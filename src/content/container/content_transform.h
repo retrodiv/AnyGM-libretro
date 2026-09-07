@@ -43,6 +43,8 @@ typedef struct AnygmContentTransforms AnygmContentTransforms;
  * replace whole entries, never mix parameters from different configuration layers. */
 AnygmContentTransforms *anygm_content_transforms_create(void);
 void anygm_content_transforms_destroy(AnygmContentTransforms *set);
+/* Transactionally copy the complete bounded program set. */
+int anygm_content_transforms_copy(AnygmContentTransforms *target,const AnygmContentTransforms *source);
 int anygm_content_transforms_parse(AnygmContentTransforms *set,const void *text,size_t size,
                                    char *error,size_t error_size);
 /* Higher-priority declarations survive later lower-priority layers. Equal priority

@@ -8,6 +8,8 @@
 #endif
 #include "content_router.h"
 #include "content_transform_source.h"
+#include "content_config.h"
+#include "gml_hash.h"
 #include "embedded_cab.h"
 #include "embedded_nsis.h"
 #include "gmlc_package.h"
@@ -35,6 +37,18 @@
 
 _Static_assert(GMLC_CLASSIC_FILE_LIMIT==ANYGM_CONTENT_MAX_MEMBER_BYTES,
                "classic project and content-router limits must remain aligned");
+
+enum { CONFIG_ANCHOR_LAYERS=ANYGM_CONTENT_MAX_NESTING_LEVELS+3u };
+typedef struct ContentConfigResolution {
+  AnygmContentConfig *ini;
+  AnygmContentTransforms *base_transforms;
+  char defaults[ANYGM_CONFIG_OVERRIDE_BYTES];
+  char specific[ANYGM_CONFIG_OVERRIDE_BYTES];
+  char anchors[CONFIG_ANCHOR_LAYERS][ANYGM_CONTENT_MAX_ANCHOR_BYTES];
+} ContentConfigResolution;
+
+static int select_payload_configuration(const AnygmContentRouter *router,const char *path);
+static int select_payload_digest(const AnygmContentRouter *router,const uint8_t digest[32],const char *label);
 
 static void content_log(const AnygmContentRouter *router,int level,const char *format,...){
   if(!router || !router->log) return;
@@ -725,10 +739,11 @@ static AnygmContentResolveResult resolve_executable_content(
       uint64_t executable_size=0;
       file_size64(router,path,&executable_size);
       if(resolve_adjacent_studio_payload(router,path,executable_size,content_path,content_size)==
-         ANYGM_CONTENT_RESOLVE_OK) return ANYGM_CONTENT_RESOLVE_OK;
+         ANYGM_CONTENT_RESOLVE_OK) return select_payload_configuration(router,content_path)
+           ?ANYGM_CONTENT_RESOLVE_OK:ANYGM_CONTENT_RESOLVE_INVALID;
       snprintf(content_path,content_size,"%s",extracted);
     }
-    return ANYGM_CONTENT_RESOLVE_OK;
+    return select_payload_configuration(router,path)?ANYGM_CONTENT_RESOLVE_OK:ANYGM_CONTENT_RESOLVE_INVALID;
   }
   if(embedded) return ANYGM_CONTENT_RESOLVE_INVALID;
   AnygmEmbeddedCab cab={0};
@@ -744,6 +759,7 @@ static AnygmContentResolveResult resolve_executable_content(
        ? classic_executable_maybe(router,path,source_size,NULL):0);
   if((status==ANYGM_EMBEDDED_CAB_NOT_FOUND &&
       nsis_status==ANYGM_EMBEDDED_NSIS_NOT_FOUND) || classic_candidate){
+    if(!select_payload_configuration(router,path)) return ANYGM_CONTENT_RESOLVE_INVALID;
     if(load_classic_project_content(router,path,content_path,content_size))
       return ANYGM_CONTENT_RESOLVE_OK;
     if(classic_candidate) return ANYGM_CONTENT_RESOLVE_INVALID;
@@ -761,15 +777,21 @@ static AnygmContentResolveResult resolve_executable_content(
       return ANYGM_CONTENT_RESOLVE_UNSUPPORTED;
     }
     if(nsis_status==ANYGM_EMBEDDED_NSIS_SUPPORTED){
+      if(!select_payload_configuration(router,path)) return ANYGM_CONTENT_RESOLVE_INVALID;
       if(!anygm_embedded_nsis_extract(router,path,&nsis,content_path,content_size,
                                       asset_root,asset_root_size))
         return ANYGM_CONTENT_RESOLVE_INVALID;
       return ANYGM_CONTENT_RESOLVE_OK;
     }
     if(nsis_status==ANYGM_EMBEDDED_NSIS_INVALID) return ANYGM_CONTENT_RESOLVE_INVALID;
-    return resolve_adjacent_studio_payload(router,path,source_size,content_path,content_size);
+    AnygmContentResolveResult adjacent=resolve_adjacent_studio_payload(
+      router,path,source_size,content_path,content_size);
+    if(adjacent==ANYGM_CONTENT_RESOLVE_OK && !select_payload_configuration(router,content_path))
+      return ANYGM_CONTENT_RESOLVE_INVALID;
+    return adjacent;
   }
   if(status!=ANYGM_EMBEDDED_CAB_SUPPORTED) return ANYGM_CONTENT_RESOLVE_INVALID;
+  if(!select_payload_configuration(router,path)) return ANYGM_CONTENT_RESOLVE_INVALID;
   if(!anygm_embedded_cab_extract(router,path,&cab,content_path,content_size,
                                  asset_root,asset_root_size))
     return ANYGM_CONTENT_RESOLVE_INVALID;
@@ -928,7 +950,7 @@ static int zip_under_root(const char *name,const char *selected){
  * channel. Blank lines and lines whose first significant character is '#' are comments in both
  * forms. Structure is validated here; directive grammar belongs to the engine and is validated
  * at load. When several anchors take part in one resolution (an anchor selecting an archive that
- * carries its own), the outermost override block wins: it is the distribution wrapper speaking. */
+ * carries its own), the outermost declarations have higher priority for matching destinations. */
 #define ANYGM_CONTENT_ANCHOR_MEMBER_COPY ".anygm_anchor"
 static int anchor_next_line(const uint8_t *data,size_t size,size_t *cursor,
                             const uint8_t **line,size_t *length){
@@ -1034,6 +1056,17 @@ static int anchor_apply_transforms(const AnygmContentRouter *router,
     return 0;
   }
   return 1;
+}
+
+static int anchor_apply_configuration(const AnygmContentRouter *router,const uint8_t *data,
+                                       size_t size,unsigned priority){
+  if(!router->configuration || priority>=CONFIG_ANCHOR_LAYERS) return 0;
+  char reference[ANYGM_CONTENT_MAX_MEMBER_PATH+1u];
+  int ok=anchor_parse(data,size,reference,sizeof reference,
+    router->configuration->anchors[priority],ANYGM_CONTENT_MAX_ANCHOR_BYTES) &&
+    anchor_apply_transforms(router,data,size,priority);
+  if(ok) content_log(router,ANYGM_CONTENT_LOG_INFO,"configuration: applied anchor layer %u",priority);
+  return ok;
 }
 
 static uint32_t zip_crc32(const uint8_t *data,size_t size){
@@ -1391,8 +1424,8 @@ static int load_archive_content_depth(const AnygmContentRouter *router,const cha
     content_log(router,ANYGM_CONTENT_LOG_ERROR,"archive: resolved payload path is too long");
     return 0;
   }
-  /* Hand this archive's override directives to the caller before any nested resolution runs, so
-   * the outermost anchor wins. The staged copy is untrusted input reparsed on every load; a copy
+  /* Collect this archive's declared layer before nested resolution, retaining its
+   * priority. The staged copy is untrusted input reparsed on every load; a copy
    * that no longer parses is a corrupted cache entry and rejects the load rather than dropping
    * directives the archive declared. */
   {
@@ -1402,13 +1435,9 @@ static int load_archive_content_depth(const AnygmContentRouter *router,const cha
        !(anchor_info.flags&ANYGM_FILE_INFO_DIRECTORY)){
       uint8_t *anchor_bytes=NULL;
       size_t anchor_size=0;
-      char anchor_ref[ANYGM_CONTENT_MAX_MEMBER_PATH+1u];
       int parsed=anygm_vfs_read_all(router->host,anchor_copy,&anchor_bytes,&anchor_size,
-                                    (size_t)ANYGM_CONTENT_MAX_ANCHOR_FILE_BYTES) &&
-                 anchor_parse(anchor_bytes,anchor_size,anchor_ref,sizeof anchor_ref,
-                              content_overrides && !content_overrides[0]?content_overrides:NULL,
-                              content_overrides_size);
-      if(parsed) parsed=anchor_apply_transforms(router,anchor_bytes,anchor_size,
+                                    (size_t)ANYGM_CONTENT_MAX_ANCHOR_FILE_BYTES);
+      if(parsed) parsed=anchor_apply_configuration(router,anchor_bytes,anchor_size,
         ANYGM_CONTENT_MAX_NESTING_LEVELS+1u-(unsigned)depth);
       free(anchor_bytes);
       if(!parsed){
@@ -1432,12 +1461,14 @@ static int load_archive_content_depth(const AnygmContentRouter *router,const cha
         router,resolved,content_path,cpsz,asset_root,arsz);
       if(executable==ANYGM_CONTENT_RESOLVE_UNSUPPORTED) return executable;
       resolved_ok=executable==ANYGM_CONTENT_RESOLVE_OK;
-    } else resolved_ok=load_classic_project_content(router,resolved,content_path,cpsz);
+    } else resolved_ok=select_payload_configuration(router,resolved) &&
+                         load_classic_project_content(router,resolved,content_path,cpsz);
     if(resolved_ok && asset_root && arsz && !asset_root[0])
       snprintf(asset_root,arsz,"%s",outdir);
     return resolved_ok;
   }
   if(kind!='C' || magic!=1) return 0;
+  if(!select_payload_configuration(router,resolved)) return 0;
   snprintf(content_path,cpsz,"%s",resolved);
   return 1;
 }
@@ -1600,8 +1631,8 @@ static int load_anchor_content(const AnygmContentRouter *router,const char *anch
   }
   char reference[ANYGM_CONTENT_MAX_MEMBER_PATH+1u];
   int ok=anchor_parse(bytes,size,reference,sizeof reference,
-                      content_overrides,content_overrides_size);
-  if(ok) ok=anchor_apply_transforms(router,bytes,size,ANYGM_CONTENT_MAX_NESTING_LEVELS+2u);
+                      NULL,0);
+  if(ok) ok=anchor_apply_configuration(router,bytes,size,ANYGM_CONTENT_MAX_NESTING_LEVELS+2u);
   free(bytes);
   if(!ok){
     content_log(router,ANYGM_CONTENT_LOG_ERROR,
@@ -1660,10 +1691,8 @@ int anygm_content_identity_path(const AnygmContentRouter *router,const char *inp
   return snprintf(output,output_size,"%s",target)<(int)output_size;
 }
 
-/* content_overrides receives the override directives the resolved content carried, when the
- * caller supplies a buffer. The buffer is only written while it is empty, which is what makes
- * the outermost anchor win across nested resolutions, so a caller starting a fresh resolution
- * clears it first. */
+/* Resolution collects configuration layers in the private transaction. The
+ * public entry point emits them in priority order after selecting the payload. */
 static AnygmContentResolveResult content_resolve_path_direct(
     const AnygmContentRouter *router,const char *input_path,
     char *resolved_path,size_t resolved_path_size,
@@ -1679,9 +1708,11 @@ static AnygmContentResolveResult content_resolve_path_direct(
   if(path_ext_is(input_path,".gmd") || path_ext_is(input_path,".gmk") ||
      path_ext_is(input_path,".gm81") || path_ext_is(input_path,".gm6") ||
      path_ext_is(input_path,".exe")){
+    if(!select_payload_configuration(router,input_path)) return ANYGM_CONTENT_RESOLVE_INVALID;
     return load_classic_project_content(router,input_path,resolved_path,resolved_path_size);
   }
   if(path_ext_is(input_path,".yyp") || path_ext_is(input_path,".yyz")){
+    if(!select_payload_configuration(router,input_path)) return ANYGM_CONTENT_RESOLVE_INVALID;
     return load_source_project_content(router,input_path,resolved_path,resolved_path_size);
   }
   if(path_ext_is(input_path,".anygm")){
@@ -1695,7 +1726,8 @@ static AnygmContentResolveResult content_resolve_path_direct(
                                 asset_root,asset_root_size,
                                 content_overrides,content_overrides_size);
   }
-  if(snprintf(resolved_path,resolved_path_size,"%s",input_path)>=(int)resolved_path_size){
+  if(!select_payload_configuration(router,input_path) ||
+     snprintf(resolved_path,resolved_path_size,"%s",input_path)>=(int)resolved_path_size){
     resolved_path[0]=0;
     return 0;
   }
@@ -1804,13 +1836,114 @@ static int load_transform_defaults(const AnygmContentRouter *router){
   /* Hosts that cannot distinguish absence from inaccessibility supply no defaults. */
   if(!anygm_vfs_stat(router->host,path,&info)) return 1;
   if(!(info.flags&ANYGM_FILE_INFO_EXISTS)) return 1;
-  uint8_t *data=NULL; size_t size=0; char error[256]={0};
+  uint8_t *text=NULL; size_t size=0; char error[256]={0};
   int ok=(info.flags&ANYGM_FILE_INFO_REGULAR) &&
-    anygm_vfs_read_all(router->host,path,&data,&size,ANYGM_TRANSFORM_MAX_CONFIG_BYTES) &&
-    anygm_content_transforms_parse(router->transforms,data,size,error,sizeof error);
-  free(data);
+    anygm_vfs_read_all(router->host,path,&text,&size,ANYGM_TRANSFORM_MAX_CONFIG_BYTES);
+  if(ok){
+    router->configuration->ini=anygm_content_config_parse(text,size,error,sizeof error);
+    ok=router->configuration->ini && anygm_content_config_apply(router->configuration->ini,
+      NULL,router->transforms,0,router->configuration->defaults,
+      sizeof router->configuration->defaults,error,sizeof error);
+  }
+  free(text);
   if(!ok) content_log(router,ANYGM_CONTENT_LOG_ERROR,"configuration %s: %s",path,
                       error[0]?error:"cannot read bounded regular file");
+  else content_log(router,ANYGM_CONTENT_LOG_INFO,"configuration: loaded defaults from %s",path);
+  return ok;
+}
+
+static int select_payload_configuration(const AnygmContentRouter *router,const char *path){
+  ContentConfigResolution *config=router->configuration;
+  if(!config || !config->ini) return 1;
+  uint64_t size=0;
+  if(!file_size64(router,path,&size) || size>UINT64_C(2147483648)) return 0;
+  void *file=router->host->file_open(router->host->userdata,path,ANYGM_FILE_READ);
+  if(!file) return 0;
+  GmlSha256 hash;
+  gml_sha256_init(&hash);
+  uint8_t buffer[65536],digest[32];
+  uint64_t remaining=size;
+  int ok=1;
+  while(remaining){
+    size_t take=remaining<sizeof buffer?(size_t)remaining:sizeof buffer;
+    size_t got=router->host->file_read(router->host->userdata,file,buffer,take);
+    if(!got || got>take){ ok=0; break; }
+    gml_sha256_update(&hash,buffer,got); remaining-=got;
+  }
+  if(ok && router->host->file_read(router->host->userdata,file,buffer,1)!=0) ok=0;
+  router->host->file_close(router->host->userdata,file);
+  if(!ok){ content_log(router,ANYGM_CONTENT_LOG_ERROR,"configuration: incomplete hash read of %s",path); return 0; }
+  gml_sha256_final(&hash,digest);
+  return select_payload_digest(router,digest,path);
+}
+
+static int select_payload_digest(const AnygmContentRouter *router,const uint8_t digest[32],const char *label){
+  ContentConfigResolution *config=router->configuration;
+  if(!config || !config->ini) return 1;
+  /* Executable routing may establish that its real content is an adjacent data
+   * image. Reselect from the same defaults/anchors, never from the first hash. */
+  if(!config->base_transforms){
+    config->base_transforms=anygm_content_transforms_create();
+    if(!config->base_transforms || !anygm_content_transforms_copy(config->base_transforms,
+       router->transforms)) return 0;
+  } else if(!anygm_content_transforms_copy(router->transforms,config->base_transforms)) return 0;
+  char error[256]={0},hex[65];
+  for(size_t i=0;i<32;i++) snprintf(hex+i*2,3,"%02x",digest[i]);
+  int ok=anygm_content_config_apply(config->ini,digest,router->transforms,UINT_MAX,
+    config->specific,sizeof config->specific,error,sizeof error);
+  content_log(router,ok?ANYGM_CONTENT_LOG_INFO:ANYGM_CONTENT_LOG_ERROR,
+    "configuration: payload %s SHA-256 %s%s%s",label,hex,ok?"":" rejected: ",ok?"":error);
+  return ok;
+}
+
+static int append_override_text(char *out,size_t capacity,const char *text){
+  if(!out || !capacity) return 1;
+  size_t used=strlen(out),length=text?strlen(text):0;
+  if(!length) return 1;
+  if(length+2u>capacity-used) return 0;
+  memcpy(out+used,text,length); used+=length;
+  if(out[used-1]!='\n') out[used++]='\n';
+  out[used]=0;
+  return 1;
+}
+
+static int collect_override_layers(const AnygmContentRouter *router,char *out,size_t capacity){
+  ContentConfigResolution *config=router->configuration;
+  if(out && capacity) out[0]=0;
+  if(router->anchor_overrides && router->anchor_overrides_size) router->anchor_overrides[0]=0;
+  if(!append_override_text(out,capacity,config->defaults)) return 0;
+  for(unsigned i=1;i<CONFIG_ANCHOR_LAYERS;i++){
+    if(!append_override_text(out,capacity,config->anchors[i]) ||
+       ((!router->inherited_overrides || !router->inherited_overrides[0]) &&
+        !append_override_text(router->anchor_overrides,router->anchor_overrides_size,
+                              config->anchors[i]))) return 0;
+  }
+  return append_override_text(out,capacity,router->inherited_overrides) &&
+    append_override_text(router->anchor_overrides,router->anchor_overrides_size,router->inherited_overrides) &&
+    append_override_text(out,capacity,config->specific);
+}
+
+int anygm_content_configure_memory(const AnygmContentRouter *router,const void *data,size_t size,
+                                    char *overrides,size_t overrides_size){
+  if(overrides && overrides_size) overrides[0]=0;
+  if(!router || (size && !data)) return 0;
+  AnygmContentRouter scoped=*router;
+  scoped.configuration=calloc(1,sizeof *scoped.configuration);
+  scoped.transforms=anygm_content_transforms_create();
+  int ok=scoped.configuration && scoped.transforms && load_transform_defaults(&scoped);
+  if(ok && scoped.configuration->ini){
+    uint8_t digest[32];
+    gml_sha256(data,size,digest);
+    ok=select_payload_digest(&scoped,digest,"memory image");
+  }
+  if(ok) ok=collect_override_layers(&scoped,overrides,overrides_size);
+  if(scoped.configuration){
+    anygm_content_config_destroy(scoped.configuration->ini);
+    anygm_content_transforms_destroy(scoped.configuration->base_transforms);
+    free(scoped.configuration);
+  }
+  anygm_content_transforms_destroy(scoped.transforms);
+  if(!ok && overrides && overrides_size) overrides[0]=0;
   return ok;
 }
 
@@ -1825,23 +1958,42 @@ AnygmContentResolveResult anygm_content_resolve_path(
   if(!router || !input_path || !resolved_path || !resolved_path_size)
     return ANYGM_CONTENT_RESOLVE_INVALID;
   AnygmContentRouter scoped=*router;
+  scoped.configuration=calloc(1,sizeof *scoped.configuration);
   scoped.transforms=anygm_content_transforms_create();
-  if(!scoped.transforms) return ANYGM_CONTENT_RESOLVE_INVALID;
+  if(!scoped.transforms || !scoped.configuration){
+    anygm_content_transforms_destroy(scoped.transforms); free(scoped.configuration);
+    return ANYGM_CONTENT_RESOLVE_INVALID;
+  }
   if(!load_transform_defaults(&scoped) || !adopt_sibling_anchor_transforms(&scoped,input_path)){
+    anygm_content_config_destroy(scoped.configuration->ini);
+    free(scoped.configuration);
     anygm_content_transforms_destroy(scoped.transforms);
     return ANYGM_CONTENT_RESOLVE_INVALID;
   }
   router=&scoped;
-  /* Start a fresh override channel; nested resolution keeps the first block. */
+  if(router->sibling_anchor_overrides && !path_ext_is(input_path,".anygm"))
+    adopt_sibling_anchor_overrides(router,input_path,scoped.configuration->anchors[1],
+                                   sizeof scoped.configuration->anchors[1]);
+
+  /* Publish only after the complete configuration and payload have resolved. */
   if(content_overrides && content_overrides_size) content_overrides[0]=0;
   AnygmContentResolveResult result=content_resolve_path_direct(
     router,input_path,resolved_path,resolved_path_size,asset_root,asset_root_size,
     content_overrides,content_overrides_size);
-  /* Consult adjacent anchors only after direct resolution supplied no directives. */
-  if(result==ANYGM_CONTENT_RESOLVE_OK && router && router->sibling_anchor_overrides &&
-     content_overrides && content_overrides_size && !content_overrides[0] &&
-     !path_ext_is(input_path,".anygm"))
-    adopt_sibling_anchor_overrides(router,input_path,content_overrides,content_overrides_size);
+  if(result==ANYGM_CONTENT_RESOLVE_OK &&
+     !collect_override_layers(router,content_overrides,content_overrides_size)){
+    content_log(router,ANYGM_CONTENT_LOG_ERROR,"configuration: combined overrides exceed their buffer");
+    result=ANYGM_CONTENT_RESOLVE_INVALID;
+  }
+  if(result!=ANYGM_CONTENT_RESOLVE_OK){
+    resolved_path[0]=0;
+    if(asset_root && asset_root_size) asset_root[0]=0;
+    if(content_overrides && content_overrides_size) content_overrides[0]=0;
+    if(router->anchor_overrides && router->anchor_overrides_size) router->anchor_overrides[0]=0;
+  }
+  anygm_content_config_destroy(scoped.configuration->ini);
+  anygm_content_transforms_destroy(scoped.configuration->base_transforms);
+  free(scoped.configuration);
   anygm_content_transforms_destroy(scoped.transforms);
   return result;
 }

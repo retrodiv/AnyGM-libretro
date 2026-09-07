@@ -9,9 +9,14 @@ marketing version. It is a numeric field in a validated binary header.
 
 ## Save-state schema
 
-The current AnyGM save-state schema is `16`. It is the format transported by
+The current AnyGM save-state schema is `17`. It is the format transported by
 libretro frontends for manual save states, automatic state slots, and rewind
 snapshots. Those features remain supported.
+
+Schema `17` binds state configuration to the effective content override program and the
+launch-anchor envelope governing later internal content replacements. Defaults overridden by
+another layer are excluded. Root framing and embedded codecs retain their layouts; earlier
+schemas are rejected cleanly because they do not establish this configuration contract.
 
 Schema `16` selects the smaller of two lossless completed-frame encodings. Repeated-row RLE remains
 the compact form for integer-scaled canvases and letterboxes, while a frame whose run stream would
@@ -78,8 +83,8 @@ reader rejects the input after decoding begins, the engine restores an exact
 snapshot of its prior state before returning an error.
 
 If a future release deliberately breaks state compatibility, increment the
-schema to `15`, then `16`, and so on. Supporting an older schema requires an
-explicit compatibility reader. A refactor does not require a bump when the
+public schema and every affected embedded schema, and reject earlier states
+without legacy readers. A refactor does not require a bump when the
 canonical bytes and semantics remain unchanged.
 
 ## Canonical encoding

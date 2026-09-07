@@ -46,6 +46,9 @@ ZIP-compatible and embedded-Cabinet routing enforce these compile-time limits:
 | Anchor (`.anygm`) file bytes | 64 KiB |
 | Runtime-override text within an anchor | 4 KiB |
 | External transform configuration | 512 KiB |
+| Recognized content-configuration sections | 256 |
+| Collected override layers before resolution | 32 KiB |
+| Effective overrides / launch-anchor envelope | 4 KiB / 64 directives each |
 | One transform source function | 64 KiB |
 | Transform syntax nesting | 64 levels |
 | Embedded-Cabinet cache marker serialization budget | 20 MiB |

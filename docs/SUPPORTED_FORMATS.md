@@ -39,7 +39,10 @@ $lives=99
 ```
 
 Each `[overrides]` line is one directive in the same grammar the host cheat
-interface uses, including development-menu declarations. An
+interface uses, including development-menu declarations. System `anygm.ini`
+defaults, anchor declarations and exact-payload SHA-256 sections combine per
+destination and condition before execution; `CONTENT_CONFIGURATION.md`
+defines their syntax, precedence and original-byte identity. An
 `introskip|1,3-5` directive lists room indices where A, B, or Start advances
 to the next room in play order; the `GML_INTROSKIP` development setting, when
 present, takes precedence over it. `introauto|1,3-5` takes the same room list

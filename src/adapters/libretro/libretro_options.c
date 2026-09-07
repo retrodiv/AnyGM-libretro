@@ -124,8 +124,8 @@ static struct retro_core_option_v2_definition g_definitions[]={
    "None"},
 #endif
   {"anygm_content_overrides","Content override directives",NULL,
-   "Applies the override directives the loaded content carries in its .anygm anchor (frozen "
-   "variables, aspect patches, a development menu). Off ignores only this anchor "
+   "Applies override directives from system defaults, .anygm anchors, and matching payload "
+   "SHA-256 sections (frozen variables, aspect patches, a development menu). Off ignores this "
    "channel without changing host cheats. Save states remember whether directives "
    "were active and only load under the same setting.",
    NULL,"development",

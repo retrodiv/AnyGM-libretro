@@ -120,17 +120,19 @@ typedef struct {
   AnygmContentFacts facts;
   AnygmCompatibilityProfile compatibility;
   char loaded_path[1024];
-  /* Override directives the content's anchor carried, kept as the verbatim text the state
-   * identity hashes, plus the slots it parsed to. Both are validated before the running
-   * content is torn down, so a rejected directive fails the load transactionally. */
-  char content_overrides[ANYGM_CONTENT_MAX_ANCHOR_BYTES];
+  /* Collected configuration text becomes an effective program before adoption.
+   * Retain the launch envelope separately so payload selectors never migrate
+   * across an internal content replacement. Both texts are bounded to 4 KiB
+   * after semantic merging and validated before running content is torn down. */
+  char content_overrides[ANYGM_CONTENT_MAX_OVERRIDE_LAYERS_BYTES];
+  char anchor_overrides[ANYGM_CONTENT_MAX_OVERRIDE_LAYERS_BYTES];
   CheatSlot boot_cheats[GML_MAX_CHEATS];
   int boot_cheat_count;
 } EnginePreparedContent;
 
 static AnygmResult engine_prepare_content(AnygmEngine *engine,
                                           const AnygmContentSource *source,
-                                          EnginePreparedContent *prepared){
+                                          EnginePreparedContent *prepared,const char *inherited_overrides){
   if(!prepared) return ANYGM_ERROR_INVALID_ARGUMENT;
   memset(prepared,0,sizeof *prepared);
   int path_source=source && source->kind==ANYGM_CONTENT_PATH;
@@ -149,6 +151,9 @@ static AnygmResult engine_prepare_content(AnygmEngine *engine,
     router.host=&engine->host;
     router.cache_directory=source->cache_directory;
     router.system_directory=source->system_directory;
+    router.inherited_overrides=inherited_overrides;
+    router.anchor_overrides=prepared->anchor_overrides;
+    router.anchor_overrides_size=sizeof prepared->anchor_overrides;
     router.log=content_router_log;
     router.log_userdata=engine;
     /* Disabled overrides do not trigger adjacent-anchor discovery. */
@@ -207,6 +212,19 @@ static AnygmResult engine_prepare_content(AnygmEngine *engine,
       anygm_content_path_parent(origin,prepared->win.content_dir,
                                 sizeof prepared->win.content_dir);
   } else {
+    AnygmContentRouter router={0};
+    router.host=&engine->host;
+    router.system_directory=source->system_directory;
+    router.log=content_router_log;
+    router.log_userdata=engine;
+    router.inherited_overrides=inherited_overrides;
+    router.anchor_overrides=prepared->anchor_overrides;
+    router.anchor_overrides_size=sizeof prepared->anchor_overrides;
+    if(!anygm_content_configure_memory(&router,source->data,source->size,
+         prepared->content_overrides,sizeof prepared->content_overrides)){
+      engine_errorf(engine,ANYGM_ERROR_INVALID_CONTENT,"Memory content configuration was rejected");
+      return ANYGM_ERROR_INVALID_CONTENT;
+    }
     if(gml_win_from_mem(&prepared->win,(uint8_t *)(uintptr_t)source->data,
                         source->size,0)!=0){
       engine_errorf(engine,ANYGM_ERROR_INVALID_CONTENT,
@@ -282,6 +300,22 @@ static AnygmResult engine_prepare_content(AnygmEngine *engine,
     gml_win_free(&prepared->win);
     return ANYGM_ERROR_INVALID_CONTENT;
   }
+  if(!engine_boot_overrides_text(prepared->boot_cheats,prepared->boot_cheat_count,
+       prepared->content_overrides,ANYGM_CONTENT_MAX_ANCHOR_BYTES)){
+    engine_errorf(engine,ANYGM_ERROR_INVALID_CONTENT,"Effective content overrides exceed 4 KiB");
+    gml_win_free(&prepared->win); return ANYGM_ERROR_INVALID_CONTENT;
+  }
+  CheatSlot *anchor_slots=calloc(GML_MAX_CHEATS,sizeof *anchor_slots);
+  int anchor_count=0;
+  int anchor_ok=anchor_slots && engine_boot_overrides_parse(prepared->anchor_overrides,
+    anchor_slots,&anchor_count,override_error,sizeof override_error) &&
+    engine_boot_overrides_text(anchor_slots,anchor_count,prepared->anchor_overrides,
+                               ANYGM_CONTENT_MAX_ANCHOR_BYTES);
+  free(anchor_slots);
+  if(!anchor_ok){
+    engine_errorf(engine,ANYGM_ERROR_INVALID_CONTENT,"Launch overrides rejected: %s",override_error);
+    gml_win_free(&prepared->win); return ANYGM_ERROR_INVALID_CONTENT;
+  }
   return ANYGM_OK;
 }
 
@@ -289,38 +323,17 @@ static void engine_adopt_boot_overrides(AnygmEngine *engine,
                                         const EnginePreparedContent *prepared){
   memcpy(engine->boot_cheats,prepared->boot_cheats,sizeof engine->boot_cheats);
   engine->boot_cheat_count=prepared->boot_cheat_count;
-  snprintf(engine->content_overrides_text,sizeof engine->content_overrides_text,"%s",
-           prepared->content_overrides);
+  memcpy(engine->content_overrides_text,prepared->content_overrides,
+         strlen(prepared->content_overrides)+1u);
+  memcpy(engine->launch_overrides_text,prepared->anchor_overrides,
+         strlen(prepared->anchor_overrides)+1u);
   engine->introskip_enabled=-1;
   engine->vm.os_type_declared=engine_overrides_declared_os_type(engine);
   engine_override_menu_refresh(engine);
   if(engine->boot_cheat_count)
-    engine_logf(engine,ANYGM_LOG_INFO,"Content overrides: %d directive(s) from the anchor%s\n",
+    engine_logf(engine,ANYGM_LOG_INFO,"Content overrides: %d effective directive(s)%s\n",
                 engine->boot_cheat_count,
                 engine->config.content_overrides?"":" (disabled by configuration)");
-}
-
-/* An anchor describes the distribution the frontend launched, not only the first payload that
- * distribution selects. game_change replaces executable content inside that launch envelope, so
- * keep the outer directives across the replacement. Reparse their text into fresh slots: captured
- * values belong to the VM being discarded and must never be handed to the incoming one. Content
- * launched without an anchor may still change to an anchored target, in which case the prepared
- * target's own directives remain authoritative. */
-static int engine_inherit_game_change_overrides(AnygmEngine *engine,
-                                                EnginePreparedContent *prepared){
-  if(!engine || !prepared || !engine->content_overrides_text[0]) return 1;
-  snprintf(prepared->content_overrides,sizeof prepared->content_overrides,"%s",
-           engine->content_overrides_text);
-  memset(prepared->boot_cheats,0,sizeof prepared->boot_cheats);
-  prepared->boot_cheat_count=0;
-  char error[256]={0};
-  if(engine_boot_overrides_parse(prepared->content_overrides,prepared->boot_cheats,
-                                 &prepared->boot_cheat_count,error,sizeof error))
-    return 1;
-  engine_errorf(engine,ANYGM_ERROR_INVALID_CONTENT,
-                "Launch overrides could not be inherited: %s",
-                error[0]?error:"unrecognized directive");
-  return 0;
 }
 
 static AnygmResult engine_load_content_prepare(AnygmEngine *engine,
@@ -332,7 +345,7 @@ static AnygmResult engine_load_content_prepare(AnygmEngine *engine,
   snprintf(engine->region,sizeof engine->region,"%s",config&&config->region&&config->region[0]?config->region:"US");
   snprintf(engine->language_tag,sizeof engine->language_tag,"%s",config&&config->language_tag&&config->language_tag[0]?config->language_tag:"en-US");
   EnginePreparedContent prepared;
-  AnygmResult result=engine_prepare_content(engine,source,&prepared);
+  AnygmResult result=engine_prepare_content(engine,source,&prepared,NULL);
   if(result!=ANYGM_OK) return result;
   engine->win=prepared.win;
   engine->content_facts=prepared.facts;
@@ -720,15 +733,10 @@ AnygmResult engine_state_stage_content(AnygmEngine *engine,const char *locator,
   source.system_directory=engine->content_system_directory[0]
     ?engine->content_system_directory:NULL;
   EnginePreparedContent prepared;
-  result=engine_prepare_content(staged,&source,&prepared);
+  result=engine_prepare_content(staged,&source,&prepared,engine->launch_overrides_text);
   if(result!=ANYGM_OK){
     anygm_destroy(staged);
     return result;
-  }
-  if(!engine_inherit_game_change_overrides(engine,&prepared)){
-    gml_win_free(&prepared.win);
-    anygm_destroy(staged);
-    return ANYGM_ERROR_INVALID_STATE;
   }
 
   staged->win=prepared.win;
@@ -824,12 +832,8 @@ static AnygmResult engine_apply_game_change(AnygmEngine *engine,int *changed){
   source.system_directory=engine->content_system_directory[0]
     ?engine->content_system_directory:NULL;
   EnginePreparedContent prepared;
-  AnygmResult result=engine_prepare_content(engine,&source,&prepared);
+  AnygmResult result=engine_prepare_content(engine,&source,&prepared,engine->launch_overrides_text);
   if(result!=ANYGM_OK) return result;
-  if(!engine_inherit_game_change_overrides(engine,&prepared)){
-    gml_win_free(&prepared.win);
-    return ANYGM_ERROR_INVALID_CONTENT;
-  }
 
   char save_directory[sizeof engine->win.save_dir];
   snprintf(save_directory,sizeof save_directory,"%s",engine->win.save_dir);

@@ -157,6 +157,26 @@ static const TransformEntry *lookup(const AnygmContentTransforms *set,const char
   return NULL;
 }
 
+int anygm_content_transforms_copy(AnygmContentTransforms *target,const AnygmContentTransforms *source){
+  if(!target || !source) return 0;
+  AnygmContentTransforms *copy=anygm_content_transforms_create();
+  if(!copy) return 0;
+  for(size_t i=0;i<source->count;i++){
+    const TransformEntry *from=&source->entries[i];
+    TransformEntry *to=&copy->entries[copy->count++];
+    *to=*from;
+    to->program=malloc(from->program_size);
+    to->parameters=malloc(from->parameter_size?from->parameter_size:1u);
+    if(!to->program || !to->parameters){ anygm_content_transforms_destroy(copy); return 0; }
+    memcpy(to->program,from->program,from->program_size);
+    if(from->parameter_size) memcpy(to->parameters,from->parameters,from->parameter_size);
+  }
+  AnygmContentTransforms old=*target;
+  *target=*copy; *copy=old;
+  anygm_content_transforms_destroy(copy);
+  return 1;
+}
+
 int anygm_content_transforms_has(const AnygmContentTransforms *set,const char *name){
   return lookup(set,name)!=NULL;
 }

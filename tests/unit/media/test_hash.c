@@ -16,6 +16,15 @@ static int hex_value(char value){
 static int vector(const void *data,size_t size,const char *expected){
   uint8_t digest[32];
   gml_sha256(data,size,digest);
+  for(size_t split=0;split<=size;split++){
+    GmlSha256 hash;
+    uint8_t streamed[32];
+    gml_sha256_init(&hash);
+    gml_sha256_update(&hash,data,split);
+    gml_sha256_update(&hash,size?(const uint8_t*)data+split:NULL,size-split);
+    gml_sha256_final(&hash,streamed);
+    if(memcmp(digest,streamed,32)) return 0;
+  }
   for(size_t i=0;i<sizeof(digest);i++){
     int high=hex_value(expected[i*2u]);
     int low=hex_value(expected[i*2u+1u]);

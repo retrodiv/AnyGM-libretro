@@ -2743,12 +2743,12 @@ int main(int argc,char **argv){
   /* The state carries content and compatibility fingerprints. The synthetic content embeds the
    * producer fingerprint, so this hash moves whenever reviewed producer behavior or policy changes,
    * and again whenever the serialized layout itself changes. */
-  /* Schema 16 adds one word selecting the lossless completed-frame encoding. This fixture's
-   * canonical state therefore grows from 22066 to 22070; its runtime motion-planning tables remain
-   * empty, and their non-empty cost stays covered by the builtin-state fixture. */
+  /* Schema 17 changes configuration identity without changing this fixture's state layout.
+   * Replacing only its schema word with 16 reproduces the preceding canonical checksum.
+   * Its empty motion-planning tables have separate non-empty coverage in the builtin-state test. */
   uint64_t deterministic_hash=state_checksum(deterministic,deterministic_size);
   if(deterministic_size!=22070 ||
-     deterministic_hash!=UINT64_C(0x93f381ff17414513)){
+     deterministic_hash!=UINT64_C(0xa4c27da217414513)){
     fprintf(stderr,"canonical engine state changed: size=%zu hash=%016llx\n",
             deterministic_size,(unsigned long long)deterministic_hash);
     return 1;

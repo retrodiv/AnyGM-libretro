@@ -649,6 +649,45 @@ static int boot_line_is_menu(const char *code){
   return !strncmp(code,"menu|",5) || !strncmp(code,"mset|",5) ||
          !strncmp(code,"mtoggle|",8) || !strncmp(code,"mrange|",7) || !strncmp(code,"mwarp|",6);
 }
+
+/* Compare destinations and conditions, never the value being assigned. Resolve
+ * layers before any slot captures live state, runs a script, or builds a menu. */
+static int boot_same_target(const CheatSlot *left,const CheatSlot *right){
+  const CheatAct *a=&left->act,*b=&right->act;
+  if(a->kind!=b->kind || a->scope_aspect!=b->scope_aspect ||
+     a->scope_monitor!=b->scope_monitor || a->scope_gameres!=b->scope_gameres ||
+     a->scope_mode!=b->scope_mode || strcmp(a->scope_global,b->scope_global)) return 0;
+  if(a->kind!=CK_NONE)
+    return !strcmp(a->obj,b->obj) && !strcmp(a->var,b->var) &&
+      a->idx==b->idx && a->idx2==b->idx2 && a->has_index==b->has_index &&
+      a->eng==b->eng && a->camera_field==b->camera_field && a->camera_mask==b->camera_mask;
+  static const char *singletons[]={"ostype|","introskip|","introauto|","menu|"};
+  for(size_t i=0;i<sizeof singletons/sizeof singletons[0];i++){
+    size_t length=strlen(singletons[i]);
+    if(!strncmp(left->code,singletons[i],length) && !strncmp(right->code,singletons[i],length)) return 1;
+  }
+  if(boot_line_is_menu(left->code) && boot_line_is_menu(right->code)){
+    char l[6][128],r[6][128];
+    int ln=menu_split(left->code,l),rn=menu_split(right->code,r);
+    if(ln<2 || rn<2) return !strcmp(left->code,right->code);
+    int lt=!strcmp(l[0],"mset"),rt=!strcmp(r[0],"mset");
+    return lt==rt && !strcmp(l[1],r[1]);
+  }
+  return !strcmp(left->code,right->code);
+}
+
+int engine_boot_overrides_text(const CheatSlot *slots,int count,char *text,size_t capacity){
+  size_t used=0;
+  if(!text || !capacity) return 0;
+  for(int i=0;i<count;i++){
+    size_t length=strlen(slots[i].code);
+    if(length+2u>capacity-used) return 0;
+    memcpy(text+used,slots[i].code,length); used+=length; text[used++]='\n';
+  }
+  text[used]=0;
+  return 1;
+}
+
 int engine_boot_overrides_parse(const char *text,CheatSlot *slots,int *count,
                                 char *error,size_t error_capacity){
   *count=0;
@@ -678,11 +717,8 @@ int engine_boot_overrides_parse(const char *text,CheatSlot *slots,int *count,
       char parts[CHEAT_MAX_DIRECTIVES][CHEAT_DIRECTIVE_BYTES];
       int part_count=cheat_split_directives(line,parts);
       for(int p=0;p<part_count;p++){
-        if(*count>=GML_MAX_CHEATS){
-          snprintf(error,error_capacity,"more than %d directives",GML_MAX_CHEATS);
-          return 0;
-        }
-        CheatSlot *slot=&slots[*count];
+        CheatSlot candidate={0};
+        CheatSlot *slot=&candidate;
         if(strlen(parts[p])>=sizeof slot->code){
           snprintf(error,error_capacity,"directive %d is longer than %llu bytes",
                    line_number,(unsigned long long)(sizeof slot->code-1u));
@@ -730,7 +766,17 @@ int engine_boot_overrides_parse(const char *text,CheatSlot *slots,int *count,
             return 0;
           }
         }
-        (*count)++;
+        for(int i=0;i<*count;i++){
+          if(!boot_same_target(&slots[i],slot)) continue;
+          memmove(&slots[i],&slots[i+1],(size_t)(*count-i-1)*sizeof *slots);
+          (*count)--;
+          break;
+        }
+        if(*count>=GML_MAX_CHEATS){
+          snprintf(error,error_capacity,"more than %d effective directives",GML_MAX_CHEATS);
+          return 0;
+        }
+        slots[(*count)++]=candidate;
       }
     }
     if(!line_end) break;

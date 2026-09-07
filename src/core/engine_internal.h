@@ -348,6 +348,7 @@ struct AnygmEngine {
   /* Verbatim override text the loaded content's anchor carried; hashed into the state identity
    * while the content-override channel is active. boot_cheats holds its parsed form. */
   char content_overrides_text[4096];
+  char launch_overrides_text[4096];
   MenuState menu;
   uint8_t introskip_set[1024/8];
   int introskip_enabled;
@@ -419,6 +420,7 @@ void engine_override_set(AnygmEngine *engine,unsigned slot,bool enabled,const ch
 /* Content-override channel: directives a content anchor declared, parsed into boot slots that
  * survive host cheat resets. Parsing is fail-closed: an unrecognized or one-shot directive
  * rejects the whole block, and the caller fails the load rather than dropping lines. */
+int engine_boot_overrides_text(const CheatSlot *slots,int count,char *text,size_t capacity);
 int engine_boot_overrides_parse(const char *text,CheatSlot *slots,int *count,
                                 char *error,size_t error_capacity);
 /* A state carries the values a scoped override forced into it. Loading one re-opens the question

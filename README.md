@@ -209,6 +209,7 @@ runtime. See [Architecture](docs/ARCHITECTURE.md) for ownership rules and
 - [Compatibility](docs/COMPATIBILITY.md)
 - [State format](docs/STATE_FORMAT.md)
 - [Supported formats](docs/SUPPORTED_FORMATS.md)
+- [Content configuration and SHA-256 selectors](docs/CONTENT_CONFIGURATION.md)
 - [Room-layer effects](docs/EFFECT_LAYERS.md)
 - [Security model](docs/SECURITY_MODEL.md)
 - [Development and validation](docs/DEVELOPMENT.md)

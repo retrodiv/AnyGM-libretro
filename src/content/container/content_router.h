@@ -19,6 +19,7 @@
 #define ANYGM_CONTENT_EXPANSION_ALLOWANCE UINT64_C(16777216)
 #define ANYGM_CONTENT_MAX_NESTING_LEVELS 4u
 #define ANYGM_CONTENT_MAX_ANCHOR_BYTES 4096u
+#define ANYGM_CONTENT_MAX_OVERRIDE_LAYERS_BYTES 32768u
 /* Transform declarations have their own file budget; override text remains 4 KiB. */
 #define ANYGM_CONTENT_MAX_ANCHOR_FILE_BYTES 65536u
 
@@ -35,6 +36,13 @@ typedef struct AnygmContentRouter {
   const char *system_directory;
   /* Borrowed only for one resolution transaction. */
   AnygmContentTransforms *transforms;
+  /* Private configuration transaction; never retained by a caller. */
+  struct ContentConfigResolution *configuration;
+  /* Launch-anchor directives inherited during an internal content replacement.
+   * Defaults and SHA-256 selections are always taken from the new source. */
+  const char *inherited_overrides;
+  char *anchor_overrides;
+  size_t anchor_overrides_size;
 } AnygmContentRouter;
 
 enum {
@@ -53,14 +61,17 @@ typedef enum AnygmContentResolveResult {
  * holding the runtime assets the content opens by path, and is emptied whenever that is the
  * payload's own directory. An archive carrying a source project rather than a compiled payload
  * separates the two: the payload is generated into the cache while the assets stay extracted. */
-/* content_overrides, when supplied, receives the override directives the resolved content's
- * anchor carried, written only while the buffer is empty so the outermost anchor of a nested
- * resolution wins. Callers starting a fresh resolution clear the buffer first. */
+/* content_overrides receives bounded low-to-high priority text for the engine's
+ * directive parser. The parser resolves destinations before executing any slot.
+ * anchor_overrides, if supplied on the router, receives the launch envelope
+ * separately from defaults and the selected SHA-256 layer. */
 AnygmContentResolveResult anygm_content_resolve_path(
     const AnygmContentRouter *router,const char *input_path,
     char *resolved_path,size_t resolved_path_size,
     char *asset_root,size_t asset_root_size,
     char *content_overrides,size_t content_overrides_size);
+int anygm_content_configure_memory(const AnygmContentRouter *router,const void *data,size_t size,
+                                    char *overrides,size_t overrides_size);
 int anygm_content_load_win(const AnygmContentRouter *router,GmlWin *win,const char *path,char *loaded_path,
                            size_t loaded_path_size);
 void anygm_content_path_stem(const char *path,char *output,size_t output_size);

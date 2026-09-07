@@ -5,13 +5,6 @@
 
 #include <string.h>
 
-typedef struct {
-  uint32_t state[8];
-  uint64_t bytes;
-  uint8_t block[64];
-  size_t used;
-} GmlSha256;
-
 static uint32_t rotate_right(uint32_t value,unsigned bits){
   return (value>>bits)|(value<<(32u-bits));
 }
@@ -63,7 +56,7 @@ static void sha256_transform(GmlSha256 *hash,const uint8_t block[64]){
   hash->state[4]+=e; hash->state[5]+=f; hash->state[6]+=g; hash->state[7]+=h;
 }
 
-static void sha256_update(GmlSha256 *hash,const void *data,size_t size){
+void gml_sha256_update(GmlSha256 *hash,const void *data,size_t size){
   const uint8_t *source=(const uint8_t*)data;
   hash->bytes+=(uint64_t)size;
   while(size){
@@ -77,19 +70,29 @@ static void sha256_update(GmlSha256 *hash,const void *data,size_t size){
   }
 }
 
-void gml_sha256(const void *data,size_t size,uint8_t digest[32]){
-  GmlSha256 hash={{
+void gml_sha256_init(GmlSha256 *hash){
+  const GmlSha256 initial={{
     0x6a09e667u,0xbb67ae85u,0x3c6ef372u,0xa54ff53au,
     0x510e527fu,0x9b05688cu,0x1f83d9abu,0x5be0cd19u
   },0,{0},0};
-  sha256_update(&hash,data,size);
-  uint64_t bits=hash.bytes*8u;
+  *hash=initial;
+}
+
+void gml_sha256_final(GmlSha256 *hash,uint8_t digest[32]){
+  uint64_t bits=hash->bytes*8u;
   const uint8_t marker=0x80;
-  sha256_update(&hash,&marker,1);
+  gml_sha256_update(hash,&marker,1);
   const uint8_t zero=0;
-  while(hash.used!=56u) sha256_update(&hash,&zero,1);
+  while(hash->used!=56u) gml_sha256_update(hash,&zero,1);
   uint8_t length[8];
   for(unsigned i=0;i<8;i++) length[7u-i]=(uint8_t)(bits>>(i*8u));
-  sha256_update(&hash,length,sizeof(length));
-  for(unsigned i=0;i<8;i++) store_be32(digest+i*4u,hash.state[i]);
+  gml_sha256_update(hash,length,sizeof(length));
+  for(unsigned i=0;i<8;i++) store_be32(digest+i*4u,hash->state[i]);
+}
+
+void gml_sha256(const void *data,size_t size,uint8_t digest[32]){
+  GmlSha256 hash;
+  gml_sha256_init(&hash);
+  gml_sha256_update(&hash,data,size);
+  gml_sha256_final(&hash,digest);
 }

@@ -6,6 +6,7 @@
 #include "embedded_cab.h"
 #include "embedded_nsis.h"
 #include "engine_internal.h"
+#include "gml_hash.h"
 #include "memory_vfs.h"
 #include "synthetic_content.h"
 #include "stdio_vfs.h"
@@ -1597,6 +1598,27 @@ static int embedded_cabinet_cases(const AnygmHostServices *services,const char *
   return 1;
 }
 
+static int selected_file_identity(const AnygmContentRouter *router,const char *input,
+                                  const char *original,const char *root){
+  uint8_t *bytes=NULL,digest[32]; size_t size=0;
+  if(!read_file(original,&bytes,&size)) return 0;
+  gml_sha256(bytes,size,digest); free(bytes);
+  char directory[700],ini[750],hex[65],text[512],overrides[512],resolved[1024];
+  snprintf(directory,sizeof directory,"%s/identity-XXXXXX",root);
+  if(!mkdtemp(directory)) return 0;
+  snprintf(ini,sizeof ini,"%s/anygm.ini",directory);
+  for(size_t i=0;i<32;i++) snprintf(hex+i*2,3,"%02x",digest[i]);
+  snprintf(text,sizeof text,"[overrides]\n$identity=1\n"
+    "[sha256:%s.overrides]\n$identity=2\n",hex);
+  AnygmContentRouter scoped=*router; scoped.system_directory=directory;
+  int ok=write_file(ini,text,strlen(text)) &&
+    anygm_content_resolve_path(&scoped,input,resolved,sizeof resolved,NULL,0,
+                               overrides,sizeof overrides)==ANYGM_CONTENT_RESOLVE_OK &&
+    !strcmp(overrides,"$identity=1\n$identity=2\n");
+  anygm_content_directory_remove(router->host,directory);
+  return ok;
+}
+
 static int embedded_executable_cases(const AnygmHostServices *services,const char *root){
   uint8_t form[200],executable[224]={0};
   build_no_code_form(form);
@@ -1623,6 +1645,8 @@ static int embedded_executable_cases(const AnygmHostServices *services,const cha
          extracted_size==sizeof form && !memcmp(extracted,form,sizeof form);
   free(extracted);
   if(!ok) return fail("embedded executable payload changed");
+  if(!selected_file_identity(&router,path,path,root))
+    return fail("embedded executable configuration did not hash the original executable");
 
   uint8_t supported_with_cabinet[1024];
   build_pe_cabinet(supported_with_cabinet);
@@ -1736,6 +1760,10 @@ static int adjacent_executable_payload_cases(const AnygmHostServices *services,c
      strcmp(resolved,payload) || asset_root[0]){
     free(form);
     return fail("a launcher-only PE did not resolve its exact adjacent data.win");
+  }
+  if(!selected_file_identity(&router,launcher,payload,root)){
+    free(form);
+    return fail("launcher-only configuration did not select the adjacent data image hash");
   }
 
   AnygmEngine *engine=NULL;
@@ -2205,6 +2233,63 @@ static int transform_configuration_cases(const AnygmHostServices *services,const
   return 1;
 }
 
+static int selected_configuration_cases(const AnygmHostServices *services,const char *root){
+  char directory[600],ini[700],payload[700],anchor[700],archive_path[700],resolved[1024];
+  snprintf(directory,sizeof directory,"%s/selected-config",root);
+  if(mkdir(directory,0700)) return fail("could not create selected configuration directory");
+  snprintf(ini,sizeof ini,"%s/anygm.ini",directory);
+  snprintf(payload,sizeof payload,"%s/project.gmk",directory);
+  snprintf(anchor,sizeof anchor,"%s/content.anygm",directory);
+  snprintf(archive_path,sizeof archive_path,"%s/content.zip",directory);
+  Fixture project={{0},0};
+  if(!build_project_fixture(701,&project) || !write_file(payload,project.data,project.size))
+    return fail("could not write selected configuration project");
+  uint8_t digest[32]; char hex[65],config[2048],overrides[4096];
+  gml_sha256(project.data,project.size,digest);
+  for(size_t i=0;i<32;i++) snprintf(hex+i*2,3,"%02x",digest[i]);
+  snprintf(config,sizeof config,
+    "[overrides]\n$default=1\n[transforms]\nclassic.project.7=buffer stop(){ reject(); }\n"
+    "[sha256:%s.transforms]\nclassic.project.7=buffer copy(){ return slice(0,input_size); }\n"
+    "[sha256:%s.overrides]\n$selected=3\n",hex,hex);
+  static const uint8_t anchor_text[]="[anygm]\npayload=project.gmk\n[overrides]\n$anchor=2\n"
+    "[transforms]\nclassic.project.7=buffer stop(){ reject(); }\n";
+  if(!write_file(ini,config,strlen(config)) || !write_file(anchor,anchor_text,sizeof anchor_text-1))
+    return fail("could not write selected configuration declarations");
+  AnygmContentRouter router={0}; router.host=services; router.cache_directory=directory;
+  router.system_directory=directory; router.sibling_anchor_overrides=1;
+  for(int direct=0;direct<2;direct++){
+    if(!anygm_content_resolve_path(&router,direct?payload:anchor,resolved,sizeof resolved,
+         NULL,0,overrides,sizeof overrides) || strcmp(overrides,"$default=1\n$anchor=2\n$selected=3\n"))
+      return fail("SHA-256 selection did not override an anchor before protected import");
+  }
+  ZipEntry entries[2]={
+    {(const uint8_t*)"project.gmk",11,project.data,(uint32_t)project.size,(uint32_t)project.size,0,0,0,0},
+    {(const uint8_t*)"inner.anygm",11,anchor_text,sizeof anchor_text-1,sizeof anchor_text-1,0,0,0,0}
+  };
+  Buffer archive={0};
+  int ok=build_zip(entries,2,&archive) && write_file(archive_path,archive.data,archive.size);
+  free(archive.data);
+  if(!ok) return fail("could not write selected configuration archive");
+  /* The external sibling is a lower layer than the archive's own anchor. */
+  const char outer[]="[anygm]\npayload=content.zip\n[overrides]\n$outer=4\n";
+  if(!write_file(anchor,outer,sizeof outer-1)) return fail("could not write outer configuration anchor");
+  for(int warm=0;warm<2;warm++){
+    if(!anygm_content_resolve_path(&router,archive_path,resolved,sizeof resolved,
+         NULL,0,overrides,sizeof overrides) ||
+       strcmp(overrides,"$default=1\n$outer=4\n$anchor=2\n$selected=3\n"))
+      return fail("archive wrapping or cache warmth changed the selected payload configuration");
+  }
+  /* A different original fingerprint cannot reuse the prior derived result. */
+  config[0]=0;
+  hex[0]=hex[0]=='0'?'1':'0';
+  snprintf(config,sizeof config,"[transforms]\nclassic.project.7=buffer stop(){reject();}\n"
+    "[sha256:%s.transforms]\nclassic.project.7=buffer copy(){return slice(0,input_size);}\n",hex);
+  if(!write_file(ini,config,strlen(config)) ||
+     anygm_content_resolve_path(&router,archive_path,resolved,sizeof resolved,NULL,0,overrides,sizeof overrides) ||
+     overrides[0] || resolved[0]) return fail("unmatched hash selected a cached transform result");
+  return 1;
+}
+
 int main(void){
   char root[]="build/content-security-XXXXXX";
   if(!mkdtemp(root)) return fail("could not create temporary root")?0:1;
@@ -2247,7 +2332,8 @@ int main(void){
          archive_anchor_cases(&services,root) &&
          archive_advanced_anchor_cases(&services,root) &&
          direct_anchor_cases(&services,root) &&
-         transform_configuration_cases(&services,root);
+         transform_configuration_cases(&services,root) &&
+         selected_configuration_cases(&services,root);
   ZipEntry pair[2]={traversal,safe};
   ok=ok&&invalid_case(&services,root,"traversal.zip",pair,2);
   pair[0]=absolute;

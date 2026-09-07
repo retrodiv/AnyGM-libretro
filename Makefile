@@ -153,13 +153,14 @@ VIDEO_RENDERER_TESTS := test_renderer_effects test_renderer_postprocess test_ren
 ifneq ($(HARDWARE_RENDER),0)
 VIDEO_RENDERER_TESTS += test_gpu
 endif
-CONTENT_TESTS := test_bytecode test_package test_classic test_sprite_masks test_content_transform
+CONTENT_TESTS := test_bytecode test_package test_classic test_sprite_masks test_content_transform test_content_config
 MEDIA_TESTS := test_hash test_image_codec test_font_raster
 AUDIO_TESTS := test_mp3_detect
 COMPATIBILITY_TESTS := test_compatibility
 CHECK_TARGETS := $(addprefix $(TEST_DIR)/,$(RUNTIME_TESTS) $(VIDEO_RENDERER_TESTS) \
 	$(CONTENT_TESTS) $(MEDIA_TESTS) $(AUDIO_TESTS) $(COMPATIBILITY_TESTS))
 INTEGRATION_TESTS := $(TEST_DIR)/test_engine_instances $(TEST_DIR)/test_host_setting_budget $(TEST_DIR)/test_engine_blocking_wait \
+	$(TEST_DIR)/test_engine_content_config \
 	$(TEST_DIR)/test_engine_scoped_overrides \
 	$(TEST_DIR)/test_engine_composed_raster
 ifneq ($(HARDWARE_RENDER),0)
@@ -425,6 +426,12 @@ $(TEST_DIR)/test_content_transform: tests/unit/content/test_content_transform.c 
 	mkdir -p $(dir $@)
 	$(CC) $(CPPFLAGS) $(CFLAGS) $^ -o $@
 
+$(TEST_DIR)/test_content_config: tests/unit/content/test_content_config.c \
+	src/content/container/content_config.c src/content/container/content_transform.c \
+	src/content/container/content_transform_source.c src/media/gml_hash.c
+	mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $^ -o $@
+
 $(TEST_DIR)/test_mp3_detect: tests/unit/audio/test_mp3_detect.c \
 	src/audio/codecs/gml_mp3.c
 	mkdir -p $(dir $@)
@@ -448,6 +455,7 @@ check: warnings-check architecture-check api-check contract-check integration-ch
 	$(TEST_DIR)/test_package
 	$(TEST_DIR)/test_classic
 	$(TEST_DIR)/test_sprite_masks
+	$(TEST_DIR)/test_content_config
 	$(TEST_DIR)/test_hash
 	$(TEST_DIR)/test_image_codec
 	$(TEST_DIR)/test_font_raster
@@ -540,6 +548,7 @@ $(TEST_DIR)/public_header_cpp.o: tests/contract/public_header_cpp.cpp src/api/an
 
 integration-check: $(INTEGRATION_TESTS)
 	$(TEST_DIR)/test_engine_instances
+	$(TEST_DIR)/test_engine_content_config
 	$(TEST_DIR)/test_host_setting_budget
 	$(if $(filter-out 0,$(HARDWARE_RENDER)),$(TEST_DIR)/test_graphics_state,true)
 
@@ -644,6 +653,11 @@ $(TEST_DIR)/test_engine_blocking_wait: tests/integration/test_engine_blocking_wa
 	$(call link_runtime_test,$(TEST_CPPFLAGS))
 
 $(TEST_DIR)/test_engine_scoped_overrides: tests/integration/test_engine_scoped_overrides.c \
+	tests/support/synthetic_content.c $(RUNTIME_OBJECTS) $(TEST_HOST_OBJECTS)
+	mkdir -p $(dir $@)
+	$(call link_runtime_test,$(TEST_CPPFLAGS))
+
+$(TEST_DIR)/test_engine_content_config: tests/integration/test_engine_content_config.c \
 	tests/support/synthetic_content.c $(RUNTIME_OBJECTS) $(TEST_HOST_OBJECTS)
 	mkdir -p $(dir $@)
 	$(call link_runtime_test,$(TEST_CPPFLAGS))

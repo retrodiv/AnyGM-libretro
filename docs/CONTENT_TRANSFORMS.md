@@ -17,7 +17,9 @@ underscores, and hyphens, with a maximum of 63 bytes.
 
 Blank lines and whole-line `#` or `;` comments outside functions are ignored. Inside a function,
 use C-style `//` or `/* ... */` comments. The closing brace must end its declaration line,
-apart from spaces or tabs. Other INI sections are not interpreted by the transform parser.
+apart from spaces or tabs. Other INI sections are not interpreted by the transform parser;
+the configuration owner selects overrides and SHA-256 sections as documented in
+`CONTENT_CONFIGURATION.md`.
 Duplicate keys or duplicate transform sections in one document fail. UTF-8 BOM and LF, CRLF,
 and CR line endings are accepted. The former hexadecimal declaration syntax is rejected;
 configuration files must contain source functions.
@@ -31,8 +33,9 @@ defaults in either case; content that requires a program still fails without one
 
 An advanced `.anygm` anchor may carry the same `[transforms]` section after its `[anygm]` payload
 selection. Each declared entry replaces the lower-priority entry completely, including parameters;
-undeclared entries remain available. Precedence is an explicitly opened anchor, then outer-to-inner
-archive anchors, then the lone sibling anchor, then `anygm.ini`. Multiple sibling anchors select
+undeclared entries remain available. Precedence is a matching SHA-256 section in `anygm.ini`, then
+an explicitly opened anchor, outer-to-inner archive anchors, the lone sibling anchor, and the INI
+defaults. Multiple sibling anchors select
 none. Transform requirements do not depend on the runtime-overrides option. An unreadable selected
 sibling anchor rejects resolution rather than silently selecting another program.
 
