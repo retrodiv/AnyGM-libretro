@@ -318,6 +318,7 @@ int import_actions(ImportReader *r, ImportText *text){
       ok = text_append(text, lhs) && text_append(text, relative ? " += " : " = ") && text_append(text, rhs) && text_append(text, ";\n");
     } else {
       int wrapped_target = applies && !question && (int32_t)target != -1;
+      int other_question = applies && question && (int32_t)target == -2;
       if(wrapped_target){
         ok = text_append(text, "with (") && text_append_int(text, (int32_t)target) && text_append(text, ") {\n");
       }
@@ -325,6 +326,10 @@ int import_actions(ImportReader *r, ImportText *text){
        * statement so a preceding question or repeat owns all three. */
       if(ok && relative && !question) ok = text_append(text, "{\naction_set_relative(1);\n");
       if(ok && question) ok = text_append(text, "if (") && (!negate || text_append(text, "!"));
+      /* An other-target question reads its arguments in the collision partner's
+       * context, but the following action still owns its independent target.
+       * Return the condition from that context before selecting the branch. */
+      if(ok && other_question) ok = text_append(text, "(function(){\nwith (-2) {\nreturn ");
       if(ok){
         if(type == 2 || kind == 7){
           if(code && *code)
@@ -344,6 +349,7 @@ int import_actions(ImportReader *r, ImportText *text){
                                    used_arguments < argument_count ? used_arguments : argument_count,
                                    question, relative!=0);
       }
+      if(ok && other_question) ok = text_append(text, ";\n}\nreturn false;\n})()");
       if(ok && question) ok = text_append(text, ")\n");
       else if(ok) ok = text_append(text, ";\n");
       if(ok && relative && !question) ok = text_append(text, "action_set_relative(0);\n}\n");
