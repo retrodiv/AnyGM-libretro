@@ -1780,7 +1780,12 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
 	    /* Without an explicit GUI size, first-generation layer semantics use the first
 	     * room's view port as logical GUI coordinates. The physical target and its
 	     * presentation extents remain unchanged; later layers use the live target. */
-	    else if(!anygm_policy_has_modern_layer_semantics(&engine->win) &&
+	    /* A full-width compositor explicitly addresses the widened window, so its implicit GUI
+	     * coordinates must follow that target too. Keep this projection local to the draw pass:
+	     * persisting it as a content-declared GUI size feeds it back into canvas/aspect selection
+	     * and leaves the previous forced extent behind when the frontend changes modes. */
+	    else if(!(engine->aspect_force_active && compositor_fullwidth) &&
+	            !anygm_policy_has_modern_layer_semantics(&engine->win) &&
 	            engine->vm.gui_w<=0 && engine->vm.gui_h<=0 &&
 	            engine->vm.gui_boot_w>=16 && engine->vm.gui_boot_h>=16 &&
 	            (engine->vm.gui_boot_w!=(gui_uses_window_target?gtw:gsw) ||

@@ -882,6 +882,64 @@ static int shifted_view_port_policy(void){
   return ok;
 }
 
+static int fullwidth_gui_transition_policy(void){
+  AnygmSyntheticContent fixture;
+  if(!anygm_synthetic_window_gui_content_create(&fixture)) return 0;
+  AnygmHostServices services={0}; services.struct_size=sizeof services;
+  services.abi_version=ANYGM_HOST_SERVICES_VERSION;
+  anygm_stdio_vfs_services_init(&services);
+  AnygmContentSource source={0}; source.struct_size=sizeof source;
+  source.kind=ANYGM_CONTENT_PATH; source.path=fixture.path;
+  source.cache_directory=source.save_directory=fixture.directory;
+  const unsigned widths[]={
+    [GMC_ASPECT_FORCE_NONE]=64, [GMC_ASPECT_FORCE_4_3]=64,
+    [GMC_ASPECT_FORCE_16_9]=88, [GMC_ASPECT_FORCE_21_9]=112,
+    [GMC_ASPECT_FORCE_16_10]=80
+  };
+  int ok=1;
+  for(unsigned initial=0;ok && initial<5;initial++){
+    AnygmEngine *engine=NULL;
+    AnygmConfigDelta config={0}; config.struct_size=sizeof config;
+    config.fields=ANYGM_CONFIG_PRESENT_LOGICAL_RASTER|ANYGM_CONFIG_ASPECT_MODE;
+    config.values.struct_size=sizeof config.values;
+    config.values.present_logical_raster=1; config.values.aspect_mode=initial;
+    ok=anygm_create(&services,&engine)==ANYGM_OK &&
+       anygm_set_config(engine,&config)==ANYGM_OK &&
+       anygm_load(engine,&source,NULL)==ANYGM_OK &&
+       anygm_set_runtime_override(engine,0,1u,"?aspect @compositor_fullwidth=1")==ANYGM_OK;
+    /* Every directed transition, with the initial mode restored between destinations. */
+    for(unsigned stage=0;ok && stage<11;stage++){
+      unsigned mode=stage%2?stage/2:initial;
+      config.values.aspect_mode=mode;
+      ok=anygm_set_config(engine,&config)==ANYGM_OK;
+      for(int frame=0;ok && frame<3;frame++){
+        AnygmInputFrame input={0}; input.struct_size=sizeof input;
+        input.pointer_x=input.pointer_y=-1;
+        AnygmFrameOutput output={0}; output.struct_size=sizeof output;
+        ok=anygm_run_frame(engine,&input,&output)==ANYGM_OK && output.pixels &&
+           output.width==widths[mode] && output.height==48 &&
+           engine->vm.gui_w==0 && engine->vm.gui_h==0 && !engine->canvas_mode;
+        for(unsigned y=0;ok && y<48;y++) for(unsigned x=0;ok && x<widths[mode];x++){
+          uint32_t expected=x>=widths[mode]/2-2 && x<=widths[mode]/2+1 &&
+                            y>=20 && y<=23 ? 0xFFFFFF : 0x0000FF;
+          uint32_t actual=((const uint32_t *)((const uint8_t *)output.pixels+y*output.pitch))[x]&0xFFFFFF;
+          if(actual!=expected){
+            fprintf(stderr,"full-width GUI %u -> %u pixel %u,%u: %06x != %06x\n",
+                    initial,mode,x,y,actual,expected);
+            ok=0;
+          }
+        }
+        if(!ok) fprintf(stderr,"full-width GUI initial %u mode %u frame %d: %ux%u GUI %dx%d canvas %d\n",
+                         initial,mode,frame,output.width,output.height,
+                         engine->vm.gui_w,engine->vm.gui_h,engine->canvas_mode);
+      }
+    }
+    anygm_destroy(engine);
+  }
+  anygm_synthetic_content_destroy(&fixture);
+  return ok;
+}
+
 static int draw_schedule_policy(void){
   AnygmSyntheticContent fixture;
   if(!anygm_synthetic_draw_content_create(&fixture)){
@@ -2393,6 +2451,8 @@ static int expect_rejected_unchanged(AnygmEngine *engine,const uint8_t *candidat
 
 int main(int argc,char **argv){
   if(argc==3 && !strcmp(argv[1],"--case")){
+    if(!strcmp(argv[2],"fullwidth_gui_transition"))
+      return fullwidth_gui_transition_policy()?0:1;
     if(!strcmp(argv[2],"shifted_view_port"))
       return shifted_view_port_policy()?0:1;
     if(!strcmp(argv[2],"virtual_monitor_geometry"))
@@ -2471,6 +2531,7 @@ int main(int argc,char **argv){
           "application_surface_port_scale|"
           "first_generation_application_surface|"
           "shifted_view_port|"
+          "fullwidth_gui_transition|"
           "game_restart|"
           "anchor_script_override|"
           "sibling_anchor_override|"
@@ -2496,6 +2557,7 @@ int main(int argc,char **argv){
   if(!application_surface_port_scale_policy()) return 1;
   if(!first_generation_application_surface_policy()) return 1;
   if(!shifted_view_port_policy()) return 1;
+  if(!fullwidth_gui_transition_policy()) return 1;
   if(!first_generation_dynamic_camera_policy()) return 1;
   if(!explicit_window_screen_stage_policy()) return 1;
   if(!viewless_window_screen_stage_policy()) return 1;
