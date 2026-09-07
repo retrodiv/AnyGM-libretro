@@ -333,6 +333,8 @@ int gml_surface_set_target(GmlRender *r, int id){
    * active: draws inside it must NOT be shifted by the room camera/GUI offset. */
   r->projection_cam_x=0; r->projection_cam_y=0;
   r->cam_x=0; r->cam_y=0;
+  if(id==r->surface_canvas && r->surface_canvas_width>0 && w>=r->surface_canvas_width)
+    r->projection_cam_x=r->cam_x=-((w-r->surface_canvas_width)/2);
   gml_d3_sync_render_camera(r);
   if(render_setting(r,"GML_LOG_SURF")){
     /* Count both channels again at function exit, paired with the entry counts. */
@@ -1504,10 +1506,35 @@ static int draw_surface_through_program(GmlRender *r,int surf,const uint32_t *sp
 static void draw_surface_stretched_impl(GmlRender *r,int surf,double dx,double dy,
                                         double dw,double dh,uint32_t blend,double alpha,
                                         int allow_software3d){
-  int explicit_target_raster=surface_draw_targets_screen_raster(r,surf,dw,dh);
+  int canvas_present=r && r->surface_canvas>0 && surf==r->surface_canvas &&
+                     r->target_sp==0 && r->target_id<0 &&
+                     fabs(dx)<0.001 && fabs(dy)<0.001 && dw>0 && dh>0;
+  int explicit_target_raster=canvas_present || surface_draw_targets_screen_raster(r,surf,dw,dh);
   if(!explicit_target_raster){
     gml_render_draw_map_point(r,&dx,&dy);
     gml_render_draw_map_scale(r,&dw,&dh);
+  }
+  if(canvas_present){
+    dx=r->cam_x; dy=r->cam_y;
+    dw=r->fbw; dh=r->fbh;
+  }
+  /* Only a declared composition target expands its complete native-width application image.
+   * The content retains the vertical inset/height; ordinary HUD draws use the centred camera. */
+  int canvas_world=r && r->surface_canvas>0 && r->target_id==r->surface_canvas && surf==0 &&
+     r->surface_canvas_width>0 && fabs(dx)<0.001 &&
+     fabs(dw-r->surface_canvas_width)<0.001 && dh>0;
+  if(canvas_world){
+    dx=r->cam_x;
+    dw=r->fbw;
+  }
+  if(canvas_world && r->surface_canvas_world_width>0){
+    int sw=0,sh=0;
+    if(!surface_pixels(r,surf,&sw,&sh) || sw<=0 || sh<=0) return;
+    double rx=(double)r->surface_canvas_room_x*sw/r->surface_canvas_world_width;
+    double rw=(double)r->surface_canvas_room_width*sw/r->surface_canvas_world_width;
+    if(rw>0) draw_surface_region(r,surf,rx,0,rw,sh,
+                               dx+rx*dw/sw,dy,rw*dw/sw,dh,blend,alpha);
+    return;
   }
   const struct GmlShaderPal *sdual=dual_active(r);
   if(render_setting(r,"GML_LOG_SHADER") && r && r->active_shader>=0 && r->stretched_shader_log_count++<8){

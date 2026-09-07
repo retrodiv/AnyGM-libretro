@@ -150,6 +150,33 @@ surfaces.
 
 ## Normalized data containers
 
+### Fixed-coordinate surface compositors
+
+An aspect-scoped `surface_canvas|OBJECT|VARIABLE|W|H` declares the native canvas
+of one persistent presentation object. `W` and `H` are literal integer dimensions
+between 16 and the framebuffer limits. The object variable must name a live
+user surface. The declaration affects only forced aspects; disabling the mode
+restores the surface's original dimensions.
+
+```
+?aspect surface_canvas|obj_presenter|canvas|640|480
+```
+
+The final aspect is calculated from this complete canvas, independently of a
+shorter gameplay camera. The surface widens to the forced output and retains
+its declared height. Its ordinary drawing coordinates are horizontally centred
+without scaling. A complete native-width `application_surface` draw starting at
+x=0 spans the widened surface, retaining its authored vertical offset and height.
+Narrow rooms clip that application image to their bounds. The content's clear
+fills the entire surface, including the expanded HUD background. Presenting the
+complete surface at (0,0) uses the final output extent even when the GUI declares
+the original canvas size. Offset, partial, rotated and preview draws retain
+their ordinary semantics.
+
+This opt-in policy describes a self-compositor that redraws its singleton
+surface each frame, with an unscaled HUD beside an application image. It is not
+a general transformation for arbitrary cached surfaces or multiple views.
+
 Studio data containers using bytecode revisions 14, 15, 16, and 17 are
 recognized. Revision-specific bytecode readers normalize instructions and
 records into the shared content model before execution.

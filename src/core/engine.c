@@ -1332,6 +1332,7 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
             gml_global_arr(&engine->vm, "view_wport", 0), gml_global_arr(&engine->vm, "view_hport", 0)); }
   if(prof){ t1 = profile_now_ms(engine); engine->profile.clear_ms += t1 - t0; t0 = t1; }
   engine->aspect_draw_full_context = engine->aspect_force_active;
+  aspect_surface_canvas_update(engine,cam_x);
   engine->aspect_draw_full_x = cam_x;
   engine->aspect_draw_full_y = cam_y;
   engine->aspect_event_view_stack_pointer = 0;
@@ -1390,6 +1391,10 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
   uint32_t *world_pixels=engine->fb;
   int world_width=(int)engine->width;
   int world_height=(int)engine->height;
+  if(engine->aspect_force_active && aspect_surface_canvas_size(engine,NULL,NULL) &&
+     frame_view_count==1 && render_presentation.application_owned &&
+     gml_render_application_surface_owned_view(&engine->render,&direct_world_view))
+    direct_owned_world=1;
   if (!multiview_rendered) {
   *gml_varmap_put(&engine->vm.globals,"view_current")=vreal(frame_view_index);
   int translated_full_port=frame_view_count==1 &&

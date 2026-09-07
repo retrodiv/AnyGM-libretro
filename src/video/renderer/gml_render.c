@@ -579,6 +579,14 @@ void gml_render_control_update(GmlRender *r,const GmlRenderControl *control,
     r->aspect_wide_w=control->wide_width;
     r->aspect_wide_h=control->wide_height;
   }
+  if(fields&GML_RENDER_CONTROL_SURFACE_CANVAS){
+    r->surface_canvas=control->surface_canvas;
+    r->surface_canvas_width=control->surface_canvas_width;
+    r->surface_canvas_height=control->surface_canvas_height;
+    r->surface_canvas_world_width=control->surface_canvas_world_width;
+    r->surface_canvas_room_x=control->surface_canvas_room_x;
+    r->surface_canvas_room_width=control->surface_canvas_room_width;
+  }
 }
 int gml_render_resource_metrics(const GmlRender *r,
                                 GmlRenderResourceMetrics *metrics){

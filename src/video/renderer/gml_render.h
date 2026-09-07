@@ -294,6 +294,8 @@ typedef struct {
   int shader_device_expected;
   int fast_forward, fast_alpha_cull;
   int wide_aspect_active, wide_width, wide_height;
+  int surface_canvas, surface_canvas_width, surface_canvas_height;
+  int surface_canvas_world_width, surface_canvas_room_x, surface_canvas_room_width;
 } GmlRenderControl;
 
 enum {
@@ -302,6 +304,7 @@ enum {
   GML_RENDER_CONTROL_FAST_FORWARD   = 1u<<2,
   GML_RENDER_CONTROL_FAST_ALPHA     = 1u<<3,
   GML_RENDER_CONTROL_WIDE_ASPECT    = 1u<<4,
+  GML_RENDER_CONTROL_SURFACE_CANVAS = 1u<<5,
   GML_RENDER_CONTROL_HOST_OPTIONS =
     GML_RENDER_CONTROL_MONITOR_SIZE | GML_RENDER_CONTROL_SHADERS
 };

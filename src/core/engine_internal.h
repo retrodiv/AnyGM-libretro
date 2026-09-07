@@ -128,7 +128,7 @@ enum {
 typedef enum {
   CK_NONE=0, CK_ROOM, CK_GARR, CK_GSCALAR, CK_INST, CK_INST_SET, CK_ENGINE, CK_ROUTE,
   CK_CAMERA, CK_SURFACE, CK_MONITOR_VIEW, CK_ALARM_PAUSE, CK_SCRIPT, CK_LIST_SET,
-  CK_DRAW_HOLD
+  CK_DRAW_HOLD, CK_SURFACE_CANVAS
 } CheatKind;
 typedef enum {
   TK_LIT=0, TK_BASE_W, TK_BASE_H, TK_FORCED_W, TK_FORCED_H, TK_EXTRA_W, TK_EXTRA_H,
@@ -408,6 +408,8 @@ void screen_stage_gui_geometry(
 void aspect_forced_camera(AnygmEngine *engine,double raw_x,double raw_y,
                           double *out_x,double *out_y);
 int aspect_compositor_fullwidth_gen(AnygmEngine *engine);
+int aspect_surface_canvas_size(AnygmEngine *engine,int *width,int *height);
+void aspect_surface_canvas_update(AnygmEngine *engine,double camera_x);
 int aspect_center_view_target_gen(AnygmEngine *engine);
 int aspect_wide_gameplay_view_gen(AnygmEngine *engine);
 int aspect_draw_full_view_gen(AnygmEngine *engine,const GmlInstance *instance,

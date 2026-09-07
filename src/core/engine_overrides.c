@@ -70,6 +70,7 @@ int core_opt_redirect_room_order(AnygmEngine *engine) {
  *   listset|target|var[i]|j|V   keep a DS-list item at V; target is an object or `global`
  *   camera[LIST]:field=V        write x, y, width, or height on selected live camera handles
  *   surface|obj|var|W|H         resize surfaces named by an instance variable
+ *   surface_canvas|obj|var|W|H  centred native HUD and full-width application composition
  *   monitorview|H|MIN|MAX       declare a monitor-derived logical view (ratios use W:H)
  *   @field=V                    engine state and data-declared aspect behavior
  *   obj@suffix->mode            Draw-GUI route: mode = full_view | backdrop | default
@@ -343,8 +344,9 @@ static void cheat_parse(const char *code, CheatAct *a){
     if(!*s || strchr(s,'|')){ a->kind=CK_NONE; return; }
     cheat_parse_val(s,&a->val); a->kind=CK_INST_SET; return;
   }
-  if(!strncmp(s,"surface|",8)){
-    s+=8; const char *bar=strchr(s,'|');
+  if(!strncmp(s,"surface|",8) || !strncmp(s,"surface_canvas|",15)){
+    int canvas=!strncmp(s,"surface_canvas|",15);
+    s+=canvas?15:8; const char *bar=strchr(s,'|');
     if(!bar || bar==s || (size_t)(bar-s)>=sizeof a->obj){ a->kind=CK_NONE; return; }
     memcpy(a->obj,s,(size_t)(bar-s)); a->obj[bar-s]=0; s=bar+1;
     bar=strchr(s,'|');
@@ -355,8 +357,23 @@ static void cheat_parse(const char *code, CheatAct *a){
     char first[64]; size_t first_length=(size_t)(bar-s);
     if(first_length>=sizeof first){ a->kind=CK_NONE; return; }
     memcpy(first,s,first_length); first[first_length]=0;
+    if(canvas){
+      const char *first_end=first,*second_end=bar+1;
+      int width=0,height=0;
+      if(!parse_nonnegative_index(&first_end,&width) || *first_end ||
+         !parse_nonnegative_index(&second_end,&height) || *second_end){
+        a->kind=CK_NONE; return;
+      }
+    }
     cheat_parse_val(first,&a->val); cheat_parse_val(bar+1,&a->val2);
-    a->kind=CK_SURFACE; return;
+    if(canvas && (!a->scope_aspect || a->scope_global[0] ||
+       a->val.tok!=TK_LIT || a->val2.tok!=TK_LIT || a->val.nop || a->val2.nop ||
+       !isfinite(a->val.lit) || !isfinite(a->val2.lit) ||
+       a->val.lit<16 || a->val.lit>FB_MAX_W || a->val2.lit<16 || a->val2.lit>FB_MAX_H ||
+       floor(a->val.lit)!=a->val.lit || floor(a->val2.lit)!=a->val2.lit)){
+      a->kind=CK_NONE; return;
+    }
+    a->kind=canvas?CK_SURFACE_CANVAS:CK_SURFACE; return;
   }
   if(!strncmp(s,"camera",6)){
     s+=6;
@@ -835,6 +852,7 @@ static int cheat_engine_field_mutable(const CheatAct *a){
   return a->kind==CK_ENGINE && a->eng>=EF_WINDOW_W && a->eng<=EF_PRESENT_SHIFT_Y;
 }
 static int cheat_slot_capturable(const CheatAct *a){
+  if(a->kind==CK_SURFACE_CANVAS) return 1;
   if(a->kind==CK_GSCALAR || a->kind==CK_GARR) return 1;
   return a->scope_gameres &&
          (a->kind==CK_INST || a->kind==CK_SURFACE || cheat_engine_field_mutable(a));
@@ -858,6 +876,7 @@ static void cheat_slot_capture(AnygmEngine *engine,CheatSlot *slot){
         slot->saved_valid=1;
       }
       break; }
+    case CK_SURFACE_CANVAS:
     case CK_SURFACE: {
       int width=0,height=0;
       if(gml_inst_surface_size_first(&engine->vm,slot->act.obj,slot->act.var,&width,&height)){
@@ -908,6 +927,7 @@ static void cheat_slot_restore_keep(AnygmEngine *engine,CheatSlot *slot,int keep
                      break;
     case CK_INST:    gml_set_inst_var_all(&engine->vm, slot->act.obj, slot->act.var, slot->saved);
                      break;
+    case CK_SURFACE_CANVAS:
     case CK_SURFACE: gml_resize_inst_surface_all(&engine->vm, slot->act.obj, slot->act.var,
                                                  (int)slot->saved,(int)slot->saved2);
                      break;
@@ -1011,7 +1031,7 @@ static void cheat_sticky_pass(AnygmEngine *engine,CheatSlot *arr, int n, int cha
     if(a->kind==CK_ROOM || a->kind==CK_INST_SET || a->kind==CK_NONE) continue;
     /* A hold belongs to the drawing, not to the post-step pass: writing it here would make it the
      * freeze it exists not to be. */
-    if(a->kind==CK_DRAW_HOLD) continue;
+    if(a->kind==CK_DRAW_HOLD || a->kind==CK_SURFACE_CANVAS) continue;
     if(room_owned_only && !cheat_slot_is_room_owned(a)) continue;
     int applies=channel_on && slot->enabled && cheat_scope_ok(engine,a,0);
     /* A script override is an edge at fresh startup, not a value to restore when its channel is
@@ -1196,6 +1216,64 @@ void aspect_apply_program(AnygmEngine *engine){
   cheat_aspect_pass(engine,engine->cheats, engine->cheat_count);
   cheat_aspect_pass(engine,engine->boot_cheats, engine_boot_cheats_active(engine));
 }
+/* A declared singleton surface holds a fixed-coordinate HUD and a full-width application image.
+ * Its authored canvas chooses the final aspect, independently of the shorter world camera. */
+static CheatSlot *surface_canvas_slot(AnygmEngine *engine){
+  CheatSlot *tables[]={engine->cheats,engine->boot_cheats};
+  int counts[]={engine->cheat_count,engine_boot_cheats_active(engine)};
+  for(int table=0;table<2;table++) for(int i=0;i<counts[table];i++){
+    CheatSlot *slot=&tables[table][i];
+    if(slot->enabled && slot->act.kind==CK_SURFACE_CANVAS &&
+       (!slot->act.scope_mode || slot->act.scope_mode==engine->aspect_force_mode)) return slot;
+  }
+  return NULL;
+}
+int aspect_surface_canvas_size(AnygmEngine *engine,int *width,int *height){
+  CheatSlot *slot=surface_canvas_slot(engine);
+  if(!slot) return 0;
+  if(width) *width=(int)slot->act.val.lit;
+  if(height) *height=(int)slot->act.val2.lit;
+  return 1;
+}
+void aspect_surface_canvas_update(AnygmEngine *engine,double camera_x){
+  GmlRenderControl control={0};
+  CheatSlot *selected=engine->aspect_force_active?surface_canvas_slot(engine):NULL;
+  CheatSlot *tables[]={engine->cheats,engine->boot_cheats};
+  int counts[]={engine->cheat_count,engine->boot_cheat_count};
+  for(int table=0;table<2;table++) for(int i=0;i<counts[table];i++){
+    CheatSlot *slot=&tables[table][i];
+    if(slot->act.kind!=CK_SURFACE_CANVAS) continue;
+    if(slot!=selected){
+      if(slot->applied) cheat_slot_restore_keep(engine,slot,0);
+      slot->applied=0;
+      continue;
+    }
+    if(!slot->saved_valid) cheat_slot_capture(engine,slot);
+    double handle=0;
+    if(!slot->saved_valid ||
+       !gml_inst_var_first_real(&engine->vm,slot->act.obj,slot->act.var,&handle) ||
+       !isfinite(handle) || handle<1 || handle>GML_MAX_SURFACES ||
+       !gml_surface_exists(&engine->render,(int)handle)) continue;
+    if(gml_surface_width(&engine->render,(int)handle)!=(int)engine->width ||
+       gml_surface_height(&engine->render,(int)handle)!=(int)slot->act.val2.lit)
+      gml_surface_resize(&engine->render,(int)handle,(int)engine->width,(int)slot->act.val2.lit);
+    slot->applied=1;
+    control.surface_canvas=(int)handle;
+    control.surface_canvas_width=(int)slot->act.val.lit;
+    control.surface_canvas_height=(int)slot->act.val2.lit;
+    control.surface_canvas_world_width=(int)engine->width;
+    control.surface_canvas_room_width=(int)engine->width;
+    GmlRoom room;
+    if(gml_vm_room_get(&engine->vm,engine->vm.room_index,&room)==0 &&
+       room.width>0 && room.width<engine->width && isfinite(camera_x)){
+      double left=fmax(0.0,fmin((double)engine->width,-camera_x));
+      double right=fmax(left,fmin((double)engine->width,(double)room.width-camera_x));
+      control.surface_canvas_room_x=(int)lround(left);
+      control.surface_canvas_room_width=(int)lround(right)-control.surface_canvas_room_x;
+    }
+  }
+  gml_render_control_update(&engine->render,&control,GML_RENDER_CONTROL_SURFACE_CANVAS);
+}
 static int cheat_compositor_pass(AnygmEngine *engine,const CheatSlot *arr, int n){
   for(int i=0;i<n;i++){
     if(!arr[i].enabled) continue;
@@ -1209,6 +1287,7 @@ static int cheat_compositor_pass(AnygmEngine *engine,const CheatSlot *arr, int n
 /* Any enabled `?aspect @compositor_fullwidth=1` for the active mode runs the Draw-GUI
  * compositor at the full forced-wide resolution instead of a centered sub-rect. */
 int aspect_compositor_fullwidth_gen(AnygmEngine *engine){
+  if(aspect_surface_canvas_size(engine,NULL,NULL)) return 1;
   return cheat_compositor_pass(engine,engine->cheats, engine->cheat_count)
       || cheat_compositor_pass(engine,engine->boot_cheats, engine_boot_cheats_active(engine));
 }

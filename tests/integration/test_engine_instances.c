@@ -940,6 +940,68 @@ static int fullwidth_gui_transition_policy(void){
   return ok;
 }
 
+static int surface_canvas_transition_policy(void){
+  const char *invalid[]={"surface_canvas|obj_fixture|canvas|64|48",
+    "?aspect surface_canvas|obj_fixture|canvas|0|48",
+    "?aspect surface_canvas|obj_fixture|canvas|64|48|extra",
+    "?aspect surface_canvas|obj_fixture|canvas|64|NaN",
+    "?aspect surface_canvas|obj_fixture|canvas|64|999999"};
+  for(unsigned i=0;i<sizeof invalid/sizeof *invalid;i++){
+    CheatSlot slots[GML_MAX_CHEATS]; int count=0; char error[160];
+    if(engine_boot_overrides_parse(invalid[i],slots,&count,error,sizeof error)){
+      fprintf(stderr,"invalid surface canvas declaration accepted: %s\n",invalid[i]); return 0;
+    }
+  }
+  AnygmSyntheticContent fixture;
+  if(!anygm_synthetic_surface_canvas_content_create(&fixture)) return 0;
+  AnygmHostServices services={0}; services.struct_size=sizeof services;
+  services.abi_version=ANYGM_HOST_SERVICES_VERSION;
+  anygm_stdio_vfs_services_init(&services);
+  AnygmContentSource source={0}; source.struct_size=sizeof source;
+  source.kind=ANYGM_CONTENT_PATH; source.path=fixture.path;
+  source.cache_directory=source.save_directory=fixture.directory;
+  AnygmEngine *engine=NULL;
+  AnygmConfigDelta config={0}; config.struct_size=sizeof config;
+  config.fields=ANYGM_CONFIG_PRESENT_LOGICAL_RASTER|ANYGM_CONFIG_ASPECT_MODE;
+  config.values.struct_size=sizeof config.values;
+  config.values.present_logical_raster=1;
+  int ok=anygm_create(&services,&engine)==ANYGM_OK &&
+         anygm_set_config(engine,&config)==ANYGM_OK &&
+         anygm_load(engine,&source,NULL)==ANYGM_OK &&
+         anygm_set_runtime_override(engine,0,1u,
+           "?aspect surface_canvas|obj_fixture|canvas|64|48")==ANYGM_OK;
+  const unsigned modes[]={GMC_ASPECT_FORCE_21_9,GMC_ASPECT_FORCE_16_9,
+    GMC_ASPECT_FORCE_16_10,GMC_ASPECT_FORCE_4_3,GMC_ASPECT_FORCE_NONE,
+    GMC_ASPECT_FORCE_21_9,GMC_ASPECT_FORCE_NONE};
+  const unsigned widths[]={112,88,80,64,64,112,64};
+  for(unsigned stage=0;ok && stage<sizeof modes/sizeof *modes;stage++){
+    config.values.aspect_mode=modes[stage];
+    ok=anygm_set_config(engine,&config)==ANYGM_OK;
+    for(int frame=0;ok && frame<3;frame++){
+      AnygmInputFrame input={0}; input.struct_size=sizeof input;
+      input.pointer_x=input.pointer_y=-1;
+      AnygmFrameOutput output={0}; output.struct_size=sizeof output;
+      ok=anygm_run_frame(engine,&input,&output)==ANYGM_OK && output.pixels &&
+         output.width==widths[stage] && output.height==48;
+      for(unsigned y=0;ok && y<48;y++) for(unsigned x=0;ok && x<widths[stage];x++){
+        unsigned margin=(widths[stage]-64)/2;
+        uint32_t expected=y>=8 && x>=margin && x<margin+64 ? 0x0000FF : 0;
+        if(x>=margin+2 && x<=margin+5 && y>=2 && y<=5) expected=0xFFFFFF;
+        uint32_t actual=((const uint32_t *)((const uint8_t *)output.pixels+y*output.pitch))[x]&0xFFFFFF;
+        if(actual!=expected){
+          fprintf(stderr,"surface canvas mode %u pixel %u,%u: %06x != %06x\n",
+                  modes[stage],x,y,actual,expected); ok=0;
+        }
+      }
+      if(!ok) fprintf(stderr,"surface canvas mode %u frame %d extent %ux%u\n",
+                       modes[stage],frame,output.width,output.height);
+    }
+  }
+  if(!ok) fprintf(stderr,"surface canvas transition failed\n");
+  anygm_destroy(engine); anygm_synthetic_content_destroy(&fixture);
+  return ok;
+}
+
 static int fullwidth_explicit_gui_transition_policy(void){
   AnygmSyntheticContent fixture;
   if(!anygm_synthetic_window_gui_size_content_create(&fixture)) return 0;
@@ -2508,6 +2570,8 @@ int main(int argc,char **argv){
       return fullwidth_gui_transition_policy()?0:1;
     if(!strcmp(argv[2],"fullwidth_explicit_gui_transition"))
       return fullwidth_explicit_gui_transition_policy()?0:1;
+    if(!strcmp(argv[2],"surface_canvas_transition"))
+      return surface_canvas_transition_policy()?0:1;
     if(!strcmp(argv[2],"shifted_view_port"))
       return shifted_view_port_policy()?0:1;
     if(!strcmp(argv[2],"virtual_monitor_geometry"))
@@ -2588,6 +2652,7 @@ int main(int argc,char **argv){
           "shifted_view_port|"
           "fullwidth_gui_transition|"
           "fullwidth_explicit_gui_transition|"
+          "surface_canvas_transition|"
           "game_restart|"
           "anchor_script_override|"
           "sibling_anchor_override|"
@@ -2615,6 +2680,7 @@ int main(int argc,char **argv){
   if(!shifted_view_port_policy()) return 1;
   if(!fullwidth_gui_transition_policy()) return 1;
   if(!fullwidth_explicit_gui_transition_policy()) return 1;
+  if(!surface_canvas_transition_policy()) return 1;
   if(!first_generation_dynamic_camera_policy()) return 1;
   if(!explicit_window_screen_stage_policy()) return 1;
   if(!viewless_window_screen_stage_policy()) return 1;

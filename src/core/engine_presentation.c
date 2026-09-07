@@ -721,12 +721,14 @@ static void apply_aspect_force_to_res(AnygmEngine *engine,unsigned base_w, unsig
    * presentation path. */
   if (engine->classic_compositor) mode = GMC_ASPECT_FORCE_NONE;
   engine->aspect_force_mode = mode;
+  int canvas_w=0,canvas_h=0;
+  int surface_canvas=aspect_surface_canvas_size(engine,&canvas_w,&canvas_h);
   engine->aspect_force_active = 0;
   engine->aspect_cam_dx = engine->aspect_cam_dy = 0.0;
   engine->aspect_gui_ox = engine->aspect_gui_oy = 0;
   if (mode != GMC_ASPECT_FORCE_NONE && base_w > 0 && base_h > 0) {
     const double target = gmc_aspect_force_ratio(mode);
-    double ratio = (double)base_w / (double)base_h;
+    double ratio = surface_canvas?(double)canvas_w/canvas_h:(double)base_w/base_h;
     unsigned present_w = 0, present_h = 0;
     int already_target = fabs(ratio - target) <= 0.2;
     if (!already_target &&
@@ -735,7 +737,7 @@ static void apply_aspect_force_to_res(AnygmEngine *engine,unsigned base_w, unsig
       already_target = fabs(present_ratio - target) <= 0.2;
     }
     if (!already_target) {
-      unsigned target_w = round_to_multiple_of_8((double)base_h * target);
+      unsigned target_w = round_to_multiple_of_8((surface_canvas?(double)canvas_h:(double)base_h) * target);
       if (target_w > FB_MAX_W) target_w = FB_MAX_W & ~7u;
       if (target_w < 8) target_w = 8;
       if (target_w != base_w) {
@@ -1135,6 +1137,15 @@ void compute_present(AnygmEngine *engine) {
     engine->gui_space_width=(int)engine->output_width;
     engine->gui_space_height=(int)engine->output_height;
     engine->gui_offset_x=engine->gui_offset_y=0;
+  }
+  int canvas_height=0;
+  if(engine->aspect_force_active && aspect_surface_canvas_size(engine,NULL,&canvas_height)){
+    engine->output_height=(unsigned)canvas_height;
+    engine->gui_space_width=(int)engine->output_width;
+    engine->gui_space_height=canvas_height;
+    engine->gui_offset_x=engine->gui_offset_y=0;
+    effective_width=(int)engine->output_width;
+    effective_height=canvas_height;
   }
   /* The configured extent has already participated in the effective window and GUI policies
    * above. A presentation path which intentionally retains a narrower completed raster still

@@ -547,6 +547,9 @@ typedef struct GmlRender {
                                    * dimensions (below) so the content's compositing surface spans the full width
                                    * instead of a centered 4:3 sub-rect. 0 = normal. */
   int       aspect_wide_w, aspect_wide_h; /* the forced-wide base dimensions. */
+  /* Frame-derived external canvas policy; rebuilt before drawing, never serialized. */
+  int       surface_canvas, surface_canvas_width, surface_canvas_height;
+  int       surface_canvas_world_width, surface_canvas_room_x, surface_canvas_room_width;
   /* async atlas prefetch pool (opaque; see gml_render_atlas.c). Decodes atlases on worker threads so
    * first-use of a texture page does not stall a frame for a full BZ2+QOI atlas decode. */
   void     *prefetch; int prefetch_checked;
