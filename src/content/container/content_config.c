@@ -16,6 +16,7 @@ typedef struct {
 struct AnygmContentConfig {
   char *text;
   size_t count;
+  int has_input;
   ConfigSection sections[ANYGM_CONFIG_MAX_SECTIONS];
 };
 
@@ -45,6 +46,7 @@ static int section_name(const char *name,size_t length,ConfigSection *section){
     name+=72; length-=72;
   }
   if(length==10 && !memcmp(name,"transforms",10)){ section->transforms=1; return 1; }
+  if(length==9 && !memcmp(name,"pipelines",9)){ section->transforms=2; return 1; }
   if(length==9 && !memcmp(name,"overrides",9)) return 1;
   return section->targeted?-1:0;
 }
@@ -53,9 +55,11 @@ static char *transform_document(const AnygmContentConfig *config,const ConfigSec
   size_t size=section->end-section->begin;
   char *text=malloc(size+14u);
   if(!text) return NULL;
-  memcpy(text,"[transforms]\n",13);
-  memcpy(text+13,config->text+section->begin,size);
-  text[size+13]=0;
+  const char *header=section->transforms==2?"[pipelines]\n":"[transforms]\n";
+  size_t prefix=strlen(header);
+  memcpy(text,header,prefix);
+  memcpy(text+prefix,config->text+section->begin,size);
+  text[size+prefix]=0;
   return text;
 }
 
@@ -121,7 +125,7 @@ AnygmContentConfig *anygm_content_config_parse(const void *text,size_t size,
       }
       current=&config->sections[config->count++];
       *current=section; current->begin=at; current->end=size;
-    } else if(current && current->transforms){
+    } else if(current && current->transforms==1){
       /* Consume the complete function even in an unmatched section: section-like
        * source comments must never select overrides or another transform set. */
       const char *equal=memchr(config->text+begin,'=',end-begin);
@@ -141,9 +145,25 @@ AnygmContentConfig *anygm_content_config_parse(const void *text,size_t size,
     ConfigSection *section=&config->sections[i];
     if(section->transforms){
       char *document=transform_document(config,section);
+      /* Functions and pipelines share one namespace in each selection scope.
+       * Validate both sections together so their ordering cannot hide a duplicate. */
+      for(size_t prior=0;document && prior<i;prior++){
+        ConfigSection *other=&config->sections[prior];
+        if(!other->transforms || other->transforms==section->transforms ||
+           other->targeted!=section->targeted || memcmp(other->digest,section->digest,32)) continue;
+        char *preceding=transform_document(config,other);
+        size_t length=strlen(document),prefix=preceding?strlen(preceding):0;
+        char *combined=preceding?malloc(prefix+length+2u):NULL;
+        if(combined){
+          memcpy(combined,preceding,prefix); combined[prefix]='\n';
+          memcpy(combined+prefix+1u,document,length+1u);
+        }
+        free(preceding); free(document); document=combined;
+      }
       AnygmContentTransforms *validation=anygm_content_transforms_create();
       int ok=document && validation && anygm_content_transforms_parse(validation,document,
         strlen(document),error,error_size);
+      if(ok && anygm_content_transforms_has(validation,"input")) config->has_input=1;
       free(document); anygm_content_transforms_destroy(validation);
       if(!ok) goto invalid;
     } else {
@@ -160,6 +180,10 @@ invalid:
 
 void anygm_content_config_destroy(AnygmContentConfig *config){
   if(config){ free(config->text); free(config); }
+}
+
+int anygm_content_config_has_input(const AnygmContentConfig *config){
+  return config && config->has_input;
 }
 
 int anygm_content_config_apply(const AnygmContentConfig *config,const uint8_t *digest,

@@ -10,7 +10,7 @@ rules come from external configuration; the core ships none of its own.
 
 ## Sections and precedence
 
-Both forms support `[transforms]` and `[overrides]`. Their existing languages
+Both forms support `[transforms]`, `[pipelines]` and `[overrides]`. Their languages
 are documented in `CONTENT_TRANSFORMS.md` and `SUPPORTED_FORMATS.md`.
 An advanced anchor starts with `[anygm]` and `payload=...`; the basic
 single-line payload reference remains supported. The INI does not select a
@@ -23,7 +23,7 @@ Priority runs from lowest to highest:
 3. Archive anchors, from the innermost to the outermost archive.
 4. The explicitly opened anchor.
 5. Inherited launch-anchor overrides during an internal content replacement.
-6. Matching `[sha256:<digest>.transforms]` and
+6. Matching `[sha256:<digest>.transforms]`, `[sha256:<digest>.pipelines]` and
    `[sha256:<digest>.overrides]` sections in `anygm.ini`.
 
 A digest is exactly 64 hexadecimal digits; uppercase and lowercase digits
@@ -32,8 +32,9 @@ Hash selectors belong only in the system INI. Duplicate recognized sections,
 including equivalent digest spellings, reject the INI. Multiple sibling
 anchors select none; an explicit anchor does not discover another sibling.
 
-A transform replaces the complete entry with the same key, including its
-parameters. Overrides replace earlier directives with the same destination,
+A transform or pipeline replaces the complete entry with the same key, including its
+parameters or ordered steps. Both sections share one namespace; duplicate keys in the same
+selection scope are rejected. Overrides replace earlier directives with the same destination,
 operation kind and conditions. For example, `$counter=5` replaces `$counter=3`,
 but `?gameres $counter=5` and `$counter=3` remain distinct scoped operations.
 Indexes distinguish array/list items; camera destinations use the normalized
@@ -57,6 +58,14 @@ wrappers use the selected uncompressed member, including nested archives.
 Opening an anchor, renaming a file or changing ZIP compression does not change
 this identity. Source inputs routed as `.yyp` or `.yyz` use that source file.
 Memory content uses the supplied image bytes.
+
+An explicitly selected `input` function or pipeline can normalize the source before routing.
+When its path result differs from the original bytes, the original source's digest remains the
+selector through all subsequent parsing, including selection inside a resulting ZIP. This lets
+one exact wrapped source select both its adapter and its runtime directives. An absent adapter
+or byte-identical path result retains ordinary member/adjacent-payload selection. Memory content
+always uses the original supplied image's digest. `CONTENT_TRANSFORMS.md` owns the source-preparation
+contract and examples.
 
 An internal `data.alternate.win` code companion does not replace the selected
 source identity: opening `data.win` still selects its original hash.
@@ -122,7 +131,7 @@ and recreates fresh runtime override state.
 Limits are 512 KiB per INI, 256 recognized sections and 4 KiB of override text
 per section. Anchors retain their 64 KiB file and 4 KiB override-section bounds.
 Collected layers fit 32 KiB. Effective overrides and the launch envelope each
-fit 4 KiB and 64 directives. Selected transforms retain the 16-program limit
+fit 4 KiB and 64 directives. Selected functions and pipelines share the 16-entry limit
 and the compiler/interpreter limits in `CONTENT_TRANSFORMS.md`.
 
 The INI accepts UTF-8 BOM and LF, CRLF or CR line endings. Blank lines and

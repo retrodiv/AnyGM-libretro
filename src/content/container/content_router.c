@@ -42,13 +42,20 @@ enum { CONFIG_ANCHOR_LAYERS=ANYGM_CONTENT_MAX_NESTING_LEVELS+3u };
 typedef struct ContentConfigResolution {
   AnygmContentConfig *ini;
   AnygmContentTransforms *base_transforms;
+  int input_adapted;
+  uint8_t original_digest[32];
   char defaults[ANYGM_CONFIG_OVERRIDE_BYTES];
   char specific[ANYGM_CONFIG_OVERRIDE_BYTES];
   char anchors[CONFIG_ANCHOR_LAYERS][ANYGM_CONTENT_MAX_ANCHOR_BYTES];
 } ContentConfigResolution;
 
 static int select_payload_configuration(const AnygmContentRouter *router,const char *path);
+static int original_file_digest(const AnygmContentRouter *router,const char *path,uint8_t digest[32]);
 static int select_payload_digest(const AnygmContentRouter *router,const uint8_t digest[32],const char *label);
+static int load_input_pipeline(const AnygmContentRouter *router,const char *path,
+                                char *content_path,size_t content_size,
+                                char *asset_root,size_t asset_root_size,
+                                char *overrides,size_t overrides_size,int depth);
 
 static void content_log(const AnygmContentRouter *router,int level,const char *format,...){
   if(!router || !router->log) return;
@@ -313,7 +320,7 @@ static int file_size64(const AnygmContentRouter *router,const char *path,uint64_
 }
 
 int anygm_content_load_win(const AnygmContentRouter *router,GmlWin *win,const char *path,
-                           char *loaded_path,size_t loaded_path_sz) {
+                           const char *asset_root,char *loaded_path,size_t loaded_path_sz) {
   if(!router || !win || !path) return 0;
   if(gml_win_load_host(win,router->host,path)!=0){
     /* Preserve the loader's specific validation reason instead of flattening every failure
@@ -326,7 +333,13 @@ int anygm_content_load_win(const AnygmContentRouter *router,GmlWin *win,const ch
   if(win->n_code>0) return 1;
 
   char alt[1024];
-  if (!sibling_alternate_path(path, alt, sizeof(alt)) || !file_exists(router,alt)) return 1;
+  if (!sibling_alternate_path(path, alt, sizeof(alt)) || !file_exists(router,alt)){
+    /* A normalized image can live in the disposable cache while its authored
+     * code companion remains alongside the original assets. */
+    if(!asset_root || !asset_root[0] ||
+       !path_join_bounded(alt,sizeof alt,asset_root,"data.alternate.win") ||
+       !file_exists(router,alt)) return 1;
+  }
   GmlWin altw;
   memset(&altw, 0, sizeof(altw));
   if (gml_win_load_host(&altw,router->host,alt) != 0) return 1;
@@ -993,7 +1006,7 @@ static int anchor_parse(const uint8_t *data,size_t size,char *reference,size_t r
     if(!anchor_reference_normalize(line,length,reference,refsz)) return 0;
     return !anchor_next_line(data,size,&cursor,&line,&length);
   }
-  int section=0,have_payload=0,have_overrides=0,have_transforms=0;
+  int section=0,have_payload=0,have_overrides=0,have_transforms=0,have_pipelines=0;
   size_t used=0;
   while(anchor_next_line(data,size,&cursor,&line,&length)){
     if(line[0]=='['){
@@ -1002,6 +1015,9 @@ static int anchor_parse(const uint8_t *data,size_t size,char *reference,size_t r
       }
       if(length==12 && !memcmp(line,"[transforms]",12) && !have_transforms){
         section=2; have_transforms=1; continue;
+      }
+      if(length==11 && !memcmp(line,"[pipelines]",11) && !have_pipelines){
+        section=3; have_pipelines=1; continue;
       }
       return 0;
     }
@@ -1036,7 +1052,7 @@ static int anchor_parse(const uint8_t *data,size_t size,char *reference,size_t r
     }
   }
   if(!have_payload) return 0;
-  if(have_transforms){
+  if(have_transforms || have_pipelines){
     AnygmContentTransforms *validation=anygm_content_transforms_create();
     int valid=validation && anygm_content_transforms_parse(validation,data,size,NULL,0);
     anygm_content_transforms_destroy(validation);
@@ -1053,6 +1069,12 @@ static int anchor_apply_transforms(const AnygmContentRouter *router,
      !anygm_content_transforms_parse_layer(router->transforms,data,size,priority,error,sizeof error)){
     content_log(router,ANYGM_CONTENT_LOG_ERROR,"%s",
                 error[0]?error:"anchor: transform context is unavailable");
+    return 0;
+  }
+  if(router->configuration && router->configuration->base_transforms &&
+     !anygm_content_transforms_parse_layer(router->configuration->base_transforms,
+       data,size,priority,error,sizeof error)){
+    content_log(router,ANYGM_CONTENT_LOG_ERROR,"%s",error);
     return 0;
   }
   return 1;
@@ -1456,7 +1478,11 @@ static int load_archive_content_depth(const AnygmContentRouter *router,const cha
      * content opens by path. Route executable members through the same Classic/Cabinet boundary
      * as a directly selected path. */
     int resolved_ok=0;
-    if(path_ext_is(resolved,".exe")){
+    int adapted=load_input_pipeline(router,resolved,content_path,cpsz,asset_root,arsz,
+                                     content_overrides,content_overrides_size,depth+1);
+    if(adapted<0) return 0;
+    if(adapted>0) resolved_ok=1;
+    else if(path_ext_is(resolved,".exe")){
       AnygmContentResolveResult executable=resolve_executable_content(
         router,resolved,content_path,cpsz,asset_root,arsz);
       if(executable==ANYGM_CONTENT_RESOLVE_UNSUPPORTED) return executable;
@@ -1467,7 +1493,11 @@ static int load_archive_content_depth(const AnygmContentRouter *router,const cha
       snprintf(asset_root,arsz,"%s",outdir);
     return resolved_ok;
   }
-  if(kind!='C' || magic!=1) return 0;
+  if(kind!='C') return 0;
+  int adapted=load_input_pipeline(router,resolved,content_path,cpsz,asset_root,arsz,
+                                   content_overrides,content_overrides_size,depth+1);
+  if(adapted) return adapted>0;
+  if(magic!=1) return 0;
   if(!select_payload_configuration(router,resolved)) return 0;
   snprintf(content_path,cpsz,"%s",resolved);
   return 1;
@@ -1477,6 +1507,102 @@ static int load_archive_content(const AnygmContentRouter *router,const char *zpa
                                 char *content_overrides,size_t content_overrides_size){
   return load_archive_content_depth(router,zpath,content_path,cpsz,asset_root,arsz,
                                     content_overrides,content_overrides_size,0);
+}
+
+/* A selected source adapter returns a supported byte representation, never an
+ * executable callback. It runs once before routing its result. A byte-identical
+ * result declines adaptation and leaves ordinary member/adjacent-file selection
+ * unchanged. Original paths remain authoritative for assets and fidelity data. */
+static int load_input_pipeline(const AnygmContentRouter *router,const char *path,
+                                char *content_path,size_t content_size,
+                                char *asset_root,size_t asset_root_size,
+                                char *overrides,size_t overrides_size,int depth){
+  ContentConfigResolution *config=router->configuration;
+  if(!config || config->input_adapted ||
+     (!anygm_content_transforms_has(router->transforms,"input") &&
+      !anygm_content_config_has_input(config->ini))) return 0;
+  AnygmContentTransforms *selected=anygm_content_transforms_create();
+  uint8_t *original=NULL,*image=NULL,digest[32];
+  size_t original_size=0,image_size=0;
+  char specific[ANYGM_CONFIG_OVERRIDE_BYTES]={0},error[256]={0};
+  int result=-1;
+  if(!selected || !anygm_content_transforms_copy(selected,config->base_transforms?
+       config->base_transforms:router->transforms) ||
+     !original_file_digest(router,path,digest)) goto done;
+  if(!anygm_content_config_apply(config->ini,digest,selected,UINT_MAX,
+       specific,sizeof specific,error,sizeof error)) goto done;
+  if(!anygm_content_transforms_has(selected,"input")){ result=0; goto done; }
+  if(!anygm_vfs_read_all(router->host,path,&original,&original_size,
+                         (size_t)ANYGM_TRANSFORM_MAX_INPUT_BYTES)) goto done;
+  uint8_t observed_digest[32];
+  gml_sha256(original,original_size,observed_digest);
+  if(memcmp(digest,observed_digest,32)){
+    snprintf(error,sizeof error,"original bytes changed during selection"); goto done;
+  }
+  if(!anygm_content_transform_run(selected,"input",original,original_size,
+       &image,&image_size,error,sizeof error)) goto done;
+  if(image_size==original_size && (!image_size || !memcmp(image,original,image_size))){
+    result=0; goto done;
+  }
+  int kind=image_size>=8u && !memcmp(image,"FORM",4)?1:
+    image_size>=4u && !memcmp(image,"PK\003\004",4)?2:
+    image_size>=8u && zu32(image)==GMLC_CLASSIC_MAGIC?3:
+    image_size>=2u && image[0]=='M' && image[1]=='Z'?3:0;
+  if(!kind){ snprintf(error,sizeof error,"result is not a supported input representation"); goto done; }
+  if(!config->base_transforms){
+    config->base_transforms=anygm_content_transforms_create();
+    if(!config->base_transforms ||
+       !anygm_content_transforms_copy(config->base_transforms,router->transforms)) goto done;
+  }
+  if(!anygm_content_transforms_copy(router->transforms,selected)) goto done;
+  memcpy(config->specific,specific,sizeof specific);
+  memcpy(config->original_digest,digest,32); config->input_adapted=1;
+  uint8_t identity[96],key[32]; char hex[65];
+  memcpy(identity,digest,32); anygm_content_transforms_hash(selected,identity+32);
+  gml_sha256(image,image_size,identity+64); gml_sha256(identity,sizeof identity,key);
+  for(size_t i=0;i<32;i++) snprintf(hex+i*2,3,"%02x",key[i]);
+  char directory[1400],output[1536];
+  const char *cache=router->cache_directory?router->cache_directory:"tmp";
+  if(snprintf(directory,sizeof directory,"%s/input-%s",cache,hex)>=(int)sizeof directory ||
+     !path_join_bounded(output,sizeof output,directory,kind==2?"payload.zip":"data.win") ||
+     !anygm_vfs_mkdirs(router->host,directory)) goto done;
+  if(kind==3){
+    /* Always re-import an adapted project: companion files may have changed.
+     * No cache marker claims that the primary image covers those dependencies. */
+    GmlcProject project;
+    if(!gmlc_classic_project_load_image(selected,&project,router->host,path,image,image_size,
+         directory,error,sizeof error)) goto done;
+    int ok=gmlc_package_write_structural(&project,output,error,sizeof error);
+    gmlc_project_free(&project);
+    if(!ok) goto done;
+  } else {
+    char temporary[1600];
+    if(snprintf(temporary,sizeof temporary,"%s.tmp",output)>=(int)sizeof temporary) goto done;
+    if(!anygm_vfs_write_all(router->host,temporary,image,image_size) ||
+       !anygm_vfs_publish(router->host,temporary,output)){
+      anygm_vfs_remove(router->host,temporary);
+      goto done;
+    }
+  }
+  if(kind==2){
+    if(!load_archive_content_depth(router,output,content_path,content_size,asset_root,asset_root_size,
+                                   overrides,overrides_size,depth)) goto done;
+  } else {
+    if(snprintf(content_path,content_size,"%s",output)>=(int)content_size) goto done;
+    if(asset_root && asset_root_size)
+      anygm_content_path_parent(path,asset_root,asset_root_size);
+  }
+  for(size_t i=0;i<32;i++) snprintf(hex+i*2,3,"%02x",digest[i]);
+  content_log(router,ANYGM_CONTENT_LOG_INFO,"input pipeline: normalized %s SHA-256 %s",path,hex);
+  result=1;
+done:
+  anygm_content_transforms_destroy(selected); free(original); free(image);
+  if(result<0){
+    if(content_path && content_size) content_path[0]=0;
+    if(asset_root && asset_root_size) asset_root[0]=0;
+    content_log(router,ANYGM_CONTENT_LOG_ERROR,"input pipeline: %s",error[0]?error:"source preparation failed");
+  }
+  return result;
 }
 
 static int load_classic_project_content(const AnygmContentRouter *router,const char *srcpath,
@@ -1701,6 +1827,11 @@ static AnygmContentResolveResult content_resolve_path_direct(
   if(!input_path || !input_path[0] || !resolved_path || resolved_path_size==0) return 0;
   resolved_path[0]=0;
   if(asset_root && asset_root_size) asset_root[0]=0;
+  if(!path_ext_is(input_path,".anygm")){
+    int adapted=load_input_pipeline(router,input_path,resolved_path,resolved_path_size,
+                                     asset_root,asset_root_size,content_overrides,content_overrides_size,0);
+    if(adapted) return adapted>0?ANYGM_CONTENT_RESOLVE_OK:ANYGM_CONTENT_RESOLVE_INVALID;
+  }
   if(path_ext_is(input_path,".exe")){
     return resolve_executable_content(router,input_path,resolved_path,resolved_path_size,
                                       asset_root,asset_root_size);
@@ -1816,7 +1947,8 @@ static int adopt_sibling_anchor_transforms(const AnygmContentRouter *router,cons
   const uint8_t *line=NULL;
   int declared=0;
   while(anchor_next_line(bytes,size,&cursor,&line,&length))
-    if(length==12 && !memcmp(line,"[transforms]",12)){ declared=1; break; }
+    if((length==12 && !memcmp(line,"[transforms]",12)) ||
+       (length==11 && !memcmp(line,"[pipelines]",11))){ declared=1; break; }
   char reference[ANYGM_CONTENT_MAX_MEMBER_PATH+1u];
   int ok=!declared || (anchor_parse(bytes,size,reference,sizeof reference,NULL,0) &&
                        anchor_apply_transforms(router,bytes,size,1u));
@@ -1852,16 +1984,14 @@ static int load_transform_defaults(const AnygmContentRouter *router){
   return ok;
 }
 
-static int select_payload_configuration(const AnygmContentRouter *router,const char *path){
-  ContentConfigResolution *config=router->configuration;
-  if(!config || !config->ini) return 1;
+static int original_file_digest(const AnygmContentRouter *router,const char *path,uint8_t digest[32]){
   uint64_t size=0;
   if(!file_size64(router,path,&size) || size>UINT64_C(2147483648)) return 0;
   void *file=router->host->file_open(router->host->userdata,path,ANYGM_FILE_READ);
   if(!file) return 0;
   GmlSha256 hash;
   gml_sha256_init(&hash);
-  uint8_t buffer[65536],digest[32];
+  uint8_t buffer[65536];
   uint64_t remaining=size;
   int ok=1;
   while(remaining){
@@ -1874,12 +2004,22 @@ static int select_payload_configuration(const AnygmContentRouter *router,const c
   router->host->file_close(router->host->userdata,file);
   if(!ok){ content_log(router,ANYGM_CONTENT_LOG_ERROR,"configuration: incomplete hash read of %s",path); return 0; }
   gml_sha256_final(&hash,digest);
-  return select_payload_digest(router,digest,path);
+  return 1;
+}
+
+static int select_payload_configuration(const AnygmContentRouter *router,const char *path){
+  ContentConfigResolution *config=router->configuration;
+  if(!config || !config->ini) return 1;
+  if(config->input_adapted)
+    return select_payload_digest(router,config->original_digest,"original pipeline input");
+  uint8_t digest[32];
+  return original_file_digest(router,path,digest) && select_payload_digest(router,digest,path);
 }
 
 static int select_payload_digest(const AnygmContentRouter *router,const uint8_t digest[32],const char *label){
   ContentConfigResolution *config=router->configuration;
   if(!config || !config->ini) return 1;
+  if(config->input_adapted) digest=config->original_digest;
   /* Executable routing may establish that its real content is an adjacent data
    * image. Reselect from the same defaults/anchors, never from the first hash. */
   if(!config->base_transforms){
@@ -1923,10 +2063,13 @@ static int collect_override_layers(const AnygmContentRouter *router,char *out,si
     append_override_text(out,capacity,config->specific);
 }
 
-int anygm_content_configure_memory(const AnygmContentRouter *router,const void *data,size_t size,
-                                    char *overrides,size_t overrides_size){
+int anygm_content_prepare_memory(const AnygmContentRouter *router,const void *data,size_t size,
+                                  uint8_t **normalized,size_t *normalized_size,
+                                  char *overrides,size_t overrides_size){
   if(overrides && overrides_size) overrides[0]=0;
-  if(!router || (size && !data)) return 0;
+  if(normalized) *normalized=NULL;
+  if(normalized_size) *normalized_size=0;
+  if(!router || !normalized || !normalized_size || (size && !data)) return 0;
   AnygmContentRouter scoped=*router;
   scoped.configuration=calloc(1,sizeof *scoped.configuration);
   scoped.transforms=anygm_content_transforms_create();
@@ -1937,6 +2080,12 @@ int anygm_content_configure_memory(const AnygmContentRouter *router,const void *
     ok=select_payload_digest(&scoped,digest,"memory image");
   }
   if(ok) ok=collect_override_layers(&scoped,overrides,overrides_size);
+  if(ok && anygm_content_transforms_has(scoped.transforms,"input")){
+    char error[256]={0};
+    ok=anygm_content_transform_run(scoped.transforms,"input",data,size,
+      normalized,normalized_size,error,sizeof error);
+    if(!ok) content_log(&scoped,ANYGM_CONTENT_LOG_ERROR,"input pipeline: %s",error);
+  }
   if(scoped.configuration){
     anygm_content_config_destroy(scoped.configuration->ini);
     anygm_content_transforms_destroy(scoped.configuration->base_transforms);

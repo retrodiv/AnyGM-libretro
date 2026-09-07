@@ -2,6 +2,7 @@
  * Copyright (c) 2026 retrodiv <retrodiv@proton.me>
  */
 #include "content_transform.h"
+#include "gml_image_codec.h"
 #include <assert.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -256,7 +257,140 @@ static void source_limits(void){
   }
   free(config); anygm_content_transforms_destroy(set);
 }
+static void pipelines(void){
+  const char config[]=
+    "[transforms]\n"
+    "unwrap=buffer remove_header() { if(input_size<4) reject(); return slice(4,input_size-4); }\n"
+    "patch=buffer normalize_header() { write32(work,0,0x4d524f46); return slice(0,input_size); }\n"
+    "[pipelines]\n"
+    "input=unwrap | decompress | builtin.byteswap16 | patch\n"
+    "decompress=builtin.zlib:64\n";
+  char error[256]; uint8_t before[32],after[32];
+  AnygmContentTransforms *set=anygm_content_transforms_create(),*copy=anygm_content_transforms_create();
+  assert(set && copy && anygm_content_transforms_parse(set,config,sizeof config-1,error,sizeof error));
+  assert(anygm_content_transform_validate(set,"input",error,sizeof error));
+  assert(anygm_content_transforms_copy(copy,set));
+  anygm_content_transforms_hash(set,before); anygm_content_transforms_hash(copy,after);
+  assert(!memcmp(before,after,32));
+  const uint8_t plain[]={0,0,0,0,2,1,4,3};
+  const uint8_t expected[]={'F','O','R','M',1,2,3,4};
+  GmlMediaBuffer compressed={0};
+  assert(gml_deflate_encode_zlib(plain,sizeof plain,&compressed));
+  uint8_t *wrapped=malloc(compressed.size+4); assert(wrapped);
+  memcpy(wrapped,"WRAP",4); memcpy(wrapped+4,compressed.data,compressed.size);
+  uint8_t *output=NULL; size_t size=0;
+  assert(anygm_content_transform_run(copy,"input",wrapped,compressed.size+4,
+    &output,&size,error,sizeof error));
+  assert(size==sizeof expected && !memcmp(output,expected,size)); free(output);
+  assert(!memcmp(wrapped,"WRAP",4) && !memcmp(wrapped+4,compressed.data,compressed.size));
+  wrapped[compressed.size+3u]^=1u;
+  assert(!anygm_content_transform_run(copy,"input",wrapped,compressed.size+4,
+    &output,&size,error,sizeof error));
+  assert(!output && !size); wrapped[compressed.size+3u]^=1u;
+  assert(anygm_content_transform_run(copy,"builtin.deflate:64",compressed.data+2u,compressed.size-6u,
+    &output,&size,error,sizeof error));
+  assert(size==sizeof plain && !memcmp(output,plain,size)); free(output);
+  const char small[]="[pipelines]\ndecompress=builtin.zlib:4\n";
+  assert(anygm_content_transforms_parse_layer(set,small,sizeof small-1,2,error,sizeof error));
+  anygm_content_transforms_hash(set,after); assert(memcmp(before,after,32));
+  assert(!anygm_content_transform_run(set,"input",wrapped,compressed.size+4,
+    &output,&size,error,sizeof error));
+  assert(!output && !size && error[0]);
+  assert(anygm_content_transforms_parse_layer(set,config,sizeof config-1,1,error,sizeof error));
+  assert(!anygm_content_transform_run(set,"input",wrapped,compressed.size+4,
+    &output,&size,error,sizeof error));
+  assert(!output && !size);
+  free(wrapped); gml_media_buffer_release(&compressed);
+  const char *invalid[]={
+    "[pipelines]\nx=\n", "[pipelines]\nx=|patch\n", "[pipelines]\nx=patch|\n",
+    "[pipelines]\nx=patch||patch\n", "[pipelines]\nx=patch| \n",
+    "[pipelines]\nx=builtin.zlib:0\n", "[pipelines]\nx=builtin.zlib:1073741825\n",
+    "[pipelines]\nx=builtin.zlib:18446744073709551616\n",
+    "[pipelines]\nx=builtin.deflate:01\n", "[pipelines]\nx=builtin.missing\n",
+    "[pipelines]\nbuiltin.byteswap16=patch\n", "[pipelines]\nx=patch\nx=patch\n",
+    "[pipelines]\nx=patch\n[pipelines]\ny=patch\n",
+    "[transforms]\nx=buffer x(){return slice(0,input_size);}\n[pipelines]\nx=patch\n"
+  };
+  anygm_content_transforms_hash(set,before);
+  for(size_t i=0;i<sizeof invalid/sizeof invalid[0];i++){
+    assert(!anygm_content_transforms_parse(set,invalid[i],strlen(invalid[i]),error,sizeof error));
+    anygm_content_transforms_hash(set,after); assert(!memcmp(before,after,32));
+  }
+  const char cycle[]="[pipelines]\nx=y\ny=x\n";
+  assert(anygm_content_transforms_parse(set,cycle,sizeof cycle-1,error,sizeof error));
+  assert(!anygm_content_transform_validate(set,"x",error,sizeof error));
+  assert(!anygm_content_transform_run(set,"x",plain,sizeof plain,&output,&size,error,sizeof error));
+  assert(!output && !size);
+  const char excess[]="[pipelines]\nx=patch|patch|patch|patch|patch|patch|patch|patch|patch\n"
+    "y=x|x\n";
+  assert(anygm_content_transforms_parse(set,excess,sizeof excess-1,error,sizeof error));
+  assert(!anygm_content_transform_validate(set,"y",error,sizeof error));
+  assert(!anygm_content_transform_run(set,"y",plain,sizeof plain,&output,&size,error,sizeof error));
+  assert(!output && !size);
+  const char missing[]="[pipelines]\nx=patch|missing\n";
+  assert(anygm_content_transforms_parse(set,missing,sizeof missing-1,error,sizeof error));
+  assert(!anygm_content_transform_validate(set,"x",error,sizeof error));
+  assert(!anygm_content_transform_run(set,"x",plain,sizeof plain,&output,&size,error,sizeof error));
+  assert(!output && !size);
+  assert(!anygm_content_transform_run(set,"builtin.byteswap16",plain,3,&output,&size,error,sizeof error));
+  assert(!output && !size);
+  assert(anygm_content_transform_run(set,"builtin.byteswap32",plain,sizeof plain,&output,&size,error,sizeof error));
+  assert(size==sizeof plain && output[4]==3 && output[5]==4 && output[6]==1 && output[7]==2);
+  free(output);
+  anygm_content_transforms_destroy(set); anygm_content_transforms_destroy(copy);
+}
+
+static void distributed_adapters(void){
+  FILE *file=fopen("examples/input_transforms.ini","rb");
+  assert(file);
+  char config[8192]; size_t length=fread(config,1,sizeof config,file);
+  assert(length<sizeof config && !ferror(file) && !fclose(file));
+  AnygmContentTransforms *set=anygm_content_transforms_create();
+  char error[256];
+  assert(set && anygm_content_transforms_parse(set,config,length,error,sizeof error));
+  /* A synthetic single-member ZIP concatenated after an inert data prefix.
+   * Central-directory offsets are relative to the original standalone archive. */
+  uint8_t input[256]={0};
+  const size_t prefix=64,local_size=32,central_size=47,end=prefix+local_size+central_size;
+  memcpy(input,"WRAP",4);
+  memcpy(input+prefix,"PK\003\004",4);
+  memcpy(input+prefix+14,"\xd3\xff\x6b\x9e",4);
+  input[prefix+4]=20; input[prefix+18]=1; input[prefix+22]=1; input[prefix+26]=1;
+  input[prefix+30]='x'; input[prefix+31]='!';
+  memcpy(input+prefix+local_size,"PK\001\002",4);
+  memcpy(input+prefix+local_size+16,"\xd3\xff\x6b\x9e",4);
+  input[prefix+local_size+4]=20; input[prefix+local_size+6]=20;
+  input[prefix+local_size+20]=1; input[prefix+local_size+24]=1;
+  input[prefix+local_size+28]=1; input[prefix+local_size+46]='x';
+  memcpy(input+end,"PK\005\006",4);
+  input[end+8]=input[end+10]=1;
+  input[end+12]=(uint8_t)central_size; input[end+16]=(uint8_t)local_size;
+  uint8_t *output=NULL; size_t size=0;
+  assert(anygm_content_transform_run(set,"embedded_zip",input,end+22,&output,&size,error,sizeof error));
+  assert(size==end+22-prefix && !memcmp(output,input+prefix,size)); free(output);
+  assert(!memcmp(input,"WRAP",4));
+  /* Changing the locator, directory framing or terminal comment length must not
+   * turn a matching signature elsewhere in the input into an accepted archive. */
+  const size_t corruptions[]={end+4,end+8,end+10,end+12,end+16,end+20,prefix+local_size,prefix};
+  for(size_t i=0;i<sizeof corruptions/sizeof corruptions[0];i++){
+    input[corruptions[i]]^=128;
+    assert(!anygm_content_transform_run(set,"embedded_zip",input,end+22,&output,&size,error,sizeof error));
+    assert(!output && !size); input[corruptions[i]]^=128;
+  }
+  assert(anygm_content_transform_run(set,"little_endian_words","abcd",4,&output,&size,error,sizeof error));
+  assert(size==4 && !memcmp(output,"dcba",4)); free(output);
+  GmlMediaBuffer compressed={0};
+  assert(gml_deflate_encode_zlib((const uint8_t*)"payload",7,&compressed));
+  assert(compressed.size+4<=sizeof input);
+  memset(input,0,4); input[0]=4; memcpy(input+4,compressed.data,compressed.size);
+  assert(anygm_content_transform_run(set,"sized_zlib",input,compressed.size+4,&output,&size,error,sizeof error));
+  assert(size==7 && !memcmp(output,"payload",7)); free(output);
+  gml_media_buffer_release(&compressed); anygm_content_transforms_destroy(set);
+}
+
 int main(void){
   arithmetic(); buffers_and_branches(); failures(); configuration(); source_programs(); source_limits();
+  pipelines();
+  distributed_adapters();
   puts("Content transform isolation, validation, and configuration: ok"); return 0;
 }

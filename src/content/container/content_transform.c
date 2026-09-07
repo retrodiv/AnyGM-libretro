@@ -3,6 +3,7 @@
  */
 #include "content_transform.h"
 #include "content_transform_source.h"
+#include "content_pipeline.h"
 #include "gml_hash.h"
 
 #include <stdio.h>
@@ -14,6 +15,8 @@ typedef struct TransformEntry {
   uint8_t *program,*parameters;
   size_t program_size,parameter_size;
   unsigned priority;
+  size_t step_count;
+  char steps[ANYGM_TRANSFORM_MAX_PIPELINE_STEPS][64];
 } TransformEntry;
 
 struct AnygmContentTransforms {
@@ -165,10 +168,10 @@ int anygm_content_transforms_copy(AnygmContentTransforms *target,const AnygmCont
     const TransformEntry *from=&source->entries[i];
     TransformEntry *to=&copy->entries[copy->count++];
     *to=*from;
-    to->program=malloc(from->program_size);
+    to->program=malloc(from->program_size?from->program_size:1u);
     to->parameters=malloc(from->parameter_size?from->parameter_size:1u);
     if(!to->program || !to->parameters){ anygm_content_transforms_destroy(copy); return 0; }
-    memcpy(to->program,from->program,from->program_size);
+    if(from->program_size) memcpy(to->program,from->program,from->program_size);
     if(from->parameter_size) memcpy(to->parameters,from->parameters,from->parameter_size);
   }
   AnygmContentTransforms old=*target;
@@ -186,13 +189,34 @@ int anygm_content_transforms_parse(AnygmContentTransforms *set,const void *text,
   return anygm_content_transforms_parse_layer(set,text,size,0,error,error_size);
 }
 
+static int pipeline_steps(TransformEntry *entry,const char *value,const char *end){
+  while(value<end){
+    while(value<end && (*value==' ' || *value=='\t')) value++;
+    const char *begin=value;
+    while(value<end && *value!='|') value++;
+    const char *last=value;
+    while(last>begin && (last[-1]==' ' || last[-1]=='\t')) last--;
+    size_t length=(size_t)(last-begin);
+    if(!length || length>=sizeof entry->steps[0] ||
+       entry->step_count==ANYGM_TRANSFORM_MAX_PIPELINE_STEPS) return 0;
+    for(const char *p=begin;p<last;p++)
+      if(!((*p>='a' && *p<='z') || (*p>='0' && *p<='9') ||
+           *p=='.' || *p=='_' || *p=='-' || *p==':')) return 0;
+    char *step=entry->steps[entry->step_count++];
+    memcpy(step,begin,length);
+    if(!strncmp(step,"builtin.",8) && !anygm_content_pipeline_builtin_valid(step)) return 0;
+    if(value<end && ++value==end) return 0;
+  }
+  return entry->step_count!=0;
+}
+
 int anygm_content_transforms_parse_layer(AnygmContentTransforms *set,const void *text,size_t size,
                                          unsigned priority,char *error,size_t error_size){
   if(error && error_size) error[0]=0;
   if(!set || (size && !text) || size>ANYGM_TRANSFORM_MAX_CONFIG_BYTES ||
      (size && memchr(text,0,size))) return fail(error,error_size,"invalid configuration");
   AnygmContentTransforms staged={0};
-  int active=0,seen_section=0;
+  int active=0,seen_sections=0;
   const char *bytes=(const char*)text;
   size_t at=size>=3 && !memcmp(bytes,"\xef\xbb\xbf",3)?3u:0u;
   for(;at<size;){
@@ -206,8 +230,10 @@ int anygm_content_transforms_parse_layer(AnygmContentTransforms *set,const void 
     if(start==end || bytes[start]=='#' || bytes[start]==';') continue;
     if(bytes[start]=='['){
       if(bytes[end-1]!=']') goto invalid;
-      active=end-start==12 && !memcmp(bytes+start,"[transforms]",12);
-      if(active && seen_section++) goto invalid;
+      active=end-start==12 && !memcmp(bytes+start,"[transforms]",12)?1:
+        end-start==11 && !memcmp(bytes+start,"[pipelines]",11)?2:0;
+      if(active && (seen_sections&(1<<active))) goto invalid;
+      seen_sections|=1<<active;
       continue;
     }
     if(!active) continue;
@@ -222,11 +248,16 @@ int anygm_content_transforms_parse_layer(AnygmContentTransforms *set,const void 
     }
     TransformEntry *entry=&staged.entries[staged.count];
     memcpy(entry->name,bytes+start,name_size); entry->name[name_size]=0;
+    if(!strncmp(entry->name,"builtin.",8)) goto invalid;
     if(lookup(&staged,entry->name)) goto invalid;
     staged.count++;
     entry->priority=priority;
     const char *value=equal+1,*last=bytes+end;
     while(value<last && (*value==' ' || *value=='\t')) value++;
+    if(active==2){
+      if(!pipeline_steps(entry,value,last)) goto invalid;
+      continue;
+    }
     size_t consumed=0; char detail[160]={0};
     if(!anygm_content_transform_compile(value,size-(size_t)(value-bytes),&consumed,
          &entry->program,&entry->program_size,&entry->parameters,&entry->parameter_size,
@@ -265,7 +296,7 @@ invalid:
 void anygm_content_transforms_hash(const AnygmContentTransforms *set,uint8_t digest[32]){
   /* Fixed per-entry hashes sorted by name make identity independent of INI order. */
   const TransformEntry *ordered[ANYGM_TRANSFORM_MAX_PROGRAMS];
-  uint8_t records[ANYGM_TRANSFORM_MAX_PROGRAMS][128];
+  uint8_t records[ANYGM_TRANSFORM_MAX_PROGRAMS][160];
   size_t count=set?set->count:0;
   memset(records,0,sizeof records);
   for(size_t i=0;i<count;i++){
@@ -280,21 +311,76 @@ void anygm_content_transforms_hash(const AnygmContentTransforms *set,uint8_t dig
     memcpy(records[i],entry->name,strlen(entry->name));
     gml_sha256(entry->program,entry->program_size,records[i]+64);
     gml_sha256(entry->parameters,entry->parameter_size,records[i]+96);
+    if(entry->step_count) gml_sha256(entry->steps,
+      entry->step_count*sizeof entry->steps[0],records[i]+128);
   }
   gml_sha256(records,count*sizeof records[0],digest);
+}
+
+typedef struct {
+  const TransformEntry *program;
+  const char *builtin;
+} PipelineLeaf;
+
+static int expand(const AnygmContentTransforms *set,const char *name,
+                    PipelineLeaf leaves[ANYGM_TRANSFORM_MAX_PIPELINE_STEPS],
+                    size_t *count,unsigned depth,char *error,size_t error_size){
+  if(depth>ANYGM_TRANSFORM_MAX_PROGRAMS)
+    return fail(error,error_size,"cyclic or excessively deep pipeline");
+  const TransformEntry *entry=lookup(set,name);
+  if(entry && entry->step_count){
+    for(size_t i=0;i<entry->step_count;i++)
+      if(!expand(set,entry->steps[i],leaves,count,depth+1u,error,error_size)) return 0;
+    return 1;
+  }
+  if(!entry && !anygm_content_pipeline_builtin_valid(name)){
+    if(error && error_size) snprintf(error,error_size,"content transform: missing user program or pipeline step '%s'",name?name:"");
+    return 0;
+  }
+  if(*count==ANYGM_TRANSFORM_MAX_PIPELINE_STEPS)
+    return fail(error,error_size,"expanded pipeline has too many steps");
+  leaves[*count].program=entry;
+  leaves[(*count)++].builtin=entry?NULL:name;
+  return 1;
+}
+
+int anygm_content_transform_validate(const AnygmContentTransforms *set,const char *name,
+                                      char *error,size_t error_size){
+  if(error && error_size) error[0]=0;
+  PipelineLeaf leaves[ANYGM_TRANSFORM_MAX_PIPELINE_STEPS];
+  size_t count=0;
+  return expand(set,name,leaves,&count,0,error,error_size);
 }
 
 int anygm_content_transform_run(const AnygmContentTransforms *set,const char *name,
                                  const void *input,size_t input_size,
                                  uint8_t **output,size_t *output_size,
                                  char *error,size_t error_size){
-  const TransformEntry *entry=lookup(set,name);
-  if(!entry){
-    if(output) *output=NULL;
-    if(output_size) *output_size=0;
-    if(error && error_size) snprintf(error,error_size,"content transform: missing user program '%s'",name?name:"");
-    return 0;
+  if(error && error_size) error[0]=0;
+  if(output) *output=NULL;
+  if(output_size) *output_size=0;
+  if(!output || !output_size || (input_size && !input) ||
+     input_size>ANYGM_TRANSFORM_MAX_INPUT_BYTES)
+    return fail(error,error_size,"invalid pipeline input");
+  PipelineLeaf leaves[ANYGM_TRANSFORM_MAX_PIPELINE_STEPS];
+  size_t count=0;
+  if(!expand(set,name,leaves,&count,0,error,error_size)) return 0;
+  uint8_t *owned=NULL;
+  const void *current=input;
+  size_t size=input_size;
+  for(size_t i=0;i<count;i++){
+    const TransformEntry *entry=leaves[i].program;
+    uint8_t *next=NULL; size_t next_size=0;
+    int ok=entry?anygm_content_transform_execute(entry->program,entry->program_size,
+      entry->parameters,entry->parameter_size,current,size,0,&next,&next_size,error,error_size):
+      anygm_content_pipeline_builtin_run(leaves[i].builtin,current,size,&next,&next_size);
+    free(owned);
+    if(!ok){
+      if(!entry) fail(error,error_size,"built-in step rejected input or exceeded its output capacity");
+      return 0;
+    }
+    owned=next; current=next; size=next_size;
   }
-  return anygm_content_transform_execute(entry->program,entry->program_size,
-    entry->parameters,entry->parameter_size,input,input_size,0,output,output_size,error,error_size);
+  *output=owned; *output_size=size;
+  return 1;
 }

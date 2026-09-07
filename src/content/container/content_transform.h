@@ -11,6 +11,7 @@
 #define ANYGM_TRANSFORM_MAX_PROGRAM_BYTES 12288u
 #define ANYGM_TRANSFORM_MAX_PARAMETER_BYTES 4096u
 #define ANYGM_TRANSFORM_MAX_PROGRAMS 16u
+#define ANYGM_TRANSFORM_MAX_PIPELINE_STEPS 16u
 #define ANYGM_TRANSFORM_SCRATCH_BYTES 65536u
 #define ANYGM_TRANSFORM_MAX_INPUT_BYTES UINT64_C(1073741824)
 #define ANYGM_TRANSFORM_MAX_STEPS (UINT64_C(1000000)+ANYGM_TRANSFORM_MAX_INPUT_BYTES*128u)
@@ -52,6 +53,10 @@ int anygm_content_transforms_parse(AnygmContentTransforms *set,const void *text,
 int anygm_content_transforms_parse_layer(AnygmContentTransforms *set,const void *text,size_t size,
                                          unsigned priority,char *error,size_t error_size);
 int anygm_content_transforms_has(const AnygmContentTransforms *set,const char *name);
+/* Validate a complete expansion before executing any leaf. Pipeline references
+ * may be forward-declared or supplied by another configuration layer. */
+int anygm_content_transform_validate(const AnygmContentTransforms *set,const char *name,
+                                      char *error,size_t error_size);
 void anygm_content_transforms_hash(const AnygmContentTransforms *set,uint8_t digest[32]);
 int anygm_content_transform_run(const AnygmContentTransforms *set,const char *name,
                                  const void *input,size_t input_size,

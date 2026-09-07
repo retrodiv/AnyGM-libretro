@@ -189,7 +189,7 @@ static AnygmResult engine_prepare_content(AnygmEngine *engine,
       engine_errorf(engine,ANYGM_ERROR_INVALID_CONTENT,"Failed to resolve content path: %s",source->path);
       return ANYGM_ERROR_INVALID_CONTENT;
     }
-    load_rc=anygm_content_load_win(&router,&prepared->win,content,
+    load_rc=anygm_content_load_win(&router,&prepared->win,content,asset_root,
                                    prepared->loaded_path,sizeof prepared->loaded_path);
     if(!load_rc){
       engine_errorf(engine,ANYGM_ERROR_INVALID_CONTENT,"Failed to load content: %s",content);
@@ -220,17 +220,22 @@ static AnygmResult engine_prepare_content(AnygmEngine *engine,
     router.inherited_overrides=inherited_overrides;
     router.anchor_overrides=prepared->anchor_overrides;
     router.anchor_overrides_size=sizeof prepared->anchor_overrides;
-    if(!anygm_content_configure_memory(&router,source->data,source->size,
+    uint8_t *normalized=NULL; size_t normalized_size=0;
+    if(!anygm_content_prepare_memory(&router,source->data,source->size,&normalized,&normalized_size,
          prepared->content_overrides,sizeof prepared->content_overrides)){
       engine_errorf(engine,ANYGM_ERROR_INVALID_CONTENT,"Memory content configuration was rejected");
       return ANYGM_ERROR_INVALID_CONTENT;
     }
-    if(gml_win_from_mem(&prepared->win,(uint8_t *)(uintptr_t)source->data,
-                        source->size,0)!=0){
+    if(gml_win_from_mem(&prepared->win,normalized?normalized:(uint8_t *)(uintptr_t)source->data,
+                        normalized?normalized_size:source->size,0)!=0){
+      free(normalized);
       engine_errorf(engine,ANYGM_ERROR_INVALID_CONTENT,
                     "The memory source is not a supported normalized content image");
       return ANYGM_ERROR_INVALID_CONTENT;
     }
+    /* The reader borrows during validation. Transfer the private result only
+     * after success, so early header rejection and partial-reader cleanup agree. */
+    if(normalized) prepared->win.owns=1;
     prepared->win.host=&engine->host;
     snprintf(prepared->loaded_path,sizeof prepared->loaded_path,"%s",
              source->path&&source->path[0]?source->path:"memory image");

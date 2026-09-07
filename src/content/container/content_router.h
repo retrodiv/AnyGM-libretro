@@ -70,10 +70,14 @@ AnygmContentResolveResult anygm_content_resolve_path(
     char *resolved_path,size_t resolved_path_size,
     char *asset_root,size_t asset_root_size,
     char *content_overrides,size_t content_overrides_size);
-int anygm_content_configure_memory(const AnygmContentRouter *router,const void *data,size_t size,
-                                    char *overrides,size_t overrides_size);
-int anygm_content_load_win(const AnygmContentRouter *router,GmlWin *win,const char *path,char *loaded_path,
-                           size_t loaded_path_size);
+/* Select configuration using original bytes, then execute the explicitly named
+ * input pipeline when present. A NULL normalized result borrows the original;
+ * otherwise the caller owns it. Failure clears every output. */
+int anygm_content_prepare_memory(const AnygmContentRouter *router,const void *data,size_t size,
+                                  uint8_t **normalized,size_t *normalized_size,
+                                  char *overrides,size_t overrides_size);
+int anygm_content_load_win(const AnygmContentRouter *router,GmlWin *win,const char *path,
+                           const char *asset_root,char *loaded_path,size_t loaded_path_size);
 void anygm_content_path_stem(const char *path,char *output,size_t output_size);
 void anygm_content_path_parent(const char *path,char *output,size_t output_size);
 void anygm_content_save_label(const char *path,char *output,size_t output_size);

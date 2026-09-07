@@ -3,6 +3,7 @@
  */
 #include "engine_internal.h"
 #include "gml_hash.h"
+#include "gml_image_codec.h"
 #include "stdio_vfs.h"
 #include "synthetic_content.h"
 #include <assert.h>
@@ -14,6 +15,11 @@ static void write_text(const char *path,const char *text){
   FILE *file=fopen(path,"wb");
   assert(file && fwrite(text,1,strlen(text),file)==strlen(text));
   assert(!fclose(file));
+}
+
+static void write_bytes(const char *path,const void *bytes,size_t size){
+  FILE *file=fopen(path,"wb");
+  assert(file && fwrite(bytes,1,size,file)==size && !fclose(file));
 }
 
 static void frame(AnygmEngine *engine){
@@ -182,7 +188,75 @@ static void replacement(void){
   anygm_synthetic_content_destroy(&fixture);
 }
 
+static void memory_pipeline(void){
+  AnygmSyntheticContent fixture;
+  assert(anygm_synthetic_content_create(&fixture));
+  uint8_t *content=NULL,digest[32]; size_t content_size=0;
+  assert(anygm_synthetic_content_read(&fixture,&content,&content_size));
+  GmlMediaBuffer compressed={0};
+  assert(gml_deflate_encode_zlib(content,content_size,&compressed));
+  uint8_t *wrapped=malloc(compressed.size+4); assert(wrapped);
+  memcpy(wrapped,"WRAP",4); memcpy(wrapped+4,compressed.data,compressed.size);
+  gml_sha256(wrapped,compressed.size+4,digest);
+  char hex[65],ini[256],path[256],companion[256],config[1024];
+  for(size_t i=0;i<32;i++) snprintf(hex+i*2,3,"%02x",digest[i]);
+  snprintf(ini,sizeof ini,"%s/anygm.ini",fixture.directory);
+  snprintf(path,sizeof path,"%s/content.bin",fixture.directory);
+  snprintf(companion,sizeof companion,"%s/data.alternate.win",fixture.directory);
+  snprintf(config,sizeof config,
+    "[transforms]\nunwrap=buffer unwrap(){ if(input_size<4) reject(); return slice(4,input_size-4); }\n"
+    "[sha256:%s.pipelines]\ninput=unwrap|builtin.zlib:%zu\n"
+    "[sha256:%s.overrides]\n$anygm_probe=23\n",hex,content_size,hex);
+  write_text(ini,config);
+  AnygmHostServices services={0}; services.struct_size=sizeof services;
+  services.abi_version=ANYGM_HOST_SERVICES_VERSION; anygm_stdio_vfs_services_init(&services);
+  AnygmEngine *engine=NULL; assert(anygm_create(&services,&engine)==ANYGM_OK);
+  AnygmContentSource source={0}; source.struct_size=sizeof source;
+  source.kind=ANYGM_CONTENT_MEMORY; source.data=wrapped; source.size=compressed.size+4;
+  source.system_directory=fixture.directory;
+  assert(anygm_load(engine,&source,NULL)==ANYGM_OK);
+  assert(engine->win.data!=wrapped && engine->win.owns);
+  assert(engine->win.size==content_size && !memcmp(engine->win.data,content,content_size));
+  frame(engine); assert(gml_global_num(&engine->vm,"anygm_probe")==23);
+  assert(!memcmp(wrapped,"WRAP",4) && !memcmp(wrapped+4,compressed.data,compressed.size));
+  anygm_unload(engine);
+  write_bytes(path,wrapped,compressed.size+4);
+  source.kind=ANYGM_CONTENT_PATH; source.path=path; source.cache_directory=fixture.directory;
+  assert(anygm_load(engine,&source,NULL)==ANYGM_OK); frame(engine);
+  assert(gml_global_num(&engine->vm,"anygm_probe")==23);
+  assert(!strcmp(engine->win.content_dir,fixture.directory));
+  anygm_unload(engine);
+  write_bytes(companion,content,content_size);
+  const uint8_t empty_wrapped[]={'W','R','A','P','F','O','R','M',0,0,0,0};
+  write_bytes(path,empty_wrapped,sizeof empty_wrapped);
+  write_text(ini,"[transforms]\ninput=buffer unwrap(){return slice(4,input_size-4);}\n");
+  assert(anygm_load(engine,&source,NULL)==ANYGM_OK);
+  assert(!strcmp(engine->current_content_path,companion) && !strcmp(engine->win.content_dir,fixture.directory));
+  anygm_unload(engine); assert(!remove(companion));
+  write_text(ini,config);
+  /* An unmatched selector does not run the pipeline; the original normalized
+   * image stays borrowed, with no source-format or transformation dependency. */
+  source.kind=ANYGM_CONTENT_MEMORY; source.path=NULL;
+  source.data=content; source.size=content_size;
+  assert(anygm_load(engine,&source,NULL)==ANYGM_OK);
+  assert(engine->win.data==content && !engine->win.owns);
+  anygm_unload(engine);
+  source.data=wrapped; source.size=compressed.size+4;
+  wrapped[source.size-1]^=1;
+  write_text(ini,"[pipelines]\ninput=builtin.zlib:64\n");
+  assert(anygm_load(engine,&source,NULL)==ANYGM_ERROR_INVALID_CONTENT);
+  assert(!engine->win.data && !memcmp(wrapped,"WRAP",4));
+  write_text(ini,"[transforms]\ninput=buffer empty(){return slice(0,0);}\n");
+  assert(anygm_load(engine,&source,NULL)==ANYGM_ERROR_INVALID_CONTENT);
+  assert(!engine->win.data);
+  anygm_destroy(engine);
+  assert(!remove(ini) && !remove(path));
+  free(wrapped); free(content); gml_media_buffer_release(&compressed);
+  anygm_synthetic_content_destroy(&fixture);
+}
+
 int main(void){
+  memory_pipeline();
   merge_destinations(); lifecycle(); replacement();
   puts("Layered content overrides, payload selection, Reset and state identity: ok");
   return 0;

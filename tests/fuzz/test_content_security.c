@@ -2178,6 +2178,110 @@ static int cache_producer_change_case(const AnygmHostServices *services,const ch
 }
 
 
+static int input_pipeline_cases(const AnygmHostServices *services,const char *root){
+  char directory[600],payload[700],ini[700],anchor[700],resolved[1536],assets[1536],overrides[4096];
+  if(snprintf(directory,sizeof directory,"%s/input-pipelines",root)>=(int)sizeof directory ||
+     mkdir(directory,0700) ||
+     snprintf(payload,sizeof payload,"%s/wrapper.win",directory)>=(int)sizeof payload ||
+     snprintf(ini,sizeof ini,"%s/anygm.ini",directory)>=(int)sizeof ini ||
+     snprintf(anchor,sizeof anchor,"%s/content.anygm",directory)>=(int)sizeof anchor)
+    return fail("could not create input-pipeline paths");
+  const uint8_t form[]={'F','O','R','M',0,0,0,0};
+  const char archive_anchor[]="[anygm]\npayload=data.win\n[overrides]\n$archive_marker=11\n"
+    "[transforms]\nretained=buffer retained(){return slice(0,input_size);}\n";
+  ZipEntry entries[]={
+    {(const uint8_t*)"data.win",8,form,sizeof form,sizeof form,0,0,0,0},
+    {(const uint8_t*)"member.anygm",12,(const uint8_t*)archive_anchor,
+     sizeof archive_anchor-1,sizeof archive_anchor-1,0,0,0,0}
+  };
+  Buffer archive={0},wrapped={0};
+  uint8_t prefix[64]={'W','R','A','P'},digest[32];
+  if(!build_zip(entries,2,&archive) || !buffer_bytes(&wrapped,prefix,sizeof prefix) ||
+     !buffer_bytes(&wrapped,archive.data,archive.size)) return fail("could not build wrapped ZIP");
+  uint8_t *examples=NULL; size_t examples_size=0;
+  if(!read_file("examples/input_transforms.ini",&examples,&examples_size)) return fail("cannot read distributed adapters");
+  char hex[65],member_hex[65],selection[1024];
+  gml_sha256(wrapped.data,wrapped.size,digest);
+  for(size_t i=0;i<32;i++) snprintf(hex+i*2,3,"%02x",digest[i]);
+  gml_sha256(form,sizeof form,digest);
+  for(size_t i=0;i<32;i++) snprintf(member_hex+i*2,3,"%02x",digest[i]);
+  snprintf(selection,sizeof selection,
+    "\n[sha256:%s.pipelines]\ninput=embedded_zip\n"
+    "[sha256:%s.overrides]\n$source_marker=3\n"
+    "[sha256:%s.overrides]\n$wrong_identity=99\n",hex,hex,member_hex);
+  Buffer config={0};
+  int ok=buffer_bytes(&config,examples,examples_size) && buffer_bytes(&config,selection,strlen(selection)) &&
+    write_file(payload,wrapped.data,wrapped.size) && write_file(ini,config.data,config.size);
+  free(examples); free(config.data); free(archive.data);
+  AnygmContentRouter router={0}; router.host=services; router.cache_directory=directory;
+  router.system_directory=directory; router.log=fixture_log;
+  if(!ok || !anygm_content_resolve_path(&router,payload,resolved,sizeof resolved,assets,sizeof assets,
+       overrides,sizeof overrides) || !strstr(overrides,"$source_marker=3") ||
+     !strstr(overrides,"$archive_marker=11") || strstr(overrides,"$wrong_identity"))
+    return fail("wrapped ZIP lost original identity or archive directives");
+  /* Empty asset_root means the resolved image's own directory, not the original
+   * source directory. That is the archive reader's ordinary contract. */
+  if(!assets[0]) anygm_content_path_parent(resolved,assets,sizeof assets);
+  char extraction_prefix[720];
+  snprintf(extraction_prefix,sizeof extraction_prefix,"%s/payload-",directory);
+  if(strncmp(assets,extraction_prefix,strlen(extraction_prefix)) ||
+     !strstr(assets,"-anygm-archive")) return fail("wrapped ZIP did not retain extracted assets");
+  uint8_t observed[8];
+  if(!read_prefix(resolved,observed,sizeof observed) || memcmp(observed,form,sizeof form))
+    return fail("wrapped ZIP did not reach the ordinary data reader");
+  uint8_t *unchanged=NULL; size_t unchanged_size=0;
+  if(!read_file(payload,&unchanged,&unchanged_size) || unchanged_size!=wrapped.size ||
+     memcmp(unchanged,wrapped.data,wrapped.size)) return fail("input adapter modified original content");
+  free(unchanged);
+  if(!anygm_content_resolve_path(&router,payload,resolved,sizeof resolved,assets,sizeof assets,
+       overrides,sizeof overrides) || !strstr(overrides,"$source_marker=3") ||
+     !strstr(overrides,"$archive_marker=11")) return fail("warm adapted ZIP lost configuration");
+  /* Normalizing an archive member cannot reset the global nesting budget. The
+   * wrapped ZIP consumes one level after the ordinary outer archives. */
+  Buffer nested={0};
+  for(unsigned level=1;level<=ANYGM_CONTENT_MAX_NESTING_LEVELS;level++){
+    const uint8_t *name=(const uint8_t*)(level==1?"wrapper.win":"nested.zip");
+    const uint8_t *bytes=level==1?wrapped.data:nested.data;
+    size_t length=level==1?wrapped.size:nested.size;
+    ZipEntry member={name,strlen((const char*)name),bytes,(uint32_t)length,(uint32_t)length,0,0,0,0};
+    Buffer next={0};
+    if(!build_zip(&member,1,&next)) return fail("cannot build adapter nesting boundary");
+    free(nested.data); nested=next;
+    char nested_path[720];
+    snprintf(nested_path,sizeof nested_path,"%s/nested-%u.zip",directory,level);
+    if(!write_file(nested_path,nested.data,nested.size)) return fail("cannot write adapter nesting boundary");
+    int accepted=anygm_content_resolve_path(&router,nested_path,resolved,sizeof resolved,
+      assets,sizeof assets,overrides,sizeof overrides)==ANYGM_CONTENT_RESOLVE_OK;
+    if(accepted!=(level<ANYGM_CONTENT_MAX_NESTING_LEVELS))
+      return fail("input adaptation changed the archive nesting limit");
+    if(!accepted && (resolved[0] || overrides[0])) return fail("nesting rejection published partial results");
+  }
+  free(nested.data);
+  const char explicit_adapter[]="[anygm]\npayload=wrapper.win\n[pipelines]\ninput=embedded_zip\n";
+  if(!write_file(anchor,explicit_adapter,sizeof explicit_adapter-1u)) return fail("cannot write adapter anchor");
+  /* The adapter only locates the envelope. Member checksum validation remains
+   * mandatory in the existing archive reader after successful transformation. */
+  wrapped.data[64+30+8]^=1;
+  if(!write_file(payload,wrapped.data,wrapped.size) ||
+     anygm_content_resolve_path(&router,anchor,resolved,sizeof resolved,assets,sizeof assets,
+       overrides,sizeof overrides) || resolved[0] || overrides[0])
+    return fail("a transformed ZIP bypassed member integrity checks");
+  free(wrapped.data);
+  Fixture project={{0},0};
+  Buffer project_wrapper={0};
+  const char project_adapter[]="[anygm]\npayload=project.bin\n[pipelines]\ninput=header_payload\n";
+  snprintf(payload,sizeof payload,"%s/project.bin",directory);
+  ok=build_project_fixture(600,&project) && buffer_u32(&project_wrapper,4) &&
+    buffer_bytes(&project_wrapper,project.data,project.size) &&
+    write_file(payload,project_wrapper.data,project_wrapper.size) &&
+    write_file(anchor,project_adapter,sizeof project_adapter-1u);
+  free(project_wrapper.data);
+  if(!ok || anygm_content_resolve_path(&router,anchor,resolved,sizeof resolved,assets,sizeof assets,
+       overrides,sizeof overrides)!=ANYGM_CONTENT_RESOLVE_OK || strcmp(assets,directory) ||
+     !read_prefix(resolved,observed,4) || memcmp(observed,"FORM",4))
+    return fail("normalized source project lost its structural importer or original assets");
+  return 1;
+}
 static int transform_configuration_cases(const AnygmHostServices *services,const char *root){
   char directory[600],system[700],ini[800],payload[800],anchor[800],second[800],resolved[1024];
   if(snprintf(directory,sizeof directory,"%s/transform-cases",root)>=(int)sizeof directory ||
@@ -2222,6 +2326,18 @@ static int transform_configuration_cases(const AnygmHostServices *services,const
     return fail("ambiguous sibling anchors selected a transform");
   if(!anygm_content_resolve_path(&router,anchor,resolved,sizeof resolved,NULL,0,NULL,0))
     return fail("an explicit anchor was superseded by ambiguous sibling anchors");
+  const char pipeline[]="[anygm]\npayload=project.gmk\n[transforms]\n"
+    "copy=buffer copy(){ /* [overrides] is only a comment */ return slice(0,input_size); }\n"
+    "[pipelines]\nclassic.project.7=copy|copy\n";
+  if(!write_file(anchor,pipeline,sizeof pipeline-1u) ||
+     !anygm_content_resolve_path(&router,anchor,resolved,sizeof resolved,NULL,0,overrides,sizeof overrides) ||
+     overrides[0]) return fail("an anchor pipeline failed or injected an override");
+  const char broken_pipeline[]="[anygm]\npayload=project.gmk\n[pipelines]\n"
+    /* Retired adapter declaration omitted from unpublished history. */ "";
+  if(!write_file(anchor,broken_pipeline,sizeof broken_pipeline-1u) ||
+     anygm_content_resolve_path(&router,anchor,resolved,sizeof resolved,NULL,0,overrides,sizeof overrides) ||
+     resolved[0] || overrides[0]) return fail("a malformed anchor pipeline published a result");
+  if(!write_file(anchor,pipeline,sizeof pipeline-1u)) return fail("could not restore the anchor pipeline");
   const char invalid[]="[transforms]\nclassic.project.7=not-a-program:\n";
   if(!write_file(ini,invalid,sizeof invalid-1u)) return fail("could not write invalid configuration");
   strcpy(resolved,"stale");
@@ -2333,6 +2449,7 @@ int main(void){
          archive_advanced_anchor_cases(&services,root) &&
          direct_anchor_cases(&services,root) &&
          transform_configuration_cases(&services,root) &&
+         input_pipeline_cases(&services,root) &&
          selected_configuration_cases(&services,root);
   ZipEntry pair[2]={traversal,safe};
   ok=ok&&invalid_case(&services,root,"traversal.zip",pair,2);

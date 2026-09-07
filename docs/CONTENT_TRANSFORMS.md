@@ -1,7 +1,7 @@
 <!-- SPDX-License-Identifier: MIT -->
 <!-- Copyright (c) 2026 retrodiv <retrodiv@proton.me> -->
 
-# External content transforms
+# Content transformation pipelines
 
 The bounded transform interpreter operates only on supplied byte buffers. It contains no
 format-specific program, native-code loader, filesystem instruction, network instruction,
@@ -71,9 +71,119 @@ example = buffer edit_bytes() {
 }
 ```
 
+## Ordered pipelines
+
+Functions are reusable buffer operations. A `[pipelines]` section declares an ordered chain of
+functions, other pipelines, and explicitly selected built-in steps. All declarations share the
+same case-sensitive namespace; `builtin.` is reserved. The matching
+`[sha256:<digest>.pipelines]` section follows the same layering rules as source functions.
+A higher-priority entry replaces the whole chain, not individual steps. Changing the chain order
+or any referenced function changes the configuration identity. Source declaration order and
+insignificant whitespace do not.
+
+```ini
+[transforms]
+unwrap = buffer remove_prefix() {
+    if (input_size < 4 || read32(input, 0) != 0x50415257) reject();
+    return slice(4, input_size - 4);
+}
+header = buffer normalize_header() {
+    if (input_size < 4) reject();
+    write32(work, 0, 0x4d524f46);
+    return slice(0, input_size);
+}
+
+[pipelines]
+wrapped_image = unwrap | builtin.zlib:1048576 | header
+word_image = builtin.byteswap32
+```
+
+These are explicit container-prefix, compression, header and byte-order adaptations. Declaring
+an arbitrary pipeline does not automatically run it or discover matching content. Its consumer
+must select it. No installed module directory is searched and no native plugin is loaded.
+
+## Preparing an input source
+
+The content router selects the entry named `input`, when declared, before parsing a source.
+It can be either a function or a pipeline. Declare reusable operations under other names and
+select them in the intended anchor or original-file SHA-256 scope, for example:
+
+```ini
+[anygm]
+payload=wrapped.bin
+[pipelines]
+input=wrapped_image
+```
+
+Here `wrapped_image` is supplied by the system INI example above. Arbitrary filenames can be
+selected through an anchor or a portable host; a frontend may restrict its file picker to the
+core's advertised extensions. The input is treated as data; no code is executed.
+
+Without an `input` entry the ordinary parser path is unchanged. A selected entry that rejects
+causes the load to fail, not a fallback to a different interpretation. To decline a format in a
+default function, return the input unchanged. For path content a byte-identical result resumes
+ordinary routing, including archive-member and adjacent-payload selection. A changed result is
+routed once; it does not recursively run `input` again. Supported results are data images,
+ZIP-compatible archives, and Classic images accepted by the structural reader. A source adapter
+is not a replacement for that reader's structural and integrity checks.
+
+Memory content uses the same selection and interpreter but retains its existing data-image-only
+consumer: a transformed ZIP or source project must be loaded by path. Each successful transformed
+memory result is privately owned, including an identity copy. Unselected memory input remains
+borrowed. Rejection publishes neither an output image nor partially selected configuration.
+
+Path preparation reads a selected original into a bounded buffer, verifies that it still matches
+the digest used for selection, and leaves it untouched. Unmatched hash scopes are inspected with
+streamed hashing rather than input-sized allocations. The prepared cache key includes the original
+digest, effective program/pipeline identity and output digest. Source adaptation runs on every
+load; this cache is disposable storage, not permission to skip a selected operation or validation.
+Hosts sharing a cache must serialize writes or give concurrent loads private cache directories.
+Assets and code companions remain relative to the original source directory, or to the extracted
+member directory for an archive result. Adapted Classic images are re-imported so a primary-file
+fingerprint cannot silently authorize reuse after an external resource changes.
+
+A changed source pins SHA-256 configuration to its original bytes through subsequent parsing and
+archive selection. An ordinary, unadapted ZIP still uses its selected member's identity. See
+`CONTENT_CONFIGURATION.md`; derived bytes and cache paths never select another SHA-256 scope.
+
+## Distributed operations and limits
+
+[`examples/input_transforms.ini`](../examples/input_transforms.ini) supplies tested adapters for
+a standalone ZIP concatenated after a prefix, an explicitly sized wrapper around zlib data, and
+big-endian 32-bit words. The ZIP adapter supports nonempty, ordinary single-disk archives whose
+offsets are relative to the archive itself; ZIP64, split archives, absolute external offsets and
+trailing data outside the ZIP comment are not supported. Extraction identifies the envelope only:
+the ordinary ZIP parser still validates members, checksums, paths and extraction limits.
+
+| Step | Contract |
+| --- | --- |
+| A declared function | Execute the bounded byte program on the previous step's bytes |
+| A declared pipeline | Expand its ordered steps before executing any operation |
+| `builtin.zlib:N` | Inflate an RFC 1950 stream, validating its header and Adler-32; reject preset dictionaries; allocate at most the explicit output capacity `N` |
+| `builtin.deflate:N` | Inflate an RFC 1951 raw stream into at most `N` bytes; raw framing has no checksum |
+| `builtin.byteswap16` | Reverse the two bytes in every word; reject odd input lengths |
+| `builtin.byteswap32` | Reverse the four bytes in every word; reject non-multiple-of-four lengths |
+
+`N` is a positive decimal byte count, at most 1 GiB, without leading zeroes. Set a tight capacity
+for the intended representation; there is no unbounded inflater. Compression uses the existing
+shared media decoder, not a second implementation. Buffer functions still cannot expand their
+input; a native inflate step may do so only within its declared capacity.
+
+At most 16 entries (functions and pipelines together) and 16 expanded leaf steps are allowed.
+References may be forward-declared or supplied by another layer. Before execution the complete
+chain must resolve: missing entries, cycles, excess depth and excess leaf counts reject it without
+executing an earlier leaf. Each program retains its ordinary instruction budget and every
+intermediate image is bounded to 1 GiB. Peak working memory includes the immutable caller input,
+the previous owned intermediate result, the current step's output allocation and interpreter
+scratch. These are resource ceilings, not a promise of short execution time.
+
+The caller's input is never modified. Intermediate results are private to the execution and are
+freed as the next result replaces them. A rejected step publishes no output, including when
+earlier steps succeeded. No partial normalized image is passed to a parser.
+
 ## Source language
 
-Each entry defines one `buffer name()` function with no arguments. Available statements are
+Each source entry defines one `buffer name()` function with no arguments. Available statements are
 initialized `uint64_t` local declarations, assignments, `if`/`else`, `while`, `for`, `break`,
 `continue`, braced blocks, `reject()`, memory writes, and `return slice(offset, length)`.
 Local scope follows blocks and loop declarations; shadowing a visible name is rejected.

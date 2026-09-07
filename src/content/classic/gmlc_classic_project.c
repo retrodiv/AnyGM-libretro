@@ -261,6 +261,14 @@ static int classic_add_empty_room(GmlcProject *project, const char *cache_dir,
 int gmlc_classic_project_load(const AnygmContentTransforms *transforms,GmlcProject *project,const AnygmHostServices *host,
                               const char *project_path,
                               const char *cache_dir, char *err, size_t errcap){
+  return gmlc_classic_project_load_image(transforms,project,host,project_path,NULL,0,
+                                         cache_dir,err,errcap);
+}
+
+int gmlc_classic_project_load_image(const AnygmContentTransforms *transforms,GmlcProject *project,
+                                    const AnygmHostServices *host,const char *project_path,
+                                    const void *image,size_t image_size,const char *cache_dir,
+                                    char *err,size_t errcap){
   if(err && errcap) err[0] = '\0';
   if(!project || !project_path || !*project_path || !cache_dir || !*cache_dir){
     if(err && errcap) snprintf(err, errcap, "classic project: invalid load arguments");
@@ -275,7 +283,8 @@ int gmlc_classic_project_load(const AnygmContentTransforms *transforms,GmlcProje
     return 0;
   }
   GmlcClassicManifest manifest;
-  if(!gmlc_classic_manifest(transforms,project_data,project_size,&manifest,err,errcap)){
+  if(!gmlc_classic_manifest(transforms,image?image:project_data,image?image_size:project_size,
+                            &manifest,err,errcap)){
     free(project_data); return 0;
   }
   if(!gmlc_classic_fidelity_apply(&manifest,host,project_path,project_data,project_size,

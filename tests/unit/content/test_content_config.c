@@ -14,9 +14,11 @@ static void layers(void){
   const char text[]="\xef\xbb\xbf[overrides]\r\nostype|0\r\n"
     "[transforms]\ncopy=buffer copy() { return slice(0,input_size); }\n"
     "keep=buffer keep() { return slice(0,input_size); }\n"
+    "[pipelines]\ninput=copy|keep\n"
     "[sha256:" DIGEST ".transforms]\ncopy=buffer edit() {\n"
     "/*\n[overrides]\n$injected=1\n*/\nwrite8(work,0,'z'); return slice(0,input_size);\n}\n"
     "[sha256:" DIGEST ".overrides]\n; ignored\nostype|6\n"
+    "[sha256:" DIGEST ".pipelines]\ninput=keep|copy\n"
     "[unrelated]\nunchanged=value\n";
   char error[256],overrides[4096];
   AnygmContentConfig *config=anygm_content_config_parse(text,sizeof text-1,error,sizeof error);
@@ -38,7 +40,11 @@ static void layers(void){
   assert(anygm_content_transform_run(set,"copy","abc",3,&output,&size,error,sizeof error));
   assert(size==3 && !memcmp(output,"zbc",3)); free(output);
   assert(anygm_content_transforms_has(set,"keep"));
+  assert(anygm_content_transform_run(set,"input","abc",3,&output,&size,error,sizeof error));
+  assert(size==3 && !memcmp(output,"zbc",3)); free(output);
   assert(anygm_content_transform_run(copy,"copy","abc",3,&output,&size,error,sizeof error));
+  assert(size==3 && !memcmp(output,"abc",3)); free(output);
+  assert(anygm_content_transform_run(copy,"input","abc",3,&output,&size,error,sizeof error));
   assert(size==3 && !memcmp(output,"abc",3)); free(output);
   digest[0]^=1;
   assert(anygm_content_config_apply(config,digest,copy,100,overrides,sizeof overrides,error,sizeof error));
@@ -56,7 +62,11 @@ static void rejection(void){
     "[sha256:" DIGEST ".transforms]\nx=buffer broken() { unknown(); }\n",
     "[sha256:" DIGEST ".transforms]\nx=buffer broken() { /*\n[overrides]\n$x=1\n",
     "[transforms]\nx=buffer copy() {return slice(0,input_size);} trailing\n",
-    "[transforms]\nx=buffer copy() {return slice(0,input_size);}\nx=buffer copy() {}\n"
+    "[transforms]\nx=buffer copy() {return slice(0,input_size);}\nx=buffer copy() {}\n",
+    "[transforms]\nx=buffer copy() {return slice(0,input_size);}\n[pipelines]\nx=builtin.byteswap16\n",
+    "[pipelines]\nx=builtin.byteswap16\n[transforms]\nx=buffer copy() {return slice(0,input_size);}\n",
+    "[sha256:" DIGEST ".pipelines]\nx=builtin.zlib:0\n",
+    "[pipelines]\nx=builtin.byteswap16\n[pipelines]\ny=builtin.byteswap16\n"
   };
   for(size_t i=0;i<sizeof invalid/sizeof invalid[0];i++){
     char error[256];
