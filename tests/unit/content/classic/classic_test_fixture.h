@@ -54,9 +54,18 @@ int build_project_fixture_source(unsigned version, const char *gml, Fixture *out
  * project that can exercise those: optional authored image resources, objects whose events carry
  * authored source, and a room holding instances of them. */
 typedef struct {
+  unsigned kind;     /* 0 code question, 1 begin, 2 end, 3 else, 7 execute code */
+  int target;
+  unsigned negate;
+  const char *source;
+} FixtureAction;
+
+typedef struct {
   int event_type;    /* 0 create, 3 step, 4 collision, 8 draw */
   int event_number;  /* collision: the other object's slot; otherwise the event's own number */
   const char *source;
+  const FixtureAction *actions; /* NULL keeps the ordinary single-code-action representation */
+  int action_count;
 } FixtureEvent;
 
 typedef struct {

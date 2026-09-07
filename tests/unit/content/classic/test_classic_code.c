@@ -153,11 +153,50 @@ static int expect_other_question_context(void){
   return 1;
 }
 
+static int expect_object_question_context(void){
+  for(unsigned negate=0;negate<2;negate++){
+    Fixture payload={{0},0};
+    fixture_u32(&payload,(unsigned)-1); fixture_u32(&payload,0); fixture_u32(&payload,1);
+    fixture_u32(&payload,0); fixture_u32(&payload,0); fixture_u32(&payload,(unsigned)-100);
+    fixture_u32(&payload,(unsigned)-1); fixture_u32(&payload,0);
+    fixture_u32(&payload,0);
+    fixture_u32(&payload,400); fixture_u32(&payload,4);
+    fixture_action(&payload,0,1,2,0,"action_if","x > 0",NULL);
+    payload.data[payload.size-4]=(unsigned char)negate;
+    fixture_action(&payload,0,0,-1,0,"action_move_to","5","6");
+    fixture_action(&payload,3,0,-1,0,"",NULL,NULL);
+    fixture_action(&payload,0,0,-1,0,"action_move_to","7","8");
+    fixture_u32(&payload,(unsigned)-1);
+    GmlcClassicResourceSlot slot={0};
+    slot.exists=1; slot.name="resource_actor";
+    slot.payload=payload.data; slot.payload_size=payload.size;
+    GmlcClassicManifest manifest={0};
+    manifest.inventory.resource_slots[GMLC_CLASSIC_OBJECT]=1;
+    manifest.slots[GMLC_CLASSIC_OBJECT]=&slot;
+    GmlcProject project; fixture_project_clear(&project);
+    project.prefer_memory_files=1;
+    char error[256]={0},expected[512];
+    snprintf(expected,sizeof expected,
+      "if ((function(){\nwith (2) {\nif (%s(action_if(x > 0,0))) return false;\n}\n"
+      "return true;\n})())\naction_move_to(5,6);\nelse\naction_move_to(7,8);\n",
+      negate?"":"!");
+    int ok=gmlc_classic_import_objects(&manifest,&project,"memory",error,sizeof error);
+    char *source=ok?gmlc_project_read_source(&project,project.objects[0].events[0].source_path):NULL;
+    ok=ok && source && !strcmp(source,expected);
+    if(!ok) fprintf(stderr,"object question context: %s\n%s\n",error,source?source:"<no source>");
+    free(source);
+    gmlc_project_free(&project);
+    if(!ok) return 0;
+  }
+  return 1;
+}
+
 AnygmTestGroup classic_test_code_group(void){
   static const AnygmTestCase cases[]={
     {"script-import",expect_script_import},
     {"relative-action-statement",expect_relative_action_statement},
     {"other-question-context",expect_other_question_context},
+    {"object-question-context",expect_object_question_context},
   };
   const AnygmTestGroup group={
     "classic.code",cases,sizeof cases/sizeof cases[0]

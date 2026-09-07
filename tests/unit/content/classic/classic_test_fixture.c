@@ -665,6 +665,25 @@ static void fixture_code_action_list(Fixture *f, const char *source){
   fixture_u32(f,0);   /* negated */
 }
 
+static void fixture_authored_action_list(Fixture *f, const FixtureEvent *event){
+  fixture_u32(f,400);
+  fixture_u32(f,(unsigned)event->action_count);
+  for(int i=0;i<event->action_count;i++){
+    const FixtureAction *a=&event->actions[i];
+    int code=a->kind==7, question=a->kind==0;
+    fixture_u32(f,440); fixture_u32(f,1); fixture_u32(f,code?603:0);
+    fixture_u32(f,a->kind); fixture_u32(f,0); fixture_u32(f,question);
+    fixture_u32(f,1); fixture_u32(f,code || question?2:0);
+    fixture_string(f,""); fixture_string(f,question?a->source:"");
+    fixture_u32(f,code); fixture_u32(f,code);
+    if(code) fixture_u32(f,1);
+    fixture_u32(f,(unsigned)a->target); fixture_u32(f,0);
+    fixture_u32(f,code);
+    if(code) fixture_string(f,a->source);
+    fixture_u32(f,a->negate);
+  }
+}
+
 static void fixture_object_payload(Fixture *f, const FixtureObject *object){
   int last_event_type=0;
   for(int i=0;i<object->event_count;i++)
@@ -683,7 +702,8 @@ static void fixture_object_payload(Fixture *f, const FixtureObject *object){
     for(int i=0;i<object->event_count;i++){
       if(object->events[i].event_type!=type) continue;
       fixture_u32(f,(unsigned)object->events[i].event_number);
-      fixture_code_action_list(f,object->events[i].source);
+      if(object->events[i].actions) fixture_authored_action_list(f,&object->events[i]);
+      else fixture_code_action_list(f,object->events[i].source);
     }
     fixture_u32(f,(unsigned)-1); /* end of this event type */
   }

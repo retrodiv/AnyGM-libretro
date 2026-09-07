@@ -103,15 +103,18 @@ static char *read_source_file(const char *path){
  * shortcut may quietly cap. */
 #define FIXTURE_MAX_OBJECTS 64
 #define FIXTURE_MAX_EVENTS 128
+#define FIXTURE_MAX_ACTIONS 512
 #define FIXTURE_MAX_INSTANCES 96
 
 typedef struct {
   FixtureProgram program;
   FixtureObject objects[FIXTURE_MAX_OBJECTS];
   FixtureEvent events[FIXTURE_MAX_EVENTS];
+  FixtureAction actions[FIXTURE_MAX_ACTIONS];
+  int action_count;
   FixtureInstance instances[FIXTURE_MAX_INSTANCES];
   int event_starts[FIXTURE_MAX_OBJECTS];
-  char *owned[FIXTURE_MAX_EVENTS + FIXTURE_MAX_OBJECTS + 1];
+  char *owned[FIXTURE_MAX_EVENTS + FIXTURE_MAX_OBJECTS + FIXTURE_MAX_ACTIONS + 2];
   int owned_count;
 } ProgramFile;
 
@@ -127,6 +130,52 @@ static char *program_keep(ProgramFile *p, char *text){
   return text;
 }
 
+/* An authored action list exercises the importer, not a hand-lowered imitation
+ * of it. Source paths are relative to this list, as event paths are to a program. */
+static int program_actions_read(const char *path, ProgramFile *p, FixtureEvent *event){
+  FILE *file=fopen(path,"rb");
+  if(!file){ fprintf(stderr,"cannot open action list: %s\n",path); return 0; }
+  char directory[800],line[512];
+  snprintf(directory,sizeof directory,"%s",path);
+  char *slash=strrchr(directory,'/');
+  if(slash) slash[1]='\0'; else directory[0]='\0';
+  int start=p->action_count,ok=1;
+  event->actions=&p->actions[start];
+  while(ok && fgets(line,sizeof line,file)){
+    char keyword[32],source[256],extra[2];
+    if(sscanf(line,"%31s",keyword)!=1 || keyword[0]=='#') continue;
+    if(p->action_count>=FIXTURE_MAX_ACTIONS){ ok=0; break; }
+    FixtureAction *action=&p->actions[p->action_count++];
+    action->target=-1;
+    int fields=0;
+    if(!strcmp(keyword,"code")){
+      action->kind=7;
+      fields=sscanf(line,"%31s %255s %1s",keyword,source,extra);
+      ok=fields==2;
+    } else if(!strcmp(keyword,"question")){
+      fields=sscanf(line,"%31s %d %u %255s %1s",keyword,&action->target,
+                    &action->negate,source,extra);
+      ok=fields==4 && action->negate<=1;
+    } else {
+      if(!strcmp(keyword,"begin")) action->kind=1;
+      else if(!strcmp(keyword,"end")) action->kind=2;
+      else if(!strcmp(keyword,"else")) action->kind=3;
+      else ok=0;
+      if(sscanf(line,"%31s %1s",keyword,extra)!=1) ok=0;
+    }
+    if(ok && fields){
+      char full[1100]; snprintf(full,sizeof full,"%s%s",directory,source);
+      action->source=program_keep(p,read_source_file(full));
+      ok=action->source!=NULL;
+    }
+    if(!ok) fprintf(stderr,"cannot read action line: %s",line);
+  }
+  if(ferror(file)) ok=0;
+  fclose(file);
+  event->action_count=p->action_count-start;
+  return ok && event->action_count>0;
+}
+
 /* A program file describes the smallest project that can exercise a rule needing instances. It
  * carries no identity of its own: names, sources and placements all come from the caller, so this
  * writer stays a container exercise and the tests that use it live elsewhere.
@@ -138,6 +187,7 @@ static char *program_keep(ProgramFile *p, char *text){
  *   startup <source.gml>
  *   object <name> <sprite-slot|-1>
  *   event <type> <number> <source.gml>     applies to the most recent object
+ *   event-actions <type> <number> <list>  code/question/begin/end/else action list
  *   instance <object-slot> <x> <y>
  */
 static int program_read(const char *path, ProgramFile *p){
@@ -196,7 +246,7 @@ static int program_read(const char *path, ProgramFile *p){
         p->event_starts[current]=events;
         ok=p->objects[current].name!=NULL;
       }
-    } else if(!strcmp(keyword,"event")){
+    } else if(!strcmp(keyword,"event") || !strcmp(keyword,"event-actions")){
       if(current<0){ fprintf(stderr,"event before any object\n"); ok=0; }
       else if(events>=FIXTURE_MAX_EVENTS){ fprintf(stderr,"too many events\n"); ok=0; }
       else if(sscanf(line,"%31s %63s %63s %255s",keyword,b,c,a)!=4){ ok=0; }
@@ -204,8 +254,11 @@ static int program_read(const char *path, ProgramFile *p){
         char full[800]; snprintf(full,sizeof(full),"%s%s",directory,a);
         p->events[events].event_type=atoi(b);
         p->events[events].event_number=atoi(c);
-        p->events[events].source=program_keep(p,read_source_file(full));
-        ok=p->events[events].source!=NULL;
+        if(!strcmp(keyword,"event-actions")) ok=program_actions_read(full,p,&p->events[events]);
+        else {
+          p->events[events].source=program_keep(p,read_source_file(full));
+          ok=p->events[events].source!=NULL;
+        }
         if(ok){ events++; p->objects[current].event_count=events-p->event_starts[current]; }
       }
     } else if(!strcmp(keyword,"instance")){
