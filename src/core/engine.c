@@ -2440,13 +2440,22 @@ int engine_graphics_device_expected(const AnygmEngine *engine){
 static void release_fullwidth_gui_extent(AnygmEngine *engine,unsigned next_mode){
   if(engine->lifecycle!=ENGINE_LOADED || next_mode==engine->config.aspect_mode ||
      anygm_policy_has_modern_layer_semantics(&engine->win) ||
-     !engine->aspect_force_active || !aspect_compositor_fullwidth_gen(engine) ||
-     engine->vm.gui_w!=(int)engine->width || engine->vm.gui_h!=(int)engine->height ||
+     !engine->aspect_force_active || !aspect_compositor_fullwidth_gen(engine)) return;
+  if(engine->first_generation_app_owned && engine->wide_app_restore_width>0){
+    GmlRenderPresentationMetrics presentation;
+    gml_render_presentation_metrics(&engine->render,&presentation);
+    if(presentation.application_owned)
+      (void)gml_render_application_surface_ensure_owned(
+        &engine->render,engine->wide_app_restore_width,engine->wide_app_restore_height);
+    engine->wide_app_restore_width=engine->wide_app_restore_height=0;
+  }
+  if(engine->vm.gui_w!=(int)engine->width || engine->vm.gui_h!=(int)engine->height ||
      engine->vm.gui_boot_w<16 || engine->vm.gui_boot_h<16) return;
   /* A first-generation compositor may derive display_set_gui_size() from the live window during
    * Draw GUI. That declaration is authoritative for the frame being drawn, but its forced extent
-   * is stale as soon as the frontend selects another mode. Restore the pre-force drawing space
-   * before presentation is recomputed; the next GUI event can then declare the new live extent. */
+   * is stale as soon as the frontend selects another mode. Its core-owned application surface was
+   * widened from the same old extent, so restore both before presentation is recomputed; the next
+   * GUI event can then declare the new live extent. */
   engine->vm.gui_w=engine->vm.gui_boot_w;
   engine->vm.gui_h=engine->vm.gui_boot_h;
 }

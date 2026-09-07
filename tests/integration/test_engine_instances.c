@@ -959,6 +959,13 @@ static int fullwidth_explicit_gui_transition_policy(void){
          anygm_set_config(engine,&config)==ANYGM_OK &&
          anygm_load(engine,&source,NULL)==ANYGM_OK &&
          anygm_set_runtime_override(engine,0,1u,"?aspect @compositor_fullwidth=1")==ANYGM_OK;
+  /* Exercise the first-generation core-owned application surface that follows the forced window.
+   * The structural fixture itself uses the current project container, so select the older runtime
+   * policy explicitly after load while retaining its already compiled neutral program. */
+  if(ok){
+    engine->win.bytecode=16;
+    engine->first_generation_app_owned=1;
+  }
   AnygmInputFrame input={0}; input.struct_size=sizeof input;
   input.pointer_x=input.pointer_y=-1;
   AnygmFrameOutput output={0}; output.struct_size=sizeof output;
@@ -967,13 +974,19 @@ static int fullwidth_explicit_gui_transition_policy(void){
            engine->vm.gui_w==112 && engine->vm.gui_h==48;
   config.values.aspect_mode=GMC_ASPECT_FORCE_4_3;
   ok=ok && anygm_set_config(engine,&config)==ANYGM_OK;
+  GmlRenderPresentationMetrics presentation={0};
+  if(ok) gml_render_presentation_metrics(&engine->render,&presentation);
+  ok=ok && presentation.application_owned &&
+           presentation.application_width==64 && presentation.application_height==48 &&
+           engine->wide_app_restore_width==0 && engine->wide_app_restore_height==0;
   memset(&output,0,sizeof output); output.struct_size=sizeof output;
   ok=ok && anygm_run_frame(engine,&input,&output)==ANYGM_OK && output.pixels &&
            output.width==64 && output.height==48 &&
            engine->vm.gui_w==64 && engine->vm.gui_h==48 && !engine->canvas_mode;
   if(!ok)
-    fprintf(stderr,"explicit full-width GUI transition: %ux%u GUI %dx%d canvas %d\n",
+    fprintf(stderr,"explicit full-width GUI transition: %ux%u GUI %dx%d app %dx%d canvas %d\n",
             output.width,output.height,engine?engine->vm.gui_w:0,engine?engine->vm.gui_h:0,
+            presentation.application_width,presentation.application_height,
             engine?engine->canvas_mode:0);
   anygm_destroy(engine);
   anygm_synthetic_content_destroy(&fixture);
