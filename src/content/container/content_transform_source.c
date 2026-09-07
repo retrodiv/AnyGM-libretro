@@ -234,7 +234,7 @@ static unsigned expression(SourceParser *p,unsigned minimum){
 static int reserved(const char *name){
   static const char *words[]={"input","work","parameters","scratch","input_size","parameter_size",
     "buffer","uint64_t","if","else","while","for","break","continue","return","true","false",
-    "read8","read32","read64","write8","write32","write64","slice","reject"};
+    "read8","read32","read64","write8","write32","write64","slice","scratch_slice","reject"};
   for(size_t i=0;i<sizeof words/sizeof words[0];i++) if(!strcmp(words[i],name)) return 1;
   return 0;
 }
@@ -312,9 +312,11 @@ static void statement(SourceParser *p){
     else if(p->loop->count==LOOP_JUMPS) source_fail(p,"too many loop exits");
     else p->loop->breaks[p->loop->count++]=emit(p,ANYGM_TRANSFORM_JUMP,0,0,0,0);
   } else if(take(p,"return")){
-    expect(p,"slice"); expect(p,"("); unsigned offset=expression(p,1); expect(p,",");
+    unsigned scratch=take(p,"scratch_slice");
+    if(!scratch) expect(p,"slice");
+    expect(p,"("); unsigned offset=expression(p,1); expect(p,",");
     unsigned length=expression(p,1); expect(p,")"); expect(p,";");
-    emit(p,ANYGM_TRANSFORM_RETURN,0,offset,length,0); reg_free(p,offset); reg_free(p,length);
+    emit(p,ANYGM_TRANSFORM_RETURN,scratch,offset,length,0); reg_free(p,offset); reg_free(p,length);
   } else if(take(p,"reject")){
     expect(p,"("); expect(p,")"); expect(p,";"); emit(p,ANYGM_TRANSFORM_REJECT,0,0,0,0);
   } else if(is(p,"write8") || is(p,"write32") || is(p,"write64")){

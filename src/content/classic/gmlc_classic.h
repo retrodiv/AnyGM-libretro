@@ -217,6 +217,9 @@ int gmlc_classic_probe(const void *data, size_t size, GmlcClassicHeader *out,
 int gmlc_classic_probe_file(const struct AnygmHostServices *host,const char *path,
                             GmlcClassicHeader *out,
                             char *err, size_t errcap);
+/* Complete, side-effect-free structural validator for source candidate selection.
+ * Context is the caller's transform registry for nested records, or NULL. */
+int gmlc_classic_validate_image(void *context,const void *data,size_t size,char *err,size_t errcap);
 /* Parse a normalized project inventory. Memory readers never select the source
  * input adapter; file inventory/manifest entry points prepare that source once.
  * Individual modern resource payloads are not interpreted by this function. */

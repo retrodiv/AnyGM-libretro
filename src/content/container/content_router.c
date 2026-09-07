@@ -8,6 +8,7 @@
 #endif
 #include "content_router.h"
 #include "content_transform_source.h"
+#include "content_source.h"
 #include "content_config.h"
 #include "gml_hash.h"
 #include "embedded_cab.h"
@@ -1509,6 +1510,23 @@ static int load_archive_content(const AnygmContentRouter *router,const char *zpa
                                     content_overrides,content_overrides_size,0);
 }
 
+static int validate_data_candidate(void *context,const void *data,size_t size,
+                                    char *error,size_t error_size){
+  (void)context;
+  GmlWin win={0};
+  int ok=gml_win_from_mem(&win,(uint8_t*)data,size,0)==0;
+  if(!ok && error && error_size) snprintf(error,error_size,"%s",gml_win_last_load_error());
+  gml_win_free(&win);
+  return ok;
+}
+
+static int validate_source_candidate(void *context,const void *data,size_t size,
+                                      char *error,size_t error_size){
+  if(size>=4u && !memcmp(data,"FORM",4))
+    return validate_data_candidate(NULL,data,size,error,error_size);
+  return gmlc_classic_validate_image(context,data,size,error,error_size);
+}
+
 /* A selected source adapter returns a supported byte representation, never an
  * executable callback. It runs once before routing its result. A byte-identical
  * result declines adaptation and leaves ordinary member/adjacent-file selection
@@ -1519,7 +1537,7 @@ static int load_input_pipeline(const AnygmContentRouter *router,const char *path
                                 char *overrides,size_t overrides_size,int depth){
   ContentConfigResolution *config=router->configuration;
   if(!config || config->input_adapted ||
-     (!anygm_content_transforms_has(router->transforms,"input") &&
+     (!anygm_content_source_configured(router->transforms) &&
       !anygm_content_config_has_input(config->ini))) return 0;
   AnygmContentTransforms *selected=anygm_content_transforms_create();
   uint8_t *original=NULL,*image=NULL,digest[32];
@@ -1531,7 +1549,7 @@ static int load_input_pipeline(const AnygmContentRouter *router,const char *path
      !original_file_digest(router,path,digest)) goto done;
   if(!anygm_content_config_apply(config->ini,digest,selected,UINT_MAX,
        specific,sizeof specific,error,sizeof error)) goto done;
-  if(!anygm_content_transforms_has(selected,"input")){ result=0; goto done; }
+  if(!anygm_content_source_configured(selected)){ result=0; goto done; }
   if(!anygm_vfs_read_all(router->host,path,&original,&original_size,
                          (size_t)ANYGM_TRANSFORM_MAX_INPUT_BYTES)) goto done;
   uint8_t observed_digest[32];
@@ -1539,9 +1557,9 @@ static int load_input_pipeline(const AnygmContentRouter *router,const char *path
   if(memcmp(digest,observed_digest,32)){
     snprintf(error,sizeof error,"original bytes changed during selection"); goto done;
   }
-  if(!anygm_content_transform_run(selected,"input",original,original_size,
+  if(!anygm_content_source_prepare(selected,original,original_size,validate_source_candidate,selected,
        &image,&image_size,error,sizeof error)) goto done;
-  if(image_size==original_size && (!image_size || !memcmp(image,original,image_size))){
+  if(!image || (image_size==original_size && (!image_size || !memcmp(image,original,image_size)))){
     result=0; goto done;
   }
   int kind=image_size>=8u && !memcmp(image,"FORM",4)?1:
@@ -2080,9 +2098,9 @@ int anygm_content_prepare_memory(const AnygmContentRouter *router,const void *da
     ok=select_payload_digest(&scoped,digest,"memory image");
   }
   if(ok) ok=collect_override_layers(&scoped,overrides,overrides_size);
-  if(ok && anygm_content_transforms_has(scoped.transforms,"input")){
+  if(ok && anygm_content_source_configured(scoped.transforms)){
     char error[256]={0};
-    ok=anygm_content_transform_run(scoped.transforms,"input",data,size,
+    ok=anygm_content_source_prepare(scoped.transforms,data,size,validate_data_candidate,NULL,
       normalized,normalized_size,error,sizeof error);
     if(!ok) content_log(&scoped,ANYGM_CONTENT_LOG_ERROR,"input pipeline: %s",error);
   }

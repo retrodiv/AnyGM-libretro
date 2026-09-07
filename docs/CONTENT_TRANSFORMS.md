@@ -129,7 +129,7 @@ is not a replacement for that reader's structural and integrity checks.
 
 Memory content uses the same selection and interpreter but retains its existing data-image-only
 consumer: a transformed ZIP or source project must be loaded by path. Each successful transformed
-memory result is privately owned, including an identity copy. Unselected memory input remains
+memory result is privately owned, including a single-step identity copy. Unselected memory input remains
 borrowed. Rejection publishes neither an output image nor partially selected configuration.
 
 Path preparation reads a selected original into a bounded buffer, verifies that it still matches
@@ -145,6 +145,36 @@ fingerprint cannot silently authorize reuse after an external resource changes.
 A changed source pins SHA-256 configuration to its original bytes through subsequent parsing and
 archive selection. An ordinary, unadapted ZIP still uses its selected member's identity. See
 `CONTENT_CONFIGURATION.md`; derived bytes and cache paths never select another SHA-256 scope.
+
+### Selecting among source ranges
+
+An optional `input.probe` entry enumerates byte ranges before `input` runs. Its output is a table
+of little-endian `(uint64_t offset, uint64_t length)` pairs into the unchanged source. It may return
+zero pairs to decline preparation, or at most 64 pairs with strictly increasing offsets. Every
+range and the complete table are checked before any candidate is transformed or validated.
+Overlapping ranges are allowed: each reads the original bytes and owns its separate work buffer.
+
+Each candidate passes through `input` and the existing complete structural reader. Exactly one
+valid image succeeds; invalid candidates do not hide a later valid candidate, and two valid images
+reject as ambiguous even when their bytes agree. A fatal validator failure also rejects selection.
+The candidate callback belongs to compiled reader code and is never accessible to a transform.
+No module, format signature or recovery algorithm is part of the generic range selector.
+
+Candidate selection requires both `input` and a reader. Memory consumers validate data images;
+path consumers validate data or Classic images. Candidate ZIP extraction is not supported; the
+single-source `input` path still supports ZIP normally. A sole whole-source range whose result is
+byte-identical declines preparation before validation, retaining ordinary container/member routing
+and borrowed memory ownership. Candidate selection never reruns `input` on its chosen result.
+
+The distributed `indexed_candidates` example reads an authored `IDX1` envelope: four magic bytes,
+a little-endian 32-bit count, then the range pairs. Select it as `input.probe` and `copy_payload`
+as `input` in an anchor's `[pipelines]` section. This demonstrates directory-based extraction of
+an ordinary embedded data image without any format recovery. A custom probe can construct its
+table in scratch memory and return `scratch_slice(0, count * 16)` instead.
+
+The ordinary per-execution limits apply separately to the probe and each of the at most 64
+candidates; the bound is not a short-running-time guarantee. The selector retains the original,
+the table and at most one chosen image while transforming and validating the next candidate.
 
 ## Distributed operations and limits
 
@@ -185,7 +215,8 @@ earlier steps succeeded. No partial normalized image is passed to a parser.
 
 Each source entry defines one `buffer name()` function with no arguments. Available statements are
 initialized `uint64_t` local declarations, assignments, `if`/`else`, `while`, `for`, `break`,
-`continue`, braced blocks, `reject()`, memory writes, and `return slice(offset, length)`.
+`continue`, braced blocks, `reject()`, memory writes, and `return slice(offset, length)` or
+`return scratch_slice(offset, length)`.
 Local scope follows blocks and loop declarations; shadowing a visible name is rejected.
 There are no uninitialized declarations. Falling through the function rejects the input.
 
@@ -204,7 +235,9 @@ take a memory name and byte offset; `write8`, `write32`, and `write64` also take
 Multi-byte accesses are little-endian and need no alignment. Memory names are `input`
 (read-only), `work` (an input-sized private copy), `parameters` (read-only), and `scratch`
 (zero-initialized, 64 KiB). Writes store the low bits of the value. `slice` returns a byte
-range from work, with ownership transferred to the caller only on success.
+range from work; `scratch_slice` returns a range from scratch, allowing small constructed results
+larger than the original input. Either transfers ownership only on success and frees the other
+private buffer. Slice bounds apply to the selected buffer, including zero-length slices at its end.
 
 `parameters("...");` is optional and allowed only before executable statements in the
 function. Strings and character literals accept printable ASCII and the escapes `\n`, `\r`,
@@ -233,7 +266,7 @@ length, `r1` is the parameter length, and all other registers are zero. Arithmet
 
 | Opcode | Operation |
 | --- | --- |
-| 0 | Return work-buffer slice at `r[a]`, length `r[b]`; `d=0` |
+| 0 | Return slice at `r[a]`, length `r[b]`; `d=0` selects work, `d=1` selects scratch |
 | 1 | Reject input; `d=a=b=0` |
 | 2 | `r[d]=immediate`; `a=b=0` |
 | 3 | `r[d]=r[a]`; `b=0` |

@@ -2,6 +2,7 @@
  * Copyright (c) 2026 retrodiv <retrodiv@proton.me>
  */
 #include "content_transform.h"
+#include "content_source.h"
 #include "gml_image_codec.h"
 #include <assert.h>
 #include <stdio.h>
@@ -388,9 +389,105 @@ static void distributed_adapters(void){
   gml_media_buffer_release(&compressed); anygm_content_transforms_destroy(set);
 }
 
+static void scratch_results(void){
+  const char config[]="[transforms]\nexpand=buffer expand(){write32(scratch,65532,0x44434241);"
+    "return scratch_slice(65532,4);}\nempty=buffer empty(){return scratch_slice(65536,0);}\n"
+    "bad=buffer bad(){return scratch_slice(65536,1);}\n";
+  AnygmContentTransforms *set=anygm_content_transforms_create();
+  uint8_t *output=NULL; size_t size=0; char error[256];
+  assert(set && anygm_content_transforms_parse(set,config,sizeof config-1,error,sizeof error));
+  assert(anygm_content_transform_run(set,"expand",NULL,0,&output,&size,error,sizeof error));
+  assert(size==4 && !memcmp(output,"ABCD",4)); free(output);
+  assert(anygm_content_transform_run(set,"empty",NULL,0,&output,&size,error,sizeof error));
+  assert(output && !size); free(output);
+  assert(!anygm_content_transform_run(set,"bad",NULL,0,&output,&size,error,sizeof error));
+  assert(!output && !size);
+  anygm_content_transforms_destroy(set);
+  Program p={0}; emit(&p,ANYGM_TRANSFORM_RETURN,2,31,0,0); reject(&p);
+}
+
+typedef struct { unsigned calls; int fatal; } CandidateCheck;
+static int validate_candidate(void *context,const void *data,size_t size,char *error,size_t capacity){
+  CandidateCheck *check=context;
+  check->calls++;
+  if(check->fatal && check->calls==(unsigned)check->fatal){
+    snprintf(error,capacity,"fatal validator failure"); return -1;
+  }
+  int valid=size==4 && !memcmp(data,"GOOD",4);
+  if(!valid) snprintf(error,capacity,"invalid authored record");
+  return valid;
+}
+
+static void candidate_sources(void){
+  static const struct { const char *probe; const char *data; int ok; unsigned calls; const char *result; } cases[]={
+    {"write64(scratch,0,0);write64(scratch,8,8);write64(scratch,16,4);write64(scratch,24,4);"
+     "return scratch_slice(0,32);","bad!GOOD",1,2,"GOOD"},
+    {"write64(scratch,0,0);write64(scratch,8,4);write64(scratch,16,4);write64(scratch,24,4);"
+     "return scratch_slice(0,32);","GOODGOOD",0,2,NULL},
+    {"write64(scratch,0,4);write64(scratch,8,4);return scratch_slice(0,16);","bad!bad!",0,1,NULL},
+    {"return scratch_slice(0,0);","ignored",1,0,NULL},
+    {"write64(scratch,8,input_size);return scratch_slice(0,16);","unchanged",1,0,NULL},
+    /* Whole-table checks precede every callback, even when the first row is valid. */
+    {"write64(scratch,8,4);write64(scratch,16,99);return scratch_slice(0,32);","GOOD",0,0,NULL},
+    {"write64(scratch,8,4);return scratch_slice(0,32);","GOOD",0,0,NULL},
+    {"write64(scratch,0,3);write64(scratch,8,2);return scratch_slice(0,16);","GOOD",0,0,NULL},
+    {"write64(scratch,0,0xffffffffffffffff);return scratch_slice(0,16);","GOOD",0,0,NULL},
+    {"return scratch_slice(0,15);","GOOD",0,0,NULL},
+    {"return scratch_slice(0,1040);","GOOD",0,0,NULL},
+  };
+  for(size_t i=0;i<sizeof cases/sizeof cases[0];i++){
+    char config[2048],error[256];
+    snprintf(config,sizeof config,"[transforms]\ninput=buffer copy(){return slice(0,input_size);}\n"
+      "input.probe=buffer probe(){%s}\n",cases[i].probe);
+    AnygmContentTransforms *set=anygm_content_transforms_create();
+    assert(set && anygm_content_transforms_parse(set,config,strlen(config),error,sizeof error));
+    CandidateCheck check={0}; uint8_t *output=(uint8_t*)set; size_t size=99;
+    char original[32]; strcpy(original,cases[i].data);
+    int ok=anygm_content_source_prepare(set,original,strlen(original),validate_candidate,&check,
+      &output,&size,error,sizeof error);
+    assert(ok==cases[i].ok && check.calls==cases[i].calls && !strcmp(original,cases[i].data));
+    if(cases[i].result) assert(size==4 && output && !memcmp(output,cases[i].result,4));
+    else assert(!output && !size);
+    if(!ok) assert(error[0]);
+    free(output); anygm_content_transforms_destroy(set);
+  }
+  /* A fatal validator result cannot silently choose a previously valid candidate. */
+  const char fatal_config[]="[transforms]\ninput=buffer copy(){return slice(0,input_size);}\n"
+    "input.probe=buffer probe(){write64(scratch,8,4);write64(scratch,16,4);write64(scratch,24,4);"
+    "return scratch_slice(0,32);}\n";
+  char error[256]; AnygmContentTransforms *set=anygm_content_transforms_create();
+  assert(set && anygm_content_transforms_parse(set,fatal_config,sizeof fatal_config-1,error,sizeof error));
+  CandidateCheck check={0,2}; uint8_t *output=NULL; size_t size=0;
+  assert(!anygm_content_source_prepare(set,"GOODGOOD",8,validate_candidate,&check,
+    &output,&size,error,sizeof error) && !output && !size && check.calls==2);
+  assert(strstr(error,"fatal validator"));
+  assert(!anygm_content_source_prepare(set,"bad!GOOD",8,NULL,NULL,&output,&size,error,sizeof error));
+  anygm_content_transforms_destroy(set);
+  const char missing[]="[transforms]\ninput.probe=buffer none(){return scratch_slice(0,0);}\n";
+  set=anygm_content_transforms_create();
+  assert(set && anygm_content_transforms_parse(set,missing,sizeof missing-1,error,sizeof error));
+  check.calls=0;
+  assert(!anygm_content_source_prepare(set,"GOOD",4,validate_candidate,&check,
+    &output,&size,error,sizeof error) && !check.calls && !output && !size);
+  anygm_content_transforms_destroy(set);
+  const char maximum[]="[transforms]\ninput=buffer copy(){return slice(0,input_size);}\n"
+    "input.probe=buffer ranges(){for(uint64_t i=0;i<64;i++){write64(scratch,16*i,i);"
+    "write64(scratch,16*i+8,1);}return scratch_slice(0,1024);}\n";
+  uint8_t bytes[64]={0};
+  set=anygm_content_transforms_create();
+  assert(set && anygm_content_transforms_parse(set,maximum,sizeof maximum-1,error,sizeof error));
+  check.calls=0; check.fatal=0;
+  assert(!anygm_content_source_prepare(set,bytes,sizeof bytes,validate_candidate,&check,
+    &output,&size,error,sizeof error) && check.calls==64 && !output && !size);
+  anygm_content_transforms_destroy(set);
+  assert(anygm_content_source_prepare(NULL,NULL,0,NULL,NULL,&output,&size,error,sizeof error));
+  assert(!output && !size);
+}
+
 int main(void){
   arithmetic(); buffers_and_branches(); failures(); configuration(); source_programs(); source_limits();
   pipelines();
   distributed_adapters();
+  scratch_results(); candidate_sources();
   puts("Content transform isolation, validation, and configuration: ok"); return 0;
 }

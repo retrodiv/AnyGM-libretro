@@ -211,6 +211,7 @@ ANYGM_RUNTIME_SOURCES := \
 	src/content/container/content_config.c \
 	src/content/container/content_transform.c \
 	src/content/container/content_pipeline.c \
+	src/content/container/content_source.c \
 	src/content/container/content_transform_source.c \
 	src/content/container/embedded_cab.c \
 	src/content/container/cab_lzx.c \

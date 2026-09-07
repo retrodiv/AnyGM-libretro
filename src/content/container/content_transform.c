@@ -52,7 +52,7 @@ static int valid_program(const uint8_t *code,size_t size){
     } else {
       if(imm) return 0;
       if(op==ANYGM_TRANSFORM_REJECT && (d || a || b)) return 0;
-      if(op==ANYGM_TRANSFORM_RETURN && d) return 0;
+      if(op==ANYGM_TRANSFORM_RETURN && d>1u) return 0;
       if(op==ANYGM_TRANSFORM_MOVE && b) return 0;
     }
   }
@@ -91,10 +91,13 @@ int anygm_content_transform_execute(const void *program,size_t program_size,
     unsigned op=p[0],d=p[1],a=p[2],b=p[3];
     uint64_t imm=read_le(p+4,8),left=registers[a],right=registers[b];
     switch(op){
-      case ANYGM_TRANSFORM_RETURN:
-        if(left>input_size || right>input_size-left){ reason="invalid result slice"; goto rejected; }
-        if(right) memmove(work,work+(size_t)left,(size_t)right);
-        free(scratch); *output=work; *output_size=(size_t)right; return 1;
+      case ANYGM_TRANSFORM_RETURN: {
+        uint8_t *result=d?scratch:work;
+        size_t capacity=d?ANYGM_TRANSFORM_SCRATCH_BYTES:input_size;
+        if(left>capacity || right>capacity-left){ reason="invalid result slice"; goto rejected; }
+        if(right) memmove(result,result+(size_t)left,(size_t)right);
+        free(d?work:scratch); *output=result; *output_size=(size_t)right; return 1;
+      }
       case ANYGM_TRANSFORM_REJECT: reason="program rejected input"; goto rejected;
       case ANYGM_TRANSFORM_CONSTANT: registers[d]=imm; break;
       case ANYGM_TRANSFORM_MOVE: registers[d]=left; break;

@@ -2280,6 +2280,30 @@ static int input_pipeline_cases(const AnygmHostServices *services,const char *ro
        overrides,sizeof overrides)!=ANYGM_CONTENT_RESOLVE_OK || strcmp(assets,directory) ||
      !read_prefix(resolved,observed,4) || memcmp(observed,"FORM",4))
     return fail("normalized source project lost its structural importer or original assets");
+  /* An authored indexed envelope contains a malformed FORM before a valid one.
+   * Its directory only supplies ranges; complete reader validation selects one. */
+  uint8_t indexed[56]={0};
+  memcpy(indexed,"IDX1",4); indexed[4]=2;
+  indexed[8]=40; indexed[16]=8; indexed[24]=48; indexed[32]=8;
+  memcpy(indexed+40,form,8); indexed[44]=1; memcpy(indexed+48,form,8);
+  const char indexed_adapter[]="[anygm]\npayload=project.bin\n[pipelines]\n"
+    "input.probe=indexed_candidates\ninput=copy_payload\n";
+  if(!write_file(payload,indexed,sizeof indexed) ||
+     !write_file(anchor,indexed_adapter,sizeof indexed_adapter-1u) ||
+     anygm_content_resolve_path(&router,anchor,resolved,sizeof resolved,assets,sizeof assets,
+       overrides,sizeof overrides)!=ANYGM_CONTENT_RESOLVE_OK || strcmp(assets,directory) ||
+     !read_prefix(resolved,observed,8) || memcmp(observed,form,8))
+    return fail("indexed envelope did not select its unique complete data image");
+  indexed[44]=0;
+  if(!write_file(payload,indexed,sizeof indexed) ||
+     anygm_content_resolve_path(&router,anchor,resolved,sizeof resolved,assets,sizeof assets,
+       overrides,sizeof overrides) || resolved[0] || assets[0] || overrides[0])
+    return fail("ambiguous indexed envelope published a partial result");
+  indexed[44]=1; indexed[24]=250;
+  if(!write_file(payload,indexed,sizeof indexed) ||
+     anygm_content_resolve_path(&router,anchor,resolved,sizeof resolved,assets,sizeof assets,
+       overrides,sizeof overrides) || resolved[0] || assets[0] || overrides[0])
+    return fail("out-of-bounds indexed directory was accepted");
   return 1;
 }
 static int build_wrapped_project(Fixture *project){

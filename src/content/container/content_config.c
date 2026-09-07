@@ -3,6 +3,7 @@
  */
 #include "content_config.h"
 #include "content_transform_source.h"
+#include "content_source.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -163,7 +164,7 @@ AnygmContentConfig *anygm_content_config_parse(const void *text,size_t size,
       AnygmContentTransforms *validation=anygm_content_transforms_create();
       int ok=document && validation && anygm_content_transforms_parse(validation,document,
         strlen(document),error,error_size);
-      if(ok && anygm_content_transforms_has(validation,"input")) config->has_input=1;
+      if(ok && anygm_content_source_configured(validation)) config->has_input=1;
       free(document); anygm_content_transforms_destroy(validation);
       if(!ok) goto invalid;
     } else {

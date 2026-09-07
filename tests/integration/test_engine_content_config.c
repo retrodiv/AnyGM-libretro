@@ -255,7 +255,55 @@ static void memory_pipeline(void){
   anygm_synthetic_content_destroy(&fixture);
 }
 
+static void candidate_inputs(void){
+  AnygmSyntheticContent fixture;
+  assert(anygm_synthetic_content_create(&fixture));
+  uint8_t *content=NULL,digest[32]; size_t size=0;
+  assert(anygm_synthetic_content_read(&fixture,&content,&size));
+  uint8_t *container=malloc(size*2+8); assert(container);
+  memcpy(container,"FORM\1\0\0\0",8); memcpy(container+8,content,size);
+  gml_sha256(container,size+8,digest);
+  char ini[256],path[256],config[2048],hex[65];
+  for(size_t i=0;i<32;i++) snprintf(hex+i*2,3,"%02x",digest[i]);
+  snprintf(ini,sizeof ini,"%s/anygm.ini",fixture.directory);
+  snprintf(path,sizeof path,"%s/indexed.bin",fixture.directory);
+  snprintf(config,sizeof config,"[transforms]\ninput=buffer copy(){return slice(0,input_size);}\n"
+    "[sha256:%s.transforms]\ninput.probe=buffer ranges(){write64(scratch,8,8);"
+    "write64(scratch,16,8);write64(scratch,24,input_size-8);return scratch_slice(0,32);}\n"
+    "[sha256:%s.overrides]\n$anygm_probe=29\n",hex,hex);
+  write_text(ini,config); write_bytes(path,container,size+8);
+  AnygmHostServices services={0}; services.struct_size=sizeof services;
+  services.abi_version=ANYGM_HOST_SERVICES_VERSION; anygm_stdio_vfs_services_init(&services);
+  AnygmEngine *engine=NULL; assert(anygm_create(&services,&engine)==ANYGM_OK);
+  AnygmContentSource source={0}; source.struct_size=sizeof source;
+  source.system_directory=fixture.directory; source.cache_directory=fixture.directory;
+  source.kind=ANYGM_CONTENT_MEMORY; source.data=container; source.size=size+8;
+  for(int path_input=0;path_input<2;path_input++){
+    if(path_input){ source.kind=ANYGM_CONTENT_PATH; source.path=path; }
+    assert(anygm_load(engine,&source,NULL)==ANYGM_OK);
+    assert(engine->win.size==size && !memcmp(engine->win.data,content,size));
+    frame(engine); assert(gml_global_num(&engine->vm,"anygm_probe")==29);
+    anygm_unload(engine);
+  }
+  assert(!memcmp(container,"FORM\1\0\0\0",8) && !memcmp(container+8,content,size));
+  /* Both valid ranges must reject before either image becomes the live engine. */
+  memcpy(container,content,size); memcpy(container+size,content,size);
+  snprintf(config,sizeof config,"[transforms]\ninput=buffer copy(){return slice(0,input_size);}\n"
+    "input.probe=buffer ranges(){write64(scratch,8,%zu);write64(scratch,16,%zu);"
+    "write64(scratch,24,%zu);return scratch_slice(0,32);}\n",size,size,size);
+  write_text(ini,config); write_bytes(path,container,size*2);
+  source.kind=ANYGM_CONTENT_MEMORY; source.path=NULL; source.size=size*2;
+  for(int path_input=0;path_input<2;path_input++){
+    if(path_input){ source.kind=ANYGM_CONTENT_PATH; source.path=path; }
+    assert(anygm_load(engine,&source,NULL)==ANYGM_ERROR_INVALID_CONTENT);
+    assert(!engine->win.data);
+  }
+  anygm_destroy(engine); free(container); free(content);
+  assert(!remove(ini) && !remove(path)); anygm_synthetic_content_destroy(&fixture);
+}
+
 int main(void){
+  candidate_inputs();
   memory_pipeline();
   merge_destinations(); lifecycle(); replacement();
   puts("Layered content overrides, payload selection, Reset and state identity: ok");

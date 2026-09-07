@@ -60,6 +60,9 @@ this identity. Source inputs routed as `.yyp` or `.yyz` use that source file.
 Memory content uses the supplied image bytes.
 
 An explicitly selected `input` function or pipeline can normalize the source before routing.
+An optional `input.probe` enumerates bounded candidate ranges in that same original source;
+the complete structural reader must select exactly one valid normalized result. Both entries
+follow the ordinary default/anchor/hash layering, with the contract in `CONTENT_TRANSFORMS.md`.
 When its path result differs from the original bytes, the original source's digest remains the
 selector through all subsequent parsing, including selection inside a resulting ZIP. This lets
 one exact wrapped source select both its adapter and its runtime directives. An absent adapter

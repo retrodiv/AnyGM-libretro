@@ -3,6 +3,7 @@
  */
 #include "gmlc_classic.h"
 #include "content_transform.h"
+#include "content_source.h"
 #include "anygm_vfs.h"
 #include "gml_image_codec.h"
 
@@ -2756,13 +2757,21 @@ int gmlc_classic_embedded_project(const AnygmContentTransforms *transforms,const
   return ok;
 }
 
+int gmlc_classic_validate_image(void *context,const void *data,size_t size,char *err,size_t errcap){
+  GmlcClassicManifest manifest={0};
+  int ok=gmlc_classic_manifest(context,data,size,&manifest,err,errcap);
+  gmlc_classic_manifest_free(&manifest);
+  return ok;
+}
+
 static int read_prepared_file(const AnygmContentTransforms *transforms,const AnygmHostServices *host,
                                const char *path,uint8_t **data,size_t *size,char *err,size_t errcap){
   if(!read_file(host,path,data,size,err,errcap)) return 0;
-  if(!anygm_content_transforms_has(transforms,"input")) return 1;
+  if(!anygm_content_source_configured(transforms)) return 1;
   uint8_t *prepared=NULL; size_t prepared_size=0;
-  int ok=anygm_content_transform_run(transforms,"input",*data,*size,
+  int ok=anygm_content_source_prepare(transforms,*data,*size,gmlc_classic_validate_image,(void*)transforms,
     &prepared,&prepared_size,err,errcap);
+  if(ok && !prepared) return 1;
   free(*data); *data=prepared; *size=prepared_size;
   return ok;
 }
