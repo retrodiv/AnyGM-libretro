@@ -131,6 +131,9 @@ CORE_RUNTIME_OBJECTS := $(patsubst %.c,$(BUILD_DIR)/obj/%.o,$(ANYGM_CORE_SOURCES
 LIBRETRO_OBJECTS := $(patsubst %.c,$(BUILD_DIR)/obj/%.o,$(ANYGM_LIBRETRO_SOURCES))
 TEST_HOST_OBJECTS := $(patsubst %.c,$(BUILD_DIR)/obj/%.o,$(ANYGM_TEST_HOST_SOURCES))
 VENDORED_BZIP2_OBJECTS := $(filter $(BUILD_DIR)/obj/src/third_party/bzip2/%,$(RUNTIME_OBJECTS))
+DELTA_OBJECTS := $(patsubst %.c,$(BUILD_DIR)/obj/%.o,$(ANYGM_DELTA_SOURCES))
+VENDORED_LZMA_OBJECTS := $(patsubst %.c,$(BUILD_DIR)/obj/%.o,$(ANYGM_LZMA_SOURCES))
+VENDORED_XDELTA_OBJECT := $(BUILD_DIR)/obj/src/third_party/xdelta3/xdelta3.o
 VENDORED_PXTONE_OBJECTS := $(filter $(BUILD_DIR)/obj/src/third_party/pxtone/%,$(RUNTIME_OBJECTS))
 VENDORED_WW2OGG_OBJECTS := $(filter $(BUILD_DIR)/obj/src/third_party/ww2ogg/%,$(RUNTIME_OBJECTS))
 WWISE_ADAPTER_OBJECT := $(BUILD_DIR)/obj/src/audio/banks/gml_wwise.o
@@ -153,7 +156,7 @@ VIDEO_RENDERER_TESTS := test_renderer_effects test_renderer_postprocess test_ren
 ifneq ($(HARDWARE_RENDER),0)
 VIDEO_RENDERER_TESTS += test_gpu
 endif
-CONTENT_TESTS := test_bytecode test_package test_classic test_sprite_masks test_content_transform test_content_config
+CONTENT_TESTS := test_bytecode test_package test_classic test_sprite_masks test_content_transform test_content_config test_content_delta
 MEDIA_TESTS := test_hash test_image_codec test_font_raster
 AUDIO_TESTS := test_mp3_detect
 COMPATIBILITY_TESTS := test_compatibility
@@ -217,6 +220,12 @@ $(LIBRETRO_OBJECTS): $(BUILD_DIR)/obj/%.o: %.c
 
 # Keep warnings from imported bzip2 sources isolated without weakening diagnostics for owned code.
 $(VENDORED_BZIP2_OBJECTS): CFLAGS += -Wno-unused-parameter -Wno-implicit-fallthrough
+
+$(VENDORED_LZMA_OBJECTS): CPPFLAGS += $(ANYGM_LZMA_CPPFLAGS)
+$(VENDORED_XDELTA_OBJECT): CPPFLAGS += -Isrc/third_party/liblzma/api
+# Upstream shares encoder/decoder helpers and switch-based state machines.
+# Isolate only these imported-code diagnostics; owned wrappers retain -Werror.
+$(VENDORED_XDELTA_OBJECT): CFLAGS += -Wno-unused-parameter -Wno-unused-function -Wno-implicit-fallthrough
 
 # Keep imported pxtone warnings isolated without weakening diagnostics for owned runtime code.
 # The adapter includes upstream headers, whose declarations trigger these two diagnostics, but
@@ -423,6 +432,11 @@ $(TEST_DIR)/test_hash: tests/unit/media/test_hash.c src/media/gml_hash.c
 	mkdir -p $(dir $@)
 	$(CC) $(CPPFLAGS) $(CFLAGS) $^ -o $@
 
+$(TEST_DIR)/test_content_delta: tests/unit/content/test_content_delta.c \
+	tests/support/anygm_test_runner.c tests/fixtures/vcdiff/fixtures.h $(DELTA_OBJECTS)
+	mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(filter %.c %.o,$^) -o $@
+
 $(TEST_DIR)/test_content_transform: tests/unit/content/test_content_transform.c \
 	src/content/container/content_transform.c src/content/container/content_pipeline.c \
 	src/content/container/content_source.c \
@@ -515,7 +529,7 @@ endif
 warnings-check: CFLAGS += -Werror
 warnings-check: core
 
-architecture-check: builtin-registry-check provenance-check notices-check audio-data-check
+architecture-check: builtin-registry-check provenance-check notices-check audio-data-check delta-vendor-check
 	tests/architecture/check_compatibility_boundaries.sh
 	tests/architecture/check_code_map.sh
 	tests/architecture/check_graphics_boundaries.sh
@@ -523,6 +537,10 @@ architecture-check: builtin-registry-check provenance-check notices-check audio-
 	python3 tests/architecture/check_cab_boundaries.py
 	python3 tests/architecture/check_nsis_boundaries.py
 	tests/architecture/check_numeric_conversions.sh
+
+.PHONY: delta-vendor-check
+delta-vendor-check:
+	python3 tests/architecture/check_delta_vendor.py
 
 # Check the internal files named by provenance directives against their recorded digests.
 provenance-check:

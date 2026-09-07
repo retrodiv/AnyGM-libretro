@@ -3,6 +3,20 @@
 
 # Generated-data provenance
 
+## VCDIFF decoder and synthetic patches
+
+The upstream releases, licenses, decoder-only configuration and scoped modifications are
+documented in `src/third_party/xdelta3/README.anygm.md` and
+`src/third_party/liblzma/README.anygm.md`. `src/third_party/delta-import.json` lists each retained
+upstream path and whether its vendored copy is modified. `make delta-vendor-check` checks that
+inventory, modification notices and raw API ownership. When explicitly supplied with both
+independently verified upstream trees, the checker also compares each retained file byte-for-byte.
+The normal check does not verify upstream identity, and no build downloads dependencies.
+
+`tests/fixtures/vcdiff/README.md` documents the independent encoder recipe for the authored
+byte-sequence patches in `fixtures.h`. Ordinary tests reconstruct the expected output directly
+from the synthetic recipe without an encoder or external payload.
+
 ## Embedded Cabinet decompressor
 
 The embedded Cabinet path uses `src/content/container/cab_lzx.c` for

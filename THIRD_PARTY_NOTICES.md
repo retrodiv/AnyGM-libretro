@@ -10,6 +10,8 @@ including their original copyright years.
 | Component | Location | Terms |
 | --- | --- | --- |
 | bzip2 | `src/third_party/bzip2/` | bzip2 license in `LICENSES/bzip2.txt` |
+| xdelta3 VCDIFF decoder, with bounded-memory integration changes | `src/third_party/xdelta3/` | Apache-2.0, reproduced in `LICENSES/xdelta3.txt` |
+| liblzma decoder from XZ Utils | `src/third_party/liblzma/` | 0BSD, reproduced in `LICENSES/liblzma.txt` |
 | libretro API header | `src/third_party/libretro/include/libretro.h` | MIT, reproduced in `LICENSES/libretro.txt` |
 | minimp3 | `src/third_party/minimp3/` | CC0, reproduced in `LICENSES/minimp3.txt` |
 | Pxtone playback sources and fork contributions | `src/third_party/pxtone/` | Studio Pixel's playback-source terms in `LICENSES/pxtone.txt` and `src/third_party/pxtone/LICENSE.txt`; source and contributions credited below |

@@ -3,6 +3,41 @@
 
 TARGET_NAME := anygm
 
+# Decoder sources and include paths are owned here for all native consumers.
+ANYGM_LZMA_SOURCES := \
+	src/third_party/liblzma/check/check.c \
+	src/third_party/liblzma/check/crc32_fast.c \
+	src/third_party/liblzma/check/crc64_fast.c \
+	src/third_party/liblzma/check/sha256.c \
+	src/third_party/liblzma/common/common.c \
+	src/third_party/liblzma/common/block_util.c \
+	src/third_party/liblzma/common/filter_common.c \
+	src/third_party/liblzma/common/filter_decoder.c \
+	src/third_party/liblzma/common/filter_flags_decoder.c \
+	src/third_party/liblzma/common/block_decoder.c \
+	src/third_party/liblzma/common/block_header_decoder.c \
+	src/third_party/liblzma/common/index_hash.c \
+	src/third_party/liblzma/common/stream_decoder.c \
+	src/third_party/liblzma/common/stream_flags_common.c \
+	src/third_party/liblzma/common/stream_flags_decoder.c \
+	src/third_party/liblzma/common/vli_decoder.c \
+	src/third_party/liblzma/common/vli_size.c \
+	src/third_party/liblzma/lz/lz_decoder.c \
+	src/third_party/liblzma/lzma/lzma_decoder.c \
+	src/third_party/liblzma/lzma/lzma2_decoder.c
+
+ANYGM_LZMA_CPPFLAGS := -include src/third_party/liblzma/anygm_config.h \
+	-Isrc/third_party/liblzma/api -Isrc/third_party/liblzma/common_support \
+	-Isrc/third_party/liblzma/common -Isrc/third_party/liblzma/check \
+	-Isrc/third_party/liblzma/lz -Isrc/third_party/liblzma/lzma \
+	-Isrc/third_party/liblzma/rangecoder -Isrc/third_party/liblzma/simple \
+	-Isrc/third_party/liblzma/delta
+
+ANYGM_DELTA_SOURCES := \
+	src/content/container/content_delta.c \
+	src/third_party/xdelta3/xdelta3.c \
+	$(ANYGM_LZMA_SOURCES)
+
 ANYGM_BZIP2_SOURCES := \
 	src/third_party/bzip2/blocksort.c \
 	src/third_party/bzip2/bzlib.c \
@@ -201,6 +236,7 @@ ANYGM_BUILTIN_SOURCES := \
 	src/runtime/builtins/gml_builtin_state.c
 
 ANYGM_RUNTIME_SOURCES := \
+	$(ANYGM_DELTA_SOURCES) \
 	src/host/anygm_host.c \
 	src/host/anygm_vfs.c \
 	src/host/anygm_libm_compat.c \

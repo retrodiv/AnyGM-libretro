@@ -4,6 +4,16 @@ Copyright (c) 2026 retrodiv <retrodiv@proton.me>
 The identification above covers this project's original explanatory text, not
 third-party code or notices. Those retain their respective licenses and rights.
 
+This product includes a modified in-memory decoder from xdelta3:
+Copyright 2016 Joshua MacDonald
+Licensed under the Apache License, Version 2.0.
+The complete license is in LICENSES/xdelta3.txt; the origin and modifications
+are recorded in src/third_party/xdelta3/README.anygm.md.
+
+This product also includes the liblzma decoder from XZ Utils under 0BSD.
+Its terms are in LICENSES/liblzma.txt and its source provenance is recorded in
+src/third_party/liblzma/README.anygm.md.
+
 The FMOD Studio bank metadata reader in src/audio/banks/gml_fmod.c is adapted from
 FModBankParser (https://github.com/Masusder/FModBankParser), distributed under the
 Apache License 2.0. The C implementation uses local buffers and integrates metadata
