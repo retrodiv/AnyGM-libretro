@@ -9,12 +9,18 @@ or implicit fallback.
 
 ## Configuration representation
 
-A `[transforms]` section contains `name=program-hex:parameter-hex` declarations. Names are
-case-sensitive ASCII lowercase letters, digits, dots, underscores, and hyphens, with a maximum
-of 63 bytes. Hexadecimal is case-insensitive. The colon is mandatory; empty parameters are
-allowed. Spaces around the name and value are ignored, but not within hexadecimal data.
-Blank lines and whole-line `#` or `;` comments are ignored. Other sections are not interpreted
-by the transform parser. Duplicate names or duplicate transform sections in one document fail.
+A `[transforms]` section contains `name = buffer function_name() { ... }` declarations.
+The function may span multiple lines and is compiled at configuration load into the existing
+bounded instruction interpreter. The INI key selects the transform; the descriptive function
+name does not affect dispatch. Keys are case-sensitive ASCII lowercase letters, digits, dots,
+underscores, and hyphens, with a maximum of 63 bytes.
+
+Blank lines and whole-line `#` or `;` comments outside functions are ignored. Inside a function,
+use C-style `//` or `/* ... */` comments. The closing brace must end its declaration line,
+apart from spaces or tabs. Other INI sections are not interpreted by the transform parser.
+Duplicate keys or duplicate transform sections in one document fail. UTF-8 BOM and LF, CRLF,
+and CR line endings are accepted. The former hexadecimal declaration syntax is rejected;
+configuration files must contain source functions.
 
 The frontend's system directory optionally supplies `anygm.ini`; no working-directory or
 content-directory file of that name is guessed. Libretro obtains this directory through
@@ -37,17 +43,75 @@ savestates. Internal replacement loads retain the system directory but select th
 own anchors; a launch anchor's transform declarations are not implicitly inherited by another
 payload.
 
-The following synthetic program returns the supplied buffer unchanged:
+The following synthetic function returns the supplied buffer unchanged:
 
 ```ini
 [transforms]
-identity=00001f000000000000000000:
+identity = buffer copy_input() {
+    return slice(0, input_size);
+}
 ```
 
-Limits are 512 KiB per configuration, 16 programs, 12 KiB per program, and 4 KiB of parameters
-per program. These are limits, not allocations derived from untrusted length words.
+An optional first statement supplies read-only parameter bytes as a string. This synthetic
+example edits each work byte with a repeating parameter, keeping input unchanged:
 
-## Instruction format
+```ini
+[transforms]
+example = buffer edit_bytes() {
+    parameters("ABC");
+    for (uint64_t offset = 0; offset < input_size; offset++) {
+        uint64_t value = read8(input, offset);
+        uint64_t parameter = read8(parameters, offset % parameter_size);
+        write8(work, offset, value ^ parameter);
+    }
+    return slice(0, input_size);
+}
+```
+
+## Source language
+
+Each entry defines one `buffer name()` function with no arguments. Available statements are
+initialized `uint64_t` local declarations, assignments, `if`/`else`, `while`, `for`, `break`,
+`continue`, braced blocks, `reject()`, memory writes, and `return slice(offset, length)`.
+Local scope follows blocks and loop declarations; shadowing a visible name is rejected.
+There are no uninitialized declarations. Falling through the function rejects the input.
+
+Values are unsigned 64-bit integers, including literals and character literals. Arithmetic
+wraps at 64 bits; narrower arithmetic needs an explicit mask. Decimal and hexadecimal literals
+are accepted without suffixes; octal and floating-point literals are rejected. `true` and `false`
+are 1 and 0. Operators use C precedence and associativity: unary `+ - ! ~`, arithmetic
+`+ - * / %`, shifts `<< >>`, comparisons `== != < <= > >=`, bitwise `& ^ |`, and logical
+`&& ||`. Logical operations normalize to 0 or 1 and short-circuit. Comparisons are unsigned.
+Assignments support `= += -= *= /= %= &= |= ^=`; statement updates also support `name++`
+and `name--`. In a `for`, initialization and update each accept one assignment or update;
+initialization may instead declare a local. Empty clauses are allowed.
+
+`input_size` and `parameter_size` are read-only byte counts. `read8`, `read32`, and `read64`
+take a memory name and byte offset; `write8`, `write32`, and `write64` also take a value.
+Multi-byte accesses are little-endian and need no alignment. Memory names are `input`
+(read-only), `work` (an input-sized private copy), `parameters` (read-only), and `scratch`
+(zero-initialized, 64 KiB). Writes store the low bits of the value. `slice` returns a byte
+range from work, with ownership transferred to the caller only on success.
+
+`parameters("...");` is optional and allowed only before executable statements in the
+function. Strings and character literals accept printable ASCII and the escapes `\n`, `\r`,
+`\t`, `\0`, `\\`, `\"`, `\'`, and `\xHH` (exactly two hexadecimal digits). There is no
+implicit terminating zero byte. Parameters are part of the complete entry, so overriding a
+function also replaces its parameters. User-function calls, pointers, arrays, casts, includes,
+allocation, native functions and host capabilities are unavailable.
+
+Limits are 512 KiB per configuration, 16 programs, 64 KiB of source per function, 12 KiB of
+compiled instructions, and 4 KiB of parameters per program. The compiler bounds syntax nesting
+to 64 levels and `break` sites to 128 per loop. Its 32 registers hold the two read-only sizes,
+live locals, and expression temporaries; overly complex expressions or too many live variables
+are rejected. Compilation validates all source, including unreachable code, before selecting
+an entry. Diagnostics identify the transform key and line/column relative to its function value.
+Whitespace, comments and local/function names do not affect the compiled program identity.
+
+## Internal instruction format
+
+Instructions are an internal compilation result, not INI syntax. The interpreter and direct
+execution contract remain available for synthetic low-level validation.
 
 Each instruction is exactly twelve bytes: `opcode, d, a, b, immediate[8]`. The immediate is
 unsigned little-endian. There are 32 unsigned 64-bit registers. Initially `r0` is the input
@@ -95,5 +159,7 @@ scheduling as described in `SECURITY_MODEL.md`.
 The revision-selected adaptation interface is omitted from this unpublished
 history. Earlier snapshots with omitted implementations are not supported builds.
 
-`make check TEST=content_transform` exercises synthetic arithmetic, buffer isolation, malformed
-programs, execution exhaustion, missing programs, transactional overrides, and identity changes.
+`make check TEST=content_transform` exercises source compilation, scopes, short-circuit control
+flow, diagnostics, arithmetic, buffer isolation, malformed source/instructions, execution
+exhaustion, missing programs, transactional overrides, and identity changes. Content-security
+tests also prove that section-shaped text inside source comments cannot become anchor overrides.

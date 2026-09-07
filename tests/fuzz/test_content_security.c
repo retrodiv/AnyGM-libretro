@@ -2168,9 +2168,10 @@ static int transform_configuration_cases(const AnygmHostServices *services,const
   router.cache_directory=directory;
   router.system_directory=system;
   router.log=fixture_log;
-  const char identity[]="[transforms]\nclassic.project.7=00001f000000000000000000:\n";
-  const char reject_program[]="[transforms]\nclassic.project.7=010000000000000000000000:\n";
-  const char selected[]="[anygm]\npayload=project.gmk\n[transforms]\nclassic.project.7=00001f000000000000000000:\n";
+  const char identity[]="[transforms]\nclassic.project.7=buffer copy() {\n return slice(0,input_size);\n}\n";
+  const char reject_program[]="[transforms]\nclassic.project.7=buffer stop() { reject(); }\n";
+  const char selected[]="[anygm]\npayload=project.gmk\n[transforms]\nclassic.project.7=buffer copy() {\n"
+    "/*\n[overrides]\n$sentinel=999\n*/\n return slice(0,input_size);\n}\n";
   if(anygm_content_resolve_path(&router,payload,resolved,sizeof resolved,NULL,0,NULL,0))
     return fail("an input requiring a program loaded without one");
   if(!write_file(ini,identity,sizeof identity-1u) ||
@@ -2182,6 +2183,9 @@ static int transform_configuration_cases(const AnygmHostServices *services,const
   if(!write_file(anchor,selected,sizeof selected-1u) ||
      !anygm_content_resolve_path(&router,anchor,resolved,sizeof resolved,NULL,0,NULL,0))
     return fail("the explicit anchor did not override the system program");
+  char overrides[1024]={0};
+  if(!anygm_content_resolve_path(&router,anchor,resolved,sizeof resolved,NULL,0,overrides,sizeof overrides) || overrides[0])
+    return fail("transform source comments became anchor overrides");
   /* Runtime overrides remain disabled; transform requirements are independent. */
   if(!anygm_content_resolve_path(&router,payload,resolved,sizeof resolved,NULL,0,NULL,0))
     return fail("the lone sibling anchor did not supply its transform");

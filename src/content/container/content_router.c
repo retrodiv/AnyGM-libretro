@@ -7,6 +7,7 @@
 #define _GNU_SOURCE 1
 #endif
 #include "content_router.h"
+#include "content_transform_source.h"
 #include "embedded_cab.h"
 #include "embedded_nsis.h"
 #include "gmlc_package.h"
@@ -992,6 +993,18 @@ static int anchor_parse(const uint8_t *data,size_t size,char *reference,size_t r
       while(value_length && (value[0]==' '||value[0]=='\t')){ value++; value_length--; }
       if(!anchor_reference_normalize(value,value_length,reference,refsz)) return 0;
       have_payload=1;
+    } else if(section==2){
+      /* Skip the complete compiled function. INI-looking text inside a C comment
+       * is source text, never an anchor section or an override directive. */
+      const uint8_t *equal=(const uint8_t*)memchr(line,'=',length);
+      if(!equal) return 0;
+      size_t source_at=(size_t)(equal+1-data),consumed=0,program_size=0,parameter_size=0;
+      uint8_t *program=NULL,*parameters=NULL;
+      int valid=anygm_content_transform_compile((const char*)data+source_at,size-source_at,&consumed,
+        &program,&program_size,&parameters,&parameter_size,NULL,0);
+      free(program); free(parameters);
+      if(!valid) return 0;
+      cursor=source_at+consumed;
     } else if(section==1 && overrides){
       if(overrides_size-used<length+2u) return 0;
       memcpy(overrides+used,line,length);

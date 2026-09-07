@@ -16,7 +16,7 @@
 #define ANYGM_TRANSFORM_MAX_STEPS (UINT64_C(1000000)+ANYGM_TRANSFORM_MAX_INPUT_BYTES*128u)
 #define ANYGM_TRANSFORM_INSTRUCTION_BYTES 12u
 
-/* The wire representation is twelve bytes: opcode, destination, left, right,
+/* The internal instruction representation is twelve bytes: opcode, destination, left, right,
  * followed by an unsigned little-endian 64-bit immediate. See CONTENT_TRANSFORMS.md.
  * None of these instructions performs a format-specific operation. */
 enum {
@@ -39,7 +39,7 @@ typedef struct AnygmContentTransforms AnygmContentTransforms;
 
 /* Empty sets contain no implicit programs. Parsing [transforms] is transactional:
  * a malformed declaration leaves the existing set unchanged. One declaration is
- * name=program-hex:parameter-hex; the parameter part may be empty. Declarations
+ * name=buffer function_name() { ... } in a bounded C-like language. Declarations
  * replace whole entries, never mix parameters from different configuration layers. */
 AnygmContentTransforms *anygm_content_transforms_create(void);
 void anygm_content_transforms_destroy(AnygmContentTransforms *set);

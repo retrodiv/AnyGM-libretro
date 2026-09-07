@@ -46,9 +46,11 @@ ZIP-compatible and embedded-Cabinet routing enforce these compile-time limits:
 | Anchor (`.anygm`) file bytes | 64 KiB |
 | Runtime-override text within an anchor | 4 KiB |
 | External transform configuration | 512 KiB |
+| One transform source function | 64 KiB |
+| Transform syntax nesting | 64 levels |
 | Embedded-Cabinet cache marker serialization budget | 20 MiB |
 
-External content transforms are bounded buffer programs with no host capabilities. Their format,
+External content transforms compile bounded C-like source into buffer programs with no host capabilities. Their format,
 selection, memory limits and proportional instruction budget are documented in
 `CONTENT_TRANSFORMS.md`. A work bound is not a wall-clock deadline; a frontend accepting untrusted
 content and programs should still enforce process resource and time limits.

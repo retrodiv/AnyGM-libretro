@@ -2,6 +2,7 @@
  * Copyright (c) 2026 retrodiv <retrodiv@proton.me>
  */
 #include "content_transform.h"
+#include "content_transform_source.h"
 #include "gml_hash.h"
 
 #include <stdio.h>
@@ -160,25 +161,6 @@ int anygm_content_transforms_has(const AnygmContentTransforms *set,const char *n
   return lookup(set,name)!=NULL;
 }
 
-static int hex_digit(unsigned char c){
-  if(c>='0' && c<='9') return c-'0';
-  if(c>='a' && c<='f') return c-'a'+10;
-  if(c>='A' && c<='F') return c-'A'+10;
-  return -1;
-}
-
-static uint8_t *decode_hex(const char *text,size_t length,size_t limit){
-  if(length%2 || length/2>limit) return NULL;
-  uint8_t *data=(uint8_t*)malloc(length/2?length/2:1u);
-  if(!data) return NULL;
-  for(size_t i=0;i<length/2;i++){
-    int high=hex_digit((unsigned char)text[i*2]),low=hex_digit((unsigned char)text[i*2+1]);
-    if(high<0 || low<0){ free(data); return NULL; }
-    data[i]=(uint8_t)((high<<4)|low);
-  }
-  return data;
-}
-
 int anygm_content_transforms_parse(AnygmContentTransforms *set,const void *text,size_t size,
                                    char *error,size_t error_size){
   return anygm_content_transforms_parse_layer(set,text,size,0,error,error_size);
@@ -225,13 +207,17 @@ int anygm_content_transforms_parse_layer(AnygmContentTransforms *set,const void 
     entry->priority=priority;
     const char *value=equal+1,*last=bytes+end;
     while(value<last && (*value==' ' || *value=='\t')) value++;
-    const char *colon=(const char*)memchr(value,':',(size_t)(last-value));
-    if(!colon) goto invalid;
-    size_t code_size=(size_t)(colon-value),parameter_size=(size_t)(last-colon-1);
-    entry->program=decode_hex(value,code_size,ANYGM_TRANSFORM_MAX_PROGRAM_BYTES);
-    entry->parameters=decode_hex(colon+1,parameter_size,ANYGM_TRANSFORM_MAX_PARAMETER_BYTES);
-    entry->program_size=code_size/2; entry->parameter_size=parameter_size/2;
-    if(!entry->parameters || !valid_program(entry->program,entry->program_size)) goto invalid;
+    size_t consumed=0; char detail[160]={0};
+    if(!anygm_content_transform_compile(value,size-(size_t)(value-bytes),&consumed,
+         &entry->program,&entry->program_size,&entry->parameters,&entry->parameter_size,
+         detail,sizeof detail)){
+      if(error && error_size) snprintf(error,error_size,"content transform '%s': %s",entry->name,detail);
+      goto invalid;
+    }
+    if(!valid_program(entry->program,entry->program_size)) goto invalid;
+    at=(size_t)(value-bytes)+consumed;
+    while(at<size && (bytes[at]==' ' || bytes[at]=='\t')) at++;
+    if(at<size && bytes[at]!='\r' && bytes[at]!='\n') goto invalid;
   }
   size_t additional=0;
   for(size_t i=0;i<staged.count;i++) if(!lookup(set,staged.entries[i].name)) additional++;
@@ -252,6 +238,7 @@ invalid:
   for(size_t i=0;i<staged.count;i++){
     free(staged.entries[i].program); free(staged.entries[i].parameters);
   }
+  if(error && error_size && error[0]) return 0;
   return fail(error,error_size,"malformed or oversized transform declaration");
 }
 
