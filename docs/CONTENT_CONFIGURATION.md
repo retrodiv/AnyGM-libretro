@@ -10,7 +10,7 @@ rules come from external configuration; the core ships none of its own.
 
 ## Sections and precedence
 
-Both forms support `[transforms]`, `[pipelines]` and `[overrides]`. Their languages
+Both forms support `[transforms]`, `[pipelines]`, `[patches]` and `[overrides]`. Their languages
 are documented in `CONTENT_TRANSFORMS.md` and `SUPPORTED_FORMATS.md`.
 An advanced anchor starts with `[anygm]` and `payload=...`; the basic
 single-line payload reference remains supported. The INI does not select a
@@ -23,7 +23,8 @@ Priority runs from lowest to highest:
 3. Archive anchors, from the innermost to the outermost archive.
 4. The explicitly opened anchor.
 5. Inherited launch-anchor overrides during an internal content replacement.
-6. Matching `[sha256:<digest>.transforms]`, `[sha256:<digest>.pipelines]` and
+6. Matching `[sha256:<digest>.transforms]`, `[sha256:<digest>.pipelines]`,
+   `[sha256:<digest>.patches]` and
    `[sha256:<digest>.overrides]` sections in `anygm.ini`.
 
 A digest is exactly 64 hexadecimal digits; uppercase and lowercase digits
@@ -32,8 +33,8 @@ Hash selectors belong only in the system INI. Duplicate recognized sections,
 including equivalent digest spellings, reject the INI. Multiple sibling
 anchors select none; an explicit anchor does not discover another sibling.
 
-A transform or pipeline replaces the complete entry with the same key, including its
-parameters or ordered steps. Both sections share one namespace; duplicate keys in the same
+A transform, pipeline or patch replaces the complete entry with the same key, including its
+parameters, ordered steps or external-resource declaration. These sections share one namespace; duplicate keys in the same
 selection scope are rejected. Overrides replace earlier directives with the same destination,
 operation kind and conditions. For example, `$counter=5` replaces `$counter=3`,
 but `?gameres $counter=5` and `$counter=3` remain distinct scoped operations.
@@ -61,7 +62,9 @@ Memory content uses the supplied image bytes.
 
 An explicitly selected `input` function or pipeline can normalize the source before routing.
 An optional `input.probe` enumerates bounded candidate ranges in that same original source;
-the complete structural reader must select exactly one valid normalized result. Both entries
+the complete structural reader must select exactly one valid normalized result. An optional
+`input.final` pipeline then processes the selected representation, including after a probe's
+identity or zero-record decline. These entries
 follow the ordinary default/anchor/hash layering, with the contract in `CONTENT_TRANSFORMS.md`.
 When its path result differs from the original bytes, the original source's digest remains the
 selector through all subsequent parsing, including selection inside a resulting ZIP. This lets
@@ -127,14 +130,15 @@ before accepting the state transactionally.
 
 Effective override text and the launch-anchor envelope contribute to the
 active state configuration fingerprint. Replaced default assignments do not.
-Programs and parameters contribute to derived-content cache identity; neither
-programs nor machine paths are serialized. Reset retains parsed configuration
+Programs, parameters, ordered pipelines and patch declarations contribute to derived-content
+cache identity; bindings do not change declaration identity. Neither programs, patch bytes nor
+machine paths are serialized. Reset retains parsed configuration
 and recreates fresh runtime override state.
 
 Limits are 512 KiB per INI, 256 recognized sections and 4 KiB of override text
 per section. Anchors retain their 64 KiB file and 4 KiB override-section bounds.
 Collected layers fit 32 KiB. Effective overrides and the launch envelope each
-fit 4 KiB and 64 directives. Selected functions and pipelines share the 16-entry limit
+fit 4 KiB and 64 directives. Selected functions, pipelines and patches share the 16-entry limit
 and the compiler/interpreter limits in `CONTENT_TRANSFORMS.md`.
 
 The INI accepts UTF-8 BOM and LF, CRLF or CR line endings. Blank lines and
@@ -146,5 +150,6 @@ Invalid selected runtime directives reject preparation before live content
 is replaced. Failure never publishes partial overrides or transforms.
 
 Focused checks are `make check TEST=content_config`,
-`make check TEST=content_security` and `make check TEST=engine_content_config`.
-The engine case is also registered in `make integration-check`.
+`make check TEST=content_patch`,
+`make check TEST=content_security`, `make check TEST=engine_content_config` and
+`make check TEST=engine_content_patch`. Both engine cases are registered in `make integration-check`.

@@ -6,6 +6,7 @@
 
 #include <stddef.h>
 #include <stdint.h>
+#include "content_patch.h"
 
 #define ANYGM_TRANSFORM_MAX_CONFIG_BYTES 524288u
 #define ANYGM_TRANSFORM_MAX_PROGRAM_BYTES 12288u
@@ -54,6 +55,15 @@ int anygm_content_transforms_parse(AnygmContentTransforms *set,const void *text,
 int anygm_content_transforms_parse_layer(AnygmContentTransforms *set,const void *text,size_t size,
                                          unsigned priority,char *error,size_t error_size);
 int anygm_content_transforms_has(const AnygmContentTransforms *set,const char *name);
+/* Value-copy declarations for the router's explicit external-resource reads.
+ * Selected resources are dependencies of this configuration transaction. Binding
+ * consumes a malloc buffer only on success; it never adds host capabilities. */
+size_t anygm_content_transforms_patch_count(const AnygmContentTransforms *set);
+int anygm_content_transforms_patch_at(const AnygmContentTransforms *set,size_t index,
+                                      char name[64],AnygmContentPatchSpec *spec);
+int anygm_content_transforms_bind_patch(AnygmContentTransforms *set,const char *name,
+                                        uint8_t **bytes,size_t size,
+                                        char *error,size_t error_size);
 /* Validate a complete expansion before executing any leaf. Pipeline references
  * may be forward-declared or supplied by another configuration layer. */
 int anygm_content_transform_validate(const AnygmContentTransforms *set,const char *name,

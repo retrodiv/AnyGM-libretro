@@ -48,6 +48,7 @@ static int section_name(const char *name,size_t length,ConfigSection *section){
   }
   if(length==10 && !memcmp(name,"transforms",10)){ section->transforms=1; return 1; }
   if(length==9 && !memcmp(name,"pipelines",9)){ section->transforms=2; return 1; }
+  if(length==7 && !memcmp(name,"patches",7)){ section->transforms=3; return 1; }
   if(length==9 && !memcmp(name,"overrides",9)) return 1;
   return section->targeted?-1:0;
 }
@@ -56,7 +57,8 @@ static char *transform_document(const AnygmContentConfig *config,const ConfigSec
   size_t size=section->end-section->begin;
   char *text=malloc(size+14u);
   if(!text) return NULL;
-  const char *header=section->transforms==2?"[pipelines]\n":"[transforms]\n";
+  const char *header=section->transforms==3?"[patches]\n":
+    section->transforms==2?"[pipelines]\n":"[transforms]\n";
   size_t prefix=strlen(header);
   memcpy(text,header,prefix);
   memcpy(text+prefix,config->text+section->begin,size);
@@ -146,8 +148,8 @@ AnygmContentConfig *anygm_content_config_parse(const void *text,size_t size,
     ConfigSection *section=&config->sections[i];
     if(section->transforms){
       char *document=transform_document(config,section);
-      /* Functions and pipelines share one namespace in each selection scope.
-       * Validate both sections together so their ordering cannot hide a duplicate. */
+      /* Functions, pipelines and patches share one namespace in each selection scope.
+       * Validate the sections together so their ordering cannot hide a duplicate. */
       for(size_t prior=0;document && prior<i;prior++){
         ConfigSection *other=&config->sections[prior];
         if(!other->transforms || other->transforms==section->transforms ||

@@ -156,7 +156,7 @@ VIDEO_RENDERER_TESTS := test_renderer_effects test_renderer_postprocess test_ren
 ifneq ($(HARDWARE_RENDER),0)
 VIDEO_RENDERER_TESTS += test_gpu
 endif
-CONTENT_TESTS := test_bytecode test_package test_classic test_sprite_masks test_content_transform test_content_config test_content_delta
+CONTENT_TESTS := test_bytecode test_package test_classic test_sprite_masks test_content_transform test_content_config test_content_delta test_content_patch
 MEDIA_TESTS := test_hash test_image_codec test_font_raster
 AUDIO_TESTS := test_mp3_detect
 COMPATIBILITY_TESTS := test_compatibility
@@ -164,6 +164,7 @@ CHECK_TARGETS := $(addprefix $(TEST_DIR)/,$(RUNTIME_TESTS) $(VIDEO_RENDERER_TEST
 	$(CONTENT_TESTS) $(MEDIA_TESTS) $(AUDIO_TESTS) $(COMPATIBILITY_TESTS))
 INTEGRATION_TESTS := $(TEST_DIR)/test_engine_instances $(TEST_DIR)/test_host_setting_budget $(TEST_DIR)/test_engine_blocking_wait \
 	$(TEST_DIR)/test_engine_content_config \
+	$(TEST_DIR)/test_engine_content_patch \
 	$(TEST_DIR)/test_engine_scoped_overrides \
 	$(TEST_DIR)/test_engine_composed_raster
 ifneq ($(HARDWARE_RENDER),0)
@@ -415,9 +416,7 @@ $(TEST_DIR)/test_classic: $(ANYGM_CLASSIC_TEST_SOURCES) \
 	src/content/bytecode/gml_bc14.c src/content/bytecode/gml_bc15.c \
 	src/content/bytecode/gml_bc17.c \
 	src/content/classic/gmlc_classic.c $(ANYGM_CLASSIC_IMPORT_SOURCES) \
-	src/content/container/content_transform.c src/content/container/content_pipeline.c \
-	src/content/container/content_source.c \
-	src/content/container/content_transform_source.c src/media/gml_hash.c \
+	$(ANYGM_INPUT_TRANSFORM_SOURCES) $(DELTA_OBJECTS) src/media/gml_hash.c \
 	src/content/project/gmlc_project.c src/content/project/gmlc_json.c \
 	src/content/project/gmlc_assets.c
 	mkdir -p $(dir $@)
@@ -438,19 +437,32 @@ $(TEST_DIR)/test_content_delta: tests/unit/content/test_content_delta.c \
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(filter %.c %.o,$^) -o $@
 
 $(TEST_DIR)/test_content_transform: tests/unit/content/test_content_transform.c \
-	src/content/container/content_transform.c src/content/container/content_pipeline.c \
-	src/content/container/content_source.c \
-	src/content/container/content_transform_source.c src/media/gml_hash.c src/media/gml_image_codec.c
+	$(ANYGM_INPUT_TRANSFORM_SOURCES) $(DELTA_OBJECTS) src/media/gml_hash.c src/media/gml_image_codec.c
 	mkdir -p $(dir $@)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $^ -o $@
+	$(CC) $(CPPFLAGS) $(CFLAGS) $^ -o $@ -lm
 
 $(TEST_DIR)/test_content_config: tests/unit/content/test_content_config.c \
-	src/content/container/content_config.c src/content/container/content_transform.c \
-	src/content/container/content_pipeline.c src/content/container/content_transform_source.c \
-	src/content/container/content_source.c \
+	$(ANYGM_INPUT_TRANSFORM_SOURCES) $(DELTA_OBJECTS) \
 	src/media/gml_hash.c src/media/gml_image_codec.c
 	mkdir -p $(dir $@)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $^ -o $@
+	$(CC) $(CPPFLAGS) $(CFLAGS) $^ -o $@ -lm
+
+$(TEST_DIR)/test_content_patch: tests/unit/content/test_content_patch.c tests/support/anygm_test_runner.c \
+	$(ANYGM_INPUT_TRANSFORM_SOURCES) $(DELTA_OBJECTS) src/media/gml_hash.c src/media/gml_image_codec.c
+	mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $^ -o $@ -lm
+
+# A neutral development boundary for explicit external configuration consumers.
+# First-party entry points are visible; vendored implementation objects stay hidden.
+CONTENT_TRANSFORM_LIBRARY ?= $(BUILD_DIR)/libanygm_content_transform.so
+.PHONY: content-transform-library
+content-transform-library: $(CONTENT_TRANSFORM_LIBRARY)
+$(CONTENT_TRANSFORM_LIBRARY): $(ANYGM_INPUT_TRANSFORM_SOURCES) \
+	src/content/container/content_delta.c $(filter-out %/content_delta.o,$(DELTA_OBJECTS)) \
+	src/media/gml_hash.c src/media/gml_image_codec.c src/host/anygm_notices.c \
+	$(wildcard src/content/container/content_*.h) src/generated/anygm_third_party_notices.h
+	mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -fPIC -shared $(filter %.c %.o,$^) -o $@ -lm
 
 $(TEST_DIR)/test_mp3_detect: tests/unit/audio/test_mp3_detect.c \
 	src/audio/codecs/gml_mp3.c
@@ -476,6 +488,8 @@ check: warnings-check architecture-check api-check contract-check integration-ch
 	$(TEST_DIR)/test_classic
 	$(TEST_DIR)/test_sprite_masks
 	$(TEST_DIR)/test_content_config
+	$(TEST_DIR)/test_content_delta
+	$(TEST_DIR)/test_content_patch
 	$(TEST_DIR)/test_hash
 	$(TEST_DIR)/test_image_codec
 	$(TEST_DIR)/test_font_raster
@@ -573,6 +587,7 @@ $(TEST_DIR)/public_header_cpp.o: tests/contract/public_header_cpp.cpp src/api/an
 integration-check: $(INTEGRATION_TESTS)
 	$(TEST_DIR)/test_engine_instances
 	$(TEST_DIR)/test_engine_content_config
+	$(TEST_DIR)/test_engine_content_patch
 	$(TEST_DIR)/test_host_setting_budget
 	$(if $(filter-out 0,$(HARDWARE_RENDER)),$(TEST_DIR)/test_graphics_state,true)
 
@@ -615,6 +630,7 @@ $(TEST_DIR)/stb_vorbis_fmod_test.o: src/third_party/stb/stb_vorbis.c
 		-DSTB_VORBIS_NO_PUSHDATA_API -c $< -o $@
 
 $(TEST_DIR)/test_content_security: tests/fuzz/test_content_security.c \
+	tests/support/vcdiff_fixture.c \
 	tests/support/synthetic_content.c \
 	tests/support/memory_vfs.c \
 	$(RUNTIME_OBJECTS) $(TEST_HOST_OBJECTS)
@@ -682,6 +698,12 @@ $(TEST_DIR)/test_engine_scoped_overrides: tests/integration/test_engine_scoped_o
 	$(call link_runtime_test,$(TEST_CPPFLAGS))
 
 $(TEST_DIR)/test_engine_content_config: tests/integration/test_engine_content_config.c \
+	tests/support/synthetic_content.c $(RUNTIME_OBJECTS) $(TEST_HOST_OBJECTS)
+	mkdir -p $(dir $@)
+	$(call link_runtime_test,$(TEST_CPPFLAGS))
+
+$(TEST_DIR)/test_engine_content_patch: tests/integration/test_engine_content_patch.c \
+	tests/support/vcdiff_fixture.c tests/support/anygm_test_runner.c \
 	tests/support/synthetic_content.c $(RUNTIME_OBJECTS) $(TEST_HOST_OBJECTS)
 	mkdir -p $(dir $@)
 	$(call link_runtime_test,$(TEST_CPPFLAGS))

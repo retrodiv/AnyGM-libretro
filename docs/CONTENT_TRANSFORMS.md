@@ -74,7 +74,7 @@ example = buffer edit_bytes() {
 ## Ordered pipelines
 
 Functions are reusable buffer operations. A `[pipelines]` section declares an ordered chain of
-functions, other pipelines, and explicitly selected built-in steps. All declarations share the
+functions, named external patches, other pipelines, and explicitly selected built-in steps. All declarations share the
 same case-sensitive namespace; `builtin.` is reserved. The matching
 `[sha256:<digest>.pipelines]` section follows the same layering rules as source functions.
 A higher-priority entry replaces the whole chain, not individual steps. Changing the chain order
@@ -102,6 +102,70 @@ These are explicit container-prefix, compression, header and byte-order adaptati
 an arbitrary pipeline does not automatically run it or discover matching content. Its consumer
 must select it. No installed module directory is searched and no native plugin is loaded.
 
+### External xdelta patches
+
+`[patches]` declares named xdelta3/VCDIFF operations. Each value is one line with six fields:
+
+```text
+name = xdelta | relative-path | source-sha256 | patch-sha256 | result-sha256 | result-size
+```
+
+All three digests are mandatory 64-digit hexadecimal SHA-256 values. `result-size` is the exact
+decimal byte size, at most 1 GiB. A patch is not permission to skip a source or result check.
+The source digest describes the bytes entering that stage, including any earlier transformations;
+the next patch's source must match the preceding patch's result. Names and declaration order do
+not choose execution order: the pipeline does, including when it references nested pipelines.
+
+For example, after supplying declarations for `first` and `second` in `[patches]`, an anchor
+can apply both to a data image with:
+
+```ini
+[anygm]
+payload=data.win
+
+[pipelines]
+input.final = first | second
+```
+
+`input.final` is a generic post-selection pipeline. It runs once on the representation selected
+by `input` or `input.probe`, or on the original bytes when there is no selection or the probe
+declines with identity/zero records. A probe cannot silently bypass this explicit final stage.
+Candidate ambiguity or selection errors still reject before it runs. The ordinary parser
+validates the final result; a final pipeline does not weaken that parser.
+
+Patch declarations follow the same whole-entry precedence and shared namespace as functions and
+pipelines. The INI also accepts `[sha256:<original-digest>.patches]`. Put dependencies in a
+content-local anchor or matching original-file scope: every effective patch declaration is read
+and checked before input preparation, even if a conditional candidate does not eventually use
+it. Unmatched hash-scoped dependencies are not opened. Merely declaring patches without an input
+entry does not enable preparation.
+
+Paths are relative to the original file being prepared, not to the system INI, current working
+directory chosen implicitly, or a derived cache file. They use the existing confined member-name
+policy: at most 511 bytes, no absolute/drive paths, parent/dot segments, control characters or
+empty interior segments; backslashes normalize to slashes. Spaces within a field are preserved.
+A trailing slash or literal field separator `|` cannot name a patch. For an archive's internal
+anchor, put its patch resources beside the selected extracted input (or in a relative
+subdirectory). An outer anchor preparing an archive operates on that archive's bytes, not
+implicitly on an inner member. Memory-only input has no file-backed resource root and rejects
+external patch dependencies; it never falls back to the host's working directory.
+
+Only the router reads files, through host VFS services. It transfers validated immutable buffers
+to the registry; neither the transform interpreter nor the patch decoder gains file, process,
+network or native-plugin access. Configuration copies share immutable patch storage. The original
+source and patch files are never written. A missing file, wrong source/order, changed patch, wrong
+output size/digest or malformed stream rejects the complete preparation, without caching or
+publishing an earlier intermediate result.
+
+All selected patch files together are capped at 1 GiB. One decode has a 256 MiB auxiliary-memory
+ceiling shared by xdelta and its secondary decoder, plus its explicit source/patch/output buffers;
+target windows are at most 64 MiB. These bounds can reject a valid but excessively demanding patch.
+The decoder supports xdelta3's plain, DJW, FGK and LZMA secondary streams. The private liblzma
+closure supports LZMA1/LZMA2 filters and CRC32/CRC64/SHA-256 checks, not arbitrary XZ filters.
+Custom VCDIFF code tables and unsupported prior-target window modes reject cleanly.
+Origins and preserved Apache-2.0/0BSD terms are recorded in `THIRD_PARTY_NOTICES.md` and the vendor
+provenance records; first-party code remains MIT.
+
 ## Preparing an input source
 
 The content router selects the entry named `input`, when declared, before parsing a source.
@@ -119,7 +183,7 @@ Here `wrapped_image` is supplied by the system INI example above. Arbitrary file
 selected through an anchor or a portable host; a frontend may restrict its file picker to the
 core's advertised extensions. The input is treated as data; no code is executed.
 
-Without an `input` entry the ordinary parser path is unchanged. A selected entry that rejects
+Without an `input`, `input.probe` or `input.final` entry the ordinary parser path is unchanged. A selected entry that rejects
 causes the load to fail, not a fallback to a different interpretation. To decline a format in a
 default function, return the input unchanged. For path content a byte-identical result resumes
 ordinary routing, including archive-member and adjacent-payload selection. A changed result is
@@ -167,8 +231,9 @@ Candidate selection requires a reader; `input` is only required by records with 
 name. Memory consumers validate data images;
 path consumers validate data or Classic images. Candidate ZIP extraction is not supported; the
 single-source `input` path still supports ZIP normally. A sole whole-source range whose result is
-byte-identical declines preparation before validation, retaining ordinary container/member routing
-and borrowed memory ownership. Candidate selection never reruns `input` on its chosen result.
+byte-identical declines selection before validation, retaining ordinary container/member routing
+and borrowed memory ownership unless `input.final` is present. Candidate selection never reruns
+`input` on its chosen result; the separately named final pipeline is one explicit subsequent pass.
 
 The distributed `indexed_candidates` example reads an authored `IDX1` envelope: four magic bytes,
 a little-endian 32-bit count, then 16-byte offset/length pairs. It constructs the candidate records
@@ -196,6 +261,7 @@ the ordinary ZIP parser still validates members, checksums, paths and extraction
 | --- | --- |
 | A declared function | Execute the bounded byte program on the previous step's bytes |
 | A declared pipeline | Expand its ordered steps before executing any operation |
+| A declared patch | Verify the stage's source, decode its bound VCDIFF bytes, and verify exact result size and SHA-256 |
 | `builtin.zlib:N` | Inflate an RFC 1950 stream, validating its header and Adler-32; reject preset dictionaries; allocate at most the explicit output capacity `N` |
 | `builtin.deflate:N` | Inflate an RFC 1951 raw stream into at most `N` bytes; raw framing has no checksum |
 | `builtin.byteswap16` | Reverse the two bytes in every word; reject odd input lengths |
@@ -206,13 +272,14 @@ for the intended representation; there is no unbounded inflater. Compression use
 shared media decoder, not a second implementation. Buffer functions still cannot expand their
 input; a native inflate step may do so only within its declared capacity.
 
-At most 16 entries (functions and pipelines together) and 16 expanded leaf steps are allowed.
+At most 16 entries (functions, pipelines and patches together) and 16 expanded leaf steps are allowed.
 References may be forward-declared or supplied by another layer. Before execution the complete
 chain must resolve: missing entries, cycles, excess depth and excess leaf counts reject it without
 executing an earlier leaf. Each program retains its ordinary instruction budget and every
 intermediate image is bounded to 1 GiB. Peak working memory includes the immutable caller input,
 the previous owned intermediate result, the current step's output allocation and interpreter
-scratch. These are resource ceilings, not a promise of short execution time.
+scratch, plus the selected immutable patch files and the active decoder's bounded workspace.
+These are resource ceilings, not a promise of short execution time.
 
 The caller's input is never modified. Intermediate results are private to the execution and are
 freed as the next result replaces them. A rejected step publishes no output, including when

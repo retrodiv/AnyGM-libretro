@@ -20,10 +20,11 @@ static uint64_t source_u64(const uint8_t *bytes){
 
 int anygm_content_source_configured(const AnygmContentTransforms *transforms){
   return anygm_content_transforms_has(transforms,"input") ||
-    anygm_content_transforms_has(transforms,"input.probe");
+    anygm_content_transforms_has(transforms,"input.probe") ||
+    anygm_content_transforms_has(transforms,"input.final");
 }
 
-int anygm_content_source_prepare(const AnygmContentTransforms *transforms,
+static int prepare_selected_source(const AnygmContentTransforms *transforms,
                                   const void *data,size_t size,
                                   AnygmContentSourceValidator validate,void *context,
                                   uint8_t **output,size_t *output_size,
@@ -33,7 +34,8 @@ int anygm_content_source_prepare(const AnygmContentTransforms *transforms,
   if(output_size) *output_size=0;
   if(!output || !output_size || (size && !data))
     return source_error(error,error_size,"invalid arguments");
-  if(!anygm_content_source_configured(transforms)) return 1;
+  if(!anygm_content_transforms_has(transforms,"input") &&
+     !anygm_content_transforms_has(transforms,"input.probe")) return 1;
   if(!anygm_content_transforms_has(transforms,"input.probe"))
     return anygm_content_transform_run(transforms,"input",data,size,NULL,0,
       output,output_size,error,error_size);
@@ -111,4 +113,29 @@ int anygm_content_source_prepare(const AnygmContentTransforms *transforms,
     return source_error(error,error_size,last_error[0]?last_error:"no structurally valid candidate");
   *output=selected; *output_size=selected_size;
   return 1;
+}
+
+int anygm_content_source_prepare(const AnygmContentTransforms *transforms,
+                                  const void *data,size_t size,
+                                  AnygmContentSourceValidator validate,void *context,
+                                  uint8_t **output,size_t *output_size,
+                                  char *error,size_t error_size){
+  if(output) *output=NULL;
+  if(output_size) *output_size=0;
+  if(!output || !output_size || (size && !data))
+    return source_error(error,error_size,"invalid arguments");
+  uint8_t *selected=NULL;
+  size_t selected_size=0;
+  if(!prepare_selected_source(transforms,data,size,validate,context,
+       &selected,&selected_size,error,error_size)) return 0;
+  if(!anygm_content_transforms_has(transforms,"input.final")){
+    *output=selected; *output_size=selected_size; return 1;
+  }
+  /* A probe's identity/zero-record decline selects ordinary input; it must not
+   * bypass an explicitly configured final pipeline. Candidate enumeration and
+   * ambiguity checks are unchanged and finish before this single final pass. */
+  int ok=anygm_content_transform_run(transforms,"input.final",selected?selected:data,
+    selected?selected_size:size,NULL,0,output,output_size,error,error_size);
+  free(selected);
+  return ok;
 }

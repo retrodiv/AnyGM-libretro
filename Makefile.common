@@ -38,6 +38,15 @@ ANYGM_DELTA_SOURCES := \
 	src/third_party/xdelta3/xdelta3.c \
 	$(ANYGM_LZMA_SOURCES)
 
+ANYGM_INPUT_TRANSFORM_SOURCES := \
+	src/content/container/content_config.c \
+	src/content/container/content_transform.c \
+	src/content/container/content_pipeline.c \
+	src/content/container/content_source.c \
+	src/content/container/content_transform_source.c \
+	src/content/container/content_patch.c \
+	src/content/container/content_path.c
+
 ANYGM_BZIP2_SOURCES := \
 	src/third_party/bzip2/blocksort.c \
 	src/third_party/bzip2/bzlib.c \
@@ -244,11 +253,7 @@ ANYGM_RUNTIME_SOURCES := \
 	$(ANYGM_CORE_SOURCES) \
 	src/compatibility/anygm_compatibility.c \
 	src/content/container/content_router.c \
-	src/content/container/content_config.c \
-	src/content/container/content_transform.c \
-	src/content/container/content_pipeline.c \
-	src/content/container/content_source.c \
-	src/content/container/content_transform_source.c \
+	$(ANYGM_INPUT_TRANSFORM_SOURCES) \
 	src/content/container/embedded_cab.c \
 	src/content/container/cab_lzx.c \
 	src/content/container/embedded_nsis.c \

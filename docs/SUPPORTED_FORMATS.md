@@ -38,6 +38,12 @@ $lives=99
 ?aspect view_wport[0]=$forced_w
 ```
 
+An advanced anchor may also contain `[transforms]`, `[pipelines]` and `[patches]`.
+Named external xdelta3/VCDIFF patches can be applied in an explicit pipeline order, including an
+`input.final` chain after source selection. Original files remain unchanged; source, patch and
+result SHA-256 values and exact result sizes are checked. The generic declaration, resource-path
+and decoder limits are owned by `CONTENT_TRANSFORMS.md`, not by any particular format family.
+
 Each `[overrides]` line is one directive in the same grammar the host cheat
 interface uses, including development-menu declarations. System `anygm.ini`
 defaults, anchor declarations and exact-payload SHA-256 sections combine per

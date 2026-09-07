@@ -10,6 +10,7 @@
 #include "memory_vfs.h"
 #include "synthetic_content.h"
 #include "stdio_vfs.h"
+#include "vcdiff_fixture.h"
 
 #include <dirent.h>
 #include <errno.h>
@@ -2067,6 +2068,51 @@ static int archive_advanced_anchor_cases(const AnygmHostServices *services,const
   return 1;
 }
 
+/* An archive anchor binds patch files relative to its selected extracted source. */
+static int archive_patch_cases(const AnygmHostServices *services,const char *root){
+  uint8_t original[200],target[200];
+  build_no_code_form(original); memcpy(target,original,sizeof target); store_u32(target,80,242);
+  size_t patch_size=0;
+  uint8_t *patch=anygm_test_vcdiff_literal(target,sizeof target,&patch_size);
+  char source_hash[65],patch_hash[65],result_hash[65],anchor[1024];
+  anygm_test_sha256_hex(original,sizeof original,source_hash);
+  anygm_test_sha256_hex(patch,patch_size,patch_hash);
+  anygm_test_sha256_hex(target,sizeof target,result_hash);
+  snprintf(anchor,sizeof anchor,"[anygm]\npayload=alt/payload.win\n[patches]\n"
+    "update=xdelta|update.xdelta|%s|%s|%s|200\n[pipelines]\ninput.final=update\n",
+    source_hash,patch_hash,result_hash);
+  ZipEntry entries[]={
+    {(const uint8_t*)"alt/payload.win",15,original,sizeof original,sizeof original,0,0,0,0},
+    {(const uint8_t*)"content.anygm",13,(const uint8_t*)anchor,(uint32_t)strlen(anchor),
+      (uint32_t)strlen(anchor),0,0,0,0},
+    {(const uint8_t*)"alt/update.xdelta",17,patch,(uint32_t)patch_size,(uint32_t)patch_size,0,0,0,0},
+  };
+  Buffer archive={0}; char path[512],resolved[1536],assets[1536],overrides[4096];
+  AnygmContentRouter router={0}; router.host=services; router.cache_directory=root;
+  router.log=fixture_log;
+  int ok=build_zip(entries,3,&archive) &&
+    snprintf(path,sizeof path,"%s/patch-chain.zip",root)<(int)sizeof path &&
+    write_file(path,archive.data,archive.size);
+  free(archive.data);
+  for(unsigned warm=0;ok && warm<2;warm++){
+    uint8_t *observed=NULL; size_t observed_size=0;
+    ok=anygm_content_resolve_path(&router,path,resolved,sizeof resolved,assets,sizeof assets,
+      overrides,sizeof overrides) && read_file(resolved,&observed,&observed_size) &&
+      observed_size==sizeof target && !memcmp(observed,target,sizeof target) &&
+      strstr(assets,"-anygm-archive/alt") && strstr(resolved,"/input-");
+    free(observed);
+  }
+  if(ok){
+    char patch_path[1600];
+    snprintf(patch_path,sizeof patch_path,"%s/update.xdelta",assets);
+    ok=write_file(patch_path,"broken",6) &&
+      !anygm_content_resolve_path(&router,path,resolved,sizeof resolved,assets,sizeof assets,
+        overrides,sizeof overrides) && !resolved[0];
+  }
+  free(patch);
+  return ok?1:fail("archive patch resource, source-relative root or warm-cache validation failed");
+}
+
 /* A directly loaded anchor routes its referenced payload, confined to its own subtree. */
 static int direct_anchor_cases(const AnygmHostServices *services,const char *root){
   uint8_t form[200];
@@ -2482,6 +2528,7 @@ int main(void){
          adjacent_executable_payload_cases(&services,root) &&
          archive_anchor_cases(&services,root) &&
          archive_advanced_anchor_cases(&services,root) &&
+         archive_patch_cases(&services,root) &&
          direct_anchor_cases(&services,root) &&
          transform_configuration_cases(&services,root) &&
          input_pipeline_cases(&services,root) &&

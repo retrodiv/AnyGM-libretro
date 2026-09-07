@@ -53,6 +53,44 @@ typedef struct ContentConfigResolution {
 static int select_payload_configuration(const AnygmContentRouter *router,const char *path);
 static int original_file_digest(const AnygmContentRouter *router,const char *path,uint8_t digest[32]);
 static int select_payload_digest(const AnygmContentRouter *router,const uint8_t digest[32],const char *label);
+static int path_join_bounded(char *out,size_t outsz,const char *parent,const char *relative);
+/* External resources are explicit dependencies of the effective content
+ * configuration, not filenames available to byte programs. Read and pin them
+ * once per preparation transaction. All declared patches share the input-size
+ * byte budget, independently of the decoder's auxiliary workspace budget. */
+static int bind_patch_resources(const AnygmContentRouter *router,const char *source_path,
+                                 AnygmContentTransforms *transforms,
+                                 char *error,size_t error_size){
+  size_t count=anygm_content_transforms_patch_count(transforms);
+  if(!count) return 1;
+  char parent[1024];
+  if(!source_path || strlen(source_path)>=sizeof parent){
+    if(error && error_size) snprintf(error,error_size,"external patches require a bounded file-backed source path");
+    return 0;
+  }
+  anygm_content_path_parent(source_path,parent,sizeof parent);
+  size_t remaining=(size_t)ANYGM_TRANSFORM_MAX_INPUT_BYTES;
+  for(size_t i=0;i<count;i++){
+    AnygmContentPatchSpec spec;
+    char name[64],path[1536],detail[256]={0};
+    uint8_t *bytes=NULL;
+    size_t size=0;
+    if(!anygm_content_transforms_patch_at(transforms,i,name,&spec)) return 0;
+    if(remaining<5u || !path_join_bounded(path,sizeof path,parent,spec.path) ||
+       !anygm_vfs_read_all(router->host,path,&bytes,&size,remaining)){
+      if(error && error_size) snprintf(error,error_size,
+        "patch '%s': could not read the declared resource within the shared byte limit",name);
+      free(bytes); return 0;
+    }
+    if(!anygm_content_transforms_bind_patch(transforms,name,&bytes,size,detail,sizeof detail)){
+      if(error && error_size) snprintf(error,error_size,"patch '%s': %s",name,detail);
+      free(bytes); return 0;
+    }
+    remaining-=size;
+  }
+  return 1;
+}
+
 static int load_input_pipeline(const AnygmContentRouter *router,const char *path,
                                 char *content_path,size_t content_size,
                                 char *asset_root,size_t asset_root_size,
@@ -823,29 +861,6 @@ static int file_magic_kind(const AnygmContentRouter *router,const char *path){
      ((b[2]==3 && b[3]==4)||(b[2]==5 && b[3]==6)||(b[2]==7 && b[3]==8))) return 2;
   return 0;
 }
-static int zip_name_normalize(char *name,size_t raw_size){
-  if(!name || !raw_size || raw_size>ANYGM_CONTENT_MAX_MEMBER_PATH ||
-     memchr(name,0,raw_size)) return 0;
-  name[raw_size]=0;
-  for(size_t i=0;i<raw_size;i++){
-    unsigned char c=(unsigned char)name[i];
-    if(c=='\\') name[i]='/';
-    else if(c<0x20u || c==0x7fu || c==':') return 0;
-  }
-  if(name[0]=='/') return 0;
-  size_t segment=0;
-  for(size_t i=0;i<=raw_size;i++){
-    if(i<raw_size && name[i]!='/') continue;
-    size_t length=i-segment;
-    int final_directory=(i==raw_size && i>0 && name[i-1]=='/');
-    if((!length && !final_directory) ||
-       (length==1 && name[segment]=='.') ||
-       (length==2 && name[segment]=='.' && name[segment+1]=='.')) return 0;
-    segment=i+1;
-  }
-  return 1;
-}
-
 typedef struct ZipSeenNames {
   char **slots;
   size_t capacity;
@@ -986,7 +1001,7 @@ static int anchor_next_line(const uint8_t *data,size_t size,size_t *cursor,
 static int anchor_reference_normalize(const uint8_t *line,size_t length,char *out,size_t outsz){
   if(!length || length>ANYGM_CONTENT_MAX_MEMBER_PATH || length+1>outsz) return 0;
   memcpy(out,line,length);
-  if(!zip_name_normalize(out,length)) return 0;
+  if(!anygm_content_member_normalize(out,length)) return 0;
   if(out[strlen(out)-1]=='/') return 0;
   if(zip_endswith(out,".anygm")) return 0;
   return 1;
@@ -1006,7 +1021,7 @@ static int anchor_parse(const uint8_t *data,size_t size,char *reference,size_t r
     if(!anchor_reference_normalize(line,length,reference,refsz)) return 0;
     return !anchor_next_line(data,size,&cursor,&line,&length);
   }
-  int section=0,have_payload=0,have_overrides=0,have_transforms=0,have_pipelines=0;
+  int section=0,have_payload=0,have_overrides=0,have_transforms=0,have_pipelines=0,have_patches=0;
   size_t used=0;
   while(anchor_next_line(data,size,&cursor,&line,&length)){
     if(line[0]=='['){
@@ -1018,6 +1033,9 @@ static int anchor_parse(const uint8_t *data,size_t size,char *reference,size_t r
       }
       if(length==11 && !memcmp(line,"[pipelines]",11) && !have_pipelines){
         section=3; have_pipelines=1; continue;
+      }
+      if(length==9 && !memcmp(line,"[patches]",9) && !have_patches){
+        section=4; have_patches=1; continue;
       }
       return 0;
     }
@@ -1052,7 +1070,7 @@ static int anchor_parse(const uint8_t *data,size_t size,char *reference,size_t r
     }
   }
   if(!have_payload) return 0;
-  if(have_transforms || have_pipelines){
+  if(have_transforms || have_pipelines || have_patches){
     AnygmContentTransforms *validation=anygm_content_transforms_create();
     int valid=validation && anygm_content_transforms_parse(validation,data,size,NULL,0);
     anygm_content_transforms_destroy(validation);
@@ -1175,7 +1193,7 @@ static int zip_extract_all(const AnygmContentRouter *router,const char *zpath,co
     if(next<p || next>fsz || !nlen || nlen>ANYGM_CONTENT_MAX_MEMBER_PATH){ valid=0; break; }
     char name[ANYGM_CONTENT_MAX_MEMBER_PATH+1u];
     memcpy(name,zd+p+46,nlen);
-    if(!zip_name_normalize(name,nlen)){ valid=0; break; }
+    if(!anygm_content_member_normalize(name,nlen)){ valid=0; break; }
     int cs=content_rel?zip_content_score(name):0;
     if(cs>content_best){ snprintf(content_rel,crsz,"%s",name); content_best=cs; }
     if(project_rel && !project_rel[0] && zip_endswith(name,".yyp")) snprintf(project_rel,prsz,"%s",name);
@@ -1246,7 +1264,7 @@ static int zip_extract_all(const AnygmContentRouter *router,const char *zpath,co
         if(!nl2 || nl2>ANYGM_CONTENT_MAX_MEMBER_PATH || 46u+(size_t)nl2>fsz-q) break;
         memcpy(name2,zd+q+46,nl2);
         q+=46u+nl2+el2+cl2;
-        if(!zip_name_normalize(name2,nl2)) break;
+        if(!anygm_content_member_normalize(name2,nl2)) break;
         if(name2[strlen(name2)-1]=='/') continue;
         if(zip_name_equal_folded(name2,target)){
           snprintf(target,sizeof target,"%s",name2);
@@ -1312,7 +1330,7 @@ static int zip_extract_all(const AnygmContentRouter *router,const char *zpath,co
     char name[ANYGM_CONTENT_MAX_MEMBER_PATH+1u];
     memcpy(name,zd+p+46,nlen);
     p=next;
-    if(!zip_name_normalize(name,nlen)){ valid=0; break; }
+    if(!anygm_content_member_normalize(name,nlen)){ valid=0; break; }
     int wanted=project_rel!=NULL;
     if(!wanted && content_rel && content_rel[0]) wanted=zip_under_root(name,content_rel);
     else if(!wanted && nested_rel && nested_rel[0]) wanted=!strcasecmp(name,nested_rel);
@@ -1556,6 +1574,7 @@ static int load_input_pipeline(const AnygmContentRouter *router,const char *path
   if(memcmp(digest,observed_digest,32)){
     snprintf(error,sizeof error,"original bytes changed during selection"); goto done;
   }
+  if(!bind_patch_resources(router,path,selected,error,sizeof error)) goto done;
   if(!anygm_content_source_prepare(selected,original,original_size,validate_source_candidate,selected,
        &image,&image_size,error,sizeof error)) goto done;
   if(!image || (image_size==original_size && (!image_size || !memcmp(image,original,image_size)))){
@@ -1965,7 +1984,8 @@ static int adopt_sibling_anchor_transforms(const AnygmContentRouter *router,cons
   int declared=0;
   while(anchor_next_line(bytes,size,&cursor,&line,&length))
     if((length==12 && !memcmp(line,"[transforms]",12)) ||
-       (length==11 && !memcmp(line,"[pipelines]",11))){ declared=1; break; }
+       (length==11 && !memcmp(line,"[pipelines]",11)) ||
+       (length==9 && !memcmp(line,"[patches]",9))){ declared=1; break; }
   char reference[ANYGM_CONTENT_MAX_MEMBER_PATH+1u];
   int ok=!declared || (anchor_parse(bytes,size,reference,sizeof reference,NULL,0) &&
                        anchor_apply_transforms(router,bytes,size,1u));
@@ -2099,7 +2119,8 @@ int anygm_content_prepare_memory(const AnygmContentRouter *router,const void *da
   if(ok) ok=collect_override_layers(&scoped,overrides,overrides_size);
   if(ok && anygm_content_source_configured(scoped.transforms)){
     char error[256]={0};
-    ok=anygm_content_source_prepare(scoped.transforms,data,size,validate_data_candidate,NULL,
+    ok=bind_patch_resources(&scoped,NULL,scoped.transforms,error,sizeof error) &&
+      anygm_content_source_prepare(scoped.transforms,data,size,validate_data_candidate,NULL,
       normalized,normalized_size,error,sizeof error);
     if(!ok) content_log(&scoped,ANYGM_CONTENT_LOG_ERROR,"input pipeline: %s",error);
   }

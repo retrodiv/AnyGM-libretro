@@ -22,7 +22,12 @@ int anygm_content_source_configured(const AnygmContentTransforms *transforms);
  * operation name (empty selects input). Offsets must not decrease. Repeated ranges
  * with different operations are alternatives; exact duplicate records reject. The
  * entire table is checked before normalization/validation; overlapping ranges are
- * independent immutable inputs. A zero-record probe declines preparation.
+ * independent immutable inputs. A zero-record probe declines selection.
+ * An optional input.final pipeline then consumes the selected representation, or
+ * the original bytes after an identity/zero-record decline. It runs exactly once
+ * after selection, independently of candidate operation names. Its result still
+ * needs the caller's ordinary structural parser; a failed final stage publishes
+ * no selected or intermediate bytes.
  *
  * With no probe, input has its ordinary single-result contract; validation belongs
  * to the caller's next reader. With a probe, a validator is required and every

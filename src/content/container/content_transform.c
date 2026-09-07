@@ -13,6 +13,7 @@
 typedef struct TransformEntry {
   char name[64];
   uint8_t *program,*parameters;
+  AnygmContentPatch *patch;
   size_t program_size,parameter_size;
   unsigned priority;
   size_t step_count;
@@ -156,6 +157,7 @@ void anygm_content_transforms_destroy(AnygmContentTransforms *set){
   if(!set) return;
   for(size_t i=0;i<set->count;i++){
     free(set->entries[i].program); free(set->entries[i].parameters);
+    anygm_content_patch_release(set->entries[i].patch);
   }
   free(set);
 }
@@ -174,9 +176,12 @@ int anygm_content_transforms_copy(AnygmContentTransforms *target,const AnygmCont
     const TransformEntry *from=&source->entries[i];
     TransformEntry *to=&copy->entries[copy->count++];
     *to=*from;
+    to->patch=anygm_content_patch_retain(from->patch);
     to->program=malloc(from->program_size?from->program_size:1u);
     to->parameters=malloc(from->parameter_size?from->parameter_size:1u);
-    if(!to->program || !to->parameters){ anygm_content_transforms_destroy(copy); return 0; }
+    if(!to->program || !to->parameters || (from->patch && !to->patch)){
+      anygm_content_transforms_destroy(copy); return 0;
+    }
     if(from->program_size) memcpy(to->program,from->program,from->program_size);
     if(from->parameter_size) memcpy(to->parameters,from->parameters,from->parameter_size);
   }
@@ -188,6 +193,35 @@ int anygm_content_transforms_copy(AnygmContentTransforms *target,const AnygmCont
 
 int anygm_content_transforms_has(const AnygmContentTransforms *set,const char *name){
   return lookup(set,name)!=NULL;
+}
+
+size_t anygm_content_transforms_patch_count(const AnygmContentTransforms *set){
+  size_t count=0;
+  if(set) for(size_t i=0;i<set->count;i++) if(set->entries[i].patch) count++;
+  return count;
+}
+
+int anygm_content_transforms_patch_at(const AnygmContentTransforms *set,size_t index,
+                                      char name[64],AnygmContentPatchSpec *spec){
+  if(!set || !name || !spec) return 0;
+  for(size_t i=0;i<set->count;i++) if(set->entries[i].patch){
+    if(index){ index--; continue; }
+    memcpy(name,set->entries[i].name,64);
+    anygm_content_patch_spec(set->entries[i].patch,spec);
+    return 1;
+  }
+  return 0;
+}
+
+int anygm_content_transforms_bind_patch(AnygmContentTransforms *set,const char *name,
+                                        uint8_t **bytes,size_t size,
+                                        char *error,size_t error_size){
+  if(set && name) for(size_t i=0;i<set->count;i++){
+    TransformEntry *entry=&set->entries[i];
+    if(!strcmp(entry->name,name) && entry->patch)
+      return anygm_content_patch_bind(&entry->patch,bytes,size,error,error_size);
+  }
+  return fail(error,error_size,"unknown patch resource");
 }
 
 int anygm_content_transforms_parse(AnygmContentTransforms *set,const void *text,size_t size,
@@ -237,7 +271,8 @@ int anygm_content_transforms_parse_layer(AnygmContentTransforms *set,const void 
     if(bytes[start]=='['){
       if(bytes[end-1]!=']') goto invalid;
       active=end-start==12 && !memcmp(bytes+start,"[transforms]",12)?1:
-        end-start==11 && !memcmp(bytes+start,"[pipelines]",11)?2:0;
+        end-start==11 && !memcmp(bytes+start,"[pipelines]",11)?2:
+        end-start==9 && !memcmp(bytes+start,"[patches]",9)?3:0;
       if(active && (seen_sections&(1<<active))) goto invalid;
       seen_sections|=1<<active;
       continue;
@@ -264,6 +299,11 @@ int anygm_content_transforms_parse_layer(AnygmContentTransforms *set,const void 
       if(!pipeline_steps(entry,value,last)) goto invalid;
       continue;
     }
+    if(active==3){
+      entry->patch=anygm_content_patch_parse(value,(size_t)(last-value),error,error_size);
+      if(!entry->patch) goto invalid;
+      continue;
+    }
     size_t consumed=0; char detail[160]={0};
     if(!anygm_content_transform_compile(value,size-(size_t)(value-bytes),&consumed,
          &entry->program,&entry->program_size,&entry->parameters,&entry->parameter_size,
@@ -286,14 +326,19 @@ int anygm_content_transforms_parse_layer(AnygmContentTransforms *set,const void 
     if(position==set->count) set->count++;
     else if(set->entries[position].priority>priority){
       free(staged.entries[i].program); free(staged.entries[i].parameters);
+      anygm_content_patch_release(staged.entries[i].patch);
       continue;
-    } else { free(set->entries[position].program); free(set->entries[position].parameters); }
+    } else {
+      free(set->entries[position].program); free(set->entries[position].parameters);
+      anygm_content_patch_release(set->entries[position].patch);
+    }
     set->entries[position]=staged.entries[i];
   }
   return 1;
 invalid:
   for(size_t i=0;i<staged.count;i++){
     free(staged.entries[i].program); free(staged.entries[i].parameters);
+    anygm_content_patch_release(staged.entries[i].patch);
   }
   if(error && error_size && error[0]) return 0;
   return fail(error,error_size,"malformed or oversized transform declaration");
@@ -302,7 +347,7 @@ invalid:
 void anygm_content_transforms_hash(const AnygmContentTransforms *set,uint8_t digest[32]){
   /* Fixed per-entry hashes sorted by name make identity independent of INI order. */
   const TransformEntry *ordered[ANYGM_TRANSFORM_MAX_PROGRAMS];
-  uint8_t records[ANYGM_TRANSFORM_MAX_PROGRAMS][160];
+  uint8_t records[ANYGM_TRANSFORM_MAX_PROGRAMS][192];
   size_t count=set?set->count:0;
   memset(records,0,sizeof records);
   for(size_t i=0;i<count;i++){
@@ -319,6 +364,7 @@ void anygm_content_transforms_hash(const AnygmContentTransforms *set,uint8_t dig
     gml_sha256(entry->parameters,entry->parameter_size,records[i]+96);
     if(entry->step_count) gml_sha256(entry->steps,
       entry->step_count*sizeof entry->steps[0],records[i]+128);
+    if(entry->patch) anygm_content_patch_hash(entry->patch,records[i]+160);
   }
   gml_sha256(records,count*sizeof records[0],digest);
 }
@@ -379,7 +425,9 @@ int anygm_content_transform_run(const AnygmContentTransforms *set,const char *na
   for(size_t i=0;i<count;i++){
     const TransformEntry *entry=leaves[i].program;
     uint8_t *next=NULL; size_t next_size=0;
-    int ok=entry?anygm_content_transform_execute(entry->program,entry->program_size,
+    int ok=entry && entry->patch?
+      anygm_content_patch_apply(entry->patch,current,size,&next,&next_size,error,error_size):
+      entry?anygm_content_transform_execute(entry->program,entry->program_size,
       entry->parameters,entry->parameter_size,current,size,metadata,metadata_size,0,
       &next,&next_size,error,error_size):
       anygm_content_pipeline_builtin_run(leaves[i].builtin,current,size,&next,&next_size);

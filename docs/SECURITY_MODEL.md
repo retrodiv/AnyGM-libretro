@@ -53,12 +53,25 @@ ZIP-compatible and embedded-Cabinet routing enforce these compile-time limits:
 | Transform syntax nesting | 64 levels |
 | Source-candidate records | 64 records, 80 bytes each |
 | Transform caller metadata | 256 read-only bytes per execution |
+| All effective external patch files | 1 GiB combined per preparation |
+| One patch result | 1 GiB, exact size declared by configuration |
+| VCDIFF target window / auxiliary decoder memory | 64 MiB / 256 MiB |
 | Embedded-Cabinet cache marker serialization budget | 20 MiB |
 
 External content transforms compile bounded C-like source into buffer programs with no host capabilities. Their format,
 selection, memory limits and proportional instruction budget are documented in
 `CONTENT_TRANSFORMS.md`. A work bound is not a wall-clock deadline; a frontend accepting untrusted
 content and programs should still enforce process resource and time limits.
+
+Named VCDIFF patches bind only explicitly declared files beneath the original source directory,
+using the same member-name policy as anchors and archives. The router alone reads those files
+through the host VFS; memory-only loading has no patch-resource root. Every effective patch file
+is SHA-256 checked before input preparation. Every applied stage verifies its current source and
+exact result identity, so wrong bases or ordering reject without publishing intermediate bytes.
+Decoder allocations, including LZMA, share a per-call auxiliary budget. The configuration owner
+shares only immutable bound resources between copies; it serializes no patch bytes or pointers.
+These are in-memory data operations, not native execution or a filesystem capability for the
+buffer interpreter. `CONTENT_TRANSFORMS.md` owns the complete declaration and lifecycle contract.
 
 Member paths are normalized before selection. Absolute paths, drive or stream
 syntax, empty and dot segments, parent traversal, embedded control bytes,

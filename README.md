@@ -24,6 +24,9 @@ or proprietary runtime components.
   Cabinet with a normalized Studio payload and external runtime assets.
 - PE launchers paired with an adjacent normalized `data.win`.
 - Memory-backed content through the framework-neutral AnyGM API.
+- Explicit ordered input transformations and external xdelta/VCDIFF patch chains,
+  declared in configuration with source, patch and result integrity checks; see
+  [content transformation pipelines](docs/CONTENT_TRANSFORMS.md).
 
 Format recognition does not imply that every built-in operation used by every
 piece of content is implemented. Unsupported or malformed input is rejected
