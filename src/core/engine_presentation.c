@@ -419,7 +419,7 @@ void aspect_forced_camera(AnygmEngine *engine,double raw_x, double raw_y, double
     /* A data-declared wide gameplay view must never expose coordinates beyond a real room edge.
      * Keeping the render camera and gameplay rectangle on the same clamped origin also avoids
      * changing coordinate systems partway through the leading-edge scroll interval. */
-    if (aspect_wide_gameplay_view_gen(engine))
+    if (aspect_wide_gameplay_view_gen(engine) || aspect_surface_canvas_size(engine,NULL,NULL))
       clamp_camera_to_current_room(engine,&x, &y, 1);
   }
   if (out_x) *out_x = x;
