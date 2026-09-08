@@ -191,6 +191,15 @@ static int cache_reuse_and_repair(void){
   f.engine->host.path_rename=reject_publication;
   assert(anygm_load(f.engine,&f.source,NULL)==ANYGM_OK); expect_payload(&f,2);
   anygm_unload(f.engine);
+  /* Temporarily hiding an anchor selects the original image. Restoring its
+   * extension must recover the same prepared input without clearing caches. */
+  char parked[300]; snprintf(parked,sizeof parked,"%s.disabled",f.anchor);
+  assert(!rename(f.anchor,parked)); f.source.path=f.content[0].path;
+  assert(anygm_load(f.engine,&f.source,NULL)==ANYGM_OK); expect_payload(&f,0);
+  anygm_unload(f.engine);
+  assert(!rename(parked,f.anchor)); f.source.path=f.anchor;
+  assert(anygm_load(f.engine,&f.source,NULL)==ANYGM_OK); expect_payload(&f,2);
+  anygm_unload(f.engine);
   /* A same-size alteration is not a hit. A failed repair publishes no image. */
   f.bytes[2][f.size[2]-1]^=1;
   write_file(cached,f.bytes[2],f.size[2]);
