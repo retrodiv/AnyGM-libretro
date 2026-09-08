@@ -201,6 +201,11 @@ the digest used for selection, and leaves it untouched. Unmatched hash scopes ar
 streamed hashing rather than input-sized allocations. The prepared cache key includes the original
 digest, effective program/pipeline identity and output digest. Source adaptation runs on every
 load; this cache is disposable storage, not permission to skip a selected operation or validation.
+An existing prepared data or archive image is reused only after its length and complete SHA-256
+match the newly prepared bytes. Identical bytes are not republished, so a host rename need not
+replace an existing destination. A corrupt regular cache file is removed only after its replacement
+has been fully written and flushed; a failed publication never exposes a partial image. Non-regular
+destinations reject without removal.
 Hosts sharing a cache must serialize writes or give concurrent loads private cache directories.
 Assets and code companions remain relative to the original source directory, or to the extracted
 member directory for an archive result. Adapted Classic images are re-imported so a primary-file

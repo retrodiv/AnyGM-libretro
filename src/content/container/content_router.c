@@ -1544,6 +1544,42 @@ static int validate_source_candidate(void *context,const void *data,size_t size,
   return gmlc_classic_validate_image(context,data,size,error,error_size);
 }
 
+static int publish_input_image(const AnygmContentRouter *router,const char *path,
+                                const uint8_t *image,size_t size,const uint8_t digest[32],
+                                char *error,size_t error_size){
+  AnygmFileInfo info={0}; uint8_t cached_digest[32];
+  int exists=anygm_vfs_stat(router->host,path,&info) &&
+             (info.flags&ANYGM_FILE_INFO_EXISTS);
+  /* Preparation and dependency validation already ran. The cached file is only
+   * reusable when its complete bytes match that newly computed result. Avoid
+   * republishing an identical file: a host rename need not replace its target. */
+  if(exists && (info.flags&ANYGM_FILE_INFO_REGULAR) && info.size==size &&
+     original_file_digest(router,path,cached_digest) && !memcmp(cached_digest,digest,32)) return 1;
+  if(exists && !(info.flags&ANYGM_FILE_INFO_REGULAR)){
+    snprintf(error,error_size,"prepared cache destination is not a regular file"); return 0;
+  }
+  char temporary[1600];
+  if(snprintf(temporary,sizeof temporary,"%s.tmp",path)>=(int)sizeof temporary){
+    snprintf(error,error_size,"prepared cache path is too long"); return 0;
+  }
+  int ok=anygm_vfs_write_all(router->host,temporary,image,size);
+  if(!ok) snprintf(error,error_size,"cannot write prepared cache image");
+  /* Only an invalid, disposable cache image may be removed, and only after the
+   * replacement has been completely written and flushed. Original input and
+   * external resources never pass through this publication boundary. */
+  if(ok && exists){
+    ok=router->host->path_remove &&
+      router->host->path_remove(router->host->userdata,path)==ANYGM_OK;
+    if(!ok) snprintf(error,error_size,"cannot remove invalid prepared cache image");
+  }
+  if(ok){
+    ok=anygm_vfs_publish(router->host,temporary,path);
+    if(!ok) snprintf(error,error_size,"cannot publish prepared cache image");
+  }
+  if(!ok) anygm_vfs_remove(router->host,temporary);
+  return ok;
+}
+
 /* A selected source adapter returns a supported byte representation, never an
  * executable callback. It runs once before routing its result. A byte-identical
  * result declines adaptation and leaves ordinary member/adjacent-file selection
@@ -1611,15 +1647,8 @@ static int load_input_pipeline(const AnygmContentRouter *router,const char *path
     int ok=gmlc_package_write_structural(&project,output,error,sizeof error);
     gmlc_project_free(&project);
     if(!ok) goto done;
-  } else {
-    char temporary[1600];
-    if(snprintf(temporary,sizeof temporary,"%s.tmp",output)>=(int)sizeof temporary) goto done;
-    if(!anygm_vfs_write_all(router->host,temporary,image,image_size) ||
-       !anygm_vfs_publish(router->host,temporary,output)){
-      anygm_vfs_remove(router->host,temporary);
-      goto done;
-    }
-  }
+  } else if(!publish_input_image(router,output,image,image_size,identity+64,error,sizeof error))
+    goto done;
   if(kind==2){
     if(!load_archive_content_depth(router,output,content_path,content_size,asset_root,asset_root_size,
                                    overrides,overrides_size,depth)) goto done;
