@@ -10,6 +10,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 
 typedef struct PatchFixture {
   AnygmSyntheticContent content[3];
@@ -27,6 +28,20 @@ static void write_file(const char *path,const void *bytes,size_t size){
 }
 
 static void write_text(const char *path,const char *text){write_file(path,text,strlen(text));}
+
+/* Some host namespaces cannot rename over an existing destination. Exercise
+ * that contract on every platform instead of inheriting POSIX replacement. */
+static AnygmResult rename_without_replacement(void *userdata,const char *from,const char *to){
+  (void)userdata;
+  struct stat status;
+  if(!stat(to,&status)) return ANYGM_ERROR_IO;
+  return rename(from,to)==0?ANYGM_OK:ANYGM_ERROR_IO;
+}
+
+static AnygmResult reject_publication(void *userdata,const char *from,const char *to){
+  (void)userdata; (void)from; (void)to;
+  return ANYGM_ERROR_IO;
+}
 
 static void configure(PatchFixture *f,const char *order){
   char text[2048];
@@ -65,6 +80,7 @@ static void setup(PatchFixture *f){
   write_text(f->ini,text); configure(f,"first | second");
   AnygmHostServices services={0}; services.struct_size=sizeof services;
   services.abi_version=ANYGM_HOST_SERVICES_VERSION; anygm_stdio_vfs_services_init(&services);
+  services.path_rename=rename_without_replacement;
   assert(anygm_create(&services,&f->engine)==ANYGM_OK);
   f->source.struct_size=sizeof f->source; f->source.kind=ANYGM_CONTENT_PATH;
   f->source.path=f->anchor; f->source.system_directory=f->content[0].directory;
@@ -166,11 +182,35 @@ static int memory_dependency_rejection(void){
   teardown(&f); return 1;
 }
 
+static int cache_reuse_and_repair(void){
+  PatchFixture f; setup(&f);
+  assert(anygm_load(f.engine,&f.source,NULL)==ANYGM_OK); expect_payload(&f,2);
+  char cached[1536]; snprintf(cached,sizeof cached,"%s",f.engine->current_content_path);
+  anygm_unload(f.engine);
+  /* Exact cached bytes need no publication, even when renames are unavailable. */
+  f.engine->host.path_rename=reject_publication;
+  assert(anygm_load(f.engine,&f.source,NULL)==ANYGM_OK); expect_payload(&f,2);
+  anygm_unload(f.engine);
+  /* A same-size alteration is not a hit. A failed repair publishes no image. */
+  f.bytes[2][f.size[2]-1]^=1;
+  write_file(cached,f.bytes[2],f.size[2]);
+  f.bytes[2][f.size[2]-1]^=1;
+  assert(anygm_load(f.engine,&f.source,NULL)==ANYGM_ERROR_INVALID_CONTENT);
+  assert(!f.engine->win.data);
+  f.engine->host.path_rename=rename_without_replacement;
+  assert(anygm_load(f.engine,&f.source,NULL)==ANYGM_OK); expect_payload(&f,2);
+  anygm_unload(f.engine);
+  write_text(cached,"truncated");
+  assert(anygm_load(f.engine,&f.source,NULL)==ANYGM_OK); expect_payload(&f,2);
+  teardown(&f); return 1;
+}
+
 int main(int argc,char **argv){
   static const AnygmTestCase cases[]={
     {"ordered_lifecycle",ordered_lifecycle},
     {"dependency_rejection",dependency_rejection},
     {"memory_dependency_rejection",memory_dependency_rejection},
+    {"cache_reuse_and_repair",cache_reuse_and_repair},
   };
   const AnygmTestGroup group={"engine_content_patch",cases,sizeof cases/sizeof cases[0]};
   AnygmTestResult result={0};
