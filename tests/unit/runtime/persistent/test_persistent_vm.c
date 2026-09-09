@@ -218,11 +218,11 @@ int expect_authored_long_layer_background_binding(void){
 
 static int retired_builtin_script_shadow_case(const char *script_name){
   uint8_t data[20]={0};
-  fixture_word(data,0,(OP_CALL<<24)|(DT_VAR<<16));
+  fixture_word(data,0,((uint32_t)OP_CALL<<24)|((uint32_t)DT_VAR<<16));
   fixture_word(data,1,0);
-  fixture_word(data,2,(OP_RET<<24)|(DT_VAR<<16));
-  fixture_word(data,3,(OP_PUSH<<24)|(DT_INT16<<16)|91u);
-  fixture_word(data,4,(OP_RET<<24)|(DT_VAR<<16));
+  fixture_word(data,2,((uint32_t)OP_RET<<24)|((uint32_t)DT_VAR<<16));
+  fixture_word(data,3,((uint32_t)OP_PUSH<<24)|((uint32_t)DT_INT16<<16)|91u);
+  fixture_word(data,4,((uint32_t)OP_RET<<24)|((uint32_t)DT_VAR<<16));
   GmlCode code[2]={0};
   code[0].name=(char*)"gml_Script_neutral_retired_builtin_caller";
   code[0].start=0;
@@ -252,6 +252,7 @@ static int retired_builtin_script_shadow_case(const char *script_name){
   if(!ok)
     fprintf(stderr,"retired builtin %s replaced the packaged compatibility script: %.0f\n",
             script_name,result.t==V_REAL?result.d:-1.0);
+  gml_vm_free(&vm);
   for(int index=0;index<2;index++){
     free(code[index].insn);
     free(code[index].insn_pc);
