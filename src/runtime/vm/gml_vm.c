@@ -333,7 +333,12 @@ int gml_vm_init_launch(GmlVM *vm,GmlWin *win,const AnygmHostServices *host,
     }
   }
   gml_vm_instances_parse_objects(vm);
-  gml_vm_rooms_init(vm);
+  if(!gml_vm_rooms_init(vm)){
+    anygm_host_logf(vm->host,ANYGM_LOG_ERROR,"invalid or oversized path resources\n");
+    gml_vm_free(vm);
+    memset(vm,0,sizeof(*vm));
+    return -1;
+  }
   gml_vm_instances_parse_boundary_events(vm);
   free(vm->obj_alive); vm->obj_alive=calloc(vm->n_objects?vm->n_objects:1,sizeof(int));
   free(vm->obj_head); vm->obj_head=malloc((vm->n_objects?vm->n_objects:1)*sizeof(int));
@@ -432,8 +437,7 @@ void gml_vm_free(GmlVM *vm){
   free(vm->structs); free(vm->struct_gen); free(vm->struct_free);
   free(vm->inst);
   for(int i=0;i<vm->n_objects;i++) free(vm->objects[i].events);
-  for(int i=0;i<vm->n_paths;i++) free(vm->paths[i].pts);
-  free(vm->paths);
+  gml_vm_paths_clear(vm);
   gml_vm_sequences_clear(vm);
   for(int i=0;i<vm->n_timelines;i++){
     free(vm->timelines[i].moments);

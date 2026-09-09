@@ -9,11 +9,21 @@ marketing version. It is a numeric field in a validated binary header.
 
 ## Save-state schema
 
-The current AnyGM save-state schema is `18`. It is the format transported by
+The current AnyGM save-state schema is `19`. It is the format transported by
 libretro frontends for manual save states, automatic state slots, and rewind
 snapshots. Those features remain supported.
 
-Schema `18` carries VM schema `9`: arrays retain identity across every VM value root, including
+Schema `19` carries VM schema `10`: each edited or runtime-created path retains its defining
+controls as well as its existing execution samples and deleted-resource flag. Each defining point
+is three doubles (x, y, speed), preceded by a signed 32-bit count. The sampled geometry remains
+byte-exact across restoration rather than being refitted. Counts are bounded to 4,194,304 points
+per representation and 65,536 resource slots. Names are immutable resource identity: authored
+names are re-read from content and runtime names follow the append-only creation ordinal, so no
+mutable name or separate naming counter is serialized. An instance's optional path block adds one
+relative-mode byte; a resource translation moves a relative follower's pivot with the controls.
+Deleted IDs are not reused. Previous root and VM schemas reject cleanly.
+
+Schema `18` carried VM schema `9`: arrays retain identity across every VM value root, including
 builtin containers, static variables, arguments and parked frames. The first encounter defines an
 array and implicitly assigns the next one-based ID before its elements. Wire value tag `4` carries
 a little-endian array ID; zero denotes a null array and every other reference must already exist.
@@ -129,7 +139,7 @@ same form without an intervening mutation produces identical bytes.
 ## VM payload ownership
 
 `src/core/engine_state.c` owns the root framing and section transaction.
-Within the VM section, `src/runtime/vm/gml_vm_state.c` alone owns schema `9`,
+Within the VM section, `src/runtime/vm/gml_vm_state.c` alone owns schema `10`,
 field order, value-graph encoding, sizing, and restore scratch.
 
 Builtin resources have a separate storage and lifetime owner, not a separate

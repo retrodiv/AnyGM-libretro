@@ -228,6 +228,10 @@ occurs in the engine's scratch transaction, so any resource-stage failure
 discards the candidate and preserves the prior live engine exactly.
 The list/queue/stack pool accepts at most 1,024 simultaneously live containers; this remains a
 state-reader bound as well as a runtime resource bound.
+Paths have at most 65,536 resource slots and 4,194,304 points in either their retained control
+array or sampled polyline. Smoothing checks the expanded sample count before allocation.
+Runtime edits publish only after the new controls and finite sampled geometry are ready;
+state records check counts against their remaining byte span before allocating either array.
 
 Cache data is never authoritative. A schema, producer, source, output, size,
 or checksum mismatch discards the cache marker and regenerates from the source.

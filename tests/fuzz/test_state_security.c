@@ -473,6 +473,11 @@ int main(void){
   engine->vm.script_argc=2;
   *gml_varmap_put(&engine->vm.globals,"state_graph")=graph;
 
+  const GmlPathControl path_controls[]={{10,20,100},{13,24,0}};
+  int path_index=gml_path_add(&engine->vm);
+  if(path_index!=0 || !gml_path_replace(&engine->vm,path_index,path_controls,2,0,0,4))
+    return fail("runtime path fixture failed")?0:1;
+
   uint8_t *baseline=NULL;
   size_t state_size=0;
   if(!save_state(engine,&baseline,&state_size)||state_size<=STATE_HEADER_SIZE)
@@ -497,6 +502,33 @@ int main(void){
   size_t audio_start=vm_start+(size_t)vm_size;
   if(audio_start+(size_t)audio_size!=state_size) ok=fail("section arithmetic is inconsistent");
 
+  /* The final VM block holds one runtime path: table header, metadata, two samples, two controls. */
+  const size_t path_record_size=4+3*4+1+8+4+2*4*8+4+2*3*8;
+  size_t path_table=vm_start+(size_t)vm_size-12-path_record_size;
+  StateCursor path_cursor={baseline,state_size,path_table,1};
+  if(cursor_u32(&path_cursor)!=1 || cursor_u32(&path_cursor)!=0 ||
+     cursor_u32(&path_cursor)!=1 || cursor_u32(&path_cursor)!=0)
+    ok=fail("path mutation fixture does not identify its table");
+  if(ok) ok=reject_payload_u32(engine,candidate,state_size,baseline,state_size,
+                               path_table,GML_PATH_MAX_COUNT+1u,"oversized path table");
+  if(ok) ok=reject_payload_u32(engine,candidate,state_size,baseline,state_size,
+                               path_table+8,0,"missing runtime path record");
+  if(ok) ok=reject_payload_u32(engine,candidate,state_size,baseline,state_size,
+                               path_table+12+25,UINT32_MAX,"oversized sampled path count");
+  if(ok) ok=reject_payload_u32(engine,candidate,state_size,baseline,state_size,
+                               path_table+12+93,UINT32_MAX,"oversized defining path count");
+  if(ok){
+    memcpy(candidate,baseline,state_size);
+    write_u64(candidate+path_table+12+97,UINT64_C(0x7ff8000000000000));
+    refresh_checksum(candidate);
+    ok=reject_unchanged(engine,candidate,state_size,baseline,state_size,"nonfinite path control");
+  }
+  if(ok){
+    memcpy(candidate,baseline,state_size); candidate[path_table+12+16]=1;
+    refresh_checksum(candidate);
+    ok=reject_unchanged(engine,candidate,state_size,baseline,state_size,"populated deleted path");
+  }
+
   /* VM header and fixed scalar prefix end at 132. The sparse two-element definition has
    * a self reference then a real; argument one is the first cross-root reference. */
   StateCursor graph_cursor={baseline,state_size,vm_start+132,1};
@@ -515,6 +547,13 @@ int main(void){
                                vm_start+136,UINT32_MAX,"oversized array definition");
   if(ok) ok=reject_payload_u32(engine,candidate,state_size,baseline,state_size,
                                vm_start+4,8,"previous VM tree schema");
+  if(ok) ok=reject_payload_u32(engine,candidate,state_size,baseline,state_size,
+                               vm_start+4,9,"previous sampled-only path schema");
+  if(ok){
+    memcpy(candidate,baseline,state_size);
+    write_u32(candidate+4,ANYGM_STATE_SCHEMA-1u);
+    ok=reject_unchanged(engine,candidate,state_size,baseline,state_size,"previous path state schema");
+  }
   if(ok){
     memcpy(candidate,baseline,state_size);
     write_u32(candidate+4,17);

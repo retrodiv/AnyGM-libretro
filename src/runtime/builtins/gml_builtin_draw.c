@@ -418,8 +418,10 @@ static int asset_index_and_type_by_name(GmlVM *vm, const char *name, int *out_ty
   if(index>=0){ type=GML_ASSET_SOUND; goto done; }
   index=gml_win_asset_index_by_name(vm->win,"BGND",0,name);
   if(index>=0){ type=GML_ASSET_TILESET; goto done; }
-  index=gml_win_asset_index_by_name(vm->win,"PATH",0,name);
-  if(index>=0){ type=GML_ASSET_PATH; goto done; }
+  for(int i=0;i<vm->n_paths;i++)
+    if(!vm->paths[i].deleted && vm->paths[i].name && !strcmp(vm->paths[i].name,name)){
+      index=i; type=GML_ASSET_PATH; goto done;
+    }
   index=gml_win_asset_index_by_name(vm->win,"SCPT",0,name);
   if(index<0){
     /* Script records may use the gml_Script_ prefix associated with their CODE entries.

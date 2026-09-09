@@ -18,7 +18,7 @@
 #include <limits.h>
 
 /* ---------------- save-state runtime serialization ---------------- */
-enum { GML_VM_STATE_SCHEMA=9 };
+enum { GML_VM_STATE_SCHEMA=10 };
 #define GML_VM_STATE_MAGIC UINT32_C(0x534D5641)
 /* IDs are assigned in canonical traversal order, never from addresses. Zero is the null array;
  * a definition claims the next ID before its elements, so back references can close cycles. */
@@ -26,7 +26,7 @@ enum { STATE_ARRAY_REF=4, STATE_MAX_ARRAYS=1000000, STATE_MAX_ARRAY_DEPTH=64 };
 typedef struct { const GmlArr *array; uint32_t id; } StateArrayEntry;
 /* A path a run can build: mp_grid_path fills one cell per step of a route, so the grid's cell
  * count is the ceiling, and path_add_point cannot be asked for more than a state could hold. */
-#define GML_STATE_MAX_PATH_POINTS (1<<22)
+#define GML_STATE_MAX_PATH_POINTS GML_PATH_MAX_POINTS
 /* Writing a state walks every instance's variables, and the names repeat across them: every
  * instance carries the same handful of built-in names, each time as the very same pointer into
  * the content mapping. Resolving one costs a hash of the whole text, a comparison against the
@@ -107,6 +107,8 @@ static void sw_u32(StateW *s, uint32_t v){
   uint8_t b[4]={(uint8_t)v,(uint8_t)(v>>8),(uint8_t)(v>>16),(uint8_t)(v>>24)};
   sw_raw(s,b,sizeof b);
 }
+static void sw_u8(StateW *s,uint8_t value){ sw_raw(s,&value,1); }
+static uint8_t sr_u8(StateR *s){ uint8_t value=0; sr_raw(s,&value,1); return value; }
 static void sw_i32(StateW *s, int v){ sw_u32(s,(uint32_t)(int32_t)v); }
 static void sw_i64(StateW *s, int64_t v){
   uint64_t u=(uint64_t)v; uint8_t b[8]; for(unsigned i=0;i<8;i++) b[i]=(uint8_t)(u>>(i*8));
@@ -560,7 +562,7 @@ static int sr_varmap(GmlVM *vm, StateR *s, GmlVarMap *m){
  *  flags byte (active|marked<<1|deactivated<<2), id u32, obj i32,
  *  field mask u32 (bit set = value differs from its default and follows as a double, in bit
  *  order), x/y/xprev/yprev/xstart/ystart always as doubles, alarm mask u16 (bit = alarm != -1,
- *  set ones follow), path block (11 doubles) only when mask bit 20 is set, timeline block
+ *  set ones follow), path block (11 doubles and one relative-mode byte) when mask bit 20 is set, timeline block
  *  (5 doubles) only when mask bit 21 is set, then the varmap.
  *  Defaults mirror init_inst; equality is exact, so untouched fields round-trip bit-perfectly
  *  and anything else is written verbatim. Typical terrain instance: 308 -> ~80 bytes. */
@@ -575,7 +577,7 @@ static int state_instance_path_present(GmlInstance *in){
   return in->path_index!=-1 || in->path_position!=0 || in->path_positionprevious!=0 ||
          in->path_speed!=0 || in->path_orientation!=0 || in->path_scale!=1 ||
          in->path_endaction!=0 || in->path_xoff!=0 || in->path_yoff!=0 ||
-         in->path_origin_x!=0 || in->path_origin_y!=0;
+         in->path_origin_x!=0 || in->path_origin_y!=0 || in->path_relative;
 }
 static int state_instance_timeline_present(GmlInstance *in){
   return in->timeline_index!=-1 || in->timeline_position!=0 || in->timeline_speed!=1 ||
@@ -608,6 +610,7 @@ static void sw_instance(StateW *s, GmlInstance *in){
     sw_d(s,in->path_speed); sw_d(s,in->path_orientation); sw_d(s,in->path_scale);
     sw_d(s,in->path_endaction); sw_d(s,in->path_xoff); sw_d(s,in->path_yoff);
     sw_d(s,in->path_origin_x); sw_d(s,in->path_origin_y);
+    sw_u8(s,in->path_relative);
   }
   if(fm&(1u<<21)){
     sw_d(s,in->timeline_index); sw_d(s,in->timeline_position); sw_d(s,in->timeline_speed);
@@ -712,11 +715,14 @@ static void sr_instance(GmlVM *vm, StateR *s, GmlInstance *in){
     in->path_speed=sr_d(s); in->path_orientation=sr_d(s); in->path_scale=sr_d(s);
     in->path_endaction=sr_d(s); in->path_xoff=sr_d(s); in->path_yoff=sr_d(s);
     in->path_origin_x=sr_d(s); in->path_origin_y=sr_d(s);
+    in->path_relative=sr_u8(s);
+    if(in->path_relative>1) s->ok=0;
   } else {
     in->path_index=-1; in->path_position=0; in->path_positionprevious=0;
     in->path_speed=0; in->path_orientation=0; in->path_scale=1;
     in->path_endaction=0; in->path_xoff=0; in->path_yoff=0;
     in->path_origin_x=0; in->path_origin_y=0;
+    in->path_relative=0;
   }
   if(fm&(1u<<21)){
     in->timeline_index=sr_d(s); in->timeline_position=sr_d(s); in->timeline_speed=sr_d(s);
@@ -954,11 +960,16 @@ static void sw_vm(StateW *s, GmlVM *vm){
       if(i<vm->n_authored_paths && !p->runtime_dirty) continue;
       sw_i32(s,i);
       sw_i32(s,p->kind); sw_i32(s,p->closed); sw_i32(s,p->precision);
+      sw_u8(s,p->deleted);
       sw_d(s,p->len);
       sw_i32(s,p->n);
       for(int k=0;k<p->n;k++){
         sw_d(s,p->pts[k].x); sw_d(s,p->pts[k].y);
         sw_d(s,p->pts[k].sp); sw_d(s,p->pts[k].clen);
+      }
+      sw_i32(s,p->control_count);
+      for(int k=0;k<p->control_count;k++){
+        sw_d(s,p->controls[k].x); sw_d(s,p->controls[k].y); sw_d(s,p->controls[k].sp);
       }
     }
   }
@@ -1334,20 +1345,16 @@ int gml_vm_state_load(GmlVM *vm, const void *data, size_t len, size_t *used){
     int total=sr_i32(&s);
     int authored=sr_i32(&s);
     int dirty=sr_i32(&s);
-    if(total<0 || authored<0 || dirty<0 || authored>total || dirty>total ||
+    if(total<0 || total>GML_PATH_MAX_COUNT || authored<0 || dirty<0 || authored>total ||
+       dirty>total || dirty<total-authored ||
        authored!=vm->n_authored_paths){
       state_debug(vm,"bad path table",s.pos,(uint32_t)total); s.ok=0;
     } else {
       gml_vm_paths_reset_authored(vm);
-      if(total>vm->n_paths){
-        GmlPath *grown=realloc(vm->paths,(size_t)total*sizeof(GmlPath));
-        if(!grown) s.ok=0;
-        else {
-          memset(grown+vm->n_paths,0,(size_t)(total-vm->n_paths)*sizeof(GmlPath));
-          vm->paths=grown; vm->n_paths=total;
-        }
-      }
+      if(vm->n_authored_paths!=authored) s.ok=0;
+      while(s.ok && total>vm->n_paths) if(gml_path_add(vm)<0) s.ok=0;
       int last=-1;
+      int restored_dynamic=0;
       for(int k=0;k<dirty && s.ok;k++){
         int index=sr_i32(&s);
         if(index<=last || index<0 || index>=vm->n_paths){
@@ -1356,9 +1363,13 @@ int gml_vm_state_load(GmlVM *vm, const void *data, size_t len, size_t *used){
         last=index;
         GmlPath *p=&vm->paths[index];
         int kind=sr_i32(&s), closed=sr_i32(&s), precision=sr_i32(&s);
+        unsigned deleted=sr_u8(&s);
         double len=sr_d(&s);
         int count=sr_i32(&s);
-        if(count<0 || count>GML_STATE_MAX_PATH_POINTS || !isfinite(len)){
+        if(count<0 || count>GML_STATE_MAX_PATH_POINTS || !isfinite(len) || len<0 ||
+           kind<0 || kind>1 || closed<0 || closed>1 || precision<1 || precision>8 ||
+           deleted>1 || (deleted && (count || len)) ||
+           s.pos>s.cap || (size_t)count>(s.cap-s.pos)/32u){
           state_debug(vm,"bad path point count",s.pos,(uint32_t)count); s.ok=0; break;
         }
         GmlPathPt *pts=calloc((size_t)(count>0?count:1),sizeof(GmlPathPt));
@@ -1366,12 +1377,33 @@ int gml_vm_state_load(GmlVM *vm, const void *data, size_t len, size_t *used){
         for(int j=0;j<count;j++){
           pts[j].x=sr_d(&s); pts[j].y=sr_d(&s);
           pts[j].sp=sr_d(&s); pts[j].clen=sr_d(&s);
+          if(!isfinite(pts[j].x) || !isfinite(pts[j].y) || !isfinite(pts[j].sp) ||
+             !isfinite(pts[j].clen) || pts[j].clen<0 || pts[j].clen>len ||
+             (j && pts[j].clen<pts[j-1].clen)) s.ok=0;
         }
         if(!s.ok){ free(pts); break; }
+        int control_count=sr_i32(&s);
+        if(control_count<0 || control_count>GML_STATE_MAX_PATH_POINTS ||
+           (deleted && control_count) || (count==0)!=(control_count==0) ||
+           s.pos>s.cap || (size_t)control_count>(s.cap-s.pos)/24u){
+          free(pts); s.ok=0; break;
+        }
+        GmlPathControl *controls=control_count?calloc((size_t)control_count,sizeof(*controls)):NULL;
+        if(control_count && !controls){ free(pts); s.ok=0; break; }
+        for(int j=0;j<control_count;j++){
+          controls[j].x=sr_d(&s); controls[j].y=sr_d(&s); controls[j].sp=sr_d(&s);
+          if(!isfinite(controls[j].x) || !isfinite(controls[j].y) || !isfinite(controls[j].sp))
+            s.ok=0;
+        }
+        if(!s.ok){ free(pts); free(controls); break; }
         free(p->pts);
+        free(p->controls);
         p->pts=pts; p->n=count; p->kind=kind; p->closed=closed;
         p->precision=precision; p->len=len; p->runtime_dirty=1;
+        p->controls=controls; p->control_count=control_count; p->deleted=(unsigned char)deleted;
+        if(index>=authored) restored_dynamic++;
       }
+      if(restored_dynamic!=total-authored) s.ok=0;
     }
   }
   vm->cur_self=vm->cur_other=NULL; vm->cur_event=NULL; vm->cur_event_obj=0;

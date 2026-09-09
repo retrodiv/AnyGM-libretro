@@ -957,7 +957,7 @@ GmlVal gml_builtin_try_collision_planning(GmlVM *vm, const char *nm, GmlVal *a, 
       if(pi<0||pi>=vm->n_paths) return vreal(0);
       int sh=(int)floor((x0-g->left)/g->cw), sv=(int)floor((y0-g->top)/g->ch);
       int gh=(int)floor((x1-g->left)/g->cw), gv=(int)floor((y1-g->top)/g->ch);
-      GmlPath *p=&vm->paths[pi];
+      if(vm->paths[pi].deleted) return vreal(0);
       if(sh<0||sh>=g->hc||sv<0||sv>=g->vc||gh<0||gh>=g->hc||gv<0||gv>=g->vc) return vreal(0);
       if(g->cell[sv*g->hc+sh]||g->cell[gv*g->hc+gh]) return vreal(0);
       int nc=g->hc*g->vc;
@@ -1001,20 +1001,18 @@ GmlVal gml_builtin_try_collision_planning(GmlVM *vm, const char *nm, GmlVal *a, 
       #undef MPH
       if(found){
         int rn=0; for(int c=goal;c>=0;c=prev[c]) rn++;
-        GmlPathPt *pts=calloc((size_t)rn>0?(size_t)rn:1,sizeof(GmlPathPt));
+        GmlPathControl *pts=calloc((size_t)rn>0?(size_t)rn:1,sizeof(*pts));
+        if(!pts){ free(prev); free(cost); free(heap); free(fsco); return vreal(0); }
         int idx=rn-1;
         for(int c=goal;c>=0;c=prev[c],idx--){
           pts[idx].x=g->left+(c%g->hc+0.5)*g->cw;
           pts[idx].y=g->top+(c/g->hc+0.5)*g->ch;
           pts[idx].sp=100;
         }
-        pts[0].x=x0; pts[0].y=y0;                     /* exact endpoints, GM-style */
+        pts[0].x=x0; pts[0].y=y0;                     /* preserve exact endpoints */
         pts[rn-1].x=x1; pts[rn-1].y=y1;
-        free(p->pts); p->pts=pts; p->n=rn; p->kind=0; p->closed=0; p->runtime_dirty=1;
-        double L=0; p->pts[0].clen=0;
-        for(int k=1;k<p->n;k++){ double ddx=p->pts[k].x-p->pts[k-1].x, ddy=p->pts[k].y-p->pts[k-1].y;
-          L+=sqrt(ddx*ddx+ddy*ddy); p->pts[k].clen=L; }
-        p->len=L;
+        found=gml_path_replace(vm,pi,pts,rn,0,0,vm->paths[pi].precision);
+        free(pts);
       }
       free(prev); free(cost); free(heap); free(fsco);
       return vreal(found);
@@ -1040,76 +1038,85 @@ GmlVal gml_builtin_try_collision_planning(GmlVM *vm, const char *nm, GmlVal *a, 
     if(n<2 || !isfinite(index) || index<0 || index>=vm->n_paths) return vreal(0);
     return vreal(gml_path_speed_public(vm,(int)index,position));
   }
-  if(!strcmp(nm,"path_add")){
-    GmlPath *np=realloc(vm->paths,(size_t)(vm->n_paths+1)*sizeof(GmlPath));
-    if(!np) return vreal(-1);
-    vm->paths=np;
-    GmlPath *p=&vm->paths[vm->n_paths];
-    memset(p,0,sizeof *p);
-    p->pts=calloc(1,sizeof(GmlPathPt));
-    p->precision=4; p->closed=1; p->runtime_dirty=1;
-    return vreal(vm->n_paths++);
-  }
-  if(!strcmp(nm,"path_add_point")){
-    int pi=(int)N(a,n,0);
-    if(pi>=0 && pi<vm->n_paths){
-      GmlPath *p=&vm->paths[pi]; p->runtime_dirty=1;
-      GmlPathPt *np=realloc(p->pts,(size_t)(p->n+1)*sizeof(GmlPathPt));
-      if(np){ p->pts=np;
-        p->pts[p->n].x=N(a,n,1); p->pts[p->n].y=N(a,n,2); p->pts[p->n].sp=N(a,n,3); p->n++;
-        double L=0; p->pts[0].clen=0;
-        for(int k=1;k<p->n;k++){ double dx=p->pts[k].x-p->pts[k-1].x, dy=p->pts[k].y-p->pts[k-1].y;
-          L+=sqrt(dx*dx+dy*dy); p->pts[k].clen=L; }
-        if(p->closed && p->n>1){ double dx=p->pts[0].x-p->pts[p->n-1].x, dy=p->pts[0].y-p->pts[p->n-1].y;
-          L+=sqrt(dx*dx+dy*dy); }
-        p->len=L; }
+  if(!strcmp(nm,"path_add")) return vreal(gml_path_add(vm));
+  if(!strncmp(nm,"path_",5)){
+    double index=N(a,n,0);
+    int pi=n && isfinite(index) && index>=0 && index<vm->n_paths?(int)index:-1;
+    GmlPath *p=pi>=0 && !vm->paths[pi].deleted?&vm->paths[pi]:NULL;
+    if(!strcmp(nm,"path_get_name")) return vstr(p && p->name?p->name:"");
+    if(!strcmp(nm,"path_exists")) return vreal(p!=NULL);
+    if(!strcmp(nm,"path_add_point")){
+      if(p && n>=4) gml_path_edit_point(vm,pi,p->control_count,GML_PATH_POINT_INSERT,
+                                      (GmlPathControl){N(a,n,1),N(a,n,2),N(a,n,3)});
+      return vreal(0);
     }
-    return vreal(0);
-  }
-  if(!strcmp(nm,"path_set_closed")){
-    int pi=(int)N(a,n,0);
-    if(pi>=0 && pi<vm->n_paths){
-      GmlPath *p=&vm->paths[pi]; p->closed=N(a,n,1)!=0; p->runtime_dirty=1;
-      double L=0; if(p->n>0) p->pts[0].clen=0;
-      for(int k=1;k<p->n;k++){ double dx=p->pts[k].x-p->pts[k-1].x,dy=p->pts[k].y-p->pts[k-1].y;
-        L+=sqrt(dx*dx+dy*dy); p->pts[k].clen=L; }
-      if(p->closed && p->n>1){ double dx=p->pts[0].x-p->pts[p->n-1].x,dy=p->pts[0].y-p->pts[p->n-1].y;
-        L+=sqrt(dx*dx+dy*dy); }
-      p->len=L;
+    if(!strcmp(nm,"path_change_point") || !strcmp(nm,"path_insert_point") ||
+       !strcmp(nm,"path_delete_point")){
+      int operation=!strcmp(nm,"path_insert_point")?GML_PATH_POINT_INSERT:
+                    (!strcmp(nm,"path_delete_point")?GML_PATH_POINT_DELETE:GML_PATH_POINT_CHANGE);
+      double point=N(a,n,1);
+      if(p && n>=(operation==GML_PATH_POINT_DELETE?2:5) && isfinite(point) &&
+         point>=0 && point<=p->control_count)
+        gml_path_edit_point(vm,pi,(int)point,operation,
+                           (GmlPathControl){N(a,n,2),N(a,n,3),N(a,n,4)});
+      return vreal(0);
     }
-    return vreal(0);
+    if(!strcmp(nm,"path_set_closed") || !strcmp(nm,"path_set_kind") ||
+       !strcmp(nm,"path_set_precision")){
+      double value=N(a,n,1);
+      if(p && n>=2 && isfinite(value)){
+        int kind=p->kind,closed=p->closed,precision=p->precision;
+        if(!strcmp(nm,"path_set_closed")) closed=value!=0;
+        else if(!strcmp(nm,"path_set_kind")){ if(value<0 || value>1) return vreal(0); kind=(int)value; }
+        else { if(value<1 || value>8) return vreal(0); precision=(int)value; }
+        gml_path_replace(vm,pi,p->controls,p->control_count,kind,closed,precision);
+      }
+      return vreal(0);
+    }
+    if(!strcmp(nm,"path_clear_points") || !strcmp(nm,"path_delete")){
+      if(p && gml_path_replace(vm,pi,NULL,0,p->kind,p->closed,p->precision) &&
+         !strcmp(nm,"path_delete")) p->deleted=1;
+      return vreal(0);
+    }
+    if(!strcmp(nm,"path_append")){
+      double source=N(a,n,1);
+      if(p && n>=2 && isfinite(source) && source>=0 && source<vm->n_paths)
+        gml_path_append(vm,pi,(int)source);
+      return vreal(0);
+    }
+    if(!strcmp(nm,"path_reverse")){ if(p) gml_path_reverse(vm,pi); return vreal(0); }
+    if(!strcmp(nm,"path_mirror")){ if(p) gml_path_transform(vm,pi,-1,1,0); return vreal(0); }
+    if(!strcmp(nm,"path_flip")){ if(p) gml_path_transform(vm,pi,1,-1,0); return vreal(0); }
+    if(!strcmp(nm,"path_rescale")){
+      if(p && n>=3) gml_path_transform(vm,pi,N(a,n,1),N(a,n,2),0);
+      return vreal(0);
+    }
+    if(!strcmp(nm,"path_rotate")){
+      if(p && n>=2) gml_path_transform(vm,pi,1,1,N(a,n,1));
+      return vreal(0);
+    }
+    if(!strcmp(nm,"path_shift")){
+      if(p && n>=3) gml_path_shift(vm,pi,N(a,n,1),N(a,n,2));
+      return vreal(0);
+    }
+    if(!strcmp(nm,"path_get_number")) return vreal(p?p->control_count:0);
+    if(!strcmp(nm,"path_get_closed")) return vreal(p?p->closed:0);
+    if(!strcmp(nm,"path_get_kind")) return vreal(p?p->kind:0);
+    if(!strcmp(nm,"path_get_precision")) return vreal(p?p->precision:0);
+    if(!strcmp(nm,"path_get_length")) return vreal(p?p->len:0);
+    if(!strcmp(nm,"path_get_x") || !strcmp(nm,"path_get_y")){
+      double t=N(a,n,1),px=0,py=0;
+      if(p && n>=2 && isfinite(t)) gml_path_eval_public(vm,pi,t,&px,&py);
+      return vreal(nm[9]=='x'?px:py);
+    }
+    if(!strcmp(nm,"path_get_point_x") || !strcmp(nm,"path_get_point_y") ||
+       !strcmp(nm,"path_get_point_speed")){
+      double point=N(a,n,1);
+      if(!p || n<2 || !isfinite(point) || point<0 || point>=p->control_count) return vreal(0);
+      const GmlPathControl *value=&p->controls[(int)point];
+      return vreal(nm[15]=='x'?value->x:(nm[15]=='y'?value->y:value->sp));
+    }
   }
-  if(!strcmp(nm,"path_clear_points")){
-    int pi=(int)N(a,n,0);
-    if(pi>=0 && pi<vm->n_paths){ vm->paths[pi].n=0; vm->paths[pi].len=0;
-      vm->paths[pi].runtime_dirty=1; }
-    return vreal(0);
-  }
-  if(!strcmp(nm,"path_get_number")){ int pi=(int)N(a,n,0);
-    return vreal((pi>=0&&pi<vm->n_paths)?vm->paths[pi].n:0); }
-  if(!strcmp(nm,"path_get_closed")){ int pi=(int)N(a,n,0);
-    return vreal((pi>=0&&pi<vm->n_paths)?vm->paths[pi].closed:0); }
-  if(!strcmp(nm,"path_get_kind")){ int pi=(int)N(a,n,0);
-    return vreal((pi>=0&&pi<vm->n_paths)?vm->paths[pi].kind:0); }
-  if(!strcmp(nm,"path_get_precision")){ int pi=(int)N(a,n,0);
-    return vreal((pi>=0&&pi<vm->n_paths)?vm->paths[pi].precision:0); }
-  if(!strcmp(nm,"path_get_length")){ int pi=(int)N(a,n,0);
-    return vreal((pi>=0&&pi<vm->n_paths)?vm->paths[pi].len:0); }
-  if(!strcmp(nm,"path_get_x")||!strcmp(nm,"path_get_y")){
-    int pi=(int)N(a,n,0); double t=N(a,n,1);
-    if(pi<0||pi>=vm->n_paths) return vreal(0);
-    double px,py; gml_path_eval_public(vm,pi,t,&px,&py);
-    return vreal(nm[9]=='x'?px:py); }
-  if(!strcmp(nm,"path_get_point_x")){ int pi=(int)N(a,n,0), k=(int)N(a,n,1);
-    return vreal((pi>=0&&pi<vm->n_paths&&k>=0&&k<vm->paths[pi].n)?vm->paths[pi].pts[k].x:0); }
-  if(!strcmp(nm,"path_get_point_y")){ int pi=(int)N(a,n,0), k=(int)N(a,n,1);
-    return vreal((pi>=0&&pi<vm->n_paths&&k>=0&&k<vm->paths[pi].n)?vm->paths[pi].pts[k].y:0); }
-  if(!strcmp(nm,"path_get_point_speed")){ int pi=(int)N(a,n,0), k=(int)N(a,n,1);
-    return vreal((pi>=0&&pi<vm->n_paths&&k>=0&&k<vm->paths[pi].n)?vm->paths[pi].pts[k].sp:0); }
-  if(!strcmp(nm,"path_exists")){ int pi=(int)N(a,n,0); return vreal(pi>=0&&pi<vm->n_paths); }
-  if(!strcmp(nm,"path_delete")){ int pi=(int)N(a,n,0);
-    if(pi>=0&&pi<vm->n_paths){ vm->paths[pi].n=0; vm->paths[pi].len=0;
-      vm->paths[pi].runtime_dirty=1; } return vreal(0); }
   if(!strcmp(nm,"mp_linear_step")){
     if(n<4) return vreal(0);
     int all=N(a,n,3)!=0;

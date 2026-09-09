@@ -39,6 +39,7 @@ typedef struct {
   double  path_index, path_position, path_positionprevious, path_speed, path_orientation, path_scale;
   double  path_endaction, path_xoff, path_yoff;   /* world anchor for transformed path coords */
   double  path_origin_x, path_origin_y;           /* local pivot: first point for relative paths */
+  unsigned char path_relative;                 /* translation must also move a relative pivot */
   /* classic GameMaker timeline playback */
   double  timeline_index, timeline_position, timeline_speed, timeline_running, timeline_loop;
   unsigned char mouse_over;  /* transient hover flag for Mouse enter/leave (not serialized) */
@@ -54,7 +55,13 @@ typedef struct {
 
 /* ---- path (parsed from PATH) ---- */
 typedef struct { double x, y, sp, clen; } GmlPathPt;   /* sp = point speed factor, clen = cumulative length */
+typedef struct { double x, y, sp; } GmlPathControl;
+#define GML_PATH_MAX_POINTS (1<<22)
+#define GML_PATH_MAX_COUNT 65536
 typedef struct { GmlPathPt *pts; int n; int kind, closed, precision; double len;
+                 GmlPathControl *controls; int control_count;
+                 char *name;
+                 unsigned char deleted;
                  unsigned char runtime_dirty; /* content differs from what PATH authored */
                } GmlPath;
 /* ---- sequences (SEQN chunk, GMS2.3+) ----
@@ -492,6 +499,16 @@ void gml_path_eval_public(GmlVM *vm, int pi, double t, double *ox, double *oy);
 double gml_path_speed_public(GmlVM *vm, int index, double position);
 int gml_path_assign(GmlVM *vm, int destination, int source);
 int gml_path_duplicate(GmlVM *vm, int source);
+int gml_path_add(GmlVM *vm);
+int gml_path_replace(GmlVM *vm, int index, const GmlPathControl *points, int count,
+                     int kind, int closed, int precision);
+enum { GML_PATH_POINT_INSERT, GML_PATH_POINT_CHANGE, GML_PATH_POINT_DELETE };
+int gml_path_edit_point(GmlVM *vm, int index, int point, int operation,
+                        GmlPathControl value);
+int gml_path_append(GmlVM *vm, int destination, int source);
+int gml_path_reverse(GmlVM *vm, int index);
+int gml_path_transform(GmlVM *vm, int index, double xscale, double yscale, double angle);
+int gml_path_shift(GmlVM *vm, int index, double xshift, double yshift);
 double gml_legacy_view_follow_axis(double current, double target, double extent,
                                    double border, double speed);
 int gml_room_instance_precreate_code(GmlVM *vm, uint32_t instance_record);

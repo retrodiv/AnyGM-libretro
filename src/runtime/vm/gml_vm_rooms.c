@@ -18,7 +18,7 @@
 #include <string.h>
 
 /* ---------------- path parsing + evaluation (PATH chunk) ---------------- */
-typedef struct { double x,y,sp; } PathCtlPt;
+typedef GmlPathControl PathCtlPt;
 
 static PathCtlPt path_midpoint(PathCtlPt a, PathCtlPt b){
   PathCtlPt result={(a.x+b.x)*0.5,(a.y+b.y)*0.5,(a.sp+b.sp)*0.5};
@@ -30,30 +30,28 @@ static double path_quadratic(double p0, double p1, double p2, double t){
   return u*u*p0+2.0*u*t*p1+t*t*p2;
 }
 
-static void path_append_sample(GmlPath *p, int *cap, double x, double y, double sp){
-  if(p->n>=*cap){
-    *cap=*cap?(*cap*2):16;
-    p->pts=realloc(p->pts,(size_t)*cap*sizeof(GmlPathPt));
-  }
+static void path_append_sample(GmlPath *p, double x, double y, double sp){
   p->pts[p->n].x=x; p->pts[p->n].y=y; p->pts[p->n].sp=sp; p->pts[p->n].clen=0;
   p->n++;
 }
 
-static void path_build_samples(GmlPath *p, PathCtlPt *ctl, int npt){
-  int cap=0; p->pts=NULL; p->n=0;
-  if(npt<=0) return;
+static int path_build_samples(GmlPath *p, const PathCtlPt *ctl, int npt){
+  p->pts=NULL; p->n=0; p->len=0;
+  if(npt<0 || npt>GML_PATH_MAX_POINTS || (npt && !ctl)) return 0;
+  if(npt==0) return 1;
+  int precision=p->precision<1?1:(p->precision>8?8:p->precision);
+  int subdiv=1<<precision;
+  size_t samples=(size_t)npt;
+  if(p->kind && npt>1) samples=samples*(size_t)subdiv+(p->closed?0u:1u);
+  if(samples>GML_PATH_MAX_POINTS || samples>SIZE_MAX/sizeof(*p->pts)) return 0;
+  p->pts=malloc(samples*sizeof(*p->pts));
+  if(!p->pts) return 0;
   if(npt==1){
-    path_append_sample(p,&cap,ctl[0].x,ctl[0].y,ctl[0].sp);
-    return;
-  }
-  if(p->kind==0){
-    for(int k=0;k<npt;k++) path_append_sample(p,&cap,ctl[k].x,ctl[k].y,ctl[k].sp);
-    return;
-  }
-  int subdiv=1 << (p->precision>0?p->precision:1);
-  if(subdiv<2) subdiv=2;
-  if(subdiv>256) subdiv=256;
-  for(int i=0;i<npt;i++){
+    path_append_sample(p,ctl[0].x,ctl[0].y,ctl[0].sp);
+  } else if(p->kind==0){
+    for(int k=0;k<npt;k++) path_append_sample(p,ctl[k].x,ctl[k].y,ctl[k].sp);
+  } else {
+   for(int i=0;i<npt;i++){
     int previous=i>0?i-1:npt-1;
     int next=i+1<npt?i+1:0;
     PathCtlPt p1=ctl[i];
@@ -64,10 +62,32 @@ static void path_build_samples(GmlPath *p, PathCtlPt *ctl, int npt){
       double x=path_quadratic(p0.x,p1.x,p2.x,t);
       double y=path_quadratic(p0.y,p1.y,p2.y,t);
       double sp=path_quadratic(p0.sp,p1.sp,p2.sp,t);
-      path_append_sample(p,&cap,x,y,sp);
+      path_append_sample(p,x,y,sp);
     }
   }
-  if(!p->closed) path_append_sample(p,&cap,ctl[npt-1].x,ctl[npt-1].y,ctl[npt-1].sp);
+   if(!p->closed) path_append_sample(p,ctl[npt-1].x,ctl[npt-1].y,ctl[npt-1].sp);
+  }
+  /* Keep the established arc-length and quadratic kernels; only storage is retained now. */
+  double length=0;
+  for(int k=0;k<p->n;k++){
+    if(!isfinite(p->pts[k].x) || !isfinite(p->pts[k].y) || !isfinite(p->pts[k].sp))
+      goto fail;
+    if(k){
+      double dx=p->pts[k].x-p->pts[k-1].x,dy=p->pts[k].y-p->pts[k-1].y;
+      length+=sqrt(dx*dx+dy*dy);
+    }
+    p->pts[k].clen=length;
+  }
+  if(p->closed && p->n>1){
+    double dx=p->pts[0].x-p->pts[p->n-1].x,dy=p->pts[0].y-p->pts[p->n-1].y;
+    length+=sqrt(dx*dx+dy*dy);
+  }
+  if(!isfinite(length)) goto fail;
+  p->len=length;
+  return 1;
+fail:
+  free(p->pts); p->pts=NULL; p->n=0;
+  return 0;
 }
 
 /* ---- sequences (SEQN) ----
@@ -576,13 +596,20 @@ static void parse_sequences(GmlVM *vm){
   }
 }
 
-static void parse_paths(GmlVM *vm){
-  GmlWin *w=vm->win; const GmlChunk *c=gml_chunk(w,"PATH"); if(!c) return;
+static int parse_paths(GmlVM *vm){
+  GmlWin *w=vm->win; const GmlChunk *c=gml_chunk(w,"PATH"); if(!c) return 1;
   const uint8_t *d=w->data; uint32_t base=c->off;
-  uint32_t n=gml_vm_read_u32_le(d,base); vm->paths=calloc(n>0?n:1,sizeof(GmlPath)); vm->n_paths=n;
+  if(base>w->size || c->size>w->size-base || c->size<4) return 0;
+  size_t end=(size_t)base+c->size;
+  uint32_t n=gml_vm_read_u32_le(d,base);
+  if(n>GML_PATH_MAX_COUNT || n>(c->size-4)/4) return 0;
+  vm->paths=calloc(n?n:1,sizeof(GmlPath));
+  if(!vm->paths) return 0;
+  vm->n_paths=(int)n;
   vm->n_authored_paths=(int)n;
   for(uint32_t i=0;i<n;i++){
     uint32_t ep=gml_vm_read_u32_le(d,base+4+i*4);
+    if(ep<base+4+n*4 || ep>end || end-ep<20) goto fail;
     GmlPath *p=&vm->paths[i];
     /* GMS1.4 PATH entry: [name_ptr:u32][kind:u32(0=straight,1=smooth)][closed:u32][precision:u32]
      * [n_points:u32][points: each x(f32),y(f32),speed_factor(f32)=12B]. */
@@ -590,20 +617,21 @@ static void parse_paths(GmlVM *vm){
     p->closed=(int)gml_vm_read_u32_le(d,ep+8);
     p->precision=(int)gml_vm_read_u32_le(d,ep+12);
     int npt=(int)gml_vm_read_u32_le(d,ep+16);
-    PathCtlPt *ctl=calloc(npt>0?npt:1,sizeof(PathCtlPt));
+    if(npt<0 || npt>GML_PATH_MAX_POINTS || (size_t)npt>(end-ep-20)/12) goto fail;
+    const char *name=gml_str_by_ptr(w,gml_vm_read_u32_le(d,ep));
+    p->name=strdup(name?name:"");
+    PathCtlPt *ctl=calloc(npt?npt:1,sizeof(PathCtlPt));
+    if(!p->name || !ctl){ free(ctl); goto fail; }
+    p->controls=ctl; p->control_count=npt;
     for(int k=0;k<npt;k++){ uint32_t po=ep+20+k*12;
       ctl[k].x=gml_vm_read_f32_le(d,po); ctl[k].y=gml_vm_read_f32_le(d,po+4);
       ctl[k].sp=gml_vm_read_f32_le(d,po+8); }
-    path_build_samples(p,ctl,npt);
-    free(ctl);
-    /* cumulative arc length along the polyline (closed paths include the wrap segment) */
-    double L=0; if(p->n>0) p->pts[0].clen=0;
-    for(int k=1;k<p->n;k++){ double dx=p->pts[k].x-p->pts[k-1].x, dy=p->pts[k].y-p->pts[k-1].y;
-      L+=sqrt(dx*dx+dy*dy); p->pts[k].clen=L; }
-    if(p->closed && p->n>1){ double dx=p->pts[0].x-p->pts[p->n-1].x, dy=p->pts[0].y-p->pts[p->n-1].y;
-      L+=sqrt(dx*dx+dy*dy); }
-    p->len=L;
+    if(!path_build_samples(p,ctl,npt)) goto fail;
   }
+  return 1;
+fail:
+  gml_vm_paths_clear(vm);
+  return 0;
 }
 
 /* A state restore rebuilds the authored path table from the content before applying whatever the
@@ -612,10 +640,18 @@ static void parse_paths(GmlVM *vm){
  * path for the whole session so a restore can clean one the run had edited. */
 void gml_vm_paths_reset_authored(GmlVM *vm){
   if(!vm) return;
-  for(int i=0;i<vm->n_paths;i++) free(vm->paths[i].pts);
+  gml_vm_paths_clear(vm);
+  parse_paths(vm);
+}
+void gml_vm_paths_clear(GmlVM *vm){
+  if(!vm) return;
+  for(int i=0;i<vm->n_paths;i++){
+    free(vm->paths[i].pts);
+    free(vm->paths[i].controls);
+    free(vm->paths[i].name);
+  }
   free(vm->paths);
   vm->paths=NULL; vm->n_paths=0; vm->n_authored_paths=0;
-  parse_paths(vm);
 }
 
 static int native_timeline_code(GmlWin *w, const char *timeline_name, int moment, int step,
@@ -767,14 +803,16 @@ static double path_speed_factor(GmlPath *p, double t){
   return isfinite(sp) ? sp : 100.0;
 }
 double gml_path_speed_public(GmlVM *vm, int index, double position){
-  if(!vm || index<0 || index>=vm->n_paths || !isfinite(position)) return 0;
+  if(!vm || index<0 || index>=vm->n_paths || vm->paths[index].deleted || !isfinite(position)) return 0;
   return path_speed_factor(&vm->paths[index],position);
 }
 /* Copy sampled geometry without resampling it: this preserves imported curves and the
  * speed profile already used by traversal. Publication happens only after allocation. */
 static int path_copy_data(const GmlPath *source, GmlPath *copy){
   if(source->n<0 || (size_t)source->n>SIZE_MAX/sizeof(GmlPathPt) ||
-     (source->n && !source->pts)) return 0;
+     (source->n && !source->pts) || source->control_count<0 ||
+     source->control_count>GML_PATH_MAX_POINTS ||
+     (source->control_count && !source->controls) || source->deleted) return 0;
   GmlPathPt *points=NULL;
   if(source->n){
     size_t bytes=(size_t)source->n*sizeof *points;
@@ -782,30 +820,165 @@ static int path_copy_data(const GmlPath *source, GmlPath *copy){
     if(!points) return 0;
     memcpy(points,source->pts,bytes);
   }
-  *copy=*source; copy->pts=points; copy->runtime_dirty=1;
+  GmlPathControl *controls=NULL;
+  if(source->control_count){
+    size_t bytes=(size_t)source->control_count*sizeof(*controls);
+    controls=malloc(bytes);
+    if(!controls){ free(points); return 0; }
+    memcpy(controls,source->controls,bytes);
+  }
+  *copy=*source; copy->pts=points; copy->controls=controls; copy->name=NULL;
+  copy->runtime_dirty=1;
   return 1;
 }
 int gml_path_assign(GmlVM *vm, int destination, int source){
   if(!vm || destination<0 || destination>=vm->n_paths || source<0 || source>=vm->n_paths)
     return 0;
-  if(destination==source) return 1;
+  if(vm->paths[destination].deleted) return 0;
+  if(destination==source) return !vm->paths[source].deleted;
   GmlPath copy;
   if(!path_copy_data(&vm->paths[source],&copy)) return 0;
   free(vm->paths[destination].pts);
+  free(vm->paths[destination].controls);
+  copy.name=vm->paths[destination].name;
   vm->paths[destination]=copy;
   return 1;
 }
 int gml_path_duplicate(GmlVM *vm, int source){
-  if(!vm || source<0 || source>=vm->n_paths || vm->n_paths==INT_MAX ||
-     (size_t)vm->n_paths+1>SIZE_MAX/sizeof(GmlPath)) return -1;
+  if(!vm || source<0 || source>=vm->n_paths) return -1;
   GmlPath copy;
   if(!path_copy_data(&vm->paths[source],&copy)) return -1;
-  GmlPath *paths=realloc(vm->paths,((size_t)vm->n_paths+1)*sizeof *paths);
-  if(!paths){ free(copy.pts); return -1; }
-  vm->paths=paths;
-  int index=vm->n_paths;
-  vm->paths[index]=copy; vm->n_paths++;
+  int index=gml_path_add(vm);
+  if(index<0){ free(copy.pts); free(copy.controls); return -1; }
+  copy.name=vm->paths[index].name;
+  vm->paths[index]=copy;
   return index;
+}
+int gml_path_add(GmlVM *vm){
+  if(!vm || vm->n_paths<vm->n_authored_paths || vm->n_paths>=GML_PATH_MAX_COUNT) return -1;
+  char label[32];
+  snprintf(label,sizeof label,"_newpath%d",vm->n_paths-vm->n_authored_paths);
+  char *name=strdup(label);
+  if(!name) return -1;
+  GmlPath *paths=realloc(vm->paths,((size_t)vm->n_paths+1)*sizeof(*paths));
+  if(!paths){ free(name); return -1; }
+  vm->paths=paths;
+  int index=vm->n_paths++;
+  GmlPath *p=&vm->paths[index];
+  memset(p,0,sizeof(*p)); p->name=name; p->precision=4; p->closed=1; p->runtime_dirty=1;
+  return index;
+}
+static GmlPath *path_find(GmlVM *vm,int index){
+  return vm && index>=0 && index<vm->n_paths && !vm->paths[index].deleted?
+         &vm->paths[index]:NULL;
+}
+/* Takes the proposed controls, but publishes neither them nor their samples on failure. */
+static int path_publish_controls(GmlPath *p,GmlPathControl *controls,int count,
+                                  int kind,int closed,int precision){
+  GmlPath next=*p;
+  next.controls=controls; next.control_count=count;
+  next.kind=kind; next.closed=closed; next.precision=precision;
+  if(!path_build_samples(&next,controls,count)){ free(controls); return 0; }
+  free(p->pts); free(p->controls);
+  next.runtime_dirty=1; *p=next;
+  return 1;
+}
+int gml_path_replace(GmlVM *vm,int index,const GmlPathControl *points,int count,
+                     int kind,int closed,int precision){
+  GmlPath *p=path_find(vm,index);
+  if(!p || count<0 || count>GML_PATH_MAX_POINTS || (count && !points) ||
+     kind<0 || kind>1 || closed<0 || closed>1 || precision<1 || precision>8) return 0;
+  GmlPathControl *controls=NULL;
+  if(count){
+    controls=malloc((size_t)count*sizeof(*controls));
+    if(!controls) return 0;
+    memcpy(controls,points,(size_t)count*sizeof(*controls));
+  }
+  return path_publish_controls(p,controls,count,kind,closed,precision);
+}
+int gml_path_edit_point(GmlVM *vm,int index,int point,int operation,GmlPathControl value){
+  GmlPath *p=path_find(vm,index);
+  if(!p || point<0 || point>p->control_count ||
+     operation<GML_PATH_POINT_INSERT || operation>GML_PATH_POINT_DELETE ||
+     (operation!=GML_PATH_POINT_INSERT && point==p->control_count) ||
+     (operation!=GML_PATH_POINT_DELETE &&
+       (!isfinite(value.x) || !isfinite(value.y) || !isfinite(value.sp)))) return 0;
+  int count=p->control_count+(operation==GML_PATH_POINT_INSERT)-(operation==GML_PATH_POINT_DELETE);
+  if(count>GML_PATH_MAX_POINTS) return 0;
+  GmlPathControl *controls=count?malloc((size_t)count*sizeof(*controls)):NULL;
+  if(count && !controls) return 0;
+  for(int i=0;i<count;i++){
+    if(i==point && operation!=GML_PATH_POINT_DELETE){ controls[i]=value; continue; }
+    int source=i;
+    if(i>=point){
+      if(operation==GML_PATH_POINT_INSERT) source--;
+      else if(operation==GML_PATH_POINT_DELETE) source++;
+    }
+    controls[i]=p->controls[source];
+  }
+  return path_publish_controls(p,controls,count,p->kind,p->closed,p->precision);
+}
+int gml_path_append(GmlVM *vm,int destination,int source){
+  GmlPath *p=path_find(vm,destination),*other=path_find(vm,source);
+  /* Self-transfer has no specified result; retain the resource instead of clearing it. */
+  if(!p || !other || p==other || other->control_count>GML_PATH_MAX_POINTS-p->control_count)
+    return 0;
+  int count=p->control_count+other->control_count;
+  GmlPathControl *controls=count?malloc((size_t)count*sizeof(*controls)):NULL;
+  if(count && !controls) return 0;
+  if(p->control_count) memcpy(controls,p->controls,(size_t)p->control_count*sizeof(*controls));
+  if(other->control_count)
+    memcpy(controls+p->control_count,other->controls,(size_t)other->control_count*sizeof(*controls));
+  if(!path_publish_controls(p,controls,count,p->kind,p->closed,p->precision)) return 0;
+  return path_publish_controls(other,NULL,0,other->kind,other->closed,other->precision);
+}
+int gml_path_reverse(GmlVM *vm,int index){
+  GmlPath *p=path_find(vm,index);
+  if(!p) return 0;
+  GmlPathControl *controls=p->control_count?malloc((size_t)p->control_count*sizeof(*controls)):NULL;
+  if(p->control_count && !controls) return 0;
+  for(int i=0;i<p->control_count;i++) controls[i]=p->controls[p->control_count-1-i];
+  return path_publish_controls(p,controls,p->control_count,p->kind,p->closed,p->precision);
+}
+int gml_path_transform(GmlVM *vm,int index,double xscale,double yscale,double angle){
+  GmlPath *p=path_find(vm,index);
+  if(!p || !isfinite(xscale) || !isfinite(yscale) || !isfinite(angle)) return 0;
+  if(!p->control_count) return 1;
+  double left=p->controls[0].x,right=left,top=p->controls[0].y,bottom=top;
+  for(int i=1;i<p->control_count;i++){
+    left=fmin(left,p->controls[i].x); right=fmax(right,p->controls[i].x);
+    top=fmin(top,p->controls[i].y); bottom=fmax(bottom,p->controls[i].y);
+  }
+  double cx=left*0.5+right*0.5,cy=top*0.5+bottom*0.5;
+  double radians=fmod(angle,360.0)*M_PI/180.0,c=cos(radians),s=sin(radians);
+  GmlPathControl *controls=malloc((size_t)p->control_count*sizeof(*controls));
+  if(!controls) return 0;
+  for(int i=0;i<p->control_count;i++){
+    double x=(p->controls[i].x-cx)*xscale,y=(p->controls[i].y-cy)*yscale;
+    controls[i]=(GmlPathControl){cx+x*c+y*s,cy-x*s+y*c,p->controls[i].sp};
+  }
+  return path_publish_controls(p,controls,p->control_count,p->kind,p->closed,p->precision);
+}
+int gml_path_shift(GmlVM *vm,int index,double xshift,double yshift){
+  GmlPath *p=path_find(vm,index);
+  if(!p || !isfinite(xshift) || !isfinite(yshift)) return 0;
+  for(int i=0;i<vm->inst_count;i++){
+    GmlInstance *in=&vm->inst[i];
+    if(in->active && in->path_index==index && in->path_relative &&
+       (!isfinite(in->path_origin_x+xshift) || !isfinite(in->path_origin_y+yshift))) return 0;
+  }
+  GmlPathControl *controls=p->control_count?malloc((size_t)p->control_count*sizeof(*controls)):NULL;
+  if(p->control_count && !controls) return 0;
+  for(int i=0;i<p->control_count;i++)
+    controls[i]=(GmlPathControl){p->controls[i].x+xshift,p->controls[i].y+yshift,p->controls[i].sp};
+  if(!path_publish_controls(p,controls,p->control_count,p->kind,p->closed,p->precision)) return 0;
+  for(int i=0;i<vm->inst_count;i++){
+    GmlInstance *in=&vm->inst[i];
+    if(in->active && in->path_index==index && in->path_relative){
+      in->path_origin_x+=xshift; in->path_origin_y+=yshift;
+    }
+  }
+  return 1;
 }
 static void path_world_xy(GmlInstance *in, double px, double py, double *ox, double *oy){
   double scl=in->path_scale!=0?in->path_scale:1;
@@ -816,8 +989,9 @@ static void path_world_xy(GmlInstance *in, double px, double py, double *ox, dou
 }
 /* path_start(path,speed,endaction,absolute): begin following a path. */
 void gml_path_start(GmlVM *vm, GmlInstance *in, int path, double speed, double endaction, int absolute){
-  if(path<0||path>=vm->n_paths) return;
+  if(!in || !path_find(vm,path)) return;
   in->path_index=path; in->path_speed=speed; in->path_endaction=endaction;
+  in->path_relative=!absolute;
   /* Each traversal starts from the authored transform. Content code may change scale or
    * orientation afterwards, but completed-traversal values do not leak into path_start.
    * A negative speed begins at the far endpoint and walks the path backwards. */
@@ -926,10 +1100,11 @@ static void run_paths(GmlVM *vm){
   }
 }
 
-void gml_vm_rooms_init(GmlVM *vm){
-  parse_paths(vm);
+int gml_vm_rooms_init(GmlVM *vm){
+  if(!parse_paths(vm)) return 0;
   parse_timelines(vm);
   parse_sequences(vm);
+  return 1;
 }
 
 void gml_vm_rooms_step_paths(GmlVM *vm){

@@ -110,9 +110,10 @@ static void setup_platform_locale(AnygmEngine *engine,GmlVM *vm){
   vm->language_tag[tag_size]='\0';
 }
 
-static void boot_runtime_prepare(AnygmEngine *engine);
+static int boot_runtime_prepare(AnygmEngine *engine);
 static void boot_runtime_start(AnygmEngine *engine);
-static void boot_runtime(AnygmEngine *engine);
+static int boot_runtime(AnygmEngine *engine);
+static void engine_unload(AnygmEngine *engine);
 static AnygmResult engine_apply_game_change(AnygmEngine *engine,int *changed);
 
 typedef struct {
@@ -375,7 +376,7 @@ static AnygmResult engine_load_content_prepare(AnygmEngine *engine,
   engine_logf(engine,ANYGM_LOG_INFO,"Loaded content: bytecode=%u rooms=%d code=%d\n",
               engine->win.bytecode,gml_room_count(&engine->win),engine->win.n_code);
   engine->full_game_on_initial_boot=0;
-  boot_runtime_prepare(engine);
+  if(!boot_runtime_prepare(engine)) return ANYGM_ERROR_INVALID_CONTENT;
   if(info){
     info->flags=gml_render_content_device_candidate_present(&engine->render)
       ?ANYGM_CONTENT_GLSL_DEVICE_CANDIDATE:0u;
@@ -385,7 +386,7 @@ static AnygmResult engine_load_content_prepare(AnygmEngine *engine,
 /* Prepare the runtime from the already-loaded data.win without executing content events. Keeping
  * this boundary before extension scripts and room entry lets a host inspect the shader catalogue,
  * negotiate a session-long context, and only then expose the final shader policy to Create. */
-static void boot_runtime_prepare(AnygmEngine *engine) {
+static int boot_runtime_prepare(AnygmEngine *engine) {
   /* A reset is a cold boot. Keep engine time on the same timeline as an initial load. */
   { engine->vm.frame = 0; }
   engine->classic_compositor = 0;
@@ -420,9 +421,18 @@ static void boot_runtime_prepare(AnygmEngine *engine) {
   classic_transition_reset(engine);
   engine->have_presented_frame = 0;
   setup_display(engine);
-  gml_vm_init_launch(&engine->vm,&engine->win,&engine->host,
+  int vm_result=gml_vm_init_launch(&engine->vm,&engine->win,&engine->host,
                      engine->content_program_directory,engine->current_content_path,
                      engine->launch_parameters);
+  if(vm_result){
+    /* Reset and replacement callers have already released the old renderer. Initialize its
+     * new owner before the ordinary unload transaction, including on a rejected VM load. */
+    gml_render_init(&engine->render,&engine->win);
+    engine_unload(engine);
+    engine->lifecycle=ENGINE_EMPTY;
+    engine_errorf(engine,ANYGM_ERROR_INVALID_CONTENT,"Runtime resource initialization failed");
+    return 0;
+  }
   /* Launch resets VM fields, so install the declaration before the first event. */
   engine->vm.os_type_declared=engine_overrides_declared_os_type(engine);
   engine_input_bind(engine);
@@ -466,6 +476,7 @@ static void boot_runtime_prepare(AnygmEngine *engine) {
   engine->vm.present_latch_hook_user = engine;
   engine->audio = gml_audio_create(&engine->win);
   engine->vm.audio = engine->audio;
+  return 1;
 }
 
 /* Start the prepared runtime. Everything below this boundary can execute authored code. */
@@ -542,9 +553,10 @@ static void boot_runtime_start(AnygmEngine *engine) {
 
 /* A reset and an in-content game change already own their session policy and context, so they run
  * the two phases back to back. Initial host loading uses the phases separately. */
-static void boot_runtime(AnygmEngine *engine) {
-  boot_runtime_prepare(engine);
+static int boot_runtime(AnygmEngine *engine) {
+  if(!boot_runtime_prepare(engine)) return 0;
   boot_runtime_start(engine);
+  return 1;
 }
 
 static int game_change_next_argument(const char **cursor,char *output,size_t capacity){
@@ -774,7 +786,7 @@ AnygmResult engine_state_stage_content(AnygmEngine *engine,const char *locator,
   staged->loaded=1;
   staged->lifecycle=ENGINE_LOADED;
   staged->full_game_on_initial_boot=locator[0]?1:0;
-  boot_runtime(staged);
+  if(!boot_runtime(staged)){ anygm_destroy(staged); return ANYGM_ERROR_INVALID_CONTENT; }
   run_selftest(staged);
   for(int index=0;index<engine->cheat_count;index++){
     const CheatSlot *slot=&engine->cheats[index];
@@ -864,7 +876,7 @@ static AnygmResult engine_apply_game_change(AnygmEngine *engine,int *changed){
   engine_logf(engine,ANYGM_LOG_INFO,"Changed content: bytecode=%u rooms=%d code=%d\n",
               engine->win.bytecode,gml_room_count(&engine->win),engine->win.n_code);
   engine->full_game_on_initial_boot=1;
-  boot_runtime(engine);
+  if(!boot_runtime(engine)) return ANYGM_ERROR_INVALID_CONTENT;
   run_selftest(engine);
   GmlRenderResourceMetrics render_resources;
   gml_render_resource_metrics(&engine->render,&render_resources);
@@ -1142,7 +1154,7 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
       gml_audio_free(engine->audio); engine->audio=NULL; engine->vm.audio=NULL;
       gml_vm_free(&engine->vm);
       gml_render_free(&engine->render);
-      boot_runtime(engine);
+      if(!boot_runtime(engine)) return ANYGM_ERROR_INVALID_CONTENT;
     } else {
       engine->runtime_ended = 1;
       if(!engine->shutdown_sent){
@@ -2306,8 +2318,7 @@ AnygmResult anygm_reset(AnygmEngine *engine){
   engine->frame_authority=ENGINE_FRAME_CPU_MATERIALIZED;
   gml_vm_free(&engine->vm);
   gml_render_free(&engine->render);
-  boot_runtime(engine);
-  return ANYGM_OK;
+  return boot_runtime(engine)?ANYGM_OK:ANYGM_ERROR_INVALID_CONTENT;
 }
 
 AnygmResult anygm_get_av_info(const AnygmEngine *engine,AnygmAvInfo *info){
