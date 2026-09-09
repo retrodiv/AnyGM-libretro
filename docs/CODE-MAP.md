@@ -160,6 +160,13 @@ source-group inventory.
 | `src/video/software3d/gml_software3d_models.c` | Opaque model lifecycle, bounded batch/vertex value-copy inspection, fixed-function model construction/drawing, and canonical model-state serialization | Software-3D private model storage, typed raster operations, and renderer backend leaves | Builtin implementation, VM scheduling, borrowed model storage, or root-state ordering | Mutates model resources in the caller's `GmlSoftware3D` context without exposing their allocation | Canonical model subpayload | `make check TEST=d3_state` |
 | `src/video/software3d/gml_software3d_state.c` | Canonical fixed-function state mapping to and from the VM serializer's bounded arrays | Context reset and matrix initialization operations | VM scheduling, root-state framing, or model payload bytes | Restores one caller-owned `GmlSoftware3D` transaction input | Canonical fixed-function subpayload | `make check TEST=d3_state` |
 
+## Sequence-copy contract coverage
+
+`tests/unit/runtime/test_builtin_sequence_copy.c` owns synthetic array-concatenation,
+queue-copy and stack-copy contracts, including ordered/cached dispatch, value order,
+source preservation and independent destination storage. Run
+`make check TEST=builtin_sequence_copy`.
+
 ## Build-time audio data
 
 `tools/audiogen/` owns the optional, standalone reproduction of
