@@ -114,9 +114,37 @@ static int alpha_case(void){
         gml_builtin_fast_id(&vm,"draw_set_alpha_test_ref_value")==-1;
   vm.render=NULL; gml_vm_free(&vm); return ok;
 }
+static int background_part_case(void){
+  int ok=1;
+  for(int cached=0;cached<2;cached++){
+    GmlWin win={0}; GmlRender render;
+    if(gml_render_init(&render,&win)!=0) return 0;
+    render.atlas=calloc(1,sizeof *render.atlas); render.n_atlas=1;
+    render.tpag=calloc(1,sizeof *render.tpag); render.n_tpag=1;
+    render.bg=calloc(1,sizeof *render.bg); render.n_bg=1;
+    if(!render.atlas || !render.tpag || !render.bg) abort();
+    render.atlas[0].px=malloc(4*4*4); render.atlas[0].w=render.atlas[0].h=4;
+    if(!render.atlas[0].px) abort();
+    for(int y=0;y<4;y++) for(int x=0;x<4;x++){
+      uint8_t *pixel=render.atlas[0].px+(y*4+x)*4;
+      pixel[0]=(uint8_t)(x*20+7); pixel[1]=(uint8_t)(y*30+11); pixel[2]=13; pixel[3]=255;
+    }
+    render.tpag[0]=(GmlTpag){.sw=4,.sh=4,.tw=4,.th=4,.bw=4,.bh=4};
+    uint32_t frame[16*16]={0};
+    gml_render_begin(&render,frame,16,16,0,0);
+    GmlVM vm={.render=&render};
+    GmlVal args[]={vreal(0),vreal(1),vreal(2),vreal(2),vreal(1),vreal(5),vreal(6)};
+    query(&vm,"draw_background_part",args,7,cached,&ok);
+    ok &= (frame[6*16+5]&0xFFFFFFu)==0x1B470Du &&
+          (frame[6*16+6]&0xFFFFFFu)==0x2F470Du && (frame[6*16+7]&0xFFFFFFu)==0;
+    vm.render=NULL; gml_vm_free(&vm); gml_render_free(&render);
+  }
+  return ok;
+}
 int main(void){
   const AnygmTestCase cases[]={{"circle_precision",circle_case},{"shader_asset_names",shader_case},
-    {"all_live_layers_at_depth",layers_case},{"retired_alpha_controls",alpha_case}};
+    {"all_live_layers_at_depth",layers_case},{"retired_alpha_controls",alpha_case},
+    {"background_source_region",background_part_case}};
   const AnygmTestGroup group={"draw_queries",cases,sizeof cases/sizeof cases[0]};
   AnygmTestResult result;
   anygm_test_run_groups(&group,1,NULL,&result);

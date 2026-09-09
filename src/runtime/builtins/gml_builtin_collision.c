@@ -1151,10 +1151,15 @@ GmlVal gml_builtin_try_collision(GmlVM *vm, const char *nm, GmlVal *a, int n){
   if(!strcmp(nm,"position_meeting")){ double p[4]={N(a,n,0),N(a,n,1),0,0}; return vreal(collision_shape(vm,0,p,(int)N(a,n,2),1,0)!=NULL); }
   if(!strcmp(nm,"collision_rectangle")){ double p[4]={N(a,n,0),N(a,n,1),N(a,n,2),N(a,n,3)}; GmlInstance *o=collision_shape_value(vm,1,p,n>4?a[4]:vreal(IT_NOONE),N(a,n,5)>=0.5,(int)N(a,n,6)); return vreal(o?(double)o->id:-4); }
   if(!strcmp(nm,"collision_rectangle_list") || !strcmp(nm,"collision_ellipse_list")){ double p[4]={N(a,n,0),N(a,n,1),N(a,n,2),N(a,n,3)};
-    GmlDSList *list=ds_list_slot_repair(vm,(int)N(a,n,7));
     int kind=!strcmp(nm,"collision_ellipse_list")?3:1;
+    if(kind==3){
+      if(n<9 || !isfinite(N(a,n,7)) || N(a,n,7)<0 || N(a,n,7)>INT_MAX) return vreal(0);
+      for(int i=0;i<4;i++)
+        if(!isfinite(p[i]) || p[i]<INT_MIN || p[i]>INT_MAX-1.0) return vreal(0);
+    }
+    GmlDSList *list=ds_list_slot_repair(vm,(int)N(a,n,7));
     return vreal(collision_shape_list_query(vm,kind,p,n>4?a[4]:vreal(IT_NOONE),
-      N(a,n,5)>=0.5,(int)N(a,n,6),list,N(a,n,8)>=0.5)); }
+      N(a,n,5)>=0.5,kind==3?N(a,n,6)>=0.5:(int)N(a,n,6),list,N(a,n,8)>=0.5)); }
   if(!strcmp(nm,"rectangle_in_rectangle")){
     double ax1=N(a,n,0), ay1=N(a,n,1), ax2=N(a,n,2), ay2=N(a,n,3);
     double bx1=N(a,n,4), by1=N(a,n,5), bx2=N(a,n,6), by2=N(a,n,7);

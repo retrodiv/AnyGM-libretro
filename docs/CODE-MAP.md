@@ -173,6 +173,10 @@ source preservation and independent destination storage. Run
 duplication, interpolated speed queries and same-execution state restoration:
 `make check TEST=builtin_paths`.
 
+`tests/unit/runtime/test_builtin_collision_lists.c` covers elliptical selection,
+append order, distance sorting and nonfinite-bound rejection through both dispatch
+paths: `make check TEST=builtin_collision_lists`.
+
 `tests/unit/runtime/test_builtin_resource_queries.c` owns neutral object-asset flag,
 timeline active-moment count, per-device deadzone and invalid-argument contracts
 through ordered/cached dispatch. Run `make check TEST=builtin_resource_queries`.
@@ -183,7 +187,8 @@ PERSISTENT_TEST_ARGS='--case timeline.native_import_and_step'`.
 ## File and buffer contract coverage
 
 `tests/unit/runtime/test_builtin_draw_queries.c` covers retained circle precision,
-owned shader names, live depth-matched layers and the retired alpha controls:
+owned shader names, live depth-matched layers, retired alpha controls and source-region
+background pixels:
 `make check TEST=builtin_draw_queries`.
 
 `tests/unit/runtime/test_builtin_buffer_hash.c` covers exact buffer SHA-1 slices,
