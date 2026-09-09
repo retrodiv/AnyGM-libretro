@@ -169,6 +169,10 @@ source preservation and independent destination storage. Run
 
 ## Resource-query contract coverage
 
+`tests/unit/runtime/test_builtin_paths.c` covers independent path assignment and
+duplication, interpolated speed queries and same-execution state restoration:
+`make check TEST=builtin_paths`.
+
 `tests/unit/runtime/test_builtin_resource_queries.c` owns neutral object-asset flag,
 timeline active-moment count, per-device deadzone and invalid-argument contracts
 through ordered/cached dispatch. Run `make check TEST=builtin_resource_queries`.
