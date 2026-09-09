@@ -178,6 +178,10 @@ PERSISTENT_TEST_ARGS='--case timeline.native_import_and_step'`.
 
 ## File and buffer contract coverage
 
+`tests/unit/runtime/test_builtin_draw_queries.c` covers retained circle precision,
+owned shader names, live depth-matched layers and the retired alpha controls:
+`make check TEST=builtin_draw_queries`.
+
 `tests/unit/runtime/test_builtin_buffer_hash.c` covers exact buffer SHA-1 slices,
 unchanged cursor/data and invalid ranges: `make check TEST=builtin_buffer_hash`.
 `tests/contract/test_builtin_file_io.c` covers streamed digest vectors, VFS overlay
