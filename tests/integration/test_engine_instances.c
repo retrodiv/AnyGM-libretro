@@ -2968,7 +2968,7 @@ int main(int argc,char **argv){
   /* The state carries content and compatibility fingerprints. The synthetic content embeds the
    * producer fingerprint, so this hash moves whenever reviewed producer behavior or policy changes,
    * and again whenever the serialized layout itself changes. */
-  /* This array-free fixture changes only the public/VM schema words and payload checksum.
+  /* This array/path-free fixture changes only public/VM schema words and payload checksum.
    * Preserve the previous exact digest as a discriminator for unrelated byte changes; graph
    * contents and aliases have separate non-empty state, builtin and security coverage. */
   uint64_t deterministic_hash=state_checksum(deterministic,deterministic_size);
@@ -2979,7 +2979,7 @@ int main(int argc,char **argv){
   uint64_t preceding_hash=state_checksum(deterministic,deterministic_size);
   memcpy(deterministic,first_state,first_written);
   if(deterministic_size!=22070 ||
-     deterministic_hash!=UINT64_C(0xf8b9d2df17414513) ||
+     deterministic_hash!=UINT64_C(0x8fe9f1b017414513) ||
      preceding_hash!=UINT64_C(0xa4c27da217414513)){
     fprintf(stderr,"canonical engine state changed: size=%zu hash=%016llx\n",
             deterministic_size,(unsigned long long)deterministic_hash);
