@@ -42,6 +42,7 @@ int expect_room_order_boundaries(void);
 int expect_alarm_dispatch_order(void);
 int expect_automatic_motion_order(void);
 int expect_legacy_jump_to_start(void);
+int expect_linear_motion_collision_filters(void);
 int expect_event_boundary_room_transition(void);
 int expect_room_transition_animation_phase(void);
 int expect_animation_end_room_transition_reuses_step_slot(void);

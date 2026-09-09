@@ -725,6 +725,83 @@ int expect_legacy_jump_to_start(void){
   return ok;
 }
 
+static double fixture_linear_step(GmlVM *vm,int cached,const char *name,
+                                  double x,double y,double step,double target){
+  GmlVal args[]={vreal(x),vreal(y),vreal(step),vreal(target)};
+  int id=gml_builtin_fast_id(vm,name);
+  GmlVal result=cached?gml_builtin_call_fast_id(vm,id,name,args,4)
+                      :gml_builtin_call(vm,name,args,4);
+  return result.t==V_REAL?result.d:-1;
+}
+
+int expect_linear_motion_collision_filters(void){
+  int ok=1;
+  for(int cached=0;cached<2;cached++){
+    GmlSprite sprite={.w=1,.h=1,.collision_kind=1};
+    GmlRender render={.spr=&sprite,.n_spr=1};
+    GmlObject objects[3]={{.parent=-1},{.parent=-1},{.parent=1}};
+    GmlInstance instances[2]={0};
+    for(int i=0;i<2;i++){
+      instances[i].id=100000+i;
+      instances[i].obj=i;
+      instances[i].active=1;
+      instances[i].image_xscale=instances[i].image_yscale=1;
+    }
+    instances[1].x=4;
+    GmlVM vm={.render=&render,.inst=instances,.inst_count=2,.inst_cap=2,
+              .cur_self=&instances[0],.objects=objects,.n_objects=3};
+    gml_colgrid_invalidate(&vm);
+    const char *name="mp_linear_step_object";
+    double result=fixture_linear_step(&vm,cached,name,8,0,4,1);
+    int blocked=result==0 && instances[0].x==0;
+    ok=ok && blocked;
+    result=fixture_linear_step(&vm,cached,name,8,0,4,100001);
+    ok=ok && result==0 && instances[0].x==0;
+    result=fixture_linear_step(&vm,cached,name,8,0,4,-3);
+    ok=ok && result==0 && instances[0].x==0;
+    instances[1].obj=2;
+    result=fixture_linear_step(&vm,cached,name,8,0,4,1);
+    ok=ok && result==0 && instances[0].x==0; /* An inherited object also blocks. */
+    instances[1].obj=1;
+    result=fixture_linear_step(&vm,cached,name,8,0,4,2);
+    int ignored=result==0 && instances[0].x==4;
+    ok=ok && ignored;
+    result=fixture_linear_step(&vm,cached,name,8,0,4,2);
+    int arrived=result==1 && instances[0].x==8;
+    ok=ok && arrived;
+    result=fixture_linear_step(&vm,cached,name,8,0,4,-3);
+    ok=ok && result==1 && instances[0].x==8;
+    instances[0].x=0; gml_colgrid_touch(&vm,&instances[0]);
+    result=fixture_linear_step(&vm,cached,name,2,0,4,1);
+    ok=ok && result==1 && instances[0].x==2;
+    instances[0].x=0; gml_colgrid_touch(&vm,&instances[0]);
+    instances[1].active=0; gml_colgrid_invalidate(&vm);
+    result=fixture_linear_step(&vm,cached,name,8,0,4,-3);
+    ok=ok && result==0 && instances[0].x==4;
+    instances[1].active=1; instances[0].x=0; gml_colgrid_invalidate(&vm);
+    result=fixture_linear_step(&vm,cached,"mp_linear_step",8,0,4,0);
+    ok=ok && result==0 && instances[0].x==4;
+    instances[0].x=0; instances[1].solid=1; gml_colgrid_invalidate(&vm);
+    result=fixture_linear_step(&vm,cached,"mp_linear_step",8,0,4,0);
+    int solid=result==0 && instances[0].x==0;
+    ok=ok && solid;
+    instances[1].solid=0;
+    result=fixture_linear_step(&vm,cached,"mp_linear_step",8,0,4,1);
+    ok=ok && result==0 && instances[0].x==0;
+    result=fixture_linear_step(&vm,cached,name,NAN,0,4,1);
+    ok=ok && result==0 && instances[0].x==0;
+    result=fixture_linear_step(&vm,cached,name,8,0,4,NAN);
+    ok=ok && result==0 && instances[0].x==0;
+    if(!blocked || !ignored || !arrived || !solid)
+      fprintf(stderr,"linear step mode=%d blocked=%d ignored=%d arrived=%d solid=%d\n",
+              cached,blocked,ignored,arrived,solid);
+    vm.render=NULL; vm.inst=NULL; vm.inst_count=vm.inst_cap=0;
+    vm.cur_self=NULL; vm.objects=NULL; vm.n_objects=0;
+    gml_vm_free(&vm);
+  }
+  return ok;
+}
+
 int expect_automatic_motion_order(void){
   GmlcProject project={0};
   GmlcObject objects[2]={{0}};
