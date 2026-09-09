@@ -950,6 +950,18 @@ int expect_builtin_sound_fade(void){
     fixture_call_sound_fade(&vm,cached,id,args,3);
     fixture_call_sound_fade(&vm,cached,id,args,1);
     ok=ok && gml_audio_sound_get_gain(audio,sound)==0.25;
+    args[0]=vreal(voice); args[1]=vreal(1); args[2]=vreal(10);
+    fixture_call_sound_fade(&vm,cached,id,args,3);
+    ok=ok && gml_audio_sound_get_gain(audio,voice)==0.25;
+    args[0]=vreal(-1); args[2]=vreal(0);
+    fixture_call_sound_fade(&vm,cached,id,args,3);
+    ok=ok && gml_audio_sound_get_gain(audio,sound)==0.25;
+    args[0]=vreal(sound); args[1]=vreal(2);
+    fixture_call_sound_fade(&vm,cached,id,args,3);
+    ok=ok && gml_audio_sound_get_gain(audio,sound)==1;
+    args[1]=vreal(-1); args[2]=vreal(-10);
+    fixture_call_sound_fade(&vm,cached,id,args,3);
+    ok=ok && gml_audio_sound_get_gain(audio,sound)==0;
     if(middle!=0.5 || end!=0)
       fprintf(stderr,"sound fade mode=%d midpoint=%.17g endpoint=%.17g\n",cached,middle,end);
     gml_vm_free(&vm);

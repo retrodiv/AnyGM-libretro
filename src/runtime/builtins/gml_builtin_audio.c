@@ -2119,6 +2119,19 @@ GmlVal gml_builtin_try_audio(GmlVM *vm, const char *nm, GmlVal *a, int n){
     if(!strcmp(nm,"audio_set_master_gain")){ gml_audio_set_master_gain(AU,n>=2?N(a,n,1):N(a,n,0)); return vreal(0); }
     if(!strcmp(nm,"audio_sound_gain")){ gml_audio_sound_gain(AU,(int)N(a,n,0),N(a,n,1)); return vreal(0); }
     if(!strcmp(nm,"sound_volume")){ gml_audio_sound_gain(AU,(int)N(a,n,0),N(a,n,1)); return vreal(0); }
+    if(!strcmp(nm,"sound_fade")){
+      double sound=N(a,n,0), gain=N(a,n,1), milliseconds=N(a,n,2);
+      if(n<3 || !isfinite(sound) || sound<0 || sound>INT_MAX ||
+         !isfinite(gain) || !isfinite(milliseconds) || milliseconds>INT_MAX)
+        return vreal(0);
+      if(!gml_audio_exists(AU,(int)sound) ||
+         gml_audio_voice_sound(AU,(int)sound)>=0) return vreal(0);
+      if(gain<0) gain=0;
+      if(gain>1) gain=1;
+      gml_audio_sound_gain_fade(AU,(int)sound,gain,
+                                milliseconds>0?(int)milliseconds:0);
+      return vreal(0);
+    }
     /* The classic name uses the mixer's master gain over the 0..1 control range. */
     if(!strcmp(nm,"sound_global_volume")){ gml_audio_set_master_gain(AU,N(a,n,0)); return vreal(0); }
     if(!strcmp(nm,"audio_sound_pitch")){ gml_audio_sound_pitch(AU,(int)N(a,n,0),N(a,n,1)); return vreal(0); }

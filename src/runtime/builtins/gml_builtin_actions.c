@@ -154,6 +154,15 @@ GmlVal gml_builtin_try_actions_legacy(GmlVM *vm, const char *nm, GmlVal *a, int 
     }
     return vreal(0);
   }
+  if(!strcmp(nm,"action_move_start")){
+    GmlInstance *self=vm->cur_self;
+    if(self){
+      self->x=self->xstart;
+      self->y=self->ystart;
+      gml_colgrid_touch(vm,self);
+    }
+    return vreal(0);
+  }
   if(!strcmp(nm,"action_move_to")){ GmlInstance*s=vm->cur_self; if(s){
       double x=N(a,n,0), y=N(a,n,1);
       if(vm->action_relative){ s->x+=x; s->y+=y; } else { s->x=x; s->y=y; } gml_colgrid_touch(vm,s); } return vreal(0); }
