@@ -176,6 +176,13 @@ The persistent timeline owner additionally verifies queries on imported native
 records without changing playback: `make check TEST=persistent_room
 PERSISTENT_TEST_ARGS='--case timeline.native_import_and_step'`.
 
+## File and buffer contract coverage
+
+| Test owner | Contract | Focused command |
+| --- | --- | --- |
+| `tests/unit/runtime/test_builtin_buffer_hash.c` | Exact buffer SHA-1 slices, unchanged cursor/data and invalid ranges | `make check TEST=builtin_buffer_hash` |
+| `tests/contract/test_builtin_file_io.c` | Streamed digest vectors, VFS overlay and short-read/error handling; rewrite cursor, handle, write authority and resource cleanup | `make check TEST=builtin_file_io` |
+
 ## Build-time audio data
 
 `tools/audiogen/` owns the optional, standalone reproduction of
