@@ -1106,6 +1106,55 @@ static int portable_joystick_contract(GmlVM *vm){
   return ok;
 }
 
+static int gamepad_guid_device_count(void *userdata){
+  return *(int *)userdata;
+}
+
+static int gamepad_guid_capability_contract(GmlVM *vm){
+  void *saved_userdata=vm->input.userdata;
+  int (*saved_count)(void *)=vm->input.gamepad_device_count;
+  int (*saved_connected)(void *,int)=vm->input.gamepad_connected;
+  int count=4,ok=1;
+  vm->input.userdata=&count;
+  vm->input.gamepad_device_count=gamepad_guid_device_count;
+  vm->input.gamepad_connected=gamepad_fixture_connected;
+  static const struct { double index; const char *expected; } cases[]={
+    {0,"none"},{1,"none"},{3,"none"},{0.75,"none"},{3.75,"none"},
+    {-1,"device index out of range"},{-0.5,"device index out of range"},
+    {4,"device index out of range"},{1e300,"device index out of range"},
+    {NAN,"device index out of range"},{INFINITY,"device index out of range"},
+    {-INFINITY,"device index out of range"}
+  };
+  for(size_t i=0;i<sizeof cases/sizeof cases[0];i++){
+    GmlVal argument=vreal(cases[i].index);
+    ok=expect_string("GUID ordinary capability result",
+      gml_builtin_call(vm,"gamepad_get_guid",&argument,1),cases[i].expected)&&ok;
+    ok=expect_string("GUID cached capability result",
+      call_fast(vm,"gamepad_get_guid",&argument,1,&ok),cases[i].expected)&&ok;
+    ok=expect_string("GUID prefix-cached capability result",
+      gml_builtin_call_fast_id(vm,BID_INPUT_KBGP,"gamepad_get_guid",&argument,1),
+      cases[i].expected)&&ok;
+  }
+  GmlVal slot=vreal(2);
+  count=2;
+  ok=expect_string("GUID uses the host slot count",
+    gml_builtin_call(vm,"gamepad_get_guid",&slot,1),"device index out of range")&&ok;
+  count=12;
+  slot=vreal(11);
+  ok=expect_string("GUID accepts a wider host slot interval",
+    call_fast(vm,"gamepad_get_guid",&slot,1,&ok),"none")&&ok;
+  ok=expect_string("GUID missing argument is invalid",
+    gml_builtin_call(vm,"gamepad_get_guid",NULL,0),"device index out of range")&&ok;
+  slot=vreal(0);
+  vm->input.gamepad_device_count=NULL;
+  ok=expect_string("GUID absent slot service is an empty interval",
+    call_fast(vm,"gamepad_get_guid",&slot,1,&ok),"device index out of range")&&ok;
+  vm->input.userdata=saved_userdata;
+  vm->input.gamepad_device_count=saved_count;
+  vm->input.gamepad_connected=saved_connected;
+  return ok;
+}
+
 static int canonical_registry_resolution(GmlVM *vm){
   int ok=1;
   int checked=0;
@@ -1216,6 +1265,7 @@ int main(void){
     return 1;
   }
   int ok=canonical_registry_resolution(&vm) &&
+         gamepad_guid_capability_contract(&vm) &&
          exact_builtin_precedes_same_named_script(&vm) &&
          script_resolution_order(&vm,&log_fixture) &&
          show_error_contract(&vm,&log_fixture) &&
