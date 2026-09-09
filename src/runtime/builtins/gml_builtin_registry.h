@@ -1605,7 +1605,9 @@ typedef enum GmlBuiltinCachePolicy {
   ENTRY(1517, GPU_POP_STATE, "gpu_pop_state", PLATFORM, PLATFORM_TAIL, NEVER) \
   ENTRY(1518, GPU_PUSH_STATE, "gpu_push_state", PLATFORM, PLATFORM_TAIL, NEVER) \
   ENTRY(1519, GPU_SET_ALPHATESTENABLE, "gpu_set_alphatestenable", PLATFORM, PLATFORM_TAIL, NEVER) \
+  ALIAS(GPU_SET_ALPHATESTENABLE, "draw_set_alpha_test", PLATFORM, PLATFORM_TAIL, NEVER) \
   ENTRY(1520, GPU_SET_ALPHATESTREF, "gpu_set_alphatestref", PLATFORM, PLATFORM_TAIL, NEVER) \
+  ALIAS(GPU_SET_ALPHATESTREF, "draw_set_alpha_test_ref_value", PLATFORM, PLATFORM_TAIL, NEVER) \
   ENTRY(1521, GPU_SET_BLENDEQUATION, "gpu_set_blendequation", PLATFORM, PLATFORM_TAIL, NEVER) \
   ENTRY(1522, GPU_SET_BLENDEQUATION_SEPALPHA, "gpu_set_blendequation_sepalpha", PLATFORM, PLATFORM_TAIL, NEVER) \
   ENTRY(1523, GPU_SET_BLENDMODE_EXT_SEPALPHA, "gpu_set_blendmode_ext_sepalpha", PLATFORM, PLATFORM_TAIL, ALWAYS) \
@@ -1833,9 +1835,7 @@ typedef enum GmlBuiltinCachePolicy {
   ENTRY(1739, FILE_BIN_REWRITE, "file_bin_rewrite", IO, IO, ALWAYS) \
   ENTRY(1740, DRAW_GET_CIRCLE_PRECISION, "draw_get_circle_precision", DRAW, DRAW, ALWAYS) \
   ENTRY(1741, SHADER_GET_NAME, "shader_get_name", DRAW, DRAW_3D, ALWAYS) \
-  ENTRY(1742, LAYER_GET_ID_AT_DEPTH, "layer_get_id_at_depth", PLATFORM, PLATFORM_EXTENSIONS, ALWAYS) \
-  ALIAS(GPU_SET_ALPHATESTENABLE, "draw_set_alpha_test", PLATFORM, PLATFORM_TAIL, NEVER) \
-  ALIAS(GPU_SET_ALPHATESTREF, "draw_set_alpha_test_ref_value", PLATFORM, PLATFORM_TAIL, NEVER)
+  ENTRY(1742, LAYER_GET_ID_AT_DEPTH, "layer_get_id_at_depth", PLATFORM, PLATFORM_EXTENSIONS, ALWAYS)
 
 /* Dynamic prefix IDs retain the previously characterized slow-path order. */
 #define GML_BUILTIN_DYNAMIC_REGISTRY(ENTRY) \

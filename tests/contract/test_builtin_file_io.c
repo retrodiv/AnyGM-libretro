@@ -70,7 +70,8 @@ static GmlVal invoke(GmlVM *vm,const char *name,GmlVal *a,int n,int cached,int *
 static int string_is(GmlVal value,const char *expected){
   int ok=value.t==V_STR && value.s && !strcmp(value.s,expected);
   if(!ok) fprintf(stderr,"file digest mismatch: expected %s\n",expected);
-  gml_values_release(&value,1);
+  if(value.t==V_STR && value.d!=0) free((void *)value.s);
+  else gml_values_release(&value,1);
   return ok;
 }
 static int real_is(GmlVal value,double expected){ return value.t==V_REAL && value.d==expected; }

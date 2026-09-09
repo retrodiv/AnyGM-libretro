@@ -18,7 +18,9 @@ static GmlVal query(GmlVM *vm,const char *name,GmlVal *args,int count,int cached
 static int real_is(GmlVal v,double number){ return v.t==V_REAL && v.d==number; }
 static int string_is(GmlVal v,const char *text){
   int ok=v.t==V_STR && v.s && !strcmp(v.s,text);
-  gml_values_release(&v,1); return ok;
+  if(v.t==V_STR && v.d!=0) free((void *)v.s);
+  else gml_values_release(&v,1);
+  return ok;
 }
 static int circle_case(void){
   int ok=1;
