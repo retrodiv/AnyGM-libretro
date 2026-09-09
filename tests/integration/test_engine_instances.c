@@ -2837,7 +2837,7 @@ int main(int argc,char **argv){
   const char *fixture_name=strrchr(fixture.directory,'/');
   fixture_name=fixture_name?fixture_name+1:fixture.directory;
   char save_path[384];
-  snprintf(save_path,sizeof save_path,"%s/anygm/%s-%08x",fixture.directory,fixture_name,
+  snprintf(save_path,sizeof save_path,"%s/AnyGM/%s-%08x",fixture.directory,fixture_name,
            anygm_content_path_hash(fixture.path));
   AnygmFileInfo save_info={0};
   save_info.struct_size=sizeof save_info;

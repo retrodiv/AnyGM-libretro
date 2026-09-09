@@ -278,7 +278,7 @@ void retro_reset(void){
 
 /* Keep persistent content data under the save root and rebuildable loader data
  * under a separate cache subdirectory. */
-#define ANYGM_CACHE_SUBDIRECTORY "anygm-cache"
+#define ANYGM_CACHE_SUBDIRECTORY "AnyGM-cache"
 
 /* Join a frontend-named root and one suffix, refusing the result rather than truncating it. A
  * truncated join names a prefix of the root, which is how a cache directory ends up being the save
@@ -320,7 +320,7 @@ static void update_directories(void){
   else if(system){
     libretro_log(RETRO_LOG_WARN,
                  "The frontend named no save directory; using the system directory instead\n");
-    join_root(g_libretro.save_directory,sizeof g_libretro.save_directory,system,"anygm");
+    join_root(g_libretro.save_directory,sizeof g_libretro.save_directory,system,"AnyGM");
     join_root(g_libretro.cache_directory,sizeof g_libretro.cache_directory,
               system,ANYGM_CACHE_SUBDIRECTORY);
   }

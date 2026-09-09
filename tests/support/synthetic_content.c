@@ -1723,13 +1723,13 @@ void anygm_synthetic_content_destroy(AnygmSyntheticContent *fixture){
   const char *label=strrchr(fixture->directory,'/');
   label=label?label+1:fixture->directory;
   char save_path[256],save_root[256];
-  snprintf(save_path,sizeof save_path,"%s/anygm/%s-%08x",fixture->directory,label,
+  snprintf(save_path,sizeof save_path,"%s/AnyGM/%s-%08x",fixture->directory,label,
            synthetic_path_hash(fixture->path));
   char transition_path[320];
   snprintf(transition_path,sizeof transition_path,"%s/transition.ini",save_path);
   anygm_test_unlink(transition_path);
   anygm_test_rmdir(save_path);
-  snprintf(save_root,sizeof save_root,"%s/anygm",fixture->directory);
+  snprintf(save_root,sizeof save_root,"%s/AnyGM",fixture->directory);
   anygm_test_rmdir(save_root);
   anygm_test_rmdir(fixture->directory);
   memset(fixture,0,sizeof *fixture);

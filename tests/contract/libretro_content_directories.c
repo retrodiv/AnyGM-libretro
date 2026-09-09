@@ -162,7 +162,7 @@ static void cache_lives_under_the_save_root(void){
   expect_flag("save root offered",loaded_save_present,1);
   expect_flag("cache root offered",loaded_cache_present,1);
   expect_text("save root","C:/RetroArch/saves",loaded_save_directory);
-  expect_text("cache root","C:/RetroArch/saves/anygm-cache",loaded_cache_directory);
+  expect_text("cache root","C:/RetroArch/saves/AnyGM-cache",loaded_cache_directory);
   if(!strcmp(loaded_save_directory,loaded_cache_directory)){
     puts("FAIL the cache root is the save root");
     failures++;

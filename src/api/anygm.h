@@ -311,7 +311,7 @@ typedef struct AnygmContentSource {
  * system_directory optionally supplies anygm.ini for content transforms and overrides,
  * including SHA-256 sections selected by the original path or memory payload bytes.
  * When a save root is present,
- * writable content files live below save_directory/anygm/<sanitized-label>-<path-hash>. */
+ * writable content files live below save_directory/AnyGM/<sanitized-label>-<path-hash>. */
 
 /* Locale strings are what os_get_language and its relatives expose: lowercase language ("en"),
  * uppercase region ("US"), and a fuller tag ("en-US"). Content loaded without a configuration

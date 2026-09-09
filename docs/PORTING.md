@@ -159,7 +159,7 @@ capabilities produce a defined failure and never trigger an ambient filesystem
 fallback.
 
 When `save_directory` is present, the runtime places writable content files in
-`save_directory/anygm/<sanitized-label>-<path-hash>/`. The label normally comes
+`save_directory/AnyGM/<sanitized-label>-<path-hash>/`. The label normally comes
 from the selected file stem. For generic payload filenames, it comes from the
 containing directory instead. The hash is derived from the source identity path,
 so equally named content at different paths does not share persistent files. A
@@ -169,9 +169,14 @@ restarts or content relocation under its own VFS namespace.
 A host handed a single writable root should still give the two fields different
 directories. Persistent content data belongs in the save root. Rebuildable loader data
 belongs in a separate cache root. The libretro adapter passes the frontend's
-save directory as the save root unchanged and `save_directory/anygm-cache`
+save directory as the save root unchanged and `save_directory/AnyGM-cache`
 as the cache root. The cache subdirectory can be removed without touching
 persistent data; it will be rebuilt when needed.
+
+On case-sensitive filesystems, rename an existing lowercase `anygm` directory
+to `AnyGM` to retain the same persistent files. An existing `anygm-cache`
+directory may likewise be renamed to `AnyGM-cache` to reuse derived content;
+otherwise the cache is rebuilt. The runtime does not migrate directories.
 
 ## Timing and optional services
 

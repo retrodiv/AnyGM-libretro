@@ -264,7 +264,7 @@ static AnygmResult engine_prepare_content(AnygmEngine *engine,
       else snprintf(label,sizeof label,"memory");
       uint32_t namespace_hash=identity?anygm_content_path_hash(identity):
         (uint32_t)state_hash_bytes(source->data,source->size);
-      snprintf(prepared->win.save_dir,sizeof prepared->win.save_dir,"%s/anygm/%s-%08x",
+      snprintf(prepared->win.save_dir,sizeof prepared->win.save_dir,"%s/AnyGM/%s-%08x",
                base,label,namespace_hash);
       /* Opt-in fresh start: drop everything this content generated before it can read any of it,
        * so the run that follows behaves like the first one this machine ever performed. */
