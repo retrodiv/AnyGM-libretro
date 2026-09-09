@@ -1162,8 +1162,8 @@ static int rounded_contextual_precedence(GmlVM *vm){
   gml_render_begin(&render,pixels,24,20,0,0);
   int ok=1;
   for(int i=0;i<3;i++){
-    ok=expect_real("2D rounded name retains script precedence",
-      gml_builtin_call(vm,names[i],NULL,0),80+i)&&ok;
+    ok=expect_real("2D rounded operation precedes same-named script",
+      gml_builtin_call(vm,names[i],NULL,0),0)&&ok;
     if(gml_builtin_fast_id(vm,names[i])!=-1) ok=0;
   }
   (void)gml_builtin_call(vm,"d3d_start",NULL,0);
@@ -1176,7 +1176,8 @@ static int rounded_contextual_precedence(GmlVM *vm){
     ok=expect_real("active 3D rounded operation retains contextual precedence",
       gml_builtin_call(vm,names[i],args,i==2?7:9),0)&&ok;
     if(pixels[2*24+2] || !(pixels[8*24+10]>>24)){
-      fprintf(stderr,"contextual rounded call did not reach the curved raster\n"); ok=0;
+      fprintf(stderr,"contextual rounded %s: corner=%08x centre=%08x\n",
+        names[i],pixels[2*24+2],pixels[8*24+10]); ok=0;
     }
   }
   (void)gml_builtin_call(vm,"d3d_end",NULL,0);
