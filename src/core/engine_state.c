@@ -735,6 +735,11 @@ bool engine_state_load(AnygmEngine *engine,const void *d,size_t n){
     free(snapshot);
     return false;
   }
+  GmlRenderFontCheckpoint *font_checkpoint=NULL;
+  if(!gml_render_font_checkpoint_create(&engine->render,&font_checkpoint)){
+    free(snapshot);
+    return false;
+  }
 
   CheatSlot prior_cheats[GML_MAX_CHEATS];
   CheatSlot prior_boot_cheats[GML_MAX_CHEATS];
@@ -746,6 +751,7 @@ bool engine_state_load(AnygmEngine *engine,const void *d,size_t n){
   int prior_just_loaded=engine->state_just_loaded;
   size_t prior_reapply_size=engine->state_reapply_size;
   if(!state_unserialize_impl(engine,d,target_size,1)){
+    int fonts_restored=gml_render_font_checkpoint_restore(&engine->render,font_checkpoint);
     int restored=state_unserialize_impl(engine,snapshot,snapshot_size,0);
     memcpy(engine->cheats,prior_cheats,sizeof prior_cheats);
     memcpy(engine->boot_cheats,prior_boot_cheats,sizeof prior_boot_cheats);
@@ -753,13 +759,15 @@ bool engine_state_load(AnygmEngine *engine,const void *d,size_t n){
     engine->state_just_loaded=prior_just_loaded;
     engine->state_reapply_size=prior_reapply_size;
     free(snapshot);
-    if(!restored)
+    gml_render_font_checkpoint_free(font_checkpoint);
+    if(!restored || !fonts_restored)
       engine_logf(engine,ANYGM_LOG_ERROR,"[anygm] state rollback failed after a rejected load\n");
     return false;
   }
   if(target_size>engine->state_reapply_capacity){
     uint8_t *next=realloc(engine->state_reapply,target_size?target_size:1);
     if(!next){
+      int fonts_restored=gml_render_font_checkpoint_restore(&engine->render,font_checkpoint);
       int restored=state_unserialize_impl(engine,snapshot,snapshot_size,0);
       memcpy(engine->cheats,prior_cheats,sizeof prior_cheats);
       memcpy(engine->boot_cheats,prior_boot_cheats,sizeof prior_boot_cheats);
@@ -767,7 +775,8 @@ bool engine_state_load(AnygmEngine *engine,const void *d,size_t n){
       engine->state_just_loaded=prior_just_loaded;
       engine->state_reapply_size=prior_reapply_size;
       free(snapshot);
-      if(!restored)
+      gml_render_font_checkpoint_free(font_checkpoint);
+      if(!restored || !fonts_restored)
         engine_logf(engine,ANYGM_LOG_ERROR,"[anygm] state rollback failed after an allocation error\n");
       return false;
     }
@@ -777,6 +786,7 @@ bool engine_state_load(AnygmEngine *engine,const void *d,size_t n){
   memcpy(engine->state_reapply,d,target_size);
   engine->state_reapply_size=target_size;
   free(snapshot);
+  gml_render_font_checkpoint_free(font_checkpoint);
   return true;
 }
 

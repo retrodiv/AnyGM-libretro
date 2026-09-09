@@ -203,6 +203,45 @@ static int changed_source_case(void){
   return ok;
 }
 
+static void write_u32(uint8_t *p,uint32_t value){
+  for(int i=0;i<4;i++) p[i]=(uint8_t)(value>>(i*8));
+}
+static uint32_t read_u32(const uint8_t *p){
+  uint32_t value=0;
+  for(int i=0;i<4;i++) value|=(uint32_t)p[i]<<(i*8);
+  return value;
+}
+
+static int malformed_record_case(void){
+  FontFixture *f=fixture_create();
+  if(!f) return 0;
+  int font=add_font(f);
+  size_t size=0;
+  uint8_t *state=save_font_state(f,&size),*candidate=size?malloc(size):NULL;
+  int ok=font==0 && state && candidate && size>=36 && read_u32(state+20)==0;
+  if(ok){
+    size_t metrics=36+(size_t)read_u32(state+32)+32;
+    const size_t offsets[]={0,20,24,28,32,32,metrics,metrics,metrics+4,
+                             metrics+8,metrics+12,metrics+12,metrics+16,metrics+16};
+    const uint32_t values[]={UINT32_MAX,UINT32_MAX,2,9,0,4096,3,257,UINT32_MAX,
+                             65536,0,65537,65536,'B'};
+    if(metrics>size || size-metrics<20) ok=0;
+    for(size_t i=0;ok && i<sizeof offsets/sizeof offsets[0];i++){
+      memcpy(candidate,state,size);
+      write_u32(candidate+offsets[i],values[i]);
+      size_t used=0,repeated_size=0;
+      int rejected=!gml_render_state_load(&f->render,candidate,size,&used);
+      uint8_t *repeated=save_font_state(f,&repeated_size);
+      ok=rejected && repeated && repeated_size==size && !memcmp(repeated,state,size);
+      if(!ok) fprintf(stderr,"font record mutation %zu at %zu failed rejection/retention\n",i,offsets[i]);
+      free(repeated);
+    }
+  }
+  if(!ok) fprintf(stderr,"bounded font-state record control failed\n");
+  free(state); free(candidate); fixture_destroy(f);
+  return ok;
+}
+
 int main(int argc,char **argv){
   const char *filter=NULL;
   if(argc==3 && !strcmp(argv[1],"--case")) filter=argv[2];
@@ -212,7 +251,8 @@ int main(int argc,char **argv){
     {"restore_deleted_runtime_font",restore_deleted_case},
     {"restore_removes_later_runtime_font",restore_removes_later_case},
     {"lazy_glyph_restore_and_atlas_reuse",lazy_glyph_restore_case},
-    {"changed_source_rejected",changed_source_case}
+    {"changed_source_rejected",changed_source_case},
+    {"malformed_record_rejected",malformed_record_case}
   };
   const AnygmTestGroup group={"fonts",cases,sizeof cases/sizeof cases[0]};
   AnygmTestResult result;
