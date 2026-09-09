@@ -70,9 +70,45 @@ static int expect_timeline_import(void){
   return ok;
 }
 
+static int expect_timeline_program_resources(void){
+  FixtureTimelineMoment moments[64];
+  for(int i=0;i<64;i++) moments[i]=(FixtureTimelineMoment){17+i,"x += 1;"};
+  FixtureTimeline timelines[]={{"sequence",moments,2},{"initial",moments+2,1}};
+  FixtureProgram program={.room_width=24,.room_height=20,.timelines=timelines,.timeline_count=2};
+  Fixture project={{0},0};
+  for(unsigned version=800;version<=810;version+=10){
+    GmlcClassicManifest manifest={0}; char error[128]={0};
+    if(!build_project_fixture_program(version,&program,&project) ||
+       !gmlc_classic_manifest(NULL,project.data,project.size,&manifest,error,sizeof error)){
+      fprintf(stderr,"timeline program manifest %u: %s\n",version,error);
+      gmlc_classic_manifest_free(&manifest); return 0;
+    }
+    int ok=manifest.inventory.resource_slots[GMLC_CLASSIC_TIMELINE]==2 &&
+      manifest.existing[GMLC_CLASSIC_TIMELINE]==2;
+    if(ok){
+      const GmlcClassicResourceSlot *slot=&manifest.slots[GMLC_CLASSIC_TIMELINE][0];
+      ok=slot->exists && slot->name && !strcmp(slot->name,"sequence") &&
+        slot->payload_size>8 && slot->payload[0]==2 && slot->payload[4]==17;
+    }
+    gmlc_classic_manifest_free(&manifest);
+    if(!ok) return 0;
+  }
+  if(build_project_fixture_program(530,&program,&project)) return 0;
+  timelines[0].moment_count=timelines[1].moment_count=40;
+  timelines[1].moments=moments;
+  if(build_project_fixture_program(800,&program,&project)) return 0;
+  timelines[0].moment_count=2; timelines[1].moment_count=1;
+  moments[0].step=-1;
+  if(build_project_fixture_program(800,&program,&project)) return 0;
+  moments[0].step=17;
+  program.timelines=NULL;
+  return !build_project_fixture_program(800,&program,&project);
+}
+
 AnygmTestGroup classic_test_timelines_group(void){
   static const AnygmTestCase cases[]={
     {"import",expect_timeline_import},
+    {"program_resources",expect_timeline_program_resources},
   };
   const AnygmTestGroup group={
     "classic.timelines",cases,sizeof cases/sizeof cases[0]

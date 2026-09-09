@@ -853,10 +853,13 @@ int build_project_fixture_program(unsigned version, const FixtureProgram *progra
   if(!program || program->room_width<=0 || program->room_height<=0) return 0;
   if(program->timeline_count<0 || program->timeline_count>8 ||
      (program->timeline_count && !program->timelines)) return 0;
+  int total_moments=0;
   for(int i=0;i<program->timeline_count;i++){
     const FixtureTimeline *timeline=&program->timelines[i];
     if(!timeline->name || timeline->moment_count<0 || timeline->moment_count>64 ||
        (timeline->moment_count && !timeline->moments)) return 0;
+    total_moments+=timeline->moment_count;
+    if(total_moments>64) return 0;
     for(int m=0;m<timeline->moment_count;m++)
       if(timeline->moments[m].step<0 || !timeline->moments[m].source) return 0;
   }
