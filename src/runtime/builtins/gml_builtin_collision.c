@@ -509,6 +509,25 @@ void classic_move_bounce(GmlVM *vm, GmlInstance *s, int all, int advanced){
     gml_colgrid_touch(vm,s);
   }
 }
+/* Keep the distance-limited step shared; collision selection changes only its veto. */
+static int linear_step_move(GmlVM *vm,GmlInstance *self,double tx,double ty,
+                            double step,int target,int solid_only){
+  if(!self || !isfinite(tx) || !isfinite(ty) || !isfinite(step) || step<0)
+    return 0;
+  double dx=tx-self->x,dy=ty-self->y,distance=hypot(dx,dy);
+  if(!isfinite(distance)) return 0;
+  if(distance==0) return 1;
+  if(step==0) return 0;
+  int arrived=distance<=step || distance<1e-9;
+  double x=arrived?tx:self->x+dx/distance*step;
+  double y=arrived?ty:self->y+dy/distance*step;
+  if(collision_at(vm,x,y,target,solid_only)) return 0;
+  self->x=x;
+  self->y=y;
+  gml_colgrid_touch(vm,self);
+  return arrived;
+}
+
 static double potential_dir_norm(double d){
   d=fmod(d,360.0); return d<0?d+360.0:d;
 }
@@ -1091,12 +1110,18 @@ GmlVal gml_builtin_try_collision_planning(GmlVM *vm, const char *nm, GmlVal *a, 
   if(!strcmp(nm,"path_delete")){ int pi=(int)N(a,n,0);
     if(pi>=0&&pi<vm->n_paths){ vm->paths[pi].n=0; vm->paths[pi].len=0;
       vm->paths[pi].runtime_dirty=1; } return vreal(0); }
-  /* mp_linear_step(x,y,speed,checkall): step the current instance toward (x,y) by `speed`; returns 1
-   * once it arrives. We move directly (no obstacle stop yet — better than the no-op that never moved). */
-  if(!strcmp(nm,"mp_linear_step")){ GmlInstance*s=vm->cur_self; if(!s) return vreal(0);
-    double tx=N(a,n,0), ty=N(a,n,1), sp=N(a,n,2); double dx=tx-s->x, dy=ty-s->y, d=hypot(dx,dy);
-    if(d<=sp || d<1e-9){ s->x=tx; s->y=ty; gml_colgrid_touch(vm,s); return vreal(1); }
-    s->x += dx/d*sp; s->y += dy/d*sp; gml_colgrid_touch(vm,s); return vreal(0); }
+  if(!strcmp(nm,"mp_linear_step")){
+    if(n<4) return vreal(0);
+    int all=N(a,n,3)!=0;
+    return vreal(linear_step_move(vm,vm->cur_self,N(a,n,0),N(a,n,1),N(a,n,2),
+                                 IT_ALL,!all));
+  }
+  if(!strcmp(nm,"mp_linear_step_object")){
+    double target=N(a,n,3);
+    if(n<4 || !isfinite(target) || target<INT_MIN || target>INT_MAX) return vreal(0);
+    return vreal(linear_step_move(vm,vm->cur_self,N(a,n,0),N(a,n,1),N(a,n,2),
+                                 (int)target,0));
+  }
   if(!strcmp(nm,"mp_potential_settings")){
     vm->potential_max_rotation=N(a,n,0); vm->potential_rotate_step=N(a,n,1);
     vm->potential_check_distance=N(a,n,2); vm->potential_rotate_on_spot=N(a,n,3)!=0;
