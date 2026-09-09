@@ -3,6 +3,7 @@
  */
 #include "software3d_test_fixture.h"
 #include "gml_image_codec.h"
+#include "gml_vm_internal.h"
 
 
 void free_extension_fixture(GmlVM *vm){
@@ -425,6 +426,15 @@ int asset_lookup_fixture(void){
   object.name=names[0]; timeline.name=names[7];
   vm.win=&win; vm.render=&render; vm.objects=&object; vm.n_objects=1;
   vm.timelines=&timeline; vm.n_timelines=1;
+  /* Path names belong to the loaded resource table, including deletion identity.
+   * Load the authored record through its owner before querying that table. */
+  gml_vm_paths_reset_authored(&vm);
+  if(vm.n_paths!=1 || vm.n_authored_paths!=1 || !vm.paths[0].name ||
+     strcmp(vm.paths[0].name,names[4])){
+    fprintf(stderr,"asset lookup fixture did not load its authored path\n");
+    gml_vm_paths_clear(&vm);
+    return 0;
+  }
   static const int expected_type[]={0,1,2,3,4,5,6,7,8,9,10,11,13};
   for(int i=0;i<13;i++){
     GmlVal name=vstr(names[i]);
@@ -432,6 +442,7 @@ int asset_lookup_fixture(void){
     GmlVal type=call_values(&vm,"asset_get_type",&name,1);
     if(index.t!=V_REAL || index.d!=0 || type.t!=V_REAL || type.d!=expected_type[i]){
       fprintf(stderr,"asset lookup fixture mismatch at %d: index=%g type=%g\n",i,index.d,type.d);
+      gml_vm_paths_clear(&vm);
       return 0;
     }
   }
@@ -439,8 +450,10 @@ int asset_lookup_fixture(void){
   if(call_values(&vm,"asset_get_index",&absent,1).d!=-1 ||
      call_values(&vm,"asset_get_type",&absent,1).d!=-1){
     fprintf(stderr,"asset lookup fixture missing-resource mismatch\n");
+    gml_vm_paths_clear(&vm);
     return 0;
   }
+  gml_vm_paths_clear(&vm);
   GmlGlyph font_glyphs[]={
     {.sx=2,.sy=3,.w=4,.h=5,.shift=6,.offset=1,.ch='A'},
     {.sx=6,.sy=3,.w=2,.h=5,.shift=3,.offset=0,.ch=' '}

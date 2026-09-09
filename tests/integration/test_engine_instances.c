@@ -2968,22 +2968,50 @@ int main(int argc,char **argv){
   /* The state carries content and compatibility fingerprints. The synthetic content embeds the
    * producer fingerprint, so this hash moves whenever reviewed producer behavior or policy changes,
    * and again whenever the serialized layout itself changes. */
-  /* This array/path-free fixture changes only public/VM schema words and payload checksum.
-   * Preserve the previous exact digest as a discriminator for unrelated byte changes; graph
-   * contents and aliases have separate non-empty state, builtin and security coverage. */
+  /* This array/path/file-font-free fixture adds only one zero runtime-font flag per slot.
+   * Strip exactly those flags in a temporary copy, adjust framing, and retain both preceding
+   * exact digests. This is a test discriminator, not a reader for older runtime states. */
   uint64_t deterministic_hash=state_checksum(deterministic,deterministic_size);
+  size_t canonical_render=112+(size_t)read_u64(deterministic+64);
+  size_t render_size=(size_t)read_u64(deterministic+72);
+  const size_t font_slots=48,removed=font_slots*4;
+  if(canonical_render>deterministic_size || render_size>deterministic_size-canonical_render ||
+     render_size<4+font_slots*24){
+    fprintf(stderr,"canonical font-pool framing changed\n");
+    return 1;
+  }
+  size_t read_at=canonical_render+4,write_at=read_at;
+  for(size_t i=0;i<font_slots;i++){
+    /* Both the old map length and the added runtime-file flag must be zero. */
+    if(read_u64(deterministic+read_at+16)!=0){
+      fprintf(stderr,"canonical font-pool fixture is no longer empty at slot %zu\n",i);
+      return 1;
+    }
+    memmove(deterministic+write_at,deterministic+read_at,20);
+    read_at+=24; write_at+=20;
+  }
+  memmove(deterministic+write_at,deterministic+read_at,deterministic_size-read_at);
+  size_t preceding_size=deterministic_size-removed;
+  write_u64(deterministic+16,preceding_size);
+  write_u64(deterministic+72,render_size-removed);
+  write_u64(deterministic+96,preceding_size-112);
+  write_u32(deterministic+4,19);
+  write_u64(deterministic+56,state_checksum(deterministic+112,preceding_size-112));
+  uint64_t preceding_font_hash=state_checksum(deterministic,preceding_size);
   size_t canonical_vm=112+(size_t)read_u64(deterministic+64)+(size_t)read_u64(deterministic+72);
   write_u32(deterministic+4,17);
   write_u32(deterministic+canonical_vm+4,8);
-  write_u64(deterministic+56,state_checksum(deterministic+112,deterministic_size-112));
-  uint64_t preceding_hash=state_checksum(deterministic,deterministic_size);
+  write_u64(deterministic+56,state_checksum(deterministic+112,preceding_size-112));
+  uint64_t preceding_hash=state_checksum(deterministic,preceding_size);
   memcpy(deterministic,first_state,first_written);
   if(deterministic_size!=22070 ||
      deterministic_hash!=UINT64_C(0x8fe9f1b017414513) ||
+     preceding_size!=22070 || preceding_font_hash!=UINT64_C(0x8fe9f1b017414513) ||
      preceding_hash!=UINT64_C(0xa4c27da217414513)){
     fprintf(stderr,"canonical engine state changed: size=%zu hash=%016llx\n",
             deterministic_size,(unsigned long long)deterministic_hash);
-    fprintf(stderr,"schema-normalized hash=%016llx\n",(unsigned long long)preceding_hash);
+    fprintf(stderr,"prior-font-layout size=%zu hash=%016llx; schema-normalized hash=%016llx\n",
+            preceding_size,(unsigned long long)preceding_font_hash,(unsigned long long)preceding_hash);
     return 1;
   }
   free(deterministic);
