@@ -450,6 +450,8 @@ int vm_file_slot(GmlVM *vm, int id){
 }
 typedef struct {
   void *handle;
+  char *path;
+  AnygmFileMode mode;
   int pushed;
   unsigned char pushed_byte;
 } GmlHostFile;
@@ -463,15 +465,19 @@ int vm_file_open(GmlVM *vm, const char *path, const char *mode){
   if(strchr(mode,'w') || strchr(mode,'a') || strchr(mode,'+')) flags|=ANYGM_FILE_WRITE;
   if(strchr(mode,'w') || strchr(mode,'a')) flags|=ANYGM_FILE_CREATE;
   if(strchr(mode,'w')) flags|=ANYGM_FILE_TRUNCATE;
-  void *handle=vm->host->file_open(vm->host->userdata,path,flags);
-  if(!handle) return -1;
   GmlHostFile *file=calloc(1,sizeof *file);
-  if(!file){ vm->host->file_close(vm->host->userdata,handle); return -1; }
+  if(!file) return -1;
+  file->path=strdup(path);
+  if(!file->path){ free(file); return -1; }
+  void *handle=vm->host->file_open(vm->host->userdata,path,flags);
+  if(!handle){ free(file->path); free(file); return -1; }
   file->handle=handle;
+  file->mode=flags;
   if(strchr(mode,'a') && vm->host->file_seek)
     vm->host->file_seek(vm->host->userdata,handle,0,ANYGM_SEEK_END);
   for(int i=0;i<16;i++) if(!vm->builtins->bin_file[i]){ vm->builtins->bin_file[i]=file; return i+1; }
   vm->host->file_close(vm->host->userdata,handle);
+  free(file->path);
   free(file);
   return -1;
 }
@@ -480,8 +486,23 @@ void vm_file_close(GmlVM *vm,int slot){
   if(!file) return;
   if(vm->host && vm->host->file_flush) vm->host->file_flush(vm->host->userdata,file->handle);
   if(vm->host && vm->host->file_close) vm->host->file_close(vm->host->userdata,file->handle);
+  free(file->path);
   free(file);
   vm->builtins->bin_file[slot]=NULL;
+}
+static void vm_file_rewrite(GmlVM *vm,int slot){
+  GmlHostFile *file=vm_host_file(vm,slot);
+  if(!file || !(file->mode&ANYGM_FILE_WRITE) || !vm->host ||
+     !vm->host->file_open || !vm->host->file_close || !vm->host->file_flush) return;
+  /* Flush before truncation: closing a buffered old handle must not restore old bytes.
+   * Keep that handle and its cursor when flushing or opening the replacement fails. */
+  if(vm->host->file_flush(vm->host->userdata,file->handle)!=ANYGM_OK) return;
+  void *replacement=vm->host->file_open(vm->host->userdata,file->path,
+                                       file->mode|ANYGM_FILE_TRUNCATE);
+  if(!replacement) return;
+  vm->host->file_close(vm->host->userdata,file->handle);
+  file->handle=replacement;
+  file->pushed=0;
 }
 void builtin_io_files_close(GmlBuiltinState *state){
   if(!state || !state->vm || state->vm->builtins!=state) return;
@@ -907,18 +928,23 @@ static void md5_final(GmlMd5 *m, uint8_t out[16]){
     out[i*4+3]=(uint8_t)(m->h[i]>>24);
   }
 }
-GmlVal md5_hex_val(const uint8_t *p, size_t n){
+static GmlVal digest_hex_val(const uint8_t *digest,size_t size){
   static const char H[]="0123456789abcdef";
+  char *text=malloc(size*2u+1u);
+  if(!text) return vstr("");
+  for(size_t i=0;i<size;i++){
+    text[i*2]=H[digest[i]>>4]; text[i*2+1]=H[digest[i]&15];
+  }
+  text[size*2]=0;
+  return vstr_owned(text);
+}
+GmlVal md5_hex_val(const uint8_t *p, size_t n){
   uint8_t d[16];
   GmlMd5 m;
   md5_init(&m);
   if(p && n) md5_update(&m,p,n);
   md5_final(&m,d);
-  char *s=malloc(33);
-  if(!s) return vstr("");
-  for(int i=0;i<16;i++){ s[i*2]=H[d[i]>>4]; s[i*2+1]=H[d[i]&15]; }
-  s[32]=0;
-  return vstr_owned(s);
+  return digest_hex_val(d,sizeof d);
 }
 typedef struct { uint32_t h[5]; uint64_t bits; uint8_t buf[64]; int used; } GmlSha1;
 static uint32_t sha1_rot(uint32_t x, unsigned n){ return (x<<n)|(x>>(32u-n)); }
@@ -970,14 +996,41 @@ static void sha1_final(GmlSha1 *s, uint8_t out[20]){
   }
 }
 GmlVal sha1_hex_val(const uint8_t *p, size_t n){
-  static const char H[]="0123456789abcdef";
   uint8_t d[20]; GmlSha1 s;
   sha1_init(&s); if(p && n) sha1_update(&s,p,n); sha1_final(&s,d);
-  char *out=malloc(41);
-  if(!out) return vstr("");
-  for(int i=0;i<20;i++){ out[i*2]=H[d[i]>>4]; out[i*2+1]=H[d[i]&15]; }
-  out[40]=0;
-  return vstr_owned(out);
+  return digest_hex_val(d,sizeof d);
+}
+static GmlVal file_digest(GmlVM *vm,const char *raw,int use_sha1){
+  if(!vm || !anygm_vfs_can_read(vm->host) || !vm->host->file_seek || !raw || !raw[0])
+    return vstr("");
+  char *path=resolve_read_path(vm,raw);
+  if(!path) return vstr("");
+  const AnygmHostServices *host=vm->host;
+  void *file=host->file_open(host->userdata,path,ANYGM_FILE_READ);
+  free(path);
+  if(!file) return vstr("");
+  GmlVal result=vstr("");
+  int64_t size=host->file_seek(host->userdata,file,0,ANYGM_SEEK_END);
+  if(size<0 || host->file_seek(host->userdata,file,0,ANYGM_SEEK_START)!=0) goto done;
+  GmlMd5 md5; GmlSha1 sha1;
+  if(use_sha1) sha1_init(&sha1); else md5_init(&md5);
+  uint8_t bytes[65536],digest[20];
+  uint64_t remaining=(uint64_t)size;
+  while(remaining){
+    size_t request=remaining>sizeof bytes?sizeof bytes:(size_t)remaining;
+    size_t count=host->file_read(host->userdata,file,bytes,request);
+    if(!count || count>request) goto done;
+    if(use_sha1) sha1_update(&sha1,bytes,count); else md5_update(&md5,bytes,count);
+    remaining-=count;
+  }
+  /* The VFS read result cannot distinguish EOF from an error. Require the measured
+   * extent and its EOF; never publish a digest of a truncated or growing input. */
+  if(host->file_read(host->userdata,file,bytes,1)!=0) goto done;
+  if(use_sha1) sha1_final(&sha1,digest); else md5_final(&md5,digest);
+  result=digest_hex_val(digest,use_sha1?20u:16u);
+done:
+  host->file_close(host->userdata,file);
+  return result;
 }
 char *base64_encode_alloc(const unsigned char *bytes, int length){
   static const char B64[]="ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
@@ -1613,6 +1666,13 @@ GmlVal gml_builtin_try_io(GmlVM *vm, const char *nm, GmlVal *a, int n){
     free(copy);
     return vreal(ok);
   }
+  if(!strcmp(nm,"md5_file") || !strcmp(nm,"sha1_file"))
+    return n>0?file_digest(vm,S(vm,a,n,0),nm[0]=='s'):vstr("");
+  if(!strcmp(nm,"file_bin_rewrite")){
+    double id=N(a,n,0);
+    if(isfinite(id) && id>=1 && id<=16) vm_file_rewrite(vm,vm_file_slot(vm,(int)id));
+    return vreal(0);
+  }
   if(!strcmp(nm,"file_bin_open")||!strcmp(nm,"FS_file_bin_open")){ int mode=(int)N(a,n,1);
     char *path=mode==0?resolve_read_path(vm,S(vm,a,n,0)):resolve_write_path(vm,S(vm,a,n,0));
     const char *fm = mode==1 ? "wb+" : (mode==2 ? "ab+" : "rb");
@@ -1691,6 +1751,17 @@ GmlVal gml_builtin_try_io(GmlVM *vm, const char *nm, GmlVal *a, int n){
   if(!strcmp(nm,"buffer_delete")){ int i=vm_buffer_slot(vm,(int)N(a,n,0));
     if(i>=0){ free(vm->builtins->buffer[i].data); memset(&vm->builtins->buffer[i],0,sizeof(vm->builtins->buffer[i])); } return vreal(0); }
   if(!strcmp(nm,"buffer_get_size")){ int i=vm_buffer_slot(vm,(int)N(a,n,0)); return vreal(i>=0?vm->builtins->buffer[i].size:0); }
+  if(!strcmp(nm,"buffer_sha1")){
+    double id=N(a,n,0),offset=N(a,n,1),length=N(a,n,2);
+    if(n<3 || !isfinite(id) || id<1 || id>16 || !isfinite(offset) ||
+       !isfinite(length) || offset<0 || length<0) return vstr("");
+    int i=vm_buffer_slot(vm,(int)id);
+    if(i<0 || offset>vm->builtins->buffer[i].size) return vstr("");
+    int off=(int)offset;
+    if(length>vm->builtins->buffer[i].size-off) return vstr("");
+    const uint8_t *data=vm->builtins->buffer[i].data;
+    return sha1_hex_val(data?data+off:NULL,(size_t)length);
+  }
   if(!strcmp(nm,"buffer_md5")){ int i=vm_buffer_slot(vm,(int)N(a,n,0)); if(i<0) return md5_hex_val(NULL,0);
     int off=(int)N(a,n,1), sz=(int)N(a,n,2);
     if(off<0) off=0;

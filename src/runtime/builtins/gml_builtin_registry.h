@@ -1826,7 +1826,11 @@ typedef enum GmlBuiltinCachePolicy {
   ENTRY(1732, OBJECT_GET_SOLID, "object_get_solid", DRAW, DRAW, ALWAYS) \
   ENTRY(1733, OBJECT_GET_PERSISTENT, "object_get_persistent", DRAW, DRAW, ALWAYS) \
   ENTRY(1734, TIMELINE_SIZE, "timeline_size", INSTANCES, INSTANCES_TIMELINES, ALWAYS) \
-  ENTRY(1735, GAMEPAD_GET_AXIS_DEADZONE, "gamepad_get_axis_deadzone", INPUT, INPUT, ALWAYS)
+  ENTRY(1735, GAMEPAD_GET_AXIS_DEADZONE, "gamepad_get_axis_deadzone", INPUT, INPUT, ALWAYS) \
+  ENTRY(1736, BUFFER_SHA1, "buffer_sha1", IO, IO, ALWAYS) \
+  ENTRY(1737, MD5_FILE, "md5_file", IO, IO, ALWAYS) \
+  ENTRY(1738, SHA1_FILE, "sha1_file", IO, IO, ALWAYS) \
+  ENTRY(1739, FILE_BIN_REWRITE, "file_bin_rewrite", IO, IO, ALWAYS)
 
 /* Dynamic prefix IDs retain the previously characterized slow-path order. */
 #define GML_BUILTIN_DYNAMIC_REGISTRY(ENTRY) \
@@ -1841,7 +1845,7 @@ typedef enum GmlBuiltinId {
   GML_BUILTIN_DYNAMIC_REGISTRY(GML_BUILTIN_ID_ENTRY)
 #undef GML_BUILTIN_ID_ALIAS
 #undef GML_BUILTIN_ID_ENTRY
-  GML_BUILTIN_ID_LIMIT = 1736
+  GML_BUILTIN_ID_LIMIT = 1740
 } GmlBuiltinId;
 
 #endif

@@ -63,8 +63,12 @@ static int invalid_case(void){
       args[1]=vreal(0); args[2]=vreal(invalid[i]);
       ok &= hash_is(query(&vm,args,3,cached,&ok),"");
     }
-    args[0]=vreal(-1); args[1]=vreal(0); args[2]=vreal(0);
-    ok &= hash_is(query(&vm,args,3,cached,&ok),"");
+    double invalid_handles[]={-1,0,17,1e100,NAN,INFINITY,-2147483648.0};
+    for(int i=0;i<7;i++){
+      args[0]=vreal(invalid_handles[i]); args[1]=vreal(0); args[2]=vreal(0);
+      ok &= hash_is(query(&vm,args,3,cached,&ok),"");
+    }
+    ok &= hash_is(query(&vm,NULL,0,cached,&ok),"");
   }
   gml_vm_free(&vm);
   return ok;

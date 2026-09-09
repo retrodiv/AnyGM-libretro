@@ -12,7 +12,7 @@ typedef struct {
   AnygmMemoryVfs memory; /* first member also serves ordinary memory-VFS callbacks */
   AnygmHostServices base, host;
   size_t read_limit, read_total, max_requested;
-  int short_eof, fail_seek, fail_flush, fail_truncate;
+  int short_eof, fail_seek, fail_flush, fail_truncate, overread, shorter_extent, fail_rewind;
   int opened, closed;
 } FileFixture;
 static void *fixture_open(void *userdata,const char *path,AnygmFileMode mode){
@@ -30,6 +30,7 @@ static void fixture_close(void *userdata,void *file){
 static size_t fixture_read(void *userdata,void *file,void *data,size_t size){
   FileFixture *f=userdata;
   if(size>f->max_requested) f->max_requested=size;
+  if(f->overread) return size+1u;
   if(f->short_eof && f->read_total>=2) return 0;
   if(f->read_limit && size>f->read_limit) size=f->read_limit;
   size_t count=f->base.file_read(&f->memory,file,data,size);
@@ -38,7 +39,9 @@ static size_t fixture_read(void *userdata,void *file,void *data,size_t size){
 }
 static int64_t fixture_seek(void *userdata,void *file,int64_t offset,AnygmSeekOrigin origin){
   FileFixture *f=userdata;
-  return f->fail_seek?-1:f->base.file_seek(&f->memory,file,offset,origin);
+  if(f->fail_seek || (f->fail_rewind && origin==ANYGM_SEEK_START)) return -1;
+  int64_t result=f->base.file_seek(&f->memory,file,offset,origin);
+  return f->shorter_extent && origin==ANYGM_SEEK_END && result>0?result-1:result;
 }
 static AnygmResult fixture_flush(void *userdata,void *file){
   FileFixture *f=userdata;
@@ -108,11 +111,14 @@ static int digest_case(void){
 static int digest_failure_case(void){
   int ok=1;
   const char *names[]={"md5_file","sha1_file"};
-  for(int fault=0;fault<4;fault++){
+  for(int fault=0;fault<9;fault++){
     FileFixture f; GmlVM vm; fixture_init(&f,&vm);
     anygm_memory_vfs_add_file(&f.memory,"/input.bin","abc",3);
     f.read_limit=1; f.short_eof=fault==0; f.fail_seek=fault==1;
     if(fault==2) f.host.file_read=NULL;
+    if(fault==4) f.host.file_seek=NULL;
+    f.overread=fault==5; f.shorter_extent=fault==6; f.fail_rewind=fault==7;
+    if(fault==8) f.host.file_open=NULL;
     GmlVal path=vstr(fault==3?"/missing.bin":"/input.bin");
     for(int algorithm=0;algorithm<2;algorithm++){
       f.read_total=0;
@@ -145,7 +151,7 @@ static int rewrite_case(void){
 }
 static int rewrite_failure_case(void){
   int ok=1;
-  for(int fault=0;fault<3;fault++){
+  for(int fault=0;fault<5;fault++){
     FileFixture f; GmlVM vm; fixture_init(&f,&vm);
     anygm_memory_vfs_add_file(&f.memory,"/input.bin","abc",3);
     GmlVal args[]={vstr("/input.bin"),vreal(fault==0?0:2)};
@@ -153,6 +159,8 @@ static int rewrite_failure_case(void){
     GmlVal seek[]={file,vreal(1)};
     gml_builtin_call(&vm,"file_bin_seek",seek,2);
     f.fail_flush=fault==1; f.fail_truncate=fault==2;
+    if(fault==3) f.host.file_flush=NULL;
+    if(fault==4) f.host.file_open=NULL;
     invoke(&vm,"file_bin_rewrite",&file,1,1,&ok);
     ok &= real_is(gml_builtin_call(&vm,"file_bin_position",&file,1),1) &&
           real_is(gml_builtin_call(&vm,"file_bin_size",&file,1),3) &&
