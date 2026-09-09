@@ -537,6 +537,7 @@ check: warnings-check architecture-check api-check contract-check integration-ch
 	$(TEST_DIR)/test_renderer_postprocess
 	$(TEST_DIR)/test_renderer_surfaces
 	$(TEST_DIR)/test_renderer_assets
+	$(TEST_DIR)/test_renderer_fonts
 	$(TEST_DIR)/test_renderer_texture_shells
 	$(TEST_DIR)/test_renderer_tiles
 	$(TEST_DIR)/test_renderer_primitives

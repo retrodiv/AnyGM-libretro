@@ -92,7 +92,7 @@ static int lifecycle_case(void){
   gml_font_delete(&f->render,font);
   ok &= !gml_render_font_exists(&f->render,font) &&
     !f->render.fonts[0].runtime_face && !f->render.fonts[0].glyphs &&
-    !f->render.atlas[0].px;
+    f->render.n_atlas==1 && !f->render.atlas[0].px;
   if(!ok) fprintf(stderr,"runtime font construction/deletion control failed\n");
   fixture_destroy(f);
   return ok;
