@@ -1253,7 +1253,13 @@ static int rounded_contextual_precedence(GmlVM *vm){
   return ok;
 }
 
-int main(void){
+int main(int argc,char **argv){
+  int guid_only=argc==3 && !strcmp(argv[1],"--case") &&
+                !strcmp(argv[2],"input.gamepad_guid");
+  if(argc!=1 && !guid_only){
+    fprintf(stderr,"usage: %s [--case input.gamepad_guid]\n",argv[0]);
+    return 2;
+  }
   GmlWin win={0};
   GmlVM vm={0};
   AnygmHostServices host={0};
@@ -1264,7 +1270,8 @@ int main(void){
     gml_win_free(&win);
     return 1;
   }
-  int ok=canonical_registry_resolution(&vm) &&
+  int ok=guid_only ? gamepad_guid_capability_contract(&vm) :
+         canonical_registry_resolution(&vm) &&
          gamepad_guid_capability_contract(&vm) &&
          exact_builtin_precedes_same_named_script(&vm) &&
          script_resolution_order(&vm,&log_fixture) &&
@@ -1297,6 +1304,7 @@ int main(void){
   gml_vm_free(&vm);
   gml_win_free(&win);
   if(!ok) return 1;
-  puts("builtin dispatch precedence fixtures: ok");
+  puts(guid_only ? "gamepad identity capability contract: ok" :
+                  "builtin dispatch precedence fixtures: ok");
   return 0;
 }

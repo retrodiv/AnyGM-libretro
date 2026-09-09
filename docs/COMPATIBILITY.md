@@ -16,6 +16,19 @@ formats differ in two controlled places:
 Everything after those seams is shared unless a reviewed policy expresses a
 real semantic difference.
 
+## Normalized gamepad identity
+
+The normalized gamepad interface exposes logical slots, digital buttons and stick
+axes, not a physical-device GUID. `gamepad_get_guid` returns the documented string
+`none` within the interval exposed by `gamepad_get_device_count`, and
+`device index out of range` outside it. A connected logical slot does not imply
+that hardware identity is available. Missing and nonfinite indices use the latter
+result as a defensive policy; negative fractional indices are also rejected.
+The existing description and input mapping are unchanged. This does not add raw-hat
+or analogue-button-pressure support. The contract is documented in the
+[publisher manual](https://manual.gamemaker.io/lts/en/GameMaker_Language/GML_Reference/Game_Input/GamePad_Input/gamepad_get_guid.htm)
+and covered by ordinary, exact cached and prefix-cached dispatch controls.
+
 ## Supported matrix
 
 | Input family | Structural selector | Parser path | Runtime path |

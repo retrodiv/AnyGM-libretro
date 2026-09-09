@@ -1333,6 +1333,14 @@ int builtin_input_kbgp(GmlVM *vm, const char *nm, GmlVal *a, int n, GmlVal *out)
   if(!strcmp(nm,"gamepad_is_connected")){          *out=vreal(gml_input_gamepad_connected(vm,(int)N(a,n,0))); return 1; }
   if(!strcmp(nm,"gamepad_is_supported")){          *out=vreal(1); return 1; }
   if(!strcmp(nm,"gamepad_get_device_count")){      *out=vreal(gml_input_gamepad_device_count(vm)); return 1; }
+  if(!strcmp(nm,"gamepad_get_guid")){
+    double index=N(a,n,0);
+    int count=gml_input_gamepad_device_count(vm);
+    /* Normalized input exposes slots, but no physical-device GUID. */
+    *out=vstr(n>0 && isfinite(index) && index>=0 && index<count ?
+              "none" : "device index out of range");
+    return 1;
+  }
   if(!strcmp(nm,"gamepad_button_count")){          *out=vreal(16); return 1; }
   if(!strcmp(nm,"gamepad_axis_count")){            *out=vreal(4); return 1; }
   /* The GameMaker manual gives this XInput-compatible device description as

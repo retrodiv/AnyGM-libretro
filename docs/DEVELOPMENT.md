@@ -40,6 +40,10 @@ release gates.
 
 The large runtime characterization binaries expose ownership-level filters:
 
+The builtin dispatch binary also accepts `--case input.gamepad_guid` to run the
+string-valued identity capability and argument-boundary contract in isolation.
+Without arguments it retains the complete dispatch characterization.
+
 ```sh
 make -j1 check TEST=d3_state D3_TEST_ARGS='--case raster.blend_and_shader'
 make -j1 check TEST=persistent_room PERSISTENT_TEST_ARGS='--case io.save_overlay_sandbox'
