@@ -49,6 +49,11 @@ Each filtered case starts from a clean synthetic fixture. The software-3D test r
 may replay explicitly bounded prerequisite stages; persistent cases do
 not inherit mutable state from another registered case.
 
+`make check TEST=renderer_fonts` exercises runtime-font lifetime and renderer-state
+restoration through an injected memory VFS. Its binary also accepts `--case`.
+`tests/unit/media/font_test_fixture.h` owns the shared synthetic TrueType builder
+used by these controls and the existing policy-free font-raster tests.
+
 ## Resource limits
 
 Generated tables and a few large C modules can make parallel compilers consume
