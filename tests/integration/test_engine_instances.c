@@ -2973,10 +2973,10 @@ int main(int argc,char **argv){
    * exact digests. This is a test discriminator, not a reader for older runtime states. */
   uint64_t deterministic_hash=state_checksum(deterministic,deterministic_size);
   size_t canonical_render=112+(size_t)read_u64(deterministic+64);
-  size_t render_size=(size_t)read_u64(deterministic+72);
+  size_t canonical_render_size=(size_t)read_u64(deterministic+72);
   const size_t font_slots=48,removed=font_slots*4;
-  if(canonical_render>deterministic_size || render_size>deterministic_size-canonical_render ||
-     render_size<4+font_slots*24){
+  if(canonical_render>deterministic_size || canonical_render_size>deterministic_size-canonical_render ||
+     canonical_render_size<4+font_slots*24){
     fprintf(stderr,"canonical font-pool framing changed\n");
     return 1;
   }
@@ -2993,7 +2993,7 @@ int main(int argc,char **argv){
   memmove(deterministic+write_at,deterministic+read_at,deterministic_size-read_at);
   size_t preceding_size=deterministic_size-removed;
   write_u64(deterministic+16,preceding_size);
-  write_u64(deterministic+72,render_size-removed);
+  write_u64(deterministic+72,canonical_render_size-removed);
   write_u64(deterministic+96,preceding_size-112);
   write_u32(deterministic+4,19);
   write_u64(deterministic+56,state_checksum(deterministic+112,preceding_size-112));
