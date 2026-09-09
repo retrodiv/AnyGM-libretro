@@ -2968,14 +2968,22 @@ int main(int argc,char **argv){
   /* The state carries content and compatibility fingerprints. The synthetic content embeds the
    * producer fingerprint, so this hash moves whenever reviewed producer behavior or policy changes,
    * and again whenever the serialized layout itself changes. */
-  /* Schema 17 changes configuration identity without changing this fixture's state layout.
-   * Replacing only its schema word with 16 reproduces the preceding canonical checksum.
-   * Its empty motion-planning tables have separate non-empty coverage in the builtin-state test. */
+  /* This array-free fixture changes only the public/VM schema words and payload checksum.
+   * Preserve the previous exact digest as a discriminator for unrelated byte changes; graph
+   * contents and aliases have separate non-empty state, builtin and security coverage. */
   uint64_t deterministic_hash=state_checksum(deterministic,deterministic_size);
+  size_t canonical_vm=112+(size_t)read_u64(deterministic+64)+(size_t)read_u64(deterministic+72);
+  write_u32(deterministic+4,17);
+  write_u32(deterministic+canonical_vm+4,8);
+  write_u64(deterministic+56,state_checksum(deterministic+112,deterministic_size-112));
+  uint64_t preceding_hash=state_checksum(deterministic,deterministic_size);
+  memcpy(deterministic,first_state,first_written);
   if(deterministic_size!=22070 ||
-     deterministic_hash!=UINT64_C(0xa4c27da217414513)){
+     deterministic_hash!=UINT64_C(0xf8b9d2df17414513) ||
+     preceding_hash!=UINT64_C(0xa4c27da217414513)){
     fprintf(stderr,"canonical engine state changed: size=%zu hash=%016llx\n",
             deterministic_size,(unsigned long long)deterministic_hash);
+    fprintf(stderr,"schema-normalized hash=%016llx\n",(unsigned long long)preceding_hash);
     return 1;
   }
   free(deterministic);
