@@ -88,6 +88,8 @@ int expect_vm_state_array_depth_case(void);
 int expect_object_defaults(void);
 int expect_object_state_rewind(void);
 int expect_object_state_fresh(void);
+int expect_object_argument_bounds(void);
+int expect_object_state_bounds(void);
 int expect_background_slot_dimensions(void);
 int expect_background_exists_builtin(void);
 int expect_classic_view_array_aliases(void);

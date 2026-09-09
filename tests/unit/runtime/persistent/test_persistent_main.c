@@ -27,6 +27,7 @@ int main(int argc,char **argv){
     {"authored_long_layer_background_binding",expect_authored_long_layer_background_binding},
     {"retired_builtin_script_shadow",expect_retired_builtin_script_shadow},
     {"object_defaults",expect_object_defaults},
+    {"object_argument_bounds",expect_object_argument_bounds},
     {"deactivated_instance_reference",expect_deactivated_instance_reference},
     {"bounding_box_far_edges_by_generation",expect_bounding_box_far_edges_by_generation},
     {"rectangular_mask_edge_contacts",expect_rectangular_mask_edge_contacts},
@@ -114,6 +115,7 @@ int main(int argc,char **argv){
     {"array_definition_depth",expect_vm_state_array_depth_case},
     {"object_rewind",expect_object_state_rewind},
     {"object_fresh_restore",expect_object_state_fresh},
+    {"object_bounds",expect_object_state_bounds},
   };
   const AnygmTestGroup groups[]={
     {"vm",vm_cases,sizeof vm_cases/sizeof vm_cases[0]},

@@ -5,6 +5,8 @@
 #include "gml_builtin.h"
 #include "gml_particle.h"
 
+#include <limits.h>
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -14,11 +16,12 @@ static int objects_fixture(GmlVM *vm,GmlWin *win){
   vm->win=win; vm->room_index=vm->pending_room=-1;
   vm->next_id=100000; vm->next_creation_seq=1;
   vm->inst_cap=16; vm->inst=calloc(16,sizeof *vm->inst);
-  vm->n_objects=3; vm->objects=calloc(3,sizeof *vm->objects);
+  vm->objects=calloc(3,sizeof *vm->objects);
   vm->obj_alive=calloc(3,sizeof *vm->obj_alive);
   vm->particles=gml_particle_state_create(vm);
   gml_vm_software3d_reset(vm);
   if(!vm->inst || !vm->objects || !vm->obj_alive || !vm->particles) return 0;
+  vm->n_objects=3;
   for(int i=0;i<3;i++) vm->objects[i]=(GmlObject){
     .name=i==0?"obj_root":i==1?"obj_child":"obj_other",
     .sprite_index=-1,.mask_index=-1,.parent=-100,.depth=31+i,.visible=1
@@ -59,6 +62,9 @@ int expect_object_defaults(void){
     object_call(&vm,"object_set_depth",1,-42,2,cached,&ok);
     GmlInstance *after=gml_instance_create(&vm,30,40,1);
     GmlInstance *override=gml_instance_create_depth(&vm,50,60,1,1,19);
+    GmlRtLayer *layer=gml_rt_layer_new(&vm);
+    if(layer){ layer->depth=73; layer->order=5; }
+    GmlInstance *layered=layer?gml_instance_create_layer(&vm,70,80,1,layer->id):NULL;
     ok &= object_expect(before && before->sprite_index==-1 && before->mask_index==-1 &&
       before->solid==0 && before->persistent==0 && before->depth==32,
       "setters must not change existing instances");
@@ -67,6 +73,10 @@ int expect_object_defaults(void){
       "new instances inherit the changed defaults");
     ok &= object_expect(override && override->depth==19 && override->solid==1,
       "explicit creation depth overrides only the depth default");
+    ok &= object_expect(layered && layered->depth==73 && layered->draw_layer_order==5 &&
+      layered->sprite_index==4 && layered->mask_index==7 && layered->solid==1 &&
+      layered->persistent==1 && vm.objects[1].depth==-42,
+      "layer depth and order override instance placement without changing asset defaults");
     ok &= object_expect(vm.objects[0].depth==31 && vm.objects[0].sprite_index==-1 &&
       vm.objects[2].persistent==0,"other objects retain their own defaults");
     object_call(&vm,"object_set_sprite",1,-1,2,cached,&ok);
@@ -135,3 +145,109 @@ done:
 
 int expect_object_state_rewind(void){ return object_state_case(0); }
 int expect_object_state_fresh(void){ return object_state_case(1); }
+
+/* These are selected defensive/coercion policies, not undocumented error
+ * messages or original-runner crashes promoted into language expectations. */
+int expect_object_argument_bounds(void){
+  const char *setters[]={"object_set_sprite","object_set_mask","object_set_solid",
+                        "object_set_persistent","object_set_depth"};
+  const double invalid[]={-1,-.25,3,1e100,NAN,INFINITY,-INFINITY};
+  int ok=1;
+  for(int cached=0;cached<2;cached++){
+    GmlWin win={0}; GmlVM vm={0};
+    if(!objects_fixture(&vm,&win)){ gml_vm_free(&vm); return 0; }
+    GmlObject original[3]; memcpy(original,vm.objects,sizeof original);
+    for(unsigned i=0;i<sizeof setters/sizeof setters[0];i++){
+      object_call(&vm,setters[i],1,0,0,cached,&ok);
+      object_call(&vm,setters[i],1,0,1,cached,&ok);
+      for(unsigned j=0;j<sizeof invalid/sizeof invalid[0];j++)
+        object_call(&vm,setters[i],invalid[j],1,2,cached,&ok);
+      object_call(&vm,setters[i],1,NAN,2,cached,&ok);
+      object_call(&vm,setters[i],1,INFINITY,2,cached,&ok);
+      object_call(&vm,setters[i],1,-INFINITY,2,cached,&ok);
+    }
+    for(unsigned i=0;i<sizeof invalid/sizeof invalid[0];i++){
+      GmlVal result=object_call(&vm,"object_get_depth",invalid[i],0,1,cached,&ok);
+      ok &= object_expect(result.t==V_REAL && result.d==0,"invalid depth query is bounded");
+    }
+    for(int i=0;i<3;i++){
+      const char *name=i==0?setters[0]:i==1?setters[1]:setters[4];
+      object_call(&vm,name,1,(double)INT_MAX+1,2,cached,&ok);
+      object_call(&vm,name,1,(double)INT_MIN-1,2,cached,&ok);
+    }
+    ok &= object_expect(!memcmp(original,vm.objects,sizeof original),
+      "missing, invalid and nonfinite inputs do not mutate any object");
+    object_call(&vm,"object_set_depth",1,INT_MIN,2,cached,&ok);
+    ok &= object_expect(vm.objects[1].depth==INT_MIN,"minimum signed depth remains representable");
+    object_call(&vm,"object_set_depth",1,INT_MAX,2,cached,&ok);
+    ok &= object_expect(vm.objects[1].depth==INT_MAX,"maximum signed depth remains representable");
+    object_call(&vm,"object_set_depth",1,-3.75,2,cached,&ok);
+    ok &= object_expect(vm.objects[1].depth==-3,"fractional depth uses selected truncation policy");
+    for(int classic=0;classic<2;classic++){
+      win.classic_version=classic?800:0;
+      for(int i=2;i<4;i++){
+        object_call(&vm,setters[i],1,.5,2,cached,&ok);
+        int value=i==2?vm.objects[1].solid:vm.objects[1].persistent;
+        ok &= object_expect(value==classic,"half-boolean follows the selected generation policy");
+        object_call(&vm,setters[i],1,-1,2,cached,&ok);
+        value=i==2?vm.objects[1].solid:vm.objects[1].persistent;
+        ok &= object_expect(value==0,"negative numeric booleans are false");
+      }
+    }
+    gml_vm_free(&vm);
+  }
+  return ok;
+}
+
+int expect_object_state_bounds(void){
+  GmlWin win={0}; GmlVM vm={0};
+  if(!objects_fixture(&vm,&win)){ gml_vm_free(&vm); return 0; }
+  size_t size=gml_vm_state_size(&vm),written=0,used=0;
+  uint8_t *bytes=malloc(size?size:1),*candidate=malloc(size?size:1);
+  int ok=bytes && candidate && size>=88 &&
+    gml_vm_state_save(&vm,bytes,size,&written) && written==size;
+  GmlObject original[3]; memcpy(original,vm.objects,sizeof original);
+  if(ok){
+    size_t table=size-88;
+    ok=fixture_u32(bytes,table)==3;
+    const struct { size_t offset; uint32_t value; const char *label; } changes[]={
+      {table,UINT32_MAX,"negative object count"},
+      {table,2,"missing object record"},
+      {table,4,"object count exceeds loaded content"},
+      {table+12,0,"self parent"},
+      {table+12,3,"parent beyond loaded content"},
+    };
+    for(unsigned i=0;i<sizeof changes/sizeof changes[0] && ok;i++){
+      memcpy(candidate,bytes,size);
+      fixture_w32(candidate,changes[i].offset,changes[i].value);
+      ok=object_expect(!gml_vm_state_load(&vm,candidate,size,&used) &&
+        !memcmp(original,vm.objects,sizeof original),changes[i].label);
+    }
+    if(ok){
+      memcpy(candidate,bytes,size);
+      fixture_w32(candidate,table+12,1);
+      fixture_w32(candidate,table+40,2);
+      fixture_w32(candidate,table+68,0);
+      ok=object_expect(!gml_vm_state_load(&vm,candidate,size,&used) &&
+        !memcmp(original,vm.objects,sizeof original),"longer parent cycle cannot publish");
+    }
+    if(ok) ok=object_expect(!gml_vm_state_load(&vm,bytes,size-1,&used) &&
+      !memcmp(original,vm.objects,sizeof original),"truncated property record cannot publish");
+    if(ok){
+      memcpy(candidate,bytes,size);
+      fixture_w32(candidate,4,10);
+      ok=object_expect(!gml_vm_state_load(&vm,candidate,size,&used),"previous VM schema is rejected");
+    }
+    /* A forward edge is valid; an ordered setter replay must not reject it
+     * merely because the previous live hierarchy points in the opposite direction. */
+    if(ok){
+      ok=object_expect(gml_object_set_parent(&vm,2,0),"opposite live hierarchy is valid");
+      memcpy(candidate,bytes,size);
+      fixture_w32(candidate,table+12,2);
+      ok=ok && object_expect(gml_vm_state_load(&vm,candidate,size,&used) && used==size &&
+        gml_object_is(&vm,0,2) && !gml_object_is(&vm,2,0),"acyclic forward parent restores");
+    }
+  }
+  free(bytes); free(candidate); gml_vm_free(&vm);
+  return ok;
+}

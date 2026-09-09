@@ -529,9 +529,40 @@ int main(void){
   size_t audio_start=vm_start+(size_t)vm_size;
   if(audio_start+(size_t)audio_size!=state_size) ok=fail("section arithmetic is inconsistent");
 
-  /* The final VM block holds one runtime path: table header, metadata, two samples, two controls. */
+  /* Object properties follow the path table. Assert the synthetic table's exact
+   * extent before moving the existing path mutations to their current offsets. */
+  const size_t object_bytes=4+28;
+  size_t object_table=audio_start-object_bytes;
+  StateCursor object_cursor={baseline,state_size,object_table,1};
+  if(engine->vm.n_objects!=1 || cursor_u32(&object_cursor)!=1)
+    ok=fail("object mutation fixture does not identify its table");
+  if(ok) ok=reject_payload_u32(engine,candidate,state_size,baseline,state_size,
+                               object_table,UINT32_MAX,"negative object count");
+  if(ok) ok=reject_payload_u32(engine,candidate,state_size,baseline,state_size,
+                               object_table,0,"missing object record");
+  if(ok) ok=reject_payload_u32(engine,candidate,state_size,baseline,state_size,
+                               object_table,2,"object count exceeds content");
+  if(ok) ok=reject_payload_u32(engine,candidate,state_size,baseline,state_size,
+                               object_table+12,0,"self object parent");
+  if(ok) ok=reject_payload_u32(engine,candidate,state_size,baseline,state_size,
+                               object_table+12,1,"out-of-range object parent");
+  if(ok) ok=reject_payload_u32(engine,candidate,state_size,baseline,state_size,
+                               vm_start+4,10,"previous object-free VM schema");
+  if(ok){
+    memcpy(candidate,baseline,state_size);
+    /* A valid replacement must be published before the later audio rejection.
+     * Exact engine equality then proves rollback covers all seven object words. */
+    const int words[]={7,8,engine->vm.objects[0].parent==-1?-100:-1,-123,0,1,1};
+    for(int i=0;i<7;i++) write_u32(candidate+object_table+4+(size_t)i*4,(uint32_t)words[i]);
+    write_u32(candidate+audio_start,0);
+    refresh_checksum(candidate);
+    ok=reject_unchanged(engine,candidate,state_size,baseline,state_size,
+                        "audio rejection after object-property publication");
+  }
+
+  /* One runtime path: table header, metadata, two samples, two controls. */
   const size_t path_record_size=4+3*4+1+8+4+2*4*8+4+2*3*8;
-  size_t path_table=vm_start+(size_t)vm_size-12-path_record_size;
+  size_t path_table=object_table-12-path_record_size;
   StateCursor path_cursor={baseline,state_size,path_table,1};
   if(cursor_u32(&path_cursor)!=1 || cursor_u32(&path_cursor)!=0 ||
      cursor_u32(&path_cursor)!=1 || cursor_u32(&path_cursor)!=0)
