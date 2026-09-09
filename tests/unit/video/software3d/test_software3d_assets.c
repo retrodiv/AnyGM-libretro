@@ -410,6 +410,8 @@ int asset_lookup_fixture(void){
   uint32_t offsets[13];
   for(int i=0;i<13;i++) offsets[i]=800u+(uint32_t)i*4u;
   GmlWin win={0}; GmlVM vm={0}; GmlRender render={0};
+  GmlVal font_uvs=vundef();
+  int ok=0;
   GmlSprite sprite={0}; GmlObject object={0}; GmlTimeline timeline={0};
   win.data=data; win.size=sizeof(data); win.strs=names; win.str_charoff=offsets; win.n_strs=13;
   add_named_asset_chunk(&win,data,"SOND",  0,offsets[2],0);
@@ -433,7 +435,7 @@ int asset_lookup_fixture(void){
      strcmp(vm.paths[0].name,names[4])){
     fprintf(stderr,"asset lookup fixture did not load its authored path\n");
     gml_vm_paths_clear(&vm);
-    return 0;
+    goto done;
   }
   static const int expected_type[]={0,1,2,3,4,5,6,7,8,9,10,11,13};
   for(int i=0;i<13;i++){
@@ -443,7 +445,7 @@ int asset_lookup_fixture(void){
     if(index.t!=V_REAL || index.d!=0 || type.t!=V_REAL || type.d!=expected_type[i]){
       fprintf(stderr,"asset lookup fixture mismatch at %d: index=%g type=%g\n",i,index.d,type.d);
       gml_vm_paths_clear(&vm);
-      return 0;
+      goto done;
     }
   }
   GmlVal absent=vstr("neutral_absent");
@@ -451,7 +453,7 @@ int asset_lookup_fixture(void){
      call_values(&vm,"asset_get_type",&absent,1).d!=-1){
     fprintf(stderr,"asset lookup fixture missing-resource mismatch\n");
     gml_vm_paths_clear(&vm);
-    return 0;
+    goto done;
   }
   gml_vm_paths_clear(&vm);
   GmlGlyph font_glyphs[]={
@@ -477,11 +479,11 @@ int asset_lookup_fixture(void){
      call_values(&vm,"font_exists",&default_font,1).d!=0 ||
      call_values(&vm,"font_exists",&absent_font,1).d!=0){
     fprintf(stderr,"font existence fixture mismatch\n");
-    return 0;
+    goto done;
   }
   GmlVal font_name=call_values(&vm,"font_get_name",&embedded_font,1);
   GmlVal font_texture=call_values(&vm,"font_get_texture",&embedded_font,1);
-  GmlVal font_uvs=call_values(&vm,"font_get_uvs",&embedded_font,1);
+  font_uvs=call_values(&vm,"font_get_uvs",&embedded_font,1);
   GmlVal texture_width=call_values(&vm,"texture_get_width",&font_texture,1);
   GmlVal texel_width=call_values(&vm,"texture_get_texel_width",&font_texture,1);
   GmlVal texel_height=call_values(&vm,"texture_get_texel_height",&font_texture,1);
@@ -511,17 +513,27 @@ int asset_lookup_fixture(void){
      !ascender || ascender->d!=14 || !ascender_offset || ascender_offset->d!=3 ||
      !sdf_enabled || sdf_enabled->d!=1 || !sdf_spread || sdf_spread->d!=8){
     fprintf(stderr,"font metadata fixture mismatch\n");
-    gml_vm_free(&vm);
-    return 0;
+    goto done;
   }
   gml_font_delete(&render,1);
   if(call_values(&vm,"font_exists",&runtime_font,1).d!=0){
     fprintf(stderr,"deleted font remained live\n");
-    gml_vm_free(&vm);
-    return 0;
+    goto done;
   }
+  ok=1;
+done:
+  gml_values_release(&font_uvs,1);
+  vm.objects=NULL; vm.n_objects=0;
+  vm.timelines=NULL; vm.n_timelines=0;
   gml_vm_free(&vm);
-  return 1;
+  /* The records and pixels are borrowed, but lookup indexes belong to their owners. */
+  render.spr=NULL; render.n_spr=0;
+  render.atlas=NULL; render.n_atlas=0;
+  memset(render.fonts,0,sizeof render.fonts); render.n_fonts=0;
+  gml_render_free(&render);
+  win.strs=NULL; win.str_charoff=NULL; win.n_strs=0;
+  gml_win_free(&win);
+  return ok;
 }
 
 

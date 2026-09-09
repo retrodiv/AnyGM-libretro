@@ -1574,7 +1574,9 @@ void gml_render_free(GmlRender *r){
   gml_render_flush_rotated_batch(r);
   atlas_pool_free(r);   /* before atlas teardown: workers read r->atlas/win */
   gml_row_pool_free(r);  /* compositor workers must stop before their renderer workspaces vanish */
-  for(int i=0;i<GML_MAX_SURFACES;i++) free(r->surface[i].px);
+  for(int i=0;i<GML_MAX_SURFACES;i++){
+    free(r->surface[i].px); free(r->surface[i].rle);
+  }
   for(int i=0;i<GML_MAX_FONTS;i++){
     if(r->fonts[i].runtime_face) gml_font_raster_face_close(r->fonts[i].runtime_face);
     free(r->fonts[i].map); free(r->fonts[i].glyphs); free(r->fonts[i].kerning);

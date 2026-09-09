@@ -172,7 +172,7 @@ void gmlc_project_free(GmlcProject *p){
   free(p->objects);
   for(int i=0;i<p->n_rooms;i++){
     GmlcRoom *r=&p->rooms[i];
-    free(r->id); free(r->name);
+    free(r->id); free(r->name); free(r->caption);
     free(r->creation_code_path);
     for(int k=0;k<r->n_instances;k++){
       free(r->instances[k].id); free(r->instances[k].name);

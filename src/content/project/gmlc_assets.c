@@ -863,6 +863,7 @@ static int load_one(GmlcProject *p, GmlcResource *r, char *err, size_t errcap){
   GmlcJson *yy=gmlc_json_parse_file(p->host,r->abs_path,err,errcap);
   if(!yy) return 0;
   const char *nm=gmlc_json_str(gmlc_json_obj(yy,"name"),NULL);
+  free(r->name);
   r->name=nm ? gmlc_strdup(nm) : basename_no_ext(r->path);
   int ok=1;
   switch(r->kind){
