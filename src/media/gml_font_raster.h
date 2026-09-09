@@ -30,6 +30,8 @@ int gml_font_raster_face_open(const uint8_t *font_bytes, size_t font_size,
                               const char *family_name,
                               GmlFontRasterFace **out_face);
 void gml_font_raster_face_close(GmlFontRasterFace *face);
+/* Retain the immutable face for another owner in the same serialized engine operation. */
+int gml_font_raster_face_retain(GmlFontRasterFace *face);
 
 float gml_font_raster_scale_for_em(const GmlFontRasterFace *face,
                                    float pixel_height);

@@ -1578,6 +1578,7 @@ void gml_render_free(GmlRender *r){
   for(int i=0;i<GML_MAX_FONTS;i++){
     if(r->fonts[i].runtime_face) gml_font_raster_face_close(r->fonts[i].runtime_face);
     free(r->fonts[i].map); free(r->fonts[i].glyphs); free(r->fonts[i].kerning);
+    free(r->fonts[i].runtime_source_path);
   }
   free(r->default_font.map); free(r->default_font.glyphs);
   for(int i=0;i<r->n_spr;i++){

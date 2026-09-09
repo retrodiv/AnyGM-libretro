@@ -15,6 +15,12 @@ typedef struct {
   int file_runtime_sprite_count;
 } GmlRenderStateProfileMetrics;
 
+typedef struct GmlRenderFontCheckpoint GmlRenderFontCheckpoint;
+/* In-memory rollback protection, not a second wire format. No VFS reads are needed to restore it. */
+int gml_render_font_checkpoint_create(const GmlRender *render,GmlRenderFontCheckpoint **out);
+int gml_render_font_checkpoint_restore(GmlRender *render,GmlRenderFontCheckpoint *checkpoint);
+void gml_render_font_checkpoint_free(GmlRenderFontCheckpoint *checkpoint);
+
 size_t gml_render_state_size(GmlRender *render,int derived_view_surface);
 int gml_render_state_save(GmlRender *render,int derived_view_surface,
                           void *data,size_t length,size_t *written);

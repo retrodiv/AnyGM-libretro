@@ -4,6 +4,7 @@
 /* Canonical renderer payload encoding for root savestates. */
 #include "gml_render_state.h"
 #include "gml_render_internal.h"
+#include "gml_font_raster.h"
 #include "anygm_vfs.h"
 
 #include <stdint.h>
@@ -65,6 +66,100 @@ static void state_store_u32(uint8_t *destination,uint32_t value){
   destination[3]=(uint8_t)(value>>24);
 }
 
+struct GmlRenderFontCheckpoint {
+  GmlRender saved;
+};
+
+void gml_render_font_checkpoint_free(GmlRenderFontCheckpoint *checkpoint){
+  if(!checkpoint) return;
+  gml_render_free(&checkpoint->saved);
+  free(checkpoint);
+}
+
+int gml_render_font_checkpoint_create(const GmlRender *render,GmlRenderFontCheckpoint **out){
+  if(out) *out=NULL;
+  if(!render || !out || render->n_fonts<0 || render->n_fonts>GML_MAX_FONTS ||
+     render->n_atlas<0 || (size_t)render->n_atlas>SIZE_MAX/sizeof(GmlAtlas)) return 0;
+  int present=0;
+  for(int i=0;i<GML_MAX_FONTS;i++) if(render->fonts[i].runtime_owned) present++;
+  if(!present) return 1;
+  GmlRenderFontCheckpoint *checkpoint=calloc(1,sizeof(*checkpoint));
+  if(!checkpoint) return 0;
+  GmlRender *saved=&checkpoint->saved;
+  saved->n_fonts=render->n_fonts;
+  saved->atlas=calloc((size_t)render->n_atlas,sizeof(*saved->atlas));
+  if(!saved->atlas){ gml_render_font_checkpoint_free(checkpoint); return 0; }
+  saved->n_atlas=render->n_atlas;
+  int ok=1;
+  for(int i=0;ok && i<GML_MAX_FONTS;i++){
+    const GmlFont *source=&render->fonts[i];
+    if(!source->runtime_owned) continue;
+    if(i>=render->n_fonts || source->atlas<0 || source->atlas>=render->n_atlas ||
+       !source->runtime_face || !source->runtime_source_path || !source->glyphs ||
+       source->n_glyphs<1 || source->n_glyphs>65536 ||
+       source->runtime_glyph_cap<source->n_glyphs || source->runtime_glyph_cap>131072 ||
+       source->map_len<0 || source->map_len>4096 || source->n_kerning<0 ||
+       source->n_kerning>1048576){ ok=0; break; }
+    GmlFont *font=&saved->fonts[i];
+    *font=*source;
+    font->map=NULL; font->glyphs=NULL; font->kerning=NULL;
+    font->runtime_source_path=NULL; font->runtime_face=NULL;
+    if(!gml_font_raster_face_retain(source->runtime_face)){ ok=0; break; }
+    font->runtime_face=source->runtime_face;
+    font->runtime_source_path=strdup(source->runtime_source_path);
+    font->glyphs=calloc((size_t)source->runtime_glyph_cap,sizeof(*font->glyphs));
+    if(!font->runtime_source_path || !font->glyphs){ ok=0; break; }
+    memcpy(font->glyphs,source->glyphs,(size_t)source->n_glyphs*sizeof(*font->glyphs));
+    if(source->map_len){
+      font->map=malloc((size_t)source->map_len*sizeof(*font->map));
+      if(!source->map || !font->map){ ok=0; break; }
+      memcpy(font->map,source->map,(size_t)source->map_len*sizeof(*font->map));
+    }
+    if(source->n_kerning){
+      font->kerning=malloc((size_t)source->n_kerning*sizeof(*font->kerning));
+      if(!source->kerning || !font->kerning){ ok=0; break; }
+      memcpy(font->kerning,source->kerning,(size_t)source->n_kerning*sizeof(*font->kerning));
+    }
+    const GmlAtlas *atlas=&render->atlas[source->atlas];
+    GmlAtlas *copy=&saved->atlas[source->atlas];
+    size_t bytes=0;
+    if(copy->px || !atlas->px || atlas->w<=0 || atlas->h<=0 ||
+       !state_bounded_product3((size_t)atlas->w,(size_t)atlas->h,4,128u*1024u*1024u,&bytes)){
+      ok=0; break;
+    }
+    *copy=*atlas; copy->px=NULL; copy->external_blob=NULL;
+    copy->px=malloc(bytes);
+    if(!copy->px){ ok=0; break; }
+    memcpy(copy->px,atlas->px,bytes);
+  }
+  if(!ok){ gml_render_font_checkpoint_free(checkpoint); return 0; }
+  *out=checkpoint;
+  return 1;
+}
+
+int gml_render_font_checkpoint_restore(GmlRender *render,GmlRenderFontCheckpoint *checkpoint){
+  if(!checkpoint) return 1;
+  GmlRender *saved=&checkpoint->saved;
+  /* Font loads may append/reuse pages, but never shrink the authored atlas table. */
+  if(!render || render->n_atlas<saved->n_atlas) return 0;
+  render->n_fonts=GML_MAX_FONTS;
+  for(int i=0;i<GML_MAX_FONTS;i++)
+    if(render->fonts[i].runtime_owned) gml_font_delete(render,i);
+  for(int i=0;i<GML_MAX_FONTS;i++){
+    GmlFont *font=&saved->fonts[i];
+    if(!font->runtime_owned) continue;
+    gml_font_delete(render,i);
+    render->fonts[i]=*font;
+    int atlas=font->atlas;
+    free(render->atlas[atlas].px);
+    render->atlas[atlas]=saved->atlas[atlas];
+    memset(&saved->atlas[atlas],0,sizeof(saved->atlas[atlas]));
+    memset(font,0,sizeof(*font));
+  }
+  render->n_fonts=saved->n_fonts;
+  return 1;
+}
+
 
 
 /* A runtime sprite records the file it came from so a state can rebuild it without carrying its
@@ -121,6 +216,7 @@ static int runtime_path_rebuild(const GmlRender *render,int root,const char *sto
 }
 
 static void render_state_write(GmlRender *render,int view_surface,CoreW *s){
+  if(render->n_fonts<0 || render->n_fonts>GML_MAX_FONTS){ s->ok=0; return; }
   cw_i32(s,render->n_fonts);
   for(int i=0;i<GML_MAX_FONTS;i++){
     GmlFont *f=&render->fonts[i];
@@ -129,6 +225,20 @@ static void render_state_write(GmlRender *render,int view_surface,CoreW *s){
     int map_len=(f->map && f->map_len>0) ? f->map_len : 0;
     cw_i32(s,map_len);
     for(int j=0;j<map_len;j++) cw_u32(s,f->map[j]);
+    cw_i32(s,f->runtime_owned?1:0);
+    if(f->runtime_owned){
+      const char *stored=NULL;
+      if(i>=render->n_fonts || !f->runtime_source_path || !f->runtime_face ||
+         !f->glyphs || f->n_glyphs<1 || f->n_glyphs>65536){ s->ok=0; return; }
+      int root=runtime_path_store(render,f->runtime_source_path,&stored);
+      size_t length=strlen(stored);
+      if(!length || length>4095){ s->ok=0; return; }
+      cw_i32(s,root); cw_i32(s,(int)length); cw_raw(s,stored,length);
+      cw_raw(s,f->runtime_source_sha256,32);
+      cw_i32(s,f->runtime_pixel_height); cw_i32(s,f->runtime_first);
+      cw_i32(s,f->runtime_last); cw_i32(s,f->n_glyphs);
+      for(int j=0;j<f->n_glyphs;j++) cw_u32(s,f->glyphs[j].ch);
+    }
   }
   cw_i32(s,render->app_draw_enable); cw_u32(s,render->color); cw_d(s,render->alpha);
   cw_i32(s,render->halign); cw_i32(s,render->valign); cw_i32(s,render->font);
@@ -208,18 +318,55 @@ static void render_state_write(GmlRender *render,int view_surface,CoreW *s){
 
 
 /* Read font-pool records [from,to) into render->fonts. Returns 0 on parse error. */
-static int render_state_read_font_records(GmlRender *render,CoreR *s, int from, int to){
+static int render_state_read_font_records(GmlRender *render,CoreR *s,int from,int to,int count){
   for(int i=from;i<to;i++){
-    render->fonts[i].sprite=cr_i32(s); render->fonts[i].first=cr_i32(s);
-    render->fonts[i].prop=cr_i32(s); render->fonts[i].sep=cr_i32(s);
+    int sprite=cr_i32(s),first=cr_i32(s),prop=cr_i32(s),sep=cr_i32(s);
     int raw_len=cr_i32(s);
-    if(raw_len<0 || raw_len>4096){ s->ok=0; return 0; }
+    size_t remaining=s->pos<=s->cap?s->cap-s->pos:0;
+    if(raw_len<0 || raw_len>4096 || (size_t)raw_len>remaining/4){ s->ok=0; return 0; }
+    uint32_t *map=NULL;
     if(raw_len>0){
-      render->fonts[i].map=malloc((size_t)raw_len*sizeof(uint32_t));
-      if(!render->fonts[i].map){ s->ok=0; return 0; }
+      map=malloc((size_t)raw_len*sizeof(*map));
+      if(!map){ s->ok=0; return 0; }
     }
-    for(int j=0;j<raw_len;j++) render->fonts[i].map[j]=cr_u32(s);
-    render->fonts[i].map_len=raw_len;
+    for(int j=0;j<raw_len;j++) map[j]=cr_u32(s);
+    int runtime=cr_i32(s);
+    if(runtime<0 || runtime>1 ||
+       (i>=count && (runtime || (render->fonts[i].real && !render->fonts[i].runtime_owned))))
+      s->ok=0;
+    if(s->ok && runtime){
+      int root=cr_i32(s),length=cr_i32(s);
+      char stored[4096],path[4608];
+      uint8_t digest[32];
+      if(length<1 || length>4095 || sprite!=-1 || first || prop || sep || raw_len){
+        free(map); s->ok=0; return 0;
+      }
+      cr_raw(s,stored,(size_t)length); stored[length]=0;
+      if(memchr(stored,0,(size_t)length)) s->ok=0;
+      cr_raw(s,digest,sizeof digest);
+      int pixels=cr_i32(s),range_first=cr_i32(s),range_last=cr_i32(s),glyphs=cr_i32(s);
+      remaining=s->pos<=s->cap?s->cap-s->pos:0;
+      if(!s->ok || glyphs<1 || glyphs>65536 || (size_t)glyphs>remaining/4 ||
+         !runtime_path_rebuild(render,root,stored,path,sizeof path)){
+        free(map); s->ok=0; return 0;
+      }
+      uint32_t *characters=malloc((size_t)glyphs*sizeof(*characters));
+      if(!characters){ free(map); s->ok=0; return 0; }
+      for(int j=0;j<glyphs;j++) characters[j]=cr_u32(s);
+      if(!s->ok || !gml_render_restore_runtime_font(render,i,path,digest,pixels,
+                                                    range_first,range_last,characters,glyphs))
+        s->ok=0;
+      free(characters);
+    }
+    if(!s->ok){ free(map); return 0; }
+    if(!runtime && render->fonts[i].runtime_owned){
+      if(render->n_fonts<=i) render->n_fonts=i+1;
+      gml_font_delete(render,i);
+    }
+    GmlFont *font=&render->fonts[i];
+    free(font->map);
+    font->sprite=sprite; font->first=first; font->prop=prop; font->sep=sep;
+    font->map=map; font->map_len=raw_len;
   }
   return s->ok;
 }
@@ -227,15 +374,8 @@ static int render_state_read_font_records(GmlRender *render,CoreR *s, int from, 
 
 static int render_state_read(GmlRender *render,CoreR *s){
   int nf=cr_i32(s);
-  if(nf<0 || nf>GML_MAX_FONTS) s->ok=0;
-  for(int i=0;i<GML_MAX_FONTS;i++){
-    free(render->fonts[i].map);
-    render->fonts[i].map=NULL;
-    render->fonts[i].map_len=0;
-    render->fonts[i].sprite=-1; render->fonts[i].first=0;
-    render->fonts[i].prop=0; render->fonts[i].sep=0;
-  }
-  if(!render_state_read_font_records(render,s,0,GML_MAX_FONTS)) return 0;
+  if(!s->ok || nf<0 || nf>GML_MAX_FONTS){ s->ok=0; return 0; }
+  if(!render_state_read_font_records(render,s,0,GML_MAX_FONTS,nf)) return 0;
   render->n_fonts=nf;
   gml_render_rebuild_font_maps(render);
   render->app_draw_enable=cr_i32(s); render->color=cr_u32(s); render->alpha=cr_d(s);

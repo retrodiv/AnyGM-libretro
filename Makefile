@@ -163,6 +163,7 @@ COMPATIBILITY_TESTS := test_compatibility
 CHECK_TARGETS := $(addprefix $(TEST_DIR)/,$(RUNTIME_TESTS) $(VIDEO_RENDERER_TESTS) \
 	$(CONTENT_TESTS) $(MEDIA_TESTS) $(AUDIO_TESTS) $(COMPATIBILITY_TESTS))
 INTEGRATION_TESTS := $(TEST_DIR)/test_engine_instances $(TEST_DIR)/test_host_setting_budget $(TEST_DIR)/test_engine_blocking_wait \
+	$(TEST_DIR)/test_font_state \
 	$(TEST_DIR)/test_engine_content_config \
 	$(TEST_DIR)/test_engine_content_patch \
 	$(TEST_DIR)/test_engine_scoped_overrides \
@@ -631,6 +632,7 @@ $(TEST_DIR)/public_header_cpp.o: tests/contract/public_header_cpp.cpp src/api/an
 
 integration-check: $(INTEGRATION_TESTS)
 	$(TEST_DIR)/test_engine_instances
+	$(TEST_DIR)/test_font_state
 	$(TEST_DIR)/test_engine_content_config
 	$(TEST_DIR)/test_engine_content_patch
 	$(TEST_DIR)/test_host_setting_budget
@@ -722,6 +724,12 @@ export-check: core
 	else \
 		tests/contract/check_libretro_exports.sh "$(CORE_TARGET)"; \
 	fi
+
+$(TEST_DIR)/test_font_state: tests/integration/test_font_state.c \
+	tests/unit/media/font_test_fixture.h tests/support/memory_vfs.c \
+	tests/support/synthetic_content.c $(RUNTIME_OBJECTS) $(TEST_HOST_OBJECTS)
+	mkdir -p $(dir $@)
+	$(CC) $(TEST_CPPFLAGS) $(CFLAGS) $(filter-out %.h,$^) -o $@ -lm -pthread $(CXX_RUNTIME_LDLIBS)
 
 $(TEST_DIR)/test_engine_instances: tests/integration/test_engine_instances.c \
 	tests/support/synthetic_content.c $(RUNTIME_OBJECTS) $(TEST_HOST_OBJECTS)

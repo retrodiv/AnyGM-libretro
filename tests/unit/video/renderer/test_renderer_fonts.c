@@ -24,6 +24,7 @@ static FontFixture *fixture_create(void){
   if(!f) return NULL;
   anygm_memory_vfs_init(&f->memory,&f->host);
   f->win.host=&f->host;
+  snprintf(f->win.content_dir,sizeof f->win.content_dir,"/content");
   f->render.win=&f->win;
   f->render.font=-1;
   f->render.default_font.sprite=-1;
@@ -40,6 +41,8 @@ static FontFixture *fixture_create(void){
   }
   uint8_t bytes[552];
   size_t size=font_fixture_build(bytes);
+  /* Map B to the same authored rectangle, outside the initial font_add range. */
+  bytes[124+18+66]=1;
   if(!anygm_memory_vfs_add_file(&f->memory,"/content/fixture.ttf",bytes,size)){
     anygm_memory_vfs_destroy(&f->memory);
     free(f);
@@ -160,6 +163,46 @@ static int restore_removes_later_case(void){
   return ok;
 }
 
+static int lazy_glyph_restore_case(void){
+  FontFixture *f=fixture_create();
+  if(!f) return 0;
+  int font=add_font(f);
+  f->render.font=font;
+  int width=font>=0?gml_text_width(&f->render,"AB"):0;
+  size_t size=0;
+  uint8_t *state=save_font_state(f,&size);
+  int ok=font==0 && state && width>0 && f->render.fonts[font].n_glyphs==2;
+  for(int cycle=0;ok && cycle<12;cycle++){
+    gml_font_delete(&f->render,font);
+    size_t used=0,repeated_size=0;
+    ok=gml_render_state_load(&f->render,state,size,&used) && used==size &&
+      gml_text_width(&f->render,"AB")==width && f->render.n_atlas==1 &&
+      f->render.fonts[font].n_glyphs==2 && f->render.fonts[font].glyphs[1].ch=='B';
+    uint8_t *repeated=ok?save_font_state(f,&repeated_size):NULL;
+    ok &= repeated && repeated_size==size && !memcmp(state,repeated,size);
+    free(repeated);
+  }
+  if(!ok) fprintf(stderr,"lazy font glyph replay or repeated atlas reuse failed\n");
+  free(state); fixture_destroy(f);
+  return ok;
+}
+
+static int changed_source_case(void){
+  FontFixture *f=fixture_create();
+  if(!f) return 0;
+  int font=add_font(f);
+  size_t size=0,used=0;
+  uint8_t *state=save_font_state(f,&size);
+  int ok=font==0 && state;
+  gml_font_delete(&f->render,font);
+  ok &= anygm_memory_vfs_xor_byte(&f->memory,"/content/fixture.ttf",0,1);
+  ok &= !gml_render_state_load(&f->render,state,size,&used) &&
+    !gml_render_font_exists(&f->render,font);
+  if(!ok) fprintf(stderr,"changed runtime font source was not rejected\n");
+  free(state); fixture_destroy(f);
+  return ok;
+}
+
 int main(int argc,char **argv){
   const char *filter=NULL;
   if(argc==3 && !strcmp(argv[1],"--case")) filter=argv[2];
@@ -167,7 +210,9 @@ int main(int argc,char **argv){
   const AnygmTestCase cases[]={
     {"runtime_lifecycle",lifecycle_case},
     {"restore_deleted_runtime_font",restore_deleted_case},
-    {"restore_removes_later_runtime_font",restore_removes_later_case}
+    {"restore_removes_later_runtime_font",restore_removes_later_case},
+    {"lazy_glyph_restore_and_atlas_reuse",lazy_glyph_restore_case},
+    {"changed_source_rejected",changed_source_case}
   };
   const AnygmTestGroup group={"fonts",cases,sizeof cases/sizeof cases[0]};
   AnygmTestResult result;

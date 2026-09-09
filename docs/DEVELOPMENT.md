@@ -53,6 +53,9 @@ not inherit mutable state from another registered case.
 restoration through an injected memory VFS. Its binary also accepts `--case`.
 `tests/unit/media/font_test_fixture.h` owns the shared synthetic TrueType builder
 used by these controls and the existing policy-free font-raster tests.
+`test_font_state`, registered in `integration-check`, rejects a late malformed VM
+section after removing a live font and checks exact rollback with a missing or
+changed source file. It creates every state during its own fresh content load.
 
 ## Resource limits
 

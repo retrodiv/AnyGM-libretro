@@ -66,7 +66,14 @@ int main(void){
   expect(hash==UINT64_C(0x8783b5265d0c96c7),
          "exact synthetic glyph coverage");
 
+  int retained=gml_font_raster_face_retain(face);
+  expect(retained,"retain immutable face for a rollback owner");
   gml_font_raster_face_close(face);
+  if(retained){
+    expect(gml_font_raster_has_glyph(face,65),"retained face survives its first owner");
+    gml_font_raster_face_close(face);
+  }
+  expect(!gml_font_raster_face_retain(NULL),"reject retaining an absent face");
   face=(GmlFontRasterFace*)(uintptr_t)1;
   expect(!gml_font_raster_face_open(font,sizeof(font),NULL,&face) && face==NULL,
          "malformed face is rejected transactionally");

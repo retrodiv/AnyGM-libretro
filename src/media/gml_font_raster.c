@@ -22,6 +22,7 @@
 struct GmlFontRasterFace {
   uint8_t *bytes;
   size_t size;
+  unsigned references;
   stbtt_fontinfo info;
 };
 
@@ -44,6 +45,7 @@ int gml_font_raster_face_open(const uint8_t *font_bytes, size_t font_size,
 
   GmlFontRasterFace *face=(GmlFontRasterFace*)calloc(1,sizeof(*face));
   if(!face) return 0;
+  face->references=1;
   face->bytes=(uint8_t*)calloc(font_size+FONT_GUARD_BYTES,1);
   if(!face->bytes){
     free(face);
@@ -68,10 +70,17 @@ int gml_font_raster_face_open(const uint8_t *font_bytes, size_t font_size,
 
 void gml_font_raster_face_close(GmlFontRasterFace *face){
   if(!face) return;
+  if(--face->references) return;
   free(face->bytes);
   face->bytes=NULL;
   face->size=0;
   free(face);
+}
+
+int gml_font_raster_face_retain(GmlFontRasterFace *face){
+  if(!face || face->references==UINT_MAX) return 0;
+  face->references++;
+  return 1;
 }
 
 float gml_font_raster_scale_for_em(const GmlFontRasterFace *face,

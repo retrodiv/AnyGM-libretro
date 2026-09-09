@@ -125,6 +125,7 @@ typedef struct {
   uint8_t *external_blob; size_t external_size;                    /* encoded VFS sidecar, if any */
   int debug_dumped;                                                /* one-shot opt-in atlas diagnostic */
   int no_source_reported;                                          /* one-shot: page carries no blob */
+  int runtime_font_page;                                          /* reusable only by runtime fonts */
 } GmlAtlas;
 typedef struct {
   int atlas, sx, sy, sw, sh;
@@ -155,6 +156,9 @@ typedef struct {
   int sdf_spread;                                                /* zero when distance-field rendering is off */
   int align_height;                                              /* visible cell extent for valign */
   int runtime_owned;                                             /* font + atlas created after load */
+  char *runtime_source_path;
+  uint8_t runtime_source_sha256[32];
+  int runtime_pixel_height, runtime_first, runtime_last;
   int subpixel;                                                   /* per-channel GDI coverage for classic info */
   GmlGlyph *glyphs; int n_glyphs, glyphs_sorted;
   GmlFontKern *kerning; int n_kerning;                           /* sorted by (left,right) */
@@ -165,6 +169,11 @@ typedef struct {
   int runtime_pen_x, runtime_pen_y, runtime_row_h, runtime_glyph_cap;
   int glyph_by_char[256];                                        /* fast ASCII lookup, -1 = none */
 } GmlFont;                                                        /* sprite font or real FONT-chunk font */
+
+/* Renderer-state reconstruction uses the ordinary font loader and glyph-cache owner. */
+int gml_render_restore_runtime_font(GmlRender *render,int font,const char *path,
+                                    const uint8_t sha256[32],int pixel_height,
+                                    int first,int last,const uint32_t *characters,int count);
 enum { GML_SHADER_GENERIC_UNIFORMS=32, GML_SHADER_GENERIC_SAMPLERS=4 };
 /* Handles for the content's own uniforms and samplers live outside the recognized families' slot
  * space: bit 20 marks them, bits 8..19 carry the shader, bit 7 marks a sampler, bits 0..6 the

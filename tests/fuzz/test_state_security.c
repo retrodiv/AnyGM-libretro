@@ -166,6 +166,8 @@ static int locate_runtime_mask_record(const uint8_t *state,size_t state_size,
     if(!cursor_skip(&cursor,16)) return 0;
     uint32_t map_count=cursor_u32(&cursor);
     if(map_count>4096 || !cursor_skip(&cursor,(size_t)map_count*4)) return 0;
+    /* This collision-plane fixture creates no runtime file fonts. */
+    if(cursor_u32(&cursor)!=0) return 0;
   }
   if(!cursor_skip(&cursor,40)) return 0;
   for(int surface=0;surface<GML_MAX_SURFACES && cursor.ok;surface++){

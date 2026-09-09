@@ -9,11 +9,27 @@ marketing version. It is a numeric field in a validated binary header.
 
 ## Save-state schema
 
-The current AnyGM save-state schema is `19`. It is the format transported by
+The current AnyGM save-state schema is `20`. It is the format transported by
 libretro frontends for manual save states, automatic state slots, and rewind
 snapshots. Those features remain supported.
 
-Schema `19` carries VM schema `10`: each edited or runtime-created path retains its defining
+Schema `20` retains VM schema `10` and extends each renderer font-pool record with a 32-bit
+runtime-file flag. A live file font adds its portable source root/path, SHA-256, raster pixel
+height, initial character range and ordered materialized character list. Paths are bounded to
+4,095 bytes and the list to 65,536 unique BMP codepoints. Font-file reads retain their 32-MiB
+bound. Glyph coordinates and pixels are rebuilt through the existing loader and lazy-glyph
+operation; the file bytes and raster atlas are not repeated in every rewind snapshot. Deletion
+and restoration reuse font-owned atlas slots, without changing authored texture pages.
+
+A matching live font can be reused without reopening its source. Reconstruction requires the
+current VFS file to match its saved digest; a missing or changed source rejects the state.
+The root transaction must retain an in-memory font checkpoint until every section and the
+reapply allocation have accepted the candidate: rollback cannot depend on reopening a file
+after its previous face has been destroyed. The checkpoint copies mutable glyph/atlas storage
+and retains the immutable raster face; it is not part of the wire format or save-size queries.
+Previous public schemas reject cleanly, with no legacy reader.
+
+Schema `19` introduced VM schema `10`: each edited or runtime-created path retains its defining
 controls as well as its existing execution samples and deleted-resource flag. Each defining point
 is three doubles (x, y, speed), preceded by a signed 32-bit count. The sampled geometry remains
 byte-exact across restoration rather than being refitted. Counts are bounded to 4,194,304 points

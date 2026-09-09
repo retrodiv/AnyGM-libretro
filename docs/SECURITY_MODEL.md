@@ -134,6 +134,14 @@ counts before allocation or pointer arithmetic. A new variable-length field
 must introduce a matching limit and a synthetic boundary test in its owning
 module.
 
+Runtime-font state records limit paths to 4,095 bytes, pixel height to 4 through 256,
+and materialized glyphs to 65,536 unique BMP codepoints. Their initial range is bounded to
+the same character domain. Reconstruction hashes the same bounded VFS read passed to the
+existing font parser, before accepting its face, and never trusts state-provided font bytes.
+The ordinary runtime-font atlas remains bounded to 128 MiB. An in-memory rollback checkpoint
+retains immutable faces and copies mutable glyph/atlas storage, independently of source-file
+availability; it does not enlarge serialized states.
+
 Classic binary-extension library and symbol names are limited to 4,096 bytes before their
 self-describing aliases are created or decoded. Portable external audio reads at most 64 MiB per
 loose asset. External-audio state records limit logical paths (and Saudio IDs) to 4,096 bytes and

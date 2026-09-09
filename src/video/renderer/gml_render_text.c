@@ -4,6 +4,7 @@
 /* Runtime fonts, glyph layout, text drawing, and information-page rendering. */
 #include "gml_render_internal.h"
 #include "gml_font_raster.h"
+#include "gml_hash.h"
 #include "gml_default_font_data.h"
 #include "gml_studio_default_font_data.h"
 #include "gml_classic_info_font_data.h"
@@ -380,9 +381,10 @@ int gml_font_add_sprite_ext(GmlRender *r, int sprite, const char *map, int prop,
  * the same "ascent whitespace baked into the glyph" convention as data.win FONT glyphs, so
  * draw_text_real needs no changes. `size` is the raster pixel height; applying
  * a second 96/72 screen-DPI conversion makes loose fonts one third too large. */
-int gml_font_add_file(GmlRender *r, const char *path, double point_size,
-                      int first, int last){
-  if(!r || !path || r->n_fonts>=GML_MAX_FONTS) return -1;
+static int font_add_file_checked(GmlRender *r,const char *path,double point_size,
+                                 int first,int last,const uint8_t *expected_sha256){
+  if(!r || !path || !path[0] || strlen(path)>4095 || !isfinite(point_size) ||
+     r->n_fonts<0 || r->n_fonts>=GML_MAX_FONTS) return -1;
   if(first<0) first=0;
   if(last>0xFFFF) last=0xFFFF;
   if(last<first) return -1;
@@ -390,13 +392,19 @@ int gml_font_add_file(GmlRender *r, const char *path, double point_size,
   size_t font_size=0;
   if(!r->win || !anygm_vfs_read_all(r->win->host,path,&ttf,&font_size,32u*1024u*1024u) ||
      font_size==0 || font_size>INT_MAX){ free(ttf); return -1; }
+  uint8_t digest[32];
+  gml_sha256(ttf,font_size,digest);
+  if(expected_sha256 && memcmp(digest,expected_sha256,sizeof digest)){
+    free(ttf);
+    return -1;
+  }
   GmlFontRasterFace *face=NULL;
   if(!gml_font_raster_face_open(ttf,font_size,NULL,&face)){
     free(ttf);
     return -1;
   }
   free(ttf);
-  int px=(int)lround(point_size); if(px<4) px=4; if(px>256) px=256;
+  int px=point_size<=4?4:point_size>=256?256:(int)lround(point_size);
   /* A negative-height Win32 font request maps the requested size to the font's em square.
    * ScaleForPixelHeight instead maps it to ascent-descent; the two happen to agree for many
    * Latin fonts but undersize fonts whose external leading extends beyond the em. */
@@ -451,24 +459,33 @@ int gml_font_add_file(GmlRender *r, const char *path, double point_size,
     free(cw); free(cps); gml_font_raster_face_close(face); return -1;
   }
   /* new atlas page */
-  GmlAtlas *na=realloc(r->atlas,(size_t)(r->n_atlas+1)*sizeof(GmlAtlas));
-  if(!na){
-    free(cw); free(cps); gml_font_raster_face_close(face); return -1;
+  int atlas_id=-1;
+  for(int i=0;i<r->n_atlas;i++)
+    if(r->atlas[i].runtime_font_page && !r->atlas[i].px){ atlas_id=i; break; }
+  int appended=atlas_id<0;
+  if(appended){
+    GmlAtlas *na=realloc(r->atlas,(size_t)(r->n_atlas+1)*sizeof(GmlAtlas));
+    if(!na){
+      free(cw); free(cps); gml_font_raster_face_close(face); return -1;
+    }
+    r->atlas=na;
+    atlas_id=r->n_atlas;
   }
-  r->atlas=na;
-  GmlAtlas *A=&r->atlas[r->n_atlas];
+  GmlAtlas *A=&r->atlas[atlas_id];
   memset(A,0,sizeof(*A));
+  A->runtime_font_page=1;
   A->w=aw; A->h=ah;
   A->px=calloc(atlas_pixels,4);
   if(!A->px){
     free(cw); free(cps); gml_font_raster_face_close(face); return -1;
   }
   A->decode_attempted=1;
-  int atlas_id=r->n_atlas++;
+  if(appended) r->n_atlas++;
   /* second pass: rasterize each glyph into its cell */
   GmlGlyph *glyphs=calloc((size_t)ncp,sizeof(GmlGlyph));
   if(!glyphs){
-    free(A->px); memset(A,0,sizeof(*A)); r->n_atlas--;
+    free(A->px); memset(A,0,sizeof(*A)); A->runtime_font_page=1;
+    if(appended) r->n_atlas--;
     free(cw); free(cps); gml_font_raster_face_close(face); return -1;
   }
   ax=0; ay=0;
@@ -479,7 +496,8 @@ int gml_font_add_file(GmlRender *r, const char *path, double point_size,
     GmlFontRasterGlyphMetrics metrics;
     if(!gml_font_raster_glyph_metrics(face,cp,scale,&metrics)){
       free(glyphs);
-      free(A->px); memset(A,0,sizeof(*A)); r->n_atlas--;
+      free(A->px); memset(A,0,sizeof(*A)); A->runtime_font_page=1;
+      if(appended) r->n_atlas--;
       free(cw); free(cps); gml_font_raster_face_close(face); return -1;
     }
     int gw=metrics.x1-metrics.x0, gh=metrics.y1-metrics.y0;
@@ -515,16 +533,25 @@ int gml_font_add_file(GmlRender *r, const char *path, double point_size,
   memset(f,0,sizeof(*f));
   for(int k=0;k<256;k++) f->glyph_by_char[k]=-1;
   f->real=1; f->atlas=atlas_id; f->line_height=lh; f->align_height=lh; f->runtime_owned=1;
+  f->sprite=-1;
   f->glyphs=glyphs; f->n_glyphs=ng; f->glyphs_sorted=1;
   /* The face stays open for on-demand glyphs outside the requested range. */
   f->runtime_face=face; f->runtime_scale=scale; f->runtime_ascent=ascent;
   f->runtime_pen_x=ax; f->runtime_pen_y=ay; f->runtime_row_h=rowh;
   f->runtime_glyph_cap=ng;
+  f->runtime_source_path=strdup(path);
+  memcpy(f->runtime_source_sha256,digest,sizeof digest);
+  f->runtime_pixel_height=px; f->runtime_first=first; f->runtime_last=last;
+  if(!f->runtime_source_path){ gml_font_delete(r,id); r->n_fonts--; return -1; }
   for(int g=0;g<ng;g++) if(glyphs[g].ch<256) f->glyph_by_char[glyphs[g].ch]=g;
   if(render_setting(r,"GML_LOG_FONT"))
     anygm_host_logf(r && r->win ? r->win->host : NULL,ANYGM_LOG_DEBUG,"[font] ttf id=%d path=%s pt=%.1f px=%d lh=%d range=%d-%d atlas=%d(%dx%d) glyphs=%d\n",
       id,path,point_size,px,lh,first,last,atlas_id,aw,ah,ng);
   return id;
+}
+
+int gml_font_add_file(GmlRender *r,const char *path,double point_size,int first,int last){
+  return font_add_file_checked(r,path,point_size,first,last,NULL);
 }
 
 void gml_font_delete(GmlRender *r, int font){
@@ -538,9 +565,11 @@ void gml_font_delete(GmlRender *r, int font){
     GmlAtlas *atlas=&r->atlas[f->atlas];
     free(atlas->px);
     memset(atlas,0,sizeof(*atlas));
+    atlas->runtime_font_page=1;
   }
   if(f->runtime_face) gml_font_raster_face_close(f->runtime_face);
   free(f->map); free(f->glyphs); free(f->kerning);
+  free(f->runtime_source_path);
   memset(f,0,sizeof(*f));
   f->sprite=-1; f->atlas=-1;
   for(int i=0;i<256;i++) f->glyph_by_char[i]=-1;
@@ -736,6 +765,70 @@ static GmlGlyph *real_glyph_demand(GmlRender *r, GmlFont *f, unsigned cp){
   GmlGlyph *g=real_glyph(f,cp);
   if(g || !f->runtime_face) return g;
   return font_runtime_rasterize(r,f,cp);
+}
+
+int gml_render_restore_runtime_font(GmlRender *r,int id,const char *path,
+                                    const uint8_t sha256[32],int pixel_height,
+                                    int first,int last,const uint32_t *characters,int count){
+  if(!r || id<0 || id>=GML_MAX_FONTS || !path || !sha256 || !characters ||
+     pixel_height<4 || pixel_height>256 || first<0 || last>65535 || last<first ||
+     count<1 || count>65536) return 0;
+  GmlFont *live=&r->fonts[id];
+  if(live->real && !live->runtime_owned) return 0;
+  uint8_t seen[8192]={0};
+  for(int i=0;i<count;i++){
+    unsigned cp=characters[i];
+    if(cp>65535 || (seen[cp>>3]&(1u<<(cp&7)))) return 0;
+    seen[cp>>3]|=(uint8_t)(1u<<(cp&7));
+  }
+  int matching=live->runtime_owned && live->runtime_source_path &&
+    !strcmp(live->runtime_source_path,path) && live->runtime_face &&
+    !memcmp(live->runtime_source_sha256,sha256,32) &&
+    live->runtime_pixel_height==pixel_height && live->runtime_first==first &&
+    live->runtime_last==last && live->n_glyphs==count && live->glyphs;
+  for(int i=0;matching && i<count;i++) matching=live->glyphs[i].ch==characters[i];
+  if(matching) return 1;
+
+  /* Build without changing the live resource. The same checked file read supplies both the
+   * identity and the existing rasterizer, so a second open cannot race the digest check. */
+  GmlRender *staged=calloc(1,sizeof(*staged));
+  if(!staged) return 0;
+  staged->win=r->win;
+  int built=font_add_file_checked(staged,path,pixel_height,first,last,sha256);
+  int ok=built==0;
+  GmlFont *font=&staged->fonts[0];
+  int initial=font->n_glyphs;
+  if(initial>count) ok=0;
+  for(int i=0;ok && i<initial;i++) ok=font->glyphs[i].ch==characters[i];
+  for(int i=initial;ok && i<count;i++)
+    ok=real_glyph_demand(staged,font,characters[i])!=NULL;
+  if(ok && font->n_glyphs!=count) ok=0;
+  int target_atlas=-1;
+  if(ok && live->runtime_owned && live->atlas>=0 && live->atlas<r->n_atlas)
+    target_atlas=live->atlas;
+  for(int i=0;ok && target_atlas<0 && i<r->n_atlas;i++)
+    if(r->atlas[i].runtime_font_page && !r->atlas[i].px) target_atlas=i;
+  if(ok && target_atlas<0){
+    GmlAtlas *pages=realloc(r->atlas,(size_t)(r->n_atlas+1)*sizeof(*pages));
+    if(!pages) ok=0;
+    else {
+      r->atlas=pages;
+      target_atlas=r->n_atlas++;
+      memset(&r->atlas[target_atlas],0,sizeof(*pages));
+    }
+  }
+  if(ok){
+    if(r->n_fonts<=id) r->n_fonts=id+1;
+    gml_font_delete(r,id);
+    r->atlas[target_atlas]=staged->atlas[font->atlas];
+    memset(&staged->atlas[font->atlas],0,sizeof(*staged->atlas));
+    r->fonts[id]=*font;
+    r->fonts[id].atlas=target_atlas;
+    memset(font,0,sizeof(*font));
+  }
+  gml_render_free(staged);
+  free(staged);
+  return ok;
 }
 /* advance width of one line (up to '#', LF, or NUL), '\#' counts as a literal '#'. */
 static int real_line_width(GmlRender *r, GmlFont *f, const char *p, const char **end){
