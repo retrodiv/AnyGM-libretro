@@ -962,7 +962,8 @@ int gml_path_shift(GmlVM *vm,int index,double xshift,double yshift){
   if(!p || !isfinite(xshift) || !isfinite(yshift)) return 0;
   for(int i=0;i<vm->inst_count;i++){
     GmlInstance *in=&vm->inst[i];
-    if(in->active && in->path_index==index && in->path_relative &&
+    if((in->active || in->deactivated || in->room_dormant) &&
+       in->path_index==index && in->path_relative &&
        (!isfinite(in->path_origin_x+xshift) || !isfinite(in->path_origin_y+yshift))) return 0;
   }
   GmlPathControl *controls=p->control_count?malloc((size_t)p->control_count*sizeof(*controls)):NULL;
@@ -972,7 +973,8 @@ int gml_path_shift(GmlVM *vm,int index,double xshift,double yshift){
   if(!path_publish_controls(p,controls,p->control_count,p->kind,p->closed,p->precision)) return 0;
   for(int i=0;i<vm->inst_count;i++){
     GmlInstance *in=&vm->inst[i];
-    if(in->active && in->path_index==index && in->path_relative){
+    if((in->active || in->deactivated || in->room_dormant) &&
+       in->path_index==index && in->path_relative){
       in->path_origin_x+=xshift; in->path_origin_y+=yshift;
     }
   }
