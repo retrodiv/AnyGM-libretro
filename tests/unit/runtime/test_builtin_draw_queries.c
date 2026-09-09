@@ -175,10 +175,57 @@ static int background_part_case(void){
   }
   return ok;
 }
+static int font_styles_case(void){
+  int ok=1;
+  for(int cached=0;cached<2;cached++){
+    uint8_t bytes[576]={0};
+    GmlWin win={.data=bytes,.size=sizeof bytes,.bytecode=15,.n_chunks=1};
+    win.chunks[0]=(GmlChunk){"FONT",8,24};
+    word(bytes,8,4);
+    for(int i=0;i<4;i++){
+      int record=64+i*96,glyph=record+60;
+      word(bytes,12+i*4,(uint32_t)record);
+      word(bytes,record+8,12);
+      word(bytes,record+12,(uint32_t)(i&1));
+      word(bytes,record+16,(uint32_t)(i>>1));
+      word(bytes,record+28,512);
+      word(bytes,record+32,0x3F800000u); word(bytes,record+36,0x3F800000u);
+      word(bytes,record+40,1); word(bytes,record+44,(uint32_t)glyph);
+      word(bytes,glyph,'A'); word(bytes,glyph+4,2u<<16);
+      word(bytes,glyph+8,3u|(4u<<16));
+    }
+    GmlRender render={.win=&win};
+    parse_font(&render);
+    GmlVM vm={.render=&render,.win=&win};
+    for(int i=0;i<4;i++){
+      GmlVal arg=vreal(i);
+      ok &= real_is(query(&vm,"font_get_bold",&arg,1,cached,&ok),i&1);
+      ok &= real_is(query(&vm,"font_get_italic",&arg,1,cached,&ok),i>>1);
+      render.font=i;
+      ok &= gml_text_width(&render,"A")==4;
+    }
+    GmlVal fraction=vreal(1.75);
+    ok &= real_is(query(&vm,"font_get_bold",&fraction,1,cached,&ok),1);
+    const double invalid[]={-1,4,NAN,INFINITY,1e100};
+    for(size_t i=0;i<sizeof invalid/sizeof invalid[0];i++){
+      GmlVal arg=vreal(invalid[i]);
+      ok &= real_is(query(&vm,"font_get_bold",&arg,1,cached,&ok),0);
+      ok &= real_is(query(&vm,"font_get_italic",&arg,1,cached,&ok),0);
+    }
+    ok &= real_is(query(&vm,"font_get_bold",NULL,0,cached,&ok),0);
+    vm.render=NULL;
+    GmlVal arg=vreal(1);
+    ok &= real_is(query(&vm,"font_get_italic",&arg,1,cached,&ok),0);
+    vm.win=NULL; gml_vm_free(&vm); gml_render_free(&render);
+  }
+  return ok;
+}
+
 int main(void){
   const AnygmTestCase cases[]={{"circle_precision",circle_case},{"shader_asset_names",shader_case},
     {"all_live_layers_at_depth",layers_case},{"retired_alpha_controls",alpha_case},
-    {"background_source_region",background_part_case},{"background_name_alias",background_names_case}};
+    {"background_source_region",background_part_case},{"background_name_alias",background_names_case},
+    {"authored_font_styles",font_styles_case}};
   const AnygmTestGroup group={"draw_queries",cases,sizeof cases/sizeof cases[0]};
   AnygmTestResult result;
   anygm_test_run_groups(&group,1,NULL,&result);
