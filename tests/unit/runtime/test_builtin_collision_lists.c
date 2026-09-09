@@ -19,6 +19,7 @@ int main(void){
       instances[i].image_xscale=instances[i].image_yscale=1;
     }
     GmlVM vm={.render=&render,.inst=instances,.inst_count=4,.cur_self=&instances[0]};
+    gml_colgrid_invalidate(&vm);
     GmlVal list=gml_builtin_call(&vm,"ds_list_create",NULL,0);
     GmlVal add[]={list,vreal(777)}; gml_builtin_call(&vm,"ds_list_add",add,2);
     GmlVal args[]={vreal(0),vreal(0),vreal(20),vreal(20),vreal(-3),vreal(0),
