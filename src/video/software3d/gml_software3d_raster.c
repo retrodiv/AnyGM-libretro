@@ -6,6 +6,7 @@
 #include "anygm_host.h"
 
 #include <float.h>
+#include <limits.h>
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
@@ -324,7 +325,8 @@ static void d3_sample(GmlRender *R,const GmlRenderBackendDrawView *draw,
 static double d3_edge(double ax,double ay,double bx,double by,double px,double py){
   return (px-ax)*(by-ay)-(py-ay)*(bx-ax);
 }
-static void d3_raster_triangle(GmlRender *R, const GmlD3Vertex in[3], const GmlD3Texture *texture){
+static void d3_raster_triangle(GmlRender *R, const GmlD3Vertex in[3], const GmlD3Texture *texture,
+                               int joined){
   GmlRenderBackendDrawView draw;
   if(!d3_depth_prepare(R) || !gml_render_backend_draw_view(R,&draw) ||
      !draw.pixels || draw.width<=0 || draw.height<=0) return;
@@ -374,14 +376,22 @@ static void d3_raster_triangle(GmlRender *R, const GmlD3Vertex in[3], const GmlD
     }
   }
   double area=d3_edge(sx[0],sy[0],sx[1],sy[1],sx[2],sy[2]);
-  if(fabs(area)<1e-9) return;
+  if(!isfinite(area) || fabs(area)<1e-9) return;
   if(g_d3.culling && area>=0) return;
-  int minx=(int)floor(fmin(sx[0],fmin(sx[1],sx[2]))), maxx=(int)ceil(fmax(sx[0],fmax(sx[1],sx[2])));
-  int miny=(int)floor(fmin(sy[0],fmin(sy[1],sy[2]))), maxy=(int)ceil(fmax(sy[0],fmax(sy[1],sy[2])));
-  if(minx<0) minx=0;
-  if(miny<0) miny=0;
-  if(maxx>=draw.width) maxx=draw.width-1;
-  if(maxy>=draw.height) maxy=draw.height-1;
+  /* Clip in floating point before converting untrusted projected coordinates. */
+  double left=fmax(0,floor(fmin(sx[0],fmin(sx[1],sx[2]))));
+  double right=fmin(draw.width-1,ceil(fmax(sx[0],fmax(sx[1],sx[2]))));
+  double top=fmax(0,floor(fmin(sy[0],fmin(sy[1],sy[2]))));
+  double bottom=fmin(draw.height-1,ceil(fmax(sy[0],fmax(sy[1],sy[2]))));
+  if(left>right || top>bottom) return;
+  int minx=(int)left,maxx=(int)right,miny=(int)top,maxy=(int)bottom;
+  int include_edge[3]={1,1,1};
+  if(joined) for(int i=0;i<3;i++){
+    int a=(i+1)%3,b=(i+2)%3;
+    double dx=sx[b]-sx[a],dy=sy[b]-sy[a];
+    if(area<0){ dx=-dx; dy=-dy; }
+    include_edge[i]=dy>0 || (dy==0 && dx<0);
+  }
   double inv_area=1.0/area;
   double edge0_step=sy[2]-sy[1],edge1_step=sy[0]-sy[2];
   int opaque_prepared=0;
@@ -394,6 +404,11 @@ static void d3_raster_triangle(GmlRender *R, const GmlD3Vertex in[3], const GmlD
     double b1=edge1*inv_area;
     double b2=1.0-b0-b1;
     if(b0<-1e-9 || b1<-1e-9 || b2<-1e-9) continue;
+    /* Joined fills own each shared edge once; existing independent primitives
+     * retain their characterized inclusive-edge coverage. */
+    if(joined && ((fabs(b0)<=1e-9&&!include_edge[0]) ||
+                  (fabs(b1)<=1e-9&&!include_edge[1]) ||
+                  (fabs(b2)<=1e-9&&!include_edge[2]))) continue;
     double invz=b0*iz[0]+b1*iz[1]+b2*iz[2];
     double ztest=b0*depth_value[0]+b1*depth_value[1]+b2*depth_value[2];
     size_t di=(size_t)y*draw.width+x;
@@ -572,7 +587,7 @@ static void d3_draw_quad(GmlRender *R, const double p[4][3], int texture, double
   }
   for(int i=1;i+1<count;i++){
     GmlD3Vertex tri[3]={clipped[0],clipped[i],clipped[i+1]};
-    d3_raster_triangle(R,tri,&resolved);
+    d3_raster_triangle(R,tri,&resolved,0);
   }
 }
 static void d3_set_camera(GmlRender *R,double xfrom,double yfrom,double zfrom,
@@ -659,7 +674,8 @@ static void d3_apply_light_factor(GmlD3Vertex *vertex,const double factor[3]){
   if(vertex->g>255) vertex->g=255;
   if(vertex->b>255) vertex->b=255;
 }
-static void d3_emit_triangle(GmlRender *R,const GmlD3Vertex world[3],const GmlD3Texture *texture){
+static void d3_emit_triangle_coverage(GmlRender *R,const GmlD3Vertex world[3],
+                                       const GmlD3Texture *texture,int joined){
   GmlD3Vertex camera[3],near_clipped[12],far_clipped[12];
   GmlD3Vertex lit[3]={world[0],world[1],world[2]};
   g_d3.shade_r=g_d3.shade_g=g_d3.shade_b=1;
@@ -687,8 +703,11 @@ static void d3_emit_triangle(GmlRender *R,const GmlD3Vertex world[3],const GmlD3
   }
   for(int i=1;i+1<count;i++){
     GmlD3Vertex triangle[3]={near_clipped[0],near_clipped[i],near_clipped[i+1]};
-    d3_raster_triangle(R,triangle,texture);
+    d3_raster_triangle(R,triangle,texture,joined);
   }
+}
+static void d3_emit_triangle(GmlRender *R,const GmlD3Vertex world[3],const GmlD3Texture *texture){
+  d3_emit_triangle_coverage(R,world,texture,0);
 }
 static void d3_draw_ellipsoid(GmlRender *R,double x1,double y1,double z1,
                               double x2,double y2,double z2,int texture,
@@ -998,9 +1017,26 @@ static void d3_emit_line(GmlRender *R,GmlD3Vertex a,GmlD3Vertex b,const GmlD3Tex
   double ax,ay,a_inverse_z,a_depth,a_distance,bx,by,b_inverse_z,b_depth,b_distance;
   if(!d3_project_vertex(R,&draw,&a,&ax,&ay,&a_inverse_z,&a_depth,&a_distance) ||
      !d3_project_vertex(R,&draw,&b,&bx,&by,&b_inverse_z,&b_depth,&b_distance)) return;
-  int steps=(int)ceil(fmax(fabs(bx-ax),fabs(by-ay)));
-  if(steps<1) steps=1;
-  for(int i=0;i<=steps;i++){
+  if(!isfinite(ax) || !isfinite(ay) || !isfinite(bx) || !isfinite(by)) return;
+  double step_count=fmax(1,ceil(fmax(fabs(bx-ax),fabs(by-ay))));
+  if(!isfinite(step_count) || step_count>INT_MAX) return;
+  int steps=(int)step_count;
+  /* Retain the original sample phase and interpolation, but visit only steps
+   * that can round into the target. Offscreen segments cannot consume a loop
+   * proportional to their distance from the viewport. */
+  double first=0,last=steps;
+  for(int axis=0;axis<2;axis++){
+    double start=axis?ay:ax,delta=((axis?by:bx)-start)/steps;
+    double limit=axis?draw.height:draw.width;
+    if(delta==0){ if(start<-.5 || start>limit-.5) return; }
+    else {
+      double enter=(-.5-start)/delta,leave=(limit-.5-start)/delta;
+      if(enter>leave){ double swap=enter; enter=leave; leave=swap; }
+      first=fmax(first,ceil(enter)); last=fmin(last,floor(leave));
+    }
+  }
+  if(first>last) return;
+  for(int64_t i=(int64_t)first;i<=(int64_t)last;i++){
     double amount=(double)i/steps;
     double inverse_z=a_inverse_z+(b_inverse_z-a_inverse_z)*amount;
     double denominator=g_d3.ortho?1:inverse_z;
@@ -1301,25 +1337,39 @@ static int prim_try_fast_surface_quad(GmlRender *R){
   return gml_render_backend_surface_stretched(
     R,surface,x0,y0,x1-x0,y1-y0,0xFFFFFFu,alpha);
 }
-static void d3_flush_2d_primitive(GmlRender *R){
-  if(!R || g_prim_n<=0) return;
-  if(prim_try_fast_surface_quad(R)) return;
-  GmlRenderBackendDrawView draw;
-  if(!gml_render_backend_draw_view(R,&draw)) return;
+static int d3_begin_2d_projection(GmlRender *R,const GmlRenderBackendDrawView *draw,
+                                   GmlD3State *saved){
   /* Immediate-mode primitives are part of the ordinary 2D API too. Reuse the textured,
    * per-vertex software rasterizer under a temporary pixel-coordinate orthographic projection
    * when no legacy d3d projection is active. The old non-d3 path discarded texture coordinates
    * entirely, turning every textured compositor quad into a solid vertex-colour rectangle. */
   int temporary=!g_d3.active;
-  GmlD3State saved;
   if(temporary){
-    saved=g_d3;
+    *saved=g_d3;
     g_d3.active=1; g_d3.ortho=1; g_d3.hidden=0; g_d3.zwrite=0;
     g_d3.lighting=0; g_d3.fog=0; g_d3.culling=0; g_d3.smooth=1;
-    g_d3.ortho_x=draw.camera_x; g_d3.ortho_y=draw.camera_y;
-    g_d3.ortho_w=draw.width>0?draw.width:1; g_d3.ortho_h=draw.height>0?draw.height:1;
+    g_d3.ortho_x=draw->camera_x; g_d3.ortho_y=draw->camera_y;
+    g_d3.ortho_w=draw->width>0?draw->width:1; g_d3.ortho_h=draw->height>0?draw->height:1;
     g_d3.ortho_angle=0; g_d3.draw_depth=0;
   }
+  return temporary;
+}
+static void d3_end_2d_projection(GmlRender *R,const GmlD3State *saved,int temporary){
+  if(temporary){
+    float *depth=g_d3.depth; size_t depth_cap=g_d3.depth_cap;
+    int depth_w=g_d3.depth_w,depth_h=g_d3.depth_h; long depth_frame=g_d3.depth_frame;
+    g_d3=*saved;
+    g_d3.depth=depth; g_d3.depth_cap=depth_cap;
+    g_d3.depth_w=depth_w; g_d3.depth_h=depth_h; g_d3.depth_frame=depth_frame;
+  }
+}
+static void d3_flush_2d_primitive(GmlRender *R){
+  if(!R || g_prim_n<=0) return;
+  if(prim_try_fast_surface_quad(R)) return;
+  GmlRenderBackendDrawView draw;
+  if(!gml_render_backend_draw_view(R,&draw)) return;
+  GmlD3State saved;
+  int temporary=d3_begin_2d_projection(R,&draw,&saved);
   GmlD3Texture texture={0}; if(g_prim_texture!=-1) d3_texture(R,g_prim_texture,&texture);
   gml_render_backend_prepare_draw(R);
   GmlD3Vertex vertex[GML_PRIM_MAX];
@@ -1344,13 +1394,60 @@ static void d3_flush_2d_primitive(GmlRender *R){
   } else if(g_prim_kind==6){
     for(int i=1;i+1<g_prim_n;i++){ GmlD3Vertex triangle[3]={vertex[0],vertex[i],vertex[i+1]}; d3_emit_triangle(R,triangle,&texture); }
   }
-  if(temporary){
-    float *depth=g_d3.depth; size_t depth_cap=g_d3.depth_cap;
-    int depth_w=g_d3.depth_w,depth_h=g_d3.depth_h; long depth_frame=g_d3.depth_frame;
-    g_d3=saved;
-    g_d3.depth=depth; g_d3.depth_cap=depth_cap;
-    g_d3.depth_w=depth_w; g_d3.depth_h=depth_h; g_d3.depth_frame=depth_frame;
+  d3_end_2d_projection(R,&saved,temporary);
+}
+void gml_software3d_draw_roundrect_2d(GmlRender *R,double x1,double y1,double x2,double y2,
+                                      double rx,double ry,uint32_t inner,uint32_t outer,
+                                      double alpha,int outline){
+  if(!R || !GML_GRAPHICS || !isfinite(x1) || !isfinite(y1) ||
+     !isfinite(x2) || !isfinite(y2) || !isfinite(rx) || !isfinite(ry) ||
+     !isfinite(alpha) || alpha<=0) return;
+  if(x1>x2){ double swap=x1; x1=x2; x2=swap; }
+  if(y1>y2){ double swap=y1; y1=y2; y2=swap; }
+  double width=x2-x1,height=y2-y1;
+  if(!isfinite(width) || !isfinite(height) || width<=0 || height<=0) return;
+  rx=fmin(fmax(0,rx),width*.5); ry=fmin(fmax(0,ry),height*.5);
+  GmlRenderBackendDrawView draw;
+  if(!gml_render_backend_draw_view(R,&draw)) return;
+  int precision=draw.circle_precision>=4?draw.circle_precision:24;
+  if(precision>64) precision=64;
+  int quarter=precision/4,number=0;
+  double points[68][2];
+  for(int corner=0;corner<4;corner++){
+    double cx=(corner==0||corner==3)?x2-rx:x1+rx;
+    double cy=corner<2?y2-ry:y1+ry;
+    for(int step=0;step<=quarter;step++){
+      double angle=(corner+(double)step/quarter)*M_PI*.5;
+      points[number][0]=cx+cos(angle)*rx;
+      points[number++][1]=cy+sin(angle)*ry;
+    }
   }
+  GmlD3State saved;
+  int temporary=d3_begin_2d_projection(R,&draw,&saved);
+  GmlD3Vertex boundary[68];
+  for(int i=0;i<number;i++){
+    double x=points[i][0],y=points[i][1];
+    gml_render_backend_draw_map_point(R,&x,&y);
+    boundary[i]=d3_2d_vertex(R,x,y,outer,alpha);
+  }
+  double cx=x1+width*.5,cy=y1+height*.5;
+  gml_render_backend_draw_map_point(R,&cx,&cy);
+  GmlD3Vertex centre=d3_2d_vertex(R,cx,cy,inner,alpha);
+  GmlD3Texture texture={0};
+  gml_render_backend_prepare_draw(R);
+  if(!d3_depth_prepare(R)){
+    d3_end_2d_projection(R,&saved,temporary);
+    return;
+  }
+  for(int i=0;i<number;i++){
+    GmlD3Vertex a=boundary[i],b=boundary[(i+1)%number];
+    if(outline) d3_emit_line(R,a,b,&texture);
+    else {
+      GmlD3Vertex triangle[3]={centre,a,b};
+      d3_emit_triangle_coverage(R,triangle,&texture,1);
+    }
+  }
+  d3_end_2d_projection(R,&saved,temporary);
 }
 void gml_software3d_draw_point_2d(GmlRender *render,double x,double y,
                                   uint32_t color,double alpha){

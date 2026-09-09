@@ -47,6 +47,21 @@ static int rounded_fixture(int coloured){
         call_numbers(&vm,name,args,argc);
         ROUND_REQUIRE(!pixels[3*24+3] && reference[3*24+3],"circle precision must change the corner tessellation");
         render.circle_precision=64;
+        if(!active) for(int mapping=0;mapping<3;mapping++){
+          double mapped[]={2,2,18,14,4,4,0};
+          memset(pixels,0,sizeof pixels);
+          gml_render_begin(&render,pixels,24,20,mapping==0?3:0,mapping==0?5:0);
+          if(mapping==0){ mapped[0]+=3; mapped[2]+=3; mapped[1]+=5; mapped[3]+=5; }
+          else {
+            for(int i=0;i<6;i++) mapped[i]*=.5;
+            if(mapping==1) gml_render_gui_begin(&render,12,10);
+            else gml_render_world_set_logical_extent(&render,12,10);
+          }
+          call_numbers(&vm,name,mapped,7);
+          ROUND_REQUIRE(!memcmp(pixels,reference,sizeof pixels),"camera and logical scaling must map once");
+          gml_render_gui_end(&render);
+        }
+        gml_render_begin(&render,pixels,24,20,0,0);
       }
       memset(pixels,0,sizeof pixels); args[coloured?8:6]=1;
       call_numbers(&vm,name,args,argc);
@@ -54,6 +69,35 @@ static int rounded_fixture(int coloured){
       ROUND_REQUIRE(pixels[2*24+10]>>24,"outline must retain the straight top edge");
     }
     call_numbers(&vm,"d3d_end",NULL,0);
+  }
+  if(!coloured){
+    double args[]={2,2,18,14,4,4,0};
+    memset(pixels,0,sizeof pixels);
+    gml_render_begin(&render,pixels,24,20,0,0);
+    call_numbers(&vm,"draw_roundrect_ext",args,7);
+    memcpy(reference,pixels,sizeof pixels);
+    for(int i=0;i<6;i++){
+      double saved=args[i]; args[i]=NAN;
+      call_numbers(&vm,"draw_roundrect_ext",args,7); args[i]=saved;
+      ROUND_REQUIRE(!memcmp(pixels,reference,sizeof pixels),"nonfinite geometry must leave the target unchanged");
+    }
+    memset(pixels,0,sizeof pixels);
+    call_numbers(&vm,"draw_roundrect_ext",(double[]){18,14,2,2,4,4,0},7);
+    ROUND_REQUIRE(!memcmp(pixels,reference,sizeof pixels),"reversed bounds must retain the same geometry");
+    memset(pixels,0,sizeof pixels);
+    call_numbers(&vm,"draw_primitive_begin",(double[]){4},1);
+    call_numbers(&vm,"draw_vertex",(double[]){20,16},2);
+    call_numbers(&vm,"draw_vertex",(double[]){23,16},2);
+    call_numbers(&vm,"draw_vertex",(double[]){20,19},2);
+    call_numbers(&vm,"draw_roundrect_ext",args,7);
+    call_numbers(&vm,"draw_primitive_end",NULL,0);
+    ROUND_REQUIRE(pixels[16*24+20]>>24,"rounded drawing must not overwrite a pending primitive");
+    memset(pixels,0,sizeof pixels);
+    call_numbers(&vm,"draw_roundrect_ext",(double[]){2,2,18,14,0,0,0},7);
+    ROUND_REQUIRE(pixels[2*24+2]>>24,"zero radii must produce square corners");
+    memset(pixels,0,sizeof pixels);
+    call_numbers(&vm,"draw_roundrect_ext",(double[]){-1000000,2,1000000,14,4,4,1},7);
+    ROUND_REQUIRE(pixels[2*24+10]>>24,"long outlines must retain their visible samples");
   }
   passed=1;
 done:

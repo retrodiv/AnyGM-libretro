@@ -1054,6 +1054,12 @@ static int d3_try_draw_2d_builtin(GmlVM *vm,const char *name,GmlVal *args,int co
     return 0;
   GmlRenderDrawState draw=builtin_draw_state(R);
   double alpha=draw.alpha; gml_render_maybe_prepare_draw(R);
+  if(!strcmp(name,"draw_roundrect_ext")||!strcmp(name,"draw_roundrect_color_ext")||
+     !strcmp(name,"draw_roundrect_colour_ext")){
+    /* Retain contextual precedence while sharing the one family adapter. */
+    (void)gml_builtin_try_draw(vm,name,args,count);
+    return 1;
+  }
   if(!strcmp(name,"draw_point")||!strcmp(name,"draw_point_color")||!strcmp(name,"draw_point_colour")){
     uint32_t color=!strcmp(name,"draw_point")?draw.color:NU32(args,count,2);
     gml_software3d_draw_point_2d(
@@ -1118,15 +1124,14 @@ static int d3_try_draw_2d_builtin(GmlVM *vm,const char *name,GmlVal *args,int co
       inner,outer,alpha,(int)N(args,count,plain?4:6));
     return 1;
   }
-  if(!strcmp(name,"draw_roundrect")||!strcmp(name,"draw_roundrect_color")||!strcmp(name,"draw_roundrect_colour")||
-     !strcmp(name,"draw_roundrect_color_ext")||!strcmp(name,"draw_roundrect_colour_ext")){
-    int plain=!strcmp(name,"draw_roundrect"),extended=strstr(name,"_ext")!=NULL;
-    uint32_t c1=plain?draw.color:NU32(args,count,extended?6:4);
-    uint32_t c2=plain?c1:NU32(args,count,extended?7:5),colors[4]={c1,c1,c2,c2};
+  if(!strcmp(name,"draw_roundrect")||!strcmp(name,"draw_roundrect_color")||!strcmp(name,"draw_roundrect_colour")){
+    int plain=!strcmp(name,"draw_roundrect");
+    uint32_t c1=plain?draw.color:NU32(args,count,4);
+    uint32_t c2=plain?c1:NU32(args,count,5),colors[4]={c1,c1,c2,c2};
     gml_software3d_draw_rectangle_2d(
       R,draw_gui_x(R,N(args,count,0)),draw_gui_y(R,N(args,count,1)),
                     draw_gui_x(R,N(args,count,2)),draw_gui_y(R,N(args,count,3)),colors,alpha,
-                    (int)N(args,count,plain?4:(extended?8:6))); return 1;
+                    (int)N(args,count,plain?4:6)); return 1;
   }
   if(!strcmp(name,"draw_healthbar")){
     double x1=draw_gui_x(R,N(args,count,0)),y1=draw_gui_y(R,N(args,count,1));

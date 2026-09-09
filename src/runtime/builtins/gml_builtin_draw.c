@@ -875,13 +875,22 @@ GmlVal gml_builtin_try_draw(GmlVM *vm, const char *nm, GmlVal *a, int n){
         gml_render_primitive_circle(R,(x1+x2)/2,(y1+y2)/2,abs(x2-x1)/2,abs(y2-y1)/2,draw.color,(int)N(a,n,4)); } return vreal(0); }
     if(!strcmp(nm,"draw_roundrect")){ if(R){ GmlRenderTargetMetrics target=builtin_target_metrics(R); GmlRenderDrawState draw=builtin_draw_state(R);
         gml_render_primitive_rectangle(R,(int)floor(draw_gui_x(R,N(a,n,0))-target.camera_x),(int)floor(draw_gui_y(R,N(a,n,1))-target.camera_y),(int)ceil(draw_gui_x(R,N(a,n,2))-target.camera_x),(int)ceil(draw_gui_y(R,N(a,n,3))-target.camera_y),draw.color,(int)N(a,n,4)); } return vreal(0); }
-    if(!strcmp(nm,"draw_roundrect_color")||!strcmp(nm,"draw_roundrect_colour")||
-       !strcmp(nm,"draw_roundrect_color_ext")||!strcmp(nm,"draw_roundrect_colour_ext")){
-      if(R){ int ext=strstr(nm,"_ext")!=NULL; int outline=(int)N(a,n,ext?8:6);
+    if(!strcmp(nm,"draw_roundrect_ext")||!strcmp(nm,"draw_roundrect_color_ext")||
+       !strcmp(nm,"draw_roundrect_colour_ext")){
+      if(R){
+        int plain=!strcmp(nm,"draw_roundrect_ext");
+        GmlRenderDrawState draw=builtin_draw_state(R);
+        uint32_t inner=plain?draw.color:NU32(a,n,6),outer=plain?inner:NU32(a,n,7);
+        gml_software3d_draw_roundrect_2d(R,N(a,n,0),N(a,n,1),N(a,n,2),N(a,n,3),
+          N(a,n,4),N(a,n,5),inner,outer,draw.alpha,N(a,n,plain?6:8)>=.5);
+      }
+      return vreal(0); }
+    if(!strcmp(nm,"draw_roundrect_color")||!strcmp(nm,"draw_roundrect_colour")){
+      if(R){ int outline=(int)N(a,n,6);
         GmlRenderTargetMetrics target=builtin_target_metrics(R);
         gml_render_primitive_rectangle(R,(int)floor(draw_gui_x(R,N(a,n,0))-target.camera_x),(int)floor(draw_gui_y(R,N(a,n,1))-target.camera_y),
                        (int)ceil(draw_gui_x(R,N(a,n,2))-target.camera_x),(int)ceil(draw_gui_y(R,N(a,n,3))-target.camera_y),
-                       NU32(a,n,ext?6:4),outline); }
+                       NU32(a,n,4),outline); }
       return vreal(0); }
     if(!strcmp(nm,"draw_healthbar")){
       if(R){ double amt=N(a,n,4); if(amt<0) amt=0; if(amt>100) amt=100;

@@ -195,6 +195,11 @@ void gml_software3d_draw_ellipse_2d(struct GmlRender *render,
                                     double radius_x,double radius_y,
                                     uint32_t inner,uint32_t outer,
                                     double alpha,int outline);
+/* Logical 2D coordinates, mapped once; also works without an active 3D projection. */
+void gml_software3d_draw_roundrect_2d(struct GmlRender *render,
+                                      double x1,double y1,double x2,double y2,
+                                      double radius_x,double radius_y,
+                                      uint32_t inner,uint32_t outer,double alpha,int outline);
 void gml_software3d_draw_quad(struct GmlRender *render,
                               const double points[4][3],int texture,
                               double hrepeat,double vrepeat,uint32_t color,
