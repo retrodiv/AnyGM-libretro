@@ -98,6 +98,7 @@ int software3d_case_language(Software3dRasterFixture *fixture){
         return 0;
       }
     }
+    gml_values_release(&array,1);
   }
 
   {
@@ -257,6 +258,7 @@ int software3d_case_language(Software3dRasterFixture *fixture){
     if(encoded_marked.t==V_STR && encoded_marked.d!=0) free((char*)encoded_marked.s);
     if(serial_text.t==V_STR && serial_text.d!=0) free((char*)serial_text.s);
     if(trailing_text.t==V_STR && trailing_text.d!=0) free((char*)trailing_text.s);
+    gml_vm_free(&jvm);
   }
 
   {
@@ -420,6 +422,7 @@ int software3d_case_language(Software3dRasterFixture *fixture){
       fprintf(stderr,"classic information leaked into modern content\n");
       return 0;
     }
+    gml_vm_free(&modal);
   }
 
   {

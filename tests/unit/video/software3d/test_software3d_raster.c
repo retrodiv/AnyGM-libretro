@@ -578,6 +578,8 @@ int software3d_case_particles(Software3dRasterFixture *fixture){
       return 0;
     }
     gml_surface_free(&fixture->render,translated_surface);
+    GmlVal matrix_roots[]={translation,scaling,composed,fetched,identity};
+    gml_values_release(matrix_roots,sizeof matrix_roots/sizeof matrix_roots[0]);
   }
 
   gml_vm_software3d_reset(&fixture->vm);
@@ -1247,6 +1249,8 @@ int software3d_case_primitive_model(Software3dRasterFixture *fixture){
     }
     call_numbers(&fixture->vm,"vertex_delete_buffer",buffer_id,1);
     call_numbers(&fixture->vm,"vertex_format_delete",buffer_id,1);
+    GmlVal matrix_roots[]={world,identity};
+    gml_values_release(matrix_roots,sizeof matrix_roots/sizeof matrix_roots[0]);
   }
 
   gml_vm_software3d_reset(&fixture->vm); memset(fixture->pixels,0,sizeof(fixture->pixels));

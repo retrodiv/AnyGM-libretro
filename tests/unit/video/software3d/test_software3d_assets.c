@@ -8,12 +8,9 @@
 
 void free_extension_fixture(GmlVM *vm){
   if(!vm) return;
-  gml_colgrid_invalidate(vm);
-  free(vm->cg_off);
-  free(vm->cg_items);
-  free(vm->cg_overlay);
-  free(vm->inst);
-  vm->cg_off=NULL; vm->cg_items=NULL; vm->cg_overlay=NULL; vm->inst=NULL;
+  /* The object table is borrowed; instances, caches and builtin resources are owned. */
+  vm->objects=NULL; vm->n_objects=0;
+  gml_vm_free(vm);
 }
 
 

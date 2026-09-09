@@ -575,6 +575,14 @@ int software3d_case_vm_draw(Software3dRasterFixture *fixture){
     }
     fixture->render.classic=0;
     fixture->render.alpha=1;
+    /* Draw tables and strings borrow stack storage; the VM and content own their caches. */
+    draw_vm.objects=NULL; draw_vm.n_objects=0;
+    draw_vm.inst=NULL; draw_vm.inst_count=draw_vm.inst_cap=0;
+    draw_vm.rtl=NULL; draw_vm.n_rtl=draw_vm.cap_rtl=0;
+    gml_vm_free(&draw_vm);
+    gml_render_bind_software3d(&fixture->render,fixture->vm.software3d);
+    draw_win.strs=NULL; draw_win.str_charoff=NULL; draw_win.n_strs=0;
+    gml_win_free(&draw_win);
   }
   {
     GmlVM extension_vm={0};
