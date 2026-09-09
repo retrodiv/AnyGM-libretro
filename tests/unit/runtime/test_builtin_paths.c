@@ -117,9 +117,125 @@ static int restore_case(void){
   }
   free(bytes); gml_vm_free(&vm); return ok;
 }
+static double query(GmlVM *vm,const char *name,GmlVal id,int point){
+  GmlVal args[]={id,vreal(point)};
+  GmlVal value=gml_builtin_call(vm,name,args,2);
+  return value.t==V_REAL?value.d:NAN;
+}
+static int controls_case(void){
+  int ok=1;
+  for(int cached=0;cached<2;cached++){
+    GmlVM vm={0}; GmlVal id=path(&vm);
+    GmlVal insert[]={id,vreal(1),vreal(12),vreal(30),vreal(40)};
+    call(&vm,"path_insert_point",insert,5,cached,&ok);
+    ok &= expect(query(&vm,"path_get_number",id,0)==3 &&
+                 query(&vm,"path_get_point_y",id,1)==30 &&
+                 query(&vm,"path_get_point_speed",id,1)==40,
+                 "insertion precedes the indexed defining point");
+    GmlVal kind[]={id,vreal(1)},precision[]={id,vreal(2)};
+    call(&vm,"path_set_kind",kind,2,cached,&ok);
+    call(&vm,"path_set_precision",precision,2,cached,&ok);
+    ok &= expect(query(&vm,"path_get_kind",id,0)==1 &&
+                 query(&vm,"path_get_precision",id,0)==2 && vm.paths[0].n>3 &&
+                 query(&vm,"path_get_number",id,0)==3 &&
+                 query(&vm,"path_get_point_y",id,1)==30,
+                 "smoothing retains three defining points independently of samples");
+    GmlVal change[]={id,vreal(1),vreal(11),vreal(25),vreal(75)};
+    call(&vm,"path_change_point",change,5,cached,&ok);
+    ok &= expect(query(&vm,"path_get_point_x",id,1)==11 &&
+                 query(&vm,"path_get_point_speed",id,1)==75,
+                 "point replacement addresses controls after smoothing");
+    GmlVal remove[]={id,vreal(1)};
+    call(&vm,"path_delete_point",remove,2,cached,&ok);
+    kind[1]=vreal(0); call(&vm,"path_set_kind",kind,2,cached,&ok);
+    ok &= expect(vm.paths[0].n==2 && query(&vm,"path_get_number",id,0)==2 &&
+                 query(&vm,"path_get_length",id,0)==5 &&
+                 query(&vm,"path_get_point_y",id,1)==24,
+                 "deletion and straight restoration recover the original two controls");
+    gml_vm_free(&vm);
+  }
+  return ok;
+}
+static int transforms_case(void){
+  int ok=1;
+  for(int cached=0;cached<2;cached++){
+    GmlVM vm={0}; GmlVal id=path(&vm);
+    GmlVal scale[]={id,vreal(2),vreal(3)};
+    call(&vm,"path_rescale",scale,3,cached,&ok);
+    ok &= expect(query(&vm,"path_get_point_x",id,0)==8.5 &&
+                 query(&vm,"path_get_point_y",id,0)==16 &&
+                 query(&vm,"path_get_point_x",id,1)==14.5 &&
+                 query(&vm,"path_get_point_y",id,1)==28,
+                 "rescale uses the path center, not the coordinate origin");
+    call(&vm,"path_mirror",&id,1,cached,&ok);
+    call(&vm,"path_flip",&id,1,cached,&ok);
+    ok &= expect(query(&vm,"path_get_point_x",id,0)==14.5 &&
+                 query(&vm,"path_get_point_y",id,0)==28,
+                 "mirror and flip reflect about the horizontal and vertical center");
+    call(&vm,"path_reverse",&id,1,cached,&ok);
+    ok &= expect(query(&vm,"path_get_point_x",id,0)==8.5 &&
+                 query(&vm,"path_get_point_speed",id,0)==0,
+                 "reversal reverses defining points together with their speed");
+    GmlVal rotate[]={id,vreal(90)};
+    call(&vm,"path_rotate",rotate,2,cached,&ok);
+    ok &= expect(fabs(query(&vm,"path_get_point_x",id,0)-5.5)<1e-10 &&
+                 fabs(query(&vm,"path_get_point_y",id,0)-25)<1e-10,
+                 "rotation is counterclockwise about the center in y-down coordinates");
+    GmlVal shift[]={id,vreal(4),vreal(-7)};
+    call(&vm,"path_shift",shift,3,cached,&ok);
+    ok &= expect(fabs(query(&vm,"path_get_point_x",id,0)-9.5)<1e-10 &&
+                 fabs(query(&vm,"path_get_point_y",id,0)-18)<1e-10,
+                 "shift translates every defining point");
+    double old_x=query(&vm,"path_get_point_x",id,0);
+    shift[1]=vreal(INFINITY); call(&vm,"path_shift",shift,3,cached,&ok);
+    ok &= expect(query(&vm,"path_get_point_x",id,0)==old_x,
+                 "nonfinite mutation leaves the path unchanged");
+    gml_vm_free(&vm);
+  }
+  return ok;
+}
+static int append_case(void){
+  int ok=1;
+  for(int cached=0;cached<2;cached++){
+    GmlVM vm={0}; GmlVal destination=path(&vm),source=path(&vm);
+    GmlVal args[]={destination,source};
+    call(&vm,"path_append",args,2,cached,&ok);
+    ok &= expect(query(&vm,"path_get_number",destination,0)==4 &&
+                 query(&vm,"path_get_point_x",destination,2)==10 &&
+                 query(&vm,"path_get_point_speed",destination,3)==0,
+                 "append joins defining points without relocating them");
+    ok &= expect(query(&vm,"path_get_number",source,0)==0 &&
+                 query(&vm,"path_exists",source,0)==1,
+                 "append leaves the source as an existing empty path");
+    gml_vm_free(&vm);
+  }
+  return ok;
+}
+static int names_case(void){
+  int ok=1;
+  for(int cached=0;cached<2;cached++){
+    GmlVM vm={0}; GmlVal first=path(&vm),second=path(&vm);
+    GmlVal value=call(&vm,"path_get_name",&first,1,cached,&ok);
+    ok &= expect(value.t==V_STR && !strcmp(value.s,"_newpath0"),
+                 "first dynamic path has its generated identity");
+    GmlVal args[]={second,first}; call(&vm,"path_assign",args,2,cached,&ok);
+    value=call(&vm,"path_get_name",&second,1,cached,&ok);
+    ok &= expect(value.t==V_STR && !strcmp(value.s,"_newpath1"),
+                 "assignment preserves the destination identity");
+    GmlVal third=call(&vm,"path_duplicate",&first,1,cached,&ok);
+    value=call(&vm,"path_get_name",&third,1,cached,&ok);
+    ok &= expect(value.t==V_STR && !strcmp(value.s,"_newpath2"),
+                 "duplicate receives a distinct generated identity");
+    gml_vm_free(&vm);
+  }
+  return ok;
+}
 int main(void){
   const AnygmTestCase cases[]={{"independent_copies",copies_case},{"interpolated_speed",speeds_case},
-                               {"current_state_restore",restore_case}};
+                               {"current_state_restore",restore_case},
+                               {"defining_point_edits",controls_case},
+                               {"centered_transforms",transforms_case},
+                               {"append_transfer",append_case},{"resource_names",names_case}};
   const AnygmTestGroup group={"paths",cases,sizeof cases/sizeof cases[0]};
   AnygmTestResult result; anygm_test_run_groups(&group,1,NULL,&result);
   printf("path contracts: passed=%d failed=%d\n",result.passed,result.failed);
