@@ -88,6 +88,7 @@ typedef struct {
   int sprite_size;                 /* edge of the one opaque sprite in slot 0; 0 writes no sprite */
   int sprite_blank_frame;          /* add a second, fully transparent frame to that sprite */
   int background_size;             /* edge of the one opaque background in slot 0; manifest only */
+  int second_background_size;      /* optional opaque background in slot 1; zero omits it */
   const FixtureObject *objects;
   int object_count;
   const FixtureInstance *instances;

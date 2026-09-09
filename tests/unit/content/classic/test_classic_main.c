@@ -183,7 +183,7 @@ static int program_actions_read(const char *path, ProgramFile *p, FixtureEvent *
  *   room <width> <height>
  *   caption <text>|"<text>"      the room's authored caption; quote it to carry outer spaces
  *   sprite <edge> [blank-second-frame]
- *   background <edge>
+ *   background <edge> [second-edge]
  *   startup <source.gml>
  *   object <name> <sprite-slot|-1>
  *   object-flags <solid:0|1> <persistent:0|1>   applies to the most recent object
@@ -226,8 +226,16 @@ static int program_read(const char *path, ProgramFile *p){
       if(sscanf(line,"%31s %d %d",keyword,&p->program.sprite_size,
                 &p->program.sprite_blank_frame)<2) ok=0;
     } else if(!strcmp(keyword,"background")){
-      if(sscanf(line,"%31s %d",keyword,&p->program.background_size)!=2 ||
-         p->program.background_size<=0) ok=0;
+      int fields=sscanf(line,"%31s %255s %63s %63s",keyword,a,b,c);
+      p->program.second_background_size=0;
+      if(fields<2 || fields>3) ok=0;
+      for(int i=0;ok && i<fields-1;i++){
+        char *end=NULL; errno=0;
+        long edge=strtol(i?b:a,&end,10);
+        if(errno || !end || *end || edge<=0 || edge>63) ok=0;
+        else if(i) p->program.second_background_size=(int)edge;
+        else p->program.background_size=(int)edge;
+      }
     } else if(!strcmp(keyword,"startup")){
       if(sscanf(line,"%31s %255s",keyword,a)!=2){ ok=0; }
       else {

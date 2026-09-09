@@ -798,10 +798,15 @@ static Fixture manifest_fixture_program(unsigned container_version, const Fixtur
       fixture_sprite_payload(&payload,program->sprite_size,program->sprite_blank_frame);
       fixture_manifest_resource(&f,"fixture_square",800,&payload);
     } else if(type == GMLC_CLASSIC_BACKGROUND && program->background_size>0){
-      fixture_u32(&f,1);
+      fixture_u32(&f,program->second_background_size>0?2:1);
       Fixture payload={{0},0};
       fixture_background_payload(&payload,program->background_size);
       fixture_manifest_resource(&f,"fixture_background",800,&payload);
+      if(program->second_background_size>0){
+        payload.size=0;
+        fixture_background_payload(&payload,program->second_background_size);
+        fixture_manifest_resource(&f,"fixture_background_second",800,&payload);
+      }
     } else if(type == GMLC_CLASSIC_OBJECT && program->object_count){
       fixture_u32(&f,(unsigned)program->object_count);
       for(int i=0;i<program->object_count;i++){
@@ -834,6 +839,10 @@ static Fixture manifest_fixture_program(unsigned container_version, const Fixtur
 
 int build_project_fixture_program(unsigned version, const FixtureProgram *program, Fixture *out){
   if(!program || program->room_width<=0 || program->room_height<=0) return 0;
+  /* Each uncompressed image must fit the bounded fixture payload. */
+  if(program->background_size<0 || program->background_size>63 ||
+     program->second_background_size<0 || program->second_background_size>63 ||
+     (program->second_background_size>0 && !program->background_size)) return 0;
   /* A first-party GM5 rule can use the legacy inline object and room records. The compact legacy
    * sprite record is deliberately not synthesized here; a program requiring one must continue to
    * use a manifest generation until that distinct record is represented explicitly. */
