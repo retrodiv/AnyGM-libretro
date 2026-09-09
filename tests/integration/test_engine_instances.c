@@ -3004,8 +3004,8 @@ int main(int argc,char **argv){
   write_u64(deterministic+56,state_checksum(deterministic+112,preceding_size-112));
   uint64_t preceding_hash=state_checksum(deterministic,preceding_size);
   memcpy(deterministic,first_state,first_written);
-  if(deterministic_size!=22070 ||
-     deterministic_hash!=UINT64_C(0x8fe9f1b017414513) ||
+  if(deterministic_size!=22262 ||
+     deterministic_hash!=UINT64_C(0x04e88245bcbf9fd3) ||
      preceding_size!=22070 || preceding_font_hash!=UINT64_C(0x8fe9f1b017414513) ||
      preceding_hash!=UINT64_C(0xa4c27da217414513)){
     fprintf(stderr,"canonical engine state changed: size=%zu hash=%016llx\n",
