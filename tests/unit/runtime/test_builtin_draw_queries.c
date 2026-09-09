@@ -260,7 +260,12 @@ static int runtime_font_styles_case(void){
       ok &= real_is(query(&vm,"font_add",args,6,cached,&ok),-1) && render.n_fonts==5;
       args[5]=vreal(65); args[1]=vreal(invalid[i]);
       GmlVal result=query(&vm,"font_add",args,6,cached,&ok);
-      ok &= real_is(result,-1) && render.n_fonts==5;
+      /* Character indices reject an out-of-range integer; finite sizes retain the loader's
+       * established clamp to 256 pixels rather than becoming an invalid font request. */
+      if(isfinite(invalid[i]))
+        ok &= real_is(result,5) && render.n_fonts==6 &&
+          render.fonts[5].runtime_pixel_height==256;
+      else ok &= real_is(result,-1) && render.n_fonts==5;
       if(!ok) fprintf(stderr,"runtime font numeric guard: cached=%d input=%g id=%g count=%d\n",
                        cached,invalid[i],result.d,render.n_fonts);
     }
