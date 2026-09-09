@@ -284,9 +284,11 @@ $(TEST_DIR)/test_builtin_buffer_hash: tests/unit/runtime/test_builtin_buffer_has
 	mkdir -p $(dir $@)
 	$(call link_runtime_test,$(TEST_CPPFLAGS))
 
-$(TEST_DIR)/test_builtin_draw_queries: tests/unit/runtime/test_builtin_draw_queries.c tests/support/anygm_test_runner.c $(UNIT_RUNTIME_OBJECTS)
+$(TEST_DIR)/test_builtin_draw_queries: tests/unit/runtime/test_builtin_draw_queries.c \
+  tests/unit/media/font_test_fixture.h tests/support/memory_vfs.c \
+  tests/support/anygm_test_runner.c $(UNIT_RUNTIME_OBJECTS)
 	mkdir -p $(dir $@)
-	$(call link_runtime_test,$(TEST_CPPFLAGS))
+	$(CC) $(TEST_CPPFLAGS) $(CFLAGS) $(filter-out %.h,$^) -o $@ -lm -pthread $(CXX_RUNTIME_LDLIBS)
 
 $(TEST_DIR)/test_builtin_paths: tests/unit/runtime/test_builtin_paths.c tests/support/anygm_test_runner.c $(UNIT_RUNTIME_OBJECTS)
 	mkdir -p $(dir $@)

@@ -54,7 +54,7 @@ static int rejected_load_preserves_font(int remove_source){
   source.path="/content/data.win"; source.data=payload; source.size=payload_size;
   if(anygm_load(engine,&source,NULL)!=ANYGM_OK) goto done;
   target=save(engine,&target_size);
-  int font=gml_font_add_file(&engine->render,"/content/fixture.ttf",32,65,65);
+  int font=gml_font_add_file(&engine->render,"/content/fixture.ttf",32,1,1,65,65);
   if(!target || font<0) goto done;
   engine->render.font=font;
   int width=gml_text_width(&engine->render,"A");
@@ -74,7 +74,8 @@ static int rejected_load_preserves_font(int remove_source){
   ok=result==ANYGM_ERROR_STATE_MISMATCH && after && after_size==baseline_size &&
     !memcmp(after,baseline,baseline_size) && gml_render_font_exists(&engine->render,font) &&
     gml_render_font_metrics(&engine->render,font,&metrics) && !metrics.sprite_backed &&
-    metrics.glyph_count==1 && gml_text_width(&engine->render,"A")==width;
+    metrics.bold==1 && metrics.italic==1 && metrics.glyph_count==1 &&
+    gml_text_width(&engine->render,"A")==width;
 done:
   if(!ok) fprintf(stderr,"font rollback after %s source failed: sizes=%zu/%zu\n",
                    remove_source?"missing":"changed",after_size,baseline_size);

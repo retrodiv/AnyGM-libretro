@@ -610,8 +610,8 @@ int write_font(Pkg *pkg, const GmlcProject *p){
     wstrptr(pkg,sid);
     wu32(&pkg->b,0);
     wi32(&pkg->b,font->em_size>0?font->em_size:12);
-    wu32(&pkg->b,0);
-    wu32(&pkg->b,0);
+    wu32(&pkg->b,font->bold?1u:0u);
+    wu32(&pkg->b,font->italic?1u:0u);
     wu32(&pkg->b,0);
     wu32(&pkg->b,0);
     uint32_t tex_pos=(uint32_t)pkg->b.len;

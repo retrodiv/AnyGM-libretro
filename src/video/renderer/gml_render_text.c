@@ -97,6 +97,8 @@ void parse_font(GmlRender *r){
     for(int k=0;k<256;k++) f->glyph_by_char[k]=-1;
     f->real=1;
     f->sprite=-1;   /* real fonts have no sprite: keeps state records unambiguous vs sprite fonts */
+    f->bold=u32(d,p+12)!=0;
+    f->italic=u32(d,p+16)!=0;
     /* EmSize is u32 in bc14-16 and float, negated for point-sized fonts, in newer exports.
      * Reading the float bits as an integer shifts the glyph table and can produce zero glyphs. */
     int em_is_float=0;
@@ -382,7 +384,8 @@ int gml_font_add_sprite_ext(GmlRender *r, int sprite, const char *map, int prop,
  * draw_text_real needs no changes. `size` is the raster pixel height; applying
  * a second 96/72 screen-DPI conversion makes loose fonts one third too large. */
 static int font_add_file_checked(GmlRender *r,const char *path,double point_size,
-                                 int first,int last,const uint8_t *expected_sha256){
+                                 int bold,int italic,int first,int last,
+                                 const uint8_t *expected_sha256){
   if(!r || !path || !path[0] || strlen(path)>4095 || !isfinite(point_size) ||
      r->n_fonts<0 || r->n_fonts>=GML_MAX_FONTS) return -1;
   if(first<0) first=0;
@@ -534,6 +537,8 @@ static int font_add_file_checked(GmlRender *r,const char *path,double point_size
   for(int k=0;k<256;k++) f->glyph_by_char[k]=-1;
   f->real=1; f->atlas=atlas_id; f->line_height=lh; f->align_height=lh; f->runtime_owned=1;
   f->sprite=-1;
+  /* Retain the request; selecting or synthesizing a different face is not a metadata query. */
+  f->bold=bold!=0; f->italic=italic!=0;
   f->glyphs=glyphs; f->n_glyphs=ng; f->glyphs_sorted=1;
   /* The face stays open for on-demand glyphs outside the requested range. */
   f->runtime_face=face; f->runtime_scale=scale; f->runtime_ascent=ascent;
@@ -550,8 +555,9 @@ static int font_add_file_checked(GmlRender *r,const char *path,double point_size
   return id;
 }
 
-int gml_font_add_file(GmlRender *r,const char *path,double point_size,int first,int last){
-  return font_add_file_checked(r,path,point_size,first,last,NULL);
+int gml_font_add_file(GmlRender *r,const char *path,double point_size,
+                       int bold,int italic,int first,int last){
+  return font_add_file_checked(r,path,point_size,bold,italic,first,last,NULL);
 }
 
 void gml_font_delete(GmlRender *r, int font){
@@ -769,10 +775,11 @@ static GmlGlyph *real_glyph_demand(GmlRender *r, GmlFont *f, unsigned cp){
 
 int gml_render_restore_runtime_font(GmlRender *r,int id,const char *path,
                                     const uint8_t sha256[32],int pixel_height,
-                                    int first,int last,const uint32_t *characters,int count){
+                                    int bold,int italic,int first,int last,
+                                    const uint32_t *characters,int count){
   if(!r || id<0 || id>=GML_MAX_FONTS || !path || !sha256 || !characters ||
      pixel_height<4 || pixel_height>256 || first<0 || last>65535 || last<first ||
-     count<1 || count>65536) return 0;
+     bold<0 || bold>1 || italic<0 || italic>1 || count<1 || count>65536) return 0;
   GmlFont *live=&r->fonts[id];
   if(live->real && !live->runtime_owned) return 0;
   uint8_t seen[8192]={0};
@@ -785,6 +792,7 @@ int gml_render_restore_runtime_font(GmlRender *r,int id,const char *path,
     !strcmp(live->runtime_source_path,path) && live->runtime_face &&
     !memcmp(live->runtime_source_sha256,sha256,32) &&
     live->runtime_pixel_height==pixel_height && live->runtime_first==first &&
+    live->bold==bold && live->italic==italic &&
     live->runtime_last==last && live->n_glyphs==count && live->glyphs;
   for(int i=0;matching && i<count;i++) matching=live->glyphs[i].ch==characters[i];
   if(matching) return 1;
@@ -794,7 +802,7 @@ int gml_render_restore_runtime_font(GmlRender *r,int id,const char *path,
   GmlRender *staged=calloc(1,sizeof(*staged));
   if(!staged) return 0;
   staged->win=r->win;
-  int built=font_add_file_checked(staged,path,pixel_height,first,last,sha256);
+  int built=font_add_file_checked(staged,path,pixel_height,bold,italic,first,last,sha256);
   int ok=built==0;
   GmlFont *font=&staged->fonts[0];
   int initial=font->n_glyphs;

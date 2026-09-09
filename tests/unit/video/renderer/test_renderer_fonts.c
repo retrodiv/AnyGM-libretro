@@ -59,7 +59,7 @@ static void fixture_destroy(FontFixture *f){
 }
 
 static int add_font(FontFixture *f){
-  return gml_font_add_file(&f->render,"/content/fixture.ttf",32,65,65);
+  return gml_font_add_file(&f->render,"/content/fixture.ttf",32,0,0,65,65);
 }
 
 static int draw_font(FontFixture *f,int font){
@@ -203,6 +203,35 @@ static int changed_source_case(void){
   return ok;
 }
 
+static int restore_styles_case(void){
+  FontFixture *f=fixture_create();
+  if(!f) return 0;
+  int ok=1,ink=0,width=0;
+  uint32_t baseline[96*48]={0};
+  for(int i=0;ok && i<4;i++){
+    int id=gml_font_add_file(&f->render,"/content/fixture.ttf",32,i&1,i>>1,65,65);
+    int drawn=id>=0?draw_font(f,id):0;
+    if(i==0){ ink=drawn; width=gml_text_width(&f->render,"A"); memcpy(baseline,f->frame,sizeof baseline); }
+    ok=id==i && ink>0 && drawn==ink && gml_text_width(&f->render,"A")==width &&
+      !memcmp(baseline,f->frame,sizeof baseline);
+  }
+  size_t size=0,used=0,repeated_size=0;
+  uint8_t *state=ok?save_font_state(f,&size):NULL;
+  for(int i=0;i<4;i++) gml_font_delete(&f->render,i);
+  ok=ok && state && gml_render_state_load(&f->render,state,size,&used) && used==size;
+  for(int i=0;ok && i<4;i++){
+    GmlRenderFontMetrics metrics={0};
+    ok=gml_render_font_metrics(&f->render,i,&metrics) && metrics.bold==(i&1) &&
+      metrics.italic==(i>>1) && draw_font(f,i)==ink &&
+      gml_text_width(&f->render,"A")==width && !memcmp(baseline,f->frame,sizeof baseline);
+  }
+  uint8_t *repeated=ok?save_font_state(f,&repeated_size):NULL;
+  ok=ok && repeated && repeated_size==size && !memcmp(state,repeated,size) && f->render.n_atlas==4;
+  if(!ok) fprintf(stderr,"font styles changed pixels, layout or restored metadata\n");
+  free(repeated); free(state); fixture_destroy(f);
+  return ok;
+}
+
 static void write_u32(uint8_t *p,uint32_t value){
   for(int i=0;i<4;i++) p[i]=(uint8_t)(value>>(i*8));
 }
@@ -222,10 +251,11 @@ static int malformed_record_case(void){
   if(ok){
     size_t metrics=36+(size_t)read_u32(state+32)+32;
     const size_t offsets[]={0,20,24,28,32,32,metrics,metrics,metrics+4,
-                             metrics+8,metrics+12,metrics+12,metrics+16,metrics+16};
+                             metrics+8,metrics+20,metrics+20,metrics+24,metrics+24,
+                             metrics+12,metrics+16};
     const uint32_t values[]={UINT32_MAX,UINT32_MAX,2,9,0,4096,3,257,UINT32_MAX,
-                             65536,0,65537,65536,'B'};
-    if(metrics>size || size-metrics<20) ok=0;
+                             65536,0,65537,65536,'B',2,UINT32_MAX};
+    if(metrics>size || size-metrics<28) ok=0;
     for(size_t i=0;ok && i<sizeof offsets/sizeof offsets[0];i++){
       memcpy(candidate,state,size);
       write_u32(candidate+offsets[i],values[i]);
@@ -252,6 +282,7 @@ int main(int argc,char **argv){
     {"restore_removes_later_runtime_font",restore_removes_later_case},
     {"lazy_glyph_restore_and_atlas_reuse",lazy_glyph_restore_case},
     {"changed_source_rejected",changed_source_case},
+    {"style_restore_preserves_raster",restore_styles_case},
     {"malformed_record_rejected",malformed_record_case}
   };
   const AnygmTestGroup group={"fonts",cases,sizeof cases/sizeof cases[0]};

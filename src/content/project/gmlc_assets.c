@@ -477,6 +477,8 @@ static int parse_font(GmlcProject *p, const GmlcResource *res, const GmlcJson *y
   if(file) snprintf(file,n,"%s.png",f.name?f.name:"");
   f.png_path=gmlc_path_join(dir,file?file:"");
   f.em_size=gmlc_json_int(gmlc_json_obj(yy,"size"),12);
+  f.bold=gmlc_json_bool(gmlc_json_obj(yy,"bold"),0);
+  f.italic=gmlc_json_bool(gmlc_json_obj(yy,"italic"),0);
   if(!f.id || !f.name || !f.png_path || !png_file_dims(p,f.png_path,&f.width,&f.height)){
     snprintf(err,errcap,"failed to load font texture for %s",f.name?f.name:"font resource");
     free(f.id); free(f.name); free(f.png_path); free(dir); free(file);

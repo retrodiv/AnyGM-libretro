@@ -1238,14 +1238,27 @@ GmlVal gml_builtin_try_draw(GmlVM *vm, const char *nm, GmlVal *a, int n){
       /* font_add(file, size, bold, italic, first, last): rasterize a loose TTF from the game
        * dir (localized fonts in ports). -1 when missing/unreadable, like GM. */
       char *p=resolve_read_path(vm,S(vm,a,n,0));
+      double first_arg=n>4?N(a,n,4):32, last_arg=n>5?N(a,n,5):255;
+      if(!isfinite(first_arg) || !isfinite(last_arg) || first_arg<INT_MIN ||
+         first_arg>INT_MAX || last_arg<INT_MIN || last_arg>INT_MAX){
+        free(p); return vreal(-1);
+      }
+      int bold=N(a,n,2)>0.5, italic=N(a,n,3)>0.5;
+      int first=(int)first_arg,last=(int)last_arg;
       if(builtin_setting(vm,"GML_LOG_FONT")) anygm_host_logf(vm ? vm->host : NULL,ANYGM_LOG_DEBUG,
         "[font_add] path=%s size=%.1f bold=%d italic=%d first=%d last=%d argc=%d\n",
-        p?p:"?",N(a,n,1),(int)N(a,n,2),(int)N(a,n,3),
-        n>4?(int)N(a,n,4):32,n>5?(int)N(a,n,5):255,n);
-      int first=n>4?(int)N(a,n,4):32, last=n>5?(int)N(a,n,5):255;
-      int id = p? gml_font_add_file(R,p,N(a,n,1),first,last) : -1;
+        p?p:"?",N(a,n,1),bold,italic,first,last,n);
+      int id = p? gml_font_add_file(R,p,N(a,n,1),bold,italic,first,last) : -1;
       free(p);
       return vreal(id);
+    }
+    if(!strcmp(nm,"font_get_bold") || !strcmp(nm,"font_get_italic")){
+      double id=N(a,n,0);
+      if(n<1 || !isfinite(id) || id<0 || id>INT_MAX) return vreal(0);
+      GmlRenderFontMetrics font;
+      if(!gml_render_font_exists(R,(int)id) ||
+         !gml_render_font_metrics(R,(int)id,&font)) return vreal(0);
+      return vreal(!strcmp(nm,"font_get_bold")?font.bold!=0:font.italic!=0);
     }
     /* object_get_parent returns the OBJT parent index, or -100 for no parent. */
   if(!strcmp(nm,"object_get_parent")){ int ob=(int)N(a,n,0);

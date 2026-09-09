@@ -15,7 +15,9 @@ snapshots. Those features remain supported.
 
 Schema `20` retains VM schema `10` and extends each renderer font-pool record with a 32-bit
 runtime-file flag. A live file font adds its portable source root/path, SHA-256, raster pixel
-height, initial character range and ordered materialized character list. Paths are bounded to
+height, initial character range, 32-bit bold/italic booleans and ordered materialized character
+list. Authored styles remain immutable content metadata; sprite fonts have neither style.
+Paths are bounded to
 4,095 bytes and the list to 65,536 unique BMP codepoints. Font-file reads retain their 32-MiB
 bound. Glyph coordinates and pixels are rebuilt through the existing loader and lazy-glyph
 operation; the file bytes and raster atlas are not repeated in every rewind snapshot. Deletion
@@ -23,7 +25,7 @@ and restoration reuse font-owned atlas slots, without changing authored texture 
 
 A matching live font can be reused without reopening its source. Reconstruction requires the
 current VFS file to match its saved digest; a missing or changed source rejects the state.
-The root transaction must retain an in-memory font checkpoint until every section and the
+The root transaction retains an in-memory font checkpoint until every section and the
 reapply allocation have accepted the candidate: rollback cannot depend on reopening a file
 after its previous face has been destroyed. The checkpoint copies mutable glyph/atlas storage
 and retains the immutable raster face; it is not part of the wire format or save-size queries.

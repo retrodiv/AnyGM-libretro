@@ -4,6 +4,8 @@
 #include "gml_builtin.h"
 #include "gml_render_internal.h"
 #include "anygm_test_runner.h"
+#include "memory_vfs.h"
+#include "../media/font_test_fixture.h"
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -221,11 +223,54 @@ static int font_styles_case(void){
   return ok;
 }
 
+static int runtime_font_styles_case(void){
+  int ok=1;
+  for(int cached=0;cached<2;cached++){
+    AnygmMemoryVfs *memory=calloc(1,sizeof(*memory));
+    if(!memory) return 0;
+    AnygmHostServices host={0}; anygm_memory_vfs_init(memory,&host);
+    uint8_t bytes[552]; size_t size=font_fixture_build(bytes);
+    ok &= anygm_memory_vfs_add_file(memory,"/content/fixture.ttf",bytes,size);
+    GmlWin win={.host=&host}; snprintf(win.content_dir,sizeof win.content_dir,"/content");
+    GmlRender render={.win=&win}; GmlVM vm={.win=&win,.host=&host,.render=&render};
+    for(int i=0;ok && i<4;i++){
+      GmlVal args[]={vstr("fixture.ttf"),vreal(32),vreal(i&1),vreal(i>>1),vreal(65),vreal(65)};
+      GmlVal font=query(&vm,"font_add",args,6,cached,&ok);
+      ok &= real_is(font,i) && real_is(query(&vm,"font_get_bold",&font,1,cached,&ok),i&1) &&
+        real_is(query(&vm,"font_get_italic",&font,1,cached,&ok),i>>1);
+      query(&vm,"font_delete",&font,1,cached,&ok);
+      ok &= real_is(query(&vm,"font_get_bold",&font,1,cached,&ok),0) &&
+        real_is(query(&vm,"font_get_italic",&font,1,cached,&ok),0);
+    }
+    render.n_spr=1; render.spr=calloc(1,sizeof(*render.spr));
+    if(!render.spr) ok=0;
+    if(ok){
+      render.spr[0].n_frames=1;
+      GmlVal args[]={vreal(0),vstr("A"),vreal(1),vreal(0)};
+      GmlVal font=query(&vm,"font_add_sprite_ext",args,4,cached,&ok);
+      ok &= real_is(font,4) && real_is(query(&vm,"font_get_bold",&font,1,cached,&ok),0) &&
+        real_is(query(&vm,"font_get_italic",&font,1,cached,&ok),0);
+    }
+    const double invalid[]={NAN,INFINITY,-INFINITY,1e100};
+    for(size_t i=0;ok && i<sizeof invalid/sizeof invalid[0];i++){
+      GmlVal args[]={vstr("fixture.ttf"),vreal(32),vreal(1),vreal(1),vreal(invalid[i]),vreal(65)};
+      ok &= real_is(query(&vm,"font_add",args,6,cached,&ok),-1) && render.n_fonts==5;
+      args[4]=vreal(65); args[5]=vreal(invalid[i]);
+      ok &= real_is(query(&vm,"font_add",args,6,cached,&ok),-1) && render.n_fonts==5;
+      args[5]=vreal(65); args[1]=vreal(invalid[i]);
+      ok &= real_is(query(&vm,"font_add",args,6,cached,&ok),-1) && render.n_fonts==5;
+    }
+    vm.render=NULL; vm.win=NULL; gml_vm_free(&vm); gml_render_free(&render);
+    anygm_memory_vfs_destroy(memory); free(memory);
+  }
+  return ok;
+}
+
 int main(void){
   const AnygmTestCase cases[]={{"circle_precision",circle_case},{"shader_asset_names",shader_case},
     {"all_live_layers_at_depth",layers_case},{"retired_alpha_controls",alpha_case},
     {"background_source_region",background_part_case},{"background_name_alias",background_names_case},
-    {"authored_font_styles",font_styles_case}};
+    {"authored_font_styles",font_styles_case},{"runtime_font_styles",runtime_font_styles_case}};
   const AnygmTestGroup group={"draw_queries",cases,sizeof cases/sizeof cases[0]};
   AnygmTestResult result;
   anygm_test_run_groups(&group,1,NULL,&result);

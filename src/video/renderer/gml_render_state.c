@@ -236,7 +236,8 @@ static void render_state_write(GmlRender *render,int view_surface,CoreW *s){
       cw_i32(s,root); cw_i32(s,(int)length); cw_raw(s,stored,length);
       cw_raw(s,f->runtime_source_sha256,32);
       cw_i32(s,f->runtime_pixel_height); cw_i32(s,f->runtime_first);
-      cw_i32(s,f->runtime_last); cw_i32(s,f->n_glyphs);
+      cw_i32(s,f->runtime_last); cw_i32(s,f->bold); cw_i32(s,f->italic);
+      cw_i32(s,f->n_glyphs);
       for(int j=0;j<f->n_glyphs;j++) cw_u32(s,f->glyphs[j].ch);
     }
   }
@@ -344,7 +345,8 @@ static int render_state_read_font_records(GmlRender *render,CoreR *s,int from,in
       cr_raw(s,stored,(size_t)length); stored[length]=0;
       if(memchr(stored,0,(size_t)length)) s->ok=0;
       cr_raw(s,digest,sizeof digest);
-      int pixels=cr_i32(s),range_first=cr_i32(s),range_last=cr_i32(s),glyphs=cr_i32(s);
+      int pixels=cr_i32(s),range_first=cr_i32(s),range_last=cr_i32(s);
+      int bold=cr_i32(s),italic=cr_i32(s),glyphs=cr_i32(s);
       remaining=s->pos<=s->cap?s->cap-s->pos:0;
       if(!s->ok || glyphs<1 || glyphs>65536 || (size_t)glyphs>remaining/4 ||
          !runtime_path_rebuild(render,root,stored,path,sizeof path)){
@@ -354,7 +356,7 @@ static int render_state_read_font_records(GmlRender *render,CoreR *s,int from,in
       if(!characters){ free(map); s->ok=0; return 0; }
       for(int j=0;j<glyphs;j++) characters[j]=cr_u32(s);
       if(!s->ok || !gml_render_restore_runtime_font(render,i,path,digest,pixels,
-                                                    range_first,range_last,characters,glyphs))
+                                                    bold,italic,range_first,range_last,characters,glyphs))
         s->ok=0;
       free(characters);
     }

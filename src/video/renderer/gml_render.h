@@ -87,6 +87,7 @@ typedef struct {
 typedef struct {
   int line_height;
   int ascender, ascender_offset, sdf_spread;
+  int bold, italic;
   int sprite, first, proportional, separation;
   int sprite_backed;
   int glyph_count;
@@ -696,7 +697,7 @@ int  gml_sprite_collision(GmlRender *r, int sprite, int frame, int lx, int ly);
 int  gml_font_add_sprite(GmlRender *r, int sprite, int first, int prop, int sep);
 int  gml_font_add_sprite_ext(GmlRender *r, int sprite, const char *map, int prop, int sep);
 int  gml_font_add_file(GmlRender *r, const char *path, double point_size,
-                       int first, int last);                     /* runtime TTF (font_add) */
+                       int bold, int italic, int first, int last); /* runtime TTF (font_add) */
 void gml_font_delete(GmlRender *r, int font);
 int  gml_sprite_add_file(GmlRender *r, const char *path, int imgnum, int removeback, int xorig, int yorig);
 void gml_render_rebuild_font_maps(GmlRender *r);

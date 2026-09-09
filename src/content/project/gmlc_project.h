@@ -213,6 +213,7 @@ typedef struct {
   char *name;
   char *png_path;
   int width, height, em_size;
+  int bold, italic;
   GmlcFontGlyph *glyphs;
   int n_glyphs, cap_glyphs;
 } GmlcFont;

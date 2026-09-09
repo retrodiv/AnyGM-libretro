@@ -120,11 +120,38 @@ static int expect_gm81_font_metadata(void){
   return ok;
 }
 
+static int expect_font_styles(void){
+  GmlcClassicManifest manifest={0};
+  manifest.inventory.header.version=GMLC_CLASSIC_GM81;
+  manifest.inventory.resource_slots[GMLC_CLASSIC_FONT]=4;
+  manifest.existing[GMLC_CLASSIC_FONT]=4;
+  manifest.slots[GMLC_CLASSIC_FONT]=calloc(4,sizeof(GmlcClassicResourceSlot));
+  if(!manifest.slots[GMLC_CLASSIC_FONT]) return 0;
+  int ok=1;
+  for(int i=0;ok && i<4;i++){
+    char name[32]; snprintf(name,sizeof name,"font_style_%d",i);
+    ok=fixture_font_slot(&manifest.slots[GMLC_CLASSIC_FONT][i],name,12,
+                         (unsigned)(i&1),(unsigned)(i>>1),65,65);
+  }
+  GmlcProject project; fixture_project_clear(&project);
+  project.prefer_memory_files=1;
+  char err[256]={0};
+  if(ok) ok=gmlc_classic_import_fonts(&manifest,&project,"unused",err,sizeof err);
+  ok &= project.n_fonts==4;
+  for(int i=0;ok && i<4;i++)
+    ok=project.fonts[i].bold==(i&1) && project.fonts[i].italic==(i>>1) &&
+       project.fonts[i].n_glyphs==1 && project.fonts[i].glyphs[0].ch==65;
+  if(!ok) fprintf(stderr,"classic font styles were not retained: %s\n",err);
+  free_font_fixture_project(&project); gmlc_classic_manifest_free(&manifest);
+  return ok;
+}
+
 AnygmTestGroup classic_test_fonts_group(void){
   static const AnygmTestCase cases[]={
     {"sparse-import",expect_sparse_font_import},
     {"empty-import",expect_empty_font_import},
     {"gm81-metadata",expect_gm81_font_metadata},
+    {"style-metadata",expect_font_styles},
   };
   const AnygmTestGroup group={
     "classic.fonts",cases,sizeof cases/sizeof cases[0]

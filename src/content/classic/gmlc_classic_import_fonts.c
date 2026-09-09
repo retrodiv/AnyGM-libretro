@@ -653,6 +653,7 @@ int gmlc_classic_import_fonts(const GmlcClassicManifest *classic,
               raster.line_height,raster.n_glyphs);
     font->png_path=classic_font_store_raster(project,cache_dir,i,&raster,err,errcap);
     font->width=raster.width; font->height=raster.height; font->em_size=raster.line_height;
+    font->bold=spec.bold; font->italic=spec.italic;
     font->glyphs=raster.glyphs; font->n_glyphs=font->cap_glyphs=raster.n_glyphs;
     raster.glyphs=NULL;
     classic_font_raster_free(&raster);

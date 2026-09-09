@@ -147,6 +147,7 @@ typedef struct { int32_t sx, sy, w, h; int16_t shift, offset; uint16_t ch; } Gml
 typedef struct { uint16_t left, right; int16_t amount; } GmlFontKern;
 typedef struct {
   int sprite, first, prop, sep;
+  int bold, italic;                                             /* authored or requested style flags */
   uint32_t *map; int map_len;                                    /* font_add_sprite_ext explicit map */
   int map_fast[256];
   /* real FONT-chunk font: glyph sub-rects blitted from the data.win atlas at runtime
@@ -173,7 +174,8 @@ typedef struct {
 /* Renderer-state reconstruction uses the ordinary font loader and glyph-cache owner. */
 int gml_render_restore_runtime_font(GmlRender *render,int font,const char *path,
                                     const uint8_t sha256[32],int pixel_height,
-                                    int first,int last,const uint32_t *characters,int count);
+                                    int bold,int italic,int first,int last,
+                                    const uint32_t *characters,int count);
 enum { GML_SHADER_GENERIC_UNIFORMS=32, GML_SHADER_GENERIC_SAMPLERS=4 };
 /* Handles for the content's own uniforms and samplers live outside the recognized families' slot
  * space: bit 20 marks them, bits 8..19 carry the shader, bit 7 marks a sampler, bits 0..6 the

@@ -5,6 +5,7 @@
 #include "gmlc_package.h"
 #include "gmlc_project.h"
 #include "gml_win.h"
+#include "gml_image_codec.h"
 #include "stdio_vfs.h"
 
 #include <inttypes.h>
@@ -394,6 +395,52 @@ static int expect_modern_project_room_schema(const char *directory){
   return ok;
 }
 
+static int expect_font_style_normalization(const char *directory){
+  char yyp[256],font_path[256],png_path[256],package_path[256];
+  snprintf(yyp,sizeof yyp,"%s/font-style.yyp",directory);
+  snprintf(font_path,sizeof font_path,"%s/style.yy",directory);
+  snprintf(png_path,sizeof png_path,"%s/font_style.png",directory);
+  snprintf(package_path,sizeof package_path,"%s/font-style.win",directory);
+  const char *project_text="{\"name\":\"font_styles\",\"resources\":[{\"Value\":{"
+    "\"id\":\"font_style\",\"resourceType\":\"GMFont\",\"resourcePath\":\"style.yy\"}}]}";
+  const char *styles[]={"\"bold\":false,\"italic\":false,",
+    "\"bold\":true,\"italic\":false,","\"bold\":false,\"italic\":true,",
+    "\"bold\":true,\"italic\":true,",""};
+  uint8_t pixels[4*4*4]; memset(pixels,255,sizeof pixels);
+  GmlMediaBuffer png={0};
+  AnygmHostServices host={.struct_size=sizeof host,.abi_version=ANYGM_HOST_SERVICES_VERSION};
+  anygm_stdio_vfs_services_init(&host);
+  int ok=gml_image_encode_png(pixels,4,4,4,16,&png) &&
+    write_bytes(png_path,png.data,png.size) && write_text(yyp,project_text);
+  for(int i=0;ok && i<5;i++){
+    char text[512],error[256]={0};
+    snprintf(text,sizeof text,"{\"name\":\"font_style\",\"size\":12,%s"
+      "\"glyphs\":{\"65\":{\"character\":65,\"x\":0,\"y\":0,\"w\":4,\"h\":4,\"shift\":5}},"
+      "\"resourceType\":\"GMFont\"}",styles[i]);
+    GmlcProject project={0}; GmlWin win={0}; uint8_t *bytes=NULL; size_t size=0;
+    int bold=i<4?(i&1):0,italic=i<4?(i>>1):0;
+    ok=write_text(font_path,text) && gmlc_project_load_yyp(&project,&host,yyp,error,sizeof error) &&
+      project.n_fonts==1 && project.fonts[0].bold==bold && project.fonts[0].italic==italic &&
+      project.fonts[0].n_glyphs==1 && project.fonts[0].glyphs[0].shift==5 &&
+      gmlc_package_write_structural(&project,package_path,error,sizeof error) &&
+      read_bytes(package_path,&bytes,&size) && gml_win_from_mem(&win,bytes,size,0)==0;
+    if(ok){
+      const GmlChunk *chunk=gml_chunk(&win,"FONT");
+      int bounded=chunk!=NULL;
+      uint32_t count=bounded?read_u32le(bytes,size,chunk->off,&bounded):0;
+      uint32_t record=count==1?read_u32le(bytes,size,chunk->off+4,&bounded):0;
+      uint32_t flags[2]={read_u32le(bytes,size,(size_t)record+12,&bounded),
+                         read_u32le(bytes,size,(size_t)record+16,&bounded)};
+      ok=bounded && count==1 && flags[0]==(uint32_t)bold && flags[1]==(uint32_t)italic;
+    }
+    if(!ok) fprintf(stderr,"project/package font style %d failed: %s\n",i,error);
+    gml_win_free(&win); free(bytes); gmlc_project_free(&project);
+  }
+  gml_media_buffer_release(&png);
+  remove(package_path); remove(font_path); remove(png_path); remove(yyp);
+  return ok;
+}
+
 int main(int argc,char **argv){
   AnygmSyntheticContent first={0}, second={0};
   uint8_t *first_bytes=NULL, *second_bytes=NULL;
@@ -431,6 +478,7 @@ int main(int argc,char **argv){
   if(ok && !expect_tileset_source_indices(first.directory)) ok=0;
   if(ok && !expect_classic_room_order_display_extent(first.directory)) ok=0;
   if(ok && !expect_optn_scale_is_read(first.directory)) ok=0;
+  if(ok && !expect_font_style_normalization(first.directory)) ok=0;
 
   free(first_bytes);
   free(second_bytes);
