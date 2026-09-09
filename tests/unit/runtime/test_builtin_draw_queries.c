@@ -119,17 +119,22 @@ static int background_part_case(void){
   for(int cached=0;cached<2;cached++){
     GmlWin win={0}; GmlRender render;
     if(gml_render_init(&render,&win)!=0) return 0;
-    render.atlas=calloc(1,sizeof *render.atlas); render.n_atlas=1;
+    int atlas_id=render.n_atlas;
+    GmlAtlas *atlases=realloc(render.atlas,(size_t)(atlas_id+1)*sizeof *atlases);
+    if(!atlases) abort();
+    render.atlas=atlases; render.n_atlas++;
+    memset(&render.atlas[atlas_id],0,sizeof render.atlas[atlas_id]);
     render.tpag=calloc(1,sizeof *render.tpag); render.n_tpag=1;
     render.bg=calloc(1,sizeof *render.bg); render.n_bg=1;
     if(!render.atlas || !render.tpag || !render.bg) abort();
-    render.atlas[0].px=malloc(4*4*4); render.atlas[0].w=render.atlas[0].h=4;
-    if(!render.atlas[0].px) abort();
+    render.atlas[atlas_id].px=malloc(4*4*4);
+    render.atlas[atlas_id].w=render.atlas[atlas_id].h=4;
+    if(!render.atlas[atlas_id].px) abort();
     for(int y=0;y<4;y++) for(int x=0;x<4;x++){
-      uint8_t *pixel=render.atlas[0].px+(y*4+x)*4;
+      uint8_t *pixel=render.atlas[atlas_id].px+(y*4+x)*4;
       pixel[0]=(uint8_t)(x*20+7); pixel[1]=(uint8_t)(y*30+11); pixel[2]=13; pixel[3]=255;
     }
-    render.tpag[0]=(GmlTpag){.sw=4,.sh=4,.tw=4,.th=4,.bw=4,.bh=4};
+    render.tpag[0]=(GmlTpag){.sw=4,.sh=4,.tw=4,.th=4,.bw=4,.bh=4,.atlas=atlas_id};
     uint32_t frame[16*16]={0};
     gml_render_begin(&render,frame,16,16,0,0);
     GmlVM vm={.render=&render};
