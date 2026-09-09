@@ -178,10 +178,11 @@ PERSISTENT_TEST_ARGS='--case timeline.native_import_and_step'`.
 
 ## File and buffer contract coverage
 
-| Test owner | Contract | Focused command |
-| --- | --- | --- |
-| `tests/unit/runtime/test_builtin_buffer_hash.c` | Exact buffer SHA-1 slices, unchanged cursor/data and invalid ranges | `make check TEST=builtin_buffer_hash` |
-| `tests/contract/test_builtin_file_io.c` | Streamed digest vectors, VFS overlay and short-read/error handling; rewrite cursor, handle, write authority and resource cleanup | `make check TEST=builtin_file_io` |
+`tests/unit/runtime/test_builtin_buffer_hash.c` covers exact buffer SHA-1 slices,
+unchanged cursor/data and invalid ranges: `make check TEST=builtin_buffer_hash`.
+`tests/contract/test_builtin_file_io.c` covers streamed digest vectors, VFS overlay
+and short-read/error handling, plus rewrite cursor, handle, write authority and
+resource cleanup: `make check TEST=builtin_file_io`.
 
 ## Build-time audio data
 
