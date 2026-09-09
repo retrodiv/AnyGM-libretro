@@ -16,6 +16,7 @@ int surface_tiled_fixture(void){
   TILED_REQUIRE(source>0,"source allocation");
   memcpy(render.surface[source-1].px,pattern,sizeof pattern);
   render.surface[source-1].opaque_known=render.surface[source-1].all_opaque=1;
+  render.surface[source-1].all_transparent=0;
   for(int scenario=0;scenario<6;scenario++){
     double xs=scenario==1?2:scenario==2?-1:scenario==3?.75:1;
     double ys=scenario==2?-2:1;
