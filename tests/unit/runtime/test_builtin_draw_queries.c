@@ -114,6 +114,28 @@ static int alpha_case(void){
         gml_builtin_fast_id(&vm,"draw_set_alpha_test_ref_value")==-1;
   vm.render=NULL; gml_vm_free(&vm); return ok;
 }
+static int background_names_case(void){
+  int ok=1;
+  for(int cached=0;cached<2;cached++){
+    GmlBg backgrounds[2]={{.tpag=-1,.name="neutral_background_a"},
+                          {.tpag=-1,.name="neutral_background_b"}};
+    GmlRender render={.bg=backgrounds,.n_bg=2}; GmlVM vm={.render=&render};
+    for(int i=0;i<2;i++){
+      GmlVal arg=vreal(i);
+      ok &= string_is(query(&vm,"background_name",&arg,1,cached,&ok),backgrounds[i].name);
+      ok &= string_is(query(&vm,"background_get_name",&arg,1,cached,&ok),backgrounds[i].name);
+    }
+    const double invalid[]={-1,2,INFINITY,-INFINITY,NAN,1e100};
+    for(unsigned i=0;i<sizeof invalid/sizeof invalid[0];i++){
+      GmlVal arg=vreal(invalid[i]);
+      ok &= string_is(query(&vm,"background_name",&arg,1,cached,&ok),"");
+    }
+    ok &= !strcmp(backgrounds[0].name,"neutral_background_a") &&
+          !strcmp(backgrounds[1].name,"neutral_background_b");
+    vm.render=NULL; gml_vm_free(&vm);
+  }
+  return ok;
+}
 static int background_part_case(void){
   int ok=1;
   for(int cached=0;cached<2;cached++){
@@ -149,7 +171,7 @@ static int background_part_case(void){
 int main(void){
   const AnygmTestCase cases[]={{"circle_precision",circle_case},{"shader_asset_names",shader_case},
     {"all_live_layers_at_depth",layers_case},{"retired_alpha_controls",alpha_case},
-    {"background_source_region",background_part_case}};
+    {"background_source_region",background_part_case},{"background_name_alias",background_names_case}};
   const AnygmTestGroup group={"draw_queries",cases,sizeof cases/sizeof cases[0]};
   AnygmTestResult result;
   anygm_test_run_groups(&group,1,NULL,&result);

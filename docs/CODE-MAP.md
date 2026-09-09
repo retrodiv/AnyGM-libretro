@@ -184,6 +184,12 @@ The persistent timeline owner additionally verifies queries on imported native
 records without changing playback: `make check TEST=persistent_room
 PERSISTENT_TEST_ARGS='--case timeline.native_import_and_step'`.
 
+## Fixed-arity numeric contract coverage
+
+`tests/unit/runtime/test_builtin_extrema.c` owns fixed-three-argument extrema,
+ordered/cached dispatch, argument-order boundaries, exceptional numeric values and
+defensive missing arguments. Run `make check TEST=builtin_extrema`.
+
 ## File and buffer contract coverage
 
 `tests/unit/runtime/test_builtin_draw_queries.c` covers retained circle precision,
