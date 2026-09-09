@@ -934,6 +934,7 @@ GmlVal gml_builtin_try_draw(GmlVM *vm, const char *nm, GmlVal *a, int n){
     if(!strcmp(nm,"draw_primitive_end")){
       if(R) gml_software3d_primitive_2d_end(R);
       return vreal(0); }
+    if(!strcmp(nm,"draw_get_circle_precision")) return vreal(builtin_draw_state(R).circle_precision);
     if(!strcmp(nm,"draw_set_circle_precision")){ if(R){ GmlRenderDrawState draw={0}; int p=(int)N(a,n,0); if(p<4) p=4; if(p>64) p=64; p=(p/4)*4; if(p<4) p=4; draw.circle_precision=p; gml_render_draw_state_update(R,&draw,GML_RENDER_DRAW_STATE_CIRCLE_PRECISION); } return vreal(0); }
     if(!strcmp(nm,"application_surface")) return vreal(0);
     /* ---- FMOD Studio extension (fmod-gamemaker): games route ALL audio through it (their AUDO chunk
@@ -1888,6 +1889,12 @@ GmlVal gml_builtin_try_draw_3d(GmlVM *vm, const char *nm, GmlVal *a, int n){
     return vreal(ok); }
   /* Uniform and sampler handles are opaque to GML; the software renderer maps recognized shader
    * controls onto its private slots and accepts unknown controls without changing output. */
+  if(!strcmp(nm,"shader_get_name")){
+    double id=N(a,n,0);
+    const char *name=n>0 && isfinite(id) && id>=0 && id<=INT_MAX
+      ?chunk_asset_name_by_index(vm?vm->win:NULL,"SHDR",0,(int)id):NULL;
+    return name?vstr_owned(strdup(name)):vstr("");
+  }
   if(!strcmp(nm,"shader_get_uniform")){ GmlRender *R=(GmlRender*)vm->render;
     return vreal(gml_shader_get_uniform(R,(int)N(a,n,0),S(vm,a,n,1))); }
   if(!strcmp(nm,"shader_get_sampler_index")){

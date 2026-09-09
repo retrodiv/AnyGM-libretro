@@ -37,6 +37,20 @@ int builtin_layer_exact(GmlVM *vm, const char *nm, GmlVal *a, int n, GmlVal *out
     for(int i=0;i<vm->n_rtl;i++) if(vm->rtl[i].used) A->data[k++]=vreal(vm->rtl[i].id);
     *out=v; return 1;
   }
+  if(!strcmp(nm,"layer_get_id_at_depth")){
+    double depth=N(a,n,0);
+    int count=0;
+    for(int i=0;i<vm->n_rtl;i++)
+      if(vm->rtl[i].used && vm->rtl[i].depth==depth) count++;
+    GmlVal value=arr_newv(count?count:1);
+    if(value.t==V_ARR){
+      GmlArr *array=value.arr; int next=0;
+      if(!count) array->data[0]=vreal(-1);
+      for(int i=0;i<vm->n_rtl;i++)
+        if(vm->rtl[i].used && vm->rtl[i].depth==depth) array->data[next++]=vreal(vm->rtl[i].id);
+    }
+    *out=value; return 1;
+  }
   if(!strcmp(nm,"layer_get_all_elements")){
     int lid=(int)N(a,n,0), cnt=0;
     for(int i=0;i<vm->n_rte;i++) if(vm->rte[i].used && vm->rte[i].layer==lid) cnt++;
