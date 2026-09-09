@@ -167,6 +167,15 @@ queue-copy and stack-copy contracts, including ordered/cached dispatch, value or
 source preservation and independent destination storage. Run
 `make check TEST=builtin_sequence_copy`.
 
+## Resource-query contract coverage
+
+`tests/unit/runtime/test_builtin_resource_queries.c` owns neutral object-asset flag,
+timeline active-moment count, per-device deadzone and invalid-argument contracts
+through ordered/cached dispatch. Run `make check TEST=builtin_resource_queries`.
+The persistent timeline owner additionally verifies queries on imported native
+records without changing playback: `make check TEST=persistent_room
+PERSISTENT_TEST_ARGS='--case timeline.native_import_and_step'`.
+
 ## Build-time audio data
 
 `tools/audiogen/` owns the optional, standalone reproduction of

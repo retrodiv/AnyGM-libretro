@@ -671,10 +671,10 @@ static void fixture_object_payload(Fixture *f, const FixtureObject *object){
   for(int i=0;i<object->event_count;i++)
     if(object->events[i].event_type>last_event_type) last_event_type=object->events[i].event_type;
   fixture_u32(f,(unsigned)object->sprite);
-  fixture_u32(f,0); /* solid */
+  fixture_u32(f,(unsigned)(object->solid!=0));
   fixture_u32(f,1); /* visible */
   fixture_u32(f,0); /* depth */
-  fixture_u32(f,0); /* persistent */
+  fixture_u32(f,(unsigned)(object->persistent!=0));
   fixture_u32(f,(unsigned)-100); /* parent: none */
   fixture_u32(f,(unsigned)-1);   /* mask: the sprite's own */
   fixture_u32(f,(unsigned)last_event_type);

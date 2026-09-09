@@ -75,6 +75,7 @@ typedef struct {
   int sprite;        /* sprite slot, or -1 for an object with no sprite and so no collision */
   const FixtureEvent *events;
   int event_count;
+  int solid, persistent; /* authored object flags; zero preserves the plain fixture */
 } FixtureObject;
 
 typedef struct {

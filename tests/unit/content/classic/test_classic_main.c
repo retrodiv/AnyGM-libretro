@@ -186,6 +186,7 @@ static int program_actions_read(const char *path, ProgramFile *p, FixtureEvent *
  *   background <edge>
  *   startup <source.gml>
  *   object <name> <sprite-slot|-1>
+ *   object-flags <solid:0|1> <persistent:0|1>   applies to the most recent object
  *   event <type> <number> <source.gml>     applies to the most recent object
  *   event-actions <type> <number> <list>  code/question/begin/end/else action list
  *   instance <object-slot> <x> <y>
@@ -246,6 +247,11 @@ static int program_read(const char *path, ProgramFile *p){
         p->event_starts[current]=events;
         ok=p->objects[current].name!=NULL;
       }
+    } else if(!strcmp(keyword,"object-flags")){
+      int solid=0, persistent=0;
+      if(current<0 || sscanf(line,"%31s %d %d",keyword,&solid,&persistent)!=3 ||
+         (solid!=0 && solid!=1) || (persistent!=0 && persistent!=1)) ok=0;
+      else { p->objects[current].solid=solid; p->objects[current].persistent=persistent; }
     } else if(!strcmp(keyword,"event") || !strcmp(keyword,"event-actions")){
       if(current<0){ fprintf(stderr,"event before any object\n"); ok=0; }
       else if(events>=FIXTURE_MAX_EVENTS){ fprintf(stderr,"too many events\n"); ok=0; }

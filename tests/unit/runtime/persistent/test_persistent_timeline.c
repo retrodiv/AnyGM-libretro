@@ -2,6 +2,7 @@
  * Copyright (c) 2026 retrodiv <retrodiv@proton.me>
  */
 #include "persistent_test_fixture.h"
+#include "gml_builtin.h"
 
 #include "gmlc_package.h"
 #include "stdio_vfs.h"
@@ -49,6 +50,15 @@ int expect_native_timeline_import(const char *path){
     vm.timelines[0].moments[0].step==0 && vm.timelines[0].moments[0].code>=0 &&
     vm.timelines[0].moments[1].step==2 && vm.timelines[0].moments[1].code>=0 &&
     vm.timelines[0].moments[2].step==4 && vm.timelines[0].moments[2].code>=0;
+  GmlVal timeline=vreal(0);
+  GmlVal queried_size=gml_builtin_call(&vm,"timeline_size",&timeline,1);
+  ok &= queried_size.t==V_REAL && queried_size.d==3;
+  int query_id=gml_builtin_fast_id(&vm,"timeline_size");
+  if(query_id<0) ok=0;
+  else {
+    queried_size=gml_builtin_call_fast_id(&vm,query_id,"timeline_size",&timeline,1);
+    ok &= queried_size.t==V_REAL && queried_size.d==3;
+  }
   if(ok){
     gml_room_enter(&vm,0);
     GmlInstance *probe=find_slot(&vm,100000);
@@ -62,6 +72,9 @@ int expect_native_timeline_import(const char *path){
       ok=order && order->t==V_REAL && order->d==12;
     }
   }
+  gml_builtin_call(&vm,"timeline_clear",&timeline,1);
+  queried_size=gml_builtin_call(&vm,"timeline_size",&timeline,1);
+  ok &= queried_size.t==V_REAL && queried_size.d==0;
   if(!ok) fprintf(stderr,"native timeline import fixture failed\n");
   gml_vm_free(&vm); gml_win_free(&win);
   return ok;
