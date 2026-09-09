@@ -3,8 +3,10 @@
  */
 /* Documented sequence-copy contracts, through ordered and cached dispatch. */
 #include "gml_builtin.h"
+#include "gml_particle.h"
 #include "anygm_test_runner.h"
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 static int expect(int condition,const char *message){
@@ -127,10 +129,63 @@ static int invalid_case(void){
   gml_vm_free(&vm);
   return ok;
 }
+static int state_case(void){
+  GmlWin win={0};
+  GmlVM vm={0};
+  vm.win=&win;
+  vm.room_index=-1;
+  vm.pending_room=-1;
+  vm.next_creation_seq=1;
+  vm.particles=gml_particle_state_create(&vm);
+  if(!vm.particles) return 0;
+  gml_vm_software3d_reset(&vm);
+  GmlVal source=gml_arr_new(1,vstr("saved"));
+  GmlVal arrays[]={source,source};
+  GmlVal joined=gml_builtin_call(&vm,"array_concat",arrays,2);
+  *gml_varmap_put(&vm.globals,"source")=source;
+  *gml_varmap_put(&vm.globals,"joined")=joined;
+  GmlVal queue=gml_builtin_call(&vm,"ds_queue_create",NULL,0);
+  GmlVal stack=gml_builtin_call(&vm,"ds_stack_create",NULL,0);
+  GmlVal queue_copy=gml_builtin_call(&vm,"ds_queue_create",NULL,0);
+  GmlVal stack_copy=gml_builtin_call(&vm,"ds_stack_create",NULL,0);
+  GmlVal enqueue[]={queue,joined}, push[]={stack,joined};
+  gml_builtin_call(&vm,"ds_queue_enqueue",enqueue,2);
+  gml_builtin_call(&vm,"ds_stack_push",push,2);
+  GmlVal queue_args[]={queue_copy,queue}, stack_args[]={stack_copy,stack};
+  gml_builtin_call(&vm,"ds_queue_copy",queue_args,2);
+  gml_builtin_call(&vm,"ds_stack_copy",stack_args,2);
+  size_t size=gml_vm_state_size(&vm), written=0, used=0;
+  void *bytes=malloc(size?size:1);
+  int ok=expect(bytes && gml_vm_state_save(&vm,bytes,size,&written) && written==size,
+                "new sequence results serialize through the existing state owner");
+  if(ok){
+    gml_arr_set(joined,0,vreal(0));
+    gml_builtin_call(&vm,"ds_queue_clear",&queue_copy,1);
+    gml_builtin_call(&vm,"ds_stack_clear",&stack_copy,1);
+    ok &= expect(gml_vm_state_load(&vm,bytes,written,&used) && used==written,
+                 "same-execution sequence snapshot restores");
+    if(ok){
+      GmlVal *restored=gml_varmap_get(&vm.globals,"joined");
+      GmlVal *original=gml_varmap_get(&vm.globals,"source");
+      GmlVal head=gml_builtin_call(&vm,"ds_queue_head",&queue_copy,1);
+      GmlVal top=gml_builtin_call(&vm,"ds_stack_top",&stack_copy,1);
+      ok &= expect(restored && original && restored->t==V_ARR &&
+                   restored->arr!=original->arr && gml_val_array_length(*restored)==2 &&
+                   string_is(gml_arr_get(*restored,0),"saved") &&
+                   head.t==V_ARR && head.arr==restored->arr &&
+                   top.t==V_ARR && top.arr==restored->arr,
+                   "restore preserves contents, separate arrays and shared DS element references");
+    }
+  }
+  free(bytes);
+  gml_vm_free(&vm);
+  return ok;
+}
 int main(void){
   static const AnygmTestCase cases[]={
     {"array_concat",concat_case},{"queue_copy",queue_case},{"stack_copy",stack_case},
     {"defensive_policy",invalid_case},
+    {"current_state",state_case},
   };
   const AnygmTestGroup group={"sequence_copy",cases,sizeof(cases)/sizeof(cases[0])};
   AnygmTestResult result={0};
