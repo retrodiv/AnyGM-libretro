@@ -416,6 +416,12 @@ static GmlVal gml_builtin_try_instances_timelines(GmlVM *vm, const char *nm, Gml
     return vreal(ti>=0 && ti<vm->n_timelines && vm->timelines[ti].name!=NULL); }
   if(!strcmp(nm,"timeline_get_name")){ int ti=(int)N(a,n,0);
     return vstr((ti>=0 && ti<vm->n_timelines && vm->timelines[ti].name)?vm->timelines[ti].name:""); }
+  if(!strcmp(nm,"timeline_size")){
+    double index=N(a,n,0);
+    if(n<1 || !isfinite(index) || index<0 || index>=vm->n_timelines) return vreal(0);
+    const GmlTimeline *timeline=&vm->timelines[(int)index];
+    return vreal(timeline->name?timeline->n:0);
+  }
   if(!strcmp(nm,"timeline_add")) return vreal(gml_timeline_add(vm));
   if(!strcmp(nm,"timeline_clear")){ gml_timeline_clear(vm,(int)N(a,n,0)); return vreal(0); }
   if(!strcmp(nm,"action_set_timeline") || !strcmp(nm,"action_timeline_set")){ if(vm->cur_self){

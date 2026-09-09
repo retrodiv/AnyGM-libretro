@@ -1229,6 +1229,12 @@ GmlVal gml_builtin_try_draw(GmlVM *vm, const char *nm, GmlVal *a, int n){
     return vreal((ob>=0&&ob<vm->n_objects)?vm->objects[ob].mask_index:-1); }
   if(!strcmp(nm,"object_get_visible")){ int ob=(int)N(a,n,0);
     return vreal((ob>=0&&ob<vm->n_objects)?vm->objects[ob].visible:0); }
+  if(!strcmp(nm,"object_get_solid") || !strcmp(nm,"object_get_persistent")){
+    double index=N(a,n,0);
+    if(n<1 || !isfinite(index) || index<0 || index>=vm->n_objects) return vreal(0);
+    const GmlObject *object=&vm->objects[(int)index];
+    return vreal(!strcmp(nm,"object_get_solid")?object->solid!=0:object->persistent!=0);
+  }
   if(!strcmp(nm,"object_set_visible")){ int ob=(int)N(a,n,0);
     if(ob>=0&&ob<vm->n_objects) vm->objects[ob].visible=N(a,n,1)!=0.0;
     return vreal(0); }

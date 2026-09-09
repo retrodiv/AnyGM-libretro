@@ -1337,6 +1337,11 @@ int builtin_input_kbgp(GmlVM *vm, const char *nm, GmlVal *a, int n, GmlVal *out)
   if(!strcmp(nm,"gamepad_set_axis_deadzone")){
     gp_deadzone_set(vm,(int)N(a,n,0),N(a,n,1)); *out=vreal(0); return 1;
   }
+  if(!strcmp(nm,"gamepad_get_axis_deadzone")){
+    double index=N(a,n,0);
+    int device=n>0 && isfinite(index) && index>=0 && index<GML_GP_MAX_DEV?(int)index:-1;
+    *out=vreal(gp_deadzone_get(vm,device)); return 1;
+  }
   if(!strcmp(nm,"gamepad_set_button_threshold")){ *out=vreal(0); return 1; }
   if(!strcmp(nm,"gamepad_set_vibration")){
     gml_input_gamepad_set_vibration(vm,(int)N(a,n,0), N(a,n,1), N(a,n,2));
