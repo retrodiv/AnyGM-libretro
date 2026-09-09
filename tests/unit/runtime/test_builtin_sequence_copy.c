@@ -169,6 +169,10 @@ static int state_case(void){
       GmlVal *original=gml_varmap_get(&vm.globals,"source");
       GmlVal head=gml_builtin_call(&vm,"ds_queue_head",&queue_copy,1);
       GmlVal top=gml_builtin_call(&vm,"ds_stack_top",&stack_copy,1);
+      fprintf(stderr,"state probe: result=%p source=%p head=%p/%d top=%p/%d length=%d first=%s\n",
+              restored?restored->arr:NULL,original?original->arr:NULL,
+              head.arr,head.t,top.arr,top.t,restored?gml_val_array_length(*restored):-1,
+              restored && gml_arr_get(*restored,0).t==V_STR?gml_arr_get(*restored,0).s:"<non-string>");
       ok &= expect(restored && original && restored->t==V_ARR &&
                    restored->arr!=original->arr && gml_val_array_length(*restored)==2 &&
                    string_is(gml_arr_get(*restored,0),"saved") &&
