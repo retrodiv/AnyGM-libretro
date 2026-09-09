@@ -458,6 +458,31 @@ int main(void){
   source.size=content_size;
   if(anygm_load(engine,&source,NULL)!=ANYGM_OK) return fail("content load failed")?0:1;
 
+  /* Reject a bounded PATH table at the VM/content boundary, including after a renderer
+   * existed. A failed cold Reset must also leave an empty, reloadable engine. */
+  const GmlChunk *path_chunk=gml_chunk(&engine->win,"PATH");
+  if(!path_chunk || path_chunk->off>content_size || content_size-path_chunk->off<4)
+    return fail("path rejection fixture has no bounded chunk")?0:1;
+  uint8_t *bad_content=malloc(content_size);
+  if(!bad_content) return fail("path rejection fixture allocation failed")?0:1;
+  memcpy(bad_content,content,content_size);
+  write_u32(bad_content+path_chunk->off,GML_PATH_MAX_COUNT+1);
+  anygm_unload(engine);
+  source.data=bad_content;
+  if(anygm_load(engine,&source,NULL)!=ANYGM_ERROR_INVALID_CONTENT || engine->loaded ||
+     engine->win.data || engine->lifecycle!=ENGINE_EMPTY)
+    return fail("invalid path table did not reject cleanly")?0:1;
+  free(bad_content); source.data=content;
+  if(anygm_load(engine,&source,NULL)!=ANYGM_OK)
+    return fail("reload after path rejection failed")?0:1;
+  for(int i=0;i<engine->win.n_chunks;i++)
+    if(!strcmp(engine->win.chunks[i].name,"PATH")) engine->win.chunks[i].size=3;
+  if(anygm_reset(engine)!=ANYGM_ERROR_INVALID_CONTENT || engine->loaded ||
+     engine->win.data || engine->lifecycle!=ENGINE_EMPTY)
+    return fail("invalid path Reset did not release runtime owners")?0:1;
+  if(anygm_load(engine,&source,NULL)!=ANYGM_OK)
+    return fail("reload after rejected Reset failed")?0:1;
+
   AnygmInputFrame input={0};
   AnygmFrameOutput output={0};
   input.struct_size=sizeof input;

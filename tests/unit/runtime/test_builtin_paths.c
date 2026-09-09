@@ -204,12 +204,36 @@ static int append_case(void){
                  query(&vm,"path_get_point_x",destination,2)==10 &&
                  query(&vm,"path_get_point_speed",destination,3)==0,
                  "append joins defining points without relocating them");
-    ok &= expect(query(&vm,"path_get_number",source,0)==0 &&
+    ok &= expect(query(&vm,"path_get_number",source,0)==2 &&
                  query(&vm,"path_exists",source,0)==1,
-                 "append leaves the source as an existing empty path");
+                 "append retains the source controls and resource");
+    gml_builtin_call(&vm,"path_clear_points",&source,1);
+    ok &= expect(query(&vm,"path_get_number",destination,0)==4,
+                 "the destination owns appended controls after source clearing");
     gml_vm_free(&vm);
   }
   return ok;
+}
+static int smooth_center_case(void){
+  GmlVM vm={0}; GmlVal id=gml_builtin_call(&vm,"path_add",NULL,0);
+  const double points[3][3]={{0,0,100},{100,100,50},{20,0,25}};
+  for(int i=0;i<3;i++){
+    GmlVal args[]={id,vreal(points[i][0]),vreal(points[i][1]),vreal(points[i][2])};
+    gml_builtin_call(&vm,"path_add_point",args,4);
+  }
+  GmlVal kind[]={id,vreal(1)},closed[]={id,vreal(0)};
+  gml_builtin_call(&vm,"path_set_closed",closed,2);
+  gml_builtin_call(&vm,"path_set_kind",kind,2);
+  gml_builtin_call(&vm,"path_mirror",&id,1);
+  gml_builtin_call(&vm,"path_flip",&id,1);
+  int ok=expect(query(&vm,"path_get_point_x",id,0)==100 &&
+                query(&vm,"path_get_point_y",id,0)==100 &&
+                query(&vm,"path_get_point_x",id,1)==0 &&
+                query(&vm,"path_get_point_y",id,1)==0 &&
+                query(&vm,"path_get_point_x",id,2)==80 &&
+                query(&vm,"path_get_point_y",id,2)==100,
+                "smooth transforms use defining bounds, not the sampled curve bounds");
+  gml_vm_free(&vm); return ok;
 }
 static int names_case(void){
   int ok=1;
@@ -300,6 +324,11 @@ static int edited_restore_case(void){
                 "translation moves only the relative follower's local pivot");
   gml_builtin_call(&vm,"path_delete",&removed,1);
   ok &= expect(query(&vm,"path_exists",removed,0)==0,"deleted path is no longer a live resource");
+  /* Loaded metadata predates setter validation. Preserve precision zero rather than
+   * writing a current snapshot that its own reader rejects; sampling remains bounded. */
+  vm.paths[0].precision=0;
+  GmlVal closed[]={id,vreal(0)};
+  gml_builtin_call(&vm,"path_set_closed",closed,2);
   size_t size=gml_vm_state_size(&vm),written=0,used=0;
   unsigned char *bytes=malloc(size?size:1),*after=malloc(size?size:1);
   ok &= expect(bytes && after && gml_vm_state_save(&vm,bytes,size,&written) && written==size,
@@ -313,7 +342,8 @@ static int edited_restore_case(void){
     GmlVal point[]={id,vreal(1),vreal(45),vreal(16),vreal(33)};
     gml_builtin_call(&vm,"path_change_point",point,5);
     ok &= expect(query(&vm,"path_get_point_x",id,1)==45 &&
-                 query(&vm,"path_get_point_speed",id,1)==33 && vm.paths[0].n>3,
+                 query(&vm,"path_get_point_speed",id,1)==33 && vm.paths[0].n>3 &&
+                 vm.paths[0].precision==0,
                  "restored smooth controls remain editable");
     shift[1]=vreal(3); shift[2]=vreal(4);
     gml_builtin_call(&vm,"path_shift",shift,3);
@@ -333,7 +363,8 @@ int main(void){
                                {"current_state_restore",restore_case},
                                {"defining_point_edits",controls_case},
                                {"centered_transforms",transforms_case},
-                               {"append_transfer",append_case},{"resource_names",names_case},
+                               {"smooth_control_center",smooth_center_case},
+                               {"append_preserves_source",append_case},{"resource_names",names_case},
                                {"authored_controls",authored_case},
                                {"edited_state_restore",edited_restore_case}};
   const AnygmTestGroup group={"paths",cases,sizeof cases/sizeof cases[0]};

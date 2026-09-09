@@ -886,8 +886,7 @@ static int path_publish_controls(GmlPath *p,GmlPathControl *controls,int count,
 int gml_path_replace(GmlVM *vm,int index,const GmlPathControl *points,int count,
                      int kind,int closed,int precision){
   GmlPath *p=path_find(vm,index);
-  if(!p || count<0 || count>GML_PATH_MAX_POINTS || (count && !points) ||
-     kind<0 || kind>1 || closed<0 || closed>1 || precision<1 || precision>8) return 0;
+  if(!p || count<0 || count>GML_PATH_MAX_POINTS || (count && !points)) return 0;
   GmlPathControl *controls=NULL;
   if(count){
     controls=malloc((size_t)count*sizeof(*controls));
@@ -920,7 +919,7 @@ int gml_path_edit_point(GmlVM *vm,int index,int point,int operation,GmlPathContr
 }
 int gml_path_append(GmlVM *vm,int destination,int source){
   GmlPath *p=path_find(vm,destination),*other=path_find(vm,source);
-  /* Self-transfer has no specified result; retain the resource instead of clearing it. */
+  /* Self-append has no specified result; retain the resource without unbounded growth. */
   if(!p || !other || p==other || other->control_count>GML_PATH_MAX_POINTS-p->control_count)
     return 0;
   int count=p->control_count+other->control_count;
@@ -929,8 +928,7 @@ int gml_path_append(GmlVM *vm,int destination,int source){
   if(p->control_count) memcpy(controls,p->controls,(size_t)p->control_count*sizeof(*controls));
   if(other->control_count)
     memcpy(controls+p->control_count,other->controls,(size_t)other->control_count*sizeof(*controls));
-  if(!path_publish_controls(p,controls,count,p->kind,p->closed,p->precision)) return 0;
-  return path_publish_controls(other,NULL,0,other->kind,other->closed,other->precision);
+  return path_publish_controls(p,controls,count,p->kind,p->closed,p->precision);
 }
 int gml_path_reverse(GmlVM *vm,int index){
   GmlPath *p=path_find(vm,index);

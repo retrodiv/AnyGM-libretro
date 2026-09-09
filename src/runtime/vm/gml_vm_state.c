@@ -1362,12 +1362,13 @@ int gml_vm_state_load(GmlVM *vm, const void *data, size_t len, size_t *used){
         }
         last=index;
         GmlPath *p=&vm->paths[index];
+        /* Retain authored scalar metadata verbatim. The sampler bounds precision when
+         * it consumes it; current snapshots must also restore pre-setter values. */
         int kind=sr_i32(&s), closed=sr_i32(&s), precision=sr_i32(&s);
         unsigned deleted=sr_u8(&s);
         double len=sr_d(&s);
         int count=sr_i32(&s);
         if(count<0 || count>GML_STATE_MAX_PATH_POINTS || !isfinite(len) || len<0 ||
-           kind<0 || kind>1 || closed<0 || closed>1 || precision<1 || precision>8 ||
            deleted>1 || (deleted && (count || len)) ||
            s.pos>s.cap || (size_t)count>(s.cap-s.pos)/32u){
           state_debug(vm,"bad path point count",s.pos,(uint32_t)count); s.ok=0; break;
