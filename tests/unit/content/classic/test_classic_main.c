@@ -108,6 +108,7 @@ static char *read_source_file(const char *path){
 #define FIXTURE_MAX_INSTANCES 96
 #define FIXTURE_MAX_TIMELINES 8
 #define FIXTURE_MAX_MOMENTS 64
+#define FIXTURE_MAX_FONTS 8
 
 typedef struct {
   FixtureProgram program;
@@ -118,9 +119,10 @@ typedef struct {
   FixtureInstance instances[FIXTURE_MAX_INSTANCES];
   FixtureTimeline timelines[FIXTURE_MAX_TIMELINES];
   FixtureTimelineMoment moments[FIXTURE_MAX_MOMENTS];
+  FixtureFont fonts[FIXTURE_MAX_FONTS];
   int event_starts[FIXTURE_MAX_OBJECTS];
   char *owned[FIXTURE_MAX_EVENTS + FIXTURE_MAX_OBJECTS + FIXTURE_MAX_ACTIONS +
-              FIXTURE_MAX_TIMELINES + FIXTURE_MAX_MOMENTS + 2];
+              FIXTURE_MAX_TIMELINES + FIXTURE_MAX_MOMENTS + FIXTURE_MAX_FONTS + 2];
   int owned_count;
 } ProgramFile;
 
@@ -190,6 +192,7 @@ static int program_actions_read(const char *path, ProgramFile *p, FixtureEvent *
  *   caption <text>|"<text>"      the room's authored caption; quote it to carry outer spaces
  *   sprite <edge> [blank-second-frame]
  *   background <edge> [second-edge]
+ *   font <name> <size> <bold:0|1> <italic:0|1> <first> <last>
  *   startup <source.gml>
  *   object <name> <sprite-slot|-1>
  *   object-flags <solid:0|1> <persistent:0|1>   applies to the most recent object
@@ -202,6 +205,7 @@ static int program_read(const char *path, ProgramFile *p){
   p->program.room_width=320; p->program.room_height=240;
   p->program.objects=p->objects; p->program.instances=p->instances;
   p->program.timelines=p->timelines;
+  p->program.fonts=p->fonts;
   FILE *file=fopen(path,"rb");
   if(!file){ fprintf(stderr,"cannot open program: %s\n",path); return 0; }
   char line[512];
@@ -242,6 +246,22 @@ static int program_read(const char *path, ProgramFile *p){
         if(errno || !end || *end || edge<=0 || edge>63) ok=0;
         else if(i) p->program.second_background_size=(int)edge;
         else p->program.background_size=(int)edge;
+      }
+    } else if(!strcmp(keyword,"font")){
+      char args[5][64],extra[2]; int values[5];
+      if(p->program.font_count>=FIXTURE_MAX_FONTS ||
+         sscanf(line,"%31s %255s %63s %63s %63s %63s %63s %1s",keyword,a,
+                args[0],args[1],args[2],args[3],args[4],extra)!=7) ok=0;
+      for(int i=0;ok && i<5;i++){
+        char *end=NULL; errno=0;
+        long value=strtol(args[i],&end,10);
+        if(errno || end==args[i] || *end || value<INT_MIN || value>INT_MAX) ok=0;
+        else values[i]=(int)value;
+      }
+      if(ok){
+        FixtureFont *font=&p->fonts[p->program.font_count++];
+        *font=(FixtureFont){program_keep(p,strdup(a)),values[0],values[1],values[2],values[3],values[4]};
+        ok=font->name!=NULL;
       }
     } else if(!strcmp(keyword,"startup")){
       if(sscanf(line,"%31s %255s",keyword,a)!=2){ ok=0; }

@@ -146,12 +146,52 @@ static int expect_font_styles(void){
   return ok;
 }
 
+static int expect_program_fonts(void){
+  FixtureFont fonts[]={{"regular",12,0,0,65,65},{"bold",12,1,0,65,65},
+                        {"italic",12,0,1,65,65},{"both",12,1,1,65,65}};
+  FixtureProgram program={.room_width=24,.room_height=20,.fonts=fonts,.font_count=4};
+  Fixture bytes={{0},0};
+  for(unsigned version=800;version<=810;version+=10){
+    GmlcClassicManifest manifest={0}; GmlcProject project; fixture_project_clear(&project);
+    project.prefer_memory_files=1;
+    char error[256]={0};
+    int ok=build_project_fixture_program(version,&program,&bytes) &&
+      gmlc_classic_manifest(NULL,bytes.data,bytes.size,&manifest,error,sizeof error) &&
+      manifest.inventory.resource_slots[GMLC_CLASSIC_FONT]==4 &&
+      manifest.existing[GMLC_CLASSIC_FONT]==4 &&
+      gmlc_classic_import_fonts(&manifest,&project,"unused",error,sizeof error) && project.n_fonts==4;
+    for(int i=0;ok && i<4;i++)
+      ok=!strcmp(project.fonts[i].name,fonts[i].name) && project.fonts[i].bold==(i&1) &&
+        project.fonts[i].italic==(i>>1) && project.fonts[i].n_glyphs==1;
+    if(!ok) fprintf(stderr,"program font resources %u: %s\n",version,error);
+    free_font_fixture_project(&project); gmlc_classic_manifest_free(&manifest);
+    if(!ok) return 0;
+  }
+  if(build_project_fixture_program(530,&program,&bytes) ||
+     build_project_fixture_program(600,&program,&bytes) ||
+     build_project_fixture_program(701,&program,&bytes)) return 0;
+  program.font_count=9;
+  if(build_project_fixture_program(800,&program,&bytes)) return 0;
+  program.font_count=1;
+  const FixtureFont invalid[]={{NULL,12,0,0,65,65},{"",12,0,0,65,65},
+    {"font",0,0,0,65,65},{"font",257,0,0,65,65},{"font",12,2,0,65,65},
+    {"font",12,0,-1,65,65},{"font",12,0,0,-1,65},{"font",12,0,0,65,65536},
+    {"font",12,0,0,66,65},{"font",12,0,0,0,256}};
+  for(size_t i=0;i<sizeof invalid/sizeof invalid[0];i++){
+    program.fonts=&invalid[i];
+    if(build_project_fixture_program(800,&program,&bytes)) return 0;
+  }
+  program.fonts=NULL;
+  return !build_project_fixture_program(800,&program,&bytes);
+}
+
 AnygmTestGroup classic_test_fonts_group(void){
   static const AnygmTestCase cases[]={
     {"sparse-import",expect_sparse_font_import},
     {"empty-import",expect_empty_font_import},
     {"gm81-metadata",expect_gm81_font_metadata},
     {"style-metadata",expect_font_styles},
+    {"program-resources",expect_program_fonts},
   };
   const AnygmTestGroup group={
     "classic.fonts",cases,sizeof cases/sizeof cases[0]

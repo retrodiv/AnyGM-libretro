@@ -807,6 +807,16 @@ static Fixture manifest_fixture_program(unsigned container_version, const Fixtur
         fixture_background_payload(&payload,program->second_background_size);
         fixture_manifest_resource(&f,"fixture_background_second",800,&payload);
       }
+    } else if(type == GMLC_CLASSIC_FONT && program->font_count){
+      fixture_u32(&f,(unsigned)program->font_count);
+      for(int i=0;i<program->font_count;i++){
+        const FixtureFont *font=&program->fonts[i];
+        Fixture payload={{0},0};
+        fixture_string(&payload,"sans"); fixture_u32(&payload,(unsigned)font->size);
+        fixture_u32(&payload,(unsigned)font->bold); fixture_u32(&payload,(unsigned)font->italic);
+        fixture_u32(&payload,(unsigned)font->first); fixture_u32(&payload,(unsigned)font->last);
+        fixture_manifest_resource(&f,font->name,800,&payload);
+      }
     } else if(type == GMLC_CLASSIC_TIMELINE && program->timeline_count){
       fixture_u32(&f,(unsigned)program->timeline_count);
       for(int i=0;i<program->timeline_count;i++){
@@ -851,6 +861,15 @@ static Fixture manifest_fixture_program(unsigned container_version, const Fixtur
 
 int build_project_fixture_program(unsigned version, const FixtureProgram *program, Fixture *out){
   if(!program || program->room_width<=0 || program->room_height<=0) return 0;
+  if(program->font_count<0 || program->font_count>8 ||
+     (program->font_count && !program->fonts)) return 0;
+  for(int i=0;i<program->font_count;i++){
+    const FixtureFont *font=&program->fonts[i];
+    if(!font->name || !font->name[0] || strlen(font->name)>255 ||
+       font->size<1 || font->size>256 || font->bold<0 || font->bold>1 ||
+       font->italic<0 || font->italic>1 || font->first<0 || font->last>65535 ||
+       font->last<font->first || font->last-font->first>=256) return 0;
+  }
   if(program->timeline_count<0 || program->timeline_count>8 ||
      (program->timeline_count && !program->timelines)) return 0;
   int total_moments=0;
@@ -871,7 +890,7 @@ int build_project_fixture_program(unsigned version, const FixtureProgram *progra
    * sprite record is deliberately not synthesized here; a program requiring one must continue to
    * use a manifest generation until that distinct record is represented explicitly. */
   if(version==530 && program->sprite_size==0 && program->background_size==0 &&
-     program->timeline_count==0){
+     program->timeline_count==0 && program->font_count==0){
     *out=legacy_fixture_build(version,0,NULL,program);
     return 1;
   }

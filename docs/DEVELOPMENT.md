@@ -57,6 +57,12 @@ used by these controls and the existing policy-free font-raster tests.
 section after removing a live font and checks exact rollback with a missing or
 changed source file. It creates every state during its own fresh content load.
 
+The Classic program fixture accepts `font <name> <size> <bold> <italic> <first> <last>`
+in manifest generations. It carries at most eight fonts, sizes 1..256, zero/one style
+flags and inclusive BMP ranges of at most 256 characters. Font normalization and
+invalid declaration bounds are covered by `make check TEST=classic` with
+`CLASSIC_TEST_ARGS='--case classic.fonts'`.
+
 ## Resource limits
 
 Generated tables and a few large C modules can make parallel compilers consume

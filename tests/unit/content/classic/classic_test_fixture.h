@@ -95,6 +95,11 @@ typedef struct {
 } FixtureTimeline;
 
 typedef struct {
+  const char *name;
+  int size, bold, italic, first, last;
+} FixtureFont;
+
+typedef struct {
   const char *startup;             /* library creation code, run once before the room; may be NULL */
   int sprite_size;                 /* edge of the one opaque sprite in slot 0; 0 writes no sprite */
   int sprite_blank_frame;          /* add a second, fully transparent frame to that sprite */
@@ -108,6 +113,8 @@ typedef struct {
   const char *room_caption;   /* the room's authored caption; NULL writes an empty one */
   const FixtureTimeline *timelines;
   int timeline_count;         /* optional authored timelines; manifest containers only */
+  const FixtureFont *fonts;
+  int font_count;             /* at most eight bounded fonts; manifest containers only */
 } FixtureProgram;
 
 int build_project_fixture_program(unsigned version, const FixtureProgram *program, Fixture *out);
