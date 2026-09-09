@@ -3,6 +3,72 @@
  */
 #include "software3d_test_fixture.h"
 
+int surface_tiled_fixture(void){
+  GmlRender render={0}; GmlVM vm={0};
+  uint32_t pixels[48],expected[48];
+  const uint32_t pattern[4]={0xFFFF0000u,0xFF00FF00u,0xFF0000FFu,0xFFFFFFFFu};
+  render.color=0xFFFFFFu; render.alpha=1; render.alphablend=1;
+  render.color_write_mask=15; render.blend_equation=render.blend_equation_alpha=1;
+  render.next_surface_id=1; vm.render=&render;
+  int source=gml_surface_create(&render,2,2),passed=0;
+#define TILED_REQUIRE(condition,label) do { if(!(condition)){ \
+  fprintf(stderr,"surface tiling: %s\n",label); goto done; } } while(0)
+  TILED_REQUIRE(source>0,"source allocation");
+  memcpy(render.surface[source-1].px,pattern,sizeof pattern);
+  render.surface[source-1].opaque_known=render.surface[source-1].all_opaque=1;
+  for(int scenario=0;scenario<6;scenario++){
+    double xs=scenario==1?2:scenario==2?-1:scenario==3?.75:1;
+    double ys=scenario==2?-2:1;
+    double alpha=scenario==0?1:.5;
+    uint32_t tint=scenario==1?0x00FFFFu:0xFFFFFFu;
+    double cx=scenario==0?0:3,cy=scenario==0?0:5;
+    for(int reference=0;reference<2;reference++){
+      uint32_t *target=reference?expected:pixels;
+      memset(target,0,sizeof pixels);
+      gml_render_begin(&render,target,8,6,cx,cy);
+      if(scenario==4) gml_render_gui_begin(&render,4,3);
+      if(scenario==5) gml_render_world_set_logical_extent(&render,4,3);
+      if(reference){
+        for(int y=-12;y<=12;y++) for(int x=-12;x<=12;x++)
+          gml_draw_surface_part_ext(&render,source,0,0,2,2,
+            1+x*2*fabs(xs),-1+y*2*fabs(ys),xs,ys,tint,alpha);
+      } else {
+        GmlVal args[]={vreal(source),vreal(1),vreal(-1),vreal(xs),vreal(ys),vreal(tint),vreal(alpha)};
+        if(scenario==0) (void)call_values(&vm,"draw_surface_tiled",args,3);
+        else (void)call_values(&vm,"draw_surface_tiled_ext",args,7);
+      }
+      gml_render_gui_end(&render);
+    }
+    if(memcmp(pixels,expected,sizeof pixels)){
+      fprintf(stderr,"surface tiling scenario %d differs from explicit repeated cells\n",scenario);
+      goto done;
+    }
+    TILED_REQUIRE(colored_pixels(pixels,48)==48,"every target pixel covered");
+    if(scenario==0) TILED_REQUIRE(pixels[0]==pattern[3] && pixels[1]==pattern[2],
+      "hand-derived phase at the top-left");
+  }
+  gml_render_begin(&render,pixels,8,6,0,0);
+  TILED_REQUIRE(gml_surface_set_target(&render,source),"bind source as target");
+  GmlVal self_args[]={vreal(source),vreal(1),vreal(0),vreal(1),vreal(1),vreal(0),vreal(1)};
+  (void)call_values(&vm,"draw_surface_tiled_ext",self_args,7);
+  TILED_REQUIRE(!memcmp(render.surface[source-1].px,pattern,sizeof pattern),"self-draw is rejected");
+  gml_surface_reset_target(&render);
+  memcpy(expected,pixels,sizeof pixels);
+  const double invalid[]={0,NAN,INFINITY,1e-200};
+  for(size_t i=0;i<sizeof invalid/sizeof invalid[0];i++){
+    GmlVal args[]={vreal(source),vreal(0),vreal(0),vreal(invalid[i]),vreal(1),vreal(0xFFFFFF),vreal(1)};
+    (void)call_values(&vm,"draw_surface_tiled_ext",args,7);
+    TILED_REQUIRE(!memcmp(pixels,expected,sizeof pixels),"invalid or zero-raster extent draws nothing");
+  }
+  passed=1;
+done:
+  gml_render_free(&render);
+  vm.render=NULL;
+  gml_vm_free(&vm);
+  return passed;
+#undef TILED_REQUIRE
+}
+
 
 int software3d_case_assets(Software3dRasterFixture *fixture){
   const double perspective[]={
@@ -332,7 +398,6 @@ int software3d_case_assets(Software3dRasterFixture *fixture){
   fixture->depth_sprite=gml_sprite_create_from_surface(&fixture->render,fixture->surface,0,0,2,2,0,0,0,0);
   return 1;
 }
-
 
 int software3d_case_vm_draw(Software3dRasterFixture *fixture){
   {

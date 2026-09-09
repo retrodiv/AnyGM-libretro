@@ -3,6 +3,67 @@
  */
 #include "software3d_test_fixture.h"
 
+static int matrix_array_matches(GmlVal value,const double expected[16]){
+  if(value.t!=V_ARR || gml_val_array_length(value)<16) return 0;
+  for(int i=0;i<16;i++){
+    GmlVal item=gml_arr_get(value,i);
+    if(item.t!=V_REAL || !isfinite(item.d) ||
+       fabs(item.d-expected[i])>1e-12*fmax(1.0,fabs(expected[i]))) return 0;
+  }
+  return 1;
+}
+
+int matrix_inverse_fixture(void){
+  GmlVM vm={0};
+  GmlVal roots[4]={gml_arr_new(16,vreal(0)),vundef(),
+                   gml_arr_new(18,vreal(23)),vundef()};
+  const double transform[16]={2,0,0,0, 0,4,0,0, 0,0,8,0, 6,-12,16,1};
+  const double inverse[16]={.5,0,0,0, 0,.25,0,0, 0,0,.125,0, -3,3,-2,1};
+  const double permutation[16]={0,0,0,1, 0,0,1,0, 0,1,0,0, 1,0,0,0};
+  int passed=0;
+#define MATRIX_REQUIRE(condition,label) do { if(!(condition)){ \
+  fprintf(stderr,"matrix inverse: %s\n",label); goto done; } } while(0)
+  for(int i=0;i<16;i++) gml_arr_set(roots[0],i,vreal(transform[i]));
+  roots[1]=call_values(&vm,"matrix_inverse",roots,1);
+  MATRIX_REQUIRE(matrix_array_matches(roots[1],inverse),"hand-derived affine inverse");
+  MATRIX_REQUIRE(matrix_array_matches(roots[0],transform),"source is unchanged");
+  GmlVal reuse_args[2]={roots[0],roots[2]};
+  roots[3]=call_values(&vm,"matrix_inverse",reuse_args,2);
+  MATRIX_REQUIRE(roots[3].t==V_ARR && roots[3].arr==roots[2].arr &&
+    matrix_array_matches(roots[2],inverse) && gml_arr_get(roots[2],17).d==23,
+    "reuse writes only the sixteen result elements");
+  GmlVal alias_args[2]={roots[0],roots[0]};
+  (void)call_values(&vm,"matrix_inverse",alias_args,2);
+  MATRIX_REQUIRE(matrix_array_matches(roots[0],inverse),"input may alias output");
+  for(int i=0;i<16;i++) gml_arr_set(roots[0],i,vreal(permutation[i]));
+  (void)call_values(&vm,"matrix_inverse",alias_args,2);
+  MATRIX_REQUIRE(matrix_array_matches(roots[0],permutation),"non-affine pivot swaps");
+  for(int i=0;i<16;i++) gml_arr_set(roots[0],i,vreal(0));
+  MATRIX_REQUIRE(call_values(&vm,"matrix_inverse",roots,1).t==V_UNDEF,
+    "singular input has no inverse");
+  MATRIX_REQUIRE(call_values(&vm,"matrix_inverse",reuse_args,2).t==V_UNDEF &&
+    matrix_array_matches(roots[2],inverse),"singular reuse is transactional");
+  for(int i=0;i<16;i++) gml_arr_set(roots[0],i,vreal(i%5==0?1:0));
+  gml_arr_set(roots[0],0,vreal(1e-200));
+  (void)call_values(&vm,"matrix_inverse",alias_args,2);
+  MATRIX_REQUIRE(fabs(gml_arr_get(roots[0],0).d/1e200-1)<1e-12,
+    "small nonzero pivots are not rejected by a fixed epsilon");
+  const double invalid[]={NAN,INFINITY,1e-320};
+  for(size_t k=0;k<sizeof invalid/sizeof invalid[0];k++){
+    gml_arr_set(roots[0],0,vreal(invalid[k]));
+    MATRIX_REQUIRE(call_values(&vm,"matrix_inverse",reuse_args,2).t==V_UNDEF &&
+      matrix_array_matches(roots[2],inverse),"invalid or unrepresentable inverse is transactional");
+  }
+  MATRIX_REQUIRE(call_values(&vm,"matrix_inverse",NULL,0).t==V_UNDEF,
+    "missing matrix is rejected");
+  passed=1;
+done:
+  gml_values_release(roots,sizeof roots/sizeof roots[0]);
+  gml_vm_free(&vm);
+  return passed;
+#undef MATRIX_REQUIRE
+}
+
 
 int software3d_case_language(Software3dRasterFixture *fixture){
   if(!pushref_function_fixture()) return 0;

@@ -50,6 +50,8 @@ int main(int argc,char **argv){
     filter=argv[++index];
   }
   static const AnygmTestCase boundary_cases[]={
+    {"matrix_inverse",matrix_inverse_fixture},
+    {"surface_tiled",surface_tiled_fixture},
     {"software3d_operations",software3d_operation_boundary_fixture},
     {"renderer_state",renderer_state_boundary_fixture},
     {"asset_lookup",asset_lookup_fixture},
