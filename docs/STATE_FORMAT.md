@@ -9,9 +9,19 @@ marketing version. It is a numeric field in a validated binary header.
 
 ## Save-state schema
 
-The current AnyGM save-state schema is `17`. It is the format transported by
+The current AnyGM save-state schema is `18`. It is the format transported by
 libretro frontends for manual save states, automatic state slots, and rewind
 snapshots. Those features remain supported.
+
+Schema `18` carries VM schema `9`: arrays retain identity across every VM value root, including
+builtin containers, static variables, arguments and parked frames. The first encounter defines an
+array and implicitly assigns the next one-based ID before its elements. Wire value tag `4` carries
+a little-endian array ID; zero denotes a null array and every other reference must already exist.
+This preserves shared and cyclic graphs without merging distinct equal arrays. Definitions are
+bounded to one million arrays and 64 nested definitions; back references do not add depth. A graph
+beyond the bounds makes saving fail, never silently replaces a value. Sparse indices are strictly
+increasing. Identity tables are operation-local scratch, not serialized addresses. Previous public
+and VM schemas are rejected without a legacy reader.
 
 Schema `17` binds state configuration to the effective content override program and the
 launch-anchor envelope governing later internal content replacements. Defaults overridden by
@@ -119,7 +129,7 @@ same form without an intervening mutation produces identical bytes.
 ## VM payload ownership
 
 `src/core/engine_state.c` owns the root framing and section transaction.
-Within the VM section, `src/runtime/vm/gml_vm_state.c` alone owns schema `5`,
+Within the VM section, `src/runtime/vm/gml_vm_state.c` alone owns schema `9`,
 field order, value-graph encoding, sizing, and restore scratch.
 
 Builtin resources have a separate storage and lifetime owner, not a separate

@@ -470,6 +470,7 @@ static void state_write(AnygmEngine *engine,CoreW *s){
     s->pos+=wr;
   } else {
     vmn = gml_vm_state_size(&engine->vm);
+    if(!vmn) s->ok=0;
     s->pos+=vmn;
   }
   if(s->data){

@@ -106,6 +106,8 @@ int main(int argc,char **argv){
   };
   static const AnygmTestCase state_cases[]={
     {"canonical_roundtrip",expect_vm_state_case},
+    {"array_graph_roundtrip",expect_vm_state_graph_case},
+    {"array_definition_depth",expect_vm_state_array_depth_case},
   };
   const AnygmTestGroup groups[]={
     {"vm",vm_cases,sizeof vm_cases/sizeof vm_cases[0]},

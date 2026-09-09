@@ -465,6 +465,14 @@ int main(void){
   output.struct_size=sizeof output;
   if(anygm_run_frame(engine,&input,&output)!=ANYGM_OK) return fail("initial frame failed")?0:1;
 
+  /* Put the first definition in argument zero: later roots must refer back to it, including
+   * the self-cycle. This also makes transactional byte equality sensitive to lost aliases. */
+  GmlVal graph=gml_arr_new(2,vreal(7));
+  gml_arr_set(graph,0,graph);
+  engine->vm.script_args[0]=engine->vm.script_args[1]=graph;
+  engine->vm.script_argc=2;
+  *gml_varmap_put(&engine->vm.globals,"state_graph")=graph;
+
   uint8_t *baseline=NULL;
   size_t state_size=0;
   if(!save_state(engine,&baseline,&state_size)||state_size<=STATE_HEADER_SIZE)
@@ -488,6 +496,30 @@ int main(void){
   size_t vm_start=render_start+(size_t)render_size;
   size_t audio_start=vm_start+(size_t)vm_size;
   if(audio_start+(size_t)audio_size!=state_size) ok=fail("section arithmetic is inconsistent");
+
+  /* VM header and fixed scalar prefix end at 132. The sparse two-element definition has
+   * a self reference then a real; argument one is the first cross-root reference. */
+  StateCursor graph_cursor={baseline,state_size,vm_start+132,1};
+  if(cursor_u32(&graph_cursor)!=V_ARR || cursor_u32(&graph_cursor)!=UINT32_C(0x80000002))
+    ok=fail("array mutation fixture does not identify the first definition");
+  graph_cursor.offset=vm_start+180;
+  if(cursor_u32(&graph_cursor)!=4 || cursor_u32(&graph_cursor)!=1)
+    ok=fail("array mutation fixture does not identify the cross-root reference");
+  if(ok) ok=reject_payload_u32(engine,candidate,state_size,baseline,state_size,
+                               vm_start+160,2,"forward array reference inside a definition");
+  if(ok) ok=reject_payload_u32(engine,candidate,state_size,baseline,state_size,
+                               vm_start+184,UINT32_MAX,"unknown cross-root array reference");
+  if(ok) ok=reject_payload_u32(engine,candidate,state_size,baseline,state_size,
+                               vm_start+164,0,"duplicate sparse array index");
+  if(ok) ok=reject_payload_u32(engine,candidate,state_size,baseline,state_size,
+                               vm_start+136,UINT32_MAX,"oversized array definition");
+  if(ok) ok=reject_payload_u32(engine,candidate,state_size,baseline,state_size,
+                               vm_start+4,8,"previous VM tree schema");
+  if(ok){
+    memcpy(candidate,baseline,state_size);
+    write_u32(candidate+4,17);
+    ok=reject_unchanged(engine,candidate,state_size,baseline,state_size,"previous public schema");
+  }
 
   size_t truncations[]={0,1,3,4,7,8,15,16,STATE_HEADER_SIZE-1,STATE_HEADER_SIZE,
                         render_start-1,render_start,vm_start-1,vm_start,

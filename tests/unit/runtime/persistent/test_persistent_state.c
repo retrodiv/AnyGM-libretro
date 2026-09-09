@@ -9,6 +9,81 @@
 #include <stdlib.h>
 #include <string.h>
 
+int expect_vm_state_graph_case(void){
+  GmlWin win={0}; GmlVM vm={0};
+  vm.win=&win; vm.room_index=vm.pending_room=-1; vm.next_creation_seq=1;
+  vm.particles=gml_particle_state_create(&vm);
+  gml_vm_software3d_reset(&vm);
+  GmlVal root=gml_arr_new(4,vreal(0)), child=gml_arr_new(2,vreal(7));
+  GmlVal equal=gml_arr_new(2,vreal(7)), empty=gml_arr_new(0,vreal(0));
+  GmlVal null_array=vreal(0); null_array.t=V_ARR;
+  gml_arr_set(root,0,root); /* self cycle */
+  gml_arr_set(root,1,child); gml_arr_set(child,0,root); /* mutual cycle */
+  gml_arr_set(root,2,child); gml_arr_set(root,3,equal);
+  *gml_varmap_put(&vm.globals,"graph")=root;
+  *gml_varmap_put(&vm.globals,"empty")=empty;
+  *gml_varmap_put(&vm.globals,"null_array")=null_array;
+  vm.script_args[0]=root; vm.script_argc=1;
+  vm.code_static=calloc(1,sizeof(*vm.code_static));
+  vm.code_static_init=calloc(1,1); vm.code_static_count=1;
+  if(!vm.particles || !vm.code_static || !vm.code_static_init){ gml_vm_free(&vm); return 0; }
+  *gml_varmap_put(&vm.code_static[0],"alias")=child;
+  vm.code_static_init[0]=1;
+  size_t size=gml_vm_state_size(&vm),written=0,used=0;
+  uint8_t *bytes=malloc(size?size:1), *again=malloc(size?size:1);
+  int ok=size && bytes && again && gml_vm_state_save(&vm,bytes,size,&written) && written==size;
+  for(int pass=0;pass<3 && ok;pass++){
+    ok=gml_vm_state_load(&vm,bytes,size,&used) && used==size;
+    GmlVal *restored=gml_varmap_get(&vm.globals,"graph");
+    GmlVal *nil=gml_varmap_get(&vm.globals,"null_array");
+    GmlVal *zero=gml_varmap_get(&vm.globals,"empty");
+    GmlVal *alias=gml_varmap_get(&vm.code_static[0],"alias");
+    GmlVal nested=restored?gml_arr_get(*restored,1):vreal(0);
+    ok=ok && restored && nil && zero && alias &&
+       nil->t==V_ARR && !nil->arr && zero->t==V_ARR && zero->arr &&
+       gml_val_array_length(*zero)==0 && vm.script_args[0].arr==restored->arr &&
+       gml_arr_get(*restored,0).arr==restored->arr &&
+       gml_arr_get(nested,0).arr==restored->arr &&
+       gml_arr_get(*restored,2).arr==nested.arr && alias->arr==nested.arr &&
+       gml_arr_get(*restored,3).arr!=nested.arr &&
+       gml_vm_state_size(&vm)==size &&
+       gml_vm_state_save(&vm,again,size,&written) && written==size && !memcmp(bytes,again,size);
+    if(ok){
+      gml_arr_set(nested,1,vreal(91));
+      ok=gml_arr_get(*alias,1).d==91 &&
+         gml_arr_get(gml_arr_get(*restored,2),1).d==91 &&
+         gml_arr_get(gml_arr_get(*restored,3),1).d==7;
+    }
+  }
+  if(!ok) fputs("array graph identity, cycles or canonical replay failed\n",stderr);
+  free(bytes); free(again); gml_vm_free(&vm);
+  return ok;
+}
+
+int expect_vm_state_array_depth_case(void){
+  GmlWin win={0}; GmlVM vm={0}; vm.win=&win;
+  vm.particles=gml_particle_state_create(&vm); gml_vm_software3d_reset(&vm);
+  GmlVal root=gml_arr_new(1,vreal(0)), tail=root;
+  *gml_varmap_put(&vm.globals,"chain")=root;
+  for(int i=1;i<64;i++){
+    GmlVal child=gml_arr_new(1,vreal(0)); gml_arr_set(tail,0,child); tail=child;
+  }
+  gml_arr_set(tail,0,root); /* a back reference does not consume another definition depth */
+  size_t size=gml_vm_state_size(&vm),written=0,used=0;
+  void *bytes=malloc(size?size:1);
+  int ok=size && bytes && gml_vm_state_save(&vm,bytes,size,&written) && written==size &&
+         gml_vm_state_load(&vm,bytes,size,&used) && used==size;
+  GmlVal *restored=gml_varmap_get(&vm.globals,"chain");
+  tail=restored?*restored:vreal(0);
+  for(int i=1;i<64;i++) tail=gml_arr_get(tail,0);
+  ok=ok && restored && gml_arr_get(tail,0).arr==restored->arr;
+  GmlVal extra=gml_arr_new(1,vreal(1)); gml_arr_set(tail,0,extra);
+  ok=ok && gml_vm_state_size(&vm)==0 && !gml_vm_state_save(&vm,bytes,size,&written);
+  if(!ok) fputs("array depth bounds must reject instead of truncating values\n",stderr);
+  free(bytes); gml_vm_free(&vm);
+  return ok;
+}
+
 
 int expect_vm_state_case(void){
   GmlWin win={0};

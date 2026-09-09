@@ -18,8 +18,12 @@
 #include <limits.h>
 
 /* ---------------- save-state runtime serialization ---------------- */
-enum { GML_VM_STATE_SCHEMA=8 };
+enum { GML_VM_STATE_SCHEMA=9 };
 #define GML_VM_STATE_MAGIC UINT32_C(0x534D5641)
+/* IDs are assigned in canonical traversal order, never from addresses. Zero is the null array;
+ * a definition claims the next ID before its elements, so back references can close cycles. */
+enum { STATE_ARRAY_REF=4, STATE_MAX_ARRAYS=1000000, STATE_MAX_ARRAY_DEPTH=64 };
+typedef struct { const GmlArr *array; uint32_t id; } StateArrayEntry;
 /* A path a run can build: mp_grid_path fills one cell per step of a route, so the grid's cell
  * count is the ceiling, and path_add_point cannot be asked for more than a state could hold. */
 #define GML_STATE_MAX_PATH_POINTS (1<<22)
@@ -60,6 +64,9 @@ struct GmlVmStateWriter {
   GmlVM *vm;
   int compact_strings, array_meta;
   struct GmlVmStateStringMemo *memo;
+  StateArrayEntry *arrays;
+  size_t array_capacity;
+  uint32_t array_count;
 };
 struct GmlVmStateReader {
   const uint8_t *data;
@@ -67,6 +74,9 @@ struct GmlVmStateReader {
   int ok;
   GmlVM *vm;
   int compact_strings, array_meta;
+  GmlArr **arrays;
+  size_t array_capacity;
+  uint32_t array_count;
 };
 typedef GmlVmStateWriter StateW;
 typedef GmlVmStateReader StateR;
@@ -253,14 +263,54 @@ static void sw_array_sparse_entries(StateW *s, GmlArr *A, int depth, uint32_t *c
     (*count)++;
   }
 }
+static size_t state_array_slot(const GmlArr *array,size_t capacity){
+  uint64_t key=(uintptr_t)array;
+  key^=key>>33; key*=UINT64_C(0xff51afd7ed558ccd); key^=key>>33;
+  return (size_t)key&(capacity-1);
+}
+/* Returns an existing ID, or zero after registering a new definition. */
+static uint32_t sw_array_identity(StateW *s,const GmlArr *array){
+  if(s->array_capacity){
+    size_t slot=state_array_slot(array,s->array_capacity);
+    while(s->arrays[slot].array){
+      if(s->arrays[slot].array==array) return s->arrays[slot].id;
+      slot=(slot+1)&(s->array_capacity-1);
+    }
+  }
+  if(s->array_count>=STATE_MAX_ARRAYS){ s->ok=0; return 0; }
+  if((size_t)s->array_count*4>=s->array_capacity*3){
+    size_t capacity=s->array_capacity?s->array_capacity*2:64;
+    StateArrayEntry *entries=calloc(capacity,sizeof(*entries));
+    if(!entries){ s->ok=0; return 0; }
+    for(size_t i=0;i<s->array_capacity;i++) if(s->arrays[i].array){
+      size_t slot=state_array_slot(s->arrays[i].array,capacity);
+      while(entries[slot].array) slot=(slot+1)&(capacity-1);
+      entries[slot]=s->arrays[i];
+    }
+    free(s->arrays); s->arrays=entries; s->array_capacity=capacity;
+  }
+  size_t slot=state_array_slot(array,s->array_capacity);
+  while(s->arrays[slot].array) slot=(slot+1)&(s->array_capacity-1);
+  s->arrays[slot]=(StateArrayEntry){array,++s->array_count};
+  return 0;
+}
 static void sw_val(StateW *s, GmlVal v, int depth){
-  if(v.t==V_ARR && depth>=8) v=vreal(0);
+  if(!s->ok) return;
+  if(v.t==V_ARR){
+    uint32_t id=v.arr?sw_array_identity(s,v.arr):0;
+    if(!s->ok) return;
+    if(id || !v.arr){ sw_u32(s,STATE_ARRAY_REF); sw_u32(s,id); return; }
+    if(depth>=STATE_MAX_ARRAY_DEPTH){ s->ok=0; return; }
+  }
   sw_u32(s,(uint32_t)v.t);
   if(v.t==V_REAL){ sw_d(s,v.d); return; }
   if(v.t==V_STR){ sw_str(s,v.s); return; }
   if(v.t==V_UNDEF) return;
-  if(v.t==V_ARR && v.arr && depth<8){
+  if(v.t==V_ARR && v.arr){
     GmlArr *A=(GmlArr*)v.arr;
+    if(A->len<0 || A->len>16000000 || A->cap<A->len || (A->len && !A->data)){
+      s->ok=0; return;
+    }
     if(s->compact_strings && A->len>=0 && A->len<0x7fffffff){
       sw_u32(s,0x80000000u | (uint32_t)A->len);
       if(s->array_meta){
@@ -276,8 +326,9 @@ static void sw_val(StateW *s, GmlVal v, int depth){
       sw_u32(s,0);
       uint32_t count=0;
       sw_array_sparse_entries(s,A,depth,&count);
-      if(s->data && count_pos+sizeof(uint32_t)<=s->cap)
-        memcpy(s->data+count_pos,&count,sizeof(count));
+      if(s->data && count_pos<=s->cap && sizeof(uint32_t)<=s->cap-count_pos){
+        for(unsigned i=0;i<4;i++) s->data[count_pos+i]=(uint8_t)(count>>(i*8));
+      }
       return;
     }
     sw_u32(s,(uint32_t)A->len);
@@ -293,14 +344,27 @@ static void sw_val(StateW *s, GmlVal v, int depth){
     for(int i=0;i<A->len;i++) sw_val(s,A->data[i],depth+1);
     return;
   }
-  sw_u32(s,0);
+  s->ok=0;
 }
 static GmlVal sr_val(GmlVM *vm, StateR *s, int depth){
+  if(!s->ok) return vreal(0);
   uint32_t t=sr_u32(s);
   if(t==V_REAL) return vreal(sr_d(s));
   if(t==V_STR) return vstr(state_runtime_string(s,sr_str_dup(s)));
   if(t==V_UNDEF) return vundef();
-  if(t==V_ARR && depth<8){
+  if(t==STATE_ARRAY_REF){
+    uint32_t id=sr_u32(s);
+    if(id>s->array_count){ s->ok=0; return vreal(0); }
+    GmlVal v=vreal(0); v.t=V_ARR; v.arr=id?s->arrays[id-1]:NULL; return v;
+  }
+  if(t==V_ARR && depth<STATE_MAX_ARRAY_DEPTH){
+    if(s->array_count>=STATE_MAX_ARRAYS){ s->ok=0; return vreal(0); }
+    if(s->array_count==s->array_capacity){
+      size_t capacity=s->array_capacity?s->array_capacity*2:64;
+      GmlArr **arrays=realloc(s->arrays,capacity*sizeof(*arrays));
+      if(!arrays){ s->ok=0; return vreal(0); }
+      s->arrays=arrays; s->array_capacity=capacity;
+    }
     uint32_t raw_len=sr_u32(s);
     int sparse = s->compact_strings && (raw_len&0x80000000u);
     uint32_t len = raw_len&0x7fffffffu;
@@ -318,6 +382,8 @@ static GmlVal sr_val(GmlVM *vm, StateR *s, int depth){
     A->len=A->cap=(int)len;
     A->data=calloc(len?len:1,sizeof(GmlVal));
     if(!A->data){ free(A); s->ok=0; return vreal(0); }
+    A->escaped=1;
+    s->arrays[s->array_count++]=A;
     /* calloc IS the fill: vreal(0) = {V_REAL=0, 0.0, NULL, NULL} = all-zero bytes. sparse 2D
      * arrays have logical lengths in the hundreds of thousands (row*32000 stride); explicitly
      * storing vreal(0) into every slot touched a large amount of fresh pages per state load, which made
@@ -329,6 +395,7 @@ static GmlVal sr_val(GmlVM *vm, StateR *s, int depth){
       if(h>0){
         A->is_2d=1;
         gml_arr_row_ensure(A,(int)h-1);
+        if(!A->row_len || A->row_cap<(int)h){ s->ok=0; }
         for(uint32_t i=0;i<h;i++){
           uint32_t w=sr_u32(s);
           if(w>GML_2D_STRIDE){ state_debug(s->vm,"array row too large",s->pos,w); s->ok=0; w=GML_2D_STRIDE; }
@@ -347,14 +414,16 @@ static GmlVal sr_val(GmlVM *vm, StateR *s, int depth){
       uint32_t count=sr_u32(s);
       remain = s->pos <= s->cap ? s->cap - s->pos : 0;
       if(count>len || count>remain/8){ state_debug(s->vm,"sparse array too large",s->pos,count); s->ok=0; count=0; }
-      for(uint32_t n=0;n<count;n++){
+      uint32_t previous=0;
+      for(uint32_t n=0;n<count && s->ok;n++){
         uint32_t idx=sr_u32(s);
+        if(idx>=len || (n && idx<=previous)){ s->ok=0; break; }
+        previous=idx;
         GmlVal elem=sr_val(vm,s,depth+1);
-        if(idx<len) A->data[idx]=elem;
-        else s->ok=0;
+        A->data[idx]=elem;
       }
     } else {
-      for(uint32_t i=0;i<len;i++) A->data[i]=sr_val(vm,s,depth+1);
+      for(uint32_t i=0;i<len && s->ok;i++) A->data[i]=sr_val(vm,s,depth+1);
     }
     if(!s->array_meta) gml_arr_rebuild_legacy_2d_meta(A);
     GmlVal v=vreal(0); v.t=V_ARR; v.arr=A; return v;
@@ -429,7 +498,8 @@ size_t gml_vm_state_measure_value(GmlVM *vm,GmlVal value){
   writer.compact_strings=1;
   writer.array_meta=1;
   sw_val(&writer,value,0);
-  return writer.pos;
+  free(writer.arrays);
+  return writer.ok?writer.pos:0;
 }
 static int state_var_slot_compare(const void *left,const void *right){
   const GmlVarSlot *a=*(GmlVarSlot *const *)left;
@@ -555,6 +625,7 @@ static void vm_state_profile_globals(GmlVM *vm){
     StateW ts={0}; ts.ok=1; ts.vm=vm; ts.compact_strings=1;
     sw_str(&ts,vm->globals.slots[i].key);
     sw_val(&ts,vm->globals.slots[i].val,0);
+    free(ts.arrays);
     total += ts.pos;
     for(int k=0;k<10;k++) if(ts.pos > top[k].bytes){
       memmove(&top[k+1],&top[k],(size_t)(9-k)*sizeof(top[0]));
@@ -574,6 +645,7 @@ static void vm_state_profile_globals(GmlVM *vm){
   for(int i=0;i<vm->inst_count;i++){
     StateW ts={0}; ts.ok=1; ts.vm=vm; ts.compact_strings=1; ts.array_meta=1;
     sw_instance(&ts,&vm->inst[i]);
+    free(ts.arrays);
     inst_total += ts.pos;
     const char *name="?";
     int obj=vm->inst[i].obj;
@@ -595,6 +667,7 @@ static void vm_state_profile_globals(GmlVM *vm){
     struct_live++;
     StateW ts={0}; ts.ok=1; ts.vm=vm; ts.compact_strings=1; ts.array_meta=1;
     sw_instance(&ts,vm->structs[i]);
+    free(ts.arrays);
     struct_total += ts.pos;
     const char *name="?";
     GmlVal *nm=gml_varmap_get(&vm->structs[i]->vars,"__name");
@@ -661,7 +734,7 @@ static void runtime_release_builtin_value(void *userdata,GmlVal value){
   gml_val_free((GmlValueFreeContext *)userdata,value);
 }
 
-static void runtime_clear(GmlVM *vm){
+static void runtime_clear(GmlVM *vm,GmlArr **partial_arrays,uint32_t partial_count){
   gml_vm_wait_cancel(vm);   /* the state about to be read decides what is parked, if anything */
   GmlValueFreeContext free_context={0};
   gml_value_free_context_begin(&free_context);
@@ -672,7 +745,14 @@ static void runtime_clear(GmlVM *vm){
   gml_builtin_state_take_owned_values(vm->builtins,
                                       runtime_release_builtin_value,
                                       &free_context);
+  /* A failed read may have defined nodes before reaching a owning map or container. Release
+   * those nodes in the same sweep as published roots, including their aliases and cycles. */
+  for(uint32_t i=0;i<partial_count;i++){
+    GmlVal v=vreal(0); v.t=V_ARR; v.arr=partial_arrays[i];
+    gml_val_free(&free_context,v);
+  }
   gml_value_free_context_end(&free_context);
+  memset(vm->script_args,0,sizeof(vm->script_args)); vm->script_argc=0;
   gml_vm_state_runtime_strings_clear(vm);
   gml_builtin_state_reset(vm->builtins);
   if(vm->code_static_init && vm->code_static_count>0)
@@ -891,7 +971,9 @@ size_t gml_vm_state_size(GmlVM *vm){
     gml_struct_gc(vm);
   }
   StateW s={0}; s.ok=1; s.vm=vm; s.compact_strings=1; s.memo=state_str_memo(vm);
-  sw_vm(&s,vm); return s.pos;
+  sw_vm(&s,vm);
+  free(s.arrays);
+  return s.ok?s.pos:0;
 }
 int gml_vm_state_save(GmlVM *vm, void *data, size_t len, size_t *written){
   
@@ -901,7 +983,10 @@ int gml_vm_state_save(GmlVM *vm, void *data, size_t len, size_t *written){
   }
   StateW s={.data=(uint8_t*)data,.cap=len,.pos=0,.ok=1,.vm=vm,.compact_strings=1,
             .memo=state_str_memo(vm)};
-  sw_vm(&s,vm); if(written) *written=s.pos; return s.ok && s.pos<=len;
+  sw_vm(&s,vm);
+  free(s.arrays);
+  if(written) *written=s.pos;
+  return s.ok && s.pos<=len;
 }
 int gml_vm_state_load(GmlVM *vm, const void *data, size_t len, size_t *used){
   gml_colgrid_invalidate(vm);   /* wholesale: every instance is about to be rewritten */
@@ -916,7 +1001,7 @@ int gml_vm_state_load(GmlVM *vm, const void *data, size_t len, size_t *used){
   GmlBuiltinState *builtin_state=gml_builtin_state_ensure(vm);
   if(!builtin_state) return 0;
   void *render=vm->render, *audio=vm->audio;
-  runtime_clear(vm);
+  runtime_clear(vm,NULL,0);
   int inst_count=sr_i32(&s); if(inst_count<0 || inst_count>vm->inst_cap) s.ok=0;
   if(!s.ok) state_debug(vm,"bad inst_count",s.pos,(uint32_t)inst_count);
   vm->next_id=sr_u32(&s);
@@ -1207,6 +1292,7 @@ int gml_vm_state_load(GmlVM *vm, const void *data, size_t len, size_t *used){
     for(int i=0;i<frames && s.ok;i++){
       GmlWaitFrame *f=&vm->wait.frames[i];
       memset(f,0,sizeof *f);
+      vm->wait.n_frames=i+1; /* cancellation also owns a partially decoded frame */
       f->ci=sr_i32(&s);
       f->insn_index=sr_u32(&s); f->bytecode_pc=sr_u32(&s); f->wait_site=sr_u32(&s);
       f->self_id=sr_u32(&s); f->other_id=sr_u32(&s);
@@ -1325,5 +1411,8 @@ int gml_vm_state_load(GmlVM *vm, const void *data, size_t len, size_t *used){
     gml_vm_warm_audio_for_room_window(vm);
     gml_vm_prefetch_room_assets(vm);
   }
-  return s.ok && s.pos<=len;
+  int ok=s.ok && s.pos<=len;
+  if(!ok) runtime_clear(vm,s.arrays,s.array_count);
+  free(s.arrays);
+  return ok;
 }
