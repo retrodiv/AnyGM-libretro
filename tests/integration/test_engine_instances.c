@@ -2975,7 +2975,9 @@ int main(int argc,char **argv){
   size_t object_vm=112+(size_t)read_u64(deterministic+64)+(size_t)read_u64(deterministic+72);
   size_t object_vm_size=(size_t)read_u64(deterministic+80);
   uint8_t empty_object_properties[32]={1};
-  for(int i=1;i<=3;i++) write_u32(empty_object_properties+(size_t)i*4,UINT32_MAX);
+  for(int i=1;i<=2;i++) write_u32(empty_object_properties+(size_t)i*4,UINT32_MAX);
+  /* The package writer normalizes an absent parent to the root sentinel -100. */
+  write_u32(empty_object_properties+12,(uint32_t)-100);
   if(object_vm>deterministic_size || object_vm_size>deterministic_size-object_vm ||
      object_vm_size<sizeof empty_object_properties){
     fprintf(stderr,"canonical object-table framing changed\n");
