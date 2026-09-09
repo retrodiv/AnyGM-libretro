@@ -7,25 +7,98 @@
 #include "anygm_host.h"
 
 #include <math.h>
+#include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
 /* ACRV curve records contain inline channels and points. Evaluate linearly between knots and clamp at the ends. */
 static float acrv_f32(const uint8_t *d, uint32_t o){ float f; memcpy(&f,d+o,4); return f; }
+static int acrv_bounds(GmlVM *vm,size_t *begin,size_t *end){
+  if(!vm || !vm->win || !vm->win->data) return 0;
+  const GmlChunk *chunk=gml_chunk(vm->win,"ACRV");
+  if(!chunk || chunk->off>vm->win->size || chunk->size<8 ||
+     chunk->size>vm->win->size-chunk->off) return 0;
+  *begin=chunk->off; *end=*begin+chunk->size;
+  return 1;
+}
 static uint32_t acrv_curve_ptr(GmlVM *vm, int idx){
-  const GmlChunk *c=gml_chunk(vm->win,"ACRV"); if(!c) return 0;
-  const uint8_t *d=vm->win->data; uint32_t n=u32(d,c->off+4);
-  if(idx<0||(uint32_t)idx>=n) return 0;
-  return u32(d,c->off+8+idx*4);
+  size_t begin,end;
+  if(idx<0 || !acrv_bounds(vm,&begin,&end)) return 0;
+  const uint8_t *d=vm->win->data; uint32_t n=u32(d,begin+4);
+  if(n>(end-begin-8)/4 || (uint32_t)idx>=n) return 0;
+  uint32_t cp=u32(d,begin+8+(size_t)idx*4);
+  if(cp<begin+8+(size_t)n*4 || cp>end || end-cp<12) return 0;
+  if(u32(d,cp+8)>(end-cp-12)/16) return 0;
+  return cp;
+}
+static int acrv_channel_span(GmlVM *vm,size_t position,size_t end,size_t *next){
+  if(position>end || end-position<16) return 0;
+  uint32_t count=u32(vm->win->data,position+12);
+  if(count>(end-position-16)/24) return 0;
+  *next=position+16+(size_t)count*24;
+  return 1;
 }
 static uint32_t acrv_channel_ptr(GmlVM *vm, int curve, int ch){
   uint32_t cp=acrv_curve_ptr(vm,curve); if(!cp) return 0;
   const uint8_t *d=vm->win->data; uint32_t nch=u32(d,cp+8);
   if(ch<0||(uint32_t)ch>=nch) return 0;
-  uint32_t p=cp+12;
-  for(int i=0;i<ch;i++){ uint32_t npts=u32(d,p+12); p+=16+npts*24; }
-  return p;
+  size_t begin,end,p=(size_t)cp+12,next;
+  if(!acrv_bounds(vm,&begin,&end)) return 0;
+  for(int i=0;i<=ch;i++){
+    if(!acrv_channel_span(vm,p,end,&next)) return 0;
+    if(i==ch) return (uint32_t)p;
+    p=next;
+  }
+  return 0;
+}
+static int acrv_channel_named(GmlVM *vm,int curve,const char *name){
+  uint32_t cp=acrv_curve_ptr(vm,curve);
+  size_t begin,end;
+  if(!cp || !name || !acrv_bounds(vm,&begin,&end)) return -1;
+  const uint8_t *data=vm->win->data;
+  uint32_t count=u32(data,cp+8);
+  size_t position=(size_t)cp+12,length=strlen(name);
+  for(uint32_t i=0;i<count;i++){
+    size_t next;
+    if(!acrv_channel_span(vm,position,end,&next)) return -1;
+    uint32_t pointer=u32(data,position);
+    if(pointer<4 || pointer>=vm->win->size) return -1;
+    uint32_t bytes=u32(data,pointer-4);
+    if(bytes>=vm->win->size-pointer || data[(size_t)pointer+bytes]!=0) return -1;
+    if(bytes==length && !memcmp(data+pointer,name,length)) return (int)i;
+    position=next;
+  }
+  return -1;
+}
+static GmlInstance *acrv_struct(GmlVM *vm,GmlVal value){
+  if(!vm || value.t!=V_REAL || !GML_IS_STRUCT_ID(value.d) ||
+     floor(value.d)!=value.d) return NULL;
+  return gml_struct_find(vm,(unsigned)value.d);
+}
+static GmlVal acrv_channel_index(GmlVM *vm,GmlVal *args,int count){
+  int index=-1;
+  if(args && count==2 && args[0].t==V_REAL && args[1].t==V_STR && args[1].s){
+    double id=args[0].d;
+    GmlInstance *curve=acrv_struct(vm,args[0]);
+    if(curve){
+      GmlVal *channels=gml_varmap_get(&curve->vars,"channels");
+      int length=channels?gml_val_array_length(*channels):0;
+      for(int i=0;i<length;i++){
+        GmlInstance *channel=acrv_struct(vm,gml_arr_get(*channels,i));
+        GmlVal *name=channel?gml_varmap_get(&channel->vars,"name"):NULL;
+        if(name && name->t==V_STR && name->s && !strcmp(name->s,args[1].s)){
+          index=i; break;
+        }
+      }
+    }else if(isfinite(id) && id>=0 && id<=INT_MAX && floor(id)==id)
+      index=acrv_channel_named(vm,(int)id,args[1].s);
+  }
+  if(index>=0) return vreal(index);
+  /* Invalid queries have no usable index. Full language exception transport is not available. */
+  anygm_host_logf(vm?vm->host:NULL,ANYGM_LOG_ERROR,
+                 "animcurve_get_channel_index: invalid curve or channel query\n");
+  return vundef();
 }
 #define GML_ACRV_TAG 0x52000000
 static double acrv_evaluate(GmlVM *vm, int curve, int ch, double x){
@@ -246,15 +319,11 @@ GmlVal gml_builtin_try_animation(GmlVM *vm, const char *nm, GmlVal *a, int n){
   /* animation curves: get_channel hands out a tagged handle; evaluate interpolates the knots. */
   if(!strcmp(nm,"animcurve_exists")) return vreal(acrv_curve_ptr(vm,(int)N(a,n,0))!=0);
   if(!strcmp(nm,"animcurve_get")) return vreal(N(a,n,0));   /* asset ref passes through */
+  if(!strcmp(nm,"animcurve_get_channel_index")) return acrv_channel_index(vm,a,n);
   if(!strcmp(nm,"animcurve_get_channel")){
     int curve=(int)N(a,n,0), ch=0;
     if(n>=2 && a[1].t==V_STR){                    /* select channel by name */
-      uint32_t cp=acrv_curve_ptr(vm,curve); ch=-1;
-      if(cp){ const uint8_t *d=vm->win->data; uint32_t nch=u32(d,cp+8), p=cp+12;
-        for(uint32_t i=0;i<nch;i++){ uint32_t nmp=u32(d,p), npts=u32(d,p+12);
-          uint32_t ln=u32(d,nmp-4);
-          if(ln==strlen(a[1].s) && !memcmp(vm->win->data+nmp,a[1].s,ln)){ ch=(int)i; break; }
-          p+=16+npts*24; } }
+      ch=acrv_channel_named(vm,curve,a[1].s);
       if(ch<0) ch=0;
     } else ch=(int)N(a,n,1);
     if(!acrv_channel_ptr(vm,curve,ch)) return vreal(-1);
