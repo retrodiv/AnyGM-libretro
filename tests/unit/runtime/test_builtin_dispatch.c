@@ -113,6 +113,9 @@ static int setup_fixture(GmlWin *win,GmlVM *vm,AnygmHostServices *host,
     {"gml_Script_neutral_function_value",77},
     {"gml_Script_mouse_wheel_up",78},
     {"gml_Script_draw_set_blend_mode",79},
+    {"gml_Script_draw_roundrect_color_ext",80},
+    {"gml_Script_draw_roundrect_colour_ext",81},
+    {"gml_Script_draw_roundrect_ext",82},
   };
   const int count=(int)(sizeof(scripts)/sizeof(scripts[0]));
   win->bytecode=17;
@@ -1150,6 +1153,37 @@ static int canonical_registry_resolution(GmlVM *vm){
   return ok;
 }
 
+static int rounded_contextual_precedence(GmlVM *vm){
+  const char *names[]={"draw_roundrect_color_ext","draw_roundrect_colour_ext","draw_roundrect_ext"};
+  GmlRender render={0}; uint32_t pixels[24*20]={0};
+  render.color=0xFFFFFF; render.alpha=1; render.color_write_mask=15;
+  render.circle_precision=64; vm->render=&render;
+  gml_vm_software3d_reset(vm);
+  gml_render_begin(&render,pixels,24,20,0,0);
+  int ok=1;
+  for(int i=0;i<3;i++){
+    ok=expect_real("2D rounded name retains script precedence",
+      gml_builtin_call(vm,names[i],NULL,0),80+i)&&ok;
+    if(gml_builtin_fast_id(vm,names[i])!=-1) ok=0;
+  }
+  (void)gml_builtin_call(vm,"d3d_start",NULL,0);
+  GmlVal projection[]={vreal(0),vreal(0),vreal(24),vreal(20),vreal(0)};
+  (void)gml_builtin_call(vm,"d3d_set_projection_ortho",projection,5);
+  for(int i=0;i<3;i++){
+    memset(pixels,0,sizeof pixels);
+    GmlVal args[]={vreal(2),vreal(2),vreal(18),vreal(14),vreal(4),vreal(4),
+      vreal(i==2?0:255),vreal(16711680),vreal(0)};
+    ok=expect_real("active 3D rounded operation retains contextual precedence",
+      gml_builtin_call(vm,names[i],args,i==2?7:9),0)&&ok;
+    if(pixels[2*24+2] || !(pixels[8*24+10]>>24)){
+      fprintf(stderr,"contextual rounded call did not reach the curved raster\n"); ok=0;
+    }
+  }
+  (void)gml_builtin_call(vm,"d3d_end",NULL,0);
+  gml_render_free(&render); vm->render=NULL;
+  return ok;
+}
+
 int main(void){
   GmlWin win={0};
   GmlVM vm={0};
@@ -1188,7 +1222,8 @@ int main(void){
          layer_fx_answers_none(&vm) &&
          missing_stream_is_not_sound_zero(&vm) &&
          inherited_collision_resolves_numeric_suffix(&vm) &&
-         surface_general_reaches_the_screen(&vm);
+         surface_general_reaches_the_screen(&vm) &&
+         rounded_contextual_precedence(&vm);
   gml_vm_free(&vm);
   gml_win_free(&win);
   if(!ok) return 1;

@@ -38,7 +38,8 @@ static int rounded_fixture(int coloured){
         render.alpha=.5; memset(pixels,0,sizeof pixels);
         call_numbers(&vm,name,args,argc);
         uint32_t centre=pixels[8*24+10];
-        ROUND_REQUIRE((centre>>24)>0 && (centre>>24)<255,"draw alpha must be applied");
+        /* The main framebuffer is XRGB; opacity is observable through blending. */
+        ROUND_REQUIRE((centre&255)>0 && (centre&255)<255,"draw alpha must affect RGB");
         for(int i=0;i<24*20;i++)
           ROUND_REQUIRE((reference[i]==0 && pixels[i]==0) ||
                         (reference[i]!=0 && pixels[i]==centre),"fill must have no gaps or double-blended fan seams");
