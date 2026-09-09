@@ -5,6 +5,7 @@
 #include "gml_software3d_internal.h"
 #include "anygm_host.h"
 
+#include <float.h>
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
@@ -84,6 +85,42 @@ void gml_software3d_cross(const double first[3],const double second[3],double ou
 }
 void gml_software3d_matrix_multiply(const double left[16],const double right[16],double output[16]){
   d3_matrix_multiply(left,right,output);
+}
+int gml_software3d_matrix_inverse(const double input[16],double output[16]){
+  if(!input || !output) return 0;
+  long double rows[4][8];
+  double result[16];
+  for(int row=0;row<4;row++) for(int col=0;col<4;col++){
+    double value=input[row+col*4];
+    if(!isfinite(value)) return 0;
+    rows[row][col]=value;
+    rows[row][col+4]=row==col?1:0;
+  }
+  /* Reduce [input | identity] with partial pivoting. Work locally so even an
+   * aliased destination remains intact when the matrix cannot be inverted. */
+  for(int col=0;col<4;col++){
+    int pivot=col;
+    for(int row=col+1;row<4;row++)
+      if(fabsl(rows[row][col])>fabsl(rows[pivot][col])) pivot=row;
+    long double divisor=rows[pivot][col];
+    if(!isfinite(divisor) || divisor==0) return 0;
+    if(pivot!=col) for(int k=0;k<8;k++){
+      long double saved=rows[col][k];
+      rows[col][k]=rows[pivot][k]; rows[pivot][k]=saved;
+    }
+    for(int k=0;k<8;k++) rows[col][k]/=divisor;
+    for(int row=0;row<4;row++) if(row!=col){
+      long double factor=rows[row][col];
+      for(int k=0;k<8;k++) rows[row][k]-=factor*rows[col][k];
+    }
+  }
+  for(int row=0;row<4;row++) for(int col=0;col<4;col++){
+    long double value=rows[row][col+4];
+    if(!isfinite(value) || fabsl(value)>DBL_MAX) return 0;
+    result[row+col*4]=(double)value;
+  }
+  memcpy(output,result,sizeof result);
+  return 1;
 }
 int gml_software3d_matrix_set(GmlRender *render,int type,
                               const double matrix[16]){

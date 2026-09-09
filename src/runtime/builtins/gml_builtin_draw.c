@@ -139,6 +139,12 @@ static GmlVal gm_matrix_write(const double matrix[16],GmlVal reuse){
 
 static GmlVal gm_matrix_builtin(GmlRender *R,const char *name,GmlVal *args,int count){
   double result[16];
+  if(!strcmp(name,"matrix_inverse")){
+    double input[16];
+    if(count<1 || !gm_matrix_read(args[0],input) ||
+       !gml_software3d_matrix_inverse(input,result)) return vundef();
+    return gm_matrix_write(result,count>1?args[1]:vundef());
+  }
   if(!strcmp(name,"matrix_build_identity")){
     gml_software3d_matrix_identity(result);
     return gm_matrix_write(result,count>0?args[0]:vundef());
@@ -712,6 +718,17 @@ GmlVal gml_builtin_try_draw(GmlVM *vm, const char *nm, GmlVal *a, int n){
           gml_render_gui_logical_width(R),gml_render_gui_logical_height(R),0xFFFFFF,draw.alpha);
       else
         gml_draw_surface_stretched(R,s,N(a,n,1),N(a,n,2),gml_surface_width(R,s),gml_surface_height(R,s),0xFFFFFF,draw.alpha); } return vreal(0); }
+    if(!strcmp(nm,"draw_surface_tiled") || !strcmp(nm,"draw_surface_tiled_ext")){
+      int extended=!strcmp(nm,"draw_surface_tiled_ext");
+      double surface=N(a,n,0);
+      if(!R || n<(extended?7:3) || !isfinite(surface) || surface<0 || surface>INT_MAX)
+        return vreal(0);
+      GmlRenderDrawState draw=builtin_draw_state(R);
+      gml_draw_surface_tiled_ext(R,(int)surface,N(a,n,1),N(a,n,2),
+        extended?N(a,n,3):1,extended?N(a,n,4):1,
+        extended?NU32(a,n,5):0xFFFFFFu,extended?N(a,n,6):draw.alpha);
+      return vreal(0);
+    }
     if(!strcmp(nm,"draw_surface_ext")){ if(R) gml_draw_surface_ext(R,(int)N(a,n,0),N(a,n,1),N(a,n,2),N(a,n,3),N(a,n,4),N(a,n,5),NU32(a,n,6),N(a,n,7)); return vreal(0); }
     if(!strcmp(nm,"draw_surface_part_ext")){ if(R) gml_draw_surface_part_ext(R,(int)N(a,n,0),N(a,n,1),N(a,n,2),N(a,n,3),N(a,n,4),N(a,n,5),N(a,n,6),N(a,n,7),N(a,n,8),NU32(a,n,9),N(a,n,10)); return vreal(0); }
     if(!strcmp(nm,"draw_surface_general")){
@@ -1927,7 +1944,7 @@ GmlVal gml_builtin_try_draw_3d(GmlVM *vm, const char *nm, GmlVal *a, int n){
     return vreal(gml_render_sprite_texture_handle(spr,img)); }
   if(!strcmp(nm,"texture_debug_messages")) return vreal(0);
   if(!strcmp(nm,"matrix_build_identity")||!strcmp(nm,"matrix_get")||!strcmp(nm,"matrix_set")||
-     !strcmp(nm,"matrix_multiply")||!strcmp(nm,"matrix_build")||
+     !strcmp(nm,"matrix_multiply")||!strcmp(nm,"matrix_build")||!strcmp(nm,"matrix_inverse")||
      !strcmp(nm,"matrix_transform_vertex")||!strcmp(nm,"matrix_build_lookat")||
      !strcmp(nm,"matrix_build_projection_ortho")||
      !strcmp(nm,"matrix_build_projection_perspective_fov"))

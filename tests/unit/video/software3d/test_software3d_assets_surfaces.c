@@ -17,12 +17,13 @@ int surface_tiled_fixture(void){
   memcpy(render.surface[source-1].px,pattern,sizeof pattern);
   render.surface[source-1].opaque_known=render.surface[source-1].all_opaque=1;
   render.surface[source-1].all_transparent=0;
-  for(int scenario=0;scenario<6;scenario++){
+  for(int scenario=0;scenario<7;scenario++){
     double xs=scenario==1?2:scenario==2?-1:scenario==3?.75:1;
     double ys=scenario==2?-2:1;
     double alpha=scenario==0?1:.5;
     uint32_t tint=scenario==1?0x00FFFFu:0xFFFFFFu;
     double cx=scenario==0?0:3,cy=scenario==0?0:5;
+    if(scenario==6){ cx=3.25; cy=5.5; }
     for(int reference=0;reference<2;reference++){
       uint32_t *target=reference?expected:pixels;
       memset(target,0,sizeof pixels);
@@ -44,7 +45,8 @@ int surface_tiled_fixture(void){
       fprintf(stderr,"surface tiling scenario %d differs from explicit repeated cells\n",scenario);
       goto done;
     }
-    TILED_REQUIRE(colored_pixels(pixels,48)==48,"every target pixel covered");
+    for(int i=0;i<48;i++)
+      TILED_REQUIRE(pixels[i]>>24,"every target pixel covered, including tinted black");
     if(scenario==0) TILED_REQUIRE(pixels[0]==pattern[3] && pixels[1]==pattern[2],
       "hand-derived phase at the top-left");
   }

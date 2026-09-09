@@ -117,6 +117,8 @@ int gml_software3d_light_define_direction(GmlSoftware3D *software3d,int id,
 int gml_software3d_light_enable(GmlSoftware3D *software3d,int id,int enabled);
 
 void gml_software3d_matrix_identity(double matrix[16]);
+/* Column-major inverse. Failure leaves output unchanged; input may alias output. */
+int gml_software3d_matrix_inverse(const double input[16],double output[16]);
 double gml_software3d_dot(const double first[3],const double second[3]);
 int gml_software3d_normalize(double vector[3]);
 void gml_software3d_cross(const double first[3],const double second[3],

@@ -627,6 +627,8 @@ int  gml_surface_target_lit(GmlRender *r);
 void gml_draw_surface_stretched(GmlRender *r, int surf, double x, double y, double w, double h, uint32_t blend, double alpha);
 void gml_draw_surface_ext(GmlRender *r, int surf, double x, double y,
                           double xs, double ys, double rot, uint32_t blend, double alpha);
+void gml_draw_surface_tiled_ext(GmlRender *r, int surf, double x, double y,
+                              double xs, double ys, uint32_t blend, double alpha);
 void gml_draw_surface_part_ext(GmlRender *r, int surf, double sx, double sy, double sw, double sh,
                                double x, double y, double xs, double ys, uint32_t blend, double alpha);
 int  gml_sprite_create_from_surface(GmlRender *r, int surf, int x, int y, int w, int h,

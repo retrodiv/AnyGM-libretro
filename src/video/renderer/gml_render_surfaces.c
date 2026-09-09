@@ -2094,13 +2094,8 @@ void gml_draw_surface_ext(GmlRender *r,int surf,double x,double y,
   r->fb_opaque_known=0;
   free(copy);
 }
-void gml_draw_surface_part_ext(GmlRender *r, int surf, double sx, double sy, double sw, double sh,
-                               double dx, double dy, double xs, double ys, uint32_t blend, double alpha){
-  int explicit_target_raster=surface_draw_targets_screen_raster(r,surf,sw*xs,sh*ys);
-  if(!explicit_target_raster){
-    gml_render_draw_map_point(r,&dx,&dy);
-    gml_render_draw_map_scale(r,&xs,&ys);
-  }
+static void draw_surface_part_mapped(GmlRender *r,int surf,double sx,double sy,double sw,double sh,
+                                    double dx,double dy,double xs,double ys,uint32_t blend,double alpha){
   const struct GmlShaderPal *sdual=dual_active(r);
   if(!sdual && !mapped_texture_active(r) &&
      gml_d3_draw_surface_part_2d(r,surf,sx,sy,sw,sh,dx,dy,xs,ys,blend,alpha)) return;
@@ -2121,4 +2116,50 @@ void gml_draw_surface_part_ext(GmlRender *r, int surf, double sx, double sy, dou
   double t0=prof?rprof_now():0.0;
   draw_surface_region(r,surf,sx,sy,sw,sh,dx,dy,sw*xs,sh*ys,blend,alpha);
   if(prof) rprof_add("surface",r,NULL,(rprof_now()-t0)*1000.0,(unsigned long long)llround(fabs(sw*xs*sh*ys)));
+}
+
+void gml_draw_surface_part_ext(GmlRender *r,int surf,double sx,double sy,double sw,double sh,
+                               double dx,double dy,double xs,double ys,uint32_t blend,double alpha){
+  int explicit_target_raster=surface_draw_targets_screen_raster(r,surf,sw*xs,sh*ys);
+  if(!explicit_target_raster){
+    gml_render_draw_map_point(r,&dx,&dy);
+    gml_render_draw_map_scale(r,&xs,&ys);
+  }
+  draw_surface_part_mapped(r,surf,sx,sy,sw,sh,dx,dy,xs,ys,blend,alpha);
+}
+
+void gml_draw_surface_tiled_ext(GmlRender *r,int surf,double x,double y,
+                               double xs,double ys,uint32_t blend,double alpha){
+  if(!r || !r->fb || r->fbw<=0 || r->fbh<=0 ||
+     !isfinite(x) || !isfinite(y) || !isfinite(xs) || !isfinite(ys) ||
+     !isfinite(alpha) || alpha<=0) return;
+  int sw=0,sh=0;
+  const uint32_t *source=surface_pixels(r,surf,&sw,&sh);
+  if(!source || source==r->fb || sw<=0 || sh<=0) return;
+  /* Map once: the repeated cells are not independent application-surface
+   * presentations and must not each select an automatic screen-size policy. */
+  gml_render_draw_map_point(r,&x,&y);
+  gml_render_draw_map_scale(r,&xs,&ys);
+  double width=fabs(sw*xs),height=fabs(sh*ys);
+  double relative_x=x-r->cam_x,relative_y=y-r->cam_y;
+  if(!isfinite(width) || !isfinite(height) ||
+     !isfinite(relative_x) || !isfinite(relative_y)) return;
+  /* Surface rectangles round their raster extents. A zero-raster cell cannot
+   * contribute pixels; discarding it also bounds repeat work by target area.
+   * Keep the existing signed-int rectangle arithmetic representable. */
+  if(width<.5 || height<.5 ||
+     width>((double)INT_MAX-r->fbw-2)/2 ||
+     height>((double)INT_MAX-r->fbh-2)/2) return;
+  double first_x=fmod(relative_x,width),first_y=fmod(relative_y,height);
+  if(first_x>0) first_x-=width;
+  if(first_y>0) first_y-=height;
+  int64_t columns=(int64_t)ceil((r->fbw-first_x)/width)+1;
+  int64_t rows=(int64_t)ceil((r->fbh-first_y)/height)+1;
+  /* One trailing cell includes mirrored quads whose anchor is their far edge.
+   * Integer counters avoid stalled additions at very distant supplied phases. */
+  for(int64_t row=0;row<rows;row++) for(int64_t column=0;column<columns;column++){
+    double dx=first_x+column*width+r->cam_x;
+    double dy=first_y+row*height+r->cam_y;
+    draw_surface_part_mapped(r,surf,0,0,sw,sh,dx,dy,xs,ys,blend,alpha);
+  }
 }
