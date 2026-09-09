@@ -807,6 +807,18 @@ static Fixture manifest_fixture_program(unsigned container_version, const Fixtur
         fixture_background_payload(&payload,program->second_background_size);
         fixture_manifest_resource(&f,"fixture_background_second",800,&payload);
       }
+    } else if(type == GMLC_CLASSIC_TIMELINE && program->timeline_count){
+      fixture_u32(&f,(unsigned)program->timeline_count);
+      for(int i=0;i<program->timeline_count;i++){
+        const FixtureTimeline *timeline=&program->timelines[i];
+        Fixture payload={{0},0};
+        fixture_u32(&payload,(unsigned)timeline->moment_count);
+        for(int m=0;m<timeline->moment_count;m++){
+          fixture_u32(&payload,(unsigned)timeline->moments[m].step);
+          fixture_code_action_list(&payload,timeline->moments[m].source);
+        }
+        fixture_manifest_resource(&f,timeline->name,500,&payload);
+      }
     } else if(type == GMLC_CLASSIC_OBJECT && program->object_count){
       fixture_u32(&f,(unsigned)program->object_count);
       for(int i=0;i<program->object_count;i++){
@@ -839,6 +851,15 @@ static Fixture manifest_fixture_program(unsigned container_version, const Fixtur
 
 int build_project_fixture_program(unsigned version, const FixtureProgram *program, Fixture *out){
   if(!program || program->room_width<=0 || program->room_height<=0) return 0;
+  if(program->timeline_count<0 || program->timeline_count>8 ||
+     (program->timeline_count && !program->timelines)) return 0;
+  for(int i=0;i<program->timeline_count;i++){
+    const FixtureTimeline *timeline=&program->timelines[i];
+    if(!timeline->name || timeline->moment_count<0 || timeline->moment_count>64 ||
+       (timeline->moment_count && !timeline->moments)) return 0;
+    for(int m=0;m<timeline->moment_count;m++)
+      if(timeline->moments[m].step<0 || !timeline->moments[m].source) return 0;
+  }
   /* Each uncompressed image must fit the bounded fixture payload. */
   if(program->background_size<0 || program->background_size>63 ||
      program->second_background_size<0 || program->second_background_size>63 ||
@@ -846,7 +867,8 @@ int build_project_fixture_program(unsigned version, const FixtureProgram *progra
   /* A first-party GM5 rule can use the legacy inline object and room records. The compact legacy
    * sprite record is deliberately not synthesized here; a program requiring one must continue to
    * use a manifest generation until that distinct record is represented explicitly. */
-  if(version==530 && program->sprite_size==0 && program->background_size==0){
+  if(version==530 && program->sprite_size==0 && program->background_size==0 &&
+     program->timeline_count==0){
     *out=legacy_fixture_build(version,0,NULL,program);
     return 1;
   }

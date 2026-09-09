@@ -4,6 +4,7 @@
 #include "classic_test_fixture.h"
 
 #include <errno.h>
+#include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -105,6 +106,8 @@ static char *read_source_file(const char *path){
 #define FIXTURE_MAX_EVENTS 128
 #define FIXTURE_MAX_ACTIONS 512
 #define FIXTURE_MAX_INSTANCES 96
+#define FIXTURE_MAX_TIMELINES 8
+#define FIXTURE_MAX_MOMENTS 64
 
 typedef struct {
   FixtureProgram program;
@@ -113,8 +116,11 @@ typedef struct {
   FixtureAction actions[FIXTURE_MAX_ACTIONS];
   int action_count;
   FixtureInstance instances[FIXTURE_MAX_INSTANCES];
+  FixtureTimeline timelines[FIXTURE_MAX_TIMELINES];
+  FixtureTimelineMoment moments[FIXTURE_MAX_MOMENTS];
   int event_starts[FIXTURE_MAX_OBJECTS];
-  char *owned[FIXTURE_MAX_EVENTS + FIXTURE_MAX_OBJECTS + FIXTURE_MAX_ACTIONS + 2];
+  char *owned[FIXTURE_MAX_EVENTS + FIXTURE_MAX_OBJECTS + FIXTURE_MAX_ACTIONS +
+              FIXTURE_MAX_TIMELINES + FIXTURE_MAX_MOMENTS + 2];
   int owned_count;
 } ProgramFile;
 
@@ -195,10 +201,11 @@ static int program_read(const char *path, ProgramFile *p){
   memset(p,0,sizeof(*p));
   p->program.room_width=320; p->program.room_height=240;
   p->program.objects=p->objects; p->program.instances=p->instances;
+  p->program.timelines=p->timelines;
   FILE *file=fopen(path,"rb");
   if(!file){ fprintf(stderr,"cannot open program: %s\n",path); return 0; }
   char line[512];
-  int current=-1, events=0;
+  int current=-1, events=0, current_timeline=-1, moments=0;
   int ok=1;
   char directory[512];
   snprintf(directory,sizeof(directory),"%s",path);
@@ -242,6 +249,32 @@ static int program_read(const char *path, ProgramFile *p){
         char full[800]; snprintf(full,sizeof(full),"%s%s",directory,a);
         p->program.startup=program_keep(p,read_source_file(full));
         ok=p->program.startup!=NULL;
+      }
+    } else if(!strcmp(keyword,"timeline")){
+      if(p->program.timeline_count>=FIXTURE_MAX_TIMELINES ||
+         sscanf(line,"%31s %255s",keyword,a)!=2) ok=0;
+      else {
+        current_timeline=p->program.timeline_count++;
+        FixtureTimeline *timeline=&p->timelines[current_timeline];
+        timeline->name=program_keep(p,strdup(a));
+        timeline->moments=&p->moments[moments];
+        ok=timeline->name!=NULL;
+      }
+    } else if(!strcmp(keyword,"moment")){
+      if(current_timeline<0 || moments>=FIXTURE_MAX_MOMENTS ||
+         sscanf(line,"%31s %63s %255s",keyword,b,a)!=3) ok=0;
+      else {
+        char *end=NULL; errno=0;
+        long step=strtol(b,&end,10);
+        if(errno || !end || end==b || *end || step<0 || step>INT_MAX) ok=0;
+        else {
+          char full[800]; snprintf(full,sizeof(full),"%s%s",directory,a);
+          FixtureTimelineMoment *moment=&p->moments[moments];
+          moment->step=(int)step;
+          moment->source=program_keep(p,read_source_file(full));
+          ok=moment->source!=NULL;
+          if(ok){ moments++; p->timelines[current_timeline].moment_count++; }
+        }
       }
     } else if(!strcmp(keyword,"object")){
       if(p->program.object_count>=FIXTURE_MAX_OBJECTS){ fprintf(stderr,"too many objects\n"); ok=0; }
