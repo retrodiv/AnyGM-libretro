@@ -169,6 +169,11 @@ source preservation and independent destination storage. Run
 
 ## Resource-query contract coverage
 
+`tests/unit/runtime/test_builtin_animation_queries.c` owns animation channel-name
+indices for immutable assets and mutable curve structs, invalid/malformed input,
+ordinary/cached dispatch and neighboring channel evaluation. Run
+`make check TEST=builtin_animation_queries`.
+
 `tests/unit/runtime/persistent/test_persistent_objects.c` owns object default
 mutation, future-instance initialization, and canonical object-property restoration
 in the same or a fresh VM. Run `make check TEST=persistent_room
