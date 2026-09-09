@@ -129,7 +129,7 @@ static int invalid_case(void){
   gml_vm_free(&vm);
   return ok;
 }
-static int state_case(void){
+static int state_case_mode(int existing_only){
   GmlWin win={0};
   GmlVM vm={0};
   vm.win=&win;
@@ -141,7 +141,12 @@ static int state_case(void){
   gml_vm_software3d_reset(&vm);
   GmlVal source=gml_arr_new(1,vstr("saved"));
   GmlVal arrays[]={source,source};
-  GmlVal joined=gml_builtin_call(&vm,"array_concat",arrays,2);
+  GmlVal joined;
+  if(existing_only){
+    joined=gml_arr_new(2,vreal(0));
+    gml_arr_copy(joined,0,source,0,1);
+    gml_arr_copy(joined,1,source,0,1);
+  } else joined=gml_builtin_call(&vm,"array_concat",arrays,2);
   *gml_varmap_put(&vm.globals,"source")=source;
   *gml_varmap_put(&vm.globals,"joined")=joined;
   GmlVal queue=gml_builtin_call(&vm,"ds_queue_create",NULL,0);
@@ -152,11 +157,19 @@ static int state_case(void){
   gml_builtin_call(&vm,"ds_queue_enqueue",enqueue,2);
   gml_builtin_call(&vm,"ds_stack_push",push,2);
   GmlVal queue_args[]={queue_copy,queue}, stack_args[]={stack_copy,stack};
-  gml_builtin_call(&vm,"ds_queue_copy",queue_args,2);
-  gml_builtin_call(&vm,"ds_stack_copy",stack_args,2);
+  if(existing_only){
+    GmlVal queue_value[]={queue_copy,joined}, stack_value[]={stack_copy,joined};
+    gml_builtin_call(&vm,"ds_queue_enqueue",queue_value,2);
+    gml_builtin_call(&vm,"ds_stack_push",stack_value,2);
+  } else {
+    gml_builtin_call(&vm,"ds_queue_copy",queue_args,2);
+    gml_builtin_call(&vm,"ds_stack_copy",stack_args,2);
+  }
+  int before_shared=gml_builtin_call(&vm,"ds_queue_head",&queue_copy,1).arr==joined.arr &&
+                    gml_builtin_call(&vm,"ds_stack_top",&stack_copy,1).arr==joined.arr;
   size_t size=gml_vm_state_size(&vm), written=0, used=0;
   void *bytes=malloc(size?size:1);
-  int ok=expect(bytes && gml_vm_state_save(&vm,bytes,size,&written) && written==size,
+  int ok=expect(before_shared && bytes && gml_vm_state_save(&vm,bytes,size,&written) && written==size,
                 "new sequence results serialize through the existing state owner");
   if(ok){
     gml_arr_set(joined,0,vreal(0));
@@ -169,23 +182,30 @@ static int state_case(void){
       GmlVal *original=gml_varmap_get(&vm.globals,"source");
       GmlVal head=gml_builtin_call(&vm,"ds_queue_head",&queue_copy,1);
       GmlVal top=gml_builtin_call(&vm,"ds_stack_top",&stack_copy,1);
-      fprintf(stderr,"state probe: result=%p source=%p head=%p/%d top=%p/%d length=%d first=%s\n",
-              restored?restored->arr:NULL,original?original->arr:NULL,
-              head.arr,head.t,top.arr,top.t,restored?gml_val_array_length(*restored):-1,
-              restored && gml_arr_get(*restored,0).t==V_STR?gml_arr_get(*restored,0).s:"<non-string>");
       ok &= expect(restored && original && restored->t==V_ARR &&
                    restored->arr!=original->arr && gml_val_array_length(*restored)==2 &&
                    string_is(gml_arr_get(*restored,0),"saved") &&
                    head.t==V_ARR && head.arr==restored->arr &&
                    top.t==V_ARR && top.arr==restored->arr,
                    "restore preserves contents, separate arrays and shared DS element references");
+      if(restored){
+        gml_arr_set(*restored,0,vreal(55));
+        int propagated=real_is(gml_arr_get(head,0),55) && real_is(gml_arr_get(top,0),55);
+        ok &= expect(propagated,"mutating the restored global must reach its DS aliases");
+        if(!ok) fprintf(stderr,"state control: existing_only=%d shared_before=%d shared_after=%d mutation_propagates=%d\n",
+                        existing_only,before_shared,
+                        head.arr==restored->arr && top.arr==restored->arr,propagated);
+      }
     }
   }
   free(bytes);
   gml_vm_free(&vm);
   return ok;
 }
-int main(void){
+static int state_case(void){ return state_case_mode(0); }
+int main(int argc,char **argv){
+  if(argc==2 && !strcmp(argv[1],"--existing-state-control"))
+    return state_case_mode(1)?0:1;
   static const AnygmTestCase cases[]={
     {"array_concat",concat_case},{"queue_copy",queue_case},{"stack_copy",stack_case},
     {"defensive_policy",invalid_case},
