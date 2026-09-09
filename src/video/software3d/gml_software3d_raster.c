@@ -415,7 +415,9 @@ static void d3_raster_triangle(GmlRender *R, const GmlD3Vertex in[3], const GmlD
     /* The fixed-function hidden-surface path accepts fragments at the current depth
      * (the usual LESS_EQUAL comparison).  A strict comparison makes coplanar 2D batches eat
      * one another: text glyphs and quads are emitted as multiple triangles at one layer depth. */
-    if(g_d3.hidden && ztest<g_d3.depth[di]) continue;
+    /* Compare in the depth buffer's representation. Interpolation can land
+     * just below an equal stored float without being a farther fragment. */
+    if(g_d3.hidden && (float)ztest<g_d3.depth[di]) continue;
     double sampled[4]={255,255,255,255};
     if(texture&&texture->kind){
       double u=(b0*uz[0]+b1*uz[1]+b2*uz[2])/invz;
@@ -949,7 +951,7 @@ static void d3_raster_sample(GmlRender *R,const GmlRenderBackendDrawView *draw,
                              const GmlD3Texture *texture){
   if(!R || !draw || x<0 || y<0 || x>=draw->width || y>=draw->height || alpha<=0) return;
   size_t index=(size_t)y*draw->width+x;
-  if(g_d3.hidden && depth<g_d3.depth[index]) return;
+  if(g_d3.hidden && (float)depth<g_d3.depth[index]) return;
   double sampled[4]={255,255,255,255};
   if(texture&&texture->kind) d3_sample(R,draw,texture,u,v,sampled);
   if(red<0) red=0; else if(red>255) red=255;

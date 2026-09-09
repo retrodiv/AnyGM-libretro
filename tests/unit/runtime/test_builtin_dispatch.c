@@ -1155,7 +1155,7 @@ static int canonical_registry_resolution(GmlVM *vm){
 
 static int rounded_contextual_precedence(GmlVM *vm){
   const char *names[]={"draw_roundrect_color_ext","draw_roundrect_colour_ext","draw_roundrect_ext"};
-  GmlRender render={0}; uint32_t pixels[24*20]={0};
+  GmlRender render={0}; uint32_t pixels[24*20]={0},reference[24*20];
   render.color=0xFFFFFF; render.alpha=1; render.color_write_mask=15;
   render.circle_precision=64; vm->render=&render;
   gml_vm_software3d_reset(vm);
@@ -1179,6 +1179,25 @@ static int rounded_contextual_precedence(GmlVM *vm){
       fprintf(stderr,"contextual rounded %s: corner=%08x centre=%08x\n",
         names[i],pixels[2*24+2],pixels[8*24+10]); ok=0;
     }
+    if(i==0) memcpy(reference,pixels,sizeof pixels);
+    if(i==1 && memcmp(reference,pixels,sizeof pixels)){
+      fprintf(stderr,"equal-depth rounded redraw changed coverage\n"); ok=0;
+    }
+  }
+  memcpy(reference,pixels,sizeof pixels);
+  GmlVal offset[]={vreal(0),vreal(0),vreal(2)};
+  (void)gml_builtin_call(vm,"d3d_transform_set_translation",offset,3);
+  GmlVal shape[]={vreal(2),vreal(2),vreal(18),vreal(14),vreal(4),vreal(4),
+    vreal(255),vreal(255),vreal(0)};
+  (void)gml_builtin_call(vm,"draw_roundrect_color_ext",shape,9);
+  if(memcmp(reference,pixels,sizeof pixels)){
+    fprintf(stderr,"farther rounded fill passed the depth test\n"); ok=0;
+  }
+  offset[2]=vreal(-2);
+  (void)gml_builtin_call(vm,"d3d_transform_set_translation",offset,3);
+  (void)gml_builtin_call(vm,"draw_roundrect_color_ext",shape,9);
+  if(pixels[8*24+10]!=0xFFFF0000u){
+    fprintf(stderr,"nearer rounded fill failed the depth test\n"); ok=0;
   }
   (void)gml_builtin_call(vm,"d3d_end",NULL,0);
   gml_render_free(&render); vm->render=NULL;
