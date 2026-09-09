@@ -422,6 +422,14 @@ static GmlVal gml_builtin_try_instances_timelines(GmlVM *vm, const char *nm, Gml
     const GmlTimeline *timeline=&vm->timelines[(int)index];
     return vreal(timeline->name?timeline->n:0);
   }
+  if(!strcmp(nm,"timeline_max_moment")){
+    double index=N(a,n,0);
+    if(n<1 || !isfinite(index) || index<0 || index>=vm->n_timelines) return vreal(0);
+    const GmlTimeline *timeline=&vm->timelines[(int)index];
+    /* Keep the neutral fallback for an absent/empty resource; a populated
+     * timeline already retains the maximum authored step, independently of order. */
+    return vreal(timeline->name && timeline->n>0?timeline->last_step:0);
+  }
   if(!strcmp(nm,"timeline_add")) return vreal(gml_timeline_add(vm));
   if(!strcmp(nm,"timeline_clear")){ gml_timeline_clear(vm,(int)N(a,n,0)); return vreal(0); }
   if(!strcmp(nm,"action_set_timeline") || !strcmp(nm,"action_timeline_set")){ if(vm->cur_self){

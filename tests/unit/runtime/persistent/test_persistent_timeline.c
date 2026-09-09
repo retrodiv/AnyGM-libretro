@@ -59,6 +59,14 @@ int expect_native_timeline_import(const char *path){
     queried_size=gml_builtin_call_fast_id(&vm,query_id,"timeline_size",&timeline,1);
     ok &= queried_size.t==V_REAL && queried_size.d==3;
   }
+  GmlVal maximum=gml_builtin_call(&vm,"timeline_max_moment",&timeline,1);
+  ok &= maximum.t==V_REAL && maximum.d==4;
+  int maximum_id=gml_builtin_fast_id(&vm,"timeline_max_moment");
+  if(maximum_id<0) ok=0;
+  else {
+    maximum=gml_builtin_call_fast_id(&vm,maximum_id,"timeline_max_moment",&timeline,1);
+    ok &= maximum.t==V_REAL && maximum.d==4;
+  }
   if(ok){
     gml_room_enter(&vm,0);
     GmlInstance *probe=find_slot(&vm,100000);
@@ -75,6 +83,8 @@ int expect_native_timeline_import(const char *path){
   gml_builtin_call(&vm,"timeline_clear",&timeline,1);
   queried_size=gml_builtin_call(&vm,"timeline_size",&timeline,1);
   ok &= queried_size.t==V_REAL && queried_size.d==0;
+  maximum=gml_builtin_call(&vm,"timeline_max_moment",&timeline,1);
+  ok &= maximum.t==V_REAL && maximum.d==0; /* neutral empty-resource policy */
   if(!ok) fprintf(stderr,"native timeline import fixture failed\n");
   gml_vm_free(&vm); gml_win_free(&win);
   return ok;
