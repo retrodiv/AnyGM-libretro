@@ -170,10 +170,63 @@ static int malformed_assets_case(void){
   gml_vm_free(&empty);
   return ok;
 }
+/* Reproduce both struct-setup paths without invoking any animation builtin. This
+ * control separates pre-existing setter lifetime from a read-only query's work. */
+static int struct_setup_control_case(void){
+  for(int repeat=0;repeat<2;repeat++){
+    GmlVM vm={0};
+    GmlVal curve=make_struct(&vm),other=make_struct(&vm);
+    GmlVal first=make_struct(&vm),last=make_struct(&vm);
+    GmlVal channels=gml_arr_new(2,vundef()),single=gml_arr_new(1,vundef());
+    set_field(&vm,first,"name",vstr("first")); set_field(&vm,last,"name",vstr("last"));
+    gml_arr_set(channels,0,first); gml_arr_set(channels,1,last); gml_arr_set(single,0,last);
+    set_field(&vm,curve,"channels",channels); set_field(&vm,other,"channels",single);
+    set_field(&vm,last,"name",vstr("renamed"));
+    gml_arr_set(channels,0,last); gml_arr_set(channels,1,first);
+    gml_vm_free(&vm);
+    GmlVM invalid={0};
+    GmlVal empty=make_struct(&invalid);
+    set_field(&invalid,empty,"channels",vreal(12));
+    channels=gml_arr_new(1,vreal(0)); set_field(&invalid,empty,"channels",channels);
+    GmlVal channel=make_struct(&invalid); gml_arr_set(channels,0,channel);
+    set_field(&invalid,channel,"name",vreal(1));
+    gml_vm_free(&invalid);
+  }
+  return 1;
+}
+/* Borrowed literal fields isolate query behavior from dynamic setter ownership.
+ * The setter-driven cases and query-free lifetime control remain above. */
+static int borrowed_struct_fields_case(void){
+  int ok=1;
+  for(int cached=0;cached<2;cached++){
+    GmlVM vm={0};
+    GmlVal curve=make_struct(&vm),first=make_struct(&vm),last=make_struct(&vm);
+    GmlInstance *c=gml_struct_find(&vm,(unsigned)curve.d);
+    GmlInstance *a=gml_struct_find(&vm,(unsigned)first.d);
+    GmlInstance *b=gml_struct_find(&vm,(unsigned)last.d);
+    if(!c || !a || !b){ gml_vm_free(&vm); return 0; }
+    *gml_varmap_put(&a->vars,"name")=vstr("first");
+    *gml_varmap_put(&b->vars,"name")=vstr("last");
+    GmlVal channels=gml_arr_new(2,vundef());
+    gml_arr_set(channels,0,first); gml_arr_set(channels,1,last);
+    *gml_varmap_put(&c->vars,"channels")=channels;
+    ok &= expect(real_is(query(&vm,curve,"last",cached,&ok),1),
+                 "borrowed fields retain the same nonzero channel index");
+    *gml_varmap_get(&b->vars,"name")=vstr("renamed");
+    gml_arr_set(channels,0,last); gml_arr_set(channels,1,first);
+    ok &= expect(real_is(query(&vm,curve,"renamed",cached,&ok),0) &&
+                 real_is(query(&vm,curve,"first",cached,&ok),1),
+                 "query-only controls observe live fields without setter allocation");
+    gml_vm_free(&vm);
+  }
+  return ok;
+}
 int main(int argc,char **argv){
   static const AnygmTestCase cases[]={
     {"asset_channel_names",asset_names_case}, {"struct_channel_names",struct_names_case},
-    {"invalid_arguments",invalid_arguments_case}, {"malformed_assets",malformed_assets_case}
+    {"invalid_arguments",invalid_arguments_case}, {"malformed_assets",malformed_assets_case},
+    {"struct_setup_control",struct_setup_control_case},
+    {"borrowed_struct_fields",borrowed_struct_fields_case}
   };
   static const AnygmTestGroup group={"animation_queries",cases,sizeof cases/sizeof cases[0]};
   const char *filter=NULL;
