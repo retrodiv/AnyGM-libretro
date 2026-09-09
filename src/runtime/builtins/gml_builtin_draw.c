@@ -1364,8 +1364,11 @@ GmlVal gml_builtin_try_draw(GmlVM *vm, const char *nm, GmlVal *a, int n){
       return vreal(gml_render_background_metrics(R,(int)N(a,n,0),NULL));
     if(!strcmp(nm,"background_get_width")){ GmlRenderBackgroundMetrics background; return vreal(gml_render_background_metrics(R,(int)N(a,n,0),&background)?background.logical_width:0); }
     if(!strcmp(nm,"background_get_height")){ GmlRenderBackgroundMetrics background; return vreal(gml_render_background_metrics(R,(int)N(a,n,0),&background)?background.logical_height:0); }
-    if(!strcmp(nm,"background_get_name")){ GmlRenderBackgroundMetrics background;
-      return vstr(gml_render_background_metrics(R,(int)N(a,n,0),&background)&&background.name?background.name:""); }
+    if(!strcmp(nm,"background_get_name") || !strcmp(nm,"background_name")){
+      GmlRenderBackgroundMetrics background;
+      double index=N(a,n,0);
+      if(!isfinite(index) || index<INT_MIN || index>INT_MAX) return vstr("");
+      return vstr(gml_render_background_metrics(R,(int)index,&background)&&background.name?background.name:""); }
     /* Return the authored background flags through the corresponding queries. */
     if(!strcmp(nm,"background_get_transparent")){ GmlRenderBackgroundMetrics background;
       return vreal(gml_render_background_metrics(R,(int)N(a,n,0),&background)?background.transparent:0); }

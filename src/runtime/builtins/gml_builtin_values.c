@@ -107,6 +107,10 @@ GmlVal gml_builtin_try_values_math(GmlVM *vm, const char *nm, GmlVal *a, int n){
   if(!strcmp(nm,"mean")){ double s=0; for(int i=0;i<n;i++) s+=N(a,n,i); return vreal(n? s/n : 0); }
   if(!strcmp(nm,"min")){ if(n<=0) return vreal(0); double v=N(a,n,0); for(int i=1;i<n;i++){ double x=N(a,n,i); if(x<v) v=x; } return vreal(v); }
   if(!strcmp(nm,"max")){ if(n<=0) return vreal(0); double v=N(a,n,0); for(int i=1;i<n;i++){ double x=N(a,n,i); if(x>v) v=x; } return vreal(v); }
+  if(!strcmp(nm,"min3") || !strcmp(nm,"max3")){
+    if(n<3) return vreal(0);
+    return gml_builtin_try_values_math(vm,!strcmp(nm,"min3")?"min":"max",a,3);
+  }
   if(!strcmp(nm,"power")) return vreal(pow(N(a,n,0),N(a,n,1)));
   if(!strcmp(nm,"db_to_lin")) return vreal(pow(10.0,N(a,n,0)/20.0));
   if(!strcmp(nm,"lin_to_db")) return vreal(20.0*log10(N(a,n,0)));

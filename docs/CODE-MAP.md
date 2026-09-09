@@ -194,7 +194,7 @@ defensive missing arguments. Run `make check TEST=builtin_extrema`.
 
 `tests/unit/runtime/test_builtin_draw_queries.c` covers retained circle precision,
 owned shader names, live depth-matched layers, retired alpha controls and source-region
-background pixels:
+background pixels, plus canonical and legacy background-name lookup:
 `make check TEST=builtin_draw_queries`.
 
 `tests/unit/runtime/test_builtin_buffer_hash.c` covers exact buffer SHA-1 slices,

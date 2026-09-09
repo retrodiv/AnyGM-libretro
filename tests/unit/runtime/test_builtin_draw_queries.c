@@ -129,7 +129,14 @@ static int background_names_case(void){
     for(unsigned i=0;i<sizeof invalid/sizeof invalid[0];i++){
       GmlVal arg=vreal(invalid[i]);
       ok &= string_is(query(&vm,"background_name",&arg,1,cached,&ok),"");
+      ok &= string_is(query(&vm,"background_get_name",&arg,1,cached,&ok),"");
     }
+    /* Keep the existing numeric-index truncation and missing-index fallback. */
+    GmlVal fractional=vreal(0.75);
+    ok &= string_is(query(&vm,"background_name",&fractional,1,cached,&ok),backgrounds[0].name);
+    ok &= string_is(query(&vm,"background_get_name",&fractional,1,cached,&ok),backgrounds[0].name);
+    ok &= string_is(query(&vm,"background_name",NULL,0,cached,&ok),backgrounds[0].name);
+    ok &= string_is(query(&vm,"background_get_name",NULL,0,cached,&ok),backgrounds[0].name);
     ok &= !strcmp(backgrounds[0].name,"neutral_background_a") &&
           !strcmp(backgrounds[1].name,"neutral_background_b");
     vm.render=NULL; gml_vm_free(&vm);
