@@ -93,9 +93,44 @@ static int sequence_case(int stack){
 }
 static int queue_case(void){ return sequence_case(0); }
 static int stack_case(void){ return sequence_case(1); }
+/* Defensive input policy for invalid calls. */
+static int invalid_case(void){
+  int ok=1;
+  GmlVM vm={0};
+  GmlVal empty=gml_arr_new(0,vreal(0));
+  GmlVal wrong[]={empty,vreal(1)};
+  ok &= expect(gml_builtin_call(&vm,"array_concat",wrong,2).t==V_UNDEF,
+               "a scalar concat argument must not produce a partial array");
+  ok &= expect(gml_builtin_call(&vm,"array_concat",NULL,0).t==V_UNDEF &&
+               gml_builtin_call(&vm,"array_concat",&empty,1).t==V_UNDEF,
+               "concat rejects missing required arguments");
+  /* Synthetic lengths prove rejection before any element access or allocation. */
+  GmlArr large={.len=16000000}, extra={.len=1};
+  GmlVal oversized[]={{.t=V_ARR,.arr=&large},{.t=V_ARR,.arr=&extra}};
+  ok &= expect(gml_builtin_call(&vm,"array_concat",oversized,2).t==V_UNDEF,
+               "concat rejects a sum above the array allocation bound");
+  const char *copies[]={"ds_queue_copy","ds_stack_copy"};
+  for(int i=0;i<2;i++){
+    GmlVal dst=gml_builtin_call(&vm,"ds_queue_create",NULL,0);
+    GmlVal value[]={dst,vreal(42)};
+    gml_builtin_call(&vm,"ds_queue_enqueue",value,2);
+    GmlVal args[]={dst,vreal(-1)};
+    gml_builtin_call(&vm,copies[i],args,2);
+    args[1]=dst;
+    gml_builtin_call(&vm,copies[i],args,2);
+    gml_builtin_call(&vm,copies[i],&dst,1);
+    ok &= expect(real_is(gml_builtin_call(&vm,"ds_queue_size",&dst,1),1) &&
+                 real_is(gml_builtin_call(&vm,"ds_queue_head",&dst,1),42),
+                 "invalid source, missing source and self-copy preserve the destination");
+  }
+  gml_values_release(&empty,1);
+  gml_vm_free(&vm);
+  return ok;
+}
 int main(void){
   static const AnygmTestCase cases[]={
     {"array_concat",concat_case},{"queue_copy",queue_case},{"stack_copy",stack_case},
+    {"defensive_policy",invalid_case},
   };
   const AnygmTestGroup group={"sequence_copy",cases,sizeof(cases)/sizeof(cases[0])};
   AnygmTestResult result={0};

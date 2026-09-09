@@ -1184,6 +1184,41 @@ GmlVal gml_builtin_try_ds(GmlVM *vm, const char *nm, GmlVal *a, int n){
       l->item[p]=ds_val_clone(a[2]); if(l->child_kind) l->child_kind[p]=0; } return vreal(0); }
   /* Implement FIFO queues and LIFO stacks through GmlDSList storage and shared IDs. */
   if(!strcmp(nm,"ds_queue_create")||!strcmp(nm,"ds_stack_create")) return vreal((double)ds_list_create_id(vm));
+  if(!strcmp(nm,"ds_queue_copy")||!strcmp(nm,"ds_stack_copy")){
+    if(n<2) return vreal(0);
+    GmlDSList *dst=ds_list_slot(vm,(int)N(a,n,0));
+    GmlDSList *src=ds_list_slot(vm,(int)N(a,n,1));
+    if(!dst || !src || dst==src) return vreal(0);
+    /* Stage through the existing list storage operation before replacing the
+     * destination. A failed allocation must not consume either sequence. */
+    GmlDSList staged={0};
+    for(int i=0;i<src->len;i++){
+      GmlVal value=ds_val_clone(src->item[i]);
+      if(src->item[i].t==V_STR && src->item[i].s && src->item[i].s[0] &&
+         (!value.s || !value.s[0])) break;
+      ds_list_push(&staged,value);
+      if(staged.len!=i+1){
+        if(value.t==V_STR && value.d!=0) free((void *)value.s);
+        break;
+      }
+    }
+    if(staged.len==src->len){
+      ds_list_clear_owned(vm,dst);
+      free(dst->item);
+      free(dst->child_kind);
+      dst->item=staged.item;
+      dst->child_kind=staged.child_kind;
+      dst->len=staged.len;
+      dst->cap=staged.cap;
+    } else {
+      for(int i=0;i<staged.len;i++)
+        if(staged.item[i].t==V_STR && staged.item[i].d!=0)
+          free((void *)staged.item[i].s);
+      free(staged.item);
+      free(staged.child_kind);
+    }
+    return vreal(0);
+  }
   if(!strcmp(nm,"ds_queue_destroy")||!strcmp(nm,"ds_stack_destroy")){ ds_list_destroy_id(vm,(int)N(a,n,0)); return vreal(0); }
   if(!strcmp(nm,"ds_queue_clear")||!strcmp(nm,"ds_stack_clear")){ GmlDSList *l=ds_list_slot_repair(vm,(int)N(a,n,0)); ds_list_clear_owned(vm,l); return vreal(0); }
   if(!strcmp(nm,"ds_queue_size")||!strcmp(nm,"ds_stack_size")){ GmlDSList *l=ds_list_slot_repair(vm,(int)N(a,n,0)); return vreal(l?l->len:0); }

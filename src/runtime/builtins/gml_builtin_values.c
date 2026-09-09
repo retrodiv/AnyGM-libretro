@@ -209,6 +209,30 @@ GmlVal gml_builtin_try_values_math(GmlVM *vm, const char *nm, GmlVal *a, int n){
   if(!strcmp(nm,"array_pop")){ return n>0?gml_arr_pop(a[0]):vreal(0); }
   if(!strcmp(nm,"array_resize")){ if(n>1) gml_arr_resize(a[0],(int)N(a,n,1)); return vreal(0); }
   if(!strcmp(nm,"array_copy")){ if(n>4) gml_arr_copy(a[0],(int)N(a,n,1),a[2],(int)N(a,n,3),(int)N(a,n,4)); return vreal(0); }
+  if(!strcmp(nm,"array_concat")){
+    /* A new top-level array; element ownership follows the existing array-copy
+     * operation. Reject invalid/oversized requests before copying any prefix. */
+    if(n<2) return vundef();
+    int total=0;
+    for(int i=0;i<n;i++){
+      if(a[i].t!=V_ARR || !a[i].arr) return vundef();
+      int count=gml_val_array_length(a[i]);
+      if(count<0 || count>16000000-total) return vundef();
+      total+=count;
+    }
+    GmlVal result=gml_arr_new(total,vreal(0));
+    if(!result.arr || gml_val_array_length(result)!=total){
+      gml_values_release(&result,1);
+      return vundef();
+    }
+    int offset=0;
+    for(int i=0;i<n;i++){
+      int count=gml_val_array_length(a[i]);
+      gml_arr_copy(result,offset,a[i],0,count);
+      offset+=count;
+    }
+    return result;
+  }
   if(!strcmp(nm,"array_insert")){ if(n>2) gml_arr_insert(a[0],(int)N(a,n,1),a+2,n-2); return vreal(0); }
   if(!strcmp(nm,"array_equals")) return vreal(n>1 && array_equals_recursive(vm,a[0],a[1]));
   if(!strcmp(nm,"array_get_index")) return vreal(gml_array_search_index(a,n));
