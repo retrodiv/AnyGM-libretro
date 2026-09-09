@@ -266,7 +266,9 @@ int expect_retired_builtin_script_shadow(void){
   return retired_builtin_script_shadow_case("background_get_height") &&
          retired_builtin_script_shadow_case("background_get_width") &&
          retired_builtin_script_shadow_case("draw_background") &&
-         retired_builtin_script_shadow_case("draw_background_ext");
+         retired_builtin_script_shadow_case("draw_background_ext") &&
+         retired_builtin_script_shadow_case("object_get_depth") &&
+         retired_builtin_script_shadow_case("object_set_depth");
 }
 
 int expect_deactivated_instance_reference(void){

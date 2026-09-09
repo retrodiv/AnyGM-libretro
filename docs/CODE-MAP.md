@@ -169,6 +169,11 @@ source preservation and independent destination storage. Run
 
 ## Resource-query contract coverage
 
+`tests/unit/runtime/persistent/test_persistent_objects.c` owns object default
+mutation, future-instance initialization, and canonical object-property restoration
+in the same or a fresh VM. Run `make check TEST=persistent_room
+PERSISTENT_TEST_ARGS='--case object'`.
+
 `tests/unit/runtime/test_builtin_paths.c` covers independent path assignment and
 duplication, interpolated speed queries and same-execution state restoration:
 `make check TEST=builtin_paths`.
