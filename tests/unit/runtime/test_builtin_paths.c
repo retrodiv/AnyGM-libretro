@@ -235,6 +235,29 @@ static int smooth_center_case(void){
                 "smooth transforms use defining bounds, not the sampled curve bounds");
   gml_vm_free(&vm); return ok;
 }
+static int paused_followers_case(void){
+  GmlVM vm={0}; GmlVal id=path(&vm);
+  vm.inst=calloc(5,sizeof(*vm.inst));
+  if(!vm.inst){ gml_vm_free(&vm); return 0; }
+  vm.inst_count=vm.inst_cap=5;
+  for(int i=0;i<5;i++){
+    vm.inst[i].active=1;
+    gml_path_start(&vm,&vm.inst[i],(int)id.d,2,0,i==1);
+  }
+  vm.inst[2].active=0; vm.inst[2].deactivated=1;
+  vm.inst[3].active=0; vm.inst[3].room_dormant=1;
+  vm.inst[4].active=0;
+  GmlVal shift[]={id,vreal(20),vreal(-10)};
+  gml_builtin_call(&vm,"path_shift",shift,3);
+  int ok=1;
+  for(int i=0;i<4;i++) if(i!=1)
+    ok &= expect(vm.inst[i].path_origin_x==30 && vm.inst[i].path_origin_y==10,
+                 "relative pivots follow translation while active, deactivated or room-dormant");
+  ok &= expect(vm.inst[1].path_origin_x==0 && vm.inst[1].path_origin_y==0 &&
+               vm.inst[4].path_origin_x==10 && vm.inst[4].path_origin_y==20,
+               "translation does not rewrite absolute followers or released slots");
+  gml_vm_free(&vm); return ok;
+}
 static int names_case(void){
   int ok=1;
   for(int cached=0;cached<2;cached++){
@@ -364,6 +387,7 @@ int main(void){
                                {"defining_point_edits",controls_case},
                                {"centered_transforms",transforms_case},
                                {"smooth_control_center",smooth_center_case},
+                               {"paused_relative_followers",paused_followers_case},
                                {"append_preserves_source",append_case},{"resource_names",names_case},
                                {"authored_controls",authored_case},
                                {"edited_state_restore",edited_restore_case}};
