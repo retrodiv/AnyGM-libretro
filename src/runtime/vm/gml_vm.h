@@ -489,6 +489,9 @@ unsigned long gml_vm_unset_reads(const GmlVM *vm);
 uint32_t gml_room_layer_type_off(GmlVM *vm, uint32_t lp);  /* per-layer type-data offset with effect fields */
 void gml_struct_gc(GmlVM *vm);
 void gml_path_eval_public(GmlVM *vm, int pi, double t, double *ox, double *oy);
+double gml_path_speed_public(GmlVM *vm, int index, double position);
+int gml_path_assign(GmlVM *vm, int destination, int source);
+int gml_path_duplicate(GmlVM *vm, int source);
 double gml_legacy_view_follow_axis(double current, double target, double extent,
                                    double border, double speed);
 int gml_room_instance_precreate_code(GmlVM *vm, uint32_t instance_record);

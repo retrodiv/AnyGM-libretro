@@ -766,6 +766,47 @@ static double path_speed_factor(GmlPath *p, double t){
   double x,y,sp; path_eval_ex(p,t,&x,&y,&sp);
   return isfinite(sp) ? sp : 100.0;
 }
+double gml_path_speed_public(GmlVM *vm, int index, double position){
+  if(!vm || index<0 || index>=vm->n_paths || !isfinite(position)) return 0;
+  return path_speed_factor(&vm->paths[index],position);
+}
+/* Copy sampled geometry without resampling it: this preserves imported curves and the
+ * speed profile already used by traversal. Publication happens only after allocation. */
+static int path_copy_data(const GmlPath *source, GmlPath *copy){
+  if(source->n<0 || (size_t)source->n>SIZE_MAX/sizeof(GmlPathPt) ||
+     (source->n && !source->pts)) return 0;
+  GmlPathPt *points=NULL;
+  if(source->n){
+    size_t bytes=(size_t)source->n*sizeof *points;
+    points=malloc(bytes);
+    if(!points) return 0;
+    memcpy(points,source->pts,bytes);
+  }
+  *copy=*source; copy->pts=points; copy->runtime_dirty=1;
+  return 1;
+}
+int gml_path_assign(GmlVM *vm, int destination, int source){
+  if(!vm || destination<0 || destination>=vm->n_paths || source<0 || source>=vm->n_paths)
+    return 0;
+  if(destination==source) return 1;
+  GmlPath copy;
+  if(!path_copy_data(&vm->paths[source],&copy)) return 0;
+  free(vm->paths[destination].pts);
+  vm->paths[destination]=copy;
+  return 1;
+}
+int gml_path_duplicate(GmlVM *vm, int source){
+  if(!vm || source<0 || source>=vm->n_paths || vm->n_paths==INT_MAX ||
+     (size_t)vm->n_paths+1>SIZE_MAX/sizeof(GmlPath)) return -1;
+  GmlPath copy;
+  if(!path_copy_data(&vm->paths[source],&copy)) return -1;
+  GmlPath *paths=realloc(vm->paths,((size_t)vm->n_paths+1)*sizeof *paths);
+  if(!paths){ free(copy.pts); return -1; }
+  vm->paths=paths;
+  int index=vm->n_paths;
+  vm->paths[index]=copy; vm->n_paths++;
+  return index;
+}
 static void path_world_xy(GmlInstance *in, double px, double py, double *ox, double *oy){
   double scl=in->path_scale!=0?in->path_scale:1;
   double dx=(px-in->path_origin_x)*scl, dy=(py-in->path_origin_y)*scl;

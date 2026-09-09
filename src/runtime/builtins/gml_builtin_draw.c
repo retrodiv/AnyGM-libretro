@@ -743,6 +743,11 @@ GmlVal gml_builtin_try_draw(GmlVM *vm, const char *nm, GmlVal *a, int n){
     if(!strcmp(nm,"draw_background_stretched")){ GmlRenderDrawState draw=builtin_draw_state(R); if(R) gml_draw_background_stretched(R,(int)N(a,n,0),N(a,n,1),N(a,n,2),N(a,n,3),N(a,n,4),0xFFFFFF,draw.alpha); return vreal(0); }
     if(!strcmp(nm,"draw_background_stretched_ext")){ if(R) gml_draw_background_stretched(R,(int)N(a,n,0),N(a,n,1),N(a,n,2),N(a,n,3),N(a,n,4),NU32(a,n,5),N(a,n,6)); return vreal(0); }
     if(!strcmp(nm,"draw_background_part_ext")){ if(R) gml_draw_background_part_ext(R,(int)N(a,n,0),N(a,n,1),N(a,n,2),N(a,n,3),N(a,n,4),N(a,n,5),N(a,n,6),N(a,n,7),N(a,n,8),NU32(a,n,9),N(a,n,10)); return vreal(0); }
+    if(!strcmp(nm,"draw_background_part")){
+      if(R){ GmlRenderDrawState draw=builtin_draw_state(R);
+        gml_draw_background_part_ext(R,(int)N(a,n,0),N(a,n,1),N(a,n,2),N(a,n,3),
+                                    N(a,n,4),N(a,n,5),N(a,n,6),1,1,0xFFFFFF,draw.alpha); }
+      return vreal(0); }
     if(!strcmp(nm,"draw_rectangle")||!strcmp(nm,"draw_rectangle_colour")||!strcmp(nm,"draw_rectangle_color")){
       if(R){ int plain=!strcmp(nm,"draw_rectangle"); int outline=(int)N(a,n,plain?4:8);
         GmlRenderTargetMetrics target=builtin_target_metrics(R);

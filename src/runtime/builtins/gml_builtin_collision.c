@@ -1004,6 +1004,23 @@ GmlVal gml_builtin_try_collision_planning(GmlVM *vm, const char *nm, GmlVal *a, 
     return vreal(0);
   }
   /* runtime paths (path_add / mp_grid_path targets). Appended to vm->paths; indices stay stable. */
+  if(!strcmp(nm,"path_assign")){
+    double destination=N(a,n,0), source=N(a,n,1);
+    if(n>=2 && isfinite(destination) && destination>=0 && destination<vm->n_paths &&
+       isfinite(source) && source>=0 && source<vm->n_paths)
+      gml_path_assign(vm,(int)destination,(int)source);
+    return vreal(0);
+  }
+  if(!strcmp(nm,"path_duplicate")){
+    double source=N(a,n,0);
+    if(n<1 || !isfinite(source) || source<0 || source>=vm->n_paths) return vreal(-1);
+    return vreal(gml_path_duplicate(vm,(int)source));
+  }
+  if(!strcmp(nm,"path_get_speed")){
+    double index=N(a,n,0), position=N(a,n,1);
+    if(n<2 || !isfinite(index) || index<0 || index>=vm->n_paths) return vreal(0);
+    return vreal(gml_path_speed_public(vm,(int)index,position));
+  }
   if(!strcmp(nm,"path_add")){
     GmlPath *np=realloc(vm->paths,(size_t)(vm->n_paths+1)*sizeof(GmlPath));
     if(!np) return vreal(-1);
@@ -1133,9 +1150,10 @@ GmlVal gml_builtin_try_collision(GmlVM *vm, const char *nm, GmlVal *a, int n){
   /* position_meeting(x,y,obj): is the point (x,y) inside any instance of obj? (bool; checks all). */
   if(!strcmp(nm,"position_meeting")){ double p[4]={N(a,n,0),N(a,n,1),0,0}; return vreal(collision_shape(vm,0,p,(int)N(a,n,2),1,0)!=NULL); }
   if(!strcmp(nm,"collision_rectangle")){ double p[4]={N(a,n,0),N(a,n,1),N(a,n,2),N(a,n,3)}; GmlInstance *o=collision_shape_value(vm,1,p,n>4?a[4]:vreal(IT_NOONE),N(a,n,5)>=0.5,(int)N(a,n,6)); return vreal(o?(double)o->id:-4); }
-  if(!strcmp(nm,"collision_rectangle_list")){ double p[4]={N(a,n,0),N(a,n,1),N(a,n,2),N(a,n,3)};
+  if(!strcmp(nm,"collision_rectangle_list") || !strcmp(nm,"collision_ellipse_list")){ double p[4]={N(a,n,0),N(a,n,1),N(a,n,2),N(a,n,3)};
     GmlDSList *list=ds_list_slot_repair(vm,(int)N(a,n,7));
-    return vreal(collision_shape_list_query(vm,1,p,n>4?a[4]:vreal(IT_NOONE),
+    int kind=!strcmp(nm,"collision_ellipse_list")?3:1;
+    return vreal(collision_shape_list_query(vm,kind,p,n>4?a[4]:vreal(IT_NOONE),
       N(a,n,5)>=0.5,(int)N(a,n,6),list,N(a,n,8)>=0.5)); }
   if(!strcmp(nm,"rectangle_in_rectangle")){
     double ax1=N(a,n,0), ay1=N(a,n,1), ax2=N(a,n,2), ay2=N(a,n,3);
