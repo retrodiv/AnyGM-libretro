@@ -883,6 +883,81 @@ int expect_dynamic_audio_extension_state(void){
   return ok;
 }
 
+static void fixture_call_sound_fade(GmlVM *vm,int cached,int id,GmlVal *args,int count){
+  if(cached) gml_builtin_call_fast_id(vm,id,"sound_fade",args,count);
+  else gml_builtin_call(vm,"sound_fade",args,count);
+}
+
+int expect_builtin_sound_fade(void){
+  int ok=1;
+  for(int cached=0;cached<2;cached++){
+    unsigned char wav[60];
+    size_t wav_size=fixture_pcm16_wav(wav,sizeof wav,8,8000);
+    GmlWin win={0};
+    GmlAudio *audio=gml_audio_create(&win);
+    if(!audio) return 0;
+    GmlVM vm={0}; vm.audio=audio;
+    int sound=gml_audio_add_encoded(audio,wav,(int)wav_size);
+    int voice=gml_audio_play(audio,sound,1);
+    int id=gml_builtin_fast_id(&vm,"sound_fade");
+    GmlVal args[]={vreal(sound),vreal(0),vreal(20)};
+    fixture_call_sound_fade(&vm,cached,id,args,3);
+    ok=ok && sound>=0 && voice>=1000000 && id>0 &&
+       gml_audio_sound_get_gain(audio,sound)==1;
+    int16_t mixed[882], replay[882];
+    gml_audio_mix(audio,mixed,441);
+    double middle=gml_audio_sound_get_gain(audio,sound);
+    int audible=0;
+    for(size_t i=0;i<sizeof mixed/sizeof mixed[0];i++) audible|=mixed[i]!=0;
+    ok=ok && fabs(middle-0.5)<1e-12 && audible;
+
+    size_t size=gml_audio_state_size(audio),written=0,used=0;
+    void *state=malloc(size?size:1);
+    int saved=state && gml_audio_state_save(audio,state,size,&written) && written==size;
+    gml_audio_mix(audio,mixed,441);
+    double end=gml_audio_sound_get_gain(audio,sound);
+    int restored=saved && gml_audio_state_load(audio,state,size,&used) && used==size;
+    ok=ok && restored && fabs(gml_audio_sound_get_gain(audio,sound)-middle)<1e-12;
+    gml_audio_mix(audio,replay,441);
+    ok=ok && end==0 && gml_audio_sound_get_gain(audio,sound)==0 &&
+       !memcmp(mixed,replay,sizeof mixed);
+    free(state);
+    gml_audio_mix(audio,mixed,441);
+    for(size_t i=0;i<sizeof mixed/sizeof mixed[0];i++) ok=ok && mixed[i]==0;
+
+    args[1]=vreal(1); args[2]=vreal(20);
+    fixture_call_sound_fade(&vm,cached,id,args,3);
+    gml_audio_mix(audio,mixed,441);
+    ok=ok && fabs(gml_audio_sound_get_gain(audio,sound)-0.5)<1e-12;
+    args[1]=vreal(0.75); args[2]=vreal(10);
+    fixture_call_sound_fade(&vm,cached,id,args,3);
+    gml_audio_mix(audio,mixed,441);
+    ok=ok && gml_audio_sound_get_gain(audio,sound)==0.75;
+    args[1]=vreal(0.25); args[2]=vreal(0);
+    fixture_call_sound_fade(&vm,cached,id,args,3);
+    ok=ok && gml_audio_sound_get_gain(audio,sound)==0.25;
+
+    /* Invalid numeric arguments must not reach an out-of-range integer cast. */
+    static const double invalid[]={NAN,INFINITY,-INFINITY,1e100};
+    for(size_t i=0;i<sizeof invalid/sizeof invalid[0];i++){
+      args[0]=vreal(invalid[i]); args[1]=vreal(0); args[2]=vreal(0);
+      fixture_call_sound_fade(&vm,cached,id,args,3);
+      args[0]=vreal(sound); args[2]=vreal(invalid[i]);
+      fixture_call_sound_fade(&vm,cached,id,args,3);
+      ok=ok && gml_audio_sound_get_gain(audio,sound)==0.25;
+    }
+    args[1]=vreal(NAN); args[2]=vreal(0);
+    fixture_call_sound_fade(&vm,cached,id,args,3);
+    fixture_call_sound_fade(&vm,cached,id,args,1);
+    ok=ok && gml_audio_sound_get_gain(audio,sound)==0.25;
+    if(middle!=0.5 || end!=0)
+      fprintf(stderr,"sound fade mode=%d midpoint=%.17g endpoint=%.17g\n",cached,middle,end);
+    gml_vm_free(&vm);
+    gml_audio_free(audio);
+  }
+  return ok;
+}
+
 int expect_saudio_portable_playback(void){
   int failure_stage=0;
   static const char open_name[]=

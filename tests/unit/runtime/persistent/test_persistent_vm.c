@@ -685,6 +685,46 @@ cleanup:
 }
 
 
+int expect_legacy_jump_to_start(void){
+  int ok=1;
+  for(int cached=0;cached<2;cached++){
+    GmlVM vm={0};
+    vm.inst=calloc(1,sizeof(*vm.inst));
+    if(!vm.inst) return 0;
+    vm.inst_cap=1;
+    GmlInstance *subject=vm.cur_self=vm.inst;
+    subject->x=90; subject->y=80;
+    subject->xstart=12; subject->ystart=15;
+    subject->xprevious=70; subject->yprevious=60;
+    subject->hspeed=3; subject->vspeed=4; subject->speed=5;
+    subject->direction=53; subject->path_position=0.25;
+    /* Exercise the touched-instance overlay of a valid synthetic grid. */
+    vm.cg_gen=1;
+    int id=gml_builtin_fast_id(&vm,"action_move_start");
+    if(cached) gml_builtin_call_fast_id(&vm,id,"action_move_start",NULL,0);
+    else gml_builtin_call(&vm,"action_move_start",NULL,0);
+    int restored=subject->x==12 && subject->y==15;
+    ok=ok && restored && id>0 && vm.cg_overlay_n==1 &&
+       vm.cg_overlay[0]==0;
+    subject->xstart=3.5; subject->ystart=-4.25;
+    vm.action_relative=1;
+    if(cached) gml_builtin_call_fast_id(&vm,id,"action_move_start",NULL,0);
+    else gml_builtin_call(&vm,"action_move_start",NULL,0);
+    int edited=subject->x==3.5 && subject->y==-4.25;
+    ok=ok && edited && subject->xprevious==70 && subject->yprevious==60 &&
+       subject->hspeed==3 && subject->vspeed==4 && subject->speed==5 &&
+       subject->direction==53 && subject->path_position==0.25 &&
+       subject->xstart==3.5 && subject->ystart==-4.25;
+    vm.cur_self=NULL;
+    if(cached) gml_builtin_call_fast_id(&vm,id,"action_move_start",NULL,0);
+    else gml_builtin_call(&vm,"action_move_start",NULL,0);
+    if(!restored || !edited)
+      fprintf(stderr,"jump-to-start mode=%d original=%d edited=%d\n",cached,restored,edited);
+    gml_vm_free(&vm);
+  }
+  return ok;
+}
+
 int expect_automatic_motion_order(void){
   GmlcProject project={0};
   GmlcObject objects[2]={{0}};
