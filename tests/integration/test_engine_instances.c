@@ -2968,14 +2968,41 @@ int main(int argc,char **argv){
   /* The state carries content and compatibility fingerprints. The synthetic content embeds the
    * producer fingerprint, so this hash moves whenever reviewed producer behavior or policy changes,
    * and again whenever the serialized layout itself changes. */
+  uint64_t deterministic_hash=state_checksum(deterministic,deterministic_size);
+  /* The synthetic object has no sprite, mask, parent, depth or enabled flags.
+   * Remove only its verified eight-word table and normalize the two schemas.
+   * Reproducing the preceding exact hash proves every unrelated byte is retained. */
+  size_t object_vm=112+(size_t)read_u64(deterministic+64)+(size_t)read_u64(deterministic+72);
+  size_t object_vm_size=(size_t)read_u64(deterministic+80);
+  uint8_t empty_object_properties[32]={1};
+  for(int i=1;i<=3;i++) write_u32(empty_object_properties+(size_t)i*4,UINT32_MAX);
+  if(object_vm>deterministic_size || object_vm_size>deterministic_size-object_vm ||
+     object_vm_size<sizeof empty_object_properties){
+    fprintf(stderr,"canonical object-table framing changed\n");
+    return 1;
+  }
+  size_t object_table=object_vm+object_vm_size-sizeof empty_object_properties;
+  if(memcmp(deterministic+object_table,empty_object_properties,sizeof empty_object_properties)){
+    fprintf(stderr,"canonical object-table fixture changed\n");
+    return 1;
+  }
+  memmove(deterministic+object_table,deterministic+object_table+sizeof empty_object_properties,
+          deterministic_size-object_table-sizeof empty_object_properties);
+  size_t preceding_object_size=deterministic_size-sizeof empty_object_properties;
+  write_u64(deterministic+16,preceding_object_size);
+  write_u64(deterministic+80,object_vm_size-sizeof empty_object_properties);
+  write_u64(deterministic+96,preceding_object_size-112);
+  write_u32(deterministic+4,20);
+  write_u32(deterministic+object_vm+4,10);
+  write_u64(deterministic+56,state_checksum(deterministic+112,preceding_object_size-112));
+  uint64_t preceding_object_hash=state_checksum(deterministic,preceding_object_size);
   /* This array/path/file-font-free fixture adds only one zero runtime-font flag per slot.
    * Strip exactly those flags in a temporary copy, adjust framing, and retain both preceding
    * exact digests. This is a test discriminator, not a reader for older runtime states. */
-  uint64_t deterministic_hash=state_checksum(deterministic,deterministic_size);
   size_t canonical_render=112+(size_t)read_u64(deterministic+64);
   size_t canonical_render_size=(size_t)read_u64(deterministic+72);
   const size_t font_slots=48,removed=font_slots*4;
-  if(canonical_render>deterministic_size || canonical_render_size>deterministic_size-canonical_render ||
+  if(canonical_render>preceding_object_size || canonical_render_size>preceding_object_size-canonical_render ||
      canonical_render_size<4+font_slots*24){
     fprintf(stderr,"canonical font-pool framing changed\n");
     return 1;
@@ -2990,8 +3017,8 @@ int main(int argc,char **argv){
     memmove(deterministic+write_at,deterministic+read_at,20);
     read_at+=24; write_at+=20;
   }
-  memmove(deterministic+write_at,deterministic+read_at,deterministic_size-read_at);
-  size_t preceding_size=deterministic_size-removed;
+  memmove(deterministic+write_at,deterministic+read_at,preceding_object_size-read_at);
+  size_t preceding_size=preceding_object_size-removed;
   write_u64(deterministic+16,preceding_size);
   write_u64(deterministic+72,canonical_render_size-removed);
   write_u64(deterministic+96,preceding_size-112);
@@ -3006,10 +3033,13 @@ int main(int argc,char **argv){
   memcpy(deterministic,first_state,first_written);
   if(deterministic_size!=22262 ||
      deterministic_hash!=UINT64_C(0x04e88245bcbf9fd3) ||
+     preceding_object_size!=22262 || preceding_object_hash!=UINT64_C(0x04e88245bcbf9fd3) ||
      preceding_size!=22070 || preceding_font_hash!=UINT64_C(0x8fe9f1b017414513) ||
      preceding_hash!=UINT64_C(0xa4c27da217414513)){
     fprintf(stderr,"canonical engine state changed: size=%zu hash=%016llx\n",
             deterministic_size,(unsigned long long)deterministic_hash);
+    fprintf(stderr,"prior-object-layout size=%zu hash=%016llx\n",
+            preceding_object_size,(unsigned long long)preceding_object_hash);
     fprintf(stderr,"prior-font-layout size=%zu hash=%016llx; schema-normalized hash=%016llx\n",
             preceding_size,(unsigned long long)preceding_font_hash,(unsigned long long)preceding_hash);
     return 1;
