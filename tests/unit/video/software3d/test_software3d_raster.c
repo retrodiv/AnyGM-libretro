@@ -3,6 +3,68 @@
  */
 #include "software3d_test_fixture.h"
 
+static int rounded_fixture(int coloured){
+  GmlRender render={0}; GmlVM vm={0};
+  uint32_t pixels[24*20],reference[24*20];
+  int passed=0;
+  render.color=0xFFFFFFu; render.alpha=1; render.alphablend=1;
+  render.color_write_mask=15; render.blend_equation=render.blend_equation_alpha=1;
+  render.circle_precision=64; vm.render=&render;
+  gml_vm_software3d_reset(&vm);
+#define ROUND_REQUIRE(condition,label) do { if(!(condition)){ \
+  fprintf(stderr,"rounded %s: %s\n",coloured?"colour":"geometry",label); goto done; } } while(0)
+  for(int active=0;active<2;active++){
+    gml_render_begin(&render,pixels,24,20,0,0);
+    if(active){
+      call_numbers(&vm,"d3d_start",NULL,0);
+      call_numbers(&vm,"d3d_set_projection_ortho",(double[]){0,0,24,20,0},5);
+      call_numbers(&vm,"d3d_set_hidden",software3d_disable,1);
+    }
+    for(int spelling=0;spelling<(coloured?2:1);spelling++){
+      const char *name=coloured?(spelling?"draw_roundrect_colour_ext":"draw_roundrect_color_ext"):
+        "draw_roundrect_ext";
+      double args[]={2,2,18,14,4,4,coloured?255:0,16711680,0};
+      int argc=coloured?9:7;
+      memset(pixels,0,sizeof pixels);
+      call_numbers(&vm,name,args,argc);
+      ROUND_REQUIRE(pixels[8*24+10]>>24,"filled centre must be present in both projection modes");
+      ROUND_REQUIRE(pixels[2*24+2]==0,"curved corner must not be a rectangle");
+      if(coloured){
+        uint32_t centre=pixels[8*24+10],edge=pixels[3*24+10];
+        ROUND_REQUIRE(((centre>>16)&255)>(centre&255),"centre must favour the inner colour");
+        ROUND_REQUIRE((edge&255)>((edge>>16)&255),"edge must favour the outer colour");
+      } else {
+        memcpy(reference,pixels,sizeof pixels);
+        render.alpha=.5; memset(pixels,0,sizeof pixels);
+        call_numbers(&vm,name,args,argc);
+        uint32_t centre=pixels[8*24+10];
+        ROUND_REQUIRE((centre>>24)>0 && (centre>>24)<255,"draw alpha must be applied");
+        for(int i=0;i<24*20;i++)
+          ROUND_REQUIRE((reference[i]==0 && pixels[i]==0) ||
+                        (reference[i]!=0 && pixels[i]==centre),"fill must have no gaps or double-blended fan seams");
+        render.alpha=1;
+        render.circle_precision=4; memset(pixels,0,sizeof pixels);
+        call_numbers(&vm,name,args,argc);
+        ROUND_REQUIRE(!pixels[3*24+3] && reference[3*24+3],"circle precision must change the corner tessellation");
+        render.circle_precision=64;
+      }
+      memset(pixels,0,sizeof pixels); args[coloured?8:6]=1;
+      call_numbers(&vm,name,args,argc);
+      ROUND_REQUIRE(!pixels[8*24+10],"outline must leave its centre untouched");
+      ROUND_REQUIRE(pixels[2*24+10]>>24,"outline must retain the straight top edge");
+    }
+    call_numbers(&vm,"d3d_end",NULL,0);
+  }
+  passed=1;
+done:
+  gml_render_free(&render); vm.render=NULL; gml_vm_free(&vm);
+  return passed;
+#undef ROUND_REQUIRE
+}
+
+int rounded_geometry_fixture(void){ return rounded_fixture(0); }
+int rounded_colour_fixture(void){ return rounded_fixture(1); }
+
 
 int software3d_case_particles(Software3dRasterFixture *fixture){
   memset(fixture->pixels,0,sizeof(fixture->pixels));
