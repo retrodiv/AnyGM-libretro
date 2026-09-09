@@ -18,7 +18,7 @@
 #include <limits.h>
 
 /* ---------------- save-state runtime serialization ---------------- */
-enum { GML_VM_STATE_SCHEMA=10 };
+enum { GML_VM_STATE_SCHEMA=11 };
 #define GML_VM_STATE_MAGIC UINT32_C(0x534D5641)
 /* IDs are assigned in canonical traversal order, never from addresses. Zero is the null array;
  * a definition claims the next ID before its elements, so back references can close cycles. */
@@ -786,6 +786,72 @@ static int tilemap_diff_count(const GmlTileMap *tm){
   }
   return n;
 }
+/* Object properties are mutable creation defaults. Keep their complete fixed
+ * content-bound extent even before the first frame; changing a default does not
+ * increase the capacity a frontend already reserved for rewind. */
+static void sw_object_properties(StateW *s,GmlVM *vm){
+  if(vm->n_objects<0 || (vm->n_objects && !vm->objects)){ s->ok=0; return; }
+  sw_i32(s,vm->n_objects);
+  for(int i=0;i<vm->n_objects;i++){
+    const GmlObject *object=&vm->objects[i];
+    sw_i32(s,object->sprite_index); sw_i32(s,object->mask_index);
+    sw_i32(s,object->parent); sw_i32(s,object->depth);
+    sw_i32(s,object->visible); sw_i32(s,object->solid); sw_i32(s,object->persistent);
+  }
+}
+
+static void sr_object_properties(StateR *s,GmlVM *vm){
+  typedef struct {
+    int sprite,mask,parent,depth,visible,solid,persistent;
+  } ObjectProperties;
+  int count=sr_i32(s);
+  if(!s->ok || count<0 || count!=vm->n_objects || (count && !vm->objects) ||
+     s->pos>s->cap || (size_t)count>(s->cap-s->pos)/28u ||
+     (size_t)count>SIZE_MAX/sizeof(ObjectProperties)){
+    state_debug(vm,"bad object property count",s->pos,(uint32_t)count); s->ok=0; return;
+  }
+  if(!count) return;
+  ObjectProperties *properties=calloc((size_t)count,sizeof *properties);
+  unsigned char *marks=calloc((size_t)count,1);
+  if(!properties || !marks){ free(properties); free(marks); s->ok=0; return; }
+  for(int i=0;i<count && s->ok;i++){
+    ObjectProperties *object=&properties[i];
+    object->sprite=sr_i32(s); object->mask=sr_i32(s);
+    object->parent=sr_i32(s); object->depth=sr_i32(s);
+    object->visible=sr_i32(s); object->solid=sr_i32(s); object->persistent=sr_i32(s);
+    /* Preserve authored words and negative root sentinels verbatim. References
+     * which could escape the table or make a nonterminating chain are invalid. */
+    if(object->parent>=count || object->parent==i) s->ok=0;
+  }
+  /* Each vertex enters and leaves the visiting set once. Validate the whole
+   * forest before publishing any edge, including forward parent references. */
+  for(int i=0;i<count && s->ok;i++){
+    int parent=i;
+    while(parent>=0 && !marks[parent]){
+      marks[parent]=1; parent=properties[parent].parent;
+    }
+    if(parent>=0 && marks[parent]==1){ s->ok=0; break; }
+    parent=i;
+    while(parent>=0 && marks[parent]==1){
+      marks[parent]=2; parent=properties[parent].parent;
+    }
+  }
+  if(s->ok){
+    int hierarchy_changed=0;
+    for(int i=0;i<count;i++){
+      GmlObject *object=&vm->objects[i];
+      const ObjectProperties *saved=&properties[i];
+      hierarchy_changed|=object->parent!=saved->parent;
+      object->sprite_index=saved->sprite; object->mask_index=saved->mask;
+      object->parent=saved->parent; object->depth=saved->depth;
+      object->visible=saved->visible; object->solid=saved->solid;
+      object->persistent=saved->persistent;
+    }
+    if(hierarchy_changed) gml_vm_instances_rebuild_hierarchy(vm);
+  } else state_debug(vm,"bad object parent forest",s->pos,0);
+  free(properties); free(marks);
+}
+
 static void sw_vm(StateW *s, GmlVM *vm){
   s->vm=vm; s->compact_strings=1; s->array_meta=1;
   GmlBuiltinState *builtin_state=gml_builtin_state_ensure(vm);
@@ -973,6 +1039,7 @@ static void sw_vm(StateW *s, GmlVM *vm){
       }
     }
   }
+  sw_object_properties(s,vm);
   vm_state_profile_globals(vm);
 }
 size_t gml_vm_state_size(GmlVM *vm){
@@ -1407,6 +1474,7 @@ int gml_vm_state_load(GmlVM *vm, const void *data, size_t len, size_t *used){
       if(restored_dynamic!=total-authored) s.ok=0;
     }
   }
+  if(s.ok) sr_object_properties(&s,vm);
   vm->cur_self=vm->cur_other=NULL; vm->cur_event=NULL; vm->cur_event_obj=0;
   vm->step_active=0; vm->step_alloc_base=0;
   vm->step_free_n=vm->step_free_pos=0;

@@ -1590,6 +1590,18 @@ GmlVal gml_builtin_try_scripts_fallback(GmlVM *vm, const char *nm, GmlVal *a, in
 GmlVal gml_builtin_try_platform_tail(GmlVM *vm, const char *nm, GmlVal *a, int n){
   GmlRender *R=(GmlRender*)vm->render;
   (void)R;
+  /* Removed object-depth APIs remain after packaged compatibility scripts. Their
+   * integer resource value is a creation default, not a live-instance mutation. */
+  if(!strcmp(nm,"object_get_depth") || !strcmp(nm,"object_set_depth")){
+    double index=N(a,n,0);
+    if(n<1 || !isfinite(index) || index<0 || index>=vm->n_objects) return vreal(0);
+    GmlObject *object=&vm->objects[(int)index];
+    if(!strcmp(nm,"object_get_depth")) return vreal(object->depth);
+    double value=N(a,n,1);
+    if(n>=2 && isfinite(value) && value>=INT_MIN && value<=INT_MAX)
+      object->depth=(int)value;
+    return vreal(0);
+  }
   /* ---- draw / audio / misc: stubbed until the renderer/audio land ----
    * Keep this after script fallback: user scripts can legally share prefixes
    * such as draw_ or audio_ and must resolve before broad no-op fallbacks. */

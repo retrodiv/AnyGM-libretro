@@ -241,6 +241,13 @@ array or sampled polyline. Smoothing checks the expanded sample count before all
 Runtime edits publish only after the new controls and finite sampled geometry are ready;
 state records check counts against their remaining byte span before allocating either array.
 
+Object-property state has exactly one seven-word record per loaded object. The
+reader checks that count against both the existing content table and its remaining
+byte span before allocating scratch. Parent edges must stay within that table or
+be negative root sentinels, and a linear forest validation rejects self references
+and longer cycles before publishing any object properties. Derived event,
+collision and family caches are rebuilt by the instance owner after publication.
+
 Cache data is never authoritative. A schema, producer, source, output, size,
 or checksum mismatch discards the cache marker and regenerates from the source.
 No reader for an earlier unpublished state or cache layout is present.

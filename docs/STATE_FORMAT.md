@@ -9,9 +9,21 @@ marketing version. It is a numeric field in a validated binary header.
 
 ## Save-state schema
 
-The current AnyGM save-state schema is `20`. It is the format transported by
+The current AnyGM save-state schema is `21`. It is the format transported by
 libretro frontends for manual save states, automatic state slots, and rewind
 snapshots. Those features remain supported.
+
+Schema `21` introduces VM schema `11`. The VM payload ends with a signed 32-bit
+object count followed by seven signed 32-bit words per loaded object: sprite,
+mask, parent, depth, visible, solid and persistent. Its fixed extent is present
+before the first frame and never grows when a creation default changes. Names,
+event definitions and physics metadata remain immutable content, not state bytes.
+The count must equal the loaded object count; the bounded reader validates the
+complete parent forest before publishing any property, then rebuilds hierarchy
+caches through their existing owner. Authored scalar words and negative root
+sentinels are preserved. Previous public and VM schemas reject without a legacy
+reader. A later section rejection uses the ordinary root transaction to restore
+the previous object properties and hierarchy as well as the instance state.
 
 Schema `20` retains VM schema `10` and extends each renderer font-pool record with a 32-bit
 runtime-file flag. A live file font adds its portable source root/path, SHA-256, raster pixel
@@ -157,7 +169,7 @@ same form without an intervening mutation produces identical bytes.
 ## VM payload ownership
 
 `src/core/engine_state.c` owns the root framing and section transaction.
-Within the VM section, `src/runtime/vm/gml_vm_state.c` alone owns schema `10`,
+Within the VM section, `src/runtime/vm/gml_vm_state.c` alone owns schema `11`,
 field order, value-graph encoding, sizing, and restore scratch.
 
 Builtin resources have a separate storage and lifetime owner, not a separate

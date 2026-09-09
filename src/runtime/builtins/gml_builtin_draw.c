@@ -1285,6 +1285,21 @@ GmlVal gml_builtin_try_draw(GmlVM *vm, const char *nm, GmlVal *a, int n){
   if(!strcmp(nm,"object_set_visible")){ int ob=(int)N(a,n,0);
     if(ob>=0&&ob<vm->n_objects) vm->objects[ob].visible=N(a,n,1)!=0.0;
     return vreal(0); }
+  if(!strcmp(nm,"object_set_sprite") || !strcmp(nm,"object_set_mask") ||
+     !strcmp(nm,"object_set_solid") || !strcmp(nm,"object_set_persistent")){
+    double index=N(a,n,0),value=N(a,n,1);
+    if(n<2 || !isfinite(index) || index<0 || index>=vm->n_objects ||
+       !isfinite(value)) return vreal(0);
+    GmlObject *object=&vm->objects[(int)index];
+    int boolean=vm->win && anygm_policy_uses_classic_runtime(vm->win)?value>=.5:value>.5;
+    if(!strcmp(nm,"object_set_solid")) object->solid=boolean;
+    else if(!strcmp(nm,"object_set_persistent")) object->persistent=boolean;
+    else if(value>=INT_MIN && value<=INT_MAX){
+      if(!strcmp(nm,"object_set_sprite")) object->sprite_index=(int)value;
+      else object->mask_index=(int)value;
+    }
+    return vreal(0);
+  }
   if(!strcmp(nm,"object_is_ancestor")){ int obj=(int)N(a,n,0), anc=(int)N(a,n,1);
     for(int p=obj; p>=0 && p<vm->n_objects; p=vm->objects[p].parent) if(p==anc) return vreal(1);
     return vreal(0); }

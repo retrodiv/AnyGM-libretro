@@ -1747,7 +1747,11 @@ int gml_object_set_parent(GmlVM *vm, int object, int parent){
     if(p==object) return 0;
   if(vm->objects[object].parent==parent) return 1;
   vm->objects[object].parent=parent;
+  gml_vm_instances_rebuild_hierarchy(vm);
+  return 1;
+}
 
+void gml_vm_instances_rebuild_hierarchy(GmlVM *vm){
   classic_dispatch_cache_reset(vm);
   if(vm->event_cache) memset(vm->event_cache,0,(size_t)vm->event_cache_cap*sizeof(*vm->event_cache));
   if(vm->col_pair_cache) memset(vm->col_pair_cache,0,(size_t)vm->col_pair_cache_cap*sizeof(*vm->col_pair_cache));
@@ -1766,7 +1770,6 @@ int gml_object_set_parent(GmlVM *vm, int object, int parent){
   gml_obj_alive_recount(vm);
   colcand_reset(vm);
   gml_colgrid_invalidate(vm);
-  return 1;
 }
 /* fire the room/view boundary "Other" events for instances whose bbox left the room/view. GM:
  * "Outside" = bbox entirely outside; "Intersect Boundary" = bbox not entirely inside (partly OR fully out). */

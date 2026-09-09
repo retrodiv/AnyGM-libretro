@@ -91,6 +91,8 @@ void gml_vm_instances_parse_objects(GmlVM *vm);
 void gml_vm_instances_parse_boundary_events(GmlVM *vm);
 void gml_vm_instances_parse_dispatch_events(GmlVM *vm);
 void gml_vm_instances_reset_caches(GmlVM *vm);
+/* Rebuild derived hierarchy state after a validated parent forest is published. */
+void gml_vm_instances_rebuild_hierarchy(GmlVM *vm);
 int gml_vm_rooms_init(GmlVM *vm);
 void gml_vm_sequences_clear(GmlVM *vm);
 void gml_vm_rooms_step_paths(GmlVM *vm);
