@@ -238,6 +238,7 @@ static int runtime_font_styles_case(void){
       GmlVal font=query(&vm,"font_add",args,6,cached,&ok);
       ok &= real_is(font,i) && real_is(query(&vm,"font_get_bold",&font,1,cached,&ok),i&1) &&
         real_is(query(&vm,"font_get_italic",&font,1,cached,&ok),i>>1);
+      if(!ok) fprintf(stderr,"runtime font creation/style: cached=%d style=%d id=%g\n",cached,i,font.d);
       query(&vm,"font_delete",&font,1,cached,&ok);
       ok &= real_is(query(&vm,"font_get_bold",&font,1,cached,&ok),0) &&
         real_is(query(&vm,"font_get_italic",&font,1,cached,&ok),0);
@@ -258,7 +259,10 @@ static int runtime_font_styles_case(void){
       args[4]=vreal(65); args[5]=vreal(invalid[i]);
       ok &= real_is(query(&vm,"font_add",args,6,cached,&ok),-1) && render.n_fonts==5;
       args[5]=vreal(65); args[1]=vreal(invalid[i]);
-      ok &= real_is(query(&vm,"font_add",args,6,cached,&ok),-1) && render.n_fonts==5;
+      GmlVal result=query(&vm,"font_add",args,6,cached,&ok);
+      ok &= real_is(result,-1) && render.n_fonts==5;
+      if(!ok) fprintf(stderr,"runtime font numeric guard: cached=%d input=%g id=%g count=%d\n",
+                       cached,invalid[i],result.d,render.n_fonts);
     }
     vm.render=NULL; vm.win=NULL; gml_vm_free(&vm); gml_render_free(&render);
     anygm_memory_vfs_destroy(memory); free(memory);
