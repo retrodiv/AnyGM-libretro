@@ -198,7 +198,7 @@ int anygm_synthetic_tilemap_content_create(AnygmSyntheticContent *fixture){
   rooms[0].id=rooms[0].name=(char*)"room_maps";
   rooms[1].id=rooms[1].name=(char*)"room_empty";
   for(int i=0;i<2;i++){
-    rooms[i].width=64; rooms[i].height=48; rooms[i].speed=60;
+    rooms[i].width=1280; rooms[i].height=960; rooms[i].speed=60;
     rooms[i].draw_background_color=1;
     layers[i].id=layers[i].name=i?(char*)"map_second":(char*)"map_first";
     layers[i].type=4; layers[i].layer_id=10+i; layers[i].depth=17+i;
