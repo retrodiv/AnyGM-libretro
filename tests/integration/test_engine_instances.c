@@ -2969,6 +2969,24 @@ int main(int argc,char **argv){
    * producer fingerprint, so this hash moves whenever reviewed producer behavior or policy changes,
    * and again whenever the serialized layout itself changes. */
   uint64_t deterministic_hash=state_checksum(deterministic,deterministic_size);
+  /* Validate and remove only the new root mouse word in test scratch. The
+   * preceding exact digests remain required; no runtime legacy reader exists. */
+  size_t mouse_word=112+1024+1024+44+sizeof first->pad_current+sizeof first->pad_previous+
+                    sizeof first->key_current+sizeof first->key_previous;
+  size_t core_size=(size_t)read_u64(deterministic+64);
+  if(deterministic_size<mouse_word+4 || core_size<mouse_word+4-112 ||
+     memcmp(deterministic+mouse_word,"\0\0\0\0",4)){
+    fprintf(stderr,"canonical mouse suppression word changed\n");
+    return 1;
+  }
+  memmove(deterministic+mouse_word,deterministic+mouse_word+4,deterministic_size-mouse_word-4);
+  size_t preceding_mouse_size=deterministic_size-4;
+  write_u64(deterministic+16,preceding_mouse_size);
+  write_u64(deterministic+64,core_size-4);
+  write_u64(deterministic+96,preceding_mouse_size-112);
+  write_u32(deterministic+4,21);
+  write_u64(deterministic+56,state_checksum(deterministic+112,preceding_mouse_size-112));
+  uint64_t preceding_mouse_hash=state_checksum(deterministic,preceding_mouse_size);
   /* The synthetic object has no sprite, mask, parent, depth or enabled flags.
    * Remove only its verified eight-word table and normalize the two schemas.
    * Reproducing the preceding exact hash proves every unrelated byte is retained. */
@@ -2978,7 +2996,7 @@ int main(int argc,char **argv){
   for(int i=1;i<=2;i++) write_u32(empty_object_properties+(size_t)i*4,UINT32_MAX);
   /* The package writer normalizes an absent parent to the root sentinel -100. */
   write_u32(empty_object_properties+12,(uint32_t)-100);
-  if(object_vm>deterministic_size || object_vm_size>deterministic_size-object_vm ||
+  if(object_vm>preceding_mouse_size || object_vm_size>preceding_mouse_size-object_vm ||
      object_vm_size<sizeof empty_object_properties){
     fprintf(stderr,"canonical object-table framing changed\n");
     return 1;
@@ -2989,8 +3007,8 @@ int main(int argc,char **argv){
     return 1;
   }
   memmove(deterministic+object_table,deterministic+object_table+sizeof empty_object_properties,
-          deterministic_size-object_table-sizeof empty_object_properties);
-  size_t preceding_object_size=deterministic_size-sizeof empty_object_properties;
+          preceding_mouse_size-object_table-sizeof empty_object_properties);
+  size_t preceding_object_size=preceding_mouse_size-sizeof empty_object_properties;
   write_u64(deterministic+16,preceding_object_size);
   write_u64(deterministic+80,object_vm_size-sizeof empty_object_properties);
   write_u64(deterministic+96,preceding_object_size-112);
@@ -3035,11 +3053,14 @@ int main(int argc,char **argv){
   memcpy(deterministic,first_state,first_written);
   if(deterministic_size!=22294 ||
      deterministic_hash!=UINT64_C(0x0be7c1443e9fa05b) ||
+     preceding_mouse_size!=22294 || preceding_mouse_hash!=UINT64_C(0x0be7c1443e9fa05b) ||
      preceding_object_size!=22262 || preceding_object_hash!=UINT64_C(0x04e88245bcbf9fd3) ||
      preceding_size!=22070 || preceding_font_hash!=UINT64_C(0x8fe9f1b017414513) ||
      preceding_hash!=UINT64_C(0xa4c27da217414513)){
     fprintf(stderr,"canonical engine state changed: size=%zu hash=%016llx\n",
             deterministic_size,(unsigned long long)deterministic_hash);
+    fprintf(stderr,"prior-mouse-layout size=%zu hash=%016llx\n",
+            preceding_mouse_size,(unsigned long long)preceding_mouse_hash);
     fprintf(stderr,"prior-object-layout size=%zu hash=%016llx\n",
             preceding_object_size,(unsigned long long)preceding_object_hash);
     fprintf(stderr,"prior-font-layout size=%zu hash=%016llx; schema-normalized hash=%016llx\n",
