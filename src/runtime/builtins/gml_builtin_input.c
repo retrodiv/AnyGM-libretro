@@ -261,6 +261,12 @@ GmlVal gml_builtin_try_input(GmlVM *vm, const char *nm, GmlVal *a, int n){
   }
   { GmlVal v; if(builtin_input_kbgp(vm,nm,a,n,&v)) return v; }
   /* ---- mouse (the host pointer/mouse device via gml_input_mouse) ---- */
+  if(!strcmp(nm,"mouse_clear")){
+    double button=N(a,n,0);
+    if(n>=1 && isfinite(button) && button>-2.0 && button<4.0)
+      gml_input_mouse_clear(vm,(int)button);
+    return vundef();
+  }
   if(!strcmp(nm,"mouse_check_button"))          return vreal(mouse_btn_check(vm,(int)N(a,n,0),0));
   if(!strcmp(nm,"mouse_check_button_pressed"))  return vreal(mouse_btn_check(vm,(int)N(a,n,0),1));
   if(!strcmp(nm,"mouse_check_button_released")) return vreal(mouse_btn_check(vm,(int)N(a,n,0),2));

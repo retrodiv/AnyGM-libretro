@@ -651,6 +651,13 @@ int main(void){
 
   if(ok) ok=reject_payload_u32(engine,candidate,state_size,baseline,state_size,
                                STATE_CORE_FIELDS_OFFSET,0,"zero frame width");
+  size_t mouse_mask_offset=STATE_CORE_FIELDS_OFFSET+44+
+    sizeof engine->pad_current+sizeof engine->pad_previous+
+    sizeof engine->key_current+sizeof engine->key_previous;
+  if(ok) ok=reject_payload_u32(engine,candidate,state_size,baseline,state_size,
+                               mouse_mask_offset,8,"unsupported mouse suppression bit");
+  if(ok) ok=reject_payload_u32(engine,candidate,state_size,baseline,state_size,
+                               mouse_mask_offset,UINT32_MAX,"extreme mouse suppression mask");
   if(ok){
     memcpy(candidate,baseline,state_size);
     write_u64(candidate+STATE_CORE_FIELDS_OFFSET+12,UINT64_C(0x7ff8000000000000));

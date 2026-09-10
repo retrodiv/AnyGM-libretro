@@ -342,6 +342,8 @@ struct AnygmEngine {
   int mouse_warped;
   double mouse_host_x,mouse_host_y;
   uint8_t mouse_button_current[3],mouse_button_previous[3];
+  /* Held suppression is canonical; cleared edge observations last only this poll. */
+  uint8_t mouse_button_cleared,mouse_button_edges_cleared;
   int mouse_wheel;
   int present_mouse_valid,present_mouse_x,present_mouse_y,present_mouse_width,present_mouse_height;
   int present_mouse_source_width,present_mouse_source_height;

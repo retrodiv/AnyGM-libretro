@@ -412,6 +412,7 @@ static int boot_runtime_prepare(AnygmEngine *engine) {
   engine->mouse_host_x = 0; engine->mouse_host_y = 0;
   memset(engine->mouse_button_current, 0, sizeof(engine->mouse_button_current));
   memset(engine->mouse_button_previous, 0, sizeof(engine->mouse_button_previous));
+  engine->mouse_button_cleared=engine->mouse_button_edges_cleared=0;
   engine->mouse_wheel = 0;
   engine->present_mouse_valid = 0;
   engine->follow_player = 0; engine->player_object = -1; engine->audio_accumulator = 0.0; engine->fps = 60.0; engine->fps_room = -1;

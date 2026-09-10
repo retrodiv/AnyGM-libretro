@@ -444,6 +444,7 @@ static void state_write(AnygmEngine *engine,CoreW *s){
   { cw_i64(s,(int64_t)engine->vm.frame); }
   cw_raw(s,engine->pad_current,sizeof(engine->pad_current)); cw_raw(s,engine->pad_previous,sizeof(engine->pad_previous));
   cw_raw(s,engine->key_current,sizeof(engine->key_current)); cw_raw(s,engine->key_previous,sizeof(engine->key_previous));
+  cw_u32(s,engine->mouse_button_cleared);
   state_write_completed_frame(engine,s);
   size_t coren=s->pos-core_start;
   size_t render_start=s->pos;
@@ -606,6 +607,10 @@ bool state_unserialize_impl(AnygmEngine *engine,const void *d, size_t n, int sch
   { engine->vm.frame=(long)frame; }
   cr_raw(&core,engine->pad_current,sizeof(engine->pad_current)); cr_raw(&core,engine->pad_previous,sizeof(engine->pad_previous));
   cr_raw(&core,engine->key_current,sizeof(engine->key_current)); cr_raw(&core,engine->key_previous,sizeof(engine->key_previous));
+  uint32_t mouse_cleared=cr_u32(&core);
+  if(mouse_cleared>7u) return false;
+  engine->mouse_button_cleared=(uint8_t)mouse_cleared;
+  engine->mouse_button_edges_cleared=0;
   if(!state_read_completed_frame(engine,&core)) return false;
   if(!core.ok || core.pos!=core.cap) return false;
   /* The serialized current state is the edge-detection baseline for the first advancing frame.

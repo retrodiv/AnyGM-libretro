@@ -168,6 +168,7 @@ typedef struct {
   void (*mouse)(void *userdata,double *room_x,double *room_y,double *gui_x,double *gui_y,
                 double *window_x,double *window_y,int *held,int *pressed,int *released,int *wheel);
   void (*mouse_set)(void *userdata,double x,double y);
+  void (*mouse_clear)(void *userdata,int button);
 } GmlInputServices;
 
 typedef struct {
@@ -553,6 +554,7 @@ double  gml_vm_get_timer_us(GmlVM *vm);
 void    gml_input_mouse(GmlVM *vm,double *room_x,double *room_y,double *gui_x,double *gui_y,
                         double *window_x,double *window_y,int *held,int *pressed,int *released,int *wheel);
 void    gml_input_mouse_set(GmlVM *vm,double x,double y);
+void    gml_input_mouse_clear(GmlVM *vm,int button);
 void    gml_rng_seed(GmlVM *vm, uint32_t seed);   /* WELL512 signed-high-word seeding */
 double  gml_rng_value(GmlVM *vm);                 /* next()/2^32 -> [0,1) */
 uint64_t gml_rng_select(GmlVM *vm, uint64_t count);

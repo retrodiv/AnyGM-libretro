@@ -2266,6 +2266,9 @@ void gml_input_mouse(GmlVM *vm,double *room_x,double *room_y,double *gui_x,doubl
 void gml_input_mouse_set(GmlVM *vm,double x,double y){
   if(vm&&vm->input.mouse_set) vm->input.mouse_set(vm->input.userdata,x,y);
 }
+void gml_input_mouse_clear(GmlVM *vm,int button){
+  if(vm&&vm->input.mouse_clear) vm->input.mouse_clear(vm->input.userdata,button);
+}
 static int code_micro_maybe(GmlVM *vm, int ci, GmlVal *args, int n_args, GmlVal *out);
 static inline int builtin_hotprof_on(GmlVM *vm){
   if(vm->diagnostics.hot_builtin_profile<0)

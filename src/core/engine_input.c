@@ -388,6 +388,9 @@ void engine_input_poll_mouse(AnygmEngine *engine){
   engine->mouse_button_current[0]=(engine->input.mouse_buttons[0]!=0) || pp;
   engine->mouse_button_current[1]=engine->input.mouse_buttons[1]!=0;
   engine->mouse_button_current[2]=engine->input.mouse_buttons[2]!=0;
+  engine->mouse_button_edges_cleared=0;
+  for(int i=0;i<3;i++)
+    if(!engine->mouse_button_current[i]) engine->mouse_button_cleared&=~(1u<<i);
 }
 /* Fill GM-space mouse state. Spaces: room (view transform), GUI (display_set_gui_size space),
  * window (presented-frame px). held/pressed/released are bitmasks: bit0=left,1=right,2=middle. */
@@ -461,10 +464,18 @@ static void engine_input_mouse(void *userdata,double *rx, double *ry, double *gx
           ((engine->mouse_button_current[2] && !engine->mouse_button_previous[2]) ? 4 : 0);
   int r = ((!engine->mouse_button_current[0] && engine->mouse_button_previous[0]) ? 1 : 0) | ((!engine->mouse_button_current[1] && engine->mouse_button_previous[1]) ? 2 : 0) |
           ((!engine->mouse_button_current[2] && engine->mouse_button_previous[2]) ? 4 : 0);
-  if(held) *held = h;
-  if(pressed) *pressed = p;
-  if(released) *released = r;
+  int cleared_edges=engine->mouse_button_cleared | engine->mouse_button_edges_cleared;
+  if(held) *held = h & ~engine->mouse_button_cleared;
+  if(pressed) *pressed = p & ~cleared_edges;
+  if(released) *released = r & ~cleared_edges;
   if(wheel) *wheel = engine->mouse_wheel;
+}
+static void engine_input_mouse_clear(void *userdata,int button){
+  AnygmEngine *engine=userdata;
+  unsigned mask=button==-1?7u:(button>=1 && button<=3?1u<<(button-1):0u);
+  engine->mouse_button_edges_cleared|=mask;
+  for(int i=0;i<3;i++)
+    if(engine->mouse_button_current[i]) engine->mouse_button_cleared|=mask & (1u<<i);
 }
 static void engine_input_mouse_set(void *userdata,double x, double y){
   AnygmEngine *engine=userdata;
@@ -527,4 +538,5 @@ void engine_input_bind(AnygmEngine *engine){
   engine->vm.input.gamepad_vibration=engine_input_gamepad_set_vibration;
   engine->vm.input.mouse=engine_input_mouse;
   engine->vm.input.mouse_set=engine_input_mouse_set;
+  engine->vm.input.mouse_clear=engine_input_mouse_clear;
 }

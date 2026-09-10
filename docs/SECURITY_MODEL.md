@@ -227,6 +227,10 @@ checksum, content fingerprint, compatibility fingerprint, and stateful config
 fingerprint before section decoding. A failure during decoding restores an
 exact pre-load snapshot.
 
+The root input section accepts only three bits in its unsigned mouse
+held-suppression word. Invalid bits reject the state, including when the
+outer payload checksum is otherwise valid.
+
 The VM state reader exposes an opaque bounded cursor to the builtin resource
 owner at four established field positions. That owner validates INI,
 map/list/grid, physics, emitter, external-audio handle/path/hash, Saudio ID, and time-source counts

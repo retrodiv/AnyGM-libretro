@@ -9,9 +9,23 @@ marketing version. It is a numeric field in a validated binary header.
 
 ## Save-state schema
 
-The current AnyGM save-state schema is `21`. It is the format transported by
+The current AnyGM save-state schema is `22`. It is the format transported by
 libretro frontends for manual save states, automatic state slots, and rewind
 snapshots. Those features remain supported.
+
+Schema `22` adds one little-endian unsigned 32-bit mouse held-suppression mask
+after the root keyboard snapshots and before the optional completed frame.
+Only bits zero through two are valid, selecting left, right and middle buttons.
+The mask records buttons cleared while held; clearing an already released button
+only removes its transient edge observation and does not suppress its next press.
+Raw mouse input and cleared edge observations remain poll-local, not state bytes.
+After restoration, the mask survives while the host still holds the button and
+is removed when the normalized pointer/mouse union releases it. The existing
+first-advancing-poll continuity policy still prevents synthetic press edges.
+Reset discards suppression. The reader rejects invalid masks transactionally;
+previous public schemas reject without legacy readers. VM schema `11` and audio
+schema `2` retain their existing byte layouts. The fixed four-byte addition is
+present even before the first frame and does not introduce state-size growth.
 
 Schema `21` introduces VM schema `11`. The VM payload ends with a signed 32-bit
 object count followed by seven signed 32-bit words per loaded object: sprite,

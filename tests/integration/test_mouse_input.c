@@ -69,8 +69,8 @@ static int clear_button(MouseSession *session,double button,int cached){
   if(cached){
     int id=gml_builtin_fast_id(vm,"mouse_clear");
     if(id<0){ fprintf(stderr,"mouse input: clear has no cached dispatch\n"); return 0; }
-    (void)gml_builtin_call_fast_id(vm,id,"mouse_clear",&arg,1);
-  } else (void)gml_builtin_call(vm,"mouse_clear",&arg,1);
+    if(gml_builtin_call_fast_id(vm,id,"mouse_clear",&arg,1).t!=V_UNDEF) return 0;
+  } else if(gml_builtin_call(vm,"mouse_clear",&arg,1).t!=V_UNDEF) return 0;
   return 1;
 }
 
@@ -141,29 +141,35 @@ done:
   close_session(&first); close_session(&second); return ok;
 }
 
-static uint8_t *save(MouseSession *session,size_t *size){
-  size_t capacity=anygm_state_size(session->engine);
+static uint8_t *save(MouseSession *session,size_t *size,int resume){
+  size_t capacity=resume?anygm_state_resume_size(session->engine):anygm_state_size(session->engine);
   uint8_t *bytes=malloc(capacity?capacity:1);
-  if(!bytes || anygm_state_save(session->engine,bytes,capacity,size)!=ANYGM_OK){
+  AnygmResult result=bytes?(resume?
+    anygm_state_save_for_resume(session->engine,bytes,capacity,size):
+    anygm_state_save(session->engine,bytes,capacity,size)):ANYGM_ERROR_INVALID_ARGUMENT;
+  if(result!=ANYGM_OK){
     free(bytes); return NULL;
   }
   return bytes;
 }
 static int restoration_case(void){
+  for(int resume=0;resume<2;resume++){
   MouseSession session={0}; int ok=0;
   uint8_t *saved=NULL,*again=NULL; size_t size=0,again_size=0;
   REQUIRE(open_session(&session));
   REQUIRE(advance(&session,1,0));
   REQUIRE(clear_button(&session,1,0));
   REQUIRE(observe(&session,0,0,0,"save a genuinely suppressed button"));
-  saved=save(&session,&size); REQUIRE(saved!=NULL);
+  saved=save(&session,&size,resume); REQUIRE(saved!=NULL);
   REQUIRE(advance(&session,0,0) && advance(&session,1,0));
   REQUIRE(observe(&session,1,1,0,"mutate away from the saved suppression"));
   REQUIRE(anygm_state_load(session.engine,saved,size)==ANYGM_OK);
-  again=save(&session,&again_size);
+  again=save(&session,&again_size,resume);
   REQUIRE(again && again_size==size && !memcmp(saved,again,size));
-  REQUIRE(advance(&session,1,0));
-  REQUIRE(observe(&session,0,0,0,"restoration presentation frame is inert"));
+  if(!resume){
+    REQUIRE(advance(&session,1,0));
+    REQUIRE(observe(&session,0,0,0,"restoration presentation frame is inert"));
+  }
   REQUIRE(advance(&session,1,0));
   REQUIRE(observe(&session,0,0,0,"held input after resume stays suppressed"));
   REQUIRE(advance(&session,0,0));
@@ -176,13 +182,37 @@ static int restoration_case(void){
   REQUIRE(observe(&session,1,1,0,"reset discards suppression"));
   ok=1;
 done:
+  free(saved); free(again); close_session(&session);
+  if(!ok) return 0;
+  }
+  return 1;
+}
+
+static int cold_restoration_case(void){
+  MouseSession session={0}; int ok=0;
+  uint8_t *saved=NULL,*again=NULL; size_t size=0,again_size=0;
+  REQUIRE(open_session(&session));
+  REQUIRE(clear_button(&session,-1,0));
+  saved=save(&session,&size,1); REQUIRE(saved!=NULL);
+  REQUIRE(advance(&session,7,0));
+  REQUIRE(observe(&session,7,7,0,"clear before the first poll does not eat a press"));
+  REQUIRE(clear_button(&session,-1,0));
+  REQUIRE(anygm_state_load(session.engine,saved,size)==ANYGM_OK);
+  again=save(&session,&again_size,1);
+  REQUIRE(again && again_size==size && !memcmp(saved,again,size));
+  REQUIRE(advance(&session,7,0));
+  REQUIRE(observe(&session,7,0,0,"cold clear retains no held suppression on resume"));
+  REQUIRE(advance(&session,0,0));
+  REQUIRE(observe(&session,0,0,7,"all releases follow the resumed host baseline"));
+  ok=1;
+done:
   free(saved); free(again); close_session(&session); return ok;
 }
 
 int main(int argc,char **argv){
   static const AnygmTestCase cases[]={
     {"temporal",temporal_case}, {"isolation",isolation_case},
-    {"restoration",restoration_case}
+    {"restoration",restoration_case}, {"cold_restoration",cold_restoration_case}
   };
   AnygmTestGroup group={"mouse",cases,sizeof cases/sizeof cases[0]};
   AnygmTestResult result={0};
