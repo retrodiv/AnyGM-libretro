@@ -927,7 +927,7 @@ static void check_first_generation_application_surface_partial_alpha_coverage(vo
   gml_draw_surface_stretched(&render,0,0.0,0.0,1.0,1.0,0xffffffu,1.0);
   expect((presentation&0x00ffffffu)==(application&0x00ffffffu),
          "first-generation application-surface presentation applied coverage twice");
-  free(page.argb_cache);
+  gml_render_texture_page_cache_clear(&render,&page);
 }
 
 static void check_first_generation_automatic_presentation_ignores_retained_alpha(void){
@@ -984,7 +984,7 @@ static void check_first_generation_automatic_presentation_ignores_retained_alpha
   gml_draw_surface_stretched(&render,0,0.0,0.0,2.0,1.0,0xffffffu,1.0);
   expect((explicit_draw[0]&0x00ffffffu)!=(resolved_application[0]&0x00ffffffu),
          "an explicit surface-0 draw ignored the retained application-surface coverage");
-  free(page.argb_cache);
+  gml_render_texture_page_cache_clear(&render,&page);
 }
 
 static void check_first_generation_complete_black_mask_reaches_presentation(void){
@@ -1051,7 +1051,7 @@ static void check_first_generation_complete_black_mask_reaches_presentation(void
          "a whole-target clear retained superseded presentation coverage");
   free(render.app_presentation_coverage);
   free(render.app_presentation_alpha_scratch);
-  free(page.argb_cache);
+  gml_render_texture_page_cache_clear(&render,&page);
 }
 
 static void check_first_generation_filtered_minification(void){

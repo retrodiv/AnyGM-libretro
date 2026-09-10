@@ -6201,7 +6201,7 @@ void gml_draw_background_tile(GmlRender *r,int bg,
   int source_x=(int)lround(sx),source_y=(int)lround(sy);
   int source_width=(int)lround(sw),source_height=(int)lround(sh);
   double screen_x=x-r->cam_x,screen_y=y-r->cam_y;
-  if(fabs(xs-1.0)<0.001 && fabs(ys-1.0)<0.001 &&
+  if(sw==sh && fabs(xs-1.0)<0.001 && fabs(ys-1.0)<0.001 &&
      fabs(sx-source_x)<1e-9 && fabs(sy-source_y)<1e-9 &&
      fabs(sw-source_width)<1e-9 && fabs(sh-source_height)<1e-9 &&
      alpha>=1.0 && (color&0xFFFFFFu)==0xFFFFFFu &&
@@ -6222,8 +6222,12 @@ void gml_draw_background_tile(GmlRender *r,int bg,
   view.bw=(int)ceil(sw);
   view.bh=(int)ceil(sh);
 
-  double tile_xscale=mirror?-xs:xs;
-  double tile_yscale=flip?-ys:ys;
+  /* Tile transforms permute texture coordinates inside the authored destination rectangle.
+   * Compensate the source axes before rotation, including nonuniform target scaling. */
+  double tile_xscale=(sh/sw)*ys;
+  double tile_yscale=(sw/sh)*xs;
+  if(mirror) tile_xscale=-tile_xscale;
+  if(flip) tile_yscale=-tile_yscale;
   double cosine=0.0,sine=0.0;
   const double degrees=-90.0;
   render_rotation_sincos(degrees,&cosine,&sine);
