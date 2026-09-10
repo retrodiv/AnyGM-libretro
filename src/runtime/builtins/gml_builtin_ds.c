@@ -1756,7 +1756,25 @@ GmlVal gml_builtin_try_ds(GmlVM *vm, const char *nm, GmlVal *a, int n){
     ds_key_temp_free(&kt);
     return vreal(i>=0 && m->entry[i].child_kind==kind);
   }
-  if(!strcmp(nm,"ds_map_set")||!strcmp(nm,"ds_map_set_post")||!strcmp(nm,"ds_map_replace")){
+  if(!strcmp(nm,"ds_map_set_pre")||!strcmp(nm,"ds_map_set_post")){
+    if(n<3) return vundef();
+    GmlVal result=a[2];
+    double index=N(a,n,0);
+    if(!isfinite(index) || index<0 || index>INT_MAX) return result;
+    int id=(int)index;
+    GmlDSMap *map=ds_map_slot(vm,id);
+    if(!map) return result;
+    if(!strcmp(nm,"ds_map_set_post")){
+      DsKeyTemp key={0};
+      int entry=ds_map_find_entry(map,ds_key_temp(a[1],&key));
+      result=entry>=0?ds_ret(map->entry[entry].val):vundef();
+      ds_key_temp_free(&key);
+    }
+    /* Preserve the ordinary map storage and escaped-value lifetime rules. */
+    ds_map_put(vm,id,a[1],a[2],1);
+    return result;
+  }
+  if(!strcmp(nm,"ds_map_set")||!strcmp(nm,"ds_map_replace")){
     if(n>=3) ds_map_put(vm,(int)N(a,n,0),a[1],a[2],1);
     return n>=3 ? a[2] : vreal(0);
   }

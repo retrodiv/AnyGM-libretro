@@ -1883,7 +1883,8 @@ typedef enum GmlBuiltinCachePolicy {
   ENTRY(1786, DRAW_TILEMAP, "draw_tilemap", DRAW, DRAW, ALWAYS) \
   ENTRY(1787, MOUSE_CLEAR, "mouse_clear", INPUT, INPUT, ALWAYS) \
   ENTRY(1788, TILEMAP_X, "tilemap_x", LAYERS, LAYERS_LATE, NEVER) \
-  ENTRY(1789, TILEMAP_Y, "tilemap_y", LAYERS, LAYERS_LATE, NEVER)
+  ENTRY(1789, TILEMAP_Y, "tilemap_y", LAYERS, LAYERS_LATE, NEVER) \
+  ENTRY(1790, DS_MAP_SET_PRE, "ds_map_set_pre", DS, DS, ALWAYS)
 
 /* Dynamic prefix IDs retain the previously characterized slow-path order. */
 #define GML_BUILTIN_DYNAMIC_REGISTRY(ENTRY) \
