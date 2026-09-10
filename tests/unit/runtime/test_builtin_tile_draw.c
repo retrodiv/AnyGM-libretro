@@ -43,6 +43,7 @@ static void setup(TileFixture *f){
   f->layer=(GmlRtLayer){.id=70,.used=1,.order=2,.x=11,.y=13,.depth=17};
   f->vm=(GmlVM){.render=&f->render,.tilemaps=&f->map,.n_tilemaps=1,
     .rtl=&f->layer,.n_rtl=1,.frame=6};
+  *gml_varmap_put(&f->vm.globals,"room_speed")=vreal(60);
 }
 static void cleanup(TileFixture *f){
   f->vm.render=NULL; f->vm.tilemaps=NULL; f->vm.n_tilemaps=0;
