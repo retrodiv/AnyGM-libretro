@@ -151,6 +151,13 @@ static void word(unsigned char *data,size_t offset,uint32_t value){
 static void real32(unsigned char *data,size_t offset,float value){
   uint32_t bits; memcpy(&bits,&value,sizeof bits); word(data,offset,bits);
 }
+static void room_cleanup(RoomFixture *f){
+  gml_vm_free(&f->vm);
+  /* The immutable string tables are borrowed stack storage; lazy lookup indexes
+   * belong to the content owner and still need its ordinary teardown. */
+  f->win.strs=NULL; f->win.str_charoff=NULL;
+  gml_win_free(&f->win);
+}
 static int room_setup(RoomFixture *f){
   memset(f,0,sizeof *f);
   word(f->bytes,0,2); word(f->bytes,4,32); word(f->bytes,8,160);
@@ -173,18 +180,18 @@ static int room_setup(RoomFixture *f){
   f->win=(GmlWin){.data=f->bytes,.size=sizeof f->bytes,.bytecode=17,.game_speed=60,
     .n_chunks=1,.strs=f->strings,.str_charoff=f->offsets,.n_strs=3};
   memcpy(f->win.chunks[0].name,"ROOM",5); f->win.chunks[0].size=sizeof f->bytes;
-  if(gml_vm_init(&f->vm,&f->win,NULL)) return 0;
+  if(gml_vm_init(&f->vm,&f->win,NULL)){ room_cleanup(f); return 0; }
   gml_room_enter(&f->vm,0);
   if(f->vm.n_tilemaps==1 && f->vm.n_rtl==1) return 1;
   fputs("neutral authored map fixture failed to load\n",stderr);
-  gml_vm_free(&f->vm); return 0;
+  room_cleanup(f); return 0;
 }
 static int authored_origin(void){
   RoomFixture f; if(!room_setup(&f)) return 0;
   double x,y; gml_tilemap_effective(&f.vm,&f.vm.tilemaps[0],&x,&y,NULL,NULL);
   int ok=f.vm.tilemaps[0].x==0 && f.vm.tilemaps[0].y==0 && x==11 && y==13;
   if(!ok) fputs("authored layer offsets must not become map-local offsets\n",stderr);
-  gml_vm_free(&f.vm); return ok;
+  room_cleanup(&f); return ok;
 }
 static int room_without_maps(void){
   RoomFixture f; if(!room_setup(&f)) return 0;
@@ -192,7 +199,7 @@ static int room_without_maps(void){
   gml_room_enter(&f.vm,1);
   int ok=f.vm.room_index==1 && f.vm.n_tilemaps==0 && !gml_tilemap_find(&f.vm,id);
   if(!ok) fputs("entering a room without maps must discard the previous room's maps\n",stderr);
-  gml_vm_free(&f.vm); return ok;
+  room_cleanup(&f); return ok;
 }
 static int state_position_and_identity(void){
   RoomFixture f; if(!room_setup(&f)) return 0;
@@ -223,7 +230,7 @@ static int state_position_and_identity(void){
       if(!loaded) break;
     }
   }
-  free(first); free(second); gml_vm_free(&f.vm); return ok;
+  free(first); free(second); room_cleanup(&f); return ok;
 }
 int main(int argc,char **argv){
   const char *filter=NULL;
