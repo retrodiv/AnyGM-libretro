@@ -167,6 +167,10 @@ queue-copy and stack-copy contracts, including ordered/cached dispatch, value or
 source preservation and independent destination storage. Run
 `make check TEST=builtin_sequence_copy`.
 
+`tests/unit/runtime/test_builtin_sequence_codecs.c` owns foreign queue/stack text
+vectors, FIFO/LIFO ordering, recursive arrays, legacy rows and transactional
+malformed-input controls: `make check TEST=builtin_sequence_codecs`.
+
 ## Resource-query contract coverage
 
 `tests/unit/runtime/test_builtin_animation_queries.c` owns animation channel-name
