@@ -798,6 +798,49 @@ int expect_linear_motion_collision_filters(void){
     if(!blocked || !ignored || !arrived || !solid)
       fprintf(stderr,"linear step mode=%d blocked=%d ignored=%d arrived=%d solid=%d\n",
               cached,blocked,ignored,arrived,solid);
+    /* A free step turns the retained velocity; a blocked final step still reports
+     * that the target is within one step. Neither collision path takes a detour. */
+    const char *names[]={"mp_linear_step_object","mp_linear_step"};
+    for(int variant=0;variant<2;variant++){
+      GmlInstance *self=&instances[0],*wall=&instances[1];
+      double selector=variant?1:100001;
+      wall->x=20; wall->y=20;
+      self->x=self->y=0; self->direction=123; self->speed=2;
+      gml_colgrid_invalidate(&vm);
+      result=fixture_linear_step(&vm,cached,names[variant],0,-8,4,selector);
+      ok &= result==0 && self->x==0 && self->y==-4 && self->direction==90 &&
+            self->speed==2 && fabs(self->hspeed)<1e-12 && self->vspeed==-2;
+      self->x=self->y=0;
+      result=fixture_linear_step(&vm,cached,names[variant],3,4,2.5,selector);
+      ok &= result==0 && self->x==1.5 && self->y==2 &&
+            fabs(self->direction-306.869897645844)<1e-9 && self->speed==2 &&
+            fabs(self->hspeed-1.2)<1e-12 && fabs(self->vspeed-1.6)<1e-12;
+      self->x=self->y=0; self->direction=123;
+      wall->x=0; wall->y=-4; gml_colgrid_invalidate(&vm);
+      double hs=self->hspeed,vs=self->vspeed;
+      result=fixture_linear_step(&vm,cached,names[variant],0,-8,4,selector);
+      ok &= result==0 && self->x==0 && self->y==0 && self->direction==123 &&
+            self->hspeed==hs && self->vspeed==vs;
+      for(int step=4;step<=8;step+=4){
+        result=fixture_linear_step(&vm,cached,names[variant],0,-4,step,selector);
+        ok &= result==1 && self->x==0 && self->y==0 && self->direction==123 &&
+              self->hspeed==hs && self->vspeed==vs;
+      }
+      result=fixture_linear_step(&vm,cached,names[variant],0,0,4,selector);
+      ok &= result==1 && self->direction==123 && self->hspeed==hs && self->vspeed==vs;
+      result=fixture_linear_step(&vm,cached,names[variant],8,0,0,selector);
+      ok &= result==0 && self->x==0 && self->y==0 && self->direction==0 &&
+            self->hspeed==2 && self->vspeed==0;
+      result=fixture_linear_step(&vm,cached,names[variant],0,-8,-4,selector);
+      ok &= result==0 && self->x==0 && self->y==4 && self->direction==270 &&
+            fabs(self->hspeed)<1e-12 && self->vspeed==2;
+      self->x=self->y=0; gml_colgrid_touch(&vm,self);
+      result=fixture_linear_step(&vm,cached,names[variant],1e-10,0,1e-12,selector);
+      ok &= result==0 && fabs(self->x-1e-12)<1e-24 && self->y==0 && self->direction==0;
+      self->x=1e308; self->y=0; self->direction=123;
+      result=fixture_linear_step(&vm,cached,names[variant],0,0,-1e308,selector);
+      ok &= result==0 && self->x==1e308 && self->y==0 && self->direction==123;
+    }
     vm.render=NULL; vm.inst=NULL; vm.inst_count=vm.inst_cap=0;
     vm.cur_self=NULL; vm.objects=NULL; vm.n_objects=0;
     gml_vm_free(&vm);
