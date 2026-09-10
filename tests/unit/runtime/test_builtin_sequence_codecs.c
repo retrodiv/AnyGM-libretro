@@ -225,9 +225,12 @@ static int graph_limits_case(void){
                "cyclic writes fail without mutating the source graph");
   gml_values_release(&encoded,1); gml_vm_free(&vm);
   GmlVM bounded={0}; id=gml_builtin_call(&bounded,"ds_stack_create",NULL,0);
-  GmlArr large={.len=1000001,.cap=1000001};
+  GmlArr large={0};
   input[0]=id; input[1]=(GmlVal){.t=V_ARR,.arr=&large};
   gml_builtin_call(&bounded,"ds_stack_push",input,2);
+  /* Install a valid empty descriptor through normal escape tracking first.
+   * Only the codec sees the synthetic bound; enqueue must not traverse it. */
+  large.len=large.cap=1000001;
   encoded=call(&bounded,"ds_stack_write",&id,1,0,&ok);
   ok &= expect(encoded.t==V_UNDEF,"oversized arrays reject before any element access");
   /* Remove the synthetic borrowed descriptor before ordinary owner teardown. */
