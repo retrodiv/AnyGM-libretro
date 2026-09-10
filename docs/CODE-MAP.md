@@ -181,12 +181,17 @@ changing the established shared-string policy of ordinary array release.
 `tests/unit/runtime/test_builtin_contact_action.c` owns legacy contact action
 selection, direction, maximum distance, engine isolation and parity with the
 existing generation-specific collision owner. Run `make check TEST=builtin_contact_action`.
+It does not implement a second contact solver or change the existing movement expectations.
 
 `tests/unit/runtime/test_builtin_delayed_calls.c` owns delayed callback timing,
 hidden-handle isolation, callback-time mutation, bound receivers, one-shot slot
 reclamation and same-run canonical restoration. It compiles synthetic script
 fixtures through the existing source packager. Run `make check TEST=builtin_delayed_calls`.
-It does not implement a second contact solver or change the existing movement expectations.
+The instance builtin owner adapts delayed-call arguments. The shared scheduler
+retains one creation-ordered snapshot and places hidden callbacks between its
+global and game phases. The builtin-state owner allocates the shared pool and
+reclaims hidden calls, including callback-time cancellation; canonical parent
+metadata preserves that distinction through state restoration.
 
 `tests/unit/runtime/test_builtin_map_access.c` owns map pre/post assignment
 expression returns, insertion/replacement, retained string/array identity,

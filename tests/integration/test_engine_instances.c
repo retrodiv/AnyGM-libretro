@@ -3024,6 +3024,16 @@ int main(int argc,char **argv){
   }
   free(map_probe);
   if(visual_word<=map_word){ fprintf(stderr,"canonical visual sections changed order\n"); return 1; }
+  /* No timer is present in this neutral fixture. The hidden-parent contract
+   * changes only the two schema words and checksum; retain the entire prior
+   * exact state pin instead of accepting unrelated byte changes. */
+  if((uint32_t)read_u64(deterministic+4)!=25 ||
+     (uint32_t)read_u64(deterministic+map_vm+4)!=14){
+    fprintf(stderr,"delayed-call state schemas changed unexpectedly\n"); return 1;
+  }
+  write_u32(deterministic+4,24); write_u32(deterministic+map_vm+4,13);
+  write_u64(deterministic+56,state_checksum(deterministic+112,deterministic_size-112));
+  uint64_t preceding_delayed_hash=state_checksum(deterministic,deterministic_size);
   memmove(deterministic+visual_word,deterministic+visual_word+4,deterministic_size-visual_word-4);
   size_t preceding_visual_size=deterministic_size-4;
   write_u64(deterministic+16,preceding_visual_size);
@@ -3125,7 +3135,7 @@ int main(int argc,char **argv){
   uint64_t preceding_hash=state_checksum(deterministic,preceding_size);
   memcpy(deterministic,first_state,first_written);
   if(deterministic_size!=22306 ||
-     deterministic_hash!=UINT64_C(0xa3ed237ec81fc73d) ||
+     preceding_delayed_hash!=UINT64_C(0xa3ed237ec81fc73d) ||
      preceding_visual_size!=22302 || preceding_visual_hash!=UINT64_C(0x9351d78c1daaea2b) ||
      preceding_map_size!=22298 || preceding_map_hash!=UINT64_C(0x07f91baea5f9e3ff) ||
      preceding_mouse_size!=22294 || preceding_mouse_hash!=UINT64_C(0x0be7c1443e9fa05b) ||
@@ -3134,6 +3144,7 @@ int main(int argc,char **argv){
      preceding_hash!=UINT64_C(0xa4c27da217414513)){
     fprintf(stderr,"canonical engine state changed: size=%zu hash=%016llx\n",
             deterministic_size,(unsigned long long)deterministic_hash);
+    fprintf(stderr,"prior-delayed-schema hash=%016llx\n",(unsigned long long)preceding_delayed_hash);
     fprintf(stderr,"prior-visual-layout size=%zu hash=%016llx\n",
             preceding_visual_size,(unsigned long long)preceding_visual_hash);
     fprintf(stderr,"prior-map-layout size=%zu hash=%016llx\n",

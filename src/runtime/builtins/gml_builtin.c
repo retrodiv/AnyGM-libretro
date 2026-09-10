@@ -871,6 +871,10 @@ GmlTimeSource *time_source_find(GmlVM *vm, int id){
 static int time_source_ancestor_active(GmlVM *vm, GmlTimeSource *source,
                                        int *root, int depth){
   if(!source || depth>GML_TIME_SOURCE_MAX) return 0;
+  if(source->parent==GML_TIME_SOURCE_HIDDEN_PARENT){
+    if(root) *root=GML_TIME_SOURCE_HIDDEN_PARENT;
+    return 1;
+  }
   if(source->parent==0){ if(root) *root=0; return 1; }
   if(source->parent==1){ if(root) *root=1; return vm->builtins->time_source_game_state==1; }
   GmlTimeSource *parent=time_source_find(vm,source->parent);
@@ -884,7 +888,7 @@ static int compare_time_source_id(const void *left, const void *right){
 }
 
 void gml_time_sources_tick(GmlVM *vm){
-  if(!vm) return;
+  if(!vm || !vm->builtins) return;
   uint32_t ids[GML_TIME_SOURCE_MAX];
   unsigned char roots[GML_TIME_SOURCE_MAX];
   int count=0;
@@ -894,11 +898,17 @@ void gml_time_sources_tick(GmlVM *vm){
     int root=0;
     if(source->live && source->state==1 && time_source_ancestor_active(vm,source,&root,0)){
       ids[count]=source->id; roots[count]=(unsigned char)root; count++;
+      /* Hidden calls have all elapsed before the first global callback runs.
+       * A callback-created source cannot join this already captured tick. */
+      if(root==GML_TIME_SOURCE_HIDDEN_PARENT)
+        source->remaining-=source->units==1?1.0:1.0/gml_room_speed(vm);
     }
   }
-  /* Process the global tree first, then the game tree. IDs preserve creation order
-   * even when a previously freed pool slot is reused. */
-  for(int root=0;root<=1;root++){
+  /* Hidden delayed calls run between the established global and game trees.
+   * IDs preserve creation order even when a freed pool slot is reused. */
+  const int root_order[]={0,GML_TIME_SOURCE_HIDDEN_PARENT,1};
+  for(int phase=0;phase<3;phase++){
+    int root=root_order[phase];
     uint32_t ordered[GML_TIME_SOURCE_MAX]; int ordered_count=0;
     for(int i=0;i<count;i++) if(roots[i]==root) ordered[ordered_count++]=ids[i];
     qsort(ordered,(size_t)ordered_count,sizeof(*ordered),compare_time_source_id);
@@ -906,18 +916,23 @@ void gml_time_sources_tick(GmlVM *vm){
       GmlTimeSource *source=time_source_find(vm,(int)ordered[i]);
       if(!source || source->state!=1) continue;
       double step=source->units==1?1.0:1.0/gml_room_speed(vm);
-      source->remaining-=step;
+      int hidden=source->parent==GML_TIME_SOURCE_HIDDEN_PARENT;
+      if(!hidden) source->remaining-=step;
       int expired;
       if(source->units==1) expired=source->remaining<=0.0;
+      else if(hidden) expired=source->remaining<=8*DBL_EPSILON*fmax(step,source->period);
       else if(source->expiry_type==0) expired=source->remaining<=step*0.5;
       else expired=source->remaining<0.0;
       if(!expired) continue;
 
-      source->reps_completed++;
+      if(source->reps_completed<INT_MAX) source->reps_completed++;
       if(source->reps_remaining>0) source->reps_remaining--;
       int repeats=source->reps_remaining<0 || source->reps_remaining>0;
       if(repeats){
-        source->remaining+=source->period;
+        if(hidden && source->remaining<=0.0)
+          source->remaining=source->period-fmod(-source->remaining,source->period);
+        else source->remaining+=source->period;
+        if(hidden && source->remaining>source->period) source->remaining=source->period;
         if(source->remaining<=0.0) source->remaining=source->period;
       } else {
         source->remaining=0.0;
@@ -925,6 +940,7 @@ void gml_time_sources_tick(GmlVM *vm){
       }
 
       GmlVal callback=source->callback;
+      uint32_t callback_id=source->id;
       GmlVal callback_args[16]; int callback_count=0;
       if(source->args.t==V_ARR && source->args.arr){
         int available=gml_val_array_length(source->args);
@@ -932,7 +948,13 @@ void gml_time_sources_tick(GmlVM *vm){
         for(int argument=0;argument<callback_count;argument++)
           callback_args[argument]=gml_arr_get(source->args,argument);
       }
+      GmlInstance *old_self=vm->cur_self,*old_other=vm->cur_other;
+      if(hidden) vm->cur_self=vm->cur_other=NULL;
       GmlVal result=gml_vm_call_callable(vm,callback,callback_args,callback_count);
+      if(hidden){
+        vm->cur_self=old_self; vm->cur_other=old_other;
+        if(!repeats) gml_builtin_delayed_call_release(vm,callback_id);
+      }
       if(result.t==V_STR && result.s && result.d!=0) free((void*)result.s);
     }
   }

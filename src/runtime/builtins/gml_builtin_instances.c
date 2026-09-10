@@ -29,7 +29,9 @@ static struct GmlViewOvr *room_view_override(GmlVM *vm,int room,int view,int cre
 }
 
 static int time_source_parent_exists(GmlVM *vm, int parent){
-  return parent==0 || parent==1 || time_source_find(vm,parent)!=NULL;
+  GmlTimeSource *source=time_source_find(vm,parent);
+  return parent==0 || parent==1 ||
+    (source && source->parent!=GML_TIME_SOURCE_HIDDEN_PARENT);
 }
 
 static double time_source_period(double period, int units){
@@ -68,23 +70,52 @@ static GmlVal time_source_create_builtin(GmlVM *vm, GmlVal *args, int count){
   if(!vm || count<4) return vundef();
   int parent=(int)N(args,count,0);
   if(!time_source_parent_exists(vm,parent)) return vundef();
-  int slot=-1;
-  for(int i=0;i<GML_TIME_SOURCE_MAX;i++) if(!vm->builtins->time_source[i].live){ slot=i; break; }
-  if(slot<0) return vundef();
-  if(vm->builtins->next_time_source_id<GML_TIME_SOURCE_ID_BASE)
-    vm->builtins->next_time_source_id=GML_TIME_SOURCE_ID_BASE;
-  GmlTimeSource *source=&vm->builtins->time_source[slot];
-  memset(source,0,sizeof(*source));
-  source->live=1;
-  source->id=vm->builtins->next_time_source_id++;
-  if(vm->builtins->next_time_source_id<GML_TIME_SOURCE_ID_BASE)
-    vm->builtins->next_time_source_id=GML_TIME_SOURCE_ID_BASE;
-  source->parent=parent;
+  GmlTimeSource *source=gml_builtin_time_source_allocate(vm,parent);
+  if(!source) return vundef();
   int repetitions=count>5?time_source_repetitions(N(args,count,5)):1;
   int expiry_type=count>6?(int)N(args,count,6):1;
   time_source_configure(source,N(args,count,1),(int)N(args,count,2),args[3],
                         count>4?args[4]:vundef(),repetitions,expiry_type);
   return vreal((double)source->id);
+}
+
+static GmlVal delayed_call_create(GmlVM *vm,GmlVal *args,int count){
+  if(!vm || !vm->win || count<3) return vreal(-1);
+  double period=N(args,count,0),units=N(args,count,1);
+  GmlVal callback=args[2];
+  if(!isfinite(period) || !isfinite(units) || units<0 || units>=2 ||
+     callback.t!=V_REAL || !isfinite(callback.d) || callback.d<0 ||
+     callback.d>INT_MAX || floor(callback.d)!=callback.d) return vreal(-1);
+  int code=-1;
+  if(GML_IS_STRUCT_ID(callback.d)){
+    GmlVal function=gml_builtin_call(vm,"method_get_index",&callback,1);
+    if(function.t==V_REAL && isfinite(function.d) && function.d>=0 &&
+       function.d<=INT_MAX && floor(function.d)==function.d &&
+       GML_IS_FUNCVAL((int)function.d)) code=(int)function.d&0x00FFFFFF;
+  } else {
+    code=script_ref_code_of(vm,callback);
+    if(code>=0) callback=vreal(GML_FUNCVAL_TAG|code);
+  }
+  if(code<0 || code>=vm->win->n_code) return vreal(-1);
+  /* The shared deterministic clock is in seconds. Normalize the requested
+   * deadline to whole microseconds without overflowing large finite periods. */
+  if((int)units==0){
+    period=fmax(period,0.000001);
+    if(period<DBL_MAX/1000000.0) period=floor(period*1000000.0)/1000000.0;
+  }
+  GmlTimeSource *source=gml_builtin_time_source_allocate(vm,GML_TIME_SOURCE_HIDDEN_PARENT);
+  if(!source) return vreal(-1);
+  time_source_configure(source,period,(int)units,callback,vundef(),
+                        count>3 && N(args,count,3)>0.5?-1:1,1);
+  source->state=1;
+  return vreal(source->id);
+}
+
+static GmlVal delayed_call_cancel(GmlVM *vm,GmlVal *args,int count){
+  double id=N(args,count,0);
+  if(count>0 && isfinite(id) && id>=GML_TIME_SOURCE_ID_BASE && id<=INT_MAX)
+    gml_builtin_delayed_call_release(vm,(uint32_t)id);
+  return vreal(0);
 }
 
 static int time_source_has_child(GmlVM *vm, int parent){
@@ -97,6 +128,7 @@ static GmlVal time_source_builtin(GmlVM *vm, const char *name, GmlVal *args, int
   if(!strcmp(name,"time_source_create")) return time_source_create_builtin(vm,args,count);
   int id=count>0?(int)N(args,count,0):-1;
   GmlTimeSource *source=time_source_find(vm,id);
+  if(source && source->parent==GML_TIME_SOURCE_HIDDEN_PARENT) source=NULL;
   if(!strcmp(name,"time_source_exists")) return vreal(id==0 || id==1 || source!=NULL);
   if(!strcmp(name,"time_source_start")){
     if(source){ source->remaining=source->period; source->reps_remaining=source->repetitions;
@@ -442,6 +474,8 @@ static GmlVal gml_builtin_try_instances_timelines(GmlVM *vm, const char *nm, Gml
   if(!strcmp(nm,"action_timeline_pause")){ if(vm->cur_self) vm->cur_self->timeline_running=0; return vreal(0); }
   if(!strcmp(nm,"action_timeline_stop")){ if(vm->cur_self){ vm->cur_self->timeline_running=0; vm->cur_self->timeline_position=0; } return vreal(0); }
 
+  if(!strcmp(nm,"call_later")) return delayed_call_create(vm,a,n);
+  if(!strcmp(nm,"call_cancel")) return delayed_call_cancel(vm,a,n);
   if(!strncmp(nm,"time_source_",12)) return time_source_builtin(vm,nm,a,n);
   if(!strcmp(nm,"time_seconds_to_bpm")){ double seconds=N(a,n,0); return vreal(seconds!=0.0?60.0/seconds:INFINITY); }
   if(!strcmp(nm,"time_bpm_to_seconds")){ double bpm=N(a,n,0); return vreal(bpm!=0.0?60.0/bpm:INFINITY); }

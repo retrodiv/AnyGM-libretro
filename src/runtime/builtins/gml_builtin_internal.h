@@ -20,6 +20,7 @@
 #define GML_DS_GRID_MAX 32
 #define GML_TIME_SOURCE_MAX 256
 #define GML_TIME_SOURCE_ID_BASE UINT32_C(0x48000000)
+#define GML_TIME_SOURCE_HIDDEN_PARENT 2
 #define GML_MAX_EMITTERS 32
 #define GML_PHYS_FIXTURE_MAX 128
 #define GML_PHYS_JOINT_MAX 256
@@ -449,6 +450,8 @@ int ds_val_equal(GmlVal a, GmlVal b);
 GmlVal builtin_http_request_stub(GmlVM *vm);
 char *resolve_read_path(GmlVM *vm, const char *path);
 GmlTimeSource *time_source_find(GmlVM *vm, int id);
+GmlTimeSource *gml_builtin_time_source_allocate(GmlVM *vm,int parent);
+void gml_builtin_delayed_call_release(GmlVM *vm,uint32_t id);
 int order_pos(GmlVM *vm, int room_index);
 int script_code_of(GmlVM *vm, int script_id);
 int script_ref_code_of(GmlVM *vm, GmlVal value);

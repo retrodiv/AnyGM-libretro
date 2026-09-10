@@ -7,9 +7,42 @@
 #include "gml_audio.h"
 
 #include <math.h>
+#include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+GmlTimeSource *gml_builtin_time_source_allocate(GmlVM *vm,int parent){
+  GmlBuiltinState *state=gml_builtin_state_ensure(vm);
+  if(!state) return NULL;
+  int slot=-1;
+  for(int i=0;i<GML_TIME_SOURCE_MAX;i++) if(!state->time_source[i].live){ slot=i; break; }
+  if(slot<0) return NULL;
+  if(state->next_time_source_id<GML_TIME_SOURCE_ID_BASE)
+    state->next_time_source_id=GML_TIME_SOURCE_ID_BASE;
+  /* Exhaustion fails instead of recycling an identity still held by content. */
+  if(state->next_time_source_id>INT_MAX) return NULL;
+  GmlTimeSource *source=&state->time_source[slot];
+  memset(source,0,sizeof(*source));
+  source->live=1;
+  source->id=state->next_time_source_id++;
+  source->parent=parent;
+  return source;
+}
+
+void gml_builtin_delayed_call_release(GmlVM *vm,uint32_t id){
+  GmlBuiltinState *state=vm?vm->builtins:NULL;
+  if(!state) return;
+  for(int i=0;i<GML_TIME_SOURCE_MAX;i++){
+    GmlTimeSource *source=&state->time_source[i];
+    if(!source->live || source->id!=id || source->parent!=GML_TIME_SOURCE_HIDDEN_PARENT) continue;
+    GmlVal values[]={source->callback,source->args};
+    memset(source,0,sizeof(*source));
+    /* Callback methods are VM-owned references; no exposed method is freed. */
+    gml_values_release(values,2);
+    return;
+  }
+}
 
 static void builtin_state_resource_defaults(GmlBuiltinState *state){
   state->next_buffer_id=1;
@@ -1029,6 +1062,7 @@ int gml_builtin_state_read_time_sources(GmlBuiltinState *state,
   state->time_source_game_state=gml_vm_state_read_i32(reader);
   int live=gml_vm_state_read_i32(reader);
   if(state->next_time_source_id<GML_TIME_SOURCE_ID_BASE ||
+     state->next_time_source_id>(uint32_t)INT_MAX+1u ||
      live<0 || live>GML_TIME_SOURCE_MAX ||
      state->time_source_game_state<1 ||
      state->time_source_game_state>3){
@@ -1052,7 +1086,8 @@ int gml_builtin_state_read_time_sources(GmlBuiltinState *state,
     source->args=gml_vm_state_read_value(reader);
     gml_arr_mark_escaped(source->callback);
     gml_arr_mark_escaped(source->args);
-    if(source->id<GML_TIME_SOURCE_ID_BASE ||
+    if(source->id<GML_TIME_SOURCE_ID_BASE || source->id>INT_MAX ||
+       source->id>=state->next_time_source_id ||
        !isfinite(source->period) || source->period<0 ||
        !isfinite(source->remaining) || source->remaining<0 ||
        source->units<0 || source->units>1 ||
@@ -1063,12 +1098,29 @@ int gml_builtin_state_read_time_sources(GmlBuiltinState *state,
        (source->args.t!=V_ARR && source->args.t!=V_UNDEF)){
       gml_vm_state_reader_fail(reader,"bad time source",source->id);
     }
+    if(source->parent==GML_TIME_SOURCE_HIDDEN_PARENT &&
+       (source->period<=0 || source->remaining>source->period ||
+        (source->state!=1 && source->state!=3) ||
+        (source->units==1 && floor(source->period)!=source->period) ||
+        (source->repetitions!=1 && source->repetitions!=-1) ||
+        (source->repetitions==-1 && source->reps_remaining!=-1) ||
+        (source->repetitions==1 && source->reps_remaining!=0 && source->reps_remaining!=1) ||
+        source->expiry_type!=1 || source->callback.t!=V_REAL ||
+        !isfinite(source->callback.d) || source->callback.d<0 ||
+        source->callback.d>INT_MAX || floor(source->callback.d)!=source->callback.d ||
+        (!GML_IS_STRUCT_ID(source->callback.d) && !GML_IS_FUNCVAL((int)source->callback.d)) ||
+        source->args.t!=V_UNDEF))
+      gml_vm_state_reader_fail(reader,"bad delayed call",source->id);
   }
   for(int i=0;i<live && gml_vm_state_reader_ok(reader);i++){
     int parent=state->time_source[i].parent;
-    int found=parent==0 || parent==1;
-    for(int j=0;j<live && !found;j++)
-      found=(int)state->time_source[j].id==parent;
+    int found=parent==0 || parent==1 || parent==GML_TIME_SOURCE_HIDDEN_PARENT;
+    for(int j=0;j<live;j++){
+      if(i!=j && state->time_source[i].id==state->time_source[j].id)
+        gml_vm_state_reader_fail(reader,"duplicate time source",state->time_source[i].id);
+      if((int)state->time_source[j].id==parent &&
+         state->time_source[j].parent!=GML_TIME_SOURCE_HIDDEN_PARENT) found=1;
+    }
     if(!found)
       gml_vm_state_reader_fail(reader,"bad time source parent",
                                (uint32_t)parent);

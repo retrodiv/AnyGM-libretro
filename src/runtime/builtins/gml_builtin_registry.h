@@ -1885,7 +1885,9 @@ typedef enum GmlBuiltinCachePolicy {
   ENTRY(1788, TILEMAP_X, "tilemap_x", LAYERS, LAYERS_LATE, NEVER) \
   ENTRY(1789, TILEMAP_Y, "tilemap_y", LAYERS, LAYERS_LATE, NEVER) \
   ENTRY(1790, DS_MAP_SET_PRE, "ds_map_set_pre", DS, DS, ALWAYS) \
-  ENTRY(1791, ACTION_MOVE_CONTACT, "action_move_contact", ACTIONS, ACTIONS_LEGACY, ALWAYS)
+  ENTRY(1791, ACTION_MOVE_CONTACT, "action_move_contact", ACTIONS, ACTIONS_LEGACY, ALWAYS) \
+  ENTRY(1792, CALL_LATER, "call_later", INSTANCES, INSTANCES_TIMELINES, ALWAYS) \
+  ENTRY(1793, CALL_CANCEL, "call_cancel", INSTANCES, INSTANCES_TIMELINES, ALWAYS)
 
 /* Dynamic prefix IDs retain the previously characterized slow-path order. */
 #define GML_BUILTIN_DYNAMIC_REGISTRY(ENTRY) \
@@ -1900,7 +1902,7 @@ typedef enum GmlBuiltinId {
   GML_BUILTIN_DYNAMIC_REGISTRY(GML_BUILTIN_ID_ENTRY)
 #undef GML_BUILTIN_ID_ALIAS
 #undef GML_BUILTIN_ID_ENTRY
-  GML_BUILTIN_ID_LIMIT = 1792
+  GML_BUILTIN_ID_LIMIT = 1794
 } GmlBuiltinId;
 
 #endif
