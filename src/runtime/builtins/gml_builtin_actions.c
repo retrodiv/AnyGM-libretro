@@ -7,6 +7,7 @@
 #include "gml_render.h"
 #include "gml_particle.h"
 
+#include <limits.h>
 #include <math.h>
 #include <stdio.h>
 #include <string.h>
@@ -153,6 +154,13 @@ GmlVal gml_builtin_try_actions_legacy(GmlVM *vm, const char *nm, GmlVal *a, int 
       int target=(int)vm->win->room_order[pos+1]; gml_vm_warm_audio_for_room(vm,target); vm->pending_room=target;
     }
     return vreal(0);
+  }
+  if(!strcmp(nm,"action_move_contact")){
+    if(n<3 || !vm->cur_self) return vreal(0);
+    double direction=N(a,n,0),distance=N(a,n,1);
+    if(!isfinite(direction) || !isfinite(distance) || distance>INT_MAX) return vreal(0);
+    /* The collision owner retains each generation's distance and overlap policy. */
+    return gml_builtin_try_collision(vm,N(a,n,2)>0.5?"move_contact":"move_contact_solid",a,2);
   }
   if(!strcmp(nm,"action_move_start")){
     GmlInstance *self=vm->cur_self;
