@@ -224,7 +224,8 @@ Run `make check TEST=builtin_tile_draw`.
 
 `tests/unit/runtime/test_builtin_tilemap_position.c` owns map-local coordinates,
 parent displacement and scrolling, sibling and engine isolation, translated pixel
-lookup/mutation, invalid identities and unchanged zero-local placement.
+lookup/mutation, invalid identities, authored origin, empty-room transitions,
+unchanged zero-local placement and canonical position/identity restoration.
 Run `make check TEST=builtin_tilemap_position`; its binary also accepts `--case`.
 
 Explicit tile drawing adapts values in `gml_builtin_draw.c`, reads prepared tileset
