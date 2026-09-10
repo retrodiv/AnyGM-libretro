@@ -217,7 +217,8 @@ style queries through ordinary and cached dispatch:
 
 `tests/unit/runtime/test_builtin_tile_draw.c` owns synthetic explicit tile and map drawing:
 all transforms, tint/alpha, animated empty cells, hidden-layer independent placement,
-camera origin, unchanged retained fields, invalid numerics, and ordinary/cached dispatch.
+camera origin, scaled views, bordered/separated and legacy layouts, unchanged retained
+fields, invalid numerics, bounded offscreen maps, and ordinary/cached dispatch.
 Run `make check TEST=builtin_tile_draw`.
 
 Explicit tile drawing adapts values in `gml_builtin_draw.c`, reads prepared tileset

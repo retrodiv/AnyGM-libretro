@@ -4,6 +4,7 @@
 #include "gml_builtin.h"
 #include "gml_render_internal.h"
 #include "anygm_test_runner.h"
+#include <limits.h>
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -136,10 +137,72 @@ static int automatic_map(void){
   int ok=region(&f,3,5,colors);
   f.vm.win=NULL; cleanup(&f); return ok;
 }
+static int prepared_layouts(void){
+  TileFixture f; setup(&f);
+  f.page.bw=28; f.page.bh=33;
+  f.background.tile_w=2; f.background.tile_h=3;
+  f.background.tile_border_x=1; f.background.tile_border_y=2;
+  f.background.tile_separation_x=3; f.background.tile_separation_y=4;
+  f.background.tile_columns=4;
+  GmlRenderTilesetLayout layout; GmlRenderTileSource source;
+  int ok=gml_render_tileset_layout(&f.render,0,1,1,&layout);
+  ok &= layout.pitch_x==7 && layout.pitch_y==11 && layout.columns==4;
+  ok &= gml_render_tileset_source(&f.render,&layout,1,1,&source);
+  ok &= source.x==15 && source.y==2 && source.width==2 && source.height==3;
+  ok &= !gml_render_tileset_source(&f.render,&layout,2,1,&source);
+  /* The legacy layout has no map: its first nonempty index selects cell zero. */
+  f.background.tile_ids=NULL; f.background.tile_w=0; f.background.tile_h=0;
+  f.background.tile_columns=0;
+  ok &= gml_render_tileset_layout(&f.render,0,2,3,&layout) && layout.columns==4;
+  ok &= gml_render_tileset_source(&f.render,&layout,1,0,&source);
+  ok &= source.x==1 && source.y==2 && source.width==2 && source.height==3;
+  f.background.tile_w=INT_MAX; f.background.tile_h=3;
+  ok &= !gml_render_tileset_layout(&f.render,0,2,3,&layout);
+  cleanup(&f); return ok;
+}
+static int scaled_map(void){
+  int ok=1;
+  for(int automatic=0;automatic<2;automatic++){
+    TileFixture f; setup(&f); GmlWin win={0}; f.vm.win=&win;
+    f.render.world_transform_active=1; f.render.world_scale_x=2; f.render.world_scale_y=3;
+    f.render.cam_x=6; f.render.cam_y=9;
+    if(automatic){
+      f.map.visible=1; f.layer.visible=1; f.layer.x=4; f.layer.y=4;
+      f.layer.script_begin=f.layer.script_end=-1; gml_vm_draw(&f.vm);
+      gml_render_flush_rotated_batch(&f.render);
+    }else{
+      GmlVal args[]={vreal(7),vreal(4),vreal(4)};
+      ok &= call(&f,"draw_tilemap",args,3,1);
+    }
+    for(int y=0;y<16;y++) for(int x=0;x<16;x++){
+      uint32_t want=x>=2 && x<6 && y>=3 && y<9?colors[((y-3)/3)*2+(x-2)/2]:0;
+      if(f.pixels[y*16+x]!=want){
+        fprintf(stderr,"scaled map pixel (%d,%d): %08x != %08x\n",x,y,f.pixels[y*16+x],want);
+        ok=0;
+      }
+    }
+    f.vm.win=NULL; cleanup(&f);
+  }
+  return ok;
+}
+static int bounded_empty_maps(void){
+  int ok=1; const uint32_t empty[4]={0};
+  for(int sign=-1;sign<=1;sign+=2){
+    TileFixture f; setup(&f); GmlWin win={0}; f.vm.win=&win;
+    f.map.visible=1; f.layer.visible=1; f.layer.x=sign*1e100; f.layer.y=sign*1e100;
+    f.layer.script_begin=f.layer.script_end=-1;
+    gml_vm_draw(&f.vm); gml_render_flush_rotated_batch(&f.render);
+    ok &= region(&f,0,0,empty);
+    f.vm.win=NULL; cleanup(&f);
+  }
+  return ok;
+}
 int main(int argc,char **argv){
   const AnygmTestCase cases[]={{"transforms",transforms},
     {"draw_state_and_animation",draw_state_and_animation},{"explicit_map",explicit_map},
-    {"invalid_arguments",invalid_arguments},{"automatic_animated_empty",automatic_map}};
+    {"invalid_arguments",invalid_arguments},{"automatic_animated_empty",automatic_map},
+    {"prepared_layouts",prepared_layouts},{"scaled_map",scaled_map},
+    {"bounded_empty_maps",bounded_empty_maps}};
   const AnygmTestGroup group={"tile_draw",cases,sizeof cases/sizeof cases[0]};
   const char *filter=NULL;
   if(argc==3 && !strcmp(argv[1],"--case")) filter=argv[2]; else if(argc!=1) return EXIT_FAILURE;

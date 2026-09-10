@@ -1587,7 +1587,7 @@ void gml_vm_draw(GmlVM *vm){
       uint32_t datum=gml_vm_read_u32_le(cell,0); GmlRenderTileSource source;
       if(!gml_render_tileset_source(R,&layout,datum,animation_frame,&source)) continue;
       GmlDrawTile dt;
-      dt.x=tmx + cx*tm->tw; dt.y=tmy + cy*tm->th; dt.xs=1; dt.ys=1;
+      dt.x=tmx + (double)cx*tm->tw; dt.y=tmy + (double)cy*tm->th; dt.xs=1; dt.ys=1;
       dt.mirror=(int)((datum>>28)&1);
       dt.flip=(int)((datum>>29)&1);
       dt.rotate=(int)((datum>>30)&1);
