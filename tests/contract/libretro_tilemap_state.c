@@ -78,6 +78,16 @@ static int retained(int id,int next){
          g_libretro.engine->vm.tilemaps[1].x==0;
 }
 
+static void count_root(void *context,GmlVal value){
+  (void)value; (*(int*)context)++;
+}
+
+static int timer_roots(void){
+  int count=0;
+  gml_builtin_state_visit_values(g_libretro.engine->vm.builtins,count_root,&count);
+  return count;
+}
+
 #define REQUIRE(condition,message) do { if(!(condition)){ \
   fprintf(stderr,"tilemap frontend (%d): %s\n",negotiation,message); ok=0; goto done; \
 } } while(0)
@@ -105,6 +115,16 @@ static int run_case(int response){
   REQUIRE(ring.bytes && cold,"allocate ring before first frame");
   REQUIRE(push(&ring),"cold push");
   memcpy(cold,ring.bytes,ring.initial);
+  /* Fill the bounded shared pool after the frontend allocated its cold ring.
+   * The authored startup code is an inert callable; native/language tests own
+   * callback effects, while this fixture observes transport and exact expiry. */
+  REQUIRE(g_libretro.engine->win.n_code>0,"authored inert callback code");
+  GmlVal timer_args[]={vreal(4),vreal(1),vreal(GML_FUNCVAL_TAG)};
+  for(int i=0;i<256;i++){
+    GmlVal timer=gml_builtin_call(&g_libretro.engine->vm,"call_later",timer_args,3);
+    REQUIRE(timer.t==V_REAL && timer.d>=3,"allocate pending call after cold capacity query");
+  }
+  REQUIRE(timer_roots()==512,"all pending calls retained before first frame");
   retro_run();
   REQUIRE(frames==1 && frame_width==1280 && frame_height==960,"first authored raster");
   REQUIRE(push(&ring),"first completed-frame push");
@@ -133,6 +153,7 @@ static int run_case(int response){
   gml_room_enter(&g_libretro.engine->vm,1);
   REQUIRE(g_libretro.engine->vm.n_tilemaps==0 && push(&ring),"empty-room push");
   REQUIRE(retro_unserialize(saved,saved_size) && retained(id,next),"restore maps from empty room");
+  REQUIRE(timer_roots()==512,"hidden callbacks survive room change and frontend restoration");
 
   *gml_varmap_put(&g_libretro.engine->vm.globals,"room_persistent")=vreal(1);
   gml_room_enter(&g_libretro.engine->vm,1);
@@ -156,6 +177,7 @@ static int run_case(int response){
 
   retro_reset();
   REQUIRE(g_libretro.reset_pending_frame,"Reset awaits its first new frame");
+  REQUIRE(timer_roots()==0,"Reset removes pending callbacks");
   size_t reset_size=anygm_state_size(g_libretro.engine),written=0;
   before_reset_load=malloc(reset_size); after_reset_load=malloc(reset_size);
   REQUIRE(before_reset_load && after_reset_load,"allocate Reset guard");
@@ -169,12 +191,19 @@ static int run_case(int response){
   retro_run();
   REQUIRE(push(&ring),"first reset-frame push");
   REQUIRE(retro_unserialize(saved,saved_size) && retained(id,next),"restore retained map after Reset");
+  REQUIRE(timer_roots()==512,"pre-Reset pending callbacks restore through frontend");
   REQUIRE(push(&ring),"restored map push");
   REQUIRE(retro_unserialize(dormant,dormant_size) && g_libretro.engine->vm.room_index==1,
           "restore dormant maps after Reset");
   gml_room_enter(&g_libretro.engine->vm,0);
   REQUIRE(retained(id,next) && push(&ring),"post-Reset dormant-map push");
   REQUIRE(ring.accepted==11 && ring.rejected==0 && ring.serialize_calls==11,"all wrapper pushes accepted");
+  retro_run(); retro_run();
+  REQUIRE(timer_roots()==512,"restoration preserves the remaining callback delay");
+  retro_run();
+  REQUIRE(timer_roots()==0,"restored one-shots expire and release all callback roots");
+  REQUIRE(push(&ring) && ring.accepted==12 && ring.rejected==0 && ring.serialize_calls==12,
+          "frontend still accepts a snapshot after callback completion");
   printf("tilemap frontend: negotiation=%d cold=%zu final=%zu accepted=%u rejected=%u\n",
          response,ring.initial,ring.capacity,ring.accepted,ring.rejected);
 done:

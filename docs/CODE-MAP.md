@@ -195,6 +195,10 @@ metadata preserves that distinction through state restoration.
 `tests/fuzz/test_state_security.c` locates a complete synthetic delayed-call
 table and exercises bounded record rejection, late-failure rollback, previous-schema
 rejection and same-run restoration across Reset through the public engine API.
+The actual-core `libretro_tilemap_state.c` frontend fixture additionally fills the
+pending-call pool after its cold capacity query, preserves callbacks across room
+changes and restores, clears them on Reset and checks their restored expiry under
+unsupported, declined and acknowledged-variable serialization negotiations.
 
 `tests/unit/runtime/test_builtin_map_access.c` owns map pre/post assignment
 expression returns, insertion/replacement, retained string/array identity,
