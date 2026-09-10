@@ -85,8 +85,8 @@ static int retained(int id,int next){
 static int run_case(int response){
   AnygmSyntheticContent fixture={0};
   Ring ring={0};
-  uint8_t *cold=NULL,*saved=NULL,*before_reset_load=NULL,*after_reset_load=NULL;
-  size_t saved_size=0;
+  uint8_t *cold=NULL,*saved=NULL,*dormant=NULL,*before_reset_load=NULL,*after_reset_load=NULL;
+  size_t saved_size=0,dormant_size=0;
   int ok=1;
   negotiation=response; frames=frame_width=frame_height=0;
   monitor_changed=option_update=0;
@@ -134,6 +134,20 @@ static int run_case(int response){
   REQUIRE(g_libretro.engine->vm.n_tilemaps==0 && push(&ring),"empty-room push");
   REQUIRE(retro_unserialize(saved,saved_size) && retained(id,next),"restore maps from empty room");
 
+  *gml_varmap_put(&g_libretro.engine->vm.globals,"room_persistent")=vreal(1);
+  gml_room_enter(&g_libretro.engine->vm,1);
+  REQUIRE(g_libretro.engine->vm.n_tilemaps==0 && push(&ring),"dormant-room push");
+  dormant_size=ring.capacity; dormant=malloc(dormant_size);
+  REQUIRE(dormant!=NULL,"retain dormant same-execution snapshot");
+  memcpy(dormant,ring.bytes,dormant_size);
+  gml_room_enter(&g_libretro.engine->vm,0);
+  REQUIRE(retained(id,next),"persistent return before restoration");
+  REQUIRE(retro_unserialize(dormant,dormant_size) &&
+          g_libretro.engine->vm.room_index==1 && g_libretro.engine->vm.n_tilemaps==0,
+          "restore inactive map ownership through frontend");
+  gml_room_enter(&g_libretro.engine->vm,0);
+  REQUIRE(retained(id,next) && push(&ring),"reactivated dormant-map push");
+
   monitor_changed=option_update=1;
   retro_run();
   REQUIRE(g_libretro.engine->config.monitor_width==1920 &&
@@ -156,11 +170,15 @@ static int run_case(int response){
   REQUIRE(push(&ring),"first reset-frame push");
   REQUIRE(retro_unserialize(saved,saved_size) && retained(id,next),"restore retained map after Reset");
   REQUIRE(push(&ring),"restored map push");
-  REQUIRE(ring.accepted==8 && ring.rejected==0 && ring.serialize_calls==8,"all wrapper pushes accepted");
+  REQUIRE(retro_unserialize(dormant,dormant_size) && g_libretro.engine->vm.room_index==1,
+          "restore dormant maps after Reset");
+  gml_room_enter(&g_libretro.engine->vm,0);
+  REQUIRE(retained(id,next) && push(&ring),"post-Reset dormant-map push");
+  REQUIRE(ring.accepted==11 && ring.rejected==0 && ring.serialize_calls==11,"all wrapper pushes accepted");
   printf("tilemap frontend: negotiation=%d cold=%zu final=%zu accepted=%u rejected=%u\n",
          response,ring.initial,ring.capacity,ring.accepted,ring.rejected);
 done:
-  free(before_reset_load); free(after_reset_load); free(cold); free(saved); free(ring.bytes);
+  free(before_reset_load); free(after_reset_load); free(cold); free(saved); free(dormant); free(ring.bytes);
   retro_unload_game(); retro_deinit(); anygm_synthetic_content_destroy(&fixture);
   return ok;
 }
