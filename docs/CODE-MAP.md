@@ -178,6 +178,11 @@ changing the established shared-string policy of ordinary array release.
 
 ## Resource-query contract coverage
 
+`tests/unit/runtime/test_builtin_map_access.c` owns map pre/post assignment
+expression returns, insertion/replacement, retained string/array identity,
+engine isolation and defensive argument bounds. Run `make check TEST=builtin_map_access`.
+It uses the existing DS value owner and does not define a second map codec.
+
 `tests/unit/runtime/test_builtin_animation_queries.c` owns animation channel-name
 indices for immutable assets and mutable curve structs, invalid/malformed input,
 ordinary/cached dispatch and neighboring channel evaluation. Run
