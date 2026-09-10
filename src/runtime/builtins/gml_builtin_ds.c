@@ -1133,11 +1133,11 @@ static int ds_sequence_array(DsSequenceReader *r,uint32_t count,unsigned depth,G
      count>DS_SEQUENCE_VALUES-r->values) return 0;
   GmlVal array=gml_arr_new((int)count,vundef());
   if(!array.arr || gml_val_array_length(array)!=(int)count){
-    gml_values_release(&array,1); return 0;
+    gml_values_release_owned(&array,1); return 0;
   }
   GmlArr *storage=array.arr;
   for(uint32_t i=0;i<count;i++) if(!ds_sequence_value(r,depth+1,&storage->data[i])){
-    gml_values_release(&array,1); return 0;
+    gml_values_release_owned(&array,1); return 0;
   }
   *out=array; return 1;
 }
@@ -1188,17 +1188,17 @@ static int ds_sequence_value(DsSequenceReader *r,unsigned depth,GmlVal *out){
        count>DS_SEQUENCE_VALUES-r->values) return 0;
     GmlVal array=gml_arr_new((int)count,vundef());
     if(!array.arr || gml_val_array_length(array)!=(int)count){
-      gml_values_release(&array,1); return 0;
+      gml_values_release_owned(&array,1); return 0;
     }
     GmlArr *storage=array.arr;
     for(uint32_t row=0;row<count;row++){
       uint32_t length;
       if(r->values>=DS_SEQUENCE_VALUES || !ds_sequence_word(r,&length)){
-        gml_values_release(&array,1); return 0;
+        gml_values_release_owned(&array,1); return 0;
       }
       r->values++;
       if(!ds_sequence_array(r,length,depth+1,&storage->data[row])){
-        gml_values_release(&array,1); return 0;
+        gml_values_release_owned(&array,1); return 0;
       }
     }
     *out=array; return 1;
@@ -1228,7 +1228,7 @@ static int ds_sequence_read(GmlVM *vm,GmlDSList *dst,const char *text,int queue)
         if(staged.len==previous+1) continue;
         ok=0;
       }
-      gml_values_release(&value,1);
+      gml_values_release_owned(&value,1);
     }
     if(r.off!=size) ok=0;
   }
@@ -1238,7 +1238,7 @@ static int ds_sequence_read(GmlVM *vm,GmlDSList *dst,const char *text,int queue)
     dst->item=staged.item; dst->child_kind=staged.child_kind;
     dst->len=staged.len; dst->cap=staged.cap;
   } else {
-    gml_values_release(staged.item,(size_t)staged.len);
+    gml_values_release_owned(staged.item,(size_t)staged.len);
     free(staged.item); free(staged.child_kind);
   }
   free(bytes); return ok;

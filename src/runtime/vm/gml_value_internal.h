@@ -13,7 +13,7 @@
 typedef struct {
   void **set;
   size_t capacity, count;
-  int active, skip_escaped;
+  int active, skip_escaped, owned_strings;
 } GmlValueFreeContext;
 
 uint32_t gml_value_name_hash(const char *name);

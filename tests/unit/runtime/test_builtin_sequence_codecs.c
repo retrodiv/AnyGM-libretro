@@ -27,6 +27,15 @@ static GmlVal call(GmlVM *vm,const char *name,GmlVal *args,int n,int cached,int 
   *ok &= expect(id>=0,"sequence codec must have an exact cached ID");
   return id>=0?gml_builtin_call_fast_id(vm,id,name,args,n):vundef();
 }
+/* These fixtures own each complete decoded tree and retain no aliases after
+ * their last assertion. Ordinary DS cleanup must preserve escaped references. */
+static void drain_owned(GmlVM *vm,GmlVal id){
+  while(gml_builtin_call(vm,"ds_stack_size",&id,1).d>0){
+    GmlVal value=gml_builtin_call(vm,"ds_stack_pop",&id,1);
+    if(value.t==V_STR) value.d=1;
+    gml_values_release_owned(&value,1);
+  }
+}
 static const char *scalar_hex[]={
   "cb000000050000000000000005000000000000000000000000001c40010000000400000074657874"
   "0000000000000000000004c00100000000000000000000000000000000000080",
@@ -77,7 +86,9 @@ static int scalar_case(void){
     input[1]=vstr(empty_hex[stack]); call(&vm,read,input,2,cached,&ok);
     GmlVal empty=call(&vm,write,&target,1,cached,&ok);
     ok &= expect(hex_is(empty,empty_hex[stack]),"empty sequences have a valid typed envelope");
-    gml_values_release(consumed,5); gml_values_release(&encoded,1); gml_values_release(&empty,1);
+    gml_values_release_owned(consumed,5);
+    gml_values_release_owned(&encoded,1); gml_values_release_owned(&empty,1);
+    drain_owned(&vm,source);
     gml_vm_free(&vm);
   }
   return ok;
@@ -114,7 +125,8 @@ static int arrays_case(void){
     ok &= expect(copied.t==V_ARR && copied.arr!=outer.arr &&
                  string_is(gml_arr_get(gml_arr_get(copied,1),0),"nested"),
                  "writing nested arrays produces an independently allocated readable tree");
-    gml_values_release(&encoded,1); gml_vm_free(&vm);
+    gml_values_release_owned(&encoded,1);
+    drain_owned(&vm,id); drain_owned(&vm,target); gml_vm_free(&vm);
   }
   return ok;
 }
@@ -133,7 +145,7 @@ static int legacy_case(void){
                  real_is(rows?gml_arr_get(gml_arr_get(a,0),0):gml_arr_get(a,0),1) &&
                  string_is(rows?gml_arr_get(gml_arr_get(a,1),0):gml_arr_get(a,1),"x"),
                  "legacy row counts distinguish flat and nested arrays");
-    gml_vm_free(&vm);
+    drain_owned(&vm,id); gml_vm_free(&vm);
   }
   GmlVM vm={0}; GmlVal id=gml_builtin_call(&vm,"ds_queue_create",NULL,0);
   GmlVal input[]={id,vstr("cb00000003000000010000000200000000000000000000000000f03f"
@@ -143,6 +155,12 @@ static int legacy_case(void){
                real_is(gml_builtin_call(&vm,"ds_queue_head",&id,1),2) &&
                real_is(gml_builtin_call(&vm,"ds_queue_tail",&id,1),3),
                "queue first offset discards only the consumed prefix");
+  input[1]=vstr("cb0000000200000001000000020000000100000006000000707265666978"
+                "000000000000000000000040");
+  call(&vm,"ds_queue_read",input,2,0,&ok);
+  ok &= expect(real_is(gml_builtin_call(&vm,"ds_queue_size",&id,1),1) &&
+               real_is(gml_builtin_call(&vm,"ds_queue_head",&id,1),2),
+               "discarded queue-prefix strings are not published");
   gml_vm_free(&vm); return ok;
 }
 static int rejection_case(void){
@@ -152,7 +170,8 @@ static int rejection_case(void){
     "67000000010000000100000003000000610062", "670000000000000000",
     "6500000000000000", "6700000001000000030000000000000000000000",
     "670000000200000001000000040000006c65616bfe000000",
-    "67000000010000000a0000000100000000002000"};
+    "67000000010000000a0000000100000000002000",
+    "6700000001000000020000000200000001000000040000006c65616bfe000000"};
   GmlVM vm={0}; GmlVal id=gml_builtin_call(&vm,"ds_stack_create",NULL,0);
   GmlVal seed[]={id,vreal(42)}; gml_builtin_call(&vm,"ds_stack_push",seed,2);
   for(size_t i=0;i<sizeof bad/sizeof bad[0];i++){
@@ -171,7 +190,7 @@ static int rejection_case(void){
   for(size_t i=0;i<sizeof invalid/sizeof invalid[0];i++){
     GmlVal out=call(&vm,"ds_stack_write",&invalid[i],1,0,&ok);
     ok &= expect(out.t==V_UNDEF,"invalid writer handle returns explicit failure, not fake data");
-    gml_values_release(&out,1);
+    gml_values_release_owned(&out,1);
   }
   gml_vm_free(&vm); return ok;
 }
@@ -199,7 +218,7 @@ static int numeric_and_text_case(void){
   GmlVal input[]={id,vstr(bytes)}; call(&vm,"ds_stack_read",input,2,0,&ok);
   GmlVal encoded=call(&vm,"ds_stack_write",&id,1,1,&ok);
   ok &= expect(hex_is(encoded,bytes),"UTF-8 byte lengths and bytes survive without recoding");
-  gml_values_release(&encoded,1); gml_vm_free(&vm); return ok;
+  gml_values_release_owned(&encoded,1); drain_owned(&vm,id); gml_vm_free(&vm); return ok;
 }
 static int graph_limits_case(void){
   int ok=1;
@@ -215,7 +234,7 @@ static int graph_limits_case(void){
                  "depth boundary accepts the bounded tree and rejects the next level transactionally");
     GmlVal encoded=call(&vm,"ds_stack_write",&id,1,0,&ok);
     if(depth==63) ok &= expect(hex_is(encoded,text),"writer and reader have the same depth budget");
-    gml_values_release(&encoded,1); gml_vm_free(&vm);
+    gml_values_release_owned(&encoded,1); drain_owned(&vm,id); gml_vm_free(&vm);
   }
   GmlVM vm={0}; GmlVal id=gml_builtin_call(&vm,"ds_queue_create",NULL,0);
   GmlVal cycle=gml_arr_new(1,vundef()); gml_arr_set(cycle,0,cycle);
@@ -223,7 +242,7 @@ static int graph_limits_case(void){
   GmlVal encoded=call(&vm,"ds_queue_write",&id,1,1,&ok);
   ok &= expect(encoded.t==V_UNDEF && gml_arr_get(cycle,0).arr==cycle.arr,
                "cyclic writes fail without mutating the source graph");
-  gml_values_release(&encoded,1); gml_vm_free(&vm);
+  gml_values_release_owned(&encoded,1); drain_owned(&vm,id); gml_vm_free(&vm);
   GmlVM bounded={0}; id=gml_builtin_call(&bounded,"ds_stack_create",NULL,0);
   GmlArr large={0};
   input[0]=id; input[1]=(GmlVal){.t=V_ARR,.arr=&large};
@@ -235,13 +254,32 @@ static int graph_limits_case(void){
   ok &= expect(encoded.t==V_UNDEF,"oversized arrays reject before any element access");
   /* Remove the synthetic borrowed descriptor before ordinary owner teardown. */
   gml_builtin_call(&bounded,"ds_stack_pop",&id,1);
-  gml_values_release(&encoded,1); gml_vm_free(&bounded); return ok;
+  gml_values_release_owned(&encoded,1); gml_vm_free(&bounded); return ok;
+}
+static int owned_graph_case(void){
+  int ok=1;
+  GmlVal array=gml_arr_new(3,vundef());
+  char *text=strdup("owned");
+  if(!array.arr || !text){ free(text); gml_values_release(&array,1); return 0; }
+  GmlArr *storage=array.arr;
+  /* Deliberately alias an owned string and a cycle across several roots. */
+  storage->data[0]=vstr_owned(text); storage->data[1]=array;
+  storage->data[2]=vstr("borrowed");
+  GmlVal roots[]={array,array,vstr_owned(text),vstr("borrowed")};
+  gml_values_release_owned(roots,4);
+  GmlVal retained=vstr_owned(strdup("retained"));
+  if(!retained.s) return 0;
+  gml_values_release(&retained,1);
+  ok &= expect(string_is(retained,"retained"),"ordinary release retains its existing string policy");
+  gml_values_release_owned(&retained,1);
+  return ok;
 }
 int main(int argc,char **argv){
   static const AnygmTestCase cases[]={
     {"scalar_vectors",scalar_case}, {"nested_arrays",arrays_case},
     {"legacy_rows_and_queue_offset",legacy_case}, {"transactional_rejection",rejection_case},
-    {"numeric_and_text_policies",numeric_and_text_case}, {"graph_limits",graph_limits_case}
+    {"numeric_and_text_policies",numeric_and_text_case}, {"graph_limits",graph_limits_case},
+    {"owned_graph_cleanup",owned_graph_case}
   };
   static const AnygmTestGroup group={"sequence_codecs",cases,sizeof cases/sizeof cases[0]};
   const char *filter=NULL;

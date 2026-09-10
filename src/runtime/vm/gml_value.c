@@ -328,6 +328,10 @@ void gml_value_free_context_end(GmlValueFreeContext *context){
   memset(context,0,sizeof(*context));
 }
 void gml_val_free(GmlValueFreeContext *context,GmlVal v){
+  if(v.t==V_STR && v.d!=0 && v.s && context && context->owned_strings){
+    if(!freeset_seen(context,(void*)v.s)) free((void*)v.s);
+    return;
+  }
   if(v.t!=V_ARR || !v.arr) return;
   GmlArr *A=v.arr;
   if(freeset_seen(context,A)) return;
@@ -379,13 +383,16 @@ void gml_varmap_free_ex(GmlVarMap *m,int skip_escaped){
   gml_varmap_free_with_context(m,skip_escaped,NULL);
 }
 void gml_varmap_free(GmlVarMap *m){ gml_varmap_free_ex(m,0); }
-void gml_values_release(GmlVal *values,size_t count){
+static void values_release(GmlVal *values,size_t count,int owned_strings){
   GmlValueFreeContext context={0};
   if(!values && count) return;
   gml_value_free_context_begin(&context);
+  context.owned_strings=owned_strings;
   for(size_t i=0;i<count;i++) gml_val_free(&context,values[i]);
   gml_value_free_context_end(&context);
 }
+void gml_values_release(GmlVal *values,size_t count){ values_release(values,count,0); }
+void gml_values_release_owned(GmlVal *values,size_t count){ values_release(values,count,1); }
 static void arr_mark_escaped_rec(GmlArr *A, int depth){
   if(!A || depth>64) return;
   if(A->escaped) return;

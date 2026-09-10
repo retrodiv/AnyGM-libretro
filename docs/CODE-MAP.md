@@ -169,7 +169,10 @@ source preservation and independent destination storage. Run
 
 `tests/unit/runtime/test_builtin_sequence_codecs.c` owns foreign queue/stack text
 vectors, FIFO/LIFO ordering, recursive arrays, legacy rows and transactional
-malformed-input controls: `make check TEST=builtin_sequence_codecs`.
+malformed-input and exclusively owned value-graph cleanup controls:
+`make check TEST=builtin_sequence_codecs`. The cleanup implementation remains in
+`gml_value.c`; its owned-graph entry point frees unpublished strings without
+changing the established shared-string policy of ordinary array release.
 
 ## Resource-query contract coverage
 

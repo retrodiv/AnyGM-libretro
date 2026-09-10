@@ -66,6 +66,11 @@ GmlVal *gml_varmap_put(GmlVarMap *m, const char *key);   /* get-or-create slot *
 GmlVal *gml_varmap_put_owned(GmlVarMap *m, char *key);   /* takes ownership of a heap key */
 
 void gml_arr_mark_escaped(GmlVal v);   /* array stored beyond its scope: locals cleanup must not free it */
-/* Release a bounded group of value roots with one alias-deduplication pass. */
+/* Release array storage with one alias-deduplication pass. Strings retain their
+ * established shared-reference lifetime, including strings stored in arrays. */
 void gml_values_release(GmlVal *values, size_t count);
+/* Release an exclusively owned graph, including owned strings. No reference to
+ * its arrays or owned strings may survive this call; borrowed strings are kept.
+ * Intended for unpublished decoded values and caller-owned temporary graphs. */
+void gml_values_release_owned(GmlVal *values, size_t count);
 #endif
