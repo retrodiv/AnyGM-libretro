@@ -14,7 +14,7 @@ typedef struct {
   GmlVM vm; GmlRender render; GmlAtlas atlas; GmlTpag page; GmlBg background;
   GmlTileMap map; GmlRtLayer layer;
   uint32_t pixels[16*16];
-  uint8_t rgba[6*2*4],ids[6*4],cells[2*4];
+  uint8_t rgba[6*3*4],ids[6*4],cells[2*4];
 } TileFixture;
 static const uint32_t colors[]={0xffff0000,0xff00ff00,0xff0000ff,0xffffffff};
 static void word(uint8_t *out,uint32_t value){
@@ -197,12 +197,34 @@ static int bounded_empty_maps(void){
   }
   return ok;
 }
+static int rectangular_tile_extent(void){
+  int ok=1;
+  for(int scaled=0;scaled<2;scaled++) for(int flags=0;flags<8;flags++){
+    TileFixture f; setup(&f);
+    memset(f.rgba,255,sizeof f.rgba);
+    f.atlas.h=3; f.page.sh=f.page.bh=3; f.page.ay1=2;
+    f.background.tile_h=3; f.map.th=3;
+    int xs=scaled?2:1,ys=scaled?3:1;
+    f.render.world_transform_active=1; f.render.world_scale_x=xs; f.render.world_scale_y=ys;
+    GmlVal args[]={vreal(0),vreal(1u|((unsigned)flags<<28)),vreal(1),vreal(2),vreal(1)};
+    ok &= call(&f,"draw_tile",args,5,1);
+    for(int y=0;y<16;y++) for(int x=0;x<16;x++){
+      uint32_t want=x>=2*xs && x<4*xs && y>=ys && y<4*ys?0xffffffff:0;
+      if(f.pixels[y*16+x]!=want){
+        fprintf(stderr,"rectangular tile: scaled=%d flags=%d (%d,%d) %08x != %08x\n",
+          scaled,flags,x,y,f.pixels[y*16+x],want); ok=0;
+      }
+    }
+    cleanup(&f);
+  }
+  return ok;
+}
 int main(int argc,char **argv){
   const AnygmTestCase cases[]={{"transforms",transforms},
     {"draw_state_and_animation",draw_state_and_animation},{"explicit_map",explicit_map},
     {"invalid_arguments",invalid_arguments},{"automatic_animated_empty",automatic_map},
     {"prepared_layouts",prepared_layouts},{"scaled_map",scaled_map},
-    {"bounded_empty_maps",bounded_empty_maps}};
+    {"bounded_empty_maps",bounded_empty_maps},{"rectangular_tile_extent",rectangular_tile_extent}};
   const AnygmTestGroup group={"tile_draw",cases,sizeof cases/sizeof cases[0]};
   const char *filter=NULL;
   if(argc==3 && !strcmp(argv[1],"--case")) filter=argv[2]; else if(argc!=1) return EXIT_FAILURE;
