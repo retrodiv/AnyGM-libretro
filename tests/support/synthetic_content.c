@@ -180,6 +180,11 @@ int anygm_synthetic_tilemap_content_create(AnygmSyntheticContent *fixture){
   memset(fixture,0,sizeof *fixture);
   if(!create_fixture_directory(fixture->directory,sizeof fixture->directory)) return 0;
   snprintf(fixture->path,sizeof fixture->path,"%s/data.win",fixture->directory);
+  char startup[192];
+  snprintf(startup,sizeof startup,"%s/startup.gml",fixture->directory);
+  if(!write_text(startup,"exit;\n")){
+    anygm_synthetic_content_destroy(fixture); return 0;
+  }
   AnygmHostServices services={0};
   services.struct_size=sizeof services; services.abi_version=ANYGM_HOST_SERVICES_VERSION;
   anygm_stdio_vfs_services_init(&services);
@@ -187,6 +192,7 @@ int anygm_synthetic_tilemap_content_create(AnygmSyntheticContent *fixture){
   uint32_t cells[4]={0}; int order[]={0,1};
   GmlcProject project={0};
   project.host=&services; project.name=(char*)"neutral-tilemap-state";
+  project.startup_code_path=startup;
   project.rooms=rooms; project.n_rooms=project.cap_rooms=2;
   project.room_order=order; project.n_room_order=2;
   rooms[0].id=rooms[0].name=(char*)"room_maps";

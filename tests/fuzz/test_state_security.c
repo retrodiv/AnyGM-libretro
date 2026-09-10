@@ -451,7 +451,16 @@ static int tilemap_state_cases(const AnygmHostServices *services){
   AnygmContentSource source={0};
   source.struct_size=sizeof source; source.kind=ANYGM_CONTENT_MEMORY;
   source.path="synthetic-tilemaps.win"; source.data=content; source.size=content_size;
-  if(ok) ok=anygm_load(engine,&source,NULL)==ANYGM_OK && engine->vm.n_tilemaps==2;
+  if(ok){
+    AnygmResult result=anygm_load(engine,&source,NULL);
+    ok=result==ANYGM_OK && engine->vm.n_tilemaps==2;
+    if(!ok){
+      char error[256]={0};
+      anygm_get_last_error(engine,error,sizeof error);
+      fprintf(stderr,"tilemap setup: result=%d maps=%d error=%s\n",
+              (int)result,engine->vm.n_tilemaps,error);
+    }
+  }
   if(!ok){ fail("tilemap fixture did not load two authored maps"); goto done; }
 
   /* The first capacity answer already includes unedited map metadata. */
