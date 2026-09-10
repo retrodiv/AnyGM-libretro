@@ -1422,7 +1422,7 @@ void gml_vm_draw(GmlVM *vm){
    * across frames, so a many-tile room does no per-frame tile malloc. */
   GmlDrawTile *tiles=scratch->tile; int nt=0, tcap=scratch->tile_capacity;
   double *tdepth=scratch->tile_depth;
-  GmlRoom rm;
+  GmlRoom rm={0};
   if(gml_vm_room_get(vm,vm->room_index,&rm)==0 && rm.tile_ptr){
     const uint8_t *d=vm->win->data; uint32_t tc=gml_vm_read_u32_le(d,rm.tile_ptr);
     if(tc>0 && tc<100000){
