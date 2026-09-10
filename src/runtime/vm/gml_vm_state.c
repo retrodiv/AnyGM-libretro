@@ -18,7 +18,7 @@
 #include <limits.h>
 
 /* ---------------- save-state runtime serialization ---------------- */
-enum { GML_VM_STATE_SCHEMA=12 };
+enum { GML_VM_STATE_SCHEMA=13 };
 enum { STATE_MAX_TILEMAPS=512, STATE_TILEMAP_RECORD_BYTES=56 };
 #define GML_VM_STATE_MAGIC UINT32_C(0x534D5641)
 /* IDs are assigned in canonical traversal order, never from addresses. Zero is the null array;
@@ -744,6 +744,7 @@ static void runtime_release_builtin_value(void *userdata,GmlVal value){
 static void runtime_clear(GmlVM *vm,GmlArr **partial_arrays,uint32_t partial_count){
   gml_vm_wait_cancel(vm);   /* the state about to be read decides what is parked, if anything */
   gml_vm_rooms_clear_stored_visuals(vm);
+  gml_vm_rooms_clear_tilemaps(vm);
   GmlValueFreeContext free_context={0};
   gml_value_free_context_begin(&free_context);
   gml_varmap_free_with_context(&vm->globals,0,&free_context);
@@ -854,6 +855,313 @@ static void sr_object_properties(StateR *s,GmlVM *vm){
   free(properties); free(marks);
 }
 
+static void sw_tilemap_records(StateW *s,GmlTileMap *maps,int count,int next_id){
+  /* Metadata exists even without edited cells. Rebinding immutable grids must not
+   * allocate new language handles or discard map-local position and resource edits. */
+  if(count<0 || count>STATE_MAX_TILEMAPS ||
+     (count && !maps) || next_id<0){ s->ok=0; return; }
+  for(int i=0;i<count;i++){
+    GmlTileMap *tm=&maps[i];
+    if(tm->id<0 || tm->id>=next_id || tm->cols<=0 || tm->cols>8192 ||
+       tm->rows<=0 || tm->rows>8192 || (tm->used!=0 && tm->used!=1) ||
+       (tm->visible!=0 && tm->visible!=1) || !isfinite(tm->x) || !isfinite(tm->y) ||
+       !isfinite(tm->depth)){ s->ok=0; return; }
+    for(int j=0;j<i;j++) if(maps[j].id==tm->id){ s->ok=0; return; }
+    int diffs=tilemap_diff_count(tm);
+    sw_i32(s,tm->id); sw_i32(s,tm->used); sw_i32(s,tm->visible);
+    sw_i32(s,tm->order); sw_i32(s,tm->tileset);
+    sw_i32(s,tm->cols);
+    sw_i32(s,tm->rows);
+    sw_d(s,tm->x); sw_d(s,tm->y); sw_d(s,tm->depth);
+    sw_i32(s,diffs);
+    if(diffs<=0) continue;
+    int cells=tm->cols*tm->rows;
+    for(int c=0;c<cells;c++){
+      uint32_t off=(uint32_t)c*4u;
+      uint32_t datum=gml_vm_read_u32_le(tm->owned_tiles,off);
+      if(datum==gml_vm_read_u32_le(tm->base_tiles,off)) continue;
+      sw_i32(s,c);
+      sw_u32(s,datum);
+    }
+  }
+}
+
+typedef struct {
+  int id, used, visible, order, tileset, cols, rows, n;
+  double x,y,depth;
+  int *cell; uint32_t *datum;
+} TileMapState;
+
+static void free_tilemap_records(TileMapState *records,int count){
+  if(!records) return;
+  for(int i=0;i<count;i++){ free(records[i].cell); free(records[i].datum); }
+  free(records);
+}
+
+static TileMapState *sr_tilemap_records(StateR *s,int tm_state_n,int tm_next_id){
+  TileMapState *tm_state=NULL;
+  if(s->ok){
+    if(!s->ok || tm_state_n<0 || tm_state_n>STATE_MAX_TILEMAPS || tm_next_id<0 ||
+       s->pos>s->cap || (size_t)tm_state_n>(s->cap-s->pos)/STATE_TILEMAP_RECORD_BYTES){
+      state_debug(s->vm,"bad tilemap state extent",s->pos,(uint32_t)tm_state_n);
+      s->ok=0; tm_state_n=0;
+    }
+    tm_state=tm_state_n?calloc((size_t)tm_state_n,sizeof(*tm_state)):NULL;
+    if(tm_state_n && !tm_state){ s->ok=0; tm_state_n=0; }
+    for(int i=0;i<tm_state_n && s->ok;i++){
+      TileMapState *ts=&tm_state[i];
+      ts->id=sr_i32(s); ts->used=sr_i32(s); ts->visible=sr_i32(s);
+      ts->order=sr_i32(s); ts->tileset=sr_i32(s);
+      ts->cols=sr_i32(s); ts->rows=sr_i32(s);
+      ts->x=sr_d(s); ts->y=sr_d(s); ts->depth=sr_d(s);
+      ts->n=sr_i32(s);
+      if(!s->ok || ts->id<0 || ts->id>=tm_next_id ||
+         (ts->used!=0 && ts->used!=1) || (ts->visible!=0 && ts->visible!=1) ||
+         ts->cols<=0 || ts->rows<=0 || ts->cols>8192 || ts->rows>8192 ||
+         !isfinite(ts->x) || !isfinite(ts->y) || !isfinite(ts->depth)){
+        state_debug(s->vm,"bad tilemap state metadata",s->pos,(uint32_t)ts->id);
+        s->ok=0; break;
+      }
+      for(int j=0;j<i;j++) if(tm_state[j].id==ts->id) s->ok=0;
+      int maxcells=ts->cols*ts->rows;
+      if(ts->n<0 || ts->n>maxcells || s->pos>s->cap || (size_t)ts->n>(s->cap-s->pos)/8u){
+        state_debug(s->vm,"bad tilemap sparse extent",s->pos,(uint32_t)ts->n);
+        s->ok=0;
+      }
+      if(!s->ok) break;
+      if(ts->n>0){
+        ts->cell=malloc((size_t)ts->n*sizeof(int));
+        ts->datum=malloc((size_t)ts->n*sizeof(uint32_t));
+        if(!ts->cell || !ts->datum){ s->ok=0; break; }
+      }
+      for(int j=0;j<ts->n && s->ok;j++){
+        ts->cell[j]=sr_i32(s); ts->datum[j]=sr_u32(s);
+        if(ts->cell[j]<0 || ts->cell[j]>=maxcells || (j && ts->cell[j]<=ts->cell[j-1])) s->ok=0;
+      }
+    }
+  }
+  if(!s->ok){ free_tilemap_records(tm_state,tm_state_n); return NULL; }
+  return tm_state;
+}
+
+static void apply_tilemap_records(StateR *s,GmlTileMap *maps,int map_count,
+                                  TileMapState *tm_state,int tm_state_n){
+  if(!s->ok) return;
+  if(s->ok && tm_state_n!=map_count){
+    state_debug(s->vm,"tilemap state room mismatch",s->pos,(uint32_t)tm_state_n); s->ok=0;
+  }
+  for(int i=0;i<tm_state_n;i++){
+    TileMapState *ts=&tm_state[i];
+    if(s->ok){
+      GmlTileMap *tm=&maps[i];
+      if(tm->cols!=ts->cols || tm->rows!=ts->rows || tm->order!=ts->order ||
+         (ts->n>0 && !gml_vm_tilemap_ensure_owned(tm))){
+        state_debug(s->vm,"tilemap state binding failed",s->pos,(uint32_t)i); s->ok=0;
+      }else{
+        tm->id=ts->id; tm->used=ts->used; tm->visible=ts->visible;
+        tm->tileset=ts->tileset; tm->x=ts->x; tm->y=ts->y; tm->depth=ts->depth;
+        for(int j=0;j<ts->n;j++){
+          int c=ts->cell[j];
+          unsigned char *p=tm->owned_tiles+(size_t)c*4u;
+          uint32_t datum=ts->datum[j];
+          p[0]=(unsigned char)(datum&0xFFu);
+          p[1]=(unsigned char)((datum>>8)&0xFFu);
+          p[2]=(unsigned char)((datum>>16)&0xFFu);
+          p[3]=(unsigned char)((datum>>24)&0xFFu);
+        }
+      }
+    }
+  }
+}
+
+/* Preserve slot extents as well as live records: layer shaders and free-slot
+ * reuse address the original table, not a compacted list of surviving handles. */
+static void sw_layers(StateW *s,GmlRtLayer *layers,int count){
+  if(count<0 || count>4096 || (count && !layers)){ s->ok=0; return; }
+  sw_i32(s,count);
+  for(int i=0;i<count;i++){
+    GmlRtLayer *l=&layers[i];
+    if(l->used!=0 && l->used!=1){ s->ok=0; return; }
+    sw_i32(s,l->used); if(!l->used) continue;
+    sw_i32(s,l->id); sw_i32(s,l->visible); sw_d(s,l->depth);
+    sw_d(s,l->x); sw_d(s,l->y); sw_d(s,l->hs); sw_d(s,l->vs);
+    sw_raw(s,l->name,sizeof(l->name)); sw_i32(s,l->touched);
+    sw_i32(s,l->script_begin); sw_i32(s,l->script_end);
+    sw_i32(s,l->order);
+  }
+}
+static void sw_elements(StateW *s,GmlRtElem *elements,int count){
+  if(count<0 || count>1000000 || (count && !elements)){ s->ok=0; return; }
+  sw_i32(s,count);
+  for(int i=0;i<count;i++){
+    GmlRtElem *e=&elements[i];
+    if(e->used!=0 && e->used!=1){ s->ok=0; return; }
+    sw_i32(s,e->used); if(!e->used) continue;
+    sw_i32(s,e->id); sw_i32(s,e->layer); sw_i32(s,e->type); sw_i32(s,e->sprite);
+    sw_d(s,e->x); sw_d(s,e->y);
+    sw_i32(s,e->sx); sw_i32(s,e->sy); sw_i32(s,e->w); sw_i32(s,e->h);
+    sw_d(s,e->xs); sw_d(s,e->ys); sw_d(s,e->alpha);
+    sw_i32(s,e->visible); sw_u32(s,e->blend);
+    sw_i32(s,e->htiled); sw_i32(s,e->vtiled); sw_i32(s,e->stretch);
+    sw_raw(s,e->name,sizeof(e->name));
+    sw_d(s,e->image_index); sw_d(s,e->image_speed); sw_d(s,e->image_angle);
+  }
+}
+static int sr_visual_slot_count(StateR *s,int maximum){
+  int count=sr_i32(s);
+  if(!s->ok || count<0 || count>maximum || s->pos>s->cap ||
+     (size_t)count>(s->cap-s->pos)/4u){ s->ok=0; return 0; }
+  return count;
+}
+static void sr_layers(StateR *s,GmlRtLayer **layers,int *count,int *capacity){
+  int n=sr_visual_slot_count(s,4096);
+  if(!s->ok) return;
+  GmlRtLayer *restored=n?calloc((size_t)n,sizeof *restored):NULL;
+  if(n && !restored){ s->ok=0; return; }
+  free(*layers); *layers=restored; *count=*capacity=n;
+  for(int i=0;i<n && s->ok;i++){
+    GmlRtLayer *l=&restored[i];
+    l->used=sr_i32(s);
+    if(l->used!=0 && l->used!=1){ s->ok=0; break; }
+    if(!l->used) continue;
+    l->id=sr_i32(s);
+    l->visible=sr_i32(s); l->depth=sr_d(s);
+    l->x=sr_d(s); l->y=sr_d(s); l->hs=sr_d(s); l->vs=sr_d(s);
+    sr_raw(s,l->name,sizeof(l->name)); l->name[sizeof(l->name)-1]=0;
+    l->touched=sr_i32(s);
+    l->script_begin=sr_i32(s); l->script_end=sr_i32(s);
+    l->order=sr_i32(s);
+  }
+}
+static void sr_elements(StateR *s,GmlRtElem **elements,int *count,int *capacity){
+  int n=sr_visual_slot_count(s,1000000);
+  if(!s->ok) return;
+  GmlRtElem *restored=n?calloc((size_t)n,sizeof *restored):NULL;
+  if(n && !restored){ s->ok=0; return; }
+  free(*elements); *elements=restored; *count=*capacity=n;
+  for(int i=0;i<n && s->ok;i++){
+    GmlRtElem *e=&restored[i];
+    e->used=sr_i32(s);
+    if(e->used!=0 && e->used!=1){ s->ok=0; break; }
+    if(!e->used) continue;
+    e->id=sr_i32(s);
+    e->layer=sr_i32(s); e->type=sr_i32(s); e->sprite=sr_i32(s);
+    e->x=sr_d(s); e->y=sr_d(s);
+    e->sx=sr_i32(s); e->sy=sr_i32(s); e->w=sr_i32(s); e->h=sr_i32(s);
+    e->xs=sr_d(s); e->ys=sr_d(s); e->alpha=sr_d(s);
+    e->visible=sr_i32(s); e->blend=sr_u32(s);
+    e->htiled=sr_i32(s); e->vtiled=sr_i32(s); e->stretch=sr_i32(s);
+    sr_raw(s,e->name,sizeof(e->name)); e->name[sizeof(e->name)-1]=0;
+    e->image_index=sr_d(s); e->image_speed=sr_d(s); e->image_angle=sr_d(s);
+  }
+}
+static void sw_dormant_visuals(StateW *s,GmlVM *vm){
+  int count=0,previous=-1;
+  for(GmlRoomVisualState *r=vm->room_visuals;r;r=r->next){
+    if(r->room_index<=previous || r->room_index==vm->room_index ||
+       r->room_index>=vm->room_state_count || !vm->room_stored ||
+       !vm->room_stored[r->room_index] || r->age<0){ s->ok=0; return; }
+    previous=r->room_index; count++;
+  }
+  sw_i32(s,count);
+  for(GmlRoomVisualState *r=vm->room_visuals;r && s->ok;r=r->next){
+    sw_i32(s,r->room_index); sw_i64(s,(int64_t)r->age);
+    sw_layers(s,r->layers,r->layer_count);
+    sw_elements(s,r->elements,r->element_count);
+    if(r->layer_count && !r->shaders){ s->ok=0; return; }
+    for(int i=0;i<r->layer_count;i++){
+      if(!isfinite(r->shaders[i]) || r->shaders[i]<0 ||
+         r->shaders[i]>(double)INT_MAX+1.0){ s->ok=0; return; }
+      sw_d(s,r->shaders[i]);
+    }
+    sw_i32(s,r->map_count);
+    sw_tilemap_records(s,r->maps,r->map_count,vm->next_tilemap_id);
+  }
+}
+static void sr_dormant_visuals(StateR *s,GmlVM *vm,int next_map_id){
+  int count=sr_i32(s),previous=-1;
+  if(!s->ok || count<0 || count>vm->room_state_count || s->pos>s->cap ||
+     (size_t)count>(s->cap-s->pos)/24u){ s->ok=0; return; }
+  GmlRoomVisualState **link=&vm->room_visuals;
+  for(int i=0;i<count && s->ok;i++){
+    int room=sr_i32(s);
+    int64_t age=sr_i64(s);
+    if(!s->ok || room<=previous || room==vm->room_index ||
+       room>=vm->room_state_count || room>=gml_room_count(vm->win) ||
+       !vm->room_stored || vm->room_stored[room]!=1 || age<0 || age>LONG_MAX){
+      s->ok=0; break;
+    }
+    previous=room;
+    GmlRoomVisualState *r=calloc(1,sizeof *r);
+    if(!r){ s->ok=0; break; }
+    *link=r; link=&r->next;
+    r->room_index=room; r->age=(long)age;
+    sr_layers(s,&r->layers,&r->layer_count,&r->layer_capacity);
+    sr_elements(s,&r->elements,&r->element_count,&r->element_capacity);
+    if(!s->ok || s->pos>s->cap ||
+       (size_t)r->layer_count>(s->cap-s->pos)/8u){ s->ok=0; break; }
+    r->shaders=r->layer_count?calloc((size_t)r->layer_count,sizeof *r->shaders):NULL;
+    if(r->layer_count && !r->shaders){ s->ok=0; break; }
+    for(int j=0;j<r->layer_count;j++){
+      r->shaders[j]=sr_d(s);
+      if(!isfinite(r->shaders[j]) || r->shaders[j]<0 ||
+         r->shaders[j]>(double)INT_MAX+1.0) s->ok=0;
+    }
+    int map_count=sr_i32(s);
+    TileMapState *maps=sr_tilemap_records(s,map_count,next_map_id);
+    if(s->ok && !gml_vm_rooms_load_maps(vm,room,&r->maps,&r->map_count,
+                                       &r->map_capacity,NULL)) s->ok=0;
+    apply_tilemap_records(s,r->maps,r->map_count,maps,map_count);
+    free_tilemap_records(maps,map_count);
+  }
+}
+
+typedef struct { int *ids; size_t count,capacity; } StateVisualIds;
+static int state_visual_id_add(StateVisualIds *set,int id,int next){
+  if(id<0 || id>=next) return 0;
+  if(set->count==set->capacity){
+    size_t capacity=set->capacity?set->capacity*2u:32u;
+    if(capacity<set->capacity || capacity>SIZE_MAX/sizeof *set->ids) return 0;
+    int *ids=realloc(set->ids,capacity*sizeof *ids);
+    if(!ids) return 0;
+    set->ids=ids; set->capacity=capacity;
+  }
+  set->ids[set->count++]=id;
+  return 1;
+}
+static int state_visual_id_compare(const void *a,const void *b){
+  int x=*(const int*)a,y=*(const int*)b;
+  return (x>y)-(x<y);
+}
+static int state_visual_ids_unique(StateVisualIds *set){
+  if(set->count>1) qsort(set->ids,set->count,sizeof *set->ids,state_visual_id_compare);
+  for(size_t i=1;i<set->count;i++) if(set->ids[i]==set->ids[i-1]) return 0;
+  return 1;
+}
+static int state_collect_visual_ids(StateVisualIds *runtime,StateVisualIds *maps,
+                                    GmlRtLayer *layers,int nl,GmlRtElem *elements,int ne,
+                                    GmlTileMap *tilemaps,int nm,int next_rt,int next_map){
+  for(int i=0;i<nl;i++) if(layers[i].used &&
+      !state_visual_id_add(runtime,layers[i].id,next_rt)) return 0;
+  for(int i=0;i<ne;i++) if(elements[i].used &&
+      !state_visual_id_add(runtime,elements[i].id,next_rt)) return 0;
+  for(int i=0;i<nm;i++) if(!state_visual_id_add(maps,tilemaps[i].id,next_map)) return 0;
+  return 1;
+}
+static int state_visual_ids_valid(GmlVM *vm){
+  StateVisualIds runtime={0},maps={0};
+  int ok=vm->rt_next_id>=0 && vm->next_tilemap_id>=0 &&
+    state_collect_visual_ids(&runtime,&maps,vm->rtl,vm->n_rtl,vm->rte,vm->n_rte,
+                             vm->tilemaps,vm->n_tilemaps,vm->rt_next_id,vm->next_tilemap_id);
+  for(GmlRoomVisualState *r=vm->room_visuals;r && ok;r=r->next)
+    ok=state_collect_visual_ids(&runtime,&maps,r->layers,r->layer_count,r->elements,
+                                r->element_count,r->maps,r->map_count,
+                                vm->rt_next_id,vm->next_tilemap_id);
+  ok=ok && state_visual_ids_unique(&runtime) && state_visual_ids_unique(&maps);
+  free(runtime.ids); free(maps.ids);
+  return ok;
+}
+
 static void sw_vm(StateW *s, GmlVM *vm){
   s->vm=vm; s->compact_strings=1; s->array_meta=1;
   GmlBuiltinState *builtin_state=gml_builtin_state_ensure(vm);
@@ -905,36 +1213,8 @@ static void sw_vm(StateW *s, GmlVM *vm){
   if(vm->room_state_count>0) sw_raw(s,vm->room_stored,(size_t)vm->room_state_count);
   sw_i32(s,vm->n_tile_mut); sw_raw(s,vm->tile_mut,sizeof(vm->tile_mut));
   sw_i32(s,vm->n_tile_del_at); sw_raw(s,vm->tile_del_at,sizeof(vm->tile_del_at));
-  /* Metadata exists even without edited cells. Rebinding immutable grids must not
-   * allocate new language handles or discard map-local position and resource edits. */
-  if(vm->n_tilemaps<0 || vm->n_tilemaps>STATE_MAX_TILEMAPS ||
-     (vm->n_tilemaps && !vm->tilemaps) || vm->next_tilemap_id<0){ s->ok=0; return; }
-  sw_i32(s,vm->n_tilemaps);
-  sw_i32(s,vm->next_tilemap_id);
-  for(int i=0;i<vm->n_tilemaps;i++){
-    GmlTileMap *tm=&vm->tilemaps[i];
-    if(tm->id<0 || tm->id>=vm->next_tilemap_id || tm->cols<=0 || tm->cols>8192 ||
-       tm->rows<=0 || tm->rows>8192 || (tm->used!=0 && tm->used!=1) ||
-       (tm->visible!=0 && tm->visible!=1) || !isfinite(tm->x) || !isfinite(tm->y) ||
-       !isfinite(tm->depth)){ s->ok=0; return; }
-    for(int j=0;j<i;j++) if(vm->tilemaps[j].id==tm->id){ s->ok=0; return; }
-    int diffs=tilemap_diff_count(tm);
-    sw_i32(s,tm->id); sw_i32(s,tm->used); sw_i32(s,tm->visible);
-    sw_i32(s,tm->order); sw_i32(s,tm->tileset);
-    sw_i32(s,tm->cols);
-    sw_i32(s,tm->rows);
-    sw_d(s,tm->x); sw_d(s,tm->y); sw_d(s,tm->depth);
-    sw_i32(s,diffs);
-    if(diffs<=0) continue;
-    int cells=tm->cols*tm->rows;
-    for(int c=0;c<cells;c++){
-      uint32_t off=(uint32_t)c*4u;
-      uint32_t datum=gml_vm_read_u32_le(tm->owned_tiles,off);
-      if(datum==gml_vm_read_u32_le(tm->base_tiles,off)) continue;
-      sw_i32(s,c);
-      sw_u32(s,datum);
-    }
-  }
+  sw_i32(s,vm->n_tilemaps); sw_i32(s,vm->next_tilemap_id);
+  sw_tilemap_records(s,vm->tilemaps,vm->n_tilemaps,vm->next_tilemap_id);
   gml_builtin_state_write_ini_ds(builtin_state,s);
   sw_varmap(s,&vm->globals);
   for(int i=0;i<vm->inst_count;i++) sw_instance(s,&vm->inst[i]);
@@ -949,26 +1229,11 @@ static void sw_vm(StateW *s, GmlVM *vm){
   sw_i32(s,vm->n_struct_free);
   for(int i=0;i<vm->n_struct_free;i++) sw_i32(s,vm->struct_free?vm->struct_free[i]:0);
   sw_d(s,vm->window_x); sw_d(s,vm->window_y);
-  /* Runtime layers and elements must survive rewind and state restoration. */
+  /* Shared field codecs keep active and dormant visual resources identical. */
   sw_i32(s,vm->rt_next_id);
-  int live_l=0; for(int i=0;i<vm->n_rtl;i++) if(vm->rtl[i].used) live_l++;
-  sw_i32(s,live_l);
-  for(int i=0;i<vm->n_rtl;i++) if(vm->rtl[i].used){ GmlRtLayer *l=&vm->rtl[i];
-    sw_i32(s,l->id); sw_i32(s,l->visible); sw_d(s,l->depth);
-    sw_d(s,l->x); sw_d(s,l->y); sw_d(s,l->hs); sw_d(s,l->vs);
-    sw_raw(s,l->name,sizeof(l->name)); sw_i32(s,l->touched);
-    sw_i32(s,l->script_begin); sw_i32(s,l->script_end); }
-  int live_e=0; for(int i=0;i<vm->n_rte;i++) if(vm->rte[i].used) live_e++;
-  sw_i32(s,live_e);
-  for(int i=0;i<vm->n_rte;i++) if(vm->rte[i].used){ GmlRtElem *e=&vm->rte[i];
-    sw_i32(s,e->id); sw_i32(s,e->layer); sw_i32(s,e->type); sw_i32(s,e->sprite);
-    sw_d(s,e->x); sw_d(s,e->y);
-    sw_i32(s,e->sx); sw_i32(s,e->sy); sw_i32(s,e->w); sw_i32(s,e->h);
-    sw_d(s,e->xs); sw_d(s,e->ys); sw_d(s,e->alpha);
-    sw_i32(s,e->visible); sw_u32(s,e->blend);
-    sw_i32(s,e->htiled); sw_i32(s,e->vtiled); sw_i32(s,e->stretch);
-    sw_raw(s,e->name,sizeof(e->name));
-    sw_d(s,e->image_index); sw_d(s,e->image_speed); sw_d(s,e->image_angle); }
+  sw_layers(s,vm->rtl,vm->n_rtl);
+  sw_elements(s,vm->rte,vm->n_rte);
+  sw_dormant_visuals(s,vm);
   gml_builtin_state_write_physics(builtin_state,s);
   sw_i32(s,vm->window_cursor);
   sw_particle_state(s);
@@ -1142,55 +1407,8 @@ int gml_vm_state_load(GmlVM *vm, const void *data, size_t len, size_t *used){
     state_debug(vm,"bad tile mutation counts",s.pos,(uint32_t)vm->n_tile_mut);
     s.ok=0;
   }
-  typedef struct {
-    int id, used, visible, order, tileset, cols, rows, n;
-    double x,y,depth;
-    int *cell; uint32_t *datum;
-  } TileMapState;
-  TileMapState *tm_state=NULL;
-  int tm_state_n=0,tm_next_id=0;
-  if(s.ok){
-    tm_state_n=sr_i32(&s);
-    tm_next_id=sr_i32(&s);
-    if(!s.ok || tm_state_n<0 || tm_state_n>STATE_MAX_TILEMAPS || tm_next_id<0 ||
-       s.pos>s.cap || (size_t)tm_state_n>(s.cap-s.pos)/STATE_TILEMAP_RECORD_BYTES){
-      state_debug(vm,"bad tilemap state extent",s.pos,(uint32_t)tm_state_n);
-      s.ok=0; tm_state_n=0;
-    }
-    tm_state=tm_state_n?calloc((size_t)tm_state_n,sizeof(*tm_state)):NULL;
-    if(tm_state_n && !tm_state){ s.ok=0; tm_state_n=0; }
-    for(int i=0;i<tm_state_n && s.ok;i++){
-      TileMapState *ts=&tm_state[i];
-      ts->id=sr_i32(&s); ts->used=sr_i32(&s); ts->visible=sr_i32(&s);
-      ts->order=sr_i32(&s); ts->tileset=sr_i32(&s);
-      ts->cols=sr_i32(&s); ts->rows=sr_i32(&s);
-      ts->x=sr_d(&s); ts->y=sr_d(&s); ts->depth=sr_d(&s);
-      ts->n=sr_i32(&s);
-      if(!s.ok || ts->id<0 || ts->id>=tm_next_id ||
-         (ts->used!=0 && ts->used!=1) || (ts->visible!=0 && ts->visible!=1) ||
-         ts->cols<=0 || ts->rows<=0 || ts->cols>8192 || ts->rows>8192 ||
-         !isfinite(ts->x) || !isfinite(ts->y) || !isfinite(ts->depth)){
-        state_debug(vm,"bad tilemap state metadata",s.pos,(uint32_t)ts->id);
-        s.ok=0; break;
-      }
-      for(int j=0;j<i;j++) if(tm_state[j].id==ts->id) s.ok=0;
-      int maxcells=ts->cols*ts->rows;
-      if(ts->n<0 || ts->n>maxcells || s.pos>s.cap || (size_t)ts->n>(s.cap-s.pos)/8u){
-        state_debug(vm,"bad tilemap sparse extent",s.pos,(uint32_t)ts->n);
-        s.ok=0;
-      }
-      if(!s.ok) break;
-      if(ts->n>0){
-        ts->cell=malloc((size_t)ts->n*sizeof(int));
-        ts->datum=malloc((size_t)ts->n*sizeof(uint32_t));
-        if(!ts->cell || !ts->datum){ s.ok=0; break; }
-      }
-      for(int j=0;j<ts->n && s.ok;j++){
-        ts->cell[j]=sr_i32(&s); ts->datum[j]=sr_u32(&s);
-        if(ts->cell[j]<0 || ts->cell[j]>=maxcells || (j && ts->cell[j]<=ts->cell[j-1])) s.ok=0;
-      }
-    }
-  }
+  int tm_state_n=sr_i32(&s),tm_next_id=sr_i32(&s);
+  TileMapState *tm_state=sr_tilemap_records(&s,tm_state_n,tm_next_id);
   (void)gml_builtin_state_read_ini_ds(builtin_state,&s);
   if(!s.ok) state_debug(vm,"before globals failed",s.pos,0);
   uint64_t vt0=0,vt1=0,vt2=0;
@@ -1254,49 +1472,11 @@ int gml_vm_state_load(GmlVM *vm, const void *data, size_t len, size_t *used){
   if(s.ok && s.pos + sizeof(double)*2 <= s.cap){
     vm->window_x=sr_d(&s); vm->window_y=sr_d(&s);
   }
-  /* Runtime layers and elements. */
-  vm->n_rtl=0; vm->n_rte=0;
   if(s.ok){
-    int restored_rt_next_id=sr_i32(&s);
-    vm->rt_next_id=restored_rt_next_id;
-    int nl=sr_i32(&s);
-    if(nl<0 || nl>4096){ state_debug(vm,"bad rt layer count",s.pos,(uint32_t)nl); s.ok=0; nl=0; }
-    for(int i=0;i<nl && s.ok;i++){
-      GmlRtLayer *l=gml_rt_layer_new(vm);
-      if(!l){ s.ok=0; break; }
-      int id=sr_i32(&s);
-      l->visible=sr_i32(&s); l->depth=sr_d(&s);
-      l->x=sr_d(&s); l->y=sr_d(&s); l->hs=sr_d(&s); l->vs=sr_d(&s);
-      sr_raw(&s,l->name,sizeof(l->name)); l->name[sizeof(l->name)-1]=0;
-      l->touched=sr_i32(&s);
-      l->script_begin=sr_i32(&s); l->script_end=sr_i32(&s);
-      l->id=id;
-      if(anygm_host_development_setting(vm->host,"GML_LOG_RTL")){
-        anygm_host_logf(vm ? vm->host : NULL,ANYGM_LOG_DEBUG,"[rtl-state] load layer id=%d name=\"%s\" vis=%d depth=%.0f pos=(%.2f,%.2f) speed=(%.2f,%.2f) touched=%d\n",
-                l->id,l->name,l->visible,l->depth,l->x,l->y,l->hs,l->vs,l->touched);
-      }
-    }
-    int ne=sr_i32(&s);
-    if(ne<0 || ne>1000000){ state_debug(vm,"bad rt elem count",s.pos,(uint32_t)ne); s.ok=0; ne=0; }
-    for(int i=0;i<ne && s.ok;i++){
-      GmlRtElem *e=gml_rt_elem_new(vm);
-      if(!e){ s.ok=0; break; }
-      int id=sr_i32(&s);
-      e->layer=sr_i32(&s); e->type=sr_i32(&s); e->sprite=sr_i32(&s);
-      e->x=sr_d(&s); e->y=sr_d(&s);
-      e->sx=sr_i32(&s); e->sy=sr_i32(&s); e->w=sr_i32(&s); e->h=sr_i32(&s);
-      e->xs=sr_d(&s); e->ys=sr_d(&s); e->alpha=sr_d(&s);
-      e->visible=sr_i32(&s); e->blend=sr_u32(&s);
-      e->htiled=sr_i32(&s); e->vtiled=sr_i32(&s); e->stretch=sr_i32(&s);
-      sr_raw(&s,e->name,sizeof(e->name));
-      e->name[sizeof(e->name)-1]=0;
-      e->image_index=sr_d(&s); e->image_speed=sr_d(&s); e->image_angle=sr_d(&s);
-      e->id=id;
-    }
-    /* The generic allocators assign temporary IDs while reconstructing each record. The records
-     * immediately receive their serialized IDs, so those allocation-side increments must not
-     * advance the language-visible next-ID counter. */
-    vm->rt_next_id=restored_rt_next_id;
+    vm->rt_next_id=sr_i32(&s);
+    sr_layers(&s,&vm->rtl,&vm->n_rtl,&vm->cap_rtl);
+    sr_elements(&s,&vm->rte,&vm->n_rte,&vm->cap_rte);
+    sr_dormant_visuals(&s,vm,tm_next_id);
   }
   if(s.ok) (void)gml_builtin_state_read_physics(builtin_state,&s);
   if(s.ok) vm->window_cursor=sr_i32(&s);
@@ -1510,35 +1690,12 @@ int gml_vm_state_load(GmlVM *vm, const void *data, size_t len, size_t *used){
     vm->next_tilemap_id=0;
     gml_vm_room_reload_layers_mode(vm,vm->room_index,0);
   }
-  if(s.ok && tm_state_n!=vm->n_tilemaps){
-    state_debug(vm,"tilemap state room mismatch",s.pos,(uint32_t)tm_state_n); s.ok=0;
-  }
-  for(int i=0;i<tm_state_n;i++){
-    TileMapState *ts=&tm_state[i];
-    if(s.ok){
-      GmlTileMap *tm=&vm->tilemaps[i];
-      if(tm->cols!=ts->cols || tm->rows!=ts->rows || tm->order!=ts->order ||
-         (ts->n>0 && !gml_vm_tilemap_ensure_owned(tm))){
-        state_debug(vm,"tilemap state binding failed",s.pos,(uint32_t)i); s.ok=0;
-      }else{
-        tm->id=ts->id; tm->used=ts->used; tm->visible=ts->visible;
-        tm->tileset=ts->tileset; tm->x=ts->x; tm->y=ts->y; tm->depth=ts->depth;
-        for(int j=0;j<ts->n;j++){
-          int c=ts->cell[j];
-          unsigned char *p=tm->owned_tiles+(size_t)c*4u;
-          uint32_t datum=ts->datum[j];
-          p[0]=(unsigned char)(datum&0xFFu);
-          p[1]=(unsigned char)((datum>>8)&0xFFu);
-          p[2]=(unsigned char)((datum>>16)&0xFFu);
-          p[3]=(unsigned char)((datum>>24)&0xFFu);
-        }
-      }
-    }
-    free(ts->cell);
-    free(ts->datum);
-  }
-  free(tm_state);
+  apply_tilemap_records(&s,vm->tilemaps,vm->n_tilemaps,tm_state,tm_state_n);
+  free_tilemap_records(tm_state,tm_state_n);
   if(s.ok) vm->next_tilemap_id=tm_next_id;
+  if(s.ok && !state_visual_ids_valid(vm)){
+    state_debug(vm,"bad retained visual identities",s.pos,0); s.ok=0;
+  }
   /* The sampling clock is restored above rather than invalidated here: it stopped being a cached
    * host timestamp and became part of what a frame draws from, so discarding it would make the
    * redraw after a load read a different value than the frame being restored. */

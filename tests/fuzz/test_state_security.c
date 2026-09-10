@@ -565,6 +565,118 @@ done:
   return ok;
 }
 
+static int dormant_visual_state_cases(const AnygmHostServices *services){
+  AnygmSyntheticContent fixture;
+  if(!anygm_synthetic_tilemap_content_create(&fixture)) return fail("dormant fixture creation failed");
+  AnygmEngine *engine=NULL; uint8_t *content=NULL,*baseline=NULL,*candidate=NULL;
+  size_t content_size=0,size=0;
+  int ok=anygm_synthetic_content_read(&fixture,&content,&content_size) &&
+    anygm_create(services,&engine)==ANYGM_OK;
+  AnygmContentSource source={0};
+  source.struct_size=sizeof source; source.kind=ANYGM_CONTENT_MEMORY;
+  source.path="synthetic-dormant.win"; source.data=content; source.size=content_size;
+  if(ok) ok=anygm_load(engine,&source,NULL)==ANYGM_OK &&
+    engine->vm.n_rtl==2 && engine->vm.n_tilemaps==2;
+  if(!ok){ fail("dormant fixture did not load its declared tables"); goto done; }
+  int map_id=engine->vm.tilemaps[0].id,layer_id=engine->vm.rtl[0].id;
+  *gml_varmap_put(&engine->vm.globals,"room_persistent")=vreal(1);
+  gml_tilemap_set_position(&engine->vm.tilemaps[0],11.25,-7.5);
+  if(!gml_tilemap_set_cell(&engine->vm.tilemaps[0],0,0,9)){ ok=0; goto done; }
+  GmlRtElem *element=gml_rt_elem_new(&engine->vm);
+  if(!element){ ok=0; goto done; }
+  element->type=7; element->layer=layer_id; element->sprite=-1; element->alpha=0.25;
+  int element_id=element->id;
+  engine->vm.frame=37;
+  gml_room_enter(&engine->vm,1);
+  GmlRtLayer *active=gml_rt_layer_new(&engine->vm);
+  if(!active){ ok=0; goto done; }
+  int active_id=active->id;
+  if(!save_state(engine,&baseline,&size)){ ok=fail("dormant baseline save failed"); goto done; }
+  candidate=malloc(size);
+  if(!candidate){ ok=0; goto done; }
+  size_t vm_start=STATE_HEADER_SIZE+(size_t)read_u64(baseline+64)+(size_t)read_u64(baseline+72);
+  size_t vm_end=vm_start+(size_t)read_u64(baseline+80);
+  /* Fingerprint the declared room/count/age/layer header, independently of the
+   * decoder. Assert every following table boundary before corrupting fields. */
+  uint8_t prefix[28]={0};
+  write_u32(prefix,1); write_u32(prefix+4,0); write_u64(prefix+8,37);
+  write_u32(prefix+16,2); write_u32(prefix+20,1); write_u32(prefix+24,(uint32_t)layer_id);
+  size_t record=0,matches=0;
+  for(size_t at=vm_start;at+sizeof prefix<=vm_end;at++)
+    if(!memcmp(baseline+at,prefix,sizeof prefix)){ record=at; matches++; }
+  size_t elements=record+220,shader=record+408,maps=record+424;
+  StateCursor cursor={baseline,size,elements,1};
+  if(matches!=1 || maps+4+64+56>vm_end || cursor_u32(&cursor)!=1 ||
+     cursor_u32(&cursor)!=1 || cursor_u32(&cursor)!=(uint32_t)element_id){
+    ok=fail("dormant layer/element record boundaries are not exact"); goto done;
+  }
+  cursor.offset=maps;
+  if(cursor_u32(&cursor)!=2 || cursor_u32(&cursor)!=(uint32_t)map_id){
+    ok=fail("dormant map boundary is not exact"); goto done;
+  }
+  const struct { size_t offset; uint32_t value; const char *label; } mutations[]={
+    {record,UINT32_MAX,"negative dormant room count"},
+    {record,3,"dormant count exceeds room table"},
+    {record+4,UINT32_MAX,"negative dormant room identity"},
+    {record+4,1,"active room declared dormant"},
+    {record+4,2,"dormant room outside content"},
+    {record+16,4097,"excessive dormant layer slots"},
+    {record+20,2,"invalid dormant layer used flag"},
+    {record+24,UINT32_MAX,"negative dormant layer identity"},
+    {record+24,(uint32_t)active_id,"dormant layer duplicates active identity"},
+    {elements,1000001,"excessive dormant element slots"},
+    {elements,1000000,"dormant slots exceed remaining markers"},
+    {elements+4,2,"invalid dormant element used flag"},
+    {elements+8,(uint32_t)layer_id,"element duplicates a layer identity"},
+    {maps,513,"excessive dormant map count"},
+    {maps+4,UINT32_MAX,"negative dormant map identity"},
+    {maps+4+64,(uint32_t)map_id,"duplicate dormant map identity"},
+    {maps+4+12,99,"dormant map parent mismatch"},
+    {maps+4+20,3,"dormant map width disagrees with content"},
+    {maps+4+52,1000000,"dormant sparse extent exceeds bytes"},
+    {vm_start+4,12,"previous dormant-free VM schema"}
+  };
+  for(size_t i=0;ok && i<sizeof mutations/sizeof mutations[0];i++)
+    ok=reject_payload_u32(engine,candidate,size,baseline,size,mutations[i].offset,
+                          mutations[i].value,mutations[i].label);
+  for(int i=0;ok && i<3;i++){
+    memcpy(candidate,baseline,size);
+    write_double(candidate+shader,i==0?NAN:(i==1?-1.0:INFINITY));
+    refresh_checksum(candidate);
+    ok=reject_unchanged(engine,candidate,size,baseline,size,"invalid dormant shader binding");
+  }
+  if(ok){
+    memcpy(candidate,baseline,size); write_u64(candidate+record+8,UINT64_MAX);
+    refresh_checksum(candidate);
+    ok=reject_unchanged(engine,candidate,size,baseline,size,"negative dormant room age");
+  }
+  if(ok){
+    memcpy(candidate,baseline,size);
+    write_double(candidate+maps+4+28,91); write_u32(candidate+vm_end,0);
+    refresh_checksum(candidate);
+    ok=reject_unchanged(engine,candidate,size,baseline,size,"late failure after dormant publication");
+  }
+  if(ok){
+    gml_room_enter(&engine->vm,0);
+    ok=anygm_state_load(engine,baseline,size)==ANYGM_OK && engine_matches(engine,baseline,size);
+    if(!ok) fail("dormant restore after reactivation is not byte-exact");
+  }
+  if(ok){
+    gml_room_enter(&engine->vm,0);
+    GmlTileMap *map=gml_tilemap_find(&engine->vm,map_id);
+    element=gml_rt_elem_find(&engine->vm,element_id);
+    ok=map && map->x==11.25 && map->y==-7.5 && map->tiles[0]==9 &&
+      element && element->alpha==0.25 && engine->vm.frame-engine->vm.room_enter_frame==37;
+    if(!ok) fail("dormant restore did not retain map, element and room age");
+  }
+  if(ok) ok=anygm_reset(engine)==ANYGM_OK &&
+    anygm_state_load(engine,baseline,size)==ANYGM_OK && engine_matches(engine,baseline,size);
+done:
+  free(candidate); free(baseline); anygm_destroy(engine); free(content);
+  anygm_synthetic_content_destroy(&fixture);
+  return ok;
+}
+
 int main(void){
   AnygmSyntheticContent fixture;
   if(!anygm_synthetic_list_override_content_create(&fixture))
@@ -845,6 +957,7 @@ int main(void){
   if(ok) ok=runtime_mask_state_cases(engine);
 
   if(ok) ok=tilemap_state_cases(&services);
+  if(ok) ok=dormant_visual_state_cases(&services);
 
   if(ok) ok=content_override_state_cases(&services,&fixture);
 

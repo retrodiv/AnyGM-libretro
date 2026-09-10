@@ -268,6 +268,19 @@ visible flags are boolean; local positions and fallback depths must be finite.
 The next handle is nonnegative and strictly greater than every retained handle.
 Any rejection remains inside the existing root transaction.
 
+Dormant visual state is bounded by the serialized room-flag count and loaded
+room table. Room indices are strictly increasing, cannot name the active room,
+and must have a stored flag. Each room uses the same bounded map codec and
+immutable-content binding as the active room. Layer and element slot extents
+are limited to 4,096 and 1,000,000 respectively and checked against remaining
+used-marker bytes before allocation; each used marker is zero or one. Dormant
+shader arrays have exactly the layer-slot extent and finite, nonnegative
+encoded bindings no larger than one beyond the signed integer maximum.
+Room-relative age must fit a nonnegative host long. Global handle validation
+sorts bounded operation-local scratch and rejects duplicate or non-advancing
+identities across active and dormant rooms. Failed reconstruction releases
+all dormant owned grids, arrays and shader storage through the room owner.
+
 Cache data is never authoritative. A schema, producer, source, output, size,
 or checksum mismatch discards the cache marker and regenerates from the source.
 No reader for an earlier unpublished state or cache layout is present.

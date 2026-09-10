@@ -255,6 +255,14 @@ static int room_return_case(int persistent,int through_state){
       int loaded=gml_vm_state_load(&f.vm,state,size,&used) && used==size && f.vm.room_index==1;
       ok &= loaded;
       if(!loaded) fputs("dormant-map test state failed to restore its empty active room\n",stderr);
+      unsigned char *again=malloc(size);
+      int exact=loaded && again && gml_vm_state_size(&f.vm)==size &&
+        gml_vm_state_save(&f.vm,again,size,&written) && written==size &&
+        !memcmp(state,again,size);
+      if(!exact) fputs("dormant visual save/load/save is not byte-exact\n",stderr);
+      ok &= exact;
+      free(again);
+      if(loaded) ok &= gml_vm_state_load(&f.vm,state,size,&used) && used==size;
     } else ok=0;
     free(state);
   }
@@ -365,6 +373,15 @@ static int state_layer_slot_bindings(void){
     int loaded=saved && gml_vm_state_load(&f.vm,state,size,&used) && used==size;
     last=gml_rt_layer_find(&f.vm,id);
     ok &= loaded && last && last->order==2 && layer_shader(&f.vm,id,0,0)==9;
+    if(loaded){
+      size_t next_size=gml_vm_state_size(&f.vm);
+      unsigned char *again=malloc(next_size?next_size:1);
+      ok &= again && next_size==size && gml_vm_state_save(&f.vm,again,next_size,&written) &&
+        written==size && !memcmp(state,again,size);
+      free(again);
+      GmlRtLayer *reused=gml_rt_layer_new(&f.vm);
+      ok &= reused && reused==&f.vm.rtl[1];
+    }
     if(!ok) fputs("state restoration must retain layer order and slot-indexed shader bindings across a gap\n",stderr);
     free(state);
   }

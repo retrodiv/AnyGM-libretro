@@ -1410,13 +1410,16 @@ uint32_t gml_room_layer_type_off(GmlVM *vm, uint32_t lp){
 }
 
 /* ---- GMS2 tile layers (type-4 room layers) for tile-based collision ---- */
-static GmlTileMap *gml_tilemap_new(GmlVM *vm){
-  if(vm->next_tilemap_id==INT_MAX) return NULL;
-  if(vm->n_tilemaps>=vm->cap_tilemaps){ int nc=vm->cap_tilemaps?vm->cap_tilemaps*2:8;
-    GmlTileMap *nt=realloc(vm->tilemaps,(size_t)nc*sizeof(*nt)); if(!nt) return NULL; vm->tilemaps=nt; vm->cap_tilemaps=nc; }
-  GmlTileMap *t=&vm->tilemaps[vm->n_tilemaps++]; memset(t,0,sizeof *t);
-  if(vm->next_tilemap_id<2000001) vm->next_tilemap_id=2000001;
-  t->id=vm->next_tilemap_id++; t->used=1; t->visible=1;
+static GmlTileMap *room_tilemap_new(GmlTileMap **maps,int *count,int *capacity,int *next_id){
+  if(next_id && *next_id==INT_MAX) return NULL;
+  if(*count>=*capacity){ int nc=*capacity?*capacity*2:8;
+    GmlTileMap *nt=realloc(*maps,(size_t)nc*sizeof(*nt)); if(!nt) return NULL; *maps=nt; *capacity=nc; }
+  GmlTileMap *t=&(*maps)[(*count)++]; memset(t,0,sizeof *t);
+  if(next_id){
+    if(*next_id<2000001) *next_id=2000001;
+    t->id=(*next_id)++;
+  }
+  t->used=1; t->visible=1;
   return t;
 }
 static void room_tilemaps_clear(GmlTileMap *maps,int count){
@@ -1770,32 +1773,16 @@ static void room_bind_instance_layers(GmlVM *vm,int room_index,int reset){
   }
 }
 
-/* Rebuild a room's derived GMS2 layer data from immutable ROOM records. Runtime layers/elements are
- * rebuilt on room enter; after modern savestate loads they are preserved and only type-4 tilemap
- * views are rebound to win data, since those grids are not serialized by pointer. */
-void gml_vm_room_reload_layers_mode(GmlVM *vm, int room_index, int rebuild_runtime_layers){
-  if(rebuild_runtime_layers){
-    /* Per-layer shader handles use serialized globals so rewind needs no state-format fork.  A
-     * genuine room rebuild owns a new layer set and must not inherit the previous room's slot. */
-    room_layer_shaders_clear(vm);
-    vm->n_rtl=0; vm->n_rte=0;
-  }
+/* Reuse the same immutable grid expansion for active and dormant rooms. The
+ * caller owns the output array. A null allocator rebinds state without minting
+ * language handles, touching globals or running room lifecycle events. */
+int gml_vm_rooms_load_maps(GmlVM *vm,int room_index,GmlTileMap **maps,
+                           int *count,int *capacity,int *next_id){
+  room_tilemaps_clear(*maps,*count); *count=0;
   const uint8_t *rd=vm->win->data;
   uint32_t lcnt=0;
   uint32_t lay=gml_vm_rooms_layer_list(vm,room_index,&lcnt);
-  gml_vm_rooms_clear_tilemaps(vm);
-  if(!lay) return;
-  if(rebuild_runtime_layers && lcnt<512) for(uint32_t i=0;i<lcnt;i++){ uint32_t lp=gml_vm_read_u32_le(rd,lay+4+i*4);
-    if(!lp || lp+40>vm->win->size) continue;
-    uint32_t np=gml_vm_read_u32_le(rd,lp+0); if(!np || np>=vm->win->size) continue;
-    GmlRtLayer *l=gml_rt_layer_new(vm); if(!l) break;
-    snprintf(l->name,sizeof l->name,"%s",(const char*)(rd+np));
-    l->order=(int)i;
-    l->depth=(double)(int32_t)gml_vm_read_u32_le(rd,lp+12);
-    l->x=gml_vm_read_f32_le(rd,lp+16); l->y=gml_vm_read_f32_le(rd,lp+20); l->hs=gml_vm_read_f32_le(rd,lp+24); l->vs=gml_vm_read_f32_le(rd,lp+28);
-    l->visible=gml_vm_read_u32_le(rd,lp+32)?1:0; l->touched=0;
-  }
-  room_bind_instance_layers(vm,room_index,rebuild_runtime_layers);
+  if(!lay) return 1;
   const GmlChunk *bc = gml_chunk(vm->win,"BGND");
   uint32_t bcnt = bc ? gml_vm_read_u32_le(rd,bc->off) : 0;
   if(lcnt<512) for(uint32_t i=0;i<lcnt;i++){ uint32_t lp=gml_vm_read_u32_le(rd,lay+4+i*4);
@@ -1830,7 +1817,8 @@ void gml_vm_room_reload_layers_mode(GmlVM *vm, int room_index, int rebuild_runti
       if(bp && bp+32<vm->win->size){ int w=(int32_t)gml_vm_read_u32_le(rd,bp+24),h=(int32_t)gml_vm_read_u32_le(rd,bp+28);
         if(w>0) tw=w;
         if(h>0) th=h; } }
-    GmlTileMap *tm=gml_tilemap_new(vm); if(!tm){ free(decoded); break; }
+    GmlTileMap *tm=room_tilemap_new(maps,count,capacity,next_id);
+    if(!tm){ free(decoded); return 0; }
     uint32_t np2=gml_vm_read_u32_le(rd,lp+0);
     snprintf(tm->name,sizeof tm->name,"%s",(np2&&np2<vm->win->size)?(const char*)(rd+np2):"");
     tm->tileset=tileset;
@@ -1842,15 +1830,51 @@ void gml_vm_room_reload_layers_mode(GmlVM *vm, int room_index, int rebuild_runti
     tm->base_tiles=tm->tiles;
     /* ROOM stores the parent layer offset, not a second tilemap displacement. */
     tm->x=0; tm->y=0; tm->visible=gml_vm_read_u32_le(rd,lp+32)?1:0;
-      GmlRtLayer *rl=gml_rt_layer_find_by_order(vm,tm->order);
-      if(rl){
-        tm->visible=rl->visible;
-        tm->depth=rl->depth;
-        tm->order=rl->order;
-      }
-	  }
-  gml_room_bind_backgrounds(vm, room_index);
-  gml_room_bind_asset_sprites(vm, room_index);
+  }
+  return 1;
+}
+
+/* Rebuild a room's derived GMS2 layer data from immutable ROOM records. Runtime layers/elements are
+ * rebuilt on room enter; after modern savestate loads they are preserved and only type-4 tilemap
+ * views are rebound to win data, since those grids are not serialized by pointer. */
+void gml_vm_room_reload_layers_mode(GmlVM *vm, int room_index, int rebuild_runtime_layers){
+  if(rebuild_runtime_layers){
+    /* Per-layer shader handles use serialized globals so rewind needs no state-format fork.  A
+     * genuine room rebuild owns a new layer set and must not inherit the previous room's slot. */
+    room_layer_shaders_clear(vm);
+    vm->n_rtl=0; vm->n_rte=0;
+  }
+  const uint8_t *rd=vm->win->data;
+  uint32_t lcnt=0;
+  uint32_t lay=gml_vm_rooms_layer_list(vm,room_index,&lcnt);
+  gml_vm_rooms_clear_tilemaps(vm);
+  if(!lay) return;
+  if(rebuild_runtime_layers && lcnt<512) for(uint32_t i=0;i<lcnt;i++){ uint32_t lp=gml_vm_read_u32_le(rd,lay+4+i*4);
+    if(!lp || lp+40>vm->win->size) continue;
+    uint32_t np=gml_vm_read_u32_le(rd,lp+0); if(!np || np>=vm->win->size) continue;
+    GmlRtLayer *l=gml_rt_layer_new(vm); if(!l) break;
+    snprintf(l->name,sizeof l->name,"%s",(const char*)(rd+np));
+    l->order=(int)i;
+    l->depth=(double)(int32_t)gml_vm_read_u32_le(rd,lp+12);
+    l->x=gml_vm_read_f32_le(rd,lp+16); l->y=gml_vm_read_f32_le(rd,lp+20); l->hs=gml_vm_read_f32_le(rd,lp+24); l->vs=gml_vm_read_f32_le(rd,lp+28);
+    l->visible=gml_vm_read_u32_le(rd,lp+32)?1:0; l->touched=0;
+  }
+  room_bind_instance_layers(vm,room_index,rebuild_runtime_layers);
+  (void)gml_vm_rooms_load_maps(vm,room_index,&vm->tilemaps,&vm->n_tilemaps,
+                              &vm->cap_tilemaps,&vm->next_tilemap_id);
+  for(int i=0;i<vm->n_tilemaps;i++){
+    GmlTileMap *tm=&vm->tilemaps[i];
+    GmlRtLayer *rl=gml_rt_layer_find_by_order(vm,tm->order);
+    if(rl){
+      tm->visible=rl->visible;
+      tm->depth=rl->depth;
+      tm->order=rl->order;
+    }
+  }
+  if(rebuild_runtime_layers){
+    gml_room_bind_backgrounds(vm, room_index);
+    gml_room_bind_asset_sprites(vm, room_index);
+  }
   if(anygm_host_development_setting(vm->host,"GML_LOG_ROOM")){ anygm_host_logf(vm ? vm->host : NULL,ANYGM_LOG_DEBUG,"[room] reload_layers room=%d: %d layers, %d tilemaps\n",room_index,vm->n_rtl,vm->n_tilemaps);
     for(int t=0;t<vm->n_tilemaps;t++){ GmlTileMap *tm=&vm->tilemaps[t];
       int solid=0; for(int c=0;c<tm->cols*tm->rows;c++){ uint32_t d=gml_vm_read_u32_le(tm->tiles,(uint32_t)c*4); if((d&0x7FFFF)!=0) solid++; }

@@ -9,11 +9,31 @@ marketing version. It is a numeric field in a validated binary header.
 
 ## Save-state schema
 
-The current AnyGM save-state schema is `23`. It is the format transported by
+The current AnyGM save-state schema is `24`. It is the format transported by
 libretro frontends for manual save states, automatic state slots, and rewind
 snapshots. Those features remain supported.
 
-Schema `23` introduces VM schema `12`. The tilemap section records every authored
+Schema `24` introduces VM schema `13`. Runtime layer and element tables preserve
+their slot extents instead of compacting surviving handles. Each slot starts with
+a signed 32-bit used flag; an unused slot has no further fields. Used records
+retain the preceding field order, with one additional signed 32-bit parent-order
+word at the end of each layer. Shader globals therefore keep addressing the same
+slots, and subsequent allocation reuses the same holes.
+
+After the active layer/element tables, a signed 32-bit count introduces dormant
+room visuals in strictly increasing room-index order. Each room has a signed
+32-bit index, signed 64-bit nonnegative room-relative age, the same layer and
+element tables, one shader-binding double per layer slot, and a signed 32-bit map
+count followed by the same map metadata and sparse cells as the active room.
+Global next-handle counters are written only once. Dormant rooms must be flagged
+stored, belong to the loaded content and differ from the current room. Grids are
+rebound by the existing room owner without executing room entry or mutating room
+globals. Layer, element and map handles are checked for global uniqueness in
+their respective namespaces before publication. Deleted map records remain
+retained, and ordinary room recreation remains distinct from persistent return.
+Previous public and VM schemas reject cleanly; audio schema `2` is unchanged.
+
+Schema `23` introduced VM schema `12`. The tilemap section records every authored
 map, including maps with no edited cells. A signed 32-bit map count and next-map
 identity precede the records. Each record holds seven signed 32-bit words
 (identity, used, visible, parent order, tileset, columns, rows), three doubles
@@ -199,7 +219,7 @@ same form without an intervening mutation produces identical bytes.
 ## VM payload ownership
 
 `src/core/engine_state.c` owns the root framing and section transaction.
-Within the VM section, `src/runtime/vm/gml_vm_state.c` alone owns schema `12`,
+Within the VM section, `src/runtime/vm/gml_vm_state.c` alone owns schema `13`,
 field order, value-graph encoding, sizing, and restore scratch.
 
 Builtin resources have a separate storage and lifetime owner, not a separate
