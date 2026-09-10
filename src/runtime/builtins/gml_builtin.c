@@ -1715,8 +1715,11 @@ GmlVal gml_builtin_try_platform_tail(GmlVM *vm, const char *nm, GmlVal *a, int n
     return vreal(0); }
   if(!strcmp(nm,"gpu_get_alphatestenable")){ GmlRender *R2=(GmlRender*)vm->render;
     return vreal(builtin_draw_state(R2).alpha_test_enable); }
-  if(!strcmp(nm,"gpu_set_alphatestref")||!strcmp(nm,"draw_set_alpha_test_ref_value")){ GmlRender *R2=(GmlRender*)vm->render; int ref=(int)N(a,n,0);
-    GmlRenderDrawState draw={0}; if(ref<0) ref=0; else if(ref>255) ref=255; draw.alpha_test_reference=ref;
+  if(!strcmp(nm,"gpu_set_alphatestref")||!strcmp(nm,"draw_set_alpha_test_ref_value")){ GmlRender *R2=(GmlRender*)vm->render;
+    double value=N(a,n,0);
+    if(!isfinite(value)) return vreal(0);
+    int ref=value<=0?0:value>=255?255:(int)value;
+    GmlRenderDrawState draw={0}; draw.alpha_test_reference=ref;
     gml_render_draw_state_update(R2,&draw,GML_RENDER_DRAW_STATE_ALPHA_TEST_REFERENCE); return vreal(0); }
   if(!strcmp(nm,"gpu_get_alphatestref")){ GmlRender *R2=(GmlRender*)vm->render;
     return vreal(builtin_draw_state(R2).alpha_test_reference); }

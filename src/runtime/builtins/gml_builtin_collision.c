@@ -512,16 +512,20 @@ void classic_move_bounce(GmlVM *vm, GmlInstance *s, int all, int advanced){
 /* Keep the distance-limited step shared; collision selection changes only its veto. */
 static int linear_step_move(GmlVM *vm,GmlInstance *self,double tx,double ty,
                             double step,int target,int solid_only){
-  if(!self || !isfinite(tx) || !isfinite(ty) || !isfinite(step) || step<0)
+  if(!self || !isfinite(tx) || !isfinite(ty) || !isfinite(step))
     return 0;
   double dx=tx-self->x,dy=ty-self->y,distance=hypot(dx,dy);
   if(!isfinite(distance)) return 0;
   if(distance==0) return 1;
-  if(step==0) return 0;
-  int arrived=distance<=step || distance<1e-9;
+  int arrived=distance<=step;
   double x=arrived?tx:self->x+dx/distance*step;
   double y=arrived?ty:self->y+dy/distance*step;
-  if(collision_at(vm,x,y,target,solid_only)) return 0;
+  if(!isfinite(x) || !isfinite(y)) return 0;
+  /* The result describes a final-sized step even when its destination is blocked. */
+  if(collision_at(vm,x,y,target,solid_only)) return arrived;
+  self->direction=atan2(self->y-y,x-self->x)*180.0/M_PI;
+  if(self->direction<0) self->direction+=360.0;
+  motion_from_speed_direction(vm,self);
   self->x=x;
   self->y=y;
   gml_colgrid_touch(vm,self);

@@ -14,6 +14,11 @@
 static int log_tilecol_on(GmlVM *vm){
   return builtin_log_tile_collision(vm);
 }
+static double layer_depth_argument(double value){
+  if(!isfinite(value)) return NAN;
+  double depth=U32(value);
+  return depth>=2147483648.0?depth-4294967296.0:depth;
+}
 static GmlTileMap *tilemap_position_target(GmlVM *vm,GmlVal *a,int n){
   if(!vm || !a || n<1) return NULL;
   double id=N(a,n,0);
@@ -30,9 +35,11 @@ static int tilemap_pixel_cell(GmlVM *vm,GmlTileMap *tm,double x,double y,int *cx
 int builtin_layer_exact(GmlVM *vm, const char *nm, GmlVal *a, int n, GmlVal *out){
   if(!vm || !nm || !out) return 0;
   if(!strcmp(nm,"layer_create")){
+    double depth=layer_depth_argument(N(a,n,0));
+    if(!isfinite(depth)){ *out=vreal(-1); return 1; }
     GmlRtLayer *l=gml_rt_layer_new(vm);
     if(!l){ *out=vreal(-1); return 1; }
-    l->depth=N(a,n,0);
+    l->depth=depth;
     if(builtin_setting(vm,"GML_LOG_RTL")){ 
       anygm_host_logf(vm ? vm->host : NULL,ANYGM_LOG_DEBUG,"[rtl] f%ld layer_create depth=%f id=%d\n",vm->frame,l->depth,l->id); }
     snprintf(l->name,sizeof l->name,"%s",(n>=2 && a[1].t==V_STR && a[1].s)?a[1].s:"_rt_layer");
@@ -52,7 +59,7 @@ int builtin_layer_exact(GmlVM *vm, const char *nm, GmlVal *a, int n, GmlVal *out
     *out=v; return 1;
   }
   if(!strcmp(nm,"layer_get_id_at_depth")){
-    double depth=N(a,n,0);
+    double depth=layer_depth_argument(N(a,n,0));
     int count=0;
     for(int i=0;i<vm->n_rtl;i++)
       if(vm->rtl[i].used && vm->rtl[i].depth==depth) count++;
@@ -79,9 +86,11 @@ int builtin_layer_exact(GmlVM *vm, const char *nm, GmlVal *a, int n, GmlVal *out
     *out=vreal(e?e->layer:-1); return 1; }
   if(!strcmp(nm,"layer_get_depth")){ GmlRtLayer *l=rt_layer_resolve(vm,a,n); *out=vreal(l?l->depth:0); return 1; }
   if(!strcmp(nm,"layer_depth")){ GmlRtLayer *l=rt_layer_resolve(vm,a,n);
+    double depth=layer_depth_argument(N(a,n,1));
+    if(!isfinite(depth)){ *out=vreal(0); return 1; }
     if(l){
       double old=l->depth;
-      l->depth=N(a,n,1);
+      l->depth=depth;
       if(builtin_setting(vm,"GML_LOG_RTL")){ 
         anygm_host_logf(vm ? vm->host : NULL,ANYGM_LOG_DEBUG,"[rtl] f%ld layer_depth %s id=%d %.0f -> %.0f\n",
                 vm->frame,l->name,l->id,old,l->depth); }
