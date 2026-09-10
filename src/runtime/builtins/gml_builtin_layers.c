@@ -6,12 +6,26 @@
 #include "gml_render.h"
 #include "anygm_host.h"
 
+#include <limits.h>
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 static int log_tilecol_on(GmlVM *vm){
   return builtin_log_tile_collision(vm);
+}
+static GmlTileMap *tilemap_position_target(GmlVM *vm,GmlVal *a,int n){
+  if(!vm || !a || n<1) return NULL;
+  double id=N(a,n,0);
+  return isfinite(id) && id>=INT_MIN && id<=INT_MAX?gml_tilemap_find(vm,(int)id):NULL;
+}
+static int tilemap_pixel_cell(GmlVM *vm,GmlTileMap *tm,double x,double y,int *cx,int *cy){
+  if(!tm || tm->tw<=0 || tm->th<=0) return 0;
+  double tx,ty; gml_tilemap_effective(vm,tm,&tx,&ty,NULL,NULL);
+  double column=floor((x-tx)/tm->tw),row=floor((y-ty)/tm->th);
+  if(!isfinite(column) || !isfinite(row) || column<0 || row<0 ||
+     column>=tm->cols || row>=tm->rows) return 0;
+  *cx=(int)column; *cy=(int)row; return 1;
 }
 int builtin_layer_exact(GmlVM *vm, const char *nm, GmlVal *a, int n, GmlVal *out){
   if(!vm || !nm || !out) return 0;
@@ -348,18 +362,15 @@ GmlVal gml_builtin_try_layers(GmlVM *vm, const char *nm, GmlVal *a, int n){
     if(log_tilecol_on(vm)) anygm_host_logf(vm ? vm->host : NULL,ANYGM_LOG_DEBUG,"[tilecol] tilemap_get(%s,%d,%d) -> %u (idx=%u)\n",tm->name,cx,cy,datum,datum&0x7FFFF);
     return vreal((double)datum); }
   if(!strcmp(nm,"tilemap_get_at_pixel")){ GmlTileMap *tm=gml_tilemap_find(vm,(int)N(a,n,0));
-    if(!tm||!tm->tw||!tm->th) return vreal(0);
-    double tx,ty; gml_tilemap_effective(vm,tm,&tx,&ty,NULL,NULL);
-    int cx=(int)floor((N(a,n,1)-tx)/tm->tw), cy=(int)floor((N(a,n,2)-ty)/tm->th);
-    if(cx<0||cy<0||cx>=tm->cols||cy>=tm->rows) return vreal(0);
+    int cx,cy;
+    if(!tilemap_pixel_cell(vm,tm,N(a,n,1),N(a,n,2),&cx,&cy)) return vreal(0);
     const unsigned char *p=tm->tiles+((size_t)cy*tm->cols+cx)*4;
     return vreal((double)((uint32_t)p[0]|((uint32_t)p[1]<<8)|((uint32_t)p[2]<<16)|((uint32_t)p[3]<<24))); }
   if(!strcmp(nm,"tilemap_set")){ GmlTileMap *tm=gml_tilemap_find(vm,(int)N(a,n,0));
     gml_tilemap_set_cell(tm,(int)N(a,n,2),(int)N(a,n,3),NU32(a,n,1)); return vreal(0); }
   if(!strcmp(nm,"tilemap_set_at_pixel")){ GmlTileMap *tm=gml_tilemap_find(vm,(int)N(a,n,0));
-    if(tm&&tm->tw&&tm->th){
-      double tx,ty; gml_tilemap_effective(vm,tm,&tx,&ty,NULL,NULL);
-      int cx=(int)floor((N(a,n,2)-tx)/tm->tw), cy=(int)floor((N(a,n,3)-ty)/tm->th);
+    int cx,cy;
+    if(tilemap_pixel_cell(vm,tm,N(a,n,2),N(a,n,3),&cx,&cy)){
       gml_tilemap_set_cell(tm,cx,cy,NU32(a,n,1));
     }
     return vreal(0); }
@@ -375,8 +386,18 @@ GmlVal gml_builtin_try_layers(GmlVM *vm, const char *nm, GmlVal *a, int n){
   if(!strcmp(nm,"tilemap_get_tileset")){ GmlTileMap *tm=gml_tilemap_find(vm,(int)N(a,n,0)); return vreal(tm?tm->tileset:-1); }
   if(!strcmp(nm,"tilemap_get_tile_width")){ GmlTileMap *tm=gml_tilemap_find(vm,(int)N(a,n,0)); return vreal(tm?tm->tw:0); }
   if(!strcmp(nm,"tilemap_get_tile_height")){ GmlTileMap *tm=gml_tilemap_find(vm,(int)N(a,n,0)); return vreal(tm?tm->th:0); }
-  if(!strcmp(nm,"tilemap_get_x")){ GmlTileMap *tm=gml_tilemap_find(vm,(int)N(a,n,0)); double tx=0.0; gml_tilemap_effective(vm,tm,&tx,NULL,NULL,NULL); return vreal(tm?tx:0); }
-  if(!strcmp(nm,"tilemap_get_y")){ GmlTileMap *tm=gml_tilemap_find(vm,(int)N(a,n,0)); double ty=0.0; gml_tilemap_effective(vm,tm,NULL,&ty,NULL,NULL); return vreal(tm?ty:0); }
+  if(!strcmp(nm,"tilemap_get_x")){ GmlTileMap *tm=tilemap_position_target(vm,a,n); return vreal(tm?tm->x:-1); }
+  if(!strcmp(nm,"tilemap_get_y")){ GmlTileMap *tm=tilemap_position_target(vm,a,n); return vreal(tm?tm->y:-1); }
+  if(!strcmp(nm,"tilemap_x")){
+    GmlTileMap *tm=tilemap_position_target(vm,a,n);
+    if(tm && n>1) gml_tilemap_set_position(tm,N(a,n,1),tm->y);
+    return vreal(0);
+  }
+  if(!strcmp(nm,"tilemap_y")){
+    GmlTileMap *tm=tilemap_position_target(vm,a,n);
+    if(tm && n>1) gml_tilemap_set_position(tm,tm->x,N(a,n,1));
+    return vreal(0);
+  }
   if(!strcmp(nm,"tilemap_get_frame")){
     GmlTileMap *tm=gml_tilemap_find(vm,(int)N(a,n,0));
     double speed=gml_room_speed(vm);

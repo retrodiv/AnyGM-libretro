@@ -1529,6 +1529,10 @@ int gml_tilemap_set_cell(GmlTileMap *tm, int cx, int cy, uint32_t datum){
   p[3]=(unsigned char)((datum>>24)&0xFFu);
   return 1;
 }
+void gml_tilemap_set_position(GmlTileMap *tm,double x,double y){
+  if(!tm || !tm->used || !isfinite(x) || !isfinite(y)) return;
+  tm->x=x; tm->y=y;
+}
 /* find the tile layer backing a given layer id OR name (layer_tilemap_get_id accepts either) */
 GmlTileMap *gml_tilemap_by_layer(GmlVM *vm, GmlVal v){
   if(v.t==V_STR && v.s){ for(int i=0;i<vm->n_tilemaps;i++) if(vm->tilemaps[i].used && !strcmp(vm->tilemaps[i].name,v.s)) return &vm->tilemaps[i]; return NULL; }
@@ -1547,12 +1551,12 @@ void gml_tilemap_effective(GmlVM *vm, const GmlTileMap *tm,
       ev=rl->visible;
       ed=rl->depth;
       if(rl->touched){
-        ex=rl->x; ey=rl->y;
+        ex+=rl->x; ey+=rl->y;
       }else{
         
         long fin=vm->frame - vm->room_enter_frame; if(fin<0) fin=0;
-        ex=rl->x + rl->hs*fin;
-        ey=rl->y + rl->vs*fin;
+        ex+=rl->x + rl->hs*fin;
+        ey+=rl->y + rl->vs*fin;
       }
     }
   }
@@ -1679,6 +1683,7 @@ void gml_vm_room_reload_layers_mode(GmlVM *vm, int room_index, int rebuild_runti
   const uint8_t *rd=vm->win->data;
   uint32_t lcnt=0;
   uint32_t lay=gml_vm_rooms_layer_list(vm,room_index,&lcnt);
+  gml_vm_rooms_clear_tilemaps(vm);
   if(!lay) return;
   if(rebuild_runtime_layers && lcnt<512) for(uint32_t i=0;i<lcnt;i++){ uint32_t lp=gml_vm_read_u32_le(rd,lay+4+i*4);
     if(!lp || lp+40>vm->win->size) continue;
@@ -1705,7 +1710,6 @@ void gml_vm_room_reload_layers_mode(GmlVM *vm, int room_index, int rebuild_runti
       }
     }
   }
-  gml_vm_rooms_clear_tilemaps(vm);
   if(lcnt<512) for(uint32_t i=0;i<lcnt;i++){ uint32_t lp=gml_vm_read_u32_le(rd,lay+4+i*4);
     if(!lp || gml_vm_read_u32_le(rd,lp+8)!=2) continue;
     uint32_t tb=gml_room_layer_type_off(vm,lp);
@@ -1771,13 +1775,13 @@ void gml_vm_room_reload_layers_mode(GmlVM *vm, int room_index, int rebuild_runti
     tm->decoded_tiles=decoded;
     tm->tiles=decoded?decoded:rd+tdata;
     tm->base_tiles=tm->tiles;
-    tm->x=gml_vm_read_f32_le(rd,lp+16); tm->y=gml_vm_read_f32_le(rd,lp+20); tm->visible=gml_vm_read_u32_le(rd,lp+32)?1:0;
+    /* ROOM stores the parent layer offset, not a second tilemap displacement. */
+    tm->x=0; tm->y=0; tm->visible=gml_vm_read_u32_le(rd,lp+32)?1:0;
       GmlRtLayer *rl=gml_rt_layer_find_by_order(vm,tm->order);
       if(rl){
         tm->visible=rl->visible;
         tm->depth=rl->depth;
         tm->order=rl->order;
-        if(rl->touched){ tm->x=rl->x; tm->y=rl->y; }
       }
 	  }
   gml_room_bind_backgrounds(vm, room_index);

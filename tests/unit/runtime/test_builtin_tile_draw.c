@@ -132,10 +132,27 @@ static int invalid_arguments(void){
 }
 static int automatic_map(void){
   TileFixture f; setup(&f); GmlWin win={0}; f.vm.win=&win;
+  f.map.x=f.map.y=0;
   f.map.visible=1; f.layer.visible=1; f.layer.x=3; f.layer.y=5;
   f.layer.script_begin=f.layer.script_end=-1;
   gml_vm_draw(&f.vm); gml_render_flush_rotated_batch(&f.render);
   int ok=region(&f,3,5,colors);
+  f.vm.win=NULL; cleanup(&f); return ok;
+}
+static int local_map_position(void){
+  TileFixture f; setup(&f); GmlWin win={0}; f.vm.win=&win;
+  f.map.visible=f.layer.visible=1; f.layer.x=f.layer.y=1;
+  f.layer.script_begin=f.layer.script_end=-1;
+  GmlVal x[]={vreal(7),vreal(4)},y[]={vreal(7),vreal(6)};
+  gml_builtin_call(&f.vm,"tilemap_x",x,2); gml_builtin_call(&f.vm,"tilemap_y",y,2);
+  gml_vm_draw(&f.vm); gml_render_flush_rotated_batch(&f.render);
+  int ok=region(&f,5,7,colors);
+  memset(f.pixels,0,sizeof f.pixels); f.layer.x=f.layer.y=2;
+  gml_vm_draw(&f.vm); gml_render_flush_rotated_batch(&f.render);
+  ok &= region(&f,6,8,colors) && f.map.x==4 && f.map.y==6;
+  memset(f.pixels,0,sizeof f.pixels);
+  GmlVal explicit_position[]={vreal(7),vreal(3),vreal(5)};
+  ok &= call(&f,"draw_tilemap",explicit_position,3,1) && region(&f,3,5,colors);
   f.vm.win=NULL; cleanup(&f); return ok;
 }
 static int prepared_layouts(void){
@@ -168,6 +185,7 @@ static int scaled_map(void){
     f.render.world_transform_active=1; f.render.world_scale_x=2; f.render.world_scale_y=3;
     f.render.cam_x=6; f.render.cam_y=9;
     if(automatic){
+      f.map.x=f.map.y=0;
       f.map.visible=1; f.layer.visible=1; f.layer.x=4; f.layer.y=4;
       f.layer.script_begin=f.layer.script_end=-1; gml_vm_draw(&f.vm);
       gml_render_flush_rotated_batch(&f.render);
@@ -224,6 +242,7 @@ int main(int argc,char **argv){
   const AnygmTestCase cases[]={{"transforms",transforms},
     {"draw_state_and_animation",draw_state_and_animation},{"explicit_map",explicit_map},
     {"invalid_arguments",invalid_arguments},{"automatic_animated_empty",automatic_map},
+    {"local_map_position",local_map_position},
     {"prepared_layouts",prepared_layouts},{"scaled_map",scaled_map},
     {"bounded_empty_maps",bounded_empty_maps},{"rectangular_tile_extent",rectangular_tile_extent}};
   const AnygmTestGroup group={"tile_draw",cases,sizeof cases/sizeof cases[0]};

@@ -142,8 +142,9 @@ typedef struct {
  * upgraded GM8 projects route tile_add/tile_delete through these, so terrain painted at
  * runtime lives here, not in the ROOM chunk). Cleared on room enter like GM tiles. */
 typedef struct { int id, used, visible, touched, order, script_begin, script_end; double depth, x, y, hs, vs; char name[32]; } GmlRtLayer;
-/* GMS2 tile layer (room layer type 4): a grid of tileset cells. Games read it for tile-based collision
- * (tilemap_get + tilemap_get_cell_*_at_pixel). tiles points INTO the immutable room data (no copy). */
+/* GMS2 tile layer (room layer type 4): a grid of tileset cells. x/y are map-local;
+ * drawing and pixel lookup add the current parent offset. Immutable cell bytes
+ * remain content-owned until a cell mutation creates an owned copy. */
 typedef struct { int id, used, visible, order; double x, y, depth; int tileset, tw, th, cols, rows; const unsigned char *tiles, *base_tiles; unsigned char *owned_tiles, *decoded_tiles; char name[32]; } GmlTileMap;
 typedef struct { int id, used, layer, type;         /* type: 7=tile, 3=sprite, 1=background (layerelementtype_*) */
   int sprite; double x, y; int sx, sy, w, h;        /* sx/sy/w/h = source region (tiles) */
@@ -489,6 +490,7 @@ typedef struct GmlVM {
 } GmlVM;
 GmlTileMap *gml_tilemap_find(GmlVM *vm, int id);
 int gml_tilemap_set_cell(GmlTileMap *tm, int cx, int cy, uint32_t datum);
+void gml_tilemap_set_position(GmlTileMap *tm,double x,double y);
 void gml_tilemap_effective(GmlVM *vm, const GmlTileMap *tm,
                            double *x, double *y, double *depth, int *visible);
 int gml_room_layer_data_off(GmlVM *vm);

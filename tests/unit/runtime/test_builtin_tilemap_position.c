@@ -104,6 +104,28 @@ static int invalid_identity(void){
   ok &= f.maps[0].x==40 && f.maps[0].y==50 && f.layer.x==11 && f.layer.y==13;
   cleanup(&f); return ok;
 }
+static int defensive_inputs(void){
+  PositionFixture f; setup(&f); int ok=1;
+  const double invalid[]={NAN,INFINITY,-INFINITY,1e100,-1e100};
+  for(size_t i=0;i<sizeof invalid/sizeof invalid[0];i++){
+    call(&f,"tilemap_x",invalid[i],1,0,2); call(&f,"tilemap_y",invalid[i],2,0,2);
+    ok &= number("unrepresentable identity",call(&f,"tilemap_get_x",invalid[i],0,0,1),-1);
+  }
+  for(int i=0;i<3;i++){
+    call(&f,"tilemap_x",7,invalid[i],0,2); call(&f,"tilemap_y",7,invalid[i],0,2);
+  }
+  call(&f,"tilemap_x",7,0,0,1); call(&f,"tilemap_y",7,0,0,1);
+  gml_builtin_call(&f.vm,"tilemap_x",NULL,0);
+  ok &= f.maps[0].x==40 && f.maps[0].y==50;
+  call(&f,"tilemap_x",7,1e100,0,2); call(&f,"tilemap_y",7,-1e100,0,2);
+  ok &= number("distant pixel is empty",call(&f,"tilemap_get_at_pixel",7,0,0,3),0);
+  GmlVal set[]={vreal(7),vreal(9),vreal(0),vreal(0)};
+  gml_builtin_call(&f.vm,"tilemap_set_at_pixel",set,4);
+  ok &= !f.maps[0].owned_tiles;
+  ok &= gml_builtin_fast_id(&f.vm,"tilemap_x")<0 && gml_builtin_fast_id(&f.vm,"tilemap_y")<0;
+  if(!ok) fputs("position boundaries or ordered dispatch policy failed\n",stderr);
+  cleanup(&f); return ok;
+}
 static int zero_local_origin(void){
   PositionFixture f; setup(&f); double x,y;
   f.maps[0].x=f.maps[0].y=0;
@@ -210,7 +232,8 @@ int main(int argc,char **argv){
   static const AnygmTestCase cases[]={
     {"local_getters",local_getters},{"isolated_setters",isolated_setters},
     {"effective_position",effective_position},{"pixel_queries",pixel_queries},
-    {"invalid_identity",invalid_identity},{"zero_local_origin",zero_local_origin},
+    {"invalid_identity",invalid_identity},{"defensive_inputs",defensive_inputs},
+    {"zero_local_origin",zero_local_origin},
     {"authored_origin",authored_origin},{"room_without_maps",room_without_maps},
     {"state_position_and_identity",state_position_and_identity}
   };
