@@ -2969,6 +2969,35 @@ int main(int argc,char **argv){
    * producer fingerprint, so this hash moves whenever reviewed producer behavior or policy changes,
    * and again whenever the serialized layout itself changes. */
   uint64_t deterministic_hash=state_checksum(deterministic,deterministic_size);
+  /* Locate the dormant-room count through a separate allocator-only probe.
+   * This neutral fixture has no runtime layers, elements or dormant rooms, so
+   * the three counts after that allocator must all be zero. Strip only the
+   * last word, then require the complete preceding layout and every older pin. */
+  uint8_t *visual_probe=NULL;
+  size_t visual_probe_size=0,visual_allocator=0,visual_differences=0;
+  if(first->vm.rt_next_id || first->vm.n_rtl || first->vm.n_rte || first->vm.room_visuals){
+    fprintf(stderr,"canonical fixture unexpectedly owns runtime visual resources\n");
+    return 1;
+  }
+  first->vm.rt_next_id=1;
+  int visual_probe_ok=save_state(first,&visual_probe,&visual_probe_size);
+  first->vm.rt_next_id=0;
+  if(!visual_probe_ok || visual_probe_size!=deterministic_size){ free(visual_probe); return 1; }
+  for(size_t i=112;i<deterministic_size;i++) if(visual_probe[i]!=deterministic[i]){
+    visual_allocator=i; visual_differences++;
+  }
+  size_t visual_vm=112+(size_t)read_u64(deterministic+64)+(size_t)read_u64(deterministic+72);
+  size_t visual_vm_size=(size_t)read_u64(deterministic+80);
+  const uint8_t empty_visual_tables[16]={0};
+  if(visual_differences!=1 || visual_vm>deterministic_size ||
+     visual_vm_size>deterministic_size-visual_vm || visual_allocator<visual_vm ||
+     visual_allocator+16>visual_vm+visual_vm_size || visual_probe[visual_allocator]!=1 ||
+     memcmp(deterministic+visual_allocator,empty_visual_tables,sizeof empty_visual_tables)){
+    fprintf(stderr,"canonical dormant count is not bounded by the empty visual tables\n");
+    free(visual_probe); return 1;
+  }
+  free(visual_probe);
+  size_t visual_word=visual_allocator+12;
   /* This fixture has never allocated a tilemap. Change only its next-handle
    * word in a second serialization to locate that new field independently of
    * private codec offsets. Removing it must reproduce every preceding digest. */
@@ -2994,8 +3023,18 @@ int main(int argc,char **argv){
     free(map_probe); return 1;
   }
   free(map_probe);
-  memmove(deterministic+map_word,deterministic+map_word+4,deterministic_size-map_word-4);
-  size_t preceding_map_size=deterministic_size-4;
+  if(visual_word<=map_word){ fprintf(stderr,"canonical visual sections changed order\n"); return 1; }
+  memmove(deterministic+visual_word,deterministic+visual_word+4,deterministic_size-visual_word-4);
+  size_t preceding_visual_size=deterministic_size-4;
+  write_u64(deterministic+16,preceding_visual_size);
+  write_u64(deterministic+80,map_vm_size-4);
+  write_u64(deterministic+96,preceding_visual_size-112);
+  write_u32(deterministic+4,23); write_u32(deterministic+map_vm+4,12);
+  write_u64(deterministic+56,state_checksum(deterministic+112,preceding_visual_size-112));
+  uint64_t preceding_visual_hash=state_checksum(deterministic,preceding_visual_size);
+  map_vm_size-=4;
+  memmove(deterministic+map_word,deterministic+map_word+4,preceding_visual_size-map_word-4);
+  size_t preceding_map_size=preceding_visual_size-4;
   write_u64(deterministic+16,preceding_map_size);
   write_u64(deterministic+80,map_vm_size-4);
   write_u64(deterministic+96,preceding_map_size-112);
@@ -3087,6 +3126,7 @@ int main(int argc,char **argv){
   memcpy(deterministic,first_state,first_written);
   if(deterministic_size!=22302 ||
      deterministic_hash!=UINT64_C(0x9351d78c1daaea2b) ||
+     preceding_visual_size!=22302 || preceding_visual_hash!=UINT64_C(0x9351d78c1daaea2b) ||
      preceding_map_size!=22298 || preceding_map_hash!=UINT64_C(0x07f91baea5f9e3ff) ||
      preceding_mouse_size!=22294 || preceding_mouse_hash!=UINT64_C(0x0be7c1443e9fa05b) ||
      preceding_object_size!=22262 || preceding_object_hash!=UINT64_C(0x04e88245bcbf9fd3) ||
@@ -3094,6 +3134,8 @@ int main(int argc,char **argv){
      preceding_hash!=UINT64_C(0xa4c27da217414513)){
     fprintf(stderr,"canonical engine state changed: size=%zu hash=%016llx\n",
             deterministic_size,(unsigned long long)deterministic_hash);
+    fprintf(stderr,"prior-visual-layout size=%zu hash=%016llx\n",
+            preceding_visual_size,(unsigned long long)preceding_visual_hash);
     fprintf(stderr,"prior-map-layout size=%zu hash=%016llx\n",
             preceding_map_size,(unsigned long long)preceding_map_hash);
     fprintf(stderr,"prior-mouse-layout size=%zu hash=%016llx\n",
