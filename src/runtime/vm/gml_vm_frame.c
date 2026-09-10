@@ -1377,6 +1377,41 @@ int gml_vm_frame_apply_tile_mutation(GmlVM *vm, int depth, int *eff_depth,
   }
   return 1;
 }
+static int tilemap_cell_bound(double value,int count){
+  if(!(value>0.0)) return 0;
+  return value>=count?count:(int)value;
+}
+static void tilemap_visible_cells(GmlRender *render,const GmlTileMap *map,double x,double y,
+                                  int *x0,int *y0,int *x1,int *y1){
+  double vx=0,vy=0,vw=0,vh=0;
+  if(!gml_render_world_view(render,&vx,&vy,&vw,&vh)) vx=vy=vw=vh=0;
+  *x0=tilemap_cell_bound(floor((vx-x)/map->tw)-1,map->cols);
+  *y0=tilemap_cell_bound(floor((vy-y)/map->th)-1,map->rows);
+  *x1=tilemap_cell_bound(ceil((vx+vw-x)/map->tw)+1,map->cols);
+  *y1=tilemap_cell_bound(ceil((vy+vh-y)/map->th)+1,map->rows);
+}
+
+void gml_vm_draw_tilemap_at(GmlVM *vm,int id,double x,double y){
+  if(!vm || !vm->render || !isfinite(x) || !isfinite(y)) return;
+  GmlTileMap *map=gml_tilemap_find(vm,id);
+  GmlRender *render=vm->render; GmlRenderTilesetLayout layout;
+  if(!map || !map->used || !map->tiles || map->tw<=0 || map->th<=0 ||
+     map->cols<=0 || map->rows<=0 ||
+     !gml_render_tileset_layout(render,map->tileset,map->tw,map->th,&layout)) return;
+  double speed=gml_room_speed(vm);
+  int frame=gml_render_background_tile_animation_frame(render,map->tileset,
+                                                        speed>0?vm->frame/speed:0);
+  int x0,y0,x1,y1; tilemap_visible_cells(render,map,x,y,&x0,&y0,&x1,&y1);
+  for(int cy=y0;cy<y1;cy++) for(int cx=x0;cx<x1;cx++){
+    const unsigned char *cell=map->tiles+((size_t)cy*map->cols+cx)*4u;
+    uint32_t datum=gml_vm_read_u32_le(cell,0); GmlRenderTileSource source;
+    if(!gml_render_tileset_source(render,&layout,datum,frame,&source)) continue;
+    gml_draw_background_tile(render,map->tileset,source.x,source.y,source.width,source.height,
+      x+(double)cx*map->tw,y+(double)cy*map->th,1,1,
+      (datum>>28)&1,(datum>>29)&1,(datum>>30)&1,0xffffff,1.0);
+  }
+}
+
 void gml_vm_draw(GmlVM *vm){
   GmlRender *R=(GmlRender*)vm->render; if(!R) return;
   gml_render_set_frame(R,vm->frame);
@@ -1534,57 +1569,29 @@ void gml_vm_draw(GmlVM *vm){
    * the same units. Target metrics are target pixels; dividing those by a cell size selects a
    * region scaled by whatever the view-to-target transform is, which is off-screen entirely once
    * the two differ. */
-  double view_x=0,view_y=0,view_w=0,view_h=0;
-  if(!gml_render_world_view(R,&view_x,&view_y,&view_w,&view_h)){
-    view_x=view_y=0; view_w=view_h=0;
-  }
   for(int mi=0; mi<vm->n_tilemaps; mi++){
     GmlTileMap *tm=&vm->tilemaps[mi];
     double tmx,tmy,tmdepth; int tmvis;
     gml_tilemap_effective(vm,tm,&tmx,&tmy,&tmdepth,&tmvis);
     if(!tm->used || !tmvis || !tm->tiles || tm->tileset<0 || tm->tw<=0 || tm->th<=0) continue;
-    GmlRenderBackgroundMetrics background;
-    if(!gml_render_background_metrics(R,tm->tileset,&background) ||
-       background.texture_page<0) continue;
-    int tw=background.tile_width>0?background.tile_width:tm->tw;
-    int th=background.tile_height>0?background.tile_height:tm->th;
-    int bx=background.tile_border_x,by=background.tile_border_y;
-    int pitch_x=tw+2*bx+background.tile_separation_x;
-    int pitch_y=th+2*by+background.tile_separation_y;
-    int srcw=background.logical_width,srch=background.logical_height;
-    int per_row=background.tile_columns>0?background.tile_columns:(pitch_x>0?srcw/pitch_x:0);
-    if(srcw<=0 || srch<=0 || tw<=0 || th<=0 || pitch_x<=0 || pitch_y<=0 || per_row<=0) continue;
+    GmlRenderTilesetLayout layout;
+    if(!gml_render_tileset_layout(R,tm->tileset,tm->tw,tm->th,&layout)) continue;
     double speed=gml_room_speed(vm);
     double elapsed_seconds=speed>0.0?vm->frame/speed:0.0;
     int animation_frame=
       gml_render_background_tile_animation_frame(R,tm->tileset,elapsed_seconds);
-    int cx0=(int)floor((view_x-tmx)/tm->tw)-1;
-    int cy0=(int)floor((view_y-tmy)/tm->th)-1;
-    int cx1=(int)ceil((view_x+view_w-tmx)/tm->tw)+1;
-    int cy1=(int)ceil((view_y+view_h-tmy)/tm->th)+1;
-    if(cx0<0) cx0=0;
-    if(cy0<0) cy0=0;
-    if(cx1>tm->cols) cx1=tm->cols;
-    if(cy1>tm->rows) cy1=tm->rows;
+    int cx0,cy0,cx1,cy1;
+    tilemap_visible_cells(R,tm,tmx,tmy,&cx0,&cy0,&cx1,&cy1);
     for(int cy=cy0; cy<cy1; cy++) for(int cx=cx0; cx<cx1; cx++){
-      uint32_t datum=gml_vm_read_u32_le(tm->tiles,(uint32_t)((size_t)cy*tm->cols+cx)*4);
-      int idx=(int)(datum & 0x7FFFFu);
-      if(idx<=0) continue;                  /* GM encodes 0 as empty */
-      int src_idx=
-        gml_render_background_tile_source_index(R,tm->tileset,idx,animation_frame);
-      if(src_idx<0) continue;
-      int sx=(src_idx%per_row)*pitch_x + bx, sy=(src_idx/per_row)*pitch_y + by;
-      if(sx>=srcw || sy>=srch) continue;
-      int w=tw, h=th;
-      if(sx+w>srcw) w=srcw-sx;
-      if(sy+h>srch) h=srch-sy;
-      if(w<=0 || h<=0) continue;
+      const unsigned char *cell=tm->tiles+((size_t)cy*tm->cols+cx)*4u;
+      uint32_t datum=gml_vm_read_u32_le(cell,0); GmlRenderTileSource source;
+      if(!gml_render_tileset_source(R,&layout,datum,animation_frame,&source)) continue;
       GmlDrawTile dt;
       dt.x=tmx + cx*tm->tw; dt.y=tmy + cy*tm->th; dt.xs=1; dt.ys=1;
       dt.mirror=(int)((datum>>28)&1);
       dt.flip=(int)((datum>>29)&1);
       dt.rotate=(int)((datum>>30)&1);
-      dt.def=tm->tileset; dt.sx=sx; dt.sy=sy; dt.w=w; dt.h=h;
+      dt.def=tm->tileset; dt.sx=source.x; dt.sy=source.y; dt.w=source.width; dt.h=source.height;
       draw_tile_add(&tiles,&tdepth,&nt,&tcap,dt,tmdepth,tm->order);
     }
   }

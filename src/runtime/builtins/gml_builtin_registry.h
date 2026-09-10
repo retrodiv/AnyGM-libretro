@@ -1878,7 +1878,9 @@ typedef enum GmlBuiltinCachePolicy {
   ENTRY(1781, DS_QUEUE_READ, "ds_queue_read", DS, DS, ALWAYS) \
   ENTRY(1782, DS_QUEUE_WRITE, "ds_queue_write", DS, DS, ALWAYS) \
   ENTRY(1783, DS_STACK_READ, "ds_stack_read", DS, DS, ALWAYS) \
-  ENTRY(1784, DS_STACK_WRITE, "ds_stack_write", DS, DS, ALWAYS)
+  ENTRY(1784, DS_STACK_WRITE, "ds_stack_write", DS, DS, ALWAYS) \
+  ENTRY(1785, DRAW_TILE, "draw_tile", DRAW, DRAW, ALWAYS) \
+  ENTRY(1786, DRAW_TILEMAP, "draw_tilemap", DRAW, DRAW, ALWAYS)
 
 /* Dynamic prefix IDs retain the previously characterized slow-path order. */
 #define GML_BUILTIN_DYNAMIC_REGISTRY(ENTRY) \

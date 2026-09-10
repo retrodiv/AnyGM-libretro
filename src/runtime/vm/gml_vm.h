@@ -655,6 +655,7 @@ void         gml_vm_step(GmlVM *vm);                         /* one frame of the
 void         gml_vm_draw(GmlVM *vm);                         /* draw phase (needs vm->render) */
 void         gml_vm_draw_instance_sprite(GmlVM *vm, GmlInstance *instance,
                                          double alpha);
+void         gml_vm_draw_tilemap_at(GmlVM *vm,int id,double x,double y);
 void         gml_vm_post_draw(GmlVM *vm);                    /* classic animation phase */
 void         gml_vm_draw_gui(GmlVM *vm);                     /* Draw GUI (Draw_64) pass */
 

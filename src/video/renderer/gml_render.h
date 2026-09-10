@@ -114,6 +114,13 @@ typedef struct {
   const char *name;
 } GmlRenderBackgroundMetrics;
 
+/* Prepared value-copy geometry shared by automatic and explicit tile drawing. */
+typedef struct {
+  int background, width, height, border_x, border_y;
+  int pitch_x, pitch_y, columns, source_width, source_height;
+} GmlRenderTilesetLayout;
+typedef struct { int x, y, width, height; } GmlRenderTileSource;
+
 enum {
   GML_RENDER_TEXTURE_NONE,
   GML_RENDER_TEXTURE_SPRITE,
@@ -609,6 +616,8 @@ void gml_draw_background_tiled_ext(GmlRender *r, int bg, double x, double y, dou
 void gml_draw_room_backgrounds(GmlRender *r, uint32_t bg_ptr, int want_fg);
 void gml_draw_room_tiles(GmlRender *r, uint32_t tile_ptr);
 void gml_draw_tile(GmlRender *r, int def, int sx, int sy, int w, int h, double x, double y);
+void gml_draw_tileset_tile(GmlRender *r, int background, uint32_t datum, int frame,
+                           double x, double y, uint32_t color, double alpha);
 /* GML draw commands for stretching the application_surface and sprites in
  * screen-space without a camera. The engine executes the runtime draw calls. */
 int  gml_surface_create(GmlRender *r, int w, int h);
@@ -678,6 +687,11 @@ int  gml_render_background_tile_animation_frame(const GmlRender *r, int backgrou
                                                  double elapsed_seconds);
 int  gml_render_background_tile_source_index(const GmlRender *r, int background,
                                               int tile_index, int animation_frame);
+int  gml_render_tileset_layout(const GmlRender *r, int background,
+                               int fallback_width, int fallback_height,
+                               GmlRenderTilesetLayout *layout);
+int  gml_render_tileset_source(const GmlRender *r, const GmlRenderTilesetLayout *layout,
+                               uint32_t datum, int frame, GmlRenderTileSource *source);
 int  gml_render_font_metrics(const GmlRender *r, int font,
                              GmlRenderFontMetrics *metrics);
 int  gml_render_font_glyph_metrics(const GmlRender *r, int font, int glyph,

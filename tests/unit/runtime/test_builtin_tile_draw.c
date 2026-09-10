@@ -127,10 +127,18 @@ static int invalid_arguments(void){
   }
   return ok;
 }
+static int automatic_map(void){
+  TileFixture f; setup(&f); GmlWin win={0}; f.vm.win=&win;
+  f.map.visible=1; f.layer.visible=1; f.layer.x=3; f.layer.y=5;
+  f.layer.script_begin=f.layer.script_end=-1;
+  gml_vm_draw(&f.vm); gml_render_flush_rotated_batch(&f.render);
+  int ok=region(&f,3,5,colors);
+  f.vm.win=NULL; cleanup(&f); return ok;
+}
 int main(int argc,char **argv){
   const AnygmTestCase cases[]={{"transforms",transforms},
     {"draw_state_and_animation",draw_state_and_animation},{"explicit_map",explicit_map},
-    {"invalid_arguments",invalid_arguments}};
+    {"invalid_arguments",invalid_arguments},{"automatic_animated_empty",automatic_map}};
   const AnygmTestGroup group={"tile_draw",cases,sizeof cases/sizeof cases[0]};
   const char *filter=NULL;
   if(argc==3 && !strcmp(argv[1],"--case")) filter=argv[2]; else if(argc!=1) return EXIT_FAILURE;

@@ -220,6 +220,12 @@ all transforms, tint/alpha, animated empty cells, hidden-layer independent place
 camera origin, unchanged retained fields, invalid numerics, and ordinary/cached dispatch.
 Run `make check TEST=builtin_tile_draw`.
 
+Explicit tile drawing adapts values in `gml_builtin_draw.c`, reads prepared tileset
+geometry from `gml_render_assets.c`, and enters the existing background-tile raster in
+`gml_render_blit.c`. `gml_vm_frame.c` owns explicit tilemap traversal and shares its
+visible-cell bounds and prepared source rectangles with automatic tilemap gathering.
+These operations change pixels only; they add no retained state or codec section.
+
 `tests/unit/runtime/test_builtin_buffer_hash.c` covers exact buffer SHA-1 slices,
 unchanged cursor/data and invalid ranges: `make check TEST=builtin_buffer_hash`.
 `tests/contract/test_builtin_file_io.c` covers streamed digest vectors, VFS overlay

@@ -6167,6 +6167,15 @@ void gml_draw_background_part_ext(GmlRender *r, int bg, double sx, double sy, do
   if(gml_d3_draw_background_part_2d(r,bg,sx,sy,sw,sh,x,y,xs,ys,color,alpha)) return;
   blit_tpag_part_background(r,&r->tpag[ti],sx,sy,sw,sh,x-r->cam_x,y-r->cam_y,xs,ys,color,alpha);
 }
+void gml_draw_tileset_tile(GmlRender *r,int background,uint32_t datum,int frame,
+                           double x,double y,uint32_t color,double alpha){
+  GmlRenderTilesetLayout layout; GmlRenderTileSource source;
+  if(!gml_render_tileset_layout(r,background,0,0,&layout) ||
+     !gml_render_tileset_source(r,&layout,datum,frame,&source)) return;
+  gml_draw_background_tile(r,background,source.x,source.y,source.width,source.height,
+                           x,y,1,1,(datum>>28)&1,(datum>>29)&1,(datum>>30)&1,color,alpha);
+}
+
 void gml_draw_background_tile(GmlRender *r,int bg,
                               double sx,double sy,double sw,double sh,
                               double x,double y,double xs,double ys,

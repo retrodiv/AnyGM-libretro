@@ -767,6 +767,25 @@ GmlVal gml_builtin_try_draw(GmlVM *vm, const char *nm, GmlVal *a, int n){
         gml_draw_background_part_ext(R,(int)N(a,n,0),N(a,n,1),N(a,n,2),N(a,n,3),
                                     N(a,n,4),N(a,n,5),N(a,n,6),1,1,0xFFFFFF,draw.alpha); }
       return vreal(0); }
+    if(!strcmp(nm,"draw_tile")){
+      double background=N(a,n,0),datum=N(a,n,1),frame=N(a,n,2),x=N(a,n,3),y=N(a,n,4);
+      if(n>=5 && R && isfinite(background) && background>=0 && background<=INT_MAX &&
+         isfinite(datum) && datum>=INT_MIN && datum<=UINT32_MAX &&
+         isfinite(frame) && frame>=INT_MIN && frame<=INT_MAX &&
+         isfinite(x) && x>=INT_MIN && x<=INT_MAX && isfinite(y) && y>=INT_MIN && y<=INT_MAX){
+        GmlRenderDrawState draw=builtin_draw_state(R);
+        gml_draw_tileset_tile(R,(int)background,(uint32_t)(int64_t)datum,(int)frame,
+                              x,y,draw.color,draw.alpha);
+      }
+      return vreal(0);
+    }
+    if(!strcmp(nm,"draw_tilemap")){
+      double id=N(a,n,0),x=N(a,n,1),y=N(a,n,2);
+      if(n>=3 && isfinite(id) && id>=0 && id<=INT_MAX &&
+         isfinite(x) && x>=INT_MIN && x<=INT_MAX && isfinite(y) && y>=INT_MIN && y<=INT_MAX)
+        gml_vm_draw_tilemap_at(vm,(int)id,x,y);
+      return vreal(0);
+    }
     if(!strcmp(nm,"draw_rectangle")||!strcmp(nm,"draw_rectangle_colour")||!strcmp(nm,"draw_rectangle_color")){
       if(R){ int plain=!strcmp(nm,"draw_rectangle"); int outline=(int)N(a,n,plain?4:8);
         GmlRenderTargetMetrics target=builtin_target_metrics(R);

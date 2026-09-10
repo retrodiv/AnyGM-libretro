@@ -626,6 +626,47 @@ int gml_render_background_tile_source_index(const GmlRender *R,int background,
   return source->tile_ids?tile_index:tile_index-1;
 }
 
+int gml_render_tileset_layout(const GmlRender *R,int background,
+                              int fallback_width,int fallback_height,
+                              GmlRenderTilesetLayout *layout){
+  GmlRenderBackgroundMetrics metrics;
+  if(!layout || !gml_render_background_metrics(R,background,&metrics) ||
+     metrics.texture_page<0) return 0;
+  int width=metrics.tile_width>0?metrics.tile_width:fallback_width;
+  int height=metrics.tile_height>0?metrics.tile_height:fallback_height;
+  int64_t pitch_x=(int64_t)width+2LL*metrics.tile_border_x+metrics.tile_separation_x;
+  int64_t pitch_y=(int64_t)height+2LL*metrics.tile_border_y+metrics.tile_separation_y;
+  if(width<=0 || height<=0 || pitch_x<=0 || pitch_x>INT_MAX ||
+     pitch_y<=0 || pitch_y>INT_MAX || metrics.tile_border_x<0 || metrics.tile_border_y<0 ||
+     metrics.logical_width<=0 || metrics.logical_height<=0) return 0;
+  int columns=metrics.tile_columns>0?metrics.tile_columns:metrics.logical_width/(int)pitch_x;
+  if(columns<=0) return 0;
+  *layout=(GmlRenderTilesetLayout){background,width,height,
+    metrics.tile_border_x,metrics.tile_border_y,(int)pitch_x,(int)pitch_y,columns,
+    metrics.logical_width,metrics.logical_height};
+  return 1;
+}
+
+int gml_render_tileset_source(const GmlRender *R,const GmlRenderTilesetLayout *layout,
+                              uint32_t datum,int frame,GmlRenderTileSource *source){
+  int index=(int)(datum&0x7ffffu);
+  if(!R || !layout || !source || index==0 || layout->background<0 ||
+     layout->background>=R->n_bg || layout->columns<=0) return 0;
+  int mapped=gml_render_background_tile_source_index(R,layout->background,index,frame);
+  /* An animated empty frame is not atlas cell zero. Unmapped legacy layouts,
+   * however, legitimately use that cell for their first nonempty tile. */
+  if(mapped<0 || (mapped==0 && R->bg[layout->background].tile_ids)) return 0;
+  int64_t x=(int64_t)(mapped%layout->columns)*layout->pitch_x+layout->border_x;
+  int64_t y=(int64_t)(mapped/layout->columns)*layout->pitch_y+layout->border_y;
+  if(x<0 || y<0 || x>=layout->source_width || y>=layout->source_height) return 0;
+  int width=layout->width,height=layout->height;
+  if(width>layout->source_width-x) width=(int)(layout->source_width-x);
+  if(height>layout->source_height-y) height=(int)(layout->source_height-y);
+  if(width<=0 || height<=0) return 0;
+  *source=(GmlRenderTileSource){(int)x,(int)y,width,height};
+  return 1;
+}
+
 int gml_render_font_metrics(const GmlRender *R,int font,
                             GmlRenderFontMetrics *metrics){
   if(metrics) memset(metrics,0,sizeof(*metrics));
