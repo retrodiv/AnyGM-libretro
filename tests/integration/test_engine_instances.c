@@ -2969,18 +2969,52 @@ int main(int argc,char **argv){
    * producer fingerprint, so this hash moves whenever reviewed producer behavior or policy changes,
    * and again whenever the serialized layout itself changes. */
   uint64_t deterministic_hash=state_checksum(deterministic,deterministic_size);
+  /* This fixture has never allocated a tilemap. Change only its next-handle
+   * word in a second serialization to locate that new field independently of
+   * private codec offsets. Removing it must reproduce every preceding digest. */
+  size_t map_vm=112+(size_t)read_u64(deterministic+64)+(size_t)read_u64(deterministic+72);
+  size_t map_vm_size=(size_t)read_u64(deterministic+80);
+  uint8_t *map_probe=NULL;
+  size_t map_probe_size=0,map_word=0,map_differences=0;
+  if(first->vm.n_tilemaps!=0 || first->vm.next_tilemap_id!=0){
+    fprintf(stderr,"canonical fixture unexpectedly allocated tilemap identities\n");
+    return 1;
+  }
+  first->vm.next_tilemap_id=1;
+  int map_probe_ok=save_state(first,&map_probe,&map_probe_size);
+  first->vm.next_tilemap_id=0;
+  if(!map_probe_ok || map_probe_size!=deterministic_size){ free(map_probe); return 1; }
+  for(size_t i=112;i<deterministic_size;i++) if(map_probe[i]!=deterministic[i]){
+    map_word=i; map_differences++;
+  }
+  if(map_differences!=1 || map_vm>deterministic_size || map_vm_size>deterministic_size-map_vm ||
+     map_word<map_vm+4 || map_word+4>map_vm+map_vm_size ||
+     map_probe[map_word]!=1 || memcmp(deterministic+map_word-4,"\0\0\0\0\0\0\0\0",8)){
+    fprintf(stderr,"canonical tilemap allocation field is not the sole payload difference\n");
+    free(map_probe); return 1;
+  }
+  free(map_probe);
+  memmove(deterministic+map_word,deterministic+map_word+4,deterministic_size-map_word-4);
+  size_t preceding_map_size=deterministic_size-4;
+  write_u64(deterministic+16,preceding_map_size);
+  write_u64(deterministic+80,map_vm_size-4);
+  write_u64(deterministic+96,preceding_map_size-112);
+  write_u32(deterministic+4,22);
+  write_u32(deterministic+map_vm+4,11);
+  write_u64(deterministic+56,state_checksum(deterministic+112,preceding_map_size-112));
+  uint64_t preceding_map_hash=state_checksum(deterministic,preceding_map_size);
   /* Validate and remove only the new root mouse word in test scratch. The
    * preceding exact digests remain required; no runtime legacy reader exists. */
   size_t mouse_word=112+1024+1024+44+sizeof first->pad_current+sizeof first->pad_previous+
                     sizeof first->key_current+sizeof first->key_previous;
   size_t mouse_core_size=(size_t)read_u64(deterministic+64);
-  if(deterministic_size<mouse_word+4 || mouse_core_size<mouse_word+4-112 ||
+  if(preceding_map_size<mouse_word+4 || mouse_core_size<mouse_word+4-112 ||
      memcmp(deterministic+mouse_word,"\0\0\0\0",4)){
     fprintf(stderr,"canonical mouse suppression word changed\n");
     return 1;
   }
-  memmove(deterministic+mouse_word,deterministic+mouse_word+4,deterministic_size-mouse_word-4);
-  size_t preceding_mouse_size=deterministic_size-4;
+  memmove(deterministic+mouse_word,deterministic+mouse_word+4,preceding_map_size-mouse_word-4);
+  size_t preceding_mouse_size=preceding_map_size-4;
   write_u64(deterministic+16,preceding_mouse_size);
   write_u64(deterministic+64,mouse_core_size-4);
   write_u64(deterministic+96,preceding_mouse_size-112);
@@ -3053,12 +3087,15 @@ int main(int argc,char **argv){
   memcpy(deterministic,first_state,first_written);
   if(deterministic_size!=22298 ||
      deterministic_hash!=UINT64_C(0x07f91baea5f9e3ff) ||
+     preceding_map_size!=22298 || preceding_map_hash!=UINT64_C(0x07f91baea5f9e3ff) ||
      preceding_mouse_size!=22294 || preceding_mouse_hash!=UINT64_C(0x0be7c1443e9fa05b) ||
      preceding_object_size!=22262 || preceding_object_hash!=UINT64_C(0x04e88245bcbf9fd3) ||
      preceding_size!=22070 || preceding_font_hash!=UINT64_C(0x8fe9f1b017414513) ||
      preceding_hash!=UINT64_C(0xa4c27da217414513)){
     fprintf(stderr,"canonical engine state changed: size=%zu hash=%016llx\n",
             deterministic_size,(unsigned long long)deterministic_hash);
+    fprintf(stderr,"prior-map-layout size=%zu hash=%016llx\n",
+            preceding_map_size,(unsigned long long)preceding_map_hash);
     fprintf(stderr,"prior-mouse-layout size=%zu hash=%016llx\n",
             preceding_mouse_size,(unsigned long long)preceding_mouse_hash);
     fprintf(stderr,"prior-object-layout size=%zu hash=%016llx\n",
