@@ -222,6 +222,11 @@ camera origin, scaled views, bordered/separated and legacy layouts, unchanged re
 fields, invalid numerics, bounded offscreen maps, and ordinary/cached dispatch.
 Run `make check TEST=builtin_tile_draw`.
 
+`tests/unit/runtime/test_builtin_tilemap_position.c` owns map-local coordinates,
+parent displacement and scrolling, sibling and engine isolation, translated pixel
+lookup/mutation, invalid identities and unchanged zero-local placement.
+Run `make check TEST=builtin_tilemap_position`; its binary also accepts `--case`.
+
 Explicit tile drawing adapts values in `gml_builtin_draw.c`, reads prepared tileset
 geometry from `gml_render_assets.c`, and enters the existing background-tile raster in
 `gml_render_blit.c`. `gml_vm_frame.c` owns explicit tilemap traversal and shares its
