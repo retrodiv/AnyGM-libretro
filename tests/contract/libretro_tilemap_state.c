@@ -198,6 +198,12 @@ static int run_case(int response){
   gml_room_enter(&g_libretro.engine->vm,0);
   REQUIRE(retained(id,next) && push(&ring),"post-Reset dormant-map push");
   REQUIRE(ring.accepted==11 && ring.rejected==0 && ring.serialize_calls==11,"all wrapper pushes accepted");
+  if(response>0){
+    long before=g_libretro.engine->vm.frame;
+    retro_run();
+    REQUIRE(g_libretro.engine->vm.frame==before && timer_roots()==512,
+            "complete-state presentation does not advance pending callbacks");
+  }
   retro_run(); retro_run();
   REQUIRE(timer_roots()==512,"restoration preserves the remaining callback delay");
   retro_run();
