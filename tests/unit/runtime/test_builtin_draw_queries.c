@@ -116,6 +116,63 @@ static int alpha_case(void){
         gml_builtin_fast_id(&vm,"draw_set_alpha_test_ref_value")==-1;
   vm.render=NULL; gml_vm_free(&vm); return ok;
 }
+static int layer_integer_depth_case(void){
+  int ok=1;
+  for(int cached=0;cached<2;cached++){
+    GmlVM vm={0};
+    const double inputs[]={12.9,-12.9,0.9,-0.9,2147483647.9,2147483648.0,
+                           -2147483649.0,4294967308.75};
+    const double expected[]={12,-12,0,0,2147483647.0,-2147483648.0,
+                             2147483647.0,12};
+    for(size_t i=0;i<sizeof inputs/sizeof inputs[0];i++){
+      GmlVal args[]={vreal(inputs[i]),vstr("normalized")};
+      GmlVal layer=query(&vm,"layer_create",args,2,cached,&ok);
+      ok &= real_is(query(&vm,"layer_get_depth",&layer,1,cached,&ok),expected[i]);
+      int id=(int)layer.d;
+      GmlVal depth=vreal(expected[i]);
+      ok &= depth_matches(query(&vm,"layer_get_id_at_depth",&depth,1,cached,&ok),&id,1);
+      depth=vreal(inputs[i]);
+      ok &= depth_matches(query(&vm,"layer_get_id_at_depth",&depth,1,cached,&ok),&id,1);
+      GmlVal move[]={layer,vreal(-22.75)};
+      query(&vm,"layer_depth",move,2,cached,&ok);
+      ok &= real_is(query(&vm,"layer_get_depth",&layer,1,cached,&ok),-22);
+      depth=vreal(-22.5);
+      ok &= depth_matches(query(&vm,"layer_get_id_at_depth",&depth,1,cached,&ok),&id,1);
+      const double invalid[]={NAN,INFINITY,-INFINITY};
+      for(size_t j=0;j<sizeof invalid/sizeof invalid[0];j++){
+        /* Invalid depth is rejected without publishing a layer or changing one. */
+        int count=vm.n_rtl;
+        args[0]=vreal(invalid[j]);
+        ok &= real_is(query(&vm,"layer_create",args,2,cached,&ok),-1) && vm.n_rtl==count;
+        move[1]=args[0]; query(&vm,"layer_depth",move,2,cached,&ok);
+        ok &= real_is(query(&vm,"layer_get_depth",&layer,1,cached,&ok),-22);
+        ok &= depth_matches(query(&vm,"layer_get_id_at_depth",args,1,cached,&ok),NULL,0);
+      }
+      query(&vm,"layer_destroy",&layer,1,cached,&ok);
+    }
+    gml_vm_free(&vm);
+  }
+  return ok;
+}
+static int alpha_reference_bounds_case(void){
+  GmlRender render={0}; GmlVM vm={.render=&render}; int ok=1;
+  const char *names[]={"draw_set_alpha_test_ref_value","gpu_set_alphatestref"};
+  const double inputs[]={17.9,254.9,-0.9,-1,256,1e100,-1e100};
+  const double expected[]={17,254,0,0,255,255,0};
+  for(size_t alias=0;alias<sizeof names/sizeof names[0];alias++){
+    for(size_t i=0;i<sizeof inputs/sizeof inputs[0];i++){
+      GmlVal arg=vreal(inputs[i]); gml_builtin_call(&vm,names[alias],&arg,1);
+      ok &= real_is(gml_builtin_call(&vm,"gpu_get_alphatestref",NULL,0),expected[i]);
+    }
+    const double invalid[]={NAN,INFINITY,-INFINITY};
+    for(size_t i=0;i<sizeof invalid/sizeof invalid[0];i++){
+      GmlVal arg=vreal(17); gml_builtin_call(&vm,names[alias],&arg,1);
+      arg=vreal(invalid[i]); gml_builtin_call(&vm,names[alias],&arg,1);
+      ok &= real_is(gml_builtin_call(&vm,"gpu_get_alphatestref",NULL,0),17);
+    }
+  }
+  vm.render=NULL; gml_vm_free(&vm); return ok;
+}
 static int background_names_case(void){
   int ok=1;
   for(int cached=0;cached<2;cached++){
@@ -275,14 +332,18 @@ static int runtime_font_styles_case(void){
   return ok;
 }
 
-int main(void){
+int main(int argc,char **argv){
+  const char *filter=NULL;
+  if(argc==3 && !strcmp(argv[1],"--case")) filter=argv[2];
+  else if(argc!=1) return EXIT_FAILURE;
   const AnygmTestCase cases[]={{"circle_precision",circle_case},{"shader_asset_names",shader_case},
     {"all_live_layers_at_depth",layers_case},{"retired_alpha_controls",alpha_case},
+    {"integer_layer_depth",layer_integer_depth_case},{"alpha_reference_bounds",alpha_reference_bounds_case},
     {"background_source_region",background_part_case},{"background_name_alias",background_names_case},
     {"authored_font_styles",font_styles_case},{"runtime_font_styles",runtime_font_styles_case}};
   const AnygmTestGroup group={"draw_queries",cases,sizeof cases/sizeof cases[0]};
   AnygmTestResult result;
-  anygm_test_run_groups(&group,1,NULL,&result);
+  anygm_test_run_groups(&group,1,filter,&result);
   printf("draw queries: passed=%d failed=%d\n",result.passed,result.failed);
   return result.failed?EXIT_FAILURE:EXIT_SUCCESS;
 }
