@@ -1411,6 +1411,7 @@ uint32_t gml_room_layer_type_off(GmlVM *vm, uint32_t lp){
 
 /* ---- GMS2 tile layers (type-4 room layers) for tile-based collision ---- */
 static GmlTileMap *gml_tilemap_new(GmlVM *vm){
+  if(vm->next_tilemap_id==INT_MAX) return NULL;
   if(vm->n_tilemaps>=vm->cap_tilemaps){ int nc=vm->cap_tilemaps?vm->cap_tilemaps*2:8;
     GmlTileMap *nt=realloc(vm->tilemaps,(size_t)nc*sizeof(*nt)); if(!nt) return NULL; vm->tilemaps=nt; vm->cap_tilemaps=nc; }
   GmlTileMap *t=&vm->tilemaps[vm->n_tilemaps++]; memset(t,0,sizeof *t);

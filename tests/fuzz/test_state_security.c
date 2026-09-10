@@ -437,6 +437,125 @@ static int content_override_state_cases(const AnygmHostServices *services,
   return 1;
 }
 
+static void write_double(uint8_t *data,double value){
+  uint64_t bits; memcpy(&bits,&value,sizeof bits); write_u64(data,bits);
+}
+
+static int tilemap_state_cases(const AnygmHostServices *services){
+  AnygmSyntheticContent fixture;
+  if(!anygm_synthetic_tilemap_content_create(&fixture)) return fail("tilemap fixture creation failed");
+  AnygmEngine *engine=NULL; uint8_t *content=NULL,*baseline=NULL,*candidate=NULL;
+  size_t content_size=0,state_size=0;
+  int ok=anygm_synthetic_content_read(&fixture,&content,&content_size) &&
+    anygm_create(services,&engine)==ANYGM_OK;
+  AnygmContentSource source={0};
+  source.struct_size=sizeof source; source.kind=ANYGM_CONTENT_MEMORY;
+  source.path="synthetic-tilemaps.win"; source.data=content; source.size=content_size;
+  if(ok) ok=anygm_load(engine,&source,NULL)==ANYGM_OK && engine->vm.n_tilemaps==2;
+  if(!ok){ fail("tilemap fixture did not load two authored maps"); goto done; }
+
+  /* The first capacity answer already includes unedited map metadata. */
+  size_t cold_size=anygm_state_size(engine);
+  GmlTileMap *first=&engine->vm.tilemaps[0],*second=&engine->vm.tilemaps[1];
+  int id=first->id,other_id=second->id,next=engine->vm.next_tilemap_id;
+  gml_tilemap_set_position(first,11.25,-7.5); first->tileset=3;
+  if(!cold_size || anygm_state_size(engine)!=cold_size){
+    ok=fail("position-only mutation grew the cold state"); goto done;
+  }
+  if(!gml_tilemap_set_cell(first,0,0,5) || !gml_tilemap_set_cell(first,1,1,9) ||
+     !save_state(engine,&baseline,&state_size)){
+    ok=fail("tilemap state baseline failed"); goto done;
+  }
+  candidate=malloc(state_size);
+  if(!candidate){ ok=0; goto done; }
+
+  /* Locate the exact declared metadata prefix inside the VM section only. No
+   * private decoder is called to choose the fields that the decoder must reject. */
+  uint8_t prefix[64]={0};
+  write_u32(prefix,2); write_u32(prefix+4,(uint32_t)next);
+  const int fields[]={id,1,1,first->order,3,2,2};
+  for(int i=0;i<7;i++) write_u32(prefix+8+4*i,(uint32_t)fields[i]);
+  write_double(prefix+36,11.25); write_double(prefix+44,-7.5);
+  write_double(prefix+52,first->depth); write_u32(prefix+60,2);
+  size_t vm_start=STATE_HEADER_SIZE+(size_t)read_u64(baseline+64)+(size_t)read_u64(baseline+72);
+  size_t vm_end=vm_start+(size_t)read_u64(baseline+80);
+  size_t record=0,matches=0;
+  for(size_t at=vm_start;at+sizeof prefix<=vm_end;at++){
+    if(!memcmp(baseline+at,prefix,sizeof prefix)){ record=at+8; matches++; }
+  }
+  if(matches!=1 || record+56+16+56>vm_end){
+    ok=fail("tilemap state metadata prefix is not unique or complete"); goto done;
+  }
+  size_t other=record+56+16;
+  StateCursor cursor={baseline,state_size,other,1};
+  if(cursor_u32(&cursor)!=(uint32_t)other_id){ ok=fail("second map boundary disagrees"); goto done; }
+  const struct { size_t offset; uint32_t value; const char *label; } mutations[]={
+    {record-8,UINT32_MAX,"negative map count"},
+    {record-8,513,"excessive map count"},
+    {record-8,512,"map count beyond remaining metadata"},
+    {record-4,UINT32_MAX,"negative next map identity"},
+    {record-4,(uint32_t)id,"non-advancing next map identity"},
+    {record,UINT32_MAX,"negative retained map identity"},
+    {other,(uint32_t)id,"duplicate retained map identity"},
+    {record+4,2,"invalid map used flag"},
+    {record+8,2,"invalid map visibility flag"},
+    {record+12,99,"map parent order mismatch"},
+    {record+20,0,"zero map width"},
+    {record+20,8193,"oversized map width"},
+    {record+20,3,"map width disagrees with room"},
+    {record+24,0,"zero map height"},
+    {record+24,8193,"oversized map height"},
+    {record+52,UINT32_MAX,"negative sparse cell count"},
+    {record+52,5,"sparse count exceeds map cells"},
+    {record+56,UINT32_MAX,"negative sparse cell index"},
+    {record+56,4,"sparse cell outside map"},
+    {record+64,0,"duplicate sparse cell index"},
+    {record+56,3,"unordered sparse cell indices"},
+    {vm_start+4,11,"previous map-metadata-free VM schema"}
+  };
+  for(size_t i=0;ok && i<sizeof mutations/sizeof mutations[0];i++)
+    ok=reject_payload_u32(engine,candidate,state_size,baseline,state_size,
+                          mutations[i].offset,mutations[i].value,mutations[i].label);
+  for(int i=0;ok && i<3;i++){
+    memcpy(candidate,baseline,state_size);
+    write_double(candidate+record+28+8*i,i==1?INFINITY:NAN);
+    refresh_checksum(candidate);
+    ok=reject_unchanged(engine,candidate,state_size,baseline,state_size,"non-finite map metadata");
+  }
+  if(ok){
+    memcpy(candidate,baseline,state_size);
+    write_u32(candidate+record+20,8192); write_u32(candidate+record+24,8192);
+    write_u32(candidate+record+52,1000000);
+    refresh_checksum(candidate);
+    ok=reject_unchanged(engine,candidate,state_size,baseline,state_size,"sparse extent exceeds remaining bytes");
+  }
+  if(ok){
+    memcpy(candidate,baseline,state_size);
+    write_double(candidate+record+28,91); write_u32(candidate+vm_end,0);
+    refresh_checksum(candidate);
+    ok=reject_unchanged(engine,candidate,state_size,baseline,state_size,"late rejection after map publication");
+  }
+  if(ok){
+    gml_room_enter(&engine->vm,1);
+    ok=engine->vm.n_tilemaps==0 && anygm_state_load(engine,baseline,state_size)==ANYGM_OK &&
+      engine_matches(engine,baseline,state_size);
+    if(!ok) fail("map restoration from an empty room failed");
+  }
+  if(ok){
+    ok=anygm_reset(engine)==ANYGM_OK && anygm_state_load(engine,baseline,state_size)==ANYGM_OK &&
+      engine_matches(engine,baseline,state_size);
+    first=gml_tilemap_find(&engine->vm,id); second=gml_tilemap_find(&engine->vm,other_id);
+    ok=ok && first && second && first->x==11.25 && first->y==-7.5 && first->tileset==3 &&
+      first->tiles[0]==5 && first->tiles[12]==9 && second->x==0 && second->y==0 &&
+      engine->vm.next_tilemap_id==next;
+    if(!ok) fail("tilemap Reset restoration lost metadata or identities");
+  }
+done:
+  free(candidate); free(baseline); anygm_destroy(engine); free(content);
+  anygm_synthetic_content_destroy(&fixture);
+  return ok;
+}
+
 int main(void){
   AnygmSyntheticContent fixture;
   if(!anygm_synthetic_list_override_content_create(&fixture))
@@ -715,6 +834,8 @@ int main(void){
   }
 
   if(ok) ok=runtime_mask_state_cases(engine);
+
+  if(ok) ok=tilemap_state_cases(&services);
 
   if(ok) ok=content_override_state_cases(&services,&fixture);
 

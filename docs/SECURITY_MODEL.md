@@ -259,6 +259,15 @@ be negative root sentinels, and a linear forest validation rejects self referenc
 and longer cycles before publishing any object properties. Derived event,
 collision and family caches are rebuilt by the instance owner after publication.
 
+Tilemap state has at most 512 records, each with a fixed 56-byte metadata prefix
+and ordered eight-byte cell deltas. Each grid dimension is at most 8,192. The
+reader checks the remaining byte extent before allocating metadata or delta
+arrays, rejects duplicate handles and repeated or unordered cells, and binds
+counts, dimensions and parent order to the room's reconstructed maps. Used and
+visible flags are boolean; local positions and fallback depths must be finite.
+The next handle is nonnegative and strictly greater than every retained handle.
+Any rejection remains inside the existing root transaction.
+
 Cache data is never authoritative. A schema, producer, source, output, size,
 or checksum mismatch discards the cache marker and regenerates from the source.
 No reader for an earlier unpublished state or cache layout is present.

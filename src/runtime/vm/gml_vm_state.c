@@ -18,7 +18,8 @@
 #include <limits.h>
 
 /* ---------------- save-state runtime serialization ---------------- */
-enum { GML_VM_STATE_SCHEMA=11 };
+enum { GML_VM_STATE_SCHEMA=12 };
+enum { STATE_MAX_TILEMAPS=512, STATE_TILEMAP_RECORD_BYTES=56 };
 #define GML_VM_STATE_MAGIC UINT32_C(0x534D5641)
 /* IDs are assigned in canonical traversal order, never from addresses. Zero is the null array;
  * a definition claims the next ID before its elements, so back references can close cycles. */
@@ -903,18 +904,27 @@ static void sw_vm(StateW *s, GmlVM *vm){
   if(vm->room_state_count>0) sw_raw(s,vm->room_stored,(size_t)vm->room_state_count);
   sw_i32(s,vm->n_tile_mut); sw_raw(s,vm->tile_mut,sizeof(vm->tile_mut));
   sw_i32(s,vm->n_tile_del_at); sw_raw(s,vm->tile_del_at,sizeof(vm->tile_del_at));
-  int mut_tm=0;
-  for(int i=0;i<vm->n_tilemaps;i++)
-    if(vm->tilemaps[i].used && vm->tilemaps[i].owned_tiles && tilemap_diff_count(&vm->tilemaps[i])>0) mut_tm++;
-  sw_i32(s,mut_tm);
-  for(int i=0;i<vm->n_tilemaps;i++) if(vm->tilemaps[i].used && vm->tilemaps[i].owned_tiles){
+  /* Metadata exists even without edited cells. Rebinding immutable grids must not
+   * allocate new language handles or discard map-local position and resource edits. */
+  if(vm->n_tilemaps<0 || vm->n_tilemaps>STATE_MAX_TILEMAPS ||
+     (vm->n_tilemaps && !vm->tilemaps) || vm->next_tilemap_id<0){ s->ok=0; return; }
+  sw_i32(s,vm->n_tilemaps);
+  sw_i32(s,vm->next_tilemap_id);
+  for(int i=0;i<vm->n_tilemaps;i++){
     GmlTileMap *tm=&vm->tilemaps[i];
+    if(tm->id<0 || tm->id>=vm->next_tilemap_id || tm->cols<=0 || tm->cols>8192 ||
+       tm->rows<=0 || tm->rows>8192 || (tm->used!=0 && tm->used!=1) ||
+       (tm->visible!=0 && tm->visible!=1) || !isfinite(tm->x) || !isfinite(tm->y) ||
+       !isfinite(tm->depth)){ s->ok=0; return; }
+    for(int j=0;j<i;j++) if(vm->tilemaps[j].id==tm->id){ s->ok=0; return; }
     int diffs=tilemap_diff_count(tm);
-    if(diffs<=0) continue;
-    sw_i32(s,i);
+    sw_i32(s,tm->id); sw_i32(s,tm->used); sw_i32(s,tm->visible);
+    sw_i32(s,tm->order); sw_i32(s,tm->tileset);
     sw_i32(s,tm->cols);
     sw_i32(s,tm->rows);
+    sw_d(s,tm->x); sw_d(s,tm->y); sw_d(s,tm->depth);
     sw_i32(s,diffs);
+    if(diffs<=0) continue;
     int cells=tm->cols*tm->rows;
     for(int c=0;c<cells;c++){
       uint32_t off=(uint32_t)c*4u;
@@ -1131,39 +1141,52 @@ int gml_vm_state_load(GmlVM *vm, const void *data, size_t len, size_t *used){
     state_debug(vm,"bad tile mutation counts",s.pos,(uint32_t)vm->n_tile_mut);
     s.ok=0;
   }
-  typedef struct { int index, cols, rows, n; int *cell; uint32_t *datum; } TileMapState;
+  typedef struct {
+    int id, used, visible, order, tileset, cols, rows, n;
+    double x,y,depth;
+    int *cell; uint32_t *datum;
+  } TileMapState;
   TileMapState *tm_state=NULL;
-  int tm_state_n=0;
+  int tm_state_n=0,tm_next_id=0;
   if(s.ok){
     tm_state_n=sr_i32(&s);
-    if(tm_state_n<0 || tm_state_n>512){ state_debug(vm,"bad tilemap state count",s.pos,(uint32_t)tm_state_n); s.ok=0; tm_state_n=0; }
+    tm_next_id=sr_i32(&s);
+    if(!s.ok || tm_state_n<0 || tm_state_n>STATE_MAX_TILEMAPS || tm_next_id<0 ||
+       s.pos>s.cap || (size_t)tm_state_n>(s.cap-s.pos)/STATE_TILEMAP_RECORD_BYTES){
+      state_debug(vm,"bad tilemap state extent",s.pos,(uint32_t)tm_state_n);
+      s.ok=0; tm_state_n=0;
+    }
     tm_state=tm_state_n?calloc((size_t)tm_state_n,sizeof(*tm_state)):NULL;
-    if(tm_state_n && !tm_state) s.ok=0;
-    for(int i=0;i<tm_state_n;i++){
-      tm_state[i].index=sr_i32(&s);
-      tm_state[i].cols=sr_i32(&s);
-      tm_state[i].rows=sr_i32(&s);
-      if(tm_state[i].cols<=0 || tm_state[i].rows<=0 || tm_state[i].cols>8192 || tm_state[i].rows>8192){
-        state_debug(vm,"bad tilemap state dims",s.pos,(uint32_t)tm_state[i].cols);
+    if(tm_state_n && !tm_state){ s.ok=0; tm_state_n=0; }
+    for(int i=0;i<tm_state_n && s.ok;i++){
+      TileMapState *ts=&tm_state[i];
+      ts->id=sr_i32(&s); ts->used=sr_i32(&s); ts->visible=sr_i32(&s);
+      ts->order=sr_i32(&s); ts->tileset=sr_i32(&s);
+      ts->cols=sr_i32(&s); ts->rows=sr_i32(&s);
+      ts->x=sr_d(&s); ts->y=sr_d(&s); ts->depth=sr_d(&s);
+      ts->n=sr_i32(&s);
+      if(!s.ok || ts->id<0 || ts->id>=tm_next_id ||
+         (ts->used!=0 && ts->used!=1) || (ts->visible!=0 && ts->visible!=1) ||
+         ts->cols<=0 || ts->rows<=0 || ts->cols>8192 || ts->rows>8192 ||
+         !isfinite(ts->x) || !isfinite(ts->y) || !isfinite(ts->depth)){
+        state_debug(vm,"bad tilemap state metadata",s.pos,(uint32_t)ts->id);
+        s.ok=0; break;
+      }
+      for(int j=0;j<i;j++) if(tm_state[j].id==ts->id) s.ok=0;
+      int maxcells=ts->cols*ts->rows;
+      if(ts->n<0 || ts->n>maxcells || s.pos>s.cap || (size_t)ts->n>(s.cap-s.pos)/8u){
+        state_debug(vm,"bad tilemap sparse extent",s.pos,(uint32_t)ts->n);
         s.ok=0;
-        tm_state[i].cols=tm_state[i].rows=0;
       }
-      int maxcells=tm_state[i].cols*tm_state[i].rows;
-      tm_state[i].n=sr_i32(&s);
-      if(tm_state[i].n<0 || tm_state[i].n>maxcells){
-        state_debug(vm,"bad tilemap sparse count",s.pos,(uint32_t)tm_state[i].n);
-        s.ok=0;
-        tm_state[i].n=0;
+      if(!s.ok) break;
+      if(ts->n>0){
+        ts->cell=malloc((size_t)ts->n*sizeof(int));
+        ts->datum=malloc((size_t)ts->n*sizeof(uint32_t));
+        if(!ts->cell || !ts->datum){ s.ok=0; break; }
       }
-      if(tm_state[i].n>0){
-        tm_state[i].cell=malloc((size_t)tm_state[i].n*sizeof(int));
-        tm_state[i].datum=malloc((size_t)tm_state[i].n*sizeof(uint32_t));
-        if(!tm_state[i].cell || !tm_state[i].datum){ s.ok=0; tm_state[i].n=0; }
-      }
-      for(int j=0;j<tm_state[i].n;j++){
-        tm_state[i].cell[j]=sr_i32(&s);
-        tm_state[i].datum[j]=sr_u32(&s);
-        if(tm_state[i].cell[j]<0 || tm_state[i].cell[j]>=maxcells) s.ok=0;
+      for(int j=0;j<ts->n && s.ok;j++){
+        ts->cell[j]=sr_i32(&s); ts->datum[j]=sr_u32(&s);
+        if(ts->cell[j]<0 || ts->cell[j]>=maxcells || (j && ts->cell[j]<=ts->cell[j-1])) s.ok=0;
       }
     }
   }
@@ -1480,16 +1503,27 @@ int gml_vm_state_load(GmlVM *vm, const void *data, size_t len, size_t *used){
   vm->step_free_n=vm->step_free_pos=0;
   vm->render=render; vm->audio=audio;
   gml_obj_alive_recount(vm);   /* family live counts rebuilt from the restored pool */
-  /* Rebuild collision maps, which point into immutable content data and are not serialized. */
-  if(vm->win && vm->room_index>=0) gml_vm_room_reload_layers_mode(vm,vm->room_index,0);
+  /* Rebind immutable grids before restoring their saved handles. The temporary
+   * construction IDs never escape this state transaction. */
+  if(s.ok && vm->win && vm->room_index>=0){
+    vm->next_tilemap_id=0;
+    gml_vm_room_reload_layers_mode(vm,vm->room_index,0);
+  }
+  if(s.ok && tm_state_n!=vm->n_tilemaps){
+    state_debug(vm,"tilemap state room mismatch",s.pos,(uint32_t)tm_state_n); s.ok=0;
+  }
   for(int i=0;i<tm_state_n;i++){
     TileMapState *ts=&tm_state[i];
-    if(ts->index>=0 && ts->index<vm->n_tilemaps){
-      GmlTileMap *tm=&vm->tilemaps[ts->index];
-      if(tm->cols==ts->cols && tm->rows==ts->rows && ts->n>0 && gml_vm_tilemap_ensure_owned(tm)){
+    if(s.ok){
+      GmlTileMap *tm=&vm->tilemaps[i];
+      if(tm->cols!=ts->cols || tm->rows!=ts->rows || tm->order!=ts->order ||
+         (ts->n>0 && !gml_vm_tilemap_ensure_owned(tm))){
+        state_debug(vm,"tilemap state binding failed",s.pos,(uint32_t)i); s.ok=0;
+      }else{
+        tm->id=ts->id; tm->used=ts->used; tm->visible=ts->visible;
+        tm->tileset=ts->tileset; tm->x=ts->x; tm->y=ts->y; tm->depth=ts->depth;
         for(int j=0;j<ts->n;j++){
           int c=ts->cell[j];
-          if(c<0 || c>=ts->cols*ts->rows) continue;
           unsigned char *p=tm->owned_tiles+(size_t)c*4u;
           uint32_t datum=ts->datum[j];
           p[0]=(unsigned char)(datum&0xFFu);
@@ -1503,6 +1537,7 @@ int gml_vm_state_load(GmlVM *vm, const void *data, size_t len, size_t *used){
     free(ts->datum);
   }
   free(tm_state);
+  if(s.ok) vm->next_tilemap_id=tm_next_id;
   /* The sampling clock is restored above rather than invalidated here: it stopped being a cached
    * host timestamp and became part of what a frame draws from, so discarding it would make the
    * redraw after a load read a different value than the frame being restored. */

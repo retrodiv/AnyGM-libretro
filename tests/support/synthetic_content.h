@@ -13,6 +13,8 @@ typedef struct AnygmSyntheticContent {
 } AnygmSyntheticContent;
 
 int anygm_synthetic_content_create(AnygmSyntheticContent *fixture);
+/* Two authored tilemap layers followed by an empty room, without external assets. */
+int anygm_synthetic_tilemap_content_create(AnygmSyntheticContent *fixture);
 /* The neutral engine fixture with one object-held array of lists and one global list. Its Step
  * deliberately rewrites both so a persistent content override can prove it runs after Step. */
 int anygm_synthetic_list_override_content_create(AnygmSyntheticContent *fixture);

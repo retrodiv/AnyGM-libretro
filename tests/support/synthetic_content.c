@@ -175,6 +175,40 @@ int anygm_synthetic_anchor_script_content_create(AnygmSyntheticContent *fixture)
   return synthetic_content_create(fixture,1,0);
 }
 
+int anygm_synthetic_tilemap_content_create(AnygmSyntheticContent *fixture){
+  if(!fixture) return 0;
+  memset(fixture,0,sizeof *fixture);
+  if(!create_fixture_directory(fixture->directory,sizeof fixture->directory)) return 0;
+  snprintf(fixture->path,sizeof fixture->path,"%s/data.win",fixture->directory);
+  AnygmHostServices services={0};
+  services.struct_size=sizeof services; services.abi_version=ANYGM_HOST_SERVICES_VERSION;
+  anygm_stdio_vfs_services_init(&services);
+  GmlcRoom rooms[2]={0}; GmlcRoomLayer layers[2]={0};
+  uint32_t cells[4]={0}; int order[]={0,1};
+  GmlcProject project={0};
+  project.host=&services; project.name=(char*)"neutral-tilemap-state";
+  project.rooms=rooms; project.n_rooms=project.cap_rooms=2;
+  project.room_order=order; project.n_room_order=2;
+  rooms[0].id=rooms[0].name=(char*)"room_maps";
+  rooms[1].id=rooms[1].name=(char*)"room_empty";
+  for(int i=0;i<2;i++){
+    rooms[i].width=64; rooms[i].height=48; rooms[i].speed=60;
+    rooms[i].draw_background_color=1;
+    layers[i].id=layers[i].name=i?(char*)"map_second":(char*)"map_first";
+    layers[i].type=4; layers[i].layer_id=10+i; layers[i].depth=17+i;
+    layers[i].visible=1; layers[i].x=11; layers[i].y=13;
+    layers[i].tile_tileset_id=-1; layers[i].tile_cols=layers[i].tile_rows=2;
+    layers[i].tile_data=cells;
+  }
+  rooms[0].layers=layers; rooms[0].n_layers=rooms[0].cap_layers=2;
+  char error[256]={0};
+  if(!gmlc_package_write_structural(&project,fixture->path,error,sizeof error)){
+    fprintf(stderr,"synthetic tilemap package failed: %s\n",error);
+    anygm_synthetic_content_destroy(fixture); return 0;
+  }
+  return 1;
+}
+
 static int synthetic_classic_present_content_create(AnygmSyntheticContent *fixture,int compositing){
   if(!fixture) return 0;
   memset(fixture,0,sizeof *fixture);

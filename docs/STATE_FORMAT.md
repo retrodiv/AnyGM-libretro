@@ -9,9 +9,25 @@ marketing version. It is a numeric field in a validated binary header.
 
 ## Save-state schema
 
-The current AnyGM save-state schema is `22`. It is the format transported by
+The current AnyGM save-state schema is `23`. It is the format transported by
 libretro frontends for manual save states, automatic state slots, and rewind
 snapshots. Those features remain supported.
+
+Schema `23` introduces VM schema `12`. The tilemap section records every authored
+map, including maps with no edited cells. A signed 32-bit map count and next-map
+identity precede the records. Each record holds seven signed 32-bit words
+(identity, used, visible, parent order, tileset, columns, rows), three doubles
+(local x, local y, fallback depth), and a signed 32-bit sparse-cell count followed
+by that many (cell index, unsigned datum) word pairs. Indices are strictly
+increasing. Parent-layer position remains in its existing runtime-layer record.
+
+The fixed metadata is present before any setter call. It does not grow when a
+map moves or changes its tileset; edited cells retain their sparse representation.
+Restoration rebinds grids from immutable room content, checks map count, order and
+dimensions, and restores the original language handles and next identity. Counts,
+remaining byte spans, duplicate identities, flags and finite coordinates are
+validated before publication. Previous public and VM schemas reject without a
+legacy reader. Audio schema `2` and root input transport retain their layouts.
 
 Schema `22` adds one little-endian unsigned 32-bit mouse held-suppression mask
 after the root keyboard snapshots and before the optional completed frame.
@@ -183,7 +199,7 @@ same form without an intervening mutation produces identical bytes.
 ## VM payload ownership
 
 `src/core/engine_state.c` owns the root framing and section transaction.
-Within the VM section, `src/runtime/vm/gml_vm_state.c` alone owns schema `11`,
+Within the VM section, `src/runtime/vm/gml_vm_state.c` alone owns schema `12`,
 field order, value-graph encoding, sizing, and restore scratch.
 
 Builtin resources have a separate storage and lifetime owner, not a separate
