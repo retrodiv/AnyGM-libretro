@@ -96,7 +96,7 @@ release evidence. The following SHA-256 directives pin only the two
 first-party files in this repository; `make provenance-check` verifies
 their current bytes.
 
-<!-- PROVENANCE-CHECK: src/runtime/builtins/gml_builtin_registry.h = daaecf07873a898214236339e64e9d03dd9cb7b56af425be16f5cb17d3918431 -->
+<!-- PROVENANCE-CHECK: src/runtime/builtins/gml_builtin_registry.h = 5e305ddeb2cf5cbf85a9ed70d42fb5af45c58868a986fdafcc45ddcefbbf3e02 -->
 <!-- PROVENANCE-CHECK: src/generated/gml_builtin_registry_index.h = 79cec54b43aa8c4c8eb0886c8132afc2143210fdad6be762c3e0fccd0bb2e143 -->
 
 ## Audio setup packets
