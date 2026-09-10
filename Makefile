@@ -162,7 +162,7 @@ AUDIO_TESTS := test_mp3_detect
 COMPATIBILITY_TESTS := test_compatibility
 CHECK_TARGETS := $(addprefix $(TEST_DIR)/,$(RUNTIME_TESTS) $(VIDEO_RENDERER_TESTS) \
 	$(CONTENT_TESTS) $(MEDIA_TESTS) $(AUDIO_TESTS) $(COMPATIBILITY_TESTS))
-INTEGRATION_TESTS := $(TEST_DIR)/test_engine_instances $(TEST_DIR)/test_host_setting_budget $(TEST_DIR)/test_engine_blocking_wait \
+INTEGRATION_TESTS := $(TEST_DIR)/test_engine_instances $(TEST_DIR)/test_mouse_input $(TEST_DIR)/test_host_setting_budget $(TEST_DIR)/test_engine_blocking_wait \
 	$(TEST_DIR)/test_font_state \
 	$(TEST_DIR)/test_engine_content_config \
 	$(TEST_DIR)/test_engine_content_patch \
@@ -649,6 +649,7 @@ $(TEST_DIR)/public_header_cpp.o: tests/contract/public_header_cpp.cpp src/api/an
 
 integration-check: $(INTEGRATION_TESTS)
 	$(TEST_DIR)/test_engine_instances
+	$(TEST_DIR)/test_mouse_input
 	$(TEST_DIR)/test_font_state
 	$(TEST_DIR)/test_engine_content_config
 	$(TEST_DIR)/test_engine_content_patch
@@ -750,6 +751,11 @@ $(TEST_DIR)/test_font_state: tests/integration/test_font_state.c \
 
 $(TEST_DIR)/test_engine_instances: tests/integration/test_engine_instances.c \
 	tests/support/synthetic_content.c $(RUNTIME_OBJECTS) $(TEST_HOST_OBJECTS)
+	mkdir -p $(dir $@)
+	$(call link_runtime_test,$(TEST_CPPFLAGS))
+
+$(TEST_DIR)/test_mouse_input: tests/integration/test_mouse_input.c \
+	tests/support/synthetic_content.c tests/support/anygm_test_runner.c $(RUNTIME_OBJECTS) $(TEST_HOST_OBJECTS)
 	mkdir -p $(dir $@)
 	$(call link_runtime_test,$(TEST_CPPFLAGS))
 
