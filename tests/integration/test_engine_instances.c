@@ -2973,8 +2973,8 @@ int main(int argc,char **argv){
    * preceding exact digests remain required; no runtime legacy reader exists. */
   size_t mouse_word=112+1024+1024+44+sizeof first->pad_current+sizeof first->pad_previous+
                     sizeof first->key_current+sizeof first->key_previous;
-  size_t core_size=(size_t)read_u64(deterministic+64);
-  if(deterministic_size<mouse_word+4 || core_size<mouse_word+4-112 ||
+  size_t mouse_core_size=(size_t)read_u64(deterministic+64);
+  if(deterministic_size<mouse_word+4 || mouse_core_size<mouse_word+4-112 ||
      memcmp(deterministic+mouse_word,"\0\0\0\0",4)){
     fprintf(stderr,"canonical mouse suppression word changed\n");
     return 1;
@@ -2982,7 +2982,7 @@ int main(int argc,char **argv){
   memmove(deterministic+mouse_word,deterministic+mouse_word+4,deterministic_size-mouse_word-4);
   size_t preceding_mouse_size=deterministic_size-4;
   write_u64(deterministic+16,preceding_mouse_size);
-  write_u64(deterministic+64,core_size-4);
+  write_u64(deterministic+64,mouse_core_size-4);
   write_u64(deterministic+96,preceding_mouse_size-112);
   write_u32(deterministic+4,21);
   write_u64(deterministic+56,state_checksum(deterministic+112,preceding_mouse_size-112));
