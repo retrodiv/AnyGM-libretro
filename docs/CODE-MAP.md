@@ -215,6 +215,11 @@ background pixels, canonical and legacy background-name lookup, and authored/run
 style queries through ordinary and cached dispatch:
 `make check TEST=builtin_draw_queries`.
 
+`tests/unit/runtime/test_builtin_tile_draw.c` owns synthetic explicit tile and map drawing:
+all transforms, tint/alpha, animated empty cells, hidden-layer independent placement,
+camera origin, unchanged retained fields, invalid numerics, and ordinary/cached dispatch.
+Run `make check TEST=builtin_tile_draw`.
+
 `tests/unit/runtime/test_builtin_buffer_hash.c` covers exact buffer SHA-1 slices,
 unchanged cursor/data and invalid ranges: `make check TEST=builtin_buffer_hash`.
 `tests/contract/test_builtin_file_io.c` covers streamed digest vectors, VFS overlay
