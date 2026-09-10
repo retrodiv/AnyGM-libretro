@@ -3124,8 +3124,8 @@ int main(int argc,char **argv){
   write_u64(deterministic+56,state_checksum(deterministic+112,preceding_size-112));
   uint64_t preceding_hash=state_checksum(deterministic,preceding_size);
   memcpy(deterministic,first_state,first_written);
-  if(deterministic_size!=22302 ||
-     deterministic_hash!=UINT64_C(0x9351d78c1daaea2b) ||
+  if(deterministic_size!=22306 ||
+     deterministic_hash!=UINT64_C(0xa3ed237ec81fc73d) ||
      preceding_visual_size!=22302 || preceding_visual_hash!=UINT64_C(0x9351d78c1daaea2b) ||
      preceding_map_size!=22298 || preceding_map_hash!=UINT64_C(0x07f91baea5f9e3ff) ||
      preceding_mouse_size!=22294 || preceding_mouse_hash!=UINT64_C(0x0be7c1443e9fa05b) ||
