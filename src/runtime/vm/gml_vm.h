@@ -10,6 +10,7 @@
 #include "gml_software3d.h"
 
 struct GmlClassicDispatchCache;
+struct GmlRoomVisualState;
 
 /* ---- instance ---- */
 #define GML_ALARMS 12
@@ -140,7 +141,7 @@ typedef struct {
 } GmlCollisionCandidateCache;
 /* runtime layers (GMS2 layer_create / layer_tile_create — the compat scripts GMS emits for
  * upgraded GM8 projects route tile_add/tile_delete through these, so terrain painted at
- * runtime lives here, not in the ROOM chunk). Cleared on room enter like GM tiles. */
+ * runtime lives here, not in the ROOM chunk). Persistent rooms retain these arrays. */
 typedef struct { int id, used, visible, touched, order, script_begin, script_end; double depth, x, y, hs, vs; char name[32]; } GmlRtLayer;
 /* GMS2 tile layer (room layer type 4): a grid of tileset cells. x/y are map-local;
  * drawing and pixel lookup add the current parent offset. Immutable cell bytes
@@ -353,6 +354,7 @@ typedef struct GmlVM {
   int      room_index;        /* current room (ROOM index) */
   int      pending_room;      /* -1 none, else target ROOM index (play-order resolved) */
   unsigned char *room_stored; int room_state_count;
+  struct GmlRoomVisualState *room_visuals; /* dormant, room-owned layer/map storage */
   int      game_end;
   int      game_change_pending;
   char     game_change_directory[GML_GAME_CHANGE_TEXT_MAX];

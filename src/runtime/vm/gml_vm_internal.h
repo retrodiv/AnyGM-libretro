@@ -106,6 +106,19 @@ int gml_vm_frame_apply_tile_mutation(GmlVM *vm, int depth,
                                      int *effective_depth,
                                      double *offset_x, double *offset_y);
 void gml_vm_rooms_clear_tilemaps(GmlVM *vm);
+/* Dormant visual resources have the same owners and element representation as
+ * the active room. Only the room owner transfers them; the canonical state
+ * owner transports them without duplicating the room-loading algorithms. */
+typedef struct GmlRoomVisualState {
+  int room_index;
+  long age;
+  GmlRtLayer *layers; int layer_count, layer_capacity;
+  GmlRtElem *elements; int element_count, element_capacity;
+  GmlTileMap *maps; int map_count, map_capacity;
+  double *shaders;
+  struct GmlRoomVisualState *next;
+} GmlRoomVisualState;
+void gml_vm_rooms_clear_stored_visuals(GmlVM *vm);
 void gml_vm_frame_cleanup(GmlVM *vm);
 void gml_vm_state_runtime_strings_clear(GmlVM *vm);
 int gml_vm_struct_ensure_capacity(GmlVM *vm, int need);

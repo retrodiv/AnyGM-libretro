@@ -1419,14 +1419,71 @@ static GmlTileMap *gml_tilemap_new(GmlVM *vm){
   t->id=vm->next_tilemap_id++; t->used=1; t->visible=1;
   return t;
 }
-void gml_vm_rooms_clear_tilemaps(GmlVM *vm){
-  for(int i=0;i<vm->n_tilemaps;i++){
-    free(vm->tilemaps[i].owned_tiles);
-    free(vm->tilemaps[i].decoded_tiles);
-    vm->tilemaps[i].owned_tiles=NULL;
-    vm->tilemaps[i].decoded_tiles=NULL;
+static void room_tilemaps_clear(GmlTileMap *maps,int count){
+  for(int i=0;i<count;i++){
+    free(maps[i].owned_tiles);
+    free(maps[i].decoded_tiles);
+    maps[i].owned_tiles=NULL;
+    maps[i].decoded_tiles=NULL;
   }
+}
+void gml_vm_rooms_clear_tilemaps(GmlVM *vm){
+  room_tilemaps_clear(vm->tilemaps,vm->n_tilemaps);
   vm->n_tilemaps=0;
+}
+void gml_vm_rooms_clear_stored_visuals(GmlVM *vm){
+  while(vm->room_visuals){
+    GmlRoomVisualState *state=vm->room_visuals;
+    vm->room_visuals=state->next;
+    room_tilemaps_clear(state->maps,state->map_count);
+    free(state->maps); free(state->layers); free(state->elements);
+    free(state->shaders); free(state);
+  }
+}
+static void room_layer_shaders_clear(GmlVM *vm){
+  for(int i=0;i<vm->n_rtl;i++) gml_set_global_arr(vm,"__gml_layer_shader",i,0);
+}
+static int room_visuals_store(GmlVM *vm,int room_index){
+  if(!vm->n_rtl && !vm->n_rte && !vm->n_tilemaps) return 1;
+  GmlRoomVisualState **link=&vm->room_visuals;
+  while(*link && (*link)->room_index<room_index) link=&(*link)->next;
+  if(*link && (*link)->room_index==room_index) return 0;
+  GmlRoomVisualState *state=calloc(1,sizeof *state);
+  if(!state) return 0;
+  state->shaders=vm->n_rtl?calloc((size_t)vm->n_rtl,sizeof *state->shaders):NULL;
+  if(vm->n_rtl && !state->shaders){ free(state); return 0; }
+  for(int i=0;i<vm->n_rtl;i++)
+    state->shaders[i]=gml_global_arr(vm,"__gml_layer_shader",i);
+  room_layer_shaders_clear(vm);
+  state->room_index=room_index;
+  state->age=vm->frame-vm->room_enter_frame;
+  if(state->age<0) state->age=0;
+  state->layers=vm->rtl; state->layer_count=vm->n_rtl; state->layer_capacity=vm->cap_rtl;
+  state->elements=vm->rte; state->element_count=vm->n_rte; state->element_capacity=vm->cap_rte;
+  state->maps=vm->tilemaps; state->map_count=vm->n_tilemaps; state->map_capacity=vm->cap_tilemaps;
+  vm->rtl=NULL; vm->n_rtl=vm->cap_rtl=0;
+  vm->rte=NULL; vm->n_rte=vm->cap_rte=0;
+  vm->tilemaps=NULL; vm->n_tilemaps=vm->cap_tilemaps=0;
+  state->next=*link; *link=state;
+  return 1;
+}
+static int room_visuals_restore(GmlVM *vm,int room_index){
+  GmlRoomVisualState **link=&vm->room_visuals;
+  while(*link && (*link)->room_index<room_index) link=&(*link)->next;
+  GmlRoomVisualState *state=*link;
+  if(!state || state->room_index!=room_index) return 0;
+  room_layer_shaders_clear(vm);
+  gml_vm_rooms_clear_tilemaps(vm);
+  free(vm->tilemaps); free(vm->rtl); free(vm->rte);
+  vm->rtl=state->layers; vm->n_rtl=state->layer_count; vm->cap_rtl=state->layer_capacity;
+  vm->rte=state->elements; vm->n_rte=state->element_count; vm->cap_rte=state->element_capacity;
+  vm->tilemaps=state->maps; vm->n_tilemaps=state->map_count; vm->cap_tilemaps=state->map_capacity;
+  vm->room_enter_frame=vm->frame-state->age;
+  for(int i=0;i<vm->n_rtl;i++)
+    gml_set_global_arr(vm,"__gml_layer_shader",i,state->shaders[i]);
+  *link=state->next;
+  free(state->shaders); free(state);
+  return 1;
 }
 
 /* Read enough tileset metadata to distinguish the separated-border layout, which also uses
@@ -1671,33 +1728,12 @@ static void gml_room_bind_asset_sprites(GmlVM *vm, int room_index){
   }
 }
 
-/* Rebuild a room's derived GMS2 layer data from immutable ROOM records. Runtime layers/elements are
- * rebuilt on room enter; after modern savestate loads they are preserved and only type-4 tilemap
- * views are rebound to win data, since those grids are not serialized by pointer. */
-void gml_vm_room_reload_layers_mode(GmlVM *vm, int room_index, int rebuild_runtime_layers){
-  if(rebuild_runtime_layers){
-    /* Per-layer shader handles use serialized globals so rewind needs no state-format fork.  A
-     * genuine room rebuild owns a new layer set and must not inherit the previous room's slot. */
-    for(int i=0;i<vm->n_rtl;i++) gml_set_global_arr(vm,"__gml_layer_shader",i,0);
-    vm->n_rtl=0; vm->n_rte=0;
-  }
+static void room_bind_instance_layers(GmlVM *vm,int room_index,int reset){
   const uint8_t *rd=vm->win->data;
   uint32_t lcnt=0;
   uint32_t lay=gml_vm_rooms_layer_list(vm,room_index,&lcnt);
-  gml_vm_rooms_clear_tilemaps(vm);
-  if(!lay) return;
-  if(rebuild_runtime_layers && lcnt<512) for(uint32_t i=0;i<lcnt;i++){ uint32_t lp=gml_vm_read_u32_le(rd,lay+4+i*4);
-    if(!lp || lp+40>vm->win->size) continue;
-    uint32_t np=gml_vm_read_u32_le(rd,lp+0); if(!np || np>=vm->win->size) continue;
-    GmlRtLayer *l=gml_rt_layer_new(vm); if(!l) break;
-    snprintf(l->name,sizeof l->name,"%s",(const char*)(rd+np));
-    l->order=(int)i;
-    l->depth=(double)(int32_t)gml_vm_read_u32_le(rd,lp+12);
-    l->x=gml_vm_read_f32_le(rd,lp+16); l->y=gml_vm_read_f32_le(rd,lp+20); l->hs=gml_vm_read_f32_le(rd,lp+24); l->vs=gml_vm_read_f32_le(rd,lp+28);
-    l->visible=gml_vm_read_u32_le(rd,lp+32)?1:0; l->touched=0;
-  }
   if(lcnt<512){
-    if(rebuild_runtime_layers)
+    if(reset)
       for(int ii=0; ii<vm->inst_count; ii++){
         vm->inst[ii].draw_layer_order=-1;
         vm->inst[ii].draw_layer_element_order=-1;
@@ -1732,6 +1768,34 @@ void gml_vm_room_reload_layers_mode(GmlVM *vm, int room_index, int rebuild_runti
         }
     }
   }
+}
+
+/* Rebuild a room's derived GMS2 layer data from immutable ROOM records. Runtime layers/elements are
+ * rebuilt on room enter; after modern savestate loads they are preserved and only type-4 tilemap
+ * views are rebound to win data, since those grids are not serialized by pointer. */
+void gml_vm_room_reload_layers_mode(GmlVM *vm, int room_index, int rebuild_runtime_layers){
+  if(rebuild_runtime_layers){
+    /* Per-layer shader handles use serialized globals so rewind needs no state-format fork.  A
+     * genuine room rebuild owns a new layer set and must not inherit the previous room's slot. */
+    room_layer_shaders_clear(vm);
+    vm->n_rtl=0; vm->n_rte=0;
+  }
+  const uint8_t *rd=vm->win->data;
+  uint32_t lcnt=0;
+  uint32_t lay=gml_vm_rooms_layer_list(vm,room_index,&lcnt);
+  gml_vm_rooms_clear_tilemaps(vm);
+  if(!lay) return;
+  if(rebuild_runtime_layers && lcnt<512) for(uint32_t i=0;i<lcnt;i++){ uint32_t lp=gml_vm_read_u32_le(rd,lay+4+i*4);
+    if(!lp || lp+40>vm->win->size) continue;
+    uint32_t np=gml_vm_read_u32_le(rd,lp+0); if(!np || np>=vm->win->size) continue;
+    GmlRtLayer *l=gml_rt_layer_new(vm); if(!l) break;
+    snprintf(l->name,sizeof l->name,"%s",(const char*)(rd+np));
+    l->order=(int)i;
+    l->depth=(double)(int32_t)gml_vm_read_u32_le(rd,lp+12);
+    l->x=gml_vm_read_f32_le(rd,lp+16); l->y=gml_vm_read_f32_le(rd,lp+20); l->hs=gml_vm_read_f32_le(rd,lp+24); l->vs=gml_vm_read_f32_le(rd,lp+28);
+    l->visible=gml_vm_read_u32_le(rd,lp+32)?1:0; l->touched=0;
+  }
+  room_bind_instance_layers(vm,room_index,rebuild_runtime_layers);
   const GmlChunk *bc = gml_chunk(vm->win,"BGND");
   uint32_t bcnt = bc ? gml_vm_read_u32_le(rd,bc->off) : 0;
   if(lcnt<512) for(uint32_t i=0;i<lcnt;i++){ uint32_t lp=gml_vm_read_u32_le(rd,lay+4+i*4);
@@ -2046,8 +2110,14 @@ void gml_room_enter(GmlVM *vm, int room_index){
     GmlVal *persistent=gml_varmap_get(&vm->globals,"room_persistent");
     if(persistent) store_previous=gml_vm_value_as_number(*persistent)!=0.0;
     else { GmlRoom previous; if(gml_vm_room_get(vm,prev_room,&previous)==0) store_previous=previous.persistent; }
-    if(prev_room<vm->room_state_count && vm->room_stored) vm->room_stored[prev_room]=store_previous?1:0;
   }
+  if(store_previous && !room_visuals_store(vm,prev_room)){
+    anygm_host_logf(vm->host,ANYGM_LOG_ERROR,"[room] cannot retain visual resources; transition cancelled\n");
+    vm->pending_room=-1;
+    return;
+  }
+  if(prev_room>=0 && prev_room<vm->room_state_count && vm->room_stored)
+    vm->room_stored[prev_room]=store_previous?1:0;
   if(store_previous) room_runtime_state_store(vm,prev_room);
   if(store_previous){
     for(int i=0;i<vm->inst_count;i++){
@@ -2077,7 +2147,7 @@ void gml_room_enter(GmlVM *vm, int room_index){
   vm->n_tile_del_at=0; /* tile_layer_delete_at marks are per-room */
   gml_builtin_physics_room_reset(vm);
   /* Register this room's GMS2 runtime layers (addressable by name) + type-4 tile-collision maps. */
-  gml_room_reload_layers(vm, room_index);
+  if(!room_visuals_restore(vm,room_index)) gml_room_reload_layers(vm, room_index);
   if(anygm_host_development_setting(vm->host,"GML_LOG_ROOM")) anygm_host_logf(vm ? vm->host : NULL,ANYGM_LOG_DEBUG,"[room] enter %d\n",room_index);
   GmlRoom r; if(gml_vm_room_get(vm,room_index,&r)!=0) return;
   *gml_varmap_put(&vm->globals,"room_persistent")=vreal(r.persistent?1.0:0.0);
@@ -2098,6 +2168,7 @@ void gml_room_enter(GmlVM *vm, int room_index){
       in->active=in->deactivated?0:1; in->room_was_deactivated=0;
       gml_obj_alive_adjust(vm,in->obj,1); gml_vm_instances_link(vm,in);
     }
+    room_bind_instance_layers(vm,room_index,0);
     int n0=vm->inst_count;
     for(int i=0;i<n0;i++) if(vm->inst[i].active && !vm->inst[i].marked)
       gml_run_event(vm,&vm->inst[i],"Other_4");

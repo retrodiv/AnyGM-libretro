@@ -447,6 +447,7 @@ void gml_vm_free(GmlVM *vm){
   free(vm->objects); free(vm->col_events); free(vm->col_pair_cache); free(vm->event_cache);
   gml_vm_rooms_clear_tilemaps(vm);
   free(vm->rtl); free(vm->rte); free(vm->view_ovr); free(vm->tilemaps);
+  gml_vm_rooms_clear_stored_visuals(vm);
   free(vm->room_stored); vm->room_stored=NULL; vm->room_state_count=0;
   free(vm->audio_room_warm_scan); vm->audio_room_warm_scan=NULL; vm->audio_room_warm_scan_n=0;
   gml_particle_state_destroy(vm->particles); vm->particles=NULL;

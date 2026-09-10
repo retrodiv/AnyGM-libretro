@@ -278,6 +278,98 @@ static int room_return_case(int persistent,int through_state){
 static int ordinary_room_recreates(void){ return room_return_case(0,0); }
 static int persistent_room_retains(void){ return room_return_case(1,0); }
 static int dormant_maps_survive_state(void){ return room_return_case(1,1); }
+static double layer_shader(GmlVM *vm,int layer,int shader,int set){
+  GmlVal args[]={vreal(layer),vreal(shader)};
+  GmlVal result=gml_builtin_call(vm,set?"layer_shader":"layer_get_shader",args,set?2:1);
+  return result.t==V_REAL?result.d:-2;
+}
+static int persistent_visual_ownership(void){
+  RoomFixture f; if(!room_setup_mode(&f,1)) return 0;
+  int map_id=f.vm.tilemaps[0].id,first_layer=f.vm.rtl[0].id;
+  f.vm.rtl[0].hs=2; f.vm.rtl[0].vs=-1;
+  f.vm.frame=6;
+  layer_shader(&f.vm,first_layer,9,1);
+  int ok=gml_tilemap_set_cell(&f.vm.tilemaps[0],1,1,9);
+  double x,y;
+  gml_tilemap_effective(&f.vm,&f.vm.tilemaps[0],&x,&y,NULL,NULL);
+  ok &= x==23 && y==7;
+  gml_room_enter(&f.vm,1);
+  ok &= f.vm.n_rtl==0 && !gml_tilemap_find(&f.vm,map_id);
+  GmlRtLayer *layer=gml_rt_layer_new(&f.vm);
+  int second_layer=layer?layer->id:-1;
+  GmlRtElem *elem=gml_rt_elem_new(&f.vm);
+  int element_id=elem?elem->id:-1;
+  if(layer && elem){
+    layer->x=-20; layer->touched=1;
+    elem->layer=second_layer; elem->type=7; elem->x=8; elem->alpha=0.25;
+    ok &= layer_shader(&f.vm,second_layer,0,0)==-1;
+    layer_shader(&f.vm,second_layer,4,1);
+  }else ok=0;
+  *gml_varmap_put(&f.vm.globals,"room_persistent")=vreal(1);
+  for(int trip=0;trip<3;trip++){
+    f.vm.frame+=100;
+    gml_room_enter(&f.vm,0);
+    GmlTileMap *map=gml_tilemap_find(&f.vm,map_id);
+    ok &= f.vm.n_rtl==1 && f.vm.n_rte==0 && map && map->tiles[12]==9 &&
+      !gml_rt_layer_find(&f.vm,second_layer) && !gml_rt_elem_find(&f.vm,element_id);
+    ok &= layer_shader(&f.vm,first_layer,0,0)==9;
+    if(map){
+      gml_tilemap_effective(&f.vm,map,&x,&y,NULL,NULL);
+      ok &= x==23+4*trip && y==7-2*trip;
+    }
+    f.vm.frame+=2;
+    gml_room_enter(&f.vm,1);
+    layer=gml_rt_layer_find(&f.vm,second_layer);
+    elem=gml_rt_elem_find(&f.vm,element_id);
+    ok &= f.vm.n_rtl==1 && f.vm.n_rte==1 && f.vm.n_tilemaps==0 &&
+      layer && layer->x==-20 && elem && elem->x==8 && elem->alpha==0.25;
+    ok &= layer_shader(&f.vm,second_layer,0,0)==4;
+  }
+  if(!ok) fputs("persistent visual ownership, paused scroll or shader isolation failed\n",stderr);
+  /* Destroy while the other room still owns edited cell storage. */
+  room_cleanup(&f); return ok;
+}
+static int persistent_destroyed_map(void){
+  RoomFixture f; if(!room_setup_mode(&f,1)) return 0;
+  int id=f.vm.tilemaps[0].id;
+  f.vm.tilemaps[0].used=0;
+  gml_room_enter(&f.vm,1); gml_room_enter(&f.vm,0);
+  int ok=f.vm.n_tilemaps==1 && f.vm.tilemaps[0].id==id && !gml_tilemap_find(&f.vm,id);
+  if(!ok) fputs("persistent return must not resurrect a removed map\n",stderr);
+  room_cleanup(&f); return ok;
+}
+static int persistent_mode_disabled(void){
+  RoomFixture f; if(!room_setup_mode(&f,1)) return 0;
+  int id=f.vm.tilemaps[0].id;
+  gml_tilemap_set_position(&f.vm.tilemaps[0],4,6);
+  gml_room_enter(&f.vm,1); gml_room_enter(&f.vm,0);
+  *gml_varmap_put(&f.vm.globals,"room_persistent")=vreal(0);
+  gml_room_enter(&f.vm,1); gml_room_enter(&f.vm,0);
+  int ok=f.vm.n_tilemaps==1 && f.vm.tilemaps[0].id!=id &&
+    f.vm.tilemaps[0].x==0 && f.vm.tilemaps[0].y==0;
+  if(!ok) fputs("disabling persistence must restore ordinary room recreation\n",stderr);
+  room_cleanup(&f); return ok;
+}
+static int state_layer_slot_bindings(void){
+  RoomFixture f; if(!room_setup(&f)) return 0;
+  GmlRtLayer *gap=gml_rt_layer_new(&f.vm),*last=gap?gml_rt_layer_new(&f.vm):NULL;
+  int ok=last!=NULL;
+  if(last){
+    int id=last->id;
+    strcpy(last->name,"retained_layer");
+    f.vm.rtl[1].used=0;
+    layer_shader(&f.vm,id,9,1);
+    size_t size=gml_vm_state_size(&f.vm),written=0,used=0;
+    unsigned char *state=malloc(size?size:1);
+    int saved=state && size && gml_vm_state_save(&f.vm,state,size,&written) && written==size;
+    int loaded=saved && gml_vm_state_load(&f.vm,state,size,&used) && used==size;
+    last=gml_rt_layer_find(&f.vm,id);
+    ok &= loaded && last && last->order==2 && layer_shader(&f.vm,id,0,0)==9;
+    if(!ok) fputs("state restoration must retain layer order and slot-indexed shader bindings across a gap\n",stderr);
+    free(state);
+  }
+  room_cleanup(&f); return ok;
+}
 int main(int argc,char **argv){
   const char *filter=NULL;
   if(argc==3 && !strcmp(argv[1],"--case")) filter=argv[2];
@@ -291,7 +383,11 @@ int main(int argc,char **argv){
     {"state_position_and_identity",state_position_and_identity},
     {"ordinary_room_recreates",ordinary_room_recreates},
     {"persistent_room_retains",persistent_room_retains},
-    {"dormant_maps_survive_state",dormant_maps_survive_state}
+    {"dormant_maps_survive_state",dormant_maps_survive_state},
+    {"persistent_visual_ownership",persistent_visual_ownership},
+    {"persistent_destroyed_map",persistent_destroyed_map},
+    {"persistent_mode_disabled",persistent_mode_disabled},
+    {"state_layer_slot_bindings",state_layer_slot_bindings}
   };
   const AnygmTestGroup group={"tilemap_position",cases,sizeof cases/sizeof cases[0]};
   AnygmTestResult result={0};

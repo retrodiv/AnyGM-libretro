@@ -227,6 +227,11 @@ Run `make check TEST=builtin_tile_draw`.
 parent displacement and scrolling, sibling and engine isolation, translated pixel
 lookup/mutation, invalid identities, authored origin, empty-room transitions,
 unchanged zero-local placement and canonical position/identity restoration.
+Persistent-room controls distinguish ordinary recreation, retained and destroyed
+maps, repeated room-owned layer/element transfers, paused scrolling, shader-slot
+isolation, disabling persistence, dormant state and layer-slot gaps on restoration.
+The room owner retains dormant visual arrays behind the opaque `room_visuals`
+pointer; their representation and teardown remain VM-family private.
 Run `make check TEST=builtin_tilemap_position`; its binary also accepts `--case`.
 
 Explicit tile drawing adapts values in `gml_builtin_draw.c`, reads prepared tileset
