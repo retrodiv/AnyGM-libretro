@@ -178,6 +178,11 @@ changing the established shared-string policy of ordinary array release.
 
 ## Resource-query contract coverage
 
+`tests/unit/runtime/test_builtin_contact_action.c` owns legacy contact action
+selection, direction, maximum distance, engine isolation and parity with the
+existing generation-specific collision owner. Run `make check TEST=builtin_contact_action`.
+It does not implement a second contact solver or change the existing movement expectations.
+
 `tests/unit/runtime/test_builtin_map_access.c` owns map pre/post assignment
 expression returns, insertion/replacement, retained string/array identity,
 engine isolation and defensive argument bounds. Run `make check TEST=builtin_map_access`.
