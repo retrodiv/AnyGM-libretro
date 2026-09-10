@@ -3,6 +3,37 @@
 
 # Generated-data provenance
 
+## Queue and stack text formats
+
+The sequence text codecs are first-party implementations over the existing DS
+byte helpers and list-backed resources. Their scalar and nested-array vectors
+were checked against the publisher's publicly available HTML5 source in an
+isolated harness with explicit handle/coercion seams. The exact upstream
+revision and harness conditions are retained in private validation evidence.
+No publisher implementation is bundled or used at build time. The GameMaker
+manual entries for `ds_queue_read`, `ds_queue_write`, `ds_stack_read` and
+`ds_stack_write` supply the replacement and ordering contracts.
+
+Writers emit current queue/stack markers 203/103. Readers also admit 202/102 row
+arrays, including a flat single row and nested multiple rows. The third queue
+header word is ignored, as in the exercised reader; the first-retained offset
+is bounded by the encoded entry count. Hex case is insignificant. There is no
+claim of support for pre-1.3 formats 201/101, even with the optional legacy flag.
+JSON envelopes and object/pointer records are not accepted by these codecs.
+
+Reals retain binary64 bits, strings retain their bytes, arrays become independent
+trees and undefined remains undefined. Boolean and int32 records normalize to
+the runtime's real representation. Int64 records are admitted only when their
+value is exactly representable as a binary64 number; their original type is not
+preserved. This exactness restriction, cyclic-value rejection, resource bounds,
+embedded-NUL rejection and transactional malformed-input behavior are defensive
+policies, not claims about undocumented failure behavior. Edge-case results
+from the separate web implementation were not used as correctness expectations.
+
+`make check TEST=builtin_sequence_codecs` covers literal format data separately
+from writer roundtrips, ordering, array layouts and unchanged rejected destinations.
+The codecs add no canonical state fields or alternate resource owner.
+
 ## VCDIFF decoder and synthetic patches
 
 The upstream releases, licenses, decoder-only configuration and scoped modifications are
@@ -65,8 +96,8 @@ release evidence. The following SHA-256 directives pin only the two
 first-party files in this repository; `make provenance-check` verifies
 their current bytes.
 
-<!-- PROVENANCE-CHECK: src/runtime/builtins/gml_builtin_registry.h = 6f7d99a36cabbc6c41e94355a7989b25630d0b8b3855b58f40fed9b77f852c0e -->
-<!-- PROVENANCE-CHECK: src/generated/gml_builtin_registry_index.h = cdc64736fd736112c092d71352b23f5a858eb4d5072e9c765f00cd4260fb8a98 -->
+<!-- PROVENANCE-CHECK: src/runtime/builtins/gml_builtin_registry.h = ba6eb34c8079ab593784dfbb5713e4774fb76e41ce3b98fd22c1a3bf21e8b5a2 -->
+<!-- PROVENANCE-CHECK: src/generated/gml_builtin_registry_index.h = 7a61240476af4fe2d3ea6ac01abb6acc860f797fe51ebc5920890f2e5d540608 -->
 
 ## Audio setup packets
 

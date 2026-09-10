@@ -8,6 +8,7 @@
 
 #include <ctype.h>
 #include <inttypes.h>
+#include <limits.h>
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -883,24 +884,30 @@ static int ds_native_skip_value(const uint8_t *b,size_t size,size_t *off){
   return 0;
 }
 /* Only called after the same walk has been validated, so the entry is known to fit. */
-static GmlVal ds_native_take_value(const uint8_t *b,size_t *off){
+static int ds_native_take_value_checked(const uint8_t *b,size_t *off,GmlVal *out){
   uint32_t type=ds_native_u32(b,*off);
   if(type==1){
     uint32_t length=ds_native_u32(b,*off+4);
     char *text=malloc((size_t)length+1);
-    GmlVal out=vstr("");
-    if(text){
-      memcpy(text,b+*off+8,length);
-      text[length]=0;
-      out=vstr_owned(text);
-    }
+    if(!text) return 0;
+    memcpy(text,b+*off+8,length);
+    text[length]=0;
+    *out=vstr_owned(text);
     *off+=8+length;
-    return out;
+    return 1;
   }
+  uint64_t bits=(uint64_t)ds_native_u32(b,*off+4)|((uint64_t)ds_native_u32(b,*off+8)<<32);
   double value=0.0;
-  memcpy(&value,b+*off+4,sizeof value);
+  memcpy(&value,&bits,sizeof value);
   *off+=12;
-  return vreal(value);
+  *out=vreal(value);
+  return 1;
+}
+static GmlVal ds_native_take_value(const uint8_t *b,size_t *off){
+  GmlVal out=vstr("");
+  if(!ds_native_take_value_checked(b,off,&out))
+    *off+=8+ds_native_u32(b,*off+4);
+  return out;
 }
 /* Encode the layout accepted by the reader below. A real uses a typed double;
  * a string uses a tag, length and bytes. Other types use the numeric fallback because the
@@ -1105,6 +1112,222 @@ static int ds_priority_read_native(GmlVM *vm,int id,const char *text){
   return ok;
 }
 
+/* Sequence text is an external value tree, not a VM state snapshot. The reader
+ * stages every allocation before replacing the existing list-backed resource. */
+#define DS_SEQUENCE_BYTES (64u*1024u*1024u)
+#define DS_SEQUENCE_VALUES 1000000u
+#define DS_SEQUENCE_DEPTH 64u
+typedef struct {
+  const uint8_t *bytes;
+  size_t size, off;
+  unsigned values;
+  int rows;
+} DsSequenceReader;
+static int ds_sequence_word(DsSequenceReader *r,uint32_t *word){
+  if(r->off>r->size || r->size-r->off<4) return 0;
+  *word=ds_native_u32(r->bytes,r->off); r->off+=4; return 1;
+}
+static int ds_sequence_value(DsSequenceReader *r,unsigned depth,GmlVal *out);
+static int ds_sequence_array(DsSequenceReader *r,uint32_t count,unsigned depth,GmlVal *out){
+  if(depth>=DS_SEQUENCE_DEPTH || r->off>r->size || count>(r->size-r->off)/4 ||
+     count>DS_SEQUENCE_VALUES-r->values) return 0;
+  GmlVal array=gml_arr_new((int)count,vundef());
+  if(!array.arr || gml_val_array_length(array)!=(int)count){
+    gml_values_release(&array,1); return 0;
+  }
+  GmlArr *storage=array.arr;
+  for(uint32_t i=0;i<count;i++) if(!ds_sequence_value(r,depth+1,&storage->data[i])){
+    gml_values_release(&array,1); return 0;
+  }
+  *out=array; return 1;
+}
+static int ds_sequence_value(DsSequenceReader *r,unsigned depth,GmlVal *out){
+  uint32_t type;
+  size_t start=r->off;
+  *out=vundef();
+  if(depth>=DS_SEQUENCE_DEPTH || r->values>=DS_SEQUENCE_VALUES || !ds_sequence_word(r,&type)) return 0;
+  r->values++;
+  if(type==0 || type==1){
+    size_t end=start;
+    if(!ds_native_skip_value(r->bytes,r->size,&end)) return 0;
+    if(type==1 && memchr(r->bytes+start+8,0,end-start-8)) return 0;
+    r->off=start;
+    return ds_native_take_value_checked(r->bytes,&r->off,out);
+  }
+  if(type==5) return 1;
+  if(type==7){
+    uint32_t word;
+    if(!ds_sequence_word(r,&word)) return 0;
+    *out=vreal((double)word-(word>INT32_MAX?4294967296.0:0.0)); return 1;
+  }
+  if(type==13 || type==10){
+    uint32_t low,high;
+    if(!ds_sequence_word(r,&low) || !ds_sequence_word(r,&high)) return 0;
+    uint64_t bits=(uint64_t)low|((uint64_t)high<<32);
+    if(type==13){
+      double value; memcpy(&value,&bits,sizeof value); *out=vreal(value!=0.0); return 1;
+    }
+    /* No typed int64 exists in this value model. Admit only exactly representable
+     * integers; never silently round a save-file value or copy a pointer. */
+    int negative=(high&0x80000000u)!=0;
+    uint64_t magnitude=negative?~bits+1:bits, scan=magnitude;
+    unsigned significant=0;
+    while(scan){ significant++; scan>>=1; }
+    if(significant>53 && (magnitude&((UINT64_C(1)<<(significant-53))-1))) return 0;
+    *out=vreal(negative?-(double)magnitude:(double)magnitude); return 1;
+  }
+  if(type==2){
+    uint32_t count;
+    if(!ds_sequence_word(r,&count)) return 0;
+    if(!r->rows) return ds_sequence_array(r,count,depth,out);
+    if(count==1){
+      if(!ds_sequence_word(r,&count)) return 0;
+      return ds_sequence_array(r,count,depth,out);
+    }
+    if(depth+1>=DS_SEQUENCE_DEPTH || count>(r->size-r->off)/4 ||
+       count>DS_SEQUENCE_VALUES-r->values) return 0;
+    GmlVal array=gml_arr_new((int)count,vundef());
+    if(!array.arr || gml_val_array_length(array)!=(int)count){
+      gml_values_release(&array,1); return 0;
+    }
+    GmlArr *storage=array.arr;
+    for(uint32_t row=0;row<count;row++){
+      uint32_t length;
+      if(r->values>=DS_SEQUENCE_VALUES || !ds_sequence_word(r,&length)){
+        gml_values_release(&array,1); return 0;
+      }
+      r->values++;
+      if(!ds_sequence_array(r,length,depth+1,&storage->data[row])){
+        gml_values_release(&array,1); return 0;
+      }
+    }
+    *out=array; return 1;
+  }
+  return 0;
+}
+static int ds_sequence_read(GmlVM *vm,GmlDSList *dst,const char *text,int queue){
+  if(!text || strnlen(text,(size_t)DS_SEQUENCE_BYTES*2+1)>(size_t)DS_SEQUENCE_BYTES*2) return 0;
+  size_t size=0;
+  uint8_t *bytes=ds_native_decode_hex(text,&size);
+  if(!bytes) return 0;
+  DsSequenceReader r={.bytes=bytes,.size=size};
+  uint32_t marker,count,first=0,reserved;
+  int ok=ds_sequence_word(&r,&marker) &&
+    (marker==(queue?203u:103u) || marker==(queue?202u:102u)) && ds_sequence_word(&r,&count);
+  if(ok && queue) ok=ds_sequence_word(&r,&first) && ds_sequence_word(&r,&reserved);
+  GmlDSList staged={0};
+  if(ok) ok=first<=count && count<=DS_SEQUENCE_VALUES && count<=(size-r.off)/4;
+  if(ok){
+    r.rows=marker==(queue?202u:102u);
+    for(uint32_t i=0;ok && i<count;i++){
+      GmlVal value=vundef();
+      ok=ds_sequence_value(&r,0,&value);
+      if(ok && i>=first){
+        int previous=staged.len;
+        ds_list_push(&staged,value);
+        if(staged.len==previous+1) continue;
+        ok=0;
+      }
+      gml_values_release(&value,1);
+    }
+    if(r.off!=size) ok=0;
+  }
+  if(ok){
+    ds_list_clear_owned(vm,dst);
+    free(dst->item); free(dst->child_kind);
+    dst->item=staged.item; dst->child_kind=staged.child_kind;
+    dst->len=staged.len; dst->cap=staged.cap;
+  } else {
+    gml_values_release(staged.item,(size_t)staged.len);
+    free(staged.item); free(staged.child_kind);
+  }
+  free(bytes); return ok;
+}
+static int ds_sequence_space(size_t *off,size_t count){
+  if(*off>DS_SEQUENCE_BYTES || count>DS_SEQUENCE_BYTES-*off) return 0;
+  *off+=count; return 1;
+}
+static int ds_sequence_emit(GmlVM *vm,GmlVal value,uint8_t *bytes,size_t *off,
+                            const void **parents,unsigned depth,unsigned *values){
+  if(depth>=DS_SEQUENCE_DEPTH || *values>=DS_SEQUENCE_VALUES) return 0;
+  (*values)++;
+  size_t start=*off;
+  if(value.t==V_REAL){
+    if(isfinite(value.d) && GML_IS_STRUCT_ID(value.d) && gml_struct_find(vm,(unsigned)value.d)) return 0;
+    if(!ds_sequence_space(off,12)) return 0;
+    if(bytes){
+      uint64_t bits; memcpy(&bits,&value.d,sizeof bits);
+      ds_native_put_u32(bytes,&start,0);
+      ds_native_put_u32(bytes,&start,(uint32_t)bits);
+      ds_native_put_u32(bytes,&start,(uint32_t)(bits>>32));
+    }
+    return 1;
+  }
+  if(value.t==V_STR){
+    const char *text=value.s?value.s:"";
+    size_t length=strnlen(text,DS_SEQUENCE_BYTES+1u);
+    if(!ds_sequence_space(off,8) || !ds_sequence_space(off,length)) return 0;
+    if(bytes){
+      ds_native_put_u32(bytes,&start,1); ds_native_put_u32(bytes,&start,(uint32_t)length);
+      memcpy(bytes+start,text,length);
+    }
+    return 1;
+  }
+  if(value.t==V_UNDEF){
+    if(!ds_sequence_space(off,4)) return 0;
+    if(bytes) ds_native_put_u32(bytes,&start,5);
+    return 1;
+  }
+  if(value.t!=V_ARR || !value.arr) return 0;
+  for(unsigned i=0;i<depth;i++) if(parents[i]==value.arr) return 0;
+  parents[depth]=value.arr;
+  GmlArr *array=value.arr;
+  int count=gml_val_array_length(value);
+  if(count<0 || (unsigned)count>DS_SEQUENCE_VALUES-*values || array->len<0 ||
+     array->len>array->cap || array->cap>GML_ARR_MAX_CAP || (array->len && !array->data)) return 0;
+  if(!ds_sequence_space(off,8)) return 0;
+  if(bytes){ ds_native_put_u32(bytes,&start,2); ds_native_put_u32(bytes,&start,(uint32_t)count); }
+  if(array->is_2d){
+    if(depth+1>=DS_SEQUENCE_DEPTH || count>array->row_cap || (count && !array->row_len)) return 0;
+    for(int row=0;row<count;row++){
+      int length=gml_val_array_length_2d(value,row);
+      if(length<0 || (unsigned)length>DS_SEQUENCE_VALUES-*values || *values>=DS_SEQUENCE_VALUES) return 0;
+      (*values)++;
+      start=*off;
+      if(!ds_sequence_space(off,8)) return 0;
+      if(bytes){ ds_native_put_u32(bytes,&start,2); ds_native_put_u32(bytes,&start,(uint32_t)length); }
+      parents[depth+1]=NULL;
+      for(int column=0;column<length;column++)
+        if(!ds_sequence_emit(vm,gml_arr_get_2d(value,row,column),bytes,off,parents,depth+2,values)) return 0;
+    }
+  } else {
+    for(int i=0;i<count;i++)
+      if(!ds_sequence_emit(vm,gml_arr_get(value,i),bytes,off,parents,depth+1,values)) return 0;
+  }
+  return 1;
+}
+static GmlVal ds_sequence_write(GmlVM *vm,GmlDSList *src,int queue){
+  if(src->len<0 || (unsigned)src->len>DS_SEQUENCE_VALUES) return vundef();
+  size_t size=queue?16:8;
+  unsigned values=0;
+  const void *parents[DS_SEQUENCE_DEPTH]={0};
+  for(int i=0;i<src->len;i++)
+    if(!ds_sequence_emit(vm,src->item[i],NULL,&size,parents,0,&values)) return vundef();
+  uint8_t *bytes=malloc(size);
+  char *text=malloc(size*2+1);
+  if(!bytes || !text){ free(bytes); free(text); return vundef(); }
+  size_t off=0;
+  ds_native_put_u32(bytes,&off,queue?203:103); ds_native_put_u32(bytes,&off,(uint32_t)src->len);
+  if(queue){ ds_native_put_u32(bytes,&off,0); ds_native_put_u32(bytes,&off,(uint32_t)src->len); }
+  values=0;
+  for(int i=0;i<src->len;i++) if(!ds_sequence_emit(vm,src->item[i],bytes,&off,parents,0,&values)){
+    free(bytes); free(text); return vundef();
+  }
+  static const char digits[]="0123456789ABCDEF";
+  for(size_t i=0;i<size;i++){ text[i*2]=digits[bytes[i]>>4]; text[i*2+1]=digits[bytes[i]&15]; }
+  text[size*2]=0; free(bytes); return vstr_owned(text);
+}
+
 GmlVal gml_builtin_try_ds(GmlVM *vm, const char *nm, GmlVal *a, int n){
   GmlRender *R=(GmlRender*)vm->render;
   (void)R;
@@ -1184,6 +1407,20 @@ GmlVal gml_builtin_try_ds(GmlVM *vm, const char *nm, GmlVal *a, int n){
       l->item[p]=ds_val_clone(a[2]); if(l->child_kind) l->child_kind[p]=0; } return vreal(0); }
   /* Implement FIFO queues and LIFO stacks through GmlDSList storage and shared IDs. */
   if(!strcmp(nm,"ds_queue_create")||!strcmp(nm,"ds_stack_create")) return vreal((double)ds_list_create_id(vm));
+  if(!strcmp(nm,"ds_queue_read") || !strcmp(nm,"ds_stack_read") ||
+     !strcmp(nm,"ds_queue_write") || !strcmp(nm,"ds_stack_write")){
+    int queue=nm[3]=='q', read=strstr(nm,"_read")!=NULL;
+    GmlDSList *list=NULL;
+    if(n>=1 && a[0].t==V_REAL && isfinite(a[0].d) && a[0].d>=INT_MIN && a[0].d<=INT_MAX)
+      list=ds_list_slot(vm,(int)a[0].d);
+    if(list && read && n>=2 && a[1].t==V_STR && ds_sequence_read(vm,list,a[1].s,queue)) return vreal(1);
+    if(list && !read){
+      GmlVal result=ds_sequence_write(vm,list,queue);
+      if(result.t==V_STR) return result;
+    }
+    anygm_host_logf(vm->host,ANYGM_LOG_WARN,"%s: invalid handle or unsupported sequence data",nm);
+    return read?vreal(0):vundef();
+  }
   if(!strcmp(nm,"ds_queue_copy")||!strcmp(nm,"ds_stack_copy")){
     if(n<2) return vreal(0);
     GmlDSList *dst=ds_list_slot(vm,(int)N(a,n,0));

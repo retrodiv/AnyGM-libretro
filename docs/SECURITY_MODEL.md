@@ -236,6 +236,13 @@ occurs in the engine's scratch transaction, so any resource-stage failure
 discards the candidate and preserves the prior live engine exactly.
 The list/queue/stack pool accepts at most 1,024 simultaneously live containers; this remains a
 state-reader bound as well as a runtime resource bound.
+Queue/stack text codecs accept at most 64 MiB of decoded bytes, one million
+value nodes (including synthesized legacy rows), and 64 value-tree levels.
+Writers apply the same budgets and reject cycles. Readers validate the exact
+extent and stage all decoded values before replacing a live sequence. Unsupported
+records, non-exact integer conversions and embedded NUL string bytes reject
+without changing the destination; old resource values retain their established
+escaped-reference lifetime policy. This external text format is not a savestate.
 Paths have at most 65,536 resource slots and 4,194,304 points in either their retained control
 array or sampled polyline. Smoothing checks the expanded sample count before allocation.
 Runtime edits publish only after the new controls and finite sampled geometry are ready;
