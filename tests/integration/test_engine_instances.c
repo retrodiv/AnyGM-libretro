@@ -3100,7 +3100,7 @@ int main(int argc,char **argv){
   uint64_t core_size=read_u64(damaged+64);
   uint64_t render_size=read_u64(damaged+72);
   uint64_t payload_size=read_u64(damaged+96);
-  size_t frame_width_offset=112u+2048u+44u+
+  size_t frame_width_offset=112u+2048u+44u+4u+
     sizeof first->pad_current+sizeof first->pad_previous+
     sizeof first->key_current+sizeof first->key_previous;
   if(frame_width_offset+12>112u+core_size) return 1;
