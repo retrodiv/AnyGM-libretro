@@ -64,7 +64,11 @@ static int fixture_init(Fixture *f){
     "global.argc = argument_count; "
     "if(global.mode == 1) call_cancel(global.cancel); "
     "if(global.mode == 2) global.child = call_later(1,1,global.second); "
-    "if(global.mode == 3) amount += 5;",
+    "if(global.mode == 3) amount += 5; "
+    "if(global.mode == 4) { call_cancel(global.cancel); "
+    "global.child = call_later(1,1,global.second); } "
+    "if(global.mode == 5) { call_cancel(global.cancel); amount += 5; } "
+    "if(global.mode == 6 && global.hits == 2) call_cancel(global.cancel);",
     "global.hits += 1; global.trace = global.trace * 10 + 2;",
     "global.hits += 1; global.trace = global.trace * 10 + 3;"
   };
@@ -155,6 +159,34 @@ static int periods_case(void){
   gml_time_sources_tick(&f.vm); ok &= expect(number(&f,"hits")==1,"seconds expire on an exact deterministic deadline");
   fixture_free(&f); return ok;
 }
+static int seconds_phase_case(void){
+  Fixture f; int ok=1; if(!fixture_init(&f)){fixture_free(&f); return 0;}
+  later(&f,0.3,0,0,0,0,&ok);
+  for(int tick=1;tick<=4;tick++){
+    gml_time_sources_tick(&f.vm);
+    ok &= expect(number(&f,"hits")== (tick>=3),"fractional seconds do not slip an exact deadline");
+  }
+  set_global(&f,"hits",vreal(0));
+  GmlVal loop=later(&f,0.25,0,0,1,0,&ok);
+  const int expected[]={0,0,1,1,2,2,2,3,3,4};
+  for(int tick=0;tick<10;tick++){
+    gml_time_sources_tick(&f.vm);
+    ok &= expect(number(&f,"hits")==expected[tick],"loop preserves residual phase between fractional deadlines");
+  }
+  call(&f,"call_cancel",&loop,1,0,&ok); set_global(&f,"hits",vreal(0));
+  loop=later(&f,0.25,0,0,1,0,&ok);
+  GmlVal speed[]={vreal(10.0/9.0),vreal(0)};
+  gml_builtin_call(&f.vm,"game_set_speed",speed,2); gml_time_sources_tick(&f.vm);
+  ok &= expect(number(&f,"hits")==1,"overshoot emits at most one callback in a tick");
+  speed[0]=vreal(10); gml_builtin_call(&f.vm,"game_set_speed",speed,2);
+  const int after_overshoot[]={2,2,2,3};
+  for(int tick=0;tick<4;tick++){
+    gml_time_sources_tick(&f.vm);
+    ok &= expect(number(&f,"hits")==after_overshoot[tick],"overshoot wraps modulo the period instead of resetting phase");
+  }
+  call(&f,"call_cancel",&loop,1,0,&ok);
+  fixture_free(&f); return ok;
+}
 static int visibility_case(void){
   int ok=1;
   for(int cached=0;cached<2;cached++){
@@ -213,6 +245,33 @@ static int ordering_case(void){
   gml_time_sources_tick(&f.vm); ok &= expect(number(&f,"trace")==12,"new hidden work joins the next tick");
   fixture_free(&f); return ok;
 }
+static int callback_reuse_case(void){
+  int ok=1;
+  for(int loop=0;loop<=1;loop++){
+    Fixture f; if(!fixture_init(&f)){fixture_free(&f); return 0;}
+    set_global(&f,"mode",vreal(4));
+    GmlVal id=later(&f,1,1,0,loop,0,&ok); set_global(&f,"cancel",id);
+    gml_time_sources_tick(&f.vm);
+    ok &= expect(number(&f,"trace")==1 && root_count(&f)==2 && number(&f,"child")>id.d,
+                 "self-cancellation may reuse its slot without deleting replacement work");
+    call(&f,"call_cancel",&id,1,0,&ok); gml_time_sources_tick(&f.vm);
+    ok &= expect(number(&f,"trace")==12 && root_count(&f)==0,
+                 "stale handle cannot cancel callback-created replacement");
+    fixture_free(&f);
+  }
+  Fixture f; if(!fixture_init(&f)){fixture_free(&f); return 0;}
+  set_global(&f,"mode",vreal(2)); ordinary(&f,0,0); gml_time_sources_tick(&f.vm);
+  ok &= expect(number(&f,"trace")==1,"global callback cannot inject work into the current hidden phase");
+  gml_time_sources_tick(&f.vm);
+  ok &= expect(number(&f,"trace")==12,"global-created hidden work joins the next tick");
+  set_global(&f,"mode",vreal(6)); set_global(&f,"hits",vreal(0));
+  GmlVal id=later(&f,2,1,0,1,0,&ok); set_global(&f,"cancel",id);
+  for(int tick=1;tick<=6;tick++){
+    gml_time_sources_tick(&f.vm);
+    ok &= expect(number(&f,"hits")== (tick<4?tick/2:2),"loop cancels on its second callback at the expected tick");
+  }
+  fixture_free(&f); return ok;
+}
 static int pause_and_binding_case(void){
   Fixture f; int ok=1; if(!fixture_init(&f)){fixture_free(&f); return 0;}
   ordinary(&f,1,1); later(&f,1,1,0,0,0,&ok); GmlVal game=vreal(1);
@@ -228,6 +287,11 @@ static int pause_and_binding_case(void){
   later(&f,1,1,0,0,0,&ok); gml_time_sources_tick(&f.vm);
   GmlVal *amount=gml_varmap_get(&receiver->vars,"amount");
   ok &= expect(amount && real_is(*amount,12),"delayed callback preserves its bound receiver");
+  set_global(&f,"mode",vreal(5));
+  GmlVal id=later(&f,1,1,0,1,0,&ok); set_global(&f,"cancel",id);
+  gml_time_sources_tick(&f.vm);
+  amount=gml_varmap_get(&receiver->vars,"amount");
+  ok &= expect(amount && real_is(*amount,17),"bound receiver stays usable after self-cancellation");
   fixture_free(&f); return ok;
 }
 static int restore_case(void){
@@ -248,6 +312,36 @@ static int restore_case(void){
   }
   free(bytes); free(again); fixture_free(&f); return ok;
 }
+static int binding_gc_case(void){
+  Fixture f; int ok=1; if(!fixture_init(&f)){fixture_free(&f); return 0;}
+  GmlInstance *receiver=gml_struct_new(&f.vm),*unreachable=gml_struct_new(&f.vm);
+  if(!receiver || !unreachable){fixture_free(&f); return 0;}
+  unsigned receiver_id=receiver->id,unreachable_id=unreachable->id;
+  *gml_varmap_put(&receiver->vars,"amount")=vreal(7);
+  GmlVal args[]={vreal(receiver_id),f.callback[0]};
+  f.callback[0]=gml_builtin_call(&f.vm,"method",args,2);
+  unsigned method_id=(unsigned)f.callback[0].d;
+  set_global(&f,"mode",vreal(3));
+  GmlVal id=later(&f,2,1,0,0,0,&ok);
+  gml_struct_gc(&f.vm);
+  ok &= expect(!gml_struct_find(&f.vm,unreachable_id) && gml_struct_find(&f.vm,receiver_id) &&
+               gml_struct_find(&f.vm,method_id),"real collection removes an unrooted control and retains the callback graph");
+  gml_time_sources_tick(&f.vm);
+  size_t size=gml_vm_state_size(&f.vm),written=0,used=0; unsigned char *bytes=malloc(size?size:1);
+  ok &= expect(bytes && gml_vm_state_save(&f.vm,bytes,size,&written) && written==size,"bound callback graph saves");
+  call(&f,"call_cancel",&id,1,0,&ok); gml_struct_gc(&f.vm);
+  ok &= expect(!gml_struct_find(&f.vm,receiver_id) && !gml_struct_find(&f.vm,method_id),"cancelled callback releases its only graph root");
+  if(ok) ok &= expect(gml_vm_state_load(&f.vm,bytes,size,&used) && used==size,"bound callback graph restores");
+  if(ok){
+    gml_struct_gc(&f.vm); gml_time_sources_tick(&f.vm);
+    receiver=gml_struct_find(&f.vm,receiver_id);
+    GmlVal *amount=receiver?gml_varmap_get(&receiver->vars,"amount"):NULL;
+    ok &= expect(amount && real_is(*amount,12),"restored callback keeps its bound receiver through collection");
+    gml_struct_gc(&f.vm);
+    ok &= expect(!gml_struct_find(&f.vm,receiver_id) && !gml_struct_find(&f.vm,method_id),"completed callback releases its only graph root");
+  }
+  free(bytes); fixture_free(&f); return ok;
+}
 static int bounds_and_reuse_case(void){
   Fixture f,other; int ok=1;
   if(!fixture_init(&f)){fixture_free(&f); return 0;}
@@ -262,6 +356,15 @@ static int bounds_and_reuse_case(void){
   args[2]=vundef(); ok &= expect(real_is(call(&f,"call_later",args,4,1,&ok),-1),"invalid callback is rejected");
   args[2]=f.callback[0]; args[1]=vreal(3);
   ok &= expect(real_is(call(&f,"call_later",args,4,1,&ok),-1),"invalid units reject without a source");
+  for(int field=0;field<3;field++){
+    const double invalid[]={NAN,INFINITY,-INFINITY};
+    for(size_t i=0;i<sizeof invalid/sizeof invalid[0];i++){
+      args[0]=vreal(1); args[1]=vreal(1); args[2]=f.callback[0]; args[field]=vreal(invalid[i]);
+      ok &= expect(real_is(call(&f,"call_later",args,4,1,&ok),-1),"nonfinite creation argument retains no work");
+    }
+  }
+  call(&f,"call_cancel",NULL,0,1,&ok);
+  ok &= expect(root_count(&f)==0,"invalid creation and empty cancellation leave the owner empty");
   double previous=-1;
   for(int i=0;i<1100;i++){
     GmlVal current=later(&f,1,1,0,0,0,&ok);
@@ -275,8 +378,9 @@ static int bounds_and_reuse_case(void){
 }
 int main(int argc,char **argv){
   const AnygmTestCase cases[]={{"basic",basic_case},{"periods",periods_case},{"visibility",visibility_case},
+    {"seconds_phase",seconds_phase_case},{"callback_reuse",callback_reuse_case},
     {"cancellation",cancellation_case},{"ordering",ordering_case},{"pause_and_binding",pause_and_binding_case},
-    {"restore",restore_case},{"bounds_and_reuse",bounds_and_reuse_case}};
+    {"restore",restore_case},{"binding_gc",binding_gc_case},{"bounds_and_reuse",bounds_and_reuse_case}};
   const AnygmTestGroup group={"delayed_calls",cases,sizeof cases/sizeof cases[0]};
   const char *filter=argc==3 && !strcmp(argv[1],"--case")?argv[2]:NULL; AnygmTestResult result={0};
   int ok=anygm_test_run_groups(&group,1,filter,&result);

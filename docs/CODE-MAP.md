@@ -192,6 +192,9 @@ retains one creation-ordered snapshot and places hidden callbacks between its
 global and game phases. The builtin-state owner allocates the shared pool and
 reclaims hidden calls, including callback-time cancellation; canonical parent
 metadata preserves that distinction through state restoration.
+`tests/fuzz/test_state_security.c` locates a complete synthetic delayed-call
+table and exercises bounded record rejection, late-failure rollback, previous-schema
+rejection and same-run restoration across Reset through the public engine API.
 
 `tests/unit/runtime/test_builtin_map_access.c` owns map pre/post assignment
 expression returns, insertion/replacement, retained string/array identity,

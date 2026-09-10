@@ -3,6 +3,7 @@
  */
 #include "anygm.h"
 #include "engine_internal.h"
+#include "gml_builtin.h"
 #include "stdio_vfs.h"
 #include "synthetic_content.h"
 
@@ -677,6 +678,126 @@ done:
   return ok;
 }
 
+/* Match the complete independently encoded two-call table inside the bounded VM section.
+ * This makes mutations field-specific without importing the private pool representation. */
+static size_t delayed_table(const uint8_t *bytes,size_t size,uint32_t first,
+                            uint32_t second,double callback){
+  enum { TABLE_BYTES=12+2*64 };
+  uint8_t expected[TABLE_BYTES]={0};
+  write_u32(expected,second+1); write_u32(expected+4,1); write_u32(expected+8,2);
+  for(int i=0;i<2;i++){
+    uint8_t *record=expected+12+i*64;
+    write_u32(record,i?second:first); write_u32(record+4,2);
+    write_double(record+8,i?7:123.25); write_double(record+16,i?7:123.25);
+    write_u32(record+24,i?1:0); write_u32(record+28,1);
+    write_u32(record+32,i?UINT32_MAX:1); write_u32(record+36,i?UINT32_MAX:1);
+    write_u32(record+44,1); write_u32(record+48,V_REAL);
+    write_double(record+52,callback); write_u32(record+60,V_UNDEF);
+  }
+  if(size<STATE_HEADER_SIZE) return SIZE_MAX;
+  uint64_t core=read_u64(bytes+64),render=read_u64(bytes+72),vm=read_u64(bytes+80);
+  size_t start=STATE_HEADER_SIZE;
+  if(core>size-start) return SIZE_MAX;
+  start+=(size_t)core;
+  if(render>size-start) return SIZE_MAX;
+  start+=(size_t)render;
+  if(vm>size-start || vm<TABLE_BYTES) return SIZE_MAX;
+  size_t found=SIZE_MAX;
+  for(size_t offset=start;offset<=start+(size_t)vm-TABLE_BYTES;offset++){
+    if(memcmp(bytes+offset,expected,sizeof expected)) continue;
+    if(found!=SIZE_MAX) return SIZE_MAX;
+    found=offset;
+  }
+  return found;
+}
+
+static int delayed_call_state_cases(const AnygmHostServices *services,
+                                     const AnygmContentSource *source){
+  AnygmEngine *engine=NULL; uint8_t *baseline=NULL,*candidate=NULL; size_t size=0;
+  int ok=anygm_create(services,&engine)==ANYGM_OK;
+  if(!ok) return fail("delayed-call engine creation failed");
+  ok=anygm_load(engine,source,NULL)==ANYGM_OK && engine->win.n_code>0;
+  if(!ok){fail("delayed-call state content failed"); goto done;}
+  GmlVal args[]={vreal(123.25),vreal(0),vreal(GML_FUNCVAL_TAG),vreal(0)};
+  GmlVal first=gml_builtin_call(&engine->vm,"call_later",args,4);
+  args[0]=vreal(7); args[1]=vreal(1); args[3]=vreal(1);
+  GmlVal second=gml_builtin_call(&engine->vm,"call_later",args,4);
+  ok=first.t==V_REAL && second.t==V_REAL && first.d>=3 && second.d>first.d &&
+     save_state(engine,&baseline,&size);
+  if(!ok){fail("delayed-call baseline failed"); goto done;}
+  size_t table=delayed_table(baseline,size,(uint32_t)first.d,(uint32_t)second.d,args[2].d);
+  if(table==SIZE_MAX){ok=fail("delayed-call table is not uniquely identified"); goto done;}
+  size_t record=table+12,loop=record+64;
+  candidate=malloc(size);
+  if(!candidate){ok=fail("delayed-call mutation allocation failed"); goto done;}
+  /* The valid table must load before its corrupt variants have diagnostic value. */
+  gml_builtin_call(&engine->vm,"call_cancel",&first,1);
+  gml_builtin_call(&engine->vm,"call_cancel",&second,1);
+  ok=anygm_state_load(engine,baseline,size)==ANYGM_OK && engine_matches(engine,baseline,size);
+  if(!ok){fail("valid delayed-call state does not restore exactly"); goto done;}
+  const struct {size_t offset; uint32_t value; const char *label;} mutations[]={
+    {table,(uint32_t)second.d,"non-advancing next timer identity"},
+    {table,UINT32_MAX,"overflowing next timer identity"},
+    {table+8,257,"oversized shared timer count"},
+    {record,(uint32_t)second.d,"duplicate timer identity"},
+    {record,UINT32_MAX,"overflowing timer identity"},
+    {record+4,(uint32_t)second.d,"ordinary timer parented by a hidden timer"},
+    {record+4,UINT32_MAX,"missing timer parent"},
+    {record+24,2,"invalid delayed-call units"},
+    {record+28,0,"initial hidden timer state"},
+    {record+28,2,"paused hidden timer state"},
+    {record+32,2,"finite multi-repeat hidden timer"},
+    {record+36,2,"excess single-shot repetitions"},
+    {loop+36,0,"inconsistent looping repetitions"},
+    {record+40,UINT32_MAX,"negative completed repetitions"},
+    {record+44,0,"nearest-expiry hidden timer"},
+    {record+48,UINT32_MAX,"invalid callback value kind"},
+    {record+60,UINT32_MAX,"invalid hidden callback argument kind"}
+  };
+  for(size_t i=0;ok && i<sizeof mutations/sizeof mutations[0];i++)
+    ok=reject_payload_u32(engine,candidate,size,baseline,size,mutations[i].offset,
+                          mutations[i].value,mutations[i].label);
+  const struct {size_t offset; double value; const char *label;} reals[]={
+    {record+8,0,"zero delayed-call period"},
+    {record+8,NAN,"nonfinite delayed-call period"},
+    {record+16,124,"remaining delay exceeds its period"},
+    {record+16,-1,"negative remaining delay"},
+    {record+16,INFINITY,"infinite remaining delay"},
+    {loop+8,7.5,"fractional frame period"},
+    {record+52,NAN,"nonfinite callback identity"},
+    {record+52,2147483648.0,"overflowing callback identity"},
+    {record+52,-1,"negative callback identity"},
+    {record+52,GML_FUNCVAL_TAG+0.5,"fractional callback identity"},
+    {record+52,0,"untagged callback identity"}
+  };
+  for(size_t i=0;ok && i<sizeof reals/sizeof reals[0];i++){
+    memcpy(candidate,baseline,size); write_double(candidate+reals[i].offset,reals[i].value);
+    refresh_checksum(candidate);
+    ok=reject_unchanged(engine,candidate,size,baseline,size,reals[i].label);
+  }
+  if(ok){
+    /* A valid source mutation followed by an audio failure must roll back too. */
+    size_t audio_start=STATE_HEADER_SIZE+(size_t)read_u64(baseline+64)+
+      (size_t)read_u64(baseline+72)+(size_t)read_u64(baseline+80);
+    memcpy(candidate,baseline,size); write_double(candidate+record+16,12);
+    write_u32(candidate+audio_start,0); refresh_checksum(candidate);
+    ok=reject_unchanged(engine,candidate,size,baseline,size,"late rejection after delayed-call decoding");
+  }
+  if(ok){
+    size_t vm_start=STATE_HEADER_SIZE+(size_t)read_u64(baseline+64)+(size_t)read_u64(baseline+72);
+    ok=reject_payload_u32(engine,candidate,size,baseline,size,vm_start+4,13,"previous hidden-free VM schema");
+  }
+  if(ok){
+    memcpy(candidate,baseline,size); write_u32(candidate+4,24);
+    ok=reject_unchanged(engine,candidate,size,baseline,size,"previous hidden-free root schema");
+  }
+  if(ok) ok=anygm_reset(engine)==ANYGM_OK && anygm_state_size(engine)<size &&
+    anygm_state_load(engine,baseline,size)==ANYGM_OK && engine_matches(engine,baseline,size);
+  if(!ok) fail("delayed-call state contract failed");
+done:
+  free(candidate); free(baseline); anygm_destroy(engine); return ok;
+}
+
 int main(void){
   AnygmSyntheticContent fixture;
   if(!anygm_synthetic_list_override_content_create(&fixture))
@@ -958,6 +1079,8 @@ int main(void){
 
   if(ok) ok=tilemap_state_cases(&services);
   if(ok) ok=dormant_visual_state_cases(&services);
+
+  if(ok) ok=delayed_call_state_cases(&services,&source);
 
   if(ok) ok=content_override_state_cases(&services,&fixture);
 
