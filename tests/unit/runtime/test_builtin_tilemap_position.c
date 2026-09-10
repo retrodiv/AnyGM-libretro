@@ -158,7 +158,7 @@ static void room_cleanup(RoomFixture *f){
   f->win.strs=NULL; f->win.str_charoff=NULL;
   gml_win_free(&f->win);
 }
-static int room_setup(RoomFixture *f){
+static int room_setup_mode(RoomFixture *f,int persistent){
   memset(f,0,sizeof *f);
   word(f->bytes,0,2); word(f->bytes,4,32); word(f->bytes,8,160);
   const char *names[]={"map_room","empty_room","map_layer"};
@@ -172,6 +172,7 @@ static int room_setup(RoomFixture *f){
     word(f->bytes,room+12,96); word(f->bytes,room+16,60);
     word(f->bytes,room+32,UINT32_MAX); word(f->bytes,room+48,640);
   }
+  word(f->bytes,32+20,(uint32_t)persistent);
   word(f->bytes,32+88,300); word(f->bytes,300,1); word(f->bytes,304,384);
   word(f->bytes,384,f->offsets[2]); word(f->bytes,392,4); word(f->bytes,396,17);
   real32(f->bytes,400,11); real32(f->bytes,404,13); word(f->bytes,416,1);
@@ -186,6 +187,7 @@ static int room_setup(RoomFixture *f){
   fputs("neutral authored map fixture failed to load\n",stderr);
   room_cleanup(f); return 0;
 }
+static int room_setup(RoomFixture *f){ return room_setup_mode(f,0); }
 static int authored_origin(void){
   RoomFixture f; if(!room_setup(&f)) return 0;
   double x,y; gml_tilemap_effective(&f.vm,&f.vm.tilemaps[0],&x,&y,NULL,NULL);
@@ -232,6 +234,50 @@ static int state_position_and_identity(void){
   }
   free(first); free(second); room_cleanup(&f); return ok;
 }
+
+static int room_return_case(int persistent,int through_state){
+  RoomFixture f; if(!room_setup_mode(&f,persistent)) return 0;
+  GmlTileMap *map=&f.vm.tilemaps[0];
+  int id=map->id,parent_id=f.vm.rtl[0].id;
+  gml_tilemap_set_position(map,4,6);
+  int ok=gml_tilemap_set_cell(map,1,1,9);
+  f.vm.rtl[0].x=31; f.vm.rtl[0].y=-7; f.vm.rtl[0].touched=1;
+  GmlVal *flag=gml_varmap_get(&f.vm.globals,"room_persistent");
+  ok &= flag && flag->d==persistent;
+  gml_room_enter(&f.vm,1);
+  ok &= f.vm.n_tilemaps==0 && !gml_tilemap_find(&f.vm,id);
+  if(through_state){
+    size_t size=gml_vm_state_size(&f.vm),written=0,used=0;
+    unsigned char *state=malloc(size?size:1);
+    int saved=state && size && gml_vm_state_save(&f.vm,state,size,&written) && written==size;
+    if(saved){
+      gml_room_enter(&f.vm,0);
+      int loaded=gml_vm_state_load(&f.vm,state,size,&used) && used==size && f.vm.room_index==1;
+      ok &= loaded;
+      if(!loaded) fputs("dormant-map test state failed to restore its empty active room\n",stderr);
+    } else ok=0;
+    free(state);
+  }
+  gml_room_enter(&f.vm,0);
+  map=f.vm.n_tilemaps==1?&f.vm.tilemaps[0]:NULL;
+  GmlRtLayer *parent=f.vm.n_rtl==1?&f.vm.rtl[0]:NULL;
+  if(persistent){
+    int retained=map && parent && map->id==id && parent->id==parent_id &&
+      map->x==4 && map->y==6 && map->tiles[12]==9 && parent->x==31 && parent->y==-7;
+    if(!retained) fprintf(stderr,"persistent room%s lost map/layer handles, local position or cells\n",
+                         through_state?" restored from a dormant snapshot":"");
+    ok &= retained;
+  }else{
+    int recreated=map && parent && map->id!=id && map->x==0 && map->y==0 &&
+      map->tiles[12]==4 && parent->x==11 && parent->y==13 && !gml_tilemap_find(&f.vm,id);
+    if(!recreated) fputs("ordinary room return must recreate authored maps and invalidate old handles\n",stderr);
+    ok &= recreated;
+  }
+  room_cleanup(&f); return ok;
+}
+static int ordinary_room_recreates(void){ return room_return_case(0,0); }
+static int persistent_room_retains(void){ return room_return_case(1,0); }
+static int dormant_maps_survive_state(void){ return room_return_case(1,1); }
 int main(int argc,char **argv){
   const char *filter=NULL;
   if(argc==3 && !strcmp(argv[1],"--case")) filter=argv[2];
@@ -242,7 +288,10 @@ int main(int argc,char **argv){
     {"invalid_identity",invalid_identity},{"defensive_inputs",defensive_inputs},
     {"zero_local_origin",zero_local_origin},
     {"authored_origin",authored_origin},{"room_without_maps",room_without_maps},
-    {"state_position_and_identity",state_position_and_identity}
+    {"state_position_and_identity",state_position_and_identity},
+    {"ordinary_room_recreates",ordinary_room_recreates},
+    {"persistent_room_retains",persistent_room_retains},
+    {"dormant_maps_survive_state",dormant_maps_survive_state}
   };
   const AnygmTestGroup group={"tilemap_position",cases,sizeof cases/sizeof cases[0]};
   AnygmTestResult result={0};
