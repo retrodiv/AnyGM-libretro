@@ -2512,7 +2512,8 @@ static int payload_compatibility_script_code(GmlVM *vm,const char *name){
   int classic=classic_extension_script_code(vm,name);
   if(classic>=0) return classic;
   if(!vm || !vm->win || anygm_policy_uses_classic_runtime(vm->win) || !name ||
-     (strcmp(name,"background_get_height") && strcmp(name,"background_get_width") &&
+     (strcmp(name,"action_move_to") &&
+      strcmp(name,"background_get_height") && strcmp(name,"background_get_width") &&
       strcmp(name,"draw_background") && strcmp(name,"draw_background_ext"))) return -1;
   char code_name[192];
   snprintf(code_name,sizeof code_name,"gml_Script_%s",name);

@@ -247,8 +247,13 @@ static int retired_builtin_script_shadow_case(const char *script_name){
   vm.win=&win;
   vm.cur_code_index=-1;
   vm.math_epsilon=1e-5;
-  GmlVal result=gml_vm_run_code(&vm,0,NULL,NULL,NULL,0);
-  int ok=result.t==V_REAL && result.d==91;
+  GmlVal result=vundef();
+  int ok=1;
+  /* Repeat the call site so a cached native ID cannot displace the payload script. */
+  for(int repeat=0;ok && repeat<3;repeat++){
+    result=gml_vm_run_code(&vm,0,NULL,NULL,NULL,0);
+    ok=result.t==V_REAL && result.d==91;
+  }
   if(!ok)
     fprintf(stderr,"retired builtin %s replaced the packaged compatibility script: %.0f\n",
             script_name,result.t==V_REAL?result.d:-1.0);
@@ -264,7 +269,8 @@ static int retired_builtin_script_shadow_case(const char *script_name){
 }
 
 int expect_retired_builtin_script_shadow(void){
-  return retired_builtin_script_shadow_case("background_get_height") &&
+  return retired_builtin_script_shadow_case("action_move_to") &&
+         retired_builtin_script_shadow_case("background_get_height") &&
          retired_builtin_script_shadow_case("background_get_width") &&
          retired_builtin_script_shadow_case("draw_background") &&
          retired_builtin_script_shadow_case("draw_background_ext") &&
