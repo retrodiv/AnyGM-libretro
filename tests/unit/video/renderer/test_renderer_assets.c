@@ -2,6 +2,7 @@
  * Copyright (c) 2026 retrodiv <retrodiv@proton.me>
  */
 #include "gml_render_internal.h"
+#include "gml_render_state.h"
 #include "stdio_vfs.h"
 
 #include <stdint.h>
@@ -47,7 +48,51 @@ static int write_file(const char *path,const uint8_t *data,size_t size){
   return written==size;
 }
 
+static int runtime_sprite_names_survive_state(void){
+  GmlWin win={0};
+  GmlRender source,restored;
+  REQUIRE(gml_render_init(&source,&win)==0 && gml_render_init(&restored,&win)==0,
+          "sprite name state renderer init");
+  source.spr=calloc(1,sizeof *source.spr);
+  restored.spr=calloc(1,sizeof *restored.spr);
+  REQUIRE(source.spr && restored.spr,"authored placeholder allocation");
+  source.n_spr=source.spr_cap=source.base_n_spr=1;
+  restored.n_spr=restored.spr_cap=restored.base_n_spr=1;
+  char names[3][96];
+  for(int i=0;i<3;i++){
+    int extent=i==2?64:4;
+    uint8_t *rgba=malloc((size_t)extent*extent*4);
+    REQUIRE(rgba!=NULL,"sprite name state pixels");
+    memset(rgba,255,(size_t)extent*extent*4);
+    int id=gml_sprite_append_from_rgba(&source,rgba,extent,extent,0,0,
+                                     i==1?"named_runtime_asset":NULL);
+    GmlRenderSpriteMetrics metrics;
+    REQUIRE(id==i+1 && gml_render_sprite_metrics(&source,id,&metrics) && metrics.name,
+            "sprite name state source identity");
+    snprintf(names[i],sizeof names[i],"%s",metrics.name);
+  }
+  size_t size=gml_render_state_size(&source,-1),written=0,used=0;
+  uint8_t *state=malloc(size);
+  REQUIRE(state && gml_render_state_save(&source,-1,state,size,&written) && written==size,
+          "sprite name state save");
+  for(int pass=0;pass<2;pass++){
+    REQUIRE(gml_render_state_load(&restored,state,size,&used) && used==size,
+            "sprite name state load");
+    for(int i=0;i<3;i++){
+      GmlRenderSpriteMetrics metrics;
+      REQUIRE(gml_render_sprite_metrics(&restored,i+1,&metrics) && metrics.name &&
+              !strcmp(metrics.name,names[i]) && gml_render_named_sprite(&restored,names[i])==i+1,
+              "raw and compressed sprites must retain their addressable names after restore");
+    }
+  }
+  free(state);
+  gml_render_free(&restored);
+  gml_render_free(&source);
+  return 0;
+}
+
 int main(void){
+  REQUIRE(runtime_sprite_names_survive_state()==0,"runtime sprite name state regression");
   char root[]="build/renderer-assets-XXXXXX";
   REQUIRE(mkdtemp(root)!=NULL,"temporary root");
   char animated[256],strip[256];
