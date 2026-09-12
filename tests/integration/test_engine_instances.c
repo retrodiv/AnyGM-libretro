@@ -1680,7 +1680,7 @@ static int one_shot_instance_assignment_policy(void){
   return ok;
 }
 
-static int view_surface_room_lifetime_policy(void){
+static int view_surface_room_lifetime_case(int persistent){
   AnygmSyntheticContent fixture;
   if(!anygm_synthetic_tilemap_content_create(&fixture)) return 0;
   AnygmHostServices services={0};
@@ -1702,6 +1702,7 @@ static int view_surface_room_lifetime_policy(void){
   ok=ok && anygm_run_frame(engine,&input,&output)==ANYGM_OK;
   int surface=ok?gml_surface_create(&engine->render,16,12):-1;
   ok=ok && surface>0;
+  if(ok) *gml_varmap_put(&engine->vm.globals,"room_persistent")=vreal(persistent);
   for(int view=0;ok && view<GML_ROOM_CAMERA_COUNT;view++){
     GmlVal args[2]={vreal(view),vreal(surface)};
     (void)gml_builtin_call(&engine->vm,"view_set_surface_id",args,2);
@@ -1730,12 +1731,27 @@ static int view_surface_room_lifetime_policy(void){
       }
     }
     ok=ok && gml_surface_exists(&engine->render,surface);
+    if(ok){
+      int other=gml_surface_create(&engine->render,8,8);
+      GmlVal args[]={vreal(0),vreal(other)};
+      (void)gml_builtin_call(&engine->vm,"view_set_surface_id",args,2);
+      gml_room_enter(&engine->vm,0);
+      for(int view=0;ok && view<GML_ROOM_CAMERA_COUNT;view++){
+        GmlVal index=vreal(view);
+        GmlVal actual=gml_builtin_call(&engine->vm,"view_get_surface_id",&index,1);
+        ok=actual.t==V_REAL && actual.d==(persistent?surface:-1);
+      }
+    }
   }
   if(!ok) fputs("view surface room lifetime failed\n",stderr);
   free(state);
   anygm_destroy(engine);
   anygm_synthetic_content_destroy(&fixture);
   return ok;
+}
+
+static int view_surface_room_lifetime_policy(void){
+  return view_surface_room_lifetime_case(0) && view_surface_room_lifetime_case(1);
 }
 
 static int framebuffer_retention_case(

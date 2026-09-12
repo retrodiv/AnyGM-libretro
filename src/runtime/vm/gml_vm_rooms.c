@@ -1229,6 +1229,7 @@ static const char *const room_view_fields[]={
  * hold a reading from whichever room happened to be current when it started. */
 int gml_room_owned_global(const char *name){
   if(!name) return 0;
+  if(!strcmp(name,"view_surface_id")) return 1;
   for(size_t i=0;i<sizeof room_view_fields/sizeof *room_view_fields;i++)
     if(!strcmp(name,room_view_fields[i])) return 1;
   for(size_t i=0;i<sizeof room_background_fields/sizeof *room_background_fields;i++)
@@ -1283,6 +1284,10 @@ static void room_runtime_state_store(GmlVM *vm, int room){
   for(size_t field=0;field<sizeof(room_view_fields)/sizeof(room_view_fields[0]);field++)
     for(int i=0;i<8;i++) room_state_store_number(vm,room,room_view_fields[field],i,
                                                   gml_vm_global_array_number(vm,room_view_fields[field],i));
+  if(anygm_policy_has_modern_layer_semantics(vm->win))
+    for(int i=0;i<GML_ROOM_CAMERA_COUNT;i++)
+      room_state_store_number(vm,room,"view_surface_id",i,
+                              gml_vm_global_array_number(vm,"view_surface_id",i));
   GmlVal *speed=gml_varmap_get(&vm->globals,"room_speed");
   room_state_store_number(vm,room,"room_speed",0,
                           speed?gml_vm_value_as_number(*speed):gml_room_speed(vm));
@@ -1317,6 +1322,10 @@ static void room_runtime_state_restore(GmlVM *vm, int room){
   for(size_t field=0;field<sizeof(room_view_fields)/sizeof(room_view_fields[0]);field++)
     for(int i=0;i<8;i++) gml_vm_global_array_set(vm,room_view_fields[field],i,
                                         room_state_restore_number(vm,room,room_view_fields[field],i));
+  if(anygm_policy_has_modern_layer_semantics(vm->win))
+    for(int i=0;i<GML_ROOM_CAMERA_COUNT;i++)
+      gml_vm_global_array_set(vm,"view_surface_id",i,
+                              room_state_restore_number(vm,room,"view_surface_id",i));
   *gml_varmap_put(&vm->globals,"room_speed")=vreal(room_state_restore_number(vm,room,"room_speed",0));
   *gml_varmap_put(&vm->globals,"view_current")=vreal(room_state_restore_number(vm,room,"view_current",0));
   *gml_varmap_put(&vm->globals,"view_enabled")=vreal(room_state_restore_number(vm,room,"view_enabled",0));
@@ -2219,6 +2228,10 @@ void gml_room_enter(GmlVM *vm, int room_index){
       for(size_t field=0;field<sizeof(room_view_fields)/sizeof(room_view_fields[0]);field++)
         gml_vm_global_array_set(vm,room_view_fields[field],i,0);
       gml_vm_global_array_set(vm,"view_object",i,-1);
+      /* A view target belongs to its room, not to the allocated surface. A
+       * fresh room starts unbound even when the previous target remains live.
+       * Persistent-room returns restore their own binding above. */
+      gml_vm_global_array_set(vm,"view_surface_id",i,-1);
     }
   }
   /* Initialise the built-in background_* arrays from the room's background

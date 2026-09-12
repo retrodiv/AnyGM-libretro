@@ -235,6 +235,10 @@ canonical bytes and semantics remain unchanged.
   width.
 - Native structs, padding, pointers, `long`, and `size_t` are never serialized.
 - Maps and other unordered collections are written in deterministic order.
+  The keyed map/list/grid resource records are ordered by public resource ID,
+  independently of private allocator holes. Element order inside each container
+  is preserved. Restore may compact the private pools without changing the bytes
+  produced after an identical sequence of later allocations.
 - Every variable section is length-delimited and must be consumed exactly.
 - Content, compatibility, and stateful configuration fingerprints are distinct.
 - Active content-override directives join the configuration fingerprint, so a state saved with
