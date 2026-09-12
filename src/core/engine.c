@@ -1239,9 +1239,12 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
   {
     const char *needle = anygm_host_development_setting(&engine->host,"GML_LOG_OBJ");
     if (needle && *needle) {
+      const char *inactive=anygm_host_development_setting(&engine->host,"GML_LOG_OBJ_DEACTIVATED");
+      int include_deactivated=inactive && !strcmp(inactive,"1");
       for (int i = 0; i < engine->vm.inst_count; i++) {
         GmlInstance *o = &engine->vm.inst[i];
-        if (!o->active || o->marked || o->obj < 0 || o->obj >= engine->vm.n_objects) continue;
+        if ((!o->active && !(include_deactivated && o->deactivated)) || o->marked ||
+            o->obj < 0 || o->obj >= engine->vm.n_objects) continue;
         const char *on = engine->vm.objects[o->obj].name;
         if (on && (!strcmp(needle, "*") || strstr(on, needle))) {
           char dn[160];

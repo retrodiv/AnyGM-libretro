@@ -112,6 +112,14 @@ diagnostics.
 
 ## Route coverage
 
+`GML_LOG_OBJ=TEXT` lists active instances whose object names contain `TEXT`
+after each frame (`*` selects every object). With the additional setting
+`GML_LOG_OBJ_DEACTIVATED=1`, the same read-only listing includes temporarily
+deactivated instances. It does not activate them, execute their events or
+change canonical state. This exposes retained positions outside an active
+view without confusing temporary deactivation with destruction. Consumers
+that request it must interpret object counts as including those instances.
+
 `GML_LOG_COVERAGE=1` reports, once when content is unloaded, how much of the payload's own code a
 run ever entered:
 
