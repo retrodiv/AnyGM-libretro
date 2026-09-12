@@ -37,6 +37,10 @@ than leave them looking accidental.
 
 ## Decisions a reviewer will ask about
 
+**Core option groups are Video, Input, System, and Development, in that order.**
+System contains Language followed by Region. Frontends without category support
+receive the same options through the flat declaration.
+
 **Save states are `serialized`, not `deterministic`.** `randomize()` seeds from
 host entropy; the seed is part of serialized state, so rewind and
 save/load are exact, but two fresh runs of the same

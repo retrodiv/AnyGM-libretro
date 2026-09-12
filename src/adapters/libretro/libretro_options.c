@@ -13,6 +13,7 @@
 static const struct retro_core_option_v2_category g_categories[]={
   {"video","Video","Frame geometry, rendering and content shaders."},
   {"input","Input","Controllers and pointer."},
+  {"system","System","Language and region reported to the game."},
   {"development","Development","Tools for exercising content."},
   {NULL,NULL,NULL}
 };
@@ -148,7 +149,7 @@ static struct retro_core_option_v2_definition g_definitions[]={
    "The language the game is told it is running in, through os_get_language() and the locale "
    "environment variables. Auto follows the frontend's language setting. Takes effect on "
    "restart.",
-   NULL,"development",
+   NULL,"system",
    {{"Auto",NULL},{"en",NULL},{"es",NULL},{"fr",NULL},{"de",NULL},{"it",NULL},{"pt",NULL},
     {"nl",NULL},{"pl",NULL},{"ru",NULL},{"uk",NULL},{"cs",NULL},{"sv",NULL},{"fi",NULL},
     {"no",NULL},{"hu",NULL},{"el",NULL},{"tr",NULL},{"ca",NULL},{"ar",NULL},{"ja",NULL},
@@ -157,7 +158,7 @@ static struct retro_core_option_v2_definition g_definitions[]={
   {"anygm_region","Region",NULL,
    "The region the game is told it is running in, through os_get_region() and the locale "
    "environment variables. Auto pairs it with the language. Takes effect on restart.",
-   NULL,"development",
+   NULL,"system",
    {{"Auto",NULL},{"US",NULL},{"GB",NULL},{"ES",NULL},{"FR",NULL},{"DE",NULL},{"IT",NULL},
     {"BR",NULL},{"PT",NULL},{"NL",NULL},{"PL",NULL},{"RU",NULL},{"UA",NULL},{"CZ",NULL},
     {"SE",NULL},{"FI",NULL},{"NO",NULL},{"HU",NULL},{"GR",NULL},{"TR",NULL},{"SA",NULL},

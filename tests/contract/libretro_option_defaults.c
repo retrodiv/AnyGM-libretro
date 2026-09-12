@@ -219,7 +219,7 @@ static void every_setting_sits_in_a_group(void){
     complain("the grouped declaration was never made");
     return;
   }
-  static const char *const expected[]={"video","input","development",NULL};
+  static const char *const expected[]={"video","input","system","development",NULL};
   size_t index=0;
   for(const struct retro_core_option_v2_category *c=declared_categories;c->key;c++,index++){
     if(!expected[index] || strcmp(c->key,expected[index])){
