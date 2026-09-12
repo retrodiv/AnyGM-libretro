@@ -34,6 +34,14 @@ static struct retro_core_option_v2_definition g_definitions[]={
    NULL,"video",
    {{"On",NULL},{"Off",NULL},{NULL,NULL}},
    "On"},
+  {"anygm_adjust_crt_tv","Adjust for 4:3 CRT TV",NULL,
+   "With Render at game resolution on, fits images wider than 364 pixels or taller than 244 "
+   "pixels into 640x480 using sharp bilinear filtering. Preserves the image's aspect ratio "
+   "with centered black bars. Limits are checked after Aspect Ratio force is applied. "
+   "Smaller images keep their resolution. The frontend controls the TV video mode.",
+   NULL,"video",
+   {{"Off",NULL},{"On",NULL},{NULL,NULL}},
+   "Off"},
   {"anygm_width_resolution","Monitor width",NULL,
    "With Render at game resolution off, reports this virtual monitor width to the game and "
    "supplies the effective presentation-window and framebuffer width. Game Base follows the "
@@ -519,6 +527,8 @@ static int update_option_visibility(void){
   display.key="anygm_aspect_ratio_force";
   display.visible=logical_raster?true:false;
   g_libretro.environment(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY,&display);
+  display.key="anygm_adjust_crt_tv";
+  g_libretro.environment(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY,&display);
   g_published_ranges=ranges;
   g_published_logical_raster=logical_raster;
   return 1;
@@ -647,6 +657,7 @@ void libretro_options_apply(bool all_fields){
      larger than the view. Rasterizing at the view is the default; the window-matching path stays
      available for content and host-monitor layouts that depend on it. */
   config->present_logical_raster=present_logical_raster;
+  config->adjust_crt_tv=present_logical_raster && option_on("anygm_adjust_crt_tv",0);
   config->clear_local_data=option_on("anygm_clear_local_data",0);
 
   /* Choosing another stretch of rooms changes which rooms the chooser holds, not any setting the
@@ -666,7 +677,7 @@ void libretro_options_apply(bool all_fields){
       ANYGM_CONFIG_REPORT_ALL_SHADERS_COMPILED|
       ANYGM_CONFIG_GAMEPAD_CONNECTED|
       ANYGM_CONFIG_FAST_ALPHA_CULL|ANYGM_CONFIG_START_ROOM|
-      ANYGM_CONFIG_PRESENT_LOGICAL_RASTER|ANYGM_CONFIG_CLEAR_LOCAL_DATA|
+      ANYGM_CONFIG_PRESENT_LOGICAL_RASTER|ANYGM_CONFIG_ADJUST_CRT_TV|ANYGM_CONFIG_CLEAR_LOCAL_DATA|
       ANYGM_CONFIG_CONTENT_OVERRIDES|ANYGM_CONFIG_CONTENT_SHADER_READBACK|
       ANYGM_CONFIG_CONTENT_SHADER_DEVICE_EXPECTED|ANYGM_CONFIG_HYBRID_GPU_PRESENTATION;
   if(g_libretro.loaded || g_libretro.prepared)

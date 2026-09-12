@@ -87,7 +87,11 @@ typedef enum GmlPlanOpcode {
    * record: the program text the content ships, the uniforms the content set, and the samplers it
    * bound. GPU-only: there is no software equivalent, and a plan carrying it that cannot run on
    * the device is replayed as the unshaded presentation the renderer recorded. */
-  GML_PLAN_OP_SHADER_DRAW=4
+  GML_PLAN_OP_SHADER_DRAW=4,
+  /* Software sharp bilinear: integer nearest prescale followed by bilinear at pixel centres.
+   * The shared prescale is ceil(min(destination_width/source_width,
+   * destination_height/source_height)), at least one. */
+  GML_PLAN_OP_BLIT_OPAQUE_SHARP_BILINEAR=5
 } GmlPlanOpcode;
 
 typedef struct GmlPlanRect {
@@ -231,6 +235,8 @@ int gml_render_plan_add_blit_nearest(GmlRenderPlan *plan,uint32_t source,
                                      uint32_t alpha_write);
 int gml_render_plan_add_blit_box(GmlRenderPlan *plan,uint32_t source,
                                  GmlPlanRect destination,uint32_t alpha_write);
+int gml_render_plan_add_blit_sharp_bilinear(GmlRenderPlan *plan,uint32_t source,
+                                            GmlPlanRect destination,uint32_t alpha_write);
 /* The terminal presentation drawn through the content's own program. The shader record is copied
  * into the plan; its source pointers stay lent. */
 /* `source_rect` names the part of the source the destination shows; pass a zero-sized rectangle

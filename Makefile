@@ -173,6 +173,7 @@ INTEGRATION_TESTS += $(TEST_DIR)/test_graphics_state
 endif
 CONTRACT_TESTS := $(TEST_DIR)/dummy_host $(TEST_DIR)/test_builtin_file_io $(TEST_DIR)/test_libretro_state_transport \
 	$(TEST_DIR)/test_libretro_tilemap_state \
+	$(TEST_DIR)/test_libretro_crt_output \
 	$(TEST_DIR)/test_libretro_vfs_transport $(TEST_DIR)/test_libretro_option_defaults \
 	$(TEST_DIR)/test_libretro_keyboard_source $(TEST_DIR)/test_libretro_gamepad_ports \
 	$(TEST_DIR)/test_libretro_locale_variables $(TEST_DIR)/test_libretro_wall_time \
@@ -682,6 +683,7 @@ contract-check: $(CONTRACT_TESTS)
 	$(TEST_DIR)/test_builtin_file_io
 	$(TEST_DIR)/test_libretro_state_transport
 	$(TEST_DIR)/test_libretro_tilemap_state
+	$(TEST_DIR)/test_libretro_crt_output
 	$(TEST_DIR)/test_libretro_vfs_transport
 	$(TEST_DIR)/test_libretro_option_defaults
 	$(TEST_DIR)/test_libretro_keyboard_source
@@ -837,6 +839,11 @@ $(TEST_DIR)/test_libretro_option_defaults: tests/contract/libretro_option_defaul
 	src/adapters/libretro/libretro_options.c
 	mkdir -p $(dir $@)
 	$(CC) $(LIBRETRO_CPPFLAGS) $(CFLAGS) $^ -o $@
+
+$(TEST_DIR)/test_libretro_crt_output: tests/contract/libretro_crt_output.c \
+	tests/support/synthetic_content.c $(CORE_OBJECTS) $(TEST_HOST_OBJECTS)
+	mkdir -p $(dir $@)
+	$(CC) $(LIBRETRO_CPPFLAGS) -Itests/support $(CFLAGS) $^ -o $@ -lm -pthread $(CXX_RUNTIME_LDLIBS)
 
 $(TEST_DIR)/test_libretro_keyboard_source: tests/contract/libretro_keyboard_source.c \
 	src/adapters/libretro/libretro_input.c

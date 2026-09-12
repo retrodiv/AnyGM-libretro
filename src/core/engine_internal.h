@@ -315,6 +315,7 @@ struct AnygmEngine {
    * can still wrap its completed frame in the distinct host framebuffer below. */
   unsigned host_output_width,host_output_height;
   int host_canvas_active,host_canvas_x,host_canvas_y,host_canvas_width,host_canvas_height;
+  int host_crt_active;
   /* Whole-pixel offset applied to the delivered frame, and the buffer that holds the offset copy
    * so the completed frame the state carries is never moved. Declared by a ?gameres directive and
    * therefore zero unless the logical-raster presentation is selected and an anchor asks for it. */

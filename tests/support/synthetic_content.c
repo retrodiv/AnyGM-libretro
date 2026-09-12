@@ -57,7 +57,7 @@ static unsigned synthetic_path_hash(const char *path){
 }
 
 static int synthetic_content_create(
-    AnygmSyntheticContent *fixture,int anchor_script,int list_fixture){
+    AnygmSyntheticContent *fixture,int anchor_script,int list_fixture,unsigned width,unsigned height){
   if(!fixture) return 0;
   memset(fixture,0,sizeof *fixture);
   if(!create_fixture_directory(fixture->directory,sizeof fixture->directory)) return 0;
@@ -145,8 +145,8 @@ static int synthetic_content_create(
   events[list_fixture?1:0].source_path=step;
 
   room.id=room.name=(char *)"room_fixture";
-  room.width=64;
-  room.height=48;
+  room.width=width;
+  room.height=height;
   room.speed=60;
   room.draw_background_color=1;
   room.instances=&instance;
@@ -166,13 +166,17 @@ static int synthetic_content_create(
   return 1;
 }
 int anygm_synthetic_content_create(AnygmSyntheticContent *fixture){
-  return synthetic_content_create(fixture,0,0);
+  return synthetic_content_create(fixture,0,0,64,48);
+}
+int anygm_synthetic_sized_content_create(AnygmSyntheticContent *fixture,unsigned width,unsigned height){
+  if(!width || !height || width>3840 || height>2160) return 0;
+  return synthetic_content_create(fixture,0,0,width,height);
 }
 int anygm_synthetic_list_override_content_create(AnygmSyntheticContent *fixture){
-  return synthetic_content_create(fixture,0,1);
+  return synthetic_content_create(fixture,0,1,64,48);
 }
 int anygm_synthetic_anchor_script_content_create(AnygmSyntheticContent *fixture){
-  return synthetic_content_create(fixture,1,0);
+  return synthetic_content_create(fixture,1,0,64,48);
 }
 
 int anygm_synthetic_tilemap_content_create(AnygmSyntheticContent *fixture){

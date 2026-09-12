@@ -227,6 +227,10 @@ canonical bytes and semantics remain unchanged.
   state identity; the host's current presentation settings remain active when a state is loaded.
   If the stored completed frame has another extent, the load redraws once without advancing the
   simulation instead of publishing that stale extent and changing geometry on the following frame.
+- CRT output adaptation is also excluded from state identity and bytes. The completed image stays
+  at its content or forced-aspect extent; its filtered 640x480 host frame is derived output.
+  Restoring a state applies the current CRT setting when presenting it, without changing the
+  frontend's serialization capacity policy or adding another frame to the state.
 - Diagnostics, host handles, and disposable caches are excluded.
 - Graphics-target resources and host execution policies are excluded under every schema. Textures,
   programs, framebuffer identifiers, entry-point tables, upload buffers, residency records,

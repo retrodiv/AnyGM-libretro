@@ -2523,6 +2523,13 @@ AnygmResult anygm_set_config(AnygmEngine *engine,const AnygmConfigDelta *delta){
       engine->fps_room=-1;
     }
   }
+  if(f&ANYGM_CONFIG_ADJUST_CRT_TV){
+    uint32_t want=delta->values.adjust_crt_tv?1u:0u;
+    if(want!=engine->config.adjust_crt_tv){
+      engine->config.adjust_crt_tv=want;
+      engine->fps_room=-1;
+    }
+  }
   if(presentation_changed){
     engine->fps_room=-1;
     if(engine->lifecycle==ENGINE_LOADED) engine->monitor_override_pending=1;

@@ -597,6 +597,60 @@ static int completed_frame_encodings_case(void){
   return ok;
 }
 
+/* A terminal content program must finish at its authored raster before CRT filtering. The fake
+ * proves synchronous readback, ownership and transport; the software plan cases own filter pixels. */
+static int crt_terminal_program_case(void){
+  Session session;
+  uint32_t source[16];
+  struct GmlShaderPal pal[1]={0};
+  anygm_test_graphics_reset();
+  REQUIRE(session_open(&session),"CRT graphics session loads");
+  REQUIRE(graphics_adopt(session.engine,ANYGM_GRAPHICS_OPENGLES3)==ANYGM_OK,"CRT context adopted");
+  AnygmEngine *engine=session.engine;
+  GmlRender *render=&engine->render;
+  REQUIRE(render->n_shader_pal==0,"fixture has no content programs");
+  engine->config.content_shader_device_expected=1;
+  engine->config.content_shader_readback=ANYGM_SHADER_READBACK_BUDGETED;
+  engine->output_width=400; engine->output_height=300;
+  engine->host_output_width=640; engine->host_output_height=480;
+  engine->host_crt_active=engine->host_canvas_active=1;
+  engine->host_canvas_x=engine->host_canvas_y=0;
+  engine->host_canvas_width=640; engine->host_canvas_height=480;
+  engine->readback_is_pipelined=1;
+  for(unsigned i=0;i<16;i++) source[i]=0xFFAA5500u;
+  pal[0].source_vertex_es="attribute vec3 in_Position; void main(){ gl_Position=vec4(in_Position,1.0); }";
+  pal[0].source_fragment_es="varying vec2 v_vTexcoord; void main(){ gl_FragColor=texture2D(gm_BaseTexture,v_vTexcoord); }";
+  struct GmlShaderPal *saved_pal=render->shader_pal;
+  render->shader_pal=pal; render->n_shader_pal=1;
+  gml_render_application_surface_bind(render,source,4,4,1);
+  gml_render_application_surface_set_draw_enabled(render,0);
+  gml_render_set_deferred_presentation(render,1);
+  gml_render_begin(render,engine->screen,400,300,0,0);
+  gml_render_gui_begin(render,400,300);
+  gml_render_gui_set_size(render,400,300);
+  gml_render_shader_set_current(render,0);
+  gml_draw_surface_stretched(render,0,0,0,400,300,0xFFFFFFu,1.0);
+  gml_render_shader_set_current(render,-1);
+  int ok=gml_render_deferred_presentation(render,NULL) &&
+         !engine_present_hardware_screen(engine,NULL,NULL) &&
+         anygm_test_graphics_quad_draw_calls()==1 &&
+         anygm_test_graphics_read_pixels()==1 && !anygm_test_graphics_async_read_pixels() &&
+         !gml_render_deferred_presentation(render,NULL) &&
+         engine->frame_authority==ENGINE_FRAME_CPU_MATERIALIZED;
+  const uint32_t *pixels=NULL; unsigned width=0,height=0;
+  ok=ok && resolve_host_frame(engine,&pixels,&width,&height) && width==640 && height==480 &&
+           engine_present_hardware_frame(engine,pixels,width,height);
+  int x=0,y=0,w=0,h=0;
+  anygm_test_graphics_viewport(&x,&y,&w,&h);
+  ok=ok && w==640 && h==480 && engine->readback_is_pipelined==1;
+  gml_render_gui_end(render);
+  render->shader_pal=saved_pal; render->n_shader_pal=0;
+  gml_render_application_surface_bind(render,engine->fb,engine->width,engine->height,1);
+  session_close(&session);
+  REQUIRE(ok,"terminal shader readback precedes CRT fit and hardware transport");
+  return 1;
+}
+
 int main(void){
   static const struct { const char *name; int (*run)(void); } cases[]={
     {"state bytes match with and without a target",state_bytes_match_case},
@@ -613,6 +667,7 @@ int main(void){
     {"a buffer too short for the frame still takes the state",short_buffer_drops_the_frame_case},
     {"an explicit resume state omits only the completed frame",explicit_resume_state_case},
     {"raw and repeated-row completed frames roundtrip",completed_frame_encodings_case},
+    {"CRT preserves terminal content programs",crt_terminal_program_case},
   };
   int failed=0;
   for(size_t index=0;index<sizeof cases/sizeof cases[0];index++)

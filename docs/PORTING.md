@@ -52,6 +52,28 @@ cut: it neither compiles nor links the libretro adapter.
 7. Call `anygm_unload` before replacing content and destroy the engine before
    destroying anything referenced by host userdata.
 
+## CRT presentation
+
+`adjust_crt_tv` is an optional live presentation setting, effective only with
+`present_logical_raster`. After aspect forcing and any declared presentation crop, an image wider
+than 364 pixels or taller than 244 pixels is fitted into a 640x480 frame. The complete image keeps
+its square-pixel aspect ratio with centered black margins. Images at or below both limits retain
+their own raster. Window queries, GUI coordinates and camera geometry remain owned by the content
+and the existing aspect policy.
+
+The fit uses sharp bilinear: a virtual integer nearest enlargement followed by bilinear sampling
+at destination pixel centres. Its shared integer prescale is the ceiling of the smaller fitted
+axis scale, with a minimum of one. Exact integer enlargement preserves hard pixel edges; reduction
+uses bilinear sampling. The software render-plan executor owns the filter on every host. With an
+adopted graphics context the filtered frame is uploaded for presentation; a terminal content shader
+is evaluated at its original extent and read back synchronously before filtering. That extra
+readback can cost more on discrete GPUs.
+
+The host receives a 4:3 aspect with an adapted 640x480 frame. Physical resolution, interlacing,
+refresh rate and TV output remain frontend responsibilities. The libretro option is named
+**Adjust for 4:3 CRT TV**, defaults to Off, follows **Render at game resolution**, and is visible
+only while that parent option is On.
+
 ## Optional host graphics target
 
 A host that owns an OpenGL or OpenGL ES 3 context may lend it to the engine with

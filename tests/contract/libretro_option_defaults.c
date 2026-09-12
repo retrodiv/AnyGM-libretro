@@ -18,6 +18,7 @@
 
 static const char *answered_value;
 static const char *answered_raster_value;
+static const char *answered_crt_value;
 static const char *answered_monitor_value;
 static const char *answered_aspect_value;
 static const char *answered_page_value;
@@ -84,6 +85,8 @@ static bool environment_callback(unsigned command,void *data){
       if(variable->key && !strcmp(variable->key,"anygm_render_game_resolution") &&
          answered_raster_value)
         value=answered_raster_value;
+      if(variable->key && !strcmp(variable->key,"anygm_adjust_crt_tv") && answered_crt_value)
+        value=answered_crt_value;
       if(variable->key &&
          (!strcmp(variable->key,"anygm_width_resolution") ||
           !strcmp(variable->key,"anygm_height_resolution")) && answered_monitor_value)
@@ -187,6 +190,7 @@ static void begin(unsigned version,uint32_t rooms){
   visibility_count=0;
   answered_value=NULL;
   answered_raster_value=NULL;
+  answered_crt_value=NULL;
   answered_monitor_value=NULL;
   answered_aspect_value=NULL;
   answered_page_value=NULL;
@@ -475,6 +479,38 @@ static void monitor_dimensions_follow_the_window_raster(void){
  * It is therefore the exact complement of the monitor dimensions: one of the two is offered, never
  * both and never neither. A selection made on one path must also stop acting once the player
  * leaves it, or a shape they can no longer see keeps reshaping the frame. */
+static void crt_adjustment_follows_the_logical_raster(void){
+  begin(2,3);
+  const struct retro_core_option_v2_definition *raster=definition("anygm_render_game_resolution");
+  const struct retro_core_option_v2_definition *crt=definition("anygm_adjust_crt_tv");
+  if(!crt || !raster || crt!=raster+1 || strcmp(crt->desc,"Adjust for 4:3 CRT TV") ||
+     strcmp(crt->default_value,"Off"))
+    complain("CRT adjustment must follow game resolution and default to Off");
+  if(!menu_time_visibility){ complain("CRT visibility callback missing"); return; }
+  libretro_options_apply(true);
+  expect("CRT default",applied_config.values.adjust_crt_tv,0u);
+  answered_crt_value="On";
+  answered_raster_value="On";
+  menu_time_visibility();
+  libretro_options_apply(false);
+  expect("CRT visible at game resolution",shown("anygm_adjust_crt_tv"),1u);
+  expect("CRT enabled",applied_config.values.adjust_crt_tv,1u);
+  if(!(applied_config.fields&ANYGM_CONFIG_ADJUST_CRT_TV)) complain("CRT live delta missing");
+  answered_raster_value="Off";
+  menu_time_visibility();
+  libretro_options_apply(false);
+  expect("CRT hidden at window resolution",shown("anygm_adjust_crt_tv"),0u);
+  expect("CRT inactive at window resolution",applied_config.values.adjust_crt_tv,0u);
+  answered_raster_value="On";
+  menu_time_visibility();
+  libretro_options_apply(false);
+  expect("CRT remembered selection",applied_config.values.adjust_crt_tv,1u);
+  begin(0,3);
+  const char *flat=flat_text("anygm_adjust_crt_tv");
+  if(!flat || strcmp(flat,"Adjust for 4:3 CRT TV; Off|On"))
+    complain("legacy CRT option declaration differs");
+}
+
 static void the_forced_shape_follows_the_logical_raster(void){
   begin(2,3);
   if(!menu_time_visibility){
@@ -680,6 +716,7 @@ int main(void){
   monitor_dimensions_reach_the_virtual_monitor_fields();
   monitor_dimensions_follow_the_window_raster();
   the_forced_shape_follows_the_logical_raster();
+  crt_adjustment_follows_the_logical_raster();
   culling_names_rise_with_their_thresholds();
   loaded_content_names_its_rooms();
   rooms_past_one_list_stay_reachable();

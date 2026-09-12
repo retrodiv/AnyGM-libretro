@@ -121,6 +121,17 @@ int gml_render_plan_add_blit_box(GmlRenderPlan *plan,uint32_t source,
   return 1;
 }
 
+int gml_render_plan_add_blit_sharp_bilinear(GmlRenderPlan *plan,uint32_t source,
+                                            GmlPlanRect destination,uint32_t alpha_write){
+  GmlPlanOp *op=append(plan);
+  if(!op) return 0;
+  op->opcode=GML_PLAN_OP_BLIT_OPAQUE_SHARP_BILINEAR;
+  op->source=source;
+  op->destination=destination;
+  op->alpha_write=alpha_write&0xFFu;
+  return 1;
+}
+
 int gml_render_plan_add_shader_draw_part(GmlRenderPlan *plan,uint32_t source,GmlPlanRect destination,
                                          GmlPlanRect source_rect,
                                     const GmlPlanShader *shader,uint32_t linear){
@@ -221,6 +232,9 @@ int gml_render_plan_validate(const GmlRenderPlan *plan){
         break;
       case GML_PLAN_OP_PRESENT_CPU_FRAME:
         if(op->destination.width!=image->width || op->destination.height!=image->height) return 0;
+        break;
+      case GML_PLAN_OP_BLIT_OPAQUE_SHARP_BILINEAR:
+        /* Both enlargement and reduction sample the complete bounded source. */
         break;
       case GML_PLAN_OP_SHADER_DRAW:
         if(!plan->has_shader) return 0;

@@ -363,6 +363,10 @@ typedef struct AnygmConfig {
    * window extent the content requested. A window larger than the view carries no extra detail
    * for a software renderer: the pixels are a nearest upscale the host performs anyway. */
   uint32_t present_logical_raster;
+  /* With the logical raster selected, fit a completed image wider than 364 or taller than 244
+   * into 640x480 using sharp bilinear and black margins. Test the extent after aspect forcing.
+   * This host presentation policy is neither simulation state nor state identity. */
+  uint32_t adjust_crt_tv;
   /* Delete this content's generated local data (saves, extracted archive cache) and reload. */
   uint32_t clear_local_data;
   /* How shader_is_compiled answers for content shaders. Non-zero reports valid sampling shaders
@@ -422,7 +426,8 @@ enum {
   ANYGM_CONFIG_CONTENT_OVERRIDES=1ull<<19,
   ANYGM_CONFIG_CONTENT_SHADER_READBACK=1ull<<20,
   ANYGM_CONFIG_CONTENT_SHADER_DEVICE_EXPECTED=1ull<<21,
-  ANYGM_CONFIG_HYBRID_GPU_PRESENTATION=1ull<<22
+  ANYGM_CONFIG_HYBRID_GPU_PRESENTATION=1ull<<22,
+  ANYGM_CONFIG_ADJUST_CRT_TV=1ull<<23
 };
 
 typedef struct AnygmInputFrame {

@@ -1018,6 +1018,60 @@ static int shaded_primitive_and_device_case(void){
   return 1;
 }
 
+static int sharp_bilinear_case(void){
+  /* A fractional 3 -> 5 enlargement distinguishes sharp bilinear from both nearest and ordinary
+   * bilinear. Use padded rows and an inset destination to expose stride and border mistakes. */
+  uint32_t source[]={0xFF000000u,0xFFFFFFFFu,0xFF000000u,0xDEADBEEFu,
+                     0xFF000000u,0xFFFFFFFFu,0xFF000000u,0xDEADBEEFu};
+  uint32_t target[9*6];
+  GmlRenderPlan plan;
+  GmlPlanImage image={0};
+  image.image_class=GML_PLAN_IMAGE_COMPLETED_FRAME;
+  image.width=3; image.height=2; image.pitch_pixels=4;
+  image.cpu_pixels=source; image.opaque=1;
+  const unsigned widths[]={5,6,3};
+  const uint32_t expected[][6]={{0,0x4D4D4Du,0xFFFFFFu,0x4D4D4Du,0,0},
+                              {0,0,0xFFFFFFu,0xFFFFFFu,0,0},
+                              {0,0xFFFFFFu,0,0,0,0}};
+  for(unsigned pass=0;pass<3;pass++){
+    for(size_t i=0;i<sizeof target/sizeof target[0];i++) target[i]=0x12345678u;
+    gml_render_plan_reset(&plan,GML_PLAN_TARGET_CPU_FRAME,8,6);
+    uint32_t index=gml_render_plan_add_image(&plan,&image);
+    GmlPlanRect rect={1,1,widths[pass],4};
+    REQUIRE(gml_render_plan_add_blit_sharp_bilinear(&plan,index,rect,0xA5u),"record sharp bilinear");
+    REQUIRE(gml_render_plan_validate(&plan),"validate sharp bilinear");
+    REQUIRE(!gml_render_plan_gpu_eligible(&plan),"sharp bilinear keeps its exact software kernel");
+    REQUIRE(gml_render_plan_execute_software(&plan,target,9),"execute sharp bilinear");
+    for(unsigned y=0;y<6;y++) for(unsigned x=0;x<9;x++){
+      uint32_t want=(y>=1 && y<5 && x>=1 && x<=widths[pass])
+        ?0xA5000000u|expected[pass][x-1]:0x12345678u;
+      REQUIRE(target[y*9+x]==want,"sharp fractional, integer, identity and padded border pixels");
+    }
+  }
+  /* Reduction uses bilinear samples, including vertical interpolation and independent channels. */
+  uint32_t colors[]={0xFF0000u,0x00FF00u,0x0000FFu,0xFFFFFFu};
+  image.width=image.height=2; image.pitch_pixels=2; image.cpu_pixels=colors;
+  gml_render_plan_reset(&plan,GML_PLAN_TARGET_CPU_FRAME,1,1);
+  uint32_t index=gml_render_plan_add_image(&plan,&image);
+  GmlPlanRect single={0,0,1,1};
+  REQUIRE(gml_render_plan_add_blit_sharp_bilinear(&plan,index,single,0u),"record reduction");
+  REQUIRE(gml_render_plan_execute_software(&plan,target,1) && target[0]==0x808080u,
+          "two-axis reduction rounds each channel correctly");
+  image.width=image.height=image.pitch_pixels=1;
+  image.cpu_pixels=colors;
+  gml_render_plan_reset(&plan,GML_PLAN_TARGET_CPU_FRAME,7,5);
+  index=gml_render_plan_add_image(&plan,&image);
+  GmlPlanRect whole={0,0,7,5};
+  REQUIRE(gml_render_plan_add_blit_sharp_bilinear(&plan,index,whole,0u),"record single texel");
+  REQUIRE(gml_render_plan_execute_software(&plan,target,7),"clamp single texel neighbours");
+  for(unsigned i=0;i<35;i++) REQUIRE(target[i]==0xFF0000u,"single texel is constant");
+  plan.images[0].pitch_pixels=0;
+  target[0]=0x12345678u;
+  REQUIRE(!gml_render_plan_execute_software(&plan,target,7) && target[0]==0x12345678u,
+          "invalid source rejected before writing");
+  return 1;
+}
+
 int main(int argc,char **argv){
   const char *filter=NULL;
   for(int index=1;index<argc;++index){
@@ -1047,6 +1101,7 @@ int main(int argc,char **argv){
   static const AnygmTestCase plan_cases[]={
     {"host_canvas_magnify",host_canvas_magnify_case},
     {"host_canvas_reduce",host_canvas_reduce_case},
+    {"sharp_bilinear",sharp_bilinear_case},
     {"pooled_box_identity",pooled_box_identity_case},
     {"axis_map",axis_map_case},
     {"validation",plan_validation_case},

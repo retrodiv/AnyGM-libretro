@@ -322,7 +322,8 @@ int engine_present_hardware_screen(AnygmEngine *engine,unsigned *width,unsigned 
   int hybrid=engine_hybrid_presentation_active(engine);
   int shaders=engine_content_shaders_active(engine);
   if(!engine || (!hybrid && !shaders)) return 0;
-  if(engine->host_canvas_active) return 0;
+  int crt_readback=engine->host_crt_active && engine->host_canvas_active;
+  if(engine->host_canvas_active && !crt_readback) return 0;
   if(!gml_render_deferred_presentation(&engine->render,&record)) return 0;
   if(record.target_pixels!=engine->screen) return 0;
   if((unsigned)record.target_width!=engine->output_width ||
@@ -393,7 +394,23 @@ int engine_present_hardware_screen(AnygmEngine *engine,unsigned *width,unsigned 
      * asking again, and this frame falls back to the unshaded blit below. */
     if(engine_plan_content_program(engine,plan,image,destination,record.shader,record.generation,
                                    record.linear)){
-      if(gml_gpu_execute_plan(engine->gpu,plan)) goto presented;
+      if(crt_readback){
+        /* Preserve the content's terminal program at its authored extent before the CPU CRT
+         * filter. A terminal frame must be current even when mid-frame readbacks are pipelined. */
+        plan->target=GML_PLAN_TARGET_READBACK;
+        plan->readback_pixels=engine->screen;
+        plan->readback_pitch_pixels=engine->output_width;
+        gml_gpu_set_readback_pipelined(engine->gpu,0);
+        int executed=gml_gpu_execute_plan(engine->gpu,plan);
+        gml_gpu_set_readback_pipelined(engine->gpu,engine->readback_is_pipelined);
+        if(executed){
+          gml_render_discard_deferred_presentation(&engine->render);
+          engine->frame_authority=ENGINE_FRAME_CPU_MATERIALIZED;
+          engine->frame_materializations++;
+          engine->host_clear_valid=0;
+          return 0; /* The caller still has to fit and present these pixels. */
+        }
+      } else if(gml_gpu_execute_plan(engine->gpu,plan)) goto presented;
       if(plan->fallback_reason==GML_PLAN_FALLBACK_SHADER_FAILURE)
         gml_render_shader_mark_failed(&engine->render,record.shader);
     }
@@ -403,6 +420,7 @@ int engine_present_hardware_screen(AnygmEngine *engine,unsigned *width,unsigned 
     image=gml_render_plan_add_image(plan,&source);
     if(image==GML_PLAN_NO_IMAGE) return 0;
   }
+  if(crt_readback) return 0;
   /* With only content GLSL enabled, an ineligible or refused program returns to the complete
    * software presentation. The final-pass acceleration belongs exclusively to Hybrid GPU. */
   if(!hybrid) return 0;

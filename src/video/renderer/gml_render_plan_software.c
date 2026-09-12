@@ -279,6 +279,65 @@ static void execute_box(const GmlPlanOp *op,const GmlPlanImage *image,
   execute_box_rows(op,image,target,pitch,0,destination_height);
 }
 
+typedef struct PlanSharpTap {
+  uint32_t first,second,weight;
+} PlanSharpTap;
+
+/* Sample a virtual integer nearest enlargement without ever allocating it. Rational pixel-centre
+ * coordinates preserve exact integer enlargements; the only rounding is the bilinear Q16 weight.
+ * Clamp in the expanded plane before converting its two neighbours back to source indices. */
+static PlanSharpTap sharp_tap(uint32_t pixel,uint32_t source,uint32_t destination,uint32_t scale){
+  PlanSharpTap tap={0,0,0};
+  uint64_t numerator=(2ull*pixel+1u)*source*scale;
+  uint32_t denominator=2u*destination;
+  if(numerator<=destination) return tap;
+  numerator-=destination;
+  uint64_t first=numerator/denominator;
+  tap.first=(uint32_t)(first/scale);
+  tap.second=(uint32_t)((first+1u)/scale);
+  if(tap.first>=source) tap.first=source-1u;
+  if(tap.second>=source) tap.second=source-1u;
+  tap.weight=(uint32_t)(((numerator%denominator)*65536u+denominator/2u)/denominator);
+  return tap;
+}
+
+static uint32_t sharp_lerp(uint32_t a,uint32_t b,uint32_t weight){
+  uint32_t inverse=65536u-weight,result=0;
+  for(unsigned shift=0;shift<24;shift+=8){
+    uint32_t channel=(((a>>shift)&255u)*inverse+((b>>shift)&255u)*weight+32768u)>>16;
+    result|=channel<<shift;
+  }
+  return result;
+}
+
+static void execute_sharp_bilinear(const GmlPlanOp *op,const GmlPlanImage *image,
+                                   uint32_t *target,uint32_t pitch){
+  uint32_t width=op->destination.width,height=op->destination.height;
+  uint32_t scale_x=(width+image->width-1u)/image->width;
+  uint32_t scale_y=(height+image->height-1u)/image->height;
+  uint32_t scale=scale_x<scale_y?scale_x:scale_y;
+  PlanSharpTap stack[PLAN_COLUMN_STACK];
+  PlanSharpTap *columns=width<=PLAN_COLUMN_STACK?stack:malloc((size_t)width*sizeof(*columns));
+  if(columns)
+    for(uint32_t x=0;x<width;x++) columns[x]=sharp_tap(x,image->width,width,scale);
+  for(uint32_t y=0;y<height;y++){
+    PlanSharpTap vertical=sharp_tap(y,image->height,height,scale);
+    const uint32_t *row0=image->cpu_pixels+(size_t)vertical.first*image->pitch_pixels;
+    const uint32_t *row1=image->cpu_pixels+(size_t)vertical.second*image->pitch_pixels;
+    uint32_t *out=target+(size_t)((uint32_t)op->destination.y+y)*pitch+(uint32_t)op->destination.x;
+    for(uint32_t x=0;x<width;x++){
+      PlanSharpTap horizontal=columns?columns[x]:sharp_tap(x,image->width,width,scale);
+      uint32_t a=sharp_lerp(row0[horizontal.first],row0[horizontal.second],horizontal.weight);
+      if(vertical.weight && vertical.first!=vertical.second){
+        uint32_t b=sharp_lerp(row1[horizontal.first],row1[horizontal.second],horizontal.weight);
+        a=sharp_lerp(a,b,vertical.weight);
+      }
+      out[x]=plan_pixel(a,op->alpha_write);
+    }
+  }
+  if(columns!=stack) free(columns);
+}
+
 static void execute_present(const GmlPlanOp *op,const GmlPlanImage *image,
                             uint32_t *target,uint32_t pitch){
   for(uint32_t y=0;y<op->destination.height;y++)
@@ -311,6 +370,9 @@ int gml_render_plan_execute_software_pooled(const GmlRenderPlan *plan,uint32_t *
         break;
       case GML_PLAN_OP_PRESENT_CPU_FRAME:
         execute_present(op,image,target,target_pitch_pixels);
+        break;
+      case GML_PLAN_OP_BLIT_OPAQUE_SHARP_BILINEAR:
+        execute_sharp_bilinear(op,image,target,target_pitch_pixels);
         break;
       default:
         return 0;

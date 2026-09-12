@@ -544,6 +544,13 @@ fingerprint, and losing all of it costs a rebuild rather than a wrong frame. `HA
 removes the directory and the adapter bridge from the source lists and leaves the same engine, the
 same renderer, the same state format and the ordinary CPU video callback.
 
+CRT fitting is a final host-canvas policy in `engine_presentation.c`, applied after aspect forcing.
+It selects the sharp-bilinear render-plan operation, whose complete software kernel lives in
+`gml_render_plan_software.c`. The GPU path transports those filtered pixels unchanged. When a
+terminal content program precedes the fit, `engine_graphics.c` evaluates it into the completed
+source raster with a synchronous readback before software filtering. The host canvas and filter
+remain derived presentation; neither changes the content's window or serialized configuration.
+
 A mapped content view remains host-owned and immutable. Its opaque mapping
 handle is retained by the owning content model and returned exactly once on
 failed parsing, unload, or destroy. Mapping is a coarse load-time optimization,

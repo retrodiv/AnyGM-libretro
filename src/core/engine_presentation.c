@@ -98,7 +98,9 @@ int engine_build_host_plan(AnygmEngine *engine,GmlRenderPlan *plan,uint32_t targ
   canvas.y=engine->host_canvas_y;
   canvas.width=(uint32_t)engine->host_canvas_width;
   canvas.height=(uint32_t)engine->host_canvas_height;
-  if(canvas.width>=source.width && canvas.height>=source.height){
+  if(engine->host_crt_active){
+    if(!gml_render_plan_add_blit_sharp_bilinear(plan,image,canvas,0u)) return 0;
+  } else if(canvas.width>=source.width && canvas.height>=source.height){
     GmlPlanAxis axis_x,axis_y;
     memset(&axis_x,0,sizeof axis_x);
     memset(&axis_y,0,sizeof axis_y);
@@ -898,6 +900,11 @@ static void host_canvas_update(AnygmEngine *engine){
                                        NULL,NULL,&source_width,&source_height);
   unsigned host_width=source_width;
   unsigned host_height=source_height;
+  /* output and its declared crop already include the forced aspect. The TV is only a final
+   * destination; it must not become the window, GUI or camera extent seen by content. */
+  engine->host_crt_active=engine->config.present_logical_raster && engine->config.adjust_crt_tv &&
+                          (source_width>364u || source_height>244u);
+  if(engine->host_crt_active){ host_width=640u; host_height=480u; }
   if(!engine->config.present_logical_raster){
     int configured_width=core_opt_monitor_size(engine,0);
     int configured_height=core_opt_monitor_size(engine,1);
@@ -926,11 +933,11 @@ static void host_canvas_update(AnygmEngine *engine){
   if(width_limited<=height_limited){
     engine->host_canvas_width=(int)host_width;
     engine->host_canvas_height=(int)(((uint64_t)shape_height*host_width+
-                                      shape_width/2u)/shape_width);
+                                      (engine->host_crt_active?0u:shape_width/2u))/shape_width);
   } else {
     engine->host_canvas_height=(int)host_height;
     engine->host_canvas_width=(int)(((uint64_t)shape_width*host_height+
-                                     shape_height/2u)/shape_height);
+                                     (engine->host_crt_active?0u:shape_height/2u))/shape_height);
   }
   if(engine->host_canvas_width<1) engine->host_canvas_width=1;
   if(engine->host_canvas_height<1) engine->host_canvas_height=1;

@@ -13,6 +13,8 @@ typedef struct AnygmSyntheticContent {
 } AnygmSyntheticContent;
 
 int anygm_synthetic_content_create(AnygmSyntheticContent *fixture);
+/* The same fixture at an explicit authored room raster for presentation contracts. */
+int anygm_synthetic_sized_content_create(AnygmSyntheticContent *fixture,unsigned width,unsigned height);
 /* Two authored tilemap layers followed by an empty room, without external assets. */
 int anygm_synthetic_tilemap_content_create(AnygmSyntheticContent *fixture);
 /* The neutral engine fixture with one object-held array of lists and one global list. Its Step
