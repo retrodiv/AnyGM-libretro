@@ -599,7 +599,8 @@ static int completed_frame_encodings_case(void){
 
 /* A terminal content program must finish at its authored raster before CRT filtering. The fake
  * proves synchronous readback, ownership and transport; the software plan cases own filter pixels. */
-static int crt_terminal_program_case(void){
+static int crt_terminal_program_extent(unsigned source_w,unsigned source_h,
+                                       unsigned host_w,unsigned host_h,int native_padding){
   Session session;
   uint32_t source[16];
   struct GmlShaderPal pal[1]={0};
@@ -611,11 +612,13 @@ static int crt_terminal_program_case(void){
   REQUIRE(render->n_shader_pal==0,"fixture has no content programs");
   engine->config.content_shader_device_expected=1;
   engine->config.content_shader_readback=ANYGM_SHADER_READBACK_BUDGETED;
-  engine->output_width=400; engine->output_height=300;
-  engine->host_output_width=640; engine->host_output_height=480;
+  engine->output_width=source_w; engine->output_height=source_h;
+  engine->host_output_width=host_w; engine->host_output_height=host_h;
   engine->host_crt_active=engine->host_canvas_active=1;
-  engine->host_canvas_x=engine->host_canvas_y=0;
-  engine->host_canvas_width=640; engine->host_canvas_height=480;
+  engine->host_canvas_width=native_padding?(int)source_w:(int)host_w;
+  engine->host_canvas_height=native_padding?(int)source_h:(int)host_h;
+  engine->host_canvas_x=((int)host_w-engine->host_canvas_width)/2;
+  engine->host_canvas_y=((int)host_h-engine->host_canvas_height)/2;
   engine->readback_is_pipelined=1;
   for(unsigned i=0;i<16;i++) source[i]=0xFFAA5500u;
   pal[0].source_vertex_es="attribute vec3 in_Position; void main(){ gl_Position=vec4(in_Position,1.0); }";
@@ -625,11 +628,11 @@ static int crt_terminal_program_case(void){
   gml_render_application_surface_bind(render,source,4,4,1);
   gml_render_application_surface_set_draw_enabled(render,0);
   gml_render_set_deferred_presentation(render,1);
-  gml_render_begin(render,engine->screen,400,300,0,0);
-  gml_render_gui_begin(render,400,300);
-  gml_render_gui_set_size(render,400,300);
+  gml_render_begin(render,engine->screen,source_w,source_h,0,0);
+  gml_render_gui_begin(render,source_w,source_h);
+  gml_render_gui_set_size(render,source_w,source_h);
   gml_render_shader_set_current(render,0);
-  gml_draw_surface_stretched(render,0,0,0,400,300,0xFFFFFFu,1.0);
+  gml_draw_surface_stretched(render,0,0,0,source_w,source_h,0xFFFFFFu,1.0);
   gml_render_shader_set_current(render,-1);
   int ok=gml_render_deferred_presentation(render,NULL) &&
          !engine_present_hardware_screen(engine,NULL,NULL) &&
@@ -638,17 +641,22 @@ static int crt_terminal_program_case(void){
          !gml_render_deferred_presentation(render,NULL) &&
          engine->frame_authority==ENGINE_FRAME_CPU_MATERIALIZED;
   const uint32_t *pixels=NULL; unsigned width=0,height=0;
-  ok=ok && resolve_host_frame(engine,&pixels,&width,&height) && width==640 && height==480 &&
+  ok=ok && resolve_host_frame(engine,&pixels,&width,&height) && width==host_w && height==host_h &&
            engine_present_hardware_frame(engine,pixels,width,height);
   int x=0,y=0,w=0,h=0;
   anygm_test_graphics_viewport(&x,&y,&w,&h);
-  ok=ok && w==640 && h==480 && engine->readback_is_pipelined==1;
+  ok=ok && w==(int)host_w && h==(int)host_h && engine->readback_is_pipelined==1;
   gml_render_gui_end(render);
   render->shader_pal=saved_pal; render->n_shader_pal=0;
   gml_render_application_surface_bind(render,engine->fb,engine->width,engine->height,1);
   session_close(&session);
   REQUIRE(ok,"terminal shader readback precedes CRT fit and hardware transport");
   return 1;
+}
+static int crt_terminal_program_case(void){
+  return crt_terminal_program_extent(400,300,640,480,0) &&
+         crt_terminal_program_extent(320,180,320,240,1) &&
+         crt_terminal_program_extent(240,240,320,240,1);
 }
 
 int main(void){

@@ -545,7 +545,10 @@ removes the directory and the adapter bridge from the source lists and leaves th
 same renderer, the same state format and the ordinary CPU video callback.
 
 CRT fitting is a final host-canvas policy in `engine_presentation.c`, applied after aspect forcing.
-It selects the sharp-bilinear render-plan operation, whose complete software kernel lives in
+It shares the inclusive relative 10% aspect-proximity rule with experimental forcing. Low rasters
+outside the 4:3 interval receive one-axis native-pixel padding before the output limits are checked
+again. Native padding retains the source pixel extent; larger output selects the existing 640x480
+fit. Both use the sharp-bilinear render-plan operation, whose complete software kernel lives in
 `gml_render_plan_software.c`. The GPU path transports those filtered pixels unchanged. When a
 terminal content program precedes the fit, `engine_graphics.c` evaluates it into the completed
 source raster with a synchronous readback before software filtering. The host canvas and filter

@@ -31,10 +31,16 @@ enum {
 /* One shape per mode, resolved in one place: the ratio is needed both when the forced frame is
  * measured and when its width is derived, and a mode added to only one of those reads as the
  * shape it is not. */
+static inline void gmc_aspect_force_fraction(int mode,unsigned *numerator,unsigned *denominator){
+  *numerator=mode==GMC_ASPECT_FORCE_21_9?21u:
+             (mode==GMC_ASPECT_FORCE_16_9 || mode==GMC_ASPECT_FORCE_16_10)?16u:4u;
+  *denominator=mode==GMC_ASPECT_FORCE_21_9 || mode==GMC_ASPECT_FORCE_16_9?9u:
+               mode==GMC_ASPECT_FORCE_16_10?10u:3u;
+}
 static inline double gmc_aspect_force_ratio(int mode){
-  return mode==GMC_ASPECT_FORCE_21_9 ? (21.0/9.0) :
-         mode==GMC_ASPECT_FORCE_16_9 ? (16.0/9.0) :
-         mode==GMC_ASPECT_FORCE_16_10 ? (16.0/10.0) : (4.0/3.0);
+  unsigned numerator,denominator;
+  gmc_aspect_force_fraction(mode,&numerator,&denominator);
+  return (double)numerator/denominator;
 }
 enum {
   GMC_ASPECT_DRAW_DEFAULT            = 0,

@@ -738,6 +738,16 @@ static int aspect_canvas_present_res(AnygmEngine *engine,unsigned base_w, unsign
   }
   return 0;
 }
+/* One relative, inclusive 10% rule for forced shapes and CRT padding. Integer cross-products
+ * keep exact boundary rasters inside the interval without floating-point endpoint drift. */
+static int aspect_within_tolerance(unsigned width,unsigned height,int mode){
+  unsigned numerator,denominator;
+  if(!width || !height) return 0;
+  gmc_aspect_force_fraction(mode,&numerator,&denominator);
+  uint64_t actual=(uint64_t)width*denominator*10u;
+  uint64_t target=(uint64_t)height*numerator;
+  return actual>=target*9u && actual<=target*11u;
+}
 static void apply_aspect_force_to_res(AnygmEngine *engine,unsigned base_w, unsigned base_h,
                                       unsigned *ow, unsigned *oh) {
   unsigned w = base_w, h = base_h;
@@ -754,13 +764,12 @@ static void apply_aspect_force_to_res(AnygmEngine *engine,unsigned base_w, unsig
   engine->aspect_gui_ox = engine->aspect_gui_oy = 0;
   if (mode != GMC_ASPECT_FORCE_NONE && base_w > 0 && base_h > 0) {
     const double target = gmc_aspect_force_ratio(mode);
-    double ratio = surface_canvas?(double)canvas_w/canvas_h:(double)base_w/base_h;
     unsigned present_w = 0, present_h = 0;
-    int already_target = fabs(ratio - target) <= 0.2;
+    int already_target = aspect_within_tolerance(surface_canvas?(unsigned)canvas_w:base_w,
+                                                surface_canvas?(unsigned)canvas_h:base_h,mode);
     if (!already_target &&
         aspect_canvas_present_res(engine,base_w, base_h, &present_w, &present_h)) {
-      double present_ratio = (double)present_w / (double)present_h;
-      already_target = fabs(present_ratio - target) <= 0.2;
+      already_target = aspect_within_tolerance(present_w,present_h,mode);
     }
     if (!already_target) {
       unsigned target_w = round_to_multiple_of_8((surface_canvas?(double)canvas_h:(double)base_h) * target);
@@ -900,11 +909,29 @@ static void host_canvas_update(AnygmEngine *engine){
                                        NULL,NULL,&source_width,&source_height);
   unsigned host_width=source_width;
   unsigned host_height=source_height;
+  int native_padding=0;
   /* output and its declared crop already include the forced aspect. The TV is only a final
    * destination; it must not become the window, GUI or camera extent seen by content. */
-  engine->host_crt_active=engine->config.present_logical_raster && engine->config.adjust_crt_tv &&
-                          (source_width>364u || source_height>244u);
-  if(engine->host_crt_active){ host_width=640u; host_height=480u; }
+  engine->host_crt_active=0;
+  if(engine->config.present_logical_raster && engine->config.adjust_crt_tv &&
+     source_width && source_height){
+    if(source_width<=364u && source_height<=244u &&
+       !aspect_within_tolerance(source_width,source_height,GMC_ASPECT_FORCE_4_3)){
+      /* Add pixels on one axis only, never resample the native image. A fractional extent
+       * rounds up; the centred integer margins can differ by one pixel. */
+      if((uint64_t)source_width*3u>(uint64_t)source_height*4u)
+        host_height=(source_width*3u+3u)/4u;
+      else
+        host_width=(source_height*4u+2u)/3u;
+      native_padding=1;
+      engine->host_crt_active=1;
+    }
+    if(host_width>364u || host_height>244u){
+      host_width=640u; host_height=480u;
+      native_padding=0;
+      engine->host_crt_active=1;
+    }
+  }
   if(!engine->config.present_logical_raster){
     int configured_width=core_opt_monitor_size(engine,0);
     int configured_height=core_opt_monitor_size(engine,1);
@@ -919,6 +946,13 @@ static void host_canvas_update(AnygmEngine *engine){
   engine->host_canvas_width=(int)host_width;
   engine->host_canvas_height=(int)host_height;
   if(!source_width || !source_height || !host_width || !host_height) return;
+  if(native_padding){
+    engine->host_canvas_width=(int)source_width;
+    engine->host_canvas_height=(int)source_height;
+    engine->host_canvas_x=((int)host_width-(int)source_width)/2;
+    engine->host_canvas_y=((int)host_height-(int)source_height)/2;
+    return;
+  }
   unsigned shape_width=source_width;
   unsigned shape_height=source_height;
   if(content_keeps_aspect_ratio(engine) && engine->width && engine->height){

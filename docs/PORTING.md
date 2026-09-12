@@ -52,14 +52,29 @@ cut: it neither compiles nor links the libretro adapter.
 7. Call `anygm_unload` before replacing content and destroy the engine before
    destroying anything referenced by host userdata.
 
+## Aspect proximity
+
+Experimental aspect forcing and CRT padding share one inclusive relative tolerance:
+`abs(actual / target - 1) <= 0.10`. The comparison uses integer cross-products of raster
+dimensions and the target fraction, so both exact endpoints are included without floating-point
+rounding drift. For 4:3 the accepted interval is 1.2 through 22/15. Each experimental mode uses
+its own target; this is not an exclusive classification (16:10 is on the lower 16:9 boundary).
+Existing content-ownership exceptions to aspect forcing remain unchanged.
+
 ## CRT presentation
 
 `adjust_crt_tv` is an optional live presentation setting, effective only with
 `present_logical_raster`. After aspect forcing and any declared presentation crop, an image wider
 than 364 pixels or taller than 244 pixels is fitted into a 640x480 frame. The complete image keeps
-its square-pixel aspect ratio with centered black margins. Images at or below both limits retain
-their own raster. Window queries, GUI coordinates and camera geometry remain owned by the content
-and the existing aspect policy.
+its square-pixel aspect ratio with centered black margins. An image at or below both limits keeps
+its own raster when within the shared 4:3 tolerance. Outside it, only one host dimension grows
+to pad the native image to 4:3, with centered black margins and no resampling. A fractional
+dimension rounds up to a whole pixel, approximating 4:3 within that rounding; odd margins differ
+by one pixel, with the extra pixel at the bottom or right. The limits are checked again on this
+padded extent. A result above either limit uses the existing direct source-to-640x480 fit without
+an intermediate padded image. Thus 320x180 becomes 320x240, while 360x180 would require 360x270
+and instead selects 640x480. Window queries, GUI coordinates and camera geometry remain owned by
+the content and the existing aspect policy.
 
 The fit uses sharp bilinear: a virtual integer nearest enlargement followed by bilinear sampling
 at destination pixel centres. Its shared integer prescale is the ceiling of the smaller fitted
@@ -69,7 +84,7 @@ adopted graphics context the filtered frame is uploaded for presentation; a term
 is evaluated at its original extent and read back synchronously before filtering. That extra
 readback can cost more on discrete GPUs.
 
-The host receives a 4:3 aspect with an adapted 640x480 frame. Physical resolution, interlacing,
+The host receives the final padded or fitted raster aspect. Physical resolution, interlacing,
 refresh rate and TV output remain frontend responsibilities. The libretro option is named
 **Adjust for 4:3 CRT TV**, defaults to Off, follows **Render at game resolution**, and is visible
 only while that parent option is On.

@@ -37,8 +37,9 @@ static struct retro_core_option_v2_definition g_definitions[]={
   {"anygm_adjust_crt_tv","Adjust for 4:3 CRT TV",NULL,
    "With Render at game resolution on, fits images wider than 364 pixels or taller than 244 "
    "pixels into 640x480 using sharp bilinear filtering. Preserves the image's aspect ratio "
-   "with centered black bars. Limits are checked after Aspect Ratio force is applied. "
-   "Smaller images keep their resolution. The frontend controls the TV video mode.",
+   "with centered black bars. Smaller images outside 4:3 +/-10% receive native-pixel black "
+   "padding to 4:3, then the size limits are checked again. All checks follow Aspect Ratio "
+   "force. The frontend controls the TV video mode.",
    NULL,"video",
    {{"Off",NULL},{"On",NULL},{NULL,NULL}},
    "Off"},
@@ -74,7 +75,8 @@ static struct retro_core_option_v2_definition g_definitions[]={
    "Game Base"},
   {"anygm_aspect_ratio_force","Aspect Ratio force (Experimental)",NULL,
    "With Render at game resolution on, overrides the shape of the game's own raster before this "
-   "program hands it over. None keeps the shape the game draws. Off that path the monitor "
+   "program hands it over. Shapes within +/-10% of the selected aspect are left unchanged. "
+   "None keeps the shape the game draws. Off that path the monitor "
    "dimensions already state the shape, so this neither acts nor is offered.",
    NULL,"video",
    {{"None",NULL},{"4:3",NULL},{"16:9",NULL},{"16:10",NULL},{"21:9",NULL},{NULL,NULL}},
