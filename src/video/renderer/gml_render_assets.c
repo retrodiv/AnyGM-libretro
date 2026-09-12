@@ -554,6 +554,10 @@ int gml_render_sprite_texture_handle(int sprite,int image){
   if(sprite<0) return -1;
   return (int)(GML_TEX_SPR_TAG|((sprite&0xFFFF)<<10)|(image&0x3FF));
 }
+int gml_render_atlas_texture_handle(const GmlRender *r,int atlas){
+  return r && atlas>=0 && atlas<r->n_atlas && atlas<=0x00FFFFFF
+    ?(int)(GML_TEX_ATLAS_TAG|(uint32_t)atlas):-1;
+}
 
 int gml_render_surface_texture_handle(int surface){
   if(surface<0) return -1;
@@ -745,6 +749,8 @@ int gml_render_backend_texture_view(GmlRender *R,int handle,int full_atlas,
   backend_texture_view_reset(view);
   if(!R) return 0;
   uint32_t encoded=(uint32_t)handle,kind=encoded&GML_TEX_KIND_MASK;
+  if(kind==GML_TEX_ATLAS_TAG)
+    return gml_render_backend_atlas_view(R,(int)(encoded&0x00FFFFFFu),view);
   if(kind==GML_TEX_SPR_TAG){
     int spr=(int)((encoded>>10)&0xFFFF),img=(int)(encoded&0x3FF);
     gml_render_warm_sprite(R,spr);
@@ -837,6 +843,7 @@ int gml_render_texture_metrics(GmlRender *R,int handle,
   else if(kind==GML_TEX_SURF_TAG) metrics->kind=GML_RENDER_TEXTURE_SURFACE;
   else if(kind==GML_TEX_BG_TAG) metrics->kind=GML_RENDER_TEXTURE_BACKGROUND;
   else if(kind==GML_TEX_FONT_TAG) metrics->kind=GML_RENDER_TEXTURE_FONT;
+  else if(kind==GML_TEX_ATLAS_TAG) metrics->kind=GML_RENDER_TEXTURE_ATLAS;
   else return 0;
   metrics->runtime=view.runtime;
   metrics->atlas_backed=view.pixel_kind==GML_RENDER_BACKEND_PIXELS_RGBA &&

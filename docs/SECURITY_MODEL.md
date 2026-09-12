@@ -104,6 +104,7 @@ The normalized FORM reader enforces a separate set of compile-time limits:
 | Rooms | 1,048,576 |
 | Room-order entries | 1,048,576 |
 | Embedded classic information | 8 MiB |
+| Texture pages returned by one named-group query | 65,536 |
 
 The reader validates the exact FORM extent, unique and complete chunks,
 record tables, string termination, code spans, room records, room order, and

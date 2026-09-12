@@ -126,7 +126,8 @@ enum {
   GML_RENDER_TEXTURE_SPRITE,
   GML_RENDER_TEXTURE_SURFACE,
   GML_RENDER_TEXTURE_BACKGROUND,
-  GML_RENDER_TEXTURE_FONT
+  GML_RENDER_TEXTURE_FONT,
+  GML_RENDER_TEXTURE_ATLAS
 };
 
 typedef struct {
@@ -677,6 +678,11 @@ int  gml_render_sprite_metrics(const GmlRender *r, int sprite,
 int  gml_render_sprite_set_playback(GmlRender *r, int sprite,
                                     double speed, int speed_type);
 int  gml_render_sprite_texture_handle(int sprite, int image);
+int  gml_render_atlas_texture_handle(const GmlRender *r,int atlas);
+/* Owned handle array from immutable group metadata; free it after use.
+ * Missing or malformed groups return zero with empty outputs. */
+int  gml_render_texture_group_handles(const GmlRender *r,const char *name,
+                                      int **handles,size_t *count);
 int  gml_render_surface_texture_handle(int surface);
 int  gml_render_texture_metrics(GmlRender *r,int texture,
                                 GmlRenderTextureMetrics *metrics);

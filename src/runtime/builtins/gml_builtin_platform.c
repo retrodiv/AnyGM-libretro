@@ -3,6 +3,7 @@
  */
 /* Deterministic platform and offline-capability builtin adapters. */
 #include "gml_builtin_internal.h"
+#include <limits.h>
 #include "anygm_compatibility.h"
 #include "anygm_host.h"
 
@@ -744,12 +745,28 @@ GmlVal gml_builtin_try_platform(GmlVM *vm, const char *nm, GmlVal *a, int n){
     }
     return vreal(1);
   }
-  if(!strcmp(nm,"texturegroup_get_textures")) return arr_newv(0);
+  if(!strcmp(nm,"texturegroup_get_textures")){
+    int *handles=NULL;size_t count=0;
+    if(n<1 || a[0].t!=V_STR ||
+       !gml_render_texture_group_handles(vm->render,a[0].s,&handles,&count)) return arr_newv(0);
+    GmlVal result=arr_newv((int)count);
+    for(size_t i=0;i<count;i++)
+      gml_arr_set(result,(int)i,vreal(handles[i]));
+    free(handles);
+    return result;
+  }
   if(!strcmp(nm,"texturegroup_get_status")) return vreal(3);   /* loaded */
   if(!strcmp(nm,"texturegroup_load")||!strcmp(nm,"texturegroup_unload")||
      !strcmp(nm,"texturegroup_set_mode")) return vreal(0);
   if(!strcmp(nm,"texture_is_ready")) return vreal(1);
-  if(!strcmp(nm,"texture_prefetch")||!strcmp(nm,"texture_flush")||!strcmp(nm,"draw_texture_flush")||
+  if(!strcmp(nm,"texture_prefetch")){
+    GmlRenderTextureMetrics metrics;
+    if(n>0 && a[0].t==V_REAL && isfinite(a[0].d) &&
+       a[0].d>=0 && a[0].d<=INT_MAX && a[0].d==floor(a[0].d))
+      (void)gml_render_texture_metrics(vm->render,(int)a[0].d,&metrics);
+    return vreal(0);
+  }
+  if(!strcmp(nm,"texture_flush")||!strcmp(nm,"draw_texture_flush")||
      !strcmp(nm,"sprite_prefetch")||!strcmp(nm,"sprite_flush")||!strcmp(nm,"sprite_flush_multi")||
      !strcmp(nm,"sprite_prefetch_multi")) return vreal(0);
   return gml_builtin_try_ds(vm,nm,a,n);

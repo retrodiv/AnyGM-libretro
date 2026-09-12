@@ -345,6 +345,83 @@ static const char *texture_group_string(const GmlWin *win,uint32_t pointer){
   return NULL;
 }
 
+typedef struct {
+  const char *name,*directory,*extension;
+  uint32_t load_type,pages,page_count;
+} TextureGroupMetadata;
+
+static const GmlChunk *texture_group_table(const GmlWin *win,uint32_t *count){
+  const GmlChunk *chunk=gml_chunk(win,"TGIN");
+  uint32_t version=0;
+  *count=0;
+  if(!chunk || !chunk_read_u32_absolute(win,chunk,chunk->off,&version) || version!=1 ||
+     !chunk_read_u32_absolute(win,chunk,(size_t)chunk->off+4,count) ||
+     *count>GML_WIN_MAX_REFERENCES ||
+     !chunk_has_absolute(win,chunk,(size_t)chunk->off+8,(size_t)*count*4)) return NULL;
+  return chunk;
+}
+
+static int texture_group_read(const GmlWin *win,const GmlChunk *chunk,uint32_t index,
+                              TextureGroupMetadata *group){
+  uint32_t record=0,name=0,first=0;
+  memset(group,0,sizeof(*group));
+  if(!chunk_read_u32_absolute(win,chunk,(size_t)chunk->off+8+(size_t)index*4,&record) ||
+     !chunk_has_absolute(win,chunk,record,24) ||
+     !chunk_read_u32_absolute(win,chunk,record,&name) ||
+     !chunk_read_u32_absolute(win,chunk,(size_t)record+4,&first) ||
+     !(group->name=texture_group_string(win,name))) return 0;
+  size_t header=24;
+  group->pages=first;
+  group->directory=texture_group_string(win,first);
+  /* Extended records insert directory, extension and load policy. Removing the
+   * separate skeletal-sprite list does not move their texture-page pointer. */
+  if(group->directory){
+    uint32_t extension=0;
+    header=32;
+    if(!chunk_has_absolute(win,chunk,record,header) ||
+       !chunk_read_u32_absolute(win,chunk,(size_t)record+8,&extension) ||
+       !chunk_read_u32_absolute(win,chunk,(size_t)record+12,&group->load_type) ||
+       !chunk_read_u32_absolute(win,chunk,(size_t)record+16,&group->pages) ||
+       group->load_type>2 || !(group->extension=texture_group_string(win,extension))) return 0;
+  }
+  return (size_t)group->pages>=(size_t)record+header &&
+    chunk_read_u32_absolute(win,chunk,group->pages,&group->page_count) &&
+    group->page_count<=GML_WIN_MAX_REFERENCES &&
+    chunk_has_absolute(win,chunk,(size_t)group->pages+4,(size_t)group->page_count*4);
+}
+
+int gml_render_texture_group_handles(const GmlRender *r,const char *name,
+                                     int **handles,size_t *count){
+  if(handles) *handles=NULL;
+  if(count) *count=0;
+  if(!r || !r->win || !r->win->data || r->n_atlas<0 || !name || !handles || !count) return 0;
+  uint32_t groups=0,atlas_count=0;
+  const GmlChunk *chunk=texture_group_table(r->win,&groups);
+  const GmlChunk *txtr=gml_chunk(r->win,"TXTR");
+  if(!chunk || !txtr ||
+     !chunk_read_u32_absolute(r->win,txtr,txtr->off,&atlas_count) ||
+     !chunk_has_absolute(r->win,txtr,(size_t)txtr->off+4,(size_t)atlas_count*4)) return 0;
+  for(uint32_t i=0;i<groups;i++){
+    TextureGroupMetadata group;
+    if(!texture_group_read(r->win,chunk,i,&group) || strcmp(group.name,name)) continue;
+    /* Bound the allocation exported to a language array independently of the
+     * file reader's larger reference-table limit. */
+    if(group.page_count>65536u) return 0;
+    for(uint32_t j=0;j<group.page_count;j++){
+      uint32_t page=u32(r->win->data,group.pages+4+j*4);
+      if(page>=atlas_count || page>=(uint32_t)r->n_atlas) return 0;
+    }
+    if(!group.page_count) return 1;
+    int *result=malloc((size_t)group.page_count*sizeof(*result));
+    if(!result) return 0;
+    for(uint32_t j=0;j<group.page_count;j++)
+      result[j]=gml_render_atlas_texture_handle(r,(int)u32(r->win->data,group.pages+4+j*4));
+    *handles=result;*count=group.page_count;
+    return 1;
+  }
+  return 0;
+}
+
 static int texture_group_leaf_safe(const char *text){
   if(!text || !text[0] || !strcmp(text,".") || !strcmp(text,"..")) return 0;
   for(const unsigned char *p=(const unsigned char *)text;*p;p++)
@@ -440,37 +517,18 @@ static void load_external_texture(GmlRender *r,const GmlChunk *txtr,uint32_t atl
 }
 
 static void load_external_texture_groups(GmlRender *r,const GmlChunk *txtr){
-  const GmlChunk *tgin=gml_chunk(r->win,"TGIN");
-  uint32_t version=0,count=0;
-  if(!tgin ||
-     !chunk_read_u32_absolute(r->win,tgin,tgin->off,&version) || version!=1 ||
-     !chunk_read_u32_absolute(r->win,tgin,(size_t)tgin->off+4u,&count) ||
-     count>GML_WIN_MAX_REFERENCES ||
-     !chunk_has_absolute(r->win,tgin,(size_t)tgin->off+8u,(size_t)count*4u)) return;
+  uint32_t count=0;
+  const GmlChunk *tgin=texture_group_table(r->win,&count);
+  if(!tgin) return;
   size_t total_bytes=0;
   for(uint32_t i=0;i<count;i++){
-    uint32_t record=0,name_pointer=0,directory_pointer=0,extension_pointer=0;
-    uint32_t load_type=0,pages_pointer=0,page_count=0;
-    if(!chunk_read_u32_absolute(r->win,tgin,(size_t)tgin->off+8u+(size_t)i*4u,&record) ||
-       !chunk_read_u32_absolute(r->win,tgin,record,&name_pointer) ||
-       !chunk_read_u32_absolute(r->win,tgin,(size_t)record+4u,&directory_pointer) ||
-       !chunk_read_u32_absolute(r->win,tgin,(size_t)record+8u,&extension_pointer) ||
-       !chunk_read_u32_absolute(r->win,tgin,(size_t)record+12u,&load_type) ||
-       !chunk_read_u32_absolute(r->win,tgin,(size_t)record+16u,&pages_pointer) ||
-       !load_type || load_type>2 ||
-       !chunk_read_u32_absolute(r->win,tgin,pages_pointer,&page_count) ||
-       page_count>GML_WIN_MAX_REFERENCES ||
-       !chunk_has_absolute(r->win,tgin,(size_t)pages_pointer+4u,(size_t)page_count*4u))
-      continue;
-    const char *name=texture_group_string(r->win,name_pointer);
-    const char *directory=texture_group_string(r->win,directory_pointer);
-    const char *extension=texture_group_string(r->win,extension_pointer);
-    if(!name || !directory || !extension) continue;
-    for(uint32_t page=0;page<page_count;page++){
+    TextureGroupMetadata group;
+    if(!texture_group_read(r->win,tgin,i,&group) || !group.load_type) continue;
+    for(uint32_t page=0;page<group.page_count;page++){
       uint32_t atlas_index=0;
-      if(chunk_read_u32_absolute(r->win,tgin,(size_t)pages_pointer+4u+(size_t)page*4u,
+      if(chunk_read_u32_absolute(r->win,tgin,(size_t)group.pages+4u+(size_t)page*4u,
                                  &atlas_index))
-        load_external_texture(r,txtr,atlas_index,directory,name,extension,&total_bytes);
+        load_external_texture(r,txtr,atlas_index,group.directory,group.name,group.extension,&total_bytes);
     }
   }
 }

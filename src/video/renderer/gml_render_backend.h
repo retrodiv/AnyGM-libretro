@@ -82,6 +82,7 @@ int gml_render_backend_shader_vertex_colour_blend(const GmlRender *render,double
 #define GML_TEX_SURF_TAG 0x55000000u
 #define GML_TEX_BG_TAG   0x56000000u
 #define GML_TEX_FONT_TAG 0x57000000u
+#define GML_TEX_ATLAS_TAG 0x58000000u
 #define GML_TEX_KIND_MASK 0xFF000000u
 
 
