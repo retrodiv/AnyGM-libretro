@@ -361,6 +361,7 @@ void gml_builtin_state_reset(GmlBuiltinState *state){
   }
   builtin_state_ini_reset(state);
   state->next_buffer_id=1;
+  state->async_seq=0;
   state->n_async_sl=0;
   state->n_async_http=0;
   state->async_group_active=0;
@@ -461,6 +462,10 @@ static int ds_state_order_compare(const void *left,const void *right){
 
 void gml_builtin_state_write_ini_ds(const GmlBuiltinState *state,
                                     GmlVmStateWriter *writer){
+  /* Closed/transient resources are not replayed, but the allocator cursors
+   * determine language-visible identities issued after restoration. */
+  gml_vm_state_write_i32(writer,state->next_buffer_id);
+  gml_vm_state_write_i32(writer,state->async_seq);
   gml_vm_state_write_i32(writer,state->ini_n);
   gml_vm_state_write_i32(writer,state->ini_open);
   gml_vm_state_write_string(writer,state->ini_path);
@@ -527,6 +532,14 @@ void gml_builtin_state_write_ini_ds(const GmlBuiltinState *state,
 int gml_builtin_state_read_ini_ds(GmlBuiltinState *state,
                                   GmlVmStateReader *reader){
   if(!state || !gml_vm_state_reader_ok(reader)) return 0;
+  int next_buffer_id=gml_vm_state_read_i32(reader);
+  int async_seq=gml_vm_state_read_i32(reader);
+  if(next_buffer_id<1 || next_buffer_id>16 || async_seq<0){
+    gml_vm_state_reader_fail(reader,"bad I/O identity cursor",(uint32_t)next_buffer_id);
+    return 0;
+  }
+  state->next_buffer_id=next_buffer_id;
+  state->async_seq=async_seq;
   state->ini_n=gml_vm_state_read_i32(reader);
   state->ini_open=gml_vm_state_read_i32(reader);
   char *path=gml_vm_state_read_string(reader);

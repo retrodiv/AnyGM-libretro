@@ -78,6 +78,42 @@ int expect_vm_state_sparse_ds_continuation(void){
   return all_ok;
 }
 
+static GmlVal empty_async_group(GmlVM *vm){
+  (void)gml_builtin_call(vm,"buffer_async_group_begin",NULL,0);
+  return gml_builtin_call(vm,"buffer_async_group_end",NULL,0);
+}
+
+int expect_vm_state_io_identity_continuation(void){
+  GmlWin win={0}; GmlVM vm={0}; vm.win=&win;
+  vm.particles=gml_particle_state_create(&vm); gml_vm_software3d_reset(&vm);
+  GmlVal bytes=vreal(16);
+  for(int i=0;i<3;i++){
+    GmlVal buffer=gml_builtin_call(&vm,"buffer_create",&bytes,1);
+    (void)gml_builtin_call(&vm,"buffer_delete",&buffer,1);
+    (void)empty_async_group(&vm);
+  }
+  /* All I/O is closed: no buffer contents, queued completion or host handle is
+   * part of this test. Only the identities of future operations must resume. */
+  size_t size=gml_vm_state_size(&vm),written=0,used=0;
+  void *state=malloc(size?size:1);
+  int ok=state && gml_vm_state_save(&vm,state,size,&written) && written==size;
+  GmlVal expected_buffer=gml_builtin_call(&vm,"buffer_create",&bytes,1);
+  GmlVal expected_request=empty_async_group(&vm);
+  (void)gml_builtin_call(&vm,"buffer_delete",&expected_buffer,1);
+  for(int pass=0;pass<2 && ok;pass++){
+    ok=gml_vm_state_load(&vm,state,size,&used) && used==size;
+    GmlVal buffer=gml_builtin_call(&vm,"buffer_create",&bytes,1);
+    GmlVal request=empty_async_group(&vm);
+    ok=ok && buffer.t==V_REAL && buffer.d==expected_buffer.d &&
+       request.t==V_REAL && request.d==expected_request.d;
+    if(!ok) fprintf(stderr,"I/O continuation identities: buffer %.0f/%.0f request %.0f/%.0f\n",
+                   buffer.d,expected_buffer.d,request.d,expected_request.d);
+    (void)gml_builtin_call(&vm,"buffer_delete",&buffer,1);
+  }
+  free(state); gml_vm_free(&vm);
+  return ok;
+}
+
 int expect_vm_state_graph_case(void){
   GmlWin win={0}; GmlVM vm={0};
   vm.win=&win; vm.room_index=vm.pending_room=-1; vm.next_creation_seq=1;

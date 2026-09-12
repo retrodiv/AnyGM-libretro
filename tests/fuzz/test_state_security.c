@@ -903,6 +903,78 @@ done:
   free(candidate); free(baseline); anygm_destroy(engine); return ok;
 }
 
+static int io_identity_state_cases(const AnygmHostServices *services,
+                                   const AnygmContentSource *source){
+  AnygmEngine *engine=NULL;
+  if(anygm_create(services,&engine)!=ANYGM_OK || anygm_load(engine,source,NULL)!=ANYGM_OK){
+    anygm_destroy(engine);
+    return fail("I/O identity fixture load failed");
+  }
+  for(int i=0;i<12;i++){
+    GmlVal length=vreal(16);
+    GmlVal id=gml_builtin_call(&engine->vm,"buffer_create",&length,1);
+    (void)gml_builtin_call(&engine->vm,"buffer_delete",&id,1);
+  }
+  for(int i=0;i<37;i++){
+    (void)gml_builtin_call(&engine->vm,"buffer_async_group_begin",NULL,0);
+    (void)gml_builtin_call(&engine->vm,"buffer_async_group_end",NULL,0);
+  }
+  uint8_t *baseline=NULL; size_t size=0;
+  if(!save_state(engine,&baseline,&size)){ anygm_destroy(engine); return 0; }
+  uint8_t *candidate=malloc(size);
+  size_t vm_start=STATE_HEADER_SIZE+(size_t)read_u64(baseline+64)+(size_t)read_u64(baseline+72);
+  size_t vm_end=vm_start+(size_t)read_u64(baseline+80);
+  uint8_t prefix[16]={0}; write_u32(prefix,13); write_u32(prefix+4,37);
+  size_t cursor=0; int matches=0;
+  for(size_t at=vm_start;at+sizeof prefix<=vm_end;at++)
+    if(!memcmp(baseline+at,prefix,sizeof prefix)){ cursor=at; matches++; }
+  int ok=candidate && matches==1;
+  if(!ok) fail("I/O cursor fixture does not identify its unique record");
+  const uint32_t bad_buffer[]={0,17,UINT32_MAX};
+  for(size_t i=0;ok && i<sizeof bad_buffer/sizeof *bad_buffer;i++)
+    ok=reject_payload_u32(engine,candidate,size,baseline,size,cursor,bad_buffer[i],
+                          "invalid buffer allocator cursor");
+  if(ok) ok=reject_payload_u32(engine,candidate,size,baseline,size,cursor+4,UINT32_MAX,
+                               "negative asynchronous identity");
+  if(ok) ok=reject_payload_u32(engine,candidate,size,baseline,size,cursor+4,UINT32_C(0x80000000),
+                               "out-of-domain asynchronous identity");
+  if(ok) ok=reject_payload_u32(engine,candidate,size,baseline,size,vm_start+4,14,
+                               "previous I/O-cursor-free VM schema");
+  if(ok) ok=reject_payload_u32(engine,candidate,size,baseline,size,4,28,
+                               "previous I/O-cursor-free public schema");
+  if(ok){
+    memcpy(candidate,baseline,size);
+    write_u32(candidate+cursor,8); write_u32(candidate+cursor+4,42);
+    write_u32(candidate+vm_end,0); /* Reject later, after accepting both cursors. */
+    refresh_checksum(candidate);
+    ok=reject_unchanged(engine,candidate,size,baseline,size,
+                        "audio rejection after I/O cursor publication");
+  }
+  if(ok){
+    memcpy(candidate,baseline,size);
+    write_u32(candidate+cursor,16); write_u32(candidate+cursor+4,INT32_MAX);
+    refresh_checksum(candidate);
+    ok=anygm_state_load(engine,candidate,size)==ANYGM_OK;
+    (void)gml_builtin_call(&engine->vm,"buffer_async_group_begin",NULL,0);
+    GmlVal request=gml_builtin_call(&engine->vm,"buffer_async_group_end",NULL,0);
+    GmlVal length=vreal(16);
+    GmlVal buffer=gml_builtin_call(&engine->vm,"buffer_create",&length,1);
+    ok=ok && request.t==V_REAL && request.d==-1 && buffer.t==V_REAL && buffer.d==16;
+    if(!ok) fail("I/O boundary cursor or exhaustion behavior failed");
+  }
+  if(ok){
+    gml_builtin_state_reset(engine->vm.builtins);
+    GmlVal length=vreal(16);
+    GmlVal buffer=gml_builtin_call(&engine->vm,"buffer_create",&length,1);
+    (void)gml_builtin_call(&engine->vm,"buffer_async_group_begin",NULL,0);
+    GmlVal request=gml_builtin_call(&engine->vm,"buffer_async_group_end",NULL,0);
+    ok=buffer.t==V_REAL && buffer.d==1 && request.t==V_REAL && request.d==1;
+    if(!ok) fail("Reset did not clear I/O identities");
+  }
+  free(candidate); free(baseline); anygm_destroy(engine);
+  return ok;
+}
+
 int main(void){
   AnygmSyntheticContent fixture;
   if(!anygm_synthetic_list_override_content_create(&fixture))
@@ -1194,6 +1266,8 @@ int main(void){
   if(ok) ok=dormant_visual_state_cases(&services);
 
   if(ok) ok=delayed_call_state_cases(&services,&source);
+
+  if(ok) ok=io_identity_state_cases(&services,&source);
 
   if(ok) ok=content_override_state_cases(&services,&fixture);
 

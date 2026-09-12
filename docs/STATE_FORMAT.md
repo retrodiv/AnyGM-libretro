@@ -9,9 +9,20 @@ marketing version. It is a numeric field in a validated binary header.
 
 ## Save-state schema
 
-The current AnyGM save-state schema is `28`. It is the format transported by
+The current AnyGM save-state schema is `29`. It is the format transported by
 libretro frontends for manual save states, automatic state slots, and rewind
 snapshots. Those features remain supported.
+
+Schema `29` introduces VM schema `15`. Two signed little-endian 32-bit words
+prefix the existing builtin INI/data-structure section: the next buffer search
+cursor (1 through 16), then the last issued asynchronous save/load request ID
+(0 through INT_MAX). They retain the identities of future operations after a
+restore. Exhausted asynchronous IDs return failure instead of overflowing.
+Buffer contents, open host handles and pending completion queues remain transient;
+these counters do not replay external I/O. Reset clears both cursors. The fixed
+eight-byte addition is present before the first frame. Earlier public and VM
+schemas reject transactionally, without a legacy reader. Renderer encoding and audio
+schema `2` retain their layouts.
 
 Schema `28` appends the language-visible asset name to each renderer runtime-sprite
 record, after its collision mask. An unsigned little-endian 32-bit byte count includes
@@ -269,7 +280,7 @@ same form without an intervening mutation produces identical bytes.
 ## VM payload ownership
 
 `src/core/engine_state.c` owns the root framing and section transaction.
-Within the VM section, `src/runtime/vm/gml_vm_state.c` alone owns schema `14`,
+Within the VM section, `src/runtime/vm/gml_vm_state.c` alone owns schema `15`,
 field order, value-graph encoding, sizing, and restore scratch.
 
 Builtin resources have a separate storage and lifetime owner, not a separate

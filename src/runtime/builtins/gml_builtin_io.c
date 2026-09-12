@@ -1082,10 +1082,15 @@ static void async_saveload_queue(GmlVM *vm, int req, int ok){
   }
 }
 
+static int async_next_request_id(GmlVM *vm){
+  if(vm->builtins->async_seq>=INT_MAX) return -1;
+  return ++vm->builtins->async_seq;
+}
+
 static int async_saveload_request(GmlVM *vm, int ok){
   if(!vm) return 0;
   if(vm->builtins->async_group_active){
-    if(vm->builtins->async_group_id<=0) vm->builtins->async_group_id=++vm->builtins->async_seq;
+    if(vm->builtins->async_group_id<=0) vm->builtins->async_group_id=async_next_request_id(vm);
     if(!ok) vm->builtins->async_group_status=0;
     vm->builtins->async_group_count++;
     if(builtin_setting(vm,"GML_LOG_ASYNC")){ 
@@ -1093,7 +1098,7 @@ static int async_saveload_request(GmlVM *vm, int ok){
         vm->frame,vm->builtins->async_group_id,ok?1:0,vm->builtins->async_group_count); }
     return vm->builtins->async_group_id;
   }
-  int req=++vm->builtins->async_seq;
+  int req=async_next_request_id(vm);
   async_saveload_queue(vm, req, ok);
   return req;
 }
@@ -1940,7 +1945,7 @@ GmlVal gml_builtin_try_io(GmlVM *vm, const char *nm, GmlVal *a, int n){
     free(data); free(path); return vreal(0); }
   if(!strcmp(nm,"buffer_async_group_begin")){
     vm->builtins->async_group_active=1;
-    vm->builtins->async_group_id=++vm->builtins->async_seq;
+    vm->builtins->async_group_id=async_next_request_id(vm);
     vm->builtins->async_group_status=1;
     vm->builtins->async_group_count=0;
     return vreal(0);
