@@ -176,12 +176,24 @@ static struct retro_core_option_v2_definition g_definitions[]={
    NULL,"development",
    {{"Full game",NULL},{NULL,NULL}},
    "Full game"},
-  {"anygm_clear_local_data","Clear local data on load",NULL,
+  {"anygm_clear_local_data","Clear current game saved data on load",NULL,
    "Deletes everything this game has written before it loads, so the next run behaves like the "
    "first on this machine.",
    NULL,"development",
    {{"Off",NULL},{"On",NULL},{NULL,NULL}},
    "Off"},
+  {"anygm_clear_game_cache","Clear current game cache on unload",NULL,
+   "Deletes the cache directories used by the current game after unloading it or closing the "
+   "core. The next load rebuilds them. Saved game data is unaffected.",
+   NULL,"development",
+   {{"On",NULL},{"Off",NULL},{NULL,NULL}},
+   "On"},
+  {"anygm_clear_all_caches","Clear all game caches on load",NULL,
+   "Deletes all contents of AnyGM-cache before loading a game or generating its cache. "
+   "Every load starts with an empty cache while this is On. Saved game data is unaffected.",
+   NULL,"development",
+   {{"On",NULL},{"Off",NULL},{NULL,NULL}},
+   "On"},
   {NULL,NULL,NULL,NULL,NULL,NULL,{{NULL,NULL}},NULL}
 };
 

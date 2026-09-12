@@ -291,6 +291,7 @@ ANYGM_TEST_HOST_SOURCES := \
 
 ANYGM_LIBRETRO_SOURCES := \
 	src/adapters/libretro/libretro_entry.c \
+	src/adapters/libretro/libretro_cache.c \
 	src/adapters/libretro/libretro_context.c \
 	src/adapters/libretro/libretro_vfs.c \
 	src/adapters/libretro/libretro_options.c \

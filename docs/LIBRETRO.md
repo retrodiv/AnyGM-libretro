@@ -55,11 +55,38 @@ surprising in equal measure; it is documented rather than gated because the
 override surface is the same one the diagnostics use, and gating it would take
 the feature away from the only people who use it.
 
-**"Clear local data on load" is sticky and destructive.** While it is On, every
+**"Clear current game saved data on load" is sticky and destructive.** It defaults
+to Off. While it is On, every
 load deletes the save namespace of the content being loaded, not just the next
 one. The description says so; it is not auto-reset after acting, because a
 player who turns it on to escape a corrupted save usually needs it to survive
 one more load.
+
+**Cache cleanup has two independent Development options, both On by default.**
+They follow the saved-data option: "Clear current game cache on unload", then
+"Clear all game caches on load". The first removes the immediate `AnyGM-cache`
+children used by the loaded session, after unload or core destruction has closed
+the runtime's files and mappings. Warm-cache reads, transformed inputs and
+staging renames are tracked as well as newly written caches. The current frontend
+value is read on close, so a menu change applies even while content is paused.
+Failed preparation also cleans its attempted cache entries when enabled.
+
+The second empties `AnyGM-cache` before any content preparation, including old
+versions and caches not used by the incoming game. It retains the root directory;
+a deletion failure refuses the new load with a message. Unload deletion failures
+are warnings. The existing cache names and layout are unchanged. Unused historical
+versions are handled by global cleanup, not guessed from a filename at unload.
+Neither option removes the separate saved-data namespace. Cleanup is limited to
+the explicit adapter cache root; a frontend supplying no usable writable root
+does not grant permission to delete the loader's fallback directories.
+
+Native cache cleanup includes hidden entries and treats symbolic links and Windows
+reparse points as leaves. A linked cache root is refused. Native directory deletion
+uses host APIs because the frontend VFS lacks a dedicated directory-delete operation;
+URI cache roots use frontend VFS operations exclusively and report unsupported removal.
+Walks reject path-bearing entry names and stop with failure above 64 levels or
+1,048,576 visits. Cache users must be closed before deletion, and hosts sharing a
+cache root across concurrent core instances must disable global cleanup.
 
 **Maximum geometry is fixed at 3840x2160.** A frontend may preallocate around
 33 MB from that, which is heavy on mobile. It is fixed rather than derived from

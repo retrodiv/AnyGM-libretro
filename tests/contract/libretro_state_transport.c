@@ -148,6 +148,9 @@ bool libretro_hw_render_requested(void){ return false; }
 #endif
 void libretro_vfs_request(void){}
 void libretro_vfs_services_init(AnygmHostServices *services){ (void)services; }
+bool libretro_vfs_clear_cache(const char *path,bool keep_root){
+  (void)path; (void)keep_root; return true;
+}
 static unsigned options_registered;
 void libretro_options_register(void){ options_registered++; }
 static unsigned options_applied;

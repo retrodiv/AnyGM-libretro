@@ -177,7 +177,7 @@ CONTRACT_TESTS := $(TEST_DIR)/dummy_host $(TEST_DIR)/test_builtin_file_io $(TEST
 	$(TEST_DIR)/test_libretro_vfs_transport $(TEST_DIR)/test_libretro_option_defaults \
 	$(TEST_DIR)/test_libretro_keyboard_source $(TEST_DIR)/test_libretro_gamepad_ports \
 	$(TEST_DIR)/test_libretro_locale_variables $(TEST_DIR)/test_libretro_wall_time \
-	$(TEST_DIR)/test_libretro_content_directories
+	$(TEST_DIR)/test_libretro_content_directories $(TEST_DIR)/test_libretro_cache_vfs
 ifneq ($(HARDWARE_RENDER),0)
 CONTRACT_TESTS += $(TEST_DIR)/test_libretro_hardware_render
 endif
@@ -691,6 +691,7 @@ contract-check: $(CONTRACT_TESTS)
 	$(TEST_DIR)/test_libretro_locale_variables
 	$(TEST_DIR)/test_libretro_wall_time
 	$(TEST_DIR)/test_libretro_content_directories
+	$(TEST_DIR)/test_libretro_cache_vfs
 	$(if $(filter-out 0,$(HARDWARE_RENDER)),$(TEST_DIR)/test_libretro_hardware_render,true)
 
 security-check: $(SECURITY_TESTS)
@@ -826,7 +827,8 @@ $(TEST_DIR)/dummy_host: tests/contract/dummy_host.c tests/support/synthetic_cont
 	$(call link_runtime_test,$(TEST_CPPFLAGS))
 
 $(TEST_DIR)/test_libretro_state_transport: tests/contract/libretro_state_transport.c \
-	src/adapters/libretro/libretro_entry.c src/adapters/libretro/libretro_context.c
+	src/adapters/libretro/libretro_entry.c src/adapters/libretro/libretro_context.c \
+	src/adapters/libretro/libretro_cache.c
 	mkdir -p $(dir $@)
 	$(CC) $(LIBRETRO_CPPFLAGS) $(CFLAGS) $^ -o $@
 
@@ -866,12 +868,18 @@ $(TEST_DIR)/test_libretro_wall_time: tests/contract/libretro_wall_time.c \
 	$(CC) $(LIBRETRO_CPPFLAGS) $(CFLAGS) $^ -o $@
 
 $(TEST_DIR)/test_libretro_content_directories: tests/contract/libretro_content_directories.c \
-	src/adapters/libretro/libretro_entry.c src/adapters/libretro/libretro_context.c
+	src/adapters/libretro/libretro_entry.c src/adapters/libretro/libretro_context.c \
+	src/adapters/libretro/libretro_cache.c src/adapters/libretro/libretro_vfs.c
 	mkdir -p $(dir $@)
 	$(CC) $(LIBRETRO_CPPFLAGS) $(CFLAGS) $^ -o $@
 
 $(TEST_DIR)/test_libretro_vfs_transport: tests/contract/libretro_vfs_transport.c \
 	src/adapters/libretro/libretro_vfs.c
+	mkdir -p $(dir $@)
+	$(CC) $(LIBRETRO_CPPFLAGS) $(CFLAGS) $^ -o $@
+
+$(TEST_DIR)/test_libretro_cache_vfs: tests/contract/libretro_cache_vfs.c \
+	src/adapters/libretro/libretro_cache.c src/adapters/libretro/libretro_vfs.c
 	mkdir -p $(dir $@)
 	$(CC) $(LIBRETRO_CPPFLAGS) $(CFLAGS) $^ -o $@
 

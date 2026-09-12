@@ -202,6 +202,7 @@ void retro_deinit(void){
     anygm_destroy(g_libretro.engine);
     g_libretro.engine=NULL;
   }
+  libretro_cache_end();
   libretro_options_release();
   memset(g_libretro.keyboard_events,0,sizeof g_libretro.keyboard_events);
   memset(g_libretro.override_used,0,sizeof g_libretro.override_used);
@@ -376,6 +377,7 @@ bool retro_load_game(const struct retro_game_info *info){
   update_directories();
   update_locale();
   libretro_options_apply(true);
+  if(!libretro_cache_begin()) return false;
   AnygmContentSource source;
   memset(&source,0,sizeof source);
   source.struct_size=sizeof source;
@@ -413,6 +415,7 @@ bool retro_load_game(const struct retro_game_info *info){
       message.progress=-1;
       g_libretro.environment(RETRO_ENVIRONMENT_SET_MESSAGE_EXT,&message);
     }
+    libretro_cache_end();
     return false;
   }
   g_libretro.prepared=true;
@@ -439,6 +442,7 @@ void retro_unload_game(void){
   if(!g_libretro.loaded && !g_libretro.prepared) return;
   libretro_hw_render_release();
   anygm_unload(g_libretro.engine);
+  libretro_cache_end();
   g_libretro.prepared=false;
   g_libretro.loaded=false;
   g_libretro.provisional_av_exposed=false;

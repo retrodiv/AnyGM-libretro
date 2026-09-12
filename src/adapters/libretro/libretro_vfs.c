@@ -83,6 +83,7 @@ static void *host_file_map(void *userdata,const char *path,const void **data,siz
   if(data) *data=NULL;
   if(size) *size=0;
   if(!path || !path[0] || !data || !size) return NULL;
+  libretro_cache_track(path);
   const void *mapped=NULL;
   size_t length=0;
 #ifdef _WIN32
@@ -167,6 +168,7 @@ static const char *stdio_mode(AnygmFileMode mode){
 static void *host_file_open(void *userdata,const char *path,AnygmFileMode mode){
   (void)userdata;
   if(!path || !(mode&(ANYGM_FILE_READ|ANYGM_FILE_WRITE))) return NULL;
+  libretro_cache_track(path);
   LibretroFile *file=calloc(1,sizeof *file);
   if(!file) return NULL;
   if(g_libretro.vfs && g_libretro.vfs->open){
@@ -271,6 +273,7 @@ static void host_file_close(void *userdata,void *handle){
 static AnygmResult host_file_stat(void *userdata,const char *path,AnygmFileInfo *info){
   (void)userdata;
   if(!path || !info || info->struct_size<sizeof *info) return ANYGM_ERROR_INVALID_ARGUMENT;
+  libretro_cache_track(path);
   memset((char *)info+sizeof info->struct_size,0,sizeof *info-sizeof info->struct_size);
   info->struct_size=sizeof *info;
   if(g_libretro.vfs && g_libretro.vfs->stat){
@@ -304,6 +307,7 @@ static AnygmResult host_file_stat(void *userdata,const char *path,AnygmFileInfo 
 static AnygmResult host_directory_create(void *userdata,const char *path){
   (void)userdata;
   if(!path) return ANYGM_ERROR_INVALID_ARGUMENT;
+  libretro_cache_track(path);
   int result;
   /* A value left over from an unrelated call would otherwise satisfy the EEXIST test below. */
   errno=0;
@@ -328,6 +332,8 @@ static AnygmResult host_directory_create(void *userdata,const char *path){
 static AnygmResult host_path_rename(void *userdata,const char *from,const char *to){
   (void)userdata;
   if(!from || !to) return ANYGM_ERROR_INVALID_ARGUMENT;
+  libretro_cache_track(from);
+  libretro_cache_track(to);
   int result;
   if(g_libretro.vfs&&g_libretro.vfs->rename){
     char normalized_from[4096],normalized_to[4096];
@@ -350,23 +356,22 @@ static AnygmResult host_path_remove(void *userdata,const char *path){
   return result==0?ANYGM_OK:ANYGM_ERROR_IO;
 }
 
-static void *host_directory_open(void *userdata,const char *path){
-  (void)userdata;
+static void *directory_open(const char *path,bool use_vfs,bool include_hidden){
   if(!path) return NULL;
   LibretroDirectory *directory=calloc(1,sizeof *directory);
   if(!directory) return NULL;
 #ifdef _WIN32
   directory->find_handle=-1;
 #endif
-  if(g_libretro.vfs && g_libretro.vfs->opendir)
+  if(use_vfs && g_libretro.vfs && g_libretro.vfs->opendir)
   {
     char normalized[4096];
     const char *vfs_path=frontend_path(path,normalized,sizeof normalized);
-    if(vfs_path) directory->vfs_handle=g_libretro.vfs->opendir(vfs_path,false);
+    if(vfs_path) directory->vfs_handle=g_libretro.vfs->opendir(vfs_path,include_hidden);
   }
 #ifdef _WIN32
   else {
-    char pattern[1024];
+    char pattern[4096];
     if(snprintf(pattern,sizeof pattern,"%s\\*",path)<(int)sizeof pattern){
       directory->find_handle=_findfirst(pattern,&directory->find_data);
       directory->first_pending=directory->find_handle!=-1;
@@ -388,6 +393,12 @@ static void *host_directory_open(void *userdata,const char *path){
   return directory;
 }
 
+static void *host_directory_open(void *userdata,const char *path){
+  (void)userdata;
+  libretro_cache_track(path);
+  return directory_open(path,true,false);
+}
+
 static AnygmResult host_directory_read(void *userdata,void *handle,AnygmDirectoryEntry *entry){
   (void)userdata;
   LibretroDirectory *directory=handle;
@@ -402,14 +413,16 @@ static AnygmResult host_directory_read(void *userdata,void *handle,AnygmDirector
 #ifdef _WIN32
   else {
     if(directory->first_pending) directory->first_pending=0;
-    else if(_findnext(directory->find_handle,&directory->find_data)!=0) return ANYGM_RESULT_END;
+    else if(_findnext(directory->find_handle,&directory->find_data)!=0)
+      return errno==ENOENT?ANYGM_RESULT_END:ANYGM_ERROR_IO;
     name=directory->find_data.name;
     is_directory=(directory->find_data.attrib&_A_SUBDIR)!=0;
   }
 #else
   else {
+    errno=0;
     struct dirent *item=readdir(directory->stdio_handle);
-    if(!item) return ANYGM_RESULT_END;
+    if(!item) return errno?ANYGM_ERROR_IO:ANYGM_RESULT_END;
     name=item->d_name;
     /* d_type is optional. XFS, several FUSE filesystems and some Android volumes answer
      * DT_UNKNOWN for everything, and reading that as "not a directory" makes every directory
@@ -424,7 +437,7 @@ static AnygmResult host_directory_read(void *userdata,void *handle,AnygmDirector
     }
   }
 #endif
-  if(!name) return ANYGM_ERROR_IO;
+  if(!name || strlen(name)>=sizeof entry->name) return ANYGM_ERROR_IO;
   memset(entry,0,sizeof *entry);
   entry->struct_size=sizeof *entry;
   entry->flags=ANYGM_FILE_INFO_EXISTS|
@@ -444,6 +457,96 @@ static void host_directory_close(void *userdata,void *handle){
   if(directory->stdio_handle) closedir(directory->stdio_handle);
 #endif
   free(directory);
+}
+
+/* The frontend VFS has no unlink-without-following or directory-removal operation. Native
+ * cache paths therefore use native metadata and deletion, just as immutable mappings use
+ * native handles. URI namespaces stay wholly in the frontend VFS and report unsupported
+ * removal. Links/reparse points are leaves, never directories to walk. */
+enum { CACHE_EXISTS=1, CACHE_DIRECTORY=2, CACHE_LINK=4 };
+static int cache_path_flags(const char *path,bool native){
+  if(!native){
+    if(!g_libretro.vfs || !g_libretro.vfs->stat) return -1;
+    int32_t size=0;
+    int flags=g_libretro.vfs->stat(path,&size);
+    if(!(flags&RETRO_VFS_STAT_IS_VALID)) return 0;
+    return CACHE_EXISTS|((flags&RETRO_VFS_STAT_IS_DIRECTORY)?CACHE_DIRECTORY:0);
+  }
+#ifdef _WIN32
+  DWORD attributes=GetFileAttributesA(path);
+  if(attributes==INVALID_FILE_ATTRIBUTES){
+    DWORD error=GetLastError();
+    return error==ERROR_FILE_NOT_FOUND || error==ERROR_PATH_NOT_FOUND?0:-1;
+  }
+  return CACHE_EXISTS|((attributes&FILE_ATTRIBUTE_DIRECTORY)?CACHE_DIRECTORY:0)|
+      ((attributes&FILE_ATTRIBUTE_REPARSE_POINT)?CACHE_LINK:0);
+#else
+  struct stat info;
+  if(lstat(path,&info)!=0) return errno==ENOENT || errno==ENOTDIR?0:-1;
+  return CACHE_EXISTS|(S_ISDIR(info.st_mode)?CACHE_DIRECTORY:0)|
+      (S_ISLNK(info.st_mode)?CACHE_LINK:0);
+#endif
+}
+
+static bool clear_cache_tree(const char *path,bool native,bool keep_root,
+                              unsigned depth,size_t *remaining){
+  if(depth>64 || !*remaining) return false;
+  --*remaining;
+  int flags=cache_path_flags(path,native);
+  if(flags<0) return false;
+  if(!flags) return true;
+  if(keep_root && (!(flags&CACHE_DIRECTORY) || (flags&CACHE_LINK))) return false;
+  if((flags&CACHE_DIRECTORY) && !(flags&CACHE_LINK)){
+    if(!native && (!g_libretro.vfs->opendir || !g_libretro.vfs->readdir ||
+       !g_libretro.vfs->dirent_get_name || !g_libretro.vfs->dirent_is_dir ||
+       !g_libretro.vfs->closedir)) return false;
+    void *directory=directory_open(path,!native,true);
+    if(!directory) return false;
+    bool ok=true;
+    for(;;){
+      AnygmDirectoryEntry entry={0};
+      entry.struct_size=sizeof entry;
+      AnygmResult result=host_directory_read(NULL,directory,&entry);
+      if(result==ANYGM_RESULT_END) break;
+      if(result!=ANYGM_OK){ ok=false; break; }
+      if(!*remaining){ ok=false; break; }
+      --*remaining;
+      if(!strcmp(entry.name,".") || !strcmp(entry.name,"..")) continue;
+      if(!entry.name[0] || strpbrk(entry.name,"/\\:")){ ok=false; break; }
+      char child[4096];
+      int written=snprintf(child,sizeof child,"%s/%s",path,entry.name);
+      if(written<0 || (size_t)written>=sizeof child ||
+         !clear_cache_tree(child,native,false,depth+1,remaining)){ ok=false; break; }
+    }
+    host_directory_close(NULL,directory);
+    if(!ok) return false;
+  }
+  if(keep_root) return true;
+  if(!native) return g_libretro.vfs->remove && g_libretro.vfs->remove(path)==0;
+#ifdef _WIN32
+  return ((flags&CACHE_DIRECTORY)?RemoveDirectoryA(path):DeleteFileA(path))!=0;
+#else
+  return ((flags&CACHE_DIRECTORY) && !(flags&CACHE_LINK)?rmdir(path):unlink(path))==0;
+#endif
+}
+
+bool libretro_vfs_clear_cache(const char *path,bool keep_root){
+  const char *root=g_libretro.cache_directory;
+  size_t length=strlen(root);
+  if(!path || !length || strncmp(path,root,length) ||
+     (path[length] && path[length]!='/')) return false;
+  /* Only the adapter-selected root or one recorded immediate child is a deletion target. */
+  if(path[length]){
+    const char *child=path+length+1;
+    if(!child[0] || strpbrk(child,"/\\:") || !strcmp(child,".") || !strcmp(child,".."))
+      return false;
+  } else if(!keep_root) return false;
+  const char *scheme=strstr(root,"://");
+  bool native=!scheme || scheme==root+1;
+  int flags=cache_path_flags(root,native);
+  if(flags<0 || (flags && (!(flags&CACHE_DIRECTORY) || (flags&CACHE_LINK)))) return false;
+  size_t remaining=1048576;
+  return clear_cache_tree(path,native,keep_root,0,&remaining);
 }
 
 void libretro_vfs_services_init(AnygmHostServices *services){

@@ -709,7 +709,35 @@ static void a_restarted_core_declares_its_settings_again(void){
   if(value_count(chooser)<2) complain("a core started again names no rooms");
 }
 
+static void cleanup_options_have_safe_distinct_scopes(void){
+  begin(2,3);
+  const struct retro_core_option_v2_definition *saved=definition("anygm_clear_local_data");
+  const struct retro_core_option_v2_definition *current=definition("anygm_clear_game_cache");
+  const struct retro_core_option_v2_definition *all=definition("anygm_clear_all_caches");
+  if(!saved || !current || !all){ complain("a cleanup option is missing"); return; }
+  if(current!=saved+1 || all!=current+1 || strcmp(saved->category_key,"development") ||
+     strcmp(current->category_key,"development") || strcmp(all->category_key,"development"))
+    complain("cleanup options are not saved data, current cache, all caches in Development");
+  if(strcmp(saved->desc,"Clear current game saved data on load") ||
+     strcmp(current->desc,"Clear current game cache on unload") ||
+     strcmp(all->desc,"Clear all game caches on load") ||
+     strcmp(saved->default_value,"Off") || strcmp(current->default_value,"On") ||
+     strcmp(all->default_value,"On"))
+    complain("cleanup labels or defaults are wrong");
+  begin(0,3);
+  const char *flat=flat_text("anygm_clear_game_cache");
+  if(!flat || strcmp(flat,"Clear current game cache on unload; On|Off"))
+    complain("flat current-cache option does not default to On");
+  flat=flat_text("anygm_clear_all_caches");
+  if(!flat || strcmp(flat,"Clear all game caches on load; On|Off"))
+    complain("flat all-caches option does not default to On");
+  flat=flat_text("anygm_clear_local_data");
+  if(!flat || strcmp(flat,"Clear current game saved data on load; Off|On"))
+    complain("flat saved-data option lost its label or Off default");
+}
+
 int main(void){
+  cleanup_options_have_safe_distinct_scopes();
   every_setting_sits_in_a_group();
   graphics_settings_are_independent();
   unset_settings_keep_content_reachable();

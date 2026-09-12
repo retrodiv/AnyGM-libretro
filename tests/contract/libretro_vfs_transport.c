@@ -17,6 +17,7 @@ static int invalid_path_seen;
 static int invalid_end_seek_seen;
 
 LibretroAdapter g_libretro;
+void libretro_cache_track(const char *path){ (void)path; }
 
 static int valid_path(const char *path){
   int valid=path && !strcmp(path,"C:/content/data.win");

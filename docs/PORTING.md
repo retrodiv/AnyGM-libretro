@@ -210,6 +210,11 @@ save directory as the save root unchanged and `save_directory/AnyGM-cache`
 as the cache root. The cache subdirectory can be removed without touching
 persistent data; it will be rebuilt when needed.
 
+The libretro Development options clear all cache contents before load and the
+current session's used cache directories after unload by default. They do not
+change the cache layout or the portable runtime's policy; see
+[the libretro surface](LIBRETRO.md) for lifecycle and host-filesystem details.
+
 On case-sensitive filesystems, rename an existing lowercase `anygm` directory
 to `AnyGM` to retain the same persistent files. An existing `anygm-cache`
 directory may likewise be renamed to `AnyGM-cache` to reuse derived content;

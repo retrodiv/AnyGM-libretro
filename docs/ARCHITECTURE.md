@@ -607,6 +607,13 @@ names no graphics API type. The other files in that directory translate libretro
 options, and input facilities into the public API. The linked core exports only
 the official libretro surface.
 
+`libretro_cache.c` owns the adapter's two cache-cleanup policies and a bounded,
+session-local list of immediate cache-root children observed by its VFS callbacks.
+The VFS owner performs confined cache deletion after all runtime handles are
+released, or before any incoming content preparation for global cleanup. Existing
+content hashes, directory names and runtime state remain owned by their original
+modules; the adapter does not reproduce cache naming or parse cache markers.
+
 Deleting `src/adapters/libretro/` and its entries in `Makefile.common` leaves a
 buildable framework-neutral runtime library. No portable module includes
 `libretro.h`.
