@@ -126,10 +126,10 @@ static size_t fixed_state_capacity(size_t actual,bool compact_startup,uint32_t f
    * and any known mutable render allocations raise it only as required. */
   size_t floor=compact_startup?1u*1024u*1024u:4u*1024u*1024u;
   /* Deferred container initialization can outgrow four MiB of required simulation state even
-   * with a small authored raster. Reserve eight MiB before a fixed frontend allocates its ring.
+   * with a small authored raster. Reserve 32 MiB before a fixed frontend allocates its ring.
    * This is a bounded growth policy, not a bound on arbitrary future container allocations. */
   if(!compact_startup && (flags&ANYGM_STATE_CAPACITY_DYNAMIC_CONTAINERS))
-    floor=8u*1024u*1024u;
+    floor=32u*1024u*1024u;
   if(actual>(SIZE_MAX-margin)/2u) return SIZE_MAX;
   size_t capacity=actual*2u+margin;
   return capacity<floor?floor:capacity;
@@ -624,8 +624,7 @@ size_t retro_serialize_size(void){
      * complete-first writer also handles later presentation growth within this fixed capacity. */
     if(complete_hint && complete_hint<=small_complete_capacity &&
        actual<=(small_complete_capacity-complete_hint)/2u &&
-       !(capacity_flags&(ANYGM_STATE_CAPACITY_DYNAMIC_SURFACES|
-                         ANYGM_STATE_CAPACITY_DYNAMIC_CONTAINERS)))
+       !(capacity_flags&ANYGM_STATE_CAPACITY_DYNAMIC_SURFACES))
       compact_startup=true;
     if(!compact_startup && complete_hint>actual) actual=complete_hint;
   }

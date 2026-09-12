@@ -221,9 +221,9 @@ static int deferred_containers_keep_a_larger_fixed_reserve(int negotiation_resul
   stub_capacity_flags=ANYGM_STATE_CAPACITY_DYNAMIC_CONTAINERS;
   stub_hint_bytes=512u*1024u;
   const size_t capacity=retro_serialize_size();
-  int ok=capacity==8u*1024u*1024u;
+  int ok=capacity==32u*1024u*1024u;
   retro_run();
-  stub_state_bytes=5u*1024u*1024u;
+  stub_state_bytes=24u*1024u*1024u;
   stub_resume_state_bytes=stub_state_bytes;
   uint8_t *state=malloc(capacity);
   if(!state) ok=0;
