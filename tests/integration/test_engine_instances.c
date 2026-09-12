@@ -2426,6 +2426,53 @@ static int bridged_key_press_delivery_policy(void){
   return ok;
 }
 
+static int bridged_key_restore_policy(void){
+  for(int save_frame=1;save_frame<=2;save_frame++){
+    AnygmSyntheticContent fixture;
+    if(!anygm_synthetic_bridged_key_content_create(&fixture)) return 0;
+    AnygmHostServices services={0};
+    services.struct_size=sizeof services;
+    services.abi_version=ANYGM_HOST_SERVICES_VERSION;
+    anygm_stdio_vfs_services_init(&services);
+    AnygmEngine *engine=NULL;
+    AnygmContentSource source={0};
+    source.struct_size=sizeof source;
+    source.kind=ANYGM_CONTENT_PATH;
+    source.path=fixture.path;
+    source.cache_directory=source.save_directory=fixture.directory;
+    int ok=anygm_create(&services,&engine)==ANYGM_OK &&
+           anygm_load(engine,&source,NULL)==ANYGM_OK;
+    AnygmInputFrame input={0};
+    input.struct_size=sizeof input;
+    input.pointer_x=input.pointer_y=-1;
+    AnygmFrameOutput output={.struct_size=sizeof output};
+    for(int frame=0;ok && frame<save_frame;frame++)
+      ok=anygm_run_frame(engine,&input,&output)==ANYGM_OK;
+    uint8_t *state=NULL; size_t size=0;
+    if(ok) ok=save_state(engine,&state,&size);
+    int pending=ok?engine->key_release_defer[39]:-1;
+    for(int frame=save_frame;ok && frame<5;frame++)
+      ok=anygm_run_frame(engine,&input,&output)==ANYGM_OK;
+    if(ok) ok=!engine->vm.input.key(engine,39,0) &&
+              gml_global_num(&engine->vm,"fixture_presses")==1;
+    if(ok) ok=anygm_state_load(engine,state,size)==ANYGM_OK;
+    /* The completed picture consumes one presentation-only call before input advances. */
+    if(ok) ok=anygm_run_frame(engine,&input,&output)==ANYGM_OK;
+    for(int frame=save_frame;ok && frame<5;frame++)
+      ok=anygm_run_frame(engine,&input,&output)==ANYGM_OK;
+    if(ok) ok=!engine->vm.input.key(engine,39,0) &&
+              gml_global_num(&engine->vm,"fixture_presses")==1;
+    if(!ok) fprintf(stderr,"bridged key restore failed: saved frame=%d pending=%d held=%d presses=%.0f\n",
+                    save_frame,pending,engine?engine->vm.input.key(engine,39,0):-1,
+                    engine?gml_global_num(&engine->vm,"fixture_presses"):-1.0);
+    free(state);
+    anygm_destroy(engine);
+    anygm_synthetic_content_destroy(&fixture);
+    if(!ok) return 0;
+  }
+  return 1;
+}
+
 /* A synthetic instance pairs press and release in Step, then checks held
  * input in Begin Step. The fixture counts how many following frames observe
  * the held key and checks that the key goes up after the pairs stop. */
@@ -2707,6 +2754,8 @@ int main(int argc,char **argv){
       return bridged_key_press_delivery_policy()?0:1;
     if(!strcmp(argv[2],"bridged_key_hold"))
       return bridged_key_hold_policy()?0:1;
+    if(!strcmp(argv[2],"bridged_key_restore"))
+      return bridged_key_restore_policy()?0:1;
     if(!strcmp(argv[2],"undefined_placement"))
       return undefined_placement_policy()?0:1;
     fprintf(stderr,"unknown integration case: %s\n",argv[2]);
@@ -2774,6 +2823,7 @@ int main(int argc,char **argv){
   if(!simulated_key_frame_lifetime_policy()) return 1;
   if(!bridged_key_press_delivery_policy()) return 1;
   if(!bridged_key_hold_policy()) return 1;
+  if(!bridged_key_restore_policy()) return 1;
   if(!undefined_placement_policy()) return 1;
   if(!alarm_pause_policy()) return 1;
   if(!alarm_phase_membership_policy()) return 1;
