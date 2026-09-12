@@ -3088,6 +3088,27 @@ int main(int argc,char **argv){
   }
   free(map_probe);
   if(visual_word<=map_word){ fprintf(stderr,"canonical visual sections changed order\n"); return 1; }
+  /* This fixture owes no keyboard events. Remove only the verified empty queues from test
+   * scratch, retaining every historical exact state pin below. This is not a runtime reader. */
+  size_t pending_at=112+2048+44+sizeof first->pad_current+sizeof first->pad_previous+
+                    sizeof first->key_current+sizeof first->key_previous;
+  size_t pending_bytes=sizeof first->key_press_carry+sizeof first->key_release_defer;
+  size_t pending_core=(size_t)read_u64(deterministic+64);
+  if((uint32_t)read_u64(deterministic+4)!=27 || pending_at+pending_bytes>map_vm ||
+     pending_bytes>pending_core){
+    fprintf(stderr,"canonical pending keyboard framing changed\n"); return 1;
+  }
+  for(size_t at=0;at<pending_bytes;at++) if(deterministic[pending_at+at]){
+    fprintf(stderr,"canonical fixture unexpectedly owes a keyboard event\n"); return 1;
+  }
+  memmove(deterministic+pending_at,deterministic+pending_at+pending_bytes,
+          deterministic_size-pending_at-pending_bytes);
+  deterministic_size-=pending_bytes;
+  map_vm-=pending_bytes; map_word-=pending_bytes; visual_word-=pending_bytes;
+  write_u64(deterministic+16,deterministic_size);
+  write_u64(deterministic+64,pending_core-pending_bytes);
+  write_u64(deterministic+96,deterministic_size-112);
+  write_u32(deterministic+4,26);
   /* No timer or runtime sprite is present in this neutral fixture. The hidden-parent
    * and compressed-sprite contracts change only the schema words and checksum; retain the entire prior
    * exact state pin instead of accepting unrelated byte changes. */
@@ -3198,7 +3219,8 @@ int main(int argc,char **argv){
   write_u64(deterministic+56,state_checksum(deterministic+112,preceding_size-112));
   uint64_t preceding_hash=state_checksum(deterministic,preceding_size);
   memcpy(deterministic,first_state,first_written);
-  if(deterministic_size!=22306 ||
+  deterministic_size=first_written;
+  if(deterministic_size!=22818 ||
      preceding_delayed_hash!=UINT64_C(0xa3ed237ec81fc73d) ||
      preceding_visual_size!=22302 || preceding_visual_hash!=UINT64_C(0x9351d78c1daaea2b) ||
      preceding_map_size!=22298 || preceding_map_hash!=UINT64_C(0x07f91baea5f9e3ff) ||
