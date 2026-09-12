@@ -123,6 +123,9 @@ typedef struct RuntimeMaskRecord {
   size_t row_bytes_offset;
   size_t count_offset;
   size_t payload_offset;
+  size_t name_size_offset;
+  size_t name_offset;
+  uint32_t name_bytes;
   int width;
   int height;
   int frames;
@@ -217,6 +220,13 @@ static int locate_runtime_mask_record(const uint8_t *state,size_t state_size,
   record->count_offset=render_start+cursor.offset;
   record->count=(int32_t)cursor_u32(&cursor);
   record->payload_offset=render_start+cursor.offset;
+  uint64_t mask_bytes=(uint64_t)(unsigned)record->row_bytes*(unsigned)record->height*
+                      (unsigned)record->count;
+  if(mask_bytes>SIZE_MAX || !cursor_skip(&cursor,(size_t)mask_bytes)) return 0;
+  record->name_size_offset=render_start+cursor.offset;
+  record->name_bytes=cursor_u32(&cursor);
+  record->name_offset=render_start+cursor.offset;
+  if(!cursor_skip(&cursor,record->name_bytes)) return 0;
   return cursor.ok;
 }
 
@@ -260,10 +270,11 @@ static int runtime_mask_state_cases(AnygmEngine *engine){
   if(ok){
     uint64_t render_size=read_u64(baseline+72),vm_size=read_u64(baseline+80);
     memcpy(candidate,baseline,state_size);
-    if(!render_size || vm_size==UINT64_MAX) ok=fail("runtime mask section cannot be shortened");
+    size_t removed=(size_t)record.name_bytes+5;
+    if(render_size<removed || vm_size>UINT64_MAX-removed) ok=fail("runtime mask section cannot be shortened");
     else {
-      write_u64(candidate+72,render_size-1);
-      write_u64(candidate+80,vm_size+1);
+      write_u64(candidate+72,render_size-removed);
+      write_u64(candidate+80,vm_size+removed);
       ok=reject_unchanged(engine,candidate,state_size,baseline,state_size,
                           "truncated runtime mask payload");
     }
@@ -359,11 +370,37 @@ static int compressed_sprite_state_cases(const AnygmHostServices *services,
                                record.width_offset,127,"long compressed sprite output");
   if(ok) ok=reject_payload_u32(engine,candidate,size,baseline,size,
                                record.encoded_offset,0,"invalid compressed sprite header");
+  if(ok) ok=reject_payload_u32(engine,candidate,size,baseline,size,
+                               4,27,"previous nameless runtime sprite schema");
+  if(ok) ok=reject_payload_u32(engine,candidate,size,baseline,size,
+                               record.name_size_offset,16u*1024u*1024u+2u,
+                               "runtime sprite name beyond string bound");
+  if(ok) ok=reject_payload_u32(engine,candidate,size,baseline,size,
+                               record.name_size_offset,UINT32_MAX,"unbounded runtime sprite name");
+  if(ok) ok=reject_payload_u32(engine,candidate,size,baseline,size,
+                               record.name_size_offset,record.name_bytes+1,
+                               "runtime sprite name beyond renderer section");
+  if(ok) ok=reject_payload_u32(engine,candidate,size,baseline,size,
+                               record.name_offset,0,"embedded NUL in runtime sprite name");
+  if(ok){
+    memcpy(candidate,baseline,size);
+    candidate[record.name_offset+record.name_bytes-1]='x';
+    refresh_checksum(candidate);
+    ok=reject_unchanged(engine,candidate,size,baseline,size,"unterminated runtime sprite name");
+  }
   /* Exercise rollback after the renderer has successfully decoded different pixels. */
   if(ok){
     uint8_t *replacement=malloc(128u*128u*4);
     if(replacement) memset(replacement,0x66,128u*128u*4);
     ok=replacement && gml_sprite_replace_from_rgba_frames(&engine->render,0,replacement,128,128,1,0,0);
+    if(ok){
+      GmlSprite *sprite=&engine->render.spr[0];
+      free(sprite->owned_name);
+      sprite->owned_name=strdup("live_identity_after_snapshot");
+      sprite->name=sprite->owned_name;
+      engine->render.spr_name_gen++;
+      ok=sprite->name!=NULL;
+    }
     uint8_t *current=NULL;size_t current_size=0;
     ok=ok && save_state(engine,&current,&current_size);
     if(ok){

@@ -45,6 +45,7 @@ typedef struct {
   double  timeline_index, timeline_position, timeline_speed, timeline_running, timeline_loop;
   unsigned char mouse_over;  /* transient hover flag for Mouse enter/leave (not serialized) */
   unsigned char room_transition_survivor; /* transient phase membership across room entry */
+  unsigned char disposal_callback_active; /* transient explicit-ID access during Destroy/CleanUp */
   int cg_touch, cg_visit;    /* collision-grid stamps: touched-since-build / visited-this-query (not serialized) */
   int draw_layer_order;      /* transient GMS2 room layer order for equal-depth draw ties */
   int draw_layer_element_order; /* authored position inside a ROOM instance layer, or -1 */

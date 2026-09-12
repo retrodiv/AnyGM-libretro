@@ -809,10 +809,12 @@ void gml_instance_destroy_with_event(GmlVM *vm, GmlInstance *in, int perform_des
    * not reject marked instances, so the one required Destroy/CleanUp pair still executes. */
   if(!in||!in->active||in->marked) return;
   in->marked=1;
+  in->disposal_callback_active=1;
   if(perform_destroy_event) gml_run_event(vm,in,"Destroy_0");
   /* Newer Clean Up events fire immediately after Destroy when an instance is disposed of.
    * Per-instance resources are commonly released there. */
   gml_run_event(vm,in,"CleanUp_0");
+  in->disposal_callback_active=0;
 }
 void gml_instance_destroy(GmlVM *vm, GmlInstance *in){
   gml_instance_destroy_with_event(vm,in,1);

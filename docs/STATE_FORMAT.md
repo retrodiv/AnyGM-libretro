@@ -9,9 +9,17 @@ marketing version. It is a numeric field in a validated binary header.
 
 ## Save-state schema
 
-The current AnyGM save-state schema is `27`. It is the format transported by
+The current AnyGM save-state schema is `28`. It is the format transported by
 libretro frontends for manual save states, automatic state slots, and rewind
 snapshots. Those features remain supported.
+
+Schema `28` appends the language-visible asset name to each renderer runtime-sprite
+record, after its collision mask. An unsigned little-endian 32-bit byte count includes
+the terminating NUL; zero means a null name. Non-null names contain no earlier NUL
+and at most 16 MiB of text. Generated, copied and file-backed identities survive both
+pixel reconstruction and compressed-cache reuse, independently of source-path relocation.
+The renderer has no independent schema header. VM schema `14` and audio schema `2`
+retain their layouts. Earlier public schemas reject transactionally.
 
 Schema `27` adds two fixed 256-byte arrays after the root keyboard snapshots:
 the carried simulated-press event flags (zero or one), then deferred release

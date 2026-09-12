@@ -34,6 +34,7 @@ int expect_early_native_layer_animation(void);
 int expect_authored_long_layer_background_binding(void);
 int expect_retired_builtin_script_shadow(void);
 int expect_deactivated_instance_reference(void);
+int expect_destroy_callback_reference(void);
 int expect_bounding_box_far_edges_by_generation(void);
 int expect_bounding_box_far_edges_at_a_fractional_position(void);
 int expect_rectangular_mask_edge_contacts(void);

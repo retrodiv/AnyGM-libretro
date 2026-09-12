@@ -18,6 +18,8 @@ typedef struct { const uint8_t *data; size_t cap, pos; int ok; } CoreR;
 /* An independent expansion budget for the compressed sprite representation.
  * Larger live sets retain raw records rather than producing an unreadable state. */
 #define GML_STATE_COMPRESSED_SPRITE_BUDGET (256u*1024u*1024u)
+/* Match the content reader's per-string bound, plus its terminating NUL. */
+#define GML_STATE_SPRITE_NAME_BYTES (16u*1024u*1024u+1u)
 
 void gml_render_sprite_state_cache_clear(GmlSprite *sprite){
   if(!sprite) return;
@@ -356,6 +358,10 @@ static void render_state_write(GmlRender *render,int view_surface,CoreW *s){
     cw_i32(s,mask_rowb); cw_i32(s,mask_count);
     if(mask_rowb)
       cw_raw(s,sp->mask,(size_t)mask_rowb*(size_t)sp->h*(size_t)mask_count);
+    size_t name_bytes=sp->name?strlen(sp->name)+1:0;
+    if(name_bytes>GML_STATE_SPRITE_NAME_BYTES){ s->ok=0; return; }
+    cw_u32(s,(uint32_t)name_bytes);
+    if(name_bytes) cw_raw(s,sp->name,name_bytes);
   }
 }
 
@@ -563,7 +569,7 @@ static int render_state_read(GmlRender *render,CoreR *s){
         }else cr_raw(s,rgba,bytes);
         if(extra || id>=render->base_n_spr){
           if(id>=0 && id<render->n_spr && render->spr[id].runtime_extra) gml_sprite_delete(render,id);
-          int got=gml_sprite_append_from_rgba_frames(render,rgba,w,h,frames,ox,oy,"<state-sprite>");
+          int got=gml_sprite_append_from_rgba_frames(render,rgba,w,h,frames,ox,oy,NULL);
           if(got!=id){ free(seen_runtime); s->ok=0; return 0; }
         } else if(!gml_sprite_replace_from_rgba_frames(render,id,rgba,w,h,frames,ox,oy)){
           free(rgba); free(seen_runtime); s->ok=0; return 0;
@@ -608,6 +614,29 @@ static int render_state_read(GmlRender *render,CoreR *s){
       }
       sp->ml=ml; sp->mt=mt; sp->mr=mr; sp->mb=mb;
       sp->collision_kind=kind; sp->collision_tolerance=tolerance;
+      /* Names are language-visible identities, independent of a relocated source path or a
+       * reusable pixel cache. Restore them even when the existing pixels were retained. */
+      uint32_t name_bytes=cr_u32(s);
+      remaining=s->pos<=s->cap?s->cap-s->pos:0;
+      if(!s->ok || name_bytes>GML_STATE_SPRITE_NAME_BYTES || name_bytes>remaining ||
+         (name_bytes && (s->data[s->pos+name_bytes-1] ||
+                        memchr(s->data+s->pos,0,name_bytes-1)))){
+        free(seen_runtime); s->ok=0; return 0;
+      }
+      const char *name=name_bytes?(const char*)s->data+s->pos:NULL;
+      if((name && (!sp->name || strcmp(name,sp->name))) || (!name && sp->name)){
+        char *owned=NULL;
+        if(name){
+          owned=malloc(name_bytes);
+          if(!owned){ free(seen_runtime); s->ok=0; return 0; }
+          memcpy(owned,name,name_bytes);
+        }
+        free(sp->owned_name);
+        sp->owned_name=owned;
+        sp->name=owned;
+        render->spr_name_gen++;
+      }
+      s->pos+=name_bytes;
     }
   }
   int base=render->base_n_spr>0?render->base_n_spr:render->n_spr;

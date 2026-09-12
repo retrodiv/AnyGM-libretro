@@ -1331,10 +1331,13 @@ static GmlInstance *inst_by_id(GmlVM *vm, double idv){
   }
   /* Deactivation removes an instance from object-scoped lookup and scheduling, but an explicit
    * saved id remains a valid variable receiver. Region-culling controllers commonly deactivate
-   * their marker and immediately read its geometry to decide which instances to reactivate. */
+   * their marker and immediately read its geometry to decide which instances to reactivate.
+   * A disposal callback likewise retains its receiver until Destroy/CleanUp finish. The pending
+   * mark still prevents recursive destruction and keeps it out of ordinary instance queries. */
   for(int i=0;i<vm->inst_count;i++)
     if((vm->inst[i].active || vm->inst[i].deactivated) &&
-       !vm->inst[i].marked && (int)vm->inst[i].id==id) return &vm->inst[i];
+       (!vm->inst[i].marked || vm->inst[i].disposal_callback_active) &&
+       (int)vm->inst[i].id==id) return &vm->inst[i];
   return NULL;
 }
 GmlInstance *gml_vm_instance_by_id(GmlVM *vm, double id){

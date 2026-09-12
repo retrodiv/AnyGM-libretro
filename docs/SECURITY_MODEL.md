@@ -143,6 +143,12 @@ Raw planes remain bounded by their complete bytes in the section. This budget
 is a selected resource policy, not an observed format limit; larger live planes
 remain writable through the raw representation.
 
+Runtime-sprite state names use the content reader's 16-MiB per-string limit, plus
+one terminating NUL. The complete byte span and termination are checked before
+allocation; embedded NUL bytes reject. Names confer no VFS access and remain distinct
+from the separately confined source path. Whole-engine rejection restores their
+previous identities along with the other renderer state.
+
 Runtime-font state records limit paths to 4,095 bytes, pixel height to 4 through 256,
 and materialized glyphs to 65,536 unique BMP codepoints. Their initial range is bounded to
 the same character domain. Reconstruction hashes the same bounded VFS read passed to the

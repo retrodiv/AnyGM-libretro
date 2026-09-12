@@ -748,6 +748,41 @@ static int modern_self_compositor_window_raster_policy(void){
   return ok;
 }
 
+static int explicit_gui_surface_logical_raster_policy(void){
+  AnygmEngine engine={0};
+  engine.win.bytecode=17;
+  engine.win.disp_w=576; engine.win.disp_h=384;
+  engine.width=160; engine.height=96;
+  engine.vm.win=&engine.win;
+  engine.vm.gui_w=192; engine.vm.gui_h=128;
+  engine.config.present_logical_raster=1;
+  gml_vm_global_array_set(&engine.vm,"view_visible",0,1);
+  gml_vm_global_array_set(&engine.vm,"view_wview",0,160);
+  gml_vm_global_array_set(&engine.vm,"view_hview",0,96);
+  gml_vm_global_array_set(&engine.vm,"view_wport",0,160);
+  gml_vm_global_array_set(&engine.vm,"view_hport",0,96);
+  gml_render_application_surface_set_draw_enabled(&engine.render,0);
+  /* The world occupies only part of a larger content-owned GUI composite. */
+  if(!gml_render_application_surface_ensure_owned(&engine.render,192,128)){
+    gml_vm_free(&engine.vm); return 0;
+  }
+  compute_present(&engine);
+  int ok=engine.output_width==192 && engine.output_height==128 &&
+         engine.gui_space_width==192 && engine.gui_space_height==128;
+  if(!ok) fprintf(stderr,"explicit GUI surface was reduced to the smaller world view\n");
+  uint32_t *owned=engine.render.app_surface_owned;
+  engine.render.app_surface_owned=NULL;
+  compute_present(&engine);
+  ok=ok && engine.output_width==160 && engine.output_height==96;
+  engine.render.app_surface_owned=owned;
+  gml_render_application_surface_set_draw_enabled(&engine.render,1);
+  compute_present(&engine);
+  ok=ok && engine.output_width==160 && engine.output_height==96;
+  gml_render_free(&engine.render);
+  gml_vm_free(&engine.vm);
+  return ok;
+}
+
 static int automatic_surface_monitor_fit_policy(void){
   AnygmEngine engine={0};
   engine.win.bytecode=16;
@@ -2743,6 +2778,8 @@ int main(int argc,char **argv){
       return first_generation_window_raster_policy()?0:1;
     if(!strcmp(argv[2],"modern_self_compositor_window_raster"))
       return modern_self_compositor_window_raster_policy()?0:1;
+    if(!strcmp(argv[2],"explicit_gui_surface_logical_raster"))
+      return explicit_gui_surface_logical_raster_policy()?0:1;
     if(!strcmp(argv[2],"automatic_surface_monitor_fit"))
       return automatic_surface_monitor_fit_policy()?0:1;
     if(!strcmp(argv[2],"first_generation_oversized_gui"))
@@ -2793,6 +2830,7 @@ int main(int argc,char **argv){
           "viewless_window_screen_stage|"
           "first_generation_window_raster|"
           "modern_self_compositor_window_raster|"
+          "explicit_gui_surface_logical_raster|"
           "automatic_surface_monitor_fit|"
           "first_generation_oversized_gui|"
           "background_color|multi_view_application_canvas|game_change|"
@@ -2818,6 +2856,7 @@ int main(int argc,char **argv){
   if(!viewless_window_screen_stage_policy()) return 1;
   if(!first_generation_window_raster_policy()) return 1;
   if(!modern_self_compositor_window_raster_policy()) return 1;
+  if(!explicit_gui_surface_logical_raster_policy()) return 1;
   if(!automatic_surface_monitor_fit_policy()) return 1;
   if(!first_generation_oversized_gui_policy()) return 1;
   if(!draw_schedule_policy()) return 1;
@@ -3094,7 +3133,8 @@ int main(int argc,char **argv){
                     sizeof first->key_current+sizeof first->key_previous;
   size_t pending_bytes=sizeof first->key_press_carry+sizeof first->key_release_defer;
   size_t pending_core=(size_t)read_u64(deterministic+64);
-  if((uint32_t)read_u64(deterministic+4)!=27 || pending_at+pending_bytes>map_vm ||
+  /* No runtime sprite is present, so the name transport adds no bytes to this fixture. */
+  if((uint32_t)read_u64(deterministic+4)!=28 || pending_at+pending_bytes>map_vm ||
      pending_bytes>pending_core){
     fprintf(stderr,"canonical pending keyboard framing changed\n"); return 1;
   }

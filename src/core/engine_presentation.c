@@ -1171,6 +1171,22 @@ void compute_present(AnygmEngine *engine) {
     effective_width = content_window_width;
     effective_height = content_window_height;
   }
+  /* A self-compositor can instead own an explicit GUI-sized application surface. That is its
+   * complete logical image, even when the world view/port occupies only a smaller part of it.
+   * Reducing this canvas to the world view resamples already-composed native pixels. Keep the
+   * existing window, margin, maximised-GUI and forced-aspect policies outside this narrow case. */
+  if(engine->config.present_logical_raster &&
+     anygm_policy_has_modern_screen_stage(&engine->win) &&
+     !engine->aspect_force_active && !engine->canvas_mode && !gui_window_mode &&
+     !engine->vm.gui_maximise_active && renderer.application_owned &&
+     !renderer.application_draw_enabled && engine->vm.gui_w>0 && engine->vm.gui_h>0 &&
+     renderer.application_width==engine->vm.gui_w &&
+     renderer.application_height==engine->vm.gui_h &&
+     renderer.application_width<=FB_MAX_W && renderer.application_height<=FB_MAX_H){
+    engine->output_width=(unsigned)renderer.application_width;
+    engine->output_height=(unsigned)renderer.application_height;
+    engine->gui_offset_x=engine->gui_offset_y=0;
+  }
   /* A Studio game can explicitly resize application_surface to the window and keep the normal
    * automatic presentation path.  That surface is the final presentation raster, not an oversized
    * internal effect buffer: presenting the smaller room view instead box-reduces the authored

@@ -298,6 +298,61 @@ int expect_deactivated_instance_reference(void){
   return 1;
 }
 
+int expect_destroy_callback_reference(void){
+  /* Both disposal events read a saved explicit ID, not the implicit self shortcut. */
+  uint8_t data[72]={0};
+  uint32_t refs[6];
+  const char *names[6]={"x","destroy_seen","instance_destroy",
+                        "x","cleanup_seen","instance_destroy"};
+  GmlCode code[2]={{0}};
+  for(int event=0;event<2;event++){
+    int word=event*9;
+    fixture_word(data,word+0,(OP_PUSH<<24)|(DT_INT32<<16));
+    fixture_word(data,word+1,100001);
+    fixture_word(data,word+2,(OP_PUSH<<24)|(DT_VAR<<16));
+    fixture_word(data,word+3,0x80000000u);
+    fixture_word(data,word+4,(OP_POP<<24)|(DT_VAR<<16)|(DT_VAR<<20)|(uint16_t)IT_GLOBAL);
+    fixture_word(data,word+5,0xa0000000u);
+    fixture_word(data,word+6,(OP_CALL<<24));
+    fixture_word(data,word+7,0);
+    fixture_word(data,word+8,(OP_EXIT<<24)|(DT_VAR<<16));
+    refs[event*3+0]=(uint32_t)(word+3)*4;
+    refs[event*3+1]=(uint32_t)(word+5)*4;
+    refs[event*3+2]=(uint32_t)(word+7)*4;
+    code[event].name=event?(char*)"gml_Object_neutral_disposal_CleanUp_0":
+                           (char*)"gml_Object_neutral_disposal_Destroy_0";
+    code[event].start=(uint32_t)word*4;
+    code[event].length=36;
+  }
+  GmlWin win={0};
+  win.bytecode=17; win.data=data; win.size=sizeof data;
+  win.code=code; win.n_code=2;
+  win.ref_addr=refs; win.ref_name=names; win.n_refs=6;
+  GmlVM vm={0};
+  vm.win=&win; vm.cur_code_index=-1;
+  vm.inst=calloc(1,sizeof *vm.inst);
+  vm.objects=calloc(1,sizeof *vm.objects);
+  if(!vm.inst || !vm.objects){ free(vm.inst); free(vm.objects); return 0; }
+  vm.inst_count=vm.inst_cap=vm.n_objects=1;
+  vm.objects[0].name=(char*)"neutral_disposal";
+  vm.objects[0].parent=-1;
+  vm.inst[0].active=1; vm.inst[0].id=100001; vm.inst[0].x=73;
+  gml_instance_destroy(&vm,&vm.inst[0]);
+  GmlVal *destroy=gml_varmap_get(&vm.globals,"destroy_seen");
+  GmlVal *cleanup=gml_varmap_get(&vm.globals,"cleanup_seen");
+  int ok=destroy && cleanup && destroy->t==V_REAL && cleanup->t==V_REAL &&
+         destroy->d==73 && cleanup->d==73 && vm.inst[0].marked &&
+         !gml_vm_instance_by_id(&vm,100001) && !gml_find_instance(&vm,0);
+  if(!ok) fprintf(stderr,"explicit receiver disappeared during disposal: destroy=%.0f cleanup=%.0f\n",
+                  destroy?destroy->d:-1.0,cleanup?cleanup->d:-1.0);
+  gml_vm_free(&vm);
+  for(int event=0;event<2;event++){
+    free(code[event].insn); free(code[event].insn_pc); free(code[event].branch_index);
+  }
+  free(win.code_hix); free(win.ref_hix);
+  return ok;
+}
+
 int expect_room_camera_reservation(void){
   uint8_t data[512]={0};
   char *strings[]={(char*)"neutral_camera_room"};

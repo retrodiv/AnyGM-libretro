@@ -83,6 +83,14 @@ static int runtime_sprite_names_survive_state(void){
       REQUIRE(gml_render_sprite_metrics(&restored,i+1,&metrics) && metrics.name &&
               !strcmp(metrics.name,names[i]) && gml_render_named_sprite(&restored,names[i])==i+1,
               "raw and compressed sprites must retain their addressable names after restore");
+      if(pass==0){
+        GmlSprite *sprite=&restored.spr[i+1];
+        free(sprite->owned_name);
+        sprite->owned_name=strdup("changed_live_identity");
+        REQUIRE(sprite->owned_name!=NULL,"changed live sprite name");
+        sprite->name=sprite->owned_name;
+        restored.spr_name_gen++;
+      }
     }
   }
   free(state);

@@ -29,6 +29,7 @@ int main(int argc,char **argv){
     {"object_defaults",expect_object_defaults},
     {"object_argument_bounds",expect_object_argument_bounds},
     {"deactivated_instance_reference",expect_deactivated_instance_reference},
+    {"destroy_callback_reference",expect_destroy_callback_reference},
     {"bounding_box_far_edges_by_generation",expect_bounding_box_far_edges_by_generation},
     {"rectangular_mask_edge_contacts",expect_rectangular_mask_edge_contacts},
     {"bounding_box_far_edges_at_a_fractional_position",
