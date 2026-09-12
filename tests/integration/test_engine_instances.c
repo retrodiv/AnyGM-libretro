@@ -1680,6 +1680,64 @@ static int one_shot_instance_assignment_policy(void){
   return ok;
 }
 
+static int view_surface_room_lifetime_policy(void){
+  AnygmSyntheticContent fixture;
+  if(!anygm_synthetic_tilemap_content_create(&fixture)) return 0;
+  AnygmHostServices services={0};
+  services.struct_size=sizeof services;
+  services.abi_version=ANYGM_HOST_SERVICES_VERSION;
+  anygm_stdio_vfs_services_init(&services);
+  AnygmContentSource source={0};
+  source.struct_size=sizeof source;
+  source.kind=ANYGM_CONTENT_PATH;
+  source.path=fixture.path;
+  source.cache_directory=source.save_directory=fixture.directory;
+  AnygmEngine *engine=NULL;
+  int ok=anygm_create(&services,&engine)==ANYGM_OK &&
+         anygm_load(engine,&source,NULL)==ANYGM_OK;
+  AnygmInputFrame input={0};
+  input.struct_size=sizeof input;
+  input.pointer_x=input.pointer_y=-1;
+  AnygmFrameOutput output={0}; output.struct_size=sizeof output;
+  ok=ok && anygm_run_frame(engine,&input,&output)==ANYGM_OK;
+  int surface=ok?gml_surface_create(&engine->render,16,12):-1;
+  ok=ok && surface>0;
+  for(int view=0;ok && view<GML_ROOM_CAMERA_COUNT;view++){
+    GmlVal args[2]={vreal(view),vreal(surface)};
+    (void)gml_builtin_call(&engine->vm,"view_set_surface_id",args,2);
+    GmlVal actual=gml_builtin_call(&engine->vm,"view_get_surface_id",args,1);
+    ok=actual.t==V_REAL && actual.d==surface;
+  }
+  uint8_t *state=NULL; size_t written=0;
+  ok=ok && save_state(engine,&state,&written);
+  /* A snapshot retains the current room's binding, while entering another room
+   * must not redirect its world into the previous room's still-live surface. */
+  for(int replay=0;ok && replay<2;replay++){
+    if(replay){
+      ok=anygm_state_load(engine,state,written)==ANYGM_OK;
+      for(int view=0;ok && view<GML_ROOM_CAMERA_COUNT;view++)
+        ok=gml_global_arr(&engine->vm,"view_surface_id",view)==surface;
+    }
+    if(!ok) break;
+    gml_room_enter(&engine->vm,1);
+    for(int view=0;ok && view<GML_ROOM_CAMERA_COUNT;view++){
+      GmlVal index=vreal(view);
+      GmlVal actual=gml_builtin_call(&engine->vm,"view_get_surface_id",&index,1);
+      if(actual.t!=V_REAL || actual.d!=-1){
+        fprintf(stderr,"room entry retained view %d surface %.0f (replay %d)\n",
+                view,actual.t==V_REAL?actual.d:-999.0,replay);
+        ok=0;
+      }
+    }
+    ok=ok && gml_surface_exists(&engine->render,surface);
+  }
+  if(!ok) fputs("view surface room lifetime failed\n",stderr);
+  free(state);
+  anygm_destroy(engine);
+  anygm_synthetic_content_destroy(&fixture);
+  return ok;
+}
+
 static int framebuffer_retention_case(
     int (*create_fixture)(AnygmSyntheticContent *),const char *label){
   AnygmSyntheticContent fixture;
@@ -2786,6 +2844,8 @@ int main(int argc,char **argv){
       return first_generation_oversized_gui_policy()?0:1;
     if(!strcmp(argv[2],"background_color"))
       return background_color_policy()?0:1;
+    if(!strcmp(argv[2],"view_surface_room_lifetime"))
+      return view_surface_room_lifetime_policy()?0:1;
     if(!strcmp(argv[2],"multi_view_application_canvas"))
       return framebuffer_retention_case(
         anygm_synthetic_multiview_framebuffer_content_create,"multi-view")?0:1;
@@ -2833,7 +2893,7 @@ int main(int argc,char **argv){
           "explicit_gui_surface_logical_raster|"
           "automatic_surface_monitor_fit|"
           "first_generation_oversized_gui|"
-          "background_color|multi_view_application_canvas|game_change|"
+          "background_color|view_surface_room_lifetime|multi_view_application_canvas|game_change|"
           "input_binding_ownership|simulated_key_lifetime|simulated_key_frame_lifetime|"
           "bridged_key_press_delivery|bridged_key_hold|bridged_key_restore|undefined_placement|"
           "room_start_deactivation]\n",stderr);
@@ -2865,6 +2925,7 @@ int main(int argc,char **argv){
   if(!sibling_anchor_override_policy()) return 1;
   if(!one_shot_instance_assignment_policy()) return 1;
   if(!background_color_policy()) return 1;
+  if(!view_surface_room_lifetime_policy()) return 1;
   if(!framebuffer_retention_policy()) return 1;
   if(!clear_view_background_policy()) return 1;
   if(!game_restart_policy()) return 1;
