@@ -8,7 +8,9 @@ defaults. An advanced `.anygm` anchor adds or replaces declarations. The INI
 can also target exact original payload bytes by SHA-256. All identities and
 rules come from external configuration; the core ships none of its own.
 
-Use the exact filename `AnyGM.ini`, including its capitalization on case-sensitive hosts.
+The canonical filename is `AnyGM.ini`. Lookup follows the host filesystem's case
+rules; the core adds no separate capitalization check. Case-sensitive hosts require
+that spelling, while case-insensitive hosts also accept differently capitalized names.
 
 ## Sections and precedence
 
