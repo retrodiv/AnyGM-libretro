@@ -888,7 +888,14 @@ static GmlInstance *resolve_inst(GmlVM *vm, int inst_t){
   if(inst_t==IT_OTHER) return vm->cur_other;
   if(inst_t==IT_ALL)   return first_active_instance(vm);
   if(inst_t<0)         return vm->cur_self;
+  if(GML_IS_STRUCT_ID((double)inst_t)) return gml_struct_find(vm,(unsigned)inst_t);
   return inst_by_id(vm,inst_t);               /* instance id OR object index */
+}
+static int array_uses_instance_alarm(GmlVM *vm,int scope){
+  if(scope==IT_GLOBAL || scope==IT_LOCAL || scope==IT_STATIC) return 0;
+  /* Struct fields do not borrow the instance timer bank. In particular, an
+   * unqualified read inside with must address the same array as receiver.alarm. */
+  return !inst_is_struct_ref(resolve_inst(vm,scope));
 }
 /* scope map for array access (global/local/self/other/instance/object) */
 static GmlVarMap *scope_map(GmlVM *vm, GmlVarMap *locals, int inst_t){
@@ -1047,7 +1054,7 @@ static void array_set_h(GmlVM *vm, GmlVarMap *locals, int inst_t, const char *nm
     if(idx>=0 && idx<array->cap) array->data[idx]=v;
     return;
   }
-  if(!strcmp(nm,"alarm")){
+  if(!strcmp(nm,"alarm") && array_uses_instance_alarm(vm,inst_t)){
     double alv=alarm_store_value(vm,v);
     /* Writing OBJECT.alarm[i]=v applies to every instance of that object. An object index is in
      * [0,n_objects), while a real instance id is at least 100000. Reading returns the first
@@ -1156,7 +1163,7 @@ static GmlVal array_get_h(
     if(gml_arr_nested_get_flat(*slot,idx,&nested)) return nested;
     return (idx>=0 && idx<array->len)?array->data[idx]:vreal(0);
   }
-  if(!strcmp(nm,"alarm")){ GmlInstance *s=resolve_inst(vm,inst_t);
+  if(!strcmp(nm,"alarm") && array_uses_instance_alarm(vm,inst_t)){ GmlInstance *s=resolve_inst(vm,inst_t);
     return vreal((s&&idx>=0&&idx<GML_ALARMS)? s->alarm[idx] : -1); }
   int room_global=is_room_global_array(nm);
   if(var_name_maybe_special(vm,nm,nh) && !room_global &&

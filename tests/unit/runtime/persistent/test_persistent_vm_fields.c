@@ -17,6 +17,77 @@
 #include <string.h>
 #include <unistd.h>
 
+/* An array named alarm on a struct is an ordinary field, including inside with.
+ * Exercise decoded and uncached instructions, implicit self/other, direct IDs,
+ * and the explicit receiver marker rather than calling an accessor helper. */
+static GmlVal alarm_array_access(GmlVM *vm,GmlInstance *self,GmlInstance *other,
+                                int scope,int explicit_receiver,int index,
+                                int write,int uncached){
+  unsigned char data[96]={0};
+  uint32_t references[2]={0};
+  const char *names[2]={"alarm","alarm"};
+  int words=0,refs=0;
+  for(int operation=write?0:1;operation<2;operation++){
+    if(!operation)
+      fixture_word(data,words++,(0x84u<<24)|(DT_INT16<<16)|3u);
+    fixture_word(data,words++,(OP_PUSH<<24)|(DT_INT32<<16));
+    fixture_word(data,words++,(uint32_t)scope);
+    if(explicit_receiver)
+      fixture_word(data,words++,(0x84u<<24)|(DT_INT16<<16)|(uint16_t)IT_STACK);
+    fixture_word(data,words++,(0x84u<<24)|(DT_INT16<<16)|(uint16_t)index);
+    fixture_word(data,words++,((operation?OP_PUSH:OP_POP)<<24)|(DT_VAR<<16));
+    references[refs++]=(uint32_t)words*4;
+    fixture_word(data,words++,0);
+  }
+  fixture_word(data,words++,(OP_RET<<24)|(DT_VAR<<16));
+  GmlCode code={0};
+  code.name="gml_Script_array_namespace_fixture";
+  code.length=(uint32_t)words*4;code.cache_bad=(uint8_t)uncached;
+  GmlWin win={0};
+  win.data=data;win.size=code.length;win.bytecode=17;
+  win.code=&code;win.n_code=1;
+  win.ref_addr=references;win.ref_name=names;win.n_refs=refs;
+  GmlWin *previous=vm->win;vm->win=&win;
+  GmlVal result=gml_vm_run_code(vm,0,self,other,NULL,0);
+  vm->win=previous;
+  free(code.insn);free(code.insn_pc);free(code.branch_index);free(win.ref_hix);
+  return result;
+}
+
+int expect_struct_alarm_array_namespace(void){
+  int ok=1;
+  for(int uncached=0;uncached<2;uncached++){
+    GmlVM vm={0};vm.cur_code_index=-1;
+    GmlInstance *structure=gml_struct_new(&vm);
+    if(!structure) return 0;
+    GmlVal array=gml_arr_new(16,vreal(6));
+    gml_arr_mark_escaped(array);
+    *gml_varmap_put(&structure->vars,"alarm")=array;
+    structure->alarm[0]=99;
+    const int scopes[]={IT_SELF,IT_OTHER,(int)structure->id,(int)structure->id};
+    for(int route=0;route<4;route++) for(int index=0;index<=15;index+=15){
+      gml_arr_set(array,index,vreal(6));
+      GmlVal before=alarm_array_access(&vm,structure,structure,scopes[route],route==3,index,0,uncached);
+      GmlVal after=alarm_array_access(&vm,structure,structure,scopes[route],route==3,index,1,uncached);
+      if(before.t!=V_REAL || before.d!=6 || after.t!=V_REAL || after.d!=3 ||
+         gml_arr_get(array,index).d!=3 || structure->alarm[0]!=99){
+        fprintf(stderr,"struct alarm namespace: uncached=%d route=%d index=%d read=%.0f written=%.0f field=%.0f physical=%.0f\n",
+                uncached,route,index,before.d,after.d,gml_arr_get(array,index).d,structure->alarm[0]);
+        ok=0;
+      }
+    }
+    GmlInstance instance={0};instance.id=100001;instance.obj=0;instance.active=1;
+    instance.alarm[0]=6;
+    GmlVal before=alarm_array_access(&vm,&instance,&instance,IT_SELF,0,0,0,uncached);
+    GmlVal after=alarm_array_access(&vm,&instance,&instance,IT_SELF,0,0,1,uncached);
+    if(before.d!=6 || after.d!=3 || instance.alarm[0]!=3){
+      fputs("ordinary instance alarm must retain its engine-owned timer\n",stderr);ok=0;
+    }
+    gml_vm_free(&vm);
+  }
+  return ok;
+}
+
 static const char *bbox_fixture_setting(void *userdata,const char *name){
   (void)userdata;
   return name && !strcmp(name,"GML_NO_COLGRID")?"1":NULL;
