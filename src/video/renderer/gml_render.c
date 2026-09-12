@@ -1216,8 +1216,20 @@ int gml_render_shader_texture_stage_set(
       if(generic_index>=recognized->generic_sampler_count) return 0;
       if(kind!=GML_TEX_SPR_TAG && kind!=GML_TEX_SURF_TAG) return 0;
       recognized->generic_sampler[generic_index].texture=texture;
+      const char *name=recognized->generic_sampler[generic_index].name;
+      int palette=(recognized->lut && !strcmp(name,recognized->lut_sampler)) ||
+                  (recognized->grid && !strcmp(name,recognized->grid_sampler));
+      /* Named samplers are collected before software-family recognition. Keep the program
+       * binding, but also connect the recognized kernel to the texture its name selects.
+       * Otherwise the generic handle silently bypasses the palette stage. Handle identities
+       * remain unchanged, including those content has retained across a state restore. */
+      if(palette){
+        r->lut_pal_sprite=kind==GML_TEX_SPR_TAG?(texture>>10)&0xFFFF:-1;
+        r->lut_pal_frame=kind==GML_TEX_SPR_TAG?texture&0x3FF:0;
+      }
       if(binding){
-        binding->kind=GML_RENDER_SHADER_TEXTURE_CONTENT;
+        binding->kind=palette && kind==GML_TEX_SPR_TAG
+          ?GML_RENDER_SHADER_TEXTURE_PALETTE:GML_RENDER_SHADER_TEXTURE_CONTENT;
         binding->sampler=generic_index;
         if(kind==GML_TEX_SPR_TAG){ binding->sprite=(texture>>10)&0xFFFF; binding->frame=texture&0x3FF; }
         else binding->surface=texture&0xFFFF;

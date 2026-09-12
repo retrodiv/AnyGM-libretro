@@ -657,8 +657,9 @@ static int glyph_frame(GmlFont *f, unsigned cp){
   return gc<=0x7fffffffU ? (int)gc - f->first : -1;
 }
 
-static int text_is_linebreak(const char *p){
-  return p && (*p=='#' || *p=='\r' || *p=='\n');
+static int text_is_linebreak(GmlRender *r,const char *p){
+  return p && (*p=='\r' || *p=='\n' ||
+    (*p=='#' && anygm_policy_text_uses_hash_line_breaks(r?r->win:NULL)));
 }
 typedef enum {
   ANYGM_TEXT_LAYOUT_PLAIN,
@@ -670,17 +671,17 @@ typedef enum {
  * that treats each control character as a separate break. */
 static int text_linebreak_bytes(GmlRender *r, const char *p,
                                 AnygmTextLayoutFamily family){
-  if(!text_is_linebreak(p)) return 0;
+  if(!text_is_linebreak(r,p)) return 0;
   if(p[0]=='\r' && p[1]=='\n' && r &&
      (family==ANYGM_TEXT_LAYOUT_EXTENDED ||
       anygm_policy_text_pairs_carriage_return_with_line_feed(r->win))) return 2;
   return 1;
 }
 
-/* width of one line (up to '#', CR, LF, or NUL), counting '\#' as a literal '#'. */
+/* Width of one policy-delimited line, retaining the existing escaped-hash reading. */
 static int line_width(GmlRender *r, GmlFont *f, const char *p, const char **end){
   int w=0;
-  while(*p && !text_is_linebreak(p)){
+  while(*p && !text_is_linebreak(r,p)){
     unsigned cp;
     if(p[0]=='\\' && p[1]=='#'){ cp='#'; p+=2; }
     else cp=text_next_cp(&p);
@@ -838,10 +839,10 @@ int gml_render_restore_runtime_font(GmlRender *r,int id,const char *path,
   free(staged);
   return ok;
 }
-/* advance width of one line (up to '#', LF, or NUL), '\#' counts as a literal '#'. */
+/* Advance width of one policy-delimited line; escaped hashes retain their existing reading. */
 static int real_line_width(GmlRender *r, GmlFont *f, const char *p, const char **end){
   int w=0; unsigned previous=0;
-  while(*p && !text_is_linebreak(p)){
+  while(*p && !text_is_linebreak(r,p)){
     unsigned cp;
     if(p[0]=='\\' && p[1]=='#'){ cp='#'; p+=2; }
     else cp=text_next_cp(&p);
@@ -961,7 +962,7 @@ static void draw_text_real(GmlRender *r, GmlFont *f, double x, double y, const c
     int nlines=1;
     int x0,y0,x1,y1,margin;
     for(const char *q=str;*q;q++){ if(*q=='\\'&&q[1]=='#'){q++;continue;}
-      if(text_is_linebreak(q)){ nlines++; q+=text_linebreak_bytes(r,q,family)-1; } }
+      if(text_is_linebreak(r,q)){ nlines++; q+=text_linebreak_bytes(r,q,family)-1; } }
     margin=(int)(lh*(ys>0?ys:1.0))+8;
     x0=(int)floor(x-r->cam_x-width-margin);
     y0=(int)floor(y-r->cam_y-margin);
@@ -982,7 +983,7 @@ static void draw_text_real_plain(GmlRender *r, GmlFont *f, double x, double y, c
   int lh=f->line_height>0? f->line_height:12;
   int ah=f->align_height>0?f->align_height:lh;
   int nlines=1; for(const char *q=str;*q;q++){ if(*q=='\\'&&q[1]=='#'){q++;continue;}
-    if(text_is_linebreak(q)){ nlines++; q+=text_linebreak_bytes(r,q,family)-1; } }
+    if(text_is_linebreak(r,q)){ nlines++; q+=text_linebreak_bytes(r,q,family)-1; } }
   double base_y=0;
   double block_height=(nlines-1)*lh+ah;
   if(r->valign==1) base_y=-block_height/2.0; else if(r->valign==2) base_y=-block_height;
@@ -1059,7 +1060,7 @@ static void draw_text_real_plain(GmlRender *r, GmlFont *f, double x, double y, c
       if(g) cx += g->shift;
     }
     base_y += lh;
-    if(text_is_linebreak(end)) p=end+text_linebreak_bytes(r,end,family); else break;
+    if(text_is_linebreak(r,end)) p=end+text_linebreak_bytes(r,end,family); else break;
   }
 }
 
@@ -1077,7 +1078,7 @@ static int text_width_font(GmlRender *r, GmlFont *f, const char *str,
   for(;;){
     const char *end; int w = f->real ? real_line_width(r,f,p,&end) : line_width(r,f,p,&end);
     if(w>best) best=w;
-    if(!text_is_linebreak(end)) break;
+    if(!text_is_linebreak(r,end)) break;
     p=end+text_linebreak_bytes(r,end,family);
   }
   return best;
@@ -1106,7 +1107,7 @@ static int text_height_font(GmlRender *r, GmlFont *f, const char *str,
   if(f->real) lh=f->line_height>0?f->line_height:12;
   else { GmlSprite *s=&r->spr[f->sprite]; lh=s->h>0?s->h:8; }
   if(str) for(const char *p=str;*p;p++){ if(*p=='\\'&&p[1]=='#'){p++;continue;}
-    if(text_is_linebreak(p)){ nlines++; p+=text_linebreak_bytes(r,p,family)-1; } }
+    if(text_is_linebreak(r,p)){ nlines++; p+=text_linebreak_bytes(r,p,family)-1; } }
   return lh*nlines;
 }
 
@@ -1681,7 +1682,7 @@ static void draw_text_transformed_font(GmlRender *r, GmlFont *f,
   int lh=s->h; if(lh<=0) lh=8;
   /* count lines for valign */
   int nlines=1; for(const char *p=str;*p;p++){ if(*p=='\\'&&p[1]=='#'){p++;continue;}
-    if(text_is_linebreak(p)){ nlines++; p+=text_linebreak_bytes(r,p,family)-1; } }
+    if(text_is_linebreak(r,p)){ nlines++; p+=text_linebreak_bytes(r,p,family)-1; } }
   double base_y=0;
   if(r->valign==1) base_y=-(nlines*lh)/2.0; else if(r->valign==2) base_y=-nlines*lh;
   const char *p=str;
@@ -1745,7 +1746,7 @@ static void draw_text_transformed_font(GmlRender *r, GmlFont *f,
       cx += glyph_w(r,f,fr,cp)+f->sep;
     }
     base_y += lh;
-    if(text_is_linebreak(end)) p=end+text_linebreak_bytes(r,end,family); else break;
+    if(text_is_linebreak(r,end)) p=end+text_linebreak_bytes(r,end,family); else break;
   }
 }
 void gml_draw_text_transformed(GmlRender *r, double x, double y, const char *str,
@@ -1797,7 +1798,7 @@ static const char *text_wrap_ext(GmlRender *r,GmlFont *font,const char *str,
   const char *p=str;
   for(;;){
     const char *explicit_end=p;
-    while(*explicit_end && !text_is_linebreak(explicit_end))
+    while(*explicit_end && !text_is_linebreak(r,explicit_end))
       explicit_end=text_unit_end(explicit_end);
 
     const char *line_start=p;
@@ -1819,7 +1820,7 @@ static const char *text_wrap_ext(GmlRender *r,GmlFont *font,const char *str,
           const char *paint_end=wrap_end;
           while(paint_end>line_start && paint_end[-1]==' ') paint_end--;
           text_wrap_copy(wrapped,cap,&offset,line_start,paint_end);
-          if(offset<cap-1) wrapped[offset++]='#';
+          if(offset<cap-1) wrapped[offset++]='\n';
           line_start=wrap_end;
           break;
         }
@@ -1834,7 +1835,7 @@ static const char *text_wrap_ext(GmlRender *r,GmlFont *font,const char *str,
     }
 
     if(!*explicit_end) break;
-    if(offset<cap-1) wrapped[offset++]='#';
+    if(offset<cap-1) wrapped[offset++]='\n';
     p=explicit_end+text_linebreak_bytes(r,explicit_end,family);
   }
   wrapped[offset]=0;
@@ -1861,7 +1862,7 @@ double gml_text_height_ext(GmlRender *r,const char *str,double sep,double w){
   int lines=1;
   for(const char *p=layout;*p;p++){
     if(*p=='\\' && p[1]=='#'){ p++; continue; }
-    if(text_is_linebreak(p)){
+    if(text_is_linebreak(r,p)){
       lines++;
       p+=text_linebreak_bytes(r,p,ANYGM_TEXT_LAYOUT_EXTENDED)-1;
     }
@@ -1884,7 +1885,7 @@ static void draw_text_ext_transformed_font(GmlRender *r, GmlFont *font,
   }
   /* custom line separation: draw line by line at y + i*sep */
   int nlines=1; for(const char *q=str;*q;q++){ if(*q=='\\'&&q[1]=='#'){q++;continue;}
-    if(text_is_linebreak(q)){ nlines++; q+=text_linebreak_bytes(r,q,family)-1; } }
+    if(text_is_linebreak(r,q)){ nlines++; q+=text_linebreak_bytes(r,q,family)-1; } }
   /* Separation is the distance between successive line origins, not the full block height.
    * The first line still occupies one font line-height; omitting it shifts even a single-line
    * centred or bottom-aligned string away from the requested anchor. */
@@ -1898,12 +1899,14 @@ static void draw_text_ext_transformed_font(GmlRender *r, GmlFont *font,
   char lbuf[1024];
   while(1){
     size_t k=0;
-    while(*p && !((*p=='#' && (p==str || p[-1]!='\\')) || *p=='\r' || *p=='\n') && k<sizeof(lbuf)-1) lbuf[k++]=*p++;
+    while(*p && !(text_is_linebreak(r,p) &&
+          !(*p=='#' && p>str && p[-1]=='\\')) && k<sizeof(lbuf)-1)
+      lbuf[k++]=*p++;
     lbuf[k]=0;
     double line_y=base+li*sep;
     draw_text_transformed_font(r,font,x+line_y*ys*sa,y+line_y*ys*ca,
                                lbuf,xs,ys,rr,blend,alpha,family);
-    if(!text_is_linebreak(p)) break;
+    if(!text_is_linebreak(r,p)) break;
     p+=text_linebreak_bytes(r,p,family); li++;
   }
   r->valign=sv;

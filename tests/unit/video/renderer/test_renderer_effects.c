@@ -1727,6 +1727,66 @@ static void check_stretched_band_lazy_lut(void) {
   free(parallel);
 }
 
+static void check_named_palette_sampler(void) {
+  static const char fragment[] =
+    "uniform sampler2D u_lookup;uniform float u_row;"
+    "void main(){vec4 source=texture2D(gm_BaseTexture,v_vTexcoord);"
+    "gl_FragColor=texture2D(u_lookup,vec2(source.r,u_row));}";
+  uint8_t data[512]={0};
+  GmlWin content={0};
+  GmlRender render;
+  write_u32(data,0,1);
+  write_u32(data,4,32);
+  write_u32(data,32+12,96);
+  memcpy(data+96,fragment,sizeof fragment);
+  content.data=data;
+  content.size=sizeof data;
+  content.n_chunks=1;
+  memcpy(content.chunks[0].name,"SHDR",4);
+  content.chunks[0].size=8;
+  expect(gml_render_init(&render,&content)==0,"named palette initialization failed");
+  if(render.n_shader_pal==1 && render.shader_pal){
+    struct GmlShaderPal *shader=&render.shader_pal[0];
+    expect(shader->lut && shader->generic_sampler_count==1,
+           "the parsed palette must retain its named sampler");
+    int sampler=gml_render_shader_sampler_handle(&render,0,"u_lookup");
+    int uniform=gml_render_shader_uniform_handle(&render,0,"u_row");
+    const double row[4]={0,0,0,0};
+    static const uint8_t palette[8]={0,0,0,255,255,255,255,255};
+    uint8_t *pixels=malloc(sizeof palette);
+    if(!pixels){ expect(0,"palette allocation failed"); gml_render_free(&render); return; }
+    memcpy(pixels,palette,sizeof palette);
+    int sprite=gml_sprite_append_from_rgba(&render,pixels,2,1,0,0,"lookup");
+    GmlRenderShaderTextureBinding binding;
+    gml_render_shader_uniform_set(&render,uniform,row);
+    expect(sprite>=0 && gml_render_shader_texture_stage_set(
+             &render,sampler,gml_render_sprite_texture_handle(sprite,0),&binding),
+           "the named palette sampler rejected its sprite texture");
+    render.active_shader=0;
+    expect(lut_active(&render)!=NULL,
+           "a named texture binding bypassed its recognized palette kernel");
+    expect(mapped_texture_pixel(&render,UINT32_C(0xff808080))==UINT32_C(0xffffffff),
+           "a grayscale index escaped without its authored palette conversion");
+    /* The other software palette family resolves the same named binding contract. */
+    shader->lut=0;
+    shader->grid=1;
+    snprintf(shader->grid_sampler,sizeof shader->grid_sampler,"u_lookup");
+    render.lut_pal_sprite=-1;
+    expect(gml_render_shader_texture_stage_set(
+             &render,sampler,gml_render_sprite_texture_handle(sprite,0),&binding) &&
+           render.lut_pal_sprite==sprite && binding.kind==GML_RENDER_SHADER_TEXTURE_PALETTE,
+           "the named grid palette did not receive its texture");
+    /* An unsupported palette source must not reuse a previously bound sprite. The generic
+     * program binding remains available to the device path. */
+    expect(gml_render_shader_texture_stage_set(
+             &render,sampler,gml_render_surface_texture_handle(7),&binding) &&
+           render.lut_pal_sprite==-1 && binding.kind==GML_RENDER_SHADER_TEXTURE_CONTENT,
+           "a surface palette binding retained stale software sprite state");
+    render.active_shader=-1;
+  }else expect(0,"named palette shader was not loaded");
+  gml_render_free(&render);
+}
+
 int main(void) {
   static const struct {
     const char *name;
@@ -1746,6 +1806,7 @@ int main(void) {
   uint64_t noise = run_noise();
   uint64_t tint = run_tint();
   check_shader_recognition();
+  check_named_palette_sampler();
   check_channel_mask_pixels();
   check_zero_reference_alpha_test_pixels();
   check_solid_alpha_mask_pixels();

@@ -96,6 +96,7 @@ int main(int argc,char **argv){
     {"signed_distance_font_coverage",expect_signed_distance_font_reconstructs_coverage},
     {"signed_distance_font_position",expect_signed_distance_font_spread_does_not_shift_text},
     {"carriage_return_line_break",expect_carriage_return_and_line_feed_are_one_break},
+    {"hash_line_break_generation",expect_hash_line_breaks_follow_text_generation},
     {"wrapped_line_space",expect_a_wrapped_line_drops_the_space_it_broke_at},
     {"font_kerning_pair",expect_a_font_kerning_pair_moves_the_pen},
     {"legacy_sprite_assign_builtin",expect_legacy_sprite_assign_builtin},

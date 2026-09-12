@@ -1250,6 +1250,50 @@ int expect_carriage_return_and_line_feed_are_one_break(void){
   return ok;
 }
 
+int expect_hash_line_breaks_follow_text_generation(void){
+  GmlWin win={0}; GmlRender render={0}; GmlAtlas atlas={0};
+  GmlGlyph glyphs[3]; uint8_t pixels[3*4]; uint32_t framebuffer[12*4];
+  real_font_layout_fixture(&render,&win,&atlas,glyphs,pixels,framebuffer,12,4);
+  render.halign=0;
+  render.fonts[0].glyph_by_char['#']=0;
+  int ok=1;
+  for(int generation=0;generation<3;generation++){
+    win.classic_version=generation==0?810:0;
+    win.bytecode=generation==2?17:16;
+    int literal=generation==2;
+    int expected_height=literal?1:2;
+    int expected_width=literal?8:3;
+    if(gml_text_height(&render,"A#B")!=expected_height ||
+       gml_text_width(&render,"A#B")!=expected_width ||
+       gml_text_height_ext(&render,"A#B",-1,-1)!=expected_height ||
+       gml_text_width_ext(&render,"A#B",-1,-1)!=expected_width){
+      fprintf(stderr,"hash text metrics mismatch in generation %d\n",generation);
+      ok=0;
+    }
+    memset(framebuffer,0,sizeof framebuffer);
+    gml_draw_text(&render,0,0,"A#B");
+    if((framebuffer[3]!=0)!=literal || (framebuffer[12]!=0)==literal){
+      fprintf(stderr,"hash plain text placement mismatch in generation %d\n",generation);
+      ok=0;
+    }
+    memset(framebuffer,0,sizeof framebuffer);
+    gml_draw_text_ext(&render,0,0,"A#B",2,-1);
+    if((framebuffer[3]!=0)!=literal || (framebuffer[24]!=0)==literal){
+      fprintf(stderr,"hash extended text placement mismatch in generation %d\n",generation);
+      ok=0;
+    }
+  }
+  /* Automatic wrapping must emit a real separator even when a literal hash no longer is one. */
+  if(gml_text_height_ext(&render,"AA AA",-1,7)!=2){
+    fprintf(stderr,"modern automatic wrap lost its generated line separator\n");
+    ok=0;
+  }
+  render.fonts[0].glyphs=NULL; render.fonts[0].n_glyphs=0;
+  render.atlas=NULL; render.n_atlas=0;
+  gml_render_free(&render);
+  return ok;
+}
+
 int expect_a_wrapped_line_drops_the_space_it_broke_at(void){
   /* The break-space in "AA AA" belongs to neither line. The first line therefore uses
    * six advances and its centred ink occupies the exact expected columns. */

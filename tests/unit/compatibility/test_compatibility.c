@@ -105,6 +105,23 @@ int main(void){
     fputs("second-generation policy resolution mismatch\n",stderr);
     return 1;
   }
+  {
+    GmlWin policy_content={0};
+    const AnygmCompatibilityProfile *profiles[]={&classic_early,&first_late,&second,&beta};
+    for(size_t i=0;i<sizeof profiles/sizeof profiles[0];i++){
+      policy_content.compatibility=profiles[i];
+      if(anygm_policy_text_uses_hash_line_breaks(&policy_content)!=(i!=2)){
+        fputs("hash text policy did not follow the resolved language family\n",stderr);
+        return 1;
+      }
+    }
+    policy_content.compatibility=NULL;
+    policy_content.bytecode=17;
+    if(anygm_policy_text_uses_hash_line_breaks(&policy_content)) return 1;
+    policy_content.classic_version=810;
+    if(!anygm_policy_text_uses_hash_line_breaks(&policy_content) ||
+       !anygm_policy_text_uses_hash_line_breaks(NULL)) return 1;
+  }
   if(!flagged.round_transformed_collision_bounds || !classic_early.fingerprint ||
      classic_early.fingerprint==classic_late.fingerprint ||
      first_early.fingerprint==second.fingerprint){

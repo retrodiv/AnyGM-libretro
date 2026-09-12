@@ -145,6 +145,14 @@ static inline int anygm_policy_text_pairs_carriage_return_with_line_feed(const G
   return p?(int)p->text_pairs_carriage_return_with_line_feed:
            (content && content->classic_version<=0 && content->bytecode>=17);
 }
+/* Modern Studio strings retain a hash as a glyph. The older text API interprets it as a line
+ * separator. This is independent of the CR/LF builtin-family policy and derives from the
+ * already fingerprinted language family, not the font or the room's rendering format. */
+static inline int anygm_policy_text_uses_hash_line_breaks(const GmlWin *content){
+  const AnygmCompatibilityProfile *p=anygm_profile(content);
+  return p?p->diagnostic_family!=ANYGM_FAMILY_STUDIO_SECOND:
+    !(content && content->classic_version<=0 && content->bytecode>=17);
+}
 static inline int anygm_policy_has_modern_function_values(const GmlWin *content){
   const AnygmCompatibilityProfile *p=anygm_profile(content);
   return p?(int)p->has_modern_function_values:(content&&content->bytecode>=17);
