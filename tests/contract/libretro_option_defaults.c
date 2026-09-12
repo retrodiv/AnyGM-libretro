@@ -257,6 +257,38 @@ static void every_setting_sits_in_a_group(void){
   }
 }
 
+/* A frontend may create each category when it encounters its first option, rather than
+ * pre-populating the menu from the category table. Both orders must therefore agree. */
+static void expect_frontend_category_order(void){
+  const struct retro_core_option_v2_category *next=declared_categories;
+  if(!next || !declared_definitions){ complain("frontend category declaration is missing"); return; }
+  for(const struct retro_core_option_v2_definition *d=declared_definitions;d->key;d++){
+    if(!d->category_key){ complain("frontend option has no category"); return; }
+    const struct retro_core_option_v2_definition *prior=declared_definitions;
+    for(;prior<d;prior++)
+      if(prior->category_key && !strcmp(prior->category_key,d->category_key)) break;
+    if(prior<d) continue;
+    if(!next->key || strcmp(next->key,d->category_key)){
+      fprintf(stderr,"libretro option defaults: frontend encounters %s before expected %s\n",
+              d->category_key,next->key?next->key:"end");
+      failures++;
+      return;
+    }
+    next++;
+  }
+  if(next->key) complain("frontend category has no option");
+}
+
+static void frontend_category_order_survives_republication(void){
+  begin(2,RETRO_NUM_CORE_OPTION_VALUES_MAX+9);
+  expect_frontend_category_order();
+  libretro_options_publish_rooms();
+  expect_frontend_category_order();
+  libretro_options_release();
+  libretro_options_register();
+  expect_frontend_category_order();
+}
+
 /* Content GLSL and final-pass acceleration are independent session policies. Both remain visible,
  * and the former owns its reporting fallback instead of relying on a second hidden option. */
 static void graphics_settings_are_independent(void){
@@ -739,6 +771,7 @@ static void cleanup_options_have_safe_distinct_scopes(void){
 int main(void){
   cleanup_options_have_safe_distinct_scopes();
   every_setting_sits_in_a_group();
+  frontend_category_order_survives_republication();
   graphics_settings_are_independent();
   unset_settings_keep_content_reachable();
   monitor_dimensions_reach_the_virtual_monitor_fields();

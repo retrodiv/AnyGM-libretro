@@ -22,6 +22,8 @@ static const struct retro_core_option_v2_category g_categories[]={
  * whole game. What is left is how many rooms a single stretch can name. */
 #define ROOM_CHOICE_LIMIT (RETRO_NUM_CORE_OPTION_VALUES_MAX-2)
 
+/* Frontends may create categories on first use, so their first definitions must follow
+ * g_categories even when later options return to a previously introduced category. */
 static struct retro_core_option_v2_definition g_definitions[]={
   {"anygm_alpha_cull","Transparency culling",NULL,
    "Skips pixels too faint to see. None draws every one; the rest trade faint detail for speed.",
@@ -134,14 +136,6 @@ static struct retro_core_option_v2_definition g_definitions[]={
    {{"None",NULL},{"OpenGL","OpenGL / OpenGL ES"},{NULL,NULL}},
    "None"},
 #endif
-  {"anygm_content_overrides","Content override directives",NULL,
-   "Applies override directives from system defaults, .anygm anchors, and matching payload "
-   "SHA-256 sections (frozen variables, aspect patches, a development menu). Off ignores this "
-   "channel without changing host cheats. Save states remember whether directives "
-   "were active and only load under the same setting.",
-   NULL,"development",
-   {{"On",NULL},{"Off",NULL},{NULL,NULL}},
-   "On"},
   /* These are the exact locale strings exposed by the runtime: lowercase language and uppercase
    * region. Auto follows the frontend language and its paired region. Locale environment variables
    * expose the same values for content without the locale builtins. */
@@ -164,6 +158,14 @@ static struct retro_core_option_v2_definition g_definitions[]={
     {"SE",NULL},{"FI",NULL},{"NO",NULL},{"HU",NULL},{"GR",NULL},{"TR",NULL},{"SA",NULL},
     {"JP",NULL},{"KR",NULL},{"CN",NULL},{"TW",NULL},{"VN",NULL},{"TH",NULL},{NULL,NULL}},
    "Auto"},
+  {"anygm_content_overrides","Content override directives",NULL,
+   "Applies override directives from system defaults, .anygm anchors, and matching payload "
+   "SHA-256 sections (frozen variables, aspect patches, a development menu). Off ignores this "
+   "channel without changing host cheats. Save states remember whether directives "
+   "were active and only load under the same setting.",
+   NULL,"development",
+   {{"On",NULL},{"Off",NULL},{NULL,NULL}},
+   "On"},
   /* Both start-room entries are filled in once content is loaded and its rooms are known. */
   {"anygm_start_room_page","Start room range",NULL,
    "Which stretch of rooms the chooser below offers. Only games with more rooms than one list "

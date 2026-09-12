@@ -39,7 +39,9 @@ than leave them looking accidental.
 
 **Core option groups are Video, Input, System, and Development, in that order.**
 System contains Language followed by Region. Frontends without category support
-receive the same options through the flat declaration.
+receive the same options through the flat declaration. The first occurrence of
+each category in the option definitions follows the category table's order:
+frontends may build their menus from those first occurrences, not from the table.
 
 **Save states are `serialized`, not `deterministic`.** `randomize()` seeds from
 host entropy; the seed is part of serialized state, so rewind and
