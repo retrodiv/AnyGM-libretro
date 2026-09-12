@@ -2981,6 +2981,21 @@ int main(int argc,char **argv){
     ok=ok && anygm_state_capacity_flags(first)==ANYGM_STATE_CAPACITY_DYNAMIC_SURFACES;
     names[0]="draw_surface";
     ok=ok && anygm_state_capacity_flags(first)==0;
+    const char *container_names[]={"ds_grid_create","ds_list_create","ds_map_create",
+                                   "array_create","array_resize"};
+    for(size_t i=0;i<sizeof container_names/sizeof container_names[0];i++){
+      names[0]=container_names[i];
+      ok=ok && anygm_state_capacity_flags(first)==ANYGM_STATE_CAPACITY_DYNAMIC_CONTAINERS;
+    }
+    kinds[0]=GML_REF_VARIABLE;
+    ok=ok && anygm_state_capacity_flags(first)==0;
+    const char *combined_names[]={"surface_create","ds_grid_create"};
+    uint8_t combined_kinds[]={GML_REF_FUNCTION,GML_REF_FUNCTION};
+    first->win.ref_name=combined_names;
+    first->win.ref_kind=combined_kinds;
+    first->win.n_refs=2;
+    ok=ok && anygm_state_capacity_flags(first)==
+      (ANYGM_STATE_CAPACITY_DYNAMIC_SURFACES|ANYGM_STATE_CAPACITY_DYNAMIC_CONTAINERS);
     first->win.ref_name=saved_names;
     first->win.ref_kind=saved_kinds;
     first->win.n_refs=saved_count;

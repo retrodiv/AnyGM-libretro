@@ -571,11 +571,14 @@ size_t anygm_state_resume_size(AnygmEngine *engine);
  * a bounded advisory hint, just like anygm_state_capacity_hint; the current exact requirement is
  * always anygm_state_resume_size. */
 size_t anygm_state_resume_capacity_hint(const AnygmEngine *engine);
-enum { ANYGM_STATE_CAPACITY_DYNAMIC_SURFACES = 1u << 0 };
-/* Content references which make cold render allocations an incomplete growth estimate. These are
+enum {
+  ANYGM_STATE_CAPACITY_DYNAMIC_SURFACES = 1u << 0,
+  ANYGM_STATE_CAPACITY_DYNAMIC_CONTAINERS = 1u << 1
+};
+/* Content references which make cold render or container allocations an incomplete growth estimate. These are
  * conservative risk flags (including dynamic source execution or payload replacement), not a
  * bound on arbitrary future language allocations. A host choosing
- * a smaller fixed reserve must account for surfaces created only after the first frame. */
+ * a smaller fixed reserve must account for surfaces and containers created after the first frame. */
 uint32_t anygm_state_capacity_flags(const AnygmEngine *engine);
 /* The capacity the engine advises a host to provision for complete states: at least the completed
  * frame's ceiling under the current output geometry, raised by the largest serialized size this

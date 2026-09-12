@@ -337,7 +337,11 @@ so newly sized saves retain the exact completed picture while older compact ring
 loadable.
 
 An ordinary complete-capacity session reserves at least 4 MiB because a cold load can precede the
-render and language-level tables populated by gameplay. The compact large-frame path instead
+render and language-level tables populated by gameplay. References to grid/list/map creation or
+explicit array allocation/resizing select an 8-MiB ordinary reserve and exclude the small-picture
+one-MiB optimization: deferred container initialization can exceed the four-MiB reserve before
+the first gameplay snapshot. These are conservative reference flags and a selected growth policy,
+not a proof that arbitrary language allocations fit. The compact large-frame path instead
 reserves at least 1 MiB; its frame-free capacity hint describes the startup ring while that separate
 floor covers bounded cold-to-gameplay growth. This adapter capacity policy changes neither
 the logical size in the canonical header nor the portable state format. Explicit portable hosts

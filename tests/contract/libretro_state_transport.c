@@ -213,6 +213,32 @@ static int fixed_frontend_reuses_the_measured_capacity(int negotiation_result){
   return 1;
 }
 
+/* A cold container graph can grow beyond the ordinary reserve during initialization. The
+ * reservation must exist before that growth, including when variable sizing is unsupported. */
+static int deferred_containers_keep_a_larger_fixed_reserve(int negotiation_result){
+  stub_state_bytes=320u*1024u;
+  if(!begin_frontend(negotiation_result)) return 0;
+  stub_capacity_flags=ANYGM_STATE_CAPACITY_DYNAMIC_CONTAINERS;
+  stub_hint_bytes=512u*1024u;
+  const size_t capacity=retro_serialize_size();
+  int ok=capacity==8u*1024u*1024u;
+  retro_run();
+  stub_state_bytes=5u*1024u*1024u;
+  stub_resume_state_bytes=stub_state_bytes;
+  uint8_t *state=malloc(capacity);
+  if(!state) ok=0;
+  if(ok) ok=retro_serialize_size()==capacity && retro_serialize(state,capacity) &&
+            complete_saves==1u && resume_saves==0u && retro_unserialize(state,capacity);
+  retro_reset();
+  if(ok) ok=retro_serialize_size()==capacity;
+  retro_run();
+  if(ok) ok=retro_serialize(state,capacity) && retro_unserialize(state,capacity);
+  free(state);
+  retro_unload_game();
+  retro_deinit();
+  return ok;
+}
+
 static int stable_transport(int negotiation_result){
   stub_state_bytes=113u;
   if(!begin_frontend(negotiation_result)) return 0;
@@ -597,6 +623,9 @@ int main(void){
      !stable_transport(1) || !stable_transport(0) || !stable_transport(-1) ||
      !fixed_ordinary_ring_covers_expected_runtime_growth(0) ||
      !fixed_ordinary_ring_covers_expected_runtime_growth(-1) ||
+     !deferred_containers_keep_a_larger_fixed_reserve(1) ||
+     !deferred_containers_keep_a_larger_fixed_reserve(0) ||
+     !deferred_containers_keep_a_larger_fixed_reserve(-1) ||
      !growth_follows_frontend_acknowledgement(1) ||
      !growth_follows_frontend_acknowledgement(0) ||
      !growth_follows_frontend_acknowledgement(-1) ||

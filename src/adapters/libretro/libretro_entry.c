@@ -117,7 +117,7 @@ static void negotiate_serialization(void){
       (quirks&RETRO_SERIALIZATION_QUIRK_FRONT_VARIABLE_SIZE)!=0;
 }
 
-static size_t fixed_state_capacity(size_t actual,bool compact_startup){
+static size_t fixed_state_capacity(size_t actual,bool compact_startup,uint32_t flags){
   const size_t margin=512u*1024u;
   /* Before the first frame, a cold ordinary raster can still understate the render and run-time
    * tables that gameplay will populate. Fixed frontends cannot enlarge the ring they allocate
@@ -125,6 +125,11 @@ static size_t fixed_state_capacity(size_t actual,bool compact_startup){
    * small. A deliberately compact large-frame ring starts at one MiB, then its frame-free hint
    * and any known mutable render allocations raise it only as required. */
   size_t floor=compact_startup?1u*1024u*1024u:4u*1024u*1024u;
+  /* Deferred container initialization can outgrow four MiB of required simulation state even
+   * with a small authored raster. Reserve eight MiB before a fixed frontend allocates its ring.
+   * This is a bounded growth policy, not a bound on arbitrary future container allocations. */
+  if(!compact_startup && (flags&ANYGM_STATE_CAPACITY_DYNAMIC_CONTAINERS))
+    floor=8u*1024u*1024u;
   if(actual>(SIZE_MAX-margin)/2u) return SIZE_MAX;
   size_t capacity=actual*2u+margin;
   return capacity<floor?floor:capacity;
@@ -600,6 +605,7 @@ size_t retro_serialize_size(void){
   size_t resume_hint=anygm_state_resume_capacity_hint(g_libretro.engine);
   if(resume_hint>actual) actual=resume_hint;
   bool compact_startup=false;
+  uint32_t capacity_flags=anygm_state_capacity_flags(g_libretro.engine);
   /* Preserve completed-frame rewind while its worst-case storage is modest. Once the optional
    * picture adds at least the ordinary four-MiB session reserve, copying its pessimistic ceiling
    * into every fixed rewind slot dominates the high-frequency transport. A smaller picture stays
@@ -618,7 +624,8 @@ size_t retro_serialize_size(void){
      * complete-first writer also handles later presentation growth within this fixed capacity. */
     if(complete_hint && complete_hint<=small_complete_capacity &&
        actual<=(small_complete_capacity-complete_hint)/2u &&
-       !(anygm_state_capacity_flags(g_libretro.engine)&ANYGM_STATE_CAPACITY_DYNAMIC_SURFACES))
+       !(capacity_flags&(ANYGM_STATE_CAPACITY_DYNAMIC_SURFACES|
+                         ANYGM_STATE_CAPACITY_DYNAMIC_CONTAINERS)))
       compact_startup=true;
     if(!compact_startup && complete_hint>actual) actual=complete_hint;
   }
@@ -633,7 +640,7 @@ size_t retro_serialize_size(void){
   if(!g_libretro.fixed_state_capacity ||
      (g_libretro.variable_state_supported && actual>g_libretro.fixed_state_capacity)){
     size_t previous=g_libretro.fixed_state_capacity;
-    g_libretro.fixed_state_capacity=fixed_state_capacity(actual,compact_startup);
+    g_libretro.fixed_state_capacity=fixed_state_capacity(actual,compact_startup,capacity_flags);
     /* Acknowledged growth is unusual enough to report once without flooding repeated queries. */
     if(previous && !g_libretro.state_capacity_growth_reported){
       g_libretro.state_capacity_growth_reported=true;

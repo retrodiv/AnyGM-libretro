@@ -2618,15 +2618,20 @@ size_t anygm_state_resume_capacity_hint(const AnygmEngine *engine){
 
 uint32_t anygm_state_capacity_flags(const AnygmEngine *engine){
   if(!engine || engine->guard!=ANYGM_ENGINE_GUARD || engine->lifecycle!=ENGINE_LOADED) return 0;
+  uint32_t flags=0;
   for(int i=0;i<engine->win.n_refs;i++){
     if(engine->win.ref_kind && engine->win.ref_kind[i]!=GML_REF_FUNCTION) continue;
     const char *name=engine->win.ref_name[i];
     if(name && (!strcmp(name,"surface_create") || !strcmp(name,"surface_create_ext") ||
                 !strcmp(name,"surface_resize") || !strcmp(name,"execute_string") ||
                 !strcmp(name,"execute_file") || !strcmp(name,"game_change")))
-      return ANYGM_STATE_CAPACITY_DYNAMIC_SURFACES;
+      flags|=ANYGM_STATE_CAPACITY_DYNAMIC_SURFACES;
+    if(name && (!strcmp(name,"ds_grid_create") || !strcmp(name,"ds_list_create") ||
+                !strcmp(name,"ds_map_create") || !strcmp(name,"array_create") ||
+                !strcmp(name,"array_resize")))
+      flags|=ANYGM_STATE_CAPACITY_DYNAMIC_CONTAINERS;
   }
-  return 0;
+  return flags;
 }
 
 size_t anygm_state_capacity_hint(const AnygmEngine *engine){
