@@ -308,7 +308,7 @@ typedef struct AnygmContentSource {
 /* Path sources are opened during anygm_load. Memory sources are borrowed and must remain valid
  * until anygm_unload or anygm_destroy; the optional path is an identity and directory hint.
  * cache_directory, save_directory and system_directory are roots in the host VFS.
- * system_directory optionally supplies anygm.ini for content transforms and overrides,
+ * system_directory optionally supplies AnyGM.ini for content transforms and overrides,
  * including SHA-256 sections selected by the original path or memory payload bytes.
  * When a save root is present,
  * writable content files live below save_directory/AnyGM/<sanitized-label>-<path-hash>. */

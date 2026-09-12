@@ -63,7 +63,7 @@ static void lifecycle(void){
   gml_sha256(content,content_size,digest);
   char hex[65],ini[256],anchor[256],text[1024];
   for(size_t i=0;i<32;i++) snprintf(hex+i*2,3,"%02x",digest[i]);
-  snprintf(ini,sizeof ini,"%s/anygm.ini",fixture.directory);
+  snprintf(ini,sizeof ini,"%s/AnyGM.ini",fixture.directory);
   snprintf(anchor,sizeof anchor,"%s/content.anygm",fixture.directory);
   const char *name=strrchr(fixture.path,'/'); name=name?name+1:fixture.path;
   snprintf(text,sizeof text,"[anygm]\npayload=%s\n[overrides]\n"
@@ -151,7 +151,7 @@ static void replacement(void){
   gml_sha256(child_bytes,child_size,digest);
   for(size_t i=0;i<32;i++) snprintf(child_hex+i*2,3,"%02x",digest[i]);
   assert(strcmp(root_hex,child_hex));
-  snprintf(ini,sizeof ini,"%s/anygm.ini",fixture.directory);
+  snprintf(ini,sizeof ini,"%s/AnyGM.ini",fixture.directory);
   snprintf(anchor,sizeof anchor,"%s/launch.anygm",fixture.directory);
   snprintf(text,sizeof text,"[overrides]\n$default_marker=5\n"
     "[sha256:%s.overrides]\nostype|6\n$root_only=11\n"
@@ -200,7 +200,7 @@ static void memory_pipeline(void){
   gml_sha256(wrapped,compressed.size+4,digest);
   char hex[65],ini[256],path[256],companion[256],config[1024];
   for(size_t i=0;i<32;i++) snprintf(hex+i*2,3,"%02x",digest[i]);
-  snprintf(ini,sizeof ini,"%s/anygm.ini",fixture.directory);
+  snprintf(ini,sizeof ini,"%s/AnyGM.ini",fixture.directory);
   snprintf(path,sizeof path,"%s/content.bin",fixture.directory);
   snprintf(companion,sizeof companion,"%s/data.alternate.win",fixture.directory);
   snprintf(config,sizeof config,
@@ -265,7 +265,7 @@ static void candidate_inputs(void){
   gml_sha256(container,size+8,digest);
   char ini[256],path[256],config[2048],hex[65];
   for(size_t i=0;i<32;i++) snprintf(hex+i*2,3,"%02x",digest[i]);
-  snprintf(ini,sizeof ini,"%s/anygm.ini",fixture.directory);
+  snprintf(ini,sizeof ini,"%s/AnyGM.ini",fixture.directory);
   snprintf(path,sizeof path,"%s/indexed.bin",fixture.directory);
   snprintf(config,sizeof config,"[transforms]\ninput=buffer copy(){return slice(0,input_size);}\n"
     "[sha256:%s.transforms]\ninput.probe=buffer ranges(){write64(scratch,8,8);"

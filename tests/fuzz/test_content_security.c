@@ -1607,7 +1607,7 @@ static int selected_file_identity(const AnygmContentRouter *router,const char *i
   char directory[700],ini[750],hex[65],text[512],overrides[512],resolved[1024];
   snprintf(directory,sizeof directory,"%s/identity-XXXXXX",root);
   if(!mkdtemp(directory)) return 0;
-  snprintf(ini,sizeof ini,"%s/anygm.ini",directory);
+  snprintf(ini,sizeof ini,"%s/AnyGM.ini",directory);
   for(size_t i=0;i<32;i++) snprintf(hex+i*2,3,"%02x",digest[i]);
   snprintf(text,sizeof text,"[overrides]\n$identity=1\n"
     "[sha256:%s.overrides]\n$identity=2\n",hex);
@@ -1669,7 +1669,7 @@ static int embedded_executable_cases(const AnygmHostServices *services,const cha
   Fixture classic={{0},0};
   char config_path[600];
   const char *declarations="[transforms]\n";
-  if(snprintf(config_path,sizeof config_path,"%s/anygm.ini",root)>=(int)sizeof config_path ||
+  if(snprintf(config_path,sizeof config_path,"%s/AnyGM.ini",root)>=(int)sizeof config_path ||
      !write_file(config_path,declarations,strlen(declarations)))
     return fail("could not write the empty configuration");
   router.system_directory=root;
@@ -2229,7 +2229,7 @@ static int input_pipeline_cases(const AnygmHostServices *services,const char *ro
   if(snprintf(directory,sizeof directory,"%s/input-pipelines",root)>=(int)sizeof directory ||
      mkdir(directory,0700) ||
      snprintf(payload,sizeof payload,"%s/wrapper.win",directory)>=(int)sizeof payload ||
-     snprintf(ini,sizeof ini,"%s/anygm.ini",directory)>=(int)sizeof ini ||
+     snprintf(ini,sizeof ini,"%s/AnyGM.ini",directory)>=(int)sizeof ini ||
      snprintf(anchor,sizeof anchor,"%s/content.anygm",directory)>=(int)sizeof anchor)
     return fail("could not create input-pipeline paths");
   const uint8_t form[]={'F','O','R','M',0,0,0,0};
@@ -2364,7 +2364,7 @@ static int transform_configuration_cases(const AnygmHostServices *services,const
   if(snprintf(directory,sizeof directory,"%s/transform-cases",root)>=(int)sizeof directory ||
      mkdir(directory,0700) ||
      snprintf(system,sizeof system,"%s/system",directory)>=(int)sizeof system || mkdir(system,0700) ||
-     snprintf(ini,sizeof ini,"%s/anygm.ini",system)>=(int)sizeof ini ||
+     snprintf(ini,sizeof ini,"%s/AnyGM.ini",system)>=(int)sizeof ini ||
      snprintf(payload,sizeof payload,"%s/project.gmk",directory)>=(int)sizeof payload ||
      snprintf(anchor,sizeof anchor,"%s/content.anygm",directory)>=(int)sizeof anchor ||
      snprintf(second,sizeof second,"%s/second.anygm",directory)>=(int)sizeof second)
@@ -2431,7 +2431,7 @@ static int selected_configuration_cases(const AnygmHostServices *services,const 
   char directory[600],ini[700],payload[700],anchor[700],archive_path[700],resolved[1024];
   snprintf(directory,sizeof directory,"%s/selected-config",root);
   if(mkdir(directory,0700)) return fail("could not create selected configuration directory");
-  snprintf(ini,sizeof ini,"%s/anygm.ini",directory);
+  snprintf(ini,sizeof ini,"%s/AnyGM.ini",directory);
   snprintf(payload,sizeof payload,"%s/project.gmk",directory);
   snprintf(anchor,sizeof anchor,"%s/content.anygm",directory);
   snprintf(archive_path,sizeof archive_path,"%s/content.zip",directory);

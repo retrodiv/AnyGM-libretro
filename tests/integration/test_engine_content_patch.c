@@ -70,7 +70,7 @@ static void setup(PatchFixture *f){
     write_file(f->patch_path[i],f->patch[i],f->patch_size[i]);
   }
   snprintf(f->anchor,sizeof f->anchor,"%s/content.anygm",f->content[0].directory);
-  snprintf(f->ini,sizeof f->ini,"%s/anygm.ini",f->content[0].directory);
+  snprintf(f->ini,sizeof f->ini,"%s/AnyGM.ini",f->content[0].directory);
   char text[1024];
   /* A generic global probe may decline; the local final chain must still run.
    * Hash-specific runtime policy continues to refer to the original input. */

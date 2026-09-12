@@ -45,7 +45,7 @@ result SHA-256 values and exact result sizes are checked. The generic declaratio
 and decoder limits are owned by `CONTENT_TRANSFORMS.md`, not by any particular format family.
 
 Each `[overrides]` line is one directive in the same grammar the host cheat
-interface uses, including development-menu declarations. System `anygm.ini`
+interface uses, including development-menu declarations. System `AnyGM.ini`
 defaults, anchor declarations and exact-payload SHA-256 sections combine per
 destination and condition before execution; `CONTENT_CONFIGURATION.md`
 defines their syntax, precedence and original-byte identity. An
@@ -243,7 +243,7 @@ projects. Otherwise the normalized record is consumed directly. Native code
 and bundled support libraries are not executed.
 
 Where a content layout requires an external transform, the core accepts an
-explicitly supplied buffer program through `anygm.ini` or an `.anygm` anchor.
+explicitly supplied buffer program through `AnyGM.ini` or an `.anygm` anchor.
 The program format and selection rules are in `CONTENT_TRANSFORMS.md`.
 
 The editor-standard revision-530 project is accepted directly with its `.gmd` extension

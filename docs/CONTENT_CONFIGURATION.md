@@ -3,10 +3,12 @@
 
 # Content configuration
 
-The optional `anygm.ini` in the frontend system directory supplies content
+The optional `AnyGM.ini` in the frontend system directory supplies content
 defaults. An advanced `.anygm` anchor adds or replaces declarations. The INI
 can also target exact original payload bytes by SHA-256. All identities and
 rules come from external configuration; the core ships none of its own.
+
+Use the exact filename `AnyGM.ini`, including its capitalization on case-sensitive hosts.
 
 ## Sections and precedence
 
@@ -18,14 +20,14 @@ payload.
 
 Priority runs from lowest to highest:
 
-1. Default sections in `anygm.ini`.
+1. Default sections in `AnyGM.ini`.
 2. The unique sibling anchor, when sibling discovery applies.
 3. Archive anchors, from the innermost to the outermost archive.
 4. The explicitly opened anchor.
 5. Inherited launch-anchor overrides during an internal content replacement.
 6. Matching `[sha256:<digest>.transforms]`, `[sha256:<digest>.pipelines]`,
    `[sha256:<digest>.patches]` and
-   `[sha256:<digest>.overrides]` sections in `anygm.ini`.
+   `[sha256:<digest>.overrides]` sections in `AnyGM.ini`.
 
 A digest is exactly 64 hexadecimal digits; uppercase and lowercase digits
 identify the same bytes. Section names and transform keys are case-sensitive.

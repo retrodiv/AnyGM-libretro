@@ -24,7 +24,7 @@ Duplicate keys or duplicate transform sections in one document fail. UTF-8 BOM a
 and CR line endings are accepted. The former hexadecimal declaration syntax is rejected;
 configuration files must contain source functions.
 
-The frontend's system directory optionally supplies `anygm.ini`; no working-directory or
+The frontend's system directory optionally supplies `AnyGM.ini`; no working-directory or
 content-directory file of that name is guessed. Libretro obtains this directory through
 `RETRO_ENVIRONMENT_GET_SYSTEM_DIRECTORY`; portable hosts set `AnygmContentSource.system_directory`.
 No file means no default programs. A present, readable but malformed file rejects the load.
@@ -33,7 +33,7 @@ defaults in either case; content that requires a program still fails without one
 
 An advanced `.anygm` anchor may carry the same `[transforms]` section after its `[anygm]` payload
 selection. Each declared entry replaces the lower-priority entry completely, including parameters;
-undeclared entries remain available. Precedence is a matching SHA-256 section in `anygm.ini`, then
+undeclared entries remain available. Precedence is a matching SHA-256 section in `AnyGM.ini`, then
 an explicitly opened anchor, outer-to-inner archive anchors, the lone sibling anchor, and the INI
 defaults. Multiple sibling anchors select
 none. Transform requirements do not depend on the runtime-overrides option. An unreadable selected

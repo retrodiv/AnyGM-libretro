@@ -2026,7 +2026,7 @@ static int adopt_sibling_anchor_transforms(const AnygmContentRouter *router,cons
 static int load_transform_defaults(const AnygmContentRouter *router){
   if(!router->system_directory || !router->system_directory[0]) return 1;
   char path[1536];
-  if(!path_join_bounded(path,sizeof path,router->system_directory,"anygm.ini")){
+  if(!path_join_bounded(path,sizeof path,router->system_directory,"AnyGM.ini")){
     content_log(router,ANYGM_CONTENT_LOG_ERROR,"transform configuration path is too long");
     return 0;
   }
