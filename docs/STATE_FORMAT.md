@@ -9,9 +9,23 @@ marketing version. It is a numeric field in a validated binary header.
 
 ## Save-state schema
 
-The current AnyGM save-state schema is `25`. It is the format transported by
+The current AnyGM save-state schema is `26`. It is the format transported by
 libretro frontends for manual save states, automatic state slots, and rewind
 snapshots. Those features remain supported.
+
+Schema `26` adds renderer runtime-sprite mode `2`: a little-endian unsigned
+32-bit encoded length followed by a zlib-compressed RGBA plane. Dimensions and
+frame count determine the exact decoded byte count. Compressed planes share a
+256-MiB decoded budget per renderer payload. The writer retains raw mode `0`
+for planes below 4 KiB, incompressible planes and planes exceeding the remaining
+budget; file-backed mode `1` is unchanged. Compression uses the existing image
+codec and is cached until the sprite's pixels change. Repeated size queries and
+snapshots neither recompress nor read a mutable source file. A reader may reuse
+live pixels only when the complete compressed bytes match its own canonical
+cache and the sprite geometry matches. Other streams are decoded with an exact
+output bound. Cached bytes are derived data, never a separate state dependency.
+Previous public schemas reject transactionally. VM schema `14` and audio schema
+`2` retain their byte layouts; the renderer has no independent schema header.
 
 Schema `25` introduces VM schema `14`. Time-source records retain their field
 order and widths, but parent `2` now identifies hidden, self-cleaning delayed

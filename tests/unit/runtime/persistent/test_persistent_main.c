@@ -101,6 +101,7 @@ int main(int argc,char **argv){
     {"runtime_sprite_state_collision_extent",expect_runtime_sprite_state_preserves_collision_extent},
     {"runtime_sprite_state_large_inline_dimension",
      expect_runtime_sprite_state_accepts_large_inline_dimension},
+    {"runtime_sprite_state_compression_cache",expect_runtime_sprite_state_compression_cache},
     {"font_primitive_blend",expect_renderer_semantics},
   };
   static const AnygmTestCase io_cases[]={

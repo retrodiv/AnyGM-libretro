@@ -116,6 +116,10 @@ typedef struct StateCursor {
 } StateCursor;
 
 typedef struct RuntimeMaskRecord {
+  size_t width_offset;
+  size_t encoded_size_offset;
+  size_t encoded_offset;
+  uint32_t encoded_size;
   size_t row_bytes_offset;
   size_t count_offset;
   size_t payload_offset;
@@ -186,6 +190,7 @@ static int locate_runtime_mask_record(const uint8_t *state,size_t state_size,
   if(!cursor.ok || !runtime_count) return 0;
   (void)cursor_u32(&cursor); /* id */
   (void)cursor_u32(&cursor); /* extra */
+  record->width_offset=render_start+cursor.offset;
   record->width=(int32_t)cursor_u32(&cursor);
   record->height=(int32_t)cursor_u32(&cursor);
   record->frames=(int32_t)cursor_u32(&cursor);
@@ -196,6 +201,11 @@ static int locate_runtime_mask_record(const uint8_t *state,size_t state_size,
     uint64_t pixels=(uint64_t)(unsigned)record->width*(unsigned)record->height*
                     (unsigned)record->frames;
     if(pixels>SIZE_MAX/4 || !cursor_skip(&cursor,(size_t)pixels*4)) return 0;
+  } else if(mode==2){
+    record->encoded_size_offset=render_start+cursor.offset;
+    record->encoded_size=cursor_u32(&cursor);
+    record->encoded_offset=render_start+cursor.offset;
+    if(!cursor_skip(&cursor,record->encoded_size)) return 0;
   } else if(mode==1){
     (void)cursor_u32(&cursor); /* root */
     uint32_t path_length=cursor_u32(&cursor);
@@ -309,6 +319,64 @@ static int reject_payload_u32(AnygmEngine *engine,uint8_t *candidate,size_t size
   write_u32(candidate+offset,value);
   refresh_checksum(candidate);
   return reject_unchanged(engine,candidate,size,baseline,baseline_size,label);
+}
+
+static int compressed_sprite_state_cases(const AnygmHostServices *services,
+                                          const AnygmContentSource *source){
+  AnygmEngine *engine=NULL;
+  if(anygm_create(services,&engine)!=ANYGM_OK) return fail("compressed fixture creation failed");
+  int ok=anygm_load(engine,source,NULL)==ANYGM_OK;
+  uint8_t *rgba=calloc(128u*128u,4);
+  if(ok && rgba){
+    int sprite=gml_sprite_append_from_rgba_frames(&engine->render,rgba,128,128,1,0,0,"<compressed-state>");
+    ok=sprite==0;
+    if(sprite<0) free(rgba);
+    if(ok){
+      engine->render.spr[sprite].runtime_extra=0;
+      engine->render.base_n_spr=engine->render.n_spr;
+    }
+  }else{ free(rgba);ok=0; }
+  uint8_t *baseline=NULL,*candidate=NULL;
+  size_t size=0;
+  RuntimeMaskRecord record={0};
+  ok=ok && save_state(engine,&baseline,&size);
+  if(ok) candidate=malloc(size);
+  ok=ok && candidate && locate_runtime_mask_record(baseline,size,&record) &&
+     record.encoded_size>8 && record.encoded_size<4096;
+  if(ok) ok=reject_payload_u32(engine,candidate,size,baseline,size,
+                               4,25,"previous uncompressed public schema");
+  if(ok) ok=reject_payload_u32(engine,candidate,size,baseline,size,
+                               record.encoded_size_offset,0,"empty compressed sprite");
+  if(ok) ok=reject_payload_u32(engine,candidate,size,baseline,size,
+                               record.encoded_size_offset,UINT32_MAX,"unbounded compressed sprite");
+  if(ok) ok=reject_payload_u32(engine,candidate,size,baseline,size,
+                               record.encoded_size_offset,4,"truncated compressed sprite");
+  if(ok) ok=reject_payload_u32(engine,candidate,size,baseline,size,
+                               record.width_offset,INT32_MAX,"compressed sprite expansion budget");
+  if(ok) ok=reject_payload_u32(engine,candidate,size,baseline,size,
+                               record.width_offset,129,"short compressed sprite output");
+  if(ok) ok=reject_payload_u32(engine,candidate,size,baseline,size,
+                               record.width_offset,127,"long compressed sprite output");
+  if(ok) ok=reject_payload_u32(engine,candidate,size,baseline,size,
+                               record.encoded_offset,0,"invalid compressed sprite header");
+  /* Exercise rollback after the renderer has successfully decoded different pixels. */
+  if(ok){
+    uint8_t *replacement=malloc(128u*128u*4);
+    if(replacement) memset(replacement,0x66,128u*128u*4);
+    ok=replacement && gml_sprite_replace_from_rgba_frames(&engine->render,0,replacement,128,128,1,0,0);
+    uint8_t *current=NULL;size_t current_size=0;
+    ok=ok && save_state(engine,&current,&current_size);
+    if(ok){
+      memcpy(candidate,baseline,size);
+      size_t vm_start=STATE_HEADER_SIZE+(size_t)read_u64(baseline+64)+(size_t)read_u64(baseline+72);
+      write_u32(candidate+vm_start,0);
+      refresh_checksum(candidate);
+      ok=reject_unchanged(engine,candidate,size,current,current_size,"later rejection after sprite decode");
+    }
+    free(current);
+  }
+  free(candidate);free(baseline);anygm_destroy(engine);
+  return ok?1:fail("compressed sprite state cases failed");
 }
 
 /* Content-override directives join the state identity while active: a state saved with them
@@ -1075,6 +1143,7 @@ int main(void){
     if(!ok) fail("runtime override bounds were not transactional");
   }
 
+  if(ok) ok=compressed_sprite_state_cases(&services,&source);
   if(ok) ok=runtime_mask_state_cases(engine);
 
   if(ok) ok=tilemap_state_cases(&services);

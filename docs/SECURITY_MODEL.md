@@ -135,6 +135,14 @@ counts before allocation or pointer arithmetic. A new variable-length field
 must introduce a matching limit and a synthetic boundary test in its owning
 module.
 
+Compressed runtime-sprite state planes share a 256-MiB decoded-byte budget per
+renderer section. Every dimensions/frame product is checked before allocation;
+encoded lengths must fit the remaining section and be smaller than the decoded
+plane. The bounded existing zlib decoder must produce exactly that plane's size.
+Raw planes remain bounded by their complete bytes in the section. This budget
+is a selected resource policy, not an observed format limit; larger live planes
+remain writable through the raw representation.
+
 Runtime-font state records limit paths to 4,095 bytes, pixel height to 4 through 256,
 and materialized glyphs to 65,536 unique BMP codepoints. Their initial range is bounded to
 the same character domain. Reconstruction hashes the same bounded VFS read passed to the

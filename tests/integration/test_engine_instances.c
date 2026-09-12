@@ -3024,12 +3024,12 @@ int main(int argc,char **argv){
   }
   free(map_probe);
   if(visual_word<=map_word){ fprintf(stderr,"canonical visual sections changed order\n"); return 1; }
-  /* No timer is present in this neutral fixture. The hidden-parent contract
-   * changes only the two schema words and checksum; retain the entire prior
+  /* No timer or runtime sprite is present in this neutral fixture. The hidden-parent
+   * and compressed-sprite contracts change only the schema words and checksum; retain the entire prior
    * exact state pin instead of accepting unrelated byte changes. */
-  if((uint32_t)read_u64(deterministic+4)!=25 ||
+  if((uint32_t)read_u64(deterministic+4)!=26 ||
      (uint32_t)read_u64(deterministic+map_vm+4)!=14){
-    fprintf(stderr,"delayed-call state schemas changed unexpectedly\n"); return 1;
+    fprintf(stderr,"compressed-sprite state schemas changed unexpectedly\n"); return 1;
   }
   write_u32(deterministic+4,24); write_u32(deterministic+map_vm+4,13);
   write_u64(deterministic+56,state_checksum(deterministic+112,deterministic_size-112));

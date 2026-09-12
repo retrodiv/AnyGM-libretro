@@ -906,6 +906,7 @@ static void sprite_set_runtime_rgba(GmlSprite *s, uint8_t *rgba, int w, int h, i
   if(frames<1) frames=1;
   if(!extra) sprite_backup(s);
   gml_render_sprite_cache_free(s);
+  gml_render_sprite_state_cache_clear(s);
   free(s->runtime_rgba);
   free(s->runtime_mask);
   free(s->runtime_row_min);
@@ -1338,6 +1339,7 @@ void gml_sprite_delete(GmlRender *r, int sprite){
   GmlSprite *s=&r->spr[sprite];
   if(!s->runtime_extra) return;
   gml_render_sprite_cache_free(s);
+  gml_render_sprite_state_cache_clear(s);
   free(s->runtime_rgba);
   free(s->runtime_mask);
   free(s->runtime_row_min);
@@ -1404,6 +1406,7 @@ void gml_render_clear_runtime_sprites(GmlRender *r){
   for(int i=0;i<base;i++){
     GmlSprite *s=&r->spr[i];
     gml_render_sprite_cache_free(s);
+    gml_render_sprite_state_cache_clear(s);
     free(s->runtime_rgba); free(s->runtime_mask); free(s->runtime_row_min); free(s->runtime_row_max); free(s->runtime_source_path);
     s->runtime_rgba=NULL; s->runtime_mask=NULL; s->runtime_row_min=NULL; s->runtime_row_max=NULL; s->runtime_source_path=NULL; s->runtime_owned=0; s->runtime_extra=0;
     s->runtime_opaque=0;
@@ -1411,6 +1414,7 @@ void gml_render_clear_runtime_sprites(GmlRender *r){
     sprite_restore_base(s);
   }
   for(int i=base;i<r->n_spr;i++){
+    gml_render_sprite_state_cache_clear(&r->spr[i]);
     free(r->spr[i].runtime_rgba);
     free(r->spr[i].runtime_mask);
     free(r->spr[i].runtime_row_min);

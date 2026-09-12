@@ -5,6 +5,7 @@
 #include "gml_render_state.h"
 #include "gml_render_internal.h"
 #include "gml_font_raster.h"
+#include "gml_image_codec.h"
 #include "anygm_vfs.h"
 
 #include <stdint.h>
@@ -14,6 +15,32 @@
 
 typedef struct { uint8_t *data; size_t cap, pos; int ok; } CoreW;
 typedef struct { const uint8_t *data; size_t cap, pos; int ok; } CoreR;
+/* An independent expansion budget for the compressed sprite representation.
+ * Larger live sets retain raw records rather than producing an unreadable state. */
+#define GML_STATE_COMPRESSED_SPRITE_BUDGET (256u*1024u*1024u)
+
+void gml_render_sprite_state_cache_clear(GmlSprite *sprite){
+  if(!sprite) return;
+  free(sprite->runtime_state_data);
+  sprite->runtime_state_data=NULL;
+  sprite->runtime_state_size=0;
+  sprite->runtime_state_cached=0;
+}
+
+static int sprite_state_cache_prepare(GmlSprite *sprite,size_t bytes){
+  if(sprite->runtime_state_cached) return 1;
+  GmlMediaBuffer encoded={0};
+  if(bytes>=4096 && bytes<=GML_STATE_COMPRESSED_SPRITE_BUDGET){
+    /* Allocation failure must not permanently select a different wire representation. */
+    if(!gml_deflate_encode_zlib(sprite->runtime_rgba,bytes,&encoded)) return 0;
+    if(encoded.size+4<bytes){
+      sprite->runtime_state_data=encoded.data;
+      sprite->runtime_state_size=encoded.size;
+    }else gml_media_buffer_release(&encoded);
+  }
+  sprite->runtime_state_cached=1;
+  return 1;
+}
 static void cw_raw(CoreW *s, const void *p, size_t n){
   if(n>SIZE_MAX-s->pos){ s->ok=0; s->pos=SIZE_MAX; return; }
   if(s->data){ if(s->pos<=s->cap && n<=s->cap-s->pos) memcpy(s->data+s->pos,p,n); else s->ok=0; }
@@ -285,6 +312,7 @@ static void render_state_write(GmlRender *render,int view_surface,CoreW *s){
     }
   }
   int runtime_sprites=0;
+  size_t compressed_budget=GML_STATE_COMPRESSED_SPRITE_BUDGET;
   for(int i=0;i<render->n_spr;i++) if(render->spr[i].runtime_rgba) runtime_sprites++;
   cw_i32(s,runtime_sprites);
   for(int i=0;i<render->n_spr;i++) if(render->spr[i].runtime_rgba){
@@ -306,8 +334,22 @@ static void render_state_write(GmlRender *render,int view_surface,CoreW *s){
       cw_i32(s,sp->runtime_source_imgnum);
       cw_i32(s,sp->runtime_source_removeback);
     } else {
-      cw_i32(s,0);
-      cw_raw(s,sp->runtime_rgba,(size_t)sp->w*sp->h*frames*4);
+      size_t pixels=0;
+      if(sp->w<=0 || sp->h<=0 ||
+         !state_bounded_product3((size_t)sp->w,(size_t)sp->h,(size_t)frames,SIZE_MAX/4,&pixels)){
+        s->ok=0;return;
+      }
+      size_t bytes=pixels*4;
+      if(!sprite_state_cache_prepare(sp,bytes)){ s->ok=0; return; }
+      if(sp->runtime_state_data && bytes<=compressed_budget){
+        compressed_budget-=bytes;
+        cw_i32(s,2);
+        cw_u32(s,(uint32_t)sp->runtime_state_size);
+        cw_raw(s,sp->runtime_state_data,sp->runtime_state_size);
+      }else{
+        cw_i32(s,0);
+        cw_raw(s,sp->runtime_rgba,bytes);
+      }
     }
     int mask_rowb=sp->mask && sp->mask_rowb>0 && sp->mask_count>0 ? sp->mask_rowb : 0;
     int mask_count=mask_rowb ? sp->mask_count : 0;
@@ -421,6 +463,7 @@ static int render_state_read(GmlRender *render,CoreR *s){
   uint8_t *seen_runtime = NULL;
   int seen_cap = 0;
   int runtime_sprites=cr_i32(s);
+  size_t compressed_budget=GML_STATE_COMPRESSED_SPRITE_BUDGET;
   if(runtime_sprites<0 || runtime_sprites>4096){ s->ok=0; return 0; }
   seen_cap = render->spr_cap + runtime_sprites + 16;
   if(seen_cap < render->n_spr + runtime_sprites + 16) seen_cap = render->n_spr + runtime_sprites + 16;
@@ -480,23 +523,53 @@ static int render_state_read(GmlRender *render,CoreR *s){
       if(got!=id || got<0 || got>=render->n_spr){ free(seen_runtime); s->ok=0; return 0; }
       GmlSprite *chk=&render->spr[got];
       if(chk->w!=w || chk->h!=h || chk->n_frames!=frames){ free(seen_runtime); s->ok=0; return 0; }
-    } else if(mode==0){
+    } else if(mode==0 || mode==2){
       size_t rem=s->pos<=s->cap ? s->cap-s->pos : 0;
       size_t pixels=0;
-      if(!state_bounded_product3((size_t)w,(size_t)h,(size_t)frames,rem/4,&pixels)){
+      size_t limit=mode==2?compressed_budget:rem;
+      if(!state_bounded_product3((size_t)w,(size_t)h,(size_t)frames,limit/4,&pixels)){
         free(seen_runtime); s->ok=0; return 0;
       }
       size_t bytes=pixels*4;
-      uint8_t *rgba=malloc(bytes);
-      if(!rgba){ free(seen_runtime); s->ok=0; return 0; }
-      cr_raw(s,rgba,bytes);
-      if(extra || id>=render->base_n_spr){
-        if(id>=0 && id<render->n_spr && render->spr[id].runtime_extra) gml_sprite_delete(render,id);
-        int got=gml_sprite_append_from_rgba_frames(render,rgba,w,h,frames,ox,oy,"<state-sprite>");
-        if(got!=id){ free(seen_runtime); s->ok=0; return 0; }
-      } else if(!gml_sprite_replace_from_rgba_frames(render,id,rgba,w,h,frames,ox,oy)){
-        free(rgba); free(seen_runtime); s->ok=0; return 0;
+      const uint8_t *encoded=NULL;
+      uint32_t encoded_size=0;
+      int reuse=0;
+      if(mode==2){
+        compressed_budget-=bytes;
+        encoded_size=cr_u32(s);
+        rem=s->pos<=s->cap?s->cap-s->pos:0;
+        if(!s->ok || !encoded_size || encoded_size>=bytes || encoded_size>rem){
+          free(seen_runtime);s->ok=0;return 0;
+        }
+        encoded=s->data+s->pos;
+        if(id<render->n_spr){
+          GmlSprite *current=&render->spr[id];
+          /* Equality with our own canonical cache proves the pixels without
+           * inflating and replacing an unchanged plane on every rewind pop. */
+          reuse=current->runtime_rgba && current->runtime_state_data &&
+            current->runtime_extra==extra && current->w==w && current->h==h &&
+            current->n_frames==frames && current->originx==ox && current->originy==oy &&
+            current->runtime_state_size==encoded_size &&
+            !memcmp(current->runtime_state_data,encoded,encoded_size);
+        }
       }
+      if(!reuse){
+        uint8_t *rgba=malloc(bytes);
+        if(!rgba){ free(seen_runtime); s->ok=0; return 0; }
+        if(mode==2){
+          size_t decoded=0;
+          if(!gml_deflate_decode_to_buffer(encoded,encoded_size,GML_DEFLATE_ZLIB,rgba,bytes,&decoded) ||
+             decoded!=bytes){ free(rgba);free(seen_runtime);s->ok=0;return 0; }
+        }else cr_raw(s,rgba,bytes);
+        if(extra || id>=render->base_n_spr){
+          if(id>=0 && id<render->n_spr && render->spr[id].runtime_extra) gml_sprite_delete(render,id);
+          int got=gml_sprite_append_from_rgba_frames(render,rgba,w,h,frames,ox,oy,"<state-sprite>");
+          if(got!=id){ free(seen_runtime); s->ok=0; return 0; }
+        } else if(!gml_sprite_replace_from_rgba_frames(render,id,rgba,w,h,frames,ox,oy)){
+          free(rgba); free(seen_runtime); s->ok=0; return 0;
+        }
+      }
+      if(mode==2) s->pos+=encoded_size;
     } else {
       free(seen_runtime); s->ok=0; return 0;
     }
@@ -544,6 +617,7 @@ static int render_state_read(GmlRender *render,CoreR *s){
       gml_sprite_delete(render,i);
   for(int i=0;i<base;i++) if(render->spr[i].runtime_rgba && (i>=seen_cap || !seen_runtime[i])){
     GmlSprite *sp=&render->spr[i];
+    gml_render_sprite_state_cache_clear(sp);
     free(sp->runtime_rgba); free(sp->runtime_mask); free(sp->runtime_row_min); free(sp->runtime_row_max); free(sp->runtime_source_path);
     sp->runtime_rgba=NULL; sp->runtime_mask=NULL; sp->runtime_row_min=NULL; sp->runtime_row_max=NULL; sp->runtime_source_path=NULL; sp->runtime_owned=0; sp->runtime_extra=0;
     sp->runtime_source_imgnum=0; sp->runtime_source_removeback=0;

@@ -104,6 +104,8 @@ typedef struct { const char *name; int originx, originy, w, h, n_frames; int *fr
                  int collision_kind, collision_tolerance;
                  float playback_speed; int playback_speed_type, playback_speed_valid;
                  uint8_t *runtime_rgba; int runtime_owned, runtime_extra, runtime_opaque; char *owned_name;
+                 uint8_t *runtime_state_data; size_t runtime_state_size;
+                 int runtime_state_cached; /* derived encoding, invalidated with pixel replacement */
                  int *runtime_row_min, *runtime_row_max;
                  uint32_t *runtime_axis_cache_px; uint8_t *runtime_axis_cache_alpha;
                  int *runtime_axis_cache_row_min, *runtime_axis_cache_row_max;
@@ -705,6 +707,7 @@ int build_default_font(GmlRender *r);
 void render_rotation_sincos(double degrees,double *cosine,double *sine);
 const uint8_t *runtime_frame_rgba(GmlSprite *sprite,int frame);
 void gml_render_sprite_cache_free(GmlSprite *sprite);
+void gml_render_sprite_state_cache_clear(GmlSprite *sprite);
 void blit(GmlRender *r,GmlTpag *tpag,double x,double y,double xscale,double yscale,
           uint32_t blend,double alpha);
 void blit_rgba_sprite(GmlRender *r,GmlSprite *owner,const uint8_t *source,

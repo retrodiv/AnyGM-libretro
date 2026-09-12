@@ -331,6 +331,76 @@ int expect_runtime_sprite_state_preserves_collision_extent(void){
   return ok;
 }
 
+int expect_runtime_sprite_state_compression_cache(void){
+  enum { WIDTH=128, HEIGHT=128, BYTES=WIDTH*HEIGHT*4 };
+  int ok=1;
+  for(int extra=0;ok && extra<2;extra++){
+    GmlRender render={0};
+    render.alpha=1;
+    render.font=-1;
+    render.alphablend=1;
+    render.circle_precision=24;
+    render.app_draw_enable=1;
+    render.next_surface_id=1;
+    render.spr=calloc(1,sizeof(*render.spr));
+    render.n_spr=render.base_n_spr=render.spr_cap=render.spr?1:0;
+    size_t empty=gml_render_state_size(&render,0);
+    uint8_t *rgba=malloc(BYTES);
+    if(rgba) memset(rgba,0x55,BYTES);
+    int sprite=-1;
+    if(rgba && render.spr){
+      if(extra) sprite=gml_sprite_append_from_rgba_frames(&render,rgba,WIDTH,HEIGHT,1,2,3,"<cache-test>");
+      else if(gml_sprite_replace_from_rgba_frames(&render,0,rgba,WIDTH,HEIGHT,1,2,3)) sprite=0;
+    }
+    if(sprite<0){ free(rgba); gml_render_free(&render); return 0; }
+    size_t size=gml_render_state_size(&render,0),written=0,used=0;
+    uint8_t *before=malloc(size?size:1),*after=malloc(size?size:1);
+    uint8_t *pixels=render.spr[sprite].runtime_rgba;
+    uint8_t *cached=render.spr[sprite].runtime_state_data;
+    ok=before && after && cached && size<empty+BYTES/8 &&
+       gml_render_state_save(&render,0,before,size,&written) && written==size &&
+       gml_render_state_size(&render,0)==size && render.spr[sprite].runtime_state_data==cached &&
+       gml_render_state_load(&render,before,size,&used) && used==size &&
+       render.spr[sprite].runtime_rgba==pixels && render.spr[sprite].runtime_state_data==cached;
+    if(!ok) fprintf(stderr,"compressed sprite initial save/reuse failed\n");
+    /* A genuine replacement invalidates the compressed cache; a later restore must
+     * decode the old pixels, not mistake the new plane for the old one. */
+    uint8_t *replacement=malloc(BYTES);
+    if(replacement) memset(replacement,0x99,BYTES);
+    if(ok && replacement){
+      if(extra){
+        gml_sprite_delete(&render,sprite);
+        ok=gml_sprite_append_from_rgba_frames(&render,replacement,WIDTH,HEIGHT,1,2,3,"<replacement>")==sprite;
+      }else ok=gml_sprite_replace_from_rgba_frames(&render,sprite,replacement,WIDTH,HEIGHT,1,2,3);
+      ok=ok &&
+         !render.spr[sprite].runtime_state_cached && !render.spr[sprite].runtime_state_data &&
+         gml_render_state_load(&render,before,size,&used) && used==size;
+      for(size_t i=0;ok && i<BYTES;i++) ok=render.spr[sprite].runtime_rgba[i]==0x55;
+      ok=ok && gml_render_state_save(&render,0,after,size,&written) && written==size &&
+         !memcmp(before,after,size);
+      if(!ok) fprintf(stderr,"compressed sprite replacement/restore failed\n");
+    }else{ free(replacement);ok=0; }
+    /* High-entropy pixels retain raw mode without repeatedly trying compression. */
+    replacement=malloc(BYTES);
+    uint32_t random=0x12345678u;
+    for(size_t i=0;replacement && i<BYTES;i++){
+      random^=random<<13;random^=random>>17;random^=random<<5;
+      replacement[i]=(uint8_t)random;
+    }
+    if(ok && replacement){
+      ok=gml_sprite_replace_from_rgba_frames(&render,sprite,replacement,WIDTH,HEIGHT,1,2,3) &&
+         gml_render_state_size(&render,0)>empty+BYTES &&
+         render.spr[sprite].runtime_state_cached && !render.spr[sprite].runtime_state_data;
+      if(!ok) fprintf(stderr,"incompressible sprite raw fallback failed\n");
+    }else{ free(replacement);ok=0; }
+    if(!ok) fprintf(stderr,"compressed sprite fixture extra=%d size=%zu empty=%zu written=%zu used=%zu\n",
+                   extra,size,empty,written,used);
+    free(before);free(after);gml_render_free(&render);
+  }
+  if(!ok) fprintf(stderr,"runtime sprite compressed state/cache mismatch\n");
+  return ok;
+}
+
 int expect_runtime_sprite_state_accepts_large_inline_dimension(void){
   enum { WIDTH=2, HEIGHT=4097 };
   GmlRender render={0};
