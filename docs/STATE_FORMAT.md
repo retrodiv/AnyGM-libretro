@@ -9,9 +9,18 @@ marketing version. It is a numeric field in a validated binary header.
 
 ## Save-state schema
 
-The current AnyGM save-state schema is `26`. It is the format transported by
+The current AnyGM save-state schema is `27`. It is the format transported by
 libretro frontends for manual save states, automatic state slots, and rewind
 snapshots. Those features remain supported.
+
+Schema `27` adds two fixed 256-byte arrays after the root keyboard snapshots:
+the carried simulated-press event flags (zero or one), then deferred release
+phases (zero through two). A press/release pair issued within one frame owes
+input work to later frames, so restoring its held bit without these arrays
+would latch the key and lose its event. The existing input poll consumes the
+restored queues; Reset clears them. Invalid values and earlier public schemas
+reject transactionally. VM schema `14`, renderer encoding and audio schema `2`
+retain their layouts. The 512-byte addition is present before the first frame.
 
 Schema `26` adds renderer runtime-sprite mode `2`: a little-endian unsigned
 32-bit encoded length followed by a zlib-compressed RGBA plane. Dimensions and

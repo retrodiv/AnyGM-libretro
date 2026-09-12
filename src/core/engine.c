@@ -400,6 +400,10 @@ static int boot_runtime_prepare(AnygmEngine *engine) {
   memset(engine->axis_previous, 0, sizeof(engine->axis_previous));
   memset(engine->key_current, 0, sizeof(engine->key_current));
   memset(engine->key_previous, 0, sizeof(engine->key_previous));
+  memset(engine->key_press_raised,0,sizeof engine->key_press_raised);
+  memset(engine->key_press_carry,0,sizeof engine->key_press_carry);
+  memset(engine->key_press_step,0,sizeof engine->key_press_step);
+  memset(engine->key_release_defer,0,sizeof engine->key_release_defer);
   memset(engine->hardware_key_current, 0, sizeof(engine->hardware_key_current));
   memset(engine->hardware_key_previous, 0, sizeof(engine->hardware_key_previous));
   memset(engine->event_vk_current, 0, sizeof(engine->event_vk_current));

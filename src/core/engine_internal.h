@@ -302,11 +302,13 @@ struct AnygmEngine {
   /* A simulated key pressed and released in one step must retain its press edge.
    * raised records the current frame's edge and carry records only edges
    * cancelled by a release in that frame. A held press uses its existing edge.
-   * These transient flags are not serialized between frames. */
+   * Carry is serialized because the next input poll consumes it; raised is
+   * reconstructed at that poll. */
   uint8_t key_press_raised[NKEY],key_press_carry[NKEY];
   /* key_press_step classifies a simulated press in the running step as a repeat or
    * new edge. key_release_defer counts polls owed by its paired release so a
-   * held-key query in the following frame can observe it. Both are transient. */
+   * held-key query in the following frame can observe it. The deferred release
+   * is serialized across the boundary; the running-step marker is transient. */
   uint8_t key_press_step[NKEY],key_release_defer[NKEY];
   /* io_clear and keyboard_clear suppress a held key until all input sources next report it up. A later press is then observed normally. */
   uint8_t key_cleared[NKEY];

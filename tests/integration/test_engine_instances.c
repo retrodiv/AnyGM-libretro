@@ -2426,7 +2426,9 @@ static int bridged_key_press_delivery_policy(void){
   return ok;
 }
 
+/* A same-step press/release leaves both an event and a release owed to a later frame. */
 static int bridged_key_restore_policy(void){
+  for(int resume=0;resume<2;resume++)
   for(int save_frame=1;save_frame<=2;save_frame++){
     AnygmSyntheticContent fixture;
     if(!anygm_synthetic_bridged_key_content_create(&fixture)) return 0;
@@ -2449,22 +2451,34 @@ static int bridged_key_restore_policy(void){
     for(int frame=0;ok && frame<save_frame;frame++)
       ok=anygm_run_frame(engine,&input,&output)==ANYGM_OK;
     uint8_t *state=NULL; size_t size=0;
-    if(ok) ok=save_state(engine,&state,&size);
+    if(ok && resume){
+      size_t capacity=anygm_state_resume_size(engine);
+      state=malloc(capacity?capacity:1);
+      ok=state && anygm_state_save_for_resume(engine,state,capacity,&size)==ANYGM_OK;
+    } else if(ok) ok=save_state(engine,&state,&size);
     int pending=ok?engine->key_release_defer[39]:-1;
+    if(ok) ok=pending==save_frame;
     for(int frame=save_frame;ok && frame<5;frame++)
       ok=anygm_run_frame(engine,&input,&output)==ANYGM_OK;
     if(ok) ok=!engine->vm.input.key(engine,39,0) &&
               gml_global_num(&engine->vm,"fixture_presses")==1;
     if(ok) ok=anygm_state_load(engine,state,size)==ANYGM_OK;
     /* The completed picture consumes one presentation-only call before input advances. */
-    if(ok) ok=anygm_run_frame(engine,&input,&output)==ANYGM_OK;
+    if(ok && !resume) ok=anygm_run_frame(engine,&input,&output)==ANYGM_OK;
     for(int frame=save_frame;ok && frame<5;frame++)
       ok=anygm_run_frame(engine,&input,&output)==ANYGM_OK;
     if(ok) ok=!engine->vm.input.key(engine,39,0) &&
               gml_global_num(&engine->vm,"fixture_presses")==1;
-    if(!ok) fprintf(stderr,"bridged key restore failed: saved frame=%d pending=%d held=%d presses=%.0f\n",
-                    save_frame,pending,engine?engine->vm.input.key(engine,39,0):-1,
+    if(!ok) fprintf(stderr,"bridged key restore failed: resume=%d saved frame=%d pending=%d held=%d presses=%.0f\n",
+                    resume,save_frame,pending,engine?engine->vm.input.key(engine,39,0):-1,
                     engine?gml_global_num(&engine->vm,"fixture_presses"):-1.0);
+    if(ok){
+      engine->vm.input.key_press(engine,38);
+      engine->vm.input.key_release(engine,38);
+      ok=anygm_reset(engine)==ANYGM_OK && !engine->key_press_carry[38] &&
+         !engine->key_release_defer[38] && !engine->key_press_step[38] &&
+         !engine->key_press_raised[38];
+    }
     free(state);
     anygm_destroy(engine);
     anygm_synthetic_content_destroy(&fixture);
@@ -2783,7 +2797,7 @@ int main(int argc,char **argv){
           "first_generation_oversized_gui|"
           "background_color|multi_view_application_canvas|game_change|"
           "input_binding_ownership|simulated_key_lifetime|simulated_key_frame_lifetime|"
-          "bridged_key_press_delivery|bridged_key_hold|undefined_placement|"
+          "bridged_key_press_delivery|bridged_key_hold|bridged_key_restore|undefined_placement|"
           "room_start_deactivation]\n",stderr);
     return 1;
   }
@@ -3242,7 +3256,8 @@ int main(int argc,char **argv){
   uint64_t payload_size=read_u64(damaged+96);
   size_t frame_width_offset=112u+2048u+44u+4u+
     sizeof first->pad_current+sizeof first->pad_previous+
-    sizeof first->key_current+sizeof first->key_previous;
+    sizeof first->key_current+sizeof first->key_previous+
+    sizeof first->key_press_carry+sizeof first->key_release_defer;
   if(frame_width_offset+12>112u+core_size) return 1;
   write_u32(damaged+frame_width_offset,UINT32_MAX);
   write_u64(damaged+56,state_checksum(damaged+112,(size_t)payload_size));

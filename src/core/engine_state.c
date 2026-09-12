@@ -444,6 +444,8 @@ static void state_write(AnygmEngine *engine,CoreW *s){
   { cw_i64(s,(int64_t)engine->vm.frame); }
   cw_raw(s,engine->pad_current,sizeof(engine->pad_current)); cw_raw(s,engine->pad_previous,sizeof(engine->pad_previous));
   cw_raw(s,engine->key_current,sizeof(engine->key_current)); cw_raw(s,engine->key_previous,sizeof(engine->key_previous));
+  cw_raw(s,engine->key_press_carry,sizeof engine->key_press_carry);
+  cw_raw(s,engine->key_release_defer,sizeof engine->key_release_defer);
   cw_u32(s,engine->mouse_button_cleared);
   state_write_completed_frame(engine,s);
   size_t coren=s->pos-core_start;
@@ -607,6 +609,12 @@ bool state_unserialize_impl(AnygmEngine *engine,const void *d, size_t n, int sch
   { engine->vm.frame=(long)frame; }
   cr_raw(&core,engine->pad_current,sizeof(engine->pad_current)); cr_raw(&core,engine->pad_previous,sizeof(engine->pad_previous));
   cr_raw(&core,engine->key_current,sizeof(engine->key_current)); cr_raw(&core,engine->key_previous,sizeof(engine->key_previous));
+  cr_raw(&core,engine->key_press_carry,sizeof engine->key_press_carry);
+  cr_raw(&core,engine->key_release_defer,sizeof engine->key_release_defer);
+  for(int key=0;key<NKEY;key++)
+    if(engine->key_press_carry[key]>1 || engine->key_release_defer[key]>2) return false;
+  memset(engine->key_press_raised,0,sizeof engine->key_press_raised);
+  memset(engine->key_press_step,0,sizeof engine->key_press_step);
   uint32_t mouse_cleared=cr_u32(&core);
   if(mouse_cleared>7u) return false;
   engine->mouse_button_cleared=(uint8_t)mouse_cleared;
