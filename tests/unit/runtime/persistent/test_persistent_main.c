@@ -115,6 +115,7 @@ int main(int argc,char **argv){
   };
   static const AnygmTestCase state_cases[]={
     {"canonical_roundtrip",expect_vm_state_case},
+    {"sparse_ds_continuation",expect_vm_state_sparse_ds_continuation},
     {"array_graph_roundtrip",expect_vm_state_graph_case},
     {"array_definition_depth",expect_vm_state_array_depth_case},
     {"object_rewind",expect_object_state_rewind},

@@ -3,11 +3,80 @@
  */
 #include "persistent_test_fixture.h"
 
+#include "gml_builtin.h"
 #include "gml_particle.h"
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+static void sparse_ds_set(GmlVM *vm,int family,GmlVal id){
+  GmlVal args[]={id,vreal(0),vreal(0),vreal(id.d+100)};
+  if(family==0){
+    args[1]=vstr("second"); args[2]=args[3];
+    (void)gml_builtin_call(vm,"ds_map_add",args,3);
+    args[1]=vstr("first");
+    (void)gml_builtin_call(vm,"ds_map_add",args,3);
+  }else if(family==1){
+    args[1]=args[3];
+    (void)gml_builtin_call(vm,"ds_list_add",args,2);
+  }else (void)gml_builtin_call(vm,"ds_grid_set",args,4);
+}
+
+static int sparse_ds_value_matches(GmlVM *vm,int family,GmlVal id){
+  const char *get[]={"ds_map_find_value","ds_list_find_value","ds_grid_get"};
+  GmlVal args[]={id,family==0?vstr("second"):vreal(0),vreal(0)};
+  GmlVal value=gml_builtin_call(vm,get[family],args,family==2?3:2);
+  int ok=value.t==V_REAL && value.d==id.d+100;
+  if(family==0){
+    GmlVal first=gml_builtin_call(vm,"ds_map_find_first",&id,1);
+    ok=ok && first.t==V_STR && first.s && !strcmp(first.s,"second");
+  }
+  return ok;
+}
+
+/* A load may compact private resource slots. Future allocations must still
+ * produce the same canonical bytes as uninterrupted execution. */
+int expect_vm_state_sparse_ds_continuation(void){
+  const char *create[]={"ds_map_create","ds_list_create","ds_grid_create"};
+  const char *destroy[]={"ds_map_destroy","ds_list_destroy","ds_grid_destroy"};
+  int all_ok=1;
+  for(int family=0;family<3;family++){
+    GmlWin win={0}; GmlVM vm={0}; vm.win=&win;
+    vm.particles=gml_particle_state_create(&vm);
+    gml_vm_software3d_reset(&vm);
+    GmlVal dimensions[]={vreal(2),vreal(2)},ids[3];
+    for(int i=0;i<3;i++){
+      ids[i]=gml_builtin_call(&vm,create[family],dimensions,family==2?2:0);
+      sparse_ds_set(&vm,family,ids[i]);
+    }
+    (void)gml_builtin_call(&vm,destroy[family],&ids[0],1);
+    size_t initial_size=gml_vm_state_size(&vm),written=0,used=0;
+    void *initial=malloc(initial_size?initial_size:1);
+    int ok=vm.particles && initial && ids[2].d>ids[1].d &&
+      gml_vm_state_save(&vm,initial,initial_size,&written) && written==initial_size;
+    GmlVal next=gml_builtin_call(&vm,create[family],dimensions,family==2?2:0);
+    sparse_ds_set(&vm,family,next);
+    size_t final_size=gml_vm_state_size(&vm);
+    void *reference=malloc(final_size?final_size:1),*replay=malloc(final_size?final_size:1);
+    ok=ok && reference && replay && next.d>ids[2].d &&
+      gml_vm_state_save(&vm,reference,final_size,&written) && written==final_size;
+    for(int pass=0;pass<2 && ok;pass++){
+      ok=gml_vm_state_load(&vm,initial,initial_size,&used) && used==initial_size;
+      GmlVal restored_next=gml_builtin_call(&vm,create[family],dimensions,family==2?2:0);
+      sparse_ds_set(&vm,family,restored_next);
+      for(int i=1;i<3;i++) ok=ok && sparse_ds_value_matches(&vm,family,ids[i]);
+      ok=ok && sparse_ds_value_matches(&vm,family,restored_next);
+      ok=ok && restored_next.d==next.d && gml_vm_state_size(&vm)==final_size &&
+        gml_vm_state_save(&vm,replay,final_size,&written) && written==final_size &&
+        !memcmp(reference,replay,final_size);
+    }
+    if(!ok) fprintf(stderr,"sparse %s continuation changed canonical state\n",create[family]);
+    all_ok=all_ok && ok;
+    free(initial); free(reference); free(replay); gml_vm_free(&vm);
+  }
+  return all_ok;
+}
 
 int expect_vm_state_graph_case(void){
   GmlWin win={0}; GmlVM vm={0};

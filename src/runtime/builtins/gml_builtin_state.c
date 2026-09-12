@@ -452,6 +452,13 @@ void gml_builtin_state_profile_ds(const GmlBuiltinState *state,
   }
 }
 
+typedef struct { uint32_t id; int slot; } DsStateOrder;
+
+static int ds_state_order_compare(const void *left,const void *right){
+  uint32_t a=((const DsStateOrder *)left)->id,b=((const DsStateOrder *)right)->id;
+  return (a>b)-(a<b);
+}
+
 void gml_builtin_state_write_ini_ds(const GmlBuiltinState *state,
                                     GmlVmStateWriter *writer){
   gml_vm_state_write_i32(writer,state->ini_n);
@@ -465,11 +472,19 @@ void gml_builtin_state_write_ini_ds(const GmlBuiltinState *state,
     gml_vm_state_write_string(writer,state->ini_kv[i].sval);
   }
   gml_vm_state_write_i32(writer,state->next_ds_id);
+  /* Records carry public IDs, not private allocator slots. Loading compacts
+   * holes; a later allocation therefore occupies a different physical slot.
+   * Sort the record traversal by ID so uninterrupted and restored execution
+   * retain identical bytes, including shared-array definition order. This
+   * changes neither container entry order nor the existing keyed format. */
+  DsStateOrder maps[GML_DS_MAP_MAX],lists[GML_DS_LIST_MAX],grids[GML_DS_GRID_MAX];
   int map_live=0;
-  for(int i=0;i<GML_DS_MAP_MAX;i++) if(state->ds_map[i].live) map_live++;
+  for(int i=0;i<GML_DS_MAP_MAX;i++) if(state->ds_map[i].live)
+    maps[map_live++]=(DsStateOrder){state->ds_map[i].id,i};
+  qsort(maps,(size_t)map_live,sizeof(*maps),ds_state_order_compare);
   gml_vm_state_write_i32(writer,map_live);
-  for(int i=0;i<GML_DS_MAP_MAX;i++) if(state->ds_map[i].live){
-    const GmlDSMap *map=&state->ds_map[i];
+  for(int i=0;i<map_live;i++){
+    const GmlDSMap *map=&state->ds_map[maps[i].slot];
     gml_vm_state_write_u32(writer,map->id);
     gml_vm_state_write_i32(writer,map->len);
     for(int j=0;j<map->len;j++){
@@ -480,10 +495,12 @@ void gml_builtin_state_write_ini_ds(const GmlBuiltinState *state,
     }
   }
   int list_live=0;
-  for(int i=0;i<GML_DS_LIST_MAX;i++) if(state->ds_list[i].live) list_live++;
+  for(int i=0;i<GML_DS_LIST_MAX;i++) if(state->ds_list[i].live)
+    lists[list_live++]=(DsStateOrder){state->ds_list[i].id,i};
+  qsort(lists,(size_t)list_live,sizeof(*lists),ds_state_order_compare);
   gml_vm_state_write_i32(writer,list_live);
-  for(int i=0;i<GML_DS_LIST_MAX;i++) if(state->ds_list[i].live){
-    const GmlDSList *list=&state->ds_list[i];
+  for(int i=0;i<list_live;i++){
+    const GmlDSList *list=&state->ds_list[lists[i].slot];
     gml_vm_state_write_u32(writer,list->id);
     gml_vm_state_write_i32(writer,list->len);
     for(int j=0;j<list->len;j++){
@@ -492,10 +509,12 @@ void gml_builtin_state_write_ini_ds(const GmlBuiltinState *state,
     }
   }
   int grid_live=0;
-  for(int i=0;i<GML_DS_GRID_MAX;i++) if(state->ds_grid[i].live) grid_live++;
+  for(int i=0;i<GML_DS_GRID_MAX;i++) if(state->ds_grid[i].live)
+    grids[grid_live++]=(DsStateOrder){state->ds_grid[i].id,i};
+  qsort(grids,(size_t)grid_live,sizeof(*grids),ds_state_order_compare);
   gml_vm_state_write_i32(writer,grid_live);
-  for(int i=0;i<GML_DS_GRID_MAX;i++) if(state->ds_grid[i].live){
-    const GmlDSGrid *grid=&state->ds_grid[i];
+  for(int i=0;i<grid_live;i++){
+    const GmlDSGrid *grid=&state->ds_grid[grids[i].slot];
     gml_vm_state_write_u32(writer,grid->id);
     gml_vm_state_write_i32(writer,grid->w);
     gml_vm_state_write_i32(writer,grid->h);
