@@ -22,6 +22,8 @@ or proprietary runtime components.
   `gm81`, and `exe`.
 - Single-runtime PE executables carrying one embedded, unfiltered LZX-21
   Cabinet with a normalized Studio payload and external runtime assets.
+- Executables carrying one unambiguous, structurally valid embedded Studio
+  data image.
 - PE launchers paired with an adjacent normalized `data.win`.
 - Memory-backed content through the framework-neutral AnyGM API.
 - Explicit ordered input transformations and external xdelta/VCDIFF patch chains,

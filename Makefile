@@ -721,6 +721,7 @@ $(TEST_DIR)/stb_vorbis_fmod_test.o: src/third_party/stb/stb_vorbis.c
 		-DSTB_VORBIS_NO_PUSHDATA_API -c $< -o $@
 
 $(TEST_DIR)/test_content_security: tests/fuzz/test_content_security.c \
+	tests/unit/content/classic/classic_test_fixture.c \
 	tests/support/vcdiff_fixture.c \
 	tests/support/synthetic_content.c \
 	tests/support/memory_vfs.c \

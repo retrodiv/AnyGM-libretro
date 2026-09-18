@@ -307,6 +307,10 @@ regular `data.win` beside it. The sibling passes through ordinary Studio validat
 malformed or unsupported internal container is terminal, not a reason to use the sibling.
 The executable remains the launch and save identity; content-relative files resolve from
 their shared directory. No native machine code is run.
+An `exe` may also carry one unambiguous normalized Studio `FORM` data image.
+The bounded reader validates it before extracting it to a disposable cache.
+An embedded image with no VM code defers to an adjacent image only when both
+declare the same project identity and the adjacent image has VM code.
 An `exe` may also carry one unfiltered Cabinet in a validated PE raw section. The supported
 single-runtime profile uses one Cabinet volume and LZX window 21, contains exactly one normalized
 Studio payload, and may contain regular external runtime assets. The core opens only the declared

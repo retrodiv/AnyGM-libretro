@@ -31,7 +31,7 @@ ambient process service.
 
 ## Content and archive limits
 
-ZIP-compatible and embedded-Cabinet routing enforce these compile-time limits:
+ZIP-compatible, embedded-Cabinet, and embedded-data routing enforce these compile-time limits:
 
 | Resource | Limit |
 | --- | ---: |

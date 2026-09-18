@@ -3,6 +3,7 @@
  */
 #include "anygm.h"
 #include "content_router.h"
+#include "classic_test_fixture.h"
 #include "embedded_cab.h"
 #include "embedded_nsis.h"
 #include "engine_internal.h"
@@ -1789,9 +1790,10 @@ static int adjacent_executable_payload_cases(const AnygmHostServices *services,c
     return fail("an adjacent payload did not preserve launch identity and Reset paths");
   }
 
+
   uint8_t no_code[200];
   build_no_code_form(no_code);
-  build_pe_runner_only(executable);
+  build_pe_launcher_only(executable);
   memcpy(executable+700,no_code,sizeof no_code);
   char embedded[640];
   if(snprintf(embedded,sizeof embedded,"%s/embedded-first.exe",directory)>=(int)sizeof embedded ||
@@ -1818,7 +1820,7 @@ static int adjacent_executable_payload_cases(const AnygmHostServices *services,c
     return fail("could not stage the same-project embedded payload fixture");
   }
   memset(named_executable,0,sizeof named_executable);
-  build_pe_runner_only(named_executable);
+  build_pe_launcher_only(named_executable);
   memcpy(named_executable+700,named,named_size);
   char same_project[640];
   if(snprintf(same_project,sizeof same_project,"%s/embedded-same-project.exe",directory)>=
@@ -1829,6 +1831,7 @@ static int adjacent_executable_payload_cases(const AnygmHostServices *services,c
     free(form);
     return fail("a codeless embedded payload did not defer to the same project beside it");
   }
+
 
   char rejected[640];
   build_pe_cabinet(executable);
@@ -2520,11 +2523,11 @@ int main(void){
   ZipEntry bad_crc=safe;
   bad_crc.corrupt_crc=1;
 
-  int ok=embedded_executable_cases(&services,root) &&
-         cache_producer_change_case(&services,root) &&
+  int ok=cache_producer_change_case(&services,root) &&
          embedded_cabinet_cases(&services,root) &&
          embedded_lzx_cabinet_cases(&services,root) &&
          embedded_nsis_cases(&services,root) &&
+         embedded_executable_cases(&services,root) &&
          adjacent_executable_payload_cases(&services,root) &&
          archive_anchor_cases(&services,root) &&
          archive_advanced_anchor_cases(&services,root) &&
