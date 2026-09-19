@@ -57,8 +57,12 @@ make -j1
 ```
 
 The output is `anygm_libretro.so` on Unix, with the platform extension changed
-to `dll` or `dylib` where appropriate. A sequential build is recommended on
-memory-constrained systems because some generated translation units are large.
+to `dll` or `dylib` where appropriate, and `anygm_libretro_android.so` for the
+Android target. A sequential build is recommended on memory-constrained systems
+because some generated translation units are large; `tools/run_guarded.py` runs
+any command under an enforced memory and time ceiling when the host has a
+systemd user manager, and [Building](docs/BUILDING.md) records the limits used
+for the cross builds.
 
 Useful targets are:
 

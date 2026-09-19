@@ -296,6 +296,15 @@ documented in `tools/audiogen/README.md`. `make provenance-check notices-check`
 checks the declared first-party provenance directives and embedded-notice
 table consistency; it does not authenticate an external source archive.
 
+## Bounded local invocations
+
+`tools/run_guarded.py` owns the bounded-process-tree wrapper used for builds and
+for suites whose memory use is not known in advance: it establishes cgroup v2
+memory, swap, task and wall-clock limits through the systemd user manager,
+re-checks them from inside the cgroup and stops the whole tree on timeout or
+over-commit. It is a development tool; no part of it is linked into the core.
+`docs/BUILDING.md` records the limits used for compilation and for suites.
+
 ## Common change routes
 
 ### Add or correct a serialized input field
