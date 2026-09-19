@@ -20,6 +20,8 @@ include:
   - project: libretro-infrastructure/ci-templates
     file: /linux-aarch64.yml
   - project: libretro-infrastructure/ci-templates
+    file: /android-jni.yml
+  - project: libretro-infrastructure/ci-templates
     file: /osx-x64.yml
   - project: libretro-infrastructure/ci-templates
     file: /osx-arm64.yml
@@ -52,6 +54,13 @@ libretro-build-linux-i686:
 libretro-build-linux-aarch64:
   extends:
     - .libretro-linux-aarch64-make-default
+    - .core-defs
+
+# The Android template runs ndk-build, which builds the core through this repository's own Makefile
+# for platform=android and installs the result as libs/arm64-v8a/libretro.so.
+libretro-build-android-arm64:
+  extends:
+    - .libretro-android-jni-arm64-v8a
     - .core-defs
 
 # The 10-7 template is the legacy variant; the mainstream choice is the default (macOS 10.9).

@@ -63,7 +63,10 @@ CXX := $(TOOLCHAIN_PREFIX)g++
 endif
 
 ifeq ($(ANYGM_APPLE_CROSS),1)
-ANYGM_APPLE_SYSROOT := $(shell xcodebuild -version -sdk macosx Path 2>/dev/null)
+# The libretro osx-arm64 template exports the SDK path it found, which is the only source of one
+# for a cross build on a host that has no Apple toolchain; a native host that can query its own
+# installation falls back to xcodebuild.
+ANYGM_APPLE_SYSROOT := $(if $(LIBRETRO_APPLE_ISYSROOT),$(LIBRETRO_APPLE_ISYSROOT),$(shell xcodebuild -version -sdk macosx Path 2>/dev/null))
 APPLE_TARGET_FLAGS := $(if $(LIBRETRO_APPLE_PLATFORM),-target $(LIBRETRO_APPLE_PLATFORM)) \
 	$(if $(ANYGM_APPLE_SYSROOT),-isysroot $(ANYGM_APPLE_SYSROOT))
 CFLAGS += $(APPLE_TARGET_FLAGS)
@@ -90,29 +93,55 @@ endif
 
 CORE_BASENAME := $(TARGET_NAME)_libretro
 CORE_EXTENSION := so
+# The Android library keeps the libretro buildbot's platform-specific filename, which is how the
+# published artifact is told apart from the Linux one it shares an extension with.
+CORE_ARTIFACT_SUFFIX :=
 CORE_PLATFORM_LDLIBS := -lm -pthread
 CORE_PLATFORM_LDFLAGS := -Wl,--version-script=link.T -Wl,--no-undefined -Wl,--build-id=none
 CORE_SHARED_FLAG := -shared
+CORE_LINK_INPUTS := link.T
 PIC_FLAGS := -fPIC -fvisibility=hidden
+
+# Apple targets export their entry points through an explicit symbol list, because the Mach-O
+# linker has no version script. The list is derived from the reviewed libretro ABI that the ELF
+# export check compares against, so the two spellings of the same contract cannot drift apart;
+# -exported_symbols_list takes no wildcards, so every entry point is written out with the leading
+# underscore the Mach-O namespace uses.
+MACHO_EXPORT_LIST := $(BUILD_DIR)/libretro.exports.macho
+$(MACHO_EXPORT_LIST): tests/contract/libretro_exports.txt
+	mkdir -p $(dir $@)
+	sed -e '/^[[:space:]]*#/d' -e '/^[[:space:]]*$$/d' -e 's/^/_/' $< > $@
+ifneq (,$(filter osx ios tvos,$(platform)))
+CORE_LINK_INPUTS := $(MACHO_EXPORT_LIST)
+endif
 
 ifneq (,$(findstring win,$(platform)))
 CORE_EXTENSION := dll
 CORE_PLATFORM_LDLIBS := -lm -lgdi32 -luser32
 CORE_PLATFORM_LDFLAGS := -Wl,--no-insert-timestamp -static-libgcc -static-libstdc++
 endif
+ifneq (,$(findstring android,$(platform)))
+CORE_ARTIFACT_SUFFIX := _android
+# A device with 16 KiB pages refuses a library whose load segments are aligned to 4 KiB, and the
+# alignment is recorded in the file rather than applied by the loader, so it is a link-time
+# property of the artifact itself. The C++ runtime is linked statically for the same reason the
+# Windows build does it: the core then depends on the platform's own libraries only.
+CORE_PLATFORM_LDFLAGS := -Wl,--version-script=link.T -Wl,--no-undefined -Wl,--build-id=none \
+	-Wl,-z,max-page-size=16384 -Wl,-z,common-page-size=16384 -static-libstdc++
+endif
 ifneq (,$(findstring osx,$(platform)))
 CORE_EXTENSION := dylib
-CORE_PLATFORM_LDFLAGS := -dynamiclib
+CORE_PLATFORM_LDFLAGS := -dynamiclib -Wl,-exported_symbols_list,$(MACHO_EXPORT_LIST)
 CORE_SHARED_FLAG :=
 endif
 ifneq (,$(findstring ios,$(platform)))
 CORE_EXTENSION := dylib
-CORE_PLATFORM_LDFLAGS := -dynamiclib
+CORE_PLATFORM_LDFLAGS := -dynamiclib -Wl,-exported_symbols_list,$(MACHO_EXPORT_LIST)
 CORE_SHARED_FLAG :=
 endif
 ifneq (,$(findstring tvos,$(platform)))
 CORE_EXTENSION := dylib
-CORE_PLATFORM_LDFLAGS := -dynamiclib
+CORE_PLATFORM_LDFLAGS := -dynamiclib -Wl,-exported_symbols_list,$(MACHO_EXPORT_LIST)
 CORE_SHARED_FLAG :=
 endif
 
@@ -144,7 +173,7 @@ RUNTIME_LIBRARY := $(BUILD_DIR)/libanygm_runtime.a
 ifeq ($(STATIC_LINKING),1)
 CORE_TARGET := $(CORE_BASENAME).a
 else
-CORE_TARGET := $(CORE_BASENAME).$(CORE_EXTENSION)
+CORE_TARGET := $(CORE_BASENAME)$(CORE_ARTIFACT_SUFFIX).$(CORE_EXTENSION)
 endif
 
 TEST_DIR := $(BUILD_DIR)/tests
@@ -202,7 +231,7 @@ ifeq ($(STATIC_LINKING),1)
 $(CORE_TARGET): $(CORE_OBJECTS)
 	$(AR) $(ARFLAGS) $@ $^
 else
-$(CORE_TARGET): $(CORE_OBJECTS) link.T
+$(CORE_TARGET): $(CORE_OBJECTS) $(CORE_LINK_INPUTS)
 	$(CXX) $(LDFLAGS) $(CORE_SHARED_FLAG) $(PIC_FLAGS) $(CORE_PLATFORM_LDFLAGS) -o $@ $(CORE_OBJECTS) $(LDLIBS) $(CORE_PLATFORM_LDLIBS)
 endif
 
@@ -921,7 +950,7 @@ $(TEST_DIR)/test_vm: tests/unit/runtime/test_vm.c $(UNIT_RUNTIME_OBJECTS)
 clean:
 	tests/architecture/safe_clean.sh "$(BUILD_DIR)" \
 		$(CORE_BASENAME).so $(CORE_BASENAME).dll \
-		$(CORE_BASENAME).dylib $(CORE_BASENAME).a
+		$(CORE_BASENAME).dylib $(CORE_BASENAME).a $(CORE_BASENAME)_android.so
 
 -include $(RUNTIME_OBJECTS:.o=.d) $(LIBRETRO_OBJECTS:.o=.d) $(TEST_HOST_OBJECTS:.o=.d)
 

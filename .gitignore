@@ -5,6 +5,10 @@
 /anygm_libretro.dll
 /anygm_libretro.dylib
 /anygm_libretro.a
+/anygm_libretro_android.so
+# ndk-build output for the Android runner: the published library and its object tree.
+/libs/
+/obj/
 *.o
 *.d
 *.gcda

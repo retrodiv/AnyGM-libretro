@@ -32,7 +32,7 @@ fi
 if [ -d "$build_dir" ]; then rm -r -- "$build_dir"; fi
 for artifact in "$@"; do
   case "$artifact" in
-    anygm_libretro.so|anygm_libretro.dll|anygm_libretro.dylib|anygm_libretro.a)
+    anygm_libretro.so|anygm_libretro.dll|anygm_libretro.dylib|anygm_libretro.a|anygm_libretro_android.so)
       if [ -f "$artifact" ] || [ -L "$artifact" ]; then rm -f -- "$artifact"; fi
       ;;
     *)
