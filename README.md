@@ -15,11 +15,42 @@ or proprietary runtime components.
 
 ## Supported format families
 
-- Classic container revisions 530, 600, 701, 702, 800, and 810.
-- Studio bytecode revisions 14 through 17.
-- Path-backed content selected by the libretro extensions declared by the
-  core: `win`, `droid`, `zip`, `port`, `apk`, `yyp`, `yyz`, `gmd`, `gmk`, `gm6`,
-  `gm81`, and `exe`.
+AnyGM runs content authored with these GameMaker generations, in the standard
+container each format defines:
+
+- **Game Maker 5.3** — the `.gmd` editor project standard, classic revision 530.
+- **Game Maker 6** — the `.gm6` editor project standard, classic revision 600,
+  with its adjacent included files and `.gex` extension packages.
+- **Game Maker 7** — the `.gmk` editor project standard, classic revisions 701
+  and 702.
+- **Game Maker 8** — the `.gmk` editor project standard, classic revision 800.
+- **Game Maker 8.1** — the `.gm81` editor project standard, classic revision 810.
+- **GameMaker Studio 1.x** — the Studio data container (`data.win`,
+  `game.droid`, `game.unx`) at bytecode revisions 14, 15, and 16, with classic
+  Studio semantics.
+- **GameMaker Studio 2.x** — the same data container with modern function,
+  struct, and layer semantics. Revision 17 is the common case; an early Studio 2
+  package can arrive at bytecode 15, and its generation is decided by the
+  container structure rather than by the revision alone.
+
+Two limits apply to every generation:
+
+- **Unprotected content only.** AnyGM loads the format's own container: the
+  project, data, or compiled runner file laid out the way that format lays it
+  out. A payload that a protection, packing, or obfuscation tool has wrapped,
+  packed, re-encoded, or otherwise altered is outside this boundary, however it
+  was published or distributed.
+- **No native code.** AnyGM executes GML, and it never runs, loads, or links
+  machine code. Content compiled with the YYC native compiler carries no GML
+  bytecode for the runtime to execute, so it is outside this boundary, and
+  neither a native runner nor a native extension library is ever loaded.
+
+### Container forms
+
+- Path-backed content selected by the extensions the core declares to the
+  frontend: `win`, `droid`, `unx`, `zip`, `port`, `apk`, `yyp`, `yyz`, `gmd`,
+  `gmk`, `gm6`, `gm81`, `exe`, and `anygm`, the anchor that names the payload
+  beside it; see [Supported formats](docs/SUPPORTED_FORMATS.md).
 - Single-runtime PE executables carrying one embedded, unfiltered LZX-21
   Cabinet with a normalized Studio payload and external runtime assets.
 - Executables carrying one unambiguous, structurally valid embedded Studio
@@ -139,15 +170,21 @@ one engine -> normalized content -> compatibility profile
 host services supplied by the adapter
 ```
 
+### Core lifecycle and coordination
+
 Within the core, `src/core/engine.c` remains the lifecycle and per-frame
 coordinator, `src/core/engine_input.c` owns normalized input and its VM bridge,
 `src/core/engine_overrides.c` owns runtime overrides, menu declarations, and
 explicit room/intro skip hooks,
 `src/core/engine_presentation.c` owns view/aspect/GUI composition, and
 `src/core/engine_state.c` owns root state framing and transactional restore.
+
 The engine has one video-owned `GmlSoftware3D` context for fixed-function 3D,
 models, and vertex resources; the renderer borrows it and builtins reach it only
 through typed subsystem operations.
+
+### Values, VM state, and resources
+
 Language values, arrays, and variable maps use the narrow
 `src/runtime/vm/gml_value.h` boundary; consumers that only exchange `GmlVal`
 do not need the complete VM state interface. Their one canonical implementation
@@ -156,12 +193,14 @@ declared only by `gml_value_internal.h`, while the bounded public
 `gml_values_release` operation tears down aliasing value graphs without exposing
 that representation. Canonical VM payload sizing, field order, and transactional
 restore have one implementation owner in `src/runtime/vm/gml_vm_state.c`.
+
 Builtin-owned INI, file/buffer, asynchronous-request, data-structure,
 time-source, spatial-audio, and physics resources live in one opaque
 `GmlBuiltinState`; `src/runtime/builtins/gml_builtin_state.c` alone creates,
 resets, destroys, visits, and serializes that resource owner. Its four staged
 codecs consume the opaque cursor in `gml_vm_state_codec.h` at their established
 VM-state positions, so ownership changes do not introduce a second state header.
+
 The compatibility-aware deterministic random
 stream has one implementation owner in `src/runtime/vm/gml_vm_rng.c`; room
 lookup and entry, persistent-room state, runtime layers and tilemaps, room asset
@@ -169,19 +208,24 @@ warming, path and timeline resources and stepping, and tile-layer mutations
 have one owner in `src/runtime/vm/gml_vm_rooms.c`; step ordering, draw
 scheduling, frame snapshots, event drains, visual-filter decoding, read-only
 tile-mutation projection, and frame scratch have one owner in
-`src/runtime/vm/gml_vm_frame.c`. Bytecode
-dispatch, variable resolution, callable invocation, and code-cache analysis
-have one owner in
+`src/runtime/vm/gml_vm_frame.c`.
+
+Bytecode dispatch, variable resolution, callable invocation, and code-cache
+analysis have one owner in
 `src/runtime/vm/gml_vm_exec.c`; object parsing, instance lifetime, event
 dispatch, collision, and boundary behavior have one owner in
 `src/runtime/vm/gml_vm_instances.c`; private cross-owner VM operations remain
 limited to `gml_vm_internal.h`. `src/runtime/vm/gml_vm.c` retains lifecycle,
 subsystem wiring, input services, shared comparison/byte utilities, and coarse
 control.
+
+### Builtin names
+
 Builtin name resolution is characterized independently by
 `make check TEST=builtin_dispatch`; exact and cached builtins, aliases, scripts,
 function values, and deliberate fallbacks retain one tested precedence while
 the implementation is divided into searchable family owners.
+
 `src/runtime/builtins/gml_builtin_registry.h` is the canonical, searchable
 source for every exact builtin name, stable internal ID, family owner, dispatch
 stage, and cache policy. `gml_builtin_registry.c` resolves that data through a
@@ -195,14 +239,19 @@ boundary exchanges bounded value views and streaming operations rather than
 container storage. `make check TEST=builtin_state` proves builtin resource
 lifetime, transient-resource exclusion, transactional restore, and exact
 save/load/save byte stability.
+
+### Media and renderer
+
 Shared image decode, in-memory PNG encode, inflate, and TrueType raster
 implementation live in the path-free `src/media/` leaf; content and video
 owners retain host/VFS, atlas-layout, and runtime policy.
+
 The renderer facade owns coarse lifecycle and frame/target coordination,
 `gml_render_assets.c` owns asset metadata and runtime-sprite lifetime, and
 `gml_render_blit.c` keeps the complete mutually calling sprite, background,
 tile, paint, and pixel raster closure. The latter is intentionally cohesive so
 hot inner loops do not cross translation-unit boundaries.
+
 The authoritative file-level ownership map is kept in
 [`docs/CODE-MAP.md`](docs/CODE-MAP.md).
 

@@ -195,6 +195,7 @@ INTEGRATION_TESTS := $(TEST_DIR)/test_engine_instances $(TEST_DIR)/test_mouse_in
 	$(TEST_DIR)/test_font_state \
 	$(TEST_DIR)/test_engine_content_config \
 	$(TEST_DIR)/test_engine_content_patch \
+	$(TEST_DIR)/test_engine_payload_names \
 	$(TEST_DIR)/test_engine_scoped_overrides \
 	$(TEST_DIR)/test_engine_composed_raster
 ifneq ($(HARDWARE_RENDER),0)
@@ -710,6 +711,7 @@ integration-check: $(INTEGRATION_TESTS)
 	$(TEST_DIR)/test_font_state
 	$(TEST_DIR)/test_engine_content_config
 	$(TEST_DIR)/test_engine_content_patch
+	$(TEST_DIR)/test_engine_payload_names
 	$(TEST_DIR)/test_host_setting_budget
 	$(if $(filter-out 0,$(HARDWARE_RENDER)),$(TEST_DIR)/test_graphics_state,true)
 
@@ -842,6 +844,11 @@ $(TEST_DIR)/test_engine_content_config: tests/integration/test_engine_content_co
 
 $(TEST_DIR)/test_engine_content_patch: tests/integration/test_engine_content_patch.c \
 	tests/support/vcdiff_fixture.c tests/support/anygm_test_runner.c \
+	tests/support/synthetic_content.c $(RUNTIME_OBJECTS) $(TEST_HOST_OBJECTS)
+	mkdir -p $(dir $@)
+	$(call link_runtime_test,$(TEST_CPPFLAGS))
+
+$(TEST_DIR)/test_engine_payload_names: tests/integration/test_engine_payload_names.c \
 	tests/support/synthetic_content.c $(RUNTIME_OBJECTS) $(TEST_HOST_OBJECTS)
 	mkdir -p $(dir $@)
 	$(call link_runtime_test,$(TEST_CPPFLAGS))

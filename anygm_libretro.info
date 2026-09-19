@@ -4,7 +4,7 @@
 # Software Information
 display_name = "GameMaker (AnyGM)"
 authors = "retrodiv"
-supported_extensions = "win|droid|zip|port|apk|yyp|yyz|gmd|gmk|gm6|gm81|exe|anygm"
+supported_extensions = "win|droid|unx|zip|port|apk|yyp|yyz|gmd|gmk|gm6|gm81|exe|anygm"
 corename = "AnyGM"
 categories = "Game engine"
 license = "Multiple (MIT and third-party terms)"

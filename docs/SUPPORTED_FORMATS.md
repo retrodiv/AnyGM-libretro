@@ -298,9 +298,15 @@ not the libretro adapter.
 ## Containers
 
 Path-backed routing recognizes the extensions declared by the core:
-`win`, `droid`, `zip`, `port`, `apk`, `yyp`, `yyz`, `gmd`, `gmk`, `gm6`, `gm81`, and
-`exe`. Extension recognition selects a parser; magic and structural validation
-still determine whether the input is accepted.
+`win`, `droid`, `unx`, `zip`, `port`, `apk`, `yyp`, `yyz`, `gmd`, `gmk`, `gm6`,
+`gm81`, and `exe`. Extension recognition selects a parser; magic and structural
+validation still determine whether the input is accepted.
+
+An exporter names the Studio data container after the platform it was exported
+for: `data.win` on Windows, `game.droid` on Android, and `game.unx` on Linux.
+They are one container under three names, so any of them is accepted as the
+directly loaded payload, and the same three names are what an archive, a
+self-extracting package, and the sibling search beside a launcher select.
 
 When a structurally valid PE has no supported internal payload, the core may load the exact
 regular `data.win` beside it. The sibling passes through ordinary Studio validation. A

@@ -223,7 +223,7 @@ void retro_get_system_info(struct retro_system_info *info){
   memset(info,0,sizeof *info);
   info->library_name="AnyGM";
   info->library_version=ANYGM_VERSION;
-  info->valid_extensions="win|droid|zip|port|apk|yyp|yyz|gmd|gmk|gm6|gm81|exe|anygm";
+  info->valid_extensions="win|droid|unx|zip|port|apk|yyp|yyz|gmd|gmk|gm6|gm81|exe|anygm";
   info->need_fullpath=true;
   info->block_extract=true;
 }

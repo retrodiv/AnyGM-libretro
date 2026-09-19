@@ -10,7 +10,7 @@ have to guess which of them are accidents.
 ## Advertised extensions
 
 ```
-win | droid | zip | port | apk | yyp | yyz | gmd | gmk | gm6 | gm81 | exe | anygm
+win | droid | unx | zip | port | apk | yyp | yyz | gmd | gmk | gm6 | gm81 | exe | anygm
 ```
 
 with `need_fullpath = true` and `block_extract = true`. That pair is not
@@ -18,7 +18,7 @@ optional: the core does its own archive and executable parsing, so it needs the
 path rather than a buffer, and it must be handed the archive rather than a
 frontend's extraction of it.
 
-Two entries have a cost worth stating.
+Three entries are worth stating.
 
 **`zip`** makes every zip in a player's library list this core as a load
 candidate, and `block_extract` disables browse-inside-archive for it. That is
@@ -31,8 +31,14 @@ classic containers can be embedded in an executable, and declining the
 extension would exclude that format family. Unsupported executables receive
 a diagnostic rejection rather than being treated as supported content.
 
+**`unx`** is the name a Linux export gives the same Studio data container that
+`win` names on Windows and `droid` on Android. The archive router and the
+launcher-sibling search already select it by name, and the loader behind it is
+the one the other two already reach; advertising the extension is what lets a
+bare payload be handed over directly instead of only from inside a package.
+
 An `.info` file submitted to `libretro-super` must carry exactly this list in
-`supported_extensions`, and the submission should state the two choices rather
+`supported_extensions`, and the submission should state these entries rather
 than leave them looking accidental.
 
 ## Decisions a reviewer will ask about
