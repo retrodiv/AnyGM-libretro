@@ -16,8 +16,8 @@ body:
     id: version
     attributes:
       label: Core version
-      description: The version string shown by the frontend.
-      placeholder: "0.1.0"
+      description: The version string shown by the frontend, in the project's 0.1.x form.
+      placeholder: "0.1.x"
     validations:
       required: true
   - type: input

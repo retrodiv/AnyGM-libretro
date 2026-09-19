@@ -86,6 +86,12 @@ The CI matrix is a build declaration, not proof that every CI environment is ava
 locally. Platform-specific failures should be fixed in the adapter or build
 selection rather than by adding platform branches to portable runtime code.
 
+The version a built core reports belongs to `ANYGM_VERSION` in `src/api/anygm.h` and to nothing
+else. The buildbot's metadata declares `Git`, so a nightly identifies itself by the number its own
+commit carries rather than by a value written into a metadata file. `tools/bump-version.sh` is the
+whole procedure for moving that number; `make architecture-check` proves it is well formed and that
+no second copy of it exists in the tree.
+
 ## Review checklist
 
 - Does the change keep exactly one engine and instance-owned mutable state?

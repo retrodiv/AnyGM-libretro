@@ -1,0 +1,50 @@
+#!/bin/sh
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 retrodiv <retrodiv@proton.me>
+#
+# Refuse a commit whose version did not move.
+#
+# ANYGM_VERSION in src/api/anygm.h is this project's identity: the core reports it to the frontend at
+# runtime, and every commit increments it (CONTRIBUTING.md owns the policy). A version that does not
+# move is the failure nobody notices until a bug report names the wrong build, so the commit that
+# would keep the previous number is refused here.
+#
+# Enable it once per clone:
+#
+#   git config core.hooksPath .githooks
+#
+# Rewrites and replays pass --no-verify, and that is deliberate: an amend rewrites an existing commit
+# rather than adding a change, a merge carries commits that already bumped, and a rebase replay or a
+# cherry-pick copies them. A deliberate exception uses the same escape; the hook exists for the
+# commit nobody thought about.
+
+set -eu
+
+git rev-parse --verify -q HEAD >/dev/null 2>&1 || exit 0
+
+git_directory=$(git rev-parse --absolute-git-dir)
+for marker in MERGE_HEAD CHERRY_PICK_HEAD REVERT_HEAD rebase-merge rebase-apply; do
+  if [ -e "$git_directory/$marker" ]; then
+    exit 0
+  fi
+done
+
+header=src/api/anygm.h
+version_of() {
+  sed -n 's/^#define ANYGM_VERSION "\([^"]*\)".*/\1/p'
+}
+
+staged=$(git show ":$header" 2>/dev/null | version_of) || staged=
+previous=$(git show "HEAD:$header" 2>/dev/null | version_of) || previous=
+
+# A tree without the version, or one that is the first to declare it, has nothing to compare.
+if [ -z "$staged" ] || [ -z "$previous" ]; then
+  exit 0
+fi
+
+if [ "$staged" = "$previous" ]; then
+  printf '%s\n' \
+    "AnyGM version: this commit would keep $staged, and every commit increments it." \
+    "Run tools/bump-version.sh, or pass --no-verify when rewriting an existing commit." >&2
+  exit 1
+fi

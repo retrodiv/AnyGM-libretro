@@ -2,14 +2,17 @@
 # Copyright (c) 2026 retrodiv <retrodiv@proton.me>
 
 # Software Information
-display_name = "AnyGM"
+display_name = "GameMaker (AnyGM)"
 authors = "retrodiv"
 supported_extensions = "win|droid|zip|port|apk|yyp|yyz|gmd|gmk|gm6|gm81|exe|anygm"
 corename = "AnyGM"
 categories = "Game engine"
 license = "Multiple (MIT and third-party terms)"
 permissions = ""
-display_version = "0.1.0"
+# The version a frontend displays comes from the core itself, which reads the one macro in
+# src/api/anygm.h. A number written here would be a second copy, and a second copy goes stale;
+# CONTRIBUTING.md owns the increment procedure.
+display_version = "Git"
 
 # Hardware Information
 systemname = "GameMaker"
@@ -29,7 +32,7 @@ load_subsystem = "false"
 hw_render = "true"
 needs_fullpath = "true"
 disk_control = "false"
-is_experimental = "true"
+is_experimental = "false"
 
 # Notes
 description = "Portable runtime and libretro core for supported GameMaker content formats. First-party code uses MIT; bundled components and generated data retain their own terms, detailed in THIRD_PARTY_NOTICES.md."

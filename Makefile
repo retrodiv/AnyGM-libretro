@@ -657,7 +657,7 @@ endif
 warnings-check: CFLAGS += -Werror
 warnings-check: core
 
-architecture-check: builtin-registry-check provenance-check notices-check audio-data-check delta-vendor-check
+architecture-check: builtin-registry-check provenance-check notices-check audio-data-check delta-vendor-check version-policy-check
 	tests/architecture/check_compatibility_boundaries.sh
 	tests/architecture/check_code_map.sh
 	tests/architecture/check_graphics_boundaries.sh
@@ -669,6 +669,12 @@ architecture-check: builtin-registry-check provenance-check notices-check audio-
 .PHONY: delta-vendor-check
 delta-vendor-check:
 	python3 tests/architecture/check_delta_vendor.py
+
+# The project's version is written in exactly one place, and every publishable copy of the metadata
+# says "Git" instead of a number. The check also exercises the one documented increment.
+.PHONY: version-policy-check
+version-policy-check:
+	python3 tests/architecture/check_version_policy.py
 
 # Check the internal files named by provenance directives against their recorded digests.
 provenance-check:

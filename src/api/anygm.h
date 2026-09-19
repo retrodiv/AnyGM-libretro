@@ -11,6 +11,11 @@
 extern "C" {
 #endif
 
+/* The one copy of this project's version. Everything else derives it: an adapter reports it as the
+ * runtime library version, and every publishable metadata file declares the literal "Git" instead
+ * of a number, so no copy can promise a value that has gone stale. CONTRIBUTING.md owns the single
+ * increment step. */
+#define ANYGM_VERSION "0.1.0"
 #define ANYGM_API_VERSION 4u
 #define ANYGM_HOST_SERVICES_VERSION 1u
 #define ANYGM_STATE_SCHEMA 29u
