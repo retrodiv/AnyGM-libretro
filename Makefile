@@ -792,8 +792,8 @@ sanitizer-check:
 		security-check contract-check integration-check
 
 export-check: core
-	@if [ "$(CORE_EXTENSION)" != "so" ]; then \
-		printf '%s\n' "export-check is available for native Unix shared builds"; \
+	@if [ "$(CORE_EXTENSION)" != "so" ] && [ "$(CORE_EXTENSION)" != "dylib" ]; then \
+		printf '%s\n' "export-check is available for native Unix and Apple shared builds"; \
 	else \
 		tests/contract/check_libretro_exports.sh "$(CORE_TARGET)"; \
 	fi

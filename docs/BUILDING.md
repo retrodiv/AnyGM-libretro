@@ -96,7 +96,9 @@ Run it after changing a language-visible builtin name or owner.
 `check` uses only synthetic fixtures. `sanitizer-check` builds the bounded
 security and contract suite with AddressSanitizer and UndefinedBehaviorSanitizer
 when the selected compiler supports them. `export-check` inspects a linked
-shared core and is intended for native Unix release validation.
+shared core against the reviewed entry-point list — the dynamic symbol table of
+an ELF library or the export trie of a Mach-O one, recognised by the file's own
+magic — and is intended for native Unix and Apple release validation.
 
 Use `make clean` only from the checkout whose resolved build directory should
 be removed. The target validates that directory before removing generated
@@ -142,8 +144,10 @@ publishes to the libretro Android runner as `libs/<abi>/libretro.so`, and that
 file is also what an Android distribution may name directly. The Windows builds
 link the compiler runtime statically for the same reason. Apple targets are
 single-architecture, honour `MACOSX_DEPLOYMENT_TARGET`, and export the entry
-points through their own visibility attributes rather than through a symbol
-list, so no Mach-O export file is required.
+points through a symbol list generated from the reviewed libretro ABI, because a
+Mach-O linker has no version script. The repository's GitHub workflow builds
+both Apple targets with warnings as errors, runs `export-check` on each, and
+builds the arm64 target a second time through the cross variables above.
 
 ## Bounded builds and tests
 
