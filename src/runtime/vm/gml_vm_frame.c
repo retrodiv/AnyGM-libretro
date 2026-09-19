@@ -1749,7 +1749,7 @@ void gml_vm_draw(GmlVM *vm){
           (in->obj>=0&&in->obj<vm->n_objects)?vm->objects[in->obj].name:"?",in->id,
           (int)in->sprite_index,in->visible,in->depth,in->draw_layer_order,in->draw_layer_element_order,
           in->x,in->y,in->image_angle,in->image_xscale,in->image_yscale,in->image_alpha,in->image_index,in->image_speed); } } }
-  skip_instdump:
+  skip_instdump:;  /* the label needs a statement of its own before the declarations below */
   int active_layer_order=-1;
   GmlRtLayer *active_layer=NULL;
   GmlLayerFilter *active_filter=NULL;

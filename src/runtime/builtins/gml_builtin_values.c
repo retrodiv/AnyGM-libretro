@@ -483,6 +483,15 @@ static uint8_t *utf16le_alloc(const char *text, size_t *out_len){
   return out;
 }
 
+/* The trim predicate for string_trim and its two one-sided variants. It takes the character set as
+ * an argument instead of closing over the caller's local, because nested functions are a GCC
+ * extension that no other supported compiler accepts. */
+static int string_trim_matches(const char *set, char ch){
+  return (set&&*set) ? strchr(set,ch)!=NULL
+       : (set)       ? 0
+                     : isspace((unsigned char)ch)!=0;
+}
+
 /* string(template, ...) substitutes numbered placeholders from subsequent arguments.
  * Repeated or reordered indices refer to the same argument positions. A placeholder without
  * an available argument remains unchanged rather than inventing a value. */
@@ -729,13 +738,8 @@ GmlVal gml_builtin_try_values_strings(GmlVM *vm, const char *nm, GmlVal *a, int 
     int trail=both||!strcmp(nm,"string_trim_end");
     /* An empty character set trims nothing, which is not the same as no set at all: passing "" is
      * a deliberate request to leave the string alone. */
-    int trims(char ch){
-      return (set&&*set) ? strchr(set,ch)!=NULL
-           : (set)       ? 0
-                         : isspace((unsigned char)ch)!=0;
-    }
-    if(lead)  while(start<stop && trims(s[start])) start++;
-    if(trail) while(stop>start && trims(s[stop-1])) stop--;
+    if(lead)  while(start<stop && string_trim_matches(set,s[start])) start++;
+    if(trail) while(stop>start && string_trim_matches(set,s[stop-1])) stop--;
     return vstr_owned(dup_n(s+start,(int)(stop-start)));
   }
   if(!strcmp(nm,"string_letters")) return string_filter_ascii(S(vm,a,n,0),0);
