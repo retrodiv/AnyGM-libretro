@@ -668,8 +668,10 @@ GmlVal gml_builtin_try_draw(GmlVM *vm, const char *nm, GmlVal *a, int n){
         R,(int)N(a,n,0),(int)N(a,n,1),(int)N(a,n,2),first,number);
       return vreal(0); }
     if(!strcmp(nm,"draw_sprite")){ if(R) gml_draw_sprite(R,(int)N(a,n,0),gml_draw_subimg(vm,N(a,n,1)),N(a,n,2),N(a,n,3)); return vreal(0); }
-    if(!strcmp(nm,"draw_sprite_ext")){ if(R) gml_draw_sprite_ext(R,(int)N(a,n,0),gml_draw_subimg(vm,N(a,n,1)),N(a,n,2),N(a,n,3),
-        N(a,n,4),N(a,n,5),N(a,n,6),NU32(a,n,7),N(a,n,8)); return vreal(0); }
+    if(!strcmp(nm,"draw_sprite_ext")){
+      if(R) gml_draw_sprite_ext(R,(int)N(a,n,0),gml_draw_subimg(vm,N(a,n,1)),N(a,n,2),N(a,n,3),
+                                N(a,n,4),N(a,n,5),N(a,n,6),NU32(a,n,7),N(a,n,8));
+      return vreal(0); }
     if(!strcmp(nm,"draw_sprite_pos")){
       if(R){ double x[4]={N(a,n,2),N(a,n,4),N(a,n,6),N(a,n,8)};
         double y[4]={N(a,n,3),N(a,n,5),N(a,n,7),N(a,n,9)};
@@ -677,8 +679,10 @@ GmlVal gml_builtin_try_draw(GmlVM *vm, const char *nm, GmlVal *a, int n){
       return vreal(0); }
     /* draw_sprite_tiled(sprite,subimg,x,y) / _ext(...,xs,ys,color,alpha): tile a sprite to fill the screen */
     if(!strcmp(nm,"draw_sprite_tiled")){ GmlRenderDrawState draw=builtin_draw_state(R); if(R) gml_draw_sprite_tiled_ext(R,(int)N(a,n,0),gml_draw_subimg(vm,N(a,n,1)),N(a,n,2),N(a,n,3),1,1,0xFFFFFF,draw.alpha); return vreal(0); }
-    if(!strcmp(nm,"draw_sprite_tiled_ext")){ if(R) gml_draw_sprite_tiled_ext(R,(int)N(a,n,0),gml_draw_subimg(vm,N(a,n,1)),N(a,n,2),N(a,n,3),
-        N(a,n,4),N(a,n,5),NU32(a,n,6),N(a,n,7)); return vreal(0); }
+    if(!strcmp(nm,"draw_sprite_tiled_ext")){
+      if(R) gml_draw_sprite_tiled_ext(R,(int)N(a,n,0),gml_draw_subimg(vm,N(a,n,1)),N(a,n,2),N(a,n,3),
+                                      N(a,n,4),N(a,n,5),NU32(a,n,6),N(a,n,7));
+      return vreal(0); }
     if(!strcmp(nm,"draw_self") || (!strcmp(nm,"draw_full_sprite") && n==0)){
       GmlInstance *s=vm->cur_self;
       if(R&&s) gml_vm_draw_instance_sprite(
@@ -1020,9 +1024,10 @@ GmlVal gml_builtin_try_draw(GmlVM *vm, const char *nm, GmlVal *a, int n){
     if(!strcmp(nm,"surface_reset_target")){ if(builtin_setting(vm,"GML_LOG_SURF"))anygm_host_logf(vm ? vm->host : NULL,ANYGM_LOG_DEBUG,"[surf] reset_target\n"); if(R) gml_surface_reset_target(R); return vreal(0); }
     if(!strcmp(nm,"surface_resize")){ if(R) gml_surface_resize(R,(int)N(a,n,0),(int)N(a,n,1),(int)N(a,n,2)); return vreal(0); }
     if(!strcmp(nm,"surface_copy")){ if(R) gml_surface_copy(R,(int)N(a,n,0),(int)N(a,n,1),(int)N(a,n,2),(int)N(a,n,3)); return vreal(0); }
-    if(!strcmp(nm,"surface_copy_part")){ if(R) gml_surface_copy_part(R,
-      (int)N(a,n,0),(int)N(a,n,1),(int)N(a,n,2),(int)N(a,n,3),
-      (int)N(a,n,4),(int)N(a,n,5),(int)N(a,n,6),(int)N(a,n,7)); return vreal(0); }
+    if(!strcmp(nm,"surface_copy_part")){
+      if(R) gml_surface_copy_part(R,(int)N(a,n,0),(int)N(a,n,1),(int)N(a,n,2),(int)N(a,n,3),
+                                  (int)N(a,n,4),(int)N(a,n,5),(int)N(a,n,6),(int)N(a,n,7));
+      return vreal(0); }
     if(!strcmp(nm,"surface_save")||!strcmp(nm,"surface_save_part")) return vreal(0);
     /* Without a per-surface depth buffer, store the toggle as a latch.
      * Its getter reads back the most recently set value. */

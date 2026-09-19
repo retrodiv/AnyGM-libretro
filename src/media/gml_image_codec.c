@@ -7,7 +7,12 @@
 #include <stdlib.h>
 #include <string.h>
 
-#if defined(__GNUC__)
+/* The bundled stb implementations are third-party code, so their diagnostics are isolated here
+ * rather than fixed in place. Each compiler needs its own spelling of the same request. */
+#if defined(__clang__)
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wunused-function"
+#elif defined(__GNUC__)
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wunused-function"
 #endif
@@ -18,19 +23,27 @@
 #define STB_IMAGE_STATIC
 #define STB_IMAGE_IMPLEMENTATION
 #include "stb_image.h"
-#if defined(__GNUC__)
+/* This bundled stb_image_write revision miscompiles its PNG compressor at
+ * GCC -O2. Keep only the third-party implementation at its verified level. */
+#if defined(__clang__)
+#pragma clang diagnostic pop
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wunused-function"
+#pragma clang optimize off
+#elif defined(__GNUC__)
 #pragma GCC diagnostic pop
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wunused-function"
 #pragma GCC push_options
-/* This bundled stb_image_write revision miscompiles its PNG compressor at
- * GCC -O2. Keep only the third-party implementation at its verified level. */
 #pragma GCC optimize ("O1")
 #endif
 #define STB_IMAGE_WRITE_STATIC
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #include "stb_image_write.h"
-#if defined(__GNUC__)
+#if defined(__clang__)
+#pragma clang optimize on
+#pragma clang diagnostic pop
+#elif defined(__GNUC__)
 #pragma GCC pop_options
 #pragma GCC diagnostic pop
 #endif

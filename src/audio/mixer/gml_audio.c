@@ -4,14 +4,22 @@
 /* gml_audio.c — software mixer for AUDO/SOND. Handles uncompressed RIFF/WAV, OGG Vorbis,
  * and MP3. WAV data is referenced in-place; compressed data is mostly decoded lazily on
  * first playback so large soundtracks do not consume decoded-PCM memory at boot. */
-#if defined(__GNUC__)
+/* The bundled stb_vorbis implementation is third-party code, so its diagnostics are isolated here
+ * rather than fixed in place. Each compiler needs its own spelling of the same request. */
+#if defined(__clang__)
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wuninitialized"
+#pragma clang diagnostic ignored "-Wtautological-compare"
+#elif defined(__GNUC__)
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wmaybe-uninitialized"
 #endif
 #define STB_VORBIS_NO_PUSHDATA_API
 #define STB_VORBIS_NO_STDIO
 #include "stb_vorbis.c"
-#if defined(__GNUC__)
+#if defined(__clang__)
+#pragma clang diagnostic pop
+#elif defined(__GNUC__)
 #pragma GCC diagnostic pop
 #endif
 #undef STB_VORBIS_NO_STDIO
@@ -897,7 +905,6 @@ static void audio_warm_initial_ogg(GmlAudio *a){
   if(!a || !a->snd) return;
   uint32_t budget=audio_initial_ogg_warm_budget(a);
   if(!budget) return;
-  int warmed=0;
   uint32_t used=0;
   for(int i=0;i<a->n_snd;i++){
     GmlSound *s=&a->snd[i];
@@ -909,7 +916,6 @@ static void audio_warm_initial_ogg(GmlAudio *a){
     if(s->ogg_len>budget-used) continue;
     if(sound_ensure_pcm(a,s)){
       used += s->ogg_len;
-      warmed++;
       if(audio_setting(a,"GML_LOG_AUDIO"))
         anygm_host_logf(a && a->win ? a->win->host : NULL,ANYGM_LOG_DEBUG,"[audio] warm_ogg sound=%d ogg=%u pcm=%u budget=%u\n",i,s->ogg_len,s->nval,budget);
     }
