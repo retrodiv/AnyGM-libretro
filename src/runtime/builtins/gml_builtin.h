@@ -50,6 +50,8 @@ int gml_builtin_state_read_time_sources(GmlBuiltinState *state,
                                         GmlVmStateReader *reader);
 
 int gml_builtin_fast_id(GmlVM *vm,const char *name);
+/* Code index of the payload's own script for a name it redefines, or -1. */
+int gml_builtin_payload_shadow_script(GmlVM *vm,const char *name);
 GmlVal gml_builtin_call(GmlVM *vm, const char *name, GmlVal *args, int count);
 GmlVal gml_builtin_call_fast_id(GmlVM *vm, int id, const char *name,
                                 GmlVal *args, int count);

@@ -1484,6 +1484,11 @@ GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
       anygm_host_logf(vm ? vm->host : NULL,ANYGM_LOG_DEBUG,"[call] target=%d %s/%d\n",tgt,nm,n);
     }
   }
+  /* A name the payload defines as its own script is the game's code, not ours: answer it with that
+   * script before any stage can claim the name. The reference runner binds such a call to the
+   * payload's script and only consults a builtin for names the payload does not define. */
+  if(gml_builtin_payload_shadow_script(vm,nm)>=0)
+    return gml_builtin_try_scripts_fallback(vm,nm,a,n);
   int id=gml_builtin_fast_id(vm,nm);
   if(id>0) return gml_builtin_call_fast_id(vm,id,nm,a,n);
   int external_handled=0;
