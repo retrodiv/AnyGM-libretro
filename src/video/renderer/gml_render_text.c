@@ -1017,6 +1017,14 @@ static void draw_text_real_plain(GmlRender *r, GmlFont *f, double x, double y, c
         double dy=(base_y-f->ascender_offset-packing_spread)*ys;
         double glyph_x=use_rot?x+dx*ca+dy*sa:x+dx;
         double glyph_y=use_rot?y-dx*sa+dy*ca:y+dy;
+        /* The runner places a glyph at whole pixels of the destination. A sub-pixel draw offset
+         * therefore moves the letter by one pixel when it crosses the rounding boundary and never
+         * changes the glyph's own shape. Sampling the cell at a fractional phase instead trims or
+         * repeats an edge column, which reads as a flicker on the glyph rather than as movement. */
+        if(!use_rot && !f->subpixel){
+          glyph_x=floor(glyph_x+0.5);
+          glyph_y=floor(glyph_y+0.5);
+        }
         uint32_t glyph_blend=f->subpixel?0xFFFFFFu:blend;
         int saved_interp=r->interp;
         int saved_sdf_active=r->font_sdf_active;
