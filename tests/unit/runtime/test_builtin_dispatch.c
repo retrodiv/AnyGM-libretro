@@ -113,9 +113,6 @@ static int setup_fixture(GmlWin *win,GmlVM *vm,AnygmHostServices *host,
     {"gml_Script_neutral_function_value",77},
     {"gml_Script_mouse_wheel_up",78},
     {"gml_Script_draw_set_blend_mode",79},
-    {"gml_Script_draw_roundrect_color_ext",80},
-    {"gml_Script_draw_roundrect_colour_ext",81},
-    {"gml_Script_draw_roundrect_ext",82},
   };
   const int count=(int)(sizeof(scripts)/sizeof(scripts[0]));
   win->bytecode=17;
@@ -217,18 +214,22 @@ static int room_dimension_mutation(GmlVM *vm){
   return gml_vm_room_get(vm,0,&room)==0 && room.width==640 && room.height==360;
 }
 
-static int exact_builtin_precedes_same_named_script(GmlVM *vm){
+/* The fixture declares a payload script for two canonical names (see ScriptFixture), and the
+ * reference runner resolves the payload's own script before a builtin of the same name, so the
+ * registry must report no id at all for them. */
+static int payload_shadows(const char *name){
+  return !strcmp(name,"abs") || !strcmp(name,"draw_set_blend_mode");
+}
+
+static int payload_script_precedes_exact_builtin(GmlVM *vm){
   GmlVal argument=vreal(-4);
-  GmlVal direct=gml_builtin_call(vm,"abs",&argument,1);
   int id=gml_builtin_fast_id(vm,"abs");
-  GmlVal cached=gml_builtin_call_fast_id(vm,id,"abs",&argument,1);
+  GmlVal direct=gml_builtin_call(vm,"abs",&argument,1);
   GmlVal blend_argument=vreal(0);
-  return id>=0 &&
-         expect_real("exact builtin before same-named script",direct,4) &&
-         expect_real("cached exact builtin parity",cached,4) &&
+  return id==-1 &&
+         expect_real("payload script before the same-named exact builtin",direct,73) &&
          expect_real("characterized hot exact name before script",
-                     gml_builtin_call(vm,"draw_set_blend_mode",
-                                      &blend_argument,1),0);
+                     gml_builtin_call(vm,"draw_set_blend_mode",&blend_argument,1),79);
 }
 
 static int script_resolution_order(GmlVM *vm,LogFixture *log_fixture){
@@ -1163,7 +1164,7 @@ static int canonical_registry_resolution(GmlVM *vm){
 #define EXPECTED_NEVER(id) (-1)
 #define CHECK_EXACT(value,id,name,owner,stage,cache) do { \
     int actual=gml_builtin_fast_id(vm,name); \
-    int expected=EXPECTED_##cache(id); \
+    int expected=payload_shadows(name)?-1:EXPECTED_##cache(id); \
     checked++; \
     if(actual!=expected || BID_##id!=(value)){ \
       fprintf(stderr, \
@@ -1174,7 +1175,7 @@ static int canonical_registry_resolution(GmlVM *vm){
   } while(0);
 #define CHECK_ALIAS(id,name,owner,stage,cache) do { \
     int actual=gml_builtin_fast_id(vm,name); \
-    int expected=EXPECTED_##cache(id); \
+    int expected=payload_shadows(name)?-1:EXPECTED_##cache(id); \
     checked++; \
     if(actual!=expected){ \
       fprintf(stderr,"canonical registry alias %s: expected %d, got %d\n", \
@@ -1273,7 +1274,7 @@ int main(int argc,char **argv){
   int ok=guid_only ? gamepad_guid_capability_contract(&vm) :
          canonical_registry_resolution(&vm) &&
          gamepad_guid_capability_contract(&vm) &&
-         exact_builtin_precedes_same_named_script(&vm) &&
+         payload_script_precedes_exact_builtin(&vm) &&
          script_resolution_order(&vm,&log_fixture) &&
          show_error_contract(&vm,&log_fixture) &&
          function_value_and_alias_resolution(&vm) &&

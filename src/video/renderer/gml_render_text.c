@@ -1022,8 +1022,11 @@ static void draw_text_real_plain(GmlRender *r, GmlFont *f, double x, double y, c
          * changes the glyph's own shape. Sampling the cell at a fractional phase instead trims or
          * repeats an edge column, which reads as a flicker on the glyph rather than as movement. */
         if(!use_rot && !f->subpixel){
-          glyph_x=floor(glyph_x+0.5);
-          glyph_y=floor(glyph_y+0.5);
+          /* A reduced draw has no whole destination pixel per source texel: rounding the origin
+           * re-phases the cell and drops a source column — the gap an odd-width centred line
+           * carries between its strokes disappears. Keep the sub-pixel origin below scale one. */
+          if(fabs(xs)>=1.0) glyph_x=floor(glyph_x+0.5);
+          if(fabs(ys)>=1.0) glyph_y=floor(glyph_y+0.5);
         }
         uint32_t glyph_blend=f->subpixel?0xFFFFFFu:blend;
         int saved_interp=r->interp;
