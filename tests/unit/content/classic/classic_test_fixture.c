@@ -829,6 +829,16 @@ static Fixture manifest_fixture_program(unsigned container_version, const Fixtur
         }
         fixture_manifest_resource(&f,timeline->name,500,&payload);
       }
+    } else if(type == GMLC_CLASSIC_SCRIPT && program->script_count){
+      /* A program that names its own scripts writes exactly those. The name is what GML calls, which
+       * is the whole point of a source that has to reach a name the runtime also knows. */
+      fixture_u32(&f,(unsigned)program->script_count);
+      for(int i=0;i<program->script_count;i++){
+        const FixtureScript *script=&program->scripts[i];
+        Fixture payload={{0},0};
+        fixture_string(&payload,script->source);
+        fixture_manifest_resource(&f,script->name,800,&payload);
+      }
     } else if(type == GMLC_CLASSIC_OBJECT && program->object_count){
       fixture_u32(&f,(unsigned)program->object_count);
       for(int i=0;i<program->object_count;i++){
@@ -872,6 +882,13 @@ int build_project_fixture_program(unsigned version, const FixtureProgram *progra
   }
   if(program->timeline_count<0 || program->timeline_count>8 ||
      (program->timeline_count && !program->timelines)) return 0;
+  if(program->script_count<0 || program->script_count>8 ||
+     (program->script_count && !program->scripts)) return 0;
+  for(int i=0;i<program->script_count;i++){
+    const FixtureScript *script=&program->scripts[i];
+    if(!script->name || !script->name[0] || strlen(script->name)>255 ||
+       !script->source) return 0;
+  }
   int total_moments=0;
   for(int i=0;i<program->timeline_count;i++){
     const FixtureTimeline *timeline=&program->timelines[i];

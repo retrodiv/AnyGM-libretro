@@ -100,6 +100,11 @@ typedef struct {
 } FixtureFont;
 
 typedef struct {
+  const char *name;                /* the script resource's name, as GML calls it */
+  const char *source;              /* its GML source */
+} FixtureScript;
+
+typedef struct {
   const char *startup;             /* library creation code, run once before the room; may be NULL */
   int sprite_size;                 /* edge of the one opaque sprite in slot 0; 0 writes no sprite */
   int sprite_blank_frame;          /* add a second, fully transparent frame to that sprite */
@@ -115,6 +120,8 @@ typedef struct {
   int timeline_count;         /* optional authored timelines; manifest containers only */
   const FixtureFont *fonts;
   int font_count;             /* at most eight bounded fonts; manifest containers only */
+  const FixtureScript *scripts;    /* authored script resources; manifest containers only */
+  int script_count;
 } FixtureProgram;
 
 int build_project_fixture_program(unsigned version, const FixtureProgram *program, Fixture *out);

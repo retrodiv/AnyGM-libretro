@@ -109,6 +109,7 @@ static char *read_source_file(const char *path){
 #define FIXTURE_MAX_TIMELINES 8
 #define FIXTURE_MAX_MOMENTS 64
 #define FIXTURE_MAX_FONTS 8
+#define FIXTURE_MAX_SCRIPTS 8
 
 typedef struct {
   FixtureProgram program;
@@ -120,9 +121,12 @@ typedef struct {
   FixtureTimeline timelines[FIXTURE_MAX_TIMELINES];
   FixtureTimelineMoment moments[FIXTURE_MAX_MOMENTS];
   FixtureFont fonts[FIXTURE_MAX_FONTS];
+  FixtureScript scripts[FIXTURE_MAX_SCRIPTS];
+  int script_count;
   int event_starts[FIXTURE_MAX_OBJECTS];
   char *owned[FIXTURE_MAX_EVENTS + FIXTURE_MAX_OBJECTS + FIXTURE_MAX_ACTIONS +
-              FIXTURE_MAX_TIMELINES + FIXTURE_MAX_MOMENTS + FIXTURE_MAX_FONTS + 2];
+              FIXTURE_MAX_TIMELINES + FIXTURE_MAX_MOMENTS + FIXTURE_MAX_FONTS + 2 +
+              FIXTURE_MAX_SCRIPTS * 2];
   int owned_count;
 } ProgramFile;
 
@@ -270,6 +274,19 @@ static int program_read(const char *path, ProgramFile *p){
         p->program.startup=program_keep(p,read_source_file(full));
         ok=p->program.startup!=NULL;
       }
+    } else if(!strcmp(keyword,"script")){
+      /* A program may name its own script resources: a script is a resource GML calls by name, so a
+       * program that has to reach a name the runtime also knows must be able to declare one. */
+      if(p->script_count>=FIXTURE_MAX_SCRIPTS ||
+         sscanf(line,"%31s %255s %63s",keyword,a,b)!=3) ok=0;
+      else {
+        char full[800]; snprintf(full,sizeof(full),"%s%s",directory,b);
+        FixtureScript *script=&p->scripts[p->script_count];
+        script->name=program_keep(p,strdup(a));
+        script->source=program_keep(p,read_source_file(full));
+        ok=script->name!=NULL && script->source!=NULL;
+        if(ok) p->script_count++;
+      }
     } else if(!strcmp(keyword,"timeline")){
       if(p->program.timeline_count>=FIXTURE_MAX_TIMELINES ||
          sscanf(line,"%31s %255s",keyword,a)!=2) ok=0;
@@ -382,6 +399,8 @@ int main(int argc, char **argv){
     unsigned version=(unsigned)strtoul(argv[2],NULL,10);
     ProgramFile program;
     if(!program_read(argv[4],&program)) return 1;
+    program.program.scripts=program.scripts;
+    program.program.script_count=program.script_count;
     Fixture project;
     int built=build_project_fixture_program(version,&program.program,&project);
     program_free(&program);
