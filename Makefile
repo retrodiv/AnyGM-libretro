@@ -8,6 +8,11 @@ HARDWARE_RENDER ?= 1
 
 include Makefile.common
 
+# A goal-less invocation has to build the core. The first rule in this file generates the macOS
+# export list, so without this it becomes the default goal: `make` then writes that one file,
+# reports success, and leaves every object untouched, which is indistinguishable from a build.
+.DEFAULT_GOAL := all
+
 platform ?=
 CROSS_COMPILE ?=
 DEBUG ?= 0
