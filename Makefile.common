@@ -235,6 +235,7 @@ ANYGM_BUILTIN_SOURCES := \
 	src/runtime/builtins/gml_builtin_values.c \
 	src/runtime/builtins/gml_builtin_animation.c \
 	src/runtime/builtins/gml_builtin_physics.c \
+	src/runtime/builtins/gml_builtin_physics_world.c \
 	src/runtime/builtins/gml_builtin_actions.c \
 	src/runtime/builtins/gml_builtin_input.c \
 	src/runtime/builtins/gml_builtin_audio.c \
@@ -284,7 +285,55 @@ ANYGM_WWISE_SOURCES := \
 	src/third_party/ww2ogg/codebook.cpp \
 	src/third_party/ww2ogg/wwriff.cpp
 
-ANYGM_RUNTIME_CXX_SOURCES := $(ANYGM_PXTONE_SOURCES) $(ANYGM_WWISE_SOURCES)
+ANYGM_PHYSICS_SOURCES := \
+	src/runtime/physics/gml_physics_solver.cpp \
+	src/third_party/box2d/src/collision/b2_broad_phase.cpp \
+	src/third_party/box2d/src/collision/b2_chain_shape.cpp \
+	src/third_party/box2d/src/collision/b2_circle_shape.cpp \
+	src/third_party/box2d/src/collision/b2_collide_circle.cpp \
+	src/third_party/box2d/src/collision/b2_collide_edge.cpp \
+	src/third_party/box2d/src/collision/b2_collide_polygon.cpp \
+	src/third_party/box2d/src/collision/b2_collision.cpp \
+	src/third_party/box2d/src/collision/b2_distance.cpp \
+	src/third_party/box2d/src/collision/b2_dynamic_tree.cpp \
+	src/third_party/box2d/src/collision/b2_edge_shape.cpp \
+	src/third_party/box2d/src/collision/b2_polygon_shape.cpp \
+	src/third_party/box2d/src/collision/b2_time_of_impact.cpp \
+	src/third_party/box2d/src/common/b2_block_allocator.cpp \
+	src/third_party/box2d/src/common/b2_draw.cpp \
+	src/third_party/box2d/src/common/b2_math.cpp \
+	src/third_party/box2d/src/common/b2_settings.cpp \
+	src/third_party/box2d/src/common/b2_stack_allocator.cpp \
+	src/third_party/box2d/src/common/b2_timer.cpp \
+	src/third_party/box2d/src/dynamics/b2_body.cpp \
+	src/third_party/box2d/src/dynamics/b2_chain_circle_contact.cpp \
+	src/third_party/box2d/src/dynamics/b2_chain_polygon_contact.cpp \
+	src/third_party/box2d/src/dynamics/b2_circle_contact.cpp \
+	src/third_party/box2d/src/dynamics/b2_contact.cpp \
+	src/third_party/box2d/src/dynamics/b2_contact_manager.cpp \
+	src/third_party/box2d/src/dynamics/b2_contact_solver.cpp \
+	src/third_party/box2d/src/dynamics/b2_distance_joint.cpp \
+	src/third_party/box2d/src/dynamics/b2_edge_circle_contact.cpp \
+	src/third_party/box2d/src/dynamics/b2_edge_polygon_contact.cpp \
+	src/third_party/box2d/src/dynamics/b2_fixture.cpp \
+	src/third_party/box2d/src/dynamics/b2_friction_joint.cpp \
+	src/third_party/box2d/src/dynamics/b2_gear_joint.cpp \
+	src/third_party/box2d/src/dynamics/b2_island.cpp \
+	src/third_party/box2d/src/dynamics/b2_joint.cpp \
+	src/third_party/box2d/src/dynamics/b2_motor_joint.cpp \
+	src/third_party/box2d/src/dynamics/b2_mouse_joint.cpp \
+	src/third_party/box2d/src/dynamics/b2_polygon_circle_contact.cpp \
+	src/third_party/box2d/src/dynamics/b2_polygon_contact.cpp \
+	src/third_party/box2d/src/dynamics/b2_prismatic_joint.cpp \
+	src/third_party/box2d/src/dynamics/b2_pulley_joint.cpp \
+	src/third_party/box2d/src/dynamics/b2_revolute_joint.cpp \
+	src/third_party/box2d/src/dynamics/b2_weld_joint.cpp \
+	src/third_party/box2d/src/dynamics/b2_wheel_joint.cpp \
+	src/third_party/box2d/src/dynamics/b2_world.cpp \
+	src/third_party/box2d/src/dynamics/b2_world_callbacks.cpp \
+	src/third_party/box2d/src/rope/b2_rope.cpp
+
+ANYGM_RUNTIME_CXX_SOURCES := $(ANYGM_PHYSICS_SOURCES) $(ANYGM_PXTONE_SOURCES) $(ANYGM_WWISE_SOURCES)
 
 ANYGM_TEST_HOST_SOURCES := \
 	src/host/stdio_vfs.c
@@ -311,6 +360,9 @@ ANYGM_RUNTIME_INCLUDE_DIRS := \
 	src/runtime/vm \
 	src/runtime/builtins \
 	src/runtime/particles \
+	src/runtime/physics \
+	src/third_party/box2d/include \
+	src/third_party/box2d/src \
 	src/video/renderer \
 	src/video/gpu \
 	src/video/software3d \

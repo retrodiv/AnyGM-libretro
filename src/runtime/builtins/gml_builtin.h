@@ -27,6 +27,10 @@ void gml_builtin_state_profile_ds(const GmlBuiltinState *state,
                                   size_t byte_totals[3], int live_counts[3]);
 int gml_builtin_ini_entry_count(const GmlVM *vm);
 void gml_builtin_physics_room_reset(GmlVM *vm);
+int gml_physics_body_enabled(GmlVM *vm,const GmlInstance *instance);
+void gml_physics_step(GmlVM *vm);
+int gml_physics_variable_get(GmlVM *vm,GmlInstance *instance,const char *name,GmlVal *out);
+int gml_physics_variable_set(GmlVM *vm,GmlInstance *instance,const char *name,GmlVal value);
 
 void gml_builtin_state_write_ini_ds(const GmlBuiltinState *state,
                                     GmlVmStateWriter *writer);

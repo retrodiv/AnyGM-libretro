@@ -138,6 +138,7 @@ void gml_vm_motion_from_speed_direction(GmlVM *vm, GmlInstance *instance){
 /* ---------------- builtin instance variables ---------------- */
 /* returns 1 if name is a builtin and handled */
 static int inst_builtin_get(GmlVM *vm, GmlInstance *in, const char *n, GmlVal *out){
+  if(!strncmp(n,"phy_",4) && gml_physics_variable_get(vm,in,n,out)) return 1;
   if(!strcmp(n,"image_single")){ *out=vreal(in->image_speed==0? in->image_index : -1); return 1; }
   if(!strcmp(n,"layer")){
     if(vm && in->draw_layer_order>=0){
@@ -174,6 +175,7 @@ static int inst_builtin_get(GmlVM *vm, GmlInstance *in, const char *n, GmlVal *o
   return 0;
 }
 static int inst_builtin_set(GmlVM *vm, GmlInstance *in, const char *n, GmlVal v){
+  if(!strncmp(n,"phy_",4) && gml_physics_variable_set(vm,in,n,v)) return 1;
   double d=asnum(v);
   #define B(name,field) if(!strcmp(n,name)){ in->field=d; return 1; }
   #define BT(name,field) if(!strcmp(n,name)){ in->field=d; gml_colgrid_touch(vm,in); return 1; }  /* bbox input */
@@ -525,6 +527,7 @@ static int var_name_maybe_special(GmlVM *vm,const char *name,uint32_t nh){
   /* prefix-matched specials (argumentN / argument_count / bbox_*) */
   if(name[0]=='a' && !strncmp(name,"argument",8)) return 1;
   if(name[0]=='b' && !strncmp(name,"bbox_",5)) return 1;
+  if(name[0]=='p' && !strncmp(name,"phy_",4)) return 1;
   return 0;
 }
 int gml_vm_variable_name_maybe_special(GmlVM *vm, const char *name,

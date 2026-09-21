@@ -4,6 +4,7 @@
 /* gml_vm_instances.c — object, instance, event, and collision ownership. */
 #include "gml_vm.h"
 #include "gml_vm_internal.h"
+#include "gml_builtin.h"
 #include "gml_value_internal.h"
 #include "anygm_compatibility.h"
 #include "gml_render.h"
@@ -129,6 +130,10 @@ static void parse_objects(GmlVM *vm){
         o->physics_awake=(int)awake;
         o->physics_kinematic=(int)kinematic;
         o->physics_density=density;
+        o->physics_restitution=gml_vm_read_f32_le(d,q+16);
+        o->physics_linear_damping=gml_vm_read_f32_le(d,q+24);
+        o->physics_angular_damping=gml_vm_read_f32_le(d,q+28);
+        o->physics_friction=gml_vm_read_f32_le(d,q+36);
         if(nvert<=GML_OBJECT_PHYSICS_POINT_MAX){
           int points_valid=1;
           for(uint32_t vi=0;vi<nvert;vi++){
@@ -1421,6 +1426,27 @@ static int col_event_for_pair(GmlVM *vm, int self_obj, int other_obj,
   }
   return 0;
 }
+int gml_vm_physics_collision_allowed(GmlVM *vm,int a,int b){
+  return col_event_for_pair(vm,a,b,NULL,NULL,NULL) ||
+         col_event_for_pair(vm,b,a,NULL,NULL,NULL);
+}
+void gml_vm_physics_collision_event(GmlVM *vm,uint32_t a,uint32_t b,
+                                    double x,double y,double nx,double ny){
+  for(int direction=0;direction<2;direction++){
+    GmlInstance *self=gml_vm_instance_by_id(vm,direction?b:a);
+    GmlInstance *other=gml_vm_instance_by_id(vm,direction?a:b);
+    if(!self || !other || !self->active || !other->active || self->marked || other->marked) continue;
+    int handler=-1,target=-1,code=-1;
+    if(!col_event_for_pair(vm,self->obj,other->obj,&handler,&target,&code)) continue;
+    *gml_varmap_put(&self->vars,"phy_collision_x")=vreal(x);
+    *gml_varmap_put(&self->vars,"phy_collision_y")=vreal(y);
+    *gml_varmap_put(&self->vars,"phy_col_normal_x")=vreal(direction?-nx:nx);
+    *gml_varmap_put(&self->vars,"phy_col_normal_y")=vreal(direction?-ny:ny);
+    char suffix[32]; snprintf(suffix,sizeof suffix,"Collision_%d",target);
+    run_event_code_from(vm,self,other,suffix,handler,code);
+  }
+}
+
 /* Per-frame, per-object-type collision candidates: the union of live instances that IS-A any
  * TARGET of any Collision_* handler on the type's parent chain (exactly the pairs
  * col_event_for_pair can ever accept). A bomb blast spawns ~150 debris of the SAME type whose
@@ -1554,6 +1580,9 @@ void gml_vm_instances_run_collisions(GmlVM *vm){
       }
       GmlInstance *oi=&vm->inst[j];
       if(oi==si||!oi->active||oi->marked||oi->obj<0||oi->obj>=vm->n_objects) continue;
+      /* The physics solve owns contacts once both bodies have been materialized. */
+      if(gml_physics_body_enabled(vm,si) && gml_physics_body_enabled(vm,oi) &&
+         gml_varmap_get(&si->vars,"__phy_body") && gml_varmap_get(&oi->vars,"__phy_body")) continue;
       int solid_pair=si->solid || oi->solid;
       int classic_pair=solid_pair && vm->win && anygm_policy_uses_classic_runtime(vm->win);
       int fixture_pair=vm_fixture_active(vm,si) && vm_fixture_active(vm,oi);

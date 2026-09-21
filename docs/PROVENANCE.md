@@ -3,6 +3,23 @@
 
 # Generated-data provenance
 
+## Rigid-body solver
+
+`src/third_party/box2d/` retains the headers and implementation sources of the
+upstream Box2D 2.4.1 release without modifications. `import.json` records each
+upstream path; archive and file digests are retained in external verification
+evidence. The MIT license is reproduced in `LICENSES/box2d.txt` and embedded by
+the ordinary notice generator. No upstream tests, example media or build output
+are imported. Production builds require no download.
+
+The first-party bridge in `src/runtime/physics/` exchanges numeric body, fixture
+and joint descriptions with the VM. A fresh solve graph is built for each step,
+with warm starting and sleeping disabled; local anchors and body velocities
+are canonical state. This deliberately chosen policy makes restored simulation
+independent of native pointer identities and hidden contact impulse caches.
+`make check TEST=builtin_physics` covers dimensional units, fixture ownership,
+contacts, articulation and identical continuation after restoration.
+
 ## Queue and stack text formats
 
 The sequence text codecs are first-party implementations over the existing DS
@@ -96,8 +113,8 @@ release evidence. The following SHA-256 directives pin only the two
 first-party files in this repository; `make provenance-check` verifies
 their current bytes.
 
-<!-- PROVENANCE-CHECK: src/runtime/builtins/gml_builtin_registry.h = de3f60963b1ae282a3f474ac17e9e967e6a332e21c2d6ee729125c9dfa5aac30 -->
-<!-- PROVENANCE-CHECK: src/generated/gml_builtin_registry_index.h = 6282201c14604dc9a5a16b89b52282a031a944de87f9999b39212c6f2c733bd4 -->
+<!-- PROVENANCE-CHECK: src/runtime/builtins/gml_builtin_registry.h = c78d3ab760885ff2b86408414376d8fd525f90d766b127a1dc184b64853ea012 -->
+<!-- PROVENANCE-CHECK: src/generated/gml_builtin_registry_index.h = 832dfbf74c82a618590567aa4b807547daf0a28ba9e2e7eb7f72f30bb01f6d85 -->
 
 ## Audio setup packets
 

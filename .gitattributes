@@ -1,2 +1,5 @@
 # SPDX-License-Identifier: MIT
 # Copyright (c) 2026 retrodiv <retrodiv@proton.me>
+
+# Preserve imported sources byte-for-byte, including upstream whitespace.
+src/third_party/box2d/** -whitespace

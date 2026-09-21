@@ -9,6 +9,7 @@ including their original copyright years.
 
 | Component | Location | Terms |
 | --- | --- | --- |
+| Box2D | `src/third_party/box2d/` | MIT, reproduced in `LICENSES/box2d.txt` |
 | bzip2 | `src/third_party/bzip2/` | bzip2 license in `LICENSES/bzip2.txt` |
 | xdelta3 VCDIFF decoder, with bounded-memory integration changes | `src/third_party/xdelta3/` | Apache-2.0, reproduced in `LICENSES/xdelta3.txt` |
 | liblzma decoder from XZ Utils | `src/third_party/liblzma/` | 0BSD, reproduced in `LICENSES/liblzma.txt` |

@@ -6,6 +6,7 @@
 
 #include "gml_builtin.h"
 #include "gml_render.h"
+#include "gml_physics_solver.h"
 
 #include <math.h>
 #include <stdint.h>
@@ -22,9 +23,8 @@
 #define GML_TIME_SOURCE_ID_BASE UINT32_C(0x48000000)
 #define GML_TIME_SOURCE_HIDDEN_PARENT 2
 #define GML_MAX_EMITTERS 32
-#define GML_PHYS_FIXTURE_MAX 128
-#define GML_PHYS_JOINT_MAX 256
-#define GML_PHYS_FIXTURE_POINTS 16
+#define GML_PHYS_FIXTURE_MAX 2048
+#define GML_PHYS_JOINT_MAX 1024
 
 typedef struct {
   char *key;
@@ -59,18 +59,6 @@ typedef struct {
   double period, remaining;
   GmlVal callback, args;
 } GmlTimeSource;
-typedef struct {
-  int live, shape, bound_inst, points;
-  uint32_t id;
-  double density, friction, restitution, lin_damp, ang_damp, awake;
-  double radius, w, h, x1, y1, x2, y2;
-  double px[GML_PHYS_FIXTURE_POINTS], py[GML_PHYS_FIXTURE_POINTS];
-} GmlPhysicsFixture;
-typedef struct {
-  int live, type, value_count;
-  uint32_t id;
-  double a, b, x1, y1, x2, y2, params[24];
-} GmlPhysicsJoint;
 typedef struct {
   char *section, *key, *sval;
   double val;
@@ -210,6 +198,16 @@ struct GmlBuiltinState {
 };
 
 struct GmlRender;
+
+GmlPhysicsFixture *gml_physics_fixture_new(GmlVM *vm);
+double gml_physics_world_scale(GmlVM *vm);
+void gml_physics_initialize_body(GmlVM *vm,GmlInstance *instance);
+uint32_t gml_physics_bind_fixture(GmlVM *vm,const GmlPhysicsFixture *fixture,
+                                 GmlInstance *instance,double xoffset,double yoffset);
+void gml_physics_initialize_joint(GmlVM *vm,GmlPhysicsJoint *joint);
+void gml_physics_apply(GmlVM *vm,GmlInstance *instance,double x,double y,
+                       double fx,double fy,int impulse,int local);
+void gml_physics_apply_torque(GmlVM *vm,GmlInstance *instance,double torque,int impulse);
 
 /*
  * Private ordered-dispatch boundary. Family stages return a result when they

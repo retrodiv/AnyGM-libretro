@@ -183,7 +183,7 @@ endif
 
 TEST_DIR := $(BUILD_DIR)/tests
 RUNTIME_TESTS := test_vm_conv_bool test_vm_unset_reads test_rng test_code_coverage test_persistent_room test_d3_state test_ds_grid test_builtin_sequence_copy test_builtin_sequence_codecs test_builtin_map_access test_builtin_contact_action test_builtin_delayed_calls test_builtin_resource_queries test_builtin_animation_queries test_builtin_buffer_hash test_builtin_draw_queries test_builtin_tile_draw test_builtin_tilemap_position test_builtin_paths test_builtin_collision_lists \
-	test_builtin_dispatch test_builtin_state test_vm_hotpath test_builtin_args test_vm_gc test_builtin_string_format test_builtin_string_search test_builtin_value_math test_builtin_extrema test_builtin_filename_parts test_builtin_map_arrays test_builtin_struct_exists test_builtin_clipboard test_builtin_instance_names test_builtin_grid_roundtrip test_builtin_gpu_zstate test_builtin_tilemap_tileset test_stacktop_scope test_value_compare
+	test_builtin_dispatch test_builtin_physics test_builtin_state test_vm_hotpath test_builtin_args test_vm_gc test_builtin_string_format test_builtin_string_search test_builtin_value_math test_builtin_extrema test_builtin_filename_parts test_builtin_map_arrays test_builtin_struct_exists test_builtin_clipboard test_builtin_instance_names test_builtin_grid_roundtrip test_builtin_gpu_zstate test_builtin_tilemap_tileset test_stacktop_scope test_value_compare
 VIDEO_RENDERER_TESTS := test_renderer_effects test_renderer_postprocess test_renderer_surfaces \
 	test_renderer_tiles test_renderer_primitives test_renderer_assets test_renderer_fonts \
 	test_renderer_texture_shells test_render_plan
@@ -269,6 +269,7 @@ $(VENDORED_XDELTA_OBJECT): CFLAGS += -Wno-unused-parameter -Wno-unused-function 
 # Keep imported pxtone warnings isolated without weakening diagnostics for owned runtime code.
 # The adapter includes upstream headers, whose declarations trigger these two diagnostics, but
 # its own implementation remains covered by every other warning (and -Werror).
+$(filter $(BUILD_DIR)/obj/src/third_party/box2d/%,$(RUNTIME_OBJECTS)): CXXFLAGS += -Wno-class-memaccess -Wno-unused-variable
 $(VENDORED_PXTONE_OBJECTS): CXXFLAGS += -w
 $(PXTONE_ADAPTER_OBJECT): CXXFLAGS += -Wno-unused-parameter -Wno-extra
 $(VENDORED_WW2OGG_OBJECTS): CXXFLAGS += -w -fexceptions
@@ -433,6 +434,10 @@ $(TEST_DIR)/test_vm_gc: tests/unit/runtime/test_vm_gc.c $(UNIT_RUNTIME_OBJECTS)
 
 $(TEST_DIR)/test_builtin_dispatch: tests/unit/runtime/test_builtin_dispatch.c \
 	$(UNIT_RUNTIME_OBJECTS)
+	mkdir -p $(dir $@)
+	$(call link_runtime_test,$(CPPFLAGS))
+
+$(TEST_DIR)/test_builtin_physics: tests/unit/runtime/test_builtin_physics.c $(UNIT_RUNTIME_OBJECTS)
 	mkdir -p $(dir $@)
 	$(call link_runtime_test,$(CPPFLAGS))
 

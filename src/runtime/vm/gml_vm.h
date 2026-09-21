@@ -122,6 +122,7 @@ typedef struct {
   int physics_enabled, physics_sensor, physics_shape, physics_group;
   int physics_awake, physics_kinematic, physics_point_count;
   double physics_density, physics_area_px;
+  double physics_restitution, physics_friction, physics_linear_damping, physics_angular_damping;
   float physics_point[GML_OBJECT_PHYSICS_POINT_MAX][2];
   int bevents;   /* classic boundary flags: room bits 0..1, outside-view 2..9, intersect-view 10..17 */
   int colself;   /* this object (or an ancestor) owns >=1 Collision_* handler — run_collisions outer filter */
@@ -621,6 +622,10 @@ void         gml_gamepad_set_axis_deadzone_direct(GmlVM *vm, int device, double 
 void         gml_instance_destroy(GmlVM *vm, GmlInstance *in);
 void         gml_instance_destroy_with_event(GmlVM *vm, GmlInstance *in, int perform_destroy_event);
 int          gml_instance_number(GmlVM *vm, int target); /* object index, special scope, or real instance id */
+GmlInstance *gml_vm_instance_by_id(GmlVM *vm, double id);
+int gml_vm_physics_collision_allowed(GmlVM *vm,int object_a,int object_b);
+void gml_vm_physics_collision_event(GmlVM *vm,uint32_t first,uint32_t second,
+                                    double x,double y,double nx,double ny);
 int          gml_object_is(GmlVM *vm, int obj, int target);  /* obj == target or descends from it */
 int          gml_object_set_parent(GmlVM *vm, int obj, int parent); /* cycle-safe runtime hierarchy mutation */
 int          gml_object_index_by_name(GmlVM *vm, const char *name);  /* -1 if not found */

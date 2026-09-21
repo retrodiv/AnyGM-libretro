@@ -782,6 +782,10 @@ void gml_builtin_state_write_physics(const GmlBuiltinState *state,
     gml_vm_state_write_real(writer,fixture->y1);
     gml_vm_state_write_real(writer,fixture->x2);
     gml_vm_state_write_real(writer,fixture->y2);
+    gml_vm_state_write_real(writer,fixture->offset_x);
+    gml_vm_state_write_real(writer,fixture->offset_y);
+    gml_vm_state_write_i32(writer,fixture->sensor);
+    gml_vm_state_write_i32(writer,fixture->group);
     for(int p=0;p<GML_PHYS_FIXTURE_POINTS;p++){
       gml_vm_state_write_real(writer,fixture->px[p]);
       gml_vm_state_write_real(writer,fixture->py[p]);
@@ -802,6 +806,12 @@ void gml_builtin_state_write_physics(const GmlBuiltinState *state,
     gml_vm_state_write_real(writer,joint->y1);
     gml_vm_state_write_real(writer,joint->x2);
     gml_vm_state_write_real(writer,joint->y2);
+    gml_vm_state_write_real(writer,joint->anchor_ax);
+    gml_vm_state_write_real(writer,joint->anchor_ay);
+    gml_vm_state_write_real(writer,joint->anchor_bx);
+    gml_vm_state_write_real(writer,joint->anchor_by);
+    gml_vm_state_write_real(writer,joint->reference_angle);
+    gml_vm_state_write_i32(writer,joint->initialized);
     for(int p=0;p<24;p++)
       gml_vm_state_write_real(writer,joint->params[p]);
   }
@@ -831,9 +841,15 @@ int gml_builtin_state_read_physics(GmlBuiltinState *state,
     fixture->shape=gml_vm_state_read_i32(reader);
     fixture->bound_inst=gml_vm_state_read_i32(reader);
     fixture->points=gml_vm_state_read_i32(reader);
-    if(fixture->points<0) fixture->points=0;
-    if(fixture->points>GML_PHYS_FIXTURE_POINTS)
-      fixture->points=GML_PHYS_FIXTURE_POINTS;
+    if(fixture->points<0 || fixture->points>GML_PHYS_FIXTURE_POINTS ||
+       fixture->shape<0 || fixture->shape>4 || !fixture->id || fixture->id>=state->phys_next_id){
+      gml_vm_state_reader_fail(reader,"bad physics fixture description",fixture->id);
+      return 0;
+    }
+    for(int previous=0;previous<i;previous++) if(state->phys_fixture[previous].id==fixture->id){
+      gml_vm_state_reader_fail(reader,"duplicate physics fixture",fixture->id);
+      return 0;
+    }
     fixture->density=gml_vm_state_read_real(reader);
     fixture->friction=gml_vm_state_read_real(reader);
     fixture->restitution=gml_vm_state_read_real(reader);
@@ -847,6 +863,10 @@ int gml_builtin_state_read_physics(GmlBuiltinState *state,
     fixture->y1=gml_vm_state_read_real(reader);
     fixture->x2=gml_vm_state_read_real(reader);
     fixture->y2=gml_vm_state_read_real(reader);
+    fixture->offset_x=gml_vm_state_read_real(reader);
+    fixture->offset_y=gml_vm_state_read_real(reader);
+    fixture->sensor=gml_vm_state_read_i32(reader);
+    fixture->group=gml_vm_state_read_i32(reader);
     for(int p=0;p<GML_PHYS_FIXTURE_POINTS;p++){
       fixture->px[p]=gml_vm_state_read_real(reader);
       fixture->py[p]=gml_vm_state_read_real(reader);
@@ -865,14 +885,27 @@ int gml_builtin_state_read_physics(GmlBuiltinState *state,
     joint->id=gml_vm_state_read_u32(reader);
     joint->type=gml_vm_state_read_i32(reader);
     joint->value_count=gml_vm_state_read_i32(reader);
-    if(joint->value_count<0) joint->value_count=0;
-    if(joint->value_count>24) joint->value_count=24;
+    if(joint->value_count<0 || joint->value_count>24 || joint->type<1 || joint->type>4 ||
+       !joint->id || joint->id>=state->phys_next_id){
+      gml_vm_state_reader_fail(reader,"bad physics joint description",joint->id);
+      return 0;
+    }
+    for(int previous=0;previous<i;previous++) if(state->phys_joint[previous].id==joint->id){
+      gml_vm_state_reader_fail(reader,"duplicate physics joint",joint->id);
+      return 0;
+    }
     joint->a=gml_vm_state_read_real(reader);
     joint->b=gml_vm_state_read_real(reader);
     joint->x1=gml_vm_state_read_real(reader);
     joint->y1=gml_vm_state_read_real(reader);
     joint->x2=gml_vm_state_read_real(reader);
     joint->y2=gml_vm_state_read_real(reader);
+    joint->anchor_ax=gml_vm_state_read_real(reader);
+    joint->anchor_ay=gml_vm_state_read_real(reader);
+    joint->anchor_bx=gml_vm_state_read_real(reader);
+    joint->anchor_by=gml_vm_state_read_real(reader);
+    joint->reference_angle=gml_vm_state_read_real(reader);
+    joint->initialized=gml_vm_state_read_i32(reader);
     for(int p=0;p<24;p++)
       joint->params[p]=gml_vm_state_read_real(reader);
   }

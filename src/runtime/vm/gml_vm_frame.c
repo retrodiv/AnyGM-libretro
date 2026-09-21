@@ -729,6 +729,7 @@ void gml_vm_step(GmlVM *vm){
   int movement_count=anygm_policy_snapshot_instance_iteration(vm->win)?n:vm->inst_count;
   for(int i=0;i<movement_count;i++){ GmlInstance *in=&vm->inst[i];
     if(!in->active||in->marked||!gml_vm_instances_step_snapshot_member(vm,in)) continue;
+    if(gml_physics_body_enabled(vm,in)) continue;
     if(in->gravity!=0){ in->hspeed+=in->gravity*cos(in->gravity_direction*M_PI/180.0);
       in->vspeed-=in->gravity*sin(in->gravity_direction*M_PI/180.0);
       gml_vm_motion_from_components(vm,in);
@@ -750,6 +751,7 @@ void gml_vm_step(GmlVM *vm){
   /* room/view boundary events (Outside Room/View, Intersect Boundary) — after move */
   gml_vm_instances_run_boundary_events(vm);
   VMPROF_MARK(move);
+  gml_physics_step(vm);
   /* collision events (GM order: after move, before end step) */
   gml_vm_instances_run_collisions(vm);
   VMPROF_MARK(coll);

@@ -18,12 +18,13 @@ static GmlPhysicsFixture *phys_fixture_find(GmlVM *vm, int id){
     if(vm->builtins->phys_fixture[i].live && vm->builtins->phys_fixture[i].id==(uint32_t)id) return &vm->builtins->phys_fixture[i];
   return NULL;
 }
-static GmlPhysicsFixture *phys_fixture_new(GmlVM *vm){
+GmlPhysicsFixture *gml_physics_fixture_new(GmlVM *vm){
   if(!vm) return NULL;
   for(int i=0;i<GML_PHYS_FIXTURE_MAX;i++) if(!vm->builtins->phys_fixture[i].live){
     GmlPhysicsFixture *f=&vm->builtins->phys_fixture[i];
     memset(f,0,sizeof(*f));
     f->live=1; f->id=phys_next_id(vm); f->bound_inst=-1; f->awake=1;
+    f->density=0.5; f->friction=0.2; f->lin_damp=0.1; f->ang_damp=0.1;
     return f;
   }
   return NULL;
@@ -45,12 +46,14 @@ static GmlPhysicsJoint *phys_joint_new(GmlVM *vm, int type){
   return NULL;
 }
 
-static double physics_room_scale(GmlVM *vm){
-  if(!vm || !vm->win) return 0.0;
+double gml_physics_world_scale(GmlVM *vm){
+  if(!vm) return 0.0;
   GmlVal *dynamic=gml_varmap_get(&vm->globals,"__physics_world_scale");
   GmlVal *dynamic_room=gml_varmap_get(&vm->globals,"__physics_world_scale_room");
   if(dynamic && dynamic->t==V_REAL && dynamic->d>0.0 && dynamic_room &&
-     dynamic_room->t==V_REAL && (int)dynamic_room->d==vm->room_index) return dynamic->d;
+     dynamic_room->t==V_REAL && isfinite(dynamic->d) && dynamic->d<=1000.0 &&
+     (int)dynamic_room->d==vm->room_index) return dynamic->d;
+  if(!vm->win) return 0.0;
   const GmlChunk *rc=gml_chunk(vm->win,"ROOM");
   if(!rc || vm->room_index<0) return 0.0;
   uint64_t rend=(uint64_t)rc->off+rc->size;
@@ -64,32 +67,48 @@ static double physics_room_scale(GmlVM *vm){
   return isfinite(scale) && scale>0.000001f && scale<=1000.0f ? scale : 0.0;
 }
 
-static double physics_instance_mass(GmlVM *vm, GmlInstance *in, double scale){
-  if(!vm || !in || scale<=0.0) return 0.0;
-  GmlVal *explicit_mass=gml_varmap_get(&in->vars,"phy_mass");
-  if(explicit_mass && explicit_mass->t==V_REAL && explicit_mass->d>0.0) return explicit_mass->d;
-  if(in->obj<0 || in->obj>=vm->n_objects) return 0.0;
-  GmlObject *o=&vm->objects[in->obj];
-  if(!o->physics_enabled || o->physics_kinematic || o->physics_density<=0.0 || o->physics_area_px<=0.0)
-    return 0.0;
-  return o->physics_density*o->physics_area_px*scale*scale;
+static int physics_target(GmlVM *vm,GmlInstance *in,int target){
+  if(!in->active || in->marked) return 0;
+  if(target==-1) return in==vm->cur_self;
+  if(target==-2) return in==vm->cur_other;
+  if(target==-3) return 1;
+  if(target>=100000) return in->id==(uint32_t)target;
+  return target>=0 && gml_object_is(vm,in->obj,target);
 }
 
 GmlVal gml_builtin_try_physics(GmlVM *vm, const char *nm, GmlVal *a, int n){
   GmlRender *R=(GmlRender*)vm->render;
   (void)R;
   if(!strcmp(nm,"physics_fixture_create")){
-    GmlPhysicsFixture *f=phys_fixture_new(vm);
+    GmlPhysicsFixture *f=gml_physics_fixture_new(vm);
     return vreal(f?(double)f->id:0);
   }
   if(!strcmp(nm,"physics_fixture_delete")){
     GmlPhysicsFixture *f=phys_fixture_find(vm,(int)N(a,n,0));
-    if(f) f->live=0;
+    if(f && f->bound_inst<0) f->live=0;
     return vreal(0);
   }
-  if(!strcmp(nm,"physics_fixture_bind")){
+  if(!strcmp(nm,"physics_fixture_bind") || !strcmp(nm,"physics_fixture_bind_ext")){
     GmlPhysicsFixture *f=phys_fixture_find(vm,(int)N(a,n,0));
-    if(f) f->bound_inst=(int)N(a,n,1);
+    uint32_t result=0;
+    if(f && f->bound_inst<0){
+      GmlPhysicsFixture source=*f;
+      int target=(int)N(a,n,1);
+      for(int i=0;i<vm->inst_count;i++) if(physics_target(vm,&vm->inst[i],target)){
+        gml_physics_initialize_body(vm,&vm->inst[i]);
+        uint32_t id=gml_physics_bind_fixture(vm,&source,&vm->inst[i],N(a,n,2),N(a,n,3));
+        if(!result) result=id;
+      }
+    }
+    return vreal(result);
+  }
+  if(!strcmp(nm,"physics_remove_fixture")){
+    GmlPhysicsFixture *f=phys_fixture_find(vm,(int)N(a,n,1));
+    if(f && f->bound_inst>=0){
+      for(int i=0;i<vm->inst_count;i++)
+        if(vm->inst[i].id==(uint32_t)f->bound_inst && physics_target(vm,&vm->inst[i],(int)N(a,n,0)))
+          f->live=0;
+    }
     return vreal(0);
   }
   if(!strcmp(nm,"physics_fixture_add_point")){
@@ -132,6 +151,10 @@ GmlVal gml_builtin_try_physics(GmlVM *vm, const char *nm, GmlVal *a, int n){
     GmlPhysicsFixture *f=phys_fixture_find(vm,(int)N(a,n,0)); if(f) f->ang_damp=N(a,n,1); return vreal(0); }
   if(!strcmp(nm,"physics_fixture_set_awake")){
     GmlPhysicsFixture *f=phys_fixture_find(vm,(int)N(a,n,0)); if(f) f->awake=N(a,n,1); return vreal(0); }
+  if(!strcmp(nm,"physics_fixture_set_sensor")){
+    GmlPhysicsFixture *f=phys_fixture_find(vm,(int)N(a,n,0)); if(f) f->sensor=N(a,n,1)!=0; return vreal(0); }
+  if(!strcmp(nm,"physics_fixture_set_collision_group")){
+    GmlPhysicsFixture *f=phys_fixture_find(vm,(int)N(a,n,0)); if(f) f->group=(int)N(a,n,1); return vreal(0); }
   if(!strcmp(nm,"physics_joint_revolute_create")||!strcmp(nm,"physics_joint_prismatic_create")||
      !strcmp(nm,"physics_joint_wheel_create")||!strcmp(nm,"physics_joint_rope_create")){
     int type=!strcmp(nm,"physics_joint_revolute_create")?1:
@@ -144,6 +167,7 @@ GmlVal gml_builtin_try_physics(GmlVM *vm, const char *nm, GmlVal *a, int n){
     int pc=n-6; if(pc<0) pc=0; if(pc>24) pc=24;
     j->value_count=pc;
     for(int i=0;i<pc;i++) j->params[i]=N(a,n,6+i);
+    gml_physics_initialize_joint(vm,j);
     return vreal((double)j->id);
   }
   if(!strcmp(nm,"physics_joint_delete")){
@@ -159,14 +183,18 @@ GmlVal gml_builtin_try_physics(GmlVM *vm, const char *nm, GmlVal *a, int n){
   }
   if(!strcmp(nm,"physics_mass_properties")){
     if(vm->cur_self){
+      gml_physics_initialize_body(vm,vm->cur_self);
+      *gml_varmap_put(&vm->cur_self->vars,"__phy_mass_override")=vreal(1);
       *gml_varmap_put(&vm->cur_self->vars,"phy_mass")=vreal(N(a,n,0));
       *gml_varmap_put(&vm->cur_self->vars,"phy_inertia")=vreal(N(a,n,3));
+      *gml_varmap_put(&vm->cur_self->vars,"__phy_center_x")=vreal(N(a,n,1));
+      *gml_varmap_put(&vm->cur_self->vars,"__phy_center_y")=vreal(N(a,n,2));
     }
     return vreal(0);
   }
   if(!strcmp(nm,"physics_world_create")){
     double scale=N(a,n,0);
-    if(scale>0.0){
+    if(isfinite(scale) && scale>0.000001 && scale<=1000.0){
       *gml_varmap_put(&vm->globals,"__physics_world_scale")=vreal(scale);
       *gml_varmap_put(&vm->globals,"__physics_world_scale_room")=vreal(vm->room_index);
     }
@@ -177,31 +205,16 @@ GmlVal gml_builtin_try_physics(GmlVM *vm, const char *nm, GmlVal *a, int n){
   if(!strcmp(nm,"physics_world_update_iterations")){ vm->builtins->phys_update_iterations=(int)N(a,n,0); return vreal(0); }
   if(!strcmp(nm,"physics_pause_enable")){ vm->builtins->phys_paused=(int)N(a,n,0); return vreal(0); }
   if(!strcmp(nm,"physics_world_draw_debug")){ vm->builtins->phys_debug_draw=(int)N(a,n,0); return vreal(0); }
-  if(!strcmp(nm,"physics_apply_impulse")){
-    /* Convert Box2D's metre/second impulse response to the lightweight backend's pixels/step.
-     * The two-metre translation cap is the public engine's per-step tunnelling guard. */
-    GmlInstance *s=vm->cur_self;
-    if(s && !vm->builtins->phys_paused){
-      double scale=physics_room_scale(vm);
-      double mass=physics_instance_mass(vm,s,scale);
-      double hz=gml_room_speed(vm);
-      if(mass>0.0 && hz>0.0){
-        double ix=N(a,n,2), iy=N(a,n,3);
-        double vx=s->hspeed+ix/(mass*scale*hz);
-        double vy=s->vspeed+iy/(mass*scale*hz);
-        double max_step=2.0/scale, step=hypot(vx,vy);
-        if(step>max_step){ double k=max_step/step; vx*=k; vy*=k; }
-        s->hspeed=vx; s->vspeed=vy;
-        motion_from_components(s);
-        if(builtin_setting(vm,"GML_LOG_PHYSICS"))
-          anygm_host_logf(vm ? vm->host : NULL,ANYGM_LOG_DEBUG,"[physics] impulse id=%u mass=%.6g scale=%.6g vel=(%.6g,%.6g)\n",
-                  s->id,mass,scale,s->hspeed,s->vspeed);
-      }
-    }
+  if(!strcmp(nm,"physics_apply_impulse") || !strcmp(nm,"physics_apply_local_impulse") ||
+     !strcmp(nm,"physics_apply_force") || !strcmp(nm,"physics_apply_local_force")){
+    gml_physics_apply(vm,vm->cur_self,N(a,n,0),N(a,n,1),N(a,n,2),N(a,n,3),
+                      strstr(nm,"impulse")!=NULL,strstr(nm,"local")!=NULL);
     return vreal(0);
   }
-  if(!strcmp(nm,"physics_apply_local_force")) return vreal(0);
+  if(!strcmp(nm,"physics_apply_torque") || !strcmp(nm,"physics_apply_angular_impulse")){
+    gml_physics_apply_torque(vm,vm->cur_self,N(a,n,0),strstr(nm,"impulse")!=NULL);
+    return vreal(0);
+  }
   if(!strncmp(nm,"physics_",8)) return vreal(0);
   return gml_builtin_try_platform_extensions(vm,nm,a,n);
 }
-

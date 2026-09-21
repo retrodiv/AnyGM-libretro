@@ -9,9 +9,19 @@ marketing version. It is a numeric field in a validated binary header.
 
 ## Save-state schema
 
-The current AnyGM save-state schema is `29`. It is the format transported by
+The current AnyGM save-state schema is `30`. It is the format transported by
 libretro frontends for manual save states, automatic state slots, and rewind
 snapshots. Those features remain supported.
+
+Schema `30` introduces VM schema `16`. Physics fixture records append two doubles
+for the local binding offset and two signed 32-bit words for sensor and collision
+group before the point arrays. Joint records append five doubles (both local
+anchors and the reference angle) and a signed 32-bit initialized flag before the
+parameter array. Template and bound fixture handles remain distinct. Body rotation,
+velocities, accumulated forces and mass overrides use the existing instance variable
+codec. Native solver objects and caches are transient and rebuilt deterministically.
+Earlier public and VM schemas reject transactionally. Renderer encoding and audio
+schema `2` are unchanged.
 
 Schema `29` introduces VM schema `15`. Two signed little-endian 32-bit words
 prefix the existing builtin INI/data-structure section: the next buffer search

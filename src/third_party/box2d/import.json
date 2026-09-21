@@ -1,0 +1,391 @@
+{
+  "archive_url": "https://codeload.github.com/erincatto/box2d/tar.gz/refs/tags/v2.4.1",
+  "component": "Box2D",
+  "copyright": "Copyright (c) 2026 retrodiv <retrodiv@proton.me>",
+  "files": {
+    "LICENSES/box2d.txt": {
+      "modified": false,
+      "upstream_path": "LICENSE"
+    },
+    "src/third_party/box2d/include/box2d/b2_api.h": {
+      "modified": false,
+      "upstream_path": "include/box2d/b2_api.h"
+    },
+    "src/third_party/box2d/include/box2d/b2_block_allocator.h": {
+      "modified": false,
+      "upstream_path": "include/box2d/b2_block_allocator.h"
+    },
+    "src/third_party/box2d/include/box2d/b2_body.h": {
+      "modified": false,
+      "upstream_path": "include/box2d/b2_body.h"
+    },
+    "src/third_party/box2d/include/box2d/b2_broad_phase.h": {
+      "modified": false,
+      "upstream_path": "include/box2d/b2_broad_phase.h"
+    },
+    "src/third_party/box2d/include/box2d/b2_chain_shape.h": {
+      "modified": false,
+      "upstream_path": "include/box2d/b2_chain_shape.h"
+    },
+    "src/third_party/box2d/include/box2d/b2_circle_shape.h": {
+      "modified": false,
+      "upstream_path": "include/box2d/b2_circle_shape.h"
+    },
+    "src/third_party/box2d/include/box2d/b2_collision.h": {
+      "modified": false,
+      "upstream_path": "include/box2d/b2_collision.h"
+    },
+    "src/third_party/box2d/include/box2d/b2_common.h": {
+      "modified": false,
+      "upstream_path": "include/box2d/b2_common.h"
+    },
+    "src/third_party/box2d/include/box2d/b2_contact.h": {
+      "modified": false,
+      "upstream_path": "include/box2d/b2_contact.h"
+    },
+    "src/third_party/box2d/include/box2d/b2_contact_manager.h": {
+      "modified": false,
+      "upstream_path": "include/box2d/b2_contact_manager.h"
+    },
+    "src/third_party/box2d/include/box2d/b2_distance.h": {
+      "modified": false,
+      "upstream_path": "include/box2d/b2_distance.h"
+    },
+    "src/third_party/box2d/include/box2d/b2_distance_joint.h": {
+      "modified": false,
+      "upstream_path": "include/box2d/b2_distance_joint.h"
+    },
+    "src/third_party/box2d/include/box2d/b2_draw.h": {
+      "modified": false,
+      "upstream_path": "include/box2d/b2_draw.h"
+    },
+    "src/third_party/box2d/include/box2d/b2_dynamic_tree.h": {
+      "modified": false,
+      "upstream_path": "include/box2d/b2_dynamic_tree.h"
+    },
+    "src/third_party/box2d/include/box2d/b2_edge_shape.h": {
+      "modified": false,
+      "upstream_path": "include/box2d/b2_edge_shape.h"
+    },
+    "src/third_party/box2d/include/box2d/b2_fixture.h": {
+      "modified": false,
+      "upstream_path": "include/box2d/b2_fixture.h"
+    },
+    "src/third_party/box2d/include/box2d/b2_friction_joint.h": {
+      "modified": false,
+      "upstream_path": "include/box2d/b2_friction_joint.h"
+    },
+    "src/third_party/box2d/include/box2d/b2_gear_joint.h": {
+      "modified": false,
+      "upstream_path": "include/box2d/b2_gear_joint.h"
+    },
+    "src/third_party/box2d/include/box2d/b2_growable_stack.h": {
+      "modified": false,
+      "upstream_path": "include/box2d/b2_growable_stack.h"
+    },
+    "src/third_party/box2d/include/box2d/b2_joint.h": {
+      "modified": false,
+      "upstream_path": "include/box2d/b2_joint.h"
+    },
+    "src/third_party/box2d/include/box2d/b2_math.h": {
+      "modified": false,
+      "upstream_path": "include/box2d/b2_math.h"
+    },
+    "src/third_party/box2d/include/box2d/b2_motor_joint.h": {
+      "modified": false,
+      "upstream_path": "include/box2d/b2_motor_joint.h"
+    },
+    "src/third_party/box2d/include/box2d/b2_mouse_joint.h": {
+      "modified": false,
+      "upstream_path": "include/box2d/b2_mouse_joint.h"
+    },
+    "src/third_party/box2d/include/box2d/b2_polygon_shape.h": {
+      "modified": false,
+      "upstream_path": "include/box2d/b2_polygon_shape.h"
+    },
+    "src/third_party/box2d/include/box2d/b2_prismatic_joint.h": {
+      "modified": false,
+      "upstream_path": "include/box2d/b2_prismatic_joint.h"
+    },
+    "src/third_party/box2d/include/box2d/b2_pulley_joint.h": {
+      "modified": false,
+      "upstream_path": "include/box2d/b2_pulley_joint.h"
+    },
+    "src/third_party/box2d/include/box2d/b2_revolute_joint.h": {
+      "modified": false,
+      "upstream_path": "include/box2d/b2_revolute_joint.h"
+    },
+    "src/third_party/box2d/include/box2d/b2_rope.h": {
+      "modified": false,
+      "upstream_path": "include/box2d/b2_rope.h"
+    },
+    "src/third_party/box2d/include/box2d/b2_settings.h": {
+      "modified": false,
+      "upstream_path": "include/box2d/b2_settings.h"
+    },
+    "src/third_party/box2d/include/box2d/b2_shape.h": {
+      "modified": false,
+      "upstream_path": "include/box2d/b2_shape.h"
+    },
+    "src/third_party/box2d/include/box2d/b2_stack_allocator.h": {
+      "modified": false,
+      "upstream_path": "include/box2d/b2_stack_allocator.h"
+    },
+    "src/third_party/box2d/include/box2d/b2_time_of_impact.h": {
+      "modified": false,
+      "upstream_path": "include/box2d/b2_time_of_impact.h"
+    },
+    "src/third_party/box2d/include/box2d/b2_time_step.h": {
+      "modified": false,
+      "upstream_path": "include/box2d/b2_time_step.h"
+    },
+    "src/third_party/box2d/include/box2d/b2_timer.h": {
+      "modified": false,
+      "upstream_path": "include/box2d/b2_timer.h"
+    },
+    "src/third_party/box2d/include/box2d/b2_types.h": {
+      "modified": false,
+      "upstream_path": "include/box2d/b2_types.h"
+    },
+    "src/third_party/box2d/include/box2d/b2_weld_joint.h": {
+      "modified": false,
+      "upstream_path": "include/box2d/b2_weld_joint.h"
+    },
+    "src/third_party/box2d/include/box2d/b2_wheel_joint.h": {
+      "modified": false,
+      "upstream_path": "include/box2d/b2_wheel_joint.h"
+    },
+    "src/third_party/box2d/include/box2d/b2_world.h": {
+      "modified": false,
+      "upstream_path": "include/box2d/b2_world.h"
+    },
+    "src/third_party/box2d/include/box2d/b2_world_callbacks.h": {
+      "modified": false,
+      "upstream_path": "include/box2d/b2_world_callbacks.h"
+    },
+    "src/third_party/box2d/include/box2d/box2d.h": {
+      "modified": false,
+      "upstream_path": "include/box2d/box2d.h"
+    },
+    "src/third_party/box2d/src/collision/b2_broad_phase.cpp": {
+      "modified": false,
+      "upstream_path": "src/collision/b2_broad_phase.cpp"
+    },
+    "src/third_party/box2d/src/collision/b2_chain_shape.cpp": {
+      "modified": false,
+      "upstream_path": "src/collision/b2_chain_shape.cpp"
+    },
+    "src/third_party/box2d/src/collision/b2_circle_shape.cpp": {
+      "modified": false,
+      "upstream_path": "src/collision/b2_circle_shape.cpp"
+    },
+    "src/third_party/box2d/src/collision/b2_collide_circle.cpp": {
+      "modified": false,
+      "upstream_path": "src/collision/b2_collide_circle.cpp"
+    },
+    "src/third_party/box2d/src/collision/b2_collide_edge.cpp": {
+      "modified": false,
+      "upstream_path": "src/collision/b2_collide_edge.cpp"
+    },
+    "src/third_party/box2d/src/collision/b2_collide_polygon.cpp": {
+      "modified": false,
+      "upstream_path": "src/collision/b2_collide_polygon.cpp"
+    },
+    "src/third_party/box2d/src/collision/b2_collision.cpp": {
+      "modified": false,
+      "upstream_path": "src/collision/b2_collision.cpp"
+    },
+    "src/third_party/box2d/src/collision/b2_distance.cpp": {
+      "modified": false,
+      "upstream_path": "src/collision/b2_distance.cpp"
+    },
+    "src/third_party/box2d/src/collision/b2_dynamic_tree.cpp": {
+      "modified": false,
+      "upstream_path": "src/collision/b2_dynamic_tree.cpp"
+    },
+    "src/third_party/box2d/src/collision/b2_edge_shape.cpp": {
+      "modified": false,
+      "upstream_path": "src/collision/b2_edge_shape.cpp"
+    },
+    "src/third_party/box2d/src/collision/b2_polygon_shape.cpp": {
+      "modified": false,
+      "upstream_path": "src/collision/b2_polygon_shape.cpp"
+    },
+    "src/third_party/box2d/src/collision/b2_time_of_impact.cpp": {
+      "modified": false,
+      "upstream_path": "src/collision/b2_time_of_impact.cpp"
+    },
+    "src/third_party/box2d/src/common/b2_block_allocator.cpp": {
+      "modified": false,
+      "upstream_path": "src/common/b2_block_allocator.cpp"
+    },
+    "src/third_party/box2d/src/common/b2_draw.cpp": {
+      "modified": false,
+      "upstream_path": "src/common/b2_draw.cpp"
+    },
+    "src/third_party/box2d/src/common/b2_math.cpp": {
+      "modified": false,
+      "upstream_path": "src/common/b2_math.cpp"
+    },
+    "src/third_party/box2d/src/common/b2_settings.cpp": {
+      "modified": false,
+      "upstream_path": "src/common/b2_settings.cpp"
+    },
+    "src/third_party/box2d/src/common/b2_stack_allocator.cpp": {
+      "modified": false,
+      "upstream_path": "src/common/b2_stack_allocator.cpp"
+    },
+    "src/third_party/box2d/src/common/b2_timer.cpp": {
+      "modified": false,
+      "upstream_path": "src/common/b2_timer.cpp"
+    },
+    "src/third_party/box2d/src/dynamics/b2_body.cpp": {
+      "modified": false,
+      "upstream_path": "src/dynamics/b2_body.cpp"
+    },
+    "src/third_party/box2d/src/dynamics/b2_chain_circle_contact.cpp": {
+      "modified": false,
+      "upstream_path": "src/dynamics/b2_chain_circle_contact.cpp"
+    },
+    "src/third_party/box2d/src/dynamics/b2_chain_circle_contact.h": {
+      "modified": false,
+      "upstream_path": "src/dynamics/b2_chain_circle_contact.h"
+    },
+    "src/third_party/box2d/src/dynamics/b2_chain_polygon_contact.cpp": {
+      "modified": false,
+      "upstream_path": "src/dynamics/b2_chain_polygon_contact.cpp"
+    },
+    "src/third_party/box2d/src/dynamics/b2_chain_polygon_contact.h": {
+      "modified": false,
+      "upstream_path": "src/dynamics/b2_chain_polygon_contact.h"
+    },
+    "src/third_party/box2d/src/dynamics/b2_circle_contact.cpp": {
+      "modified": false,
+      "upstream_path": "src/dynamics/b2_circle_contact.cpp"
+    },
+    "src/third_party/box2d/src/dynamics/b2_circle_contact.h": {
+      "modified": false,
+      "upstream_path": "src/dynamics/b2_circle_contact.h"
+    },
+    "src/third_party/box2d/src/dynamics/b2_contact.cpp": {
+      "modified": false,
+      "upstream_path": "src/dynamics/b2_contact.cpp"
+    },
+    "src/third_party/box2d/src/dynamics/b2_contact_manager.cpp": {
+      "modified": false,
+      "upstream_path": "src/dynamics/b2_contact_manager.cpp"
+    },
+    "src/third_party/box2d/src/dynamics/b2_contact_solver.cpp": {
+      "modified": false,
+      "upstream_path": "src/dynamics/b2_contact_solver.cpp"
+    },
+    "src/third_party/box2d/src/dynamics/b2_contact_solver.h": {
+      "modified": false,
+      "upstream_path": "src/dynamics/b2_contact_solver.h"
+    },
+    "src/third_party/box2d/src/dynamics/b2_distance_joint.cpp": {
+      "modified": false,
+      "upstream_path": "src/dynamics/b2_distance_joint.cpp"
+    },
+    "src/third_party/box2d/src/dynamics/b2_edge_circle_contact.cpp": {
+      "modified": false,
+      "upstream_path": "src/dynamics/b2_edge_circle_contact.cpp"
+    },
+    "src/third_party/box2d/src/dynamics/b2_edge_circle_contact.h": {
+      "modified": false,
+      "upstream_path": "src/dynamics/b2_edge_circle_contact.h"
+    },
+    "src/third_party/box2d/src/dynamics/b2_edge_polygon_contact.cpp": {
+      "modified": false,
+      "upstream_path": "src/dynamics/b2_edge_polygon_contact.cpp"
+    },
+    "src/third_party/box2d/src/dynamics/b2_edge_polygon_contact.h": {
+      "modified": false,
+      "upstream_path": "src/dynamics/b2_edge_polygon_contact.h"
+    },
+    "src/third_party/box2d/src/dynamics/b2_fixture.cpp": {
+      "modified": false,
+      "upstream_path": "src/dynamics/b2_fixture.cpp"
+    },
+    "src/third_party/box2d/src/dynamics/b2_friction_joint.cpp": {
+      "modified": false,
+      "upstream_path": "src/dynamics/b2_friction_joint.cpp"
+    },
+    "src/third_party/box2d/src/dynamics/b2_gear_joint.cpp": {
+      "modified": false,
+      "upstream_path": "src/dynamics/b2_gear_joint.cpp"
+    },
+    "src/third_party/box2d/src/dynamics/b2_island.cpp": {
+      "modified": false,
+      "upstream_path": "src/dynamics/b2_island.cpp"
+    },
+    "src/third_party/box2d/src/dynamics/b2_island.h": {
+      "modified": false,
+      "upstream_path": "src/dynamics/b2_island.h"
+    },
+    "src/third_party/box2d/src/dynamics/b2_joint.cpp": {
+      "modified": false,
+      "upstream_path": "src/dynamics/b2_joint.cpp"
+    },
+    "src/third_party/box2d/src/dynamics/b2_motor_joint.cpp": {
+      "modified": false,
+      "upstream_path": "src/dynamics/b2_motor_joint.cpp"
+    },
+    "src/third_party/box2d/src/dynamics/b2_mouse_joint.cpp": {
+      "modified": false,
+      "upstream_path": "src/dynamics/b2_mouse_joint.cpp"
+    },
+    "src/third_party/box2d/src/dynamics/b2_polygon_circle_contact.cpp": {
+      "modified": false,
+      "upstream_path": "src/dynamics/b2_polygon_circle_contact.cpp"
+    },
+    "src/third_party/box2d/src/dynamics/b2_polygon_circle_contact.h": {
+      "modified": false,
+      "upstream_path": "src/dynamics/b2_polygon_circle_contact.h"
+    },
+    "src/third_party/box2d/src/dynamics/b2_polygon_contact.cpp": {
+      "modified": false,
+      "upstream_path": "src/dynamics/b2_polygon_contact.cpp"
+    },
+    "src/third_party/box2d/src/dynamics/b2_polygon_contact.h": {
+      "modified": false,
+      "upstream_path": "src/dynamics/b2_polygon_contact.h"
+    },
+    "src/third_party/box2d/src/dynamics/b2_prismatic_joint.cpp": {
+      "modified": false,
+      "upstream_path": "src/dynamics/b2_prismatic_joint.cpp"
+    },
+    "src/third_party/box2d/src/dynamics/b2_pulley_joint.cpp": {
+      "modified": false,
+      "upstream_path": "src/dynamics/b2_pulley_joint.cpp"
+    },
+    "src/third_party/box2d/src/dynamics/b2_revolute_joint.cpp": {
+      "modified": false,
+      "upstream_path": "src/dynamics/b2_revolute_joint.cpp"
+    },
+    "src/third_party/box2d/src/dynamics/b2_weld_joint.cpp": {
+      "modified": false,
+      "upstream_path": "src/dynamics/b2_weld_joint.cpp"
+    },
+    "src/third_party/box2d/src/dynamics/b2_wheel_joint.cpp": {
+      "modified": false,
+      "upstream_path": "src/dynamics/b2_wheel_joint.cpp"
+    },
+    "src/third_party/box2d/src/dynamics/b2_world.cpp": {
+      "modified": false,
+      "upstream_path": "src/dynamics/b2_world.cpp"
+    },
+    "src/third_party/box2d/src/dynamics/b2_world_callbacks.cpp": {
+      "modified": false,
+      "upstream_path": "src/dynamics/b2_world_callbacks.cpp"
+    },
+    "src/third_party/box2d/src/rope/b2_rope.cpp": {
+      "modified": false,
+      "upstream_path": "src/rope/b2_rope.cpp"
+    }
+  },
+  "license": "MIT",
+  "schema": 1,
+  "source": "https://github.com/erincatto/box2d/tree/v2.4.1",
+  "version": "2.4.1"
+}
