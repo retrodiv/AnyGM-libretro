@@ -782,8 +782,6 @@ void gml_builtin_state_write_physics(const GmlBuiltinState *state,
     gml_vm_state_write_real(writer,fixture->y1);
     gml_vm_state_write_real(writer,fixture->x2);
     gml_vm_state_write_real(writer,fixture->y2);
-    gml_vm_state_write_real(writer,fixture->offset_x);
-    gml_vm_state_write_real(writer,fixture->offset_y);
     gml_vm_state_write_i32(writer,fixture->sensor);
     gml_vm_state_write_i32(writer,fixture->group);
     for(int p=0;p<GML_PHYS_FIXTURE_POINTS;p++){
@@ -863,8 +861,6 @@ int gml_builtin_state_read_physics(GmlBuiltinState *state,
     fixture->y1=gml_vm_state_read_real(reader);
     fixture->x2=gml_vm_state_read_real(reader);
     fixture->y2=gml_vm_state_read_real(reader);
-    fixture->offset_x=gml_vm_state_read_real(reader);
-    fixture->offset_y=gml_vm_state_read_real(reader);
     fixture->sensor=gml_vm_state_read_i32(reader);
     fixture->group=gml_vm_state_read_i32(reader);
     for(int p=0;p<GML_PHYS_FIXTURE_POINTS;p++){

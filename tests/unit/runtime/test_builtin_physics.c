@@ -2,7 +2,7 @@
  * Copyright (c) 2026 retrodiv <retrodiv@proton.me>
  */
 /* Authored bodies exercise language units, fixture ownership and restored constraints. */
-#include "gml_builtin.h"
+#include "gml_builtin_internal.h"
 #include "gml_vm_internal.h"
 #include "gml_particle.h"
 #include "gml_physics_solver.h"
@@ -94,15 +94,62 @@ static void offset_and_rotation(void){
   CALL(&vm,"physics_fixture_set_density",f,2);
   CALL(&vm,"physics_fixture_bind_ext",f,vm.inst[0].id,3,4);
   CALL(&vm,"physics_fixture_delete",f);
-  assert(fabs(get(&vm,0,"phy_com_x")-3)<1e-6);
-  assert(fabs(get(&vm,0,"phy_com_y")-4)<1e-6);
+  assert(fabs(get(&vm,0,"phy_com_x")+3)<1e-6);
+  assert(fabs(get(&vm,0,"phy_com_y")+4)<1e-6);
   vm.cur_self=&vm.inst[0];
-  CALL(&vm,"physics_apply_impulse",3,4,0,2);
+  CALL(&vm,"physics_apply_impulse",-3,-4,0,2);
   assert(fabs(get(&vm,0,"phy_angular_velocity"))<1e-4);
-  CALL(&vm,"physics_apply_impulse",8,4,0,2);
+  CALL(&vm,"physics_apply_impulse",2,-4,0,2);
   assert(get(&vm,0,"phy_angular_velocity")>100);
   step(&vm,1);
   assert(get(&vm,0,"phy_rotation")>0 && vm.inst[0].image_angle<0);
+  gml_vm_free(&vm);
+}
+
+/* Native runner controls distinguish the body position from the visual origin,
+ * including deferred setters, a second attachment and an initially rotated bind. */
+static void binding_origin_and_phase(void){
+  GmlVM vm; GmlWin win; setup(&vm,&win);
+  CALL(&vm,"physics_world_gravity",0,0);
+  vm.inst[0].x=300; vm.inst[0].y=200;
+  double f=call(&vm,"physics_fixture_create",NULL,0).d;
+  CALL(&vm,"physics_fixture_set_box_shape",f,12,8);
+  CALL(&vm,"physics_fixture_set_density",f,1);
+  CALL(&vm,"physics_fixture_bind_ext",f,vm.inst[0].id,-12,-8);
+  assert(get(&vm,0,"phy_position_x")==312 && get(&vm,0,"phy_position_y")==208);
+  assert(fabs(get(&vm,0,"phy_com_x")-312)<1e-5 && fabs(get(&vm,0,"phy_com_y")-208)<1e-5);
+  assert(fabs(get(&vm,0,"phy_mass")-3.84)<1e-5);
+  assert(gml_physics_variable_set(&vm,&vm.inst[0],"phy_rotation",vreal(90)));
+  assert(gml_physics_variable_set(&vm,&vm.inst[0],"phy_position_x",vreal(400)));
+  assert(gml_physics_variable_set(&vm,&vm.inst[0],"phy_position_y",vreal(500)));
+  CALL(&vm,"physics_fixture_set_circle_shape",f,2);
+  CALL(&vm,"physics_fixture_bind_ext",f,vm.inst[0].id,-3,-4);
+  assert(fabs(get(&vm,0,"phy_com_x")-400)<1e-5 && fabs(get(&vm,0,"phy_com_y")-500)<1e-5);
+  assert(vm.inst[0].x==300 && vm.inst[0].y==200 && vm.inst[0].image_angle==0);
+  size_t capacity=gml_vm_state_size(&vm),written=0,used=0;
+  unsigned char *snapshot=malloc(capacity);
+  assert(gml_vm_state_save(&vm,snapshot,capacity,&written));
+  for(int replay=0;replay<2;replay++){
+    if(replay) assert(gml_vm_state_load(&vm,snapshot,written,&used) && used==written);
+    step(&vm,1);
+    assert(fabs(vm.inst[0].x-408)<1e-4 && fabs(vm.inst[0].y-488)<1e-4);
+    assert(fabs(vm.inst[0].image_angle+90)<1e-4);
+    vm.inst[0].x+=10; vm.inst[0].y+=20; vm.inst[0].image_angle=0;
+    assert(get(&vm,0,"phy_position_x")==400 && get(&vm,0,"phy_position_y")==500);
+    step(&vm,1);
+    assert(fabs(vm.inst[0].x-408)<1e-4 && fabs(vm.inst[0].y-488)<1e-4);
+    assert(fabs(vm.inst[0].image_angle+90)<1e-4);
+  }
+  free(snapshot);
+  vm.inst[1].x=300; vm.inst[1].y=200; vm.inst[1].image_angle=90;
+  CALL(&vm,"physics_fixture_bind_ext",f,vm.inst[1].id,-12,-8);
+  assert(fabs(get(&vm,1,"phy_position_x")-308)<1e-5);
+  assert(fabs(get(&vm,1,"phy_position_y")-188)<1e-5);
+  GmlPhysicsJoint stored_joint={.type=1,.a=vm.inst[0].id,.b=vm.inst[1].id,.x1=400,.y1=500};
+  gml_physics_initialize_joint(&vm,&stored_joint);
+  GmlPhysicsJoint *joint=&stored_joint;
+  assert(fabs(joint->anchor_ax)<1e-5 && fabs(joint->anchor_ay)<1e-5);
+  assert(fabs(joint->anchor_bx+312)<1e-5 && fabs(joint->anchor_by-92)<1e-5);
   gml_vm_free(&vm);
 }
 
@@ -185,7 +232,7 @@ static void malformed_geometry_and_mass(void){
 }
 
 int main(void){
-  units_and_ownership(); offset_and_rotation(); floor_joints_and_restore(); filtering_and_sensors(); malformed_geometry_and_mass();
+  units_and_ownership(); offset_and_rotation(); binding_origin_and_phase(); floor_joints_and_restore(); filtering_and_sensors(); malformed_geometry_and_mass();
   puts("physics: units, fixture lifetime, offsets, rotation, contacts, joints and restore passed");
   return 0;
 }

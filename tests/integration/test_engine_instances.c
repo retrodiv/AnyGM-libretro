@@ -3226,8 +3226,8 @@ int main(int argc,char **argv){
   const uint8_t initial_io_cursors[8]={1,0,0,0,0,0,0,0};
   /* This fixture owns no fixtures or joints, so articulated-resource fields add no bytes.
    * Only the public/VM schema words advance; retain every historical payload hash below. */
-  if((uint32_t)read_u64(deterministic+4)!=30 ||
-     (uint32_t)read_u64(deterministic+map_vm+4)!=16 ||
+  if((uint32_t)read_u64(deterministic+4)!=31 ||
+     (uint32_t)read_u64(deterministic+map_vm+4)!=17 ||
      io_word+sizeof initial_io_cursors>visual_word || map_vm_size<sizeof initial_io_cursors ||
      memcmp(deterministic+io_word,initial_io_cursors,sizeof initial_io_cursors)){
     fprintf(stderr,"canonical I/O cursor framing changed\n"); return 1;

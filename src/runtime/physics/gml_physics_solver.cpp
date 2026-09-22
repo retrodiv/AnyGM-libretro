@@ -24,23 +24,22 @@ struct Shape {
   const b2Shape *make(const GmlPhysicsFixture &f, double scale) {
     /* Bound converted geometry and density before the single-precision mass integrals.
      * Finite doubles alone can still overflow those integrals into invalid native bodies. */
-    const double dimensions[]={f.offset_x,f.offset_y,f.radius,f.w,f.h,f.x1,f.y1,f.x2,f.y2};
+    const double dimensions[]={f.radius,f.w,f.h,f.x1,f.y1,f.x2,f.y2};
     for (double coordinate:dimensions)
       if (!bounded(coordinate) || std::fabs(coordinate*scale)>1e6) return nullptr;
     if (!bounded(f.density) || f.density>1e6) return nullptr;
-    b2Vec2 offset(float(f.offset_x * scale), float(f.offset_y * scale));
     if (f.shape == 1 && f.radius*scale > b2_epsilon) {
       circle.m_radius = float(f.radius * scale);
-      circle.m_p = offset;
+      circle.m_p.SetZero();
       return &circle;
     }
     if (f.shape == 2 && f.w*scale > b2_epsilon && f.h*scale > b2_epsilon) {
-      polygon.SetAsBox(float(f.w * scale), float(f.h * scale), offset, 0);
+      polygon.SetAsBox(float(f.w * scale), float(f.h * scale));
       return &polygon;
     }
     if (f.shape == 4 && bounded(f.x1) && bounded(f.x2) && bounded(f.y1) && bounded(f.y2)) {
-      b2Vec2 a(float(f.x1 * scale)+offset.x, float(f.y1 * scale)+offset.y);
-      b2Vec2 b(float(f.x2 * scale)+offset.x, float(f.y2 * scale)+offset.y);
+      b2Vec2 a(float(f.x1 * scale), float(f.y1 * scale));
+      b2Vec2 b(float(f.x2 * scale), float(f.y2 * scale));
       if ((a-b).LengthSquared() <= b2_epsilon*b2_epsilon) return nullptr;
       edge.SetTwoSided(a,b);
       return &edge;
@@ -53,7 +52,7 @@ struct Shape {
       for (int i=0;i<f.points;i++) {
         if (!bounded(f.px[i]) || !bounded(f.py[i]) ||
             std::fabs(f.px[i]*scale)>1e6 || std::fabs(f.py[i]*scale)>1e6) return nullptr;
-        b2Vec2 p(float(f.px[i]*scale)+offset.x,float(f.py[i]*scale)+offset.y);
+        b2Vec2 p(float(f.px[i]*scale),float(f.py[i]*scale));
         bool duplicate=false;
         for (int k=0;k<count;k++)
           if ((p-points[k]).LengthSquared() < 0.25f*b2_linearSlop*b2_linearSlop)

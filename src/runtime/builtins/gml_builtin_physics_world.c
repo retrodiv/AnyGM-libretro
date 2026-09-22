@@ -25,9 +25,16 @@ int gml_physics_body_enabled(GmlVM *vm,const GmlInstance *in){
                             vm->objects[in->obj].physics_enabled);
 }
 
-static void initialize_values(GmlInstance *in){
+static void initialize_values(GmlInstance *in,double xoffset,double yoffset){
   store(in,"__phy_body",1);
-  store(in,"phy_rotation",value(in,"phy_rotation",-in->image_angle));
+  double angle=value(in,"phy_rotation",-in->image_angle);
+  double radians=angle*M_PI/180.0,c=cos(radians),s=sin(radians);
+  store(in,"phy_rotation",angle);
+  /* The first binding offsets the visual origin from the body origin. Later
+   * fixtures share that origin; their shapes remain in body-local coordinates. */
+  store(in,"__phy_offset_x",xoffset); store(in,"__phy_offset_y",yoffset);
+  store(in,"phy_position_x",in->x-c*xoffset+s*yoffset);
+  store(in,"phy_position_y",in->y-s*xoffset-c*yoffset);
   store(in,"phy_linear_velocity_x",value(in,"phy_linear_velocity_x",0));
   store(in,"phy_linear_velocity_y",value(in,"phy_linear_velocity_y",0));
   store(in,"phy_angular_velocity",value(in,"phy_angular_velocity",0));
@@ -42,8 +49,7 @@ uint32_t gml_physics_bind_fixture(GmlVM *vm,const GmlPhysicsFixture *source,
   if(!bound) return 0;
   uint32_t id=bound->id;
   *bound=copy; bound->id=id; bound->live=1; bound->bound_inst=(int)in->id;
-  bound->offset_x=xoffset; bound->offset_y=yoffset;
-  if(!initialized(in)) initialize_values(in);
+  if(!initialized(in)) initialize_values(in,xoffset,yoffset);
   store(in,"phy_linear_damping",copy.lin_damp);
   store(in,"phy_angular_damping",copy.ang_damp);
   return id;
@@ -51,7 +57,7 @@ uint32_t gml_physics_bind_fixture(GmlVM *vm,const GmlPhysicsFixture *source,
 
 void gml_physics_initialize_body(GmlVM *vm,GmlInstance *in){
   if(!gml_physics_body_enabled(vm,in) || initialized(in)) return;
-  initialize_values(in);
+  initialize_values(in,0,0);
   const GmlObject *o=&vm->objects[in->obj];
   GmlPhysicsFixture f;
   memset(&f,0,sizeof(f));
@@ -80,7 +86,7 @@ static void read_body(GmlVM *vm,GmlInstance *in,GmlPhysicsBody *body){
   body->kinematic=value(in,"__phy_kinematic",0)!=0;
   body->fixed_rotation=value(in,"phy_fixed_rotation",0)!=0;
   body->bullet=value(in,"phy_bullet",0)!=0;
-  body->x=in->x; body->y=in->y; body->angle=value(in,"phy_rotation",-in->image_angle);
+  body->x=value(in,"phy_position_x",in->x); body->y=value(in,"phy_position_y",in->y); body->angle=value(in,"phy_rotation",-in->image_angle);
   body->vx=value(in,"phy_linear_velocity_x",0);
   body->vy=value(in,"phy_linear_velocity_y",0);
   body->omega=value(in,"phy_angular_velocity",0);
@@ -105,7 +111,8 @@ static void local_to_world(const GmlPhysicsBody *b,double x,double y,double *wx,
 }
 static void world_to_local(GmlInstance *in,double x,double y,double *lx,double *ly){
   double angle=value(in,"phy_rotation",-in->image_angle)*M_PI/180.0;
-  double dx=x-in->x,dy=y-in->y,c=cos(angle),s=sin(angle);
+  double dx=x-value(in,"phy_position_x",in->x),dy=y-value(in,"phy_position_y",in->y);
+  double c=cos(angle),s=sin(angle);
   *lx=c*dx+s*dy; *ly=-s*dx+c*dy;
 }
 
@@ -164,8 +171,8 @@ int gml_physics_variable_get(GmlVM *vm,GmlInstance *in,const char *name,GmlVal *
   if(!gml_physics_body_enabled(vm,in)) return 0;
   gml_physics_initialize_body(vm,in);
   double hz=fmax(1,gml_room_speed(vm)),number;
-  if(!strcmp(name,"phy_position_x")) number=in->x;
-  else if(!strcmp(name,"phy_position_y")) number=in->y;
+  if(!strcmp(name,"phy_position_x")) number=value(in,name,in->x);
+  else if(!strcmp(name,"phy_position_y")) number=value(in,name,in->y);
   else if(!strcmp(name,"phy_speed_x")) number=value(in,"phy_linear_velocity_x",0)/hz;
   else if(!strcmp(name,"phy_speed_y")) number=value(in,"phy_linear_velocity_y",0)/hz;
   else if(!strcmp(name,"phy_speed"))
@@ -196,12 +203,11 @@ int gml_physics_variable_set(GmlVM *vm,GmlInstance *in,const char *name,GmlVal v
   double d=N(&v,1,0);
   if(!isfinite(d) || fabs(d)>1e12) return 1;
   double hz=fmax(1,gml_room_speed(vm));
-  if(!strcmp(name,"phy_position_x")){ in->x=d; gml_colgrid_touch(vm,in); return 1; }
-  if(!strcmp(name,"phy_position_y")){ in->y=d; gml_colgrid_touch(vm,in); return 1; }
+  if(!strcmp(name,"phy_position_x") || !strcmp(name,"phy_position_y") ||
+     !strcmp(name,"phy_rotation")){ store(in,name,d); return 1; }
   if(!strcmp(name,"phy_speed_x")){ name="phy_linear_velocity_x"; d*=hz; }
   if(!strcmp(name,"phy_speed_y")){ name="phy_linear_velocity_y"; d*=hz; }
-  if(!strcmp(name,"phy_rotation")) { in->image_angle=-d; gml_colgrid_touch(vm,in); }
-  else if(!strcmp(name,"phy_linear_velocity_x") || !strcmp(name,"phy_linear_velocity_y") ||
+  if(!strcmp(name,"phy_linear_velocity_x") || !strcmp(name,"phy_linear_velocity_y") ||
           !strcmp(name,"phy_angular_velocity")){
     GmlPhysicsBody b; read_body(vm,in,&b);
     if(b.mass<=0 && d!=0) store(in,"__phy_kinematic",1);
@@ -264,7 +270,12 @@ void gml_physics_step(GmlVM *vm){
     GmlPhysicsBody *b=&bodies[i]; GmlInstance *in=gml_vm_instance_by_id(vm,b->id);
     if(!in) continue;
     if(b->active){
-      in->x=b->x; in->y=b->y; in->image_angle=-b->angle;
+      /* Physical setters are immediate; visual coordinates synchronize here.
+       * Ordinary x/y/image_angle writes do not teleport the physical body. */
+      local_to_world(b,value(in,"__phy_offset_x",0),value(in,"__phy_offset_y",0),
+                     &in->x,&in->y);
+      in->image_angle=-b->angle;
+      store(in,"phy_position_x",b->x); store(in,"phy_position_y",b->y);
       store(in,"phy_rotation",b->angle);
       store(in,"phy_linear_velocity_x",b->vx); store(in,"phy_linear_velocity_y",b->vy);
       store(in,"phy_angular_velocity",b->omega);

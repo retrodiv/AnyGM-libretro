@@ -15,7 +15,6 @@ typedef struct {
   double density, friction, restitution, lin_damp, ang_damp, awake;
   double radius, w, h, x1, y1, x2, y2;
   double px[GML_PHYS_FIXTURE_POINTS], py[GML_PHYS_FIXTURE_POINTS];
-  double offset_x, offset_y;
   int sensor, group;
 } GmlPhysicsFixture;
 
