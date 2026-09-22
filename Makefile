@@ -92,8 +92,10 @@ CXXFLAGS += -std=c++11 -Wall -Wextra $(REPRODUCIBLE_CFLAGS)
 CXXFLAGS += -fno-exceptions -fno-rtti -fcheck-new
 ifeq ($(DEBUG),1)
 CFLAGS += -O0 -g3
+CXXFLAGS += -O0 -g3
 else
 CFLAGS += -O2
+CXXFLAGS += -O2
 endif
 
 CORE_BASENAME := $(TARGET_NAME)_libretro

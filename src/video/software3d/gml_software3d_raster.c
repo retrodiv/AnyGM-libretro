@@ -330,12 +330,14 @@ static void d3_raster_triangle(GmlRender *R, const GmlD3Vertex in[3], const GmlD
   GmlRenderBackendDrawView draw;
   if(!d3_depth_prepare(R) || !gml_render_backend_draw_view(R,&draw) ||
      !draw.pixels || draw.width<=0 || draw.height<=0) return;
+  /* Renderer leaf calls cannot replace this context during a raster operation. */
+  GmlD3State *d3=&gml_render_backend_software3d(R)->d3;
   const char *fov_text=anygm_host_development_setting(draw.host,"GML_D3D_FOV");
-  double fov=fov_text?atof(fov_text):g_d3.fov;
+  double fov=fov_text?atof(fov_text):d3->fov;
   if(fov<1.0 || fov>170.0) fov=41.2;
   double tangent=tan(fov*M_PI/360.0);
   double focal_y=(draw.height*0.5)/tangent;
-  double focal_x=g_d3.aspect>1e-9?(draw.width*0.5)/(tangent*g_d3.aspect):focal_y;
+  double focal_x=d3->aspect>1e-9?(draw.width*0.5)/(tangent*d3->aspect):focal_y;
   double sx[3],sy[3],iz[3],uz[3],vz[3],riz[3],giz[3],biz[3],aiz[3];
   double depth_value[3],view_distance[3];
   int flat_color=in[0].r==in[1].r&&in[0].r==in[2].r&&
@@ -343,19 +345,19 @@ static void d3_raster_triangle(GmlRender *R, const GmlD3Vertex in[3], const GmlD
                  in[0].b==in[1].b&&in[0].b==in[2].b&&
                  in[0].alpha==in[1].alpha&&in[0].alpha==in[2].alpha;
   int opaque_white=flat_color&&in[0].r==255.0&&in[0].g==255.0&&in[0].b==255.0&&
-                   in[0].alpha>=1.0&&!g_d3.lighting&&!g_d3.fog&&
+                   in[0].alpha>=1.0&&!d3->lighting&&!d3->fog&&
                    (!draw.alpha_blend||draw.blend_mode==0);
   /* The fixed-function viewport uses a half-pixel anchor represented just below 0.5.
    * Keeping the 11-bit phase avoids pushing boundary samples into the next texel. */
-  double pixel_offset=g_d3.classic?0.5-1.0/2048.0:0.0;
+  double pixel_offset=d3->classic?0.5-1.0/2048.0:0.0;
   /* Bias the vertices once: perspective interpolation preserves a constant phase exactly, while
    * keeping this work out of the per-pixel inner loop. */
-  double u_phase=(g_d3.classic&&!draw.interpolate)?1.0/65536.0:0.0;
-  double v_phase=(g_d3.classic&&!draw.interpolate)?-1.0/524288.0:0.0;
+  double u_phase=(d3->classic&&!draw.interpolate)?1.0/65536.0:0.0;
+  double v_phase=(d3->classic&&!draw.interpolate)?-1.0/524288.0:0.0;
   for(int i=0;i<3;i++){
-    if(g_d3.ortho){
-      double ow=fabs(g_d3.ortho_w)>1e-9?g_d3.ortho_w:1;
-      double oh=fabs(g_d3.ortho_h)>1e-9?g_d3.ortho_h:1;
+    if(d3->ortho){
+      double ow=fabs(d3->ortho_w)>1e-9?d3->ortho_w:1;
+      double oh=fabs(d3->ortho_h)>1e-9?d3->ortho_h:1;
       iz[i]=1; uz[i]=in[i].u+u_phase; vz[i]=in[i].v+v_phase;
       if(!flat_color){
         riz[i]=in[i].r; giz[i]=in[i].g; biz[i]=in[i].b; aiz[i]=in[i].alpha;
@@ -377,7 +379,7 @@ static void d3_raster_triangle(GmlRender *R, const GmlD3Vertex in[3], const GmlD
   }
   double area=d3_edge(sx[0],sy[0],sx[1],sy[1],sx[2],sy[2]);
   if(!isfinite(area) || fabs(area)<1e-9) return;
-  if(g_d3.culling && area>=0) return;
+  if(d3->culling && area>=0) return;
   /* Clip in floating point before converting untrusted projected coordinates. */
   double left=fmax(0,floor(fmin(sx[0],fmin(sx[1],sx[2]))));
   double right=fmin(draw.width-1,ceil(fmax(sx[0],fmax(sx[1],sx[2]))));
@@ -394,6 +396,14 @@ static void d3_raster_triangle(GmlRender *R, const GmlD3Vertex in[3], const GmlD
   }
   double inv_area=1.0/area;
   double edge0_step=sy[2]-sy[1],edge1_step=sy[0]-sy[2];
+  /* Once a monotonically decreasing weight is outside, the rest of this row
+   * cannot enter the triangle. Keep every preceding edge addition unchanged:
+   * jumping to a calculated span start would rephase floating-point samples.
+   * The third weight is known to decrease only when both others increase. */
+  int edge0_falls=area>0?edge0_step<=0:edge0_step>=0;
+  int edge1_falls=area>0?edge1_step<=0:edge1_step>=0;
+  int edge2_falls=area>0?(edge0_step>=0&&edge1_step>=0):
+                              (edge0_step<=0&&edge1_step<=0);
   int opaque_prepared=0;
   for(int y=miny;y<=maxy;y++){
     double py=y+0.5,px=minx+0.5;
@@ -401,9 +411,20 @@ static void d3_raster_triangle(GmlRender *R, const GmlD3Vertex in[3], const GmlD
     double edge1=d3_edge(sx[2],sy[2],sx[0],sy[0],px,py);
     for(int x=minx;x<=maxx;x++,edge0+=edge0_step,edge1+=edge1_step){
     double b0=edge0*inv_area;
+    if(b0<-1e-9){
+      if(edge0_falls) break;
+      continue;
+    }
     double b1=edge1*inv_area;
+    if(b1<-1e-9){
+      if(edge1_falls) break;
+      continue;
+    }
     double b2=1.0-b0-b1;
-    if(b0<-1e-9 || b1<-1e-9 || b2<-1e-9) continue;
+    if(b2<-1e-9){
+      if(edge2_falls) break;
+      continue;
+    }
     /* Joined fills own each shared edge once; existing independent primitives
      * retain their characterized inclusive-edge coverage. */
     if(joined && ((fabs(b0)<=1e-9&&!include_edge[0]) ||
@@ -417,7 +438,7 @@ static void d3_raster_triangle(GmlRender *R, const GmlD3Vertex in[3], const GmlD
      * one another: text glyphs and quads are emitted as multiple triangles at one layer depth. */
     /* Compare in the depth buffer's representation. Interpolation can land
      * just below an equal stored float without being a farther fragment. */
-    if(g_d3.hidden && (float)ztest<g_d3.depth[di]) continue;
+    if(d3->hidden && (float)ztest<d3->depth[di]) continue;
     double sampled[4]={255,255,255,255};
     if(texture&&texture->kind){
       double u=(b0*uz[0]+b1*uz[1]+b2*uz[2])/invz;
@@ -432,7 +453,7 @@ static void d3_raster_triangle(GmlRender *R, const GmlD3Vertex in[3], const GmlD
       }
       draw.pixels[di]=0xFF000000u|((uint32_t)sampled[0]<<16)|
                       ((uint32_t)sampled[1]<<8)|(uint32_t)sampled[2];
-      if(g_d3.hidden&&g_d3.zwrite) g_d3.depth[di]=(float)ztest;
+      if(d3->hidden&&d3->zwrite) d3->depth[di]=(float)ztest;
       continue;
     }
     double vr=in[0].r,vg=in[0].g,vb=in[0].b,vertex_alpha=in[0].alpha;
@@ -449,21 +470,21 @@ static void d3_raster_triangle(GmlRender *R, const GmlD3Vertex in[3], const GmlD
     int mod_g=(int)lround(sampled[1]*vg/255.0);
     int mod_b=(int)lround(sampled[2]*vb/255.0);
     uint32_t color=(uint32_t)mod_r|((uint32_t)mod_g<<8)|((uint32_t)mod_b<<16);
-    if(g_d3.lighting){
-      int cr=(int)((color&255)*g_d3.shade_r), cg=(int)(((color>>8)&255)*g_d3.shade_g);
-      int cb=(int)(((color>>16)&255)*g_d3.shade_b);
+    if(d3->lighting){
+      int cr=(int)((color&255)*d3->shade_r), cg=(int)(((color>>8)&255)*d3->shade_g);
+      int cb=(int)(((color>>16)&255)*d3->shade_b);
       if(cr>255) cr=255;
       if(cg>255) cg=255;
       if(cb>255) cb=255;
       color=(uint32_t)cr|((uint32_t)cg<<8)|((uint32_t)cb<<16);
     }
-    if(g_d3.fog){
-      double distance=g_d3.ortho?
+    if(d3->fog){
+      double distance=d3->ortho?
         b0*view_distance[0]+b1*view_distance[1]+b2*view_distance[2]:1.0/invz;
-      double span=g_d3.fog_end-g_d3.fog_start;
-      double amount=span>1e-9?(distance-g_d3.fog_start)/span:(distance>=g_d3.fog_end?1:0);
+      double span=d3->fog_end-d3->fog_start;
+      double amount=span>1e-9?(distance-d3->fog_start)/span:(distance>=d3->fog_end?1:0);
       if(amount<0) amount=0; else if(amount>1) amount=1;
-      uint32_t fog=g_d3.fog_color;
+      uint32_t fog=d3->fog_color;
       int cr=(int)lround((color&255)*(1-amount)+(fog&255)*amount);
       int cg=(int)lround(((color>>8)&255)*(1-amount)+((fog>>8)&255)*amount);
       int cb=(int)lround(((color>>16)&255)*(1-amount)+((fog>>16)&255)*amount);
@@ -471,7 +492,7 @@ static void d3_raster_triangle(GmlRender *R, const GmlD3Vertex in[3], const GmlD
     }
     double alpha=(sampled[3]/255.0)*vertex_alpha;
     gml_render_backend_draw_pixel_alpha(R,x,y,color,alpha);
-    if(g_d3.hidden && g_d3.zwrite && alpha>0.0) g_d3.depth[di]=(float)ztest;
+    if(d3->hidden && d3->zwrite && alpha>0.0) d3->depth[di]=(float)ztest;
   }
   }
 }
