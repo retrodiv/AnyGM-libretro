@@ -344,6 +344,10 @@ GmlVal gml_builtin_try_layers_early(GmlVM *vm, const char *nm, GmlVal *a, int n)
 GmlVal gml_builtin_try_layers(GmlVM *vm, const char *nm, GmlVal *a, int n){
   GmlRender *R=(GmlRender*)vm->render;
   (void)R;
+  if(!strcmp(nm,"tile_exists")){
+    GmlRtElem *e=gml_rt_elem_find(vm,(int)N(a,n,0));
+    return vreal(e && e->type==7);
+  }
   /* ---- runtime layers and elements (Studio layer_* API) ----
    * Compatibility scripts for converted projects implement tile and background operations on top
    * of this model. Elements live in vm->rte, layers in

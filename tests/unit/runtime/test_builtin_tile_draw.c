@@ -3,6 +3,7 @@
  */
 #include "gml_builtin.h"
 #include "gml_render_internal.h"
+#include "anygm_compatibility.h"
 #include "anygm_test_runner.h"
 #include <limits.h>
 #include <math.h>
@@ -216,6 +217,65 @@ static int bounded_empty_maps(void){
   }
   return ok;
 }
+static int legacy_dynamic_tiles(void){
+  int ok=1;
+  for(int generation=0;generation<4;generation++){
+    TileFixture f; setup(&f);
+    GmlWin win={.bytecode=generation?13+generation:16,
+                .classic_version=generation?0:800};
+    f.vm.win=&win; f.render.win=&win;
+    f.vm.tilemaps=NULL; f.vm.n_tilemaps=0;
+    f.layer.visible=1; f.layer.x=f.layer.y=0;
+    f.layer.script_begin=f.layer.script_end=-1;
+    GmlVal args[]={vreal(0),vreal(2),vreal(0),vreal(2),vreal(2),
+                   vreal(3),vreal(5),vreal(17)};
+    GmlVal tile=gml_builtin_call(&f.vm,"tile_add",args,8);
+    int id=(int)tile.d;
+    GmlRtElem *element=f.vm.n_rte?f.vm.rte:NULL;
+    if(!element || !element->used || element->type!=7){
+      fprintf(stderr,"legacy generation %d did not create a dynamic tile\n",generation);
+      ok=0;
+    }else{
+      ok &= gml_builtin_call(&f.vm,"tile_exists",&tile,1).d==1;
+      GmlVal point[]={vreal(17),vreal(4),vreal(6)};
+      ok &= gml_builtin_call(&f.vm,"tile_layer_find",point,3).d==id;
+      gml_vm_draw(&f.vm); gml_render_flush_rotated_batch(&f.render);
+      ok &= region(&f,3,5,colors);
+      gml_builtin_call(&f.vm,"tile_delete",&tile,1);
+      ok &= !element->used && gml_builtin_call(&f.vm,"tile_exists",&tile,1).d==0;
+      ok &= gml_builtin_call(&f.vm,"tile_layer_find",point,3).d==-1;
+      memset(f.pixels,0,sizeof f.pixels);
+      gml_vm_draw(&f.vm); gml_render_flush_rotated_batch(&f.render);
+      const uint32_t empty[4]={0}; ok &= region(&f,3,5,empty);
+    }
+    f.vm.win=NULL; f.render.win=NULL; cleanup(&f);
+  }
+  return ok;
+}
+static int modern_dynamic_tile_resource(void){
+  int ok=1;
+  for(int revision=15;revision<=17;revision+=2){
+    TileFixture f; setup(&f);
+    AnygmCompatibilityProfile profile={.has_modern_layer_semantics=1};
+    GmlWin win={.bytecode=revision,.compatibility=&profile};
+    int frame=0;
+    GmlSprite sprite={.w=6,.h=2,.n_frames=1,.frame=&frame};
+    f.vm.win=&win; f.render.win=&win;
+    f.vm.tilemaps=NULL; f.vm.n_tilemaps=0;
+    f.render.spr=&sprite; f.render.n_spr=1;
+    f.render.bg=NULL; f.render.n_bg=0;
+    f.layer.visible=1; f.layer.x=f.layer.y=0;
+    f.layer.script_begin=f.layer.script_end=-1;
+    GmlVal args[]={vreal(70),vreal(3),vreal(5),vreal(0),
+                   vreal(2),vreal(0),vreal(2),vreal(2)};
+    GmlVal tile=gml_builtin_call(&f.vm,"layer_tile_create",args,8);
+    ok &= gml_builtin_call(&f.vm,"layer_tile_exists",&tile,1).d==1;
+    gml_vm_draw(&f.vm); gml_render_flush_rotated_batch(&f.render);
+    ok &= region(&f,3,5,colors);
+    f.vm.win=NULL; f.render.win=NULL; cleanup(&f);
+  }
+  return ok;
+}
 static int rectangular_tile_extent(void){
   int ok=1;
   for(int scaled=0;scaled<2;scaled++) for(int flags=0;flags<8;flags++){
@@ -244,7 +304,9 @@ int main(int argc,char **argv){
     {"invalid_arguments",invalid_arguments},{"automatic_animated_empty",automatic_map},
     {"local_map_position",local_map_position},
     {"prepared_layouts",prepared_layouts},{"scaled_map",scaled_map},
-    {"bounded_empty_maps",bounded_empty_maps},{"rectangular_tile_extent",rectangular_tile_extent}};
+    {"bounded_empty_maps",bounded_empty_maps},{"rectangular_tile_extent",rectangular_tile_extent},
+    {"legacy_dynamic_tiles",legacy_dynamic_tiles},
+    {"modern_dynamic_tile_resource",modern_dynamic_tile_resource}};
   const AnygmTestGroup group={"tile_draw",cases,sizeof cases/sizeof cases[0]};
   const char *filter=NULL;
   if(argc==3 && !strcmp(argv[1],"--case")) filter=argv[2]; else if(argc!=1) return EXIT_FAILURE;

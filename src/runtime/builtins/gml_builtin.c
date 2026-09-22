@@ -1498,10 +1498,10 @@ GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
   GmlRender *R=(GmlRender*)vm->render;
   (void)graphics_state_for_vm(vm);
   if(d3_try_draw_2d_builtin(vm,nm,a,n)) return vreal(0);
-  /* Classic dynamic room tiles are runtime objects rather than modern tilemaps. Keep them in
-   * the runtime-layer store for room-entry cleanup, state serialization and depth ordering. A
-   * Classic background id names a BGND resource rather than a sprite resource. */
-  if(vm->win && anygm_policy_uses_classic_runtime(vm->win) && !strcmp(nm,"tile_add")){
+  /* Classic and first-generation Studio dynamic tiles use background resources. Keep them in
+   * the runtime-layer store for room-entry cleanup, state serialization and depth ordering.
+   * Modern layer tiles use sprite resources and retain their payload-defined compatibility code. */
+  if(vm->win && !anygm_policy_has_modern_layer_semantics(vm->win) && !strcmp(nm,"tile_add")){
     double dep=N(a,n,7);
     GmlRtLayer *l=NULL;
     for(int i=0;i<vm->n_rtl;i++)

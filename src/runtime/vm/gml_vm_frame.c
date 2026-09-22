@@ -1784,7 +1784,7 @@ void gml_vm_draw(GmlVM *vm){
                                t->mirror,t->flip,t->rotate,0xFFFFFF,1);
       continue; }
     if(it[k].type==2){ struct LayTile *t=&ltl[it[k].idx];
-      if(vm->win && anygm_policy_uses_classic_runtime(vm->win))
+      if(vm->win && !anygm_policy_has_modern_layer_semantics(vm->win))
         gml_draw_background_part_ext(R,t->sprite,t->sx,t->sy,t->w,t->h,t->x,t->y,t->xs,t->ys,t->blend,t->alpha);
       else
         gml_draw_sprite_part_ext(R,t->sprite,0,t->sx,t->sy,t->w,t->h,t->x,t->y,t->xs,t->ys,t->blend,t->alpha);
