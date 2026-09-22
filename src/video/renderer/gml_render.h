@@ -9,6 +9,12 @@
 
 typedef struct GmlRender GmlRender;
 
+enum { GML_RENDER_TEXTURE_STAGES=8 };
+/* Stage zero samples the base image. Named shader handles resolve to auxiliary stages. */
+void gml_render_texture_filter_all(GmlRender *render,int enabled);
+void gml_render_texture_filter_set(GmlRender *render,int sampler,int enabled);
+int gml_render_texture_filter_get(const GmlRender *render,int sampler);
+
 /* bm_subtract is the fixed-function pair (bm_zero, bm_inv_src_colour), not the
  * arithmetic blend equation.  The destination component is therefore scaled
  * by the inverse source component.  Keep the integer rule shared by every
@@ -268,6 +274,7 @@ typedef struct {
    * sprite frame, or a surface. Whichever does not apply is -1. */
   int texture;
   int sprite,frame,surface;
+  int interpolation;
 } GmlRenderShaderSampler;
 
 enum {

@@ -7,6 +7,7 @@
 #include "gml_render_internal.h"
 
 #include <math.h>
+#include <string.h>
 #include <stdint.h>
 
 /* Header-local recognized-shader sampling operations shared by complete
@@ -262,6 +263,39 @@ static inline int mapped_texture_prepare_parallel(GmlRender *r){
   int atlas=r->tpag[texture].atlas;
   return atlas>=0 && atlas<r->n_atlas && atlas_pixels(r,atlas)!=NULL;
 }
+static inline int palette_sampler_linear(const GmlRender *r,const struct GmlShaderPal *sp,
+                                           const char *name){
+  for(int i=0;i<sp->generic_sampler_count;i++)
+    if(!strcmp(sp->generic_sampler[i].name,name)) return r->texture_filter[i];
+  return r->texture_filter[0];
+}
+static inline uint32_t palette_sample_argb(GmlRender *r,float u,float v,int linear,
+                                           uint32_t fallback){
+  GmlSprite *sprite=&r->spr[r->lut_pal_sprite];
+  int w=sprite->w,h=sprite->h;
+  if(w<=0 || h<=0 || !isfinite(u) || !isfinite(v)) return fallback;
+  if(u<0) u=0; else if(u>1) u=1;
+  if(v<0) v=0; else if(v>1) v=1;
+  float x=u*w-(linear?0.5f:0.0f),y=v*h-(linear?0.5f:0.0f);
+  int x0=(int)floorf(x),y0=(int)floorf(y),x1=x0+1,y1=y0+1;
+  float fx=x-floorf(x),fy=y-floorf(y);
+  if(x0<0)x0=0; else if(x0>=w)x0=w-1;
+  if(y0<0)y0=0; else if(y0>=h)y0=h-1;
+  if(x1<0)x1=0; else if(x1>=w)x1=w-1;
+  if(y1<0)y1=0; else if(y1>=h)y1=h-1;
+  uint32_t a=sprite_pixel_argb(r,r->lut_pal_sprite,r->lut_pal_frame,x0,y0,fallback);
+  if(!linear) return a;
+  uint32_t b=sprite_pixel_argb(r,r->lut_pal_sprite,r->lut_pal_frame,x1,y0,a);
+  uint32_t c=sprite_pixel_argb(r,r->lut_pal_sprite,r->lut_pal_frame,x0,y1,a);
+  uint32_t d=sprite_pixel_argb(r,r->lut_pal_sprite,r->lut_pal_frame,x1,y1,a);
+  uint32_t result=0;
+  for(int shift=0;shift<32;shift+=8){
+    float top=((a>>shift)&255)*(1-fx)+((b>>shift)&255)*fx;
+    float bottom=((c>>shift)&255)*(1-fx)+((d>>shift)&255)*fx;
+    result|=(uint32_t)(top*(1-fy)+bottom*fy+0.5f)<<shift;
+  }
+  return result;
+}
 static inline uint32_t lut_map_px(GmlRender *r, const struct GmlShaderPal *sp, uint32_t v){
   GmlSprite *s=&r->spr[r->lut_pal_sprite];
   int w=s->w>0?s->w:1, h=s->h>0?s->h:1;
@@ -271,10 +305,7 @@ static inline uint32_t lut_map_px(GmlRender *r, const struct GmlShaderPal *sp, u
     if(sr==sg && sg==sb && sp->lut_offset>0.0f && sp->lut_colors>0.0f){
       float pu=sp->lut_row;
       float pv=((255.0f*((float)sr/255.0f))/sp->lut_offset+0.5f)/sp->lut_colors;
-      int x=(int)floorf(pu*w), y=(int)floorf(pv*h);
-      if(x<0) x=0; else if(x>=w) x=w-1;
-      if(y<0) y=0; else if(y>=h) y=h-1;
-      mapped=sprite_pixel_argb(r,r->lut_pal_sprite,r->lut_pal_frame,x,y,v);
+      mapped=palette_sample_argb(r,pu,pv,palette_sampler_linear(r,sp,sp->lut_sampler),v);
     }
     int mr=(mapped>>16)&255, mg=(mapped>>8)&255, mb=mapped&255;
     /* Tint variants colorize the fragment after either branch: non-indexed source colours must
@@ -289,6 +320,9 @@ static inline uint32_t lut_map_px(GmlRender *r, const struct GmlShaderPal *sp, u
     }
     return (v&0xFF000000u)|((uint32_t)mr<<16)|((uint32_t)mg<<8)|(uint32_t)mb;
   }
+  if(palette_sampler_linear(r,sp,sp->lut_sampler))
+    return 0xff000000u|(palette_sample_argb(r,(float)((v>>16)&255)/255.0f,
+                                          sp->lut_row,1,v)&0x00ffffffu);
   int u=(int)((v>>16)&0xFF);                       /* source red channel selects the column */
   int x=u*w/256; if(x>w-1) x=w-1;
   int y=(int)(sp->lut_row*h); if(y>h-1) y=h-1; if(y<0) y=0;
@@ -305,6 +339,8 @@ static inline uint32_t grid_map_px(GmlRender *r, const struct GmlShaderPal *sp, 
     int dg=((int)(base>>8)&255)-vg, db=((int)base&255)-vb;
     if(da*da+dr*dr+dg*dg+db*db>1) continue; /* distance < 0.004 in normalized RGBA */
     float id=sp->grid_id; if(id<0) return v;
+    if(!sp->grid_explicit_mix && !palette_sampler_linear(r,sp,sp->grid_sampler))
+      id=floorf(id+0.5f);
     int x0=(int)floorf(id), x1=x0+1; float f=id-floorf(id);
     if(x0<0)x0=0; else if(x0>=w)x0=w-1;
     if(x1<0)x1=0; else if(x1>=w)x1=w-1;

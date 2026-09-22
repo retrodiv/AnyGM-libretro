@@ -929,10 +929,14 @@ GmlVal gml_builtin_try_platform_noops(GmlVM *vm, const char *nm, GmlVal *a, int 
   if(!strcmp(nm,"gpu_set_texfilter")||!strcmp(nm,"gpu_set_texfilter_ext")||
      !strcmp(nm,"texture_set_interpolation_ext")||
      !strcmp(nm,"gpu_set_tex_filter")||!strcmp(nm,"gpu_set_tex_filter_ext")){
-    int enable=(!strcmp(nm,"gpu_set_texfilter_ext")||
-                !strcmp(nm,"gpu_set_tex_filter_ext")||
-                !strcmp(nm,"texture_set_interpolation_ext")) && n>1 ? 1 : 0;
-    GmlRender *R=(GmlRender*)vm->render; builtin_set_interpolation(R,N(a,n,enable)!=0.0); return vreal(0); }
+    GmlRender *R=(GmlRender*)vm->render;
+    if(!strcmp(nm,"gpu_set_texfilter_ext") || !strcmp(nm,"gpu_set_tex_filter_ext") ||
+       !strcmp(nm,"texture_set_interpolation_ext"))
+      gml_render_texture_filter_set(R,(int)N(a,n,0),N(a,n,1)!=0.0);
+    else builtin_set_interpolation(R,N(a,n,0)!=0.0);
+    return vreal(0); }
+  if(!strcmp(nm,"gpu_get_texfilter_ext") || !strcmp(nm,"gpu_get_tex_filter_ext"))
+    return vreal(gml_render_texture_filter_get((GmlRender*)vm->render,(int)N(a,n,0)));
   if(!strcmp(nm,"gpu_get_texfilter")||!strcmp(nm,"gpu_get_tex_filter")){
     GmlRender *R=(GmlRender*)vm->render; return vreal(builtin_draw_state(R).interpolation); }
   if(!strcmp(nm,"gpu_set_tex_repeat")||!strcmp(nm,"gpu_set_tex_repeat_ext")||

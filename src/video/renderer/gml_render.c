@@ -515,7 +515,7 @@ int gml_render_init(GmlRender *r, GmlWin *win){
   r->app_draw_enable=1; r->next_surface_id=1;
   r->shader_report_all_compiled=1;
   for(int i=0;i<GML_SHADED_FRAME_CACHE;i++) r->shaded_frame[i].atlas=-1;
-  r->interp=anygm_policy_classic_interpolate(win);
+  gml_render_texture_filter_all(r,anygm_policy_classic_interpolate(win));
   r->composites_app=0;
   r->fast_alpha_cull=env_fast_alpha_cull(r);
   r->lut_pal_sprite=-1; r->lut_pal_frame=0;
@@ -855,6 +855,7 @@ int gml_render_gpu_state_push(GmlRender *r){
   state->blend_equation=r->blend_equation;
   state->blend_equation_alpha=r->blend_equation_alpha;
   state->interp=r->interp;
+  memcpy(state->texture_filter,r->texture_filter,sizeof r->texture_filter);
   state->color_write_mask=r->color_write_mask;
   return 1;
 }
@@ -868,6 +869,7 @@ int gml_render_gpu_state_pop(GmlRender *r){
   r->blend_equation=state->blend_equation;
   r->blend_equation_alpha=state->blend_equation_alpha;
   r->interp=state->interp;
+  memcpy(r->texture_filter,state->texture_filter,sizeof r->texture_filter);
   r->color_write_mask=state->color_write_mask;
   return 1;
 }
@@ -1042,6 +1044,8 @@ int gml_render_shader_uniform_handle(GmlRender *r,int shader,const char *name){
 }
 
 int gml_render_shader_sampler_handle(GmlRender *r,int shader,const char *name){
+  if(r && name && shader>=0 && shader<r->n_shader_pal && !strcmp(name,"gm_BaseTexture"))
+    return 0;
   if(r && name && shader>=0 && shader<r->n_shader_pal && r->shader_pal){
     const struct GmlShaderPal *recognized=&r->shader_pal[shader];
     for(int index=0;index<recognized->generic_sampler_count;index++)
@@ -1057,6 +1061,31 @@ static int generic_handle_parts(const GmlRender *r,int handle,int *shader,int *i
   *index=handle&0x7F;
   *sampler=(handle&GML_RENDER_GENERIC_SAMPLER_FLAG)!=0;
   return r && *shader<r->n_shader_pal && r->shader_pal;
+}
+
+static int texture_filter_stage(const GmlRender *r,int handle){
+  int shader,index,sampler;
+  if(generic_handle_parts(r,handle,&shader,&index,&sampler)){
+    if(!sampler || index>=r->shader_pal[shader].generic_sampler_count) return -1;
+    return index+1;
+  }
+  return handle>=0 && handle<GML_RENDER_TEXTURE_STAGES?handle:-1;
+}
+void gml_render_texture_filter_all(GmlRender *r,int enabled){
+  if(!r) return;
+  r->interp=enabled?1:0;
+  for(int i=0;i<GML_RENDER_TEXTURE_STAGES-1;i++) r->texture_filter[i]=r->interp;
+}
+void gml_render_texture_filter_set(GmlRender *r,int sampler,int enabled){
+  if(!r) return;
+  int stage=texture_filter_stage(r,sampler);
+  if(stage==0) r->interp=enabled?1:0;
+  else if(stage>0) r->texture_filter[stage-1]=enabled?1:0;
+}
+int gml_render_texture_filter_get(const GmlRender *r,int sampler){
+  if(!r) return 0;
+  int stage=texture_filter_stage(r,sampler);
+  return stage==0?r->interp:stage>0?r->texture_filter[stage-1]:0;
 }
 
 void gml_render_shader_uniform_set_values(GmlRender *r,int handle,const double *values,
@@ -1312,6 +1341,7 @@ uint32_t gml_render_shader_samplers(const GmlRender *r,int shader,
       memset(&out[written],0,sizeof out[written]);
       snprintf(out[written].name,sizeof out[written].name,"%s",p->generic_sampler[index].name);
       out[written].texture=p->generic_sampler[index].texture;
+      out[written].interpolation=r->texture_filter[index];
       out[written].sprite=-1;
       out[written].frame=-1;
       out[written].surface=-1;

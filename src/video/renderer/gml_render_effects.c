@@ -2038,7 +2038,7 @@ void parse_shader_palettes(GmlRender *r){
         glsl_uniform_name(src,"float",0,idname,sizeof idname);
         glsl_uniform_name(src,"vec2",0,pxname,sizeof pxname);
         if(sname[0] && uvname[0] && idname[0] && pxname[0]){
-          sp->grid=1; sp->grid_id=-1.0f;
+          sp->grid=1; sp->grid_explicit_mix=interpolated_grid?1:0; sp->grid_id=-1.0f;
           snprintf(sp->grid_sampler,sizeof sp->grid_sampler,"%s",sname);
           snprintf(sp->grid_uvs_uniform,sizeof sp->grid_uvs_uniform,"%s",uvname);
           snprintf(sp->grid_id_uniform,sizeof sp->grid_id_uniform,"%s",idname);

@@ -17,6 +17,7 @@ typedef struct FakeTexture {
   int created;
   int deleted;
   GLint internal_format;
+  GLint min_filter;
   GLsizei width;
   GLsizei height;
   uint32_t upload_count;
@@ -34,6 +35,8 @@ typedef struct FakeDriver {
   GLuint next_name;
   FakeTexture textures[FAKE_MAX_TEXTURES];
   GLuint bound_texture[3];
+  GLuint quad_texture[3];
+  GLint quad_filter[3];
   GLuint active_unit;
   GLuint framebuffer;
   uint32_t framebuffer_queries;
@@ -162,7 +165,11 @@ static void fake_BindTexture(GLenum target,GLuint name){
   if(g_fake.active_unit<3) g_fake.bound_texture[g_fake.active_unit]=name;
 }
 static void fake_ActiveTexture(GLenum unit){ note_call(); g_fake.active_unit=unit-GL_TEXTURE0; }
-static void fake_TexParameteri(GLenum t,GLenum p,GLint v){ (void)t;(void)p;(void)v; note_call(); }
+static void fake_TexParameteri(GLenum t,GLenum p,GLint v){
+  (void)t; note_call();
+  GLuint name=g_fake.active_unit<3?g_fake.bound_texture[g_fake.active_unit]:0;
+  if(name<FAKE_MAX_TEXTURES && p==GL_TEXTURE_MIN_FILTER) g_fake.textures[name].min_filter=v;
+}
 static void fake_TexImage2D(GLenum target,GLint level,GLint internal_format,GLsizei width,
                             GLsizei height,GLint border,GLenum format,GLenum type,
                             const void *pixels){
@@ -366,7 +373,14 @@ static void fake_DeleteVertexArrays(GLsizei n,const GLuint *names){
 static void fake_DrawArrays(GLenum mode,GLint first,GLsizei count){
   note_call();
   if(mode==GL_TRIANGLES && first==0 && count==3) g_fake.draw_calls++;
-  if(mode==GL_TRIANGLE_STRIP && first==0 && count==4) g_fake.strip_draw_calls++;
+  if(mode==GL_TRIANGLE_STRIP && first==0 && count==4){
+    g_fake.strip_draw_calls++;
+    for(unsigned unit=0;unit<3;unit++){
+      GLuint name=g_fake.bound_texture[unit];
+      g_fake.quad_texture[unit]=name;
+      g_fake.quad_filter[unit]=name<FAKE_MAX_TEXTURES?g_fake.textures[name].min_filter:0;
+    }
+  }
 }
 /* The entry points only a content program uses. The fixture records what a test can ask about:
  * how many quads were drawn, and which attribute names were resolved. */
@@ -511,6 +525,8 @@ int anygm_test_graphics_deletes(void){ return g_fake.deletes_issued; }
 int anygm_test_graphics_calls_after_forget(void){ return g_fake.calls_after_forget; }
 int anygm_test_graphics_draw_calls(void){ return g_fake.draw_calls; }
 int anygm_test_graphics_quad_draw_calls(void){ return g_fake.strip_draw_calls; }
+unsigned anygm_test_graphics_quad_texture(unsigned unit){ return unit<3?g_fake.quad_texture[unit]:0; }
+int anygm_test_graphics_quad_filter(unsigned unit){ return unit<3?g_fake.quad_filter[unit]:0; }
 const char *anygm_test_graphics_shader_source(int fragment){ return g_fake.shader_source[fragment?1:0]; }
 void anygm_test_graphics_withhold_attributes(int withhold){ g_fake.no_attributes=withhold; }
 int anygm_test_graphics_attributes_enabled(void){ return g_fake.attributes_enabled; }

@@ -659,8 +659,42 @@ static int crt_terminal_program_case(void){
          crt_terminal_program_extent(240,240,320,240,1);
 }
 
+static int texture_filter_state_case(void){
+  Session source,destination;
+  REQUIRE(session_open(&source),"filter source loads");
+  REQUIRE(session_open(&destination),"filter destination loads");
+  GmlRender *r=&source.engine->render;
+  gml_render_texture_filter_all(r,1);
+  gml_render_texture_filter_set(r,0,0);
+  gml_render_texture_filter_set(r,3,0);
+  REQUIRE(gml_render_gpu_state_push(r),"mixed filter state pushes");
+  gml_render_texture_filter_all(r,0);
+  gml_render_texture_filter_set(r,7,1);
+  size_t size=0,again_size=0;
+  uint8_t *state=serialize(source.engine,&size);
+  REQUIRE(state,"mixed filter state serializes before the first frame");
+  REQUIRE(anygm_state_load(destination.engine,state,size)==ANYGM_OK,
+          "mixed filter state loads into another engine");
+  GmlRender *loaded=&destination.engine->render;
+  REQUIRE(!gml_render_texture_filter_get(loaded,0) &&
+          !gml_render_texture_filter_get(loaded,1) &&
+          gml_render_texture_filter_get(loaded,7),"restored filters match each stage");
+  uint8_t *again=serialize(destination.engine,&again_size);
+  REQUIRE(again && again_size==size && !memcmp(state,again,size),
+          "restored sampler state is byte stable");
+  REQUIRE(gml_render_gpu_state_pop(loaded) &&
+          !gml_render_texture_filter_get(loaded,0) &&
+          gml_render_texture_filter_get(loaded,1) &&
+          !gml_render_texture_filter_get(loaded,3) &&
+          gml_render_texture_filter_get(loaded,7),"restored GPU stack retains per-stage filters");
+  free(again); free(state);
+  session_close(&destination); session_close(&source);
+  return 1;
+}
+
 int main(void){
   static const struct { const char *name; int (*run)(void); } cases[]={
+    {"texture filters and GPU stack restore",texture_filter_state_case},
     {"state bytes match with and without a target",state_bytes_match_case},
     {"save, load and save again produce the same bytes",save_load_save_case},
     {"a state crosses between a target and none",cross_load_case},

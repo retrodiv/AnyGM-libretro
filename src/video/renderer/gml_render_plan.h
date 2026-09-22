@@ -140,6 +140,7 @@ typedef struct GmlPlanUniform {
 typedef struct GmlPlanSampler {
   char name[GML_PLAN_UNIFORM_NAME];
   uint32_t image;
+  uint32_t linear;
 } GmlPlanSampler;
 
 /* The content's shader program as the plan carries it. The four sources are lent from the content

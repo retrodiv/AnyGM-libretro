@@ -41,6 +41,9 @@ int anygm_test_graphics_calls_after_forget(void);
 int anygm_test_graphics_draw_calls(void);
 /* Quads drawn through a content program, as opposed to the presentation triangle. */
 int anygm_test_graphics_quad_draw_calls(void);
+/* Texture identity and minification filter captured at the last content draw. */
+unsigned anygm_test_graphics_quad_texture(unsigned unit);
+int anygm_test_graphics_quad_filter(unsigned unit);
 /* The most recent source text handed to the driver for the vertex (0) or fragment (1) stage. */
 const char *anygm_test_graphics_shader_source(int fragment);
 /* Resolve no vertex attribute, so a program without in_Position can be tested. */

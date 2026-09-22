@@ -3219,6 +3219,27 @@ int main(int argc,char **argv){
   }
   free(map_probe);
   if(visual_word<=map_word){ fprintf(stderr,"canonical visual sections changed order\n"); return 1; }
+  /* Schema 32 appends eight sampler filters and an empty GPU-state stack to the renderer.
+   * This fixture has never changed those defaults. Strip their measured zero record only in
+   * test scratch, then retain every historical size/hash assertion below. */
+  size_t filter_bytes=9u*4u;
+  size_t render_bytes=(size_t)read_u64(deterministic+72);
+  if((uint32_t)read_u64(deterministic+4)!=32 || render_bytes<filter_bytes ||
+     map_vm<filter_bytes || first->render.gpu_state_sp!=0){
+    fprintf(stderr,"canonical sampler state framing changed\n"); return 1;
+  }
+  size_t filter_at=map_vm-filter_bytes;
+  for(size_t i=0;i<filter_bytes;i++) if(deterministic[filter_at+i]){
+    fprintf(stderr,"canonical sampler state is not the untouched default\n"); return 1;
+  }
+  memmove(deterministic+filter_at,deterministic+map_vm,deterministic_size-map_vm);
+  deterministic_size-=filter_bytes;
+  size_t preceding_filter_size=deterministic_size;
+  map_vm-=filter_bytes; map_word-=filter_bytes; visual_word-=filter_bytes;
+  write_u64(deterministic+16,deterministic_size);
+  write_u64(deterministic+72,render_bytes-filter_bytes);
+  write_u64(deterministic+96,deterministic_size-112);
+  write_u32(deterministic+4,31);
   /* The verified empty tilemap table is immediately followed by the two I/O
    * cursors. Strip only their defaults in test scratch and retain every older
    * exact pin below; no runtime reader accepts the preceding format. */
@@ -3375,7 +3396,7 @@ int main(int argc,char **argv){
   uint64_t preceding_hash=state_checksum(deterministic,preceding_size);
   memcpy(deterministic,first_state,first_written);
   deterministic_size=first_written;
-  if(deterministic_size!=22826 || preceding_io_size!=22818 ||
+  if(deterministic_size!=22862 || preceding_filter_size!=22826 || preceding_io_size!=22818 ||
      preceding_delayed_hash!=UINT64_C(0xa3ed237ec81fc73d) ||
      preceding_visual_size!=22302 || preceding_visual_hash!=UINT64_C(0x9351d78c1daaea2b) ||
      preceding_map_size!=22298 || preceding_map_hash!=UINT64_C(0x07f91baea5f9e3ff) ||

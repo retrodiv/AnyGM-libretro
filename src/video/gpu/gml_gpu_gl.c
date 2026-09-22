@@ -67,6 +67,7 @@ typedef struct GlContentProgram {
 
 typedef struct GlSourceTexture {
   GLuint name;
+  int linear;
   uint32_t image_class;
   uint32_t identity;
   uint32_t content_generation;
@@ -391,13 +392,13 @@ int gml_gpu_gl_reset(GmlGpuBackend *backend,const GmlGpuContext *context,
   return 1;
 }
 
-static GlSourceTexture *acquire_source(GmlGpuBackend *backend,const GmlPlanImage *image){
+static GlSourceTexture *acquire_source(GmlGpuBackend *backend,const GmlPlanImage *image,int linear){
   GlSourceTexture *slot=NULL;
   uint32_t oldest=0xFFFFFFFFu;
   for(size_t index=0;index<GML_PLAN_MAX_IMAGES;index++){
     GlSourceTexture *candidate=&backend->sources[index];
     if(candidate->name && candidate->image_class==image->image_class &&
-       candidate->identity==image->identity) return candidate;
+       candidate->identity==image->identity && candidate->linear==linear) return candidate;
   }
   for(size_t index=0;index<GML_PLAN_MAX_IMAGES;index++){
     GlSourceTexture *candidate=&backend->sources[index];
@@ -411,6 +412,7 @@ static GlSourceTexture *acquire_source(GmlGpuBackend *backend,const GmlPlanImage
   }
   slot->image_class=image->image_class;
   slot->identity=image->identity;
+  slot->linear=linear;
   slot->uploaded=0;
   slot->width=0;
   slot->height=0;
@@ -418,8 +420,8 @@ static GlSourceTexture *acquire_source(GmlGpuBackend *backend,const GmlPlanImage
 }
 
 static int upload_source(GmlGpuBackend *backend,const GmlPlanImage *image,
-                         GmlGpuCounters *counters,GLuint *out_name){
-  GlSourceTexture *slot=acquire_source(backend,image);
+                         GmlGpuCounters *counters,GLuint *out_name,int linear){
+  GlSourceTexture *slot=acquire_source(backend,image,linear);
   int recreate;
   if(!slot) return 0;
   slot->last_used=++backend->use_clock;
@@ -814,14 +816,15 @@ static int execute_shader_draw(GmlGpuBackend *backend,GmlRenderPlan *plan,const 
     plan->fallback_reason=GML_PLAN_FALLBACK_SHADER_FAILURE;
     return 0;
   }
-  if(!upload_source(backend,image,counters,&source_name)){
+  if(!upload_source(backend,image,counters,&source_name,op->linear?1:0)){
     record_error(error,error_capacity,"graphics source upload failed");
     return 0;
   }
   for(uint32_t index=0;index<shader->sampler_count && index<GML_PLAN_MAX_SAMPLERS;index++){
     uint32_t bound=shader->samplers[index].image;
     if(bound==GML_PLAN_NO_IMAGE || bound>=plan->image_count) continue;
-    if(!upload_source(backend,&plan->images[bound],counters,&sampler_names[index])){
+    if(!upload_source(backend,&plan->images[bound],counters,&sampler_names[index],
+                      shader->samplers[index].linear?1:0)){
       record_error(error,error_capacity,"graphics sampler upload failed");
       return 0;
     }
@@ -853,7 +856,7 @@ static int execute_shader_draw(GmlGpuBackend *backend,GmlRenderPlan *plan,const 
     if(!entry || entry->type!=GL_SAMPLER_2D || !sampler_names[index]) continue;
     backend->gl.Uniform1iv(entry->location,1,&unit);
     backend->gl.ActiveTexture(units[index]);
-    set_sampler_filter(backend,sampler_names[index],op->linear?1:0);
+    set_sampler_filter(backend,sampler_names[index],shader->samplers[index].linear?1:0);
   }
   backend->gl.ActiveTexture(GL_TEXTURE0);
   set_sampler_filter(backend,source_name,op->linear?1:0);
@@ -1170,7 +1173,7 @@ int gml_gpu_gl_execute(GmlGpuBackend *backend,const GmlGpuContext *context,
         axis_x=identity_axis(image->width);
         axis_y=identity_axis(image->height);
       }
-      if(!upload_source(backend,image,counters,&source_name)){
+      if(!upload_source(backend,image,counters,&source_name,op->linear?1:0)){
         record_error(error,error_capacity,"graphics source upload failed");
         failed=1;
         break;

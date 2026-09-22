@@ -9,9 +9,19 @@ marketing version. It is a numeric field in a validated binary header.
 
 ## Save-state schema
 
-The current AnyGM save-state schema is `30`. It is the format transported by
+The current AnyGM save-state schema is `32`. It is the format transported by
 libretro frontends for manual save states, automatic state slots, and rewind
 snapshots. Those features remain supported.
+
+Schema `32` appends base and auxiliary sampler filtering to the renderer payload, followed by
+its GPU-state stack depth and the active stack records. Each filter is a validated little-endian
+32-bit boolean. An empty stack adds nine words in total; each active entry adds fifteen words,
+including its seven auxiliary filters. The public schema owns this renderer layout; VM schema
+`17` and audio schema `2` are unchanged. Older states reject transactionally.
+
+Schema `31` introduces VM schema `17`: physics body coordinates and the visual-origin offset
+are canonical independently of instance coordinates. Per-fixture translation offsets are removed;
+solver state remains reconstructible from the canonical body and attachment records.
 
 Schema `30` introduces VM schema `16`. Physics fixture records append two doubles
 for the local binding offset and two signed 32-bit words for sensor and collision

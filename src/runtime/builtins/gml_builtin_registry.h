@@ -1896,7 +1896,9 @@ typedef enum GmlBuiltinCachePolicy {
   ENTRY(1799, PHYSICS_APPLY_FORCE, "physics_apply_force", PHYSICS, PHYSICS, ALWAYS) \
   ENTRY(1800, PHYSICS_APPLY_TORQUE, "physics_apply_torque", PHYSICS, PHYSICS, ALWAYS) \
   ENTRY(1801, PHYSICS_APPLY_ANGULAR_IMPULSE, "physics_apply_angular_impulse", PHYSICS, PHYSICS, ALWAYS) \
-  ENTRY(1802, TILE_EXISTS, "tile_exists", LAYERS, LAYERS_LATE, NEVER)
+  ENTRY(1802, TILE_EXISTS, "tile_exists", LAYERS, LAYERS_LATE, NEVER) \
+  ENTRY(1803, GPU_GET_TEXFILTER_EXT, "gpu_get_texfilter_ext", PLATFORM, PLATFORM_NOOPS, ALWAYS) \
+  ALIAS(GPU_GET_TEXFILTER_EXT, "gpu_get_tex_filter_ext", PLATFORM, PLATFORM_NOOPS, ALWAYS)
 
 /* Dynamic prefix IDs retain the previously characterized slow-path order. */
 #define GML_BUILTIN_DYNAMIC_REGISTRY(ENTRY) \
@@ -1911,7 +1913,7 @@ typedef enum GmlBuiltinId {
   GML_BUILTIN_DYNAMIC_REGISTRY(GML_BUILTIN_ID_ENTRY)
 #undef GML_BUILTIN_ID_ALIAS
 #undef GML_BUILTIN_ID_ENTRY
-  GML_BUILTIN_ID_LIMIT = 1803
+  GML_BUILTIN_ID_LIMIT = 1804
 } GmlBuiltinId;
 
 #endif

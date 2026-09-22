@@ -363,6 +363,17 @@ static void render_state_write(GmlRender *render,int view_surface,CoreW *s){
     cw_u32(s,(uint32_t)name_bytes);
     if(name_bytes) cw_raw(s,sp->name,name_bytes);
   }
+  cw_i32(s,render->interp);
+  for(int i=0;i<GML_RENDER_TEXTURE_STAGES-1;i++) cw_i32(s,render->texture_filter[i]);
+  if(render->gpu_state_sp<0 || render->gpu_state_sp>16){ s->ok=0; return; }
+  cw_i32(s,render->gpu_state_sp);
+  for(int i=0;i<render->gpu_state_sp;i++){
+    const struct GmlGpuState *g=&render->gpu_state_stack[i];
+    cw_i32(s,g->alphablend); cw_i32(s,g->alpha_test_enable); cw_i32(s,g->blendmode);
+    cw_i32(s,g->blend_equation); cw_i32(s,g->blend_equation_alpha); cw_i32(s,g->interp);
+    cw_u32(s,g->alpha_test_ref); cw_u32(s,g->color_write_mask);
+    for(int j=0;j<GML_RENDER_TEXTURE_STAGES-1;j++) cw_i32(s,g->texture_filter[j]);
+  }
 }
 
 
@@ -652,6 +663,30 @@ static int render_state_read(GmlRender *render,CoreR *s){
     sp->runtime_source_imgnum=0; sp->runtime_source_removeback=0;
   }
   free(seen_runtime);
+  render->interp=cr_i32(s);
+  if(render->interp<0 || render->interp>1) s->ok=0;
+  for(int i=0;i<GML_RENDER_TEXTURE_STAGES-1;i++){
+    int enabled=cr_i32(s);
+    if(enabled<0 || enabled>1) s->ok=0;
+    render->texture_filter[i]=enabled;
+  }
+  int depth=cr_i32(s);
+  if(!s->ok || depth<0 || depth>16){ s->ok=0; return 0; }
+  render->gpu_state_sp=depth;
+  memset(render->gpu_state_stack,0,sizeof render->gpu_state_stack);
+  for(int i=0;i<depth;i++){
+    struct GmlGpuState *g=&render->gpu_state_stack[i];
+    g->alphablend=cr_i32(s); g->alpha_test_enable=cr_i32(s); g->blendmode=cr_i32(s);
+    g->blend_equation=cr_i32(s); g->blend_equation_alpha=cr_i32(s); g->interp=cr_i32(s);
+    uint32_t reference=cr_u32(s),mask=cr_u32(s);
+    if(reference>255 || mask>15 || g->interp<0 || g->interp>1) s->ok=0;
+    g->alpha_test_ref=(uint8_t)reference; g->color_write_mask=(uint8_t)mask;
+    for(int j=0;j<GML_RENDER_TEXTURE_STAGES-1;j++){
+      int enabled=cr_i32(s);
+      if(enabled<0 || enabled>1) s->ok=0;
+      g->texture_filter[j]=enabled;
+    }
+  }
   return s->ok;
 }
 

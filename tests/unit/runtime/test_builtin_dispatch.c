@@ -283,16 +283,24 @@ static int texture_interpolation_ext_alias(GmlVM *vm,LogFixture *log_fixture){
   vm->render=&render;
   int logs_before=log_fixture->count;
   int ok=1;
+  const char *names[]={"texture_set_interpolation_ext","gpu_set_texfilter_ext",
+                       "gpu_set_tex_filter_ext"};
   GmlVal enable[]={vreal(7),vreal(1)};
   GmlVal disable[]={vreal(7),vreal(0)};
-  ok&=expect_real("texture interpolation ext enable return",
-                  call_fast(vm,"texture_set_interpolation_ext",enable,2,&ok),0);
-  ok&=render.interp==1;
-  ok&=expect_real("texture interpolation ext disable return",
-                  call_fast(vm,"texture_set_interpolation_ext",disable,2,&ok),0);
-  ok&=render.interp==0;
+  for(size_t i=0;i<sizeof names/sizeof names[0];i++){
+    ok&=expect_real("texture interpolation ext enable return",
+                    call_fast(vm,names[i],enable,2,&ok),0);
+    ok&=render.interp==0;
+    ok&=expect_real("auxiliary interpolation enabled",
+                    gml_builtin_call(vm,"gpu_get_texfilter_ext",enable,1),1);
+    ok&=expect_real("texture interpolation ext disable return",
+                    gml_builtin_call(vm,names[i],disable,2),0);
+    ok&=render.interp==0;
+    ok&=expect_real("auxiliary interpolation disabled",
+                    gml_builtin_call(vm,"gpu_get_texfilter_ext",disable,1),0);
+  }
   ok&=log_fixture->count==logs_before;
-  if(!ok) fprintf(stderr,"texture_set_interpolation_ext did not select its enable argument\n");
+  if(!ok) fprintf(stderr,"extended filtering escaped its sampler or lost alias dispatch\n");
   vm->render=prior_render;
   return ok;
 }

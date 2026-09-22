@@ -155,6 +155,7 @@ static int engine_plan_content_program_part(AnygmEngine *engine,GmlRenderPlan *p
     const uint32_t *pixels=NULL;
     memcpy(sampler->name,samplers[index].name,sizeof sampler->name);
     sampler->image=GML_PLAN_NO_IMAGE;
+    sampler->linear=samplers[index].interpolation?1u:0u;
     memset(&picture,0,sizeof picture);
     if(samplers[index].surface>=0){
       if(!gml_render_surface_plane(&engine->render,samplers[index].surface,&w,&h,&pixels)) return 0;

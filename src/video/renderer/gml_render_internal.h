@@ -291,7 +291,8 @@ typedef struct GmlRender {
    * reproduces a scaled classic viewport without requiring a GPU-sized render target. */
   uint32_t *classic_interp_phase[3];
   uint32_t *app_interp_phase[3];
-  int       interp;   /* texture_set_interpolation state: 0 nearest (GM default), 1 bilinear. */
+  int       interp;   /* Base-image sampler: 0 nearest, 1 bilinear. */
+  int       texture_filter[GML_RENDER_TEXTURE_STAGES-1];
   int       font_sdf_active;
   double    font_sdf_width;
   int       composites_app;  /* set by a draw when the game blits the application_surface stretched in
@@ -331,6 +332,7 @@ typedef struct GmlRender {
   int       blend_equation, blend_equation_alpha; /* 1 add, 2 max, 3 subtract, 4 reverse-subtract, 5 min */
   struct GmlGpuState {
     int alphablend, alpha_test_enable, blendmode, blend_equation, blend_equation_alpha, interp;
+    int texture_filter[GML_RENDER_TEXTURE_STAGES-1];
     uint8_t alpha_test_ref, color_write_mask;
   } gpu_state_stack[16];
   int       gpu_state_sp;
@@ -445,7 +447,7 @@ typedef struct GmlRender {
     float lut_uvs[4], lut_offset, lut_colors, lut_colorise[4], lut_bounds[4];
     /* Palette-grid shader: find the source color in palette column 0, then sample the selected
      * column (with fractional interpolation). Uniform names/configuration are parsed from GLSL. */
-    int grid;
+    int grid, grid_explicit_mix;
     char grid_sampler[32], grid_uvs_uniform[32], grid_id_uniform[32], grid_pixel_uniform[32];
     float grid_uvs[4], grid_id, grid_pixel[2];
     /* Two-sample channel-offset post-process. The fragment samples the base texture twice, shifts

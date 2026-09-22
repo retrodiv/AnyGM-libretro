@@ -81,9 +81,7 @@ void builtin_set_alpha_blend(GmlRender *render,int enabled){
   gml_render_draw_state_update(render,&state,GML_RENDER_DRAW_STATE_ALPHA_BLEND);
 }
 void builtin_set_interpolation(GmlRender *render,int enabled){
-  GmlRenderDrawState state={0};
-  state.interpolation=enabled;
-  gml_render_draw_state_update(render,&state,GML_RENDER_DRAW_STATE_INTERPOLATION);
+  gml_render_texture_filter_all(render,enabled);
 }
 void builtin_set_blendmode_ext(GmlVM *vm,GmlRender *R,int src,int dst){
   if(!R) return;

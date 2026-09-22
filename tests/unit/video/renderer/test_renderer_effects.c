@@ -1767,6 +1767,24 @@ static void check_named_palette_sampler(void) {
            "a named texture binding bypassed its recognized palette kernel");
     expect(mapped_texture_pixel(&render,UINT32_C(0xff808080))==UINT32_C(0xffffffff),
            "a grayscale index escaped without its authored palette conversion");
+    gml_render_texture_filter_set(&render,sampler,1);
+    expect(render.interp==0 && gml_render_texture_filter_get(&render,sampler)==1,
+           "the palette filter changed the base sampler");
+    expect(mapped_texture_pixel(&render,UINT32_C(0xff808080))==UINT32_C(0xff818181),
+           "linear palette filtering did not interpolate auxiliary texels");
+    GmlRenderShaderSampler stages[4];
+    expect(gml_render_shader_samplers(&render,0,stages,4)==1 && stages[0].interpolation==1,
+           "the device sampler lost its independent filter");
+    expect(gml_render_gpu_state_push(&render),"filter state push failed");
+    gml_render_texture_filter_all(&render,0);
+    expect(!gml_render_texture_filter_get(&render,sampler),"global filter did not override auxiliary");
+    expect(gml_render_gpu_state_pop(&render) && !render.interp &&
+           gml_render_texture_filter_get(&render,sampler),"filter state pop lost the auxiliary filter");
+    gml_render_texture_filter_all(&render,1);
+    gml_render_texture_filter_set(&render,sampler,0);
+    expect(render.interp && !gml_render_texture_filter_get(&render,sampler),
+           "point palette filtering changed a linear base sampler");
+    gml_render_texture_filter_all(&render,0);
     /* The other software palette family resolves the same named binding contract. */
     shader->lut=0;
     shader->grid=1;

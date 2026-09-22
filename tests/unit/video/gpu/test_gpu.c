@@ -449,6 +449,30 @@ static int build_content_plan(GmlRenderPlan *plan,const uint32_t *frame,const ui
   return gml_render_plan_add_shader_draw(plan,source,whole,&shader,1u);
 }
 
+static int content_sampler_filter_case(void){
+  uint32_t frame[8*6]={0},mask[4*4]={0};
+  GmlRenderPlan plan;
+  anygm_test_graphics_reset();
+  GmlGpu *gpu=gml_gpu_create();
+  GmlGpuContext context=fake_context(GML_GPU_API_OPENGL_CORE);
+  REQUIRE(gpu && gml_gpu_context_reset(gpu,&context),"sampler context adopted");
+  REQUIRE(build_content_plan(&plan,frame,mask),"sampler plan built");
+  plan.shader.samplers[0].image=plan.operations[1].source;
+  REQUIRE(gml_gpu_execute_plan(gpu,&plan),"one image drawn through two sampler stages");
+  REQUIRE(anygm_test_graphics_quad_filter(0)==GL_LINEAR &&
+          anygm_test_graphics_quad_filter(1)==GL_NEAREST &&
+          anygm_test_graphics_quad_texture(0)!=anygm_test_graphics_quad_texture(1),
+          "opposite filters on one image require independent device texture state");
+  plan.shader.samplers[0].linear=1;
+  plan.operations[1].linear=0;
+  REQUIRE(gml_gpu_execute_plan(gpu,&plan),"opposite filters reversed");
+  REQUIRE(anygm_test_graphics_quad_filter(0)==GL_NEAREST &&
+          anygm_test_graphics_quad_filter(1)==GL_LINEAR,
+          "cached pictures preserve reversed sampler filters");
+  gml_gpu_destroy(gpu,1);
+  return 1;
+}
+
 static int content_program_case(void){
   uint32_t frame[8*6],mask[4*4];
   GmlGpu *gpu;
@@ -465,6 +489,9 @@ static int content_program_case(void){
   REQUIRE(gml_render_plan_validate(&plan),"content plan validates");
   REQUIRE(gml_gpu_execute_plan(gpu,&plan),"the content program presents the frame");
   REQUIRE(anygm_test_graphics_quad_draw_calls()==1,"one quad is drawn through the content program");
+  REQUIRE(anygm_test_graphics_quad_filter(0)==GL_LINEAR &&
+          anygm_test_graphics_quad_filter(1)==GL_NEAREST,
+          "base and auxiliary textures retain their selected filters");
   REQUIRE(anygm_test_graphics_attributes_enabled()==0,"no attribute array is left enabled");
   REQUIRE(anygm_test_graphics_bound_buffer()==0,"no vertex buffer is left bound");
   REQUIRE(anygm_test_graphics_float_uniforms()==2,"the vector and scalar values are set as floats");
@@ -771,6 +798,7 @@ int main(int argc,char **argv){
     {"reduction_falls_back",reduction_falls_back_case},
     {"no_context_falls_back",no_context_falls_back_case},
     {"content_program",content_program_case},
+    {"content_sampler_filters",content_sampler_filter_case},
     {"content_program_embedded_dialect",content_program_embedded_dialect_case},
     {"content_program_refused",content_program_refused_case},
     {"content_program_readback",content_program_readback_case},
