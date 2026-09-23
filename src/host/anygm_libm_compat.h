@@ -10,7 +10,7 @@
 float anygm_libm_sqrtf_v217(float x);
 float anygm_libm_atan2f_v217(float y,float x);
 
-/* The wrappers the aarch64-linux link step selects with --wrap=sqrtf,--wrap=atan2f. */
+/* The wrappers the aarch64 Linux/glibc link selects with --wrap=sqrtf,--wrap=atan2f. */
 float __wrap_sqrtf(float x);
 float __wrap_atan2f(float y,float x);
 

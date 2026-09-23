@@ -7,7 +7,7 @@
 // Pin both references to the oldest widely available version (present since
 // aarch64's glibc baseline) so a core built on a newer host still loads on
 // an older aarch64 target. Paired with the --wrap=sqrtf,--wrap=atan2f link
-// flags applied only for aarch64-linux cross builds; unused and inert
+// flags applied only for aarch64 Linux/glibc cross builds; unused and inert
 // everywhere else.
 
 #if defined(__linux__) && defined(__aarch64__) && !defined(__ANDROID__)

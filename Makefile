@@ -155,9 +155,13 @@ endif
 ANYGM_TARGET_TRIPLE := $(shell $(CC) -dumpmachine 2>/dev/null)
 ifneq (,$(findstring aarch64,$(ANYGM_TARGET_TRIPLE)))
 ifneq (,$(findstring linux,$(ANYGM_TARGET_TRIPLE)))
-# See src/host/anygm_libm_compat.c: pins sqrtf/atan2f to an older glibc
-# symbol version than a newer aarch64-linux cross toolchain binds by default.
+# Android compiler triples also contain "linux", but Android uses bionic and
+# does not compile the glibc wrappers in src/host/anygm_libm_compat.c.
+ifeq (,$(findstring android,$(ANYGM_TARGET_TRIPLE)))
+# Pin sqrtf/atan2f to an older glibc symbol version than a newer aarch64-linux
+# cross toolchain binds by default.
 CORE_PLATFORM_LDFLAGS += -Wl,--wrap=sqrtf -Wl,--wrap=atan2f
+endif
 endif
 endif
 
