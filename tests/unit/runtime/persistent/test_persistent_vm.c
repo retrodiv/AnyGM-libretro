@@ -734,7 +734,9 @@ int expect_alarm_dispatch_order(void){
     }
   }
   ok=expect_alarm_dispatch_order_for_revision(
-       package_path,16,1112213141.0,"first-generation Studio") &&
+       package_path,15,1112213141.0,"first-generation Studio bytecode 15") &&
+     expect_alarm_dispatch_order_for_revision(
+       package_path,16,1112213141.0,"first-generation Studio bytecode 16") &&
      expect_alarm_dispatch_order_for_revision(
        package_path,17,3111411221.0,"second-generation Studio");
 

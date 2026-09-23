@@ -526,7 +526,7 @@ void gml_vm_step(GmlVM *vm){
   /* Alarm dispatch order varies by format, but positive alarms fire on reaching zero:
    * alarm[i]=N fires N steps later. A below-zero policy adds one frame on every re-arm.
    * Fractional alarms fire on the first tick at or below zero. Set -1 before running the
-   * event so the handler can re-arm. Classic and Studio bytecode 16 dispatch each alarm
+   * event so the handler can re-arm. Classic and first-generation Studio dispatch each alarm
    * subtype by ascending exact object resource, then insertion order within that object. */
   int resource_major_alarm_order=anygm_policy_resource_major_alarm_dispatch(vm->win);
   int alarm_at_zero = anygm_policy_alarm_at_zero(vm->win);

@@ -223,7 +223,7 @@ static inline int anygm_policy_alarm_at_zero(const GmlWin *content){
 static inline int anygm_policy_resource_major_alarm_dispatch(const GmlWin *content){
   const AnygmCompatibilityProfile *p=anygm_profile(content);
   return p?p->alarm_dispatch==ANYGM_ALARM_DISPATCH_RESOURCE_MAJOR:
-    (content&&(content->classic_version||content->bytecode==16));
+    (content&&(content->classic_version||content->bytecode==15||content->bytecode==16));
 }
 static inline double anygm_policy_default_comparison_epsilon(const GmlWin *content){
   const AnygmCompatibilityProfile *p=anygm_profile(content);

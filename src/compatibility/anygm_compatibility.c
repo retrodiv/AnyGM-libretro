@@ -232,7 +232,10 @@ int anygm_compatibility_resolve(const AnygmContentFacts *facts,
   profile->comparison=classic?ANYGM_COMPARISON_CLASSIC_EPSILON:
     ANYGM_COMPARISON_STUDIO_EPSILON;
   profile->default_comparison_epsilon=classic?1e-13:1e-5;
-  profile->alarm_dispatch=(classic||facts->bytecode_revision==16)?
+  /* Both first-generation Studio bytecode revisions dispatch alarms by object
+   * resource, allowing an earlier object's alarm to create instances that a
+   * later object's alarm observes in the same step. */
+  profile->alarm_dispatch=(classic||facts->bytecode_revision==15||facts->bytecode_revision==16)?
     ANYGM_ALARM_DISPATCH_RESOURCE_MAJOR:ANYGM_ALARM_DISPATCH_STANDARD;
   profile->alarm_threshold=ANYGM_ALARM_TRIGGER_AT_ZERO;
   profile->instance_iteration=(!classic&&modern)?ANYGM_INSTANCE_ITERATION_FRAME_SNAPSHOT:
