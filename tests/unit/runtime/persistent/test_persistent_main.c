@@ -40,6 +40,7 @@ int main(int argc,char **argv){
     {"alarm_dispatch_order",expect_alarm_dispatch_order},
     {"automatic_motion_order",expect_automatic_motion_order},
     {"legacy_jump_to_start",expect_legacy_jump_to_start},
+    {"relative_object_condition",expect_relative_object_condition},
     {"linear_motion_collision_filters",expect_linear_motion_collision_filters},
     {"event_boundary_room_transition",expect_event_boundary_room_transition},
     {"room_transition_animation_phase",expect_room_transition_animation_phase},

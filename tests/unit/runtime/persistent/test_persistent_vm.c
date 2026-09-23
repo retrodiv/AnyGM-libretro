@@ -789,6 +789,60 @@ int expect_legacy_jump_to_start(void){
   return ok;
 }
 
+int expect_relative_object_condition(void){
+  int ok=1;
+  const double offsets[][2]={{-8,0},{8,0},{0,-8},{0,8}};
+  for(int cached=0;cached<2;cached++){
+    GmlSprite sprite={.w=3,.h=3,.mr=2,.mb=2,.collision_kind=1};
+    GmlRender render={.spr=&sprite,.n_spr=1};
+    GmlObject objects[2]={{.parent=-1},{.parent=-1}};
+    GmlInstance instances[2]={0};
+    for(int i=0;i<2;i++){
+      instances[i].id=100000+i;
+      instances[i].obj=i;
+      instances[i].active=1;
+      instances[i].image_xscale=instances[i].image_yscale=1;
+    }
+    GmlInstance *self=&instances[0],*target=&instances[1];
+    self->x=100; self->y=70;
+    self->hspeed=3; self->vspeed=-2;
+    GmlVM vm={.render=&render,.inst=instances,.inst_count=2,.inst_cap=2,
+              .cur_self=self,.objects=objects,.n_objects=2};
+    const char *name="action_if_object";
+    int id=gml_builtin_fast_id(&vm,name);
+    for(int direction=0;direction<4;direction++){
+      double dx=offsets[direction][0],dy=offsets[direction][1];
+      /* The query origin misses the target, but the two masks overlap. */
+      target->x=self->x+dx+1; target->y=self->y+dy;
+      gml_colgrid_invalidate(&vm);
+      const struct { int flag,argc,explicit_relative,absolute,hit; } probes[]={
+        {1,3,0,0,1},{0,3,0,0,0},
+        {1,4,0,0,0},{0,4,1,0,1},{1,4,1,0,1},
+        {0,3,0,1,1},{1,4,0,1,1},{1,3,0,1,0}
+      };
+      for(size_t i=0;i<sizeof probes/sizeof probes[0];i++){
+        double x=dx+(probes[i].absolute?self->x:0);
+        double y=dy+(probes[i].absolute?self->y:0);
+        GmlVal args[]={vreal(1),vreal(x),vreal(y),vreal(probes[i].explicit_relative)};
+        vm.action_relative=probes[i].flag;
+        GmlVal result=cached?gml_builtin_call_fast_id(&vm,id,name,args,probes[i].argc)
+                            :gml_builtin_call(&vm,name,args,probes[i].argc);
+        int matched=result.t==V_REAL && result.d==probes[i].hit &&
+                    vm.action_relative==probes[i].flag && self->x==100 && self->y==70 &&
+                    self->hspeed==3 && self->vspeed==-2;
+        if(!matched)
+          fprintf(stderr,"object condition mode=%d direction=%d probe=%zu hit=%.0f expected=%d\n",
+                  cached,direction,i,result.t==V_REAL?result.d:-1.0,probes[i].hit);
+        ok &= matched;
+      }
+    }
+    vm.render=NULL; vm.inst=NULL; vm.inst_count=vm.inst_cap=0;
+    vm.cur_self=NULL; vm.objects=NULL; vm.n_objects=0;
+    gml_vm_free(&vm);
+  }
+  return ok;
+}
+
 static double fixture_linear_step(GmlVM *vm,int cached,const char *name,
                                   double x,double y,double step,double target){
   GmlVal args[]={vreal(x),vreal(y),vreal(step),vreal(target)};
@@ -2351,14 +2405,20 @@ int expect_hash_layer_gpu_gap_closure(void){
   ok=ok && ref.t==V_REAL && ref.d==255 && enabled.t==V_REAL && enabled.d==1 &&
      shaders.t==V_REAL && shaders.d==1;
 
-  render.interp=1;
-  GmlVal texfilter_ext[2]={vreal(37),vreal(0)};
-  (void)gml_builtin_call(&vm,"gpu_set_texfilter_ext",texfilter_ext,2);
-  ok=ok && render.interp==0;
   GmlVal texfilter=vreal(1);
   (void)gml_builtin_call(&vm,"gpu_set_texfilter",&texfilter,1);
+  GmlVal texfilter_ext[2]={vreal(37),vreal(0)};
+  (void)gml_builtin_call(&vm,"gpu_set_texfilter_ext",texfilter_ext,2);
+  ok=ok && render.interp==1;
+  texfilter_ext[0]=vreal(1);
+  (void)gml_builtin_call(&vm,"gpu_set_texfilter_ext",texfilter_ext,2);
+  GmlVal stage_filter=gml_builtin_call(&vm,"gpu_get_texfilter_ext",texfilter_ext,1);
+  ok=ok && render.interp==1 && stage_filter.t==V_REAL && stage_filter.d==0;
+  (void)gml_builtin_call(&vm,"gpu_set_texfilter",&texfilter,1);
   GmlVal texfilter_get=gml_builtin_call(&vm,"gpu_get_texfilter",NULL,0);
-  int filter_ok=render.interp==1 && texfilter_get.t==V_REAL && texfilter_get.d==1;
+  stage_filter=gml_builtin_call(&vm,"gpu_get_texfilter_ext",texfilter_ext,1);
+  int filter_ok=render.interp==1 && texfilter_get.t==V_REAL && texfilter_get.d==1 &&
+    stage_filter.t==V_REAL && stage_filter.d==1;
   ok=ok && filter_ok;
   GmlVal texrepeat[2]={vreal(17),vreal(1)};
   GmlVal texrepeat_result=gml_builtin_call(&vm,"gpu_set_texrepeat",texrepeat,2);

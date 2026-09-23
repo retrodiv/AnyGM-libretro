@@ -99,7 +99,8 @@ GmlVal gml_builtin_try_actions_legacy(GmlVM *vm, const char *nm, GmlVal *a, int 
   if(!strcmp(nm,"action_if_object")){
     GmlInstance *s=vm->cur_self;
     double x=N(a,n,1), y=N(a,n,2);
-    if(n>=4 && N(a,n,3)!=0 && s){ x+=s->x; y+=s->y; }
+    int relative=n>=4 ? N(a,n,3)!=0 : vm->action_relative;
+    if(relative && s){ x+=s->x; y+=s->y; }
     /* Test whether this instance would meet a target at the requested position, using the same
      * mask comparison as place_meeting. A point query answers a different question. */
     return vreal(collision_at(vm,x,y,(int)N(a,n,0),0));
