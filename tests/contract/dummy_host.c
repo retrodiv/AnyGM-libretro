@@ -178,12 +178,15 @@ static int exercise_declared_global_cadence(AnygmEngine *engine){
   unsigned saved_room_speed_cadence=engine->compatibility.uses_room_speed_cadence;
   double saved_fps=engine->fps;
   int saved_fps_room=engine->fps_room;
+  unsigned saved_frame_flags=engine->frame_flags;
+  double saved_audio_accumulator=engine->audio_accumulator;
   GmlVal *room_speed=gml_varmap_get(&engine->vm.globals,"room_speed");
   int had_room_speed=room_speed!=NULL;
   GmlVal saved_room_speed=had_room_speed?*room_speed:vundef();
 
   engine->win.game_speed=30.0;
   engine->compatibility.has_modern_layer_semantics=1;
+  *gml_varmap_put(&engine->vm.globals,"room_speed")=vreal(48.0);
   engine->fps_room=-1;
   sync_room_fps(engine,0);
 
@@ -201,6 +204,22 @@ static int exercise_declared_global_cadence(AnygmEngine *engine){
   sync_room_fps(engine,0);
   ok=ok && anygm_get_av_info(engine,&av)==ANYGM_OK && av.frames_per_second==30.0;
 
+  /* Older content can change cadence without changing the room resource.
+   * Each change must reach the host and discard the old audio remainder. */
+  engine->win.bytecode=15;
+  engine->compatibility.has_modern_layer_semantics=0;
+  const double runtime_rates[]={48.0,72.0};
+  for(size_t i=0;i<sizeof runtime_rates/sizeof runtime_rates[0];i++){
+    *gml_varmap_put(&engine->vm.globals,"room_speed")=vreal(runtime_rates[i]);
+    engine->frame_flags=0;
+    engine->audio_accumulator=0.5;
+    sync_room_fps(engine,1);
+    ok=ok && anygm_get_av_info(engine,&av)==ANYGM_OK &&
+       av.frames_per_second==runtime_rates[i] &&
+       (engine->frame_flags&ANYGM_FRAME_TIMING_CHANGED) &&
+       engine->audio_accumulator==0.0;
+  }
+
   engine->win.game_speed=saved_content_fps;
   engine->win.bytecode=saved_bytecode;
   *gml_varmap_put(&engine->vm.globals,"room_speed")=had_room_speed?saved_room_speed:vundef();
@@ -208,7 +227,9 @@ static int exercise_declared_global_cadence(AnygmEngine *engine){
   engine->compatibility.uses_room_speed_cadence=saved_room_speed_cadence;
   engine->fps=saved_fps;
   engine->fps_room=saved_fps_room;
-  if(!ok) return fail("declared global cadence was not reported to the host");
+  engine->frame_flags=saved_frame_flags;
+  engine->audio_accumulator=saved_audio_accumulator;
+  if(!ok) return fail("declared or runtime cadence was not reported to the host");
   return 0;
 }
 

@@ -499,7 +499,10 @@ static double cur_room_fps_unclamped(AnygmEngine *engine) {
     if(fps > 0.0) return fps;
   }
   GmlRoom r;
-  if (gml_vm_room_get(&engine->vm, engine->vm.room_index, &r) == 0 && r.speed > 0) return (double)r.speed;
+  /* Room-based cadence follows assignments made by the running content, not
+   * only the initial value in the room resource. */
+  if (gml_vm_room_get(&engine->vm, engine->vm.room_index, &r) == 0 && r.speed > 0)
+    return gml_room_speed(&engine->vm);
   if(engine->win.game_speed > 0.0) return engine->win.game_speed;
   return 60.0;
 }
