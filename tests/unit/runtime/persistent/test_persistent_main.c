@@ -39,6 +39,7 @@ int main(int argc,char **argv){
     {"revision16_legacy_room_view",expect_revision16_room_uses_legacy_view},
     {"room_order_boundaries",expect_room_order_boundaries},
     {"alarm_dispatch_order",expect_alarm_dispatch_order},
+    {"alarm_newborn_deferral",expect_alarm_newborn_deferral},
     {"automatic_motion_order",expect_automatic_motion_order},
     {"legacy_jump_to_start",expect_legacy_jump_to_start},
     {"relative_object_condition",expect_relative_object_condition},

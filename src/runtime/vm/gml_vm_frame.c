@@ -530,10 +530,9 @@ void gml_vm_step(GmlVM *vm){
    * subtype by ascending exact object resource, then insertion order within that object. */
   int resource_major_alarm_order=anygm_policy_resource_major_alarm_dispatch(vm->win);
   int alarm_at_zero = anygm_policy_alarm_at_zero(vm->win);
-  /* An instance created by an alarm does not tick or fire its own alarms in the same pass. Where
-   * dispatch is instance-major the pass is the phase, so one watermark taken here covers it; the
-   * resource-major order takes its own per group, because there a group that has not started yet
-   * legitimately sees an instance an earlier group made. */
+  /* Studio snapshots alarm membership for the whole phase, including later subtypes and object
+   * groups. Classic retains its per-group population. Resource ordering alone must not let a
+   * newborn tick an alarm before the following step. */
   uint32_t alarm_first_id=vm->next_id;
   if(resource_major_alarm_order){
     for(int a=0;a<GML_ALARMS;a++){
@@ -547,7 +546,8 @@ void gml_vm_step(GmlVM *vm){
         int native_declared=gml_vm_instances_native_event_declared(
           vm,2,a,object,NULL,&declared_code);
         if(!native_declared && !gml_vm_instances_event_lookup(vm,s,object,NULL,NULL)) continue;
-        uint32_t group_first_id=vm->next_id;
+        uint32_t group_first_id=anygm_policy_uses_classic_runtime(vm->win)?
+          vm->next_id:alarm_first_id;
         int count=gml_vm_instances_collect_object_slots(vm,object);
         if(count<0) continue;
         for(int k=count-1;k>=0;k--){ int i=vm->event_ord[k];

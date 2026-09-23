@@ -751,6 +751,83 @@ cleanup:
 }
 
 
+/* A later alarm subtype must not tick an instance born during an earlier subtype.
+ * The resource ordering of existing responders remains a separate contract. */
+int expect_alarm_newborn_deferral(void){
+  GmlcProject project={0};
+  GmlcObject objects[2]={{0}};
+  GmlcObjectEvent events[4]={{0}};
+  GmlcRoom room={0};
+  GmlcRoomInstance placed={0};
+  int room_order=0,ok=0;
+  AnygmHostServices services={0};
+  char paths[5][64]={{0}};
+  const char *source[4]={
+    "alarm[0]=1; global.late_hits=0;\n",
+    "instance_create(0,0,1);\n",
+    "alarm[1]=1;\n",
+    "global.late_hits+=1;\n"
+  };
+  for(int i=0;i<5;i++){
+    snprintf(paths[i],sizeof paths[i],"/tmp/gml-alarm-newborn-%d-XXXXXX",i);
+    int fd=mkstemp(paths[i]);
+    if(fd<0) goto cleanup;
+    close(fd);
+    if(i<4 && !fixture_write_text(paths[i],source[i])) goto cleanup;
+  }
+  services.struct_size=sizeof services;
+  services.abi_version=ANYGM_HOST_SERVICES_VERSION;
+  anygm_stdio_vfs_services_init(&services);
+  project.name="alarm-newborn-fixture"; project.host=&services;
+  project.objects=objects; project.n_objects=project.cap_objects=2;
+  project.rooms=&room; project.n_rooms=project.cap_rooms=1;
+  project.room_order=&room_order; project.n_room_order=1;
+  for(int i=0;i<2;i++){
+    objects[i].id=objects[i].name=i?"obj_late":"obj_spawner";
+    objects[i].sprite_id=objects[i].mask_id=objects[i].parent_id=-1;
+    objects[i].events=&events[i*2]; objects[i].n_events=objects[i].cap_events=2;
+    events[i*2].event_type=0; events[i*2].source_path=paths[i*2];
+    events[i*2+1].event_type=2; events[i*2+1].event_number=i;
+    events[i*2+1].source_path=paths[i*2+1];
+  }
+  room.id=room.name="room_alarm_newborn"; room.width=64; room.height=48; room.speed=60;
+  room.instances=&placed; room.n_instances=room.cap_instances=1;
+  placed.id=placed.name="placed_spawner"; placed.object_id=0; placed.instance_id=100000;
+  placed.sx=placed.sy=1; placed.color=0xFFFFFFFFu;
+  char error[256]={0};
+  if(!gmlc_package_write_structural(&project,paths[4],error,sizeof error)) goto cleanup;
+  ok=1;
+  for(int revision=15;revision<=17;revision++){
+    GmlWin win;
+    if(anygm_stdio_load_win(&win,paths[4])){ ok=0; break; }
+    win.bytecode=(uint8_t)revision;
+    AnygmContentFacts facts={0}; AnygmCompatibilityProfile profile={0};
+    int resolved=anygm_content_facts_detect(&win,&facts,error,sizeof error) &&
+      anygm_compatibility_resolve(&facts,&profile,error,sizeof error);
+    win.compatibility=&profile;
+    GmlVM vm;
+    if(!resolved || gml_vm_init(&vm,&win,NULL)){
+      gml_win_free(&win); ok=0; break;
+    }
+    gml_room_enter(&vm,0);
+    gml_vm_step(&vm);
+    GmlVal *hits=gml_varmap_get(&vm.globals,"late_hits");
+    int deferred=hits && hits->t==V_REAL && hits->d==0;
+    gml_vm_step(&vm);
+    hits=gml_varmap_get(&vm.globals,"late_hits");
+    int fired=hits && hits->t==V_REAL && hits->d==1;
+    if(!deferred || !fired){
+      fprintf(stderr,"bytecode %d newborn alarm: deferred=%d fired-next-step=%d\n",
+        revision,deferred,fired);
+      ok=0;
+    }
+    gml_vm_free(&vm); win.compatibility=NULL; gml_win_free(&win);
+  }
+cleanup:
+  for(int i=0;i<5;i++) if(paths[i][0]) unlink(paths[i]);
+  return ok;
+}
+
 int expect_legacy_jump_to_start(void){
   int ok=1;
   for(int cached=0;cached<2;cached++){

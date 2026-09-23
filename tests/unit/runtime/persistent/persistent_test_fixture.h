@@ -43,6 +43,7 @@ int expect_room_camera_reservation(void);
 int expect_revision16_room_uses_legacy_view(void);
 int expect_room_order_boundaries(void);
 int expect_alarm_dispatch_order(void);
+int expect_alarm_newborn_deferral(void);
 int expect_automatic_motion_order(void);
 int expect_legacy_jump_to_start(void);
 int expect_relative_object_condition(void);
