@@ -2542,20 +2542,28 @@ static int bridged_key_press_delivery_policy(void){
   input.struct_size=sizeof input;
   input.pointer_x=input.pointer_y=-1;
   AnygmFrameOutput output={0};
+  int queried_presses[5]={0};
   for(int frame=0;ok && frame<5;frame++){
     output.struct_size=sizeof output;
     ok=anygm_run_frame(engine,&input,&output)==ANYGM_OK;
+    /* A Draw-time check must agree with event delivery: the paired press is
+     * visible only in the following frame, even while its held bit is set. */
+    queried_presses[frame]=engine->vm.input.key(engine->vm.input.userdata,39,1);
   }
   /* Key events run before the step, so the event seeing one completed step is the frame after the
    * one that raised the press. A second delivery would leave a later count behind. */
   ok=ok && gml_global_num(&engine->vm,"fixture_presses")==1 &&
      gml_global_num(&engine->vm,"fixture_press_step")==1 &&
+     !queried_presses[0] && queried_presses[1] && !queried_presses[2] &&
+     !queried_presses[3] && !queried_presses[4] &&
      !engine->vm.input.key(engine->vm.input.userdata,39,0);
   if(!ok)
     fprintf(stderr,"a key pressed and released in one step was not delivered once to the next: "
-                   "presses=%.0f step=%.0f\n",
+                   "presses=%.0f step=%.0f queries=%d,%d,%d,%d,%d\n",
             engine?gml_global_num(&engine->vm,"fixture_presses"):-1.0,
-            engine?gml_global_num(&engine->vm,"fixture_press_step"):-1.0);
+            engine?gml_global_num(&engine->vm,"fixture_press_step"):-1.0,
+            queried_presses[0],queried_presses[1],queried_presses[2],
+            queried_presses[3],queried_presses[4]);
   anygm_destroy(engine);
   anygm_synthetic_content_destroy(&fixture);
   return ok;
