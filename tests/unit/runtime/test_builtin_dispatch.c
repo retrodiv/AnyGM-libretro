@@ -104,7 +104,7 @@ static GmlVal call_fast(GmlVM *vm,const char *name,
 }
 
 static int setup_fixture(GmlWin *win,GmlVM *vm,AnygmHostServices *host,
-                         LogFixture *log_fixture){
+                         LogFixture *log_fixture,const char *first_script_name){
   static const ScriptFixture scripts[]={
     {"gml_Script_abs",73},
     {"gml_Script_neutral_dispatch",74},
@@ -132,6 +132,7 @@ static int setup_fixture(GmlWin *win,GmlVM *vm,AnygmHostServices *host,
       .length=8,
     };
   }
+  win->code[0].name=first_script_name;
   win->n_chunks=2;
   memcpy(win->chunks[0].name,"ROOM",5);
   win->chunks[0].off=64;
@@ -170,6 +171,42 @@ static int setup_fixture(GmlWin *win,GmlVM *vm,AnygmHostServices *host,
   host->userdata=log_fixture;
   host->log=log_fixture_write;
   return gml_vm_init(vm,win,host)==0;
+}
+
+/* Reinitializing a payload in the same stack owner must not reuse the previous script answer. */
+static int payload_shadow_cache_lifetime(GmlWin *win,GmlVM *vm,
+                                         AnygmHostServices *host,LogFixture *log_fixture){
+  GmlVal argument=vreal(-9);
+  int ok=setup_fixture(win,vm,host,log_fixture,"gml_Script_other_name");
+  if(ok){
+    int fast=gml_builtin_fast_id(vm,"abs");
+    GmlVal answer=gml_builtin_call(vm,"abs",&argument,1);
+    ok=fast>=0 && expect_real("builtin after content replacement",answer,9);
+  }
+  gml_vm_free(vm);
+  gml_win_free(win);
+  if(!ok) return 0;
+  ok=setup_fixture(win,vm,host,log_fixture,"gml_Script_abs");
+  if(ok){
+    int fast=gml_builtin_fast_id(vm,"abs");
+    GmlVal answer=gml_builtin_call(vm,"abs",&argument,1);
+    ok=fast==-1 && expect_real("payload script after content replacement",answer,73);
+  }
+  gml_vm_free(vm);
+  gml_win_free(win);
+  if(!ok) return 0;
+  ok=setup_fixture(win,vm,host,log_fixture,"gml_Script_draw_set_colour");
+  if(ok){
+    GmlVal color=vreal(0);
+    int canonical=gml_builtin_fast_id(vm,"draw_set_color");
+    int alias=gml_builtin_fast_id(vm,"draw_set_colour");
+    GmlVal answer=gml_builtin_call(vm,"draw_set_colour",&color,1);
+    ok=canonical>=0 && alias==-1 &&
+       expect_real("same-ID alias has its own script precedence",answer,73);
+  }
+  gml_vm_free(vm);
+  gml_win_free(win);
+  return ok;
 }
 
 static int room_dimension_mutation(GmlVM *vm){
@@ -1273,7 +1310,7 @@ int main(int argc,char **argv){
   GmlVM vm={0};
   AnygmHostServices host={0};
   LogFixture log_fixture={0};
-  if(!setup_fixture(&win,&vm,&host,&log_fixture)){
+  if(!setup_fixture(&win,&vm,&host,&log_fixture,"gml_Script_abs")){
     fprintf(stderr,"builtin dispatch fixture setup failed\n");
     gml_vm_free(&vm);
     gml_win_free(&win);
@@ -1312,6 +1349,7 @@ int main(int argc,char **argv){
          rounded_contextual_precedence(&vm);
   gml_vm_free(&vm);
   gml_win_free(&win);
+  if(!guid_only) ok=payload_shadow_cache_lifetime(&win,&vm,&host,&log_fixture) && ok;
   if(!ok) return 1;
   puts(guid_only ? "gamepad identity capability contract: ok" :
                   "builtin dispatch precedence fixtures: ok");

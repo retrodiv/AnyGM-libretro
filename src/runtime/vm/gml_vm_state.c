@@ -147,16 +147,12 @@ static unsigned state_str_memo_slot(const char *p){
   return (unsigned)(v&(STATE_STR_MEMO_SLOTS-1u));
 }
 
-static int state_str_index_by_ptr(GmlVM *vm, const char *p){
-  if(!vm || !vm->win || !p) return -1;
-  /* Canonicalize by string content, not by the allocation that currently owns the bytes.
-   * Runtime text loaded from a sidecar may equal a STRG entry while living outside the content
-   * mapping. A state load interns that text, so pointer-only compaction made save-load-save choose
-   * two different encodings for the same value. */
-  p=gml_win_intern_lookup(vm->win,p);
-  if(!p) return -1;
+static int state_str_index_by_ptr(GmlVM *vm, const char *canonical){
+  if(!vm || !vm->win || !canonical) return -1;
+  /* The caller already resolved text through the content table. Keeping that one lookup is
+   * essential: a runtime allocation equal to a STRG entry needs the same encoding after load. */
   const uint8_t *base=vm->win->data;
-  const uint8_t *q=(const uint8_t*)p;
+  const uint8_t *q=(const uint8_t*)canonical;
   if(q < base || q >= base + vm->win->size) return -1;
   uint32_t off=(uint32_t)(q-base);
   int lo=0, hi=vm->win->n_strs-1;
@@ -170,6 +166,19 @@ static int state_str_index_by_ptr(GmlVM *vm, const char *p){
 static void sw_str(StateW *s, const char *p){
   if(!p) p="";
   if(s->compact_strings){
+    /* A prior answer for an immutable content pointer remains valid for this VM. Test its range
+     * before using the pointer memo; runtime strings can be freed and reused after a restore. */
+    GmlWin *win=s->vm?s->vm->win:NULL;
+    if(s->memo && win && win->data){
+      uintptr_t address=(uintptr_t)p, base=(uintptr_t)win->data;
+      if(address>=base && address-base<win->size){
+        unsigned slot=state_str_memo_slot(p);
+        if(s->memo->key[slot]==p && s->memo->index[slot]>=0){
+          sw_u32(s,0x80000000u | (uint32_t)s->memo->index[slot]);
+          return;
+        }
+      }
+    }
     /* Only mapping-owned pointers are stable for the lifetime of this memo. A runtime allocation
      * may be freed during state restore and later reused for unrelated text, so retaining that
      * address could emit a stale STRG index on the next save. */

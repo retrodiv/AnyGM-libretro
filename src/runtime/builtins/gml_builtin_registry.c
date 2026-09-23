@@ -112,22 +112,19 @@ static const GmlBuiltinRegistryEntry *gml_builtin_exact_entry(
  * because a same-named core feature claimed the name and did something else entirely. The answer
  * is per payload and per name, so one code-table probe is paid once for each builtin the payload
  * actually redefines. */
-static const GmlWin *gml_builtin_shadow_win=NULL;
-static signed char gml_builtin_shadow[GML_BUILTIN_ID_LIMIT];
-
-static int gml_builtin_shadowed_by_payload(GmlVM *vm,int id,const char *name){
-  if(!vm || !vm->win || !name || id<=0 || id>=GML_BUILTIN_ID_LIMIT) return 0;
-  if(gml_builtin_shadow_win!=vm->win){
-    gml_builtin_shadow_win=vm->win;
-    memset(gml_builtin_shadow,-1,sizeof gml_builtin_shadow);
-  }
-  if(gml_builtin_shadow[id]<0){
-    char code_name[192];
-    int written=snprintf(code_name,sizeof code_name,"gml_Script_%s",name);
-    gml_builtin_shadow[id]=(written>0 && written<(int)sizeof code_name &&
-                            gml_code_index_by_name(vm->win,code_name)>=0)?1:0;
-  }
-  return gml_builtin_shadow[id];
+static int gml_builtin_shadowed_by_payload(GmlVM *vm,const GmlBuiltinRegistryEntry *entry){
+  if(!vm || !vm->win || !entry) return 0;
+  size_t index=(size_t)(entry-gml_builtin_exact_registry);
+  if(!vm->builtin_shadow_cache)
+    vm->builtin_shadow_cache=calloc(GML_BUILTIN_REGISTRY_ENTRY_COUNT,1);
+  unsigned char *cache=vm->builtin_shadow_cache;
+  if(cache && cache[index]) return cache[index]==2;
+  char code_name[192];
+  int written=snprintf(code_name,sizeof code_name,"gml_Script_%s",entry->name);
+  int shadowed=written>0 && written<(int)sizeof code_name &&
+               gml_code_index_by_name(vm->win,code_name)>=0;
+  if(cache) cache[index]=shadowed?2:1;
+  return shadowed;
 }
 
 /* The payload's own code index for a name it redefines, or -1 when the builtin is the only
@@ -135,7 +132,7 @@ static int gml_builtin_shadowed_by_payload(GmlVM *vm,int id,const char *name){
  * themselves. */
 int gml_builtin_payload_shadow_script(GmlVM *vm,const char *nm){
   const GmlBuiltinRegistryEntry *entry=gml_builtin_exact_entry(nm);
-  if(!entry || !gml_builtin_shadowed_by_payload(vm,entry->id,nm)) return -1;
+  if(!gml_builtin_shadowed_by_payload(vm,entry)) return -1;
   char code_name[192];
   int written=snprintf(code_name,sizeof code_name,"gml_Script_%s",nm);
   if(written<=0 || written>=(int)sizeof code_name) return -1;
@@ -146,7 +143,7 @@ int gml_builtin_fast_id(GmlVM *vm,const char *nm){
   if(!nm || !*nm) return -1;
   const GmlBuiltinRegistryEntry *entry=gml_builtin_exact_entry(nm);
   if(entry){
-    if(gml_builtin_shadowed_by_payload(vm,entry->id,nm)) return -1;
+    if(gml_builtin_shadowed_by_payload(vm,entry)) return -1;
     switch((GmlBuiltinCachePolicy)entry->cache){
       case GML_BUILTIN_CACHE_ALWAYS:
         return entry->id;

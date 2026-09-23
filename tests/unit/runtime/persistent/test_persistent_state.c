@@ -208,6 +208,7 @@ int expect_vm_state_case(void){
   gml_vm_software3d_reset(&vm);
   *gml_varmap_put(&vm.globals,"state_value")=vreal(37);
   *gml_varmap_put(&vm.globals,"runtime_text")=vstr(runtime_string);
+  *gml_varmap_put(&vm.globals,"mapped_text")=vstr((char *)content_string);
   GmlVal ordinary=gml_arr_new(2,vreal(0));
   GmlVal ordinary_child=gml_arr_new(2,vreal(0));
   gml_arr_set(ordinary_child,0,vreal(11));
@@ -226,6 +227,8 @@ int expect_vm_state_case(void){
   size_t size=gml_vm_state_size(&vm),first_size=0,second_size=0,used=0;
   void *first=malloc(size?size:1);
   void *second=malloc(size?size:1);
+  /* Compare a cold lookup table with the warmed table used on repeated rewind saves. */
+  free(vm.state_str_memo); vm.state_str_memo=NULL;
   int ok=first && second &&
     gml_vm_state_save(&vm,first,size,&first_size) && first_size==size &&
     gml_vm_state_save(&vm,second,size,&second_size) && second_size==first_size &&
@@ -234,6 +237,7 @@ int expect_vm_state_case(void){
   if(ok) ok=gml_vm_state_load(&vm,first,size,&used) && used==size;
   GmlVal *value=gml_varmap_get(&vm.globals,"state_value");
   GmlVal *text=gml_varmap_get(&vm.globals,"runtime_text");
+  GmlVal *mapped=gml_varmap_get(&vm.globals,"mapped_text");
   GmlVal *restored_ordinary=gml_varmap_get(&vm.globals,"ordinary_nested_array");
   GmlVal *restored_indexed_2d=gml_varmap_get(&vm.globals,"indexed_2d_array");
   GmlVal ordinary_first=restored_ordinary
@@ -242,6 +246,7 @@ int expect_vm_state_case(void){
     ? gml_arr_get_2d(*restored_indexed_2d,0,1) : vreal(0);
   ok=ok && value && value->t==V_REAL && value->d==37 &&
     text && text->t==V_STR && !strcmp(text->s,runtime_string) &&
+    mapped && mapped->t==V_STR && !strcmp(mapped->s,(char *)content_string) &&
     restored_ordinary && restored_ordinary->t==V_ARR &&
     restored_ordinary->arr && !((GmlArr *)restored_ordinary->arr)->nested_2d &&
     ordinary_first.t==V_ARR && gml_val_array_length(ordinary_first)==2 &&

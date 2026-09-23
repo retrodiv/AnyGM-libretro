@@ -408,6 +408,7 @@ void gml_vm_free(GmlVM *vm){
   free(vm->event_ord); vm->event_ord=NULL; vm->event_ord_cap=0;
   free(vm->special_var_hash); vm->special_var_hash=NULL; vm->special_var_bloom=0;
   free(vm->state_str_memo); vm->state_str_memo=NULL;
+  free(vm->builtin_shadow_cache); vm->builtin_shadow_cache=NULL;
   free(vm->step_free); vm->step_free=NULL;
   vm->step_free_n=vm->step_free_pos=vm->step_free_cap=0;
   free(vm->cg_off); vm->cg_off=NULL; vm->cg_off_cap=0;
