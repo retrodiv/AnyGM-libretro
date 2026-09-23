@@ -1195,6 +1195,49 @@ int expect_generic_external_audio_restore(void){
   }
 
   GmlVal relative=vstr("tone.wav");
+  static const char supersound_load[]=
+    "__anygm_external_7375706572736f756e642e646c6c_53535f4c6f6164536f756e64";
+  static const char supersound_loop[]=
+    "__anygm_external_7375706572736f756e642e646c6c_53535f4c6f6f70536f756e64";
+  static const char supersound_set_volume[]=
+    "__anygm_external_7375706572736f756e642e646c6c_53535f536574536f756e64566f6c";
+  static const char supersound_get_volume[]=
+    "__anygm_external_7375706572736f756e642e646c6c_53535f476574536f756e64566f6c";
+  static const char supersound_free[]=
+    "__anygm_external_7375706572736f756e642e646c6c_53535f46726565536f756e64";
+  GmlVal ss_loaded=gml_builtin_call(&vm,supersound_load,&relative,1);
+  int ss_sound=ss_loaded.t==V_STR && ss_loaded.s ? atoi(ss_loaded.s) : -1;
+  int ss_ok=ss_loaded.t==V_STR && ss_loaded.d==1.0 && ss_sound>=0 &&
+    gml_audio_exists(audio,ss_sound);
+  if(ss_ok){
+    GmlVal ss_handle=vreal(ss_sound);
+    GmlVal ss_level[]={ss_handle,vreal(0)};
+    (void)gml_builtin_call(&vm,supersound_loop,&ss_handle,1);
+    (void)gml_builtin_call(&vm,supersound_set_volume,ss_level,2);
+    int16_t mixed[128]={0};
+    gml_audio_mix(audio,mixed,64);
+    int audible=0;
+    for(size_t sample=0;sample<sizeof mixed/sizeof mixed[0];sample++)
+      audible |= mixed[sample]!=0;
+    GmlVal full=gml_builtin_call(&vm,supersound_get_volume,&ss_handle,1);
+    ss_ok=audible && full.t==V_REAL && full.d==0.0 &&
+      gml_audio_sound_get_gain(audio,ss_sound)==1.0;
+    ss_level[1]=vreal(-600);
+    (void)gml_builtin_call(&vm,supersound_set_volume,ss_level,2);
+    GmlVal half=gml_builtin_call(&vm,supersound_get_volume,&ss_handle,1);
+    ss_ok=ss_ok && half.t==V_REAL && half.d==-600.0 &&
+      fabs(gml_audio_sound_get_gain(audio,ss_sound)-0.5011872336)<0.000001;
+    ss_level[1]=vreal(-10000);
+    (void)gml_builtin_call(&vm,supersound_set_volume,ss_level,2);
+    GmlVal silent=gml_builtin_call(&vm,supersound_get_volume,&ss_handle,1);
+    ss_ok=ss_ok && silent.t==V_REAL && silent.d==-10000.0 &&
+      gml_audio_sound_get_gain(audio,ss_sound)==0.0 &&
+      atoi(ss_loaded.s)==ss_sound;
+    (void)gml_builtin_call(&vm,supersound_free,&ss_handle,1);
+    ss_ok=ss_ok && !gml_audio_exists(audio,ss_sound);
+  }
+  if(ss_loaded.t==V_STR && ss_loaded.d==1.0) free((void *)ss_loaded.s);
+  ok=ok && ss_ok;
   GmlVal loaded=gml_builtin_call(&vm,create_name,&relative,1);
   int sound=loaded.t==V_REAL?(int)loaded.d:-1;
   ok=ok && sound>=0 && gml_audio_exists(audio,sound);

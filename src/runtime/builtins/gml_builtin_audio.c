@@ -1820,15 +1820,21 @@ GmlVal builtin_external_audio_call(GmlVM *vm,int handle,
         audio,(int)N(args,count,0),N(args,count,1)!=0.0);
     return vreal(0);
   }
-  /* Sound handles map onto mixer sound IDs. Volume is 0..10000 and
-   * frequency is absolute hertz, so convert them to gain and pitch. */
+  /* Sound handles map onto mixer sound IDs. SuperSound uses DirectSound
+   * attenuation in hundredths of a decibel: 0 is full volume and -10000
+   * is silence. Frequency is absolute hertz. */
   if(operation==GML_EXTERNAL_AUDIO_SS_LOAD){
     /* Return the load handle as decimal text; accessors parse it numerically.
      * The failure result is represented by the string "0". */
     int loaded=external_audio_load(vm,S(vm,args,count,0));
     char handle_text[32];
     snprintf(handle_text,sizeof handle_text,"%d",loaded<0?0:loaded);
-    return vstr(handle_text);
+    char *owned=strdup(handle_text);
+    if(!owned){
+      if(loaded>=0) external_audio_free(vm,loaded);
+      return vstr("0");
+    }
+    return vstr_owned(owned);
   }
   if(operation==GML_EXTERNAL_AUDIO_SS_PLAY || operation==GML_EXTERNAL_AUDIO_SS_LOOP ||
      operation==GML_EXTERNAL_AUDIO_SS_RESUME){
@@ -1849,13 +1855,20 @@ GmlVal builtin_external_audio_call(GmlVM *vm,int handle,
     return vreal(0);
   }
   if(operation==GML_EXTERNAL_AUDIO_SS_SET_VOLUME){
-    double level=N(args,count,1)/10000.0;
-    if(level<0.0) level=0.0; else if(level>1.0) level=1.0;
+    double attenuation=N(args,count,1);
+    double level=attenuation<=-10000.0 ? 0.0
+                : attenuation>=0.0 ? 1.0
+                : pow(10.0,attenuation/2000.0);
     gml_audio_sound_gain(audio,(int)N(args,count,0),level);
     return vreal(0);
   }
-  if(operation==GML_EXTERNAL_AUDIO_SS_GET_VOLUME)
-    return vreal(gml_audio_sound_get_gain(audio,(int)N(args,count,0))*10000.0);
+  if(operation==GML_EXTERNAL_AUDIO_SS_GET_VOLUME){
+    double gain=gml_audio_sound_get_gain(audio,(int)N(args,count,0));
+    double attenuation=gain<=0.0 ? -10000.0
+                      : gain>=1.0 ? 0.0
+                      : 2000.0*log10(gain);
+    return vreal((double)llround(attenuation));
+  }
   if(operation==GML_EXTERNAL_AUDIO_SS_SET_FREQ){
     double hz=N(args,count,1);
     if(hz>0.0) gml_audio_sound_pitch(audio,(int)N(args,count,0),hz/44100.0);
