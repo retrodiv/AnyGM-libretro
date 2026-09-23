@@ -88,6 +88,7 @@ int expect_portable_extension_io(void);
 int expect_native_timeline_import(const char *path);
 int expect_timeline_case(void);
 int expect_vm_state_case(void);
+int expect_vm_state_map_string_replacement(void);
 int expect_vm_state_sparse_ds_continuation(void);
 int expect_vm_state_io_identity_continuation(void);
 int expect_vm_state_graph_case(void);

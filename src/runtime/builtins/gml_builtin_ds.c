@@ -341,6 +341,7 @@ int ds_map_put(GmlVM *vm, int id, GmlVal keyv, GmlVal val, int overwrite){
   if(i>=0){
     if(overwrite){
       m->entry[i].val=ds_val_clone(val);   /* old val leaks: refs may have escaped via ds_ret */
+      m->entry[i].state_string_encoding[2]=0;
       m->entry[i].child_kind=0;
     }
     ds_key_temp_free(&kt);
@@ -355,6 +356,8 @@ int ds_map_put(GmlVM *vm, int id, GmlVal keyv, GmlVal val, int overwrite){
   m->entry[m->len].key_val=ds_key_val_clone(keyv);
   m->entry[m->len].val=ds_val_clone(val);
   m->entry[m->len].child_kind=0;
+  memset(m->entry[m->len].state_string_encoding,0,
+         sizeof m->entry[m->len].state_string_encoding);
   m->len++;
   ds_map_index_add(m,m->len-1);
   return 1;

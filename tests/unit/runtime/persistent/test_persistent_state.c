@@ -190,6 +190,47 @@ int expect_vm_state_array_depth_case(void){
 }
 
 
+int expect_vm_state_map_string_replacement(void){
+  uint8_t content[]="mapped\0mapped";
+  char *strings[]={(char *)content,(char *)content+7};
+  uint32_t offsets[]={0,7};
+  GmlWin win={0}; GmlVM vm={0};
+  win.data=content; win.size=sizeof content; win.strs=strings;
+  win.str_charoff=offsets; win.n_strs=2; vm.win=&win;
+  vm.particles=gml_particle_state_create(&vm); gml_vm_software3d_reset(&vm);
+  GmlVal map=gml_builtin_call(&vm,"ds_map_create",NULL,0);
+  GmlVal args[]={map,vstr("key"),vstr(strings[1])};
+  (void)gml_builtin_call(&vm,"ds_map_add",args,3);
+  const char *texts[]={"mapped","runtime text","x","","mapped","another raw value"};
+  int ok=vm.particles!=NULL;
+  for(size_t phase=0;phase<sizeof texts/sizeof texts[0] && ok;phase++){
+    /* Warm the previous encoding before replacing it. Delete/reinsert also reuses the
+     * final physical entry, whose old derived answers must not survive. */
+    (void)gml_vm_state_size(&vm);
+    args[2]=vstr(texts[phase]);
+    if(phase==3){
+      (void)gml_builtin_call(&vm,"ds_map_delete",args,2);
+      args[1]=vstr("replacement key");
+      (void)gml_builtin_call(&vm,"ds_map_add",args,3);
+    } else (void)gml_builtin_call(&vm,"ds_map_replace",args,3);
+    size_t size=gml_vm_state_size(&vm),written=0,used=0;
+    uint8_t *first=malloc(size?size:1),*second=malloc(size?size:1);
+    ok=first && second && size &&
+      gml_vm_state_save(&vm,first,size,&written) && written==size &&
+      gml_vm_state_save(&vm,second,size,&written) && written==size &&
+      !memcmp(first,second,size) &&
+      gml_vm_state_load(&vm,first,size,&used) && used==size;
+    GmlVal restored=gml_builtin_call(&vm,"ds_map_find_value",args,2);
+    ok=ok && restored.t==V_STR && restored.s && !strcmp(restored.s,texts[phase]) &&
+      gml_vm_state_save(&vm,second,size,&written) && written==size &&
+      !memcmp(first,second,size);
+    free(first); free(second);
+  }
+  if(!ok) fputs("map string replacement changed text or canonical state bytes\n",stderr);
+  gml_vm_free(&vm); free(win.str_hix);
+  return ok;
+}
+
 int expect_vm_state_case(void){
   GmlWin win={0};
   uint8_t content_string[]="canonical content string";

@@ -163,7 +163,7 @@ static int state_str_index_by_ptr(GmlVM *vm, const char *canonical){
   }
   return -1;
 }
-static void sw_str(StateW *s, const char *p){
+static uint32_t state_string_encoding(StateW *s, const char *p){
   if(!p) p="";
   if(s->compact_strings){
     /* A prior answer for an immutable content pointer remains valid for this VM. Test its range
@@ -174,8 +174,7 @@ static void sw_str(StateW *s, const char *p){
       if(address>=base && address-base<win->size){
         unsigned slot=state_str_memo_slot(p);
         if(s->memo->key[slot]==p && s->memo->index[slot]>=0){
-          sw_u32(s,0x80000000u | (uint32_t)s->memo->index[slot]);
-          return;
+          return 0x80000000u | (uint32_t)s->memo->index[slot];
         }
       }
     }
@@ -192,10 +191,18 @@ static void sw_str(StateW *s, const char *p){
         if(s->memo){ s->memo->key[slot]=stable; s->memo->index[slot]=idx; }
       }
     }
-    if(idx>=0){ sw_u32(s,0x80000000u | (uint32_t)idx); return; }
+    if(idx>=0) return 0x80000000u | (uint32_t)idx;
   }
   size_t n=strlen(p); if(n>UINT32_MAX) n=UINT32_MAX;
-  sw_u32(s,(uint32_t)n); sw_raw(s,p,n);
+  return (uint32_t)n;
+}
+static void sw_encoded_string(StateW *s,const char *p,uint32_t encoding){
+  sw_u32(s,encoding);
+  if(!(s->compact_strings && (encoding&0x80000000u)))
+    sw_raw(s,p?p:"",encoding);
+}
+static void sw_str(StateW *s,const char *p){
+  sw_encoded_string(s,p,state_string_encoding(s,p));
 }
 static char *sr_str_dup(StateR *s){
   uint32_t n=sr_u32(s);
@@ -462,6 +469,22 @@ void gml_vm_state_write_string(GmlVmStateWriter *writer,const char *value){
 }
 void gml_vm_state_write_value(GmlVmStateWriter *writer,GmlVal value){
   sw_val(writer,value,0);
+}
+void gml_vm_state_write_owned_string(GmlVmStateWriter *writer,const char *value,
+                                     uint64_t *encoding){
+  uint32_t resolved=*encoding?(uint32_t)(*encoding-1u):state_string_encoding(writer,value);
+  GmlWin *win=writer->vm?writer->vm->win:NULL;
+  /* A failed lazy table allocation is not a permanent proof that text is absent. */
+  if(!*encoding && (!win || win->n_strs<=0 || win->str_hix))
+    *encoding=(uint64_t)resolved+1u;
+  sw_encoded_string(writer,value,resolved);
+}
+void gml_vm_state_write_owned_value(GmlVmStateWriter *writer,GmlVal value,
+                                    uint64_t *encoding){
+  if(value.t==V_STR){
+    sw_u32(writer,V_STR);
+    gml_vm_state_write_owned_string(writer,value.s,encoding);
+  } else sw_val(writer,value,0);
 }
 void gml_vm_state_read_raw(GmlVmStateReader *reader,
                            void *bytes,size_t size){
