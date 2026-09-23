@@ -319,6 +319,87 @@ int expect_bounding_box_far_edges_by_generation(void){
   return 1;
 }
 
+int expect_studio_transformed_mask_bounds(void){
+  GmlWin win={0};
+  GmlVM vm={0};
+  AnygmHostServices services={0};
+  GmlRender render={0};
+  GmlSprite sprites[2]={{0}};
+  GmlObject objects[2]={{0}};
+  GmlInstance instances[2]={{0}};
+  win.bytecode=16;
+  render.win=&win; render.n_spr=2; render.spr=sprites;
+  sprites[0].w=12; sprites[0].h=10;
+  sprites[0].mr=11; sprites[0].mb=9;
+  sprites[0].originx=5; sprites[0].originy=3;
+  sprites[1].w=sprites[1].h=1;
+  sprites[0].collision_kind=sprites[1].collision_kind=1;
+  objects[0].parent=objects[1].parent=-1;
+  services.development_setting=bbox_fixture_setting;
+  vm.win=&win; vm.host=&services; vm.render=&render;
+  vm.objects=objects; vm.n_objects=2;
+  vm.inst=instances; vm.inst_count=vm.inst_cap=2;
+  for(int i=0;i<2;i++){
+    instances[i].active=1; instances[i].id=100000u+(unsigned)i; instances[i].obj=i;
+    instances[i].sprite_index=instances[i].mask_index=i;
+    instances[i].image_xscale=instances[i].image_yscale=1;
+  }
+  vm.cur_self=&instances[0];
+  /* Independent scalar controls use an authored asymmetric rectangle. Reflection must retain
+   * its extent, and rotation acts on its outer edges before the far edge becomes inclusive. */
+  const struct { double angle,xscale,yscale,left,top,right,bottom; } readings[]={
+    {0,1,1,95,197,106,206}, {0,-1,1,93,197,104,206},
+    {0,1,-1,95,193,106,202}, {0,-1,-1,93,193,104,202},
+    {0,2,1,90,197,113,206}, {0,-2,1,86,197,109,206},
+    {0,0.5,1,98,197,103,206}, {0,-0.5,1,96,197,101,206},
+    {90,1,1,97,193,106,204}, {90,-1,1,97,195,106,206},
+    {90,1,-1,93,193,102,204}, {90,-1,-1,93,195,102,206},
+    {30,1,1,94,194,109,208}, {30,-1,1,92,195,107,209},
+    {30,1,-1,92,190,107,204}, {30,-1,-1,90,191,105,205},
+  };
+  AnygmContentFacts facts={0};
+  AnygmCompatibilityProfile profile={0};
+  char error[128]={0};
+  int ok=anygm_content_facts_detect(&win,&facts,error,sizeof error) &&
+         anygm_compatibility_resolve(&facts,&profile,error,sizeof error);
+  const char *names[]={"bbox_left","bbox_top","bbox_right","bbox_bottom"};
+  for(int resolved=0;ok && resolved<2;resolved++){
+    win.compatibility=resolved?&profile:NULL;
+    for(unsigned i=0;ok && i<sizeof readings/sizeof readings[0];i++){
+      GmlInstance *in=&instances[0];
+      in->x=100; in->y=200; in->image_angle=readings[i].angle;
+      in->image_xscale=readings[i].xscale; in->image_yscale=readings[i].yscale;
+      double bounds[4]={0};
+      const double expected[]={readings[i].left,readings[i].top,
+                               readings[i].right,readings[i].bottom};
+      if(!gml_vm_instance_bbox(&vm,in,bounds,bounds+1,bounds+2,bounds+3)) ok=0;
+      for(int edge=0;edge<4;edge++){
+        GmlVal value=gml_vm_variable_get_h(&vm,IT_SELF,names[edge],gml_value_name_hash(names[edge]));
+        if(bounds[edge]!=expected[edge] || value.t!=V_REAL || value.d!=expected[edge]){
+          fprintf(stderr,"transformed mask resolved=%d case=%u %s: internal=%.0f field=%.0f expected=%.0f\n",
+            resolved,i,names[edge],bounds[edge],value.t==V_REAL?value.d:-999.0,expected[edge]);
+          ok=0;
+        }
+      }
+      if(in->image_angle==0){
+        for(int separated=0;separated<2;separated++){
+          instances[1].x=expected[2]+separated; instances[1].y=expected[1]+1;
+          gml_colgrid_invalidate(&vm);
+          GmlVal args[]={vreal(in->x),vreal(in->y),vreal(instances[1].id)};
+          GmlVal hit=gml_builtin_call(&vm,"place_meeting",args,3);
+          if(hit.t!=V_REAL || hit.d!=(double)!separated){
+            fprintf(stderr,"transformed contact resolved=%d case=%u separated=%d hit=%.0f\n",
+              resolved,i,separated,hit.t==V_REAL?hit.d:-1.0);
+            ok=0;
+          }
+        }
+      }
+    }
+  }
+  gml_builtin_state_destroy(vm.builtins);
+  return ok;
+}
+
 /* A fractional-position box must round both edges consistently. The synthetic
  * neighbour distinguishes the positions immediately around the half-pixel boundary. */
 int expect_bounding_box_far_edges_at_a_fractional_position(void){

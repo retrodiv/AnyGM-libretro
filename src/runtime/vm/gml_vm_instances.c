@@ -1194,7 +1194,10 @@ static int vm_bbox_at(GmlVM *vm, GmlInstance *in, double atx, double aty,
   double ang=in->image_angle*M_PI/180.0, c=cos(ang), sn=sin(ang);
   double minx=1e30,miny=1e30,maxx=-1e30,maxy=-1e30;
   double x0, x1, y0, y1;
-  int round_bounds=anygm_policy_round_collision_bounds(vm->win);
+  /* Studio's inclusive far edge belongs to the transformed world-space box. Only Classic
+   * transforms already-inclusive source corners; reflection must not grow a Studio mask. */
+  int round_bounds=anygm_policy_round_collision_bounds(vm->win) &&
+                   anygm_policy_uses_classic_runtime(vm->win);
   if(round_bounds){
     x0=(sprite.collision_left-sprite.origin_x)*xs;
     y0=(sprite.collision_top-sprite.origin_y)*ys;

@@ -34,9 +34,11 @@ int inst_bbox(GmlVM *vm, GmlInstance *in, double atx, double aty,
      sprite.collision_bottom<sprite.collision_top) return 0;
   double xs=in->image_xscale, ys=in->image_yscale;
   if(fabs(xs)<1e-9 || fabs(ys)<1e-9) return 0;
-  if(anygm_policy_round_collision_bounds(vm->win)){
-    /* Rounded-bound modes build the inclusive bottom/right corner as top-left plus scaled size
-     * minus one, rotate those pixel coordinates, then round each edge to the nearest integer. */
+  if(anygm_policy_round_collision_bounds(vm->win) &&
+     anygm_policy_uses_classic_runtime(vm->win)){
+    /* Classic builds inclusive corners before rotation. Studio transforms the full outer
+     * edges below, then converts the world-space far edges to inclusive coordinates. Doing
+     * that conversion before reflection expands a negative scale by two pixels. */
     double x0=(sprite.collision_left-sprite.origin_x)*xs;
     double y0=(sprite.collision_top-sprite.origin_y)*ys;
     double x1=x0+(sprite.collision_right+1.0-sprite.collision_left)*xs-1.0;

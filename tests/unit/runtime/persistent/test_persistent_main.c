@@ -32,6 +32,7 @@ int main(int argc,char **argv){
     {"destroy_callback_reference",expect_destroy_callback_reference},
     {"bounding_box_far_edges_by_generation",expect_bounding_box_far_edges_by_generation},
     {"rectangular_mask_edge_contacts",expect_rectangular_mask_edge_contacts},
+    {"studio_transformed_mask_bounds",expect_studio_transformed_mask_bounds},
     {"bounding_box_far_edges_at_a_fractional_position",
      expect_bounding_box_far_edges_at_a_fractional_position},
     {"room_camera_reservation",expect_room_camera_reservation},

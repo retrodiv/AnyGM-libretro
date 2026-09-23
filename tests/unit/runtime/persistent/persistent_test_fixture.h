@@ -37,6 +37,7 @@ int expect_deactivated_instance_reference(void);
 int expect_destroy_callback_reference(void);
 int expect_bounding_box_far_edges_by_generation(void);
 int expect_bounding_box_far_edges_at_a_fractional_position(void);
+int expect_studio_transformed_mask_bounds(void);
 int expect_rectangular_mask_edge_contacts(void);
 int expect_room_camera_reservation(void);
 int expect_revision16_room_uses_legacy_view(void);
