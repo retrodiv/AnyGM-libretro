@@ -1215,7 +1215,7 @@ int gml_vm_room_placements_cleared(GmlVM *vm, int room_index){
 static const char *const room_background_fields[]={
   "background_visible","background_foreground","background_index","background_x","background_y",
   "background_htiled","background_vtiled","background_hspeed","background_vspeed","background_stretch",
-  "background_alpha","background_blend"
+  "background_alpha","background_blend","background_xscale","background_yscale"
 };
 static const char *const room_view_fields[]={
   "view_visible","view_xview","view_yview","view_wview","view_hview","view_xport","view_yport",
@@ -2232,6 +2232,14 @@ void gml_room_enter(GmlVM *vm, int room_index){
        * fresh room starts unbound even when the previous target remains live.
        * Persistent-room returns restore their own binding above. */
       gml_vm_global_array_set(vm,"view_surface_id",i,-1);
+    }
+  }
+  /* Background scales belong to the room, including slots without a resource.
+   * Instance creation may assign them before the first background draw. */
+  if(!anygm_policy_has_modern_layer_semantics(vm->win)){
+    for(int i=0;i<8;i++){
+      gml_vm_global_array_set(vm,"background_xscale",i,1);
+      gml_vm_global_array_set(vm,"background_yscale",i,1);
     }
   }
   /* Initialise the built-in background_* arrays from the room's background

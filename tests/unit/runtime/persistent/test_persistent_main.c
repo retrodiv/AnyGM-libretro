@@ -89,6 +89,7 @@ int main(int argc,char **argv){
   };
   static const AnygmTestCase render_cases[]={
     {"background_slot_dimensions",expect_background_slot_dimensions},
+    {"room_background_scales",expect_room_background_scales},
     {"background_exists_builtin",expect_background_exists_builtin},
     {"classic_view_array_aliases",expect_classic_view_array_aliases},
     {"classic_hollow_rectangle",expect_classic_hollow_rectangle},

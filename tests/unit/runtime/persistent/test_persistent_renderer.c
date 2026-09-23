@@ -83,6 +83,87 @@ int expect_background_slot_dimensions(void){
   return ok;
 }
 
+/* The writer and reader are different instances: background scale arrays are
+ * room state even when bytecode addresses them through implicit self. */
+static GmlVal background_scale_access(GmlVM *vm,GmlInstance *self,const char *name,
+                                      int write,int value,int uncached){
+  unsigned char data[40]={0};
+  int words=0;
+  if(write) fixture_word(data,words++,(0x84u<<24)|(DT_INT16<<16)|(uint16_t)value);
+  fixture_word(data,words++,(0x84u<<24)|(DT_INT16<<16)|(uint16_t)IT_SELF);
+  fixture_word(data,words++,(0x84u<<24)|(DT_INT16<<16));
+  fixture_word(data,words++,((write?OP_POP:OP_PUSH)<<24)|(DT_VAR<<16));
+  uint32_t reference=(uint32_t)words*4;
+  fixture_word(data,words++,0);
+  fixture_word(data,words++,((write?OP_EXIT:OP_RET)<<24)|(DT_VAR<<16));
+  GmlCode code={0};
+  code.name="gml_Script_room_scale_fixture";
+  code.length=(uint32_t)words*4; code.cache_bad=(uint8_t)uncached;
+  GmlWin win={0};
+  win.data=data; win.size=code.length; win.bytecode=15;
+  win.code=&code; win.n_code=1;
+  win.ref_addr=&reference; win.ref_name=&name; win.n_refs=1;
+  GmlWin *previous=vm->win; vm->win=&win;
+  GmlVal result=gml_vm_run_code(vm,0,self,NULL,NULL,0);
+  vm->win=previous;
+  free(code.insn); free(code.insn_pc); free(code.branch_index); free(win.ref_hix);
+  return result;
+}
+
+int expect_room_background_scales(void){
+  int ok=1;
+  for(int uncached=0;uncached<2;uncached++){
+    GmlVM vm={0}; GmlWin win={0}; GmlRender render={0};
+    GmlInstance writer={0},reader={0};
+    GmlBg background={0}; GmlTpag page={0}; GmlAtlas atlas={0};
+    uint8_t pixels[8]={255,0,0,255,0,255,0,255};
+    uint32_t framebuffer[16*12]={0};
+    win.bytecode=15; vm.win=&win; vm.render=&render; vm.cur_code_index=-1;
+    render.win=&win; render.bg=&background; render.n_bg=1;
+    render.tpag=&page; render.n_tpag=1; render.atlas=&atlas; render.n_atlas=1;
+    render.alpha=1; render.alphablend=1; render.color_write_mask=0x0F;
+    page.sw=2; page.sh=1; page.tx=1; page.bw=3; page.bh=1;
+    atlas.px=pixels; atlas.w=2; atlas.h=1; atlas.decode_attempted=1;
+    writer.id=100001; reader.id=100002;
+    gml_set_global_arr(&vm,"background_visible",0,1);
+    gml_set_global_arr(&vm,"background_index",0,0);
+    gml_set_global_arr(&vm,"background_x",0,2);
+    gml_set_global_arr(&vm,"background_y",0,3);
+    gml_set_global_arr(&vm,"background_alpha",0,1);
+    gml_set_global_arr(&vm,"background_blend",0,0xFFFFFF);
+    (void)background_scale_access(&vm,&writer,"background_xscale",1,3,uncached);
+    (void)background_scale_access(&vm,&writer,"background_yscale",1,2,uncached);
+    GmlVal xs=background_scale_access(&vm,&reader,"background_xscale",0,0,uncached);
+    GmlVal ys=background_scale_access(&vm,&reader,"background_yscale",0,0,uncached);
+    if(xs.t!=V_REAL || xs.d!=3 || ys.t!=V_REAL || ys.d!=2 ||
+       gml_varmap_get(&writer.vars,"background_xscale") ||
+       gml_varmap_get(&writer.vars,"background_yscale")) ok=0;
+    for(int tiled=0;tiled<2;tiled++){
+      gml_set_global_arr(&vm,"background_htiled",0,tiled);
+      memset(framebuffer,0,sizeof framebuffer);
+      gml_render_begin(&render,framebuffer,16,12,0,0);
+      gml_vm_draw(&vm);
+      for(int y=0;y<12;y++) for(int x=0;x<16;x++){
+        int local=x-2;
+        if(tiled){ local%=9; if(local<0) local+=9; }
+        uint32_t expected=0;
+        if(y>=3 && y<5 && local>=3 && local<9)
+          expected=local<6?UINT32_C(0xFF0000):UINT32_C(0x00FF00);
+        if((framebuffer[y*16+x]&0xFFFFFFu)!=expected){
+          fprintf(stderr,"room scale raster: uncached=%d tiled=%d pixel=%d,%d got=%08x expected=%06x\n",
+                  uncached,tiled,x,y,framebuffer[y*16+x],expected);
+          ok=0; goto cleanup_scale;
+        }
+      }
+    }
+  cleanup_scale:
+    gml_vm_frame_cleanup(&vm);
+    gml_varmap_free(&vm.globals);
+    gml_varmap_free(&writer.vars); gml_varmap_free(&reader.vars);
+  }
+  return ok;
+}
+
 int expect_background_exists_builtin(void){
   GmlBg backgrounds[2]={{0}};
   GmlRender render={0};

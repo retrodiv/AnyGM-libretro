@@ -919,7 +919,8 @@ static int is_room_global_array(const char *n){
     return !strcmp(s,"visible") || !strcmp(s,"foreground") || !strcmp(s,"index") ||
            !strcmp(s,"x") || !strcmp(s,"y") || !strcmp(s,"htiled") || !strcmp(s,"vtiled") ||
            !strcmp(s,"hspeed") || !strcmp(s,"vspeed") || !strcmp(s,"stretch") ||
-           !strcmp(s,"alpha") || !strcmp(s,"blend");
+           !strcmp(s,"alpha") || !strcmp(s,"blend") ||
+           !strcmp(s,"xscale") || !strcmp(s,"yscale");
   }
   if(!strncmp(n,"view_",5)){
     const char *s=n+5;

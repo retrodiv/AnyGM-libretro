@@ -9,9 +9,16 @@ marketing version. It is a numeric field in a validated binary header.
 
 ## Save-state schema
 
-The current AnyGM save-state schema is `32`. It is the format transported by
+The current AnyGM save-state schema is `33`. It is the format transported by
 libretro frontends for manual save states, automatic state slots, and rewind
 snapshots. Those features remain supported.
+
+Schema `33` introduces VM schema `18`. Legacy room background scale arrays now belong
+to the room's canonical globals and persistent-room records. Fresh rooms initialize
+both axes to one; state restoration retains the active and dormant rooms' scales.
+The existing named-value codec carries these fields. Older states may instead contain
+instance-local scale writes or omit the defaults, so they reject transactionally.
+Renderer and audio layouts are unchanged.
 
 Schema `32` appends base and auxiliary sampler filtering to the renderer payload, followed by
 its GPU-state stack depth and the active stack records. Each filter is a validated little-endian

@@ -20,6 +20,32 @@ static int save_state(AnygmEngine *engine,uint8_t **data,size_t *written){
   return anygm_state_save(engine,*data,capacity,written)==ANYGM_OK;
 }
 
+/* Project only the newly initialized room scales out of the neutral fixture.
+ * Borrow the other values through a separate map so canonical state remains
+ * intact. This test-only projection preserves every earlier byte/hash pin. */
+static int save_without_background_defaults(AnygmEngine *engine,uint8_t **data,size_t *written){
+  const char *names[]={"background_xscale","background_yscale"};
+  for(size_t i=0;i<2;i++){
+    GmlVal *value=gml_varmap_get(&engine->vm.globals,names[i]);
+    if(!value || value->t!=V_ARR || gml_val_array_length(*value)!=8) return 0;
+    for(int j=0;j<8;j++){
+      GmlVal element=gml_arr_get(*value,j);
+      if(element.t!=V_REAL || element.d!=1) return 0;
+    }
+  }
+  GmlVarMap original=engine->vm.globals,projection={0};
+  for(int i=0;i<original.cap;i++){
+    GmlVarSlot *slot=&original.slots[i];
+    if(!slot->key || !strcmp(slot->key,names[0]) || !strcmp(slot->key,names[1])) continue;
+    *gml_varmap_put(&projection,slot->key)=slot->val;
+  }
+  engine->vm.globals=projection;
+  int ok=save_state(engine,data,written);
+  engine->vm.globals=original;
+  free(projection.slots); /* Keys and values remain owned by the original map. */
+  return ok;
+}
+
 static uint64_t read_u64(const uint8_t *data){
   uint64_t value=0;
   for(unsigned i=0;i<8;i++) value|=(uint64_t)data[i]<<(i*8);
@@ -3164,6 +3190,16 @@ int main(int argc,char **argv){
    * producer fingerprint, so this hash moves whenever reviewed producer behavior or policy changes,
    * and again whenever the serialized layout itself changes. */
   uint64_t deterministic_hash=state_checksum(deterministic,deterministic_size);
+  uint8_t *scale_projection=NULL;
+  size_t preceding_scale_size=0;
+  if(!save_without_background_defaults(first,&scale_projection,&preceding_scale_size) ||
+     preceding_scale_size>=deterministic_size){
+    fprintf(stderr,"canonical background defaults did not project cleanly\n");
+    free(scale_projection); return 1;
+  }
+  memcpy(deterministic,scale_projection,preceding_scale_size);
+  deterministic_size=preceding_scale_size;
+  free(scale_projection);
   /* Locate the dormant-room count through a separate allocator-only probe.
    * This neutral fixture has no runtime layers, elements or dormant rooms, so
    * the three counts after that allocator must all be zero. Strip only the
@@ -3175,7 +3211,7 @@ int main(int argc,char **argv){
     return 1;
   }
   first->vm.rt_next_id=1;
-  int visual_probe_ok=save_state(first,&visual_probe,&visual_probe_size);
+  int visual_probe_ok=save_without_background_defaults(first,&visual_probe,&visual_probe_size);
   first->vm.rt_next_id=0;
   if(!visual_probe_ok || visual_probe_size!=deterministic_size){ free(visual_probe); return 1; }
   for(size_t i=112;i<deterministic_size;i++) if(visual_probe[i]!=deterministic[i]){
@@ -3205,7 +3241,7 @@ int main(int argc,char **argv){
     return 1;
   }
   first->vm.next_tilemap_id=1;
-  int map_probe_ok=save_state(first,&map_probe,&map_probe_size);
+  int map_probe_ok=save_without_background_defaults(first,&map_probe,&map_probe_size);
   first->vm.next_tilemap_id=0;
   if(!map_probe_ok || map_probe_size!=deterministic_size){ free(map_probe); return 1; }
   for(size_t i=112;i<deterministic_size;i++) if(map_probe[i]!=deterministic[i]){
@@ -3219,6 +3255,12 @@ int main(int argc,char **argv){
   }
   free(map_probe);
   if(visual_word<=map_word){ fprintf(stderr,"canonical visual sections changed order\n"); return 1; }
+  if((uint32_t)read_u64(deterministic+4)!=33 ||
+     (uint32_t)read_u64(deterministic+map_vm+4)!=18){
+    fprintf(stderr,"canonical room-scale schemas changed\n"); return 1;
+  }
+  write_u32(deterministic+4,32);
+  write_u32(deterministic+map_vm+4,17);
   /* Schema 32 appends eight sampler filters and an empty GPU-state stack to the renderer.
    * This fixture has never changed those defaults. Strip their measured zero record only in
    * test scratch, then retain every historical size/hash assertion below. */
@@ -3396,7 +3438,7 @@ int main(int argc,char **argv){
   uint64_t preceding_hash=state_checksum(deterministic,preceding_size);
   memcpy(deterministic,first_state,first_written);
   deterministic_size=first_written;
-  if(deterministic_size!=22862 || preceding_filter_size!=22826 || preceding_io_size!=22818 ||
+  if(preceding_scale_size!=22862 || preceding_filter_size!=22826 || preceding_io_size!=22818 ||
      preceding_delayed_hash!=UINT64_C(0xa3ed237ec81fc73d) ||
      preceding_visual_size!=22302 || preceding_visual_hash!=UINT64_C(0x9351d78c1daaea2b) ||
      preceding_map_size!=22298 || preceding_map_hash!=UINT64_C(0x07f91baea5f9e3ff) ||

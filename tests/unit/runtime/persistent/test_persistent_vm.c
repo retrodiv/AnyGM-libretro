@@ -4304,12 +4304,24 @@ static int expect_persistent_lifecycle_exit_code(void){
     }
     (void)gml_builtin_call(&vm,"camera_destroy",&camera,1);
   }
+  if(global_array_value(&vm,"background_xscale",0)!=1 ||
+     global_array_value(&vm,"background_yscale",7)!=1){
+    fprintf(stderr,"room background scale defaults were not initialized\n"); return 1;
+  }
+  gml_set_global_arr(&vm,"background_xscale",0,-2);
+  gml_set_global_arr(&vm,"background_yscale",7,0.5);
   gml_set_global_arr(&vm,"background_x",0,123);
   gml_set_global_arr(&vm,"view_xview",0,77);
   *gml_varmap_put(&vm.globals,"room_speed")=vreal(55);
   gml_tile_layer_shift(&vm,300,8,9);
   uint32_t id=created->id; *gml_varmap_put(&created->vars,"value")=vreal(42);
   gml_room_enter(&vm,1);
+  if(global_array_value(&vm,"background_xscale",0)!=1 ||
+     global_array_value(&vm,"background_yscale",7)!=1){
+    fprintf(stderr,"fresh room inherited another room's background scales\n"); return 1;
+  }
+  gml_set_global_arr(&vm,"background_xscale",0,3);
+  gml_set_global_arr(&vm,"background_yscale",7,4);
   room_view_enabled=gml_varmap_get(&vm.globals,"view_enabled");
   if(!room_view_enabled || room_view_enabled->t!=V_REAL || room_view_enabled->d!=0){
     fprintf(stderr,"room flags did not disable the legacy view system: %.0f\n",
@@ -4361,6 +4373,10 @@ static int expect_persistent_lifecycle_exit_code(void){
   vm.code_static_init[static_ci]=0;
   *gml_varmap_put(&vm.code_static[static_ci],"fixture_static")=vreal(99);
   if(!gml_vm_state_load(&vm,state,written,&used)||used!=written)return 1;
+  if(global_array_value(&vm,"background_xscale",0)!=3 ||
+     global_array_value(&vm,"background_yscale",7)!=4){
+    fprintf(stderr,"active room background scales did not restore\n"); return 1;
+  }
   gml_room_enter(&vm,0); slot=find_slot(&vm,id);
   GmlVal *value=slot?gml_varmap_get(&slot->vars,"value"):NULL;
   GmlVal *room_speed=gml_varmap_get(&vm.globals,"room_speed");
@@ -4373,6 +4389,8 @@ static int expect_persistent_lifecycle_exit_code(void){
     gml_builtin_call(&vm,"time_source_get_reps_remaining",timer_handle,1):vundef();
   GmlVal *restored_timer_total=gml_varmap_get(&vm.globals,"time_source_fixture");
   int ok=slot&&slot->active&&!slot->room_dormant&&value&&value->t==V_REAL&&value->d==42 &&
+    global_array_value(&vm,"background_xscale",0)==-2 &&
+    global_array_value(&vm,"background_yscale",7)==0.5 &&
     global_array_value(&vm,"background_x",0)==123 && global_array_value(&vm,"view_xview",0)==77 &&
     room_speed&&room_speed->t==V_REAL&&room_speed->d==55 && vm.n_tile_mut==1 &&
     vm.tile_mut[0].depth==300&&vm.tile_mut[0].dx==8&&vm.tile_mut[0].dy==9 &&

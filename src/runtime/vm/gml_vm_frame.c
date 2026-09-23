@@ -1133,7 +1133,7 @@ struct LayTile { int sprite; int sx,sy,w,h,order; double x,y,xs,ys; uint32_t ble
 struct LaySprite { int sprite, subimg,order; double x,y,xs,ys,angle; uint32_t blend; double alpha; double depth; };
 struct LayEffect { GmlLayerFilter effect; int order; double depth; };
 struct LayAttachedFilter { GmlLayerFilter effect; int order; };
-struct ClassicBg { int def,th,tv,stretch; double x,y; uint32_t blend; double alpha,depth; };
+struct ClassicBg { int def,th,tv,stretch; double x,y,xs,ys; uint32_t blend; double alpha,depth; };
 
 static unsigned sequence_multiply_byte(unsigned first, unsigned second){
   return (first*second+127u)/255u;
@@ -1469,6 +1469,8 @@ void gml_vm_draw(GmlVM *vm){
     struct ClassicBg *bg=&cbg[ncb++];
     bg->def=def;
     bg->x=gml_vm_global_array_number(vm,"background_x",i); bg->y=gml_vm_global_array_number(vm,"background_y",i);
+    bg->xs=gml_vm_global_array_number(vm,"background_xscale",i);
+    bg->ys=gml_vm_global_array_number(vm,"background_yscale",i);
     bg->th=gml_vm_global_array_number(vm,"background_htiled",i)>=0.5;
     bg->tv=gml_vm_global_array_number(vm,"background_vtiled",i)>=0.5;
     bg->stretch=gml_vm_global_array_number(vm,"background_stretch",i)>=0.5;
@@ -1818,8 +1820,8 @@ void gml_vm_draw(GmlVM *vm){
     if(it[k].type==6){ struct ClassicBg *b=&cbg[it[k].idx];
       if(b->def<0) gml_draw_layer_color_fill(R,b->blend,b->alpha);
       else if(b->stretch) gml_draw_background_stretched(R,b->def,b->x,b->y,rm.width,rm.height,b->blend,b->alpha);
-      else if(b->th || b->tv) gml_draw_background_tiled_ext(R,b->def,b->x,b->y,1,1,b->blend,b->alpha,b->th,b->tv);
-      else gml_draw_background_ext(R,b->def,b->x,b->y,1,1,b->blend,b->alpha);
+      else if(b->th || b->tv) gml_draw_background_tiled_ext(R,b->def,b->x,b->y,b->xs,b->ys,b->blend,b->alpha,b->th,b->tv);
+      else gml_draw_background_ext(R,b->def,b->x,b->y,b->xs,b->ys,b->blend,b->alpha);
       continue; }
     if(it[k].type==7){ struct LayEffect *f=&lfx[it[k].idx];
       if(f->effect.kind==GML_LAYER_FILTER_RGB_NOISE)
