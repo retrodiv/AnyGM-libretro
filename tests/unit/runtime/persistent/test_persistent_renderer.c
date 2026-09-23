@@ -9,6 +9,7 @@
 #include "gml_render.h"
 #include "gml_render_internal.h"
 #include "gml_render_state.h"
+#include "anygm_compatibility.h"
 
 #include <math.h>
 #include <stdio.h>
@@ -162,6 +163,132 @@ int expect_room_background_scales(void){
     gml_varmap_free(&writer.vars); gml_varmap_free(&reader.vars);
   }
   return ok;
+}
+
+static int expect_early_background_opacity_and_order(void){
+  GmlVM vm={0}; GmlWin win={0}; GmlRender render={0};
+  GmlBg background={0}; GmlTpag page={0}; GmlAtlas atlas={0};
+  uint8_t pixels[4]={191,200,194,255}; uint32_t framebuffer[16*12];
+  win.bytecode=13; vm.win=&win; vm.render=&render; vm.cur_code_index=-1;
+  render.win=&win; render.bg=&background; render.n_bg=1;
+  render.tpag=&page; render.n_tpag=1; render.atlas=&atlas; render.n_atlas=1;
+  render.app_surface=framebuffer; render.app_w=16; render.app_h=12;
+  render.alpha=1; render.alphablend=1; render.color_write_mask=0x0F;
+  page.sw=page.sh=page.bw=page.bh=1;
+  atlas.px=pixels; atlas.w=atlas.h=1; atlas.decode_attempted=1;
+  const double opacity[]={0.5,0.25,0.1,1};
+  const uint32_t expected[]={0x5F6461,0x2F3130,0x131413,0xBFC8C2};
+  int ok=1;
+  for(int packed=0;packed<2;packed++){
+    atlas.blob=packed?16:0;
+    for(size_t i=0;i<(packed?4u:1u);i++){
+      for(size_t p=0;p<sizeof framebuffer/sizeof framebuffer[0];p++) framebuffer[p]=0xFF000000;
+      gml_render_begin(&render,framebuffer,16,12,0,0);
+      gml_draw_background_ext(&render,0,2,3,4,4,0xFFFFFF,opacity[i]);
+      uint32_t wanted=packed?expected[i]:0x606461;
+      if((framebuffer[3*16+2]&0xFFFFFF)!=wanted){
+        fprintf(stderr,"background opacity: packed=%d opacity=%.2f got=%06x expected=%06x\n",
+                packed,opacity[i],framebuffer[3*16+2]&0xFFFFFF,wanted);
+        ok=0;
+      }
+    }
+  }
+  /* Distinct colours distinguish per-background repetition from two passes
+   * over the whole background list. Independent native controls give 36/0/146. */
+  for(int i=0;i<2;i++){
+    gml_set_global_arr(&vm,"background_visible",i,1);
+    gml_set_global_arr(&vm,"background_index",i,0);
+    gml_set_global_arr(&vm,"background_x",i,2);
+    gml_set_global_arr(&vm,"background_y",i,3);
+    gml_set_global_arr(&vm,"background_xscale",i,4);
+    gml_set_global_arr(&vm,"background_yscale",i,4);
+    gml_set_global_arr(&vm,"background_alpha",i,0.5);
+    gml_set_global_arr(&vm,"background_blend",i,i?0xFF0000:0x0000FF);
+  }
+  for(size_t p=0;p<sizeof framebuffer/sizeof framebuffer[0];p++) framebuffer[p]=0xFF000000;
+  gml_render_begin(&render,framebuffer,16,12,0,0);
+  gml_vm_draw(&vm);
+  if((framebuffer[3*16+2]&0xFFFFFF)!=0x240092){
+    fprintf(stderr,"background order: got=%06x expected=240092\n",framebuffer[3*16+2]&0xFFFFFF);
+    ok=0;
+  }
+  gml_render_texture_page_cache_clear(&render,&page);
+  gml_vm_frame_cleanup(&vm); gml_varmap_free(&vm.globals);
+  return ok;
+}
+
+int expect_room_background_compositing(void){
+  /* Native controls compare the same black alpha-63 texel over white through
+   * automatic packed backgrounds, tiled backgrounds and an explicit draw.
+   * Untiled packed backgrounds in the earliest Studio encoding compose twice.
+   * Later encodings retain their existing single-pass policy until measured. */
+  const int revisions[]={13,14,15,16,17};
+  int ok=1;
+  for(size_t revision=0;revision<sizeof revisions/sizeof revisions[0];revision++)
+  for(int resolved=0;resolved<2;resolved++)
+  for(int packed=0;packed<2;packed++)
+  for(int foreground=0;foreground<2;foreground++)
+  for(int tiled=0;tiled<3;tiled++){
+    GmlVM vm={0}; GmlWin win={0}; GmlRender render={0};
+    GmlBg background={0}; GmlTpag page={0}; GmlAtlas atlas={0};
+    AnygmContentFacts facts={0}; AnygmCompatibilityProfile profile={0};
+    uint8_t pixels[4]={0,0,0,63}; uint32_t framebuffer[16*12];
+    win.bytecode=(uint8_t)revisions[revision];
+    if(resolved){
+      if(!anygm_content_facts_detect(&win,&facts,NULL,0) ||
+         !anygm_compatibility_resolve(&facts,&profile,NULL,0)) return 0;
+      win.compatibility=&profile;
+    }
+    vm.win=&win; vm.render=&render; vm.cur_code_index=-1;
+    render.win=&win; render.bg=&background; render.n_bg=1;
+    render.tpag=&page; render.n_tpag=1; render.atlas=&atlas; render.n_atlas=1;
+    render.alpha=1; render.alphablend=1; render.color_write_mask=0x0F;
+    page.sw=page.sh=page.bw=page.bh=1;
+    /* The native controls render into the Studio application surface. Its
+     * established rounded blending differs from direct framebuffer drawing. */
+    render.app_surface=framebuffer; render.app_w=16; render.app_h=12;
+    atlas.px=pixels; atlas.w=atlas.h=1; atlas.decode_attempted=1;
+    atlas.blob=packed?16:0;
+    gml_set_global_arr(&vm,"background_visible",0,1);
+    gml_set_global_arr(&vm,"background_index",0,0);
+    gml_set_global_arr(&vm,"background_foreground",0,foreground);
+    gml_set_global_arr(&vm,"background_x",0,2);
+    gml_set_global_arr(&vm,"background_y",0,3);
+    gml_set_global_arr(&vm,"background_htiled",0,tiled==1);
+    gml_set_global_arr(&vm,"background_vtiled",0,tiled==2);
+    gml_set_global_arr(&vm,"background_blend",0,0xFFFFFF);
+    for(int scale=1;scale<=4;scale*=4){
+      gml_set_global_arr(&vm,"background_xscale",0,scale);
+      gml_set_global_arr(&vm,"background_yscale",0,scale);
+      for(int half=0;half<2;half++){
+        /* The half-alpha discriminator was measured in the early profile. */
+        if(half && revision) continue;
+        double alpha=half?0.5:1;
+        int twice=revisions[revision]==13 && packed && !tiled;
+        uint32_t shade=twice?(half?197:145):(half?224:192);
+        gml_set_global_arr(&vm,"background_alpha",0,alpha);
+        for(size_t i=0;i<sizeof framebuffer/sizeof framebuffer[0];i++)
+          framebuffer[i]=UINT32_C(0xFFFFFFFF);
+        gml_render_begin(&render,framebuffer,16,12,0,0);
+        gml_vm_draw(&vm);
+        uint32_t expected=shade*UINT32_C(0x010101);
+        uint32_t got=framebuffer[3*16+2]&0xFFFFFFu;
+        if(got!=expected){
+          fprintf(stderr,"room background composition: revision=%d resolved=%d packed=%d foreground=%d tiled=%d scale=%d half=%d got=%06x expected=%06x\n",
+                  revisions[revision],resolved,packed,foreground,tiled,scale,half,got,expected);
+          ok=0;
+        }
+        /* An explicit call uses one pass even for packed content. */
+        framebuffer[10*16+12]=UINT32_C(0xFFFFFFFF);
+        gml_draw_background_ext(&render,0,12,10,1,1,0xFFFFFF,alpha);
+        shade=half?224:192;
+        if((framebuffer[10*16+12]&0xFFFFFFu)!=shade*UINT32_C(0x010101)) ok=0;
+      }
+    }
+    gml_render_texture_page_cache_clear(&render,&page);
+    gml_vm_frame_cleanup(&vm); gml_varmap_free(&vm.globals);
+  }
+  return expect_early_background_opacity_and_order() && ok;
 }
 
 int expect_background_exists_builtin(void){

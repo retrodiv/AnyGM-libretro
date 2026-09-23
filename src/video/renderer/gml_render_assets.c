@@ -589,6 +589,10 @@ int gml_render_background_metrics(const GmlRender *R,int background,
       metrics->declared_width=page->bw; metrics->declared_height=page->bh;
       metrics->logical_width=page->bw?page->bw:page->sw;
       metrics->logical_height=page->bh?page->bh:page->sh;
+      if(page->atlas>=0 && page->atlas<R->n_atlas){
+        const GmlAtlas *atlas=&R->atlas[page->atlas];
+        metrics->content_texture=atlas->blob!=0 || atlas->external_blob!=NULL;
+      }
     }
   }
   return 1;

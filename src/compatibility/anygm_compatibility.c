@@ -151,6 +151,7 @@ static uint64_t compatibility_fingerprint(const AnygmCompatibilityProfile *profi
   ENCODE_FIELD(classic_executable_layout);
   ENCODE_FIELD(uses_limited_random_seed_expansion);
   ENCODE_FIELD(legacy_view_slots);
+  ENCODE_FIELD(early_background_compositing);
 #undef ENCODE_FIELD
   uint64_t epsilon=0;
   memcpy(&epsilon,&profile->default_comparison_epsilon,sizeof epsilon);
@@ -226,6 +227,8 @@ int anygm_compatibility_resolve(const AnygmContentFacts *facts,
   profile->has_modern_screen_stage=modern;
   profile->uses_room_speed_cadence=!classic&&facts->bytecode_revision==16;
   profile->uses_legacy_room_cameras=!classic&&facts->bytecode_revision==16;
+  profile->early_background_compositing=
+    !classic && facts->bytecode_revision==13 && !second_generation_rendering;
   profile->comparison=classic?ANYGM_COMPARISON_CLASSIC_EPSILON:
     ANYGM_COMPARISON_STUDIO_EPSILON;
   profile->default_comparison_epsilon=classic?1e-13:1e-5;

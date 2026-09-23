@@ -1133,7 +1133,7 @@ struct LayTile { int sprite; int sx,sy,w,h,order; double x,y,xs,ys; uint32_t ble
 struct LaySprite { int sprite, subimg,order; double x,y,xs,ys,angle; uint32_t blend; double alpha; double depth; };
 struct LayEffect { GmlLayerFilter effect; int order; double depth; };
 struct LayAttachedFilter { GmlLayerFilter effect; int order; };
-struct ClassicBg { int def,th,tv,stretch; double x,y,xs,ys; uint32_t blend; double alpha,depth; };
+struct ClassicBg { int def,th,tv,stretch,repeat; double x,y,xs,ys; uint32_t blend; double alpha,depth; };
 
 static unsigned sequence_multiply_byte(unsigned first, unsigned second){
   return (first*second+127u)/255u;
@@ -1459,13 +1459,15 @@ void gml_vm_draw(GmlVM *vm){
   if(rm.draw_bg){
     uint32_t room_color=gml_vm_room_background_argb(vm);
     cbg[ncb].def=-1; cbg[ncb].th=cbg[ncb].tv=cbg[ncb].stretch=0;
+    cbg[ncb].repeat=0;
     cbg[ncb].x=cbg[ncb].y=0; cbg[ncb].blend=room_color&0xFFFFFFu;
     cbg[ncb].alpha=((room_color>>24)&0xFF)/255.0; cbg[ncb].depth=1.1e300; ncb++;
   }
   for(int i=0;i<8;i++){
     if(gml_vm_global_array_number(vm,"background_visible",i)<0.5) continue;
     int def=(int)gml_vm_global_array_number(vm,"background_index",i);
-    if(def<0 || !gml_render_background_metrics(R,def,NULL)) continue;
+    GmlRenderBackgroundMetrics metrics;
+    if(def<0 || !gml_render_background_metrics(R,def,&metrics)) continue;
     struct ClassicBg *bg=&cbg[ncb++];
     bg->def=def;
     bg->x=gml_vm_global_array_number(vm,"background_x",i); bg->y=gml_vm_global_array_number(vm,"background_y",i);
@@ -1474,6 +1476,8 @@ void gml_vm_draw(GmlVM *vm){
     bg->th=gml_vm_global_array_number(vm,"background_htiled",i)>=0.5;
     bg->tv=gml_vm_global_array_number(vm,"background_vtiled",i)>=0.5;
     bg->stretch=gml_vm_global_array_number(vm,"background_stretch",i)>=0.5;
+    bg->repeat=metrics.content_texture &&
+      anygm_policy_uses_early_background_compositing(vm->win);
     bg->blend=(uint32_t)gml_vm_global_array_number(vm,"background_blend",i);
     bg->alpha=gml_vm_global_array_number(vm,"background_alpha",i);
     bg->depth=gml_vm_global_array_number(vm,"background_foreground",i)>=0.5 ? -1.0e300 : 1.0e300;
@@ -1821,7 +1825,11 @@ void gml_vm_draw(GmlVM *vm){
       if(b->def<0) gml_draw_layer_color_fill(R,b->blend,b->alpha);
       else if(b->stretch) gml_draw_background_stretched(R,b->def,b->x,b->y,rm.width,rm.height,b->blend,b->alpha);
       else if(b->th || b->tv) gml_draw_background_tiled_ext(R,b->def,b->x,b->y,b->xs,b->ys,b->blend,b->alpha,b->th,b->tv);
-      else gml_draw_background_ext(R,b->def,b->x,b->y,b->xs,b->ys,b->blend,b->alpha);
+      else {
+        gml_draw_background_ext(R,b->def,b->x,b->y,b->xs,b->ys,b->blend,b->alpha);
+        if(b->repeat)
+          gml_draw_background_ext(R,b->def,b->x,b->y,b->xs,b->ys,b->blend,b->alpha);
+      }
       continue; }
     if(it[k].type==7){ struct LayEffect *f=&lfx[it[k].idx];
       if(f->effect.kind==GML_LAYER_FILTER_RGB_NOISE)

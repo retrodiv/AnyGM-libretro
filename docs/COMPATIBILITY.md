@@ -34,7 +34,7 @@ and covered by ordinary, exact cached and prefix-cached dispatch controls.
 | Input family | Structural selector | Parser path | Runtime path |
 | --- | --- | --- | --- |
 | Classic | container revisions 600, 701, 702, 800, 810 | `src/content/classic/` | shared engine with classic policies |
-| Studio first generation | bytecode 14, 15, 16 | `src/content/datafile/` and `src/content/bytecode/` | shared engine with resolved policies |
+| Studio first generation | bytecode 13, 14, 15, 16 | `src/content/datafile/` and `src/content/bytecode/` | shared engine with resolved policies |
 | Studio second generation | bytecode 17 | same normalized content model, with the revision-specific reader | shared engine with modern function, struct, and layer policies |
 
 Bytecode 16 reuses the compatible normalized reader path where its serialized
@@ -90,6 +90,23 @@ phase before their first draw, while frame-snapshot generations defer those new
 instances until the following frame.
 
 ## Where a difference belongs
+
+Early Studio background compositing has a narrow policy for bytecode 13 without
+room layers. Independent native controls show two successive source-over passes
+for each untiled automatic background backed by a content atlas, whether behind
+or in front of instances. Horizontal or vertical tiling, runtime-created images,
+and explicit background draws use one pass. A black alpha-63 texel over white gives
+145 through the automatic path and 192 through the explicit path; at draw opacity
+0.5 those values are 197 and 224. Point-sampled content backgrounds truncate draw
+opacity to an eight-bit vertex value, round the sampled coverage to a byte, and
+round source and destination colour products separately. An opaque 191/200/194
+texel over black at opacity 0.5 gives 95/100/97 from content and 96/100/97 from a
+runtime-created image. Overlapping red and blue automatic slots give 36/0/146,
+which distinguishes repetition of each background from two whole-list passes.
+The existing fixed-function blend implements this arithmetic. Controls cover scales one through eight and an
+enlarged packed texel. These are measured early-runner results. Keeping later
+encodings, filtered sampling, and the separate stretch branch unchanged is a conservative policy
+boundary, not a claim that their native behavior has been measured.
 
 Use this decision order:
 

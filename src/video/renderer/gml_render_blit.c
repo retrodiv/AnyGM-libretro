@@ -1277,7 +1277,7 @@ static inline void blend_argb_src_over_draw_alpha(GmlRender *r,uint32_t *dp,cons
   }
 }
 static int blit_tpag_scale1_white_exact(GmlRender *r, GmlTpag *t, GmlAtlas *a,
-                                        int x0, int y0, int xx0, int xx1, int yy0, int yy1){
+                                        int x0, int y0, int xx0, int xx1, int yy0, int yy1,int quantize_alpha){
   if(!r || !t || !a || !a->px || !r->fb || xx1<=xx0 || yy1<=yy0) return 0;
   int abx0=0, aby0=0, abx1=t->sw-1, aby1=t->sh-1;
   if(!tpag_alpha_bounds(r,t,a,&abx0,&aby0,&abx1,&aby1)) return 1;
@@ -1301,7 +1301,7 @@ static int blit_tpag_scale1_white_exact(GmlRender *r, GmlTpag *t, GmlAtlas *a,
       int n=sx1-sx0;
       if(!r->alphablend) copy_argb_force_opaque(dp,sp,n);
       else if(ar->alpha==255u) memcpy(dp,sp,(size_t)n*sizeof(uint32_t));
-      else blend_argb_src_over_exact(r,dp,sp,n,(uint32_t)ar->alpha,gml_blend_family(r));
+      else blend_argb_src_over_exact(r,dp,sp,n,(uint32_t)ar->alpha,quantize_alpha?GML_BLEND_CLASSIC:gml_blend_family(r));
     }
     return 1;
   }
@@ -1328,7 +1328,7 @@ static int blit_tpag_scale1_white_exact(GmlRender *r, GmlTpag *t, GmlAtlas *a,
       uint32_t aa=sp[i]>>24;
       int run=1;
       while(i+run<n && (sp[i+run]>>24)==aa) run++;
-      blend_argb_src_over_exact(r,dp+i,sp+i,run,aa,gml_blend_family(r));
+      blend_argb_src_over_exact(r,dp+i,sp+i,run,aa,quantize_alpha?GML_BLEND_CLASSIC:gml_blend_family(r));
       i+=run;
     }
   }
@@ -1336,7 +1336,7 @@ static int blit_tpag_scale1_white_exact(GmlRender *r, GmlTpag *t, GmlAtlas *a,
 }
 static int blit_tpag_scale1_white_draw_alpha(GmlRender *r, GmlTpag *t, GmlAtlas *a,
                                              int x0, int y0, int xx0, int xx1, int yy0, int yy1,
-                                             double alpha){
+                                             double alpha,int quantize_alpha){
   if(!r || !t || !a || !a->px || !r->fb || xx1<=xx0 || yy1<=yy0 || alpha<=0.0 || alpha>=1.0) return 0;
   int abx0=0, aby0=0, abx1=t->sw-1, aby1=t->sh-1;
   if(!tpag_alpha_bounds(r,t,a,&abx0,&aby0,&abx1,&aby1)) return 1;
@@ -1358,6 +1358,8 @@ static int blit_tpag_scale1_white_draw_alpha(GmlRender *r, GmlTpag *t, GmlAtlas 
     const uint32_t *sp=cache+(size_t)yy*t->sw+sx0;
     int n=sx1-sx0;
     if(!r->alphablend) copy_argb_force_opaque(dp,sp,n);
+    else if(quantize_alpha)
+      blend_argb_src_over_exact(r,dp,sp,n,(uint32_t)lround(ar->alpha*alpha),GML_BLEND_CLASSIC);
     else blend_argb_src_over_draw_alpha(r,dp,sp,n,(uint32_t)ar->alpha,alpha,
                                         gml_blend_family(r));
   }
@@ -2577,6 +2579,7 @@ typedef struct GmlBlitOneBand {
   double axs,ays;
   double alpha;
   int bR,bG,bB;
+  int quantize_alpha;
 } GmlBlitOneBand;
 
 typedef struct GmlNearestOpaqueAlphaBand {
@@ -2713,12 +2716,13 @@ static void blit_one_band_rows(void *context,int row_start,int row_end,int slot)
         int dr=(destination>>16)&0xFF, dg=(destination>>8)&0xFF, db=destination&0xFF;
         int family=gml_blend_family(r);
         int or_,og,ob;
-        if(family==GML_BLEND_CLASSIC){
+        if(family==GML_BLEND_CLASSIC || b->quantize_alpha){
           or_=(int)(sp[0]*sa+0.5)+(int)(dr*(1-sa)+0.5);
           og=(int)(sp[1]*sa+0.5)+(int)(dg*(1-sa)+0.5);
           ob=(int)(sp[2]*sa+0.5)+(int)(db*(1-sa)+0.5);
         } else {
-          double bias=family==GML_BLEND_STUDIO2?0.5:0.0;
+          double bias=(family==GML_BLEND_STUDIO2 ||
+                       gml_render_target_is_first_generation_application_surface(r))?0.5:0.0;
           or_=(int)(sp[0]*sa+dr*(1-sa)+bias);
           og=(int)(sp[1]*sa+dg*(1-sa)+bias);
           ob=(int)(sp[2]*sa+db*(1-sa)+bias);
@@ -2755,6 +2759,7 @@ static void blit_one_band_rows(void *context,int row_start,int row_end,int slot)
         sampled=mapped_texture_pixel(r,sampled);
       int sample_a=(int)(sampled>>24);
       double sa=(sample_a/255.0)*alpha;
+      if(b->quantize_alpha) sa=lround(sample_a*alpha)/255.0;
       /* (bm_one, bm_zero) writes the source fragment wherever the quad lands: the texel's own
        * colour and its own coverage, with the destination contributing nothing. A transparent texel
        * is therefore not a discarded fragment here - it replaces what was underneath with the
@@ -2814,8 +2819,8 @@ static void blit_one_band_rows(void *context,int row_start,int row_end,int slot)
       /* clamp each channel to [0,255]: a blend>255 or a (legitimately clamped) alpha can still push
        * sr*sa over 255, and packing an out-of-range byte would corrupt the neighbouring channel. */
       int or_,og,ob;
-      if(family==GML_BLEND_CLASSIC){
-        if(!reciprocal_x || !reciprocal_y){
+      if(family==GML_BLEND_CLASSIC || b->quantize_alpha){
+        if(b->quantize_alpha || !reciprocal_x || !reciprocal_y){
           or_=(int)(sr*sa+0.5)+(int)(dr*(1-sa)+0.5);
           og=(int)(sg*sa+0.5)+(int)(dg*(1-sa)+0.5);
           ob=(int)(sb*sa+0.5)+(int)(db*(1-sa)+0.5);
@@ -2867,7 +2872,7 @@ static void gml_render_write_authored_margin(GmlRender *r, const GmlTpag *t,
   r->fb_all_transparent=0;
 }
 static void blit_one(GmlRender *r, GmlTpag *t, double dx, double dy, double xs, double ys,
-                     uint32_t blend, double alpha){
+                     uint32_t blend, double alpha,int quantize_alpha){
   if(!r || !t || !r->fb || r->fbw<=0 || r->fbh<=0) return;
   if(alpha>1) alpha=1; else if(alpha<0) alpha=0;   /* GM clamps draw alpha to [0,1] */
   if(alpha<=0) return;
@@ -3062,8 +3067,8 @@ static void blit_one(GmlRender *r, GmlTpag *t, double dx, double dy, double xs, 
     int cy1=y0+t->sh; if(cy1>r->fbh) cy1=r->fbh;
     int cw=cx1-cx0, ch=cy1-cy0;
     if(cw<=0 || ch<=0) return;
-    if(!blit_tpag_scale1_white_exact(r,t,a,x0,y0,cx0-x0,cx1-x0,cy0-y0,cy1-y0)){
-      int family=gml_blend_family(r);
+    if(!blit_tpag_scale1_white_exact(r,t,a,x0,y0,cx0-x0,cx1-x0,cy0-y0,cy1-y0,quantize_alpha)){
+      int family=quantize_alpha?GML_BLEND_CLASSIC:gml_blend_family(r);
       int sx0=t->sx + (cx0-x0), sy0=t->sy + (cy0-y0);
       for(int yy=0; yy<ch; yy++){
         const uint8_t *sp=a->px+((size_t)(sy0+yy)*a->w+sx0)*4;
@@ -3114,9 +3119,9 @@ static void blit_one(GmlRender *r, GmlTpag *t, double dx, double dy, double xs, 
     int cw=cx1-cx0, ch=cy1-cy0;
     if(cw<=0 || ch<=0) return;
     if(blit_tpag_scale1_white_draw_alpha(
-         r,t,a,x0,y0,cx0-x0,cx1-x0,cy0-y0,cy1-y0,alpha)) return;
+         r,t,a,x0,y0,cx0-x0,cx1-x0,cy0-y0,cy1-y0,alpha,quantize_alpha)) return;
   }
-  if((flipx || flipy) && fabs(axs-1.0)<0.001 && fabs(ays-1.0)<0.001 &&
+  if(!quantize_alpha && (flipx || flipy) && fabs(axs-1.0)<0.001 && fabs(ays-1.0)<0.001 &&
      alpha>=1.0 && (blend & 0xFFFFFF)==0xFFFFFF && r->blendmode==0 && !mapped_shader){
     if(blit_tpag_scale1_white_exact_flipped(
          r,t,a,x0,y0,xx0,xx1,yy0,yy1,flipx,flipy)) return;
@@ -3311,7 +3316,7 @@ static void blit_one(GmlRender *r, GmlTpag *t, double dx, double dy, double xs, 
       a->w>0?a->w-1:0,
       first_generation_quad_phase_x,first_generation_quad_phase_y,
       reciprocal_x,reciprocal_y,
-      sample_x,sample_y,axs,ays,alpha,bR,bG,bB
+      sample_x,sample_y,axs,ays,alpha,bR,bG,bB,quantize_alpha
     };
     if(gml_render_row_bands_profitable(r,vispix)) gml_run_row_bands(r,yy1-yy0,blit_one_band_rows,&band);
     else blit_one_band_rows(&band,0,yy1-yy0,0);
@@ -3347,7 +3352,7 @@ static void blit_phase_plane(GmlRender *r, uint32_t *plane, GmlTpag *t,
   r->fb_opaque_known=0;
   r->fb_all_opaque=0;
   r->fb_all_transparent=0;
-  blit_one(r,t,dx,dy,xs,ys,blend,alpha);
+  blit_one(r,t,dx,dy,xs,ys,blend,alpha,0);
   r->fb=saved_fb;
   r->fb_opaque_known=saved_known;
   r->fb_all_opaque=saved_opaque;
@@ -4338,12 +4343,12 @@ static void blit_phase_plane_previous(GmlRender *r, uint32_t *plane, GmlTpag *t,
 }
 static void blit_with_phase(GmlRender *r, GmlTpag *t, double dx, double dy,
                             double xs, double ys, uint32_t blend, double alpha,
-                            int phase_mode){
+                            int phase_mode,int quantize_alpha){
   int phase=r && r->target_sp==0 && r->fb==r->base_fb && r->classic_phase_y;
   int interp_phase=r && r->target_sp==0 && r->fb==r->base_fb &&
                    r->classic_interp_phase[0] && r->classic_interp_phase[1] &&
                    r->classic_interp_phase[2];
-  blit_one(r,t,dx,dy,xs,ys,blend,alpha);
+  blit_one(r,t,dx,dy,xs,ys,blend,alpha,quantize_alpha);
   if(interp_phase){
     blit_interp_phase_plane(r,r->classic_interp_phase[0],t,dx,dy,xs,ys,blend,alpha,1,0);
     blit_interp_phase_plane(r,r->classic_interp_phase[1],t,dx,dy,xs,ys,blend,alpha,0,1);
@@ -4364,14 +4369,22 @@ static void blit_with_phase(GmlRender *r, GmlTpag *t, double dx, double dy,
 }
 void blit(GmlRender *r, GmlTpag *t, double dx, double dy, double xs, double ys,
                  uint32_t blend, double alpha){
-  blit_with_phase(r,t,dx,dy,xs,ys,blend,alpha,4);
+  blit_with_phase(r,t,dx,dy,xs,ys,blend,alpha,4,0);
 }
 /* A room's background layer is rasterized by the same transform as everything drawn over it, so
  * it answers to the same tie. Pinning the following-texel replay here instead left every layer
  * half a logical row above the sprites sharing its frame. */
 static void blit_background_phase(GmlRender *r, GmlTpag *t, double dx, double dy,
                                   double xs, double ys, uint32_t blend, double alpha){
-  blit_with_phase(r,t,dx,dy,xs,ys,blend,alpha,4);
+  int quantize_alpha=!r->interp && t->atlas>=0 && t->atlas<r->n_atlas &&
+    (r->atlas[t->atlas].blob || r->atlas[t->atlas].external_blob) &&
+    anygm_policy_uses_early_background_compositing(r->win);
+  /* Packed early backgrounds truncate vertex opacity, then round the sampled
+   * product to normalized eight-bit coverage. Source and destination products
+   * round separately, using the established fixed-function blend. Runtime images retain their
+   * floating draw opacity. The point-sampled native controls distinguish both. */
+  if(quantize_alpha && alpha>0.0 && alpha<1.0) alpha=floor(alpha*255.0)/255.0;
+  blit_with_phase(r,t,dx,dy,xs,ys,blend,alpha,4,quantize_alpha);
 }
 typedef struct {
   GmlRender *r;
@@ -5984,7 +5997,7 @@ static void draw_sprite_ext_unmasked(GmlRender *r, int sprite, int subimg, doubl
     double projected_h=fabs((double)s->h*ys);
     int spans_viewport=projected_w>(double)r->fbw+0.001 &&
                        projected_h>(double)r->fbh+0.001;
-    blit_with_phase(r,t,dx,dy,xs,ys,blend,alpha,spans_viewport?0:4);
+    blit_with_phase(r,t,dx,dy,xs,ys,blend,alpha,spans_viewport?0:4,0);
   }
   else blit_rotated_with_phase(r,s,t,x,y,xs,ys,rr,blend,alpha);
   if(sprof) sprof_add(sprite,s->name,(rprof_now()-sprof_t0)*1000.0);
@@ -6064,7 +6077,7 @@ static void draw_sprite_tiled_ext_unmasked(GmlRender *r, int sprite, int subimg,
       sprite,sub,bw,bh,ax,ay,x0,y0,t->tx,t->ty,t->sw,t->sh,alpha);
   for(double yy=y0; yy<r->fbh; yy+=bh)
     for(double xx=x0; xx<r->fbw; xx+=bw)
-	      blit_with_phase(r,t,xx+t->tx*xs,yy+t->ty*ys,xs,ys,blend,alpha,0);
+	      blit_with_phase(r,t,xx+t->tx*xs,yy+t->ty*ys,xs,ys,blend,alpha,0,0);
 }
 
 void gml_draw_sprite_tiled_ext(GmlRender *r, int sprite, int subimg, double x, double y,
@@ -6122,7 +6135,7 @@ void gml_draw_layer_background_sprite(GmlRender *r, int sprite, int subimg, doub
     return;
   }
   for(double yy=y0;yy<yend;yy+=bh) for(double xx=x0;xx<xend;xx+=bw)
-    blit_with_phase(r,t,xx+t->tx*xs,yy+t->ty*ys,xs,ys,blend,alpha,0);
+    blit_with_phase(r,t,xx+t->tx*xs,yy+t->ty*ys,xs,ys,blend,alpha,0,0);
 }
 void gml_draw_sprite_part_ext(GmlRender *r, int sprite, int subimg, double sx, double sy,
                               double sw, double sh, double x, double y,
@@ -6305,7 +6318,7 @@ static void do_bg_tiled_ext(GmlRender *r, int bg, double x, double y, double xs,
     for(double yy=y0; yy<yend; yy+=logical_h)
       for(double xx=x0; xx<xend; xx+=logical_w){
         if(vtiled && logical_h<r->fbh)
-          blit_with_phase(r,t,xx+t->tx*xs,yy+t->ty*ys,xs,ys,color,alpha,2);
+          blit_with_phase(r,t,xx+t->tx*xs,yy+t->ty*ys,xs,ys,color,alpha,2,0);
         else
           blit_background_phase(r,t,xx+t->tx*xs,yy+t->ty*ys,xs,ys,color,alpha);
     }

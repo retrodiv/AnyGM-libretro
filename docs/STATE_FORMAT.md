@@ -9,9 +9,15 @@ marketing version. It is a numeric field in a validated binary header.
 
 ## Save-state schema
 
-The current AnyGM save-state schema is `33`. It is the format transported by
+The current AnyGM save-state schema is `34`. It is the format transported by
 libretro frontends for manual save states, automatic state slots, and rewind
 snapshots. Those features remain supported.
+
+Schema `34` introduces compatibility schema `2`. The profile fingerprint now
+includes early Studio background compositing. The automatic pass count and
+packed-image blend policy affect the reconstructed image; older semantic
+profiles reject transactionally. Payload layouts, VM schema `18`, and audio
+schema `2` remain unchanged.
 
 Schema `33` introduces VM schema `18`. Legacy room background scale arrays now belong
 to the room's canonical globals and persistent-room records. Fresh rooms initialize

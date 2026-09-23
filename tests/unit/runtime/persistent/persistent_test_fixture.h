@@ -97,6 +97,7 @@ int expect_object_argument_bounds(void);
 int expect_object_state_bounds(void);
 int expect_background_slot_dimensions(void);
 int expect_room_background_scales(void);
+int expect_room_background_compositing(void);
 int expect_background_exists_builtin(void);
 int expect_classic_view_array_aliases(void);
 int expect_classic_hollow_rectangle(void);

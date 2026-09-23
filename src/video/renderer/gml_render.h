@@ -117,6 +117,7 @@ typedef struct {
   int tile_width, tile_height, tile_border_x, tile_border_y;
   int tile_separation_x, tile_separation_y, tile_columns;
   int transparent, smooth, preload;
+  int content_texture; /* Encoded content atlas, rather than a runtime image. */
   const char *name;
 } GmlRenderBackgroundMetrics;
 

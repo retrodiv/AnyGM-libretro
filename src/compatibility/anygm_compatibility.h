@@ -11,7 +11,7 @@
 #include <stdint.h>
 #include "gml_win.h"
 
-enum { ANYGM_COMPATIBILITY_SCHEMA=1 };
+enum { ANYGM_COMPATIBILITY_SCHEMA=2 };
 
 typedef enum AnygmDiagnosticFamily {
   ANYGM_FAMILY_CLASSIC=1,
@@ -106,6 +106,7 @@ typedef struct AnygmCompatibilityProfile {
   uint32_t classic_executable_layout;
   uint32_t uses_limited_random_seed_expansion;
   uint32_t legacy_view_slots;
+  uint32_t early_background_compositing;
   double default_comparison_epsilon;
   uint64_t fingerprint;
 } AnygmCompatibilityProfile;
@@ -187,7 +188,17 @@ static inline int anygm_policy_uses_legacy_room_cameras(const GmlWin *content){
 static inline int anygm_policy_uses_first_generation_studio(const GmlWin *content){
   const AnygmCompatibilityProfile *p=anygm_profile(content);
   return p?p->diagnostic_family==ANYGM_FAMILY_STUDIO_FIRST:
-    (content&&!content->classic_version&&content->bytecode>=14&&content->bytecode<17);
+    (content&&!content->classic_version&&content->bytecode>=13&&content->bytecode<17);
+}
+/* Measured in the earliest Studio encoding: an untiled automatic content
+ * background repeats its draw; packed point samples use normalized-byte
+ * coverage and separately rounded source/destination products.
+ * Later encodings keep the established policy;
+ * their boundary has not been measured by these controls. */
+static inline int anygm_policy_uses_early_background_compositing(const GmlWin *content){
+  const AnygmCompatibilityProfile *p=anygm_profile(content);
+  return p?(int)p->early_background_compositing:
+    (content&&!content->classic_version&&content->bytecode==13&&!content->has_room_layers);
 }
 static inline int anygm_policy_classic_modern_presentation(const GmlWin *content){
   const AnygmCompatibilityProfile *p=anygm_profile(content);

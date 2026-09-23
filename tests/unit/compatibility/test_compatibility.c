@@ -138,6 +138,23 @@ int main(void){
     return 1;
   }
   AnygmCompatibilityProfile repeated={0};
+  {
+    AnygmCompatibilityProfile earliest={0},layered={0};
+    if(!resolve(0,13,0,0,&earliest) || !resolve(0,13,0,1,&layered) ||
+       !earliest.early_background_compositing || layered.early_background_compositing ||
+       first_early.early_background_compositing || first_late.early_background_compositing ||
+       classic_early.early_background_compositing || second.early_background_compositing ||
+       earliest.fingerprint==first_early.fingerprint) return 1;
+    GmlWin content={0}; content.bytecode=13;
+    if(!anygm_policy_uses_early_background_compositing(&content)) return 1;
+    content.has_room_layers=1;
+    if(anygm_policy_uses_early_background_compositing(&content)) return 1;
+    content.compatibility=&earliest;
+    if(!anygm_policy_uses_early_background_compositing(&content)) return 1;
+    content.compatibility=NULL; content.has_room_layers=0; content.classic_version=800;
+    if(anygm_policy_uses_early_background_compositing(&content) ||
+       anygm_policy_uses_early_background_compositing(NULL)) return 1;
+  }
   if(!resolve(0,17,0,0,&repeated) || memcmp(&repeated,&second,sizeof second)){
     fputs("compatibility resolution was not deterministic\n",stderr);
     return 1;
