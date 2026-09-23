@@ -1026,9 +1026,11 @@ static void draw_text_real_plain(GmlRender *r, GmlFont *f, double x, double y, c
            * re-phases the cell and drops a source column — the gap an odd-width centred line
            * carries between its strokes disappears. Keep the sub-pixel origin below scale one. */
           if(fabs(xs)>=1.0) glyph_x=floor(glyph_x+0.5);
-          /* Top-aligned text retains the authored vertical sampling phase across its lines.
-           * Centred and bottom-aligned blocks still land their offset on destination pixels. */
-          if(fabs(ys)>=1.0 && r->valign!=0) glyph_y=floor(glyph_y+0.5);
+          /* Top-aligned text in an explicit surface retains its authored vertical
+           * sampling phase across lines. Direct draws and aligned blocks land
+           * their glyphs on destination pixels. */
+          if(fabs(ys)>=1.0 && (r->target_id<0 || r->valign!=0))
+            glyph_y=floor(glyph_y+0.5);
         }
         uint32_t glyph_blend=f->subpixel?0xFFFFFFu:blend;
         int saved_interp=r->interp;
