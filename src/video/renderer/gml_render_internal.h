@@ -271,6 +271,9 @@ typedef struct GmlRender {
   /* the application_surface: the buffer the game is rendered into and later
    * readable by draw_surface_* calls. Set by the host; same w/h as fbw/fbh. */
   uint32_t *app_surface; int app_draw_enable;
+  /* The backing pixels may be allocated before content starts, but the runner
+   * publishes the application surface only when the first Draw phase begins. */
+  int app_surface_published;
   /* Set during Post-Draw after the automatic presentation decision. */
   int app_draw_presentation_settled;
   int content_composited_screen;       /* a surface was drawn onto the base canvas */

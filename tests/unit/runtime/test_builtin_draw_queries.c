@@ -41,6 +41,35 @@ static int circle_case(void){
   }
   return ok;
 }
+static int application_surface_lifetime_case(void){
+  int ok=1;
+  for(int cached=0;cached<2;cached++){
+    uint32_t pixels[4]={0};
+    GmlWin win={0}; GmlRender render;
+    if(gml_render_init(&render,&win)!=0) return 0;
+    GmlVM vm={.win=&win,.render=&render};
+    gml_render_application_surface_bind(&render,pixels,2,2,0);
+    GmlVal app=vreal(0);
+    /* Backing pixels exist at boot, but content first observes the surface
+     * when Draw begins. A custom surface remains visible independently. */
+    GmlVal before=query(&vm,"surface_exists",&app,1,cached,&ok);
+    if(!real_is(before,0)) fprintf(stderr,"surface lifetime before: cached=%d type=%d value=%g\n",cached,before.t,before.d);
+    ok &= real_is(before,0);
+    GmlVal dimensions[]={vreal(2),vreal(2)};
+    GmlVal custom=query(&vm,"surface_create",dimensions,2,cached,&ok);
+    GmlVal own=query(&vm,"surface_exists",&custom,1,cached,&ok);
+    if(!(custom.d>0 && real_is(own,1))) fprintf(stderr,"surface lifetime custom: cached=%d id=%g exists=%g\n",cached,custom.d,own.d);
+    ok &= custom.d>0 && real_is(own,1);
+    gml_render_application_surface_publish(&render);
+    GmlVal after=query(&vm,"surface_exists",&app,1,cached,&ok);
+    if(!real_is(after,1)) fprintf(stderr,"surface lifetime after: cached=%d type=%d value=%g\n",cached,after.t,after.d);
+    ok &= real_is(after,1);
+    query(&vm,"surface_free",&custom,1,cached,&ok);
+    ok &= real_is(query(&vm,"surface_exists",&custom,1,cached,&ok),0);
+    vm.render=NULL; gml_vm_free(&vm); gml_render_free(&render);
+  }
+  return ok;
+}
 static void word(uint8_t *data,int offset,uint32_t value){
   for(int i=0;i<4;i++) data[offset+i]=(uint8_t)(value>>(i*8));
 }
@@ -336,7 +365,8 @@ int main(int argc,char **argv){
   const char *filter=NULL;
   if(argc==3 && !strcmp(argv[1],"--case")) filter=argv[2];
   else if(argc!=1) return EXIT_FAILURE;
-  const AnygmTestCase cases[]={{"circle_precision",circle_case},{"shader_asset_names",shader_case},
+  const AnygmTestCase cases[]={{"circle_precision",circle_case},
+    {"application_surface_lifetime",application_surface_lifetime_case},{"shader_asset_names",shader_case},
     {"all_live_layers_at_depth",layers_case},{"retired_alpha_controls",alpha_case},
     {"integer_layer_depth",layer_integer_depth_case},{"alpha_reference_bounds",alpha_reference_bounds_case},
     {"background_source_region",background_part_case},{"background_name_alias",background_names_case},

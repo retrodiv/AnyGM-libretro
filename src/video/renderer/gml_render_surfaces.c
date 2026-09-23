@@ -107,7 +107,11 @@ uint32_t *surface_pixels(GmlRender *r, int id, int *w, int *h){
 
 
 int gml_surface_exists(GmlRender *r, int id){
+  if(id==0 && (!r || !r->app_surface_published)) return 0;
   int w=0,h=0; return surface_pixels(r,id,&w,&h)!=NULL && w>0 && h>0;
+}
+void gml_render_application_surface_publish(GmlRender *r){
+  if(r) r->app_surface_published=1;
 }
 int gml_surface_width(GmlRender *r, int id){
   int w=0,h=0; return surface_pixels(r,id,&w,&h)?w:0;

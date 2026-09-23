@@ -443,9 +443,10 @@ static int boot_runtime_prepare(AnygmEngine *engine) {
   engine_input_bind(engine);
   setup_platform_locale(engine,&engine->vm);
   gml_render_init(&engine->render, &engine->win);
-  /* application_surface exists before the first Create event. GML may resize it there; the
-   * renderer promotes the borrowed framebuffer to an independently owned surface when that
-   * happens. */
+  /* Allocate backing pixels before the first Create event. GML may resize the
+   * application surface there; the renderer promotes the borrowed framebuffer
+   * to independently owned storage when that happens. Surface existence becomes
+   * visible to GML at the first Draw phase. */
   gml_render_application_surface_bind(
     &engine->render,engine->fb,(int)engine->width,(int)engine->height,0);
   /* First-generation presentation keeps the default application surface at the exported
@@ -1008,6 +1009,10 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
   unsigned transition_old_h = engine->output_height ? engine->output_height : engine->height;
   int state_restore_frame = engine->state_just_loaded;
   int run_step = !state_restore_frame && !engine->classic_transition.active;
+  /* A restored frame has already passed Draw even though this renderer was
+   * reconstructed from state. Keep the VM-visible surface lifetime aligned. */
+  if(engine->have_presented_frame)
+    gml_render_application_surface_publish(&engine->render);
   if(state_restore_frame){
     memset(engine->pad_current, 0, sizeof(engine->pad_current));
     memset(engine->pad_previous, 0, sizeof(engine->pad_previous));
@@ -1299,6 +1304,7 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
   /* Pre-Draw is a screen-stage event which runs once before the visible frame is snapshotted
    * viewports. It may deliberately change view visibility or camera state for the regular draw
    * phases, so it cannot live inside the per-view loop. */
+  gml_render_application_surface_publish(&engine->render);
   if(gml_vm_draw_pass_active(&engine->vm,"Draw_76")){
     if(!engine->output_width || !engine->output_height) compute_present(engine);
     gml_render_begin(&engine->render,engine->screen,

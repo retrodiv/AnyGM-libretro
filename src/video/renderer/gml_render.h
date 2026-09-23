@@ -401,6 +401,7 @@ void gml_render_target_coverage_update(GmlRender *r,
                                        unsigned fields);
 void gml_render_application_surface_bind(GmlRender *r,uint32_t *pixels,
                                          int width,int height,int opaque);
+void gml_render_application_surface_publish(GmlRender *r);
 int gml_render_application_surface_ensure_owned(GmlRender *r,int width,int height);
 int gml_render_application_surface_owned_clear(
   GmlRender *r,uint32_t color,GmlRenderApplicationWriteView *view);
