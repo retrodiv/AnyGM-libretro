@@ -1026,7 +1026,9 @@ static void draw_text_real_plain(GmlRender *r, GmlFont *f, double x, double y, c
            * re-phases the cell and drops a source column — the gap an odd-width centred line
            * carries between its strokes disappears. Keep the sub-pixel origin below scale one. */
           if(fabs(xs)>=1.0) glyph_x=floor(glyph_x+0.5);
-          if(fabs(ys)>=1.0) glyph_y=floor(glyph_y+0.5);
+          /* Text authored into an explicit surface retains its vertical sampling phase before
+           * that surface is composited. Rounding here can add a row to later lines of a run. */
+          if(fabs(ys)>=1.0 && r->target_id<0) glyph_y=floor(glyph_y+0.5);
         }
         uint32_t glyph_blend=f->subpixel?0xFFFFFFu:blend;
         int saved_interp=r->interp;
