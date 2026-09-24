@@ -1478,15 +1478,17 @@ int expect_hash_line_breaks_follow_text_generation(void){
       fprintf(stderr,"hash text metrics mismatch in generation %d\n",generation);
       ok=0;
     }
+    /* The draw API consumes the authored separator even when modern string
+     * measurements report a literal hash. */
     memset(framebuffer,0,sizeof framebuffer);
     gml_draw_text(&render,0,0,"A#B");
-    if((framebuffer[3]!=0)!=literal || (framebuffer[12]!=0)==literal){
+    if(framebuffer[3]!=0 || framebuffer[12]==0){
       fprintf(stderr,"hash plain text placement mismatch in generation %d\n",generation);
       ok=0;
     }
     memset(framebuffer,0,sizeof framebuffer);
     gml_draw_text_ext(&render,0,0,"A#B",2,-1);
-    if((framebuffer[3]!=0)!=literal || (framebuffer[24]!=0)==literal){
+    if(framebuffer[3]!=0 || framebuffer[24]==0){
       fprintf(stderr,"hash extended text placement mismatch in generation %d\n",generation);
       ok=0;
     }
