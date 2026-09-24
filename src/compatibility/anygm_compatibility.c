@@ -143,6 +143,7 @@ static uint64_t compatibility_fingerprint(const AnygmCompatibilityProfile *profi
   ENCODE_FIELD(round_transformed_collision_bounds);
   ENCODE_FIELD(bounding_box_far_edges_exclusive);
   ENCODE_FIELD(text_pairs_carriage_return_with_line_feed);
+  ENCODE_FIELD(text_compacts_extended_blank_lines);
   ENCODE_FIELD(creation_code_before_create);
   ENCODE_FIELD(classic_presentation);
   ENCODE_FIELD(classic_modern_presentation);
@@ -222,6 +223,7 @@ int anygm_compatibility_resolve(const AnygmContentFacts *facts,
   /* Modern text layout pairs CR LF as one separator. Classic and earlier profiles keep
    * the independently interpreted control-character behavior. */
   profile->text_pairs_carriage_return_with_line_feed=!classic && modern;
+  profile->text_compacts_extended_blank_lines=classic && facts->classic_revision>=700;
   profile->has_modern_layer_semantics=second_generation_rendering;
   /* The screen stage stays with the instruction encoding: see the policy's own comment. */
   profile->has_modern_screen_stage=modern;

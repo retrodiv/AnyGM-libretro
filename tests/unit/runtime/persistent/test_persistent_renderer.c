@@ -1501,6 +1501,20 @@ int expect_hash_line_breaks_follow_text_generation(void){
     fprintf(stderr,"classic extended empty-line placement mismatch\n");
     ok=0;
   }
+  win.classic_version=530;
+  memset(framebuffer,0,sizeof framebuffer);
+  gml_draw_text_ext(&render,0,0,"A\n\n\nB",1,12);
+  if(framebuffer[0]==0 || framebuffer[3*12]==0 || framebuffer[2*12]!=0){
+    fprintf(stderr,"GM5 extended blank-line preservation mismatch\n");
+    ok=0;
+  }
+  win.classic_version=701;
+  memset(framebuffer,0,sizeof framebuffer);
+  gml_draw_text_ext(&render,0,0,"A\n\n\nB",1,12);
+  if(framebuffer[0]==0 || framebuffer[2*12]==0 || framebuffer[3*12]!=0){
+    fprintf(stderr,"GM7 extended blank-line compaction mismatch\n");
+    ok=0;
+  }
   win.classic_version=0;
   win.bytecode=17;
   /* Automatic wrapping must emit a real separator even when a literal hash no longer is one. */

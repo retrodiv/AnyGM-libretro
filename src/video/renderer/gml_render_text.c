@@ -1859,9 +1859,10 @@ static const char *text_wrap_ext(GmlRender *r,GmlFont *font,const char *str,
   return wrapped;
 }
 
-/* The wrapped classic extended draw omits an empty line before its first glyph and retains one
- * empty line between nonempty lines. Plain text and string metrics keep their own separator
- * policy. Work on the already-wrapped buffer so word breaks remain untouched. */
+/* GM7 and later wrapped extended draws omit an empty line before the first glyph and retain one
+ * empty line between nonempty lines. GM5 preserves repeated blank lines, as does its original
+ * runner. Plain text and string metrics keep their own separator policy. Work on the
+ * already-wrapped buffer so word breaks remain untouched. */
 static void text_compact_classic_extended_blanks(char *text){
   char *read=text,*write=text;
   int have_content=0,pending_blank=0;
@@ -1926,7 +1927,7 @@ static void draw_text_ext_transformed_font(GmlRender *r, GmlFont *font,
   if(!r || !str || !font) return;
   char wrapped[2048];
   str=text_wrap_ext(r,font,str,w,wrapped,sizeof wrapped,family,1);
-  if(str==wrapped && anygm_policy_uses_classic_runtime(r->win))
+  if(str==wrapped && anygm_policy_text_compacts_extended_blank_lines(r->win))
     text_compact_classic_extended_blanks(wrapped);
   if(sep<0){
     draw_text_transformed_font(r,font,x,y,str,xs,ys,rot,blend,alpha,family);

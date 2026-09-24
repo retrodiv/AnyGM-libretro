@@ -11,7 +11,7 @@
 #include <stdint.h>
 #include "gml_win.h"
 
-enum { ANYGM_COMPATIBILITY_SCHEMA=2 };
+enum { ANYGM_COMPATIBILITY_SCHEMA=3 };
 
 typedef enum AnygmDiagnosticFamily {
   ANYGM_FAMILY_CLASSIC=1,
@@ -98,6 +98,7 @@ typedef struct AnygmCompatibilityProfile {
   uint32_t round_transformed_collision_bounds;
   uint32_t bounding_box_far_edges_exclusive;
   uint32_t text_pairs_carriage_return_with_line_feed;
+  uint32_t text_compacts_extended_blank_lines;
   uint32_t creation_code_before_create;
   uint32_t classic_presentation;
   uint32_t classic_modern_presentation;
@@ -145,6 +146,13 @@ static inline int anygm_policy_text_pairs_carriage_return_with_line_feed(const G
   const AnygmCompatibilityProfile *p=anygm_profile(content);
   return p?(int)p->text_pairs_carriage_return_with_line_feed:
            (content && content->classic_version<=0 && content->bytecode>=17);
+}
+/* Original GM5 extended draws keep authored empty lines. The later classic renderer compacts
+ * leading and repeated empty lines in wrapped extended draws. */
+static inline int anygm_policy_text_compacts_extended_blank_lines(const GmlWin *content){
+  const AnygmCompatibilityProfile *p=anygm_profile(content);
+  return p?(int)p->text_compacts_extended_blank_lines:
+           (content && content->classic_version>=700);
 }
 /* Modern Studio string measurements retain a hash as a glyph; older measurements treat it
  * as a line separator. Drawing has its own separator rule in gml_render_text.c. This is

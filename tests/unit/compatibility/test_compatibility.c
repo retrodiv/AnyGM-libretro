@@ -37,10 +37,11 @@ int main(void){
     fputs("external library policy mismatch\n",stderr);
     return 1;
   }
-  AnygmCompatibilityProfile classic_early={0},classic_late={0};
+  AnygmCompatibilityProfile classic_early={0},classic_middle={0},classic_late={0};
   AnygmCompatibilityProfile first_early={0},first_late={0},second={0},flagged={0},beta={0};
   AnygmCompatibilityProfile flagged_without_layers={0};
-  if(!resolve(600,16,0,0,&classic_early) || !resolve(800,16,0,0,&classic_late) ||
+  if(!resolve(600,16,0,0,&classic_early) || !resolve(701,16,0,0,&classic_middle) ||
+     !resolve(800,16,0,0,&classic_late) ||
      !resolve(0,14,0,0,&first_early) || !resolve(0,16,0,0,&first_late) ||
      !resolve(0,17,0,0,&second) || !resolve(0,15,UINT64_C(0x08000000),0,&flagged) ||
      !resolve(0,15,UINT64_C(0x00400000),1,&beta) ||
@@ -49,6 +50,8 @@ int main(void){
     return 1;
   }
   if(!classic_early.uses_classic_runtime || classic_early.classic_modern_presentation ||
+     classic_early.text_compacts_extended_blank_lines ||
+     !classic_middle.text_compacts_extended_blank_lines ||
      !classic_late.classic_modern_presentation ||
      classic_early.alarm_dispatch!=ANYGM_ALARM_DISPATCH_RESOURCE_MAJOR ||
      classic_early.preserves_frame_without_background_clear ||
