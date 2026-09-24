@@ -3263,14 +3263,16 @@ int main(int argc,char **argv){
   }
   free(map_probe);
   if(visual_word<=map_word){ fprintf(stderr,"canonical visual sections changed order\n"); return 1; }
-  /* Compatibility schema 2 adds the early-background policy to its fingerprint.
-   * This fixed Classic fixture retains its semantics. Normalize only its header
-   * identity in scratch to the measured preceding profile, preserving every
-   * historical payload size/hash below; the runtime never reads older states. */
+  /* Compatibility schema 3 adds classic extended-text blank-line policy to its fingerprint.
+   * The fixed Classic fixture resolves that policy and retains the same state payload. Schema 2
+   * added early-background compositing; this fixture leaves that policy disabled. Project only
+   * the header identity in test scratch to schema 1, preserving every historical payload pin
+   * below. The runtime never reads older states. */
   if((uint32_t)read_u64(deterministic+4)!=34 ||
-     (uint32_t)read_u64(deterministic+32)!=2 ||
+     (uint32_t)read_u64(deterministic+32)!=3 ||
      read_u64(deterministic+40)!=first->compatibility.fingerprint ||
-     first->win.classic_version!=800 || first->compatibility.early_background_compositing){
+     first->win.classic_version!=800 || first->compatibility.early_background_compositing ||
+     !first->compatibility.text_compacts_extended_blank_lines){
     fprintf(stderr,"canonical compatibility policy projection changed\n"); return 1;
   }
   write_u32(deterministic+4,33);
