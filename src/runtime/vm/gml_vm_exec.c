@@ -397,14 +397,18 @@ uint64_t gml_host_random_seed(GmlVM *vm){
  * value until it advances. What it must not do is move by how long this machine took: a clock that
  * depends on host load makes the same run answer differently every time, and a run that cannot
  * repeat itself cannot be restored either — a state saved mid-stage resumes into a different
- * continuation, which is what a savestate and a rewind both are. So the intra-frame part counts
- * reads rather than milliseconds, bounded below one frame so it can never overtake the next. */
+ * continuation, which is what a savestate and a rewind both are. Count reads rather than host
+ * milliseconds. A wait may exceed one frame, so carry its excess into later frames to keep the
+ * clock monotonic. */
 static double intra_frame_ms(GmlVM *vm){
   double step=1000.0 / gml_room_speed(vm);
   if(vm->time_sample_frame!=vm->frame){
+    double elapsed=(double)vm->frame-(double)vm->time_sample_frame;
+    double carry=vm->time_sample_frame>=0 && elapsed>0
+      ?vm->time_sample_cpu_ms-elapsed*step:0.0;
     vm->time_sample_frame=vm->frame;
-    vm->time_sample_cpu_ms=0.0;
-    vm->time_sample_draw_ms=0.0;
+    vm->time_sample_cpu_ms=carry>0.0?carry:0.0;
+    vm->time_sample_draw_ms=vm->time_sample_cpu_ms;
   }
   /* Drawing may read the clock, and a wait loop written in a Draw event needs it to advance or it
    * never ends. But what a frame draws has to be a function of the state alone: a state restored
@@ -413,9 +417,8 @@ static double intra_frame_ms(GmlVM *vm){
    * step's value and is dropped at the end of the phase. */
   double *slot=vm->draw_phase?&vm->time_sample_draw_ms:&vm->time_sample_cpu_ms;
   double intra=*slot;
-  double limit=step*0.999;
-  if(intra<limit) *slot=intra+1.0;
-  return intra<limit?intra:limit;
+  *slot=intra+1.0;
+  return intra;
 }
 static double current_time_value(GmlVM *vm){
   return (double)vm->frame * (1000.0 / gml_room_speed(vm)) + intra_frame_ms(vm);
@@ -440,9 +443,7 @@ static int current_calendar_value(GmlVM *vm,const char *name,GmlVal *out){
   else return 0;
   return 1;
 }
-/* get_timer (µs): frame-locked base plus intra-frame CPU advance, matching current_time.
- * The base advances exactly 1/fps per frame and shares the bounded intra-frame advance, so
- * busy-wait loops still exit and the answer stays repeatable. */
+/* get_timer (µs): frame-locked base plus deterministic intra-frame advance, matching current_time. */
 double gml_vm_get_timer_us(GmlVM *vm){
   return (double)vm->frame * (1000000.0 / gml_room_speed(vm)) + intra_frame_ms(vm)*1000.0;
 }

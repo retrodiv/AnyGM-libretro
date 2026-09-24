@@ -1207,10 +1207,8 @@ GmlVal gml_builtin_try_draw(GmlVM *vm, const char *nm, GmlVal *a, int n){
       GmlRenderTargetMetrics target=builtin_target_metrics(R);
       return vreal(vm->gui_h>0?vm->gui_h:(target.height>0?target.height:(vm->win&&vm->win->disp_h?(int)vm->win->disp_h:216))); }
     if(!strcmp(nm,"get_timer")){
-      /* Microseconds. GM code uses get_timer for timing and busy-wait frame limiters, so it must
-       * advance within a single VM frame. A frame counter would spin forever, while a raw clock
-       * depends on host load. Use a hybrid:
-       * frame-locked base + intra-frame CPU advance (see gml_vm_get_timer_us). */
+      /* Microseconds. Busy-wait frame limiters need this to advance within one VM frame;
+       * gml_vm_get_timer_us counts reads and carries excess into the next frame. */
       return vreal(gml_vm_get_timer_us(vm));
     }
     if(!strcmp(nm,"surface_get_width")) return vreal(R?gml_surface_width(R,(int)N(a,n,0)):0);

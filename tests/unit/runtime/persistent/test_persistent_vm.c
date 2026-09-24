@@ -74,6 +74,36 @@ int expect_frame_clock_ignores_host_time(void){
   return ok;
 }
 
+int expect_frame_clock_long_wait_continues(void){
+  GmlWin win={0}; GmlVM vm={0};
+  win.game_speed=30;
+  vm.win=&win;
+  vm.frame=90;
+  double start=gml_vm_get_timer_us(&vm);
+  double elapsed=0;
+  for(int i=0;i<100;i++) elapsed=(gml_vm_get_timer_us(&vm)-start)/1000.0;
+  if(elapsed<80.0){
+    fprintf(stderr,"frame clock stopped during a long wait: %.1f ms\n",elapsed);
+    return 0;
+  }
+  vm.frame++;
+  double continued=gml_vm_get_timer_us(&vm);
+  if(continued<=start+elapsed*1000.0){
+    fprintf(stderr,"frame clock moved backward after a long wait: %.0f <= %.0f\n",
+            continued,start+elapsed*1000.0);
+    return 0;
+  }
+  vm.draw_phase=1;
+  double draw=gml_vm_get_timer_us(&vm);
+  vm.draw_phase=0;
+  double cpu_after_draw=gml_vm_get_timer_us(&vm);
+  if(draw!=continued || cpu_after_draw!=continued+1000.0){
+    fputs("draw clock altered the step clock after a long wait\n",stderr);
+    return 0;
+  }
+  return 1;
+}
+
 
 int expect_classic_timeline_index_activation(void){
   GmlWin win={0}; GmlVM vm={0}; GmlInstance instance={0};
