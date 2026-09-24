@@ -140,6 +140,35 @@ static int automatic_map(void){
   int ok=region(&f,3,5,colors);
   f.vm.win=NULL; cleanup(&f); return ok;
 }
+static int static_room_tile_scale(void){
+  TileFixture f; setup(&f);
+  uint8_t data[256]={0};
+  char *strings[]={"room"}; uint32_t string_offsets[]={200};
+  GmlWin win={.data=data,.size=sizeof data,.n_chunks=1,
+    .strs=strings,.str_charoff=string_offsets,.n_strs=1};
+  win.chunks[0]=(GmlChunk){"ROOM",16,200};
+  word(data+16,1); word(data+20,32);
+  word(data+32,200); word(data+40,16); word(data+44,16);
+  word(data+84,100); /* room tile pointer */
+  word(data+100,1); word(data+104,112);
+  word(data+112,3); word(data+116,4); /* tile position */
+  word(data+132,2); word(data+136,2); /* source extent */
+  word(data+140,15); word(data+144,1); /* depth and id */
+  word(data+148,0x40400000u); word(data+152,0x40000000u); /* 3 x 2 */
+  word(data+156,0xffffffffu);
+  f.vm.win=&win; f.render.win=&win;
+  gml_vm_draw(&f.vm); gml_render_flush_rotated_batch(&f.render);
+  int ok=1;
+  for(int y=0;y<16;y++) for(int x=0;x<16;x++){
+    uint32_t expected=x>=3 && x<9 && y>=4 && y<8?0xff808080u:0;
+    if(f.pixels[y*16+x]!=expected){
+      fprintf(stderr,"static room tile pixel (%d,%d): %08x != %08x\n",
+              x,y,f.pixels[y*16+x],expected);
+      ok=0;
+    }
+  }
+  f.vm.win=NULL; f.render.win=NULL; cleanup(&f); return ok;
+}
 static int local_map_position(void){
   TileFixture f; setup(&f); GmlWin win={0}; f.vm.win=&win;
   f.map.visible=f.layer.visible=1; f.layer.x=f.layer.y=1;
@@ -302,6 +331,7 @@ int main(int argc,char **argv){
   const AnygmTestCase cases[]={{"transforms",transforms},
     {"draw_state_and_animation",draw_state_and_animation},{"explicit_map",explicit_map},
     {"invalid_arguments",invalid_arguments},{"automatic_animated_empty",automatic_map},
+    {"static_room_tile_scale",static_room_tile_scale},
     {"local_map_position",local_map_position},
     {"prepared_layouts",prepared_layouts},{"scaled_map",scaled_map},
     {"bounded_empty_maps",bounded_empty_maps},{"rectangular_tile_extent",rectangular_tile_extent},

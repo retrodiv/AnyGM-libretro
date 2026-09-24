@@ -1429,6 +1429,7 @@ void gml_vm_draw(GmlVM *vm){
     const uint8_t *d=vm->win->data; uint32_t tc=gml_vm_read_u32_le(d,rm.tile_ptr);
     if(tc>0 && tc<100000){
       for(uint32_t i=0;i<tc;i++){ uint32_t p=gml_vm_read_u32_le(d,rm.tile_ptr+4+i*4);
+	if(!p || p>vm->win->size || vm->win->size-p<48) continue;
 	int tx=(int)gml_vm_read_u32_le(d,p), ty=(int)gml_vm_read_u32_le(d,p+4); int tdep=(int32_t)gml_vm_read_u32_le(d,p+28);
 	if(vm->n_tile_mut){ int ed; double ox,oy;
           if(!gml_vm_frame_apply_tile_mutation(vm,tdep,&ed,&ox,&oy)) continue;   /* deleted layer: drop */
@@ -1438,7 +1439,8 @@ void gml_vm_draw(GmlVM *vm){
             if(vm->tile_del_at[da].depth==tdep && vm->tile_del_at[da].x==tx && vm->tile_del_at[da].y==ty){ drop=1; break; }
           if(drop) continue; }
 	GmlDrawTile dt;
-	dt.x=tx; dt.y=ty; dt.xs=1; dt.ys=1; dt.def=(int)gml_vm_read_u32_le(d,p+8);
+	dt.x=tx; dt.y=ty; dt.xs=gml_vm_read_f32_le(d,p+36); dt.ys=gml_vm_read_f32_le(d,p+40);
+	dt.def=(int)gml_vm_read_u32_le(d,p+8);
 	dt.sx=(int)gml_vm_read_u32_le(d,p+12); dt.sy=(int)gml_vm_read_u32_le(d,p+16);
 	dt.w=(int)gml_vm_read_u32_le(d,p+20); dt.h=(int)gml_vm_read_u32_le(d,p+24);
 	dt.mirror=dt.flip=dt.rotate=0;
