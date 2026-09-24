@@ -1433,6 +1433,30 @@ GmlVal gml_builtin_try_draw(GmlVM *vm, const char *nm, GmlVal *a, int n){
       if(builtin_setting(vm,"GML_DBG_TEXT")){ 
         anygm_host_logf(vm ? vm->host : NULL,ANYGM_LOG_DEBUG,"[text] f%ld font=%d (%.0f,%.0f) \"%s\"\n",vm->frame,builtin_draw_state(R).font,N(a,n,0),N(a,n,1),S(vm,a,n,2)); }
       return vreal(0); }
+    if(!strcmp(nm,"draw_highscore")){
+      if(R){
+        GmlBuiltinState *state=builtin_state_ensure(vm);
+        if(state){
+          double left=N(a,n,0), top=N(a,n,1), right=N(a,n,2);
+          double step=(N(a,n,3)-top)/GML_HIGHSCORE_PLACES;
+          GmlRenderDrawState saved=builtin_draw_state(R);
+          builtin_set_draw_valign(R,0);
+          for(int place=0;place<GML_HIGHSCORE_PLACES;place++){
+            const GmlBuiltinHighscore *entry=&state->highscore[place];
+            char score[48];
+            snprintf(score,sizeof score,"%g",entry->used?entry->score:0.0);
+            builtin_set_draw_halign(R,0);
+            gml_draw_text(R,left,top+step*place,
+                          entry->used?entry->name:"<nobody>");
+            builtin_set_draw_halign(R,2);
+            gml_draw_text(R,right,top+step*place,score);
+          }
+          builtin_set_draw_halign(R,saved.horizontal_alignment);
+          builtin_set_draw_valign(R,saved.vertical_alignment);
+        }
+      }
+      return vreal(0);
+    }
     /* draw_text_color takes four corner colors plus alpha. The software approximation paints the
      * flat top-left color. */
     if(!strcmp(nm,"draw_text_color")||!strcmp(nm,"draw_text_colour")){

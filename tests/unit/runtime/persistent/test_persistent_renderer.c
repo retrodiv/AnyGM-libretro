@@ -1460,8 +1460,8 @@ int expect_carriage_return_and_line_feed_are_one_break(void){
 
 int expect_hash_line_breaks_follow_text_generation(void){
   GmlWin win={0}; GmlRender render={0}; GmlAtlas atlas={0};
-  GmlGlyph glyphs[3]; uint8_t pixels[3*4]; uint32_t framebuffer[12*4];
-  real_font_layout_fixture(&render,&win,&atlas,glyphs,pixels,framebuffer,12,4);
+  GmlGlyph glyphs[3]; uint8_t pixels[3*4]; uint32_t framebuffer[12*8];
+  real_font_layout_fixture(&render,&win,&atlas,glyphs,pixels,framebuffer,12,8);
   render.halign=0;
   render.fonts[0].glyph_by_char['#']=0;
   int ok=1;
@@ -1493,6 +1493,16 @@ int expect_hash_line_breaks_follow_text_generation(void){
       ok=0;
     }
   }
+  win.classic_version=810;
+  win.bytecode=0;
+  memset(framebuffer,0,sizeof framebuffer);
+  gml_draw_text_ext(&render,0,0,"\nA# #\nB",2,12);
+  if(framebuffer[0]==0 || framebuffer[4*12]==0 || framebuffer[2*12]!=0){
+    fprintf(stderr,"classic extended empty-line placement mismatch\n");
+    ok=0;
+  }
+  win.classic_version=0;
+  win.bytecode=17;
   /* Automatic wrapping must emit a real separator even when a literal hash no longer is one. */
   if(gml_text_height_ext(&render,"AA AA",-1,7)!=2){
     fprintf(stderr,"modern automatic wrap lost its generated line separator\n");
