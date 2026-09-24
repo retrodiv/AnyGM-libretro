@@ -1243,6 +1243,30 @@ static void check_repeated_filtered_draw_cache(void){
 
   gml_render_texture_page_cache_clear(&reference,&reference_page);
   gml_render_texture_page_cache_clear(&cached,&cached_page);
+  reference.app_surface=reference_pixels;
+  cached.app_surface=cached_pixels;
+  reference.app_w=cached.app_w=TARGET_WIDTH;
+  reference.app_h=cached.app_h=TARGET_HEIGHT;
+  for(unsigned pass=0;pass<3;pass++){
+    fill_cache_test_target(reference_pixels,TARGET_WIDTH,TARGET_HEIGHT,pass+6);
+    for(size_t pixel=0;pixel<(size_t)TARGET_WIDTH*TARGET_HEIGHT;pixel++)
+      reference_pixels[pixel]=(reference_pixels[pixel]&UINT32_C(0x00ffffff))|
+        (((unsigned)(pixel*37u+pass*53u)&255u)<<24);
+    memcpy(cached_pixels,reference_pixels,target_bytes);
+    memset(&reference_page.interp_draw_pending_key,0,
+           sizeof(reference_page.interp_draw_pending_key));
+    reference_page.interp_draw_pending_count=0;
+    cached.frame=reference.frame=6+pass;
+    gml_draw_background_ext(&reference,0,8.25,6.75,2.125,1.9375,0xffffffu,1.0);
+    gml_draw_background_ext(&cached,0,8.25,6.75,2.125,1.9375,0xffffffu,1.0);
+    if(pass==1)
+      expect(cached_page.interp_draw_cache_valid,
+             "a repeated filtered application-surface draw did not populate the cache");
+    expect(!memcmp(reference_pixels,cached_pixels,target_bytes),
+           "cached filtered application-surface draw changed destination ARGB pixels");
+  }
+  gml_render_texture_page_cache_clear(&reference,&reference_page);
+  gml_render_texture_page_cache_clear(&cached,&cached_page);
   expect(cached.interp_draw_cache_bytes==0,
          "clearing a texture page left filtered cache memory accounted");
   free(rgba);

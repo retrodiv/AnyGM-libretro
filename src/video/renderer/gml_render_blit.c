@@ -3638,7 +3638,8 @@ static void GML_HOT_RENDER tpag_interp_draw_cache_replay(
       if(red>255u) red=255u;
       if(green>255u) green=255u;
       if(blue>255u) blue=255u;
-      destination[pixel]=UINT32_C(0xFF000000)|(red<<16)|(green<<8)|blue;
+      destination[pixel]=gml_sprite_target_alpha(render,destination_pixel,source_alpha)|
+                         (red<<16)|(green<<8)|blue;
     }
   }
 }
@@ -3721,8 +3722,9 @@ static int tpag_interp_draw_cache_try(
      rprof_tpag_id(render,tpag)<0 || band->flip_x || band->flip_y ||
      band->solid_mask || band->solid_blur ||
      mapped_texture_active(render) || shader_alpha_test_requires_filter(render) ||
+     render->font_sdf_active ||
      render->blendmode!=0 || !render->alphablend ||
-     gml_render_target_preserves_alpha(render) || render->color_write_mask!=0x0F ||
+     render->color_write_mask!=0x0F ||
      band->alpha<1.0 || (band->blend&0xFFFFFFu)!=0xFFFFFFu)
     return 0;
   GmlTpagInterpKey key={
