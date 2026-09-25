@@ -3,6 +3,7 @@
  */
 /* Renderer lifecycle, frame coordination, draw state, and software draw facade. */
 #include "gml_render.h"
+#include "gml_render_cpu_presentation.h"
 #include "gml_render_internal.h"
 #include "gml_render_cpu_blit_internal.h"
 #include "gml_render_cpu_pixel_internal.h"
@@ -978,12 +979,12 @@ static int pending_underlay_covered(GmlRender *r, int x0, int y0, int x1, int y1
 void gml_render_prepare_draw(GmlRender *r){
   gml_render_flush_pending_underlay(r);
   gml_render_flush_pending_fill(r);
-  render_write_deferred_presentation(r);
+  gml_render_cpu_present_image(r);
 }
 
 void gml_render_set_deferred_presentation(GmlRender *r,int enabled){
   if(!r) return;
-  if(!enabled) render_write_deferred_presentation(r);
+  if(!enabled) gml_render_cpu_present_image(r);
   r->presentation_deferral_enabled=enabled?1:0;
 }
 
@@ -994,7 +995,7 @@ int gml_render_deferred_presentation(const GmlRender *r,GmlRenderDeferredPresent
 }
 
 void gml_render_flush_deferred_presentation(GmlRender *r){
-  render_write_deferred_presentation(r);
+  gml_render_cpu_present_image(r);
 }
 
 void gml_render_discard_deferred_presentation(GmlRender *r){
@@ -1016,7 +1017,7 @@ static inline void render_maybe_prepare_draw_local(GmlRender *r){
   if(r){
     if(!r->rotated_batch_building) gml_render_flush_rotated_batch(r);
     if(r->pending_underlay || r->pending_fill) gml_render_prepare_draw(r);
-    if(r->pending_presentation) render_write_deferred_presentation(r);
+    if(r->pending_presentation) gml_render_cpu_present_image(r);
     r->fb_all_transparent=0;
   }
 }
@@ -1025,7 +1026,7 @@ static inline void render_maybe_prepare_opaque_rect_local(GmlRender *r, int x0, 
     if(r->pending_underlay || r->pending_fill) gml_render_prepare_opaque_rect(r,x0,y0,x1,y1);
     /* An opaque rectangle that covers the target would hide the deferred presentation, but one
      * that does not would sit on stale pixels. Writing it first is the answer to both. */
-    if(r->pending_presentation) render_write_deferred_presentation(r);
+    if(r->pending_presentation) gml_render_cpu_present_image(r);
     r->fb_all_transparent=0;
   }
 }

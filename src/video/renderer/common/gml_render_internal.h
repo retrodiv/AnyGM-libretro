@@ -652,7 +652,6 @@ int surface_known_opaque(GmlRender *r,int surface);
 int surface_known_transparent(GmlRender *r,int surface);
 int rect_covers_target(GmlRender *r,int x0,int y0,int x1,int y1);
 /* Keep deferred terminal presentation recording outside the composition kernels. */
-void render_write_deferred_presentation(GmlRender *r);
 int render_present_content_shader(GmlRender *r,int surf,const uint32_t *src,int sw,int sh,
                                   int x0,int y0,int x1,int y1,
                                   double dx,double dy,double dw,double dh,int shader);
