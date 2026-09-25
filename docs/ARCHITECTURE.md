@@ -474,7 +474,8 @@ and any pass that cannot be is replayed here in full. The plan carries value rec
 graphics API type, no host callback, no function pointer — and is never serialized under any schema.
 
 `common/gml_render_surfaces.c` owns surface identity, lookup and coverage metadata,
-allocation, resize, free, target-stack operations, and the established CPU-view read barrier.
+allocation, resize, free, target-stack operations, the established CPU-view read barrier,
+screen-raster target policy, and stretched/part draw-request preparation.
 `cpu/gml_render_cpu_surfaces.c` retains deferred-fill realization, copies, and the complete normal,
 interpolated, part, stretched, and rotated surface composition kernels. The
 facade may request one coarse surface composition while flushing a deferred

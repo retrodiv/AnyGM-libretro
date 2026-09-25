@@ -3,6 +3,7 @@
  */
 /* Renderer-owned surface storage, pool, copy, resize, and target-stack operations. */
 #include "gml_render.h"
+#include "gml_render_cpu_surfaces.h"
 #include "gml_render_cpu_backend.h"
 #include "gml_render_cpu_shader_pass.h"
 #include "gml_render_cpu_blit_internal.h"
@@ -1081,20 +1082,6 @@ void draw_surface_region(GmlRender *r, int surf, double sx0d, double sy0d, doubl
   }
   free(copy);
 }
-/* A screen-stage compositor can choose either logical application-surface coordinates or explicit
- * window-pixel coordinates. The latter is observable when surface 0 covers exactly the current
- * target extent. Those dimensions are already physical: applying the logical-to-window GUI
- * transform again magnifies the image by the presentation scale and clips the trailing region. */
-static int surface_draw_targets_screen_raster(const GmlRender *r,int surf,
-                                              double width,double height){
-  return r && surf==0 && gml_render_gui_transform_active(r) &&
-         r->target_sp==0 && r->fbw>0 && r->fbh>0 &&
-         gml_render_gui_logical_width(r)<=(double)r->fbw+0.001 &&
-         gml_render_gui_logical_height(r)<=(double)r->fbh+0.001 &&
-         fabs(fabs(width)-(double)r->fbw)<0.001 &&
-         fabs(fabs(height)-(double)r->fbh)<0.001;
-}
-
 /* First-generation GUI composition samples the application-surface quad at destination pixel
  * centres, both with fractional GUI transforms and with content-owned window presentation.
  * Rounding the rectangle or projecting from its leading edge changes samples at non-integer
@@ -1135,7 +1122,7 @@ static int draw_first_generation_gui_app_surface(GmlRender *r,int surf,
   return 1;
 }
 
-static void draw_surface_stretched_impl(GmlRender *r,int surf,double dx,double dy,
+void gml_render_cpu_draw_surface_stretched_impl(GmlRender *r,int surf,double dx,double dy,
                                         double dw,double dh,uint32_t blend,double alpha,
                                         int allow_software3d){
   int canvas_present=r && r->surface_canvas>0 && surf==r->surface_canvas &&
@@ -1143,7 +1130,7 @@ static void draw_surface_stretched_impl(GmlRender *r,int surf,double dx,double d
                      fabs(dx)<0.001 && fabs(dy)<0.001 &&
                      dw>=gml_surface_width(r,surf) && dh>=gml_surface_height(r,surf) &&
                      fabs(dw*gml_surface_height(r,surf)-dh*gml_surface_width(r,surf))<0.001;
-  int explicit_target_raster=canvas_present || surface_draw_targets_screen_raster(r,surf,dw,dh);
+  int explicit_target_raster=canvas_present || gml_render_surface_draw_targets_screen_raster(r,surf,dw,dh);
   if(!explicit_target_raster){
     gml_render_draw_map_point(r,&dx,&dy);
     gml_render_draw_map_scale(r,&dw,&dh);
@@ -1278,22 +1265,10 @@ static void draw_surface_stretched_impl(GmlRender *r,int surf,double dx,double d
   }
   if(prof) rprof_add("surface",r,NULL,(rprof_now()-t0)*1000.0,(unsigned long long)llround(fabs(dw*dh)));
 }
-void gml_draw_surface_stretched(GmlRender *r,int surf,double dx,double dy,
-                                double dw,double dh,uint32_t blend,double alpha){
-  /* A surface drawn onto the base canvas, rather than into another surface, is content compositing
-   * its own screen. A bare refresh means only presentation, and a newly created transparent scratch
-   * surface writes no pixels. An authored surface can still count after a transparent clear. */
-  int slot=surface_slot(surf);
-  if(r && r->target_id<0 && alpha>0.0 && slot>=0 &&
-     (!surface_known_transparent(r,surf) ||
-      (r->content_authored_surfaces&(UINT64_C(1)<<slot))))
-    r->content_composited_screen=1;
-  draw_surface_stretched_impl(r,surf,dx,dy,dw,dh,blend,alpha,1);
-}
 int gml_render_cpu_backend_surface_stretched(GmlRender *r,int surf,double dx,double dy,
                                          double dw,double dh,uint32_t blend,double alpha){
   if(!r || (surf!=0 && !gml_surface_exists(r,surf))) return 0;
-  draw_surface_stretched_impl(r,surf,dx,dy,dw,dh,blend,alpha,0);
+  gml_render_cpu_draw_surface_stretched_impl(r,surf,dx,dy,dw,dh,blend,alpha,0);
   return 1;
 }
 
@@ -1401,7 +1376,7 @@ void gml_draw_surface_ext(GmlRender *r,int surf,double x,double y,
   r->fb_opaque_known=0;
   free(copy);
 }
-static void draw_surface_part_mapped(GmlRender *r,int surf,double sx,double sy,double sw,double sh,
+void gml_render_cpu_draw_surface_part_mapped(GmlRender *r,int surf,double sx,double sy,double sw,double sh,
                                     double dx,double dy,double xs,double ys,uint32_t blend,double alpha){
   const struct GmlShaderPal *sdual=dual_active(r);
   if(!sdual && !mapped_texture_active(r) &&
@@ -1423,16 +1398,6 @@ static void draw_surface_part_mapped(GmlRender *r,int surf,double sx,double sy,d
   double t0=prof?rprof_now():0.0;
   draw_surface_region(r,surf,sx,sy,sw,sh,dx,dy,sw*xs,sh*ys,blend,alpha);
   if(prof) rprof_add("surface",r,NULL,(rprof_now()-t0)*1000.0,(unsigned long long)llround(fabs(sw*xs*sh*ys)));
-}
-
-void gml_draw_surface_part_ext(GmlRender *r,int surf,double sx,double sy,double sw,double sh,
-                               double dx,double dy,double xs,double ys,uint32_t blend,double alpha){
-  int explicit_target_raster=surface_draw_targets_screen_raster(r,surf,sw*xs,sh*ys);
-  if(!explicit_target_raster){
-    gml_render_draw_map_point(r,&dx,&dy);
-    gml_render_draw_map_scale(r,&xs,&ys);
-  }
-  draw_surface_part_mapped(r,surf,sx,sy,sw,sh,dx,dy,xs,ys,blend,alpha);
 }
 
 void gml_draw_surface_tiled_ext(GmlRender *r,int surf,double x,double y,
@@ -1467,6 +1432,6 @@ void gml_draw_surface_tiled_ext(GmlRender *r,int surf,double x,double y,
   for(int64_t row=0;row<rows;row++) for(int64_t column=0;column<columns;column++){
     double dx=first_x+column*width+r->cam_x;
     double dy=first_y+row*height+r->cam_y;
-    draw_surface_part_mapped(r,surf,0,0,sw,sh,dx,dy,xs,ys,blend,alpha);
+    gml_render_cpu_draw_surface_part_mapped(r,surf,0,0,sw,sh,dx,dy,xs,ys,blend,alpha);
   }
 }
