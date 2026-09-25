@@ -8,6 +8,7 @@
 #include <stdint.h>
 
 #include "gml_render_plan.h"
+#include "gml_render_device.h"
 
 /* The GPU subsystem boundary. Everything here is API-neutral: no graphics API type and no
  * frontend-adapter type appears, and the only way into a graphics API is the entry-point callback
@@ -66,6 +67,10 @@ int gml_gpu_context_reset(GmlGpu *gpu,const GmlGpuContext *context);
 /* The context went away without notice. Forget every handle without issuing a call. */
 void gml_gpu_context_lost(GmlGpu *gpu);
 int gml_gpu_context_active(const GmlGpu *gpu);
+
+/* Copies an API-neutral scene service table. Scene capabilities remain empty until the resident
+ * executor is initialized; an unsupported submission is rejected before any device write. */
+void gml_gpu_device_services(GmlGpu *gpu,GmlRenderDeviceServices *out_services);
 
 /* Execute a complete plan against the host's current framebuffer. Returns zero without publishing
  * partial work when any part of the plan cannot be executed exactly, so the caller can replay the

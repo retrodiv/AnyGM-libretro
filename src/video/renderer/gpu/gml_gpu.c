@@ -59,6 +59,63 @@ int gml_gpu_context_active(const GmlGpu *gpu){
   return gpu && gpu->context_active;
 }
 
+static int scene_capabilities(void *context,GmlRenderDeviceCaps *out_caps){
+  GmlGpu *gpu=(GmlGpu*)context;
+  if(!gpu || !out_caps || !gpu->context_active) return 0;
+  memset(out_caps,0,sizeof *out_caps);
+  return 1;
+}
+
+static GmlRenderExecutionResult scene_submit(void *context,const GmlRenderDrawBatch *batch){
+  GmlRenderExecutionResult result;
+  (void)context;
+  (void)batch;
+  memset(&result,0,sizeof result);
+  result.status=GML_RENDER_EXEC_UNSUPPORTED;
+  return result;
+}
+
+static int scene_upload(void *context,const GmlRenderImageUpload *transfer){
+  (void)context;
+  (void)transfer;
+  return 0;
+}
+
+static int scene_readback(void *context,const GmlRenderImageReadback *transfer){
+  (void)context;
+  (void)transfer;
+  return 0;
+}
+
+static void scene_retire(void *context,GmlRenderImageRef image){
+  (void)context;
+  (void)image;
+}
+
+static int scene_flush(void *context){
+  (void)context;
+  return 0;
+}
+
+static int scene_wait(void *context){
+  (void)context;
+  return 0;
+}
+
+void gml_gpu_device_services(GmlGpu *gpu,GmlRenderDeviceServices *out_services){
+  if(!out_services) return;
+  memset(out_services,0,sizeof *out_services);
+  if(!gpu || !gpu->context_active) return;
+  out_services->context=gpu;
+  out_services->capabilities=scene_capabilities;
+  out_services->submit=scene_submit;
+  out_services->upload=scene_upload;
+  out_services->readback=scene_readback;
+  out_services->retire=scene_retire;
+  out_services->flush=scene_flush;
+  out_services->wait=scene_wait;
+}
+
 int gml_gpu_execute_plan(GmlGpu *gpu,GmlRenderPlan *plan){
   if(!gpu || !plan) return 0;
   gpu->counters.frames_offered++;

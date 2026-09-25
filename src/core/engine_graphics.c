@@ -37,12 +37,18 @@ AnygmResult anygm_graphics_context_reset(AnygmEngine *engine,const AnygmGraphics
     engine->gpu=gml_gpu_create();
     if(!engine->gpu) return ANYGM_ERROR_OUT_OF_MEMORY;
   }
+  gml_render_bind_device(&engine->render,NULL);
   if(!gml_gpu_context_reset(engine->gpu,&adopted)){
     const char *reason=gml_gpu_last_error(engine->gpu);
     engine_logf(engine,ANYGM_LOG_WARN,"The graphics context could not be adopted: %s\n",
                 reason?reason:"unknown");
     /* The software engine is untouched and remains the complete implementation. */
     return ANYGM_ERROR_UNSUPPORTED;
+  }
+  {
+    GmlRenderDeviceServices services;
+    gml_gpu_device_services(engine->gpu,&services);
+    gml_render_bind_device(&engine->render,&services);
   }
   /* Hybrid presentation and content GLSL share this context but are independent policies. */
   gml_render_set_shader_device(&engine->render,engine_content_shaders_active(engine));
@@ -69,6 +75,7 @@ int engine_content_shaders_active(const AnygmEngine *engine){
 
 void engine_graphics_release(AnygmEngine *engine,int context_is_current){
   if(!engine || !engine->gpu) return;
+  gml_render_bind_device(&engine->render,NULL);
   gml_render_set_shader_device(&engine->render,0);
   /* Report before the counters go away with the object. A host releases the context when content
    * closes, which is before the engine's own teardown. */

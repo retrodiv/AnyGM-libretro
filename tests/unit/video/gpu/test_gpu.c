@@ -183,6 +183,49 @@ static int program_failure_case(void){
   return 1;
 }
 
+static int scene_service_unavailable_case(void){
+  GmlGpu *gpu;
+  GmlGpuContext context;
+  GmlRenderDeviceServices services;
+  GmlRenderDeviceCaps caps;
+  GmlRenderDrawOp op;
+  GmlRenderDrawBatch batch;
+  GmlRenderExecutionResult result;
+  int draws;
+  anygm_test_graphics_reset();
+  gpu=gml_gpu_create();
+  REQUIRE(gpu!=NULL,"device metadata allocated");
+  memset(&services,0xA5,sizeof services);
+  gml_gpu_device_services(gpu,&services);
+  REQUIRE(!services.context && !services.submit,"no service is bound before context adoption");
+  context=fake_context(GML_GPU_API_OPENGL_CORE);
+  REQUIRE(gml_gpu_context_reset(gpu,&context),"context adopted");
+  gml_gpu_device_services(gpu,&services);
+  REQUIRE(services.context==gpu && services.capabilities && services.submit &&
+          services.upload && services.readback && services.retire && services.flush && services.wait,
+          "the neutral service has a complete callback table");
+  memset(&caps,0xA5,sizeof caps);
+  REQUIRE(services.capabilities(services.context,&caps),"capability query succeeds");
+  REQUIRE(caps.supported_families==0 && caps.max_batch_quads==0,
+          "no scene family is advertised before a resident executor exists");
+  memset(&op,0,sizeof op);
+  op.opcode=GML_RENDER_OP_TEXTURED_QUAD;
+  memset(&batch,0,sizeof batch);
+  batch.operations=&op;
+  batch.operation_count=1;
+  draws=anygm_test_graphics_draw_calls();
+  result=services.submit(services.context,&batch);
+  REQUIRE(result.status==GML_RENDER_EXEC_UNSUPPORTED && result.accepted_prefix==0 &&
+          result.uncertain_target_count==0 && !result.all_destinations_uncertain,
+          "unsupported scene submission refuses before a write");
+  REQUIRE(anygm_test_graphics_draw_calls()==draws,"unsupported scene work reaches no driver draw");
+  gml_gpu_context_lost(gpu);
+  gml_gpu_device_services(gpu,&services);
+  REQUIRE(!services.context && !services.submit,"a lost context offers no service");
+  gml_gpu_destroy(gpu,0);
+  return 1;
+}
+
 static int execute_state_and_geometry_case(void){
   enum { SOURCE_WIDTH=4,SOURCE_HEIGHT=3,TARGET_WIDTH=40,TARGET_HEIGHT=30,
          CANVAS_X=4,CANVAS_Y=6,CANVAS_WIDTH=32,CANVAS_HEIGHT=18 };
@@ -791,6 +834,7 @@ int main(int argc,char **argv){
     {"destroy_without_context",lifecycle_destroy_without_context_case},
     {"missing_entry_point",missing_entry_point_case},
     {"program_failure",program_failure_case},
+    {"scene_service_unavailable",scene_service_unavailable_case},
   };
   static const AnygmTestCase execution_cases[]={
     {"state_and_geometry",execute_state_and_geometry_case},

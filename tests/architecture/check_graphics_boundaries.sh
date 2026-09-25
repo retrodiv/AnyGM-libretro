@@ -39,7 +39,8 @@ fail_matches "Only the private GL backend may name OpenGL or EGL types, constant
 
 # The neutral seams. A GL or libretro type in either of these headers would make the plan and the
 # RHI facade describe one backend instead of describing the work.
-for header in src/video/renderer/gml_render_plan.h src/video/renderer/gpu/gml_gpu.h; do
+for header in src/video/renderer/gml_render_plan.h src/video/renderer/gml_render_draw.h \
+  src/video/renderer/gml_render_device.h src/video/renderer/gpu/gml_gpu.h; do
   [ -f "$header" ] || continue
   neutral=$(grep -n -H -E "$gl_tokens|retro_[[:alnum:]_]+|RETRO_[A-Z0-9_]+" "$header" 2>/dev/null || true)
   fail_matches "The neutral graphics seam must contain no GL or libretro type: $header" "$neutral"

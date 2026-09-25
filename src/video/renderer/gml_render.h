@@ -6,8 +6,14 @@
 #define GML_RENDER_H
 #include "gml_win.h"
 #include "gml_software3d.h"
+#include "gml_render_device.h"
 
 typedef struct GmlRender GmlRender;
+
+/* A borrowed device service bound only by the engine graphics owner. Binding copies callbacks,
+ * never a device-owned handle. An absent service keeps the established immediate CPU path. */
+void gml_render_bind_device(GmlRender *render,const GmlRenderDeviceServices *services);
+const GmlRenderDeviceServices *gml_render_device(const GmlRender *render);
 
 enum { GML_RENDER_TEXTURE_STAGES=8 };
 /* Stage zero samples the base image. Named shader handles resolve to auxiliary stages. */

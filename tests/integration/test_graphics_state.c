@@ -423,6 +423,30 @@ static int refused_context_case(void){
   return ok;
 }
 
+static int neutral_device_binding_case(void){
+  Session session;
+  const GmlRenderDeviceServices *device;
+  GmlRenderDeviceCaps caps;
+  anygm_test_graphics_reset();
+  REQUIRE(session_open(&session),"session loads for device binding");
+  REQUIRE(gml_render_device(&session.engine->render)==NULL,
+          "CPU scene begins without a bound device");
+  REQUIRE(graphics_adopt(session.engine,ANYGM_GRAPHICS_OPENGLES3)==ANYGM_OK,
+          "a context is adopted for device binding");
+  device=gml_render_device(&session.engine->render);
+  REQUIRE(device && device->context && device->capabilities && device->submit,
+          "the engine binds the neutral service on successful adoption");
+  memset(&caps,0,sizeof caps);
+  REQUIRE(device->capabilities(device->context,&caps) && caps.supported_families==0,
+          "binding does not pretend a scene family is implemented");
+  anygm_graphics_context_destroy(session.engine,1u);
+  REQUIRE(gml_render_device(&session.engine->render)==NULL,
+          "device service is cleared before context destruction");
+  REQUIRE(advance(session.engine,1,NULL),"CPU scene continues after context destruction");
+  session_close(&session);
+  return 1;
+}
+
 /* A context is shared transport, not permission to turn every graphics policy on. Disabling the
  * hybrid policy keeps eligible final passes on the processor, and leaving content GLSL disabled
  * keeps the renderer from reporting a shader device even while that context carries the frame. */
@@ -705,6 +729,7 @@ int main(void){
     {"a context lost while a frame is on it",context_lost_with_frame_pending_case},
     {"two interleaved engines stay independent",interleaved_engines_case},
     {"a refused context leaves a working software engine",refused_context_case},
+    {"neutral device binds and clears with context",neutral_device_binding_case},
     {"content GLSL and hybrid presentation remain independent",independent_graphics_policy_case},
     {"a buffer too short for the frame still takes the state",short_buffer_drops_the_frame_case},
     {"an explicit resume state omits only the completed frame",explicit_resume_state_case},

@@ -203,6 +203,8 @@ enum { GML_SHADED_FRAME_CACHE=32 };
 
 typedef struct GmlRender {
   GmlWin   *win;
+  GmlRenderDeviceServices device;
+  int device_bound;
   /* Borrowed engine-owned fixed-function context. */
   GmlSoftware3D *software3d;
   long frame;                     /* simulation frame supplied by the owning VM */
