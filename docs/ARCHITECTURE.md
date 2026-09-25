@@ -446,7 +446,7 @@ their authored records remain in the same renderer-owned storage.
 `common/gml_render_runtime_images.c` owns the unchanged dynamic sprite and
 background image, collision-mask, cache-invalidation, and source-reload
 lifecycle; metadata queries stay in `gml_render_assets.c`.
-`gml_render_blit.c` owns the complete sprite, background, room-tile, paint,
+`cpu/gml_render_cpu_blit.c` owns the complete sprite, background, room-tile, paint,
 axis-cache, and low-level pixel raster closure. Keeping those mutually calling
 hot kernels in one translation unit avoids introducing per-pixel indirection
 or cross-unit calls. Its size is therefore an intentional exception to the

@@ -702,8 +702,8 @@ fail_matches "Software-3D camera synchronization must use its declared video int
 
 renderer_pixel_backend_definitions=$(find src -type f -name '*.c' -exec grep -n -H -E \
   '^[[:space:]]*(uint32_t|void|int)[[:space:]]+gml_render_cpu_backend_(color_to_xrgb|lerp_xrgb|fill_xrgb|flat_blend_init|flat_blend_run|flat_blend_uses_float_alpha|draw_xrgb_alpha|draw_pixel_alpha|draw_pixel)[[:space:]]*\(' \
-  {} + 2>/dev/null | grep -v '^src/video/renderer/gml_render_blit\.c:' || true)
-fail_matches "Renderer pixel backend definitions belong only to gml_render_blit.c:" \
+  {} + 2>/dev/null | grep -v '^src/video/renderer/cpu/gml_render_cpu_blit\.c:' || true)
+fail_matches "Renderer pixel backend definitions belong only to cpu/gml_render_cpu_blit.c:" \
   "$renderer_pixel_backend_definitions"
 
 renderer_primitive_definition_files=$(find src -type f -name '*.c' -exec grep -l -E \
@@ -737,8 +737,8 @@ renderer_raster_definition_files=$(find src/video/renderer -type f -not -path 's
   -exec grep -l -E \
   '^[[:space:]]*(static[[:space:]]+)?(int|void|uint32_t)[[:space:]]+(gml_draw_(sprite|background|room_backgrounds|room_tiles|tile)|draw_sprite_nineslice|gml_render_shader_fill_rect|gml_render_cpu_backend_(color_to_xrgb|fill_xrgb|draw_pixel))([[:alnum:]_]*)[[:space:]]*\(' \
   {} + 2>/dev/null || true)
-if [ "$renderer_raster_definition_files" != "src/video/renderer/gml_render_blit.c" ]; then
-  printf '%s\n' "Complete sprite, background, tile, paint, and pixel raster definitions belong only to gml_render_blit.c:" >&2
+if [ "$renderer_raster_definition_files" != "src/video/renderer/cpu/gml_render_cpu_blit.c" ]; then
+  printf '%s\n' "Complete sprite, background, tile, paint, and pixel raster definitions belong only to cpu/gml_render_cpu_blit.c:" >&2
   printf '%s\n' "$renderer_raster_definition_files" >&2
   exit 1
 fi
