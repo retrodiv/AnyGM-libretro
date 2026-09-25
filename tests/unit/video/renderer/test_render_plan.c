@@ -11,7 +11,7 @@
 #include "anygm_test_runner.h"
 
 #include "gml_render_internal.h"
-#include "gml_render_plan.h"
+#include "gml_render_cpu_plan.h"
 #include "anygm.h"
 
 #include <math.h>
@@ -663,7 +663,7 @@ static int host_canvas_magnify_case(void){
             accumulator_axis(SOURCE_HEIGHT,CANVAS_HEIGHT),0u),
           "canvas magnification recorded");
   REQUIRE(gml_render_plan_validate(&plan),"canvas plan validates");
-  REQUIRE(gml_render_plan_execute_software(&plan,target,HOST_WIDTH),"canvas plan executes");
+  REQUIRE(gml_render_cpu_plan_execute(&plan,target,HOST_WIDTH),"canvas plan executes");
   for(int y=0;y<HOST_HEIGHT;y++) for(int x=0;x<HOST_WIDTH;x++){
     uint32_t actual=target[(size_t)y*HOST_WIDTH+x];
     uint32_t expected=0u;
@@ -698,7 +698,7 @@ static int host_canvas_reduce_case(void){
   REQUIRE(index!=GML_PLAN_NO_IMAGE,"reduction source recorded");
   REQUIRE(gml_render_plan_add_blit_box(&plan,index,whole,0u),"reduction recorded");
   REQUIRE(gml_render_plan_validate(&plan),"reduction plan validates");
-  REQUIRE(gml_render_plan_execute_software(&plan,target,HOST_WIDTH),"reduction executes");
+  REQUIRE(gml_render_cpu_plan_execute(&plan,target,HOST_WIDTH),"reduction executes");
   for(unsigned y=0;y<HOST_HEIGHT;y++) for(unsigned x=0;x<HOST_WIDTH;x++){
     unsigned y0=y*SOURCE_HEIGHT/HOST_HEIGHT,y1=(y+1)*SOURCE_HEIGHT/HOST_HEIGHT;
     unsigned x0=x*SOURCE_WIDTH/HOST_WIDTH,x1=(x+1)*SOURCE_WIDTH/HOST_WIDTH;
@@ -770,7 +770,7 @@ static int pooled_box_identity_case(void){
   content.host=&host;
   pool_owner.win=&content;
   memset(reference,0xCD,target_count*sizeof *reference);
-  if(!gml_render_plan_execute_software_pooled(&plan,reference,HOST_WIDTH,&pool_owner) ||
+  if(!gml_render_cpu_plan_execute_pooled(&plan,reference,HOST_WIDTH,&pool_owner) ||
      pool_owner.row_pool){
     fprintf(stderr,"render plan failed: single-band reduction\n");
     goto done;
@@ -778,7 +778,7 @@ static int pooled_box_identity_case(void){
   for(size_t count=1;count<sizeof thread_counts/sizeof thread_counts[0];count++){
     settings.threads=thread_counts[count];
     memset(actual,0xCD,target_count*sizeof *actual);
-    if(!gml_render_plan_execute_software_pooled(&plan,actual,HOST_WIDTH,&pool_owner) ||
+    if(!gml_render_cpu_plan_execute_pooled(&plan,actual,HOST_WIDTH,&pool_owner) ||
        !pool_owner.row_pool || memcmp(reference,actual,target_count*sizeof *actual)){
       fprintf(stderr,"render plan failed: reduction differs at %s bands\n",
               thread_counts[count]);
@@ -931,7 +931,7 @@ static int shader_draw_validation_case(void){
   REQUIRE(gml_render_plan_validate(&plan),"a shader draw with both sources validates");
   REQUIRE(plan.has_shader && plan.operation_count==1 && plan.operations[0].opcode==GML_PLAN_OP_SHADER_DRAW,
           "the plan carries the program and the operation");
-  REQUIRE(!gml_render_plan_execute_software(&plan,target,8),
+  REQUIRE(!gml_render_cpu_plan_execute(&plan,target,8),
           "the software executor does not run a content program");
 
   /* Without text there is nothing to compile. */
@@ -1041,7 +1041,7 @@ static int sharp_bilinear_case(void){
     REQUIRE(gml_render_plan_add_blit_sharp_bilinear(&plan,index,rect,0xA5u),"record sharp bilinear");
     REQUIRE(gml_render_plan_validate(&plan),"validate sharp bilinear");
     REQUIRE(!gml_render_plan_gpu_eligible(&plan),"sharp bilinear keeps its exact software kernel");
-    REQUIRE(gml_render_plan_execute_software(&plan,target,9),"execute sharp bilinear");
+    REQUIRE(gml_render_cpu_plan_execute(&plan,target,9),"execute sharp bilinear");
     for(unsigned y=0;y<6;y++) for(unsigned x=0;x<9;x++){
       uint32_t want=(y>=1 && y<5 && x>=1 && x<=widths[pass])
         ?0xA5000000u|expected[pass][x-1]:0x12345678u;
@@ -1055,7 +1055,7 @@ static int sharp_bilinear_case(void){
   uint32_t index=gml_render_plan_add_image(&plan,&image);
   GmlPlanRect single={0,0,1,1};
   REQUIRE(gml_render_plan_add_blit_sharp_bilinear(&plan,index,single,0u),"record reduction");
-  REQUIRE(gml_render_plan_execute_software(&plan,target,1) && target[0]==0x808080u,
+  REQUIRE(gml_render_cpu_plan_execute(&plan,target,1) && target[0]==0x808080u,
           "two-axis reduction rounds each channel correctly");
   image.width=image.height=image.pitch_pixels=1;
   image.cpu_pixels=colors;
@@ -1063,11 +1063,11 @@ static int sharp_bilinear_case(void){
   index=gml_render_plan_add_image(&plan,&image);
   GmlPlanRect whole={0,0,7,5};
   REQUIRE(gml_render_plan_add_blit_sharp_bilinear(&plan,index,whole,0u),"record single texel");
-  REQUIRE(gml_render_plan_execute_software(&plan,target,7),"clamp single texel neighbours");
+  REQUIRE(gml_render_cpu_plan_execute(&plan,target,7),"clamp single texel neighbours");
   for(unsigned i=0;i<35;i++) REQUIRE(target[i]==0xFF0000u,"single texel is constant");
   plan.images[0].pitch_pixels=0;
   target[0]=0x12345678u;
-  REQUIRE(!gml_render_plan_execute_software(&plan,target,7) && target[0]==0x12345678u,
+  REQUIRE(!gml_render_cpu_plan_execute(&plan,target,7) && target[0]==0x12345678u,
           "invalid source rejected before writing");
   return 1;
 }

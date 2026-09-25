@@ -5,7 +5,7 @@
  * a GPU execution is accepted only when it reproduces what this file produces, and a pass that
  * cannot be executed exactly elsewhere is replayed here in full. The bodies are the established
  * ones, moved rather than rewritten. */
-#include "gml_render_plan.h"
+#include "gml_render_cpu_plan.h"
 #include "gml_render_internal.h"
 
 #include <math.h>
@@ -346,7 +346,7 @@ static void execute_present(const GmlPlanOp *op,const GmlPlanImage *image,
            (size_t)op->destination.width*sizeof(uint32_t));
 }
 
-int gml_render_plan_execute_software_pooled(const GmlRenderPlan *plan,uint32_t *target,
+int gml_render_cpu_plan_execute_pooled(const GmlRenderPlan *plan,uint32_t *target,
                                             uint32_t target_pitch_pixels,
                                             struct GmlRender *pool_owner){
   if(!plan || !target) return 0;
@@ -381,7 +381,7 @@ int gml_render_plan_execute_software_pooled(const GmlRenderPlan *plan,uint32_t *
   return 1;
 }
 
-int gml_render_plan_execute_software(const GmlRenderPlan *plan,uint32_t *target,
+int gml_render_cpu_plan_execute(const GmlRenderPlan *plan,uint32_t *target,
                                      uint32_t target_pitch_pixels){
-  return gml_render_plan_execute_software_pooled(plan,target,target_pitch_pixels,NULL);
+  return gml_render_cpu_plan_execute_pooled(plan,target,target_pitch_pixels,NULL);
 }

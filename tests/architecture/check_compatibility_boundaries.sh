@@ -578,7 +578,7 @@ fi
 external_renderer_internal_includes=$(find src -type f \
   \( -name '*.c' -o -name '*.h' \) -exec grep -l -E \
   '^[[:space:]]*#include[[:space:]]+"gml_render_internal[.]h"' {} + 2>/dev/null | \
-  grep -v -E '^(src/core/engine_internal[.]h|src/video/renderer/gml_render_(pixel|sampling)_internal[.]h|src/video/renderer/[^/]+[.]c)$' || true)
+  grep -v -E '^(src/core/engine_internal[.]h|src/video/renderer/gml_render_(pixel|sampling)_internal[.]h|src/video/renderer/(common/|cpu/)?[^/]+[.]c)$' || true)
 fail_matches "Only renderer implementation and the engine composition root may include renderer storage:" \
   "$external_renderer_internal_includes"
 

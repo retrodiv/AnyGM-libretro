@@ -437,7 +437,7 @@ performance characterization; new non-raster policy does not belong there.
 The coarse presentation passes are additionally described by a framework-neutral render plan.
 `gml_render_plan.c` owns the plan's lifetime, bounded recording, validation, the two characterized
 axis rules and their composition, and the eligibility facts that decide whether a pass may leave the
-software executor. `gml_render_plan_software.c` is that executor and remains the canonical
+software executor. `gml_render_cpu_plan.c` is that executor and remains the canonical
 implementation: an alternative execution is accepted only when it reproduces these pixels exactly,
 and any pass that cannot be is replayed here in full. The plan carries value records only — no
 graphics API type, no host callback, no function pointer — and is never serialized under any schema.
@@ -549,7 +549,7 @@ It shares the inclusive relative 10% aspect-proximity rule with experimental for
 outside the 4:3 interval receive one-axis native-pixel padding before the output limits are checked
 again. Native padding retains the source pixel extent; larger output selects the existing 640x480
 fit. Both use the sharp-bilinear render-plan operation, whose complete software kernel lives in
-`gml_render_plan_software.c`. The GPU path transports those filtered pixels unchanged. When a
+`gml_render_cpu_plan.c`. The GPU path transports those filtered pixels unchanged. When a
 terminal content program precedes the fit, `engine_graphics.c` evaluates it into the completed
 source raster with a synchronous readback before software filtering. The host canvas and filter
 remain derived presentation; neither changes the content's window or serialized configuration.

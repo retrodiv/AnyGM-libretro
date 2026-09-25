@@ -6,6 +6,7 @@
 #include "engine_internal.h"
 #include "anygm_host.h"
 #include "content_router.h"
+#include "gml_render_cpu_plan.h"
 
 
 /* Start-room values must not leak across content loads because the same numeric value can identify
@@ -186,7 +187,7 @@ int resolve_host_frame(AnygmEngine *engine,const uint32_t **pixels,
   }
   if(!engine_build_host_plan(engine,&engine->host_plan,GML_PLAN_TARGET_CPU_FRAME,
                              host_width,host_height,clear_required) ||
-     !gml_render_plan_execute_software_pooled(&engine->host_plan,engine->host_screen,host_width,
+     !gml_render_cpu_plan_execute_pooled(&engine->host_plan,engine->host_screen,host_width,
                                               &engine->render)){
     engine->host_clear_valid=0;
     return 0;
