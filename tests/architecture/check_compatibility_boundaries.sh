@@ -832,8 +832,8 @@ fi
 renderer_shader_recognition_definition_files=$(find src/video/renderer -type f -not -path 'src/video/renderer/gpu/opengl/*' -name '*.c' -exec grep -l -E \
   '^[[:space:]]*(static[[:space:]]+)?(const[[:space:]]+void[[:space:]]*\*|char[[:space:]]*\*|void|int)[[:space:]]+(pal_parse_vec3|mem_find|glsl_[[:alnum:]_]+|parse_shader_palettes)[[:space:]]*\(' \
   {} + 2>/dev/null || true)
-if [ "$renderer_shader_recognition_definition_files" != "src/video/renderer/gml_render_effects.c" ]; then
-  printf '%s\n' "Renderer shader-recognition definitions belong only to gml_render_effects.c:" >&2
+if [ "$renderer_shader_recognition_definition_files" != "src/video/renderer/common/gml_render_shader_recognition.c" ]; then
+  printf '%s\n' "Renderer shader-recognition definitions belong only to common/gml_render_shader_recognition.c:" >&2
   printf '%s\n' "$renderer_shader_recognition_definition_files" >&2
   exit 1
 fi

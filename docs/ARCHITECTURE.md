@@ -438,6 +438,8 @@ the generation-specific camera rounding and logical/physical coordinate maps.
 `common/gml_render_shaders.c` owns the existing recognized-family policy,
 uniform and sampler controls, device candidacy, and optional accounting. The
 content-shader callback and software-family decisions are unchanged.
+`common/gml_render_shader_recognition.c` owns the existing ordered structural
+recognizers and bounded source selection, run once during content loading.
 `common/gml_render_skeleton.c` owns the unchanged embedded skeletal decode,
 animation pose preparation, and neutral draw-item construction; sprites and
 their authored records remain in the same renderer-owned storage.
@@ -469,11 +471,10 @@ bridge live in `cpu/gml_render_cpu_workers.c`; renderer teardown joins it before
 workspaces. No per-pixel call crosses those
 translation-unit seams.
 
-`gml_render_effects.c` owns bounded structural recognition of the supported
-software shader families plus non-CRT room-layer capture, filtering,
-composition, and complete effect pixel kernels. Recognition produces
-renderer-owned policy records during initialization; it does not interpret
-arbitrary shader code at draw time. The effects owner may use the
+`gml_render_effects.c` owns non-CRT room-layer capture, filtering,
+composition, and complete effect pixel kernels. Shader recognition produces
+renderer-owned policy records during initialization in the separate shared
+owner; it does not interpret arbitrary shader code at draw time. The effects owner may use the
 renderer-private row-band executor only at pass granularity. Inner pixel loops
 and the main sprite/surface mappers remain direct and do not cross an indirect
 dispatch boundary.

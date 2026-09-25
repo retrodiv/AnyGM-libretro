@@ -181,6 +181,7 @@ ANYGM_RENDERER_SOURCES := \
 	src/video/renderer/common/gml_render_content.c \
 	src/video/renderer/common/gml_render_view.c \
 	src/video/renderer/common/gml_render_shaders.c \
+	src/video/renderer/common/gml_render_shader_recognition.c \
 	src/video/renderer/common/gml_render_skeleton.c \
 	src/video/renderer/common/gml_render_runtime_images.c \
 	src/video/renderer/common/gml_render_fonts.c \
