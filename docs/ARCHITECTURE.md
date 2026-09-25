@@ -441,6 +441,9 @@ content-shader callback and software-family decisions are unchanged.
 `common/gml_render_skeleton.c` owns the unchanged embedded skeletal decode,
 animation pose preparation, and neutral draw-item construction; sprites and
 their authored records remain in the same renderer-owned storage.
+`common/gml_render_runtime_images.c` owns the unchanged dynamic sprite and
+background image, collision-mask, cache-invalidation, and source-reload
+lifecycle; metadata queries stay in `gml_render_assets.c`.
 `gml_render_blit.c` owns the complete sprite, background, room-tile, paint,
 axis-cache, and low-level pixel raster closure. Keeping those mutually calling
 hot kernels in one translation unit avoids introducing per-pixel indirection

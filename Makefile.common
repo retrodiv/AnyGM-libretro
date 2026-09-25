@@ -182,6 +182,7 @@ ANYGM_RENDERER_SOURCES := \
 	src/video/renderer/common/gml_render_view.c \
 	src/video/renderer/common/gml_render_shaders.c \
 	src/video/renderer/common/gml_render_skeleton.c \
+	src/video/renderer/common/gml_render_runtime_images.c \
 	src/video/renderer/gml_render_blit.c \
 	src/video/renderer/cpu/gml_render_cpu_postprocess.c \
 	src/video/renderer/cpu/gml_render_cpu_workers.c \

@@ -736,10 +736,10 @@ fi
 
 renderer_runtime_sprite_definition_files=$(find src/video/renderer -type f -not -path 'src/video/renderer/gpu/opengl/*' -name '*.c' \
   -exec grep -l -E \
-  '^[[:space:]]*(int|void)[[:space:]]+gml_(sprite_(append_from_rgba_frames|duplicate|set_alpha_from_sprite|set_offset|add_file|replace_from_rgba_frames|delete|collision_mask|create_from_surface|replace_from_file)|render_clear_runtime_sprites)[[:space:]]*\(' \
+  '^[[:space:]]*(int|void)[[:space:]]+(gml_sprite_(append_from_rgba_frames|duplicate|assign|set_alpha_from_sprite|set_offset|add_file|replace_from_rgba_frames|delete|collision_mask|create_from_surface|replace_from_file)|gml_background_replace_from_rgba|gml_render_(apply_removeback_rgba|clear_runtime_sprites|materialize_scaled_pages))[[:space:]]*\(' \
   {} + 2>/dev/null || true)
-if [ "$renderer_runtime_sprite_definition_files" != "src/video/renderer/gml_render_assets.c" ]; then
-  printf '%s\n' "The complete runtime-sprite record lifecycle belongs only to gml_render_assets.c:" >&2
+if [ "$renderer_runtime_sprite_definition_files" != "src/video/renderer/common/gml_render_runtime_images.c" ]; then
+  printf '%s\n' "The runtime image lifecycle belongs only to common/gml_render_runtime_images.c:" >&2
   printf '%s\n' "$renderer_runtime_sprite_definition_files" >&2
   exit 1
 fi
