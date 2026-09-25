@@ -1,0 +1,14 @@
+/* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 retrodiv <retrodiv@proton.me>
+ * Current CPU execution anchors. A fallback must name its concrete checkpoint.
+ */
+GML_RENDER_CPU_OPERATION(TEXTURED_QUAD, supported, gml_render_cpu_blit_tpag_part, "existing texture-page region raster")
+GML_RENDER_CPU_OPERATION(TEXTURED_TRIANGLES, supported, gml_render_cpu_blit_sprite_pos_resolved, "existing positioned-quad triangle raster")
+GML_RENDER_CPU_OPERATION(COLOURED_PRIMITIVE, supported, gml_render_cpu_rectangle, "existing primitive coverage closure")
+GML_RENDER_CPU_OPERATION(CLEAR, supported, gml_render_clear, "existing deferred/full-target clear")
+GML_RENDER_CPU_OPERATION(COPY_IMAGE, supported, gml_surface_copy, "existing alias-safe surface copy")
+GML_RENDER_CPU_OPERATION(COMPOSE_SURFACE, supported, gml_render_cpu_draw_surface_stretched_impl, "existing surface composition closure")
+GML_RENDER_CPU_OPERATION(LAYER_EFFECT, supported, gml_render_cpu_layer_filter_end, "existing recognized layer-filter kernels")
+GML_RENDER_CPU_OPERATION(PRESENT_IMAGE, supported, gml_render_cpu_present_image, "existing output materialization")
+GML_RENDER_CPU_OPERATION(CONTENT_SHADER_DRAW, fallback, gml_render_cpu_shader_pass_surface, "existing host-program handoff and CPU composition; no exact software shader interpreter")
+GML_RENDER_CPU_OPERATION(SOFTWARE3D_PASS, supported, gml_d3_draw_sprite_2d, "existing conservative software-3D bridge")

@@ -1,0 +1,14 @@
+/* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 retrodiv <retrodiv@proton.me>
+ * New scene GPU entries are planned and cannot be selected at the CPU milestone.
+ */
+GML_RENDER_GPU_OPERATION(TEXTURED_QUAD, planned, gml_render_gpu_opengl_draw_textured_quad, "P3+ resident texture executor")
+GML_RENDER_GPU_OPERATION(TEXTURED_TRIANGLES, planned, gml_render_gpu_opengl_draw_textured_triangles, "P3+ positioned-quad executor")
+GML_RENDER_GPU_OPERATION(COLOURED_PRIMITIVE, planned, gml_render_gpu_opengl_draw_primitive, "P3+ primitive coverage executor")
+GML_RENDER_GPU_OPERATION(CLEAR, planned, gml_render_gpu_opengl_clear, "P3+ target clear executor")
+GML_RENDER_GPU_OPERATION(COPY_IMAGE, planned, gml_render_gpu_opengl_copy_image, "P3+ versioned image copy")
+GML_RENDER_GPU_OPERATION(COMPOSE_SURFACE, planned, gml_render_gpu_opengl_compose_surface, "P3+ versioned surface composition")
+GML_RENDER_GPU_OPERATION(LAYER_EFFECT, planned, gml_render_gpu_opengl_apply_effect, "P7 qualified effect families or bounded CPU fallback")
+GML_RENDER_GPU_OPERATION(PRESENT_IMAGE, planned, gml_render_gpu_opengl_present_image, "P3+ resident presentation")
+GML_RENDER_GPU_OPERATION(CONTENT_SHADER_DRAW, planned, gml_render_gpu_opengl_content_shader_draw, "P7 resident content-program pass or existing host handoff")
+GML_RENDER_GPU_OPERATION(SOFTWARE3D_PASS, fallback, gml_d3_draw_sprite_2d, "conservative software-3D bridge with CPU/GPU barrier")

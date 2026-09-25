@@ -466,6 +466,8 @@ soft source-size trigger, supported by the frame-boundary allocation and
 performance characterization; new non-raster policy does not belong there.
 
 The coarse presentation passes are additionally described by a framework-neutral render plan.
+The scene-operation ownership, current CPU anchors, planned OpenGL counterparts,
+and synchronization boundaries are indexed in [Renderer backend correspondence](RENDERER_BACKENDS.md).
 `gml_render_plan.c` owns the plan's lifetime, bounded recording, validation, the two characterized
 axis rules and their composition, and the eligibility facts that decide whether a pass may leave the
 software executor. `gml_render_cpu_plan.c` is that executor and remains the canonical

@@ -676,6 +676,7 @@ warnings-check: core
 
 architecture-check: builtin-registry-check provenance-check notices-check audio-data-check delta-vendor-check version-policy-check
 	tests/architecture/check_compatibility_boundaries.sh
+	python3 tests/architecture/check_render_operations.py --self-test
 	tests/architecture/check_code_map.sh
 	tests/architecture/check_graphics_boundaries.sh
 	python3 tests/architecture/check_content_boundaries.py
