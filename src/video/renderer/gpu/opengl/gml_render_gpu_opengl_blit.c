@@ -9,6 +9,7 @@
 
 int gml_render_gpu_opengl_draw_textured_quad(const GmlRenderDrawOp *op,
                                              const GmlRenderDrawStateSnapshot *state,
+                                             int rendered_source_origin,
                                              float *vertices){
   static const uint8_t corners[6]={0,1,2,0,2,3};
   const GmlRenderQuad *quad;
@@ -28,7 +29,8 @@ int gml_render_gpu_opengl_draw_textured_quad(const GmlRenderDrawOp *op,
     vertex[0]=(float)quad->x[corner];
     vertex[1]=(float)quad->y[corner];
     vertex[2]=(float)quad->u[corner];
-    vertex[3]=(float)quad->v[corner];
+    vertex[3]=rendered_source_origin?1.0f-(float)quad->v[corner]
+                                   :(float)quad->v[corner];
     vertex[4]=(float)((colour>>16)&255u)/255.0f;
     vertex[5]=(float)((colour>>8)&255u)/255.0f;
     vertex[6]=(float)(colour&255u)/255.0f;

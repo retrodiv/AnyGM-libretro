@@ -274,7 +274,7 @@ int gml_gpu_opengl_scene_upload(GmlGpuBackend *backend,const GmlRenderImageUploa
   GlSceneImage *slot;
   size_t row_bytes,bytes;
   const uint8_t *source;
-  int first,resize;
+  int first,resize,rendered_origin;
   if(!backend || !transfer || !transfer->bytes || !backend->loaded) return 0;
   scene=&backend->scene;
   if(!scene->available || !scene_extent_valid(scene,transfer->storage_width,transfer->storage_height) ||
@@ -289,6 +289,16 @@ int gml_gpu_opengl_scene_upload(GmlGpuBackend *backend,const GmlRenderImageUploa
   bytes=row_bytes*transfer->region.height;
   slot=scene_slot(backend,transfer->image);
   if(!slot) return 0;
+  /* Mutable render targets use the FBO's high-edge origin, even when CPU bytes arrive first.
+   * Authored atlas and sprite uploads retain the established low-edge texture convention. */
+  rendered_origin=transfer->image.resource_class==GML_RENDER_RESOURCE_SCREEN ||
+                  transfer->image.resource_class==GML_RENDER_RESOURCE_APPLICATION ||
+                  transfer->image.resource_class==GML_RENDER_RESOURCE_SURFACE ||
+                  transfer->image.resource_class==GML_RENDER_RESOURCE_SCRATCH;
+  if(slot->texture && slot->rendered_origin!=rendered_origin &&
+     (transfer->region.x || transfer->region.y ||
+      transfer->region.width!=transfer->storage_width ||
+      transfer->region.height!=transfer->storage_height)) return 0;
   first=!slot->texture;
   resize=slot->width!=transfer->storage_width || slot->height!=transfer->storage_height;
   if((first || resize || !scene_same_version(slot->ref,transfer->image)) &&
@@ -299,7 +309,8 @@ int gml_gpu_opengl_scene_upload(GmlGpuBackend *backend,const GmlRenderImageUploa
   source=(const uint8_t*)transfer->bytes;
   for(uint32_t row=0;row<transfer->region.height;row++){
     const uint8_t *input=source+(size_t)row*transfer->stride_bytes;
-    uint8_t *output=scene->scratch+(size_t)row*row_bytes;
+    uint32_t destination_row=rendered_origin?transfer->region.height-1u-row:row;
+    uint8_t *output=scene->scratch+(size_t)destination_row*row_bytes;
     if(transfer->pixel_format==GML_RENDER_PIXEL_RGBA8888){
       memcpy(output,input,row_bytes);
     } else for(uint32_t column=0;column<transfer->region.width;column++){
@@ -328,7 +339,10 @@ int gml_gpu_opengl_scene_upload(GmlGpuBackend *backend,const GmlRenderImageUploa
     backend->gl.TexParameteri(GL_TEXTURE_2D,GL_TEXTURE_WRAP_S,GL_CLAMP_TO_EDGE);
     backend->gl.TexParameteri(GL_TEXTURE_2D,GL_TEXTURE_WRAP_T,GL_CLAMP_TO_EDGE);
   }
-  backend->gl.TexSubImage2D(GL_TEXTURE_2D,0,transfer->region.x,transfer->region.y,
+  backend->gl.TexSubImage2D(GL_TEXTURE_2D,0,transfer->region.x,
+                            rendered_origin?(GLint)(transfer->storage_height-
+                              (uint32_t)transfer->region.y-transfer->region.height)
+                                           :transfer->region.y,
                             (GLsizei)transfer->region.width,(GLsizei)transfer->region.height,
                             GL_RGBA,GL_UNSIGNED_BYTE,scene->scratch);
   backend->gl.PixelStorei(GL_UNPACK_ALIGNMENT,4);
@@ -339,6 +353,7 @@ int gml_gpu_opengl_scene_upload(GmlGpuBackend *backend,const GmlRenderImageUploa
   slot->height=transfer->storage_height;
   slot->pixel_format=transfer->pixel_format;
   slot->valid=1;
+  slot->rendered_origin=rendered_origin;
   slot->last_used=++scene->use_clock;
   return 1;
 }

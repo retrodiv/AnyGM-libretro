@@ -32,7 +32,9 @@ static int full_region(GmlRenderRect region,uint32_t width,uint32_t height){
 static int existing_target(const GmlGpuBackend *backend,const GmlRenderTargetRef *target){
   for(size_t index=0;index<GL_SCENE_MAX_IMAGES;index++){
     const GlSceneImage *slot=&backend->scene.images[index];
-    if(slot->target && slot->valid && slot->texture &&
+    /* An uploaded, valid image can become a target when scene_target attaches its FBO.
+     * Requiring an existing FBO here rejected the first draw over a CPU-current surface. */
+    if(slot->valid && slot->texture &&
        same_logical(slot->ref,target->image) && slot->width==target->width &&
        slot->height==target->height && slot->pixel_format==target->pixel_format) return 1;
   }
@@ -140,7 +142,8 @@ static int scene_preflight(GmlGpuBackend *backend,const GmlRenderDrawBatch *batc
          state->samplers[0].filter!=sampling->filter ||
          state->samplers[0].edge_rule!=sampling->edge_rule ||
          !full_region(state->samplers[0].source_region,source->width,source->height) ||
-         !gml_render_gpu_opengl_draw_textured_quad(op,state,probe)) return 0;
+         !gml_render_gpu_opengl_draw_textured_quad(op,state,
+                                                   source->rendered_origin,probe)) return 0;
       for(uint32_t corner=0;corner<4;corner++)
         if((op->payload.quad.corner_colour[corner]>>24)!=255u) return 0;
     }
@@ -214,6 +217,7 @@ static int flush_quads(GmlGpuBackend *backend,GlSceneImage *target,GlSceneImage 
   backend->gl.Disable(GL_BLEND);
   if(backend->gl.GetError()!=GL_NO_ERROR){ target->valid=0; return 0; }
   target->valid=1;
+  target->rendered_origin=1;
   return 1;
 }
 
@@ -230,7 +234,8 @@ static int draw_exact_quad(GmlGpuBackend *backend,const GmlRenderDrawOp *op,
   int outcome;
   if(!exact_rect(op,&left,&bottom,&width,&height) ||
      !gml_gpu_opengl_scene_exact_program(backend,error,error_capacity) ||
-     !gml_render_gpu_opengl_draw_textured_quad(op,state,scene->vertices)) return 0;
+     !gml_render_gpu_opengl_draw_textured_quad(op,state,source->rendered_origin,
+                                               scene->vertices)) return 0;
   if(!scene->snapshot_texture){
     backend->gl.GenTextures(1,&scene->snapshot_texture);
     if(!scene->snapshot_texture) return 0;
@@ -292,7 +297,7 @@ cleanup:
   backend->gl.ActiveTexture(GL_TEXTURE0);
   backend->gl.BindTexture(GL_TEXTURE_2D,0);
   if(backend->gl.GetError()!=GL_NO_ERROR) outcome=-1;
-  if(outcome>0) target->valid=1;
+  if(outcome>0){ target->valid=1; target->rendered_origin=1; }
   return outcome;
 }
 
@@ -363,6 +368,7 @@ GmlRenderExecutionResult gml_gpu_opengl_scene_submit(GmlGpuBackend *backend,
         break;
       }
       target->valid=1;
+      target->rendered_origin=1;
       result.accepted_prefix=index+1u;
       continue;
     }
@@ -384,6 +390,7 @@ GmlRenderExecutionResult gml_gpu_opengl_scene_submit(GmlGpuBackend *backend,
       continue;
     }
     if(!gml_render_gpu_opengl_draw_textured_quad(op,&batch->states[op->state_index],
+       pending_source->rendered_origin,
        backend->scene.vertices+(size_t)pending_count*6u*GL_SCENE_VERTEX_FLOATS)){
       result.status=GML_RENDER_EXEC_RESOURCE_ERROR;
       break;

@@ -91,7 +91,7 @@ typedef struct GlSceneImage {
   GLuint texture,framebuffer;
   uint32_t width,height,pixel_format;
   uint64_t last_used;
-  int valid,target;
+  int valid,target,rendered_origin;
 } GlSceneImage;
 
 typedef struct GlScene {
@@ -175,6 +175,7 @@ int gml_render_gpu_opengl_clear(GmlGpuBackend *backend,const GmlRenderDrawOp *op
                                 GlSceneImage *target);
 int gml_render_gpu_opengl_draw_textured_quad(const GmlRenderDrawOp *op,
                                              const GmlRenderDrawStateSnapshot *state,
+                                             int rendered_source_origin,
                                              float *vertices);
 GlSceneImage *gml_gpu_opengl_scene_image(GmlGpuBackend *backend,GmlRenderImageRef image);
 GlSceneImage *gml_gpu_opengl_scene_target(GmlGpuBackend *backend,const GmlRenderTargetRef *target);

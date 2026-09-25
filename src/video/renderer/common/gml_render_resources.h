@@ -39,6 +39,9 @@ typedef struct GmlRenderResourceSource {
   size_t byte_capacity;
   const void *bytes;
   int borrowed_immutable;
+  /* Optional current resource backing this CPU view. A matching GPU version can be sampled
+   * directly; reconstruction still pins a separate immutable copy of mutable pixels. */
+  const GmlRenderResource *resident_resource;
 } GmlRenderResourceSource;
 
 typedef struct GmlRenderJournalMetrics {
@@ -55,6 +58,8 @@ GmlRenderResource *gml_render_resource_create(GmlRenderImageRef image,uint32_t w
                                                GmlRenderResourceLimits limits);
 void gml_render_resource_destroy(GmlRenderResource *resource);
 GmlRenderImageRef gml_render_resource_image_ref(const GmlRenderResource *resource);
+int gml_render_resource_source_view(GmlRenderResource *resource,
+                                    GmlRenderResourceSource *out_source);
 
 /* Submission reserves replay storage before issuing device work. Reconstructible rejected or
  * partially failed batches replay once on CPU. A non-reconstructible DEVICE_CHECKPOINT result is

@@ -341,6 +341,73 @@ static int recreate_device_before_reader(void){
   return 1;
 }
 
+static int resident_target_copy(void){
+  uint32_t source_pixels[16],destination_pixels[16],other_pixels[16],*write=NULL;
+  GmlRenderImageRef source_identity={GML_RENDER_RESOURCE_SURFACE,2u,1u,1u};
+  GmlRenderImageRef source_version;
+  GmlRenderDrawOp clear=clear_op(2u,0x40010203u,GML_RENDER_REPLAY_EXACT);
+  GmlRenderDrawOp copy;
+  GmlRenderDrawStateSnapshot state=quad_state(0);
+  GmlRenderDrawBatch source_batch={&clear,1u,NULL,0u};
+  GmlRenderDrawBatch destination_batch;
+  GmlRenderResourceSource view;
+  FakeDevice fake={0},other_fake={0};
+  GmlRenderDeviceServices device=service(&fake);
+  GmlRenderDeviceServices other_device=service(&other_fake);
+  GmlRenderResource *source,*destination,*other_destination;
+  fill(source_pixels,0u);
+  fill(destination_pixels,0u);
+  fill(other_pixels,0u);
+  source=gml_render_resource_create(source_identity,4u,4u,
+    GML_RENDER_PIXEL_ARGB8888,source_pixels,(GmlRenderResourceLimits){0});
+  destination=gml_render_resource_create(target_ref(1u,1u),4u,4u,
+    GML_RENDER_PIXEL_ARGB8888,destination_pixels,(GmlRenderResourceLimits){0});
+  other_destination=gml_render_resource_create(
+    (GmlRenderImageRef){GML_RENDER_RESOURCE_SURFACE,3u,1u,1u},4u,4u,
+    GML_RENDER_PIXEL_ARGB8888,other_pixels,(GmlRenderResourceLimits){0});
+  CHECK(source && destination && other_destination);
+  clear.target.image=source_identity;
+  clear.target.image.content_version=2u;
+  clear.target.pixel_format=GML_RENDER_PIXEL_ARGB8888;
+  CHECK(gml_render_resource_submit(source,&device,&source_batch,NULL,0u)==
+        GML_RENDER_RESOURCE_EXEC_DEVICE);
+  CHECK(gml_render_resource_source_view(source,&view));
+  CHECK(source_pixels[0]==0x40010203u && fake.uploads==0);
+  source_version=view.image;
+  copy=quad_op(2u,&source_version);
+  copy.target.pixel_format=GML_RENDER_PIXEL_ARGB8888;
+  copy.payload.quad.sampling.source_region=(GmlRenderRect){0,0,4u,4u};
+  copy.payload.quad.x[0]=copy.payload.quad.x[3]=0.0;
+  copy.payload.quad.x[1]=copy.payload.quad.x[2]=4.0;
+  copy.payload.quad.y[0]=copy.payload.quad.y[1]=0.0;
+  copy.payload.quad.y[2]=copy.payload.quad.y[3]=4.0;
+  state.samplers[0].source_region=(GmlRenderRect){0,0,4u,4u};
+  destination_batch=(GmlRenderDrawBatch){&copy,1u,&state,1u};
+  CHECK(gml_render_resource_submit(destination,&device,&destination_batch,&view,1u)==
+        GML_RENDER_RESOURCE_EXEC_DEVICE);
+  CHECK(fake.uploads==1); /* Destination baseline only; source stays resident. */
+  copy.target.image.identity=3u;
+  CHECK(gml_render_resource_submit(other_destination,&other_device,&destination_batch,
+                                   &view,1u)==GML_RENDER_RESOURCE_EXEC_DEVICE);
+  CHECK(other_fake.uploads==2); /* A different device needs both source and baseline. */
+  copy.target.image.identity=1u;
+  CHECK(gml_render_resource_acquire_cpu_write(source,&write));
+  write[0]=0xFF998877u;
+  CHECK(gml_render_resource_commit_cpu_write(source));
+  copy.target.image.content_version=3u;
+  CHECK(gml_render_resource_submit(destination,&device,&destination_batch,&view,1u)==
+        GML_RENDER_RESOURCE_EXEC_FAILED); /* Stale source version is fenced. */
+  gml_render_resource_context_lost(destination);
+  CHECK(gml_render_resource_acquire_cpu_read(destination,NULL));
+  CHECK(destination_pixels[0]==0x40010203u && destination_pixels[15]==0x40010203u);
+  CHECK(fake.readbacks==0 && fake.submits==2);
+  CHECK(other_fake.submits==1);
+  gml_render_resource_destroy(source);
+  gml_render_resource_destroy(destination);
+  gml_render_resource_destroy(other_destination);
+  return 1;
+}
+
 static int partial_error_and_write_lease(void){
   uint32_t pixels[16],*write=NULL;
   const uint32_t *read=NULL;
@@ -564,11 +631,12 @@ int main(void){
   passed+=argb_surface_replay();
   passed+=pressure_and_fallback();
   passed+=recreate_device_before_reader();
+  passed+=resident_target_copy();
   passed+=partial_error_and_write_lease();
   passed+=checkpoint_and_failure();
   passed+=rejection_and_isolation();
   passed+=persistent_surface_lifecycle();
   passed+=state_without_context();
-  printf("render resource cases: passed=%d failed=%d\n",passed,9-passed);
-  return passed==9?EXIT_SUCCESS:EXIT_FAILURE;
+  printf("render resource cases: passed=%d failed=%d\n",passed,10-passed);
+  return passed==10?EXIT_SUCCESS:EXIT_FAILURE;
 }

@@ -39,6 +39,7 @@ struct GmlRenderResource {
   size_t retained_bytes;
   uint32_t authority;
   int cpu_write_acquired;
+  const void *device_identity;
   uint64_t cpu_replays,device_checkpoints,consolidations,cpu_fallbacks;
 };
 
@@ -53,6 +54,7 @@ static int same_version(GmlRenderImageRef a,GmlRenderImageRef b){
 
 static int source_view_valid(const GmlRenderResourceSource *source){
   uint64_t bytes;
+  const GmlRenderResource *resident;
   if(!source || !source->bytes || !source->image.incarnation ||
      !source->image.content_version || !source->width || !source->height ||
      source->width>UINT32_MAX/4u || source->stride_bytes<source->width*4u ||
@@ -60,7 +62,17 @@ static int source_view_valid(const GmlRenderResourceSource *source){
       source->pixel_format!=GML_RENDER_PIXEL_ARGB8888 &&
       source->pixel_format!=GML_RENDER_PIXEL_RGBA8888)) return 0;
   bytes=(uint64_t)(source->height-1u)*source->stride_bytes+(uint64_t)source->width*4u;
-  return bytes<=source->byte_capacity;
+  if(bytes>source->byte_capacity) return 0;
+  resident=source->resident_resource;
+  if(!resident) return 1;
+  return !source->borrowed_immutable &&
+         resident->authority!=GML_RENDER_RESOURCE_INVALID &&
+         same_version(resident->image,source->image) &&
+         resident->cpu_version==source->image.content_version &&
+         resident->width==source->width && resident->height==source->height &&
+         resident->pixel_format==source->pixel_format &&
+         source->bytes==resident->pixels &&
+         source->stride_bytes==source->width*4u;
 }
 
 static const GmlRenderResourceSource *find_input(const GmlRenderResourceSource *sources,
@@ -87,6 +99,7 @@ static int pin_source(PinnedSource *pin,const GmlRenderResourceSource *view){
            (const uint8_t*)view->bytes+(size_t)row*view->stride_bytes,
            (size_t)view->width*4u);
   pin->view.bytes=pin->owned;
+  pin->view.resident_resource=NULL;
   pin->view.stride_bytes=view->width*4u;
   pin->view.byte_capacity=bytes;
   pin->charged_bytes=bytes;
@@ -179,6 +192,23 @@ int gml_render_resource_acquire_cpu_read(GmlRenderResource *resource,
   return 1;
 }
 
+int gml_render_resource_source_view(GmlRenderResource *resource,
+                                    GmlRenderResourceSource *out_source){
+  const uint32_t *pixels=NULL;
+  if(out_source) memset(out_source,0,sizeof *out_source);
+  if(!out_source || !gml_render_resource_acquire_cpu_read(resource,&pixels) ||
+     resource->width>UINT32_MAX/4u) return 0;
+  out_source->image=resource->image;
+  out_source->width=resource->width;
+  out_source->height=resource->height;
+  out_source->pixel_format=resource->pixel_format;
+  out_source->stride_bytes=resource->width*4u;
+  out_source->byte_capacity=(size_t)resource->width*resource->height*4u;
+  out_source->bytes=pixels;
+  out_source->resident_resource=resource;
+  return 1;
+}
+
 int gml_render_resource_acquire_cpu_write(GmlRenderResource *resource,
                                            uint32_t **out_pixels){
   const uint32_t *current=NULL;
@@ -203,6 +233,7 @@ int gml_render_resource_commit_cpu_write(GmlRenderResource *resource){
 void gml_render_resource_context_lost(GmlRenderResource *resource){
   if(!resource) return;
   resource->gpu_version=0;
+  resource->device_identity=NULL;
   if(resource->authority==GML_RENDER_RESOURCE_BOTH_CURRENT)
     resource->authority=GML_RENDER_RESOURCE_CPU_CURRENT;
 }
@@ -243,6 +274,7 @@ static GmlRenderResourceExecution cpu_fallback(GmlRenderResource *resource,
                                   .target.image.content_version;
   resource->cpu_version=resource->image.content_version;
   resource->gpu_version=0;
+  resource->device_identity=NULL;
   resource->authority=GML_RENDER_RESOURCE_CPU_CURRENT;
   resource->cpu_fallbacks++;
   return GML_RENDER_RESOURCE_EXEC_CPU;
@@ -302,6 +334,9 @@ static int upload_sources(const GmlRenderDeviceServices *device,
     if(seen) continue;
     view=find_input(sources,source_count,operation->sources[0]);
     if(!view) return 0;
+    if(view->resident_resource &&
+       view->resident_resource->gpu_version==view->image.content_version &&
+       view->resident_resource->device_identity==device->context) continue;
     transfer.image=view->image;
     transfer.storage_width=view->width;
     transfer.storage_height=view->height;
@@ -324,7 +359,8 @@ static int ensure_target_current(GmlRenderResource *resource,
      batch->operations[0].target.region.y==0 &&
      batch->operations[0].target.region.width==resource->width &&
      batch->operations[0].target.region.height==resource->height) return 1;
-  if(resource->gpu_version==resource->image.content_version) return 1;
+  if(resource->gpu_version==resource->image.content_version &&
+     resource->device_identity==device->context) return 1;
   if(!gml_render_resource_acquire_cpu_read(resource,NULL)) return 0;
   transfer.image=resource->image;
   transfer.storage_width=resource->width;
@@ -336,6 +372,7 @@ static int ensure_target_current(GmlRenderResource *resource,
   transfer.bytes=resource->pixels;
   if(!device->upload(device->context,&transfer)) return 0;
   resource->gpu_version=resource->image.content_version;
+  resource->device_identity=device->context;
   resource->authority=GML_RENDER_RESOURCE_BOTH_CURRENT;
   return 1;
 }
@@ -438,11 +475,13 @@ GmlRenderResourceExecution gml_render_resource_submit(
      device_result.accepted_prefix!=batch->operation_count){
     if(device->retire) device->retire(device->context,resource->image);
     resource->gpu_version=0;
+    resource->device_identity=NULL;
     goto staging_failed;
   }
   resource->image.content_version=batch->operations[batch->operation_count-1u]
                                   .target.image.content_version;
   resource->gpu_version=resource->image.content_version;
+  resource->device_identity=device->context;
   if(checkpoint_required){
     GmlRenderImageReadback readback={0};
     uint32_t *checkpoint=(uint32_t*)malloc((size_t)resource->width*resource->height*4u);
