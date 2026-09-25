@@ -161,6 +161,8 @@ void gml_gpu_opengl_scene_forget(GmlGpuBackend *backend){
   GlScene *scene=&backend->scene;
   memset(scene->images,0,sizeof scene->images);
   scene->program=scene->vertex_buffer=scene->vertex_array=0;
+  scene->exact_program=scene->snapshot_texture=0;
+  scene->snapshot_width=scene->snapshot_height=0;
   scene->max_texture_size=0;
   scene->available=0;
 }
@@ -171,6 +173,8 @@ void gml_gpu_opengl_scene_destroy(GmlGpuBackend *backend,int context_is_current)
     for(size_t index=0;index<GL_SCENE_MAX_IMAGES;index++)
       scene_delete_image(backend,&scene->images[index]);
     if(scene->program) backend->gl.DeleteProgram(scene->program);
+    if(scene->exact_program) backend->gl.DeleteProgram(scene->exact_program);
+    if(scene->snapshot_texture) backend->gl.DeleteTextures(1,&scene->snapshot_texture);
     if(scene->vertex_array) backend->gl.DeleteVertexArrays(1,&scene->vertex_array);
     if(scene->vertex_buffer) backend->gl.DeleteBuffers(1,&scene->vertex_buffer);
   }
@@ -211,6 +215,8 @@ int gml_gpu_opengl_scene_capabilities(const GmlGpuBackend *backend,GmlRenderDevi
   caps->supported_operations=(UINT64_C(1)<<GML_RENDER_OP_CLEAR)|
                              (UINT64_C(1)<<GML_RENDER_OP_TEXTURED_QUAD);
   caps->supported_families=GML_RENDER_FAMILY_TEXTURE|GML_RENDER_FAMILY_PRIMITIVE;
+  caps->supports_rgb_alpha_separate=backend->gl.BlendFuncSeparate &&
+                                     backend->gl.BlendEquationSeparate;
   caps->soft_cache_bytes=128u*1024u*1024u;
   return 1;
 }

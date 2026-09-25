@@ -99,6 +99,10 @@ typedef struct GlScene {
   GLuint program,vertex_buffer,vertex_array;
   GLint a_position,a_texcoord,a_colour;
   GLint u_extent,u_image;
+  GLuint exact_program,snapshot_texture;
+  GLint exact_a_position,exact_a_texcoord,exact_a_colour;
+  GLint exact_u_extent,exact_u_image,exact_u_previous,exact_u_region_origin;
+  uint32_t snapshot_width,snapshot_height;
   float *vertices;
   uint8_t *scratch;
   size_t scratch_capacity;
@@ -148,6 +152,7 @@ void gml_gpu_opengl_set_rect(GmlGpuBackend *backend,const GmlPlanRect *rect,
                               uint32_t target_height);
 int gml_gpu_opengl_build_program(GmlGpuBackend *backend,char *error,size_t error_capacity);
 int gml_gpu_opengl_scene_program(GmlGpuBackend *backend,char *error,size_t error_capacity);
+int gml_gpu_opengl_scene_exact_program(GmlGpuBackend *backend,char *error,size_t error_capacity);
 int gml_gpu_opengl_execute_shader_draw(GmlGpuBackend *backend,GmlRenderPlan *plan,
                                         const GmlPlanOp *op,GmlGpuCounters *counters,
                                         char *error,size_t error_capacity);

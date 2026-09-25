@@ -369,6 +369,115 @@ static int scene_resident_batch_case(void){
   return 1;
 }
 
+static int scene_alpha_composition_case(void){
+  uint32_t source_pixels[4]={0x80FF0000u,0x0000FF00u,0xFF0000FFu,0x40FFFFFFu};
+  GmlRenderImageRef source={GML_RENDER_RESOURCE_ATLAS,8u,1u,1u};
+  GmlRenderImageRef target={GML_RENDER_RESOURCE_SURFACE,9u,1u,1u};
+  GmlRenderImageUpload upload={0};
+  GmlRenderDrawStateSnapshot state={0};
+  GmlRenderDrawOp operations[3]={0};
+  GmlRenderDrawBatch batch={0};
+  GmlRenderDeviceServices service;
+  GmlRenderExecutionResult result;
+  GmlGpu *gpu;
+  GmlGpuContext context;
+  anygm_test_graphics_reset();
+  gpu=gml_gpu_create();
+  REQUIRE(gpu!=NULL,"device metadata allocated");
+  context=fake_context(GML_GPU_API_OPENGL_CORE);
+  REQUIRE(gml_gpu_context_reset(gpu,&context),"context adopted");
+  gml_gpu_device_services(gpu,&service);
+  upload.image=source;
+  upload.storage_width=upload.storage_height=2u;
+  upload.region=(GmlRenderRect){0,0,2u,2u};
+  upload.pixel_format=GML_RENDER_PIXEL_ARGB8888;
+  upload.stride_bytes=8u;
+  upload.byte_capacity=sizeof source_pixels;
+  upload.bytes=source_pixels;
+  REQUIRE(service.upload(service.context,&upload),"alpha atlas uploaded");
+  state.write_mask=15u;
+  state.alpha=255u;
+  state.colour=0xFFFFFFFFu;
+  state.sampler_count=1u;
+  state.rgb_source_factor=GML_RENDER_BLEND_SOURCE_ALPHA;
+  state.rgb_destination_factor=GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA;
+  state.alpha_source_factor=GML_RENDER_BLEND_ONE;
+  state.alpha_destination_factor=GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA;
+  state.rgb_equation=state.alpha_equation=GML_RENDER_BLEND_ADD;
+  state.samplers[0].filter=GML_RENDER_FILTER_NEAREST;
+  state.samplers[0].edge_rule=GML_RENDER_EDGE_CLAMP_SUBIMAGE;
+  state.samplers[0].source_region=(GmlRenderRect){0,0,2u,2u};
+  for(uint32_t index=0;index<3u;index++){
+    GmlRenderDrawOp *op=&operations[index];
+    op->sequence=index+1u;
+    op->target.image=target;
+    op->target.image.content_version=index+1u;
+    op->target.storage_version=index+1u;
+    op->target.width=op->target.height=8u;
+    op->target.pixel_format=GML_RENDER_PIXEL_ARGB8888;
+    op->target.region=(GmlRenderRect){0,0,8u,8u};
+    if(index==0u){
+      op->opcode=GML_RENDER_OP_CLEAR;
+      op->payload.clear_colour=0x00000000u;
+      continue;
+    }
+    op->opcode=GML_RENDER_OP_TEXTURED_QUAD;
+    op->source_count=1u;
+    op->sources=&source;
+    op->payload.quad.shape=GML_RENDER_QUAD_AXIS_ALIGNED;
+    op->payload.quad.sampling=state.samplers[0];
+    for(uint32_t corner=0;corner<4u;corner++)
+      op->payload.quad.corner_colour[corner]=0xFFFFFFFFu;
+    op->payload.quad.x[0]=op->payload.quad.x[3]=1.0;
+    op->payload.quad.x[1]=op->payload.quad.x[2]=3.0;
+    op->payload.quad.y[0]=op->payload.quad.y[1]=1.0;
+    op->payload.quad.y[2]=op->payload.quad.y[3]=3.0;
+    op->payload.quad.u[0]=op->payload.quad.u[3]=0.0;
+    op->payload.quad.u[1]=op->payload.quad.u[2]=1.0;
+    op->payload.quad.v[0]=op->payload.quad.v[1]=0.0;
+    op->payload.quad.v[2]=op->payload.quad.v[3]=1.0;
+  }
+  batch.operations=operations;
+  batch.operation_count=3u;
+  batch.states=&state;
+  batch.state_count=1u;
+  result=service.submit(service.context,&batch);
+  REQUIRE(result.status==GML_RENDER_EXEC_ACCEPTED && result.accepted_prefix==3u,
+          "alpha overlap is submitted in order");
+  REQUIRE(anygm_test_graphics_scene_draw_calls()==1 &&
+          anygm_test_graphics_scene_vertices()==12 &&
+          anygm_test_graphics_blend_configurations()==1 &&
+          !anygm_test_graphics_blend_enabled(),
+          "two overlapping alpha quads use one ordered draw and restore disabled blending");
+  REQUIRE(anygm_test_graphics_read_pixels()==0,
+          "transparent composition remains resident until explicit observation");
+  state.rgb_equation=state.alpha_equation=GML_RENDER_BLEND_EXACT8_TRUNC;
+  for(uint32_t index=0;index<3u;index++){
+    operations[index].target.image.identity=10u;
+    operations[index].target.pixel_format=GML_RENDER_PIXEL_XRGB8888;
+  }
+  operations[0].payload.clear_colour=0xFF0000FFu;
+  result=service.submit(service.context,&batch);
+  REQUIRE(result.status==GML_RENDER_EXEC_ACCEPTED && result.accepted_prefix==3u,
+          "exact source-over submits after a full clear");
+  REQUIRE(anygm_test_graphics_scene_copies()==2u &&
+          anygm_test_graphics_scene_copied_pixels()==8u &&
+          anygm_test_graphics_read_pixels()==0u,
+          "each overlap snapshots only its 2x2 destination region, without a CPU download");
+  {
+    int prior_clears=anygm_test_graphics_clear_calls();
+    int prior_draws=anygm_test_graphics_scene_draw_calls();
+    state.rgb_source_factor=GML_RENDER_BLEND_ZERO;
+    result=service.submit(service.context,&batch);
+    REQUIRE(result.status==GML_RENDER_EXEC_UNSUPPORTED && result.accepted_prefix==0u &&
+            anygm_test_graphics_clear_calls()==prior_clears &&
+            anygm_test_graphics_scene_draw_calls()==prior_draws,
+            "an unqualified blend refuses the whole batch before clear or draw");
+  }
+  gml_gpu_destroy(gpu,1);
+  return 1;
+}
+
 static int execute_state_and_geometry_case(void){
   enum { SOURCE_WIDTH=4,SOURCE_HEIGHT=3,TARGET_WIDTH=40,TARGET_HEIGHT=30,
          CANVAS_X=4,CANVAS_Y=6,CANVAS_WIDTH=32,CANVAS_HEIGHT=18 };
@@ -980,6 +1089,7 @@ int main(int argc,char **argv){
     {"scene_service_contract",scene_service_contract_case},
     {"scene_optional_entry_refusal",scene_optional_entry_refusal_case},
     {"scene_resident_batch",scene_resident_batch_case},
+    {"scene_alpha_composition",scene_alpha_composition_case},
   };
   static const AnygmTestCase execution_cases[]={
     {"state_and_geometry",execute_state_and_geometry_case},

@@ -88,4 +88,21 @@
   "out vec4 o_color;\n" \
   "void main(){ o_color=texture(u_image,v_texcoord)*v_colour; }\n"
 
+/* The eight-bit truncating source-over rule used by a characterised CPU leaf. Sampling the
+ * previous destination from a copied, bounded region makes overlaps observe prior writes. */
+#define GML_GPU_OPENGL_SCENE_EXACT_FRAGMENT_BODY \
+  "uniform sampler2D u_image;\n" \
+  "uniform sampler2D u_previous;\n" \
+  "uniform ivec2 u_region_origin;\n" \
+  "in vec2 v_texcoord;\n" \
+  "in vec4 v_colour;\n" \
+  "out vec4 o_color;\n" \
+  "void main(){\n" \
+  "  ivec4 source=ivec4(round(texture(u_image,v_texcoord)*v_colour*255.0));\n" \
+  "  ivec4 prior=ivec4(round(texelFetch(u_previous,ivec2(gl_FragCoord.xy)-u_region_origin,0)*255.0));\n" \
+  "  int factor=source.a==255?256:source.a;\n" \
+  "  ivec3 colour=(source.rgb*factor+prior.rgb*(256-factor))/256;\n" \
+  "  o_color=vec4(vec3(colour)/255.0,1.0);\n" \
+  "}\n"
+
 #endif

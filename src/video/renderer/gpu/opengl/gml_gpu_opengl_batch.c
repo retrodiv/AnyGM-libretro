@@ -5,6 +5,8 @@
  * rejected before writes; after a device error, the affected target is explicitly uncertain. */
 #include "gml_gpu_opengl_internal.h"
 
+#include <limits.h>
+#include <math.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -44,6 +46,40 @@ static int cleared_earlier(const GmlRenderImageRef *cleared,uint32_t count,
   return 0;
 }
 
+static int qualified_blend(const GmlRenderDrawStateSnapshot *state){
+  if(!state->rgb_source_factor && !state->rgb_destination_factor &&
+     !state->alpha_source_factor && !state->alpha_destination_factor &&
+     !state->rgb_equation && !state->alpha_equation) return 0;
+  if(state->rgb_source_factor==GML_RENDER_BLEND_SOURCE_ALPHA &&
+     state->rgb_destination_factor==GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA &&
+     state->alpha_source_factor==GML_RENDER_BLEND_ONE &&
+     state->alpha_destination_factor==GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA){
+    if(state->rgb_equation==GML_RENDER_BLEND_ADD &&
+       state->alpha_equation==GML_RENDER_BLEND_ADD) return 1;
+    if(state->rgb_equation==GML_RENDER_BLEND_EXACT8_TRUNC &&
+       state->alpha_equation==GML_RENDER_BLEND_EXACT8_TRUNC) return 2;
+  }
+  return -1;
+}
+
+static int exact_rect(const GmlRenderDrawOp *op,GLint *left,GLint *bottom,
+                      GLsizei *width,GLsizei *height){
+  const GmlRenderQuad *quad=&op->payload.quad;
+  double x0=quad->x[0],x1=quad->x[1],y0=quad->y[0],y1=quad->y[2];
+  if(!isfinite(x0) || !isfinite(x1) || !isfinite(y0) || !isfinite(y1) ||
+     x0!=quad->x[3] || x1!=quad->x[2] || y0!=quad->y[1] || y1!=quad->y[3] ||
+     x0<0.0 || y0<0.0 || x1<=x0 || y1<=y0 ||
+     x1>(double)INT_MAX || y1>(double)INT_MAX ||
+     x1>(double)op->target.width || y1>(double)op->target.height ||
+     x0!=(double)(GLint)x0 || y0!=(double)(GLint)y0 ||
+     x1!=(double)(GLint)x1 || y1!=(double)(GLint)y1) return 0;
+  if(left) *left=(GLint)x0;
+  if(bottom) *bottom=(GLint)op->target.height-(GLint)y1;
+  if(width) *width=(GLsizei)(x1-x0);
+  if(height) *height=(GLsizei)(y1-y0);
+  return 1;
+}
+
 static int scene_preflight(GmlGpuBackend *backend,const GmlRenderDrawBatch *batch){
   GmlRenderImageRef cleared[GL_SCENE_MAX_IMAGES];
   uint32_t clear_count=0;
@@ -58,7 +94,8 @@ static int scene_preflight(GmlGpuBackend *backend,const GmlRenderDrawBatch *batc
        target->width>(uint32_t)backend->scene.max_texture_size ||
        target->height>(uint32_t)backend->scene.max_texture_size ||
        !valid_region(target->region,target->width,target->height) ||
-       target->pixel_format!=GML_RENDER_PIXEL_XRGB8888) return 0;
+       (target->pixel_format!=GML_RENDER_PIXEL_XRGB8888 &&
+        target->pixel_format!=GML_RENDER_PIXEL_ARGB8888)) return 0;
     if(op->opcode==GML_RENDER_OP_CLEAR){
       if(!full_region(target->region,target->width,target->height) &&
          !existing_target(backend,target) &&
@@ -78,13 +115,18 @@ static int scene_preflight(GmlGpuBackend *backend,const GmlRenderDrawBatch *batc
       const GmlRenderDrawStateSnapshot *state=&batch->states[op->state_index];
       GlSceneImage *source=gml_gpu_opengl_scene_image(backend,op->sources[0]);
       const GmlRenderSamplingPolicy *sampling=&op->payload.quad.sampling;
-      if(!source || source->pixel_format!=GML_RENDER_PIXEL_XRGB8888 ||
+      int blend=qualified_blend(state);
+      if(!source || (source->pixel_format!=GML_RENDER_PIXEL_XRGB8888 &&
+                     source->pixel_format!=GML_RENDER_PIXEL_ARGB8888) ||
          same_logical(op->sources[0],target->image) ||
          state->write_mask!=15u || state->alpha!=255u ||
          state->colour!=0xFFFFFFFFu || state->alpha_test_enabled ||
-         state->rgb_source_factor || state->rgb_destination_factor ||
-         state->alpha_source_factor || state->alpha_destination_factor ||
-         state->rgb_equation || state->alpha_equation ||
+         blend<0 || (blend==1 && (!backend->gl.BlendFuncSeparate ||
+                                 !backend->gl.BlendEquationSeparate)) ||
+         (blend==2 && (!backend->gl.CopyTexSubImage2D ||
+                       target->pixel_format!=GML_RENDER_PIXEL_XRGB8888 ||
+                       sampling->filter!=GML_RENDER_FILTER_NEAREST ||
+                       !exact_rect(op,NULL,NULL,NULL,NULL))) ||
          state->sampler_count!=1u || state->material_identity || state->material_version ||
          state->coverage_policy ||
          !((state->clip.width==0 && state->clip.height==0) ||
@@ -126,7 +168,7 @@ static int scene_prepare_geometry(GmlGpuBackend *backend,char *error,size_t erro
 }
 
 static int flush_quads(GmlGpuBackend *backend,GlSceneImage *target,GlSceneImage *source,
-                       uint32_t filter,uint32_t count){
+                       uint32_t filter,int blend,uint32_t count){
   GlScene *scene=&backend->scene;
   GLfloat extent[2]={(GLfloat)target->width,(GLfloat)target->height};
   GLenum texture_filter=filter==GML_RENDER_FILTER_BILINEAR?GL_LINEAR:GL_NEAREST;
@@ -139,6 +181,12 @@ static int flush_quads(GmlGpuBackend *backend,GlSceneImage *target,GlSceneImage 
   backend->gl.BindTexture(GL_TEXTURE_2D,source->texture);
   backend->gl.TexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,(GLint)texture_filter);
   backend->gl.TexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAG_FILTER,(GLint)texture_filter);
+  if(blend){
+    backend->gl.BlendFuncSeparate(GL_SRC_ALPHA,GL_ONE_MINUS_SRC_ALPHA,
+                                  GL_ONE,GL_ONE_MINUS_SRC_ALPHA);
+    backend->gl.BlendEquationSeparate(GL_FUNC_ADD,GL_FUNC_ADD);
+    backend->gl.Enable(GL_BLEND);
+  } else backend->gl.Disable(GL_BLEND);
   backend->gl.UseProgram(scene->program);
   backend->gl.Uniform2fv(scene->u_extent,1,extent);
   backend->gl.Uniform1i(scene->u_image,0);
@@ -163,9 +211,89 @@ static int flush_quads(GmlGpuBackend *backend,GlSceneImage *target,GlSceneImage 
   backend->gl.BindVertexArray(0);
   backend->gl.UseProgram(0);
   backend->gl.BindTexture(GL_TEXTURE_2D,0);
+  backend->gl.Disable(GL_BLEND);
   if(backend->gl.GetError()!=GL_NO_ERROR){ target->valid=0; return 0; }
   target->valid=1;
   return 1;
+}
+
+/* Returns 1 on success, 0 before any target write, and -1 if the draw may have modified it. The
+ * snapshot is only the affected rectangle, never the entire surface per overlapping sprite. */
+static int draw_exact_quad(GmlGpuBackend *backend,const GmlRenderDrawOp *op,
+                           const GmlRenderDrawStateSnapshot *state,
+                           GlSceneImage *target,GlSceneImage *source,
+                           char *error,size_t error_capacity){
+  GlScene *scene=&backend->scene;
+  GLint left,bottom,origin[2];
+  GLsizei width,height,stride=GL_SCENE_VERTEX_FLOATS*(GLsizei)sizeof(float);
+  GLfloat extent[2]={(GLfloat)target->width,(GLfloat)target->height};
+  int outcome;
+  if(!exact_rect(op,&left,&bottom,&width,&height) ||
+     !gml_gpu_opengl_scene_exact_program(backend,error,error_capacity) ||
+     !gml_render_gpu_opengl_draw_textured_quad(op,state,scene->vertices)) return 0;
+  if(!scene->snapshot_texture){
+    backend->gl.GenTextures(1,&scene->snapshot_texture);
+    if(!scene->snapshot_texture) return 0;
+  }
+  backend->gl.BindFramebuffer(GL_FRAMEBUFFER,target->framebuffer);
+  backend->gl.ActiveTexture(GL_TEXTURE1);
+  backend->gl.BindTexture(GL_TEXTURE_2D,scene->snapshot_texture);
+  if(scene->snapshot_width<(uint32_t)width || scene->snapshot_height<(uint32_t)height){
+    backend->gl.TexImage2D(GL_TEXTURE_2D,0,GL_RGBA8,width,height,0,
+                           GL_RGBA,GL_UNSIGNED_BYTE,NULL);
+    backend->gl.TexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,GL_NEAREST);
+    backend->gl.TexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAG_FILTER,GL_NEAREST);
+    backend->gl.TexParameteri(GL_TEXTURE_2D,GL_TEXTURE_WRAP_S,GL_CLAMP_TO_EDGE);
+    backend->gl.TexParameteri(GL_TEXTURE_2D,GL_TEXTURE_WRAP_T,GL_CLAMP_TO_EDGE);
+    scene->snapshot_width=(uint32_t)width;
+    scene->snapshot_height=(uint32_t)height;
+  }
+  backend->gl.CopyTexSubImage2D(GL_TEXTURE_2D,0,0,0,left,bottom,width,height);
+  if(backend->gl.GetError()!=GL_NO_ERROR) return 0;
+  backend->gl.Disable(GL_BLEND);
+  backend->gl.Viewport(0,0,(GLsizei)target->width,(GLsizei)target->height);
+  backend->gl.Scissor(left,bottom,width,height);
+  backend->gl.ActiveTexture(GL_TEXTURE0);
+  backend->gl.BindTexture(GL_TEXTURE_2D,source->texture);
+  backend->gl.TexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,GL_NEAREST);
+  backend->gl.TexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAG_FILTER,GL_NEAREST);
+  backend->gl.UseProgram(scene->exact_program);
+  backend->gl.Uniform2fv(scene->exact_u_extent,1,extent);
+  backend->gl.Uniform1i(scene->exact_u_image,0);
+  backend->gl.Uniform1i(scene->exact_u_previous,1);
+  origin[0]=left;
+  origin[1]=bottom;
+  backend->gl.Uniform2iv(scene->exact_u_region_origin,1,origin);
+  backend->gl.BindVertexArray(scene->vertex_array);
+  backend->gl.BindBuffer(GL_ARRAY_BUFFER,scene->vertex_buffer);
+  backend->gl.BufferData(GL_ARRAY_BUFFER,6u*GL_SCENE_VERTEX_FLOATS*sizeof(float),
+                         scene->vertices,GL_STREAM_DRAW);
+  backend->gl.EnableVertexAttribArray((GLuint)scene->exact_a_position);
+  backend->gl.EnableVertexAttribArray((GLuint)scene->exact_a_texcoord);
+  backend->gl.EnableVertexAttribArray((GLuint)scene->exact_a_colour);
+  backend->gl.VertexAttribPointer((GLuint)scene->exact_a_position,2,GL_FLOAT,GL_FALSE,stride,
+                                  (const void*)0);
+  backend->gl.VertexAttribPointer((GLuint)scene->exact_a_texcoord,2,GL_FLOAT,GL_FALSE,stride,
+                                  (const void*)(2*sizeof(float)));
+  backend->gl.VertexAttribPointer((GLuint)scene->exact_a_colour,4,GL_FLOAT,GL_FALSE,stride,
+                                  (const void*)(4*sizeof(float)));
+  if(backend->gl.GetError()!=GL_NO_ERROR){ outcome=0; goto cleanup; }
+  backend->gl.DrawArrays(GL_TRIANGLES,0,6);
+  outcome=backend->gl.GetError()==GL_NO_ERROR?1:-1;
+cleanup:
+  backend->gl.DisableVertexAttribArray((GLuint)scene->exact_a_position);
+  backend->gl.DisableVertexAttribArray((GLuint)scene->exact_a_texcoord);
+  backend->gl.DisableVertexAttribArray((GLuint)scene->exact_a_colour);
+  backend->gl.BindBuffer(GL_ARRAY_BUFFER,0);
+  backend->gl.BindVertexArray(0);
+  backend->gl.UseProgram(0);
+  backend->gl.ActiveTexture(GL_TEXTURE1);
+  backend->gl.BindTexture(GL_TEXTURE_2D,0);
+  backend->gl.ActiveTexture(GL_TEXTURE0);
+  backend->gl.BindTexture(GL_TEXTURE_2D,0);
+  if(backend->gl.GetError()!=GL_NO_ERROR) outcome=-1;
+  if(outcome>0) target->valid=1;
+  return outcome;
 }
 
 static void mark_uncertain(GmlRenderExecutionResult *result,GlSceneImage *target){
@@ -184,6 +312,7 @@ GmlRenderExecutionResult gml_gpu_opengl_scene_submit(GmlGpuBackend *backend,
   GmlRenderExecutionResult result={0};
   GlSceneImage *active_target=NULL,*pending_source=NULL;
   uint32_t pending_filter=0,pending_count=0;
+  int pending_blend=0;
   result.status=GML_RENDER_EXEC_UNSUPPORTED;
   if(!scene_preflight(backend,batch)) return result;
   result.status=GML_RENDER_EXEC_RESOURCE_ERROR;
@@ -204,8 +333,11 @@ GmlRenderExecutionResult gml_gpu_opengl_scene_submit(GmlGpuBackend *backend,
        !active_target || !same_logical(active_target->ref,op->target.image) ||
        pending_count==GL_SCENE_MAX_QUADS ||
        !pending_source || !same_version(pending_source->ref,op->sources[0]) ||
-       pending_filter!=op->payload.quad.sampling.filter)){
-      if(!flush_quads(backend,active_target,pending_source,pending_filter,pending_count)){
+       pending_filter!=op->payload.quad.sampling.filter ||
+       pending_blend!=qualified_blend(&batch->states[op->state_index]) ||
+       qualified_blend(&batch->states[op->state_index])==2)){
+      if(!flush_quads(backend,active_target,pending_source,pending_filter,
+                      pending_blend,pending_count)){
         mark_uncertain(&result,active_target);
         break;
       }
@@ -240,6 +372,17 @@ GmlRenderExecutionResult gml_gpu_opengl_scene_submit(GmlGpuBackend *backend,
       break;
     }
     pending_filter=op->payload.quad.sampling.filter;
+    pending_blend=qualified_blend(&batch->states[op->state_index]);
+    if(pending_blend==2){
+      int drawn=draw_exact_quad(backend,op,&batch->states[op->state_index],
+                                target,pending_source,error,error_capacity);
+      if(drawn<0) mark_uncertain(&result,target);
+      else if(!drawn) result.status=GML_RENDER_EXEC_RESOURCE_ERROR;
+      if(drawn<=0) break;
+      result.accepted_prefix=index+1u;
+      pending_count=0;
+      continue;
+    }
     if(!gml_render_gpu_opengl_draw_textured_quad(op,&batch->states[op->state_index],
        backend->scene.vertices+(size_t)pending_count*6u*GL_SCENE_VERTEX_FLOATS)){
       result.status=GML_RENDER_EXEC_RESOURCE_ERROR;
@@ -249,13 +392,16 @@ GmlRenderExecutionResult gml_gpu_opengl_scene_submit(GmlGpuBackend *backend,
   }
   if(result.status==GML_RENDER_EXEC_RESOURCE_ERROR &&
      result.accepted_prefix+pending_count==batch->operation_count){
-    if(!flush_quads(backend,active_target,pending_source,pending_filter,pending_count))
+    if(!flush_quads(backend,active_target,pending_source,pending_filter,
+                    pending_blend,pending_count))
       mark_uncertain(&result,active_target);
     else {
       result.status=GML_RENDER_EXEC_ACCEPTED;
       result.accepted_prefix=batch->operation_count;
     }
   }
+  backend->gl.ActiveTexture(GL_TEXTURE1);
+  backend->gl.BindTexture(GL_TEXTURE_2D,0);
   backend->gl.ActiveTexture(GL_TEXTURE0);
   backend->gl.BindTexture(GL_TEXTURE_2D,0);
   backend->gl.BindBuffer(GL_ARRAY_BUFFER,0);

@@ -82,6 +82,22 @@ typedef struct GmlRenderSamplingPolicy {
   uint32_t quantisation;
 } GmlRenderSamplingPolicy;
 
+/* Resolved blend semantics, independent of any device API's enumerant values. Zeroed factors
+ * and equations describe disabled blending; unsupported combinations are rejected before writes. */
+typedef enum GmlRenderBlendFactor {
+  GML_RENDER_BLEND_ZERO=1,
+  GML_RENDER_BLEND_ONE=2,
+  GML_RENDER_BLEND_SOURCE_ALPHA=3,
+  GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA=4
+} GmlRenderBlendFactor;
+
+typedef enum GmlRenderBlendEquation {
+  GML_RENDER_BLEND_ADD=1,
+  /* Source-over with eight-bit factors and truncating division by 256. The destination must be
+   * snapshotted before this operation; fixed-function blending is not this rule. */
+  GML_RENDER_BLEND_EXACT8_TRUNC=2
+} GmlRenderBlendEquation;
+
 typedef struct GmlRenderDrawStateSnapshot {
   uint32_t rgb_source_factor,rgb_destination_factor;
   uint32_t alpha_source_factor,alpha_destination_factor;

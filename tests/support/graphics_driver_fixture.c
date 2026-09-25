@@ -46,6 +46,9 @@ typedef struct FakeDriver {
   GLuint bound_program;
   GLuint bound_vertex_array;
   int blend_enabled;
+  unsigned blend_configurations;
+  unsigned scene_copies;
+  uint64_t scene_copied_pixels;
   int depth_enabled;
   int stencil_enabled;
   int cull_enabled;
@@ -111,12 +114,17 @@ static void fake_GetIntegerv(GLenum name,GLint *value){
 static void fake_Flush(void){ note_call(); }
 static void fake_Finish(void){ note_call(); }
 static void fake_BlendFuncSeparate(GLenum a,GLenum b,GLenum c,GLenum d){
-  (void)a;(void)b;(void)c;(void)d; note_call();
+  note_call();
+  if(a==GL_SRC_ALPHA && b==GL_ONE_MINUS_SRC_ALPHA &&
+     c==GL_ONE && d==GL_ONE_MINUS_SRC_ALPHA) g_fake.blend_configurations++;
 }
 static void fake_BlendEquationSeparate(GLenum a,GLenum b){ (void)a;(void)b; note_call(); }
 static void fake_CopyTexSubImage2D(GLenum a,GLint b,GLint c,GLint d,GLint e,GLint f,
                                     GLsizei g,GLsizei h){
-  (void)a;(void)b;(void)c;(void)d;(void)e;(void)f;(void)g;(void)h; note_call();
+  (void)a;(void)b;(void)c;(void)d;(void)e;(void)f;
+  note_call();
+  g_fake.scene_copies++;
+  g_fake.scene_copied_pixels+=(uint64_t)(unsigned)g*(unsigned)h;
 }
 static void fake_Enable(GLenum cap){
   note_call();
@@ -585,6 +593,9 @@ unsigned anygm_test_graphics_attached_texture(void){ return g_fake.attached_text
 int anygm_test_graphics_clear_calls(void){ return g_fake.clear_calls; }
 unsigned anygm_test_graphics_framebuffer_queries(void){ return g_fake.framebuffer_queries; }
 int anygm_test_graphics_blend_enabled(void){ return g_fake.blend_enabled; }
+unsigned anygm_test_graphics_blend_configurations(void){ return g_fake.blend_configurations; }
+unsigned anygm_test_graphics_scene_copies(void){ return g_fake.scene_copies; }
+uint64_t anygm_test_graphics_scene_copied_pixels(void){ return g_fake.scene_copied_pixels; }
 int anygm_test_graphics_depth_enabled(void){ return g_fake.depth_enabled; }
 int anygm_test_graphics_stencil_enabled(void){ return g_fake.stencil_enabled; }
 int anygm_test_graphics_cull_enabled(void){ return g_fake.cull_enabled; }
