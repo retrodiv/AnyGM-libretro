@@ -192,9 +192,6 @@ void gml_render_bind_software3d(GmlRender *r,GmlSoftware3D *software3d){
 void gml_render_rebind_content(GmlRender *r,GmlWin *win){
   if(r) r->win=win;
 }
-GmlSoftware3D *gml_render_cpu_backend_software3d(GmlRender *r){
-  return r?r->software3d:NULL;
-}
 GmlSoftware3D *gml_render_software3d(GmlRender *r){
   return gml_render_cpu_backend_software3d(r);
 }
@@ -654,47 +651,6 @@ int gml_render_surface_plane(GmlRender *r,int surface,int *width,int *height,
   return 1;
 }
 
-int gml_render_cpu_backend_draw_view(GmlRender *r,GmlRenderCpuBackendDrawView *view){
-  if(view) memset(view,0,sizeof(*view));
-  if(!r || !view) return 0;
-  gml_render_flush_rotated_batch(r);
-  view->host=r->win?r->win->host:NULL;
-  view->pixels=r->fb;
-  if(r->target_sp==0 && r->fb==r->base_fb){
-    view->interpolation_pixels[0]=r->classic_interp_phase[0];
-    view->interpolation_pixels[1]=r->classic_interp_phase[1];
-    view->interpolation_pixels[2]=r->classic_interp_phase[2];
-  }
-  view->frame=r->frame;
-  view->camera_x=r->cam_x; view->camera_y=r->cam_y;
-  int world_coordinates=r->world_transform_active && !r->gui_pass_active &&
-    (r->target_sp==0 || r->target_id==-2) && r->target_id<0;
-  view->coordinate_scale_x=world_coordinates?r->world_scale_x:1.0;
-  view->coordinate_scale_y=world_coordinates?r->world_scale_y:1.0;
-  view->alpha=r->alpha;
-  view->width=r->fbw; view->height=r->fbh;
-  view->interpolate=r->interp;
-  view->alpha_blend=r->alphablend; view->blend_mode=r->blendmode;
-  view->circle_precision=r->circle_precision;
-  return 1;
-}
-void gml_render_cpu_backend_prepare_draw(GmlRender *r){
-  gml_render_maybe_prepare_draw(r);
-}
-int gml_render_cpu_backend_prepare_draw_view(GmlRender *r,GmlRenderCpuBackendDrawView *view){
-  gml_render_cpu_backend_prepare_draw(r);
-  return gml_render_cpu_backend_draw_view(r,view);
-}
-void gml_render_cpu_backend_sync_camera(GmlRender *r,double translation_x,double translation_y){
-  if(!r) return;
-  if(r->world_transform_active && !r->gui_pass_active &&
-     (r->target_sp==0 || r->target_id==-2) && r->target_id<0){
-    translation_x*=r->world_scale_x;
-    translation_y*=r->world_scale_y;
-  }
-  r->cam_x=r->projection_cam_x-translation_x;
-  r->cam_y=r->projection_cam_y-translation_y;
-}
 void gml_render_texture_page_cache_clear(GmlRender *render,GmlTpag *page){
   if(!page) return;
   int sx=page->sx,sy=page->sy,sw=page->sw,sh=page->sh;
@@ -731,9 +687,6 @@ void gml_render_interpolated_subrect_cache_clear(GmlRender *render){
   render->interp_subrect_cache=NULL;
   render->interp_subrect_count=0;
   render->interp_subrect_capacity=0;
-}
-void gml_render_cpu_backend_draw_map_point(const GmlRender *r,double *x,double *y){
-  gml_render_draw_map_point(r,x,y);
 }
 void gml_render_free(GmlRender *r){
   gml_render_flush_rotated_batch(r);

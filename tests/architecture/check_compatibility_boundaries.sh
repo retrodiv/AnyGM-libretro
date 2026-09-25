@@ -727,8 +727,8 @@ fi
 renderer_asset_view_definitions=$(find src -type f -name '*.c' -exec grep -l -E \
   '^[[:space:]]*int[[:space:]]+gml_render_cpu_backend_(texture|atlas)_view[[:space:]]*\(' \
   {} + 2>/dev/null || true)
-if [ "$renderer_asset_view_definitions" != "src/video/renderer/gml_render_assets.c" ]; then
-  printf '%s\n' "Renderer asset-view definitions belong only to gml_render_assets.c:" >&2
+if [ "$renderer_asset_view_definitions" != "src/video/renderer/cpu/gml_render_cpu_backend.c" ]; then
+  printf '%s\n' "Renderer CPU asset-view definitions belong only to cpu/gml_render_cpu_backend.c:" >&2
   printf '%s\n' "$renderer_asset_view_definitions" >&2
   exit 1
 fi
@@ -956,10 +956,10 @@ fail_matches "Software-3D asset access must stay behind the non-reentrant backen
   "$software3d_asset_facade_calls"
 
 renderer_target_backend_definitions=$(find src -type f -name '*.c' -exec grep -l -E \
-  '^[[:space:]]*(int|void|GmlSoftware3D[[:space:]]*\*)[[:space:]]+gml_render_cpu_backend_(software3d|draw_view|prepare_draw|prepare_draw_view|sync_camera|gui_map_point)[[:space:]]*\(' \
+  '^[[:space:]]*(int|void|GmlSoftware3D[[:space:]]*\*)[[:space:]]+gml_render_cpu_backend_(software3d|draw_view|prepare_draw|prepare_draw_view|sync_camera|draw_map_point)[[:space:]]*\(' \
   {} + 2>/dev/null || true)
-if [ "$renderer_target_backend_definitions" != "src/video/renderer/gml_render.c" ]; then
-  printf '%s\n' "Renderer target-view backend definitions belong only to gml_render.c:" >&2
+if [ "$renderer_target_backend_definitions" != "src/video/renderer/cpu/gml_render_cpu_backend.c" ]; then
+  printf '%s\n' "Renderer CPU target-view definitions belong only to cpu/gml_render_cpu_backend.c:" >&2
   printf '%s\n' "$renderer_target_backend_definitions" >&2
   exit 1
 fi
