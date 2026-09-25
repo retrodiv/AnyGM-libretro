@@ -771,6 +771,15 @@ if [ "$renderer_surface_definition_files" != "src/video/renderer/cpu/gml_render_
   exit 1
 fi
 
+renderer_shader_pass_definition_files=$(find src/video/renderer -type f -name '*.c' -exec grep -l -E \
+  '^[[:space:]]*(static[[:space:]]+)?(int|void|const[[:space:]]+uint32_t[[:space:]]*\*)[[:space:]]*(shade_source_to_target|gml_render_cpu_shader_pass_surface|gml_render_(shade_target_rect|shaded_atlas_rect|compose_shaded_plane|shaded_run_wanted|shaded_run_begin|shaded_run_end|shade_atlas_rect_at|compose_shaded_rotated|shade_target_sprite_part|shade_target_sprite))[[:space:]]*\(' \
+  {} + 2>/dev/null || true)
+if [ "$renderer_shader_pass_definition_files" != "src/video/renderer/cpu/gml_render_cpu_shader_pass.c" ]; then
+  printf '%s\n' "CPU content-shader capture and composition definitions belong only to cpu/gml_render_cpu_shader_pass.c:" >&2
+  printf '%s\n' "$renderer_shader_pass_definition_files" >&2
+  exit 1
+fi
+
 renderer_final_pixel_definition_files=$(find src/video/renderer -type f -not -path 'src/video/renderer/gpu/opengl/*' \
   \( -name '*.c' -o -name '*.h' \) -exec grep -l -E \
   '^[[:space:]]*static[[:space:]]+inline[[:space:]]+uint32_t[[:space:]]+(color_write_merge|blend_multiply_pixel)[[:space:]]*\(' \
