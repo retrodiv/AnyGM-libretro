@@ -848,11 +848,20 @@ if [ "$renderer_font_definition_files" != "src/video/renderer/common/gml_render_
 fi
 
 renderer_text_definition_files=$(find src/video/renderer -type f -not -path 'src/video/renderer/gpu/opengl/*' -name '*.c' -exec grep -l -E \
-  '^[[:space:]]*(static[[:space:]]+)?(void|int|double)[[:space:]]+(gml_text_(width|height|width_ext|height_ext)|gml_draw_(classic_game_information|text|text_transformed|text_ext|text_ext_transformed))[[:space:]]*\(' \
+  '^[[:space:]]*(static[[:space:]]+)?(void|int|double)[[:space:]]+(gml_text_(width|height|width_ext|height_ext)|gml_draw_(text|text_transformed|text_ext|text_ext_transformed))[[:space:]]*\(' \
   {} + 2>/dev/null || true)
 if [ "$renderer_text_definition_files" != "src/video/renderer/gml_render_text.c" ]; then
   printf '%s\n' "Renderer text definitions belong only to gml_render_text.c:" >&2
   printf '%s\n' "$renderer_text_definition_files" >&2
+  exit 1
+fi
+
+renderer_classic_info_definition_files=$(find src/video/renderer -type f -not -path 'src/video/renderer/gpu/opengl/*' -name '*.c' -exec grep -l -E \
+  '^[[:space:]]*void[[:space:]]+gml_draw_classic_game_information[[:space:]]*\(' \
+  {} + 2>/dev/null || true)
+if [ "$renderer_classic_info_definition_files" != "src/video/renderer/common/gml_render_classic_info.c" ]; then
+  printf '%s\n' "Classic information-page rendering belongs only to common/gml_render_classic_info.c:" >&2
+  printf '%s\n' "$renderer_classic_info_definition_files" >&2
   exit 1
 fi
 
