@@ -456,7 +456,8 @@ axis-cache, and low-level pixel raster closure. `common/gml_render_sprites.c` no
 ordinary sprite alpha, runtime frame selection, part source/transform/shader decisions,
 tiled-sprite repetition, sprite-backed background-layer preparation, extended sprite
 shader/Spine/D3 choice, stretched-sprite view/D3/shader preparation, and
-positioned-sprite view/D3/log/validation and axis/triangle geometry preparation. Masked
+positioned-sprite view/D3/log/validation and axis/triangle geometry preparation, plus
+the unchanged nine-slice band expansion. Masked
 extended/tiled dispatch, stretched raster, and positioned source sampling and raster
 remain with the connected CPU closure. Keeping those mutually calling
 hot kernels in one translation unit avoids introducing per-pixel indirection

@@ -58,6 +58,64 @@ static void check_positioned_sprite_geometry(void){
          "classic positioned sprite lost half-pixel shift or bypassed triangles");
 }
 
+static void check_nineslice_band_order(void){
+  enum { SOURCE_WIDTH=3,TARGET_WIDTH=5 };
+  uint8_t rgba[SOURCE_WIDTH*SOURCE_WIDTH*4];
+  uint32_t framebuffer[TARGET_WIDTH*TARGET_WIDTH];
+  GmlRender render={0};
+  GmlAtlas atlas={0};
+  GmlTpag page={0};
+  GmlSprite sprite={0};
+  int frame=0;
+  const int source_axis[TARGET_WIDTH]={0,1,1,1,2};
+  for(int i=0;i<SOURCE_WIDTH*SOURCE_WIDTH;i++){
+    rgba[i*4]=(uint8_t)(20+i*20);
+    rgba[i*4+1]=0;
+    rgba[i*4+2]=0;
+    rgba[i*4+3]=255;
+  }
+  atlas.px=rgba;
+  atlas.w=atlas.h=SOURCE_WIDTH;
+  page.atlas=0;
+  page.sw=page.sh=page.bw=page.bh=SOURCE_WIDTH;
+  page.alpha_scanned=1;
+  page.alpha_max=255;
+  page.ax1=page.ay1=SOURCE_WIDTH-1;
+  sprite.n_frames=1;
+  sprite.frame=&frame;
+  sprite.w=sprite.h=SOURCE_WIDTH;
+  sprite.ns_enabled=1;
+  sprite.ns_l=sprite.ns_r=sprite.ns_t=sprite.ns_b=1;
+  render.fb=render.base_fb=framebuffer;
+  render.fbw=render.base_fbw=TARGET_WIDTH;
+  render.fbh=render.base_fbh=TARGET_WIDTH;
+  render.atlas=&atlas;
+  render.n_atlas=1;
+  render.tpag=&page;
+  render.n_tpag=1;
+  render.spr=&sprite;
+  render.n_spr=1;
+  render.alpha=1.0;
+  render.alphablend=1;
+  render.color_write_mask=0x0f;
+  render.active_shader=-1;
+  render.target_id=-1;
+  memset(framebuffer,0,sizeof framebuffer);
+  gml_draw_sprite_stretched(&render,0,0,0,0,TARGET_WIDTH,TARGET_WIDTH,0xFFFFFFu,1.0);
+  for(int y=0;y<TARGET_WIDTH;y++) for(int x=0;x<TARGET_WIDTH;x++){
+    unsigned source=(unsigned)(source_axis[y]*SOURCE_WIDTH+source_axis[x]);
+    expect((framebuffer[y*TARGET_WIDTH+x]&0x00FFFFFFu)==((20u+source*20u)<<16),
+           "nine-slice corner, edge, or center band changed emission order");
+  }
+  sprite.ns_tile[4]=4;
+  memset(framebuffer,0,sizeof framebuffer);
+  gml_draw_sprite_stretched(&render,0,0,0,0,TARGET_WIDTH,TARGET_WIDTH,0xFFFFFFu,1.0);
+  expect((framebuffer[2*TARGET_WIDTH+2]&0x00FFFFFFu)==0 &&
+         (framebuffer[0]&0x00FFFFFFu)==(20u<<16),
+         "nine-slice hidden center did not preserve corner emission");
+  free(page.argb_cache);
+}
+
 static void write_u32(uint8_t *bytes,size_t offset,uint32_t value){
   bytes[offset+0]=(uint8_t)value;
   bytes[offset+1]=(uint8_t)(value>>8);
@@ -1450,6 +1508,7 @@ int main(void){
   };
   check_tileset_layout(0);
   check_positioned_sprite_geometry();
+  check_nineslice_band_order();
   check_tileset_layout(1);
   for(int bits=0;bits<8;bits++)
     check_transform(bits&1,(bits>>1)&1,(bits>>2)&1,transformed[bits]);

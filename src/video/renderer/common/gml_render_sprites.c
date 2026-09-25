@@ -145,6 +145,51 @@ int gml_render_sprite_pos_geometry(GmlRender *r, const double x[4], const double
   return 2;
 }
 
+/* one nine-slice band: tile (repeat/mirror) or stretch the source region (full-frame logical
+ * coords) into the destination span. Tiling anchors at the band's top-left and crops the last
+ * tile, according to the nine-slice contract. Mirror and blank-repeat modes
+ * fall back to plain repeat. */
+static void ns_band(GmlRender *r, GmlTpag *t, int mode,
+                    int sx, int sy, int sw, int sh,
+                    double dx, double dy, int tw, int th,
+                    uint32_t blend, double alpha){
+  if(sw<=0 || sh<=0 || tw<=0 || th<=0) return;
+  if(mode==4) return;                                   /* hide */
+  if(mode==0){                                          /* stretch */
+    gml_render_cpu_blit_tpag_part(r,t,sx,sy,sw,sh,dx,dy,(double)tw/sw,(double)th/sh,blend,alpha);
+    return;
+  }
+  for(int oy=0; oy<th; oy+=sh){                          /* repeat (also mirror/blankrepeat) */
+    int ch=sh<th-oy? sh : th-oy;
+    for(int ox=0; ox<tw; ox+=sw){
+      int cw=sw<tw-ox? sw : tw-ox;
+      gml_render_cpu_blit_tpag_part(r,t,sx,sy,cw,ch,dx+ox,dy+oy,1,1,blend,alpha);
+    }
+  }
+}
+/* draw a nine-slice sprite frame into the W x H target box at (dx0,dy0) (camera applied).
+ * Corners stay native-size; edges and center follow their tile modes. */
+void gml_render_sprite_nineslice(GmlRender *r, GmlSprite *s, GmlTpag *t,
+                                  double dx0, double dy0, int W, int H,
+                                  uint32_t blend, double alpha){
+  int sw=s->w, sh=s->h;
+  int l=s->ns_l, rt=s->ns_r, tp=s->ns_t, bt=s->ns_b;
+  int cw=sw-l-rt, chh=sh-tp-bt;      /* source center band sizes */
+  int tw=W-l-rt, th=H-tp-bt;         /* target center band sizes */
+  /* corners (never scaled) */
+  gml_render_cpu_blit_tpag_part(r,t,0,0,l,tp,          dx0,        dy0,        1,1,blend,alpha);
+  gml_render_cpu_blit_tpag_part(r,t,sw-rt,0,rt,tp,     dx0+W-rt,   dy0,        1,1,blend,alpha);
+  gml_render_cpu_blit_tpag_part(r,t,0,sh-bt,l,bt,      dx0,        dy0+H-bt,   1,1,blend,alpha);
+  gml_render_cpu_blit_tpag_part(r,t,sw-rt,sh-bt,rt,bt, dx0+W-rt,   dy0+H-bt,   1,1,blend,alpha);
+  /* edges: top(1), bottom(3), left(0), right(2) — tile mode indices per the SPRT record */
+  ns_band(r,t,s->ns_tile[1], l,0,cw,tp,      dx0+l,      dy0,        tw,tp, blend,alpha);
+  ns_band(r,t,s->ns_tile[3], l,sh-bt,cw,bt,  dx0+l,      dy0+H-bt,   tw,bt, blend,alpha);
+  ns_band(r,t,s->ns_tile[0], 0,tp,l,chh,     dx0,        dy0+tp,     l,th,  blend,alpha);
+  ns_band(r,t,s->ns_tile[2], sw-rt,tp,rt,chh,dx0+W-rt,   dy0+tp,     rt,th, blend,alpha);
+  /* center */
+  ns_band(r,t,s->ns_tile[4], l,tp,cw,chh,    dx0+l,      dy0+tp,     tw,th, blend,alpha);
+}
+
 void gml_draw_sprite_part_ext(GmlRender *r, int sprite, int subimg, double sx, double sy,
                               double sw, double sh, double x, double y,
                               double xs, double ys, uint32_t blend, double alpha){
