@@ -430,6 +430,8 @@ asset metadata plus the complete runtime-sprite record lifecycle.
 `common/gml_render_content.c` keeps the authored TPAG, sprite, and background
 record parsers intact; the coordinator invokes them in their original order
 between texture-page and font initialisation.
+`common/gml_render_view.c` owns the existing world and GUI transforms, including
+the generation-specific camera rounding and logical/physical coordinate maps.
 `gml_render_blit.c` owns the complete sprite, background, room-tile, paint,
 axis-cache, and low-level pixel raster closure. Keeping those mutually calling
 hot kernels in one translation unit avoids introducing per-pixel indirection
