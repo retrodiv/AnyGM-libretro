@@ -1055,10 +1055,11 @@ static void check_first_generation_complete_black_mask_reaches_presentation(void
 }
 
 static void check_first_generation_filtered_minification(void){
-  static const uint8_t rgba[16]={
+  static const uint8_t center[16]={
     255,0,0,255, 0,255,0,255,
     0,0,255,255, 255,255,255,255
   };
+  uint8_t rgba[4*4*4];
   uint32_t framebuffer=0xff000000u;
   GmlWin content;
   GmlRender render;
@@ -1071,10 +1072,14 @@ static void check_first_generation_filtered_minification(void){
   memset(&atlas,0,sizeof atlas);
   memset(&page,0,sizeof page);
   memset(&background,0,sizeof background);
+  memset(rgba,0x37,sizeof rgba);
+  memcpy(rgba+(1*4+1)*4,center,8);
+  memcpy(rgba+(2*4+1)*4,center+8,8);
   content.bytecode=14;
   atlas.px=(uint8_t*)rgba;
-  atlas.w=atlas.h=2;
+  atlas.w=atlas.h=4;
   page.atlas=0;
+  page.sx=page.sy=1;
   page.sw=page.sh=page.bw=page.bh=2;
   page.alpha_scanned=1;
   page.alpha_max=255;
@@ -1094,7 +1099,7 @@ static void check_first_generation_filtered_minification(void){
 
   gml_draw_background_ext(&render,0,0.0,0.0,0.5,0.5,0xffffffu,1.0);
   expect(framebuffer==0xff808080u,
-         "first-generation filtered minification did not sample all four neighbouring texels");
+         "first-generation filtered minification crossed the subpage or missed a texel");
   free(page.argb_cache);
 }
 

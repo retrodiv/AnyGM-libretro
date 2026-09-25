@@ -3521,10 +3521,24 @@ static inline void interp_tpag_filtered_sample(
     const GmlAtlas *atlas,const GmlTpag *tpag,
     int ua,int ub,int va,int vb,double fx,double fy,int logical_margin,
     double *red,double *green,double *blue,double *alpha){
-  const uint8_t *p00=interp_tpag_sample(atlas,tpag,ua,va,logical_margin);
-  const uint8_t *p01=interp_tpag_sample(atlas,tpag,ub,va,logical_margin);
-  const uint8_t *p10=interp_tpag_sample(atlas,tpag,ua,vb,logical_margin);
-  const uint8_t *p11=interp_tpag_sample(atlas,tpag,ub,vb,logical_margin);
+  const uint8_t *p00,*p01,*p10,*p11;
+  if(atlas && atlas->px && tpag &&
+     tpag->sw>0 && tpag->sh>0 &&
+     ua>=0 && ua<tpag->sw-1 && ub==ua+1 &&
+     va>=0 && va<tpag->sh-1 && vb==va+1 &&
+     tpag->sx>=0 && tpag->sy>=0 &&
+     tpag->sw<=atlas->w && tpag->sh<=atlas->h &&
+     tpag->sx<=atlas->w-tpag->sw && tpag->sy<=atlas->h-tpag->sh){
+    p00=atlas->px+(((size_t)(tpag->sy+va)*atlas->w)+tpag->sx+ua)*4u;
+    p01=p00+4;
+    p10=p00+(size_t)atlas->w*4u;
+    p11=p10+4;
+  } else {
+    p00=interp_tpag_sample(atlas,tpag,ua,va,logical_margin);
+    p01=interp_tpag_sample(atlas,tpag,ub,va,logical_margin);
+    p10=interp_tpag_sample(atlas,tpag,ua,vb,logical_margin);
+    p11=interp_tpag_sample(atlas,tpag,ub,vb,logical_margin);
+  }
   double inverse_x=1.0-fx,inverse_y=1.0-fy;
   double weight00=inverse_x*inverse_y;
   double weight01=fx*inverse_y;
