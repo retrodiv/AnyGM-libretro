@@ -462,8 +462,9 @@ implementation: an alternative execution is accepted only when it reproduces the
 and any pass that cannot be is replayed here in full. The plan carries value records only — no
 graphics API type, no host callback, no function pointer — and is never serialized under any schema.
 
-`cpu/gml_render_cpu_surfaces.c` temporarily owns surface lookup and coverage metadata, allocation,
-copy, resize, free, target-stack operations, and the complete normal,
+`common/gml_render_surfaces.c` owns surface identity, lookup and coverage metadata,
+allocation, resize, free, target-stack operations, and the established CPU-view read barrier.
+`cpu/gml_render_cpu_surfaces.c` retains deferred-fill realization, copies, and the complete normal,
 interpolated, part, stretched, and rotated surface composition kernels. The
 facade may request one coarse surface composition while flushing a deferred
 application-surface underlay; composition may request coarse draw preparation

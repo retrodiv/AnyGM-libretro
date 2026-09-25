@@ -762,12 +762,21 @@ if [ "$renderer_atlas_definition_files" != "src/video/renderer/common/gml_render
   exit 1
 fi
 
-renderer_surface_definition_files=$(find src/video/renderer -type f -not -path 'src/video/renderer/gpu/opengl/*' -name '*.c' -exec grep -l -E \
-  '^[[:space:]]*(static[[:space:]]+)?(int|void|uint32_t[[:space:]]*\*|const[[:space:]]+uint32_t[[:space:]]*\*)[[:space:]]*(surface_(slot|known_opaque|known_transparent|alpha_all_zero|store_target_coverage|pixels)|draw_(scaled_full_surface_normal|surface_interp_phase|surface_region|surface_stretched_impl)|gml_(surface_(exists|width|height|pixels_read|copy|create|free|resize|set_target|reset_target|get_target)|draw_surface_(stretched|ext|part_ext)|render_backend_surface_stretched))[[:space:]]*\(' \
+renderer_surface_shared_definitions=$(find src/video/renderer -type f -name '*.c' -exec grep -l -E \
+  '^[[:space:]]*(static[[:space:]]+)?(int|void|uint32_t[[:space:]]*\*|const[[:space:]]+uint32_t[[:space:]]*\*)[[:space:]]*(surface_(coverage_counts|slot|known_opaque|known_transparent|alpha_all_zero|store_target_coverage)|application_surface_resize|gml_surface_(exists|width|height|pixels_read|create|free|resize|set_target|reset_target|get_target)|gml_render_(application_surface_publish|application_surface_ensure_owned|begin_retaining_target))[[:space:]]*\(' \
   {} + 2>/dev/null || true)
-if [ "$renderer_surface_definition_files" != "src/video/renderer/cpu/gml_render_cpu_surfaces.c" ]; then
-  printf '%s\n' "Renderer surface storage, targets, and complete composition definitions belong only to cpu/gml_render_cpu_surfaces.c:" >&2
-  printf '%s\n' "$renderer_surface_definition_files" >&2
+if [ "$renderer_surface_shared_definitions" != "src/video/renderer/common/gml_render_surfaces.c" ]; then
+  printf '%s\n' "Surface identity, lifetime, and target definitions belong only to common/gml_render_surfaces.c:" >&2
+  printf '%s\n' "$renderer_surface_shared_definitions" >&2
+  exit 1
+fi
+
+renderer_surface_cpu_definitions=$(find src/video/renderer -type f -name '*.c' -exec grep -l -E \
+  '^[[:space:]]*(static[[:space:]]+)?(int|void|uint32_t[[:space:]]*\*|const[[:space:]]+uint32_t[[:space:]]*\*)[[:space:]]*(realize_suspended_fill|surface_pixels|draw_(scaled_full_surface_normal|surface_interp_phase|surface_region|surface_stretched_impl)|gml_surface_(copy|copy_part|target_lit)|gml_draw_surface_(stretched|ext|part_ext|tiled_ext)|gml_render_cpu_backend_surface_stretched)[[:space:]]*\(' \
+  {} + 2>/dev/null || true)
+if [ "$renderer_surface_cpu_definitions" != "src/video/renderer/cpu/gml_render_cpu_surfaces.c" ]; then
+  printf '%s\n' "Surface raster and CPU-copy definitions belong only to cpu/gml_render_cpu_surfaces.c:" >&2
+  printf '%s\n' "$renderer_surface_cpu_definitions" >&2
   exit 1
 fi
 
