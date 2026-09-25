@@ -20,7 +20,7 @@ typedef struct {
   int y, x, len;
   uint8_t opaque;
 } GmlTpagInterpRun;
-typedef struct {
+typedef struct GmlTpag {
   int sx,sy,sw,sh, tx,ty, tw,th, bw,bh, atlas;  /* texture page item; tw/th = logical extent of the
                                                    stored rectangle (differs when the page is scaled) */
   int project_authored_edges;                    /* a tilemap cell is one quad in an authored grid;

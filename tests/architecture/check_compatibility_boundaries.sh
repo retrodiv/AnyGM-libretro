@@ -735,11 +735,29 @@ fi
 
 renderer_raster_definition_files=$(find src/video/renderer -type f -not -path 'src/video/renderer/gpu/opengl/*' -name '*.c' \
   -exec grep -l -E \
-  '^[[:space:]]*(static[[:space:]]+)?(int|void|uint32_t)[[:space:]]+(gml_draw_(sprite|background|room_backgrounds|room_tiles|tile)|draw_sprite_nineslice|gml_render_shader_fill_rect|gml_render_cpu_backend_(color_to_xrgb|fill_xrgb|draw_pixel))([[:alnum:]_]*)[[:space:]]*\(' \
+  '^[[:space:]]*(static[[:space:]]+)?(int|void|uint32_t)[[:space:]]+(gml_draw_(sprite|background|room_backgrounds)|draw_sprite_nineslice|gml_render_shader_fill_rect|gml_render_cpu_backend_(color_to_xrgb|fill_xrgb|draw_pixel))([[:alnum:]_]*)[[:space:]]*\(' \
   {} + 2>/dev/null || true)
 if [ "$renderer_raster_definition_files" != "src/video/renderer/cpu/gml_render_cpu_blit.c" ]; then
-  printf '%s\n' "Complete sprite, background, tile, paint, and pixel raster definitions belong only to cpu/gml_render_cpu_blit.c:" >&2
+  printf '%s\n' "Sprite, background, paint, and pixel raster definitions belong only to cpu/gml_render_cpu_blit.c:" >&2
   printf '%s\n' "$renderer_raster_definition_files" >&2
+  exit 1
+fi
+
+renderer_tile_definition_files=$(find src/video/renderer -type f -name '*.c' -exec grep -l -E \
+  '^[[:space:]]*(static[[:space:]]+)?(int|void)[[:space:]]+(gml_draw_(tileset_tile|tile|room_tiles)|cmp_tile_depth)[[:space:]]*\(' \
+  {} + 2>/dev/null || true)
+if [ "$renderer_tile_definition_files" != "src/video/renderer/common/gml_render_tiles.c" ]; then
+  printf '%s\n' "Tile source, depth, and room traversal definitions belong only to common/gml_render_tiles.c:" >&2
+  printf '%s\n' "$renderer_tile_definition_files" >&2
+  exit 1
+fi
+
+renderer_cpu_tile_emitter_files=$(find src/video/renderer -type f -name '*.c' -exec grep -l -E \
+  '^[[:space:]]*void[[:space:]]+gml_render_cpu_blit_background_phase[[:space:]]*\(' \
+  {} + 2>/dev/null || true)
+if [ "$renderer_cpu_tile_emitter_files" != "src/video/renderer/cpu/gml_render_cpu_blit.c" ]; then
+  printf '%s\n' "CPU background and tile emission belongs only to cpu/gml_render_cpu_blit.c:" >&2
+  printf '%s\n' "$renderer_cpu_tile_emitter_files" >&2
   exit 1
 fi
 
