@@ -707,11 +707,20 @@ fail_matches "Renderer pixel backend definitions belong only to gml_render_blit.
   "$renderer_pixel_backend_definitions"
 
 renderer_primitive_definition_files=$(find src -type f -name '*.c' -exec grep -l -E \
-  '^[[:space:]]*(static[[:space:]]+)?(int|void|uint32_t)[[:space:]]+(draw_rect_prim_alpha|draw_rect_prim|draw_rect_colour_prim|draw_line_prim|draw_circle_prim|gm_color_lerp_fan|draw_px_fan|draw_circle_colour_prim|prim_tri_fill_ex|gml_render_primitive_point|gml_render_primitive_rectangle|gml_render_primitive_rectangle_color|gml_render_primitive_line|gml_render_primitive_circle|gml_render_primitive_circle_color|gml_render_primitive_triangle_alpha|gml_draw_layer_color_fill)[[:space:]]*\(' \
+  '^[[:space:]]*(static[[:space:]]+)?(int|void|uint32_t)[[:space:]]+(draw_rect_prim_alpha|draw_rect_prim|draw_rect_colour_prim|draw_line_prim|draw_circle_prim|gm_color_lerp_fan|draw_px_fan|draw_circle_colour_prim|prim_tri_fill_ex|gml_render_primitive_point|gml_render_primitive_line|gml_render_primitive_circle|gml_render_primitive_circle_color|gml_render_primitive_triangle_alpha|gml_draw_layer_color_fill|gml_render_cpu_rectangle|gml_render_cpu_rectangle_color)[[:space:]]*\(' \
   {} + 2>/dev/null || true)
 if [ "$renderer_primitive_definition_files" != "src/video/renderer/cpu/gml_render_cpu_primitives.c" ]; then
   printf '%s\n' "Renderer fixed-function primitive definitions belong only to cpu/gml_render_cpu_primitives.c:" >&2
   printf '%s\n' "$renderer_primitive_definition_files" >&2
+  exit 1
+fi
+
+renderer_primitive_preparation_files=$(find src -type f -name '*.c' -exec grep -l -E \
+  '^[[:space:]]*void[[:space:]]+(gml_render_primitive_rectangle|gml_render_primitive_rectangle_color|gml_render_circle_geometry)[[:space:]]*\(' \
+  {} + 2>/dev/null || true)
+if [ "$renderer_primitive_preparation_files" != "src/video/renderer/common/gml_render_primitives.c" ]; then
+  printf '%s\n' "Shared rectangle and circle preparation belongs only to common/gml_render_primitives.c:" >&2
+  printf '%s\n' "$renderer_primitive_preparation_files" >&2
   exit 1
 fi
 
