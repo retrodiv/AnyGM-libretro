@@ -198,6 +198,7 @@ ANYGM_RENDERER_SOURCES := \
 	src/video/renderer/common/gml_render_plan.c \
 	src/video/renderer/common/gml_render_surfaces.c \
 	src/video/renderer/common/gml_render_tiles.c \
+	src/video/renderer/common/gml_render_backgrounds.c \
 	src/video/renderer/common/gml_render_presentation.c \
 	src/video/renderer/cpu/gml_render_cpu_presentation.c \
 	src/video/renderer/cpu/gml_render_cpu_plan.c \
