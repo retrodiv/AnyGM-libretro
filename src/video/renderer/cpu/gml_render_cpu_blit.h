@@ -21,6 +21,8 @@ void gml_render_cpu_blit_sprite_stretched_resolved(GmlRender *render, GmlSprite 
                                                     int frame, double x, double y,
                                                     double width, double height,
                                                     uint32_t blend, double alpha);
+void gml_render_cpu_blit_sprite_pos_resolved(GmlRender *render, int sprite, int subimage,
+                                              const double x[4], const double y[4], double alpha);
 
 /* Existing coarse sprite-region raster entries; sources remain borrowed. */
 void gml_render_cpu_blit_rgba_region(GmlRender *r, const uint8_t *source, int width, int height,

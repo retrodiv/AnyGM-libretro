@@ -455,9 +455,10 @@ cache-detached subrectangle views, and ordered room-background traversal. The CP
 axis-cache, and low-level pixel raster closure. `common/gml_render_sprites.c` now owns
 ordinary sprite alpha, runtime frame selection, part source/transform/shader decisions,
 tiled-sprite repetition, sprite-backed background-layer preparation, extended sprite
-shader/Spine/D3 choice, and stretched-sprite view/D3/shader preparation. Masked
-extended/tiled dispatch, stretched raster and positioned draws remain with the connected
-CPU closure pending positioned-draw preparation. Keeping those mutually calling
+shader/Spine/D3 choice, stretched-sprite view/D3/shader preparation, and
+positioned-sprite view/D3/log/validation and axis/triangle geometry preparation. Masked
+extended/tiled dispatch, stretched raster, and positioned source sampling and raster
+remain with the connected CPU closure. Keeping those mutually calling
 hot kernels in one translation unit avoids introducing per-pixel indirection
 or cross-unit calls. Its size is therefore an intentional exception to the
 soft source-size trigger, supported by the frame-boundary allocation and

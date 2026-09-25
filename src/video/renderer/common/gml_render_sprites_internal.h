@@ -6,6 +6,12 @@
 
 #include "gml_render.h"
 
+typedef struct {
+  double qx[4], qy[4];
+  double tx[2][3], ty[2][3], tu[2][3], tv[2][3];
+  int x0, x1, y0, y1;
+} GmlRenderSpritePosGeometry;
+
 int gml_render_sprite_log_enabled(const GmlRender *render);
 void gml_render_sprite_tiled_ext_unmasked(GmlRender *render, int sprite, int subimage,
                                            double x, double y, double xscale, double yscale,
@@ -13,5 +19,7 @@ void gml_render_sprite_tiled_ext_unmasked(GmlRender *render, int sprite, int sub
 void gml_render_sprite_ext_unmasked(GmlRender *render, int sprite, int subimage,
                                     double x, double y, double xscale, double yscale,
                                     double rotation, uint32_t blend, double alpha);
+int gml_render_sprite_pos_geometry(GmlRender *render, const double x[4], const double y[4],
+                                    GmlRenderSpritePosGeometry *geometry);
 
 #endif

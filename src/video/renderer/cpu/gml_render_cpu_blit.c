@@ -5692,22 +5692,8 @@ static void sprite_pos_pixel(GmlRender *r,int x,int y,const double sample[4],dou
        ((uint32_t)gg<<8)|(uint32_t)bb;
 }
 
-void gml_draw_sprite_pos(GmlRender *r,int sprite,int subimg,
-                         const double x[4],const double y[4],double alpha){
-  double mapped_x[4],mapped_y[4];
-  for(int i=0;i<4;i++){
-    mapped_x[i]=x[i]; mapped_y[i]=y[i];
-    gml_render_draw_map_point(r,&mapped_x[i],&mapped_y[i]);
-  }
-  x=mapped_x; y=mapped_y;
-  if(gml_d3_draw_sprite_pos_2d(r,sprite,subimg,x,y,alpha)) return;
-  if(render_setting(r,"GML_LOG_SPRITE_POS")){
-    if(r && r->sprite_position_log_count++<16) anygm_host_logf(r && r->win ? r->win->host : NULL,ANYGM_LOG_DEBUG,"[sprite-pos] sprite=%d sub=%d alpha=%.3f p=(%.2f,%.2f)(%.2f,%.2f)(%.2f,%.2f)(%.2f,%.2f)\n",
-      sprite,subimg,alpha,x[0],y[0],x[1],y[1],x[2],y[2],x[3],y[3]);
-  }
-  if(!r||!r->fb||sprite<0||sprite>=r->n_spr||alpha<=0) return;
-  if(alpha>1) alpha=1;
-  for(int i=0;i<4;i++) if(!isfinite(x[i])||!isfinite(y[i])) return;
+void gml_render_cpu_blit_sprite_pos_resolved(GmlRender *r,int sprite,int subimg,
+                                              const double x[4],const double y[4],double alpha){
   GmlSprite *s=&r->spr[sprite]; if(s->n_frames<=0) return;
   const uint8_t *rgba=NULL; int stride=0,ox=0,oy=0,sw=0,sh=0;
   GmlTpag *page=NULL;
@@ -5723,44 +5709,20 @@ void gml_draw_sprite_pos(GmlRender *r,int sprite,int subimg,
   }
   if(!rgba||stride<=0||sw<=0||sh<=0) return;
 
-  double qx[4],qy[4],shift=r->classic?-.5:0;
-  for(int i=0;i<4;i++){ qx[i]=x[i]-r->cam_x+shift; qy[i]=y[i]-r->cam_y+shift; }
-  /* Most calls are ordinary rectangles. Preserve the established axis blitters for this common
-   * case and reserve barycentric work for genuinely distorted quads. */
-  if(!r->classic && qx[1]>qx[0] && qy[3]>qy[0] &&
-     fabs(qy[0]-qy[1])<1e-9 && fabs(qx[1]-qx[2])<1e-9 &&
-     fabs(qy[2]-qy[3])<1e-9 && fabs(qx[3]-qx[0])<1e-9){
+  GmlRenderSpritePosGeometry geometry;
+  int geometry_kind=gml_render_sprite_pos_geometry(r,x,y,&geometry);
+  if(geometry_kind==0) return;
+  if(geometry_kind==1){
+    const double *qx=geometry.qx,*qy=geometry.qy;
     if(page) blit(r,page,qx[0],qy[0],(qx[1]-qx[0])/sw,(qy[3]-qy[0])/sh,0xFFFFFF,alpha);
     else gml_render_cpu_blit_rgba_region(r,rgba,sw,sh,0,0,sw,sh,qx[0],qy[0],qx[1]-qx[0],qy[3]-qy[0],0xFFFFFF,alpha);
     return;
   }
-
-  double minx=qx[0],maxx=qx[0],miny=qy[0],maxy=qy[0];
-  for(int i=1;i<4;i++){
-    if(qx[i]<minx) minx=qx[i];
-    if(qx[i]>maxx) maxx=qx[i];
-    if(qy[i]<miny) miny=qy[i];
-    if(qy[i]>maxy) maxy=qy[i];
-  }
-  int x0=(int)floor(minx),x1=(int)ceil(maxx)-1,y0=(int)floor(miny),y1=(int)ceil(maxy)-1;
-  if(x0<0) x0=0;
-  if(y0<0) y0=0;
-  if(x1>=r->fbw) x1=r->fbw-1;
-  if(y1>=r->fbh) y1=r->fbh-1;
-  if(x1<x0||y1<y0) return;
-  static const double uvx[4]={0,1,1,0},uvy[4]={0,0,1,1};
-  const int tri[2][3]={{0,1,2},{0,2,3}};
-  double tx[2][3],ty[2][3],tu[2][3],tv[2][3];
-  for(int part=0;part<2;part++) for(int k=0;k<3;k++){
-    int index=tri[part][k];
-    tx[part][k]=qx[index]; ty[part][k]=qy[index];
-    tu[part][k]=uvx[index]; tv[part][k]=uvy[index];
-  }
   gml_render_maybe_prepare_draw(r);
-  for(int py=y0;py<=y1;py++) for(int px=x0;px<=x1;px++){
+  for(int py=geometry.y0;py<=geometry.y1;py++) for(int px=geometry.x0;px<=geometry.x1;px++){
     double u=0,v=0; int hit=0;
     for(int part=0;part<2&&!hit;part++)
-      hit=sprite_pos_triangle(px+.5,py+.5,tx[part],ty[part],tu[part],tv[part],&u,&v);
+      hit=sprite_pos_triangle(px+.5,py+.5,geometry.tx[part],geometry.ty[part],geometry.tu[part],geometry.tv[part],&u,&v);
     if(hit){ double sample[4]; sprite_pos_sample(rgba,stride,ox,oy,sw,sh,u,v,r->interp,sample); sprite_pos_pixel(r,px,py,sample,alpha); }
   }
 }

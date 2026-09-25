@@ -2,6 +2,7 @@
  * Copyright (c) 2026 retrodiv <retrodiv@proton.me>
  */
 #include "gml_render_internal.h"
+#include "gml_render_sprites_internal.h"
 #include "anygm_compatibility.h"
 
 #include <math.h>
@@ -16,6 +17,45 @@ static void expect(int condition,const char *message){
   if(condition) return;
   fprintf(stderr,"renderer tiles: %s\n",message);
   failures++;
+}
+
+static void check_positioned_sprite_geometry(void){
+  GmlRender render={0};
+  GmlRenderSpritePosGeometry geometry;
+  const double axis_x[4]={2.0,6.0,6.0,2.0};
+  const double axis_y[4]={3.0,3.0,7.0,7.0};
+  const double quad_x[4]={-1.0,8.0,9.0,0.0};
+  const double quad_y[4]={2.0,1.0,9.0,8.0};
+  const double outside_x[4]={-100.0,-90.0,-89.0,-101.0};
+  const double outside_y[4]={2.0,3.0,8.0,7.0};
+  const double outside_axis_x[4]={-100.0,-90.0,-90.0,-100.0};
+  render.fbw=64;
+  render.fbh=48;
+  render.cam_x=0.25;
+  render.cam_y=0.75;
+  expect(gml_render_sprite_pos_geometry(&render,axis_x,axis_y,&geometry)==1,
+         "axis-aligned positioned sprite did not retain the established fast-path choice");
+  expect(geometry.qx[0]==1.75 && geometry.qy[0]==2.25 &&
+         geometry.qx[2]==5.75 && geometry.qy[2]==6.25,
+         "positioned sprite axis coordinates changed fractional-camera mapping");
+  expect(gml_render_sprite_pos_geometry(&render,quad_x,quad_y,&geometry)==2,
+         "distorted positioned sprite did not select triangle preparation");
+  expect(geometry.x0==0 && geometry.x1==8 && geometry.y0==0 && geometry.y1==8,
+         "positioned sprite triangle bounds changed viewport clipping");
+  expect(geometry.tx[0][0]==-1.25 && geometry.ty[0][0]==1.25 &&
+         geometry.tx[0][1]==7.75 && geometry.ty[0][1]==0.25 &&
+         geometry.tu[0][0]==0.0 && geometry.tv[0][0]==0.0 &&
+         geometry.tu[0][1]==1.0 && geometry.tv[0][1]==0.0 &&
+         geometry.tu[1][1]==1.0 && geometry.tv[1][1]==1.0,
+         "positioned sprite triangle vertices or UV order changed");
+  expect(gml_render_sprite_pos_geometry(&render,outside_x,outside_y,&geometry)==0,
+         "offscreen distorted positioned sprite did not retain its early clip");
+  expect(gml_render_sprite_pos_geometry(&render,outside_axis_x,axis_y,&geometry)==1,
+         "offscreen axis-aligned sprite no longer selects the fast path before clipping");
+  render.classic=1;
+  expect(gml_render_sprite_pos_geometry(&render,axis_x,axis_y,&geometry)==2 &&
+         geometry.qx[0]==1.25 && geometry.qy[0]==1.75,
+         "classic positioned sprite lost half-pixel shift or bypassed triangles");
 }
 
 static void write_u32(uint8_t *bytes,size_t offset,uint32_t value){
@@ -1409,6 +1449,7 @@ int main(void){
     {0xff00ff00,0xffffffff,0xffff0000,0xff0000ff}
   };
   check_tileset_layout(0);
+  check_positioned_sprite_geometry();
   check_tileset_layout(1);
   for(int bits=0;bits<8;bits++)
     check_transform(bits&1,(bits>>1)&1,(bits>>2)&1,transformed[bits]);
