@@ -118,5 +118,12 @@ int gml_gpu_opengl_upload_source(GmlGpuBackend *backend,const GmlPlanImage *imag
 int gml_gpu_opengl_upload_axis(GmlGpuBackend *backend,uint32_t slot_index,
                                 const GmlPlanAxis *axis,uint32_t count,
                                 GmlGpuCounters *counters,GLuint *out_name);
+void gml_gpu_opengl_record_error(char *error,size_t capacity,const char *format,...);
+void gml_gpu_opengl_set_rect(GmlGpuBackend *backend,const GmlPlanRect *rect,
+                              uint32_t target_height);
+int gml_gpu_opengl_build_program(GmlGpuBackend *backend,char *error,size_t error_capacity);
+int gml_gpu_opengl_execute_shader_draw(GmlGpuBackend *backend,GmlRenderPlan *plan,
+                                        const GmlPlanOp *op,GmlGpuCounters *counters,
+                                        char *error,size_t error_capacity);
 
 #endif

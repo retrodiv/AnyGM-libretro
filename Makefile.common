@@ -222,7 +222,8 @@ else
 ANYGM_GPU_SOURCES := \
 	src/video/renderer/gpu/gml_gpu.c \
 	src/video/renderer/gpu/opengl/gml_gpu_opengl.c \
-	src/video/renderer/gpu/opengl/gml_gpu_opengl_resources.c
+	src/video/renderer/gpu/opengl/gml_gpu_opengl_resources.c \
+	src/video/renderer/gpu/opengl/gml_gpu_opengl_programs.c
 ANYGM_LIBRETRO_HARDWARE_SOURCES := \
 	src/adapters/libretro/libretro_hw_render.c
 endif
