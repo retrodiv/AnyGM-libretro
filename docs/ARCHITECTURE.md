@@ -438,6 +438,9 @@ the generation-specific camera rounding and logical/physical coordinate maps.
 `common/gml_render_shaders.c` owns the existing recognized-family policy,
 uniform and sampler controls, device candidacy, and optional accounting. The
 content-shader callback and software-family decisions are unchanged.
+`common/gml_render_skeleton.c` owns the unchanged embedded skeletal decode,
+animation pose preparation, and neutral draw-item construction; sprites and
+their authored records remain in the same renderer-owned storage.
 `gml_render_blit.c` owns the complete sprite, background, room-tile, paint,
 axis-cache, and low-level pixel raster closure. Keeping those mutually calling
 hot kernels in one translation unit avoids introducing per-pixel indirection

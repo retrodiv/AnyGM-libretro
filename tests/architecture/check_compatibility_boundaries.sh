@@ -1069,6 +1069,15 @@ if [ "$renderer_metadata_definition_files" != "src/video/renderer/gml_render_ass
   exit 1
 fi
 
+renderer_skeleton_definition_files=$(find src -type f -name '*.c' -exec grep -l -E \
+  '^[[:space:]]*(int|void|double)[[:space:]]+gml_render_(parse_spine|free_spine|spine_build_items|skeleton_state_set|skeleton_animation_duration|skeleton_bone_setup|sprite_is_skeleton)[[:space:]]*\(' \
+  {} + 2>/dev/null || true)
+if [ "$renderer_skeleton_definition_files" != "src/video/renderer/common/gml_render_skeleton.c" ]; then
+  printf '%s\n' "Renderer skeletal preparation belongs only to common/gml_render_skeleton.c:" >&2
+  printf '%s\n' "$renderer_skeleton_definition_files" >&2
+  exit 1
+fi
+
 renderer_clear_definition_files=$(find src -type f -name '*.c' -exec grep -l -E \
   '^[[:space:]]*void[[:space:]]+gml_render_clear[[:space:]]*\(' \
   {} + 2>/dev/null || true)
