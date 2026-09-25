@@ -68,8 +68,8 @@ int gml_gpu_context_reset(GmlGpu *gpu,const GmlGpuContext *context);
 void gml_gpu_context_lost(GmlGpu *gpu);
 int gml_gpu_context_active(const GmlGpu *gpu);
 
-/* Copies an API-neutral scene service table. Scene capabilities remain empty until the resident
- * executor is initialized; an unsupported submission is rejected before any device write. */
+/* Copies an API-neutral scene service table. Capabilities state the currently qualified scene
+ * variants; unsupported submissions are rejected before a device write. */
 void gml_gpu_device_services(GmlGpu *gpu,GmlRenderDeviceServices *out_services);
 
 /* Execute a complete plan against the host's current framebuffer. Returns zero without publishing

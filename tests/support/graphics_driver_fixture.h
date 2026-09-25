@@ -39,6 +39,9 @@ uintptr_t anygm_test_graphics_framebuffer(void *userdata);
 int anygm_test_graphics_deletes(void);
 int anygm_test_graphics_calls_after_forget(void);
 int anygm_test_graphics_draw_calls(void);
+int anygm_test_graphics_scene_draw_calls(void);
+int anygm_test_graphics_scene_vertices(void);
+unsigned anygm_test_graphics_scene_texture(void);
 /* Quads drawn through a content program, as opposed to the presentation triangle. */
 int anygm_test_graphics_quad_draw_calls(void);
 /* Texture identity and minification filter captured at the last content draw. */
@@ -89,6 +92,7 @@ unsigned anygm_test_graphics_first_texture_with_format(int internal_format);
 int anygm_test_graphics_texture_width(unsigned name);
 int anygm_test_graphics_texture_height(unsigned name);
 unsigned anygm_test_graphics_texture_uploads(unsigned name);
+unsigned anygm_test_graphics_texture_data_uploads(unsigned name);
 const unsigned char *anygm_test_graphics_texture_bytes(unsigned name,size_t *count);
 
 #endif

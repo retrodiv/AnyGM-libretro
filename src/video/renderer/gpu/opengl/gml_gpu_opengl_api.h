@@ -117,6 +117,8 @@ typedef void GLvoid;
 #define GL_UNSIGNED_INT_VEC3 0x8DC7
 #define GL_UNSIGNED_INT_VEC4 0x8DC8
 #define GL_DEPTH_WRITEMASK 0x0B72
+#define GL_MAX_TEXTURE_SIZE 0x0D33
+#define GL_FUNC_ADD 0x8006
 
 /* Every entry point the backend uses, resolved once per context reset into an engine-owned table.
  * The mandatory ones are listed in the implementation; a missing name is named exactly and rejects
@@ -124,6 +126,7 @@ typedef void GLvoid;
 typedef struct GmlGlApi {
   GLenum   (*GetError)(void);
   const GLubyte *(*GetString)(GLenum name);
+  void     (*GetIntegerv)(GLenum name,GLint *value);
   void     (*Enable)(GLenum cap);
   void     (*Disable)(GLenum cap);
   void     (*Viewport)(GLint x,GLint y,GLsizei width,GLsizei height);
@@ -144,6 +147,8 @@ typedef struct GmlGlApi {
   void     (*TexSubImage2D)(GLenum target,GLint level,GLint xoffset,GLint yoffset,
                             GLsizei width,GLsizei height,GLenum format,GLenum type,
                             const void *pixels);
+  void     (*CopyTexSubImage2D)(GLenum target,GLint level,GLint xoffset,GLint yoffset,
+                                GLint x,GLint y,GLsizei width,GLsizei height);
   void     (*PixelStorei)(GLenum pname,GLint param);
   GLuint   (*CreateShader)(GLenum type);
   void     (*ShaderSource)(GLuint shader,GLsizei count,const GLchar *const *string,
@@ -165,6 +170,11 @@ typedef struct GmlGlApi {
   void     (*BindVertexArray)(GLuint array);
   void     (*DeleteVertexArrays)(GLsizei n,const GLuint *arrays);
   void     (*DrawArrays)(GLenum mode,GLint first,GLsizei count);
+  void     (*BlendFuncSeparate)(GLenum source_rgb,GLenum destination_rgb,
+                                GLenum source_alpha,GLenum destination_alpha);
+  void     (*BlendEquationSeparate)(GLenum rgb,GLenum alpha);
+  void     (*Flush)(void);
+  void     (*Finish)(void);
   /* Used only to execute the content's own programs. */
   GLint    (*GetAttribLocation)(GLuint program,const GLchar *name);
   void     (*VertexAttribPointer)(GLuint index,GLint size,GLenum type,GLboolean normalized,

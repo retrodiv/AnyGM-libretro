@@ -65,4 +65,27 @@
 #define GML_GPU_OPENGL_FRAGMENT_BODY_TAIL \
   "}\n"
 
+/* The scene prototype consumes neutral, already resolved quads. Its atlas uploads are RGBA bytes,
+ * unlike the historical hybrid plan's raw packed-word upload. Normalized sampling is qualified
+ * separately for each variant before a scene family can become the default. */
+#define GML_GPU_OPENGL_SCENE_VERTEX_BODY \
+  "in vec2 in_Position;\n" \
+  "in vec2 in_TextureCoord;\n" \
+  "in vec4 in_Colour;\n" \
+  "uniform vec2 u_extent;\n" \
+  "out vec2 v_texcoord;\n" \
+  "out vec4 v_colour;\n" \
+  "void main(){\n" \
+  "  gl_Position=vec4(2.0*in_Position.x/u_extent.x-1.0,1.0-2.0*in_Position.y/u_extent.y,0.0,1.0);\n" \
+  "  v_texcoord=in_TextureCoord;\n" \
+  "  v_colour=in_Colour;\n" \
+  "}\n"
+
+#define GML_GPU_OPENGL_SCENE_FRAGMENT_BODY \
+  "uniform sampler2D u_image;\n" \
+  "in vec2 v_texcoord;\n" \
+  "in vec4 v_colour;\n" \
+  "out vec4 o_color;\n" \
+  "void main(){ o_color=texture(u_image,v_texcoord)*v_colour; }\n"
+
 #endif

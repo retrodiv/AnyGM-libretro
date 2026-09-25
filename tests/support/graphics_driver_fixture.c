@@ -21,6 +21,7 @@ typedef struct FakeTexture {
   GLsizei width;
   GLsizei height;
   uint32_t upload_count;
+  uint32_t data_upload_count;
   unsigned char bytes[FAKE_MAX_PIXELS*4];
   size_t byte_count;
 } FakeTexture;
@@ -57,6 +58,9 @@ typedef struct FakeDriver {
   GLint clear_calls;
   GLfloat clear_colour[4];
   GLint draw_calls;
+  GLint scene_draw_calls;
+  GLint scene_vertices;
+  GLuint scene_texture;
   unsigned shader_stage[256];
   /* The uniforms the last linked program declares, read from the text it was linked from. */
   struct { char name[48]; GLenum type; GLint size; } uniform[64];
@@ -100,6 +104,20 @@ static void note_call(void){
 
 static GLenum fake_GetError(void){ note_call(); return GL_NO_ERROR; }
 static const GLubyte *fake_GetString(GLenum name){ (void)name; note_call(); return (const GLubyte*)"fake"; }
+static void fake_GetIntegerv(GLenum name,GLint *value){
+  note_call();
+  if(value) *value=name==GL_MAX_TEXTURE_SIZE?4096:0;
+}
+static void fake_Flush(void){ note_call(); }
+static void fake_Finish(void){ note_call(); }
+static void fake_BlendFuncSeparate(GLenum a,GLenum b,GLenum c,GLenum d){
+  (void)a;(void)b;(void)c;(void)d; note_call();
+}
+static void fake_BlendEquationSeparate(GLenum a,GLenum b){ (void)a;(void)b; note_call(); }
+static void fake_CopyTexSubImage2D(GLenum a,GLint b,GLint c,GLint d,GLint e,GLint f,
+                                    GLsizei g,GLsizei h){
+  (void)a;(void)b;(void)c;(void)d;(void)e;(void)f;(void)g;(void)h; note_call();
+}
 static void fake_Enable(GLenum cap){
   note_call();
   switch(cap){
@@ -184,6 +202,7 @@ static void fake_TexImage2D(GLenum target,GLint level,GLint internal_format,GLsi
     texture->width=width;
     texture->height=height;
     texture->upload_count++;
+    if(pixels) texture->data_upload_count++;
     texture->byte_count=bytes<sizeof texture->bytes?bytes:sizeof texture->bytes;
     if(pixels) memcpy(texture->bytes,pixels,texture->byte_count);
   }
@@ -198,6 +217,7 @@ static void fake_TexSubImage2D(GLenum target,GLint level,GLint x,GLint y,GLsizei
     size_t stride=type==GL_UNSIGNED_SHORT?2u:4u;
     size_t bytes=(size_t)width*(size_t)height*stride;
     texture->upload_count++;
+    if(pixels) texture->data_upload_count++;
     texture->byte_count=bytes<sizeof texture->bytes?bytes:sizeof texture->bytes;
     if(pixels) memcpy(texture->bytes,pixels,texture->byte_count);
   }
@@ -373,6 +393,11 @@ static void fake_DeleteVertexArrays(GLsizei n,const GLuint *names){
 static void fake_DrawArrays(GLenum mode,GLint first,GLsizei count){
   note_call();
   if(mode==GL_TRIANGLES && first==0 && count==3) g_fake.draw_calls++;
+  if(mode==GL_TRIANGLES && first==0 && count>=6 && count%6==0){
+    g_fake.scene_draw_calls++;
+    g_fake.scene_vertices+=count;
+    g_fake.scene_texture=g_fake.bound_texture[0];
+  }
   if(mode==GL_TRIANGLE_STRIP && first==0 && count==4){
     g_fake.strip_draw_calls++;
     for(unsigned unit=0;unit<3;unit++){
@@ -434,6 +459,12 @@ void (*anygm_test_graphics_proc(void *userdata,const char *name))(void){
   static const struct { const char *name; void *proc; } table[]={
     {"glGetError",(void*)fake_GetError},
     {"glGetString",(void*)fake_GetString},
+    {"glGetIntegerv",(void*)fake_GetIntegerv},
+    {"glFlush",(void*)fake_Flush},
+    {"glFinish",(void*)fake_Finish},
+    {"glBlendFuncSeparate",(void*)fake_BlendFuncSeparate},
+    {"glBlendEquationSeparate",(void*)fake_BlendEquationSeparate},
+    {"glCopyTexSubImage2D",(void*)fake_CopyTexSubImage2D},
     {"glEnable",(void*)fake_Enable},
     {"glDisable",(void*)fake_Disable},
     {"glViewport",(void*)fake_Viewport},
@@ -524,6 +555,9 @@ void anygm_test_graphics_forbid_calls(void){ g_fake.allow_calls=0; }
 int anygm_test_graphics_deletes(void){ return g_fake.deletes_issued; }
 int anygm_test_graphics_calls_after_forget(void){ return g_fake.calls_after_forget; }
 int anygm_test_graphics_draw_calls(void){ return g_fake.draw_calls; }
+int anygm_test_graphics_scene_draw_calls(void){ return g_fake.scene_draw_calls; }
+int anygm_test_graphics_scene_vertices(void){ return g_fake.scene_vertices; }
+unsigned anygm_test_graphics_scene_texture(void){ return g_fake.scene_texture; }
 int anygm_test_graphics_quad_draw_calls(void){ return g_fake.strip_draw_calls; }
 unsigned anygm_test_graphics_quad_texture(unsigned unit){ return unit<3?g_fake.quad_texture[unit]:0; }
 int anygm_test_graphics_quad_filter(unsigned unit){ return unit<3?g_fake.quad_filter[unit]:0; }
@@ -619,6 +653,9 @@ int anygm_test_graphics_texture_height(unsigned name){
 
 unsigned anygm_test_graphics_texture_uploads(unsigned name){
   return name<FAKE_MAX_TEXTURES?g_fake.textures[name].upload_count:0u;
+}
+unsigned anygm_test_graphics_texture_data_uploads(unsigned name){
+  return name<FAKE_MAX_TEXTURES?g_fake.textures[name].data_upload_count:0u;
 }
 
 const unsigned char *anygm_test_graphics_texture_bytes(unsigned name,size_t *count){

@@ -437,8 +437,9 @@ static int neutral_device_binding_case(void){
   REQUIRE(device && device->context && device->capabilities && device->submit,
           "the engine binds the neutral service on successful adoption");
   memset(&caps,0,sizeof caps);
-  REQUIRE(device->capabilities(device->context,&caps) && caps.supported_families==0,
-          "binding does not pretend a scene family is implemented");
+  REQUIRE(device->capabilities(device->context,&caps) &&
+          (caps.supported_operations&(UINT64_C(1)<<GML_RENDER_OP_TEXTURED_QUAD)),
+          "binding exposes the qualified prototype without selecting it for the CPU scene");
   anygm_graphics_context_destroy(session.engine,1u);
   REQUIRE(gml_render_device(&session.engine->render)==NULL,
           "device service is cleared before context destruction");

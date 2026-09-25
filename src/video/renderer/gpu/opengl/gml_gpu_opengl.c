@@ -45,6 +45,7 @@ GmlGpuBackend *gml_gpu_opengl_create(void){
  * somebody else. */
 void gml_gpu_opengl_forget(GmlGpuBackend *backend){
   if(!backend) return;
+  gml_gpu_opengl_scene_forget(backend);
   backend->loaded=0;
   backend->program=0;
   backend->vertex_array=0;
@@ -89,6 +90,7 @@ static void delete_objects(GmlGpuBackend *backend){
 
 void gml_gpu_opengl_destroy(GmlGpuBackend *backend,int context_is_current){
   if(!backend) return;
+  gml_gpu_opengl_scene_destroy(backend,context_is_current);
   if(context_is_current) delete_objects(backend);
   free(backend->map_scratch);
   free(backend->readback_scratch);
@@ -199,5 +201,6 @@ int gml_gpu_opengl_reset(GmlGpuBackend *backend,const GmlGpuContext *context,
     return 0;
   }
   backend->max_texture_size=0;
+  gml_gpu_opengl_scene_reset(backend,context);
   return 1;
 }

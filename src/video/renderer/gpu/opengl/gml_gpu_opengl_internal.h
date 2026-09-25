@@ -12,7 +12,10 @@ enum {
   GL_INFO_LOG_LIMIT=512,
   GL_CONTENT_PROGRAMS=16,
   GL_CONTENT_UNIFORMS=64,
-  GL_READBACK_SLOTS=8
+  GL_READBACK_SLOTS=8,
+  GL_SCENE_MAX_IMAGES=64,
+  GL_SCENE_MAX_QUADS=2048,
+  GL_SCENE_VERTEX_FLOATS=8
 };
 
 /* One uniform the content's program declares, as the context reports it after linking. A value
@@ -83,6 +86,27 @@ typedef struct GlAxisMap {
   int valid;
 } GlAxisMap;
 
+typedef struct GlSceneImage {
+  GmlRenderImageRef ref;
+  GLuint texture,framebuffer;
+  uint32_t width,height,pixel_format;
+  uint64_t last_used;
+  int valid,target;
+} GlSceneImage;
+
+typedef struct GlScene {
+  GlSceneImage images[GL_SCENE_MAX_IMAGES];
+  GLuint program,vertex_buffer,vertex_array;
+  GLint a_position,a_texcoord,a_colour;
+  GLint u_extent,u_image;
+  float *vertices;
+  uint8_t *scratch;
+  size_t scratch_capacity;
+  uint64_t use_clock;
+  GLint max_texture_size;
+  int available;
+} GlScene;
+
 struct GmlGpuBackend {
   GmlGlApi gl;
   int loaded;
@@ -111,6 +135,7 @@ struct GmlGpuBackend {
   size_t readback_scratch_capacity;
   GlReadbackSlot readback_slots[GL_READBACK_SLOTS];
   int readback_pipelined;
+  GlScene scene;
 };
 
 int gml_gpu_opengl_upload_source(GmlGpuBackend *backend,const GmlPlanImage *image,
@@ -122,6 +147,7 @@ void gml_gpu_opengl_record_error(char *error,size_t capacity,const char *format,
 void gml_gpu_opengl_set_rect(GmlGpuBackend *backend,const GmlPlanRect *rect,
                               uint32_t target_height);
 int gml_gpu_opengl_build_program(GmlGpuBackend *backend,char *error,size_t error_capacity);
+int gml_gpu_opengl_scene_program(GmlGpuBackend *backend,char *error,size_t error_capacity);
 int gml_gpu_opengl_execute_shader_draw(GmlGpuBackend *backend,GmlRenderPlan *plan,
                                         const GmlPlanOp *op,GmlGpuCounters *counters,
                                         char *error,size_t error_capacity);
@@ -131,5 +157,25 @@ int gml_gpu_opengl_read_back_target(GmlGpuBackend *backend,GmlRenderPlan *plan,
                                      char *error,size_t error_capacity);
 int gml_gpu_opengl_read_back_target_pipelined(GmlGpuBackend *backend,GmlRenderPlan *plan,
                                                char *error,size_t error_capacity);
+void gml_gpu_opengl_scene_forget(GmlGpuBackend *backend);
+void gml_gpu_opengl_scene_destroy(GmlGpuBackend *backend,int context_is_current);
+void gml_gpu_opengl_scene_reset(GmlGpuBackend *backend,const GmlGpuContext *context);
+int gml_gpu_opengl_scene_capabilities(const GmlGpuBackend *backend,GmlRenderDeviceCaps *caps);
+int gml_gpu_opengl_scene_upload(GmlGpuBackend *backend,const GmlRenderImageUpload *transfer);
+int gml_gpu_opengl_scene_readback(GmlGpuBackend *backend,const GmlRenderImageReadback *transfer);
+void gml_gpu_opengl_scene_retire(GmlGpuBackend *backend,GmlRenderImageRef image);
+int gml_gpu_opengl_scene_flush(GmlGpuBackend *backend);
+int gml_gpu_opengl_scene_wait(GmlGpuBackend *backend);
+int gml_render_gpu_opengl_clear(GmlGpuBackend *backend,const GmlRenderDrawOp *op,
+                                GlSceneImage *target);
+int gml_render_gpu_opengl_draw_textured_quad(const GmlRenderDrawOp *op,
+                                             const GmlRenderDrawStateSnapshot *state,
+                                             float *vertices);
+GlSceneImage *gml_gpu_opengl_scene_image(GmlGpuBackend *backend,GmlRenderImageRef image);
+GlSceneImage *gml_gpu_opengl_scene_target(GmlGpuBackend *backend,const GmlRenderTargetRef *target);
+GmlRenderExecutionResult gml_gpu_opengl_scene_submit(GmlGpuBackend *backend,
+                                                       const GmlRenderDrawBatch *batch,
+                                                       uintptr_t frontend_framebuffer,
+                                                       char *error,size_t error_capacity);
 
 #endif

@@ -92,6 +92,59 @@ int gml_gpu_opengl_build_program(GmlGpuBackend *backend,char *error,size_t error
   return 1;
 }
 
+int gml_gpu_opengl_scene_program(GmlGpuBackend *backend,char *error,size_t error_capacity){
+  GlScene *scene=&backend->scene;
+  const char *prefix=backend->api==GML_GPU_API_OPENGLES3
+    ?GML_GPU_OPENGL_PREFIX_ES:GML_GPU_OPENGL_PREFIX_DESKTOP;
+  char vertex_source[1024],fragment_source[512];
+  GLuint vertex,fragment;
+  GLint status=GL_FALSE;
+  if(scene->program) return 1;
+  snprintf(vertex_source,sizeof vertex_source,"%s%s",prefix,GML_GPU_OPENGL_SCENE_VERTEX_BODY);
+  snprintf(fragment_source,sizeof fragment_source,"%s%s",prefix,GML_GPU_OPENGL_SCENE_FRAGMENT_BODY);
+  vertex=compile_stage(backend,GL_VERTEX_SHADER,vertex_source,error,error_capacity);
+  if(!vertex) return 0;
+  fragment=compile_stage(backend,GL_FRAGMENT_SHADER,fragment_source,error,error_capacity);
+  if(!fragment){ backend->gl.DeleteShader(vertex); return 0; }
+  scene->program=backend->gl.CreateProgram();
+  if(!scene->program){
+    backend->gl.DeleteShader(vertex);
+    backend->gl.DeleteShader(fragment);
+    gml_gpu_opengl_record_error(error,error_capacity,"scene program object could not be created");
+    return 0;
+  }
+  backend->gl.AttachShader(scene->program,vertex);
+  backend->gl.AttachShader(scene->program,fragment);
+  backend->gl.LinkProgram(scene->program);
+  backend->gl.GetProgramiv(scene->program,GL_LINK_STATUS,&status);
+  backend->gl.DeleteShader(vertex);
+  backend->gl.DeleteShader(fragment);
+  if(status!=GL_TRUE){
+    char log[GL_INFO_LOG_LIMIT];
+    GLsizei written=0;
+    log[0]='\0';
+    backend->gl.GetProgramInfoLog(scene->program,(GLsizei)sizeof log,&written,log);
+    log[sizeof log-1]='\0';
+    gml_gpu_opengl_record_error(error,error_capacity,"scene program failed to link: %s",log);
+    backend->gl.DeleteProgram(scene->program);
+    scene->program=0;
+    return 0;
+  }
+  scene->a_position=backend->gl.GetAttribLocation(scene->program,"in_Position");
+  scene->a_texcoord=backend->gl.GetAttribLocation(scene->program,"in_TextureCoord");
+  scene->a_colour=backend->gl.GetAttribLocation(scene->program,"in_Colour");
+  scene->u_extent=backend->gl.GetUniformLocation(scene->program,"u_extent");
+  scene->u_image=backend->gl.GetUniformLocation(scene->program,"u_image");
+  if(scene->a_position<0 || scene->a_texcoord<0 || scene->a_colour<0 ||
+     scene->u_extent<0 || scene->u_image<0){
+    gml_gpu_opengl_record_error(error,error_capacity,"scene program is missing an attribute or uniform");
+    backend->gl.DeleteProgram(scene->program);
+    scene->program=0;
+    return 0;
+  }
+  return 1;
+}
+
 /* ---- The content's own programs ----
  *
  * A Studio payload ships its shaders as GLSL ES 1.00 text, with a desktop GLSL 1.20 rendering

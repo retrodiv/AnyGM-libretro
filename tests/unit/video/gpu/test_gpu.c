@@ -183,7 +183,7 @@ static int program_failure_case(void){
   return 1;
 }
 
-static int scene_service_unavailable_case(void){
+static int scene_service_contract_case(void){
   GmlGpu *gpu;
   GmlGpuContext context;
   GmlRenderDeviceServices services;
@@ -206,10 +206,12 @@ static int scene_service_unavailable_case(void){
           "the neutral service has a complete callback table");
   memset(&caps,0xA5,sizeof caps);
   REQUIRE(services.capabilities(services.context,&caps),"capability query succeeds");
-  REQUIRE(caps.supported_families==0 && caps.max_batch_quads==0,
-          "no scene family is advertised before a resident executor exists");
+  REQUIRE(caps.max_texture_extent==4096 && caps.max_batch_quads==2048 &&
+          (caps.supported_operations&(UINT64_C(1)<<GML_RENDER_OP_CLEAR)) &&
+          (caps.supported_operations&(UINT64_C(1)<<GML_RENDER_OP_TEXTURED_QUAD)),
+          "only the initial resident variants are advertised");
   memset(&op,0,sizeof op);
-  op.opcode=GML_RENDER_OP_TEXTURED_QUAD;
+  op.opcode=GML_RENDER_OP_LAYER_EFFECT;
   memset(&batch,0,sizeof batch);
   batch.operations=&op;
   batch.operation_count=1;
@@ -223,6 +225,147 @@ static int scene_service_unavailable_case(void){
   gml_gpu_device_services(gpu,&services);
   REQUIRE(!services.context && !services.submit,"a lost context offers no service");
   gml_gpu_destroy(gpu,0);
+  return 1;
+}
+
+static int scene_optional_entry_refusal_case(void){
+  GmlGpu *gpu;
+  GmlGpuContext context;
+  GmlRenderDeviceServices services;
+  GmlRenderDeviceCaps caps;
+  anygm_test_graphics_reset();
+  anygm_test_graphics_withhold("glGetIntegerv");
+  gpu=gml_gpu_create();
+  REQUIRE(gpu!=NULL,"metadata allocated");
+  context=fake_context(GML_GPU_API_OPENGL_CORE);
+  REQUIRE(gml_gpu_context_reset(gpu,&context),
+          "a missing scene-only entry point does not reject the established hybrid context");
+  gml_gpu_device_services(gpu,&services);
+  REQUIRE(!services.capabilities(services.context,&caps),
+          "the scene executor does not advertise unqueryable limits");
+  gml_gpu_destroy(gpu,1);
+  return 1;
+}
+
+static int scene_resident_batch_case(void){
+  enum { QUADS=500 };
+  uint32_t pixels[4]={0xFF112233u,0xFF445566u,0xFF778899u,0xFFAABBCCu};
+  GmlRenderDrawOp *operations;
+  GmlRenderDrawStateSnapshot state;
+  GmlRenderDrawBatch batch;
+  GmlRenderImageRef source_ref={GML_RENDER_RESOURCE_ATLAS,4u,1u,1u};
+  GmlRenderImageRef target_ref={GML_RENDER_RESOURCE_SURFACE,7u,1u,1u};
+  GmlRenderImageUpload upload;
+  GmlRenderImageReadback readback;
+  GmlRenderDeviceServices services;
+  GmlRenderExecutionResult result;
+  GmlGpu *gpu;
+  GmlGpuContext context;
+  uint32_t output[4]={0};
+  size_t uploaded_size=0;
+  const unsigned char *uploaded;
+  unsigned atlas_name;
+  anygm_test_graphics_reset();
+  gpu=gml_gpu_create();
+  REQUIRE(gpu!=NULL,"metadata allocated");
+  context=fake_context(GML_GPU_API_OPENGL_CORE);
+  REQUIRE(gml_gpu_context_reset(gpu,&context),"context adopted");
+  gml_gpu_device_services(gpu,&services);
+  memset(&upload,0,sizeof upload);
+  upload.image=source_ref;
+  upload.storage_width=upload.storage_height=2u;
+  upload.region=(GmlRenderRect){0,0,2u,2u};
+  upload.pixel_format=GML_RENDER_PIXEL_XRGB8888;
+  upload.stride_bytes=8u;
+  upload.byte_capacity=sizeof pixels;
+  upload.bytes=pixels;
+  REQUIRE(services.upload(services.context,&upload),"the atlas uploads once");
+  atlas_name=anygm_test_graphics_first_texture_with_format(GL_RGBA8);
+  uploaded=anygm_test_graphics_texture_bytes(atlas_name,&uploaded_size);
+  REQUIRE(uploaded && uploaded_size==sizeof pixels &&
+          uploaded[0]==0x11u && uploaded[1]==0x22u &&
+          uploaded[2]==0x33u && uploaded[3]==0xFFu,
+          "packed source words become ordered RGBA bytes without swapping channels");
+  operations=(GmlRenderDrawOp*)calloc(QUADS+1u,sizeof *operations);
+  REQUIRE(operations!=NULL,"batch allocated");
+  memset(&state,0,sizeof state);
+  state.write_mask=15u;
+  state.alpha=255u;
+  state.colour=0xFFFFFFFFu;
+  state.sampler_count=1u;
+  state.samplers[0].filter=GML_RENDER_FILTER_NEAREST;
+  state.samplers[0].edge_rule=GML_RENDER_EDGE_CLAMP_SUBIMAGE;
+  state.samplers[0].source_region=(GmlRenderRect){0,0,2u,2u};
+  for(uint32_t index=0;index<QUADS+1u;index++){
+    GmlRenderDrawOp *op=&operations[index];
+    op->sequence=index+1u;
+    op->target.image=target_ref;
+    op->target.image.content_version=index+1u;
+    op->target.storage_version=index+1u;
+    op->target.width=64u;
+    op->target.height=64u;
+    op->target.pixel_format=GML_RENDER_PIXEL_XRGB8888;
+    op->target.region=(GmlRenderRect){0,0,64u,64u};
+    if(index==0u){
+      op->opcode=GML_RENDER_OP_CLEAR;
+      op->payload.clear_colour=0xFF123456u;
+      continue;
+    }
+    op->opcode=GML_RENDER_OP_TEXTURED_QUAD;
+    op->state_index=0u;
+    op->source_count=1u;
+    op->sources=&source_ref;
+    op->payload.quad.shape=GML_RENDER_QUAD_AXIS_ALIGNED;
+    op->payload.quad.sampling=state.samplers[0];
+    for(uint32_t corner=0;corner<4;corner++)
+      op->payload.quad.corner_colour[corner]=0xFFFFFFFFu;
+    {
+      double x=(double)((index*7u)%60u),y=(double)((index*11u)%60u);
+      op->payload.quad.x[0]=op->payload.quad.x[3]=x;
+      op->payload.quad.x[1]=op->payload.quad.x[2]=x+4.0;
+      op->payload.quad.y[0]=op->payload.quad.y[1]=y;
+      op->payload.quad.y[2]=op->payload.quad.y[3]=y+4.0;
+      op->payload.quad.u[0]=op->payload.quad.u[3]=0.0;
+      op->payload.quad.u[1]=op->payload.quad.u[2]=1.0;
+      op->payload.quad.v[0]=op->payload.quad.v[1]=0.0;
+      op->payload.quad.v[2]=op->payload.quad.v[3]=1.0;
+    }
+  }
+  batch.operations=operations;
+  batch.operation_count=QUADS+1u;
+  batch.states=&state;
+  batch.state_count=1u;
+  result=services.submit(services.context,&batch);
+  REQUIRE(result.status==GML_RENDER_EXEC_ACCEPTED && result.accepted_prefix==QUADS+1u,
+          "clear and 500 ordered quads are accepted completely");
+  REQUIRE(anygm_test_graphics_scene_draw_calls()==1 &&
+          anygm_test_graphics_scene_vertices()==QUADS*6,
+          "500 quads issue one scene draw call");
+  REQUIRE(anygm_test_graphics_clear_calls()==1 &&
+          anygm_test_graphics_scene_texture()==atlas_name,
+          "the batch uses the resident atlas and target clear");
+  REQUIRE(anygm_test_graphics_read_pixels()==0,
+          "ordinary resident submission never downloads its target");
+  REQUIRE(anygm_test_graphics_texture_data_uploads(atlas_name)==1,
+          "one atlas data upload serves all 500 quads");
+  REQUIRE(services.flush(services.context) && services.wait(services.context),
+          "issuing and waiting are separate service operations");
+  memset(&readback,0,sizeof readback);
+  target_ref.content_version=QUADS+1u;
+  readback.image=target_ref;
+  readback.storage_width=readback.storage_height=64u;
+  readback.region=(GmlRenderRect){0,0,2u,2u};
+  readback.pixel_format=GML_RENDER_PIXEL_XRGB8888;
+  readback.stride_bytes=8u;
+  readback.byte_capacity=sizeof output;
+  readback.bytes=output;
+  REQUIRE(services.readback(services.context,&readback),"an explicit CPU read completes");
+  REQUIRE(anygm_test_graphics_read_pixels()==1 &&
+          output[0]==0xFF010033u && output[2]==0xFF000033u,
+          "readback flips rows and packs the runtime word only on demand");
+  services.retire(services.context,target_ref);
+  free(operations);
+  gml_gpu_destroy(gpu,1);
   return 1;
 }
 
@@ -834,7 +977,9 @@ int main(int argc,char **argv){
     {"destroy_without_context",lifecycle_destroy_without_context_case},
     {"missing_entry_point",missing_entry_point_case},
     {"program_failure",program_failure_case},
-    {"scene_service_unavailable",scene_service_unavailable_case},
+    {"scene_service_contract",scene_service_contract_case},
+    {"scene_optional_entry_refusal",scene_optional_entry_refusal_case},
+    {"scene_resident_batch",scene_resident_batch_case},
   };
   static const AnygmTestCase execution_cases[]={
     {"state_and_geometry",execute_state_and_geometry_case},

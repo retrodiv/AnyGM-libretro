@@ -17,6 +17,16 @@ typedef enum GmlRenderOperationCode {
   GML_RENDER_OPERATION_COUNT
 } GmlRenderOperationCode;
 
+enum {
+  GML_RENDER_FAMILY_TEXTURE=1u<<0,
+  GML_RENDER_FAMILY_PRIMITIVE=1u<<1,
+  GML_RENDER_FAMILY_SURFACE=1u<<2,
+  GML_RENDER_FAMILY_EFFECT=1u<<3,
+  GML_RENDER_FAMILY_PRESENTATION=1u<<4,
+  GML_RENDER_FAMILY_SHADER=1u<<5,
+  GML_RENDER_FAMILY_SOFTWARE3D=1u<<6
+};
+
 typedef enum GmlRenderResourceClass {
   GML_RENDER_RESOURCE_SCREEN=1,
   GML_RENDER_RESOURCE_APPLICATION=2,
@@ -163,6 +173,7 @@ typedef struct GmlRenderImageReadback {
 typedef struct GmlRenderDeviceCaps {
   uint32_t max_texture_extent;
   uint32_t max_batch_quads;
+  uint64_t supported_operations;
   uint32_t supported_families;
   uint32_t supports_rgb_alpha_separate;
   uint64_t soft_cache_bytes;

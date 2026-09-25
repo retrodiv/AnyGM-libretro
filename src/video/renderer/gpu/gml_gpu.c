@@ -62,44 +62,46 @@ int gml_gpu_context_active(const GmlGpu *gpu){
 static int scene_capabilities(void *context,GmlRenderDeviceCaps *out_caps){
   GmlGpu *gpu=(GmlGpu*)context;
   if(!gpu || !out_caps || !gpu->context_active) return 0;
-  memset(out_caps,0,sizeof *out_caps);
-  return 1;
+  return gml_gpu_opengl_scene_capabilities(gpu->backend,out_caps);
 }
 
 static GmlRenderExecutionResult scene_submit(void *context,const GmlRenderDrawBatch *batch){
   GmlRenderExecutionResult result;
-  (void)context;
-  (void)batch;
+  GmlGpu *gpu=(GmlGpu*)context;
   memset(&result,0,sizeof result);
   result.status=GML_RENDER_EXEC_UNSUPPORTED;
+  if(gpu && gpu->context_active && gpu->context.get_current_framebuffer)
+    return gml_gpu_opengl_scene_submit(gpu->backend,batch,
+      gpu->context.get_current_framebuffer(gpu->context.userdata),
+      gpu->error,sizeof gpu->error);
   return result;
 }
 
 static int scene_upload(void *context,const GmlRenderImageUpload *transfer){
-  (void)context;
-  (void)transfer;
-  return 0;
+  GmlGpu *gpu=(GmlGpu*)context;
+  return gpu && gpu->context_active &&
+    gml_gpu_opengl_scene_upload(gpu->backend,transfer);
 }
 
 static int scene_readback(void *context,const GmlRenderImageReadback *transfer){
-  (void)context;
-  (void)transfer;
-  return 0;
+  GmlGpu *gpu=(GmlGpu*)context;
+  return gpu && gpu->context_active &&
+    gml_gpu_opengl_scene_readback(gpu->backend,transfer);
 }
 
 static void scene_retire(void *context,GmlRenderImageRef image){
-  (void)context;
-  (void)image;
+  GmlGpu *gpu=(GmlGpu*)context;
+  if(gpu && gpu->context_active) gml_gpu_opengl_scene_retire(gpu->backend,image);
 }
 
 static int scene_flush(void *context){
-  (void)context;
-  return 0;
+  GmlGpu *gpu=(GmlGpu*)context;
+  return gpu && gpu->context_active && gml_gpu_opengl_scene_flush(gpu->backend);
 }
 
 static int scene_wait(void *context){
-  (void)context;
-  return 0;
+  GmlGpu *gpu=(GmlGpu*)context;
+  return gpu && gpu->context_active && gml_gpu_opengl_scene_wait(gpu->backend);
 }
 
 void gml_gpu_device_services(GmlGpu *gpu,GmlRenderDeviceServices *out_services){
