@@ -169,6 +169,61 @@ static void fill(uint32_t *pixels,uint32_t colour){
   for(int index=0;index<16;index++) pixels[index]=colour;
 }
 
+static int nearest_subrectangle_mirrors(void){
+  uint32_t source_pixels[12],pixels[16];
+  GmlRenderImageRef ref=source_ref();
+  GmlRenderResourceSource source=source_view(source_pixels,1);
+  for(uint32_t index=0;index<12u;index++) source_pixels[index]=0xFF000000u|(index+1u);
+  source.width=4u;
+  source.height=3u;
+  source.stride_bytes=16u;
+  source.byte_capacity=sizeof source_pixels;
+  for(unsigned mirror=0;mirror<4u;mirror++){
+    FakeDevice fake={0};
+    GmlRenderDeviceServices device=service(&fake);
+    GmlRenderDrawOp operation=quad_op(2u,&ref);
+    GmlRenderDrawStateSnapshot state=quad_state(0);
+    GmlRenderDrawBatch batch={&operation,1u,&state,1u};
+    GmlRenderResource *resource;
+    const uint32_t *observed=NULL;
+    GmlRenderRect region={1,1,2u,2u};
+    uint32_t expected_top_left=(mirror&2u)?10u:6u;
+    if(mirror&1u) expected_top_left++;
+    fill(pixels,0xFF000000u);
+    operation.target.image=target_ref(2u,mirror+1u);
+    operation.payload.quad.sampling.source_region=region;
+    state.samplers[0].source_region=region;
+    operation.payload.quad.u[0]=operation.payload.quad.u[3]=(mirror&1u)?0.75:0.25;
+    operation.payload.quad.u[1]=operation.payload.quad.u[2]=(mirror&1u)?0.25:0.75;
+    operation.payload.quad.v[0]=operation.payload.quad.v[1]=(mirror&2u)?1.0:1.0/3.0;
+    operation.payload.quad.v[2]=operation.payload.quad.v[3]=(mirror&2u)?1.0/3.0:1.0;
+    resource=gml_render_resource_create(target_ref(1u,mirror+1u),4u,4u,
+      GML_RENDER_PIXEL_XRGB8888,pixels,(GmlRenderResourceLimits){0});
+    CHECK(resource);
+    if(!mirror){
+      operation.payload.quad.u[2]=0.0;
+      CHECK(gml_render_resource_submit(resource,NULL,&batch,&source,1u)==
+            GML_RENDER_RESOURCE_EXEC_FAILED);
+      CHECK(pixels[5]==0xFF000000u);
+      operation.payload.quad.u[2]=0.75;
+    }
+    CHECK(gml_render_resource_submit(resource,mirror&1u?&device:NULL,&batch,&source,1u)==
+          ((mirror&1u)?GML_RENDER_RESOURCE_EXEC_DEVICE:GML_RENDER_RESOURCE_EXEC_CPU));
+    if(mirror&1u) gml_render_resource_context_lost(resource);
+    CHECK(gml_render_resource_acquire_cpu_read(resource,&observed));
+    CHECK(observed==pixels);
+    CHECK(pixels[5]==(0xFF000000u|expected_top_left));
+    CHECK(pixels[6]==(0xFF000000u|(expected_top_left+((mirror&1u)?-1u:1u))));
+    CHECK(pixels[9]==(0xFF000000u|(expected_top_left+((mirror&2u)?-4u:4u))));
+    CHECK(pixels[10]==(0xFF000000u|
+      (expected_top_left+((mirror&1u)?-1u:1u)+((mirror&2u)?-4u:4u))));
+    CHECK(pixels[0]==0xFF000000u && pixels[15]==0xFF000000u);
+    CHECK(fake.readbacks==0);
+    gml_render_resource_destroy(resource);
+  }
+  return 1;
+}
+
 static int journal_loss_and_mutation(void){
   uint32_t pixels[16],source_pixels[4]={0x80FF0000u,0x40FF0000u,
                                        0xFFFF0000u,0x00FF0000u};
@@ -637,6 +692,7 @@ int main(void){
   passed+=rejection_and_isolation();
   passed+=persistent_surface_lifecycle();
   passed+=state_without_context();
-  printf("render resource cases: passed=%d failed=%d\n",passed,10-passed);
-  return passed==10?EXIT_SUCCESS:EXIT_FAILURE;
+  passed+=nearest_subrectangle_mirrors();
+  printf("render resource cases: passed=%d failed=%d\n",passed,11-passed);
+  return passed==11?EXIT_SUCCESS:EXIT_FAILURE;
 }

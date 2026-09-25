@@ -2,7 +2,7 @@
  * Copyright (c) 2026 retrodiv <retrodiv@proton.me>
  * New scene GPU entries are planned and cannot be selected at the CPU milestone.
  */
-GML_RENDER_GPU_OPERATION(TEXTURED_QUAD, supported, gml_render_gpu_opengl_draw_textured_quad, "P3 opaque whole-image resident quad prototype; other variants are preflight refusals")
+GML_RENDER_GPU_OPERATION(TEXTURED_QUAD, supported, gml_render_gpu_opengl_draw_textured_quad, "Resident whole-image and nearest subrectangle quads; unqualified variants are preflight refusals")
 GML_RENDER_GPU_OPERATION(TEXTURED_TRIANGLES, planned, gml_render_gpu_opengl_draw_textured_triangles, "P3+ positioned-quad executor")
 GML_RENDER_GPU_OPERATION(COLOURED_PRIMITIVE, planned, gml_render_gpu_opengl_draw_primitive, "P3+ primitive coverage executor")
 GML_RENDER_GPU_OPERATION(CLEAR, supported, gml_render_gpu_opengl_clear, "P3 resident target region clear with explicit preflight")

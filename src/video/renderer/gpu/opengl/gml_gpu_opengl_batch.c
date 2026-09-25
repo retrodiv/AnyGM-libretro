@@ -30,6 +30,10 @@ static int full_region(GmlRenderRect region,uint32_t width,uint32_t height){
   return region.x==0 && region.y==0 && region.width==width && region.height==height;
 }
 
+static int same_region(GmlRenderRect a,GmlRenderRect b){
+  return a.x==b.x && a.y==b.y && a.width==b.width && a.height==b.height;
+}
+
 static int existing_target(const GmlGpuBackend *backend,const GmlRenderTargetRef *target){
   for(size_t index=0;index<GL_SCENE_MAX_IMAGES;index++){
     const GlSceneImage *slot=&backend->scene.images[index];
@@ -205,18 +209,33 @@ static int scene_preflight(GmlGpuBackend *backend,const GmlRenderDrawBatch *batc
          !((state->clip.width==0 && state->clip.height==0) ||
            full_region(state->clip,target->width,target->height)) ||
          !full_region(target->region,target->width,target->height) ||
-         !full_region(sampling->source_region,source->width,source->height) ||
+         !valid_region(sampling->source_region,source->width,source->height) ||
+         (sampling->filter==GML_RENDER_FILTER_BILINEAR &&
+          !full_region(sampling->source_region,source->width,source->height)) ||
          (sampling->filter!=GML_RENDER_FILTER_NEAREST &&
           sampling->filter!=GML_RENDER_FILTER_BILINEAR) ||
          sampling->edge_rule!=GML_RENDER_EDGE_CLAMP_SUBIMAGE ||
          sampling->quantisation ||
          state->samplers[0].filter!=sampling->filter ||
          state->samplers[0].edge_rule!=sampling->edge_rule ||
-         !full_region(state->samplers[0].source_region,source->width,source->height) ||
+         !same_region(state->samplers[0].source_region,sampling->source_region) ||
          !gml_render_gpu_opengl_draw_textured_quad(op,state,
                                                    source->rendered_origin,probe)) return 0;
       for(uint32_t corner=0;corner<4;corner++)
         if((op->payload.quad.corner_colour[corner]>>24)!=255u) return 0;
+      if(!full_region(sampling->source_region,source->width,source->height)){
+        double u0=(double)sampling->source_region.x/source->width;
+        double u1=(double)((uint32_t)sampling->source_region.x+
+                           sampling->source_region.width)/source->width;
+        double v0=(double)sampling->source_region.y/source->height;
+        double v1=(double)((uint32_t)sampling->source_region.y+
+                           sampling->source_region.height)/source->height;
+        for(uint32_t corner=0;corner<4;corner++)
+          if(op->payload.quad.u[corner]<u0-1e-12 ||
+             op->payload.quad.u[corner]>u1+1e-12 ||
+             op->payload.quad.v[corner]<v0-1e-12 ||
+             op->payload.quad.v[corner]>v1+1e-12) return 0;
+      }
     }
   }
   return 1;

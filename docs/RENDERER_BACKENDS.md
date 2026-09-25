@@ -14,6 +14,12 @@ not the P1 CPU milestone. A planned entry cannot be selected. P1 has no new
 scene-GPU dispatcher; the existing hybrid presentation/content-program path
 remains separate and unchanged.
 
+The later resident prototype supports clear, qualified whole-image quads, and nearest-filtered
+interior atlas subrectangles with integer-sized axis-aligned destinations and optional X/Y mirrors.
+The subrectangle variant is replayable from retained source pixels after context loss. Bilinear
+subrectangles, scaling, rotation, general sprite/background/tile dispatch, and resident final
+presentation are not yet qualified; the corresponding ordinary game calls still execute on CPU.
+
 | Neutral ID | Shared rule owner | Current CPU execution anchor | OpenGL/OpenGL ES target at P1 | Barrier or fallback |
 |---|---|---|---|---|
 | `TEXTURED_QUAD` | Sprite, background, tile and text facades; frame/region and transform | `gml_render_cpu_blit_tpag_part` and connected runtime-image blitters | `gml_render_gpu_opengl_draw_textured_quad` — planned | Pixel reads require the latest image version before CPU sampling. |
