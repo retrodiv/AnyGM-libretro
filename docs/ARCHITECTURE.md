@@ -471,10 +471,11 @@ bridge live in `cpu/gml_render_cpu_workers.c`; renderer teardown joins it before
 workspaces. No per-pixel call crosses those
 translation-unit seams.
 
-`gml_render_effects.c` owns non-CRT room-layer capture, filtering,
-composition, and complete effect pixel kernels. Shader recognition produces
+`common/gml_render_effects.c` owns non-CRT room-layer capture and the
+pass-level request to `cpu/gml_render_cpu_effects.c`, which owns the unchanged
+sampling, filtering, target restoration and composition kernels. Shader recognition produces
 renderer-owned policy records during initialization in the separate shared
-owner; it does not interpret arbitrary shader code at draw time. The effects owner may use the
+owner; it does not interpret arbitrary shader code at draw time. The CPU effects owner may use the
 renderer-private row-band executor only at pass granularity. Inner pixel loops
 and the main sprite/surface mappers remain direct and do not cross an indirect
 dispatch boundary.

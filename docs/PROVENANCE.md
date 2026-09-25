@@ -225,7 +225,7 @@ origin is documented deliberately instead of discovered.
   the upstream Apache-2.0 grant and notice remain in `LICENSES/` and `NOTICE`.
   Project-original contributions retain their separate MIT terms.
 - **GLSL family recognition**
-  (`src/video/renderer/gml_render_effects.c`). The software renderer
+  (`src/video/renderer/common/gml_render_shader_recognition.c`). The software renderer
   recognizes narrow families of fragment shaders and reads their parameters -
   uniform names, literal thresholds, palette colours, tap weights - from the
   GLSL that ships inside the content. The matchers key on operation shape:
@@ -260,7 +260,8 @@ origin is documented deliberately instead of discovered.
   `gm_BaseTexture`, `in_Position`, `in_Colour`, `in_TextureCoord`, the
   alpha-test and fog switches) are interoperability facts and are supplied by
   name.
-- **Room-layer effects** (`src/video/renderer/gml_render_effects.c`).
+- **Room-layer effects** (`src/video/renderer/common/gml_render_effects.c`,
+  `src/video/renderer/cpu/gml_render_cpu_effects.c`).
   Effect identifiers and property keys are read from room records. The
   renderer applies the image operations specified in `docs/EFFECT_LAYERS.md`;
   its unit checksums pin only this implementation's synthetic output.
