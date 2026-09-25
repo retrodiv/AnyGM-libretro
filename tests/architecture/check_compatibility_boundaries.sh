@@ -63,7 +63,7 @@ fi
 renderer_type_definitions=$(portable_product_files | xargs grep -l -E \
   '^[[:space:]]*(typedef[[:space:]]+)?struct[[:space:]]+GmlRender[[:space:]]*\{' \
   2>/dev/null || true)
-if [ "$renderer_type_definitions" != "src/video/renderer/gml_render_internal.h" ]; then
+if [ "$renderer_type_definitions" != "src/video/renderer/common/gml_render_internal.h" ]; then
   printf '%s\n' "Only gml_render_internal.h may define renderer storage:" >&2
   printf '%s\n' "$renderer_type_definitions" >&2
   exit 1
@@ -569,7 +569,7 @@ done
 renderer_private_record_definitions=$(portable_product_files | xargs grep -l -E \
   '}[[:space:]]+(GmlTpagAlphaRun|GmlTpag|GmlRuntimeAxisKey|GmlRuntimeAxisRun|GmlSprite|GmlAtlas|GmlInterpSubrectCache|GmlBg|GmlGlyph|GmlFont|GmlSurface);' \
   2>/dev/null || true)
-if [ "$renderer_private_record_definitions" != "src/video/renderer/gml_render_internal.h" ]; then
+if [ "$renderer_private_record_definitions" != "src/video/renderer/common/gml_render_internal.h" ]; then
   printf '%s\n' "Private renderer record definitions belong only to gml_render_internal.h:" >&2
   printf '%s\n' "$renderer_private_record_definitions" >&2
   exit 1
@@ -597,7 +597,7 @@ fail_matches "The subsystem-facing renderer header must keep GmlRender opaque:" 
 renderer_state_definition_files=$(find src -type f -name '*.c' -exec grep -l -E \
   '^[[:space:]]*(int|size_t)[[:space:]]+gml_render_state_(size|save|load|profile_metrics)[[:space:]]*\(' \
   {} + 2>/dev/null || true)
-if [ "$renderer_state_definition_files" != "src/video/renderer/gml_render_state.c" ]; then
+if [ "$renderer_state_definition_files" != "src/video/renderer/common/gml_render_state.c" ]; then
   printf '%s\n' "Canonical renderer payload operations belong only to gml_render_state.c:" >&2
   printf '%s\n' "$renderer_state_definition_files" >&2
   exit 1
@@ -747,7 +747,7 @@ fi
 renderer_atlas_definition_files=$(find src -type f -name '*.c' -exec grep -l -E \
   '^[[:space:]]*(static[[:space:]]+)?(uint8_t[[:space:]]*\*|void|int)[[:space:]]*(decode_texture_blob|atlas_(decode_publish|worker|pool_get|pool_free|pixels)|gml_render_(prefetch_atlas|prefetch_sprite|prefetch_bg|warm_atlas|warm_sprite|warm_bg)|parse_txtr)[[:space:]]*\(' \
   {} + 2>/dev/null || true)
-if [ "$renderer_atlas_definition_files" != "src/video/renderer/gml_render_atlas.c" ]; then
+if [ "$renderer_atlas_definition_files" != "src/video/renderer/common/gml_render_atlas.c" ]; then
   printf '%s\n' "Renderer atlas decode and prefetch definitions belong only to gml_render_atlas.c:" >&2
   printf '%s\n' "$renderer_atlas_definition_files" >&2
   exit 1
