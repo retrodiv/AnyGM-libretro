@@ -452,7 +452,9 @@ depth order, and sub-rectangle draw preparation. Its one coarse call per tile en
 `cpu/gml_render_cpu_blit.c`. `common/gml_render_backgrounds.c` owns basic/scaled
 background source preparation, exact tiled repetition/phase choice, part and rotated tile geometry,
 cache-detached subrectangle views, and ordered room-background traversal. The CPU blit owner retains sprite, background, paint,
-axis-cache, and low-level pixel raster closure. Keeping those mutually calling
+axis-cache, and low-level pixel raster closure. `common/gml_render_sprites.c` now owns
+ordinary sprite alpha selection and part source/transform/shader decisions; other sprite
+variants remain in the connected CPU owner pending their shared extraction. Keeping those mutually calling
 hot kernels in one translation unit avoids introducing per-pixel indirection
 or cross-unit calls. Its size is therefore an intentional exception to the
 soft source-size trigger, supported by the frame-boundary allocation and

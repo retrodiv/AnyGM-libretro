@@ -735,11 +735,29 @@ fi
 
 renderer_raster_definition_files=$(find src/video/renderer -type f -not -path 'src/video/renderer/gpu/opengl/*' -name '*.c' \
   -exec grep -l -E \
-  '^[[:space:]]*(static[[:space:]]+)?(int|void|uint32_t)[[:space:]]+(gml_draw_sprite[[:alnum:]_]*|draw_sprite_nineslice|gml_render_shader_fill_rect|gml_render_cpu_backend_(color_to_xrgb|fill_xrgb|draw_pixel))[[:space:]]*\(' \
+  '^[[:space:]]*(static[[:space:]]+)?(int|void|uint32_t)[[:space:]]+(gml_draw_sprite_(pos|ext|tiled_ext|stretched)|gml_draw_layer_background_sprite|draw_sprite_nineslice|gml_render_shader_fill_rect|gml_render_cpu_backend_(color_to_xrgb|fill_xrgb|draw_pixel))[[:space:]]*\(' \
   {} + 2>/dev/null || true)
 if [ "$renderer_raster_definition_files" != "src/video/renderer/cpu/gml_render_cpu_blit.c" ]; then
   printf '%s\n' "Sprite raster/paint definitions belong only to cpu/gml_render_cpu_blit.c:" >&2
   printf '%s\n' "$renderer_raster_definition_files" >&2
+  exit 1
+fi
+
+renderer_sprite_shared_definitions=$(find src/video/renderer -type f -name '*.c' -exec grep -l -E \
+  '^[[:space:]]*void[[:space:]]+gml_draw_sprite(_part_ext)?[[:space:]]*\(' \
+  {} + 2>/dev/null || true)
+if [ "$renderer_sprite_shared_definitions" != "src/video/renderer/common/gml_render_sprites.c" ]; then
+  printf '%s\n' "Shared sprite selection and part preparation belong only to common/gml_render_sprites.c:" >&2
+  printf '%s\n' "$renderer_sprite_shared_definitions" >&2
+  exit 1
+fi
+
+renderer_sprite_cpu_part_emitters=$(find src/video/renderer -type f -name '*.c' -exec grep -l -E \
+  '^[[:space:]]*void[[:space:]]+gml_render_cpu_blit_(rgba_region|tpag_part)[[:space:]]*\(' \
+  {} + 2>/dev/null || true)
+if [ "$renderer_sprite_cpu_part_emitters" != "src/video/renderer/cpu/gml_render_cpu_blit.c" ]; then
+  printf '%s\n' "CPU sprite-region raster belongs only to cpu/gml_render_cpu_blit.c:" >&2
+  printf '%s\n' "$renderer_sprite_cpu_part_emitters" >&2
   exit 1
 fi
 

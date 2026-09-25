@@ -8,6 +8,16 @@
 
 typedef struct GmlTpag GmlTpag;
 
+/* Existing coarse sprite-region raster entries; sources remain borrowed. */
+void gml_render_cpu_blit_rgba_region(GmlRender *r, const uint8_t *source, int width, int height,
+                                     double sx, double sy, double sw, double sh,
+                                     double dx, double dy, double dw, double dh,
+                                     uint32_t blend, double alpha);
+void gml_render_cpu_blit_tpag_part(GmlRender *r, GmlTpag *page,
+                                   double sx, double sy, double sw, double sh,
+                                   double dx, double dy, double xs, double ys,
+                                   uint32_t blend, double alpha);
+
 /* One resolved background/tile source emitted into the active CPU target. */
 void gml_render_cpu_blit_background_phase(GmlRender *r, GmlTpag *t, double dx, double dy,
                                           double xs, double ys, uint32_t blend, double alpha);

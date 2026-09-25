@@ -2286,7 +2286,7 @@ void blit_rgba_sprite(GmlRender *r, GmlSprite *owner, const uint8_t *src, int sw
     *dp=gml_sprite_target_alpha(r,destination,source_alpha)|(or_<<16)|(og<<8)|ob;
   }
 }
-static void blit_rgba_region(GmlRender *r, const uint8_t *src, int iw, int ih,
+void gml_render_cpu_blit_rgba_region(GmlRender *r, const uint8_t *src, int iw, int ih,
                              double sx0d, double sy0d, double swd, double shd,
                              double dx, double dy, double dw, double dh,
                              uint32_t blend, double alpha){
@@ -2412,7 +2412,7 @@ static void blit_tpag_part_with_phase(GmlRender *r, GmlTpag *t,
   else
     blit(r,&tt,dx+(anchor_x-sx)*xs,dy+(anchor_y-sy)*ys,cell_xs,cell_ys,blend,alpha);
 }
-static void blit_tpag_part(GmlRender *r, GmlTpag *t, double sx, double sy, double sw, double sh,
+void gml_render_cpu_blit_tpag_part(GmlRender *r, GmlTpag *t, double sx, double sy, double sw, double sh,
                            double dx, double dy, double xs, double ys, uint32_t blend, double alpha){
   blit_tpag_part_with_phase(r,t,sx,sy,sw,sh,dx,dy,xs,ys,blend,alpha,0,0);
 }
@@ -5583,14 +5583,14 @@ static void ns_band(GmlRender *r, GmlTpag *t, int mode,
   if(sw<=0 || sh<=0 || tw<=0 || th<=0) return;
   if(mode==4) return;                                   /* hide */
   if(mode==0){                                          /* stretch */
-    blit_tpag_part(r,t,sx,sy,sw,sh,dx,dy,(double)tw/sw,(double)th/sh,blend,alpha);
+    gml_render_cpu_blit_tpag_part(r,t,sx,sy,sw,sh,dx,dy,(double)tw/sw,(double)th/sh,blend,alpha);
     return;
   }
   for(int oy=0; oy<th; oy+=sh){                          /* repeat (also mirror/blankrepeat) */
     int ch=sh<th-oy? sh : th-oy;
     for(int ox=0; ox<tw; ox+=sw){
       int cw=sw<tw-ox? sw : tw-ox;
-      blit_tpag_part(r,t,sx,sy,cw,ch,dx+ox,dy+oy,1,1,blend,alpha);
+      gml_render_cpu_blit_tpag_part(r,t,sx,sy,cw,ch,dx+ox,dy+oy,1,1,blend,alpha);
     }
   }
 }
@@ -5604,10 +5604,10 @@ static void draw_sprite_nineslice(GmlRender *r, GmlSprite *s, GmlTpag *t,
   int cw=sw-l-rt, chh=sh-tp-bt;      /* source center band sizes */
   int tw=W-l-rt, th=H-tp-bt;         /* target center band sizes */
   /* corners (never scaled) */
-  blit_tpag_part(r,t,0,0,l,tp,          dx0,        dy0,        1,1,blend,alpha);
-  blit_tpag_part(r,t,sw-rt,0,rt,tp,     dx0+W-rt,   dy0,        1,1,blend,alpha);
-  blit_tpag_part(r,t,0,sh-bt,l,bt,      dx0,        dy0+H-bt,   1,1,blend,alpha);
-  blit_tpag_part(r,t,sw-rt,sh-bt,rt,bt, dx0+W-rt,   dy0+H-bt,   1,1,blend,alpha);
+  gml_render_cpu_blit_tpag_part(r,t,0,0,l,tp,          dx0,        dy0,        1,1,blend,alpha);
+  gml_render_cpu_blit_tpag_part(r,t,sw-rt,0,rt,tp,     dx0+W-rt,   dy0,        1,1,blend,alpha);
+  gml_render_cpu_blit_tpag_part(r,t,0,sh-bt,l,bt,      dx0,        dy0+H-bt,   1,1,blend,alpha);
+  gml_render_cpu_blit_tpag_part(r,t,sw-rt,sh-bt,rt,bt, dx0+W-rt,   dy0+H-bt,   1,1,blend,alpha);
   /* edges: top(1), bottom(3), left(0), right(2) — tile mode indices per the SPRT record */
   ns_band(r,t,s->ns_tile[1], l,0,cw,tp,      dx0+l,      dy0,        tw,tp, blend,alpha);
   ns_band(r,t,s->ns_tile[3], l,sh-bt,cw,bt,  dx0+l,      dy0+H-bt,   tw,bt, blend,alpha);
@@ -5743,7 +5743,7 @@ void gml_draw_sprite_pos(GmlRender *r,int sprite,int subimg,
      fabs(qy[0]-qy[1])<1e-9 && fabs(qx[1]-qx[2])<1e-9 &&
      fabs(qy[2]-qy[3])<1e-9 && fabs(qx[3]-qx[0])<1e-9){
     if(page) blit(r,page,qx[0],qy[0],(qx[1]-qx[0])/sw,(qy[3]-qy[0])/sh,0xFFFFFF,alpha);
-    else blit_rgba_region(r,rgba,sw,sh,0,0,sw,sh,qx[0],qy[0],qx[1]-qx[0],qy[3]-qy[0],0xFFFFFF,alpha);
+    else gml_render_cpu_blit_rgba_region(r,rgba,sw,sh,0,0,sw,sh,qx[0],qy[0],qx[1]-qx[0],qy[3]-qy[0],0xFFFFFF,alpha);
     return;
   }
 
@@ -6001,10 +6001,6 @@ void gml_draw_sprite_ext(GmlRender *r, int sprite, int subimg, double x, double 
   masked_sprite_draw_end(r,masked);
 }
 
-void gml_draw_sprite(GmlRender *r, int sprite, int subimg, double x, double y){
-  gml_draw_sprite_ext(r,sprite,subimg,x,y,1,1,0,0xFFFFFF,
-                      r && !r->classic ? r->alpha : 1.0);
-}
 /* draw_sprite_tiled_ext: repeat a sprite frame to fill the screen (both axes),
  * anchored at (x,y). Used by GML effects and tiled background scripts. */
 static void draw_sprite_tiled_ext_unmasked(GmlRender *r, int sprite, int subimg,
@@ -6128,32 +6124,6 @@ void gml_draw_layer_background_sprite(GmlRender *r, int sprite, int subimg, doub
   for(double yy=y0;yy<yend;yy+=bh) for(double xx=x0;xx<xend;xx+=bw)
     gml_render_cpu_blit_with_phase(r,t,xx+t->tx*xs,yy+t->ty*ys,xs,ys,blend,alpha,0,0);
 }
-void gml_draw_sprite_part_ext(GmlRender *r, int sprite, int subimg, double sx, double sy,
-                              double sw, double sh, double x, double y,
-                              double xs, double ys, uint32_t blend, double alpha){
-  gml_render_draw_map_point(r,&x,&y);
-  gml_render_draw_map_scale(r,&xs,&ys);
-  if(sprite<0||sprite>=r->n_spr) return;
-  if(gml_d3_draw_sprite_part_2d(r,sprite,subimg,sx,sy,sw,sh,x,y,xs,ys,blend,alpha)) return;
-  GmlSprite *s=&r->spr[sprite]; if(s->n_frames<=0) return;
-  /* A region of a sprite drawn through a program this renderer does not execute reaches the same
-   * executor; unflipped only, because the composed plane is axis-aligned. */
-  if(xs!=0 && ys!=0 && r->active_shader>=0 && r->shader_executor &&
-     gml_render_shader_content_candidate(r,r->active_shader)){
-    int sub=((subimg%s->n_frames)+s->n_frames)%s->n_frames;
-    if(gml_render_shade_target_sprite_part(r,sprite,sub,sx,sy,sw,sh,
-                                           x-r->cam_x,y-r->cam_y,sw*xs,sh*ys,blend,alpha)) return;
-  }
-  if(s->runtime_rgba){
-    const uint8_t *fr=runtime_frame_rgba(s,subimg); if(!fr) return;
-    blit_rgba_region(r,fr,s->w,s->h,sx,sy,sw,sh,x-r->cam_x,y-r->cam_y,sw*xs,sh*ys,blend,alpha);
-    return;
-  }
-  int sub=((subimg%s->n_frames)+s->n_frames)%s->n_frames;
-  int ti=s->frame[sub]; if(ti<0||ti>=r->n_tpag) return;
-  blit_tpag_part(r,&r->tpag[ti],sx,sy,sw,sh,x-r->cam_x,y-r->cam_y,xs,ys,blend,alpha);
-}
-
 void gml_render_cpu_blit_rotated_background_tile(GmlRender *r, GmlTpag *view,
                                                   double draw_x, double draw_y,
                                                   double tile_xscale, double tile_yscale,
@@ -6307,7 +6277,7 @@ void gml_draw_sprite_stretched(GmlRender *r, int sprite, int frame, double dx, d
   dx-=r->cam_x; dy-=r->cam_y;
   if(s->runtime_rgba){
     const uint8_t *fr=runtime_frame_rgba(s,frame); if(!fr) return;
-    blit_rgba_region(r,fr,s->w,s->h,0,0,s->w,s->h,dx,dy,dw,dh,blend,alpha);
+    gml_render_cpu_blit_rgba_region(r,fr,s->w,s->h,0,0,s->w,s->h,dx,dy,dw,dh,blend,alpha);
     return;
   }
   int sub=((frame%s->n_frames)+s->n_frames)%s->n_frames;
