@@ -7,6 +7,16 @@
 #include "gml_render.h"
 
 typedef struct GmlTpag GmlTpag;
+typedef struct GmlSprite GmlSprite;
+
+/* Existing CPU skeletal and raster closures reached after shared sprite preparation. */
+int gml_render_cpu_draw_spine_sprite(GmlRender *render, GmlSprite *sprite,
+                                     double x, double y, double xscale, double yscale,
+                                     double rotation, uint32_t blend, double alpha);
+void gml_render_cpu_blit_sprite_ext_resolved(GmlRender *render, GmlSprite *sprite_record,
+                                             int sprite, int subimage, double x, double y,
+                                             double xscale, double yscale, double rotation,
+                                             uint32_t blend, double alpha);
 
 /* Existing coarse sprite-region raster entries; sources remain borrowed. */
 void gml_render_cpu_blit_rgba_region(GmlRender *r, const uint8_t *source, int width, int height,

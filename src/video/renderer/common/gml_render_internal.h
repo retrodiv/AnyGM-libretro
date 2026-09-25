@@ -97,7 +97,7 @@ typedef struct {
   double x, y, rotation, scale_x, scale_y;
   double world_x, world_y, a, b, c, d;
 } GmlSpinePoseBone;
-typedef struct { const char *name; int originx, originy, w, h, n_frames; int *frame;
+typedef struct GmlSprite { const char *name; int originx, originy, w, h, n_frames; int *frame;
                  int ml, mr, mt, mb;                /* collision bbox coordinates: left,right,top,bottom */
                  const uint8_t *mask; int mask_rowb, mask_count;  /* SPRT collision mask: 1bpp */
                  uint8_t *runtime_mask;                           /* owned copy for runtime assets */

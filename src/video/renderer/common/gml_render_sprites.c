@@ -30,6 +30,44 @@ void gml_draw_sprite(GmlRender *r, int sprite, int subimg, double x, double y){
                       r && !r->classic ? r->alpha : 1.0);
 }
 
+void gml_render_sprite_ext_unmasked(GmlRender *r, int sprite, int subimg, double x, double y,
+                                     double xs, double ys, double rot, uint32_t blend, double alpha){
+  gml_render_draw_map_point(r,&x,&y);
+  gml_render_draw_map_scale(r,&xs,&ys);
+  if(r && sprite>=0 && sprite<r->n_spr &&
+     gml_render_cpu_draw_spine_sprite(r,&r->spr[sprite],x,y,xs,ys,rot,blend,alpha)) return;
+  if(gml_d3_draw_sprite_2d(r,sprite,subimg,x,y,xs,ys,rot,blend,alpha)) return;
+  if(sprite<0||sprite>=r->n_spr) return;
+  if(alpha<=0) return;
+  GmlSprite *s=&r->spr[sprite]; if(s->n_frames<=0) return;
+  /* A sprite drawn through a program this renderer does not execute goes to the same executor as
+   * a surface, evaluated at the destination's size. Unrotated, unflipped draws only: the composed
+   * plane is axis-aligned, and a rotated or mirrored draw keeps today's plain path. */
+  /* A rotated draw composes through the ordinary sprite blit, which already has the pivot. Only a
+   * program whose answer is a property of the texels can be kept for it; one that reads its place
+   * on the target is evaluated where it lands, and a rotated one of those keeps the plain path. */
+  if(rot!=0.0 && xs!=0 && ys!=0 && r->active_shader>=0 && r->shader_executor &&
+     gml_render_shader_content_candidate(r,r->active_shader) &&
+     r->shader_pal && !r->shader_pal[r->active_shader].position_dependent){
+    int sub=((subimg%s->n_frames)+s->n_frames)%s->n_frames;
+    int atlas=0,ax=0,ay=0,aw=0,ah=0;
+    if(gml_render_sprite_frame_rect(r,sprite,sub,&atlas,&ax,&ay,&aw,&ah)){
+      const uint32_t *shaded=gml_render_shaded_atlas_rect(r,atlas,ax,ay,aw,ah);
+      if(shaded && gml_render_compose_shaded_rotated(r,s,shaded,aw,ah,x,y,xs,ys,rot,
+                                                     s->originx,s->originy,blend,alpha)) return;
+    }
+  }
+  /* Unrotated draws, mirrored or not: the composition takes a negative extent for a flip. */
+  if(rot==0.0 && xs!=0 && ys!=0 && r->active_shader>=0 && r->shader_executor &&
+     gml_render_shader_content_candidate(r,r->active_shader)){
+    int sub=((subimg%s->n_frames)+s->n_frames)%s->n_frames;
+    if(gml_render_shade_target_sprite(r,sprite,sub,
+                                      x-s->originx*xs,y-s->originy*ys,
+                                      s->w*xs,s->h*ys,blend,alpha)) return;
+  }
+  gml_render_cpu_blit_sprite_ext_resolved(r,s,sprite,subimg,x,y,xs,ys,rot,blend,alpha);
+}
+
 void gml_draw_sprite_part_ext(GmlRender *r, int sprite, int subimg, double sx, double sy,
                               double sw, double sh, double x, double y,
                               double xs, double ys, uint32_t blend, double alpha){

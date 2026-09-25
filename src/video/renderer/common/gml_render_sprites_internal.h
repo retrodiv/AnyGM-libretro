@@ -10,5 +10,8 @@ int gml_render_sprite_log_enabled(const GmlRender *render);
 void gml_render_sprite_tiled_ext_unmasked(GmlRender *render, int sprite, int subimage,
                                            double x, double y, double xscale, double yscale,
                                            uint32_t blend, double alpha);
+void gml_render_sprite_ext_unmasked(GmlRender *render, int sprite, int subimage,
+                                    double x, double y, double xscale, double yscale,
+                                    double rotation, uint32_t blend, double alpha);
 
 #endif

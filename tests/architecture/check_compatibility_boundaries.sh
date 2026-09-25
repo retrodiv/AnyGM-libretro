@@ -744,7 +744,7 @@ if [ "$renderer_raster_definition_files" != "src/video/renderer/cpu/gml_render_c
 fi
 
 renderer_sprite_shared_definitions=$(find src/video/renderer -type f -name '*.c' -exec grep -l -E \
-  '^[[:space:]]*void[[:space:]]+(gml_draw_sprite(_part_ext)?|gml_draw_layer_background_sprite|gml_render_sprite_tiled_ext_unmasked)[[:space:]]*\(' \
+  '^[[:space:]]*void[[:space:]]+(gml_draw_sprite(_part_ext)?|gml_draw_layer_background_sprite|gml_render_sprite_(tiled_)?ext_unmasked)[[:space:]]*\(' \
   {} + 2>/dev/null || true)
 if [ "$renderer_sprite_shared_definitions" != "src/video/renderer/common/gml_render_sprites.c" ]; then
   printf '%s\n' "Shared sprite selection and part preparation belong only to common/gml_render_sprites.c:" >&2
@@ -762,7 +762,7 @@ if [ "$renderer_shared_sprite_frame_files" != "src/video/renderer/common/gml_ren
 fi
 
 renderer_sprite_cpu_part_emitters=$(find src/video/renderer -type f -name '*.c' -exec grep -l -E \
-  '^[[:space:]]*void[[:space:]]+gml_render_cpu_blit_(rgba_region|tpag_part)[[:space:]]*\(' \
+  '^[[:space:]]*(void|int)[[:space:]]+gml_render_cpu_(blit_(rgba_region|tpag_part|sprite_ext_resolved)|draw_spine_sprite)[[:space:]]*\(' \
   {} + 2>/dev/null || true)
 if [ "$renderer_sprite_cpu_part_emitters" != "src/video/renderer/cpu/gml_render_cpu_blit.c" ]; then
   printf '%s\n' "CPU sprite-region raster belongs only to cpu/gml_render_cpu_blit.c:" >&2
