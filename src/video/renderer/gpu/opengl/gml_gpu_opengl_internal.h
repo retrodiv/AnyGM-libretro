@@ -49,6 +49,7 @@ typedef struct GlContentProgram {
   GLuint program;
   uint32_t identity;
   const char *fragment_key;
+  int scene_rgba;
   int failed;
   uint32_t last_used;
   GLint a_position,a_colour,a_texcoord;
@@ -156,7 +157,11 @@ int gml_gpu_opengl_scene_program(GmlGpuBackend *backend,char *error,size_t error
 int gml_gpu_opengl_scene_exact_program(GmlGpuBackend *backend,char *error,size_t error_capacity);
 int gml_gpu_opengl_execute_shader_draw(GmlGpuBackend *backend,GmlRenderPlan *plan,
                                         const GmlPlanOp *op,GmlGpuCounters *counters,
-                                        char *error,size_t error_capacity);
+                                       char *error,size_t error_capacity);
+int gml_gpu_opengl_scene_shader_draw(GmlGpuBackend *backend,const GmlPlanShader *shader,
+                                      const GmlRenderDrawStateSnapshot *state,
+                                      GlSceneImage *target,GlSceneImage *source,
+                                      char *error,size_t error_capacity);
 int gml_gpu_opengl_bind_readback_target(GmlGpuBackend *backend,uint32_t width,uint32_t height,
                                          char *error,size_t error_capacity);
 int gml_gpu_opengl_read_back_target(GmlGpuBackend *backend,GmlRenderPlan *plan,

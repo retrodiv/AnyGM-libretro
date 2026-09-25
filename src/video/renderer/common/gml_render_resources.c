@@ -307,6 +307,9 @@ static int batch_valid(const GmlRenderResource *resource,const GmlRenderDrawBatc
       source=find_input(sources,source_count,operation->sources[0]);
       if(!source) return 0;
     }
+    if(operation->opcode==GML_RENDER_OP_CONTENT_SHADER_DRAW &&
+       (!operation->payload.shader ||
+        operation->reconstruction_mode!=GML_RENDER_DEVICE_CHECKPOINT)) return 0;
     if(operation->reconstruction_mode==GML_RENDER_REPLAY_EXACT){
       if(!gml_render_cpu_replay_eligible(operation,state,source)) return 0;
     } else if(operation->reconstruction_mode==GML_RENDER_DEVICE_CHECKPOINT){

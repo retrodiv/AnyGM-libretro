@@ -151,6 +151,35 @@ static int scene_preflight(GmlGpuBackend *backend,const GmlRenderDrawBatch *batc
       }
       continue;
     }
+    if(op->opcode==GML_RENDER_OP_CONTENT_SHADER_DRAW){
+      const GmlRenderDrawStateSnapshot *state;
+      const GmlPlanShader *shader=op->payload.shader;
+      GlSceneImage *source;
+      if(op->reconstruction_mode!=GML_RENDER_DEVICE_CHECKPOINT ||
+         !batch->states || op->state_index>=batch->state_count ||
+         op->source_count!=1u || !op->sources || !shader ||
+         !shader->vertex_es || !shader->fragment_es || shader->sampler_count ||
+         !full_region(target->region,target->width,target->height) ||
+         (!existing_target(backend,target) &&
+          !cleared_earlier(cleared,clear_count,target->image))) return 0;
+      state=&batch->states[op->state_index];
+      source=gml_gpu_opengl_scene_image(backend,op->sources[0]);
+      if(!source || same_logical(source->ref,target->image) ||
+         (source->pixel_format!=GML_RENDER_PIXEL_XRGB8888 &&
+          source->pixel_format!=GML_RENDER_PIXEL_ARGB8888) ||
+         state->write_mask!=15u || state->alpha!=255u ||
+         state->colour!=0xFFFFFFFFu || state->alpha_test_enabled ||
+         qualified_blend(state)!=0 || state->coverage_policy ||
+         state->sampler_count!=1u ||
+         (state->samplers[0].filter!=GML_RENDER_FILTER_NEAREST &&
+          state->samplers[0].filter!=GML_RENDER_FILTER_BILINEAR) ||
+         state->samplers[0].edge_rule!=GML_RENDER_EDGE_CLAMP_SUBIMAGE ||
+         state->samplers[0].quantisation ||
+         !full_region(state->samplers[0].source_region,source->width,source->height) ||
+         !((state->clip.width==0 && state->clip.height==0) ||
+           full_region(state->clip,target->width,target->height))) return 0;
+      continue;
+    }
     if(op->opcode!=GML_RENDER_OP_TEXTURED_QUAD || !batch->states ||
        op->state_index>=batch->state_count || op->source_count!=1 || !op->sources ||
        (!existing_target(backend,target) &&
@@ -378,7 +407,7 @@ GmlRenderExecutionResult gml_gpu_opengl_scene_submit(GmlGpuBackend *backend,
   for(uint32_t index=0;index<batch->operation_count;index++){
     const GmlRenderDrawOp *op=&batch->operations[index];
     GlSceneImage *target;
-    if(pending_count && (op->opcode==GML_RENDER_OP_CLEAR ||
+    if(pending_count && (op->opcode!=GML_RENDER_OP_TEXTURED_QUAD ||
        !active_target || !same_logical(active_target->ref,op->target.image) ||
        pending_count==GL_SCENE_MAX_QUADS ||
        !pending_source || !same_version(pending_source->ref,op->sources[0]) ||
@@ -408,6 +437,18 @@ GmlRenderExecutionResult gml_gpu_opengl_scene_submit(GmlGpuBackend *backend,
     active_target=target;
     if(op->opcode==GML_RENDER_OP_CLEAR){
       if(!gml_render_gpu_opengl_clear(backend,op,target)){
+        mark_uncertain(&result,target);
+        break;
+      }
+      target->valid=1;
+      target->rendered_origin=1;
+      result.accepted_prefix=index+1u;
+      continue;
+    }
+    if(op->opcode==GML_RENDER_OP_CONTENT_SHADER_DRAW){
+      GlSceneImage *source=gml_gpu_opengl_scene_image(backend,op->sources[0]);
+      if(!source || !gml_gpu_opengl_scene_shader_draw(backend,op->payload.shader,
+          &batch->states[op->state_index],target,source,error,error_capacity)){
         mark_uncertain(&result,target);
         break;
       }

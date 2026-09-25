@@ -7,6 +7,8 @@
 #include <stddef.h>
 #include <stdint.h>
 
+struct GmlPlanShader;
+
 enum { GML_RENDER_MAX_SAMPLERS=8, GML_RENDER_MAX_UNCERTAIN_TARGETS=8 };
 
 /* Resolved, API-neutral work. No entry may look up mutable content after submission. */
@@ -151,6 +153,8 @@ typedef struct GmlRenderDrawOp {
     uint32_t clear_colour;
     GmlRenderQuad quad;
     GmlRenderCopyRegion copy;
+    /* Lent through this submission. Shader output is non-reconstructible and must checkpoint. */
+    const struct GmlPlanShader *shader;
   } payload;
 } GmlRenderDrawOp;
 

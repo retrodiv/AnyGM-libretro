@@ -213,8 +213,9 @@ int gml_gpu_opengl_scene_exact_program(GmlGpuBackend *backend,char *error,
  * beside it. Neither is what a core-profile context accepts, so the text is rewritten, token by
  * token and nothing more: the storage qualifiers and the sampling calls of the older dialect are
  * spelled the newer way, the fragment output is declared, and one helper is added that samples a
- * texture and reorders its channels, because every picture this backend uploads is the runtime's
- * XRGB word layout as raw bytes. The content's own expressions are untouched. */
+ * texture. The existing hybrid path reorders channels for its raw-word uploads; resident scene
+ * textures are already RGBA and use the sampled channels directly. Content expressions stay
+ * untouched. */
 
 static int glsl_word_boundary(const char *text,size_t index,size_t length){
   int before=index==0 || !(isalnum((unsigned char)text[index-1]) || text[index-1]=='_');
@@ -242,7 +243,8 @@ static int glsl_append(char **buffer,size_t *length,size_t *capacity,const char 
 
 /* Rewrite one source. `desktop` selects the 330 core dialect; otherwise 300 es. `vertex` selects
  * the storage qualifier spellings. Returns a malloc'd string, or NULL on allocation failure. */
-static char *glsl_rewrite(const char *source,int vertex,int desktop,int little_endian){
+static char *glsl_rewrite(const char *source,int vertex,int desktop,int little_endian,
+                          int scene_rgba){
   static const struct { const char *from; const char *to_vertex; const char *to_fragment; } words[]={
     {"attribute","in","in"},
     {"varying","out","in"},
@@ -257,9 +259,11 @@ static char *glsl_rewrite(const char *source,int vertex,int desktop,int little_e
   const char *header=desktop
     ?"#version 330 core\n"
     :"#version 300 es\nprecision highp float;\nprecision highp int;\nprecision highp sampler2D;\n";
-  const char *sample=little_endian
-    ?"vec4 anygm_sample(sampler2D s,vec2 c){ return texture(s,c).bgra; }\n"
-    :"vec4 anygm_sample(sampler2D s,vec2 c){ return texture(s,c).gbar; }\n";
+  const char *sample=scene_rgba
+    ?"vec4 anygm_sample(sampler2D s,vec2 c){ return texture(s,c); }\n"
+    :little_endian
+      ?"vec4 anygm_sample(sampler2D s,vec2 c){ return texture(s,c).bgra; }\n"
+      :"vec4 anygm_sample(sampler2D s,vec2 c){ return texture(s,c).gbar; }\n";
   if(!glsl_append(&out,&length,&capacity,header,strlen(header))) return NULL;
   if(!vertex && !glsl_append(&out,&length,&capacity,"out vec4 anygm_fragment;\n",25)) { free(out); return NULL; }
   if(!glsl_append(&out,&length,&capacity,sample,strlen(sample))){ free(out); return NULL; }
@@ -296,13 +300,15 @@ static char *glsl_rewrite(const char *source,int vertex,int desktop,int little_e
   return out;
 }
 
-static GlContentProgram *content_slot(GmlGpuBackend *backend,const GmlPlanShader *shader){
+static GlContentProgram *content_slot(GmlGpuBackend *backend,const GmlPlanShader *shader,
+                                      int scene_rgba){
   GlContentProgram *slot=NULL;
   uint32_t oldest=0xFFFFFFFFu;
   for(size_t index=0;index<GL_CONTENT_PROGRAMS;index++){
     GlContentProgram *candidate=&backend->content[index];
     if((candidate->program || candidate->failed) && candidate->identity==shader->identity &&
-       candidate->fragment_key==shader->fragment_es) return candidate;
+       candidate->fragment_key==shader->fragment_es &&
+       candidate->scene_rgba==scene_rgba) return candidate;
   }
   for(size_t index=0;index<GL_CONTENT_PROGRAMS;index++){
     GlContentProgram *candidate=&backend->content[index];
@@ -314,6 +320,7 @@ static GlContentProgram *content_slot(GmlGpuBackend *backend,const GmlPlanShader
   memset(slot,0,sizeof *slot);
   slot->identity=shader->identity;
   slot->fragment_key=shader->fragment_es;
+  slot->scene_rgba=scene_rgba;
   return slot;
 }
 
@@ -354,16 +361,17 @@ static GLuint link_content(GmlGpuBackend *backend,const char *vertex,const char 
 /* Compile the content's program for this context, or return the cached one. Returns NULL with the
  * slot marked failed when the context refuses it. */
 static GlContentProgram *content_program(GmlGpuBackend *backend,const GmlPlanShader *shader,
+                                         int scene_rgba,
                                          char *error,size_t error_capacity){
-  GlContentProgram *slot=content_slot(backend,shader);
+  GlContentProgram *slot=content_slot(backend,shader,scene_rgba);
   int desktop=backend->api!=GML_GPU_API_OPENGLES3;
   char *vertex=NULL,*fragment=NULL;
   if(!slot) return NULL;
   slot->last_used=++backend->use_clock;
   if(slot->program) return slot;
   if(slot->failed) return NULL;
-  vertex=glsl_rewrite(shader->vertex_es,1,desktop,backend->little_endian);
-  fragment=glsl_rewrite(shader->fragment_es,0,desktop,backend->little_endian);
+  vertex=glsl_rewrite(shader->vertex_es,1,desktop,backend->little_endian,scene_rgba);
+  fragment=glsl_rewrite(shader->fragment_es,0,desktop,backend->little_endian,scene_rgba);
   if(vertex && fragment) slot->program=link_content(backend,vertex,fragment,error,error_capacity);
   free(vertex);
   free(fragment);
@@ -481,23 +489,26 @@ static void set_sampler_filter(GmlGpuBackend *backend,GLuint texture,int linear)
  * rectangle in its own pixel units; the world-view-projection matrix the vertex program multiplies
  * by maps those units to clip space with the row order the runtime addresses, and the viewport is
  * the rectangle itself. */
-int gml_gpu_opengl_execute_shader_draw(GmlGpuBackend *backend,GmlRenderPlan *plan,const GmlPlanOp *op,
-                               GmlGpuCounters *counters,char *error,size_t error_capacity){
+static int execute_shader_draw_with_source(GmlGpuBackend *backend,GmlRenderPlan *plan,
+                                            const GmlPlanOp *op,GmlGpuCounters *counters,
+                                            GLuint resident_source,int rendered_source_origin,
+                                            char *error,size_t error_capacity){
   const GmlPlanShader *shader=&plan->shader;
   const GmlPlanImage *image=&plan->images[op->source];
   GlContentProgram *program;
-  GLuint source_name=0;
+  GLuint source_name=resident_source;
   GLuint sampler_names[GML_PLAN_MAX_SAMPLERS]={0,0,0,0};
   float matrices[5*16];
   float vertices[4*9];
   const float w=(float)op->destination.width,h=(float)op->destination.height;
   static const GLenum units[GML_PLAN_MAX_SAMPLERS]={GL_TEXTURE1,GL_TEXTURE2,GL_TEXTURE3,GL_TEXTURE4};
-  program=content_program(backend,shader,error,error_capacity);
+  program=content_program(backend,shader,resident_source!=0,error,error_capacity);
   if(!program){
     plan->fallback_reason=GML_PLAN_FALLBACK_SHADER_FAILURE;
     return 0;
   }
-  if(!gml_gpu_opengl_upload_source(backend,image,counters,&source_name,op->linear?1:0)){
+  if(!resident_source &&
+     !gml_gpu_opengl_upload_source(backend,image,counters,&source_name,op->linear?1:0)){
     gml_gpu_opengl_record_error(error,error_capacity,"graphics source upload failed");
     return 0;
   }
@@ -561,6 +572,7 @@ int gml_gpu_opengl_execute_shader_draw(GmlGpuBackend *backend,GmlRenderPlan *pla
       row[5]=shader->vertex_colour[2]; row[6]=shader->vertex_colour[3];
       row[7]=u0+(u1-u0)*(corners[v][0]/w);
       row[8]=v0+(v1-v0)*(corners[v][1]/h);
+      if(rendered_source_origin) row[8]=1.0f-row[8];
     }
   }
   if(!backend->content_buffer){
@@ -597,4 +609,44 @@ int gml_gpu_opengl_execute_shader_draw(GmlGpuBackend *backend,GmlRenderPlan *pla
   set_sampler_filter(backend,source_name,0);
   backend->gl.UseProgram(backend->program);
   return 1;
+}
+
+int gml_gpu_opengl_execute_shader_draw(GmlGpuBackend *backend,GmlRenderPlan *plan,
+                                        const GmlPlanOp *op,GmlGpuCounters *counters,
+                                        char *error,size_t error_capacity){
+  return execute_shader_draw_with_source(backend,plan,op,counters,0,0,
+                                         error,error_capacity);
+}
+
+int gml_gpu_opengl_scene_shader_draw(GmlGpuBackend *backend,const GmlPlanShader *shader,
+                                      const GmlRenderDrawStateSnapshot *state,
+                                      GlSceneImage *target,GlSceneImage *source,
+                                      char *error,size_t error_capacity){
+  GmlRenderPlan plan={0};
+  GmlPlanOp operation={0};
+  int drawn;
+  GLenum gl_error;
+  if(!backend || !shader || !state || !target || !source || !source->texture ||
+     !target->framebuffer || !target->width || !target->height) return 0;
+  plan.target_width=target->width;
+  plan.target_height=target->height;
+  plan.image_count=1u;
+  plan.images[0].width=source->width;
+  plan.images[0].height=source->height;
+  plan.shader=*shader;
+  operation.opcode=GML_PLAN_OP_SHADER_DRAW;
+  operation.source=0u;
+  operation.linear=state->samplers[0].filter==GML_RENDER_FILTER_BILINEAR;
+  operation.destination=(GmlPlanRect){0,0,target->width,target->height};
+  operation.source_rect=(GmlPlanRect){0,0,source->width,source->height};
+  backend->gl.BindFramebuffer(GL_FRAMEBUFFER,target->framebuffer);
+  backend->gl.Disable(GL_BLEND);
+  backend->gl.BindVertexArray(backend->scene.vertex_array);
+  drawn=execute_shader_draw_with_source(backend,&plan,&operation,NULL,source->texture,
+                                        source->rendered_origin,error,error_capacity);
+  backend->gl.BindVertexArray(0);
+  gl_error=backend->gl.GetError();
+  if(gl_error!=GL_NO_ERROR)
+    gml_gpu_opengl_record_error(error,error_capacity,"scene shader GL error %u",gl_error);
+  return drawn && gl_error==GL_NO_ERROR;
 }
