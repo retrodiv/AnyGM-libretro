@@ -4357,7 +4357,7 @@ static void blit_phase_plane_previous(GmlRender *r, uint32_t *plane, GmlTpag *t,
   if(!t || t->sh<=0) return;
   blit_phase_plane(r,plane,t,dx,dy,xs,ys,blend,alpha);
 }
-static void blit_with_phase(GmlRender *r, GmlTpag *t, double dx, double dy,
+void gml_render_cpu_blit_with_phase(GmlRender *r, GmlTpag *t, double dx, double dy,
                             double xs, double ys, uint32_t blend, double alpha,
                             int phase_mode,int quantize_alpha){
   int phase=r && r->target_sp==0 && r->fb==r->base_fb && r->classic_phase_y;
@@ -4385,7 +4385,7 @@ static void blit_with_phase(GmlRender *r, GmlTpag *t, double dx, double dy,
 }
 void blit(GmlRender *r, GmlTpag *t, double dx, double dy, double xs, double ys,
                  uint32_t blend, double alpha){
-  blit_with_phase(r,t,dx,dy,xs,ys,blend,alpha,4,0);
+  gml_render_cpu_blit_with_phase(r,t,dx,dy,xs,ys,blend,alpha,4,0);
 }
 /* A room's background layer is rasterized by the same transform as everything drawn over it, so
  * it answers to the same tie. Pinning the following-texel replay here instead left every layer
@@ -4400,7 +4400,7 @@ void gml_render_cpu_blit_background_phase(GmlRender *r, GmlTpag *t, double dx, d
    * round separately, using the established fixed-function blend. Runtime images retain their
    * floating draw opacity. The point-sampled native controls distinguish both. */
   if(quantize_alpha && alpha>0.0 && alpha<1.0) alpha=floor(alpha*255.0)/255.0;
-  blit_with_phase(r,t,dx,dy,xs,ys,blend,alpha,4,quantize_alpha);
+  gml_render_cpu_blit_with_phase(r,t,dx,dy,xs,ys,blend,alpha,4,quantize_alpha);
 }
 typedef struct {
   GmlRender *r;
@@ -6013,7 +6013,7 @@ static void draw_sprite_ext_unmasked(GmlRender *r, int sprite, int subimg, doubl
     double projected_h=fabs((double)s->h*ys);
     int spans_viewport=projected_w>(double)r->fbw+0.001 &&
                        projected_h>(double)r->fbh+0.001;
-    blit_with_phase(r,t,dx,dy,xs,ys,blend,alpha,spans_viewport?0:4,0);
+    gml_render_cpu_blit_with_phase(r,t,dx,dy,xs,ys,blend,alpha,spans_viewport?0:4,0);
   }
   else blit_rotated_with_phase(r,s,t,x,y,xs,ys,rr,blend,alpha);
   if(sprof) sprof_add(sprite,s->name,(rprof_now()-sprof_t0)*1000.0);
@@ -6093,7 +6093,7 @@ static void draw_sprite_tiled_ext_unmasked(GmlRender *r, int sprite, int subimg,
       sprite,sub,bw,bh,ax,ay,x0,y0,t->tx,t->ty,t->sw,t->sh,alpha);
   for(double yy=y0; yy<r->fbh; yy+=bh)
     for(double xx=x0; xx<r->fbw; xx+=bw)
-	      blit_with_phase(r,t,xx+t->tx*xs,yy+t->ty*ys,xs,ys,blend,alpha,0,0);
+	      gml_render_cpu_blit_with_phase(r,t,xx+t->tx*xs,yy+t->ty*ys,xs,ys,blend,alpha,0,0);
 }
 
 void gml_draw_sprite_tiled_ext(GmlRender *r, int sprite, int subimg, double x, double y,
@@ -6151,7 +6151,7 @@ void gml_draw_layer_background_sprite(GmlRender *r, int sprite, int subimg, doub
     return;
   }
   for(double yy=y0;yy<yend;yy+=bh) for(double xx=x0;xx<xend;xx+=bw)
-    blit_with_phase(r,t,xx+t->tx*xs,yy+t->ty*ys,xs,ys,blend,alpha,0,0);
+    gml_render_cpu_blit_with_phase(r,t,xx+t->tx*xs,yy+t->ty*ys,xs,ys,blend,alpha,0,0);
 }
 void gml_draw_sprite_part_ext(GmlRender *r, int sprite, int subimg, double sx, double sy,
                               double sw, double sh, double x, double y,
@@ -6267,85 +6267,6 @@ void gml_draw_background_tile(GmlRender *r,int bg,
                tile_xscale,tile_yscale,degrees,color,alpha);
   if(r->rotated_batch_count>queued_before) gml_render_flush_rotated_batch(r);
 }
-/* draw_background_tiled: repeat the background image along the layer's tiled axes, anchored at (x,y).
- * htiled/vtiled come from the room layer (background_htiled[]/vtiled[]): a layer that only tiles
- * horizontally (e.g. a ground strip) must draw a single row, not fill the screen vertically. */
-static void do_bg_tiled_ext(GmlRender *r, int bg, double x, double y, double xs, double ys,
-                            uint32_t color, double alpha, int htiled, int vtiled){
-  gml_render_draw_map_point(r,&x,&y);
-  gml_render_draw_map_scale(r,&xs,&ys);
-  if(bg<0||bg>=r->n_bg) return;
-  { const char*sb=render_setting(r,"GML_SKIP_BG"); if(sb&&atoi(sb)==bg) return; }
-  int ti=r->bg[bg].tpag; if(ti<0||ti>=r->n_tpag) return;
-  GmlTpag *t=&r->tpag[ti];
-  double logical_w=(t->bw?t->bw:t->sw)*xs;
-  double logical_h=(t->bh?t->bh:t->sh)*ys;
-  if(logical_w<=0 || logical_h<=0) return;
-  if(render_setting(r,"GML_LOG_BG"))
-    anygm_host_logf(r && r->win ? r->win->host : NULL,ANYGM_LOG_DEBUG,"[bg-tiled] def=%d tpag=%d src=%d,%d %dx%d dst=%d,%d base=%dx%d atlas=%d pos=(%.3f,%.3f) scale=(%.3f,%.3f) tiled=(%d,%d) alpha=%.3f\n",
-      bg,ti,t->sx,t->sy,t->sw,t->sh,t->tx,t->ty,t->bw,t->bh,t->atlas,
-      x,y,xs,ys,htiled,vtiled,alpha);
-  if(r->classic){
-    /* Keep the anchor where the content put it and let the blit apply its nearest-pixel snapping.
-     * Truncating here would make the layer follow a different rule from other draws: a parallax
-     * position derived from a view that oscillates by a fraction of a pixel can sit on an integer
-     * boundary and flip a whole pixel while the world remains still. The tiling period is
-     * unchanged, so every repeat keeps one phase. */
-    double anchor_x=x-r->cam_x, anchor_y=y-r->cam_y;
-    double x0,xend,y0,yend;
-    if(htiled){ x0=fmod(anchor_x,logical_w); if(x0>0) x0-=logical_w; xend=r->fbw; }
-    else { x0=anchor_x; xend=anchor_x+1; }
-    if(vtiled){ y0=fmod(anchor_y,logical_h); if(y0>0) y0-=logical_h; yend=r->fbh; }
-    else { y0=anchor_y; yend=anchor_y+1; }
-    if(render_setting(r,"GML_LOG_BG"))
-      anygm_host_logf(r && r->win ? r->win->host : NULL,ANYGM_LOG_DEBUG,
-        "[bg-anchor] def=%d cam=(%.3f,%.3f) anchor=(%.3f,%.3f) start=(%.3f,%.3f)\n",
-        bg,r->cam_x,r->cam_y,anchor_x,anchor_y,x0,y0);
-    if(gml_d3_is_active(r)){
-      for(double yy=y0; yy<yend; yy+=logical_h) for(double xx=x0; xx<xend; xx+=logical_w)
-        gml_d3_draw_background_2d(r,bg,xx+r->cam_x,yy+r->cam_y,xs,ys,color,alpha);
-      return;
-    }
-    for(double yy=y0; yy<yend; yy+=logical_h)
-      for(double xx=x0; xx<xend; xx+=logical_w){
-        if(vtiled && logical_h<r->fbh)
-          blit_with_phase(r,t,xx+t->tx*xs,yy+t->ty*ys,xs,ys,color,alpha,2,0);
-        else
-          gml_render_cpu_blit_background_phase(r,t,xx+t->tx*xs,yy+t->ty*ys,xs,ys,color,alpha);
-    }
-    return;
-  }
-  /* Repeat the complete logical background cell. Texture pages omit transparent margins, but
-   * those margins remain part of both the tiling period and its authored anchor. */
-  double anchor_x=floor(x-r->cam_x),anchor_y=floor(y-r->cam_y);
-  double x0,xend,y0,yend;
-  if(htiled){ x0=fmod(anchor_x,logical_w); if(x0>0) x0-=logical_w; xend=r->fbw; }
-  else { x0=anchor_x; xend=anchor_x+1; }
-  if(vtiled){ y0=fmod(anchor_y,logical_h); if(y0>0) y0-=logical_h; yend=r->fbh; }
-  else { y0=anchor_y; yend=anchor_y+1; }
-  if(gml_d3_is_active(r)){
-    for(double yy=y0; yy<yend; yy+=logical_h)
-      for(double xx=x0; xx<xend; xx+=logical_w)
-        gml_d3_draw_background_2d(r,bg,xx+r->cam_x,yy+r->cam_y,xs,ys,color,alpha);
-    return;
-  }
-  for(double yy=y0; yy<yend; yy+=logical_h)
-    for(double xx=x0; xx<xend; xx+=logical_w)
-      gml_render_cpu_blit_background_phase(r,t,xx+t->tx*xs,yy+t->ty*ys,xs,ys,color,alpha);
-}
-/* Paint a background layer immediately in the order requested by GML. */
-static void bg_emit(GmlRender *r, int bgdef, double x, double y, double xs, double ys,
-                    uint32_t color, double alpha, int htiled, int vtiled){
-  do_bg_tiled_ext(r,bgdef,x,y,xs,ys,color,alpha,htiled,vtiled);
-}
-void gml_draw_background_tiled(GmlRender *r, int bg, double x, double y, int htiled, int vtiled){
-  bg_emit(r,bg,x,y,1,1,0xFFFFFF,r?r->alpha:1,htiled,vtiled);
-}
-void gml_draw_background_tiled_ext(GmlRender *r, int bg, double x, double y, double xs, double ys,
-                                  uint32_t color, double alpha, int htiled, int vtiled){
-  bg_emit(r,bg,x,y,xs,ys,color,alpha,htiled,vtiled);
-}
-
 /* Coarse-mip (flat area-average) texel of a straight-RGBA atlas sub-region, built by successive
  * 2x2 box reduction to 1x1 — i.e. the top mip level of the texture page.
  *

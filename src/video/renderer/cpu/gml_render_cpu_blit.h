@@ -12,4 +12,9 @@ typedef struct GmlTpag GmlTpag;
 void gml_render_cpu_blit_background_phase(GmlRender *r, GmlTpag *t, double dx, double dy,
                                           double xs, double ys, uint32_t blend, double alpha);
 
+/* Preserve classic phase replay for a resolved repeated background cell. */
+void gml_render_cpu_blit_with_phase(GmlRender *r, GmlTpag *t, double dx, double dy,
+                                    double xs, double ys, uint32_t blend, double alpha,
+                                    int phase_mode, int quantize_alpha);
+
 #endif
