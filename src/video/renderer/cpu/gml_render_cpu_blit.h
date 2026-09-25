@@ -17,4 +17,10 @@ void gml_render_cpu_blit_with_phase(GmlRender *r, GmlTpag *t, double dx, double 
                                     double xs, double ys, uint32_t blend, double alpha,
                                     int phase_mode, int quantize_alpha);
 
+/* Emit a resolved background sub-rectangle through the unchanged CPU part kernel. */
+void gml_render_cpu_blit_tpag_part_background(GmlRender *r, GmlTpag *t,
+                                              double sx, double sy, double sw, double sh,
+                                              double dx, double dy, double xs, double ys,
+                                              uint32_t blend, double alpha);
+
 #endif

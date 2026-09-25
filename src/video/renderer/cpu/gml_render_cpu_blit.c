@@ -2441,7 +2441,7 @@ static void blit_tpag_part(GmlRender *r, GmlTpag *t, double sx, double sy, doubl
                            double dx, double dy, double xs, double ys, uint32_t blend, double alpha){
   blit_tpag_part_with_phase(r,t,sx,sy,sw,sh,dx,dy,xs,ys,blend,alpha,0,0);
 }
-static void blit_tpag_part_background(GmlRender *r, GmlTpag *t,
+void gml_render_cpu_blit_tpag_part_background(GmlRender *r, GmlTpag *t,
                                       double sx, double sy, double sw, double sh,
                                       double dx, double dy, double xs, double ys,
                                       uint32_t blend, double alpha){
@@ -6179,15 +6179,6 @@ void gml_draw_sprite_part_ext(GmlRender *r, int sprite, int subimg, double sx, d
   blit_tpag_part(r,&r->tpag[ti],sx,sy,sw,sh,x-r->cam_x,y-r->cam_y,xs,ys,blend,alpha);
 }
 
-void gml_draw_background_part_ext(GmlRender *r, int bg, double sx, double sy, double sw, double sh,
-                                  double x, double y, double xs, double ys, uint32_t color, double alpha){
-  gml_render_draw_map_point(r,&x,&y);
-  gml_render_draw_map_scale(r,&xs,&ys);
-  if(bg<0||bg>=r->n_bg) return;
-  int ti=r->bg[bg].tpag; if(ti<0||ti>=r->n_tpag) return;
-  if(gml_d3_draw_background_part_2d(r,bg,sx,sy,sw,sh,x,y,xs,ys,color,alpha)) return;
-  blit_tpag_part_background(r,&r->tpag[ti],sx,sy,sw,sh,x-r->cam_x,y-r->cam_y,xs,ys,color,alpha);
-}
 void gml_draw_background_tile(GmlRender *r,int bg,
                               double sx,double sy,double sw,double sh,
                               double x,double y,double xs,double ys,

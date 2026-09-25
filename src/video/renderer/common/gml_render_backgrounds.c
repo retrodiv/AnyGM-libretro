@@ -28,6 +28,16 @@ void gml_draw_background_stretched(GmlRender *r, int bg, double x, double y, dou
   gml_draw_background_part_ext(r,bg,0,0,bw,bh,x,y,w/bw,h/bh,color,alpha);
 }
 
+void gml_draw_background_part_ext(GmlRender *r, int bg, double sx, double sy, double sw, double sh,
+                                  double x, double y, double xs, double ys, uint32_t color, double alpha){
+  gml_render_draw_map_point(r,&x,&y);
+  gml_render_draw_map_scale(r,&xs,&ys);
+  if(bg<0||bg>=r->n_bg) return;
+  int ti=r->bg[bg].tpag; if(ti<0||ti>=r->n_tpag) return;
+  if(gml_d3_draw_background_part_2d(r,bg,sx,sy,sw,sh,x,y,xs,ys,color,alpha)) return;
+  gml_render_cpu_blit_tpag_part_background(r,&r->tpag[ti],sx,sy,sw,sh,x-r->cam_x,y-r->cam_y,xs,ys,color,alpha);
+}
+
 /* draw_background[_tiled]_ext: as above + xscale/yscale + blend colour + alpha. */
 void gml_draw_background_ext(GmlRender *r, int bg, double x, double y, double xs, double ys,
                             uint32_t color, double alpha){
