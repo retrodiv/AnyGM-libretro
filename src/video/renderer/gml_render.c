@@ -5,6 +5,7 @@
 #include "gml_render.h"
 #include "gml_render_cpu_presentation.h"
 #include "gml_render_internal.h"
+#include "gml_render_surfaces_internal.h"
 #include "gml_render_cpu_blit_internal.h"
 #include "gml_render_cpu_pixel_internal.h"
 #include "gml_render_cpu_sampling_internal.h"
@@ -693,6 +694,7 @@ void gml_render_free(GmlRender *r){
   atlas_pool_free(r);   /* before atlas teardown: workers read r->atlas/win */
   gml_row_pool_free(r);  /* compositor workers must stop before their renderer workspaces vanish */
   for(int i=0;i<GML_MAX_SURFACES;i++){
+    gml_render_surface_resource_dispose(r,i+1);
     free(r->surface[i].px); free(r->surface[i].rle);
   }
   for(int i=0;i<GML_MAX_FONTS;i++){

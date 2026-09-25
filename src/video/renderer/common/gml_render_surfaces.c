@@ -26,6 +26,51 @@ static void surface_coverage_counts(const uint32_t *px,int w,int h,int *colour,i
   *colour=c; *covered=a;
 }
 int surface_slot(int id){ return id>0 && id<=GML_MAX_SURFACES ? id-1 : -1; }
+GmlRenderResource *gml_render_surface_resource_ensure(GmlRender *r,int id){
+  int slot=surface_slot(id);
+  GmlSurface *surface;
+  GmlRenderImageRef image;
+  if(!r || slot<0) return NULL;
+  surface=&r->surface[slot];
+  if(!surface->live || !surface->px || surface->w<=0 || surface->h<=0) return NULL;
+  if(surface->resource) return surface->resource;
+  if(r->next_surface_resource_incarnation==UINT64_MAX) return NULL;
+  image=(GmlRenderImageRef){GML_RENDER_RESOURCE_SURFACE,(uint32_t)id,
+    ++r->next_surface_resource_incarnation,1u};
+  surface->resource=gml_render_resource_create(image,(uint32_t)surface->w,
+    (uint32_t)surface->h,GML_RENDER_PIXEL_ARGB8888,surface->px,
+    (GmlRenderResourceLimits){0});
+  return surface->resource;
+}
+
+void gml_render_surface_resource_dispose(GmlRender *r,int id){
+  int slot=surface_slot(id);
+  GmlRenderResource *resource;
+  const GmlRenderDeviceServices *device;
+  if(!r || slot<0 || !(resource=r->surface[slot].resource)) return;
+  device=gml_render_device(r);
+  if(device && device->retire)
+    device->retire(device->context,gml_render_resource_image_ref(resource));
+  gml_render_resource_destroy(resource);
+  r->surface[slot].resource=NULL;
+}
+
+GmlRenderResourceExecution gml_render_surface_scene_submit(
+  GmlRender *r,int id,const GmlRenderDrawBatch *batch,
+  const GmlRenderResourceSource *sources,uint32_t source_count){
+  GmlRenderResource *resource=gml_render_surface_resource_ensure(r,id);
+  GmlRenderResourceExecution result;
+  int slot=surface_slot(id);
+  if(!resource) return GML_RENDER_RESOURCE_EXEC_FAILED;
+  result=gml_render_resource_submit(resource,gml_render_device(r),batch,sources,source_count);
+  if(result!=GML_RENDER_RESOURCE_EXEC_FAILED){
+    r->surface[slot].dirty=1;
+    r->surface[slot].opaque_known=0;
+    r->surface[slot].all_opaque=0;
+    r->surface[slot].all_transparent=0;
+  }
+  return result;
+}
 int surface_known_opaque(GmlRender *r, int id){
   if(!r) return 0;
   if(id==0) return r->app_surface_opaque;
@@ -135,7 +180,7 @@ int gml_surface_create(GmlRender *r, int w, int h){
       uint32_t *px=calloc((size_t)w*h,sizeof(uint32_t));
       if(!px) return -1;
       { uint8_t *rle=r->surface[i].rle; size_t cap=r->surface[i].rle_cap;   /* keep cache alloc across reuse */
-        r->surface[i]=(GmlSurface){px,w,h,1,1,1,0,1,rle,0,cap}; }
+        r->surface[i]=(GmlSurface){px,w,h,1,1,1,0,1,rle,0,cap,NULL}; }
       r->next_surface_id=i+2; if(r->next_surface_id>GML_MAX_SURFACES) r->next_surface_id=1;
       return i+1;
     }
@@ -144,6 +189,7 @@ int gml_surface_create(GmlRender *r, int w, int h){
 }
 void gml_surface_free(GmlRender *r, int id){
   int i=surface_slot(id); if(i<0) return;
+  gml_render_surface_resource_dispose(r,id);
   free(r->surface[i].px); free(r->surface[i].rle); memset(&r->surface[i],0,sizeof(r->surface[i]));
 }
 static int application_surface_resize(GmlRender *r,int w,int h){
@@ -188,9 +234,15 @@ void gml_surface_resize(GmlRender *r, int id, int w, int h){
   int i=surface_slot(id); if(i<0 || !r->surface[i].live || w<=0 || h<=0 || w>4096 || h>4096) return;
   uint32_t *px=calloc((size_t)w*h,sizeof(uint32_t));
   if(!px) return;
+  if(r->surface[i].resource &&
+     !gml_render_resource_acquire_cpu_read(r->surface[i].resource,NULL)){
+    free(px);
+    return;
+  }
   int was_transparent=r->surface[i].all_transparent;
   int cw=w<r->surface[i].w?w:r->surface[i].w, ch=h<r->surface[i].h?h:r->surface[i].h;
   for(int y=0;y<ch;y++) memcpy(px+(size_t)y*w,r->surface[i].px+(size_t)y*r->surface[i].w,(size_t)cw*sizeof(uint32_t));
+  gml_render_surface_resource_dispose(r,id);
   free(r->surface[i].px); r->surface[i].px=px; r->surface[i].w=w; r->surface[i].h=h;
   r->surface[i].dirty=1;
   r->surface[i].opaque_known=0;

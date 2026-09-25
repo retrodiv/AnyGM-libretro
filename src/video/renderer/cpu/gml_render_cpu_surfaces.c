@@ -57,6 +57,22 @@ uint32_t *surface_pixels(GmlRender *r, int id, int *w, int *h){
   }
   int i=surface_slot(id);
   if(i<0 || !r->surface[i].live || !r->surface[i].px) return NULL;
+  if(r->surface[i].resource){
+    uint32_t *canonical=NULL;
+    if(!gml_render_resource_acquire_cpu_write(r->surface[i].resource,&canonical) ||
+       canonical!=r->surface[i].px) return NULL;
+    realize_suspended_fill(r,canonical);
+    if(!gml_render_resource_commit_cpu_write(r->surface[i].resource)) return NULL;
+    /* The accessor returns a writable pointer. Callers may only read it, but a conservative
+     * version change prevents an unobserved later write from leaving the GPU copy current. */
+    r->surface[i].dirty=1;
+    r->surface[i].opaque_known=0;
+    r->surface[i].all_opaque=0;
+    r->surface[i].all_transparent=0;
+    if(w) *w=r->surface[i].w;
+    if(h) *h=r->surface[i].h;
+    return canonical;
+  }
   if(w) *w=r->surface[i].w;
   if(h) *h=r->surface[i].h;
   realize_suspended_fill(r,r->surface[i].px);

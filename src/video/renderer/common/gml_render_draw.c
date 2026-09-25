@@ -11,6 +11,8 @@ void gml_render_bind_device(GmlRender *render,const GmlRenderDeviceServices *ser
   if(!services || !services->context || !services->capabilities || !services->submit ||
      !services->upload || !services->readback || !services->retire || !services->flush ||
      !services->wait){
+    for(int index=0;index<GML_MAX_SURFACES;index++)
+      gml_render_resource_context_lost(render->surface[index].resource);
     memset(&render->device,0,sizeof render->device);
     render->device_bound=0;
     return;

@@ -4,6 +4,7 @@
 /* Canonical renderer payload encoding for root savestates. */
 #include "gml_render_state.h"
 #include "gml_render_internal.h"
+#include "gml_render_surfaces_internal.h"
 #include "gml_font_raster.h"
 #include "gml_image_codec.h"
 #include "anygm_vfs.h"
@@ -284,6 +285,15 @@ static void render_state_write(GmlRender *render,int view_surface,CoreW *s){
     GmlSurface *sf=&render->surface[i];
     cw_i32(s,sf->live); cw_i32(s,sf->w); cw_i32(s,sf->h);
     if(sf->live && sf->px && sf->w>0 && sf->h>0){
+      if(sf->resource){
+        GmlRenderJournalMetrics metrics;
+        gml_render_resource_journal_metrics(sf->resource,&metrics);
+        if(!gml_render_resource_acquire_cpu_read(sf->resource,NULL)){
+          s->ok=0;
+          continue;
+        }
+        if(metrics.journal_operations) sf->dirty=1;
+      }
       size_t n=(size_t)sf->w*sf->h;
       if(view_surface>0 && i==view_surface-1){
         cw_u32(s,1); cw_u32(s,(uint32_t)n); cw_u32(s,0);   /* one transparent run */
@@ -450,6 +460,7 @@ static int render_state_read(GmlRender *render,CoreR *s){
   render->next_surface_id=cr_i32(s);
   if(render->next_surface_id<1 || render->next_surface_id>GML_MAX_SURFACES) render->next_surface_id=1;
   for(int i=0;i<GML_MAX_SURFACES;i++){
+    gml_render_surface_resource_dispose(render,i+1);
     free(render->surface[i].px); free(render->surface[i].rle);
     memset(&render->surface[i],0,sizeof(render->surface[i]));
   }

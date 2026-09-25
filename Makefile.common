@@ -188,6 +188,7 @@ ANYGM_RENDERER_SOURCES := \
 	src/video/renderer/common/gml_render_fonts.c \
 	src/video/renderer/common/gml_render_classic_info.c \
 	src/video/renderer/cpu/gml_render_cpu_blit.c \
+	src/video/renderer/cpu/gml_render_cpu_replay.c \
 	src/video/renderer/cpu/gml_render_cpu_postprocess.c \
 	src/video/renderer/cpu/gml_render_cpu_backend.c \
 	src/video/renderer/cpu/gml_render_cpu_effects.c \
@@ -197,6 +198,7 @@ ANYGM_RENDERER_SOURCES := \
 	src/video/renderer/cpu/gml_render_cpu_primitives.c \
 	src/video/renderer/common/gml_render_plan.c \
 	src/video/renderer/common/gml_render_draw.c \
+	src/video/renderer/common/gml_render_resources.c \
 	src/video/renderer/common/gml_render_surfaces.c \
 	src/video/renderer/common/gml_render_tiles.c \
 	src/video/renderer/common/gml_render_backgrounds.c \

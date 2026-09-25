@@ -6,6 +6,7 @@
 #define GML_RENDER_INTERNAL_H
 
 #include "gml_render.h"
+#include "gml_render_resources.h"
 
 #include "anygm_compatibility.h"
 
@@ -193,7 +194,8 @@ typedef struct { uint32_t *px; int w, h, live;
                  int dirty;                       /* px changed since the RLE cache was built */
                  int opaque_known, all_opaque, all_transparent;  /* conservative coverage metadata */
                  uint8_t *rle; size_t rle_len, rle_cap;  /* cached savestate RLE (u32 nrun + pairs) */
-} GmlSurface;      /* XRGB8888 runtime surface */
+                 GmlRenderResource *resource;  /* optional metadata; px remains canonical owner */
+} GmlSurface;      /* ARGB8888 runtime surface */
 
 /* Renderer implementation and the engine composition root may include this
  * header to obtain storage size. Subsystem callers remain on gml_render.h and
@@ -320,6 +322,7 @@ typedef struct GmlRender {
   int presentation_deferral_enabled;
   GmlRenderDeferredPresentation presentation;
   GmlSurface surface[GML_MAX_SURFACES]; int next_surface_id;
+  uint64_t next_surface_resource_incarnation;
   /* draw state */
   uint32_t  color;  double alpha; int halign, valign, font, alphablend, circle_precision;
   /* Fixed-function flat fog state for ordinary sprite drawing. */

@@ -192,7 +192,7 @@ RUNTIME_TESTS := test_vm_conv_bool test_vm_unset_reads test_rng test_code_covera
 	test_builtin_dispatch test_builtin_physics test_builtin_state test_vm_hotpath test_builtin_args test_vm_gc test_builtin_string_format test_builtin_string_search test_builtin_value_math test_builtin_extrema test_builtin_filename_parts test_builtin_map_arrays test_builtin_struct_exists test_builtin_clipboard test_builtin_instance_names test_builtin_grid_roundtrip test_builtin_gpu_zstate test_builtin_tilemap_tileset test_stacktop_scope test_value_compare
 VIDEO_RENDERER_TESTS := test_renderer_effects test_renderer_postprocess test_renderer_surfaces \
 	test_renderer_tiles test_renderer_primitives test_renderer_assets test_renderer_fonts \
-	test_renderer_texture_shells test_render_plan
+	test_renderer_texture_shells test_render_plan test_render_resources
 ifneq ($(HARDWARE_RENDER),0)
 VIDEO_RENDERER_TESTS += test_gpu
 endif
@@ -492,6 +492,11 @@ $(TEST_DIR)/test_render_plan: tests/unit/video/renderer/test_render_plan.c \
 	mkdir -p $(dir $@)
 	$(call link_runtime_test,$(TEST_CPPFLAGS))
 
+$(TEST_DIR)/test_render_resources: tests/unit/video/renderer/test_render_resources.c \
+	$(UNIT_RUNTIME_OBJECTS)
+	mkdir -p $(dir $@)
+	$(call link_runtime_test,$(CPPFLAGS))
+
 $(TEST_DIR)/test_gpu: tests/unit/video/gpu/test_gpu.c \
 	tests/support/anygm_test_runner.c tests/support/graphics_driver_fixture.c \
 	$(UNIT_RUNTIME_OBJECTS)
@@ -621,6 +626,7 @@ check: warnings-check architecture-check api-check contract-check integration-ch
 	$(TEST_DIR)/test_renderer_tiles
 	$(TEST_DIR)/test_renderer_primitives
 	$(TEST_DIR)/test_render_plan
+	$(TEST_DIR)/test_render_resources
 	$(if $(filter-out 0,$(HARDWARE_RENDER)),$(TEST_DIR)/test_gpu,true)
 	$(TEST_DIR)/test_rng
 	$(TEST_DIR)/test_persistent_room
