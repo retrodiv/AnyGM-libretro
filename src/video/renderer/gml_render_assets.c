@@ -261,3 +261,29 @@ int gml_sprite_exists(GmlRender *r, int sprite){
 int gml_sprite_frames(GmlRender *r, int sprite){
   return r && sprite>=0 && sprite<r->n_spr ? r->spr[sprite].n_frames : 0;
 }
+
+int gml_render_sprite_frame_rect(GmlRender *r,int sprite,int frame,int *atlas,int *sx,int *sy,
+                                 int *w,int *h){
+  return gml_render_sprite_frame_rect_full(r,sprite,frame,atlas,sx,sy,w,h,NULL,NULL);
+}
+
+/* The sprite frame's own texture-page rectangle, or a refusal for a runtime-built sprite. */
+int gml_render_sprite_frame_rect_full(GmlRender *r,int sprite,int frame,int *atlas,int *sx,int *sy,
+                                      int *w,int *h,int *tx,int *ty){
+  GmlSprite *s;
+  int ti;
+  if(!r || sprite<0 || sprite>=r->n_spr) return 0;
+  s=&r->spr[sprite];
+  if(s->runtime_rgba || !s->frame || s->n_frames<=0) return 0;
+  if(frame<0 || frame>=s->n_frames) frame=0;
+  ti=s->frame[frame];
+  if(ti<0 || ti>=r->n_tpag) return 0;
+  {
+    GmlTpag *t=&r->tpag[ti];
+    if(t->atlas<0 || t->atlas>=r->n_atlas || t->sw<=0 || t->sh<=0) return 0;
+    *atlas=t->atlas; *sx=t->sx; *sy=t->sy; *w=t->sw; *h=t->sh;
+    if(tx) *tx=t->tx;
+    if(ty) *ty=t->ty;
+    return 1;
+  }
+}

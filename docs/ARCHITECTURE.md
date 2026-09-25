@@ -427,9 +427,10 @@ Renderer implementation files are divided by durable ownership seams.
 of the CPU backend view contract, so shared shader policy can decode handles
 without a CPU pixel-borrow dependency.
 `gml_render.c` is the coarse renderer facade: it owns lifecycle, frame and
-target coordination, draw preparation, presentation, and the
-non-reentrant target-view backend leaves. `gml_render_assets.c` owns renderer
-asset metadata plus the complete runtime-sprite record lifecycle.
+target coordination, draw preparation, and presentation. The CPU backend owns
+non-reentrant target views. `gml_render_assets.c` owns renderer asset metadata
+and sprite-frame atlas rectangle resolution; runtime image mutation lives in
+`common/gml_render_runtime_images.c`.
 `common/gml_render_content.c` keeps the authored TPAG, sprite, and background
 record parsers intact; the coordinator invokes them in their original order
 between texture-page and font initialisation.

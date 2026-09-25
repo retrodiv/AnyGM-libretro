@@ -1097,7 +1097,7 @@ fail_matches "Core must use renderer snapshots, borrowed composition views, and 
   "$core_renderer_field_access"
 
 renderer_metadata_definition_files=$(find src -type f -name '*.c' -exec grep -l -E \
-  '^[[:space:]]*int[[:space:]]+gml_render_(sprite_metrics|sprite_set_playback|sprite_texture_handle|surface_texture_handle|texture_metrics|background_metrics|background_texture_handle|background_tile_source_index|font_metrics)[[:space:]]*\(' \
+  '^[[:space:]]*int[[:space:]]+gml_render_(sprite_metrics|sprite_set_playback|sprite_texture_handle|sprite_frame_rect|sprite_frame_rect_full|surface_texture_handle|texture_metrics|background_metrics|background_texture_handle|background_tile_source_index|font_metrics)[[:space:]]*\(' \
   {} + 2>/dev/null || true)
 if [ "$renderer_metadata_definition_files" != "src/video/renderer/gml_render_assets.c" ]; then
   printf '%s\n' "Renderer asset metadata operations belong only to gml_render_assets.c:" >&2
