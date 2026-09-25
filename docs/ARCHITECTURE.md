@@ -447,7 +447,9 @@ copy, resize, free, target-stack operations, and the complete normal,
 interpolated, part, stretched, and rotated surface composition kernels. The
 facade may request one coarse surface composition while flushing a deferred
 application-surface underlay; composition may request coarse draw preparation
-and recognized post-process owners. No per-pixel call crosses those
+and recognized post-process owners. The instance-owned row-band pool and its portable thread
+bridge live in `cpu/gml_render_cpu_workers.c`; renderer teardown joins it before freeing raster
+workspaces. No per-pixel call crosses those
 translation-unit seams.
 
 `gml_render_effects.c` owns bounded structural recognition of the supported
