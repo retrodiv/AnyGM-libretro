@@ -709,8 +709,8 @@ fail_matches "Renderer pixel backend definitions belong only to gml_render_blit.
 renderer_primitive_definition_files=$(find src -type f -name '*.c' -exec grep -l -E \
   '^[[:space:]]*(static[[:space:]]+)?(int|void|uint32_t)[[:space:]]+(draw_rect_prim_alpha|draw_rect_prim|draw_rect_colour_prim|draw_line_prim|draw_circle_prim|gm_color_lerp_fan|draw_px_fan|draw_circle_colour_prim|prim_tri_fill_ex|gml_render_primitive_point|gml_render_primitive_rectangle|gml_render_primitive_rectangle_color|gml_render_primitive_line|gml_render_primitive_circle|gml_render_primitive_circle_color|gml_render_primitive_triangle_alpha|gml_draw_layer_color_fill)[[:space:]]*\(' \
   {} + 2>/dev/null || true)
-if [ "$renderer_primitive_definition_files" != "src/video/renderer/gml_render_primitives.c" ]; then
-  printf '%s\n' "Renderer fixed-function primitive definitions belong only to gml_render_primitives.c:" >&2
+if [ "$renderer_primitive_definition_files" != "src/video/renderer/cpu/gml_render_cpu_primitives.c" ]; then
+  printf '%s\n' "Renderer fixed-function primitive definitions belong only to cpu/gml_render_cpu_primitives.c:" >&2
   printf '%s\n' "$renderer_primitive_definition_files" >&2
   exit 1
 fi
@@ -1108,8 +1108,8 @@ fi
 renderer_clear_definition_files=$(find src -type f -name '*.c' -exec grep -l -E \
   '^[[:space:]]*void[[:space:]]+gml_render_clear[[:space:]]*\(' \
   {} + 2>/dev/null || true)
-if [ "$renderer_clear_definition_files" != "src/video/renderer/gml_render_primitives.c" ]; then
-  printf '%s\n' "Renderer clear semantics belong only to gml_render_primitives.c:" >&2
+if [ "$renderer_clear_definition_files" != "src/video/renderer/cpu/gml_render_cpu_primitives.c" ]; then
+  printf '%s\n' "Renderer clear semantics belong only to cpu/gml_render_cpu_primitives.c:" >&2
   printf '%s\n' "$renderer_clear_definition_files" >&2
   exit 1
 fi
