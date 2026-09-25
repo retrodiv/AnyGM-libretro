@@ -125,5 +125,11 @@ int gml_gpu_opengl_build_program(GmlGpuBackend *backend,char *error,size_t error
 int gml_gpu_opengl_execute_shader_draw(GmlGpuBackend *backend,GmlRenderPlan *plan,
                                         const GmlPlanOp *op,GmlGpuCounters *counters,
                                         char *error,size_t error_capacity);
+int gml_gpu_opengl_bind_readback_target(GmlGpuBackend *backend,uint32_t width,uint32_t height,
+                                         char *error,size_t error_capacity);
+int gml_gpu_opengl_read_back_target(GmlGpuBackend *backend,GmlRenderPlan *plan,
+                                     char *error,size_t error_capacity);
+int gml_gpu_opengl_read_back_target_pipelined(GmlGpuBackend *backend,GmlRenderPlan *plan,
+                                               char *error,size_t error_capacity);
 
 #endif
