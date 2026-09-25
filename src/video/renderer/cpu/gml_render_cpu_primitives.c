@@ -11,12 +11,12 @@
 #include <stdio.h>
 #include "gml_render.h"
 #include "gml_render_cpu_primitives.h"
-#include "gml_render_backend.h"
+#include "gml_render_cpu_backend.h"
 #include "gml_render_internal.h"
 
 static void draw_additive_span(GmlRender *render,uint32_t *pixels,int count,
                                uint32_t color,double alpha){
-  uint32_t source=gml_render_backend_color_to_xrgb(color);
+  uint32_t source=gml_render_cpu_backend_color_to_xrgb(color);
   int add_red=(int)(((source>>16)&255u)*alpha);
   int add_green=(int)(((source>>8)&255u)*alpha);
   int add_blue=(int)((source&255u)*alpha);
@@ -125,12 +125,12 @@ static void draw_rect_prim_alpha(GmlRender *R, int x1, int y1, int x2, int y2, u
    * draw_set_color/alpha need not affect it when the shader source does not consume vertex colour. */
   if(!outline && R->blendmode==0 && (alpha>=1 || !R->alphablend)){   /* opaque filled rect: fast per-row fill */
     gml_render_maybe_prepare_opaque_rect(R,x1,y1,x2+1,y2+1);
-    uint32_t src=gml_render_backend_color_to_xrgb(gmcol);
+    uint32_t src=gml_render_cpu_backend_color_to_xrgb(gmcol);
     if(x1==0 && y1==0 && x2==R->fbw-1 && y2==R->fbh-1){
       gml_render_set_pending_fill(R,src);
       return;
     }
-    for(int y=y1;y<=y2;y++) gml_render_backend_fill_xrgb(R->fb+(size_t)y*R->fbw+x1,x2-x1+1,src);
+    for(int y=y1;y<=y2;y++) gml_render_cpu_backend_fill_xrgb(R->fb+(size_t)y*R->fbw+x1,x2-x1+1,src);
     return;
   }
   if(!outline){
@@ -146,26 +146,26 @@ static void draw_rect_prim_alpha(GmlRender *R, int x1, int y1, int x2, int y2, u
           draw_additive_rows(&rows,0,y2-y1+1,0);
         return;
       }
-      for(int y=y1;y<=y2;y++) for(int x=x1;x<=x2;x++) gml_render_backend_draw_pixel_alpha(R,x,y,gmcol,alpha);
+      for(int y=y1;y<=y2;y++) for(int x=x1;x<=x2;x++) gml_render_cpu_backend_draw_pixel_alpha(R,x,y,gmcol,alpha);
       return;
     }
-    uint32_t src=gml_render_backend_color_to_xrgb(gmcol);
-    if(R->classic && gml_render_backend_flat_blend_uses_float_alpha(alpha)){
-      GmlRenderBackendFlatBlend blend;
-      gml_render_backend_flat_blend_init(&blend,src,alpha);
+    uint32_t src=gml_render_cpu_backend_color_to_xrgb(gmcol);
+    if(R->classic && gml_render_cpu_backend_flat_blend_uses_float_alpha(alpha)){
+      GmlRenderCpuBackendFlatBlend blend;
+      gml_render_cpu_backend_flat_blend_init(&blend,src,alpha);
       for(int y=y1;y<=y2;y++)
-        gml_render_backend_flat_blend_run(R,&R->fb[(size_t)y*R->fbw+x1],x2-x1+1,&blend);
+        gml_render_cpu_backend_flat_blend_run(R,&R->fb[(size_t)y*R->fbw+x1],x2-x1+1,&blend);
       return;
     }
     for(int y=y1;y<=y2;y++)
-      gml_render_backend_draw_xrgb_alpha(R,&R->fb[(size_t)y*R->fbw+x1],x2-x1+1,src,alpha);
+      gml_render_cpu_backend_draw_xrgb_alpha(R,&R->fb[(size_t)y*R->fbw+x1],x2-x1+1,src,alpha);
     return;
   }
   for(int y=y1;y<=y2;y++) for(int x=x1;x<=x2;x++){
     /* Clip the geometric edges instead of turning each clipped boundary into a new edge. */
     if(y!=geometric_y1 && y!=geometric_y2 &&
        x!=geometric_x1 && x!=geometric_x2) continue;
-    gml_render_backend_draw_pixel_alpha(R,x,y,gmcol,alpha);
+    gml_render_cpu_backend_draw_pixel_alpha(R,x,y,gmcol,alpha);
   }
 }
 static void draw_rect_prim(GmlRender *R, int x1, int y1, int x2, int y2, uint32_t gmcol, int outline){
@@ -175,7 +175,7 @@ void gml_render_clear(GmlRender *R,uint32_t color,double alpha){
   if(!R) return;
   if(alpha<0) alpha=0;
   if(alpha>1) alpha=1;
-  uint32_t source=gml_render_backend_color_to_xrgb(color);
+  uint32_t source=gml_render_cpu_backend_color_to_xrgb(color);
   source=(source&UINT32_C(0x00FFFFFF))|
     ((uint32_t)lround(alpha*255.0)<<24);
   gml_render_set_pending_fill(R,source);
@@ -199,20 +199,20 @@ static void draw_gradient_rows(void *context,int row_start,int row_end,int slot)
   (void)slot;
   GmlGradientRows *rows=(GmlGradientRows*)context;
   for(int row=row_start;row<row_end;row++){
-    uint32_t left=gml_render_backend_lerp_xrgb(
+    uint32_t left=gml_render_cpu_backend_lerp_xrgb(
       rows->top_left,rows->bottom_left,rows->y_offset+row,rows->height_denominator);
-    uint32_t right=gml_render_backend_lerp_xrgb(
+    uint32_t right=gml_render_cpu_backend_lerp_xrgb(
       rows->top_right,rows->bottom_right,rows->y_offset+row,rows->height_denominator);
     if(rows->x_offset>0 || rows->x_offset+rows->width-1<rows->width_denominator){
-      uint32_t clipped_left=gml_render_backend_lerp_xrgb(
+      uint32_t clipped_left=gml_render_cpu_backend_lerp_xrgb(
         left,right,rows->x_offset,rows->width_denominator);
-      right=gml_render_backend_lerp_xrgb(
+      right=gml_render_cpu_backend_lerp_xrgb(
         left,right,rows->x_offset+rows->width-1,rows->width_denominator);
       left=clipped_left;
     }
     uint32_t *pixels=rows->render->fb+
       (size_t)(rows->y+row)*rows->render->fbw+rows->x;
-    if(left==right) gml_render_backend_fill_xrgb(pixels,rows->width,left);
+    if(left==right) gml_render_cpu_backend_fill_xrgb(pixels,rows->width,left);
     else draw_opaque_gradient_row(pixels,rows->width,left,right);
   }
 }
@@ -245,7 +245,7 @@ static void draw_rect_colour_prim(GmlRender *R, int x1, int y1, int x2, int y2,
   if(alpha<=0) return;
   if(alpha>=1.0 || !R->alphablend) gml_render_maybe_prepare_opaque_rect(R,x1,y1,x2+1,y2+1);
   else gml_render_maybe_prepare_draw(R);
-  uint32_t tl=gml_render_backend_color_to_xrgb(c1), tr=gml_render_backend_color_to_xrgb(c2), br=gml_render_backend_color_to_xrgb(c3), bl=gml_render_backend_color_to_xrgb(c4);
+  uint32_t tl=gml_render_cpu_backend_color_to_xrgb(c1), tr=gml_render_cpu_backend_color_to_xrgb(c2), br=gml_render_cpu_backend_color_to_xrgb(c3), bl=gml_render_cpu_backend_color_to_xrgb(c4);
   int wden=owden, hden=ohden, n=x2-x1+1;
   if(alpha>=1.0){
     GmlGradientRows rows={R,x1,y1,n,hden,tl,tr,br,bl,x_off,y_off,wden};
@@ -257,19 +257,19 @@ static void draw_rect_colour_prim(GmlRender *R, int x1, int y1, int x2, int y2,
   }
   if(tl==tr && bl==br){
     for(int y=y1;y<=y2;y++){
-      uint32_t rowc=gml_render_backend_lerp_xrgb(tl,bl,y_off+(y-y1),hden);
-      gml_render_backend_draw_xrgb_alpha(R,R->fb+(size_t)y*R->fbw+x1,n,rowc,alpha);
+      uint32_t rowc=gml_render_cpu_backend_lerp_xrgb(tl,bl,y_off+(y-y1),hden);
+      gml_render_cpu_backend_draw_xrgb_alpha(R,R->fb+(size_t)y*R->fbw+x1,n,rowc,alpha);
     }
     return;
   }
   for(int y=y1;y<=y2;y++){
-    uint32_t lc=gml_render_backend_lerp_xrgb(tl,bl,y_off+(y-y1),hden);
-    uint32_t rc=gml_render_backend_lerp_xrgb(tr,br,y_off+(y-y1),hden);
+    uint32_t lc=gml_render_cpu_backend_lerp_xrgb(tl,bl,y_off+(y-y1),hden);
+    uint32_t rc=gml_render_cpu_backend_lerp_xrgb(tr,br,y_off+(y-y1),hden);
     uint32_t *row=R->fb+(size_t)y*R->fbw+x1;
-    if(lc==rc){ gml_render_backend_draw_xrgb_alpha(R,row,n,lc,alpha); continue; }
+    if(lc==rc){ gml_render_cpu_backend_draw_xrgb_alpha(R,row,n,lc,alpha); continue; }
     for(int x=0;x<n;x++){
-      uint32_t c=gml_render_backend_lerp_xrgb(lc,rc,x_off+x,wden);
-      gml_render_backend_draw_xrgb_alpha(R,row+x,1,c,alpha);
+      uint32_t c=gml_render_cpu_backend_lerp_xrgb(lc,rc,x_off+x,wden);
+      gml_render_cpu_backend_draw_xrgb_alpha(R,row+x,1,c,alpha);
     }
   }
 }
@@ -404,7 +404,7 @@ static void draw_circle_prim_ex(GmlRender *R, double cx, double cy, double rx, d
                                 uint32_t gmcol, int outline){
   if(!R||rx<0.0||ry<0.0) return;
   if(!(rx>0.0)||!(ry>0.0)){
-    gml_render_backend_draw_pixel(R,(int)floor(cx),(int)floor(cy),gmcol);
+    gml_render_cpu_backend_draw_pixel(R,(int)floor(cx),(int)floor(cy),gmcol);
     return;
   }
   int n=R->circle_precision;
@@ -442,7 +442,7 @@ static void draw_circle_prim_ex(GmlRender *R, double cx, double cy, double rx, d
       if(last<0.0 || first>=(double)R->fbw) continue;
       int x0=first<0.0?0:(int)first;
       int x1=last>=(double)R->fbw?R->fbw-1:(int)last;
-      for(int x=x0;x<=x1;x++) gml_render_backend_draw_pixel(R,x,y,gmcol);
+      for(int x=x0;x<=x1;x++) gml_render_cpu_backend_draw_pixel(R,x,y,gmcol);
     }
   }
 }
@@ -486,14 +486,14 @@ static void draw_px_fan(GmlRender *R,int x,int y,uint32_t inner,uint32_t outer,d
     *dp=(coverage<<24)|(rr<<16)|(gg<<8)|bb;
     return;
   }
-  gml_render_backend_draw_pixel(R,x,y,gm_color_lerp_fan(inner,outer,amount));
+  gml_render_cpu_backend_draw_pixel(R,x,y,gm_color_lerp_fan(inner,outer,amount));
 }
 static void draw_circle_colour_prim_ex(GmlRender *R,double cx,double cy,double rx,double ry,
                                        uint32_t inner,uint32_t outer,int outline){
   if(!R||rx<0.0||ry<0.0) return;
   if(inner==outer){ draw_circle_prim_ex(R,cx,cy,rx,ry,inner,outline); return; }
   if(!(rx>0.0)||!(ry>0.0)){
-    gml_render_backend_draw_pixel(R,(int)floor(cx),(int)floor(cy),inner);
+    gml_render_cpu_backend_draw_pixel(R,(int)floor(cx),(int)floor(cy),inner);
     return;
   }
   int n=R->circle_precision;
@@ -612,7 +612,7 @@ static void draw_opaque_triangle_rows(void *context,int row_start,int row_end,in
            value[1]+step[1]*last<0.0 ||
            value[2]+step[2]*last<0.0)) last--;
     if(first<=last)
-      gml_render_backend_fill_xrgb(
+      gml_render_cpu_backend_fill_xrgb(
         rows->render->fb+(size_t)(rows->min_y+row)*rows->render->fbw+
           rows->min_x+first,
         last-first+1,rows->source);
@@ -647,7 +647,7 @@ static void prim_tri_fill_ex(GmlRender *R, double X1,double Y1,double X2,double 
       (Y2-Y3)*(minx-X3)+(X3-X2)*(miny-Y3),
       (Y3-Y1)*(minx-X3)+(X1-X3)*(miny-Y3),
       X3-X2,X1-X3,
-      gml_render_backend_color_to_xrgb(col)
+      gml_render_cpu_backend_color_to_xrgb(col)
     };
     gml_render_maybe_prepare_draw(R);
     R->fb_all_transparent=0;
@@ -662,7 +662,7 @@ static void prim_tri_fill_ex(GmlRender *R, double X1,double Y1,double X2,double 
     double b0=((Y3-Y1)*(xx-X3)+(X1-X3)*(yy-Y3))/den;
     double c0=1-a0-b0;
     if(outline && a0>0.04&&b0>0.04&&c0>0.04) continue;
-    if(a0>=0&&b0>=0&&c0>=0) gml_render_backend_draw_pixel_alpha(R,xx,yy,col,alpha);
+    if(a0>=0&&b0>=0&&c0>=0) gml_render_cpu_backend_draw_pixel_alpha(R,xx,yy,col,alpha);
   }
 }
 
@@ -670,7 +670,7 @@ static void prim_tri_fill_ex(GmlRender *R, double X1,double Y1,double X2,double 
 void gml_render_primitive_point(GmlRender *render,
                                 int x,int y,uint32_t color){
   gml_render_maybe_prepare_draw(render);
-  gml_render_backend_draw_pixel(render,x,y,color);
+  gml_render_cpu_backend_draw_pixel(render,x,y,color);
 }
 
 

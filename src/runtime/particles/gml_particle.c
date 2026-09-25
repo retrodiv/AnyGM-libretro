@@ -17,7 +17,7 @@
 #include <math.h>
 #include <stdio.h>
 #include <limits.h>
-#include "gml_render_backend.h"
+#include "gml_render_cpu_backend.h"
 #include "anygm_compatibility.h"
 #include "gml_particle.h"
 #include "gml_vm.h"
@@ -267,8 +267,8 @@ static void effect_room_metrics(GmlParticleState *state,int *width,int *height,i
     if(room.speed>0) *speed=room.speed;
   } else if(g_particle_vm->render){
     GmlRender *render=(GmlRender*)g_particle_vm->render;
-    GmlRenderBackendDrawView draw;
-    if(gml_render_backend_draw_view(render,&draw)){
+    GmlRenderCpuBackendDrawView draw;
+    if(gml_render_cpu_backend_draw_view(render,&draw)){
       if(draw.width>0) *width=draw.width;
       if(draw.height>0) *height=draw.height;
     }
@@ -629,7 +629,7 @@ static uint32_t keyc(double age, PType *t){
 }
 
 /* plot a filled clipped square for shape/pixel particles (no custom sprite) */
-static void plot_square(const GmlRenderBackendDrawView *draw,uint32_t *target_pixels,
+static void plot_square(const GmlRenderCpuBackendDrawView *draw,uint32_t *target_pixels,
                         int cx,int cy,int half_x,int half_y,uint32_t col,double a){
   if(!draw||!target_pixels||a<=0) return;
   if(a>1) a=1;
@@ -695,7 +695,7 @@ static double sample_ring_shape(GmlParticleState *state,double x,double y){
   return (a*(1.0-fy)+b*fy)/255.0;
 }
 
-static void plot_circle_shape(GmlParticleState *state,const GmlRenderBackendDrawView *draw,
+static void plot_circle_shape(GmlParticleState *state,const GmlRenderCpuBackendDrawView *draw,
                               double cx,double cy,double xs,double ys,
                               uint32_t color,double alpha,int hollow){
   double rx=32.0*fabs(xs),ry=32.0*fabs(ys);
@@ -739,7 +739,7 @@ static double sample_line_shape_texture(double x,double y,int interpolate){
   return (a+(b-a)*fx)*(1.0-fy)+(c+(d-c)*fx)*fy;
 }
 
-static void plot_line_shape_plane(const GmlRenderBackendDrawView *draw,uint32_t *plane,
+static void plot_line_shape_plane(const GmlRenderCpuBackendDrawView *draw,uint32_t *plane,
                                   double cx,double cy,double xs,double ys,
                                   double co,double si,double ex,double ey,
                                   double sample_x,double sample_y,
@@ -763,7 +763,7 @@ static void plot_line_shape_plane(const GmlRenderBackendDrawView *draw,uint32_t 
   }
 }
 
-static void plot_line_shape(const GmlRenderBackendDrawView *draw,
+static void plot_line_shape(const GmlRenderCpuBackendDrawView *draw,
                             double cx,double cy,double xs,double ys,double angle,
                             uint32_t color,double alpha){
   if(!draw || !draw->pixels || fabs(xs)<1.0/128.0 || fabs(ys)<1.0/128.0 || alpha<=0) return;
@@ -921,7 +921,7 @@ static double sample_snow_shape(GmlParticleState *state,double x,double y){
   return ((a+(b-a)*fx)*(1.0-fy)+(c+(d-c)*fx)*fy)/255.0;
 }
 
-static void plot_explosion_shape(GmlParticleState *state,const GmlRenderBackendDrawView *draw,
+static void plot_explosion_shape(GmlParticleState *state,const GmlRenderCpuBackendDrawView *draw,
                                  double cx,double cy,double xs,double ys,
                                  double angle,uint32_t color,double alpha){
   if(!draw || !draw->pixels || fabs(xs)<1.0/128.0 || fabs(ys)<1.0/128.0 || alpha<=0) return;
@@ -942,7 +942,7 @@ static void plot_explosion_shape(GmlParticleState *state,const GmlRenderBackendD
   }
 }
 
-static void plot_glint_shape(GmlParticleState *state,const GmlRenderBackendDrawView *draw,
+static void plot_glint_shape(GmlParticleState *state,const GmlRenderCpuBackendDrawView *draw,
                              int shape,double cx,double cy,double xs,double ys,
                              double angle,uint32_t color,double alpha){
   if(!draw || !draw->pixels || fabs(xs)<1.0/128.0 || fabs(ys)<1.0/128.0 || alpha<=0) return;
@@ -963,7 +963,7 @@ static void plot_glint_shape(GmlParticleState *state,const GmlRenderBackendDrawV
   }
 }
 
-static void plot_snow_shape(GmlParticleState *state,const GmlRenderBackendDrawView *draw,
+static void plot_snow_shape(GmlParticleState *state,const GmlRenderCpuBackendDrawView *draw,
                             double cx,double cy,double xs,double ys,
                             double angle,uint32_t color,double alpha){
   if(!draw || !draw->pixels || fabs(xs)<1.0/128.0 || fabs(ys)<1.0/128.0 || alpha<=0) return;
@@ -986,8 +986,8 @@ static void plot_snow_shape(GmlParticleState *state,const GmlRenderBackendDrawVi
 
 void gml_part_system_drawit(GmlParticleState *state,GmlRender *r,int id){
   PSys *s=ps(state,id); if(!s||!r) return;
-  GmlRenderBackendDrawView target;
-  if(!gml_render_backend_draw_view(r,&target)) return;
+  GmlRenderCpuBackendDrawView target;
+  if(!gml_render_cpu_backend_draw_view(r,&target)) return;
   const double camera_x=target.camera_x,camera_y=target.camera_y;
   const double coordinate_scale_x=target.coordinate_scale_x;
   const double coordinate_scale_y=target.coordinate_scale_y;
@@ -1038,8 +1038,8 @@ void gml_part_system_drawit(GmlParticleState *state,GmlRender *r,int id){
       double alpha=keyf(age,t->nalpha,t->alpha[0],t->alpha[1],t->alpha[2]);
       if(alpha<=0) continue;
       uint32_t col = p->has_col ? p->col_over : keyc(age,t);
-      GmlRenderBackendDrawView draw;
-      if(!gml_render_backend_prepare_draw_view(r,&draw) || !draw.pixels) continue;
+      GmlRenderCpuBackendDrawView draw;
+      if(!gml_render_cpu_backend_prepare_draw_view(r,&draw) || !draw.pixels) continue;
       if(t->shape==1 || t->shape==5 || t->shape==6 || t->shape==7){
         plot_circle_shape(state,&draw,p->x*coordinate_scale_x-camera_x,
                           p->y*coordinate_scale_y-camera_y,
@@ -1074,7 +1074,7 @@ void gml_part_system_drawit(GmlParticleState *state,GmlRender *r,int id){
                     (p->x-half)*coordinate_scale_x,(p->y-half)*coordinate_scale_y,
                     (p->x+half+1)*coordinate_scale_x,(p->y+half+1)*coordinate_scale_y,
                     col,alpha,0) &&
-                gml_render_backend_prepare_draw_view(r,&draw))
+                gml_render_cpu_backend_prepare_draw_view(r,&draw))
         plot_square(&draw,draw.pixels,cx,cy,half_x,half_y,col,alpha);
     }
   }

@@ -8,7 +8,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define g_d3 (gml_render_backend_software3d(R)->d3)
+#define g_d3 (gml_render_cpu_backend_software3d(R)->d3)
 #define d3_texture gml_software3d_texture
 #define d3_depth_prepare gml_software3d_depth_prepare
 #define d3_emit_point gml_software3d_emit_point
@@ -142,7 +142,7 @@ static void d3_model_draw(GmlRender *R,const GmlD3Model *model,double x,double y
   GmlD3Texture texture={0};
   if(texture_handle!=-1) d3_texture(R,texture_handle,&texture);
   g_d3.shade_r=g_d3.shade_g=g_d3.shade_b=1;
-  gml_render_backend_prepare_draw(R);
+  gml_render_cpu_backend_prepare_draw(R);
   if(!d3_depth_prepare(R)) return;
   for(int b=0;b<model->batch_n;b++){
     const GmlD3Batch *batch=&model->batch[b];
@@ -242,7 +242,7 @@ int gml_software3d_model_add_shape(GmlSoftware3D *graphics,int id,int shape,
 }
 void gml_software3d_model_draw(GmlRender *render,int id,
                                double x,double y,double z,int texture_handle){
-  GmlSoftware3D *graphics=gml_render_backend_software3d(render);
+  GmlSoftware3D *graphics=gml_render_cpu_backend_software3d(render);
   d3_model_draw(render,d3_model_find_const(graphics,id),
                 x,y,z,texture_handle);
 }

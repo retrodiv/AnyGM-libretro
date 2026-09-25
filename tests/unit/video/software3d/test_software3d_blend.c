@@ -2,7 +2,7 @@
  * Copyright (c) 2026 retrodiv <retrodiv@proton.me>
  */
 #include "software3d_test_fixture.h"
-#include "gml_render_backend.h"
+#include "gml_render_cpu_backend.h"
 
 
 int software3d_case_blend_shader(Software3dRasterFixture *fixture){
@@ -13,7 +13,7 @@ int software3d_case_blend_shader(Software3dRasterFixture *fixture){
   fixture->render.alphablend=1;
   fixture->render.blendmode=7;
   fixture->pixels[0]=0x00000000u;
-  gml_render_backend_draw_pixel_alpha(&fixture->render,0,0,0x000000FFu,1.0);
+  gml_render_cpu_backend_draw_pixel_alpha(&fixture->render,0,0,0x000000FFu,1.0);
   if(fixture->pixels[0]!=0xFFFF0000u){
     fprintf(stderr,"software D3 inverse destination alpha blend mismatch: %08x\n",
             fixture->pixels[0]);

@@ -3,7 +3,7 @@
  */
 /* Renderer-owned surface storage, pool, copy, resize, and target-stack operations. */
 #include "gml_render.h"
-#include "gml_render_backend.h"
+#include "gml_render_cpu_backend.h"
 #include "gml_render_cpu_blit_internal.h"
 #include "gml_render_internal.h"
 #include "gml_render_cpu_pixel_internal.h"
@@ -74,7 +74,7 @@ static void realize_suspended_fill(GmlRender *r,const uint32_t *px){
     uint32_t *p=r->target_stack[i].fb;
     while(n>0){
       int run=n>(size_t)INT_MAX?INT_MAX:(int)n;
-      gml_render_backend_fill_xrgb(p,run,r->target_stack[i].fill_color);
+      gml_render_cpu_backend_fill_xrgb(p,run,r->target_stack[i].fill_color);
       p+=run; n-=(size_t)run;
     }
     r->target_stack[i].pending_fill=0;
@@ -694,7 +694,7 @@ static int draw_scaled_full_surface_normal(GmlRender *r, const uint32_t *src, in
       uint32_t *first=r->fb+(size_t)(sy*yscale)*W;
       const uint32_t *source_row=src+(size_t)sy*sw;
       for(int sx=0;sx<sw;sx++)
-        gml_render_backend_fill_xrgb(first+(size_t)sx*xscale,xscale,
+        gml_render_cpu_backend_fill_xrgb(first+(size_t)sx*xscale,xscale,
                                      source_row[sx]|0xFF000000u);
       for(int repeat=1;repeat<yscale;repeat++)
         memcpy(first+(size_t)repeat*W,first,(size_t)W*sizeof(*first));
@@ -1659,7 +1659,7 @@ int gml_render_shade_target_rect(GmlRender *r,int x1,int y1,int x2,int y2,uint32
   if(x2<=x1 || y2<=y1) return 0;
   /* A one-texel source of the primitive's colour: a program that samples gm_BaseTexture reads the
    * flat colour a rectangle carries, and a procedural one ignores it. */
-  source=gml_render_backend_color_to_xrgb(colour)|0xFF000000u;
+  source=gml_render_cpu_backend_color_to_xrgb(colour)|0xFF000000u;
   return shade_source_to_target(r,&source,1,1,0,0,1,1,0xFFFFFFFFu,
                                 (double)x1+r->cam_x,(double)y1+r->cam_y,
                                 (double)(x2-x1),(double)(y2-y1),0xFFFFFFu,alpha);
@@ -1785,7 +1785,7 @@ void gml_render_shaded_run_end(GmlRender *r,uint32_t *saved_fb,int saved_shader,
                                int x0,int y0,int x1,int y1,uint32_t blend,double alpha){
   /* Gathering omits colour; the program applies vertex colour after evaluating the
    * sampled image, which matters when its result saturates. */
-  uint32_t xrgb=gml_render_backend_color_to_xrgb(blend);
+  uint32_t xrgb=gml_render_cpu_backend_color_to_xrgb(blend);
   float colour[4]={((xrgb>>16)&0xFFu)/255.0f,((xrgb>>8)&0xFFu)/255.0f,(xrgb&0xFFu)/255.0f,
                    (float)(alpha>1.0?1.0:(alpha<0.0?0.0:alpha))};
   const uint32_t *plane=r->run_plane;
@@ -1987,7 +1987,7 @@ void gml_draw_surface_stretched(GmlRender *r,int surf,double dx,double dy,
     r->content_composited_screen=1;
   draw_surface_stretched_impl(r,surf,dx,dy,dw,dh,blend,alpha,1);
 }
-int gml_render_backend_surface_stretched(GmlRender *r,int surf,double dx,double dy,
+int gml_render_cpu_backend_surface_stretched(GmlRender *r,int surf,double dx,double dy,
                                          double dw,double dh,uint32_t blend,double alpha){
   if(!r || (surf!=0 && !gml_surface_exists(r,surf))) return 0;
   draw_surface_stretched_impl(r,surf,dx,dy,dw,dh,blend,alpha,0);

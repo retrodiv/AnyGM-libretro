@@ -12,7 +12,7 @@
 #include <string.h>
 
 #define GML_GRAPHICS (graphics_state_for_render(R))
-#define g_d3 (gml_render_backend_software3d(R)->d3)
+#define g_d3 (gml_render_cpu_backend_software3d(R)->d3)
 #define g_d3_prim (GML_GRAPHICS->d3_prim)
 #define g_d3_prim_kind (GML_GRAPHICS->d3_prim_kind)
 #define g_d3_prim_texture (GML_GRAPHICS->d3_prim_texture)
@@ -29,7 +29,7 @@
 #define g_prim_c (GML_GRAPHICS->prim_c)
 
 static GmlSoftware3D *graphics_state_for_render(GmlRender *render){
-  return gml_render_backend_software3d(render);
+  return gml_render_cpu_backend_software3d(render);
 }
 
 static double d3_dot(const double a[3], const double b[3]){
@@ -194,7 +194,7 @@ void gml_d3_sync_render_camera(GmlRender *R){
   if(!R) return;
   GmlSoftware3D *graphics=graphics_state_for_render(R);
   if(!graphics){
-    gml_render_backend_sync_camera(R,0,0);
+    gml_render_cpu_backend_sync_camera(R,0,0);
     return;
   }
   GmlD3State *d3=&graphics->d3;
@@ -203,7 +203,7 @@ void gml_d3_sync_render_camera(GmlRender *R){
     fabs(d3->transform[10]-1)<eps && fabs(d3->transform[15]-1)<eps;
   for(int i=0;i<12 && translation;i++)
     if(i!=0 && i!=5 && i!=10 && fabs(d3->transform[i])>=eps) translation=0;
-  gml_render_backend_sync_camera(R,translation?d3->transform[12]:0,
+  gml_render_cpu_backend_sync_camera(R,translation?d3->transform[12]:0,
                                  translation?d3->transform[13]:0);
 }
 static void d3_transform_point(GmlRender *R,double *x,double *y,double *z){
@@ -213,8 +213,8 @@ static void d3_transform_point(GmlRender *R,double *x,double *y,double *z){
   *z=g_d3.transform[2]*inx+g_d3.transform[6]*iny+g_d3.transform[10]*inz+g_d3.transform[14];
 }
 static int d3_depth_prepare(GmlRender *R){
-  GmlRenderBackendDrawView draw;
-  if(!gml_render_backend_draw_view(R,&draw) || draw.width<=0 || draw.height<=0) return 0;
+  GmlRenderCpuBackendDrawView draw;
+  if(!gml_render_cpu_backend_draw_view(R,&draw) || draw.width<=0 || draw.height<=0) return 0;
   size_t count=(size_t)draw.width*(size_t)draw.height;
   if(count>g_d3.depth_cap){
     float *depth=(float*)realloc(g_d3.depth,count*sizeof(*depth));
@@ -227,16 +227,16 @@ static int d3_depth_prepare(GmlRender *R){
   }
   return 1;
 }
-static int d3_texture_from_backend_view(const GmlRenderBackendTextureView *view,
+static int d3_texture_from_backend_view(const GmlRenderCpuBackendTextureView *view,
                                         GmlD3Texture *out){
   if(!view || view->width<=0 || view->height<=0 || view->stride<=0) return 0;
-  if(view->pixel_kind==GML_RENDER_BACKEND_PIXELS_RGBA && view->rgba){
+  if(view->pixel_kind==GML_RENDER_CPU_BACKEND_PIXELS_RGBA && view->rgba){
     if(out) *out=(GmlD3Texture){.kind=1,.w=view->width,.h=view->height,
       .stride=view->stride,.offset_x=view->source_x,.offset_y=view->source_y,
       .rgba=view->rgba};
     return 1;
   }
-  if(view->pixel_kind==GML_RENDER_BACKEND_PIXELS_XRGB && view->xrgb){
+  if(view->pixel_kind==GML_RENDER_CPU_BACKEND_PIXELS_XRGB && view->xrgb){
     if(out) *out=(GmlD3Texture){.kind=2,.w=view->width,.h=view->height,
       .stride=view->stride,.xrgb=view->xrgb};
     return 1;
@@ -245,11 +245,11 @@ static int d3_texture_from_backend_view(const GmlRenderBackendTextureView *view,
 }
 static int d3_texture(GmlRender *R, int handle, GmlD3Texture *out){
   if(out) memset(out,0,sizeof(*out));
-  GmlRenderBackendTextureView view;
-  if(!gml_render_backend_texture_view(R,handle,0,&view)) return 0;
-  GmlRenderBackendDrawView draw;
+  GmlRenderCpuBackendTextureView view;
+  if(!gml_render_cpu_backend_texture_view(R,handle,0,&view)) return 0;
+  GmlRenderCpuBackendDrawView draw;
   const struct AnygmHostServices *host=
-    gml_render_backend_draw_view(R,&draw)?draw.host:NULL;
+    gml_render_cpu_backend_draw_view(R,&draw)?draw.host:NULL;
   if(((uint32_t)handle&GML_TEX_KIND_MASK)==GML_TEX_BG_TAG &&
      anygm_host_development_setting(host,"GML_LOG_D3D") &&
      GML_GRAPHICS && GML_GRAPHICS->d3_texture_log_count++<8)
@@ -265,8 +265,8 @@ static int d3_texture(GmlRender *R, int handle, GmlD3Texture *out){
 static int vertex_texture(GmlRender *R,int handle,GmlD3Texture *out){
   if(out) memset(out,0,sizeof(*out));
   if(handle==-1) return 1;
-  GmlRenderBackendTextureView view;
-  if(!gml_render_backend_texture_view(R,handle,1,&view)) return 0;
+  GmlRenderCpuBackendTextureView view;
+  if(!gml_render_cpu_backend_texture_view(R,handle,1,&view)) return 0;
   return d3_texture_from_backend_view(&view,out);
 }
 static void d3_texture_texel(const GmlD3Texture *texture,int x,int y,int channel[4]){
@@ -279,7 +279,7 @@ static void d3_texture_texel(const GmlD3Texture *texture,int x,int y,int channel
     channel[2]=pixel&255; channel[3]=(pixel>>24)&255;
   }
 }
-static void d3_sample(GmlRender *R,const GmlRenderBackendDrawView *draw,
+static void d3_sample(GmlRender *R,const GmlRenderCpuBackendDrawView *draw,
                       const GmlD3Texture *texture,double u,double v,double channel[4]){
   if(!isfinite(u) || !isfinite(v)){
     for(int c=0;c<4;c++) channel[c]=0;
@@ -327,11 +327,11 @@ static double d3_edge(double ax,double ay,double bx,double by,double px,double p
 }
 static void d3_raster_triangle(GmlRender *R, const GmlD3Vertex in[3], const GmlD3Texture *texture,
                                int joined){
-  GmlRenderBackendDrawView draw;
-  if(!d3_depth_prepare(R) || !gml_render_backend_draw_view(R,&draw) ||
+  GmlRenderCpuBackendDrawView draw;
+  if(!d3_depth_prepare(R) || !gml_render_cpu_backend_draw_view(R,&draw) ||
      !draw.pixels || draw.width<=0 || draw.height<=0) return;
   /* Renderer leaf calls cannot replace this context during a raster operation. */
-  GmlD3State *d3=&gml_render_backend_software3d(R)->d3;
+  GmlD3State *d3=&gml_render_cpu_backend_software3d(R)->d3;
   const char *fov_text=anygm_host_development_setting(draw.host,"GML_D3D_FOV");
   double fov=fov_text?atof(fov_text):d3->fov;
   if(fov<1.0 || fov>170.0) fov=41.2;
@@ -447,8 +447,8 @@ static void d3_raster_triangle(GmlRender *R, const GmlD3Vertex in[3], const GmlD
     }
     if(opaque_white&&sampled[3]>=255.0){
       if(!opaque_prepared){
-        gml_render_backend_prepare_draw(R);
-        if(!gml_render_backend_draw_view(R,&draw) || !draw.pixels) return;
+        gml_render_cpu_backend_prepare_draw(R);
+        if(!gml_render_cpu_backend_draw_view(R,&draw) || !draw.pixels) return;
         opaque_prepared=1;
       }
       draw.pixels[di]=0xFF000000u|((uint32_t)sampled[0]<<16)|
@@ -491,7 +491,7 @@ static void d3_raster_triangle(GmlRender *R, const GmlD3Vertex in[3], const GmlD
       color=(uint32_t)cr|((uint32_t)cg<<8)|((uint32_t)cb<<16);
     }
     double alpha=(sampled[3]/255.0)*vertex_alpha;
-    gml_render_backend_draw_pixel_alpha(R,x,y,color,alpha);
+    gml_render_cpu_backend_draw_pixel_alpha(R,x,y,color,alpha);
     if(d3->hidden && d3->zwrite && alpha>0.0) d3->depth[di]=(float)ztest;
   }
   }
@@ -538,8 +538,8 @@ static int d3_clip_z(const GmlD3Vertex *input,int count,GmlD3Vertex *output,doub
 static void d3_emit_triangle(GmlRender *R,const GmlD3Vertex world[3],const GmlD3Texture *texture);
 static void d3_draw_quad(GmlRender *R, const double p[4][3], int texture, double hrep, double vrep,
                          uint32_t vertex_color,int reverse_normal,int uv_mode){
-  GmlRenderBackendDrawView draw;
-  if(!gml_render_backend_draw_view(R,&draw)) return;
+  GmlRenderCpuBackendDrawView draw;
+  if(!gml_render_cpu_backend_draw_view(R,&draw)) return;
   GmlD3Texture resolved={0};
   if(texture!=-1) d3_texture(R,texture,&resolved);
   g_d3.shade_r=g_d3.shade_g=g_d3.shade_b=1;
@@ -627,8 +627,8 @@ static void d3_set_camera(GmlRender *R,double xfrom,double yfrom,double zfrom,
   gml_software3d_normalize(g_d3.up);
 }
 static void d3_set_default_projection(GmlRender *R,double x,double y,double width,double height,double angle){
-  GmlRenderBackendDrawView draw;
-  int have_draw=gml_render_backend_draw_view(R,&draw);
+  GmlRenderCpuBackendDrawView draw;
+  int have_draw=gml_render_cpu_backend_draw_view(R,&draw);
   if(fabs(width)<1e-9) width=have_draw&&draw.width>0?draw.width:640;
   if(fabs(height)<1e-9) height=have_draw&&draw.height>0?draw.height:480;
   double distance=fabs(width); if(distance<1) distance=1;
@@ -736,8 +736,8 @@ static void d3_draw_ellipsoid(GmlRender *R,double x1,double y1,double z1,
                               double x2,double y2,double z2,int texture,
                               double hrep,double vrep,int steps,uint32_t color){
   if(!R) return;
-  GmlRenderBackendDrawView draw;
-  if(!gml_render_backend_draw_view(R,&draw)) return;
+  GmlRenderCpuBackendDrawView draw;
+  if(!gml_render_cpu_backend_draw_view(R,&draw)) return;
   if(steps<3) steps=3; else if(steps>128) steps=128;
   int rows=(steps+1)/2;
   double cx=(x1+x2)*.5,cy=(y1+y2)*.5,cz=(z1+z2)*.5;
@@ -771,8 +771,8 @@ int gml_d3_draw_sprite_2d(GmlRender *R,int sprite_id,int subimg,double x,double 
   if(!GML_GRAPHICS || !g_d3.active) return 0;
   if(!R || alpha<=0) return 1;
   int handle=(int)(GML_TEX_SPR_TAG|((sprite_id&0xFFFF)<<10)|(subimg&0x3FF));
-  GmlRenderBackendTextureView view;
-  if(!gml_render_backend_texture_view(R,handle,0,&view)) return 1;
+  GmlRenderCpuBackendTextureView view;
+  if(!gml_render_cpu_backend_texture_view(R,handle,0,&view)) return 1;
   double left=-view.origin_x,top=-view.origin_y;
   double right=view.logical_width-view.origin_x,bottom=view.logical_height-view.origin_y;
   if(!view.runtime){
@@ -792,7 +792,7 @@ int gml_d3_draw_sprite_2d(GmlRender *R,int sprite_id,int subimg,double x,double 
     vertex[i].r=blend&255; vertex[i].g=(blend>>8)&255; vertex[i].b=(blend>>16)&255; vertex[i].alpha=alpha;
   }
   g_d3.shade_r=g_d3.shade_g=g_d3.shade_b=1;
-  gml_render_backend_prepare_draw(R);
+  gml_render_cpu_backend_prepare_draw(R);
   GmlD3Vertex first[3]={vertex[0],vertex[1],vertex[2]};
   GmlD3Vertex second[3]={vertex[0],vertex[2],vertex[3]};
   d3_emit_triangle(R,first,&texture); d3_emit_triangle(R,second,&texture);
@@ -814,7 +814,7 @@ int gml_d3_draw_sprite_pos_2d(GmlRender *R,int sprite_id,int subimg,
     vertex[i].r=vertex[i].g=vertex[i].b=255; vertex[i].alpha=alpha;
   }
   g_d3.shade_r=g_d3.shade_g=g_d3.shade_b=1;
-  gml_render_backend_prepare_draw(R);
+  gml_render_cpu_backend_prepare_draw(R);
   GmlD3Vertex first[3]={vertex[0],vertex[1],vertex[2]};
   GmlD3Vertex second[3]={vertex[0],vertex[2],vertex[3]};
   d3_emit_triangle(R,first,&texture); d3_emit_triangle(R,second,&texture);
@@ -824,9 +824,9 @@ int gml_d3_draw_background_2d(GmlRender *R,int background,double x,double y,
                               double xs,double ys,uint32_t blend,double alpha){
   if(!GML_GRAPHICS || !g_d3.active) return 0;
   if(!R || alpha<=0) return 1;
-  GmlRenderBackendTextureView view;
+  GmlRenderCpuBackendTextureView view;
   int handle=(int)(GML_TEX_BG_TAG|(background&0x00FFFFFF));
-  if(!gml_render_backend_texture_view(R,handle,0,&view)) return 1;
+  if(!gml_render_cpu_backend_texture_view(R,handle,0,&view)) return 1;
   GmlD3Texture texture={0}; if(!d3_texture_from_backend_view(&view,&texture)) return 1;
   double left=x+view.trim_x*xs,top=y+view.trim_y*ys;
   double right=left+view.width*xs,bottom=top+view.height*ys;
@@ -840,7 +840,7 @@ int gml_d3_draw_background_2d(GmlRender *R,int background,double x,double y,
     vertex[i].r=blend&255; vertex[i].g=(blend>>8)&255; vertex[i].b=(blend>>16)&255; vertex[i].alpha=alpha;
   }
   g_d3.shade_r=g_d3.shade_g=g_d3.shade_b=1;
-  gml_render_backend_prepare_draw(R);
+  gml_render_cpu_backend_prepare_draw(R);
   GmlD3Vertex first[3]={vertex[0],vertex[1],vertex[2]};
   GmlD3Vertex second[3]={vertex[0],vertex[2],vertex[3]};
   d3_emit_triangle(R,first,&texture); d3_emit_triangle(R,second,&texture);
@@ -870,7 +870,7 @@ static int d3_draw_texture_part_2d(GmlRender *R,int handle,double trim_x,double 
     vertex[i].r=blend&255; vertex[i].g=(blend>>8)&255; vertex[i].b=(blend>>16)&255; vertex[i].alpha=alpha;
   }
   g_d3.shade_r=g_d3.shade_g=g_d3.shade_b=1;
-  gml_render_backend_prepare_draw(R);
+  gml_render_cpu_backend_prepare_draw(R);
   GmlD3Vertex first[3]={vertex[0],vertex[1],vertex[2]};
   GmlD3Vertex second[3]={vertex[0],vertex[2],vertex[3]};
   d3_emit_triangle(R,first,&texture); d3_emit_triangle(R,second,&texture);
@@ -882,8 +882,8 @@ int gml_d3_draw_sprite_part_2d(GmlRender *R,int sprite_id,int subimg,
   if(!GML_GRAPHICS || !g_d3.active) return 0;
   if(!R) return 1;
   int handle=(int)(GML_TEX_SPR_TAG|((sprite_id&0xFFFF)<<10)|(subimg&0x3FF));
-  GmlRenderBackendTextureView view;
-  if(!gml_render_backend_texture_view(R,handle,0,&view)) return 1;
+  GmlRenderCpuBackendTextureView view;
+  if(!gml_render_cpu_backend_texture_view(R,handle,0,&view)) return 1;
   if(!view.runtime) return d3_draw_texture_part_2d(R,handle,
     view.trim_x,view.trim_y,view.width,view.height,
     sx,sy,sw,sh,x,y,xs,ys,blend,alpha);
@@ -896,8 +896,8 @@ int gml_d3_draw_background_part_2d(GmlRender *R,int background,
   if(!GML_GRAPHICS || !g_d3.active) return 0;
   if(!R) return 1;
   int handle=(int)(GML_TEX_BG_TAG|(background&0x00FFFFFF));
-  GmlRenderBackendTextureView view;
-  if(!gml_render_backend_texture_view(R,handle,0,&view)) return 1;
+  GmlRenderCpuBackendTextureView view;
+  if(!gml_render_cpu_backend_texture_view(R,handle,0,&view)) return 1;
   return d3_draw_texture_part_2d(R,handle,view.trim_x,view.trim_y,view.width,view.height,
     sx,sy,sw,sh,x,y,xs,ys,blend,alpha);
 }
@@ -905,8 +905,8 @@ int gml_d3_draw_atlas_part_2d(GmlRender *R,int atlas_id,int sx,int sy,int width,
                               double x,double y,double xs,double ys,uint32_t blend,double alpha){
   if(!GML_GRAPHICS || !g_d3.active) return 0;
   if(!R || width<=0 || height<=0 || alpha<=0) return 1;
-  GmlRenderBackendTextureView view;
-  if(!gml_render_backend_atlas_view(R,atlas_id,&view) ||
+  GmlRenderCpuBackendTextureView view;
+  if(!gml_render_cpu_backend_atlas_view(R,atlas_id,&view) ||
      sx<0 || sy<0 || sx+width>view.full_width || sy+height>view.full_height) return 1;
   GmlD3Texture texture={.kind=1,.w=width,.h=height,.stride=view.stride,
     .offset_x=sx,.offset_y=sy,.rgba=view.rgba};
@@ -921,7 +921,7 @@ int gml_d3_draw_atlas_part_2d(GmlRender *R,int atlas_id,int sx,int sy,int width,
     vertex[i].r=blend&255; vertex[i].g=(blend>>8)&255; vertex[i].b=(blend>>16)&255; vertex[i].alpha=alpha;
   }
   g_d3.shade_r=g_d3.shade_g=g_d3.shade_b=1;
-  gml_render_backend_prepare_draw(R);
+  gml_render_cpu_backend_prepare_draw(R);
   GmlD3Vertex first[3]={vertex[0],vertex[1],vertex[2]};
   GmlD3Vertex second[3]={vertex[0],vertex[2],vertex[3]};
   d3_emit_triangle(R,first,&texture); d3_emit_triangle(R,second,&texture);
@@ -931,13 +931,13 @@ int gml_d3_draw_surface_part_2d(GmlRender *R,int surface,
                                 double sx,double sy,double sw,double sh,double x,double y,
                                 double xs,double ys,uint32_t blend,double alpha){
   if(!GML_GRAPHICS || !g_d3.active) return 0;
-  GmlRenderBackendTextureView view;
+  GmlRenderCpuBackendTextureView view;
   int handle=(int)(GML_TEX_SURF_TAG|(surface&0xFFFF));
-  if(!gml_render_backend_texture_view(R,handle,0,&view)) return 1;
+  if(!gml_render_cpu_backend_texture_view(R,handle,0,&view)) return 1;
   return d3_draw_texture_part_2d(R,(int)(GML_TEX_SURF_TAG|(surface&0xFFFF)),
     0,0,view.width,view.height,sx,sy,sw,sh,x,y,xs,ys,blend,alpha);
 }
-static int d3_project_vertex(GmlRender *R,const GmlRenderBackendDrawView *draw,
+static int d3_project_vertex(GmlRender *R,const GmlRenderCpuBackendDrawView *draw,
                              const GmlD3Vertex *vertex,
                              double *screen_x,double *screen_y,double *inverse_z,
                              double *depth,double *distance){
@@ -966,7 +966,7 @@ static int d3_project_vertex(GmlRender *R,const GmlRenderBackendDrawView *draw,
   *depth=*inverse_z; *distance=vertex->z;
   return 1;
 }
-static void d3_raster_sample(GmlRender *R,const GmlRenderBackendDrawView *draw,
+static void d3_raster_sample(GmlRender *R,const GmlRenderCpuBackendDrawView *draw,
                              int x,int y,double depth,double distance,
                              double u,double v,double red,double green,double blue,double alpha,
                              const GmlD3Texture *texture){
@@ -997,7 +997,7 @@ static void d3_raster_sample(GmlRender *R,const GmlRenderBackendDrawView *draw,
     cb=(int)lround(cb*(1-amount)+((fog>>16)&255)*amount);
   }
   double final_alpha=(sampled[3]/255.0)*alpha;
-  gml_render_backend_draw_pixel_alpha(R,x,y,(uint32_t)cr|((uint32_t)cg<<8)|((uint32_t)cb<<16),final_alpha);
+  gml_render_cpu_backend_draw_pixel_alpha(R,x,y,(uint32_t)cr|((uint32_t)cg<<8)|((uint32_t)cb<<16),final_alpha);
   if(g_d3.hidden && g_d3.zwrite && final_alpha>0) g_d3.depth[index]=(float)depth;
 }
 static int d3_clip_segment_plane(GmlD3Vertex *a,GmlD3Vertex *b,double plane,int keep_greater){
@@ -1012,8 +1012,8 @@ static int d3_clip_segment_plane(GmlD3Vertex *a,GmlD3Vertex *b,double plane,int 
   return 1;
 }
 static void d3_emit_point(GmlRender *R,GmlD3Vertex world,const GmlD3Texture *texture){
-  GmlRenderBackendDrawView draw;
-  if(!gml_render_backend_draw_view(R,&draw)) return;
+  GmlRenderCpuBackendDrawView draw;
+  if(!gml_render_cpu_backend_draw_view(R,&draw)) return;
   if(g_d3.lighting){ double factor[3]; if(d3_vertex_light_factor(R,&world,factor)) d3_apply_light_factor(&world,factor); }
   GmlD3Vertex camera=d3_vertex_camera(R,world);
   double x,y,inverse_z,depth,distance;
@@ -1023,8 +1023,8 @@ static void d3_emit_point(GmlRender *R,GmlD3Vertex world,const GmlD3Texture *tex
                    camera.r,camera.g,camera.b,camera.alpha,texture);
 }
 static void d3_emit_line(GmlRender *R,GmlD3Vertex a,GmlD3Vertex b,const GmlD3Texture *texture){
-  GmlRenderBackendDrawView draw;
-  if(!gml_render_backend_draw_view(R,&draw)) return;
+  GmlRenderCpuBackendDrawView draw;
+  if(!gml_render_cpu_backend_draw_view(R,&draw)) return;
   if(g_d3.lighting){
     double factor[3]; int have=d3_vertex_light_factor(R,&a,factor);
     if(have) d3_apply_light_factor(&a,factor);
@@ -1079,7 +1079,7 @@ static void d3_primitive_flush(GmlRender *R){
   GmlD3Texture texture={0};
   if(g_d3_prim_texture!=-1) d3_texture(R,g_d3_prim_texture,&texture);
   g_d3.shade_r=g_d3.shade_g=g_d3.shade_b=1;
-  gml_render_backend_prepare_draw(R);
+  gml_render_cpu_backend_prepare_draw(R);
   if(!d3_depth_prepare(R)) return;
   if(g_d3_prim_kind==1){
     for(int i=0;i<g_d3_prim_n;i++) d3_emit_point(R,g_d3_prim[i],&texture);
@@ -1128,7 +1128,7 @@ static void vertex_submit_buffer(GmlRender *R,int id,int primitive,int texture_h
    * libraries carry a string's tint and fade. Apply it here, to a copy, so the rasterizer keeps
    * receiving plain vertex colours and every other submission path is untouched. */
   double blend[4];
-  if(gml_render_backend_shader_vertex_colour_blend(R,blend) &&
+  if(gml_render_cpu_backend_shader_vertex_colour_blend(R,blend) &&
      (blend[0]<1.0 || blend[1]<1.0 || blend[2]<1.0 || blend[3]<1.0)){
     GmlD3Vertex *modulated=vertex_blend_scratch_ensure(R,number);
     if(modulated){
@@ -1144,8 +1144,8 @@ static void vertex_submit_buffer(GmlRender *R,int id,int primitive,int texture_h
   }
   GmlD3Texture texture={0};
   if(!vertex_texture(R,texture_handle,&texture)) memset(&texture,0,sizeof(texture));
-  GmlRenderBackendDrawView draw;
-  if(!gml_render_backend_draw_view(R,&draw)) return;
+  GmlRenderCpuBackendDrawView draw;
+  if(!gml_render_cpu_backend_draw_view(R,&draw)) return;
 
   /* The ordinary 2D API also exposes vertex buffers. Configure a
    * temporary orthographic software pipeline when legacy d3d mode is not
@@ -1176,7 +1176,7 @@ static void vertex_submit_buffer(GmlRender *R,int id,int primitive,int texture_h
     }
   }
   g_d3.shade_r=g_d3.shade_g=g_d3.shade_b=1;
-  gml_render_backend_prepare_draw(R);
+  gml_render_cpu_backend_prepare_draw(R);
   if(primitive==1){
     for(int i=0;i<number;i++) d3_emit_point(R,vertex[i],&texture);
   } else if(primitive==2){
@@ -1318,8 +1318,8 @@ int gml_d3_draw_rectangle_2d(GmlRender *R,double x1,double y1,double x2,double y
 }
 static void d3_2d_ellipse(GmlRender *R,double cx,double cy,double rx,double ry,
                           uint32_t inner,uint32_t outer,double alpha,int outline){
-  GmlRenderBackendDrawView draw;
-  int segments=gml_render_backend_draw_view(R,&draw)&&draw.circle_precision>=3?
+  GmlRenderCpuBackendDrawView draw;
+  int segments=gml_render_cpu_backend_draw_view(R,&draw)&&draw.circle_precision>=3?
     draw.circle_precision:24;
   if(segments>256) segments=256;
   GmlD3Texture texture={0}; GmlD3Vertex center=d3_2d_vertex(R,cx,cy,inner,alpha);
@@ -1357,10 +1357,10 @@ static int prim_try_fast_surface_quad(GmlRender *R){
   d3_transform_point(R,&x0,&y0,&z0); d3_transform_point(R,&x1,&y1,&z1);
   if(fabs(z0-z1)>eps || x1<=x0 || y1<=y0) return 0;
   int surface=(int)(encoded&0xFFFFu);
-  return gml_render_backend_surface_stretched(
+  return gml_render_cpu_backend_surface_stretched(
     R,surface,x0,y0,x1-x0,y1-y0,0xFFFFFFu,alpha);
 }
-static int d3_begin_2d_projection(GmlRender *R,const GmlRenderBackendDrawView *draw,
+static int d3_begin_2d_projection(GmlRender *R,const GmlRenderCpuBackendDrawView *draw,
                                    GmlD3State *saved){
   /* Immediate-mode primitives are part of the ordinary 2D API too. Reuse the textured,
    * per-vertex software rasterizer under a temporary pixel-coordinate orthographic projection
@@ -1389,16 +1389,16 @@ static void d3_end_2d_projection(GmlRender *R,const GmlD3State *saved,int tempor
 static void d3_flush_2d_primitive(GmlRender *R){
   if(!R || g_prim_n<=0) return;
   if(prim_try_fast_surface_quad(R)) return;
-  GmlRenderBackendDrawView draw;
-  if(!gml_render_backend_draw_view(R,&draw)) return;
+  GmlRenderCpuBackendDrawView draw;
+  if(!gml_render_cpu_backend_draw_view(R,&draw)) return;
   GmlD3State saved;
   int temporary=d3_begin_2d_projection(R,&draw,&saved);
   GmlD3Texture texture={0}; if(g_prim_texture!=-1) d3_texture(R,g_prim_texture,&texture);
-  gml_render_backend_prepare_draw(R);
+  gml_render_cpu_backend_prepare_draw(R);
   GmlD3Vertex vertex[GML_PRIM_MAX];
   for(int i=0;i<g_prim_n;i++){
     double x=g_prim_x[i],y=g_prim_y[i];
-    gml_render_backend_draw_map_point(R,&x,&y);
+    gml_render_cpu_backend_draw_map_point(R,&x,&y);
     vertex[i]=d3_2d_vertex(R,x,y,g_prim_c[i],g_prim_a[i]);
     vertex[i].u=g_prim_u[i]; vertex[i].v=g_prim_v[i];
   }
@@ -1430,8 +1430,8 @@ void gml_software3d_draw_roundrect_2d(GmlRender *R,double x1,double y1,double x2
   double width=x2-x1,height=y2-y1;
   if(!isfinite(width) || !isfinite(height) || width<=0 || height<=0) return;
   rx=fmin(fmax(0,rx),width*.5); ry=fmin(fmax(0,ry),height*.5);
-  GmlRenderBackendDrawView draw;
-  if(!gml_render_backend_draw_view(R,&draw)) return;
+  GmlRenderCpuBackendDrawView draw;
+  if(!gml_render_cpu_backend_draw_view(R,&draw)) return;
   int precision=draw.circle_precision>=4?draw.circle_precision:24;
   if(precision>64) precision=64;
   int quarter=precision/4,number=0;
@@ -1450,14 +1450,14 @@ void gml_software3d_draw_roundrect_2d(GmlRender *R,double x1,double y1,double x2
   GmlD3Vertex boundary[68];
   for(int i=0;i<number;i++){
     double x=points[i][0],y=points[i][1];
-    gml_render_backend_draw_map_point(R,&x,&y);
+    gml_render_cpu_backend_draw_map_point(R,&x,&y);
     boundary[i]=d3_2d_vertex(R,x,y,outer,alpha);
   }
   double cx=x1+width*.5,cy=y1+height*.5;
-  gml_render_backend_draw_map_point(R,&cx,&cy);
+  gml_render_cpu_backend_draw_map_point(R,&cx,&cy);
   GmlD3Vertex centre=d3_2d_vertex(R,cx,cy,inner,alpha);
   GmlD3Texture texture={0};
-  gml_render_backend_prepare_draw(R);
+  gml_render_cpu_backend_prepare_draw(R);
   if(!d3_depth_prepare(R)){
     d3_end_2d_projection(R,&saved,temporary);
     return;

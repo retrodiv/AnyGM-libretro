@@ -2,7 +2,7 @@
  * Copyright (c) 2026 retrodiv <retrodiv@proton.me>
  */
 #include "gml_render_internal.h"
-#include "gml_render_backend.h"
+#include "gml_render_cpu_backend.h"
 #include "gml_render_cpu_sampling_internal.h"
 #include "anygm.h"
 
@@ -1333,15 +1333,15 @@ static void check_optimized_primitives(void) {
     &render,1,1,5,4,corners[0],corners[1],corners[2],corners[3],0);
   uint32_t converted[4];
   for(int corner=0;corner<4;corner++)
-    converted[corner]=gml_render_backend_color_to_xrgb(corners[corner]);
+    converted[corner]=gml_render_cpu_backend_color_to_xrgb(corners[corner]);
   for(int y=1;y<=4;y++){
-    uint32_t left=gml_render_backend_lerp_xrgb(
+    uint32_t left=gml_render_cpu_backend_lerp_xrgb(
       converted[0],converted[3],y-1,3);
-    uint32_t right=gml_render_backend_lerp_xrgb(
+    uint32_t right=gml_render_cpu_backend_lerp_xrgb(
       converted[1],converted[2],y-1,3);
     for(int x=1;x<=5;x++)
       expect(pixels[y*PRIMITIVE_WIDTH+x]==
-               gml_render_backend_lerp_xrgb(left,right,x-1,4),
+               gml_render_cpu_backend_lerp_xrgb(left,right,x-1,4),
              "opaque rectangle gradient diverged from fixed-point interpolation");
   }
 
@@ -1352,7 +1352,7 @@ static void check_optimized_primitives(void) {
   gml_render_primitive_triangle_alpha(
     &render,1,1,6,2,2,6,UINT32_C(0x004080c0),1.0,0);
   uint32_t triangle_color=
-    gml_render_backend_color_to_xrgb(UINT32_C(0x004080c0));
+    gml_render_cpu_backend_color_to_xrgb(UINT32_C(0x004080c0));
   double denominator=(2.0-6.0)*(1.0-2.0)+(2.0-6.0)*(1.0-6.0);
   for(int y=0;y<PRIMITIVE_HEIGHT;y++){
     for(int x=0;x<PRIMITIVE_WIDTH;x++){

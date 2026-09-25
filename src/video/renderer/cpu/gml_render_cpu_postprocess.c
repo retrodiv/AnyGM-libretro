@@ -7,7 +7,7 @@
 #include "gml_render.h"
 #include "gml_render_internal.h"
 #include "gml_render_cpu_pixel_internal.h"
-#include "gml_render_backend.h"
+#include "gml_render_cpu_backend.h"
 
 #include "anygm_host.h"
 #include "gml_thread.h"

@@ -2,7 +2,7 @@
  * Copyright (c) 2026 retrodiv <retrodiv@proton.me>
  */
 /* Renderer-owned asset lookup and record operations. */
-#include "gml_render_backend.h"
+#include "gml_render_cpu_backend.h"
 #include "gml_render_internal.h"
 #include "gml_image_codec.h"
 #include "gmlc_json.h"
@@ -15,7 +15,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-static void backend_texture_view_reset(GmlRenderBackendTextureView *view){
+static void backend_texture_view_reset(GmlRenderCpuBackendTextureView *view){
   if(view) memset(view,0,sizeof(*view));
 }
 
@@ -231,11 +231,11 @@ int gml_render_font_exists(const GmlRender *R,int font){
   return source->real || source->sprite>=0;
 }
 
-static void backend_texture_view_page(GmlRenderBackendTextureView *view,
+static void backend_texture_view_page(GmlRenderCpuBackendTextureView *view,
                                       const GmlTpag *page,const GmlAtlas *atlas,
                                       int full_atlas){
   if(!view) return;
-  view->pixel_kind=GML_RENDER_BACKEND_PIXELS_RGBA;
+  view->pixel_kind=GML_RENDER_CPU_BACKEND_PIXELS_RGBA;
   view->trim_x=page->tx; view->trim_y=page->ty;
   view->width=full_atlas?atlas->w:page->sw;
   view->height=full_atlas?atlas->h:page->sh;
@@ -247,13 +247,13 @@ static void backend_texture_view_page(GmlRenderBackendTextureView *view,
   view->rgba=atlas->px;
 }
 
-int gml_render_backend_texture_view(GmlRender *R,int handle,int full_atlas,
-                                    GmlRenderBackendTextureView *view){
+int gml_render_cpu_backend_texture_view(GmlRender *R,int handle,int full_atlas,
+                                    GmlRenderCpuBackendTextureView *view){
   backend_texture_view_reset(view);
   if(!R) return 0;
   uint32_t encoded=(uint32_t)handle,kind=encoded&GML_TEX_KIND_MASK;
   if(kind==GML_TEX_ATLAS_TAG)
-    return gml_render_backend_atlas_view(R,(int)(encoded&0x00FFFFFFu),view);
+    return gml_render_cpu_backend_atlas_view(R,(int)(encoded&0x00FFFFFFu),view);
   if(kind==GML_TEX_SPR_TAG){
     int spr=(int)((encoded>>10)&0xFFFF),img=(int)(encoded&0x3FF);
     gml_render_warm_sprite(R,spr);
@@ -268,7 +268,7 @@ int gml_render_backend_texture_view(GmlRender *R,int handle,int full_atlas,
       int frames=sprite->n_frames>0?sprite->n_frames:1;
       int sub=((img%frames)+frames)%frames;
       if(view){
-        view->pixel_kind=GML_RENDER_BACKEND_PIXELS_RGBA;
+        view->pixel_kind=GML_RENDER_CPU_BACKEND_PIXELS_RGBA;
         view->runtime=1;
         view->width=view->full_width=sprite->w;
         view->height=view->full_height=sprite->h;
@@ -297,7 +297,7 @@ int gml_render_backend_texture_view(GmlRender *R,int handle,int full_atlas,
     const uint32_t *pixels=gml_surface_pixels_read(R,surface,&width,&height);
     if(!pixels || width<=0 || height<=0) return 0;
     if(view){
-      view->pixel_kind=GML_RENDER_BACKEND_PIXELS_XRGB;
+      view->pixel_kind=GML_RENDER_CPU_BACKEND_PIXELS_XRGB;
       view->logical_width=view->width=view->full_width=width;
       view->logical_height=view->height=view->full_height=height;
       view->stride=width; view->resource_index=surface; view->xrgb=pixels;
@@ -308,7 +308,7 @@ int gml_render_backend_texture_view(GmlRender *R,int handle,int full_atlas,
     int font=(int)(encoded&0x00FFFFFFu);
     if(font<0 || font>=R->n_fonts || !R->fonts[font].real) return 0;
     int atlas=R->fonts[font].atlas;
-    int ok=gml_render_backend_atlas_view(R,atlas,view);
+    int ok=gml_render_cpu_backend_atlas_view(R,atlas,view);
     if(ok && view) view->resource_index=font;
     return ok;
   }
@@ -339,8 +339,8 @@ int gml_render_backend_texture_view(GmlRender *R,int handle,int full_atlas,
 int gml_render_texture_metrics(GmlRender *R,int handle,
                                GmlRenderTextureMetrics *metrics){
   if(metrics) memset(metrics,0,sizeof(*metrics));
-  GmlRenderBackendTextureView view;
-  if(!metrics || !gml_render_backend_texture_view(R,handle,0,&view)) return 0;
+  GmlRenderCpuBackendTextureView view;
+  if(!metrics || !gml_render_cpu_backend_texture_view(R,handle,0,&view)) return 0;
   uint32_t kind=(uint32_t)handle&GML_TEX_KIND_MASK;
   if(kind==GML_TEX_SPR_TAG) metrics->kind=GML_RENDER_TEXTURE_SPRITE;
   else if(kind==GML_TEX_SURF_TAG) metrics->kind=GML_RENDER_TEXTURE_SURFACE;
@@ -349,7 +349,7 @@ int gml_render_texture_metrics(GmlRender *R,int handle,
   else if(kind==GML_TEX_ATLAS_TAG) metrics->kind=GML_RENDER_TEXTURE_ATLAS;
   else return 0;
   metrics->runtime=view.runtime;
-  metrics->atlas_backed=view.pixel_kind==GML_RENDER_BACKEND_PIXELS_RGBA &&
+  metrics->atlas_backed=view.pixel_kind==GML_RENDER_CPU_BACKEND_PIXELS_RGBA &&
     !view.runtime;
   metrics->logical_width=view.logical_width;
   metrics->logical_height=view.logical_height;
@@ -364,15 +364,15 @@ int gml_render_texture_metrics(GmlRender *R,int handle,
   return 1;
 }
 
-int gml_render_backend_atlas_view(GmlRender *R,int atlas_index,
-                                  GmlRenderBackendTextureView *view){
+int gml_render_cpu_backend_atlas_view(GmlRender *R,int atlas_index,
+                                  GmlRenderCpuBackendTextureView *view){
   backend_texture_view_reset(view);
   if(!R || atlas_index<0 || atlas_index>=R->n_atlas ||
      !gml_render_warm_atlas(R,atlas_index)) return 0;
   GmlAtlas *atlas=&R->atlas[atlas_index];
   if(!atlas->px || atlas->w<=0 || atlas->h<=0) return 0;
   if(view){
-    view->pixel_kind=GML_RENDER_BACKEND_PIXELS_RGBA;
+    view->pixel_kind=GML_RENDER_CPU_BACKEND_PIXELS_RGBA;
     view->logical_width=view->width=view->full_width=atlas->w;
     view->logical_height=view->height=view->full_height=atlas->h;
     view->stride=atlas->w; view->atlas_index=atlas_index; view->rgba=atlas->px;

@@ -4,7 +4,7 @@
 #include "gml_render_cpu_presentation.h"
 #include "gml_render_internal.h"
 #include "gml_render_presentation_axis.h"
-#include "gml_render_backend.h"
+#include "gml_render_cpu_backend.h"
 
 #include <limits.h>
 #include <stdint.h>
@@ -42,7 +42,7 @@ void gml_render_cpu_present_image(GmlRender *r){
       r->fb_all_transparent=((record.fill_color>>24)==0u);
       while(remaining>0){
         int run=remaining>(size_t)INT_MAX?INT_MAX:(int)remaining;
-        gml_render_backend_fill_xrgb(cursor,run,record.fill_color);
+        gml_render_cpu_backend_fill_xrgb(cursor,run,record.fill_color);
         cursor+=run;
         remaining-=(size_t)run;
       }

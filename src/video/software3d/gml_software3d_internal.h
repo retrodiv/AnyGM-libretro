@@ -6,7 +6,7 @@
 #define GML_SOFTWARE3D_INTERNAL_H
 
 #include "gml_software3d.h"
-#include "gml_render_backend.h"
+#include "gml_render_cpu_backend.h"
 
 typedef GmlSoftware3DVertex GmlD3Vertex;
 

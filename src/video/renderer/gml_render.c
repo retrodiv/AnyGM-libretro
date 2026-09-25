@@ -8,7 +8,7 @@
 #include "gml_render_cpu_blit_internal.h"
 #include "gml_render_cpu_pixel_internal.h"
 #include "gml_render_cpu_sampling_internal.h"
-#include "gml_render_backend.h"
+#include "gml_render_cpu_backend.h"
 #include "gml_render_cpu_workers.h"
 #include "gml_render_content.h"
 #include "gml_render_shaders.h"
@@ -192,11 +192,11 @@ void gml_render_bind_software3d(GmlRender *r,GmlSoftware3D *software3d){
 void gml_render_rebind_content(GmlRender *r,GmlWin *win){
   if(r) r->win=win;
 }
-GmlSoftware3D *gml_render_backend_software3d(GmlRender *r){
+GmlSoftware3D *gml_render_cpu_backend_software3d(GmlRender *r){
   return r?r->software3d:NULL;
 }
 GmlSoftware3D *gml_render_software3d(GmlRender *r){
-  return gml_render_backend_software3d(r);
+  return gml_render_cpu_backend_software3d(r);
 }
 void gml_render_set_frame(GmlRender *r,long frame){
   if(r) r->frame=frame;
@@ -654,7 +654,7 @@ int gml_render_surface_plane(GmlRender *r,int surface,int *width,int *height,
   return 1;
 }
 
-int gml_render_backend_draw_view(GmlRender *r,GmlRenderBackendDrawView *view){
+int gml_render_cpu_backend_draw_view(GmlRender *r,GmlRenderCpuBackendDrawView *view){
   if(view) memset(view,0,sizeof(*view));
   if(!r || !view) return 0;
   gml_render_flush_rotated_batch(r);
@@ -678,14 +678,14 @@ int gml_render_backend_draw_view(GmlRender *r,GmlRenderBackendDrawView *view){
   view->circle_precision=r->circle_precision;
   return 1;
 }
-void gml_render_backend_prepare_draw(GmlRender *r){
+void gml_render_cpu_backend_prepare_draw(GmlRender *r){
   gml_render_maybe_prepare_draw(r);
 }
-int gml_render_backend_prepare_draw_view(GmlRender *r,GmlRenderBackendDrawView *view){
-  gml_render_backend_prepare_draw(r);
-  return gml_render_backend_draw_view(r,view);
+int gml_render_cpu_backend_prepare_draw_view(GmlRender *r,GmlRenderCpuBackendDrawView *view){
+  gml_render_cpu_backend_prepare_draw(r);
+  return gml_render_cpu_backend_draw_view(r,view);
 }
-void gml_render_backend_sync_camera(GmlRender *r,double translation_x,double translation_y){
+void gml_render_cpu_backend_sync_camera(GmlRender *r,double translation_x,double translation_y){
   if(!r) return;
   if(r->world_transform_active && !r->gui_pass_active &&
      (r->target_sp==0 || r->target_id==-2) && r->target_id<0){
@@ -732,7 +732,7 @@ void gml_render_interpolated_subrect_cache_clear(GmlRender *render){
   render->interp_subrect_count=0;
   render->interp_subrect_capacity=0;
 }
-void gml_render_backend_draw_map_point(const GmlRender *r,double *x,double *y){
+void gml_render_cpu_backend_draw_map_point(const GmlRender *r,double *x,double *y){
   gml_render_draw_map_point(r,x,y);
 }
 void gml_render_free(GmlRender *r){
@@ -879,7 +879,7 @@ void gml_render_set_pending_fill(GmlRender *r, uint32_t color){
     uint32_t *p=r->classic_phase_y; size_t left=n;
     while(left>0){
       int run=left>(size_t)INT_MAX?INT_MAX:(int)left;
-      gml_render_backend_fill_xrgb(p,run,color); p+=run; left-=(size_t)run;
+      gml_render_cpu_backend_fill_xrgb(p,run,color); p+=run; left-=(size_t)run;
     }
   }
   if(r->target_sp==0){
@@ -888,7 +888,7 @@ void gml_render_set_pending_fill(GmlRender *r, uint32_t color){
       uint32_t *p=r->classic_interp_phase[q]; size_t left=n;
       while(left>0){
         int run=left>(size_t)INT_MAX?INT_MAX:(int)left;
-        gml_render_backend_fill_xrgb(p,run,color); p+=run; left-=(size_t)run;
+        gml_render_cpu_backend_fill_xrgb(p,run,color); p+=run; left-=(size_t)run;
       }
     }
   }
@@ -905,7 +905,7 @@ void gml_render_flush_pending_fill(GmlRender *r){
   uint32_t *p=r->fb;
   while(n>0){
     int run=n>(size_t)INT_MAX?INT_MAX:(int)n;
-    gml_render_backend_fill_xrgb(p,run,color);
+    gml_render_cpu_backend_fill_xrgb(p,run,color);
     p+=run;
     n-=(size_t)run;
   }

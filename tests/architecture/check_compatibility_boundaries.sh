@@ -701,7 +701,7 @@ fail_matches "Software-3D camera synchronization must use its declared video int
   "$local_camera_sync_declarations"
 
 renderer_pixel_backend_definitions=$(find src -type f -name '*.c' -exec grep -n -H -E \
-  '^[[:space:]]*(uint32_t|void|int)[[:space:]]+gml_render_backend_(color_to_xrgb|lerp_xrgb|fill_xrgb|flat_blend_init|flat_blend_run|flat_blend_uses_float_alpha|draw_xrgb_alpha|draw_pixel_alpha|draw_pixel)[[:space:]]*\(' \
+  '^[[:space:]]*(uint32_t|void|int)[[:space:]]+gml_render_cpu_backend_(color_to_xrgb|lerp_xrgb|fill_xrgb|flat_blend_init|flat_blend_run|flat_blend_uses_float_alpha|draw_xrgb_alpha|draw_pixel_alpha|draw_pixel)[[:space:]]*\(' \
   {} + 2>/dev/null | grep -v '^src/video/renderer/gml_render_blit\.c:' || true)
 fail_matches "Renderer pixel backend definitions belong only to gml_render_blit.c:" \
   "$renderer_pixel_backend_definitions"
@@ -725,7 +725,7 @@ if [ "$renderer_primitive_preparation_files" != "src/video/renderer/common/gml_r
 fi
 
 renderer_asset_view_definitions=$(find src -type f -name '*.c' -exec grep -l -E \
-  '^[[:space:]]*int[[:space:]]+gml_render_backend_(texture|atlas)_view[[:space:]]*\(' \
+  '^[[:space:]]*int[[:space:]]+gml_render_cpu_backend_(texture|atlas)_view[[:space:]]*\(' \
   {} + 2>/dev/null || true)
 if [ "$renderer_asset_view_definitions" != "src/video/renderer/gml_render_assets.c" ]; then
   printf '%s\n' "Renderer asset-view definitions belong only to gml_render_assets.c:" >&2
@@ -735,7 +735,7 @@ fi
 
 renderer_raster_definition_files=$(find src/video/renderer -type f -not -path 'src/video/renderer/gpu/opengl/*' -name '*.c' \
   -exec grep -l -E \
-  '^[[:space:]]*(static[[:space:]]+)?(int|void|uint32_t)[[:space:]]+(gml_draw_(sprite|background|room_backgrounds|room_tiles|tile)|draw_sprite_nineslice|gml_render_shader_fill_rect|gml_render_backend_(color_to_xrgb|fill_xrgb|draw_pixel))([[:alnum:]_]*)[[:space:]]*\(' \
+  '^[[:space:]]*(static[[:space:]]+)?(int|void|uint32_t)[[:space:]]+(gml_draw_(sprite|background|room_backgrounds|room_tiles|tile)|draw_sprite_nineslice|gml_render_shader_fill_rect|gml_render_cpu_backend_(color_to_xrgb|fill_xrgb|draw_pixel))([[:alnum:]_]*)[[:space:]]*\(' \
   {} + 2>/dev/null || true)
 if [ "$renderer_raster_definition_files" != "src/video/renderer/gml_render_blit.c" ]; then
   printf '%s\n' "Complete sprite, background, tile, paint, and pixel raster definitions belong only to gml_render_blit.c:" >&2
@@ -937,7 +937,7 @@ fail_matches "Raw stb truetype APIs and configuration belong only to gml_font_ra
   "$raw_stb_truetype_consumers"
 
 legacy_renderer_asset_lookup=$(portable_product_files | xargs grep -n -H \
-  'gml_render_backend_sprite_tpag_info' 2>/dev/null || true)
+  'gml_render_cpu_backend_sprite_tpag_info' 2>/dev/null || true)
 fail_matches "The private-record renderer asset lookup must not return:" \
   "$legacy_renderer_asset_lookup"
 
@@ -956,7 +956,7 @@ fail_matches "Software-3D asset access must stay behind the non-reentrant backen
   "$software3d_asset_facade_calls"
 
 renderer_target_backend_definitions=$(find src -type f -name '*.c' -exec grep -l -E \
-  '^[[:space:]]*(int|void|GmlSoftware3D[[:space:]]*\*)[[:space:]]+gml_render_backend_(software3d|draw_view|prepare_draw|prepare_draw_view|sync_camera|gui_map_point)[[:space:]]*\(' \
+  '^[[:space:]]*(int|void|GmlSoftware3D[[:space:]]*\*)[[:space:]]+gml_render_cpu_backend_(software3d|draw_view|prepare_draw|prepare_draw_view|sync_camera|gui_map_point)[[:space:]]*\(' \
   {} + 2>/dev/null || true)
 if [ "$renderer_target_backend_definitions" != "src/video/renderer/gml_render.c" ]; then
   printf '%s\n' "Renderer target-view backend definitions belong only to gml_render.c:" >&2
@@ -979,7 +979,7 @@ fail_matches "Software-3D target and draw policy must stay behind backend leaves
   "$software3d_retired_renderer_leaf_calls"
 
 renderer_surface_backend_definitions=$(find src -type f -name '*.c' -exec grep -l -E \
-  '^[[:space:]]*int[[:space:]]+gml_render_backend_surface_stretched[[:space:]]*\(' \
+  '^[[:space:]]*int[[:space:]]+gml_render_cpu_backend_surface_stretched[[:space:]]*\(' \
   {} + 2>/dev/null || true)
 if [ "$renderer_surface_backend_definitions" != "src/video/renderer/gml_render_surfaces.c" ]; then
   printf '%s\n' "The non-reentrant stretched-surface backend belongs only to gml_render_surfaces.c:" >&2
@@ -990,7 +990,7 @@ fi
 software3d_renderer_facade_calls=$(find src/video/software3d -type f \
   \( -name '*.c' -o -name '*.h' \) -exec grep -n -H -E \
   'gml_(render|surface|draw)_[[:alnum:]_]+[[:space:]]*\(' {} + 2>/dev/null | \
-  grep -v 'gml_render_backend_' || true)
+  grep -v 'gml_render_cpu_backend_' || true)
 fail_matches "Software-3D may call renderer code only through non-reentrant backend leaves:" \
   "$software3d_renderer_facade_calls"
 
@@ -1031,7 +1031,7 @@ fail_matches "Builtins must use typed renderer draw, target, presentation, shade
 
 builtin_private_video_headers=$(find src/runtime/builtins -type f \
   \( -name '*.c' -o -name '*.h' \) -exec grep -n -H -E \
-  '^[[:space:]]*#[[:space:]]*include[[:space:]]+"(gml_render_internal|gml_render_backend|gml_software3d_internal)[.]h"' \
+  '^[[:space:]]*#[[:space:]]*include[[:space:]]+"(gml_render_internal|gml_render_cpu_backend|gml_software3d_internal)[.]h"' \
   {} + 2>/dev/null || true)
 fail_matches "Builtins must not include renderer or software-3D internal boundaries:" \
   "$builtin_private_video_headers"

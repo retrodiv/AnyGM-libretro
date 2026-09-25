@@ -2,7 +2,7 @@
  * Copyright (c) 2026 retrodiv <retrodiv@proton.me>
  */
 /* Cohesive software blit and pixel kernels. */
-#include "gml_render_backend.h"
+#include "gml_render_cpu_backend.h"
 #include "gml_render_cpu_blit_internal.h"
 #include "gml_render_internal.h"
 #include "gml_render_cpu_pixel_internal.h"
@@ -51,12 +51,12 @@ static void sprof_add(int sprite,const char *name,double milliseconds){
   (void)milliseconds;
 }
 
-uint32_t gml_render_backend_color_to_xrgb(uint32_t c){
+uint32_t gml_render_cpu_backend_color_to_xrgb(uint32_t c){
   /* alpha byte 0xFF = drawn/opaque: surfaces track per-pixel coverage in the high byte so
    * draw_clear_alpha(c,0) ("clear to transparent") is representable — see gml_render.h. */
   return 0xFF000000u | ((c&0xff)<<16) | (c&0xff00) | ((c>>16)&0xff);
 }
-uint32_t gml_render_backend_lerp_xrgb(uint32_t a, uint32_t b, int num, int den){
+uint32_t gml_render_cpu_backend_lerp_xrgb(uint32_t a, uint32_t b, int num, int den){
   if(den<=0 || num<=0) return a;
   if(num>=den) return b;
   int ar=(a>>16)&0xff, ag=(a>>8)&0xff, ab=a&0xff;
@@ -69,7 +69,7 @@ uint32_t gml_render_backend_lerp_xrgb(uint32_t a, uint32_t b, int num, int den){
 #if defined(__GNUC__) || defined(__clang__)
 typedef uint64_t GmlRenderU64Alias __attribute__((__may_alias__));
 #endif
-void gml_render_backend_fill_xrgb(uint32_t *dp, int n, uint32_t src){
+void gml_render_cpu_backend_fill_xrgb(uint32_t *dp, int n, uint32_t src){
   if(n<=0) return;
 #if defined(__SSE2__)
   /* A fill the size of a virtual monitor is larger than any cache, and an ordinary store has to
@@ -119,7 +119,7 @@ void gml_render_backend_fill_xrgb(uint32_t *dp, int n, uint32_t src){
 #endif
   for(int i=0;i<n;i++) dp[i]=src;
 }
-void gml_render_backend_flat_blend_init(GmlRenderBackendFlatBlend *blend,uint32_t src,double alpha){
+void gml_render_cpu_backend_flat_blend_init(GmlRenderCpuBackendFlatBlend *blend,uint32_t src,double alpha){
   double ia=1.0-alpha;
   int sr=(src>>16)&0xff,sg=(src>>8)&0xff,sb=src&0xff;
   for(int d=0;d<256;d++){
@@ -129,7 +129,7 @@ void gml_render_backend_flat_blend_init(GmlRenderBackendFlatBlend *blend,uint32_
   }
   blend->surface_alpha=(uint32_t)lround(alpha*255.0);
 }
-void gml_render_backend_flat_blend_run(GmlRender *R,uint32_t *dp,int n,const GmlRenderBackendFlatBlend *blend){
+void gml_render_cpu_backend_flat_blend_run(GmlRender *R,uint32_t *dp,int n,const GmlRenderCpuBackendFlatBlend *blend){
   for(int i=0;i<n;i++){
     uint32_t dv=dp[i],oa=0xFF;
     if(R->target_sp>0){
@@ -140,14 +140,14 @@ void gml_render_backend_flat_blend_run(GmlRender *R,uint32_t *dp,int n,const Gml
           ((uint32_t)blend->green[(dv>>8)&0xff]<<8)|blend->blue[dv&0xff];
   }
 }
-int gml_render_backend_flat_blend_uses_float_alpha(double alpha){
+int gml_render_cpu_backend_flat_blend_uses_float_alpha(double alpha){
   /* Exact N/256 alpha values use the classic tie behavior and retain the truncating
    * 8-bit fast path. Other values (notably 0.4 and 0.8) retain their requested
    * fractional weight and round the final channels. */
   double scaled=alpha*256.0;
   return fabs(scaled-floor(scaled+0.5))>1e-12;
 }
-void gml_render_backend_draw_xrgb_alpha(GmlRender *R, uint32_t *dp, int n, uint32_t src, double alpha){
+void gml_render_cpu_backend_draw_xrgb_alpha(GmlRender *R, uint32_t *dp, int n, uint32_t src, double alpha){
   if(n<=0) return;
   if(!R->alphablend || alpha>=1.0){
     uint32_t out=src;
@@ -155,21 +155,21 @@ void gml_render_backend_draw_xrgb_alpha(GmlRender *R, uint32_t *dp, int n, uint3
       uint32_t sa=(uint32_t)lround(alpha*255.0);
       out=(src&0x00FFFFFFu)|(sa<<24);
     }
-    gml_render_backend_fill_xrgb(dp,n,out);
+    gml_render_cpu_backend_fill_xrgb(dp,n,out);
     return;
   }
   uint32_t af=(uint32_t)(alpha*256.0);
-  if(af>=256u){ gml_render_backend_fill_xrgb(dp,n,src); return; }
+  if(af>=256u){ gml_render_cpu_backend_fill_xrgb(dp,n,src); return; }
   if(!af) return;
-  if(R->classic && gml_render_backend_flat_blend_uses_float_alpha(alpha)){
+  if(R->classic && gml_render_cpu_backend_flat_blend_uses_float_alpha(alpha)){
     /* Classic compatibility keeps the requested draw alpha as a float and rounds the
      * resulting colour channels to the nearest 8-bit value. Quantizing alpha to 1/256 first
      * produces different channel values for translucent primitives such as alpha 0.4. The
      * source colour is constant across this run, so small channel lookup tables preserve that
      * arithmetic without putting floating-point work in the per-pixel loop. */
-    GmlRenderBackendFlatBlend blend;
-    gml_render_backend_flat_blend_init(&blend,src,alpha);
-    gml_render_backend_flat_blend_run(R,dp,n,&blend);
+    GmlRenderCpuBackendFlatBlend blend;
+    gml_render_cpu_backend_flat_blend_init(&blend,src,alpha);
+    gml_render_cpu_backend_flat_blend_run(R,dp,n,&blend);
     return;
   }
   uint32_t ia=256u-af;
@@ -188,7 +188,7 @@ void gml_render_backend_draw_xrgb_alpha(GmlRender *R, uint32_t *dp, int n, uint3
     dp[i]=(oa<<24)|rb|g;
   }
 }
-void gml_render_backend_draw_pixel_alpha(GmlRender *R, int x, int y, uint32_t gmcol, double alpha){
+void gml_render_cpu_backend_draw_pixel_alpha(GmlRender *R, int x, int y, uint32_t gmcol, double alpha){
   if(!R||x<0||y<0||x>=R->fbw||y>=R->fbh) return;
   if(alpha>1) alpha=1; else if(alpha<0) alpha=0;
   if(alpha<=0) return;
@@ -207,7 +207,7 @@ void gml_render_backend_draw_pixel_alpha(GmlRender *R, int x, int y, uint32_t gm
     R->fb_opaque_known=0;
     R->fb_all_opaque=0;
   }
-  uint32_t src=gml_render_backend_color_to_xrgb(gmcol), *dp=&R->fb[(size_t)y*R->fbw+x];
+  uint32_t src=gml_render_cpu_backend_color_to_xrgb(gmcol), *dp=&R->fb[(size_t)y*R->fbw+x];
   if(R->alphablend && (R->blend_equation!=1 || R->blend_equation_alpha!=1)){
     int sc[4]={(src>>16)&255,(src>>8)&255,src&255,(int)lround(alpha*255.0)};
     int dc[4]={(*dp>>16)&255,(*dp>>8)&255,*dp&255,preserve_alpha?(int)(*dp>>24):255};
@@ -301,8 +301,8 @@ void gml_render_backend_draw_pixel_alpha(GmlRender *R, int x, int y, uint32_t gm
   }
   *dp=(oa<<24)|(or_<<16)|(og<<8)|ob;
 }
-void gml_render_backend_draw_pixel(GmlRender *R, int x, int y, uint32_t gmcol){
-  gml_render_backend_draw_pixel_alpha(R,x,y,gmcol,R?R->alpha:1);
+void gml_render_cpu_backend_draw_pixel(GmlRender *R, int x, int y, uint32_t gmcol){
+  gml_render_cpu_backend_draw_pixel_alpha(R,x,y,gmcol,R?R->alpha:1);
 }
 
 static inline int floor_fixed20(int64_t v){
