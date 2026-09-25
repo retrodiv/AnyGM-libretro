@@ -8,8 +8,7 @@
  * integer axis-map textures that make nearest selection exact. It creates no window, opens no
  * library, and keeps no process-global state: a frontend running two cores must not have one
  * instance calling into the other's context. */
-#include "gml_gpu_internal.h"
-#include "gml_gpu_opengl_api.h"
+#include "gml_gpu_opengl_internal.h"
 #include "gml_gpu_opengl_shaders.h"
 
 #include <ctype.h>
@@ -17,112 +16,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-
-enum {
-  GL_MAP_SLOTS=GML_PLAN_MAX_OPERATIONS*2,
-  GL_INFO_LOG_LIMIT=512,
-  GL_CONTENT_PROGRAMS=16,
-  GL_CONTENT_UNIFORMS=64,
-  GL_READBACK_SLOTS=8
-};
-
-/* One uniform the content's program declares, as the context reports it after linking. A value
- * the content sets is delivered through the setter this type calls for, whatever width the content
- * supplied: sending a vector to a scalar, or a matrix through a vector setter, is an error the
- * context refuses the whole draw over. */
-typedef struct GlContentUniform {
-  char name[48];
-  GLint location;
-  GLint size;
-  GLenum type;
-} GlContentUniform;
-
-/* One pipelined read-back: two buffer objects the device fills in turn. A pass reads what the
- * previous pass of the same program left — one frame old — and issues the current one without
- * waiting, which is what removes the stall. A slot is primed by one ordinary read the first time
- * it is used, so the first frame is correct rather than empty. */
-typedef struct GlReadbackSlot {
-  uint32_t identity;
-  uint32_t width,height;
-  GLuint buffer[2];
-  int cursor;
-  int primed;
-  uint32_t last_used;
-} GlReadbackSlot;
-
-/* A content program compiled for this context, keyed by the shader's identity and the text it was
- * compiled from. `failed` retires a program the context refused, so a frame does not pay the
- * refusal again and the runtime can answer that the shader did not compile. */
-typedef struct GlContentProgram {
-  GLuint program;
-  uint32_t identity;
-  const char *fragment_key;
-  int failed;
-  uint32_t last_used;
-  GLint a_position,a_colour,a_texcoord;
-  GLint u_matrices,u_base_texture,u_alpha_test,u_fog_ps,u_fog_vs;
-  GlContentUniform uniforms[GL_CONTENT_UNIFORMS];
-  uint32_t uniform_count;
-} GlContentProgram;
-
-typedef struct GlSourceTexture {
-  GLuint name;
-  int linear;
-  uint32_t image_class;
-  uint32_t identity;
-  uint32_t content_generation;
-  uint32_t pixel_generation;
-  uint32_t width;
-  uint32_t height;
-  uint32_t last_used;
-  int uploaded;
-} GlSourceTexture;
-
-/* An axis map is a pure function of the axis record, so the record is also its cache key. Keeping
- * the key instead of the contents makes the comparison a handful of scalars rather than several
- * kilobytes, and it cannot disagree with the map it describes. */
-typedef struct GlAxisMap {
-  GLuint name;
-  uint32_t capacity;
-  uint32_t count;
-  uint32_t rule;
-  uint32_t source_extent;
-  uint32_t destination_extent;
-  int32_t destination_first;
-  double origin;
-  double extent;
-  int valid;
-} GlAxisMap;
-
-struct GmlGpuBackend {
-  GmlGlApi gl;
-  int loaded;
-  GmlGpuApi api;
-  int little_endian;
-  GLint max_texture_size;
-  GLuint program;
-  GLuint vertex_array;
-  GLint u_source;
-  GLint u_map_x;
-  GLint u_map_y;
-  GLint u_dest_x;
-  GLint u_dest_y;
-  GLint u_target_height;
-  GlSourceTexture sources[GML_PLAN_MAX_IMAGES];
-  GlAxisMap maps[GL_MAP_SLOTS];
-  uint16_t *map_scratch;
-  uint32_t map_scratch_capacity;
-  uint32_t use_clock;
-  GlContentProgram content[GL_CONTENT_PROGRAMS];
-  GLuint content_buffer;
-  /* The off-screen target a read-back plan executes into, kept at the last size asked for. */
-  GLuint readback_framebuffer,readback_texture,readback_attached;
-  uint32_t readback_width,readback_height;
-  uint8_t *readback_scratch;
-  size_t readback_scratch_capacity;
-  GlReadbackSlot readback_slots[GL_READBACK_SLOTS];
-  int readback_pipelined;
-};
 
 static void record_error(char *error,size_t capacity,const char *format,...);
 
@@ -389,138 +282,6 @@ int gml_gpu_opengl_reset(GmlGpuBackend *backend,const GmlGpuContext *context,
     return 0;
   }
   backend->max_texture_size=0;
-  return 1;
-}
-
-static GlSourceTexture *acquire_source(GmlGpuBackend *backend,const GmlPlanImage *image,int linear){
-  GlSourceTexture *slot=NULL;
-  uint32_t oldest=0xFFFFFFFFu;
-  for(size_t index=0;index<GML_PLAN_MAX_IMAGES;index++){
-    GlSourceTexture *candidate=&backend->sources[index];
-    if(candidate->name && candidate->image_class==image->image_class &&
-       candidate->identity==image->identity && candidate->linear==linear) return candidate;
-  }
-  for(size_t index=0;index<GML_PLAN_MAX_IMAGES;index++){
-    GlSourceTexture *candidate=&backend->sources[index];
-    if(!candidate->name){ slot=candidate; break; }
-    if(candidate->last_used<oldest){ oldest=candidate->last_used; slot=candidate; }
-  }
-  if(!slot) return NULL;
-  if(!slot->name){
-    backend->gl.GenTextures(1,&slot->name);
-    if(!slot->name) return NULL;
-  }
-  slot->image_class=image->image_class;
-  slot->identity=image->identity;
-  slot->linear=linear;
-  slot->uploaded=0;
-  slot->width=0;
-  slot->height=0;
-  return slot;
-}
-
-static int upload_source(GmlGpuBackend *backend,const GmlPlanImage *image,
-                         GmlGpuCounters *counters,GLuint *out_name,int linear){
-  GlSourceTexture *slot=acquire_source(backend,image,linear);
-  int recreate;
-  if(!slot) return 0;
-  slot->last_used=++backend->use_clock;
-  recreate=!slot->uploaded || slot->width!=image->width || slot->height!=image->height;
-  if(!recreate && slot->content_generation==image->content_generation &&
-     slot->pixel_generation==image->pixel_generation){
-    *out_name=slot->name;
-    return 1;
-  }
-  backend->gl.ActiveTexture(GL_TEXTURE0);
-  backend->gl.BindTexture(GL_TEXTURE_2D,slot->name);
-  backend->gl.PixelStorei(GL_UNPACK_ALIGNMENT,4);
-  backend->gl.PixelStorei(GL_UNPACK_ROW_LENGTH,(GLint)image->pitch_pixels);
-  if(recreate){
-    backend->gl.TexImage2D(GL_TEXTURE_2D,0,GL_RGBA8,(GLsizei)image->width,
-                           (GLsizei)image->height,0,GL_RGBA,GL_UNSIGNED_BYTE,
-                           image->cpu_pixels);
-    /* Nearest with clamped edges and exactly one level: a sampler that could reach a mip level or
-     * an edge outside the image would fetch a texel the software executor never selects. */
-    backend->gl.TexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,GL_NEAREST);
-    backend->gl.TexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAG_FILTER,GL_NEAREST);
-    backend->gl.TexParameteri(GL_TEXTURE_2D,GL_TEXTURE_WRAP_S,GL_CLAMP_TO_EDGE);
-    backend->gl.TexParameteri(GL_TEXTURE_2D,GL_TEXTURE_WRAP_T,GL_CLAMP_TO_EDGE);
-    backend->gl.TexParameteri(GL_TEXTURE_2D,GL_TEXTURE_BASE_LEVEL,0);
-    backend->gl.TexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAX_LEVEL,0);
-    slot->width=image->width;
-    slot->height=image->height;
-    slot->uploaded=1;
-  } else {
-    backend->gl.TexSubImage2D(GL_TEXTURE_2D,0,0,0,(GLsizei)image->width,
-                              (GLsizei)image->height,GL_RGBA,GL_UNSIGNED_BYTE,
-                              image->cpu_pixels);
-  }
-  backend->gl.PixelStorei(GL_UNPACK_ROW_LENGTH,0);
-  slot->content_generation=image->content_generation;
-  slot->pixel_generation=image->pixel_generation;
-  if(counters){
-    counters->full_uploads++;
-    counters->uploaded_bytes+=(uint64_t)image->width*image->height*4u;
-  }
-  *out_name=slot->name;
-  return 1;
-}
-
-static int axis_matches(const GlAxisMap *slot,const GmlPlanAxis *axis,uint32_t count){
-  return slot->valid && slot->count==count && slot->rule==axis->rule &&
-         slot->source_extent==axis->source_extent &&
-         slot->destination_extent==axis->destination_extent &&
-         slot->destination_first==axis->destination_first &&
-         slot->origin==axis->origin && slot->extent==axis->extent;
-}
-
-static int upload_axis(GmlGpuBackend *backend,uint32_t slot_index,const GmlPlanAxis *axis,
-                       uint32_t count,GmlGpuCounters *counters,GLuint *out_name){
-  GlAxisMap *slot;
-  if(slot_index>=GL_MAP_SLOTS || count==0u) return 0;
-  slot=&backend->maps[slot_index];
-  if(axis_matches(slot,axis,count) && slot->name){ *out_name=slot->name; return 1; }
-  if(backend->map_scratch_capacity<count){
-    uint16_t *grown=(uint16_t*)realloc(backend->map_scratch,(size_t)count*sizeof *grown);
-    if(!grown) return 0;
-    backend->map_scratch=grown;
-    backend->map_scratch_capacity=count;
-  }
-  if(!gml_render_plan_axis_map(axis,backend->map_scratch,count)) return 0;
-  if(!slot->name){
-    backend->gl.GenTextures(1,&slot->name);
-    if(!slot->name) return 0;
-    slot->capacity=0;
-  }
-  backend->gl.ActiveTexture(GL_TEXTURE0);
-  backend->gl.BindTexture(GL_TEXTURE_2D,slot->name);
-  backend->gl.PixelStorei(GL_UNPACK_ALIGNMENT,2);
-  backend->gl.PixelStorei(GL_UNPACK_ROW_LENGTH,0);
-  if(slot->capacity!=count){
-    backend->gl.TexImage2D(GL_TEXTURE_2D,0,(GLint)GL_R16UI,(GLsizei)count,1,0,
-                           GL_RED_INTEGER,GL_UNSIGNED_SHORT,backend->map_scratch);
-    backend->gl.TexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,GL_NEAREST);
-    backend->gl.TexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAG_FILTER,GL_NEAREST);
-    backend->gl.TexParameteri(GL_TEXTURE_2D,GL_TEXTURE_WRAP_S,GL_CLAMP_TO_EDGE);
-    backend->gl.TexParameteri(GL_TEXTURE_2D,GL_TEXTURE_WRAP_T,GL_CLAMP_TO_EDGE);
-    backend->gl.TexParameteri(GL_TEXTURE_2D,GL_TEXTURE_BASE_LEVEL,0);
-    backend->gl.TexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAX_LEVEL,0);
-    slot->capacity=count;
-  } else {
-    backend->gl.TexSubImage2D(GL_TEXTURE_2D,0,0,0,(GLsizei)count,1,
-                              GL_RED_INTEGER,GL_UNSIGNED_SHORT,backend->map_scratch);
-  }
-  backend->gl.PixelStorei(GL_UNPACK_ALIGNMENT,4);
-  slot->count=count;
-  slot->rule=axis->rule;
-  slot->source_extent=axis->source_extent;
-  slot->destination_extent=axis->destination_extent;
-  slot->destination_first=axis->destination_first;
-  slot->origin=axis->origin;
-  slot->extent=axis->extent;
-  slot->valid=1;
-  if(counters) counters->uploaded_bytes+=(uint64_t)count*2u;
-  *out_name=slot->name;
   return 1;
 }
 
@@ -816,14 +577,14 @@ static int execute_shader_draw(GmlGpuBackend *backend,GmlRenderPlan *plan,const 
     plan->fallback_reason=GML_PLAN_FALLBACK_SHADER_FAILURE;
     return 0;
   }
-  if(!upload_source(backend,image,counters,&source_name,op->linear?1:0)){
+  if(!gml_gpu_opengl_upload_source(backend,image,counters,&source_name,op->linear?1:0)){
     record_error(error,error_capacity,"graphics source upload failed");
     return 0;
   }
   for(uint32_t index=0;index<shader->sampler_count && index<GML_PLAN_MAX_SAMPLERS;index++){
     uint32_t bound=shader->samplers[index].image;
     if(bound==GML_PLAN_NO_IMAGE || bound>=plan->image_count) continue;
-    if(!upload_source(backend,&plan->images[bound],counters,&sampler_names[index],
+    if(!gml_gpu_opengl_upload_source(backend,&plan->images[bound],counters,&sampler_names[index],
                       shader->samplers[index].linear?1:0)){
       record_error(error,error_capacity,"graphics sampler upload failed");
       return 0;
@@ -1173,13 +934,13 @@ int gml_gpu_opengl_execute(GmlGpuBackend *backend,const GmlGpuContext *context,
         axis_x=identity_axis(image->width);
         axis_y=identity_axis(image->height);
       }
-      if(!upload_source(backend,image,counters,&source_name,op->linear?1:0)){
+      if(!gml_gpu_opengl_upload_source(backend,image,counters,&source_name,op->linear?1:0)){
         record_error(error,error_capacity,"graphics source upload failed");
         failed=1;
         break;
       }
-      if(!upload_axis(backend,index*2u,&axis_x,op->destination.width,counters,&map_x) ||
-         !upload_axis(backend,index*2u+1u,&axis_y,op->destination.height,counters,&map_y)){
+      if(!gml_gpu_opengl_upload_axis(backend,index*2u,&axis_x,op->destination.width,counters,&map_x) ||
+         !gml_gpu_opengl_upload_axis(backend,index*2u+1u,&axis_y,op->destination.height,counters,&map_y)){
         record_error(error,error_capacity,"graphics axis map upload failed");
         failed=1;
         break;
