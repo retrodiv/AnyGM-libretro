@@ -724,7 +724,7 @@ if [ "$renderer_asset_view_definitions" != "src/video/renderer/gml_render_assets
   exit 1
 fi
 
-renderer_raster_definition_files=$(find src/video/renderer -type f -name '*.c' \
+renderer_raster_definition_files=$(find src/video/renderer -type f -not -path 'src/video/renderer/gpu/opengl/*' -name '*.c' \
   -exec grep -l -E \
   '^[[:space:]]*(static[[:space:]]+)?(int|void|uint32_t)[[:space:]]+(gml_draw_(sprite|background|room_backgrounds|room_tiles|tile)|draw_sprite_nineslice|gml_render_shader_fill_rect|gml_render_backend_(color_to_xrgb|fill_xrgb|draw_pixel))([[:alnum:]_]*)[[:space:]]*\(' \
   {} + 2>/dev/null || true)
@@ -734,7 +734,7 @@ if [ "$renderer_raster_definition_files" != "src/video/renderer/gml_render_blit.
   exit 1
 fi
 
-renderer_runtime_sprite_definition_files=$(find src/video/renderer -type f -name '*.c' \
+renderer_runtime_sprite_definition_files=$(find src/video/renderer -type f -not -path 'src/video/renderer/gpu/opengl/*' -name '*.c' \
   -exec grep -l -E \
   '^[[:space:]]*(int|void)[[:space:]]+gml_(sprite_(append_from_rgba_frames|duplicate|set_alpha_from_sprite|set_offset|add_file|replace_from_rgba_frames|delete|collision_mask|create_from_surface|replace_from_file)|render_clear_runtime_sprites)[[:space:]]*\(' \
   {} + 2>/dev/null || true)
@@ -753,7 +753,7 @@ if [ "$renderer_atlas_definition_files" != "src/video/renderer/gml_render_atlas.
   exit 1
 fi
 
-renderer_surface_definition_files=$(find src/video/renderer -type f -name '*.c' -exec grep -l -E \
+renderer_surface_definition_files=$(find src/video/renderer -type f -not -path 'src/video/renderer/gpu/opengl/*' -name '*.c' -exec grep -l -E \
   '^[[:space:]]*(static[[:space:]]+)?(int|void|uint32_t[[:space:]]*\*|const[[:space:]]+uint32_t[[:space:]]*\*)[[:space:]]*(surface_(slot|known_opaque|known_transparent|alpha_all_zero|store_target_coverage|pixels)|draw_(scaled_full_surface_normal|surface_interp_phase|surface_region|surface_stretched_impl)|gml_(surface_(exists|width|height|pixels_read|copy|create|free|resize|set_target|reset_target|get_target)|draw_surface_(stretched|ext|part_ext)|render_backend_surface_stretched))[[:space:]]*\(' \
   {} + 2>/dev/null || true)
 if [ "$renderer_surface_definition_files" != "src/video/renderer/gml_render_surfaces.c" ]; then
@@ -762,7 +762,7 @@ if [ "$renderer_surface_definition_files" != "src/video/renderer/gml_render_surf
   exit 1
 fi
 
-renderer_final_pixel_definition_files=$(find src/video/renderer -type f \
+renderer_final_pixel_definition_files=$(find src/video/renderer -type f -not -path 'src/video/renderer/gpu/opengl/*' \
   \( -name '*.c' -o -name '*.h' \) -exec grep -l -E \
   '^[[:space:]]*static[[:space:]]+inline[[:space:]]+uint32_t[[:space:]]+(color_write_merge|blend_multiply_pixel)[[:space:]]*\(' \
   {} + 2>/dev/null || true)
@@ -772,7 +772,7 @@ if [ "$renderer_final_pixel_definition_files" != "src/video/renderer/gml_render_
   exit 1
 fi
 
-renderer_sampling_definition_files=$(find src/video/renderer -type f \
+renderer_sampling_definition_files=$(find src/video/renderer -type f -not -path 'src/video/renderer/gpu/opengl/*' \
   \( -name '*.c' -o -name '*.h' \) -exec grep -l -E \
   '^[[:space:]]*static[[:space:]]+inline[[:space:]]+([^[:space:]]+[[:space:]]+|const[[:space:]]+struct[[:space:]]+GmlShaderPal[[:space:]]*\*[[:space:]]*)(pal_map_px|pal_active|lut_active|grid_active|dual_active|radial_wave_active|radial_wave_sample_index|uv_wave_active|uv_wave_sample_index|grayscale_active|solid_alpha_mask_active|solid_blur_alpha_active|shader_active|shader_discards_alpha_value|shader_discards_alpha|shader_alpha_test_active|sprite_pixel_argb|sprite_pixel_rgb|lut_map_px|grid_map_px|grid_map_px_cached|mapped_texture_active|mapped_texture_pixel)[[:space:]]*\(' \
   {} + 2>/dev/null || true)
@@ -782,7 +782,7 @@ if [ "$renderer_sampling_definition_files" != "src/video/renderer/gml_render_sam
   exit 1
 fi
 
-renderer_blit_definition_files=$(find src/video/renderer -type f \
+renderer_blit_definition_files=$(find src/video/renderer -type f -not -path 'src/video/renderer/gpu/opengl/*' \
   \( -name '*.c' -o -name '*.h' \) -exec grep -l -E \
   '^[[:space:]]*static[[:space:]]+(inline[[:space:]]+)?(int|void|uint32_t)[[:space:]]+(render_modern_cardinal_anchor|blend_fast8_cached|row_all_opaque32|blend_fast8_src_run|surf_bi_band)[[:space:]]*\(' \
   {} + 2>/dev/null || true)
@@ -792,7 +792,7 @@ if [ "$renderer_blit_definition_files" != "src/video/renderer/gml_render_blit_in
   exit 1
 fi
 
-renderer_blit_record_files=$(find src/video/renderer -type f \
+renderer_blit_record_files=$(find src/video/renderer -type f -not -path 'src/video/renderer/gpu/opengl/*' \
   \( -name '*.c' -o -name '*.h' \) -exec grep -l -E \
   '}[[:space:]]+SurfBiCtx;' {} + 2>/dev/null || true)
 if [ "$renderer_blit_record_files" != "src/video/renderer/gml_render_blit_internal.h" ]; then
@@ -801,7 +801,7 @@ if [ "$renderer_blit_record_files" != "src/video/renderer/gml_render_blit_intern
   exit 1
 fi
 
-renderer_postprocess_definition_files=$(find src/video/renderer -type f -name '*.c' -exec grep -l -E \
+renderer_postprocess_definition_files=$(find src/video/renderer -type f -not -path 'src/video/renderer/gpu/opengl/*' -name '*.c' -exec grep -l -E \
   '^[[:space:]]*(static[[:space:]]+)?(inline[[:space:]]+)?(int|void|uint32_t)[[:space:]]+(dual_(u8|texel|fast_band)|draw_surface_dual_sample)[[:space:]]*\(' \
   {} + 2>/dev/null || true)
 if [ "$renderer_postprocess_definition_files" != "src/video/renderer/gml_render_postprocess.c" ]; then
@@ -810,7 +810,7 @@ if [ "$renderer_postprocess_definition_files" != "src/video/renderer/gml_render_
   exit 1
 fi
 
-renderer_postprocess_record_files=$(find src/video/renderer -type f \
+renderer_postprocess_record_files=$(find src/video/renderer -type f -not -path 'src/video/renderer/gpu/opengl/*' \
   \( -name '*.c' -o -name '*.h' \) -exec grep -l -E \
   '}[[:space:]]+DualFastCtx;' \
   {} + 2>/dev/null || true)
@@ -820,7 +820,7 @@ if [ "$renderer_postprocess_record_files" != "src/video/renderer/gml_render_post
   exit 1
 fi
 
-renderer_effect_definition_files=$(find src/video/renderer -type f -name '*.c' -exec grep -l -E \
+renderer_effect_definition_files=$(find src/video/renderer -type f -not -path 'src/video/renderer/gpu/opengl/*' -name '*.c' -exec grep -l -E \
   '^[[:space:]]*(static[[:space:]]+)?(inline[[:space:]]+)?(void|int|float|uint8_t|uint32_t)[[:space:]]+(effect_(wrap_coord|unorm8)|layer_[[:alnum:]_]+|gml_render_layer_(rgb_noise|tint|filter_begin|filter_end))[[:space:]]*\(' \
   {} + 2>/dev/null || true)
 if [ "$renderer_effect_definition_files" != "src/video/renderer/gml_render_effects.c" ]; then
@@ -829,7 +829,7 @@ if [ "$renderer_effect_definition_files" != "src/video/renderer/gml_render_effec
   exit 1
 fi
 
-renderer_shader_recognition_definition_files=$(find src/video/renderer -type f -name '*.c' -exec grep -l -E \
+renderer_shader_recognition_definition_files=$(find src/video/renderer -type f -not -path 'src/video/renderer/gpu/opengl/*' -name '*.c' -exec grep -l -E \
   '^[[:space:]]*(static[[:space:]]+)?(const[[:space:]]+void[[:space:]]*\*|char[[:space:]]*\*|void|int)[[:space:]]+(pal_parse_vec3|mem_find|glsl_[[:alnum:]_]+|parse_shader_palettes)[[:space:]]*\(' \
   {} + 2>/dev/null || true)
 if [ "$renderer_shader_recognition_definition_files" != "src/video/renderer/gml_render_effects.c" ]; then
@@ -838,7 +838,7 @@ if [ "$renderer_shader_recognition_definition_files" != "src/video/renderer/gml_
   exit 1
 fi
 
-renderer_text_definition_files=$(find src/video/renderer -type f -name '*.c' -exec grep -l -E \
+renderer_text_definition_files=$(find src/video/renderer -type f -not -path 'src/video/renderer/gpu/opengl/*' -name '*.c' -exec grep -l -E \
   '^[[:space:]]*(static[[:space:]]+)?(void|int|double)[[:space:]]+(parse_font|build_default_font|gml_font_(add_sprite|add_sprite_ext|add_file|delete)|gml_render_rebuild_font_maps|gml_text_(width|height|width_ext|height_ext)|gml_draw_(classic_game_information|text|text_transformed|text_ext|text_ext_transformed))[[:space:]]*\(' \
   {} + 2>/dev/null || true)
 if [ "$renderer_text_definition_files" != "src/video/renderer/gml_render_text.c" ]; then

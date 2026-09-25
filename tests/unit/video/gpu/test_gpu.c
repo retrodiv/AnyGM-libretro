@@ -14,7 +14,7 @@
 #include "anygm_test_runner.h"
 
 #include "gml_gpu.h"
-#include "gml_gpu_gl_api.h"
+#include "gml_gpu_opengl_api.h"
 #include "graphics_driver_fixture.h"
 
 #include <stdint.h>

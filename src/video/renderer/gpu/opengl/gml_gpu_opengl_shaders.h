@@ -1,8 +1,8 @@
 /* SPDX-License-Identifier: MIT
  * Copyright (c) 2026 retrodiv <retrodiv@proton.me>
  */
-#ifndef GML_GPU_GL_SHADERS_H
-#define GML_GPU_GL_SHADERS_H
+#ifndef GML_GPU_OPENGL_SHADERS_H
+#define GML_GPU_OPENGL_SHADERS_H
 
 /* The two shader bodies this backend uses, checked in rather than generated: a production build
  * runs no generator and reaches no network.
@@ -17,10 +17,10 @@
  * byte-order swizzle is chosen from the machine's own layout, so one body serves desktop OpenGL and
  * OpenGL ES on either endianness. */
 
-#define GML_GPU_GL_PREFIX_DESKTOP \
+#define GML_GPU_OPENGL_PREFIX_DESKTOP \
   "#version 330 core\n"
 
-#define GML_GPU_GL_PREFIX_ES \
+#define GML_GPU_OPENGL_PREFIX_ES \
   "#version 300 es\n" \
   "precision highp float;\n" \
   "precision highp int;\n" \
@@ -30,7 +30,7 @@
 /* A single triangle larger than the viewport. It needs no vertex buffer and no attributes, which
  * removes an upload and a piece of state to restore; the viewport and the scissor bound what it
  * covers. */
-#define GML_GPU_GL_VERTEX_BODY \
+#define GML_GPU_OPENGL_VERTEX_BODY \
   "void main(){\n" \
   "  vec2 corner=vec2((gl_VertexID==1)?3.0:-1.0,(gl_VertexID==2)?3.0:-1.0);\n" \
   "  gl_Position=vec4(corner,0.0,1.0);\n" \
@@ -39,7 +39,7 @@
 /* u_map_x and u_map_y hold the exact source index for every destination index, built on the CPU
  * from the same expression the software executor walks. u_target_height converts the framebuffer's
  * bottom-left row to the top-left row AnyGM addresses. */
-#define GML_GPU_GL_FRAGMENT_BODY_HEAD \
+#define GML_GPU_OPENGL_FRAGMENT_BODY_HEAD \
   "uniform sampler2D u_source;\n" \
   "uniform usampler2D u_map_x;\n" \
   "uniform usampler2D u_map_y;\n" \
@@ -57,12 +57,12 @@
 /* The source arrives as raw XRGB words uploaded as bytes, so the component order the sampler sees
  * is the machine's memory order rather than red-green-blue. Permuting components is exact; it
  * moves values without computing on them. */
-#define GML_GPU_GL_FRAGMENT_SWIZZLE_LITTLE \
+#define GML_GPU_OPENGL_FRAGMENT_SWIZZLE_LITTLE \
   "  o_color=vec4(texel.b,texel.g,texel.r,1.0);\n"
-#define GML_GPU_GL_FRAGMENT_SWIZZLE_BIG \
+#define GML_GPU_OPENGL_FRAGMENT_SWIZZLE_BIG \
   "  o_color=vec4(texel.g,texel.b,texel.a,1.0);\n"
 
-#define GML_GPU_GL_FRAGMENT_BODY_TAIL \
+#define GML_GPU_OPENGL_FRAGMENT_BODY_TAIL \
   "}\n"
 
 #endif

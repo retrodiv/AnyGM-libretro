@@ -201,8 +201,8 @@ ANYGM_GPU_SOURCES :=
 ANYGM_LIBRETRO_HARDWARE_SOURCES :=
 else
 ANYGM_GPU_SOURCES := \
-	src/video/gpu/gml_gpu.c \
-	src/video/gpu/gml_gpu_gl.c
+	src/video/renderer/gpu/gml_gpu.c \
+	src/video/renderer/gpu/opengl/gml_gpu_opengl.c
 ANYGM_LIBRETRO_HARDWARE_SOURCES := \
 	src/adapters/libretro/libretro_hw_render.c
 endif
@@ -364,7 +364,10 @@ ANYGM_RUNTIME_INCLUDE_DIRS := \
 	src/third_party/box2d/include \
 	src/third_party/box2d/src \
 	src/video/renderer \
-	src/video/gpu \
+	src/video/renderer/common \
+	src/video/renderer/cpu \
+	src/video/renderer/gpu \
+	src/video/renderer/gpu/opengl \
 	src/video/software3d \
 	src/video/assets \
 	src/audio/mixer \

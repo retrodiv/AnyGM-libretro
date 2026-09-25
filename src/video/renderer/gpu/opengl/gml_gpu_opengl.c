@@ -9,8 +9,8 @@
  * library, and keeps no process-global state: a frontend running two cores must not have one
  * instance calling into the other's context. */
 #include "gml_gpu_internal.h"
-#include "gml_gpu_gl_api.h"
-#include "gml_gpu_gl_shaders.h"
+#include "gml_gpu_opengl_api.h"
+#include "gml_gpu_opengl_shaders.h"
 
 #include <ctype.h>
 #include <stdarg.h>
@@ -134,7 +134,7 @@ static void record_error(char *error,size_t capacity,const char *format,...){
   va_end(arguments);
 }
 
-GmlGpuBackend *gml_gpu_gl_create(void){
+GmlGpuBackend *gml_gpu_opengl_create(void){
   GmlGpuBackend *backend=(GmlGpuBackend*)calloc(1,sizeof *backend);
   if(!backend) return NULL;
   {
@@ -152,7 +152,7 @@ GmlGpuBackend *gml_gpu_gl_create(void){
 /* Forgetting is not deleting. When a context disappears without notice its objects are already
  * gone, and naming them against a different context would delete something that belongs to
  * somebody else. */
-void gml_gpu_gl_forget(GmlGpuBackend *backend){
+void gml_gpu_opengl_forget(GmlGpuBackend *backend){
   if(!backend) return;
   backend->loaded=0;
   backend->program=0;
@@ -196,7 +196,7 @@ static void delete_objects(GmlGpuBackend *backend){
     backend->gl.DeleteVertexArrays(1,&backend->vertex_array);
 }
 
-void gml_gpu_gl_destroy(GmlGpuBackend *backend,int context_is_current){
+void gml_gpu_opengl_destroy(GmlGpuBackend *backend,int context_is_current){
   if(!backend) return;
   if(context_is_current) delete_objects(backend);
   free(backend->map_scratch);
@@ -316,15 +316,15 @@ static int build_program(GmlGpuBackend *backend,char *error,size_t error_capacit
   char vertex_source[512];
   char fragment_source[1536];
   const char *prefix=backend->api==GML_GPU_API_OPENGLES3
-    ?GML_GPU_GL_PREFIX_ES:GML_GPU_GL_PREFIX_DESKTOP;
+    ?GML_GPU_OPENGL_PREFIX_ES:GML_GPU_OPENGL_PREFIX_DESKTOP;
   GLuint vertex,fragment;
   GLint status=GL_FALSE;
-  snprintf(vertex_source,sizeof vertex_source,"%s%s",prefix,GML_GPU_GL_VERTEX_BODY);
+  snprintf(vertex_source,sizeof vertex_source,"%s%s",prefix,GML_GPU_OPENGL_VERTEX_BODY);
   snprintf(fragment_source,sizeof fragment_source,"%s%s%s%s",prefix,
-           GML_GPU_GL_FRAGMENT_BODY_HEAD,
-           backend->little_endian?GML_GPU_GL_FRAGMENT_SWIZZLE_LITTLE
-                                 :GML_GPU_GL_FRAGMENT_SWIZZLE_BIG,
-           GML_GPU_GL_FRAGMENT_BODY_TAIL);
+           GML_GPU_OPENGL_FRAGMENT_BODY_HEAD,
+           backend->little_endian?GML_GPU_OPENGL_FRAGMENT_SWIZZLE_LITTLE
+                                 :GML_GPU_OPENGL_FRAGMENT_SWIZZLE_BIG,
+           GML_GPU_OPENGL_FRAGMENT_BODY_TAIL);
   vertex=compile_stage(backend,GL_VERTEX_SHADER,vertex_source,error,error_capacity);
   if(!vertex) return 0;
   fragment=compile_stage(backend,GL_FRAGMENT_SHADER,fragment_source,error,error_capacity);
@@ -369,10 +369,10 @@ static int build_program(GmlGpuBackend *backend,char *error,size_t error_capacit
   return 1;
 }
 
-int gml_gpu_gl_reset(GmlGpuBackend *backend,const GmlGpuContext *context,
+int gml_gpu_opengl_reset(GmlGpuBackend *backend,const GmlGpuContext *context,
                      char *error,size_t error_capacity){
   if(!backend || !context) return 0;
-  gml_gpu_gl_forget(backend);
+  gml_gpu_opengl_forget(backend);
   backend->api=context->api;
   if(!load_entry_points(backend,context,error,error_capacity)) return 0;
   backend->loaded=1;
@@ -1039,7 +1039,7 @@ static int read_back_target(GmlGpuBackend *backend,GmlRenderPlan *plan,char *err
   return 1;
 }
 
-void gml_gpu_gl_set_readback_pipelined(GmlGpuBackend *backend,int pipelined){
+void gml_gpu_opengl_set_readback_pipelined(GmlGpuBackend *backend,int pipelined){
   if(backend) backend->readback_pipelined=pipelined?1:0;
 }
 
@@ -1114,7 +1114,7 @@ static int read_back_target_pipelined(GmlGpuBackend *backend,GmlRenderPlan *plan
   return 1;
 }
 
-int gml_gpu_gl_execute(GmlGpuBackend *backend,const GmlGpuContext *context,
+int gml_gpu_opengl_execute(GmlGpuBackend *backend,const GmlGpuContext *context,
                        GmlRenderPlan *plan,GmlGpuCounters *counters,
                        char *error,size_t error_capacity){
   uintptr_t framebuffer;

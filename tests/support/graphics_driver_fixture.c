@@ -5,7 +5,7 @@
  * cannot prove. */
 #include "graphics_driver_fixture.h"
 
-#include "gml_gpu_gl_api.h"
+#include "gml_gpu_opengl_api.h"
 
 #include <stdio.h>
 #include <stdlib.h>

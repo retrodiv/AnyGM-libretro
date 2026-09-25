@@ -469,7 +469,7 @@ path: `gml_render.c` keeps, per shader the renderer recognizes no family in, the
 samplers the content sets by name; `gml_render_presentation.c` records a frame the content drew
 through such a shader as a deferred presentation that names the program; `engine_graphics.c` turns
 that record into a `SHADER_DRAW` plan operation carrying the program's lent sources, values and
-sampler pictures; and `gml_gpu_gl.c` compiles the program once per context, respells it into the
+sampler pictures; and `gml_gpu_opengl.c` compiles the program once per context, respells it into the
 dialect the context accepts, and draws the frame through it. A program the device refuses is
 retired by the renderer for the session, so the frame is presented unshaded and `shader_is_compiled`
 answers no for it, as it would under a driver that refused it. A surface drawn through such a
@@ -529,14 +529,14 @@ remain direct and header-local, so coarse draw preparation, opacity queries,
 profiling hooks, and row-band dispatch may cross renderer implementation units
 but no sampling, blending, or final-pixel call does.
 
-An optional graphics target sits beside that plan rather than inside the renderer. It serves two
+An optional graphics target sits beside the neutral plan as a separate execution owner. It serves two
 independent host policies: content GLSL may execute unrecognized authored programs, while hybrid
 presentation may execute eligible final scaling and composition. Enabling either one does not
 enable the other; when both are enabled they share the same context. A context required only for
 content GLSL may still carry a completed software frame to the frontend when no program owns that
 frame, but that transport is counted separately and is not final-pass acceleration.
-`src/video/gpu/` owns the context lifetime, the capability and resource generations, and one direct
-OpenGL / OpenGL ES backend; `src/core/engine_graphics.c` is the only core file that knows it exists,
+`src/video/renderer/gpu/` owns the context lifetime, the capability and resource generations, and
+`gpu/opengl/` owns the direct OpenGL / OpenGL ES backend; `src/core/engine_graphics.c` is the only core file that knows it exists,
 and the whole feature reaches the rest of the engine through one pointer on `AnygmEngine`. Eligible
 plans execute there; everything else keeps the software executor. A `GmlGpu` is a derived cache with
 a lifecycle rather than state: it is never serialized, it is absent from the state configuration

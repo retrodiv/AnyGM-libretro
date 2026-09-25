@@ -21,20 +21,20 @@ struct GmlGpu {
   char error[192];
 };
 
-GmlGpuBackend *gml_gpu_gl_create(void);
+GmlGpuBackend *gml_gpu_opengl_create(void);
 /* Deletes graphics objects only while the context is still current. */
-void gml_gpu_gl_destroy(GmlGpuBackend *backend,int context_is_current);
+void gml_gpu_opengl_destroy(GmlGpuBackend *backend,int context_is_current);
 /* The context went away without notice: drop every handle without issuing a call. */
-void gml_gpu_gl_forget(GmlGpuBackend *backend);
-int gml_gpu_gl_reset(GmlGpuBackend *backend,const GmlGpuContext *context,
+void gml_gpu_opengl_forget(GmlGpuBackend *backend);
+int gml_gpu_opengl_reset(GmlGpuBackend *backend,const GmlGpuContext *context,
                      char *error,size_t error_capacity);
 /* Executes the plan. A refusal that is the content program's - it did not compile or link - is
  * reported in the plan's fallback reason as well as the return value, so the caller can retire the
  * program rather than retry it every frame. */
 /* Take the pipelined read-back: a pass reads what the previous pass of the same program left and
  * starts its own without waiting. The answer is one frame old, which is what removes the stall. */
-void gml_gpu_gl_set_readback_pipelined(GmlGpuBackend *backend,int pipelined);
-int gml_gpu_gl_execute(GmlGpuBackend *backend,const GmlGpuContext *context,
+void gml_gpu_opengl_set_readback_pipelined(GmlGpuBackend *backend,int pipelined);
+int gml_gpu_opengl_execute(GmlGpuBackend *backend,const GmlGpuContext *context,
                        GmlRenderPlan *plan,GmlGpuCounters *counters,
                        char *error,size_t error_capacity);
 

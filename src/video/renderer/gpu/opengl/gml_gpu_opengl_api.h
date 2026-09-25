@@ -1,8 +1,8 @@
 /* SPDX-License-Identifier: MIT
  * Copyright (c) 2026 retrodiv <retrodiv@proton.me>
  */
-#ifndef GML_GPU_GL_API_H
-#define GML_GPU_GL_API_H
+#ifndef GML_GPU_OPENGL_API_H
+#define GML_GPU_OPENGL_API_H
 
 #include <stddef.h>
 #include <stdint.h>

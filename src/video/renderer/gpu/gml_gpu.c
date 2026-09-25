@@ -12,14 +12,14 @@
 GmlGpu *gml_gpu_create(void){
   GmlGpu *gpu=(GmlGpu*)calloc(1,sizeof *gpu);
   if(!gpu) return NULL;
-  gpu->backend=gml_gpu_gl_create();
+  gpu->backend=gml_gpu_opengl_create();
   if(!gpu->backend){ free(gpu); return NULL; }
   return gpu;
 }
 
 void gml_gpu_destroy(GmlGpu *gpu,int context_is_current){
   if(!gpu) return;
-  gml_gpu_gl_destroy(gpu->backend,context_is_current && gpu->context_active);
+  gml_gpu_opengl_destroy(gpu->backend,context_is_current && gpu->context_active);
   free(gpu);
 }
 
@@ -32,13 +32,13 @@ int gml_gpu_context_reset(GmlGpu *gpu,const GmlGpuContext *context){
   }
   /* A reset with no destroy before it means the previous context is already gone. Deleting into
    * the new one would name objects that never existed there, so forget them first. */
-  if(gpu->context_active) gml_gpu_gl_forget(gpu->backend);
+  if(gpu->context_active) gml_gpu_opengl_forget(gpu->backend);
   gpu->context=*context;
   gpu->context_active=0;
   gpu->error[0]='\0';
-  if(!gml_gpu_gl_reset(gpu->backend,&gpu->context,gpu->error,sizeof gpu->error)){
+  if(!gml_gpu_opengl_reset(gpu->backend,&gpu->context,gpu->error,sizeof gpu->error)){
     gpu->counters.program_failures++;
-    gml_gpu_gl_forget(gpu->backend);
+    gml_gpu_opengl_forget(gpu->backend);
     memset(&gpu->context,0,sizeof gpu->context);
     return 0;
   }
@@ -49,7 +49,7 @@ int gml_gpu_context_reset(GmlGpu *gpu,const GmlGpuContext *context){
 
 void gml_gpu_context_lost(GmlGpu *gpu){
   if(!gpu || !gpu->context_active) return;
-  gml_gpu_gl_forget(gpu->backend);
+  gml_gpu_opengl_forget(gpu->backend);
   gpu->context_active=0;
   gpu->counters.context_losses++;
   memset(&gpu->context,0,sizeof gpu->context);
@@ -76,7 +76,7 @@ int gml_gpu_execute_plan(GmlGpu *gpu,GmlRenderPlan *plan){
     return 0;
   }
   plan->fallback_reason=GML_PLAN_FALLBACK_NONE;
-  if(!gml_gpu_gl_execute(gpu->backend,&gpu->context,plan,&gpu->counters,
+  if(!gml_gpu_opengl_execute(gpu->backend,&gpu->context,plan,&gpu->counters,
                          gpu->error,sizeof gpu->error)){
     if(plan->fallback_reason!=GML_PLAN_FALLBACK_SHADER_FAILURE)
       plan->fallback_reason=GML_PLAN_FALLBACK_RESOURCE_UPLOAD_FAILURE;
@@ -104,7 +104,7 @@ void gml_gpu_counters(const GmlGpu *gpu,GmlGpuCounters *counters){
 }
 
 void gml_gpu_set_readback_pipelined(GmlGpu *gpu,int pipelined){
-  if(gpu && gpu->backend) gml_gpu_gl_set_readback_pipelined(gpu->backend,pipelined);
+  if(gpu && gpu->backend) gml_gpu_opengl_set_readback_pipelined(gpu->backend,pipelined);
 }
 
 const char *gml_gpu_last_error(const GmlGpu *gpu){

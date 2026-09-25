@@ -241,7 +241,7 @@ origin is documented deliberately instead of discovered.
   recognizers in this tree do not establish that
   every content shader is supported or faithfully reproduced.
 - **Content programs on the host's graphics context**
-  (`src/video/gpu/gml_gpu_gl.c`, `src/video/renderer/gml_render_presentation.c`,
+  (`src/video/renderer/gpu/opengl/gml_gpu_opengl.c`, `src/video/renderer/gml_render_presentation.c`,
   `src/core/engine_graphics.c`). A shader the software renderer recognizes no
   family in can execute as the content's own program on an eligible graphics
   path: the GLSL ES text the
@@ -273,7 +273,7 @@ origin is documented deliberately instead of discovered.
 
 ## Graphics entry-point declarations
 
-`src/video/gpu/gml_gpu_gl_api.h` is a first-party declaration set for the
+`src/video/renderer/gpu/opengl/gml_gpu_opengl_api.h` is a first-party declaration set for the
 OpenGL entry points the optional graphics backend uses. It names the required
 type widths, enumerants, and function signatures without incorporating a
 platform loader. The host supplies a callback that resolves each entry point
@@ -282,7 +282,7 @@ the declaration set in one owner also makes the graphics boundary check
 enforceable. These values describe the Khronos interface, not a copied
 implementation.
 
-`src/video/gpu/gml_gpu_gl_shaders.h` contains the two first-party shader
+`src/video/renderer/gpu/opengl/gml_gpu_opengl_shaders.h` contains the two first-party shader
 bodies compiled by that backend. They are checked in so an ordinary
 production build neither generates them nor accesses a network.
 
