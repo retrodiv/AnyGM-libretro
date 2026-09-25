@@ -461,7 +461,7 @@ implementation: an alternative execution is accepted only when it reproduces the
 and any pass that cannot be is replayed here in full. The plan carries value records only — no
 graphics API type, no host callback, no function pointer — and is never serialized under any schema.
 
-`gml_render_surfaces.c` owns surface lookup and coverage metadata, allocation,
+`cpu/gml_render_cpu_surfaces.c` temporarily owns surface lookup and coverage metadata, allocation,
 copy, resize, free, target-stack operations, and the complete normal,
 interpolated, part, stretched, and rotated surface composition kernels. The
 facade may request one coarse surface composition while flushing a deferred
@@ -495,7 +495,7 @@ dialect the context accepts, and draws the frame through it. A program the devic
 retired by the renderer for the session, so the frame is presented unshaded and `shader_is_compiled`
 answers no for it, as it would under a driver that refused it. A surface drawn through such a
 program anywhere else in the frame goes through the renderer's executor hook instead:
-`gml_render_surfaces.c` asks the host to run the program over the surface at the destination's
+`cpu/gml_render_cpu_surfaces.c` asks the host to run the program over the surface at the destination's
 size, `engine_graphics.c` executes that as a plan whose target is read back, and the answer is
 composed in software as a surface of that size with the draw's own blend and alpha; the software
 renderer remains the complete implementation, and a host without a context, or a program the

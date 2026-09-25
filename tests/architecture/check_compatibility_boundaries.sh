@@ -765,8 +765,8 @@ fi
 renderer_surface_definition_files=$(find src/video/renderer -type f -not -path 'src/video/renderer/gpu/opengl/*' -name '*.c' -exec grep -l -E \
   '^[[:space:]]*(static[[:space:]]+)?(int|void|uint32_t[[:space:]]*\*|const[[:space:]]+uint32_t[[:space:]]*\*)[[:space:]]*(surface_(slot|known_opaque|known_transparent|alpha_all_zero|store_target_coverage|pixels)|draw_(scaled_full_surface_normal|surface_interp_phase|surface_region|surface_stretched_impl)|gml_(surface_(exists|width|height|pixels_read|copy|create|free|resize|set_target|reset_target|get_target)|draw_surface_(stretched|ext|part_ext)|render_backend_surface_stretched))[[:space:]]*\(' \
   {} + 2>/dev/null || true)
-if [ "$renderer_surface_definition_files" != "src/video/renderer/gml_render_surfaces.c" ]; then
-  printf '%s\n' "Renderer surface storage, targets, and complete composition definitions belong only to gml_render_surfaces.c:" >&2
+if [ "$renderer_surface_definition_files" != "src/video/renderer/cpu/gml_render_cpu_surfaces.c" ]; then
+  printf '%s\n' "Renderer surface storage, targets, and complete composition definitions belong only to cpu/gml_render_cpu_surfaces.c:" >&2
   printf '%s\n' "$renderer_surface_definition_files" >&2
   exit 1
 fi
@@ -981,8 +981,8 @@ fail_matches "Software-3D target and draw policy must stay behind backend leaves
 renderer_surface_backend_definitions=$(find src -type f -name '*.c' -exec grep -l -E \
   '^[[:space:]]*int[[:space:]]+gml_render_cpu_backend_surface_stretched[[:space:]]*\(' \
   {} + 2>/dev/null || true)
-if [ "$renderer_surface_backend_definitions" != "src/video/renderer/gml_render_surfaces.c" ]; then
-  printf '%s\n' "The non-reentrant stretched-surface backend belongs only to gml_render_surfaces.c:" >&2
+if [ "$renderer_surface_backend_definitions" != "src/video/renderer/cpu/gml_render_cpu_surfaces.c" ]; then
+  printf '%s\n' "The non-reentrant stretched-surface backend belongs only to cpu/gml_render_cpu_surfaces.c:" >&2
   printf '%s\n' "$renderer_surface_backend_definitions" >&2
   exit 1
 fi
