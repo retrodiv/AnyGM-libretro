@@ -454,10 +454,10 @@ background source preparation, exact tiled repetition/phase choice, part and rot
 cache-detached subrectangle views, and ordered room-background traversal. The CPU blit owner retains sprite, background, paint,
 axis-cache, and low-level pixel raster closure. `common/gml_render_sprites.c` now owns
 ordinary sprite alpha, runtime frame selection, part source/transform/shader decisions,
-tiled-sprite repetition, sprite-backed background-layer preparation, and extended sprite
-shader/Spine/D3 choice. Masked extended/tiled dispatch and stretched/positioned draws remain
-with the connected CPU closure pending
-their shared extraction. Keeping those mutually calling
+tiled-sprite repetition, sprite-backed background-layer preparation, extended sprite
+shader/Spine/D3 choice, and stretched-sprite view/D3/shader preparation. Masked
+extended/tiled dispatch, stretched raster and positioned draws remain with the connected
+CPU closure pending positioned-draw preparation. Keeping those mutually calling
 hot kernels in one translation unit avoids introducing per-pixel indirection
 or cross-unit calls. Its size is therefore an intentional exception to the
 soft source-size trigger, supported by the frame-boundary allocation and

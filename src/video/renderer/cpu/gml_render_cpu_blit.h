@@ -17,6 +17,10 @@ void gml_render_cpu_blit_sprite_ext_resolved(GmlRender *render, GmlSprite *sprit
                                              int sprite, int subimage, double x, double y,
                                              double xscale, double yscale, double rotation,
                                              uint32_t blend, double alpha);
+void gml_render_cpu_blit_sprite_stretched_resolved(GmlRender *render, GmlSprite *sprite_record,
+                                                    int frame, double x, double y,
+                                                    double width, double height,
+                                                    uint32_t blend, double alpha);
 
 /* Existing coarse sprite-region raster entries; sources remain borrowed. */
 void gml_render_cpu_blit_rgba_region(GmlRender *r, const uint8_t *source, int width, int height,
