@@ -109,6 +109,18 @@ void gml_draw_surface_part_ext(GmlRender *r,int surf,double sx,double sy,double 
   }
   gml_render_cpu_draw_surface_part_mapped(r,surf,sx,sy,sw,sh,dx,dy,xs,ys,blend,alpha);
 }
+void gml_draw_surface_ext(GmlRender *r,int surf,double x,double y,
+                          double xs,double ys,double rot,uint32_t blend,double alpha){
+  double rr=fmod(rot,360.0); if(rr<0) rr+=360.0;
+  if(fabs(rr)<0.001 || fabs(rr-360.0)<0.001){
+    int sw=gml_surface_width(r,surf),sh=gml_surface_height(r,surf);
+    if(sw>0&&sh>0) gml_draw_surface_stretched(r,surf,x,y,sw*xs,sh*ys,blend,alpha);
+    return;
+  }
+  gml_render_draw_map_point(r,&x,&y);
+  gml_render_draw_map_scale(r,&xs,&ys);
+  gml_render_cpu_draw_surface_ext_mapped(r,surf,x,y,xs,ys,rr,blend,alpha);
+}
 const uint32_t *gml_surface_pixels_read(GmlRender *r, int id, int *w, int *h){
   if(!r) return NULL;
   if(id==r->target_id) gml_render_maybe_prepare_draw(r);

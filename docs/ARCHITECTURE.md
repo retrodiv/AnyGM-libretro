@@ -477,7 +477,7 @@ graphics API type, no host callback, no function pointer — and is never serial
 
 `common/gml_render_surfaces.c` owns surface identity, lookup and coverage metadata,
 allocation, resize, free, target-stack operations, the established CPU-view read barrier,
-screen-raster target policy, and stretched/part draw-request preparation.
+screen-raster target policy, and stretched/part/rotated draw-request preparation.
 `cpu/gml_render_cpu_surfaces.c` retains deferred-fill realization, copies, and the complete normal,
 interpolated, part, stretched, and rotated surface composition kernels. The
 facade may request one coarse surface composition while flushing a deferred
@@ -486,6 +486,11 @@ and recognized post-process owners. The instance-owned row-band pool and its por
 bridge live in `cpu/gml_render_cpu_workers.c`; renderer teardown joins it before freeing raster
 workspaces. No per-pixel call crosses those
 translation-unit seams.
+The existing tiled-surface entry remains a connected CPU source/repetition closure: it validates
+and borrows the source pixels before mapping the repeat phase. Splitting it in P1 would reorder
+that read barrier or duplicate pixel acquisition. P3 resource authority and scene-operation
+dispatch must separate that request at the same observation boundary; P1 does not create a
+transitional duplicate or change its sequencing.
 
 Ordinary text measurement, alignment and glyph selection remain in
 `common/gml_render_text.c`. Its existing classic information-page subpixel

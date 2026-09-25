@@ -14,5 +14,8 @@ void gml_render_cpu_draw_surface_part_mapped(GmlRender *render, int surface,
                                               double sx, double sy, double sw, double sh,
                                               double x, double y, double xs, double ys,
                                               uint32_t blend, double alpha);
+void gml_render_cpu_draw_surface_ext_mapped(GmlRender *render, int surface,
+                                              double x, double y, double xs, double ys,
+                                              double rotation, uint32_t blend, double alpha);
 
 #endif

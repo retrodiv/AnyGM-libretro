@@ -1275,16 +1275,8 @@ int gml_render_cpu_backend_surface_stretched(GmlRender *r,int surf,double dx,dou
 /* draw_surface_ext rotates around its (x,y) origin, unlike a stretched surface call. Keep this
  * portable software path independent of shaders/GPU APIs; it also provides the fixed-function
  * multiply blend used by surface light masks. */
-void gml_draw_surface_ext(GmlRender *r,int surf,double x,double y,
-                          double xs,double ys,double rot,uint32_t blend,double alpha){
-  double rr=fmod(rot,360.0); if(rr<0) rr+=360.0;
-  if(fabs(rr)<0.001 || fabs(rr-360.0)<0.001){
-    int sw=gml_surface_width(r,surf),sh=gml_surface_height(r,surf);
-    if(sw>0&&sh>0) gml_draw_surface_stretched(r,surf,x,y,sw*xs,sh*ys,blend,alpha);
-    return;
-  }
-  gml_render_draw_map_point(r,&x,&y);
-  gml_render_draw_map_scale(r,&xs,&ys);
+void gml_render_cpu_draw_surface_ext_mapped(GmlRender *r,int surf,double x,double y,
+                                           double xs,double ys,double rr,uint32_t blend,double alpha){
   int sw=0,sh=0; uint32_t *src=surface_pixels(r,surf,&sw,&sh);
   if(!r||!r->fb||!src||sw<=0||sh<=0||xs==0.0||ys==0.0||alpha<=0.0) return;
   if(alpha>1.0) alpha=1.0;
