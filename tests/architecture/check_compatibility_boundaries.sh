@@ -1036,11 +1036,20 @@ fail_matches "Builtins must use opaque renderer shader control operations:" \
   "$builtin_renderer_shader_field_access"
 
 renderer_control_definition_files=$(find src -type f -name '*.c' -exec grep -l -E \
-  '^[[:space:]]*(int|void)[[:space:]]+gml_render_(set_frame|control_update|resource_metrics|diagnostic_metrics|target_metrics|target_metrics_update|target_coverage|target_coverage_update|presentation_metrics|presentation_effective_set|sample_planes_update|application_surface_bind|application_surface_owned_clear|application_surface_select_owned|surface_mirror_pixels|draw_state_get|draw_state_update|gpu_state_push|gpu_state_pop|application_surface_set_draw_enabled|target_pixel|shader_set_current|shader_current|shader_is_compiled|shader_uniform_handle|shader_sampler_handle|shader_uniform_set|shader_texture_stage_set)[[:space:]]*\(' \
+  '^[[:space:]]*(int|void)[[:space:]]+gml_render_(set_frame|control_update|resource_metrics|diagnostic_metrics|target_metrics|target_metrics_update|target_coverage|target_coverage_update|presentation_metrics|presentation_effective_set|sample_planes_update|application_surface_bind|application_surface_owned_clear|application_surface_select_owned|surface_mirror_pixels|draw_state_get|draw_state_update|gpu_state_push|gpu_state_pop|application_surface_set_draw_enabled|target_pixel)[[:space:]]*\(' \
   {} + 2>/dev/null || true)
 if [ "$renderer_control_definition_files" != "src/video/renderer/gml_render.c" ]; then
-  printf '%s\n' "Renderer frame, target, and shader control operations belong only to gml_render.c:" >&2
+  printf '%s\n' "Renderer frame and target control operations belong only to gml_render.c:" >&2
   printf '%s\n' "$renderer_control_definition_files" >&2
+  exit 1
+fi
+
+renderer_shader_definition_files=$(find src -type f -name '*.c' -exec grep -l -E \
+  '^[[:space:]]*(int|void)[[:space:]]+gml_render_(shader_set_current|shader_current|shader_is_compiled|shader_uniform_handle|shader_sampler_handle|shader_uniform_set|shader_texture_stage_set)[[:space:]]*\(' \
+  {} + 2>/dev/null || true)
+if [ "$renderer_shader_definition_files" != "src/video/renderer/common/gml_render_shaders.c" ]; then
+  printf '%s\n' "Renderer shader control operations belong only to common/gml_render_shaders.c:" >&2
+  printf '%s\n' "$renderer_shader_definition_files" >&2
   exit 1
 fi
 
@@ -1070,9 +1079,9 @@ if [ "$renderer_clear_definition_files" != "src/video/renderer/gml_render_primit
 fi
 
 texture_handle_tag_definitions=$(portable_product_files | xargs grep -n -H -E \
-  '^#[[:space:]]*define[[:space:]]+GML_TEX_(SPR_TAG|SURF_TAG|BG_TAG|KIND_MASK)[[:space:]]' \
-  2>/dev/null | grep -v '^src/video/renderer/gml_render_backend\.h:' || true)
-fail_matches "Renderer texture-handle tags belong only to gml_render_backend.h:" \
+  '^#[[:space:]]*define[[:space:]]+GML_TEX_(SPR_TAG|SURF_TAG|BG_TAG|FONT_TAG|ATLAS_TAG|KIND_MASK)[[:space:]]' \
+  2>/dev/null | grep -v '^src/video/renderer/gml_render_texture\.h:' || true)
+fail_matches "Renderer texture-handle tags belong only to gml_render_texture.h:" \
   "$texture_handle_tag_definitions"
 
 software3d_texture_type_definitions=$(portable_product_files | xargs grep -l -E \

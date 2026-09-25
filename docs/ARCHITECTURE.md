@@ -423,8 +423,11 @@ one-way boundary prevents the former renderer/builtin cycle without creating
 a second renderer or exposing video storage.
 
 Renderer implementation files are divided by durable ownership seams.
+`gml_render_texture.h` owns the unchanged texture-handle tag values independently
+of the CPU backend view contract, so shared shader policy can decode handles
+without a CPU pixel-borrow dependency.
 `gml_render.c` is the coarse renderer facade: it owns lifecycle, frame and
-target coordination, draw preparation, presentation, shader controls, and the
+target coordination, draw preparation, presentation, and the
 non-reentrant target-view backend leaves. `gml_render_assets.c` owns renderer
 asset metadata plus the complete runtime-sprite record lifecycle.
 `common/gml_render_content.c` keeps the authored TPAG, sprite, and background
@@ -432,6 +435,9 @@ record parsers intact; the coordinator invokes them in their original order
 between texture-page and font initialisation.
 `common/gml_render_view.c` owns the existing world and GUI transforms, including
 the generation-specific camera rounding and logical/physical coordinate maps.
+`common/gml_render_shaders.c` owns the existing recognized-family policy,
+uniform and sampler controls, device candidacy, and optional accounting. The
+content-shader callback and software-family decisions are unchanged.
 `gml_render_blit.c` owns the complete sprite, background, room-tile, paint,
 axis-cache, and low-level pixel raster closure. Keeping those mutually calling
 hot kernels in one translation unit avoids introducing per-pixel indirection

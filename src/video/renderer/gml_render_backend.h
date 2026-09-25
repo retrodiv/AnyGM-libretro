@@ -6,6 +6,7 @@
 #define GML_RENDER_BACKEND_H
 
 #include "gml_render.h"
+#include "gml_render_texture.h"
 
 typedef struct {
   uint8_t red[256],green[256],blue[256];
@@ -77,13 +78,5 @@ int gml_render_backend_surface_stretched(GmlRender *render,int surface,
  * red, green, blue and alpha factors. Answers zero when no such program is set, so callers keep
  * their unmodulated path. Reads shader state and touches no draw target. */
 int gml_render_backend_shader_vertex_colour_blend(const GmlRender *render,double blend[4]);
-
-#define GML_TEX_SPR_TAG  0x54000000u
-#define GML_TEX_SURF_TAG 0x55000000u
-#define GML_TEX_BG_TAG   0x56000000u
-#define GML_TEX_FONT_TAG 0x57000000u
-#define GML_TEX_ATLAS_TAG 0x58000000u
-#define GML_TEX_KIND_MASK 0xFF000000u
-
 
 #endif
