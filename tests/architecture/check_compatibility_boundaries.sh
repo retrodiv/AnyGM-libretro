@@ -578,7 +578,7 @@ fi
 external_renderer_internal_includes=$(find src -type f \
   \( -name '*.c' -o -name '*.h' \) -exec grep -l -E \
   '^[[:space:]]*#include[[:space:]]+"gml_render_internal[.]h"' {} + 2>/dev/null | \
-  grep -v -E '^(src/core/engine_internal[.]h|src/video/renderer/gml_render_(pixel|sampling)_internal[.]h|src/video/renderer/(common/|cpu/)?[^/]+[.]c)$' || true)
+  grep -v -E '^(src/core/engine_internal[.]h|src/video/renderer/cpu/gml_render_cpu_(pixel|sampling)_internal[.]h|src/video/renderer/(common/|cpu/)?[^/]+[.]c)$' || true)
 fail_matches "Only renderer implementation and the engine composition root may include renderer storage:" \
   "$external_renderer_internal_includes"
 
@@ -766,8 +766,8 @@ renderer_final_pixel_definition_files=$(find src/video/renderer -type f -not -pa
   \( -name '*.c' -o -name '*.h' \) -exec grep -l -E \
   '^[[:space:]]*static[[:space:]]+inline[[:space:]]+uint32_t[[:space:]]+(color_write_merge|blend_multiply_pixel)[[:space:]]*\(' \
   {} + 2>/dev/null || true)
-if [ "$renderer_final_pixel_definition_files" != "src/video/renderer/gml_render_pixel_internal.h" ]; then
-  printf '%s\n' "Shared final-pixel definitions belong only to gml_render_pixel_internal.h:" >&2
+if [ "$renderer_final_pixel_definition_files" != "src/video/renderer/cpu/gml_render_cpu_pixel_internal.h" ]; then
+  printf '%s\n' "CPU final-pixel definitions belong only to gml_render_cpu_pixel_internal.h:" >&2
   printf '%s\n' "$renderer_final_pixel_definition_files" >&2
   exit 1
 fi
@@ -776,8 +776,8 @@ renderer_sampling_definition_files=$(find src/video/renderer -type f -not -path 
   \( -name '*.c' -o -name '*.h' \) -exec grep -l -E \
   '^[[:space:]]*static[[:space:]]+inline[[:space:]]+([^[:space:]]+[[:space:]]+|const[[:space:]]+struct[[:space:]]+GmlShaderPal[[:space:]]*\*[[:space:]]*)(pal_map_px|pal_active|lut_active|grid_active|dual_active|radial_wave_active|radial_wave_sample_index|uv_wave_active|uv_wave_sample_index|grayscale_active|solid_alpha_mask_active|solid_blur_alpha_active|shader_active|shader_discards_alpha_value|shader_discards_alpha|shader_alpha_test_active|sprite_pixel_argb|sprite_pixel_rgb|lut_map_px|grid_map_px|grid_map_px_cached|mapped_texture_active|mapped_texture_pixel)[[:space:]]*\(' \
   {} + 2>/dev/null || true)
-if [ "$renderer_sampling_definition_files" != "src/video/renderer/gml_render_sampling_internal.h" ]; then
-  printf '%s\n' "Shared recognized-shader sampling definitions belong only to gml_render_sampling_internal.h:" >&2
+if [ "$renderer_sampling_definition_files" != "src/video/renderer/cpu/gml_render_cpu_sampling_internal.h" ]; then
+  printf '%s\n' "CPU recognized-shader sampling definitions belong only to gml_render_cpu_sampling_internal.h:" >&2
   printf '%s\n' "$renderer_sampling_definition_files" >&2
   exit 1
 fi
@@ -786,8 +786,8 @@ renderer_blit_definition_files=$(find src/video/renderer -type f -not -path 'src
   \( -name '*.c' -o -name '*.h' \) -exec grep -l -E \
   '^[[:space:]]*static[[:space:]]+(inline[[:space:]]+)?(int|void|uint32_t)[[:space:]]+(render_modern_cardinal_anchor|blend_fast8_cached|row_all_opaque32|blend_fast8_src_run|surf_bi_band)[[:space:]]*\(' \
   {} + 2>/dev/null || true)
-if [ "$renderer_blit_definition_files" != "src/video/renderer/gml_render_blit_internal.h" ]; then
-  printf '%s\n' "Shared sprite/surface hot blit definitions belong only to gml_render_blit_internal.h:" >&2
+if [ "$renderer_blit_definition_files" != "src/video/renderer/cpu/gml_render_cpu_blit_internal.h" ]; then
+  printf '%s\n' "CPU sprite/surface hot blit definitions belong only to gml_render_cpu_blit_internal.h:" >&2
   printf '%s\n' "$renderer_blit_definition_files" >&2
   exit 1
 fi
@@ -795,8 +795,8 @@ fi
 renderer_blit_record_files=$(find src/video/renderer -type f -not -path 'src/video/renderer/gpu/opengl/*' \
   \( -name '*.c' -o -name '*.h' \) -exec grep -l -E \
   '}[[:space:]]+SurfBiCtx;' {} + 2>/dev/null || true)
-if [ "$renderer_blit_record_files" != "src/video/renderer/gml_render_blit_internal.h" ]; then
-  printf '%s\n' "The shared bilinear surface-band record belongs only to gml_render_blit_internal.h:" >&2
+if [ "$renderer_blit_record_files" != "src/video/renderer/cpu/gml_render_cpu_blit_internal.h" ]; then
+  printf '%s\n' "The CPU bilinear surface-band record belongs only to gml_render_cpu_blit_internal.h:" >&2
   printf '%s\n' "$renderer_blit_record_files" >&2
   exit 1
 fi
@@ -804,8 +804,8 @@ fi
 renderer_postprocess_definition_files=$(find src/video/renderer -type f -not -path 'src/video/renderer/gpu/opengl/*' -name '*.c' -exec grep -l -E \
   '^[[:space:]]*(static[[:space:]]+)?(inline[[:space:]]+)?(int|void|uint32_t)[[:space:]]+(dual_(u8|texel|fast_band)|draw_surface_dual_sample)[[:space:]]*\(' \
   {} + 2>/dev/null || true)
-if [ "$renderer_postprocess_definition_files" != "src/video/renderer/gml_render_postprocess.c" ]; then
-  printf '%s\n' "Recognized display post-process definitions belong only to gml_render_postprocess.c:" >&2
+if [ "$renderer_postprocess_definition_files" != "src/video/renderer/cpu/gml_render_cpu_postprocess.c" ]; then
+  printf '%s\n' "Recognized CPU post-process definitions belong only to gml_render_cpu_postprocess.c:" >&2
   printf '%s\n' "$renderer_postprocess_definition_files" >&2
   exit 1
 fi
@@ -814,8 +814,8 @@ renderer_postprocess_record_files=$(find src/video/renderer -type f -not -path '
   \( -name '*.c' -o -name '*.h' \) -exec grep -l -E \
   '}[[:space:]]+DualFastCtx;' \
   {} + 2>/dev/null || true)
-if [ "$renderer_postprocess_record_files" != "src/video/renderer/gml_render_postprocess.c" ]; then
-  printf '%s\n' "Recognized display post-process records belong only to gml_render_postprocess.c:" >&2
+if [ "$renderer_postprocess_record_files" != "src/video/renderer/cpu/gml_render_cpu_postprocess.c" ]; then
+  printf '%s\n' "Recognized CPU post-process records belong only to gml_render_cpu_postprocess.c:" >&2
   printf '%s\n' "$renderer_postprocess_record_files" >&2
   exit 1
 fi

@@ -1,8 +1,8 @@
 /* SPDX-License-Identifier: MIT
  * Copyright (c) 2026 retrodiv <retrodiv@proton.me>
  */
-#ifndef GML_RENDER_SAMPLING_INTERNAL_H
-#define GML_RENDER_SAMPLING_INTERNAL_H
+#ifndef GML_RENDER_CPU_SAMPLING_INTERNAL_H
+#define GML_RENDER_CPU_SAMPLING_INTERNAL_H
 
 #include "gml_render_internal.h"
 

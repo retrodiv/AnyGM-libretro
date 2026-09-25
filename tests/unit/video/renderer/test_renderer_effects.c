@@ -3,7 +3,7 @@
  */
 #include "gml_render_internal.h"
 #include "gml_render_backend.h"
-#include "gml_render_sampling_internal.h"
+#include "gml_render_cpu_sampling_internal.h"
 #include "anygm.h"
 
 #include <math.h>

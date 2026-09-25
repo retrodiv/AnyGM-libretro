@@ -2,10 +2,10 @@
  * Copyright (c) 2026 retrodiv <retrodiv@proton.me>
  */
 /* Header-local hot helpers shared by sprite and surface composition kernels. */
-#ifndef GML_RENDER_BLIT_INTERNAL_H
-#define GML_RENDER_BLIT_INTERNAL_H
+#ifndef GML_RENDER_CPU_BLIT_INTERNAL_H
+#define GML_RENDER_CPU_BLIT_INTERNAL_H
 
-#include "gml_render_sampling_internal.h"
+#include "gml_render_cpu_sampling_internal.h"
 
 #include <math.h>
 #include <stddef.h>

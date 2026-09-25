@@ -52,6 +52,15 @@ if [ -d src/video/renderer/gpu ]; then
   fail_matches "GPU-private headers belong to the GPU owner:" "$gpu_private"
 fi
 
+# Neither shared preparation nor the graphics backend may include CPU pixel helpers. Root-level
+# renderer files are migrated in bounded batches and remain subject to their owner checks.
+cpu_kernel_in_shared=$(find src/video/renderer/common src/video/renderer/gpu -type f \
+  \( -name '*.c' -o -name '*.h' \) -exec grep -n -H -E \
+  '#[[:space:]]*include[[:space:]]*"gml_render_cpu_(blit|sampling|pixel)_internal[.]h"' \
+  {} + 2>/dev/null || true)
+fail_matches "Common and GPU owners must not include CPU inline pixel kernels:" \
+  "$cpu_kernel_in_shared"
+
 # The adapter translates; it does not reach into the renderer or the GPU implementation.
 adapter_internals=$(find src/adapters -type f \( -name '*.c' -o -name '*.h' \) -exec grep -n -H -E \
   '#[[:space:]]*include[[:space:]]*"(gml_render|gml_gpu|engine_internal|gml_vm|gml_win)[[:alnum:]_]*\.h"' \

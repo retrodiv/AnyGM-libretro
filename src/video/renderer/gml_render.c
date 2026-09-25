@@ -4,9 +4,9 @@
 /* Renderer lifecycle, frame coordination, draw state, and software draw facade. */
 #include "gml_render.h"
 #include "gml_render_internal.h"
-#include "gml_render_blit_internal.h"
-#include "gml_render_pixel_internal.h"
-#include "gml_render_sampling_internal.h"
+#include "gml_render_cpu_blit_internal.h"
+#include "gml_render_cpu_pixel_internal.h"
+#include "gml_render_cpu_sampling_internal.h"
 #include "gml_render_backend.h"
 #include "anygm_compatibility.h"
 #include "gml_thread.h"

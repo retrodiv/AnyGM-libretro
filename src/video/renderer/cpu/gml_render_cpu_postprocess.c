@@ -6,7 +6,7 @@
  * operation - two lookups, per-channel gains, a sum - carries no expression of its own. */
 #include "gml_render.h"
 #include "gml_render_internal.h"
-#include "gml_render_pixel_internal.h"
+#include "gml_render_cpu_pixel_internal.h"
 #include "gml_render_backend.h"
 
 #include "anygm_host.h"

@@ -3,10 +3,10 @@
  */
 /* Cohesive software blit and pixel kernels. */
 #include "gml_render_backend.h"
-#include "gml_render_blit_internal.h"
+#include "gml_render_cpu_blit_internal.h"
 #include "gml_render_internal.h"
-#include "gml_render_pixel_internal.h"
-#include "gml_render_sampling_internal.h"
+#include "gml_render_cpu_pixel_internal.h"
+#include "gml_render_cpu_sampling_internal.h"
 #include "anygm_compatibility.h"
 #include "anygm_host.h"
 #include "gml_thread.h"

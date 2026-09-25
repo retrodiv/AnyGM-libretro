@@ -2,8 +2,8 @@
  * Copyright (c) 2026 retrodiv <retrodiv@proton.me>
  */
 /* Renderer-private final-pixel operations shared by complete software kernels. */
-#ifndef GML_RENDER_PIXEL_INTERNAL_H
-#define GML_RENDER_PIXEL_INTERNAL_H
+#ifndef GML_RENDER_CPU_PIXEL_INTERNAL_H
+#define GML_RENDER_CPU_PIXEL_INTERNAL_H
 
 #include "gml_render_internal.h"
 
