@@ -427,6 +427,9 @@ Renderer implementation files are divided by durable ownership seams.
 target coordination, draw preparation, presentation, shader controls, and the
 non-reentrant target-view backend leaves. `gml_render_assets.c` owns renderer
 asset metadata plus the complete runtime-sprite record lifecycle.
+`common/gml_render_content.c` keeps the authored TPAG, sprite, and background
+record parsers intact; the coordinator invokes them in their original order
+between texture-page and font initialisation.
 `gml_render_blit.c` owns the complete sprite, background, room-tile, paint,
 axis-cache, and low-level pixel raster closure. Keeping those mutually calling
 hot kernels in one translation unit avoids introducing per-pixel indirection
