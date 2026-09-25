@@ -23,4 +23,17 @@ void gml_render_cpu_blit_tpag_part_background(GmlRender *r, GmlTpag *t,
                                               double dx, double dy, double xs, double ys,
                                               uint32_t blend, double alpha);
 
+void gml_render_cpu_blit_tpag_part_tile(GmlRender *r, GmlTpag *t,
+                                        double sx, double sy, double sw, double sh,
+                                        double dx, double dy, double xs, double ys,
+                                        uint32_t blend, double alpha);
+int gml_render_cpu_try_exact_rotated_background_tile(
+    GmlRender *r, GmlTpag *page, double sx, double sy, double sw, double sh,
+    double x, double y, double xs, double ys, int mirror, int flip,
+    uint32_t color, double alpha);
+void gml_render_cpu_blit_rotated_background_tile(GmlRender *r, GmlTpag *view,
+                                                  double draw_x, double draw_y,
+                                                  double tile_xscale, double tile_yscale,
+                                                  double degrees, uint32_t color, double alpha);
+
 #endif

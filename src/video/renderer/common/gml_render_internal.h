@@ -647,6 +647,11 @@ void gml_run_row_bands_n(GmlRender *r,int height,int thread_count,
                          GmlRowBandFn function,void *context);
 void gml_run_row_bands(GmlRender *r,int height,GmlRowBandFn function,void *context);
 void gml_render_flush_rotated_batch(GmlRender *r);
+int gml_render_tpag_part_view(const GmlTpag *t,
+                              double sx,double sy,double sw,double sh,
+                              GmlTpag *view,int *source_x,int *source_y,
+                              double *overlap_x0,double *overlap_y0,
+                              double *overlap_x1,double *overlap_y1);
 uint32_t *surface_pixels(GmlRender *r,int surface,int *width,int *height);
 int surface_known_opaque(GmlRender *r,int surface);
 int surface_known_transparent(GmlRender *r,int surface);

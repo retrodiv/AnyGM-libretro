@@ -735,16 +735,16 @@ fi
 
 renderer_raster_definition_files=$(find src/video/renderer -type f -not -path 'src/video/renderer/gpu/opengl/*' -name '*.c' \
   -exec grep -l -E \
-  '^[[:space:]]*(static[[:space:]]+)?(int|void|uint32_t)[[:space:]]+(gml_draw_sprite[[:alnum:]_]*|gml_draw_background_tile|draw_sprite_nineslice|gml_render_shader_fill_rect|gml_render_cpu_backend_(color_to_xrgb|fill_xrgb|draw_pixel))[[:space:]]*\(' \
+  '^[[:space:]]*(static[[:space:]]+)?(int|void|uint32_t)[[:space:]]+(gml_draw_sprite[[:alnum:]_]*|draw_sprite_nineslice|gml_render_shader_fill_rect|gml_render_cpu_backend_(color_to_xrgb|fill_xrgb|draw_pixel))[[:space:]]*\(' \
   {} + 2>/dev/null || true)
 if [ "$renderer_raster_definition_files" != "src/video/renderer/cpu/gml_render_cpu_blit.c" ]; then
-  printf '%s\n' "Sprite and remaining rotated background raster/paint definitions belong only to cpu/gml_render_cpu_blit.c:" >&2
+  printf '%s\n' "Sprite raster/paint definitions belong only to cpu/gml_render_cpu_blit.c:" >&2
   printf '%s\n' "$renderer_raster_definition_files" >&2
   exit 1
 fi
 
 renderer_background_shared_definitions=$(find src/video/renderer -type f -name '*.c' -exec grep -l -E \
-  '^[[:space:]]*(static[[:space:]]+)?void[[:space:]]+(gml_draw_background(_stretched|_ext|_tiled|_tiled_ext|_part_ext)?|gml_draw_room_backgrounds|do_bg_tiled_ext|bg_emit)[[:space:]]*\(' \
+  '^[[:space:]]*(static[[:space:]]+)?void[[:space:]]+(gml_draw_background(_stretched|_ext|_tiled|_tiled_ext|_part_ext|_tile)?|gml_draw_room_backgrounds|do_bg_tiled_ext|bg_emit)[[:space:]]*\(' \
   {} + 2>/dev/null || true)
 if [ "$renderer_background_shared_definitions" != "src/video/renderer/common/gml_render_backgrounds.c" ]; then
   printf '%s\n' "Shared background source/transform and room-order definitions belong only to common/gml_render_backgrounds.c:" >&2
@@ -753,11 +753,20 @@ if [ "$renderer_background_shared_definitions" != "src/video/renderer/common/gml
 fi
 
 renderer_cpu_phase_emitter_files=$(find src/video/renderer -type f -name '*.c' -exec grep -l -E \
-  '^[[:space:]]*void[[:space:]]+gml_render_cpu_blit_(with_phase|tpag_part_background)[[:space:]]*\(' \
+  '^[[:space:]]*(void|int)[[:space:]]+gml_render_cpu_(blit_(with_phase|tpag_part_background|tpag_part_tile|rotated_background_tile)|try_exact_rotated_background_tile)[[:space:]]*\(' \
   {} + 2>/dev/null || true)
 if [ "$renderer_cpu_phase_emitter_files" != "src/video/renderer/cpu/gml_render_cpu_blit.c" ]; then
   printf '%s\n' "Classic phase-aware CPU blit belongs only to cpu/gml_render_cpu_blit.c:" >&2
   printf '%s\n' "$renderer_cpu_phase_emitter_files" >&2
+  exit 1
+fi
+
+renderer_shared_part_view_files=$(find src/video/renderer -type f -name '*.c' -exec grep -l -E \
+  '^[[:space:]]*int[[:space:]]+gml_render_tpag_part_view[[:space:]]*\(' \
+  {} + 2>/dev/null || true)
+if [ "$renderer_shared_part_view_files" != "src/video/renderer/common/gml_render_backgrounds.c" ]; then
+  printf '%s\n' "Shared texture-page subrectangle preparation belongs only to common/gml_render_backgrounds.c:" >&2
+  printf '%s\n' "$renderer_shared_part_view_files" >&2
   exit 1
 fi
 

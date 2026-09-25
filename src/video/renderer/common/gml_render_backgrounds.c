@@ -10,6 +10,53 @@
 #include <math.h>
 #include <stdlib.h>
 
+int gml_render_tpag_part_view(const GmlTpag *t,
+                          double sx,double sy,double sw,double sh,
+                          GmlTpag *view,int *source_x,int *source_y,
+                          double *overlap_x0,double *overlap_y0,
+                          double *overlap_x1,double *overlap_y1){
+  if(!t || !view || sw<=0 || sh<=0) return 0;
+  double ix0d=fmax(sx,(double)t->tx), iy0d=fmax(sy,(double)t->ty);
+  double ix1d=fmin(sx+sw,(double)(t->tx+t->sw)), iy1d=fmin(sy+sh,(double)(t->ty+t->sh));
+  int ix0=(int)floor(ix0d), iy0=(int)floor(iy0d);
+  int ix1=(int)ceil(ix1d), iy1=(int)ceil(iy1d);
+  if(ix1<=ix0 || iy1<=iy0) return 0;
+  /* The continuous overlap, before the outward snap, so callers can keep the selected extent. */
+  if(overlap_x0) *overlap_x0=ix0d;
+  if(overlap_y0) *overlap_y0=iy0d;
+  if(overlap_x1) *overlap_x1=ix1d;
+  if(overlap_y1) *overlap_y1=iy1d;
+  *view=*t;
+  view->sx=t->sx + (ix0 - t->tx);
+  view->sy=t->sy + (iy0 - t->ty);
+  view->sw=ix1-ix0;
+  view->sh=iy1-iy0;
+  view->tx=0; view->ty=0;
+  /* the copy dies on return, so any alpha scan on it is thrown-away work redone EVERY call
+   * (a big tiled background part re-scanned its full sub-rect per draw); and the pointer
+   * caches copied from the parent describe the PARENT's geometry, not this sub-rect.
+   * Mark it pre-scanned with conservative full-rect bounds and detach the caches. */
+  view->alpha_scanned=1;
+  view->ax0=0; view->ay0=0; view->ax1=view->sw-1; view->ay1=view->sh-1;
+  view->alpha_max=t->alpha_scanned ? t->alpha_max : 255;
+  view->alpha_partial=t->alpha_scanned ? t->alpha_partial : 1;
+  view->black_scanned=0; view->all_black=0;
+  view->alpha_row_min=view->alpha_row_max=NULL;
+  view->alpha_qrow_min=view->alpha_qrow_max=NULL; view->alpha_qrow_built=NULL;
+  view->alpha_runs=NULL; view->alpha_run_count=0; view->alpha_runs_built=0;
+  view->alpha8_cache=NULL;
+  view->argb_cache=NULL;
+  view->solid_blur_alpha_cache=NULL; view->solid_blur_alpha_shader=-1;
+  view->interp_phase_cache[0]=view->interp_phase_cache[1]=view->interp_phase_cache[2]=NULL;
+  view->fast8_draw_cache=NULL; view->fast8_draw_cache_valid=0; view->fast8_draw_pending_count=0;
+  view->interp_draw_cache=NULL; view->interp_draw_runs=NULL;
+  view->interp_draw_cache_bytes=0; view->interp_draw_run_count=0;
+  view->interp_draw_cache_valid=0; view->interp_draw_pending_count=0;
+  if(source_x) *source_x=ix0;
+  if(source_y) *source_y=iy0;
+  return 1;
+}
+
 void gml_draw_background(GmlRender *r, int bg, double x, double y){
   gml_render_draw_map_point(r,&x,&y);
   if(bg<0||bg>=r->n_bg) return;
@@ -36,6 +83,69 @@ void gml_draw_background_part_ext(GmlRender *r, int bg, double sx, double sy, do
   int ti=r->bg[bg].tpag; if(ti<0||ti>=r->n_tpag) return;
   if(gml_d3_draw_background_part_2d(r,bg,sx,sy,sw,sh,x,y,xs,ys,color,alpha)) return;
   gml_render_cpu_blit_tpag_part_background(r,&r->tpag[ti],sx,sy,sw,sh,x-r->cam_x,y-r->cam_y,xs,ys,color,alpha);
+}
+
+void gml_draw_background_tile(GmlRender *r,int bg,
+                              double sx,double sy,double sw,double sh,
+                              double x,double y,double xs,double ys,
+                              int mirror,int flip,int rotate,
+                              uint32_t color,double alpha){
+  if(!rotate){
+    if(mirror){ x+=sw*xs; xs=-xs; }
+    if(flip){ y+=sh*ys; ys=-ys; }
+    gml_render_draw_map_point(r,&x,&y);
+    gml_render_draw_map_scale(r,&xs,&ys);
+    if(!r || bg<0 || bg>=r->n_bg || sw<=0 || sh<=0 || xs==0 || ys==0) return;
+    int ti=r->bg[bg].tpag; if(ti<0 || ti>=r->n_tpag) return;
+    if(gml_d3_draw_background_part_2d(r,bg,sx,sy,sw,sh,x,y,xs,ys,color,alpha)) return;
+    gml_render_cpu_blit_tpag_part_tile(r,&r->tpag[ti],sx,sy,sw,sh,
+                        x-r->cam_x,y-r->cam_y,xs,ys,color,alpha);
+    return;
+  }
+  gml_render_draw_map_point(r,&x,&y);
+  gml_render_draw_map_scale(r,&xs,&ys);
+  if(!r || bg<0 || bg>=r->n_bg || sw<=0 || sh<=0 || xs==0 || ys==0) return;
+  int ti=r->bg[bg].tpag; if(ti<0 || ti>=r->n_tpag) return;
+  GmlTpag *page=&r->tpag[ti];
+  if(gml_render_cpu_try_exact_rotated_background_tile(
+       r,page,sx,sy,sw,sh,x,y,xs,ys,mirror,flip,color,alpha)) return;
+  GmlTpag view;
+  int clipped_source_x=0,clipped_source_y=0;
+  if(!gml_render_tpag_part_view(page,sx,sy,sw,sh,
+                     &view,&clipped_source_x,&clipped_source_y,
+                     NULL,NULL,NULL,NULL)) return;
+  view.tx=(int)lround(clipped_source_x-sx);
+  view.ty=(int)lround(clipped_source_y-sy);
+  view.bw=(int)ceil(sw);
+  view.bh=(int)ceil(sh);
+
+  /* Tile transforms permute texture coordinates inside the authored destination rectangle.
+   * Compensate the source axes before rotation, including nonuniform target scaling. */
+  double tile_xscale=(sh/sw)*ys;
+  double tile_yscale=(sw/sh)*xs;
+  if(mirror) tile_xscale=-tile_xscale;
+  if(flip) tile_yscale=-tile_yscale;
+  double cosine=0.0,sine=0.0;
+  const double degrees=-90.0;
+  render_rotation_sincos(degrees,&cosine,&sine);
+  double min_x=1e30,min_y=1e30;
+  const double corner_x[4]={0.0,sw,sw,0.0};
+  const double corner_y[4]={0.0,0.0,sh,sh};
+  for(int i=0;i<4;i++){
+    double local_x=corner_x[i]*tile_xscale;
+    double local_y=corner_y[i]*tile_yscale;
+    double transformed_x=local_x*cosine+local_y*sine;
+    double transformed_y=-local_x*sine+local_y*cosine;
+    if(transformed_x<min_x) min_x=transformed_x;
+    if(transformed_y<min_y) min_y=transformed_y;
+  }
+  double draw_x=x-min_x,draw_y=y-min_y;
+  /* blit_rotated applies the shared half-open cardinal anchor. The tile's public position is the
+   * transformed bounding-box corner, so compensate before entering that origin-based kernel. */
+  if(tile_xscale*cosine < -1e-12 || tile_yscale*sine < -1e-12) draw_x+=1.0;
+  if(-tile_xscale*sine < -1e-12 || tile_yscale*cosine < -1e-12) draw_y+=1.0;
+  gml_render_cpu_blit_rotated_background_tile(r,&view,draw_x,draw_y,
+                                              tile_xscale,tile_yscale,degrees,color,alpha);
 }
 
 /* draw_background[_tiled]_ext: as above + xscale/yscale + blend colour + alpha. */
