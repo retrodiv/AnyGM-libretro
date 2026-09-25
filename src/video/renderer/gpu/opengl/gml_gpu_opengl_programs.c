@@ -193,9 +193,11 @@ int gml_gpu_opengl_scene_exact_program(GmlGpuBackend *backend,char *error,
   scene->exact_u_previous=backend->gl.GetUniformLocation(scene->exact_program,"u_previous");
   scene->exact_u_region_origin=backend->gl.GetUniformLocation(scene->exact_program,
                                                                "u_region_origin");
+  scene->exact_u_repetitions=backend->gl.GetUniformLocation(scene->exact_program,
+                                                             "u_repetitions");
   if(scene->exact_a_position<0 || scene->exact_a_texcoord<0 || scene->exact_a_colour<0 ||
      scene->exact_u_extent<0 || scene->exact_u_image<0 || scene->exact_u_previous<0 ||
-     scene->exact_u_region_origin<0){
+     scene->exact_u_region_origin<0 || scene->exact_u_repetitions<0){
     gml_gpu_opengl_record_error(error,error_capacity,
       "exact scene program is missing an attribute or uniform");
     backend->gl.DeleteProgram(scene->exact_program);

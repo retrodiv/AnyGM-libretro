@@ -8,7 +8,8 @@
 #include <limits.h>
 #include <math.h>
 #include <stdlib.h>
-#include <string.h>
+
+enum { GL_SCENE_MAX_EXACT_REPETITIONS=64 };
 
 static int same_logical(GmlRenderImageRef a,GmlRenderImageRef b){
   return a.resource_class==b.resource_class && a.identity==b.identity &&
@@ -80,6 +81,47 @@ static int exact_rect(const GmlRenderDrawOp *op,GLint *left,GLint *bottom,
   if(width) *width=(GLsizei)(x1-x0);
   if(height) *height=(GLsizei)(y1-y0);
   return 1;
+}
+
+static int same_resolved_quad(const GmlRenderQuad *a,const GmlRenderQuad *b){
+  if(a->shape!=b->shape || a->sampling.filter!=b->sampling.filter ||
+     a->sampling.edge_rule!=b->sampling.edge_rule ||
+     a->sampling.quantisation!=b->sampling.quantisation ||
+     a->sampling.source_region.x!=b->sampling.source_region.x ||
+     a->sampling.source_region.y!=b->sampling.source_region.y ||
+     a->sampling.source_region.width!=b->sampling.source_region.width ||
+     a->sampling.source_region.height!=b->sampling.source_region.height) return 0;
+  for(uint32_t corner=0;corner<4u;corner++)
+    if(a->x[corner]!=b->x[corner] || a->y[corner]!=b->y[corner] ||
+       a->u[corner]!=b->u[corner] || a->v[corner]!=b->v[corner] ||
+       a->corner_colour[corner]!=b->corner_colour[corner]) return 0;
+  return 1;
+}
+
+/* A repeated operation has no intervening observer or state change. Folding only identical
+ * resolved geometry and the same state snapshot retains each integer-truncated overlap. */
+static uint32_t exact_repetitions(const GmlRenderDrawBatch *batch,uint32_t first){
+  const GmlRenderDrawOp *base=&batch->operations[first];
+  uint32_t count=1u;
+  while(count<GL_SCENE_MAX_EXACT_REPETITIONS && first+count<batch->operation_count){
+    const GmlRenderDrawOp *previous=&batch->operations[first+count-1u];
+    const GmlRenderDrawOp *next=&batch->operations[first+count];
+    if(next->opcode!=GML_RENDER_OP_TEXTURED_QUAD || next->source_count!=1u ||
+       next->state_index!=base->state_index ||
+       next->reconstruction_mode!=base->reconstruction_mode ||
+       !same_version(next->sources[0],base->sources[0]) ||
+       !same_logical(next->target.image,base->target.image) ||
+       next->target.width!=base->target.width ||
+       next->target.height!=base->target.height ||
+       next->target.pixel_format!=base->target.pixel_format ||
+       next->target.storage_version!=base->target.storage_version ||
+       previous->target.image.content_version==UINT64_MAX ||
+       next->target.image.content_version!=previous->target.image.content_version+1u ||
+       !same_resolved_quad(&next->payload.quad,&base->payload.quad))
+      break;
+    count++;
+  }
+  return count;
 }
 
 static int scene_preflight(GmlGpuBackend *backend,const GmlRenderDrawBatch *batch){
@@ -226,6 +268,7 @@ static int flush_quads(GmlGpuBackend *backend,GlSceneImage *target,GlSceneImage 
 static int draw_exact_quad(GmlGpuBackend *backend,const GmlRenderDrawOp *op,
                            const GmlRenderDrawStateSnapshot *state,
                            GlSceneImage *target,GlSceneImage *source,
+                           uint32_t repetitions,
                            char *error,size_t error_capacity){
   GlScene *scene=&backend->scene;
   GLint left,bottom,origin[2];
@@ -266,6 +309,7 @@ static int draw_exact_quad(GmlGpuBackend *backend,const GmlRenderDrawOp *op,
   backend->gl.Uniform2fv(scene->exact_u_extent,1,extent);
   backend->gl.Uniform1i(scene->exact_u_image,0);
   backend->gl.Uniform1i(scene->exact_u_previous,1);
+  backend->gl.Uniform1i(scene->exact_u_repetitions,(GLint)repetitions);
   origin[0]=left;
   origin[1]=bottom;
   backend->gl.Uniform2iv(scene->exact_u_region_origin,1,origin);
@@ -380,13 +424,16 @@ GmlRenderExecutionResult gml_gpu_opengl_scene_submit(GmlGpuBackend *backend,
     pending_filter=op->payload.quad.sampling.filter;
     pending_blend=qualified_blend(&batch->states[op->state_index]);
     if(pending_blend==2){
+      uint32_t repetitions=exact_repetitions(batch,index);
       int drawn=draw_exact_quad(backend,op,&batch->states[op->state_index],
-                                target,pending_source,error,error_capacity);
+                                target,pending_source,repetitions,error,error_capacity);
       if(drawn<0) mark_uncertain(&result,target);
       else if(!drawn) result.status=GML_RENDER_EXEC_RESOURCE_ERROR;
       if(drawn<=0) break;
-      result.accepted_prefix=index+1u;
+      target->ref=batch->operations[index+repetitions-1u].target.image;
+      result.accepted_prefix=index+repetitions;
       pending_count=0;
+      index+=repetitions-1u;
       continue;
     }
     if(!gml_render_gpu_opengl_draw_textured_quad(op,&batch->states[op->state_index],
