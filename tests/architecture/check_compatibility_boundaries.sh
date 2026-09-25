@@ -735,7 +735,7 @@ fi
 
 renderer_raster_definition_files=$(find src/video/renderer -type f -not -path 'src/video/renderer/gpu/opengl/*' -name '*.c' \
   -exec grep -l -E \
-  '^[[:space:]]*(static[[:space:]]+)?(int|void|uint32_t)[[:space:]]+(gml_draw_sprite_(pos|ext|tiled_ext|stretched)|gml_draw_layer_background_sprite|draw_sprite_nineslice|gml_render_shader_fill_rect|gml_render_cpu_backend_(color_to_xrgb|fill_xrgb|draw_pixel))[[:space:]]*\(' \
+  '^[[:space:]]*(static[[:space:]]+)?(int|void|uint32_t)[[:space:]]+(gml_draw_sprite_(pos|ext|tiled_ext|stretched)|draw_sprite_nineslice|gml_render_shader_fill_rect|gml_render_cpu_backend_(color_to_xrgb|fill_xrgb|draw_pixel))[[:space:]]*\(' \
   {} + 2>/dev/null || true)
 if [ "$renderer_raster_definition_files" != "src/video/renderer/cpu/gml_render_cpu_blit.c" ]; then
   printf '%s\n' "Sprite raster/paint definitions belong only to cpu/gml_render_cpu_blit.c:" >&2
@@ -744,11 +744,20 @@ if [ "$renderer_raster_definition_files" != "src/video/renderer/cpu/gml_render_c
 fi
 
 renderer_sprite_shared_definitions=$(find src/video/renderer -type f -name '*.c' -exec grep -l -E \
-  '^[[:space:]]*void[[:space:]]+gml_draw_sprite(_part_ext)?[[:space:]]*\(' \
+  '^[[:space:]]*void[[:space:]]+(gml_draw_sprite(_part_ext)?|gml_draw_layer_background_sprite|gml_render_sprite_tiled_ext_unmasked)[[:space:]]*\(' \
   {} + 2>/dev/null || true)
 if [ "$renderer_sprite_shared_definitions" != "src/video/renderer/common/gml_render_sprites.c" ]; then
   printf '%s\n' "Shared sprite selection and part preparation belong only to common/gml_render_sprites.c:" >&2
   printf '%s\n' "$renderer_sprite_shared_definitions" >&2
+  exit 1
+fi
+
+renderer_shared_sprite_frame_files=$(find src/video/renderer -type f -name '*.c' -exec grep -l -E \
+  '^[[:space:]]*(int|const[[:space:]]+uint8_t[[:space:]]*\*)[[:space:]]+(gml_render_runtime_frame_index|runtime_frame_rgba|gml_render_sprite_log_enabled)[[:space:]]*\(' \
+  {} + 2>/dev/null || true)
+if [ "$renderer_shared_sprite_frame_files" != "src/video/renderer/common/gml_render_sprites.c" ]; then
+  printf '%s\n' "Shared sprite frame selection belongs only to common/gml_render_sprites.c:" >&2
+  printf '%s\n' "$renderer_shared_sprite_frame_files" >&2
   exit 1
 fi
 
