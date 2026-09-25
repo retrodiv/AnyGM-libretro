@@ -487,6 +487,11 @@ bridge live in `cpu/gml_render_cpu_workers.c`; renderer teardown joins it before
 workspaces. No per-pixel call crosses those
 translation-unit seams.
 
+Ordinary text measurement, alignment and glyph selection remain in
+`common/gml_render_text.c`. Its existing classic information-page subpixel
+pixel loop is in `cpu/gml_render_cpu_text.c`, called once per selected glyph;
+the glyph body and coverage arithmetic are unchanged.
+
 `common/gml_render_effects.c` owns non-CRT room-layer capture and the
 pass-level request to `cpu/gml_render_cpu_effects.c`, which owns the unchanged
 sampling, filtering, target restoration and composition kernels. Shader recognition produces

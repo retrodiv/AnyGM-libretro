@@ -2,6 +2,7 @@
  * Copyright (c) 2026 retrodiv <retrodiv@proton.me>
  */
 #include "gml_render_internal.h"
+#include "gml_render_cpu_text.h"
 #include "gml_render_state.h"
 #include "anygm_test_runner.h"
 #include "memory_vfs.h"
@@ -60,6 +61,34 @@ static void fixture_destroy(FontFixture *f){
 
 static int add_font(FontFixture *f){
   return gml_font_add_file(&f->render,"/content/fixture.ttf",32,0,0,65,65);
+}
+
+/* Neutral per-channel coverage control for the classic information-page CPU seam. */
+static int classic_subpixel_case(void){
+  uint8_t pixels[4]={0,128,255,255};
+  GmlAtlas atlas={.px=pixels,.w=1,.h=1};
+  GmlFont font={.atlas=0,.subpixel=1};
+  GmlGlyph glyph={.w=1,.h=1};
+  uint32_t frame=0xFF204060u;
+  GmlRender render={0};
+  render.atlas=&atlas;
+  render.n_atlas=1;
+  render.fb=&frame;
+  render.fbw=1;
+  render.fbh=1;
+  render.alphablend=1;
+  int ok=gml_render_cpu_classic_info_subpixel_glyph(&render,&font,&glyph,
+                                                     0,0,1,1,0x0080C0FFu,1.0) &&
+    frame==0xFFFF8060u;
+  frame=0xFF204060u;
+  pixels[3]=0;
+  ok &= gml_render_cpu_classic_info_subpixel_glyph(&render,&font,&glyph,
+                                                    0,0,1,1,0x0080C0FFu,1.0) &&
+    frame==0xFF204060u;
+  ok &= !gml_render_cpu_classic_info_subpixel_glyph(&render,&font,&glyph,
+                                                     0,0,1,1,0x0080C0FFu,0.5);
+  if(!ok) fprintf(stderr,"classic subpixel glyph coverage changed\n");
+  return ok;
 }
 
 static int draw_font(FontFixture *f,int font){
@@ -277,6 +306,7 @@ int main(int argc,char **argv){
   if(argc==3 && !strcmp(argv[1],"--case")) filter=argv[2];
   else if(argc!=1){ fprintf(stderr,"usage: %s [--case filter]\n",argv[0]); return 2; }
   const AnygmTestCase cases[]={
+    {"classic_subpixel_channels",classic_subpixel_case},
     {"runtime_lifecycle",lifecycle_case},
     {"restore_deleted_runtime_font",restore_deleted_case},
     {"restore_removes_later_runtime_font",restore_removes_later_case},
