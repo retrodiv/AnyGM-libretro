@@ -53,6 +53,12 @@ typedef struct GmlGpuCounters {
   uint32_t full_uploads;
   uint64_t uploaded_bytes;
   uint32_t fallbacks[GML_PLAN_FALLBACK_COUNT];
+  /* Resident scene counters are separate from the older presentation-plan transport counters.
+   * An operation is accepted only after its entire batch was accepted. */
+  uint64_t scene_batches_offered,scene_batches_accepted,scene_batches_refused;
+  uint64_t scene_partial_prefix;
+  uint64_t scene_operations[GML_RENDER_OPERATION_COUNT];
+  uint64_t scene_uploads,scene_uploaded_bytes,scene_readbacks,scene_readback_bytes;
 } GmlGpuCounters;
 
 /* Creation allocates CPU metadata only and issues no graphics call, so an engine may own a GmlGpu

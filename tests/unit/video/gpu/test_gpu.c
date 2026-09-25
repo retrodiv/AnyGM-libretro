@@ -221,6 +221,16 @@ static int scene_service_contract_case(void){
           result.uncertain_target_count==0 && !result.all_destinations_uncertain,
           "unsupported scene submission refuses before a write");
   REQUIRE(anygm_test_graphics_draw_calls()==draws,"unsupported scene work reaches no driver draw");
+  {
+    GmlGpuCounters counters;
+    gml_gpu_counters(gpu,&counters);
+    REQUIRE(counters.scene_batches_offered==1u &&
+            counters.scene_batches_accepted==0u &&
+            counters.scene_batches_refused==1u &&
+            counters.scene_partial_prefix==0u &&
+            counters.scene_operations[GML_RENDER_OP_LAYER_EFFECT]==0u,
+            "a refused scene batch cannot appear as completed work");
+  }
   gml_gpu_context_lost(gpu);
   gml_gpu_device_services(gpu,&services);
   REQUIRE(!services.context && !services.submit,"a lost context offers no service");
@@ -348,6 +358,18 @@ static int scene_resident_batch_case(void){
           "ordinary resident submission never downloads its target");
   REQUIRE(anygm_test_graphics_texture_data_uploads(atlas_name)==1,
           "one atlas data upload serves all 500 quads");
+  {
+    GmlGpuCounters counters;
+    gml_gpu_counters(gpu,&counters);
+    REQUIRE(counters.scene_batches_offered==1u && counters.scene_batches_accepted==1u &&
+            counters.scene_batches_refused==0u &&
+            counters.scene_operations[GML_RENDER_OP_CLEAR]==1u &&
+            counters.scene_operations[GML_RENDER_OP_TEXTURED_QUAD]==QUADS &&
+            counters.scene_uploads==1u && counters.scene_uploaded_bytes==sizeof pixels &&
+            counters.scene_readbacks==0u && counters.scene_readback_bytes==0u &&
+            counters.cpu_upload_frames==0u,
+            "resident scene statistics separate accepted draws and transport");
+  }
   REQUIRE(services.flush(services.context) && services.wait(services.context),
           "issuing and waiting are separate service operations");
   memset(&readback,0,sizeof readback);
@@ -363,6 +385,12 @@ static int scene_resident_batch_case(void){
   REQUIRE(anygm_test_graphics_read_pixels()==1 &&
           output[0]==0xFF010033u && output[2]==0xFF000033u,
           "readback flips rows and packs the runtime word only on demand");
+  {
+    GmlGpuCounters counters;
+    gml_gpu_counters(gpu,&counters);
+    REQUIRE(counters.scene_readbacks==1u && counters.scene_readback_bytes==sizeof output,
+            "the explicit subregion readback is counted by byte area");
+  }
   services.retire(services.context,target_ref);
   free(operations);
   gml_gpu_destroy(gpu,1);
@@ -473,6 +501,16 @@ static int scene_alpha_composition_case(void){
             anygm_test_graphics_clear_calls()==prior_clears &&
             anygm_test_graphics_scene_draw_calls()==prior_draws,
             "an unqualified blend refuses the whole batch before clear or draw");
+  }
+  {
+    GmlGpuCounters counters;
+    gml_gpu_counters(gpu,&counters);
+    REQUIRE(counters.scene_batches_offered==3u &&
+            counters.scene_batches_accepted==2u && counters.scene_batches_refused==1u &&
+            counters.scene_operations[GML_RENDER_OP_CLEAR]==2u &&
+            counters.scene_operations[GML_RENDER_OP_TEXTURED_QUAD]==4u &&
+            counters.scene_partial_prefix==0u && counters.scene_readbacks==0u,
+            "only the two fully accepted resident batches count as completed scene work");
   }
   gml_gpu_destroy(gpu,1);
   return 1;

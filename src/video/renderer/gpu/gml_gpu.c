@@ -70,23 +70,46 @@ static GmlRenderExecutionResult scene_submit(void *context,const GmlRenderDrawBa
   GmlGpu *gpu=(GmlGpu*)context;
   memset(&result,0,sizeof result);
   result.status=GML_RENDER_EXEC_UNSUPPORTED;
-  if(gpu && gpu->context_active && gpu->context.get_current_framebuffer)
-    return gml_gpu_opengl_scene_submit(gpu->backend,batch,
+  if(gpu && gpu->context_active && gpu->context.get_current_framebuffer){
+    gpu->counters.scene_batches_offered++;
+    result=gml_gpu_opengl_scene_submit(gpu->backend,batch,
       gpu->context.get_current_framebuffer(gpu->context.userdata),
       gpu->error,sizeof gpu->error);
+    if(batch && result.status==GML_RENDER_EXEC_ACCEPTED &&
+       result.accepted_prefix==batch->operation_count){
+      gpu->counters.scene_batches_accepted++;
+      for(uint32_t index=0;index<batch->operation_count;index++){
+        uint32_t opcode=batch->operations[index].opcode;
+        if(opcode<GML_RENDER_OPERATION_COUNT)
+          gpu->counters.scene_operations[opcode]++;
+      }
+    } else {
+      gpu->counters.scene_batches_refused++;
+      gpu->counters.scene_partial_prefix+=result.accepted_prefix;
+    }
+    return result;
+  }
   return result;
 }
 
 static int scene_upload(void *context,const GmlRenderImageUpload *transfer){
   GmlGpu *gpu=(GmlGpu*)context;
-  return gpu && gpu->context_active &&
-    gml_gpu_opengl_scene_upload(gpu->backend,transfer);
+  if(!gpu || !gpu->context_active ||
+     !gml_gpu_opengl_scene_upload(gpu->backend,transfer)) return 0;
+  gpu->counters.scene_uploads++;
+  gpu->counters.scene_uploaded_bytes+=(uint64_t)transfer->region.width*
+                                      transfer->region.height*4u;
+  return 1;
 }
 
 static int scene_readback(void *context,const GmlRenderImageReadback *transfer){
   GmlGpu *gpu=(GmlGpu*)context;
-  return gpu && gpu->context_active &&
-    gml_gpu_opengl_scene_readback(gpu->backend,transfer);
+  if(!gpu || !gpu->context_active ||
+     !gml_gpu_opengl_scene_readback(gpu->backend,transfer)) return 0;
+  gpu->counters.scene_readbacks++;
+  gpu->counters.scene_readback_bytes+=(uint64_t)transfer->region.width*
+                                      transfer->region.height*4u;
+  return 1;
 }
 
 static void scene_retire(void *context,GmlRenderImageRef image){

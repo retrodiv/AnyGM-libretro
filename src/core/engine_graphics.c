@@ -115,6 +115,29 @@ void engine_graphics_report(AnygmEngine *engine){
       ?(double)engine->readback_frame_ns/(double)engine->readback_frames_measured/1e6:0.0,
     engine->readback_is_pipelined,engine->readback_refused,
     gml_gpu_last_error(engine->gpu)?gml_gpu_last_error(engine->gpu):"");
+  engine_logf(engine,ANYGM_LOG_INFO,
+    "[graphics-scene] offered=%llu accepted=%llu refused=%llu partial_prefix=%llu "
+    "texture=%llu primitive=%llu surface=%llu effect=%llu presentation=%llu "
+    "shader=%llu software3d=%llu uploads=%llu upload_bytes=%llu "
+    "readbacks=%llu readback_bytes=%llu\n",
+    (unsigned long long)counters.scene_batches_offered,
+    (unsigned long long)counters.scene_batches_accepted,
+    (unsigned long long)counters.scene_batches_refused,
+    (unsigned long long)counters.scene_partial_prefix,
+    (unsigned long long)(counters.scene_operations[GML_RENDER_OP_TEXTURED_QUAD]+
+                         counters.scene_operations[GML_RENDER_OP_TEXTURED_TRIANGLES]),
+    (unsigned long long)(counters.scene_operations[GML_RENDER_OP_COLOURED_PRIMITIVE]+
+                         counters.scene_operations[GML_RENDER_OP_CLEAR]),
+    (unsigned long long)(counters.scene_operations[GML_RENDER_OP_COPY_IMAGE]+
+                         counters.scene_operations[GML_RENDER_OP_COMPOSE_SURFACE]),
+    (unsigned long long)counters.scene_operations[GML_RENDER_OP_LAYER_EFFECT],
+    (unsigned long long)counters.scene_operations[GML_RENDER_OP_PRESENT_IMAGE],
+    (unsigned long long)counters.scene_operations[GML_RENDER_OP_CONTENT_SHADER_DRAW],
+    (unsigned long long)counters.scene_operations[GML_RENDER_OP_SOFTWARE3D_PASS],
+    (unsigned long long)counters.scene_uploads,
+    (unsigned long long)counters.scene_uploaded_bytes,
+    (unsigned long long)counters.scene_readbacks,
+    (unsigned long long)counters.scene_readback_bytes);
 }
 
 /* The frame's last operation, executed where it lands instead of on the processor.

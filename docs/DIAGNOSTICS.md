@@ -155,7 +155,7 @@ whose names begin with `draw_` are not counted as draws.
 
 ## Graphics-device counters
 
-`GML_GRAPHICS_DEVICE_STATS` reports one bounded line when the graphics context is released or
+`GML_GRAPHICS_DEVICE_STATS` reports two bounded lines when the graphics context is released or
 content is unloaded. It covers the shared context used by the independent content-GLSL and hybrid
 presentation policies:
 
@@ -165,7 +165,17 @@ presentation policies:
              fallback_context=N fallback_upload=N fallback_overflow=N fallback_shader=N
              materializations=N screen_passes=N canvas_passes=N readback_passes=N
              readback_ms_per_frame=N readback_pipelined=N readback_refused=N last_error="..."
+[graphics-scene] offered=N accepted=N refused=N partial_prefix=N texture=N primitive=N
+             surface=N effect=N presentation=N shader=N software3d=N uploads=N
+             upload_bytes=N readbacks=N readback_bytes=N
 ```
+
+The second line counts the resident scene service separately from hybrid plan transport.
+Operation-family counts include only complete accepted batches; `partial_prefix` records how many
+operations a failed batch reported as already accepted and is never treated as completed work.
+Transfer counts and bytes include only successful explicit scene-service uploads/readbacks and use
+the transferred region's area, not its enclosing texture's area. A scene line of all zeros means
+the host did not submit resident scene work, even if the older hybrid counters are nonzero.
 
 `fallback_shader` counts passes refused because the content's own program did not compile or
 link on the device; the first refusal retires that program for the session, so the count stays at
