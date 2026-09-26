@@ -49,7 +49,7 @@ static int resident_integer_sprite(GmlRender *r,GmlSprite *sprite,int subimg,
      r->rotated_batch_count || r->rotated_batch_building ||
      r->pending_underlay || r->pending_presentation ||
      r->fb!=r->app_surface_owned || r->fbw!=r->app_w || r->fbh!=r->app_h ||
-     !isfinite(xs) || !isfinite(ys) || xs<=0.0 || ys<=0.0 ||
+     !isfinite(xs) || !isfinite(ys) || xs==0.0 || ys==0.0 ||
      rotation!=0.0 || blend!=0xFFFFFFu || alpha!=1.0 ||
      (r->interp && (xs!=1.0 || ys!=1.0)))
     return 0;
@@ -85,7 +85,7 @@ int gml_render_resident_atlas_crop(GmlRender *r,int page_index,
   GmlRenderDrawStateSnapshot state={0};
   GmlRenderImageRef source_ref,image;
   GmlRenderRect region;
-  double scaled_width,scaled_height;
+  double scaled_width,scaled_height,source_left,source_right,source_top,source_bottom;
   if(!r || !r->resident_application_pass || page_index<0 || page_index>=r->n_tpag ||
      r->classic || (r->world_transform_active &&
                     (r->world_scale_x!=1.0 || r->world_scale_y!=1.0)) ||
@@ -95,7 +95,7 @@ int gml_render_resident_atlas_crop(GmlRender *r,int page_index,
      r->classic_phase_y || r->rotated_batch_count || r->rotated_batch_building ||
      r->pending_underlay || r->pending_presentation ||
      r->fb!=r->app_surface_owned || r->fbw!=r->app_w || r->fbh!=r->app_h ||
-     !isfinite(xs) || !isfinite(ys) || xs<=0.0 || ys<=0.0 ||
+     !isfinite(xs) || !isfinite(ys) || xs==0.0 || ys==0.0 ||
      (r->interp && (xs!=1.0 || ys!=1.0))) return 0;
   for(int index=0;index<3;index++)
     if(r->classic_interp_phase[index] || r->app_interp_phase[index]) return 0;
@@ -122,13 +122,18 @@ int gml_render_resident_atlas_crop(GmlRender *r,int page_index,
     page->scene_opaque_checked=1;
   }
   if(!page->scene_binary_alpha) return 0;
-  scaled_width=(double)crop_width*xs;
-  scaled_height=(double)crop_height*ys;
+  scaled_width=(double)crop_width*fabs(xs);
+  scaled_height=(double)crop_height*fabs(ys);
+  if(xs<0.0) left-=scaled_width;
+  if(ys<0.0) top-=scaled_height;
   if(!isfinite(left) || !isfinite(top) ||
      !isfinite(scaled_width) || !isfinite(scaled_height) ||
-     floor(left)!=left || floor(top)!=top || xs>INT_MAX || ys>INT_MAX ||
+     floor(left)!=left || floor(top)!=top ||
+     fabs(xs)>INT_MAX || fabs(ys)>INT_MAX ||
      xs!=(double)(int)xs || ys!=(double)(int)ys) return 0;
   if(left>=r->fbw || top>=r->fbh) return 0;
+  if((xs<0.0 && (left<0.0 || left+scaled_width>r->fbw)) ||
+     (ys<0.0 && (top<0.0 || top+scaled_height>r->fbh))) return 0;
   /* Unit texels clipped at the application edge remain exact nearest samples. Larger
    * scales can expose part of one texel there and retain the CPU fallback. */
   if(xs==1.0){
@@ -183,10 +188,14 @@ int gml_render_resident_atlas_crop(GmlRender *r,int page_index,
   operation.payload.quad.x[1]=operation.payload.quad.x[2]=left+scaled_width;
   operation.payload.quad.y[0]=operation.payload.quad.y[1]=top;
   operation.payload.quad.y[2]=operation.payload.quad.y[3]=top+scaled_height;
-  operation.payload.quad.u[0]=operation.payload.quad.u[3]=(double)region.x/source.width;
-  operation.payload.quad.u[1]=operation.payload.quad.u[2]=(double)(region.x+region.width)/source.width;
-  operation.payload.quad.v[0]=operation.payload.quad.v[1]=(double)region.y/source.height;
-  operation.payload.quad.v[2]=operation.payload.quad.v[3]=(double)(region.y+region.height)/source.height;
+  source_left=(double)region.x/source.width;
+  source_right=((double)region.x+region.width)/source.width;
+  source_top=(double)region.y/source.height;
+  source_bottom=((double)region.y+region.height)/source.height;
+  operation.payload.quad.u[0]=operation.payload.quad.u[3]=xs<0.0?source_right:source_left;
+  operation.payload.quad.u[1]=operation.payload.quad.u[2]=xs<0.0?source_left:source_right;
+  operation.payload.quad.v[0]=operation.payload.quad.v[1]=ys<0.0?source_bottom:source_top;
+  operation.payload.quad.v[2]=operation.payload.quad.v[3]=ys<0.0?source_top:source_bottom;
   state.write_mask=15u;
   state.colour=0xFFFFFFFFu;
   state.alpha=255u;

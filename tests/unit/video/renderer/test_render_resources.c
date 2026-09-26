@@ -1055,6 +1055,72 @@ static int resident_background_and_tile_cpu_barriers(void){
   }
   CHECK(gml_render_begin_resident_owned_application(render,0.0,0.0,0));
   gml_render_set_pending_fill(render,0xFF000000u);
+  gml_draw_sprite_ext(render,0,0,2,0,-1,1,0,0xFFFFFFu,1.0);
+  CHECK(render->resident_application_pass && fake.readbacks==0);
+  CHECK(gml_render_resident_application_cpu_barrier(render));
+  CHECK(!render->resident_application_pass &&
+        render->app_surface_owned[0]==0xFF10D020u &&
+        render->app_surface_owned[1]==0xFFD02010u &&
+        render->app_surface_owned[2]==0xFF000000u &&
+        render->app_surface_owned[4]==0xFFC0B0A0u &&
+        render->app_surface_owned[5]==0xFF2010D0u);
+  CHECK(gml_render_begin_resident_owned_application(render,0.0,0.0,0));
+  gml_render_set_pending_fill(render,0xFF000000u);
+  gml_draw_sprite_ext(render,0,0,0,2,1,-1,0,0xFFFFFFu,1.0);
+  CHECK(render->resident_application_pass && fake.readbacks==0);
+  CHECK(gml_render_resident_application_cpu_barrier(render));
+  CHECK(!render->resident_application_pass &&
+        render->app_surface_owned[0]==0xFF2010D0u &&
+        render->app_surface_owned[1]==0xFFC0B0A0u &&
+        render->app_surface_owned[4]==0xFFD02010u &&
+        render->app_surface_owned[5]==0xFF10D020u);
+  CHECK(gml_render_begin_resident_owned_application(render,0.0,0.0,0));
+  gml_render_set_pending_fill(render,0xFF000000u);
+  gml_draw_background_ext(render,0,2,0,-1,1,0xFFFFFFu,1.0);
+  CHECK(render->resident_application_pass && fake.readbacks==0);
+  CHECK(gml_render_resident_application_cpu_barrier(render));
+  CHECK(render->app_surface_owned[0]==0xFF10D020u &&
+        render->app_surface_owned[1]==0xFFD02010u &&
+        render->app_surface_owned[4]==0xFFC0B0A0u &&
+        render->app_surface_owned[5]==0xFF2010D0u);
+  CHECK(gml_render_begin_resident_owned_application(render,0.0,0.0,0));
+  gml_render_set_pending_fill(render,0xFF000000u);
+  gml_draw_background_tile(render,0,0,0,2,1,0,0,1,1,1,0,0,0xFFFFFFu,1.0);
+  CHECK(render->resident_application_pass && fake.readbacks==0);
+  CHECK(gml_render_resident_application_cpu_barrier(render));
+  CHECK(render->app_surface_owned[0]==0xFF10D020u &&
+        render->app_surface_owned[1]==0xFFD02010u &&
+        render->app_surface_owned[4]==0xFF000000u);
+  CHECK(gml_render_begin_resident_owned_application(render,0.0,0.0,0));
+  gml_render_set_pending_fill(render,0xFF000000u);
+  gml_draw_sprite_ext(render,0,0,4,0,-2,2,0,0xFFFFFFu,1.0);
+  CHECK(render->resident_application_pass && fake.readbacks==0);
+  CHECK(gml_render_resident_application_cpu_barrier(render));
+  CHECK(render->app_surface_owned[0]==0xFF10D020u &&
+        render->app_surface_owned[1]==0xFF10D020u &&
+        render->app_surface_owned[2]==0xFFD02010u &&
+        render->app_surface_owned[3]==0xFFD02010u &&
+        render->app_surface_owned[8]==0xFFC0B0A0u &&
+        render->app_surface_owned[10]==0xFF2010D0u &&
+        render->app_surface_owned[15]==0xFF2010D0u);
+  CHECK(gml_render_begin_resident_owned_application(render,0.0,0.0,0));
+  gml_render_set_pending_fill(render,0xFF000000u);
+  gml_draw_sprite_ext(render,0,0,1,0,-1,1,0,0xFFFFFFu,1.0);
+  CHECK(!render->resident_application_pass &&
+        render->app_surface_owned[0]==0xFFD02010u &&
+        render->app_surface_owned[4]==0xFF2010D0u &&
+        render->app_surface_owned[1]==0xFF000000u);
+  CHECK(gml_render_begin_resident_owned_application(render,0.0,0.0,0));
+  gml_render_set_pending_fill(render,0xFF000000u);
+  gml_draw_background_tile(render,0,0,0,2,2,0,0,1,1,1,0,0,0xFFFFFFu,1.0);
+  CHECK(render->resident_application_pass && fake.readbacks==0);
+  CHECK(gml_render_resident_application_cpu_barrier(render));
+  CHECK(render->app_surface_owned[0]==0xFF10D020u &&
+        render->app_surface_owned[1]==0xFFD02010u &&
+        render->app_surface_owned[4]==0xFFC0B0A0u &&
+        render->app_surface_owned[5]==0xFF2010D0u);
+  CHECK(gml_render_begin_resident_owned_application(render,0.0,0.0,0));
+  gml_render_set_pending_fill(render,0xFF000000u);
   gml_draw_background_tiled_ext(render,0,-1,0,1,1,0xFFFFFFu,1.0,1,0);
   CHECK(render->resident_application_pass && fake.readbacks==0);
   CHECK(gml_render_resident_application_cpu_barrier(render));
