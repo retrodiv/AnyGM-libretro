@@ -7,6 +7,7 @@
 #include "gml_render_cpu_blit_internal.h"
 #include "gml_render_internal.h"
 #include "gml_render_sprites_internal.h"
+#include "gml_render_surfaces_internal.h"
 #include "gml_render_cpu_pixel_internal.h"
 #include "gml_render_cpu_sampling_internal.h"
 #include "anygm_compatibility.h"
@@ -5870,6 +5871,7 @@ void gml_render_cpu_blit_sprite_ext_resolved(GmlRender *r, GmlSprite *s,
 
 void gml_draw_sprite_ext(GmlRender *r, int sprite, int subimg, double x, double y,
                          double xs, double ys, double rot, uint32_t blend, double alpha){
+  if(!gml_render_resident_application_cpu_barrier(r)) return;
   GmlMaskedSpriteDraw masked=masked_sprite_draw_begin(r);
   gml_render_sprite_ext_unmasked(r,sprite,subimg,x,y,xs,ys,rot,blend,alpha);
   masked_sprite_draw_end(r,masked);
@@ -5877,6 +5879,7 @@ void gml_draw_sprite_ext(GmlRender *r, int sprite, int subimg, double x, double 
 
 void gml_draw_sprite_tiled_ext(GmlRender *r, int sprite, int subimg, double x, double y,
                                double xs, double ys, uint32_t blend, double alpha){
+  if(!gml_render_resident_application_cpu_barrier(r)) return;
   GmlMaskedSpriteDraw masked=masked_sprite_draw_begin(r);
   gml_render_sprite_tiled_ext_unmasked(r,sprite,subimg,x,y,xs,ys,blend,alpha);
   masked_sprite_draw_end(r,masked);

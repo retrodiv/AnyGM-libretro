@@ -847,6 +847,52 @@ static int resident_application_pending_clear(void){
   return 1;
 }
 
+static int resident_application_sprite_cpu_fallback(void){
+  GmlRender *render=(GmlRender*)calloc(1,sizeof *render);
+  GmlRenderDeviceServices device;
+  GmlRenderJournalMetrics metrics={0};
+  FakeDevice fake={0};
+  CHECK(render);
+  CHECK(gml_render_application_surface_ensure_owned(render,4,4));
+  render->spr=(GmlSprite*)calloc(1,sizeof *render->spr);
+  CHECK(render->spr);
+  render->n_spr=1;
+  render->spr[0].w=render->spr[0].h=1;
+  render->spr[0].n_frames=1;
+  render->spr[0].frame=(int*)calloc(1,sizeof(int));
+  render->spr[0].runtime_rgba=(uint8_t*)malloc(4u);
+  CHECK(render->spr[0].frame && render->spr[0].runtime_rgba);
+  render->spr[0].runtime_rgba[0]=0xD0u;
+  render->spr[0].runtime_rgba[1]=0x20u;
+  render->spr[0].runtime_rgba[2]=0x10u;
+  render->spr[0].runtime_rgba[3]=0xFFu;
+  render->spr[0].runtime_opaque=1;
+  render->color_write_mask=0x0Fu;
+  device=service(&fake);
+  gml_render_bind_device(render,&device);
+  CHECK(gml_render_begin_resident_owned_application(render,0.0,0.0,0));
+  gml_render_set_pending_fill(render,0xFF000000u);
+  gml_draw_sprite_ext(render,0,0,1.0,1.0,1.0,1.0,0.0,0xFFFFFFu,1.0);
+  gml_render_resource_journal_metrics(render->app_surface_resource,&metrics);
+  CHECK(!render->resident_application_pass && !render->pending_fill &&
+        fake.submits==1 && fake.readbacks==0 && metrics.cpu_replays==1u &&
+        render->app_surface_owned[0]==0xFF000000u &&
+        render->app_surface_owned[5]==0xFFD02010u);
+  render->color_write_mask=0x07u;
+  CHECK(gml_render_begin_resident_owned_application(render,0.0,0.0,0));
+  gml_render_set_pending_fill(render,0x40112233u);
+  gml_draw_sprite_ext(render,0,0,1.0,1.0,1.0,1.0,0.0,0xFFFFFFu,1.0);
+  gml_render_resource_journal_metrics(render->app_surface_resource,&metrics);
+  CHECK(!render->resident_application_pass && fake.submits==2 &&
+        fake.readbacks==0 && metrics.cpu_replays==2u &&
+        render->app_surface_owned[0]==0x40112233u &&
+        render->app_surface_owned[5]==0x40D02010u &&
+        render->color_write_mask==0x07u);
+  gml_render_free(render);
+  free(render);
+  return 1;
+}
+
 static int state_without_context(void){
   GmlRender *original=(GmlRender*)calloc(1,sizeof *original);
   GmlRender *restored=(GmlRender*)calloc(1,sizeof *restored);
@@ -907,8 +953,9 @@ int main(void){
   passed+=retained_target_stays_resident();
   passed+=owned_application_resize_and_context_loss();
   passed+=resident_application_pending_clear();
+  passed+=resident_application_sprite_cpu_fallback();
   passed+=state_without_context();
   passed+=nearest_subrectangle_mirrors();
-  printf("render resource cases: passed=%d failed=%d\n",passed,14-passed);
-  return passed==14?EXIT_SUCCESS:EXIT_FAILURE;
+  printf("render resource cases: passed=%d failed=%d\n",passed,15-passed);
+  return passed==15?EXIT_SUCCESS:EXIT_FAILURE;
 }

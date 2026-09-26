@@ -5,6 +5,7 @@
 #include "gml_render.h"
 #include "gml_render_internal.h"
 #include "gml_render_sprites_internal.h"
+#include "gml_render_surfaces_internal.h"
 #include "gml_render_cpu_blit.h"
 #include "anygm_host.h"
 
@@ -69,6 +70,7 @@ void gml_render_sprite_ext_unmasked(GmlRender *r, int sprite, int subimg, double
 }
 
 void gml_draw_sprite_stretched(GmlRender *r, int sprite, int frame, double dx, double dy, double dw, double dh, uint32_t blend, double alpha){
+  if(!gml_render_resident_application_cpu_barrier(r)) return;
   gml_render_draw_map_point(r,&dx,&dy);
   gml_render_draw_map_scale(r,&dw,&dh);
   if(sprite<0||sprite>=r->n_spr) return;
@@ -90,6 +92,7 @@ void gml_draw_sprite_stretched(GmlRender *r, int sprite, int frame, double dx, d
 
 void gml_draw_sprite_pos(GmlRender *r,int sprite,int subimg,
                          const double x[4],const double y[4],double alpha){
+  if(!gml_render_resident_application_cpu_barrier(r)) return;
   double mapped_x[4],mapped_y[4];
   for(int i=0;i<4;i++){
     mapped_x[i]=x[i]; mapped_y[i]=y[i];
@@ -193,6 +196,7 @@ void gml_render_sprite_nineslice(GmlRender *r, GmlSprite *s, GmlTpag *t,
 void gml_draw_sprite_part_ext(GmlRender *r, int sprite, int subimg, double sx, double sy,
                               double sw, double sh, double x, double y,
                               double xs, double ys, uint32_t blend, double alpha){
+  if(!gml_render_resident_application_cpu_barrier(r)) return;
   gml_render_draw_map_point(r,&x,&y);
   gml_render_draw_map_scale(r,&xs,&ys);
   if(sprite<0||sprite>=r->n_spr) return;
