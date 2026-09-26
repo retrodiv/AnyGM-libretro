@@ -88,6 +88,7 @@ int gml_render_resident_atlas_crop(GmlRender *r,int page_index,
   GmlRenderImageRef source_ref,image;
   GmlRenderRect region;
   double scaled_width,scaled_height,source_left,source_right,source_top,source_bottom;
+  int checkpoint_alpha_background;
   if(!r || !r->resident_application_pass || page_index<0 || page_index>=r->n_tpag ||
      r->classic || (r->world_transform_active &&
                     (r->world_scale_x!=1.0 || r->world_scale_y!=1.0)) ||
@@ -123,7 +124,13 @@ int gml_render_resident_atlas_crop(GmlRender *r,int page_index,
       }
     page->scene_opaque_checked=1;
   }
-  if(!page->scene_binary_alpha) return 0;
+  checkpoint_alpha_background=!page->scene_binary_alpha &&
+    family==GML_RENDER_SCENE_BACKGROUND && !r->interp &&
+    anygm_policy_uses_first_generation_studio(r->win) &&
+    crop_x==0 && crop_y==0 && crop_width==page->sw && crop_height==page->sh &&
+    !page->tx && !page->ty && page->bw==page->sw && page->bh==page->sh &&
+    xs==1.0 && ys==1.0;
+  if(!page->scene_binary_alpha && !checkpoint_alpha_background) return 0;
   scaled_width=(double)crop_width*fabs(xs);
   scaled_height=(double)crop_height*fabs(ys);
   if(xs<0.0) left-=scaled_width;
@@ -171,7 +178,8 @@ int gml_render_resident_atlas_crop(GmlRender *r,int page_index,
                          (uint32_t)crop_width,(uint32_t)crop_height};
   source_ref=source.image;
   operation.opcode=GML_RENDER_OP_TEXTURED_QUAD;
-  operation.reconstruction_mode=GML_RENDER_REPLAY_EXACT;
+  operation.reconstruction_mode=checkpoint_alpha_background
+    ?GML_RENDER_DEVICE_CHECKPOINT:GML_RENDER_REPLAY_EXACT;
   operation.scene_family=family;
   operation.source_count=1u;
   operation.sources=&source_ref;
@@ -205,7 +213,8 @@ int gml_render_resident_atlas_crop(GmlRender *r,int page_index,
   if(!page->scene_fully_opaque){
     state.rgb_source_factor=GML_RENDER_BLEND_SOURCE_ALPHA;
     state.rgb_destination_factor=GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA;
-    state.alpha_source_factor=GML_RENDER_BLEND_ONE;
+    state.alpha_source_factor=checkpoint_alpha_background
+      ?GML_RENDER_BLEND_SOURCE_ALPHA:GML_RENDER_BLEND_ONE;
     state.alpha_destination_factor=GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA;
     state.rgb_equation=GML_RENDER_BLEND_ADD;
     state.alpha_equation=GML_RENDER_BLEND_ADD;

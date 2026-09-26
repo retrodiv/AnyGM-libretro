@@ -25,7 +25,13 @@ ordinary sprites with partial alpha. It preserves snapped destination coverage a
 texture phase, uses source-over RGB with the application's source-alpha-squared coverage rule,
 and checkpoints the device result rather than claiming exact CPU replay. CPU text resolves a
 preceding resident sprite before writing glyph pixels; this ordering barrier does not accelerate
-text. A terminal automatic application-surface underlay may also use the exact current resident
+text. A similarly bounded first-generation nearest background path accepts complete untrimmed
+pages at unit positive scale with intermediate alpha. It checkpoints the device's source-over
+result, treats only the low RGB 24 bits of a GML white tint as colour, and retains the existing
+binary-alpha replay path unchanged. A resident-only background draw whose full untrimmed source
+lies conservatively outside either target axis writes no pixels and does not force a CPU barrier;
+this does not qualify visible mirrors or trimmed backgrounds. A terminal automatic
+application-surface underlay may also use the exact current resident
 image: the existing plan's integer nearest axes select the pixels, while the GL executor reads the
 scene texture directly without a CPU upload. This requires an opaque, owned application surface,
 no intervening GUI draw, and the guarded prototype setting. A failed or lost device reconstructs

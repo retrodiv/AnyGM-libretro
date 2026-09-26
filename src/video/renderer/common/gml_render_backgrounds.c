@@ -189,10 +189,21 @@ void gml_draw_background_ext(GmlRender *r, int bg, double x, double y, double xs
   if(bg<0||bg>=r->n_bg) return;
   int ti=r->bg[bg].tpag; if(ti<0||ti>=r->n_tpag) return;
   GmlTpag *t=&r->tpag[ti];
-  if(color==0xFFFFFFu && alpha==1.0 && !r->interp && !gml_d3_is_active(r) &&
+  if((color&0xFFFFFFu)==0xFFFFFFu && alpha==1.0 && !r->interp && !gml_d3_is_active(r) &&
      gml_render_resident_atlas_page(r,ti,x-r->cam_x+t->tx*xs,
                                       y-r->cam_y+t->ty*ys,xs,ys,
                                       GML_RENDER_SCENE_BACKGROUND)) return;
+  /* A complete source axis wholly outside the target writes no pixels. Keep a preceding resident
+   * pass when an otherwise unsupported mirror is safely beyond either target axis. */
+  if(r->resident_application_pass && !gml_d3_is_active(r) &&
+     isfinite(x) && isfinite(y) && isfinite(xs) && isfinite(ys)){
+    double left=x-r->cam_x,right=left+(double)t->sw*xs;
+    double top=y-r->cam_y,bottom=top+(double)t->sh*ys;
+    if((!t->tx && t->bw==t->sw && t->tw==t->sw &&
+        (fmax(left,right)<=-1.0 || fmin(left,right)>=(double)r->fbw+1.0)) ||
+       (!t->ty && t->bh==t->sh && t->th==t->sh &&
+        (fmax(top,bottom)<=-1.0 || fmin(top,bottom)>=(double)r->fbh+1.0))) return;
+  }
   if(!gml_render_resident_application_cpu_barrier(r)) return;
   if(gml_d3_draw_background_2d(r,bg,x,y,xs,ys,color,alpha)) return;
   gml_render_cpu_blit_background_phase(r,t, x - r->cam_x + t->tx*xs, y - r->cam_y + t->ty*ys, xs,ys, color, alpha);
@@ -297,11 +308,12 @@ static void do_bg_tiled_ext(GmlRender *r, int bg, double x, double y, double xs,
   }
   for(double yy=y0; yy<yend; yy+=logical_h)
     for(double xx=x0; xx<xend; xx+=logical_w){
-      if(color==0xFFFFFFu && alpha==1.0 && !r->interp &&
+      /* The CPU tint uses RGB only; a GML white value may carry an unused high byte. */
+      if((color&0xFFFFFFu)==0xFFFFFFu && alpha==1.0 && !r->interp &&
          gml_render_resident_atlas_page(r,ti,xx+t->tx*xs,yy+t->ty*ys,xs,ys,
                                         GML_RENDER_SCENE_BACKGROUND))
         continue;
-      if(color==0xFFFFFFu && alpha==1.0 && r->interp &&
+      if((color&0xFFFFFFu)==0xFFFFFFu && alpha==1.0 && r->interp &&
          gml_render_resident_filtered_atlas_page(r,ti,xx+t->tx*xs,yy+t->ty*ys,xs,ys,
                                                  GML_RENDER_SCENE_BACKGROUND))
         continue;
