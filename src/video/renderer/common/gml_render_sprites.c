@@ -71,12 +71,14 @@ static int resident_integer_sprite(GmlRender *r,GmlSprite *sprite,int subimg,
      page->atlas<0 || page->atlas>=r->n_atlas) return 0;
   left=x-(double)sprite->originx*xs+(double)page->tx*xs-r->cam_x;
   top=y-(double)sprite->originy*ys+(double)page->ty*ys-r->cam_y;
-  return gml_render_resident_atlas_page(r,page_index,left,top,xs,ys);
+  return gml_render_resident_atlas_page(r,page_index,left,top,xs,ys,
+                                        GML_RENDER_SCENE_SPRITE);
 }
 
 int gml_render_resident_atlas_crop(GmlRender *r,int page_index,
                                   int crop_x,int crop_y,int crop_width,int crop_height,
-                                  double left,double top,double xs,double ys){
+                                  double left,double top,double xs,double ys,
+                                  GmlRenderSceneFamily family){
   GmlTpag *page;
   GmlAtlas *atlas;
   GmlRenderResourceSource source={0};
@@ -170,6 +172,7 @@ int gml_render_resident_atlas_crop(GmlRender *r,int page_index,
   source_ref=source.image;
   operation.opcode=GML_RENDER_OP_TEXTURED_QUAD;
   operation.reconstruction_mode=GML_RENDER_REPLAY_EXACT;
+  operation.scene_family=family;
   operation.source_count=1u;
   operation.sources=&source_ref;
   operation.target.image=image;
@@ -215,11 +218,114 @@ int gml_render_resident_atlas_crop(GmlRender *r,int page_index,
 }
 
 int gml_render_resident_atlas_page(GmlRender *r,int page_index,
-                                  double left,double top,double xs,double ys){
+                                  double left,double top,double xs,double ys,
+                                  GmlRenderSceneFamily family){
   if(!r || page_index<0 || page_index>=r->n_tpag) return 0;
   GmlTpag *page=&r->tpag[page_index];
   return gml_render_resident_atlas_crop(r,page_index,0,0,page->sw,page->sh,
-                                        left,top,xs,ys);
+                                        left,top,xs,ys,family);
+}
+
+/* Match the first-generation filtered CPU blit's snapped coverage while retaining its fractional
+ * texture phase. Opaque, untrimmed atlas pages need no destination-dependent blend arithmetic. */
+int gml_render_resident_filtered_atlas_page(GmlRender *r,int page_index,
+                                           double left,double top,double xs,double ys){
+  GmlTpag *page;
+  GmlAtlas *atlas;
+  GmlRenderResourceSource source={0};
+  GmlRenderResource *target;
+  GmlRenderDrawOp operation={0};
+  GmlRenderDrawStateSnapshot state={0};
+  GmlRenderImageRef source_ref,image;
+  GmlRenderRect region;
+  double x0,y0,width,height;
+  if(!r || !r->resident_application_pass || !r->interp || !r->win ||
+     !anygm_policy_uses_first_generation_studio(r->win) ||
+     page_index<0 || page_index>=r->n_tpag || r->classic ||
+     r->gui_pass_active || r->active_shader>=0 || r->alpha_test_enable ||
+     !r->alphablend || r->blendmode || r->blend_equation!=1 ||
+     r->blend_equation_alpha!=1 || r->color_write_mask!=0x0fu ||
+     r->classic_phase_y || r->rotated_batch_count || r->rotated_batch_building ||
+     r->pending_underlay || r->pending_presentation ||
+     r->fb!=r->app_surface_owned || r->fbw!=r->app_w || r->fbh!=r->app_h ||
+     !isfinite(left) || !isfinite(top) || !isfinite(xs) || !isfinite(ys) ||
+     xs<=0.0 || ys<=0.0 || xs>1000000.0 || ys>1000000.0) return 0;
+  for(int index=0;index<3;index++)
+    if(r->classic_interp_phase[index] || r->app_interp_phase[index]) return 0;
+  page=&r->tpag[page_index];
+  if(page->sw<=0 || page->sh<=0 || page->sx<0 || page->sy<0 ||
+     page->tx || page->ty || page->tw!=page->sw || page->th!=page->sh ||
+     page->bw!=page->sw || page->bh!=page->sh ||
+     page->atlas<0 || page->atlas>=r->n_atlas) return 0;
+  atlas=&r->atlas[page->atlas];
+  if(!gml_render_atlas_scene_source_view(r,page->atlas,&source) ||
+     (uint64_t)(uint32_t)page->sx+(uint32_t)page->sw>source.width ||
+     (uint64_t)(uint32_t)page->sy+(uint32_t)page->sh>source.height) return 0;
+  if(!page->scene_opaque_checked){
+    page->scene_fully_opaque=1;
+    page->scene_binary_alpha=1;
+    for(int row=0;row<page->sh;row++)
+      for(int column=0;column<page->sw;column++){
+        uint8_t coverage=atlas->px[((size_t)(page->sy+row)*atlas->w+page->sx+column)*4u+3u];
+        if(coverage!=255u) page->scene_fully_opaque=0;
+        if(coverage!=0u && coverage!=255u) page->scene_binary_alpha=0;
+      }
+    page->scene_opaque_checked=1;
+  }
+  if(!page->scene_fully_opaque) return 0;
+  x0=floor(left+0.5); y0=floor(top+0.5);
+  width=fabs(xs-nearbyint(xs))>1e-9
+    ?floor(left+(double)page->sw*xs+0.5)-x0
+    :floor((double)page->sw*xs+0.5);
+  height=fabs(ys-nearbyint(ys))>1e-9
+    ?floor(top+(double)page->sh*ys+0.5)-y0
+    :floor((double)page->sh*ys+0.5);
+  if(!isfinite(width) || !isfinite(height) || width<1.0 || height<1.0 ||
+     x0<=-width || y0<=-height || x0>=r->fbw || y0>=r->fbh ||
+     x0+width>10000000.0 || y0+height>10000000.0) return 0;
+  gml_render_flush_pending_fill(r);
+  if(r->pending_fill || !(target=gml_render_application_resource_ensure(r))) return 0;
+  image=gml_render_application_scene_next_image_ref(r,target);
+  if(image.content_version==UINT64_MAX) return 0;
+  region=(GmlRenderRect){page->sx,page->sy,(uint32_t)page->sw,(uint32_t)page->sh};
+  source_ref=source.image;
+  operation.opcode=GML_RENDER_OP_TEXTURED_QUAD;
+  operation.reconstruction_mode=GML_RENDER_DEVICE_CHECKPOINT;
+  operation.scene_family=GML_RENDER_SCENE_BACKGROUND;
+  operation.source_count=1u;
+  operation.sources=&source_ref;
+  operation.target.image=image;
+  operation.target.image.content_version++;
+  operation.target.storage_version=1u;
+  operation.target.width=(uint32_t)r->fbw;
+  operation.target.height=(uint32_t)r->fbh;
+  operation.target.pixel_format=GML_RENDER_PIXEL_ARGB8888;
+  operation.target.region=(GmlRenderRect){0,0,(uint32_t)r->fbw,(uint32_t)r->fbh};
+  operation.payload.quad.shape=GML_RENDER_QUAD_AXIS_ALIGNED;
+  operation.payload.quad.sampling.filter=GML_RENDER_FILTER_BILINEAR;
+  operation.payload.quad.sampling.edge_rule=GML_RENDER_EDGE_CLAMP_SUBIMAGE;
+  operation.payload.quad.sampling.source_region=region;
+  for(int corner=0;corner<4;corner++) operation.payload.quad.corner_colour[corner]=0xFFFFFFFFu;
+  operation.payload.quad.x[0]=operation.payload.quad.x[3]=x0;
+  operation.payload.quad.x[1]=operation.payload.quad.x[2]=x0+width;
+  operation.payload.quad.y[0]=operation.payload.quad.y[1]=y0;
+  operation.payload.quad.y[2]=operation.payload.quad.y[3]=y0+height;
+  operation.payload.quad.u[0]=operation.payload.quad.u[3]=
+    ((double)page->sx+(x0-left)/xs)/source.width;
+  operation.payload.quad.u[1]=operation.payload.quad.u[2]=
+    ((double)page->sx+(x0+width-left)/xs)/source.width;
+  operation.payload.quad.v[0]=operation.payload.quad.v[1]=
+    ((double)page->sy+(y0-top)/ys)/source.height;
+  operation.payload.quad.v[2]=operation.payload.quad.v[3]=
+    ((double)page->sy+(y0+height-top)/ys)/source.height;
+  state.write_mask=15u;
+  state.colour=0xFFFFFFFFu;
+  state.alpha=255u;
+  state.sampler_count=1u;
+  state.samplers[0]=operation.payload.quad.sampling;
+  if(!gml_render_application_scene_enqueue(r,&operation,&state,&source)) return 0;
+  r->fb_all_transparent=0;
+  return 1;
 }
 
 void gml_draw_sprite(GmlRender *r, int sprite, int subimg, double x, double y){
@@ -292,7 +398,8 @@ void gml_draw_sprite_stretched(GmlRender *r, int sprite, int frame, double dx, d
           if(mapped_w>0.0 && mapped_h>0.0 &&
              gml_render_resident_atlas_page(r,page_index,
                mapped_x-r->cam_x,mapped_y-r->cam_y,
-               mapped_w/resident_sprite->w,mapped_h/resident_sprite->h)) return;
+               mapped_w/resident_sprite->w,mapped_h/resident_sprite->h,
+               GML_RENDER_SCENE_SPRITE)) return;
         }
       }
     }
@@ -448,7 +555,7 @@ void gml_draw_sprite_part_ext(GmlRender *r, int sprite, int subimg, double sx, d
           gml_render_draw_map_scale(r,&mapped_xs,&mapped_ys);
           if(gml_render_resident_atlas_crop(r,page_index,(int)sx,(int)sy,(int)sw,(int)sh,
                                             mapped_x-r->cam_x,mapped_y-r->cam_y,
-                                            mapped_xs,mapped_ys)) return;
+                                            mapped_xs,mapped_ys,GML_RENDER_SCENE_SPRITE)) return;
         }
       }
     }
@@ -507,7 +614,8 @@ int gml_render_resident_tiled_sprite(GmlRender *r,int sprite,int subimg,
      fmod(ax,(double)s->w)!=0.0 || fmod(ay,(double)s->h)!=0.0) return 0;
   for(int yy=0;yy<r->fbh;yy+=s->h)
     for(int xx=0;xx<r->fbw;xx+=s->w)
-      if(!gml_render_resident_atlas_page(r,page_index,xx,yy,1.0,1.0)) return 0;
+      if(!gml_render_resident_atlas_page(r,page_index,xx,yy,1.0,1.0,
+                                         GML_RENDER_SCENE_SPRITE)) return 0;
   return 1;
 }
 
@@ -601,7 +709,8 @@ void gml_draw_layer_background_sprite(GmlRender *r, int sprite, int subimg, doub
          page->sw==s->w && page->sh==s->h &&
          page->bw==page->sw && page->bh==page->sh &&
          gml_render_resident_atlas_page(r,page_index,
-           round(x-r->cam_x),round(y-r->cam_y),xs,ys)) return;
+           round(x-r->cam_x),round(y-r->cam_y),xs,ys,
+           GML_RENDER_SCENE_SPRITE)) return;
     }
   }
   if(!gml_render_resident_application_cpu_barrier(r)) return;

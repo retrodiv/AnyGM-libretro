@@ -78,7 +78,8 @@ int gml_render_application_scene_enqueue(GmlRender *r,const GmlRenderDrawOp *ope
      !r->app_surface_resource || !operation || !state || !source ||
      !source->borrowed_immutable || !operation->sources ||
      operation->source_count!=1u || operation->opcode!=GML_RENDER_OP_TEXTURED_QUAD ||
-     operation->reconstruction_mode!=GML_RENDER_REPLAY_EXACT ||
+     (operation->reconstruction_mode!=GML_RENDER_REPLAY_EXACT &&
+      operation->reconstruction_mode!=GML_RENDER_DEVICE_CHECKPOINT) ||
      !same_scene_source(operation->sources[0],source->image)) return 0;
   pending=r->pending_scene_batch;
   if(pending && pending->count &&

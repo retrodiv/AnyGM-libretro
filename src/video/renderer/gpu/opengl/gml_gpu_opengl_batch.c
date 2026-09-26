@@ -211,8 +211,6 @@ static int scene_preflight(GmlGpuBackend *backend,const GmlRenderDrawBatch *batc
            full_region(state->clip,target->width,target->height)) ||
          !full_region(target->region,target->width,target->height) ||
          !valid_region(sampling->source_region,source->width,source->height) ||
-         (sampling->filter==GML_RENDER_FILTER_BILINEAR &&
-          !full_region(sampling->source_region,source->width,source->height)) ||
          (sampling->filter!=GML_RENDER_FILTER_NEAREST &&
           sampling->filter!=GML_RENDER_FILTER_BILINEAR) ||
          sampling->edge_rule!=GML_RENDER_EDGE_CLAMP_SUBIMAGE ||
@@ -220,11 +218,12 @@ static int scene_preflight(GmlGpuBackend *backend,const GmlRenderDrawBatch *batc
          state->samplers[0].filter!=sampling->filter ||
          state->samplers[0].edge_rule!=sampling->edge_rule ||
          !same_region(state->samplers[0].source_region,sampling->source_region) ||
-         !gml_render_gpu_opengl_draw_textured_quad(op,state,
+         !gml_render_gpu_opengl_draw_textured_quad(op,state,source->width,source->height,
                                                    source->rendered_origin,probe)) return 0;
       for(uint32_t corner=0;corner<4;corner++)
         if((op->payload.quad.corner_colour[corner]>>24)!=255u) return 0;
-      if(!full_region(sampling->source_region,source->width,source->height)){
+      if(sampling->filter==GML_RENDER_FILTER_NEAREST &&
+         !full_region(sampling->source_region,source->width,source->height)){
         double u0=(double)sampling->source_region.x/source->width;
         double u1=(double)((uint32_t)sampling->source_region.x+
                            sampling->source_region.width)/source->width;
@@ -265,7 +264,7 @@ static int flush_quads(GmlGpuBackend *backend,GlSceneImage *target,GlSceneImage 
                        uint32_t filter,int blend,uint32_t count){
   GlScene *scene=&backend->scene;
   GLfloat extent[2]={(GLfloat)target->width,(GLfloat)target->height};
-  GLenum texture_filter=filter==GML_RENDER_FILTER_BILINEAR?GL_LINEAR:GL_NEAREST;
+  GLenum texture_filter=GL_NEAREST;
   GLsizei stride=GL_SCENE_VERTEX_FLOATS*(GLsizei)sizeof(float);
   if(!count) return 1;
   backend->gl.BindFramebuffer(GL_FRAMEBUFFER,target->framebuffer);
@@ -284,6 +283,7 @@ static int flush_quads(GmlGpuBackend *backend,GlSceneImage *target,GlSceneImage 
   backend->gl.UseProgram(scene->program);
   backend->gl.Uniform2fv(scene->u_extent,1,extent);
   backend->gl.Uniform1i(scene->u_image,0);
+  backend->gl.Uniform1i(scene->u_filter,filter==GML_RENDER_FILTER_BILINEAR);
   backend->gl.BindVertexArray(scene->vertex_array);
   backend->gl.BindBuffer(GL_ARRAY_BUFFER,scene->vertex_buffer);
   backend->gl.BufferData(GL_ARRAY_BUFFER,
@@ -292,15 +292,27 @@ static int flush_quads(GmlGpuBackend *backend,GlSceneImage *target,GlSceneImage 
   backend->gl.EnableVertexAttribArray((GLuint)scene->a_position);
   backend->gl.EnableVertexAttribArray((GLuint)scene->a_texcoord);
   backend->gl.EnableVertexAttribArray((GLuint)scene->a_colour);
+  backend->gl.EnableVertexAttribArray((GLuint)scene->a_clamp);
+  backend->gl.EnableVertexAttribArray((GLuint)scene->a_map);
+  backend->gl.EnableVertexAttribArray((GLuint)scene->a_step);
   backend->gl.VertexAttribPointer((GLuint)scene->a_position,2,GL_FLOAT,GL_FALSE,stride,(const void*)0);
   backend->gl.VertexAttribPointer((GLuint)scene->a_texcoord,2,GL_FLOAT,GL_FALSE,stride,
                                   (const void*)(2*sizeof(float)));
   backend->gl.VertexAttribPointer((GLuint)scene->a_colour,4,GL_FLOAT,GL_FALSE,stride,
                                   (const void*)(4*sizeof(float)));
+  backend->gl.VertexAttribPointer((GLuint)scene->a_clamp,4,GL_FLOAT,GL_FALSE,stride,
+                                  (const void*)(8*sizeof(float)));
+  backend->gl.VertexAttribPointer((GLuint)scene->a_map,4,GL_FLOAT,GL_FALSE,stride,
+                                  (const void*)(12*sizeof(float)));
+  backend->gl.VertexAttribPointer((GLuint)scene->a_step,2,GL_FLOAT,GL_FALSE,stride,
+                                  (const void*)(16*sizeof(float)));
   backend->gl.DrawArrays(GL_TRIANGLES,0,(GLsizei)(count*6u));
   backend->gl.DisableVertexAttribArray((GLuint)scene->a_position);
   backend->gl.DisableVertexAttribArray((GLuint)scene->a_texcoord);
   backend->gl.DisableVertexAttribArray((GLuint)scene->a_colour);
+  backend->gl.DisableVertexAttribArray((GLuint)scene->a_clamp);
+  backend->gl.DisableVertexAttribArray((GLuint)scene->a_map);
+  backend->gl.DisableVertexAttribArray((GLuint)scene->a_step);
   backend->gl.BindBuffer(GL_ARRAY_BUFFER,0);
   backend->gl.BindVertexArray(0);
   backend->gl.UseProgram(0);
@@ -326,7 +338,8 @@ static int draw_exact_quad(GmlGpuBackend *backend,const GmlRenderDrawOp *op,
   int outcome;
   if(!exact_rect(op,&left,&bottom,&width,&height) ||
      !gml_gpu_opengl_scene_exact_program(backend,error,error_capacity) ||
-     !gml_render_gpu_opengl_draw_textured_quad(op,state,source->rendered_origin,
+     !gml_render_gpu_opengl_draw_textured_quad(op,state,source->width,source->height,
+                                               source->rendered_origin,
                                                scene->vertices)) return 0;
   if(!scene->snapshot_texture){
     backend->gl.GenTextures(1,&scene->snapshot_texture);
@@ -498,7 +511,7 @@ GmlRenderExecutionResult gml_gpu_opengl_scene_submit(GmlGpuBackend *backend,
       continue;
     }
     if(!gml_render_gpu_opengl_draw_textured_quad(op,&batch->states[op->state_index],
-       pending_source->rendered_origin,
+       pending_source->width,pending_source->height,pending_source->rendered_origin,
        backend->scene.vertices+(size_t)pending_count*6u*GL_SCENE_VERTEX_FLOATS)){
       result.status=GML_RENDER_EXEC_RESOURCE_ERROR;
       break;

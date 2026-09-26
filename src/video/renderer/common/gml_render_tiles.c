@@ -41,7 +41,8 @@ void gml_draw_tile(GmlRender *r, int def, int sx, int sy, int w, int h, double x
      bt->bw==bt->sw && bt->bh==bt->sh &&
      gml_render_resident_atlas_crop(r,ti,sx,sy,w,h,
                                    x-r->cam_x,y-r->cam_y,
-                                   draw_xscale,draw_yscale)) return;
+                                   draw_xscale,draw_yscale,
+                                   GML_RENDER_SCENE_TILE)) return;
   if(!gml_render_resident_application_cpu_barrier(r)) return;
   if(gml_d3_draw_background_part_2d(r,def,sx,sy,w,h,x,y,draw_xscale,draw_yscale,0xFFFFFF,1)) return;
   GmlTpag tt=*bt;
@@ -96,7 +97,8 @@ void gml_draw_room_tiles(GmlRender *r, uint32_t tile_ptr){
     if(!r->interp && !gml_d3_is_active(r) && bt->tx==0 && bt->ty==0 &&
        bt->bw==bt->sw && bt->bh==bt->sh &&
        gml_render_resident_atlas_crop(r,ti,t->sx,t->sy,t->w,t->h,
-                                     t->x-r->cam_x,t->y-r->cam_y,1,1)) continue;
+                                     t->x-r->cam_x,t->y-r->cam_y,1,1,
+                                     GML_RENDER_SCENE_TILE)) continue;
     if(!gml_render_resident_application_cpu_barrier(r)) break;
     GmlTpag tt=*bt;                                  /* sub-rect of the tileset image */
     tt.sx=bt->sx + t->sx; tt.sy=bt->sy + t->sy; tt.sw=t->w; tt.sh=t->h;

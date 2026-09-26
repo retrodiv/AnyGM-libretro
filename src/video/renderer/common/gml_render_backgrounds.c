@@ -63,7 +63,8 @@ int gml_render_tpag_part_view(const GmlTpag *t,
 static int resident_integer_background_part(GmlRender *r,int page_index,
                                             double sx,double sy,double sw,double sh,
                                             double x,double y,double xs,double ys,
-                                            uint32_t color,double alpha){
+                                            uint32_t color,double alpha,
+                                            GmlRenderSceneFamily family){
   if(!r || !r->resident_application_pass || r->interp || gml_d3_is_active(r) ||
      color!=0xFFFFFFu || alpha!=1.0 ||
      !isfinite(sx) || !isfinite(sy) || !isfinite(sw) || !isfinite(sh) ||
@@ -75,7 +76,7 @@ static int resident_integer_background_part(GmlRender *r,int page_index,
   if(page->tx!=0 || page->ty!=0 || page->bw!=page->sw || page->bh!=page->sh)
     return 0;
   return gml_render_resident_atlas_crop(r,page_index,(int)sx,(int)sy,(int)sw,(int)sh,
-                                       x-r->cam_x,y-r->cam_y,xs,ys);
+                                       x-r->cam_x,y-r->cam_y,xs,ys,family);
 }
 
 void gml_draw_background(GmlRender *r, int bg, double x, double y){
@@ -84,7 +85,8 @@ void gml_draw_background(GmlRender *r, int bg, double x, double y){
   int ti=r->bg[bg].tpag; if(ti<0||ti>=r->n_tpag) return;
   GmlTpag *t=&r->tpag[ti];
   if(r->alpha==1.0 && !r->interp && !gml_d3_is_active(r) &&
-     gml_render_resident_atlas_page(r,ti,x-r->cam_x+t->tx,y-r->cam_y+t->ty,1,1)) return;
+     gml_render_resident_atlas_page(r,ti,x-r->cam_x+t->tx,y-r->cam_y+t->ty,1,1,
+                                    GML_RENDER_SCENE_BACKGROUND)) return;
   if(!gml_render_resident_application_cpu_barrier(r)) return;
   if(gml_d3_draw_background_2d(r,bg,x,y,1,1,0xFFFFFF,r->alpha)) return;
   gml_render_cpu_blit_background_phase(r,t, x - r->cam_x + t->tx, y - r->cam_y + t->ty, 1,1, 0xFFFFFF, r->alpha);
@@ -105,7 +107,8 @@ void gml_draw_background_part_ext(GmlRender *r, int bg, double sx, double sy, do
   gml_render_draw_map_scale(r,&xs,&ys);
   if(bg<0||bg>=r->n_bg) return;
   int ti=r->bg[bg].tpag; if(ti<0||ti>=r->n_tpag) return;
-  if(resident_integer_background_part(r,ti,sx,sy,sw,sh,x,y,xs,ys,color,alpha)) return;
+  if(resident_integer_background_part(r,ti,sx,sy,sw,sh,x,y,xs,ys,color,alpha,
+                                      GML_RENDER_SCENE_BACKGROUND)) return;
   if(!gml_render_resident_application_cpu_barrier(r)) return;
   if(gml_d3_draw_background_part_2d(r,bg,sx,sy,sw,sh,x,y,xs,ys,color,alpha)) return;
   gml_render_cpu_blit_tpag_part_background(r,&r->tpag[ti],sx,sy,sw,sh,x-r->cam_x,y-r->cam_y,xs,ys,color,alpha);
@@ -123,7 +126,8 @@ void gml_draw_background_tile(GmlRender *r,int bg,
     gml_render_draw_map_scale(r,&xs,&ys);
     if(!r || bg<0 || bg>=r->n_bg || sw<=0 || sh<=0 || xs==0 || ys==0) return;
     int ti=r->bg[bg].tpag; if(ti<0 || ti>=r->n_tpag) return;
-    if(resident_integer_background_part(r,ti,sx,sy,sw,sh,x,y,xs,ys,color,alpha)) return;
+    if(resident_integer_background_part(r,ti,sx,sy,sw,sh,x,y,xs,ys,color,alpha,
+                                        GML_RENDER_SCENE_TILE)) return;
     if(!gml_render_resident_application_cpu_barrier(r)) return;
     if(gml_d3_draw_background_part_2d(r,bg,sx,sy,sw,sh,x,y,xs,ys,color,alpha)) return;
     gml_render_cpu_blit_tpag_part_tile(r,&r->tpag[ti],sx,sy,sw,sh,
@@ -187,7 +191,8 @@ void gml_draw_background_ext(GmlRender *r, int bg, double x, double y, double xs
   GmlTpag *t=&r->tpag[ti];
   if(color==0xFFFFFFu && alpha==1.0 && !r->interp && !gml_d3_is_active(r) &&
      gml_render_resident_atlas_page(r,ti,x-r->cam_x+t->tx*xs,
-                                      y-r->cam_y+t->ty*ys,xs,ys)) return;
+                                      y-r->cam_y+t->ty*ys,xs,ys,
+                                      GML_RENDER_SCENE_BACKGROUND)) return;
   if(!gml_render_resident_application_cpu_barrier(r)) return;
   if(gml_d3_draw_background_2d(r,bg,x,y,xs,ys,color,alpha)) return;
   gml_render_cpu_blit_background_phase(r,t, x - r->cam_x + t->tx*xs, y - r->cam_y + t->ty*ys, xs,ys, color, alpha);
@@ -216,7 +221,8 @@ void gml_draw_room_backgrounds(GmlRender *r, uint32_t bg_ptr, int want_fg){
     for(int yy=y0; yy < (tiley? r->fbh : y0+1); yy+=bh){
       for(int xx=x0; xx < (tilex? r->fbw : x0+1); xx+=bw){
         if(!gml_d3_is_active(r) &&
-           gml_render_resident_atlas_page(r,ti,xx+t->tx,yy+t->ty,1,1)) continue;
+           gml_render_resident_atlas_page(r,ti,xx+t->tx,yy+t->ty,1,1,
+                                          GML_RENDER_SCENE_BACKGROUND)) continue;
         if(!gml_render_resident_application_cpu_barrier(r)) return;
         gml_render_cpu_blit_background_phase(r,t, xx, yy, 1,1, 0xFFFFFF, 1);
       }
@@ -292,7 +298,11 @@ static void do_bg_tiled_ext(GmlRender *r, int bg, double x, double y, double xs,
   for(double yy=y0; yy<yend; yy+=logical_h)
     for(double xx=x0; xx<xend; xx+=logical_w){
       if(color==0xFFFFFFu && alpha==1.0 && !r->interp &&
-         gml_render_resident_atlas_page(r,ti,xx+t->tx*xs,yy+t->ty*ys,xs,ys))
+         gml_render_resident_atlas_page(r,ti,xx+t->tx*xs,yy+t->ty*ys,xs,ys,
+                                        GML_RENDER_SCENE_BACKGROUND))
+        continue;
+      if(color==0xFFFFFFu && alpha==1.0 && r->interp &&
+         gml_render_resident_filtered_atlas_page(r,ti,xx+t->tx*xs,yy+t->ty*ys,xs,ys))
         continue;
       if(!gml_render_resident_application_cpu_barrier(r)) return;
       gml_render_cpu_blit_background_phase(r,t,xx+t->tx*xs,yy+t->ty*ys,xs,ys,color,alpha);

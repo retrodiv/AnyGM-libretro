@@ -15,7 +15,7 @@ enum {
   GL_READBACK_SLOTS=8,
   GL_SCENE_MAX_IMAGES=64,
   GL_SCENE_MAX_QUADS=2048,
-  GL_SCENE_VERTEX_FLOATS=8
+  GL_SCENE_VERTEX_FLOATS=18
 };
 
 /* One uniform the content's program declares, as the context reports it after linking. A value
@@ -98,8 +98,8 @@ typedef struct GlSceneImage {
 typedef struct GlScene {
   GlSceneImage images[GL_SCENE_MAX_IMAGES];
   GLuint program,vertex_buffer,vertex_array;
-  GLint a_position,a_texcoord,a_colour;
-  GLint u_extent,u_image;
+  GLint a_position,a_texcoord,a_colour,a_clamp,a_map,a_step;
+  GLint u_extent,u_image,u_filter;
   GLuint exact_program,snapshot_texture;
   GLint exact_a_position,exact_a_texcoord,exact_a_colour;
   GLint exact_u_extent,exact_u_image,exact_u_previous,exact_u_region_origin;
@@ -183,6 +183,7 @@ int gml_render_gpu_opengl_clear(GmlGpuBackend *backend,const GmlRenderDrawOp *op
                                 GlSceneImage *target);
 int gml_render_gpu_opengl_draw_textured_quad(const GmlRenderDrawOp *op,
                                              const GmlRenderDrawStateSnapshot *state,
+                                             uint32_t source_width,uint32_t source_height,
                                              int rendered_source_origin,
                                              float *vertices);
 GlSceneImage *gml_gpu_opengl_scene_image(GmlGpuBackend *backend,GmlRenderImageRef image);

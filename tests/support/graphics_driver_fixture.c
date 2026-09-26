@@ -423,6 +423,9 @@ static GLint fake_GetAttribLocation(GLuint p,const GLchar *name){
   if(!strcmp(name,"in_Position")) return 0;
   if(!strcmp(name,"in_Colour")) return 1;
   if(!strcmp(name,"in_TextureCoord")) return 2;
+  if(!strcmp(name,"in_Clamp")) return 3;
+  if(!strcmp(name,"in_Map")) return 4;
+  if(!strcmp(name,"in_Step")) return 5;
   return -1;
 }
 static void fake_VertexAttribPointer(GLuint index,GLint size,GLenum type,GLboolean normalized,

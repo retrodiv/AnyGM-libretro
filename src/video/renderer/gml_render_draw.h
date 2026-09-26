@@ -141,11 +141,20 @@ typedef enum GmlRenderReconstructionMode {
   GML_RENDER_CPU_ONLY=3
 } GmlRenderReconstructionMode;
 
+typedef enum GmlRenderSceneFamily {
+  GML_RENDER_SCENE_UNCLASSIFIED=0,
+  GML_RENDER_SCENE_SPRITE=1,
+  GML_RENDER_SCENE_BACKGROUND=2,
+  GML_RENDER_SCENE_TILE=3,
+  GML_RENDER_SCENE_FAMILY_COUNT=4
+} GmlRenderSceneFamily;
+
 typedef struct GmlRenderDrawOp {
   uint64_t sequence;
   uint32_t opcode;
   uint32_t state_index;
   uint32_t reconstruction_mode;
+  uint32_t scene_family;
   uint32_t source_count;
   GmlRenderTargetRef target;
   const GmlRenderImageRef *sources;

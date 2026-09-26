@@ -157,6 +157,12 @@ void engine_graphics_report(AnygmEngine *engine){
     (unsigned long long)counters.scene_uploaded_bytes,
     (unsigned long long)counters.scene_readbacks,
     (unsigned long long)counters.scene_readback_bytes);
+  engine_logf(engine,ANYGM_LOG_INFO,
+    "[graphics-scene-families] sprite=%llu background=%llu tile=%llu unclassified=%llu\n",
+    (unsigned long long)counters.scene_families[GML_RENDER_SCENE_SPRITE],
+    (unsigned long long)counters.scene_families[GML_RENDER_SCENE_BACKGROUND],
+    (unsigned long long)counters.scene_families[GML_RENDER_SCENE_TILE],
+    (unsigned long long)counters.scene_families[GML_RENDER_SCENE_UNCLASSIFIED]);
 }
 
 /* The frame's last operation, executed where it lands instead of on the processor.

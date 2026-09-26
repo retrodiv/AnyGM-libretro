@@ -18,10 +18,15 @@ typedef struct {
 int gml_render_sprite_log_enabled(const GmlRender *render);
 /* Submit a qualified atlas crop shared by ordinary sprites, backgrounds, and tiles. */
 int gml_render_resident_atlas_page(GmlRender *render, int page_index,
-                                  double left, double top, double xscale, double yscale);
+                                  double left, double top, double xscale, double yscale,
+                                  GmlRenderSceneFamily family);
+int gml_render_resident_filtered_atlas_page(GmlRender *render, int page_index,
+                                           double left, double top,
+                                           double xscale, double yscale);
 int gml_render_resident_atlas_crop(GmlRender *render, int page_index,
                                   int crop_x, int crop_y, int crop_width, int crop_height,
-                                  double left, double top, double xscale, double yscale);
+                                  double left, double top, double xscale, double yscale,
+                                  GmlRenderSceneFamily family);
 int gml_render_resident_tiled_sprite(GmlRender *render, int sprite, int subimage,
                                      double x, double y, double xscale, double yscale,
                                      uint32_t blend, double alpha);

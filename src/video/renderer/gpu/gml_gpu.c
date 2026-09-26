@@ -82,6 +82,9 @@ static GmlRenderExecutionResult scene_submit(void *context,const GmlRenderDrawBa
         uint32_t opcode=batch->operations[index].opcode;
         if(opcode<GML_RENDER_OPERATION_COUNT)
           gpu->counters.scene_operations[opcode]++;
+        if(opcode==GML_RENDER_OP_TEXTURED_QUAD &&
+           batch->operations[index].scene_family<GML_RENDER_SCENE_FAMILY_COUNT)
+          gpu->counters.scene_families[batch->operations[index].scene_family]++;
       }
     } else {
       gpu->counters.scene_batches_refused++;
