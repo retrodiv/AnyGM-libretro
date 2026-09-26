@@ -26,9 +26,11 @@ const uint8_t *runtime_frame_rgba(GmlSprite *s, int frame){
   return s->runtime_rgba + (size_t)sub*s->w*s->h*4;
 }
 
-/* The first live sprite variant is a literal opaque atlas rectangle. The existing CPU blit
- * remains the authority for every scaled, clipped, filtered, transparent or programmed case. */
-static int resident_opaque_sprite(GmlRender *r,GmlSprite *sprite,int subimg,
+/* A unit-scale, integer-aligned atlas crop has identity sampling even when the sampler is set
+ * to interpolate. Authored trim offsets move the visible crop, not its texels. Binary-alpha
+ * crops use endpoint source-over; intermediate-alpha, scaled, fractional and programmed cases
+ * remain with the established CPU blit. */
+static int resident_identity_sprite(GmlRender *r,GmlSprite *sprite,int subimg,
                                   double x,double y,double xs,double ys,double rotation,
                                   uint32_t blend,double alpha){
   GmlTpag *page;
@@ -44,17 +46,20 @@ static int resident_opaque_sprite(GmlRender *r,GmlSprite *sprite,int subimg,
   int sub,page_index;
   if(!r || !r->resident_application_pass || !sprite || sprite->runtime_rgba ||
      sprite->spine || sprite->ns_enabled || sprite->n_frames<=0 ||
-     r->classic || r->interp || r->world_transform_active || r->gui_pass_active ||
+     sprite->w<=0 || sprite->h<=0 ||
+     r->classic || (r->world_transform_active &&
+                    (r->world_scale_x!=1.0 || r->world_scale_y!=1.0)) ||
+     r->gui_pass_active ||
      r->active_shader>=0 || r->alpha_test_enable || !r->alphablend ||
      r->blendmode || r->blend_equation!=1 || r->blend_equation_alpha!=1 ||
-     r->color_write_mask!=0x0Fu || r->classic_phase_y || r->app_phase_y ||
+     r->color_write_mask!=0x0Fu || r->classic_phase_y ||
      r->rotated_batch_count || r->rotated_batch_building ||
      r->pending_underlay || r->pending_presentation ||
      r->fb!=r->app_surface_owned || r->fbw!=r->app_w || r->fbh!=r->app_h ||
      xs!=1.0 || ys!=1.0 || rotation!=0.0 || blend!=0xFFFFFFu || alpha!=1.0)
     return 0;
-  for(int index=0;index<GML_RENDER_TEXTURE_STAGES-1;index++)
-    if(r->texture_filter[index]) return 0;
+  /* A plain sprite reads only the base image; the other texture-stage filter flags do not
+   * participate in the CPU blit, and the integer-aligned unit-scale base sample is exact. */
   for(int index=0;index<3;index++)
     if(r->classic_interp_phase[index] || r->app_interp_phase[index]) return 0;
   sub=gml_render_runtime_frame_index(sprite,subimg);
@@ -63,8 +68,10 @@ static int resident_opaque_sprite(GmlRender *r,GmlSprite *sprite,int subimg,
   if(page_index<0 || page_index>=r->n_tpag) return 0;
   page=&r->tpag[page_index];
   if(page->sw<=0 || page->sh<=0 || page->sx<0 || page->sy<0 ||
-     page->tx || page->ty || page->sw!=sprite->w || page->sh!=sprite->h ||
-     page->tw!=sprite->w || page->th!=sprite->h ||
+     page->tx<0 || page->ty<0 ||
+     (uint64_t)(uint32_t)page->tx+(uint32_t)page->sw>(uint32_t)sprite->w ||
+     (uint64_t)(uint32_t)page->ty+(uint32_t)page->sh>(uint32_t)sprite->h ||
+     page->tw!=page->sw || page->th!=page->sh ||
      page->bw!=sprite->w || page->bh!=sprite->h ||
      page->atlas<0 || page->atlas>=r->n_atlas) return 0;
   atlas=&r->atlas[page->atlas];
@@ -73,17 +80,18 @@ static int resident_opaque_sprite(GmlRender *r,GmlSprite *sprite,int subimg,
      (uint64_t)(uint32_t)page->sy+(uint32_t)page->sh>source.height) return 0;
   if(!page->scene_opaque_checked){
     page->scene_fully_opaque=1;
-    for(int row=0;row<page->sh && page->scene_fully_opaque;row++)
-      for(int column=0;column<page->sw;column++)
-        if(atlas->px[((size_t)(page->sy+row)*atlas->w+page->sx+column)*4u+3u]!=255u){
-          page->scene_fully_opaque=0;
-          break;
-        }
+    page->scene_binary_alpha=1;
+    for(int row=0;row<page->sh;row++)
+      for(int column=0;column<page->sw;column++){
+        uint8_t coverage=atlas->px[((size_t)(page->sy+row)*atlas->w+page->sx+column)*4u+3u];
+        if(coverage!=255u) page->scene_fully_opaque=0;
+        if(coverage!=0u && coverage!=255u) page->scene_binary_alpha=0;
+      }
     page->scene_opaque_checked=1;
   }
-  if(!page->scene_fully_opaque) return 0;
-  left=x-(double)sprite->originx-r->cam_x;
-  top=y-(double)sprite->originy-r->cam_y;
+  if(!page->scene_binary_alpha) return 0;
+  left=x-(double)sprite->originx+(double)page->tx-r->cam_x;
+  top=y-(double)sprite->originy+(double)page->ty-r->cam_y;
   if(!isfinite(left) || !isfinite(top) || left<0.0 || top<0.0 ||
      left+page->sw>r->fbw || top+page->sh>r->fbh ||
      left!=(double)(int)left || top!=(double)(int)top) return 0;
@@ -120,6 +128,14 @@ static int resident_opaque_sprite(GmlRender *r,GmlSprite *sprite,int subimg,
   state.write_mask=15u;
   state.colour=0xFFFFFFFFu;
   state.alpha=255u;
+  if(!page->scene_fully_opaque){
+    state.rgb_source_factor=GML_RENDER_BLEND_SOURCE_ALPHA;
+    state.rgb_destination_factor=GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA;
+    state.alpha_source_factor=GML_RENDER_BLEND_ONE;
+    state.alpha_destination_factor=GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA;
+    state.rgb_equation=GML_RENDER_BLEND_ADD;
+    state.alpha_equation=GML_RENDER_BLEND_ADD;
+  }
   state.sampler_count=1u;
   state.samplers[0]=operation.payload.quad.sampling;
   batch=(GmlRenderDrawBatch){&operation,1u,&state,1u};
@@ -140,7 +156,7 @@ void gml_render_sprite_ext_unmasked(GmlRender *r, int sprite, int subimg, double
   gml_render_draw_map_scale(r,&xs,&ys);
   if(r && r->resident_application_pass){
     if(sprite>=0 && sprite<r->n_spr &&
-       resident_opaque_sprite(r,&r->spr[sprite],subimg,x,y,xs,ys,rot,blend,alpha)) return;
+       resident_identity_sprite(r,&r->spr[sprite],subimg,x,y,xs,ys,rot,blend,alpha)) return;
     if(!gml_render_resident_application_cpu_barrier(r)) return;
   }
   if(r && sprite>=0 && sprite<r->n_spr &&

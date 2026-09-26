@@ -16,9 +16,12 @@ remains separate and unchanged.
 
 The later resident prototype supports clear, qualified whole-image quads, and nearest-filtered
 interior atlas subrectangles with integer-sized axis-aligned destinations and optional X/Y mirrors.
-The subrectangle variant is replayable from retained source pixels after context loss. Bilinear
-subrectangles, scaling, rotation, general sprite/background/tile dispatch, and resident final
-presentation are not yet qualified; the corresponding ordinary game calls still execute on CPU.
+A narrow ordinary sprite path accepts unit-scale, integer-aligned authored trim when its atlas crop
+has only alpha 0 or 255; other texture-stage filters are irrelevant to this unprogrammed base-image
+draw, and a binary-alpha crop uses endpoint source-over. Its CPU journal replay rejects any
+intermediate-alpha source. These variants are replayable from retained source pixels after context
+loss. Bilinear subrectangles, scaled or rotated ordinary sprites, general background/tile dispatch,
+and resident final presentation are not yet qualified; those calls still execute on CPU.
 
 | Neutral ID | Shared rule owner | Current CPU execution anchor | OpenGL/OpenGL ES target at P1 | Barrier or fallback |
 |---|---|---|---|---|

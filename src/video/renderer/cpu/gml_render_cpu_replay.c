@@ -53,9 +53,12 @@ static int blend_rule(const GmlRenderDrawStateSnapshot *state){
   if(state->rgb_source_factor==GML_RENDER_BLEND_SOURCE_ALPHA &&
      state->rgb_destination_factor==GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA &&
      state->alpha_source_factor==GML_RENDER_BLEND_ONE &&
-     state->alpha_destination_factor==GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA &&
-     state->rgb_equation==GML_RENDER_BLEND_EXACT8_TRUNC &&
-     state->alpha_equation==GML_RENDER_BLEND_EXACT8_TRUNC) return 1;
+     state->alpha_destination_factor==GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA){
+    if(state->rgb_equation==GML_RENDER_BLEND_EXACT8_TRUNC &&
+       state->alpha_equation==GML_RENDER_BLEND_EXACT8_TRUNC) return 1;
+    if(state->rgb_equation==GML_RENDER_BLEND_ADD &&
+       state->alpha_equation==GML_RENDER_BLEND_ADD) return 2;
+  }
   return -1;
 }
 
@@ -121,6 +124,18 @@ int gml_render_cpu_replay_eligible(const GmlRenderDrawOp *operation,
     return 0;
   for(uint32_t corner=0;corner<4u;corner++)
     if(quad->corner_colour[corner]!=0xFFFFFFFFu) return 0;
+  if(blend_rule(state)==2 && source->pixel_format!=GML_RENDER_PIXEL_XRGB8888)
+    for(uint32_t y=0;y<region.height;y++) for(uint32_t x=0;x<region.width;x++){
+      const uint8_t *bytes=(const uint8_t*)source->bytes+
+        (size_t)((uint32_t)region.y+y)*source->stride_bytes+
+        (size_t)((uint32_t)region.x+x)*4u;
+      uint32_t packed;
+      uint8_t coverage;
+      memcpy(&packed,bytes,sizeof packed);
+      coverage=source->pixel_format==GML_RENDER_PIXEL_RGBA8888
+        ?bytes[3]:(uint8_t)(packed>>24);
+      if(coverage!=0u && coverage!=255u) return 0;
+    }
   return 1;
 }
 
@@ -154,6 +169,7 @@ int gml_render_cpu_replay_one(uint32_t *target,uint32_t width,uint32_t height,
     uint32_t left=(uint32_t)quad->x[0],top=(uint32_t)quad->y[0];
     int mirror_x=quad->u[0]>quad->u[1],mirror_y=quad->v[0]>quad->v[2];
     int exact=blend_rule(state)==1;
+    int binary=blend_rule(state)==2;
     for(uint32_t y=0;y<region.height;y++) for(uint32_t x=0;x<region.width;x++){
       uint32_t source_x=(uint32_t)region.x+(mirror_x?region.width-1u-x:x);
       uint32_t source_y=(uint32_t)region.y+(mirror_y?region.height-1u-y:y);
@@ -166,7 +182,8 @@ int gml_render_cpu_replay_one(uint32_t *target,uint32_t width,uint32_t height,
         inverse=256u-factor;
         *destination=blend_fast8_cached(*destination,
           (pixel&0x00FF00FFu)*factor,(pixel&0x0000FF00u)*factor,inverse,0);
-      } else *destination=operation->target.pixel_format==GML_RENDER_PIXEL_XRGB8888
+      } else if(!binary || (pixel>>24)==255u)
+        *destination=operation->target.pixel_format==GML_RENDER_PIXEL_XRGB8888
         ?pixel|0xFF000000u:pixel;
     }
   }

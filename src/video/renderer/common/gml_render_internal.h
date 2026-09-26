@@ -30,7 +30,7 @@ typedef struct GmlTpag {
   int alpha_max;                          /* max source alpha in the texture-page item */
   int alpha_partial;                      /* at least one source texel has alpha 1..254 */
   int black_scanned, all_black;           /* cached source-colour classification */
-  int scene_opaque_checked,scene_fully_opaque; /* immutable atlas crop eligibility */
+  int scene_opaque_checked,scene_fully_opaque,scene_binary_alpha; /* immutable atlas crop eligibility */
   int *alpha_row_min, *alpha_row_max;     /* per-source-row nontransparent span, optional */
   uint16_t *alpha_qrow_min, *alpha_qrow_max; /* per-alpha-threshold row spans, built lazily */
   uint8_t *alpha_qrow_built;
