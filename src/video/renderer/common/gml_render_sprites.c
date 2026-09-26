@@ -26,11 +26,11 @@ const uint8_t *runtime_frame_rgba(GmlSprite *s, int frame){
   return s->runtime_rgba + (size_t)sub*s->w*s->h*4;
 }
 
-/* A unit-scale, integer-aligned atlas crop has identity sampling even when the sampler is set
- * to interpolate. Authored trim offsets move the visible crop, not its texels. Binary-alpha
- * crops use endpoint source-over; intermediate-alpha, scaled, fractional and programmed cases
- * remain with the established CPU blit. */
-static int resident_identity_sprite(GmlRender *r,GmlSprite *sprite,int subimg,
+/* An integer-aligned atlas crop at an integer scale has exact nearest texel centres. Unit scale
+ * also has identity sampling when interpolation is enabled. Authored trim offsets move the
+ * visible crop, not its texels. Binary-alpha crops use endpoint source-over; filtered scaling,
+ * fractional scale, intermediate alpha and programmed cases keep the established CPU blit. */
+static int resident_integer_sprite(GmlRender *r,GmlSprite *sprite,int subimg,
                                   double x,double y,double xs,double ys,double rotation,
                                   uint32_t blend,double alpha){
   GmlTpag *page;
@@ -41,7 +41,7 @@ static int resident_identity_sprite(GmlRender *r,GmlSprite *sprite,int subimg,
   GmlRenderDrawStateSnapshot state={0};
   GmlRenderImageRef source_ref,image;
   GmlRenderRect region;
-  double left,top;
+  double left,top,scaled_width,scaled_height;
   int sub,page_index;
   if(!r || !r->resident_application_pass || !sprite || sprite->runtime_rgba ||
      sprite->spine || sprite->ns_enabled || sprite->n_frames<=0 ||
@@ -55,7 +55,9 @@ static int resident_identity_sprite(GmlRender *r,GmlSprite *sprite,int subimg,
      r->rotated_batch_count || r->rotated_batch_building ||
      r->pending_underlay || r->pending_presentation ||
      r->fb!=r->app_surface_owned || r->fbw!=r->app_w || r->fbh!=r->app_h ||
-     xs!=1.0 || ys!=1.0 || rotation!=0.0 || blend!=0xFFFFFFu || alpha!=1.0)
+     !isfinite(xs) || !isfinite(ys) || xs<=0.0 || ys<=0.0 ||
+     rotation!=0.0 || blend!=0xFFFFFFu || alpha!=1.0 ||
+     (r->interp && (xs!=1.0 || ys!=1.0)))
     return 0;
   /* A plain sprite reads only the base image; the other texture-stage filter flags do not
    * participate in the CPU blit, and the integer-aligned unit-scale base sample is exact. */
@@ -89,11 +91,15 @@ static int resident_identity_sprite(GmlRender *r,GmlSprite *sprite,int subimg,
     page->scene_opaque_checked=1;
   }
   if(!page->scene_binary_alpha) return 0;
-  left=x-(double)sprite->originx+(double)page->tx-r->cam_x;
-  top=y-(double)sprite->originy+(double)page->ty-r->cam_y;
+  left=x-(double)sprite->originx*xs+(double)page->tx*xs-r->cam_x;
+  top=y-(double)sprite->originy*ys+(double)page->ty*ys-r->cam_y;
+  scaled_width=(double)page->sw*xs;
+  scaled_height=(double)page->sh*ys;
   if(!isfinite(left) || !isfinite(top) || left<0.0 || top<0.0 ||
-     left+page->sw>r->fbw || top+page->sh>r->fbh ||
-     left!=(double)(int)left || top!=(double)(int)top) return 0;
+     !isfinite(scaled_width) || !isfinite(scaled_height) ||
+     left+scaled_width>r->fbw || top+scaled_height>r->fbh ||
+     left!=(double)(int)left || top!=(double)(int)top ||
+     xs!=(double)(int)xs || ys!=(double)(int)ys) return 0;
   gml_render_flush_pending_fill(r);
   if(r->pending_fill || !(target=gml_render_application_resource_ensure(r))) return 0;
   image=gml_render_application_scene_next_image_ref(r,target);
@@ -117,9 +123,9 @@ static int resident_identity_sprite(GmlRender *r,GmlSprite *sprite,int subimg,
   operation.payload.quad.sampling.source_region=region;
   for(int corner=0;corner<4;corner++) operation.payload.quad.corner_colour[corner]=0xFFFFFFFFu;
   operation.payload.quad.x[0]=operation.payload.quad.x[3]=left;
-  operation.payload.quad.x[1]=operation.payload.quad.x[2]=left+page->sw;
+  operation.payload.quad.x[1]=operation.payload.quad.x[2]=left+scaled_width;
   operation.payload.quad.y[0]=operation.payload.quad.y[1]=top;
-  operation.payload.quad.y[2]=operation.payload.quad.y[3]=top+page->sh;
+  operation.payload.quad.y[2]=operation.payload.quad.y[3]=top+scaled_height;
   operation.payload.quad.u[0]=operation.payload.quad.u[3]=(double)page->sx/source.width;
   operation.payload.quad.u[1]=operation.payload.quad.u[2]=(double)(page->sx+page->sw)/source.width;
   operation.payload.quad.v[0]=operation.payload.quad.v[1]=(double)page->sy/source.height;
@@ -153,7 +159,7 @@ void gml_render_sprite_ext_unmasked(GmlRender *r, int sprite, int subimg, double
   gml_render_draw_map_scale(r,&xs,&ys);
   if(r && r->resident_application_pass){
     if(sprite>=0 && sprite<r->n_spr &&
-       resident_identity_sprite(r,&r->spr[sprite],subimg,x,y,xs,ys,rot,blend,alpha)) return;
+       resident_integer_sprite(r,&r->spr[sprite],subimg,x,y,xs,ys,rot,blend,alpha)) return;
     if(!gml_render_resident_application_cpu_barrier(r)) return;
   }
   if(r && sprite>=0 && sprite<r->n_spr &&

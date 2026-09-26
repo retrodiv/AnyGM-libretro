@@ -111,7 +111,11 @@ int gml_render_cpu_replay_eligible(const GmlRenderDrawOp *operation,
      x0<0.0 || y0<0.0 || x1>(double)target->width || y1>(double)target->height ||
      x0!=(double)(int)x0 || x1!=(double)(int)x1 ||
      y0!=(double)(int)y0 || y1!=(double)(int)y1 ||
-     x1-x0!=(double)region.width || y1-y0!=(double)region.height ||
+     x1<=x0 || y1<=y0 ||
+     x1-x0!=(double)(uint32_t)(x1-x0) ||
+     y1-y0!=(double)(uint32_t)(y1-y0) ||
+     (uint32_t)(x1-x0)<region.width || (uint32_t)(y1-y0)<region.height ||
+     (uint32_t)(x1-x0)%region.width || (uint32_t)(y1-y0)%region.height ||
      quad->x[3]!=x0 || quad->x[2]!=x1 || quad->y[1]!=y0 || quad->y[3]!=y1 ||
      !coordinate_matches(quad->u[0],quad->u[3]) ||
      !coordinate_matches(quad->u[1],quad->u[2]) ||
@@ -167,12 +171,18 @@ int gml_render_cpu_replay_one(uint32_t *target,uint32_t width,uint32_t height,
     const GmlRenderQuad *quad=&operation->payload.quad;
     GmlRenderRect region=quad->sampling.source_region;
     uint32_t left=(uint32_t)quad->x[0],top=(uint32_t)quad->y[0];
+    uint32_t draw_width=(uint32_t)(quad->x[1]-quad->x[0]);
+    uint32_t draw_height=(uint32_t)(quad->y[2]-quad->y[0]);
+    uint32_t scale_x=draw_width/region.width,scale_y=draw_height/region.height;
     int mirror_x=quad->u[0]>quad->u[1],mirror_y=quad->v[0]>quad->v[2];
     int exact=blend_rule(state)==1;
     int binary=blend_rule(state)==2;
-    for(uint32_t y=0;y<region.height;y++) for(uint32_t x=0;x<region.width;x++){
-      uint32_t source_x=(uint32_t)region.x+(mirror_x?region.width-1u-x:x);
-      uint32_t source_y=(uint32_t)region.y+(mirror_y?region.height-1u-y:y);
+    for(uint32_t y=0;y<draw_height;y++) for(uint32_t x=0;x<draw_width;x++){
+      uint32_t sample_x=x/scale_x,sample_y=y/scale_y;
+      uint32_t source_x=(uint32_t)region.x+
+        (mirror_x?region.width-1u-sample_x:sample_x);
+      uint32_t source_y=(uint32_t)region.y+
+        (mirror_y?region.height-1u-sample_y:sample_y);
       uint32_t pixel=source_pixel(source,source_x,source_y);
       uint32_t *destination=&target[(size_t)(top+y)*width+left+x];
       if(exact){
