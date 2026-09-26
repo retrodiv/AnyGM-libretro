@@ -4,6 +4,7 @@
 /* Shared background source, transform, and room-order preparation. */
 #include "gml_render.h"
 #include "gml_render_internal.h"
+#include "gml_render_surfaces_internal.h"
 #include "gml_render_cpu_blit.h"
 #include "anygm_host.h"
 
@@ -61,6 +62,7 @@ void gml_draw_background(GmlRender *r, int bg, double x, double y){
   gml_render_draw_map_point(r,&x,&y);
   if(bg<0||bg>=r->n_bg) return;
   int ti=r->bg[bg].tpag; if(ti<0||ti>=r->n_tpag) return;
+  if(!gml_render_resident_application_cpu_barrier(r)) return;
   if(gml_d3_draw_background_2d(r,bg,x,y,1,1,0xFFFFFF,r->alpha)) return;
   GmlTpag *t=&r->tpag[ti];
   gml_render_cpu_blit_background_phase(r,t, x - r->cam_x + t->tx, y - r->cam_y + t->ty, 1,1, 0xFFFFFF, r->alpha);
@@ -81,6 +83,7 @@ void gml_draw_background_part_ext(GmlRender *r, int bg, double sx, double sy, do
   gml_render_draw_map_scale(r,&xs,&ys);
   if(bg<0||bg>=r->n_bg) return;
   int ti=r->bg[bg].tpag; if(ti<0||ti>=r->n_tpag) return;
+  if(!gml_render_resident_application_cpu_barrier(r)) return;
   if(gml_d3_draw_background_part_2d(r,bg,sx,sy,sw,sh,x,y,xs,ys,color,alpha)) return;
   gml_render_cpu_blit_tpag_part_background(r,&r->tpag[ti],sx,sy,sw,sh,x-r->cam_x,y-r->cam_y,xs,ys,color,alpha);
 }
@@ -97,6 +100,7 @@ void gml_draw_background_tile(GmlRender *r,int bg,
     gml_render_draw_map_scale(r,&xs,&ys);
     if(!r || bg<0 || bg>=r->n_bg || sw<=0 || sh<=0 || xs==0 || ys==0) return;
     int ti=r->bg[bg].tpag; if(ti<0 || ti>=r->n_tpag) return;
+    if(!gml_render_resident_application_cpu_barrier(r)) return;
     if(gml_d3_draw_background_part_2d(r,bg,sx,sy,sw,sh,x,y,xs,ys,color,alpha)) return;
     gml_render_cpu_blit_tpag_part_tile(r,&r->tpag[ti],sx,sy,sw,sh,
                         x-r->cam_x,y-r->cam_y,xs,ys,color,alpha);
@@ -106,6 +110,7 @@ void gml_draw_background_tile(GmlRender *r,int bg,
   gml_render_draw_map_scale(r,&xs,&ys);
   if(!r || bg<0 || bg>=r->n_bg || sw<=0 || sh<=0 || xs==0 || ys==0) return;
   int ti=r->bg[bg].tpag; if(ti<0 || ti>=r->n_tpag) return;
+  if(!gml_render_resident_application_cpu_barrier(r)) return;
   GmlTpag *page=&r->tpag[ti];
   if(gml_render_cpu_try_exact_rotated_background_tile(
        r,page,sx,sy,sw,sh,x,y,xs,ys,mirror,flip,color,alpha)) return;
@@ -155,6 +160,7 @@ void gml_draw_background_ext(GmlRender *r, int bg, double x, double y, double xs
   gml_render_draw_map_scale(r,&xs,&ys);
   if(bg<0||bg>=r->n_bg) return;
   int ti=r->bg[bg].tpag; if(ti<0||ti>=r->n_tpag) return;
+  if(!gml_render_resident_application_cpu_barrier(r)) return;
   if(gml_d3_draw_background_2d(r,bg,x,y,xs,ys,color,alpha)) return;
   GmlTpag *t=&r->tpag[ti];
   gml_render_cpu_blit_background_phase(r,t, x - r->cam_x + t->tx*xs, y - r->cam_y + t->ty*ys, xs,ys, color, alpha);
@@ -173,6 +179,7 @@ void gml_draw_room_backgrounds(GmlRender *r, uint32_t bg_ptr, int want_fg){
     if(bgdef<0||bgdef>=r->n_bg) continue;
     int ti=r->bg[bgdef].tpag; if(ti<0||ti>=r->n_tpag) continue;
     GmlTpag *t=&r->tpag[ti]; int bw=t->sw, bh=t->sh; if(bw<=0||bh<=0) continue;
+    if(!gml_render_resident_application_cpu_barrier(r)) return;
     if(render_setting(r,"GML_LOG_BG"))
       anygm_host_logf(r && r->win ? r->win->host : NULL,ANYGM_LOG_DEBUG,"[bg-room] layer=%u def=%d tpag=%d src=%d,%d %dx%d dst=%d,%d base=%dx%d atlas=%d pos=(%d,%d) tiled=(%d,%d) fg=%d\n",
         i,bgdef,ti,t->sx,t->sy,t->sw,t->sh,t->tx,t->ty,t->bw,t->bh,t->atlas,
@@ -203,6 +210,7 @@ static void do_bg_tiled_ext(GmlRender *r, int bg, double x, double y, double xs,
   double logical_w=(t->bw?t->bw:t->sw)*xs;
   double logical_h=(t->bh?t->bh:t->sh)*ys;
   if(logical_w<=0 || logical_h<=0) return;
+  if(!gml_render_resident_application_cpu_barrier(r)) return;
   if(render_setting(r,"GML_LOG_BG"))
     anygm_host_logf(r && r->win ? r->win->host : NULL,ANYGM_LOG_DEBUG,"[bg-tiled] def=%d tpag=%d src=%d,%d %dx%d dst=%d,%d base=%dx%d atlas=%d pos=(%.3f,%.3f) scale=(%.3f,%.3f) tiled=(%d,%d) alpha=%.3f\n",
       bg,ti,t->sx,t->sy,t->sw,t->sh,t->tx,t->ty,t->bw,t->bh,t->atlas,

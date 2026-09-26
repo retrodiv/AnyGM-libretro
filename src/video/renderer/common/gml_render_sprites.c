@@ -425,6 +425,7 @@ void gml_draw_layer_background_sprite(GmlRender *r, int sprite, int subimg, doub
   if(!r || sprite<0 || sprite>=r->n_spr || alpha<=0) return;
   GmlSprite *s=&r->spr[sprite]; if(s->n_frames<=0) return;
   double bw=s->w*fabs(xs), bh=s->h*fabs(ys); if(bw<=0 || bh<=0) return;
+  if(!gml_render_resident_application_cpu_barrier(r)) return;
   /* Snap camera-relative background-layer vertices to the nearest output pixel. */
   double ax=round(x-r->cam_x), ay=round(y-r->cam_y);
   double x0=ax, y0=ay;

@@ -926,6 +926,78 @@ static int resident_application_sprite_cpu_fallback(void){
   return 1;
 }
 
+static int resident_background_and_tile_cpu_barriers(void){
+  GmlRender *render=(GmlRender*)calloc(1,sizeof *render);
+  FakeDevice fake={0};
+  GmlRenderDeviceServices device=service(&fake);
+  const uint8_t rgba[16]={
+    0xD0u,0x20u,0x10u,0xFFu, 0x10u,0xD0u,0x20u,0xFFu,
+    0x20u,0x10u,0xD0u,0xFFu, 0xC0u,0xB0u,0xA0u,0xFFu
+  };
+  CHECK(render && gml_render_application_surface_ensure_owned(render,4,4));
+  render->atlas=(GmlAtlas*)calloc(1,sizeof *render->atlas);
+  render->tpag=(GmlTpag*)calloc(1,sizeof *render->tpag);
+  render->spr=(GmlSprite*)calloc(1,sizeof *render->spr);
+  render->bg=(GmlBg*)calloc(1,sizeof *render->bg);
+  CHECK(render->atlas && render->tpag && render->spr && render->bg);
+  render->n_atlas=render->n_tpag=render->n_spr=render->n_bg=1;
+  render->atlas[0].px=(uint8_t*)malloc(sizeof rgba);
+  render->spr[0].frame=(int*)calloc(1,sizeof(int));
+  CHECK(render->atlas[0].px && render->spr[0].frame);
+  memcpy(render->atlas[0].px,rgba,sizeof rgba);
+  render->atlas[0].w=render->atlas[0].h=2;
+  render->tpag[0].sw=render->tpag[0].sh=2;
+  render->tpag[0].tw=render->tpag[0].th=2;
+  render->tpag[0].bw=render->tpag[0].bh=2;
+  render->spr[0].w=render->spr[0].h=2;
+  render->spr[0].n_frames=1;
+  render->active_shader=-1;
+  render->color_write_mask=0x0Fu;
+  render->alpha=1.0;
+  gml_render_bind_device(render,&device);
+
+  CHECK(gml_render_begin_resident_owned_application(render,0.0,0.0,0));
+  gml_render_set_pending_fill(render,0xFF000000u);
+  gml_draw_sprite_ext(render,0,0,0.0,0.0,1.0,1.0,0.0,0xFFFFFFu,1.0);
+  CHECK(render->resident_application_pass);
+  gml_draw_background(render,0,1.0,0.0);
+  CHECK(!render->resident_application_pass && !render->pending_fill &&
+        render->app_surface_owned[0]==0xFFD02010u &&
+        render->app_surface_owned[1]==0xFFD02010u &&
+        render->app_surface_owned[2]==0xFF10D020u && fake.readbacks==0);
+
+  CHECK(gml_render_begin_resident_owned_application(render,0.0,0.0,0));
+  gml_render_set_pending_fill(render,0xFF000000u);
+  gml_draw_sprite_ext(render,0,0,0.0,0.0,1.0,1.0,0.0,0xFFFFFFu,1.0);
+  CHECK(render->resident_application_pass);
+  gml_draw_tile(render,0,0,0,1,1,2.0,0.0);
+  CHECK(!render->resident_application_pass && !render->pending_fill &&
+        render->app_surface_owned[0]==0xFFD02010u &&
+        render->app_surface_owned[2]==0xFFD02010u && fake.readbacks==0);
+
+  /* Every public background shape must finish the queued device prefix before its unchanged
+   * software writer. Exact pixels for the plain background and tile are checked above. */
+  for(int variant=0;variant<7;variant++){
+    CHECK(gml_render_begin_resident_owned_application(render,0.0,0.0,0));
+    gml_render_set_pending_fill(render,0xFF000000u);
+    gml_draw_sprite_ext(render,0,0,0.0,0.0,1.0,1.0,0.0,0xFFFFFFu,1.0);
+    CHECK(render->resident_application_pass);
+    switch(variant){
+      case 0: gml_draw_background_stretched(render,0,1,0,2,2,0xFFFFFFu,1.0); break;
+      case 1: gml_draw_background_part_ext(render,0,0,0,1,1,1,0,1,1,0xFFFFFFu,1.0); break;
+      case 2: gml_draw_background_tile(render,0,0,0,1,1,1,0,1,1,0,0,0,0xFFFFFFu,1.0); break;
+      case 3: gml_draw_background_ext(render,0,1,0,1,1,0xFFFFFFu,1.0); break;
+      case 4: gml_draw_background_tiled(render,0,0,0,1,1); break;
+      case 5: gml_draw_background_tiled_ext(render,0,0,0,1,1,0xFFFFFFu,1.0,1,1); break;
+      case 6: gml_draw_layer_background_sprite(render,0,0,1,0,1,1,0xFFFFFFu,1.0,0,0); break;
+    }
+    CHECK(!render->resident_application_pass && !render->pending_fill && fake.readbacks==0);
+  }
+  gml_render_free(render);
+  free(render);
+  return 1;
+}
+
 static int atlas_scene_identity_and_retirement(void){
   GmlRender *first=(GmlRender*)calloc(1,sizeof *first);
   GmlRender *second=(GmlRender*)calloc(1,sizeof *second);
@@ -1277,12 +1349,13 @@ int main(void){
   passed+=owned_application_resize_and_context_loss();
   passed+=resident_application_pending_clear();
   passed+=resident_application_sprite_cpu_fallback();
+  passed+=resident_background_and_tile_cpu_barriers();
   passed+=atlas_scene_identity_and_retirement();
   passed+=resident_opaque_atlas_sprite_gpu();
   passed+=resident_binary_atlas_sprite_gpu();
   passed+=resident_integer_scaled_atlas_sprite_gpu();
   passed+=state_without_context();
   passed+=nearest_subrectangle_mirrors();
-  printf("render resource cases: passed=%d failed=%d\n",passed,19-passed);
-  return passed==19?EXIT_SUCCESS:EXIT_FAILURE;
+  printf("render resource cases: passed=%d failed=%d\n",passed,20-passed);
+  return passed==20?EXIT_SUCCESS:EXIT_FAILURE;
 }

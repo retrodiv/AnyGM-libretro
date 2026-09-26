@@ -4,6 +4,7 @@
 /* Shared tile source, room order, and draw preparation. */
 #include "gml_render.h"
 #include "gml_render_internal.h"
+#include "gml_render_surfaces_internal.h"
 #include "gml_render_cpu_blit.h"
 #include "anygm_host.h"
 
@@ -33,6 +34,7 @@ void gml_draw_tile(GmlRender *r, int def, int sx, int sy, int w, int h, double x
   gml_render_draw_map_scale(r,&draw_xscale,&draw_yscale);
   if(def<0||def>=r->n_bg) return;
   int ti=r->bg[def].tpag; if(ti<0||ti>=r->n_tpag) return;
+  if(!gml_render_resident_application_cpu_barrier(r)) return;
   if(gml_d3_draw_background_part_2d(r,def,sx,sy,w,h,x,y,draw_xscale,draw_yscale,0xFFFFFF,1)) return;
   GmlTpag *bt=&r->tpag[ti]; GmlTpag tt=*bt;
   tt.sx=bt->sx+sx; tt.sy=bt->sy+sy; tt.sw=w; tt.sh=h;
@@ -82,6 +84,7 @@ void gml_draw_room_tiles(GmlRender *r, uint32_t tile_ptr){
     GmlTileRec *t=&tiles[i];
     if(t->def<0 || t->def>=r->n_bg) continue;
     int ti=r->bg[t->def].tpag; if(ti<0 || ti>=r->n_tpag) continue;
+    if(!gml_render_resident_application_cpu_barrier(r)) break;
     GmlTpag *bt=&r->tpag[ti];
     GmlTpag tt=*bt;                                  /* sub-rect of the tileset image */
     tt.sx=bt->sx + t->sx; tt.sy=bt->sy + t->sy; tt.sw=t->w; tt.sh=t->h;
