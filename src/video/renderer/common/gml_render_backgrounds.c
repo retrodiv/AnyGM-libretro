@@ -75,6 +75,28 @@ static int resident_integer_background_part(GmlRender *r,int page_index,
   GmlTpag *page=&r->tpag[page_index];
   if(page->tx!=0 || page->ty!=0 || page->bw!=page->sw || page->bh!=page->sh)
     return 0;
+  /* Do not erase auxiliary CPU phase-plane work or special draw-state effects.
+   * The ordinary resident crop performs its fuller validation below. */
+  if(r->classic || r->classic_phase_y || r->gui_pass_active ||
+     r->active_shader>=0 || r->alpha_test_enable ||
+     r->pending_underlay || r->pending_presentation ||
+     r->fb!=r->app_surface_owned || r->fbw!=r->app_w || r->fbh!=r->app_h)
+    return 0;
+  for(int index=0;index<3;index++)
+    if(r->classic_interp_phase[index] || r->app_interp_phase[index]) return 0;
+  /* Integer source crops cannot cover pixels beyond their projected full rectangle.
+   * At integral unit scale/position the CPU writer's rounded edge is exact, including
+   * mirrored tiles; other projections retain a one-pixel rounding guard. An
+   * entirely offscreen crop must not drain later visible resident quads. */
+  double left=x-r->cam_x, top=y-r->cam_y;
+  double right=left+sw*xs, bottom=top+sh*ys;
+  if(isfinite(left) && isfinite(top) && isfinite(right) && isfinite(bottom)){
+    double x_guard=(floor(left)==left && (xs==1.0 || xs==-1.0))?0.0:1.0;
+    double y_guard=(floor(top)==top && (ys==1.0 || ys==-1.0))?0.0:1.0;
+    if(fmax(left,right)<=-x_guard || fmin(left,right)>=(double)r->fbw+x_guard ||
+       fmax(top,bottom)<=-y_guard || fmin(top,bottom)>=(double)r->fbh+y_guard)
+      return 1;
+  }
   return gml_render_resident_atlas_crop(r,page_index,(int)sx,(int)sy,(int)sw,(int)sh,
                                        x-r->cam_x,y-r->cam_y,xs,ys,family);
 }
