@@ -5,6 +5,7 @@
 #include "gml_render_internal.h"
 #include "gml_render_presentation_axis.h"
 #include "gml_render_cpu_backend.h"
+#include "gml_render_resources.h"
 
 #include <limits.h>
 #include <stdint.h>
@@ -28,8 +29,18 @@ void gml_render_cpu_present_image(GmlRender *r){
     int span=x1-x0;
     int column_stack[1024];
     int *column;
-    /* Cleared first: the kernel calls nothing that could re-enter, but a flush during a flush would
-     * write the same pixels twice for no reason. */
+    /* Resolve a resident source before consuming the record. A failed no-context replay must not
+     * silently turn a pending presentation into an empty completed frame. */
+    if(record.resident_image.resource_class){
+      GmlRenderImageRef current=gml_render_resource_image_ref(r->app_surface_resource);
+      if(current.resource_class!=record.resident_image.resource_class ||
+         current.identity!=record.resident_image.identity ||
+         current.incarnation!=record.resident_image.incarnation ||
+         current.content_version!=record.resident_image.content_version ||
+         !gml_render_resource_acquire_cpu_read(r->app_surface_resource,&src)) return;
+    }
+    /* Cleared before writes: the kernel calls nothing that could re-enter, but a flush during a
+     * flush would write the same pixels twice for no reason. */
     r->pending_presentation=0;
     if(!target || target_width<=0 || record.target_height<=0) return;
     if(record.has_fill){

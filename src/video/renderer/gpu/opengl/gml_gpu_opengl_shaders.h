@@ -46,21 +46,24 @@
   "uniform int u_dest_x;\n" \
   "uniform int u_dest_y;\n" \
   "uniform int u_target_height;\n" \
+  "uniform int u_source_height;\n" \
+  "uniform int u_resident_source;\n" \
   "out vec4 o_color;\n" \
   "void main(){\n" \
   "  int dx=int(gl_FragCoord.x)-u_dest_x;\n" \
   "  int dy=(u_target_height-1-int(gl_FragCoord.y))-u_dest_y;\n" \
   "  int sx=int(texelFetch(u_map_x,ivec2(dx,0),0).r);\n" \
   "  int sy=int(texelFetch(u_map_y,ivec2(dy,0),0).r);\n" \
-  "  vec4 texel=texelFetch(u_source,ivec2(sx,sy),0);\n"
+  "  int source_y=u_resident_source!=0 ? u_source_height-1-sy : sy;\n" \
+  "  vec4 texel=texelFetch(u_source,ivec2(sx,source_y),0);\n"
 
-/* The source arrives as raw XRGB words uploaded as bytes, so the component order the sampler sees
- * is the machine's memory order rather than red-green-blue. Permuting components is exact; it
- * moves values without computing on them. */
+/* A CPU source arrives as raw XRGB words uploaded as bytes, so the sampler sees machine byte
+ * order. A resident scene texture is already RGBA with bottom-up rows. Both branches select
+ * channels without colour arithmetic. */
 #define GML_GPU_OPENGL_FRAGMENT_SWIZZLE_LITTLE \
-  "  o_color=vec4(texel.b,texel.g,texel.r,1.0);\n"
+  "  o_color=u_resident_source!=0 ? vec4(texel.rgb,1.0) : vec4(texel.b,texel.g,texel.r,1.0);\n"
 #define GML_GPU_OPENGL_FRAGMENT_SWIZZLE_BIG \
-  "  o_color=vec4(texel.g,texel.b,texel.a,1.0);\n"
+  "  o_color=u_resident_source!=0 ? vec4(texel.rgb,1.0) : vec4(texel.g,texel.b,texel.a,1.0);\n"
 
 #define GML_GPU_OPENGL_FRAGMENT_BODY_TAIL \
   "}\n"

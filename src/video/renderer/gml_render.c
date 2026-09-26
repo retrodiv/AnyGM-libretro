@@ -1017,6 +1017,30 @@ void gml_render_flush_pending_underlay(GmlRender *r){
     }
   }
 }
+int gml_render_defer_resident_underlay(GmlRender *r){
+  GmlRenderJournalMetrics metrics={0};
+  GmlRenderImageRef image;
+  int x,y,w,h;
+  if(!r || !r->pending_underlay || !r->presentation_deferral_enabled ||
+     !r->app_surface_opaque || !r->app_surface_resource ||
+     r->app_surface!=r->app_surface_owned || r->classic ||
+     r->fb!=r->base_fb || r->target_sp || r->target_id>=0) return 0;
+  image=gml_render_resource_image_ref(r->app_surface_resource);
+  gml_render_resource_journal_metrics(r->app_surface_resource,&metrics);
+  if(image.resource_class!=GML_RENDER_RESOURCE_APPLICATION ||
+     image.content_version!=metrics.gpu_version ||
+     (metrics.authority!=GML_RENDER_RESOURCE_GPU_REPLAYABLE &&
+      metrics.authority!=GML_RENDER_RESOURCE_BOTH_CURRENT)) return 0;
+  x=r->underlay_x; y=r->underlay_y; w=r->underlay_w; h=r->underlay_h;
+  r->pending_underlay=0;
+  if(!render_record_deferred_underlay(r,r->app_surface,r->app_w,r->app_h,
+                                     x,y,w,h,1)){
+    r->pending_underlay=1;
+    return 0;
+  }
+  r->presentation.resident_image=image;
+  return 1;
+}
 int rect_covers_target(GmlRender *r, int x0, int y0, int x1, int y1){
   if(!r || r->fbw<=0 || r->fbh<=0) return 0;
   if(x0<0) x0=0;

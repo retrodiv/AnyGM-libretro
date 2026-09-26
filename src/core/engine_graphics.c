@@ -382,7 +382,8 @@ int engine_present_hardware_screen(AnygmEngine *engine,unsigned *width,unsigned 
   source.pitch_pixels=(uint32_t)record.source_pitch;
   source.pixel_format=GML_PLAN_PIXEL_XRGB8888;
   source.opaque=1u;
-  source.cpu_pixels=record.source_pixels;
+  source.cpu_pixels=record.resident_image.resource_class?NULL:record.source_pixels;
+  source.resident_image=record.resident_image;
   image=gml_render_plan_add_image(plan,&source);
   if(image==GML_PLAN_NO_IMAGE) return 0;
   destination.x=record.destination_x;

@@ -73,11 +73,22 @@ int gml_gpu_opengl_execute(GmlGpuBackend *backend,const GmlGpuContext *context,
       GmlPlanAxis axis_x=op->axis_x;
       GmlPlanAxis axis_y=op->axis_y;
       GLuint source_name=0,map_x=0,map_y=0;
+      int resident_source=0;
       if(op->opcode==GML_PLAN_OP_PRESENT_CPU_FRAME){
         axis_x=identity_axis(image->width);
         axis_y=identity_axis(image->height);
       }
-      if(!gml_gpu_opengl_upload_source(backend,image,counters,&source_name,op->linear?1:0)){
+      if(image->resident_image.resource_class){
+        GlSceneImage *scene=gml_gpu_opengl_scene_image(backend,image->resident_image);
+        if(!scene || scene->width!=image->width || scene->height!=image->height ||
+           scene->pixel_format!=GML_RENDER_PIXEL_ARGB8888 || !scene->rendered_origin){
+          gml_gpu_opengl_record_error(error,error_capacity,"resident graphics source unavailable");
+          failed=1;
+          break;
+        }
+        source_name=scene->texture;
+        resident_source=1;
+      } else if(!gml_gpu_opengl_upload_source(backend,image,counters,&source_name,op->linear?1:0)){
         gml_gpu_opengl_record_error(error,error_capacity,"graphics source upload failed");
         failed=1;
         break;
@@ -91,6 +102,8 @@ int gml_gpu_opengl_execute(GmlGpuBackend *backend,const GmlGpuContext *context,
       gml_gpu_opengl_set_rect(backend,&op->destination,plan->target_height);
       backend->gl.Uniform1i(backend->u_dest_x,op->destination.x);
       backend->gl.Uniform1i(backend->u_dest_y,op->destination.y);
+      backend->gl.Uniform1i(backend->u_source_height,(GLint)image->height);
+      backend->gl.Uniform1i(backend->u_resident_source,resident_source);
       backend->gl.ActiveTexture(GL_TEXTURE0);
       backend->gl.BindTexture(GL_TEXTURE_2D,source_name);
       backend->gl.ActiveTexture(GL_TEXTURE1);

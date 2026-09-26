@@ -256,6 +256,9 @@ typedef struct {
   uint32_t fill_color;
   /* Stable identity of the source resource and a generation that advances when its pixels do. */
   uint32_t identity, generation;
+  /* Nonzero only when the automatic opaque underlay was retained on the device. The software
+   * fallback reconstructs this exact resource before reading source_pixels. */
+  GmlRenderImageRef resident_image;
   /* The content shader the presentation was drawn through, or -1 for the plain blit. The
    * software write of the record is always the plain blit: that is what the runtime draws when no
    * device executes the program. */
@@ -556,6 +559,8 @@ double gml_render_gui_logical_x(const GmlRender *r, double physical_x);
 double gml_render_gui_logical_y(const GmlRender *r, double physical_y);
 void gml_render_set_pending_underlay(GmlRender *r, int x, int y, int w, int h);
 void gml_render_flush_pending_underlay(GmlRender *r);
+/* Keep a terminal automatic underlay as a versioned resident presentation when it is safe. */
+int gml_render_defer_resident_underlay(GmlRender *r);
 void gml_render_set_pending_fill(GmlRender *r, uint32_t color);
 void gml_render_flush_pending_fill(GmlRender *r);
 void gml_render_cancel_pending_fill(GmlRender *r);

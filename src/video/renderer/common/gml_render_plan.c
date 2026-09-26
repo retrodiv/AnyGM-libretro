@@ -218,7 +218,12 @@ int gml_render_plan_validate(const GmlRenderPlan *plan){
     }
     if(op->source>=plan->image_count) return 0;
     const GmlPlanImage *image=&plan->images[op->source];
-    if(!image->cpu_pixels) return 0;
+    if(image->resident_image.resource_class){
+      if(op->opcode!=GML_PLAN_OP_BLIT_OPAQUE_NEAREST ||
+         image->image_class!=GML_PLAN_IMAGE_APPLICATION_SURFACE ||
+         image->resident_image.resource_class!=GML_RENDER_RESOURCE_APPLICATION ||
+         !image->resident_image.content_version || !image->opaque) return 0;
+    } else if(!image->cpu_pixels) return 0;
     switch(op->opcode){
       case GML_PLAN_OP_BLIT_OPAQUE_NEAREST:
         if(!axis_ok(&op->axis_x,op->destination.width)) return 0;

@@ -868,6 +868,35 @@ static int plan_validation_case(void){
     REQUIRE(!gml_render_plan_validate(&plan),"a source with no lent pixels is rejected");
   }
 
+  /* A versioned resident application image may omit CPU pixels only for an opaque nearest
+   * device blit. The software executor must refuse it before touching the target. */
+  gml_render_plan_reset(&plan,GML_PLAN_TARGET_HOST_FRAMEBUFFER,8,8);
+  {
+    GmlPlanImage resident=image;
+    uint32_t untouched[8*8];
+    resident.image_class=GML_PLAN_IMAGE_APPLICATION_SURFACE;
+    resident.cpu_pixels=NULL;
+    resident.opaque=1u;
+    resident.resident_image=(GmlRenderImageRef){GML_RENDER_RESOURCE_APPLICATION,0u,1u,2u};
+    index=gml_render_plan_add_image(&plan,&resident);
+    REQUIRE(index!=GML_PLAN_NO_IMAGE,"versioned resident source recorded");
+    REQUIRE(gml_render_plan_add_blit_nearest(&plan,index,whole,
+              accumulator_axis(8,8),accumulator_axis(8,8),0xFFu),
+            "resident nearest blit recorded");
+    REQUIRE(gml_render_plan_validate(&plan) && gml_render_plan_gpu_eligible(&plan),
+            "opaque resident nearest presentation is device eligible");
+    for(size_t pixel=0;pixel<64u;pixel++) untouched[pixel]=0x12345678u;
+    REQUIRE(!gml_render_cpu_plan_execute(&plan,untouched,8),
+            "resident-only source is not read by the software executor");
+    for(size_t pixel=0;pixel<64u;pixel++)
+      REQUIRE(untouched[pixel]==0x12345678u,"software refusal writes no pixels");
+    plan.images[index].opaque=0u;
+    REQUIRE(!gml_render_plan_validate(&plan),"translucent resident copy is refused");
+    plan.images[index].opaque=1u;
+    plan.images[index].resident_image.content_version=0u;
+    REQUIRE(!gml_render_plan_validate(&plan),"unversioned resident copy is refused");
+  }
+
   /* An extent of zero, and one beyond the plan's own bound. */
   gml_render_plan_reset(&plan,GML_PLAN_TARGET_CPU_FRAME,0,8);
   REQUIRE(!gml_render_plan_validate(&plan),"a zero target extent is rejected");

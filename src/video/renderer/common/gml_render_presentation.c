@@ -96,6 +96,7 @@ int render_record_deferred_underlay(GmlRender *r,const uint32_t *src,int sw,int 
     r->presentation.has_fill=captured_fill;
     r->presentation.fill_color=captured_colour;
     r->presentation.identity=0u;
+    memset(&r->presentation.resident_image,0,sizeof r->presentation.resident_image);
     r->presentation.shader=-1;
     r->presentation.linear=0;
     r->presentation.generation++;
@@ -143,6 +144,7 @@ void render_present_first_generation(GmlRender *r,int surf,const uint32_t *src,i
   r->presentation.has_fill=captured_fill;
   r->presentation.fill_color=captured_colour;
   r->presentation.identity=(uint32_t)surf;
+  memset(&r->presentation.resident_image,0,sizeof r->presentation.resident_image);
   r->presentation.shader=-1;
   r->presentation.linear=0;
   r->presentation.generation++;
@@ -191,6 +193,7 @@ int render_present_content_shader(GmlRender *r,int surf,const uint32_t *src,int 
   r->presentation.has_fill=captured_fill;
   r->presentation.fill_color=captured_colour;
   r->presentation.identity=(uint32_t)surf;
+  memset(&r->presentation.resident_image,0,sizeof r->presentation.resident_image);
   r->presentation.shader=shader;
   /* Recorded for the device to run: the accounting counts it as reaching the device, because it
    * does — the engine executes it at the presentation rather than here. */

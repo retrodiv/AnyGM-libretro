@@ -6,6 +6,7 @@
 
 #include <stddef.h>
 #include <stdint.h>
+#include "gml_render_draw.h"
 
 /* A bounded, value-copy description of coarse render work: what a pass must produce, not how a
  * particular graphics API produces it. No graphics API type, no host callback and no function
@@ -46,6 +47,9 @@ typedef struct GmlPlanImage {
   /* A borrow that is valid for the frame in which the plan was built, and for as long afterwards
    * as the owner keeps the plan retained. NULL when the owner did not lend the pixels. */
   const uint32_t *cpu_pixels;
+  /* A current, context-local scene image may replace the CPU borrow for an opaque nearest
+   * presentation. Its full version prevents a stale texture from being mistaken for this frame. */
+  GmlRenderImageRef resident_image;
 } GmlPlanImage;
 
 typedef enum GmlPlanAxisRule {
