@@ -4,6 +4,7 @@
 /* Shared background source, transform, and room-order preparation. */
 #include "gml_render.h"
 #include "gml_render_internal.h"
+#include "gml_render_sprites_internal.h"
 #include "gml_render_surfaces_internal.h"
 #include "gml_render_cpu_blit.h"
 #include "anygm_host.h"
@@ -62,9 +63,11 @@ void gml_draw_background(GmlRender *r, int bg, double x, double y){
   gml_render_draw_map_point(r,&x,&y);
   if(bg<0||bg>=r->n_bg) return;
   int ti=r->bg[bg].tpag; if(ti<0||ti>=r->n_tpag) return;
+  GmlTpag *t=&r->tpag[ti];
+  if(r->alpha==1.0 && !r->interp && !gml_d3_is_active(r) &&
+     gml_render_resident_atlas_page(r,ti,x-r->cam_x+t->tx,y-r->cam_y+t->ty,1,1)) return;
   if(!gml_render_resident_application_cpu_barrier(r)) return;
   if(gml_d3_draw_background_2d(r,bg,x,y,1,1,0xFFFFFF,r->alpha)) return;
-  GmlTpag *t=&r->tpag[ti];
   gml_render_cpu_blit_background_phase(r,t, x - r->cam_x + t->tx, y - r->cam_y + t->ty, 1,1, 0xFFFFFF, r->alpha);
 }
 
@@ -100,6 +103,11 @@ void gml_draw_background_tile(GmlRender *r,int bg,
     gml_render_draw_map_scale(r,&xs,&ys);
     if(!r || bg<0 || bg>=r->n_bg || sw<=0 || sh<=0 || xs==0 || ys==0) return;
     int ti=r->bg[bg].tpag; if(ti<0 || ti>=r->n_tpag) return;
+    GmlTpag *page=&r->tpag[ti];
+    if(!r->interp && !gml_d3_is_active(r) && color==0xFFFFFFu && alpha==1.0 &&
+       sx==0.0 && sy==0.0 && sw==page->sw && sh==page->sh &&
+       page->tx==0 && page->ty==0 && page->bw==page->sw && page->bh==page->sh &&
+       gml_render_resident_atlas_page(r,ti,x-r->cam_x,y-r->cam_y,xs,ys)) return;
     if(!gml_render_resident_application_cpu_barrier(r)) return;
     if(gml_d3_draw_background_part_2d(r,bg,sx,sy,sw,sh,x,y,xs,ys,color,alpha)) return;
     gml_render_cpu_blit_tpag_part_tile(r,&r->tpag[ti],sx,sy,sw,sh,
@@ -160,9 +168,12 @@ void gml_draw_background_ext(GmlRender *r, int bg, double x, double y, double xs
   gml_render_draw_map_scale(r,&xs,&ys);
   if(bg<0||bg>=r->n_bg) return;
   int ti=r->bg[bg].tpag; if(ti<0||ti>=r->n_tpag) return;
+  GmlTpag *t=&r->tpag[ti];
+  if(color==0xFFFFFFu && alpha==1.0 && !r->interp && !gml_d3_is_active(r) &&
+     gml_render_resident_atlas_page(r,ti,x-r->cam_x+t->tx*xs,
+                                      y-r->cam_y+t->ty*ys,xs,ys)) return;
   if(!gml_render_resident_application_cpu_barrier(r)) return;
   if(gml_d3_draw_background_2d(r,bg,x,y,xs,ys,color,alpha)) return;
-  GmlTpag *t=&r->tpag[ti];
   gml_render_cpu_blit_background_phase(r,t, x - r->cam_x + t->tx*xs, y - r->cam_y + t->ty*ys, xs,ys, color, alpha);
 }
 

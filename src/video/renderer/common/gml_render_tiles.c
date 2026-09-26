@@ -4,6 +4,7 @@
 /* Shared tile source, room order, and draw preparation. */
 #include "gml_render.h"
 #include "gml_render_internal.h"
+#include "gml_render_sprites_internal.h"
 #include "gml_render_surfaces_internal.h"
 #include "gml_render_cpu_blit.h"
 #include "anygm_host.h"
@@ -34,9 +35,15 @@ void gml_draw_tile(GmlRender *r, int def, int sx, int sy, int w, int h, double x
   gml_render_draw_map_scale(r,&draw_xscale,&draw_yscale);
   if(def<0||def>=r->n_bg) return;
   int ti=r->bg[def].tpag; if(ti<0||ti>=r->n_tpag) return;
+  GmlTpag *bt=&r->tpag[ti];
+  if(!r->interp && !gml_d3_is_active(r) && sx==0 && sy==0 &&
+     w==bt->sw && h==bt->sh && bt->tx==0 && bt->ty==0 &&
+     bt->bw==bt->sw && bt->bh==bt->sh &&
+     gml_render_resident_atlas_page(r,ti,x-r->cam_x,y-r->cam_y,
+                                      draw_xscale,draw_yscale)) return;
   if(!gml_render_resident_application_cpu_barrier(r)) return;
   if(gml_d3_draw_background_part_2d(r,def,sx,sy,w,h,x,y,draw_xscale,draw_yscale,0xFFFFFF,1)) return;
-  GmlTpag *bt=&r->tpag[ti]; GmlTpag tt=*bt;
+  GmlTpag tt=*bt;
   tt.sx=bt->sx+sx; tt.sy=bt->sy+sy; tt.sw=w; tt.sh=h;
   /* Adjacent tilemap cells are independent GPU quads whose authored edges are contiguous. At a
    * fractional view scale, rounding every cell to one fixed width leaves a one-pixel crack each

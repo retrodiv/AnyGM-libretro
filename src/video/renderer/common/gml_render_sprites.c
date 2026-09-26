@@ -34,14 +34,7 @@ static int resident_integer_sprite(GmlRender *r,GmlSprite *sprite,int subimg,
                                   double x,double y,double xs,double ys,double rotation,
                                   uint32_t blend,double alpha){
   GmlTpag *page;
-  GmlAtlas *atlas;
-  GmlRenderResourceSource source={0};
-  GmlRenderResource *target;
-  GmlRenderDrawOp operation={0};
-  GmlRenderDrawStateSnapshot state={0};
-  GmlRenderImageRef source_ref,image;
-  GmlRenderRect region;
-  double left,top,scaled_width,scaled_height;
+  double left,top;
   int sub,page_index;
   if(!r || !r->resident_application_pass || !sprite || sprite->runtime_rgba ||
      sprite->spine || sprite->ns_enabled || sprite->n_frames<=0 ||
@@ -75,6 +68,39 @@ static int resident_integer_sprite(GmlRender *r,GmlSprite *sprite,int subimg,
      page->tw!=page->sw || page->th!=page->sh ||
      page->bw!=sprite->w || page->bh!=sprite->h ||
      page->atlas<0 || page->atlas>=r->n_atlas) return 0;
+  left=x-(double)sprite->originx*xs+(double)page->tx*xs-r->cam_x;
+  top=y-(double)sprite->originy*ys+(double)page->ty*ys-r->cam_y;
+  return gml_render_resident_atlas_page(r,page_index,left,top,xs,ys);
+}
+
+int gml_render_resident_atlas_page(GmlRender *r,int page_index,
+                                  double left,double top,double xs,double ys){
+  GmlTpag *page;
+  GmlAtlas *atlas;
+  GmlRenderResourceSource source={0};
+  GmlRenderResource *target;
+  GmlRenderDrawOp operation={0};
+  GmlRenderDrawStateSnapshot state={0};
+  GmlRenderImageRef source_ref,image;
+  GmlRenderRect region;
+  double scaled_width,scaled_height;
+  if(!r || !r->resident_application_pass || page_index<0 || page_index>=r->n_tpag ||
+     r->classic || (r->world_transform_active &&
+                    (r->world_scale_x!=1.0 || r->world_scale_y!=1.0)) ||
+     r->gui_pass_active || r->active_shader>=0 || r->alpha_test_enable ||
+     !r->alphablend || r->blendmode || r->blend_equation!=1 ||
+     r->blend_equation_alpha!=1 || r->color_write_mask!=0x0Fu ||
+     r->classic_phase_y || r->rotated_batch_count || r->rotated_batch_building ||
+     r->pending_underlay || r->pending_presentation ||
+     r->fb!=r->app_surface_owned || r->fbw!=r->app_w || r->fbh!=r->app_h ||
+     !isfinite(xs) || !isfinite(ys) || xs<=0.0 || ys<=0.0 ||
+     (r->interp && (xs!=1.0 || ys!=1.0))) return 0;
+  for(int index=0;index<3;index++)
+    if(r->classic_interp_phase[index] || r->app_interp_phase[index]) return 0;
+  page=&r->tpag[page_index];
+  if(page->sw<=0 || page->sh<=0 || page->sx<0 || page->sy<0 ||
+     page->atlas<0 || page->atlas>=r->n_atlas ||
+     page->tw!=page->sw || page->th!=page->sh) return 0;
   atlas=&r->atlas[page->atlas];
   if(!gml_render_atlas_scene_source_view(r,page->atlas,&source) ||
      (uint64_t)(uint32_t)page->sx+(uint32_t)page->sw>source.width ||
@@ -91,8 +117,6 @@ static int resident_integer_sprite(GmlRender *r,GmlSprite *sprite,int subimg,
     page->scene_opaque_checked=1;
   }
   if(!page->scene_binary_alpha) return 0;
-  left=x-(double)sprite->originx*xs+(double)page->tx*xs-r->cam_x;
-  top=y-(double)sprite->originy*ys+(double)page->ty*ys-r->cam_y;
   scaled_width=(double)page->sw*xs;
   scaled_height=(double)page->sh*ys;
   if(!isfinite(left) || !isfinite(top) || left<0.0 || top<0.0 ||

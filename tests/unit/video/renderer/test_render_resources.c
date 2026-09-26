@@ -954,6 +954,7 @@ static int resident_background_and_tile_cpu_barriers(void){
   render->active_shader=-1;
   render->color_write_mask=0x0Fu;
   render->alpha=1.0;
+  render->interp=1;
   gml_render_bind_device(render,&device);
 
   CHECK(gml_render_begin_resident_owned_application(render,0.0,0.0,0));
@@ -993,6 +994,33 @@ static int resident_background_and_tile_cpu_barriers(void){
     }
     CHECK(!render->resident_application_pass && !render->pending_fill && fake.readbacks==0);
   }
+  /* Nearest, complete atlas backgrounds and tiles share the resident quad preparation.
+   * The filtered variants above remain synchronized CPU fallbacks. */
+  render->interp=0;
+  CHECK(gml_render_begin_resident_owned_application(render,0.0,0.0,0));
+  gml_render_set_pending_fill(render,0xFF000000u);
+  gml_draw_background(render,0,1.0,0.0);
+  CHECK(render->resident_application_pass && fake.readbacks==0);
+  gml_draw_background_tile(render,0,0,0,2,2,0,2,1,1,0,0,0,0xFFFFFFu,1.0);
+  CHECK(render->resident_application_pass && fake.readbacks==0);
+  gml_draw_tile(render,0,0,0,2,2,2,2);
+  CHECK(render->resident_application_pass && fake.readbacks==0);
+  CHECK(gml_render_resident_application_cpu_barrier(render));
+  CHECK(!render->resident_application_pass && fake.readbacks==0 &&
+        render->app_surface_owned[0]==0xFF000000u &&
+        render->app_surface_owned[1]==0xFFD02010u &&
+        render->app_surface_owned[2]==0xFF10D020u &&
+        render->app_surface_owned[8]==0xFFD02010u &&
+        render->app_surface_owned[11]==0xFF10D020u);
+  CHECK(gml_render_begin_resident_owned_application(render,0.0,0.0,0));
+  gml_render_set_pending_fill(render,0xFF000000u);
+  gml_draw_background_ext(render,0,0,0,2,2,0xFFFFFFu,1.0);
+  CHECK(render->resident_application_pass && fake.readbacks==0);
+  CHECK(gml_render_resident_application_cpu_barrier(render));
+  CHECK(render->app_surface_owned[0]==0xFFD02010u &&
+        render->app_surface_owned[1]==0xFFD02010u &&
+        render->app_surface_owned[2]==0xFF10D020u &&
+        render->app_surface_owned[15]==0xFFC0B0A0u);
   gml_render_free(render);
   free(render);
   return 1;
