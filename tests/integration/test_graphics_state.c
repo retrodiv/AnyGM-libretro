@@ -99,6 +99,40 @@ static int advance(AnygmEngine *engine,int frames,uint32_t *last_flags){
   return 1;
 }
 
+static uint8_t *serialize(AnygmEngine *engine,size_t *size);
+
+static const char *scene_prototype_setting(void *userdata,const char *name){
+  (void)userdata;
+  return name && !strcmp(name,"GML_SCENE_GPU_PROTOTYPE")?"1":NULL;
+}
+
+static int resident_world_selection_case(void){
+  Session plain,selected;
+  GmlGpuCounters counters={0};
+  size_t plain_size=0,selected_size=0;
+  uint8_t *plain_state=NULL,*selected_state=NULL;
+  int matching;
+  anygm_test_graphics_reset();
+  REQUIRE(session_open(&plain),"plain world fixture loads");
+  REQUIRE(session_open(&selected),"resident world fixture loads");
+  selected.engine->host.development_setting=scene_prototype_setting;
+  REQUIRE(graphics_adopt(selected.engine,ANYGM_GRAPHICS_OPENGLES3)==ANYGM_OK,
+          "resident world fixture adopts a context");
+  REQUIRE(advance(plain.engine,1,NULL) && advance(selected.engine,1,NULL),
+          "both world policies complete one frame");
+  gml_gpu_counters(selected.engine->gpu,&counters);
+  REQUIRE(counters.scene_operations[GML_RENDER_OP_CLEAR]>0u,
+          "selected world submits a resident clear");
+  plain_state=serialize(plain.engine,&plain_size);
+  selected_state=serialize(selected.engine,&selected_size);
+  matching=plain_state && selected_state && plain_size==selected_size &&
+           !memcmp(plain_state,selected_state,plain_size);
+  free(selected_state); free(plain_state);
+  session_close(&selected); session_close(&plain);
+  REQUIRE(matching,"resident world selection preserves canonical state bytes");
+  return 1;
+}
+
 static uint8_t *serialize(AnygmEngine *engine,size_t *size){
   size_t capacity=anygm_state_size(engine);
   uint8_t *data=(uint8_t*)malloc(capacity?capacity:1);
@@ -719,6 +753,7 @@ static int texture_filter_state_case(void){
 
 int main(void){
   static const struct { const char *name; int (*run)(void); } cases[]={
+    {"resident world selection retains CPU state",resident_world_selection_case},
     {"texture filters and GPU stack restore",texture_filter_state_case},
     {"state bytes match with and without a target",state_bytes_match_case},
     {"save, load and save again produce the same bytes",save_load_save_case},

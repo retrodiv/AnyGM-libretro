@@ -1465,9 +1465,17 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
       "[apptarget] f%ld direct_owned_world=%d multiview=%d view_surface=%d views=%d owned=%d\n",
       engine->vm.frame,direct_owned_world,multiview_rendered,view_surface,frame_view_count,
       render_presentation.application_owned);
+  int owned_world_began=0;
+  /* Internal prototype selection: all unqualified operations still take the checked CPU
+   * barrier. The public scene option waits for a resident presentation path. */
+  if(direct_owned_world && !engine->composed_frame && !engine->aspect_force_active &&
+     engine_graphics_active(engine) &&
+     anygm_host_development_setting(&engine->host,"GML_SCENE_GPU_PROTOTYPE"))
+    owned_world_began=gml_render_begin_resident_owned_application(
+      &engine->render,cam_x,cam_y,0);
   if(direct_owned_world &&
-     gml_render_begin_owned_application(&engine->render,cam_x,cam_y,
-                                        engine->composed_frame)){
+     (owned_world_began || gml_render_begin_owned_application(
+       &engine->render,cam_x,cam_y,engine->composed_frame))){
     world_pixels=NULL;
     (void)gml_render_application_surface_owned_extent(
       &engine->render,&world_width,&world_height);
