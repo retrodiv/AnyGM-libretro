@@ -129,6 +129,7 @@ typedef struct {
   int debug_dumped;                                                /* one-shot opt-in atlas diagnostic */
   int no_source_reported;                                          /* one-shot: page carries no blob */
   int runtime_font_page;                                          /* reusable only by runtime fonts */
+  int scene_source_used;                                          /* immutable atlas upload this content lifetime */
 } GmlAtlas;
 typedef struct {
   int atlas, sx, sy, sw, sh;
@@ -207,6 +208,7 @@ typedef struct GmlRender {
   GmlWin   *win;
   GmlRenderDeviceServices device;
   int device_bound;
+  uint64_t scene_source_epoch; /* process-unique source incarnation, assigned on first upload */
   /* Borrowed engine-owned fixed-function context. */
   GmlSoftware3D *software3d;
   long frame;                     /* simulation frame supplied by the owning VM */
@@ -644,6 +646,9 @@ uint32_t be32(const uint8_t *data);
 
 void atlas_pool_free(GmlRender *r);
 uint8_t *atlas_pixels(GmlRender *r,int index);
+int gml_render_atlas_scene_source_view(GmlRender *r,int index,
+                                       GmlRenderResourceSource *out_source);
+void gml_render_atlas_scene_retire_all(GmlRender *r);
 void gml_render_materialize_scaled_pages(GmlRender *r);
 void parse_txtr(GmlRender *r);
 void parse_shader_palettes(GmlRender *r);

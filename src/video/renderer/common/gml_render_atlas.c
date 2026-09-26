@@ -11,12 +11,65 @@
 #include "gml_image_codec.h"
 
 #include <limits.h>
+#include <stdatomic.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
 #define GML_EXTERNAL_TEXTURE_MAX_BYTES (64u*1024u*1024u)
 #define GML_EXTERNAL_TEXTURE_TOTAL_BYTES (256u*1024u*1024u)
+
+static _Atomic uint64_t next_scene_source_epoch=1u;
+
+static uint64_t scene_source_epoch_allocate(void){
+  uint64_t current=atomic_load_explicit(&next_scene_source_epoch,memory_order_relaxed);
+  for(;;){
+    if(current==UINT64_MAX) return 0;
+    if(atomic_compare_exchange_weak_explicit(&next_scene_source_epoch,&current,
+                                             current+1u,memory_order_relaxed,
+                                             memory_order_relaxed)) return current;
+  }
+}
+
+int gml_render_atlas_scene_source_view(GmlRender *r,int index,
+                                       GmlRenderResourceSource *out_source){
+  GmlAtlas *atlas;
+  uint64_t bytes;
+  if(out_source) memset(out_source,0,sizeof *out_source);
+  if(!r || !out_source || !r->atlas || index<0 || index>=r->n_atlas) return 0;
+  atlas=&r->atlas[index];
+  if(atlas->runtime_font_page || !atlas_pixels(r,index) || atlas->w<=0 || atlas->h<=0 ||
+     (uint32_t)atlas->w>UINT32_MAX/4u) return 0;
+  bytes=(uint64_t)(uint32_t)atlas->w*(uint32_t)atlas->h*4u;
+  if(bytes>SIZE_MAX) return 0;
+  if(!r->scene_source_epoch){
+    r->scene_source_epoch=scene_source_epoch_allocate();
+    if(!r->scene_source_epoch) return 0;
+  }
+  out_source->image=(GmlRenderImageRef){GML_RENDER_RESOURCE_ATLAS,(uint32_t)index,
+                                        r->scene_source_epoch,1u};
+  out_source->width=(uint32_t)atlas->w;
+  out_source->height=(uint32_t)atlas->h;
+  out_source->pixel_format=GML_RENDER_PIXEL_RGBA8888;
+  out_source->stride_bytes=(uint32_t)atlas->w*4u;
+  out_source->byte_capacity=(size_t)bytes;
+  out_source->bytes=atlas->px;
+  out_source->borrowed_immutable=1;
+  atlas->scene_source_used=1;
+  return 1;
+}
+
+void gml_render_atlas_scene_retire_all(GmlRender *r){
+  const GmlRenderDeviceServices *device;
+  if(!r || !r->scene_source_epoch || !r->atlas) return;
+  device=gml_render_device(r);
+  if(!device || !device->retire) return;
+  for(int index=0;index<r->n_atlas;index++) if(r->atlas[index].scene_source_used){
+    GmlRenderImageRef image={GML_RENDER_RESOURCE_ATLAS,(uint32_t)index,
+                             r->scene_source_epoch,1u};
+    device->retire(device->context,image);
+  }
+}
 
 /* ---- atlas (TXTR) ---- */
 /* A texture blob is one of: PNG (bc14-16), a bare GameMaker-QOI "fioq" stream, or a bzip2-compressed

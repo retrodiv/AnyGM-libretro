@@ -893,6 +893,44 @@ static int resident_application_sprite_cpu_fallback(void){
   return 1;
 }
 
+static int atlas_scene_identity_and_retirement(void){
+  GmlRender *first=(GmlRender*)calloc(1,sizeof *first);
+  GmlRender *second=(GmlRender*)calloc(1,sizeof *second);
+  GmlRenderResourceSource one={0},same={0},two={0};
+  FakeDevice fake={0};
+  GmlRenderDeviceServices device=service(&fake);
+  CHECK(first && second);
+  first->atlas=(GmlAtlas*)calloc(1,sizeof *first->atlas);
+  second->atlas=(GmlAtlas*)calloc(1,sizeof *second->atlas);
+  CHECK(first->atlas && second->atlas);
+  first->n_atlas=second->n_atlas=1;
+  first->atlas[0].px=(uint8_t*)calloc(16u,1u);
+  second->atlas[0].px=(uint8_t*)calloc(16u,1u);
+  CHECK(first->atlas[0].px && second->atlas[0].px);
+  first->atlas[0].w=second->atlas[0].w=2;
+  first->atlas[0].h=second->atlas[0].h=2;
+  gml_render_bind_device(first,&device);
+  gml_render_bind_device(second,&device);
+  CHECK(gml_render_atlas_scene_source_view(first,0,&one) &&
+        gml_render_atlas_scene_source_view(first,0,&same) &&
+        gml_render_atlas_scene_source_view(second,0,&two));
+  CHECK(one.image.resource_class==GML_RENDER_RESOURCE_ATLAS &&
+        one.image.identity==0u && one.image.content_version==1u &&
+        one.image.incarnation==same.image.incarnation &&
+        one.image.incarnation!=two.image.incarnation &&
+        one.borrowed_immutable && one.pixel_format==GML_RENDER_PIXEL_RGBA8888 &&
+        one.width==2u && one.height==2u && one.stride_bytes==8u &&
+        one.byte_capacity==16u && one.bytes==first->atlas[0].px);
+  first->atlas[0].runtime_font_page=1;
+  CHECK(!gml_render_atlas_scene_source_view(first,0,&same) && !same.bytes);
+  gml_render_free(first);
+  gml_render_free(second);
+  CHECK(fake.retires==2);
+  free(first);
+  free(second);
+  return 1;
+}
+
 static int state_without_context(void){
   GmlRender *original=(GmlRender*)calloc(1,sizeof *original);
   GmlRender *restored=(GmlRender*)calloc(1,sizeof *restored);
@@ -954,8 +992,9 @@ int main(void){
   passed+=owned_application_resize_and_context_loss();
   passed+=resident_application_pending_clear();
   passed+=resident_application_sprite_cpu_fallback();
+  passed+=atlas_scene_identity_and_retirement();
   passed+=state_without_context();
   passed+=nearest_subrectangle_mirrors();
-  printf("render resource cases: passed=%d failed=%d\n",passed,15-passed);
-  return passed==15?EXIT_SUCCESS:EXIT_FAILURE;
+  printf("render resource cases: passed=%d failed=%d\n",passed,16-passed);
+  return passed==16?EXIT_SUCCESS:EXIT_FAILURE;
 }

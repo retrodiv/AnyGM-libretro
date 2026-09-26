@@ -752,6 +752,7 @@ void gml_render_free(GmlRender *r){
   gml_render_flush_rotated_batch(r);
   atlas_pool_free(r);   /* before atlas teardown: workers read r->atlas/win */
   gml_row_pool_free(r);  /* compositor workers must stop before their renderer workspaces vanish */
+  gml_render_atlas_scene_retire_all(r);
   for(int i=0;i<GML_MAX_SURFACES;i++){
     gml_render_surface_resource_dispose(r,i+1);
     free(r->surface[i].px); free(r->surface[i].rle);
