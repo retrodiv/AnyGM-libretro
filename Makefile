@@ -732,6 +732,7 @@ $(TEST_DIR)/public_header_cpp.o: tests/contract/public_header_cpp.cpp src/api/an
 integration-check: $(INTEGRATION_TESTS)
 	$(TEST_DIR)/test_engine_instances
 	$(TEST_DIR)/test_gpu_scene_route
+	$(TEST_DIR)/test_gpu_scene_route --dense
 	$(TEST_DIR)/test_mouse_input
 	$(TEST_DIR)/test_font_state
 	$(TEST_DIR)/test_engine_content_config

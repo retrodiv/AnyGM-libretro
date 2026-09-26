@@ -1092,6 +1092,110 @@ int anygm_synthetic_gpu_scene_route_content_create(AnygmSyntheticContent *fixtur
   return ok;
 }
 
+int anygm_synthetic_gpu_dense_scene_route_content_create(AnygmSyntheticContent *fixture){
+  enum { SPRITE_SIDE=64, DECORATIONS=1000, ROOM_WIDTH=1280, ROOM_HEIGHT=720 };
+  if(!fixture) return 0;
+  memset(fixture,0,sizeof *fixture);
+  if(!create_fixture_directory(fixture->directory,sizeof fixture->directory)) return 0;
+  snprintf(fixture->path,sizeof fixture->path,"%s/data.win",fixture->directory);
+  uint8_t pixels[SPRITE_SIDE*SPRITE_SIDE*4u];
+  for(int y=0;y<SPRITE_SIDE;y++) for(int x=0;x<SPRITE_SIDE;x++){
+    size_t offset=((size_t)y*SPRITE_SIDE+(size_t)x)*4u;
+    pixels[offset]=(uint8_t)(32+(x*3)%192);
+    pixels[offset+1u]=(uint8_t)(48+(y*2)%160);
+    pixels[offset+2u]=(uint8_t)((x+y)&1?224:96);
+    pixels[offset+3u]=255u;
+  }
+  AnygmHostServices services={0};
+  services.struct_size=sizeof services;
+  services.abi_version=ANYGM_HOST_SERVICES_VERSION;
+  anygm_stdio_vfs_services_init(&services);
+  GmlcProject project={0};
+  GmlcSprite sprite={0};
+  GmlcObject objects[3]={{0}};
+  GmlcObjectEvent events[2]={{0}};
+  GmlcRoom rooms[2]={{0}};
+  GmlcRoomInstance *instances[2]={0};
+  int room_order[2]={0,1};
+  char *frame=NULL,*moving_step=NULL,*second_step=NULL;
+  project.host=&services;
+  project.name=(char *)"neutral-dense-resident-scene-route";
+  project.sprites=&sprite; project.n_sprites=project.cap_sprites=1;
+  project.objects=objects; project.n_objects=project.cap_objects=3;
+  project.rooms=rooms; project.n_rooms=project.cap_rooms=2;
+  project.room_order=room_order; project.n_room_order=2;
+  frame=gmlc_project_add_memory_file(&project,"sprite",GMLC_MEMORY_RGBA,
+                                     pixels,sizeof pixels,SPRITE_SIDE,SPRITE_SIDE);
+  moving_step=gmlc_project_add_memory_file(&project,"moving-step",GMLC_MEMORY_TEXT,
+    "if (keyboard_check(vk_right)) x += 1;\n"
+    "if (x >= 42) room_goto_next();\n",
+    sizeof("if (keyboard_check(vk_right)) x += 1;\n"
+           "if (x >= 42) room_goto_next();\n")-1u,0,0);
+  second_step=gmlc_project_add_memory_file(&project,"second-step",GMLC_MEMORY_TEXT,
+    "if (keyboard_check(vk_right)) x += 1;\n",
+    sizeof("if (keyboard_check(vk_right)) x += 1;\n")-1u,0,0);
+  for(int index=0;index<2;index++)
+    instances[index]=(GmlcRoomInstance*)calloc(DECORATIONS+1u,sizeof *instances[index]);
+  if(frame && moving_step && second_step && instances[0] && instances[1]){
+    sprite.id=sprite.name=(char *)"sprite_fixture";
+    sprite.runtime_id=0;
+    sprite.width=sprite.height=SPRITE_SIDE;
+    sprite.bbox_right=sprite.bbox_bottom=SPRITE_SIDE-1;
+    sprite.n_frames=1;
+    sprite.frame_paths=&frame;
+    for(int index=0;index<3;index++){
+      objects[index].id=objects[index].name=index==0?(char *)"object_first":
+        index==1?(char *)"object_second":(char *)"object_decoration";
+      objects[index].sprite_id=0;
+      objects[index].mask_id=objects[index].parent_id=-1;
+      objects[index].visible=1;
+      if(index<2){
+        objects[index].events=&events[index];
+        objects[index].n_events=objects[index].cap_events=1;
+        events[index].event_type=3;
+        events[index].event_number=0;
+        events[index].source_path=index?second_step:moving_step;
+      }
+    }
+    for(int index=0;index<2;index++){
+      rooms[index].id=rooms[index].name=index?(char *)"room_second":(char *)"room_first";
+      rooms[index].width=ROOM_WIDTH; rooms[index].height=ROOM_HEIGHT; rooms[index].speed=60;
+      rooms[index].draw_background_color=1;
+      rooms[index].background_color=index?0x00403020u:0x00102030u;
+      rooms[index].view_enabled=1;
+      rooms[index].n_views=1;
+      rooms[index].views[0].visible=1;
+      rooms[index].views[0].wview=rooms[index].views[0].wport=ROOM_WIDTH;
+      rooms[index].views[0].hview=rooms[index].views[0].hport=ROOM_HEIGHT;
+      rooms[index].views[0].hspeed=rooms[index].views[0].vspeed=-1;
+      rooms[index].views[0].object_id=-1;
+      rooms[index].instances=instances[index];
+      rooms[index].n_instances=rooms[index].cap_instances=DECORATIONS+1;
+      for(int item=0;item<=DECORATIONS;item++){
+        GmlcRoomInstance *instance=&instances[index][item];
+        instance->id=instance->name=item?(char *)"instance_decoration":
+          index?(char *)"instance_second":(char *)"instance_first";
+        instance->object_id=item?2:index;
+        instance->instance_id=200000+index*(DECORATIONS+1)+item;
+        instance->x=item?(item*37)%(ROOM_WIDTH-SPRITE_SIDE):index?64:16;
+        instance->y=item?(item*53)%(ROOM_HEIGHT-SPRITE_SIDE):index?56:24;
+        instance->sx=instance->sy=1.0f;
+        instance->color=0xFFFFFFFFu;
+      }
+    }
+  }
+  char error[256]={0};
+  int ok=frame && moving_step && second_step && instances[0] && instances[1] &&
+    gmlc_package_write_structural(&project,fixture->path,error,sizeof error);
+  if(!ok) fprintf(stderr,"neutral dense scene route package failed: %s\n",error);
+  for(int index=0;index<project.n_memory_files;index++) free(project.memory_files[index].data);
+  free(project.memory_files);
+  free(frame); free(moving_step); free(second_step);
+  free(instances[0]); free(instances[1]);
+  if(!ok) anygm_synthetic_content_destroy(fixture);
+  return ok;
+}
+
 int anygm_synthetic_draw_content_create(AnygmSyntheticContent *fixture){
   if(!fixture) return 0;
   memset(fixture,0,sizeof *fixture);

@@ -1,9 +1,9 @@
 /* SPDX-License-Identifier: MIT
  * Copyright (c) 2026 retrodiv <retrodiv@proton.me>
  */
-/* A small complete neutral content route for host GPU/CPU comparison. The default invocation
- * checks movement and the room transition through the ordinary CPU engine. --keep prints the
- * generated package path so the same fixture can be replayed by a real libretro host. */
+/* Complete neutral content routes for host GPU/CPU comparison. The default invocation checks
+ * movement and the room transition through the ordinary CPU engine. --dense checks the larger
+ * draw-heavy variant; --keep and --keep-dense print package paths for real libretro hosts. */
 #include "anygm.h"
 #include "engine_internal.h"
 #include "stdio_vfs.h"
@@ -27,13 +27,15 @@ static uint64_t frame_digest(const AnygmFrameOutput *output){
 
 int main(int argc,char **argv){
   AnygmSyntheticContent fixture={0};
-  if(!anygm_synthetic_gpu_scene_route_content_create(&fixture)) return 1;
-  if(argc==2 && !strcmp(argv[1],"--keep")){
+  int dense=argc==2 && (!strcmp(argv[1],"--keep-dense") || !strcmp(argv[1],"--dense"));
+  if(!(dense?anygm_synthetic_gpu_dense_scene_route_content_create(&fixture):
+              anygm_synthetic_gpu_scene_route_content_create(&fixture))) return 1;
+  if(argc==2 && (!strcmp(argv[1],"--keep") || !strcmp(argv[1],"--keep-dense"))){
     puts(fixture.path);
     return 0;
   }
-  if(argc!=1){
-    fputs("usage: test_gpu_scene_route [--keep]\n",stderr);
+  if(argc!=1 && !(argc==2 && dense)){
+    fputs("usage: test_gpu_scene_route [--dense|--keep|--keep-dense]\n",stderr);
     anygm_synthetic_content_destroy(&fixture);
     return 1;
   }
@@ -59,7 +61,8 @@ int main(int argc,char **argv){
     AnygmFrameOutput output={0};
     output.struct_size=sizeof output;
     ok=anygm_run_frame(engine,&input,&output)==ANYGM_OK && output.pixels &&
-       output.width==128 && output.height==96 && output.pitch>=128u*4u;
+       output.width==(dense?1280u:128u) && output.height==(dense?720u:96u) &&
+       output.pitch>=(dense?1280u:128u)*4u;
     if(!ok) break;
     if(frame==0) first=frame_digest(&output);
     if(frame==10) moved=frame_digest(&output);
