@@ -328,7 +328,12 @@ static int upload_sources(const GmlRenderDeviceServices *device,
     GmlRenderImageUpload transfer={0};
     int seen=0;
     if(!operation->source_count) continue;
-    for(uint32_t earlier=0;earlier<index;earlier++)
+    /* A compatible quad run reuses the immediately preceding source. Avoid walking the
+     * whole batch for every operation; mixed-source batches still use the original search. */
+    if(index && batch->operations[index-1u].source_count &&
+       same_version(batch->operations[index-1u].sources[0],operation->sources[0]))
+      seen=1;
+    else for(uint32_t earlier=0;earlier<index;earlier++)
       if(batch->operations[earlier].source_count &&
          same_version(batch->operations[earlier].sources[0],operation->sources[0])){
         seen=1;
@@ -405,6 +410,18 @@ static int append_history(GmlRenderResource *resource,const GmlRenderDrawBatch *
   return 1;
 }
 
+/* A single exact full-target clear supersedes every previous reconstruction record. Keep the
+ * already-reserved entry array for the new clear; release only its old source pins and cursor. */
+static void discard_superseded_history(GmlRenderResource *resource){
+  for(uint32_t index=0;index<resource->source_count;index++)
+    free(resource->sources[index].owned);
+  free(resource->sources);
+  resource->sources=NULL;
+  resource->source_count=0;
+  resource->retained_bytes=0;
+  resource->entry_count=0;
+}
+
 GmlRenderResourceExecution gml_render_resource_submit(
   GmlRenderResource *resource,const GmlRenderDeviceServices *device,
   const GmlRenderDrawBatch *batch,const GmlRenderResourceSource *sources,
@@ -412,16 +429,22 @@ GmlRenderResourceExecution gml_render_resource_submit(
   GmlRenderExecutionResult device_result;
   uint32_t old_source_count;
   size_t old_retained_bytes;
-  int checkpoint_required;
+  int checkpoint_required,replaces_history;
   if(!resource || resource->authority==GML_RENDER_RESOURCE_INVALID ||
      resource->cpu_write_acquired ||
      !batch_valid(resource,batch,sources,source_count,&checkpoint_required))
     return GML_RENDER_RESOURCE_EXEC_FAILED;
+  replaces_history=!checkpoint_required && batch->operation_count==1u &&
+    batch->operations[0].opcode==GML_RENDER_OP_CLEAR &&
+    batch->operations[0].target.region.x==0 &&
+    batch->operations[0].target.region.y==0 &&
+    batch->operations[0].target.region.width==resource->width &&
+    batch->operations[0].target.region.height==resource->height;
   if(!device || !device->submit || !device->upload || !device->readback){
     return checkpoint_required?GML_RENDER_RESOURCE_EXEC_FAILED:
       cpu_fallback(resource,batch,sources,source_count);
   }
-  if(!checkpoint_required && resource->entry_count &&
+  if(!checkpoint_required && !replaces_history && resource->entry_count &&
      ((uint64_t)resource->entry_count+batch->operation_count>
       resource->limits.journal_bytes/sizeof(JournalEntry) ||
       resource->retained_bytes>resource->limits.retained_mutable_bytes)){
@@ -485,6 +508,7 @@ GmlRenderResourceExecution gml_render_resource_submit(
                                   .target.image.content_version;
   resource->gpu_version=resource->image.content_version;
   resource->device_identity=device->context;
+  if(replaces_history) discard_superseded_history(resource);
   if(checkpoint_required){
     GmlRenderImageReadback readback={0};
     uint32_t *checkpoint=(uint32_t*)malloc((size_t)resource->width*resource->height*4u);

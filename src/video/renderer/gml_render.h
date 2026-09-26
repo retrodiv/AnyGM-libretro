@@ -563,6 +563,8 @@ void gml_render_flush_pending_underlay(GmlRender *r);
 int gml_render_defer_resident_underlay(GmlRender *r);
 void gml_render_set_pending_fill(GmlRender *r, uint32_t color);
 void gml_render_flush_pending_fill(GmlRender *r);
+/* Finish queued resident draws before an observer leaves the world pass. */
+int gml_render_scene_flush(GmlRender *r);
 void gml_render_cancel_pending_fill(GmlRender *r);
 void gml_render_clear(GmlRender *r,uint32_t color,double alpha);
 void gml_render_cancel_pending_underlay(GmlRender *r);

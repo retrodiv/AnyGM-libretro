@@ -39,7 +39,6 @@ static int resident_identity_sprite(GmlRender *r,GmlSprite *sprite,int subimg,
   GmlRenderResource *target;
   GmlRenderDrawOp operation={0};
   GmlRenderDrawStateSnapshot state={0};
-  GmlRenderDrawBatch batch;
   GmlRenderImageRef source_ref,image;
   GmlRenderRect region;
   double left,top;
@@ -97,7 +96,7 @@ static int resident_identity_sprite(GmlRender *r,GmlSprite *sprite,int subimg,
      left!=(double)(int)left || top!=(double)(int)top) return 0;
   gml_render_flush_pending_fill(r);
   if(r->pending_fill || !(target=gml_render_application_resource_ensure(r))) return 0;
-  image=gml_render_resource_image_ref(target);
+  image=gml_render_application_scene_next_image_ref(r,target);
   if(image.content_version==UINT64_MAX) return 0;
   region=(GmlRenderRect){page->sx,page->sy,(uint32_t)page->sw,(uint32_t)page->sh};
   source_ref=source.image;
@@ -138,9 +137,7 @@ static int resident_identity_sprite(GmlRender *r,GmlSprite *sprite,int subimg,
   }
   state.sampler_count=1u;
   state.samplers[0]=operation.payload.quad.sampling;
-  batch=(GmlRenderDrawBatch){&operation,1u,&state,1u};
-  if(gml_render_application_scene_submit(r,&batch,&source,1u)==
-     GML_RENDER_RESOURCE_EXEC_FAILED) return 0;
+  if(!gml_render_application_scene_enqueue(r,&operation,&state,&source)) return 0;
   r->fb_all_transparent=0;
   return 1;
 }

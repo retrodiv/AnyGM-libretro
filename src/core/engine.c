@@ -1528,6 +1528,7 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
   engine->aspect_event_view_stack_pointer = 0;
   engine->aspect_event_view_overflow = 0;
   gml_render_flush_pending_fill(&engine->render);
+  if(!gml_render_scene_flush(&engine->render)) return ANYGM_ERROR_INTERNAL;
   if(direct_owned_world)
     (void)gml_render_application_surface_owned_extent(
       &engine->render,&world_width,&world_height);

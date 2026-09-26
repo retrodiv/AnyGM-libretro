@@ -324,11 +324,39 @@ static int pressure_and_fallback(void){
   CHECK(gml_render_resource_submit(limited,&device,&batch,NULL,0u)==
         GML_RENDER_RESOURCE_EXEC_DEVICE);
   gml_render_resource_journal_metrics(limited,&metrics);
-  CHECK(metrics.consolidations==1u && metrics.cpu_replays==1u);
+  /* A complete clear replaces the prior journal without replaying hidden pixels. */
+  CHECK(metrics.consolidations==0u && metrics.cpu_replays==0u);
   CHECK(metrics.journal_operations==1u);
+  gml_render_resource_context_lost(limited);
   CHECK(gml_render_resource_acquire_cpu_read(limited,&observed));
   CHECK(pixels[0]==0xFF445566u && pixels[15]==0xFF445566u);
   gml_render_resource_destroy(limited);
+  /* A non-replacing draw still consolidates when the same descriptor budget is reached. */
+  {
+    uint32_t source_pixels[4]={0xFFFF0000u,0xFFFF0000u,0xFFFF0000u,0xFFFF0000u};
+    GmlRenderImageRef image=source_ref();
+    GmlRenderDrawOp quad=quad_op(3u,&image);
+    GmlRenderDrawStateSnapshot state=quad_state(0);
+    GmlRenderDrawBatch quad_batch={&quad,1u,&state,1u};
+    GmlRenderResourceSource source=source_view(source_pixels,1);
+    fill(pixels,0xFF000000u);
+    limited=gml_render_resource_create(target_ref(1u,1u),4u,4u,
+      GML_RENDER_PIXEL_XRGB8888,pixels,
+      (GmlRenderResourceLimits){metrics.journal_bytes,1u});
+    CHECK(limited);
+    batch.operations=&operations[0];
+    CHECK(gml_render_resource_submit(limited,&device,&batch,NULL,0u)==
+          GML_RENDER_RESOURCE_EXEC_DEVICE);
+    CHECK(gml_render_resource_submit(limited,&device,&quad_batch,&source,1u)==
+          GML_RENDER_RESOURCE_EXEC_DEVICE);
+    gml_render_resource_journal_metrics(limited,&metrics);
+    CHECK(metrics.consolidations==1u && metrics.cpu_replays==1u &&
+          metrics.journal_operations==1u);
+    gml_render_resource_context_lost(limited);
+    CHECK(gml_render_resource_acquire_cpu_read(limited,&observed) &&
+          pixels[0]==0xFF112233u && pixels[5]==0xFFFF0000u);
+    gml_render_resource_destroy(limited);
+  }
   /* One descriptor cannot fit. The batch must execute once on CPU, before device work. */
   fill(pixels,0xFF000000u);
   limited=gml_render_resource_create(target_ref(1u,1u),4u,4u,
@@ -968,13 +996,14 @@ static int resident_opaque_atlas_sprite_gpu(void){
   gml_render_set_pending_fill(render,0xFF000000u);
   gml_draw_sprite_ext(render,0,0,1.0,1.0,1.0,1.0,0.0,0xFFFFFFu,1.0);
   gml_render_resource_journal_metrics(render->app_surface_resource,&metrics);
-  CHECK(render->resident_application_pass && fake.submits==2 &&
-        metrics.journal_operations==2u && metrics.cpu_replays==0u &&
+  CHECK(render->resident_application_pass && fake.submits==1 &&
+        metrics.journal_operations==1u && metrics.cpu_replays==0u &&
         render->app_surface_owned[5]==0u);
   CHECK(gml_render_application_surface_owned_view(render,&view) &&
         view.pixels[0]==0xFF000000u && view.pixels[5]==0xFFD02010u &&
         view.pixels[6]==0xFF10D020u && view.pixels[9]==0xFF2010D0u &&
         view.pixels[10]==0xFFC0B0A0u && fake.readbacks==0);
+  CHECK(fake.submits==2);
   memcpy(gpu_reconstructed,view.pixels,sizeof gpu_reconstructed);
   CHECK(gml_render_begin_owned_application(render,0.0,0.0,0));
   gml_render_set_pending_fill(render,0xFF000000u);
@@ -997,10 +1026,11 @@ static int resident_opaque_atlas_sprite_gpu(void){
   CHECK(gml_render_begin_resident_owned_application(render,0.0,0.0,0));
   gml_render_set_pending_fill(render,0u);
   gml_draw_sprite_ext(render,0,0,1.0,1.0,1.0,1.0,0.0,0xFFFFFFu,1.0);
-  CHECK(render->resident_application_pass && fake.submits==5 &&
+  CHECK(render->resident_application_pass && fake.submits==4 &&
         !render->fb_all_transparent);
   CHECK(gml_render_application_surface_owned_view(render,&view) &&
         view.pixels[0]==0u && view.pixels[5]==0xFFD02010u);
+  CHECK(fake.submits==5);
   render->tpag[0].tx=render->tpag[0].ty=1;
   render->tpag[0].bw=render->tpag[0].bh=4;
   render->spr[0].w=render->spr[0].h=4;
@@ -1012,11 +1042,12 @@ static int resident_opaque_atlas_sprite_gpu(void){
   CHECK(gml_render_begin_resident_owned_application(render,0.0,0.0,0));
   gml_render_set_pending_fill(render,0xFF000000u);
   gml_draw_sprite_ext(render,0,0,2.0,2.0,1.0,1.0,0.0,0xFFFFFFu,1.0);
-  CHECK(render->resident_application_pass && fake.submits==7);
+  CHECK(render->resident_application_pass && fake.submits==6);
   CHECK(gml_render_application_surface_owned_view(render,&view) &&
         view.pixels[0]==0xFF000000u && view.pixels[5]==0xFFD02010u &&
         view.pixels[6]==0xFF10D020u && view.pixels[9]==0xFF2010D0u &&
         view.pixels[10]==0xFFC0B0A0u && fake.readbacks==0);
+  CHECK(fake.submits==7);
   memcpy(gpu_reconstructed,view.pixels,sizeof gpu_reconstructed);
   CHECK(gml_render_begin_owned_application(render,0.0,0.0,0));
   gml_render_set_pending_fill(render,0xFF000000u);
@@ -1025,6 +1056,35 @@ static int resident_opaque_atlas_sprite_gpu(void){
   CHECK(fake.submits==7 &&
         !memcmp(render->app_surface_owned,gpu_reconstructed,sizeof gpu_reconstructed));
   render->app_phase_y=NULL;
+  CHECK(gml_render_begin_resident_owned_application(render,0.0,0.0,0));
+  gml_render_set_pending_fill(render,0xFF123456u);
+  gml_draw_sprite_ext(render,0,0,2.0,2.0,1.0,1.0,0.0,0xFFFFFFu,1.0);
+  gml_draw_sprite_ext(render,0,0,2.0,2.0,1.0,1.0,0.0,0xFFFFFFu,1.0);
+  gml_render_resource_journal_metrics(render->app_surface_resource,&metrics);
+  CHECK(fake.submits==8 && metrics.journal_operations==1u);
+  fake.status=GML_RENDER_EXEC_RECOVERABLE_ERROR;
+  fake.accepted_prefix=1u;
+  CHECK(gml_render_scene_flush(render));
+  fake.status=0;
+  fake.accepted_prefix=0;
+  gml_render_resource_journal_metrics(render->app_surface_resource,&metrics);
+  CHECK(fake.submits==9 && fake.retires>=1 && fake.readbacks==0 &&
+        metrics.cpu_fallbacks>=1u && metrics.journal_operations==0u &&
+        render->app_surface_owned[0]==0xFF123456u &&
+        render->app_surface_owned[5]==0xFFD02010u &&
+        render->app_surface_owned[10]==0xFFC0B0A0u);
+  CHECK(gml_render_begin_resident_owned_application(render,0.0,0.0,0));
+  gml_render_set_pending_fill(render,0xFF123456u);
+  gml_draw_sprite_ext(render,0,0,2.0,2.0,1.0,1.0,0.0,0xFFFFFFu,1.0);
+  gml_draw_sprite_ext(render,0,0,2.0,2.0,1.0,1.0,0.0,0xFFFFFFu,1.0);
+  CHECK(fake.submits==10);
+  gml_render_bind_device(render,NULL);
+  CHECK(fake.submits==10 && fake.readbacks==0 &&
+        gml_render_application_surface_owned_view(render,&view) &&
+        view.pixels[0]==0xFF123456u && view.pixels[5]==0xFFD02010u &&
+        view.pixels[10]==0xFFC0B0A0u);
+  gml_render_resource_journal_metrics(render->app_surface_resource,&metrics);
+  CHECK(metrics.journal_operations==0u && metrics.cpu_fallbacks>=2u);
   gml_render_free(render);
   free(render);
   return 1;
@@ -1070,13 +1130,14 @@ static int resident_binary_atlas_sprite_gpu(void){
     CHECK(gml_render_begin_resident_owned_application(render,0.0,0.0,0));
     gml_render_set_pending_fill(render,0xFF123456u);
     gml_draw_sprite_ext(render,0,0,2.0,2.0,1.0,1.0,0.0,0xFFFFFFu,1.0);
-    CHECK(render->resident_application_pass==!variant && fake.submits==(variant?1:2));
+    CHECK(render->resident_application_pass==!variant && fake.submits==1);
     CHECK(gml_render_application_surface_owned_view(render,&view) &&
           view.pixels[5]==0xFFD02010u &&
           (variant ? view.pixels[6]!=0xFF123456u
                    : view.pixels[6]==0xFF123456u) &&
           view.pixels[9]==0xFF2010D0u && view.pixels[10]==0xFFC0B0A0u &&
           fake.readbacks==0);
+    CHECK(fake.submits==(variant?1:2));
     memcpy(candidate,view.pixels,sizeof candidate);
     CHECK(gml_render_begin_owned_application(render,0.0,0.0,0));
     gml_render_set_pending_fill(render,0xFF123456u);

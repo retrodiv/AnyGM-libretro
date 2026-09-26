@@ -377,6 +377,7 @@ void gml_render_application_surface_bind(GmlRender *r,uint32_t *pixels,
                                          int width,int height,int opaque){
   if(!r) return;
   int changed=r->app_surface!=pixels || r->app_w!=width || r->app_h!=height;
+  if(changed && !gml_render_application_scene_flush(r)) return;
   r->app_surface=pixels;
   r->app_w=width;
   r->app_h=height;
@@ -397,6 +398,7 @@ int gml_render_application_surface_owned_extent(const GmlRender *r,int *width,in
 int gml_render_begin_owned_application(GmlRender *r,double camx,double camy,
                                        int retain_target){
   if(!gml_render_application_surface_owned_extent(r,NULL,NULL)) return 0;
+  if(!gml_render_application_scene_flush(r)) return 0;
   if(r->app_surface_resource){
     uint32_t *pixels=NULL;
     if(!gml_render_resource_acquire_cpu_write(r->app_surface_resource,&pixels) ||
@@ -434,6 +436,7 @@ int gml_render_application_surface_owned_clear(
   GmlRender *r,uint32_t color,GmlRenderApplicationWriteView *view){
   if(view) memset(view,0,sizeof(*view));
   if(!gml_render_application_surface_owned_extent(r,NULL,NULL)) return 0;
+  if(!gml_render_application_scene_flush(r)) return 0;
   if(r->app_surface_resource){
     uint32_t *pixels=NULL;
     if(!gml_render_resource_acquire_cpu_write(r->app_surface_resource,&pixels) ||
@@ -454,6 +457,7 @@ int gml_render_application_surface_owned_view(
   GmlRender *r,GmlRenderApplicationWriteView *view){
   if(view) memset(view,0,sizeof(*view));
   if(!gml_render_application_surface_owned_extent(r,NULL,NULL)) return 0;
+  if(!gml_render_application_scene_flush(r)) return 0;
   if(r->app_surface_resource){
     uint32_t *pixels=NULL;
     if(!gml_render_resource_acquire_cpu_write(r->app_surface_resource,&pixels) ||
@@ -811,6 +815,7 @@ void gml_render_free(GmlRender *r){
   free(r->tpag_ptr); r->tpag_ptr=NULL;
 }
 void gml_render_begin(GmlRender *r, uint32_t *fb, int w, int h, double cx, double cy){
+  if(!gml_render_application_scene_flush(r)) return;
   gml_render_flush_rotated_batch(r);
   r->resident_application_pass=0;
   r->fb=fb; r->fbw=w; r->fbh=h; r->base_fb=fb; r->base_fbw=w; r->base_fbh=h;
@@ -968,11 +973,15 @@ int gml_render_resident_application_cpu_barrier(GmlRender *r){
     return 0;
   gml_render_flush_pending_fill(r);
   if(r->pending_fill) return 0;
+  if(!gml_render_application_scene_flush(r)) return 0;
   resource=gml_render_application_resource_ensure(r);
   if(!resource || !gml_render_resource_acquire_cpu_write(resource,&pixels) ||
      pixels!=r->fb || !gml_render_resource_commit_cpu_write(resource)) return 0;
   r->resident_application_pass=0;
   return 1;
+}
+int gml_render_scene_flush(GmlRender *r){
+  return gml_render_application_scene_flush(r);
 }
 void gml_render_flush_pending_underlay(GmlRender *r){
   gml_render_flush_rotated_batch(r);
@@ -1025,6 +1034,7 @@ int gml_render_defer_resident_underlay(GmlRender *r){
      !r->app_surface_opaque || !r->app_surface_resource ||
      r->app_surface!=r->app_surface_owned || r->classic ||
      r->fb!=r->base_fb || r->target_sp || r->target_id>=0) return 0;
+  if(!gml_render_application_scene_flush(r)) return 0;
   image=gml_render_resource_image_ref(r->app_surface_resource);
   gml_render_resource_journal_metrics(r->app_surface_resource,&metrics);
   if(image.resource_class!=GML_RENDER_RESOURCE_APPLICATION ||

@@ -26,6 +26,93 @@ static void surface_coverage_counts(const uint32_t *px,int w,int h,int *colour,i
   *colour=c; *covered=a;
 }
 int surface_slot(int id){ return id>0 && id<=GML_MAX_SURFACES ? id-1 : -1; }
+
+enum { GML_SCENE_BATCH_LIMIT=2048 };
+struct GmlRenderPendingSceneBatch {
+  GmlRenderDrawOp operations[GML_SCENE_BATCH_LIMIT];
+  GmlRenderDrawStateSnapshot state;
+  GmlRenderResourceSource source;
+  GmlRenderImageRef source_ref;
+  uint32_t count;
+};
+
+static int same_scene_source(GmlRenderImageRef a,GmlRenderImageRef b){
+  return a.resource_class==b.resource_class && a.identity==b.identity &&
+         a.incarnation==b.incarnation && a.content_version==b.content_version;
+}
+
+GmlRenderImageRef gml_render_application_scene_next_image_ref(
+  GmlRender *r,GmlRenderResource *resource){
+  GmlRenderImageRef image=gml_render_resource_image_ref(resource);
+  uint32_t pending=r && r->pending_scene_batch?r->pending_scene_batch->count:0u;
+  if(image.content_version>UINT64_MAX-pending) image.content_version=UINT64_MAX;
+  else image.content_version+=pending;
+  return image;
+}
+
+int gml_render_application_scene_flush(GmlRender *r){
+  GmlRenderPendingSceneBatch *pending=r?r->pending_scene_batch:NULL;
+  GmlRenderDrawBatch batch;
+  GmlRenderResourceExecution result;
+  if(!pending || !pending->count) return 1;
+  if(!r->app_surface_resource) return 0;
+  batch=(GmlRenderDrawBatch){pending->operations,pending->count,&pending->state,1u};
+  result=gml_render_resource_submit(r->app_surface_resource,gml_render_device(r),
+                                    &batch,&pending->source,1u);
+  pending->count=0;
+  return result!=GML_RENDER_RESOURCE_EXEC_FAILED;
+}
+
+void gml_render_application_scene_queue_dispose(GmlRender *r){
+  if(!r) return;
+  free(r->pending_scene_batch);
+  r->pending_scene_batch=NULL;
+}
+
+int gml_render_application_scene_enqueue(GmlRender *r,const GmlRenderDrawOp *operation,
+                                          const GmlRenderDrawStateSnapshot *state,
+                                          const GmlRenderResourceSource *source){
+  GmlRenderPendingSceneBatch *pending;
+  GmlRenderImageRef next;
+  if(!r || !r->resident_application_pass || !gml_render_device(r) ||
+     !r->app_surface_resource || !operation || !state || !source ||
+     !source->borrowed_immutable || !operation->sources ||
+     operation->source_count!=1u || operation->opcode!=GML_RENDER_OP_TEXTURED_QUAD ||
+     operation->reconstruction_mode!=GML_RENDER_REPLAY_EXACT ||
+     !same_scene_source(operation->sources[0],source->image)) return 0;
+  pending=r->pending_scene_batch;
+  if(pending && pending->count &&
+     (pending->count==GML_SCENE_BATCH_LIMIT ||
+      !same_scene_source(pending->source_ref,source->image) ||
+      pending->source.bytes!=source->bytes ||
+      memcmp(&pending->state,state,sizeof *state))){
+    if(!gml_render_application_scene_flush(r)) return 0;
+  }
+  if(!pending){
+    pending=(GmlRenderPendingSceneBatch*)calloc(1,sizeof *pending);
+    if(!pending) return 0;
+    r->pending_scene_batch=pending;
+  }
+  next=gml_render_application_scene_next_image_ref(r,r->app_surface_resource);
+  if(next.content_version==UINT64_MAX ||
+     operation->target.image.content_version!=next.content_version+1u ||
+     operation->target.image.resource_class!=next.resource_class ||
+     operation->target.image.identity!=next.identity ||
+     operation->target.image.incarnation!=next.incarnation) return 0;
+  if(!pending->count){
+    pending->state=*state;
+    pending->source=*source;
+    pending->source_ref=source->image;
+  }
+  pending->operations[pending->count]=*operation;
+  pending->operations[pending->count].sources=&pending->source_ref;
+  pending->operations[pending->count].state_index=0;
+  pending->count++;
+  r->app_surface_opaque=0;
+  r->app_presentation_coverage_active=0;
+  return 1;
+}
+
 GmlRenderResource *gml_render_surface_resource_ensure(GmlRender *r,int id){
   int slot=surface_slot(id);
   GmlSurface *surface;
@@ -94,6 +181,8 @@ void gml_render_application_resource_dispose(GmlRender *r){
   GmlRenderResource *resource;
   const GmlRenderDeviceServices *device;
   if(!r || !(resource=r->app_surface_resource)) return;
+  (void)gml_render_application_scene_flush(r);
+  gml_render_application_scene_queue_dispose(r);
   device=gml_render_device(r);
   if(device && device->retire)
     device->retire(device->context,gml_render_resource_image_ref(resource));
@@ -106,7 +195,8 @@ GmlRenderResourceExecution gml_render_application_scene_submit(
   const GmlRenderResourceSource *sources,uint32_t source_count){
   GmlRenderResource *resource=gml_render_application_resource_ensure(r);
   GmlRenderResourceExecution result;
-  if(!resource) return GML_RENDER_RESOURCE_EXEC_FAILED;
+  if(!resource || !gml_render_application_scene_flush(r))
+    return GML_RENDER_RESOURCE_EXEC_FAILED;
   result=gml_render_resource_submit(resource,gml_render_device(r),batch,sources,source_count);
   if(result!=GML_RENDER_RESOURCE_EXEC_FAILED){
     r->app_surface_opaque=0;
@@ -239,6 +329,7 @@ static int application_surface_resize(GmlRender *r,int w,int h){
   if(!r || w<=0 || h<=0 || w>4096 || h>4096 ||
      (size_t)w>SIZE_MAX/(size_t)h || (size_t)w*(size_t)h>SIZE_MAX/sizeof(uint32_t))
     return 0;
+  if(!gml_render_application_scene_flush(r)) return 0;
   if(r->app_surface_owned && r->app_w==w && r->app_h==h &&
      (!r->app_surface_resource ||
       (r->app_surface_resource_width==w && r->app_surface_resource_height==h))) return 1;
@@ -301,6 +392,7 @@ void gml_surface_resize(GmlRender *r, int id, int w, int h){
   r->surface[i].all_transparent=was_transparent;
 }
 int gml_surface_set_target(GmlRender *r, int id){
+  if(!gml_render_application_scene_flush(r)) return 0;
   int w=0,h=0; uint32_t *px=surface_pixels(r,id,&w,&h);
   if(!px || r->target_sp>=GML_SURFACE_STACK) return 0;
   /* Classic target assignment replaces the current target; one reset returns to the base. Other runtime families retain nested targets. */
@@ -351,6 +443,7 @@ int gml_surface_set_target(GmlRender *r, int id){
   return 1;
 }
 void gml_surface_reset_target(GmlRender *r){
+  if(!gml_render_application_scene_flush(r)) return;
   /* Count colour coverage on both sides of the pending-draw flush while the
    * active surface is still the render target. */
   int dbg_=r && render_setting(r,"GML_LOG_SURF")!=NULL && r->fb && r->fbw>0 && r->fbh>0;

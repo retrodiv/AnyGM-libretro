@@ -27,7 +27,18 @@ no intervening GUI draw, and the guarded prototype setting. A failed or lost dev
 the source from the resource journal before the existing CPU presentation writes it. Bilinear
 subrectangles, scaled or rotated ordinary sprites, general background/tile dispatch, and GUI
 draws over the underlay remain unqualified and use the CPU fallback. This narrow terminal path
-does not establish a no-full-frame-transfer gameplay route.
+does not establish a no-full-frame-transfer route for general gameplay.
+
+The narrow ordinary-sprite route now copies consecutive compatible textured-quad
+descriptors into one renderer-owned, bounded (2,048-operation) pending batch. It
+keeps the immutable atlas source borrowed, projects each target version in draw
+order, and submits the batch at a full queue, source/state change, CPU pixel
+borrow, target/lifecycle boundary, or the end of the world pass. The existing
+resource authority and CPU replay path still own partial device failure and
+context-loss recovery. A successful full-target clear supersedes the older
+replay journal only after the device accepts that clear; an unsuccessful clear
+retains the older journal for fallback. These optimizations do not broaden the
+set of qualified scene operations or change CPU raster bodies.
 
 | Neutral ID | Shared rule owner | Current CPU execution anchor | OpenGL/OpenGL ES target at P1 | Barrier or fallback |
 |---|---|---|---|---|

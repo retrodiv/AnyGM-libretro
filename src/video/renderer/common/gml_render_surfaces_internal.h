@@ -27,6 +27,15 @@ void gml_render_application_resource_dispose(GmlRender *render);
 GmlRenderResourceExecution gml_render_application_scene_submit(
   GmlRender *render,const GmlRenderDrawBatch *batch,
   const GmlRenderResourceSource *sources,uint32_t source_count);
+/* Consecutive immutable-source sprites may queue resolved work. Every CPU observation, target
+ * switch, context change, and non-compatible draw drains the queue in order. */
+GmlRenderImageRef gml_render_application_scene_next_image_ref(GmlRender *render,
+                                                               GmlRenderResource *resource);
+int gml_render_application_scene_enqueue(GmlRender *render,const GmlRenderDrawOp *operation,
+                                          const GmlRenderDrawStateSnapshot *state,
+                                          const GmlRenderResourceSource *source);
+int gml_render_application_scene_flush(GmlRender *render);
+void gml_render_application_scene_queue_dispose(GmlRender *render);
 /* Call before a CPU leaf writes an explicitly resident application pass. The pending GPU clear
  * may be submitted first; a caller must not enter its CPU kernel on a false result. */
 int gml_render_resident_application_cpu_barrier(GmlRender *render);

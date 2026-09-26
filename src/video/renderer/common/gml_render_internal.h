@@ -205,10 +205,13 @@ typedef struct { uint32_t *px; int w, h, live;
 
 enum { GML_SHADED_FRAME_CACHE=32 };
 
+typedef struct GmlRenderPendingSceneBatch GmlRenderPendingSceneBatch;
+
 typedef struct GmlRender {
   GmlWin   *win;
   GmlRenderDeviceServices device;
   int device_bound;
+  GmlRenderPendingSceneBatch *pending_scene_batch;
   uint64_t scene_source_epoch; /* process-unique source incarnation, assigned on first upload */
   /* Borrowed engine-owned fixed-function context. */
   GmlSoftware3D *software3d;
