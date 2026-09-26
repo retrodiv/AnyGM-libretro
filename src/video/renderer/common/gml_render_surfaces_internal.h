@@ -20,6 +20,14 @@ GmlRenderResourceExecution gml_render_surface_scene_submit(
   GmlRender *render,int surface,const GmlRenderDrawBatch *batch,
   const GmlRenderResourceSource *sources,uint32_t source_count);
 
+/* The application target borrows the renderer's existing canonical allocation; CPU-only
+ * sessions never allocate this metadata. Resize and renderer teardown retire it. */
+GmlRenderResource *gml_render_application_resource_ensure(GmlRender *render);
+void gml_render_application_resource_dispose(GmlRender *render);
+GmlRenderResourceExecution gml_render_application_scene_submit(
+  GmlRender *render,const GmlRenderDrawBatch *batch,
+  const GmlRenderResourceSource *sources,uint32_t source_count);
+
 /* A scene executor may carry a numbered resident target into the next pass without acquiring
  * CPU pixels. It must materialise that target before any CPU leaf observes or writes it.
  * Ordinary gml_render_begin_retaining_target keeps its established CPU barrier. */

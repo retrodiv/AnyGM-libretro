@@ -48,10 +48,21 @@ uint32_t *surface_pixels(GmlRender *r, int id, int *w, int *h){
   }
   if(id==0){
     if(!r->app_surface) return NULL;
+    if(r->app_surface==r->app_surface_owned && r->app_surface_resource &&
+       (r->app_surface_resource_width!=r->app_w ||
+        r->app_surface_resource_height!=r->app_h)) return NULL;
     /* the app surface has its own dims (the view render); the current target may be the larger
      * presentation canvas — using target dims here read the view buffer with the wrong stride */
     if(w) *w=r->app_w?r->app_w:(r->base_fbw?r->base_fbw:r->fbw);
     if(h) *h=r->app_h?r->app_h:(r->base_fbh?r->base_fbh:r->fbh);
+    if(r->app_surface==r->app_surface_owned && r->app_surface_resource){
+      uint32_t *canonical=NULL;
+      if(!gml_render_resource_acquire_cpu_write(r->app_surface_resource,&canonical) ||
+         canonical!=r->app_surface_owned) return NULL;
+      realize_suspended_fill(r,canonical);
+      if(!gml_render_resource_commit_cpu_write(r->app_surface_resource)) return NULL;
+      return canonical;
+    }
     realize_suspended_fill(r,r->app_surface);
     return r->app_surface;
   }

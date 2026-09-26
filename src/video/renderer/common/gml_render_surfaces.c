@@ -71,6 +71,49 @@ GmlRenderResourceExecution gml_render_surface_scene_submit(
   }
   return result;
 }
+GmlRenderResource *gml_render_application_resource_ensure(GmlRender *r){
+  GmlRenderImageRef image;
+  if(!r || !r->app_surface_owned || r->app_surface!=r->app_surface_owned ||
+     r->app_w<=0 || r->app_h<=0) return NULL;
+  if(r->app_surface_resource)
+    return r->app_surface_resource_width==r->app_w &&
+           r->app_surface_resource_height==r->app_h?r->app_surface_resource:NULL;
+  if(r->next_surface_resource_incarnation==UINT64_MAX) return NULL;
+  image=(GmlRenderImageRef){GML_RENDER_RESOURCE_APPLICATION,0u,
+    ++r->next_surface_resource_incarnation,1u};
+  r->app_surface_resource=gml_render_resource_create(image,(uint32_t)r->app_w,
+    (uint32_t)r->app_h,GML_RENDER_PIXEL_ARGB8888,r->app_surface_owned,
+    (GmlRenderResourceLimits){0});
+  if(r->app_surface_resource){
+    r->app_surface_resource_width=r->app_w;
+    r->app_surface_resource_height=r->app_h;
+  }
+  return r->app_surface_resource;
+}
+void gml_render_application_resource_dispose(GmlRender *r){
+  GmlRenderResource *resource;
+  const GmlRenderDeviceServices *device;
+  if(!r || !(resource=r->app_surface_resource)) return;
+  device=gml_render_device(r);
+  if(device && device->retire)
+    device->retire(device->context,gml_render_resource_image_ref(resource));
+  gml_render_resource_destroy(resource);
+  r->app_surface_resource=NULL;
+  r->app_surface_resource_width=r->app_surface_resource_height=0;
+}
+GmlRenderResourceExecution gml_render_application_scene_submit(
+  GmlRender *r,const GmlRenderDrawBatch *batch,
+  const GmlRenderResourceSource *sources,uint32_t source_count){
+  GmlRenderResource *resource=gml_render_application_resource_ensure(r);
+  GmlRenderResourceExecution result;
+  if(!resource) return GML_RENDER_RESOURCE_EXEC_FAILED;
+  result=gml_render_resource_submit(resource,gml_render_device(r),batch,sources,source_count);
+  if(result!=GML_RENDER_RESOURCE_EXEC_FAILED){
+    r->app_surface_opaque=0;
+    r->app_presentation_coverage_active=0;
+  }
+  return result;
+}
 int surface_known_opaque(GmlRender *r, int id){
   if(!r) return 0;
   if(id==0) return r->app_surface_opaque;
@@ -196,9 +239,16 @@ static int application_surface_resize(GmlRender *r,int w,int h){
   if(!r || w<=0 || h<=0 || w>4096 || h>4096 ||
      (size_t)w>SIZE_MAX/(size_t)h || (size_t)w*(size_t)h>SIZE_MAX/sizeof(uint32_t))
     return 0;
-  if(r->app_surface_owned && r->app_w==w && r->app_h==h) return 1;
+  if(r->app_surface_owned && r->app_w==w && r->app_h==h &&
+     (!r->app_surface_resource ||
+      (r->app_surface_resource_width==w && r->app_surface_resource_height==h))) return 1;
   uint32_t *old=r->app_surface;
   int oldw=r->app_w, oldh=r->app_h;
+  if(old==r->app_surface_owned && r->app_surface_resource){
+    oldw=r->app_surface_resource_width;
+    oldh=r->app_surface_resource_height;
+    if(!gml_render_resource_acquire_cpu_read(r->app_surface_resource,NULL)) return 0;
+  }
   uint32_t *px=calloc((size_t)w*(size_t)h,sizeof(uint32_t));
   if(!px) return 0;
   int cw=oldw<w?oldw:w, ch=oldh<h?oldh:h;
@@ -216,6 +266,7 @@ static int application_surface_resize(GmlRender *r,int w,int h){
   r->app_surface=px; r->app_w=w; r->app_h=h;
   r->app_surface_opaque=0;
   r->app_presentation_coverage_active=0;
+  gml_render_application_resource_dispose(r);
   free(owned);
   return 1;
 }

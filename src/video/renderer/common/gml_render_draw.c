@@ -13,6 +13,7 @@ void gml_render_bind_device(GmlRender *render,const GmlRenderDeviceServices *ser
      !services->wait){
     for(int index=0;index<GML_MAX_SURFACES;index++)
       gml_render_resource_context_lost(render->surface[index].resource);
+    gml_render_resource_context_lost(render->app_surface_resource);
     memset(&render->device,0,sizeof render->device);
     render->device_bound=0;
     return;

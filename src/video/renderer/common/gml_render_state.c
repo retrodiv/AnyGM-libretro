@@ -698,6 +698,9 @@ static int render_state_read(GmlRender *render,CoreR *s){
       g->texture_filter[j]=enabled;
     }
   }
+  /* The application target is presentation storage, not a serialized surface record. A
+   * successful load must not retain a device/journal version from the pre-load timeline. */
+  if(s->ok) gml_render_application_resource_dispose(render);
   return s->ok;
 }
 

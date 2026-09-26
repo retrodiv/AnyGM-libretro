@@ -698,6 +698,77 @@ static int retained_target_stays_resident(void){
   return 1;
 }
 
+static int owned_application_resize_and_context_loss(void){
+  GmlRender *render=(GmlRender*)calloc(1,sizeof *render);
+  GmlRenderDeviceServices device;
+  GmlRenderResource *resource;
+  GmlRenderImageRef first_ref,second_ref;
+  GmlRenderDrawOp operation;
+  GmlRenderDrawBatch batch;
+  GmlRenderJournalMetrics metrics={0};
+  GmlRenderApplicationWriteView view={0};
+  FakeDevice fake={0};
+  uint8_t *state_bytes;
+  size_t state_size,written=0,used=0;
+  CHECK(render);
+  CHECK(gml_render_application_surface_ensure_owned(render,4,4));
+  device=service(&fake);
+  gml_render_bind_device(render,&device);
+  resource=gml_render_application_resource_ensure(render);
+  CHECK(resource);
+  first_ref=gml_render_resource_image_ref(resource);
+  CHECK(first_ref.resource_class==GML_RENDER_RESOURCE_APPLICATION &&
+        first_ref.identity==0u && first_ref.incarnation!=0u);
+  operation=clear_op(2u,0x40112233u,GML_RENDER_REPLAY_EXACT);
+  operation.target.image=first_ref;
+  operation.target.image.content_version=2u;
+  operation.target.pixel_format=GML_RENDER_PIXEL_ARGB8888;
+  batch=(GmlRenderDrawBatch){&operation,1u,NULL,0u};
+  CHECK(gml_render_application_scene_submit(render,&batch,NULL,0u)==
+        GML_RENDER_RESOURCE_EXEC_DEVICE);
+  gml_render_resource_journal_metrics(resource,&metrics);
+  CHECK(metrics.journal_operations==1u && metrics.cpu_replays==0u &&
+        render->app_surface_owned[0]==0u);
+  gml_render_application_surface_bind(render,render->app_surface_owned,7,5,0);
+  CHECK(!gml_render_application_resource_ensure(render) &&
+        !gml_render_application_surface_owned_view(render,&view));
+  CHECK(gml_render_application_surface_ensure_owned(render,6,5));
+  CHECK(!render->app_surface_resource && fake.retires==1 && fake.readbacks==0 &&
+        render->app_surface_owned[0]==0x40112233u &&
+        render->app_surface_owned[3u+3u*6u]==0x40112233u &&
+        render->app_surface_owned[4u]==0u);
+  resource=gml_render_application_resource_ensure(render);
+  CHECK(resource);
+  second_ref=gml_render_resource_image_ref(resource);
+  CHECK(second_ref.identity==first_ref.identity &&
+        second_ref.incarnation!=first_ref.incarnation);
+  operation=clear_op(2u,0xFF445566u,GML_RENDER_REPLAY_EXACT);
+  operation.target.image=second_ref;
+  operation.target.image.content_version=2u;
+  operation.target.width=6u;
+  operation.target.height=5u;
+  operation.target.pixel_format=GML_RENDER_PIXEL_ARGB8888;
+  operation.target.region=(GmlRenderRect){0,0,6u,5u};
+  CHECK(gml_render_application_scene_submit(render,&batch,NULL,0u)==
+        GML_RENDER_RESOURCE_EXEC_DEVICE);
+  gml_render_bind_device(render,NULL);
+  CHECK(gml_render_application_surface_owned_view(render,&view) &&
+        view.pixels==render->app_surface_owned && view.width==6 && view.height==5 &&
+        view.pixels[0]==0xFF445566u && view.pixels[29]==0xFF445566u &&
+        fake.readbacks==0);
+  state_size=gml_render_state_size(render,0);
+  CHECK(state_size>0);
+  state_bytes=(uint8_t*)malloc(state_size);
+  CHECK(state_bytes && gml_render_state_save(render,0,state_bytes,state_size,&written) &&
+        written==state_size);
+  CHECK(gml_render_state_load(render,state_bytes,state_size,&used) &&
+        used==state_size && !render->app_surface_resource);
+  free(state_bytes);
+  gml_render_free(render);
+  free(render);
+  return 1;
+}
+
 static int state_without_context(void){
   GmlRender *original=(GmlRender*)calloc(1,sizeof *original);
   GmlRender *restored=(GmlRender*)calloc(1,sizeof *restored);
@@ -756,8 +827,9 @@ int main(void){
   passed+=rejection_and_isolation();
   passed+=persistent_surface_lifecycle();
   passed+=retained_target_stays_resident();
+  passed+=owned_application_resize_and_context_loss();
   passed+=state_without_context();
   passed+=nearest_subrectangle_mirrors();
-  printf("render resource cases: passed=%d failed=%d\n",passed,12-passed);
-  return passed==12?EXIT_SUCCESS:EXIT_FAILURE;
+  printf("render resource cases: passed=%d failed=%d\n",passed,13-passed);
+  return passed==13?EXIT_SUCCESS:EXIT_FAILURE;
 }
