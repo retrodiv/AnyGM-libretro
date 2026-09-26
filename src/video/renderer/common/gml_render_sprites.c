@@ -71,6 +71,16 @@ static int resident_integer_sprite(GmlRender *r,GmlSprite *sprite,int subimg,
      page->atlas<0 || page->atlas>=r->n_atlas) return 0;
   left=x-(double)sprite->originx*xs+(double)page->tx*xs-r->cam_x;
   top=y-(double)sprite->originy*ys+(double)page->ty*ys-r->cam_y;
+  /* A fully offscreen crop cannot write the application surface. Keep the
+   * margin conservative for fractional coordinates and mirrored draws. */
+  {
+    double right=left+(double)page->sw*xs;
+    double bottom=top+(double)page->sh*ys;
+    if(isfinite(left) && isfinite(top) && isfinite(right) && isfinite(bottom) &&
+       (fmax(left,right)<=-1.0 || fmin(left,right)>=(double)r->fbw+1.0 ||
+        fmax(top,bottom)<=-1.0 || fmin(top,bottom)>=(double)r->fbh+1.0))
+      return 1;
+  }
   return gml_render_resident_atlas_page(r,page_index,left,top,xs,ys,
                                         GML_RENDER_SCENE_SPRITE);
 }
