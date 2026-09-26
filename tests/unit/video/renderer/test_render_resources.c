@@ -634,6 +634,70 @@ static int persistent_surface_lifecycle(void){
   return 1;
 }
 
+static int retained_target_stays_resident(void){
+  GmlRender *render=(GmlRender*)calloc(1,sizeof *render);
+  uint32_t first_base[16]={0},second_base[16]={0};
+  GmlRenderDeviceServices device;
+  GmlRenderDrawOp operation;
+  GmlRenderDrawBatch batch;
+  GmlRenderImageRef ref;
+  GmlRenderResource *resource;
+  GmlRenderJournalMetrics before={0},after={0};
+  FakeDevice fake={0};
+  const uint32_t *pixels;
+  int id,w=0,h=0;
+  CHECK(render);
+  render->next_surface_id=1;
+  gml_render_begin(render,first_base,4,4,0.0,0.0);
+  id=gml_surface_create(render,4,4);
+  CHECK(id>0 && gml_surface_set_target(render,id));
+  device=service(&fake);
+  gml_render_bind_device(render,&device);
+  resource=gml_render_surface_resource_ensure(render,id);
+  CHECK(resource);
+  ref=gml_render_resource_image_ref(resource);
+  operation=clear_op(2u,0x40112233u,GML_RENDER_REPLAY_EXACT);
+  operation.target.image=ref;
+  operation.target.image.content_version=2u;
+  operation.target.pixel_format=GML_RENDER_PIXEL_ARGB8888;
+  batch=(GmlRenderDrawBatch){&operation,1u,NULL,0u};
+  CHECK(gml_render_surface_scene_submit(render,id,&batch,NULL,0u)==
+        GML_RENDER_RESOURCE_EXEC_DEVICE);
+  gml_render_resource_journal_metrics(resource,&before);
+  CHECK(before.journal_operations==1u && before.cpu_replays==0u &&
+        render->surface[id-1].px[0]==0u);
+  gml_render_begin_retaining_resident_target(render,second_base,4,4,2.0,3.0);
+  gml_render_resource_journal_metrics(resource,&after);
+  CHECK(gml_surface_get_target(render)==id && render->fb==render->surface[id-1].px &&
+        render->base_fb==second_base && render->fbw==4 && render->fbh==4);
+  CHECK(after.journal_operations==before.journal_operations &&
+        after.cpu_replays==before.cpu_replays &&
+        after.logical_version==before.logical_version &&
+        fake.readbacks==0 && render->surface[id-1].px[0]==0u);
+  gml_surface_reset_target(render);
+  CHECK(render->fb==second_base);
+  pixels=gml_surface_pixels_read(render,id,&w,&h);
+  CHECK(pixels && w==4 && h==4 && pixels[0]==0x40112233u &&
+        pixels[15]==0x40112233u && fake.readbacks==0);
+  CHECK(gml_surface_set_target(render,id));
+  ref=gml_render_resource_image_ref(resource);
+  operation=clear_op(ref.content_version+1u,0xFF445566u,GML_RENDER_REPLAY_EXACT);
+  operation.target.image=ref;
+  operation.target.image.content_version=ref.content_version+1u;
+  operation.target.pixel_format=GML_RENDER_PIXEL_ARGB8888;
+  CHECK(gml_render_surface_scene_submit(render,id,&batch,NULL,0u)==
+        GML_RENDER_RESOURCE_EXEC_DEVICE);
+  gml_render_resource_journal_metrics(resource,&before);
+  CHECK(before.journal_operations==1u);
+  gml_render_begin_retaining_target(render,first_base,4,4,4.0,5.0);
+  gml_render_resource_journal_metrics(resource,&after);
+  CHECK(after.journal_operations==0u && after.cpu_replays==before.cpu_replays+1u &&
+        render->surface[id-1].px[0]==0xFF445566u && fake.readbacks==0);
+  gml_render_free(render);
+  free(render);
+  return 1;
+}
+
 static int state_without_context(void){
   GmlRender *original=(GmlRender*)calloc(1,sizeof *original);
   GmlRender *restored=(GmlRender*)calloc(1,sizeof *restored);
@@ -691,8 +755,9 @@ int main(void){
   passed+=checkpoint_and_failure();
   passed+=rejection_and_isolation();
   passed+=persistent_surface_lifecycle();
+  passed+=retained_target_stays_resident();
   passed+=state_without_context();
   passed+=nearest_subrectangle_mirrors();
-  printf("render resource cases: passed=%d failed=%d\n",passed,11-passed);
-  return passed==11?EXIT_SUCCESS:EXIT_FAILURE;
+  printf("render resource cases: passed=%d failed=%d\n",passed,12-passed);
+  return passed==12?EXIT_SUCCESS:EXIT_FAILURE;
 }

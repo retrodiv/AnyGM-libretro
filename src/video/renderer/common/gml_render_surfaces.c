@@ -366,8 +366,8 @@ int gml_surface_get_target(GmlRender *r){
   return r ? r->target_id : -1;
 }
 /* Retain a bound program target across a new pass while replacing the base buffer that a later target reset returns to. With no target, use ordinary pass initialization. */
-void gml_render_begin_retaining_target(GmlRender *r, uint32_t *fb, int w, int h,
-                                       double cx, double cy){
+static void begin_retaining_target(GmlRender *r, uint32_t *fb, int w, int h,
+                                   double cx, double cy,int resident_selection){
   if(!r || r->target_id<0 || r->target_sp<=0){ gml_render_begin(r,fb,w,h,cx,cy); return; }
   int retained=r->target_id;
   int depth=r->target_sp;
@@ -382,7 +382,16 @@ void gml_render_begin_retaining_target(GmlRender *r, uint32_t *fb, int w, int h,
   memcpy(saved,r->target_stack,sizeof(saved));
   gml_render_begin(r,fb,w,h,cx,cy);
   int sw=0,sh=0;
-  uint32_t *px=surface_pixels(r,retained,&sw,&sh);
+  int si=surface_slot(retained);
+  uint32_t *px=NULL;
+  if(resident_selection && si>=0 && r->surface[si].live && r->surface[si].resource){
+    /* Retaining a target only needs its stable allocation and extent. The CPU accessor would
+     * replay a resident journal and mark the GPU copy stale before this pass draws anything. */
+    px=r->surface[si].px;
+    sw=r->surface[si].w;
+    sh=r->surface[si].h;
+  } else
+    px=surface_pixels(r,retained,&sw,&sh);
   if(!px) return;   /* the surface was freed under the binding: the pass owns the base buffer */
   memcpy(r->target_stack,saved,sizeof(r->target_stack));
   r->target_sp=depth;
@@ -403,11 +412,18 @@ void gml_render_begin_retaining_target(GmlRender *r, uint32_t *fb, int w, int h,
   r->target_stack[0].underlay_w=r->target_stack[0].underlay_h=0;
   r->target_stack[0].pending_fill=0;
   r->target_stack[0].fill_color=0;
-  int si=surface_slot(retained);
   r->fb=px; r->fbw=sw; r->fbh=sh;
   r->target_id=retained;
   r->fb_opaque_known=retained_opaque_known;
   r->fb_all_opaque=retained_all_opaque;
   r->fb_all_transparent=retained_all_transparent;
   if(si>=0) r->surface[si].dirty=1;
+}
+void gml_render_begin_retaining_target(GmlRender *r, uint32_t *fb, int w, int h,
+                                       double cx, double cy){
+  begin_retaining_target(r,fb,w,h,cx,cy,0);
+}
+void gml_render_begin_retaining_resident_target(GmlRender *r,uint32_t *fb,int w,int h,
+                                                double cx,double cy){
+  begin_retaining_target(r,fb,w,h,cx,cy,1);
 }

@@ -20,4 +20,11 @@ GmlRenderResourceExecution gml_render_surface_scene_submit(
   GmlRender *render,int surface,const GmlRenderDrawBatch *batch,
   const GmlRenderResourceSource *sources,uint32_t source_count);
 
+/* A scene executor may carry a numbered resident target into the next pass without acquiring
+ * CPU pixels. It must materialise that target before any CPU leaf observes or writes it.
+ * Ordinary gml_render_begin_retaining_target keeps its established CPU barrier. */
+void gml_render_begin_retaining_resident_target(GmlRender *render,uint32_t *base,
+                                                int width,int height,double camera_x,
+                                                double camera_y);
+
 #endif
