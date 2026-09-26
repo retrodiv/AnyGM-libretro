@@ -700,7 +700,10 @@ static int render_state_read(GmlRender *render,CoreR *s){
   }
   /* The application target is presentation storage, not a serialized surface record. A
    * successful load must not retain a device/journal version from the pre-load timeline. */
-  if(s->ok) gml_render_application_resource_dispose(render);
+  if(s->ok){
+    gml_render_application_resource_dispose(render);
+    render->resident_application_pass=0;
+  }
   return s->ok;
 }
 

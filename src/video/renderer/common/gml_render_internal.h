@@ -291,6 +291,8 @@ typedef struct GmlRender {
   /* Optional resident metadata for the same canonical owned application pixels. */
   GmlRenderResource *app_surface_resource;
   int app_surface_resource_width,app_surface_resource_height;
+  /* Only the explicit resident begin opts into scene dispatch for this pass. */
+  int resident_application_pass;
   /* Optional classic 2x vertical coverage plane.  The game pass replays texture draws at the
    * half-row samples as well as at logical pixel centres; the presentation pass then interleaves
    * them without a GPU.  This is a borrowed scratch buffer owned by the host. */

@@ -786,8 +786,49 @@ static int owned_application_resize_and_context_loss(void){
   CHECK(state_bytes && gml_render_state_save(render,0,state_bytes,state_size,&written) &&
         written==state_size);
   CHECK(gml_render_state_load(render,state_bytes,state_size,&used) &&
-        used==state_size && !render->app_surface_resource);
+        used==state_size && !render->app_surface_resource &&
+        !render->resident_application_pass);
   free(state_bytes);
+  gml_render_free(render);
+  free(render);
+  return 1;
+}
+
+static int resident_application_pending_clear(void){
+  GmlRender *render=(GmlRender*)calloc(1,sizeof *render);
+  GmlRenderDeviceServices device;
+  GmlRenderJournalMetrics metrics={0};
+  GmlRenderApplicationWriteView view={0};
+  FakeDevice fake={0};
+  CHECK(render);
+  CHECK(gml_render_application_surface_ensure_owned(render,4,4));
+  device=service(&fake);
+  gml_render_bind_device(render,&device);
+  CHECK(gml_render_begin_resident_owned_application(render,1.0,2.0,0));
+  gml_render_set_pending_fill(render,0x40112233u);
+  gml_render_flush_pending_fill(render);
+  gml_render_resource_journal_metrics(render->app_surface_resource,&metrics);
+  CHECK(!render->pending_fill && fake.submits==1 && fake.readbacks==0 &&
+        metrics.journal_operations==1u && metrics.cpu_replays==0u &&
+        render->app_surface_owned[0]==0u);
+  CHECK(gml_render_begin_resident_owned_application(render,3.0,4.0,0));
+  gml_render_resource_journal_metrics(render->app_surface_resource,&metrics);
+  CHECK(metrics.journal_operations==1u && metrics.cpu_replays==0u);
+  gml_render_set_pending_fill(render,0xFF445566u);
+  fake.status=GML_RENDER_EXEC_UNSUPPORTED;
+  gml_render_flush_pending_fill(render);
+  gml_render_resource_journal_metrics(render->app_surface_resource,&metrics);
+  CHECK(!render->pending_fill && metrics.cpu_fallbacks==1u &&
+        metrics.journal_operations==0u && render->app_surface_owned[0]==0xFF445566u &&
+        render->app_surface_owned[15]==0xFF445566u);
+  fake.status=0;
+  CHECK(gml_render_begin_owned_application(render,0.0,0.0,0) &&
+        !render->resident_application_pass);
+  gml_render_set_pending_fill(render,0xFF778899u);
+  gml_render_flush_pending_fill(render);
+  CHECK(fake.submits==2 && render->app_surface_owned[0]==0xFF778899u);
+  CHECK(gml_render_application_surface_owned_view(render,&view) &&
+        view.pixels[15]==0xFF778899u);
   gml_render_free(render);
   free(render);
   return 1;
@@ -852,8 +893,9 @@ int main(void){
   passed+=persistent_surface_lifecycle();
   passed+=retained_target_stays_resident();
   passed+=owned_application_resize_and_context_loss();
+  passed+=resident_application_pending_clear();
   passed+=state_without_context();
   passed+=nearest_subrectangle_mirrors();
-  printf("render resource cases: passed=%d failed=%d\n",passed,13-passed);
-  return passed==13?EXIT_SUCCESS:EXIT_FAILURE;
+  printf("render resource cases: passed=%d failed=%d\n",passed,14-passed);
+  return passed==14?EXIT_SUCCESS:EXIT_FAILURE;
 }

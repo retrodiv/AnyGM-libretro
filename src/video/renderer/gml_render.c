@@ -427,6 +427,7 @@ int gml_render_begin_resident_owned_application(GmlRender *r,double camx,double 
       r,r->app_surface_owned,r->app_w,r->app_h,camx,camy);
   else
     gml_render_begin(r,r->app_surface_owned,r->app_w,r->app_h,camx,camy);
+  r->resident_application_pass=r->fb==r->app_surface_owned && r->target_id<=0;
   return 1;
 }
 int gml_render_application_surface_owned_clear(
@@ -810,6 +811,7 @@ void gml_render_free(GmlRender *r){
 }
 void gml_render_begin(GmlRender *r, uint32_t *fb, int w, int h, double cx, double cy){
   gml_render_flush_rotated_batch(r);
+  r->resident_application_pass=0;
   r->fb=fb; r->fbw=w; r->fbh=h; r->base_fb=fb; r->base_fbw=w; r->base_fbh=h;
   r->gui_pass_active=0;
   r->gui_base_logical_w=r->gui_base_logical_h=0;
@@ -910,6 +912,38 @@ void gml_render_set_pending_fill(GmlRender *r, uint32_t color){
 void gml_render_flush_pending_fill(GmlRender *r){
   gml_render_flush_rotated_batch(r);
   if(!r || !r->pending_fill || !r->fb || r->fbw<=0 || r->fbh<=0) return;
+  if(r->resident_application_pass && r->fb==r->app_surface_owned &&
+     r->fbw==r->app_w && r->fbh==r->app_h){
+    GmlRenderResource *resource=gml_render_application_resource_ensure(r);
+    if(!resource && r->app_surface_resource) return;
+    if(resource){
+      GmlRenderImageRef image=gml_render_resource_image_ref(resource);
+      if(image.content_version<UINT64_MAX){
+        GmlRenderDrawOp operation={0};
+        operation.opcode=GML_RENDER_OP_CLEAR;
+        operation.reconstruction_mode=GML_RENDER_REPLAY_EXACT;
+        operation.target.image=image;
+        operation.target.image.content_version++;
+        operation.target.storage_version=1u;
+        operation.target.width=(uint32_t)r->app_w;
+        operation.target.height=(uint32_t)r->app_h;
+        operation.target.pixel_format=GML_RENDER_PIXEL_ARGB8888;
+        operation.target.region=(GmlRenderRect){0,0,(uint32_t)r->app_w,(uint32_t)r->app_h};
+        operation.payload.clear_colour=r->pending_fill_color;
+        GmlRenderDrawBatch batch={&operation,1u,NULL,0u};
+        GmlRenderResourceExecution result=gml_render_application_scene_submit(
+          r,&batch,NULL,0u);
+        if(result!=GML_RENDER_RESOURCE_EXEC_FAILED){
+          r->pending_fill=0;
+          return;
+        }
+      }
+      uint32_t *pixels=NULL;
+      if(!gml_render_resource_acquire_cpu_write(resource,&pixels) ||
+         pixels!=r->fb || !gml_render_resource_commit_cpu_write(resource))
+        return;
+    }
+  }
   uint32_t color=r->pending_fill_color;
   r->pending_fill=0;
   r->fb_opaque_known=1;
