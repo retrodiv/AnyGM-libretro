@@ -477,6 +477,40 @@ void gml_draw_sprite_part_ext(GmlRender *r, int sprite, int subimg, double sx, d
   gml_render_cpu_blit_tpag_part(r,&r->tpag[ti],sx,sy,sw,sh,x-r->cam_x,y-r->cam_y,xs,ys,blend,alpha);
 }
 
+/* A complete, untrimmed nearest atlas cell can repeat without changing the CPU tile phase.
+ * Require an integral view covering complete cells so each submitted quad stays in bounds;
+ * clipped, trimmed, filtered and very dense repetitions retain the original CPU loop. */
+int gml_render_resident_tiled_sprite(GmlRender *r,int sprite,int subimg,
+                                     double x,double y,double xs,double ys,
+                                     uint32_t blend,double alpha){
+  if(!r || !r->resident_application_pass || r->interp ||
+     sprite<0 || sprite>=r->n_spr || !isfinite(x) || !isfinite(y) ||
+     !isfinite(xs) || !isfinite(ys) || xs!=1.0 || ys!=1.0 ||
+     blend!=0xFFFFFFu || alpha!=1.0 || gml_d3_is_active(r)) return 0;
+  gml_render_draw_map_point(r,&x,&y);
+  gml_render_draw_map_scale(r,&xs,&ys);
+  if(xs!=1.0 || ys!=1.0 || !isfinite(x) || !isfinite(y) ||
+     !isfinite(r->cam_x) || !isfinite(r->cam_y) ||
+     floor(r->cam_x)!=r->cam_x || floor(r->cam_y)!=r->cam_y) return 0;
+  GmlSprite *s=&r->spr[sprite];
+  if(s->runtime_rgba || s->n_frames<=0 || !s->frame || s->w<=0 || s->h<=0 ||
+     r->fbw<=0 || r->fbh<=0 || r->fbw%s->w || r->fbh%s->h ||
+     (uint64_t)(uint32_t)(r->fbw/s->w)*(uint32_t)(r->fbh/s->h)>256u) return 0;
+  int sub=((subimg%s->n_frames)+s->n_frames)%s->n_frames;
+  int page_index=s->frame[sub];
+  if(page_index<0 || page_index>=r->n_tpag) return 0;
+  GmlTpag *page=&r->tpag[page_index];
+  if(page->sw!=s->w || page->sh!=s->h || page->tx || page->ty ||
+     page->bw!=s->w || page->bh!=s->h) return 0;
+  double ax=floor(x-r->cam_x), ay=floor(y-r->cam_y);
+  if(!isfinite(ax) || !isfinite(ay) ||
+     fmod(ax,(double)s->w)!=0.0 || fmod(ay,(double)s->h)!=0.0) return 0;
+  for(int yy=0;yy<r->fbh;yy+=s->h)
+    for(int xx=0;xx<r->fbw;xx+=s->w)
+      if(!gml_render_resident_atlas_page(r,page_index,xx,yy,1.0,1.0)) return 0;
+  return 1;
+}
+
 /* draw_sprite_tiled_ext: repeat a sprite frame to fill the screen (both axes),
  * anchored at (x,y). Used by GML effects and tiled background scripts. */
 void gml_render_sprite_tiled_ext_unmasked(GmlRender *r, int sprite, int subimg,

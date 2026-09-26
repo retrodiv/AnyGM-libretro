@@ -999,6 +999,32 @@ static int resident_background_and_tile_cpu_barriers(void){
   render->interp=0;
   CHECK(gml_render_begin_resident_owned_application(render,0.0,0.0,0));
   gml_render_set_pending_fill(render,0xFF000000u);
+  gml_draw_sprite_tiled_ext(render,0,0,0,0,1,1,0xFFFFFFu,1.0);
+  CHECK(render->resident_application_pass && fake.readbacks==0);
+  CHECK(gml_render_resident_application_cpu_barrier(render));
+  CHECK(!render->resident_application_pass && fake.readbacks==0 &&
+        render->app_surface_owned[0]==0xFFD02010u &&
+        render->app_surface_owned[1]==0xFF10D020u &&
+        render->app_surface_owned[2]==0xFFD02010u &&
+        render->app_surface_owned[4]==0xFF2010D0u &&
+        render->app_surface_owned[10]==0xFFD02010u &&
+        render->app_surface_owned[15]==0xFFC0B0A0u);
+  render->interp=1;
+  CHECK(gml_render_begin_resident_owned_application(render,0.0,0.0,0));
+  gml_render_set_pending_fill(render,0xFF000000u);
+  gml_draw_sprite_tiled_ext(render,0,0,0,0,1,1,0xFFFFFFu,1.0);
+  CHECK(!render->resident_application_pass && fake.readbacks==0 &&
+        render->app_surface_owned[0]==0xFFD02010u &&
+        render->app_surface_owned[15]==0xFFC0B0A0u);
+  render->interp=0;
+  CHECK(gml_render_begin_resident_owned_application(render,0.0,0.0,0));
+  render->cam_x=0.5;
+  gml_render_set_pending_fill(render,0xFF000000u);
+  gml_draw_sprite_tiled_ext(render,0,0,0,0,1,1,0xFFFFFFu,1.0);
+  CHECK(!render->resident_application_pass && fake.readbacks==0);
+  render->cam_x=0.0;
+  CHECK(gml_render_begin_resident_owned_application(render,0.0,0.0,0));
+  gml_render_set_pending_fill(render,0xFF000000u);
   gml_draw_background(render,0,1.0,0.0);
   CHECK(render->resident_application_pass && fake.readbacks==0);
   gml_draw_background_tile(render,0,0,0,2,2,0,2,1,1,0,0,0,0xFFFFFFu,1.0);
