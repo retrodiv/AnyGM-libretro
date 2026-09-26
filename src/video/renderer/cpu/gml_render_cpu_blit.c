@@ -5871,7 +5871,8 @@ void gml_render_cpu_blit_sprite_ext_resolved(GmlRender *r, GmlSprite *s,
 
 void gml_draw_sprite_ext(GmlRender *r, int sprite, int subimg, double x, double y,
                          double xs, double ys, double rot, uint32_t blend, double alpha){
-  if(!gml_render_resident_application_cpu_barrier(r)) return;
+  if(r && r->resident_application_pass && r->color_write_mask!=0x0Fu &&
+     !gml_render_resident_application_cpu_barrier(r)) return;
   GmlMaskedSpriteDraw masked=masked_sprite_draw_begin(r);
   gml_render_sprite_ext_unmasked(r,sprite,subimg,x,y,xs,ys,rot,blend,alpha);
   masked_sprite_draw_end(r,masked);

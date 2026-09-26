@@ -194,7 +194,8 @@ static int scene_preflight(GmlGpuBackend *backend,const GmlRenderDrawBatch *batc
       const GmlRenderSamplingPolicy *sampling=&op->payload.quad.sampling;
       int blend=qualified_blend(state);
       if(!source || (source->pixel_format!=GML_RENDER_PIXEL_XRGB8888 &&
-                     source->pixel_format!=GML_RENDER_PIXEL_ARGB8888) ||
+                     source->pixel_format!=GML_RENDER_PIXEL_ARGB8888 &&
+                     source->pixel_format!=GML_RENDER_PIXEL_RGBA8888) ||
          same_logical(op->sources[0],target->image) ||
          state->write_mask!=15u || state->alpha!=255u ||
          state->colour!=0xFFFFFFFFu || state->alpha_test_enabled ||

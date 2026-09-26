@@ -26,6 +26,109 @@ const uint8_t *runtime_frame_rgba(GmlSprite *s, int frame){
   return s->runtime_rgba + (size_t)sub*s->w*s->h*4;
 }
 
+/* The first live sprite variant is a literal opaque atlas rectangle. The existing CPU blit
+ * remains the authority for every scaled, clipped, filtered, transparent or programmed case. */
+static int resident_opaque_sprite(GmlRender *r,GmlSprite *sprite,int subimg,
+                                  double x,double y,double xs,double ys,double rotation,
+                                  uint32_t blend,double alpha){
+  GmlTpag *page;
+  GmlAtlas *atlas;
+  GmlRenderResourceSource source={0};
+  GmlRenderResource *target;
+  GmlRenderDrawOp operation={0};
+  GmlRenderDrawStateSnapshot state={0};
+  GmlRenderDrawBatch batch;
+  GmlRenderImageRef source_ref,image;
+  GmlRenderRect region;
+  double left,top;
+  int sub,page_index;
+  if(!r || !r->resident_application_pass || !sprite || sprite->runtime_rgba ||
+     sprite->spine || sprite->ns_enabled || sprite->n_frames<=0 ||
+     r->classic || r->interp || r->world_transform_active || r->gui_pass_active ||
+     r->active_shader>=0 || r->alpha_test_enable || !r->alphablend ||
+     r->blendmode || r->blend_equation!=1 || r->blend_equation_alpha!=1 ||
+     r->color_write_mask!=0x0Fu || r->classic_phase_y || r->app_phase_y ||
+     r->rotated_batch_count || r->rotated_batch_building ||
+     r->pending_underlay || r->pending_presentation ||
+     r->fb!=r->app_surface_owned || r->fbw!=r->app_w || r->fbh!=r->app_h ||
+     xs!=1.0 || ys!=1.0 || rotation!=0.0 || blend!=0xFFFFFFu || alpha!=1.0)
+    return 0;
+  for(int index=0;index<GML_RENDER_TEXTURE_STAGES-1;index++)
+    if(r->texture_filter[index]) return 0;
+  for(int index=0;index<3;index++)
+    if(r->classic_interp_phase[index] || r->app_interp_phase[index]) return 0;
+  sub=gml_render_runtime_frame_index(sprite,subimg);
+  if(!sprite->frame) return 0;
+  page_index=sprite->frame[sub];
+  if(page_index<0 || page_index>=r->n_tpag) return 0;
+  page=&r->tpag[page_index];
+  if(page->sw<=0 || page->sh<=0 || page->sx<0 || page->sy<0 ||
+     page->tx || page->ty || page->sw!=sprite->w || page->sh!=sprite->h ||
+     page->tw!=sprite->w || page->th!=sprite->h ||
+     page->bw!=sprite->w || page->bh!=sprite->h ||
+     page->atlas<0 || page->atlas>=r->n_atlas) return 0;
+  atlas=&r->atlas[page->atlas];
+  if(!gml_render_atlas_scene_source_view(r,page->atlas,&source) ||
+     (uint64_t)(uint32_t)page->sx+(uint32_t)page->sw>source.width ||
+     (uint64_t)(uint32_t)page->sy+(uint32_t)page->sh>source.height) return 0;
+  if(!page->scene_opaque_checked){
+    page->scene_fully_opaque=1;
+    for(int row=0;row<page->sh && page->scene_fully_opaque;row++)
+      for(int column=0;column<page->sw;column++)
+        if(atlas->px[((size_t)(page->sy+row)*atlas->w+page->sx+column)*4u+3u]!=255u){
+          page->scene_fully_opaque=0;
+          break;
+        }
+    page->scene_opaque_checked=1;
+  }
+  if(!page->scene_fully_opaque) return 0;
+  left=x-(double)sprite->originx-r->cam_x;
+  top=y-(double)sprite->originy-r->cam_y;
+  if(!isfinite(left) || !isfinite(top) || left<0.0 || top<0.0 ||
+     left+page->sw>r->fbw || top+page->sh>r->fbh ||
+     left!=(double)(int)left || top!=(double)(int)top) return 0;
+  gml_render_flush_pending_fill(r);
+  if(r->pending_fill || !(target=gml_render_application_resource_ensure(r))) return 0;
+  image=gml_render_resource_image_ref(target);
+  if(image.content_version==UINT64_MAX) return 0;
+  region=(GmlRenderRect){page->sx,page->sy,(uint32_t)page->sw,(uint32_t)page->sh};
+  source_ref=source.image;
+  operation.opcode=GML_RENDER_OP_TEXTURED_QUAD;
+  operation.reconstruction_mode=GML_RENDER_REPLAY_EXACT;
+  operation.source_count=1u;
+  operation.sources=&source_ref;
+  operation.target.image=image;
+  operation.target.image.content_version++;
+  operation.target.storage_version=1u;
+  operation.target.width=(uint32_t)r->fbw;
+  operation.target.height=(uint32_t)r->fbh;
+  operation.target.pixel_format=GML_RENDER_PIXEL_ARGB8888;
+  operation.target.region=(GmlRenderRect){0,0,(uint32_t)r->fbw,(uint32_t)r->fbh};
+  operation.payload.quad.shape=GML_RENDER_QUAD_AXIS_ALIGNED;
+  operation.payload.quad.sampling.filter=GML_RENDER_FILTER_NEAREST;
+  operation.payload.quad.sampling.edge_rule=GML_RENDER_EDGE_CLAMP_SUBIMAGE;
+  operation.payload.quad.sampling.source_region=region;
+  for(int corner=0;corner<4;corner++) operation.payload.quad.corner_colour[corner]=0xFFFFFFFFu;
+  operation.payload.quad.x[0]=operation.payload.quad.x[3]=left;
+  operation.payload.quad.x[1]=operation.payload.quad.x[2]=left+page->sw;
+  operation.payload.quad.y[0]=operation.payload.quad.y[1]=top;
+  operation.payload.quad.y[2]=operation.payload.quad.y[3]=top+page->sh;
+  operation.payload.quad.u[0]=operation.payload.quad.u[3]=(double)page->sx/source.width;
+  operation.payload.quad.u[1]=operation.payload.quad.u[2]=(double)(page->sx+page->sw)/source.width;
+  operation.payload.quad.v[0]=operation.payload.quad.v[1]=(double)page->sy/source.height;
+  operation.payload.quad.v[2]=operation.payload.quad.v[3]=(double)(page->sy+page->sh)/source.height;
+  state.write_mask=15u;
+  state.colour=0xFFFFFFFFu;
+  state.alpha=255u;
+  state.sampler_count=1u;
+  state.samplers[0]=operation.payload.quad.sampling;
+  batch=(GmlRenderDrawBatch){&operation,1u,&state,1u};
+  if(gml_render_application_scene_submit(r,&batch,&source,1u)==
+     GML_RENDER_RESOURCE_EXEC_FAILED) return 0;
+  r->fb_all_transparent=0;
+  return 1;
+}
+
 void gml_draw_sprite(GmlRender *r, int sprite, int subimg, double x, double y){
   gml_draw_sprite_ext(r,sprite,subimg,x,y,1,1,0,0xFFFFFF,
                       r && !r->classic ? r->alpha : 1.0);
@@ -35,6 +138,11 @@ void gml_render_sprite_ext_unmasked(GmlRender *r, int sprite, int subimg, double
                                      double xs, double ys, double rot, uint32_t blend, double alpha){
   gml_render_draw_map_point(r,&x,&y);
   gml_render_draw_map_scale(r,&xs,&ys);
+  if(r && r->resident_application_pass){
+    if(sprite>=0 && sprite<r->n_spr &&
+       resident_opaque_sprite(r,&r->spr[sprite],subimg,x,y,xs,ys,rot,blend,alpha)) return;
+    if(!gml_render_resident_application_cpu_barrier(r)) return;
+  }
   if(r && sprite>=0 && sprite<r->n_spr &&
      gml_render_cpu_draw_spine_sprite(r,&r->spr[sprite],x,y,xs,ys,rot,blend,alpha)) return;
   if(gml_d3_draw_sprite_2d(r,sprite,subimg,x,y,xs,ys,rot,blend,alpha)) return;

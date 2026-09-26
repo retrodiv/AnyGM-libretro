@@ -931,6 +931,80 @@ static int atlas_scene_identity_and_retirement(void){
   return 1;
 }
 
+static int resident_opaque_atlas_sprite_gpu(void){
+  GmlRender *render=(GmlRender*)calloc(1,sizeof *render);
+  GmlRenderApplicationWriteView view={0};
+  GmlRenderJournalMetrics metrics={0};
+  FakeDevice fake={0};
+  GmlRenderDeviceServices device=service(&fake);
+  uint32_t gpu_reconstructed[16];
+  uint32_t fallback_pixels[16];
+  const uint8_t rgba[16]={
+    0xD0u,0x20u,0x10u,0xFFu, 0x10u,0xD0u,0x20u,0xFFu,
+    0x20u,0x10u,0xD0u,0xFFu, 0xC0u,0xB0u,0xA0u,0xFFu
+  };
+  CHECK(render);
+  CHECK(gml_render_application_surface_ensure_owned(render,4,4));
+  render->atlas=(GmlAtlas*)calloc(1,sizeof *render->atlas);
+  render->tpag=(GmlTpag*)calloc(1,sizeof *render->tpag);
+  render->spr=(GmlSprite*)calloc(1,sizeof *render->spr);
+  CHECK(render->atlas && render->tpag && render->spr);
+  render->n_atlas=render->n_tpag=render->n_spr=1;
+  render->atlas[0].px=(uint8_t*)malloc(sizeof rgba);
+  render->spr[0].frame=(int*)calloc(1,sizeof(int));
+  CHECK(render->atlas[0].px && render->spr[0].frame);
+  memcpy(render->atlas[0].px,rgba,sizeof rgba);
+  render->atlas[0].w=render->atlas[0].h=2;
+  render->tpag[0].sw=render->tpag[0].sh=2;
+  render->tpag[0].tw=render->tpag[0].th=2;
+  render->tpag[0].bw=render->tpag[0].bh=2;
+  render->spr[0].w=render->spr[0].h=2;
+  render->spr[0].n_frames=1;
+  render->active_shader=-1;
+  render->color_write_mask=0x0Fu;
+  gml_render_bind_device(render,&device);
+  CHECK(gml_render_begin_resident_owned_application(render,0.0,0.0,0));
+  gml_render_set_pending_fill(render,0xFF000000u);
+  gml_draw_sprite_ext(render,0,0,1.0,1.0,1.0,1.0,0.0,0xFFFFFFu,1.0);
+  gml_render_resource_journal_metrics(render->app_surface_resource,&metrics);
+  CHECK(render->resident_application_pass && fake.submits==2 &&
+        metrics.journal_operations==2u && metrics.cpu_replays==0u &&
+        render->app_surface_owned[5]==0u);
+  CHECK(gml_render_application_surface_owned_view(render,&view) &&
+        view.pixels[0]==0xFF000000u && view.pixels[5]==0xFFD02010u &&
+        view.pixels[6]==0xFF10D020u && view.pixels[9]==0xFF2010D0u &&
+        view.pixels[10]==0xFFC0B0A0u && fake.readbacks==0);
+  memcpy(gpu_reconstructed,view.pixels,sizeof gpu_reconstructed);
+  CHECK(gml_render_begin_owned_application(render,0.0,0.0,0));
+  gml_render_set_pending_fill(render,0xFF000000u);
+  gml_draw_sprite_ext(render,0,0,1.0,1.0,1.0,1.0,0.0,0xFFFFFFu,1.0);
+  gml_render_flush_pending_fill(render);
+  CHECK(fake.submits==2 &&
+        !memcmp(render->app_surface_owned,gpu_reconstructed,sizeof gpu_reconstructed));
+  CHECK(gml_render_begin_resident_owned_application(render,0.0,0.0,0));
+  gml_render_set_pending_fill(render,0xFF000000u);
+  gml_draw_sprite_ext(render,0,0,1.0,1.0,1.0,1.0,0.0,0xFFFFFFu,0.5);
+  CHECK(!render->resident_application_pass && fake.submits==3 &&
+        render->app_surface_owned[5]!=0xFF000000u);
+  memcpy(fallback_pixels,render->app_surface_owned,sizeof fallback_pixels);
+  CHECK(gml_render_begin_owned_application(render,0.0,0.0,0));
+  gml_render_set_pending_fill(render,0xFF000000u);
+  gml_draw_sprite_ext(render,0,0,1.0,1.0,1.0,1.0,0.0,0xFFFFFFu,0.5);
+  gml_render_flush_pending_fill(render);
+  CHECK(fake.submits==3 &&
+        !memcmp(render->app_surface_owned,fallback_pixels,sizeof fallback_pixels));
+  CHECK(gml_render_begin_resident_owned_application(render,0.0,0.0,0));
+  gml_render_set_pending_fill(render,0u);
+  gml_draw_sprite_ext(render,0,0,1.0,1.0,1.0,1.0,0.0,0xFFFFFFu,1.0);
+  CHECK(render->resident_application_pass && fake.submits==5 &&
+        !render->fb_all_transparent);
+  CHECK(gml_render_application_surface_owned_view(render,&view) &&
+        view.pixels[0]==0u && view.pixels[5]==0xFFD02010u);
+  gml_render_free(render);
+  free(render);
+  return 1;
+}
+
 static int state_without_context(void){
   GmlRender *original=(GmlRender*)calloc(1,sizeof *original);
   GmlRender *restored=(GmlRender*)calloc(1,sizeof *restored);
@@ -993,8 +1067,9 @@ int main(void){
   passed+=resident_application_pending_clear();
   passed+=resident_application_sprite_cpu_fallback();
   passed+=atlas_scene_identity_and_retirement();
+  passed+=resident_opaque_atlas_sprite_gpu();
   passed+=state_without_context();
   passed+=nearest_subrectangle_mirrors();
-  printf("render resource cases: passed=%d failed=%d\n",passed,16-passed);
-  return passed==16?EXIT_SUCCESS:EXIT_FAILURE;
+  printf("render resource cases: passed=%d failed=%d\n",passed,17-passed);
+  return passed==17?EXIT_SUCCESS:EXIT_FAILURE;
 }
