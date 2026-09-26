@@ -383,6 +383,23 @@ void gml_render_application_surface_bind(GmlRender *r,uint32_t *pixels,
   r->app_surface_opaque=opaque!=0;
   if(changed) r->app_presentation_coverage_active=0;
 }
+int gml_render_application_surface_owned_extent(const GmlRender *r,int *width,int *height){
+  if(width) *width=0;
+  if(height) *height=0;
+  if(!r || !r->app_surface_owned || r->app_w<=0 || r->app_h<=0) return 0;
+  if(width) *width=r->app_w;
+  if(height) *height=r->app_h;
+  return 1;
+}
+int gml_render_begin_owned_application(GmlRender *r,double camx,double camy,
+                                       int retain_target){
+  if(!gml_render_application_surface_owned_extent(r,NULL,NULL)) return 0;
+  if(retain_target)
+    gml_render_begin_retaining_target(r,r->app_surface_owned,r->app_w,r->app_h,camx,camy);
+  else
+    gml_render_begin(r,r->app_surface_owned,r->app_w,r->app_h,camx,camy);
+  return 1;
+}
 int gml_render_application_surface_owned_clear(
   GmlRender *r,uint32_t color,GmlRenderApplicationWriteView *view){
   if(view) memset(view,0,sizeof(*view));

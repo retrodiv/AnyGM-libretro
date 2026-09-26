@@ -409,6 +409,11 @@ void gml_render_application_surface_bind(GmlRender *r,uint32_t *pixels,
                                          int width,int height,int opaque);
 void gml_render_application_surface_publish(GmlRender *r);
 int gml_render_application_surface_ensure_owned(GmlRender *r,int width,int height);
+/* Selection and pass begin do not lend pixels to the engine. A CPU consumer explicitly asks for
+ * the mutable view below; a resident target may otherwise remain unmaterialised. */
+int gml_render_application_surface_owned_extent(const GmlRender *r,int *width,int *height);
+int gml_render_begin_owned_application(GmlRender *r,double camx,double camy,
+                                       int retain_target);
 int gml_render_application_surface_owned_clear(
   GmlRender *r,uint32_t color,GmlRenderApplicationWriteView *view);
 int gml_render_application_surface_owned_view(

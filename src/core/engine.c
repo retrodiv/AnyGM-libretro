@@ -1417,14 +1417,13 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
                              ensure_classic_phase(engine,classic_pixels*3);
   int view_surface = (int)gml_global_arr(&engine->vm, "view_surface_id", frame_view_index);
   int multiview_rendered = !engine->aspect_force_active && render_multiview_application(engine);
-  GmlRenderApplicationWriteView direct_world_view={0};
   int direct_owned_world=0;
   uint32_t *world_pixels=engine->fb;
   int world_width=(int)engine->width;
   int world_height=(int)engine->height;
   if(engine->aspect_force_active && aspect_surface_canvas_size(engine,NULL,NULL) &&
      frame_view_count==1 && render_presentation.application_owned &&
-     gml_render_application_surface_owned_view(&engine->render,&direct_world_view))
+     gml_render_application_surface_owned_extent(&engine->render,NULL,NULL))
     direct_owned_world=1;
   if (!multiview_rendered) {
   *gml_varmap_put(&engine->vm.globals,"view_current")=vreal(frame_view_index);
@@ -1458,7 +1457,7 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
       application_surface_matches_first_generation_view_port(
         engine,frame_view_count,view->px,view->py,view->pw,view->ph,
         render_presentation.application_width,render_presentation.application_height)))) &&
-      gml_render_application_surface_owned_view(&engine->render,&direct_world_view);
+      gml_render_application_surface_owned_extent(&engine->render,NULL,NULL);
   }
   if(engine->vm.frame<6 &&
      anygm_host_development_setting(&engine->host,"GML_LOG_APPTARGET"))
@@ -1466,14 +1465,23 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
       "[apptarget] f%ld direct_owned_world=%d multiview=%d view_surface=%d views=%d owned=%d\n",
       engine->vm.frame,direct_owned_world,multiview_rendered,view_surface,frame_view_count,
       render_presentation.application_owned);
-  world_pixels=direct_owned_world?direct_world_view.pixels:engine->fb;
-  world_width=direct_owned_world?direct_world_view.width:(int)engine->width;
-  world_height=direct_owned_world?direct_world_view.height:(int)engine->height;
-  if(engine->composed_frame)
-    gml_render_begin_retaining_target(&engine->render,world_pixels,world_width,world_height,
-                                      cam_x,cam_y);
-  else
-    gml_render_begin(&engine->render,world_pixels,world_width,world_height,cam_x,cam_y);
+  if(direct_owned_world &&
+     gml_render_begin_owned_application(&engine->render,cam_x,cam_y,
+                                        engine->composed_frame)){
+    world_pixels=NULL;
+    (void)gml_render_application_surface_owned_extent(
+      &engine->render,&world_width,&world_height);
+  } else {
+    direct_owned_world=0;
+    world_pixels=engine->fb;
+    world_width=(int)engine->width;
+    world_height=(int)engine->height;
+    if(engine->composed_frame)
+      gml_render_begin_retaining_target(&engine->render,world_pixels,world_width,world_height,
+                                        cam_x,cam_y);
+    else
+      gml_render_begin(&engine->render,world_pixels,world_width,world_height,cam_x,cam_y);
+  }
   if(direct_owned_world)
     gml_render_world_set_logical_extent(
       &engine->render,(int)engine->width,(int)engine->height);
@@ -1509,16 +1517,23 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
   engine->aspect_event_view_stack_pointer = 0;
   engine->aspect_event_view_overflow = 0;
   gml_render_flush_pending_fill(&engine->render);
-  if(direct_owned_world &&
-     gml_render_application_surface_owned_view(&engine->render,&direct_world_view)){
-    world_pixels=direct_world_view.pixels;
-    world_width=direct_world_view.width;
-    world_height=direct_world_view.height;
-  }
+  if(direct_owned_world)
+    (void)gml_render_application_surface_owned_extent(
+      &engine->render,&world_width,&world_height);
   aspect_mask_outside_room(engine,cam_x, cam_y);
   if(prof){ t1 = profile_now_ms(engine); engine->profile.draw_ms += t1 - t0; t0 = t1; }
   gml_render_presentation_metrics(&engine->render,&render_presentation);
-  if(anygm_host_development_setting(&engine->host,"GML_LOG_DRAW")){ int nz=0; for(size_t i=0;i<(size_t)world_width*world_height;i++) if(world_pixels[i]&0xFFFFFF) nz++;
+  int log_draw=anygm_host_development_setting(&engine->host,"GML_LOG_DRAW")!=NULL;
+  if(direct_owned_world &&
+     (log_draw || (view_surface>0 && gml_surface_exists(&engine->render,view_surface)))){
+    GmlRenderApplicationWriteView cpu_view={0};
+    if(gml_render_application_surface_owned_view(&engine->render,&cpu_view)){
+      world_pixels=cpu_view.pixels;
+      world_width=cpu_view.width;
+      world_height=cpu_view.height;
+    }
+  }
+  if(log_draw && world_pixels){ int nz=0; for(size_t i=0;i<(size_t)world_width*world_height;i++) if(world_pixels[i]&0xFFFFFF) nz++;
     if(engine->diagnostics.draw_frame<3||engine->diagnostics.draw_frame%200==0){ int live=0,deactivated=0,dormant=0,highest=-1;
       for(int i=0;i<engine->vm.inst_count;i++){ GmlInstance *in=&engine->vm.inst[i];
         if(in->active&&!in->marked){ live++; highest=i; }

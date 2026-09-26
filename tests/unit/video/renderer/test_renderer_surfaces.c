@@ -31,6 +31,49 @@ static uint64_t pixel_hash(const uint32_t *pixels,size_t count){
   return pixel_hash_update(UINT64_C(1469598103934665603),pixels,count);
 }
 
+static int owned_application_begin_case(void){
+  GmlRender render={0};
+  GmlRenderApplicationWriteView view={0};
+  int width=-1,height=-1;
+  render.next_surface_id=1;
+  render.target_id=-1;
+  REQUIRE(!gml_render_application_surface_owned_extent(&render,&width,&height) &&
+          width==0 && height==0,
+          "a missing owned application target has no extent");
+  REQUIRE(!gml_render_begin_owned_application(&render,0.0,0.0,0),
+          "a missing owned application target cannot begin a pass");
+  REQUIRE(gml_render_application_surface_ensure_owned(&render,4,3),
+          "owned application target allocated");
+  REQUIRE(gml_render_application_surface_owned_extent(&render,&width,&height) &&
+          width==4 && height==3,
+          "metadata selection reports dimensions without a pixel borrow");
+  REQUIRE(gml_render_begin_owned_application(&render,2.0,3.0,0),
+          "owned application target begins a normal pass");
+  REQUIRE(gml_render_application_surface_owned_view(&render,&view) &&
+          render.fb==view.pixels && render.fbw==view.width && render.fbh==view.height &&
+          render.cam_x==2.0 && render.cam_y==3.0,
+          "owned begin retains the established CPU target and camera");
+  view.pixels[5]=0xFF123456u;
+  int surface=gml_surface_create(&render,2,2);
+  REQUIRE(surface>0 && gml_surface_set_target(&render,surface),
+          "a numbered surface may suspend the owned application target");
+  REQUIRE(gml_render_begin_owned_application(&render,4.0,5.0,1) &&
+          gml_surface_get_target(&render)==surface,
+          "retaining begin preserves the numbered surface binding");
+  REQUIRE(gml_render_application_surface_ensure_owned(&render,6,4),
+          "the owned application target may resize while suspended");
+  REQUIRE(gml_render_application_surface_owned_extent(&render,&width,&height) &&
+          width==6 && height==4,
+          "metadata selection observes the new dimensions");
+  gml_surface_reset_target(&render);
+  REQUIRE(gml_render_application_surface_owned_view(&render,&view) &&
+          render.fb==view.pixels && render.fbw==6 && render.fbh==4 &&
+          view.pixels[7]==0xFF123456u,
+          "target reset returns to the resized owned allocation with retained pixels");
+  gml_render_free(&render);
+  return 0;
+}
+
 static int declared_canvas_preview_case(void){
   GmlRender render={0};
   uint32_t frame[16*8]={0};
@@ -1036,6 +1079,7 @@ int main(void){
           !gml_surface_exists(&render,destination),"freed surfaces");
   REQUIRE(presentation_latch_coverage_case()==0,
           "presentation latch coverage case");
+  REQUIRE(owned_application_begin_case()==0,"owned application begin case");
   REQUIRE(threshold_palette_surface_case()==0,
           "threshold palette surface case");
   REQUIRE(declared_canvas_preview_case()==0,"declared canvas preview case");
