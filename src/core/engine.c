@@ -443,6 +443,9 @@ static int boot_runtime_prepare(AnygmEngine *engine) {
   engine_input_bind(engine);
   setup_platform_locale(engine,&engine->vm);
   gml_render_init(&engine->render, &engine->win);
+  /* Reset and in-content replacement recreate the renderer without recreating the host GL
+   * context. Bind its new device facade before any authored Create event can draw. */
+  engine_graphics_bind_renderer(engine);
   /* Allocate backing pixels before the first Create event. GML may resize the
    * application surface there; the renderer promotes the borrowed framebuffer
    * to independently owned storage when that happens. Surface existence becomes

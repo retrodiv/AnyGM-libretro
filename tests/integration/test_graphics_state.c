@@ -474,6 +474,11 @@ static int neutral_device_binding_case(void){
   REQUIRE(device->capabilities(device->context,&caps) &&
           (caps.supported_operations&(UINT64_C(1)<<GML_RENDER_OP_TEXTURED_QUAD)),
           "binding exposes the qualified prototype without selecting it for the CPU scene");
+  REQUIRE(anygm_reset(session.engine)==ANYGM_OK,
+          "reset retains the adopted graphics context");
+  device=gml_render_device(&session.engine->render);
+  REQUIRE(device && device->context && device->capabilities && device->submit,
+          "the newly initialized renderer rebinds the existing device after reset");
   anygm_graphics_context_destroy(session.engine,1u);
   REQUIRE(gml_render_device(&session.engine->render)==NULL,
           "device service is cleared before context destruction");

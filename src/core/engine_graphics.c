@@ -45,14 +45,17 @@ AnygmResult anygm_graphics_context_reset(AnygmEngine *engine,const AnygmGraphics
     /* The software engine is untouched and remains the complete implementation. */
     return ANYGM_ERROR_UNSUPPORTED;
   }
-  {
-    GmlRenderDeviceServices services;
-    gml_gpu_device_services(engine->gpu,&services);
-    gml_render_bind_device(&engine->render,&services);
-  }
+  engine_graphics_bind_renderer(engine);
+  return ANYGM_OK;
+}
+
+void engine_graphics_bind_renderer(AnygmEngine *engine){
+  GmlRenderDeviceServices services;
+  if(!engine || !engine_graphics_active(engine)) return;
+  gml_gpu_device_services(engine->gpu,&services);
+  gml_render_bind_device(&engine->render,&services);
   /* Hybrid presentation and content GLSL share this context but are independent policies. */
   gml_render_set_shader_device(&engine->render,engine_content_shaders_active(engine));
-  return ANYGM_OK;
 }
 
 void anygm_graphics_context_destroy(AnygmEngine *engine,uint32_t context_is_current){
@@ -535,6 +538,8 @@ int engine_present_hardware_frame(AnygmEngine *engine,const uint32_t *pixels,
 }
 
 #else
+
+void engine_graphics_bind_renderer(AnygmEngine *engine){ (void)engine; }
 
 AnygmResult anygm_graphics_context_reset(AnygmEngine *engine,const AnygmGraphicsContext *context){
   if(!engine || engine->guard!=ANYGM_ENGINE_GUARD) return ANYGM_ERROR_INVALID_STATE;
