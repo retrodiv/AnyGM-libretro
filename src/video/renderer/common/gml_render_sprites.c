@@ -397,6 +397,36 @@ void gml_render_sprite_nineslice(GmlRender *r, GmlSprite *s, GmlTpag *t,
 void gml_draw_sprite_part_ext(GmlRender *r, int sprite, int subimg, double sx, double sy,
                               double sw, double sh, double x, double y,
                               double xs, double ys, uint32_t blend, double alpha){
+  if(r && r->resident_application_pass && !r->interp &&
+     blend==0xFFFFFFu && alpha==1.0 &&
+     sprite>=0 && sprite<r->n_spr &&
+     isfinite(sx) && isfinite(sy) && isfinite(sw) && isfinite(sh) &&
+     sx>=0.0 && sy>=0.0 && sw>0.0 && sh>0.0 &&
+     sx<=(double)INT_MAX && sy<=(double)INT_MAX &&
+     sw<=(double)INT_MAX && sh<=(double)INT_MAX &&
+     floor(sx)==sx && floor(sy)==sy && floor(sw)==sw && floor(sh)==sh &&
+     !gml_d3_is_active(r)){
+    GmlSprite *resident_sprite=&r->spr[sprite];
+    if(!resident_sprite->runtime_rgba && resident_sprite->n_frames>0 &&
+       resident_sprite->frame){
+      int sub=((subimg%resident_sprite->n_frames)+resident_sprite->n_frames)%
+              resident_sprite->n_frames;
+      int page_index=resident_sprite->frame[sub];
+      if(page_index>=0 && page_index<r->n_tpag){
+        GmlTpag *page=&r->tpag[page_index];
+        if(page->tx==0 && page->ty==0 &&
+           page->sw==resident_sprite->w && page->sh==resident_sprite->h &&
+           page->bw==page->sw && page->bh==page->sh){
+          double mapped_x=x,mapped_y=y,mapped_xs=xs,mapped_ys=ys;
+          gml_render_draw_map_point(r,&mapped_x,&mapped_y);
+          gml_render_draw_map_scale(r,&mapped_xs,&mapped_ys);
+          if(gml_render_resident_atlas_crop(r,page_index,(int)sx,(int)sy,(int)sw,(int)sh,
+                                            mapped_x-r->cam_x,mapped_y-r->cam_y,
+                                            mapped_xs,mapped_ys)) return;
+        }
+      }
+    }
+  }
   if(!gml_render_resident_application_cpu_barrier(r)) return;
   gml_render_draw_map_point(r,&x,&y);
   gml_render_draw_map_scale(r,&xs,&ys);

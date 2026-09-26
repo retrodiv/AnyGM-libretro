@@ -1170,6 +1170,30 @@ static int resident_background_and_tile_cpu_barriers(void){
           render->app_surface_owned[8]==0xFF000000u);
     render->win=NULL;
   }
+  /* The unchanged CPU part writer selects the right atlas column in sprite-local coordinates. */
+  CHECK(gml_render_begin_owned_application(render,0.0,0.0,0));
+  gml_render_set_pending_fill(render,0xFF000000u);
+  gml_draw_sprite_part_ext(render,0,0,1,0,1,2,1,1,1,1,0xFFFFFFu,1.0);
+  gml_render_flush_pending_fill(render);
+  CHECK(render->app_surface_owned[5]==0xFF10D020u &&
+        render->app_surface_owned[9]==0xFFC0B0A0u &&
+        render->app_surface_owned[4]==0xFF000000u &&
+        render->app_surface_owned[6]==0xFF000000u);
+  {
+    uint32_t cpu_part[16];
+    GmlRenderApplicationWriteView part_view={0};
+    memcpy(cpu_part,render->app_surface_owned,sizeof cpu_part);
+    CHECK(gml_render_begin_resident_owned_application(render,0.0,0.0,0));
+    gml_render_set_pending_fill(render,0xFF000000u);
+    gml_draw_sprite_part_ext(render,0,0,1,0,1,2,1,1,1,1,0xFFFFFFu,1.0);
+    CHECK(render->resident_application_pass && fake.readbacks==0);
+    CHECK(gml_render_application_surface_owned_view(render,&part_view) &&
+          !memcmp(part_view.pixels,cpu_part,sizeof cpu_part) && fake.readbacks==0);
+    CHECK(gml_render_begin_resident_owned_application(render,0.0,0.0,0));
+    gml_render_set_pending_fill(render,0xFF000000u);
+    gml_draw_sprite_part_ext(render,0,0,1,0,1,2,1,1,1,1,0xFFFFFFu,0.5);
+    CHECK(!render->resident_application_pass && fake.readbacks==0);
+  }
   gml_render_free(render);
   free(render);
   return 1;
