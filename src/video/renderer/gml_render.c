@@ -409,6 +409,26 @@ int gml_render_begin_owned_application(GmlRender *r,double camx,double camy,
     gml_render_begin(r,r->app_surface_owned,r->app_w,r->app_h,camx,camy);
   return 1;
 }
+int gml_render_begin_resident_owned_application(GmlRender *r,double camx,double camy,
+                                                int retain_target){
+  if(!r || !gml_render_device(r) ||
+     !gml_render_application_surface_owned_extent(r,NULL,NULL) ||
+     r->rotated_batch_count || r->rotated_batch_building ||
+     r->pending_fill || r->pending_underlay || r->pending_presentation) return 0;
+  for(int index=0;index<r->target_sp;index++)
+    if(r->target_stack[index].pending_fill ||
+       r->target_stack[index].pending_underlay) return 0;
+  if(retain_target && r->target_id>0 && r->target_sp>0 &&
+     (r->target_id>GML_MAX_SURFACES ||
+      !r->surface[r->target_id-1].resource)) return 0;
+  if(!gml_render_application_resource_ensure(r)) return 0;
+  if(retain_target)
+    gml_render_begin_retaining_resident_target(
+      r,r->app_surface_owned,r->app_w,r->app_h,camx,camy);
+  else
+    gml_render_begin(r,r->app_surface_owned,r->app_w,r->app_h,camx,camy);
+  return 1;
+}
 int gml_render_application_surface_owned_clear(
   GmlRender *r,uint32_t color,GmlRenderApplicationWriteView *view){
   if(view) memset(view,0,sizeof(*view));

@@ -414,6 +414,10 @@ int gml_render_application_surface_ensure_owned(GmlRender *r,int width,int heigh
 int gml_render_application_surface_owned_extent(const GmlRender *r,int *width,int *height);
 int gml_render_begin_owned_application(GmlRender *r,double camx,double camy,
                                        int retain_target);
+/* Opt-in scene pass: retains GPU authority and refuses unresolved CPU/deferred work before
+ * changing pass state. Its caller must explicitly acquire pixels before any CPU fallback. */
+int gml_render_begin_resident_owned_application(GmlRender *r,double camx,double camy,
+                                                int retain_target);
 int gml_render_application_surface_owned_clear(
   GmlRender *r,uint32_t color,GmlRenderApplicationWriteView *view);
 int gml_render_application_surface_owned_view(

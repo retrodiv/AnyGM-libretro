@@ -751,6 +751,30 @@ static int owned_application_resize_and_context_loss(void){
   operation.target.region=(GmlRenderRect){0,0,6u,5u};
   CHECK(gml_render_application_scene_submit(render,&batch,NULL,0u)==
         GML_RENDER_RESOURCE_EXEC_DEVICE);
+  gml_render_resource_journal_metrics(resource,&metrics);
+  CHECK(metrics.journal_operations==1u && metrics.cpu_replays==0u);
+  CHECK(gml_render_begin_resident_owned_application(render,2.0,3.0,0));
+  CHECK(render->fb==render->app_surface_owned &&
+        render->cam_x==2.0 && render->cam_y==3.0);
+  gml_render_resource_journal_metrics(resource,&metrics);
+  CHECK(metrics.journal_operations==1u && metrics.cpu_replays==0u);
+  gml_render_set_pending_fill(render,0xFF010203u);
+  CHECK(!gml_render_begin_resident_owned_application(render,4.0,5.0,0) &&
+        render->pending_fill);
+  gml_render_cancel_pending_fill(render);
+  CHECK(gml_surface_set_target(render,0));
+  second_ref=gml_render_resource_image_ref(resource);
+  operation.target.image=second_ref;
+  operation.target.image.content_version=second_ref.content_version+1u;
+  CHECK(gml_render_application_scene_submit(render,&batch,NULL,0u)==
+        GML_RENDER_RESOURCE_EXEC_DEVICE);
+  gml_render_resource_journal_metrics(resource,&metrics);
+  CHECK(metrics.journal_operations==1u);
+  CHECK(gml_render_begin_resident_owned_application(render,6.0,7.0,1) &&
+        render->target_id==0 && render->fb==render->app_surface_owned);
+  gml_render_resource_journal_metrics(resource,&metrics);
+  CHECK(metrics.journal_operations==1u);
+  gml_surface_reset_target(render);
   gml_render_bind_device(render,NULL);
   CHECK(gml_render_application_surface_owned_view(render,&view) &&
         view.pixels==render->app_surface_owned && view.width==6 && view.height==5 &&

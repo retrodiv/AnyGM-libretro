@@ -435,7 +435,13 @@ static void begin_retaining_target(GmlRender *r, uint32_t *fb, int w, int h,
   int sw=0,sh=0;
   int si=surface_slot(retained);
   uint32_t *px=NULL;
-  if(resident_selection && si>=0 && r->surface[si].live && r->surface[si].resource){
+  if(resident_selection && retained==0 && r->app_surface_resource &&
+     r->app_surface==r->app_surface_owned){
+    px=r->app_surface_owned;
+    sw=r->app_surface_resource_width;
+    sh=r->app_surface_resource_height;
+  } else if(resident_selection && si>=0 && r->surface[si].live &&
+            r->surface[si].resource){
     /* Retaining a target only needs its stable allocation and extent. The CPU accessor would
      * replay a resident journal and mark the GPU copy stale before this pass draws anything. */
     px=r->surface[si].px;
