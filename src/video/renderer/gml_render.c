@@ -958,6 +958,21 @@ void gml_render_flush_pending_fill(GmlRender *r){
     n-=(size_t)run;
   }
 }
+int gml_render_resident_application_cpu_barrier(GmlRender *r){
+  uint32_t *pixels=NULL;
+  GmlRenderResource *resource;
+  if(!r) return 0;
+  if(!r->resident_application_pass) return 1;
+  if(r->fb!=r->app_surface_owned || r->fbw!=r->app_w || r->fbh!=r->app_h)
+    return 0;
+  gml_render_flush_pending_fill(r);
+  if(r->pending_fill) return 0;
+  resource=gml_render_application_resource_ensure(r);
+  if(!resource || !gml_render_resource_acquire_cpu_write(resource,&pixels) ||
+     pixels!=r->fb || !gml_render_resource_commit_cpu_write(resource)) return 0;
+  r->resident_application_pass=0;
+  return 1;
+}
 void gml_render_flush_pending_underlay(GmlRender *r){
   gml_render_flush_rotated_batch(r);
   if(!r || !r->pending_underlay) return;

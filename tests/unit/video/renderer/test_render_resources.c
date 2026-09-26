@@ -822,11 +822,24 @@ static int resident_application_pending_clear(void){
         metrics.journal_operations==0u && render->app_surface_owned[0]==0xFF445566u &&
         render->app_surface_owned[15]==0xFF445566u);
   fake.status=0;
+  gml_render_set_pending_fill(render,0xFF123456u);
+  gml_render_flush_pending_fill(render);
+  gml_render_resource_journal_metrics(render->app_surface_resource,&metrics);
+  CHECK(fake.submits==3 && metrics.journal_operations==1u &&
+        render->app_surface_owned[0]==0xFF445566u);
+  gml_render_bind_device(render,NULL);
+  CHECK(gml_render_resident_application_cpu_barrier(render) &&
+        !render->resident_application_pass && fake.readbacks==0);
+  gml_render_resource_journal_metrics(render->app_surface_resource,&metrics);
+  CHECK(metrics.cpu_replays==1u && metrics.journal_operations==0u &&
+        render->app_surface_owned[0]==0xFF123456u &&
+        render->app_surface_owned[15]==0xFF123456u);
+  gml_render_bind_device(render,&device);
   CHECK(gml_render_begin_owned_application(render,0.0,0.0,0) &&
         !render->resident_application_pass);
   gml_render_set_pending_fill(render,0xFF778899u);
   gml_render_flush_pending_fill(render);
-  CHECK(fake.submits==2 && render->app_surface_owned[0]==0xFF778899u);
+  CHECK(fake.submits==3 && render->app_surface_owned[0]==0xFF778899u);
   CHECK(gml_render_application_surface_owned_view(render,&view) &&
         view.pixels[15]==0xFF778899u);
   gml_render_free(render);

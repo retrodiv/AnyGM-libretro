@@ -27,6 +27,9 @@ void gml_render_application_resource_dispose(GmlRender *render);
 GmlRenderResourceExecution gml_render_application_scene_submit(
   GmlRender *render,const GmlRenderDrawBatch *batch,
   const GmlRenderResourceSource *sources,uint32_t source_count);
+/* Call before a CPU leaf writes an explicitly resident application pass. The pending GPU clear
+ * may be submitted first; a caller must not enter its CPU kernel on a false result. */
+int gml_render_resident_application_cpu_barrier(GmlRender *render);
 
 /* A scene executor may carry a numbered resident target into the next pass without acquiring
  * CPU pixels. It must materialise that target before any CPU leaf observes or writes it.
