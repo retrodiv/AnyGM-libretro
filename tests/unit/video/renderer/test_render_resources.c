@@ -1194,6 +1194,49 @@ static int resident_background_and_tile_cpu_barriers(void){
     gml_draw_sprite_part_ext(render,0,0,1,0,1,2,1,1,1,1,0xFFFFFFu,0.5);
     CHECK(!render->resident_application_pass && fake.readbacks==0);
   }
+  /* Establish the old CPU geometry before qualifying additional entrypoints. */
+  uint32_t stretched_cpu[16],layer_cpu[16];
+  GmlRenderApplicationWriteView variant_view={0};
+  CHECK(gml_render_begin_owned_application(render,0.0,0.0,0));
+  gml_render_set_pending_fill(render,0xFF000000u);
+  gml_draw_sprite_stretched(render,0,0,0,0,4,4,0xFFFFFFu,1.0);
+  gml_render_flush_pending_fill(render);
+  CHECK(render->app_surface_owned[0]==0xFFD02010u &&
+        render->app_surface_owned[1]==0xFFD02010u &&
+        render->app_surface_owned[2]==0xFF10D020u &&
+        render->app_surface_owned[8]==0xFF2010D0u &&
+        render->app_surface_owned[15]==0xFFC0B0A0u);
+  memcpy(stretched_cpu,render->app_surface_owned,sizeof stretched_cpu);
+  CHECK(gml_render_begin_owned_application(render,0.0,0.0,0));
+  gml_render_set_pending_fill(render,0xFF000000u);
+  gml_draw_layer_background_sprite(render,0,0,1,1,1,1,0xFFFFFFu,1.0,0,0);
+  gml_render_flush_pending_fill(render);
+  CHECK(render->app_surface_owned[5]==0xFFD02010u &&
+        render->app_surface_owned[6]==0xFF10D020u &&
+        render->app_surface_owned[9]==0xFF2010D0u &&
+        render->app_surface_owned[10]==0xFFC0B0A0u &&
+        render->app_surface_owned[0]==0xFF000000u);
+  memcpy(layer_cpu,render->app_surface_owned,sizeof layer_cpu);
+  CHECK(gml_render_begin_resident_owned_application(render,0.0,0.0,0));
+  gml_render_set_pending_fill(render,0xFF000000u);
+  gml_draw_sprite_stretched(render,0,0,0,0,4,4,0xFFFFFFu,1.0);
+  CHECK(render->resident_application_pass && fake.readbacks==0 &&
+        gml_render_application_surface_owned_view(render,&variant_view) &&
+        !memcmp(variant_view.pixels,stretched_cpu,sizeof stretched_cpu));
+  CHECK(gml_render_begin_resident_owned_application(render,0.0,0.0,0));
+  gml_render_set_pending_fill(render,0xFF000000u);
+  gml_draw_layer_background_sprite(render,0,0,1,1,1,1,0xFFFFFFu,1.0,0,0);
+  CHECK(render->resident_application_pass && fake.readbacks==0 &&
+        gml_render_application_surface_owned_view(render,&variant_view) &&
+        !memcmp(variant_view.pixels,layer_cpu,sizeof layer_cpu));
+  CHECK(gml_render_begin_resident_owned_application(render,0.0,0.0,0));
+  gml_render_set_pending_fill(render,0xFF000000u);
+  gml_draw_layer_background_sprite(render,0,0,1,1,1,1,0xFFFFFFu,1.0,1,0);
+  CHECK(!render->resident_application_pass && fake.readbacks==0);
+  CHECK(gml_render_begin_resident_owned_application(render,0.0,0.0,0));
+  gml_render_set_pending_fill(render,0xFF000000u);
+  gml_draw_sprite_stretched(render,0,0,0,0,4,4,0xFFFFFFu,0.5);
+  CHECK(!render->resident_application_pass && fake.readbacks==0);
   gml_render_free(render);
   free(render);
   return 1;

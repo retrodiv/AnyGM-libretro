@@ -271,6 +271,32 @@ void gml_render_sprite_ext_unmasked(GmlRender *r, int sprite, int subimg, double
 }
 
 void gml_draw_sprite_stretched(GmlRender *r, int sprite, int frame, double dx, double dy, double dw, double dh, uint32_t blend, double alpha){
+  if(r && r->resident_application_pass && !r->interp &&
+     blend==0xFFFFFFu && alpha==1.0 &&
+     sprite>=0 && sprite<r->n_spr && !gml_d3_is_active(r)){
+    GmlSprite *resident_sprite=&r->spr[sprite];
+    if(!resident_sprite->runtime_rgba && !resident_sprite->ns_enabled &&
+       resident_sprite->n_frames>0 && resident_sprite->frame &&
+       resident_sprite->w>0 && resident_sprite->h>0){
+      int sub=((frame%resident_sprite->n_frames)+resident_sprite->n_frames)%
+              resident_sprite->n_frames;
+      int page_index=resident_sprite->frame[sub];
+      if(page_index>=0 && page_index<r->n_tpag){
+        GmlTpag *page=&r->tpag[page_index];
+        if(page->tx==0 && page->ty==0 &&
+           page->sw==resident_sprite->w && page->sh==resident_sprite->h &&
+           page->bw==page->sw && page->bh==page->sh){
+          double mapped_x=dx,mapped_y=dy,mapped_w=dw,mapped_h=dh;
+          gml_render_draw_map_point(r,&mapped_x,&mapped_y);
+          gml_render_draw_map_scale(r,&mapped_w,&mapped_h);
+          if(mapped_w>0.0 && mapped_h>0.0 &&
+             gml_render_resident_atlas_page(r,page_index,
+               mapped_x-r->cam_x,mapped_y-r->cam_y,
+               mapped_w/resident_sprite->w,mapped_h/resident_sprite->h)) return;
+        }
+      }
+    }
+  }
   if(!gml_render_resident_application_cpu_barrier(r)) return;
   gml_render_draw_map_point(r,&dx,&dy);
   gml_render_draw_map_scale(r,&dw,&dh);
@@ -529,6 +555,21 @@ void gml_draw_layer_background_sprite(GmlRender *r, int sprite, int subimg, doub
   if(!r || sprite<0 || sprite>=r->n_spr || alpha<=0) return;
   GmlSprite *s=&r->spr[sprite]; if(s->n_frames<=0) return;
   double bw=s->w*fabs(xs), bh=s->h*fabs(ys); if(bw<=0 || bh<=0) return;
+  if(r->resident_application_pass && !r->interp && !htiled && !vtiled &&
+     xs>0.0 && ys>0.0 && blend==0xFFFFFFu && alpha==1.0 &&
+     !s->runtime_rgba && s->frame &&
+     !gml_d3_is_active(r)){
+    int sub=((subimg%s->n_frames)+s->n_frames)%s->n_frames;
+    int page_index=s->frame[sub];
+    if(page_index>=0 && page_index<r->n_tpag){
+      GmlTpag *page=&r->tpag[page_index];
+      if(page->tx==0 && page->ty==0 &&
+         page->sw==s->w && page->sh==s->h &&
+         page->bw==page->sw && page->bh==page->sh &&
+         gml_render_resident_atlas_page(r,page_index,
+           round(x-r->cam_x),round(y-r->cam_y),xs,ys)) return;
+    }
+  }
   if(!gml_render_resident_application_cpu_barrier(r)) return;
   /* Snap camera-relative background-layer vertices to the nearest output pixel. */
   double ax=round(x-r->cam_x), ay=round(y-r->cam_y);
