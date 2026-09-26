@@ -206,7 +206,6 @@ void gml_draw_room_backgrounds(GmlRender *r, uint32_t bg_ptr, int want_fg){
     if(bgdef<0||bgdef>=r->n_bg) continue;
     int ti=r->bg[bgdef].tpag; if(ti<0||ti>=r->n_tpag) continue;
     GmlTpag *t=&r->tpag[ti]; int bw=t->sw, bh=t->sh; if(bw<=0||bh<=0) continue;
-    if(!gml_render_resident_application_cpu_barrier(r)) return;
     if(render_setting(r,"GML_LOG_BG"))
       anygm_host_logf(r && r->win ? r->win->host : NULL,ANYGM_LOG_DEBUG,"[bg-room] layer=%u def=%d tpag=%d src=%d,%d %dx%d dst=%d,%d base=%dx%d atlas=%d pos=(%d,%d) tiled=(%d,%d) fg=%d\n",
         i,bgdef,ti,t->sx,t->sy,t->sw,t->sh,t->tx,t->ty,t->bw,t->bh,t->atlas,
@@ -216,6 +215,9 @@ void gml_draw_room_backgrounds(GmlRender *r, uint32_t bg_ptr, int want_fg){
     if(tiley){ y0 = y % bh; if(y0>0) y0-=bh; }
     for(int yy=y0; yy < (tiley? r->fbh : y0+1); yy+=bh){
       for(int xx=x0; xx < (tilex? r->fbw : x0+1); xx+=bw){
+        if(!gml_d3_is_active(r) &&
+           gml_render_resident_atlas_page(r,ti,xx+t->tx,yy+t->ty,1,1)) continue;
+        if(!gml_render_resident_application_cpu_barrier(r)) return;
         gml_render_cpu_blit_background_phase(r,t, xx, yy, 1,1, 0xFFFFFF, 1);
       }
       if(!tilex) {}
@@ -237,12 +239,12 @@ static void do_bg_tiled_ext(GmlRender *r, int bg, double x, double y, double xs,
   double logical_w=(t->bw?t->bw:t->sw)*xs;
   double logical_h=(t->bh?t->bh:t->sh)*ys;
   if(logical_w<=0 || logical_h<=0) return;
-  if(!gml_render_resident_application_cpu_barrier(r)) return;
   if(render_setting(r,"GML_LOG_BG"))
     anygm_host_logf(r && r->win ? r->win->host : NULL,ANYGM_LOG_DEBUG,"[bg-tiled] def=%d tpag=%d src=%d,%d %dx%d dst=%d,%d base=%dx%d atlas=%d pos=(%.3f,%.3f) scale=(%.3f,%.3f) tiled=(%d,%d) alpha=%.3f\n",
       bg,ti,t->sx,t->sy,t->sw,t->sh,t->tx,t->ty,t->bw,t->bh,t->atlas,
       x,y,xs,ys,htiled,vtiled,alpha);
   if(r->classic){
+    if(!gml_render_resident_application_cpu_barrier(r)) return;
     /* Keep the anchor where the content put it and let the blit apply its nearest-pixel snapping.
      * Truncating here would make the layer follow a different rule from other draws: a parallax
      * position derived from a view that oscillates by a fraction of a pixel can sit on an integer
@@ -281,14 +283,20 @@ static void do_bg_tiled_ext(GmlRender *r, int bg, double x, double y, double xs,
   if(vtiled){ y0=fmod(anchor_y,logical_h); if(y0>0) y0-=logical_h; yend=r->fbh; }
   else { y0=anchor_y; yend=anchor_y+1; }
   if(gml_d3_is_active(r)){
+    if(!gml_render_resident_application_cpu_barrier(r)) return;
     for(double yy=y0; yy<yend; yy+=logical_h)
       for(double xx=x0; xx<xend; xx+=logical_w)
         gml_d3_draw_background_2d(r,bg,xx+r->cam_x,yy+r->cam_y,xs,ys,color,alpha);
     return;
   }
   for(double yy=y0; yy<yend; yy+=logical_h)
-    for(double xx=x0; xx<xend; xx+=logical_w)
+    for(double xx=x0; xx<xend; xx+=logical_w){
+      if(color==0xFFFFFFu && alpha==1.0 && !r->interp &&
+         gml_render_resident_atlas_page(r,ti,xx+t->tx*xs,yy+t->ty*ys,xs,ys))
+        continue;
+      if(!gml_render_resident_application_cpu_barrier(r)) return;
       gml_render_cpu_blit_background_phase(r,t,xx+t->tx*xs,yy+t->ty*ys,xs,ys,color,alpha);
+    }
 }
 /* Paint a background layer immediately in the order requested by GML. */
 static void bg_emit(GmlRender *r, int bgdef, double x, double y, double xs, double ys,

@@ -10,6 +10,7 @@
 #include "anygm_host.h"
 
 #include <math.h>
+#include <limits.h>
 #include <stddef.h>
 
 int gml_render_sprite_log_enabled(const GmlRender *render){
@@ -123,11 +124,38 @@ int gml_render_resident_atlas_crop(GmlRender *r,int page_index,
   if(!page->scene_binary_alpha) return 0;
   scaled_width=(double)crop_width*xs;
   scaled_height=(double)crop_height*ys;
-  if(!isfinite(left) || !isfinite(top) || left<0.0 || top<0.0 ||
+  if(!isfinite(left) || !isfinite(top) ||
      !isfinite(scaled_width) || !isfinite(scaled_height) ||
-     left+scaled_width>r->fbw || top+scaled_height>r->fbh ||
-     left!=(double)(int)left || top!=(double)(int)top ||
+     floor(left)!=left || floor(top)!=top || xs>INT_MAX || ys>INT_MAX ||
      xs!=(double)(int)xs || ys!=(double)(int)ys) return 0;
+  if(left>=r->fbw || top>=r->fbh) return 0;
+  /* Unit texels clipped at the application edge remain exact nearest samples. Larger
+   * scales can expose part of one texel there and retain the CPU fallback. */
+  if(xs==1.0){
+    if(left<0.0){
+      if(left<=-scaled_width) return 0;
+      int shift=(int)-left;
+      crop_x+=shift;
+      crop_width-=shift;
+      left=0.0;
+    }
+    if(left+crop_width>r->fbw) crop_width=(int)(r->fbw-left);
+    scaled_width=(double)crop_width;
+  }
+  if(ys==1.0){
+    if(top<0.0){
+      if(top<=-scaled_height) return 0;
+      int shift=(int)-top;
+      crop_y+=shift;
+      crop_height-=shift;
+      top=0.0;
+    }
+    if(top+crop_height>r->fbh) crop_height=(int)(r->fbh-top);
+    scaled_height=(double)crop_height;
+  }
+  if(crop_width<=0 || crop_height<=0 || left<0.0 || top<0.0 ||
+     left+scaled_width>r->fbw || top+scaled_height>r->fbh ||
+     !isfinite(scaled_width) || !isfinite(scaled_height)) return 0;
   gml_render_flush_pending_fill(r);
   if(r->pending_fill || !(target=gml_render_application_resource_ensure(r))) return 0;
   image=gml_render_application_scene_next_image_ref(r,target);

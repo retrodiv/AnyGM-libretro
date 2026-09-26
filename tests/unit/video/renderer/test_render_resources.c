@@ -1053,6 +1053,57 @@ static int resident_background_and_tile_cpu_barriers(void){
           render->app_surface_owned[3]==0xFF000000u);
     render->win=NULL;
   }
+  CHECK(gml_render_begin_resident_owned_application(render,0.0,0.0,0));
+  gml_render_set_pending_fill(render,0xFF000000u);
+  gml_draw_background_tiled_ext(render,0,-1,0,1,1,0xFFFFFFu,1.0,1,0);
+  CHECK(render->resident_application_pass && fake.readbacks==0);
+  CHECK(gml_render_resident_application_cpu_barrier(render));
+  CHECK(render->app_surface_owned[0]==0xFF10D020u &&
+        render->app_surface_owned[1]==0xFFD02010u &&
+        render->app_surface_owned[2]==0xFF10D020u &&
+        render->app_surface_owned[3]==0xFFD02010u &&
+        render->app_surface_owned[4]==0xFFC0B0A0u &&
+        render->app_surface_owned[8]==0xFF000000u);
+  CHECK(gml_render_begin_resident_owned_application(render,0.0,0.0,0));
+  gml_render_set_pending_fill(render,0xFF000000u);
+  gml_draw_background(render,0,-1,0);
+  CHECK(render->resident_application_pass && fake.readbacks==0);
+  CHECK(gml_render_resident_application_cpu_barrier(render));
+  CHECK(render->app_surface_owned[0]==0xFF10D020u &&
+        render->app_surface_owned[4]==0xFFC0B0A0u &&
+        render->app_surface_owned[1]==0xFF000000u);
+  CHECK(gml_render_begin_resident_owned_application(render,0.0,0.0,0));
+  gml_render_set_pending_fill(render,0xFF000000u);
+  gml_draw_background(render,0,3,3);
+  CHECK(render->resident_application_pass && fake.readbacks==0);
+  CHECK(gml_render_resident_application_cpu_barrier(render));
+  CHECK(render->app_surface_owned[15]==0xFFD02010u &&
+        render->app_surface_owned[14]==0xFF000000u);
+  {
+    GmlWin win={0};
+    uint8_t data[64]={0};
+    data[4]=1;               /* one room background */
+    data[8]=16;              /* background record address */
+    data[16]=1;              /* enabled */
+    data[16+12]=data[16+13]=data[16+14]=data[16+15]=0xFFu; /* x = -1 */
+    data[16+20]=1;           /* horizontal tiling */
+    win.data=data;
+    win.size=sizeof data;
+    render->win=&win;
+    CHECK(gml_render_begin_resident_owned_application(render,0.0,0.0,0));
+    gml_render_set_pending_fill(render,0xFF000000u);
+    gml_draw_room_backgrounds(render,4,0);
+    CHECK(render->resident_application_pass && fake.readbacks==0);
+    CHECK(gml_render_resident_application_cpu_barrier(render));
+    CHECK(render->app_surface_owned[0]==0xFF10D020u &&
+          render->app_surface_owned[1]==0xFFD02010u &&
+          render->app_surface_owned[2]==0xFF10D020u &&
+          render->app_surface_owned[3]==0xFFD02010u &&
+          render->app_surface_owned[4]==0xFFC0B0A0u &&
+          render->app_surface_owned[5]==0xFF2010D0u &&
+          render->app_surface_owned[8]==0xFF000000u);
+    render->win=NULL;
+  }
   gml_render_free(render);
   free(render);
   return 1;
