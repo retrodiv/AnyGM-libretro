@@ -1005,11 +1005,20 @@ static int resident_background_and_tile_cpu_barriers(void){
   CHECK(render->resident_application_pass && fake.readbacks==0);
   gml_draw_tile(render,0,0,0,2,2,2,2);
   CHECK(render->resident_application_pass && fake.readbacks==0);
+  gml_draw_tile(render,0,0,1,1,1,3,0);
+  CHECK(render->resident_application_pass && fake.readbacks==0);
+  gml_draw_background_tile(render,0,1,0,1,1,3,1,1,1,0,0,0,0xFFFFFFu,1.0);
+  CHECK(render->resident_application_pass && fake.readbacks==0);
+  gml_draw_background_part_ext(render,0,1,0,1,1,0,1,1,1,0xFFFFFFu,1.0);
+  CHECK(render->resident_application_pass && fake.readbacks==0);
   CHECK(gml_render_resident_application_cpu_barrier(render));
   CHECK(!render->resident_application_pass && fake.readbacks==0 &&
         render->app_surface_owned[0]==0xFF000000u &&
         render->app_surface_owned[1]==0xFFD02010u &&
         render->app_surface_owned[2]==0xFF10D020u &&
+        render->app_surface_owned[3]==0xFF2010D0u &&
+        render->app_surface_owned[4]==0xFF10D020u &&
+        render->app_surface_owned[7]==0xFF10D020u &&
         render->app_surface_owned[8]==0xFFD02010u &&
         render->app_surface_owned[11]==0xFF10D020u);
   CHECK(gml_render_begin_resident_owned_application(render,0.0,0.0,0));
@@ -1021,6 +1030,29 @@ static int resident_background_and_tile_cpu_barriers(void){
         render->app_surface_owned[1]==0xFFD02010u &&
         render->app_surface_owned[2]==0xFF10D020u &&
         render->app_surface_owned[15]==0xFFC0B0A0u);
+  {
+    GmlWin win={0};
+    uint8_t data[64]={0};
+    data[4]=1;             /* one room tile */
+    data[8]=16;            /* tile record address */
+    data[16]=2;            /* destination x */
+    data[16+12]=1;         /* source x */
+    data[16+16]=1;         /* source y */
+    data[16+20]=1;         /* source width */
+    data[16+24]=1;         /* source height */
+    win.data=data;
+    win.size=sizeof data;
+    render->win=&win;
+    CHECK(gml_render_begin_resident_owned_application(render,0.0,0.0,0));
+    gml_render_set_pending_fill(render,0xFF000000u);
+    gml_draw_room_tiles(render,4);
+    CHECK(render->resident_application_pass && fake.readbacks==0);
+    CHECK(gml_render_resident_application_cpu_barrier(render));
+    CHECK(render->app_surface_owned[0]==0xFF000000u &&
+          render->app_surface_owned[2]==0xFFC0B0A0u &&
+          render->app_surface_owned[3]==0xFF000000u);
+    render->win=NULL;
+  }
   gml_render_free(render);
   free(render);
   return 1;

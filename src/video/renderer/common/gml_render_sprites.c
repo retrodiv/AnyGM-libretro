@@ -73,7 +73,8 @@ static int resident_integer_sprite(GmlRender *r,GmlSprite *sprite,int subimg,
   return gml_render_resident_atlas_page(r,page_index,left,top,xs,ys);
 }
 
-int gml_render_resident_atlas_page(GmlRender *r,int page_index,
+int gml_render_resident_atlas_crop(GmlRender *r,int page_index,
+                                  int crop_x,int crop_y,int crop_width,int crop_height,
                                   double left,double top,double xs,double ys){
   GmlTpag *page;
   GmlAtlas *atlas;
@@ -100,7 +101,10 @@ int gml_render_resident_atlas_page(GmlRender *r,int page_index,
   page=&r->tpag[page_index];
   if(page->sw<=0 || page->sh<=0 || page->sx<0 || page->sy<0 ||
      page->atlas<0 || page->atlas>=r->n_atlas ||
-     page->tw!=page->sw || page->th!=page->sh) return 0;
+     page->tw!=page->sw || page->th!=page->sh ||
+     crop_x<0 || crop_y<0 || crop_width<=0 || crop_height<=0 ||
+     (uint64_t)(uint32_t)crop_x+(uint32_t)crop_width>(uint32_t)page->sw ||
+     (uint64_t)(uint32_t)crop_y+(uint32_t)crop_height>(uint32_t)page->sh) return 0;
   atlas=&r->atlas[page->atlas];
   if(!gml_render_atlas_scene_source_view(r,page->atlas,&source) ||
      (uint64_t)(uint32_t)page->sx+(uint32_t)page->sw>source.width ||
@@ -117,8 +121,8 @@ int gml_render_resident_atlas_page(GmlRender *r,int page_index,
     page->scene_opaque_checked=1;
   }
   if(!page->scene_binary_alpha) return 0;
-  scaled_width=(double)page->sw*xs;
-  scaled_height=(double)page->sh*ys;
+  scaled_width=(double)crop_width*xs;
+  scaled_height=(double)crop_height*ys;
   if(!isfinite(left) || !isfinite(top) || left<0.0 || top<0.0 ||
      !isfinite(scaled_width) || !isfinite(scaled_height) ||
      left+scaled_width>r->fbw || top+scaled_height>r->fbh ||
@@ -128,7 +132,8 @@ int gml_render_resident_atlas_page(GmlRender *r,int page_index,
   if(r->pending_fill || !(target=gml_render_application_resource_ensure(r))) return 0;
   image=gml_render_application_scene_next_image_ref(r,target);
   if(image.content_version==UINT64_MAX) return 0;
-  region=(GmlRenderRect){page->sx,page->sy,(uint32_t)page->sw,(uint32_t)page->sh};
+  region=(GmlRenderRect){page->sx+crop_x,page->sy+crop_y,
+                         (uint32_t)crop_width,(uint32_t)crop_height};
   source_ref=source.image;
   operation.opcode=GML_RENDER_OP_TEXTURED_QUAD;
   operation.reconstruction_mode=GML_RENDER_REPLAY_EXACT;
@@ -150,10 +155,10 @@ int gml_render_resident_atlas_page(GmlRender *r,int page_index,
   operation.payload.quad.x[1]=operation.payload.quad.x[2]=left+scaled_width;
   operation.payload.quad.y[0]=operation.payload.quad.y[1]=top;
   operation.payload.quad.y[2]=operation.payload.quad.y[3]=top+scaled_height;
-  operation.payload.quad.u[0]=operation.payload.quad.u[3]=(double)page->sx/source.width;
-  operation.payload.quad.u[1]=operation.payload.quad.u[2]=(double)(page->sx+page->sw)/source.width;
-  operation.payload.quad.v[0]=operation.payload.quad.v[1]=(double)page->sy/source.height;
-  operation.payload.quad.v[2]=operation.payload.quad.v[3]=(double)(page->sy+page->sh)/source.height;
+  operation.payload.quad.u[0]=operation.payload.quad.u[3]=(double)region.x/source.width;
+  operation.payload.quad.u[1]=operation.payload.quad.u[2]=(double)(region.x+region.width)/source.width;
+  operation.payload.quad.v[0]=operation.payload.quad.v[1]=(double)region.y/source.height;
+  operation.payload.quad.v[2]=operation.payload.quad.v[3]=(double)(region.y+region.height)/source.height;
   state.write_mask=15u;
   state.colour=0xFFFFFFFFu;
   state.alpha=255u;
@@ -170,6 +175,14 @@ int gml_render_resident_atlas_page(GmlRender *r,int page_index,
   if(!gml_render_application_scene_enqueue(r,&operation,&state,&source)) return 0;
   r->fb_all_transparent=0;
   return 1;
+}
+
+int gml_render_resident_atlas_page(GmlRender *r,int page_index,
+                                  double left,double top,double xs,double ys){
+  if(!r || page_index<0 || page_index>=r->n_tpag) return 0;
+  GmlTpag *page=&r->tpag[page_index];
+  return gml_render_resident_atlas_crop(r,page_index,0,0,page->sw,page->sh,
+                                        left,top,xs,ys);
 }
 
 void gml_draw_sprite(GmlRender *r, int sprite, int subimg, double x, double y){
