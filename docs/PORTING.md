@@ -95,9 +95,12 @@ A host that owns an OpenGL or OpenGL ES 3 context may lend it to the engine with
 `anygm_graphics_context_reset`, supplying an entry-point resolver and a callback that answers with
 the current framebuffer. `content_shader_device_expected` permits unrecognized content GLSL to use
 that context; `hybrid_gpu_presentation` separately permits eligible final scaling and composition.
-Either may be enabled alone, and neither is implied merely by adopting a context. When a frame is
-placed in the current framebuffer, the engine sets `ANYGM_FRAME_HARDWARE_TARGET`; a frame without
-that flag still carries complete CPU pixels, and the two are never both authoritative.
+`scene_renderer` requests eligible ordinary 2D scene operations on that context, with a checked CPU
+fallback per unsupported operation. All three policies are independent and none is implied merely
+by adopting a context. The scene request is frozen at content preparation; a changed menu value
+requires closing and reopening content. When a frame is placed in the current framebuffer, the
+engine sets `ANYGM_FRAME_HARDWARE_TARGET`; a frame without that flag still carries complete CPU
+pixels, and the two are never both authoritative.
 
 The rules a host has to honour:
 

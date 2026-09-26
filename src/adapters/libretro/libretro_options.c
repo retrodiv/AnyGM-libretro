@@ -126,6 +126,12 @@ static struct retro_core_option_v2_definition g_definitions[]={
     {"Off (but report available)","OFF (but report available)"},{"Off","OFF"},{NULL,NULL}},
    "Off (but report available)"},
 #if ANYGM_HARDWARE_RENDER
+  {"anygm_scene_renderer","Scene renderer",NULL,
+   "CPU is the complete software renderer. OpenGL tries eligible 2D scene work on the graphics "
+   "device and falls back to CPU for unsupported operations or an unavailable context. Requires "
+   "a compatible OpenGL or OpenGL ES frontend driver. Changes take effect after closing and "
+   "reopening the content.",NULL,"video",
+   {{"CPU",NULL},{"OpenGL","OpenGL / OpenGL ES"},{NULL,NULL}},"CPU"},
   {"anygm_hybrid_gpu","Hybrid GPU rendering (Experimental)",NULL,
    "Chooses whether eligible final scaling and composition passes are executed on a graphics "
    "device instead of the processor. None keeps them on the processor. OpenGL can avoid building "
@@ -363,6 +369,10 @@ const char *libretro_options_value(const char *key){ return option_value(key); }
 #if ANYGM_HARDWARE_RENDER
 static int hybrid_gpu_selected(void){
   const char *value=option_value("anygm_hybrid_gpu");
+  return value && !strcmp(value,"OpenGL");
+}
+static int scene_gpu_selected(void){
+  const char *value=option_value("anygm_scene_renderer");
   return value && !strcmp(value,"OpenGL");
 }
 #endif
@@ -627,13 +637,14 @@ void libretro_options_apply(bool all_fields){
    * survive as a setting nothing in the menu explains. */
   config->god_mode=0u;
   config->room_skip_button=0u;
-  /* Both graphics policies are frozen from content preparation through unload. The menu may
+  /* Graphics policies are frozen from content preparation through unload. The menu may
    * retain a newly selected value while a session is running, but it becomes effective only on
    * the next load, when a context can be negotiated without splitting the frame pipeline. */
   if(!g_libretro.loaded && !g_libretro.prepared){
     const char *shader=option_value("anygm_content_shader_readback");
 #if ANYGM_HARDWARE_RENDER
     g_libretro.hybrid_gpu_selected=hybrid_gpu_selected()?true:false;
+    g_libretro.scene_gpu_selected=scene_gpu_selected()?true:false;
     g_libretro.content_glsl_selected=
       shader && (!strcmp(shader,"Performance") || !strcmp(shader,"Exact"));
     config->content_shader_readback=shader && !strcmp(shader,"Performance")
@@ -643,6 +654,7 @@ void libretro_options_apply(bool all_fields){
     config->report_all_shaders_compiled=shader && !strcmp(shader,"Off")?0u:1u;
 #else
     g_libretro.hybrid_gpu_selected=false;
+    g_libretro.scene_gpu_selected=false;
     g_libretro.content_glsl_selected=false;
     config->content_shader_readback=ANYGM_SHADER_READBACK_NEVER;
     config->report_all_shaders_compiled=shader && !strcmp(shader,"Off")?0u:1u;
@@ -651,6 +663,8 @@ void libretro_options_apply(bool all_fields){
      * the first authored event runs. */
     config->content_shader_device_expected=g_libretro.content_glsl_selected?1u:0u;
     config->hybrid_gpu_presentation=g_libretro.hybrid_gpu_selected?1u:0u;
+    config->scene_renderer=g_libretro.scene_gpu_selected?
+      ANYGM_SCENE_RENDERER_OPENGL:ANYGM_SCENE_RENDERER_CPU;
   }
   config->content_overrides=option_on("anygm_content_overrides",1);
   /* The default option resolves from content before any menu is available. */
@@ -696,12 +710,14 @@ void libretro_options_apply(bool all_fields){
       ANYGM_CONFIG_FAST_ALPHA_CULL|ANYGM_CONFIG_START_ROOM|
       ANYGM_CONFIG_PRESENT_LOGICAL_RASTER|ANYGM_CONFIG_ADJUST_CRT_TV|ANYGM_CONFIG_CLEAR_LOCAL_DATA|
       ANYGM_CONFIG_CONTENT_OVERRIDES|ANYGM_CONFIG_CONTENT_SHADER_READBACK|
-      ANYGM_CONFIG_CONTENT_SHADER_DEVICE_EXPECTED|ANYGM_CONFIG_HYBRID_GPU_PRESENTATION;
+      ANYGM_CONFIG_CONTENT_SHADER_DEVICE_EXPECTED|ANYGM_CONFIG_HYBRID_GPU_PRESENTATION|
+      ANYGM_CONFIG_SCENE_RENDERER;
   if(g_libretro.loaded || g_libretro.prepared)
     delta.fields&=~(ANYGM_CONFIG_REPORT_ALL_SHADERS_COMPILED|
                     ANYGM_CONFIG_CONTENT_SHADER_READBACK|
                     ANYGM_CONFIG_CONTENT_SHADER_DEVICE_EXPECTED|
-                    ANYGM_CONFIG_HYBRID_GPU_PRESENTATION);
+                    ANYGM_CONFIG_HYBRID_GPU_PRESENTATION|
+                    ANYGM_CONFIG_SCENE_RENDERER);
   anygm_set_config(g_libretro.engine,&delta);
 }
 

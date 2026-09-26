@@ -209,6 +209,9 @@ struct AnygmEngine {
   uint32_t lifecycle;
   AnygmHostServices host;
   AnygmConfig config;
+  /* Load-time scene choice; a live config update cannot switch executors mid-session. */
+  uint32_t scene_renderer_session;
+  uint32_t scene_graphics_reported;
   AnygmInputFrame input;
   uint32_t frame_flags;
   char last_error[512];

@@ -91,9 +91,20 @@ void engine_graphics_release(AnygmEngine *engine,int context_is_current){
  * this; the counters themselves are increments at pass granularity. */
 void engine_graphics_report(AnygmEngine *engine){
   GmlGpuCounters counters;
-  if(!engine || !engine->gpu) return;
+  if(!engine) return;
   if(!anygm_host_development_setting(&engine->host,"GML_GRAPHICS_DEVICE_STATS")) return;
+  if(!engine->gpu){
+    if(engine->scene_graphics_reported) return;
+    engine_logf(engine,ANYGM_LOG_INFO,
+      "[graphics-scene] requested=%s active=CPU reason=%s offered=0 accepted=0\n",
+      engine->scene_renderer_session==ANYGM_SCENE_RENDERER_OPENGL?"OpenGL":"CPU",
+      engine->scene_renderer_session==ANYGM_SCENE_RENDERER_OPENGL?
+        "context-unavailable":"not-requested");
+    engine->scene_graphics_reported=1u;
+    return;
+  }
   gml_gpu_counters(engine->gpu,&counters);
+  engine->scene_graphics_reported=1u;
   engine_logf(engine,ANYGM_LOG_INFO,
     "[graphics-device] frames=%u accepted=%u replayed=%u transport=%u draws=%u uploads=%u "
     "bytes=%llu resets=%u destroys=%u losses=%u program_failures=%u "
@@ -119,10 +130,15 @@ void engine_graphics_report(AnygmEngine *engine){
     engine->readback_is_pipelined,engine->readback_refused,
     gml_gpu_last_error(engine->gpu)?gml_gpu_last_error(engine->gpu):"");
   engine_logf(engine,ANYGM_LOG_INFO,
-    "[graphics-scene] offered=%llu accepted=%llu refused=%llu partial_prefix=%llu "
+    "[graphics-scene] requested=%s active=%s reason=%s offered=%llu accepted=%llu "
+    "refused=%llu partial_prefix=%llu "
     "texture=%llu primitive=%llu surface=%llu effect=%llu presentation=%llu "
     "shader=%llu software3d=%llu uploads=%llu upload_bytes=%llu "
     "readbacks=%llu readback_bytes=%llu\n",
+    engine->scene_renderer_session==ANYGM_SCENE_RENDERER_OPENGL?"OpenGL":"CPU",
+    counters.scene_batches_accepted?"OpenGL":"CPU",
+    counters.scene_batches_accepted?"accepted":
+      counters.scene_batches_offered?"refused-or-unsupported":"no-eligible-scene",
     (unsigned long long)counters.scene_batches_offered,
     (unsigned long long)counters.scene_batches_accepted,
     (unsigned long long)counters.scene_batches_refused,
@@ -353,9 +369,12 @@ int engine_present_hardware_screen(AnygmEngine *engine,unsigned *width,unsigned 
   GmlPlanRect whole,destination;
   GmlPlanAxis axis_x,axis_y;
   uint32_t image;
+  if(!engine) return 0;
   int hybrid=engine_hybrid_presentation_active(engine);
   int shaders=engine_content_shaders_active(engine);
-  if(!engine || (!hybrid && !shaders)) return 0;
+  int scene=engine->scene_renderer_session==ANYGM_SCENE_RENDERER_OPENGL &&
+            engine_graphics_active(engine);
+  if(!hybrid && !shaders && !scene) return 0;
   int crt_readback=engine->host_crt_active && engine->host_canvas_active;
   if(engine->host_canvas_active && !crt_readback) return 0;
   if(!gml_render_deferred_presentation(&engine->render,&record)) return 0;
@@ -456,9 +475,9 @@ int engine_present_hardware_screen(AnygmEngine *engine,unsigned *width,unsigned 
     if(image==GML_PLAN_NO_IMAGE) return 0;
   }
   if(crt_readback) return 0;
-  /* With only content GLSL enabled, an ineligible or refused program returns to the complete
-   * software presentation. The final-pass acceleration belongs exclusively to Hybrid GPU. */
-  if(!hybrid) return 0;
+  /* A resident scene may present its final image without selecting unrelated hybrid passes.
+   * With only content GLSL enabled, an ineligible program still returns to software. */
+  if(!hybrid && !scene) return 0;
   /* The presentation writes an opaque frame: the top byte is set, not carried. */
   if(!gml_render_plan_add_blit_nearest(plan,image,destination,axis_x,axis_y,0xFFu)) return 0;
   if(!gml_gpu_execute_plan(engine->gpu,plan)) return 0;

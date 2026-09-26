@@ -34,6 +34,7 @@ void retro_get_system_av_info(struct retro_system_av_info *info);
 
 static const char *option_value;
 static const char *shader_option_value;
+static const char *scene_option_value;
 static int content_candidate;
 static int preferred_available;
 static unsigned preferred_context;
@@ -87,6 +88,10 @@ static bool environment_callback(unsigned command,void *data){
       if(!strcmp(variable->key,"anygm_hybrid_gpu")){
         variable->value=option_value;
         return option_value!=NULL;
+      }
+      if(!strcmp(variable->key,"anygm_scene_renderer")){
+        variable->value=scene_option_value;
+        return scene_option_value!=NULL;
       }
       if(!strcmp(variable->key,"anygm_content_shader_readback")){
         variable->value=shader_option_value;
@@ -254,6 +259,7 @@ void anygm_graphics_context_destroy(AnygmEngine *engine,uint32_t context_is_curr
 static void begin(const char *value,int available,unsigned preferred,int desktop,int embedded){
   option_value=value;
   shader_option_value=NULL;
+  scene_option_value=NULL;
   content_candidate=0;
   preferred_available=available;
   preferred_context=preferred;
@@ -512,6 +518,40 @@ static int content_glsl_requests_only_for_candidates(void){
   return 0;
 }
 
+static int scene_renderer_requests_context_independently(void){
+  begin("None",0,0,1,1);
+  scene_option_value="unrecognized";
+  REQUIRE(load(),"unknown scene setting leaves the CPU path available");
+  REQUIRE(declared_count==0 && start_calls==1 &&
+          latest_config.values.scene_renderer==ANYGM_SCENE_RENDERER_CPU,
+          "unknown scene setting requests no graphics context");
+  finish();
+
+  begin("None",0,0,1,1);
+  scene_option_value="OpenGL";
+  REQUIRE(load(),"scene-only content prepares");
+  REQUIRE(declared_count==1 && start_calls==0,
+          "scene option requests a context without hybrid presentation or GLSL");
+  REQUIRE(latest_config.values.scene_renderer==ANYGM_SCENE_RENDERER_OPENGL &&
+          latest_config.values.hybrid_gpu_presentation==0u &&
+          latest_config.values.content_shader_device_expected==0u,
+          "scene intent remains independent of other graphics options");
+  declared.context_reset();
+  REQUIRE(start_calls==1,"scene content starts after context adoption");
+  finish();
+
+  begin("None",0,0,0,0);
+  scene_option_value="OpenGL";
+  REQUIRE(load(),"scene content starts when the frontend refuses hardware rendering");
+  REQUIRE(declared_count>=1 && start_calls==1,
+          "a refused scene context starts the software path");
+  REQUIRE(latest_config.values.scene_renderer==ANYGM_SCENE_RENDERER_OPENGL &&
+          latest_config.values.hybrid_gpu_presentation==0u,
+          "the requested scene policy survives refusal for fallback diagnostics");
+  finish();
+  return 0;
+}
+
 static int unload_releases_without_a_current_context(void){
   begin("OpenGL",0,0,1,1);
   REQUIRE(load(),"content loads");
@@ -542,6 +582,7 @@ int main(void){
   if(failed_adoption_keeps_software()) return EXIT_FAILURE;
   if(sentinel_selects_the_target()) return EXIT_FAILURE;
   if(content_glsl_requests_only_for_candidates()) return EXIT_FAILURE;
+  if(scene_renderer_requests_context_independently()) return EXIT_FAILURE;
   if(unload_releases_without_a_current_context()) return EXIT_FAILURE;
   printf("libretro hardware render contract: ok\n");
   return EXIT_SUCCESS;

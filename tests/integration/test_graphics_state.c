@@ -56,7 +56,7 @@ static AnygmResult graphics_adopt(AnygmEngine *engine,uint32_t api){
   return anygm_graphics_context_reset(engine,&context);
 }
 
-static int session_open(Session *session){
+static int session_open_with_scene(Session *session,uint32_t scene_renderer){
   AnygmContentSource source={0};
   memset(session,0,sizeof *session);
   if(!anygm_synthetic_framebuffer_content_create(&session->fixture)) return 0;
@@ -73,10 +73,15 @@ static int session_open(Session *session){
   AnygmConfigDelta graphics={0};
   graphics.struct_size=sizeof graphics;
   graphics.values.struct_size=sizeof graphics.values;
-  graphics.fields=ANYGM_CONFIG_HYBRID_GPU_PRESENTATION;
+  graphics.fields=ANYGM_CONFIG_HYBRID_GPU_PRESENTATION|ANYGM_CONFIG_SCENE_RENDERER;
   graphics.values.hybrid_gpu_presentation=1u;
+  graphics.values.scene_renderer=scene_renderer;
   if(anygm_set_config(session->engine,&graphics)!=ANYGM_OK) return 0;
   return anygm_load(session->engine,&source,NULL)==ANYGM_OK;
+}
+
+static int session_open(Session *session){
+  return session_open_with_scene(session,ANYGM_SCENE_RENDERER_CPU);
 }
 
 static void session_close(Session *session){
@@ -101,11 +106,6 @@ static int advance(AnygmEngine *engine,int frames,uint32_t *last_flags){
 
 static uint8_t *serialize(AnygmEngine *engine,size_t *size);
 
-static const char *scene_prototype_setting(void *userdata,const char *name){
-  (void)userdata;
-  return name && !strcmp(name,"GML_SCENE_GPU_PROTOTYPE")?"1":NULL;
-}
-
 static int resident_world_selection_case(void){
   Session plain,selected;
   GmlGpuCounters counters={0};
@@ -114,8 +114,14 @@ static int resident_world_selection_case(void){
   int matching;
   anygm_test_graphics_reset();
   REQUIRE(session_open(&plain),"plain world fixture loads");
-  REQUIRE(session_open(&selected),"resident world fixture loads");
-  selected.engine->host.development_setting=scene_prototype_setting;
+  REQUIRE(session_open_with_scene(&selected,ANYGM_SCENE_RENDERER_OPENGL),
+          "resident world fixture loads with the public scene selector");
+  AnygmConfigDelta hybrid_off={0};
+  hybrid_off.struct_size=sizeof hybrid_off;
+  hybrid_off.values.struct_size=sizeof hybrid_off.values;
+  hybrid_off.fields=ANYGM_CONFIG_HYBRID_GPU_PRESENTATION;
+  REQUIRE(anygm_set_config(selected.engine,&hybrid_off)==ANYGM_OK,
+          "scene-only fixture keeps hybrid presentation disabled");
   REQUIRE(graphics_adopt(selected.engine,ANYGM_GRAPHICS_OPENGLES3)==ANYGM_OK,
           "resident world fixture adopts a context");
   REQUIRE(advance(plain.engine,1,NULL) && advance(selected.engine,1,NULL),
@@ -123,6 +129,16 @@ static int resident_world_selection_case(void){
   gml_gpu_counters(selected.engine->gpu,&counters);
   REQUIRE(counters.scene_operations[GML_RENDER_OP_CLEAR]>0u,
           "selected world submits a resident clear");
+  REQUIRE(selected.engine->screen_pass_frames==1u && counters.cpu_upload_frames==0u,
+          "scene-only presentation uses the resident image without a complete-frame upload");
+  AnygmConfigDelta changed={0};
+  changed.struct_size=sizeof changed;
+  changed.values.struct_size=sizeof changed.values;
+  changed.fields=ANYGM_CONFIG_SCENE_RENDERER;
+  changed.values.scene_renderer=ANYGM_SCENE_RENDERER_CPU;
+  REQUIRE(anygm_set_config(selected.engine,&changed)==ANYGM_OK &&
+          selected.engine->scene_renderer_session==ANYGM_SCENE_RENDERER_OPENGL,
+          "a live menu change cannot switch the scene executor mid-session");
   plain_state=serialize(plain.engine,&plain_size);
   selected_state=serialize(selected.engine,&selected_size);
   matching=plain_state && selected_state && plain_size==selected_size &&

@@ -23,10 +23,12 @@ static const char *answered_monitor_value;
 static const char *answered_aspect_value;
 static const char *answered_page_value;
 static const char *answered_hybrid_gpu_value;
+static const char *answered_scene_gpu_value;
 static const char *answered_game_shaders_value;
 static bool (*menu_time_visibility)(void);
 static const struct retro_core_option_v2_category *declared_categories;
 static const struct retro_core_option_v2_definition *declared_definitions;
+static const struct retro_core_option_definition *declared_v1_definitions;
 static const struct retro_variable *declared_variables;
 static unsigned host_options_version=2;
 static unsigned grouped_publish_count;
@@ -71,6 +73,9 @@ static bool environment_callback(unsigned command,void *data){
     case RETRO_ENVIRONMENT_SET_VARIABLES:
       declared_variables=(const struct retro_variable*)data;
       return true;
+    case RETRO_ENVIRONMENT_SET_CORE_OPTIONS:
+      declared_v1_definitions=(const struct retro_core_option_definition*)data;
+      return true;
     case RETRO_ENVIRONMENT_SET_CORE_OPTIONS_UPDATE_DISPLAY_CALLBACK:{
       const struct retro_core_options_update_display_callback *c=data;
       menu_time_visibility=c?c->callback:NULL;
@@ -100,6 +105,9 @@ static bool environment_callback(unsigned command,void *data){
       if(variable->key && !strcmp(variable->key,"anygm_hybrid_gpu") &&
          answered_hybrid_gpu_value)
         value=answered_hybrid_gpu_value;
+      if(variable->key && !strcmp(variable->key,"anygm_scene_renderer") &&
+         answered_scene_gpu_value)
+        value=answered_scene_gpu_value;
       if(variable->key && !strcmp(variable->key,"anygm_content_shader_readback") &&
          answered_game_shaders_value)
         value=answered_game_shaders_value;
@@ -186,6 +194,7 @@ static void begin(unsigned version,uint32_t rooms){
   stub_room_count=rooms;
   declared_categories=NULL;
   declared_definitions=NULL;
+  declared_v1_definitions=NULL;
   declared_variables=NULL;
   visibility_count=0;
   answered_value=NULL;
@@ -195,6 +204,7 @@ static void begin(unsigned version,uint32_t rooms){
   answered_aspect_value=NULL;
   answered_page_value=NULL;
   answered_hybrid_gpu_value=NULL;
+  answered_scene_gpu_value=NULL;
   answered_game_shaders_value=NULL;
   menu_time_visibility=NULL;
   grouped_publish_count=0;
@@ -204,6 +214,7 @@ static void begin(unsigned version,uint32_t rooms){
   g_libretro.prepared=false;
   g_libretro.loaded=false;
   g_libretro.hybrid_gpu_selected=false;
+  g_libretro.scene_gpu_selected=false;
   g_libretro.content_glsl_selected=false;
   g_libretro.content_glsl_candidate=false;
   g_libretro.environment=environment_callback;
@@ -300,7 +311,12 @@ static void graphics_settings_are_independent(void){
     complain("the former unsupported-shader setting is still exposed");
 #if ANYGM_HARDWARE_RENDER
   const struct retro_core_option_v2_definition *hybrid=definition("anygm_hybrid_gpu");
+  const struct retro_core_option_v2_definition *scene=definition("anygm_scene_renderer");
   if(!hybrid){ complain("a hardware build offers no hybrid GPU setting"); return; }
+  if(!scene || strcmp(scene->category_key,"video") || value_count(scene)!=2 ||
+     strcmp(scene->values[0].value,"CPU") || strcmp(scene->values[1].value,"OpenGL") ||
+     strcmp(scene->default_value,"CPU") || !strstr(scene->info,"closing and reopening"))
+    complain("the scene setting does not expose CPU and OpenGL in Video");
   if(strcmp(shaders->desc,"Game shaders (GLSL)") || strcmp(shaders->category_key,"video") ||
      value_count(shaders)!=4 || strcmp(shaders->values[0].value,"Performance") ||
      strcmp(shaders->values[1].value,"Exact") ||
@@ -322,6 +338,7 @@ static void graphics_settings_are_independent(void){
     complain("the hybrid GPU help does not stay within final presentation");
 #else
   if(definition("anygm_hybrid_gpu")) complain("a software-only build offers a graphics device");
+  if(definition("anygm_scene_renderer")) complain("a software-only build offers scene GPU");
   if(value_count(shaders)!=2 ||
      strcmp(shaders->values[0].value,"Off (but report available)") ||
      strcmp(shaders->values[1].value,"Off") ||
@@ -341,7 +358,8 @@ static void graphics_settings_are_independent(void){
      !strstr(shaders->info,"candidate program"))
     complain("the hardware GLSL help does not explain its execution policies");
 #endif
-  if(shown("anygm_content_shader_readback")!=-1 || shown("anygm_hybrid_gpu")!=-1)
+  if(shown("anygm_content_shader_readback")!=-1 || shown("anygm_hybrid_gpu")!=-1 ||
+     shown("anygm_scene_renderer")!=-1)
     complain("an independent graphics setting was conditionally hidden");
 
   /* Unset means the conservative report-available software policy. */
@@ -351,35 +369,51 @@ static void graphics_settings_are_independent(void){
   expect("default GLSL report",applied_config.values.report_all_shaders_compiled,1u);
   expect("default GLSL device",applied_config.values.content_shader_device_expected,0u);
   expect("default hybrid GPU",applied_config.values.hybrid_gpu_presentation,0u);
+  expect("default scene CPU",applied_config.values.scene_renderer,ANYGM_SCENE_RENDERER_CPU);
+
+#if ANYGM_HARDWARE_RENDER
+  answered_scene_gpu_value="unrecognized";
+  libretro_options_apply(false);
+  expect("unknown scene option is CPU",applied_config.values.scene_renderer,
+         ANYGM_SCENE_RENDERER_CPU);
+  answered_scene_gpu_value=NULL;
+#endif
 
 #if !ANYGM_HARDWARE_RENDER
   answered_game_shaders_value="Performance";
   answered_hybrid_gpu_value="OpenGL";
+  answered_scene_gpu_value="OpenGL";
   libretro_options_apply(false);
   expect("software-only stale GLSL execution",applied_config.values.content_shader_readback,
          ANYGM_SHADER_READBACK_NEVER);
   expect("software-only stale GLSL report",applied_config.values.report_all_shaders_compiled,1u);
   expect("software-only GLSL device",applied_config.values.content_shader_device_expected,0u);
   expect("software-only hybrid GPU",applied_config.values.hybrid_gpu_presentation,0u);
+  expect("software-only scene CPU",applied_config.values.scene_renderer,ANYGM_SCENE_RENDERER_CPU);
   answered_game_shaders_value="Off";
   libretro_options_apply(true);
   expect("software-only strict Off report",applied_config.values.report_all_shaders_compiled,0u);
   return;
 #else
   answered_hybrid_gpu_value="None";
+  answered_scene_gpu_value="OpenGL";
   answered_game_shaders_value="Exact";
   libretro_options_apply(true);
   expect("independent exact GLSL",applied_config.values.content_shader_readback,
          ANYGM_SHADER_READBACK_ALWAYS);
   expect("exact GLSL intent",applied_config.values.content_shader_device_expected,1u);
   expect("exact without hybrid",applied_config.values.hybrid_gpu_presentation,0u);
+  expect("scene independent of hybrid",applied_config.values.scene_renderer,
+         ANYGM_SCENE_RENDERER_OPENGL);
 
   answered_game_shaders_value="Performance";
   answered_hybrid_gpu_value="OpenGL";
+  answered_scene_gpu_value="CPU";
   libretro_options_apply(false);
   expect("independent performance GLSL",applied_config.values.content_shader_readback,
          ANYGM_SHADER_READBACK_BUDGETED);
   expect("performance with hybrid",applied_config.values.hybrid_gpu_presentation,1u);
+  expect("hybrid without scene",applied_config.values.scene_renderer,ANYGM_SCENE_RENDERER_CPU);
 
   answered_game_shaders_value="Off (but report available)";
   answered_hybrid_gpu_value="None";
@@ -391,6 +425,7 @@ static void graphics_settings_are_independent(void){
 
   answered_game_shaders_value="Off";
   answered_hybrid_gpu_value="OpenGL";
+  answered_scene_gpu_value="OpenGL";
   libretro_options_apply(false);
   expect("strict Off answer",applied_config.values.report_all_shaders_compiled,0u);
   expect("strict Off with hybrid",applied_config.values.hybrid_gpu_presentation,1u);
@@ -399,11 +434,13 @@ static void graphics_settings_are_independent(void){
   g_libretro.prepared=true;
   answered_game_shaders_value="Exact";
   answered_hybrid_gpu_value="None";
+  answered_scene_gpu_value="CPU";
   libretro_options_apply(true);
   if(applied_config.fields&(ANYGM_CONFIG_REPORT_ALL_SHADERS_COMPILED|
                             ANYGM_CONFIG_CONTENT_SHADER_READBACK|
                             ANYGM_CONFIG_CONTENT_SHADER_DEVICE_EXPECTED|
-                            ANYGM_CONFIG_HYBRID_GPU_PRESENTATION))
+                            ANYGM_CONFIG_HYBRID_GPU_PRESENTATION|
+                            ANYGM_CONFIG_SCENE_RENDERER))
     complain("a prepared session accepted a graphics option change");
   g_libretro.prepared=false;
 
@@ -723,6 +760,27 @@ static void older_hosts_get_every_room_at_once(void){
   const char *culling=flat_text("anygm_alpha_cull");
   if(!culling || !strstr(culling,"; High|"))
     complain("the flat declaration does not lead with the shipped amount");
+#if ANYGM_HARDWARE_RENDER
+  const char *scene=flat_text("anygm_scene_renderer");
+  if(!scene || !strstr(scene,"; CPU|OpenGL"))
+    complain("the flat declaration lost the CPU-default scene selector");
+#endif
+}
+
+static void v1_host_gets_scene_selector(void){
+  begin(1,3);
+#if ANYGM_HARDWARE_RENDER
+  const struct retro_core_option_definition *scene=declared_v1_definitions;
+  while(scene && scene->key && strcmp(scene->key,"anygm_scene_renderer")) scene++;
+  if(!scene || !scene->key || strcmp(scene->default_value,"CPU") ||
+     strcmp(scene->values[0].value,"CPU") || strcmp(scene->values[1].value,"OpenGL"))
+    complain("the v1 declaration lost the CPU-default scene selector");
+#else
+  for(const struct retro_core_option_definition *option=declared_v1_definitions;
+      option && option->key;option++)
+    if(!strcmp(option->key,"anygm_scene_renderer"))
+      complain("the CPU-only v1 declaration offers scene GPU");
+#endif
 }
 
 /* Tearing the core down releases what the declaration holds. Starting it again has to leave the
@@ -773,6 +831,7 @@ int main(void){
   every_setting_sits_in_a_group();
   frontend_category_order_survives_republication();
   graphics_settings_are_independent();
+  v1_host_gets_scene_selector();
   unset_settings_keep_content_reachable();
   monitor_dimensions_reach_the_virtual_monitor_fields();
   monitor_dimensions_follow_the_window_raster();

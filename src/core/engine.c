@@ -1469,11 +1469,11 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
       engine->vm.frame,direct_owned_world,multiview_rendered,view_surface,frame_view_count,
       render_presentation.application_owned);
   int owned_world_began=0;
-  /* Internal prototype selection: all unqualified operations still take the checked CPU
-   * barrier. The public scene option waits for a resident presentation path. */
+  /* Unsupported operations still take the checked CPU barrier. */
   if(direct_owned_world && !engine->composed_frame && !engine->aspect_force_active &&
      engine_graphics_active(engine) &&
-     anygm_host_development_setting(&engine->host,"GML_SCENE_GPU_PROTOTYPE"))
+     (engine->scene_renderer_session==ANYGM_SCENE_RENDERER_OPENGL ||
+      anygm_host_development_setting(&engine->host,"GML_SCENE_GPU_PROTOTYPE")))
     owned_world_began=gml_render_begin_resident_owned_application(
       &engine->render,cam_x,cam_y,0);
   if(direct_owned_world &&
@@ -1931,7 +1931,8 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
     gml_render_target_metrics_update(
       &engine->render,&screen_target,GML_RENDER_TARGET_CAMERA);
   gml_render_gui_end(&engine->render);
-  if(!anygm_host_development_setting(&engine->host,"GML_SCENE_GPU_PROTOTYPE") ||
+  if((engine->scene_renderer_session!=ANYGM_SCENE_RENDERER_OPENGL &&
+      !anygm_host_development_setting(&engine->host,"GML_SCENE_GPU_PROTOTYPE")) ||
      !gml_render_defer_resident_underlay(&engine->render))
     gml_render_flush_pending_underlay(&engine->render);
   gml_render_flush_pending_fill(&engine->render);
@@ -2281,6 +2282,8 @@ AnygmResult anygm_load_prepare(AnygmEngine *engine,const AnygmContentSource *sou
     engine_errorf(engine,ANYGM_ERROR_OUT_OF_MEMORY,"Could not allocate the primary frame buffers");
     return ANYGM_ERROR_OUT_OF_MEMORY;
   }
+  engine->scene_renderer_session=engine->config.scene_renderer;
+  engine->scene_graphics_reported=0u;
   AnygmLoadConfig resolved_config={0};
   char host_language[16]={0},host_region[16]={0},host_tag[32]={0};
   const AnygmLoadConfig *load_config=config;
@@ -2418,10 +2421,13 @@ AnygmResult anygm_run_frame(AnygmEngine *engine,const AnygmInputFrame *input,
    * content code runs before anything would flush it. Forget it here, ahead of all of that. */
   gml_render_discard_deferred_presentation(&engine->render);
   engine->frame_authority=ENGINE_FRAME_CPU_MATERIALIZED;
-  /* Hybrid presentation and content GLSL may each need the terminal draw, independently. */
+  /* Hybrid presentation, content GLSL and the scene executor may independently need a terminal
+   * draw; no policy silently selects another. */
   gml_render_set_deferred_presentation(
     &engine->render,
-    engine_hybrid_presentation_active(engine)||engine_content_shaders_active(engine));
+    engine_hybrid_presentation_active(engine)||engine_content_shaders_active(engine)||
+    (engine->scene_renderer_session==ANYGM_SCENE_RENDERER_OPENGL &&
+     engine_graphics_active(engine)));
   /* A content program in the middle of a frame runs only when that separate policy is active. */
   gml_render_set_shader_executor(&engine->render,
                                  engine_content_shaders_active(engine)
@@ -2553,6 +2559,9 @@ AnygmResult anygm_set_config(AnygmEngine *engine,const AnygmConfigDelta *delta){
     engine->config.content_shader_device_expected=delta->values.content_shader_device_expected?1u:0u;
   if(f&ANYGM_CONFIG_HYBRID_GPU_PRESENTATION)
     engine->config.hybrid_gpu_presentation=delta->values.hybrid_gpu_presentation?1u:0u;
+  if(f&ANYGM_CONFIG_SCENE_RENDERER)
+    engine->config.scene_renderer=delta->values.scene_renderer==ANYGM_SCENE_RENDERER_OPENGL?
+      ANYGM_SCENE_RENDERER_OPENGL:ANYGM_SCENE_RENDERER_CPU;
   if(f&ANYGM_CONFIG_GAMEPAD_CONNECTED) engine->config.gamepad_connected=delta->values.gamepad_connected;
   if(f&ANYGM_CONFIG_FAST_ALPHA_CULL) engine->config.fast_alpha_cull=delta->values.fast_alpha_cull;
   if(f&ANYGM_CONFIG_FAST_FORWARD) engine->config.fast_forward=delta->values.fast_forward;

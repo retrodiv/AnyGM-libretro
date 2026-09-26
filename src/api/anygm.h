@@ -15,7 +15,7 @@ extern "C" {
  * runtime library version, and every publishable metadata file declares the literal "Git" instead
  * of a number, so no copy can promise a value that has gone stale. CONTRIBUTING.md owns the single
  * increment step. */
-#define ANYGM_VERSION "0.1.105"
+#define ANYGM_VERSION "0.1.106"
 #define ANYGM_API_VERSION 4u
 #define ANYGM_HOST_SERVICES_VERSION 1u
 #define ANYGM_STATE_SCHEMA 34u
@@ -398,7 +398,16 @@ typedef struct AnygmConfig {
    * This is independent of content_shader_device_expected: either policy may use a context alone,
    * and both share it when enabled together. */
   uint32_t hybrid_gpu_presentation;
+  /* Requested executor for ordinary scene drawing. CPU is the default; OpenGL uses the same
+   * engine and falls back operation by operation. This request is frozen when content is prepared
+   * and is not part of game state. A missing graphics context still runs the CPU executor. */
+  uint32_t scene_renderer;
 } AnygmConfig;
+
+enum {
+  ANYGM_SCENE_RENDERER_CPU=0,
+  ANYGM_SCENE_RENDERER_OPENGL=1
+};
 
 /* Zero is the default a host that never sets the field gets, so it is the measured one rather than
  * the one that turns the feature off. */
@@ -432,7 +441,8 @@ enum {
   ANYGM_CONFIG_CONTENT_SHADER_READBACK=1ull<<20,
   ANYGM_CONFIG_CONTENT_SHADER_DEVICE_EXPECTED=1ull<<21,
   ANYGM_CONFIG_HYBRID_GPU_PRESENTATION=1ull<<22,
-  ANYGM_CONFIG_ADJUST_CRT_TV=1ull<<23
+  ANYGM_CONFIG_ADJUST_CRT_TV=1ull<<23,
+  ANYGM_CONFIG_SCENE_RENDERER=1ull<<24
 };
 
 typedef struct AnygmInputFrame {
