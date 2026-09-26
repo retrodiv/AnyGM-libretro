@@ -1805,6 +1805,67 @@ static void check_named_palette_sampler(void) {
   gml_render_free(&render);
 }
 
+static void check_opaque_stretched_underlay(void) {
+  uint8_t rgba[2 * 2 * 4] = {
+    16, 32, 48, 255, 64, 80, 96, 255,
+    112, 128, 144, 255, 160, 176, 192, 255
+  };
+  uint32_t application[4 * 4], deferred[4 * 4], eager[4 * 4];
+  GmlSprite sprite = {0};
+  GmlTpag page = {0};
+  GmlAtlas atlas = {0};
+  int frame = 0;
+  sprite.w = sprite.h = 2;
+  sprite.n_frames = 1;
+  sprite.frame = &frame;
+  page.sw = page.sh = page.bw = page.bh = 2;
+  page.atlas = 0;
+  atlas.w = atlas.h = 2;
+  atlas.px = rgba;
+  atlas.decode_attempted = 1;
+  for (int index = 0; index < 16; index++)
+    application[index] = 0xff102030u + (uint32_t)index * 0x00030507u;
+  for (int variant = 0; variant < 4; variant++) {
+    GmlRender candidate = {0}, reference = {0};
+    const double draw_alpha = variant == 3 ? 0.5 : 1.0;
+    rgba[3] = variant == 1 ? 128 : 255;
+    page.sw = variant == 2 ? 1 : 2;
+    page.tx = variant == 2 ? 1 : 0;
+    for (int index = 0; index < 16; index++)
+      deferred[index] = eager[index] = 0xff807060u;
+    candidate.spr = reference.spr = &sprite;
+    candidate.n_spr = reference.n_spr = 1;
+    candidate.tpag = reference.tpag = &page;
+    candidate.n_tpag = reference.n_tpag = 1;
+    candidate.atlas = reference.atlas = &atlas;
+    candidate.n_atlas = reference.n_atlas = 1;
+    candidate.app_surface = reference.app_surface = application;
+    candidate.app_w = reference.app_w = 4;
+    candidate.app_h = reference.app_h = 4;
+    candidate.fb = candidate.base_fb = deferred;
+    reference.fb = reference.base_fb = eager;
+    candidate.fbw = candidate.fbh = candidate.base_fbw = candidate.base_fbh = 4;
+    reference.fbw = reference.fbh = reference.base_fbw = reference.base_fbh = 4;
+    candidate.target_id = reference.target_id = -1;
+    candidate.interp = reference.interp = 1;
+    candidate.alphablend = reference.alphablend = 1;
+    candidate.color_write_mask = reference.color_write_mask = 0x0f;
+    candidate.active_shader = reference.active_shader = -1;
+    gml_render_set_pending_underlay(&candidate, 0, 0, 4, 4);
+    gml_render_set_pending_underlay(&reference, 0, 0, 4, 4);
+    gml_render_flush_pending_underlay(&reference);
+    gml_draw_sprite_stretched(&candidate, 0, 0, -2.0, -2.0, 8.0, 8.0,
+                              0xffffffu, draw_alpha);
+    gml_draw_sprite_stretched(&reference, 0, 0, -2.0, -2.0, 8.0, 8.0,
+                              0xffffffu, draw_alpha);
+    expect(!memcmp(deferred, eager, sizeof deferred),
+           variant == 1 ? "partial-alpha stretched draw lost the underlay" :
+           variant == 2 ? "cropped stretched draw lost the underlay" :
+           variant == 3 ? "translucent stretched draw lost the underlay" :
+                          "opaque stretched draw changed after underlay elision");
+  }
+}
+
 int main(void) {
   static const struct {
     const char *name;
@@ -1825,6 +1886,7 @@ int main(void) {
   uint64_t tint = run_tint();
   check_shader_recognition();
   check_named_palette_sampler();
+  check_opaque_stretched_underlay();
   check_channel_mask_pixels();
   check_zero_reference_alpha_test_pixels();
   check_solid_alpha_mask_pixels();

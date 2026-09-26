@@ -6034,6 +6034,25 @@ void gml_render_cpu_blit_sprite_stretched_resolved(GmlRender *r, GmlSprite *s, i
   int sw = s->w>0? s->w : t->sw, sh = s->h>0? s->h : t->sh;
   int x0=(int)floor(dx), y0=(int)floor(dy), W=(int)lround(dw), H=(int)lround(dh);
   if(sw<=0||sh<=0||W<=0||H<=0) return;
+  /* An ordinary opaque stretched draw can replace a pending automatic underlay when every
+   * destination pixel is covered. Keep the established blit unchanged; only discard the earlier
+   * copy that this draw would overwrite. A cropped source, shader, alpha test, partial write mask
+   * or nine-slice may leave underlay pixels visible, so none qualifies. */
+  if(r->pending_underlay && !r->classic && !s->ns_enabled && r->active_shader<0 &&
+     !r->alpha_test_enable && r->color_write_mask==0x0Fu && alpha==1.0 &&
+     t->tx==0 && t->ty==0 && t->sw==sw && t->sh==sh &&
+     a->w>=sw && a->h>=sh &&
+     t->sx>=0 && t->sy>=0 && t->sx<=a->w-sw && t->sy<=a->h-sh &&
+     x0<=0 && y0<=0 && (int64_t)x0+W>=r->fbw && (int64_t)y0+H>=r->fbh){
+    int opaque=1;
+    for(int row=0;row<sh && opaque;row++)
+      for(int column=0;column<sw;column++)
+        if(a->px[((size_t)(t->sy+row)*a->w+t->sx+column)*4u+3u]!=255u){
+          opaque=0;
+          break;
+        }
+    if(opaque) gml_render_prepare_opaque_rect(r,x0,y0,x0+W,y0+H);
+  }
   /* nine-slice applies to stretched draws too (same fixed-border layout) */
   if(s->ns_enabled && (W!=sw || H!=sh) && W>s->ns_l+s->ns_r && H>s->ns_t+s->ns_b){
     gml_render_sprite_nineslice(r,s,t,dx,dy,W,H,blend,alpha);
