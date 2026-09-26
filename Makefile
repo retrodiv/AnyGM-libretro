@@ -208,7 +208,8 @@ INTEGRATION_TESTS := $(TEST_DIR)/test_engine_instances $(TEST_DIR)/test_mouse_in
 	$(TEST_DIR)/test_engine_content_patch \
 	$(TEST_DIR)/test_engine_payload_names \
 	$(TEST_DIR)/test_engine_scoped_overrides \
-	$(TEST_DIR)/test_engine_composed_raster
+	$(TEST_DIR)/test_engine_composed_raster \
+	$(TEST_DIR)/test_gpu_scene_route
 ifneq ($(HARDWARE_RENDER),0)
 INTEGRATION_TESTS += $(TEST_DIR)/test_graphics_state
 endif
@@ -730,6 +731,7 @@ $(TEST_DIR)/public_header_cpp.o: tests/contract/public_header_cpp.cpp src/api/an
 
 integration-check: $(INTEGRATION_TESTS)
 	$(TEST_DIR)/test_engine_instances
+	$(TEST_DIR)/test_gpu_scene_route
 	$(TEST_DIR)/test_mouse_input
 	$(TEST_DIR)/test_font_state
 	$(TEST_DIR)/test_engine_content_config
@@ -877,6 +879,11 @@ $(TEST_DIR)/test_engine_payload_names: tests/integration/test_engine_payload_nam
 	$(call link_runtime_test,$(TEST_CPPFLAGS))
 
 $(TEST_DIR)/test_engine_composed_raster: tests/integration/test_engine_composed_raster.c \
+	tests/support/synthetic_content.c $(RUNTIME_OBJECTS) $(TEST_HOST_OBJECTS)
+	mkdir -p $(dir $@)
+	$(call link_runtime_test,$(TEST_CPPFLAGS))
+
+$(TEST_DIR)/test_gpu_scene_route: tests/integration/test_gpu_scene_route.c \
 	tests/support/synthetic_content.c $(RUNTIME_OBJECTS) $(TEST_HOST_OBJECTS)
 	mkdir -p $(dir $@)
 	$(call link_runtime_test,$(TEST_CPPFLAGS))

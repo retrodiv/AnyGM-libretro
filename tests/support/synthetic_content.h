@@ -29,6 +29,8 @@ int anygm_synthetic_bridged_key_content_create(AnygmSyntheticContent *fixture);
  * the following Begin Steps that observe the key held. */
 int anygm_synthetic_bridged_hold_content_create(AnygmSyntheticContent *fixture);
 int anygm_synthetic_draw_content_create(AnygmSyntheticContent *fixture);
+/* Two neutral sprite rooms: a held right key moves the visible object, then enters a second room. */
+int anygm_synthetic_gpu_scene_route_content_create(AnygmSyntheticContent *fixture);
 int anygm_synthetic_shifted_port_content_create(AnygmSyntheticContent *fixture);
 int anygm_synthetic_window_gui_content_create(AnygmSyntheticContent *fixture);
 int anygm_synthetic_window_gui_size_content_create(AnygmSyntheticContent *fixture);

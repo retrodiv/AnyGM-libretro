@@ -173,7 +173,8 @@ void gml_gpu_opengl_scene_forget(GmlGpuBackend *backend);
 void gml_gpu_opengl_scene_destroy(GmlGpuBackend *backend,int context_is_current);
 void gml_gpu_opengl_scene_reset(GmlGpuBackend *backend,const GmlGpuContext *context);
 int gml_gpu_opengl_scene_capabilities(const GmlGpuBackend *backend,GmlRenderDeviceCaps *caps);
-int gml_gpu_opengl_scene_upload(GmlGpuBackend *backend,const GmlRenderImageUpload *transfer);
+int gml_gpu_opengl_scene_upload(GmlGpuBackend *backend,const GmlRenderImageUpload *transfer,
+                                int *did_upload);
 int gml_gpu_opengl_scene_readback(GmlGpuBackend *backend,const GmlRenderImageReadback *transfer);
 void gml_gpu_opengl_scene_retire(GmlGpuBackend *backend,GmlRenderImageRef image);
 int gml_gpu_opengl_scene_flush(GmlGpuBackend *backend);

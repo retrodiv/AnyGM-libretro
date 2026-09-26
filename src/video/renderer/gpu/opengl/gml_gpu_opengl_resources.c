@@ -270,12 +270,14 @@ static int scene_scratch_ready(GlScene *scene,size_t bytes){
   return 1;
 }
 
-int gml_gpu_opengl_scene_upload(GmlGpuBackend *backend,const GmlRenderImageUpload *transfer){
+int gml_gpu_opengl_scene_upload(GmlGpuBackend *backend,const GmlRenderImageUpload *transfer,
+                                int *did_upload){
   GlScene *scene;
   GlSceneImage *slot;
   size_t row_bytes,bytes;
   const uint8_t *source;
   int first,resize,rendered_origin;
+  if(did_upload) *did_upload=0;
   if(!backend || !transfer || !transfer->bytes || !backend->loaded) return 0;
   scene=&backend->scene;
   if(!scene->available || !scene_extent_valid(scene,transfer->storage_width,transfer->storage_height) ||
@@ -296,6 +298,21 @@ int gml_gpu_opengl_scene_upload(GmlGpuBackend *backend,const GmlRenderImageUploa
                   transfer->image.resource_class==GML_RENDER_RESOURCE_APPLICATION ||
                   transfer->image.resource_class==GML_RENDER_RESOURCE_SURFACE ||
                   transfer->image.resource_class==GML_RENDER_RESOURCE_SCRATCH;
+  /* Only authored atlas incarnations are global across renderers. Mutable surface incarnations
+   * are renderer-local, so an apparent same-version hit on a shared device can alias another
+   * renderer's pixels. Keep a current immutable atlas across frames, but never infer residency
+   * for a mutable source from its image reference alone. */
+  if(transfer->image.resource_class==GML_RENDER_RESOURCE_ATLAS &&
+     slot->texture && slot->valid && scene_same_version(slot->ref,transfer->image) &&
+     slot->width==transfer->storage_width && slot->height==transfer->storage_height &&
+     slot->pixel_format==transfer->pixel_format &&
+     slot->rendered_origin==rendered_origin &&
+     transfer->region.x==0 && transfer->region.y==0 &&
+     transfer->region.width==transfer->storage_width &&
+     transfer->region.height==transfer->storage_height){
+    slot->last_used=++scene->use_clock;
+    return 1;
+  }
   if(slot->texture && slot->rendered_origin!=rendered_origin &&
      (transfer->region.x || transfer->region.y ||
       transfer->region.width!=transfer->storage_width ||
@@ -356,6 +373,7 @@ int gml_gpu_opengl_scene_upload(GmlGpuBackend *backend,const GmlRenderImageUploa
   slot->valid=1;
   slot->rendered_origin=rendered_origin;
   slot->last_used=++scene->use_clock;
+  if(did_upload) *did_upload=1;
   return 1;
 }
 

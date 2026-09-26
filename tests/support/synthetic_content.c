@@ -999,6 +999,99 @@ int anygm_synthetic_bridged_hold_content_create(AnygmSyntheticContent *fixture){
   return 1;
 }
 
+int anygm_synthetic_gpu_scene_route_content_create(AnygmSyntheticContent *fixture){
+  if(!fixture) return 0;
+  memset(fixture,0,sizeof *fixture);
+  if(!create_fixture_directory(fixture->directory,sizeof fixture->directory)) return 0;
+  snprintf(fixture->path,sizeof fixture->path,"%s/data.win",fixture->directory);
+
+  uint8_t pixels[8u*8u*4u];
+  for(int y=0;y<8;y++) for(int x=0;x<8;x++){
+    size_t offset=((size_t)y*8u+(size_t)x)*4u;
+    pixels[offset]=(uint8_t)(32+x*23);
+    pixels[offset+1u]=(uint8_t)(48+y*20);
+    pixels[offset+2u]=(uint8_t)((x+y)&1?224:96);
+    pixels[offset+3u]=255u;
+  }
+  AnygmHostServices services={0};
+  services.struct_size=sizeof services;
+  services.abi_version=ANYGM_HOST_SERVICES_VERSION;
+  anygm_stdio_vfs_services_init(&services);
+  GmlcProject project={0};
+  GmlcSprite sprite={0};
+  GmlcObject objects[2]={{0}};
+  GmlcObjectEvent events[2]={{0}};
+  GmlcRoom rooms[2]={{0}};
+  GmlcRoomInstance instances[2]={{0}};
+  int room_order[2]={0,1};
+  char *frame=NULL,*moving_step=NULL,*second_step=NULL;
+  project.host=&services;
+  project.name=(char *)"neutral-resident-scene-route";
+  project.sprites=&sprite; project.n_sprites=project.cap_sprites=1;
+  project.objects=objects; project.n_objects=project.cap_objects=2;
+  project.rooms=rooms; project.n_rooms=project.cap_rooms=2;
+  project.room_order=room_order; project.n_room_order=2;
+  frame=gmlc_project_add_memory_file(&project,"sprite",GMLC_MEMORY_RGBA,
+                                     pixels,sizeof pixels,8,8);
+  moving_step=gmlc_project_add_memory_file(&project,"moving-step",GMLC_MEMORY_TEXT,
+    "if (keyboard_check(vk_right)) x += 1;\n"
+    "if (x >= 42) room_goto_next();\n",
+    sizeof("if (keyboard_check(vk_right)) x += 1;\n"
+           "if (x >= 42) room_goto_next();\n")-1u,0,0);
+  second_step=gmlc_project_add_memory_file(&project,"second-step",GMLC_MEMORY_TEXT,
+    "if (keyboard_check(vk_right)) x += 1;\n",
+    sizeof("if (keyboard_check(vk_right)) x += 1;\n")-1u,0,0);
+  if(frame && moving_step && second_step){
+    sprite.id=sprite.name=(char *)"sprite_fixture";
+    sprite.runtime_id=0;
+    sprite.width=sprite.height=8;
+    sprite.bbox_right=sprite.bbox_bottom=7;
+    sprite.n_frames=1;
+    sprite.frame_paths=&frame;
+    for(int index=0;index<2;index++){
+      objects[index].id=objects[index].name=index?(char *)"object_second":(char *)"object_first";
+      objects[index].sprite_id=0;
+      objects[index].mask_id=objects[index].parent_id=-1;
+      objects[index].visible=1;
+      objects[index].events=&events[index];
+      objects[index].n_events=objects[index].cap_events=1;
+      events[index].event_type=3;
+      events[index].event_number=0;
+      events[index].source_path=index?second_step:moving_step;
+      rooms[index].id=rooms[index].name=index?(char *)"room_second":(char *)"room_first";
+      rooms[index].width=128; rooms[index].height=96; rooms[index].speed=60;
+      rooms[index].draw_background_color=1;
+      rooms[index].background_color=index?0x00403020u:0x00102030u;
+      rooms[index].view_enabled=1;
+      rooms[index].n_views=1;
+      rooms[index].views[0].visible=1;
+      rooms[index].views[0].wview=rooms[index].views[0].wport=128;
+      rooms[index].views[0].hview=rooms[index].views[0].hport=96;
+      rooms[index].views[0].hspeed=rooms[index].views[0].vspeed=-1;
+      rooms[index].views[0].object_id=-1;
+      rooms[index].instances=&instances[index];
+      rooms[index].n_instances=rooms[index].cap_instances=1;
+      instances[index].id=instances[index].name=
+        index?(char *)"instance_second":(char *)"instance_first";
+      instances[index].object_id=index;
+      instances[index].instance_id=100000+index;
+      instances[index].x=index?64:16;
+      instances[index].y=index?56:24;
+      instances[index].sx=instances[index].sy=1.0f;
+      instances[index].color=0xFFFFFFFFu;
+    }
+  }
+  char error[256]={0};
+  int ok=frame && moving_step && second_step &&
+    gmlc_package_write_structural(&project,fixture->path,error,sizeof error);
+  if(!ok) fprintf(stderr,"neutral scene route package failed: %s\n",error);
+  for(int index=0;index<project.n_memory_files;index++) free(project.memory_files[index].data);
+  free(project.memory_files);
+  free(frame); free(moving_step); free(second_step);
+  if(!ok) anygm_synthetic_content_destroy(fixture);
+  return ok;
+}
+
 int anygm_synthetic_draw_content_create(AnygmSyntheticContent *fixture){
   if(!fixture) return 0;
   memset(fixture,0,sizeof *fixture);

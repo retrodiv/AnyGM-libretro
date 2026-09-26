@@ -94,11 +94,14 @@ static GmlRenderExecutionResult scene_submit(void *context,const GmlRenderDrawBa
 
 static int scene_upload(void *context,const GmlRenderImageUpload *transfer){
   GmlGpu *gpu=(GmlGpu*)context;
+  int did_upload=0;
   if(!gpu || !gpu->context_active ||
-     !gml_gpu_opengl_scene_upload(gpu->backend,transfer)) return 0;
-  gpu->counters.scene_uploads++;
-  gpu->counters.scene_uploaded_bytes+=(uint64_t)transfer->region.width*
-                                      transfer->region.height*4u;
+     !gml_gpu_opengl_scene_upload(gpu->backend,transfer,&did_upload)) return 0;
+  if(did_upload){
+    gpu->counters.scene_uploads++;
+    gpu->counters.scene_uploaded_bytes+=(uint64_t)transfer->region.width*
+                                        transfer->region.height*4u;
+  }
   return 1;
 }
 
