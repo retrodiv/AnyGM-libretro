@@ -59,8 +59,12 @@ static int qualified_blend(const GmlRenderDrawStateSnapshot *state){
      !state->rgb_equation && !state->alpha_equation) return 0;
   if(state->rgb_source_factor==GML_RENDER_BLEND_SOURCE_ALPHA &&
      state->rgb_destination_factor==GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA &&
-     state->alpha_source_factor==GML_RENDER_BLEND_ONE &&
      state->alpha_destination_factor==GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA){
+    /* First-generation application surfaces retain source coverage squared in alpha. */
+    if(state->alpha_source_factor==GML_RENDER_BLEND_SOURCE_ALPHA &&
+       state->rgb_equation==GML_RENDER_BLEND_ADD &&
+       state->alpha_equation==GML_RENDER_BLEND_ADD) return 3;
+    if(state->alpha_source_factor!=GML_RENDER_BLEND_ONE) return -1;
     if(state->rgb_equation==GML_RENDER_BLEND_ADD &&
        state->alpha_equation==GML_RENDER_BLEND_ADD) return 1;
     if(state->rgb_equation==GML_RENDER_BLEND_EXACT8_TRUNC &&
@@ -276,7 +280,8 @@ static int flush_quads(GmlGpuBackend *backend,GlSceneImage *target,GlSceneImage 
   backend->gl.TexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAG_FILTER,(GLint)texture_filter);
   if(blend){
     backend->gl.BlendFuncSeparate(GL_SRC_ALPHA,GL_ONE_MINUS_SRC_ALPHA,
-                                  GL_ONE,GL_ONE_MINUS_SRC_ALPHA);
+                                  blend==3?GL_SRC_ALPHA:GL_ONE,
+                                  GL_ONE_MINUS_SRC_ALPHA);
     backend->gl.BlendEquationSeparate(GL_FUNC_ADD,GL_FUNC_ADD);
     backend->gl.Enable(GL_BLEND);
   } else backend->gl.Disable(GL_BLEND);

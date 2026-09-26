@@ -227,9 +227,10 @@ int gml_render_resident_atlas_page(GmlRender *r,int page_index,
 }
 
 /* Match the first-generation filtered CPU blit's snapped coverage while retaining its fractional
- * texture phase. Opaque, untrimmed atlas pages need no destination-dependent blend arithmetic. */
+ * texture phase. Untrimmed pages with source alpha use ordinary source-over composition. */
 int gml_render_resident_filtered_atlas_page(GmlRender *r,int page_index,
-                                           double left,double top,double xs,double ys){
+                                           double left,double top,double xs,double ys,
+                                           GmlRenderSceneFamily family){
   GmlTpag *page;
   GmlAtlas *atlas;
   GmlRenderResourceSource source={0};
@@ -272,7 +273,7 @@ int gml_render_resident_filtered_atlas_page(GmlRender *r,int page_index,
       }
     page->scene_opaque_checked=1;
   }
-  if(!page->scene_fully_opaque) return 0;
+  if(!page->scene_fully_opaque && family!=GML_RENDER_SCENE_SPRITE) return 0;
   x0=floor(left+0.5); y0=floor(top+0.5);
   width=fabs(xs-nearbyint(xs))>1e-9
     ?floor(left+(double)page->sw*xs+0.5)-x0
@@ -291,7 +292,7 @@ int gml_render_resident_filtered_atlas_page(GmlRender *r,int page_index,
   source_ref=source.image;
   operation.opcode=GML_RENDER_OP_TEXTURED_QUAD;
   operation.reconstruction_mode=GML_RENDER_DEVICE_CHECKPOINT;
-  operation.scene_family=GML_RENDER_SCENE_BACKGROUND;
+  operation.scene_family=family;
   operation.source_count=1u;
   operation.sources=&source_ref;
   operation.target.image=image;
@@ -321,11 +322,40 @@ int gml_render_resident_filtered_atlas_page(GmlRender *r,int page_index,
   state.write_mask=15u;
   state.colour=0xFFFFFFFFu;
   state.alpha=255u;
+  if(!page->scene_fully_opaque){
+    state.rgb_source_factor=GML_RENDER_BLEND_SOURCE_ALPHA;
+    state.rgb_destination_factor=GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA;
+    state.alpha_source_factor=GML_RENDER_BLEND_SOURCE_ALPHA;
+    state.alpha_destination_factor=GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA;
+    state.rgb_equation=GML_RENDER_BLEND_ADD;
+    state.alpha_equation=GML_RENDER_BLEND_ADD;
+  }
   state.sampler_count=1u;
   state.samplers[0]=operation.payload.quad.sampling;
   if(!gml_render_application_scene_enqueue(r,&operation,&state,&source)) return 0;
   r->fb_all_transparent=0;
   return 1;
+}
+
+static int resident_filtered_sprite(GmlRender *r,GmlSprite *sprite,int subimg,
+                                    double x,double y,double xs,double ys,double rotation,
+                                    uint32_t blend,double alpha){
+  GmlTpag *page;
+  int sub,page_index;
+  if(!r || !sprite || sprite->runtime_rgba || sprite->spine || sprite->ns_enabled ||
+     sprite->n_frames<=0 || sprite->w<=0 || sprite->h<=0 ||
+     gml_d3_is_active(r) || rotation!=0.0 || blend!=0xFFFFFFu || alpha!=1.0 ||
+     !isfinite(xs) || !isfinite(ys) || xs<=0.0 || ys<=0.0 || !r->interp ||
+     !sprite->frame) return 0;
+  sub=gml_render_runtime_frame_index(sprite,subimg);
+  page_index=sprite->frame[sub];
+  if(page_index<0 || page_index>=r->n_tpag) return 0;
+  page=&r->tpag[page_index];
+  if(page->tx || page->ty || page->sw!=sprite->w || page->sh!=sprite->h ||
+     page->bw!=sprite->w || page->bh!=sprite->h) return 0;
+  return gml_render_resident_filtered_atlas_page(
+      r,page_index,x-(double)sprite->originx*xs-r->cam_x,
+      y-(double)sprite->originy*ys-r->cam_y,xs,ys,GML_RENDER_SCENE_SPRITE);
 }
 
 void gml_draw_sprite(GmlRender *r, int sprite, int subimg, double x, double y){
@@ -340,6 +370,8 @@ void gml_render_sprite_ext_unmasked(GmlRender *r, int sprite, int subimg, double
   if(r && r->resident_application_pass){
     if(sprite>=0 && sprite<r->n_spr &&
        resident_integer_sprite(r,&r->spr[sprite],subimg,x,y,xs,ys,rot,blend,alpha)) return;
+    if(sprite>=0 && sprite<r->n_spr &&
+       resident_filtered_sprite(r,&r->spr[sprite],subimg,x,y,xs,ys,rot,blend,alpha)) return;
     if(!gml_render_resident_application_cpu_barrier(r)) return;
   }
   if(r && sprite>=0 && sprite<r->n_spr &&

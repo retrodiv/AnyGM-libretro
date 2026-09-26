@@ -20,13 +20,18 @@ A narrow ordinary sprite path accepts unit-scale, integer-aligned authored trim 
 has only alpha 0 or 255; other texture-stage filters are irrelevant to this unprogrammed base-image
 draw, and a binary-alpha crop uses endpoint source-over. Its CPU journal replay rejects any
 intermediate-alpha source. These variants are replayable from retained source pixels after context
-loss. A terminal automatic application-surface underlay may also use the exact current resident
+loss. A separate first-generation filtered path accepts untrimmed, positive-scale, untinted
+ordinary sprites with partial alpha. It preserves snapped destination coverage and fractional
+texture phase, uses source-over RGB with the application's source-alpha-squared coverage rule,
+and checkpoints the device result rather than claiming exact CPU replay. CPU text resolves a
+preceding resident sprite before writing glyph pixels; this ordering barrier does not accelerate
+text. A terminal automatic application-surface underlay may also use the exact current resident
 image: the existing plan's integer nearest axes select the pixels, while the GL executor reads the
 scene texture directly without a CPU upload. This requires an opaque, owned application surface,
 no intervening GUI draw, and the guarded prototype setting. A failed or lost device reconstructs
-the source from the resource journal before the existing CPU presentation writes it. Bilinear
-subrectangles, scaled or rotated ordinary sprites, general background/tile dispatch, and GUI
-draws over the underlay remain unqualified and use the CPU fallback. This narrow terminal path
+the source from the resource journal before the existing CPU presentation writes it. Trimmed
+filtered sprites, arbitrary rotation, and GUI draws over the underlay remain unqualified and use
+the CPU fallback. This narrow terminal path
 does not establish a no-full-frame-transfer route for general gameplay.
 
 The narrow ordinary-sprite route now copies consecutive compatible textured-quad

@@ -4,6 +4,7 @@
 /* Shared text layout, drawing, and classic-font glyph emission. */
 #include "gml_render_internal.h"
 #include "gml_render_text_internal.h"
+#include "gml_render_surfaces_internal.h"
 #include "gml_render_cpu_text.h"
 
 #include "anygm_compatibility.h"
@@ -303,6 +304,9 @@ static void draw_text_transformed_font(GmlRender *r, GmlFont *f,
   if(!f||!str) return;
   if(alpha>1) alpha=1; else if(alpha<0) alpha=0;
   if(xs==0||ys==0||alpha<=0) return;
+  /* Glyphs still use the CPU raster. Resolve any earlier resident sprite before those pixels
+   * are written, so a later scene checkpoint cannot overwrite the text. */
+  if(r->resident_application_pass && !gml_render_resident_application_cpu_barrier(r)) return;
   double rr=fmod(rot,360.0); if(rr<0) rr+=360.0;
   double ca,sa; render_rotation_sincos(rr,&ca,&sa);
   int use_rot = fabs(rr)>0.001 && fabs(rr-360.0)>0.001;
