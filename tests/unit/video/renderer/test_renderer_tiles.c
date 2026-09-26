@@ -1201,6 +1201,62 @@ static void check_first_generation_filtered_minification(void){
   free(page.argb_cache);
 }
 
+/* A horizontally repeated, filtered subpage keeps the logical cell period and clamps every
+ * sample to that subpage, even when a fractional vertical anchor rounds just above the view.
+ * Compare the public tiler with the same existing CPU blit at its resolved cell positions. */
+static void check_filtered_fractional_tiled_background_reference(void){
+  enum { ATLAS=6,PAGE=4,WIDTH=9,HEIGHT=4 };
+  uint8_t rgba[ATLAS*ATLAS*4];
+  uint32_t tiled[WIDTH*HEIGHT]={0},separate[WIDTH*HEIGHT]={0};
+  GmlWin content={0};
+  GmlRender render={0};
+  GmlAtlas atlas={0};
+  GmlTpag page={0};
+  GmlBg background={0};
+  int coloured=0;
+  for(int y=0;y<ATLAS;y++) for(int x=0;x<ATLAS;x++){
+    size_t offset=((size_t)y*ATLAS+x)*4u;
+    rgba[offset]=255u; rgba[offset+1]=0u; rgba[offset+2]=255u; rgba[offset+3]=255u;
+    if(x>0 && x<ATLAS-1 && y>0 && y<ATLAS-1){
+      rgba[offset]=(uint8_t)(16+x*13+y*3);
+      rgba[offset+1]=(uint8_t)(24+x*5+y*11);
+      rgba[offset+2]=(uint8_t)(32+x*7+y*9);
+    }
+  }
+  content.bytecode=14;
+  atlas.px=rgba; atlas.w=atlas.h=ATLAS;
+  page.atlas=0; page.sx=page.sy=1;
+  page.sw=page.sh=page.bw=page.bh=PAGE;
+  background.tpag=0;
+  render.win=&content;
+  render.fb=render.base_fb=tiled;
+  render.fbw=render.base_fbw=WIDTH;
+  render.fbh=render.base_fbh=HEIGHT;
+  render.atlas=&atlas; render.n_atlas=1;
+  render.tpag=&page; render.n_tpag=1;
+  render.bg=&background; render.n_bg=1;
+  render.alpha=1.0; render.alphablend=1; render.interp=1;
+  render.color_write_mask=0x0fu; render.active_shader=-1; render.target_id=-1;
+  gml_draw_background_tiled_ext(&render,0,0.0,-0.11,0.75,0.75,0xffffffu,1.0,1,0);
+  render.fb=render.base_fb=separate;
+  for(int x=0;x<WIDTH;x+=3)
+    gml_draw_background_ext(&render,0,(double)x,-1.0,0.75,0.75,0xffffffu,1.0);
+  for(int i=0;i<WIDTH*HEIGHT;i++){
+    if(tiled[i]!=separate[i]){
+      fprintf(stderr,"renderer tiles: filtered repeat pixel %d was %08x, expected %08x\n",
+              i,tiled[i],separate[i]);
+      failures++;
+    }
+    if(tiled[i] & 0x00ffffffu){
+      coloured++;
+      expect(((tiled[i]>>16)&255u)<128u && (tiled[i]&255u)<128u,
+             "filtered repeat sampled the magenta atlas neighbor");
+    }
+  }
+  expect(coloured>0,"filtered fractional repeat drew no visible pixels");
+  gml_render_texture_page_cache_clear(&render,&page);
+}
+
 static void fill_cache_test_target(uint32_t *pixels,int width,int height,unsigned seed){
   for(int y=0;y<height;y++) for(int x=0;x<width;x++){
     unsigned red=(unsigned)(x*13+y*3+seed*17)&255u;
@@ -1535,6 +1591,7 @@ int main(void){
   check_first_generation_automatic_presentation_ignores_retained_alpha();
   check_first_generation_complete_black_mask_reaches_presentation();
   check_first_generation_filtered_minification();
+  check_filtered_fractional_tiled_background_reference();
   check_repeated_filtered_draw_cache();
   check_modern_opaque_scaled_partial_alpha();
   if(failures){
