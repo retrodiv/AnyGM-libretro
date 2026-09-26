@@ -387,6 +387,13 @@ void gml_render_sprite_ext_unmasked(GmlRender *r, int sprite, int subimg, double
   gml_render_draw_map_point(r,&x,&y);
   gml_render_draw_map_scale(r,&xs,&ys);
   if(r && r->resident_application_pass){
+    /* The ordinary CPU path returns before touching pixels for zero alpha. Keep already queued
+     * device work resident; specialised spine, shader, 3D and GUI paths retain their old order. */
+    if(alpha==0.0 && sprite>=0 && sprite<r->n_spr &&
+       !r->classic && !r->gui_pass_active && r->active_shader<0 &&
+       !r->spr[sprite].spine && !r->spr[sprite].ns_enabled &&
+       !gml_d3_is_active(r) && r->fb==r->app_surface_owned)
+      return;
     if(sprite>=0 && sprite<r->n_spr &&
        resident_integer_sprite(r,&r->spr[sprite],subimg,x,y,xs,ys,rot,blend,alpha)) return;
     if(sprite>=0 && sprite<r->n_spr &&
