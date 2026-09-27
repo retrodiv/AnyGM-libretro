@@ -1265,9 +1265,9 @@ void gml_draw_sprite_general(GmlRender *r, int sprite, int subimg,
                                              corner_colour[0],alpha);
 }
 
-/* A complete, untrimmed nearest atlas cell can repeat without changing the CPU tile phase.
- * Require an integral view covering complete cells so each submitted quad stays in bounds;
- * clipped, trimmed, filtered and very dense repetitions retain the original CPU loop. */
+/* A complete, untrimmed nearest atlas cell can repeat with the CPU tile phase.
+ * Unit-scale cells clipped by the application edge select the same physical texels;
+ * trimmed, filtered and very dense repetitions retain the original CPU loop. */
 int gml_render_resident_tiled_sprite(GmlRender *r,int sprite,int subimg,
                                      double x,double y,double xs,double ys,
                                      uint32_t blend,double alpha){
@@ -1282,8 +1282,7 @@ int gml_render_resident_tiled_sprite(GmlRender *r,int sprite,int subimg,
      floor(r->cam_x)!=r->cam_x || floor(r->cam_y)!=r->cam_y) return 0;
   GmlSprite *s=&r->spr[sprite];
   if(s->runtime_rgba || s->n_frames<=0 || !s->frame || s->w<=0 || s->h<=0 ||
-     r->fbw<=0 || r->fbh<=0 || r->fbw%s->w || r->fbh%s->h ||
-     (uint64_t)(uint32_t)(r->fbw/s->w)*(uint32_t)(r->fbh/s->h)>256u) return 0;
+     r->fbw<=0 || r->fbh<=0) return 0;
   int sub=((subimg%s->n_frames)+s->n_frames)%s->n_frames;
   int page_index=s->frame[sub];
   if(page_index<0 || page_index>=r->n_tpag) return 0;
@@ -1291,10 +1290,18 @@ int gml_render_resident_tiled_sprite(GmlRender *r,int sprite,int subimg,
   if(page->sw!=s->w || page->sh!=s->h || page->tx || page->ty ||
      page->bw!=s->w || page->bh!=s->h) return 0;
   double ax=floor(x-r->cam_x), ay=floor(y-r->cam_y);
-  if(!isfinite(ax) || !isfinite(ay) ||
-     fmod(ax,(double)s->w)!=0.0 || fmod(ay,(double)s->h)!=0.0) return 0;
-  for(int yy=0;yy<r->fbh;yy+=s->h)
-    for(int xx=0;xx<r->fbw;xx+=s->w)
+  if(!isfinite(ax) || !isfinite(ay)) return 0;
+  double x0=fmod(ax,(double)s->w), y0=fmod(ay,(double)s->h);
+  if(x0>0.0) x0-=s->w;
+  if(y0>0.0) y0-=s->h;
+  int start_x=(int)x0, start_y=(int)y0;
+  uint64_t span_x=(uint64_t)(uint32_t)r->fbw+(uint32_t)(-start_x);
+  uint64_t span_y=(uint64_t)(uint32_t)r->fbh+(uint32_t)(-start_y);
+  uint64_t count_x=(span_x+(uint32_t)s->w-1u)/(uint32_t)s->w;
+  uint64_t count_y=(span_y+(uint32_t)s->h-1u)/(uint32_t)s->h;
+  if(count_x*count_y>256u) return 0;
+  for(double yy=y0;yy<r->fbh;yy+=s->h)
+    for(double xx=x0;xx<r->fbw;xx+=s->w)
       if(!gml_render_resident_atlas_page(r,page_index,xx,yy,1.0,1.0,
                                          GML_RENDER_SCENE_SPRITE)) return 0;
   return 1;
