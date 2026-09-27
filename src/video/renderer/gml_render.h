@@ -633,6 +633,10 @@ void gml_render_layer_filter_end(GmlRender *r, const GmlLayerFilter *filter, dou
 void gml_draw_sprite_part_ext(GmlRender *r, int sprite, int subimg, double sx, double sy,
                               double sw, double sh, double x, double y,
                               double xs, double ys, uint32_t blend, double alpha);
+void gml_draw_sprite_general(GmlRender *r, int sprite, int subimg,
+                             double sx, double sy, double sw, double sh,
+                             double x, double y, double xs, double ys, double rotation,
+                             const uint32_t corner_colour[4], double alpha);
 void gml_draw_background(GmlRender *r, int bg, double x, double y);
 void gml_draw_background_part_ext(GmlRender *r, int bg, double sx, double sy, double sw, double sh,
                                   double x, double y, double xs, double ys, uint32_t color, double alpha);

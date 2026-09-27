@@ -130,7 +130,7 @@
   "void main(){\n" \
   "  if(u_filter==0){ o_color=texture(u_image,v_texcoord)*v_colour; return; }\n" \
   "  vec2 centre=vec2(gl_FragCoord.x,u_extent.y-gl_FragCoord.y);\n" \
-  "  if(u_filter==2 && v_span_active>0.5){\n" \
+  "  if(u_filter>=2 && v_span_active>0.5){\n" \
   "    float mn=1e30,mx=-1e30; int hits=0;\n" \
   "    for(int i=0;i<4;i++){\n" \
   "      int j=(i+1)&3; float a=v_span_y[i],b=v_span_y[j];\n" \

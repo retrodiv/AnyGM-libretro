@@ -5796,6 +5796,196 @@ static void masked_sprite_draw_end(GmlRender *r,GmlMaskedSpriteDraw draw){
   }
 }
 
+void gml_render_cpu_blit_sprite_general_coloured(GmlRender *r, GmlSprite *sprite,
+                                                  int subimg, double sx, double sy,
+                                                  double sw, double sh, double x,
+                                                  double y, double xs, double ys,
+                                                  double rotation,
+                                                  const uint32_t corner_colour[4],
+                                                  double alpha){
+  if(!r || !r->fb || !sprite || !corner_colour || sprite->n_frames<=0 ||
+     !isfinite(sx) || !isfinite(sy) || !isfinite(sw) || !isfinite(sh) ||
+     !isfinite(x) || !isfinite(y) || !isfinite(xs) || !isfinite(ys) ||
+     !isfinite(rotation) || !isfinite(alpha) || alpha<=0.0 ||
+     sw<=0.0 || sh<=0.0 || xs==0.0 || ys==0.0) return;
+  const uint8_t *rgba=NULL;
+  int stride=0,offset_x=0,offset_y=0,source_width=0,source_height=0;
+  double logical_x=0.0,logical_y=0.0;
+  if(sprite->runtime_rgba){
+    rgba=runtime_frame_rgba(sprite,subimg);
+    stride=source_width=sprite->w;
+    source_height=sprite->h;
+  } else if(sprite->frame){
+    int frame=gml_render_runtime_frame_index(sprite,subimg);
+    int page_index=sprite->frame[frame];
+    if(page_index<0 || page_index>=r->n_tpag) return;
+    GmlTpag *page=&r->tpag[page_index];
+    if(page->atlas<0 || page->atlas>=r->n_atlas ||
+       !atlas_pixels(r,page->atlas)) return;
+    GmlAtlas *atlas=&r->atlas[page->atlas];
+    if(!atlas->px || atlas->w<=0 || atlas->h<=0 ||
+       page->sx<0 || page->sy<0 || page->sw<=0 || page->sh<=0 ||
+       (uint64_t)page->sx+(uint64_t)page->sw>(uint64_t)atlas->w ||
+       (uint64_t)page->sy+(uint64_t)page->sh>(uint64_t)atlas->h) return;
+    rgba=atlas->px;
+    stride=atlas->w;
+    offset_x=page->sx;
+    offset_y=page->sy;
+    source_width=page->sw;
+    source_height=page->sh;
+    logical_x=page->tx;
+    logical_y=page->ty;
+  }
+  if(!rgba || stride<=0 || source_width<=0 || source_height<=0) return;
+  double cosine,sine;
+  render_rotation_sincos(rotation,&cosine,&sine);
+  double anchor_x=x-r->cam_x,anchor_y=y-r->cam_y;
+  render_modern_cardinal_anchor(r,rotation,xs,ys,cosine,sine,&anchor_x,&anchor_y);
+  double qx[4],qy[4],min_x=1e30,min_y=1e30,max_x=-1e30,max_y=-1e30;
+  for(int corner=0;corner<4;corner++){
+    double local_x=(corner==1 || corner==2)?sw*xs:0.0;
+    double local_y=corner>=2?sh*ys:0.0;
+    qx[corner]=anchor_x+local_x*cosine+local_y*sine;
+    qy[corner]=anchor_y-local_x*sine+local_y*cosine;
+    if(!isfinite(qx[corner]) || !isfinite(qy[corner])) return;
+    min_x=fmin(min_x,qx[corner]); max_x=fmax(max_x,qx[corner]);
+    min_y=fmin(min_y,qy[corner]); max_y=fmax(max_y,qy[corner]);
+  }
+  if(min_x>=r->fbw || min_y>=r->fbh || max_x<=0.0 || max_y<=0.0) return;
+  int x0=(int)fmax(0.0,floor(min_x));
+  int y0=(int)fmax(0.0,floor(min_y));
+  int x1=(int)fmin((double)r->fbw,ceil(max_x));
+  int y1=(int)fmin((double)r->fbh,ceil(max_y));
+  if(x1<=x0 || y1<=y0) return;
+  static const int vertices[2][3]={{0,1,2},{0,2,3}};
+  static const double uv_x[4]={0.0,1.0,1.0,0.0};
+  static const double uv_y[4]={0.0,0.0,1.0,1.0};
+  double tx[2][3],ty[2][3],tu[2][3],tv[2][3];
+  for(int triangle=0;triangle<2;triangle++) for(int vertex=0;vertex<3;vertex++){
+    int index=vertices[triangle][vertex];
+    tx[triangle][vertex]=qx[index]; ty[triangle][vertex]=qy[index];
+    tu[triangle][vertex]=uv_x[index]; tv[triangle][vertex]=uv_y[index];
+  }
+  int interpolate=r->interp &&
+    (fabs(fmod(rotation,360.0))<0.001 ||
+     (r->win && anygm_policy_has_modern_layer_semantics(r->win)));
+  GmlMaskedSpriteDraw masked=masked_sprite_draw_begin(r);
+  gml_render_maybe_prepare_draw(r);
+  if(r->alphablend) gml_sprite_target_may_change_alpha(r);
+  for(int py=y0;py<y1;py++) for(int px=x0;px<x1;px++){
+    double u=0.0,v=0.0;
+    int hit=0;
+    for(int triangle=0;triangle<2 && !hit;triangle++)
+      hit=sprite_pos_triangle(px+0.5,py+0.5,tx[triangle],ty[triangle],
+                              tu[triangle],tv[triangle],&u,&v);
+    if(!hit) continue;
+    double source_x=sx+u*sw,source_y=sy+v*sh;
+    if(source_x<logical_x || source_y<logical_y ||
+       source_x>=logical_x+source_width ||
+       source_y>=logical_y+source_height) continue;
+    double sample[4];
+    sprite_pos_sample(rgba,stride,offset_x,offset_y,source_width,source_height,
+                      (source_x-logical_x)/source_width,
+                      (source_y-logical_y)/source_height,interpolate,sample);
+    /* The authored rectangle is two triangles, not a bilinear four-corner gradient. */
+    double weight[4];
+    if(u>=v){ weight[0]=1.0-u; weight[1]=u-v; weight[2]=v; weight[3]=0.0; }
+    else { weight[0]=1.0-v; weight[1]=0.0; weight[2]=u; weight[3]=v-u; }
+    for(int channel=0;channel<3;channel++){
+      int shift=channel==0?0:(channel==1?8:16);
+      double tint=0.0;
+      for(int corner=0;corner<4;corner++)
+        tint+=weight[corner]*((corner_colour[corner]>>shift)&255u);
+      unsigned tint_byte=(unsigned)lround(fmax(0.0,fmin(255.0,tint)));
+      unsigned sampled_byte=(unsigned)lround(fmax(0.0,fmin(255.0,sample[channel])));
+      sample[channel]=(double)(sampled_byte*tint_byte/255u);
+    }
+    if(r->alphablend && r->blendmode==0){
+      /* General-sprite vertex colours use the fixed-function interpolation path. Its target
+       * conversion rounds the final source-over channel, unlike the legacy sprite-pos leaf. */
+      double source_alpha=fmin(1.0,sample[3]*alpha/255.0);
+      if(source_alpha>0.0){
+        uint32_t *destination=&r->fb[(size_t)py*r->fbw+px];
+        uint32_t previous=*destination;
+        double inverse=1.0-source_alpha;
+        unsigned red=(unsigned)lround(sample[0]*source_alpha+
+                                      ((previous>>16)&255u)*inverse);
+        unsigned green=(unsigned)lround(sample[1]*source_alpha+
+                                        ((previous>>8)&255u)*inverse);
+        unsigned blue=(unsigned)lround(sample[2]*source_alpha+
+                                       (previous&255u)*inverse);
+        unsigned source_a=(unsigned)lround(sample[3]*alpha);
+        *destination=gml_sprite_target_alpha(r,previous,source_a)|
+                     (red<<16)|(green<<8)|blue;
+      }
+    } else sprite_pos_pixel(r,px,py,sample,alpha);
+  }
+  masked_sprite_draw_end(r,masked);
+}
+
+void gml_render_cpu_blit_sprite_general_rotated(GmlRender *r, GmlSprite *sprite,
+                                                 int subimg, double sx, double sy,
+                                                 double sw, double sh, double x,
+                                                 double y, double xs, double ys,
+                                                 double rotation, uint32_t colour,
+                                                 double alpha){
+  if(!r || !r->fb || !sprite || sprite->n_frames<=0 ||
+     !isfinite(sx+sw) || !isfinite(sy+sh)) return;
+  GmlMaskedSpriteDraw masked={0};
+  double cosine,sine;
+  render_rotation_sincos(rotation,&cosine,&sine);
+  if(sprite->runtime_rgba){
+    int source_x=(int)floor(sx),source_y=(int)floor(sy);
+    int last_x=(int)ceil(fmin(sx+sw,(double)sprite->w));
+    int last_y=(int)ceil(fmin(sy+sh,(double)sprite->h));
+    if(source_x>=0 && source_y>=0 && last_x>source_x && last_y>source_y &&
+       last_x<=sprite->w && last_y<=sprite->h){
+      int width=last_x-source_x,height=last_y-source_y;
+      size_t pixels=(size_t)width*(size_t)height;
+      if(pixels<=16777216u){
+        const uint8_t *source=runtime_frame_rgba(sprite,subimg);
+        uint8_t *selected=source?(uint8_t*)malloc(pixels*4u):NULL;
+        if(selected){
+          for(int row=0;row<height;row++)
+            memcpy(selected+(size_t)row*width*4u,
+                   source+((size_t)(source_y+row)*sprite->w+source_x)*4u,
+                   (size_t)width*4u);
+          double offset_x=(source_x-sx)*xs,offset_y=(source_y-sy)*ys;
+          GmlSprite part=*sprite;
+          part.w=width; part.h=height; part.originx=part.originy=0;
+          masked=masked_sprite_draw_begin(r);
+          blit_rgba_sprite(r,&part,selected,width,height,
+                           x+offset_x*cosine+offset_y*sine,
+                           y-offset_x*sine+offset_y*cosine,
+                           xs,ys,rotation,0,0,colour,alpha,1,NULL,NULL,0);
+          free(selected);
+        }
+      }
+    }
+  } else if(sprite->frame){
+    int sub=gml_render_runtime_frame_index(sprite,subimg);
+    int page_index=sprite->frame[sub];
+    if(page_index>=0 && page_index<r->n_tpag){
+      GmlTpag view;
+      int source_x=0,source_y=0;
+      if(gml_render_tpag_part_view(&r->tpag[page_index],sx,sy,sw,sh,
+                                    &view,&source_x,&source_y,NULL,NULL,NULL,NULL)){
+        double offset_x=(source_x-sx)*xs,offset_y=(source_y-sy)*ys;
+        GmlSprite part=*sprite;
+        part.w=view.bw=view.tw=view.sw;
+        part.h=view.bh=view.th=view.sh;
+        part.originx=part.originy=0;
+        masked=masked_sprite_draw_begin(r);
+        blit_rotated_with_phase(r,&part,&view,
+                                x+offset_x*cosine+offset_y*sine,
+                                y-offset_x*sine+offset_y*cosine,
+                                xs,ys,rotation,colour,alpha);
+      }
+    }
+  }
+  masked_sprite_draw_end(r,masked);
+}
+
 void gml_render_cpu_blit_sprite_ext_resolved(GmlRender *r, GmlSprite *s,
                                              int sprite, int subimg, double x, double y,
                                              double xs, double ys, double rot,

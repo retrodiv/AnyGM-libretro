@@ -759,9 +759,11 @@ GmlVal gml_builtin_try_draw(GmlVM *vm, const char *nm, GmlVal *a, int n){
     if(!strcmp(nm,"draw_sprite_part_ext")){ if(R) gml_draw_sprite_part_ext(R,(int)N(a,n,0),gml_draw_subimg(vm,N(a,n,1)),N(a,n,2),N(a,n,3),N(a,n,4),N(a,n,5),N(a,n,6),N(a,n,7),N(a,n,8),N(a,n,9),NU32(a,n,10),N(a,n,11)); return vreal(0); }
     if(!strcmp(nm,"draw_sprite_general")){
       /* (sprite,subimg,left,top,width,height,x,y,xscale,yscale,rot,c1,c2,c3,c4,alpha).
-       * Per-corner colors are approximated by c1; the part-blit path does not rotate. */
-      if(R) gml_draw_sprite_part_ext(R,(int)N(a,n,0),gml_draw_subimg(vm,N(a,n,1)),N(a,n,2),N(a,n,3),N(a,n,4),N(a,n,5),
-                                     N(a,n,6),N(a,n,7),N(a,n,8),N(a,n,9),NU32(a,n,11),N(a,n,15));
+       * Preserve the existing uniform-colour part path at zero rotation. */
+      if(R){ uint32_t corners[4]={NU32(a,n,11),NU32(a,n,12),NU32(a,n,13),NU32(a,n,14)};
+        gml_draw_sprite_general(R,(int)N(a,n,0),gml_draw_subimg(vm,N(a,n,1)),
+          N(a,n,2),N(a,n,3),N(a,n,4),N(a,n,5),N(a,n,6),N(a,n,7),
+          N(a,n,8),N(a,n,9),N(a,n,10),corners,N(a,n,15)); }
       return vreal(0); }
     if(!strcmp(nm,"draw_background_stretched")){ GmlRenderDrawState draw=builtin_draw_state(R); if(R) gml_draw_background_stretched(R,(int)N(a,n,0),N(a,n,1),N(a,n,2),N(a,n,3),N(a,n,4),0xFFFFFF,draw.alpha); return vreal(0); }
     if(!strcmp(nm,"draw_background_stretched_ext")){ if(R) gml_draw_background_stretched(R,(int)N(a,n,0),N(a,n,1),N(a,n,2),N(a,n,3),N(a,n,4),NU32(a,n,5),N(a,n,6)); return vreal(0); }

@@ -34,6 +34,16 @@ four-tap inverse map, nonzero-alpha crop bounds and conditional per-row quadrila
 requires a proven opaque application target and uses the modern screen target's opaque-alpha
 blend policy; transparent targets still cross the ordered CPU barrier. Both branches retain
 the CPU checkpoint for lost-device reconstruction.
+The public `draw_sprite_general` entry selects its source part independently of the authored
+sprite origin. Uniform-corner rotation uses the existing rotated CPU blitter or the qualified
+resident inverse-map quad. Distinct corner colours use a CPU two-triangle colour interpolation
+path; an ordinary atlas selection wholly inside the visible source rectangle can instead submit
+the same two transformed, vertex-coloured triangles on GPU. The selected-source and colour
+variants preserve ordered CPU fallbacks for runtime sprites, logical-trim overlap, nondefault
+blend and other unqualified states. A first-generation cardinal source edge exactly on a pixel
+centre also falls back: its incremental fixed-point CPU row walk can choose a different texel
+from an independently sampled GPU fragment. These are bounded ordinary-scene qualifications,
+not a claim that arbitrary surface, shader, GUI or skeletal draws are resident.
 CPU text resolves a
 preceding resident sprite before writing glyph pixels; this ordering barrier does not accelerate
 text. A similarly bounded first-generation nearest background path accepts complete untrimmed

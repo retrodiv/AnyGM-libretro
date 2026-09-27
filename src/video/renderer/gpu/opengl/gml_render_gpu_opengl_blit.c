@@ -31,7 +31,12 @@ int gml_render_gpu_opengl_draw_textured_quad(const GmlRenderDrawOp *op,
      (uint64_t)(uint32_t)region.y+region.height>source_height) return 0;
   region_storage_y=rendered_source_origin
     ?source_height-((uint32_t)region.y+region.height):(uint32_t)region.y;
-  if(quad->x[1]<=quad->x[0] || quad->y[2]<=quad->y[0]) return 0;
+  if(!rotated && (quad->x[1]<=quad->x[0] || quad->y[2]<=quad->y[0])) return 0;
+  if(rotated){
+    double area=(quad->x[1]-quad->x[0])*(quad->y[3]-quad->y[0])-
+                (quad->y[1]-quad->y[0])*(quad->x[3]-quad->x[0]);
+    if(!isfinite(area) || fabs(area)<1e-10) return 0;
+  }
   for(uint32_t index=0;index<6;index++){
     uint32_t corner=corners[index];
     uint32_t colour=quad->corner_colour[corner];
@@ -88,7 +93,8 @@ int gml_render_gpu_opengl_draw_textured_quad(const GmlRenderDrawOp *op,
          fabs(quad->inverse_y[coordinate])>16384.0 ||
          fabs(quad->inverse_offset[coordinate])>16384.0) return 0;
     if(quad->span_active){
-      if(quad->sampling.filter!=GML_RENDER_FILTER_BILINEAR) return 0;
+      if(quad->sampling.filter!=GML_RENDER_FILTER_BILINEAR &&
+         quad->sampling.filter!=GML_RENDER_FILTER_NEAREST) return 0;
       for(uint32_t corner=0;corner<4;corner++)
         if(!isfinite(quad->span_x[corner]) || !isfinite(quad->span_y[corner]) ||
            fabs(quad->span_x[corner])>16384.0 ||

@@ -33,6 +33,19 @@ void gml_render_cpu_blit_tpag_part(GmlRender *r, GmlTpag *page,
                                    double sx, double sy, double sw, double sh,
                                    double dx, double dy, double xs, double ys,
                                    uint32_t blend, double alpha);
+void gml_render_cpu_blit_sprite_general_rotated(GmlRender *r, GmlSprite *sprite,
+                                                 int subimg, double sx, double sy,
+                                                 double sw, double sh, double x,
+                                                 double y, double xs, double ys,
+                                                 double rotation, uint32_t colour,
+                                                 double alpha);
+void gml_render_cpu_blit_sprite_general_coloured(GmlRender *r, GmlSprite *sprite,
+                                                  int subimg, double sx, double sy,
+                                                  double sw, double sh, double x,
+                                                  double y, double xs, double ys,
+                                                  double rotation,
+                                                  const uint32_t corner_colour[4],
+                                                  double alpha);
 
 /* One resolved background/tile source emitted into the active CPU target. */
 void gml_render_cpu_blit_background_phase(GmlRender *r, GmlTpag *t, double dx, double dy,
