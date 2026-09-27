@@ -1386,7 +1386,8 @@ void gml_draw_layer_background_sprite(GmlRender *r, int sprite, int subimg, doub
   if(!r || sprite<0 || sprite>=r->n_spr || alpha<=0) return;
   GmlSprite *s=&r->spr[sprite]; if(s->n_frames<=0) return;
   double bw=s->w*fabs(xs), bh=s->h*fabs(ys); if(bw<=0 || bh<=0) return;
-  if(r->resident_application_pass && !r->interp && !htiled && !vtiled &&
+  if(r->resident_application_pass && !r->interp &&
+     ((!htiled && !vtiled) || (xs==1.0 && ys==1.0)) &&
      xs>0.0 && ys>0.0 && blend==0xFFFFFFu && alpha==1.0 &&
      !s->runtime_rgba && s->frame &&
      !gml_d3_is_active(r)){
@@ -1396,10 +1397,38 @@ void gml_draw_layer_background_sprite(GmlRender *r, int sprite, int subimg, doub
       GmlTpag *page=&r->tpag[page_index];
       if(page->tx==0 && page->ty==0 &&
          page->sw==s->w && page->sh==s->h &&
-         page->bw==page->sw && page->bh==page->sh &&
-         gml_render_resident_atlas_page(r,page_index,
-           round(x-r->cam_x),round(y-r->cam_y),xs,ys,
-           GML_RENDER_SCENE_SPRITE)) return;
+         page->bw==page->sw && page->bh==page->sh){
+        if(!htiled && !vtiled){
+          if(gml_render_resident_atlas_page(r,page_index,
+               round(x-r->cam_x),round(y-r->cam_y),xs,ys,
+               GML_RENDER_SCENE_SPRITE)) return;
+        } else {
+          double ax=round(x-r->cam_x), ay=round(y-r->cam_y);
+          double x0=ax, y0=ay;
+          if(htiled){ x0=fmod(ax,bw); if(x0>0.0) x0-=bw; }
+          if(vtiled){ y0=fmod(ay,bh); if(y0>0.0) y0-=bh; }
+          double xend=htiled?r->fbw:x0+bw;
+          double yend=vtiled?r->fbh:y0+bh;
+          if(isfinite(x0) && isfinite(y0) && isfinite(xend) && isfinite(yend) &&
+             xend>x0 && yend>y0){
+            double count_x=htiled?ceil((xend-x0)/bw):1.0;
+            double count_y=vtiled?ceil((yend-y0)/bh):1.0;
+            /* Isolate the bounded run so queue-capacity flush cannot split its cells. */
+            if(count_x<=256.0 && count_y<=256.0 && count_x*count_y<=256.0 &&
+               gml_render_application_scene_flush(r)){
+              int accepted=1;
+              for(double yy=y0;yy<yend && accepted;yy+=bh)
+                for(double xx=x0;xx<xend;xx+=bw)
+                  if(!gml_render_resident_atlas_page(r,page_index,xx,yy,1.0,1.0,
+                                                     GML_RENDER_SCENE_SPRITE)){
+                    accepted=0;
+                    break;
+                  }
+              if(accepted) return;
+            }
+          }
+        }
+      }
     }
   }
   if(!gml_render_resident_application_cpu_barrier(r)) return;
