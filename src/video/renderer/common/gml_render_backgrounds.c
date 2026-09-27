@@ -112,7 +112,7 @@ int gml_render_resident_filtered_atlas_part(GmlRender *r,int page_index,
      page_index<0 || page_index>=r->n_tpag || gml_d3_is_active(r) ||
      !isfinite(sx) || !isfinite(sy) || !isfinite(sw) || !isfinite(sh) ||
      !isfinite(x) || !isfinite(y) || !isfinite(xs) || !isfinite(ys) ||
-     !isfinite(alpha) || sx<0.0 || sy<0.0 || sw<=1.0 || sh<=1.0 ||
+     !isfinite(alpha) || sx<0.0 || sy<0.0 || sw<1.0 || sh<1.0 ||
      sx>INT_MAX || sy>INT_MAX || sw>INT_MAX || sh>INT_MAX ||
      sx!=floor(sx) || sy!=floor(sy) || sw!=floor(sw) || sh!=floor(sh)) return 0;
   page=&r->tpag[page_index];
