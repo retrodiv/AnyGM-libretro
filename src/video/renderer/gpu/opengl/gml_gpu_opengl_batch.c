@@ -231,8 +231,13 @@ static int scene_preflight(GmlGpuBackend *backend,const GmlRenderDrawBatch *batc
          !same_region(state->samplers[0].source_region,sampling->source_region) ||
          !gml_render_gpu_opengl_draw_textured_quad(op,state,source->width,source->height,
                                                    source->rendered_origin,probe)) return 0;
-      for(uint32_t corner=0;corner<4;corner++)
-        if((op->payload.quad.corner_colour[corner]>>24)!=255u) return 0;
+      for(uint32_t corner=0;corner<4;corner++){
+        uint32_t colour=op->payload.quad.corner_colour[corner];
+        if(colour!=0xFFFFFFFFu &&
+           (op->reconstruction_mode!=GML_RENDER_DEVICE_CHECKPOINT ||
+            sampling->filter!=GML_RENDER_FILTER_BILINEAR)) return 0;
+        if((colour>>24)!=255u && blend!=1 && blend!=3) return 0;
+      }
       if(sampling->filter==GML_RENDER_FILTER_NEAREST &&
          !full_region(sampling->source_region,source->width,source->height)){
         double u0=(double)sampling->source_region.x/source->width;

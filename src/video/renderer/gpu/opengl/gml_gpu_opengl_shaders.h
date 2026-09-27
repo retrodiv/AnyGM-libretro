@@ -139,7 +139,11 @@
   "  }\n" \
   "  vec4 weighted=(p00*(1.0-f.x)*(1.0-f.y)+p01*f.x*(1.0-f.y)+\n" \
   "                 p10*(1.0-f.x)*f.y+p11*f.x*f.y);\n" \
-  "  o_color=(floor(weighted+vec4(0.5))/255.0)*v_colour;\n" \
+  "  vec4 sampled=floor(weighted+vec4(0.5));\n" \
+  "  uvec3 tint=uvec3(floor(v_colour.rgb*255.0+vec3(0.5)));\n" \
+  "  uvec3 rgb=uvec3(sampled.rgb)*tint/uvec3(255u);\n" \
+  "  o_color=vec4(vec3(rgb)/255.0,\n" \
+  "               sampled.a*v_colour.a/255.0);\n" \
   "}\n"
 
 /* The eight-bit truncating source-over rule used by a characterised CPU leaf. Sampling the
