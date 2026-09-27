@@ -161,6 +161,10 @@ void gml_draw_background(GmlRender *r, int bg, double x, double y){
   if(r->alpha==1.0 && !r->interp && !gml_d3_is_active(r) &&
      gml_render_resident_atlas_page(r,ti,x-r->cam_x+t->tx,y-r->cam_y+t->ty,1,1,
                                     GML_RENDER_SCENE_BACKGROUND)) return;
+  if(!r->interp && r->alpha!=1.0 && !gml_d3_is_active(r) &&
+     gml_render_resident_filtered_atlas_page(r,ti,x-r->cam_x+t->tx,
+                                              y-r->cam_y+t->ty,1,1,
+                                              GML_RENDER_SCENE_BACKGROUND,0xFFFFFFu,r->alpha,t,1)) return;
   if(r->interp && !gml_d3_is_active(r) &&
      gml_render_resident_filtered_atlas_page(r,ti,x-r->cam_x+t->tx,
                                               y-r->cam_y+t->ty,1,1,
@@ -275,6 +279,12 @@ void gml_draw_background_ext(GmlRender *r, int bg, double x, double y, double xs
      gml_render_resident_atlas_page(r,ti,x-r->cam_x+t->tx*xs,
                                       y-r->cam_y+t->ty*ys,xs,ys,
                                       GML_RENDER_SCENE_BACKGROUND)) return;
+  if(!r->interp && fabs(xs)==1.0 && fabs(ys)==1.0 &&
+     ((color&0xFFFFFFu)!=0xFFFFFFu || alpha!=1.0) &&
+     !gml_d3_is_active(r) &&
+     gml_render_resident_filtered_atlas_page(r,ti,x-r->cam_x+t->tx*xs,
+                                              y-r->cam_y+t->ty*ys,xs,ys,
+                                              GML_RENDER_SCENE_BACKGROUND,color,alpha,t,1)) return;
   if(r->interp && !gml_d3_is_active(r) &&
      gml_render_resident_filtered_atlas_page(r,ti,x-r->cam_x+t->tx*xs,
                                               y-r->cam_y+t->ty*ys,xs,ys,
