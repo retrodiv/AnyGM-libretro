@@ -298,14 +298,109 @@ void gml_draw_surface_stretched(GmlRender *r,int surf,double dx,double dy,
   gml_render_cpu_draw_surface_stretched_impl(r,surf,dx,dy,dw,dh,blend,alpha,1);
 }
 
+/* A fully opaque integer surface crop has the same nearest texel and destination-copy rule
+ * as the existing exact textured quad. Observe the source without manufacturing a CPU write;
+ * the resource journal retains its version for CPU readers and context loss. */
+static int resident_surface_part(GmlRender *r,int surf,double sx,double sy,double sw,double sh,
+                                 double dx,double dy,double xs,double ys,
+                                 uint32_t blend,double alpha){
+  GmlRenderResource *source_resource,*target;
+  GmlRenderResourceSource source={0};
+  GmlRenderDrawOp operation={0};
+  GmlRenderDrawStateSnapshot state={0};
+  GmlRenderImageRef source_ref,image;
+  GmlRenderDrawBatch batch;
+  GmlRenderResourceExecution result;
+  const uint32_t *pixels;
+  double left,right,top,bottom;
+  int slot=surface_slot(surf),width=0,height=0;
+  if(!r || slot<0 || !r->resident_application_pass || !gml_render_device(r) ||
+     r->fb!=r->app_surface_owned || r->fbw!=r->app_w || r->fbh!=r->app_h ||
+     r->target_sp || r->target_id>=0 || r->pending_underlay || r->pending_presentation ||
+     r->active_shader>=0 || r->interp || r->blendmode || r->alpha_test_enable ||
+     r->color_write_mask!=0x0Fu || r->blend_equation!=1 ||
+     r->blend_equation_alpha!=1 || gml_d3_is_active(r) ||
+     (blend&0xFFFFFFu)!=0xFFFFFFu || !isfinite(alpha) || alpha<1.0 ||
+     !isfinite(sx) || !isfinite(sy) || !isfinite(sw) || !isfinite(sh) ||
+     !isfinite(dx) || !isfinite(dy) || !isfinite(xs) || !isfinite(ys) ||
+     sx<0.0 || sy<0.0 || sw<=0.0 || sh<=0.0 || xs<1.0 || ys<1.0 ||
+     floor(sx)!=sx || floor(sy)!=sy || floor(sw)!=sw || floor(sh)!=sh ||
+     floor(xs)!=xs || floor(ys)!=ys ||
+     r->surface[slot].px==r->fb) return 0;
+  left=dx-r->cam_x;
+  top=dy-r->cam_y;
+  right=left+sw*xs;
+  bottom=top+sh*ys;
+  if(!isfinite(left) || !isfinite(top) || !isfinite(right) || !isfinite(bottom) ||
+     left<0.0 || top<0.0 || right>(double)r->fbw || bottom>(double)r->fbh ||
+     floor(left)!=left || floor(top)!=top || floor(right)!=right ||
+     floor(bottom)!=bottom || right<=left || bottom<=top) return 0;
+  pixels=gml_surface_pixels_read(r,surf,&width,&height);
+  if(!pixels || width<=0 || height<=0 || sx+sw>(double)width ||
+     sy+sh>(double)height ||
+     !(source_resource=gml_render_surface_resource_ensure(r,surf)) ||
+     !gml_render_resource_source_view(source_resource,&source) ||
+     source.bytes!=pixels || source.pixel_format!=GML_RENDER_PIXEL_ARGB8888)
+    return 0;
+  for(int y=(int)sy;y<(int)(sy+sh);y++)
+    for(int x=(int)sx;x<(int)(sx+sw);x++)
+      if((pixels[(size_t)y*width+x]>>24)!=255u) return 0;
+  gml_render_flush_pending_fill(r);
+  if(r->pending_fill || !r->resident_application_pass ||
+     !(target=gml_render_application_resource_ensure(r))) return 0;
+  image=gml_render_application_scene_next_image_ref(r,target);
+  if(image.content_version==UINT64_MAX) return 0;
+  source_ref=source.image;
+  operation.opcode=GML_RENDER_OP_TEXTURED_QUAD;
+  operation.scene_family=GML_RENDER_SCENE_SURFACE;
+  operation.reconstruction_mode=GML_RENDER_REPLAY_EXACT;
+  operation.source_count=1u;
+  operation.sources=&source_ref;
+  operation.target.image=image;
+  operation.target.image.content_version++;
+  operation.target.storage_version=1u;
+  operation.target.width=(uint32_t)r->fbw;
+  operation.target.height=(uint32_t)r->fbh;
+  operation.target.pixel_format=GML_RENDER_PIXEL_ARGB8888;
+  operation.target.region=(GmlRenderRect){0,0,(uint32_t)r->fbw,(uint32_t)r->fbh};
+  operation.payload.quad.shape=GML_RENDER_QUAD_AXIS_ALIGNED;
+  operation.payload.quad.sampling.filter=GML_RENDER_FILTER_NEAREST;
+  operation.payload.quad.sampling.edge_rule=GML_RENDER_EDGE_CLAMP_SUBIMAGE;
+  operation.payload.quad.sampling.source_region=(GmlRenderRect){(int)sx,(int)sy,
+    (uint32_t)sw,(uint32_t)sh};
+  for(int corner=0;corner<4;corner++) operation.payload.quad.corner_colour[corner]=0xFFFFFFFFu;
+  operation.payload.quad.x[0]=operation.payload.quad.x[3]=left;
+  operation.payload.quad.x[1]=operation.payload.quad.x[2]=right;
+  operation.payload.quad.y[0]=operation.payload.quad.y[1]=top;
+  operation.payload.quad.y[2]=operation.payload.quad.y[3]=bottom;
+  operation.payload.quad.u[0]=operation.payload.quad.u[3]=sx/width;
+  operation.payload.quad.u[1]=operation.payload.quad.u[2]=(sx+sw)/width;
+  operation.payload.quad.v[0]=operation.payload.quad.v[1]=sy/height;
+  operation.payload.quad.v[2]=operation.payload.quad.v[3]=(sy+sh)/height;
+  state.write_mask=15u;
+  state.colour=0xFFFFFFFFu;
+  state.alpha=255u;
+  state.sampler_count=1u;
+  state.samplers[0]=operation.payload.quad.sampling;
+  batch=(GmlRenderDrawBatch){&operation,1u,&state,1u};
+  result=gml_render_application_scene_submit(r,&batch,&source,1u);
+  if(result==GML_RENDER_RESOURCE_EXEC_FAILED) return 0;
+  if(result==GML_RENDER_RESOURCE_EXEC_CPU) r->resident_application_pass=0;
+  r->fb_all_transparent=0;
+  r->fb_opaque_known=0;
+  r->fb_all_opaque=0;
+  return 1;
+}
+
 void gml_draw_surface_part_ext(GmlRender *r,int surf,double sx,double sy,double sw,double sh,
                                double dx,double dy,double xs,double ys,uint32_t blend,double alpha){
-  if(!gml_render_resident_application_cpu_barrier(r)) return;
   int explicit_target_raster=gml_render_surface_draw_targets_screen_raster(r,surf,sw*xs,sh*ys);
   if(!explicit_target_raster){
     gml_render_draw_map_point(r,&dx,&dy);
     gml_render_draw_map_scale(r,&xs,&ys);
   }
+  if(resident_surface_part(r,surf,sx,sy,sw,sh,dx,dy,xs,ys,blend,alpha)) return;
+  if(!gml_render_resident_application_cpu_barrier(r)) return;
   gml_render_cpu_draw_surface_part_mapped(r,surf,sx,sy,sw,sh,dx,dy,xs,ys,blend,alpha);
 }
 void gml_draw_surface_ext(GmlRender *r,int surf,double x,double y,

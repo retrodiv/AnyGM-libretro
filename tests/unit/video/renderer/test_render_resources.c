@@ -1399,6 +1399,52 @@ static int surface_observer_materializes_suspended_fill(void){
   return 1;
 }
 
+static int public_surface_part_qualified_dispatch(void){
+  GmlRender *render=(GmlRender*)calloc(1,sizeof *render);
+  GmlRenderApplicationWriteView view={0};
+  GmlRenderJournalMetrics metrics={0};
+  FakeDevice fake={0};
+  GmlRenderDeviceServices device=service(&fake);
+  uint32_t expected[16];
+  const uint32_t authored[4]={0xFFB42834u,0xFF268BB5u,0xFF8CC539u,0xFFD37224u};
+  int id;
+  CHECK(render);
+  render->next_surface_id=1;
+  render->active_shader=-1;
+  render->color_write_mask=0x0Fu;
+  render->alphablend=1;
+  render->blend_equation=render->blend_equation_alpha=1;
+  CHECK(gml_render_application_surface_ensure_owned(render,4,4));
+  id=gml_surface_create(render,2,2);
+  CHECK(id>0);
+  memcpy(render->surface[id-1].px,authored,sizeof authored);
+  render->surface[id-1].opaque_known=render->surface[id-1].all_opaque=1;
+  render->surface[id-1].all_transparent=0;
+  gml_render_bind_device(render,&device);
+  CHECK(gml_render_begin_resident_owned_application(render,0.0,0.0,0));
+  gml_render_set_pending_fill(render,0xFF102030u);
+  gml_draw_surface_part_ext(render,id,0,0,2,2,0,0,1,1,0xFFFFFFu,1.0);
+  gml_draw_surface_part_ext(render,id,1,0,1,2,3,1,1,1,0xFFFFFFu,1.0);
+  gml_draw_surface_part_ext(render,id,0,0,1,1,1,2,2,2,0xFFFFFFu,1.0);
+  CHECK(render->resident_application_pass && gml_render_scene_flush(render));
+  gml_render_resource_journal_metrics(render->app_surface_resource,&metrics);
+  CHECK(metrics.journal_operations==4u && !metrics.cpu_replays &&
+        fake.submits==4 && !fake.readbacks);
+  for(int index=0;index<16;index++) expected[index]=0xFF102030u;
+  expected[0]=authored[0]; expected[1]=authored[1];
+  expected[4]=authored[2]; expected[5]=authored[3];
+  expected[7]=authored[1]; expected[11]=authored[3];
+  expected[9]=expected[10]=expected[13]=expected[14]=authored[0];
+  gml_surface_free(render,id);
+  gml_render_bind_device(render,NULL);
+  CHECK(gml_render_application_surface_owned_view(render,&view) &&
+        view.width==4 && view.height==4 &&
+        !memcmp(view.pixels,expected,sizeof expected) && !fake.readbacks);
+  gml_render_free(render);
+  free(render);
+  return 1;
+}
+
 static int resident_opaque_atlas_sprite_gpu(void){
   GmlRender *render=(GmlRender*)calloc(1,sizeof *render);
   GmlRenderApplicationWriteView view={0};
@@ -1716,11 +1762,12 @@ int main(void){
   passed+=atlas_scene_identity_and_retirement();
   passed+=mutable_scene_identity_across_renderers();
   passed+=surface_observer_materializes_suspended_fill();
+  passed+=public_surface_part_qualified_dispatch();
   passed+=resident_opaque_atlas_sprite_gpu();
   passed+=resident_binary_atlas_sprite_gpu();
   passed+=resident_integer_scaled_atlas_sprite_gpu();
   passed+=state_without_context();
   passed+=nearest_subrectangle_mirrors();
-  printf("render resource cases: passed=%d failed=%d\n",passed,22-passed);
-  return passed==22?EXIT_SUCCESS:EXIT_FAILURE;
+  printf("render resource cases: passed=%d failed=%d\n",passed,23-passed);
+  return passed==23?EXIT_SUCCESS:EXIT_FAILURE;
 }

@@ -2,12 +2,12 @@
  * Copyright (c) 2026 retrodiv <retrodiv@proton.me>
  * Current selected scene entries and explicit unselected/fallback entries.
  */
-GML_RENDER_GPU_OPERATION(TEXTURED_QUAD, supported, gml_render_gpu_opengl_draw_textured_quad, "Qualified resident sprite, background, tile and positioned quad rules; unqualified variants use ordered CPU fallback")
+GML_RENDER_GPU_OPERATION(TEXTURED_QUAD, supported, gml_render_gpu_opengl_draw_textured_quad, "Qualified resident sprite, background, tile, positioned and opaque integer surface-part quad rules; unqualified variants use ordered CPU fallback")
 GML_RENDER_GPU_OPERATION(TEXTURED_TRIANGLES, planned, gml_render_gpu_opengl_draw_textured_triangles, "Dedicated opcode unselected; qualified positioned geometry is encoded as TEXTURED_QUAD")
 GML_RENDER_GPU_OPERATION(COLOURED_PRIMITIVE, planned, gml_render_gpu_opengl_draw_primitive, "P6 primitive coverage executor")
 GML_RENDER_GPU_OPERATION(CLEAR, supported, gml_render_gpu_opengl_clear, "P3 resident target region clear with explicit preflight")
 GML_RENDER_GPU_OPERATION(COPY_IMAGE, planned, gml_render_gpu_opengl_copy_image, "P5 general versioned image copy; P3 probe uses a qualified textured quad")
-GML_RENDER_GPU_OPERATION(COMPOSE_SURFACE, planned, gml_render_gpu_opengl_compose_surface, "P5 versioned surface composition")
+GML_RENDER_GPU_OPERATION(COMPOSE_SURFACE, planned, gml_render_gpu_opengl_compose_surface, "P5 general versioned surface composition; bounded opaque integer public part uses TEXTURED_QUAD")
 GML_RENDER_GPU_OPERATION(LAYER_EFFECT, planned, gml_render_gpu_opengl_apply_effect, "P7 qualified effect families or bounded CPU fallback")
 GML_RENDER_GPU_OPERATION(PRESENT_IMAGE, planned, gml_render_gpu_opengl_present_image, "Neutral scene opcode unselected; terminal resident-source presentation uses the separate existing plan")
 GML_RENDER_GPU_OPERATION(CONTENT_SHADER_DRAW, planned, gml_render_gpu_opengl_content_shader_draw, "P7 general resident content-program pass; P3 bounded device checkpoint exists")
