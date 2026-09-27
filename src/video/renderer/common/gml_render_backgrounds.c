@@ -109,11 +109,13 @@ int gml_render_resident_filtered_atlas_part(GmlRender *r,int page_index,
   GmlTpag *page,view;
   int source_x=0,source_y=0;
   int trimmed;
+  double overlap_x0=0.0,overlap_y0=0.0,overlap_x1=0.0,overlap_y1=0.0;
+  double anchor_x,anchor_y,cell_xs,cell_ys;
   if(!r || !r->resident_application_pass || !r->interp ||
      page_index<0 || page_index>=r->n_tpag || gml_d3_is_active(r) ||
      !isfinite(sx) || !isfinite(sy) || !isfinite(sw) || !isfinite(sh) ||
      !isfinite(x) || !isfinite(y) || !isfinite(xs) || !isfinite(ys) ||
-     !isfinite(alpha) || sx<0.0 || sy<0.0 || sw<1.0 || sh<1.0 ||
+     !isfinite(alpha) || sx<0.0 || sy<0.0 || sw<=0.0 || sh<=0.0 ||
      sx>INT_MAX || sy>INT_MAX || sw>INT_MAX || sh>INT_MAX) return 0;
   page=&r->tpag[page_index];
   /* The CPU part view already clips logical trim. Admit a trimmed atlas page
@@ -127,21 +129,26 @@ int gml_render_resident_filtered_atlas_part(GmlRender *r,int page_index,
      sx<(double)page->tx || sy<(double)page->ty ||
      sx+sw>(double)page->tx+page->sw || sy+sh>(double)page->ty+page->sh ||
      !gml_render_tpag_part_view(page,sx,sy,sw,sh,&view,&source_x,&source_y,
-                                NULL,NULL,NULL,NULL)) return 0;
+                                &overlap_x0,&overlap_y0,&overlap_x1,&overlap_y1)) return 0;
   if(trimmed && (sx!=floor(sx) || sy!=floor(sy) ||
                  sw!=floor(sw) || sh!=floor(sh))) return 0;
-  /* A fractional one-cell selection changes both anchor and scale in the CPU
-   * writer. Multi-cell background selection only snaps outwards; tile source
-   * fractions retain their separate unqualified CPU path. */
+  /* Reuse the CPU part writer's one-cell extent and anchor normalization.
+   * Multi-cell selections retain outward-snapped source geometry. Tile source
+   * fractions have a distinct authored-edge policy and remain on CPU. */
   if((sx!=floor(sx) || sy!=floor(sy) || sw!=floor(sw) || sh!=floor(sh)) &&
-     (family!=GML_RENDER_SCENE_BACKGROUND || view.sw==1 || view.sh==1)) return 0;
+     family!=GML_RENDER_SCENE_BACKGROUND) return 0;
+  anchor_x=view.sw==1?overlap_x0:(double)source_x;
+  anchor_y=view.sh==1?overlap_y0:(double)source_y;
+  cell_xs=view.sw==1?(overlap_x1-overlap_x0)*xs:xs;
+  cell_ys=view.sh==1?(overlap_y1-overlap_y0)*ys:ys;
+  if(cell_xs==0.0 || cell_ys==0.0) return 0;
   /* Keep bw/bh from the CPU's part view: filtered taps at its right/bottom
    * may reach physical atlas neighbours beyond the selected visible crop. */
   view.tw=view.sw;
   view.th=view.sh;
   return gml_render_resident_filtered_atlas_page(
-    r,page_index,x+(source_x-sx)*xs-r->cam_x,
-    y+(source_y-sy)*ys-r->cam_y,xs,ys,
+    r,page_index,x+(anchor_x-sx)*xs-r->cam_x,
+    y+(anchor_y-sy)*ys-r->cam_y,cell_xs,cell_ys,
     family,color,alpha,&view);
 }
 
