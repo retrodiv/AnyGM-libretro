@@ -218,6 +218,8 @@
   "    p10=margin_tap(lo+ivec2(0,1),first,last,mask);\n" \
   "    p11=margin_tap(lo+ivec2(1,1),first,last,mask);\n" \
   "  }\n" \
+  "  // R03_SHADER_SNAPPED_NEAREST_SOURCEOVER: a snapped unit-sign sprite uses this same\n" \
+  "  // sample equation at texel centres, with no separate nearest-colour kernel.\n" \
   "  vec4 weighted=(p00*(1.0-f.x)*(1.0-f.y)+p01*f.x*(1.0-f.y)+\n" \
   "                 p10*(1.0-f.x)*f.y+p11*f.x*f.y);\n" \
   "  vec4 sampled=floor(weighted+vec4(0.5));\n" \
