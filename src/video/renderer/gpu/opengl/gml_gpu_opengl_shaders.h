@@ -54,6 +54,7 @@
   "  int dy=(u_target_height-1-int(gl_FragCoord.y))-u_dest_y;\n" \
   "  int sx=int(texelFetch(u_map_x,ivec2(dx,0),0).r);\n" \
   "  int sy=int(texelFetch(u_map_y,ivec2(dy,0),0).r);\n" \
+  "  // R03_SHADER_RESIDENT_PRESENT: use the current scene image without upload.\n" \
   "  int source_y=u_resident_source!=0 ? u_source_height-1-sy : sy;\n" \
   "  vec4 texel=texelFetch(u_source,ivec2(sx,source_y),0);\n"
 
@@ -95,6 +96,7 @@
   "void main(){\n" \
   "  gl_Position=vec4(2.0*in_Position.x/u_extent.x-1.0,1.0-2.0*in_Position.y/u_extent.y,0.0,1.0);\n" \
   "  v_texcoord=in_TextureCoord;\n" \
+  "  // R03_SHADER_VERTEX_COLOUR: interpolate authored corner colours.\n" \
   "  v_colour=in_Colour;\n" \
   "  v_clamp=in_Clamp;\n" \
   "  v_map=in_Map;\n" \
@@ -130,8 +132,10 @@
   "  return floor(texelFetch(u_image,at,0)*255.0+0.5);\n" \
   "}\n" \
   "void main(){\n" \
+  "  // R03_SHADER_DIRECT_TEXTURE: nearest/atlas page sampling.\n" \
   "  if(u_filter==0){ o_color=texture(u_image,v_texcoord)*v_colour; return; }\n" \
   "  vec2 centre=vec2(gl_FragCoord.x,u_extent.y-gl_FragCoord.y);\n" \
+  "  // R03_SHADER_BOX_REDUCTION: stretched integer source-box average.\n" \
   "  if(u_filter==4){\n" \
   "    ivec2 logical=ivec2(v_span_x.x,v_span_y.x),dest=ivec2(v_span_x.y,v_span_y.y);\n" \
   "    ivec2 trim=ivec2(v_span_x.z,v_span_y.z),visible=ivec2(v_span_x.w,v_span_y.w);\n" \
@@ -150,6 +154,7 @@
   "    uvec3 rgb=uvec3(sampled.rgb)*tint/uvec3(255u);\n" \
   "    o_color=vec4(vec3(rgb)/255.0,sampled.a*v_colour.a/255.0); return;\n" \
   "  }\n" \
+  "  // R03_SHADER_ROW_SPAN: conditional rotated/warped CPU coverage.\n" \
   "  if(u_filter>=2 && v_span_active>0.5){\n" \
   "    float mn=1e30,mx=-1e30; int hits=0;\n" \
   "    for(int i=0;i<4;i++){\n" \
@@ -164,10 +169,12 @@
   "  }\n" \
   "  vec2 delta=centre-v_map.xy;\n" \
   "  ivec2 lo; vec2 f;\n" \
+  "  // R03_SHADER_INVERSE_GEOMETRY: affine inverse or triangle-local page UV.\n" \
   "  if(u_filter>=2){\n" \
   "    vec2 local=u_filter>=5\n" \
   "      ?v_texcoord\n" \
   "      :delta.x*v_map.zw+delta.y*v_texcoord+v_step;\n" \
+  "    // R03_SHADER_POSITIONED_NEAREST: integer texel selection and tint.\n" \
   "    if(u_filter==3 || u_filter==5){\n" \
   "      ivec2 size=ivec2(v_clamp.zw-v_clamp.xy+vec2(1.0));\n" \
   "      ivec2 point=ivec2(floor(local));\n" \
@@ -180,6 +187,7 @@
   "      o_color=vec4(vec3(rgb)/255.0,sampled.a*v_colour.a/255.0); return;\n" \
   "    }\n" \
   "    vec2 size=v_clamp.zw-v_clamp.xy+vec2(1.0);\n" \
+  "    // R03_SHADER_WARP_BILINEAR: physical-page edge clamp.\n" \
   "    if(u_filter==6) local=clamp(local,vec2(0.0),size)-vec2(0.5);\n" \
   "    else if(any(lessThan(local,vec2(-1.0))) ||\n" \
   "            any(greaterThanEqual(local,size))) discard;\n" \
@@ -191,6 +199,7 @@
   "  }\n" \
   "  ivec2 first=ivec2(v_clamp.xy),last=ivec2(v_clamp.zw-v_clamp.xy);\n" \
   "  vec4 p00,p01,p10,p11;\n" \
+  "  // R03_SHADER_FILTERED_MARGIN: logical trim and physical atlas edge taps.\n" \
   "  if(v_margin<0.5){\n" \
   "    ivec2 a=clamp(lo,ivec2(0),last),b=clamp(lo+ivec2(1),ivec2(0),last);\n" \
   "    p00=floor(texelFetch(u_image,first+a,0)*255.0+0.5);\n" \
@@ -207,6 +216,7 @@
   "  vec4 weighted=(p00*(1.0-f.x)*(1.0-f.y)+p01*f.x*(1.0-f.y)+\n" \
   "                 p10*(1.0-f.x)*f.y+p11*f.x*f.y);\n" \
   "  vec4 sampled=floor(weighted+vec4(0.5));\n" \
+  "  // R03_SHADER_TINT_ALPHA: truncating RGB tint and per-draw alpha.\n" \
   "  uvec3 tint=uvec3(floor(v_colour.rgb*255.0+vec3(0.5)));\n" \
   "  uvec3 rgb=uvec3(sampled.rgb)*tint/uvec3(255u);\n" \
   "  o_color=vec4(vec3(rgb)/255.0,\n" \
@@ -227,6 +237,7 @@
   "  ivec4 source=ivec4(round(texture(u_image,v_texcoord)*v_colour*255.0));\n" \
   "  ivec4 prior=ivec4(round(texelFetch(u_previous,ivec2(gl_FragCoord.xy)-u_region_origin,0)*255.0));\n" \
   "  int factor=source.a==255?256:source.a;\n" \
+  "  // R03_SHADER_EXACT_OVERLAP: ordered destination-dependent eight-bit truncation.\n" \
   "  ivec3 colour=prior.rgb;\n" \
   "  for(int index=0;index<u_repetitions;index++)\n" \
   "    colour=(source.rgb*factor+colour*(256-factor))/256;\n" \

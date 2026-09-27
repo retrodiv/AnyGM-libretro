@@ -15,7 +15,21 @@ RENDERER = ROOT / "src/video/renderer"
 CATALOGUE = RENDERER / "gml_render_operations.def"
 CPU_TABLE = RENDERER / "cpu/gml_render_cpu_operations.def"
 GPU_TABLE = RENDERER / "gpu/gml_render_gpu_operations.def"
+BACKEND_MAP = ROOT / "docs/RENDERER_BACKENDS.md"
 FAMILIES = {"TEXTURE", "PRIMITIVE", "SURFACE", "EFFECT", "PRESENTATION", "SHADER", "SOFTWARE3D"}
+REQUIRED_RULES = {
+    "R03-P3-JOURNAL", "R03-P3-CLEAR", "R03-P3-EXACT-OVERLAP",
+    "R03-P3-RESIDENT-COPY", "R03-P3-SHADER-CHECKPOINT",
+    "R03-P3-ATLAS-CACHE", "R03-P3-CONTEXT-RESET",
+    "R03-P3-OPAQUE-ELISION",
+    "R03-SPR-NEAREST", "R03-SPR-FILTER-TRIM", "R03-SPR-ROTATE-GENERAL",
+    "R03-SPR-CORNER-COLOUR", "R03-SPR-POSITIONED-AXIS",
+    "R03-SPR-POSITIONED-QUAD", "R03-SPR-STRETCH-MAG",
+    "R03-SPR-STRETCH-BOX", "R03-SPR-TILED-PHASE", "R03-BG-DIRECT",
+    "R03-BG-REPEAT", "R03-TILE-CELL", "R03-SCENE-ORDER",
+    "R03-ALPHA-NOOP", "R03-RESIDENT-PRESENT",
+}
+MAP_ANCHOR = re.compile(r"`([a-zA-Z0-9_./-]+)::([a-zA-Z_][a-zA-Z0-9_]*)`")
 PAIR_SUFFIX = {
     "TEXTURED_QUAD": "draw_textured_quad",
     "TEXTURED_TRIANGLES": "draw_textured_triangles",
@@ -110,6 +124,61 @@ def check_symbols(cpu_table: dict[str, tuple[str, ...]],
                 raise ValueError(f"{key}: GPU fallback {symbol} must name one real CPU checkpoint")
 
 
+def check_repair_map(document: str, gpu_table: dict[str, tuple[str, ...]],
+                     root: Path) -> None:
+    """Check only the map's structure and live anchors, not pixel equivalence."""
+    support = dict(re.findall(r"(?m)^\| `([A-Z][A-Z0-9_]*)` \| `(supported|fallback|planned)` \|",
+                              document))
+    if support.keys() != gpu_table.keys():
+        raise ValueError("current renderer support table does not cover the GPU ledger")
+    for operation, status in support.items():
+        if status != gpu_table[operation][2]:
+            raise ValueError(f"{operation}: current support table disagrees with GPU ledger")
+    start = "<!-- R03-RULES:START -->"
+    end = "<!-- R03-RULES:END -->"
+    if document.count(start) != 1 or document.count(end) != 1:
+        raise ValueError("R03 repair-level map markers are missing or repeated")
+    section = document.split(start, 1)[1].split(end, 1)[0]
+    rules: dict[str, list[str]] = {}
+    for line in section.splitlines():
+        if not line.startswith("| R03-"):
+            continue
+        fields = [field.strip() for field in line.strip().strip("|").split("|")]
+        if len(fields) != 8 or not all(fields):
+            raise ValueError("R03 map row has missing required fields")
+        rule = fields[0]
+        if rule in rules:
+            raise ValueError(f"{rule}: duplicate R03 map row")
+        rules[rule] = fields
+        for index in (2, 3, 4, 5, 7):
+            anchors = MAP_ANCHOR.findall(fields[index])
+            if not anchors and not (index == 5 and fields[index].startswith("No shader")) \
+                    and not (index == 7 and "Core comparison pending" in fields[index]):
+                raise ValueError(f"{rule}: missing path::symbol anchor in field {index}")
+            for relative, symbol in anchors:
+                if ".." in Path(relative).parts or relative.startswith("/"):
+                    raise ValueError(f"{rule}: invalid anchor path {relative}")
+                path = root / relative if relative.startswith("tests/") else \
+                    root / "src/video/renderer" / relative
+                if not path.is_file():
+                    raise ValueError(f"{rule}: stale anchor file {relative}")
+                source = path.read_text(encoding="utf-8")
+                if path.suffix == ".c":
+                    found = re.search(
+                        rf"(?m)^\s*(?:static\s+)?(?:[A-Za-z_][A-Za-z_0-9]*\s+)+"
+                        rf"\**{re.escape(symbol)}\s*\(", source)
+                else:
+                    found = re.search(rf"\b{re.escape(symbol)}\b", source)
+                if not found:
+                    raise ValueError(f"{rule}: stale anchor symbol {relative}::{symbol}")
+        if f"device comparison {rule}" not in fields[7] and \
+           f"core-only comparison {rule}" not in fields[7]:
+            raise ValueError(f"{rule}: missing comparative case ID")
+    if rules.keys() != REQUIRED_RULES:
+        raise ValueError(f"R03 rule coverage: missing={sorted(REQUIRED_RULES - rules.keys())}, "
+                         f"extra={sorted(rules.keys() - REQUIRED_RULES)}")
+
+
 def self_test() -> None:
     sample = {"CLEAR": ("CLEAR", "PRIMITIVE")}
     cpu = {"CLEAR": ("CPU", "CLEAR", "supported", "gml_render_clear", "existing clear")}
@@ -128,6 +197,26 @@ def self_test() -> None:
         except ValueError:
             continue
         raise ValueError("render operation negative probe unexpectedly passed")
+    document = BACKEND_MAP.read_text(encoding="utf-8")
+    ledger = rows(GPU_TABLE, EXECUTOR_ROW)
+    check_repair_map(document, ledger, ROOT)
+    for broken in (
+        document.replace("::resident_filtered_sprite", "::obsolete_filtered_sprite", 1),
+        document.replace("::R03_SHADER_EXACT_OVERLAP", "::OBSOLETE_EXACT_OVERLAP", 1),
+        document.replace("device comparison R03-P3-JOURNAL", "comparison missing", 1),
+        document.replace("`supported` | Only the bounded", "`planned` | Only the bounded", 1),
+        document.replace(
+            "`common/gml_render_sprites.c::gml_render_sprite_pos_geometry`; "
+            "`common/gml_render_sprites.c::resident_positioned_quad_sprite`",
+            "", 1),
+        "\n".join(line for line in document.splitlines()
+                  if not line.startswith("| R03-SPR-STRETCH-BOX |")),
+    ):
+        try:
+            check_repair_map(broken, ledger, ROOT)
+        except ValueError:
+            continue
+        raise ValueError("R03 repair-map negative probe unexpectedly passed")
 
 
 def main() -> None:
@@ -144,6 +233,7 @@ def main() -> None:
         check_ids(catalogue, cpu, gpu)
         cpu_defs, gpu_defs = definitions(ROOT)
         check_symbols(cpu, gpu, cpu_defs, gpu_defs, args.require_delivered)
+        check_repair_map(BACKEND_MAP.read_text(encoding="utf-8"), gpu, ROOT)
     except (OSError, ValueError) as error:
         parser.exit(1, f"render operations: {error}\n")
     print(f"render operations: ok ({len(catalogue)} IDs, "
