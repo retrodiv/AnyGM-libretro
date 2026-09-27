@@ -78,12 +78,14 @@
   "in vec4 in_Clamp;\n" \
   "in vec4 in_Map;\n" \
   "in vec2 in_Step;\n" \
+  "in float in_Margin;\n" \
   "uniform vec2 u_extent;\n" \
   "out vec2 v_texcoord;\n" \
   "out vec4 v_colour;\n" \
   "out vec4 v_clamp;\n" \
   "flat out vec4 v_map;\n" \
   "flat out vec2 v_step;\n" \
+  "flat out float v_margin;\n" \
   "void main(){\n" \
   "  gl_Position=vec4(2.0*in_Position.x/u_extent.x-1.0,1.0-2.0*in_Position.y/u_extent.y,0.0,1.0);\n" \
   "  v_texcoord=in_TextureCoord;\n" \
@@ -91,6 +93,7 @@
   "  v_clamp=in_Clamp;\n" \
   "  v_map=in_Map;\n" \
   "  v_step=in_Step;\n" \
+  "  v_margin=in_Margin;\n" \
   "}\n"
 
 #define GML_GPU_OPENGL_SCENE_FRAGMENT_BODY \
@@ -102,7 +105,16 @@
   "in vec4 v_clamp;\n" \
   "flat in vec4 v_map;\n" \
   "flat in vec2 v_step;\n" \
+  "flat in float v_margin;\n" \
   "out vec4 o_color;\n" \
+  "vec4 margin_tap(ivec2 p,ivec2 first,ivec2 last,int mask){\n" \
+  "  bool raw=(p.x<0 && (mask&1)!=0) || (p.y<0 && (mask&2)!=0) ||\n" \
+  "           (p.x>last.x && (mask&4)!=0) || (p.y>last.y && (mask&8)!=0);\n" \
+  "  ivec2 at=first+(raw?p:clamp(p,ivec2(0),last));\n" \
+  "  ivec2 extent=textureSize(u_image,0);\n" \
+  "  if(any(lessThan(at,ivec2(0))) || any(greaterThanEqual(at,extent))) return vec4(0.0);\n" \
+  "  return floor(texelFetch(u_image,at,0)*255.0+0.5);\n" \
+  "}\n" \
   "void main(){\n" \
   "  if(u_filter==0){ o_color=texture(u_image,v_texcoord)*v_colour; return; }\n" \
   "  vec2 centre=vec2(gl_FragCoord.x,u_extent.y-gl_FragCoord.y);\n" \
@@ -110,12 +122,21 @@
   "  vec2 remainder=(delta-whole)+delta*v_step+v_map.zw-vec2(0.5);\n" \
   "  ivec2 lo=ivec2(whole+floor(remainder));\n" \
   "  ivec2 first=ivec2(v_clamp.xy),last=ivec2(v_clamp.zw-v_clamp.xy);\n" \
-  "  ivec2 a=clamp(lo,ivec2(0),last),b=clamp(lo+ivec2(1),ivec2(0),last);\n" \
   "  vec2 f=fract(remainder);\n" \
-  "  vec4 p00=floor(texelFetch(u_image,first+a,0)*255.0+0.5);\n" \
-  "  vec4 p01=floor(texelFetch(u_image,first+ivec2(b.x,a.y),0)*255.0+0.5);\n" \
-  "  vec4 p10=floor(texelFetch(u_image,first+ivec2(a.x,b.y),0)*255.0+0.5);\n" \
-  "  vec4 p11=floor(texelFetch(u_image,first+b,0)*255.0+0.5);\n" \
+  "  vec4 p00,p01,p10,p11;\n" \
+  "  if(v_margin<0.5){\n" \
+  "    ivec2 a=clamp(lo,ivec2(0),last),b=clamp(lo+ivec2(1),ivec2(0),last);\n" \
+  "    p00=floor(texelFetch(u_image,first+a,0)*255.0+0.5);\n" \
+  "    p01=floor(texelFetch(u_image,first+ivec2(b.x,a.y),0)*255.0+0.5);\n" \
+  "    p10=floor(texelFetch(u_image,first+ivec2(a.x,b.y),0)*255.0+0.5);\n" \
+  "    p11=floor(texelFetch(u_image,first+b,0)*255.0+0.5);\n" \
+  "  } else {\n" \
+  "    int mask=int(v_margin+0.5);\n" \
+  "    p00=margin_tap(lo,first,last,mask);\n" \
+  "    p01=margin_tap(lo+ivec2(1,0),first,last,mask);\n" \
+  "    p10=margin_tap(lo+ivec2(0,1),first,last,mask);\n" \
+  "    p11=margin_tap(lo+ivec2(1,1),first,last,mask);\n" \
+  "  }\n" \
   "  vec4 weighted=(p00*(1.0-f.x)*(1.0-f.y)+p01*f.x*(1.0-f.y)+\n" \
   "                 p10*(1.0-f.x)*f.y+p11*f.x*f.y);\n" \
   "  o_color=(floor(weighted+vec4(0.5))/255.0)*v_colour;\n" \

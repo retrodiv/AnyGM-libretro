@@ -249,7 +249,7 @@ int gml_render_resident_atlas_page(GmlRender *r,int page_index,
  * texture phase. Sprite pages with source alpha or logical padding use source-over composition. */
 int gml_render_resident_filtered_atlas_page(GmlRender *r,int page_index,
                                            double left,double top,double xs,double ys,
-                                           GmlRenderSceneFamily family){
+                                           GmlRenderSceneFamily family,GmlTpag *part_view){
   GmlTpag *page;
   GmlAtlas *atlas;
   GmlRenderResourceSource source={0};
@@ -260,6 +260,7 @@ int gml_render_resident_filtered_atlas_page(GmlRender *r,int page_index,
   GmlRenderRect region;
   double x0,y0,width,height;
   int margin_left=0,margin_top=0,margin_right=0,margin_bottom=0;
+  uint32_t margin_mask=0u;
   if(!r || !r->resident_application_pass || !r->interp || !r->win ||
      !anygm_policy_uses_first_generation_studio(r->win) ||
      page_index<0 || page_index>=r->n_tpag || r->classic ||
@@ -270,10 +271,11 @@ int gml_render_resident_filtered_atlas_page(GmlRender *r,int page_index,
      r->pending_underlay || r->pending_presentation ||
      r->fb!=r->app_surface_owned || r->fbw!=r->app_w || r->fbh!=r->app_h ||
      !isfinite(left) || !isfinite(top) || !isfinite(xs) || !isfinite(ys) ||
-     xs<=0.0 || ys<=0.0 || xs>1000000.0 || ys>1000000.0) return 0;
+     xs==0.0 || ys==0.0 || fabs(xs)>1000000.0 || fabs(ys)>1000000.0) return 0;
   for(int index=0;index<3;index++)
     if(r->classic_interp_phase[index] || r->app_interp_phase[index]) return 0;
-  page=&r->tpag[page_index];
+  if(part_view && part_view->atlas!=r->tpag[page_index].atlas) return 0;
+  page=part_view?part_view:&r->tpag[page_index];
   if(page->sw<=0 || page->sh<=0 || page->sx<0 || page->sy<0 ||
      page->tw!=page->sw || page->th!=page->sh ||
      page->atlas<0 || page->atlas>=r->n_atlas) return 0;
@@ -291,12 +293,16 @@ int gml_render_resident_filtered_atlas_page(GmlRender *r,int page_index,
   if(!gml_render_atlas_scene_source_view(r,page->atlas,&source) ||
      (uint64_t)(uint32_t)page->sx+(uint32_t)page->sw>source.width ||
      (uint64_t)(uint32_t)page->sy+(uint32_t)page->sh>source.height) return 0;
-  /* The CPU filtered sprite samples one atlas texel outside a packed crop where its logical
-   * cell has padding. Expand only the sampler's clamp region, not the drawn quad or its UVs. */
+  /* The CPU filtered sprite can read one physical atlas texel outside a packed crop. The
+   * logical-margin edge rule decides that per tap without widening the visible quad or UVs. */
   if((margin_left && page->sx==0) || (margin_top && page->sy==0) ||
      (margin_right && (uint64_t)(uint32_t)page->sx+(uint32_t)page->sw>=source.width) ||
      (margin_bottom && (uint64_t)(uint32_t)page->sy+(uint32_t)page->sh>=source.height))
     return 0;
+  if(margin_left) margin_mask|=GML_RENDER_MARGIN_LEFT;
+  if(margin_top) margin_mask|=GML_RENDER_MARGIN_TOP;
+  if(margin_right) margin_mask|=GML_RENDER_MARGIN_RIGHT;
+  if(margin_bottom) margin_mask|=GML_RENDER_MARGIN_BOTTOM;
   if(!page->scene_opaque_checked){
     page->scene_fully_opaque=1;
     page->scene_binary_alpha=1;
@@ -310,12 +316,22 @@ int gml_render_resident_filtered_atlas_page(GmlRender *r,int page_index,
   }
   if(!page->scene_fully_opaque && family!=GML_RENDER_SCENE_SPRITE) return 0;
   x0=floor(left+0.5); y0=floor(top+0.5);
-  width=fabs(xs-nearbyint(xs))>1e-9
-    ?floor(left+(double)page->sw*xs+0.5)-x0
-    :floor((double)page->sw*xs+0.5);
-  height=fabs(ys-nearbyint(ys))>1e-9
-    ?floor(top+(double)page->sh*ys+0.5)-y0
-    :floor((double)page->sh*ys+0.5);
+  width=xs<0.0
+    ? (fabs(xs-nearbyint(xs))>1e-9
+       ? x0-floor(left+(double)page->sw*xs+0.5)
+       : floor((double)page->sw*-xs+0.5))
+    : fabs(xs-nearbyint(xs))>1e-9
+      ? floor(left+(double)page->sw*xs+0.5)-x0
+      : floor((double)page->sw*xs+0.5);
+  height=ys<0.0
+    ? (fabs(ys-nearbyint(ys))>1e-9
+       ? y0-floor(top+(double)page->sh*ys+0.5)
+       : floor((double)page->sh*-ys+0.5))
+    : fabs(ys-nearbyint(ys))>1e-9
+      ? floor(top+(double)page->sh*ys+0.5)-y0
+      : floor((double)page->sh*ys+0.5);
+  if(xs<0.0) x0-=width;
+  if(ys<0.0) y0-=height;
   if(!isfinite(width) || !isfinite(height) || width<1.0 || height<1.0 ||
      x0<=-width || y0<=-height || x0>=r->fbw || y0>=r->fbh ||
      x0+width>10000000.0 || y0+height>10000000.0) return 0;
@@ -323,9 +339,7 @@ int gml_render_resident_filtered_atlas_page(GmlRender *r,int page_index,
   if(r->pending_fill || !(target=gml_render_application_resource_ensure(r))) return 0;
   image=gml_render_application_scene_next_image_ref(r,target);
   if(image.content_version==UINT64_MAX) return 0;
-  region=(GmlRenderRect){page->sx-margin_left,page->sy-margin_top,
-                         (uint32_t)page->sw+(uint32_t)margin_left+(uint32_t)margin_right,
-                         (uint32_t)page->sh+(uint32_t)margin_top+(uint32_t)margin_bottom};
+  region=(GmlRenderRect){page->sx,page->sy,(uint32_t)page->sw,(uint32_t)page->sh};
   source_ref=source.image;
   operation.opcode=GML_RENDER_OP_TEXTURED_QUAD;
   operation.reconstruction_mode=GML_RENDER_DEVICE_CHECKPOINT;
@@ -341,8 +355,10 @@ int gml_render_resident_filtered_atlas_page(GmlRender *r,int page_index,
   operation.target.region=(GmlRenderRect){0,0,(uint32_t)r->fbw,(uint32_t)r->fbh};
   operation.payload.quad.shape=GML_RENDER_QUAD_AXIS_ALIGNED;
   operation.payload.quad.sampling.filter=GML_RENDER_FILTER_BILINEAR;
-  operation.payload.quad.sampling.edge_rule=GML_RENDER_EDGE_CLAMP_SUBIMAGE;
+  operation.payload.quad.sampling.edge_rule=margin_mask
+    ?GML_RENDER_EDGE_LOGICAL_TPAG:GML_RENDER_EDGE_CLAMP_SUBIMAGE;
   operation.payload.quad.sampling.source_region=region;
+  operation.payload.quad.sampling.logical_margin_mask=margin_mask;
   for(int corner=0;corner<4;corner++) operation.payload.quad.corner_colour[corner]=0xFFFFFFFFu;
   operation.payload.quad.x[0]=operation.payload.quad.x[3]=x0;
   operation.payload.quad.x[1]=operation.payload.quad.x[2]=x0+width;
@@ -382,7 +398,7 @@ static int resident_filtered_sprite(GmlRender *r,GmlSprite *sprite,int subimg,
   if(!r || !sprite || sprite->runtime_rgba || sprite->spine || sprite->ns_enabled ||
      sprite->n_frames<=0 || sprite->w<=0 || sprite->h<=0 ||
      gml_d3_is_active(r) || rotation!=0.0 || blend!=0xFFFFFFu || alpha!=1.0 ||
-     !isfinite(xs) || !isfinite(ys) || xs<=0.0 || ys<=0.0 || !r->interp ||
+     !isfinite(xs) || !isfinite(ys) || xs==0.0 || ys==0.0 || !r->interp ||
      !sprite->frame) return 0;
   sub=gml_render_runtime_frame_index(sprite,subimg);
   page_index=sprite->frame[sub];
@@ -392,7 +408,7 @@ static int resident_filtered_sprite(GmlRender *r,GmlSprite *sprite,int subimg,
   return gml_render_resident_filtered_atlas_page(
       r,page_index,x-((double)sprite->originx-(double)page->tx)*xs-r->cam_x,
       y-((double)sprite->originy-(double)page->ty)*ys-r->cam_y,
-      xs,ys,GML_RENDER_SCENE_SPRITE);
+      xs,ys,GML_RENDER_SCENE_SPRITE,NULL);
 }
 
 void gml_draw_sprite(GmlRender *r, int sprite, int subimg, double x, double y){
@@ -621,6 +637,59 @@ void gml_render_sprite_nineslice(GmlRender *r, GmlSprite *s, GmlTpag *t,
 void gml_draw_sprite_part_ext(GmlRender *r, int sprite, int subimg, double sx, double sy,
                               double sw, double sh, double x, double y,
                               double xs, double ys, uint32_t blend, double alpha){
+  if(r && r->resident_application_pass && r->interp &&
+     blend==0xFFFFFFu && alpha==1.0 && sprite>=0 && sprite<r->n_spr &&
+     isfinite(sx) && isfinite(sy) && isfinite(sw) && isfinite(sh) &&
+     sx>=0.0 && sy>=0.0 && sw>0.0 && sh>0.0 &&
+     sx<=(double)INT_MAX && sy<=(double)INT_MAX &&
+     sw<=(double)INT_MAX && sh<=(double)INT_MAX &&
+     !gml_d3_is_active(r)){
+    GmlSprite *resident_sprite=&r->spr[sprite];
+    if(!resident_sprite->runtime_rgba && !resident_sprite->spine &&
+       !resident_sprite->ns_enabled && resident_sprite->n_frames>0 &&
+       resident_sprite->frame){
+      int sub=gml_render_runtime_frame_index(resident_sprite,subimg);
+      int page_index=resident_sprite->frame[sub];
+      if(page_index>=0 && page_index<r->n_tpag){
+        GmlTpag *page=&r->tpag[page_index],view;
+        int source_x=0,source_y=0;
+        double overlap_x0=0.0,overlap_y0=0.0,overlap_x1=0.0,overlap_y1=0.0;
+        if(page->sw>0 && page->sh>0 && page->tx>=0 && page->ty>=0 &&
+           page->tw==page->sw && page->th==page->sh &&
+           page->bw==resident_sprite->w && page->bh==resident_sprite->h &&
+           page->bw>0 && page->bh>0 &&
+           (uint64_t)(uint32_t)page->tx+(uint32_t)page->sw<=(uint32_t)page->bw &&
+           (uint64_t)(uint32_t)page->ty+(uint32_t)page->sh<=(uint32_t)page->bh &&
+           gml_render_tpag_part_view(page,sx,sy,sw,sh,&view,&source_x,&source_y,
+                                      &overlap_x0,&overlap_y0,
+                                      &overlap_x1,&overlap_y1)){
+          double mapped_x=x,mapped_y=y,mapped_xs=xs,mapped_ys=ys;
+          double anchor_x=source_x,anchor_y=source_y;
+          gml_render_draw_map_point(r,&mapped_x,&mapped_y);
+          gml_render_draw_map_scale(r,&mapped_xs,&mapped_ys);
+          double draw_xscale=mapped_xs,draw_yscale=mapped_ys;
+          if(view.sw==1){
+            anchor_x=overlap_x0;
+            mapped_xs*=(overlap_x1-overlap_x0);
+          }
+          if(view.sh==1){
+            anchor_y=overlap_y0;
+            mapped_ys*=(overlap_y1-overlap_y0);
+          }
+          view.tw=view.sw;
+          view.th=view.sh;
+          /* The ephemeral crop need not rescan its pixels on every draw. Source-over is valid
+           * whether the crop is fully opaque or not, and CPU still owns its original scan. */
+          view.scene_opaque_checked=1;
+          view.scene_fully_opaque=0;
+          if(gml_render_resident_filtered_atlas_page(
+               r,page_index,mapped_x+(anchor_x-sx)*draw_xscale-r->cam_x,
+               mapped_y+(anchor_y-sy)*draw_yscale-r->cam_y,
+               mapped_xs,mapped_ys,GML_RENDER_SCENE_SPRITE,&view)) return;
+        }
+      }
+    }
+  }
   if(r && r->resident_application_pass && !r->interp &&
      blend==0xFFFFFFu && alpha==1.0 &&
      sprite>=0 && sprite<r->n_spr &&

@@ -15,7 +15,7 @@ enum {
   GL_READBACK_SLOTS=8,
   GL_SCENE_MAX_IMAGES=64,
   GL_SCENE_MAX_QUADS=2048,
-  GL_SCENE_VERTEX_FLOATS=18
+  GL_SCENE_VERTEX_FLOATS=19
 };
 
 /* One uniform the content's program declares, as the context reports it after linking. A value
@@ -98,7 +98,7 @@ typedef struct GlSceneImage {
 typedef struct GlScene {
   GlSceneImage images[GL_SCENE_MAX_IMAGES];
   GLuint program,vertex_buffer,vertex_array;
-  GLint a_position,a_texcoord,a_colour,a_clamp,a_map,a_step;
+  GLint a_position,a_texcoord,a_colour,a_clamp,a_map,a_step,a_margin;
   GLint u_extent,u_image,u_filter;
   GLuint exact_program,snapshot_texture;
   GLint exact_a_position,exact_a_texcoord,exact_a_colour;

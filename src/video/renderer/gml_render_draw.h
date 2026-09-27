@@ -74,14 +74,25 @@ typedef enum GmlRenderFilter {
 typedef enum GmlRenderEdgeRule {
   GML_RENDER_EDGE_TRANSPARENT=1,
   GML_RENDER_EDGE_CLAMP_SUBIMAGE=2,
-  GML_RENDER_EDGE_REPEAT_SUBIMAGE=3
+  GML_RENDER_EDGE_REPEAT_SUBIMAGE=3,
+  /* A packed atlas cell exposes physical neighbour texels only for taps crossing an authored
+   * logical margin; every other tap clamps to its visible source rectangle. */
+  GML_RENDER_EDGE_LOGICAL_TPAG=4
 } GmlRenderEdgeRule;
+
+enum {
+  GML_RENDER_MARGIN_LEFT=1u,
+  GML_RENDER_MARGIN_TOP=2u,
+  GML_RENDER_MARGIN_RIGHT=4u,
+  GML_RENDER_MARGIN_BOTTOM=8u
+};
 
 typedef struct GmlRenderSamplingPolicy {
   uint32_t filter;
   uint32_t edge_rule;
   GmlRenderRect source_region;
   uint32_t quantisation;
+  uint32_t logical_margin_mask;
 } GmlRenderSamplingPolicy;
 
 /* Resolved blend semantics, independent of any device API's enumerant values. Zeroed factors

@@ -20,10 +20,14 @@ A narrow ordinary sprite path accepts unit-scale, integer-aligned authored trim 
 has only alpha 0 or 255; other texture-stage filters are irrelevant to this unprogrammed base-image
 draw, and a binary-alpha crop uses endpoint source-over. Its CPU journal replay rejects any
 intermediate-alpha source. These variants are replayable from retained source pixels after context
-loss. A separate first-generation filtered path accepts untrimmed, positive-scale, untinted
-ordinary sprites with partial alpha. It preserves snapped destination coverage and fractional
-texture phase, uses source-over RGB with the application's source-alpha-squared coverage rule,
-and checkpoints the device result rather than claiming exact CPU replay. CPU text resolves a
+loss. A separate first-generation filtered path accepts qualified untinted ordinary sprites with
+partial alpha, authored trim, partial source crops and either scale sign. It preserves snapped
+destination coverage and fractional texture phase. For logical padding around a packed atlas
+cell, taps crossing a padded edge use physical atlas coordinates on both axes; other taps clamp to
+the selected source rectangle. The path requires physical margin pixels where needed, uses
+source-over RGB with the application's source-alpha-squared coverage rule, and checkpoints the
+device result rather than claiming exact CPU replay. Rotation, tint, per-draw intermediate alpha,
+special sprite states and unqualified crop geometry still use the ordered CPU fallback. CPU text resolves a
 preceding resident sprite before writing glyph pixels; this ordering barrier does not accelerate
 text. A similarly bounded first-generation nearest background path accepts complete untrimmed
 pages at unit positive scale with intermediate alpha. It checkpoints the device's source-over
@@ -35,9 +39,8 @@ application-surface underlay may also use the exact current resident
 image: the existing plan's integer nearest axes select the pixels, while the GL executor reads the
 scene texture directly without a CPU upload. This requires an opaque, owned application surface,
 no intervening GUI draw, and the guarded prototype setting. A failed or lost device reconstructs
-the source from the resource journal before the existing CPU presentation writes it. Trimmed
-filtered sprites, arbitrary rotation, and GUI draws over the underlay remain unqualified and use
-the CPU fallback. This narrow terminal path
+the source from the resource journal before the existing CPU presentation writes it. Arbitrary
+rotation and GUI draws over the underlay remain unqualified and use the CPU fallback. This narrow terminal path
 does not establish a no-full-frame-transfer route for general gameplay.
 
 The narrow ordinary-sprite route now copies consecutive compatible textured-quad

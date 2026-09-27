@@ -59,6 +59,7 @@ int gml_render_gpu_opengl_draw_textured_quad(const GmlRenderDrawOp *op,
     vertex[17]=(float)((rendered_source_origin?quad->v[0]-quad->v[2]
                         :quad->v[2]-quad->v[0])*source_height/
                        (quad->y[2]-quad->y[0])-1.0);
+    vertex[18]=(float)quad->sampling.logical_margin_mask;
   }
   return 1;
 }

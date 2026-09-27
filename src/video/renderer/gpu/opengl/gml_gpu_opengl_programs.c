@@ -99,7 +99,7 @@ int gml_gpu_opengl_scene_program(GmlGpuBackend *backend,char *error,size_t error
   GlScene *scene=&backend->scene;
   const char *prefix=backend->api==GML_GPU_API_OPENGLES3
     ?GML_GPU_OPENGL_PREFIX_ES:GML_GPU_OPENGL_PREFIX_DESKTOP;
-  char vertex_source[1024],fragment_source[2048];
+  char vertex_source[1024],fragment_source[4096];
   GLuint vertex,fragment;
   GLint status=GL_FALSE;
   if(scene->program) return 1;
@@ -139,11 +139,12 @@ int gml_gpu_opengl_scene_program(GmlGpuBackend *backend,char *error,size_t error
   scene->a_clamp=backend->gl.GetAttribLocation(scene->program,"in_Clamp");
   scene->a_map=backend->gl.GetAttribLocation(scene->program,"in_Map");
   scene->a_step=backend->gl.GetAttribLocation(scene->program,"in_Step");
+  scene->a_margin=backend->gl.GetAttribLocation(scene->program,"in_Margin");
   scene->u_extent=backend->gl.GetUniformLocation(scene->program,"u_extent");
   scene->u_image=backend->gl.GetUniformLocation(scene->program,"u_image");
   scene->u_filter=backend->gl.GetUniformLocation(scene->program,"u_filter");
   if(scene->a_position<0 || scene->a_texcoord<0 || scene->a_colour<0 ||
-     scene->a_clamp<0 || scene->a_map<0 || scene->a_step<0 ||
+     scene->a_clamp<0 || scene->a_map<0 || scene->a_step<0 || scene->a_margin<0 ||
      scene->u_extent<0 || scene->u_image<0 || scene->u_filter<0){
     gml_gpu_opengl_record_error(error,error_capacity,"scene program is missing an attribute or uniform");
     backend->gl.DeleteProgram(scene->program);

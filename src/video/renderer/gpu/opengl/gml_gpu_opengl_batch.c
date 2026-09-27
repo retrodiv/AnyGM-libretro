@@ -95,6 +95,7 @@ static int same_resolved_quad(const GmlRenderQuad *a,const GmlRenderQuad *b){
   if(a->shape!=b->shape || a->sampling.filter!=b->sampling.filter ||
      a->sampling.edge_rule!=b->sampling.edge_rule ||
      a->sampling.quantisation!=b->sampling.quantisation ||
+     a->sampling.logical_margin_mask!=b->sampling.logical_margin_mask ||
      a->sampling.source_region.x!=b->sampling.source_region.x ||
      a->sampling.source_region.y!=b->sampling.source_region.y ||
      a->sampling.source_region.width!=b->sampling.source_region.width ||
@@ -217,10 +218,16 @@ static int scene_preflight(GmlGpuBackend *backend,const GmlRenderDrawBatch *batc
          !valid_region(sampling->source_region,source->width,source->height) ||
          (sampling->filter!=GML_RENDER_FILTER_NEAREST &&
           sampling->filter!=GML_RENDER_FILTER_BILINEAR) ||
-         sampling->edge_rule!=GML_RENDER_EDGE_CLAMP_SUBIMAGE ||
+         (sampling->edge_rule!=GML_RENDER_EDGE_CLAMP_SUBIMAGE &&
+          sampling->edge_rule!=GML_RENDER_EDGE_LOGICAL_TPAG) ||
          sampling->quantisation ||
+         (sampling->edge_rule==GML_RENDER_EDGE_LOGICAL_TPAG
+           ? sampling->filter!=GML_RENDER_FILTER_BILINEAR ||
+             !sampling->logical_margin_mask || sampling->logical_margin_mask>15u
+           : sampling->logical_margin_mask!=0u) ||
          state->samplers[0].filter!=sampling->filter ||
          state->samplers[0].edge_rule!=sampling->edge_rule ||
+         state->samplers[0].logical_margin_mask!=sampling->logical_margin_mask ||
          !same_region(state->samplers[0].source_region,sampling->source_region) ||
          !gml_render_gpu_opengl_draw_textured_quad(op,state,source->width,source->height,
                                                    source->rendered_origin,probe)) return 0;
@@ -300,6 +307,7 @@ static int flush_quads(GmlGpuBackend *backend,GlSceneImage *target,GlSceneImage 
   backend->gl.EnableVertexAttribArray((GLuint)scene->a_clamp);
   backend->gl.EnableVertexAttribArray((GLuint)scene->a_map);
   backend->gl.EnableVertexAttribArray((GLuint)scene->a_step);
+  backend->gl.EnableVertexAttribArray((GLuint)scene->a_margin);
   backend->gl.VertexAttribPointer((GLuint)scene->a_position,2,GL_FLOAT,GL_FALSE,stride,(const void*)0);
   backend->gl.VertexAttribPointer((GLuint)scene->a_texcoord,2,GL_FLOAT,GL_FALSE,stride,
                                   (const void*)(2*sizeof(float)));
@@ -311,6 +319,8 @@ static int flush_quads(GmlGpuBackend *backend,GlSceneImage *target,GlSceneImage 
                                   (const void*)(12*sizeof(float)));
   backend->gl.VertexAttribPointer((GLuint)scene->a_step,2,GL_FLOAT,GL_FALSE,stride,
                                   (const void*)(16*sizeof(float)));
+  backend->gl.VertexAttribPointer((GLuint)scene->a_margin,1,GL_FLOAT,GL_FALSE,stride,
+                                  (const void*)(18*sizeof(float)));
   backend->gl.DrawArrays(GL_TRIANGLES,0,(GLsizei)(count*6u));
   backend->gl.DisableVertexAttribArray((GLuint)scene->a_position);
   backend->gl.DisableVertexAttribArray((GLuint)scene->a_texcoord);
@@ -318,6 +328,7 @@ static int flush_quads(GmlGpuBackend *backend,GlSceneImage *target,GlSceneImage 
   backend->gl.DisableVertexAttribArray((GLuint)scene->a_clamp);
   backend->gl.DisableVertexAttribArray((GLuint)scene->a_map);
   backend->gl.DisableVertexAttribArray((GLuint)scene->a_step);
+  backend->gl.DisableVertexAttribArray((GLuint)scene->a_margin);
   backend->gl.BindBuffer(GL_ARRAY_BUFFER,0);
   backend->gl.BindVertexArray(0);
   backend->gl.UseProgram(0);

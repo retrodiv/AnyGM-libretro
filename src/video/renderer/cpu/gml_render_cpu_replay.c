@@ -97,10 +97,11 @@ int gml_render_cpu_replay_eligible(const GmlRenderDrawOp *operation,
   if(quad->shape!=GML_RENDER_QUAD_AXIS_ALIGNED ||
      quad->sampling.filter!=GML_RENDER_FILTER_NEAREST ||
      quad->sampling.edge_rule!=GML_RENDER_EDGE_CLAMP_SUBIMAGE ||
-     quad->sampling.quantisation ||
+     quad->sampling.quantisation || quad->sampling.logical_margin_mask ||
      !source_rect(region,source->width,source->height) ||
      state->samplers[0].filter!=quad->sampling.filter ||
      state->samplers[0].edge_rule!=quad->sampling.edge_rule ||
+     state->samplers[0].logical_margin_mask!=quad->sampling.logical_margin_mask ||
      !same_rect(state->samplers[0].source_region,region)) return 0;
   u0=(double)region.x/source->width;
   u1=(double)((uint32_t)region.x+region.width)/source->width;
