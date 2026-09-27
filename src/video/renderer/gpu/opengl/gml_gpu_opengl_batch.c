@@ -321,6 +321,9 @@ static int flush_quads(GmlGpuBackend *backend,GlSceneImage *target,GlSceneImage 
   backend->gl.EnableVertexAttribArray((GLuint)scene->a_map);
   backend->gl.EnableVertexAttribArray((GLuint)scene->a_step);
   backend->gl.EnableVertexAttribArray((GLuint)scene->a_margin);
+  backend->gl.EnableVertexAttribArray((GLuint)scene->a_span_x);
+  backend->gl.EnableVertexAttribArray((GLuint)scene->a_span_y);
+  backend->gl.EnableVertexAttribArray((GLuint)scene->a_span_active);
   backend->gl.VertexAttribPointer((GLuint)scene->a_position,2,GL_FLOAT,GL_FALSE,stride,(const void*)0);
   backend->gl.VertexAttribPointer((GLuint)scene->a_texcoord,2,GL_FLOAT,GL_FALSE,stride,
                                   (const void*)(2*sizeof(float)));
@@ -334,6 +337,12 @@ static int flush_quads(GmlGpuBackend *backend,GlSceneImage *target,GlSceneImage 
                                   (const void*)(16*sizeof(float)));
   backend->gl.VertexAttribPointer((GLuint)scene->a_margin,1,GL_FLOAT,GL_FALSE,stride,
                                   (const void*)(18*sizeof(float)));
+  backend->gl.VertexAttribPointer((GLuint)scene->a_span_x,4,GL_FLOAT,GL_FALSE,stride,
+                                  (const void*)(19*sizeof(float)));
+  backend->gl.VertexAttribPointer((GLuint)scene->a_span_y,4,GL_FLOAT,GL_FALSE,stride,
+                                  (const void*)(23*sizeof(float)));
+  backend->gl.VertexAttribPointer((GLuint)scene->a_span_active,1,GL_FLOAT,GL_FALSE,stride,
+                                  (const void*)(27*sizeof(float)));
   backend->gl.DrawArrays(GL_TRIANGLES,0,(GLsizei)(count*6u));
   backend->gl.DisableVertexAttribArray((GLuint)scene->a_position);
   backend->gl.DisableVertexAttribArray((GLuint)scene->a_texcoord);
@@ -342,6 +351,9 @@ static int flush_quads(GmlGpuBackend *backend,GlSceneImage *target,GlSceneImage 
   backend->gl.DisableVertexAttribArray((GLuint)scene->a_map);
   backend->gl.DisableVertexAttribArray((GLuint)scene->a_step);
   backend->gl.DisableVertexAttribArray((GLuint)scene->a_margin);
+  backend->gl.DisableVertexAttribArray((GLuint)scene->a_span_x);
+  backend->gl.DisableVertexAttribArray((GLuint)scene->a_span_y);
+  backend->gl.DisableVertexAttribArray((GLuint)scene->a_span_active);
   backend->gl.BindBuffer(GL_ARRAY_BUFFER,0);
   backend->gl.BindVertexArray(0);
   backend->gl.UseProgram(0);

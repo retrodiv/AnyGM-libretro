@@ -29,7 +29,11 @@ source-over RGB with the application's source-alpha-squared coverage rule, and c
 device result rather than claiming exact CPU replay. Qualified cardinal and arbitrary rotations
 use the same source-over checkpoint with the first-generation CPU's nearest-texel inverse map;
 near-zero angles classified as axis draws, special sprite states and unqualified crop geometry
-retain the ordered CPU fallback. This does not qualify the modern-layer four-tap rotation path.
+retain the ordered CPU fallback. A separate modern-layer filtered rotation branch uses the CPU's
+four-tap inverse map, nonzero-alpha crop bounds and conditional per-row quadrilateral span. It
+requires a proven opaque application target and uses the modern screen target's opaque-alpha
+blend policy; transparent targets still cross the ordered CPU barrier. Both branches retain
+the CPU checkpoint for lost-device reconstruction.
 CPU text resolves a
 preceding resident sprite before writing glyph pixels; this ordering barrier does not accelerate
 text. A similarly bounded first-generation nearest background path accepts complete untrimmed

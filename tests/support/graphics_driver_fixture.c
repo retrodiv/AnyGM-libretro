@@ -427,6 +427,9 @@ static GLint fake_GetAttribLocation(GLuint p,const GLchar *name){
   if(!strcmp(name,"in_Map")) return 4;
   if(!strcmp(name,"in_Step")) return 5;
   if(!strcmp(name,"in_Margin")) return 6;
+  if(!strcmp(name,"in_SpanX")) return 7;
+  if(!strcmp(name,"in_SpanY")) return 8;
+  if(!strcmp(name,"in_SpanActive")) return 9;
   return -1;
 }
 static void fake_VertexAttribPointer(GLuint index,GLint size,GLenum type,GLboolean normalized,

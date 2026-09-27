@@ -140,11 +140,15 @@ int gml_gpu_opengl_scene_program(GmlGpuBackend *backend,char *error,size_t error
   scene->a_map=backend->gl.GetAttribLocation(scene->program,"in_Map");
   scene->a_step=backend->gl.GetAttribLocation(scene->program,"in_Step");
   scene->a_margin=backend->gl.GetAttribLocation(scene->program,"in_Margin");
+  scene->a_span_x=backend->gl.GetAttribLocation(scene->program,"in_SpanX");
+  scene->a_span_y=backend->gl.GetAttribLocation(scene->program,"in_SpanY");
+  scene->a_span_active=backend->gl.GetAttribLocation(scene->program,"in_SpanActive");
   scene->u_extent=backend->gl.GetUniformLocation(scene->program,"u_extent");
   scene->u_image=backend->gl.GetUniformLocation(scene->program,"u_image");
   scene->u_filter=backend->gl.GetUniformLocation(scene->program,"u_filter");
   if(scene->a_position<0 || scene->a_texcoord<0 || scene->a_colour<0 ||
      scene->a_clamp<0 || scene->a_map<0 || scene->a_step<0 || scene->a_margin<0 ||
+     scene->a_span_x<0 || scene->a_span_y<0 || scene->a_span_active<0 ||
      scene->u_extent<0 || scene->u_image<0 || scene->u_filter<0){
     gml_gpu_opengl_record_error(error,error_capacity,"scene program is missing an attribute or uniform");
     backend->gl.DeleteProgram(scene->program);

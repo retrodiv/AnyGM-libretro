@@ -71,6 +71,11 @@ int gml_render_gpu_opengl_draw_textured_quad(const GmlRenderDrawOp *op,
                                 :quad->v[2]-quad->v[0])*source_height/
                                (quad->y[2]-quad->y[0])-1.0);
     vertex[18]=(float)quad->sampling.logical_margin_mask;
+    for(uint32_t span=0;span<4;span++){
+      vertex[19+span]=(float)quad->span_x[span];
+      vertex[23+span]=(float)quad->span_y[span];
+    }
+    vertex[27]=quad->span_active?1.0f:0.0f;
   }
   if(rotated){
     for(uint32_t coordinate=0;coordinate<2;coordinate++)
@@ -82,6 +87,13 @@ int gml_render_gpu_opengl_draw_textured_quad(const GmlRenderDrawOp *op,
          fabs(quad->inverse_x[coordinate])>16384.0 ||
          fabs(quad->inverse_y[coordinate])>16384.0 ||
          fabs(quad->inverse_offset[coordinate])>16384.0) return 0;
+    if(quad->span_active){
+      if(quad->sampling.filter!=GML_RENDER_FILTER_BILINEAR) return 0;
+      for(uint32_t corner=0;corner<4;corner++)
+        if(!isfinite(quad->span_x[corner]) || !isfinite(quad->span_y[corner]) ||
+           fabs(quad->span_x[corner])>16384.0 ||
+           fabs(quad->span_y[corner])>16384.0) return 0;
+    }
   }
   return 1;
 }

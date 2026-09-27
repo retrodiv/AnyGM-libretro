@@ -79,6 +79,9 @@
   "in vec4 in_Map;\n" \
   "in vec2 in_Step;\n" \
   "in float in_Margin;\n" \
+  "in vec4 in_SpanX;\n" \
+  "in vec4 in_SpanY;\n" \
+  "in float in_SpanActive;\n" \
   "uniform vec2 u_extent;\n" \
   "out vec2 v_texcoord;\n" \
   "out vec4 v_colour;\n" \
@@ -86,6 +89,9 @@
   "flat out vec4 v_map;\n" \
   "flat out vec2 v_step;\n" \
   "flat out float v_margin;\n" \
+  "flat out vec4 v_span_x;\n" \
+  "flat out vec4 v_span_y;\n" \
+  "flat out float v_span_active;\n" \
   "void main(){\n" \
   "  gl_Position=vec4(2.0*in_Position.x/u_extent.x-1.0,1.0-2.0*in_Position.y/u_extent.y,0.0,1.0);\n" \
   "  v_texcoord=in_TextureCoord;\n" \
@@ -94,6 +100,9 @@
   "  v_map=in_Map;\n" \
   "  v_step=in_Step;\n" \
   "  v_margin=in_Margin;\n" \
+  "  v_span_x=in_SpanX;\n" \
+  "  v_span_y=in_SpanY;\n" \
+  "  v_span_active=in_SpanActive;\n" \
   "}\n"
 
 #define GML_GPU_OPENGL_SCENE_FRAGMENT_BODY \
@@ -106,6 +115,9 @@
   "flat in vec4 v_map;\n" \
   "flat in vec2 v_step;\n" \
   "flat in float v_margin;\n" \
+  "flat in vec4 v_span_x;\n" \
+  "flat in vec4 v_span_y;\n" \
+  "flat in float v_span_active;\n" \
   "out vec4 o_color;\n" \
   "vec4 margin_tap(ivec2 p,ivec2 first,ivec2 last,int mask){\n" \
   "  bool raw=(p.x<0 && (mask&1)!=0) || (p.y<0 && (mask&2)!=0) ||\n" \
@@ -118,6 +130,18 @@
   "void main(){\n" \
   "  if(u_filter==0){ o_color=texture(u_image,v_texcoord)*v_colour; return; }\n" \
   "  vec2 centre=vec2(gl_FragCoord.x,u_extent.y-gl_FragCoord.y);\n" \
+  "  if(u_filter==2 && v_span_active>0.5){\n" \
+  "    float mn=1e30,mx=-1e30; int hits=0;\n" \
+  "    for(int i=0;i<4;i++){\n" \
+  "      int j=(i+1)&3; float a=v_span_y[i],b=v_span_y[j];\n" \
+  "      if((a<=centre.y && b>centre.y) || (b<=centre.y && a>centre.y)){\n" \
+  "        float x=v_span_x[i]+(centre.y-a)/(b-a)*(v_span_x[j]-v_span_x[i]);\n" \
+  "        mn=min(mn,x); mx=max(mx,x); hits++;\n" \
+  "      }\n" \
+  "    }\n" \
+  "    float px=floor(centre.x);\n" \
+  "    if(hits<2 || px<floor(mn)-1.0 || px>=ceil(mx)+1.0) discard;\n" \
+  "  }\n" \
   "  vec2 delta=centre-v_map.xy;\n" \
   "  ivec2 lo; vec2 f;\n" \
   "  if(u_filter>=2){\n" \

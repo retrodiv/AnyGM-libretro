@@ -31,6 +31,7 @@ typedef struct GmlTpag {
   int alpha_partial;                      /* at least one source texel has alpha 1..254 */
   int black_scanned, all_black;           /* cached source-colour classification */
   int scene_opaque_checked,scene_fully_opaque,scene_binary_alpha; /* immutable atlas crop eligibility */
+  int scene_ax0,scene_ay0,scene_ax1,scene_ay1; /* nonzero-alpha crop bounds for device rotation */
   int *alpha_row_min, *alpha_row_max;     /* per-source-row nontransparent span, optional */
   uint16_t *alpha_qrow_min, *alpha_qrow_max; /* per-alpha-threshold row spans, built lazily */
   uint8_t *alpha_qrow_built;
