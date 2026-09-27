@@ -1407,7 +1407,8 @@ static int public_surface_part_qualified_dispatch(void){
   GmlRenderDeviceServices device=service(&fake);
   uint32_t expected[16];
   const uint32_t authored[4]={0xFFB42834u,0xFF268BB5u,0xFF8CC539u,0xFFD37224u};
-  int id;
+  const uint32_t binary[4]={0xFF26B481u,0x00D0A51Fu,0xFF692CB3u,0x00134791u};
+  int id,binary_id;
   CHECK(render);
   render->next_surface_id=1;
   render->active_shader=-1;
@@ -1417,25 +1418,36 @@ static int public_surface_part_qualified_dispatch(void){
   CHECK(gml_render_application_surface_ensure_owned(render,4,4));
   id=gml_surface_create(render,2,2);
   CHECK(id>0);
+  binary_id=gml_surface_create(render,2,2);
+  CHECK(binary_id>0);
   memcpy(render->surface[id-1].px,authored,sizeof authored);
+  memcpy(render->surface[binary_id-1].px,binary,sizeof binary);
   render->surface[id-1].opaque_known=render->surface[id-1].all_opaque=1;
   render->surface[id-1].all_transparent=0;
+  render->surface[binary_id-1].all_transparent=0;
   gml_render_bind_device(render,&device);
   CHECK(gml_render_begin_resident_owned_application(render,0.0,0.0,0));
   gml_render_set_pending_fill(render,0xFF102030u);
   gml_draw_surface_part_ext(render,id,0,0,2,2,0,0,1,1,0xFFFFFFu,1.0);
   gml_draw_surface_part_ext(render,id,1,0,1,2,3,1,1,1,0xFFFFFFu,1.0);
   gml_draw_surface_part_ext(render,id,0,0,1,1,1,2,2,2,0xFFFFFFu,1.0);
+  gml_draw_surface_stretched(render,id,2,2,2,2,0xFFFFFFu,1.0);
+  gml_draw_surface_stretched(render,binary_id,0,2,2,2,0xFFFFFFu,1.0);
+  gml_draw_surface_part_ext(render,binary_id,0,0,1,2,2,0,1,1,0xFFFFFFu,1.0);
   CHECK(render->resident_application_pass && gml_render_scene_flush(render));
   gml_render_resource_journal_metrics(render->app_surface_resource,&metrics);
-  CHECK(metrics.journal_operations==4u && !metrics.cpu_replays &&
-        fake.submits==4 && !fake.readbacks);
+  CHECK(metrics.journal_operations==7u && !metrics.cpu_replays &&
+        fake.submits==7 && !fake.readbacks);
   for(int index=0;index<16;index++) expected[index]=0xFF102030u;
-  expected[0]=authored[0]; expected[1]=authored[1];
+  expected[0]=authored[0]; expected[1]=authored[1]; expected[2]=binary[0];
   expected[4]=authored[2]; expected[5]=authored[3];
-  expected[7]=authored[1]; expected[11]=authored[3];
-  expected[9]=expected[10]=expected[13]=expected[14]=authored[0];
+  expected[6]=binary[2]; expected[7]=authored[1];
+  expected[8]=binary[0]; expected[9]=expected[10]=authored[0];
+  expected[11]=authored[1];
+  expected[12]=binary[2]; expected[13]=authored[0];
+  expected[14]=authored[2]; expected[15]=authored[3];
   gml_surface_free(render,id);
+  gml_surface_free(render,binary_id);
   gml_render_bind_device(render,NULL);
   CHECK(gml_render_application_surface_owned_view(render,&view) &&
         view.width==4 && view.height==4 &&

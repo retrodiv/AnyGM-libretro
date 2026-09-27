@@ -284,9 +284,29 @@ int gml_render_surface_draw_targets_screen_raster(const GmlRender *r,int surf,
          fabs(fabs(height)-(double)r->fbh)<0.001;
 }
 
+static int resident_surface_part(GmlRender *r,int surf,double sx,double sy,double sw,double sh,
+                                 double dx,double dy,double xs,double ys,
+                                 uint32_t blend,double alpha);
+
 void gml_draw_surface_stretched(GmlRender *r,int surf,double dx,double dy,
                                 double dw,double dh,uint32_t blend,double alpha){
-  if(!gml_render_resident_application_cpu_barrier(r)) return;
+  int resident_success=0;
+  int source_slot=surface_slot(surf);
+  if(r && source_slot>=0 && r->surface[source_slot].live &&
+     surf!=r->surface_canvas &&
+     r->resident_application_pass && gml_render_device(r)){
+    int source_width=r->surface[source_slot].w;
+    int source_height=r->surface[source_slot].h;
+    if(source_width>0 && source_height>0){
+      double mapped_x=dx,mapped_y=dy,mapped_width=dw,mapped_height=dh;
+      gml_render_draw_map_point(r,&mapped_x,&mapped_y);
+      gml_render_draw_map_scale(r,&mapped_width,&mapped_height);
+      resident_success=resident_surface_part(r,surf,0.0,0.0,
+        (double)source_width,(double)source_height,mapped_x,mapped_y,
+        mapped_width/source_width,mapped_height/source_height,blend,alpha);
+    }
+  }
+  if(!resident_success && !gml_render_resident_application_cpu_barrier(r)) return;
   /* A surface drawn onto the base canvas, rather than into another surface, is content compositing
    * its own screen. A bare refresh means only presentation, and a newly created transparent scratch
    * surface writes no pixels. An authored surface can still count after a transparent clear. */
@@ -295,11 +315,12 @@ void gml_draw_surface_stretched(GmlRender *r,int surf,double dx,double dy,
      (!surface_known_transparent(r,surf) ||
       (r->content_authored_surfaces&(UINT64_C(1)<<slot))))
     r->content_composited_screen=1;
+  if(resident_success) return;
   gml_render_cpu_draw_surface_stretched_impl(r,surf,dx,dy,dw,dh,blend,alpha,1);
 }
 
-/* A fully opaque integer surface crop has the same nearest texel and destination-copy rule
- * as the existing exact textured quad. Observe the source without manufacturing a CPU write;
+/* Opaque and binary-alpha integer surface crops share the exact nearest texel rule with
+ * full-source stretched draws. Observe the source without manufacturing a CPU write;
  * the resource journal retains its version for CPU readers and context loss. */
 static int resident_surface_part(GmlRender *r,int surf,double sx,double sy,double sw,double sh,
                                  double dx,double dy,double xs,double ys,
@@ -313,7 +334,7 @@ static int resident_surface_part(GmlRender *r,int surf,double sx,double sy,doubl
   GmlRenderResourceExecution result;
   const uint32_t *pixels;
   double left,right,top,bottom;
-  int slot=surface_slot(surf),width=0,height=0;
+  int slot=surface_slot(surf),width=0,height=0,binary_alpha=0,covered=0;
   if(!r || slot<0 || !r->resident_application_pass || !gml_render_device(r) ||
      r->fb!=r->app_surface_owned || r->fbw!=r->app_w || r->fbh!=r->app_h ||
      r->target_sp || r->target_id>=0 || r->pending_underlay || r->pending_presentation ||
@@ -343,8 +364,13 @@ static int resident_surface_part(GmlRender *r,int surf,double sx,double sy,doubl
      source.bytes!=pixels || source.pixel_format!=GML_RENDER_PIXEL_ARGB8888)
     return 0;
   for(int y=(int)sy;y<(int)(sy+sh);y++)
-    for(int x=(int)sx;x<(int)(sx+sw);x++)
-      if((pixels[(size_t)y*width+x]>>24)!=255u) return 0;
+    for(int x=(int)sx;x<(int)(sx+sw);x++){
+      unsigned coverage=pixels[(size_t)y*width+x]>>24;
+      if(coverage==255u) covered=1;
+      else if(coverage==0u) binary_alpha=1;
+      else return 0;
+    }
+  if(!covered) return 0;
   gml_render_flush_pending_fill(r);
   if(r->pending_fill || !r->resident_application_pass ||
      !(target=gml_render_application_resource_ensure(r))) return 0;
@@ -380,6 +406,14 @@ static int resident_surface_part(GmlRender *r,int surf,double sx,double sy,doubl
   state.write_mask=15u;
   state.colour=0xFFFFFFFFu;
   state.alpha=255u;
+  if(binary_alpha){
+    state.rgb_source_factor=GML_RENDER_BLEND_SOURCE_ALPHA;
+    state.rgb_destination_factor=GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA;
+    state.alpha_source_factor=GML_RENDER_BLEND_ONE;
+    state.alpha_destination_factor=GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA;
+    state.rgb_equation=GML_RENDER_BLEND_ADD;
+    state.alpha_equation=GML_RENDER_BLEND_ADD;
+  }
   state.sampler_count=1u;
   state.samplers[0]=operation.payload.quad.sampling;
   batch=(GmlRenderDrawBatch){&operation,1u,&state,1u};
