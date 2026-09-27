@@ -139,10 +139,10 @@ void gml_draw_background(GmlRender *r, int bg, double x, double y){
   if(r->alpha==1.0 && !r->interp && !gml_d3_is_active(r) &&
      gml_render_resident_atlas_page(r,ti,x-r->cam_x+t->tx,y-r->cam_y+t->ty,1,1,
                                     GML_RENDER_SCENE_BACKGROUND)) return;
-  if(r->alpha==1.0 && r->interp && !gml_d3_is_active(r) &&
+  if(r->interp && !gml_d3_is_active(r) &&
      gml_render_resident_filtered_atlas_page(r,ti,x-r->cam_x+t->tx,
                                               y-r->cam_y+t->ty,1,1,
-                                              GML_RENDER_SCENE_BACKGROUND,0xFFFFFFu,1.0,NULL)) return;
+                                              GML_RENDER_SCENE_BACKGROUND,0xFFFFFFu,r->alpha,NULL)) return;
   if(!gml_render_resident_application_cpu_barrier(r)) return;
   if(gml_d3_draw_background_2d(r,bg,x,y,1,1,0xFFFFFF,r->alpha)) return;
   gml_render_cpu_blit_background_phase(r,t, x - r->cam_x + t->tx, y - r->cam_y + t->ty, 1,1, 0xFFFFFF, r->alpha);
@@ -253,10 +253,10 @@ void gml_draw_background_ext(GmlRender *r, int bg, double x, double y, double xs
      gml_render_resident_atlas_page(r,ti,x-r->cam_x+t->tx*xs,
                                       y-r->cam_y+t->ty*ys,xs,ys,
                                       GML_RENDER_SCENE_BACKGROUND)) return;
-  if((color&0xFFFFFFu)==0xFFFFFFu && alpha==1.0 && r->interp && !gml_d3_is_active(r) &&
+  if(r->interp && !gml_d3_is_active(r) &&
      gml_render_resident_filtered_atlas_page(r,ti,x-r->cam_x+t->tx*xs,
                                               y-r->cam_y+t->ty*ys,xs,ys,
-                                              GML_RENDER_SCENE_BACKGROUND,0xFFFFFFu,1.0,NULL)) return;
+                                              GML_RENDER_SCENE_BACKGROUND,color,alpha,NULL)) return;
   /* A complete source axis wholly outside the target writes no pixels. Keep a preceding resident
    * pass when an otherwise unsupported mirror is safely beyond either target axis. */
   if(r->resident_application_pass && !gml_d3_is_active(r) &&
