@@ -59,6 +59,13 @@ without a context. The first-generation and modern-layer paths accept up to eigh
 source texels per axis (64 taps), a proven opaque destination and ordinary blend state, with
 or without global interpolation. Deeper boxes and the full-target coarse-mip veil remain
 ordered CPU fallbacks; the latter is a separate effect qualification, not an ordinary box sample.
+The public `draw_sprite_pos` entry can keep an ordinary axis-aligned atlas rectangle resident
+through the existing nearest or bilinear cell preparation. Its complete, cropped, trimmed,
+binary-alpha and filtered/intermediate-alpha forms preserve the mapped corner geometry; the
+filtered first-generation and modern-layer paths retain their distinct target-alpha and
+fractional-edge rules, including the modern half-camera tie. A non-axis or special-blend
+positioned quad still crosses the ordered CPU barrier; it is not silently approximated by a
+rectangular sprite.
 CPU text resolves a preceding resident sprite before writing glyph pixels; this ordering barrier
 does not accelerate text. A similarly bounded first-generation nearest background path accepts
 complete untrimmed
