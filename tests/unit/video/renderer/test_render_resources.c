@@ -1319,6 +1319,43 @@ static int atlas_scene_identity_and_retirement(void){
   return 1;
 }
 
+static int mutable_scene_identity_across_renderers(void){
+  GmlRender *first=(GmlRender*)calloc(1,sizeof *first);
+  GmlRender *second=(GmlRender*)calloc(1,sizeof *second);
+  GmlRenderImageRef first_app,second_app,first_surface,second_surface;
+  FakeDevice fake={0};
+  GmlRenderDeviceServices device=service(&fake);
+  int first_id,second_id;
+  CHECK(first && second);
+  CHECK(gml_render_application_surface_ensure_owned(first,4,4) &&
+        gml_render_application_surface_ensure_owned(second,4,4));
+  first->next_surface_id=second->next_surface_id=1;
+  first_id=gml_surface_create(first,4,4);
+  second_id=gml_surface_create(second,4,4);
+  CHECK(first_id==1 && second_id==1);
+  gml_render_bind_device(first,&device);
+  gml_render_bind_device(second,&device);
+  CHECK(gml_render_application_resource_ensure(first) &&
+        gml_render_application_resource_ensure(second) &&
+        gml_render_surface_resource_ensure(first,first_id) &&
+        gml_render_surface_resource_ensure(second,second_id));
+  first_app=gml_render_resource_image_ref(first->app_surface_resource);
+  second_app=gml_render_resource_image_ref(second->app_surface_resource);
+  first_surface=gml_render_resource_image_ref(first->surface[0].resource);
+  second_surface=gml_render_resource_image_ref(second->surface[0].resource);
+  CHECK(first_app.resource_class==GML_RENDER_RESOURCE_APPLICATION &&
+        first_app.identity==second_app.identity &&
+        first_app.incarnation!=second_app.incarnation);
+  CHECK(first_surface.resource_class==GML_RENDER_RESOURCE_SURFACE &&
+        first_surface.identity==second_surface.identity &&
+        first_surface.incarnation!=second_surface.incarnation);
+  gml_render_free(first);
+  gml_render_free(second);
+  free(first);
+  free(second);
+  return 1;
+}
+
 static int resident_opaque_atlas_sprite_gpu(void){
   GmlRender *render=(GmlRender*)calloc(1,sizeof *render);
   GmlRenderApplicationWriteView view={0};
@@ -1634,11 +1671,12 @@ int main(void){
   passed+=resident_application_sprite_cpu_fallback();
   passed+=resident_background_and_tile_cpu_barriers();
   passed+=atlas_scene_identity_and_retirement();
+  passed+=mutable_scene_identity_across_renderers();
   passed+=resident_opaque_atlas_sprite_gpu();
   passed+=resident_binary_atlas_sprite_gpu();
   passed+=resident_integer_scaled_atlas_sprite_gpu();
   passed+=state_without_context();
   passed+=nearest_subrectangle_mirrors();
-  printf("render resource cases: passed=%d failed=%d\n",passed,20-passed);
-  return passed==20?EXIT_SUCCESS:EXIT_FAILURE;
+  printf("render resource cases: passed=%d failed=%d\n",passed,21-passed);
+  return passed==21?EXIT_SUCCESS:EXIT_FAILURE;
 }

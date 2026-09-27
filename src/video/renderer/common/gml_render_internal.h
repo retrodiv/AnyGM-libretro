@@ -334,7 +334,6 @@ typedef struct GmlRender {
   int presentation_deferral_enabled;
   GmlRenderDeferredPresentation presentation;
   GmlSurface surface[GML_MAX_SURFACES]; int next_surface_id;
-  uint64_t next_surface_resource_incarnation;
   /* draw state */
   uint32_t  color;  double alpha; int halign, valign, font, alphablend, circle_precision;
   /* Fixed-function flat fog state for ordinary sprite drawing. */
@@ -651,6 +650,7 @@ uint32_t be32(const uint8_t *data);
 
 void atlas_pool_free(GmlRender *r);
 uint8_t *atlas_pixels(GmlRender *r,int index);
+uint64_t gml_render_scene_incarnation_allocate(void);
 int gml_render_atlas_scene_source_view(GmlRender *r,int index,
                                        GmlRenderResourceSource *out_source);
 void gml_render_atlas_scene_retire_all(GmlRender *r);

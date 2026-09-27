@@ -11,25 +11,12 @@
 #include "gml_image_codec.h"
 
 #include <limits.h>
-#include <stdatomic.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
 #define GML_EXTERNAL_TEXTURE_MAX_BYTES (64u*1024u*1024u)
 #define GML_EXTERNAL_TEXTURE_TOTAL_BYTES (256u*1024u*1024u)
-
-static _Atomic uint64_t next_scene_source_epoch=1u;
-
-static uint64_t scene_source_epoch_allocate(void){
-  uint64_t current=atomic_load_explicit(&next_scene_source_epoch,memory_order_relaxed);
-  for(;;){
-    if(current==UINT64_MAX) return 0;
-    if(atomic_compare_exchange_weak_explicit(&next_scene_source_epoch,&current,
-                                             current+1u,memory_order_relaxed,
-                                             memory_order_relaxed)) return current;
-  }
-}
 
 int gml_render_atlas_scene_source_view(GmlRender *r,int index,
                                        GmlRenderResourceSource *out_source){
@@ -43,7 +30,7 @@ int gml_render_atlas_scene_source_view(GmlRender *r,int index,
   bytes=(uint64_t)(uint32_t)atlas->w*(uint32_t)atlas->h*4u;
   if(bytes>SIZE_MAX) return 0;
   if(!r->scene_source_epoch){
-    r->scene_source_epoch=scene_source_epoch_allocate();
+    r->scene_source_epoch=gml_render_scene_incarnation_allocate();
     if(!r->scene_source_epoch) return 0;
   }
   out_source->image=(GmlRenderImageRef){GML_RENDER_RESOURCE_ATLAS,(uint32_t)index,

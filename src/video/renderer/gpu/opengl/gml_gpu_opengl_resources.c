@@ -298,10 +298,8 @@ int gml_gpu_opengl_scene_upload(GmlGpuBackend *backend,const GmlRenderImageUploa
                   transfer->image.resource_class==GML_RENDER_RESOURCE_APPLICATION ||
                   transfer->image.resource_class==GML_RENDER_RESOURCE_SURFACE ||
                   transfer->image.resource_class==GML_RENDER_RESOURCE_SCRATCH;
-  /* Only authored atlas incarnations are global across renderers. Mutable surface incarnations
-   * are renderer-local, so an apparent same-version hit on a shared device can alias another
-   * renderer's pixels. Keep a current immutable atlas across frames, but never infer residency
-   * for a mutable source from its image reference alone. */
+  /* Mutable sources can change through CPU writes outside this transfer path. Keep a current
+   * immutable atlas across frames, but never infer mutable residency from its image reference. */
   if(transfer->image.resource_class==GML_RENDER_RESOURCE_ATLAS &&
      slot->texture && slot->valid && scene_same_version(slot->ref,transfer->image) &&
      slot->width==transfer->storage_width && slot->height==transfer->storage_height &&
@@ -468,10 +466,17 @@ int gml_gpu_opengl_scene_readback(GmlGpuBackend *backend,const GmlRenderImageRea
 }
 
 void gml_gpu_opengl_scene_retire(GmlGpuBackend *backend,GmlRenderImageRef image){
+  int mutable_target=image.resource_class==GML_RENDER_RESOURCE_SCREEN ||
+                     image.resource_class==GML_RENDER_RESOURCE_APPLICATION ||
+                     image.resource_class==GML_RENDER_RESOURCE_SURFACE ||
+                     image.resource_class==GML_RENDER_RESOURCE_SCRATCH;
   if(!backend || !backend->loaded) return;
   for(size_t index=0;index<GL_SCENE_MAX_IMAGES;index++){
     GlSceneImage *candidate=&backend->scene.images[index];
-    if(candidate->texture && scene_same_version(candidate->ref,image)){
+    /* A CPU handoff can advance the resource version after its last device draw. Retirement
+     * ends that mutable incarnation, even if the last resident version is now older. */
+    if(candidate->texture && scene_same_logical(candidate->ref,image) &&
+       (mutable_target || scene_same_version(candidate->ref,image))){
       scene_delete_image(backend,candidate);
       return;
     }

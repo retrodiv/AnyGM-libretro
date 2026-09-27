@@ -9,9 +9,23 @@
 #include "anygm_host.h"
 
 #include <stdint.h>
+#include <limits.h>
 #include <math.h>
+#include <stdatomic.h>
 #include <stdlib.h>
 #include <string.h>
+
+static _Atomic uint64_t next_scene_incarnation=1u;
+
+uint64_t gml_render_scene_incarnation_allocate(void){
+  uint64_t current=atomic_load_explicit(&next_scene_incarnation,memory_order_relaxed);
+  for(;;){
+    if(current==UINT64_MAX) return 0;
+    if(atomic_compare_exchange_weak_explicit(&next_scene_incarnation,&current,
+                                             current+1u,memory_order_relaxed,
+                                             memory_order_relaxed)) return current;
+  }
+}
 
 /* Colour and coverage counted apart. A surface can be fully authored and hold no colour at all:
  * a scanline or shadow mask is black with an alpha ramp, so a count of non-black RGB reads zero
@@ -118,13 +132,15 @@ GmlRenderResource *gml_render_surface_resource_ensure(GmlRender *r,int id){
   int slot=surface_slot(id);
   GmlSurface *surface;
   GmlRenderImageRef image;
+  uint64_t incarnation;
   if(!r || slot<0) return NULL;
   surface=&r->surface[slot];
   if(!surface->live || !surface->px || surface->w<=0 || surface->h<=0) return NULL;
   if(surface->resource) return surface->resource;
-  if(r->next_surface_resource_incarnation==UINT64_MAX) return NULL;
+  incarnation=gml_render_scene_incarnation_allocate();
+  if(!incarnation) return NULL;
   image=(GmlRenderImageRef){GML_RENDER_RESOURCE_SURFACE,(uint32_t)id,
-    ++r->next_surface_resource_incarnation,1u};
+    incarnation,1u};
   surface->resource=gml_render_resource_create(image,(uint32_t)surface->w,
     (uint32_t)surface->h,GML_RENDER_PIXEL_ARGB8888,surface->px,
     (GmlRenderResourceLimits){0});
@@ -161,14 +177,16 @@ GmlRenderResourceExecution gml_render_surface_scene_submit(
 }
 GmlRenderResource *gml_render_application_resource_ensure(GmlRender *r){
   GmlRenderImageRef image;
+  uint64_t incarnation;
   if(!r || !r->app_surface_owned || r->app_surface!=r->app_surface_owned ||
      r->app_w<=0 || r->app_h<=0) return NULL;
   if(r->app_surface_resource)
     return r->app_surface_resource_width==r->app_w &&
            r->app_surface_resource_height==r->app_h?r->app_surface_resource:NULL;
-  if(r->next_surface_resource_incarnation==UINT64_MAX) return NULL;
+  incarnation=gml_render_scene_incarnation_allocate();
+  if(!incarnation) return NULL;
   image=(GmlRenderImageRef){GML_RENDER_RESOURCE_APPLICATION,0u,
-    ++r->next_surface_resource_incarnation,1u};
+    incarnation,1u};
   r->app_surface_resource=gml_render_resource_create(image,(uint32_t)r->app_w,
     (uint32_t)r->app_h,GML_RENDER_PIXEL_ARGB8888,r->app_surface_owned,
     (GmlRenderResourceLimits){0});
