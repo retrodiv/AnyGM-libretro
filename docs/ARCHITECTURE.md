@@ -570,8 +570,9 @@ canonical header-local recognized-shader sampling operations in
 `gml_render_cpu_sampling_internal.h`; the general surface mapper and post-process
 kernels additionally share the two final-pixel operations in
 `gml_render_cpu_pixel_internal.h`. Sprite and surface composition also share the
-canonical header-local cardinal-anchor, opacity-run, fast-alpha, and
-bilinear-band helpers in `gml_render_cpu_blit_internal.h`. These private definitions
+canonical header-local opacity-run, fast-alpha, and bilinear-band helpers in
+`gml_render_cpu_blit_internal.h`. The unchanged cardinal-anchor geometry is shared
+with resident preparation through `gml_render.c`. These private definitions
 remain direct and header-local, so coarse draw preparation, opacity queries,
 profiling hooks, and row-band dispatch may cross renderer implementation units
 but no sampling, blending, or final-pixel call does.

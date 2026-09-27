@@ -73,6 +73,12 @@ static int qualified_blend(const GmlRenderDrawStateSnapshot *state){
   return -1;
 }
 
+static uint32_t scene_filter(const GmlRenderQuad *quad){
+  return quad->shape==GML_RENDER_QUAD_AXIS_ALIGNED
+    ?(quad->sampling.filter==GML_RENDER_FILTER_BILINEAR?1u:0u)
+    :(quad->sampling.filter==GML_RENDER_FILTER_BILINEAR?2u:3u);
+}
+
 static int exact_rect(const GmlRenderDrawOp *op,GLint *left,GLint *bottom,
                       GLsizei *width,GLsizei *height){
   const GmlRenderQuad *quad=&op->payload.quad;
@@ -235,10 +241,12 @@ static int scene_preflight(GmlGpuBackend *backend,const GmlRenderDrawBatch *batc
         uint32_t colour=op->payload.quad.corner_colour[corner];
         if(colour!=0xFFFFFFFFu &&
            (op->reconstruction_mode!=GML_RENDER_DEVICE_CHECKPOINT ||
-            sampling->filter!=GML_RENDER_FILTER_BILINEAR)) return 0;
+            (sampling->filter!=GML_RENDER_FILTER_BILINEAR &&
+             op->payload.quad.shape==GML_RENDER_QUAD_AXIS_ALIGNED))) return 0;
         if((colour>>24)!=255u && blend!=1 && blend!=3) return 0;
       }
-      if(sampling->filter==GML_RENDER_FILTER_NEAREST &&
+      if(op->payload.quad.shape==GML_RENDER_QUAD_AXIS_ALIGNED &&
+         sampling->filter==GML_RENDER_FILTER_NEAREST &&
          !full_region(sampling->source_region,source->width,source->height)){
         double u0=(double)sampling->source_region.x/source->width;
         double u1=(double)((uint32_t)sampling->source_region.x+
@@ -300,7 +308,7 @@ static int flush_quads(GmlGpuBackend *backend,GlSceneImage *target,GlSceneImage 
   backend->gl.UseProgram(scene->program);
   backend->gl.Uniform2fv(scene->u_extent,1,extent);
   backend->gl.Uniform1i(scene->u_image,0);
-  backend->gl.Uniform1i(scene->u_filter,filter==GML_RENDER_FILTER_BILINEAR);
+  backend->gl.Uniform1i(scene->u_filter,(GLint)filter);
   backend->gl.BindVertexArray(scene->vertex_array);
   backend->gl.BindBuffer(GL_ARRAY_BUFFER,scene->vertex_buffer);
   backend->gl.BufferData(GL_ARRAY_BUFFER,
@@ -465,7 +473,7 @@ GmlRenderExecutionResult gml_gpu_opengl_scene_submit(GmlGpuBackend *backend,
        !active_target || !same_logical(active_target->ref,op->target.image) ||
        pending_count==GL_SCENE_MAX_QUADS ||
        !pending_source || !same_version(pending_source->ref,op->sources[0]) ||
-       pending_filter!=op->payload.quad.sampling.filter ||
+       pending_filter!=scene_filter(&op->payload.quad) ||
        pending_blend!=qualified_blend(&batch->states[op->state_index]) ||
        qualified_blend(&batch->states[op->state_index])==2)){
       if(!flush_quads(backend,active_target,pending_source,pending_filter,
@@ -516,7 +524,7 @@ GmlRenderExecutionResult gml_gpu_opengl_scene_submit(GmlGpuBackend *backend,
       result.status=GML_RENDER_EXEC_RESOURCE_ERROR;
       break;
     }
-    pending_filter=op->payload.quad.sampling.filter;
+    pending_filter=scene_filter(&op->payload.quad);
     pending_blend=qualified_blend(&batch->states[op->state_index]);
     if(pending_blend==2){
       uint32_t repetitions=exact_repetitions(batch,index);

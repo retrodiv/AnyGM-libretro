@@ -883,11 +883,27 @@ fi
 
 renderer_blit_definition_files=$(find src/video/renderer -type f -not -path 'src/video/renderer/gpu/opengl/*' \
   \( -name '*.c' -o -name '*.h' \) -exec grep -l -E \
-  '^[[:space:]]*static[[:space:]]+(inline[[:space:]]+)?(int|void|uint32_t)[[:space:]]+(render_modern_cardinal_anchor|blend_fast8_cached|row_all_opaque32|blend_fast8_src_run|surf_bi_band)[[:space:]]*\(' \
+  '^[[:space:]]*static[[:space:]]+(inline[[:space:]]+)?(int|void|uint32_t)[[:space:]]+(blend_fast8_cached|row_all_opaque32|blend_fast8_src_run|surf_bi_band)[[:space:]]*\(' \
   {} + 2>/dev/null || true)
 if [ "$renderer_blit_definition_files" != "src/video/renderer/cpu/gml_render_cpu_blit_internal.h" ]; then
   printf '%s\n' "CPU sprite/surface hot blit definitions belong only to gml_render_cpu_blit_internal.h:" >&2
   printf '%s\n' "$renderer_blit_definition_files" >&2
+  exit 1
+fi
+
+renderer_cardinal_anchor_files=$(find src/video/renderer -type f -not -path 'src/video/renderer/gpu/opengl/*' \
+  -name '*.c' -exec grep -l -E \
+  '^[[:space:]]*void[[:space:]]+render_modern_cardinal_anchor[[:space:]]*\(' \
+  {} + 2>/dev/null || true)
+renderer_cardinal_anchor_inline_files=$(find src/video/renderer -type f -not -path 'src/video/renderer/gpu/opengl/*' \
+  \( -name '*.c' -o -name '*.h' \) -exec grep -l -E \
+  '^[[:space:]]*static[[:space:]]+(inline[[:space:]]+)?void[[:space:]]+render_modern_cardinal_anchor[[:space:]]*\(' \
+  {} + 2>/dev/null || true)
+if [ "$renderer_cardinal_anchor_files" != "src/video/renderer/gml_render.c" ] ||
+   [ -n "$renderer_cardinal_anchor_inline_files" ]; then
+  printf '%s\n' "The shared cardinal-anchor definition belongs only to gml_render.c:" >&2
+  printf '%s\n' "$renderer_cardinal_anchor_files" >&2
+  printf '%s\n' "$renderer_cardinal_anchor_inline_files" >&2
   exit 1
 fi
 

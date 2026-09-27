@@ -20,14 +20,17 @@ A narrow ordinary sprite path accepts unit-scale, integer-aligned authored trim 
 has only alpha 0 or 255; other texture-stage filters are irrelevant to this unprogrammed base-image
 draw, and a binary-alpha crop uses endpoint source-over. Its CPU journal replay rejects any
 intermediate-alpha source. These variants are replayable from retained source pixels after context
-loss. A separate first-generation filtered path accepts qualified untinted ordinary sprites with
-partial alpha, authored trim, partial source crops and either scale sign. It preserves snapped
+loss. A separate first-generation filtered path accepts qualified ordinary sprites with
+partial alpha, tint, per-draw alpha, authored trim, partial source crops and either scale sign. It preserves snapped
 destination coverage and fractional texture phase. For logical padding around a packed atlas
 cell, taps crossing a padded edge use physical atlas coordinates on both axes; other taps clamp to
 the selected source rectangle. The path requires physical margin pixels where needed, uses
 source-over RGB with the application's source-alpha-squared coverage rule, and checkpoints the
-device result rather than claiming exact CPU replay. Rotation, tint, per-draw intermediate alpha,
-special sprite states and unqualified crop geometry still use the ordered CPU fallback. CPU text resolves a
+device result rather than claiming exact CPU replay. Qualified cardinal and arbitrary rotations
+use the same source-over checkpoint with the first-generation CPU's nearest-texel inverse map;
+near-zero angles classified as axis draws, special sprite states and unqualified crop geometry
+retain the ordered CPU fallback. This does not qualify the modern-layer four-tap rotation path.
+CPU text resolves a
 preceding resident sprite before writing glyph pixels; this ordering barrier does not accelerate
 text. A similarly bounded first-generation nearest background path accepts complete untrimmed
 pages at unit positive scale with intermediate alpha. It checkpoints the device's source-over

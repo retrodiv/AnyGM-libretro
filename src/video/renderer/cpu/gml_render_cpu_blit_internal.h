@@ -20,20 +20,6 @@
 #endif
 
 
-/* Modern format semantics rasterize a cardinally rotated textured rectangle as a half-open cell. When a
- * source basis points toward a negative destination axis, its outer integer edge belongs to the
- * preceding pixel.  Applying that one-pixel anchor correction also makes the four 90-degree
- * quadrants meet without doubled/separated seams.  Arbitrary-angle coverage keeps the ordinary
- * pixel-centre inverse map below. */
-static inline void render_modern_cardinal_anchor(const GmlRender *r,double degrees,
-                                                  double xs,double ys,double cosine,double sine,
-                                                  double *x,double *y){
-  double quadrant=nearbyint(degrees/90.0);
-  if(!r || r->classic || fabs(degrees-quadrant*90.0)>=1e-10) return;
-  if(xs*cosine < -1e-12 || ys*sine < -1e-12) *x-=1.0;
-  if(-xs*sine < -1e-12 || ys*cosine < -1e-12) *y-=1.0;
-}
-
 /* Classic blending rounds the complete weighted channel; modern blending truncates it.
  * Keep the choice on the compatibility policy so optimized helpers agree. */
 static inline int blend_fast8_rounds(const GmlRender *render){

@@ -245,12 +245,13 @@ int gml_render_resident_atlas_page(GmlRender *r,int page_index,
                                         left,top,xs,ys,family);
 }
 
-/* Match the first-generation filtered CPU blit's snapped coverage while retaining its fractional
- * texture phase. Sprite pages with source alpha or logical padding use source-over composition. */
-int gml_render_resident_filtered_atlas_page(GmlRender *r,int page_index,
-                                           double left,double top,double xs,double ys,
-                                           GmlRenderSceneFamily family,uint32_t colour,double alpha,
-                                           GmlTpag *part_view){
+/* Axis draws retain the first-generation filtered CPU blit's snapped coverage and fractional
+ * texture phase. Rotated sprites carry their CPU inverse map with policy-specific sampling. */
+static int resident_filtered_atlas_page(GmlRender *r,int page_index,
+                                      double left,double top,double xs,double ys,
+                                      GmlRenderSceneFamily family,uint32_t colour,double alpha,
+                                      GmlTpag *part_view,GmlSprite *rotated_sprite,
+                                      double rotation){
   GmlTpag *page;
   GmlAtlas *atlas;
   GmlRenderResourceSource source={0};
@@ -259,7 +260,7 @@ int gml_render_resident_filtered_atlas_page(GmlRender *r,int page_index,
   GmlRenderDrawStateSnapshot state={0};
   GmlRenderImageRef source_ref,image;
   GmlRenderRect region;
-  double x0,y0,width,height;
+  double x0,y0,width,height,cosine=1.0,sine=0.0;
   int margin_left=0,margin_top=0,margin_right=0,margin_bottom=0;
   uint32_t margin_mask=0u;
   if(!r || !r->resident_application_pass || !r->interp || !r->win ||
@@ -272,6 +273,7 @@ int gml_render_resident_filtered_atlas_page(GmlRender *r,int page_index,
      r->pending_underlay || r->pending_presentation ||
      r->fb!=r->app_surface_owned || r->fbw!=r->app_w || r->fbh!=r->app_h ||
      !isfinite(left) || !isfinite(top) || !isfinite(xs) || !isfinite(ys) ||
+     (rotated_sprite && !isfinite(rotation)) ||
      !isfinite(alpha) || alpha<=0.0 || alpha>1.0 ||
      xs==0.0 || ys==0.0 || fabs(xs)>1000000.0 || fabs(ys)>1000000.0) return 0;
   for(int index=0;index<3;index++)
@@ -317,23 +319,43 @@ int gml_render_resident_filtered_atlas_page(GmlRender *r,int page_index,
     page->scene_opaque_checked=1;
   }
   if(!page->scene_fully_opaque && family!=GML_RENDER_SCENE_SPRITE) return 0;
-  x0=floor(left+0.5); y0=floor(top+0.5);
-  width=xs<0.0
-    ? (fabs(xs-nearbyint(xs))>1e-9
-       ? x0-floor(left+(double)page->sw*xs+0.5)
-       : floor((double)page->sw*-xs+0.5))
-    : fabs(xs-nearbyint(xs))>1e-9
-      ? floor(left+(double)page->sw*xs+0.5)-x0
-      : floor((double)page->sw*xs+0.5);
-  height=ys<0.0
-    ? (fabs(ys-nearbyint(ys))>1e-9
-       ? y0-floor(top+(double)page->sh*ys+0.5)
-       : floor((double)page->sh*-ys+0.5))
-    : fabs(ys-nearbyint(ys))>1e-9
-      ? floor(top+(double)page->sh*ys+0.5)-y0
-      : floor((double)page->sh*ys+0.5);
-  if(xs<0.0) x0-=width;
-  if(ys<0.0) y0-=height;
+  if(rotated_sprite){
+    double minx=1e30,miny=1e30,maxx=-1e30,maxy=-1e30;
+    render_rotation_sincos(rotation,&cosine,&sine);
+    render_modern_cardinal_anchor(r,rotation,xs,ys,cosine,sine,&left,&top);
+    for(int corner=0;corner<4;corner++){
+      double sx=page->tx+((corner==1 || corner==2)?page->sw:0);
+      double sy=page->ty+((corner>=2)?page->sh:0);
+      double px=(sx-rotated_sprite->originx)*xs;
+      double py=(sy-rotated_sprite->originy)*ys;
+      double dx=left+px*cosine+py*sine;
+      double dy=top-px*sine+py*cosine;
+      minx=fmin(minx,dx); maxx=fmax(maxx,dx);
+      miny=fmin(miny,dy); maxy=fmax(maxy,dy);
+    }
+    x0=fmax(0.0,floor(minx)-1.0);
+    y0=fmax(0.0,floor(miny)-1.0);
+    width=fmin((double)r->fbw,ceil(maxx)+1.0)-x0;
+    height=fmin((double)r->fbh,ceil(maxy)+1.0)-y0;
+  } else {
+    x0=floor(left+0.5); y0=floor(top+0.5);
+    width=xs<0.0
+      ? (fabs(xs-nearbyint(xs))>1e-9
+         ? x0-floor(left+(double)page->sw*xs+0.5)
+         : floor((double)page->sw*-xs+0.5))
+      : fabs(xs-nearbyint(xs))>1e-9
+        ? floor(left+(double)page->sw*xs+0.5)-x0
+        : floor((double)page->sw*xs+0.5);
+    height=ys<0.0
+      ? (fabs(ys-nearbyint(ys))>1e-9
+         ? y0-floor(top+(double)page->sh*ys+0.5)
+         : floor((double)page->sh*-ys+0.5))
+      : fabs(ys-nearbyint(ys))>1e-9
+        ? floor(top+(double)page->sh*ys+0.5)-y0
+        : floor((double)page->sh*ys+0.5);
+    if(xs<0.0) x0-=width;
+    if(ys<0.0) y0-=height;
+  }
   if(!isfinite(width) || !isfinite(height) || width<1.0 || height<1.0 ||
      x0<=-width || y0<=-height || x0>=r->fbw || y0>=r->fbh ||
      x0+width>10000000.0 || y0+height>10000000.0) return 0;
@@ -355,12 +377,19 @@ int gml_render_resident_filtered_atlas_page(GmlRender *r,int page_index,
   operation.target.height=(uint32_t)r->fbh;
   operation.target.pixel_format=GML_RENDER_PIXEL_ARGB8888;
   operation.target.region=(GmlRenderRect){0,0,(uint32_t)r->fbw,(uint32_t)r->fbh};
-  operation.payload.quad.shape=GML_RENDER_QUAD_AXIS_ALIGNED;
-  operation.payload.quad.sampling.filter=GML_RENDER_FILTER_BILINEAR;
-  operation.payload.quad.sampling.edge_rule=margin_mask
+  operation.payload.quad.shape=rotated_sprite
+    ?(fabs(rotation-nearbyint(rotation/90.0)*90.0)<1e-10
+      ?GML_RENDER_QUAD_CARDINAL:GML_RENDER_QUAD_GENERAL)
+    :GML_RENDER_QUAD_AXIS_ALIGNED;
+  operation.payload.quad.sampling.filter=rotated_sprite &&
+    !anygm_policy_has_modern_layer_semantics(r->win)
+      ?GML_RENDER_FILTER_NEAREST:GML_RENDER_FILTER_BILINEAR;
+  operation.payload.quad.sampling.edge_rule=margin_mask &&
+    operation.payload.quad.sampling.filter==GML_RENDER_FILTER_BILINEAR
     ?GML_RENDER_EDGE_LOGICAL_TPAG:GML_RENDER_EDGE_CLAMP_SUBIMAGE;
   operation.payload.quad.sampling.source_region=region;
-  operation.payload.quad.sampling.logical_margin_mask=margin_mask;
+  operation.payload.quad.sampling.logical_margin_mask=
+    operation.payload.quad.sampling.filter==GML_RENDER_FILTER_BILINEAR?margin_mask:0u;
   uint32_t draw_alpha=(uint32_t)lround(alpha*255.0);
   /* GML's blend is BBGGRR; the neutral quad colour is AARRGGBB. */
   uint32_t draw_colour=((colour&0xFFu)<<16)|(colour&0xFF00u)|((colour>>16)&0xFFu);
@@ -370,14 +399,27 @@ int gml_render_resident_filtered_atlas_page(GmlRender *r,int page_index,
   operation.payload.quad.x[1]=operation.payload.quad.x[2]=x0+width;
   operation.payload.quad.y[0]=operation.payload.quad.y[1]=y0;
   operation.payload.quad.y[2]=operation.payload.quad.y[3]=y0+height;
-  operation.payload.quad.u[0]=operation.payload.quad.u[3]=
-    ((double)page->sx+(x0-left)/xs)/source.width;
-  operation.payload.quad.u[1]=operation.payload.quad.u[2]=
-    ((double)page->sx+(x0+width-left)/xs)/source.width;
-  operation.payload.quad.v[0]=operation.payload.quad.v[1]=
-    ((double)page->sy+(y0-top)/ys)/source.height;
-  operation.payload.quad.v[2]=operation.payload.quad.v[3]=
-    ((double)page->sy+(y0+height-top)/ys)/source.height;
+  if(rotated_sprite){
+    GmlRenderQuad *quad=&operation.payload.quad;
+    quad->inverse_anchor[0]=left;
+    quad->inverse_anchor[1]=top;
+    quad->inverse_x[0]=cosine/xs;
+    quad->inverse_x[1]=sine/ys;
+    quad->inverse_y[0]=-sine/xs;
+    quad->inverse_y[1]=cosine/ys;
+    double sample_bias=quad->sampling.filter==GML_RENDER_FILTER_BILINEAR?-0.5:0.0;
+    quad->inverse_offset[0]=(double)rotated_sprite->originx-page->tx+sample_bias;
+    quad->inverse_offset[1]=(double)rotated_sprite->originy-page->ty+sample_bias;
+  } else {
+    operation.payload.quad.u[0]=operation.payload.quad.u[3]=
+      ((double)page->sx+(x0-left)/xs)/source.width;
+    operation.payload.quad.u[1]=operation.payload.quad.u[2]=
+      ((double)page->sx+(x0+width-left)/xs)/source.width;
+    operation.payload.quad.v[0]=operation.payload.quad.v[1]=
+      ((double)page->sy+(y0-top)/ys)/source.height;
+    operation.payload.quad.v[2]=operation.payload.quad.v[3]=
+      ((double)page->sy+(y0+height-top)/ys)/source.height;
+  }
   state.write_mask=15u;
   state.colour=0xFFFFFFFFu;
   state.alpha=255u;
@@ -397,14 +439,23 @@ int gml_render_resident_filtered_atlas_page(GmlRender *r,int page_index,
   return 1;
 }
 
+int gml_render_resident_filtered_atlas_page(GmlRender *r,int page_index,
+                                           double left,double top,double xs,double ys,
+                                           GmlRenderSceneFamily family,uint32_t colour,double alpha,
+                                           GmlTpag *part_view){
+  return resident_filtered_atlas_page(r,page_index,left,top,xs,ys,family,colour,alpha,
+                                     part_view,NULL,0.0);
+}
+
 static int resident_filtered_sprite(GmlRender *r,GmlSprite *sprite,int subimg,
                                     double x,double y,double xs,double ys,double rotation,
                                     uint32_t blend,double alpha){
   GmlTpag *page;
   int sub,page_index;
+  double normalized_rotation;
   if(!r || !sprite || sprite->runtime_rgba || sprite->spine || sprite->ns_enabled ||
      sprite->n_frames<=0 || sprite->w<=0 || sprite->h<=0 ||
-     gml_d3_is_active(r) || rotation!=0.0 ||
+     gml_d3_is_active(r) || !isfinite(rotation) ||
      !isfinite(alpha) || alpha<=0.0 || alpha>1.0 ||
      !isfinite(xs) || !isfinite(ys) || xs==0.0 || ys==0.0 || !r->interp ||
      !sprite->frame) return 0;
@@ -413,6 +464,15 @@ static int resident_filtered_sprite(GmlRender *r,GmlSprite *sprite,int subimg,
   if(page_index<0 || page_index>=r->n_tpag) return 0;
   page=&r->tpag[page_index];
   if(page->bw!=sprite->w || page->bh!=sprite->h) return 0;
+  normalized_rotation=fmod(rotation,360.0);
+  if(normalized_rotation<0.0) normalized_rotation+=360.0;
+  /* The CPU entry treats a narrow near-zero interval as an axis draw. */
+  if(rotation!=0.0 && (normalized_rotation<0.001 ||
+                       fabs(normalized_rotation-360.0)<0.001)) return 0;
+  if(rotation!=0.0)
+    return resident_filtered_atlas_page(r,page_index,x-r->cam_x,y-r->cam_y,xs,ys,
+                                       GML_RENDER_SCENE_SPRITE,blend,alpha,NULL,sprite,
+                                       normalized_rotation);
   return gml_render_resident_filtered_atlas_page(
       r,page_index,x-((double)sprite->originx-(double)page->tx)*xs-r->cam_x,
       y-((double)sprite->originy-(double)page->ty)*ys-r->cam_y,

@@ -118,11 +118,28 @@
   "void main(){\n" \
   "  if(u_filter==0){ o_color=texture(u_image,v_texcoord)*v_colour; return; }\n" \
   "  vec2 centre=vec2(gl_FragCoord.x,u_extent.y-gl_FragCoord.y);\n" \
-  "  vec2 delta=centre-v_map.xy,whole=floor(delta);\n" \
-  "  vec2 remainder=(delta-whole)+delta*v_step+v_map.zw-vec2(0.5);\n" \
-  "  ivec2 lo=ivec2(whole+floor(remainder));\n" \
+  "  vec2 delta=centre-v_map.xy;\n" \
+  "  ivec2 lo; vec2 f;\n" \
+  "  if(u_filter>=2){\n" \
+  "    vec2 local=delta.x*v_map.zw+delta.y*v_texcoord+v_step;\n" \
+  "    if(u_filter==3){\n" \
+  "      ivec2 size=ivec2(v_clamp.zw-v_clamp.xy+vec2(1.0));\n" \
+  "      ivec2 point=ivec2(floor(local));\n" \
+  "      if(any(lessThan(point,ivec2(0))) || any(greaterThanEqual(point,size))) discard;\n" \
+  "      vec4 sampled=floor(texelFetch(u_image,ivec2(v_clamp.xy)+point,0)*255.0+0.5);\n" \
+  "      uvec3 tint=uvec3(floor(v_colour.rgb*255.0+vec3(0.5)));\n" \
+  "      uvec3 rgb=uvec3(sampled.rgb)*tint/uvec3(255u);\n" \
+  "      o_color=vec4(vec3(rgb)/255.0,sampled.a*v_colour.a/255.0); return;\n" \
+  "    }\n" \
+  "    vec2 size=v_clamp.zw-v_clamp.xy+vec2(1.0);\n" \
+  "    if(any(lessThan(local,vec2(-1.0))) || any(greaterThanEqual(local,size))) discard;\n" \
+  "    lo=ivec2(floor(local)); f=fract(local);\n" \
+  "  } else {\n" \
+  "    vec2 whole=floor(delta);\n" \
+  "    vec2 remainder=(delta-whole)+delta*v_step+v_map.zw-vec2(0.5);\n" \
+  "    lo=ivec2(whole+floor(remainder)); f=fract(remainder);\n" \
+  "  }\n" \
   "  ivec2 first=ivec2(v_clamp.xy),last=ivec2(v_clamp.zw-v_clamp.xy);\n" \
-  "  vec2 f=fract(remainder);\n" \
   "  vec4 p00,p01,p10,p11;\n" \
   "  if(v_margin<0.5){\n" \
   "    ivec2 a=clamp(lo,ivec2(0),last),b=clamp(lo+ivec2(1),ivec2(0),last);\n" \
