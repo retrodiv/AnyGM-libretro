@@ -246,7 +246,7 @@ int gml_render_resident_atlas_page(GmlRender *r,int page_index,
 }
 
 /* Match the first-generation filtered CPU blit's snapped coverage while retaining its fractional
- * texture phase. Untrimmed pages with source alpha use ordinary source-over composition. */
+ * texture phase. Sprite pages with source alpha or logical padding use source-over composition. */
 int gml_render_resident_filtered_atlas_page(GmlRender *r,int page_index,
                                            double left,double top,double xs,double ys,
                                            GmlRenderSceneFamily family){
@@ -259,6 +259,7 @@ int gml_render_resident_filtered_atlas_page(GmlRender *r,int page_index,
   GmlRenderImageRef source_ref,image;
   GmlRenderRect region;
   double x0,y0,width,height;
+  int margin_left=0,margin_top=0,margin_right=0,margin_bottom=0;
   if(!r || !r->resident_application_pass || !r->interp || !r->win ||
      !anygm_policy_uses_first_generation_studio(r->win) ||
      page_index<0 || page_index>=r->n_tpag || r->classic ||
@@ -274,13 +275,28 @@ int gml_render_resident_filtered_atlas_page(GmlRender *r,int page_index,
     if(r->classic_interp_phase[index] || r->app_interp_phase[index]) return 0;
   page=&r->tpag[page_index];
   if(page->sw<=0 || page->sh<=0 || page->sx<0 || page->sy<0 ||
-     page->tx || page->ty || page->tw!=page->sw || page->th!=page->sh ||
-     page->bw!=page->sw || page->bh!=page->sh ||
+     page->tw!=page->sw || page->th!=page->sh ||
      page->atlas<0 || page->atlas>=r->n_atlas) return 0;
+  if(family==GML_RENDER_SCENE_SPRITE){
+    if(page->tx<0 || page->ty<0 || page->bw<=0 || page->bh<=0 ||
+       (uint64_t)(uint32_t)page->tx+(uint32_t)page->sw>(uint32_t)page->bw ||
+       (uint64_t)(uint32_t)page->ty+(uint32_t)page->sh>(uint32_t)page->bh) return 0;
+    margin_left=page->tx>0;
+    margin_top=page->ty>0;
+    margin_right=page->tx+page->sw<page->bw;
+    margin_bottom=page->ty+page->sh<page->bh;
+  } else if(page->tx || page->ty || page->bw!=page->sw || page->bh!=page->sh)
+    return 0;
   atlas=&r->atlas[page->atlas];
   if(!gml_render_atlas_scene_source_view(r,page->atlas,&source) ||
      (uint64_t)(uint32_t)page->sx+(uint32_t)page->sw>source.width ||
      (uint64_t)(uint32_t)page->sy+(uint32_t)page->sh>source.height) return 0;
+  /* The CPU filtered sprite samples one atlas texel outside a packed crop where its logical
+   * cell has padding. Expand only the sampler's clamp region, not the drawn quad or its UVs. */
+  if((margin_left && page->sx==0) || (margin_top && page->sy==0) ||
+     (margin_right && (uint64_t)(uint32_t)page->sx+(uint32_t)page->sw>=source.width) ||
+     (margin_bottom && (uint64_t)(uint32_t)page->sy+(uint32_t)page->sh>=source.height))
+    return 0;
   if(!page->scene_opaque_checked){
     page->scene_fully_opaque=1;
     page->scene_binary_alpha=1;
@@ -307,7 +323,9 @@ int gml_render_resident_filtered_atlas_page(GmlRender *r,int page_index,
   if(r->pending_fill || !(target=gml_render_application_resource_ensure(r))) return 0;
   image=gml_render_application_scene_next_image_ref(r,target);
   if(image.content_version==UINT64_MAX) return 0;
-  region=(GmlRenderRect){page->sx,page->sy,(uint32_t)page->sw,(uint32_t)page->sh};
+  region=(GmlRenderRect){page->sx-margin_left,page->sy-margin_top,
+                         (uint32_t)page->sw+(uint32_t)margin_left+(uint32_t)margin_right,
+                         (uint32_t)page->sh+(uint32_t)margin_top+(uint32_t)margin_bottom};
   source_ref=source.image;
   operation.opcode=GML_RENDER_OP_TEXTURED_QUAD;
   operation.reconstruction_mode=GML_RENDER_DEVICE_CHECKPOINT;
@@ -341,7 +359,7 @@ int gml_render_resident_filtered_atlas_page(GmlRender *r,int page_index,
   state.write_mask=15u;
   state.colour=0xFFFFFFFFu;
   state.alpha=255u;
-  if(!page->scene_fully_opaque){
+  if(!page->scene_fully_opaque || margin_left || margin_top || margin_right || margin_bottom){
     state.rgb_source_factor=GML_RENDER_BLEND_SOURCE_ALPHA;
     state.rgb_destination_factor=GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA;
     state.alpha_source_factor=GML_RENDER_BLEND_SOURCE_ALPHA;
@@ -370,11 +388,11 @@ static int resident_filtered_sprite(GmlRender *r,GmlSprite *sprite,int subimg,
   page_index=sprite->frame[sub];
   if(page_index<0 || page_index>=r->n_tpag) return 0;
   page=&r->tpag[page_index];
-  if(page->tx || page->ty || page->sw!=sprite->w || page->sh!=sprite->h ||
-     page->bw!=sprite->w || page->bh!=sprite->h) return 0;
+  if(page->bw!=sprite->w || page->bh!=sprite->h) return 0;
   return gml_render_resident_filtered_atlas_page(
-      r,page_index,x-(double)sprite->originx*xs-r->cam_x,
-      y-(double)sprite->originy*ys-r->cam_y,xs,ys,GML_RENDER_SCENE_SPRITE);
+      r,page_index,x-((double)sprite->originx-(double)page->tx)*xs-r->cam_x,
+      y-((double)sprite->originy-(double)page->ty)*ys-r->cam_y,
+      xs,ys,GML_RENDER_SCENE_SPRITE);
 }
 
 void gml_draw_sprite(GmlRender *r, int sprite, int subimg, double x, double y){
