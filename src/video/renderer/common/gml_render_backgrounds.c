@@ -113,14 +113,17 @@ int gml_render_resident_filtered_atlas_part(GmlRender *r,int page_index,
      !isfinite(sx) || !isfinite(sy) || !isfinite(sw) || !isfinite(sh) ||
      !isfinite(x) || !isfinite(y) || !isfinite(xs) || !isfinite(ys) ||
      !isfinite(alpha) || sx<0.0 || sy<0.0 || sw<1.0 || sh<1.0 ||
-     sx>INT_MAX || sy>INT_MAX || sw>INT_MAX || sh>INT_MAX ||
-     sx!=floor(sx) || sy!=floor(sy) || sw!=floor(sw) || sh!=floor(sh)) return 0;
+     sx>INT_MAX || sy>INT_MAX || sw>INT_MAX || sh>INT_MAX) return 0;
   page=&r->tpag[page_index];
   if(page->tx || page->ty || page->bw!=page->sw || page->bh!=page->sh ||
+     sx+sw>(double)page->sw || sy+sh>(double)page->sh ||
      !gml_render_tpag_part_view(page,sx,sy,sw,sh,&view,&source_x,&source_y,
-                                NULL,NULL,NULL,NULL) ||
-     source_x!=(int)sx || source_y!=(int)sy ||
-     view.sw!=(int)sw || view.sh!=(int)sh) return 0;
+                                NULL,NULL,NULL,NULL)) return 0;
+  /* A fractional one-cell selection changes both anchor and scale in the CPU
+   * writer. Multi-cell background selection only snaps outwards; tile source
+   * fractions retain their separate unqualified CPU path. */
+  if((sx!=floor(sx) || sy!=floor(sy) || sw!=floor(sw) || sh!=floor(sh)) &&
+     (family!=GML_RENDER_SCENE_BACKGROUND || view.sw==1 || view.sh==1)) return 0;
   /* Keep bw/bh from the CPU's part view: filtered taps at its right/bottom
    * may reach physical atlas neighbours beyond the selected visible crop. */
   view.tw=view.sw;
