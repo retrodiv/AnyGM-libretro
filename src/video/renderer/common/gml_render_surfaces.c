@@ -472,7 +472,40 @@ int gml_surface_create(GmlRender *r, int w, int h){
   return -1;
 }
 void gml_surface_free(GmlRender *r, int id){
-  int i=surface_slot(id); if(i<0) return;
+  int i=surface_slot(id);
+  if(!r || i<0 || !r->surface[i].live) return;
+  if(!gml_render_application_scene_flush(r)) return;
+  uint32_t *old=r->surface[i].px;
+  /* Close each active binding while its storage is still valid. The same surface can be
+   * nested more than once; a single reset would restore another borrow of the old buffer. */
+  while(r->target_id==id && r->target_sp>0){
+    int depth=r->target_sp;
+    gml_surface_reset_target(r);
+    if(r->target_sp>=depth) return;
+  }
+  /* A suspended binding is a saved target, not an owned copy. Remove every snapshot of
+   * this allocation so a later reset cannot revive it after the ID is reused. */
+  int retained=0;
+  for(int stack=0;stack<r->target_sp;stack++)
+    if(r->target_stack[stack].fb!=old)
+      r->target_stack[retained++]=r->target_stack[stack];
+  r->target_sp=retained;
+  if(r->base_fb==old){ r->base_fb=NULL; r->base_fbw=0; r->base_fbh=0; }
+  if(r->app_surface==old){
+    r->app_surface=NULL;
+    r->app_w=r->app_h=0;
+    r->app_surface_opaque=0;
+    r->app_presentation_coverage_active=0;
+  }
+  if(r->fb==old){
+    r->fb=r->base_fb;
+    r->fbw=r->base_fbw;
+    r->fbh=r->base_fbh;
+    r->target_id=-1;
+    r->pending_fill=0;
+    r->pending_underlay=0;
+    r->fb_opaque_known=r->fb_all_opaque=r->fb_all_transparent=0;
+  }
   gml_render_surface_resource_dispose(r,id);
   free(r->surface[i].px); free(r->surface[i].rle); memset(&r->surface[i],0,sizeof(r->surface[i]));
 }
@@ -666,6 +699,7 @@ void gml_surface_reset_target(GmlRender *r){
     r->pending_fill=0;
     r->pending_fill_color=0;
   } else {
+    r->fb=NULL; r->fbw=0; r->fbh=0;
     r->target_id=-1;
     r->fb_opaque_known=0;
     r->fb_all_opaque=0;

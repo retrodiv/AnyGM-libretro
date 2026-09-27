@@ -160,6 +160,74 @@ static int numbered_surface_resize_pending_fill_case(void){
   return 0;
 }
 
+static int numbered_surface_free_bound_case(void){
+  GmlRender render={0};
+  uint32_t base[16]={0};
+  int outer,inner,reused;
+  render.next_surface_id=1;
+  render.active_shader=-1;
+  render.color_write_mask=0x0Fu;
+  gml_render_begin(&render,base,4,4,0.0,0.0);
+  outer=gml_surface_create(&render,2,2);
+  inner=gml_surface_create(&render,2,2);
+  REQUIRE(outer>0 && inner>0 && gml_surface_set_target(&render,outer) &&
+          gml_surface_set_target(&render,inner),
+          "bound free creates nested numbered surfaces");
+  gml_surface_free(&render,outer);
+  REQUIRE(!gml_surface_exists(&render,outer) && render.target_id==inner &&
+          render.fb==render.surface[inner-1].px && render.target_sp==1 &&
+          render.target_stack[0].fb==base,
+          "freeing a suspended target removes its stale stack entry");
+  render.next_surface_id=outer;
+  reused=gml_surface_create(&render,3,3);
+  REQUIRE(reused==outer && render.target_id==inner,
+          "freeing and recreating an id does not rebind the older target");
+  gml_surface_reset_target(&render);
+  REQUIRE(render.fb==base && render.target_id==-1 && render.target_sp==0,
+          "reset after suspended free returns to the valid base target");
+  REQUIRE(gml_surface_set_target(&render,reused) &&
+          gml_surface_set_target(&render,reused),
+          "the reused surface may be nested as the active target");
+  gml_surface_free(&render,reused);
+  REQUIRE(!gml_surface_exists(&render,reused) && render.fb==base &&
+          render.target_id==-1 && render.target_sp==0,
+          "freeing a multiply bound active surface restores the live base target");
+  gml_surface_free(&render,inner);
+  gml_render_free(&render);
+  GmlRender alias={0};
+  alias.next_surface_id=1;
+  int borrowed=gml_surface_create(&alias,2,2);
+  REQUIRE(borrowed>0,"base-alias free creates a numbered surface");
+  gml_render_begin(&alias,alias.surface[borrowed-1].px,2,2,0.0,0.0);
+  gml_render_application_surface_bind(&alias,alias.surface[borrowed-1].px,2,2,0);
+  gml_surface_free(&alias,borrowed);
+  REQUIRE(alias.fb==NULL && alias.base_fb==NULL &&
+          alias.app_surface==NULL && alias.fbw==0 && alias.fbh==0 &&
+          alias.base_fbw==0 && alias.base_fbh==0 && alias.app_w==0 && alias.app_h==0,
+          "freeing storage borrowed as base/application detaches every public pointer");
+  gml_render_free(&alias);
+  GmlRender nested_alias={0};
+  nested_alias.next_surface_id=1;
+  int borrowed_base=gml_surface_create(&nested_alias,2,2);
+  int surviving=gml_surface_create(&nested_alias,2,2);
+  REQUIRE(borrowed_base>0 && surviving>0,"nested base-alias free creates surfaces");
+  gml_render_begin(&nested_alias,nested_alias.surface[borrowed_base-1].px,
+                   2,2,0.0,0.0);
+  REQUIRE(gml_surface_set_target(&nested_alias,surviving),
+          "nested base-alias free binds a surviving target");
+  gml_surface_free(&nested_alias,borrowed_base);
+  REQUIRE(nested_alias.base_fb==NULL && nested_alias.target_sp==0 &&
+          nested_alias.fb==nested_alias.surface[surviving-1].px,
+          "freeing a borrowed base keeps the active surviving target");
+  gml_surface_reset_target(&nested_alias);
+  REQUIRE(nested_alias.fb==NULL && nested_alias.fbw==0 && nested_alias.fbh==0 &&
+          nested_alias.target_id==-1,
+          "reset without a base detaches the former numbered target");
+  gml_surface_free(&nested_alias,surviving);
+  gml_render_free(&nested_alias);
+  return 0;
+}
+
 static int declared_canvas_preview_case(void){
   GmlRender render={0};
   uint32_t frame[16*8]={0};
@@ -1170,6 +1238,8 @@ int main(void){
           "numbered surface resize bound target case");
   REQUIRE(numbered_surface_resize_pending_fill_case()==0,
           "numbered surface resize pending fill case");
+  REQUIRE(numbered_surface_free_bound_case()==0,
+          "numbered surface free bound target case");
   REQUIRE(threshold_palette_surface_case()==0,
           "threshold palette surface case");
   REQUIRE(declared_canvas_preview_case()==0,"declared canvas preview case");
