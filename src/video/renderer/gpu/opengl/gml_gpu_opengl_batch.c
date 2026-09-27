@@ -75,6 +75,8 @@ static int qualified_blend(const GmlRenderDrawStateSnapshot *state){
 
 static uint32_t scene_filter(const GmlRenderQuad *quad){
   if(quad->sampling.filter==GML_RENDER_FILTER_BOX) return 4u;
+  if(quad->shape==GML_RENDER_QUAD_WARPED)
+    return quad->sampling.filter==GML_RENDER_FILTER_BILINEAR?6u:5u;
   return quad->shape==GML_RENDER_QUAD_AXIS_ALIGNED
     ?(quad->sampling.filter==GML_RENDER_FILTER_BILINEAR?1u:0u)
     :(quad->sampling.filter==GML_RENDER_FILTER_BILINEAR?2u:3u);

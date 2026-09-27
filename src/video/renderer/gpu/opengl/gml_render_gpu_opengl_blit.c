@@ -16,11 +16,16 @@ int gml_render_gpu_opengl_draw_textured_quad(const GmlRenderDrawOp *op,
   const GmlRenderQuad *quad;
   GmlRenderRect region;
   uint32_t region_storage_y;
-  int rotated;
+  int rotated,warped;
   if(!op || !state || !vertices || !source_width || !source_height) return 0;
   quad=&op->payload.quad;
   rotated=quad->shape==GML_RENDER_QUAD_CARDINAL || quad->shape==GML_RENDER_QUAD_GENERAL;
-  if(quad->shape!=GML_RENDER_QUAD_AXIS_ALIGNED && !rotated) return 0;
+  warped=quad->shape==GML_RENDER_QUAD_WARPED;
+  if(quad->shape!=GML_RENDER_QUAD_AXIS_ALIGNED && !rotated && !warped) return 0;
+  if(warped && (rendered_source_origin ||
+     op->reconstruction_mode!=GML_RENDER_DEVICE_CHECKPOINT ||
+     (quad->sampling.filter!=GML_RENDER_FILTER_NEAREST &&
+      quad->sampling.filter!=GML_RENDER_FILTER_BILINEAR))) return 0;
   if(rotated && (rendered_source_origin ||
      op->reconstruction_mode!=GML_RENDER_DEVICE_CHECKPOINT ||
      (quad->sampling.filter!=GML_RENDER_FILTER_BILINEAR &&
@@ -47,8 +52,8 @@ int gml_render_gpu_opengl_draw_textured_quad(const GmlRenderDrawOp *op,
   }
   region_storage_y=rendered_source_origin
     ?source_height-((uint32_t)region.y+region.height):(uint32_t)region.y;
-  if(!rotated && (quad->x[1]<=quad->x[0] || quad->y[2]<=quad->y[0])) return 0;
-  if(rotated){
+  if(!rotated && !warped && (quad->x[1]<=quad->x[0] || quad->y[2]<=quad->y[0])) return 0;
+  if(rotated || warped){
     double area=(quad->x[1]-quad->x[0])*(quad->y[3]-quad->y[0])-
                 (quad->y[1]-quad->y[0])*(quad->x[3]-quad->x[0]);
     if(!isfinite(area) || fabs(area)<1e-10) return 0;
@@ -61,8 +66,11 @@ int gml_render_gpu_opengl_draw_textured_quad(const GmlRenderDrawOp *op,
        (!rotated && (!isfinite(quad->u[corner]) || !isfinite(quad->v[corner]))) ||
        quad->x[corner]<-10000000.0 || quad->x[corner]>10000000.0 ||
        quad->y[corner]<-10000000.0 || quad->y[corner]>10000000.0 ||
-       (!rotated && (quad->u[corner]<0.0 || quad->u[corner]>1.0 ||
-                    quad->v[corner]<0.0 || quad->v[corner]>1.0))) return 0;
+       (!rotated && !warped && (quad->u[corner]<0.0 || quad->u[corner]>1.0 ||
+                               quad->v[corner]<0.0 || quad->v[corner]>1.0)) ||
+       (warped && (!isfinite(quad->u[corner]) || !isfinite(quad->v[corner]) ||
+                   quad->u[corner]<0.0 || quad->u[corner]>region.width ||
+                   quad->v[corner]<0.0 || quad->v[corner]>region.height))) return 0;
     vertex[0]=(float)quad->x[corner];
     vertex[1]=(float)quad->y[corner];
     vertex[2]=rotated?(float)quad->inverse_y[0]:(float)quad->u[corner];
@@ -79,15 +87,15 @@ int gml_render_gpu_opengl_draw_textured_quad(const GmlRenderDrawOp *op,
     vertex[11]=(float)(region_storage_y+region.height-1u);
     vertex[12]=rotated?(float)quad->inverse_anchor[0]:(float)quad->x[0];
     vertex[13]=rotated?(float)quad->inverse_anchor[1]:(float)quad->y[0];
-    vertex[14]=rotated?(float)quad->inverse_x[0]
+    vertex[14]=warped?0.0f:rotated?(float)quad->inverse_x[0]
                       :(float)(quad->u[0]*source_width-region.x);
-    vertex[15]=rotated?(float)quad->inverse_x[1]
+    vertex[15]=warped?0.0f:rotated?(float)quad->inverse_x[1]
                       :(float)((rendered_source_origin?1.0-quad->v[0]:quad->v[0])*
                                 source_height-region_storage_y);
-    vertex[16]=rotated?(float)quad->inverse_offset[0]
+    vertex[16]=warped?0.0f:rotated?(float)quad->inverse_offset[0]
                       :(float)((quad->u[1]-quad->u[0])*source_width/
                                (quad->x[1]-quad->x[0])-1.0);
-    vertex[17]=rotated?(float)quad->inverse_offset[1]
+    vertex[17]=warped?0.0f:rotated?(float)quad->inverse_offset[1]
                       :(float)((rendered_source_origin?quad->v[0]-quad->v[2]
                                 :quad->v[2]-quad->v[0])*source_height/
                                (quad->y[2]-quad->y[0])-1.0);

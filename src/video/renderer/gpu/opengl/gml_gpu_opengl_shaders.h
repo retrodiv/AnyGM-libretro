@@ -165,18 +165,24 @@
   "  vec2 delta=centre-v_map.xy;\n" \
   "  ivec2 lo; vec2 f;\n" \
   "  if(u_filter>=2){\n" \
-  "    vec2 local=delta.x*v_map.zw+delta.y*v_texcoord+v_step;\n" \
-  "    if(u_filter==3){\n" \
+  "    vec2 local=u_filter>=5\n" \
+  "      ?v_texcoord\n" \
+  "      :delta.x*v_map.zw+delta.y*v_texcoord+v_step;\n" \
+  "    if(u_filter==3 || u_filter==5){\n" \
   "      ivec2 size=ivec2(v_clamp.zw-v_clamp.xy+vec2(1.0));\n" \
   "      ivec2 point=ivec2(floor(local));\n" \
-  "      if(any(lessThan(point,ivec2(0))) || any(greaterThanEqual(point,size))) discard;\n" \
+  "      if(u_filter==3 && (any(lessThan(point,ivec2(0))) ||\n" \
+  "         any(greaterThanEqual(point,size)))) discard;\n" \
+  "      point=clamp(point,ivec2(0),size-ivec2(1));\n" \
   "      vec4 sampled=floor(texelFetch(u_image,ivec2(v_clamp.xy)+point,0)*255.0+0.5);\n" \
   "      uvec3 tint=uvec3(floor(v_colour.rgb*255.0+vec3(0.5)));\n" \
   "      uvec3 rgb=uvec3(sampled.rgb)*tint/uvec3(255u);\n" \
   "      o_color=vec4(vec3(rgb)/255.0,sampled.a*v_colour.a/255.0); return;\n" \
   "    }\n" \
   "    vec2 size=v_clamp.zw-v_clamp.xy+vec2(1.0);\n" \
-  "    if(any(lessThan(local,vec2(-1.0))) || any(greaterThanEqual(local,size))) discard;\n" \
+  "    if(u_filter==6) local=clamp(local,vec2(0.0),size)-vec2(0.5);\n" \
+  "    else if(any(lessThan(local,vec2(-1.0))) ||\n" \
+  "            any(greaterThanEqual(local,size))) discard;\n" \
   "    lo=ivec2(floor(local)); f=fract(local);\n" \
   "  } else {\n" \
   "    vec2 whole=floor(delta);\n" \

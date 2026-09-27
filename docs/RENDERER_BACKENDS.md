@@ -63,9 +63,18 @@ The public `draw_sprite_pos` entry can keep an ordinary axis-aligned atlas recta
 through the existing nearest or bilinear cell preparation. Its complete, cropped, trimmed,
 binary-alpha and filtered/intermediate-alpha forms preserve the mapped corner geometry; the
 filtered first-generation and modern-layer paths retain their distinct target-alpha and
-fractional-edge rules, including the modern half-camera tie. A non-axis or special-blend
-positioned quad still crosses the ordered CPU barrier; it is not silently approximated by a
-rectangular sprite.
+fractional-edge rules, including the modern half-camera tie. A separate checkpointed quad
+keeps convex non-axis atlas pages resident for ordinary source-over: affine parallelograms use
+the CPU triangles' common inverse map, while genuinely warped forms interpolate local page
+coordinates across the same two triangles. Nearest and bilinear sampling, clipped edges,
+authored crops, tint-free draw alpha and intermediate source alpha retain their characterized
+CPU pixels. Non-convex, self-intersecting or special-blend forms remain on the ordered CPU
+path. Fractional non-affine coordinates, freely rotated nearest affine edges and nearest
+warps without horizontal/vertical leading edges are conservatively excluded pending exact
+pixel-centre tie rules; the corresponding filtered forms are qualified. Modern-layer
+intermediate-alpha draws require a proven opaque target; first-generation source-over can
+also preserve a translucent target. This does not make surface, shader, GUI or skeletal
+positioned draws resident.
 CPU text resolves a preceding resident sprite before writing glyph pixels; this ordering barrier
 does not accelerate text. A similarly bounded first-generation nearest background path accepts
 complete untrimmed

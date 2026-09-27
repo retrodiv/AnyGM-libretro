@@ -804,9 +804,141 @@ static int resident_positioned_axis_sprite(GmlRender *r,int sprite,int subimg,
     (geometry.qy[3]-geometry.qy[0])/page->sh,GML_RENDER_SCENE_SPRITE);
 }
 
+/* The CPU's two-triangle barycentric UVs reduce to one affine inverse for a
+ * parallelogram. A convex warped quad carries those UVs at its four corners. */
+static int resident_positioned_quad_sprite(GmlRender *r,int sprite,int subimg,
+                                              const double x[4],const double y[4],double alpha){
+  GmlRenderSpritePosGeometry geometry;
+  GmlRenderResourceSource source={0};
+  GmlRenderResource *target;
+  GmlRenderDrawOp operation={0};
+  GmlRenderDrawStateSnapshot state={0};
+  GmlRenderImageRef image;
+  GmlTpag *page;
+  GmlAtlas *atlas;
+  double mapped_x[4],mapped_y[4],ax,ay,bx,by,det;
+  int page_index,affine;
+  if(!r || !r->resident_application_pass || !r->win || r->classic ||
+     !(anygm_policy_uses_first_generation_studio(r->win) ||
+       anygm_policy_has_modern_layer_semantics(r->win)) ||
+     !r->alphablend || r->blendmode || r->blend_equation!=1 ||
+     r->blend_equation_alpha!=1 || r->color_write_mask!=0x0fu ||
+     r->gui_pass_active || r->active_shader>=0 || r->alpha_test_enable ||
+     r->classic_phase_y || r->rotated_batch_count || r->rotated_batch_building ||
+     r->pending_underlay || r->pending_presentation || gml_d3_is_active(r) ||
+     r->fb!=r->app_surface_owned || r->fbw!=r->app_w || r->fbh!=r->app_h ||
+     !isfinite(alpha) || alpha<=0.0 || alpha>1.0 ||
+     sprite<0 || sprite>=r->n_spr) return 0;
+  for(int index=0;index<3;index++)
+    if(r->classic_interp_phase[index] || r->app_interp_phase[index]) return 0;
+  GmlSprite *sprite_source=&r->spr[sprite];
+  if(sprite_source->runtime_rgba || sprite_source->spine ||
+     sprite_source->ns_enabled || sprite_source->n_frames<=0 ||
+     !sprite_source->frame) return 0;
+  page_index=sprite_source->frame[gml_render_runtime_frame_index(sprite_source,subimg)];
+  if(page_index<0 || page_index>=r->n_tpag) return 0;
+  page=&r->tpag[page_index];
+  if(page->sw<=0 || page->sh<=0 || page->sx<0 || page->sy<0 ||
+     page->tw!=page->sw || page->th!=page->sh ||
+     page->atlas<0 || page->atlas>=r->n_atlas) return 0;
+  atlas=&r->atlas[page->atlas];
+  if(!gml_render_atlas_scene_source_view(r,page->atlas,&source) ||
+     (uint64_t)(uint32_t)page->sx+(uint32_t)page->sw>source.width ||
+     (uint64_t)(uint32_t)page->sy+(uint32_t)page->sh>source.height) return 0;
+  resident_classify_page(page,atlas);
+  if(anygm_policy_has_modern_layer_semantics(r->win) &&
+     (!r->fb_opaque_known || !r->fb_all_opaque)) return 0;
+  for(int corner=0;corner<4;corner++){
+    if(!isfinite(x[corner]) || !isfinite(y[corner])) return 0;
+    mapped_x[corner]=x[corner]; mapped_y[corner]=y[corner];
+    gml_render_draw_map_point(r,&mapped_x[corner],&mapped_y[corner]);
+    if(!isfinite(mapped_x[corner]) || !isfinite(mapped_y[corner])) return 0;
+  }
+  if(gml_render_sprite_pos_geometry(r,mapped_x,mapped_y,&geometry)!=2) return 0;
+  affine=fabs(geometry.qx[2]-(geometry.qx[1]+geometry.qx[3]-geometry.qx[0]))<=1e-9 &&
+         fabs(geometry.qy[2]-(geometry.qy[1]+geometry.qy[3]-geometry.qy[0]))<=1e-9;
+  for(int corner=0;corner<4;corner++){
+    if(!affine && (geometry.qx[corner]!=floor(geometry.qx[corner]) ||
+                   geometry.qy[corner]!=floor(geometry.qy[corner]))) return 0;
+    int next=(corner+1)&3,after=(corner+2)&3;
+    double edge_x=geometry.qx[next]-geometry.qx[corner];
+    double edge_y=geometry.qy[next]-geometry.qy[corner];
+    double turn_x=geometry.qx[after]-geometry.qx[next];
+    double turn_y=geometry.qy[after]-geometry.qy[next];
+    if(edge_x*turn_y-edge_y*turn_x<=1e-9) return 0;
+  }
+  ax=geometry.qx[1]-geometry.qx[0]; ay=geometry.qy[1]-geometry.qy[0];
+  bx=geometry.qx[3]-geometry.qx[0]; by=geometry.qy[3]-geometry.qy[0];
+  /* A nearest, freely rotated affine edge can land exactly on a source-texel
+   * boundary where the CPU barycentric double and GPU inverse float pick
+   * opposite sides. Cardinal and axis-led shear cases are separately tested. */
+  if(affine && !r->interp && fabs(ax)>1e-9 && fabs(ay)>1e-9) return 0;
+  if(!affine && !r->interp && (fabs(ay)>1e-9 || fabs(bx)>1e-9)) return 0;
+  det=ax*by-ay*bx;
+  if(!isfinite(det) || det<=1e-9 || det>100000000.0) return 0;
+  gml_render_flush_pending_fill(r);
+  if(r->pending_fill || !(target=gml_render_application_resource_ensure(r))) return 0;
+  image=gml_render_application_scene_next_image_ref(r,target);
+  if(image.content_version==UINT64_MAX) return 0;
+  operation.opcode=GML_RENDER_OP_TEXTURED_QUAD;
+  operation.reconstruction_mode=GML_RENDER_DEVICE_CHECKPOINT;
+  operation.scene_family=GML_RENDER_SCENE_SPRITE;
+  operation.source_count=1u;
+  operation.sources=&source.image;
+  operation.target.image=image;
+  operation.target.image.content_version++;
+  operation.target.storage_version=1u;
+  operation.target.width=(uint32_t)r->fbw;
+  operation.target.height=(uint32_t)r->fbh;
+  operation.target.pixel_format=GML_RENDER_PIXEL_ARGB8888;
+  operation.target.region=(GmlRenderRect){0,0,(uint32_t)r->fbw,(uint32_t)r->fbh};
+  GmlRenderQuad *quad=&operation.payload.quad;
+  quad->shape=affine?GML_RENDER_QUAD_GENERAL:GML_RENDER_QUAD_WARPED;
+  quad->sampling.filter=r->interp?GML_RENDER_FILTER_BILINEAR:GML_RENDER_FILTER_NEAREST;
+  quad->sampling.edge_rule=GML_RENDER_EDGE_CLAMP_SUBIMAGE;
+  quad->sampling.source_region=(GmlRenderRect){page->sx,page->sy,
+                                             (uint32_t)page->sw,(uint32_t)page->sh};
+  for(int corner=0;corner<4;corner++){
+    quad->x[corner]=geometry.qx[corner];
+    quad->y[corner]=geometry.qy[corner];
+    quad->corner_colour[corner]=((uint32_t)lround(alpha*255.0)<<24)|0xFFFFFFu;
+  }
+  if(!affine){
+    quad->u[0]=quad->u[3]=0.0;
+    quad->u[1]=quad->u[2]=(double)page->sw;
+    quad->v[0]=quad->v[1]=0.0;
+    quad->v[2]=quad->v[3]=(double)page->sh;
+  }
+  quad->inverse_anchor[0]=geometry.qx[0];
+  quad->inverse_anchor[1]=geometry.qy[0];
+  quad->inverse_x[0]=by*page->sw/det;
+  quad->inverse_y[0]=-bx*page->sw/det;
+  quad->inverse_x[1]=-ay*page->sh/det;
+  quad->inverse_y[1]=ax*page->sh/det;
+  quad->inverse_offset[0]=quad->inverse_offset[1]=r->interp?-0.5:0.0;
+  state.write_mask=15u;
+  state.colour=0xFFFFFFFFu;
+  state.alpha=255u;
+  if(!page->scene_fully_opaque || alpha<1.0){
+    state.rgb_source_factor=GML_RENDER_BLEND_SOURCE_ALPHA;
+    state.rgb_destination_factor=GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA;
+    state.alpha_source_factor=anygm_policy_has_modern_layer_semantics(r->win)
+      ?GML_RENDER_BLEND_ONE:GML_RENDER_BLEND_SOURCE_ALPHA;
+    state.alpha_destination_factor=GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA;
+    state.rgb_equation=GML_RENDER_BLEND_ADD;
+    state.alpha_equation=GML_RENDER_BLEND_ADD;
+  }
+  state.sampler_count=1u;
+  state.samplers[0]=quad->sampling;
+  if(!gml_render_application_scene_enqueue(r,&operation,&state,&source)) return 0;
+  r->fb_all_transparent=0;
+  return 1;
+}
+
 void gml_draw_sprite_pos(GmlRender *r,int sprite,int subimg,
                          const double x[4],const double y[4],double alpha){
   if(resident_positioned_axis_sprite(r,sprite,subimg,x,y,alpha)) return;
+  if(resident_positioned_quad_sprite(r,sprite,subimg,x,y,alpha)) return;
   if(!gml_render_resident_application_cpu_barrier(r)) return;
   double mapped_x[4],mapped_y[4];
   for(int i=0;i<4;i++){

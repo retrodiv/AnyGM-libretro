@@ -130,11 +130,14 @@ typedef enum GmlRenderQuadShape {
   GML_RENDER_QUAD_AXIS_ALIGNED=1,
   GML_RENDER_QUAD_CARDINAL=2,
   GML_RENDER_QUAD_GENERAL=3,
-  GML_RENDER_QUAD_REPEATED=4
+  GML_RENDER_QUAD_REPEATED=4,
+  GML_RENDER_QUAD_WARPED=5
 } GmlRenderQuadShape;
 
 typedef struct GmlRenderQuad {
   double x[4],y[4];
+  /* WARPED carries page-local texel coordinates in u/v; other nonrotated
+   * quads carry normalized source UVs. */
   double u[4],v[4];
   /* Rotated checkpoint: local = (pixel centre - anchor) * [x,y] + offset. */
   double inverse_anchor[2],inverse_x[2],inverse_y[2],inverse_offset[2];
