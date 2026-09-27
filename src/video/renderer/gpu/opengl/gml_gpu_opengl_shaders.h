@@ -155,7 +155,7 @@
   "    o_color=vec4(vec3(rgb)/255.0,sampled.a*v_colour.a/255.0); return;\n" \
   "  }\n" \
   "  // R03_SHADER_ROW_SPAN: conditional rotated/warped CPU coverage.\n" \
-  "  if(u_filter>=2 && v_span_active>0.5){\n" \
+  "  if(u_filter>=2 && u_filter!=7 && v_span_active>0.5){\n" \
   "    float mn=1e30,mx=-1e30; int hits=0;\n" \
   "    for(int i=0;i<4;i++){\n" \
   "      int j=(i+1)&3; float a=v_span_y[i],b=v_span_y[j];\n" \
@@ -170,7 +170,7 @@
   "  vec2 delta=centre-v_map.xy;\n" \
   "  ivec2 lo; vec2 f;\n" \
   "  // R03_SHADER_INVERSE_GEOMETRY: affine inverse or triangle-local page UV.\n" \
-  "  if(u_filter>=2){\n" \
+  "  if(u_filter>=2 && u_filter!=7){\n" \
   "    vec2 local=u_filter>=5\n" \
   "      ?v_texcoord\n" \
   "      :delta.x*v_map.zw+delta.y*v_texcoord+v_step;\n" \
@@ -199,9 +199,13 @@
   "    lo=ivec2(floor(local)); f=fract(local);\n" \
   "  } else {\n" \
   "    vec2 whole=floor(delta);\n" \
-  "    vec2 remainder=(delta-whole)+delta*v_step+v_map.zw-vec2(0.5);\n" \
+  "    vec2 remainder=(delta-whole)+delta*v_step+v_map.zw+\n" \
+  "                   (u_filter==7?vec2(0.000001):vec2(-0.5));\n" \
   "    lo=ivec2(whole+floor(remainder)); f=fract(remainder);\n" \
   "  }\n" \
+  "  // R03_SHADER_NEAREST_PHASED: retain first-generation point phase; the small positive\n" \
+  "  // tolerance restores exact texel-edge ties lost when double UVs become shader floats.\n" \
+  "  if(u_filter==7) f=vec2(0.0);\n" \
   "  ivec2 first=ivec2(v_clamp.xy),last=ivec2(v_clamp.zw-v_clamp.xy);\n" \
   "  vec4 p00,p01,p10,p11;\n" \
   "  // R03_SHADER_FILTERED_MARGIN: logical trim and physical atlas edge taps.\n" \

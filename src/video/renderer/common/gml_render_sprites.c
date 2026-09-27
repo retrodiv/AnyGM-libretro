@@ -258,6 +258,8 @@ int gml_render_resident_atlas_page(GmlRender *r,int page_index,
 
 /* Axis draws retain the first-generation filtered CPU blit's snapped coverage and fractional
  * texture phase. Rotated sprites carry their CPU inverse map with policy-specific sampling. */
+/* Nearest mode 1 is the established snapped sprite rule; mode 2 is the
+ * first-generation fractional-origin background-part rule. */
 static int resident_filtered_atlas_page(GmlRender *r,int page_index,
                                       double left,double top,double xs,double ys,
                                       GmlRenderSceneFamily family,uint32_t colour,double alpha,
@@ -267,7 +269,7 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
                                       int opaque_target_alpha,
                                       int transparent_stretched_trim,
                                       int box_stretched,int positioned_axis,
-                                      int snapped_nearest){
+                                      int nearest_mode){
   GmlTpag *page;
   GmlAtlas *atlas;
   GmlRenderResourceSource source={0};
@@ -285,7 +287,7 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
   int margin_left=0,margin_top=0,margin_right=0,margin_bottom=0;
   uint32_t margin_mask=0u;
   if(!r || !r->resident_application_pass ||
-     (!r->interp && !box_stretched && !snapped_nearest) || !r->win ||
+     (!r->interp && !box_stretched && !nearest_mode) || !r->win ||
      !(anygm_policy_uses_first_generation_studio(r->win) ||
        ((rotated_sprite || opaque_target_alpha) &&
         anygm_policy_has_modern_layer_semantics(r->win))) ||
@@ -305,10 +307,17 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
      ((transparent_stretched_trim || box_stretched) &&
       (family!=GML_RENDER_SCENE_SPRITE || rotated_sprite || xs<=0.0 || ys<=0.0)) ||
      xs==0.0 || ys==0.0 || fabs(xs)>1000000.0 || fabs(ys)>1000000.0 ||
-     (snapped_nearest && (r->interp || family!=GML_RENDER_SCENE_SPRITE ||
+     (nearest_mode==1 && (r->interp || family!=GML_RENDER_SCENE_SPRITE ||
        rotated_sprite || corner_colours || fabs(xs)!=1.0 || fabs(ys)!=1.0 ||
        (part_view && (part_view->sw<=1 || part_view->sh<=1)) ||
-       floor(left)!=left || floor(top)!=top))) return 0;
+       floor(left)!=left || floor(top)!=top)) ||
+     (nearest_mode==2 && (r->interp || family!=GML_RENDER_SCENE_BACKGROUND ||
+       !part_view || rotated_sprite || corner_colours || xs<=0.0 || ys<=0.0 ||
+       xs>4.0 || ys>4.0 ||
+       (xs!=1.0 && (fabs(1.0/xs-nearbyint(1.0/xs))<1e-9 ||
+                    fabs(xs-nearbyint(xs))<1e-9)) ||
+       (ys!=1.0 && (fabs(1.0/ys-nearbyint(1.0/ys))<1e-9 ||
+                    fabs(ys-nearbyint(ys))<1e-9))))) return 0;
   for(int index=0;index<3;index++)
     if(r->classic_interp_phase[index] || r->app_interp_phase[index]) return 0;
   if(part_view && part_view->atlas!=r->tpag[page_index].atlas) return 0;
@@ -353,7 +362,8 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
   if(margin_right) margin_mask|=GML_RENDER_MARGIN_RIGHT;
   if(margin_bottom) margin_mask|=GML_RENDER_MARGIN_BOTTOM;
   resident_classify_page(page,atlas);
-  if(!page->scene_fully_opaque && family!=GML_RENDER_SCENE_SPRITE) return 0;
+  if(!page->scene_fully_opaque && family!=GML_RENDER_SCENE_SPRITE &&
+     nearest_mode!=2) return 0;
   if(rotated_sprite){
     double minx=1e30,miny=1e30,maxx=-1e30,maxy=-1e30;
     int source_x0=corner_colours && part_view?-page->tx:
@@ -475,6 +485,7 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
       ?GML_RENDER_QUAD_CARDINAL:GML_RENDER_QUAD_GENERAL)
     :GML_RENDER_QUAD_AXIS_ALIGNED;
   operation.payload.quad.sampling.filter=box_stretched?GML_RENDER_FILTER_BOX:
+    nearest_mode==2?GML_RENDER_FILTER_NEAREST_PHASED:
     rotated_sprite && !anygm_policy_has_modern_layer_semantics(r->win) &&
     !(corner_colours && fabs(fmod(rotation,360.0))<0.001)
       ?GML_RENDER_FILTER_NEAREST:GML_RENDER_FILTER_BILINEAR;
@@ -574,9 +585,9 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
 int gml_render_resident_filtered_atlas_page(GmlRender *r,int page_index,
                                            double left,double top,double xs,double ys,
                                            GmlRenderSceneFamily family,uint32_t colour,double alpha,
-                                           GmlTpag *part_view){
+                                           GmlTpag *part_view,int nearest_scaled){
   return resident_filtered_atlas_page(r,page_index,left,top,xs,ys,family,colour,alpha,
-                                     part_view,NULL,0.0,NULL,0,0,0,0,0);
+                                     part_view,NULL,0.0,NULL,0,0,0,0,nearest_scaled?2:0);
 }
 
 static int resident_filtered_sprite(GmlRender *r,GmlSprite *sprite,int subimg,
@@ -621,7 +632,7 @@ static int resident_filtered_sprite(GmlRender *r,GmlSprite *sprite,int subimg,
   return gml_render_resident_filtered_atlas_page(
       r,page_index,x-((double)sprite->originx-(double)page->tx)*xs-r->cam_x,
       y-((double)sprite->originy-(double)page->ty)*ys-r->cam_y,
-      xs,ys,GML_RENDER_SCENE_SPRITE,blend,alpha,NULL);
+      xs,ys,GML_RENDER_SCENE_SPRITE,blend,alpha,NULL,0);
 }
 
 void gml_draw_sprite(GmlRender *r, int sprite, int subimg, double x, double y){
@@ -1121,7 +1132,7 @@ void gml_draw_sprite_part_ext(GmlRender *r, int sprite, int subimg, double sx, d
           if(r->interp){
             if(gml_render_resident_filtered_atlas_page(
                  r,page_index,left,top,mapped_xs,mapped_ys,
-                 GML_RENDER_SCENE_SPRITE,blend,alpha,&view)) return;
+                 GML_RENDER_SCENE_SPRITE,blend,alpha,&view,0)) return;
           } else if(floor(sx)==sx && floor(sy)==sy &&
                     floor(sw)==sw && floor(sh)==sh &&
                     fabs(mapped_xs)==1.0 && fabs(mapped_ys)==1.0 &&

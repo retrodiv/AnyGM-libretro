@@ -25,7 +25,7 @@ int gml_render_resident_filtered_atlas_page(GmlRender *render, int page_index,
                                            double xscale, double yscale,
                                            GmlRenderSceneFamily family,
                                            uint32_t colour, double alpha,
-                                           GmlTpag *part_view);
+                                           GmlTpag *part_view, int nearest_scaled);
 int gml_render_resident_filtered_atlas_part(GmlRender *render, int page_index,
                                            double source_x, double source_y,
                                            double source_width, double source_height,

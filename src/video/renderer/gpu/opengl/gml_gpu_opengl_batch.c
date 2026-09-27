@@ -75,6 +75,7 @@ static int qualified_blend(const GmlRenderDrawStateSnapshot *state){
 
 static uint32_t scene_filter(const GmlRenderQuad *quad){
   if(quad->sampling.filter==GML_RENDER_FILTER_BOX) return 4u;
+  if(quad->sampling.filter==GML_RENDER_FILTER_NEAREST_PHASED) return 7u;
   if(quad->shape==GML_RENDER_QUAD_WARPED)
     return quad->sampling.filter==GML_RENDER_FILTER_BILINEAR?6u:5u;
   return quad->shape==GML_RENDER_QUAD_AXIS_ALIGNED
@@ -227,7 +228,12 @@ static int scene_preflight(GmlGpuBackend *backend,const GmlRenderDrawBatch *batc
          !valid_region(sampling->source_region,source->width,source->height) ||
          (sampling->filter!=GML_RENDER_FILTER_NEAREST &&
           sampling->filter!=GML_RENDER_FILTER_BILINEAR &&
-          sampling->filter!=GML_RENDER_FILTER_BOX) ||
+          sampling->filter!=GML_RENDER_FILTER_BOX &&
+          sampling->filter!=GML_RENDER_FILTER_NEAREST_PHASED) ||
+         (sampling->filter==GML_RENDER_FILTER_NEAREST_PHASED &&
+          (op->payload.quad.shape!=GML_RENDER_QUAD_AXIS_ALIGNED ||
+           op->reconstruction_mode!=GML_RENDER_DEVICE_CHECKPOINT ||
+           sampling->edge_rule!=GML_RENDER_EDGE_CLAMP_SUBIMAGE)) ||
          (sampling->edge_rule!=GML_RENDER_EDGE_CLAMP_SUBIMAGE &&
           sampling->edge_rule!=GML_RENDER_EDGE_LOGICAL_TPAG &&
           sampling->edge_rule!=GML_RENDER_EDGE_TRANSPARENT) ||
@@ -258,6 +264,7 @@ static int scene_preflight(GmlGpuBackend *backend,const GmlRenderDrawBatch *batc
            (op->reconstruction_mode!=GML_RENDER_DEVICE_CHECKPOINT ||
             (sampling->filter!=GML_RENDER_FILTER_BILINEAR &&
              sampling->filter!=GML_RENDER_FILTER_BOX &&
+             sampling->filter!=GML_RENDER_FILTER_NEAREST_PHASED &&
              op->payload.quad.shape==GML_RENDER_QUAD_AXIS_ALIGNED))) return 0;
         if((colour>>24)!=255u && blend!=1 && blend!=3) return 0;
       }

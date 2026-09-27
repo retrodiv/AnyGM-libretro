@@ -111,12 +111,15 @@ int gml_render_resident_filtered_atlas_part(GmlRender *r,int page_index,
   int trimmed;
   double overlap_x0=0.0,overlap_y0=0.0,overlap_x1=0.0,overlap_y1=0.0;
   double anchor_x,anchor_y,cell_xs,cell_ys;
-  if(!r || !r->resident_application_pass || !r->interp ||
+  if(!r || !r->resident_application_pass ||
      page_index<0 || page_index>=r->n_tpag || gml_d3_is_active(r) ||
      !isfinite(sx) || !isfinite(sy) || !isfinite(sw) || !isfinite(sh) ||
      !isfinite(x) || !isfinite(y) || !isfinite(xs) || !isfinite(ys) ||
      !isfinite(alpha) || sx<0.0 || sy<0.0 || sw<=0.0 || sh<=0.0 ||
      sx>INT_MAX || sy>INT_MAX || sw>INT_MAX || sh>INT_MAX) return 0;
+  int nearest_scaled=!r->interp;
+  if(nearest_scaled && (family!=GML_RENDER_SCENE_BACKGROUND ||
+     sx!=floor(sx) || sy!=floor(sy) || sw!=floor(sw) || sh!=floor(sh))) return 0;
   page=&r->tpag[page_index];
   /* The CPU part view already clips logical trim. Admit a background selection
    * only when it is wholly inside the packed area; edge-crossing trim and
@@ -147,7 +150,7 @@ int gml_render_resident_filtered_atlas_part(GmlRender *r,int page_index,
   return gml_render_resident_filtered_atlas_page(
     r,page_index,x+(anchor_x-sx)*xs-r->cam_x,
     y+(anchor_y-sy)*ys-r->cam_y,cell_xs,cell_ys,
-    family,color,alpha,&view);
+    family,color,alpha,&view,nearest_scaled);
 }
 
 void gml_draw_background(GmlRender *r, int bg, double x, double y){
@@ -161,7 +164,7 @@ void gml_draw_background(GmlRender *r, int bg, double x, double y){
   if(r->interp && !gml_d3_is_active(r) &&
      gml_render_resident_filtered_atlas_page(r,ti,x-r->cam_x+t->tx,
                                               y-r->cam_y+t->ty,1,1,
-                                              GML_RENDER_SCENE_BACKGROUND,0xFFFFFFu,r->alpha,t)) return;
+                                              GML_RENDER_SCENE_BACKGROUND,0xFFFFFFu,r->alpha,t,0)) return;
   if(!gml_render_resident_application_cpu_barrier(r)) return;
   if(gml_d3_draw_background_2d(r,bg,x,y,1,1,0xFFFFFF,r->alpha)) return;
   gml_render_cpu_blit_background_phase(r,t, x - r->cam_x + t->tx, y - r->cam_y + t->ty, 1,1, 0xFFFFFF, r->alpha);
@@ -275,7 +278,7 @@ void gml_draw_background_ext(GmlRender *r, int bg, double x, double y, double xs
   if(r->interp && !gml_d3_is_active(r) &&
      gml_render_resident_filtered_atlas_page(r,ti,x-r->cam_x+t->tx*xs,
                                               y-r->cam_y+t->ty*ys,xs,ys,
-                                              GML_RENDER_SCENE_BACKGROUND,color,alpha,t)) return;
+                                              GML_RENDER_SCENE_BACKGROUND,color,alpha,t,0)) return;
   /* A complete source axis wholly outside the target writes no pixels. Keep a preceding resident
    * pass when an otherwise unsupported mirror is safely beyond either target axis. */
   if(r->resident_application_pass && !gml_d3_is_active(r) &&
@@ -398,7 +401,7 @@ static void do_bg_tiled_ext(GmlRender *r, int bg, double x, double y, double xs,
         continue;
       if(r->interp &&
          gml_render_resident_filtered_atlas_page(r,ti,xx+t->tx*xs,yy+t->ty*ys,xs,ys,
-                                                 GML_RENDER_SCENE_BACKGROUND,color,alpha,t))
+                                                 GML_RENDER_SCENE_BACKGROUND,color,alpha,t,0))
         continue;
       if(!gml_render_resident_application_cpu_barrier(r)) return;
       gml_render_cpu_blit_background_phase(r,t,xx+t->tx*xs,yy+t->ty*ys,xs,ys,color,alpha);

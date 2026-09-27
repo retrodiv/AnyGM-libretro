@@ -28,7 +28,7 @@ REQUIRED_RULES = {
     "R03-SPR-POSITIONED-QUAD", "R03-SPR-STRETCH-MAG",
     "R03-SPR-STRETCH-BOX", "R03-SPR-TILED-PHASE", "R03-SPR-LAYER-UNTILED",
     "R03-SPR-LAYER-REPEAT",
-    "R03-BG-DIRECT",
+    "R03-BG-DIRECT", "R03-BG-NEAREST-PHASED",
     "R03-BG-REPEAT", "R03-TILE-CELL", "R03-SCENE-ORDER",
     "R03-ALPHA-NOOP", "R03-RESIDENT-PRESENT",
 }
@@ -206,6 +206,7 @@ def self_test() -> None:
     for broken in (
         document.replace("::resident_filtered_sprite", "::obsolete_filtered_sprite", 1),
         document.replace("::R03_SHADER_EXACT_OVERLAP", "::OBSOLETE_EXACT_OVERLAP", 1),
+        document.replace("::R03_SHADER_NEAREST_PHASED", "::OBSOLETE_NEAREST_PHASED", 1),
         document.replace("device comparison R03-P3-JOURNAL", "comparison missing", 1),
         document.replace("`supported` | Only the bounded", "`planned` | Only the bounded", 1),
         document.replace(
