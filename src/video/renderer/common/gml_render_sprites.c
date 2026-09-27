@@ -312,12 +312,12 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
        (part_view && (part_view->sw<=1 || part_view->sh<=1)) ||
        floor(left)!=left || floor(top)!=top)) ||
      (nearest_mode==2 && (r->interp || family!=GML_RENDER_SCENE_BACKGROUND ||
-       !part_view || rotated_sprite || corner_colours || xs<=0.0 || ys<=0.0 ||
-       xs>4.0 || ys>4.0 ||
-       (xs!=1.0 && (fabs(1.0/xs-nearbyint(1.0/xs))<1e-9 ||
-                    fabs(xs-nearbyint(xs))<1e-9)) ||
-       (ys!=1.0 && (fabs(1.0/ys-nearbyint(1.0/ys))<1e-9 ||
-                    fabs(ys-nearbyint(ys))<1e-9))))) return 0;
+       !part_view || rotated_sprite || corner_colours || xs==0.0 || ys==0.0 ||
+       fabs(xs)>4.0 || fabs(ys)>4.0 ||
+       (fabs(xs)!=1.0 && (fabs(1.0/xs-nearbyint(1.0/xs))<1e-9 ||
+                          fabs(xs-nearbyint(xs))<1e-9)) ||
+       (fabs(ys)!=1.0 && (fabs(1.0/ys-nearbyint(1.0/ys))<1e-9 ||
+                          fabs(ys-nearbyint(ys))<1e-9))))) return 0;
   for(int index=0;index<3;index++)
     if(r->classic_interp_phase[index] || r->app_interp_phase[index]) return 0;
   if(part_view && part_view->atlas!=r->tpag[page_index].atlas) return 0;
@@ -552,6 +552,10 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
   } else {
     double sample_left=left+(transparent_stretched_trim?(double)page->tx*xs:0.0);
     double sample_top=top+(transparent_stretched_trim?(double)page->ty*ys:0.0);
+    /* The first-generation nearest CPU leaf samples a reflected background part from its
+     * snapped half-open anchor, while an unreflected axis retains the fractional draw phase. */
+    if(nearest_mode==2 && xs<0.0) sample_left=floor(left+0.5);
+    if(nearest_mode==2 && ys<0.0) sample_top=floor(top+0.5);
     operation.payload.quad.u[0]=operation.payload.quad.u[3]=
       ((double)page->sx+(x0-sample_left)/xs)/source.width;
     operation.payload.quad.u[1]=operation.payload.quad.u[2]=
