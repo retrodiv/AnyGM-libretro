@@ -238,7 +238,13 @@ static int scene_preflight(GmlGpuBackend *backend,const GmlRenderDrawBatch *batc
            : (sampling->edge_rule==GML_RENDER_EDGE_LOGICAL_TPAG ||
               sampling->edge_rule==GML_RENDER_EDGE_TRANSPARENT
                 ? sampling->filter!=GML_RENDER_FILTER_BILINEAR ||
-                  !sampling->logical_margin_mask || sampling->logical_margin_mask>15u
+                  !sampling->logical_margin_mask ||
+                  (sampling->logical_margin_mask>15u &&
+                   sampling->logical_margin_mask!=GML_RENDER_MARGIN_VISIBLE_CENTRE) ||
+                  (sampling->logical_margin_mask==GML_RENDER_MARGIN_VISIBLE_CENTRE &&
+                   (sampling->edge_rule!=GML_RENDER_EDGE_LOGICAL_TPAG ||
+                    (op->payload.quad.shape!=GML_RENDER_QUAD_CARDINAL &&
+                     op->payload.quad.shape!=GML_RENDER_QUAD_GENERAL)))
                 : sampling->logical_margin_mask!=0u)) ||
          state->samplers[0].filter!=sampling->filter ||
          state->samplers[0].edge_rule!=sampling->edge_rule ||

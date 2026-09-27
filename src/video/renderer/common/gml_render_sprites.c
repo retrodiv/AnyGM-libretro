@@ -313,13 +313,14 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
   if(family==GML_RENDER_SCENE_SPRITE ||
      ((family==GML_RENDER_SCENE_BACKGROUND || family==GML_RENDER_SCENE_TILE) &&
       part_view)){
-    if(page->tx<0 || page->ty<0 || page->bw<=0 || page->bh<=0 ||
-       (uint64_t)(uint32_t)page->tx+(uint32_t)page->sw>(uint32_t)page->bw ||
-       (uint64_t)(uint32_t)page->ty+(uint32_t)page->sh>(uint32_t)page->bh) return 0;
+    if((page->tx<0 || page->ty<0) && !(corner_colours && part_view)) return 0;
+    if(page->bw<=0 || page->bh<=0 ||
+       (int64_t)page->tx+page->sw>page->bw ||
+       (int64_t)page->ty+page->sh>page->bh) return 0;
     margin_left=page->tx>0;
     margin_top=page->ty>0;
-    margin_right=(uint64_t)(uint32_t)page->tx+(uint32_t)page->sw<(uint32_t)page->bw;
-    margin_bottom=(uint64_t)(uint32_t)page->ty+(uint32_t)page->sh<(uint32_t)page->bh;
+    margin_right=(int64_t)page->tx+page->sw<page->bw;
+    margin_bottom=(int64_t)page->ty+page->sh<page->bh;
   } else if(page->tx || page->ty || page->bw!=page->sw || page->bh!=page->sh)
     return 0;
   atlas=&r->atlas[page->atlas];
@@ -349,10 +350,14 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
   if(!page->scene_fully_opaque && family!=GML_RENDER_SCENE_SPRITE) return 0;
   if(rotated_sprite){
     double minx=1e30,miny=1e30,maxx=-1e30,maxy=-1e30;
-    int source_x0=modern_rotation && !corner_colours?page->scene_ax0:0;
-    int source_y0=modern_rotation && !corner_colours?page->scene_ay0:0;
-    int source_x1=modern_rotation && !corner_colours?page->scene_ax1+1:page->sw;
-    int source_y1=modern_rotation && !corner_colours?page->scene_ay1+1:page->sh;
+    int source_x0=corner_colours && part_view?-page->tx:
+      modern_rotation && !corner_colours?page->scene_ax0:0;
+    int source_y0=corner_colours && part_view?-page->ty:
+      modern_rotation && !corner_colours?page->scene_ay0:0;
+    int source_x1=corner_colours && part_view?rotated_sprite->w-page->tx:
+      modern_rotation && !corner_colours?page->scene_ax1+1:page->sw;
+    int source_y1=corner_colours && part_view?rotated_sprite->h-page->ty:
+      modern_rotation && !corner_colours?page->scene_ay1+1:page->sh;
     if(source_x1<=source_x0 || source_y1<=source_y0) return 0;
     render_rotation_sincos(rotation,&cosine,&sine);
     render_modern_cardinal_anchor(r,rotation,xs,ys,cosine,sine,&left,&top);
@@ -473,7 +478,9 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
       ?GML_RENDER_EDGE_LOGICAL_TPAG:GML_RENDER_EDGE_CLAMP_SUBIMAGE);
   operation.payload.quad.sampling.source_region=region;
   operation.payload.quad.sampling.logical_margin_mask=box_stretched?0u:
-    operation.payload.quad.sampling.filter==GML_RENDER_FILTER_BILINEAR?margin_mask:0u;
+    operation.payload.quad.sampling.filter==GML_RENDER_FILTER_BILINEAR
+      ?(corner_colours && part_view && margin_mask
+          ?GML_RENDER_MARGIN_VISIBLE_CENTRE:margin_mask):0u;
   uint32_t draw_alpha=(uint32_t)lround(alpha*255.0);
   /* GML's blend is BBGGRR; each neutral quad vertex carries AARRGGBB. */
   for(int corner=0;corner<4;corner++){
@@ -1175,6 +1182,7 @@ void gml_draw_sprite_general(GmlRender *r, int sprite, int subimg,
        isfinite(mapped_xs) && isfinite(mapped_ys) &&
        isfinite(rotation) && isfinite(alpha) &&
        sx>=0.0 && sy>=0.0 && sw>0.0 && sh>0.0 &&
+       sx<=INT_MAX && sy<=INT_MAX && sw<=INT_MAX && sh<=INT_MAX &&
        floor(sx)==sx && floor(sy)==sy && floor(sw)==sw && floor(sh)==sh){
       GmlSprite *record=&r->spr[sprite];
       if(!record->runtime_rgba && record->frame && record->n_frames>0){
@@ -1183,12 +1191,30 @@ void gml_draw_sprite_general(GmlRender *r, int sprite, int subimg,
         if(page_index>=0 && page_index<r->n_tpag){
           GmlTpag view;
           int source_x=0,source_y=0;
-          if(gml_render_tpag_part_view(&r->tpag[page_index],sx,sy,sw,sh,
-                                        &view,&source_x,&source_y,NULL,NULL,NULL,NULL) &&
-             source_x==sx && source_y==sy && view.sw==sw && view.sh==sh){
+          GmlTpag *page=&r->tpag[page_index];
+          if(gml_render_tpag_part_view(page,sx,sy,sw,sh,
+                                        &view,&source_x,&source_y,NULL,NULL,NULL,NULL)){
             GmlSprite part=*record;
-            part.w=view.bw=view.tw=view.sw;
-            part.h=view.bh=view.th=view.sh;
+            /* The general CPU leaf samples the entire physical atlas page, even when
+             * the authored source selection ends earlier. Keep that sampler extent separate
+             * from the selected rectangle which owns geometry and vertex-colour interpolation. */
+            int64_t physical_x_end=(int64_t)page->tx+page->sw-(int64_t)sx;
+            int64_t physical_y_end=(int64_t)page->ty+page->sh-(int64_t)sy;
+            if(physical_x_end>INT_MAX || physical_y_end>INT_MAX ||
+               (int64_t)page->tx-(int64_t)sx<INT_MIN ||
+               (int64_t)page->ty-(int64_t)sy<INT_MIN) goto general_cpu;
+            view.sx=page->sx;
+            view.sy=page->sy;
+            view.sw=page->sw;
+            view.sh=page->sh;
+            view.tx=page->tx-(int)sx;
+            view.ty=page->ty-(int)sy;
+            part.w=(int)sw;
+            part.h=(int)sh;
+            view.bw=physical_x_end>part.w?(int)physical_x_end:part.w;
+            view.bh=physical_y_end>part.h?(int)physical_y_end:part.h;
+            view.tw=view.sw;
+            view.th=view.sh;
             part.originx=part.originy=0;
             view.scene_opaque_checked=0;
             if(resident_filtered_atlas_page(r,page_index,
@@ -1199,6 +1225,7 @@ void gml_draw_sprite_general(GmlRender *r, int sprite, int subimg,
         }
       }
     }
+general_cpu:
     if(!gml_render_resident_application_cpu_barrier(r)) return;
     gml_render_cpu_blit_sprite_general_coloured(r,&r->spr[sprite],subimg,
                                                  sx,sy,sw,sh,mapped_x,mapped_y,
