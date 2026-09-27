@@ -398,7 +398,7 @@ static void do_bg_tiled_ext(GmlRender *r, int bg, double x, double y, double xs,
         continue;
       if(r->interp &&
          gml_render_resident_filtered_atlas_page(r,ti,xx+t->tx*xs,yy+t->ty*ys,xs,ys,
-                                                 GML_RENDER_SCENE_BACKGROUND,color,alpha,NULL))
+                                                 GML_RENDER_SCENE_BACKGROUND,color,alpha,t))
         continue;
       if(!gml_render_resident_application_cpu_barrier(r)) return;
       gml_render_cpu_blit_background_phase(r,t,xx+t->tx*xs,yy+t->ty*ys,xs,ys,color,alpha);
