@@ -435,6 +435,21 @@ void gml_render_sprite_ext_unmasked(GmlRender *r, int sprite, int subimg, double
 }
 
 void gml_draw_sprite_stretched(GmlRender *r, int sprite, int frame, double dx, double dy, double dw, double dh, uint32_t blend, double alpha){
+  /* The ordinary stretched CPU blit contributes no pixels at zero alpha. Do not materialise
+   * preceding device work for that no-op; special draw states retain their existing barrier. */
+  if(r && r->resident_application_pass && alpha==0.0 &&
+     sprite>=0 && sprite<r->n_spr && !r->classic && !r->gui_pass_active &&
+     r->active_shader<0 && !r->alpha_test_enable && r->alphablend &&
+     r->blendmode==0 && r->blend_equation==1 && r->blend_equation_alpha==1 &&
+     r->color_write_mask==0x0Fu && !r->pending_underlay &&
+     !r->pending_presentation && !r->rotated_batch_count &&
+     !r->rotated_batch_building && !r->classic_phase_y &&
+     !r->spr[sprite].spine && !r->spr[sprite].ns_enabled &&
+     !r->spr[sprite].runtime_rgba && r->spr[sprite].n_frames>0 &&
+     r->spr[sprite].frame &&
+     !gml_d3_is_active(r) && r->fb==r->app_surface_owned &&
+     r->fbw==r->app_w && r->fbh==r->app_h)
+    return;
   if(r && r->resident_application_pass && !r->interp &&
      blend==0xFFFFFFu && alpha==1.0 &&
      sprite>=0 && sprite<r->n_spr && !gml_d3_is_active(r)){
