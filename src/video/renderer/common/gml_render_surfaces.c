@@ -525,16 +525,35 @@ void gml_surface_resize(GmlRender *r, int id, int w, int h){
     return;
   }
   int i=surface_slot(id); if(i<0 || !r->surface[i].live || w<=0 || h<=0 || w>4096 || h>4096) return;
+  if(!gml_render_application_scene_flush(r)) return;
   uint32_t *px=calloc((size_t)w*h,sizeof(uint32_t));
   if(!px) return;
-  if(r->surface[i].resource &&
-     !gml_render_resource_acquire_cpu_read(r->surface[i].resource,NULL)){
+  int had_pending_fill=r->target_id==id && r->pending_fill;
+  for(int stack=0;stack<r->target_sp;stack++)
+    if(r->target_stack[stack].target_id==id && r->target_stack[stack].pending_fill)
+      had_pending_fill=1;
+  if(r->target_id==id && r->pending_fill){
+    /* A deferred CPU clear must first invalidate a device-current target. Otherwise the
+     * subsequent read could replay the older GPU version over the newly materialized fill. */
+    if(surface_pixels(r,id,NULL,NULL)!=r->surface[i].px){ free(px); return; }
+    gml_render_flush_pending_fill(r);
+  }
+  const uint32_t *old=surface_pixels_observe(r,id,NULL,NULL);
+  if((r->target_id==id && r->pending_fill) || old!=r->surface[i].px){
     free(px);
     return;
   }
-  int was_transparent=r->surface[i].all_transparent;
+  int was_transparent=had_pending_fill?0:r->surface[i].all_transparent;
   int cw=w<r->surface[i].w?w:r->surface[i].w, ch=h<r->surface[i].h?h:r->surface[i].h;
-  for(int y=0;y<ch;y++) memcpy(px+(size_t)y*w,r->surface[i].px+(size_t)y*r->surface[i].w,(size_t)cw*sizeof(uint32_t));
+  for(int y=0;y<ch;y++) memcpy(px+(size_t)y*w,old+(size_t)y*r->surface[i].w,(size_t)cw*sizeof(uint32_t));
+  /* The target stack borrows the numbered allocation just as it borrows surface zero. */
+  if(r->fb==old){ r->fb=px; r->fbw=w; r->fbh=h; }
+  if(r->base_fb==old){ r->base_fb=px; r->base_fbw=w; r->base_fbh=h; }
+  for(int stack=0;stack<r->target_sp;stack++) if(r->target_stack[stack].fb==old){
+    r->target_stack[stack].fb=px;
+    r->target_stack[stack].w=w;
+    r->target_stack[stack].h=h;
+  }
   gml_render_surface_resource_dispose(r,id);
   free(r->surface[i].px); r->surface[i].px=px; r->surface[i].w=w; r->surface[i].h=h;
   r->surface[i].dirty=1;

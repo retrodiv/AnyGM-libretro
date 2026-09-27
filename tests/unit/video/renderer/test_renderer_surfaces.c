@@ -74,6 +74,92 @@ static int owned_application_begin_case(void){
   return 0;
 }
 
+static int numbered_surface_resize_bound_case(void){
+  GmlRender render={0};
+  uint32_t base[16]={0};
+  uint32_t *pixels;
+  int outer,inner;
+  render.next_surface_id=1;
+  render.active_shader=-1;
+  render.color_write_mask=0x0Fu;
+  gml_render_begin(&render,base,4,4,0.0,0.0);
+  outer=gml_surface_create(&render,2,2);
+  inner=gml_surface_create(&render,2,2);
+  REQUIRE(outer>0 && inner>0,"bound resize creates two numbered surfaces");
+  pixels=surface_pixels(&render,outer,NULL,NULL);
+  REQUIRE(pixels!=NULL,"bound resize borrows outer pixels");
+  pixels[0]=0xFF123456u;
+  pixels[3]=0xFFABCDEFu;
+  REQUIRE(gml_surface_set_target(&render,outer) &&
+          gml_surface_set_target(&render,inner),
+          "bound resize nests outer and inner targets");
+  gml_surface_resize(&render,outer,3,3);
+  pixels=render.surface[outer-1].px;
+  REQUIRE(pixels!=NULL && render.fb==render.surface[inner-1].px &&
+          render.target_stack[1].fb==pixels &&
+          render.target_stack[1].w==3 && render.target_stack[1].h==3,
+          "bound resize updates the suspended target reference");
+  gml_surface_reset_target(&render);
+  REQUIRE(render.fb==pixels && render.fbw==3 && render.fbh==3 &&
+          render.fb[0]==0xFF123456u && render.fb[4]==0xFFABCDEFu &&
+          render.fb[8]==0u,
+          "bound resize restores the resized outer target and retained pixels");
+  gml_surface_resize(&render,outer,4,4);
+  pixels=render.surface[outer-1].px;
+  REQUIRE(render.fb==pixels && render.fbw==4 && render.fbh==4 &&
+          render.fb[0]==0xFF123456u && render.fb[5]==0xFFABCDEFu &&
+          render.fb[15]==0u,
+          "bound resize updates the live target reference and extent");
+  render.fb[15]=0xFF617283u;
+  gml_surface_reset_target(&render);
+  REQUIRE(render.fb==base && render.fbw==4 && render.fbh==4 &&
+          render.surface[outer-1].px[15]==0xFF617283u,
+          "bound resize retains subsequent target writes across reset");
+  gml_surface_free(&render,inner);
+  gml_surface_free(&render,outer);
+  gml_render_free(&render);
+  return 0;
+}
+
+static int numbered_surface_resize_pending_fill_case(void){
+  GmlRender render={0};
+  uint32_t base[16]={0};
+  int outer,inner;
+  render.next_surface_id=1;
+  render.active_shader=-1;
+  render.color_write_mask=0x0Fu;
+  gml_render_begin(&render,base,4,4,0.0,0.0);
+  outer=gml_surface_create(&render,2,2);
+  inner=gml_surface_create(&render,2,2);
+  REQUIRE(outer>0 && inner>0 && gml_surface_set_target(&render,outer),
+          "pending-fill resize creates and binds numbered surfaces");
+  gml_render_set_pending_fill(&render,0xFF214365u);
+  REQUIRE(render.pending_fill && gml_surface_set_target(&render,inner),
+          "pending-fill resize suspends the deferred outer clear");
+  gml_surface_resize(&render,outer,3,3);
+  REQUIRE(render.target_stack[1].fb==render.surface[outer-1].px &&
+          !render.target_stack[1].pending_fill,
+          "pending-fill resize realizes the suspended clear before replacing storage");
+  gml_surface_reset_target(&render);
+  REQUIRE(render.fb==render.surface[outer-1].px && render.fbw==3 && render.fbh==3 &&
+          render.fb[0]==0xFF214365u && render.fb[1]==0xFF214365u &&
+          render.fb[3]==0xFF214365u && render.fb[4]==0xFF214365u &&
+          render.fb[2]==0u && render.fb[8]==0u,
+          "suspended clear survives resize with the original rectangle and new zero border");
+  gml_render_set_pending_fill(&render,0xFF7395B7u);
+  gml_surface_resize(&render,outer,4,4);
+  REQUIRE(render.fb==render.surface[outer-1].px && render.fbw==4 && render.fbh==4 &&
+          !render.pending_fill && render.fb[0]==0xFF7395B7u &&
+          render.fb[8]==0xFF7395B7u && render.fb[10]==0xFF7395B7u &&
+          render.fb[3]==0u && render.fb[15]==0u,
+          "active deferred clear survives resize without filling the newly exposed border");
+  gml_surface_reset_target(&render);
+  gml_surface_free(&render,inner);
+  gml_surface_free(&render,outer);
+  gml_render_free(&render);
+  return 0;
+}
+
 static int declared_canvas_preview_case(void){
   GmlRender render={0};
   uint32_t frame[16*8]={0};
@@ -1080,6 +1166,10 @@ int main(void){
   REQUIRE(presentation_latch_coverage_case()==0,
           "presentation latch coverage case");
   REQUIRE(owned_application_begin_case()==0,"owned application begin case");
+  REQUIRE(numbered_surface_resize_bound_case()==0,
+          "numbered surface resize bound target case");
+  REQUIRE(numbered_surface_resize_pending_fill_case()==0,
+          "numbered surface resize pending fill case");
   REQUIRE(threshold_palette_surface_case()==0,
           "threshold palette surface case");
   REQUIRE(declared_canvas_preview_case()==0,"declared canvas preview case");

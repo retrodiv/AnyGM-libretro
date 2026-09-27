@@ -744,6 +744,73 @@ static int retained_target_stays_resident(void){
   return 1;
 }
 
+static int numbered_surface_resize_replays_and_retires(void){
+  GmlRender *render=(GmlRender*)calloc(1,sizeof *render);
+  uint32_t base[16]={0};
+  FakeDevice fake={0};
+  GmlRenderDeviceServices device=service(&fake);
+  GmlRenderResource *resource;
+  GmlRenderImageRef old_ref,new_ref;
+  GmlRenderDrawOp operation;
+  GmlRenderDrawBatch batch;
+  const uint32_t *pixels;
+  int outer,inner,w=0,h=0;
+  CHECK(render);
+  render->next_surface_id=1;
+  gml_render_begin(render,base,4,4,0.0,0.0);
+  outer=gml_surface_create(render,2,2);
+  inner=gml_surface_create(render,2,2);
+  CHECK(outer>0 && inner>0 && gml_surface_set_target(render,outer));
+  gml_render_bind_device(render,&device);
+  resource=gml_render_surface_resource_ensure(render,outer);
+  CHECK(resource);
+  old_ref=gml_render_resource_image_ref(resource);
+  operation=clear_op(old_ref.content_version+1u,0xFF315779u,GML_RENDER_REPLAY_EXACT);
+  operation.target.image=old_ref;
+  operation.target.image.content_version++;
+  operation.target.width=operation.target.height=2u;
+  operation.target.region=(GmlRenderRect){0,0,2u,2u};
+  operation.target.pixel_format=GML_RENDER_PIXEL_ARGB8888;
+  batch=(GmlRenderDrawBatch){&operation,1u,NULL,0u};
+  CHECK(gml_render_surface_scene_submit(render,outer,&batch,NULL,0u)==
+        GML_RENDER_RESOURCE_EXEC_DEVICE && render->surface[outer-1].px[0]==0u);
+  CHECK(gml_surface_set_target(render,inner));
+  gml_surface_resize(render,outer,3,3);
+  CHECK(render->target_stack[1].fb==render->surface[outer-1].px &&
+        render->target_stack[1].w==3 && render->target_stack[1].h==3 &&
+        !render->surface[outer-1].resource && fake.retires==1 && !fake.readbacks);
+  gml_surface_reset_target(render);
+  pixels=gml_surface_pixels_read(render,outer,&w,&h);
+  CHECK(pixels==render->fb && w==3 && h==3 &&
+        pixels[0]==0xFF315779u && pixels[4]==0xFF315779u &&
+        pixels[2]==0u && pixels[8]==0u);
+  resource=gml_render_surface_resource_ensure(render,outer);
+  CHECK(resource);
+  new_ref=gml_render_resource_image_ref(resource);
+  CHECK(new_ref.incarnation!=old_ref.incarnation && new_ref.content_version==1u);
+  operation.target.image=new_ref;
+  operation.target.image.content_version++;
+  operation.target.width=operation.target.height=3u;
+  operation.target.region=(GmlRenderRect){0,0,3u,3u};
+  CHECK(gml_render_surface_scene_submit(render,outer,&batch,NULL,0u)==
+        GML_RENDER_RESOURCE_EXEC_DEVICE);
+  gml_render_set_pending_fill(render,0xFF7395B7u);
+  CHECK(render->pending_fill);
+  gml_surface_resize(render,outer,4,4);
+  pixels=gml_surface_pixels_read(render,outer,&w,&h);
+  CHECK(pixels==render->fb && w==4 && h==4 && !render->pending_fill &&
+        pixels[0]==0xFF7395B7u && pixels[10]==0xFF7395B7u &&
+        pixels[3]==0u && pixels[15]==0u && fake.retires==2 && !fake.readbacks);
+  gml_render_bind_device(render,NULL);
+  CHECK(!fake.readbacks);
+  gml_surface_reset_target(render);
+  gml_surface_free(render,inner);
+  gml_surface_free(render,outer);
+  gml_render_free(render);
+  free(render);
+  return 1;
+}
+
 static int owned_application_resize_and_context_loss(void){
   GmlRender *render=(GmlRender*)calloc(1,sizeof *render);
   GmlRenderDeviceServices device;
@@ -1767,6 +1834,7 @@ int main(void){
   passed+=rejection_and_isolation();
   passed+=persistent_surface_lifecycle();
   passed+=retained_target_stays_resident();
+  passed+=numbered_surface_resize_replays_and_retires();
   passed+=owned_application_resize_and_context_loss();
   passed+=resident_application_pending_clear();
   passed+=resident_application_sprite_cpu_fallback();
@@ -1780,6 +1848,6 @@ int main(void){
   passed+=resident_integer_scaled_atlas_sprite_gpu();
   passed+=state_without_context();
   passed+=nearest_subrectangle_mirrors();
-  printf("render resource cases: passed=%d failed=%d\n",passed,23-passed);
-  return passed==23?EXIT_SUCCESS:EXIT_FAILURE;
+  printf("render resource cases: passed=%d failed=%d\n",passed,24-passed);
+  return passed==24?EXIT_SUCCESS:EXIT_FAILURE;
 }
