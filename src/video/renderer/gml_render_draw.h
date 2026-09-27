@@ -138,7 +138,9 @@ typedef struct GmlRenderQuad {
   double u[4],v[4];
   /* Rotated checkpoint: local = (pixel centre - anchor) * [x,y] + offset. */
   double inverse_anchor[2],inverse_x[2],inverse_y[2],inverse_offset[2];
-  /* Modern filtered rotation optionally limits each destination row to the CPU quad span. */
+  /* Modern filtered rotation optionally limits each row to the CPU quad span. Axis-aligned
+   * box-filtered stretches instead carry [logical size, destination size, trim, visible size]
+   * in these four components per axis, with span_active left clear. */
   double span_x[4],span_y[4];
   uint32_t span_active;
   uint32_t corner_colour[4];

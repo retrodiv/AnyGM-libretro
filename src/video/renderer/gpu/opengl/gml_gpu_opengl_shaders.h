@@ -132,6 +132,24 @@
   "void main(){\n" \
   "  if(u_filter==0){ o_color=texture(u_image,v_texcoord)*v_colour; return; }\n" \
   "  vec2 centre=vec2(gl_FragCoord.x,u_extent.y-gl_FragCoord.y);\n" \
+  "  if(u_filter==4){\n" \
+  "    ivec2 logical=ivec2(v_span_x.x,v_span_y.x),dest=ivec2(v_span_x.y,v_span_y.y);\n" \
+  "    ivec2 trim=ivec2(v_span_x.z,v_span_y.z),visible=ivec2(v_span_x.w,v_span_y.w);\n" \
+  "    ivec2 p=ivec2(floor(centre-v_map.xy));\n" \
+  "    if(any(lessThan(p,ivec2(0))) || any(greaterThanEqual(p,dest))) discard;\n" \
+  "    ivec2 first=p*logical/dest,last=max((p+ivec2(1))*logical/dest,first+ivec2(1));\n" \
+  "    vec4 total=vec4(0.0); int count=0;\n" \
+  "    for(int sy=first.y;sy<last.y;sy++) for(int sx=first.x;sx<last.x;sx++){\n" \
+  "      ivec2 at=ivec2(sx,sy)-trim;\n" \
+  "      if(any(lessThan(at,ivec2(0))) || any(greaterThanEqual(at,visible))) continue;\n" \
+  "      total+=floor(texelFetch(u_image,ivec2(v_clamp.xy)+at,0)*255.0+0.5); count++;\n" \
+  "    }\n" \
+  "    if(count==0) discard;\n" \
+  "    vec4 sampled=floor(total/float(count)+vec4(0.5));\n" \
+  "    uvec3 tint=uvec3(floor(v_colour.rgb*255.0+vec3(0.5)));\n" \
+  "    uvec3 rgb=uvec3(sampled.rgb)*tint/uvec3(255u);\n" \
+  "    o_color=vec4(vec3(rgb)/255.0,sampled.a*v_colour.a/255.0); return;\n" \
+  "  }\n" \
   "  if(u_filter>=2 && v_span_active>0.5){\n" \
   "    float mn=1e30,mx=-1e30; int hits=0;\n" \
   "    for(int i=0;i<4;i++){\n" \

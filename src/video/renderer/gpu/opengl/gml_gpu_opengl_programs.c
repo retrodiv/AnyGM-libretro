@@ -99,12 +99,19 @@ int gml_gpu_opengl_scene_program(GmlGpuBackend *backend,char *error,size_t error
   GlScene *scene=&backend->scene;
   const char *prefix=backend->api==GML_GPU_API_OPENGLES3
     ?GML_GPU_OPENGL_PREFIX_ES:GML_GPU_OPENGL_PREFIX_DESKTOP;
-  char vertex_source[1024],fragment_source[4096];
+  char vertex_source[1024],fragment_source[8192];
   GLuint vertex,fragment;
   GLint status=GL_FALSE;
   if(scene->program) return 1;
-  snprintf(vertex_source,sizeof vertex_source,"%s%s",prefix,GML_GPU_OPENGL_SCENE_VERTEX_BODY);
-  snprintf(fragment_source,sizeof fragment_source,"%s%s",prefix,GML_GPU_OPENGL_SCENE_FRAGMENT_BODY);
+  int vertex_length=snprintf(vertex_source,sizeof vertex_source,"%s%s",prefix,
+                             GML_GPU_OPENGL_SCENE_VERTEX_BODY);
+  int fragment_length=snprintf(fragment_source,sizeof fragment_source,"%s%s",prefix,
+                               GML_GPU_OPENGL_SCENE_FRAGMENT_BODY);
+  if(vertex_length<0 || (size_t)vertex_length>=sizeof vertex_source ||
+     fragment_length<0 || (size_t)fragment_length>=sizeof fragment_source){
+    gml_gpu_opengl_record_error(error,error_capacity,"scene shader source exceeds buffer capacity");
+    return 0;
+  }
   vertex=compile_stage(backend,GL_VERTEX_SHADER,vertex_source,error,error_capacity);
   if(!vertex) return 0;
   fragment=compile_stage(backend,GL_FRAGMENT_SHADER,fragment_source,error,error_capacity);

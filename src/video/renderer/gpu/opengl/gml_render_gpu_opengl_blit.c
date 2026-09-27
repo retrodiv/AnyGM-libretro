@@ -29,6 +29,22 @@ int gml_render_gpu_opengl_draw_textured_quad(const GmlRenderDrawOp *op,
   if(region.x<0 || region.y<0 || !region.width || !region.height ||
      (uint64_t)(uint32_t)region.x+region.width>source_width ||
      (uint64_t)(uint32_t)region.y+region.height>source_height) return 0;
+  if(quad->sampling.filter==GML_RENDER_FILTER_BOX){
+    if(rotated || rendered_source_origin || quad->span_active ||
+       op->reconstruction_mode!=GML_RENDER_DEVICE_CHECKPOINT) return 0;
+    for(uint32_t axis=0;axis<2;axis++){
+      const double *span=axis?quad->span_y:quad->span_x;
+      double extent=axis?quad->y[2]-quad->y[0]:quad->x[1]-quad->x[0];
+      uint32_t physical=axis?region.height:region.width;
+      for(uint32_t field=0;field<4;field++)
+        if(!isfinite(span[field]) || span[field]!=floor(span[field])) return 0;
+      if(span[0]<1.0 || span[0]>4096.0 || span[1]<1.0 || span[1]>4096.0 ||
+         span[2]<0.0 || span[3]!=physical ||
+         span[2]+span[3]>span[0] || extent!=span[1] ||
+         ((uint32_t)span[0]+(uint32_t)span[1]-1u)/(uint32_t)span[1]>8u)
+        return 0;
+    }
+  }
   region_storage_y=rendered_source_origin
     ?source_height-((uint32_t)region.y+region.height):(uint32_t)region.y;
   if(!rotated && (quad->x[1]<=quad->x[0] || quad->y[2]<=quad->y[0])) return 0;

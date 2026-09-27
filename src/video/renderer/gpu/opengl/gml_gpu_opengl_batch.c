@@ -74,6 +74,7 @@ static int qualified_blend(const GmlRenderDrawStateSnapshot *state){
 }
 
 static uint32_t scene_filter(const GmlRenderQuad *quad){
+  if(quad->sampling.filter==GML_RENDER_FILTER_BOX) return 4u;
   return quad->shape==GML_RENDER_QUAD_AXIS_ALIGNED
     ?(quad->sampling.filter==GML_RENDER_FILTER_BILINEAR?1u:0u)
     :(quad->sampling.filter==GML_RENDER_FILTER_BILINEAR?2u:3u);
@@ -223,16 +224,20 @@ static int scene_preflight(GmlGpuBackend *backend,const GmlRenderDrawBatch *batc
          !full_region(target->region,target->width,target->height) ||
          !valid_region(sampling->source_region,source->width,source->height) ||
          (sampling->filter!=GML_RENDER_FILTER_NEAREST &&
-          sampling->filter!=GML_RENDER_FILTER_BILINEAR) ||
+          sampling->filter!=GML_RENDER_FILTER_BILINEAR &&
+          sampling->filter!=GML_RENDER_FILTER_BOX) ||
          (sampling->edge_rule!=GML_RENDER_EDGE_CLAMP_SUBIMAGE &&
           sampling->edge_rule!=GML_RENDER_EDGE_LOGICAL_TPAG &&
           sampling->edge_rule!=GML_RENDER_EDGE_TRANSPARENT) ||
          sampling->quantisation ||
-         (sampling->edge_rule==GML_RENDER_EDGE_LOGICAL_TPAG ||
-          sampling->edge_rule==GML_RENDER_EDGE_TRANSPARENT
-           ? sampling->filter!=GML_RENDER_FILTER_BILINEAR ||
-             !sampling->logical_margin_mask || sampling->logical_margin_mask>15u
-           : sampling->logical_margin_mask!=0u) ||
+         (sampling->filter==GML_RENDER_FILTER_BOX
+           ? sampling->edge_rule!=GML_RENDER_EDGE_TRANSPARENT ||
+             sampling->logical_margin_mask!=0u
+           : (sampling->edge_rule==GML_RENDER_EDGE_LOGICAL_TPAG ||
+              sampling->edge_rule==GML_RENDER_EDGE_TRANSPARENT
+                ? sampling->filter!=GML_RENDER_FILTER_BILINEAR ||
+                  !sampling->logical_margin_mask || sampling->logical_margin_mask>15u
+                : sampling->logical_margin_mask!=0u)) ||
          state->samplers[0].filter!=sampling->filter ||
          state->samplers[0].edge_rule!=sampling->edge_rule ||
          state->samplers[0].logical_margin_mask!=sampling->logical_margin_mask ||
@@ -244,6 +249,7 @@ static int scene_preflight(GmlGpuBackend *backend,const GmlRenderDrawBatch *batc
         if(colour!=0xFFFFFFFFu &&
            (op->reconstruction_mode!=GML_RENDER_DEVICE_CHECKPOINT ||
             (sampling->filter!=GML_RENDER_FILTER_BILINEAR &&
+             sampling->filter!=GML_RENDER_FILTER_BOX &&
              op->payload.quad.shape==GML_RENDER_QUAD_AXIS_ALIGNED))) return 0;
         if((colour>>24)!=255u && blend!=1 && blend!=3) return 0;
       }

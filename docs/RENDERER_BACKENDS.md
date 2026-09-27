@@ -50,11 +50,18 @@ it uses the CPU leaf's floored destination origin and rounded extent, preserves 
 cell around authored trim, and returns transparent samples only on authored margin sides.
 It requires a proven opaque application target, bilinear sampling, positive magnification on
 both axes and physical atlas space for the full logical quad. Transparent targets, special
-blend state, out-of-atlas logical cells, minification and the full-target coarse-mip effect
+blend state, out-of-atlas logical cells, deep minification and the full-target coarse-mip effect
 retain ordered CPU execution. This qualification does not cover nine-slice or surfaces.
-CPU text resolves a
-preceding resident sprite before writing glyph pixels; this ordering barrier does not accelerate
-text. A similarly bounded first-generation nearest background path accepts complete untrimmed
+Ordinary non-full-target minification and mixed-axis stretches use a separate bounded box-filter
+quad: each destination pixel averages the same integer source box as the CPU, excluding authored
+trim texels from both the sum and divisor. The device checkpoint preserves the exact result
+without a context. The first-generation and modern-layer paths accept up to eight covered
+source texels per axis (64 taps), a proven opaque destination and ordinary blend state, with
+or without global interpolation. Deeper boxes and the full-target coarse-mip veil remain
+ordered CPU fallbacks; the latter is a separate effect qualification, not an ordinary box sample.
+CPU text resolves a preceding resident sprite before writing glyph pixels; this ordering barrier
+does not accelerate text. A similarly bounded first-generation nearest background path accepts
+complete untrimmed
 pages at unit positive scale with intermediate alpha. It checkpoints the device's source-over
 result, treats only the low RGB 24 bits of a GML white tint as colour, and retains the existing
 binary-alpha replay path unchanged. A resident-only background draw whose full untrimmed source
