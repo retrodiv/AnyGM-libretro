@@ -104,7 +104,8 @@ static int resident_integer_background_part(GmlRender *r,int page_index,
 static int resident_filtered_background_part(GmlRender *r,int page_index,
                                              double sx,double sy,double sw,double sh,
                                              double x,double y,double xs,double ys,
-                                             uint32_t color,double alpha){
+                                             uint32_t color,double alpha,
+                                             GmlRenderSceneFamily family){
   GmlTpag *page,view;
   int source_x=0,source_y=0;
   if(!r || !r->resident_application_pass || !r->interp ||
@@ -127,7 +128,7 @@ static int resident_filtered_background_part(GmlRender *r,int page_index,
   return gml_render_resident_filtered_atlas_page(
     r,page_index,x+(source_x-sx)*xs-r->cam_x,
     y+(source_y-sy)*ys-r->cam_y,xs,ys,
-    GML_RENDER_SCENE_BACKGROUND,color,alpha,&view);
+    family,color,alpha,&view);
 }
 
 void gml_draw_background(GmlRender *r, int bg, double x, double y){
@@ -164,7 +165,8 @@ void gml_draw_background_part_ext(GmlRender *r, int bg, double sx, double sy, do
   int ti=r->bg[bg].tpag; if(ti<0||ti>=r->n_tpag) return;
   if(resident_integer_background_part(r,ti,sx,sy,sw,sh,x,y,xs,ys,color,alpha,
                                       GML_RENDER_SCENE_BACKGROUND)) return;
-  if(resident_filtered_background_part(r,ti,sx,sy,sw,sh,x,y,xs,ys,color,alpha)) return;
+  if(resident_filtered_background_part(r,ti,sx,sy,sw,sh,x,y,xs,ys,color,alpha,
+                                      GML_RENDER_SCENE_BACKGROUND)) return;
   if(!gml_render_resident_application_cpu_barrier(r)) return;
   if(gml_d3_draw_background_part_2d(r,bg,sx,sy,sw,sh,x,y,xs,ys,color,alpha)) return;
   gml_render_cpu_blit_tpag_part_background(r,&r->tpag[ti],sx,sy,sw,sh,x-r->cam_x,y-r->cam_y,xs,ys,color,alpha);
@@ -183,6 +185,8 @@ void gml_draw_background_tile(GmlRender *r,int bg,
     if(!r || bg<0 || bg>=r->n_bg || sw<=0 || sh<=0 || xs==0 || ys==0) return;
     int ti=r->bg[bg].tpag; if(ti<0 || ti>=r->n_tpag) return;
     if(resident_integer_background_part(r,ti,sx,sy,sw,sh,x,y,xs,ys,color,alpha,
+                                        GML_RENDER_SCENE_TILE)) return;
+    if(resident_filtered_background_part(r,ti,sx,sy,sw,sh,x,y,xs,ys,color,alpha,
                                         GML_RENDER_SCENE_TILE)) return;
     if(!gml_render_resident_application_cpu_barrier(r)) return;
     if(gml_d3_draw_background_part_2d(r,bg,sx,sy,sw,sh,x,y,xs,ys,color,alpha)) return;
