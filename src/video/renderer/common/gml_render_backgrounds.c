@@ -101,6 +101,35 @@ static int resident_integer_background_part(GmlRender *r,int page_index,
                                        x-r->cam_x,y-r->cam_y,xs,ys,family);
 }
 
+static int resident_filtered_background_part(GmlRender *r,int page_index,
+                                             double sx,double sy,double sw,double sh,
+                                             double x,double y,double xs,double ys,
+                                             uint32_t color,double alpha){
+  GmlTpag *page,view;
+  int source_x=0,source_y=0;
+  if(!r || !r->resident_application_pass || !r->interp ||
+     page_index<0 || page_index>=r->n_tpag || gml_d3_is_active(r) ||
+     !isfinite(sx) || !isfinite(sy) || !isfinite(sw) || !isfinite(sh) ||
+     !isfinite(x) || !isfinite(y) || !isfinite(xs) || !isfinite(ys) ||
+     !isfinite(alpha) || sx<0.0 || sy<0.0 || sw<=1.0 || sh<=1.0 ||
+     sx>INT_MAX || sy>INT_MAX || sw>INT_MAX || sh>INT_MAX ||
+     sx!=floor(sx) || sy!=floor(sy) || sw!=floor(sw) || sh!=floor(sh)) return 0;
+  page=&r->tpag[page_index];
+  if(page->tx || page->ty || page->bw!=page->sw || page->bh!=page->sh ||
+     !gml_render_tpag_part_view(page,sx,sy,sw,sh,&view,&source_x,&source_y,
+                                NULL,NULL,NULL,NULL) ||
+     source_x!=(int)sx || source_y!=(int)sy ||
+     view.sw!=(int)sw || view.sh!=(int)sh) return 0;
+  /* Keep bw/bh from the CPU's part view: filtered taps at its right/bottom
+   * may reach physical atlas neighbours beyond the selected visible crop. */
+  view.tw=view.sw;
+  view.th=view.sh;
+  return gml_render_resident_filtered_atlas_page(
+    r,page_index,x+(source_x-sx)*xs-r->cam_x,
+    y+(source_y-sy)*ys-r->cam_y,xs,ys,
+    GML_RENDER_SCENE_BACKGROUND,color,alpha,&view);
+}
+
 void gml_draw_background(GmlRender *r, int bg, double x, double y){
   gml_render_draw_map_point(r,&x,&y);
   if(bg<0||bg>=r->n_bg) return;
@@ -135,6 +164,7 @@ void gml_draw_background_part_ext(GmlRender *r, int bg, double sx, double sy, do
   int ti=r->bg[bg].tpag; if(ti<0||ti>=r->n_tpag) return;
   if(resident_integer_background_part(r,ti,sx,sy,sw,sh,x,y,xs,ys,color,alpha,
                                       GML_RENDER_SCENE_BACKGROUND)) return;
+  if(resident_filtered_background_part(r,ti,sx,sy,sw,sh,x,y,xs,ys,color,alpha)) return;
   if(!gml_render_resident_application_cpu_barrier(r)) return;
   if(gml_d3_draw_background_part_2d(r,bg,sx,sy,sw,sh,x,y,xs,ys,color,alpha)) return;
   gml_render_cpu_blit_tpag_part_background(r,&r->tpag[ti],sx,sy,sw,sh,x-r->cam_x,y-r->cam_y,xs,ys,color,alpha);

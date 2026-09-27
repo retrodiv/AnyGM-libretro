@@ -310,7 +310,8 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
   if(page->sw<=0 || page->sh<=0 || page->sx<0 || page->sy<0 ||
      page->tw!=page->sw || page->th!=page->sh ||
      page->atlas<0 || page->atlas>=r->n_atlas) return 0;
-  if(family==GML_RENDER_SCENE_SPRITE){
+  if(family==GML_RENDER_SCENE_SPRITE ||
+     (family==GML_RENDER_SCENE_BACKGROUND && part_view)){
     if(page->tx<0 || page->ty<0 || page->bw<=0 || page->bh<=0 ||
        (uint64_t)(uint32_t)page->tx+(uint32_t)page->sw>(uint32_t)page->bw ||
        (uint64_t)(uint32_t)page->ty+(uint32_t)page->sh>(uint32_t)page->bh) return 0;
