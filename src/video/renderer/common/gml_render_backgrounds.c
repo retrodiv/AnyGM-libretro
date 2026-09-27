@@ -108,6 +108,7 @@ int gml_render_resident_filtered_atlas_part(GmlRender *r,int page_index,
                                              GmlRenderSceneFamily family){
   GmlTpag *page,view;
   int source_x=0,source_y=0;
+  int trimmed;
   if(!r || !r->resident_application_pass || !r->interp ||
      page_index<0 || page_index>=r->n_tpag || gml_d3_is_active(r) ||
      !isfinite(sx) || !isfinite(sy) || !isfinite(sw) || !isfinite(sh) ||
@@ -115,10 +116,20 @@ int gml_render_resident_filtered_atlas_part(GmlRender *r,int page_index,
      !isfinite(alpha) || sx<0.0 || sy<0.0 || sw<1.0 || sh<1.0 ||
      sx>INT_MAX || sy>INT_MAX || sw>INT_MAX || sh>INT_MAX) return 0;
   page=&r->tpag[page_index];
-  if(page->tx || page->ty || page->bw!=page->sw || page->bh!=page->sh ||
-     sx+sw>(double)page->sw || sy+sh>(double)page->sh ||
+  /* The CPU part view already clips logical trim. Admit a trimmed atlas page
+   * only for an integral background selection wholly inside its packed area;
+   * fractional/edge-crossing trim and tile-source trim remain separate rules. */
+  trimmed=page->tx || page->ty || page->bw!=page->sw || page->bh!=page->sh;
+  if(page->tx<0 || page->ty<0 || page->bw<=0 || page->bh<=0 ||
+     (int64_t)page->tx+page->sw>page->bw ||
+     (int64_t)page->ty+page->sh>page->bh ||
+     (trimmed && family!=GML_RENDER_SCENE_BACKGROUND) ||
+     sx<(double)page->tx || sy<(double)page->ty ||
+     sx+sw>(double)page->tx+page->sw || sy+sh>(double)page->ty+page->sh ||
      !gml_render_tpag_part_view(page,sx,sy,sw,sh,&view,&source_x,&source_y,
                                 NULL,NULL,NULL,NULL)) return 0;
+  if(trimmed && (sx!=floor(sx) || sy!=floor(sy) ||
+                 sw!=floor(sw) || sh!=floor(sh))) return 0;
   /* A fractional one-cell selection changes both anchor and scale in the CPU
    * writer. Multi-cell background selection only snaps outwards; tile source
    * fractions retain their separate unqualified CPU path. */
