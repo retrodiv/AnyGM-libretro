@@ -673,6 +673,7 @@ int gml_render_tpag_part_view(const GmlTpag *t,
                               double *overlap_x0,double *overlap_y0,
                               double *overlap_x1,double *overlap_y1);
 uint32_t *surface_pixels(GmlRender *r,int surface,int *width,int *height);
+const uint32_t *surface_pixels_observe(GmlRender *r,int surface,int *width,int *height);
 int surface_known_opaque(GmlRender *r,int surface);
 int surface_known_transparent(GmlRender *r,int surface);
 int rect_covers_target(GmlRender *r,int x0,int y0,int x1,int y1);

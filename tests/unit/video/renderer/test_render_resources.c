@@ -675,6 +675,7 @@ static int retained_target_stays_resident(void){
   GmlRenderDrawBatch batch;
   GmlRenderImageRef ref;
   GmlRenderResource *resource;
+  GmlRenderResourceSource observed_source={0};
   GmlRenderJournalMetrics before={0},after={0};
   FakeDevice fake={0};
   const uint32_t *pixels;
@@ -712,6 +713,18 @@ static int retained_target_stays_resident(void){
   pixels=gml_surface_pixels_read(render,id,&w,&h);
   CHECK(pixels && w==4 && h==4 && pixels[0]==0x40112233u &&
         pixels[15]==0x40112233u && fake.readbacks==0);
+  gml_render_resource_journal_metrics(resource,&after);
+  CHECK(after.logical_version==before.logical_version &&
+        after.cpu_version==before.logical_version &&
+        after.gpu_version==before.logical_version &&
+        gml_surface_width(render,id)==4 && gml_surface_height(render,id)==4 &&
+        gml_surface_exists(render,id));
+  gml_render_resource_journal_metrics(resource,&after);
+  CHECK(after.logical_version==before.logical_version &&
+        gml_render_resource_source_view(resource,&observed_source) &&
+        observed_source.image.content_version==before.logical_version &&
+        observed_source.resident_resource==resource &&
+        observed_source.bytes==pixels);
   CHECK(gml_surface_set_target(render,id));
   ref=gml_render_resource_image_ref(resource);
   operation=clear_op(ref.content_version+1u,0xFF445566u,GML_RENDER_REPLAY_EXACT);
@@ -1356,6 +1369,36 @@ static int mutable_scene_identity_across_renderers(void){
   return 1;
 }
 
+static int surface_observer_materializes_suspended_fill(void){
+  GmlRender *render=(GmlRender*)calloc(1,sizeof *render);
+  GmlRenderResource *resource;
+  GmlRenderImageRef before,after;
+  const uint32_t *pixels;
+  int id,w=0,h=0;
+  CHECK(render);
+  render->next_surface_id=1;
+  CHECK(gml_render_application_surface_ensure_owned(render,4,4));
+  resource=gml_render_application_resource_ensure(render);
+  CHECK(resource);
+  gml_render_begin(render,render->app_surface_owned,4,4,0.0,0.0);
+  id=gml_surface_create(render,2,2);
+  CHECK(id>0);
+  gml_render_set_pending_fill(render,0xFF315179u);
+  before=gml_render_resource_image_ref(resource);
+  CHECK(gml_surface_set_target(render,id));
+  CHECK(render->target_stack[0].pending_fill);
+  pixels=gml_surface_pixels_read(render,0,&w,&h);
+  after=gml_render_resource_image_ref(resource);
+  CHECK(pixels && w==4 && h==4 && pixels[0]==0xFF315179u &&
+        pixels[15]==0xFF315179u && !render->target_stack[0].pending_fill &&
+        after.content_version==before.content_version+1u);
+  CHECK(gml_surface_pixels_read(render,0,&w,&h)==pixels &&
+        gml_render_resource_image_ref(resource).content_version==after.content_version);
+  gml_render_free(render);
+  free(render);
+  return 1;
+}
+
 static int resident_opaque_atlas_sprite_gpu(void){
   GmlRender *render=(GmlRender*)calloc(1,sizeof *render);
   GmlRenderApplicationWriteView view={0};
@@ -1672,11 +1715,12 @@ int main(void){
   passed+=resident_background_and_tile_cpu_barriers();
   passed+=atlas_scene_identity_and_retirement();
   passed+=mutable_scene_identity_across_renderers();
+  passed+=surface_observer_materializes_suspended_fill();
   passed+=resident_opaque_atlas_sprite_gpu();
   passed+=resident_binary_atlas_sprite_gpu();
   passed+=resident_integer_scaled_atlas_sprite_gpu();
   passed+=state_without_context();
   passed+=nearest_subrectangle_mirrors();
-  printf("render resource cases: passed=%d failed=%d\n",passed,21-passed);
-  return passed==21?EXIT_SUCCESS:EXIT_FAILURE;
+  printf("render resource cases: passed=%d failed=%d\n",passed,22-passed);
+  return passed==22?EXIT_SUCCESS:EXIT_FAILURE;
 }

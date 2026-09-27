@@ -38,7 +38,15 @@ static void realize_suspended_fill(GmlRender *r,const uint32_t *px){
     r->target_stack[i].pending_fill=0;
   }
 }
-uint32_t *surface_pixels(GmlRender *r, int id, int *w, int *h){
+static int has_suspended_fill(const GmlRender *r,const uint32_t *px){
+  if(!r || !px) return 0;
+  for(int i=0;i<r->target_sp;i++)
+    if(r->target_stack[i].fb==px && r->target_stack[i].pending_fill &&
+       r->target_stack[i].w>0 && r->target_stack[i].h>0) return 1;
+  return 0;
+}
+static uint32_t *surface_pixels_access(GmlRender *r, int id, int *w, int *h,
+                                        int writable){
   if(id==GML_RENDER_SHADED_SURFACE){
     if(r->shaded_plane_width<=0 || r->shaded_plane_height<=0) return NULL;
     if(w) *w=r->shaded_plane_width;
@@ -58,10 +66,18 @@ uint32_t *surface_pixels(GmlRender *r, int id, int *w, int *h){
     if(h) *h=r->app_h?r->app_h:(r->base_fbh?r->base_fbh:r->fbh);
     if(r->app_surface==r->app_surface_owned && r->app_surface_resource){
       uint32_t *canonical=NULL;
-      if(!gml_render_resource_acquire_cpu_write(r->app_surface_resource,&canonical) ||
-         canonical!=r->app_surface_owned) return NULL;
+      int write=writable || has_suspended_fill(r,r->app_surface_owned);
+      if(write){
+        if(!gml_render_resource_acquire_cpu_write(r->app_surface_resource,&canonical) ||
+           canonical!=r->app_surface_owned) return NULL;
+      } else {
+        const uint32_t *current=NULL;
+        if(!gml_render_resource_acquire_cpu_read(r->app_surface_resource,&current) ||
+           current!=r->app_surface_owned) return NULL;
+        canonical=(uint32_t*)(uintptr_t)current;
+      }
       realize_suspended_fill(r,canonical);
-      if(!gml_render_resource_commit_cpu_write(r->app_surface_resource)) return NULL;
+      if(write && !gml_render_resource_commit_cpu_write(r->app_surface_resource)) return NULL;
       return canonical;
     }
     realize_suspended_fill(r,r->app_surface);
@@ -71,16 +87,26 @@ uint32_t *surface_pixels(GmlRender *r, int id, int *w, int *h){
   if(i<0 || !r->surface[i].live || !r->surface[i].px) return NULL;
   if(r->surface[i].resource){
     uint32_t *canonical=NULL;
-    if(!gml_render_resource_acquire_cpu_write(r->surface[i].resource,&canonical) ||
-       canonical!=r->surface[i].px) return NULL;
+    int write=writable || has_suspended_fill(r,r->surface[i].px);
+    if(write){
+      if(!gml_render_resource_acquire_cpu_write(r->surface[i].resource,&canonical) ||
+         canonical!=r->surface[i].px) return NULL;
+    } else {
+      const uint32_t *current=NULL;
+      if(!gml_render_resource_acquire_cpu_read(r->surface[i].resource,&current) ||
+         current!=r->surface[i].px) return NULL;
+      canonical=(uint32_t*)(uintptr_t)current;
+    }
     realize_suspended_fill(r,canonical);
-    if(!gml_render_resource_commit_cpu_write(r->surface[i].resource)) return NULL;
-    /* The accessor returns a writable pointer. Callers may only read it, but a conservative
-     * version change prevents an unobserved later write from leaving the GPU copy current. */
-    r->surface[i].dirty=1;
-    r->surface[i].opaque_known=0;
-    r->surface[i].all_opaque=0;
-    r->surface[i].all_transparent=0;
+    if(write && !gml_render_resource_commit_cpu_write(r->surface[i].resource)) return NULL;
+    /* Writable callers may only read, but their conservative version change prevents an
+     * unobserved later write from leaving the GPU copy current. */
+    if(write){
+      r->surface[i].dirty=1;
+      r->surface[i].opaque_known=0;
+      r->surface[i].all_opaque=0;
+      r->surface[i].all_transparent=0;
+    }
     if(w) *w=r->surface[i].w;
     if(h) *h=r->surface[i].h;
     return canonical;
@@ -89,6 +115,12 @@ uint32_t *surface_pixels(GmlRender *r, int id, int *w, int *h){
   if(h) *h=r->surface[i].h;
   realize_suspended_fill(r,r->surface[i].px);
   return r->surface[i].px;
+}
+uint32_t *surface_pixels(GmlRender *r,int id,int *w,int *h){
+  return surface_pixels_access(r,id,w,h,1);
+}
+const uint32_t *surface_pixels_observe(GmlRender *r,int id,int *w,int *h){
+  return surface_pixels_access(r,id,w,h,0);
 }
 
 
