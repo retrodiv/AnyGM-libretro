@@ -263,7 +263,9 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
                                       GmlRenderSceneFamily family,uint32_t colour,double alpha,
                                       GmlTpag *part_view,GmlSprite *rotated_sprite,
                                       double rotation,
-                                      const uint32_t corner_colours[4]){
+                                      const uint32_t corner_colours[4],
+                                      int opaque_target_alpha,
+                                      int transparent_stretched_trim){
   GmlTpag *page;
   GmlAtlas *atlas;
   GmlRenderResourceSource source={0};
@@ -281,7 +283,8 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
   uint32_t margin_mask=0u;
   if(!r || !r->resident_application_pass || !r->interp || !r->win ||
      !(anygm_policy_uses_first_generation_studio(r->win) ||
-       (rotated_sprite && anygm_policy_has_modern_layer_semantics(r->win))) ||
+       ((rotated_sprite || opaque_target_alpha) &&
+        anygm_policy_has_modern_layer_semantics(r->win))) ||
      page_index<0 || page_index>=r->n_tpag || r->classic ||
      r->gui_pass_active || r->active_shader>=0 || r->alpha_test_enable ||
      !r->alphablend || r->blendmode || r->blend_equation!=1 ||
@@ -294,6 +297,9 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
      !isfinite(left) || !isfinite(top) || !isfinite(xs) || !isfinite(ys) ||
      (rotated_sprite && !isfinite(rotation)) ||
      !isfinite(alpha) || alpha<=0.0 || alpha>1.0 ||
+     (opaque_target_alpha && (!r->fb_opaque_known || !r->fb_all_opaque)) ||
+     (transparent_stretched_trim && (family!=GML_RENDER_SCENE_SPRITE ||
+                                     rotated_sprite || xs<=0.0 || ys<=0.0)) ||
      xs==0.0 || ys==0.0 || fabs(xs)>1000000.0 || fabs(ys)>1000000.0) return 0;
   for(int index=0;index<3;index++)
     if(r->classic_interp_phase[index] || r->app_interp_phase[index]) return 0;
@@ -308,19 +314,28 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
        (uint64_t)(uint32_t)page->ty+(uint32_t)page->sh>(uint32_t)page->bh) return 0;
     margin_left=page->tx>0;
     margin_top=page->ty>0;
-    margin_right=page->tx+page->sw<page->bw;
-    margin_bottom=page->ty+page->sh<page->bh;
+    margin_right=(uint64_t)(uint32_t)page->tx+(uint32_t)page->sw<(uint32_t)page->bw;
+    margin_bottom=(uint64_t)(uint32_t)page->ty+(uint32_t)page->sh<(uint32_t)page->bh;
   } else if(page->tx || page->ty || page->bw!=page->sw || page->bh!=page->sh)
     return 0;
   atlas=&r->atlas[page->atlas];
   if(!gml_render_atlas_scene_source_view(r,page->atlas,&source) ||
      (uint64_t)(uint32_t)page->sx+(uint32_t)page->sw>source.width ||
      (uint64_t)(uint32_t)page->sy+(uint32_t)page->sh>source.height) return 0;
+  /* The full logical quad can extend beyond the visible page, but its prepared UVs must remain
+   * inside the atlas even though transparent taps themselves never fetch those neighbours. */
+  if(transparent_stretched_trim &&
+     ((uint32_t)page->sx<(uint32_t)page->tx ||
+      (uint32_t)page->sy<(uint32_t)page->ty ||
+      (uint64_t)(uint32_t)page->sx+(uint32_t)page->bw-(uint32_t)page->tx>source.width ||
+      (uint64_t)(uint32_t)page->sy+(uint32_t)page->bh-(uint32_t)page->ty>source.height))
+    return 0;
   /* The CPU filtered sprite can read one physical atlas texel outside a packed crop. The
    * logical-margin edge rule decides that per tap without widening the visible quad or UVs. */
-  if((margin_left && page->sx==0) || (margin_top && page->sy==0) ||
-     (margin_right && (uint64_t)(uint32_t)page->sx+(uint32_t)page->sw>=source.width) ||
-     (margin_bottom && (uint64_t)(uint32_t)page->sy+(uint32_t)page->sh>=source.height))
+  if(!transparent_stretched_trim &&
+     ((margin_left && page->sx==0) || (margin_top && page->sy==0) ||
+      (margin_right && (uint64_t)(uint32_t)page->sx+(uint32_t)page->sw>=source.width) ||
+      (margin_bottom && (uint64_t)(uint32_t)page->sy+(uint32_t)page->sh>=source.height)))
     return 0;
   if(margin_left) margin_mask|=GML_RENDER_MARGIN_LEFT;
   if(margin_top) margin_mask|=GML_RENDER_MARGIN_TOP;
@@ -375,6 +390,10 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
     y0=fmax(0.0,floor(miny)-1.0);
     width=fmin((double)r->fbw,ceil(maxx)+1.0)-x0;
     height=fmin((double)r->fbh,ceil(maxy)+1.0)-y0;
+  } else if(transparent_stretched_trim){
+    x0=left; y0=top;
+    width=(double)page->bw*xs;
+    height=(double)page->bh*ys;
   } else {
     x0=floor(left+0.5); y0=floor(top+0.5);
     width=xs<0.0
@@ -430,9 +449,10 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
     !anygm_policy_has_modern_layer_semantics(r->win) &&
     !(corner_colours && fabs(fmod(rotation,360.0))<0.001)
       ?GML_RENDER_FILTER_NEAREST:GML_RENDER_FILTER_BILINEAR;
-  operation.payload.quad.sampling.edge_rule=margin_mask &&
-    operation.payload.quad.sampling.filter==GML_RENDER_FILTER_BILINEAR
-    ?GML_RENDER_EDGE_LOGICAL_TPAG:GML_RENDER_EDGE_CLAMP_SUBIMAGE;
+  operation.payload.quad.sampling.edge_rule=transparent_stretched_trim
+    ?GML_RENDER_EDGE_TRANSPARENT
+    :(margin_mask && operation.payload.quad.sampling.filter==GML_RENDER_FILTER_BILINEAR
+      ?GML_RENDER_EDGE_LOGICAL_TPAG:GML_RENDER_EDGE_CLAMP_SUBIMAGE);
   operation.payload.quad.sampling.source_region=region;
   operation.payload.quad.sampling.logical_margin_mask=
     operation.payload.quad.sampling.filter==GML_RENDER_FILTER_BILINEAR?margin_mask:0u;
@@ -472,14 +492,16 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
       quad->span_active=1u;
     }
   } else {
+    double sample_left=left+(transparent_stretched_trim?(double)page->tx*xs:0.0);
+    double sample_top=top+(transparent_stretched_trim?(double)page->ty*ys:0.0);
     operation.payload.quad.u[0]=operation.payload.quad.u[3]=
-      ((double)page->sx+(x0-left)/xs)/source.width;
+      ((double)page->sx+(x0-sample_left)/xs)/source.width;
     operation.payload.quad.u[1]=operation.payload.quad.u[2]=
-      ((double)page->sx+(x0+width-left)/xs)/source.width;
+      ((double)page->sx+(x0+width-sample_left)/xs)/source.width;
     operation.payload.quad.v[0]=operation.payload.quad.v[1]=
-      ((double)page->sy+(y0-top)/ys)/source.height;
+      ((double)page->sy+(y0-sample_top)/ys)/source.height;
     operation.payload.quad.v[2]=operation.payload.quad.v[3]=
-      ((double)page->sy+(y0+height-top)/ys)/source.height;
+      ((double)page->sy+(y0+height-sample_top)/ys)/source.height;
   }
   state.write_mask=15u;
   state.colour=0xFFFFFFFFu;
@@ -488,8 +510,8 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
      margin_left || margin_top || margin_right || margin_bottom){
     state.rgb_source_factor=GML_RENDER_BLEND_SOURCE_ALPHA;
     state.rgb_destination_factor=GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA;
-    state.alpha_source_factor=rotated_sprite &&
-      anygm_policy_has_modern_layer_semantics(r->win)
+    state.alpha_source_factor=opaque_target_alpha ||
+      (rotated_sprite && anygm_policy_has_modern_layer_semantics(r->win))
         ?GML_RENDER_BLEND_ONE:GML_RENDER_BLEND_SOURCE_ALPHA;
     state.alpha_destination_factor=GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA;
     state.rgb_equation=GML_RENDER_BLEND_ADD;
@@ -507,7 +529,7 @@ int gml_render_resident_filtered_atlas_page(GmlRender *r,int page_index,
                                            GmlRenderSceneFamily family,uint32_t colour,double alpha,
                                            GmlTpag *part_view){
   return resident_filtered_atlas_page(r,page_index,left,top,xs,ys,family,colour,alpha,
-                                     part_view,NULL,0.0,NULL);
+                                     part_view,NULL,0.0,NULL,0,0);
 }
 
 static int resident_filtered_sprite(GmlRender *r,GmlSprite *sprite,int subimg,
@@ -535,7 +557,7 @@ static int resident_filtered_sprite(GmlRender *r,GmlSprite *sprite,int subimg,
   if(rotation!=0.0)
     return resident_filtered_atlas_page(r,page_index,x-r->cam_x,y-r->cam_y,xs,ys,
                                        GML_RENDER_SCENE_SPRITE,blend,alpha,NULL,sprite,
-                                       normalized_rotation,NULL);
+                                       normalized_rotation,NULL,0,0);
   return gml_render_resident_filtered_atlas_page(
       r,page_index,x-((double)sprite->originx-(double)page->tx)*xs-r->cam_x,
       y-((double)sprite->originy-(double)page->ty)*ys-r->cam_y,
@@ -638,6 +660,46 @@ void gml_draw_sprite_stretched(GmlRender *r, int sprite, int frame, double dx, d
                mapped_x-r->cam_x,mapped_y-r->cam_y,
                mapped_w/resident_sprite->w,mapped_h/resident_sprite->h,
                GML_RENDER_SCENE_SPRITE)) return;
+        }
+      }
+    }
+  }
+  /* The ordinary CPU magnification leaf floors the mapped destination origin and rounds its
+   * extent before sampling. Use those exact integer bounds for a complete atlas cell; this is
+   * separate from the full-target minified coarse-mip effect and from nine-slice composition. */
+  if(r && r->resident_application_pass && r->interp &&
+     isfinite(alpha) && alpha>0.0 && alpha<=1.0 &&
+     sprite>=0 && sprite<r->n_spr &&
+     !gml_d3_is_active(r)){
+    GmlSprite *resident_sprite=&r->spr[sprite];
+    if(!resident_sprite->runtime_rgba && !resident_sprite->spine &&
+       !resident_sprite->ns_enabled && resident_sprite->n_frames>0 &&
+       resident_sprite->frame && resident_sprite->w>0 && resident_sprite->h>0){
+      int sub=gml_render_runtime_frame_index(resident_sprite,frame);
+      int page_index=resident_sprite->frame[sub];
+      if(page_index>=0 && page_index<r->n_tpag){
+        GmlTpag *page=&r->tpag[page_index];
+        double mapped_x=dx,mapped_y=dy,mapped_w=dw,mapped_h=dh;
+        gml_render_draw_map_point(r,&mapped_x,&mapped_y);
+        gml_render_draw_map_scale(r,&mapped_w,&mapped_h);
+        if(isfinite(mapped_x) && isfinite(mapped_y) &&
+           isfinite(mapped_w) && isfinite(mapped_h) &&
+           mapped_w>resident_sprite->w && mapped_h>resident_sprite->h &&
+           mapped_w<1000000.0 && mapped_h<1000000.0 &&
+           fabs(mapped_x)<1000000.0 && fabs(mapped_y)<1000000.0 &&
+           page->tx>=0 && page->ty>=0 &&
+           page->bw==resident_sprite->w && page->bh==resident_sprite->h &&
+           page->sw>0 && page->sh>0 &&
+           (uint64_t)(uint32_t)page->tx+(uint32_t)page->sw<=(uint32_t)page->bw &&
+           (uint64_t)(uint32_t)page->ty+(uint32_t)page->sh<=(uint32_t)page->bh){
+          int width=(int)lround(mapped_w),height=(int)lround(mapped_h);
+          if(width>resident_sprite->w && height>resident_sprite->h &&
+             resident_filtered_atlas_page(r,page_index,
+               floor(mapped_x-r->cam_x),floor(mapped_y-r->cam_y),
+               (double)width/resident_sprite->w,
+               (double)height/resident_sprite->h,
+               GML_RENDER_SCENE_SPRITE,blend,alpha,NULL,NULL,0.0,NULL,1,
+               page->tx || page->ty || page->sw!=page->bw || page->sh!=page->bh)) return;
         }
       }
     }
@@ -917,7 +979,7 @@ void gml_draw_sprite_general(GmlRender *r, int sprite, int subimg,
             if(resident_filtered_atlas_page(r,page_index,
                  mapped_x-r->cam_x,mapped_y-r->cam_y,mapped_xs,mapped_ys,
                  GML_RENDER_SCENE_SPRITE,corner_colour[0],alpha,
-                 &view,&part,rotation,corner_colour)) return;
+                 &view,&part,rotation,corner_colour,0,0)) return;
           }
         }
       }
@@ -978,7 +1040,7 @@ void gml_draw_sprite_general(GmlRender *r, int sprite, int subimg,
                mapped_x+offset_x*cosine+offset_y*sine-r->cam_x,
                mapped_y-offset_x*sine+offset_y*cosine-r->cam_y,
                mapped_xs,mapped_ys,GML_RENDER_SCENE_SPRITE,
-               corner_colour[0],alpha,&view,&part,rotation,NULL)) return;
+               corner_colour[0],alpha,&view,&part,rotation,NULL,0,0)) return;
         }
       }
     }

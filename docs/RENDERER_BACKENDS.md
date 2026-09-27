@@ -44,6 +44,14 @@ blend and other unqualified states. A first-generation cardinal source edge exac
 centre also falls back: its incremental fixed-point CPU row walk can choose a different texel
 from an independently sampled GPU fragment. These are bounded ordinary-scene qualifications,
 not a claim that arbitrary surface, shader, GUI or skeletal draws are resident.
+Ordinary magnified `draw_sprite_stretched` atlas draws in first-generation and modern-layer
+policies have a separate bounded filtered path:
+it uses the CPU leaf's floored destination origin and rounded extent, preserves the full logical
+cell around authored trim, and returns transparent samples only on authored margin sides.
+It requires a proven opaque application target, bilinear sampling, positive magnification on
+both axes and physical atlas space for the full logical quad. Transparent targets, special
+blend state, out-of-atlas logical cells, minification and the full-target coarse-mip effect
+retain ordered CPU execution. This qualification does not cover nine-slice or surfaces.
 CPU text resolves a
 preceding resident sprite before writing glyph pixels; this ordering barrier does not accelerate
 text. A similarly bounded first-generation nearest background path accepts complete untrimmed

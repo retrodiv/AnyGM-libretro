@@ -120,6 +120,8 @@
   "flat in float v_span_active;\n" \
   "out vec4 o_color;\n" \
   "vec4 margin_tap(ivec2 p,ivec2 first,ivec2 last,int mask){\n" \
+  "  if((mask&16)!=0 && (((mask&1)!=0 && p.x<0) || ((mask&2)!=0 && p.y<0) ||\n" \
+  "      ((mask&4)!=0 && p.x>last.x) || ((mask&8)!=0 && p.y>last.y))) return vec4(0.0);\n" \
   "  bool raw=(p.x<0 && (mask&1)!=0) || (p.y<0 && (mask&2)!=0) ||\n" \
   "           (p.x>last.x && (mask&4)!=0) || (p.y>last.y && (mask&8)!=0);\n" \
   "  ivec2 at=first+(raw?p:clamp(p,ivec2(0),last));\n" \
