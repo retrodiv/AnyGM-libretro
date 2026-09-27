@@ -118,9 +118,9 @@ int gml_render_resident_filtered_atlas_part(GmlRender *r,int page_index,
      !isfinite(alpha) || sx<0.0 || sy<0.0 || sw<=0.0 || sh<=0.0 ||
      sx>INT_MAX || sy>INT_MAX || sw>INT_MAX || sh>INT_MAX) return 0;
   page=&r->tpag[page_index];
-  /* The CPU part view already clips logical trim. Admit a trimmed atlas page
-   * only for an integral background selection wholly inside its packed area;
-   * fractional/edge-crossing trim and tile-source trim remain separate rules. */
+  /* The CPU part view already clips logical trim. Admit a background selection
+   * only when it is wholly inside the packed area; edge-crossing trim and
+   * tile-source trim remain separate rules. */
   trimmed=page->tx || page->ty || page->bw!=page->sw || page->bh!=page->sh;
   if(page->tx<0 || page->ty<0 || page->bw<=0 || page->bh<=0 ||
      (int64_t)page->tx+page->sw>page->bw ||
@@ -130,8 +130,6 @@ int gml_render_resident_filtered_atlas_part(GmlRender *r,int page_index,
      sx+sw>(double)page->tx+page->sw || sy+sh>(double)page->ty+page->sh ||
      !gml_render_tpag_part_view(page,sx,sy,sw,sh,&view,&source_x,&source_y,
                                 &overlap_x0,&overlap_y0,&overlap_x1,&overlap_y1)) return 0;
-  if(trimmed && (sx!=floor(sx) || sy!=floor(sy) ||
-                 sw!=floor(sw) || sh!=floor(sh))) return 0;
   /* Reuse the CPU part writer's one-cell extent and anchor normalization.
    * Multi-cell selections retain outward-snapped source geometry. Tile source
    * fractions have a distinct authored-edge policy and remain on CPU. */
