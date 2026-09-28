@@ -189,6 +189,52 @@ static int resident_line_bounds(GmlRender *render,double x1,double y1,
     y1>=-8192.0 && y1<bottom && y2>=-8192.0 && y2<bottom;
 }
 
+static int resident_outline_rectangle(GmlRender *render,int x1,int y1,int x2,int y2,
+                                      uint32_t color){
+  GmlFlatSpans spans={0};
+  int covered,result;
+  if(!resident_flat_eligible(render)) return 0;
+  spans.render=render;
+  spans.capacity=8192u;
+  spans.regions=(GmlFlatRegion*)malloc(spans.capacity*sizeof *spans.regions);
+  if(!spans.regions) return 0;
+  covered=gml_render_rectangle_outline_pixels(render,x1,y1,x2,y2,color,
+                                               collect_line_box,&spans);
+  result=covered && resident_flat_spans(render,&spans);
+  free(spans.regions);
+  return result;
+}
+
+static void collect_outline_segment(void *context,int x1,int y1,int x2,int y2,
+                                    uint32_t color){
+  GmlFlatSpans *spans=(GmlFlatSpans*)context;
+  (void)gml_render_line_integer_boxes(spans->render,x1,y1,x2,y2,
+                                       color,color,1,collect_line_box,spans);
+}
+
+static int resident_outline_circle(GmlRender *render,double cx,double cy,
+                                   double rx,double ry,uint32_t color,int coloured){
+  GmlFlatSpans spans={0};
+  int covered,result;
+  if(!resident_flat_eligible(render) || !isfinite(cx) || !isfinite(cy) ||
+     !isfinite(rx) || !isfinite(ry) || !(rx>0.0) || !(ry>0.0) ||
+     cx-rx < -8192.0 || cy-ry < -8192.0 ||
+     cx+rx >= (double)render->fbw+8192.0 ||
+     cy+ry >= (double)render->fbh+8192.0 ||
+     cx-rx <= (double)INT_MIN+2.0 || cy-ry <= (double)INT_MIN+2.0 ||
+     cx+rx >= (double)INT_MAX-2.0 || cy+ry >= (double)INT_MAX-2.0)
+    return 0;
+  spans.render=render;
+  spans.capacity=8192u;
+  spans.regions=(GmlFlatRegion*)malloc(spans.capacity*sizeof *spans.regions);
+  if(!spans.regions) return 0;
+  covered=gml_render_circle_outline_segments(render,cx,cy,rx,ry,color,coloured,
+                                              collect_outline_segment,&spans);
+  result=covered && resident_flat_spans(render,&spans);
+  free(spans.regions);
+  return result;
+}
+
 static int resident_line_integer(GmlRender *render,int x1,int y1,int x2,int y2,
                                  uint32_t colour1,uint32_t colour2,int width){
   GmlFlatSpans spans={0};
@@ -274,6 +320,7 @@ void gml_render_primitive_line_color_subpixel(GmlRender *render,
 void gml_render_primitive_rectangle(GmlRender *render,
                                     int x1,int y1,int x2,int y2,
                                     uint32_t color,int outline){
+  if(outline && resident_outline_rectangle(render,x1,y1,x2,y2,color)) return;
   if(!outline && gml_render_shade_target_rect(render,x1,y1,x2,y2,color,render?render->alpha:1.0))
     return;
   if(!outline && resident_flat_rect(render,x1,y1,x2,y2,color)) return;
@@ -285,6 +332,7 @@ void gml_render_primitive_rectangle_color(GmlRender *render,
                                           uint32_t color1,uint32_t color2,
                                           uint32_t color3,uint32_t color4,
                                           int outline){
+  if(outline && resident_outline_rectangle(render,x1,y1,x2,y2,color1)) return;
   if(!outline && color1==color2 && color2==color3 && color3==color4 &&
      gml_render_shade_target_rect(render,x1,y1,x2,y2,color1,render?render->alpha:1.0)) return;
   if(!outline && color1==color2 && color2==color3 && color3==color4 &&
@@ -295,6 +343,8 @@ void gml_render_primitive_rectangle_color(GmlRender *render,
 void gml_render_primitive_circle(GmlRender *render,
                                  int center_x,int center_y,int radius_x,int radius_y,
                                  uint32_t color,int outline){
+  if(outline && resident_outline_circle(render,(double)center_x,(double)center_y,
+                                        (double)radius_x,(double)radius_y,color,0)) return;
   if(!outline && resident_filled_circle(render,(double)center_x,(double)center_y,
                                          (double)radius_x,(double)radius_y,color)) return;
   gml_render_cpu_circle(render,(double)center_x,(double)center_y,
@@ -305,6 +355,8 @@ void gml_render_primitive_circle_subpixel(GmlRender *render,
                                           double center_x,double center_y,
                                           double radius_x,double radius_y,
                                           uint32_t color,int outline){
+  if(outline && resident_outline_circle(render,center_x,center_y,
+                                        radius_x,radius_y,color,0)) return;
   if(!outline && resident_filled_circle(render,center_x,center_y,radius_x,radius_y,color)) return;
   gml_render_cpu_circle(render,center_x,center_y,radius_x,radius_y,color,outline);
 }
@@ -312,6 +364,9 @@ void gml_render_primitive_circle_subpixel(GmlRender *render,
 void gml_render_primitive_circle_color(GmlRender *render,
                                        int center_x,int center_y,int radius_x,int radius_y,
                                        uint32_t inner,uint32_t outer,int outline){
+  if(outline && resident_outline_circle(render,(double)center_x,(double)center_y,
+                                        (double)radius_x,(double)radius_y,
+                                        inner==outer?inner:outer,inner!=outer)) return;
   if(!outline && inner==outer &&
      resident_filled_circle(render,(double)center_x,(double)center_y,
                             (double)radius_x,(double)radius_y,inner)) return;
@@ -323,6 +378,8 @@ void gml_render_primitive_circle_color_subpixel(GmlRender *render,
                                                 double center_x,double center_y,
                                                 double radius_x,double radius_y,
                                                 uint32_t inner,uint32_t outer,int outline){
+  if(outline && resident_outline_circle(render,center_x,center_y,radius_x,radius_y,
+                                        inner==outer?inner:outer,inner!=outer)) return;
   if(!outline && inner==outer &&
      resident_filled_circle(render,center_x,center_y,radius_x,radius_y,inner)) return;
   gml_render_cpu_circle_color(render,center_x,center_y,radius_x,radius_y,

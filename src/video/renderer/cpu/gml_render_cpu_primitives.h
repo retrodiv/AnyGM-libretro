@@ -16,6 +16,12 @@ int gml_render_line_subpixel_boxes(GmlRender *render,double x1,double y1,
                                    double x2,double y2,uint32_t color1,
                                    uint32_t color2,int width,
                                    GmlRenderPrimitiveBox emit,void *context);
+int gml_render_rectangle_outline_pixels(GmlRender *render,int x1,int y1,int x2,int y2,
+                                        uint32_t color,GmlRenderPrimitiveBox emit,
+                                        void *context);
+int gml_render_circle_outline_segments(GmlRender *render,double cx,double cy,
+                                       double rx,double ry,uint32_t color,int coloured,
+                                       GmlRenderPrimitiveBox emit,void *context);
 void gml_render_cpu_line_color_subpixel(GmlRender *render,double x1,double y1,
                                         double x2,double y2,uint32_t color1,
                                         uint32_t color2,int width);

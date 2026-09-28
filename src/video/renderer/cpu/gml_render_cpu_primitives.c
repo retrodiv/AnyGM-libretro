@@ -110,6 +110,36 @@ static void draw_additive_rows(void *context,int row_start,int row_end,int slot)
       rows->width,rows->color,rows->alpha);
 }
 
+int gml_render_rectangle_outline_pixels(GmlRender *R,int x1,int y1,int x2,int y2,
+                                        uint32_t color,GmlRenderPrimitiveBox emit,
+                                        void *context){
+  if(!R || !emit) return 0;
+  if(x1>x2){ int t=x1; x1=x2; x2=t; }
+  if(y1>y2){ int t=y1; y1=y2; y2=t; }
+  int geometric_x1=x1,geometric_y1=y1,geometric_x2=x2,geometric_y2=y2;
+  if(x2<0||y2<0||x1>=R->fbw||y1>=R->fbh) return 1;
+  if(x1<0) x1=0;
+  if(y1<0) y1=0;
+  if(x2>=R->fbw) x2=R->fbw-1;
+  if(y2>=R->fbh) y2=R->fbh-1;
+  for(int y=y1;y<=y2;y++) for(int x=x1;x<=x2;x++){
+    /* Clip the geometric edges instead of turning each clipped boundary into a new edge. */
+    if(y!=geometric_y1 && y!=geometric_y2 &&
+       x!=geometric_x1 && x!=geometric_x2) continue;
+    emit(context,x,y,x,y,color);
+  }
+  return 1;
+}
+
+typedef struct {GmlRender *render;double alpha;} GmlCpuOutlinePixel;
+static void draw_rectangle_cpu_outline_pixel(void *context,int x1,int y1,
+                                             int x2,int y2,uint32_t color){
+  GmlCpuOutlinePixel *pixel=(GmlCpuOutlinePixel*)context;
+  (void)x2;
+  (void)y2;
+  gml_render_cpu_backend_draw_pixel_alpha(pixel->render,x1,y1,color,pixel->alpha);
+}
+
 static void draw_rect_prim_alpha(GmlRender *R, int x1, int y1, int x2, int y2, uint32_t gmcol, int outline, double alpha){
   if(!R) return;
   if(x1>x2){ int t=x1; x1=x2; x2=t; }
@@ -162,12 +192,10 @@ static void draw_rect_prim_alpha(GmlRender *R, int x1, int y1, int x2, int y2, u
       gml_render_cpu_backend_draw_xrgb_alpha(R,&R->fb[(size_t)y*R->fbw+x1],x2-x1+1,src,alpha);
     return;
   }
-  for(int y=y1;y<=y2;y++) for(int x=x1;x<=x2;x++){
-    /* Clip the geometric edges instead of turning each clipped boundary into a new edge. */
-    if(y!=geometric_y1 && y!=geometric_y2 &&
-       x!=geometric_x1 && x!=geometric_x2) continue;
-    gml_render_cpu_backend_draw_pixel_alpha(R,x,y,gmcol,alpha);
-  }
+  GmlCpuOutlinePixel pixel={R,alpha};
+  (void)gml_render_rectangle_outline_pixels(R,geometric_x1,geometric_y1,
+                                             geometric_x2,geometric_y2,gmcol,
+                                             draw_rectangle_cpu_outline_pixel,&pixel);
 }
 static void draw_rect_prim(GmlRender *R, int x1, int y1, int x2, int y2, uint32_t gmcol, int outline){
   draw_rect_prim_alpha(R,x1,y1,x2,y2,gmcol,outline,R?R->alpha:1);
@@ -336,6 +364,11 @@ static void draw_line_prim(GmlRender *R,int x0,int y0,int x1,int y1,
   draw_line_colour_prim(R,x0,y0,x1,y1,color,color,width);
 }
 
+static void draw_circle_cpu_segment(void *context,int x0,int y0,int x1,int y1,
+                                    uint32_t color){
+  draw_line_prim((GmlRender*)context,x0,y0,x1,y1,color,1);
+}
+
 static int line_open_interval_axis(double start,double delta,
                                    double lower,double upper,
                                    double *interval_start,double *interval_end){
@@ -474,6 +507,30 @@ static void draw_circle_cpu_span(void *context,int x0,int x1,int y){
     gml_render_cpu_backend_draw_pixel(span->render,x,y,span->color);
 }
 
+int gml_render_circle_outline_segments(GmlRender *R,double cx,double cy,
+                                       double rx,double ry,uint32_t color,int coloured,
+                                       GmlRenderPrimitiveBox emit,void *context){
+  if(!R || !emit || rx<0.0 || ry<0.0 || !(rx>0.0) || !(ry>0.0)) return 0;
+  int n=R->circle_precision;
+  if(n<4) n=4;
+  if(n>64) n=64;
+  n=(n/4)*4; if(n<4) n=4;
+  double vx[64],vy[64];
+  double step=2.0*M_PI/n;
+  for(int i=0;i<n;i++){
+    /* Preserve the distinct historical expression used by colour-circle outlines. */
+    double a=coloured?i*step:(i*2.0*M_PI)/n;
+    vx[i]=cx+cos(a)*rx;
+    vy[i]=cy-sin(a)*ry;
+  }
+  for(int i=0;i<n;i++){
+    int j=(i+1)%n;
+    emit(context,(int)lround(vx[i]),(int)lround(vy[i]),
+         (int)lround(vx[j]),(int)lround(vy[j]),color);
+  }
+  return 1;
+}
+
 static void draw_circle_prim_ex(GmlRender *R, double cx, double cy, double rx, double ry,
                                 uint32_t gmcol, int outline){
   if(!R||rx<0.0||ry<0.0) return;
@@ -482,20 +539,8 @@ static void draw_circle_prim_ex(GmlRender *R, double cx, double cy, double rx, d
     return;
   }
   if(outline){
-    int n=R->circle_precision;
-    if(n<4) n=4;
-    if(n>64) n=64;
-    n=(n/4)*4; if(n<4) n=4;
-    double vx[64], vy[64];
-    for(int i=0;i<n;i++){
-      double a=(i*2.0*M_PI)/n;
-      vx[i]=cx+cos(a)*rx;
-      vy[i]=cy-sin(a)*ry;
-    }
-    for(int i=0;i<n;i++){
-      int j=(i+1)%n;
-      draw_line_prim(R,(int)lround(vx[i]),(int)lround(vy[i]),(int)lround(vx[j]),(int)lround(vy[j]),gmcol,1);
-    }
+    (void)gml_render_circle_outline_segments(R,cx,cy,rx,ry,gmcol,0,
+                                              draw_circle_cpu_segment,R);
   } else {
     /* The regular polygon is convex, so each scanline has at most one filled span. */
     GmlCircleCpuSpan span={R,gmcol};
@@ -547,6 +592,11 @@ static void draw_circle_colour_prim_ex(GmlRender *R,double cx,double cy,double r
     gml_render_cpu_backend_draw_pixel(R,(int)floor(cx),(int)floor(cy),inner);
     return;
   }
+  if(outline){
+    (void)gml_render_circle_outline_segments(R,cx,cy,rx,ry,outer,1,
+                                              draw_circle_cpu_segment,R);
+    return;
+  }
   int n=R->circle_precision;
   if(n<4) n=4;
   if(n>64) n=64;
@@ -559,14 +609,6 @@ static void draw_circle_colour_prim_ex(GmlRender *R,double cx,double cy,double r
     vy[i]=cy-sin(a)*ry;
     edge_nx[i]=cos(mid);
     edge_ny[i]=-sin(mid);
-  }
-  if(outline){
-    for(int i=0;i<n;i++){
-      int j=(i+1)%n;
-      draw_line_prim(R,(int)lround(vx[i]),(int)lround(vy[i]),
-                     (int)lround(vx[j]),(int)lround(vy[j]),outer,1);
-    }
-    return;
   }
   double span_y0=floor(cy-ry),span_y1=ceil(cy+ry);
   if(span_y1<0.0 || span_y0>=(double)R->fbh) return;
