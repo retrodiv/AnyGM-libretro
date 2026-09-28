@@ -264,10 +264,11 @@ int gml_render_resident_atlas_crop(GmlRender *r,int page_index,
 }
 
 int gml_render_resident_font_glyph(GmlRender *r,int atlas,int source_x,int source_y,
-                                   int width,int height,double left,double top){
+                                   int width,int height,double left,double top,
+                                   double xs,double ys){
   GmlTpag page={.atlas=atlas,.sx=source_x,.sy=source_y,.sw=width,.sh=height,
                 .tw=width,.th=height,.bw=width,.bh=height};
-  return resident_atlas_crop_from_page(r,&page,0,0,width,height,left,top,1.0,1.0,
+  return resident_atlas_crop_from_page(r,&page,0,0,width,height,left,top,xs,ys,
                                        GML_RENDER_SCENE_TEXT);
 }
 

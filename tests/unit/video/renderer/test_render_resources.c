@@ -2010,6 +2010,23 @@ static int resident_packaged_sprite_font_glyph(void){
   gml_draw_text(render,1.0,1.0,"A");
   gml_render_flush_pending_fill(render);
   CHECK(!memcmp(render->app_surface_owned,completed,sizeof completed));
+  gml_render_bind_device(render,&device);
+  CHECK(gml_render_begin_resident_owned_application(render,0.0,0.0,0));
+  gml_render_set_pending_fill(render,0xFF000000u);
+  gml_draw_text_transformed(render,0.0,0.0,"A",2.0,2.0,0.0,0xFFFFFFu,1.0);
+  CHECK(render->resident_application_pass);
+  CHECK(gml_render_scene_flush(render) && fake.submits==4 && fake.readbacks==0);
+  CHECK(gml_render_application_surface_owned_view(render,&view));
+  CHECK(view.pixels[0]==0xFFD02010u && view.pixels[1]==0xFFD02010u &&
+        view.pixels[2]==0xFF10D020u && view.pixels[3]==0xFF10D020u &&
+        view.pixels[8]==0xFF2010D0u && view.pixels[9]==0xFF2010D0u &&
+        view.pixels[10]==0xFFC0B0A0u && view.pixels[11]==0xFFC0B0A0u);
+  memcpy(completed,view.pixels,sizeof completed);
+  CHECK(gml_render_begin_owned_application(render,0.0,0.0,0));
+  gml_render_set_pending_fill(render,0xFF000000u);
+  gml_draw_text_transformed(render,0.0,0.0,"A",2.0,2.0,0.0,0xFFFFFFu,1.0);
+  gml_render_flush_pending_fill(render);
+  CHECK(!memcmp(render->app_surface_owned,completed,sizeof completed));
   gml_render_free(render);
   free(render);
   return 1;
@@ -2062,6 +2079,23 @@ static int resident_packaged_real_font_glyph(void){
   CHECK(gml_render_begin_owned_application(render,0.0,0.0,0));
   gml_render_set_pending_fill(render,0xFF000000u);
   gml_draw_text(render,1.0,1.0,"A");
+  gml_render_flush_pending_fill(render);
+  CHECK(!memcmp(render->app_surface_owned,completed,sizeof completed));
+  gml_render_bind_device(render,&device);
+  CHECK(gml_render_begin_resident_owned_application(render,0.0,0.0,0));
+  gml_render_set_pending_fill(render,0xFF000000u);
+  gml_draw_text_transformed(render,0.0,0.0,"A",2.0,2.0,0.0,0xFFFFFFu,1.0);
+  CHECK(render->resident_application_pass);
+  CHECK(gml_render_scene_flush(render) && fake.submits==4 && fake.readbacks==0);
+  CHECK(gml_render_application_surface_owned_view(render,&view));
+  CHECK(view.pixels[0]==0xFFD02010u && view.pixels[1]==0xFFD02010u &&
+        view.pixels[2]==0xFF000000u && view.pixels[3]==0xFF000000u &&
+        view.pixels[8]==0xFF2010D0u && view.pixels[9]==0xFF2010D0u &&
+        view.pixels[10]==0xFFC0B0A0u && view.pixels[11]==0xFFC0B0A0u);
+  memcpy(completed,view.pixels,sizeof completed);
+  CHECK(gml_render_begin_owned_application(render,0.0,0.0,0));
+  gml_render_set_pending_fill(render,0xFF000000u);
+  gml_draw_text_transformed(render,0.0,0.0,"A",2.0,2.0,0.0,0xFFFFFFu,1.0);
   gml_render_flush_pending_fill(render);
   CHECK(!memcmp(render->app_surface_owned,completed,sizeof completed));
   gml_render_free(render);
