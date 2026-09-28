@@ -19,6 +19,7 @@
 #include "graphics_driver_fixture.h"
 #include "stdio_vfs.h"
 #include "synthetic_content.h"
+#include "../unit/media/font_test_fixture.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -541,6 +542,81 @@ static int neutral_device_binding_case(void){
   return 1;
 }
 
+static int runtime_font_reset_scene_case(void){
+  Session session={0};
+  GmlRenderResourceSource first={0},second={0};
+  GmlRenderImageUpload transfer={0};
+  GmlGpuCounters before={0},after={0};
+  const GmlRenderDeviceServices *device;
+  char font_path[256]={0};
+  uint8_t font_bytes[552];
+  const char *failure=NULL;
+  FILE *file=NULL;
+  int font,previous_atlas;
+  anygm_test_graphics_reset();
+  if(!session_open(&session)) return 0;
+  if(snprintf(font_path,sizeof font_path,"%s/fixture.ttf",session.fixture.directory)>=
+     (int)sizeof font_path){ failure="font fixture path is bounded"; goto done; }
+  file=fopen(font_path,"wb");
+  if(!file){ failure="font fixture opens"; goto done; }
+  size_t size=font_fixture_build(font_bytes);
+  int written=fwrite(font_bytes,1,size,file)==size;
+  int closed=fclose(file)==0;
+  file=NULL;
+  if(!written || !closed){ failure="font fixture writes completely"; goto done; }
+  if(graphics_adopt(session.engine,ANYGM_GRAPHICS_OPENGLES3)!=ANYGM_OK){
+    failure="runtime-font reset context adopted"; goto done;
+  }
+  font=gml_font_add_file(&session.engine->render,font_path,32,0,0,65,65);
+  if(font<0){ failure="runtime font created before Reset"; goto done; }
+  previous_atlas=session.engine->render.fonts[font].atlas;
+  if(!gml_render_atlas_scene_source_view(&session.engine->render,previous_atlas,&first) ||
+     first.borrowed_immutable || !first.bytes){
+    failure="runtime page exposed before Reset"; goto done;
+  }
+  device=gml_render_device(&session.engine->render);
+  transfer.image=first.image;
+  transfer.storage_width=first.width; transfer.storage_height=first.height;
+  transfer.region=(GmlRenderRect){0,0,first.width,first.height};
+  transfer.pixel_format=first.pixel_format;
+  transfer.stride_bytes=first.stride_bytes;
+  transfer.byte_capacity=first.byte_capacity;
+  transfer.bytes=first.bytes;
+  gml_gpu_counters(session.engine->gpu,&before);
+  if(!device || !device->upload(device->context,&transfer) ||
+     anygm_reset(session.engine)!=ANYGM_OK){
+    failure="runtime page uploaded and Reset completed"; goto done;
+  }
+  font=gml_font_add_file(&session.engine->render,font_path,32,0,0,65,65);
+  if(font<0 || session.engine->render.fonts[font].atlas!=previous_atlas ||
+     !gml_render_atlas_scene_source_view(&session.engine->render,previous_atlas,&second) ||
+     second.image.incarnation==first.image.incarnation ||
+     second.image.content_version!=1u || second.borrowed_immutable){
+    failure="Reset rebuilds the same-index runtime page with a fresh generation"; goto done;
+  }
+  device=gml_render_device(&session.engine->render);
+  transfer.image=second.image;
+  transfer.storage_width=second.width; transfer.storage_height=second.height;
+  transfer.region=(GmlRenderRect){0,0,second.width,second.height};
+  transfer.pixel_format=second.pixel_format;
+  transfer.stride_bytes=second.stride_bytes;
+  transfer.byte_capacity=second.byte_capacity;
+  transfer.bytes=second.bytes;
+  if(!device || !device->upload(device->context,&transfer)){
+    failure="new runtime generation uploads on the retained device"; goto done;
+  }
+  gml_gpu_counters(session.engine->gpu,&after);
+  if(after.scene_uploads!=before.scene_uploads+2u){
+    failure="both runtime generations upload separately"; goto done;
+  }
+done:
+  if(file) fclose(file);
+  if(font_path[0]) remove(font_path);
+  session_close(&session);
+  if(failure){ fprintf(stderr,"graphics state failed: %s\n",failure); return 0; }
+  return 1;
+}
+
 /* A context is shared transport, not permission to turn every graphics policy on. Disabling the
  * hybrid policy keeps eligible final passes on the processor, and leaving content GLSL disabled
  * keeps the renderer from reporting a shader device even while that context carries the frame. */
@@ -825,6 +901,7 @@ int main(void){
     {"two interleaved engines stay independent",interleaved_engines_case},
     {"a refused context leaves a working software engine",refused_context_case},
     {"neutral device binds and clears with context",neutral_device_binding_case},
+    {"runtime font Reset gets a fresh device generation",runtime_font_reset_scene_case},
     {"content GLSL and hybrid presentation remain independent",independent_graphics_policy_case},
     {"a buffer too short for the frame still takes the state",short_buffer_drops_the_frame_case},
     {"an explicit resume state omits only the completed frame",explicit_resume_state_case},

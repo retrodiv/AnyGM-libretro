@@ -64,6 +64,8 @@ static int add_font(FontFixture *f){
   return gml_font_add_file(&f->render,"/content/fixture.ttf",32,0,0,65,65);
 }
 
+static int draw_font(FontFixture *f,int font);
+
 /* Neutral per-channel coverage control for the classic information-page CPU seam. */
 static int classic_subpixel_case(void){
   uint8_t pixels[4]={0,128,255,255};
@@ -89,6 +91,68 @@ static int classic_subpixel_case(void){
   ok &= !gml_render_cpu_classic_info_subpixel_glyph(&render,&font,&glyph,
                                                      0,0,1,1,0x0080C0FFu,0.5);
   if(!ok) fprintf(stderr,"classic subpixel glyph coverage changed\n");
+  return ok;
+}
+
+static int runtime_sprite_font_mapping_case(void){
+  FontFixture *f=fixture_create();
+  if(!f) return 0;
+  GmlRender *r=&f->render;
+  r->spr=(GmlSprite*)calloc(1,sizeof *r->spr);
+  if(!r->spr){ fixture_destroy(f); return 0; }
+  r->n_spr=1;
+  GmlSprite *sprite=&r->spr[0];
+  sprite->w=sprite->h=2;
+  sprite->n_frames=2;
+  sprite->runtime_opaque=0;
+  sprite->runtime_rgba=(uint8_t*)calloc(32u,1u);
+  if(!sprite->runtime_rgba){ fixture_destroy(f); return 0; }
+  sprite->runtime_rgba[0]=255u;
+  sprite->runtime_rgba[3]=255u;
+  sprite->runtime_rgba[16u+1u]=255u;
+  sprite->runtime_rgba[16u+3u]=255u;
+  int plain=gml_font_add_sprite(r,0,'A',0,0);
+  int mapped=gml_font_add_sprite_ext(r,0,"BA",0,0);
+  int ok=plain==0 && mapped==1 &&
+    glyph_frame(&r->fonts[plain],'A')==0 &&
+    glyph_frame(&r->fonts[mapped],'B')==0 &&
+    glyph_frame(&r->fonts[mapped],'A')==1 &&
+    draw_font(f,plain)>0 && f->frame[2u+2u*96u]==0xFFFF0000u &&
+    f->frame[3u+2u*96u]==0u;
+  sprite->runtime_rgba[0]=0u;
+  sprite->runtime_rgba[1]=255u;
+  ok &=draw_font(f,plain)>0 && f->frame[2u+2u*96u]==0xFF00FF00u &&
+    f->frame[3u+2u*96u]==0u;
+  gml_font_delete(r,plain);
+  gml_font_delete(r,mapped);
+  ok &=sprite->runtime_rgba && !r->fonts[plain].map && !r->fonts[mapped].map;
+  if(!ok) fprintf(stderr,"runtime sprite-font mapping/current-source control failed\n");
+  fixture_destroy(f);
+  return ok;
+}
+
+static int runtime_renderer_reinit_generation_case(void){
+  FontFixture *f=fixture_create();
+  if(!f) return 0;
+  int first=add_font(f);
+  GmlRenderResourceSource old_page={0},new_page={0};
+  int ink=first>=0?draw_font(f,first):0;
+  uint32_t before[96u*48u];
+  memcpy(before,f->frame,sizeof before);
+  int ok=first>=0 && ink>0 &&
+    gml_render_atlas_scene_source_view(&f->render,f->render.fonts[first].atlas,
+                                       &old_page);
+  gml_render_free(&f->render);
+  ok &=gml_render_init(&f->render,&f->win)==0;
+  int second=add_font(f);
+  ok &=second>=0 &&
+    gml_render_atlas_scene_source_view(&f->render,f->render.fonts[second].atlas,
+                                       &new_page) &&
+    new_page.image.incarnation!=old_page.image.incarnation &&
+    new_page.image.content_version==1u &&
+    draw_font(f,second)==ink && !memcmp(before,f->frame,sizeof before);
+  if(!ok) fprintf(stderr,"runtime font renderer-reinit generation control failed\n");
+  fixture_destroy(f);
   return ok;
 }
 
@@ -352,6 +416,8 @@ int main(int argc,char **argv){
   else if(argc!=1){ fprintf(stderr,"usage: %s [--case filter]\n",argv[0]); return 2; }
   const AnygmTestCase cases[]={
     {"classic_subpixel_channels",classic_subpixel_case},
+    {"runtime_sprite_font_mapping",runtime_sprite_font_mapping_case},
+    {"runtime_renderer_reinit_generation",runtime_renderer_reinit_generation_case},
     {"runtime_lifecycle",lifecycle_case},
     {"restore_deleted_runtime_font",restore_deleted_case},
     {"restore_removes_later_runtime_font",restore_removes_later_case},
