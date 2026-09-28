@@ -298,8 +298,9 @@ int gml_gpu_opengl_scene_upload(GmlGpuBackend *backend,const GmlRenderImageUploa
                   transfer->image.resource_class==GML_RENDER_RESOURCE_APPLICATION ||
                   transfer->image.resource_class==GML_RENDER_RESOURCE_SURFACE ||
                   transfer->image.resource_class==GML_RENDER_RESOURCE_SCRATCH;
-  /* Mutable sources can change through CPU writes outside this transfer path. Keep a current
-   * immutable atlas across frames, but never infer mutable residency from its image reference. */
+  /* Atlas refs are cacheable by version: packaged pages stay at version one, while runtime
+   * font pages advance on every mutation and get a fresh incarnation on reuse. Generic mutable
+   * resources cannot infer same-version residency from their image reference. */
   if(transfer->image.resource_class==GML_RENDER_RESOURCE_ATLAS &&
      slot->texture && slot->valid && scene_same_version(slot->ref,transfer->image) &&
      slot->width==transfer->storage_width && slot->height==transfer->storage_height &&
@@ -466,17 +467,18 @@ int gml_gpu_opengl_scene_readback(GmlGpuBackend *backend,const GmlRenderImageRea
 }
 
 void gml_gpu_opengl_scene_retire(GmlGpuBackend *backend,GmlRenderImageRef image){
-  int mutable_target=image.resource_class==GML_RENDER_RESOURCE_SCREEN ||
+  int retire_incarnation=image.resource_class==GML_RENDER_RESOURCE_ATLAS ||
+                     image.resource_class==GML_RENDER_RESOURCE_SCREEN ||
                      image.resource_class==GML_RENDER_RESOURCE_APPLICATION ||
                      image.resource_class==GML_RENDER_RESOURCE_SURFACE ||
                      image.resource_class==GML_RENDER_RESOURCE_SCRATCH;
   if(!backend || !backend->loaded) return;
   for(size_t index=0;index<GL_SCENE_MAX_IMAGES;index++){
     GlSceneImage *candidate=&backend->scene.images[index];
-    /* A CPU handoff can advance the resource version after its last device draw. Retirement
-     * ends that mutable incarnation, even if the last resident version is now older. */
+    /* A CPU handoff or runtime atlas growth can advance the version after its last device
+     * upload. Retirement ends that incarnation even if the resident version is older. */
     if(candidate->texture && scene_same_logical(candidate->ref,image) &&
-       (mutable_target || scene_same_version(candidate->ref,image))){
+       (retire_incarnation || scene_same_version(candidate->ref,image))){
       scene_delete_image(backend,candidate);
       return;
     }

@@ -397,6 +397,37 @@ static int scene_resident_batch_case(void){
   return 1;
 }
 
+static int scene_atlas_retire_advanced_version_case(void){
+  uint8_t pixels[16]={255u,0u,0u,255u};
+  GmlRenderImageRef page={GML_RENDER_RESOURCE_ATLAS,11u,29u,1u};
+  GmlRenderImageUpload upload={0};
+  GmlRenderDeviceServices services;
+  GmlGpu *gpu;
+  GmlGpuContext context;
+  int before;
+  anygm_test_graphics_reset();
+  gpu=gml_gpu_create();
+  REQUIRE(gpu!=NULL,"atlas retirement device allocated");
+  context=fake_context(GML_GPU_API_OPENGL_CORE);
+  REQUIRE(gml_gpu_context_reset(gpu,&context),"atlas retirement context adopted");
+  gml_gpu_device_services(gpu,&services);
+  upload.image=page;
+  upload.storage_width=upload.storage_height=2u;
+  upload.region=(GmlRenderRect){0,0,2u,2u};
+  upload.pixel_format=GML_RENDER_PIXEL_RGBA8888;
+  upload.stride_bytes=8u;
+  upload.byte_capacity=sizeof pixels;
+  upload.bytes=pixels;
+  REQUIRE(services.upload(services.context,&upload),"runtime atlas old version uploaded");
+  before=anygm_test_graphics_deletes();
+  page.content_version++;
+  services.retire(services.context,page);
+  REQUIRE(anygm_test_graphics_deletes()==before+1,
+          "retirement frees the old atlas texture after an unuploaded page mutation");
+  gml_gpu_destroy(gpu,1);
+  return 1;
+}
+
 static int scene_alpha_composition_case(void){
   uint32_t source_pixels[4]={0x80FF0000u,0x0000FF00u,0xFF0000FFu,0x40FFFFFFu};
   GmlRenderImageRef source={GML_RENDER_RESOURCE_ATLAS,8u,1u,1u};
@@ -1127,6 +1158,7 @@ int main(int argc,char **argv){
     {"scene_service_contract",scene_service_contract_case},
     {"scene_optional_entry_refusal",scene_optional_entry_refusal_case},
     {"scene_resident_batch",scene_resident_batch_case},
+    {"scene_atlas_retire_advanced_version",scene_atlas_retire_advanced_version_case},
     {"scene_alpha_composition",scene_alpha_composition_case},
   };
   static const AnygmTestCase execution_cases[]={

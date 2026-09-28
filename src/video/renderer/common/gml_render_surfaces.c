@@ -76,9 +76,11 @@ int gml_render_application_scene_flush(GmlRender *r){
   if(result==GML_RENDER_RESOURCE_EXEC_FAILED){
     GmlRenderJournalMetrics metrics={0};
     gml_render_resource_journal_metrics(r->app_surface_resource,&metrics);
-    /* A pre-submit refusal leaves CPU authority intact, so a later target change may retry
-     * this exact batch. An uncertain checkpoint invalidates the resource and cannot replay. */
-    if(metrics.authority==GML_RENDER_RESOURCE_INVALID) pending->count=0;
+    /* Immutable bytes permit a pre-submit retry. A mutable runtime atlas may relocate at the
+     * next glyph demand, so its failed submission must not leave a borrowed pointer queued;
+     * the caller will cross the CPU barrier and draw the glyph there instead. */
+    if(metrics.authority==GML_RENDER_RESOURCE_INVALID ||
+       !pending->source.borrowed_immutable) pending->count=0;
     return 0;
   }
   pending->count=0;
@@ -98,7 +100,9 @@ int gml_render_application_scene_enqueue(GmlRender *r,const GmlRenderDrawOp *ope
   GmlRenderImageRef next;
   if(!r || !r->resident_application_pass || !gml_render_device(r) ||
      !r->app_surface_resource || !operation || !state || !source ||
-     !source->borrowed_immutable || !operation->sources ||
+     (!source->borrowed_immutable &&
+      (source->image.resource_class!=GML_RENDER_RESOURCE_ATLAS ||
+       source->resident_resource)) || !operation->sources ||
      operation->source_count!=1u || operation->opcode!=GML_RENDER_OP_TEXTURED_QUAD ||
      (operation->reconstruction_mode!=GML_RENDER_REPLAY_EXACT &&
       operation->reconstruction_mode!=GML_RENDER_DEVICE_CHECKPOINT) ||
@@ -133,7 +137,9 @@ int gml_render_application_scene_enqueue(GmlRender *r,const GmlRenderDrawOp *ope
   pending->count++;
   r->app_surface_opaque=0;
   r->app_presentation_coverage_active=0;
-  return 1;
+  /* A runtime font may grow or relocate its atlas on the next glyph lookup.
+   * Pin/upload this mutable version before the caller can mutate those bytes. */
+  return source->borrowed_immutable || gml_render_application_scene_flush(r);
 }
 
 GmlRenderResource *gml_render_surface_resource_ensure(GmlRender *r,int id){

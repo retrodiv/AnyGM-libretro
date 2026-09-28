@@ -567,6 +567,7 @@ void gml_font_delete(GmlRender *r, int font){
   if(f->real && !f->runtime_owned) return;
   if(f->runtime_owned && f->atlas>=0 && f->atlas<r->n_atlas){
     GmlAtlas *atlas=&r->atlas[f->atlas];
+    gml_render_atlas_scene_retire_one(r,f->atlas);
     free(atlas->px);
     memset(atlas,0,sizeof(*atlas));
     atlas->runtime_font_page=1;
@@ -675,7 +676,8 @@ static GmlGlyph *font_runtime_rasterize(GmlRender *r, GmlFont *f, unsigned cp){
   GmlFontRasterGlyphMetrics metrics;
   if(!gml_font_raster_glyph_metrics(f->runtime_face,(int)cp,f->runtime_scale,&metrics)) return NULL;
   GmlAtlas *A=&r->atlas[f->atlas];
-  if(!A->px || A->w<=0) return NULL;
+  if(!A->px || A->w<=0 || A->scene_source_version==UINT64_MAX) return NULL;
+  int page_grew=0;
   int w=(int)ceilf(metrics.advance*f->runtime_scale);
   if(metrics.x1>w) w=metrics.x1;
   if(w<1) w=1;
@@ -692,6 +694,10 @@ static GmlGlyph *font_runtime_rasterize(GmlRender *r, GmlFont *f, unsigned cp){
     memset(grown+(size_t)A->w*(size_t)A->h*4u,0,
            (size_t)A->w*(size_t)(grown_h-A->h)*4u);
     A->px=grown; A->h=grown_h;
+    page_grew=1;
+    /* Growth changes both the byte span and borrowed pointer even if a later
+     * glyph-record allocation fails, so publish its version immediately. */
+    if(A->scene_source_version) A->scene_source_version++;
   }
   if(f->n_glyphs==f->runtime_glyph_cap){
     int cap=f->runtime_glyph_cap?f->runtime_glyph_cap*2:16;
@@ -727,6 +733,7 @@ static GmlGlyph *font_runtime_rasterize(GmlRender *r, GmlFont *f, unsigned cp){
   f->glyphs_sorted=0;
   if(cp<256) f->glyph_by_char[cp]=f->n_glyphs-1;
   f->runtime_pen_x+=cell;
+  if(A->scene_source_version && !page_grew) A->scene_source_version++;
   return gl;
 }
 GmlGlyph *real_glyph_demand(GmlRender *r, GmlFont *f, unsigned cp){

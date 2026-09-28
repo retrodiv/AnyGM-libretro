@@ -25,37 +25,58 @@ int gml_render_atlas_scene_source_view(GmlRender *r,int index,
   if(out_source) memset(out_source,0,sizeof *out_source);
   if(!r || !out_source || !r->atlas || index<0 || index>=r->n_atlas) return 0;
   atlas=&r->atlas[index];
-  if(atlas->runtime_font_page || !atlas_pixels(r,index) || atlas->w<=0 || atlas->h<=0 ||
+  if(!atlas_pixels(r,index) || atlas->w<=0 || atlas->h<=0 ||
      (uint32_t)atlas->w>UINT32_MAX/4u) return 0;
   bytes=(uint64_t)(uint32_t)atlas->w*(uint32_t)atlas->h*4u;
   if(bytes>SIZE_MAX) return 0;
-  if(!r->scene_source_epoch){
+  if(atlas->runtime_font_page){
+    if(!atlas->scene_source_incarnation){
+      atlas->scene_source_incarnation=gml_render_scene_incarnation_allocate();
+      if(!atlas->scene_source_incarnation) return 0;
+      atlas->scene_source_version=1u;
+    }
+  } else if(!r->scene_source_epoch){
     r->scene_source_epoch=gml_render_scene_incarnation_allocate();
     if(!r->scene_source_epoch) return 0;
   }
   out_source->image=(GmlRenderImageRef){GML_RENDER_RESOURCE_ATLAS,(uint32_t)index,
-                                        r->scene_source_epoch,1u};
+                                        atlas->runtime_font_page
+                                          ?atlas->scene_source_incarnation:r->scene_source_epoch,
+                                        atlas->runtime_font_page
+                                          ?atlas->scene_source_version:1u};
   out_source->width=(uint32_t)atlas->w;
   out_source->height=(uint32_t)atlas->h;
   out_source->pixel_format=GML_RENDER_PIXEL_RGBA8888;
   out_source->stride_bytes=(uint32_t)atlas->w*4u;
   out_source->byte_capacity=(size_t)bytes;
   out_source->bytes=atlas->px;
-  out_source->borrowed_immutable=1;
+  out_source->borrowed_immutable=!atlas->runtime_font_page;
   atlas->scene_source_used=1;
+  atlas->scene_source_last_view_version=out_source->image.content_version;
   return 1;
 }
 
-void gml_render_atlas_scene_retire_all(GmlRender *r){
+void gml_render_atlas_scene_retire_one(GmlRender *r,int index){
   const GmlRenderDeviceServices *device;
-  if(!r || !r->scene_source_epoch || !r->atlas) return;
+  GmlAtlas *atlas;
+  GmlRenderImageRef image;
+  if(!r || !r->atlas || index<0 || index>=r->n_atlas) return;
+  atlas=&r->atlas[index];
+  if(!atlas->scene_source_used) return;
   device=gml_render_device(r);
   if(!device || !device->retire) return;
-  for(int index=0;index<r->n_atlas;index++) if(r->atlas[index].scene_source_used){
-    GmlRenderImageRef image={GML_RENDER_RESOURCE_ATLAS,(uint32_t)index,
-                             r->scene_source_epoch,1u};
-    device->retire(device->context,image);
-  }
+  image=(GmlRenderImageRef){GML_RENDER_RESOURCE_ATLAS,(uint32_t)index,
+                            atlas->runtime_font_page
+                              ?atlas->scene_source_incarnation:r->scene_source_epoch,
+                            atlas->scene_source_last_view_version};
+  device->retire(device->context,image);
+  atlas->scene_source_used=0;
+}
+
+void gml_render_atlas_scene_retire_all(GmlRender *r){
+  if(!r || !r->atlas) return;
+  for(int index=0;index<r->n_atlas;index++)
+    gml_render_atlas_scene_retire_one(r,index);
 }
 
 /* ---- atlas (TXTR) ---- */

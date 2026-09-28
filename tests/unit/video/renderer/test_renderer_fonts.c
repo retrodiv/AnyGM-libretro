@@ -3,6 +3,7 @@
  */
 #include "gml_render_internal.h"
 #include "gml_render_cpu_text.h"
+#include "gml_render_text_internal.h"
 #include "gml_render_state.h"
 #include "anygm_test_runner.h"
 #include "memory_vfs.h"
@@ -117,7 +118,7 @@ static int lifecycle_case(void){
   FontFixture *f=fixture_create();
   if(!f) return 0;
   int font=add_font(f);
-  GmlRenderResourceSource source={0};
+  GmlRenderResourceSource source={0},grown={0},reused_source={0};
   GmlRenderFontMetrics metrics={0};
   int ink=font>=0?draw_font(f,font):0;
   uint32_t before[96*48];
@@ -126,7 +127,13 @@ static int lifecycle_case(void){
     gml_render_font_metrics(&f->render,font,&metrics) &&
     !metrics.sprite_backed && metrics.glyph_count==1 && ink>0 &&
     f->render.fonts[font].atlas==0 && f->render.atlas[0].runtime_font_page &&
-    !gml_render_atlas_scene_source_view(&f->render,0,&source) && !source.bytes;
+    gml_render_atlas_scene_source_view(&f->render,0,&source) && source.bytes &&
+    !source.borrowed_immutable && source.image.content_version==1u;
+  ok &= real_glyph_demand(&f->render,&f->render.fonts[font],'B')!=NULL &&
+    gml_render_atlas_scene_source_view(&f->render,0,&grown) &&
+    grown.image.incarnation==source.image.incarnation &&
+    grown.image.content_version==source.image.content_version+1u &&
+    grown.bytes==f->render.atlas[0].px;
   gml_font_delete(&f->render,font);
   ok &= !gml_render_font_exists(&f->render,font) &&
     !f->render.fonts[0].runtime_face && !f->render.fonts[0].glyphs &&
@@ -134,7 +141,10 @@ static int lifecycle_case(void){
   int reused=add_font(f);
   ok &= reused==1 && reused>=0 && f->render.fonts[reused].atlas==0 &&
     f->render.atlas[0].runtime_font_page &&
-    !gml_render_atlas_scene_source_view(&f->render,0,&source) && !source.bytes &&
+    gml_render_atlas_scene_source_view(&f->render,0,&reused_source) &&
+    !reused_source.borrowed_immutable &&
+    reused_source.image.incarnation!=source.image.incarnation &&
+    reused_source.image.content_version==1u &&
     draw_font(f,reused)==ink && !memcmp(before,f->frame,sizeof before);
   gml_font_delete(&f->render,reused);
   if(!ok) fprintf(stderr,"runtime font construction/deletion control failed\n");
@@ -148,19 +158,26 @@ static int restore_deleted_case(void){
   FontFixture *f=fixture_create();
   if(!f) return 0;
   int font=add_font(f),ink=font>=0?draw_font(f,font):0;
+  GmlRenderResourceSource original_page={0},restored_page={0};
   uint32_t before[96*48];
   memcpy(before,f->frame,sizeof before);
   int width=gml_text_width(&f->render,"A");
   size_t size=0,used=0;
   uint8_t *state=save_font_state(f,&size);
-  int ready=font==0 && ink>0 && width>0 && state;
+  int ready=font==0 && ink>0 && width>0 && state &&
+    gml_render_atlas_scene_source_view(&f->render,f->render.fonts[font].atlas,
+                                       &original_page);
   gml_font_delete(&f->render,font);
   int deleted=!gml_render_font_exists(&f->render,font);
   int loaded=ready && gml_render_state_load(&f->render,state,size,&used);
   GmlRenderFontMetrics metrics={0};
   int usable=loaded && used==size && gml_render_font_exists(&f->render,font) &&
     gml_render_font_metrics(&f->render,font,&metrics) && !metrics.sprite_backed &&
-    metrics.glyph_count==1 && f->render.fonts[font].runtime_face;
+    metrics.glyph_count==1 && f->render.fonts[font].runtime_face &&
+    gml_render_atlas_scene_source_view(&f->render,f->render.fonts[font].atlas,
+                                       &restored_page) &&
+    restored_page.image.incarnation!=original_page.image.incarnation &&
+    restored_page.image.content_version==1u;
   int ok=ready && deleted && usable;
   if(usable){
     ok &= draw_font(f,font)==ink && !memcmp(before,f->frame,sizeof before) &&

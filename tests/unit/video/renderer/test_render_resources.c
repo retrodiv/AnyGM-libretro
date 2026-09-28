@@ -1679,8 +1679,6 @@ static int atlas_scene_identity_and_retirement(void){
         one.borrowed_immutable && one.pixel_format==GML_RENDER_PIXEL_RGBA8888 &&
         one.width==2u && one.height==2u && one.stride_bytes==8u &&
         one.byte_capacity==16u && one.bytes==first->atlas[0].px);
-  first->atlas[0].runtime_font_page=1;
-  CHECK(!gml_render_atlas_scene_source_view(first,0,&same) && !same.bytes);
   gml_render_free(first);
   CHECK(fake.retires==1);
   CHECK(gml_render_init(first,NULL)==0);
@@ -1701,6 +1699,41 @@ static int atlas_scene_identity_and_retirement(void){
   CHECK(fake.retires==3);
   free(first);
   free(second);
+  return 1;
+}
+
+static int runtime_font_page_scene_retirement(void){
+  GmlRender *render=(GmlRender*)calloc(1,sizeof *render);
+  GmlRenderResourceSource first={0},second={0};
+  FakeDevice fake={0};
+  GmlRenderDeviceServices device=service(&fake);
+  CHECK(render);
+  render->atlas=(GmlAtlas*)calloc(1,sizeof *render->atlas);
+  CHECK(render->atlas);
+  render->n_atlas=render->n_fonts=1;
+  render->fonts[0].real=render->fonts[0].runtime_owned=1;
+  render->fonts[0].atlas=0;
+  render->atlas[0].runtime_font_page=1;
+  render->atlas[0].w=render->atlas[0].h=2;
+  render->atlas[0].px=(uint8_t*)calloc(16u,1u);
+  CHECK(render->atlas[0].px);
+  gml_render_bind_device(render,&device);
+  CHECK(gml_render_atlas_scene_source_view(render,0,&first) &&
+        !first.borrowed_immutable && first.image.content_version==1u);
+  gml_font_delete(render,0);
+  CHECK(fake.retires==1 && !render->atlas[0].px);
+  render->fonts[0].real=render->fonts[0].runtime_owned=1;
+  render->fonts[0].atlas=0;
+  render->atlas[0].w=render->atlas[0].h=2;
+  render->atlas[0].px=(uint8_t*)calloc(16u,1u);
+  CHECK(render->atlas[0].px);
+  CHECK(gml_render_atlas_scene_source_view(render,0,&second) &&
+        !second.borrowed_immutable &&
+        second.image.incarnation!=first.image.incarnation &&
+        second.image.content_version==1u);
+  gml_render_free(render);
+  CHECK(fake.retires==2);
+  free(render);
   return 1;
 }
 
@@ -2067,7 +2100,7 @@ static int resident_packaged_sprite_font_glyph(void){
   return 1;
 }
 
-static int resident_packaged_real_font_glyph(void){
+static int resident_packaged_real_font_glyph(int runtime_page){
   GmlRender *render=(GmlRender*)calloc(1,sizeof *render);
   GmlRenderApplicationWriteView view={0};
   FakeDevice fake={0};
@@ -2085,8 +2118,10 @@ static int resident_packaged_real_font_glyph(void){
   CHECK(render->atlas[0].px);
   memcpy(render->atlas[0].px,rgba,sizeof rgba);
   render->atlas[0].w=render->atlas[0].h=2;
+  render->atlas[0].runtime_font_page=runtime_page;
   GmlFont *font=&render->fonts[0];
   font->real=1; font->sprite=-1; font->atlas=0;
+  font->runtime_owned=runtime_page;
   font->line_height=font->align_height=2;
   font->glyphs=(GmlGlyph*)calloc(1,sizeof *font->glyphs);
   CHECK(font->glyphs);
@@ -2168,6 +2203,43 @@ static int resident_packaged_real_font_glyph(void){
   gml_draw_text_transformed(render,2.0,2.0,"A",1.0,1.0,90.0,0xFFFFFFu,1.0);
   gml_render_flush_pending_fill(render);
   CHECK(!memcmp(render->app_surface_owned,completed,sizeof completed));
+  if(runtime_page){
+    uint8_t *replacement;
+    render->atlas[0].px[7]=128u;
+    render->atlas[0].scene_source_version++;
+    gml_render_bind_device(render,&device);
+    fake.fail_upload_at=fake.uploads+1;
+    CHECK(gml_render_begin_resident_owned_application(render,0.0,0.0,0));
+    gml_render_set_pending_fill(render,0xFF000000u);
+    gml_draw_text(render,1.0,1.0,"A");
+    CHECK(!render->resident_application_pass &&
+          fake.uploads==fake.fail_upload_at &&
+          gml_render_application_scene_flush(render));
+    CHECK(gml_render_application_surface_owned_view(render,&view) &&
+          view.pixels[5]==0xFFD02010u);
+    memcpy(completed,view.pixels,sizeof completed);
+    gml_render_bind_device(render,NULL);
+    CHECK(gml_render_begin_owned_application(render,0.0,0.0,0));
+    gml_render_set_pending_fill(render,0xFF000000u);
+    gml_draw_text(render,1.0,1.0,"A");
+    gml_render_flush_pending_fill(render);
+    CHECK(!memcmp(render->app_surface_owned,completed,sizeof completed));
+    replacement=(uint8_t*)malloc(sizeof rgba);
+    CHECK(replacement);
+    memcpy(replacement,render->atlas[0].px,sizeof rgba);
+    replacement[7]=255u;
+    free(render->atlas[0].px);
+    render->atlas[0].px=replacement;
+    render->atlas[0].scene_source_version++;
+    fake.fail_upload_at=0;
+    gml_render_bind_device(render,&device);
+    CHECK(gml_render_begin_resident_owned_application(render,0.0,0.0,0));
+    gml_render_set_pending_fill(render,0xFF000000u);
+    gml_draw_text(render,1.0,1.0,"A");
+    CHECK(render->resident_application_pass && gml_render_scene_flush(render));
+    CHECK(gml_render_application_surface_owned_view(render,&view) &&
+          view.pixels[5]==0xFFD02010u && view.pixels[6]==0xFF10D020u);
+  }
   gml_render_free(render);
   free(render);
   return 1;
@@ -2596,18 +2668,20 @@ int main(void){
   passed+=resident_application_sprite_cpu_fallback();
   passed+=resident_background_and_tile_cpu_barriers();
   passed+=atlas_scene_identity_and_retirement();
+  passed+=runtime_font_page_scene_retirement();
   passed+=mutable_scene_identity_across_renderers();
   passed+=surface_observer_materializes_suspended_fill();
   passed+=public_surface_part_qualified_dispatch();
   passed+=resident_opaque_atlas_sprite_gpu();
   passed+=resident_packaged_sprite_font_glyph();
-  passed+=resident_packaged_real_font_glyph();
+  passed+=resident_packaged_real_font_glyph(0);
+  passed+=resident_packaged_real_font_glyph(1);
   passed+=resident_binary_atlas_sprite_gpu();
   passed+=resident_integer_scaled_atlas_sprite_gpu();
   passed+=state_without_context();
   passed+=surface_draw_sources_are_read_only();
   passed+=target_pixel_observes_resident_result();
   passed+=nearest_subrectangle_mirrors();
-  printf("render resource cases: passed=%d failed=%d\n",passed,33-passed);
-  return passed==33?EXIT_SUCCESS:EXIT_FAILURE;
+  printf("render resource cases: passed=%d failed=%d\n",passed,35-passed);
+  return passed==35?EXIT_SUCCESS:EXIT_FAILURE;
 }

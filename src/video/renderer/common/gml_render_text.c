@@ -202,8 +202,8 @@ static void draw_text_real_plain(GmlRender *r, GmlFont *f, double x, double y, c
         }
         uint32_t glyph_blend=f->subpixel?0xFFFFFFu:blend;
         int resident_glyph=0;
-        if(r->resident_application_pass && !use_rot && !f->runtime_owned &&
-           !f->runtime_face && !f->subpixel && f->sdf_spread<=0 &&
+        if(r->resident_application_pass && !use_rot &&
+           !f->subpixel && f->sdf_spread<=0 &&
            !r->software_overlay && !gml_d3_is_active(r) &&
            alpha==1.0 &&
            resident_integer_text_scale(xs,ys) && !r->interp)
@@ -324,10 +324,11 @@ static void draw_text_transformed_font(GmlRender *r, GmlFont *f,
   if(!f||!str) return;
   if(alpha>1) alpha=1; else if(alpha<0) alpha=0;
   if(xs==0||ys==0||alpha<=0) return;
-  /* Mutable real-font glyph demand and shaded-run gathering can touch the target before
-   * individual glyphs are emitted. Immutable packaged glyphs defer the barrier per cell. */
+  /* Shaded-run gathering writes a CPU target before the individual glyphs are emitted.
+   * Runtime glyph demand mutates only its versioned atlas; each mutable scene submission
+   * flushes before a later lookup can move that page. */
   if(f->real && r->resident_application_pass &&
-     (f->runtime_owned || f->runtime_face || gml_render_shaded_run_wanted(r)) &&
+     gml_render_shaded_run_wanted(r) &&
      !gml_render_resident_application_cpu_barrier(r)) return;
   double rr=fmod(rot,360.0); if(rr<0) rr+=360.0;
   double ca,sa; render_rotation_sincos(rr,&ca,&sa);

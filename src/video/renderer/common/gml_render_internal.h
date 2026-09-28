@@ -131,7 +131,9 @@ typedef struct {
   int debug_dumped;                                                /* one-shot opt-in atlas diagnostic */
   int no_source_reported;                                          /* one-shot: page carries no blob */
   int runtime_font_page;                                          /* reusable only by runtime fonts */
-  int scene_source_used;                                          /* immutable atlas upload this content lifetime */
+  int scene_source_used;                                          /* atlas source exposed to the scene device */
+  uint64_t scene_source_incarnation;                              /* runtime font page identity across reuse */
+  uint64_t scene_source_version, scene_source_last_view_version;  /* runtime mutations and retirement */
 } GmlAtlas;
 typedef struct {
   int atlas, sx, sy, sw, sh;
@@ -653,6 +655,7 @@ uint8_t *atlas_pixels(GmlRender *r,int index);
 uint64_t gml_render_scene_incarnation_allocate(void);
 int gml_render_atlas_scene_source_view(GmlRender *r,int index,
                                        GmlRenderResourceSource *out_source);
+void gml_render_atlas_scene_retire_one(GmlRender *r,int index);
 void gml_render_atlas_scene_retire_all(GmlRender *r);
 void gml_render_materialize_scaled_pages(GmlRender *r);
 void parse_txtr(GmlRender *r);
