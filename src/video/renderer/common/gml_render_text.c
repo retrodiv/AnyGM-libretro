@@ -194,44 +194,56 @@ static void draw_text_real_plain(GmlRender *r, GmlFont *f, double x, double y, c
             glyph_y=floor(glyph_y+0.5);
         }
         uint32_t glyph_blend=f->subpixel?0xFFFFFFu:blend;
-        int saved_interp=r->interp;
-        int saved_sdf_active=r->font_sdf_active;
-        double saved_sdf_width=r->font_sdf_width;
-        if(f->sdf_spread>0){
-          double scale=fmin(fabs(xs),fabs(ys));
-          if(scale<1.0/1024.0) scale=1.0/1024.0;
-          r->font_sdf_active=1;
-          r->font_sdf_width=255.0/(2.0*(double)f->sdf_spread*scale);
-          if(r->font_sdf_width<1.0) r->font_sdf_width=1.0;
-          else if(r->font_sdf_width>255.0) r->font_sdf_width=255.0;
-          /* Distance fields need a filtered distance sample even when ordinary textures are
-           * point sampled; coverage is still reconstructed at each output pixel. */
-          r->interp=1;
+        int resident_glyph=0;
+        if(r->resident_application_pass && !use_rot && !f->runtime_owned &&
+           !f->runtime_face && !f->subpixel && f->sdf_spread<=0 &&
+           !r->software_overlay && !gml_d3_is_active(r) &&
+           glyph_blend==0xFFFFFFu && alpha==1.0 &&
+           xs==1.0 && ys==1.0 && !r->interp)
+          resident_glyph=gml_render_resident_font_glyph(r,f->atlas,g->sx,g->sy,
+            g->w,g->h,glyph_x-r->cam_x,glyph_y-r->cam_y);
+        if(!resident_glyph){
+          if(r->resident_application_pass &&
+             !gml_render_resident_application_cpu_barrier(r)) return;
+          int saved_interp=r->interp;
+          int saved_sdf_active=r->font_sdf_active;
+          double saved_sdf_width=r->font_sdf_width;
+          if(f->sdf_spread>0){
+            double scale=fmin(fabs(xs),fabs(ys));
+            if(scale<1.0/1024.0) scale=1.0/1024.0;
+            r->font_sdf_active=1;
+            r->font_sdf_width=255.0/(2.0*(double)f->sdf_spread*scale);
+            if(r->font_sdf_width<1.0) r->font_sdf_width=1.0;
+            else if(r->font_sdf_width>255.0) r->font_sdf_width=255.0;
+            /* Distance fields need a filtered distance sample even when ordinary textures are
+             * point sampled; coverage is still reconstructed at each output pixel. */
+            r->interp=1;
+          }
+          if(use_rot){
+            GmlSprite glyph_sprite={.w=g->w,.h=g->h,.originx=0,.originy=0};
+            blit_rotated(r,&glyph_sprite,&gt,glyph_x-r->cam_x,glyph_y-r->cam_y,
+                         xs,ys,rotation,blend,alpha);
+          } else if(f->subpixel && r->software_overlay &&
+             gml_render_cpu_classic_info_subpixel_glyph(r,f,g,glyph_x-r->cam_x,glyph_y-r->cam_y,
+                                                         xs,ys,blend,alpha)){
+            /* Per-channel coverage was composed directly above. */
+          } else if(r->software_overlay ||
+             !gml_d3_draw_atlas_part_2d(r,f->atlas,g->sx,g->sy,g->w,g->h,
+                                        glyph_x,glyph_y,xs,ys,glyph_blend,alpha)){
+            /* A glyph drawn through a program this renderer does not execute is a rectangle of a
+             * texture page like any other: the program's answer for it is evaluated once and kept,
+             * so a screen of text costs one device evaluation per distinct glyph rather than one
+             * per glyph drawn. The plain blit stands when there is nothing to run it. */
+            if(!(xs>0 && ys>0 &&
+                 gml_render_shade_atlas_rect_at(r,gt.atlas,gt.sx,gt.sy,gt.sw,gt.sh,
+                                                glyph_x,glyph_y,gt.sw*xs,gt.sh*ys,
+                                                glyph_blend,alpha)))
+              blit(r,&gt,glyph_x-r->cam_x,glyph_y-r->cam_y,xs,ys,glyph_blend,alpha);
+          }
+          r->interp=saved_interp;
+          r->font_sdf_active=saved_sdf_active;
+          r->font_sdf_width=saved_sdf_width;
         }
-        if(use_rot){
-          GmlSprite glyph_sprite={.w=g->w,.h=g->h,.originx=0,.originy=0};
-          blit_rotated(r,&glyph_sprite,&gt,glyph_x-r->cam_x,glyph_y-r->cam_y,
-                       xs,ys,rotation,blend,alpha);
-        } else if(f->subpixel && r->software_overlay &&
-           gml_render_cpu_classic_info_subpixel_glyph(r,f,g,glyph_x-r->cam_x,glyph_y-r->cam_y,
-                                                       xs,ys,blend,alpha)){
-          /* Per-channel coverage was composed directly above. */
-        } else if(r->software_overlay ||
-           !gml_d3_draw_atlas_part_2d(r,f->atlas,g->sx,g->sy,g->w,g->h,
-                                      glyph_x,glyph_y,xs,ys,glyph_blend,alpha)){
-          /* A glyph drawn through a program this renderer does not execute is a rectangle of a
-           * texture page like any other: the program's answer for it is evaluated once and kept,
-           * so a screen of text costs one device evaluation per distinct glyph rather than one
-           * per glyph drawn. The plain blit stands when there is nothing to run it. */
-          if(!(xs>0 && ys>0 &&
-               gml_render_shade_atlas_rect_at(r,gt.atlas,gt.sx,gt.sy,gt.sw,gt.sh,
-                                              glyph_x,glyph_y,gt.sw*xs,gt.sh*ys,
-                                              glyph_blend,alpha)))
-            blit(r,&gt,glyph_x-r->cam_x,glyph_y-r->cam_y,xs,ys,glyph_blend,alpha);
-        }
-        r->interp=saved_interp;
-        r->font_sdf_active=saved_sdf_active;
-        r->font_sdf_width=saved_sdf_width;
       }
       if(g) cx += g->shift;
     }
@@ -305,9 +317,10 @@ static void draw_text_transformed_font(GmlRender *r, GmlFont *f,
   if(!f||!str) return;
   if(alpha>1) alpha=1; else if(alpha<0) alpha=0;
   if(xs==0||ys==0||alpha<=0) return;
-  /* Real-font and special glyph kernels still need CPU authority. Sprite-font glyphs may
-   * qualify individually; their first CPU-only glyph closes the resident prefix in order. */
+  /* Mutable real-font glyph demand and shaded-run gathering can touch the target before
+   * individual glyphs are emitted. Immutable packaged glyphs defer the barrier per cell. */
   if(f->real && r->resident_application_pass &&
+     (f->runtime_owned || f->runtime_face || gml_render_shaded_run_wanted(r)) &&
      !gml_render_resident_application_cpu_barrier(r)) return;
   double rr=fmod(rot,360.0); if(rr<0) rr+=360.0;
   double ca,sa; render_rotation_sincos(rr,&ca,&sa);

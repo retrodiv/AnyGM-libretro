@@ -50,8 +50,9 @@ const uint8_t *runtime_frame_rgba(GmlSprite *s, int frame){
 
 /* An integer-aligned atlas crop at an integer scale has exact nearest texel centres. Unit scale
  * also has identity sampling when interpolation is enabled. Authored trim offsets move the
- * visible crop, not its texels. Binary-alpha crops use endpoint source-over; filtered scaling,
- * fractional scale, intermediate alpha and programmed cases keep the established CPU blit. */
+ * visible crop, not its texels. Binary-alpha crops use endpoint source-over; ordinary sprites
+ * with filtered scaling, fractional scale, intermediate alpha or programs keep the CPU blit.
+ * The separate TEXT family admits unit-scale intermediate source alpha with a checkpoint. */
 static int resident_integer_sprite(GmlRender *r,GmlSprite *sprite,int subimg,
                                   double x,double y,double xs,double ys,double rotation,
                                   uint32_t blend,double alpha){
@@ -106,11 +107,10 @@ static int resident_integer_sprite(GmlRender *r,GmlSprite *sprite,int subimg,
                                         GML_RENDER_SCENE_SPRITE);
 }
 
-int gml_render_resident_atlas_crop(GmlRender *r,int page_index,
-                                  int crop_x,int crop_y,int crop_width,int crop_height,
-                                  double left,double top,double xs,double ys,
-                                  GmlRenderSceneFamily family){
-  GmlTpag *page;
+static int resident_atlas_crop_from_page(GmlRender *r,GmlTpag *page,
+                                         int crop_x,int crop_y,int crop_width,int crop_height,
+                                         double left,double top,double xs,double ys,
+                                         GmlRenderSceneFamily family){
   GmlAtlas *atlas;
   GmlRenderResourceSource source={0};
   GmlRenderResource *target;
@@ -119,8 +119,8 @@ int gml_render_resident_atlas_crop(GmlRender *r,int page_index,
   GmlRenderImageRef source_ref,image;
   GmlRenderRect region;
   double scaled_width,scaled_height,source_left,source_right,source_top,source_bottom;
-  int checkpoint_alpha_background;
-  if(!r || !r->resident_application_pass || page_index<0 || page_index>=r->n_tpag ||
+  int checkpoint_alpha_background,checkpoint_alpha_text;
+  if(!r || !page || !r->resident_application_pass ||
      r->classic || (r->world_transform_active &&
                     (r->world_scale_x!=1.0 || r->world_scale_y!=1.0)) ||
      r->gui_pass_active || r->active_shader>=0 || r->alpha_test_enable ||
@@ -133,7 +133,6 @@ int gml_render_resident_atlas_crop(GmlRender *r,int page_index,
      (r->interp && (xs!=1.0 || ys!=1.0))) return 0;
   for(int index=0;index<3;index++)
     if(r->classic_interp_phase[index] || r->app_interp_phase[index]) return 0;
-  page=&r->tpag[page_index];
   if(page->sw<=0 || page->sh<=0 || page->sx<0 || page->sy<0 ||
      page->atlas<0 || page->atlas>=r->n_atlas ||
      page->tw!=page->sw || page->th!=page->sh ||
@@ -151,7 +150,15 @@ int gml_render_resident_atlas_crop(GmlRender *r,int page_index,
     crop_x==0 && crop_y==0 && crop_width==page->sw && crop_height==page->sh &&
     !page->tx && !page->ty && page->bw==page->sw && page->bh==page->sh &&
     xs==1.0 && ys==1.0;
-  if(!page->scene_binary_alpha && !checkpoint_alpha_background) return 0;
+  checkpoint_alpha_text=!page->scene_binary_alpha &&
+    family==GML_RENDER_SCENE_TEXT && !r->interp &&
+    !gml_render_target_preserves_alpha(r) &&
+    r->fb_opaque_known && r->fb_all_opaque &&
+    crop_x==0 && crop_y==0 && crop_width==page->sw && crop_height==page->sh &&
+    !page->tx && !page->ty && page->bw==page->sw && page->bh==page->sh &&
+    xs==1.0 && ys==1.0;
+  if(!page->scene_binary_alpha && !checkpoint_alpha_background &&
+     !checkpoint_alpha_text) return 0;
   scaled_width=(double)crop_width*fabs(xs);
   scaled_height=(double)crop_height*fabs(ys);
   if(xs<0.0) left-=scaled_width;
@@ -199,7 +206,7 @@ int gml_render_resident_atlas_crop(GmlRender *r,int page_index,
                          (uint32_t)crop_width,(uint32_t)crop_height};
   source_ref=source.image;
   operation.opcode=GML_RENDER_OP_TEXTURED_QUAD;
-  operation.reconstruction_mode=checkpoint_alpha_background
+  operation.reconstruction_mode=checkpoint_alpha_background || checkpoint_alpha_text
     ?GML_RENDER_DEVICE_CHECKPOINT:GML_RENDER_REPLAY_EXACT;
   operation.scene_family=family;
   operation.source_count=1u;
@@ -245,6 +252,23 @@ int gml_render_resident_atlas_crop(GmlRender *r,int page_index,
   if(!gml_render_application_scene_enqueue(r,&operation,&state,&source)) return 0;
   r->fb_all_transparent=0;
   return 1;
+}
+
+int gml_render_resident_atlas_crop(GmlRender *r,int page_index,
+                                  int crop_x,int crop_y,int crop_width,int crop_height,
+                                  double left,double top,double xs,double ys,
+                                  GmlRenderSceneFamily family){
+  if(!r || page_index<0 || page_index>=r->n_tpag) return 0;
+  return resident_atlas_crop_from_page(r,&r->tpag[page_index],
+    crop_x,crop_y,crop_width,crop_height,left,top,xs,ys,family);
+}
+
+int gml_render_resident_font_glyph(GmlRender *r,int atlas,int source_x,int source_y,
+                                   int width,int height,double left,double top){
+  GmlTpag page={.atlas=atlas,.sx=source_x,.sy=source_y,.sw=width,.sh=height,
+                .tw=width,.th=height,.bw=width,.bh=height};
+  return resident_atlas_crop_from_page(r,&page,0,0,width,height,left,top,1.0,1.0,
+                                       GML_RENDER_SCENE_TEXT);
 }
 
 int gml_render_resident_atlas_page(GmlRender *r,int page_index,
