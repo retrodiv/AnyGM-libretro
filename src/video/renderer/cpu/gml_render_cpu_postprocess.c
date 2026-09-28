@@ -84,7 +84,7 @@ static void dual_fast_band(void *p,int py0,int py1,int slot){
 void draw_surface_dual_sample(GmlRender *r,const struct GmlShaderPal *sp,int surf,
                                      double sx,double sy,double swd,double shd,
                                      double dx,double dy,double dw,double dh,uint32_t blend,double alpha){
-  int sw=0,sh=0; uint32_t *src=surface_pixels(r,surf,&sw,&sh);
+  int sw=0,sh=0; const uint32_t *src=surface_pixels_observe(r,surf,&sw,&sh);
   if(!r||!r->fb||!src||sw<=0||sh<=0||swd<=0||shd<=0||alpha<=0) return;
   if(alpha>1) alpha=1;
   dx-=r->cam_x; dy-=r->cam_y;

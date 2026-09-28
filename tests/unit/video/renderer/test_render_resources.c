@@ -1885,6 +1885,88 @@ static int state_without_context(void){
   return 1;
 }
 
+static int surface_draw_sources_are_read_only(void){
+  GmlRender *render=(GmlRender*)calloc(1,sizeof *render);
+  uint32_t frame[16]={0};
+  GmlRenderDeviceServices device;
+  GmlRenderDrawOp operation;
+  GmlRenderDrawBatch batch;
+  GmlRenderResource *resource;
+  GmlRenderJournalMetrics before={0},after={0};
+  GmlRenderResourceSource source={0};
+  const uint32_t *plane=NULL;
+  FakeDevice fake={0};
+  int id,sprite,plane_width=0,plane_height=0;
+  CHECK(render);
+  render->next_surface_id=1;
+  render->active_shader=-1;
+  render->color_write_mask=0x0Fu;
+  render->alphablend=1;
+  render->blend_equation=render->blend_equation_alpha=1;
+  gml_render_begin(render,frame,4,4,0.0,0.0);
+  id=gml_surface_create(render,4,4);
+  CHECK(id>0);
+  device=service(&fake);
+  gml_render_bind_device(render,&device);
+  resource=gml_render_surface_resource_ensure(render,id);
+  CHECK(resource);
+  operation=clear_op(2u,0xFFB42834u,GML_RENDER_REPLAY_EXACT);
+  operation.target.image=gml_render_resource_image_ref(resource);
+  operation.target.image.content_version=2u;
+  operation.target.pixel_format=GML_RENDER_PIXEL_ARGB8888;
+  batch=(GmlRenderDrawBatch){&operation,1u,NULL,0u};
+  CHECK(gml_render_surface_scene_submit(render,id,&batch,NULL,0u)==
+        GML_RENDER_RESOURCE_EXEC_DEVICE);
+  render->surface[id-1].opaque_known=1;
+  render->surface[id-1].all_opaque=1;
+  render->surface[id-1].all_transparent=0;
+  gml_render_resource_journal_metrics(resource,&before);
+  CHECK(before.logical_version==2u && before.gpu_version==2u);
+
+  render->interp=1;
+  gml_draw_surface_part_ext(render,id,0,0,2,2,1,1,1.5,1.5,0xFFFFFFu,1.0);
+  CHECK(frame[5]!=0u);
+  gml_render_resource_journal_metrics(resource,&after);
+  CHECK(after.logical_version==before.logical_version && after.gpu_version==before.gpu_version);
+
+  memset(frame,0,sizeof frame);
+  gml_draw_surface_stretched(render,id,1,1,3,3,0xFFFFFFu,1.0);
+  CHECK(frame[5]!=0u);
+  gml_render_resource_journal_metrics(resource,&after);
+  CHECK(after.logical_version==before.logical_version && after.gpu_version==before.gpu_version);
+
+  memset(frame,0,sizeof frame);
+  gml_draw_surface_ext(render,id,1,3,1,1,90,0xFFFFFFu,1.0);
+  CHECK(frame[1]!=0u || frame[5]!=0u);
+  gml_render_resource_journal_metrics(resource,&after);
+  CHECK(after.logical_version==before.logical_version && after.gpu_version==before.gpu_version);
+
+  memset(frame,0,sizeof frame);
+  gml_draw_surface_tiled_ext(render,id,0,0,1,1,0xFFFFFFu,1.0);
+  CHECK(frame[0]!=0u);
+  gml_render_resource_journal_metrics(resource,&after);
+  CHECK(after.logical_version==before.logical_version && after.gpu_version==before.gpu_version);
+
+  sprite=gml_sprite_create_from_surface(render,id,0,0,2,2,0,0,0,0);
+  CHECK(sprite>=0 && render->spr[sprite].runtime_rgba &&
+        render->spr[sprite].runtime_rgba[0]==0xB4u &&
+        render->spr[sprite].runtime_rgba[1]==0x28u &&
+        render->spr[sprite].runtime_rgba[2]==0x34u &&
+        render->spr[sprite].runtime_rgba[3]==0xFFu);
+  gml_render_resource_journal_metrics(resource,&after);
+  CHECK(after.logical_version==before.logical_version && after.gpu_version==before.gpu_version &&
+        fake.readbacks==0 && gml_render_resource_source_view(resource,&source) &&
+        source.image.content_version==before.logical_version &&
+        source.resident_resource==resource);
+  CHECK(gml_render_surface_plane(render,id,&plane_width,&plane_height,&plane) &&
+        plane && plane_width==4 && plane_height==4 && plane[0]==0xFFB42834u);
+  gml_render_resource_journal_metrics(resource,&after);
+  CHECK(after.logical_version==before.logical_version && after.gpu_version==before.gpu_version);
+  gml_render_free(render);
+  free(render);
+  return 1;
+}
+
 int main(void){
   int passed=0;
   passed+=journal_loss_and_mutation();
@@ -1911,7 +1993,8 @@ int main(void){
   passed+=resident_binary_atlas_sprite_gpu();
   passed+=resident_integer_scaled_atlas_sprite_gpu();
   passed+=state_without_context();
+  passed+=surface_draw_sources_are_read_only();
   passed+=nearest_subrectangle_mirrors();
-  printf("render resource cases: passed=%d failed=%d\n",passed,25-passed);
-  return passed==25?EXIT_SUCCESS:EXIT_FAILURE;
+  printf("render resource cases: passed=%d failed=%d\n",passed,26-passed);
+  return passed==26?EXIT_SUCCESS:EXIT_FAILURE;
 }

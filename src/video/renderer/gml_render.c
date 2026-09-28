@@ -718,9 +718,9 @@ int gml_render_atlas_rect_plane(GmlRender *r,int atlas,int sx,int sy,int w,int h
 int gml_render_surface_plane(GmlRender *r,int surface,int *width,int *height,
                              const uint32_t **pixels){
   int w=0,h=0;
-  uint32_t *px;
+  const uint32_t *px;
   if(!r || !pixels) return 0;
-  px=surface_pixels(r,surface,&w,&h);
+  px=surface_pixels_observe(r,surface,&w,&h);
   if(!px || w<=0 || h<=0) return 0;
   if(width) *width=w;
   if(height) *height=h;

@@ -733,7 +733,7 @@ static void draw_surface_interp_phase(GmlRender *r,uint32_t *plane,const uint32_
 
 void draw_surface_region(GmlRender *r, int surf, double sx0d, double sy0d, double swd, double shd,
                                 double dx, double dy, double dw, double dh, uint32_t blend, double alpha){
-  int sw=0, sh=0; uint32_t *src=surface_pixels(r,surf,&sw,&sh);
+  int sw=0, sh=0; const uint32_t *src=surface_pixels_observe(r,surf,&sw,&sh);
   if(!src || !r->fb) return;
   dx-=r->cam_x; dy-=r->cam_y;   /* draws are camera/GUI-offset relative, like every other path */
   if(alpha>1) alpha=1; else if(alpha<0) alpha=0;
@@ -1210,7 +1210,7 @@ void gml_render_cpu_draw_surface_stretched_impl(GmlRender *r,int surf,double dx,
   }
   if(canvas_world && r->surface_canvas_world_width>0){
     int sw=0,sh=0;
-    if(!surface_pixels(r,surf,&sw,&sh) || sw<=0 || sh<=0) return;
+    if(!surface_pixels_observe(r,surf,&sw,&sh) || sw<=0 || sh<=0) return;
     double rx=(double)r->surface_canvas_room_x*sw/r->surface_canvas_world_width;
     double rw=(double)r->surface_canvas_room_width*sw/r->surface_canvas_world_width;
     if(rw>0) gml_draw_surface_part_ext(r,surf,rx,0,rw,sh,
@@ -1227,7 +1227,7 @@ void gml_render_cpu_draw_surface_stretched_impl(GmlRender *r,int surf,double dx,
   if(allow_software3d && !sdual && !mapped_texture_active(r) &&
      d3w>0&&d3h>0&&
      gml_d3_draw_surface_part_2d(r,surf,0,0,d3w,d3h,dx,dy,dw/d3w,dh/d3h,blend,alpha)) return;
-  int sw=0, sh=0; uint32_t *spx=surface_pixels(r,surf,&sw,&sh); if(!spx) return;
+  int sw=0, sh=0; const uint32_t *spx=surface_pixels_observe(r,surf,&sw,&sh); if(!spx) return;
   /* A full-width presentation compositor may retain an integer-scaled native-aspect destination
    * even though its application surface has been widened. Drawing the wide surface into that
    * narrower rectangle squeezes the world horizontally. For a near-full-height application-surface
@@ -1337,7 +1337,7 @@ int gml_render_cpu_backend_surface_stretched(GmlRender *r,int surf,double dx,dou
  * multiply blend used by surface light masks. */
 void gml_render_cpu_draw_surface_ext_mapped(GmlRender *r,int surf,double x,double y,
                                            double xs,double ys,double rr,uint32_t blend,double alpha){
-  int sw=0,sh=0; uint32_t *src=surface_pixels(r,surf,&sw,&sh);
+  int sw=0,sh=0; const uint32_t *src=surface_pixels_observe(r,surf,&sw,&sh);
   if(!r||!r->fb||!src||sw<=0||sh<=0||xs==0.0||ys==0.0||alpha<=0.0) return;
   if(alpha>1.0) alpha=1.0;
   uint32_t *copy=NULL;
@@ -1441,7 +1441,7 @@ void gml_render_cpu_draw_surface_part_mapped(GmlRender *r,int surf,double sx,dou
   if(r->active_shader>=0 && r->shader_executor &&
      gml_render_shader_content_candidate(r,r->active_shader)){
     int psw=0,psh=0;
-    uint32_t *ppx=surface_pixels(r,surf,&psw,&psh);
+    const uint32_t *ppx=surface_pixels_observe(r,surf,&psw,&psh);
     if(ppx && ppx!=r->fb && psw>0 && psh>0 &&
        gml_render_cpu_shader_pass_surface(r,surf,ppx,psw,psh,sx,sy,sw,sh,dx,dy,sw*xs,sh*ys,blend,alpha))
       return;
@@ -1459,7 +1459,7 @@ void gml_draw_surface_tiled_ext(GmlRender *r,int surf,double x,double y,
      !isfinite(alpha) || alpha<=0) return;
   if(!gml_render_resident_application_cpu_barrier(r)) return;
   int sw=0,sh=0;
-  const uint32_t *source=surface_pixels(r,surf,&sw,&sh);
+  const uint32_t *source=surface_pixels_observe(r,surf,&sw,&sh);
   if(!source || source==r->fb || sw<=0 || sh<=0) return;
   /* Map once: the repeated cells are not independent application-surface
    * presentations and must not each select an automatic screen-size policy. */

@@ -556,7 +556,7 @@ void gml_render_clear_runtime_sprites(GmlRender *r){
 int gml_sprite_create_from_surface(GmlRender *r, int surf, int x, int y, int w, int h,
                                    int removeback, int smooth, int xorig, int yorig){
   (void)smooth;
-  int sw=0, sh=0; uint32_t *src=surface_pixels(r,surf,&sw,&sh);
+  int sw=0, sh=0; const uint32_t *src=surface_pixels_observe(r,surf,&sw,&sh);
   if(!src || w<=0 || h<=0) return -1;
   if(src==r->fb) gml_render_maybe_prepare_draw(r);
   uint8_t *rgba=calloc((size_t)w*h*4,1);
