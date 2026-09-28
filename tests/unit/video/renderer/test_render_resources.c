@@ -1352,6 +1352,85 @@ static int resident_flat_primitive_public_order(void){
   return 1;
 }
 
+static int resident_zero_alpha_layer_fill_noop(void){
+  GmlRender *cpu=(GmlRender*)calloc(1,sizeof *cpu);
+  GmlRender *gpu=(GmlRender*)calloc(1,sizeof *gpu);
+  uint32_t cpu_pixels[16]={0};
+  FakeDevice fake={0};
+  GmlRenderDeviceServices device=service(&fake);
+  GmlRenderJournalMetrics before={0},after={0};
+  CHECK(cpu && gpu);
+  CHECK(gml_render_init(cpu,NULL)==0 && gml_render_init(gpu,NULL)==0);
+  gml_render_begin(cpu,cpu_pixels,4,4,0.0,0.0);
+  CHECK(gml_render_application_surface_ensure_owned(gpu,4,4));
+  gml_render_bind_device(gpu,&device);
+  CHECK(gml_render_begin_resident_owned_application(gpu,0.0,0.0,0));
+  gml_render_set_pending_fill(cpu,0xFF102030u);
+  gml_render_set_pending_fill(gpu,0xFF102030u);
+  gml_render_resource_journal_metrics(gpu->app_surface_resource,&before);
+  gml_draw_layer_color_fill(cpu,0x00556677u,0.0);
+  gml_draw_layer_color_fill(gpu,0x00556677u,0.0);
+  cpu->blendmode=gpu->blendmode=1;
+  gml_draw_layer_color_fill(cpu,0x00334455u,-1.0);
+  gml_draw_layer_color_fill(gpu,0x00334455u,-1.0);
+  cpu->blendmode=gpu->blendmode=0;
+  gml_render_resource_journal_metrics(gpu->app_surface_resource,&after);
+  CHECK(gpu->resident_application_pass && gpu->pending_fill && fake.submits==0 &&
+        fake.readbacks==0 && after.logical_version==before.logical_version &&
+        after.cpu_replays==before.cpu_replays);
+  gml_render_primitive_rectangle(cpu,1,1,2,2,0x345678u,0);
+  gml_render_primitive_rectangle(gpu,1,1,2,2,0x345678u,0);
+  CHECK(gpu->resident_application_pass && fake.submits==2 && fake.readbacks==0);
+  gml_draw_layer_color_fill(cpu,0x0000ff00u,0.5);
+  gml_draw_layer_color_fill(gpu,0x0000ff00u,0.5);
+  gml_render_flush_pending_fill(cpu);
+  CHECK(!gpu->resident_application_pass && fake.readbacks==0 &&
+        memcmp(cpu_pixels,gpu->app_surface_owned,sizeof cpu_pixels)==0);
+  gml_render_free(cpu);
+  gml_render_free(gpu);
+  free(cpu);
+  free(gpu);
+  return 1;
+}
+
+static int resident_unit_world_primitive_order(void){
+  GmlRender *cpu=(GmlRender*)calloc(1,sizeof *cpu);
+  GmlRender *gpu=(GmlRender*)calloc(1,sizeof *gpu);
+  uint32_t cpu_pixels[16]={0};
+  FakeDevice fake={0};
+  GmlRenderDeviceServices device=service(&fake);
+  GmlRenderJournalMetrics before={0},after={0};
+  CHECK(cpu && gpu);
+  CHECK(gml_render_init(cpu,NULL)==0 && gml_render_init(gpu,NULL)==0);
+  gml_render_begin(cpu,cpu_pixels,4,4,0.0,0.0);
+  CHECK(gml_render_application_surface_ensure_owned(gpu,4,4));
+  gml_render_bind_device(gpu,&device);
+  CHECK(gml_render_begin_resident_owned_application(gpu,0.0,0.0,0));
+  cpu->world_transform_active=gpu->world_transform_active=1;
+  cpu->world_scale_x=cpu->world_scale_y=1.0;
+  gpu->world_scale_x=gpu->world_scale_y=1.0;
+  gml_render_set_pending_fill(cpu,0xFF102030u);
+  gml_render_set_pending_fill(gpu,0xFF102030u);
+  gml_render_primitive_rectangle(cpu,-1,1,2,3,0x345678u,0);
+  gml_render_primitive_rectangle(gpu,-1,1,2,3,0x345678u,0);
+  gml_render_resource_journal_metrics(gpu->app_surface_resource,&before);
+  CHECK(gpu->resident_application_pass && fake.submits==2 && fake.readbacks==0 &&
+        before.journal_operations==2u && before.cpu_replays==0u);
+  cpu->world_scale_x=gpu->world_scale_x=2.0;
+  gml_render_primitive_rectangle(cpu,3,0,3,0,0x0000ffu,0);
+  gml_render_primitive_rectangle(gpu,3,0,3,0,0x0000ffu,0);
+  gml_render_flush_pending_fill(cpu);
+  gml_render_resource_journal_metrics(gpu->app_surface_resource,&after);
+  CHECK(!gpu->resident_application_pass && fake.submits==2 && fake.readbacks==0 &&
+        after.cpu_replays==before.cpu_replays+1u &&
+        memcmp(cpu_pixels,gpu->app_surface_owned,sizeof cpu_pixels)==0);
+  gml_render_free(cpu);
+  gml_render_free(gpu);
+  free(cpu);
+  free(gpu);
+  return 1;
+}
+
 static int resident_gradient_primitive_cpu_boundary(void){
   GmlRender *cpu=(GmlRender*)calloc(1,sizeof *cpu);
   GmlRender *gpu=(GmlRender*)calloc(1,sizeof *gpu);
@@ -3035,6 +3114,8 @@ int main(void){
   passed+=owned_application_resize_and_context_loss();
   passed+=resident_application_pending_clear();
   passed+=resident_flat_primitive_public_order();
+  passed+=resident_zero_alpha_layer_fill_noop();
+  passed+=resident_unit_world_primitive_order();
   passed+=resident_gradient_primitive_cpu_boundary();
   passed+=resident_particle_square_public_order();
   passed+=resident_software3d_primitive_cpu_bridge();
@@ -3059,6 +3140,6 @@ int main(void){
   passed+=target_pixel_observes_resident_result();
   passed+=nearest_subrectangle_mirrors();
   passed+=source_free_primitive_rect_replay();
-  printf("render resource cases: passed=%d failed=%d\n",passed,43-passed);
-  return passed==43?EXIT_SUCCESS:EXIT_FAILURE;
+  printf("render resource cases: passed=%d failed=%d\n",passed,45-passed);
+  return passed==45?EXIT_SUCCESS:EXIT_FAILURE;
 }

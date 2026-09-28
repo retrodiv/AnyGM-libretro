@@ -212,6 +212,9 @@ void gml_render_clear(GmlRender *R,uint32_t color,double alpha){
 /* Full-screen color fill for spriteless GMS2 background layers (screen space, at layer depth). */
 void gml_draw_layer_color_fill(GmlRender *R, uint32_t gmcol, double alpha){
   if(!R) return;
+  /* The rectangle body already returns before drawing for non-positive alpha.
+   * Do not end a resident pass before reaching that no-op. */
+  if(alpha<=0.0) return;
   /* The existing opaque full-target branch records a deferred fill without writing CPU pixels.
    * Preserve that resident path; only a compositing raster needs current CPU authority. */
   if(!(R->blendmode==0 && (alpha>=1.0 || !R->alphablend)) &&

@@ -19,7 +19,9 @@ static int resident_flat_eligible(GmlRender *render){
     render->fb==render->app_surface_owned && render->fbw==render->app_w &&
     render->fbh==render->app_h && render->fbw>0 && render->fbh>0 &&
     !render->target_sp && render->target_id==-1 && !render->gui_pass_active &&
-    !render->world_transform_active && !render->classic &&
+    (!render->world_transform_active ||
+     (render->world_scale_x==1.0 && render->world_scale_y==1.0)) &&
+    !render->classic &&
     !render->classic_phase_y && !render->classic_interp_phase[0] &&
     !render->classic_interp_phase[1] && !render->classic_interp_phase[2] &&
     render->active_shader<0 && render->alpha==1.0 && !render->blendmode &&
