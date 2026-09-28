@@ -301,8 +301,10 @@ static uint32_t gm_color_lerp_amount(uint32_t first,uint32_t second,double amoun
   return (uint32_t)red|((uint32_t)green<<8)|((uint32_t)blue<<16);
 }
 
-static void draw_line_colour_prim(GmlRender *R, int x0, int y0, int x1, int y1,
-                                  uint32_t first,uint32_t second,int width){
+int gml_render_line_integer_boxes(GmlRender *R,int x0,int y0,int x1,int y1,
+                                  uint32_t first,uint32_t second,int width,
+                                  GmlRenderPrimitiveBox emit,void *context){
+  if(!R || !emit) return 0;
   if(width<1) width=1;
   int dx=abs(x1-x0), sx=x0<x1?1:-1;
   int dy=-abs(y1-y0), sy=y0<y1?1:-1;
@@ -311,13 +313,23 @@ static void draw_line_colour_prim(GmlRender *R, int x0, int y0, int x1, int y1,
   for(;;){
     int r=width/2;
     uint32_t color=gm_color_lerp_steps(first,second,step,denominator);
-    draw_rect_prim(R,x0-r,y0-r,x0-r+width-1,y0-r+width-1,color,0);
+    emit(context,x0-r,y0-r,x0-r+width-1,y0-r+width-1,color);
     if(x0==x1 && y0==y1) break;
     int e2=2*err;
     if(e2>=dy){ err+=dy; x0+=sx; }
     if(e2<=dx){ err+=dx; y0+=sy; }
     step++;
   }
+  return 1;
+}
+static void draw_line_cpu_box(void *context,int x1,int y1,int x2,int y2,
+                              uint32_t color){
+  draw_rect_prim((GmlRender*)context,x1,y1,x2,y2,color,0);
+}
+static void draw_line_colour_prim(GmlRender *R, int x0, int y0, int x1, int y1,
+                                  uint32_t first,uint32_t second,int width){
+  (void)gml_render_line_integer_boxes(R,x0,y0,x1,y1,first,second,width,
+                                       draw_line_cpu_box,R);
 }
 static void draw_line_prim(GmlRender *R,int x0,int y0,int x1,int y1,
                            uint32_t color,int width){
@@ -351,14 +363,16 @@ static int line_crosses_pixel_diamond(double x0,double y0,double x1,double y1,
   return fabs(x1-(pixel_x+0.5))+fabs(y1-(pixel_y+0.5))>=0.5;
 }
 
-static void draw_line_colour_subpixel_prim(GmlRender *R,
-                                           double x0,double y0,double x1,double y1,
-                                           uint32_t first,uint32_t second,int width){
-  if(!R || !isfinite(x0) || !isfinite(y0) || !isfinite(x1) || !isfinite(y1)) return;
+int gml_render_line_subpixel_boxes(GmlRender *R,
+                                   double x0,double y0,double x1,double y1,
+                                   uint32_t first,uint32_t second,int width,
+                                   GmlRenderPrimitiveBox emit,void *context){
+  if(!R || !emit || !isfinite(x0) || !isfinite(y0) ||
+     !isfinite(x1) || !isfinite(y1)) return 0;
   if(width<1) width=1;
   double color_dx=x1-x0,color_dy=y1-y0;
   double color_denominator=color_dx*color_dx+color_dy*color_dy;
-  if(color_denominator<=0.0) return;
+  if(color_denominator<=0.0) return 1;
 
   /* Resolve exact diamond-boundary ties deterministically. The y perturbation is reflected for
    * the renderer's top-down framebuffer coordinates. */
@@ -394,10 +408,17 @@ static void draw_line_colour_subpixel_prim(GmlRender *R,
                              color_denominator;
       uint32_t color=gm_color_lerp_amount(first,second,color_parameter);
       int radius=width/2;
-      draw_rect_prim(R,pixel_x-radius,pixel_y-radius,
-                     pixel_x-radius+width-1,pixel_y-radius+width-1,color,0);
+      emit(context,pixel_x-radius,pixel_y-radius,
+           pixel_x-radius+width-1,pixel_y-radius+width-1,color);
     }
   }
+  return 1;
+}
+static void draw_line_colour_subpixel_prim(GmlRender *R,
+                                           double x0,double y0,double x1,double y1,
+                                           uint32_t first,uint32_t second,int width){
+  (void)gml_render_line_subpixel_boxes(R,x0,y0,x1,y1,first,second,width,
+                                       draw_line_cpu_box,R);
 }
 
 
@@ -757,11 +778,11 @@ void gml_render_cpu_line_color(GmlRender *render,
   draw_line_colour_prim(render,x1,y1,x2,y2,color1,color2,width);
 }
 
-void gml_render_primitive_line_color_subpixel(GmlRender *render,
-                                              double x1,double y1,
-                                              double x2,double y2,
-                                              uint32_t color1,uint32_t color2,
-                                              int width){
+void gml_render_cpu_line_color_subpixel(GmlRender *render,
+                                        double x1,double y1,
+                                        double x2,double y2,
+                                        uint32_t color1,uint32_t color2,
+                                        int width){
   if(!gml_render_resident_application_cpu_barrier(render)) return;
   draw_line_colour_subpixel_prim(render,x1,y1,x2,y2,color1,color2,width);
 }

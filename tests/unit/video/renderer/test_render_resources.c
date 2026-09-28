@@ -1386,6 +1386,45 @@ static int resident_filled_span_public_order(void){
   return 1;
 }
 
+static int resident_line_coverage_public_order(void){
+  GmlRender *cpu=(GmlRender*)calloc(1,sizeof *cpu);
+  GmlRender *gpu=(GmlRender*)calloc(1,sizeof *gpu);
+  uint32_t cpu_pixels[64]={0};
+  FakeDevice fake={0};
+  GmlRenderDeviceServices device=service(&fake);
+  GmlRenderJournalMetrics metrics={0};
+  CHECK(cpu && gpu);
+  CHECK(gml_render_init(cpu,NULL)==0 && gml_render_init(gpu,NULL)==0);
+  gml_render_begin(cpu,cpu_pixels,8,8,0.0,0.0);
+  CHECK(gml_render_application_surface_ensure_owned(gpu,8,8));
+  gml_render_bind_device(gpu,&device);
+  CHECK(gml_render_begin_resident_owned_application(gpu,0.0,0.0,0));
+  gml_render_set_pending_fill(cpu,0xFF101010u);
+  gml_render_set_pending_fill(gpu,0xFF101010u);
+  gml_render_primitive_line(cpu,0,0,7,7,0x0000FFu,1);
+  gml_render_primitive_line(gpu,0,0,7,7,0x0000FFu,1);
+  gml_render_primitive_line_color(cpu,0,7,7,0,0x00FF00u,0xFF0000u,2);
+  gml_render_primitive_line_color(gpu,0,7,7,0,0x00FF00u,0xFF0000u,2);
+  gml_render_primitive_line_color_subpixel(cpu,0.25,2.75,7.25,4.25,
+                                            0xFFFFFFu,0x000000u,1);
+  gml_render_primitive_line_color_subpixel(gpu,0.25,2.75,7.25,4.25,
+                                            0xFFFFFFu,0x000000u,1);
+  gml_render_resource_journal_metrics(gpu->app_surface_resource,&metrics);
+  CHECK(gpu->resident_application_pass && fake.submits==4 && fake.readbacks==0 &&
+        metrics.journal_operations>12u && metrics.cpu_replays==0u);
+  gml_render_flush_pending_fill(cpu);
+  CHECK(cpu_pixels[0]!=0xFF101010u && cpu_pixels[7]!=0xFF101010u);
+  gml_render_bind_device(gpu,NULL);
+  CHECK(gml_render_resident_application_cpu_barrier(gpu) &&
+        !gpu->resident_application_pass && fake.readbacks==0 &&
+        memcmp(cpu_pixels,gpu->app_surface_owned,sizeof cpu_pixels)==0);
+  gml_render_free(cpu);
+  gml_render_free(gpu);
+  free(cpu);
+  free(gpu);
+  return 1;
+}
+
 static int resident_application_sprite_cpu_fallback(void){
   GmlRender *render=(GmlRender*)calloc(1,sizeof *render);
   GmlRenderDeviceServices device;
@@ -2803,6 +2842,7 @@ int main(void){
   passed+=resident_application_pending_clear();
   passed+=resident_flat_primitive_public_order();
   passed+=resident_filled_span_public_order();
+  passed+=resident_line_coverage_public_order();
   passed+=resident_application_sprite_cpu_fallback();
   passed+=resident_background_and_tile_cpu_barriers();
   passed+=atlas_scene_identity_and_retirement();
@@ -2821,6 +2861,6 @@ int main(void){
   passed+=target_pixel_observes_resident_result();
   passed+=nearest_subrectangle_mirrors();
   passed+=source_free_primitive_rect_replay();
-  printf("render resource cases: passed=%d failed=%d\n",passed,38-passed);
-  return passed==38?EXIT_SUCCESS:EXIT_FAILURE;
+  printf("render resource cases: passed=%d failed=%d\n",passed,39-passed);
+  return passed==39?EXIT_SUCCESS:EXIT_FAILURE;
 }

@@ -7,6 +7,18 @@
 #include "gml_render.h"
 
 typedef void (*GmlRenderPrimitiveSpan)(void *context,int x0,int x1,int y);
+typedef void (*GmlRenderPrimitiveBox)(void *context,int x1,int y1,int x2,int y2,
+                                      uint32_t color);
+int gml_render_line_integer_boxes(GmlRender *render,int x1,int y1,int x2,int y2,
+                                  uint32_t color1,uint32_t color2,int width,
+                                  GmlRenderPrimitiveBox emit,void *context);
+int gml_render_line_subpixel_boxes(GmlRender *render,double x1,double y1,
+                                   double x2,double y2,uint32_t color1,
+                                   uint32_t color2,int width,
+                                   GmlRenderPrimitiveBox emit,void *context);
+void gml_render_cpu_line_color_subpixel(GmlRender *render,double x1,double y1,
+                                        double x2,double y2,uint32_t color1,
+                                        uint32_t color2,int width);
 int gml_render_circle_filled_spans(GmlRender *render,double cx,double cy,
                                    double rx,double ry,GmlRenderPrimitiveSpan emit,
                                    void *context);

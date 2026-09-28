@@ -71,19 +71,41 @@ static int resident_flat_rect(GmlRender *render,int x1,int y1,int x2,int y2,
 }
 
 typedef struct {
-  GmlRenderRect *regions;
+  GmlRenderRect region;
+  uint32_t colour;
+} GmlFlatRegion;
+
+typedef struct {
+  GmlRender *render;
+  GmlFlatRegion *regions;
   uint32_t count;
   uint32_t capacity;
+  uint32_t uniform_colour;
   int overflow;
 } GmlFlatSpans;
 
 static void collect_flat_span(void *context,int x0,int x1,int y){
   GmlFlatSpans *spans=(GmlFlatSpans*)context;
   if(spans->count>=spans->capacity){spans->overflow=1;return;}
-  spans->regions[spans->count++]=(GmlRenderRect){x0,y,(uint32_t)(x1-x0+1),1u};
+  spans->regions[spans->count++]=(GmlFlatRegion){
+    {x0,y,(uint32_t)(x1-x0+1),1u},spans->uniform_colour};
 }
 
-static int resident_flat_spans(GmlRender *render,GmlFlatSpans *spans,uint32_t color){
+static void collect_line_box(void *context,int x1,int y1,int x2,int y2,
+                             uint32_t colour){
+  GmlFlatSpans *spans=(GmlFlatSpans*)context;
+  GmlRender *render=spans->render;
+  if(x2<0 || y2<0 || x1>=render->fbw || y1>=render->fbh) return;
+  if(x1<0) x1=0;
+  if(y1<0) y1=0;
+  if(x2>=render->fbw) x2=render->fbw-1;
+  if(y2>=render->fbh) y2=render->fbh-1;
+  if(spans->count>=spans->capacity){spans->overflow=1;return;}
+  spans->regions[spans->count++]=(GmlFlatRegion){
+    {x1,y1,(uint32_t)(x2-x1+1),(uint32_t)(y2-y1+1)},colour};
+}
+
+static int resident_flat_spans(GmlRender *render,GmlFlatSpans *spans){
   GmlRenderResource *resource;
   GmlRenderImageRef image;
   GmlRenderDrawOp *operations;
@@ -113,8 +135,9 @@ static int resident_flat_spans(GmlRender *render,GmlFlatSpans *spans,uint32_t co
     operation->target.height=(uint32_t)render->fbh;
     operation->target.pixel_format=GML_RENDER_PIXEL_ARGB8888;
     operation->target.region=(GmlRenderRect){0,0,(uint32_t)render->fbw,(uint32_t)render->fbh};
-    operation->payload.primitive.region=spans->regions[i];
-    operation->payload.primitive.colour=gml_render_cpu_backend_color_to_xrgb(color);
+    operation->payload.primitive.region=spans->regions[i].region;
+    operation->payload.primitive.colour=gml_render_cpu_backend_color_to_xrgb(
+      spans->regions[i].colour);
   }
   batch=(GmlRenderDrawBatch){operations,spans->count,NULL,0u};
   result=gml_render_application_scene_submit(render,&batch,NULL,0u);
@@ -129,11 +152,13 @@ static int resident_filled_circle(GmlRender *render,double cx,double cy,
   int covered,result;
   if(!resident_flat_eligible(render) || !isfinite(cx) || !isfinite(cy) ||
      !isfinite(rx) || !isfinite(ry) || rx<0.0 || ry<0.0) return 0;
+  spans.render=render;
   spans.capacity=(uint32_t)(render->fbh<8192?render->fbh:8192);
-  spans.regions=(GmlRenderRect*)malloc(spans.capacity*sizeof *spans.regions);
+  spans.uniform_colour=color;
+  spans.regions=(GmlFlatRegion*)malloc(spans.capacity*sizeof *spans.regions);
   if(!spans.regions) return 0;
   covered=gml_render_circle_filled_spans(render,cx,cy,rx,ry,collect_flat_span,&spans);
-  result=covered && resident_flat_spans(render,&spans,color);
+  result=covered && resident_flat_spans(render,&spans);
   free(spans.regions);
   return result;
 }
@@ -145,12 +170,62 @@ static int resident_filled_triangle(GmlRender *render,
   GmlFlatSpans spans={0};
   int covered,result;
   if(!resident_flat_eligible(render)) return 0;
+  spans.render=render;
   spans.capacity=(uint32_t)(render->fbh<8192?render->fbh:8192);
-  spans.regions=(GmlRenderRect*)malloc(spans.capacity*sizeof *spans.regions);
+  spans.uniform_colour=color;
+  spans.regions=(GmlFlatRegion*)malloc(spans.capacity*sizeof *spans.regions);
   if(!spans.regions) return 0;
   covered=gml_render_triangle_opaque_spans(render,x1,y1,x2,y2,x3,y3,
                                            alpha,outline,collect_flat_span,&spans);
-  result=covered && resident_flat_spans(render,&spans,color);
+  result=covered && resident_flat_spans(render,&spans);
+  free(spans.regions);
+  return result;
+}
+
+static int resident_line_bounds(GmlRender *render,double x1,double y1,
+                                double x2,double y2,int width){
+  double right=(double)render->fbw+8192.0,bottom=(double)render->fbh+8192.0;
+  return width<=4096 && x1>=-8192.0 && x1<right && x2>=-8192.0 && x2<right &&
+    y1>=-8192.0 && y1<bottom && y2>=-8192.0 && y2<bottom;
+}
+
+static int resident_line_integer(GmlRender *render,int x1,int y1,int x2,int y2,
+                                 uint32_t colour1,uint32_t colour2,int width){
+  GmlFlatSpans spans={0};
+  int covered,result;
+  if(!resident_flat_eligible(render) ||
+     !resident_line_bounds(render,x1,y1,x2,y2,width)) return 0;
+  spans.render=render;
+  int64_t dx=(int64_t)x2-x1,dy=(int64_t)y2-y1;
+  if(dx<0) dx=-dx;
+  if(dy<0) dy=-dy;
+  int64_t steps=(dx>dy?dx:dy)+1;
+  spans.capacity=(uint32_t)(steps<8192?steps:8192);
+  spans.regions=(GmlFlatRegion*)malloc(spans.capacity*sizeof *spans.regions);
+  if(!spans.regions) return 0;
+  covered=gml_render_line_integer_boxes(render,x1,y1,x2,y2,
+                                         colour1,colour2,width,collect_line_box,&spans);
+  result=covered && resident_flat_spans(render,&spans);
+  free(spans.regions);
+  return result;
+}
+
+static int resident_line_subpixel(GmlRender *render,double x1,double y1,
+                                  double x2,double y2,uint32_t colour1,
+                                  uint32_t colour2,int width){
+  GmlFlatSpans spans={0};
+  int covered,result;
+  if(!resident_flat_eligible(render) || !isfinite(x1) || !isfinite(y1) ||
+     !isfinite(x2) || !isfinite(y2) ||
+     !resident_line_bounds(render,x1,y1,x2,y2,width)) return 0;
+  spans.render=render;
+  double candidate_count=(ceil(fmax(fabs(x2-x1),fabs(y2-y1)))+3.0)*5.0;
+  spans.capacity=(uint32_t)(candidate_count<8192.0?candidate_count:8192.0);
+  spans.regions=(GmlFlatRegion*)malloc(spans.capacity*sizeof *spans.regions);
+  if(!spans.regions) return 0;
+  covered=gml_render_line_subpixel_boxes(render,x1,y1,x2,y2,
+                                          colour1,colour2,width,collect_line_box,&spans);
+  result=covered && resident_flat_spans(render,&spans);
   free(spans.regions);
   return result;
 }
@@ -176,13 +251,24 @@ void gml_render_primitive_point(GmlRender *render,int x,int y,uint32_t color){
 void gml_render_primitive_line(GmlRender *render,int x1,int y1,int x2,int y2,
                                uint32_t color,int width){
   if(resident_axis_line(render,x1,y1,x2,y2,color,width)) return;
+  if(resident_line_integer(render,x1,y1,x2,y2,color,color,width)) return;
   gml_render_cpu_line(render,x1,y1,x2,y2,color,width);
 }
 
 void gml_render_primitive_line_color(GmlRender *render,int x1,int y1,int x2,int y2,
                                      uint32_t color1,uint32_t color2,int width){
   if(color1==color2 && resident_axis_line(render,x1,y1,x2,y2,color1,width)) return;
+  if(resident_line_integer(render,x1,y1,x2,y2,color1,color2,width)) return;
   gml_render_cpu_line_color(render,x1,y1,x2,y2,color1,color2,width);
+}
+
+void gml_render_primitive_line_color_subpixel(GmlRender *render,
+                                              double x1,double y1,
+                                              double x2,double y2,
+                                              uint32_t color1,uint32_t color2,
+                                              int width){
+  if(resident_line_subpixel(render,x1,y1,x2,y2,color1,color2,width)) return;
+  gml_render_cpu_line_color_subpixel(render,x1,y1,x2,y2,color1,color2,width);
 }
 
 void gml_render_primitive_rectangle(GmlRender *render,
