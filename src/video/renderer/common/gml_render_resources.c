@@ -5,6 +5,7 @@
  * canonical state: the existing surface owns pixels, and this owner tracks how to update them. */
 #include "gml_render_resources.h"
 #include "gml_render_cpu_replay.h"
+#include "gml_render_plan.h"
 
 #include <limits.h>
 #include <stdlib.h>
@@ -340,10 +341,17 @@ static int batch_valid(const GmlRenderResource *resource,const GmlRenderDrawBatc
       if(operation->source_count || operation->sources) return 0;
     } else {
       if(!batch->states || operation->state_index>=batch->state_count ||
-         operation->source_count!=1u || !operation->sources) return 0;
+         !operation->source_count || !operation->sources) return 0;
+      if(operation->opcode==GML_RENDER_OP_CONTENT_SHADER_DRAW){
+        if(!operation->payload.shader ||
+           operation->payload.shader->sampler_count>GML_PLAN_MAX_SAMPLERS ||
+           operation->source_count!=1u+operation->payload.shader->sampler_count) return 0;
+      } else if(operation->source_count!=1u) return 0;
       state=&batch->states[operation->state_index];
       source=find_input(sources,source_count,operation->sources[0]);
       if(!source) return 0;
+      for(uint32_t bound=1;bound<operation->source_count;bound++)
+        if(!find_input(sources,source_count,operation->sources[bound])) return 0;
     }
     if(operation->opcode==GML_RENDER_OP_CONTENT_SHADER_DRAW &&
        (!operation->payload.shader ||
@@ -363,36 +371,40 @@ static int upload_sources(const GmlRenderDeviceServices *device,
                            const GmlRenderResourceSource *sources,uint32_t source_count){
   for(uint32_t index=0;index<batch->operation_count;index++){
     const GmlRenderDrawOp *operation=&batch->operations[index];
-    const GmlRenderResourceSource *view;
-    GmlRenderImageUpload transfer={0};
-    int seen=0;
     if(!operation->source_count) continue;
-    /* A compatible quad run reuses the immediately preceding source. Avoid walking the
-     * whole batch for every operation; mixed-source batches still use the original search. */
-    if(index && batch->operations[index-1u].source_count &&
-       same_version(batch->operations[index-1u].sources[0],operation->sources[0]))
-      seen=1;
-    else for(uint32_t earlier=0;earlier<index;earlier++)
-      if(batch->operations[earlier].source_count &&
-         same_version(batch->operations[earlier].sources[0],operation->sources[0])){
+    for(uint32_t bound=0;bound<operation->source_count;bound++){
+      const GmlRenderResourceSource *view;
+      GmlRenderImageUpload transfer={0};
+      int seen=0;
+      /* A compatible quad run reuses the immediately preceding source. Avoid walking the
+       * whole batch for every operation; mixed-source batches still use the original search. */
+      if(index && batch->operations[index-1u].source_count &&
+         same_version(batch->operations[index-1u].sources[0],operation->sources[bound]))
         seen=1;
-        break;
-      }
-    if(seen) continue;
-    view=find_input(sources,source_count,operation->sources[0]);
-    if(!view) return 0;
-    if(view->resident_resource &&
-       view->resident_resource->gpu_version==view->image.content_version &&
-       view->resident_resource->device_identity==device->context) continue;
-    transfer.image=view->image;
-    transfer.storage_width=view->width;
-    transfer.storage_height=view->height;
-    transfer.region=(GmlRenderRect){0,0,view->width,view->height};
-    transfer.pixel_format=view->pixel_format;
-    transfer.stride_bytes=view->stride_bytes;
-    transfer.byte_capacity=view->byte_capacity;
-    transfer.bytes=view->bytes;
-    if(!device->upload(device->context,&transfer)) return 0;
+      else for(uint32_t earlier=0;earlier<index && !seen;earlier++)
+        for(uint32_t previous=0;previous<batch->operations[earlier].source_count;previous++)
+          if(same_version(batch->operations[earlier].sources[previous],
+                          operation->sources[bound])){ seen=1; break; }
+      if(!seen) for(uint32_t previous=0;previous<bound;previous++)
+        if(same_version(operation->sources[previous],operation->sources[bound])){
+          seen=1; break;
+        }
+      if(seen) continue;
+      view=find_input(sources,source_count,operation->sources[bound]);
+      if(!view) return 0;
+      if(view->resident_resource &&
+         view->resident_resource->gpu_version==view->image.content_version &&
+         view->resident_resource->device_identity==device->context) continue;
+      transfer.image=view->image;
+      transfer.storage_width=view->width;
+      transfer.storage_height=view->height;
+      transfer.region=(GmlRenderRect){0,0,view->width,view->height};
+      transfer.pixel_format=view->pixel_format;
+      transfer.stride_bytes=view->stride_bytes;
+      transfer.byte_capacity=view->byte_capacity;
+      transfer.bytes=view->bytes;
+      if(!device->upload(device->context,&transfer)) return 0;
+    }
   }
   return 1;
 }

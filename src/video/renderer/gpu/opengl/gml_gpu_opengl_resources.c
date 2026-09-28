@@ -299,7 +299,8 @@ int gml_gpu_opengl_scene_upload(GmlGpuBackend *backend,const GmlRenderImageUploa
   rendered_origin=transfer->image.resource_class==GML_RENDER_RESOURCE_SCREEN ||
                   transfer->image.resource_class==GML_RENDER_RESOURCE_APPLICATION ||
                   transfer->image.resource_class==GML_RENDER_RESOURCE_SURFACE ||
-                  transfer->image.resource_class==GML_RENDER_RESOURCE_SCRATCH;
+                  transfer->image.resource_class==GML_RENDER_RESOURCE_SCRATCH ||
+                  transfer->image.resource_class==GML_RENDER_RESOURCE_SHADER_SAMPLER;
   /* Atlas refs are cacheable by version: packaged pages stay at version one, while runtime
    * font pages advance on every mutation and get a fresh incarnation on reuse. Generic mutable
    * resources cannot infer same-version residency from their image reference. */
@@ -473,7 +474,8 @@ void gml_gpu_opengl_scene_retire(GmlGpuBackend *backend,GmlRenderImageRef image)
                      image.resource_class==GML_RENDER_RESOURCE_SCREEN ||
                      image.resource_class==GML_RENDER_RESOURCE_APPLICATION ||
                      image.resource_class==GML_RENDER_RESOURCE_SURFACE ||
-                     image.resource_class==GML_RENDER_RESOURCE_SCRATCH;
+                     image.resource_class==GML_RENDER_RESOURCE_SCRATCH ||
+                     image.resource_class==GML_RENDER_RESOURCE_SHADER_SAMPLER;
   if(!backend || !backend->loaded) return;
   for(size_t index=0;index<GL_SCENE_MAX_IMAGES;index++){
     GlSceneImage *candidate=&backend->scene.images[index];

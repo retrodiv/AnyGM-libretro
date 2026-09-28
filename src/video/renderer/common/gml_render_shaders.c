@@ -441,6 +441,10 @@ int gml_render_shader_plan_snapshot(const GmlRender *r,int shader_id,
   uint32_t count;
   if(!out || !r || !r->shader_pal || shader_id<0 || shader_id>=r->n_shader_pal ||
      r->shader_pal[shader_id].gpu_binding_overflow ||
+     r->shader_pal[shader_id].generic_uniform_count<0 ||
+     r->shader_pal[shader_id].generic_uniform_count>GML_PLAN_MAX_UNIFORMS ||
+     r->shader_pal[shader_id].generic_sampler_count<0 ||
+     r->shader_pal[shader_id].generic_sampler_count>GML_PLAN_MAX_SAMPLERS ||
      !gml_render_shader_sources(r,shader_id,&sources)) return 0;
   memset(out,0,sizeof *out);
   out->identity=(uint32_t)shader_id;

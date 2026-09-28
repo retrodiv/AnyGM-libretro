@@ -367,15 +367,22 @@ void gml_draw_surface_stretched(GmlRender *r,int surf,double dx,double dy,
  * a later distinct surface draw can consume that result on the same device. */
 static int resident_surface_shader(GmlRender *r,int surf,double dx,double dy,double dw,double dh,
                                    uint32_t blend,double alpha){
+  enum { MAX_AUXILIARY_SNAPSHOT_BYTES=64u*1024u*1024u };
   int slot=surface_slot(surf),target_id,target_slot,application_target;
   GmlRenderResource *source_resource,*target;
-  GmlRenderResourceSource source={0};
+  GmlRenderResourceSource sources[1u+GML_PLAN_MAX_SAMPLERS]={0};
   GmlRenderDrawOp operation={0};
   GmlRenderDrawStateSnapshot state={0};
-  GmlRenderImageRef source_ref,image;
+  GmlRenderImageRef source_refs[1u+GML_PLAN_MAX_SAMPLERS],image;
   GmlRenderDrawBatch batch;
   GmlRenderResourceExecution result;
   GmlPlanShader shader;
+  GmlRenderShaderSampler bindings[GML_PLAN_MAX_SAMPLERS];
+  GmlRenderDeviceCaps caps={0};
+  uint32_t *owned_sampler_pixels[GML_PLAN_MAX_SAMPLERS]={0};
+  const GmlRenderDeviceServices *device;
+  uint32_t prepared=0;
+  size_t snapshot_bytes=0;
   static const float white[4]={1.0f,1.0f,1.0f,1.0f};
   if(!r || slot<0 || !r->surface[slot].live || !r->resident_application_pass ||
      !gml_render_device(r) || !r->shader_device_present || r->active_shader<0 ||
@@ -400,25 +407,76 @@ static int resident_surface_shader(GmlRender *r,int surf,double dx,double dy,dou
             r->fbw!=r->surface[target_slot].w ||
             r->fbh!=r->surface[target_slot].h) return 0;
   if(!gml_render_shader_plan_snapshot(r,r->active_shader,0u,white,&shader) ||
-     shader.sampler_count ||
      !(source_resource=gml_render_surface_resource_ensure(r,surf)) ||
      !(gml_render_resource_pending_device_source_view(
-         source_resource,gml_render_device(r),&source) ||
-       gml_render_resource_source_view(source_resource,&source)) ||
-     source.pixel_format!=GML_RENDER_PIXEL_ARGB8888) return 0;
+         source_resource,gml_render_device(r),&sources[0]) ||
+       gml_render_resource_source_view(source_resource,&sources[0])) ||
+     sources[0].pixel_format!=GML_RENDER_PIXEL_ARGB8888) return 0;
+  device=gml_render_device(r);
+  source_refs[0]=sources[0].image;
+  if(shader.sampler_count){
+    if(!device->capabilities || !device->capabilities(device->context,&caps) ||
+       !caps.max_texture_extent) return 0;
+    if(gml_render_shader_samplers(r,r->active_shader,bindings,GML_PLAN_MAX_SAMPLERS)!=
+       shader.sampler_count) return 0;
+    for(uint32_t index=0;index<shader.sampler_count;index++){
+      const uint32_t *pixels=NULL;
+      GmlRenderResourceSource *view=&sources[index+1u];
+      GmlRenderShaderSampler *binding=&bindings[index];
+      int width=0,height=0;
+      size_t bytes;
+      if(binding->surface>=0){
+        GmlRenderResource *bound=gml_render_surface_resource_ensure(r,binding->surface);
+        GmlRenderJournalMetrics metrics={0};
+        if(!bound || binding->surface==target_id) goto sampler_fallback;
+        gml_render_resource_journal_metrics(bound,&metrics);
+        /* A CPU-stale auxiliary surface is an ordered fallback. Only the primary
+         * source currently has a device-origin-aware sampler binding. */
+        if(metrics.cpu_version!=metrics.logical_version ||
+           metrics.authority==GML_RENDER_RESOURCE_INVALID ||
+           !gml_render_surface_plane(r,binding->surface,&width,&height,&pixels))
+          goto sampler_fallback;
+      } else if(binding->sprite>=0){
+        if(!gml_render_sprite_frame_plane(r,binding->sprite,binding->frame,
+                                          &width,&height,&pixels)) goto sampler_fallback;
+      } else goto sampler_fallback;
+      if(!pixels || width<=0 || height<=0 ||
+         (uint32_t)width>caps.max_texture_extent ||
+         (uint32_t)height>caps.max_texture_extent ||
+         (size_t)width>SIZE_MAX/4u/(size_t)height ||
+         (uint32_t)width>UINT32_MAX/4u) goto sampler_fallback;
+      bytes=(size_t)width*(size_t)height*4u;
+      if(bytes>MAX_AUXILIARY_SNAPSHOT_BYTES-snapshot_bytes) goto sampler_fallback;
+      owned_sampler_pixels[index]=(uint32_t*)malloc(bytes);
+      if(!owned_sampler_pixels[index]) goto sampler_fallback;
+      memcpy(owned_sampler_pixels[index],pixels,bytes);
+      snapshot_bytes+=bytes;
+      view->image=(GmlRenderImageRef){GML_RENDER_RESOURCE_SHADER_SAMPLER,
+        index+1u,gml_render_scene_incarnation_allocate(),1u};
+      if(!view->image.incarnation) goto sampler_fallback;
+      view->width=(uint32_t)width;
+      view->height=(uint32_t)height;
+      view->pixel_format=GML_RENDER_PIXEL_ARGB8888;
+      view->stride_bytes=(uint32_t)width*4u;
+      view->byte_capacity=bytes;
+      view->bytes=owned_sampler_pixels[index];
+      source_refs[index+1u]=view->image;
+      shader.samplers[index].image=index+1u;
+      prepared++;
+    }
+  }
   gml_render_flush_pending_fill(r);
   if(r->pending_fill || !r->resident_application_pass ||
      !(target=application_target?gml_render_application_resource_ensure(r):
-       gml_render_surface_resource_ensure(r,target_id))) return 0;
+       gml_render_surface_resource_ensure(r,target_id))) goto sampler_fallback;
   image=application_target?gml_render_application_scene_next_image_ref(r,target):
     gml_render_resource_image_ref(target);
-  if(image.content_version==UINT64_MAX) return 0;
-  source_ref=source.image;
+  if(image.content_version==UINT64_MAX) goto sampler_fallback;
   operation.opcode=GML_RENDER_OP_CONTENT_SHADER_DRAW;
   operation.scene_family=GML_RENDER_SCENE_SURFACE;
   operation.reconstruction_mode=GML_RENDER_DEVICE_CHECKPOINT;
-  operation.source_count=1u;
-  operation.sources=&source_ref;
+  operation.source_count=1u+shader.sampler_count;
+  operation.sources=source_refs;
   operation.target.image=image;
   operation.target.image.content_version++;
   operation.target.storage_version=1u;
@@ -439,10 +497,15 @@ static int resident_surface_shader(GmlRender *r,int surf,double dx,double dy,dou
   state.sampler_count=1u;
   state.samplers[0].filter=r->interp?GML_RENDER_FILTER_BILINEAR:GML_RENDER_FILTER_NEAREST;
   state.samplers[0].edge_rule=GML_RENDER_EDGE_CLAMP_SUBIMAGE;
-  state.samplers[0].source_region=(GmlRenderRect){0,0,source.width,source.height};
+  state.samplers[0].source_region=(GmlRenderRect){0,0,sources[0].width,sources[0].height};
   batch=(GmlRenderDrawBatch){&operation,1u,&state,1u};
-  result=application_target?gml_render_application_scene_submit(r,&batch,&source,1u):
-    gml_render_surface_scene_submit_deferred_shader(r,target_id,&batch,&source,1u);
+  result=application_target?gml_render_application_scene_submit(r,&batch,sources,
+      operation.source_count):
+    gml_render_surface_scene_submit_deferred_shader(r,target_id,&batch,sources,
+      operation.source_count);
+  for(uint32_t index=0;index<prepared;index++)
+    if(device->retire) device->retire(device->context,source_refs[index+1u]);
+  for(uint32_t index=0;index<shader.sampler_count;index++) free(owned_sampler_pixels[index]);
   if(result!=GML_RENDER_RESOURCE_EXEC_DEVICE){
     const GmlRenderDeviceServices *device=gml_render_device(r);
     if(device && device->content_program_failed &&
@@ -455,6 +518,9 @@ static int resident_surface_shader(GmlRender *r,int surf,double dx,double dy,dou
   r->fb_all_transparent=0;
   r->shaded_draws++;
   return 1;
+sampler_fallback:
+  for(uint32_t index=0;index<shader.sampler_count;index++) free(owned_sampler_pixels[index]);
+  return 0;
 }
 
 /* Opaque and binary-alpha integer surface crops share the exact nearest texel rule with

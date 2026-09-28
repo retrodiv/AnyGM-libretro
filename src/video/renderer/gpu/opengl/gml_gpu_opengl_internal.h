@@ -165,7 +165,9 @@ int gml_gpu_opengl_execute_shader_draw(GmlGpuBackend *backend,GmlRenderPlan *pla
                                        char *error,size_t error_capacity);
 int gml_gpu_opengl_scene_shader_draw(GmlGpuBackend *backend,const GmlPlanShader *shader,
                                       const GmlRenderDrawStateSnapshot *state,
-                                      GlSceneImage *target,GlSceneImage *source,int source_over,
+                                      GlSceneImage *target,GlSceneImage *source,
+                                      GlSceneImage *const *samplers,uint32_t sampler_count,
+                                      int source_over,
                                       char *error,size_t error_capacity);
 int gml_gpu_opengl_bind_readback_target(GmlGpuBackend *backend,uint32_t width,uint32_t height,
                                          char *error,size_t error_capacity);

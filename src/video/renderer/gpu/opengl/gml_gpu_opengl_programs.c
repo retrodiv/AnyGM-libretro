@@ -584,6 +584,7 @@ static void set_sampler_filter(GmlGpuBackend *backend,GLuint texture,int linear)
 static int execute_shader_draw_with_source(GmlGpuBackend *backend,GmlRenderPlan *plan,
                                             const GmlPlanOp *op,GmlGpuCounters *counters,
                                             GLuint resident_source,int rendered_source_origin,
+                                            const GLuint *resident_samplers,
                                             char *error,size_t error_capacity){
   const GmlPlanShader *shader=&plan->shader;
   const GmlPlanImage *image=&plan->images[op->source];
@@ -617,6 +618,10 @@ static int execute_shader_draw_with_source(GmlGpuBackend *backend,GmlRenderPlan 
     return 0;
   }
   for(uint32_t index=0;index<shader->sampler_count && index<GML_PLAN_MAX_SAMPLERS;index++){
+    if(resident_samplers){
+      sampler_names[index]=resident_samplers[index];
+      continue;
+    }
     uint32_t bound=shader->samplers[index].image;
     if(bound==GML_PLAN_NO_IMAGE || bound>=plan->image_count) continue;
     if(!gml_gpu_opengl_upload_source(backend,&plan->images[bound],counters,&sampler_names[index],
@@ -719,25 +724,35 @@ int gml_gpu_opengl_execute_shader_draw(GmlGpuBackend *backend,GmlRenderPlan *pla
                                         const GmlPlanOp *op,GmlGpuCounters *counters,
                                         char *error,size_t error_capacity){
   return execute_shader_draw_with_source(backend,plan,op,counters,0,0,
-                                         error,error_capacity);
+                                         NULL,error,error_capacity);
 }
 
 int gml_gpu_opengl_scene_shader_draw(GmlGpuBackend *backend,const GmlPlanShader *shader,
                                       const GmlRenderDrawStateSnapshot *state,
-                                      GlSceneImage *target,GlSceneImage *source,int source_over,
+                                      GlSceneImage *target,GlSceneImage *source,
+                                      GlSceneImage *const *samplers,uint32_t sampler_count,
+                                      int source_over,
                                       char *error,size_t error_capacity){
   GmlRenderPlan plan={0};
   GmlPlanOp operation={0};
+  GLuint sampler_names[GML_PLAN_MAX_SAMPLERS]={0};
   int drawn;
   GLenum gl_error;
   if(!backend || !shader || !state || !target || !source || !source->texture ||
-     !target->framebuffer || !target->width || !target->height) return 0;
+     !target->framebuffer || !target->width || !target->height ||
+     sampler_count!=shader->sampler_count || sampler_count>GML_PLAN_MAX_SAMPLERS) return 0;
   plan.target_width=target->width;
   plan.target_height=target->height;
   plan.image_count=1u;
   plan.images[0].width=source->width;
   plan.images[0].height=source->height;
   plan.shader=*shader;
+  for(uint32_t index=0;index<sampler_count;index++){
+    if(!samplers || !samplers[index] || !samplers[index]->texture ||
+       !samplers[index]->rendered_origin) return 0;
+    sampler_names[index]=samplers[index]->texture;
+    plan.shader.samplers[index].image=index+1u;
+  }
   operation.opcode=GML_PLAN_OP_SHADER_DRAW;
   operation.source=0u;
   operation.linear=state->samplers[0].filter==GML_RENDER_FILTER_BILINEAR;
@@ -752,7 +767,7 @@ int gml_gpu_opengl_scene_shader_draw(GmlGpuBackend *backend,const GmlPlanShader 
   } else backend->gl.Disable(GL_BLEND);
   backend->gl.BindVertexArray(backend->scene.vertex_array);
   drawn=execute_shader_draw_with_source(backend,&plan,&operation,NULL,source->texture,
-                                        source->rendered_origin,error,error_capacity);
+                                        source->rendered_origin,sampler_names,error,error_capacity);
   backend->gl.BindVertexArray(0);
   backend->gl.Disable(GL_BLEND);
   gl_error=backend->gl.GetError();

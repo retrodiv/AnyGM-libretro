@@ -204,10 +204,12 @@ static int scene_preflight(GmlGpuBackend *backend,const GmlRenderDrawBatch *batc
       GlSceneImage *source;
       if(op->reconstruction_mode!=GML_RENDER_DEVICE_CHECKPOINT ||
          !batch->states || op->state_index>=batch->state_count ||
-         op->source_count!=1u || !op->sources || !shader ||
-         !shader->vertex_es || !shader->fragment_es || shader->sampler_count ||
+         !op->sources || !shader ||
+         !shader->vertex_es || !shader->fragment_es ||
+         shader->sampler_count>GML_PLAN_MAX_SAMPLERS ||
+         op->source_count!=1u+shader->sampler_count ||
          shader->uniform_count>GML_PLAN_MAX_UNIFORMS ||
-         backend->scene.max_texture_units<1 ||
+         backend->scene.max_texture_units<=((int)shader->sampler_count) ||
          !full_region(target->region,target->width,target->height) ||
          (!existing_target(backend,target) &&
           !cleared_earlier(cleared,clear_count,target->image))) return 0;
@@ -230,6 +232,13 @@ static int scene_preflight(GmlGpuBackend *backend,const GmlRenderDrawBatch *batc
          !full_region(state->samplers[0].source_region,source->width,source->height) ||
          !((state->clip.width==0 && state->clip.height==0) ||
            full_region(state->clip,target->width,target->height))) return 0;
+      for(uint32_t bound=0;bound<shader->sampler_count;bound++){
+        GlSceneImage *sampler=gml_gpu_opengl_scene_image(backend,op->sources[bound+1u]);
+        if(!sampler || !sampler->texture || !sampler->rendered_origin ||
+           same_logical(sampler->ref,target->image) ||
+           (sampler->pixel_format!=GML_RENDER_PIXEL_XRGB8888 &&
+            sampler->pixel_format!=GML_RENDER_PIXEL_ARGB8888)) return 0;
+      }
       continue;
     }
     if(op->opcode!=GML_RENDER_OP_TEXTURED_QUAD || !batch->states ||
@@ -623,8 +632,12 @@ GmlRenderExecutionResult gml_gpu_opengl_scene_submit(GmlGpuBackend *backend,
     }
     if(op->opcode==GML_RENDER_OP_CONTENT_SHADER_DRAW){
       GlSceneImage *source=gml_gpu_opengl_scene_image(backend,op->sources[0]);
+      GlSceneImage *samplers[GML_PLAN_MAX_SAMPLERS]={0};
+      for(uint32_t bound=0;bound<op->payload.shader->sampler_count;bound++)
+        samplers[bound]=gml_gpu_opengl_scene_image(backend,op->sources[bound+1u]);
       if(!source || !gml_gpu_opengl_scene_shader_draw(backend,op->payload.shader,
-          &batch->states[op->state_index],target,source,
+          &batch->states[op->state_index],target,source,samplers,
+          op->payload.shader->sampler_count,
           qualified_blend(&batch->states[op->state_index])==1,error,error_capacity)){
         mark_uncertain(&result,target);
         break;
