@@ -727,6 +727,73 @@ static int public_checkpoint_readback_refusal(void){
   return 1;
 }
 
+static int queued_checkpoint_flush_refusal_preserves_target(void){
+  GmlRender *render=(GmlRender*)calloc(1,sizeof *render);
+  uint32_t base[16]={0},source_pixels[4]={0xFF315779u,0xFF315779u,
+                                          0xFF315779u,0xFF315779u};
+  GmlRenderResourceSource source=source_view(source_pixels,1);
+  GmlRenderImageRef source_image=source.image;
+  GmlRenderDrawOp operation=quad_op(2u,&source_image);
+  GmlRenderDrawStateSnapshot state=quad_state(0);
+  GmlRenderJournalMetrics metrics={0};
+  FakeDevice fake={0};
+  GmlRenderDeviceServices device=service(&fake);
+  GmlRenderResource *resource;
+  int id;
+  CHECK(render);
+  render->next_surface_id=1;
+  gml_render_begin(render,base,4,4,0.0,0.0);
+  CHECK(gml_render_application_surface_ensure_owned(render,4,4));
+  id=gml_surface_create(render,4,4);
+  CHECK(id>0);
+  gml_render_bind_device(render,&device);
+  CHECK(gml_render_begin_resident_owned_application(render,0.0,0.0,0));
+  resource=gml_render_application_resource_ensure(render);
+  CHECK(resource);
+  operation.reconstruction_mode=GML_RENDER_DEVICE_CHECKPOINT;
+  operation.target.image=gml_render_resource_image_ref(resource);
+  operation.target.image.content_version++;
+  operation.target.pixel_format=GML_RENDER_PIXEL_ARGB8888;
+  CHECK(gml_render_application_scene_enqueue(render,&operation,&state,&source));
+  fake.readback_colour=0xFF315779u;
+  fake.fail_upload_at=1;
+  CHECK(!gml_surface_set_target(render,id) && fake.uploads==1 &&
+        fake.submits==0 && render->target_id==-1 && render->target_sp==0 &&
+        render->fb==render->app_surface_owned && gml_surface_exists(render,id));
+  gml_render_resource_journal_metrics(resource,&metrics);
+  CHECK(metrics.authority==GML_RENDER_RESOURCE_CPU_CURRENT &&
+        metrics.logical_version==1u && metrics.cpu_version==1u &&
+        metrics.gpu_version==0u && metrics.journal_operations==0u &&
+        render->app_surface_owned[5]==0u);
+  fake.fail_upload_at=0;
+  CHECK(gml_surface_set_target(render,id) && render->target_id==id &&
+        render->target_sp==1 && render->fb==render->surface[id-1].px &&
+        fake.submits==1 && fake.readbacks==1 &&
+        render->app_surface_owned[5]==0xFF315779u);
+  gml_render_resource_journal_metrics(resource,&metrics);
+  CHECK(metrics.authority==GML_RENDER_RESOURCE_BOTH_CURRENT &&
+        metrics.logical_version==2u && metrics.cpu_version==2u &&
+        metrics.gpu_version==2u && metrics.device_checkpoints==1u);
+  gml_surface_reset_target(render);
+  CHECK(render->target_id==-1 && render->target_sp==0 &&
+        render->fb==render->app_surface_owned && fake.readbacks==1);
+  CHECK(gml_render_begin_resident_owned_application(render,0.0,0.0,0));
+  operation.target.image=gml_render_resource_image_ref(resource);
+  operation.target.image.content_version++;
+  CHECK(gml_render_application_scene_enqueue(render,&operation,&state,&source));
+  fake.fail_readback=1;
+  CHECK(!gml_surface_set_target(render,id) && render->target_id==-1 &&
+        render->target_sp==0 && render->fb==render->app_surface_owned &&
+        fake.submits==2 && fake.readbacks==2);
+  gml_render_resource_journal_metrics(resource,&metrics);
+  CHECK(metrics.authority==GML_RENDER_RESOURCE_INVALID &&
+        gml_render_application_scene_flush(render) && fake.submits==2 &&
+        !gml_render_application_surface_owned_read(render,NULL));
+  gml_render_free(render);
+  free(render);
+  return 1;
+}
+
 static int rejection_and_isolation(void){
   uint32_t first_pixels[16],second_pixels[16];
   GmlRenderDrawOp operation=clear_op(2u,0xFF102030u,GML_RENDER_REPLAY_EXACT);
@@ -2305,6 +2372,7 @@ int main(void){
   passed+=partial_error_and_write_lease();
   passed+=checkpoint_and_failure();
   passed+=public_checkpoint_readback_refusal();
+  passed+=queued_checkpoint_flush_refusal_preserves_target();
   passed+=rejection_and_isolation();
   passed+=persistent_surface_lifecycle();
   passed+=retained_target_stays_resident();
@@ -2325,6 +2393,6 @@ int main(void){
   passed+=surface_draw_sources_are_read_only();
   passed+=target_pixel_observes_resident_result();
   passed+=nearest_subrectangle_mirrors();
-  printf("render resource cases: passed=%d failed=%d\n",passed,30-passed);
-  return passed==30?EXIT_SUCCESS:EXIT_FAILURE;
+  printf("render resource cases: passed=%d failed=%d\n",passed,31-passed);
+  return passed==31?EXIT_SUCCESS:EXIT_FAILURE;
 }

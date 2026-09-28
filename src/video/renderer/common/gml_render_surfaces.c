@@ -73,8 +73,16 @@ int gml_render_application_scene_flush(GmlRender *r){
   batch=(GmlRenderDrawBatch){pending->operations,pending->count,&pending->state,1u};
   result=gml_render_resource_submit(r->app_surface_resource,gml_render_device(r),
                                     &batch,&pending->source,1u);
+  if(result==GML_RENDER_RESOURCE_EXEC_FAILED){
+    GmlRenderJournalMetrics metrics={0};
+    gml_render_resource_journal_metrics(r->app_surface_resource,&metrics);
+    /* A pre-submit refusal leaves CPU authority intact, so a later target change may retry
+     * this exact batch. An uncertain checkpoint invalidates the resource and cannot replay. */
+    if(metrics.authority==GML_RENDER_RESOURCE_INVALID) pending->count=0;
+    return 0;
+  }
   pending->count=0;
-  return result!=GML_RENDER_RESOURCE_EXEC_FAILED;
+  return 1;
 }
 
 void gml_render_application_scene_queue_dispose(GmlRender *r){
