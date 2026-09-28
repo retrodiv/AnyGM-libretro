@@ -484,6 +484,24 @@ int gml_render_application_surface_owned_view(
   }
   return 1;
 }
+int gml_render_application_surface_owned_read(
+  GmlRender *r,GmlRenderApplicationReadView *view){
+  if(view) memset(view,0,sizeof(*view));
+  if(!gml_render_application_surface_owned_extent(r,NULL,NULL)) return 0;
+  gml_render_prepare_draw(r);
+  if(!gml_render_application_scene_flush(r)) return 0;
+  if(r->app_surface_resource){
+    const uint32_t *pixels=NULL;
+    if(!gml_render_resource_acquire_cpu_read(r->app_surface_resource,&pixels) ||
+       pixels!=r->app_surface_owned) return 0;
+  }
+  if(view){
+    view->pixels=r->app_surface_owned;
+    view->width=r->app_w;
+    view->height=r->app_h;
+  }
+  return 1;
+}
 int gml_render_application_surface_select_owned(GmlRender *r,int opaque){
   if(!r || !r->app_surface_owned) return 0;
   int changed=r->app_surface!=r->app_surface_owned;
@@ -493,7 +511,7 @@ int gml_render_application_surface_select_owned(GmlRender *r,int opaque){
   return 1;
 }
 int gml_render_surface_mirror_pixels(GmlRender *r,int destination,
-                                     uint32_t *pixels,int width,int height,
+                                     const uint32_t *pixels,int width,int height,
                                      int opaque){
   if(!r || destination<=0 || !pixels || width<=0 || height<=0 ||
      !gml_surface_exists(r,destination)) return 0;
@@ -502,7 +520,9 @@ int gml_render_surface_mirror_pixels(GmlRender *r,int destination,
   int saved_height=r->app_h;
   int saved_opaque=r->app_surface_opaque;
   int saved_presentation_coverage_active=r->app_presentation_coverage_active;
-  gml_render_application_surface_bind(r,pixels,width,height,opaque);
+  /* The mirror borrows this application source only for the nested draw; the
+   * binding API also serves writable targets, but no source write occurs here. */
+  gml_render_application_surface_bind(r,(uint32_t*)(uintptr_t)pixels,width,height,opaque);
   int mirrored=0;
   if(gml_surface_set_target(r,destination)){
     gml_draw_surface_stretched(r,0,0,0,
@@ -1002,6 +1022,11 @@ int gml_render_resident_application_cpu_barrier(GmlRender *r){
   GmlRenderResource *resource;
   if(!r) return 0;
   if(!r->resident_application_pass) return 1;
+  /* A nested numbered target borrows a different framebuffer. Preserve the
+   * suspended application's GPU authority while its own CPU writer runs. */
+  if(r->target_id>0 && r->target_id<=GML_MAX_SURFACES &&
+     r->surface[r->target_id-1].live &&
+     r->fb==r->surface[r->target_id-1].px) return 1;
   if(r->fb!=r->app_surface_owned || r->fbw!=r->app_w || r->fbh!=r->app_h)
     return 0;
   gml_render_flush_pending_fill(r);

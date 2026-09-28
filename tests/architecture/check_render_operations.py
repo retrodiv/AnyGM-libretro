@@ -23,7 +23,7 @@ REQUIRED_RULES = {
     "R03-P3-ATLAS-CACHE", "R03-P3-CONTEXT-RESET",
     "R03-P5-MUTABLE-IDENTITY", "R03-P5-SURFACE-OBSERVER",
     "R03-P5-SURFACE-COPY", "R03-P5-SURFACE-CPU-SOURCE",
-    "R03-P5-TARGET-PIXEL",
+    "R03-P5-TARGET-PIXEL", "R03-P5-ENGINE-OWNED-READ",
     "R03-P5-SURFACE-RESIZE", "R03-P5-SURFACE-FREE",
     "R03-P5-SURFACE-PART", "R03-P5-SURFACE-STRETCHED",
     "R03-P5-SURFACE-ROTATED",
@@ -167,7 +167,7 @@ def check_repair_map(document: str, gpu_table: dict[str, tuple[str, ...]],
             for relative, symbol in anchors:
                 if ".." in Path(relative).parts or relative.startswith("/"):
                     raise ValueError(f"{rule}: invalid anchor path {relative}")
-                path = root / relative if relative.startswith("tests/") else \
+                path = root / relative if relative.startswith(("tests/", "src/")) else \
                     root / "src/video/renderer" / relative
                 if not path.is_file():
                     raise ValueError(f"{rule}: stale anchor file {relative}")

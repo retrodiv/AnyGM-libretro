@@ -1974,10 +1974,12 @@ static int target_pixel_observes_resident_result(void){
   GmlRenderDrawOp operation;
   GmlRenderDrawBatch batch;
   GmlRenderResource *resource;
+  GmlRenderApplicationReadView read_view={0};
   GmlRenderJournalMetrics before={0},after={0};
   FakeDevice fake={0};
   uint32_t pixel=0;
-  int id;
+  const uint32_t *mirror_pixels;
+  int id,mirror_id;
   CHECK(render);
   render->next_surface_id=1;
   render->active_shader=-1;
@@ -1993,6 +1995,22 @@ static int target_pixel_observes_resident_result(void){
   CHECK(resource && render->app_surface_owned[5]==0u);
   gml_render_resource_journal_metrics(resource,&before);
   CHECK(before.logical_version==before.gpu_version && before.logical_version>1u);
+  CHECK(gml_render_application_surface_owned_read(render,&read_view) &&
+        read_view.width==4 && read_view.height==4 &&
+        read_view.pixels==render->app_surface_owned &&
+        read_view.pixels[5]==0xFF2468ACu);
+  gml_render_resource_journal_metrics(resource,&after);
+  CHECK(after.logical_version==before.logical_version &&
+        after.gpu_version==before.gpu_version &&
+        render->resident_application_pass && fake.readbacks==0);
+  mirror_id=gml_surface_create(render,4,4);
+  CHECK(mirror_id>0 &&
+        gml_render_surface_mirror_pixels(render,mirror_id,read_view.pixels,4,4,1));
+  mirror_pixels=gml_surface_pixels_read(render,mirror_id,NULL,NULL);
+  CHECK(mirror_pixels && mirror_pixels[5]==0xFF2468ACu);
+  gml_render_resource_journal_metrics(resource,&after);
+  CHECK(after.logical_version==before.logical_version &&
+        after.gpu_version==before.gpu_version);
   CHECK(gml_render_target_pixel(render,1,1,&pixel) && pixel==0xFF2468ACu);
   gml_render_resource_journal_metrics(resource,&after);
   CHECK(after.logical_version==before.logical_version &&

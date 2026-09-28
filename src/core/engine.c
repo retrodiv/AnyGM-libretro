@@ -1536,16 +1536,17 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
   if(prof){ t1 = profile_now_ms(engine); engine->profile.draw_ms += t1 - t0; t0 = t1; }
   gml_render_presentation_metrics(&engine->render,&render_presentation);
   int log_draw=anygm_host_development_setting(&engine->host,"GML_LOG_DRAW")!=NULL;
+  const uint32_t *observed_world_pixels=world_pixels;
   if(direct_owned_world &&
      (log_draw || (view_surface>0 && gml_surface_exists(&engine->render,view_surface)))){
-    GmlRenderApplicationWriteView cpu_view={0};
-    if(gml_render_application_surface_owned_view(&engine->render,&cpu_view)){
-      world_pixels=cpu_view.pixels;
-      world_width=cpu_view.width;
-      world_height=cpu_view.height;
+    GmlRenderApplicationReadView read_view={0};
+    if(gml_render_application_surface_owned_read(&engine->render,&read_view)){
+      observed_world_pixels=read_view.pixels;
+      world_width=read_view.width;
+      world_height=read_view.height;
     }
   }
-  if(log_draw && world_pixels){ int nz=0; for(size_t i=0;i<(size_t)world_width*world_height;i++) if(world_pixels[i]&0xFFFFFF) nz++;
+  if(log_draw && observed_world_pixels){ int nz=0; for(size_t i=0;i<(size_t)world_width*world_height;i++) if(observed_world_pixels[i]&0xFFFFFF) nz++;
     if(engine->diagnostics.draw_frame<3||engine->diagnostics.draw_frame%200==0){ int live=0,deactivated=0,dormant=0,highest=-1;
       for(int i=0;i<engine->vm.inst_count;i++){ GmlInstance *in=&engine->vm.inst[i];
         if(in->active&&!in->marked){ live++; highest=i; }
@@ -1562,7 +1563,7 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
     GmlRenderTargetCoverage render_coverage={0};
     gml_render_target_coverage(&engine->render,&render_coverage);
     if (vs > 0 && gml_render_surface_mirror_pixels(
-          &engine->render,vs,world_pixels,world_width,world_height,
+          &engine->render,vs,observed_world_pixels,world_width,world_height,
           render_coverage.opaque_known && render_coverage.all_opaque)) {
       if(anygm_host_development_setting(&engine->host,"GML_LOG_SHADER")){
         int sw=0,sh=0; const uint32_t *pixels=gml_surface_pixels_read(&engine->render,vs,&sw,&sh);

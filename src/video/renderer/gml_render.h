@@ -305,6 +305,10 @@ typedef struct {
   uint32_t *pixels;
   int width, height;
 } GmlRenderApplicationWriteView;
+typedef struct {
+  const uint32_t *pixels;
+  int width, height;
+} GmlRenderApplicationReadView;
 
 /* Core resolves host policy; renderer owns the mutable controls. A masked
  * value-copy update keeps boot, live configuration, and per-frame hints coarse
@@ -425,9 +429,11 @@ int gml_render_application_surface_owned_clear(
   GmlRender *r,uint32_t color,GmlRenderApplicationWriteView *view);
 int gml_render_application_surface_owned_view(
   GmlRender *r,GmlRenderApplicationWriteView *view);
+int gml_render_application_surface_owned_read(
+  GmlRender *r,GmlRenderApplicationReadView *view);
 int gml_render_application_surface_select_owned(GmlRender *r,int opaque);
 int gml_render_surface_mirror_pixels(GmlRender *r,int destination,
-                                     uint32_t *pixels,int width,int height,
+                                     const uint32_t *pixels,int width,int height,
                                      int opaque);
 void gml_render_set_flat_fog(GmlRender *r,int enabled,uint32_t colour);
 int gml_render_draw_state_get(const GmlRender *r,GmlRenderDrawState *state);
