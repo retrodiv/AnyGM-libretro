@@ -168,11 +168,14 @@ presentation policies:
 [graphics-scene] offered=N accepted=N refused=N partial_prefix=N texture=N primitive=N
              surface=N effect=N presentation=N shader=N software3d=N uploads=N
              upload_bytes=N readbacks=N readback_bytes=N
+[graphics-scene-families] sprite=N background=N tile=N surface=N text=N unclassified=N
 ```
 
 The second line counts the resident scene service separately from hybrid plan transport.
 Operation-family counts include only complete accepted batches; `partial_prefix` records how many
 operations a failed batch reported as already accepted and is never treated as completed work.
+The `text` scene family counts accepted packaged sprite-font glyph quads, not layout calls or
+glyphs painted later by the ordered CPU fallback. Older logs without `text` predate this counter.
 Transfer counts and bytes include only successful explicit scene-service uploads/readbacks and use
 the transferred region's area, not its enclosing texture's area. A scene line of all zeros means
 the host did not submit resident scene work, even if the older hybrid counters are nonzero.

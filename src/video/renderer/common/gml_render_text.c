@@ -5,6 +5,7 @@
 #include "gml_render_internal.h"
 #include "gml_render_text_internal.h"
 #include "gml_render_surfaces_internal.h"
+#include "gml_render_sprites_internal.h"
 #include "gml_render_cpu_text.h"
 
 #include "anygm_compatibility.h"
@@ -304,9 +305,10 @@ static void draw_text_transformed_font(GmlRender *r, GmlFont *f,
   if(!f||!str) return;
   if(alpha>1) alpha=1; else if(alpha<0) alpha=0;
   if(xs==0||ys==0||alpha<=0) return;
-  /* Glyphs still use the CPU raster. Resolve any earlier resident sprite before those pixels
-   * are written, so a later scene checkpoint cannot overwrite the text. */
-  if(r->resident_application_pass && !gml_render_resident_application_cpu_barrier(r)) return;
+  /* Real-font and special glyph kernels still need CPU authority. Sprite-font glyphs may
+   * qualify individually; their first CPU-only glyph closes the resident prefix in order. */
+  if(f->real && r->resident_application_pass &&
+     !gml_render_resident_application_cpu_barrier(r)) return;
   double rr=fmod(rot,360.0); if(rr<0) rr+=360.0;
   double ca,sa; render_rotation_sincos(rr,&ca,&sa);
   int use_rot = fabs(rr)>0.001 && fabs(rr-360.0)>0.001;
@@ -344,46 +346,63 @@ static void draw_text_transformed_font(GmlRender *r, GmlFont *f,
         double glyph_ox=cx*xs,glyph_oy=base_y*ys;
         double glyph_x=use_rot?x+glyph_ox*ca+glyph_oy*sa:x+glyph_ox;
         double glyph_y=use_rot?y-glyph_ox*sa+glyph_oy*ca:y+glyph_oy;
-        if(gml_d3_draw_sprite_2d(r,f->sprite,fr,glyph_x,glyph_y,xs,ys,rr,blend,alpha)){
-          /* The D3 hook projects the glyph quad at the current draw depth. */
-        } else if(s->runtime_rgba){
-          const uint8_t *fr_rgba=runtime_frame_rgba(s,fr);
-          if(fr_rgba){
-            if(use_rot){
-              double gx=x + cx*xs*ca + base_y*ys*sa;
-              double gy=y - cx*xs*sa + base_y*ys*ca;
-              const int *rmin=s->runtime_row_min?s->runtime_row_min+(size_t)fr*s->h:NULL;
-              const int *rmax=s->runtime_row_max?s->runtime_row_max+(size_t)fr*s->h:NULL;
-              blit_rgba_sprite(r,s,fr_rgba,s->w,s->h,gx,gy,xs,ys,rr,
-                               s->originx,s->originy,blend,alpha,1,rmin,rmax,
-                               s->runtime_opaque);
-            } else {
-              const int *rmin=s->runtime_row_min?s->runtime_row_min+(size_t)fr*s->h:NULL;
-              const int *rmax=s->runtime_row_max?s->runtime_row_max+(size_t)fr*s->h:NULL;
-              blit_rgba_sprite(r,s,fr_rgba,s->w,s->h,x+cx*xs,y+base_y*ys,xs,ys,0,
-                               s->originx,s->originy,blend,alpha,1,rmin,rmax,
-                               s->runtime_opaque);
-            }
+        int resident_glyph=0;
+        if(r->resident_application_pass && !use_rot && !s->runtime_rgba &&
+           !gml_d3_is_active(r) && s->frame && blend==0xFFFFFFu && alpha==1.0 &&
+           xs==1.0 && ys==1.0 && !r->interp){
+          int page_index=s->frame[fr];
+          if(page_index>=0 && page_index<r->n_tpag){
+            GmlTpag *page=&r->tpag[page_index];
+            double left=x+(cx-s->originx+(f->prop?0:page->tx))*xs-r->cam_x;
+            double top=y+(base_y-s->originy+page->ty)*ys-r->cam_y;
+            resident_glyph=gml_render_resident_atlas_page(
+              r,page_index,left,top,xs,ys,GML_RENDER_SCENE_TEXT);
           }
-        } else if(s->frame){ int ti=s->frame[fr];
-          if(ti>=0 && ti<r->n_tpag){ GmlTpag *t=&r->tpag[ti];
-          GmlTpag gt=*t;
-          gt.interp_draw_cache=NULL; gt.interp_draw_runs=NULL;
-          gt.interp_draw_cache_bytes=0; gt.interp_draw_run_count=0;
-          gt.interp_draw_cache_valid=0; gt.interp_draw_pending_count=0;
-          if(use_rot){
-            double ox=cx*xs;
-            double oy=base_y*ys;
-            double gx=x + ox*ca + oy*sa;
-            double gy=y - ox*sa + oy*ca;
-            blit_rotated(r,s,&gt,gx,gy,xs,ys,rr,blend,alpha);
-          } else {
-            /* A proportional sprite font advances by the cropped glyph width,
-             * so the cursor is already at the glyph's left edge. A fixed-cell
-             * font retains the horizontal offset within its full cell. */
-            blit(r,&gt, x + (cx-s->originx+(f->prop?0:gt.tx))*xs - r->cam_x,
-              y + (base_y-s->originy+gt.ty)*ys - r->cam_y, xs,ys, blend, alpha);
-          } } }
+        }
+        if(!resident_glyph){
+          if(r->resident_application_pass &&
+             !gml_render_resident_application_cpu_barrier(r)) return;
+          if(gml_d3_draw_sprite_2d(r,f->sprite,fr,glyph_x,glyph_y,xs,ys,rr,blend,alpha)){
+            /* The D3 hook projects the glyph quad at the current draw depth. */
+          } else if(s->runtime_rgba){
+            const uint8_t *fr_rgba=runtime_frame_rgba(s,fr);
+            if(fr_rgba){
+              if(use_rot){
+                double gx=x + cx*xs*ca + base_y*ys*sa;
+                double gy=y - cx*xs*sa + base_y*ys*ca;
+                const int *rmin=s->runtime_row_min?s->runtime_row_min+(size_t)fr*s->h:NULL;
+                const int *rmax=s->runtime_row_max?s->runtime_row_max+(size_t)fr*s->h:NULL;
+                blit_rgba_sprite(r,s,fr_rgba,s->w,s->h,gx,gy,xs,ys,rr,
+                                 s->originx,s->originy,blend,alpha,1,rmin,rmax,
+                                 s->runtime_opaque);
+              } else {
+                const int *rmin=s->runtime_row_min?s->runtime_row_min+(size_t)fr*s->h:NULL;
+                const int *rmax=s->runtime_row_max?s->runtime_row_max+(size_t)fr*s->h:NULL;
+                blit_rgba_sprite(r,s,fr_rgba,s->w,s->h,x+cx*xs,y+base_y*ys,xs,ys,0,
+                                 s->originx,s->originy,blend,alpha,1,rmin,rmax,
+                                 s->runtime_opaque);
+              }
+            }
+          } else if(s->frame){ int ti=s->frame[fr];
+            if(ti>=0 && ti<r->n_tpag){ GmlTpag *t=&r->tpag[ti];
+            GmlTpag gt=*t;
+            gt.interp_draw_cache=NULL; gt.interp_draw_runs=NULL;
+            gt.interp_draw_cache_bytes=0; gt.interp_draw_run_count=0;
+            gt.interp_draw_cache_valid=0; gt.interp_draw_pending_count=0;
+            if(use_rot){
+              double ox=cx*xs;
+              double oy=base_y*ys;
+              double gx=x + ox*ca + oy*sa;
+              double gy=y - ox*sa + oy*ca;
+              blit_rotated(r,s,&gt,gx,gy,xs,ys,rr,blend,alpha);
+            } else {
+              /* A proportional sprite font advances by the cropped glyph width,
+               * so the cursor is already at the glyph's left edge. A fixed-cell
+               * font retains the horizontal offset within its full cell. */
+              blit(r,&gt, x + (cx-s->originx+(f->prop?0:gt.tx))*xs - r->cam_x,
+                y + (base_y-s->originy+gt.ty)*ys - r->cam_y, xs,ys, blend, alpha);
+            } } }
+          }
         }
       cx += glyph_w(r,f,fr,cp)+f->sep;
     }
