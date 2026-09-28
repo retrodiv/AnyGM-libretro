@@ -6,6 +6,23 @@
 
 #include "gml_render.h"
 
+typedef void (*GmlRenderPrimitiveSpan)(void *context,int x0,int x1,int y);
+int gml_render_circle_filled_spans(GmlRender *render,double cx,double cy,
+                                   double rx,double ry,GmlRenderPrimitiveSpan emit,
+                                   void *context);
+int gml_render_triangle_opaque_spans(GmlRender *render,
+                                     double x1,double y1,double x2,double y2,
+                                     double x3,double y3,double alpha,int outline,
+                                     GmlRenderPrimitiveSpan emit,void *context);
+void gml_render_cpu_circle(GmlRender *render,double cx,double cy,double rx,double ry,
+                           uint32_t color,int outline);
+void gml_render_cpu_circle_color(GmlRender *render,double cx,double cy,
+                                 double rx,double ry,uint32_t inner,
+                                 uint32_t outer,int outline);
+void gml_render_cpu_triangle_alpha(GmlRender *render,double x1,double y1,
+                                   double x2,double y2,double x3,double y3,
+                                   uint32_t color,double alpha,int outline);
+
 void gml_render_cpu_point(GmlRender *render,int x,int y,uint32_t color);
 void gml_render_cpu_line(GmlRender *render,int x1,int y1,int x2,int y2,
                          uint32_t color,int width);

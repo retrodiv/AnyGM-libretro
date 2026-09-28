@@ -10,9 +10,25 @@
 
 #include <math.h>
 #include <limits.h>
+#include <stdlib.h>
 
 /* Opaque flat coverage has the same half-open pixel region for point-sized and filled
  * rectangles. Keep every non-qualified shape in its established CPU raster body. */
+static int resident_flat_eligible(GmlRender *render){
+  return render && render->resident_application_pass && gml_render_device(render) &&
+    render->fb==render->app_surface_owned && render->fbw==render->app_w &&
+    render->fbh==render->app_h && render->fbw>0 && render->fbh>0 &&
+    !render->target_sp && render->target_id==-1 && !render->gui_pass_active &&
+    !render->world_transform_active && !render->classic &&
+    !render->classic_phase_y && !render->classic_interp_phase[0] &&
+    !render->classic_interp_phase[1] && !render->classic_interp_phase[2] &&
+    render->active_shader<0 && render->alpha==1.0 && !render->blendmode &&
+    render->blend_equation==1 && render->blend_equation_alpha==1 &&
+    render->color_write_mask==15u && !render->alpha_test_enable &&
+    !render->pending_presentation && !render->rotated_batch_count &&
+    !render->rotated_batch_building;
+}
+
 static int resident_flat_rect(GmlRender *render,int x1,int y1,int x2,int y2,
                               uint32_t color){
   GmlRenderResource *resource;
@@ -20,18 +36,7 @@ static int resident_flat_rect(GmlRender *render,int x1,int y1,int x2,int y2,
   GmlRenderDrawOp operation={0};
   GmlRenderDrawBatch batch;
   GmlRenderResourceExecution result;
-  if(!render || !render->resident_application_pass || !gml_render_device(render) ||
-     render->fb!=render->app_surface_owned || render->fbw!=render->app_w ||
-     render->fbh!=render->app_h || render->fbw<=0 || render->fbh<=0 ||
-     render->target_sp || render->target_id!=-1 || render->gui_pass_active ||
-     render->world_transform_active || render->classic ||
-     render->classic_phase_y || render->classic_interp_phase[0] ||
-     render->classic_interp_phase[1] || render->classic_interp_phase[2] ||
-     render->active_shader>=0 || render->alpha!=1.0 || render->blendmode ||
-     render->blend_equation!=1 || render->blend_equation_alpha!=1 ||
-     render->color_write_mask!=15u || render->alpha_test_enable ||
-     render->pending_presentation || render->rotated_batch_count ||
-     render->rotated_batch_building) return 0;
+  if(!resident_flat_eligible(render)) return 0;
   if(x1>x2){int swap=x1;x1=x2;x2=swap;}
   if(y1>y2){int swap=y1;y1=y2;y2=swap;}
   if(x2<0 || y2<0 || x1>=render->fbw || y1>=render->fbh) return 0;
@@ -63,6 +68,91 @@ static int resident_flat_rect(GmlRender *render,int x1,int y1,int x2,int y2,
   result=gml_render_application_scene_submit(render,&batch,NULL,0u);
   if(result==GML_RENDER_RESOURCE_EXEC_CPU) render->resident_application_pass=0;
   return result!=GML_RENDER_RESOURCE_EXEC_FAILED;
+}
+
+typedef struct {
+  GmlRenderRect *regions;
+  uint32_t count;
+  uint32_t capacity;
+  int overflow;
+} GmlFlatSpans;
+
+static void collect_flat_span(void *context,int x0,int x1,int y){
+  GmlFlatSpans *spans=(GmlFlatSpans*)context;
+  if(spans->count>=spans->capacity){spans->overflow=1;return;}
+  spans->regions[spans->count++]=(GmlRenderRect){x0,y,(uint32_t)(x1-x0+1),1u};
+}
+
+static int resident_flat_spans(GmlRender *render,GmlFlatSpans *spans,uint32_t color){
+  GmlRenderResource *resource;
+  GmlRenderImageRef image;
+  GmlRenderDrawOp *operations;
+  GmlRenderDrawBatch batch;
+  GmlRenderResourceExecution result;
+  if(spans->overflow) return 0;
+  if(!spans->count) return 1;
+  /* A shape's bounding box is not an opaque replacement for its untouched pixels. */
+  gml_render_flush_pending_fill(render);
+  if(render->pending_fill || render->pending_underlay ||
+     !render->resident_application_pass) return 0;
+  resource=gml_render_application_resource_ensure(render);
+  if(!resource) return 0;
+  image=gml_render_application_scene_next_image_ref(render,resource);
+  if(image.content_version>UINT64_MAX-spans->count) return 0;
+  operations=(GmlRenderDrawOp*)calloc(spans->count,sizeof *operations);
+  if(!operations) return 0;
+  for(uint32_t i=0;i<spans->count;i++){
+    GmlRenderDrawOp *operation=&operations[i];
+    operation->opcode=GML_RENDER_OP_COLOURED_PRIMITIVE;
+    operation->scene_family=GML_RENDER_SCENE_PRIMITIVE;
+    operation->reconstruction_mode=GML_RENDER_REPLAY_EXACT;
+    operation->target.image=image;
+    operation->target.image.content_version+=i+1u;
+    operation->target.storage_version=1u;
+    operation->target.width=(uint32_t)render->fbw;
+    operation->target.height=(uint32_t)render->fbh;
+    operation->target.pixel_format=GML_RENDER_PIXEL_ARGB8888;
+    operation->target.region=(GmlRenderRect){0,0,(uint32_t)render->fbw,(uint32_t)render->fbh};
+    operation->payload.primitive.region=spans->regions[i];
+    operation->payload.primitive.colour=gml_render_cpu_backend_color_to_xrgb(color);
+  }
+  batch=(GmlRenderDrawBatch){operations,spans->count,NULL,0u};
+  result=gml_render_application_scene_submit(render,&batch,NULL,0u);
+  free(operations);
+  if(result==GML_RENDER_RESOURCE_EXEC_CPU) render->resident_application_pass=0;
+  return result!=GML_RENDER_RESOURCE_EXEC_FAILED;
+}
+
+static int resident_filled_circle(GmlRender *render,double cx,double cy,
+                                  double rx,double ry,uint32_t color){
+  GmlFlatSpans spans={0};
+  int covered,result;
+  if(!resident_flat_eligible(render) || !isfinite(cx) || !isfinite(cy) ||
+     !isfinite(rx) || !isfinite(ry) || rx<0.0 || ry<0.0) return 0;
+  spans.capacity=(uint32_t)(render->fbh<8192?render->fbh:8192);
+  spans.regions=(GmlRenderRect*)malloc(spans.capacity*sizeof *spans.regions);
+  if(!spans.regions) return 0;
+  covered=gml_render_circle_filled_spans(render,cx,cy,rx,ry,collect_flat_span,&spans);
+  result=covered && resident_flat_spans(render,&spans,color);
+  free(spans.regions);
+  return result;
+}
+
+static int resident_filled_triangle(GmlRender *render,
+                                    double x1,double y1,double x2,double y2,
+                                    double x3,double y3,uint32_t color,
+                                    double alpha,int outline){
+  GmlFlatSpans spans={0};
+  int covered,result;
+  if(!resident_flat_eligible(render)) return 0;
+  spans.capacity=(uint32_t)(render->fbh<8192?render->fbh:8192);
+  spans.regions=(GmlRenderRect*)malloc(spans.capacity*sizeof *spans.regions);
+  if(!spans.regions) return 0;
+  covered=gml_render_triangle_opaque_spans(render,x1,y1,x2,y2,x3,y3,
+                                           alpha,outline,collect_flat_span,&spans);
+  result=covered && resident_flat_spans(render,&spans,color);
+  free(spans.regions);
+  return result;
 }
 
 static int resident_axis_line(GmlRender *render,int x1,int y1,int x2,int y2,
@@ -114,6 +204,51 @@ void gml_render_primitive_rectangle_color(GmlRender *render,
   if(!outline && color1==color2 && color2==color3 && color3==color4 &&
      resident_flat_rect(render,x1,y1,x2,y2,color1)) return;
   gml_render_cpu_rectangle_color(render,x1,y1,x2,y2,color1,color2,color3,color4,outline);
+}
+
+void gml_render_primitive_circle(GmlRender *render,
+                                 int center_x,int center_y,int radius_x,int radius_y,
+                                 uint32_t color,int outline){
+  if(!outline && resident_filled_circle(render,(double)center_x,(double)center_y,
+                                         (double)radius_x,(double)radius_y,color)) return;
+  gml_render_cpu_circle(render,(double)center_x,(double)center_y,
+                        (double)radius_x,(double)radius_y,color,outline);
+}
+
+void gml_render_primitive_circle_subpixel(GmlRender *render,
+                                          double center_x,double center_y,
+                                          double radius_x,double radius_y,
+                                          uint32_t color,int outline){
+  if(!outline && resident_filled_circle(render,center_x,center_y,radius_x,radius_y,color)) return;
+  gml_render_cpu_circle(render,center_x,center_y,radius_x,radius_y,color,outline);
+}
+
+void gml_render_primitive_circle_color(GmlRender *render,
+                                       int center_x,int center_y,int radius_x,int radius_y,
+                                       uint32_t inner,uint32_t outer,int outline){
+  if(!outline && inner==outer &&
+     resident_filled_circle(render,(double)center_x,(double)center_y,
+                            (double)radius_x,(double)radius_y,inner)) return;
+  gml_render_cpu_circle_color(render,(double)center_x,(double)center_y,
+                              (double)radius_x,(double)radius_y,inner,outer,outline);
+}
+
+void gml_render_primitive_circle_color_subpixel(GmlRender *render,
+                                                double center_x,double center_y,
+                                                double radius_x,double radius_y,
+                                                uint32_t inner,uint32_t outer,int outline){
+  if(!outline && inner==outer &&
+     resident_filled_circle(render,center_x,center_y,radius_x,radius_y,inner)) return;
+  gml_render_cpu_circle_color(render,center_x,center_y,radius_x,radius_y,
+                              inner,outer,outline);
+}
+
+void gml_render_primitive_triangle_alpha(GmlRender *render,
+                                         double x1,double y1,double x2,double y2,
+                                         double x3,double y3,uint32_t color,
+                                         double alpha,int outline){
+  if(resident_filled_triangle(render,x1,y1,x2,y2,x3,y3,color,alpha,outline)) return;
+  gml_render_cpu_triangle_alpha(render,x1,y1,x2,y2,x3,y3,color,alpha,outline);
 }
 
 void gml_render_circle_geometry(const GmlRender *render,

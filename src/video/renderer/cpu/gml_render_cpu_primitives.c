@@ -403,8 +403,56 @@ static void draw_line_colour_subpixel_prim(GmlRender *R,
 
 /* The continuous form. The mapped centre and radii of a circle are generally fractional, and
  * truncating them before rasterization loses up to a whole destination pixel of extent, so the
- * geometry is carried as-is and only the covered pixel set is quantized. The integer entry point
- * below forwards to this one, so both share a single rasterization kernel. */
+ * geometry is carried as-is and only the covered pixel set is quantized. Integer public calls
+ * forward to this same rasterization kernel through the shared primitive dispatch. */
+int gml_render_circle_filled_spans(GmlRender *R,double cx,double cy,double rx,double ry,
+                                   GmlRenderPrimitiveSpan emit,void *context){
+  if(!R||rx<0.0||ry<0.0||!emit) return 0;
+  if(!(rx>0.0)||!(ry>0.0)){
+    int x=(int)floor(cx),y=(int)floor(cy);
+    if(x>=0 && y>=0 && x<R->fbw && y<R->fbh) emit(context,x,x,y);
+    return 1;
+  }
+  int n=R->circle_precision;
+  if(n<4) n=4;
+  if(n>64) n=64;
+  n=(n/4)*4; if(n<4) n=4;
+  double vx[64],vy[64];
+  for(int i=0;i<n;i++){
+    double a=(i*2.0*M_PI)/n;
+    vx[i]=cx+cos(a)*rx;
+    vy[i]=cy-sin(a)*ry;
+  }
+  /* Keep the CPU polygon's exact scanline inclusion and clipping for resident spans. */
+  double span_y0=floor(cy-ry),span_y1=ceil(cy+ry);
+  if(span_y1<0.0 || span_y0>=(double)R->fbh) return 1;
+  int y0=span_y0<0.0?0:(int)span_y0;
+  int y1=span_y1>=(double)R->fbh?R->fbh-1:(int)span_y1;
+  for(int y=y0;y<=y1;y++){
+    double py=y+0.5, xl=1e30, xr=-1e30;
+    for(int i=0,j=n-1;i<n;j=i++){
+      if((vy[i]>py)==(vy[j]>py)) continue;
+      double xi=(vx[j]-vx[i])*(py-vy[i])/(vy[j]-vy[i])+vx[i];
+      if(xi<xl) xl=xi;
+      if(xi>xr) xr=xi;
+    }
+    if(xr<xl) continue;
+    double first=ceil(xl-0.5),last=ceil(xr-0.5)-1.0;
+    if(last<0.0 || first>=(double)R->fbw) continue;
+    int x0=first<0.0?0:(int)first;
+    int x1=last>=(double)R->fbw?R->fbw-1:(int)last;
+    if(x0<=x1) emit(context,x0,x1,y);
+  }
+  return 1;
+}
+
+typedef struct {GmlRender *render;uint32_t color;} GmlCircleCpuSpan;
+static void draw_circle_cpu_span(void *context,int x0,int x1,int y){
+  GmlCircleCpuSpan *span=(GmlCircleCpuSpan*)context;
+  for(int x=x0;x<=x1;x++)
+    gml_render_cpu_backend_draw_pixel(span->render,x,y,span->color);
+}
+
 static void draw_circle_prim_ex(GmlRender *R, double cx, double cy, double rx, double ry,
                                 uint32_t gmcol, int outline){
   if(!R||rx<0.0||ry<0.0) return;
@@ -412,49 +460,26 @@ static void draw_circle_prim_ex(GmlRender *R, double cx, double cy, double rx, d
     gml_render_cpu_backend_draw_pixel(R,(int)floor(cx),(int)floor(cy),gmcol);
     return;
   }
-  int n=R->circle_precision;
-  if(n<4) n=4;
-  if(n>64) n=64;
-  n=(n/4)*4; if(n<4) n=4;
-  double vx[64], vy[64];
-  for(int i=0;i<n;i++){
-    double a=(i*2.0*M_PI)/n;
-    vx[i]=cx+cos(a)*rx;
-    vy[i]=cy-sin(a)*ry;
-  }
   if(outline){
+    int n=R->circle_precision;
+    if(n<4) n=4;
+    if(n>64) n=64;
+    n=(n/4)*4; if(n<4) n=4;
+    double vx[64], vy[64];
+    for(int i=0;i<n;i++){
+      double a=(i*2.0*M_PI)/n;
+      vx[i]=cx+cos(a)*rx;
+      vy[i]=cy-sin(a)*ry;
+    }
     for(int i=0;i<n;i++){
       int j=(i+1)%n;
       draw_line_prim(R,(int)lround(vx[i]),(int)lround(vy[i]),(int)lround(vx[j]),(int)lround(vy[j]),gmcol,1);
     }
   } else {
-    /* The regular polygon is convex, so each scanline has at most one filled span. This is
-     * pixel-identical to point_in_poly(x+0.5,y+0.5) but avoids testing every edge per pixel. */
-    double span_y0=floor(cy-ry),span_y1=ceil(cy+ry);
-    if(span_y1<0.0 || span_y0>=(double)R->fbh) return;
-    int y0=span_y0<0.0?0:(int)span_y0;
-    int y1=span_y1>=(double)R->fbh?R->fbh-1:(int)span_y1;
-    for(int y=y0;y<=y1;y++){
-      double py=y+0.5, xl=1e30, xr=-1e30;
-      for(int i=0,j=n-1;i<n;j=i++){
-        if((vy[i]>py)==(vy[j]>py)) continue;
-        double xi=(vx[j]-vx[i])*(py-vy[i])/(vy[j]-vy[i])+vx[i];
-        if(xi<xl) xl=xi;
-        if(xi>xr) xr=xi;
-      }
-      if(xr<xl) continue;
-      double first=ceil(xl-0.5),last=ceil(xr-0.5)-1.0;
-      if(last<0.0 || first>=(double)R->fbw) continue;
-      int x0=first<0.0?0:(int)first;
-      int x1=last>=(double)R->fbw?R->fbw-1:(int)last;
-      for(int x=x0;x<=x1;x++) gml_render_cpu_backend_draw_pixel(R,x,y,gmcol);
-    }
+    /* The regular polygon is convex, so each scanline has at most one filled span. */
+    GmlCircleCpuSpan span={R,gmcol};
+    (void)gml_render_circle_filled_spans(R,cx,cy,rx,ry,draw_circle_cpu_span,&span);
   }
-}
-
-static void draw_circle_prim(GmlRender *R, int cx, int cy, int rx, int ry, uint32_t gmcol, int outline){
-  if(!R||rx<0||ry<0) return;
-  draw_circle_prim_ex(R,(double)cx,(double)cy,(double)rx,(double)ry,gmcol,outline);
 }
 
 /* Colour variants interpolate from the first colour at the centre to the second at the perimeter. */
@@ -566,17 +591,13 @@ static void draw_circle_colour_prim_ex(GmlRender *R,double cx,double cy,double r
   }
 }
 
-static void draw_circle_colour_prim(GmlRender *R,int cx,int cy,int rx,int ry,
-                                    uint32_t inner,uint32_t outer,int outline){
-  if(!R||rx<0||ry<0) return;
-  draw_circle_colour_prim_ex(R,(double)cx,(double)cy,(double)rx,(double)ry,inner,outer,outline);
-}
-
 typedef struct {
   GmlRender *render;
   int min_x,min_y,max_x;
   double denominator,a_step,b_step,a_row,b_row,a_row_step,b_row_step;
   uint32_t source;
+  GmlRenderPrimitiveSpan emit;
+  void *context;
 } GmlOpaqueTriangleRows;
 static void draw_opaque_triangle_rows(void *context,int row_start,int row_end,int slot){
   (void)slot;
@@ -616,12 +637,62 @@ static void draw_opaque_triangle_rows(void *context,int row_start,int row_end,in
           (value[0]+step[0]*last<0.0 ||
            value[1]+step[1]*last<0.0 ||
            value[2]+step[2]*last<0.0)) last--;
-    if(first<=last)
-      gml_render_cpu_backend_fill_xrgb(
-        rows->render->fb+(size_t)(rows->min_y+row)*rows->render->fbw+
-          rows->min_x+first,
-        last-first+1,rows->source);
+    if(first<=last) rows->emit(rows->context,rows->min_x+first,
+                               rows->min_x+last,rows->min_y+row);
   }
+}
+
+static void draw_triangle_cpu_span(void *context,int x0,int x1,int y){
+  GmlOpaqueTriangleRows *rows=(GmlOpaqueTriangleRows*)context;
+  gml_render_cpu_backend_fill_xrgb(
+    rows->render->fb+(size_t)y*rows->render->fbw+x0,x1-x0+1,rows->source);
+}
+
+static int prepare_opaque_triangle_rows(GmlRender *R,
+                                        double X1,double Y1,double X2,double Y2,
+                                        double X3,double Y3,double alpha,int outline,
+                                        GmlRenderPrimitiveSpan emit,void *context,
+                                        GmlOpaqueTriangleRows *rows,int *height){
+  if(!R||!R->fb||R->fbw<=0||R->fbh<=0||!emit ||
+     !isfinite(X1)||!isfinite(Y1)||!isfinite(X2)||!isfinite(Y2)||
+     !isfinite(X3)||!isfinite(Y3)||!isfinite(alpha)) return 0;
+  if(alpha>1) alpha=1; else if(alpha<0) alpha=0;
+  if(alpha<=0) return 0;
+  double den=(Y2-Y3)*(X1-X3)+(X3-X2)*(Y1-Y3);
+  if(!isfinite(den)||fabs(den)<1e-9) return 0;
+  double minxd=floor(fmin(X1,fmin(X2,X3))), maxxd=floor(fmax(X1,fmax(X2,X3)));
+  double minyd=floor(fmin(Y1,fmin(Y2,Y3))), maxyd=floor(fmax(Y1,fmax(Y2,Y3)));
+  if(maxxd<0.0||maxyd<0.0||minxd>(double)(R->fbw-1)||minyd>(double)(R->fbh-1)) return 0;
+  int minx=minxd<0.0?0:(int)minxd, maxx=maxxd>=(double)R->fbw?R->fbw-1:(int)maxxd;
+  int miny=minyd<0.0?0:(int)minyd, maxy=maxyd>=(double)R->fbh?R->fbh-1:(int)maxyd;
+  int opaque_span=!outline && alpha>=1.0 && R->blendmode==0 &&
+    R->blend_equation==1 && R->blend_equation_alpha==1 &&
+    R->color_write_mask==15 &&
+    fabs(X1-nearbyint(X1))<1e-9 && fabs(Y1-nearbyint(Y1))<1e-9 &&
+    fabs(X2-nearbyint(X2))<1e-9 && fabs(Y2-nearbyint(Y2))<1e-9 &&
+    fabs(X3-nearbyint(X3))<1e-9 && fabs(Y3-nearbyint(Y3))<1e-9;
+  if(!opaque_span) return 0;
+  *rows=(GmlOpaqueTriangleRows){
+    R,minx,miny,maxx,den,
+    Y2-Y3,Y3-Y1,
+    (Y2-Y3)*(minx-X3)+(X3-X2)*(miny-Y3),
+    (Y3-Y1)*(minx-X3)+(X1-X3)*(miny-Y3),
+    X3-X2,X1-X3,0u,emit,context
+  };
+  *height=maxy-miny+1;
+  return 1;
+}
+
+int gml_render_triangle_opaque_spans(GmlRender *R,
+                                     double X1,double Y1,double X2,double Y2,
+                                     double X3,double Y3,double alpha,int outline,
+                                     GmlRenderPrimitiveSpan emit,void *context){
+  GmlOpaqueTriangleRows rows;
+  int height;
+  if(!prepare_opaque_triangle_rows(R,X1,Y1,X2,Y2,X3,Y3,alpha,outline,
+                                   emit,context,&rows,&height)) return 0;
+  draw_opaque_triangle_rows(&rows,0,height,0);
+  return 1;
 }
 
 /* Instance-owned immediate-mode primitive buffer used between begin/end. */
@@ -639,27 +710,18 @@ static void prim_tri_fill_ex(GmlRender *R, double X1,double Y1,double X2,double 
   if(maxxd<0.0||maxyd<0.0||minxd>(double)(R->fbw-1)||minyd>(double)(R->fbh-1)) return;
   int minx=minxd<0.0?0:(int)minxd, maxx=maxxd>=(double)R->fbw?R->fbw-1:(int)maxxd;
   int miny=minyd<0.0?0:(int)minyd, maxy=maxyd>=(double)R->fbh?R->fbh-1:(int)maxyd;
-  int opaque_span=!outline && alpha>=1.0 && R->blendmode==0 &&
-    R->blend_equation==1 && R->blend_equation_alpha==1 &&
-    R->color_write_mask==15 &&
-    fabs(X1-nearbyint(X1))<1e-9 && fabs(Y1-nearbyint(Y1))<1e-9 &&
-    fabs(X2-nearbyint(X2))<1e-9 && fabs(Y2-nearbyint(Y2))<1e-9 &&
-    fabs(X3-nearbyint(X3))<1e-9 && fabs(Y3-nearbyint(Y3))<1e-9;
-  if(opaque_span){
-    GmlOpaqueTriangleRows rows={
-      R,minx,miny,maxx,den,
-      Y2-Y3,Y3-Y1,
-      (Y2-Y3)*(minx-X3)+(X3-X2)*(miny-Y3),
-      (Y3-Y1)*(minx-X3)+(X1-X3)*(miny-Y3),
-      X3-X2,X1-X3,
-      gml_render_cpu_backend_color_to_xrgb(col)
-    };
+  GmlOpaqueTriangleRows rows;
+  int row_count;
+  if(prepare_opaque_triangle_rows(R,X1,Y1,X2,Y2,X3,Y3,alpha,outline,
+                                  draw_triangle_cpu_span,NULL,&rows,&row_count)){
+    rows.source=gml_render_cpu_backend_color_to_xrgb(col);
+    rows.context=&rows;
     gml_render_maybe_prepare_draw(R);
     R->fb_all_transparent=0;
-    if((size_t)(maxx-minx+1)*(size_t)(maxy-miny+1)>=262144u)
-      gml_run_row_bands(R,maxy-miny+1,draw_opaque_triangle_rows,&rows);
+    if((size_t)(maxx-minx+1)*(size_t)row_count>=262144u)
+      gml_run_row_bands(R,row_count,draw_opaque_triangle_rows,&rows);
     else
-      draw_opaque_triangle_rows(&rows,0,maxy-miny+1,0);
+      draw_opaque_triangle_rows(&rows,0,row_count,0);
     return;
   }
   for(int yy=miny;yy<=maxy;yy++) for(int xx=minx;xx<=maxx;xx++){
@@ -704,40 +766,23 @@ void gml_render_primitive_line_color_subpixel(GmlRender *render,
   draw_line_colour_subpixel_prim(render,x1,y1,x2,y2,color1,color2,width);
 }
 
-void gml_render_primitive_circle(GmlRender *render,
-                                 int center_x,int center_y,int radius_x,int radius_y,
-                                 uint32_t color,int outline){
-  if(!gml_render_resident_application_cpu_barrier(render)) return;
-  draw_circle_prim(render,center_x,center_y,radius_x,radius_y,color,outline);
-}
-
-void gml_render_primitive_circle_subpixel(GmlRender *render,
-                                          double center_x,double center_y,
-                                          double radius_x,double radius_y,
-                                          uint32_t color,int outline){
+void gml_render_cpu_circle(GmlRender *render,double center_x,double center_y,
+                           double radius_x,double radius_y,uint32_t color,int outline){
   if(!gml_render_resident_application_cpu_barrier(render)) return;
   draw_circle_prim_ex(render,center_x,center_y,radius_x,radius_y,color,outline);
 }
 
-void gml_render_primitive_circle_color(GmlRender *render,
-                                       int center_x,int center_y,int radius_x,int radius_y,
-                                       uint32_t inner,uint32_t outer,int outline){
-  if(!gml_render_resident_application_cpu_barrier(render)) return;
-  draw_circle_colour_prim(render,center_x,center_y,radius_x,radius_y,inner,outer,outline);
-}
-
-void gml_render_primitive_circle_color_subpixel(GmlRender *render,
-                                                double center_x,double center_y,
-                                                double radius_x,double radius_y,
-                                                uint32_t inner,uint32_t outer,int outline){
+void gml_render_cpu_circle_color(GmlRender *render,double center_x,double center_y,
+                                 double radius_x,double radius_y,uint32_t inner,
+                                 uint32_t outer,int outline){
   if(!gml_render_resident_application_cpu_barrier(render)) return;
   draw_circle_colour_prim_ex(render,center_x,center_y,radius_x,radius_y,inner,outer,outline);
 }
 
-void gml_render_primitive_triangle_alpha(GmlRender *render,
-                                         double x1,double y1,double x2,double y2,
-                                         double x3,double y3,uint32_t color,
-                                         double alpha,int outline){
+void gml_render_cpu_triangle_alpha(GmlRender *render,
+                                   double x1,double y1,double x2,double y2,
+                                   double x3,double y3,uint32_t color,
+                                   double alpha,int outline){
   if(!gml_render_resident_application_cpu_barrier(render)) return;
   prim_tri_fill_ex(render,x1,y1,x2,y2,x3,y3,color,alpha,outline);
 }
