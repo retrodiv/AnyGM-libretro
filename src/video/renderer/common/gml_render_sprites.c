@@ -12,6 +12,56 @@
 #include <math.h>
 #include <limits.h>
 #include <stddef.h>
+#include <stdlib.h>
+
+/* Coarse-mip (flat area-average) texel of a straight-RGBA atlas sub-region, built by successive
+ * 2x2 box reduction to 1x1 — i.e. the top mip level of the texture page.
+ *
+ * Why: GameMaker enables mipmapping on interpolated ("texture_set_interpolation(true)") sprite
+ * pages. When such a sprite is heavily minified to fill the screen,
+ * the GPU's LOD lands on the coarsest mip, so every output pixel samples the same flat average
+ * texel — the overlay becomes a uniform veil, NOT a per-pixel down-filtered copy of the texture.
+ * A per-pixel box-average (the generic filtered-downscale path below) instead reproduces the fine
+ * scanline structure, which is both visibly and numerically wrong (systematically darker where the
+ * sprite's bright, low-alpha rows should dominate). Reproduce the flat veil by compositing this
+ * single coarse texel across the whole rect. Reduction is done in float (no per-level 8-bit
+ * rounding) to stay as close as possible to the GPU's mip value. */
+void sprite_region_coarse_texel(GmlAtlas *a, int sx, int sy, int sw, int sh, double out[4]){
+  out[0]=out[1]=out[2]=out[3]=0;
+  if(!a || !a->px || sw<=0 || sh<=0) return;
+  /* Clamp source coordinates before reading atlas pixels. */
+  if(a->w<=0 || a->h<=0) return;
+  if(sx<0){ sw+=sx; sx=0; }
+  if(sy<0){ sh+=sy; sy=0; }
+  if(sx>=a->w || sy>=a->h) return;
+  if(sx+sw>a->w) sw=a->w-sx;
+  if(sy+sh>a->h) sh=a->h-sy;
+  if(sw<=0 || sh<=0) return;
+  int w=sw, h=sh;
+  float *buf=(float*)malloc((size_t)w*(size_t)h*4u*sizeof(float));
+  if(!buf) return;
+  for(int y=0;y<h;y++){
+    const uint8_t *sp=a->px + ((size_t)(sy+y)*a->w + sx)*4;
+    float *d=buf+(size_t)y*w*4;
+    for(int x=0;x<w;x++,sp+=4,d+=4){ d[0]=sp[0]; d[1]=sp[1]; d[2]=sp[2]; d[3]=sp[3]; }
+  }
+  while(w>1 || h>1){                                   /* one mip step: halve each axis (floor) */
+    int nw = w>1 ? w/2 : 1, nh = h>1 ? h/2 : 1;
+    for(int y=0;y<nh;y++){
+      int y0=(h>1)?2*y:0, y1=(h>1)?2*y+1:0;
+      for(int x=0;x<nw;x++){
+        int x0=(w>1)?2*x:0, x1=(w>1)?2*x+1:0;
+        const float *p00=buf+((size_t)y0*w+x0)*4, *p01=buf+((size_t)y0*w+x1)*4;
+        const float *p10=buf+((size_t)y1*w+x0)*4, *p11=buf+((size_t)y1*w+x1)*4;
+        float *d=buf+((size_t)y*nw+x)*4;              /* write compacts behind the read cursor */
+        for(int c=0;c<4;c++) d[c]=(p00[c]+p01[c]+p10[c]+p11[c])*0.25f;
+      }
+    }
+    w=nw; h=nh;
+  }
+  out[0]=buf[0]; out[1]=buf[1]; out[2]=buf[2]; out[3]=buf[3];
+  free(buf);
+}
 
 static void resident_classify_page(GmlTpag *page,const GmlAtlas *atlas){
   if(page->scene_opaque_checked) return;
@@ -851,6 +901,133 @@ void gml_render_sprite_ext_unmasked(GmlRender *r, int sprite, int subimg, double
   gml_render_cpu_blit_sprite_ext_resolved(r,s,sprite,subimg,x,y,xs,ys,rot,blend,alpha);
 }
 
+/* R03-SPR-COARSE-MIP: the CPU leaf already reduces a full-target minified page to one
+ * straight-RGBA texel. Share that exact preparation, then let the device compose the veil.
+ * The bounded rule keeps the CPU leaf for transformed targets and special fragment state. */
+static int resident_coarse_mip_veil(GmlRender *r,int sprite,int frame,
+                                   double dx,double dy,double dw,double dh,
+                                   uint32_t blend,double alpha){
+  GmlSprite *record;
+  GmlTpag *page;
+  GmlAtlas *atlas;
+  GmlRenderResource *target;
+  GmlRenderResourceSource source={0};
+  GmlRenderDrawOp operation={0};
+  GmlRenderDrawStateSnapshot state={0};
+  GmlRenderImageRef source_ref,image;
+  GmlRenderDrawBatch batch;
+  const GmlRenderDeviceServices *device;
+  GmlRenderResourceExecution result;
+  double mapped_x=dx,mapped_y=dy,mapped_w=dw,mapped_h=dh;
+  double texel[4];
+  uint8_t pixel[4];
+  int x0,y0,width,height,sub,page_index;
+  if(!r || !r->resident_application_pass || !(device=gml_render_device(r)) ||
+     !device->retire || !r->interp || r->classic || r->gui_pass_active ||
+     r->active_shader>=0 || r->alpha_test_enable || !r->alphablend ||
+     r->blendmode || r->blend_equation!=1 || r->blend_equation_alpha!=1 ||
+     r->color_write_mask!=0x0Fu || r->classic_phase_y ||
+     r->rotated_batch_count || r->rotated_batch_building ||
+     r->pending_underlay || r->pending_presentation ||
+     r->target_sp || r->target_id!=-1 ||
+     r->fb!=r->app_surface_owned || r->fbw!=r->app_w || r->fbh!=r->app_h ||
+     !r->fb_opaque_known || !r->fb_all_opaque ||
+     (r->world_transform_active &&
+      (r->world_scale_x!=1.0 || r->world_scale_y!=1.0)) ||
+     sprite<0 || sprite>=r->n_spr || blend!=0xFFFFFFu || alpha!=1.0 ||
+     gml_d3_is_active(r)) return 0;
+  for(int index=0;index<3;index++)
+    if(r->classic_interp_phase[index] || r->app_interp_phase[index]) return 0;
+  record=&r->spr[sprite];
+  if(record->runtime_rgba || record->spine || record->ns_enabled ||
+     record->n_frames<=0 || !record->frame || record->w<=0 || record->h<=0)
+    return 0;
+  sub=gml_render_runtime_frame_index(record,frame);
+  page_index=record->frame[sub];
+  if(page_index<0 || page_index>=r->n_tpag) return 0;
+  page=&r->tpag[page_index];
+  if(page->atlas<0 || page->atlas>=r->n_atlas || page->sw<=0 || page->sh<=0 ||
+     page->sx<0 || page->sy<0) return 0;
+  atlas=&r->atlas[page->atlas];
+  if(!atlas_pixels(r,page->atlas) || atlas->w<=0 || atlas->h<=0 ||
+     (uint64_t)(uint32_t)page->sx+(uint32_t)page->sw>(uint32_t)atlas->w ||
+     (uint64_t)(uint32_t)page->sy+(uint32_t)page->sh>(uint32_t)atlas->h)
+    return 0;
+  gml_render_draw_map_point(r,&mapped_x,&mapped_y);
+  gml_render_draw_map_scale(r,&mapped_w,&mapped_h);
+  mapped_x-=r->cam_x;
+  mapped_y-=r->cam_y;
+  if(!isfinite(mapped_x) || !isfinite(mapped_y) || !isfinite(mapped_w) ||
+     !isfinite(mapped_h) || fabs(mapped_x)>1000000.0 ||
+     fabs(mapped_y)>1000000.0 || mapped_w<=0.0 || mapped_h<=0.0 ||
+     mapped_w>1000000.0 || mapped_h>1000000.0) return 0;
+  x0=(int)floor(mapped_x);
+  y0=(int)floor(mapped_y);
+  width=(int)lround(mapped_w);
+  height=(int)lround(mapped_h);
+  if(width<=0 || height<=0 ||
+     !(record->w>width || record->h>height) ||
+     x0>0 || y0>0 || (int64_t)x0+width<r->fbw ||
+     (int64_t)y0+height<r->fbh) return 0;
+  sprite_region_coarse_texel(atlas,page->sx,page->sy,page->sw,page->sh,texel);
+  for(int channel=0;channel<4;channel++) pixel[channel]=(uint8_t)floor(texel[channel]+0.5);
+  if(pixel[3]==0u) return 1;
+  gml_render_flush_pending_fill(r);
+  if(r->pending_fill || !(target=gml_render_application_resource_ensure(r))) return 0;
+  image=gml_render_application_scene_next_image_ref(r,target);
+  if(image.content_version==UINT64_MAX) return 0;
+  source.image=(GmlRenderImageRef){GML_RENDER_RESOURCE_SCRATCH,0u,
+    gml_render_scene_incarnation_allocate(),1u};
+  if(!source.image.incarnation) return 0;
+  source.width=source.height=1u;
+  source.pixel_format=GML_RENDER_PIXEL_RGBA8888;
+  source.stride_bytes=4u;
+  source.byte_capacity=sizeof pixel;
+  source.bytes=pixel;
+  source_ref=source.image;
+  operation.opcode=GML_RENDER_OP_TEXTURED_QUAD;
+  operation.scene_family=GML_RENDER_SCENE_SPRITE;
+  operation.reconstruction_mode=GML_RENDER_DEVICE_CHECKPOINT;
+  operation.source_count=1u;
+  operation.sources=&source_ref;
+  operation.target.image=image;
+  operation.target.image.content_version++;
+  operation.target.storage_version=1u;
+  operation.target.width=(uint32_t)r->fbw;
+  operation.target.height=(uint32_t)r->fbh;
+  operation.target.pixel_format=GML_RENDER_PIXEL_ARGB8888;
+  operation.target.region=(GmlRenderRect){0,0,(uint32_t)r->fbw,(uint32_t)r->fbh};
+  operation.payload.quad.shape=GML_RENDER_QUAD_AXIS_ALIGNED;
+  operation.payload.quad.sampling.filter=GML_RENDER_FILTER_NEAREST;
+  operation.payload.quad.sampling.edge_rule=GML_RENDER_EDGE_CLAMP_SUBIMAGE;
+  operation.payload.quad.sampling.source_region=(GmlRenderRect){0,0,1u,1u};
+  for(int corner=0;corner<4;corner++) operation.payload.quad.corner_colour[corner]=0xFFFFFFFFu;
+  operation.payload.quad.x[0]=operation.payload.quad.x[3]=x0;
+  operation.payload.quad.x[1]=operation.payload.quad.x[2]=(double)x0+width;
+  operation.payload.quad.y[0]=operation.payload.quad.y[1]=y0;
+  operation.payload.quad.y[2]=operation.payload.quad.y[3]=(double)y0+height;
+  operation.payload.quad.u[0]=operation.payload.quad.u[3]=0.0;
+  operation.payload.quad.u[1]=operation.payload.quad.u[2]=1.0;
+  operation.payload.quad.v[0]=operation.payload.quad.v[1]=0.0;
+  operation.payload.quad.v[2]=operation.payload.quad.v[3]=1.0;
+  state.write_mask=15u;
+  state.colour=0xFFFFFFFFu;
+  state.alpha=255u;
+  state.rgb_source_factor=GML_RENDER_BLEND_SOURCE_ALPHA;
+  state.rgb_destination_factor=GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA;
+  state.alpha_source_factor=GML_RENDER_BLEND_ONE;
+  state.alpha_destination_factor=GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA;
+  state.rgb_equation=state.alpha_equation=GML_RENDER_BLEND_ADD;
+  state.sampler_count=1u;
+  state.samplers[0]=operation.payload.quad.sampling;
+  batch=(GmlRenderDrawBatch){&operation,1u,&state,1u};
+  result=gml_render_application_scene_submit(r,&batch,&source,1u);
+  device->retire(device->context,source.image);
+  if(result==GML_RENDER_RESOURCE_EXEC_CPU) r->resident_application_pass=0;
+  if(result!=GML_RENDER_RESOURCE_EXEC_FAILED) r->fb_all_transparent=0;
+  return result!=GML_RENDER_RESOURCE_EXEC_FAILED;
+}
+
 void gml_draw_sprite_stretched(GmlRender *r, int sprite, int frame, double dx, double dy, double dw, double dh, uint32_t blend, double alpha){
   /* The ordinary stretched CPU blit contributes no pixels at zero alpha. Do not materialise
    * preceding device work for that no-op; special draw states retain their existing barrier. */
@@ -867,6 +1044,7 @@ void gml_draw_sprite_stretched(GmlRender *r, int sprite, int frame, double dx, d
      !gml_d3_is_active(r) && r->fb==r->app_surface_owned &&
      r->fbw==r->app_w && r->fbh==r->app_h)
     return;
+  if(resident_coarse_mip_veil(r,sprite,frame,dx,dy,dw,dh,blend,alpha)) return;
   if(r && r->resident_application_pass && !r->interp &&
      blend==0xFFFFFFu && alpha==1.0 &&
      sprite>=0 && sprite<r->n_spr && !gml_d3_is_active(r)){

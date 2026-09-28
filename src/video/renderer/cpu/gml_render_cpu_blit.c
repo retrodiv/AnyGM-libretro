@@ -6087,55 +6087,6 @@ void gml_render_cpu_blit_rotated_background_tile(GmlRender *r, GmlTpag *view,
                tile_xscale,tile_yscale,degrees,color,alpha);
   if(r->rotated_batch_count>queued_before) gml_render_flush_rotated_batch(r);
 }
-/* Coarse-mip (flat area-average) texel of a straight-RGBA atlas sub-region, built by successive
- * 2x2 box reduction to 1x1 — i.e. the top mip level of the texture page.
- *
- * Why: GameMaker enables mipmapping on interpolated ("texture_set_interpolation(true)") sprite
- * pages. When such a sprite is heavily minified to fill the screen,
- * the GPU's LOD lands on the coarsest mip, so every output pixel samples the same flat average
- * texel — the overlay becomes a uniform veil, NOT a per-pixel down-filtered copy of the texture.
- * A per-pixel box-average (the generic filtered-downscale path below) instead reproduces the fine
- * scanline structure, which is both visibly and numerically wrong (systematically darker where the
- * sprite's bright, low-alpha rows should dominate). Reproduce the flat veil by compositing this
- * single coarse texel across the whole rect. Reduction is done in float (no per-level 8-bit
- * rounding) to stay as close as possible to the GPU's mip value. */
-static void sprite_region_coarse_texel(GmlAtlas *a, int sx, int sy, int sw, int sh, double out[4]){
-  out[0]=out[1]=out[2]=out[3]=0;
-  if(!a || !a->px || sw<=0 || sh<=0) return;
-  /* Clamp source coordinates before reading atlas pixels. */
-  if(a->w<=0 || a->h<=0) return;
-  if(sx<0){ sw+=sx; sx=0; }
-  if(sy<0){ sh+=sy; sy=0; }
-  if(sx>=a->w || sy>=a->h) return;
-  if(sx+sw>a->w) sw=a->w-sx;
-  if(sy+sh>a->h) sh=a->h-sy;
-  if(sw<=0 || sh<=0) return;
-  int w=sw, h=sh;
-  float *buf=(float*)malloc((size_t)w*(size_t)h*4u*sizeof(float));
-  if(!buf) return;
-  for(int y=0;y<h;y++){
-    const uint8_t *sp=a->px + ((size_t)(sy+y)*a->w + sx)*4;
-    float *d=buf+(size_t)y*w*4;
-    for(int x=0;x<w;x++,sp+=4,d+=4){ d[0]=sp[0]; d[1]=sp[1]; d[2]=sp[2]; d[3]=sp[3]; }
-  }
-  while(w>1 || h>1){                                   /* one mip step: halve each axis (floor) */
-    int nw = w>1 ? w/2 : 1, nh = h>1 ? h/2 : 1;
-    for(int y=0;y<nh;y++){
-      int y0=(h>1)?2*y:0, y1=(h>1)?2*y+1:0;
-      for(int x=0;x<nw;x++){
-        int x0=(w>1)?2*x:0, x1=(w>1)?2*x+1:0;
-        const float *p00=buf+((size_t)y0*w+x0)*4, *p01=buf+((size_t)y0*w+x1)*4;
-        const float *p10=buf+((size_t)y1*w+x0)*4, *p11=buf+((size_t)y1*w+x1)*4;
-        float *d=buf+((size_t)y*nw+x)*4;              /* write compacts behind the read cursor */
-        for(int c=0;c<4;c++) d[c]=(p00[c]+p01[c]+p10[c]+p11[c])*0.25f;
-      }
-    }
-    w=nw; h=nh;
-  }
-  out[0]=buf[0]; out[1]=buf[1]; out[2]=buf[2]; out[3]=buf[3];
-  free(buf);
-}
-
 /* draw_sprite_stretched: blit a sprite frame stretched into the screen rect (dx,dy,dw,dh), box-
  * averaging the source per dest pixel (matches the GPU's filtered down-stretch). Screen-space. */
 typedef struct {
