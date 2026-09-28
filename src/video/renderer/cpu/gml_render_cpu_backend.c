@@ -4,6 +4,7 @@
 /* Borrowed CPU views and coarse coordination for the non-reentrant software leaves. */
 #include "gml_render_cpu_backend.h"
 #include "gml_render_internal.h"
+#include "gml_render_surfaces_internal.h"
 #include "anygm_host.h"
 
 #include <string.h>
@@ -165,6 +166,7 @@ void gml_render_cpu_backend_prepare_draw(GmlRender *r){
   gml_render_maybe_prepare_draw(r);
 }
 int gml_render_cpu_backend_prepare_draw_view(GmlRender *r,GmlRenderCpuBackendDrawView *view){
+  if(!gml_render_resident_application_cpu_barrier(r)) return 0;
   gml_render_cpu_backend_prepare_draw(r);
   return gml_render_cpu_backend_draw_view(r,view);
 }

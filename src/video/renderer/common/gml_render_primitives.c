@@ -29,8 +29,8 @@ static int resident_flat_eligible(GmlRender *render){
     !render->rotated_batch_building;
 }
 
-static int resident_flat_rect(GmlRender *render,int x1,int y1,int x2,int y2,
-                              uint32_t color){
+int gml_render_try_opaque_primitive_rect(GmlRender *render,int x1,int y1,int x2,int y2,
+                                         uint32_t color){
   GmlRenderResource *resource;
   GmlRenderImageRef image;
   GmlRenderDrawOp operation={0};
@@ -286,11 +286,12 @@ static int resident_axis_line(GmlRender *render,int x1,int y1,int x2,int y2,
   top=(int64_t)(y1<y2?y1:y2)-width/2;
   bottom=(int64_t)(y1>y2?y1:y2)-width/2+width-1;
   if(left<INT_MIN || right>INT_MAX || top<INT_MIN || bottom>INT_MAX) return 0;
-  return resident_flat_rect(render,(int)left,(int)top,(int)right,(int)bottom,color);
+  return gml_render_try_opaque_primitive_rect(render,(int)left,(int)top,
+                                               (int)right,(int)bottom,color);
 }
 
 void gml_render_primitive_point(GmlRender *render,int x,int y,uint32_t color){
-  if(resident_flat_rect(render,x,y,x,y,color)) return;
+  if(gml_render_try_opaque_primitive_rect(render,x,y,x,y,color)) return;
   gml_render_cpu_point(render,x,y,color);
 }
 
@@ -323,7 +324,7 @@ void gml_render_primitive_rectangle(GmlRender *render,
   if(outline && resident_outline_rectangle(render,x1,y1,x2,y2,color)) return;
   if(!outline && gml_render_shade_target_rect(render,x1,y1,x2,y2,color,render?render->alpha:1.0))
     return;
-  if(!outline && resident_flat_rect(render,x1,y1,x2,y2,color)) return;
+  if(!outline && gml_render_try_opaque_primitive_rect(render,x1,y1,x2,y2,color)) return;
   gml_render_cpu_rectangle(render,x1,y1,x2,y2,color,outline);
 }
 
@@ -336,7 +337,7 @@ void gml_render_primitive_rectangle_color(GmlRender *render,
   if(!outline && color1==color2 && color2==color3 && color3==color4 &&
      gml_render_shade_target_rect(render,x1,y1,x2,y2,color1,render?render->alpha:1.0)) return;
   if(!outline && color1==color2 && color2==color3 && color3==color4 &&
-     resident_flat_rect(render,x1,y1,x2,y2,color1)) return;
+     gml_render_try_opaque_primitive_rect(render,x1,y1,x2,y2,color1)) return;
   gml_render_cpu_rectangle_color(render,x1,y1,x2,y2,color1,color2,color3,color4,outline);
 }
 

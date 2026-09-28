@@ -18,6 +18,7 @@
 #include <stdio.h>
 #include <limits.h>
 #include "gml_render_cpu_backend.h"
+#include "gml_render_primitives.h"
 #include "anygm_compatibility.h"
 #include "gml_particle.h"
 #include "gml_vm.h"
@@ -1038,6 +1039,13 @@ void gml_part_system_drawit(GmlParticleState *state,GmlRender *r,int id){
       double alpha=keyf(age,t->nalpha,t->alpha[0],t->alpha[1],t->alpha[2]);
       if(alpha<=0) continue;
       uint32_t col = p->has_col ? p->col_over : keyc(age,t);
+      int square_shape=t->shape!=1 && t->shape!=5 && t->shape!=6 && t->shape!=7 &&
+        t->shape!=3 && t->shape!=4 && t->shape!=8 && t->shape!=9 &&
+        t->shape!=10 && t->shape!=13;
+      if(square_shape && alpha>=1.0 && half_x>=0 && half_y>=0 &&
+         !gml_d3_is_active(r) &&
+         gml_render_try_opaque_primitive_rect(r,cx-half_x,cy-half_y,
+                                               cx+half_x,cy+half_y,col)) continue;
       GmlRenderCpuBackendDrawView draw;
       if(!gml_render_cpu_backend_prepare_draw_view(r,&draw) || !draw.pixels) continue;
       if(t->shape==1 || t->shape==5 || t->shape==6 || t->shape==7){

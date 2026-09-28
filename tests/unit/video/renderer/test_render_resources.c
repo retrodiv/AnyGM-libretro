@@ -8,6 +8,8 @@
 #include "gml_render_state.h"
 #include "gml_render_surfaces_internal.h"
 #include "gml_builtin.h"
+#include "gml_particle.h"
+#include "gml_software3d.h"
 
 #include <stdint.h>
 #include <stdio.h>
@@ -1345,6 +1347,102 @@ static int resident_flat_primitive_public_order(void){
         memcmp(cpu_pixels,gpu->app_surface_owned,sizeof cpu_pixels)==0);
   gml_render_free(cpu);
   gml_render_free(gpu);
+  free(cpu);
+  free(gpu);
+  return 1;
+}
+
+static int resident_particle_square_public_order(void){
+  GmlRender *cpu=(GmlRender*)calloc(1,sizeof *cpu);
+  GmlRender *gpu=(GmlRender*)calloc(1,sizeof *gpu);
+  GmlParticleState *particles=gml_particle_state_create(NULL);
+  uint32_t cpu_pixels[64]={0};
+  FakeDevice fake={0};
+  GmlRenderDeviceServices device=service(&fake);
+  GmlRenderJournalMetrics metrics={0};
+  CHECK(cpu && gpu && particles);
+  CHECK(gml_render_init(cpu,NULL)==0 && gml_render_init(gpu,NULL)==0);
+  int system=gml_part_system_create(particles);
+  int opaque=gml_part_type_create(particles);
+  int translucent=gml_part_type_create(particles);
+  CHECK(system && opaque && translucent);
+  gml_part_type_shape(particles,opaque,0);
+  gml_part_type_size(particles,opaque,1,1,0,0);
+  gml_part_type_alpha(particles,opaque,1,1,1,1);
+  gml_part_particles_create_color(particles,system,3,3,opaque,0x345678u,1);
+  gml_render_begin(cpu,cpu_pixels,8,8,0.0,0.0);
+  CHECK(gml_render_application_surface_ensure_owned(gpu,8,8));
+  gml_render_bind_device(gpu,&device);
+  CHECK(gml_render_begin_resident_owned_application(gpu,0.0,0.0,0));
+  gml_render_set_pending_fill(cpu,0xFF102030u);
+  gml_render_set_pending_fill(gpu,0xFF102030u);
+  gml_part_system_drawit(particles,cpu,system);
+  gml_part_system_drawit(particles,gpu,system);
+  gml_render_resource_journal_metrics(gpu->app_surface_resource,&metrics);
+  CHECK(gpu->resident_application_pass && fake.submits==2 && fake.readbacks==0 &&
+        metrics.journal_operations==2u && metrics.cpu_replays==0u);
+  gml_part_system_clear(particles,system);
+  gml_part_type_shape(particles,translucent,0);
+  gml_part_type_size(particles,translucent,1,1,0,0);
+  gml_part_type_alpha(particles,translucent,1,0.5,0.5,0.5);
+  gml_part_particles_create_color(particles,system,5,5,translucent,0x00ff00u,1);
+  gml_part_system_drawit(particles,cpu,system);
+  gml_part_system_drawit(particles,gpu,system);
+  gml_render_flush_pending_fill(cpu);
+  CHECK(!gpu->resident_application_pass);
+  CHECK(fake.submits==2 && fake.readbacks==0);
+  CHECK(memcmp(cpu_pixels,gpu->app_surface_owned,sizeof cpu_pixels)==0);
+  gml_particle_state_destroy(particles);
+  gml_render_free(cpu);
+  gml_render_free(gpu);
+  free(cpu);
+  free(gpu);
+  return 1;
+}
+
+static int resident_software3d_primitive_cpu_bridge(void){
+  GmlRender *cpu=(GmlRender*)calloc(1,sizeof *cpu);
+  GmlRender *gpu=(GmlRender*)calloc(1,sizeof *gpu);
+  GmlSoftware3D *cpu_graphics=gml_software3d_create();
+  GmlSoftware3D *gpu_graphics=gml_software3d_create();
+  uint32_t cpu_pixels[64]={0};
+  FakeDevice fake={0};
+  GmlRenderDeviceServices device=service(&fake);
+  GmlRenderJournalMetrics before={0},after={0};
+  CHECK(cpu && gpu && cpu_graphics && gpu_graphics);
+  CHECK(gml_render_init(cpu,NULL)==0 && gml_render_init(gpu,NULL)==0);
+  gml_software3d_reset(cpu_graphics);
+  gml_software3d_reset(gpu_graphics);
+  gml_render_bind_software3d(cpu,cpu_graphics);
+  gml_render_bind_software3d(gpu,gpu_graphics);
+  gml_render_begin(cpu,cpu_pixels,8,8,0.0,0.0);
+  CHECK(gml_render_application_surface_ensure_owned(gpu,8,8));
+  gml_render_bind_device(gpu,&device);
+  CHECK(gml_render_begin_resident_owned_application(gpu,0.0,0.0,0));
+  gml_render_set_pending_fill(cpu,0xFF102030u);
+  gml_render_set_pending_fill(gpu,0xFF102030u);
+  gml_render_primitive_rectangle(cpu,1,1,3,3,0x0000ffu,0);
+  gml_render_primitive_rectangle(gpu,1,1,3,3,0x0000ffu,0);
+  gml_render_resource_journal_metrics(gpu->app_surface_resource,&before);
+  gml_software3d_primitive_2d_begin(cpu_graphics,1,-1);
+  gml_software3d_primitive_2d_begin(gpu_graphics,1,-1);
+  CHECK(gml_software3d_primitive_2d_append(cpu_graphics,3,3,0,0,0x00ff00u,1.0));
+  CHECK(gml_software3d_primitive_2d_append(gpu_graphics,3,3,0,0,0x00ff00u,1.0));
+  gml_software3d_primitive_2d_end(cpu);
+  gml_software3d_primitive_2d_end(gpu);
+  gml_render_resource_journal_metrics(gpu->app_surface_resource,&after);
+  gml_render_flush_pending_fill(cpu);
+  CHECK(!gpu->resident_application_pass && fake.submits==2 && fake.readbacks==0 &&
+        memcmp(cpu_pixels,gpu->app_surface_owned,sizeof cpu_pixels)==0 &&
+        cpu_pixels[3u*8u+3u]!=0xFF102030u);
+  CHECK(after.logical_version>before.logical_version &&
+        after.cpu_version==after.logical_version &&
+        after.gpu_version==before.gpu_version &&
+        after.cpu_replays==before.cpu_replays+1u);
+  gml_render_free(cpu);
+  gml_render_free(gpu);
+  gml_software3d_destroy(cpu_graphics);
+  gml_software3d_destroy(gpu_graphics);
   free(cpu);
   free(gpu);
   return 1;
@@ -2892,6 +2990,8 @@ int main(void){
   passed+=owned_application_resize_and_context_loss();
   passed+=resident_application_pending_clear();
   passed+=resident_flat_primitive_public_order();
+  passed+=resident_particle_square_public_order();
+  passed+=resident_software3d_primitive_cpu_bridge();
   passed+=resident_filled_span_public_order();
   passed+=resident_line_coverage_public_order();
   passed+=resident_outline_coverage_public_order();
@@ -2913,6 +3013,6 @@ int main(void){
   passed+=target_pixel_observes_resident_result();
   passed+=nearest_subrectangle_mirrors();
   passed+=source_free_primitive_rect_replay();
-  printf("render resource cases: passed=%d failed=%d\n",passed,40-passed);
-  return passed==40?EXIT_SUCCESS:EXIT_FAILURE;
+  printf("render resource cases: passed=%d failed=%d\n",passed,42-passed);
+  return passed==42?EXIT_SUCCESS:EXIT_FAILURE;
 }

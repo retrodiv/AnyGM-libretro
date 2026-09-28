@@ -9,6 +9,12 @@
 
 typedef struct GmlRender GmlRender;
 
+/* Inclusive opaque coverage only. A rejected attempt leaves the caller responsible for its
+ * original CPU draw; this is also the source-free region used by ordinary flat primitives. */
+int gml_render_try_opaque_primitive_rect(GmlRender *render,
+                                         int x1,int y1,int x2,int y2,
+                                         uint32_t color);
+
 void gml_render_primitive_point(GmlRender *render,
                                 int x,int y,uint32_t color);
 

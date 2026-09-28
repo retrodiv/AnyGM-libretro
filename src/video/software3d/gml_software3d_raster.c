@@ -328,7 +328,7 @@ static double d3_edge(double ax,double ay,double bx,double by,double px,double p
 static void d3_raster_triangle(GmlRender *R, const GmlD3Vertex in[3], const GmlD3Texture *texture,
                                int joined){
   GmlRenderCpuBackendDrawView draw;
-  if(!d3_depth_prepare(R) || !gml_render_cpu_backend_draw_view(R,&draw) ||
+  if(!d3_depth_prepare(R) || !gml_render_cpu_backend_prepare_draw_view(R,&draw) ||
      !draw.pixels || draw.width<=0 || draw.height<=0) return;
   /* Renderer leaf calls cannot replace this context during a raster operation. */
   GmlD3State *d3=&gml_render_cpu_backend_software3d(R)->d3;
@@ -1013,7 +1013,7 @@ static int d3_clip_segment_plane(GmlD3Vertex *a,GmlD3Vertex *b,double plane,int 
 }
 static void d3_emit_point(GmlRender *R,GmlD3Vertex world,const GmlD3Texture *texture){
   GmlRenderCpuBackendDrawView draw;
-  if(!gml_render_cpu_backend_draw_view(R,&draw)) return;
+  if(!gml_render_cpu_backend_prepare_draw_view(R,&draw)) return;
   if(g_d3.lighting){ double factor[3]; if(d3_vertex_light_factor(R,&world,factor)) d3_apply_light_factor(&world,factor); }
   GmlD3Vertex camera=d3_vertex_camera(R,world);
   double x,y,inverse_z,depth,distance;
@@ -1024,7 +1024,7 @@ static void d3_emit_point(GmlRender *R,GmlD3Vertex world,const GmlD3Texture *tex
 }
 static void d3_emit_line(GmlRender *R,GmlD3Vertex a,GmlD3Vertex b,const GmlD3Texture *texture){
   GmlRenderCpuBackendDrawView draw;
-  if(!gml_render_cpu_backend_draw_view(R,&draw)) return;
+  if(!gml_render_cpu_backend_prepare_draw_view(R,&draw)) return;
   if(g_d3.lighting){
     double factor[3]; int have=d3_vertex_light_factor(R,&a,factor);
     if(have) d3_apply_light_factor(&a,factor);
