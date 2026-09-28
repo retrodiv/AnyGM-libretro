@@ -621,6 +621,7 @@ static int persistent_surface_lifecycle(void){
   GmlRenderImageRef old_ref,new_ref;
   GmlRenderDrawOp operation;
   GmlRenderDrawBatch batch;
+  GmlRenderJournalMetrics source_before={0},source_after={0};
   FakeDevice fake={0};
   const uint32_t *pixels;
   int first,second,disposable,reused,w,h;
@@ -651,9 +652,19 @@ static int persistent_surface_lifecycle(void){
   pixels=gml_surface_pixels_read(render,first,&w,&h);
   CHECK(pixels && w==4 && h==4 && pixels[0]==0x40224466u);
   CHECK(fake.readbacks==0);
+  gml_render_resource_journal_metrics(render->surface[first-1].resource,&source_before);
   gml_surface_copy(render,second,0,0,first);
+  gml_render_resource_journal_metrics(render->surface[first-1].resource,&source_after);
+  CHECK(source_after.logical_version==source_before.logical_version &&
+        source_after.cpu_version==source_before.cpu_version);
   pixels=gml_surface_pixels_read(render,second,&w,&h);
   CHECK(pixels && pixels[0]==0x40224466u && pixels[15]==0x40224466u);
+  gml_surface_copy_part(render,second,1,1,first,0,0,2,2);
+  gml_render_resource_journal_metrics(render->surface[first-1].resource,&source_after);
+  CHECK(source_after.logical_version==source_before.logical_version &&
+        source_after.cpu_version==source_before.cpu_version);
+  pixels=gml_surface_pixels_read(render,second,&w,&h);
+  CHECK(pixels && pixels[5]==0x40224466u && pixels[10]==0x40224466u);
   gml_surface_free(render,first);
   render->next_surface_id=first;
   reused=gml_surface_create(render,4,4);

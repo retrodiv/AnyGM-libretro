@@ -127,12 +127,12 @@ const uint32_t *surface_pixels_observe(GmlRender *r,int id,int *w,int *h){
 void gml_surface_copy(GmlRender *r, int dst, int x, int y, int src){
   if(!r) return;
   int sw=0, sh=0, dw=0, dh=0;
-  uint32_t *sp=surface_pixels(r,src,&sw,&sh);
+  const uint32_t *sp=surface_pixels_observe(r,src,&sw,&sh);
   uint32_t *dp=surface_pixels(r,dst,&dw,&dh);
   if(!sp || !dp || sw<=0 || sh<=0 || dw<=0 || dh<=0) return;
   if((r->fb && (sp==r->fb || dp==r->fb)) || src==r->target_id || dst==r->target_id){
     gml_render_maybe_prepare_draw(r);
-    sp=surface_pixels(r,src,&sw,&sh);
+    sp=surface_pixels_observe(r,src,&sw,&sh);
     dp=surface_pixels(r,dst,&dw,&dh);
     if(!sp || !dp) return;
   }
@@ -175,12 +175,12 @@ void gml_surface_copy_part(GmlRender *r, int dst, int x, int y, int src,
                            int source_x, int source_y, int width, int height){
   if(!r || width<=0 || height<=0) return;
   int sw=0,sh=0,dw=0,dh=0;
-  uint32_t *sp=surface_pixels(r,src,&sw,&sh);
+  const uint32_t *sp=surface_pixels_observe(r,src,&sw,&sh);
   uint32_t *dp=surface_pixels(r,dst,&dw,&dh);
   if(!sp || !dp || sw<=0 || sh<=0 || dw<=0 || dh<=0) return;
   if((r->fb && (sp==r->fb || dp==r->fb)) || src==r->target_id || dst==r->target_id){
     gml_render_maybe_prepare_draw(r);
-    sp=surface_pixels(r,src,&sw,&sh);
+    sp=surface_pixels_observe(r,src,&sw,&sh);
     dp=surface_pixels(r,dst,&dw,&dh);
     if(!sp || !dp) return;
   }
