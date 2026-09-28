@@ -1780,6 +1780,66 @@ static int view_surface_room_lifetime_policy(void){
   return view_surface_room_lifetime_case(0) && view_surface_room_lifetime_case(1);
 }
 
+static int view_surface_frame_mirror_policy(void){
+  AnygmSyntheticContent fixture;
+  if(!anygm_synthetic_gpu_scene_route_content_create(&fixture)) return 0;
+  AnygmHostServices services={0};
+  services.struct_size=sizeof services;
+  services.abi_version=ANYGM_HOST_SERVICES_VERSION;
+  anygm_stdio_vfs_services_init(&services);
+  AnygmContentSource source={0};
+  source.struct_size=sizeof source;
+  source.kind=ANYGM_CONTENT_PATH;
+  source.path=fixture.path;
+  source.cache_directory=source.save_directory=fixture.directory;
+  AnygmEngine *engine=NULL;
+  int ok=anygm_create(&services,&engine)==ANYGM_OK &&
+         anygm_load(engine,&source,NULL)==ANYGM_OK;
+  AnygmInputFrame input={0};
+  input.struct_size=sizeof input;
+  input.pointer_x=input.pointer_y=-1;
+  AnygmFrameOutput output={0};
+  output.struct_size=sizeof output;
+  ok=ok && anygm_run_frame(engine,&input,&output)==ANYGM_OK;
+  int surface=ok?gml_surface_create(&engine->render,16,12):-1;
+  if(ok && surface>0){
+    GmlVal args[2]={vreal(0),vreal(surface)};
+    (void)gml_builtin_call(&engine->vm,"view_set_surface_id",args,2);
+    ok=gml_global_arr(&engine->vm,"view_surface_id",0)==surface;
+  } else ok=0;
+  if(ok) ok=anygm_run_frame(engine,&input,&output)==ANYGM_OK;
+  int mirror_w=0,mirror_h=0,mirror_lit=0,source_lit=0;
+  const uint32_t *mirrored=ok?gml_surface_pixels_read(&engine->render,surface,
+                                                      &mirror_w,&mirror_h):NULL;
+  if(ok && (!mirrored || mirror_w!=16 || mirror_h!=12 ||
+            !engine->fb || !engine->width || !engine->height)) ok=0;
+  for(int y=0;ok && y<mirror_h;y++) for(int x=0;ok && x<mirror_w;x++){
+    /* Reduction's exact centre tie belongs to the preceding source texel. */
+    int sx=(int)((((int64_t)(2*x+1)*engine->width)-1)/(2*mirror_w));
+    int sy=(int)((((int64_t)(2*y+1)*engine->height)-1)/(2*mirror_h));
+    if(sx>=(int)engine->width) sx=(int)engine->width-1;
+    if(sy>=(int)engine->height) sy=(int)engine->height-1;
+    uint32_t expected=engine->fb[(size_t)sy*engine->width+sx]&0xFFFFFFu;
+    uint32_t actual=mirrored[(size_t)y*mirror_w+x]&0xFFFFFFu;
+    if(expected) source_lit++;
+    if(actual) mirror_lit++;
+    if(actual!=expected){
+      fprintf(stderr,"view surface frame mirror %d,%d: %06x != %06x\n",
+              x,y,actual,expected);
+      ok=0;
+    }
+  }
+  if(ok && (!source_lit || !mirror_lit)){
+    fprintf(stderr,"view surface frame mirror lacked visible source/destination: %d/%d\n",
+            source_lit,mirror_lit);
+    ok=0;
+  }
+  if(!ok) fputs("view surface frame mirror policy failed\n",stderr);
+  if(engine) anygm_destroy(engine);
+  anygm_synthetic_content_destroy(&fixture);
+  return ok;
+}
+
 static int framebuffer_retention_case(
     int (*create_fixture)(AnygmSyntheticContent *),const char *label){
   AnygmSyntheticContent fixture;
@@ -2896,6 +2956,8 @@ int main(int argc,char **argv){
       return background_color_policy()?0:1;
     if(!strcmp(argv[2],"view_surface_room_lifetime"))
       return view_surface_room_lifetime_policy()?0:1;
+    if(!strcmp(argv[2],"view_surface_frame_mirror"))
+      return view_surface_frame_mirror_policy()?0:1;
     if(!strcmp(argv[2],"multi_view_application_canvas"))
       return framebuffer_retention_case(
         anygm_synthetic_multiview_framebuffer_content_create,"multi-view")?0:1;
@@ -2976,6 +3038,7 @@ int main(int argc,char **argv){
   if(!one_shot_instance_assignment_policy()) return 1;
   if(!background_color_policy()) return 1;
   if(!view_surface_room_lifetime_policy()) return 1;
+  if(!view_surface_frame_mirror_policy()) return 1;
   if(!framebuffer_retention_policy()) return 1;
   if(!clear_view_background_policy()) return 1;
   if(!game_restart_policy()) return 1;
