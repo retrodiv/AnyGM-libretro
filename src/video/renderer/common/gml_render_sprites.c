@@ -933,7 +933,8 @@ static int resident_coarse_mip_veil(GmlRender *r,int sprite,int frame,
      r->fb!=r->app_surface_owned || r->fbw!=r->app_w || r->fbh!=r->app_h ||
      !r->fb_opaque_known || !r->fb_all_opaque ||
      (r->world_transform_active &&
-      (r->world_scale_x!=1.0 || r->world_scale_y!=1.0)) ||
+      (!isfinite(r->world_scale_x) || !isfinite(r->world_scale_y) ||
+       r->world_scale_x<=0.0 || r->world_scale_y<=0.0)) ||
      sprite<0 || sprite>=r->n_spr || blend!=0xFFFFFFu || alpha!=1.0 ||
      gml_d3_is_active(r)) return 0;
   for(int index=0;index<3;index++)
