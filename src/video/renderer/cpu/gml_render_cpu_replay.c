@@ -79,6 +79,10 @@ int gml_render_cpu_replay_eligible(const GmlRenderDrawOp *operation,
      !full_rect(target->region,target->width,target->height)) return 0;
   if(operation->opcode==GML_RENDER_OP_CLEAR)
     return operation->source_count==0u;
+  if(operation->opcode==GML_RENDER_OP_COLOURED_PRIMITIVE)
+    return operation->source_count==0u && !operation->sources && !source &&
+      (operation->payload.primitive.colour>>24)==255u &&
+      source_rect(operation->payload.primitive.region,target->width,target->height);
   if(operation->opcode!=GML_RENDER_OP_TEXTURED_QUAD || !state || !source_valid(source) ||
      operation->source_count!=1u || !operation->sources ||
      !same_ref(operation->sources[0],source->image) ||
@@ -166,6 +170,15 @@ int gml_render_cpu_replay_one(uint32_t *target,uint32_t width,uint32_t height,
     gml_render_cpu_backend_fill_xrgb(target,(int)((size_t)width*height),
       operation->target.pixel_format==GML_RENDER_PIXEL_XRGB8888
         ?operation->payload.clear_colour|0xFF000000u:operation->payload.clear_colour);
+    return 1;
+  }
+  if(operation->opcode==GML_RENDER_OP_COLOURED_PRIMITIVE){
+    const GmlRenderRect *region=&operation->payload.primitive.region;
+    uint32_t colour=operation->payload.primitive.colour;
+    for(uint32_t y=0;y<region->height;y++)
+      gml_render_cpu_backend_fill_xrgb(
+        target+(size_t)((uint32_t)region->y+y)*width+(uint32_t)region->x,
+        (int)region->width,colour);
     return 1;
   }
   {

@@ -160,6 +160,13 @@ typedef struct GmlRenderCopyRegion {
   uint32_t needs_source_snapshot;
 } GmlRenderCopyRegion;
 
+/* Fully resolved flat-colour coverage. The rectangle is a half-open pixel region in target
+ * coordinates; it does not borrow a texture or mutable draw state after submission. */
+typedef struct GmlRenderPrimitiveRect {
+  GmlRenderRect region;
+  uint32_t colour;
+} GmlRenderPrimitiveRect;
+
 typedef enum GmlRenderReconstructionMode {
   GML_RENDER_REPLAY_EXACT=1,
   GML_RENDER_DEVICE_CHECKPOINT=2,
@@ -173,7 +180,8 @@ typedef enum GmlRenderSceneFamily {
   GML_RENDER_SCENE_TILE=3,
   GML_RENDER_SCENE_SURFACE=4,
   GML_RENDER_SCENE_TEXT=5,
-  GML_RENDER_SCENE_FAMILY_COUNT=6
+  GML_RENDER_SCENE_PRIMITIVE=6,
+  GML_RENDER_SCENE_FAMILY_COUNT=7
 } GmlRenderSceneFamily;
 
 typedef struct GmlRenderDrawOp {
@@ -189,6 +197,7 @@ typedef struct GmlRenderDrawOp {
     uint32_t clear_colour;
     GmlRenderQuad quad;
     GmlRenderCopyRegion copy;
+    GmlRenderPrimitiveRect primitive;
     /* Lent through this submission. Shader output is non-reconstructible and must checkpoint. */
     const struct GmlPlanShader *shader;
   } payload;

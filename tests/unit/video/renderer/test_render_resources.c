@@ -113,6 +113,63 @@ static GmlRenderDrawOp clear_op(uint64_t version,uint32_t colour,uint32_t recons
   return operation;
 }
 
+static GmlRenderDrawOp flat_rect_op(uint64_t version,GmlRenderRect region,
+                                  uint32_t colour){
+  GmlRenderDrawOp operation=clear_op(version,0u,GML_RENDER_REPLAY_EXACT);
+  operation.opcode=GML_RENDER_OP_COLOURED_PRIMITIVE;
+  operation.payload.primitive.region=region;
+  operation.payload.primitive.colour=colour;
+  return operation;
+}
+
+static void fill(uint32_t *pixels,uint32_t colour);
+
+static int source_free_primitive_rect_replay(void){
+  uint32_t pixels[16];
+  GmlRenderDrawOp operations[2]={
+    flat_rect_op(2u,(GmlRenderRect){1,1,2u,2u},0xFF123456u),
+    flat_rect_op(3u,(GmlRenderRect){2,0,2u,3u},0xFFABCDEFu)
+  };
+  GmlRenderDrawBatch batch={operations,2u,NULL,0u};
+  GmlRenderJournalMetrics metrics={0};
+  FakeDevice fake={0};
+  GmlRenderDeviceServices device=service(&fake);
+  const uint32_t *observed=NULL;
+  GmlRenderResource *resource;
+  fill(pixels,0xFF000000u);
+  resource=gml_render_resource_create(target_ref(1u,1u),4u,4u,
+    GML_RENDER_PIXEL_XRGB8888,pixels,(GmlRenderResourceLimits){0});
+  CHECK(resource);
+  operations[1].payload.primitive.region=(GmlRenderRect){3,0,2u,3u};
+  CHECK(gml_render_resource_submit(resource,&device,&batch,NULL,0u)==
+        GML_RENDER_RESOURCE_EXEC_FAILED);
+  CHECK(fake.submits==0 && pixels[5]==0xFF000000u);
+  operations[1].payload.primitive.region=(GmlRenderRect){2,0,2u,3u};
+  CHECK(gml_render_resource_submit(resource,&device,&batch,NULL,0u)==
+        GML_RENDER_RESOURCE_EXEC_DEVICE);
+  gml_render_resource_journal_metrics(resource,&metrics);
+  CHECK(metrics.logical_version==3u && metrics.cpu_version==1u &&
+        metrics.gpu_version==3u && metrics.journal_operations==2u &&
+        metrics.retained_versions==0u);
+  CHECK(fake.submits==1 && fake.uploads==1 && fake.readbacks==0);
+  gml_render_resource_context_lost(resource);
+  CHECK(gml_render_resource_acquire_cpu_read(resource,&observed));
+  CHECK(observed==pixels && pixels[5]==0xFF123456u &&
+        pixels[6]==0xFFABCDEFu && pixels[2]==0xFFABCDEFu &&
+        pixels[13]==0xFF000000u && fake.readbacks==0);
+  gml_render_resource_destroy(resource);
+  fill(pixels,0xFF000000u);
+  resource=gml_render_resource_create(target_ref(1u,1u),4u,4u,
+    GML_RENDER_PIXEL_XRGB8888,pixels,(GmlRenderResourceLimits){0});
+  CHECK(resource);
+  CHECK(gml_render_resource_submit(resource,NULL,&batch,NULL,0u)==
+        GML_RENDER_RESOURCE_EXEC_CPU);
+  CHECK(pixels[5]==0xFF123456u && pixels[6]==0xFFABCDEFu &&
+        pixels[13]==0xFF000000u);
+  gml_render_resource_destroy(resource);
+  return 1;
+}
+
 static GmlRenderDrawOp quad_op(uint64_t version,const GmlRenderImageRef *source){
   GmlRenderDrawOp operation=clear_op(version,0u,GML_RENDER_REPLAY_EXACT);
   operation.opcode=GML_RENDER_OP_TEXTURED_QUAD;
@@ -1247,6 +1304,49 @@ static int resident_application_pending_clear(void){
         view.pixels[15]==0xFF778899u);
   gml_render_free(render);
   free(render);
+  return 1;
+}
+
+static int resident_flat_primitive_public_order(void){
+  GmlRender *cpu=(GmlRender*)calloc(1,sizeof *cpu);
+  GmlRender *gpu=(GmlRender*)calloc(1,sizeof *gpu);
+  uint32_t cpu_pixels[16]={0};
+  FakeDevice fake={0};
+  GmlRenderDeviceServices device=service(&fake);
+  GmlRenderJournalMetrics metrics={0};
+  CHECK(cpu && gpu);
+  CHECK(gml_render_init(cpu,NULL)==0 && gml_render_init(gpu,NULL)==0);
+  gml_render_begin(cpu,cpu_pixels,4,4,0.0,0.0);
+  CHECK(gml_render_application_surface_ensure_owned(gpu,4,4));
+  gml_render_bind_device(gpu,&device);
+  CHECK(gml_render_begin_resident_owned_application(gpu,0.0,0.0,0));
+  gml_render_set_pending_fill(cpu,0xFF102030u);
+  gml_render_set_pending_fill(gpu,0xFF102030u);
+  gml_render_primitive_rectangle(cpu,1,1,2,2,0x345678u,0);
+  gml_render_primitive_rectangle(gpu,1,1,2,2,0x345678u,0);
+  gml_render_primitive_rectangle_color(cpu,0,0,0,0,0xabcdefu,0xabcdefu,
+                                        0xabcdefu,0xabcdefu,0);
+  gml_render_primitive_rectangle_color(gpu,0,0,0,0,0xabcdefu,0xabcdefu,
+                                        0xabcdefu,0xabcdefu,0);
+  gml_render_primitive_point(cpu,3,3,0x0000ffu);
+  gml_render_primitive_point(gpu,3,3,0x0000ffu);
+  gml_render_primitive_line(cpu,0,3,2,3,0x00ff00u,1);
+  gml_render_primitive_line(gpu,0,3,2,3,0x00ff00u,1);
+  gml_render_primitive_line_color(cpu,3,0,3,2,0xff0000u,0xff0000u,1);
+  gml_render_primitive_line_color(gpu,3,0,3,2,0xff0000u,0xff0000u,1);
+  gml_render_resource_journal_metrics(gpu->app_surface_resource,&metrics);
+  CHECK(gpu->resident_application_pass && fake.submits==6 && fake.readbacks==0 &&
+        metrics.journal_operations==6u && metrics.cpu_replays==0u);
+  cpu->alpha=gpu->alpha=0.5;
+  gml_render_primitive_line(cpu,0,0,3,3,0xffffffu,1);
+  gml_render_primitive_line(gpu,0,0,3,3,0xffffffu,1);
+  gml_render_flush_pending_fill(cpu);
+  CHECK(!gpu->resident_application_pass && fake.readbacks==0 &&
+        memcmp(cpu_pixels,gpu->app_surface_owned,sizeof cpu_pixels)==0);
+  gml_render_free(cpu);
+  gml_render_free(gpu);
+  free(cpu);
+  free(gpu);
   return 1;
 }
 
@@ -2665,6 +2765,7 @@ int main(void){
   passed+=numbered_surface_free_bound_resource();
   passed+=owned_application_resize_and_context_loss();
   passed+=resident_application_pending_clear();
+  passed+=resident_flat_primitive_public_order();
   passed+=resident_application_sprite_cpu_fallback();
   passed+=resident_background_and_tile_cpu_barriers();
   passed+=atlas_scene_identity_and_retirement();
@@ -2682,6 +2783,7 @@ int main(void){
   passed+=surface_draw_sources_are_read_only();
   passed+=target_pixel_observes_resident_result();
   passed+=nearest_subrectangle_mirrors();
-  printf("render resource cases: passed=%d failed=%d\n",passed,35-passed);
-  return passed==35?EXIT_SUCCESS:EXIT_FAILURE;
+  passed+=source_free_primitive_rect_replay();
+  printf("render resource cases: passed=%d failed=%d\n",passed,37-passed);
+  return passed==37?EXIT_SUCCESS:EXIT_FAILURE;
 }

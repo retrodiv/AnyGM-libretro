@@ -158,12 +158,13 @@ void engine_graphics_report(AnygmEngine *engine){
     (unsigned long long)counters.scene_readbacks,
     (unsigned long long)counters.scene_readback_bytes);
   engine_logf(engine,ANYGM_LOG_INFO,
-    "[graphics-scene-families] sprite=%llu background=%llu tile=%llu surface=%llu text=%llu unclassified=%llu\n",
+    "[graphics-scene-families] sprite=%llu background=%llu tile=%llu surface=%llu text=%llu primitive=%llu unclassified=%llu\n",
     (unsigned long long)counters.scene_families[GML_RENDER_SCENE_SPRITE],
     (unsigned long long)counters.scene_families[GML_RENDER_SCENE_BACKGROUND],
     (unsigned long long)counters.scene_families[GML_RENDER_SCENE_TILE],
     (unsigned long long)counters.scene_families[GML_RENDER_SCENE_SURFACE],
     (unsigned long long)counters.scene_families[GML_RENDER_SCENE_TEXT],
+    (unsigned long long)counters.scene_families[GML_RENDER_SCENE_PRIMITIVE],
     (unsigned long long)counters.scene_families[GML_RENDER_SCENE_UNCLASSIFIED]);
 }
 

@@ -170,6 +170,16 @@ static int scene_preflight(GmlGpuBackend *backend,const GmlRenderDrawBatch *batc
       }
       continue;
     }
+    if(op->opcode==GML_RENDER_OP_COLOURED_PRIMITIVE){
+      if(op->reconstruction_mode!=GML_RENDER_REPLAY_EXACT ||
+         op->source_count || op->sources ||
+         !full_region(target->region,target->width,target->height) ||
+         !valid_region(op->payload.primitive.region,target->width,target->height) ||
+         (op->payload.primitive.colour>>24)!=255u ||
+         (!existing_target(backend,target) &&
+          !cleared_earlier(cleared,clear_count,target->image))) return 0;
+      continue;
+    }
     if(op->opcode==GML_RENDER_OP_CONTENT_SHADER_DRAW){
       const GmlRenderDrawStateSnapshot *state;
       const GmlPlanShader *shader=op->payload.shader;
@@ -536,6 +546,16 @@ GmlRenderExecutionResult gml_gpu_opengl_scene_submit(GmlGpuBackend *backend,
     active_target=target;
     if(op->opcode==GML_RENDER_OP_CLEAR){
       if(!gml_render_gpu_opengl_clear(backend,op,target)){
+        mark_uncertain(&result,target);
+        break;
+      }
+      target->valid=1;
+      target->rendered_origin=1;
+      result.accepted_prefix=index+1u;
+      continue;
+    }
+    if(op->opcode==GML_RENDER_OP_COLOURED_PRIMITIVE){
+      if(!gml_render_gpu_opengl_draw_primitive(backend,op,target)){
         mark_uncertain(&result,target);
         break;
       }

@@ -213,6 +213,7 @@ int gml_gpu_opengl_scene_capabilities(const GmlGpuBackend *backend,GmlRenderDevi
   caps->max_texture_extent=(uint32_t)backend->scene.max_texture_size;
   caps->max_batch_quads=GL_SCENE_MAX_QUADS;
   caps->supported_operations=(UINT64_C(1)<<GML_RENDER_OP_CLEAR)|
+                             (UINT64_C(1)<<GML_RENDER_OP_COLOURED_PRIMITIVE)|
                              (UINT64_C(1)<<GML_RENDER_OP_TEXTURED_QUAD)|
                              (UINT64_C(1)<<GML_RENDER_OP_CONTENT_SHADER_DRAW);
   caps->supported_families=GML_RENDER_FAMILY_TEXTURE|GML_RENDER_FAMILY_PRIMITIVE;

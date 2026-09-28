@@ -182,6 +182,8 @@ int gml_gpu_opengl_scene_flush(GmlGpuBackend *backend);
 int gml_gpu_opengl_scene_wait(GmlGpuBackend *backend);
 int gml_render_gpu_opengl_clear(GmlGpuBackend *backend,const GmlRenderDrawOp *op,
                                 GlSceneImage *target);
+int gml_render_gpu_opengl_draw_primitive(GmlGpuBackend *backend,
+                                         const GmlRenderDrawOp *op,GlSceneImage *target);
 int gml_render_gpu_opengl_draw_textured_quad(const GmlRenderDrawOp *op,
                                              const GmlRenderDrawStateSnapshot *state,
                                              uint32_t source_width,uint32_t source_height,

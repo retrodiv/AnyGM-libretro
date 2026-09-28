@@ -257,7 +257,9 @@ static GmlRenderResourceExecution cpu_fallback(GmlRenderResource *resource,
   if(!copy_checkpoint(resource,&copy)) return GML_RENDER_RESOURCE_EXEC_FAILED;
   for(uint32_t index=0;index<batch->operation_count;index++){
     const GmlRenderDrawOp *operation=&batch->operations[index];
-    const GmlRenderDrawStateSnapshot *state=operation->opcode==GML_RENDER_OP_CLEAR
+    const GmlRenderDrawStateSnapshot *state=
+      (operation->opcode==GML_RENDER_OP_CLEAR ||
+       operation->opcode==GML_RENDER_OP_COLOURED_PRIMITIVE)
       ?NULL:&batch->states[operation->state_index];
     const GmlRenderResourceSource *source=operation->source_count
       ?find_input(sources,source_count,operation->sources[0]):NULL;
@@ -298,7 +300,8 @@ static int batch_valid(const GmlRenderResource *resource,const GmlRenderDrawBatc
        operation->target.pixel_format!=resource->pixel_format ||
        operation->target.storage_version!=resource->storage_version) return 0;
     version++;
-    if(operation->opcode==GML_RENDER_OP_CLEAR){
+    if(operation->opcode==GML_RENDER_OP_CLEAR ||
+       operation->opcode==GML_RENDER_OP_COLOURED_PRIMITIVE){
       if(operation->source_count || operation->sources) return 0;
     } else {
       if(!batch->states || operation->state_index>=batch->state_count ||
@@ -393,7 +396,8 @@ static int append_history(GmlRenderResource *resource,const GmlRenderDrawBatch *
     memset(entry,0,sizeof *entry);
     entry->operation=*operation;
     entry->operation.sources=NULL;
-    if(operation->opcode!=GML_RENDER_OP_CLEAR){
+    if(operation->opcode!=GML_RENDER_OP_CLEAR &&
+       operation->opcode!=GML_RENDER_OP_COLOURED_PRIMITIVE){
       int found=0;
       entry->state=batch->states[operation->state_index];
       entry->source=operation->sources[0];
