@@ -77,6 +77,7 @@ static uint32_t scene_filter(const GmlRenderQuad *quad){
   if(quad->sampling.filter==GML_RENDER_FILTER_BOX) return 4u;
   if(quad->sampling.filter==GML_RENDER_FILTER_NEAREST_PHASED) return 7u;
   if(quad->sampling.filter==GML_RENDER_FILTER_NEAREST_PHASED_COPY) return 8u;
+  if(quad->sampling.filter==GML_RENDER_FILTER_NEAREST_PHASED_OPAQUE_ALPHA) return 9u;
   if(quad->shape==GML_RENDER_QUAD_WARPED)
     return quad->sampling.filter==GML_RENDER_FILTER_BILINEAR?6u:5u;
   return quad->shape==GML_RENDER_QUAD_AXIS_ALIGNED
@@ -241,12 +242,17 @@ static int scene_preflight(GmlGpuBackend *backend,const GmlRenderDrawBatch *batc
           sampling->filter!=GML_RENDER_FILTER_BILINEAR &&
           sampling->filter!=GML_RENDER_FILTER_BOX &&
           sampling->filter!=GML_RENDER_FILTER_NEAREST_PHASED &&
-          sampling->filter!=GML_RENDER_FILTER_NEAREST_PHASED_COPY) ||
+          sampling->filter!=GML_RENDER_FILTER_NEAREST_PHASED_COPY &&
+          sampling->filter!=GML_RENDER_FILTER_NEAREST_PHASED_OPAQUE_ALPHA) ||
          ((sampling->filter==GML_RENDER_FILTER_NEAREST_PHASED ||
-           sampling->filter==GML_RENDER_FILTER_NEAREST_PHASED_COPY) &&
+           sampling->filter==GML_RENDER_FILTER_NEAREST_PHASED_COPY ||
+           sampling->filter==GML_RENDER_FILTER_NEAREST_PHASED_OPAQUE_ALPHA) &&
           (op->payload.quad.shape!=GML_RENDER_QUAD_AXIS_ALIGNED ||
            op->reconstruction_mode!=GML_RENDER_DEVICE_CHECKPOINT ||
            sampling->edge_rule!=GML_RENDER_EDGE_CLAMP_SUBIMAGE)) ||
+         (sampling->filter==GML_RENDER_FILTER_NEAREST_PHASED_OPAQUE_ALPHA &&
+          (op->scene_family!=GML_RENDER_SCENE_SPRITE || blend!=1 ||
+           target->pixel_format!=GML_RENDER_PIXEL_ARGB8888)) ||
          (sampling->edge_rule!=GML_RENDER_EDGE_CLAMP_SUBIMAGE &&
           sampling->edge_rule!=GML_RENDER_EDGE_LOGICAL_TPAG &&
           sampling->edge_rule!=GML_RENDER_EDGE_TRANSPARENT) ||
@@ -279,6 +285,7 @@ static int scene_preflight(GmlGpuBackend *backend,const GmlRenderDrawBatch *batc
              sampling->filter!=GML_RENDER_FILTER_BOX &&
              sampling->filter!=GML_RENDER_FILTER_NEAREST_PHASED &&
              sampling->filter!=GML_RENDER_FILTER_NEAREST_PHASED_COPY &&
+             sampling->filter!=GML_RENDER_FILTER_NEAREST_PHASED_OPAQUE_ALPHA &&
              op->payload.quad.shape==GML_RENDER_QUAD_AXIS_ALIGNED &&
              !(op->scene_family==GML_RENDER_SCENE_TEXT &&
                sampling->filter==GML_RENDER_FILTER_NEAREST)))) return 0;
@@ -344,6 +351,7 @@ static int flush_quads(GmlGpuBackend *backend,GlSceneImage *target,GlSceneImage 
     backend->gl.BlendEquationSeparate(GL_FUNC_ADD,GL_FUNC_ADD);
     backend->gl.Enable(GL_BLEND);
   } else backend->gl.Disable(GL_BLEND);
+  if(filter==9u) backend->gl.ColorMask(GL_TRUE,GL_TRUE,GL_TRUE,GL_FALSE);
   backend->gl.UseProgram(scene->program);
   backend->gl.Uniform2fv(scene->u_extent,1,extent);
   backend->gl.Uniform1i(scene->u_image,0);
@@ -383,6 +391,16 @@ static int flush_quads(GmlGpuBackend *backend,GlSceneImage *target,GlSceneImage 
   backend->gl.VertexAttribPointer((GLuint)scene->a_span_active,1,GL_FLOAT,GL_FALSE,stride,
                                   (const void*)(27*sizeof(float)));
   backend->gl.DrawArrays(GL_TRIANGLES,0,(GLsizei)(count*6u));
+  if(filter==9u){
+    /* The modern CPU world target keeps alpha opaque at every written texel,
+     * even when its prior alpha is unknown. Reuse the sampled vertices in an
+     * alpha-only pass; the shader discards source-zero texels. */
+    backend->gl.ColorMask(GL_FALSE,GL_FALSE,GL_FALSE,GL_TRUE);
+    backend->gl.Disable(GL_BLEND);
+    backend->gl.Uniform1i(scene->u_filter,10);
+    backend->gl.DrawArrays(GL_TRIANGLES,0,(GLsizei)(count*6u));
+    backend->gl.ColorMask(GL_TRUE,GL_TRUE,GL_TRUE,GL_TRUE);
+  }
   backend->gl.DisableVertexAttribArray((GLuint)scene->a_position);
   backend->gl.DisableVertexAttribArray((GLuint)scene->a_texcoord);
   backend->gl.DisableVertexAttribArray((GLuint)scene->a_colour);

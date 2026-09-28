@@ -344,7 +344,8 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
   if(!r || !r->resident_application_pass ||
      (!r->interp && !box_stretched && !nearest_mode) || !r->win ||
      !(anygm_policy_uses_first_generation_studio(r->win) ||
-       (nearest_mode==3 && anygm_policy_has_modern_layer_semantics(r->win)) ||
+       ((nearest_mode==3 || nearest_mode==6) &&
+        anygm_policy_has_modern_layer_semantics(r->win)) ||
        ((rotated_sprite || opaque_target_alpha) &&
         anygm_policy_has_modern_layer_semantics(r->win))) ||
      page_index<0 || page_index>=r->n_tpag || r->classic ||
@@ -372,11 +373,16 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
        xs>1.0 || ys>1.0 || !r->fb_opaque_known || !r->fb_all_opaque ||
        fabs(fabs(r->cam_x-nearbyint(r->cam_x))-0.5)<1e-9 ||
        fabs(fabs(r->cam_y-nearbyint(r->cam_y))-0.5)<1e-9)) ||
+     (nearest_mode==6 && (r->interp || family!=GML_RENDER_SCENE_SPRITE ||
+       rotated_sprite || corner_colours || part_view || xs<=0.0 || ys<=0.0 ||
+       xs>1.0 || ys>1.0 ||
+       fabs(fabs(r->cam_x-nearbyint(r->cam_x))-0.5)<1e-9 ||
+       fabs(fabs(r->cam_y-nearbyint(r->cam_y))-0.5)<1e-9)) ||
      (nearest_mode==4 && (r->interp || family!=GML_RENDER_SCENE_SPRITE ||
        rotated_sprite || corner_colours || part_view || xs<=0.0 || ys<=0.0 ||
        xs>1.0 || ys>1.0 ||
-       fabs(1.0/xs-nearbyint(1.0/xs))<1e-9 ||
-       fabs(1.0/ys-nearbyint(1.0/ys))<1e-9)) ||
+       (xs!=1.0 && fabs(1.0/xs-nearbyint(1.0/xs))<1e-9) ||
+       (ys!=1.0 && fabs(1.0/ys-nearbyint(1.0/ys))<1e-9))) ||
      (nearest_mode==5 && (r->interp || family!=GML_RENDER_SCENE_BACKGROUND ||
        rotated_sprite || corner_colours || !part_view || xs!=1.0 || ys!=1.0 ||
        alpha!=1.0)) ||
@@ -395,7 +401,7 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
    * logical tw/th. A scaled stored rectangle is therefore valid for these exact rules. */
   if(page->sw<=0 || page->sh<=0 || page->sx<0 || page->sy<0 ||
      ((page->tw!=page->sw || page->th!=page->sh) &&
-      nearest_mode!=1 && nearest_mode!=3 && nearest_mode!=4) ||
+      nearest_mode!=1 && nearest_mode!=3 && nearest_mode!=4 && nearest_mode!=6) ||
      page->atlas<0 || page->atlas>=r->n_atlas) return 0;
   if(family==GML_RENDER_SCENE_SPRITE ||
      ((family==GML_RENDER_SCENE_BACKGROUND || family==GML_RENDER_SCENE_TILE) &&
@@ -503,7 +509,7 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
     }
     x0=floor(left+0.5+positioned_x_tie);
     y0=floor(top+0.5+positioned_y_tie);
-    width=(positioned_axis || nearest_mode==3) &&
+    width=(positioned_axis || nearest_mode==3 || nearest_mode==6) &&
       anygm_policy_has_modern_layer_semantics(r->win)
       ?floor((double)page->sw*fabs(xs)+0.5)
       :xs<0.0
@@ -513,7 +519,7 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
       : fabs(xs-nearbyint(xs))>1e-9
         ? floor(left+(double)page->sw*xs+0.5)-x0
         : floor((double)page->sw*xs+0.5);
-    height=(positioned_axis || nearest_mode==3) &&
+    height=(positioned_axis || nearest_mode==3 || nearest_mode==6) &&
       anygm_policy_has_modern_layer_semantics(r->win)
       ?floor((double)page->sh*fabs(ys)+0.5)
       :ys<0.0
@@ -527,9 +533,14 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
     if(ys<0.0) y0-=height;
   }
   if(!isfinite(width) || !isfinite(height) || width<1.0 || height<1.0 ||
-     x0<=-width || y0<=-height || x0>=r->fbw || y0>=r->fbh ||
      x0+width>10000000.0 || y0+height>10000000.0) return 0;
-  if(nearest_mode==3 &&
+  if(x0<=-width || y0<=-height || x0>=r->fbw || y0>=r->fbh){
+    /* The unit-scale first-generation point leaf has the same snapped half-open
+     * rectangle. A fully clipped draw leaves queued device work untouched. */
+    if(nearest_mode==4 && !rotated_sprite && xs==1.0 && ys==1.0) return 1;
+    return 0;
+  }
+  if((nearest_mode==3 || nearest_mode==6) &&
      (!modern_nearest_axis_bias(left,x0,xs,width,page->sw,&nearest_bias_x) ||
       !modern_nearest_axis_bias(top,y0,ys,height,page->sh,&nearest_bias_y))) return 0;
   if(rotated_sprite){
@@ -563,6 +574,7 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
     :GML_RENDER_QUAD_AXIS_ALIGNED;
   operation.payload.quad.sampling.filter=box_stretched?GML_RENDER_FILTER_BOX:
     nearest_mode==5?GML_RENDER_FILTER_NEAREST_PHASED_COPY:
+    nearest_mode==6?GML_RENDER_FILTER_NEAREST_PHASED_OPAQUE_ALPHA:
     (nearest_mode==2 || nearest_mode==3 || nearest_mode==4 || nearest_mode==5)
       ?GML_RENDER_FILTER_NEAREST_PHASED:
     rotated_sprite && !anygm_policy_has_modern_layer_semantics(r->win) &&
@@ -655,6 +667,7 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
     state.rgb_source_factor=GML_RENDER_BLEND_SOURCE_ALPHA;
     state.rgb_destination_factor=GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA;
     state.alpha_source_factor=opaque_target_alpha || nearest_mode==3 ||
+      nearest_mode==6 ||
       (rotated_sprite && anygm_policy_has_modern_layer_semantics(r->win))
         ?GML_RENDER_BLEND_ONE:GML_RENDER_BLEND_SOURCE_ALPHA;
     state.alpha_destination_factor=GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA;
@@ -702,10 +715,9 @@ static int resident_filtered_sprite(GmlRender *r,GmlSprite *sprite,int subimg,
                        fabs(normalized_rotation-360.0)<0.001)) return 0;
   if(!r->interp){
     /* R03-SPR-FIRSTGEN-NEAREST-REDUCE: retain independent authored far-edge coverage
-     * and fractional point phase for bounded, non-reciprocal reduction. */
+     * and fractional point phase for unit scale and bounded non-reciprocal reduction. */
     if(rotation==0.0 && anygm_policy_uses_first_generation_studio(r->win) &&
-       xs>0.0 && ys>0.0 && xs<=1.0 && ys<=1.0 &&
-       (xs!=1.0 || ys!=1.0))
+       xs>0.0 && ys>0.0 && xs<=1.0 && ys<=1.0)
       return resident_filtered_atlas_page(r,page_index,
         x-((double)sprite->originx-(double)page->tx)*xs-r->cam_x,
         y-((double)sprite->originy-(double)page->ty)*ys-r->cam_y,
@@ -717,7 +729,7 @@ static int resident_filtered_sprite(GmlRender *r,GmlSprite *sprite,int subimg,
         x-((double)sprite->originx-(double)page->tx)*xs-r->cam_x,
         y-((double)sprite->originy-(double)page->ty)*ys-r->cam_y,
         xs,ys,GML_RENDER_SCENE_SPRITE,blend,alpha,NULL,NULL,0.0,NULL,
-        0,0,0,0,3);
+        0,0,0,0,r->fb_opaque_known && r->fb_all_opaque?3:6);
     double left=x-((double)sprite->originx-(double)page->tx)*xs-r->cam_x;
     double top=y-((double)sprite->originy-(double)page->ty)*ys-r->cam_y;
     if(rotation!=0.0 || fabs(xs)!=1.0 || fabs(ys)!=1.0 ||
