@@ -486,10 +486,16 @@ static int resident_target_copy(void){
   copy.target.image.content_version=3u;
   CHECK(gml_render_resource_submit(destination,&device,&destination_batch,&view,1u)==
         GML_RENDER_RESOURCE_EXEC_FAILED); /* Stale source version is fenced. */
+  CHECK(gml_render_resource_source_view(source,&view));
+  source_version=view.image;
+  CHECK(source_version.content_version==3u && view.bytes==source_pixels);
+  CHECK(gml_render_resource_submit(destination,&device,&destination_batch,&view,1u)==
+        GML_RENDER_RESOURCE_EXEC_DEVICE);
+  CHECK(fake.uploads==2); /* The new source version uploads on the same device. */
   gml_render_resource_context_lost(destination);
   CHECK(gml_render_resource_acquire_cpu_read(destination,NULL));
-  CHECK(destination_pixels[0]==0x40010203u && destination_pixels[15]==0x40010203u);
-  CHECK(fake.readbacks==0 && fake.submits==2);
+  CHECK(destination_pixels[0]==0xFF998877u && destination_pixels[15]==0x40010203u);
+  CHECK(fake.readbacks==0 && fake.submits==3);
   CHECK(other_fake.submits==1);
   gml_render_resource_destroy(source);
   gml_render_resource_destroy(destination);
@@ -1428,7 +1434,7 @@ static int resident_background_and_tile_cpu_barriers(void){
 static int atlas_scene_identity_and_retirement(void){
   GmlRender *first=(GmlRender*)calloc(1,sizeof *first);
   GmlRender *second=(GmlRender*)calloc(1,sizeof *second);
-  GmlRenderResourceSource one={0},same={0},two={0};
+  GmlRenderResourceSource one={0},same={0},two={0},reloaded={0};
   FakeDevice fake={0};
   GmlRenderDeviceServices device=service(&fake);
   CHECK(first && second);
@@ -1456,8 +1462,23 @@ static int atlas_scene_identity_and_retirement(void){
   first->atlas[0].runtime_font_page=1;
   CHECK(!gml_render_atlas_scene_source_view(first,0,&same) && !same.bytes);
   gml_render_free(first);
+  CHECK(fake.retires==1);
+  CHECK(gml_render_init(first,NULL)==0);
+  CHECK(first->n_atlas>0 && first->atlas && first->atlas[0].px);
+  /* Reinitialization owns a fresh page at the same logical index. Keep its allocated default
+   * font page intact: replacing it would leak the generation we are testing. */
+  first->atlas[0].px[0]=0xA5u;
+  gml_render_bind_device(first,&device);
+  CHECK(gml_render_atlas_scene_source_view(first,0,&reloaded) &&
+        reloaded.image.identity==one.image.identity &&
+        reloaded.image.incarnation!=one.image.incarnation &&
+        reloaded.image.incarnation!=two.image.incarnation &&
+        reloaded.image.content_version==1u &&
+        reloaded.bytes==first->atlas[0].px &&
+        ((const uint8_t*)reloaded.bytes)[0]==0xA5u);
+  gml_render_free(first);
   gml_render_free(second);
-  CHECK(fake.retires==2);
+  CHECK(fake.retires==3);
   free(first);
   free(second);
   return 1;

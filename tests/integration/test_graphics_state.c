@@ -477,6 +477,9 @@ static int neutral_device_binding_case(void){
   Session session;
   const GmlRenderDeviceServices *device;
   GmlRenderDeviceCaps caps;
+  GmlRenderResourceSource old_atlas={0},new_atlas={0};
+  GmlRenderImageUpload transfer={0};
+  GmlGpuCounters before={0},after={0};
   anygm_test_graphics_reset();
   REQUIRE(session_open(&session),"session loads for device binding");
   REQUIRE(gml_render_device(&session.engine->render)==NULL,
@@ -490,11 +493,46 @@ static int neutral_device_binding_case(void){
   REQUIRE(device->capabilities(device->context,&caps) &&
           (caps.supported_operations&(UINT64_C(1)<<GML_RENDER_OP_TEXTURED_QUAD)),
           "binding exposes the qualified prototype without selecting it for the CPU scene");
+  REQUIRE(gml_render_atlas_scene_source_view(&session.engine->render,0,&old_atlas),
+          "the loaded renderer identifies its first immutable atlas page");
+  transfer.image=old_atlas.image;
+  transfer.storage_width=old_atlas.width;
+  transfer.storage_height=old_atlas.height;
+  transfer.region=(GmlRenderRect){0,0,old_atlas.width,old_atlas.height};
+  transfer.pixel_format=old_atlas.pixel_format;
+  transfer.stride_bytes=old_atlas.stride_bytes;
+  transfer.byte_capacity=old_atlas.byte_capacity;
+  transfer.bytes=old_atlas.bytes;
+  gml_gpu_counters(session.engine->gpu,&before);
+  REQUIRE(device->upload(device->context,&transfer) &&
+          device->upload(device->context,&transfer),
+          "the first immutable page uploads and same-version reuse succeeds");
+  gml_gpu_counters(session.engine->gpu,&after);
+  REQUIRE(after.scene_uploads==before.scene_uploads+1u,
+          "same-version immutable atlas reuse does not upload twice");
   REQUIRE(anygm_reset(session.engine)==ANYGM_OK,
           "reset retains the adopted graphics context");
   device=gml_render_device(&session.engine->render);
   REQUIRE(device && device->context && device->capabilities && device->submit,
           "the newly initialized renderer rebinds the existing device after reset");
+  REQUIRE(gml_render_atlas_scene_source_view(&session.engine->render,0,&new_atlas) &&
+          new_atlas.image.identity==old_atlas.image.identity &&
+          new_atlas.image.incarnation!=old_atlas.image.incarnation &&
+          new_atlas.image.content_version==1u,
+          "Reset gives the same atlas index a new source incarnation");
+  transfer.image=new_atlas.image;
+  transfer.storage_width=new_atlas.width;
+  transfer.storage_height=new_atlas.height;
+  transfer.region=(GmlRenderRect){0,0,new_atlas.width,new_atlas.height};
+  transfer.pixel_format=new_atlas.pixel_format;
+  transfer.stride_bytes=new_atlas.stride_bytes;
+  transfer.byte_capacity=new_atlas.byte_capacity;
+  transfer.bytes=new_atlas.bytes;
+  REQUIRE(device->upload(device->context,&transfer),
+          "the retained device accepts the fresh Reset atlas generation");
+  gml_gpu_counters(session.engine->gpu,&before);
+  REQUIRE(before.scene_uploads==after.scene_uploads+1u,
+          "Reset atlas generation uploads anew on the retained device");
   anygm_graphics_context_destroy(session.engine,1u);
   REQUIRE(gml_render_device(&session.engine->render)==NULL,
           "device service is cleared before context destruction");
