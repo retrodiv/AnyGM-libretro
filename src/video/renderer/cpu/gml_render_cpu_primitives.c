@@ -758,21 +758,73 @@ int gml_render_triangle_opaque_spans(GmlRender *R,
   return 1;
 }
 
+typedef struct {
+  double den;
+  int minx,maxx,miny,maxy;
+} GmlTriangleBarycentricBounds;
+
+static int prepare_triangle_barycentric_bounds(GmlRender *R,
+                                               double X1,double Y1,double X2,double Y2,
+                                               double X3,double Y3,double *alpha,
+                                               GmlTriangleBarycentricBounds *bounds){
+  if(!R||!R->fb||R->fbw<=0||R->fbh<=0) return 0;
+  if(!isfinite(X1)||!isfinite(Y1)||!isfinite(X2)||!isfinite(Y2)||!isfinite(X3)||!isfinite(Y3)) return 0;
+  if(!isfinite(*alpha)) return 0;
+  if(*alpha>1) *alpha=1; else if(*alpha<0) *alpha=0;
+  if(*alpha<=0) return 0;
+  double den=(Y2-Y3)*(X1-X3)+(X3-X2)*(Y1-Y3);
+  if(!isfinite(den)||fabs(den)<1e-9) return 0;
+  double minxd=floor(fmin(X1,fmin(X2,X3))), maxxd=floor(fmax(X1,fmax(X2,X3)));
+  double minyd=floor(fmin(Y1,fmin(Y2,Y3))), maxyd=floor(fmax(Y1,fmax(Y2,Y3)));
+  if(maxxd<0.0||maxyd<0.0||minxd>(double)(R->fbw-1)||minyd>(double)(R->fbh-1)) return 0;
+  int minx=minxd<0.0?0:(int)minxd, maxx=maxxd>=(double)R->fbw?R->fbw-1:(int)maxxd;
+  int miny=minyd<0.0?0:(int)minyd, maxy=maxyd>=(double)R->fbh?R->fbh-1:(int)maxyd;
+  *bounds=(GmlTriangleBarycentricBounds){den,minx,maxx,miny,maxy};
+  return 1;
+}
+
+static void emit_triangle_barycentric_pixels(const GmlTriangleBarycentricBounds *bounds,
+                                             double X1,double Y1,double X2,double Y2,
+                                             double X3,double Y3,int outline,uint32_t color,
+                                             GmlRenderPrimitiveBox emit,void *context){
+  double den=bounds->den;
+  for(int yy=bounds->miny;yy<=bounds->maxy;yy++)
+    for(int xx=bounds->minx;xx<=bounds->maxx;xx++){
+      double a0=((Y2-Y3)*(xx-X3)+(X3-X2)*(yy-Y3))/den;
+      double b0=((Y3-Y1)*(xx-X3)+(X1-X3)*(yy-Y3))/den;
+      double c0=1-a0-b0;
+      if(outline && a0>0.04&&b0>0.04&&c0>0.04) continue;
+      if(a0>=0&&b0>=0&&c0>=0) emit(context,xx,yy,xx,yy,color);
+    }
+}
+
+int gml_render_triangle_barycentric_pixels(GmlRender *R,
+                                           double X1,double Y1,double X2,double Y2,
+                                           double X3,double Y3,double alpha,int outline,
+                                           uint32_t color,GmlRenderPrimitiveBox emit,
+                                           void *context){
+  GmlTriangleBarycentricBounds bounds;
+  if(!emit || !prepare_triangle_barycentric_bounds(R,X1,Y1,X2,Y2,X3,Y3,
+                                                   &alpha,&bounds)) return 0;
+  emit_triangle_barycentric_pixels(&bounds,X1,Y1,X2,Y2,X3,Y3,outline,color,emit,context);
+  return 1;
+}
+
+typedef struct {GmlRender *render;double alpha;} GmlCpuTrianglePixel;
+static void draw_triangle_cpu_pixel(void *context,int x1,int y1,int x2,int y2,
+                                    uint32_t color){
+  GmlCpuTrianglePixel *pixel=(GmlCpuTrianglePixel*)context;
+  (void)x2;
+  (void)y2;
+  gml_render_cpu_backend_draw_pixel_alpha(pixel->render,x1,y1,color,pixel->alpha);
+}
+
 /* Instance-owned immediate-mode primitive buffer used between begin/end. */
 static void prim_tri_fill_ex(GmlRender *R, double X1,double Y1,double X2,double Y2,double X3,double Y3,
                              uint32_t col, double alpha, int outline){
-  if(!R||!R->fb||R->fbw<=0||R->fbh<=0) return;
-  if(!isfinite(X1)||!isfinite(Y1)||!isfinite(X2)||!isfinite(Y2)||!isfinite(X3)||!isfinite(Y3)) return;
-  if(!isfinite(alpha)) return;
-  if(alpha>1) alpha=1; else if(alpha<0) alpha=0;
-  if(alpha<=0) return;
-  double den=(Y2-Y3)*(X1-X3)+(X3-X2)*(Y1-Y3);
-  if(!isfinite(den)||fabs(den)<1e-9) return;
-  double minxd=floor(fmin(X1,fmin(X2,X3))), maxxd=floor(fmax(X1,fmax(X2,X3)));
-  double minyd=floor(fmin(Y1,fmin(Y2,Y3))), maxyd=floor(fmax(Y1,fmax(Y2,Y3)));
-  if(maxxd<0.0||maxyd<0.0||minxd>(double)(R->fbw-1)||minyd>(double)(R->fbh-1)) return;
-  int minx=minxd<0.0?0:(int)minxd, maxx=maxxd>=(double)R->fbw?R->fbw-1:(int)maxxd;
-  int miny=minyd<0.0?0:(int)minyd, maxy=maxyd>=(double)R->fbh?R->fbh-1:(int)maxyd;
+  GmlTriangleBarycentricBounds bounds;
+  if(!prepare_triangle_barycentric_bounds(R,X1,Y1,X2,Y2,X3,Y3,&alpha,&bounds)) return;
+  int minx=bounds.minx,maxx=bounds.maxx;
   GmlOpaqueTriangleRows rows;
   int row_count;
   if(prepare_opaque_triangle_rows(R,X1,Y1,X2,Y2,X3,Y3,alpha,outline,
@@ -787,13 +839,9 @@ static void prim_tri_fill_ex(GmlRender *R, double X1,double Y1,double X2,double 
       draw_opaque_triangle_rows(&rows,0,row_count,0);
     return;
   }
-  for(int yy=miny;yy<=maxy;yy++) for(int xx=minx;xx<=maxx;xx++){
-    double a0=((Y2-Y3)*(xx-X3)+(X3-X2)*(yy-Y3))/den;
-    double b0=((Y3-Y1)*(xx-X3)+(X1-X3)*(yy-Y3))/den;
-    double c0=1-a0-b0;
-    if(outline && a0>0.04&&b0>0.04&&c0>0.04) continue;
-    if(a0>=0&&b0>=0&&c0>=0) gml_render_cpu_backend_draw_pixel_alpha(R,xx,yy,col,alpha);
-  }
+  GmlCpuTrianglePixel pixel={R,alpha};
+  emit_triangle_barycentric_pixels(&bounds,X1,Y1,X2,Y2,X3,Y3,outline,col,
+                                   draw_triangle_cpu_pixel,&pixel);
 }
 
 

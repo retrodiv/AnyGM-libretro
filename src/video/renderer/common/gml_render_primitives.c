@@ -182,6 +182,31 @@ static int resident_filled_triangle(GmlRender *render,
   return result;
 }
 
+static int resident_outline_triangle(GmlRender *render,
+                                     double x1,double y1,double x2,double y2,
+                                     double x3,double y3,uint32_t color,double alpha){
+  GmlFlatSpans spans={0};
+  int covered,result;
+  if(!resident_flat_eligible(render) || !isfinite(alpha) || alpha<1.0 ||
+     !isfinite(x1) || !isfinite(y1) || !isfinite(x2) || !isfinite(y2) ||
+     !isfinite(x3) || !isfinite(y3)) return 0;
+  double minx=fmin(x1,fmin(x2,x3)),maxx=fmax(x1,fmax(x2,x3));
+  double miny=fmin(y1,fmin(y2,y3)),maxy=fmax(y1,fmax(y2,y3));
+  if(minx< -8192.0 || miny< -8192.0 ||
+     maxx>=(double)render->fbw+8192.0 ||
+     maxy>=(double)render->fbh+8192.0 ||
+     (maxx-minx+1.0)*(maxy-miny+1.0)>262144.0) return 0;
+  spans.render=render;
+  spans.capacity=8192u;
+  spans.regions=(GmlFlatRegion*)malloc(spans.capacity*sizeof *spans.regions);
+  if(!spans.regions) return 0;
+  covered=gml_render_triangle_barycentric_pixels(render,x1,y1,x2,y2,x3,y3,
+                                                  alpha,1,color,collect_line_box,&spans);
+  result=covered && resident_flat_spans(render,&spans);
+  free(spans.regions);
+  return result;
+}
+
 static int resident_line_bounds(GmlRender *render,double x1,double y1,
                                 double x2,double y2,int width){
   double right=(double)render->fbw+8192.0,bottom=(double)render->fbh+8192.0;
@@ -391,6 +416,7 @@ void gml_render_primitive_triangle_alpha(GmlRender *render,
                                          double x1,double y1,double x2,double y2,
                                          double x3,double y3,uint32_t color,
                                          double alpha,int outline){
+  if(outline && resident_outline_triangle(render,x1,y1,x2,y2,x3,y3,color,alpha)) return;
   if(resident_filled_triangle(render,x1,y1,x2,y2,x3,y3,color,alpha,outline)) return;
   gml_render_cpu_triangle_alpha(render,x1,y1,x2,y2,x3,y3,color,alpha,outline);
 }

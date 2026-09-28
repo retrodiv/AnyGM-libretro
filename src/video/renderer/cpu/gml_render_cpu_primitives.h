@@ -32,6 +32,11 @@ int gml_render_triangle_opaque_spans(GmlRender *render,
                                      double x1,double y1,double x2,double y2,
                                      double x3,double y3,double alpha,int outline,
                                      GmlRenderPrimitiveSpan emit,void *context);
+int gml_render_triangle_barycentric_pixels(GmlRender *render,
+                                           double x1,double y1,double x2,double y2,
+                                           double x3,double y3,double alpha,int outline,
+                                           uint32_t color,GmlRenderPrimitiveBox emit,
+                                           void *context);
 void gml_render_cpu_circle(GmlRender *render,double cx,double cy,double rx,double ry,
                            uint32_t color,int outline);
 void gml_render_cpu_circle_color(GmlRender *render,double cx,double cy,

@@ -1557,8 +1557,12 @@ static int resident_outline_coverage_public_order(void){
                                               0xff0000u,0xff0000u,1);
   gml_render_primitive_circle_color_subpixel(gpu,5.5,5.25,1.5,1.25,
                                               0xff0000u,0xff0000u,1);
+  gml_render_primitive_triangle_alpha(cpu,1.2,1.1,8.2,1.9,2.4,8.1,0x2468acu,1.0,1);
+  gml_render_primitive_triangle_alpha(gpu,1.2,1.1,8.2,1.9,2.4,8.1,0x2468acu,1.0,1);
+  gml_render_primitive_triangle_alpha(cpu,9.5,7.5,4.5,0.5,-1.5,4.5,0x102a6bu,1.0,1);
+  gml_render_primitive_triangle_alpha(gpu,9.5,7.5,4.5,0.5,-1.5,4.5,0x102a6bu,1.0,1);
   gml_render_resource_journal_metrics(gpu->app_surface_resource,&metrics);
-  CHECK(gpu->resident_application_pass && fake.submits==7 && fake.readbacks==0 &&
+  CHECK(gpu->resident_application_pass && fake.submits==9 && fake.readbacks==0 &&
         metrics.journal_operations>20u && metrics.cpu_replays==0u);
   gml_render_flush_pending_fill(cpu);
   CHECK(cpu_pixels[1u*10u+5u]!=0xFF101010u &&
