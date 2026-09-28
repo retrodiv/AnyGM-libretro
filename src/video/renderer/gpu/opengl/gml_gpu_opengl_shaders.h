@@ -249,12 +249,24 @@
   "uniform sampler2D u_previous;\n" \
   "uniform ivec2 u_region_origin;\n" \
   "uniform int u_repetitions;\n" \
+  "uniform int u_blend_rule;\n" \
+  "uniform float u_additive_alpha;\n" \
   "in vec2 v_texcoord;\n" \
   "in vec4 v_colour;\n" \
   "out vec4 o_color;\n" \
   "void main(){\n" \
   "  ivec4 source=ivec4(round(texture(u_image,v_texcoord)*v_colour*255.0));\n" \
   "  ivec4 prior=ivec4(round(texelFetch(u_previous,ivec2(gl_FragCoord.xy)-u_region_origin,0)*255.0));\n" \
+  "  // R03_SHADER_ADDITIVE_BACKGROUND: exact saturated point-sampled bm_add RGB.\n" \
+  "  if(u_blend_rule==1){\n" \
+  "    if(source.a==0){ o_color=vec4(prior)/255.0; return; }\n" \
+  "    float sa=float(source.a)/255.0*u_additive_alpha;\n" \
+  "    ivec3 increment=ivec3(vec3(source.rgb)*sa);\n" \
+  "    ivec3 colour=prior.rgb;\n" \
+  "    for(int index=0;index<u_repetitions;index++) colour=min(ivec3(255),colour+increment);\n" \
+  "    o_color=vec4(vec3(colour)/255.0,1.0);\n" \
+  "    return;\n" \
+  "  }\n" \
   "  int factor=source.a==255?256:source.a;\n" \
   "  // R03_SHADER_EXACT_OVERLAP: ordered destination-dependent eight-bit truncation.\n" \
   "  ivec3 colour=prior.rgb;\n" \

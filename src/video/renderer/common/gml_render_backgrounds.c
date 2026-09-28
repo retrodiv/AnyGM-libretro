@@ -160,23 +160,27 @@ static int resident_direct_background_nearest(GmlRender *r,int page_index,
                                               double x,double y,double xs,double ys,
                                               uint32_t colour,double alpha){
   GmlTpag *page;
+  int additive=r && r->blendmode==1;
   if(!r || !r->resident_application_pass || r->interp || r->classic ||
      gml_d3_is_active(r) || page_index<0 || page_index>=r->n_tpag ||
      !isfinite(xs) || !isfinite(ys) || xs==0.0 || ys==0.0 ||
      (colour&0xffffffu)!=0xffffffu ||
-     !isfinite(x) || !isfinite(y) || !isfinite(alpha) || alpha<0.0 ||
+     !isfinite(x) || !isfinite(y) || !isfinite(alpha) ||
+     (alpha<0.0 && !additive) ||
      r->gui_pass_active || r->active_shader>=0 || r->alpha_test_enable ||
-     !r->alphablend || r->blendmode || r->blend_equation!=1 ||
+     !r->alphablend || (r->blendmode && !additive) || r->blend_equation!=1 ||
      r->blend_equation_alpha!=1 || r->color_write_mask!=0x0fu ||
      r->fb!=r->app_surface_owned || r->fbw!=r->app_w || r->fbh!=r->app_h)
     return 0;
-  if(alpha==0.0) return 1;
+  /* The bm_add CPU point leaf skips every texel when draw alpha is non-positive. */
+  if(alpha==0.0 || (additive && alpha<0.0)) return 1;
   if(xs!=1.0 || ys!=1.0) return 0;
-  if(alpha<1.0) return 0;
+  if(alpha<1.0 && !additive) return 0;
   page=&r->tpag[page_index];
   return gml_render_resident_filtered_atlas_page(r,page_index,
     x-r->cam_x+page->tx,y-r->cam_y+page->ty,1.0,1.0,
-    GML_RENDER_SCENE_BACKGROUND,colour,1.0,page,GML_RENDER_NEAREST_DIRECT_SNAP_RULE);
+    GML_RENDER_SCENE_BACKGROUND,colour,additive?alpha:1.0,page,
+    GML_RENDER_NEAREST_DIRECT_SNAP_RULE);
 }
 
 void gml_draw_background(GmlRender *r, int bg, double x, double y){

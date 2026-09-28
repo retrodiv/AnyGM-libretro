@@ -114,7 +114,9 @@ typedef enum GmlRenderBlendEquation {
   GML_RENDER_BLEND_ADD=1,
   /* Source-over with eight-bit factors and truncating division by 256. The destination must be
    * snapshotted before this operation; fixed-function blending is not this rule. */
-  GML_RENDER_BLEND_EXACT8_TRUNC=2
+  GML_RENDER_BLEND_EXACT8_TRUNC=2,
+  /* Saturated source-alpha additive RGB with truncation and opaque output alpha. */
+  GML_RENDER_BLEND_EXACT8_ADDITIVE=3
 } GmlRenderBlendEquation;
 
 typedef struct GmlRenderDrawStateSnapshot {
@@ -130,6 +132,7 @@ typedef struct GmlRenderDrawStateSnapshot {
   GmlRenderRect clip;
   GmlRenderSamplingPolicy samplers[GML_RENDER_MAX_SAMPLERS];
   uint64_t material_identity,material_version;
+  double additive_draw_alpha;
 } GmlRenderDrawStateSnapshot;
 
 typedef enum GmlRenderQuadShape {

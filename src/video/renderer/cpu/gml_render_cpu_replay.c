@@ -59,6 +59,14 @@ static int blend_rule(const GmlRenderDrawStateSnapshot *state){
     if(state->rgb_equation==GML_RENDER_BLEND_ADD &&
        state->alpha_equation==GML_RENDER_BLEND_ADD) return 2;
   }
+  if(state->rgb_source_factor==GML_RENDER_BLEND_SOURCE_ALPHA &&
+     state->rgb_destination_factor==GML_RENDER_BLEND_ONE &&
+     state->alpha_source_factor==GML_RENDER_BLEND_ONE &&
+     state->alpha_destination_factor==GML_RENDER_BLEND_ZERO &&
+     state->rgb_equation==GML_RENDER_BLEND_EXACT8_ADDITIVE &&
+     state->alpha_equation==GML_RENDER_BLEND_EXACT8_ADDITIVE &&
+     isfinite(state->additive_draw_alpha) &&
+     state->additive_draw_alpha>0.0 && state->additive_draw_alpha<=1.0) return 3;
   return -1;
 }
 
@@ -94,6 +102,8 @@ int gml_render_cpu_replay_eligible(const GmlRenderDrawOp *operation,
      state->material_identity || state->material_version ||
      state->sampler_count!=1u || blend_rule(state)<0 ||
      (blend_rule(state)==1 && target->pixel_format!=GML_RENDER_PIXEL_XRGB8888) ||
+     (blend_rule(state)==3 && (target->pixel_format!=GML_RENDER_PIXEL_ARGB8888 ||
+                              operation->scene_family!=GML_RENDER_SCENE_BACKGROUND)) ||
      !((state->clip.width==0u && state->clip.height==0u) ||
        full_rect(state->clip,target->width,target->height))) return 0;
   quad=&operation->payload.quad;
@@ -191,6 +201,7 @@ int gml_render_cpu_replay_one(uint32_t *target,uint32_t width,uint32_t height,
     int mirror_x=quad->u[0]>quad->u[1],mirror_y=quad->v[0]>quad->v[2];
     int exact=blend_rule(state)==1;
     int binary=blend_rule(state)==2;
+    int additive=blend_rule(state)==3;
     for(uint32_t y=0;y<draw_height;y++) for(uint32_t x=0;x<draw_width;x++){
       uint32_t sample_x=x/scale_x,sample_y=y/scale_y;
       uint32_t source_x=(uint32_t)region.x+
@@ -199,7 +210,12 @@ int gml_render_cpu_replay_one(uint32_t *target,uint32_t width,uint32_t height,
         (mirror_y?region.height-1u-sample_y:sample_y);
       uint32_t pixel=source_pixel(source,source_x,source_y);
       uint32_t *destination=&target[(size_t)(top+y)*width+left+x];
-      if(exact){
+      if(additive){
+        if((pixel>>24)==0u) continue;
+        double sa=((pixel>>24)/255.0)*state->additive_draw_alpha;
+        *destination=gml_render_cpu_additive_pixel(*destination,
+          (int)((pixel>>16)&255u),(int)((pixel>>8)&255u),(int)(pixel&255u),sa);
+      } else if(exact){
         uint32_t factor=pixel>>24;
         uint32_t inverse;
         if(factor==255u) factor=256u;

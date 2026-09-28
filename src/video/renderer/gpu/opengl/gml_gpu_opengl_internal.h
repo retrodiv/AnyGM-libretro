@@ -105,6 +105,7 @@ typedef struct GlScene {
   GLint exact_a_position,exact_a_texcoord,exact_a_colour;
   GLint exact_u_extent,exact_u_image,exact_u_previous,exact_u_region_origin;
   GLint exact_u_repetitions;
+  GLint exact_u_blend_rule,exact_u_additive_alpha;
   uint32_t snapshot_width,snapshot_height;
   float *vertices;
   uint8_t *scratch;

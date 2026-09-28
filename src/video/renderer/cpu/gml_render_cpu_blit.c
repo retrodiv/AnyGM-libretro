@@ -2760,8 +2760,7 @@ static void blit_one_band_rows(void *context,int row_start,int row_end,int slot)
       uint32_t destination=*dp;
       int dr=(destination>>16)&0xFF, dg=(destination>>8)&0xFF, db=destination&0xFF;
       if(r->blendmode==1){   /* bm_add: dst += src*srcAlpha (glow) */
-        int ar=dr+(int)(sr*sa); if(ar>255)ar=255; int ag=dg+(int)(sg*sa); if(ag>255)ag=255;
-        int ab=db+(int)(sb*sa); if(ab>255)ab=255; *dp=0xFF000000u|(ar<<16)|(ag<<8)|ab; continue; }
+        *dp=gml_render_cpu_additive_pixel(destination,sr,sg,sb,sa); continue; }
       if(r->blendmode==2){   /* (bm_zero,bm_inv_src_colour), including inverse source alpha. */
         unsigned ar=gml_blend_inv_source_u8((unsigned)dr,(unsigned)sr);
         unsigned ag=gml_blend_inv_source_u8((unsigned)dg,(unsigned)sg);

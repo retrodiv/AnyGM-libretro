@@ -70,6 +70,14 @@ static int qualified_blend(const GmlRenderDrawStateSnapshot *state){
     if(state->rgb_equation==GML_RENDER_BLEND_EXACT8_TRUNC &&
        state->alpha_equation==GML_RENDER_BLEND_EXACT8_TRUNC) return 2;
   }
+  if(state->rgb_source_factor==GML_RENDER_BLEND_SOURCE_ALPHA &&
+     state->rgb_destination_factor==GML_RENDER_BLEND_ONE &&
+     state->alpha_source_factor==GML_RENDER_BLEND_ONE &&
+     state->alpha_destination_factor==GML_RENDER_BLEND_ZERO &&
+     state->rgb_equation==GML_RENDER_BLEND_EXACT8_ADDITIVE &&
+     state->alpha_equation==GML_RENDER_BLEND_EXACT8_ADDITIVE &&
+     isfinite(state->additive_draw_alpha) &&
+     state->additive_draw_alpha>0.0 && state->additive_draw_alpha<=1.0) return 4;
   return -1;
 }
 
@@ -232,6 +240,11 @@ static int scene_preflight(GmlGpuBackend *backend,const GmlRenderDrawBatch *batc
                        target->pixel_format!=GML_RENDER_PIXEL_XRGB8888 ||
                        sampling->filter!=GML_RENDER_FILTER_NEAREST ||
                        !exact_rect(op,NULL,NULL,NULL,NULL))) ||
+         (blend==4 && (!backend->gl.CopyTexSubImage2D ||
+                       op->scene_family!=GML_RENDER_SCENE_BACKGROUND ||
+                       target->pixel_format!=GML_RENDER_PIXEL_ARGB8888 ||
+                       sampling->filter!=GML_RENDER_FILTER_NEAREST ||
+                       !exact_rect(op,NULL,NULL,NULL,NULL))) ||
          state->sampler_count!=1u || state->material_identity || state->material_version ||
          state->coverage_policy ||
          !((state->clip.width==0 && state->clip.height==0) ||
@@ -290,6 +303,7 @@ static int scene_preflight(GmlGpuBackend *backend,const GmlRenderDrawBatch *batc
              !(op->scene_family==GML_RENDER_SCENE_TEXT &&
                sampling->filter==GML_RENDER_FILTER_NEAREST)))) return 0;
         if((colour>>24)!=255u && blend!=1 && blend!=3) return 0;
+        if(blend==4 && colour!=0xFFFFFFFFu) return 0;
       }
       if(op->payload.quad.shape==GML_RENDER_QUAD_AXIS_ALIGNED &&
          sampling->filter==GML_RENDER_FILTER_NEAREST &&
@@ -470,6 +484,12 @@ static int draw_exact_quad(GmlGpuBackend *backend,const GmlRenderDrawOp *op,
   backend->gl.Uniform1i(scene->exact_u_image,0);
   backend->gl.Uniform1i(scene->exact_u_previous,1);
   backend->gl.Uniform1i(scene->exact_u_repetitions,(GLint)repetitions);
+  backend->gl.Uniform1i(scene->exact_u_blend_rule,
+                        qualified_blend(state)==4?1:0);
+  {
+    GLfloat opacity=(GLfloat)state->additive_draw_alpha;
+    backend->gl.Uniform1fv(scene->exact_u_additive_alpha,1,&opacity);
+  }
   origin[0]=left;
   origin[1]=bottom;
   backend->gl.Uniform2iv(scene->exact_u_region_origin,1,origin);
@@ -544,7 +564,8 @@ GmlRenderExecutionResult gml_gpu_opengl_scene_submit(GmlGpuBackend *backend,
        !pending_source || !same_version(pending_source->ref,op->sources[0]) ||
        pending_filter!=scene_filter(&op->payload.quad) ||
        pending_blend!=qualified_blend(&batch->states[op->state_index]) ||
-       qualified_blend(&batch->states[op->state_index])==2)){
+       qualified_blend(&batch->states[op->state_index])==2 ||
+       qualified_blend(&batch->states[op->state_index])==4)){
       if(!flush_quads(backend,active_target,pending_source,pending_filter,
                       pending_blend,pending_count)){
         mark_uncertain(&result,active_target);
@@ -605,7 +626,7 @@ GmlRenderExecutionResult gml_gpu_opengl_scene_submit(GmlGpuBackend *backend,
     }
     pending_filter=scene_filter(&op->payload.quad);
     pending_blend=qualified_blend(&batch->states[op->state_index]);
-    if(pending_blend==2){
+    if(pending_blend==2 || pending_blend==4){
       uint32_t repetitions=exact_repetitions(batch,index);
       int drawn=draw_exact_quad(backend,op,&batch->states[op->state_index],
                                 target,pending_source,repetitions,error,error_capacity);

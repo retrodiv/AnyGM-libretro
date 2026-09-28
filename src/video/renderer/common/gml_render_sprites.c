@@ -361,6 +361,10 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
   double span_x[4]={0},span_y[4]={0};
   int modern_rotation=rotated_sprite && r && r->win &&
     anygm_policy_has_modern_layer_semantics(r->win);
+  int additive_background=r && r->blendmode==1 &&
+    family==GML_RENDER_SCENE_BACKGROUND && nearest_mode==5 &&
+    !r->interp && xs==1.0 && ys==1.0 &&
+    (colour&0xFFFFFFu)==0xFFFFFFu && alpha>0.0 && alpha<=1.0;
   int span_active=0;
   int margin_left=0,margin_top=0,margin_right=0,margin_bottom=0;
   uint32_t margin_mask=0u;
@@ -373,7 +377,7 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
         anygm_policy_has_modern_layer_semantics(r->win))) ||
      page_index<0 || page_index>=r->n_tpag || r->classic ||
      r->gui_pass_active || r->active_shader>=0 || r->alpha_test_enable ||
-     !r->alphablend || r->blendmode || r->blend_equation!=1 ||
+     !r->alphablend || (r->blendmode && !additive_background) || r->blend_equation!=1 ||
      r->blend_equation_alpha!=1 || r->color_write_mask!=0x0fu ||
      (rotated_sprite && anygm_policy_has_modern_layer_semantics(r->win) &&
       (!r->fb_opaque_known || !r->fb_all_opaque)) ||
@@ -408,7 +412,7 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
        (ys!=1.0 && fabs(1.0/ys-nearbyint(1.0/ys))<1e-9))) ||
      (nearest_mode==5 && (r->interp || family!=GML_RENDER_SCENE_BACKGROUND ||
        rotated_sprite || corner_colours || !part_view || xs!=1.0 || ys!=1.0 ||
-       alpha!=1.0)) ||
+       (alpha!=1.0 && !additive_background))) ||
      (nearest_mode==2 && (r->interp || family!=GML_RENDER_SCENE_BACKGROUND ||
        !part_view || rotated_sprite || corner_colours || xs==0.0 || ys==0.0 ||
        fabs(xs)>4.0 || fabs(ys)>4.0 ||
@@ -563,6 +567,10 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
     if(nearest_mode==4 && !rotated_sprite && xs==1.0 && ys==1.0) return 1;
     return 0;
   }
+  /* Explicit additive blending snapshots this exact rectangle. A clipped quad cannot be
+   * reconstructed by that executor or its exact CPU journal; keep the ordered CPU writer. */
+  if(additive_background &&
+     (x0<0.0 || y0<0.0 || x0+width>r->fbw || y0+height>r->fbh)) return 0;
   if((nearest_mode==3 || nearest_mode==6) &&
      (!modern_nearest_axis_bias(left,x0,xs,width,page->sw,&nearest_bias_x) ||
       !modern_nearest_axis_bias(top,y0,ys,height,page->sh,&nearest_bias_y))) return 0;
@@ -580,7 +588,8 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
   region=(GmlRenderRect){page->sx,page->sy,(uint32_t)page->sw,(uint32_t)page->sh};
   source_ref=source.image;
   operation.opcode=GML_RENDER_OP_TEXTURED_QUAD;
-  operation.reconstruction_mode=GML_RENDER_DEVICE_CHECKPOINT;
+  operation.reconstruction_mode=additive_background
+    ?GML_RENDER_REPLAY_EXACT:GML_RENDER_DEVICE_CHECKPOINT;
   operation.scene_family=family;
   operation.source_count=1u;
   operation.sources=&source_ref;
@@ -596,7 +605,8 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
       ?GML_RENDER_QUAD_CARDINAL:GML_RENDER_QUAD_GENERAL)
     :GML_RENDER_QUAD_AXIS_ALIGNED;
   operation.payload.quad.sampling.filter=box_stretched?GML_RENDER_FILTER_BOX:
-    nearest_mode==5?GML_RENDER_FILTER_NEAREST_PHASED_COPY:
+    nearest_mode==5?(additive_background?GML_RENDER_FILTER_NEAREST:
+                     GML_RENDER_FILTER_NEAREST_PHASED_COPY):
     nearest_mode==6?GML_RENDER_FILTER_NEAREST_PHASED_OPAQUE_ALPHA:
     (nearest_mode==2 || nearest_mode==3 || nearest_mode==4 || nearest_mode==5)
       ?GML_RENDER_FILTER_NEAREST_PHASED:
@@ -612,7 +622,7 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
     operation.payload.quad.sampling.filter==GML_RENDER_FILTER_BILINEAR
       ?(corner_colours && part_view && margin_mask
           ?GML_RENDER_MARGIN_VISIBLE_CENTRE:margin_mask):0u;
-  uint32_t draw_alpha=(uint32_t)lround(alpha*255.0);
+  uint32_t draw_alpha=additive_background?255u:(uint32_t)lround(alpha*255.0);
   /* GML's blend is BBGGRR; each neutral quad vertex carries AARRGGBB. */
   for(int corner=0;corner<4;corner++){
     uint32_t tint=corner_colours?corner_colours[corner]:colour;
@@ -685,7 +695,15 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
   state.write_mask=15u;
   state.colour=0xFFFFFFFFu;
   state.alpha=255u;
-  if(nearest_mode!=5 && (!page->scene_fully_opaque || alpha<1.0 ||
+  if(additive_background){
+    state.rgb_source_factor=GML_RENDER_BLEND_SOURCE_ALPHA;
+    state.rgb_destination_factor=GML_RENDER_BLEND_ONE;
+    state.alpha_source_factor=GML_RENDER_BLEND_ONE;
+    state.alpha_destination_factor=GML_RENDER_BLEND_ZERO;
+    state.rgb_equation=GML_RENDER_BLEND_EXACT8_ADDITIVE;
+    state.alpha_equation=GML_RENDER_BLEND_EXACT8_ADDITIVE;
+    state.additive_draw_alpha=alpha;
+  } else if(nearest_mode!=5 && (!page->scene_fully_opaque || alpha<1.0 ||
      margin_left || margin_top || margin_right || margin_bottom)){
     state.rgb_source_factor=GML_RENDER_BLEND_SOURCE_ALPHA;
     state.rgb_destination_factor=GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA;

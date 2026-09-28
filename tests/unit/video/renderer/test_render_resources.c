@@ -360,6 +360,44 @@ static int argb_surface_replay(void){
   return 1;
 }
 
+static int additive_background_exact_replay(void){
+  uint32_t pixels[16],source_pixels[4]={0x80DC280Au,0x00B40FC8u,
+                                       0xFF5A1EE6u,0x400A0A0Au};
+  GmlRenderImageRef source_image=source_ref();
+  GmlRenderDrawOp operations[2]={quad_op(2u,&source_image),
+                                 quad_op(3u,&source_image)};
+  GmlRenderDrawStateSnapshot state=quad_state(0);
+  GmlRenderDrawBatch batch={operations,2u,&state,1u};
+  GmlRenderResourceSource source=source_view(source_pixels,1);
+  FakeDevice fake={0};
+  GmlRenderDeviceServices device=service(&fake);
+  GmlRenderResource *resource;
+  for(unsigned index=0;index<16u;index++) pixels[index]=0x40563412u;
+  state.rgb_source_factor=GML_RENDER_BLEND_SOURCE_ALPHA;
+  state.rgb_destination_factor=GML_RENDER_BLEND_ONE;
+  state.alpha_source_factor=GML_RENDER_BLEND_ONE;
+  state.alpha_destination_factor=GML_RENDER_BLEND_ZERO;
+  state.rgb_equation=state.alpha_equation=GML_RENDER_BLEND_EXACT8_ADDITIVE;
+  state.additive_draw_alpha=0.65;
+  for(unsigned index=0;index<2u;index++){
+    operations[index].scene_family=GML_RENDER_SCENE_BACKGROUND;
+    operations[index].target.pixel_format=GML_RENDER_PIXEL_ARGB8888;
+  }
+  resource=gml_render_resource_create(target_ref(1u,1u),4u,4u,
+    GML_RENDER_PIXEL_ARGB8888,pixels,(GmlRenderResourceLimits){0});
+  CHECK(resource);
+  CHECK(gml_render_resource_submit(resource,&device,&batch,&source,1u)==
+        GML_RENDER_RESOURCE_EXEC_DEVICE);
+  CHECK(fake.submits==1 && fake.readbacks==0 && pixels[5]==0x40563412u);
+  gml_render_resource_context_lost(resource);
+  CHECK(gml_render_resource_acquire_cpu_read(resource,NULL));
+  CHECK(pixels[0]==0x40563412u && pixels[5]==0xFFE44E18u &&
+        pixels[6]==0x40563412u && pixels[9]==0xFFCA5AFFu &&
+        pixels[10]==0xFF583614u && fake.readbacks==0);
+  gml_render_resource_destroy(resource);
+  return 1;
+}
+
 static int pressure_and_fallback(void){
   uint32_t pixels[16];
   const uint32_t *observed=NULL;
@@ -3097,6 +3135,7 @@ int main(void){
   int passed=0;
   passed+=journal_loss_and_mutation();
   passed+=argb_surface_replay();
+  passed+=additive_background_exact_replay();
   passed+=pressure_and_fallback();
   passed+=upload_refusal_recovers_cpu();
   passed+=journal_saturation_stays_bounded();
@@ -3140,6 +3179,6 @@ int main(void){
   passed+=target_pixel_observes_resident_result();
   passed+=nearest_subrectangle_mirrors();
   passed+=source_free_primitive_rect_replay();
-  printf("render resource cases: passed=%d failed=%d\n",passed,45-passed);
-  return passed==45?EXIT_SUCCESS:EXIT_FAILURE;
+  printf("render resource cases: passed=%d failed=%d\n",passed,46-passed);
+  return passed==46?EXIT_SUCCESS:EXIT_FAILURE;
 }

@@ -36,6 +36,16 @@ static inline uint32_t blend_fast8_cached(uint32_t dst, uint32_t srb, uint32_t s
   return 0xFF000000u|rb|g;
 }
 
+/* The existing point-sampled bm_add channel rule is also the exact journal replay owner. */
+static inline uint32_t gml_render_cpu_additive_pixel(uint32_t destination,
+                                                      int sr,int sg,int sb,double sa){
+  int dr=(destination>>16)&255,dg=(destination>>8)&255,db=destination&255;
+  int ar=dr+(int)(sr*sa); if(ar>255) ar=255;
+  int ag=dg+(int)(sg*sa); if(ag>255) ag=255;
+  int ab=db+(int)(sb*sa); if(ab>255) ab=255;
+  return 0xFF000000u|((uint32_t)ar<<16)|((uint32_t)ag<<8)|(uint32_t)ab;
+}
+
 static inline int row_all_opaque32(const uint32_t *sp, int run){
   if(run<=0) return 1;
 #if defined(__SSE2__)
