@@ -618,11 +618,22 @@ int gml_render_application_surface_presentation_settled(const GmlRender *r){
   return r?r->app_draw_presentation_settled:0;
 }
 int gml_render_target_pixel(GmlRender *r,int x,int y,uint32_t *pixel){
+  const uint32_t *current;
+  int width,height;
   if(pixel) *pixel=0;
   if(!r || !pixel) return 0;
   gml_render_maybe_prepare_draw(r);
   if(!r->fb || x<0 || y<0 || x>=r->fbw || y>=r->fbh) return 0;
-  *pixel=r->fb[(size_t)y*r->fbw+x];
+  current=r->fb;
+  width=r->fbw;
+  height=r->fbh;
+  if(r->fb==r->app_surface_owned && r->app_surface_resource)
+    current=surface_pixels_observe(r,0,&width,&height);
+  else if(r->target_id>0 && r->target_id<=GML_MAX_SURFACES &&
+          r->surface[r->target_id-1].resource)
+    current=surface_pixels_observe(r,r->target_id,&width,&height);
+  if(!current || current!=r->fb || width!=r->fbw || height!=r->fbh) return 0;
+  *pixel=current[(size_t)y*width+x];
   return 1;
 }
 /* Whether this renderer is rasterizing under the classic conventions. Builtins see GmlRender as an
@@ -961,6 +972,15 @@ void gml_render_flush_pending_fill(GmlRender *r){
       if(!gml_render_resource_acquire_cpu_write(resource,&pixels) ||
          pixels!=r->fb || !gml_render_resource_commit_cpu_write(resource))
         return;
+    }
+  }
+  if(r->target_id>0 && r->target_id<=GML_MAX_SURFACES){
+    GmlSurface *surface=&r->surface[r->target_id-1];
+    if(surface->live && surface->resource && r->fb==surface->px){
+      int width=0,height=0;
+      if(surface->w!=r->fbw || surface->h!=r->fbh ||
+         surface_pixels(r,r->target_id,&width,&height)!=r->fb ||
+         width!=r->fbw || height!=r->fbh) return;
     }
   }
   uint32_t color=r->pending_fill_color;

@@ -1967,6 +1967,71 @@ static int surface_draw_sources_are_read_only(void){
   return 1;
 }
 
+static int target_pixel_observes_resident_result(void){
+  GmlRender *render=(GmlRender*)calloc(1,sizeof *render);
+  uint32_t base[16]={0};
+  GmlRenderDeviceServices device;
+  GmlRenderDrawOp operation;
+  GmlRenderDrawBatch batch;
+  GmlRenderResource *resource;
+  GmlRenderJournalMetrics before={0},after={0};
+  FakeDevice fake={0};
+  uint32_t pixel=0;
+  int id;
+  CHECK(render);
+  render->next_surface_id=1;
+  render->active_shader=-1;
+  render->color_write_mask=0x0Fu;
+  CHECK(gml_render_application_surface_ensure_owned(render,4,4));
+  device=service(&fake);
+  gml_render_bind_device(render,&device);
+  CHECK(gml_render_begin_resident_owned_application(render,0.0,0.0,0));
+  gml_render_set_pending_fill(render,0xFF2468ACu);
+  gml_render_flush_pending_fill(render);
+  CHECK(gml_render_scene_flush(render) && render->resident_application_pass);
+  resource=render->app_surface_resource;
+  CHECK(resource && render->app_surface_owned[5]==0u);
+  gml_render_resource_journal_metrics(resource,&before);
+  CHECK(before.logical_version==before.gpu_version && before.logical_version>1u);
+  CHECK(gml_render_target_pixel(render,1,1,&pixel) && pixel==0xFF2468ACu);
+  gml_render_resource_journal_metrics(resource,&after);
+  CHECK(after.logical_version==before.logical_version &&
+        after.gpu_version==before.gpu_version &&
+        render->resident_application_pass && fake.readbacks==0);
+
+  gml_render_begin(render,base,4,4,0.0,0.0);
+  id=gml_surface_create(render,4,4);
+  CHECK(id>0 && gml_surface_set_target(render,id));
+  resource=gml_render_surface_resource_ensure(render,id);
+  CHECK(resource);
+  operation=clear_op(2u,0xFFB42834u,GML_RENDER_REPLAY_EXACT);
+  operation.target.image=gml_render_resource_image_ref(resource);
+  operation.target.image.content_version++;
+  operation.target.pixel_format=GML_RENDER_PIXEL_ARGB8888;
+  batch=(GmlRenderDrawBatch){&operation,1u,NULL,0u};
+  CHECK(gml_render_surface_scene_submit(render,id,&batch,NULL,0u)==
+        GML_RENDER_RESOURCE_EXEC_DEVICE);
+  gml_render_resource_journal_metrics(resource,&before);
+  CHECK(before.logical_version==before.gpu_version &&
+        render->surface[id-1].px[5]==0u);
+  CHECK(gml_render_target_pixel(render,1,1,&pixel) && pixel==0xFFB42834u);
+  gml_render_resource_journal_metrics(resource,&after);
+  CHECK(after.logical_version==before.logical_version &&
+        after.gpu_version==before.gpu_version && fake.readbacks==0);
+  gml_render_set_pending_fill(render,0xFF3975B1u);
+  CHECK(gml_render_target_pixel(render,1,1,&pixel) && pixel==0xFF3975B1u);
+  gml_render_resource_journal_metrics(resource,&after);
+  CHECK(after.logical_version>before.logical_version &&
+        after.cpu_version==after.logical_version &&
+        after.gpu_version==before.gpu_version && fake.readbacks==0);
+  gml_surface_reset_target(render);
+  base[5]=0xFF654321u;
+  CHECK(gml_render_target_pixel(render,1,1,&pixel) && pixel==0xFF654321u);
+  gml_render_free(render);
+  free(render);
+  return 1;
+}
+
 int main(void){
   int passed=0;
   passed+=journal_loss_and_mutation();
@@ -1994,7 +2059,8 @@ int main(void){
   passed+=resident_integer_scaled_atlas_sprite_gpu();
   passed+=state_without_context();
   passed+=surface_draw_sources_are_read_only();
+  passed+=target_pixel_observes_resident_result();
   passed+=nearest_subrectangle_mirrors();
-  printf("render resource cases: passed=%d failed=%d\n",passed,26-passed);
-  return passed==26?EXIT_SUCCESS:EXIT_FAILURE;
+  printf("render resource cases: passed=%d failed=%d\n",passed,27-passed);
+  return passed==27?EXIT_SUCCESS:EXIT_FAILURE;
 }
