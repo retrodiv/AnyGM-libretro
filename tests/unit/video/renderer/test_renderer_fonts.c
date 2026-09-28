@@ -244,6 +244,22 @@ static int changed_source_case(void){
   return ok;
 }
 
+static int runtime_font_capacity_case(void){
+  FontFixture *f=fixture_create();
+  if(!f) return 0;
+  f->render.n_fonts=GML_MAX_FONTS;
+  int refused=add_font(f);
+  int ok=refused==-1 && f->render.n_fonts==GML_MAX_FONTS &&
+    f->render.n_atlas==0 && !f->render.atlas;
+  f->render.n_fonts=0;
+  int accepted=add_font(f);
+  ok &= accepted==0 && draw_font(f,accepted)>0 &&
+    f->render.n_atlas==1 && f->render.atlas[0].runtime_font_page;
+  if(!ok) fprintf(stderr,"runtime font capacity or recovery changed\n");
+  fixture_destroy(f);
+  return ok;
+}
+
 static int restore_styles_case(void){
   FontFixture *f=fixture_create();
   if(!f) return 0;
@@ -324,6 +340,7 @@ int main(int argc,char **argv){
     {"restore_removes_later_runtime_font",restore_removes_later_case},
     {"lazy_glyph_restore_and_atlas_reuse",lazy_glyph_restore_case},
     {"changed_source_rejected",changed_source_case},
+    {"runtime_font_capacity",runtime_font_capacity_case},
     {"style_restore_preserves_raster",restore_styles_case},
     {"malformed_record_rejected",malformed_record_case}
   };

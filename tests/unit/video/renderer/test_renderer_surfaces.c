@@ -74,6 +74,49 @@ static int owned_application_begin_case(void){
   return 0;
 }
 
+static int surface_budget_refusal_case(void){
+  GmlRender render={0};
+  uint32_t base[4]={0};
+  uint32_t *bound;
+  int ids[GML_MAX_SURFACES],reused;
+  render.next_surface_id=1;
+  gml_render_begin(&render,base,2,2,0.0,0.0);
+  REQUIRE(gml_surface_create(&render,0,1)==-1 &&
+          gml_surface_create(&render,1,0)==-1 &&
+          gml_surface_create(&render,4097,1)==-1 &&
+          gml_surface_create(&render,1,4097)==-1,
+          "invalid and over-limit surface extents refuse before allocation");
+  ids[0]=gml_surface_create(&render,2,2);
+  REQUIRE(ids[0]>0 && gml_surface_set_target(&render,ids[0]),
+          "a bounded surface can become the current target");
+  bound=render.fb;
+  gml_render_set_pending_fill(&render,0xFF315779u);
+  gml_surface_resize(&render,ids[0],0,2);
+  gml_surface_resize(&render,ids[0],4097,2);
+  REQUIRE(render.fb==bound && render.fbw==2 && render.fbh==2 &&
+          render.target_id==ids[0] && render.target_sp==1 && render.pending_fill &&
+          gml_surface_width(&render,ids[0])==2 && gml_surface_height(&render,ids[0])==2,
+          "refused resize preserves bound storage, stack and deferred fill");
+  for(int index=1;index<GML_MAX_SURFACES;index++){
+    ids[index]=gml_surface_create(&render,1,1);
+    REQUIRE(ids[index]>0,"each bounded surface slot can be allocated once");
+  }
+  REQUIRE(gml_surface_create(&render,1,1)==-1 && render.fb==bound &&
+          render.target_id==ids[0] && render.pending_fill,
+          "slot exhaustion refuses without disturbing the active target");
+  gml_surface_free(&render,ids[GML_MAX_SURFACES-1]);
+  reused=gml_surface_create(&render,1,1);
+  REQUIRE(reused==ids[GML_MAX_SURFACES-1] && render.fb==bound &&
+          render.target_id==ids[0] && render.pending_fill,
+          "a freed slot is reusable without an unbounded pool or target change");
+  gml_surface_reset_target(&render);
+  REQUIRE(render.fb==base && render.target_id==-1 && render.target_sp==0 &&
+          render.surface[ids[0]-1].px[0]==0xFF315779u,
+          "the deferred fill still commits exactly after bounded refusals");
+  gml_render_free(&render);
+  return 0;
+}
+
 static int numbered_surface_resize_bound_case(void){
   GmlRender render={0};
   uint32_t base[16]={0};
@@ -1234,6 +1277,7 @@ int main(void){
   REQUIRE(presentation_latch_coverage_case()==0,
           "presentation latch coverage case");
   REQUIRE(owned_application_begin_case()==0,"owned application begin case");
+  REQUIRE(surface_budget_refusal_case()==0,"surface budget refusal case");
   REQUIRE(numbered_surface_resize_bound_case()==0,
           "numbered surface resize bound target case");
   REQUIRE(numbered_surface_resize_pending_fill_case()==0,
