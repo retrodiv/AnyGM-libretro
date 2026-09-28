@@ -1039,7 +1039,8 @@ int gml_render_resident_application_cpu_barrier(GmlRender *r){
   return 1;
 }
 int gml_render_scene_flush(GmlRender *r){
-  return gml_render_application_scene_flush(r);
+  return gml_render_application_scene_flush(r) &&
+    gml_render_checkpoint_pending_resources(r);
 }
 void gml_render_flush_pending_underlay(GmlRender *r){
   gml_render_flush_rotated_batch(r);

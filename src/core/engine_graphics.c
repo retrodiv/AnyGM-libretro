@@ -38,7 +38,9 @@ AnygmResult anygm_graphics_context_reset(AnygmEngine *engine,const AnygmGraphics
     engine->gpu=gml_gpu_create();
     if(!engine->gpu) return ANYGM_ERROR_OUT_OF_MEMORY;
   }
-  gml_render_bind_device(&engine->render,NULL);
+  /* Context reset replaces the old GL namespace before this callback; its pending-only images
+   * cannot be read through the new context and must not masquerade as canonical CPU pixels. */
+  gml_render_abandon_device(&engine->render);
   if(!gml_gpu_context_reset(engine->gpu,&adopted)){
     const char *reason=gml_gpu_last_error(engine->gpu);
     engine_logf(engine,ANYGM_LOG_WARN,"The graphics context could not be adopted: %s\n",
@@ -79,7 +81,8 @@ int engine_content_shaders_active(const AnygmEngine *engine){
 
 void engine_graphics_release(AnygmEngine *engine,int context_is_current){
   if(!engine || !engine->gpu) return;
-  gml_render_bind_device(&engine->render,NULL);
+  if(context_is_current) gml_render_bind_device(&engine->render,NULL);
+  else gml_render_abandon_device(&engine->render);
   gml_render_set_shader_device(&engine->render,0);
   /* Report before the counters go away with the object. A host releases the context when content
    * closes, which is before the engine's own teardown. */

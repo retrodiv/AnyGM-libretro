@@ -60,6 +60,11 @@ void gml_render_resource_destroy(GmlRenderResource *resource);
 GmlRenderImageRef gml_render_resource_image_ref(const GmlRenderResource *resource);
 int gml_render_resource_source_view(GmlRenderResource *resource,
                                     GmlRenderResourceSource *out_source);
+/* Only a device-current, not-yet-checkpointed result may use this byte-free view. The next
+ * target must checkpoint rather than claim exact CPU replay from unavailable source bytes. */
+int gml_render_resource_pending_device_source_view(
+  GmlRenderResource *resource,const GmlRenderDeviceServices *device,
+  GmlRenderResourceSource *out_source);
 
 /* Submission reserves replay storage before issuing device work. Reconstructible rejected or
  * partially failed batches replay once on CPU. A non-reconstructible DEVICE_CHECKPOINT result is
@@ -69,6 +74,14 @@ GmlRenderResourceExecution gml_render_resource_submit(
   GmlRenderResource *resource,const GmlRenderDeviceServices *device,
   const GmlRenderDrawBatch *batch,const GmlRenderResourceSource *sources,
   uint32_t source_count);
+/* A single content-program draw may defer its required checkpoint within the current frame.
+ * CPU observation or frame-end sealing still materialises canonical pixels before context loss. */
+GmlRenderResourceExecution gml_render_resource_submit_deferred_shader(
+  GmlRenderResource *resource,const GmlRenderDeviceServices *device,
+  const GmlRenderDrawBatch *batch,const GmlRenderResourceSource *sources,
+  uint32_t source_count);
+int gml_render_resource_checkpoint(GmlRenderResource *resource,
+                                    const GmlRenderDeviceServices *device);
 
 /* CPU access is complete without a current graphics context. A write acquisition materialises
  * first; the caller then commits a new logical version after changing the borrowed pixel plane. */

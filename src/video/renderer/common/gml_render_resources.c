@@ -40,6 +40,7 @@ struct GmlRenderResource {
   uint32_t authority;
   int cpu_write_acquired;
   const void *device_identity;
+  GmlRenderDeviceServices checkpoint_device;
   uint64_t cpu_replays,device_checkpoints,consolidations,cpu_fallbacks;
 };
 
@@ -55,15 +56,26 @@ static int same_version(GmlRenderImageRef a,GmlRenderImageRef b){
 static int source_view_valid(const GmlRenderResourceSource *source){
   uint64_t bytes;
   const GmlRenderResource *resident;
-  if(!source || !source->bytes || !source->image.incarnation ||
+  if(!source || !source->image.incarnation ||
      !source->image.content_version || !source->width || !source->height ||
      source->width>UINT32_MAX/4u || source->stride_bytes<source->width*4u ||
      (source->pixel_format!=GML_RENDER_PIXEL_XRGB8888 &&
       source->pixel_format!=GML_RENDER_PIXEL_ARGB8888 &&
       source->pixel_format!=GML_RENDER_PIXEL_RGBA8888)) return 0;
+  resident=source->resident_resource;
+  if(!source->bytes){
+    return resident && !source->borrowed_immutable &&
+           resident->authority==GML_RENDER_RESOURCE_GPU_PENDING_CHECKPOINT &&
+           same_version(resident->image,source->image) &&
+           resident->gpu_version==source->image.content_version &&
+           resident->device_identity && resident->width==source->width &&
+           resident->height==source->height &&
+           resident->pixel_format==source->pixel_format &&
+           source->stride_bytes==source->width*4u &&
+           source->byte_capacity==0u;
+  }
   bytes=(uint64_t)(source->height-1u)*source->stride_bytes+(uint64_t)source->width*4u;
   if(bytes>source->byte_capacity) return 0;
-  resident=source->resident_resource;
   if(!resident) return 1;
   return !source->borrowed_immutable &&
          resident->authority!=GML_RENDER_RESOURCE_INVALID &&
@@ -174,6 +186,8 @@ int gml_render_resource_acquire_cpu_read(GmlRenderResource *resource,
   size_t bytes;
   if(out_pixels) *out_pixels=NULL;
   if(!resource || !resource->pixels || resource->authority==GML_RENDER_RESOURCE_INVALID) return 0;
+  if(resource->authority==GML_RENDER_RESOURCE_GPU_PENDING_CHECKPOINT &&
+     !gml_render_resource_checkpoint(resource,NULL)) return 0;
   if(resource->entry_count){
     bytes=(size_t)resource->width*resource->height*4u;
     candidate=(uint32_t*)malloc(bytes);
@@ -209,6 +223,24 @@ int gml_render_resource_source_view(GmlRenderResource *resource,
   return 1;
 }
 
+int gml_render_resource_pending_device_source_view(
+  GmlRenderResource *resource,const GmlRenderDeviceServices *device,
+  GmlRenderResourceSource *out_source){
+  if(out_source) memset(out_source,0,sizeof *out_source);
+  if(!out_source || !resource || !device || !device->context ||
+     resource->authority!=GML_RENDER_RESOURCE_GPU_PENDING_CHECKPOINT ||
+     resource->device_identity!=device->context ||
+     resource->gpu_version!=resource->image.content_version ||
+     resource->width>UINT32_MAX/4u) return 0;
+  out_source->image=resource->image;
+  out_source->width=resource->width;
+  out_source->height=resource->height;
+  out_source->pixel_format=resource->pixel_format;
+  out_source->stride_bytes=resource->width*4u;
+  out_source->resident_resource=resource;
+  return 1;
+}
+
 int gml_render_resource_acquire_cpu_write(GmlRenderResource *resource,
                                            uint32_t **out_pixels){
   const uint32_t *current=NULL;
@@ -232,8 +264,11 @@ int gml_render_resource_commit_cpu_write(GmlRenderResource *resource){
 
 void gml_render_resource_context_lost(GmlRenderResource *resource){
   if(!resource) return;
+  if(resource->authority==GML_RENDER_RESOURCE_GPU_PENDING_CHECKPOINT)
+    resource->authority=GML_RENDER_RESOURCE_INVALID;
   resource->gpu_version=0;
   resource->device_identity=NULL;
+  memset(&resource->checkpoint_device,0,sizeof resource->checkpoint_device);
   if(resource->authority==GML_RENDER_RESOURCE_BOTH_CURRENT)
     resource->authority=GML_RENDER_RESOURCE_CPU_CURRENT;
 }
@@ -314,7 +349,8 @@ static int batch_valid(const GmlRenderResource *resource,const GmlRenderDrawBatc
        (!operation->payload.shader ||
         operation->reconstruction_mode!=GML_RENDER_DEVICE_CHECKPOINT)) return 0;
     if(operation->reconstruction_mode==GML_RENDER_REPLAY_EXACT){
-      if(!gml_render_cpu_replay_eligible(operation,state,source)) return 0;
+      if(source && !source->bytes) *checkpoint_required=1;
+      else if(!gml_render_cpu_replay_eligible(operation,state,source)) return 0;
     } else if(operation->reconstruction_mode==GML_RENDER_DEVICE_CHECKPOINT){
       *checkpoint_required=1;
     } else return 0;
@@ -426,10 +462,49 @@ static void discard_superseded_history(GmlRenderResource *resource){
   resource->entry_count=0;
 }
 
-GmlRenderResourceExecution gml_render_resource_submit(
+int gml_render_resource_checkpoint(GmlRenderResource *resource,
+                                    const GmlRenderDeviceServices *device){
+  GmlRenderImageReadback readback={0};
+  uint32_t *checkpoint;
+  if(!resource) return 0;
+  if(resource->authority!=GML_RENDER_RESOURCE_GPU_PENDING_CHECKPOINT) return 1;
+  if(!device) device=&resource->checkpoint_device;
+  if(!device || !device->readback || !device->context ||
+     device->context!=resource->device_identity ||
+     resource->gpu_version!=resource->image.content_version){
+    resource->authority=GML_RENDER_RESOURCE_INVALID;
+    return 0;
+  }
+  checkpoint=(uint32_t*)malloc((size_t)resource->width*resource->height*4u);
+  if(!checkpoint){ resource->authority=GML_RENDER_RESOURCE_INVALID; return 0; }
+  readback.image=resource->image;
+  readback.storage_width=resource->width;
+  readback.storage_height=resource->height;
+  readback.region=(GmlRenderRect){0,0,resource->width,resource->height};
+  readback.pixel_format=resource->pixel_format;
+  readback.stride_bytes=resource->width*4u;
+  readback.byte_capacity=(size_t)resource->width*resource->height*4u;
+  readback.bytes=checkpoint;
+  if(!device->readback(device->context,&readback)){
+    free(checkpoint);
+    resource->authority=GML_RENDER_RESOURCE_INVALID;
+    return 0;
+  }
+  memcpy(resource->pixels,checkpoint,readback.byte_capacity);
+  free(checkpoint);
+  clear_history(resource);
+  resource->cpu_version=resource->image.content_version;
+  resource->authority=GML_RENDER_RESOURCE_BOTH_CURRENT;
+  resource->device_checkpoints++;
+  resource->cpu_write_acquired=0;
+  memset(&resource->checkpoint_device,0,sizeof resource->checkpoint_device);
+  return 1;
+}
+
+static GmlRenderResourceExecution resource_submit(
   GmlRenderResource *resource,const GmlRenderDeviceServices *device,
   const GmlRenderDrawBatch *batch,const GmlRenderResourceSource *sources,
-  uint32_t source_count){
+  uint32_t source_count,int defer_checkpoint){
   GmlRenderExecutionResult device_result;
   uint32_t old_source_count;
   size_t old_retained_bytes;
@@ -437,6 +512,9 @@ GmlRenderResourceExecution gml_render_resource_submit(
   if(!resource || resource->authority==GML_RENDER_RESOURCE_INVALID ||
      resource->cpu_write_acquired ||
      !batch_valid(resource,batch,sources,source_count,&checkpoint_required))
+    return GML_RENDER_RESOURCE_EXEC_FAILED;
+  if(resource->authority==GML_RENDER_RESOURCE_GPU_PENDING_CHECKPOINT &&
+     !gml_render_resource_checkpoint(resource,device))
     return GML_RENDER_RESOURCE_EXEC_FAILED;
   replaces_history=!checkpoint_required && batch->operation_count==1u &&
     batch->operations[0].opcode==GML_RENDER_OP_CLEAR &&
@@ -514,30 +592,10 @@ GmlRenderResourceExecution gml_render_resource_submit(
   resource->device_identity=device->context;
   if(replaces_history) discard_superseded_history(resource);
   if(checkpoint_required){
-    GmlRenderImageReadback readback={0};
-    uint32_t *checkpoint=(uint32_t*)malloc((size_t)resource->width*resource->height*4u);
-    if(!checkpoint){ resource->authority=GML_RENDER_RESOURCE_INVALID; return GML_RENDER_RESOURCE_EXEC_FAILED; }
-    readback.image=resource->image;
-    readback.storage_width=resource->width;
-    readback.storage_height=resource->height;
-    readback.region=(GmlRenderRect){0,0,resource->width,resource->height};
-    readback.pixel_format=resource->pixel_format;
-    readback.stride_bytes=resource->width*4u;
-    readback.byte_capacity=(size_t)resource->width*resource->height*4u;
-    readback.bytes=checkpoint;
     resource->authority=GML_RENDER_RESOURCE_GPU_PENDING_CHECKPOINT;
-    if(!device->readback(device->context,&readback)){
-      free(checkpoint);
-      resource->authority=GML_RENDER_RESOURCE_INVALID;
+    resource->checkpoint_device=*device;
+    if(!defer_checkpoint && !gml_render_resource_checkpoint(resource,device))
       return GML_RENDER_RESOURCE_EXEC_FAILED;
-    }
-    memcpy(resource->pixels,checkpoint,readback.byte_capacity);
-    free(checkpoint);
-    clear_history(resource);
-    resource->cpu_version=resource->image.content_version;
-    resource->authority=GML_RENDER_RESOURCE_BOTH_CURRENT;
-    resource->device_checkpoints++;
-    resource->cpu_write_acquired=0;
   } else {
     if(!append_history(resource,batch,sources,source_count)){
       resource->authority=GML_RENDER_RESOURCE_INVALID;
@@ -553,6 +611,24 @@ staging_failed:
   resource->retained_bytes=old_retained_bytes;
   return checkpoint_required?GML_RENDER_RESOURCE_EXEC_FAILED:
     cpu_fallback(resource,batch,sources,source_count);
+}
+
+GmlRenderResourceExecution gml_render_resource_submit(
+  GmlRenderResource *resource,const GmlRenderDeviceServices *device,
+  const GmlRenderDrawBatch *batch,const GmlRenderResourceSource *sources,
+  uint32_t source_count){
+  return resource_submit(resource,device,batch,sources,source_count,0);
+}
+
+GmlRenderResourceExecution gml_render_resource_submit_deferred_shader(
+  GmlRenderResource *resource,const GmlRenderDeviceServices *device,
+  const GmlRenderDrawBatch *batch,const GmlRenderResourceSource *sources,
+  uint32_t source_count){
+  if(!batch || batch->operation_count!=1u ||
+     batch->operations[0].opcode!=GML_RENDER_OP_CONTENT_SHADER_DRAW ||
+     batch->operations[0].reconstruction_mode!=GML_RENDER_DEVICE_CHECKPOINT)
+    return GML_RENDER_RESOURCE_EXEC_FAILED;
+  return resource_submit(resource,device,batch,sources,source_count,1);
 }
 
 void gml_render_resource_journal_metrics(const GmlRenderResource *resource,

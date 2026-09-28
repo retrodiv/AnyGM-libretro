@@ -19,6 +19,9 @@ void gml_render_surface_resource_dispose(GmlRender *render,int surface);
 GmlRenderResourceExecution gml_render_surface_scene_submit(
   GmlRender *render,int surface,const GmlRenderDrawBatch *batch,
   const GmlRenderResourceSource *sources,uint32_t source_count);
+GmlRenderResourceExecution gml_render_surface_scene_submit_deferred_shader(
+  GmlRender *render,int surface,const GmlRenderDrawBatch *batch,
+  const GmlRenderResourceSource *sources,uint32_t source_count);
 
 /* The application target borrows the renderer's existing canonical allocation; CPU-only
  * sessions never allocate this metadata. Resize and renderer teardown retire it. */
@@ -35,6 +38,7 @@ int gml_render_application_scene_enqueue(GmlRender *render,const GmlRenderDrawOp
                                           const GmlRenderDrawStateSnapshot *state,
                                           const GmlRenderResourceSource *source);
 int gml_render_application_scene_flush(GmlRender *render);
+int gml_render_checkpoint_pending_resources(GmlRender *render);
 void gml_render_application_scene_queue_dispose(GmlRender *render);
 /* Call before a CPU leaf writes an explicitly resident application pass. The pending GPU clear
  * may be submitted first; a caller must not enter its CPU kernel on a false result. */

@@ -13,6 +13,9 @@ typedef struct GmlRender GmlRender;
 /* A borrowed device service bound only by the engine graphics owner. Binding copies callbacks,
  * never a device-owned handle. An absent service keeps the established immediate CPU path. */
 void gml_render_bind_device(GmlRender *render,const GmlRenderDeviceServices *services);
+/* The host has already lost the old context: invalidate uncheckpointed device-only pixels
+ * without invoking any callback on the former GL context. */
+void gml_render_abandon_device(GmlRender *render);
 const GmlRenderDeviceServices *gml_render_device(const GmlRender *render);
 
 enum { GML_RENDER_TEXTURE_STAGES=8 };
