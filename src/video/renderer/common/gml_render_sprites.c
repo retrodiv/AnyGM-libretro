@@ -110,7 +110,7 @@ static int resident_integer_sprite(GmlRender *r,GmlSprite *sprite,int subimg,
 static int resident_atlas_crop_from_page(GmlRender *r,GmlTpag *page,
                                          int crop_x,int crop_y,int crop_width,int crop_height,
                                          double left,double top,double xs,double ys,
-                                         GmlRenderSceneFamily family){
+                                         GmlRenderSceneFamily family,uint32_t colour){
   GmlAtlas *atlas;
   GmlRenderResourceSource source={0};
   GmlRenderResource *target;
@@ -144,6 +144,9 @@ static int resident_atlas_crop_from_page(GmlRender *r,GmlTpag *page,
      (uint64_t)(uint32_t)page->sx+(uint32_t)page->sw>source.width ||
      (uint64_t)(uint32_t)page->sy+(uint32_t)page->sh>source.height) return 0;
   resident_classify_page(page,atlas);
+  colour&=0xFFFFFFu;
+  if(colour!=0xFFFFFFu &&
+     (family!=GML_RENDER_SCENE_TEXT || !page->scene_binary_alpha)) return 0;
   checkpoint_alpha_background=!page->scene_binary_alpha &&
     family==GML_RENDER_SCENE_BACKGROUND && !r->interp &&
     anygm_policy_uses_first_generation_studio(r->win) &&
@@ -206,7 +209,8 @@ static int resident_atlas_crop_from_page(GmlRender *r,GmlTpag *page,
                          (uint32_t)crop_width,(uint32_t)crop_height};
   source_ref=source.image;
   operation.opcode=GML_RENDER_OP_TEXTURED_QUAD;
-  operation.reconstruction_mode=checkpoint_alpha_background || checkpoint_alpha_text
+  operation.reconstruction_mode=checkpoint_alpha_background || checkpoint_alpha_text ||
+    colour!=0xFFFFFFu
     ?GML_RENDER_DEVICE_CHECKPOINT:GML_RENDER_REPLAY_EXACT;
   operation.scene_family=family;
   operation.source_count=1u;
@@ -222,7 +226,10 @@ static int resident_atlas_crop_from_page(GmlRender *r,GmlTpag *page,
   operation.payload.quad.sampling.filter=GML_RENDER_FILTER_NEAREST;
   operation.payload.quad.sampling.edge_rule=GML_RENDER_EDGE_CLAMP_SUBIMAGE;
   operation.payload.quad.sampling.source_region=region;
-  for(int corner=0;corner<4;corner++) operation.payload.quad.corner_colour[corner]=0xFFFFFFFFu;
+  /* GML colours are BBGGRR; neutral quad colours are AARRGGBB. */
+  uint32_t rgba=0xFF000000u|((colour&0xFFu)<<16)|(colour&0xFF00u)|
+                ((colour>>16)&0xFFu);
+  for(int corner=0;corner<4;corner++) operation.payload.quad.corner_colour[corner]=rgba;
   operation.payload.quad.x[0]=operation.payload.quad.x[3]=left;
   operation.payload.quad.x[1]=operation.payload.quad.x[2]=left+scaled_width;
   operation.payload.quad.y[0]=operation.payload.quad.y[1]=top;
@@ -260,16 +267,16 @@ int gml_render_resident_atlas_crop(GmlRender *r,int page_index,
                                   GmlRenderSceneFamily family){
   if(!r || page_index<0 || page_index>=r->n_tpag) return 0;
   return resident_atlas_crop_from_page(r,&r->tpag[page_index],
-    crop_x,crop_y,crop_width,crop_height,left,top,xs,ys,family);
+    crop_x,crop_y,crop_width,crop_height,left,top,xs,ys,family,0xFFFFFFu);
 }
 
 int gml_render_resident_font_glyph(GmlRender *r,int atlas,int source_x,int source_y,
                                    int width,int height,double left,double top,
-                                   double xs,double ys){
+                                   double xs,double ys,uint32_t colour){
   GmlTpag page={.atlas=atlas,.sx=source_x,.sy=source_y,.sw=width,.sh=height,
                 .tw=width,.th=height,.bw=width,.bh=height};
   return resident_atlas_crop_from_page(r,&page,0,0,width,height,left,top,xs,ys,
-                                       GML_RENDER_SCENE_TEXT);
+                                       GML_RENDER_SCENE_TEXT,colour);
 }
 
 int gml_render_resident_atlas_page(GmlRender *r,int page_index,

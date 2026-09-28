@@ -2027,6 +2027,21 @@ static int resident_packaged_sprite_font_glyph(void){
   gml_draw_text_transformed(render,0.0,0.0,"A",2.0,2.0,0.0,0xFFFFFFu,1.0);
   gml_render_flush_pending_fill(render);
   CHECK(!memcmp(render->app_surface_owned,completed,sizeof completed));
+  gml_render_bind_device(render,&device);
+  fake.readback_colour=0xFF445566u;
+  CHECK(gml_render_begin_resident_owned_application(render,0.0,0.0,0));
+  gml_render_set_pending_fill(render,0xFF123456u);
+  gml_draw_text_transformed(render,1.0,1.0,"A",1.0,1.0,0.0,0x80C040u,1.0);
+  CHECK(render->resident_application_pass);
+  CHECK(gml_render_scene_flush(render));
+  CHECK(fake.submits==6 && fake.readbacks==1);
+  CHECK(gml_render_application_surface_owned_view(render,&view) &&
+        view.pixels[5]==fake.readback_colour && fake.readbacks==1);
+  CHECK(gml_render_begin_owned_application(render,0.0,0.0,0));
+  gml_render_set_pending_fill(render,0xFF123456u);
+  gml_draw_text_transformed(render,1.0,1.0,"A",1.0,1.0,0.0,0x80C040u,1.0);
+  gml_render_flush_pending_fill(render);
+  CHECK(render->app_surface_owned[5]==0xFF341808u);
   gml_render_free(render);
   free(render);
   return 1;
@@ -2067,6 +2082,7 @@ static int resident_packaged_real_font_glyph(void){
   render->color_write_mask=0x0Fu;
   render->active_shader=-1;
   gml_render_bind_device(render,&device);
+  fake.readback_colour=0xFF445566u;
   CHECK(gml_render_begin_resident_owned_application(render,0.0,0.0,0));
   gml_render_set_pending_fill(render,0xFF000000u);
   gml_draw_text(render,1.0,1.0,"A");
@@ -2098,6 +2114,20 @@ static int resident_packaged_real_font_glyph(void){
   gml_draw_text_transformed(render,0.0,0.0,"A",2.0,2.0,0.0,0xFFFFFFu,1.0);
   gml_render_flush_pending_fill(render);
   CHECK(!memcmp(render->app_surface_owned,completed,sizeof completed));
+  gml_render_bind_device(render,&device);
+  CHECK(gml_render_begin_resident_owned_application(render,0.0,0.0,0));
+  gml_render_set_pending_fill(render,0xFF123456u);
+  gml_draw_text_transformed(render,1.0,1.0,"A",1.0,1.0,0.0,0x80C040u,1.0);
+  CHECK(render->resident_application_pass);
+  CHECK(gml_render_scene_flush(render));
+  CHECK(fake.submits==6 && fake.readbacks==1);
+  CHECK(gml_render_application_surface_owned_view(render,&view) &&
+        view.pixels[5]==fake.readback_colour && fake.readbacks==1);
+  CHECK(gml_render_begin_owned_application(render,0.0,0.0,0));
+  gml_render_set_pending_fill(render,0xFF123456u);
+  gml_draw_text_transformed(render,1.0,1.0,"A",1.0,1.0,0.0,0x80C040u,1.0);
+  gml_render_flush_pending_fill(render);
+  CHECK(render->app_surface_owned[5]==0xFF341808u);
   gml_render_free(render);
   free(render);
   return 1;

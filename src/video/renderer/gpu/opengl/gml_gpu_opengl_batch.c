@@ -265,7 +265,9 @@ static int scene_preflight(GmlGpuBackend *backend,const GmlRenderDrawBatch *batc
             (sampling->filter!=GML_RENDER_FILTER_BILINEAR &&
              sampling->filter!=GML_RENDER_FILTER_BOX &&
              sampling->filter!=GML_RENDER_FILTER_NEAREST_PHASED &&
-             op->payload.quad.shape==GML_RENDER_QUAD_AXIS_ALIGNED))) return 0;
+             op->payload.quad.shape==GML_RENDER_QUAD_AXIS_ALIGNED &&
+             !(op->scene_family==GML_RENDER_SCENE_TEXT &&
+               sampling->filter==GML_RENDER_FILTER_NEAREST)))) return 0;
         if((colour>>24)!=255u && blend!=1 && blend!=3) return 0;
       }
       if(op->payload.quad.shape==GML_RENDER_QUAD_AXIS_ALIGNED &&

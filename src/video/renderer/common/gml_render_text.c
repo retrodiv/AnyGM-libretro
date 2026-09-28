@@ -205,10 +205,10 @@ static void draw_text_real_plain(GmlRender *r, GmlFont *f, double x, double y, c
         if(r->resident_application_pass && !use_rot && !f->runtime_owned &&
            !f->runtime_face && !f->subpixel && f->sdf_spread<=0 &&
            !r->software_overlay && !gml_d3_is_active(r) &&
-           glyph_blend==0xFFFFFFu && alpha==1.0 &&
+           alpha==1.0 &&
            resident_integer_text_scale(xs,ys) && !r->interp)
           resident_glyph=gml_render_resident_font_glyph(r,f->atlas,g->sx,g->sy,
-            g->w,g->h,glyph_x-r->cam_x,glyph_y-r->cam_y,xs,ys);
+            g->w,g->h,glyph_x-r->cam_x,glyph_y-r->cam_y,xs,ys,glyph_blend);
         if(!resident_glyph){
           if(r->resident_application_pass &&
              !gml_render_resident_application_cpu_barrier(r)) return;
@@ -368,15 +368,18 @@ static void draw_text_transformed_font(GmlRender *r, GmlFont *f,
         double glyph_y=use_rot?y-glyph_ox*sa+glyph_oy*ca:y+glyph_oy;
         int resident_glyph=0;
         if(r->resident_application_pass && !use_rot && !s->runtime_rgba &&
-           !gml_d3_is_active(r) && s->frame && blend==0xFFFFFFu && alpha==1.0 &&
+           !gml_d3_is_active(r) && s->frame && alpha==1.0 &&
            resident_integer_text_scale(xs,ys) && !r->interp){
           int page_index=s->frame[fr];
           if(page_index>=0 && page_index<r->n_tpag){
             GmlTpag *page=&r->tpag[page_index];
             double left=x+(cx-s->originx+(f->prop?0:page->tx))*xs-r->cam_x;
             double top=y+(base_y-s->originy+page->ty)*ys-r->cam_y;
-            resident_glyph=gml_render_resident_atlas_page(
-              r,page_index,left,top,xs,ys,GML_RENDER_SCENE_TEXT);
+            resident_glyph=(blend&0xFFFFFFu)==0xFFFFFFu
+              ?gml_render_resident_atlas_page(
+                 r,page_index,left,top,xs,ys,GML_RENDER_SCENE_TEXT)
+              :gml_render_resident_font_glyph(r,page->atlas,page->sx,page->sy,
+                 page->sw,page->sh,left,top,xs,ys,blend);
           }
         }
         if(!resident_glyph){
