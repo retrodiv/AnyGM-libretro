@@ -17,6 +17,8 @@ typedef struct GmlRenderDeviceServices {
   void (*retire)(void *context,GmlRenderImageRef image);
   int (*flush)(void *context);
   int (*wait)(void *context);
+  /* Query a cached compiler refusal for the exact scene program after a failed submission. */
+  int (*content_program_failed)(void *context,const struct GmlPlanShader *shader);
 } GmlRenderDeviceServices;
 
 #endif

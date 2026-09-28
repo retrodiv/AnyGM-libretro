@@ -1247,8 +1247,15 @@ void parse_shader_palettes(GmlRender *r){
           while(*cursor==' '||*cursor=='\t') cursor++;
           while((isalnum((unsigned char)*cursor) || *cursor=='_') && length<31) name[length++]=*cursor++;
           name[length]='\0';
+          if(isalnum((unsigned char)*cursor) || *cursor=='_' || *cursor=='['){
+            r->shader_pal[i].gpu_binding_overflow=1;
+            break;
+          }
           if(!length || !strcmp(name,"gm_BaseTexture")) continue;
-          if(r->shader_pal[i].generic_sampler_count>=GML_SHADER_GENERIC_SAMPLERS) break;
+          if(r->shader_pal[i].generic_sampler_count>=GML_SHADER_GENERIC_SAMPLERS){
+            r->shader_pal[i].gpu_binding_overflow=1;
+            break;
+          }
           {
             int index=r->shader_pal[i].generic_sampler_count++;
             memset(&r->shader_pal[i].generic_sampler[index],0,sizeof r->shader_pal[i].generic_sampler[index]);

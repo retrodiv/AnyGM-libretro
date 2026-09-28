@@ -10,6 +10,7 @@
  * bounded modules rather than a reversal of the renderer architecture. */
 #include "engine_internal.h"
 #include "anygm_host.h"
+#include "gml_render_shaders.h"
 
 
 #if ANYGM_HARDWARE_RENDER
@@ -184,36 +185,16 @@ static int engine_plan_content_program_part(AnygmEngine *engine,GmlRenderPlan *p
                                             int shader_id,uint32_t generation,int linear,
                                             const float colour[4]){
   GmlPlanShader shader;
-  GmlRenderShaderSources sources;
-  GmlRenderShaderUniform uniforms[GML_PLAN_MAX_UNIFORMS];
   GmlRenderShaderSampler samplers[GML_PLAN_MAX_SAMPLERS];
   uint32_t count;
-  if(!gml_render_shader_sources(&engine->render,shader_id,&sources)) return 0;
-  memset(&shader,0,sizeof shader);
-  shader.identity=(uint32_t)shader_id;
-  shader.content_generation=generation;
-  memcpy(shader.vertex_colour,colour,sizeof shader.vertex_colour);
-  shader.vertex_es=sources.vertex_es;
-  shader.fragment_es=sources.fragment_es;
-  shader.vertex_gl=sources.vertex_gl;
-  shader.fragment_gl=sources.fragment_gl;
-  count=gml_render_shader_uniforms(&engine->render,shader_id,uniforms,GML_PLAN_MAX_UNIFORMS);
-  for(uint32_t index=0;index<count;index++){
-    GmlPlanUniform *value=&shader.uniforms[shader.uniform_count++];
-    memcpy(value->name,uniforms[index].name,sizeof value->name);
-    memcpy(value->value,uniforms[index].value,sizeof value->value);
-    value->count=uniforms[index].count;
-    value->integer=uniforms[index].integer;
-  }
+  if(!gml_render_shader_plan_snapshot(&engine->render,shader_id,generation,colour,&shader))
+    return 0;
   count=gml_render_shader_samplers(&engine->render,shader_id,samplers,GML_PLAN_MAX_SAMPLERS);
   for(uint32_t index=0;index<count;index++){
-    GmlPlanSampler *sampler=&shader.samplers[shader.sampler_count++];
+    GmlPlanSampler *sampler=&shader.samplers[index];
     GmlPlanImage picture;
     int w=0,h=0;
     const uint32_t *pixels=NULL;
-    memcpy(sampler->name,samplers[index].name,sizeof sampler->name);
-    sampler->image=GML_PLAN_NO_IMAGE;
-    sampler->linear=samplers[index].interpolation?1u:0u;
     memset(&picture,0,sizeof picture);
     if(samplers[index].surface>=0){
       if(!gml_render_surface_plane(&engine->render,samplers[index].surface,&w,&h,&pixels)) return 0;

@@ -90,6 +90,9 @@ typedef struct FakeDriver {
   int uniform_count;
   int compile_fails;
   int link_fails;
+  int texture_unit_limit;
+  int active_uniform_override;
+  unsigned compile_calls;
 } FakeDriver;
 
 static FakeDriver g_fake;
@@ -99,6 +102,8 @@ void anygm_test_graphics_reset(void){
   g_fake.next_name=1;
   g_fake.allow_calls=1;
   g_fake.framebuffer=7;
+  g_fake.texture_unit_limit=8;
+  g_fake.active_uniform_override=-1;
 }
 
 static void note_call(void){
@@ -109,7 +114,8 @@ static GLenum fake_GetError(void){ note_call(); return GL_NO_ERROR; }
 static const GLubyte *fake_GetString(GLenum name){ (void)name; note_call(); return (const GLubyte*)"fake"; }
 static void fake_GetIntegerv(GLenum name,GLint *value){
   note_call();
-  if(value) *value=name==GL_MAX_TEXTURE_SIZE?4096:0;
+  if(value) *value=name==GL_MAX_TEXTURE_SIZE?4096:
+                   name==GL_MAX_TEXTURE_IMAGE_UNITS?g_fake.texture_unit_limit:0;
 }
 static void fake_Flush(void){ note_call(); }
 static void fake_Finish(void){ note_call(); }
@@ -249,7 +255,7 @@ static void fake_ShaderSource(GLuint s,GLsizei n,const GLchar *const *source,con
   g_fake.shader_source[fragment][0]='\0';
   if(n>0 && source && source[0]) snprintf(g_fake.shader_source[fragment],sizeof g_fake.shader_source[fragment],"%s",source[0]);
 }
-static void fake_CompileShader(GLuint s){ (void)s; note_call(); }
+static void fake_CompileShader(GLuint s){ (void)s; note_call(); g_fake.compile_calls++; }
 static void fake_GetShaderiv(GLuint s,GLenum name,GLint *out){
   (void)s; note_call();
   if(name==GL_COMPILE_STATUS) *out=g_fake.compile_fails?GL_FALSE:GL_TRUE;
@@ -371,7 +377,8 @@ static void fake_UniformMatrix2fv(GLint l,GLsizei n,GLboolean t,const GLfloat *v
 static void fake_GetProgramiv(GLuint p,GLenum name,GLint *out){
   (void)p; note_call();
   if(name==GL_LINK_STATUS) *out=g_fake.link_fails?GL_FALSE:GL_TRUE;
-  else if(name==GL_ACTIVE_UNIFORMS) *out=g_fake.uniform_declared;
+  else if(name==GL_ACTIVE_UNIFORMS) *out=g_fake.active_uniform_override>=0
+    ?g_fake.active_uniform_override:g_fake.uniform_declared;
   else *out=0;
 }
 static void fake_GetProgramInfoLog(GLuint p,GLsizei size,GLsizei *written,GLchar *log){
@@ -566,6 +573,8 @@ uintptr_t anygm_test_graphics_framebuffer(void *userdata){
 void anygm_test_graphics_withhold(const char *name){ g_fake.withhold=name; }
 void anygm_test_graphics_fail_compile(int failing){ g_fake.compile_fails=failing; }
 void anygm_test_graphics_fail_link(int failing){ g_fake.link_fails=failing; }
+void anygm_test_graphics_texture_unit_limit(int units){ g_fake.texture_unit_limit=units; }
+void anygm_test_graphics_active_uniform_limit(int count){ g_fake.active_uniform_override=count; }
 void anygm_test_graphics_forbid_calls(void){ g_fake.allow_calls=0; }
 int anygm_test_graphics_deletes(void){ return g_fake.deletes_issued; }
 int anygm_test_graphics_calls_after_forget(void){ return g_fake.calls_after_forget; }
@@ -574,6 +583,7 @@ int anygm_test_graphics_scene_draw_calls(void){ return g_fake.scene_draw_calls; 
 int anygm_test_graphics_scene_vertices(void){ return g_fake.scene_vertices; }
 unsigned anygm_test_graphics_scene_texture(void){ return g_fake.scene_texture; }
 int anygm_test_graphics_quad_draw_calls(void){ return g_fake.strip_draw_calls; }
+unsigned anygm_test_graphics_compile_calls(void){ return g_fake.compile_calls; }
 unsigned anygm_test_graphics_quad_texture(unsigned unit){ return unit<3?g_fake.quad_texture[unit]:0; }
 int anygm_test_graphics_quad_filter(unsigned unit){ return unit<3?g_fake.quad_filter[unit]:0; }
 const char *anygm_test_graphics_shader_source(int fragment){ return g_fake.shader_source[fragment?1:0]; }

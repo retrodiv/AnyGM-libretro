@@ -526,6 +526,9 @@ typedef struct GmlRender {
     int generic_uniform_count;
     struct { char name[32]; int texture; } generic_sampler[GML_SHADER_GENERIC_SAMPLERS];
     int generic_sampler_count;
+    /* A program whose authored bindings exceed the snapshot contract cannot be offered as a
+     * partial GPU program with silently missing values or samplers. */
+    int gpu_binding_overflow;
     /* The host's graphics context refused the program; shader_is_compiled answers no from then on,
      * exactly as a driver that rejects it would make the original answer. */
     int gpu_failed;

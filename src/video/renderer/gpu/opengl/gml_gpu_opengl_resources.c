@@ -204,6 +204,7 @@ void gml_gpu_opengl_scene_reset(GmlGpuBackend *backend,const GmlGpuContext *cont
 #undef GL_SCENE_LOAD
   if(!backend->gl.GetIntegerv || !backend->gl.Finish) return;
   backend->gl.GetIntegerv(GL_MAX_TEXTURE_SIZE,&scene->max_texture_size);
+  backend->gl.GetIntegerv(GL_MAX_TEXTURE_IMAGE_UNITS,&scene->max_texture_units);
   scene->available=scene->max_texture_size>0;
 }
 

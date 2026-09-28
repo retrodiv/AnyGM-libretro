@@ -972,6 +972,23 @@ static int shader_draw_validation_case(void){
     REQUIRE(!gml_render_plan_add_shader_draw(&plan,index,whole,&blank,0u),
             "a program without a fragment stage is not recorded");
   }
+  /* The plan must reject over-capacity bindings before copying a partial program. */
+  {
+    GmlPlanShader over=shader;
+    over.uniform_count=GML_PLAN_MAX_UNIFORMS+1u;
+    gml_render_plan_reset(&plan,GML_PLAN_TARGET_HOST_FRAMEBUFFER,8,8);
+    index=gml_render_plan_add_image(&plan,&image);
+    REQUIRE(!gml_render_plan_add_shader_draw(&plan,index,whole,&over,0u) &&
+            plan.operation_count==0u && plan.overflowed,
+            "over-capacity uniforms are refused without a partial draw");
+    over=shader;
+    over.sampler_count=GML_PLAN_MAX_SAMPLERS+1u;
+    gml_render_plan_reset(&plan,GML_PLAN_TARGET_HOST_FRAMEBUFFER,8,8);
+    index=gml_render_plan_add_image(&plan,&image);
+    REQUIRE(!gml_render_plan_add_shader_draw(&plan,index,whole,&over,0u) &&
+            plan.operation_count==0u && plan.overflowed,
+            "over-capacity samplers are refused without a partial draw");
+  }
   /* A sampler bound to an image the plan does not hold. */
   {
     GmlPlanShader bound=shader;

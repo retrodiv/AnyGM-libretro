@@ -48,5 +48,7 @@ GmlRenderExecutionResult gml_gpu_opengl_scene_submit(GmlGpuBackend *backend,
                                                        const GmlRenderDrawBatch *batch,
                                                        uintptr_t frontend_framebuffer,
                                                        char *error,size_t error_capacity);
+int gml_gpu_opengl_content_program_failed(const GmlGpuBackend *backend,
+                                           const GmlPlanShader *shader);
 
 #endif

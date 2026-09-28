@@ -6,6 +6,7 @@
 #include "gml_render_cpu_surfaces.h"
 #include "gml_render.h"
 #include "gml_render_internal.h"
+#include "gml_render_shaders.h"
 #include "anygm_host.h"
 
 #include <stdint.h>
@@ -301,6 +302,8 @@ int gml_render_surface_draw_targets_screen_raster(const GmlRender *r,int surf,
 static int resident_surface_part(GmlRender *r,int surf,double sx,double sy,double sw,double sh,
                                  double dx,double dy,double xs,double ys,
                                  uint32_t blend,double alpha);
+static int resident_surface_shader(GmlRender *r,int surf,double dx,double dy,double dw,double dh,
+                                   uint32_t blend,double alpha);
 
 void gml_draw_surface_stretched(GmlRender *r,int surf,double dx,double dy,
                                 double dw,double dh,uint32_t blend,double alpha){
@@ -315,9 +318,12 @@ void gml_draw_surface_stretched(GmlRender *r,int surf,double dx,double dy,
       double mapped_x=dx,mapped_y=dy,mapped_width=dw,mapped_height=dh;
       gml_render_draw_map_point(r,&mapped_x,&mapped_y);
       gml_render_draw_map_scale(r,&mapped_width,&mapped_height);
-      resident_success=resident_surface_part(r,surf,0.0,0.0,
-        (double)source_width,(double)source_height,mapped_x,mapped_y,
-        mapped_width/source_width,mapped_height/source_height,blend,alpha);
+      resident_success=resident_surface_shader(r,surf,mapped_x,mapped_y,
+        mapped_width,mapped_height,blend,alpha);
+      if(!resident_success)
+        resident_success=resident_surface_part(r,surf,0.0,0.0,
+          (double)source_width,(double)source_height,mapped_x,mapped_y,
+          mapped_width/source_width,mapped_height/source_height,blend,alpha);
     }
   }
   if(!resident_success && !gml_render_resident_application_cpu_barrier(r)) return;
@@ -331,6 +337,87 @@ void gml_draw_surface_stretched(GmlRender *r,int surf,double dx,double dy,
     r->content_composited_screen=1;
   if(resident_success) return;
   gml_render_cpu_draw_surface_stretched_impl(r,surf,dx,dy,dw,dh,blend,alpha,1);
+}
+
+/* A whole-target content program uses the same compiler and draw state as the terminal plan.
+ * Its source is a separate numbered surface; this first resident rule checkpoints the complete
+ * non-reconstructible result before returning to authored code. Multi-pass checkpoint coalescing
+ * is a separate resource-owner requirement, not an assumption about this immediate draw. */
+static int resident_surface_shader(GmlRender *r,int surf,double dx,double dy,double dw,double dh,
+                                   uint32_t blend,double alpha){
+  int slot=surface_slot(surf);
+  GmlRenderResource *source_resource,*target;
+  GmlRenderResourceSource source={0};
+  GmlRenderDrawOp operation={0};
+  GmlRenderDrawStateSnapshot state={0};
+  GmlRenderImageRef source_ref,image;
+  GmlRenderDrawBatch batch;
+  GmlRenderResourceExecution result;
+  GmlPlanShader shader;
+  static const float white[4]={1.0f,1.0f,1.0f,1.0f};
+  if(!r || slot<0 || !r->surface[slot].live || !r->resident_application_pass ||
+     !gml_render_device(r) || !r->shader_device_present || r->active_shader<0 ||
+     !gml_render_shader_content_candidate(r,r->active_shader) ||
+     r->fb!=r->app_surface_owned || r->fbw!=r->app_w || r->fbh!=r->app_h ||
+     r->target_sp || r->target_id>=0 || r->pending_underlay || r->pending_presentation ||
+     r->blendmode || r->alpha_test_enable || r->color_write_mask!=0x0Fu ||
+     r->blend_equation!=1 || r->blend_equation_alpha!=1 || gml_d3_is_active(r) ||
+     (blend&0xFFFFFFu)!=0xFFFFFFu || !isfinite(alpha) || alpha<1.0 ||
+     !isfinite(dx) || !isfinite(dy) || !isfinite(dw) || !isfinite(dh) ||
+     dx-r->cam_x!=0.0 || dy-r->cam_y!=0.0 ||
+     dw!=(double)r->fbw || dh!=(double)r->fbh ||
+     r->surface[slot].px==r->fb) return 0;
+  if(!gml_render_shader_plan_snapshot(r,r->active_shader,0u,white,&shader) ||
+     shader.sampler_count ||
+     !(source_resource=gml_render_surface_resource_ensure(r,surf)) ||
+     !gml_render_resource_source_view(source_resource,&source) ||
+     source.pixel_format!=GML_RENDER_PIXEL_ARGB8888) return 0;
+  gml_render_flush_pending_fill(r);
+  if(r->pending_fill || !r->resident_application_pass ||
+     !(target=gml_render_application_resource_ensure(r))) return 0;
+  image=gml_render_application_scene_next_image_ref(r,target);
+  if(image.content_version==UINT64_MAX) return 0;
+  source_ref=source.image;
+  operation.opcode=GML_RENDER_OP_CONTENT_SHADER_DRAW;
+  operation.scene_family=GML_RENDER_SCENE_SURFACE;
+  operation.reconstruction_mode=GML_RENDER_DEVICE_CHECKPOINT;
+  operation.source_count=1u;
+  operation.sources=&source_ref;
+  operation.target.image=image;
+  operation.target.image.content_version++;
+  operation.target.storage_version=1u;
+  operation.target.width=(uint32_t)r->fbw;
+  operation.target.height=(uint32_t)r->fbh;
+  operation.target.pixel_format=GML_RENDER_PIXEL_ARGB8888;
+  operation.target.region=(GmlRenderRect){0,0,(uint32_t)r->fbw,(uint32_t)r->fbh};
+  operation.payload.shader=&shader;
+  state.rgb_source_factor=GML_RENDER_BLEND_SOURCE_ALPHA;
+  state.rgb_destination_factor=GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA;
+  state.alpha_source_factor=GML_RENDER_BLEND_ONE;
+  state.alpha_destination_factor=GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA;
+  state.rgb_equation=GML_RENDER_BLEND_ADD;
+  state.alpha_equation=GML_RENDER_BLEND_ADD;
+  state.write_mask=15u;
+  state.colour=0xFFFFFFFFu;
+  state.alpha=255u;
+  state.sampler_count=1u;
+  state.samplers[0].filter=r->interp?GML_RENDER_FILTER_BILINEAR:GML_RENDER_FILTER_NEAREST;
+  state.samplers[0].edge_rule=GML_RENDER_EDGE_CLAMP_SUBIMAGE;
+  state.samplers[0].source_region=(GmlRenderRect){0,0,source.width,source.height};
+  batch=(GmlRenderDrawBatch){&operation,1u,&state,1u};
+  result=gml_render_application_scene_submit(r,&batch,&source,1u);
+  if(result!=GML_RENDER_RESOURCE_EXEC_DEVICE){
+    const GmlRenderDeviceServices *device=gml_render_device(r);
+    if(device && device->content_program_failed &&
+       device->content_program_failed(device->context,&shader))
+      gml_render_shader_mark_failed(r,r->active_shader);
+    return 0;
+  }
+  r->fb_opaque_known=0;
+  r->fb_all_opaque=0;
+  r->fb_all_transparent=0;
+  r->shaded_draws++;
+  return 1;
 }
 
 /* Opaque and binary-alpha integer surface crops share the exact nearest texel rule with

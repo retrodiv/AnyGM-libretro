@@ -118,6 +118,7 @@ typedef void GLvoid;
 #define GL_UNSIGNED_INT_VEC4 0x8DC8
 #define GL_DEPTH_WRITEMASK 0x0B72
 #define GL_MAX_TEXTURE_SIZE 0x0D33
+#define GL_MAX_TEXTURE_IMAGE_UNITS 0x8872
 #define GL_FUNC_ADD 0x8006
 
 /* Every entry point the backend uses, resolved once per context reset into an engine-owned table.

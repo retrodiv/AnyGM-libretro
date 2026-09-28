@@ -206,6 +206,8 @@ static int scene_preflight(GmlGpuBackend *backend,const GmlRenderDrawBatch *batc
          !batch->states || op->state_index>=batch->state_count ||
          op->source_count!=1u || !op->sources || !shader ||
          !shader->vertex_es || !shader->fragment_es || shader->sampler_count ||
+         shader->uniform_count>GML_PLAN_MAX_UNIFORMS ||
+         backend->scene.max_texture_units<1 ||
          !full_region(target->region,target->width,target->height) ||
          (!existing_target(backend,target) &&
           !cleared_earlier(cleared,clear_count,target->image))) return 0;
@@ -216,7 +218,10 @@ static int scene_preflight(GmlGpuBackend *backend,const GmlRenderDrawBatch *batc
           source->pixel_format!=GML_RENDER_PIXEL_ARGB8888) ||
          state->write_mask!=15u || state->alpha!=255u ||
          state->colour!=0xFFFFFFFFu || state->alpha_test_enabled ||
-         qualified_blend(state)!=0 || state->coverage_policy ||
+         (qualified_blend(state)!=0 && qualified_blend(state)!=1) ||
+         (qualified_blend(state)==1 && (!backend->gl.BlendFuncSeparate ||
+                                         !backend->gl.BlendEquationSeparate)) ||
+         state->coverage_policy ||
          state->sampler_count!=1u ||
          (state->samplers[0].filter!=GML_RENDER_FILTER_NEAREST &&
           state->samplers[0].filter!=GML_RENDER_FILTER_BILINEAR) ||
@@ -619,7 +624,8 @@ GmlRenderExecutionResult gml_gpu_opengl_scene_submit(GmlGpuBackend *backend,
     if(op->opcode==GML_RENDER_OP_CONTENT_SHADER_DRAW){
       GlSceneImage *source=gml_gpu_opengl_scene_image(backend,op->sources[0]);
       if(!source || !gml_gpu_opengl_scene_shader_draw(backend,op->payload.shader,
-          &batch->states[op->state_index],target,source,error,error_capacity)){
+          &batch->states[op->state_index],target,source,
+          qualified_blend(&batch->states[op->state_index])==1,error,error_capacity)){
         mark_uncertain(&result,target);
         break;
       }

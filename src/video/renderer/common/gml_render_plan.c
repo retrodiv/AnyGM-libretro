@@ -145,6 +145,12 @@ int gml_render_plan_add_shader_draw_part(GmlRenderPlan *plan,uint32_t source,Gml
     plan->fallback_reason=GML_PLAN_FALLBACK_PLAN_OVERFLOW;
     return 0;
   }
+  if(shader->uniform_count>GML_PLAN_MAX_UNIFORMS ||
+     shader->sampler_count>GML_PLAN_MAX_SAMPLERS){
+    plan->overflowed=1;
+    plan->fallback_reason=GML_PLAN_FALLBACK_PLAN_OVERFLOW;
+    return 0;
+  }
   op=append(plan);
   if(!op) return 0;
   op->opcode=GML_PLAN_OP_SHADER_DRAW;
@@ -160,8 +166,6 @@ int gml_render_plan_add_shader_draw_part(GmlRenderPlan *plan,uint32_t source,Gml
      plan->shader.vertex_colour[2]<=0.0f && plan->shader.vertex_colour[3]<=0.0f)
     plan->shader.vertex_colour[0]=plan->shader.vertex_colour[1]=
       plan->shader.vertex_colour[2]=plan->shader.vertex_colour[3]=1.0f;
-  if(plan->shader.uniform_count>GML_PLAN_MAX_UNIFORMS) plan->shader.uniform_count=GML_PLAN_MAX_UNIFORMS;
-  if(plan->shader.sampler_count>GML_PLAN_MAX_SAMPLERS) plan->shader.sampler_count=GML_PLAN_MAX_SAMPLERS;
   plan->has_shader=1;
   return 1;
 }

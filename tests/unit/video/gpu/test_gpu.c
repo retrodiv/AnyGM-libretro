@@ -898,6 +898,70 @@ static int content_program_case(void){
   return 1;
 }
 
+static int content_program_identity_and_limits_case(void){
+  uint32_t frame[8*6]={0},mask[4*4]={0};
+  char vertex[sizeof CONTENT_VERTEX_ES+48],fragment[sizeof CONTENT_FRAGMENT_ES+48];
+  GmlRenderPlan plan;
+  GmlGpu *gpu;
+  GmlGpuContext context=fake_context(GML_GPU_API_OPENGL_CORE);
+  unsigned compiled;
+  anygm_test_graphics_reset();
+  gpu=gml_gpu_create();
+  REQUIRE(gpu && gml_gpu_context_reset(gpu,&context),"content-limit context adopted");
+  REQUIRE(build_content_plan(&plan,frame,mask),"content-limit plan built");
+  snprintf(vertex,sizeof vertex,"%s",CONTENT_VERTEX_ES);
+  snprintf(fragment,sizeof fragment,"%s",CONTENT_FRAGMENT_ES);
+  plan.shader.vertex_es=vertex;
+  plan.shader.fragment_es=fragment;
+  REQUIRE(gml_gpu_execute_plan(gpu,&plan),"initial content program accepted");
+  compiled=anygm_test_graphics_compile_calls();
+  plan.shader.uniforms[1].value[0]=0.75f;
+  REQUIRE(gml_gpu_execute_plan(gpu,&plan) &&
+          anygm_test_graphics_compile_calls()==compiled,
+          "uniform values do not change compiled program identity");
+  strcat(fragment,"/* fragment revision */");
+  REQUIRE(gml_gpu_execute_plan(gpu,&plan) &&
+          anygm_test_graphics_compile_calls()>compiled &&
+          strstr(anygm_test_graphics_shader_source(1),"fragment revision")!=NULL,
+          "changed fragment bytes at the same address compile a new program");
+  compiled=anygm_test_graphics_compile_calls();
+  strcat(vertex,"/* vertex revision */");
+  REQUIRE(gml_gpu_execute_plan(gpu,&plan) &&
+          anygm_test_graphics_compile_calls()>compiled &&
+          strstr(anygm_test_graphics_shader_source(0),"vertex revision")!=NULL,
+          "changed vertex bytes at the same address compile a new program");
+  compiled=anygm_test_graphics_compile_calls();
+  plan.shader.content_generation++;
+  REQUIRE(gml_gpu_execute_plan(gpu,&plan) &&
+          anygm_test_graphics_compile_calls()>compiled,
+          "a new content generation does not inherit an old program");
+  plan.shader.content_generation++;
+  anygm_test_graphics_active_uniform_limit(65);
+  REQUIRE(!gml_gpu_execute_plan(gpu,&plan) &&
+          plan.fallback_reason==GML_PLAN_FALLBACK_SHADER_FAILURE,
+          "too many active uniforms refuse instead of truncating");
+  anygm_test_graphics_active_uniform_limit(-1);
+  plan.shader.content_generation++;
+  REQUIRE(gml_gpu_execute_plan(gpu,&plan),"a new program identity can recover after refusal");
+  gml_gpu_destroy(gpu,1);
+  anygm_test_graphics_reset();
+  anygm_test_graphics_texture_unit_limit(1);
+  gpu=gml_gpu_create();
+  REQUIRE(gpu && gml_gpu_context_reset(gpu,&context),"limited-unit context adopted");
+  REQUIRE(build_content_plan(&plan,frame,mask),"limited-unit plan built");
+  REQUIRE(!gml_gpu_execute_plan(gpu,&plan) &&
+          plan.fallback_reason==GML_PLAN_FALLBACK_SHADER_FAILURE,
+          "one texture unit refuses base plus auxiliary sampler");
+  gml_gpu_destroy(gpu,1);
+  anygm_test_graphics_reset();
+  gpu=gml_gpu_create();
+  REQUIRE(gpu && gml_gpu_context_reset(gpu,&context),"adequate-unit context adopted");
+  REQUIRE(build_content_plan(&plan,frame,mask) && gml_gpu_execute_plan(gpu,&plan),
+          "adequate texture units accept the same program in a new epoch");
+  gml_gpu_destroy(gpu,1);
+  return 1;
+}
+
 static int content_program_embedded_dialect_case(void){
   uint32_t frame[8*6],mask[4*4];
   GmlGpu *gpu;
@@ -1167,6 +1231,7 @@ int main(int argc,char **argv){
     {"reduction_falls_back",reduction_falls_back_case},
     {"no_context_falls_back",no_context_falls_back_case},
     {"content_program",content_program_case},
+    {"content_program_identity_and_limits",content_program_identity_and_limits_case},
     {"content_sampler_filters",content_sampler_filter_case},
     {"content_program_embedded_dialect",content_program_embedded_dialect_case},
     {"content_program_refused",content_program_refused_case},

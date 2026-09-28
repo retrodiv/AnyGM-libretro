@@ -83,7 +83,8 @@ static GmlRenderExecutionResult scene_submit(void *context,const GmlRenderDrawBa
         if(opcode<GML_RENDER_OPERATION_COUNT)
           gpu->counters.scene_operations[opcode]++;
         if((opcode==GML_RENDER_OP_TEXTURED_QUAD ||
-            opcode==GML_RENDER_OP_COLOURED_PRIMITIVE) &&
+            opcode==GML_RENDER_OP_COLOURED_PRIMITIVE ||
+            opcode==GML_RENDER_OP_CONTENT_SHADER_DRAW) &&
            batch->operations[index].scene_family<GML_RENDER_SCENE_FAMILY_COUNT)
           gpu->counters.scene_families[batch->operations[index].scene_family]++;
       }
@@ -134,6 +135,12 @@ static int scene_wait(void *context){
   return gpu && gpu->context_active && gml_gpu_opengl_scene_wait(gpu->backend);
 }
 
+static int scene_content_program_failed(void *context,const GmlPlanShader *shader){
+  GmlGpu *gpu=(GmlGpu*)context;
+  return gpu && gpu->context_active &&
+    gml_gpu_opengl_content_program_failed(gpu->backend,shader);
+}
+
 void gml_gpu_device_services(GmlGpu *gpu,GmlRenderDeviceServices *out_services){
   if(!out_services) return;
   memset(out_services,0,sizeof *out_services);
@@ -146,6 +153,7 @@ void gml_gpu_device_services(GmlGpu *gpu,GmlRenderDeviceServices *out_services){
   out_services->retire=scene_retire;
   out_services->flush=scene_flush;
   out_services->wait=scene_wait;
+  out_services->content_program_failed=scene_content_program_failed;
 }
 
 int gml_gpu_execute_plan(GmlGpu *gpu,GmlRenderPlan *plan){

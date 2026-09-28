@@ -4,6 +4,7 @@
 /* Resource authority tests. The fake device verifies transactions and lifetimes; exact GL pixels
  * are checked separately by the real-context scene probe. */
 #include "gml_render_resources.h"
+#include "gml_render_plan.h"
 #include "gml_render_internal.h"
 #include "gml_render_state.h"
 #include "gml_render_surfaces_internal.h"
@@ -23,9 +24,11 @@
 
 typedef struct FakeDevice {
   int uploads,submits,readbacks,retires;
-  int fail_upload,fail_upload_at,fail_readback;
+  int fail_upload,fail_upload_at,fail_readback,shader_failure;
   uint32_t status,accepted_prefix;
   uint32_t readback_colour;
+  uint32_t last_opcode,last_shader_identity,last_shader_uniform_count;
+  float last_shader_value;
 } FakeDevice;
 
 static int fake_upload(void *context,const GmlRenderImageUpload *upload){
@@ -39,6 +42,15 @@ static GmlRenderExecutionResult fake_submit(void *context,const GmlRenderDrawBat
   FakeDevice *fake=(FakeDevice*)context;
   GmlRenderExecutionResult result={0};
   fake->submits++;
+  if(batch && batch->operation_count){
+    const GmlRenderDrawOp *last=&batch->operations[batch->operation_count-1u];
+    fake->last_opcode=last->opcode;
+    if(last->opcode==GML_RENDER_OP_CONTENT_SHADER_DRAW && last->payload.shader){
+      fake->last_shader_identity=last->payload.shader->identity;
+      fake->last_shader_uniform_count=last->payload.shader->uniform_count;
+      fake->last_shader_value=last->payload.shader->uniforms[0].value[0];
+    }
+  }
   result.status=fake->status?fake->status:GML_RENDER_EXEC_ACCEPTED;
   result.accepted_prefix=fake->accepted_prefix?fake->accepted_prefix:
     (result.status==GML_RENDER_EXEC_ACCEPTED?batch->operation_count:0u);
@@ -78,6 +90,11 @@ static int fake_barrier(void *context){
   return 1;
 }
 
+static int fake_content_program_failed(void *context,const GmlPlanShader *shader){
+  FakeDevice *fake=(FakeDevice*)context;
+  return fake->shader_failure && shader && shader->identity==fake->last_shader_identity;
+}
+
 static GmlRenderDeviceServices service(FakeDevice *fake){
   GmlRenderDeviceServices device={0};
   device.context=fake;
@@ -88,6 +105,7 @@ static GmlRenderDeviceServices service(FakeDevice *fake){
   device.retire=fake_retire;
   device.flush=fake_barrier;
   device.wait=fake_barrier;
+  device.content_program_failed=fake_content_program_failed;
   return device;
 }
 
@@ -2311,6 +2329,104 @@ static int surface_observer_materializes_suspended_fill(void){
   return 1;
 }
 
+static int resident_content_surface_program_boundary(void){
+  GmlRender *render=(GmlRender*)calloc(1,sizeof *render);
+  FakeDevice fake={0};
+  GmlRenderDeviceServices device=service(&fake);
+  GmlRenderJournalMetrics metrics={0};
+  const uint32_t *pixels=NULL;
+  int id,old_submits;
+  CHECK(render && gml_render_application_surface_ensure_owned(render,4,4));
+  render->next_surface_id=1;
+  render->color_write_mask=0x0Fu;
+  render->blend_equation=render->blend_equation_alpha=1;
+  render->shader_pal=(struct GmlShaderPal*)calloc(1,sizeof *render->shader_pal);
+  CHECK(render->shader_pal);
+  render->n_shader_pal=1;
+  render->shader_pal[0].source_vertex_es=
+    "attribute vec3 in_Position; void main(){ gl_Position=vec4(in_Position,1.0); }";
+  render->shader_pal[0].source_fragment_es=
+    "uniform float u_value; void main(){ gl_FragColor=vec4(u_value,0.5,0.25,0.5); }";
+  render->shader_pal[0].generic_uniform_count=1;
+  snprintf(render->shader_pal[0].generic_uniform[0].name,
+           sizeof render->shader_pal[0].generic_uniform[0].name,"u_value");
+  render->shader_pal[0].generic_uniform[0].count=1;
+  render->shader_pal[0].generic_uniform[0].value[0]=0.375f;
+  render->shader_device_present=1;
+  render->shader_device_expected=1;
+  id=gml_surface_create(render,2,2);
+  CHECK(id>0);
+  for(int index=0;index<4;index++) render->surface[id-1].px[index]=0xFF102030u;
+  fake.readback_colour=0x80776655u;
+  gml_render_bind_device(render,&device);
+  CHECK(gml_render_begin_resident_owned_application(render,0.0,0.0,0));
+  render->active_shader=0;
+  gml_render_set_pending_fill(render,0xFF010203u);
+  gml_draw_surface_stretched(render,id,0.0,0.0,4.0,4.0,0xFFFFFFu,1.0);
+  gml_render_resource_journal_metrics(render->app_surface_resource,&metrics);
+  CHECK(render->resident_application_pass && fake.last_opcode==GML_RENDER_OP_CONTENT_SHADER_DRAW &&
+        fake.last_shader_identity==0u && fake.last_shader_uniform_count==1u &&
+        fake.last_shader_value==0.375f && fake.readbacks==1 &&
+        metrics.authority==GML_RENDER_RESOURCE_BOTH_CURRENT &&
+        metrics.device_checkpoints==1u && render->shaded_draws==1u &&
+        render->app_surface_owned[5]==fake.readback_colour);
+  gml_render_resource_context_lost(render->app_surface_resource);
+  CHECK(gml_render_resource_acquire_cpu_read(render->app_surface_resource,&pixels) &&
+        pixels[5]==fake.readback_colour && fake.readbacks==1);
+  /* Auxiliary samplers, partial coverage and disabled content policy remain ordered CPU work. */
+  render->shader_pal[0].generic_sampler_count=1;
+  snprintf(render->shader_pal[0].generic_sampler[0].name,
+           sizeof render->shader_pal[0].generic_sampler[0].name,"u_aux");
+  CHECK(gml_render_begin_resident_owned_application(render,0.0,0.0,0));
+  render->active_shader=0;
+  gml_render_set_pending_fill(render,0xFF010203u);
+  old_submits=fake.submits;
+  gml_draw_surface_stretched(render,id,0.0,0.0,4.0,4.0,0xFFFFFFu,1.0);
+  CHECK(!render->resident_application_pass && fake.submits==old_submits+1 &&
+        fake.last_opcode==GML_RENDER_OP_CLEAR && fake.readbacks==1);
+  render->shader_pal[0].generic_sampler_count=0;
+  CHECK(gml_render_begin_resident_owned_application(render,0.0,0.0,0));
+  render->active_shader=0;
+  gml_render_set_pending_fill(render,0xFF010203u);
+  old_submits=fake.submits;
+  gml_draw_surface_stretched(render,id,1.0,1.0,2.0,2.0,0xFFFFFFu,1.0);
+  CHECK(!render->resident_application_pass && fake.submits==old_submits+1 &&
+        fake.last_opcode==GML_RENDER_OP_CLEAR && fake.readbacks==1);
+  render->shader_device_present=0;
+  CHECK(gml_render_begin_resident_owned_application(render,0.0,0.0,0));
+  render->active_shader=0;
+  gml_render_set_pending_fill(render,0xFF010203u);
+  old_submits=fake.submits;
+  gml_draw_surface_stretched(render,id,0.0,0.0,4.0,4.0,0xFFFFFFu,1.0);
+  CHECK(!render->resident_application_pass && fake.submits==old_submits+1 &&
+        fake.last_opcode==GML_RENDER_OP_CLEAR && fake.readbacks==1);
+  render->shader_device_present=1;
+  CHECK(gml_render_shader_is_compiled(render,0));
+  CHECK(gml_render_begin_resident_owned_application(render,0.0,0.0,0));
+  render->active_shader=0;
+  gml_render_set_pending_fill(render,0xFF010203u);
+  gml_render_flush_pending_fill(render);
+  fake.status=GML_RENDER_EXEC_RECOVERABLE_ERROR;
+  old_submits=fake.submits;
+  gml_draw_surface_stretched(render,id,0.0,0.0,4.0,4.0,0xFFFFFFu,1.0);
+  CHECK(fake.submits==old_submits+1 && !render->shader_pal[0].gpu_failed &&
+        gml_render_shader_is_compiled(render,0));
+  fake.status=0;
+  CHECK(gml_render_begin_resident_owned_application(render,0.0,0.0,0));
+  render->active_shader=0;
+  gml_render_set_pending_fill(render,0xFF010203u);
+  gml_render_flush_pending_fill(render);
+  fake.status=GML_RENDER_EXEC_RECOVERABLE_ERROR;
+  fake.shader_failure=1;
+  old_submits=fake.submits;
+  gml_draw_surface_stretched(render,id,0.0,0.0,4.0,4.0,0xFFFFFFu,1.0);
+  CHECK(fake.submits==old_submits+1 && render->shader_pal[0].gpu_failed &&
+        !gml_render_shader_is_compiled(render,0));
+  gml_render_free(render);
+  free(render);
+  return 1;
+}
+
 static int public_surface_part_qualified_dispatch(void){
   GmlRender *render=(GmlRender*)calloc(1,sizeof *render);
   GmlRenderApplicationWriteView view={0};
@@ -3188,6 +3304,7 @@ int main(void){
   passed+=runtime_font_page_scene_retirement();
   passed+=mutable_scene_identity_across_renderers();
   passed+=surface_observer_materializes_suspended_fill();
+  passed+=resident_content_surface_program_boundary();
   passed+=public_surface_part_qualified_dispatch();
   passed+=resident_opaque_atlas_sprite_gpu();
   passed+=resident_packaged_sprite_font_glyph();
@@ -3200,6 +3317,6 @@ int main(void){
   passed+=target_pixel_observes_resident_result();
   passed+=nearest_subrectangle_mirrors();
   passed+=source_free_primitive_rect_replay();
-  printf("render resource cases: passed=%d failed=%d\n",passed,46-passed);
-  return passed==46?EXIT_SUCCESS:EXIT_FAILURE;
+  printf("render resource cases: passed=%d failed=%d\n",passed,47-passed);
+  return passed==47?EXIT_SUCCESS:EXIT_FAILURE;
 }

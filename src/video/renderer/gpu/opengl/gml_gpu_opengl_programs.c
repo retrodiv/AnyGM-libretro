@@ -249,6 +249,14 @@ static int glsl_word_boundary(const char *text,size_t index,size_t length){
   return before && after;
 }
 
+static int glsl_line_leading(const char *text,size_t index){
+  while(index && text[index-1u]!='\n'){
+    unsigned char previous=(unsigned char)text[--index];
+    if(previous!=' ' && previous!='\t' && previous!='\r') return 0;
+  }
+  return 1;
+}
+
 /* Append `text` to a growing buffer. */
 static int glsl_append(char **buffer,size_t *length,size_t *capacity,const char *text,size_t count){
   if(*length+count+1>*capacity){
@@ -293,11 +301,25 @@ static char *glsl_rewrite(const char *source,int vertex,int desktop,int little_e
   if(!vertex && !glsl_append(&out,&length,&capacity,"out vec4 anygm_fragment;\n",25)) { free(out); return NULL; }
   if(!glsl_append(&out,&length,&capacity,sample,strlen(sample))){ free(out); return NULL; }
   while(i<n){
-    /* Lines the older dialect needs and the newer one rejects or already has. */
-    if((i==0 || source[i-1]=='\n') && (!strncmp(source+i,"#version",8) ||
-                                       (desktop && !strncmp(source+i,"precision",9)))){
+    /* A version directive occupies its line. A precision declaration may share a line with
+     * program code, so discard only that declaration in desktop GLSL. */
+    if((i==0 || source[i-1]=='\n') && !strncmp(source+i,"#version",8)){
       while(i<n && source[i]!='\n') i++;
       continue;
+    }
+    if(desktop && glsl_line_leading(source,i) && !strncmp(source+i,"precision",9) &&
+       glsl_word_boundary(source,i,9)){
+      size_t end=i+9u;
+      while(end<n && isspace((unsigned char)source[end])) end++;
+      if(end<n && (!strncmp(source+end,"lowp",4) ||
+                   !strncmp(source+end,"mediump",7) ||
+                   !strncmp(source+end,"highp",5))){
+        while(end<n && source[end]!=';' && source[end]!='\n') end++;
+        if(end<n && source[end]==';'){
+          i=end+1u;
+          continue;
+        }
+      }
     }
     if(!strncmp(source+i,"gl_FragData[0]",14) && glsl_word_boundary(source,i,14) && !vertex){
       if(!glsl_append(&out,&length,&capacity,"anygm_fragment",14)){ free(out); return NULL; }
@@ -325,14 +347,42 @@ static char *glsl_rewrite(const char *source,int vertex,int desktop,int little_e
   return out;
 }
 
+static uint64_t content_source_key(const GmlPlanShader *shader){
+  uint64_t hash=UINT64_C(1469598103934665603);
+  const char *sources[2]={shader->vertex_es,shader->fragment_es};
+  for(size_t stage=0;stage<2;stage++){
+    const unsigned char *cursor=(const unsigned char*)sources[stage];
+    while(*cursor){ hash^=*cursor++; hash*=UINT64_C(1099511628211); }
+    hash^=0u;
+    hash*=UINT64_C(1099511628211);
+  }
+  return hash;
+}
+
+int gml_gpu_opengl_content_program_failed(const GmlGpuBackend *backend,
+                                           const GmlPlanShader *shader){
+  uint64_t key;
+  if(!backend || !shader || !shader->vertex_es || !shader->fragment_es) return 0;
+  key=content_source_key(shader);
+  for(size_t index=0;index<GL_CONTENT_PROGRAMS;index++){
+    const GlContentProgram *slot=&backend->content[index];
+    if(slot->failed && slot->identity==shader->identity &&
+       slot->content_generation==shader->content_generation &&
+       slot->source_key==key && slot->scene_rgba) return 1;
+  }
+  return 0;
+}
+
 static GlContentProgram *content_slot(GmlGpuBackend *backend,const GmlPlanShader *shader,
                                       int scene_rgba){
   GlContentProgram *slot=NULL;
+  uint64_t source_key=content_source_key(shader);
   uint32_t oldest=0xFFFFFFFFu;
   for(size_t index=0;index<GL_CONTENT_PROGRAMS;index++){
     GlContentProgram *candidate=&backend->content[index];
     if((candidate->program || candidate->failed) && candidate->identity==shader->identity &&
-       candidate->fragment_key==shader->fragment_es &&
+       candidate->content_generation==shader->content_generation &&
+       candidate->source_key==source_key &&
        candidate->scene_rgba==scene_rgba) return candidate;
   }
   for(size_t index=0;index<GL_CONTENT_PROGRAMS;index++){
@@ -344,7 +394,8 @@ static GlContentProgram *content_slot(GmlGpuBackend *backend,const GmlPlanShader
   if(slot->program) backend->gl.DeleteProgram(slot->program);
   memset(slot,0,sizeof *slot);
   slot->identity=shader->identity;
-  slot->fragment_key=shader->fragment_es;
+  slot->content_generation=shader->content_generation;
+  slot->source_key=source_key;
   slot->scene_rgba=scene_rgba;
   return slot;
 }
@@ -417,8 +468,16 @@ static GlContentProgram *content_program(GmlGpuBackend *backend,const GmlPlanSha
   {
     GLint active=0;
     backend->gl.GetProgramiv(slot->program,GL_ACTIVE_UNIFORMS,&active);
+    if(active<0 || active>GL_CONTENT_UNIFORMS){
+      gml_gpu_opengl_record_error(error,error_capacity,
+        "content program exceeds active-uniform capacity");
+      backend->gl.DeleteProgram(slot->program);
+      slot->program=0;
+      slot->failed=1;
+      return NULL;
+    }
     slot->uniform_count=0;
-    for(GLint index=0;index<active && slot->uniform_count<GL_CONTENT_UNIFORMS;index++){
+    for(GLint index=0;index<active;index++){
       GlContentUniform *entry=&slot->uniforms[slot->uniform_count];
       GLsizei length=0;
       size_t name_length;
@@ -428,6 +487,14 @@ static GlContentProgram *content_program(GmlGpuBackend *backend,const GmlPlanSha
       backend->gl.GetActiveUniform(slot->program,(GLuint)index,(GLsizei)sizeof entry->name,&length,
                                    &entry->size,&entry->type,entry->name);
       entry->name[sizeof entry->name-1]='\0';
+      if(length<0 || (size_t)length>=sizeof entry->name-1u){
+        gml_gpu_opengl_record_error(error,error_capacity,
+          "content program uniform name exceeds capacity");
+        backend->gl.DeleteProgram(slot->program);
+        slot->program=0;
+        slot->failed=1;
+        return NULL;
+      }
       /* An array is reported by its first element; the content names the array. */
       name_length=strlen(entry->name);
       if(name_length>3 && !strcmp(entry->name+name_length-3,"[0]")) entry->name[name_length-3]='\0';
@@ -527,6 +594,18 @@ static int execute_shader_draw_with_source(GmlGpuBackend *backend,GmlRenderPlan 
   float vertices[4*9];
   const float w=(float)op->destination.width,h=(float)op->destination.height;
   static const GLenum units[GML_PLAN_MAX_SAMPLERS]={GL_TEXTURE1,GL_TEXTURE2,GL_TEXTURE3,GL_TEXTURE4};
+  if(shader->uniform_count>GML_PLAN_MAX_UNIFORMS ||
+     shader->sampler_count>GML_PLAN_MAX_SAMPLERS){
+    gml_gpu_opengl_record_error(error,error_capacity,"content program binding count exceeds capacity");
+    plan->fallback_reason=GML_PLAN_FALLBACK_SHADER_FAILURE;
+    return 0;
+  }
+  if(backend->scene.max_texture_units<1 ||
+     shader->sampler_count>=(uint32_t)backend->scene.max_texture_units){
+    gml_gpu_opengl_record_error(error,error_capacity,"content program exceeds texture-unit limit");
+    plan->fallback_reason=GML_PLAN_FALLBACK_SHADER_FAILURE;
+    return 0;
+  }
   program=content_program(backend,shader,resident_source!=0,error,error_capacity);
   if(!program){
     plan->fallback_reason=GML_PLAN_FALLBACK_SHADER_FAILURE;
@@ -645,7 +724,7 @@ int gml_gpu_opengl_execute_shader_draw(GmlGpuBackend *backend,GmlRenderPlan *pla
 
 int gml_gpu_opengl_scene_shader_draw(GmlGpuBackend *backend,const GmlPlanShader *shader,
                                       const GmlRenderDrawStateSnapshot *state,
-                                      GlSceneImage *target,GlSceneImage *source,
+                                      GlSceneImage *target,GlSceneImage *source,int source_over,
                                       char *error,size_t error_capacity){
   GmlRenderPlan plan={0};
   GmlPlanOp operation={0};
@@ -665,11 +744,17 @@ int gml_gpu_opengl_scene_shader_draw(GmlGpuBackend *backend,const GmlPlanShader 
   operation.destination=(GmlPlanRect){0,0,target->width,target->height};
   operation.source_rect=(GmlPlanRect){0,0,source->width,source->height};
   backend->gl.BindFramebuffer(GL_FRAMEBUFFER,target->framebuffer);
-  backend->gl.Disable(GL_BLEND);
+  if(source_over){
+    backend->gl.BlendFuncSeparate(GL_SRC_ALPHA,GL_ONE_MINUS_SRC_ALPHA,
+                                  GL_ONE,GL_ONE_MINUS_SRC_ALPHA);
+    backend->gl.BlendEquationSeparate(GL_FUNC_ADD,GL_FUNC_ADD);
+    backend->gl.Enable(GL_BLEND);
+  } else backend->gl.Disable(GL_BLEND);
   backend->gl.BindVertexArray(backend->scene.vertex_array);
   drawn=execute_shader_draw_with_source(backend,&plan,&operation,NULL,source->texture,
                                         source->rendered_origin,error,error_capacity);
   backend->gl.BindVertexArray(0);
+  backend->gl.Disable(GL_BLEND);
   gl_error=backend->gl.GetError();
   if(gl_error!=GL_NO_ERROR)
     gml_gpu_opengl_record_error(error,error_capacity,"scene shader GL error %u",gl_error);

@@ -48,7 +48,8 @@ typedef struct GlReadbackSlot {
 typedef struct GlContentProgram {
   GLuint program;
   uint32_t identity;
-  const char *fragment_key;
+  uint32_t content_generation;
+  uint64_t source_key;
   int scene_rgba;
   int failed;
   uint32_t last_used;
@@ -107,6 +108,7 @@ typedef struct GlScene {
   GLint exact_u_repetitions;
   GLint exact_u_blend_rule,exact_u_additive_alpha;
   uint32_t snapshot_width,snapshot_height;
+  GLint max_texture_units;
   float *vertices;
   uint8_t *scratch;
   size_t scratch_capacity;
@@ -163,7 +165,7 @@ int gml_gpu_opengl_execute_shader_draw(GmlGpuBackend *backend,GmlRenderPlan *pla
                                        char *error,size_t error_capacity);
 int gml_gpu_opengl_scene_shader_draw(GmlGpuBackend *backend,const GmlPlanShader *shader,
                                       const GmlRenderDrawStateSnapshot *state,
-                                      GlSceneImage *target,GlSceneImage *source,
+                                      GlSceneImage *target,GlSceneImage *source,int source_over,
                                       char *error,size_t error_capacity);
 int gml_gpu_opengl_bind_readback_target(GmlGpuBackend *backend,uint32_t width,uint32_t height,
                                          char *error,size_t error_capacity);

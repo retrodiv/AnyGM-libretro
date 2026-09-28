@@ -57,6 +57,7 @@ int gml_render_shader_is_compiled(const GmlRender *r,int shader){
    * recognized software family executes it. A picture may arrive through any bound sampler,
    * not only gm_BaseTexture; the distinction is sampling, not the uniform name. */
   if(shader_pal_recognized(&r->shader_pal[shader])) return 1;
+  if(r->shader_pal[shader].gpu_binding_overflow) return 0;
   /* The paragraph above was written when nothing here could run a fragment. A device that can is
    * the case it excludes: told yes with one present, the program is executed and the content gets
    * the picture it wrote, which is the whole point of the answer. Told yes with none, the
@@ -154,6 +155,7 @@ int gml_render_shader_uniform_handle(GmlRender *r,int shader,const char *name){
                sizeof recognized->generic_uniform[index].name,"%s",name);
       return GML_RENDER_GENERIC_HANDLE(shader,index);
     }
+    recognized->gpu_binding_overflow=1;
   }
   return shader>=0?GML_RENDER_SHADER_HANDLE(shader,63):-1;
 }
@@ -401,7 +403,7 @@ int gml_render_shader_content_candidate(const GmlRender *r,int shader){
   if(!r || shader<0 || shader>=r->n_shader_pal || !r->shader_pal) return 0;
   {
     const struct GmlShaderPal *p=&r->shader_pal[shader];
-    if(p->gpu_failed) return 0;
+    if(p->gpu_failed || p->gpu_binding_overflow) return 0;
     /* A fragment that samples nothing carries none of the picture it is drawn over, so leaving it
      * unrun is not a weaker version of the effect but an unrelated one. It is a candidate only
      * where a device is present to execute it. */
@@ -414,7 +416,8 @@ int gml_render_content_device_candidate_present(const GmlRender *r){
   if(!r || !r->shader_pal) return 0;
   for(int shader=0;shader<r->n_shader_pal;shader++){
     const struct GmlShaderPal *p=&r->shader_pal[shader];
-    if(p->source_vertex_es && p->source_fragment_es && !shader_pal_recognized(p)) return 1;
+    if(p->source_vertex_es && p->source_fragment_es &&
+       !p->gpu_binding_overflow && !shader_pal_recognized(p)) return 1;
   }
   return 0;
 }
@@ -427,6 +430,43 @@ int gml_render_shader_sources(const GmlRender *r,int shader,GmlRenderShaderSourc
   out->vertex_gl=r->shader_pal[shader].source_vertex_gl;
   out->fragment_gl=r->shader_pal[shader].source_fragment_gl;
   return out->vertex_es && out->fragment_es;
+}
+
+int gml_render_shader_plan_snapshot(const GmlRender *r,int shader_id,
+                                    uint32_t content_generation,const float colour[4],
+                                    GmlPlanShader *out){
+  GmlRenderShaderSources sources;
+  GmlRenderShaderUniform uniforms[GML_PLAN_MAX_UNIFORMS];
+  GmlRenderShaderSampler samplers[GML_PLAN_MAX_SAMPLERS];
+  uint32_t count;
+  if(!out || !r || !r->shader_pal || shader_id<0 || shader_id>=r->n_shader_pal ||
+     r->shader_pal[shader_id].gpu_binding_overflow ||
+     !gml_render_shader_sources(r,shader_id,&sources)) return 0;
+  memset(out,0,sizeof *out);
+  out->identity=(uint32_t)shader_id;
+  out->content_generation=content_generation;
+  if(colour) memcpy(out->vertex_colour,colour,sizeof out->vertex_colour);
+  else for(int component=0;component<4;component++) out->vertex_colour[component]=1.0f;
+  out->vertex_es=sources.vertex_es;
+  out->fragment_es=sources.fragment_es;
+  out->vertex_gl=sources.vertex_gl;
+  out->fragment_gl=sources.fragment_gl;
+  count=gml_render_shader_uniforms(r,shader_id,uniforms,GML_PLAN_MAX_UNIFORMS);
+  for(uint32_t index=0;index<count;index++){
+    GmlPlanUniform *value=&out->uniforms[out->uniform_count++];
+    memcpy(value->name,uniforms[index].name,sizeof value->name);
+    memcpy(value->value,uniforms[index].value,sizeof value->value);
+    value->count=uniforms[index].count;
+    value->integer=uniforms[index].integer;
+  }
+  count=gml_render_shader_samplers(r,shader_id,samplers,GML_PLAN_MAX_SAMPLERS);
+  for(uint32_t index=0;index<count;index++){
+    GmlPlanSampler *sampler=&out->samplers[out->sampler_count++];
+    memcpy(sampler->name,samplers[index].name,sizeof sampler->name);
+    sampler->image=GML_PLAN_NO_IMAGE;
+    sampler->linear=samplers[index].interpolation?1u:0u;
+  }
+  return 1;
 }
 uint32_t gml_render_shader_uniforms(const GmlRender *r,int shader,
                                     GmlRenderShaderUniform *out,uint32_t capacity){

@@ -27,6 +27,8 @@ void anygm_test_graphics_withhold(const char *name);
 /* Fail shader compilation or program linking, to exercise the refusal paths. */
 void anygm_test_graphics_fail_compile(int failing);
 void anygm_test_graphics_fail_link(int failing);
+void anygm_test_graphics_texture_unit_limit(int units);
+void anygm_test_graphics_active_uniform_limit(int count);
 /* Anything reaching the driver after this is counted as a call that should not have happened. */
 void anygm_test_graphics_forbid_calls(void);
 
@@ -44,6 +46,7 @@ int anygm_test_graphics_scene_vertices(void);
 unsigned anygm_test_graphics_scene_texture(void);
 /* Quads drawn through a content program, as opposed to the presentation triangle. */
 int anygm_test_graphics_quad_draw_calls(void);
+unsigned anygm_test_graphics_compile_calls(void);
 /* Texture identity and minification filter captured at the last content draw. */
 unsigned anygm_test_graphics_quad_texture(unsigned unit);
 int anygm_test_graphics_quad_filter(unsigned unit);

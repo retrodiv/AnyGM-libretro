@@ -1866,6 +1866,32 @@ static void check_opaque_stretched_underlay(void) {
   }
 }
 
+static void check_content_binding_capacity(void) {
+  GmlRender render={0};
+  struct GmlShaderPal shader={0};
+  char name[32];
+  shader.source_vertex_es="attribute vec3 in_Position; void main(){ gl_Position=vec4(in_Position,1.0); }";
+  shader.source_fragment_es="void main(){ gl_FragColor=vec4(1.0); }";
+  render.shader_pal=&shader;
+  render.n_shader_pal=1;
+  render.shader_device_expected=1;
+  render.shader_device_present=1;
+  render.shader_report_all_compiled=1;
+  expect(gml_render_shader_is_compiled(&render,0) &&
+         gml_render_shader_content_candidate(&render,0),
+         "ordinary content program was rejected before its binding limit");
+  for(int index=0;index<GML_SHADER_GENERIC_UNIFORMS+1;index++){
+    snprintf(name,sizeof name,"u_capacity_%d",index);
+    (void)gml_render_shader_uniform_handle(&render,0,name);
+  }
+  expect(shader.generic_uniform_count==GML_SHADER_GENERIC_UNIFORMS &&
+         shader.gpu_binding_overflow &&
+         !gml_render_shader_is_compiled(&render,0) &&
+         !gml_render_shader_content_candidate(&render,0) &&
+         !gml_render_content_device_candidate_present(&render),
+         "an excess content uniform silently left a partial GPU program available");
+}
+
 int main(void) {
   static const struct {
     const char *name;
@@ -1885,6 +1911,7 @@ int main(void) {
   uint64_t noise = run_noise();
   uint64_t tint = run_tint();
   check_shader_recognition();
+  check_content_binding_capacity();
   check_named_palette_sampler();
   check_opaque_stretched_underlay();
   check_channel_mask_pixels();
