@@ -363,7 +363,7 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
     anygm_policy_has_modern_layer_semantics(r->win);
   int additive_background=r && r->blendmode==1 &&
     family==GML_RENDER_SCENE_BACKGROUND && nearest_mode==5 &&
-    !r->interp && xs==1.0 && ys==1.0 &&
+    !r->interp && fabs(xs)==1.0 && fabs(ys)==1.0 &&
     (colour&0xFFFFFFu)==0xFFFFFFu && alpha>0.0 && alpha<=1.0;
   int span_active=0;
   int margin_left=0,margin_top=0,margin_right=0,margin_bottom=0;
@@ -411,7 +411,8 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
        (xs!=1.0 && fabs(1.0/xs-nearbyint(1.0/xs))<1e-9) ||
        (ys!=1.0 && fabs(1.0/ys-nearbyint(1.0/ys))<1e-9))) ||
      (nearest_mode==5 && (r->interp || family!=GML_RENDER_SCENE_BACKGROUND ||
-       rotated_sprite || corner_colours || !part_view || xs!=1.0 || ys!=1.0 ||
+       rotated_sprite || corner_colours || !part_view ||
+       ((!additive_background) && (xs!=1.0 || ys!=1.0)) ||
        (alpha!=1.0 && !additive_background))) ||
      (nearest_mode==2 && (r->interp || family!=GML_RENDER_SCENE_BACKGROUND ||
        !part_view || rotated_sprite || corner_colours || xs==0.0 || ys==0.0 ||
@@ -564,13 +565,10 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
   if(x0<=-width || y0<=-height || x0>=r->fbw || y0>=r->fbh){
     /* The unit-scale first-generation point leaf has the same snapped half-open
      * rectangle. A fully clipped draw leaves queued device work untouched. */
-    if(nearest_mode==4 && !rotated_sprite && xs==1.0 && ys==1.0) return 1;
+    if((nearest_mode==4 && !rotated_sprite && xs==1.0 && ys==1.0) ||
+       additive_background) return 1;
     return 0;
   }
-  /* Explicit additive blending snapshots this exact rectangle. A clipped quad cannot be
-   * reconstructed by that executor or its exact CPU journal; keep the ordered CPU writer. */
-  if(additive_background &&
-     (x0<0.0 || y0<0.0 || x0+width>r->fbw || y0+height>r->fbh)) return 0;
   if((nearest_mode==3 || nearest_mode==6) &&
      (!modern_nearest_axis_bias(left,x0,xs,width,page->sw,&nearest_bias_x) ||
       !modern_nearest_axis_bias(top,y0,ys,height,page->sh,&nearest_bias_y))) return 0;
@@ -682,7 +680,10 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
     if(nearest_mode==2 && ys<0.0) sample_top=floor(top+0.5);
     /* Unlike a selected part, the CPU's unit-scale complete-page point leaf
      * indexes texels from the snapped destination origin. */
-    if(nearest_mode==5){ sample_left=x0; sample_top=y0; }
+    if(nearest_mode==5){
+      sample_left=xs<0.0?x0+width:x0;
+      sample_top=ys<0.0?y0+height:y0;
+    }
     operation.payload.quad.u[0]=operation.payload.quad.u[3]=
       ((double)page->sx+(x0-sample_left)/xs-nearest_bias_x)/source.width;
     operation.payload.quad.u[1]=operation.payload.quad.u[2]=

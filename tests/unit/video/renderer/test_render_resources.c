@@ -395,6 +395,27 @@ static int additive_background_exact_replay(void){
         pixels[6]==0x40563412u && pixels[9]==0xFFCA5AFFu &&
         pixels[10]==0xFF583614u && fake.readbacks==0);
   gml_render_resource_destroy(resource);
+  /* The clipped destination starts at the second mirrored quad column, whose source is
+   * the first texel. Context-loss replay must keep the unclipped source coordinate. */
+  source_pixels[0]=0xFFFF0000u;
+  source_pixels[1]=source_pixels[2]=source_pixels[3]=0u;
+  for(unsigned index=0;index<16u;index++) pixels[index]=0x40112233u;
+  operations[0].payload.quad.x[0]=operations[0].payload.quad.x[3]=-1.0;
+  operations[0].payload.quad.x[1]=operations[0].payload.quad.x[2]=1.0;
+  operations[0].payload.quad.u[0]=operations[0].payload.quad.u[3]=1.0;
+  operations[0].payload.quad.u[1]=operations[0].payload.quad.u[2]=0.0;
+  state.additive_draw_alpha=1.0;
+  batch.operation_count=1u;
+  resource=gml_render_resource_create(target_ref(1u,1u),4u,4u,
+    GML_RENDER_PIXEL_ARGB8888,pixels,(GmlRenderResourceLimits){0});
+  CHECK(resource);
+  CHECK(gml_render_resource_submit(resource,&device,&batch,&source,1u)==
+        GML_RENDER_RESOURCE_EXEC_DEVICE);
+  gml_render_resource_context_lost(resource);
+  CHECK(gml_render_resource_acquire_cpu_read(resource,NULL));
+  CHECK(pixels[4]==0xFFFF2233u && pixels[5]==0x40112233u &&
+        pixels[8]==0x40112233u && fake.readbacks==0);
+  gml_render_resource_destroy(resource);
   return 1;
 }
 

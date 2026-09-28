@@ -123,7 +123,14 @@ int gml_render_cpu_replay_eligible(const GmlRenderDrawOp *operation,
   v1=(double)((uint32_t)region.y+region.height)/source->height;
   x0=quad->x[0];x1=quad->x[1];y0=quad->y[0];y1=quad->y[2];
   if(!isfinite(x0) || !isfinite(x1) || !isfinite(y0) || !isfinite(y1) ||
-     x0<0.0 || y0<0.0 || x1>(double)target->width || y1>(double)target->height ||
+     x0<(double)INT_MIN || y0<(double)INT_MIN ||
+     x1>(double)INT_MAX || y1>(double)INT_MAX ||
+     x1-x0>(double)UINT32_MAX || y1-y0>(double)UINT32_MAX ||
+     (blend_rule(state)!=3 &&
+       (x0<0.0 || y0<0.0 || x1>(double)target->width || y1>(double)target->height)) ||
+     (blend_rule(state)==3 &&
+       (x1<=0.0 || y1<=0.0 || x0>=(double)target->width ||
+        y0>=(double)target->height)) ||
      x0!=(double)(int)x0 || x1!=(double)(int)x1 ||
      y0!=(double)(int)y0 || y1!=(double)(int)y1 ||
      x1<=x0 || y1<=y0 ||
@@ -194,7 +201,7 @@ int gml_render_cpu_replay_one(uint32_t *target,uint32_t width,uint32_t height,
   {
     const GmlRenderQuad *quad=&operation->payload.quad;
     GmlRenderRect region=quad->sampling.source_region;
-    uint32_t left=(uint32_t)quad->x[0],top=(uint32_t)quad->y[0];
+    int64_t left=(int64_t)quad->x[0],top=(int64_t)quad->y[0];
     uint32_t draw_width=(uint32_t)(quad->x[1]-quad->x[0]);
     uint32_t draw_height=(uint32_t)(quad->y[2]-quad->y[0]);
     uint32_t scale_x=draw_width/region.width,scale_y=draw_height/region.height;
@@ -202,14 +209,20 @@ int gml_render_cpu_replay_one(uint32_t *target,uint32_t width,uint32_t height,
     int exact=blend_rule(state)==1;
     int binary=blend_rule(state)==2;
     int additive=blend_rule(state)==3;
-    for(uint32_t y=0;y<draw_height;y++) for(uint32_t x=0;x<draw_width;x++){
+    uint32_t first_x=additive && left<0?(uint32_t)-left:0u;
+    uint32_t first_y=additive && top<0?(uint32_t)-top:0u;
+    uint32_t last_x=additive && left+(int64_t)draw_width>width
+      ?(uint32_t)((int64_t)width-left):draw_width;
+    uint32_t last_y=additive && top+(int64_t)draw_height>height
+      ?(uint32_t)((int64_t)height-top):draw_height;
+    for(uint32_t y=first_y;y<last_y;y++) for(uint32_t x=first_x;x<last_x;x++){
       uint32_t sample_x=x/scale_x,sample_y=y/scale_y;
       uint32_t source_x=(uint32_t)region.x+
         (mirror_x?region.width-1u-sample_x:sample_x);
       uint32_t source_y=(uint32_t)region.y+
         (mirror_y?region.height-1u-sample_y:sample_y);
       uint32_t pixel=source_pixel(source,source_x,source_y);
-      uint32_t *destination=&target[(size_t)(top+y)*width+left+x];
+      uint32_t *destination=&target[(size_t)(top+y)*width+(size_t)(left+x)];
       if(additive){
         if((pixel>>24)==0u) continue;
         double sa=((pixel>>24)/255.0)*state->additive_draw_alpha;

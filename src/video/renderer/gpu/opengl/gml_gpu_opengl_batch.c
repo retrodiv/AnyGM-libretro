@@ -94,16 +94,24 @@ static uint32_t scene_filter(const GmlRenderQuad *quad){
 }
 
 static int exact_rect(const GmlRenderDrawOp *op,GLint *left,GLint *bottom,
-                      GLsizei *width,GLsizei *height){
+                      GLsizei *width,GLsizei *height,int allow_clip){
   const GmlRenderQuad *quad=&op->payload.quad;
   double x0=quad->x[0],x1=quad->x[1],y0=quad->y[0],y1=quad->y[2];
   if(!isfinite(x0) || !isfinite(x1) || !isfinite(y0) || !isfinite(y1) ||
      x0!=quad->x[3] || x1!=quad->x[2] || y0!=quad->y[1] || y1!=quad->y[3] ||
-     x0<0.0 || y0<0.0 || x1<=x0 || y1<=y0 ||
+     x0<(double)INT_MIN || y0<(double)INT_MIN ||
      x1>(double)INT_MAX || y1>(double)INT_MAX ||
-     x1>(double)op->target.width || y1>(double)op->target.height ||
+     x1<=x0 || y1<=y0 ||
+     (!allow_clip && (x0<0.0 || y0<0.0 ||
+       x1>(double)op->target.width || y1>(double)op->target.height)) ||
      x0!=(double)(GLint)x0 || y0!=(double)(GLint)y0 ||
      x1!=(double)(GLint)x1 || y1!=(double)(GLint)y1) return 0;
+  if(allow_clip){
+    x0=fmax(0.0,x0); y0=fmax(0.0,y0);
+    x1=fmin((double)op->target.width,x1);
+    y1=fmin((double)op->target.height,y1);
+    if(x1<=x0 || y1<=y0) return 0;
+  }
   if(left) *left=(GLint)x0;
   if(bottom) *bottom=(GLint)op->target.height-(GLint)y1;
   if(width) *width=(GLsizei)(x1-x0);
@@ -239,12 +247,12 @@ static int scene_preflight(GmlGpuBackend *backend,const GmlRenderDrawBatch *batc
          (blend==2 && (!backend->gl.CopyTexSubImage2D ||
                        target->pixel_format!=GML_RENDER_PIXEL_XRGB8888 ||
                        sampling->filter!=GML_RENDER_FILTER_NEAREST ||
-                       !exact_rect(op,NULL,NULL,NULL,NULL))) ||
+                       !exact_rect(op,NULL,NULL,NULL,NULL,0))) ||
          (blend==4 && (!backend->gl.CopyTexSubImage2D ||
                        op->scene_family!=GML_RENDER_SCENE_BACKGROUND ||
                        target->pixel_format!=GML_RENDER_PIXEL_ARGB8888 ||
                        sampling->filter!=GML_RENDER_FILTER_NEAREST ||
-                       !exact_rect(op,NULL,NULL,NULL,NULL))) ||
+                       !exact_rect(op,NULL,NULL,NULL,NULL,1))) ||
          state->sampler_count!=1u || state->material_identity || state->material_version ||
          state->coverage_policy ||
          !((state->clip.width==0 && state->clip.height==0) ||
@@ -448,7 +456,8 @@ static int draw_exact_quad(GmlGpuBackend *backend,const GmlRenderDrawOp *op,
   GLsizei width,height,stride=GL_SCENE_VERTEX_FLOATS*(GLsizei)sizeof(float);
   GLfloat extent[2]={(GLfloat)target->width,(GLfloat)target->height};
   int outcome;
-  if(!exact_rect(op,&left,&bottom,&width,&height) ||
+  if(!exact_rect(op,&left,&bottom,&width,&height,
+                 qualified_blend(state)==4) ||
      !gml_gpu_opengl_scene_exact_program(backend,error,error_capacity) ||
      !gml_render_gpu_opengl_draw_textured_quad(op,state,source->width,source->height,
                                                source->rendered_origin,

@@ -174,11 +174,12 @@ static int resident_direct_background_nearest(GmlRender *r,int page_index,
     return 0;
   /* The bm_add CPU point leaf skips every texel when draw alpha is non-positive. */
   if(alpha==0.0 || (additive && alpha<0.0)) return 1;
-  if(xs!=1.0 || ys!=1.0) return 0;
+  if(additive ? (fabs(xs)!=1.0 || fabs(ys)!=1.0) :
+                (xs!=1.0 || ys!=1.0)) return 0;
   if(alpha<1.0 && !additive) return 0;
   page=&r->tpag[page_index];
   return gml_render_resident_filtered_atlas_page(r,page_index,
-    x-r->cam_x+page->tx,y-r->cam_y+page->ty,1.0,1.0,
+    x-r->cam_x+page->tx*xs,y-r->cam_y+page->ty*ys,xs,ys,
     GML_RENDER_SCENE_BACKGROUND,colour,additive?alpha:1.0,page,
     GML_RENDER_NEAREST_DIRECT_SNAP_RULE);
 }
