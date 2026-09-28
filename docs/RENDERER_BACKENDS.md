@@ -122,7 +122,7 @@ not to the still-planned neutral `PRESENT_IMAGE` scene opcode.
 | `CLEAR` | `supported` | Qualified resident target clear. |
 | `COPY_IMAGE` | `planned` | P5 resource/copy path. |
 | `COMPOSE_SURFACE` | `planned` | General P5 surface composition remains planned; qualified opaque/binary integer public part and stretched rules currently use `TEXTURED_QUAD`. |
-| `LAYER_EFFECT` | `planned` | P7 effect qualification. |
+| `LAYER_EFFECT` | `planned` | P7 GPU effect qualification. The current CPU capture first materialises an owned application or numbered target, then runs the established CPU filter/composite. |
 | `PRESENT_IMAGE` | `planned` | Separate plan resident-source optimization exists; no scene-op claim. |
 | `CONTENT_SHADER_DRAW` | `supported` | P3 neutral-device checkpoint and the bounded P7 public full-target shader rule are selected; distinct numbered targets may feed the next GPU pass before a frame-end checkpoint. Auxiliary samplers and other target/program variants remain P7. |
 | `SOFTWARE3D_PASS` | `fallback` | Ordered CPU bridge, not accelerated 3D. |
@@ -139,6 +139,16 @@ proves pixel equivalence. The shared column owns source, geometry, eligibility
 and draw-state decisions; the CPU and GPU columns own their respective pixel
 rounding/sampling. Special shaders, surfaces, GUI, software3d and unqualified
 blend/coverage are ordered CPU fallbacks unless a row expressly qualifies them.
+
+The current layer-filter fallback is not a selected `LAYER_EFFECT` GPU rule:
+`common/gml_render_effects.c::gml_render_layer_filter_begin` captures through
+`gml_render.c::gml_render_resident_application_cpu_barrier` or
+`cpu/gml_render_cpu_surfaces.c::surface_pixels`, and
+`cpu/gml_render_cpu_effects.c::gml_render_cpu_layer_filter_end` retains the
+family kernels and composite. `tests/unit/video/renderer/test_render_resources.c::resident_layer_filter_capture_barrier`
+compares the CPU-current pixels with preceding resident application and
+numbered-target clears, including both affects-below modes. It does not prove
+GPU filter arithmetic or zero-transfer effect composition; those remain P7.
 
 <!-- R03-RULES:START -->
 | Rule ID | Public operation and grouped variants | Shared preparation | Actual CPU implementation | GPU preparation and executor | Shader rule where arithmetic lives | Current limit and fallback | Discriminating comparison |

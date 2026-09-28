@@ -1463,6 +1463,78 @@ static int resident_application_pending_clear(void){
   return 1;
 }
 
+static int resident_layer_filter_capture_barrier(void){
+  GmlRender *render=(GmlRender*)calloc(1,sizeof *render);
+  GmlLayerFilter filter={0};
+  GmlRenderDeviceServices device;
+  GmlRenderJournalMetrics metrics={0};
+  FakeDevice fake={0};
+  CHECK(render);
+  CHECK(gml_render_application_surface_ensure_owned(render,4,4));
+  device=service(&fake);
+  gml_render_bind_device(render,&device);
+  filter.kind=GML_LAYER_FILTER_TINT;
+  filter.affects_below=1;
+  filter.u.tint.colour=0xFFFFFFFFu;
+  CHECK(gml_render_begin_resident_owned_application(render,0.0,0.0,0));
+  gml_render_set_pending_fill(render,0xFF445566u);
+  gml_render_flush_pending_fill(render);
+  CHECK(render->app_surface_owned[0]==0u && fake.readbacks==0);
+  CHECK(gml_render_layer_filter_begin(render,&filter));
+  CHECK(render->layer_filter_src[0]==0xFF445566u &&
+        !render->resident_application_pass && fake.readbacks==0);
+  gml_render_layer_filter_end(render,&filter,0.0);
+  CHECK(render->app_surface_owned[0]==0xFF445566u &&
+        render->app_surface_owned[15]==0xFF445566u);
+  gml_render_resource_journal_metrics(render->app_surface_resource,&metrics);
+  CHECK(metrics.cpu_replays==1u && metrics.journal_operations==0u);
+
+  filter.affects_below=0;
+  CHECK(gml_render_begin_resident_owned_application(render,0.0,0.0,0));
+  gml_render_set_pending_fill(render,0xFF0000FFu);
+  gml_render_flush_pending_fill(render);
+  CHECK(render->app_surface_owned[0]==0xFF445566u && fake.readbacks==0);
+  CHECK(gml_render_layer_filter_begin(render,&filter));
+  CHECK(render->layer_filter_src[0]==0u &&
+        render->app_surface_owned[0]==0xFF0000FFu &&
+        !render->resident_application_pass && fake.readbacks==0);
+  render->fb[0]=0x80800000u;
+  render->fb_all_transparent=0;
+  gml_render_layer_filter_end(render,&filter,0.0);
+  CHECK(render->app_surface_owned[0]==0xFF80007Fu &&
+        render->app_surface_owned[1]==0xFF0000FFu);
+  {
+    uint32_t base[16]={0};
+    GmlRenderResource *resource;
+    GmlRenderDrawOp operation;
+    GmlRenderDrawBatch batch;
+    int id;
+    gml_render_begin(render,base,4,4,0.0,0.0);
+    render->next_surface_id=1;
+    id=gml_surface_create(render,4,4);
+    CHECK(id>0 && gml_surface_set_target(render,id));
+    resource=gml_render_surface_resource_ensure(render,id);
+    CHECK(resource);
+    operation=clear_op(2u,0xFF123456u,GML_RENDER_REPLAY_EXACT);
+    operation.target.image=gml_render_resource_image_ref(resource);
+    operation.target.image.content_version++;
+    operation.target.pixel_format=GML_RENDER_PIXEL_ARGB8888;
+    batch=(GmlRenderDrawBatch){&operation,1u,NULL,0u};
+    CHECK(gml_render_surface_scene_submit(render,id,&batch,NULL,0u)==
+          GML_RENDER_RESOURCE_EXEC_DEVICE);
+    CHECK(render->surface[id-1].px[0]==0u);
+    filter.affects_below=1;
+    CHECK(gml_render_layer_filter_begin(render,&filter));
+    CHECK(render->layer_filter_src[0]==0xFF123456u &&
+          render->surface[id-1].px[0]==0xFF123456u && fake.readbacks==0);
+    gml_render_layer_filter_end(render,&filter,0.0);
+    CHECK(render->surface[id-1].px[15]==0xFF123456u);
+  }
+  gml_render_free(render);
+  free(render);
+  return 1;
+}
+
 static int resident_flat_primitive_public_order(void){
   GmlRender *cpu=(GmlRender*)calloc(1,sizeof *cpu);
   GmlRender *gpu=(GmlRender*)calloc(1,sizeof *gpu);
@@ -3584,6 +3656,7 @@ int main(void){
   passed+=numbered_surface_free_bound_resource();
   passed+=owned_application_resize_and_context_loss();
   passed+=resident_application_pending_clear();
+  passed+=resident_layer_filter_capture_barrier();
   passed+=resident_flat_primitive_public_order();
   passed+=resident_zero_alpha_layer_fill_noop();
   passed+=resident_unit_world_primitive_order();
@@ -3614,6 +3687,6 @@ int main(void){
   passed+=target_pixel_observes_resident_result();
   passed+=nearest_subrectangle_mirrors();
   passed+=source_free_primitive_rect_replay();
-  printf("render resource cases: passed=%d failed=%d\n",passed,50-passed);
-  return passed==50?EXIT_SUCCESS:EXIT_FAILURE;
+  printf("render resource cases: passed=%d failed=%d\n",passed,51-passed);
+  return passed==51?EXIT_SUCCESS:EXIT_FAILURE;
 }

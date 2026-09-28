@@ -5,6 +5,7 @@
 #include "gml_render.h"
 #include "gml_render_internal.h"
 #include "gml_render_cpu_effects.h"
+#include "gml_render_surfaces_internal.h"
 
 #include <stdint.h>
 #include <stdlib.h>
@@ -32,6 +33,14 @@ int gml_render_layer_filter_begin(GmlRender *r,const GmlLayerFilter *filter){
   size_t count=(size_t)r->fbw*(size_t)r->fbh;
   if(!layer_filter_reserve(r,count)) return 0;
   gml_render_prepare_draw(r);
+  /* The CPU capture and final composite must observe the current target, even
+   * when the preceding scene/clear has only been submitted to the device. */
+  if(!gml_render_resident_application_cpu_barrier(r)) return 0;
+  if(r->target_id>0){
+    int width=0,height=0;
+    if(surface_pixels(r,r->target_id,&width,&height)!=r->fb ||
+       width!=r->fbw || height!=r->fbh) return 0;
+  }
   int captured_known=r->fb_opaque_known,captured_opaque=r->fb_all_opaque;
   int captured_transparent=r->fb_all_transparent;
   if(filter->affects_below) memcpy(r->layer_filter_src,r->fb,count*sizeof(uint32_t));
