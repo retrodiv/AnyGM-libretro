@@ -153,6 +153,32 @@ int gml_render_resident_filtered_atlas_part(GmlRender *r,int page_index,
     family,color,alpha,&view,nearest_scaled);
 }
 
+/* R03-BG-DIRECT-NEAREST: the CPU's ordinary point writer rounds a fractional
+ * full-page origin, clamps draw alpha above one, and writes nothing at zero.
+ * Keep its original CPU leaf for all unqualified state and sampling cases. */
+static int resident_direct_background_nearest(GmlRender *r,int page_index,
+                                              double x,double y,double xs,double ys,
+                                              uint32_t colour,double alpha){
+  GmlTpag *page;
+  if(!r || !r->resident_application_pass || r->interp || r->classic ||
+     gml_d3_is_active(r) || page_index<0 || page_index>=r->n_tpag ||
+     !isfinite(xs) || !isfinite(ys) || xs==0.0 || ys==0.0 ||
+     (colour&0xffffffu)!=0xffffffu ||
+     !isfinite(x) || !isfinite(y) || !isfinite(alpha) || alpha<0.0 ||
+     r->gui_pass_active || r->active_shader>=0 || r->alpha_test_enable ||
+     !r->alphablend || r->blendmode || r->blend_equation!=1 ||
+     r->blend_equation_alpha!=1 || r->color_write_mask!=0x0fu ||
+     r->fb!=r->app_surface_owned || r->fbw!=r->app_w || r->fbh!=r->app_h)
+    return 0;
+  if(alpha==0.0) return 1;
+  if(xs!=1.0 || ys!=1.0) return 0;
+  if(alpha<1.0) return 0;
+  page=&r->tpag[page_index];
+  return gml_render_resident_filtered_atlas_page(r,page_index,
+    x-r->cam_x+page->tx,y-r->cam_y+page->ty,1.0,1.0,
+    GML_RENDER_SCENE_BACKGROUND,colour,1.0,page,GML_RENDER_NEAREST_DIRECT_SNAP_RULE);
+}
+
 void gml_draw_background(GmlRender *r, int bg, double x, double y){
   gml_render_draw_map_point(r,&x,&y);
   if(bg<0||bg>=r->n_bg) return;
@@ -169,6 +195,7 @@ void gml_draw_background(GmlRender *r, int bg, double x, double y){
      gml_render_resident_filtered_atlas_page(r,ti,x-r->cam_x+t->tx,
                                               y-r->cam_y+t->ty,1,1,
                                               GML_RENDER_SCENE_BACKGROUND,0xFFFFFFu,r->alpha,t,0)) return;
+  if(resident_direct_background_nearest(r,ti,x,y,1.0,1.0,0xFFFFFFu,r->alpha)) return;
   if(!gml_render_resident_application_cpu_barrier(r)) return;
   if(gml_d3_draw_background_2d(r,bg,x,y,1,1,0xFFFFFF,r->alpha)) return;
   gml_render_cpu_blit_background_phase(r,t, x - r->cam_x + t->tx, y - r->cam_y + t->ty, 1,1, 0xFFFFFF, r->alpha);
@@ -300,6 +327,7 @@ void gml_draw_background_ext(GmlRender *r, int bg, double x, double y, double xs
        (!t->ty && t->bh==t->sh && t->th==t->sh &&
         (fmax(top,bottom)<=-1.0 || fmin(top,bottom)>=(double)r->fbh+1.0))) return;
   }
+  if(resident_direct_background_nearest(r,ti,x,y,xs,ys,color,alpha)) return;
   if(!gml_render_resident_application_cpu_barrier(r)) return;
   if(gml_d3_draw_background_2d(r,bg,x,y,xs,ys,color,alpha)) return;
   gml_render_cpu_blit_background_phase(r,t, x - r->cam_x + t->tx*xs, y - r->cam_y + t->ty*ys, xs,ys, color, alpha);

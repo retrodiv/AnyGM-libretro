@@ -20,12 +20,17 @@ int gml_render_sprite_log_enabled(const GmlRender *render);
 int gml_render_resident_atlas_page(GmlRender *render, int page_index,
                                   double left, double top, double xscale, double yscale,
                                   GmlRenderSceneFamily family);
+enum {
+  GML_RENDER_FILTERED_ATLAS_RULE=0,
+  GML_RENDER_NEAREST_PART_PHASE_RULE=1,
+  GML_RENDER_NEAREST_DIRECT_SNAP_RULE=2
+};
 int gml_render_resident_filtered_atlas_page(GmlRender *render, int page_index,
                                            double left, double top,
                                            double xscale, double yscale,
                                            GmlRenderSceneFamily family,
                                            uint32_t colour, double alpha,
-                                           GmlTpag *part_view, int nearest_scaled);
+                                           GmlTpag *part_view, int nearest_rule);
 int gml_render_resident_filtered_atlas_part(GmlRender *render, int page_index,
                                            double source_x, double source_y,
                                            double source_width, double source_height,
