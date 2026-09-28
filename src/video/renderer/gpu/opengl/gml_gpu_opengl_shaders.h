@@ -203,8 +203,8 @@
   "                   (u_filter==7?vec2(0.000001):vec2(-0.5));\n" \
   "    lo=ivec2(whole+floor(remainder)); f=fract(remainder);\n" \
   "  }\n" \
-  "  // R03_SHADER_NEAREST_PHASED: retain first-generation point phase; the small positive\n" \
-  "  // tolerance restores exact texel-edge ties lost when double UVs become shader floats.\n" \
+  "  // R03_SHADER_NEAREST_PHASED: retain point phase. First-generation exact ties use the\n" \
+  "  // positive tolerance; modern ordinary sprites prepare a bounded per-axis UV bias.\n" \
   "  if(u_filter==7) f=vec2(0.0);\n" \
   "  ivec2 first=ivec2(v_clamp.xy),last=ivec2(v_clamp.zw-v_clamp.xy);\n" \
   "  vec4 p00,p01,p10,p11;\n" \
