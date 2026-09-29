@@ -2445,6 +2445,11 @@ AnygmResult anygm_run_frame(AnygmEngine *engine,const AnygmInputFrame *input,
     return ANYGM_ERROR_INCOMPATIBLE_ABI;
   if(input) memcpy(&engine->input,input,sizeof engine->input);
   else { memset(&engine->input,0,sizeof engine->input); engine->input.pointer_x=-1; engine->input.pointer_y=-1; }
+  /* A shutdown keeps the last completed picture without another Draw. If that picture was
+   * presented directly from a resident scene, reconstruct its CPU copy before forgetting the
+   * deferred presentation: the host target itself cannot be assumed to survive another frame. */
+  if(engine->runtime_ended)
+    engine_materialize_completed_frame(engine);
   /* The previous frame's deferred presentation describes a target that is about to be rebuilt, and
    * content code runs before anything would flush it. Forget it here, ahead of all of that. */
   gml_render_discard_deferred_presentation(&engine->render);

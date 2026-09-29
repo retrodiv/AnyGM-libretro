@@ -156,6 +156,152 @@ static int resident_world_selection_case(void){
   return 1;
 }
 
+/* The target can be discarded between two frontend calls even after the runtime has ended.
+ * Replaying the final frame then needs the completed CPU picture, not a stale screen buffer. */
+static int ended_frame_retention_variant(int lose_context){
+  Session plain={0},selected={0};
+  AnygmInputFrame input={0};
+  AnygmFrameOutput cpu={0},gpu={0};
+  uint8_t *cpu_state=NULL,*gpu_state=NULL;
+  size_t cpu_size=0,gpu_size=0;
+  int ok=1;
+  anygm_test_graphics_reset();
+  REQUIRE(session_open_fixture_with_scene(
+            &plain,ANYGM_SCENE_RENDERER_CPU,
+            anygm_synthetic_ended_frame_content_create),"ended CPU fixture loads");
+  REQUIRE(session_open_fixture_with_scene(
+            &selected,ANYGM_SCENE_RENDERER_OPENGL,
+            anygm_synthetic_ended_frame_content_create),"ended GPU fixture loads");
+  REQUIRE(graphics_adopt(selected.engine,ANYGM_GRAPHICS_OPENGLES3)==ANYGM_OK,
+          "ended GPU fixture adopts a context");
+  input.struct_size=sizeof input;
+  input.pointer_x=input.pointer_y=-1;
+  for(int frame=0;frame<5 && ok;frame++){
+    if(frame==2 && lose_context)
+      anygm_graphics_context_destroy(selected.engine,1u);
+    cpu.struct_size=gpu.struct_size=sizeof cpu;
+    ok=anygm_run_frame(plain.engine,&input,&cpu)==ANYGM_OK &&
+       anygm_run_frame(selected.engine,&input,&gpu)==ANYGM_OK &&
+       cpu.pixels && cpu.width==64u && cpu.height==48u &&
+       gpu.width==cpu.width && gpu.height==cpu.height;
+    if(!ok) break;
+    if(frame==1)
+      ok=selected.engine->runtime_ended &&
+         selected.engine->screen_pass_frames==2u &&
+         gml_render_deferred_presentation(&selected.engine->render,NULL);
+    if(frame>=2){
+      ok=ok && plain.engine->runtime_ended && selected.engine->runtime_ended &&
+         (cpu.flags&ANYGM_FRAME_SHUTDOWN_REQUESTED) &&
+         (gpu.flags&ANYGM_FRAME_SHUTDOWN_REQUESTED) &&
+         selected.engine->frame_materializations==1u &&
+         plain.engine->vm.frame==selected.engine->vm.frame;
+      for(unsigned row=0;row<cpu.height && ok;row++)
+        ok=!memcmp((const uint8_t*)cpu.pixels+(size_t)row*cpu.pitch,
+                   selected.engine->screen+(size_t)row*cpu.width,
+                   (size_t)cpu.width*4u);
+    }
+  }
+  if(ok){
+    cpu_state=serialize(plain.engine,&cpu_size);
+    gpu_state=serialize(selected.engine,&gpu_size);
+    ok=cpu_state && gpu_state && cpu_size==gpu_size &&
+       !memcmp(cpu_state,gpu_state,cpu_size);
+  }
+  free(gpu_state); free(cpu_state);
+  session_close(&selected); session_close(&plain);
+  REQUIRE(ok,lose_context?"ended frame survives context loss and preserves state":
+                          "ended frame survives repeated host calls and preserves state");
+  return 1;
+}
+
+static int ended_frame_retention_case(void){
+  return ended_frame_retention_variant(0) && ended_frame_retention_variant(1);
+}
+
+static int classic_temporal_fallback_variant(
+    int (*create_fixture)(AnygmSyntheticContent *),int transition){
+  Session plain={0},selected={0};
+  AnygmInputFrame input={0};
+  AnygmFrameOutput cpu={0},gpu={0};
+  GmlGpuCounters counters={0};
+  long previous_step=-1;
+  double previous_fixture_step=-1.0;
+  uint32_t first_colour=0,first_fade=0,black_midpoint=0,new_colour=0;
+  int ok=1;
+  anygm_test_graphics_reset();
+  REQUIRE(session_open_fixture_with_scene(
+            &plain,ANYGM_SCENE_RENDERER_CPU,create_fixture),
+          "classic temporal CPU fixture loads");
+  REQUIRE(session_open_fixture_with_scene(
+            &selected,ANYGM_SCENE_RENDERER_OPENGL,create_fixture),
+          "classic temporal selected fixture loads");
+  REQUIRE(graphics_adopt(selected.engine,ANYGM_GRAPHICS_OPENGLES3)==ANYGM_OK,
+          "classic temporal fixture adopts a context");
+  input.struct_size=sizeof input;
+  input.pointer_x=input.pointer_y=-1;
+  for(int frame=0;frame<(transition?9:3) && ok;frame++){
+    cpu.struct_size=gpu.struct_size=sizeof cpu;
+    ok=anygm_run_frame(plain.engine,&input,&cpu)==ANYGM_OK &&
+       anygm_run_frame(selected.engine,&input,&gpu)==ANYGM_OK &&
+       cpu.pixels && cpu.width==64u && cpu.height==48u &&
+       selected.engine->screen && gpu.width==cpu.width && gpu.height==cpu.height &&
+       plain.engine->vm.frame==selected.engine->vm.frame;
+    if(!ok) break;
+    for(unsigned row=0;row<cpu.height && ok;row++)
+      ok=!memcmp((const uint8_t*)cpu.pixels+(size_t)row*cpu.pitch,
+                 selected.engine->screen+(size_t)row*cpu.width,
+                 (size_t)cpu.width*4u);
+    if(previous_step>=0 && !transition)
+      ok=ok && plain.engine->vm.frame==previous_step+1;
+    previous_step=plain.engine->vm.frame;
+    if(transition){
+      static const long expected_steps[9]={1,2,2,2,2,2,3,4,5};
+      double fixture_step=gml_global_num(&plain.engine->vm,"fixture_frame");
+      ok=ok && plain.engine->vm.frame==expected_steps[frame] &&
+         selected.engine->vm.frame==expected_steps[frame];
+      if(frame>=2) ok=ok && fixture_step==previous_fixture_step;
+      previous_fixture_step=fixture_step;
+      if(frame==0) first_colour=((const uint32_t*)cpu.pixels)[32u+24u*64u]&0xFFFFFFu;
+      if(frame==1) first_fade=((const uint32_t*)cpu.pixels)[32u+24u*64u]&0xFFFFFFu;
+      if(frame==3) black_midpoint=((const uint32_t*)cpu.pixels)[32u+24u*64u]&0xFFFFFFu;
+      if(frame==6) new_colour=((const uint32_t*)cpu.pixels)[32u+24u*64u]&0xFFFFFFu;
+    } else {
+      ok=ok && gml_global_num(&plain.engine->vm,"fixture_frame")==frame+1 &&
+         gml_global_num(&selected.engine->vm,"fixture_frame")==frame+1 &&
+         gml_global_num(&plain.engine->vm,"fixture_seen")==frame+2 &&
+         gml_global_num(&selected.engine->vm,"fixture_seen")==frame+2;
+    }
+  }
+  gml_gpu_counters(selected.engine->gpu,&counters);
+  ok=ok && counters.scene_batches_offered==0u && counters.scene_batches_accepted==0u &&
+     counters.cpu_upload_frames==(unsigned)(transition?9:3);
+  if(transition)
+    ok=ok && plain.engine->vm.room_index==1 && selected.engine->vm.room_index==1 &&
+       first_colour!=0u && first_fade!=0u && first_fade!=first_colour &&
+       black_midpoint==0u && new_colour!=0u && new_colour!=first_fade;
+  if(!ok)
+    fprintf(stderr,"classic temporal %s: room=%d/%d step=%ld fixture=%.0f "
+                   "first=%06x fade=%06x mid=%06x new=%06x scene=%llu/%llu transport=%u\n",
+            transition?"transition":"redraw",plain.engine->vm.room_index,
+            selected.engine->vm.room_index,plain.engine->vm.frame,
+            gml_global_num(&plain.engine->vm,"fixture_frame"),first_colour,first_fade,
+            black_midpoint,new_colour,
+            (unsigned long long)counters.scene_batches_offered,
+            (unsigned long long)counters.scene_batches_accepted,
+            counters.cpu_upload_frames);
+  session_close(&selected); session_close(&plain);
+  REQUIRE(ok,transition?"classic fade has old, black and new frames without extra Step":
+                        "screen_redraw repeats Draw once and refresh does not");
+  return 1;
+}
+
+static int classic_temporal_fallback_case(void){
+  return classic_temporal_fallback_variant(
+           anygm_synthetic_classic_redraw_content_create,0) &&
+         classic_temporal_fallback_variant(
+           anygm_synthetic_classic_transition_content_create,1);
+}
+
 static int resident_indirect_gui_variant(
     int (*create_fixture)(AnygmSyntheticContent *),int scale_direction){
   Session plain={0},selected={0};
@@ -1622,6 +1768,9 @@ static int texture_filter_state_case(void){
 int main(void){
   static const struct { const char *name; int (*run)(void); } cases[]={
     {"resident world selection retains CPU state",resident_world_selection_case},
+    {"ended resident frame remains visible and canonical",ended_frame_retention_case},
+    {"classic redraw and transition retain exact selected fallback",
+     classic_temporal_fallback_case},
     {"resident GUI preserves direct and scaled CPU output",resident_indirect_gui_case},
     {"partial-alpha indirect GUI keeps ordered CPU fallback",
      resident_indirect_gui_alpha_fallback_case},

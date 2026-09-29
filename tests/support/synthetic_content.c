@@ -1566,6 +1566,9 @@ static int synthetic_framebuffer_content_create(
   int canvas_geometry=gpu_sprite==8;
   int window_geometry=gpu_sprite==9;
   int presentation_filter=gpu_sprite>=10 && gpu_sprite<=12;
+  int ended_frame=gpu_sprite==13;
+  int classic_redraw=gpu_sprite==14;
+  int classic_transition=gpu_sprite==15;
   char create[192],step[192],draw[192],draw_begin[192],draw_gui[192];
   snprintf(create,sizeof create,"%s/retain-create.gml",fixture->directory);
   snprintf(step,sizeof step,"%s/retain-step.gml",fixture->directory);
@@ -1593,6 +1596,9 @@ static int synthetic_framebuffer_content_create(
        "global.fixture_frame = 0;\n"
        "window_set_size(128,96);\n"
        "application_surface_draw_enable(false);\n":
+       classic_redraw?
+       "global.fixture_frame = 0;\n"
+       "global.fixture_seen = 0;\n":
        retained_step_target?
        "global.fixture_frame = 0;\n"
        "global.fixture_surface = surface_create(8,8);\n":
@@ -1604,13 +1610,27 @@ static int synthetic_framebuffer_content_create(
                  "surface_set_target(global.fixture_surface);\n"
                  "draw_clear(c_green);\n"
                  "surface_set_target(global.fixture_inner);\n":
+                 ended_frame?
+                 "global.fixture_frame += 1;\n"
+                 "if (global.fixture_frame == 2) game_end();\n":
+                 classic_redraw?
+                 "global.fixture_frame += 1;\n"
+                 "if (global.fixture_frame == 1) { screen_redraw(); screen_refresh(); }\n":
+                 classic_transition?
+                 "if (global.fixture_frame == 1) {\n"
+                 "  transition_kind = 21; transition_steps = 100; room_goto(1);\n"
+                 "}\n"
+                 "global.fixture_frame += 1;\n":
                  assigned_view_surface || canvas_geometry || window_geometry || presentation_filter?
                  "global.fixture_frame += 1;\n":
                  retained_step_target?
                  "surface_set_target(global.fixture_surface);\n":
                  "if (global.fixture_frame >= 1) room_goto(1);\n"
                  "global.fixture_frame += 1;\n") ||
-     (gpu_sprite && !write_text(draw,gpu_sprite==4?
+     (gpu_sprite && !write_text(draw,classic_redraw?
+       "global.fixture_seen += 1;\n"
+       "draw_sprite(spr_fixture,0,8,12);\n":
+       gpu_sprite==4?
        "if (view_current == 0) draw_sprite_ext(spr_fixture,0,8,12,0.7,0.7,0,c_white,1);\n"
        "else draw_sprite_ext(spr_fixture,0,48,16,0.7,0.7,0,c_white,1);\n":
        "if (view_current == 0) draw_sprite(spr_fixture,0,8,12);\n"
@@ -1747,10 +1767,10 @@ static int synthetic_framebuffer_content_create(
   rooms[1].width=rooms[0].width;
   rooms[1].height=rooms[0].height;
   rooms[1].speed=60;
-  rooms[1].background_color=0xFF000000u;
-  rooms[1].draw_background_color=0;
+  rooms[1].background_color=classic_transition?0xFF000080u:0xFF000000u;
+  rooms[1].draw_background_color=classic_transition?1:0;
   rooms[1].clear_view_background=clear_view_background;
-  if(gpu_sprite){
+  if(gpu_sprite && !classic_transition){
     rooms[1].instances=&instance;
     rooms[1].n_instances=rooms[1].cap_instances=1;
   }
@@ -1838,6 +1858,18 @@ int anygm_synthetic_crt_scaled_content_create(AnygmSyntheticContent *fixture){
 
 int anygm_synthetic_host_box_content_create(AnygmSyntheticContent *fixture){
   return synthetic_framebuffer_content_create(fixture,0,0,0,12);
+}
+
+int anygm_synthetic_ended_frame_content_create(AnygmSyntheticContent *fixture){
+  return synthetic_framebuffer_content_create(fixture,0,0,0,13);
+}
+
+int anygm_synthetic_classic_redraw_content_create(AnygmSyntheticContent *fixture){
+  return synthetic_framebuffer_content_create(fixture,0,0,1,14);
+}
+
+int anygm_synthetic_classic_transition_content_create(AnygmSyntheticContent *fixture){
+  return synthetic_framebuffer_content_create(fixture,0,0,1,15);
 }
 
 int anygm_synthetic_clear_view_content_create(AnygmSyntheticContent *fixture){
