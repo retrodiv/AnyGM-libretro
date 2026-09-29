@@ -36,8 +36,14 @@ int main(int argc,char **argv){
   int multiview_step=argc==2 && !strcmp(argv[1],"--keep-multiview-step-target");
   int multiview_nested=argc==2 && !strcmp(argv[1],"--keep-multiview-nested-target");
   int multiview_assigned=argc==2 && !strcmp(argv[1],"--keep-multiview-assigned-surface");
+  int canvas_geometry=argc==2 && !strcmp(argv[1],"--keep-canvas-geometry");
+  int window_raster=argc==2 && !strcmp(argv[1],"--keep-window-raster");
+  int centered_gui=argc==2 && !strcmp(argv[1],"--keep-centered-gui");
   if(!(gui_up?anygm_synthetic_indirect_gui_upscale_content_create(&fixture):
        gui_reduce?anygm_synthetic_indirect_gui_reduce_content_create(&fixture):
+       canvas_geometry?anygm_synthetic_multiview_canvas_content_create(&fixture):
+       window_raster?anygm_synthetic_window_raster_content_create(&fixture):
+       centered_gui?anygm_synthetic_direct_gui_sprite_content_create(&fixture):
        multiview_assigned?anygm_synthetic_multiview_assigned_surface_content_create(&fixture):
        multiview_nested?anygm_synthetic_multiview_nested_target_content_create(&fixture):
        multiview_step?anygm_synthetic_multiview_step_target_content_create(&fixture):
@@ -47,7 +53,8 @@ int main(int argc,char **argv){
        dense?anygm_synthetic_gpu_dense_scene_route_content_create(&fixture):
              anygm_synthetic_gpu_scene_route_content_create(&fixture))) return 1;
   if(gui_up || gui_reduce || multiview || multiview_offset ||
-     multiview_fractional || multiview_step || multiview_nested || multiview_assigned){
+     multiview_fractional || multiview_step || multiview_nested || multiview_assigned ||
+     canvas_geometry || window_raster || centered_gui){
     puts(fixture.path);
     return 0;
   }
@@ -60,7 +67,8 @@ int main(int argc,char **argv){
           "--keep-gui-upscale|--keep-gui-reduce|--keep-multiview|"
           "--keep-multiview-offset|--keep-multiview-fractional|"
           "--keep-multiview-step-target|--keep-multiview-nested-target|"
-          "--keep-multiview-assigned-surface]\n",stderr);
+          "--keep-multiview-assigned-surface|--keep-canvas-geometry|"
+          "--keep-window-raster|--keep-centered-gui]\n",stderr);
     anygm_synthetic_content_destroy(&fixture);
     return 1;
   }

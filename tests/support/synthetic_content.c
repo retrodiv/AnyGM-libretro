@@ -1563,6 +1563,8 @@ static int synthetic_framebuffer_content_create(
   int retained_step_target=gpu_sprite==5 || gpu_sprite==6;
   int nested_step_target=gpu_sprite==6;
   int assigned_view_surface=gpu_sprite==7;
+  int canvas_geometry=gpu_sprite==8;
+  int window_geometry=gpu_sprite==9;
   char create[192],step[192],draw[192],draw_begin[192],draw_gui[192];
   snprintf(create,sizeof create,"%s/retain-create.gml",fixture->directory);
   snprintf(step,sizeof step,"%s/retain-step.gml",fixture->directory);
@@ -1581,6 +1583,15 @@ static int synthetic_framebuffer_content_create(
        "global.fixture_inner = surface_create(8,8);\n"
        "view_set_surface_id(0,global.fixture_surface);\n"
        "view_set_surface_id(1,global.fixture_inner);\n":
+       canvas_geometry?
+       "global.fixture_frame = 0;\n"
+       "window_set_size(128,96);\n"
+       "display_set_gui_size(64,32);\n"
+       "application_surface_draw_enable(false);\n":
+       window_geometry?
+       "global.fixture_frame = 0;\n"
+       "window_set_size(128,96);\n"
+       "application_surface_draw_enable(false);\n":
        retained_step_target?
        "global.fixture_frame = 0;\n"
        "global.fixture_surface = surface_create(8,8);\n":
@@ -1592,7 +1603,7 @@ static int synthetic_framebuffer_content_create(
                  "surface_set_target(global.fixture_surface);\n"
                  "draw_clear(c_green);\n"
                  "surface_set_target(global.fixture_inner);\n":
-                 assigned_view_surface?
+                 assigned_view_surface || canvas_geometry || window_geometry?
                  "global.fixture_frame += 1;\n":
                  retained_step_target?
                  "surface_set_target(global.fixture_surface);\n":
@@ -1604,7 +1615,7 @@ static int synthetic_framebuffer_content_create(
        "if (view_current == 0) draw_sprite(spr_fixture,0,8,12);\n"
        "else draw_sprite(spr_fixture,0,48,16);\n")) ||
      ((retained_step_target || assigned_view_surface) &&
-      (!write_text(draw_begin,assigned_view_surface?
+      !write_text(draw_begin,assigned_view_surface?
          "global.fixture_seen += 1;\n"
          "if (view_current == 0) draw_clear(c_blue);\n"
          "else draw_clear(c_green);\n":
@@ -1616,14 +1627,23 @@ static int synthetic_framebuffer_content_create(
          "}\n":
          "if (view_current == 0) {\n"
          "  draw_clear(c_blue); surface_reset_target();\n"
-         "}\n") ||
-       !write_text(draw_gui,assigned_view_surface?
+         "}\n")) ||
+     ((retained_step_target || assigned_view_surface || canvas_geometry || window_geometry) &&
+      !write_text(draw_gui,canvas_geometry?
+         "draw_surface_stretched(application_surface,0,0,64,32);\n"
+         "draw_sprite(spr_fixture,0,12,12);\n"
+         "draw_set_color(c_white); draw_rectangle(0,0,3,3,false);\n":
+         window_geometry?
+         "draw_surface_stretched(application_surface,0,0,128,96);\n"
+         "draw_sprite(spr_fixture,0,12,12);\n"
+         "draw_set_color(c_white); draw_rectangle(0,0,3,3,false);\n":
+         assigned_view_surface?
          "draw_surface_stretched(global.fixture_surface,0,0,8,8);\n"
          "draw_surface_stretched(global.fixture_inner,8,0,8,8);\n":
          nested_step_target?
          "draw_surface(global.fixture_surface,0,0);\n"
          "draw_surface(global.fixture_inner,8,0);\n":
-         "draw_surface(global.fixture_surface,0,0);\n")))){
+         "draw_surface(global.fixture_surface,0,0);\n"))){
     anygm_synthetic_content_destroy(fixture);
     return 0;
   }
@@ -1683,7 +1703,8 @@ static int synthetic_framebuffer_content_create(
   object.sprite_id=object.mask_id=object.parent_id=-1;
   object.visible=gpu_sprite;
   object.events=events;
-  object.n_events=object.cap_events=retained_step_target || assigned_view_surface?5:gpu_sprite?3:2;
+  object.n_events=object.cap_events=retained_step_target || assigned_view_surface?5:
+                                     canvas_geometry || window_geometry?4:gpu_sprite?3:2;
   events[0].event_type=0;
   events[0].event_number=0;
   events[0].source_path=create;
@@ -1701,6 +1722,10 @@ static int synthetic_framebuffer_content_create(
     events[4].event_type=8;
     events[4].event_number=64;
     events[4].source_path=draw_gui;
+  } else if(canvas_geometry || window_geometry){
+    events[3].event_type=8;
+    events[3].event_number=64;
+    events[3].source_path=draw_gui;
   }
 
   rooms[0].id=rooms[0].name=(char *)"room_painted";
@@ -1792,6 +1817,14 @@ int anygm_synthetic_multiview_nested_target_content_create(AnygmSyntheticContent
 
 int anygm_synthetic_multiview_assigned_surface_content_create(AnygmSyntheticContent *fixture){
   return synthetic_framebuffer_content_create(fixture,1,0,0,7);
+}
+
+int anygm_synthetic_multiview_canvas_content_create(AnygmSyntheticContent *fixture){
+  return synthetic_framebuffer_content_create(fixture,1,0,0,8);
+}
+
+int anygm_synthetic_window_raster_content_create(AnygmSyntheticContent *fixture){
+  return synthetic_framebuffer_content_create(fixture,0,0,0,9);
 }
 
 int anygm_synthetic_clear_view_content_create(AnygmSyntheticContent *fixture){

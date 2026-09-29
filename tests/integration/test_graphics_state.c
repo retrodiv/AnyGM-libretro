@@ -618,6 +618,160 @@ static int resident_multiview_assigned_surface_restore_case(void){
   return 1;
 }
 
+static int presentation_geometry_variant(
+    const char *name,int (*create_fixture)(AnygmSyntheticContent *),
+    unsigned logical_raster,unsigned aspect_mode,unsigned monitor_width,
+    unsigned monitor_height,int variant){
+  Session plain={0},selected={0};
+  AnygmInputFrame input={0};
+  AnygmConfigDelta presentation={0};
+  int matching=1;
+  anygm_test_graphics_reset();
+  REQUIRE(session_open_fixture_with_scene(&plain,ANYGM_SCENE_RENDERER_CPU,create_fixture),
+          "geometry CPU fixture loads");
+  REQUIRE(session_open_fixture_with_scene(&selected,ANYGM_SCENE_RENDERER_OPENGL,create_fixture),
+          "geometry scene fixture loads");
+  presentation.struct_size=sizeof presentation;
+  presentation.values.struct_size=sizeof presentation.values;
+  presentation.fields=ANYGM_CONFIG_PRESENT_LOGICAL_RASTER|ANYGM_CONFIG_ASPECT_MODE;
+  presentation.values.present_logical_raster=logical_raster;
+  presentation.values.aspect_mode=aspect_mode;
+  if(monitor_width && monitor_height){
+    presentation.fields|=ANYGM_CONFIG_MONITOR_WIDTH|ANYGM_CONFIG_MONITOR_HEIGHT;
+    presentation.values.monitor_width=monitor_width;
+    presentation.values.monitor_height=monitor_height;
+  }
+  REQUIRE(anygm_set_config(plain.engine,&presentation)==ANYGM_OK &&
+          anygm_set_config(selected.engine,&presentation)==ANYGM_OK,
+          "geometry policy selected");
+  REQUIRE(graphics_adopt(selected.engine,ANYGM_GRAPHICS_OPENGLES3)==ANYGM_OK,
+          "geometry context adopted");
+  input.struct_size=sizeof input;
+  input.pointer_x=input.pointer_y=-1;
+  for(int frame=0;matching && frame<3;frame++){
+    AnygmFrameOutput cpu={0},gpu={0};
+    const uint32_t *selected_host=NULL;
+    unsigned selected_host_width=0,selected_host_height=0;
+    cpu.struct_size=gpu.struct_size=sizeof cpu;
+    if(frame==2) anygm_graphics_context_destroy(selected.engine,1u);
+    matching=anygm_run_frame(plain.engine,&input,&cpu)==ANYGM_OK &&
+             anygm_run_frame(selected.engine,&input,&gpu)==ANYGM_OK &&
+             cpu.pixels && plain.engine->screen && selected.engine->screen &&
+             plain.engine->output_width==selected.engine->output_width &&
+             plain.engine->output_height==selected.engine->output_height &&
+             !memcmp(plain.engine->screen,selected.engine->screen,
+                     (size_t)plain.engine->output_width*plain.engine->output_height*
+                     sizeof(uint32_t)) &&
+             resolve_host_frame(selected.engine,&selected_host,
+                                &selected_host_width,&selected_host_height) &&
+             selected_host && cpu.width==gpu.width && cpu.height==gpu.height &&
+             cpu.width==selected_host_width && cpu.height==selected_host_height &&
+             cpu.pitch==(size_t)cpu.width*sizeof(uint32_t) &&
+             !memcmp(cpu.pixels,selected_host,(size_t)cpu.pitch*cpu.height);
+    if(!matching){
+      size_t first_diff=(size_t)-1;
+      if(cpu.pixels && selected_host && cpu.width==gpu.width &&
+         cpu.height==gpu.height)
+        for(size_t pixel=0;pixel<(size_t)cpu.width*cpu.height;pixel++)
+          if(((const uint32_t *)cpu.pixels)[pixel]!=selected_host[pixel]){
+            first_diff=pixel;
+            break;
+          }
+      fprintf(stderr,"geometry %s frame=%d mismatch cpu=%ux%u/%zu gpu=%ux%u "
+              "pixel=%zu cpu=%08x gpu=%08x\n",name,frame,cpu.width,cpu.height,
+              cpu.pitch,gpu.width,gpu.height,first_diff,
+              first_diff!=(size_t)-1?((const uint32_t *)cpu.pixels)[first_diff]:0u,
+              first_diff!=(size_t)-1?selected_host[first_diff]:0u);
+    }
+    if(matching){
+      const uint32_t *pixels=cpu.pixels;
+      size_t count=(size_t)cpu.width*cpu.height;
+      unsigned lit=0,distinct=0;
+      uint32_t first=pixels[0]&0xFFFFFFu;
+      for(size_t i=0;i<count;i++){
+        uint32_t colour=pixels[i]&0xFFFFFFu;
+        lit+=colour!=0;
+        distinct|=colour!=first;
+      }
+      matching=lit>0 && distinct;
+    }
+    if(frame==0){
+      GmlGpuCounters counters={0};
+      gml_gpu_counters(selected.engine->gpu,&counters);
+      int geometry_ok=variant==0?
+        selected.engine->width==64 && selected.engine->height==48 &&
+        selected.engine->output_width==64 && selected.engine->output_height==64 &&
+        cpu.width==128 && cpu.height==128 &&
+        selected.engine->gui_space_width==64 && selected.engine->gui_space_height==32 &&
+        selected.engine->gui_offset_x==0 && selected.engine->gui_offset_y==16 &&
+        selected.engine->canvas_mode && !selected.engine->aspect_force_active &&
+        !selected.engine->screen_stage_window_raster &&
+        counters.scene_batches_accepted==counters.scene_batches_offered &&
+        counters.scene_batches_accepted>=5u &&
+        counters.scene_families[GML_RENDER_SCENE_SPRITE]>=2u &&
+        counters.scene_readbacks==0u && counters.cpu_upload_frames==0u:
+        variant==1?
+        selected.engine->width==64 && selected.engine->height==48 &&
+        selected.engine->output_width==128 && selected.engine->output_height==128 &&
+        cpu.width==128 && cpu.height==128 &&
+        selected.engine->gui_space_width==128 && selected.engine->gui_space_height==128 &&
+        !selected.engine->canvas_mode && !selected.engine->aspect_force_active &&
+        selected.engine->screen_stage_window_raster &&
+        counters.scene_batches_accepted==counters.scene_batches_offered &&
+        counters.scene_batches_accepted>=3u &&
+        counters.scene_families[GML_RENDER_SCENE_SPRITE]>=1u &&
+        counters.scene_readbacks==0u && counters.cpu_upload_frames==1u:
+        selected.engine->width==112 && selected.engine->height==48 &&
+        selected.engine->output_width==112 && selected.engine->output_height==48 &&
+        cpu.width==112 && cpu.height==48 &&
+        selected.engine->gui_space_width==112 && selected.engine->gui_space_height==48 &&
+        selected.engine->gui_offset_x==24 && selected.engine->gui_offset_y==0 &&
+        !selected.engine->canvas_mode && selected.engine->aspect_force_active &&
+        !selected.engine->screen_stage_window_raster &&
+        counters.scene_batches_offered==0u &&
+        counters.scene_batches_accepted==0u &&
+        counters.scene_families[GML_RENDER_SCENE_SPRITE]==0u &&
+        counters.cpu_upload_frames==1u;
+      if(!geometry_ok)
+        fprintf(stderr,"geometry %s world=%ux%u output=%ux%u delivered=%ux%u "
+                "gui=%dx%d offset=%d,%d canvas=%d aspect=%d window=%d "
+                "host=%ux%u scene=%llu/%llu sprite=%llu uploads=%llu "
+                "readbacks=%llu transport=%llu\n",name,
+                selected.engine->width,selected.engine->height,
+                selected.engine->output_width,selected.engine->output_height,
+                cpu.width,cpu.height,
+                selected.engine->gui_space_width,selected.engine->gui_space_height,
+                selected.engine->gui_offset_x,selected.engine->gui_offset_y,
+                selected.engine->canvas_mode,selected.engine->aspect_force_active,
+                selected.engine->screen_stage_window_raster,
+                selected.engine->host_output_width,selected.engine->host_output_height,
+                (unsigned long long)counters.scene_batches_accepted,
+                (unsigned long long)counters.scene_batches_offered,
+                (unsigned long long)counters.scene_families[GML_RENDER_SCENE_SPRITE],
+                (unsigned long long)counters.scene_uploads,
+                (unsigned long long)counters.scene_readbacks,
+                (unsigned long long)counters.cpu_upload_frames);
+      matching=matching && geometry_ok;
+    }
+  }
+  session_close(&selected);
+  session_close(&plain);
+  REQUIRE(matching,"geometry CPU and selected images remain visibly identical");
+  return 1;
+}
+
+static int presentation_geometry_case(void){
+  return presentation_geometry_variant(
+           "canvas",anygm_synthetic_multiview_canvas_content_create,
+           0u,GMC_ASPECT_FORCE_NONE,128u,128u,0) &&
+         presentation_geometry_variant(
+           "window",anygm_synthetic_window_raster_content_create,
+           0u,GMC_ASPECT_FORCE_NONE,128u,128u,1) &&
+         presentation_geometry_variant(
+           "centered",anygm_synthetic_direct_gui_sprite_content_create,
+           1u,GMC_ASPECT_FORCE_21_9,0u,0u,2);
+}
+
 static uint8_t *serialize(AnygmEngine *engine,size_t *size){
   size_t capacity=anygm_state_size(engine);
   uint8_t *data=(uint8_t*)malloc(capacity?capacity:1);
@@ -1364,6 +1518,8 @@ int main(void){
     {"two-view Step target survives Draw Begin and GUI",resident_multiview_step_target_case},
     {"assigned views repopulate a derived surface before restored GUI",
      resident_multiview_assigned_surface_restore_case},
+    {"presentation geometry remains visible across selected scenes",
+     presentation_geometry_case},
     {"texture filters and GPU stack restore",texture_filter_state_case},
     {"state bytes match with and without a target",state_bytes_match_case},
     {"save, load and save again produce the same bytes",save_load_save_case},
