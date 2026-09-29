@@ -1469,6 +1469,7 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
       engine->vm.frame,direct_owned_world,multiview_rendered,view_surface,frame_view_count,
       render_presentation.application_owned);
   int owned_world_began=0;
+  int base_world_began=0;
   /* Unsupported operations still take the checked CPU barrier. */
   if(direct_owned_world && !engine->composed_frame && !engine->aspect_force_active &&
      engine_graphics_active(engine) &&
@@ -1487,10 +1488,17 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
     world_pixels=engine->fb;
     world_width=(int)engine->width;
     world_height=(int)engine->height;
-    if(engine->composed_frame)
+    if(!engine->composed_frame && !engine->aspect_force_active &&
+       !render_presentation.application_draw_enabled && frame_view_count==0 &&
+       engine_graphics_active(engine) &&
+       (engine->scene_renderer_session==ANYGM_SCENE_RENDERER_OPENGL ||
+        anygm_host_development_setting(&engine->host,"GML_SCENE_GPU_PROTOTYPE")))
+      base_world_began=gml_render_begin_resident_base(
+        &engine->render,world_pixels,world_width,world_height,cam_x,cam_y);
+    if(!base_world_began && engine->composed_frame)
       gml_render_begin_retaining_target(&engine->render,world_pixels,world_width,world_height,
                                         cam_x,cam_y);
-    else
+    else if(!base_world_began)
       gml_render_begin(&engine->render,world_pixels,world_width,world_height,cam_x,cam_y);
   }
   if(direct_owned_world)
@@ -1529,6 +1537,9 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
   engine->aspect_event_view_overflow = 0;
   gml_render_flush_pending_fill(&engine->render);
   if(!gml_render_scene_flush(&engine->render)) return ANYGM_ERROR_INTERNAL;
+  if(base_world_began &&
+     !gml_render_resident_application_cpu_barrier(&engine->render))
+    return ANYGM_ERROR_INTERNAL;
   if(direct_owned_world)
     (void)gml_render_application_surface_owned_extent(
       &engine->render,&world_width,&world_height);
@@ -1708,15 +1719,24 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
 			  uint32_t *gtarget = (aspect_gui_center || gui_indirect) ? engine->gui_buffer : engine->screen;
 			  int gtw = (aspect_gui_center || gui_indirect) ? gsw : (int)ow;
 			  int gth = (aspect_gui_center || gui_indirect) ? gsh : (int)oh;
+			  int resident_screen_began=0;
 			  {
 			    double screen_cam_x=(engine->aspect_force_active || aspect_gui_center)
 			                        ? 0.0 : -(double)engine->gui_offset_x;
 			    double screen_cam_y=(engine->aspect_force_active || aspect_gui_center)
 			                        ? 0.0 : -(double)engine->gui_offset_y;
-			    if(engine->composed_frame)
+			    if(!engine->composed_frame && !engine->aspect_force_active &&
+			       !aspect_gui_center && !gui_indirect &&
+			       !render_presentation.application_draw_enabled &&
+			       engine_graphics_active(engine) &&
+			       (engine->scene_renderer_session==ANYGM_SCENE_RENDERER_OPENGL ||
+			        anygm_host_development_setting(&engine->host,"GML_SCENE_GPU_PROTOTYPE")))
+			      resident_screen_began=gml_render_begin_resident_base(
+			        &engine->render,gtarget,gtw,gth,screen_cam_x,screen_cam_y);
+			    if(!resident_screen_began && engine->composed_frame)
 			      gml_render_begin_retaining_target(&engine->render, gtarget, gtw, gth,
 			                                        screen_cam_x, screen_cam_y);
-			    else
+			    else if(!resident_screen_began)
 			      gml_render_begin(&engine->render, gtarget, gtw, gth,
 			                       screen_cam_x, screen_cam_y);
 			  }
@@ -1937,6 +1957,9 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
      !gml_render_defer_resident_underlay(&engine->render))
     gml_render_flush_pending_underlay(&engine->render);
   gml_render_flush_pending_fill(&engine->render);
+  if(resident_screen_began &&
+     !gml_render_resident_application_cpu_barrier(&engine->render))
+    return ANYGM_ERROR_INTERNAL;
   log_present_pass(engine,"flushed",gtarget,gtw,gth);
   if (anygm_host_development_setting(&engine->host,"GML_LOG_PRESENT")) {
     if (engine->diagnostics.present_frame++ % 120 == 0) engine_logf(engine,ANYGM_LOG_DEBUG, "[present] out=%ux%u canvas=%d gui=%dx%d indirect=%d port=%dx%d prect=(%d,%d %dx%d) off=(%d,%d) host=%ux%u fit=(%d,%d %dx%d)\n",

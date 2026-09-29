@@ -120,7 +120,7 @@ static int resident_integer_sprite(GmlRender *r,GmlSprite *sprite,int subimg,
      r->color_write_mask!=0x0Fu || r->classic_phase_y ||
      r->rotated_batch_count || r->rotated_batch_building ||
      r->pending_underlay || r->pending_presentation ||
-     r->fb!=r->app_surface_owned || r->fbw!=r->app_w || r->fbh!=r->app_h ||
+     !gml_render_scene_target_matches(r) ||
      !isfinite(xs) || !isfinite(ys) || xs==0.0 || ys==0.0 ||
      rotation!=0.0 || blend!=0xFFFFFFu || alpha!=1.0 ||
      (r->interp && (xs!=1.0 || ys!=1.0)))
@@ -181,7 +181,7 @@ static int resident_atlas_crop_from_page(GmlRender *r,GmlTpag *page,
      r->blend_equation_alpha!=1 || r->color_write_mask!=0x0Fu ||
      r->classic_phase_y || r->rotated_batch_count || r->rotated_batch_building ||
      r->pending_underlay || r->pending_presentation ||
-     r->fb!=r->app_surface_owned || r->fbw!=r->app_w || r->fbh!=r->app_h ||
+     !gml_render_scene_target_matches(r) ||
      !isfinite(xs) || !isfinite(ys) || xs==0.0 || ys==0.0 ||
      !isfinite(draw_alpha) || draw_alpha<=0.0 || draw_alpha>1.0 ||
      (family!=GML_RENDER_SCENE_TEXT && draw_alpha!=1.0) ||
@@ -267,7 +267,7 @@ static int resident_atlas_crop_from_page(GmlRender *r,GmlTpag *page,
      left+scaled_width>r->fbw || top+scaled_height>r->fbh ||
      !isfinite(scaled_width) || !isfinite(scaled_height)) return 0;
   gml_render_flush_pending_fill(r);
-  if(r->pending_fill || !(target=gml_render_application_resource_ensure(r))) return 0;
+  if(r->pending_fill || !(target=gml_render_scene_target_resource_ensure(r))) return 0;
   image=gml_render_application_scene_next_image_ref(r,target);
   if(image.content_version==UINT64_MAX) return 0;
   region=(GmlRenderRect){page->sx+crop_x,page->sy+crop_y,
@@ -433,7 +433,7 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
       (!r->fb_opaque_known || !r->fb_all_opaque)) ||
      r->classic_phase_y || r->rotated_batch_count || r->rotated_batch_building ||
      r->pending_underlay || r->pending_presentation ||
-     r->fb!=r->app_surface_owned || r->fbw!=r->app_w || r->fbh!=r->app_h ||
+     !gml_render_scene_target_matches(r) ||
      !isfinite(left) || !isfinite(top) || !isfinite(xs) || !isfinite(ys) ||
      (rotated_sprite && !isfinite(rotation)) ||
      !isfinite(alpha) || alpha<=0.0 || alpha>1.0 ||
@@ -630,7 +630,7 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
     span_active=qarea>0.0 && qarea<width*height*0.85;
   }
   gml_render_flush_pending_fill(r);
-  if(r->pending_fill || !(target=gml_render_application_resource_ensure(r))) return 0;
+  if(r->pending_fill || !(target=gml_render_scene_target_resource_ensure(r))) return 0;
   image=gml_render_application_scene_next_image_ref(r,target);
   if(image.content_version==UINT64_MAX) return 0;
   region=(GmlRenderRect){page->sx,page->sy,(uint32_t)page->sw,(uint32_t)page->sh};
@@ -859,7 +859,7 @@ void gml_render_sprite_ext_unmasked(GmlRender *r, int sprite, int subimg, double
     if(alpha==0.0 && sprite>=0 && sprite<r->n_spr &&
        !r->classic && !r->gui_pass_active && r->active_shader<0 &&
        !r->spr[sprite].spine && !r->spr[sprite].ns_enabled &&
-       !gml_d3_is_active(r) && r->fb==r->app_surface_owned)
+       !gml_d3_is_active(r) && gml_render_scene_target_matches(r))
       return;
     if(sprite>=0 && sprite<r->n_spr &&
        resident_integer_sprite(r,&r->spr[sprite],subimg,x,y,xs,ys,rot,blend,alpha)) return;
@@ -930,7 +930,7 @@ static int resident_coarse_mip_veil(GmlRender *r,int sprite,int frame,
      r->rotated_batch_count || r->rotated_batch_building ||
      r->pending_underlay || r->pending_presentation ||
      r->target_sp || r->target_id!=-1 ||
-     r->fb!=r->app_surface_owned || r->fbw!=r->app_w || r->fbh!=r->app_h ||
+     !gml_render_scene_target_matches(r) ||
      !r->fb_opaque_known || !r->fb_all_opaque ||
      (r->world_transform_active &&
       (!isfinite(r->world_scale_x) || !isfinite(r->world_scale_y) ||
@@ -974,7 +974,7 @@ static int resident_coarse_mip_veil(GmlRender *r,int sprite,int frame,
   for(int channel=0;channel<4;channel++) pixel[channel]=(uint8_t)floor(texel[channel]+0.5);
   if(pixel[3]==0u) return 1;
   gml_render_flush_pending_fill(r);
-  if(r->pending_fill || !(target=gml_render_application_resource_ensure(r))) return 0;
+  if(r->pending_fill || !(target=gml_render_scene_target_resource_ensure(r))) return 0;
   image=gml_render_application_scene_next_image_ref(r,target);
   if(image.content_version==UINT64_MAX) return 0;
   source.image=(GmlRenderImageRef){GML_RENDER_RESOURCE_SCRATCH,0u,
@@ -1042,8 +1042,7 @@ void gml_draw_sprite_stretched(GmlRender *r, int sprite, int frame, double dx, d
      !r->spr[sprite].spine && !r->spr[sprite].ns_enabled &&
      !r->spr[sprite].runtime_rgba && r->spr[sprite].n_frames>0 &&
      r->spr[sprite].frame &&
-     !gml_d3_is_active(r) && r->fb==r->app_surface_owned &&
-     r->fbw==r->app_w && r->fbh==r->app_h)
+     !gml_d3_is_active(r) && gml_render_scene_target_matches(r))
     return;
   if(resident_coarse_mip_veil(r,sprite,frame,dx,dy,dw,dh,blend,alpha)) return;
   if(r && r->resident_application_pass && !r->interp &&
@@ -1203,7 +1202,7 @@ static int resident_positioned_quad_sprite(GmlRender *r,int sprite,int subimg,
      r->gui_pass_active || r->active_shader>=0 || r->alpha_test_enable ||
      r->classic_phase_y || r->rotated_batch_count || r->rotated_batch_building ||
      r->pending_underlay || r->pending_presentation || gml_d3_is_active(r) ||
-     r->fb!=r->app_surface_owned || r->fbw!=r->app_w || r->fbh!=r->app_h ||
+     !gml_render_scene_target_matches(r) ||
      !isfinite(alpha) || alpha<=0.0 || alpha>1.0 ||
      sprite<0 || sprite>=r->n_spr) return 0;
   for(int index=0;index<3;index++)
@@ -1254,7 +1253,7 @@ static int resident_positioned_quad_sprite(GmlRender *r,int sprite,int subimg,
   det=ax*by-ay*bx;
   if(!isfinite(det) || det<=1e-9 || det>100000000.0) return 0;
   gml_render_flush_pending_fill(r);
-  if(r->pending_fill || !(target=gml_render_application_resource_ensure(r))) return 0;
+  if(r->pending_fill || !(target=gml_render_scene_target_resource_ensure(r))) return 0;
   image=gml_render_application_scene_next_image_ref(r,target);
   if(image.content_version==UINT64_MAX) return 0;
   operation.opcode=GML_RENDER_OP_TEXTURED_QUAD;

@@ -16,8 +16,7 @@
  * rectangles. Keep every non-qualified shape in its established CPU raster body. */
 static int resident_flat_eligible(GmlRender *render){
   return render && render->resident_application_pass && gml_render_device(render) &&
-    render->fb==render->app_surface_owned && render->fbw==render->app_w &&
-    render->fbh==render->app_h && render->fbw>0 && render->fbh>0 &&
+    gml_render_scene_target_matches(render) &&
     !render->target_sp && render->target_id==-1 && !render->gui_pass_active &&
     (!render->world_transform_active ||
      (render->world_scale_x==1.0 && render->world_scale_y==1.0)) &&
@@ -49,7 +48,7 @@ int gml_render_try_opaque_primitive_rect(GmlRender *render,int x1,int y1,int x2,
   gml_render_maybe_prepare_opaque_rect(render,x1,y1,x2+1,y2+1);
   if(render->pending_fill || render->pending_underlay ||
      !render->resident_application_pass) return 0;
-  resource=gml_render_application_resource_ensure(render);
+  resource=gml_render_scene_target_resource_ensure(render);
   if(!resource) return 0;
   image=gml_render_application_scene_next_image_ref(render,resource);
   if(image.content_version==UINT64_MAX) return 0;
@@ -119,7 +118,7 @@ static int resident_flat_spans(GmlRender *render,GmlFlatSpans *spans){
   gml_render_flush_pending_fill(render);
   if(render->pending_fill || render->pending_underlay ||
      !render->resident_application_pass) return 0;
-  resource=gml_render_application_resource_ensure(render);
+  resource=gml_render_scene_target_resource_ensure(render);
   if(!resource) return 0;
   image=gml_render_application_scene_next_image_ref(render,resource);
   if(image.content_version>UINT64_MAX-spans->count) return 0;

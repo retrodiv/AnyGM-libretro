@@ -52,14 +52,13 @@ static int layer_effect_submit_gpu(GmlRender *r,const uint32_t *source_pixels,
      (size_t)width>SIZE_MAX/4u/(size_t)height ||
      (size_t)width*(size_t)height>16u*1024u*1024u ||
      !source_pixels || !r->fb || !effect || !isfinite(effect->intensity)) return 0;
-  application=r->target_id==-1 && r->target_sp==0 &&
-    r->fb==r->app_surface_owned && r->fbw==r->app_w && r->fbh==r->app_h;
+  application=gml_render_scene_target_matches(r);
   if(!application && !(r->target_id>0 && r->target_id<=GML_MAX_SURFACES &&
      r->surface[r->target_id-1].live &&
      r->fb==r->surface[r->target_id-1].px &&
      r->fbw==r->surface[r->target_id-1].w &&
      r->fbh==r->surface[r->target_id-1].h)) return 0;
-  target=application?gml_render_application_resource_ensure(r):
+  target=application?gml_render_scene_target_resource_ensure(r):
     gml_render_surface_resource_ensure(r,r->target_id);
   if(!target) return 0;
   image=gml_render_resource_image_ref(target);
@@ -151,8 +150,7 @@ void gml_render_layer_rgb_noise(GmlRender *r,uint32_t sampler_tpag_ptr,
                                 double intensity,double animation,uint32_t rgb){
   int gpu_candidate=r && r->fb && r->fbw>0 && r->fbh>0 &&
     r->resident_application_pass && gml_render_device(r) &&
-    r->target_id==-1 && r->target_sp==0 &&
-    r->fb==r->app_surface_owned && r->fbw==r->app_w && r->fbh==r->app_h &&
+    gml_render_scene_target_matches(r) &&
     !r->layer_filter_active && !r->gui_pass_active && !r->classic &&
     r->active_shader<0 && isfinite(intensity) && intensity>0.0 && intensity<=1.0 &&
     isfinite(animation) &&

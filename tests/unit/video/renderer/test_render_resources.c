@@ -1671,6 +1671,121 @@ static int resident_flat_primitive_public_order(void){
   return 1;
 }
 
+static int resident_viewless_base_canvas_order(void){
+  GmlRender *cpu=(GmlRender*)calloc(1,sizeof *cpu);
+  GmlRender *gpu=(GmlRender*)calloc(1,sizeof *gpu);
+  uint32_t cpu_pixels[16]={0},gpu_pixels[16]={0},application_pixels[4]={0};
+  uint8_t *state_bytes=NULL;
+  size_t state_size,written=0,used=0;
+  GmlRenderPresentationMetrics presentation={0};
+  GmlRenderJournalMetrics metrics={0};
+  GmlRenderImageRef image;
+  const uint32_t *observed=NULL;
+  FakeDevice fake={0};
+  GmlRenderDeviceServices device=service(&fake);
+  CHECK(cpu && gpu);
+  CHECK(gml_render_init(cpu,NULL)==0 && gml_render_init(gpu,NULL)==0);
+  gml_render_application_surface_bind(cpu,application_pixels,2,2,0);
+  gml_render_application_surface_bind(gpu,application_pixels,2,2,0);
+  gml_render_application_surface_set_draw_enabled(cpu,0);
+  gml_render_application_surface_set_draw_enabled(gpu,0);
+  gml_render_begin(cpu,cpu_pixels,4,4,0.0,0.0);
+  gml_render_bind_device(gpu,&device);
+  CHECK(gml_render_begin_resident_base(gpu,gpu_pixels,4,4,0.0,0.0));
+  CHECK(gml_render_presentation_metrics(gpu,&presentation) &&
+        !presentation.application_owned && !presentation.application_draw_enabled &&
+        presentation.application_width==2 && presentation.application_height==2 &&
+        gpu->fb==gpu_pixels && gpu->resident_application_pass);
+  CHECK(gpu->base_scene_resource);
+  image=gml_render_resource_image_ref(gpu->base_scene_resource);
+  CHECK(image.resource_class==GML_RENDER_RESOURCE_SCREEN && image.incarnation);
+  gml_render_set_pending_fill(cpu,0xFF102030u);
+  gml_render_set_pending_fill(gpu,0xFF102030u);
+  gml_render_primitive_rectangle(cpu,1,1,2,2,0x345678u,0);
+  gml_render_primitive_rectangle(gpu,1,1,2,2,0x345678u,0);
+  gml_render_resource_journal_metrics(gpu->base_scene_resource,&metrics);
+  CHECK(gpu->resident_application_pass && fake.submits==2 && fake.readbacks==0 &&
+        metrics.journal_operations==2u && metrics.cpu_replays==0u);
+  cpu->alpha=gpu->alpha=0.5;
+  gml_render_primitive_line(cpu,0,0,3,3,0xffffffu,1);
+  gml_render_primitive_line(gpu,0,0,3,3,0xffffffu,1);
+  gml_render_flush_pending_fill(cpu);
+  CHECK(!gpu->resident_application_pass && fake.readbacks==0 &&
+        memcmp(cpu_pixels,gpu_pixels,sizeof cpu_pixels)==0 &&
+        application_pixels[0]==0u && application_pixels[3]==0u);
+  CHECK(gml_render_begin_resident_base(gpu,gpu_pixels,4,4,0.0,0.0));
+  gml_render_set_pending_fill(gpu,0xFFABCDEFu);
+  gml_render_flush_pending_fill(gpu);
+  CHECK(gpu->resident_application_pass && fake.submits==3);
+  gml_render_abandon_device(gpu);
+  CHECK(gml_render_resource_acquire_cpu_read(gpu->base_scene_resource,&observed) &&
+        observed==gpu_pixels);
+  CHECK(gpu_pixels[0]==0xFFABCDEFu && gpu_pixels[15]==0xFFABCDEFu &&
+        application_pixels[0]==0u && fake.readbacks==0);
+  CHECK(!gml_render_begin_resident_base(gpu,gpu_pixels,4,4,0.0,0.0));
+  state_size=gml_render_state_size(gpu,0);
+  CHECK(state_size>0 && (state_bytes=(uint8_t*)malloc(state_size)) &&
+        gml_render_state_save(gpu,0,state_bytes,state_size,&written) &&
+        written==state_size &&
+        gml_render_state_load(gpu,state_bytes,state_size,&used) &&
+        used==state_size && !gpu->base_scene_resource &&
+        !gpu->resident_application_pass && application_pixels[0]==0u);
+  free(state_bytes);
+  gml_render_free(cpu);
+  gml_render_free(gpu);
+  free(cpu);
+  free(gpu);
+  return 1;
+}
+
+static int resident_borrowed_surface_zero_screen_shader(void){
+  GmlRender *render=(GmlRender*)calloc(1,sizeof *render);
+  uint32_t source[16]={0},screen[16]={0};
+  GmlRenderJournalMetrics metrics={0};
+  GmlRenderImageRef image;
+  const uint32_t *observed=NULL;
+  FakeDevice fake={0};
+  GmlRenderDeviceServices device=service(&fake);
+  CHECK(render && gml_render_init(render,NULL)==0);
+  render->shader_pal=(struct GmlShaderPal*)calloc(1,sizeof *render->shader_pal);
+  CHECK(render->shader_pal);
+  render->n_shader_pal=1;
+  render->shader_pal[0].source_vertex_es=
+    "attribute vec3 in_Position; void main(){ gl_Position=vec4(in_Position,1.0); }";
+  render->shader_pal[0].source_fragment_es=
+    "uniform sampler2D gm_BaseTexture; void main(){ gl_FragColor=texture2D(gm_BaseTexture,vec2(0.5)); }";
+  render->shader_device_present=render->shader_device_expected=1;
+  for(int index=0;index<16;index++) source[index]=0xFF102030u;
+  gml_render_application_surface_bind(render,source,4,4,1);
+  gml_render_application_surface_set_draw_enabled(render,0);
+  gml_render_application_surface_publish(render);
+  fake.readback_colour=0xFF405060u;
+  gml_render_bind_device(render,&device);
+  CHECK(gml_render_begin_resident_base(render,screen,4,4,0.0,0.0));
+  gml_render_gui_begin(render,4,4);
+  render->active_shader=0;
+  gml_render_set_pending_fill(render,0u);
+  gml_draw_surface_stretched(render,0,0.0,0.0,4.0,4.0,0xFFFFFFu,1.0);
+  CHECK(render->resident_application_pass && render->shaded_draws==1u &&
+        fake.shader_submits==1 && fake.last_opcode==GML_RENDER_OP_CONTENT_SHADER_DRAW &&
+        fake.last_source_count==1u && fake.readbacks==1 &&
+        !render->app_surface_owned && !render->app_draw_enable &&
+        render->app_surface==source && render->app_w==4 && render->app_h==4);
+  image=gml_render_resource_image_ref(render->base_scene_resource);
+  gml_render_resource_journal_metrics(render->base_scene_resource,&metrics);
+  CHECK(image.resource_class==GML_RENDER_RESOURCE_SCREEN &&
+        metrics.authority==GML_RENDER_RESOURCE_BOTH_CURRENT &&
+        metrics.device_checkpoints==1u &&
+        screen[0]==fake.readback_colour && source[0]==0xFF102030u);
+  gml_render_abandon_device(render);
+  CHECK(gml_render_resource_acquire_cpu_read(render->base_scene_resource,&observed) &&
+        observed==screen && observed[15]==fake.readback_colour &&
+        source[15]==0xFF102030u);
+  gml_render_free(render);
+  free(render);
+  return 1;
+}
+
 static int resident_zero_alpha_layer_fill_noop(void){
   GmlRender *cpu=(GmlRender*)calloc(1,sizeof *cpu);
   GmlRender *gpu=(GmlRender*)calloc(1,sizeof *gpu);
@@ -3752,6 +3867,8 @@ int main(void){
   passed+=resident_layer_filter_capture_barrier();
   passed+=resident_inline_layer_effect_cpu_bridge();
   passed+=resident_flat_primitive_public_order();
+  passed+=resident_viewless_base_canvas_order();
+  passed+=resident_borrowed_surface_zero_screen_shader();
   passed+=resident_zero_alpha_layer_fill_noop();
   passed+=resident_unit_world_primitive_order();
   passed+=resident_gradient_primitive_cpu_boundary();
@@ -3781,6 +3898,6 @@ int main(void){
   passed+=target_pixel_observes_resident_result();
   passed+=nearest_subrectangle_mirrors();
   passed+=source_free_primitive_rect_replay();
-  printf("render resource cases: passed=%d failed=%d\n",passed,52-passed);
-  return passed==52?EXIT_SUCCESS:EXIT_FAILURE;
+  printf("render resource cases: passed=%d failed=%d\n",passed,54-passed);
+  return passed==54?EXIT_SUCCESS:EXIT_FAILURE;
 }

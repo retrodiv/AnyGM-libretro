@@ -428,6 +428,10 @@ int gml_render_begin_owned_application(GmlRender *r,double camx,double camy,
  * changing pass state. Its caller must explicitly acquire pixels before any CPU fallback. */
 int gml_render_begin_resident_owned_application(GmlRender *r,double camx,double camy,
                                                 int retain_target);
+int gml_render_begin_resident_base(GmlRender *r,uint32_t *pixels,int width,int height,
+                                   double camx,double camy);
+/* Materialise an opt-in scene target before host code observes its CPU pixels. */
+int gml_render_resident_application_cpu_barrier(GmlRender *r);
 int gml_render_application_surface_owned_clear(
   GmlRender *r,uint32_t color,GmlRenderApplicationWriteView *view);
 int gml_render_application_surface_owned_view(

@@ -27,6 +27,9 @@ GmlRenderResourceExecution gml_render_surface_scene_submit_deferred_shader(
  * sessions never allocate this metadata. Resize and renderer teardown retire it. */
 GmlRenderResource *gml_render_application_resource_ensure(GmlRender *render);
 void gml_render_application_resource_dispose(GmlRender *render);
+GmlRenderResource *gml_render_scene_target_resource_ensure(GmlRender *render);
+int gml_render_scene_target_matches(const GmlRender *render);
+void gml_render_base_resource_dispose(GmlRender *render);
 GmlRenderResourceExecution gml_render_application_scene_submit(
   GmlRender *render,const GmlRenderDrawBatch *batch,
   const GmlRenderResourceSource *sources,uint32_t source_count);

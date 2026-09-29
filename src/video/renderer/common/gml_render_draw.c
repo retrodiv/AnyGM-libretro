@@ -17,6 +17,7 @@ static void render_unbind_device(GmlRender *render,int context_current){
   for(int index=0;index<GML_MAX_SURFACES;index++)
     gml_render_resource_context_lost(render->surface[index].resource);
   gml_render_resource_context_lost(render->app_surface_resource);
+  gml_render_resource_context_lost(render->base_scene_resource);
   memset(&render->device,0,sizeof render->device);
 }
 

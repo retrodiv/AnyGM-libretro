@@ -80,7 +80,7 @@ static int resident_integer_background_part(GmlRender *r,int page_index,
   if(r->classic || r->classic_phase_y || r->gui_pass_active ||
      r->active_shader>=0 || r->alpha_test_enable ||
      r->pending_underlay || r->pending_presentation ||
-     r->fb!=r->app_surface_owned || r->fbw!=r->app_w || r->fbh!=r->app_h)
+     !gml_render_scene_target_matches(r))
     return 0;
   for(int index=0;index<3;index++)
     if(r->classic_interp_phase[index] || r->app_interp_phase[index]) return 0;
@@ -170,7 +170,7 @@ static int resident_direct_background_nearest(GmlRender *r,int page_index,
      r->gui_pass_active || r->active_shader>=0 || r->alpha_test_enable ||
      !r->alphablend || (r->blendmode && !additive) || r->blend_equation!=1 ||
      r->blend_equation_alpha!=1 || r->color_write_mask!=0x0fu ||
-     r->fb!=r->app_surface_owned || r->fbw!=r->app_w || r->fbh!=r->app_h)
+     !gml_render_scene_target_matches(r))
     return 0;
   /* The bm_add CPU point leaf skips every texel when draw alpha is non-positive. */
   if(alpha==0.0 || (additive && alpha<0.0)) return 1;

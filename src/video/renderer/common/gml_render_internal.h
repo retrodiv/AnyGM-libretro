@@ -302,6 +302,10 @@ typedef struct GmlRender {
   /* Optional resident metadata for the same canonical owned application pixels. */
   GmlRenderResource *app_surface_resource;
   int app_surface_resource_width,app_surface_resource_height;
+  /* The physical base canvas is not GML surface 0, even when that surface is disabled. */
+  GmlRenderResource *base_scene_resource;
+  uint32_t *base_scene_resource_pixels;
+  int base_scene_resource_width,base_scene_resource_height;
   /* Only the explicit resident begin opts into scene dispatch for this pass. */
   int resident_application_pass;
   /* Optional classic 2x vertical coverage plane.  The game pass replays texture draws at the
