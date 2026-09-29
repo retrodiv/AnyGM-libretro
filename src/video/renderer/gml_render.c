@@ -1087,6 +1087,9 @@ void gml_render_flush_pending_underlay(GmlRender *r){
         r->app_presentation_coverage && r->app_presentation_alpha_scratch &&
         count<=r->app_presentation_coverage_capacity;
       if(use_presentation_coverage){
+        /* This temporary alpha borrow must start from the current resource image.
+         * A later surface read may replay queued GPU work over the borrowed bytes. */
+        if(surface_pixels_observe(r,0,NULL,NULL)!=r->app_surface) return;
         /* Surface 0 retains the target alpha that explicit surface draws read.
          * Automatic first-generation presentation instead uses coverage authored by a
          * complete black mask. Borrow the alpha byte for that draw, then restore it. */

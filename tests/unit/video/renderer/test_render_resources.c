@@ -1463,6 +1463,93 @@ static int resident_application_pending_clear(void){
   return 1;
 }
 
+static int first_generation_underlay_resource_borrow(void){
+  GmlRender *cpu=(GmlRender*)calloc(1,sizeof *cpu);
+  GmlRender *resident=(GmlRender*)calloc(1,sizeof *resident);
+  GmlWin content={0};
+  uint32_t cpu_screen[16],resident_screen[16];
+  GmlRenderJournalMetrics before={0},after={0};
+  GmlRenderApplicationReadView read_view={0};
+  FakeDevice fake={0};
+  GmlRenderDeviceServices device=service(&fake);
+  CHECK(cpu && resident);
+  content.bytecode=15;
+  cpu->win=resident->win=&content;
+  for(size_t i=0;i<16;i++)
+    cpu_screen[i]=resident_screen[i]=0xFF203040u;
+  gml_render_begin(cpu,cpu_screen,4,4,0.0,0.0);
+  gml_render_begin(resident,resident_screen,4,4,0.0,0.0);
+  cpu->color_write_mask=resident->color_write_mask=0x0F;
+  CHECK(gml_render_application_surface_ensure_owned(cpu,4,4) &&
+        gml_render_application_surface_ensure_owned(resident,4,4));
+  gml_render_bind_device(resident,&device);
+  CHECK(gml_render_begin_owned_application(cpu,0.0,0.0,0) &&
+        gml_render_begin_resident_owned_application(resident,0.0,0.0,0));
+  gml_render_set_pending_fill(cpu,0xFF8090A0u);
+  gml_render_set_pending_fill(resident,0xFF8090A0u);
+  gml_render_flush_pending_fill(cpu);
+  gml_render_flush_pending_fill(resident);
+  gml_render_resource_journal_metrics(resident->app_surface_resource,&before);
+  CHECK(before.journal_operations==1u && before.cpu_replays==0u &&
+        fake.submits==1 && fake.readbacks==0 &&
+        resident->app_surface_owned[0]==0u);
+  gml_render_begin(cpu,cpu_screen,4,4,0.0,0.0);
+  gml_render_begin(resident,resident_screen,4,4,0.0,0.0);
+  for(int variant=0;variant<2;variant++){
+    GmlRender *render=variant?resident:cpu;
+    render->app_presentation_coverage=malloc(16);
+    render->app_presentation_alpha_scratch=malloc(16);
+    CHECK(render->app_presentation_coverage && render->app_presentation_alpha_scratch);
+    memset(render->app_presentation_coverage,255,16);
+    render->app_presentation_coverage[0]=0;
+    render->app_presentation_coverage[1]=128;
+    render->app_presentation_coverage_capacity=16;
+    render->app_presentation_coverage_active=1;
+    gml_render_set_pending_underlay(render,0,0,4,4);
+    gml_render_flush_pending_underlay(render);
+  }
+  gml_render_resource_journal_metrics(resident->app_surface_resource,&after);
+  if(memcmp(cpu_screen,resident_screen,sizeof cpu_screen) ||
+     cpu_screen[0]!=0xFF203040u || cpu_screen[2]!=0xFF8090A0u)
+    fprintf(stderr,"first-generation underlay: CPU=%08x/%08x/%08x resident=%08x/%08x/%08x source=%08x replay=%llu\n",
+            cpu_screen[0],cpu_screen[1],cpu_screen[2],
+            resident_screen[0],resident_screen[1],resident_screen[2],
+            resident->app_surface_owned[0],(unsigned long long)after.cpu_replays);
+  CHECK(!memcmp(cpu_screen,resident_screen,sizeof cpu_screen) &&
+        cpu_screen[0]==0xFF203040u && cpu_screen[2]==0xFF8090A0u);
+  CHECK(gml_render_application_surface_owned_read(resident,&read_view) &&
+        read_view.pixels==resident->app_surface_owned &&
+        !memcmp(cpu->app_surface_owned,read_view.pixels,16u*sizeof(uint32_t)) &&
+        read_view.pixels[0]==0xFF8090A0u &&
+        after.logical_version==before.logical_version &&
+        after.cpu_version==after.logical_version &&
+        after.cpu_replays==before.cpu_replays+1u &&
+        after.journal_operations==0u && fake.readbacks==0);
+  CHECK(gml_render_begin_owned_application(cpu,0.0,0.0,0) &&
+        gml_render_begin_resident_owned_application(resident,0.0,0.0,0));
+  gml_render_set_pending_fill(cpu,0xFF405060u);
+  gml_render_set_pending_fill(resident,0xFF405060u);
+  gml_render_flush_pending_fill(cpu);
+  gml_render_flush_pending_fill(resident);
+  CHECK(resident->app_surface_owned[0]==0xFF8090A0u && fake.submits==2);
+  gml_render_bind_device(resident,NULL);
+  for(size_t i=0;i<16;i++) cpu_screen[i]=resident_screen[i]=0xFF203040u;
+  gml_render_begin(cpu,cpu_screen,4,4,0.0,0.0);
+  gml_render_begin(resident,resident_screen,4,4,0.0,0.0);
+  cpu->app_presentation_coverage_active=resident->app_presentation_coverage_active=1;
+  gml_render_set_pending_underlay(cpu,0,0,4,4);
+  gml_render_set_pending_underlay(resident,0,0,4,4);
+  gml_render_flush_pending_underlay(cpu);
+  gml_render_flush_pending_underlay(resident);
+  CHECK(!memcmp(cpu_screen,resident_screen,sizeof cpu_screen) &&
+        !memcmp(cpu->app_surface_owned,resident->app_surface_owned,
+                16u*sizeof(uint32_t)) &&
+        resident->app_surface_owned[0]==0xFF405060u && fake.readbacks==0);
+  gml_render_free(cpu); free(cpu);
+  gml_render_free(resident); free(resident);
+  return 1;
+}
+
 static int resident_layer_filter_capture_barrier(void){
   GmlRender *render=(GmlRender*)calloc(1,sizeof *render);
   GmlLayerFilter filter={0};
@@ -3864,6 +3951,7 @@ int main(void){
   passed+=numbered_surface_free_bound_resource();
   passed+=owned_application_resize_and_context_loss();
   passed+=resident_application_pending_clear();
+  passed+=first_generation_underlay_resource_borrow();
   passed+=resident_layer_filter_capture_barrier();
   passed+=resident_inline_layer_effect_cpu_bridge();
   passed+=resident_flat_primitive_public_order();
@@ -3898,6 +3986,6 @@ int main(void){
   passed+=target_pixel_observes_resident_result();
   passed+=nearest_subrectangle_mirrors();
   passed+=source_free_primitive_rect_replay();
-  printf("render resource cases: passed=%d failed=%d\n",passed,54-passed);
-  return passed==54?EXIT_SUCCESS:EXIT_FAILURE;
+  printf("render resource cases: passed=%d failed=%d\n",passed,55-passed);
+  return passed==55?EXIT_SUCCESS:EXIT_FAILURE;
 }
