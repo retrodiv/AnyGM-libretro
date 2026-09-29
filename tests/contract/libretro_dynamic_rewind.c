@@ -6,6 +6,7 @@
  * checked separately. The graphics driver is synthetic; real-device pixels have another gate. */
 #include "libretro_internal.h"
 #include "engine_internal.h"
+#include "gml_render_resources.h"
 #include "graphics_driver_fixture.h"
 #include "synthetic_content.h"
 
@@ -62,6 +63,78 @@ static double elapsed_ms(void){
 static void cost_add(double duration,double *total,double *maximum){
   *total+=duration;
   if(duration>*maximum) *maximum=duration;
+}
+
+/* The frontend can query size repeatedly before every push. Measure the first CPU observation
+ * separately from repeated queries/saves of one unchanged GPU-produced frame: only the first may
+ * materialise it, and no query may borrow a GL context that the frontend has not lent. */
+static int observation_cost(AnygmEngine *engine,const char *phase,size_t ring_capacity){
+  GmlGpuCounters before_gpu={0},after_gpu={0};
+  GmlRenderJournalMetrics journal={0};
+  uint8_t *first=NULL,*again=NULL;
+  size_t bytes=0,written=0;
+  unsigned before_materializations,after_first;
+  int before_forbidden,ok=1;
+  double first_query=0.0,repeat_queries=0.0,repeat_max=0.0;
+  double saves=0.0,save_max=0.0;
+  if(!engine) return 0;
+  before_materializations=engine->frame_materializations;
+  before_forbidden=anygm_test_graphics_calls_after_forget();
+  if(engine->gpu) gml_gpu_counters(engine->gpu,&before_gpu);
+  anygm_test_graphics_forbid_calls();
+  double start=elapsed_ms();
+  bytes=anygm_state_size(engine);
+  first_query=elapsed_ms()-start;
+  after_first=engine->frame_materializations;
+  ok=bytes>0 && after_first>=before_materializations &&
+     after_first-before_materializations<=1u;
+  for(int repeat=0;repeat<3 && ok;repeat++){
+    start=elapsed_ms();
+    size_t measured=anygm_state_size(engine);
+    cost_add(elapsed_ms()-start,&repeat_queries,&repeat_max);
+    ok=measured==bytes && engine->frame_materializations==after_first;
+  }
+  if(ok){
+    first=malloc(bytes);
+    again=malloc(bytes);
+    ok=first && again;
+  }
+  for(int repeat=0;repeat<4 && ok;repeat++){
+    uint8_t *destination=repeat?again:first;
+    start=elapsed_ms();
+    ok=anygm_state_save(engine,destination,bytes,&written)==ANYGM_OK && written==bytes;
+    cost_add(elapsed_ms()-start,&saves,&save_max);
+    ok=ok && engine->frame_materializations==after_first &&
+       (!repeat || !memcmp(first,again,bytes));
+  }
+  ok=ok && anygm_test_graphics_calls_after_forget()==before_forbidden;
+  anygm_test_graphics_allow_calls();
+  if(engine->gpu) gml_gpu_counters(engine->gpu,&after_gpu);
+  ok=ok && after_gpu.scene_readbacks==before_gpu.scene_readbacks &&
+     after_gpu.scene_readback_bytes==before_gpu.scene_readback_bytes;
+  ok=ok && (!engine->gpu || engine->render.app_surface_resource!=NULL);
+  if(engine->render.app_surface_resource)
+    gml_render_resource_journal_metrics(engine->render.app_surface_resource,&journal);
+  ok=ok && journal.journal_bytes<=8u*1024u*1024u &&
+     journal.retained_mutable_bytes<=64u*1024u*1024u;
+  printf("state observation cost: mode=%s phase=%s frame=%ld state=%zu screen=%zu "
+         "ring_initial=%zu materializations=%u first_query=%.3f repeated_query_avg_max=%.3f/%.3f "
+         "save_avg_max=%.3f/%.3f ms journal=%zu/%u retained=%zu/%u "
+         "replay=%llu checkpoints=%llu readback_delta=%llu/%llu\n",
+         gpu_requested?"GPU":"CPU",phase,engine->vm.frame,bytes,
+         (size_t)engine->output_width*engine->output_height*4u,ring_capacity,
+         after_first-before_materializations,first_query,repeat_queries/3.0,repeat_max,
+         saves/4.0,save_max,journal.journal_bytes,journal.journal_operations,
+         journal.retained_mutable_bytes,journal.retained_versions,
+         (unsigned long long)journal.cpu_replays,
+         (unsigned long long)journal.device_checkpoints,
+         (unsigned long long)(after_gpu.scene_readbacks-before_gpu.scene_readbacks),
+         (unsigned long long)(after_gpu.scene_readback_bytes-before_gpu.scene_readback_bytes));
+  if(!ok) fprintf(stderr,"state observation failed: mode=%s phase=%s bytes=%zu\n",
+                  gpu_requested?"GPU":"CPU",phase,bytes);
+  free(again);
+  free(first);
+  return ok;
 }
 
 static retro_proc_address_t graphics_proc(const char *name){
@@ -403,6 +476,9 @@ static int monitor_growth_case(int mode,int response){
   REQUIRE(growth_snapshot(&cold,initial),"monitor cold ring push");
   captured_audio_frames=0;
   retro_run();
+  if(response>0)
+    REQUIRE(observation_cost(g_libretro.engine,"moving",initial),
+            "repeated native-frame state observations are bounded and GL-free");
   REQUIRE(growth_snapshot(&native,initial),"native frame ring push");
   REQUIRE(native.width==1920u && native.height==1080u,
           "native picture precedes monitor change");
@@ -419,6 +495,9 @@ static int monitor_growth_case(int mode,int response){
   for(size_t index=0;index<count;index++)
     g_libretro.engine->screen[index]=UINT32_C(0xFF000000)|
       (uint32_t)((index*UINT32_C(2654435761))&UINT32_C(0x00FFFFFF));
+  if(response>0)
+    REQUIRE(observation_cost(g_libretro.engine,"detailed",initial),
+            "repeated detailed-frame state observations are bounded and GL-free");
   complete_bytes=anygm_state_size(g_libretro.engine);
   resume_bytes=anygm_state_resume_size(g_libretro.engine);
   REQUIRE(complete_bytes>initial && resume_bytes<initial,
