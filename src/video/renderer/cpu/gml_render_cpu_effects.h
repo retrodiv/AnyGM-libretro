@@ -6,8 +6,12 @@
 
 #include "gml_render.h"
 
-/* One pass-level boundary; pixel helpers remain private to the CPU owner. */
+/* The shared pass chooses its executor after restoring the captured target.
+ * CPU pixel kernels remain private to this owner. */
+void gml_render_cpu_layer_filter_restore_target(GmlRender *render);
 void gml_render_cpu_layer_filter_end(GmlRender *render,
-                                     const GmlLayerFilter *filter,double time_seconds);
+                                     const GmlLayerFilter *filter,double time_seconds,
+                                     int width,int height,double camera_x,double camera_y,
+                                     int source_empty);
 
 #endif

@@ -241,7 +241,7 @@ static void layer_composite_add(GmlRender *r,const uint32_t *src,int w,int h,dou
 }
 
 
-static void layer_filter_restore_target(GmlRender *r){
+void gml_render_cpu_layer_filter_restore_target(GmlRender *r){
   gml_render_flush_pending_underlay(r); gml_render_flush_pending_fill(r);
   if(r->target_sp>0){
     typeof(r->target_stack[0]) t=r->target_stack[--r->target_sp];
@@ -536,17 +536,16 @@ static void layer_filter_underwater(GmlRender *r,const uint32_t *src,uint32_t *d
 }
 
 
-void gml_render_cpu_layer_filter_end(GmlRender *r,const GmlLayerFilter *filter,double time_seconds){
-  if(!r || !filter || !r->layer_filter_active) return;
-  int w=r->fbw,h=r->fbh; size_t count=(size_t)w*h;
+void gml_render_cpu_layer_filter_end(GmlRender *r,const GmlLayerFilter *filter,
+                                     double time_seconds,int w,int h,
+                                     double camx,double camy,int source_empty){
+  if(!r || !filter || !r->fb || r->fbw!=w || r->fbh!=h) return;
+  size_t count=(size_t)w*h;
   uint32_t *src=r->layer_filter_src,*work=r->layer_filter_work,*aux=r->layer_filter_aux;
-  double camx=r->cam_x,camy=r->cam_y;
-  int source_empty=r->fb_all_transparent;
   if(render_setting(r,"GML_LOG_LAYER_EFFECT") && (r->frame<4 || (r->frame%60)==0))
     anygm_host_logf(r && r->win ? r->win->host : NULL,ANYGM_LOG_DEBUG,"[layer-filter] f%ld kind=%d empty=%d size=%dx%d cam=%.3f,%.3f time=%.6f linear=%d\n",
             r->frame,filter->kind,source_empty,w,h,camx,camy,time_seconds,r->interp);
-  layer_filter_restore_target(r); r->layer_filter_active=0;
-  if(source_empty || !r->fb || r->fbw!=w || r->fbh!=h) return;
+  if(source_empty) return;
   if(filter->kind==GML_LAYER_FILTER_GLOW){
     /* The halo is built from the inside out: one blur per quality step, each reaching further
      * toward the radius than the last, added to the scene as it goes, each step carrying its share of the intensity. A blur averages

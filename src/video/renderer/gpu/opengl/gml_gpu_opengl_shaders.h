@@ -251,12 +251,43 @@
   "uniform int u_repetitions;\n" \
   "uniform int u_blend_rule;\n" \
   "uniform float u_additive_alpha;\n" \
+  "uniform ivec4 u_effect_colour;\n" \
+  "uniform float u_effect_intensity;\n" \
   "in vec2 v_texcoord;\n" \
   "in vec4 v_colour;\n" \
   "out vec4 o_color;\n" \
   "void main(){\n" \
   "  ivec4 source=ivec4(round(texture(u_image,v_texcoord)*v_colour*255.0));\n" \
   "  ivec4 prior=ivec4(round(texelFetch(u_previous,ivec2(gl_FragCoord.xy)-u_region_origin,0)*255.0));\n" \
+  "  // R03_SHADER_LAYER_TINT_COLOURISE: transform premultiplied capture, then source-over.\n" \
+  "  if(u_blend_rule==2 || u_blend_rule==3){\n" \
+  "    if(source.a==0){ o_color=vec4(prior)/255.0; return; }\n" \
+  "    ivec4 filtered=source;\n" \
+  "    if(u_blend_rule==2){\n" \
+  "      filtered=ivec4(floor(vec4(source)*vec4(u_effect_colour)/255.0+0.5));\n" \
+  "    } else {\n" \
+  "      vec3 weights=vec3(0.299,0.587,0.114);\n" \
+  "      vec3 tint=vec3(u_effect_colour.rgb)/255.0;\n" \
+  "      float tint_luma=dot(tint,weights);\n" \
+  "      vec3 straight=vec3(source.rgb)/float(source.a);\n" \
+  "      float luma=dot(straight,weights);\n" \
+  "      vec3 ramp;\n" \
+  "      if(luma<=tint_luma){\n" \
+  "        float t=tint_luma>0.0?luma/tint_luma:0.0;\n" \
+  "        ramp=tint*t;\n" \
+  "      } else {\n" \
+  "        float t=tint_luma<1.0?(luma-tint_luma)/(1.0-tint_luma):1.0;\n" \
+  "        ramp=mix(tint,vec3(1.0),t);\n" \
+  "      }\n" \
+  "      vec3 result=mix(straight,ramp,clamp(u_effect_intensity,0.0,1.0))*float(source.a)/255.0;\n" \
+  "      filtered.rgb=ivec3(floor(clamp(result,0.0,1.0)*255.0+0.5));\n" \
+  "    }\n" \
+  "    if(filtered.a==0){ o_color=vec4(prior)/255.0; return; }\n" \
+  "    vec3 retained=vec3(prior.rgb)*(1.0-float(filtered.a)/255.0);\n" \
+  "    ivec3 colour=min(ivec3(255),filtered.rgb+ivec3(floor(retained+0.5)));\n" \
+  "    o_color=vec4(vec3(colour)/255.0,1.0);\n" \
+  "    return;\n" \
+  "  }\n" \
   "  // R03_SHADER_ADDITIVE_BACKGROUND: exact saturated point-sampled bm_add RGB.\n" \
   "  if(u_blend_rule==1){\n" \
   "    if(source.a==0){ o_color=vec4(prior)/255.0; return; }\n" \

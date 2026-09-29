@@ -6,7 +6,9 @@
 #include "gml_render_internal.h"
 #include "gml_render_cpu_effects.h"
 #include "gml_render_surfaces_internal.h"
+#include "anygm_host.h"
 
+#include <math.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
@@ -26,12 +28,101 @@ static int layer_filter_reserve(GmlRender *r,size_t count){
   return 1;
 }
 
+/* Return 1 for a device-computed result, 0 for a coherent CPU fallback and -1
+ * when a failed checkpoint has invalidated the target. The source is the
+ * existing premultiplied capture, not a CPU-produced filtered result. */
+static int layer_filter_try_gpu(GmlRender *r,const GmlLayerFilter *filter,
+                                int width,int height){
+  GmlRenderResource *target;
+  GmlRenderResourceSource source={0};
+  GmlRenderImageRef source_ref,image;
+  GmlRenderDrawOp operation={0};
+  GmlRenderDrawStateSnapshot state={0};
+  GmlRenderDrawBatch batch;
+  GmlRenderResourceExecution result;
+  GmlRenderDeviceCaps caps={0};
+  GmlRenderJournalMetrics metrics={0};
+  const GmlRenderDeviceServices *device=gml_render_device(r);
+  size_t bytes;
+  int application;
+  if(!r->layer_filter_gpu_candidate || !device || !device->capabilities ||
+     !device->capabilities(device->context,&caps) || !caps.max_texture_extent ||
+     width<=0 || height<=0 || (uint32_t)width>caps.max_texture_extent ||
+     (uint32_t)height>caps.max_texture_extent ||
+     (size_t)width>SIZE_MAX/4u/(size_t)height ||
+     (size_t)width*(size_t)height>16u*1024u*1024u ||
+     !r->layer_filter_src || !r->fb ||
+     (filter->kind!=GML_LAYER_FILTER_TINT &&
+      filter->kind!=GML_LAYER_FILTER_COLOURISE)) return 0;
+  application=r->target_id==-1 && r->target_sp==0 &&
+    r->fb==r->app_surface_owned && r->fbw==r->app_w && r->fbh==r->app_h;
+  if(!application && !(r->target_id>0 && r->target_id<=GML_MAX_SURFACES &&
+     r->surface[r->target_id-1].live &&
+     r->fb==r->surface[r->target_id-1].px &&
+     r->fbw==r->surface[r->target_id-1].w &&
+     r->fbh==r->surface[r->target_id-1].h)) return 0;
+  target=application?gml_render_application_resource_ensure(r):
+    gml_render_surface_resource_ensure(r,r->target_id);
+  if(!target) return 0;
+  image=gml_render_resource_image_ref(target);
+  if(image.content_version==UINT64_MAX) return 0;
+  source_ref=(GmlRenderImageRef){GML_RENDER_RESOURCE_SCRATCH,1u,
+    gml_render_scene_incarnation_allocate(),1u};
+  if(!source_ref.incarnation) return 0;
+  bytes=(size_t)width*(size_t)height*4u;
+  source.image=source_ref;
+  source.width=(uint32_t)width;
+  source.height=(uint32_t)height;
+  source.pixel_format=GML_RENDER_PIXEL_ARGB8888;
+  source.stride_bytes=(uint32_t)width*4u;
+  source.byte_capacity=bytes;
+  source.bytes=r->layer_filter_src;
+  operation.opcode=GML_RENDER_OP_LAYER_EFFECT;
+  operation.scene_family=GML_RENDER_SCENE_EFFECT;
+  operation.reconstruction_mode=GML_RENDER_DEVICE_CHECKPOINT;
+  operation.source_count=1u;
+  operation.sources=&source_ref;
+  operation.target.image=image;
+  operation.target.image.content_version++;
+  operation.target.storage_version=1u;
+  operation.target.width=(uint32_t)width;
+  operation.target.height=(uint32_t)height;
+  operation.target.pixel_format=GML_RENDER_PIXEL_ARGB8888;
+  operation.target.region=(GmlRenderRect){0,0,(uint32_t)width,(uint32_t)height};
+  operation.payload.effect.kind=filter->kind==GML_LAYER_FILTER_TINT?
+    GML_RENDER_LAYER_EFFECT_TINT:GML_RENDER_LAYER_EFFECT_COLOURISE;
+  operation.payload.effect.colour=filter->kind==GML_LAYER_FILTER_TINT?
+    filter->u.tint.colour:filter->u.colourise.tint_colour;
+  operation.payload.effect.intensity=filter->kind==GML_LAYER_FILTER_TINT?
+    1.0:filter->u.colourise.intensity;
+  if(!isfinite(operation.payload.effect.intensity)) return 0;
+  state.write_mask=15u;
+  state.colour=0xFFFFFFFFu;
+  state.alpha=255u;
+  state.sampler_count=1u;
+  state.samplers[0].filter=GML_RENDER_FILTER_NEAREST;
+  state.samplers[0].edge_rule=GML_RENDER_EDGE_CLAMP_SUBIMAGE;
+  state.samplers[0].source_region=operation.target.region;
+  batch=(GmlRenderDrawBatch){&operation,1u,&state,1u};
+  result=application?gml_render_application_scene_submit(r,&batch,&source,1u):
+    gml_render_surface_scene_submit(r,r->target_id,&batch,&source,1u);
+  if(result==GML_RENDER_RESOURCE_EXEC_DEVICE){
+    r->fb_opaque_known=0;
+    r->fb_all_transparent=0;
+    return 1;
+  }
+  gml_render_resource_journal_metrics(target,&metrics);
+  return metrics.authority==GML_RENDER_RESOURCE_INVALID?-1:0;
+}
+
 
 int gml_render_layer_filter_begin(GmlRender *r,const GmlLayerFilter *filter){
   if(!r || !filter || filter->kind==GML_LAYER_FILTER_NONE || !r->fb ||
      r->fbw<=0 || r->fbh<=0 || r->layer_filter_active || r->target_sp>=GML_SURFACE_STACK) return 0;
   size_t count=(size_t)r->fbw*(size_t)r->fbh;
   if(!layer_filter_reserve(r,count)) return 0;
+  int gpu_candidate=r->resident_application_pass && gml_render_device(r) &&
+    !r->gui_pass_active && !r->classic && r->active_shader<0;
   gml_render_prepare_draw(r);
   /* The CPU capture and final composite must observe the current target, even
    * when the preceding scene/clear has only been submitted to the device. */
@@ -57,9 +148,29 @@ int gml_render_layer_filter_begin(GmlRender *r,const GmlLayerFilter *filter){
   r->fb_all_transparent=filter->affects_below?captured_transparent:1;
   r->pending_underlay=0; r->underlay_x=r->underlay_y=r->underlay_w=r->underlay_h=0;
   r->pending_fill=0; r->pending_fill_color=0; r->layer_filter_active=1;
+  r->layer_filter_gpu_candidate=gpu_candidate;
   return 1;
 }
 
 void gml_render_layer_filter_end(GmlRender *r,const GmlLayerFilter *filter,double time_seconds){
-  gml_render_cpu_layer_filter_end(r,filter,time_seconds);
+  if(!r || !filter || !r->layer_filter_active) return;
+  int width=r->fbw,height=r->fbh;
+  double camera_x=r->cam_x,camera_y=r->cam_y;
+  int source_empty=r->fb_all_transparent;
+  gml_render_cpu_layer_filter_restore_target(r);
+  r->layer_filter_active=0;
+  if(!source_empty && r->fb && r->fbw==width && r->fbh==height){
+    int gpu=layer_filter_try_gpu(r,filter,width,height);
+    r->layer_filter_gpu_candidate=0;
+    if(gpu>0 && render_setting(r,"GML_LOG_LAYER_EFFECT") &&
+       (r->frame<4 || (r->frame%60)==0))
+      anygm_host_logf(r->win?r->win->host:NULL,ANYGM_LOG_DEBUG,
+        "[layer-filter] f%ld kind=%d empty=0 size=%dx%d cam=%.3f,%.3f time=%.6f linear=%d backend=gpu capture_bytes=%zu checkpoint_bytes=%zu\n",
+        r->frame,filter->kind,width,height,camera_x,camera_y,time_seconds,r->interp,
+        (size_t)width*(size_t)height*4u,(size_t)width*(size_t)height*4u);
+    if(gpu!=0) return;
+  }
+  r->layer_filter_gpu_candidate=0;
+  gml_render_cpu_layer_filter_end(r,filter,time_seconds,width,height,
+                                  camera_x,camera_y,source_empty);
 }

@@ -175,6 +175,17 @@ typedef struct GmlRenderPrimitiveRect {
   uint32_t colour;
 } GmlRenderPrimitiveRect;
 
+typedef enum GmlRenderLayerEffectKind {
+  GML_RENDER_LAYER_EFFECT_TINT=1,
+  GML_RENDER_LAYER_EFFECT_COLOURISE=2
+} GmlRenderLayerEffectKind;
+
+typedef struct GmlRenderLayerEffect {
+  uint32_t kind;
+  uint32_t colour;
+  double intensity;
+} GmlRenderLayerEffect;
+
 typedef enum GmlRenderReconstructionMode {
   GML_RENDER_REPLAY_EXACT=1,
   GML_RENDER_DEVICE_CHECKPOINT=2,
@@ -189,7 +200,8 @@ typedef enum GmlRenderSceneFamily {
   GML_RENDER_SCENE_SURFACE=4,
   GML_RENDER_SCENE_TEXT=5,
   GML_RENDER_SCENE_PRIMITIVE=6,
-  GML_RENDER_SCENE_FAMILY_COUNT=7
+  GML_RENDER_SCENE_EFFECT=7,
+  GML_RENDER_SCENE_FAMILY_COUNT=8
 } GmlRenderSceneFamily;
 
 typedef struct GmlRenderDrawOp {
@@ -206,6 +218,7 @@ typedef struct GmlRenderDrawOp {
     GmlRenderQuad quad;
     GmlRenderCopyRegion copy;
     GmlRenderPrimitiveRect primitive;
+    GmlRenderLayerEffect effect;
     /* Lent through this submission. Shader output is non-reconstructible and must checkpoint. */
     const struct GmlPlanShader *shader;
   } payload;

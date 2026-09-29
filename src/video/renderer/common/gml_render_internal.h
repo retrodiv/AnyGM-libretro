@@ -373,6 +373,7 @@ typedef struct GmlRender {
   uint32_t *layer_filter_src, *layer_filter_work, *layer_filter_aux;
   size_t    layer_filter_capacity;
   int       layer_filter_active;
+  int       layer_filter_gpu_candidate;
   /* GM palette-template shaders threshold a canonical render and remap it to palette colors.
    * Parsed data-driven from the SHDR chunk's GLSL at init; shader_set activates one and the
    * surface-composite blit applies the map per pixel. has==0 -> unknown shader, no-op. */

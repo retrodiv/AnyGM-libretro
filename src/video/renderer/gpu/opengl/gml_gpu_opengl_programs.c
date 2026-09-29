@@ -170,7 +170,7 @@ int gml_gpu_opengl_scene_exact_program(GmlGpuBackend *backend,char *error,
   GlScene *scene=&backend->scene;
   const char *prefix=backend->api==GML_GPU_API_OPENGLES3
     ?GML_GPU_OPENGL_PREFIX_ES:GML_GPU_OPENGL_PREFIX_DESKTOP;
-  char vertex_source[1024],fragment_source[2048];
+  char vertex_source[1024],fragment_source[4096];
   GLuint vertex,fragment;
   GLint status=GL_FALSE;
   if(scene->exact_program) return 1;
@@ -218,11 +218,16 @@ int gml_gpu_opengl_scene_exact_program(GmlGpuBackend *backend,char *error,
   scene->exact_u_blend_rule=backend->gl.GetUniformLocation(scene->exact_program,
                                                             "u_blend_rule");
   scene->exact_u_additive_alpha=backend->gl.GetUniformLocation(scene->exact_program,
-                                                                "u_additive_alpha");
+                                                                 "u_additive_alpha");
+  scene->exact_u_effect_colour=backend->gl.GetUniformLocation(scene->exact_program,
+                                                               "u_effect_colour");
+  scene->exact_u_effect_intensity=backend->gl.GetUniformLocation(scene->exact_program,
+                                                                  "u_effect_intensity");
   if(scene->exact_a_position<0 || scene->exact_a_texcoord<0 || scene->exact_a_colour<0 ||
      scene->exact_u_extent<0 || scene->exact_u_image<0 || scene->exact_u_previous<0 ||
      scene->exact_u_region_origin<0 || scene->exact_u_repetitions<0 ||
-     scene->exact_u_blend_rule<0 || scene->exact_u_additive_alpha<0){
+     scene->exact_u_blend_rule<0 || scene->exact_u_additive_alpha<0 ||
+     scene->exact_u_effect_colour<0 || scene->exact_u_effect_intensity<0){
     gml_gpu_opengl_record_error(error,error_capacity,
       "exact scene program is missing an attribute or uniform");
     backend->gl.DeleteProgram(scene->exact_program);

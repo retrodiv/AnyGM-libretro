@@ -1483,7 +1483,9 @@ static int resident_layer_filter_capture_barrier(void){
   CHECK(gml_render_layer_filter_begin(render,&filter));
   CHECK(render->layer_filter_src[0]==0xFF445566u &&
         !render->resident_application_pass && fake.readbacks==0);
+  fake.status=GML_RENDER_EXEC_UNSUPPORTED;
   gml_render_layer_filter_end(render,&filter,0.0);
+  fake.status=0;
   CHECK(render->app_surface_owned[0]==0xFF445566u &&
         render->app_surface_owned[15]==0xFF445566u);
   gml_render_resource_journal_metrics(render->app_surface_resource,&metrics);
@@ -1500,7 +1502,9 @@ static int resident_layer_filter_capture_barrier(void){
         !render->resident_application_pass && fake.readbacks==0);
   render->fb[0]=0x80800000u;
   render->fb_all_transparent=0;
+  fake.status=GML_RENDER_EXEC_UNSUPPORTED;
   gml_render_layer_filter_end(render,&filter,0.0);
+  fake.status=0;
   CHECK(render->app_surface_owned[0]==0xFF80007Fu &&
         render->app_surface_owned[1]==0xFF0000FFu);
   {
@@ -1527,7 +1531,9 @@ static int resident_layer_filter_capture_barrier(void){
     CHECK(gml_render_layer_filter_begin(render,&filter));
     CHECK(render->layer_filter_src[0]==0xFF123456u &&
           render->surface[id-1].px[0]==0xFF123456u && fake.readbacks==0);
+    fake.status=GML_RENDER_EXEC_UNSUPPORTED;
     gml_render_layer_filter_end(render,&filter,0.0);
+    fake.status=0;
     CHECK(render->surface[id-1].px[15]==0xFF123456u);
   }
   gml_render_free(render);

@@ -107,6 +107,7 @@ typedef struct GlScene {
   GLint exact_u_extent,exact_u_image,exact_u_previous,exact_u_region_origin;
   GLint exact_u_repetitions;
   GLint exact_u_blend_rule,exact_u_additive_alpha;
+  GLint exact_u_effect_colour,exact_u_effect_intensity;
   uint32_t snapshot_width,snapshot_height;
   GLint max_texture_units;
   float *vertices;
@@ -194,6 +195,11 @@ int gml_render_gpu_opengl_draw_textured_quad(const GmlRenderDrawOp *op,
                                              uint32_t source_width,uint32_t source_height,
                                              int rendered_source_origin,
                                              float *vertices);
+int gml_render_gpu_opengl_apply_effect(GmlGpuBackend *backend,
+                                       const GmlRenderDrawOp *operation,
+                                       const GmlRenderDrawStateSnapshot *state,
+                                       GlSceneImage *target,GlSceneImage *source,
+                                       char *error,size_t error_capacity);
 GlSceneImage *gml_gpu_opengl_scene_image(GmlGpuBackend *backend,GmlRenderImageRef image);
 GlSceneImage *gml_gpu_opengl_scene_target(GmlGpuBackend *backend,const GmlRenderTargetRef *target);
 GmlRenderExecutionResult gml_gpu_opengl_scene_submit(GmlGpuBackend *backend,

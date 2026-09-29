@@ -8,6 +8,7 @@
 #include <limits.h>
 #include <math.h>
 #include <stdlib.h>
+#include <string.h>
 
 enum { GL_SCENE_MAX_EXACT_REPETITIONS=64 };
 
@@ -196,6 +197,38 @@ static int scene_preflight(GmlGpuBackend *backend,const GmlRenderDrawBatch *batc
          (op->payload.primitive.colour>>24)!=255u ||
          (!existing_target(backend,target) &&
           !cleared_earlier(cleared,clear_count,target->image))) return 0;
+      continue;
+    }
+    if(op->opcode==GML_RENDER_OP_LAYER_EFFECT){
+      const GmlRenderDrawStateSnapshot *state;
+      GlSceneImage *source;
+      if(op->reconstruction_mode!=GML_RENDER_DEVICE_CHECKPOINT ||
+         op->scene_family!=GML_RENDER_SCENE_EFFECT ||
+         !backend->gl.CopyTexSubImage2D || !batch->states ||
+         op->state_index>=batch->state_count || op->source_count!=1u ||
+         !op->sources || target->pixel_format!=GML_RENDER_PIXEL_ARGB8888 ||
+         !full_region(target->region,target->width,target->height) ||
+         (!existing_target(backend,target) &&
+          !cleared_earlier(cleared,clear_count,target->image)) ||
+         (op->payload.effect.kind!=GML_RENDER_LAYER_EFFECT_TINT &&
+          op->payload.effect.kind!=GML_RENDER_LAYER_EFFECT_COLOURISE) ||
+         !isfinite(op->payload.effect.intensity)) return 0;
+      state=&batch->states[op->state_index];
+      source=gml_gpu_opengl_scene_image(backend,op->sources[0]);
+      if(!source || !source->texture || source->pixel_format!=GML_RENDER_PIXEL_ARGB8888 ||
+         same_logical(source->ref,target->image) ||
+         source->width!=target->width || source->height!=target->height ||
+         state->write_mask!=15u || state->alpha!=255u ||
+         state->colour!=0xFFFFFFFFu || state->alpha_test_enabled ||
+         qualified_blend(state)!=0 || state->coverage_policy ||
+         state->material_identity || state->material_version ||
+         state->sampler_count!=1u ||
+         state->samplers[0].filter!=GML_RENDER_FILTER_NEAREST ||
+         state->samplers[0].edge_rule!=GML_RENDER_EDGE_CLAMP_SUBIMAGE ||
+         state->samplers[0].quantisation ||
+         !full_region(state->samplers[0].source_region,source->width,source->height) ||
+         !((state->clip.width==0 && state->clip.height==0) ||
+           full_region(state->clip,target->width,target->height))) return 0;
       continue;
     }
     if(op->opcode==GML_RENDER_OP_CONTENT_SHADER_DRAW){
@@ -463,7 +496,7 @@ static int flush_quads(GmlGpuBackend *backend,GlSceneImage *target,GlSceneImage 
 static int draw_exact_quad(GmlGpuBackend *backend,const GmlRenderDrawOp *op,
                            const GmlRenderDrawStateSnapshot *state,
                            GlSceneImage *target,GlSceneImage *source,
-                           uint32_t repetitions,
+                           uint32_t repetitions,const GmlRenderLayerEffect *effect,
                            char *error,size_t error_capacity){
   GlScene *scene=&backend->scene;
   GLint left,bottom,origin[2];
@@ -508,10 +541,19 @@ static int draw_exact_quad(GmlGpuBackend *backend,const GmlRenderDrawOp *op,
   backend->gl.Uniform1i(scene->exact_u_previous,1);
   backend->gl.Uniform1i(scene->exact_u_repetitions,(GLint)repetitions);
   backend->gl.Uniform1i(scene->exact_u_blend_rule,
-                        qualified_blend(state)==4?1:0);
+                        effect?(effect->kind==GML_RENDER_LAYER_EFFECT_TINT?2:3):
+                          (qualified_blend(state)==4?1:0));
   {
     GLfloat opacity=(GLfloat)state->additive_draw_alpha;
     backend->gl.Uniform1fv(scene->exact_u_additive_alpha,1,&opacity);
+  }
+  {
+    uint32_t colour=effect?effect->colour:0xFFFFFFFFu;
+    GLint rgba[4]={(GLint)((colour>>16)&255u),(GLint)((colour>>8)&255u),
+                   (GLint)(colour&255u),(GLint)(colour>>24)};
+    GLfloat intensity=effect?(GLfloat)effect->intensity:1.0f;
+    backend->gl.Uniform4iv(scene->exact_u_effect_colour,1,rgba);
+    backend->gl.Uniform1fv(scene->exact_u_effect_intensity,1,&intensity);
   }
   origin[0]=left;
   origin[1]=bottom;
@@ -546,6 +588,31 @@ cleanup:
   if(backend->gl.GetError()!=GL_NO_ERROR) outcome=-1;
   if(outcome>0){ target->valid=1; target->rendered_origin=1; }
   return outcome;
+}
+
+int gml_render_gpu_opengl_apply_effect(GmlGpuBackend *backend,
+                                       const GmlRenderDrawOp *operation,
+                                       const GmlRenderDrawStateSnapshot *state,
+                                       GlSceneImage *target,GlSceneImage *source,
+                                       char *error,size_t error_capacity){
+  GmlRenderDrawOp quad=*operation;
+  GmlRenderQuad *shape=&quad.payload.quad;
+  if(!target || !source || !state ||
+     (operation->payload.effect.kind!=GML_RENDER_LAYER_EFFECT_TINT &&
+      operation->payload.effect.kind!=GML_RENDER_LAYER_EFFECT_COLOURISE)) return 0;
+  memset(shape,0,sizeof *shape);
+  quad.opcode=GML_RENDER_OP_TEXTURED_QUAD;
+  shape->shape=GML_RENDER_QUAD_AXIS_ALIGNED;
+  shape->sampling.filter=GML_RENDER_FILTER_NEAREST;
+  shape->sampling.edge_rule=GML_RENDER_EDGE_CLAMP_SUBIMAGE;
+  shape->sampling.source_region=(GmlRenderRect){0,0,source->width,source->height};
+  shape->x[1]=shape->x[2]=(double)target->width;
+  shape->y[2]=shape->y[3]=(double)target->height;
+  shape->u[1]=shape->u[2]=1.0;
+  shape->v[2]=shape->v[3]=1.0;
+  for(int corner=0;corner<4;corner++) shape->corner_colour[corner]=0xFFFFFFFFu;
+  return draw_exact_quad(backend,&quad,state,target,source,1u,
+                         &operation->payload.effect,error,error_capacity);
 }
 
 static void mark_uncertain(GmlRenderExecutionResult *result,GlSceneImage *target){
@@ -647,6 +714,18 @@ GmlRenderExecutionResult gml_gpu_opengl_scene_submit(GmlGpuBackend *backend,
       result.accepted_prefix=index+1u;
       continue;
     }
+    if(op->opcode==GML_RENDER_OP_LAYER_EFFECT){
+      GlSceneImage *source=gml_gpu_opengl_scene_image(backend,op->sources[0]);
+      int drawn=source?gml_render_gpu_opengl_apply_effect(backend,op,
+        &batch->states[op->state_index],target,source,error,error_capacity):0;
+      if(drawn<0) mark_uncertain(&result,target);
+      else if(!drawn) result.status=GML_RENDER_EXEC_RESOURCE_ERROR;
+      if(drawn<=0) break;
+      target->valid=1;
+      target->rendered_origin=1;
+      result.accepted_prefix=index+1u;
+      continue;
+    }
     pending_source=gml_gpu_opengl_scene_image(backend,op->sources[0]);
     if(!pending_source){
       result.status=GML_RENDER_EXEC_RESOURCE_ERROR;
@@ -657,7 +736,7 @@ GmlRenderExecutionResult gml_gpu_opengl_scene_submit(GmlGpuBackend *backend,
     if(pending_blend==2 || pending_blend==4){
       uint32_t repetitions=exact_repetitions(batch,index);
       int drawn=draw_exact_quad(backend,op,&batch->states[op->state_index],
-                                target,pending_source,repetitions,error,error_capacity);
+                                target,pending_source,repetitions,NULL,error,error_capacity);
       if(drawn<0) mark_uncertain(&result,target);
       else if(!drawn) result.status=GML_RENDER_EXEC_RESOURCE_ERROR;
       if(drawn<=0) break;
