@@ -1562,6 +1562,7 @@ static int synthetic_framebuffer_content_create(
 
   int retained_step_target=gpu_sprite==5 || gpu_sprite==6;
   int nested_step_target=gpu_sprite==6;
+  int assigned_view_surface=gpu_sprite==7;
   char create[192],step[192],draw[192],draw_begin[192],draw_gui[192];
   snprintf(create,sizeof create,"%s/retain-create.gml",fixture->directory);
   snprintf(step,sizeof step,"%s/retain-step.gml",fixture->directory);
@@ -1573,6 +1574,13 @@ static int synthetic_framebuffer_content_create(
        "global.fixture_frame = 0;\n"
        "global.fixture_surface = surface_create(8,8);\n"
        "global.fixture_inner = surface_create(8,8);\n":
+       assigned_view_surface?
+       "global.fixture_frame = 0;\n"
+       "global.fixture_seen = 0;\n"
+       "global.fixture_surface = surface_create(8,8);\n"
+       "global.fixture_inner = surface_create(8,8);\n"
+       "view_set_surface_id(0,global.fixture_surface);\n"
+       "view_set_surface_id(1,global.fixture_inner);\n":
        retained_step_target?
        "global.fixture_frame = 0;\n"
        "global.fixture_surface = surface_create(8,8);\n":
@@ -1584,6 +1592,8 @@ static int synthetic_framebuffer_content_create(
                  "surface_set_target(global.fixture_surface);\n"
                  "draw_clear(c_green);\n"
                  "surface_set_target(global.fixture_inner);\n":
+                 assigned_view_surface?
+                 "global.fixture_frame += 1;\n":
                  retained_step_target?
                  "surface_set_target(global.fixture_surface);\n":
                  "if (global.fixture_frame >= 1) room_goto(1);\n"
@@ -1593,8 +1603,12 @@ static int synthetic_framebuffer_content_create(
        "else draw_sprite_ext(spr_fixture,0,48,16,0.7,0.7,0,c_white,1);\n":
        "if (view_current == 0) draw_sprite(spr_fixture,0,8,12);\n"
        "else draw_sprite(spr_fixture,0,48,16);\n")) ||
-     (retained_step_target &&
-      (!write_text(draw_begin,nested_step_target?
+     ((retained_step_target || assigned_view_surface) &&
+      (!write_text(draw_begin,assigned_view_surface?
+         "global.fixture_seen += 1;\n"
+         "if (view_current == 0) draw_clear(c_blue);\n"
+         "else draw_clear(c_green);\n":
+         nested_step_target?
          "if (view_current == 0) {\n"
          "  draw_clear(c_blue); surface_reset_target();\n"
          "  draw_set_color(c_red); draw_rectangle(0,0,3,3,false);\n"
@@ -1603,7 +1617,10 @@ static int synthetic_framebuffer_content_create(
          "if (view_current == 0) {\n"
          "  draw_clear(c_blue); surface_reset_target();\n"
          "}\n") ||
-       !write_text(draw_gui,nested_step_target?
+       !write_text(draw_gui,assigned_view_surface?
+         "draw_surface_stretched(global.fixture_surface,0,0,8,8);\n"
+         "draw_surface_stretched(global.fixture_inner,8,0,8,8);\n":
+         nested_step_target?
          "draw_surface(global.fixture_surface,0,0);\n"
          "draw_surface(global.fixture_inner,8,0);\n":
          "draw_surface(global.fixture_surface,0,0);\n")))){
@@ -1666,7 +1683,7 @@ static int synthetic_framebuffer_content_create(
   object.sprite_id=object.mask_id=object.parent_id=-1;
   object.visible=gpu_sprite;
   object.events=events;
-  object.n_events=object.cap_events=retained_step_target?5:gpu_sprite?3:2;
+  object.n_events=object.cap_events=retained_step_target || assigned_view_surface?5:gpu_sprite?3:2;
   events[0].event_type=0;
   events[0].event_number=0;
   events[0].source_path=create;
@@ -1677,7 +1694,7 @@ static int synthetic_framebuffer_content_create(
     events[2].event_type=8;
     events[2].source_path=draw;
   }
-  if(retained_step_target){
+  if(retained_step_target || assigned_view_surface){
     events[3].event_type=8;
     events[3].event_number=72;
     events[3].source_path=draw_begin;
@@ -1691,7 +1708,7 @@ static int synthetic_framebuffer_content_create(
   rooms[0].height=48;
   rooms[0].speed=60;
   rooms[0].background_color=0xFF336699u;
-  rooms[0].draw_background_color=1;
+  rooms[0].draw_background_color=assigned_view_surface?0:1;
   rooms[0].instances=&instance;
   rooms[0].n_instances=rooms[0].cap_instances=1;
   instance.id=instance.name=(char *)"instance_fixture";
@@ -1771,6 +1788,10 @@ int anygm_synthetic_multiview_step_target_content_create(AnygmSyntheticContent *
 
 int anygm_synthetic_multiview_nested_target_content_create(AnygmSyntheticContent *fixture){
   return synthetic_framebuffer_content_create(fixture,1,0,0,6);
+}
+
+int anygm_synthetic_multiview_assigned_surface_content_create(AnygmSyntheticContent *fixture){
+  return synthetic_framebuffer_content_create(fixture,1,0,0,7);
 }
 
 int anygm_synthetic_clear_view_content_create(AnygmSyntheticContent *fixture){
@@ -2117,6 +2138,12 @@ void anygm_synthetic_content_destroy(AnygmSyntheticContent *fixture){
   snprintf(path,sizeof path,"%s/retain-create.gml",fixture->directory);
   anygm_test_unlink(path);
   snprintf(path,sizeof path,"%s/retain-step.gml",fixture->directory);
+  anygm_test_unlink(path);
+  snprintf(path,sizeof path,"%s/retain-draw.gml",fixture->directory);
+  anygm_test_unlink(path);
+  snprintf(path,sizeof path,"%s/retain-draw-begin.gml",fixture->directory);
+  anygm_test_unlink(path);
+  snprintf(path,sizeof path,"%s/retain-draw-gui.gml",fixture->directory);
   anygm_test_unlink(path);
   snprintf(path,sizeof path,"%s/change-step.gml",fixture->directory);
   anygm_test_unlink(path);

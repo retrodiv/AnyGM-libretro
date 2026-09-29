@@ -35,8 +35,10 @@ int main(int argc,char **argv){
   int multiview_fractional=argc==2 && !strcmp(argv[1],"--keep-multiview-fractional");
   int multiview_step=argc==2 && !strcmp(argv[1],"--keep-multiview-step-target");
   int multiview_nested=argc==2 && !strcmp(argv[1],"--keep-multiview-nested-target");
+  int multiview_assigned=argc==2 && !strcmp(argv[1],"--keep-multiview-assigned-surface");
   if(!(gui_up?anygm_synthetic_indirect_gui_upscale_content_create(&fixture):
        gui_reduce?anygm_synthetic_indirect_gui_reduce_content_create(&fixture):
+       multiview_assigned?anygm_synthetic_multiview_assigned_surface_content_create(&fixture):
        multiview_nested?anygm_synthetic_multiview_nested_target_content_create(&fixture):
        multiview_step?anygm_synthetic_multiview_step_target_content_create(&fixture):
        multiview_fractional?anygm_synthetic_multiview_fractional_gpu_content_create(&fixture):
@@ -45,7 +47,7 @@ int main(int argc,char **argv){
        dense?anygm_synthetic_gpu_dense_scene_route_content_create(&fixture):
              anygm_synthetic_gpu_scene_route_content_create(&fixture))) return 1;
   if(gui_up || gui_reduce || multiview || multiview_offset ||
-     multiview_fractional || multiview_step || multiview_nested){
+     multiview_fractional || multiview_step || multiview_nested || multiview_assigned){
     puts(fixture.path);
     return 0;
   }
@@ -57,7 +59,8 @@ int main(int argc,char **argv){
     fputs("usage: test_gpu_scene_route [--dense|--keep|--keep-dense|"
           "--keep-gui-upscale|--keep-gui-reduce|--keep-multiview|"
           "--keep-multiview-offset|--keep-multiview-fractional|"
-          "--keep-multiview-step-target|--keep-multiview-nested-target]\n",stderr);
+          "--keep-multiview-step-target|--keep-multiview-nested-target|"
+          "--keep-multiview-assigned-surface]\n",stderr);
     anygm_synthetic_content_destroy(&fixture);
     return 1;
   }

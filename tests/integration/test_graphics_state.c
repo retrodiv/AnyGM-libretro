@@ -500,6 +500,124 @@ static int resident_multiview_step_target_case(void){
            anygm_synthetic_multiview_nested_target_content_create,1);
 }
 
+static int resident_multiview_assigned_surface_restore_case(void){
+  Session plain={0},selected={0};
+  AnygmInputFrame input={0};
+  AnygmFrameOutput cpu={0},gpu={0};
+  uint8_t *saved=NULL,*selected_saved=NULL;
+  size_t saved_size=0,selected_size=0;
+  int matching=1;
+  anygm_test_graphics_reset();
+  REQUIRE(session_open_fixture_with_scene(
+            &plain,ANYGM_SCENE_RENDERER_CPU,
+            anygm_synthetic_multiview_assigned_surface_content_create),
+          "assigned-view CPU fixture loads");
+  REQUIRE(session_open_fixture_with_scene(
+            &selected,ANYGM_SCENE_RENDERER_OPENGL,
+            anygm_synthetic_multiview_assigned_surface_content_create),
+          "assigned-view scene fixture loads");
+  REQUIRE(graphics_adopt(selected.engine,ANYGM_GRAPHICS_OPENGLES3)==ANYGM_OK,
+          "assigned-view context adopted");
+  input.struct_size=sizeof input;
+  input.pointer_x=input.pointer_y=-1;
+  for(int frame=0;matching && frame<3;frame++){
+    if(frame==2) anygm_graphics_context_destroy(selected.engine,1u);
+    memset(&cpu,0,sizeof cpu); cpu.struct_size=sizeof cpu;
+    memset(&gpu,0,sizeof gpu); gpu.struct_size=sizeof gpu;
+    matching=anygm_run_frame(plain.engine,&input,&cpu)==ANYGM_OK &&
+             anygm_run_frame(selected.engine,&input,&gpu)==ANYGM_OK;
+    if(!matching) break;
+    int outer_id=(int)gml_global_num(&plain.engine->vm,"fixture_surface");
+    int inner_id=(int)gml_global_num(&plain.engine->vm,"fixture_inner");
+    int selected_outer=(int)gml_global_num(&selected.engine->vm,"fixture_surface");
+    int selected_inner=(int)gml_global_num(&selected.engine->vm,"fixture_inner");
+    int ow=0,oh=0,iw=0,ih=0,sw=0,sh=0,tw=0,th=0;
+    const uint32_t *outer=gml_surface_pixels_read(
+      &plain.engine->render,outer_id,&ow,&oh);
+    const uint32_t *inner=gml_surface_pixels_read(
+      &plain.engine->render,inner_id,&iw,&ih);
+    const uint32_t *scene_outer=gml_surface_pixels_read(
+      &selected.engine->render,selected_outer,&sw,&sh);
+    const uint32_t *scene_inner=gml_surface_pixels_read(
+      &selected.engine->render,selected_inner,&tw,&th);
+    matching=cpu.pixels && selected.engine->screen && cpu.width==64u &&
+             cpu.height==48u && cpu.pitch==64u*sizeof(uint32_t) &&
+             !memcmp(cpu.pixels,selected.engine->screen,(size_t)cpu.pitch*cpu.height) &&
+             outer && inner && scene_outer && scene_inner &&
+             ow==8 && oh==8 && iw==8 && ih==8 &&
+             sw==8 && sh==8 && tw==8 && th==8 &&
+             outer[0]==0xFF0000FFu && inner[0]==0xFF008000u &&
+             gml_global_num(&plain.engine->vm,"fixture_seen")==2.0*(frame+1) &&
+             !memcmp(outer,scene_outer,64u*sizeof(uint32_t)) &&
+             !memcmp(inner,scene_inner,64u*sizeof(uint32_t)) &&
+             (((const uint32_t *)cpu.pixels)[0]&0xFFFFFFu)==0x000000FFu &&
+             (((const uint32_t *)cpu.pixels)[16]&0xFFFFFFu)==0x00008000u;
+    if(!matching)
+      fprintf(stderr,"assigned-view frame=%d ids=%d/%d bindings=%.0f/%.0f "
+              "surfaces=%08x/%08x scene=%08x/%08x "
+              "world=%08x scratch=%08x room=%d vmframe=%ld seen=%.0f "
+              "output=%08x/%08x\n",
+              frame,outer_id,inner_id,
+              gml_global_arr(&plain.engine->vm,"view_surface_id",0),
+              gml_global_arr(&plain.engine->vm,"view_surface_id",1),
+              outer?outer[0]:0u,inner?inner[0]:0u,
+              scene_outer?scene_outer[0]:0u,scene_inner?scene_inner[0]:0u,
+              plain.engine->fb?plain.engine->fb[0]:0u,
+              plain.engine->app_crop?plain.engine->app_crop[0]:0u,
+              plain.engine->vm.room_index,plain.engine->vm.frame,
+              gml_global_num(&plain.engine->vm,"fixture_seen"),
+              cpu.pixels?((const uint32_t *)cpu.pixels)[0]:0u,
+              cpu.pixels?((const uint32_t *)cpu.pixels)[16]:0u);
+    if(matching && frame==0){
+      GmlGpuCounters counts={0};
+      gml_gpu_counters(selected.engine->gpu,&counts);
+      matching=counts.scene_families[GML_RENDER_SCENE_SPRITE]>=2u;
+      saved=matching?serialize(plain.engine,&saved_size):NULL;
+      selected_saved=matching?serialize(selected.engine,&selected_size):NULL;
+      matching=matching && saved && selected_saved && saved_size>0 &&
+               saved_size==selected_size &&
+               !memcmp(saved,selected_saved,saved_size) &&
+               anygm_state_load(plain.engine,saved,saved_size)==ANYGM_OK &&
+               anygm_state_load(selected.engine,saved,saved_size)==ANYGM_OK;
+      if(matching){
+        const uint32_t *derived=gml_surface_pixels_read(
+          &plain.engine->render,outer_id,NULL,NULL);
+        const uint32_t *preserved=gml_surface_pixels_read(
+          &plain.engine->render,inner_id,NULL,NULL);
+        const uint32_t *selected_derived=gml_surface_pixels_read(
+          &selected.engine->render,selected_outer,NULL,NULL);
+        const uint32_t *selected_preserved=gml_surface_pixels_read(
+          &selected.engine->render,selected_inner,NULL,NULL);
+        matching=derived && preserved && derived[0]==0u &&
+                 preserved[0]==0xFF008000u &&
+                 selected_derived && selected_preserved &&
+                 selected_derived[0]==0u &&
+                 selected_preserved[0]==0xFF008000u;
+      }
+      if(matching){
+        AnygmFrameOutput restored_cpu={0},restored_gpu={0};
+        restored_cpu.struct_size=restored_gpu.struct_size=sizeof restored_cpu;
+        matching=anygm_run_frame(plain.engine,&input,&restored_cpu)==ANYGM_OK &&
+                 anygm_run_frame(selected.engine,&input,&restored_gpu)==ANYGM_OK &&
+                 restored_cpu.pixels && selected.engine->screen &&
+                 restored_cpu.width==64u && restored_cpu.height==48u &&
+                 !memcmp(restored_cpu.pixels,selected.engine->screen,
+                         64u*48u*sizeof(uint32_t)) &&
+                 plain.engine->vm.frame==1 &&
+                 gml_global_num(&plain.engine->vm,"fixture_seen")==2.0 &&
+                 (((const uint32_t *)restored_cpu.pixels)[0]&0xFFFFFFu)==0x000000FFu &&
+                 (((const uint32_t *)restored_cpu.pixels)[16]&0xFFFFFFu)==0x00008000u;
+      }
+    }
+  }
+  free(selected_saved);
+  free(saved);
+  session_close(&selected);
+  session_close(&plain);
+  REQUIRE(matching,"assigned views and first-restored-frame GUI reader stay current");
+  return 1;
+}
+
 static uint8_t *serialize(AnygmEngine *engine,size_t *size){
   size_t capacity=anygm_state_size(engine);
   uint8_t *data=(uint8_t*)malloc(capacity?capacity:1);
@@ -1244,6 +1362,8 @@ int main(void){
      resident_indirect_gui_alpha_fallback_case},
     {"two-view retained CPU seed stays current",resident_multiview_cpu_seed_case},
     {"two-view Step target survives Draw Begin and GUI",resident_multiview_step_target_case},
+    {"assigned views repopulate a derived surface before restored GUI",
+     resident_multiview_assigned_surface_restore_case},
     {"texture filters and GPU stack restore",texture_filter_state_case},
     {"state bytes match with and without a target",state_bytes_match_case},
     {"save, load and save again produce the same bytes",save_load_save_case},

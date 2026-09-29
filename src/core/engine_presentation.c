@@ -1634,6 +1634,14 @@ int render_multiview_application(AnygmEngine *engine) {
     if(resident_view_began &&
        (!gml_render_scene_flush(&engine->render) ||
         !gml_render_resident_application_cpu_barrier(&engine->render))) return -1;
+    int view_surface=(int)gml_global_arr(&engine->vm,"view_surface_id",v->index);
+    if(view_surface>0 && gml_surface_exists(&engine->render,view_surface)){
+      GmlRenderTargetCoverage coverage={0};
+      gml_render_target_coverage(&engine->render,&coverage);
+      if(!gml_render_surface_mirror_pixels(
+           &engine->render,view_surface,view_buffer,vw,vh,
+           coverage.opaque_known && coverage.all_opaque)) return -1;
+    }
     compose_view_rect(view_buffer, vw, vh, engine->fb, (int)engine->width, (int)engine->height,
                       v->px, v->py, v->pw, v->ph);
   }
