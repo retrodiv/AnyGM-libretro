@@ -57,10 +57,11 @@ static AnygmResult graphics_adopt(AnygmEngine *engine,uint32_t api){
   return anygm_graphics_context_reset(engine,&context);
 }
 
-static int session_open_with_scene(Session *session,uint32_t scene_renderer){
+static int session_open_fixture_with_scene(Session *session,uint32_t scene_renderer,
+                                           int (*create_fixture)(AnygmSyntheticContent *)){
   AnygmContentSource source={0};
   memset(session,0,sizeof *session);
-  if(!anygm_synthetic_framebuffer_content_create(&session->fixture)) return 0;
+  if(!create_fixture(&session->fixture)) return 0;
   session->services.struct_size=sizeof session->services;
   session->services.abi_version=ANYGM_HOST_SERVICES_VERSION;
   anygm_stdio_vfs_services_init(&session->services);
@@ -79,6 +80,11 @@ static int session_open_with_scene(Session *session,uint32_t scene_renderer){
   graphics.values.scene_renderer=scene_renderer;
   if(anygm_set_config(session->engine,&graphics)!=ANYGM_OK) return 0;
   return anygm_load(session->engine,&source,NULL)==ANYGM_OK;
+}
+
+static int session_open_with_scene(Session *session,uint32_t scene_renderer){
+  return session_open_fixture_with_scene(
+    session,scene_renderer,anygm_synthetic_framebuffer_content_create);
 }
 
 static int session_open(Session *session){
@@ -147,6 +153,171 @@ static int resident_world_selection_case(void){
   free(selected_state); free(plain_state);
   session_close(&selected); session_close(&plain);
   REQUIRE(matching,"resident world selection preserves canonical state bytes");
+  return 1;
+}
+
+static int resident_indirect_gui_variant(
+    int (*create_fixture)(AnygmSyntheticContent *),int scale_direction){
+  Session plain={0},selected={0};
+  AnygmInputFrame input={0};
+  AnygmFrameOutput cpu={0},gpu={0};
+  GmlGpuCounters counters={0};
+  int matching;
+  anygm_test_graphics_reset();
+  REQUIRE(session_open_fixture_with_scene(
+            &plain,ANYGM_SCENE_RENDERER_CPU,create_fixture),
+          "indirect GUI CPU fixture loads");
+  REQUIRE(session_open_fixture_with_scene(
+            &selected,ANYGM_SCENE_RENDERER_OPENGL,create_fixture),
+          "indirect GUI resident fixture loads");
+  REQUIRE(graphics_adopt(selected.engine,ANYGM_GRAPHICS_OPENGLES3)==ANYGM_OK,
+          "indirect GUI context adopted");
+  input.struct_size=sizeof input;
+  input.pointer_x=input.pointer_y=-1;
+  cpu.struct_size=gpu.struct_size=sizeof cpu;
+  REQUIRE(anygm_run_frame(plain.engine,&input,&cpu)==ANYGM_OK &&
+          anygm_run_frame(selected.engine,&input,&gpu)==ANYGM_OK,
+          "indirect GUI CPU and resident frames complete");
+  if((scale_direction>=0 && !selected.engine->gui_buffer) ||
+     (scale_direction>0?selected.engine->gui_space_width>=(int)selected.engine->output_width:
+      scale_direction==0?selected.engine->gui_space_width<=(int)selected.engine->output_width:
+                         selected.engine->gui_space_width!=(int)selected.engine->output_width))
+    fprintf(stderr,"GUI %s geometry gui=%dx%d output=%ux%u canvas=%d\n",
+            scale_direction>0?"upscale":scale_direction==0?"reduce":"direct",
+            selected.engine->gui_space_width,
+            selected.engine->gui_space_height,selected.engine->output_width,
+            selected.engine->output_height,selected.engine->canvas_mode);
+  REQUIRE((scale_direction>=0?selected.engine->gui_buffer!=NULL:
+                              selected.engine->gui_buffer==NULL) &&
+          (scale_direction>0?selected.engine->gui_space_width<(int)selected.engine->output_width:
+           scale_direction==0?selected.engine->gui_space_width>(int)selected.engine->output_width:
+                              selected.engine->gui_space_width==(int)selected.engine->output_width) &&
+          (scale_direction>0?selected.engine->gui_space_height<(int)selected.engine->output_height:
+           scale_direction==0?selected.engine->gui_space_height>(int)selected.engine->output_height:
+                              selected.engine->gui_space_height==(int)selected.engine->output_height),
+          "the GUI target has the selected physical geometry");
+  gml_gpu_counters(selected.engine->gpu,&counters);
+  if(!selected.engine->render.base_scene_resource ||
+     counters.scene_operations[GML_RENDER_OP_TEXTURED_QUAD]==0u)
+    fprintf(stderr,"GUI %s clear=%llu textured=%llu offered=%llu accepted=%llu "
+            "sprite=%llu target=%p gui=%p\n",
+            scale_direction>0?"upscale":scale_direction==0?"reduce":"direct",
+            (unsigned long long)counters.scene_operations[GML_RENDER_OP_CLEAR],
+            (unsigned long long)counters.scene_operations[GML_RENDER_OP_TEXTURED_QUAD],
+            (unsigned long long)counters.scene_batches_offered,
+            (unsigned long long)counters.scene_batches_accepted,
+            (unsigned long long)counters.scene_families[GML_RENDER_SCENE_SPRITE],
+            (void *)selected.engine->render.base_scene_resource,
+            (void *)selected.engine->gui_buffer);
+  REQUIRE(selected.engine->render.base_scene_resource &&
+          selected.engine->render.base_scene_resource_pixels==
+            (scale_direction>=0?selected.engine->gui_buffer:selected.engine->screen) &&
+          counters.scene_operations[GML_RENDER_OP_CLEAR]>0u &&
+          counters.scene_operations[GML_RENDER_OP_TEXTURED_QUAD]>0u,
+          "GUI uses a counted resident SCREEN clear and sprite");
+  matching=cpu.pixels && selected.engine->screen &&
+           cpu.width==selected.engine->output_width &&
+           cpu.height==selected.engine->output_height &&
+           cpu.pitch==(size_t)cpu.width*sizeof(uint32_t) &&
+           !memcmp(cpu.pixels,selected.engine->screen,(size_t)cpu.pitch*cpu.height);
+  if(matching){
+    unsigned sample=scale_direction>0?24u:scale_direction==0?6u:12u;
+    uint32_t colour=((const uint32_t *)cpu.pixels)[(size_t)sample*cpu.width+sample]&0xFFFFFFu;
+    matching=colour!=0x0000FFu && colour!=0xFFFFFFu;
+  }
+  if(!matching && cpu.pixels && selected.engine->screen && cpu.width==gpu.width &&
+     cpu.height==gpu.height){
+    const uint32_t *a=cpu.pixels,*b=selected.engine->screen;
+    for(size_t index=0;index<(size_t)cpu.width*cpu.height;index++) if(a[index]!=b[index]){
+      fprintf(stderr,"GUI %s first mismatch %zu,%zu: %08x != %08x; "
+              "gui=%dx%d output=%ux%u clear=%llu\n",
+              scale_direction>0?"upscale":scale_direction==0?"reduce":"direct",
+              index%cpu.width,index/cpu.width,a[index],b[index],
+              selected.engine->gui_space_width,selected.engine->gui_space_height,
+              gpu.width,gpu.height,
+              (unsigned long long)counters.scene_operations[GML_RENDER_OP_CLEAR]);
+      break;
+    }
+  }
+  for(int replay=0;matching && replay<2;replay++){
+    if(replay) anygm_graphics_context_destroy(selected.engine,1u);
+    memset(&cpu,0,sizeof cpu); cpu.struct_size=sizeof cpu;
+    memset(&gpu,0,sizeof gpu); gpu.struct_size=sizeof gpu;
+    matching=anygm_run_frame(plain.engine,&input,&cpu)==ANYGM_OK &&
+             anygm_run_frame(selected.engine,&input,&gpu)==ANYGM_OK &&
+             cpu.pixels && selected.engine->screen &&
+             cpu.width==selected.engine->output_width &&
+             cpu.height==selected.engine->output_height &&
+             cpu.pitch==(size_t)cpu.width*sizeof(uint32_t) &&
+             !memcmp(cpu.pixels,selected.engine->screen,(size_t)cpu.pitch*cpu.height);
+  }
+  session_close(&selected);
+  session_close(&plain);
+  REQUIRE(matching,"GUI CPU and resident output pixels agree");
+  return 1;
+}
+
+static int resident_indirect_gui_case(void){
+  return resident_indirect_gui_variant(
+           anygm_synthetic_indirect_gui_upscale_content_create,1) &&
+         resident_indirect_gui_variant(
+           anygm_synthetic_indirect_gui_reduce_content_create,0) &&
+         resident_indirect_gui_variant(
+           anygm_synthetic_direct_gui_sprite_content_create,-1);
+}
+
+static int resident_indirect_gui_alpha_fallback_case(void){
+  Session plain={0},selected={0};
+  AnygmInputFrame input={0};
+  AnygmFrameOutput cpu={0},gpu={0};
+  GmlGpuCounters counters={0};
+  int matching;
+  anygm_test_graphics_reset();
+  REQUIRE(session_open_fixture_with_scene(
+            &plain,ANYGM_SCENE_RENDERER_CPU,
+            anygm_synthetic_indirect_gui_alpha_content_create),
+          "partial-alpha GUI CPU fixture loads");
+  REQUIRE(session_open_fixture_with_scene(
+            &selected,ANYGM_SCENE_RENDERER_OPENGL,
+            anygm_synthetic_indirect_gui_alpha_content_create),
+          "partial-alpha GUI scene fixture loads");
+  REQUIRE(graphics_adopt(selected.engine,ANYGM_GRAPHICS_OPENGLES3)==ANYGM_OK,
+          "partial-alpha GUI context adopted");
+  input.struct_size=sizeof input;
+  input.pointer_x=input.pointer_y=-1;
+  cpu.struct_size=gpu.struct_size=sizeof cpu;
+  REQUIRE(anygm_run_frame(plain.engine,&input,&cpu)==ANYGM_OK &&
+          anygm_run_frame(selected.engine,&input,&gpu)==ANYGM_OK,
+          "partial-alpha GUI CPU and scene frames complete");
+  gml_gpu_counters(selected.engine->gpu,&counters);
+  if(selected.engine->gui_space_width!=128 ||
+     selected.engine->output_width!=64 ||
+     counters.scene_operations[GML_RENDER_OP_TEXTURED_QUAD]!=0u)
+    fprintf(stderr,"partial-alpha GUI geometry=%dx%d output=%ux%u scale=%.2f,%.2f "
+            "clear=%llu texture=%llu\n",
+            selected.engine->gui_space_width,selected.engine->gui_space_height,
+            selected.engine->output_width,selected.engine->output_height,
+            selected.engine->render.gui_scale_x,selected.engine->render.gui_scale_y,
+            (unsigned long long)counters.scene_operations[GML_RENDER_OP_CLEAR],
+            (unsigned long long)counters.scene_operations[GML_RENDER_OP_TEXTURED_QUAD]);
+  REQUIRE(selected.engine->gui_space_width==128 &&
+          selected.engine->output_width==64 &&
+          selected.engine->render.base_scene_resource_pixels==selected.engine->gui_buffer &&
+          counters.scene_operations[GML_RENDER_OP_CLEAR]>0u &&
+          counters.scene_operations[GML_RENDER_OP_TEXTURED_QUAD]==0u,
+          "partial-alpha GUI sprite retains the CPU fallback after a GPU clear");
+  matching=cpu.pixels && selected.engine->screen &&
+           cpu.width==selected.engine->output_width &&
+           cpu.height==selected.engine->output_height &&
+           cpu.pitch==(size_t)cpu.width*sizeof(uint32_t) &&
+           !memcmp(cpu.pixels,selected.engine->screen,(size_t)cpu.pitch*cpu.height);
+  if(matching){
+    uint32_t colour=((const uint32_t *)cpu.pixels)[6u*cpu.width+6u]&0xFFFFFFu;
+    matching=colour!=0x0000FFu && colour!=0xFFFFFFu;
+  }
+  session_close(&selected);
+  session_close(&plain);
+  REQUIRE(matching,"partial-alpha GUI CPU suffix preserves complete output pixels");
   return 1;
 }
 
@@ -889,6 +1060,9 @@ static int texture_filter_state_case(void){
 int main(void){
   static const struct { const char *name; int (*run)(void); } cases[]={
     {"resident world selection retains CPU state",resident_world_selection_case},
+    {"resident GUI preserves direct and scaled CPU output",resident_indirect_gui_case},
+    {"partial-alpha indirect GUI keeps ordered CPU fallback",
+     resident_indirect_gui_alpha_fallback_case},
     {"texture filters and GPU stack restore",texture_filter_state_case},
     {"state bytes match with and without a target",state_bytes_match_case},
     {"save, load and save again produce the same bytes",save_load_save_case},

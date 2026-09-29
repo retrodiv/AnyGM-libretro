@@ -103,6 +103,18 @@ const uint8_t *runtime_frame_rgba(GmlSprite *s, int frame){
  * visible crop, not its texels. Binary-alpha crops use endpoint source-over; ordinary sprites
  * with filtered scaling, fractional scale, intermediate alpha or programs keep the CPU blit.
  * The separate TEXT family admits unit-scale intermediate source alpha with a checkpoint. */
+static int resident_identity_screen_gui(const GmlRender *r){
+  return r && r->gui_pass_active && r->base_scene_resource &&
+         r->fb==r->base_scene_resource_pixels &&
+         r->fbw==r->base_scene_resource_width &&
+         r->fbh==r->base_scene_resource_height &&
+         r->gui_base_logical_w==r->fbw && r->gui_base_logical_h==r->fbh &&
+         r->gui_logical_w==r->fbw && r->gui_logical_h==r->fbh &&
+         r->gui_scale_x==1.0 && r->gui_scale_y==1.0 &&
+         !r->gui_maximise_active &&
+         r->gui_maximise_xoffset==0.0 && r->gui_maximise_yoffset==0.0 &&
+         r->cam_x==0.0 && r->cam_y==0.0;
+}
 static int resident_integer_sprite(GmlRender *r,GmlSprite *sprite,int subimg,
                                   double x,double y,double xs,double ys,double rotation,
                                   uint32_t blend,double alpha){
@@ -114,7 +126,7 @@ static int resident_integer_sprite(GmlRender *r,GmlSprite *sprite,int subimg,
      sprite->w<=0 || sprite->h<=0 ||
      r->classic || (r->world_transform_active &&
                     (r->world_scale_x!=1.0 || r->world_scale_y!=1.0)) ||
-     r->gui_pass_active ||
+     (r->gui_pass_active && !resident_identity_screen_gui(r)) ||
      r->active_shader>=0 || r->alpha_test_enable || !r->alphablend ||
      r->blendmode || r->blend_equation!=1 || r->blend_equation_alpha!=1 ||
      r->color_write_mask!=0x0Fu || r->classic_phase_y ||
@@ -176,7 +188,9 @@ static int resident_atlas_crop_from_page(GmlRender *r,GmlTpag *page,
   if(!r || !page || !r->resident_application_pass ||
      r->classic || (r->world_transform_active &&
                     (r->world_scale_x!=1.0 || r->world_scale_y!=1.0)) ||
-     r->gui_pass_active || r->active_shader>=0 || r->alpha_test_enable ||
+     (r->gui_pass_active &&
+      (family!=GML_RENDER_SCENE_SPRITE || !resident_identity_screen_gui(r))) ||
+     r->active_shader>=0 || r->alpha_test_enable ||
      !r->alphablend || r->blendmode || r->blend_equation!=1 ||
      r->blend_equation_alpha!=1 || r->color_write_mask!=0x0Fu ||
      r->classic_phase_y || r->rotated_batch_count || r->rotated_batch_building ||

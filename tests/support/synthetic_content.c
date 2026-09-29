@@ -1344,7 +1344,13 @@ static int synthetic_window_gui_content_create(AnygmSyntheticContent *fixture,in
   snprintf(gui,sizeof gui,"%s/window-gui.gml",fixture->directory);
   snprintf(draw,sizeof draw,"%s/window-draw.gml",fixture->directory);
   snprintf(fixture->path,sizeof fixture->path,"%s/data.win",fixture->directory);
-  if(!write_text(create,explicit_gui_size==2?
+  if(!write_text(create,explicit_gui_size==4 || explicit_gui_size==5?
+      "window_set_size(64,48);\n"
+      "display_set_gui_size(128,96);\n"
+      "application_surface_draw_enable(false);\n":explicit_gui_size==3?
+      "window_set_size(128,96);\n":explicit_gui_size==6?
+      "window_set_size(64,48);\n"
+      "application_surface_draw_enable(false);\n":explicit_gui_size==2?
       "window_set_size(64,48);\n"
       "surface_resize(application_surface,64,48);\n"
       "canvas=surface_create(64,48);\n"
@@ -1355,7 +1361,16 @@ static int synthetic_window_gui_content_create(AnygmSyntheticContent *fixture,in
       "window_set_size(320,180);\n"
       "surface_resize(application_surface,64,48);\n"
       "application_surface_draw_enable(false);\n") ||
-     !write_text(gui,explicit_gui_size==2?
+     !write_text(gui,explicit_gui_size==5?
+      "draw_clear(c_blue);\n"
+      "draw_set_alpha(0.5);\n"
+      "draw_sprite(spr_fixture,0,12,12);\n"
+      "draw_set_alpha(1);\n"
+      "draw_set_color(c_white); draw_rectangle(8,6,11,9,false);\n":
+      explicit_gui_size==3 || explicit_gui_size==4 || explicit_gui_size==6?
+      "draw_clear(c_blue);\n"
+      "draw_sprite(spr_fixture,0,12,12);\n"
+      "draw_set_color(c_white); draw_rectangle(8,6,11,9,false);\n":explicit_gui_size==2?
       "display_set_gui_size(64,48); draw_clear(c_black);\n"
       "draw_surface(canvas,0,0);\n":explicit_gui_size?
       "var w = window_get_width(); var h = window_get_height();\n"
@@ -1379,10 +1394,37 @@ static int synthetic_window_gui_content_create(AnygmSyntheticContent *fixture,in
   anygm_stdio_vfs_services_init(&services);
   GmlcProject project={0}; GmlcObject object={0}; GmlcObjectEvent events[3]={0};
   GmlcRoom room={0}; GmlcRoomInstance instance={0}; int order=0;
+  GmlcSprite sprite={0}; char *sprite_frame=NULL;
   project.host=&services; project.name=(char *)"neutral-window-gui";
   project.objects=&object; project.n_objects=project.cap_objects=1;
   project.rooms=&room; project.n_rooms=project.cap_rooms=1;
   project.room_order=&order; project.n_room_order=1;
+  if(explicit_gui_size==3 || explicit_gui_size==4 || explicit_gui_size==5 ||
+     explicit_gui_size==6){
+    uint8_t pixels[8u*8u*4u];
+    for(int y=0;y<8;y++) for(int x=0;x<8;x++){
+      size_t pixel=((size_t)y*8u+(size_t)x)*4u;
+      pixels[pixel]=(uint8_t)(32+x*16);
+      pixels[pixel+1u]=(uint8_t)(48+y*12);
+      pixels[pixel+2u]=192u;
+      pixels[pixel+3u]=255u;
+    }
+    sprite_frame=gmlc_project_add_memory_file(&project,"sprite",GMLC_MEMORY_RGBA,
+                                                pixels,sizeof pixels,8,8);
+    if(!sprite_frame){
+      free(project.memory_files);
+      anygm_synthetic_content_destroy(fixture);
+      return 0;
+    }
+    sprite.id=sprite.name=(char *)"spr_fixture";
+    sprite.runtime_id=0;
+    sprite.width=sprite.height=8;
+    sprite.bbox_right=sprite.bbox_bottom=7;
+    sprite.n_frames=1;
+    sprite.frame_paths=&sprite_frame;
+    project.sprites=&sprite;
+    project.n_sprites=project.cap_sprites=1;
+  }
   object.id=object.name=(char *)"obj_fixture";
   object.sprite_id=object.mask_id=object.parent_id=-1; object.visible=1;
   object.events=events; object.n_events=object.cap_events=2;
@@ -1406,7 +1448,11 @@ static int synthetic_window_gui_content_create(AnygmSyntheticContent *fixture,in
   instance.id=instance.name=(char *)"instance_fixture"; instance.object_id=0;
   instance.instance_id=100000; instance.sx=instance.sy=1; instance.color=0xFFFFFFFFu;
   char error[256]={0};
-  if(!gmlc_package_write_structural(&project,fixture->path,error,sizeof error)){
+  int written=gmlc_package_write_structural(&project,fixture->path,error,sizeof error);
+  for(int index=0;index<project.n_memory_files;index++) free(project.memory_files[index].data);
+  free(project.memory_files);
+  free(sprite_frame);
+  if(!written){
     fprintf(stderr,"window-GUI fixture: %s\n",error);
     anygm_synthetic_content_destroy(fixture); return 0;
   }
@@ -1419,6 +1465,22 @@ int anygm_synthetic_window_gui_content_create(AnygmSyntheticContent *fixture){
 
 int anygm_synthetic_window_gui_size_content_create(AnygmSyntheticContent *fixture){
   return synthetic_window_gui_content_create(fixture,1);
+}
+
+int anygm_synthetic_indirect_gui_upscale_content_create(AnygmSyntheticContent *fixture){
+  return synthetic_window_gui_content_create(fixture,3);
+}
+
+int anygm_synthetic_indirect_gui_reduce_content_create(AnygmSyntheticContent *fixture){
+  return synthetic_window_gui_content_create(fixture,4);
+}
+
+int anygm_synthetic_indirect_gui_alpha_content_create(AnygmSyntheticContent *fixture){
+  return synthetic_window_gui_content_create(fixture,5);
+}
+
+int anygm_synthetic_direct_gui_sprite_content_create(AnygmSyntheticContent *fixture){
+  return synthetic_window_gui_content_create(fixture,6);
 }
 
 int anygm_synthetic_surface_canvas_content_create(AnygmSyntheticContent *fixture){

@@ -1725,9 +1725,12 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
 			                        ? 0.0 : -(double)engine->gui_offset_x;
 			    double screen_cam_y=(engine->aspect_force_active || aspect_gui_center)
 			                        ? 0.0 : -(double)engine->gui_offset_y;
+			    /* The indirect GUI is a separate physical SCREEN target. Its existing
+			     * CPU barrier below makes the scaled source visible before the unchanged
+			     * nearest/box composition into the output raster. */
 			    if(!engine->composed_frame && !engine->aspect_force_active &&
-			       !aspect_gui_center && !gui_indirect &&
-			       !render_presentation.application_draw_enabled &&
+			       !aspect_gui_center &&
+			       (gui_indirect || !render_presentation.application_draw_enabled) &&
 			       engine_graphics_active(engine) &&
 			       (engine->scene_renderer_session==ANYGM_SCENE_RENDERER_OPENGL ||
 			        anygm_host_development_setting(&engine->host,"GML_SCENE_GPU_PROTOTYPE")))

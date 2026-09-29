@@ -28,14 +28,23 @@ static uint64_t frame_digest(const AnygmFrameOutput *output){
 int main(int argc,char **argv){
   AnygmSyntheticContent fixture={0};
   int dense=argc==2 && (!strcmp(argv[1],"--keep-dense") || !strcmp(argv[1],"--dense"));
-  if(!(dense?anygm_synthetic_gpu_dense_scene_route_content_create(&fixture):
-              anygm_synthetic_gpu_scene_route_content_create(&fixture))) return 1;
+  int gui_up=argc==2 && !strcmp(argv[1],"--keep-gui-upscale");
+  int gui_reduce=argc==2 && !strcmp(argv[1],"--keep-gui-reduce");
+  if(!(gui_up?anygm_synthetic_indirect_gui_upscale_content_create(&fixture):
+       gui_reduce?anygm_synthetic_indirect_gui_reduce_content_create(&fixture):
+       dense?anygm_synthetic_gpu_dense_scene_route_content_create(&fixture):
+             anygm_synthetic_gpu_scene_route_content_create(&fixture))) return 1;
+  if(gui_up || gui_reduce){
+    puts(fixture.path);
+    return 0;
+  }
   if(argc==2 && (!strcmp(argv[1],"--keep") || !strcmp(argv[1],"--keep-dense"))){
     puts(fixture.path);
     return 0;
   }
   if(argc!=1 && !(argc==2 && dense)){
-    fputs("usage: test_gpu_scene_route [--dense|--keep|--keep-dense]\n",stderr);
+    fputs("usage: test_gpu_scene_route [--dense|--keep|--keep-dense|"
+          "--keep-gui-upscale|--keep-gui-reduce]\n",stderr);
     anygm_synthetic_content_destroy(&fixture);
     return 1;
   }
