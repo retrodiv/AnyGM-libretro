@@ -1570,7 +1570,7 @@ static int synthetic_framebuffer_content_create(
   int classic_redraw=gpu_sprite==14;
   int classic_transition=gpu_sprite==15;
   int cursor_frame=gpu_sprite==16;
-  int moving_sound=gpu_sprite==17;
+  int moving_sound=gpu_sprite==17 || gpu_sprite==18;
   char create[192],step[192],draw[192],draw_begin[192],draw_gui[192];
   snprintf(create,sizeof create,"%s/retain-create.gml",fixture->directory);
   snprintf(step,sizeof step,"%s/retain-step.gml",fixture->directory);
@@ -1791,8 +1791,10 @@ static int synthetic_framebuffer_content_create(
   }
 
   rooms[0].id=rooms[0].name=(char *)"room_painted";
-  rooms[0].width=gpu_sprite==10?64:gpu_sprite==11?400:gpu_sprite==12?128:64;
-  rooms[0].height=gpu_sprite==10?32:gpu_sprite==11?300:gpu_sprite==12?96:48;
+  rooms[0].width=gpu_sprite==10?64:gpu_sprite==11?400:gpu_sprite==12?128:
+                 gpu_sprite==18?1920:64;
+  rooms[0].height=gpu_sprite==10?32:gpu_sprite==11?300:gpu_sprite==12?96:
+                  gpu_sprite==18?1080:48;
   rooms[0].speed=60;
   rooms[0].background_color=0xFF336699u;
   rooms[0].draw_background_color=assigned_view_surface?0:1;
@@ -1852,6 +1854,10 @@ int anygm_synthetic_framebuffer_content_create(AnygmSyntheticContent *fixture){
 
 int anygm_synthetic_moving_sound_content_create(AnygmSyntheticContent *fixture){
   return synthetic_framebuffer_content_create(fixture,0,0,0,17);
+}
+
+int anygm_synthetic_large_moving_sound_content_create(AnygmSyntheticContent *fixture){
+  return synthetic_framebuffer_content_create(fixture,0,0,0,18);
 }
 
 int anygm_synthetic_multiview_framebuffer_content_create(AnygmSyntheticContent *fixture){

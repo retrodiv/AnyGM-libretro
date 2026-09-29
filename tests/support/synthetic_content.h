@@ -43,6 +43,8 @@ int anygm_synthetic_surface_canvas_content_create(AnygmSyntheticContent *fixture
 int anygm_synthetic_background_color_content_create(AnygmSyntheticContent *fixture);
 int anygm_synthetic_framebuffer_content_create(AnygmSyntheticContent *fixture);
 int anygm_synthetic_moving_sound_content_create(AnygmSyntheticContent *fixture);
+/* The same moving image/audio route at a large authored raster for frontend capacity growth. */
+int anygm_synthetic_large_moving_sound_content_create(AnygmSyntheticContent *fixture);
 int anygm_synthetic_multiview_framebuffer_content_create(AnygmSyntheticContent *fixture);
 int anygm_synthetic_multiview_gpu_content_create(AnygmSyntheticContent *fixture);
 int anygm_synthetic_multiview_offset_gpu_content_create(AnygmSyntheticContent *fixture);

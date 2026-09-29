@@ -46,7 +46,9 @@ int main(int argc,char **argv){
   int cursor_frame=argc==2 && !strcmp(argv[1],"--keep-cursor-frame");
   int classic_redraw=argc==2 && !strcmp(argv[1],"--keep-classic-redraw");
   int classic_transition=argc==2 && !strcmp(argv[1],"--keep-classic-transition");
-  if(!(gui_up?anygm_synthetic_indirect_gui_upscale_content_create(&fixture):
+  int large_moving_sound=argc==2 && !strcmp(argv[1],"--keep-large-moving-sound");
+  if(!(large_moving_sound?anygm_synthetic_large_moving_sound_content_create(&fixture):
+       gui_up?anygm_synthetic_indirect_gui_upscale_content_create(&fixture):
        gui_reduce?anygm_synthetic_indirect_gui_reduce_content_create(&fixture):
        ended_frame?anygm_synthetic_ended_frame_content_create(&fixture):
        cursor_frame?anygm_synthetic_cursor_frame_content_create(&fixture):
@@ -70,7 +72,7 @@ int main(int argc,char **argv){
      multiview_fractional || multiview_step || multiview_nested || multiview_assigned ||
      canvas_geometry || window_raster || centered_gui ||
      crt_native || crt_scaled || host_box || ended_frame || cursor_frame ||
-     classic_redraw || classic_transition){
+     classic_redraw || classic_transition || large_moving_sound){
     puts(fixture.path);
     return 0;
   }
@@ -87,7 +89,8 @@ int main(int argc,char **argv){
           "--keep-window-raster|--keep-centered-gui|--keep-crt-native|"
           "--keep-crt-scaled|--keep-host-box|--keep-ended-frame|"
           "--keep-cursor-frame|"
-          "--keep-classic-redraw|--keep-classic-transition]\n",stderr);
+          "--keep-classic-redraw|--keep-classic-transition|"
+          "--keep-large-moving-sound]\n",stderr);
     anygm_synthetic_content_destroy(&fixture);
     return 1;
   }
