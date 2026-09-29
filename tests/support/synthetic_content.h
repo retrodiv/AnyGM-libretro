@@ -61,6 +61,7 @@ int anygm_synthetic_host_box_content_create(AnygmSyntheticContent *fixture);
 int anygm_synthetic_ended_frame_content_create(AnygmSyntheticContent *fixture);
 int anygm_synthetic_cursor_frame_content_create(AnygmSyntheticContent *fixture);
 int anygm_synthetic_classic_redraw_content_create(AnygmSyntheticContent *fixture);
+int anygm_synthetic_classic_viewless_draw_content_create(AnygmSyntheticContent *fixture);
 int anygm_synthetic_classic_transition_content_create(AnygmSyntheticContent *fixture);
 int anygm_synthetic_clear_view_content_create(AnygmSyntheticContent *fixture);
 int anygm_synthetic_multiview_clear_view_content_create(AnygmSyntheticContent *fixture);

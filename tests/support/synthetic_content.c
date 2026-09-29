@@ -1642,6 +1642,10 @@ static int synthetic_framebuffer_content_create(
        classic_redraw?
        "global.fixture_seen += 1;\n"
        "draw_sprite(spr_fixture,0,8,12);\n":
+       gpu_sprite==19?
+       "draw_sprite(spr_fixture,0,48,16);\n"
+       "draw_set_color(c_white); draw_text(8,30,\"GPU\");\n"
+       "draw_set_color(c_red); draw_rectangle(8,12,20,24,false);\n":
        gpu_sprite==4?
        "if (view_current == 0) draw_sprite_ext(spr_fixture,0,8,12,0.7,0.7,0,c_white,1);\n"
        "else draw_sprite_ext(spr_fixture,0,48,16,0.7,0.7,0,c_white,1);\n":
@@ -1755,7 +1759,7 @@ static int synthetic_framebuffer_content_create(
     project.n_sounds=project.cap_sounds=1;
   }
   if(classic){
-    project.classic_version=800;
+    project.classic_version=gpu_sprite==19?530:800;
     /* Distinct from both room colors so a cleared classic frame cannot be mistaken for a
      * retained one or for the room the fixture painted first. */
     project.classic_outside_color=0x00204060u;
@@ -1922,6 +1926,10 @@ int anygm_synthetic_cursor_frame_content_create(AnygmSyntheticContent *fixture){
 
 int anygm_synthetic_classic_redraw_content_create(AnygmSyntheticContent *fixture){
   return synthetic_framebuffer_content_create(fixture,0,0,1,14);
+}
+
+int anygm_synthetic_classic_viewless_draw_content_create(AnygmSyntheticContent *fixture){
+  return synthetic_framebuffer_content_create(fixture,0,0,1,19);
 }
 
 int anygm_synthetic_classic_transition_content_create(AnygmSyntheticContent *fixture){

@@ -208,6 +208,62 @@ static int resident_world_selection_case(void){
   return 1;
 }
 
+static int classic_viewless_application_scene_case(void){
+  Session plain={0},selected={0};
+  AnygmInputFrame input={0};
+  AnygmFrameOutput cpu={0},gpu={0};
+  GmlGpuCounters counters={0};
+  GmlRenderPresentationMetrics metrics={0};
+  int matching=1;
+  anygm_test_graphics_reset();
+  REQUIRE(session_open_fixture_with_scene(
+            &plain,ANYGM_SCENE_RENDERER_CPU,
+            anygm_synthetic_classic_viewless_draw_content_create),
+          "viewless classic CPU fixture loads");
+  REQUIRE(session_open_fixture_with_scene(
+            &selected,ANYGM_SCENE_RENDERER_OPENGL,
+            anygm_synthetic_classic_viewless_draw_content_create),
+          "viewless classic GPU fixture loads");
+  REQUIRE(graphics_adopt(selected.engine,ANYGM_GRAPHICS_OPENGLES3)==ANYGM_OK,
+          "viewless classic GPU context adopts");
+  input.struct_size=sizeof input;
+  input.pointer_x=input.pointer_y=-1;
+  for(int frame=0;frame<2 && matching;frame++){
+    cpu.struct_size=gpu.struct_size=sizeof cpu;
+    matching=anygm_run_frame(plain.engine,&input,&cpu)==ANYGM_OK &&
+             anygm_run_frame(selected.engine,&input,&gpu)==ANYGM_OK &&
+             cpu.pixels && gpu.width==cpu.width && gpu.height==cpu.height &&
+             selected.engine->screen;
+    if(matching)
+      matching=!memcmp(cpu.pixels,selected.engine->screen,
+                       (size_t)cpu.width*cpu.height*sizeof(uint32_t));
+  }
+  gml_render_presentation_metrics(&selected.engine->render,&metrics);
+  gml_gpu_counters(selected.engine->gpu,&counters);
+  if(!matching || counters.scene_families[GML_RENDER_SCENE_SPRITE]==0u ||
+     counters.scene_families[GML_RENDER_SCENE_TEXT]==0u)
+    fprintf(stderr,"viewless classic: owned=%d draw=%d scene=%llu/%llu sprite=%llu text=%llu "
+                   "transport=%u matching=%d classic=%d tpag=%d sprites=%d runtime_rgba=%d "
+                   "sample=%08x\n",
+            metrics.application_owned,metrics.application_draw_enabled,
+            (unsigned long long)counters.scene_batches_offered,
+            (unsigned long long)counters.scene_batches_accepted,
+            (unsigned long long)counters.scene_families[GML_RENDER_SCENE_SPRITE],
+            (unsigned long long)counters.scene_families[GML_RENDER_SCENE_TEXT],
+            counters.cpu_upload_frames,matching,selected.engine->render.classic,
+            selected.engine->render.n_tpag,selected.engine->render.n_spr,
+            selected.engine->render.n_spr?selected.engine->render.spr[0].runtime_rgba!=NULL:0,
+            cpu.pixels?((const uint32_t*)cpu.pixels)[17u*cpu.width+49u]:0u);
+  matching=matching && metrics.application_owned && metrics.application_draw_enabled &&
+           counters.scene_families[GML_RENDER_SCENE_SPRITE]>0u &&
+           counters.scene_families[GML_RENDER_SCENE_TEXT]>0u &&
+           counters.scene_families[GML_RENDER_SCENE_PRIMITIVE]==0u &&
+           counters.scene_batches_accepted>0u && counters.scene_batches_refused==0u;
+  session_close(&selected); session_close(&plain);
+  REQUIRE(matching,"viewless classic application target accepts Draw scene work with CPU pixels");
+  return 1;
+}
+
 /* The target can be discarded between two frontend calls even after the runtime has ended.
  * Replaying the final frame then needs the completed CPU picture, not a stale screen buffer. */
 static int ended_frame_retention_variant(int lose_context){
@@ -2306,6 +2362,8 @@ static int texture_filter_state_case(void){
 int main(void){
   static const struct { const char *name; int (*run)(void); } cases[]={
     {"resident world selection retains CPU state",resident_world_selection_case},
+    {"viewless classic application accepts Draw scene work",
+     classic_viewless_application_scene_case},
     {"ended resident frame remains visible and canonical",ended_frame_retention_case},
     {"authored cursor preserves a resident completed frame",resident_cursor_frame_case},
     {"transition snapshot reads a resident completed frame",resident_transition_snapshot_case},

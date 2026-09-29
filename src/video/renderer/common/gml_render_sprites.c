@@ -124,7 +124,9 @@ static int resident_integer_sprite(GmlRender *r,GmlSprite *sprite,int subimg,
   if(!r || !r->resident_application_pass || !sprite || sprite->runtime_rgba ||
      sprite->spine || sprite->ns_enabled || sprite->n_frames<=0 ||
      sprite->w<=0 || sprite->h<=0 ||
-     r->classic || (r->world_transform_active &&
+     (r->classic && (anygm_policy_classic_modern_presentation(r->win) ||
+                     r->interp || xs!=1.0 || ys!=1.0)) ||
+     (r->world_transform_active &&
                     (r->world_scale_x!=1.0 || r->world_scale_y!=1.0)) ||
      (r->gui_pass_active && !resident_identity_screen_gui(r)) ||
      r->active_shader>=0 || r->alpha_test_enable || !r->alphablend ||
@@ -186,7 +188,11 @@ static int resident_atlas_crop_from_page(GmlRender *r,GmlTpag *page,
   /* R03-TEXT-PACKAGED-PARTIAL-ALPHA: the shared glyph crop keeps the CPU
    * source-over policy's target-alpha boundary and checkpoints the GPU result. */
   if(!r || !page || !r->resident_application_pass ||
-     r->classic || (r->world_transform_active &&
+     (r->classic && ((family!=GML_RENDER_SCENE_SPRITE &&
+                      family!=GML_RENDER_SCENE_TEXT) ||
+                     anygm_policy_classic_modern_presentation(r->win) ||
+                     r->interp || xs!=1.0 || ys!=1.0)) ||
+     (r->world_transform_active &&
                     (r->world_scale_x!=1.0 || r->world_scale_y!=1.0)) ||
      (r->gui_pass_active &&
       (family!=GML_RENDER_SCENE_SPRITE || !resident_identity_screen_gui(r))) ||
@@ -223,6 +229,11 @@ static int resident_atlas_crop_from_page(GmlRender *r,GmlTpag *page,
      (uint64_t)(uint32_t)page->sx+(uint32_t)page->sw>source.width ||
      (uint64_t)(uint32_t)page->sy+(uint32_t)page->sh>source.height) return 0;
   resident_classify_page(page,atlas);
+  /* Early classic keeps its distinct partial-alpha coverage on CPU. Only opaque sprites and
+   * binary glyph cells share the exact nearest device rule. */
+  if(r->classic &&
+     ((family==GML_RENDER_SCENE_SPRITE && !page->scene_fully_opaque) ||
+      (family==GML_RENDER_SCENE_TEXT && !page->scene_binary_alpha))) return 0;
   colour&=0xFFFFFFu;
   if(colour!=0xFFFFFFu &&
      (family!=GML_RENDER_SCENE_TEXT || !page->scene_binary_alpha)) return 0;

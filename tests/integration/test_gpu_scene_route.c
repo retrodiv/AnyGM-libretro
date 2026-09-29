@@ -45,6 +45,7 @@ int main(int argc,char **argv){
   int ended_frame=argc==2 && !strcmp(argv[1],"--keep-ended-frame");
   int cursor_frame=argc==2 && !strcmp(argv[1],"--keep-cursor-frame");
   int classic_redraw=argc==2 && !strcmp(argv[1],"--keep-classic-redraw");
+  int classic_viewless=argc==2 && !strcmp(argv[1],"--keep-classic-viewless");
   int classic_transition=argc==2 && !strcmp(argv[1],"--keep-classic-transition");
   int large_moving_sound=argc==2 && !strcmp(argv[1],"--keep-large-moving-sound");
   if(!(large_moving_sound?anygm_synthetic_large_moving_sound_content_create(&fixture):
@@ -53,6 +54,7 @@ int main(int argc,char **argv){
        ended_frame?anygm_synthetic_ended_frame_content_create(&fixture):
        cursor_frame?anygm_synthetic_cursor_frame_content_create(&fixture):
        classic_redraw?anygm_synthetic_classic_redraw_content_create(&fixture):
+       classic_viewless?anygm_synthetic_classic_viewless_draw_content_create(&fixture):
        classic_transition?anygm_synthetic_classic_transition_content_create(&fixture):
        crt_native?anygm_synthetic_crt_native_content_create(&fixture):
        crt_scaled?anygm_synthetic_crt_scaled_content_create(&fixture):
@@ -72,7 +74,7 @@ int main(int argc,char **argv){
      multiview_fractional || multiview_step || multiview_nested || multiview_assigned ||
      canvas_geometry || window_raster || centered_gui ||
      crt_native || crt_scaled || host_box || ended_frame || cursor_frame ||
-     classic_redraw || classic_transition || large_moving_sound){
+     classic_redraw || classic_viewless || classic_transition || large_moving_sound){
     puts(fixture.path);
     return 0;
   }
@@ -89,7 +91,7 @@ int main(int argc,char **argv){
           "--keep-window-raster|--keep-centered-gui|--keep-crt-native|"
           "--keep-crt-scaled|--keep-host-box|--keep-ended-frame|"
           "--keep-cursor-frame|"
-          "--keep-classic-redraw|--keep-classic-transition|"
+          "--keep-classic-redraw|--keep-classic-viewless|--keep-classic-transition|"
           "--keep-large-moving-sound]\n",stderr);
     anygm_synthetic_content_destroy(&fixture);
     return 1;

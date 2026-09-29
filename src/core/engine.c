@@ -1403,6 +1403,20 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
      gml_render_application_surface_ensure_owned(
        &engine->render,(int)engine->width,(int)engine->height))
     gml_render_presentation_metrics(&engine->render,&render_presentation);
+  /* An early-classic, viewless, exact-size application target can keep Draw on the same resident
+   * resource as a sole full view. Later classic temporal presentation retains its CPU policy. */
+  if(!render_presentation.application_owned && frame_view_count==0 &&
+     render_presentation.application_draw_enabled && app_surface_is_draw_target &&
+     anygm_policy_uses_classic_runtime(&engine->win) &&
+     !anygm_policy_classic_modern_presentation(&engine->win) &&
+     render_presentation.application_width==(int)engine->width &&
+     render_presentation.application_height==(int)engine->height &&
+     !engine->composed_frame && !engine->aspect_force_active &&
+     engine_graphics_active(engine) &&
+     engine->scene_renderer_session==ANYGM_SCENE_RENDERER_OPENGL &&
+     gml_render_application_surface_ensure_owned(
+       &engine->render,(int)engine->width,(int)engine->height))
+    gml_render_presentation_metrics(&engine->render,&render_presentation);
   GmlRenderSamplePlanes sample_planes={0};
   gml_render_sample_planes_update(
     &engine->render,&sample_planes,GML_RENDER_SAMPLE_PLANES_APPLICATION);
