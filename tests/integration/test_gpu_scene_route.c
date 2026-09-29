@@ -43,11 +43,13 @@ int main(int argc,char **argv){
   int crt_scaled=argc==2 && !strcmp(argv[1],"--keep-crt-scaled");
   int host_box=argc==2 && !strcmp(argv[1],"--keep-host-box");
   int ended_frame=argc==2 && !strcmp(argv[1],"--keep-ended-frame");
+  int cursor_frame=argc==2 && !strcmp(argv[1],"--keep-cursor-frame");
   int classic_redraw=argc==2 && !strcmp(argv[1],"--keep-classic-redraw");
   int classic_transition=argc==2 && !strcmp(argv[1],"--keep-classic-transition");
   if(!(gui_up?anygm_synthetic_indirect_gui_upscale_content_create(&fixture):
        gui_reduce?anygm_synthetic_indirect_gui_reduce_content_create(&fixture):
        ended_frame?anygm_synthetic_ended_frame_content_create(&fixture):
+       cursor_frame?anygm_synthetic_cursor_frame_content_create(&fixture):
        classic_redraw?anygm_synthetic_classic_redraw_content_create(&fixture):
        classic_transition?anygm_synthetic_classic_transition_content_create(&fixture):
        crt_native?anygm_synthetic_crt_native_content_create(&fixture):
@@ -67,7 +69,7 @@ int main(int argc,char **argv){
   if(gui_up || gui_reduce || multiview || multiview_offset ||
      multiview_fractional || multiview_step || multiview_nested || multiview_assigned ||
      canvas_geometry || window_raster || centered_gui ||
-     crt_native || crt_scaled || host_box || ended_frame ||
+     crt_native || crt_scaled || host_box || ended_frame || cursor_frame ||
      classic_redraw || classic_transition){
     puts(fixture.path);
     return 0;
@@ -84,6 +86,7 @@ int main(int argc,char **argv){
           "--keep-multiview-assigned-surface|--keep-canvas-geometry|"
           "--keep-window-raster|--keep-centered-gui|--keep-crt-native|"
           "--keep-crt-scaled|--keep-host-box|--keep-ended-frame|"
+          "--keep-cursor-frame|"
           "--keep-classic-redraw|--keep-classic-transition]\n",stderr);
     anygm_synthetic_content_destroy(&fixture);
     return 1;

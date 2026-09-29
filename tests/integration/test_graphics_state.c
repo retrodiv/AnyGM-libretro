@@ -218,6 +218,71 @@ static int ended_frame_retention_case(void){
   return ended_frame_retention_variant(0) && ended_frame_retention_variant(1);
 }
 
+static int resident_cursor_frame_case(void){
+  Session plain={0},selected={0};
+  AnygmInputFrame input={0};
+  AnygmFrameOutput cpu={0},gpu={0};
+  GmlGpuCounters counters={0};
+  int matching=1;
+  anygm_test_graphics_reset();
+  REQUIRE(session_open_fixture_with_scene(
+            &plain,ANYGM_SCENE_RENDERER_CPU,
+            anygm_synthetic_cursor_frame_content_create),"cursor CPU fixture loads");
+  REQUIRE(session_open_fixture_with_scene(
+            &selected,ANYGM_SCENE_RENDERER_OPENGL,
+            anygm_synthetic_cursor_frame_content_create),"cursor GPU fixture loads");
+  REQUIRE(graphics_adopt(selected.engine,ANYGM_GRAPHICS_OPENGLES3)==ANYGM_OK,
+          "cursor GPU fixture adopts a context");
+  input.struct_size=sizeof input;
+  input.pointer_x=32;
+  input.pointer_y=24;
+  cpu.struct_size=gpu.struct_size=sizeof cpu;
+  matching=anygm_run_frame(plain.engine,&input,&cpu)==ANYGM_OK &&
+           anygm_run_frame(selected.engine,&input,&gpu)==ANYGM_OK &&
+           cpu.pixels && cpu.width==64u && cpu.height==48u &&
+           selected.engine->screen && gpu.width==cpu.width && gpu.height==cpu.height;
+  if(matching){
+    for(unsigned row=0;row<cpu.height && matching;row++)
+      matching=!memcmp((const uint8_t*)cpu.pixels+(size_t)row*cpu.pitch,
+                       selected.engine->screen+(size_t)row*cpu.width,
+                       (size_t)cpu.width*4u);
+  }
+  gml_gpu_counters(selected.engine->gpu,&counters);
+  matching=matching && counters.scene_batches_accepted>0u &&
+           selected.engine->frame_materializations==1u &&
+           !gml_render_deferred_presentation(&selected.engine->render,NULL) &&
+           ((const uint32_t*)cpu.pixels)[0]!=0u &&
+           ((const uint32_t*)cpu.pixels)[24u*64u+32u]!=
+             ((const uint32_t*)cpu.pixels)[0];
+  session_close(&selected); session_close(&plain);
+  REQUIRE(matching,"authored cursor preserves the completed resident scene underneath");
+  return 1;
+}
+
+static int resident_transition_snapshot_case(void){
+  Session plain={0},selected={0};
+  uint32_t flags=0;
+  int matching=1;
+  anygm_test_graphics_reset();
+  REQUIRE(session_open(&plain),"transition snapshot CPU fixture loads");
+  REQUIRE(session_open_with_scene(&selected,ANYGM_SCENE_RENDERER_OPENGL),
+          "transition snapshot GPU fixture loads");
+  REQUIRE(graphics_adopt(selected.engine,ANYGM_GRAPHICS_OPENGLES3)==ANYGM_OK,
+          "transition snapshot GPU fixture adopts a context");
+  matching=advance(plain.engine,1,&flags) && advance(selected.engine,1,&flags) &&
+           gml_render_deferred_presentation(&selected.engine->render,NULL) &&
+           classic_transition_start(plain.engine,64u,48u,20) &&
+           classic_transition_start(selected.engine,64u,48u,20);
+  if(matching)
+    matching=!memcmp(plain.engine->classic_transition.old_frame,
+                     selected.engine->classic_transition.old_frame,64u*48u*4u);
+  matching=matching && selected.engine->frame_materializations==1u &&
+           !gml_render_deferred_presentation(&selected.engine->render,NULL);
+  session_close(&selected); session_close(&plain);
+  REQUIRE(matching,"transition snapshot reads the completed resident frame");
+  return 1;
+}
+
 static int classic_temporal_fallback_variant(
     int (*create_fixture)(AnygmSyntheticContent *),int transition){
   Session plain={0},selected={0};
@@ -1769,6 +1834,8 @@ int main(void){
   static const struct { const char *name; int (*run)(void); } cases[]={
     {"resident world selection retains CPU state",resident_world_selection_case},
     {"ended resident frame remains visible and canonical",ended_frame_retention_case},
+    {"authored cursor preserves a resident completed frame",resident_cursor_frame_case},
+    {"transition snapshot reads a resident completed frame",resident_transition_snapshot_case},
     {"classic redraw and transition retain exact selected fallback",
      classic_temporal_fallback_case},
     {"resident GUI preserves direct and scaled CPU output",resident_indirect_gui_case},

@@ -268,6 +268,9 @@ int classic_transition_start(AnygmEngine *engine,unsigned width,unsigned height,
     engine->classic_transition.old_frame=next;
     engine->classic_transition.capacity=pixels;
   }
+  /* The last frame may still be a resident presentation. The transition owns
+   * an immutable CPU snapshot of that completed picture, not the prior screen. */
+  if(!engine_materialize_completed_frame(engine)) return 0;
   memcpy(engine->classic_transition.old_frame,engine->screen,pixels*sizeof(uint32_t));
   /* Classic transition_steps are consumed in a tight presentation loop rather than as
    * room steps. Keep the brief duration at the room rate, but always use an odd picture count:
@@ -352,6 +355,9 @@ void draw_game_cursor(AnygmEngine *engine,unsigned width,unsigned height){
     scale_x=(double)engine->present_mouse_width/engine->present_mouse_source_width;
     scale_y=(double)engine->present_mouse_height/engine->present_mouse_source_height;
   }
+  /* This CPU cursor is an ordered suffix of the completed frame. Beginning its
+   * screen target first would discard a deferred resident presentation. */
+  if(!engine_materialize_completed_frame(engine)) return;
   gml_render_begin(&engine->render,engine->screen,(int)width,(int)height,0.0,0.0);
   GmlRenderDrawState draw_state={
     .alpha_blend=1,

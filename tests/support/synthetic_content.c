@@ -1569,6 +1569,7 @@ static int synthetic_framebuffer_content_create(
   int ended_frame=gpu_sprite==13;
   int classic_redraw=gpu_sprite==14;
   int classic_transition=gpu_sprite==15;
+  int cursor_frame=gpu_sprite==16;
   char create[192],step[192],draw[192],draw_begin[192],draw_gui[192];
   snprintf(create,sizeof create,"%s/retain-create.gml",fixture->directory);
   snprintf(step,sizeof step,"%s/retain-step.gml",fixture->directory);
@@ -1596,6 +1597,9 @@ static int synthetic_framebuffer_content_create(
        "global.fixture_frame = 0;\n"
        "window_set_size(128,96);\n"
        "application_surface_draw_enable(false);\n":
+       cursor_frame?
+       "global.fixture_frame = 0;\n"
+       "cursor_sprite = spr_fixture;\n":
        classic_redraw?
        "global.fixture_frame = 0;\n"
        "global.fixture_seen = 0;\n":
@@ -1862,6 +1866,10 @@ int anygm_synthetic_host_box_content_create(AnygmSyntheticContent *fixture){
 
 int anygm_synthetic_ended_frame_content_create(AnygmSyntheticContent *fixture){
   return synthetic_framebuffer_content_create(fixture,0,0,0,13);
+}
+
+int anygm_synthetic_cursor_frame_content_create(AnygmSyntheticContent *fixture){
+  return synthetic_framebuffer_content_create(fixture,0,0,0,16);
 }
 
 int anygm_synthetic_classic_redraw_content_create(AnygmSyntheticContent *fixture){
