@@ -984,6 +984,67 @@ static int content_program_embedded_dialect_case(void){
   return 1;
 }
 
+/* Older authored GLSL can initialize a mutable global from a uniform. Modern GLES requires that
+ * work to happen at entry, in declaration order, while helper functions keep reading the global. */
+static int content_program_global_initializers_case(void){
+  static const char fragment[]=
+    "precision mediump float;\n"
+    "varying vec2 v_vTexcoord;\n"
+    "uniform vec2 u_size;\n"
+    "#define DECLARE_FAKE \\\n"
+    "  float macro_only = 8.0;\n"
+    "// float comment_only = 3.0;\n"
+    "const float fixed = 0.5;\n"
+    "float paired = 1.0, other = 2.0;\n"
+    "vec2 stretch = vec2(u_size.x / u_size.y, 1.0);\n"
+    "float bias = stretch.x * 0.25;\n"
+    "float stable = 0.5;\n"
+    "vec4 sample_colour(){ return vec4(stretch.x + bias + stable); }\n"
+    "void main(){\n"
+    "  float local = v_vTexcoord.x;\n"
+    "  gl_FragColor = sample_colour() + vec4(local);\n"
+    "}\n";
+  uint32_t frame[8*6]={0},mask[4*4]={0};
+  GmlGpu *gpu;
+  GmlGpuContext context;
+  GmlRenderPlan plan;
+  const char *text;
+  const char *entry;
+  const char *stretch;
+  const char *bias;
+  const char *stable;
+  for(int api=0;api<2;api++){
+    anygm_test_graphics_reset();
+    gpu=gml_gpu_create();
+    context=fake_context(api?GML_GPU_API_OPENGL_CORE:GML_GPU_API_OPENGLES3);
+    REQUIRE(gpu && gml_gpu_context_reset(gpu,&context),"global-init context adopted");
+    REQUIRE(build_content_plan(&plan,frame,mask),"global-init plan built");
+    plan.shader.fragment_es=fragment;
+    REQUIRE(gml_gpu_execute_plan(gpu,&plan),"global-init content program submitted");
+    text=anygm_test_graphics_shader_source(1);
+    REQUIRE(strstr(text,"vec2 stretch =") == NULL &&
+            strstr(text,"float bias =") == NULL &&
+            strstr(text,"float stable =") == NULL,
+            "modern source declares mutable globals without initializers");
+    REQUIRE(strstr(text,"float macro_only = 8.0;")!=NULL &&
+            strstr(text,"// float comment_only = 3.0;")!=NULL &&
+            strstr(text,"const float fixed = 0.5;")!=NULL &&
+            strstr(text,"float paired = 1.0, other = 2.0;")!=NULL,
+            "comments, constant globals and multi-declarators retain authored text");
+    entry=strstr(text,"void main(){");
+    REQUIRE(entry!=NULL,"entry remains in authored source");
+    stretch=strstr(entry,"stretch = vec2(u_size.x / u_size.y, 1.0);");
+    bias=strstr(entry,"bias = stretch.x * 0.25;");
+    stable=strstr(entry,"stable = 0.5;");
+    REQUIRE(stretch && bias && stable && stretch<bias && bias<stable,
+            "authored global expressions execute at entry in declaration order");
+    REQUIRE(strstr(entry,"float local = v_vTexcoord.x;")!=NULL,
+            "local initialization is untouched");
+    gml_gpu_destroy(gpu,1);
+  }
+  return 1;
+}
+
 /* A program the context refuses is a shader failure, named as such, so the runtime can retire the
  * shader rather than pay the refusal every frame; and the refusal is not repeated for the same
  * text. */
@@ -1234,6 +1295,7 @@ int main(int argc,char **argv){
     {"content_program_identity_and_limits",content_program_identity_and_limits_case},
     {"content_sampler_filters",content_sampler_filter_case},
     {"content_program_embedded_dialect",content_program_embedded_dialect_case},
+    {"content_program_global_initializers",content_program_global_initializers_case},
     {"content_program_refused",content_program_refused_case},
     {"content_program_readback",content_program_readback_case},
     {"content_program_source_region",content_program_source_region_case},

@@ -294,6 +294,208 @@ static int glsl_append(char **buffer,size_t *length,size_t *capacity,const char 
   return 1;
 }
 
+static size_t glsl_skip_layout(const char *source,size_t at,size_t end){
+  for(;;){
+    while(at<end && isspace((unsigned char)source[at])) at++;
+    if(at+1u<end && source[at]=='/' && source[at+1u]=='/'){
+      at+=2u;
+      while(at<end && source[at]!='\n') at++;
+      continue;
+    }
+    if(at+1u<end && source[at]=='/' && source[at+1u]=='*'){
+      at+=2u;
+      while(at+1u<end && !(source[at]=='*' && source[at+1u]=='/')) at++;
+      at=at+1u<end?at+2u:end;
+      continue;
+    }
+    return at;
+  }
+}
+
+static int glsl_token_at(const char *source,size_t at,size_t end,const char *word){
+  size_t length=strlen(word);
+  return at+length<=end && !strncmp(source+at,word,length) &&
+         (at+length==end || !(isalnum((unsigned char)source[at+length]) ||
+                              source[at+length]=='_'));
+}
+
+static size_t glsl_identifier_end(const char *source,size_t at,size_t end){
+  if(at>=end || !(isalpha((unsigned char)source[at]) || source[at]=='_')) return at;
+  at++;
+  while(at<end && (isalnum((unsigned char)source[at]) || source[at]=='_')) at++;
+  return at;
+}
+
+static int glsl_main_header(const char *source,size_t start,size_t end){
+  size_t at=glsl_skip_layout(source,start,end);
+  if(!glsl_token_at(source,at,end,"void")) return 0;
+  at=glsl_skip_layout(source,at+4u,end);
+  if(!glsl_token_at(source,at,end,"main")) return 0;
+  at=glsl_skip_layout(source,at+4u,end);
+  if(at>=end || source[at++]!='(') return 0;
+  at=glsl_skip_layout(source,at,end);
+  if(glsl_token_at(source,at,end,"void")) at=glsl_skip_layout(source,at+4u,end);
+  if(at>=end || source[at++]!=')') return 0;
+  return glsl_skip_layout(source,at,end)==end;
+}
+
+static size_t glsl_directive_end(const char *source,size_t at,size_t end){
+  for(;;){
+    size_t line_start=at,prior;
+    while(at<end && source[at]!='\n') at++;
+    prior=at;
+    while(prior>line_start && (source[prior-1u]==' ' || source[prior-1u]=='\t' ||
+                               source[prior-1u]=='\r')) prior--;
+    if(prior==line_start || source[prior-1u]!='\\' || at==end) return at;
+    at++;
+  }
+}
+
+static size_t glsl_main_open(const char *source){
+  size_t start=0,depth=0,n=strlen(source);
+  for(size_t at=0;at<n;at++){
+    if(at+1u<n && source[at]=='/' && source[at+1u]=='/'){
+      while(at<n && source[at]!='\n') at++;
+      continue;
+    }
+    if(at+1u<n && source[at]=='/' && source[at+1u]=='*'){
+      at+=2u;
+      while(at+1u<n && !(source[at]=='*' && source[at+1u]=='/')) at++;
+      at=at+1u<n?at+1u:n;
+      continue;
+    }
+    if(!depth && source[at]=='#' && glsl_line_leading(source,at)){
+      at=glsl_directive_end(source,at,n);
+      start=at+1u;
+      continue;
+    }
+    if(source[at]=='{'){
+      if(!depth && glsl_main_header(source,start,at)) return at;
+      depth++;
+    }else if(source[at]=='}' && depth){
+      if(!--depth) start=at+1u;
+    }else if(source[at]==';' && !depth) start=at+1u;
+  }
+  return n;
+}
+
+static int glsl_mutable_type(const char *source,size_t start,size_t end){
+  static const char *types[]={
+    "float","int","uint","bool","double","vec2","vec3","vec4",
+    "ivec2","ivec3","ivec4","uvec2","uvec3","uvec4",
+    "bvec2","bvec3","bvec4","dvec2","dvec3","dvec4",
+    "mat2","mat3","mat4","mat2x3","mat2x4","mat3x2","mat3x4",
+    "mat4x2","mat4x3"
+  };
+  for(size_t index=0;index<sizeof types/sizeof types[0];index++){
+    size_t length=strlen(types[index]);
+    if(end-start==length && !strncmp(source+start,types[index],length)) return 1;
+  }
+  return 0;
+}
+
+/* Only simple, mutable global declarations are relocated. Complex declarators remain for the
+ * driver's ordinary compile/refusal path; this never guesses at an authored expression. */
+static int glsl_global_initializer(const char *source,size_t start,size_t end,
+                                   size_t *name_start,size_t *name_end,size_t *equals){
+  size_t at=glsl_skip_layout(source,start,end),type_end,identifier_end;
+  if(glsl_token_at(source,at,end,"lowp")) at=glsl_skip_layout(source,at+4u,end);
+  else if(glsl_token_at(source,at,end,"highp")) at=glsl_skip_layout(source,at+5u,end);
+  else if(glsl_token_at(source,at,end,"mediump")) at=glsl_skip_layout(source,at+7u,end);
+  type_end=glsl_identifier_end(source,at,end);
+  if(!glsl_mutable_type(source,at,type_end)) return 0;
+  at=glsl_skip_layout(source,type_end,end);
+  *name_start=at;
+  identifier_end=glsl_identifier_end(source,at,end);
+  if(identifier_end==at) return 0;
+  *name_end=identifier_end;
+  at=glsl_skip_layout(source,identifier_end,end);
+  if(at>=end || source[at]!='=') return 0;
+  *equals=at;
+  at=glsl_skip_layout(source,at+1u,end);
+  if(at==end) return 0;
+  {
+    int parentheses=0,brackets=0;
+    for(;at<end;at++){
+      if(at+1u<end && source[at]=='/' && source[at+1u]=='/'){
+        while(at<end && source[at]!='\n') at++;
+        continue;
+      }
+      if(at+1u<end && source[at]=='/' && source[at+1u]=='*'){
+        at+=2u;
+        while(at+1u<end && !(source[at]=='*' && source[at+1u]=='/')) at++;
+        at=at+1u<end?at+1u:end;
+        continue;
+      }
+      if(source[at]=='(') parentheses++;
+      else if(source[at]==')') parentheses--;
+      else if(source[at]=='[') brackets++;
+      else if(source[at]==']') brackets--;
+      else if(source[at]=='{' || source[at]=='}' ||
+              (source[at]==',' && !parentheses && !brackets)) return 0;
+      if(parentheses<0 || brackets<0) return 0;
+    }
+    return !parentheses && !brackets;
+  }
+}
+
+/* Older authored GLSL permits mutable globals initialized from uniforms; GLSL ES 3.00 requires
+ * constant global initializers. Execute eligible original expressions at the start of main, in
+ * their declaration order, before any authored statement or helper call. This is per invocation
+ * in both dialects and preserves the globals and all later reads/writes. */
+static char *glsl_relocate_global_initializers(char *source){
+  size_t main_open=glsl_main_open(source),n=strlen(source),start=0,depth=0;
+  char *assignments=NULL,*result=NULL;
+  size_t assignment_length=0,assignment_capacity=0,result_length=0,result_capacity=0;
+  if(main_open==n) return source;
+  for(size_t at=0;at<main_open;at++){
+    if(at+1u<main_open && source[at]=='/' && source[at+1u]=='/'){
+      while(at<main_open && source[at]!='\n') at++;
+      continue;
+    }
+    if(at+1u<main_open && source[at]=='/' && source[at+1u]=='*'){
+      at+=2u;
+      while(at+1u<main_open && !(source[at]=='*' && source[at+1u]=='/')) at++;
+      at=at+1u<main_open?at+1u:main_open;
+      continue;
+    }
+    if(!depth && source[at]=='#' && glsl_line_leading(source,at)){
+      at=glsl_directive_end(source,at,main_open);
+      start=at+1u;
+      continue;
+    }
+    if(source[at]=='{') depth++;
+    else if(source[at]=='}' && depth){ if(!--depth) start=at+1u; }
+    else if(source[at]==';' && !depth){
+      size_t name_start=0,name_end=0,equals=0;
+      if(glsl_global_initializer(source,start,at,&name_start,&name_end,&equals)){
+        if(!glsl_append(&assignments,&assignment_length,&assignment_capacity,
+                        source+name_start,name_end-name_start) ||
+           !glsl_append(&assignments,&assignment_length,&assignment_capacity," ",1u) ||
+           !glsl_append(&assignments,&assignment_length,&assignment_capacity,
+                        source+equals,at-equals+1u) ||
+           !glsl_append(&assignments,&assignment_length,&assignment_capacity,"\n",1u)){
+          free(assignments); free(source); return NULL;
+        }
+        for(size_t blank=equals;blank<at;blank++){
+          if(source[blank]!='\n' && source[blank]!='\r') source[blank]=' ';
+        }
+      }
+      start=at+1u;
+    }
+  }
+  if(!assignment_length){ free(assignments); return source; }
+  if(!glsl_append(&result,&result_length,&result_capacity,source,main_open+1u) ||
+     !glsl_append(&result,&result_length,&result_capacity,"\n",1u) ||
+     !glsl_append(&result,&result_length,&result_capacity,assignments,assignment_length) ||
+     !glsl_append(&result,&result_length,&result_capacity,source+main_open+1u,n-main_open-1u)){
+    free(assignments); free(result); free(source); return NULL;
+  }
+  free(assignments);
+  free(source);
+  return result;
+}
+
 /* Rewrite one source. `desktop` selects the 330 core dialect; otherwise 300 es. `vertex` selects
  * the storage qualifier spellings. Returns a malloc'd string, or NULL on allocation failure. */
 static char *glsl_rewrite(const char *source,int vertex,int desktop,int little_endian,
@@ -364,7 +566,7 @@ static char *glsl_rewrite(const char *source,int vertex,int desktop,int little_e
     if(!glsl_append(&out,&length,&capacity,source+i,1)){ free(out); return NULL; }
     i++;
   }
-  return out;
+  return glsl_relocate_global_initializers(out);
 }
 
 static uint64_t content_source_key(const GmlPlanShader *shader){
