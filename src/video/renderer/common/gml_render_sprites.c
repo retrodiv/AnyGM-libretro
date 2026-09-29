@@ -823,12 +823,21 @@ static int resident_filtered_sprite(GmlRender *r,GmlSprite *sprite,int subimg,
     /* R03-SPR-FIRSTGEN-NEAREST-REDUCE: retain independent authored far-edge coverage
      * and fractional point phase for unit scale and bounded non-reciprocal reduction. */
     if(rotation==0.0 && anygm_policy_uses_first_generation_studio(r->win) &&
-       xs>0.0 && ys>0.0 && xs<=1.0 && ys<=1.0)
-      return resident_filtered_atlas_page(r,page_index,
-        x-((double)sprite->originx-(double)page->tx)*xs-r->cam_x,
-        y-((double)sprite->originy-(double)page->ty)*ys-r->cam_y,
-        xs,ys,GML_RENDER_SCENE_SPRITE,blend,alpha,NULL,NULL,0.0,NULL,
-        0,0,0,0,4);
+       xs>0.0 && ys>0.0 && xs<=1.0 && ys<=1.0){
+      double left=x-((double)sprite->originx-(double)page->tx)*xs-r->cam_x;
+      double top=y-((double)sprite->originy-(double)page->ty)*ys-r->cam_y;
+      if(r->app_surface && r->fb==r->app_surface)
+        return resident_filtered_atlas_page(r,page_index,left,top,xs,ys,
+          GML_RENDER_SCENE_SPRITE,blend,alpha,NULL,NULL,0.0,NULL,0,0,0,0,4);
+      /* A view scratch is not the first-generation application surface. Its
+       * CPU point leaf snaps a unit sprite before sampling, without the
+       * application surface's fractional source phase. */
+      if(xs==1.0 && ys==1.0)
+        return resident_filtered_atlas_page(r,page_index,
+          floor(left+0.5),floor(top+0.5),xs,ys,
+          GML_RENDER_SCENE_SPRITE,blend,alpha,NULL,NULL,0.0,NULL,0,0,0,0,1);
+      return 0;
+    }
     if(rotation==0.0 && anygm_policy_has_modern_layer_semantics(r->win) &&
        xs>0.0 && ys>0.0 && xs<=1.0 && ys<=1.0)
       return resident_filtered_atlas_page(r,page_index,

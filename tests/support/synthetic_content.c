@@ -1554,19 +1554,29 @@ int anygm_synthetic_background_color_content_create(AnygmSyntheticContent *fixtu
 }
 
 static int synthetic_framebuffer_content_create(
-    AnygmSyntheticContent *fixture,int multiview,int clear_view_background,int classic){
+    AnygmSyntheticContent *fixture,int multiview,int clear_view_background,int classic,
+    int gpu_sprite){
   if(!fixture) return 0;
   memset(fixture,0,sizeof *fixture);
   if(!create_fixture_directory(fixture->directory,sizeof fixture->directory)) return 0;
 
-  char create[192],step[192];
+  char create[192],step[192],draw[192];
   snprintf(create,sizeof create,"%s/retain-create.gml",fixture->directory);
   snprintf(step,sizeof step,"%s/retain-step.gml",fixture->directory);
+  snprintf(draw,sizeof draw,"%s/retain-draw.gml",fixture->directory);
   snprintf(fixture->path,sizeof fixture->path,"%s/data.win",fixture->directory);
-  if(!write_text(create,"global.fixture_frame = 0;\n") ||
+  if(!write_text(create,gpu_sprite==3 || gpu_sprite==4?
+       "global.fixture_frame = 0;\n"
+       "view_xview[0] = 0.5; view_xview[1] = 32.25;\n":
+       "global.fixture_frame = 0;\n") ||
      !write_text(step,
                  "if (global.fixture_frame >= 1) room_goto(1);\n"
-                 "global.fixture_frame += 1;\n")){
+                 "global.fixture_frame += 1;\n") ||
+     (gpu_sprite && !write_text(draw,gpu_sprite==4?
+       "if (view_current == 0) draw_sprite_ext(spr_fixture,0,8,12,0.7,0.7,0,c_white,1);\n"
+       "else draw_sprite_ext(spr_fixture,0,48,16,0.7,0.7,0,c_white,1);\n":
+       "if (view_current == 0) draw_sprite(spr_fixture,0,8,12);\n"
+       "else draw_sprite(spr_fixture,0,48,16);\n"))){
     anygm_synthetic_content_destroy(fixture);
     return 0;
   }
@@ -1578,9 +1588,10 @@ static int synthetic_framebuffer_content_create(
   anygm_stdio_vfs_services_init(&file_services);
   project.host=&file_services;
   GmlcObject object={0};
-  GmlcObjectEvent events[2]={0};
+  GmlcObjectEvent events[3]={0};
   GmlcRoom rooms[2]={0};
   GmlcRoomInstance instance={0};
+  GmlcSprite sprite={0}; char *sprite_frame=NULL;
   int room_order[2]={0,1};
   project.name=(char *)"neutral-framebuffer-fixture";
   project.objects=&object;
@@ -1589,6 +1600,31 @@ static int synthetic_framebuffer_content_create(
   project.n_rooms=project.cap_rooms=2;
   project.room_order=room_order;
   project.n_room_order=2;
+  if(gpu_sprite){
+    uint8_t pixels[8u*8u*4u];
+    for(int y=0;y<8;y++) for(int x=0;x<8;x++){
+      size_t at=((size_t)y*8u+(size_t)x)*4u;
+      pixels[at]=(uint8_t)(32+x*16);
+      pixels[at+1u]=(uint8_t)(48+y*12);
+      pixels[at+2u]=192u;
+      pixels[at+3u]=255u;
+    }
+    sprite_frame=gmlc_project_add_memory_file(&project,"sprite",GMLC_MEMORY_RGBA,
+                                                pixels,sizeof pixels,8,8);
+    if(!sprite_frame){
+      free(project.memory_files);
+      anygm_synthetic_content_destroy(fixture);
+      return 0;
+    }
+    sprite.id=sprite.name=(char *)"spr_fixture";
+    sprite.runtime_id=0;
+    sprite.width=sprite.height=8;
+    sprite.bbox_right=sprite.bbox_bottom=7;
+    sprite.n_frames=1;
+    sprite.frame_paths=&sprite_frame;
+    project.sprites=&sprite;
+    project.n_sprites=project.cap_sprites=1;
+  }
   if(classic){
     project.classic_version=800;
     /* Distinct from both room colors so a cleared classic frame cannot be mistaken for a
@@ -1598,15 +1634,19 @@ static int synthetic_framebuffer_content_create(
 
   object.id=object.name=(char *)"obj_fixture";
   object.sprite_id=object.mask_id=object.parent_id=-1;
-  object.visible=0;
+  object.visible=gpu_sprite;
   object.events=events;
-  object.n_events=object.cap_events=2;
+  object.n_events=object.cap_events=gpu_sprite?3:2;
   events[0].event_type=0;
   events[0].event_number=0;
   events[0].source_path=create;
   events[1].event_type=3;
   events[1].event_number=0;
   events[1].source_path=step;
+  if(gpu_sprite){
+    events[2].event_type=8;
+    events[2].source_path=draw;
+  }
 
   rooms[0].id=rooms[0].name=(char *)"room_painted";
   rooms[0].width=64;
@@ -1629,6 +1669,10 @@ static int synthetic_framebuffer_content_create(
   rooms[1].background_color=0xFF000000u;
   rooms[1].draw_background_color=0;
   rooms[1].clear_view_background=clear_view_background;
+  if(gpu_sprite){
+    rooms[1].instances=&instance;
+    rooms[1].n_instances=rooms[1].cap_instances=1;
+  }
   if(multiview){
     for(int room=0;room<2;room++){
       rooms[room].view_enabled=1;
@@ -1636,9 +1680,10 @@ static int synthetic_framebuffer_content_create(
       for(int view=0;view<2;view++){
         rooms[room].views[view].visible=1;
         rooms[room].views[view].xview=view*32;
-        rooms[room].views[view].wview=rooms[room].views[view].wport=32;
+        rooms[room].views[view].wview=32;
+        rooms[room].views[view].wport=gpu_sprite>=2 && view==0?28:32;
         rooms[room].views[view].hview=rooms[room].views[view].hport=48;
-        rooms[room].views[view].xport=view*32;
+        rooms[room].views[view].xport=gpu_sprite>=2 && view==0?4:view*32;
         rooms[room].views[view].hspeed=rooms[room].views[view].vspeed=-1;
         rooms[room].views[view].object_id=-1;
       }
@@ -1646,7 +1691,11 @@ static int synthetic_framebuffer_content_create(
   }
 
   char error[256]={0};
-  if(!gmlc_package_write_structural(&project,fixture->path,error,sizeof error)){
+  int written=gmlc_package_write_structural(&project,fixture->path,error,sizeof error);
+  for(int index=0;index<project.n_memory_files;index++) free(project.memory_files[index].data);
+  free(project.memory_files);
+  free(sprite_frame);
+  if(!written){
     fprintf(stderr,"synthetic framebuffer package failed: %s\n",error);
     anygm_synthetic_content_destroy(fixture);
     return 0;
@@ -1655,28 +1704,44 @@ static int synthetic_framebuffer_content_create(
 }
 
 int anygm_synthetic_framebuffer_content_create(AnygmSyntheticContent *fixture){
-  return synthetic_framebuffer_content_create(fixture,0,0,0);
+  return synthetic_framebuffer_content_create(fixture,0,0,0,0);
 }
 
 int anygm_synthetic_multiview_framebuffer_content_create(AnygmSyntheticContent *fixture){
-  return synthetic_framebuffer_content_create(fixture,1,0,0);
+  return synthetic_framebuffer_content_create(fixture,1,0,0,0);
+}
+
+int anygm_synthetic_multiview_gpu_content_create(AnygmSyntheticContent *fixture){
+  return synthetic_framebuffer_content_create(fixture,1,0,0,1);
+}
+
+int anygm_synthetic_multiview_offset_gpu_content_create(AnygmSyntheticContent *fixture){
+  return synthetic_framebuffer_content_create(fixture,1,0,0,2);
+}
+
+int anygm_synthetic_multiview_fractional_gpu_content_create(AnygmSyntheticContent *fixture){
+  return synthetic_framebuffer_content_create(fixture,1,0,0,3);
+}
+
+int anygm_synthetic_multiview_fractional_scale_content_create(AnygmSyntheticContent *fixture){
+  return synthetic_framebuffer_content_create(fixture,1,0,0,4);
 }
 
 int anygm_synthetic_clear_view_content_create(AnygmSyntheticContent *fixture){
-  return synthetic_framebuffer_content_create(fixture,0,1,0);
+  return synthetic_framebuffer_content_create(fixture,0,1,0,0);
 }
 
 int anygm_synthetic_multiview_clear_view_content_create(AnygmSyntheticContent *fixture){
-  return synthetic_framebuffer_content_create(fixture,1,1,0);
+  return synthetic_framebuffer_content_create(fixture,1,1,0,0);
 }
 
 int anygm_synthetic_classic_framebuffer_content_create(AnygmSyntheticContent *fixture){
-  return synthetic_framebuffer_content_create(fixture,0,0,1);
+  return synthetic_framebuffer_content_create(fixture,0,0,1,0);
 }
 
 int anygm_synthetic_classic_multiview_framebuffer_content_create(
     AnygmSyntheticContent *fixture){
-  return synthetic_framebuffer_content_create(fixture,1,0,1);
+  return synthetic_framebuffer_content_create(fixture,1,0,1,0);
 }
 
 /* The first placed instance deactivates the second before its Create. The second must complete

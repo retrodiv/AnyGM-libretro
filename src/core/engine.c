@@ -1419,7 +1419,8 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
                              classic_pixels<=SIZE_MAX/3 &&
                              ensure_classic_phase(engine,classic_pixels*3);
   int view_surface = (int)gml_global_arr(&engine->vm, "view_surface_id", frame_view_index);
-  int multiview_rendered = !engine->aspect_force_active && render_multiview_application(engine);
+  int multiview_rendered = engine->aspect_force_active?0:render_multiview_application(engine);
+  if(multiview_rendered<0) return ANYGM_ERROR_INTERNAL;
   int direct_owned_world=0;
   uint32_t *world_pixels=engine->fb;
   int world_width=(int)engine->width;

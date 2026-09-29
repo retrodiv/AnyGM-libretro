@@ -321,6 +321,95 @@ static int resident_indirect_gui_alpha_fallback_case(void){
   return 1;
 }
 
+static int resident_multiview_cpu_seed_variant(
+    int (*create_fixture)(AnygmSyntheticContent *),int offset_port,int expect_gpu_sprite){
+  Session plain={0},selected={0};
+  AnygmInputFrame input={0};
+  AnygmFrameOutput cpu={0},gpu={0};
+  GmlGpuCounters first={0},second={0};
+  int matching=1;
+  anygm_test_graphics_reset();
+  REQUIRE(session_open_fixture_with_scene(
+            &plain,ANYGM_SCENE_RENDERER_CPU,
+            create_fixture),
+          "two-view CPU fixture loads");
+  REQUIRE(session_open_fixture_with_scene(
+            &selected,ANYGM_SCENE_RENDERER_OPENGL,
+            create_fixture),
+          "two-view resident fixture loads");
+  REQUIRE(graphics_adopt(selected.engine,ANYGM_GRAPHICS_OPENGLES3)==ANYGM_OK,
+          "two-view context adopted");
+  input.struct_size=sizeof input;
+  input.pointer_x=input.pointer_y=-1;
+  for(int frame=0;matching && frame<3;frame++){
+    if(frame==2) anygm_graphics_context_destroy(selected.engine,1u);
+    memset(&cpu,0,sizeof cpu); cpu.struct_size=sizeof cpu;
+    memset(&gpu,0,sizeof gpu); gpu.struct_size=sizeof gpu;
+    matching=anygm_run_frame(plain.engine,&input,&cpu)==ANYGM_OK &&
+             anygm_run_frame(selected.engine,&input,&gpu)==ANYGM_OK &&
+             cpu.pixels && selected.engine->screen && cpu.width==64u &&
+             cpu.height==48u && cpu.pitch==64u*sizeof(uint32_t) &&
+             !memcmp(cpu.pixels,selected.engine->screen,(size_t)cpu.pitch*cpu.height) &&
+             plain.engine->vm.room_index==selected.engine->vm.room_index;
+    if(matching && frame==0){
+      const uint32_t *pixels=(const uint32_t *)cpu.pixels;
+      matching=(pixels[14u*64u+(offset_port?15u:12u)]&0xFFFFFFu)!=0x996633u &&
+               (pixels[18u*64u+50u]&0xFFFFFFu)!=0x996633u;
+      gml_gpu_counters(selected.engine->gpu,&first);
+      matching=matching && first.scene_operations[GML_RENDER_OP_CLEAR]>=2u &&
+               (expect_gpu_sprite?
+                  first.scene_families[GML_RENDER_SCENE_SPRITE]>=2u:
+                  first.scene_families[GML_RENDER_SCENE_SPRITE]==0u);
+    }
+    if(matching && frame==1){
+      gml_gpu_counters(selected.engine->gpu,&second);
+      matching=selected.engine->vm.room_index==1 &&
+               (expect_gpu_sprite?
+                  second.scene_families[GML_RENDER_SCENE_SPRITE]>=
+                    first.scene_families[GML_RENDER_SCENE_SPRITE]+2u:
+                  second.scene_families[GML_RENDER_SCENE_SPRITE]==0u) &&
+               second.scene_operations[GML_RENDER_OP_CLEAR]==
+                 first.scene_operations[GML_RENDER_OP_CLEAR];
+    }
+  }
+  if(!matching){
+    GmlGpuCounters observed={0};
+    gml_gpu_counters(selected.engine->gpu,&observed);
+    fprintf(stderr,"two-view CPU seed mismatch: room=%d first clear=%llu sprite=%llu "
+            "second clear=%llu sprite=%llu observed clear=%llu sprite=%llu "
+            "cpu=%ux%u gpu=%ux%u\n",
+            selected.engine?selected.engine->vm.room_index:-1,
+            (unsigned long long)first.scene_operations[GML_RENDER_OP_CLEAR],
+            (unsigned long long)first.scene_families[GML_RENDER_SCENE_SPRITE],
+            (unsigned long long)second.scene_operations[GML_RENDER_OP_CLEAR],
+            (unsigned long long)second.scene_families[GML_RENDER_SCENE_SPRITE],
+            (unsigned long long)observed.scene_operations[GML_RENDER_OP_CLEAR],
+            (unsigned long long)observed.scene_families[GML_RENDER_SCENE_SPRITE],
+            cpu.width,cpu.height,gpu.width,gpu.height);
+    if(cpu.pixels && selected.engine->screen && cpu.width==64u && cpu.height==48u){
+      const uint32_t *a=(const uint32_t *)cpu.pixels,*b=selected.engine->screen;
+      for(size_t at=0;at<64u*48u;at++) if(a[at]!=b[at]){
+        fprintf(stderr,"two-view first pixel mismatch %zu,%zu: %08x != %08x\n",
+                at%64u,at/64u,a[at],b[at]);
+        break;
+      }
+    }
+  }
+  session_close(&selected);
+  session_close(&plain);
+  REQUIRE(matching,"two-view retained CPU seed, GPU sprite and context loss agree");
+  return 1;
+}
+
+static int resident_multiview_cpu_seed_case(void){
+  return resident_multiview_cpu_seed_variant(
+           anygm_synthetic_multiview_gpu_content_create,0,1) &&
+         resident_multiview_cpu_seed_variant(
+           anygm_synthetic_multiview_offset_gpu_content_create,1,1) &&
+         resident_multiview_cpu_seed_variant(
+           anygm_synthetic_multiview_fractional_scale_content_create,1,0);
+}
+
 static uint8_t *serialize(AnygmEngine *engine,size_t *size){
   size_t capacity=anygm_state_size(engine);
   uint8_t *data=(uint8_t*)malloc(capacity?capacity:1);
@@ -1063,6 +1152,7 @@ int main(void){
     {"resident GUI preserves direct and scaled CPU output",resident_indirect_gui_case},
     {"partial-alpha indirect GUI keeps ordered CPU fallback",
      resident_indirect_gui_alpha_fallback_case},
+    {"two-view retained CPU seed stays current",resident_multiview_cpu_seed_case},
     {"texture filters and GPU stack restore",texture_filter_state_case},
     {"state bytes match with and without a target",state_bytes_match_case},
     {"save, load and save again produce the same bytes",save_load_save_case},

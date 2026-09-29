@@ -876,6 +876,9 @@ void gml_render_free(GmlRender *r){
   r->layer_filter_capacity=0; r->layer_filter_active=0;
   gml_render_application_resource_dispose(r);
   gml_render_base_resource_dispose(r);
+  /* The shared batch queue can belong to a SCREEN-only pass with no owned
+   * application resource to retire it. Both resources are flushed above. */
+  gml_render_application_scene_queue_dispose(r);
   free(r->app_surface_owned); r->app_surface_owned=NULL;
   free(r->rotated_batch); r->rotated_batch=NULL;
   r->rotated_batch_count=r->rotated_batch_capacity=0;

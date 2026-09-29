@@ -1613,7 +1613,14 @@ int render_multiview_application(AnygmEngine *engine) {
     if(!clear_background)
       seed_view_rect(engine->fb,(int)engine->width,(int)engine->height,
                      view_buffer,vw,vh,v->px,v->py,v->pw,v->ph);
-    gml_render_begin(&engine->render, view_buffer, vw, vh, v->x, v->y);
+    int resident_view_began=0;
+    if(!engine->composed_frame && engine_graphics_active(engine) &&
+       (engine->scene_renderer_session==ANYGM_SCENE_RENDERER_OPENGL ||
+        anygm_host_development_setting(&engine->host,"GML_SCENE_GPU_PROTOTYPE")))
+      resident_view_began=gml_render_begin_resident_base(
+        &engine->render,view_buffer,vw,vh,v->x,v->y);
+    if(!resident_view_began)
+      gml_render_begin(&engine->render, view_buffer, vw, vh, v->x, v->y);
     if(clear_background)
       gml_render_set_pending_fill(&engine->render, engine->background);
     if (have_room && !gml_draws_bg) draw_runtime_backgrounds(engine,0);
@@ -1622,6 +1629,9 @@ int render_multiview_application(AnygmEngine *engine) {
     gml_vm_draw_pass(&engine->vm, "Draw_73");
     if (have_room && !gml_draws_bg) draw_runtime_backgrounds(engine,1);
     gml_render_flush_pending_fill(&engine->render);
+    if(resident_view_began &&
+       (!gml_render_scene_flush(&engine->render) ||
+        !gml_render_resident_application_cpu_barrier(&engine->render))) return -1;
     compose_view_rect(view_buffer, vw, vh, engine->fb, (int)engine->width, (int)engine->height,
                       v->px, v->py, v->pw, v->ph);
   }
