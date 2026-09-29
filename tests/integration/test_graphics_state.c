@@ -1195,6 +1195,164 @@ static int cross_load_case(void){
   return ok;
 }
 
+/* Scene selection belongs to the receiving host, not the saved game. Restore a genuinely older
+ * snapshot into each destination after it has advanced further; the GPU destination also loses
+ * and recreates its context before loading. Compare the complete canonical state and the next
+ * three frames, not merely the return code from the state reader. */
+static int scene_state_transition_variant(int source_gpu,int destination_gpu){
+  Session source={0},destination={0};
+  AnygmInputFrame input={0};
+  AnygmFrameOutput source_frame={0},destination_frame={0};
+  GmlGpuCounters source_counters={0},destination_counters={0};
+  uint8_t *saved=NULL,*source_state=NULL,*destination_state=NULL;
+  size_t saved_size=0,source_size=0,destination_size=0;
+  uint64_t sprites_before_continuation=0;
+  const char *stage="save";
+  int ok=1;
+  anygm_test_graphics_reset();
+  REQUIRE(session_open_fixture_with_scene(
+            &source,source_gpu?ANYGM_SCENE_RENDERER_OPENGL:ANYGM_SCENE_RENDERER_CPU,
+            anygm_synthetic_multiview_gpu_content_create),
+          "transition source loads");
+  REQUIRE(session_open_fixture_with_scene(
+            &destination,destination_gpu?ANYGM_SCENE_RENDERER_OPENGL:ANYGM_SCENE_RENDERER_CPU,
+            anygm_synthetic_multiview_gpu_content_create),
+          "transition destination loads");
+  if(source_gpu)
+    REQUIRE(graphics_adopt(source.engine,ANYGM_GRAPHICS_OPENGLES3)==ANYGM_OK,
+            "transition source adopts a context");
+  if(destination_gpu)
+    REQUIRE(graphics_adopt(destination.engine,ANYGM_GRAPHICS_OPENGLES3)==ANYGM_OK,
+            "transition destination adopts a context");
+  REQUIRE(advance(source.engine,5,NULL) && advance(destination.engine,7,NULL),
+          "transition sessions reach different frame positions");
+  if(source_gpu){
+    gml_gpu_counters(source.engine->gpu,&source_counters);
+    REQUIRE(source_counters.scene_families[GML_RENDER_SCENE_SPRITE]>0u,
+            "transition source actually submits scene work");
+  }
+  if(destination_gpu){
+    gml_gpu_counters(destination.engine->gpu,&destination_counters);
+    REQUIRE(destination_counters.scene_families[GML_RENDER_SCENE_SPRITE]>0u,
+            "transition destination actually submits scene work before recreation");
+  }
+
+  anygm_test_graphics_forbid_calls();
+  saved=serialize(source.engine,&saved_size);
+  ok=saved!=NULL && saved_size>0u && anygm_test_graphics_calls_after_forget()==0;
+  anygm_test_graphics_allow_calls();
+  stage="recreate";
+  if(destination_gpu && ok)
+    ok=graphics_adopt(destination.engine,ANYGM_GRAPHICS_OPENGL_CORE)==ANYGM_OK;
+  if(ok){
+    stage="load and immediate state";
+    anygm_test_graphics_forbid_calls();
+    ok=anygm_state_load(destination.engine,saved,saved_size)==ANYGM_OK;
+    destination_state=ok?serialize(destination.engine,&destination_size):NULL;
+    ok=ok && destination_state && destination_size==saved_size &&
+       !memcmp(destination_state,saved,saved_size) &&
+       anygm_test_graphics_calls_after_forget()==0;
+    anygm_test_graphics_allow_calls();
+  }
+  free(destination_state);
+  destination_state=NULL;
+  input.struct_size=sizeof input;
+  input.pointer_x=input.pointer_y=-1;
+  stage="restored completed frame";
+  destination_frame.struct_size=sizeof destination_frame;
+  if(ok){
+    ok=anygm_run_frame(destination.engine,&input,&destination_frame)==ANYGM_OK &&
+       destination_frame.width==64u && destination_frame.height==48u &&
+       destination_frame.audio_frames==0u &&
+       destination.engine->vm.frame==source.engine->vm.frame &&
+       source.engine->screen && destination.engine->screen &&
+       !memcmp(source.engine->screen,destination.engine->screen,64u*48u*sizeof(uint32_t));
+    if(ok){
+      anygm_test_graphics_forbid_calls();
+      destination_state=serialize(destination.engine,&destination_size);
+      ok=destination_state && destination_size==saved_size &&
+         !memcmp(destination_state,saved,saved_size) &&
+         anygm_test_graphics_calls_after_forget()==0;
+      anygm_test_graphics_allow_calls();
+      free(destination_state);
+      destination_state=NULL;
+    }
+  }
+  if(ok && destination_gpu){
+    gml_gpu_counters(destination.engine->gpu,&destination_counters);
+    sprites_before_continuation=
+      destination_counters.scene_families[GML_RENDER_SCENE_SPRITE];
+  }
+  for(int frame=0;frame<3 && ok;frame++){
+    AnygmResult source_result,destination_result;
+    stage="continued frame";
+    memset(&source_frame,0,sizeof source_frame);
+    memset(&destination_frame,0,sizeof destination_frame);
+    source_frame.struct_size=destination_frame.struct_size=sizeof source_frame;
+    source_result=anygm_run_frame(source.engine,&input,&source_frame);
+    destination_result=anygm_run_frame(destination.engine,&input,&destination_frame);
+    ok=source_result==ANYGM_OK && destination_result==ANYGM_OK &&
+       source_frame.width==destination_frame.width &&
+       source_frame.height==destination_frame.height &&
+       source_frame.audio_rate==destination_frame.audio_rate &&
+       source_frame.audio_frames==destination_frame.audio_frames &&
+       (!source_frame.audio_frames ||
+        (source_frame.audio && destination_frame.audio &&
+         !memcmp(source_frame.audio,destination_frame.audio,
+                 source_frame.audio_frames*2u*sizeof(int16_t))));
+    if(!ok){
+      fprintf(stderr,"continued frame %d: results=%d/%d size=%ux%u/%ux%u "
+              "audio=%zu@%u/%zu@%u\n",frame,(int)source_result,(int)destination_result,
+              source_frame.width,source_frame.height,destination_frame.width,
+              destination_frame.height,source_frame.audio_frames,source_frame.audio_rate,
+              destination_frame.audio_frames,destination_frame.audio_rate);
+      break;
+    }
+    stage="continued state";
+    anygm_test_graphics_forbid_calls();
+    source_state=serialize(source.engine,&source_size);
+    destination_state=serialize(destination.engine,&destination_size);
+    ok=source_state && destination_state && source_size==destination_size &&
+       !memcmp(source_state,destination_state,source_size) &&
+       anygm_test_graphics_calls_after_forget()==0;
+    anygm_test_graphics_allow_calls();
+    free(source_state);
+    free(destination_state);
+    source_state=destination_state=NULL;
+  }
+  if(ok && destination_gpu){
+    stage="continued GPU work";
+    gml_gpu_counters(destination.engine->gpu,&destination_counters);
+    ok=destination_counters.scene_families[GML_RENDER_SCENE_SPRITE]>
+       sprites_before_continuation;
+    if(!ok)
+      fprintf(stderr,"continued GPU sprite count=%llu before=%llu frame_flags=%u "
+              "session=%u gpu=%p\n",
+              (unsigned long long)destination_counters.scene_families[GML_RENDER_SCENE_SPRITE],
+              (unsigned long long)sprites_before_continuation,destination_frame.flags,
+              destination.engine->scene_renderer_session,(void*)destination.engine->gpu);
+  }
+  if(!ok)
+    fprintf(stderr,"scene state transition failed: %s to %s at %s "
+            "(saved=%zu source=%zu destination=%zu forbidden=%d)\n",
+            source_gpu?"GPU":"CPU",destination_gpu?"GPU":"CPU",stage,
+            saved_size,source_size,destination_size,anygm_test_graphics_calls_after_forget());
+  anygm_test_graphics_allow_calls();
+  free(source_state);
+  free(destination_state);
+  free(saved);
+  session_close(&destination);
+  session_close(&source);
+  return ok;
+}
+
+static int scene_state_transition_matrix_case(void){
+  return scene_state_transition_variant(0,0) &&
+         scene_state_transition_variant(0,1) &&
+         scene_state_transition_variant(1,0) &&
+         scene_state_transition_variant(1,1);
+}
+
 /* Serializing every frame is what rewind and run-ahead do. The sizes may move as content allocates;
  * what may not happen is a frame that cannot be produced, or a save that reports a size it then
  * fails to fill. */
@@ -1858,6 +2016,8 @@ int main(void){
     {"state bytes match with and without a target",state_bytes_match_case},
     {"save, load and save again produce the same bytes",save_load_save_case},
     {"a state crosses between a target and none",cross_load_case},
+    {"CPU and scene GPU states cross in all four directions after context recreation",
+     scene_state_transition_matrix_case},
     {"every frame serializes under a target",per_frame_serialization_case},
     {"the context lifecycle around state operations",context_lifecycle_around_state_case},
     {"a refused state leaves the engine as it was",rejected_state_is_transactional_case},
