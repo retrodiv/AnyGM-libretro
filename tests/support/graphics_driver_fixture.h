@@ -31,6 +31,7 @@ void anygm_test_graphics_texture_unit_limit(int units);
 void anygm_test_graphics_active_uniform_limit(int count);
 /* Anything reaching the driver after this is counted as a call that should not have happened. */
 void anygm_test_graphics_forbid_calls(void);
+void anygm_test_graphics_allow_calls(void);
 
 /* The two callbacks a host supplies, in their raw shapes. A caller casts them into whichever
  * boundary it is testing; both boundaries declare the same two shapes. */

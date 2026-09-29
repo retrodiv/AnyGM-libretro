@@ -576,6 +576,7 @@ void anygm_test_graphics_fail_link(int failing){ g_fake.link_fails=failing; }
 void anygm_test_graphics_texture_unit_limit(int units){ g_fake.texture_unit_limit=units; }
 void anygm_test_graphics_active_uniform_limit(int count){ g_fake.active_uniform_override=count; }
 void anygm_test_graphics_forbid_calls(void){ g_fake.allow_calls=0; }
+void anygm_test_graphics_allow_calls(void){ g_fake.allow_calls=1; }
 int anygm_test_graphics_deletes(void){ return g_fake.deletes_issued; }
 int anygm_test_graphics_calls_after_forget(void){ return g_fake.calls_after_forget; }
 int anygm_test_graphics_draw_calls(void){ return g_fake.draw_calls; }

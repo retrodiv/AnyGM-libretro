@@ -1293,6 +1293,7 @@ static int rejected_state_is_transactional_case(void){
     REQUIRE((flags&ANYGM_FRAME_HARDWARE_TARGET)!=0,
             "the current frame is on the graphics target");
   }
+  anygm_test_graphics_forbid_calls();
   good=serialize(session.engine,&size);
   REQUIRE(good!=NULL && size>64,"a save succeeds and is long enough to damage meaningfully");
   damaged=(uint8_t*)malloc(size);
@@ -1306,6 +1307,10 @@ static int rejected_state_is_transactional_case(void){
   after=serialize(session.engine,&after_size);
   ok=after && after_size==size && memcmp(after,good,size)==0;
   if(!ok) fputs("a refused state did not leave the engine as it was\n",stderr);
+  ok=ok && anygm_test_graphics_calls_after_forget()==0;
+  if(anygm_test_graphics_calls_after_forget())
+    fputs("size/save/rejected load called graphics without a current context\n",stderr);
+  anygm_test_graphics_allow_calls();
   ok=ok && advance(session.engine,2,NULL);
   free(good);
   free(damaged);

@@ -26,6 +26,7 @@
 
 typedef struct FakeDevice {
   int uploads,submits,shader_submits,readbacks,retires;
+  int forbid_calls,forbidden_calls;
   int fail_upload,fail_upload_at,fail_readback,shader_failure;
   uint32_t status,accepted_prefix;
   uint32_t readback_colour;
@@ -35,8 +36,15 @@ typedef struct FakeDevice {
   float last_shader_value;
 } FakeDevice;
 
+static int fake_call_forbidden(FakeDevice *fake){
+  if(!fake->forbid_calls) return 0;
+  fake->forbidden_calls++;
+  return 1;
+}
+
 static int fake_upload(void *context,const GmlRenderImageUpload *upload){
   FakeDevice *fake=(FakeDevice*)context;
+  if(fake_call_forbidden(fake)) return 0;
   fake->uploads++;
   return !fake->fail_upload && fake->uploads!=fake->fail_upload_at &&
     upload && upload->bytes && upload->byte_capacity;
@@ -45,6 +53,7 @@ static int fake_upload(void *context,const GmlRenderImageUpload *upload){
 static GmlRenderExecutionResult fake_submit(void *context,const GmlRenderDrawBatch *batch){
   FakeDevice *fake=(FakeDevice*)context;
   GmlRenderExecutionResult result={0};
+  if(fake_call_forbidden(fake)) return result;
   fake->submits++;
   if(batch && batch->operation_count){
     const GmlRenderDrawOp *last=&batch->operations[batch->operation_count-1u];
@@ -68,6 +77,7 @@ static GmlRenderExecutionResult fake_submit(void *context,const GmlRenderDrawBat
 static int fake_readback(void *context,const GmlRenderImageReadback *readback){
   FakeDevice *fake=(FakeDevice*)context;
   uint32_t *pixels;
+  if(fake_call_forbidden(fake)) return 0;
   fake->readbacks++;
   if(fake->fail_readback || !readback || !readback->bytes ||
      readback->byte_capacity<(size_t)readback->storage_width*readback->storage_height*4u)
@@ -81,11 +91,13 @@ static int fake_readback(void *context,const GmlRenderImageReadback *readback){
 static void fake_retire(void *context,GmlRenderImageRef image){
   FakeDevice *fake=(FakeDevice*)context;
   (void)image;
+  if(fake_call_forbidden(fake)) return;
   fake->retires++;
 }
 
 static int fake_capabilities(void *context,GmlRenderDeviceCaps *out_caps){
   FakeDevice *fake=(FakeDevice*)context;
+  if(fake_call_forbidden(fake)) return 0;
   if(!out_caps) return 0;
   memset(out_caps,0,sizeof *out_caps);
   out_caps->max_texture_extent=fake->max_texture_extent?fake->max_texture_extent:4096u;
@@ -93,12 +105,12 @@ static int fake_capabilities(void *context,GmlRenderDeviceCaps *out_caps){
 }
 
 static int fake_barrier(void *context){
-  (void)context;
-  return 1;
+  return !fake_call_forbidden((FakeDevice*)context);
 }
 
 static int fake_content_program_failed(void *context,const GmlPlanShader *shader){
   FakeDevice *fake=(FakeDevice*)context;
+  if(fake_call_forbidden(fake)) return 0;
   return fake->shader_failure && shader && shader->identity==fake->last_shader_identity;
 }
 
@@ -3677,7 +3689,7 @@ static int state_without_context(void){
   batch=(GmlRenderDrawBatch){&operation,1u,NULL,0u};
   CHECK(gml_render_surface_scene_submit(original,id,&batch,NULL,0u)==
         GML_RENDER_RESOURCE_EXEC_DEVICE);
-  gml_render_bind_device(original,NULL);
+  fake.forbid_calls=1;
   size=gml_render_state_size(original,0);
   CHECK(size>0 && fake.readbacks==0);
   bytes=(uint8_t*)malloc(size);
@@ -3687,7 +3699,10 @@ static int state_without_context(void){
   pixels=gml_surface_pixels_read(restored,id,&w,&h);
   CHECK(pixels && w==4 && h==4);
   CHECK(pixels[0]==0x4088AABBu && pixels[15]==0x4088AABBu);
-  CHECK(!restored->surface[id-1].resource && fake.readbacks==0);
+  CHECK(!restored->surface[id-1].resource && fake.readbacks==0 &&
+        fake.forbidden_calls==0);
+  fake.forbid_calls=0;
+  gml_render_bind_device(original,NULL);
   free(bytes);
   gml_surface_free(original,id);
   gml_surface_free(restored,id);
