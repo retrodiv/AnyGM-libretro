@@ -1570,6 +1570,7 @@ static int synthetic_framebuffer_content_create(
   int classic_redraw=gpu_sprite==14;
   int classic_transition=gpu_sprite==15;
   int cursor_frame=gpu_sprite==16;
+  int moving_sound=gpu_sprite==17;
   char create[192],step[192],draw[192],draw_begin[192],draw_gui[192];
   snprintf(create,sizeof create,"%s/retain-create.gml",fixture->directory);
   snprintf(step,sizeof step,"%s/retain-step.gml",fixture->directory);
@@ -1577,7 +1578,10 @@ static int synthetic_framebuffer_content_create(
   snprintf(draw_begin,sizeof draw_begin,"%s/retain-draw-begin.gml",fixture->directory);
   snprintf(draw_gui,sizeof draw_gui,"%s/retain-draw-gui.gml",fixture->directory);
   snprintf(fixture->path,sizeof fixture->path,"%s/data.win",fixture->directory);
-  if(!write_text(create,nested_step_target?
+  if(!write_text(create,moving_sound?
+       "global.fixture_frame = 0;\n"
+       "audio_play_sound(snd_fixture,1,true);\n":
+       nested_step_target?
        "global.fixture_frame = 0;\n"
        "global.fixture_surface = surface_create(8,8);\n"
        "global.fixture_inner = surface_create(8,8);\n":
@@ -1610,7 +1614,9 @@ static int synthetic_framebuffer_content_create(
        "global.fixture_frame = 0;\n"
        "view_xview[0] = 0.5; view_xview[1] = 32.25;\n":
        "global.fixture_frame = 0;\n") ||
-     !write_text(step,nested_step_target?
+     !write_text(step,moving_sound?
+                 "global.fixture_frame += 1;\n":
+                 nested_step_target?
                  "surface_set_target(global.fixture_surface);\n"
                  "draw_clear(c_green);\n"
                  "surface_set_target(global.fixture_inner);\n":
@@ -1631,7 +1637,9 @@ static int synthetic_framebuffer_content_create(
                  "surface_set_target(global.fixture_surface);\n":
                  "if (global.fixture_frame >= 1) room_goto(1);\n"
                  "global.fixture_frame += 1;\n") ||
-     (gpu_sprite && !write_text(draw,classic_redraw?
+     (gpu_sprite && !write_text(draw,moving_sound?
+       "draw_sprite(spr_fixture,0,8+global.fixture_frame,12);\n":
+       classic_redraw?
        "global.fixture_seen += 1;\n"
        "draw_sprite(spr_fixture,0,8,12);\n":
        gpu_sprite==4?
@@ -1684,6 +1692,7 @@ static int synthetic_framebuffer_content_create(
   GmlcRoom rooms[2]={0};
   GmlcRoomInstance instance={0};
   GmlcSprite sprite={0}; char *sprite_frame=NULL;
+  GmlcSound sound={0}; char *sound_blob=NULL;
   int room_order[2]={0,1};
   project.name=(char *)"neutral-framebuffer-fixture";
   project.objects=&object;
@@ -1716,6 +1725,34 @@ static int synthetic_framebuffer_content_create(
     sprite.frame_paths=&sprite_frame;
     project.sprites=&sprite;
     project.n_sprites=project.cap_sprites=1;
+  }
+  if(moving_sound){
+    static const uint8_t wav_header[44]={
+      'R','I','F','F',0xA4,0x3E,0,0,'W','A','V','E','f','m','t',' ',
+      16,0,0,0,1,0,1,0,0x40,0x1F,0,0,0x80,0x3E,0,0,
+      2,0,16,0,'d','a','t','a',0x80,0x3E,0,0
+    };
+    uint8_t wav[44u+16000u];
+    memcpy(wav,wav_header,sizeof wav_header);
+    for(size_t sample=0;sample<8000u;sample++){
+      uint16_t value=(sample/20u)&1u?UINT16_C(0xE0C0):UINT16_C(0x1F40);
+      wav[44u+sample*2u]=(uint8_t)value;
+      wav[45u+sample*2u]=(uint8_t)(value>>8);
+    }
+    sound_blob=gmlc_project_add_memory_file(&project,"tone.wav",GMLC_MEMORY_BLOB,
+                                             wav,sizeof wav,0,0);
+    if(!sound_blob){
+      for(int index=0;index<project.n_memory_files;index++) free(project.memory_files[index].data);
+      free(project.memory_files);
+      free(sprite_frame);
+      anygm_synthetic_content_destroy(fixture);
+      return 0;
+    }
+    sound.id=sound.name=(char *)"snd_fixture";
+    sound.data_path=sound_blob;
+    sound.volume=sound.pitch=1.0f;
+    project.sounds=&sound;
+    project.n_sounds=project.cap_sounds=1;
   }
   if(classic){
     project.classic_version=800;
@@ -1800,6 +1837,7 @@ static int synthetic_framebuffer_content_create(
   for(int index=0;index<project.n_memory_files;index++) free(project.memory_files[index].data);
   free(project.memory_files);
   free(sprite_frame);
+  free(sound_blob);
   if(!written){
     fprintf(stderr,"synthetic framebuffer package failed: %s\n",error);
     anygm_synthetic_content_destroy(fixture);
@@ -1810,6 +1848,10 @@ static int synthetic_framebuffer_content_create(
 
 int anygm_synthetic_framebuffer_content_create(AnygmSyntheticContent *fixture){
   return synthetic_framebuffer_content_create(fixture,0,0,0,0);
+}
+
+int anygm_synthetic_moving_sound_content_create(AnygmSyntheticContent *fixture){
+  return synthetic_framebuffer_content_create(fixture,0,0,0,17);
 }
 
 int anygm_synthetic_multiview_framebuffer_content_create(AnygmSyntheticContent *fixture){

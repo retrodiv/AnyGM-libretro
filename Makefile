@@ -222,6 +222,7 @@ CONTRACT_TESTS := $(TEST_DIR)/dummy_host $(TEST_DIR)/test_builtin_file_io $(TEST
 	$(TEST_DIR)/test_libretro_content_directories $(TEST_DIR)/test_libretro_cache_vfs
 ifneq ($(HARDWARE_RENDER),0)
 CONTRACT_TESTS += $(TEST_DIR)/test_libretro_hardware_render
+CONTRACT_TESTS += $(TEST_DIR)/test_libretro_dynamic_rewind
 endif
 SECURITY_TESTS := $(TEST_DIR)/test_content_security $(TEST_DIR)/test_state_security \
 	$(TEST_DIR)/test_vfs $(TEST_DIR)/test_datafile_security \
@@ -756,6 +757,7 @@ contract-check: $(CONTRACT_TESTS)
 	$(TEST_DIR)/test_libretro_content_directories
 	$(TEST_DIR)/test_libretro_cache_vfs
 	$(if $(filter-out 0,$(HARDWARE_RENDER)),$(TEST_DIR)/test_libretro_hardware_render,true)
+	$(if $(filter-out 0,$(HARDWARE_RENDER)),$(TEST_DIR)/test_libretro_dynamic_rewind,true)
 
 security-check: $(SECURITY_TESTS)
 	$(TEST_DIR)/test_content_security
@@ -908,6 +910,12 @@ $(TEST_DIR)/test_libretro_state_transport: tests/contract/libretro_state_transpo
 
 $(TEST_DIR)/test_libretro_tilemap_state: tests/contract/libretro_tilemap_state.c \
 	tests/support/synthetic_content.c $(CORE_OBJECTS) $(TEST_HOST_OBJECTS)
+	mkdir -p $(dir $@)
+	$(CC) $(LIBRETRO_CPPFLAGS) -Itests/support $(CFLAGS) $^ -o $@ -lm -pthread $(CXX_RUNTIME_LDLIBS)
+
+$(TEST_DIR)/test_libretro_dynamic_rewind: tests/contract/libretro_dynamic_rewind.c \
+	tests/support/synthetic_content.c tests/support/graphics_driver_fixture.c \
+	$(CORE_OBJECTS) $(TEST_HOST_OBJECTS)
 	mkdir -p $(dir $@)
 	$(CC) $(LIBRETRO_CPPFLAGS) -Itests/support $(CFLAGS) $^ -o $@ -lm -pthread $(CXX_RUNTIME_LDLIBS)
 

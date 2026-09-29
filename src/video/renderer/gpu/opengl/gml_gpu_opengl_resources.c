@@ -191,6 +191,9 @@ void gml_gpu_opengl_scene_reset(GmlGpuBackend *backend,const GmlGpuContext *cont
   GmlGpuProc proc;
   GlScene *scene=&backend->scene;
   gml_gpu_opengl_scene_forget(backend);
+  /* This table belongs to one backend/engine. A reset starts a new context epoch even when a
+   * frontend skipped the old destroy callback; forgotten names must not reach its replacement. */
+  scene->context_epoch++;
 #define GL_SCENE_LOAD(field,name) do { \
   proc=context->get_proc_address(context->userdata,name); \
   memcpy(&backend->gl.field,&proc,sizeof proc); \
@@ -230,6 +233,13 @@ static GlSceneImage *scene_slot(GmlGpuBackend *backend,GmlRenderImageRef ref){
   GlSceneImage *free_slot=NULL,*oldest=NULL;
   for(size_t index=0;index<GL_SCENE_MAX_IMAGES;index++){
     GlSceneImage *candidate=&backend->scene.images[index];
+    /* Retirement can be requested by frontend state restore without a current context. Its
+     * name stays owned by this context until the next upload/target lookup, which is current. */
+    if(candidate->retired){
+      if(candidate->context_epoch==backend->scene.context_epoch)
+        scene_delete_image(backend,candidate);
+      else memset(candidate,0,sizeof *candidate);
+    }
     if(candidate->texture && scene_same_logical(candidate->ref,ref)) return candidate;
     if(!candidate->texture && !free_slot) free_slot=candidate;
     if(candidate->texture && !candidate->target &&
@@ -244,7 +254,9 @@ GlSceneImage *gml_gpu_opengl_scene_image(GmlGpuBackend *backend,GmlRenderImageRe
   if(!backend || !backend->scene.available) return NULL;
   for(size_t index=0;index<GL_SCENE_MAX_IMAGES;index++){
     GlSceneImage *candidate=&backend->scene.images[index];
-    if(candidate->texture && candidate->valid && scene_same_version(candidate->ref,ref)){
+    if(candidate->texture && !candidate->retired && candidate->valid &&
+       candidate->context_epoch==backend->scene.context_epoch &&
+       scene_same_version(candidate->ref,ref)){
       candidate->last_used=++backend->scene.use_clock;
       return candidate;
     }
@@ -371,6 +383,7 @@ int gml_gpu_opengl_scene_upload(GmlGpuBackend *backend,const GmlRenderImageUploa
   backend->gl.BindTexture(GL_TEXTURE_2D,0);
   if(backend->gl.GetError()!=GL_NO_ERROR){ slot->valid=0; return 0; }
   slot->ref=transfer->image;
+  slot->context_epoch=scene->context_epoch;
   slot->width=transfer->storage_width;
   slot->height=transfer->storage_height;
   slot->pixel_format=transfer->pixel_format;
@@ -420,6 +433,7 @@ GlSceneImage *gml_gpu_opengl_scene_target(GmlGpuBackend *backend,const GmlRender
   if(backend->gl.CheckFramebufferStatus(GL_FRAMEBUFFER)!=GL_FRAMEBUFFER_COMPLETE ||
      backend->gl.GetError()!=GL_NO_ERROR){ slot->valid=0; return NULL; }
   slot->ref=target->image;
+  slot->context_epoch=scene->context_epoch;
   slot->width=target->width;
   slot->height=target->height;
   slot->pixel_format=target->pixel_format;
@@ -483,9 +497,14 @@ void gml_gpu_opengl_scene_retire(GmlGpuBackend *backend,GmlRenderImageRef image)
     GlSceneImage *candidate=&backend->scene.images[index];
     /* A CPU handoff or runtime atlas growth can advance the version after its last device
      * upload. Retirement ends that incarnation even if the resident version is older. */
-    if(candidate->texture && scene_same_logical(candidate->ref,image) &&
+    if(candidate->texture && candidate->context_epoch==backend->scene.context_epoch &&
+       scene_same_logical(candidate->ref,image) &&
        (retire_incarnation || scene_same_version(candidate->ref,image))){
-      scene_delete_image(backend,candidate);
+      /* The caller may be restoring a state while no GL context is current. Logical access ends
+       * immediately; physical deletion happens at the next current scene allocation or destroy.
+       * A context loss instead forgets the names, as they belong to the lost context. */
+      candidate->retired=1;
+      candidate->valid=0;
       return;
     }
   }

@@ -92,8 +92,8 @@ typedef struct GlSceneImage {
   GmlRenderImageRef ref;
   GLuint texture,framebuffer;
   uint32_t width,height,pixel_format;
-  uint64_t last_used;
-  int valid,target,rendered_origin;
+  uint64_t last_used,context_epoch;
+  int valid,target,rendered_origin,retired;
 } GlSceneImage;
 
 typedef struct GlScene {
@@ -114,7 +114,7 @@ typedef struct GlScene {
   float *vertices;
   uint8_t *scratch;
   size_t scratch_capacity;
-  uint64_t use_clock;
+  uint64_t use_clock,context_epoch;
   GLint max_texture_size;
   int available;
 } GlScene;
