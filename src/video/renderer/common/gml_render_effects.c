@@ -99,6 +99,11 @@ static int layer_effect_submit_gpu(GmlRender *r,const uint32_t *source_pixels,
     gml_render_surface_scene_submit(r,r->target_id,&batch,&source,1u);
   if(device->retire) device->retire(device->context,source_ref);
   if(result==GML_RENDER_RESOURCE_EXEC_DEVICE){
+    /* The source capture crossed the CPU barrier, but the accepted effect
+     * makes this application target device-current again. Re-enter the
+     * resident draw contract so a later CPU-only draw crosses its write
+     * barrier and invalidates that device version. */
+    if(application) r->resident_application_pass=1;
     r->fb_opaque_known=0;
     r->fb_all_transparent=0;
     return 1;

@@ -1727,6 +1727,53 @@ static int resident_inline_layer_effect_cpu_bridge(void){
   return 1;
 }
 
+/* A successful application-target effect must return to the resident draw
+ * contract. Otherwise later CPU-only drawing changes canonical pixels while
+ * the resource still advertises its pre-draw GPU image as current. */
+static int resident_layer_effect_continuation_authority(void){
+  for(int variant=0;variant<2;variant++){
+    GmlRender *render=(GmlRender*)calloc(1,sizeof *render);
+    GmlRenderDeviceServices device;
+    GmlRenderJournalMetrics after_effect={0},after_cpu={0};
+    GmlLayerFilter filter={0};
+    FakeDevice fake={0};
+    CHECK(render && gml_render_init(render,NULL)==0);
+    fake.readback_colour=0xFF203040u;
+    device=service(&fake);
+    CHECK(gml_render_application_surface_ensure_owned(render,4,4));
+    gml_render_bind_device(render,&device);
+    CHECK(gml_render_begin_resident_owned_application(render,0.0,0.0,0));
+    gml_render_set_pending_fill(render,0xFF102030u);
+    if(!variant){
+      gml_render_layer_rgb_noise(render,0u,0.5,0.375,0x80C040u);
+    } else {
+      filter.kind=GML_LAYER_FILTER_TINT;
+      filter.affects_below=1;
+      filter.u.tint.colour=0xFF80C040u;
+      CHECK(gml_render_layer_filter_begin(render,&filter));
+      gml_render_layer_filter_end(render,&filter,0.375);
+    }
+    gml_render_resource_journal_metrics(render->app_surface_resource,&after_effect);
+    CHECK(fake.submits>=2 && fake.readbacks==1 &&
+          render->resident_application_pass &&
+          after_effect.authority==GML_RENDER_RESOURCE_BOTH_CURRENT &&
+          after_effect.cpu_version==after_effect.gpu_version &&
+          render->app_surface_owned[0]==fake.readback_colour);
+    render->alpha=0.5;
+    gml_render_primitive_line(render,0,0,3,3,0xFFFFFFu,1);
+    gml_render_resource_journal_metrics(render->app_surface_resource,&after_cpu);
+    CHECK(!render->resident_application_pass &&
+          after_cpu.authority==GML_RENDER_RESOURCE_CPU_CURRENT &&
+          after_cpu.logical_version==after_effect.logical_version+1u &&
+          after_cpu.cpu_version==after_cpu.logical_version &&
+          after_cpu.gpu_version==after_effect.gpu_version &&
+          render->app_surface_owned[0]!=fake.readback_colour);
+    gml_render_free(render);
+    free(render);
+  }
+  return 1;
+}
+
 static int resident_flat_primitive_public_order(void){
   GmlRender *cpu=(GmlRender*)calloc(1,sizeof *cpu);
   GmlRender *gpu=(GmlRender*)calloc(1,sizeof *gpu);
@@ -4058,6 +4105,7 @@ int main(void){
   passed+=first_generation_underlay_resource_borrow();
   passed+=resident_layer_filter_capture_barrier();
   passed+=resident_inline_layer_effect_cpu_bridge();
+  passed+=resident_layer_effect_continuation_authority();
   passed+=resident_flat_primitive_public_order();
   passed+=resident_viewless_base_canvas_order();
   passed+=resident_borrowed_surface_zero_screen_shader();
@@ -4092,6 +4140,6 @@ int main(void){
   passed+=target_pixel_observes_resident_result();
   passed+=nearest_subrectangle_mirrors();
   passed+=source_free_primitive_rect_replay();
-  printf("render resource cases: passed=%d failed=%d\n",passed,57-passed);
-  return passed==57?EXIT_SUCCESS:EXIT_FAILURE;
+  printf("render resource cases: passed=%d failed=%d\n",passed,58-passed);
+  return passed==58?EXIT_SUCCESS:EXIT_FAILURE;
 }
