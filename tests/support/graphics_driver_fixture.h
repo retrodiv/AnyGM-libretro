@@ -21,6 +21,9 @@
  * fakes of one driver drift and the one that drifts is always the one nobody is reading. */
 
 void anygm_test_graphics_reset(void);
+/* A replacement GL namespace may recycle a numeric name from a lost context. Arrange that the
+ * next generated object gets that otherwise free value, without restoring the old object. */
+int anygm_test_graphics_reuse_name(unsigned name);
 /* Refuse to resolve this entry point, so a missing one can be tested by name rather than by
  * deleting code. */
 void anygm_test_graphics_withhold(const char *name);
@@ -99,6 +102,7 @@ unsigned anygm_test_graphics_first_texture_with_format(int internal_format);
 int anygm_test_graphics_texture_width(unsigned name);
 int anygm_test_graphics_texture_height(unsigned name);
 unsigned anygm_test_graphics_texture_uploads(unsigned name);
+int anygm_test_graphics_texture_deleted(unsigned name);
 unsigned anygm_test_graphics_texture_data_uploads(unsigned name);
 const unsigned char *anygm_test_graphics_texture_bytes(unsigned name,size_t *count);
 

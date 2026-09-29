@@ -1514,6 +1514,104 @@ static int context_lost_with_frame_pending_case(void){
   return ok;
 }
 
+/* Restoring a frame may retire scene images while GL is not current. The frontend can then lose
+ * that context without a destroy callback and hand us a replacement whose texture names start
+ * from the same values. Neither the deferred retirement nor the old dispatch table may delete a
+ * newly allocated texture with the recycled name. */
+static int context_replacement_reuses_names_case(void){
+  Session plain={0},selected={0};
+  uint8_t *saved=NULL,*plain_state=NULL,*selected_state=NULL;
+  size_t saved_size=0,plain_size=0,selected_size=0;
+  GmlGpuCounters before={0},after={0};
+  unsigned recycled_texture=0;
+  const char *stage="open";
+  int ok=1;
+  anygm_test_graphics_reset();
+  ok=session_open_fixture_with_scene(&plain,ANYGM_SCENE_RENDERER_CPU,
+                                     anygm_synthetic_multiview_gpu_content_create) &&
+     session_open_fixture_with_scene(&selected,ANYGM_SCENE_RENDERER_OPENGL,
+                                     anygm_synthetic_multiview_gpu_content_create);
+  if(ok){
+    stage="initial GPU draw";
+    ok=graphics_adopt(selected.engine,ANYGM_GRAPHICS_OPENGLES3)==ANYGM_OK &&
+       advance(plain.engine,5,NULL) && advance(selected.engine,5,NULL);
+  }
+  if(ok){
+    gml_gpu_counters(selected.engine->gpu,&before);
+    recycled_texture=anygm_test_graphics_scene_texture();
+    ok=before.scene_families[GML_RENDER_SCENE_SPRITE]>0u && recycled_texture>0u &&
+       anygm_test_graphics_texture_width(recycled_texture)>0;
+  }
+  if(ok){
+    stage="state and deferred retirement";
+    saved=serialize(selected.engine,&saved_size);
+    plain_state=serialize(plain.engine,&plain_size);
+    ok=saved && plain_state && saved_size==plain_size &&
+       !memcmp(saved,plain_state,saved_size);
+  }
+  free(plain_state);
+  plain_state=NULL;
+  if(ok){
+    anygm_test_graphics_forbid_calls();
+    ok=anygm_state_load(selected.engine,saved,saved_size)==ANYGM_OK &&
+       anygm_state_load(plain.engine,saved,saved_size)==ANYGM_OK &&
+       anygm_test_graphics_calls_after_forget()==0;
+    anygm_test_graphics_allow_calls();
+  }
+  if(ok){
+    stage="replacement namespace";
+    anygm_test_graphics_reset(); /* The old context disappeared; generated names now restart. */
+    ok=graphics_adopt(selected.engine,ANYGM_GRAPHICS_OPENGL_CORE)==ANYGM_OK &&
+       anygm_test_graphics_deletes()==0 &&
+       anygm_test_graphics_reuse_name(recycled_texture);
+  }
+  for(int frame=0;frame<4 && ok;frame++){
+    stage=frame==0?"restored completed frame":"continued frame";
+    ok=advance(plain.engine,1,NULL) && advance(selected.engine,1,NULL) &&
+       plain.engine->screen && selected.engine->screen &&
+       !memcmp(plain.engine->screen,selected.engine->screen,64u*48u*sizeof(uint32_t));
+    if(ok && frame==1){
+      stage="recycled live texture";
+      ok=anygm_test_graphics_texture_width(recycled_texture)>0 &&
+         !anygm_test_graphics_texture_deleted(recycled_texture) &&
+         anygm_test_graphics_deletes()==0;
+    }
+    if(ok){
+      stage="continued canonical state";
+      anygm_test_graphics_forbid_calls();
+      plain_state=serialize(plain.engine,&plain_size);
+      selected_state=serialize(selected.engine,&selected_size);
+      ok=plain_state && selected_state && plain_size==selected_size &&
+         !memcmp(plain_state,selected_state,plain_size) &&
+         anygm_test_graphics_calls_after_forget()==0;
+      anygm_test_graphics_allow_calls();
+      free(plain_state);
+      free(selected_state);
+      plain_state=selected_state=NULL;
+    }
+  }
+  if(ok){
+    stage="new GPU sprite work";
+    gml_gpu_counters(selected.engine->gpu,&after);
+    ok=after.scene_families[GML_RENDER_SCENE_SPRITE]>
+       before.scene_families[GML_RENDER_SCENE_SPRITE];
+  }
+  if(!ok)
+    fprintf(stderr,"context replacement failed at %s (old texture=%u, new scene texture=%u, "
+            "old width=%d, old deleted=%d, deletes=%d, forbidden calls=%d)\n",stage,
+            recycled_texture,anygm_test_graphics_scene_texture(),
+            anygm_test_graphics_texture_width(recycled_texture),
+            anygm_test_graphics_texture_deleted(recycled_texture),
+            anygm_test_graphics_deletes(),anygm_test_graphics_calls_after_forget());
+  anygm_test_graphics_allow_calls();
+  free(plain_state);
+  free(selected_state);
+  free(saved);
+  session_close(&selected);
+  session_close(&plain);
+  return ok;
+}
+
 /* Two engines at once, one with a graphics target and one without, interleaved. Every handle and
  * every dispatch pointer is owned by its own engine, so neither may reach into the other. */
 static int interleaved_engines_case(void){
@@ -1551,9 +1649,11 @@ static int interleaved_engines_case(void){
 static int refused_context_case(void){
   Session session;
   AnygmGraphicsContext context;
+  GmlGpuCounters counters={0};
   int ok;
   anygm_test_graphics_reset();
-  REQUIRE(session_open(&session),"the session loads");
+  REQUIRE(session_open_fixture_with_scene(&session,ANYGM_SCENE_RENDERER_OPENGL,
+            anygm_synthetic_multiview_gpu_content_create),"the session loads");
   context=graphics_context(ANYGM_GRAPHICS_OPENGLES3);
   context.struct_size=(uint32_t)(sizeof context-1u);
   REQUIRE(anygm_graphics_context_reset(session.engine,&context)==ANYGM_ERROR_INCOMPATIBLE_ABI,
@@ -1565,15 +1665,30 @@ static int refused_context_case(void){
   context=graphics_context(0xBADu);
   REQUIRE(anygm_graphics_context_reset(session.engine,&context)==ANYGM_ERROR_UNSUPPORTED,
           "an unknown graphics family is refused");
+  anygm_test_graphics_withhold("glTexSubImage2D");
+  REQUIRE(graphics_adopt(session.engine,ANYGM_GRAPHICS_OPENGLES3)==ANYGM_ERROR_UNSUPPORTED,
+          "a missing entry point prevents initial GPU adoption");
+  {
+    const char *reason=gml_gpu_last_error(session.engine->gpu);
+    REQUIRE(reason && strstr(reason,"glTexSubImage2D")!=NULL,
+            "the initial failure names the unavailable function");
+  }
+  anygm_test_graphics_withhold(NULL);
   {
     uint32_t flags=0;
     ok=advance(session.engine,4,&flags);
     ok=ok && (flags&ANYGM_FRAME_HARDWARE_TARGET)==0;
   }
   if(!ok) fputs("a refused context did not leave a working software engine\n",stderr);
-  /* Adopting one and then tearing the engine down without saying the context is current. */
+  /* Recovery adopts the same engine after its CPU frames; it must perform actual scene work. */
   ok=ok && graphics_adopt(session.engine,ANYGM_GRAPHICS_OPENGLES3)==ANYGM_OK;
   ok=ok && advance(session.engine,1,NULL);
+  if(ok){
+    gml_gpu_counters(session.engine->gpu,&counters);
+    ok=counters.scene_families[GML_RENDER_SCENE_SPRITE]>0u;
+  }
+  if(!ok) fputs("a valid later context did not resume GPU sprite work\n",stderr);
+  /* Tear down without promising that the context is current. */
   anygm_test_graphics_forbid_calls();
   session_close(&session);
   ok=ok && anygm_test_graphics_calls_after_forget()==0;
@@ -2023,6 +2138,8 @@ int main(void){
     {"a refused state leaves the engine as it was",rejected_state_is_transactional_case},
     {"readback_budget",readback_budget_case},
     {"a context lost while a frame is on it",context_lost_with_frame_pending_case},
+    {"deferred retirement survives numeric name reuse after a lost context",
+     context_replacement_reuses_names_case},
     {"two interleaved engines stay independent",interleaved_engines_case},
     {"a refused context leaves a working software engine",refused_context_case},
     {"neutral device binds and clears with context",neutral_device_binding_case},

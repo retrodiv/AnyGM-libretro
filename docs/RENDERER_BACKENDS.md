@@ -252,6 +252,16 @@ visible image/audio, accepted scene sprites, Reset and bounded uncompressed copy
 Rejected/unsupported variable-size negotiation keeps the fixed slot; only an acknowledged frontend
 may grow it. This does not accelerate state copying or assert all Draw/GUI is GPU-resident.
 
+P8-T28 extends that same `R03-P8-STATE-RETIRE` lifetime rule through an unannounced context reset,
+not a new GPU raster kernel. `tests/integration/test_graphics_state.c::context_replacement_reuses_names_case`
+uses the unchanged `R03-SPR-NEAREST` CPU/GPU draw preparation, saves and restores with GL calls
+forbidden, then resets the fake driver namespace and deliberately reuses an old texture number.
+It compares the CPU and GPU-selected images and canonical states across the restored frame and
+continuation, requires new GPU sprite work, and rejects deletion of the recycled live texture.
+`::refused_context_case` separately covers a named missing entry point, CPU continuation and a
+later valid GPU adoption. These are engine/fake-driver lifecycle controls; physical-device pixels
+and final frontend cost retain their separately recorded evidence boundaries.
+
 ## Frame CPU-access and resident-source audit
 
 This is the live P7 frame-coherence map, not the historical P1 classification.

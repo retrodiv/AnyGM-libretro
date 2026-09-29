@@ -106,6 +106,12 @@ void anygm_test_graphics_reset(void){
   g_fake.active_uniform_override=-1;
 }
 
+int anygm_test_graphics_reuse_name(unsigned name){
+  if(!name || name>=FAKE_MAX_TEXTURES || name<g_fake.next_name) return 0;
+  g_fake.next_name=name;
+  return 1;
+}
+
 static void note_call(void){
   if(!g_fake.allow_calls) g_fake.calls_after_forget++;
 }
@@ -682,6 +688,9 @@ int anygm_test_graphics_texture_height(unsigned name){
 
 unsigned anygm_test_graphics_texture_uploads(unsigned name){
   return name<FAKE_MAX_TEXTURES?g_fake.textures[name].upload_count:0u;
+}
+int anygm_test_graphics_texture_deleted(unsigned name){
+  return name<FAKE_MAX_TEXTURES?g_fake.textures[name].deleted:0;
 }
 unsigned anygm_test_graphics_texture_data_uploads(unsigned name){
   return name<FAKE_MAX_TEXTURES?g_fake.textures[name].data_upload_count:0u;
