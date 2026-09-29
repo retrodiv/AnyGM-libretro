@@ -1565,6 +1565,7 @@ static int synthetic_framebuffer_content_create(
   int assigned_view_surface=gpu_sprite==7;
   int canvas_geometry=gpu_sprite==8;
   int window_geometry=gpu_sprite==9;
+  int presentation_filter=gpu_sprite>=10 && gpu_sprite<=12;
   char create[192],step[192],draw[192],draw_begin[192],draw_gui[192];
   snprintf(create,sizeof create,"%s/retain-create.gml",fixture->directory);
   snprintf(step,sizeof step,"%s/retain-step.gml",fixture->directory);
@@ -1603,7 +1604,7 @@ static int synthetic_framebuffer_content_create(
                  "surface_set_target(global.fixture_surface);\n"
                  "draw_clear(c_green);\n"
                  "surface_set_target(global.fixture_inner);\n":
-                 assigned_view_surface || canvas_geometry || window_geometry?
+                 assigned_view_surface || canvas_geometry || window_geometry || presentation_filter?
                  "global.fixture_frame += 1;\n":
                  retained_step_target?
                  "surface_set_target(global.fixture_surface);\n":
@@ -1729,8 +1730,8 @@ static int synthetic_framebuffer_content_create(
   }
 
   rooms[0].id=rooms[0].name=(char *)"room_painted";
-  rooms[0].width=64;
-  rooms[0].height=48;
+  rooms[0].width=gpu_sprite==10?64:gpu_sprite==11?400:gpu_sprite==12?128:64;
+  rooms[0].height=gpu_sprite==10?32:gpu_sprite==11?300:gpu_sprite==12?96:48;
   rooms[0].speed=60;
   rooms[0].background_color=0xFF336699u;
   rooms[0].draw_background_color=assigned_view_surface?0:1;
@@ -1743,8 +1744,8 @@ static int synthetic_framebuffer_content_create(
   instance.color=0xFFFFFFFFu;
 
   rooms[1].id=rooms[1].name=(char *)"room_retained";
-  rooms[1].width=64;
-  rooms[1].height=48;
+  rooms[1].width=rooms[0].width;
+  rooms[1].height=rooms[0].height;
   rooms[1].speed=60;
   rooms[1].background_color=0xFF000000u;
   rooms[1].draw_background_color=0;
@@ -1825,6 +1826,18 @@ int anygm_synthetic_multiview_canvas_content_create(AnygmSyntheticContent *fixtu
 
 int anygm_synthetic_window_raster_content_create(AnygmSyntheticContent *fixture){
   return synthetic_framebuffer_content_create(fixture,0,0,0,9);
+}
+
+int anygm_synthetic_crt_native_content_create(AnygmSyntheticContent *fixture){
+  return synthetic_framebuffer_content_create(fixture,0,0,0,10);
+}
+
+int anygm_synthetic_crt_scaled_content_create(AnygmSyntheticContent *fixture){
+  return synthetic_framebuffer_content_create(fixture,0,0,0,11);
+}
+
+int anygm_synthetic_host_box_content_create(AnygmSyntheticContent *fixture){
+  return synthetic_framebuffer_content_create(fixture,0,0,0,12);
 }
 
 int anygm_synthetic_clear_view_content_create(AnygmSyntheticContent *fixture){

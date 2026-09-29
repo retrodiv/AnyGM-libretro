@@ -772,6 +772,117 @@ static int presentation_geometry_case(void){
            1u,GMC_ASPECT_FORCE_21_9,0u,0u,2);
 }
 
+static int presentation_filter_variant(
+    const char *name,int (*create_fixture)(AnygmSyntheticContent *),int variant){
+  Session plain={0},selected={0};
+  AnygmInputFrame input={0};
+  AnygmConfigDelta presentation={0};
+  int matching=1;
+  anygm_test_graphics_reset();
+  REQUIRE(session_open_fixture_with_scene(&plain,ANYGM_SCENE_RENDERER_CPU,create_fixture),
+          "filter CPU fixture loads");
+  REQUIRE(session_open_fixture_with_scene(&selected,ANYGM_SCENE_RENDERER_OPENGL,create_fixture),
+          "filter scene fixture loads");
+  presentation.struct_size=sizeof presentation;
+  presentation.values.struct_size=sizeof presentation.values;
+  presentation.fields=ANYGM_CONFIG_PRESENT_LOGICAL_RASTER|ANYGM_CONFIG_ADJUST_CRT_TV;
+  presentation.values.present_logical_raster=variant!=2;
+  presentation.values.adjust_crt_tv=variant!=2;
+  if(variant==2){
+    presentation.fields|=ANYGM_CONFIG_MONITOR_WIDTH|ANYGM_CONFIG_MONITOR_HEIGHT;
+    presentation.values.monitor_width=64u;
+    presentation.values.monitor_height=64u;
+  }
+  REQUIRE(anygm_set_config(plain.engine,&presentation)==ANYGM_OK &&
+          anygm_set_config(selected.engine,&presentation)==ANYGM_OK,
+          "filter presentation policy selected");
+  REQUIRE(graphics_adopt(selected.engine,ANYGM_GRAPHICS_OPENGLES3)==ANYGM_OK,
+          "filter context adopted");
+  input.struct_size=sizeof input;
+  input.pointer_x=input.pointer_y=-1;
+  for(int frame=0;matching && frame<3;frame++){
+    AnygmFrameOutput cpu={0},gpu={0};
+    const uint32_t *selected_host=NULL;
+    unsigned selected_host_width=0,selected_host_height=0;
+    cpu.struct_size=gpu.struct_size=sizeof cpu;
+    if(frame==2) anygm_graphics_context_destroy(selected.engine,1u);
+    matching=anygm_run_frame(plain.engine,&input,&cpu)==ANYGM_OK &&
+             anygm_run_frame(selected.engine,&input,&gpu)==ANYGM_OK &&
+             cpu.pixels && plain.engine->screen && selected.engine->screen &&
+             plain.engine->output_width==selected.engine->output_width &&
+             plain.engine->output_height==selected.engine->output_height &&
+             !memcmp(plain.engine->screen,selected.engine->screen,
+                     (size_t)plain.engine->output_width*plain.engine->output_height*
+                     sizeof(uint32_t)) &&
+             resolve_host_frame(selected.engine,&selected_host,
+                                &selected_host_width,&selected_host_height) &&
+             selected_host && cpu.width==gpu.width && cpu.height==gpu.height &&
+             cpu.width==selected_host_width && cpu.height==selected_host_height &&
+             cpu.pitch==(size_t)cpu.width*sizeof(uint32_t) &&
+             !memcmp(cpu.pixels,selected_host,(size_t)cpu.pitch*cpu.height);
+    if(frame==0){
+      GmlGpuCounters counters={0};
+      gml_gpu_counters(selected.engine->gpu,&counters);
+      unsigned source_width=variant==0?64u:variant==1?400u:128u;
+      unsigned source_height=variant==0?32u:variant==1?300u:96u;
+      unsigned host_width=variant==0?64u:variant==1?640u:64u;
+      unsigned host_height=variant==0?48u:variant==1?480u:64u;
+      unsigned fallback=variant==2?GML_PLAN_FALLBACK_BOX_REDUCTION:
+                                   GML_PLAN_FALLBACK_UNSUPPORTED_OPERATION;
+      int filter_ok=selected.engine->output_width==source_width &&
+        selected.engine->output_height==source_height &&
+        cpu.width==host_width && cpu.height==host_height &&
+        selected.engine->host_canvas_active &&
+        selected.engine->host_crt_active==(variant!=2) &&
+        selected.engine->host_canvas_y==(variant==1?0:8) &&
+        counters.scene_batches_accepted==counters.scene_batches_offered &&
+        counters.scene_batches_accepted>=2u &&
+        counters.scene_families[GML_RENDER_SCENE_SPRITE]>=1u &&
+        counters.scene_readbacks==0u &&
+        counters.fallbacks[fallback]==1u &&
+        counters.cpu_upload_frames==1u &&
+        selected.engine->frame_materializations==1u;
+      if(!filter_ok)
+        fprintf(stderr,"filter %s source=%ux%u host=%ux%u canvas=%d crt=%d y=%d "
+                "scene=%llu/%llu sprite=%llu fallback=%u transport=%u "
+                "materialized=%u\n",name,selected.engine->output_width,
+                selected.engine->output_height,cpu.width,cpu.height,
+                selected.engine->host_canvas_active,selected.engine->host_crt_active,
+                selected.engine->host_canvas_y,
+                (unsigned long long)counters.scene_batches_accepted,
+                (unsigned long long)counters.scene_batches_offered,
+                (unsigned long long)counters.scene_families[GML_RENDER_SCENE_SPRITE],
+                counters.fallbacks[fallback],counters.cpu_upload_frames,
+                selected.engine->frame_materializations);
+      matching=matching && filter_ok;
+    }
+    if(matching){
+      const uint32_t *pixels=cpu.pixels;
+      const uint32_t *logical=selected.engine->screen;
+      uint32_t first=pixels[0]&0xFFFFFFu;
+      unsigned different=0;
+      for(size_t i=0;i<(size_t)cpu.width*cpu.height;i++)
+        different|=(pixels[i]&0xFFFFFFu)!=first;
+      matching=different &&
+        logical[(size_t)12u*selected.engine->output_width+8u]!=
+        logical[(size_t)12u*selected.engine->output_width+24u];
+    }
+  }
+  session_close(&selected);
+  session_close(&plain);
+  REQUIRE(matching,"filter CPU and selected images remain visibly identical");
+  return 1;
+}
+
+static int presentation_filter_case(void){
+  return presentation_filter_variant(
+           "CRT native",anygm_synthetic_crt_native_content_create,0) &&
+         presentation_filter_variant(
+           "CRT scaled",anygm_synthetic_crt_scaled_content_create,1) &&
+         presentation_filter_variant(
+           "host box",anygm_synthetic_host_box_content_create,2);
+}
+
 static uint8_t *serialize(AnygmEngine *engine,size_t *size){
   size_t capacity=anygm_state_size(engine);
   uint8_t *data=(uint8_t*)malloc(capacity?capacity:1);
@@ -1520,6 +1631,8 @@ int main(void){
      resident_multiview_assigned_surface_restore_case},
     {"presentation geometry remains visible across selected scenes",
      presentation_geometry_case},
+    {"CRT and box presentation preserve a resident scene through CPU filtering",
+     presentation_filter_case},
     {"texture filters and GPU stack restore",texture_filter_state_case},
     {"state bytes match with and without a target",state_bytes_match_case},
     {"save, load and save again produce the same bytes",save_load_save_case},

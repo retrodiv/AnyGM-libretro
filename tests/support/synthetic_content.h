@@ -52,6 +52,9 @@ int anygm_synthetic_multiview_nested_target_content_create(AnygmSyntheticContent
 int anygm_synthetic_multiview_assigned_surface_content_create(AnygmSyntheticContent *fixture);
 int anygm_synthetic_multiview_canvas_content_create(AnygmSyntheticContent *fixture);
 int anygm_synthetic_window_raster_content_create(AnygmSyntheticContent *fixture);
+int anygm_synthetic_crt_native_content_create(AnygmSyntheticContent *fixture);
+int anygm_synthetic_crt_scaled_content_create(AnygmSyntheticContent *fixture);
+int anygm_synthetic_host_box_content_create(AnygmSyntheticContent *fixture);
 int anygm_synthetic_clear_view_content_create(AnygmSyntheticContent *fixture);
 int anygm_synthetic_multiview_clear_view_content_create(AnygmSyntheticContent *fixture);
 int anygm_synthetic_classic_framebuffer_content_create(AnygmSyntheticContent *fixture);
