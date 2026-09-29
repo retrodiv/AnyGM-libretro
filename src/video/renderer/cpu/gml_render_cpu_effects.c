@@ -5,6 +5,7 @@
 #include "gml_render.h"
 #include "gml_render_internal.h"
 #include "gml_render_cpu_effects.h"
+#include "gml_render_surfaces_internal.h"
 
 #include "anygm_host.h"
 
@@ -35,6 +36,16 @@ static inline uint32_t effect_hash(uint32_t x,uint32_t y,uint32_t seed){
   return h;
 }
 static inline float effect_hash_unit(uint32_t h){ return (float)(h&0xFFFFFFu)*(1.0f/16777216.0f); }
+
+static int layer_inline_cpu_write_ready(GmlRender *r){
+  int width=0,height=0;
+  gml_render_prepare_draw(r);
+  if(!gml_render_resident_application_cpu_barrier(r)) return 0;
+  if(r->target_id>0 &&
+     (surface_pixels(r,r->target_id,&width,&height)!=r->fb ||
+      width!=r->fbw || height!=r->fbh)) return 0;
+  return 1;
+}
 
 /* RGB noise: every pixel takes an independent random colour, scaled by the effect colour and
  * mixed in by the intensity and the pixel's own coverage. The pattern is a function of position
@@ -69,7 +80,7 @@ void gml_render_layer_rgb_noise(GmlRender *r, uint32_t sampler_tpag_ptr,
     r->layer_noise_animation=animation;
     r->layer_noise_colour=rgb&0xFFFFFFu;
   }
-  gml_render_prepare_draw(r);
+  if(!layer_inline_cpu_write_ready(r)) return;
   float intensity=(float)intensity_d;
   if(intensity>1.0f) intensity=1.0f;
   for(size_t i=0;i<count;i++){
@@ -86,7 +97,7 @@ void gml_render_layer_rgb_noise(GmlRender *r, uint32_t sampler_tpag_ptr,
 }
 void gml_render_layer_tint(GmlRender *r, uint32_t rgba){
   if(!r || !r->fb || r->fbw<=0 || r->fbh<=0 || rgba==0xFFFFFFFFu) return;
-  gml_render_prepare_draw(r);
+  if(!layer_inline_cpu_write_ready(r)) return;
   uint32_t ta=(rgba>>24)&255, tr=(rgba>>16)&255, tg=(rgba>>8)&255, tb=rgba&255;
   size_t count=(size_t)r->fbw*(size_t)r->fbh;
   for(size_t i=0;i<count;i++){
