@@ -256,6 +256,7 @@
   "uniform float u_effect_intensity;\n" \
   "uniform vec4 u_effect_zoom;\n" \
   "uniform int u_effect_linear;\n" \
+  "uniform int u_effect_seed;\n" \
   "in vec2 v_texcoord;\n" \
   "in vec4 v_colour;\n" \
   "out vec4 o_color;\n" \
@@ -281,6 +282,20 @@
   "void main(){\n" \
   "  ivec4 source=ivec4(round(texture(u_image,v_texcoord)*v_colour*255.0));\n" \
   "  ivec4 prior=ivec4(round(texelFetch(u_previous,ivec2(gl_FragCoord.xy)-u_region_origin,0)*255.0));\n" \
+  "  // R03_SHADER_LAYER_RGB_NOISE: the CPU hash and alpha-weighted RGB mix.\n" \
+  "  if(u_blend_rule==5){\n" \
+  "    uint x=uint(int(gl_FragCoord.x));\n" \
+  "    uint y=uint(int(u_extent.y)-1-int(gl_FragCoord.y));\n" \
+  "    uint h=x*0x9E3779B1u ^ (y+0x7F4A7C15u)*0x85EBCA77u ^ uint(u_effect_seed)*0xC2B2AE3Du;\n" \
+  "    h^=h>>15; h*=0x2C1B3C6Du; h^=h>>12; h*=0x297A2D39u; h^=h>>15;\n" \
+  "    uvec3 sample_rgb=uvec3(h&255u,(h>>8)&255u,(h>>16)&255u);\n" \
+  "    uvec3 tint=uvec3(u_effect_colour.rgb);\n" \
+  "    ivec3 noise=ivec3((sample_rgb*tint+uvec3(127u))/uvec3(255u));\n" \
+  "    float weight=float(source.a)/255.0*u_effect_intensity;\n" \
+  "    ivec3 rgb=ivec3(floor(vec3(source.rgb)+(vec3(noise)-vec3(source.rgb))*weight+0.5));\n" \
+  "    o_color=vec4(vec3(clamp(rgb,ivec3(0),ivec3(255))),float(source.a))/255.0;\n" \
+  "    return;\n" \
+  "  }\n" \
   "  // R03_SHADER_LAYER_TINT_COLOURISE: transform premultiplied capture, then source-over.\n" \
   "  if(u_blend_rule==2 || u_blend_rule==3 || u_blend_rule==4){\n" \
   "    if(u_blend_rule!=4 && source.a==0){ o_color=vec4(prior)/255.0; return; }\n" \

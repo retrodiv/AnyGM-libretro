@@ -234,12 +234,15 @@ int gml_gpu_opengl_scene_exact_program(GmlGpuBackend *backend,char *error,
                                                              "u_effect_zoom");
   scene->exact_u_effect_linear=backend->gl.GetUniformLocation(scene->exact_program,
                                                                "u_effect_linear");
+  scene->exact_u_effect_seed=backend->gl.GetUniformLocation(scene->exact_program,
+                                                             "u_effect_seed");
   if(scene->exact_a_position<0 || scene->exact_a_texcoord<0 || scene->exact_a_colour<0 ||
      scene->exact_u_extent<0 || scene->exact_u_image<0 || scene->exact_u_previous<0 ||
      scene->exact_u_region_origin<0 || scene->exact_u_repetitions<0 ||
      scene->exact_u_blend_rule<0 || scene->exact_u_additive_alpha<0 ||
      scene->exact_u_effect_colour<0 || scene->exact_u_effect_intensity<0 ||
-     scene->exact_u_effect_zoom<0 || scene->exact_u_effect_linear<0){
+     scene->exact_u_effect_zoom<0 || scene->exact_u_effect_linear<0 ||
+     scene->exact_u_effect_seed<0){
     gml_gpu_opengl_record_error(error,error_capacity,
       "exact scene program is missing an attribute or uniform");
     backend->gl.DeleteProgram(scene->exact_program);

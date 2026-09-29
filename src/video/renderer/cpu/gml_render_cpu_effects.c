@@ -51,8 +51,8 @@ static int layer_inline_cpu_write_ready(GmlRender *r){
  * mixed in by the intensity and the pixel's own coverage. The pattern is a function of position
  * and animation phase only, so the plane is cached until either changes. The sampler the room
  * names is not read. */
-void gml_render_layer_rgb_noise(GmlRender *r, uint32_t sampler_tpag_ptr,
-                                double intensity_d, double animation_d, uint32_t rgb){
+void gml_render_cpu_layer_rgb_noise(GmlRender *r, uint32_t sampler_tpag_ptr,
+                                    double intensity_d, double animation_d, uint32_t rgb){
   (void)sampler_tpag_ptr;
   if(!r || !r->fb || r->fbw<=0 || r->fbh<=0 || intensity_d<=0.0) return;
   float animation=(float)animation_d;

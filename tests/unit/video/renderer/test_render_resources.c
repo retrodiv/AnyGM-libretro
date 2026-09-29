@@ -1559,8 +1559,12 @@ static int resident_inline_layer_effect_cpu_bridge(void){
   gml_render_set_pending_fill(resident,0xFF445566u);
   gml_render_flush_pending_fill(resident);
   CHECK(resident->app_surface_owned[0]==0u && fake.readbacks==0);
+  /* Keep this case on the original CPU bridge when the new effect opcode is
+   * refused; the real-EGL comparator owns the direct-GPU arithmetic proof. */
+  fake.status=GML_RENDER_EXEC_UNSUPPORTED;
   gml_render_layer_rgb_noise(cpu,0u,0.625,0.375,0x80C040u);
   gml_render_layer_rgb_noise(resident,0u,0.625,0.375,0x80C040u);
+  fake.status=0;
   CHECK(cpu_pixels[0]!=0xFF445566u &&
         !memcmp(resident->app_surface_owned,cpu_pixels,sizeof cpu_pixels) &&
         fake.readbacks==0);

@@ -178,7 +178,8 @@ typedef struct GmlRenderPrimitiveRect {
 typedef enum GmlRenderLayerEffectKind {
   GML_RENDER_LAYER_EFFECT_TINT=1,
   GML_RENDER_LAYER_EFFECT_COLOURISE=2,
-  GML_RENDER_LAYER_EFFECT_ZOOM_BLUR=3
+  GML_RENDER_LAYER_EFFECT_ZOOM_BLUR=3,
+  GML_RENDER_LAYER_EFFECT_RGB_NOISE=4
 } GmlRenderLayerEffectKind;
 
 typedef struct GmlRenderLayerEffect {
@@ -188,6 +189,7 @@ typedef struct GmlRenderLayerEffect {
   double centre[2];
   double focus_radius;
   uint32_t linear;
+  int32_t phase_seed;
 } GmlRenderLayerEffect;
 
 typedef enum GmlRenderReconstructionMode {
