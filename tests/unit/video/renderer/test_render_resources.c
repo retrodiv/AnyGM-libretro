@@ -3711,6 +3711,41 @@ static int state_without_context(void){
   return 1;
 }
 
+static int zero_base_runtime_sprite_state(void){
+  GmlRender *render=(GmlRender*)calloc(1,sizeof *render);
+  uint8_t *rgba=(uint8_t*)malloc(16u);
+  uint8_t expected[16];
+  uint8_t *bytes=NULL;
+  size_t size=0,written=0,used=0;
+  int sprite;
+  CHECK(render && rgba);
+  render->next_surface_id=1;
+  render->font=-1;
+  render->base_n_spr=0;
+  for(size_t i=0;i<16u;i++) expected[i]=rgba[i]=(uint8_t)(i*7u);
+  sprite=gml_sprite_append_from_rgba_frames(render,rgba,2,2,1,0,0,NULL);
+  CHECK(sprite==0 && render->n_spr==1 && render->spr[0].runtime_extra);
+  size=gml_render_state_size(render,0);
+  CHECK(size>0);
+  bytes=(uint8_t*)malloc(size);
+  CHECK(bytes && gml_render_state_save(render,0,bytes,size,&written) && written==size);
+  CHECK(gml_render_state_load(render,bytes,size,&used) && used==size &&
+        render->n_spr==1 && render->spr[0].runtime_rgba &&
+        !memcmp(render->spr[0].runtime_rgba,expected,16u));
+  gml_sprite_delete(render,sprite);
+  CHECK(render->n_spr==0);
+  rgba=(uint8_t*)malloc(16u);
+  CHECK(rgba);
+  memcpy(rgba,expected,16u);
+  CHECK(gml_sprite_append_from_rgba_frames(render,rgba,2,2,1,0,0,NULL)==0);
+  gml_render_clear_runtime_sprites(render);
+  CHECK(render->n_spr==0);
+  free(bytes);
+  gml_render_free(render);
+  free(render);
+  return 1;
+}
+
 static int surface_draw_sources_are_read_only(void){
   GmlRender *render=(GmlRender*)calloc(1,sizeof *render);
   uint32_t frame[16]={0};
@@ -3997,10 +4032,11 @@ int main(void){
   passed+=resident_binary_atlas_sprite_gpu();
   passed+=resident_integer_scaled_atlas_sprite_gpu();
   passed+=state_without_context();
+  passed+=zero_base_runtime_sprite_state();
   passed+=surface_draw_sources_are_read_only();
   passed+=target_pixel_observes_resident_result();
   passed+=nearest_subrectangle_mirrors();
   passed+=source_free_primitive_rect_replay();
-  printf("render resource cases: passed=%d failed=%d\n",passed,55-passed);
-  return passed==55?EXIT_SUCCESS:EXIT_FAILURE;
+  printf("render resource cases: passed=%d failed=%d\n",passed,56-passed);
+  return passed==56?EXIT_SUCCESS:EXIT_FAILURE;
 }

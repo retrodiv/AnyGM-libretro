@@ -661,7 +661,7 @@ static int render_state_read(GmlRender *render,CoreR *s){
       s->pos+=name_bytes;
     }
   }
-  int base=render->base_n_spr>0?render->base_n_spr:render->n_spr;
+  int base=render->base_n_spr>0?render->base_n_spr:0;
   if(base>render->n_spr) base=render->n_spr;
   for(int i=render->n_spr-1;i>=base;i--)
     if(render->spr[i].runtime_extra && (i>=seen_cap || !seen_runtime[i]))

@@ -19,6 +19,12 @@ packed-image blend policy affect the reconstructed image; older semantic
 profiles reject transactionally. Payload layouts, VM schema `18`, and audio
 schema `2` remain unchanged.
 
+The renderer's authored-sprite boundary may legitimately be zero. In that case
+every generated sprite is a runtime record, including ID zero: deletion, Reset
+cleanup and state-load replacement must not reinterpret the current runtime
+sprite count as an authored prefix. This is an ownership correction within the
+existing renderer payload, not a change to its bytes or schema `34`.
+
 Schema `33` introduces VM schema `18`. Legacy room background scale arrays now belong
 to the room's canonical globals and persistent-room records. Fresh rooms initialize
 both axes to one; state restoration retains the active and dormant rooms' scales.

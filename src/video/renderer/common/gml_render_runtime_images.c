@@ -462,7 +462,7 @@ int gml_sprite_replace_from_rgba(GmlRender *r, int sprite, uint8_t *rgba, int w,
 }
 void gml_sprite_delete(GmlRender *r, int sprite){
   if(!r || sprite<0 || sprite>=r->n_spr) return;
-  int base=r->base_n_spr>0?r->base_n_spr:r->n_spr;
+  int base=r->base_n_spr>0?r->base_n_spr:0;
   if(sprite<base) return;
   GmlSprite *s=&r->spr[sprite];
   if(!s->runtime_extra) return;
@@ -529,7 +529,7 @@ int gml_sprite_collision_mask(GmlRender *r, int sprite, int sepmasks, int bboxmo
   return 1;
 }
 void gml_render_clear_runtime_sprites(GmlRender *r){
-  int base=r->base_n_spr>0?r->base_n_spr:r->n_spr;
+  int base=r->base_n_spr>0?r->base_n_spr:0;
   if(base>r->n_spr) base=r->n_spr;
   for(int i=0;i<base;i++){
     GmlSprite *s=&r->spr[i];
