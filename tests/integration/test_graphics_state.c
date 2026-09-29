@@ -410,6 +410,96 @@ static int resident_multiview_cpu_seed_case(void){
            anygm_synthetic_multiview_fractional_scale_content_create,1,0);
 }
 
+static int resident_multiview_step_target_variant(
+    int (*create_fixture)(AnygmSyntheticContent *),int nested){
+  Session plain={0},selected={0};
+  AnygmInputFrame input={0};
+  AnygmFrameOutput cpu={0},gpu={0};
+  int matching=1;
+  anygm_test_graphics_reset();
+  REQUIRE(session_open_fixture_with_scene(
+            &plain,ANYGM_SCENE_RENDERER_CPU,
+            create_fixture),
+          "Step-target CPU fixture loads");
+  REQUIRE(session_open_fixture_with_scene(
+            &selected,ANYGM_SCENE_RENDERER_OPENGL,
+            create_fixture),
+          "Step-target scene fixture loads");
+  REQUIRE(graphics_adopt(selected.engine,ANYGM_GRAPHICS_OPENGLES3)==ANYGM_OK,
+          "Step-target context adopted");
+  input.struct_size=sizeof input;
+  input.pointer_x=input.pointer_y=-1;
+  for(int frame=0;matching && frame<3;frame++){
+    if(frame==2) anygm_graphics_context_destroy(selected.engine,1u);
+    memset(&cpu,0,sizeof cpu); cpu.struct_size=sizeof cpu;
+    memset(&gpu,0,sizeof gpu); gpu.struct_size=sizeof gpu;
+    matching=anygm_run_frame(plain.engine,&input,&cpu)==ANYGM_OK &&
+             anygm_run_frame(selected.engine,&input,&gpu)==ANYGM_OK;
+    if(!matching) break;
+    int cpu_id=(int)gml_global_num(&plain.engine->vm,"fixture_surface");
+    int gpu_id=(int)gml_global_num(&selected.engine->vm,"fixture_surface");
+    int cw=0,ch=0,gw=0,gh=0;
+    const uint32_t *cpu_surface=gml_surface_pixels_read(
+      &plain.engine->render,cpu_id,&cw,&ch);
+    const uint32_t *gpu_surface=gml_surface_pixels_read(
+      &selected.engine->render,gpu_id,&gw,&gh);
+    int cpu_inner_id=nested?(int)gml_global_num(&plain.engine->vm,"fixture_inner"):-1;
+    int gpu_inner_id=nested?(int)gml_global_num(&selected.engine->vm,"fixture_inner"):-1;
+    int ciw=0,cih=0,giw=0,gih=0;
+    const uint32_t *cpu_inner=nested?gml_surface_pixels_read(
+      &plain.engine->render,cpu_inner_id,&ciw,&cih):NULL;
+    const uint32_t *gpu_inner=nested?gml_surface_pixels_read(
+      &selected.engine->render,gpu_inner_id,&giw,&gih):NULL;
+    uint32_t expected_outer=nested?0xFFFF0000u:0xFF0000FFu;
+    matching=cpu.pixels && selected.engine->screen && cpu.width==64u &&
+             cpu.height==48u && cpu.pitch==64u*sizeof(uint32_t) &&
+             !memcmp(cpu.pixels,selected.engine->screen,(size_t)cpu.pitch*cpu.height) &&
+             cpu_surface && gpu_surface && cw==8 && ch==8 && gw==8 && gh==8 &&
+             cpu_surface[0]==expected_outer &&
+             !memcmp(cpu_surface,gpu_surface,64u*sizeof(uint32_t)) &&
+             (((const uint32_t *)cpu.pixels)[0]&0xFFFFFFu)==
+               (expected_outer&0xFFFFFFu) &&
+             (!nested || (cpu_surface[63]!=0u && cpu_surface[63]!=expected_outer &&
+               cpu_inner && gpu_inner && ciw==8 && cih==8 && giw==8 && gih==8 &&
+               cpu_inner[0]==0xFF0000FFu &&
+               !memcmp(cpu_inner,gpu_inner,64u*sizeof(uint32_t)) &&
+               (((const uint32_t *)cpu.pixels)[16]&0xFFFFFFu)==0x000000FFu));
+    if(!matching){
+      GmlGpuCounters counts={0};
+      gml_gpu_counters(selected.engine->gpu,&counts);
+      fprintf(stderr,"Step-target nested=%d frame=%d ids=%d/%d extent=%dx%d/%dx%d "
+              "surface=%08x/%08x tail=%08x inner=%08x/%08x output=%08x/%08x "
+              "output16=%08x sprite=%llu clear=%llu\n",
+              nested,frame,cpu_id,gpu_id,cw,ch,gw,gh,
+              cpu_surface?cpu_surface[0]:0u,gpu_surface?gpu_surface[0]:0u,
+              cpu_surface?cpu_surface[63]:0u,
+              cpu_inner?cpu_inner[0]:0u,gpu_inner?gpu_inner[0]:0u,
+              cpu.pixels?((const uint32_t *)cpu.pixels)[0]:0u,
+              selected.engine->screen?selected.engine->screen[0]:0u,
+              cpu.pixels?((const uint32_t *)cpu.pixels)[16]:0u,
+              (unsigned long long)counts.scene_families[GML_RENDER_SCENE_SPRITE],
+              (unsigned long long)counts.scene_operations[GML_RENDER_OP_CLEAR]);
+    }
+    if(matching && frame==0){
+      GmlGpuCounters counts={0};
+      gml_gpu_counters(selected.engine->gpu,&counts);
+      matching=counts.scene_families[GML_RENDER_SCENE_SPRITE]>=1u &&
+               counts.scene_operations[GML_RENDER_OP_CLEAR]>=1u;
+    }
+  }
+  session_close(&selected);
+  session_close(&plain);
+  REQUIRE(matching,"Step-retained surface survives first view and same-frame GUI read");
+  return 1;
+}
+
+static int resident_multiview_step_target_case(void){
+  return resident_multiview_step_target_variant(
+           anygm_synthetic_multiview_step_target_content_create,0) &&
+         resident_multiview_step_target_variant(
+           anygm_synthetic_multiview_nested_target_content_create,1);
+}
+
 static uint8_t *serialize(AnygmEngine *engine,size_t *size){
   size_t capacity=anygm_state_size(engine);
   uint8_t *data=(uint8_t*)malloc(capacity?capacity:1);
@@ -1153,6 +1243,7 @@ int main(void){
     {"partial-alpha indirect GUI keeps ordered CPU fallback",
      resident_indirect_gui_alpha_fallback_case},
     {"two-view retained CPU seed stays current",resident_multiview_cpu_seed_case},
+    {"two-view Step target survives Draw Begin and GUI",resident_multiview_step_target_case},
     {"texture filters and GPU stack restore",texture_filter_state_case},
     {"state bytes match with and without a target",state_bytes_match_case},
     {"save, load and save again produce the same bytes",save_load_save_case},

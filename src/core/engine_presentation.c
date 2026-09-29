@@ -1619,8 +1619,10 @@ int render_multiview_application(AnygmEngine *engine) {
         anygm_host_development_setting(&engine->host,"GML_SCENE_GPU_PROTOTYPE")))
       resident_view_began=gml_render_begin_resident_base(
         &engine->render,view_buffer,vw,vh,v->x,v->y);
+    /* A target left bound by Step belongs to the first Draw Begin. The
+     * resident base rejects its stack, so keep that stack for the CPU pass. */
     if(!resident_view_began)
-      gml_render_begin(&engine->render, view_buffer, vw, vh, v->x, v->y);
+      gml_render_begin_retaining_target(&engine->render,view_buffer,vw,vh,v->x,v->y);
     if(clear_background)
       gml_render_set_pending_fill(&engine->render, engine->background);
     if (have_room && !gml_draws_bg) draw_runtime_backgrounds(engine,0);
