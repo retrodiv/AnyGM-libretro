@@ -257,6 +257,46 @@ static int scene_optional_entry_refusal_case(void){
   return 1;
 }
 
+static int scene_content_source_orientation_case(void){
+  uint32_t pixels[4]={0xFF102030u,0xFF405060u,0xFF708090u,0xFFA0B0C0u};
+  GmlRenderDeviceServices services;
+  GmlRenderImageUpload upload={0};
+  GmlGpu *gpu;
+  GmlGpuContext context;
+  const unsigned char *bytes;
+  size_t count=0;
+  unsigned source_name,scratch_name;
+  anygm_test_graphics_reset();
+  gpu=gml_gpu_create();
+  REQUIRE(gpu!=NULL,"orientation device allocated");
+  context=fake_context(GML_GPU_API_OPENGL_CORE);
+  REQUIRE(gml_gpu_context_reset(gpu,&context),"orientation context adopted");
+  gml_gpu_device_services(gpu,&services);
+  upload.image=(GmlRenderImageRef){GML_RENDER_RESOURCE_SHADER_SOURCE,0u,1u,1u};
+  upload.storage_width=upload.storage_height=2u;
+  upload.region=(GmlRenderRect){0,0,2u,2u};
+  upload.pixel_format=GML_RENDER_PIXEL_ARGB8888;
+  upload.stride_bytes=8u;
+  upload.byte_capacity=sizeof pixels;
+  upload.bytes=pixels;
+  REQUIRE(services.upload(services.context,&upload),"content source uploaded");
+  source_name=anygm_test_graphics_first_texture_with_format(GL_RGBA8);
+  bytes=anygm_test_graphics_texture_bytes(source_name,&count);
+  REQUIRE(bytes && count==sizeof pixels && bytes[0]==0x10u &&
+          bytes[1]==0x20u && bytes[2]==0x30u && bytes[3]==0xFFu,
+          "content source keeps the terminal program's top source row first");
+  upload.image=(GmlRenderImageRef){GML_RENDER_RESOURCE_SCRATCH,0u,2u,1u};
+  REQUIRE(services.upload(services.context,&upload),"ordinary scratch uploaded");
+  scratch_name=anygm_test_graphics_texture_with_format(GL_RGBA8);
+  bytes=anygm_test_graphics_texture_bytes(scratch_name,&count);
+  REQUIRE(scratch_name!=source_name && bytes && count==sizeof pixels &&
+          bytes[0]==0x70u && bytes[1]==0x80u && bytes[2]==0x90u &&
+          bytes[3]==0xFFu,
+          "other scene scratch keeps its established render-target orientation");
+  gml_gpu_destroy(gpu,1);
+  return 1;
+}
+
 static int scene_resident_batch_case(void){
   enum { QUADS=500 };
   uint32_t pixels[4]={0xFF112233u,0xFF445566u,0xFF778899u,0xFFAABBCCu};
@@ -405,6 +445,7 @@ static int scene_atlas_retire_advanced_version_case(void){
   GmlGpu *gpu;
   GmlGpuContext context;
   int before;
+  unsigned old_name,new_name;
   anygm_test_graphics_reset();
   gpu=gml_gpu_create();
   REQUIRE(gpu!=NULL,"atlas retirement device allocated");
@@ -419,11 +460,21 @@ static int scene_atlas_retire_advanced_version_case(void){
   upload.byte_capacity=sizeof pixels;
   upload.bytes=pixels;
   REQUIRE(services.upload(services.context,&upload),"runtime atlas old version uploaded");
+  old_name=anygm_test_graphics_texture_with_format(GL_RGBA8);
+  REQUIRE(old_name!=0u,"old atlas texture has a physical identity");
   before=anygm_test_graphics_deletes();
   page.content_version++;
   services.retire(services.context,page);
-  REQUIRE(anygm_test_graphics_deletes()==before+1,
-          "retirement frees the old atlas texture after an unuploaded page mutation");
+  REQUIRE(anygm_test_graphics_deletes()==before,
+          "retirement is logical until the next current-context access");
+  pixels[0]=0u;
+  upload.image=page;
+  REQUIRE(services.upload(services.context,&upload),
+          "changed page uploads after the retired version");
+  new_name=anygm_test_graphics_texture_with_format(GL_RGBA8);
+  REQUIRE(anygm_test_graphics_deletes()==before+1 && new_name!=old_name &&
+          anygm_test_graphics_texture_data_uploads(new_name)==1u,
+          "next current upload deletes the stale texture and creates a fresh version");
   gml_gpu_destroy(gpu,1);
   return 1;
 }
@@ -1282,6 +1333,7 @@ int main(int argc,char **argv){
     {"program_failure",program_failure_case},
     {"scene_service_contract",scene_service_contract_case},
     {"scene_optional_entry_refusal",scene_optional_entry_refusal_case},
+    {"scene_content_source_orientation",scene_content_source_orientation_case},
     {"scene_resident_batch",scene_resident_batch_case},
     {"scene_atlas_retire_advanced_version",scene_atlas_retire_advanced_version_case},
     {"scene_alpha_composition",scene_alpha_composition_case},

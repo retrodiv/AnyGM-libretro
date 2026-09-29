@@ -491,7 +491,8 @@ void gml_gpu_opengl_scene_retire(GmlGpuBackend *backend,GmlRenderImageRef image)
                      image.resource_class==GML_RENDER_RESOURCE_APPLICATION ||
                      image.resource_class==GML_RENDER_RESOURCE_SURFACE ||
                      image.resource_class==GML_RENDER_RESOURCE_SCRATCH ||
-                     image.resource_class==GML_RENDER_RESOURCE_SHADER_SAMPLER;
+                     image.resource_class==GML_RENDER_RESOURCE_SHADER_SAMPLER ||
+                     image.resource_class==GML_RENDER_RESOURCE_SHADER_SOURCE;
   if(!backend || !backend->loaded) return;
   for(size_t index=0;index<GL_SCENE_MAX_IMAGES;index++){
     GlSceneImage *candidate=&backend->scene.images[index];

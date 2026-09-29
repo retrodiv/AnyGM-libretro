@@ -472,7 +472,7 @@ static int resident_surface_shader(GmlRender *r,int surf,double dx,double dy,dou
        (uint32_t)width>UINT32_MAX/4u ||
        (bytes=(size_t)width*(size_t)height*4u)>MAX_AUXILIARY_SNAPSHOT_BYTES)
       return 0;
-    sources[0].image=(GmlRenderImageRef){GML_RENDER_RESOURCE_SCRATCH,0u,
+    sources[0].image=(GmlRenderImageRef){GML_RENDER_RESOURCE_SHADER_SOURCE,0u,
       gml_render_scene_incarnation_allocate(),1u};
     if(!sources[0].image.incarnation) return 0;
     sources[0].width=(uint32_t)width;
@@ -714,6 +714,20 @@ void gml_draw_surface_part_ext(GmlRender *r,int surf,double sx,double sy,double 
   if(!explicit_target_raster){
     gml_render_draw_map_point(r,&dx,&dy);
     gml_render_draw_map_scale(r,&xs,&ys);
+  }
+  /* R03-P7-CONTENT-SURFACE: a part call selecting the whole source and covering
+   * the whole destination is the same content-program operation as stretched.
+   * Preserve the part call's own coordinate mapping, then share its program
+   * snapshot, resource checkpoint and ordered fallback with that rule. */
+  if(r){
+    int slot=surface_slot(surf);
+    int source_width=surf==0?r->app_w:
+      slot>=0 && r->surface[slot].live?r->surface[slot].w:0;
+    int source_height=surf==0?r->app_h:
+      slot>=0 && r->surface[slot].live?r->surface[slot].h:0;
+    if(sx==0.0 && sy==0.0 && sw==(double)source_width &&
+       sh==(double)source_height && source_width>0 && source_height>0 &&
+       resident_surface_shader(r,surf,dx,dy,sw*xs,sh*ys,blend,alpha)) return;
   }
   if(resident_surface_part(r,surf,sx,sy,sw,sh,dx,dy,xs,ys,blend,alpha)) return;
   if(!gml_render_resident_application_cpu_barrier(r)) return;

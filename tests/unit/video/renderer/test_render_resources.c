@@ -2933,6 +2933,60 @@ static int resident_content_surface_program_boundary(void){
   return 1;
 }
 
+static int resident_content_surface_full_part_boundary(void){
+  GmlRender *render=(GmlRender*)calloc(1,sizeof *render);
+  FakeDevice fake={0};
+  GmlRenderDeviceServices device=service(&fake);
+  uint32_t screen[64]={0};
+  int source,shader_submits;
+  CHECK(render && gml_render_application_surface_ensure_owned(render,4,4));
+  render->next_surface_id=1;
+  render->color_write_mask=0x0Fu;
+  render->blend_equation=render->blend_equation_alpha=1;
+  render->shader_pal=(struct GmlShaderPal*)calloc(1,sizeof *render->shader_pal);
+  CHECK(render->shader_pal);
+  render->n_shader_pal=1;
+  render->shader_pal[0].source_vertex_es=
+    "attribute vec3 in_Position; void main(){ gl_Position=vec4(in_Position,1.0); }";
+  render->shader_pal[0].source_fragment_es=
+    "void main(){ gl_FragColor=vec4(0.5,0.25,0.75,1.0); }";
+  render->shader_device_present=render->shader_device_expected=1;
+  source=gml_surface_create(render,2,2);
+  CHECK(source>0);
+  for(int index=0;index<4;index++) render->surface[source-1].px[index]=0xFF102030u;
+  gml_render_application_surface_publish(render);
+  fake.readback_colour=0xFF5879A4u;
+  gml_render_bind_device(render,&device);
+  CHECK(gml_render_begin_resident_base(render,screen,8,8,0.0,0.0));
+  render->active_shader=0;
+  gml_render_set_pending_fill(render,0xFF010203u);
+  gml_draw_surface_part_ext(render,source,0.0,0.0,2.0,2.0,
+                            0.0,0.0,4.0,4.0,0xFFFFFFu,1.0);
+  CHECK(render->resident_application_pass && fake.shader_submits==1 &&
+        fake.last_opcode==GML_RENDER_OP_CONTENT_SHADER_DRAW);
+  CHECK(gml_render_begin_resident_base(render,screen,8,8,0.0,0.0));
+  render->active_shader=0;
+  gml_render_set_pending_fill(render,0xFF010203u);
+  gml_draw_surface_part_ext(render,0,0.0,0.0,4.0,4.0,
+                            0.0,0.0,2.0,2.0,0xFFFFFFu,1.0);
+  CHECK(render->resident_application_pass && fake.shader_submits==2 &&
+        fake.last_opcode==GML_RENDER_OP_CONTENT_SHADER_DRAW);
+  CHECK(gml_render_begin_resident_base(render,screen,8,8,0.0,0.0));
+  render->active_shader=0;
+  shader_submits=fake.shader_submits;
+  gml_draw_surface_part_ext(render,source,1.0,0.0,1.0,2.0,
+                            0.0,0.0,8.0,4.0,0xFFFFFFu,1.0);
+  CHECK(!render->resident_application_pass && fake.shader_submits==shader_submits);
+  CHECK(gml_render_begin_resident_base(render,screen,8,8,0.0,0.0));
+  render->active_shader=0;
+  gml_draw_surface_part_ext(render,source,0.0,0.0,2.0,2.0,
+                            0.0,0.0,2.0,4.0,0xFFFFFFu,1.0);
+  CHECK(!render->resident_application_pass && fake.shader_submits==shader_submits);
+  gml_render_free(render);
+  free(render);
+  return 1;
+}
+
 static int stale_auxiliary_surface_shader_fallback(void){
   GmlRender *render=(GmlRender*)calloc(1,sizeof *render);
   FakeDevice fake={0};
@@ -4022,6 +4076,7 @@ int main(void){
   passed+=mutable_scene_identity_across_renderers();
   passed+=surface_observer_materializes_suspended_fill();
   passed+=resident_content_surface_program_boundary();
+  passed+=resident_content_surface_full_part_boundary();
   passed+=stale_auxiliary_surface_shader_fallback();
   passed+=public_content_surface_program_chain();
   passed+=public_surface_part_qualified_dispatch();
@@ -4037,6 +4092,6 @@ int main(void){
   passed+=target_pixel_observes_resident_result();
   passed+=nearest_subrectangle_mirrors();
   passed+=source_free_primitive_rect_replay();
-  printf("render resource cases: passed=%d failed=%d\n",passed,56-passed);
-  return passed==56?EXIT_SUCCESS:EXIT_FAILURE;
+  printf("render resource cases: passed=%d failed=%d\n",passed,57-passed);
+  return passed==57?EXIT_SUCCESS:EXIT_FAILURE;
 }

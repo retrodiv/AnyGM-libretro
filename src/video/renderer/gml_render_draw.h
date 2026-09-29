@@ -38,7 +38,10 @@ typedef enum GmlRenderResourceClass {
   GML_RENDER_RESOURCE_SCRATCH=6,
   /* A per-draw content-shader binding. Its CPU snapshot is oriented like a scene
    * render target and is retired after submission. */
-  GML_RENDER_RESOURCE_SHADER_SAMPLER=7
+  GML_RENDER_RESOURCE_SHADER_SAMPLER=7,
+  /* A CPU-authored primary content source retains the terminal program's
+   * texture-coordinate convention rather than the render-target convention. */
+  GML_RENDER_RESOURCE_SHADER_SOURCE=8
 } GmlRenderResourceClass;
 
 typedef enum GmlRenderPixelFormat {
