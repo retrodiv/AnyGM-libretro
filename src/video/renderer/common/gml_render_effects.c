@@ -53,7 +53,19 @@ static int layer_filter_try_gpu(GmlRender *r,const GmlLayerFilter *filter,
      (size_t)width*(size_t)height>16u*1024u*1024u ||
      !r->layer_filter_src || !r->fb ||
      (filter->kind!=GML_LAYER_FILTER_TINT &&
-      filter->kind!=GML_LAYER_FILTER_COLOURISE)) return 0;
+      filter->kind!=GML_LAYER_FILTER_COLOURISE &&
+      filter->kind!=GML_LAYER_FILTER_ZOOM_BLUR)) return 0;
+  if(filter->kind==GML_LAYER_FILTER_ZOOM_BLUR &&
+     (!isfinite(filter->u.zoom_blur.centre[0]) ||
+      !isfinite(filter->u.zoom_blur.centre[1]) ||
+      !isfinite(filter->u.zoom_blur.intensity) ||
+      !isfinite(filter->u.zoom_blur.focus_radius) ||
+      filter->u.zoom_blur.centre[0]<0.0 || filter->u.zoom_blur.centre[0]>1.0 ||
+      filter->u.zoom_blur.centre[1]<0.0 || filter->u.zoom_blur.centre[1]>1.0 ||
+      filter->u.zoom_blur.intensity<0.0 || filter->u.zoom_blur.intensity>1.0 ||
+      filter->u.zoom_blur.focus_radius<0.0 ||
+      filter->u.zoom_blur.focus_radius>8192.0 ||
+      (r->interp!=0 && r->interp!=1))) return 0;
   application=r->target_id==-1 && r->target_sp==0 &&
     r->fb==r->app_surface_owned && r->fbw==r->app_w && r->fbh==r->app_h;
   if(!application && !(r->target_id>0 && r->target_id<=GML_MAX_SURFACES &&
@@ -90,11 +102,20 @@ static int layer_filter_try_gpu(GmlRender *r,const GmlLayerFilter *filter,
   operation.target.pixel_format=GML_RENDER_PIXEL_ARGB8888;
   operation.target.region=(GmlRenderRect){0,0,(uint32_t)width,(uint32_t)height};
   operation.payload.effect.kind=filter->kind==GML_LAYER_FILTER_TINT?
-    GML_RENDER_LAYER_EFFECT_TINT:GML_RENDER_LAYER_EFFECT_COLOURISE;
+    GML_RENDER_LAYER_EFFECT_TINT:filter->kind==GML_LAYER_FILTER_COLOURISE?
+    GML_RENDER_LAYER_EFFECT_COLOURISE:GML_RENDER_LAYER_EFFECT_ZOOM_BLUR;
   operation.payload.effect.colour=filter->kind==GML_LAYER_FILTER_TINT?
-    filter->u.tint.colour:filter->u.colourise.tint_colour;
+    filter->u.tint.colour:filter->kind==GML_LAYER_FILTER_COLOURISE?
+    filter->u.colourise.tint_colour:0xFFFFFFFFu;
   operation.payload.effect.intensity=filter->kind==GML_LAYER_FILTER_TINT?
-    1.0:filter->u.colourise.intensity;
+    1.0:filter->kind==GML_LAYER_FILTER_COLOURISE?
+    filter->u.colourise.intensity:filter->u.zoom_blur.intensity;
+  if(filter->kind==GML_LAYER_FILTER_ZOOM_BLUR){
+    operation.payload.effect.centre[0]=filter->u.zoom_blur.centre[0];
+    operation.payload.effect.centre[1]=filter->u.zoom_blur.centre[1];
+    operation.payload.effect.focus_radius=filter->u.zoom_blur.focus_radius;
+    operation.payload.effect.linear=(uint32_t)r->interp;
+  }
   if(!isfinite(operation.payload.effect.intensity)) return 0;
   state.write_mask=15u;
   state.colour=0xFFFFFFFFu;
@@ -106,6 +127,7 @@ static int layer_filter_try_gpu(GmlRender *r,const GmlLayerFilter *filter,
   batch=(GmlRenderDrawBatch){&operation,1u,&state,1u};
   result=application?gml_render_application_scene_submit(r,&batch,&source,1u):
     gml_render_surface_scene_submit(r,r->target_id,&batch,&source,1u);
+  if(device->retire) device->retire(device->context,source_ref);
   if(result==GML_RENDER_RESOURCE_EXEC_DEVICE){
     r->fb_opaque_known=0;
     r->fb_all_transparent=0;

@@ -170,13 +170,20 @@ int gml_gpu_opengl_scene_exact_program(GmlGpuBackend *backend,char *error,
   GlScene *scene=&backend->scene;
   const char *prefix=backend->api==GML_GPU_API_OPENGLES3
     ?GML_GPU_OPENGL_PREFIX_ES:GML_GPU_OPENGL_PREFIX_DESKTOP;
-  char vertex_source[1024],fragment_source[4096];
+  char vertex_source[1024],fragment_source[8192];
   GLuint vertex,fragment;
   GLint status=GL_FALSE;
+  int vertex_length,fragment_length;
   if(scene->exact_program) return 1;
-  snprintf(vertex_source,sizeof vertex_source,"%s%s",prefix,GML_GPU_OPENGL_SCENE_VERTEX_BODY);
-  snprintf(fragment_source,sizeof fragment_source,"%s%s",prefix,
-           GML_GPU_OPENGL_SCENE_EXACT_FRAGMENT_BODY);
+  vertex_length=snprintf(vertex_source,sizeof vertex_source,"%s%s",prefix,
+                         GML_GPU_OPENGL_SCENE_VERTEX_BODY);
+  fragment_length=snprintf(fragment_source,sizeof fragment_source,"%s%s",prefix,
+                           GML_GPU_OPENGL_SCENE_EXACT_FRAGMENT_BODY);
+  if(vertex_length<0 || (size_t)vertex_length>=sizeof vertex_source ||
+     fragment_length<0 || (size_t)fragment_length>=sizeof fragment_source){
+    gml_gpu_opengl_record_error(error,error_capacity,"exact scene program source is too long");
+    return 0;
+  }
   vertex=compile_stage(backend,GL_VERTEX_SHADER,vertex_source,error,error_capacity);
   if(!vertex) return 0;
   fragment=compile_stage(backend,GL_FRAGMENT_SHADER,fragment_source,error,error_capacity);
@@ -223,11 +230,16 @@ int gml_gpu_opengl_scene_exact_program(GmlGpuBackend *backend,char *error,
                                                                "u_effect_colour");
   scene->exact_u_effect_intensity=backend->gl.GetUniformLocation(scene->exact_program,
                                                                   "u_effect_intensity");
+  scene->exact_u_effect_zoom=backend->gl.GetUniformLocation(scene->exact_program,
+                                                             "u_effect_zoom");
+  scene->exact_u_effect_linear=backend->gl.GetUniformLocation(scene->exact_program,
+                                                               "u_effect_linear");
   if(scene->exact_a_position<0 || scene->exact_a_texcoord<0 || scene->exact_a_colour<0 ||
      scene->exact_u_extent<0 || scene->exact_u_image<0 || scene->exact_u_previous<0 ||
      scene->exact_u_region_origin<0 || scene->exact_u_repetitions<0 ||
      scene->exact_u_blend_rule<0 || scene->exact_u_additive_alpha<0 ||
-     scene->exact_u_effect_colour<0 || scene->exact_u_effect_intensity<0){
+     scene->exact_u_effect_colour<0 || scene->exact_u_effect_intensity<0 ||
+     scene->exact_u_effect_zoom<0 || scene->exact_u_effect_linear<0){
     gml_gpu_opengl_record_error(error,error_capacity,
       "exact scene program is missing an attribute or uniform");
     backend->gl.DeleteProgram(scene->exact_program);

@@ -177,13 +177,17 @@ typedef struct GmlRenderPrimitiveRect {
 
 typedef enum GmlRenderLayerEffectKind {
   GML_RENDER_LAYER_EFFECT_TINT=1,
-  GML_RENDER_LAYER_EFFECT_COLOURISE=2
+  GML_RENDER_LAYER_EFFECT_COLOURISE=2,
+  GML_RENDER_LAYER_EFFECT_ZOOM_BLUR=3
 } GmlRenderLayerEffectKind;
 
 typedef struct GmlRenderLayerEffect {
   uint32_t kind;
   uint32_t colour;
   double intensity;
+  double centre[2];
+  double focus_radius;
+  uint32_t linear;
 } GmlRenderLayerEffect;
 
 typedef enum GmlRenderReconstructionMode {

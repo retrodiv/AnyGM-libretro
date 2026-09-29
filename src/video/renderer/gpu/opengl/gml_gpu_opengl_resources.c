@@ -216,8 +216,10 @@ int gml_gpu_opengl_scene_capabilities(const GmlGpuBackend *backend,GmlRenderDevi
   caps->supported_operations=(UINT64_C(1)<<GML_RENDER_OP_CLEAR)|
                              (UINT64_C(1)<<GML_RENDER_OP_COLOURED_PRIMITIVE)|
                              (UINT64_C(1)<<GML_RENDER_OP_TEXTURED_QUAD)|
+                             (UINT64_C(1)<<GML_RENDER_OP_LAYER_EFFECT)|
                              (UINT64_C(1)<<GML_RENDER_OP_CONTENT_SHADER_DRAW);
-  caps->supported_families=GML_RENDER_FAMILY_TEXTURE|GML_RENDER_FAMILY_PRIMITIVE;
+  caps->supported_families=GML_RENDER_FAMILY_TEXTURE|GML_RENDER_FAMILY_PRIMITIVE|
+                           GML_RENDER_FAMILY_EFFECT;
   caps->supports_rgb_alpha_separate=backend->gl.BlendFuncSeparate &&
                                      backend->gl.BlendEquationSeparate;
   caps->soft_cache_bytes=128u*1024u*1024u;

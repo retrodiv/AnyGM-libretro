@@ -247,25 +247,47 @@
 #define GML_GPU_OPENGL_SCENE_EXACT_FRAGMENT_BODY \
   "uniform sampler2D u_image;\n" \
   "uniform sampler2D u_previous;\n" \
+  "uniform vec2 u_extent;\n" \
   "uniform ivec2 u_region_origin;\n" \
   "uniform int u_repetitions;\n" \
   "uniform int u_blend_rule;\n" \
   "uniform float u_additive_alpha;\n" \
   "uniform ivec4 u_effect_colour;\n" \
   "uniform float u_effect_intensity;\n" \
+  "uniform vec4 u_effect_zoom;\n" \
+  "uniform int u_effect_linear;\n" \
   "in vec2 v_texcoord;\n" \
   "in vec4 v_colour;\n" \
   "out vec4 o_color;\n" \
+  "vec4 effect_capture_sample(vec2 uv){\n" \
+  "  vec2 position=clamp(uv,vec2(0.0),vec2(1.0))*u_extent;\n" \
+  "  ivec2 maximum=ivec2(u_extent)-ivec2(1);\n" \
+  "  if(u_effect_linear==0){\n" \
+  "    ivec2 texel=clamp(ivec2(floor(position)),ivec2(0),maximum);\n" \
+  "    return texelFetch(u_image,texel,0);\n" \
+  "  }\n" \
+  "  vec2 base=position-vec2(0.5);\n" \
+  "  ivec2 low=ivec2(floor(base));\n" \
+  "  ivec2 high=low+ivec2(1);\n" \
+  "  vec2 weight=fract(base);\n" \
+  "  low=clamp(low,ivec2(0),maximum);\n" \
+  "  high=clamp(high,ivec2(0),maximum);\n" \
+  "  vec4 a=mix(texelFetch(u_image,ivec2(low.x,low.y),0),\n" \
+  "             texelFetch(u_image,ivec2(high.x,low.y),0),weight.x);\n" \
+  "  vec4 b=mix(texelFetch(u_image,ivec2(low.x,high.y),0),\n" \
+  "             texelFetch(u_image,ivec2(high.x,high.y),0),weight.x);\n" \
+  "  return mix(a,b,weight.y);\n" \
+  "}\n" \
   "void main(){\n" \
   "  ivec4 source=ivec4(round(texture(u_image,v_texcoord)*v_colour*255.0));\n" \
   "  ivec4 prior=ivec4(round(texelFetch(u_previous,ivec2(gl_FragCoord.xy)-u_region_origin,0)*255.0));\n" \
   "  // R03_SHADER_LAYER_TINT_COLOURISE: transform premultiplied capture, then source-over.\n" \
-  "  if(u_blend_rule==2 || u_blend_rule==3){\n" \
-  "    if(source.a==0){ o_color=vec4(prior)/255.0; return; }\n" \
+  "  if(u_blend_rule==2 || u_blend_rule==3 || u_blend_rule==4){\n" \
+  "    if(u_blend_rule!=4 && source.a==0){ o_color=vec4(prior)/255.0; return; }\n" \
   "    ivec4 filtered=source;\n" \
   "    if(u_blend_rule==2){\n" \
   "      filtered=ivec4(floor(vec4(source)*vec4(u_effect_colour)/255.0+0.5));\n" \
-  "    } else {\n" \
+  "    } else if(u_blend_rule==3){\n" \
   "      vec3 weights=vec3(0.299,0.587,0.114);\n" \
   "      vec3 tint=vec3(u_effect_colour.rgb)/255.0;\n" \
   "      float tint_luma=dot(tint,weights);\n" \
@@ -281,6 +303,21 @@
   "      }\n" \
   "      vec3 result=mix(straight,ramp,clamp(u_effect_intensity,0.0,1.0))*float(source.a)/255.0;\n" \
   "      filtered.rgb=ivec3(floor(clamp(result,0.0,1.0)*255.0+0.5));\n" \
+  "    } else {\n" \
+  "      // R03_SHADER_LAYER_ZOOM_BLUR: sixteen bounded capture samples, then source-over.\n" \
+  "      vec2 point=v_texcoord*u_extent;\n" \
+  "      vec2 centre=vec2(u_effect_zoom.x,1.0-u_effect_zoom.y)*u_extent;\n" \
+  "      float distance_to_centre=distance(point,centre);\n" \
+  "      float edge0=u_effect_zoom.w;\n" \
+  "      float edge1=edge0+max(distance_to_centre,1.0);\n" \
+  "      float phase=clamp((distance_to_centre-edge0)/(edge1-edge0),0.0,1.0);\n" \
+  "      float reach=u_effect_zoom.z*phase*phase*(3.0-2.0*phase);\n" \
+  "      vec4 sum=vec4(0.0);\n" \
+  "      for(int tap=0;tap<16;tap++){\n" \
+  "        float amount=reach*float(tap)/16.0;\n" \
+  "        sum+=effect_capture_sample(mix(point,centre,amount)/u_extent);\n" \
+  "      }\n" \
+  "      filtered=ivec4(floor(clamp(sum/16.0,0.0,1.0)*255.0+0.5));\n" \
   "    }\n" \
   "    if(filtered.a==0){ o_color=vec4(prior)/255.0; return; }\n" \
   "    vec3 retained=vec3(prior.rgb)*(1.0-float(filtered.a)/255.0);\n" \

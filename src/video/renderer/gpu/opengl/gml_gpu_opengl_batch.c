@@ -211,8 +211,19 @@ static int scene_preflight(GmlGpuBackend *backend,const GmlRenderDrawBatch *batc
          (!existing_target(backend,target) &&
           !cleared_earlier(cleared,clear_count,target->image)) ||
          (op->payload.effect.kind!=GML_RENDER_LAYER_EFFECT_TINT &&
-          op->payload.effect.kind!=GML_RENDER_LAYER_EFFECT_COLOURISE) ||
+          op->payload.effect.kind!=GML_RENDER_LAYER_EFFECT_COLOURISE &&
+          op->payload.effect.kind!=GML_RENDER_LAYER_EFFECT_ZOOM_BLUR) ||
          !isfinite(op->payload.effect.intensity)) return 0;
+      if(op->payload.effect.kind==GML_RENDER_LAYER_EFFECT_ZOOM_BLUR &&
+         (!isfinite(op->payload.effect.centre[0]) ||
+          !isfinite(op->payload.effect.centre[1]) ||
+          !isfinite(op->payload.effect.focus_radius) ||
+          op->payload.effect.centre[0]<0.0 || op->payload.effect.centre[0]>1.0 ||
+          op->payload.effect.centre[1]<0.0 || op->payload.effect.centre[1]>1.0 ||
+          op->payload.effect.intensity<0.0 || op->payload.effect.intensity>1.0 ||
+          op->payload.effect.focus_radius<0.0 ||
+          op->payload.effect.focus_radius>8192.0 ||
+          op->payload.effect.linear>1u)) return 0;
       state=&batch->states[op->state_index];
       source=gml_gpu_opengl_scene_image(backend,op->sources[0]);
       if(!source || !source->texture || source->pixel_format!=GML_RENDER_PIXEL_ARGB8888 ||
@@ -541,7 +552,8 @@ static int draw_exact_quad(GmlGpuBackend *backend,const GmlRenderDrawOp *op,
   backend->gl.Uniform1i(scene->exact_u_previous,1);
   backend->gl.Uniform1i(scene->exact_u_repetitions,(GLint)repetitions);
   backend->gl.Uniform1i(scene->exact_u_blend_rule,
-                        effect?(effect->kind==GML_RENDER_LAYER_EFFECT_TINT?2:3):
+                        effect?(effect->kind==GML_RENDER_LAYER_EFFECT_TINT?2:
+                                effect->kind==GML_RENDER_LAYER_EFFECT_COLOURISE?3:4):
                           (qualified_blend(state)==4?1:0));
   {
     GLfloat opacity=(GLfloat)state->additive_draw_alpha;
@@ -554,6 +566,12 @@ static int draw_exact_quad(GmlGpuBackend *backend,const GmlRenderDrawOp *op,
     GLfloat intensity=effect?(GLfloat)effect->intensity:1.0f;
     backend->gl.Uniform4iv(scene->exact_u_effect_colour,1,rgba);
     backend->gl.Uniform1fv(scene->exact_u_effect_intensity,1,&intensity);
+    GLfloat zoom[4]={effect?(GLfloat)effect->centre[0]:0.0f,
+                     effect?(GLfloat)effect->centre[1]:0.0f,
+                     intensity,effect?(GLfloat)effect->focus_radius:0.0f};
+    backend->gl.Uniform4fv(scene->exact_u_effect_zoom,1,zoom);
+    backend->gl.Uniform1i(scene->exact_u_effect_linear,
+                          effect?(GLint)effect->linear:0);
   }
   origin[0]=left;
   origin[1]=bottom;
@@ -599,7 +617,8 @@ int gml_render_gpu_opengl_apply_effect(GmlGpuBackend *backend,
   GmlRenderQuad *shape=&quad.payload.quad;
   if(!target || !source || !state ||
      (operation->payload.effect.kind!=GML_RENDER_LAYER_EFFECT_TINT &&
-      operation->payload.effect.kind!=GML_RENDER_LAYER_EFFECT_COLOURISE)) return 0;
+      operation->payload.effect.kind!=GML_RENDER_LAYER_EFFECT_COLOURISE &&
+      operation->payload.effect.kind!=GML_RENDER_LAYER_EFFECT_ZOOM_BLUR)) return 0;
   memset(shape,0,sizeof *shape);
   quad.opcode=GML_RENDER_OP_TEXTURED_QUAD;
   shape->shape=GML_RENDER_QUAD_AXIS_ALIGNED;

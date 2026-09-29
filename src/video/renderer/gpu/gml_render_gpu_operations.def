@@ -8,7 +8,7 @@ GML_RENDER_GPU_OPERATION(COLOURED_PRIMITIVE, supported, gml_render_gpu_opengl_dr
 GML_RENDER_GPU_OPERATION(CLEAR, supported, gml_render_gpu_opengl_clear, "P3 resident target region clear with explicit preflight")
 GML_RENDER_GPU_OPERATION(COPY_IMAGE, planned, gml_render_gpu_opengl_copy_image, "P5 general versioned image copy; P3 probe uses a qualified textured quad")
 GML_RENDER_GPU_OPERATION(COMPOSE_SURFACE, planned, gml_render_gpu_opengl_compose_surface, "P5 general versioned surface composition; bounded opaque/binary integer public part and stretched draws use TEXTURED_QUAD")
-GML_RENDER_GPU_OPERATION(LAYER_EFFECT, supported, gml_render_gpu_opengl_apply_effect, "P7 bounded tint and colourise filter computation; other families use ordered CPU fallback")
+GML_RENDER_GPU_OPERATION(LAYER_EFFECT, supported, gml_render_gpu_opengl_apply_effect, "P7 bounded tint, colourise and zoom-blur computation; other families use ordered CPU fallback")
 GML_RENDER_GPU_OPERATION(PRESENT_IMAGE, planned, gml_render_gpu_opengl_present_image, "Neutral scene opcode unselected; terminal resident-source presentation uses the separate existing plan")
 GML_RENDER_GPU_OPERATION(CONTENT_SHADER_DRAW, supported, gml_gpu_opengl_scene_shader_draw, "P3 checkpoint executor plus P7 qualified public full-target surface shader; general multipass and other targets remain open")
 GML_RENDER_GPU_OPERATION(SOFTWARE3D_PASS, fallback, gml_d3_draw_sprite_2d, "conservative software-3D bridge with CPU/GPU barrier")
