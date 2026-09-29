@@ -262,6 +262,15 @@ continuation, requires new GPU sprite work, and rejects deletion of the recycled
 later valid GPU adoption. These are engine/fake-driver lifecycle controls; physical-device pixels
 and final frontend cost retain their separately recorded evidence boundaries.
 
+P8-T29 qualifies the per-engine part of `R03-P3-CONTEXT-RESET` and `R03-P8-STATE-RETIRE` without
+adding a shader or CPU algorithm. `tests/integration/test_graphics_state.c::two_live_gpu_engines_case`
+interleaves two GPU-selected engines and two CPU controls at different frame positions. Each GPU
+engine owns a distinct host resolver result for `glGetError`, framebuffer callback, source texture,
+scene counter and canonical state. Resetting then non-current-destroying only one engine must leave
+the other's callback dispatch, resource identity, image, state and counted sprite work intact. The
+fixture's shared fake driver proves logical isolation and entry-table ownership, not independent
+physical GL contexts or final performance; T25's separate real-device comparison owns pixels.
+
 ## Frame CPU-access and resident-source audit
 
 This is the live P7 frame-coherence map, not the historical P1 classification.

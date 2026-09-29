@@ -57,6 +57,58 @@ static AnygmResult graphics_adopt(AnygmEngine *engine,uint32_t api){
   return anygm_graphics_context_reset(engine,&context);
 }
 
+typedef struct GraphicsWitness {
+  unsigned slot;
+  unsigned proc_queries;
+  unsigned framebuffer_queries;
+} GraphicsWitness;
+
+static unsigned graphics_witness_error_calls[3];
+static unsigned graphics_witness_error(unsigned slot){
+  void (*generic)(void)=anygm_test_graphics_proc(NULL,"glGetError");
+  unsigned (*typed)(void)=NULL;
+  graphics_witness_error_calls[slot]++;
+  if(!generic) return 0u;
+  memcpy(&typed,&generic,sizeof typed);
+  return typed(); /* Preserve the fake driver's forbidden-call observation. */
+}
+static unsigned graphics_witness_error_0(void){ return graphics_witness_error(0u); }
+static unsigned graphics_witness_error_1(void){ return graphics_witness_error(1u); }
+static unsigned graphics_witness_error_2(void){ return graphics_witness_error(2u); }
+
+/* The driver remains the existing fake; only glGetError has a distinct function pointer per
+ * context. That makes a stale or shared engine dispatch table observable after one engine resets. */
+static void (*graphics_witness_proc(void *userdata,const char *name))(void){
+  GraphicsWitness *witness=(GraphicsWitness*)userdata;
+  if(!witness || witness->slot>=3u) return NULL;
+  witness->proc_queries++;
+  if(!strcmp(name,"glGetError")){
+    unsigned (*typed)(void)=witness->slot==0u?graphics_witness_error_0:
+                           witness->slot==1u?graphics_witness_error_1:
+                                             graphics_witness_error_2;
+    void (*generic)(void)=NULL;
+    memcpy(&generic,&typed,sizeof generic);
+    return generic;
+  }
+  return anygm_test_graphics_proc(NULL,name);
+}
+
+static uintptr_t graphics_witness_framebuffer(void *userdata){
+  GraphicsWitness *witness=(GraphicsWitness*)userdata;
+  if(!witness || witness->slot>=3u) return 0u;
+  witness->framebuffer_queries++;
+  return 7u+10u*witness->slot;
+}
+
+static AnygmResult graphics_adopt_witness(AnygmEngine *engine,uint32_t api,
+                                          GraphicsWitness *witness){
+  AnygmGraphicsContext context=graphics_context(api);
+  context.userdata=witness;
+  context.get_proc_address=graphics_witness_proc;
+  context.get_current_framebuffer=graphics_witness_framebuffer;
+  return anygm_graphics_context_reset(engine,&context);
+}
+
 static int session_open_fixture_with_scene(Session *session,uint32_t scene_renderer,
                                            int (*create_fixture)(AnygmSyntheticContent *)){
   AnygmContentSource source={0};
@@ -1644,6 +1696,149 @@ static int interleaved_engines_case(void){
   return ok;
 }
 
+static int live_engine_pair_matches(Session *plain,Session *selected){
+  uint8_t *plain_state=NULL,*selected_state=NULL;
+  size_t plain_size=0,selected_size=0;
+  int same=plain->engine && selected->engine && plain->engine->screen &&
+           selected->engine->screen &&
+           plain->engine->vm.frame==selected->engine->vm.frame &&
+           !memcmp(plain->engine->screen,selected->engine->screen,
+                   64u*48u*sizeof(uint32_t));
+  if(same){
+    plain_state=serialize(plain->engine,&plain_size);
+    selected_state=serialize(selected->engine,&selected_size);
+    same=plain_state && selected_state && plain_size==selected_size &&
+         !memcmp(plain_state,selected_state,plain_size);
+  }
+  free(plain_state);
+  free(selected_state);
+  return same;
+}
+
+/* Unlike the older GPU+CPU interleaving control, both selected engines own live GL backends.
+ * Different resolver functions and framebuffer callbacks reveal accidental sharing of the
+ * dispatch table; distinct texture names, frame positions and CPU controls reveal shared state. */
+static int two_live_gpu_engines_case(void){
+  Session plain[2]={0},selected[2]={0};
+  GraphicsWitness witness[3]={{0}};
+  GmlGpuCounters before[2]={{0}},after[2]={{0}};
+  unsigned texture[2]={0},old_errors=0,old_framebuffers=0,replacement_errors=0;
+  const char *stage="open";
+  int ok=1;
+  anygm_test_graphics_reset();
+  memset(graphics_witness_error_calls,0,sizeof graphics_witness_error_calls);
+  for(unsigned index=0;index<2u && ok;index++){
+    witness[index].slot=index;
+    ok=session_open_fixture_with_scene(&plain[index],ANYGM_SCENE_RENDERER_CPU,
+                                       anygm_synthetic_multiview_gpu_content_create) &&
+       session_open_fixture_with_scene(&selected[index],ANYGM_SCENE_RENDERER_OPENGL,
+                                       anygm_synthetic_multiview_gpu_content_create);
+  }
+  if(ok){
+    stage="adopt two contexts";
+    ok=graphics_adopt_witness(selected[0].engine,ANYGM_GRAPHICS_OPENGLES3,
+                              &witness[0])==ANYGM_OK &&
+       graphics_adopt_witness(selected[1].engine,ANYGM_GRAPHICS_OPENGL_CORE,
+                              &witness[1])==ANYGM_OK;
+  }
+  for(int frame=0;frame<6 && ok;frame++){
+    for(unsigned index=0;index<2u && ok;index++){
+      if(index==0u && frame>=4) continue;
+      stage="initial interleaving";
+      ok=advance(plain[index].engine,1,NULL) &&
+         advance(selected[index].engine,1,NULL) &&
+         live_engine_pair_matches(&plain[index],&selected[index]);
+      if(ok && frame==0) texture[index]=anygm_test_graphics_scene_texture();
+    }
+  }
+  if(ok){
+    stage="independent initial ownership";
+    gml_gpu_counters(selected[0].engine->gpu,&before[0]);
+    gml_gpu_counters(selected[1].engine->gpu,&before[1]);
+    ok=plain[0].engine->vm.frame==4 && plain[1].engine->vm.frame==6 &&
+       before[0].scene_families[GML_RENDER_SCENE_SPRITE]>0u &&
+       before[1].scene_families[GML_RENDER_SCENE_SPRITE]>0u &&
+       texture[0]>0u && texture[1]>0u && texture[0]!=texture[1] &&
+       !anygm_test_graphics_texture_deleted(texture[1]) &&
+       graphics_witness_error_calls[0]>0u && graphics_witness_error_calls[1]>0u &&
+       witness[0].proc_queries>0u && witness[1].proc_queries>0u &&
+       witness[0].framebuffer_queries>0u && witness[1].framebuffer_queries>0u;
+  }
+  if(ok){
+    stage="reset only first engine";
+    witness[2].slot=2u;
+    ok=graphics_adopt_witness(selected[0].engine,ANYGM_GRAPHICS_OPENGL_CORE,
+                              &witness[2])==ANYGM_OK &&
+       !anygm_test_graphics_texture_deleted(texture[1]) &&
+       live_engine_pair_matches(&plain[1],&selected[1]);
+  }
+  if(ok){
+    stage="second engine survives first reset";
+    old_errors=graphics_witness_error_calls[0];
+    old_framebuffers=witness[0].framebuffer_queries;
+    replacement_errors=graphics_witness_error_calls[2];
+    unsigned second_errors=graphics_witness_error_calls[1];
+    unsigned second_framebuffers=witness[1].framebuffer_queries;
+    ok=advance(plain[1].engine,1,NULL) && advance(selected[1].engine,1,NULL) &&
+       live_engine_pair_matches(&plain[1],&selected[1]) &&
+       graphics_witness_error_calls[1]>second_errors &&
+       witness[1].framebuffer_queries>second_framebuffers &&
+       graphics_witness_error_calls[0]==old_errors &&
+       graphics_witness_error_calls[2]==replacement_errors &&
+       witness[0].framebuffer_queries==old_framebuffers &&
+       !anygm_test_graphics_texture_deleted(texture[1]);
+  }
+  if(ok){
+    stage="first engine resumes on replacement";
+    ok=advance(plain[0].engine,1,NULL) && advance(selected[0].engine,1,NULL) &&
+       live_engine_pair_matches(&plain[0],&selected[0]) &&
+       graphics_witness_error_calls[2]>replacement_errors &&
+       graphics_witness_error_calls[0]==old_errors &&
+       witness[2].framebuffer_queries>0u &&
+       anygm_test_graphics_scene_texture()!=texture[1];
+    if(ok){
+      gml_gpu_counters(selected[0].engine->gpu,&after[0]);
+      ok=after[0].scene_families[GML_RENDER_SCENE_SPRITE]>
+         before[0].scene_families[GML_RENDER_SCENE_SPRITE];
+    }
+  }
+  if(ok){
+    stage="non-current shutdown leaves second engine alive";
+    unsigned first_errors=graphics_witness_error_calls[2];
+    unsigned first_framebuffers=witness[2].framebuffer_queries;
+    anygm_test_graphics_forbid_calls();
+    anygm_graphics_context_destroy(selected[0].engine,0u);
+    ok=anygm_test_graphics_calls_after_forget()==0 &&
+       graphics_witness_error_calls[2]==first_errors &&
+       witness[2].framebuffer_queries==first_framebuffers;
+    anygm_test_graphics_allow_calls();
+    ok=ok && advance(plain[0].engine,1,NULL) && advance(selected[0].engine,1,NULL) &&
+       live_engine_pair_matches(&plain[0],&selected[0]) &&
+       advance(plain[1].engine,1,NULL) && advance(selected[1].engine,1,NULL) &&
+       live_engine_pair_matches(&plain[1],&selected[1]) &&
+       !anygm_test_graphics_texture_deleted(texture[1]);
+  }
+  if(ok){
+    stage="continued GPU work in second engine";
+    gml_gpu_counters(selected[1].engine->gpu,&after[1]);
+    ok=after[1].scene_families[GML_RENDER_SCENE_SPRITE]>
+       before[1].scene_families[GML_RENDER_SCENE_SPRITE];
+  }
+  if(!ok)
+    fprintf(stderr,"two live GPU engines failed at %s (textures=%u/%u, error calls=%u/%u/%u, "
+            "framebuffer calls=%u/%u/%u, forbidden=%d)\n",stage,texture[0],texture[1],
+            graphics_witness_error_calls[0],graphics_witness_error_calls[1],
+            graphics_witness_error_calls[2],witness[0].framebuffer_queries,
+            witness[1].framebuffer_queries,witness[2].framebuffer_queries,
+            anygm_test_graphics_calls_after_forget());
+  anygm_test_graphics_allow_calls();
+  for(unsigned index=0;index<2u;index++){
+    session_close(&selected[index]);
+    session_close(&plain[index]);
+  }
+  return ok;
+}
+
 /* An unusable context leaves a fully working software engine, and destroying an engine that never
  * had a current context issues no graphics call at all. */
 static int refused_context_case(void){
@@ -2141,6 +2336,8 @@ int main(void){
     {"deferred retirement survives numeric name reuse after a lost context",
      context_replacement_reuses_names_case},
     {"two interleaved engines stay independent",interleaved_engines_case},
+    {"two live GPU engines keep independent functions and resources",
+     two_live_gpu_engines_case},
     {"a refused context leaves a working software engine",refused_context_case},
     {"neutral device binds and clears with context",neutral_device_binding_case},
     {"runtime font Reset gets a fresh device generation",runtime_font_reset_scene_case},
