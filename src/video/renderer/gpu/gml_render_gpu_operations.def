@@ -2,13 +2,13 @@
  * Copyright (c) 2026 retrodiv <retrodiv@proton.me>
  * Current selected scene entries and explicit unselected/fallback entries.
  */
-GML_RENDER_GPU_OPERATION(TEXTURED_QUAD, supported, gml_render_gpu_opengl_draw_textured_quad, "Qualified resident sprite, background, tile, positioned and opaque/binary integer surface-part/stretched quad rules; unqualified variants use ordered CPU fallback")
-GML_RENDER_GPU_OPERATION(TEXTURED_TRIANGLES, planned, gml_render_gpu_opengl_draw_textured_triangles, "Dedicated opcode unselected; qualified positioned geometry is encoded as TEXTURED_QUAD")
+GML_RENDER_GPU_OPERATION(TEXTURED_QUAD, supported, gml_render_gpu_opengl_draw_textured_quad, "Qualified resident sprite, background, tile, glyph, positioned and opaque/binary integer surface-part/stretched quad rules; unqualified variants use ordered CPU fallback")
+GML_RENDER_GPU_OPERATION(TEXTURED_TRIANGLES, fallback, gml_render_cpu_blit_sprite_pos_resolved, "Dedicated opcode unselected; qualified positioned and corner-colour geometry uses TEXTURED_QUAD; unqualified positioned geometry keeps ordered CPU triangles")
 GML_RENDER_GPU_OPERATION(COLOURED_PRIMITIVE, supported, gml_render_gpu_opengl_draw_primitive, "Qualified opaque flat, span, line, outline and particle-square regions; unqualified variants use ordered CPU fallback")
 GML_RENDER_GPU_OPERATION(CLEAR, supported, gml_render_gpu_opengl_clear, "P3 resident target region clear with explicit preflight")
-GML_RENDER_GPU_OPERATION(COPY_IMAGE, planned, gml_render_gpu_opengl_copy_image, "P5 general versioned image copy; P3 probe uses a qualified textured quad")
-GML_RENDER_GPU_OPERATION(COMPOSE_SURFACE, planned, gml_render_gpu_opengl_compose_surface, "P5 general versioned surface composition; bounded opaque/binary integer public part and stretched draws use TEXTURED_QUAD")
+GML_RENDER_GPU_OPERATION(COPY_IMAGE, fallback, gml_surface_copy, "Public full/partial raw surface copies retain clipped alias-safe CPU kernels with coherent versioned borrows; prototype resident copy is a separate qualified textured quad")
+GML_RENDER_GPU_OPERATION(COMPOSE_SURFACE, fallback, gml_render_cpu_draw_surface_stretched_impl, "Unqualified surface composition retains ordered CPU kernels; qualified opaque/binary integer part and stretched draws use TEXTURED_QUAD, and qualified content programs use CONTENT_SHADER_DRAW")
 GML_RENDER_GPU_OPERATION(LAYER_EFFECT, supported, gml_render_gpu_opengl_apply_effect, "P7 bounded tint, colourise and zoom-blur computation; other families use ordered CPU fallback")
-GML_RENDER_GPU_OPERATION(PRESENT_IMAGE, planned, gml_render_gpu_opengl_present_image, "Neutral scene opcode unselected; terminal resident-source presentation uses the separate existing plan")
-GML_RENDER_GPU_OPERATION(CONTENT_SHADER_DRAW, supported, gml_gpu_opengl_scene_shader_draw, "P3 checkpoint executor plus P7 qualified public full-target surface shader; general multipass and other targets remain open")
+GML_RENDER_GPU_OPERATION(PRESENT_IMAGE, fallback, gml_render_cpu_present_image, "Neutral scene opcode unselected; qualified terminal resident-source presentation uses the existing plan; other presentation retains coherent CPU materialization")
+GML_RENDER_GPU_OPERATION(CONTENT_SHADER_DRAW, supported, gml_gpu_opengl_scene_shader_draw, "Qualified public full-target surface programs with per-draw state/samplers and distinct-target multipass; excluded program/target variants retain the established ordered fallback")
 GML_RENDER_GPU_OPERATION(SOFTWARE3D_PASS, fallback, gml_d3_draw_sprite_2d, "conservative software-3D bridge with CPU/GPU barrier")

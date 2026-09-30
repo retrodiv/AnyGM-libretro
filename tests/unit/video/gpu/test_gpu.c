@@ -184,6 +184,17 @@ static int program_failure_case(void){
 }
 
 static int scene_service_contract_case(void){
+  static const GmlRenderOperationCode unselected[]={
+    GML_RENDER_OP_TEXTURED_TRIANGLES,GML_RENDER_OP_COPY_IMAGE,
+    GML_RENDER_OP_COMPOSE_SURFACE,GML_RENDER_OP_PRESENT_IMAGE
+  };
+  const uint64_t supported_operations=(UINT64_C(1)<<GML_RENDER_OP_CLEAR)|
+    (UINT64_C(1)<<GML_RENDER_OP_TEXTURED_QUAD)|
+    (UINT64_C(1)<<GML_RENDER_OP_COLOURED_PRIMITIVE)|
+    (UINT64_C(1)<<GML_RENDER_OP_LAYER_EFFECT)|
+    (UINT64_C(1)<<GML_RENDER_OP_CONTENT_SHADER_DRAW);
+  const uint32_t supported_families=GML_RENDER_FAMILY_TEXTURE|
+    GML_RENDER_FAMILY_PRIMITIVE|GML_RENDER_FAMILY_EFFECT|GML_RENDER_FAMILY_SHADER;
   GmlGpu *gpu;
   GmlGpuContext context;
   GmlRenderDeviceServices services;
@@ -207,9 +218,9 @@ static int scene_service_contract_case(void){
   memset(&caps,0xA5,sizeof caps);
   REQUIRE(services.capabilities(services.context,&caps),"capability query succeeds");
   REQUIRE(caps.max_texture_extent==4096 && caps.max_batch_quads==2048 &&
-          (caps.supported_operations&(UINT64_C(1)<<GML_RENDER_OP_CLEAR)) &&
-          (caps.supported_operations&(UINT64_C(1)<<GML_RENDER_OP_TEXTURED_QUAD)),
-          "only the initial resident variants are advertised");
+          caps.supported_operations==supported_operations &&
+          caps.supported_families==supported_families,
+          "the exact selected operation and neutral family masks are advertised");
   memset(&op,0,sizeof op);
   op.opcode=GML_RENDER_OP_LAYER_EFFECT;
   memset(&batch,0,sizeof batch);
@@ -230,6 +241,44 @@ static int scene_service_contract_case(void){
             counters.scene_partial_prefix==0u &&
             counters.scene_operations[GML_RENDER_OP_LAYER_EFFECT]==0u,
             "a refused scene batch cannot appear as completed work");
+  }
+  {
+    GmlRenderDrawOp operations[2]={0};
+    GmlRenderDrawBatch refused={operations,2u,NULL,0u};
+    GmlGpuCounters counters;
+    int clears=anygm_test_graphics_clear_calls();
+    operations[0].opcode=GML_RENDER_OP_CLEAR;
+    operations[0].target.image=(GmlRenderImageRef){GML_RENDER_RESOURCE_SURFACE,7u,1u,1u};
+    operations[0].target.storage_version=1u;
+    operations[0].target.width=operations[0].target.height=8u;
+    operations[0].target.region=(GmlRenderRect){0,0,8u,8u};
+    operations[0].target.pixel_format=GML_RENDER_PIXEL_ARGB8888;
+    operations[0].payload.clear_colour=0xFF123456u;
+    operations[1].target=operations[0].target;
+    operations[1].target.image.content_version=2u;
+    for(size_t index=0;index<sizeof unselected/sizeof *unselected;index++){
+      operations[1].opcode=unselected[index];
+      result=services.submit(services.context,&refused);
+      REQUIRE(result.status==GML_RENDER_EXEC_UNSUPPORTED && result.accepted_prefix==0u &&
+              result.uncertain_target_count==0u && !result.all_destinations_uncertain,
+              "each unselected opcode rejects the whole batch before its valid clear prefix");
+      REQUIRE(anygm_test_graphics_clear_calls()==clears &&
+              anygm_test_graphics_draw_calls()==draws,
+              "an unselected opcode causes no clear or draw");
+      gml_gpu_counters(gpu,&counters);
+      REQUIRE(counters.scene_operations[unselected[index]]==0u &&
+              counters.scene_operations[GML_RENDER_OP_CLEAR]==0u,
+              "neither an unselected opcode nor its refused prefix is counted as GPU work");
+    }
+    gml_gpu_counters(gpu,&counters);
+    REQUIRE(counters.scene_batches_offered==5u && counters.scene_batches_refused==5u &&
+            counters.scene_batches_accepted==0u && counters.scene_partial_prefix==0u,
+            "all four unselected opcode refusals retain exact batch accounting");
+    refused.operation_count=1u;
+    result=services.submit(services.context,&refused);
+    REQUIRE(result.status==GML_RENDER_EXEC_ACCEPTED && result.accepted_prefix==1u &&
+            anygm_test_graphics_clear_calls()==clears+1,
+            "the identical clear prefix is valid when submitted without an unselected suffix");
   }
   gml_gpu_context_lost(gpu);
   gml_gpu_device_services(gpu,&services);
