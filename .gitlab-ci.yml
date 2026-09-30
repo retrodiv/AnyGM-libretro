@@ -56,11 +56,34 @@ libretro-build-linux-aarch64:
     - .libretro-linux-aarch64-make-default
     - .core-defs
 
-# The Android template runs ndk-build, which builds the core through this repository's own Makefile
-# for platform=android and installs the result as libs/arm64-v8a/libretro.so.
+# There is no upstream armhf template. Cross-build on an x86-64 image with the
+# hard-float toolchain and strip with the matching target tool.
+libretro-build-linux-armhf:
+  extends:
+    - .libretro-linux-x64
+    - .core-defs
+  image: ubuntu:22.04
+  variables:
+    CFLAGS: -march=armv7-a -mfpu=vfpv3-d16 -mfloat-abi=hard
+    CXXFLAGS: -march=armv7-a -mfpu=vfpv3-d16 -mfloat-abi=hard
+  before_script:
+    - apt-get update
+    - apt-get install -y --no-install-recommends make gcc-arm-linux-gnueabihf g++-arm-linux-gnueabihf
+  script:
+    - make -j4 platform=unix CROSS_COMPILE=arm-linux-gnueabihf- BUILD_DIR=build/linux-armhf core
+  after_script:
+    - if [ "$STRIP_CORE_LIB" -eq 1 ] && [ -f anygm_libretro.so ]; then arm-linux-gnueabihf-strip --strip-unneeded anygm_libretro.so; fi
+
+# The Android template runs ndk-build through the repository's Makefile and
+# installs each ABI as libs/<abi>/libretro.so.
 libretro-build-android-arm64:
   extends:
     - .libretro-android-jni-arm64-v8a
+    - .core-defs
+
+libretro-build-android-armv7:
+  extends:
+    - .libretro-android-jni-armeabi-v7a
     - .core-defs
 
 # The 10-7 template is the legacy variant; the mainstream choice is the default (macOS 10.9).

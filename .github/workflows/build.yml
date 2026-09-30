@@ -39,9 +39,29 @@ jobs:
       - name: Build win-i686
         run: make -j"$(nproc)" platform=win CROSS_COMPILE=i686-w64-mingw32- BUILD_DIR=build/win32 core
 
-  android:
-    name: android arm64 build
+  linux-armhf:
+    name: linux ARMv7 hard-float build
     runs-on: ubuntu-latest
+    env:
+      CFLAGS: -march=armv7-a -mfpu=vfpv3-d16 -mfloat-abi=hard
+      CXXFLAGS: -march=armv7-a -mfpu=vfpv3-d16 -mfloat-abi=hard
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install the ARM hard-float toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-arm-linux-gnueabihf g++-arm-linux-gnueabihf
+      - name: Build and check the export surface
+        run: |
+          make -j4 platform=unix CROSS_COMPILE=arm-linux-gnueabihf- BUILD_DIR=build/linux-armhf core
+          make platform=unix CROSS_COMPILE=arm-linux-gnueabihf- BUILD_DIR=build/linux-armhf export-check
+
+  android:
+    name: android ${{ matrix.abi }} build
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        abi: [arm64-v8a, armeabi-v7a]
     steps:
       - uses: actions/checkout@v4
       - name: Locate the Android NDK
@@ -52,13 +72,13 @@ jobs:
             printf '%s\n' "No Android NDK is installed on this runner." >&2
             exit 1
           fi
-          printf 'NDK_BIN=%s/toolchains/llvm/prebuilt/linux-x86_64/bin\n' "$ndk" >> "$GITHUB_ENV"
-      - name: Build android-arm64
+          printf 'NDK_ROOT=%s\n' "$ndk" >> "$GITHUB_ENV"
+      - name: Build through the NDK entry point
+        env:
+          ANDROID_ABI: ${{ matrix.abi }}
         run: |
-          make -j"$(nproc)" platform=android BUILD_DIR=build/android-arm64 \
-            CC="$NDK_BIN/aarch64-linux-android24-clang" \
-            CXX="$NDK_BIN/aarch64-linux-android24-clang++" AR="$NDK_BIN/llvm-ar" core
-          test -f anygm_libretro_android.so
+          "$NDK_ROOT/ndk-build" -j4 -C jni APP_ABI="$ANDROID_ABI"
+          test -f "libs/$ANDROID_ABI/libretro.so"
 
   # The two Apple jobs build the core with the Apple toolchain, which is the compiler family the
   # libretro osx templates use, and check the export surface against the same reviewed list the ELF

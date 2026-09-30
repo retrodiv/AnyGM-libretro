@@ -119,6 +119,11 @@ make -j4 platform=unix CC="gcc -m32" CXX="g++ -m32" BUILD_DIR=build/unix-i686 co
 # Linux aarch64, including the Recalbox image
 make -j4 platform=unix CROSS_COMPILE=aarch64-linux-gnu- BUILD_DIR=build/unix-aarch64 core
 
+# Linux ARMv7 hard-float (armhf), with a VFPv3-D16 baseline
+CFLAGS='-march=armv7-a -mfpu=vfpv3-d16 -mfloat-abi=hard' \
+CXXFLAGS='-march=armv7-a -mfpu=vfpv3-d16 -mfloat-abi=hard' \
+make -j4 platform=unix CROSS_COMPILE=arm-linux-gnueabihf- BUILD_DIR=build/unix-armhf core
+
 # Windows x86-64 and i686
 make -j4 platform=win CROSS_COMPILE=x86_64-w64-mingw32- core
 make -j4 platform=win CROSS_COMPILE=i686-w64-mingw32- BUILD_DIR=build/win32 core
@@ -128,6 +133,14 @@ NDK_BIN=<ndk>/toolchains/llvm/prebuilt/linux-x86_64/bin
 make -j4 platform=android BUILD_DIR=build/android-arm64 \
   CC="$NDK_BIN/aarch64-linux-android24-clang" \
   CXX="$NDK_BIN/aarch64-linux-android24-clang++" AR="$NDK_BIN/llvm-ar" core
+
+# Android ARMv7 uses the NDK softfp ABI, distinct from Linux armhf
+make -j4 platform=android BUILD_DIR=build/android-armv7 \
+  CC="$NDK_BIN/armv7a-linux-androideabi24-clang" \
+  CXX="$NDK_BIN/armv7a-linux-androideabi24-clang++" AR="$NDK_BIN/llvm-ar" core
+
+# The buildbot entry point also builds both ABIs into separate directories
+<ndk>/ndk-build -j4 -C jni APP_ABI='arm64-v8a armeabi-v7a'
 
 # macOS, natively on either architecture, or with the Apple cross variables the
 # libretro osx-arm64 template exports
