@@ -412,18 +412,53 @@ static void surface_store_target_coverage(GmlRender *r){
   }
 }
 
+/* Metadata queries do not observe raster bytes or realize suspended fills. Preserve
+ * the unavailable-resource fence, but leave valid device authority and journals intact. */
+static int surface_dimensions(const GmlRender *r,int id,int *width,int *height){
+  const GmlRenderResource *resource=NULL;
+  GmlRenderJournalMetrics metrics={0};
+  int w=0,h=0;
+  if(!r) return 0;
+  if(id==GML_RENDER_SHADED_SURFACE){
+    if((!r->shaded_plane && !r->shaded_plane_borrowed) ||
+       r->shaded_plane_width<=0 || r->shaded_plane_height<=0) return 0;
+    w=r->shaded_plane_width; h=r->shaded_plane_height;
+  } else if(id==0){
+    if(!r->app_surface) return 0;
+    if(r->app_surface==r->app_surface_owned && r->app_surface_resource){
+      if(r->app_surface_resource_width!=r->app_w ||
+         r->app_surface_resource_height!=r->app_h) return 0;
+      resource=r->app_surface_resource;
+    }
+    w=r->app_w?r->app_w:(r->base_fbw?r->base_fbw:r->fbw);
+    h=r->app_h?r->app_h:(r->base_fbh?r->base_fbh:r->fbh);
+  } else {
+    int slot=surface_slot(id);
+    if(slot<0 || !r->surface[slot].live || !r->surface[slot].px) return 0;
+    w=r->surface[slot].w; h=r->surface[slot].h;
+    resource=r->surface[slot].resource;
+  }
+  if(resource){
+    gml_render_resource_journal_metrics(resource,&metrics);
+    if(metrics.authority==GML_RENDER_RESOURCE_INVALID) return 0;
+  }
+  if(width) *width=w;
+  if(height) *height=h;
+  return 1;
+}
+
 int gml_surface_exists(GmlRender *r, int id){
   if(id==0 && (!r || !r->app_surface_published)) return 0;
-  int w=0,h=0; return surface_pixels_observe(r,id,&w,&h)!=NULL && w>0 && h>0;
+  int w=0,h=0; return surface_dimensions(r,id,&w,&h) && w>0 && h>0;
 }
 void gml_render_application_surface_publish(GmlRender *r){
   if(r) r->app_surface_published=1;
 }
 int gml_surface_width(GmlRender *r, int id){
-  int w=0,h=0; return surface_pixels_observe(r,id,&w,&h)?w:0;
+  int w=0,h=0; return surface_dimensions(r,id,&w,&h)?w:0;
 }
 int gml_surface_height(GmlRender *r, int id){
-  int w=0,h=0; return surface_pixels_observe(r,id,&w,&h)?h:0;
+  int w=0,h=0; return surface_dimensions(r,id,&w,&h)?h:0;
 }
 
 /* A screen-stage compositor can choose either logical application-surface coordinates or explicit
@@ -483,13 +518,14 @@ void gml_draw_surface_stretched(GmlRender *r,int surf,double dx,double dy,
   gml_render_cpu_draw_surface_stretched_impl(r,surf,dx,dy,dw,dh,blend,alpha,1);
 }
 
-/* A whole-target content program uses the same compiler and draw state as the terminal plan.
+/* A contained integer content-program rectangle uses the terminal plan's compiler/draw state.
  * A numbered destination retains its device result until a CPU observer or the frame boundary;
  * a later distinct surface draw can consume that result on the same device. */
 static int resident_surface_shader(GmlRender *r,int surf,double dx,double dy,double dw,double dh,
                                    uint32_t blend,double alpha){
   enum { MAX_AUXILIARY_SNAPSHOT_BYTES=64u*1024u*1024u };
-  int slot=surface_slot(surf),target_id,target_slot,application_target;
+  int slot=surface_slot(surf),target_id,target_slot,application_target,transient_source=0;
+  double left,top;
   GmlRenderResource *source_resource,*target;
   GmlRenderResourceSource sources[1u+GML_PLAN_MAX_SAMPLERS]={0};
   GmlRenderDrawOp operation={0};
@@ -516,9 +552,13 @@ static int resident_surface_shader(GmlRender *r,int surf,double dx,double dy,dou
      r->blend_equation!=1 || r->blend_equation_alpha!=1 || gml_d3_is_active(r) ||
      (blend&0xFFFFFFu)!=0xFFFFFFu || !isfinite(alpha) || alpha<1.0 ||
      !isfinite(dx) || !isfinite(dy) || !isfinite(dw) || !isfinite(dh) ||
-     dx-r->cam_x!=0.0 || dy-r->cam_y!=0.0 ||
-     dw!=(double)r->fbw || dh!=(double)r->fbh ||
      (surf!=0 && r->surface[slot].px==r->fb)) return 0;
+  left=dx-r->cam_x;
+  top=dy-r->cam_y;
+  if(!isfinite(left) || !isfinite(top) || left<0.0 || top<0.0 ||
+     dw<=0.0 || dh<=0.0 || left+dw>(double)r->fbw || top+dh>(double)r->fbh ||
+     floor(left)!=left || floor(top)!=top || floor(dw)!=dw || floor(dh)!=dh)
+    return 0;
   target_id=r->target_id;
   application_target=target_id==-1;
   target_slot=surface_slot(target_id);
@@ -530,7 +570,12 @@ static int resident_surface_shader(GmlRender *r,int surf,double dx,double dy,dou
             r->fbw!=r->surface[target_slot].w ||
             r->fbh!=r->surface[target_slot].h) return 0;
   if(!gml_render_shader_plan_snapshot(r,r->active_shader,0u,white,&shader)) return 0;
-  if(surf==0){
+  source_resource=surf==0?gml_render_application_resource_ensure(r):
+    gml_render_surface_resource_ensure(r,surf);
+  if(source_resource && gml_render_resource_device_source_view(
+       source_resource,gml_render_device(r),&sources[0])){
+    if(sources[0].pixel_format!=GML_RENDER_PIXEL_ARGB8888) return 0;
+  } else if(surf==0){
     const uint32_t *pixels;
     int width=0,height=0;
     size_t bytes;
@@ -549,12 +594,10 @@ static int resident_surface_shader(GmlRender *r,int surf,double dx,double dy,dou
     sources[0].stride_bytes=(uint32_t)width*4u;
     sources[0].byte_capacity=bytes;
     sources[0].bytes=pixels;
+    transient_source=1;
   } else {
-    source_resource=gml_render_surface_resource_ensure(r,surf);
     if(!source_resource ||
-       !(gml_render_resource_pending_device_source_view(
-           source_resource,gml_render_device(r),&sources[0]) ||
-         gml_render_resource_source_view(source_resource,&sources[0])) ||
+       !gml_render_resource_source_view(source_resource,&sources[0]) ||
        sources[0].pixel_format!=GML_RENDER_PIXEL_ARGB8888) return 0;
   }
   device=gml_render_device(r);
@@ -575,8 +618,8 @@ static int resident_surface_shader(GmlRender *r,int surf,double dx,double dy,dou
         GmlRenderJournalMetrics metrics={0};
         if(!bound || binding->surface==target_id) goto sampler_fallback;
         gml_render_resource_journal_metrics(bound,&metrics);
-        /* A CPU-stale auxiliary surface is an ordered fallback. Only the primary
-         * source currently has a device-origin-aware sampler binding. */
+        /* Auxiliary preparation retains its immutable CPU snapshot. A stale CPU
+         * version is an ordered fallback, not permission to observe device pixels. */
         if(metrics.cpu_version!=metrics.logical_version ||
            metrics.authority==GML_RENDER_RESOURCE_INVALID ||
            !gml_render_surface_plane(r,binding->surface,&width,&height,&pixels))
@@ -628,7 +671,8 @@ static int resident_surface_shader(GmlRender *r,int surf,double dx,double dy,dou
   operation.target.width=(uint32_t)r->fbw;
   operation.target.height=(uint32_t)r->fbh;
   operation.target.pixel_format=GML_RENDER_PIXEL_ARGB8888;
-  operation.target.region=(GmlRenderRect){0,0,(uint32_t)r->fbw,(uint32_t)r->fbh};
+  operation.target.region=(GmlRenderRect){(int32_t)left,(int32_t)top,
+    (uint32_t)dw,(uint32_t)dh};
   operation.payload.shader=&shader;
   state.rgb_source_factor=GML_RENDER_BLEND_SOURCE_ALPHA;
   state.rgb_destination_factor=GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA;
@@ -648,7 +692,7 @@ static int resident_surface_shader(GmlRender *r,int surf,double dx,double dy,dou
       operation.source_count):
     gml_render_surface_scene_submit_deferred_shader(r,target_id,&batch,sources,
       operation.source_count);
-  if(surf==0 && device->retire) device->retire(device->context,source_refs[0]);
+  if(transient_source && device->retire) device->retire(device->context,source_refs[0]);
   for(uint32_t index=0;index<prepared;index++)
     if(device->retire) device->retire(device->context,source_refs[index+1u]);
   for(uint32_t index=0;index<shader.sampler_count;index++) free(owned_sampler_pixels[index]);

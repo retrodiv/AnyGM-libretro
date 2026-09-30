@@ -152,6 +152,9 @@ static int scene_same_version(GmlRenderImageRef a,GmlRenderImageRef b){
 }
 
 static void scene_delete_image(GmlGpuBackend *backend,GlSceneImage *image){
+  if(image->content_source_framebuffer)
+    backend->gl.DeleteFramebuffers(1,&image->content_source_framebuffer);
+  if(image->content_source_texture) backend->gl.DeleteTextures(1,&image->content_source_texture);
   if(image->framebuffer) backend->gl.DeleteFramebuffers(1,&image->framebuffer);
   if(image->texture) backend->gl.DeleteTextures(1,&image->texture);
   memset(image,0,sizeof *image);
@@ -200,6 +203,7 @@ void gml_gpu_opengl_scene_reset(GmlGpuBackend *backend,const GmlGpuContext *cont
 } while(0)
   GL_SCENE_LOAD(GetIntegerv,"glGetIntegerv");
   GL_SCENE_LOAD(CopyTexSubImage2D,"glCopyTexSubImage2D");
+  GL_SCENE_LOAD(BlitFramebuffer,"glBlitFramebuffer");
   GL_SCENE_LOAD(BlendFuncSeparate,"glBlendFuncSeparate");
   GL_SCENE_LOAD(BlendEquationSeparate,"glBlendEquationSeparate");
   GL_SCENE_LOAD(Flush,"glFlush");
@@ -333,6 +337,7 @@ int gml_gpu_opengl_scene_upload(GmlGpuBackend *backend,const GmlRenderImageUploa
      (transfer->region.x || transfer->region.y ||
       transfer->region.width!=transfer->storage_width ||
       transfer->region.height!=transfer->storage_height)) return 0;
+  slot->content_source_version=0;
   first=!slot->texture;
   resize=slot->width!=transfer->storage_width || slot->height!=transfer->storage_height;
   if((first || resize || !scene_same_version(slot->ref,transfer->image)) &&
@@ -440,6 +445,59 @@ GlSceneImage *gml_gpu_opengl_scene_target(GmlGpuBackend *backend,const GmlRender
   slot->target=1;
   slot->last_used=++scene->use_clock;
   return slot;
+}
+
+/* Content programs see the terminal plan's low-edge coordinates, not merely upright samples.
+ * A versioned device-only view preserves both procedural UV and nearest boundary selection;
+ * ordinary render targets keep their established high-edge storage. */
+GLuint gml_gpu_opengl_scene_content_source(GmlGpuBackend *backend,GlSceneImage *source){
+  GmlRenderTargetRef source_target={0};
+  if(!backend || !source || !source->valid || !source->texture ||
+     !source->rendered_origin ||
+     !backend->gl.BlitFramebuffer) return 0;
+  if(source->content_source_texture && source->content_source_version==source->ref.content_version &&
+     source->content_source_width==source->width && source->content_source_height==source->height)
+    return source->content_source_texture;
+  source->content_source_version=0;
+  source_target.image=source->ref;source_target.storage_version=1u;
+  source_target.width=source->width;source_target.height=source->height;
+  source_target.pixel_format=source->pixel_format;
+  source_target.region=(GmlRenderRect){0,0,source->width,source->height};
+  if(gml_gpu_opengl_scene_target(backend,&source_target)!=source) return 0;
+  if(!source->content_source_texture){
+    backend->gl.GenTextures(1,&source->content_source_texture);
+    if(!source->content_source_texture) return 0;
+  }
+  backend->gl.ActiveTexture(GL_TEXTURE0);
+  backend->gl.BindTexture(GL_TEXTURE_2D,source->content_source_texture);
+  if(source->content_source_width!=source->width || source->content_source_height!=source->height){
+    backend->gl.TexImage2D(GL_TEXTURE_2D,0,GL_RGBA8,(GLsizei)source->width,
+                           (GLsizei)source->height,0,GL_RGBA,GL_UNSIGNED_BYTE,NULL);
+    backend->gl.TexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,GL_NEAREST);
+    backend->gl.TexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAG_FILTER,GL_NEAREST);
+    backend->gl.TexParameteri(GL_TEXTURE_2D,GL_TEXTURE_WRAP_S,GL_CLAMP_TO_EDGE);
+    backend->gl.TexParameteri(GL_TEXTURE_2D,GL_TEXTURE_WRAP_T,GL_CLAMP_TO_EDGE);
+    if(backend->gl.GetError()!=GL_NO_ERROR) return 0;
+    source->content_source_width=source->width;
+    source->content_source_height=source->height;
+  }
+  if(!source->content_source_framebuffer){
+    backend->gl.GenFramebuffers(1,&source->content_source_framebuffer);
+    if(!source->content_source_framebuffer) return 0;
+  }
+  backend->gl.BindFramebuffer(GL_DRAW_FRAMEBUFFER,source->content_source_framebuffer);
+  backend->gl.FramebufferTexture2D(GL_DRAW_FRAMEBUFFER,GL_COLOR_ATTACHMENT0,GL_TEXTURE_2D,
+                                   source->content_source_texture,0);
+  if(backend->gl.CheckFramebufferStatus(GL_DRAW_FRAMEBUFFER)!=GL_FRAMEBUFFER_COMPLETE)
+    return 0;
+  backend->gl.BindFramebuffer(GL_READ_FRAMEBUFFER,source->framebuffer);
+  backend->gl.Scissor(0,0,(GLsizei)source->width,(GLsizei)source->height);
+  backend->gl.BlitFramebuffer(0,(GLint)source->height,(GLint)source->width,0,
+                               0,0,(GLint)source->width,(GLint)source->height,
+                               GL_COLOR_BUFFER_BIT,GL_NEAREST);
+  if(backend->gl.GetError()!=GL_NO_ERROR) return 0;
+  source->content_source_version=source->ref.content_version;
+  return source->content_source_texture;
 }
 
 int gml_gpu_opengl_scene_readback(GmlGpuBackend *backend,const GmlRenderImageReadback *transfer){

@@ -66,7 +66,10 @@ static int source_view_valid(const GmlRenderResourceSource *source){
   resident=source->resident_resource;
   if(!source->bytes){
     return resident && !source->borrowed_immutable &&
-           resident->authority==GML_RENDER_RESOURCE_GPU_PENDING_CHECKPOINT &&
+           (resident->authority==GML_RENDER_RESOURCE_GPU_PENDING_CHECKPOINT ||
+            resident->authority==GML_RENDER_RESOURCE_GPU_REPLAYABLE ||
+            resident->authority==GML_RENDER_RESOURCE_BOTH_CURRENT) &&
+           !resident->cpu_write_acquired &&
            same_version(resident->image,source->image) &&
            resident->gpu_version==source->image.content_version &&
            resident->device_identity && resident->width==source->width &&
@@ -224,12 +227,15 @@ int gml_render_resource_source_view(GmlRenderResource *resource,
   return 1;
 }
 
-int gml_render_resource_pending_device_source_view(
+int gml_render_resource_device_source_view(
   GmlRenderResource *resource,const GmlRenderDeviceServices *device,
   GmlRenderResourceSource *out_source){
   if(out_source) memset(out_source,0,sizeof *out_source);
   if(!out_source || !resource || !device || !device->context ||
-     resource->authority!=GML_RENDER_RESOURCE_GPU_PENDING_CHECKPOINT ||
+     (resource->authority!=GML_RENDER_RESOURCE_GPU_PENDING_CHECKPOINT &&
+      resource->authority!=GML_RENDER_RESOURCE_GPU_REPLAYABLE &&
+      resource->authority!=GML_RENDER_RESOURCE_BOTH_CURRENT) ||
+     resource->cpu_write_acquired || !resource->width || !resource->height ||
      resource->device_identity!=device->context ||
      resource->gpu_version!=resource->image.content_version ||
      resource->width>UINT32_MAX/4u) return 0;

@@ -269,12 +269,12 @@ static int scene_preflight(GmlGpuBackend *backend,const GmlRenderDrawBatch *batc
          op->source_count!=1u+shader->sampler_count ||
          shader->uniform_count>GML_PLAN_MAX_UNIFORMS ||
          backend->scene.max_texture_units<=((int)shader->sampler_count) ||
-         !full_region(target->region,target->width,target->height) ||
          (!existing_target(backend,target) &&
           !cleared_earlier(cleared,clear_count,target->image))) return 0;
       state=&batch->states[op->state_index];
       source=gml_gpu_opengl_scene_image(backend,op->sources[0]);
       if(!source || same_logical(source->ref,target->image) ||
+         (source->rendered_origin && !backend->gl.BlitFramebuffer) ||
          (source->pixel_format!=GML_RENDER_PIXEL_XRGB8888 &&
           source->pixel_format!=GML_RENDER_PIXEL_ARGB8888) ||
          state->write_mask!=15u || state->alpha!=255u ||
@@ -293,7 +293,8 @@ static int scene_preflight(GmlGpuBackend *backend,const GmlRenderDrawBatch *batc
            full_region(state->clip,target->width,target->height))) return 0;
       for(uint32_t bound=0;bound<shader->sampler_count;bound++){
         GlSceneImage *sampler=gml_gpu_opengl_scene_image(backend,op->sources[bound+1u]);
-        if(!sampler || !sampler->texture || !sampler->rendered_origin ||
+        if(!sampler || !sampler->texture ||
+           (sampler->rendered_origin && !backend->gl.BlitFramebuffer) ||
            same_logical(sampler->ref,target->image) ||
            (sampler->pixel_format!=GML_RENDER_PIXEL_XRGB8888 &&
             sampler->pixel_format!=GML_RENDER_PIXEL_ARGB8888)) return 0;
@@ -803,7 +804,7 @@ GmlRenderExecutionResult gml_gpu_opengl_scene_submit(GmlGpuBackend *backend,
       for(uint32_t bound=0;bound<op->payload.shader->sampler_count;bound++)
         samplers[bound]=gml_gpu_opengl_scene_image(backend,op->sources[bound+1u]);
       if(!source || !gml_gpu_opengl_scene_shader_draw(backend,op->payload.shader,
-          &batch->states[op->state_index],target,source,samplers,
+          &batch->states[op->state_index],target,op->target.region,source,samplers,
           op->payload.shader->sampler_count,
           qualified_blend(&batch->states[op->state_index])==1,error,error_capacity)){
         mark_uncertain(&result,target);

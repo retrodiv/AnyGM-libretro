@@ -138,6 +138,14 @@ static void fake_CopyTexSubImage2D(GLenum a,GLint b,GLint c,GLint d,GLint e,GLin
   g_fake.scene_copies++;
   g_fake.scene_copied_pixels+=(uint64_t)(unsigned)g*(unsigned)h;
 }
+static void fake_BlitFramebuffer(GLint sx0,GLint sy0,GLint sx1,GLint sy1,
+                                  GLint dx0,GLint dy0,GLint dx1,GLint dy1,
+                                  GLbitfield mask,GLenum filter){
+  (void)sx0;(void)sy0;(void)sx1;(void)sy1;(void)mask;(void)filter;
+  note_call();
+  g_fake.scene_copies++;
+  g_fake.scene_copied_pixels+=(uint64_t)(unsigned)abs(dx1-dx0)*(unsigned)abs(dy1-dy0);
+}
 static void fake_Enable(GLenum cap){
   note_call();
   switch(cap){
@@ -493,6 +501,7 @@ void (*anygm_test_graphics_proc(void *userdata,const char *name))(void){
     {"glBlendFuncSeparate",(void*)fake_BlendFuncSeparate},
     {"glBlendEquationSeparate",(void*)fake_BlendEquationSeparate},
     {"glCopyTexSubImage2D",(void*)fake_CopyTexSubImage2D},
+    {"glBlitFramebuffer",(void*)fake_BlitFramebuffer},
     {"glEnable",(void*)fake_Enable},
     {"glDisable",(void*)fake_Disable},
     {"glViewport",(void*)fake_Viewport},

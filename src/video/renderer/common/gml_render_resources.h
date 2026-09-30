@@ -60,9 +60,9 @@ void gml_render_resource_destroy(GmlRenderResource *resource);
 GmlRenderImageRef gml_render_resource_image_ref(const GmlRenderResource *resource);
 int gml_render_resource_source_view(GmlRenderResource *resource,
                                     GmlRenderResourceSource *out_source);
-/* Only a device-current, not-yet-checkpointed result may use this byte-free view. The next
- * target must checkpoint rather than claim exact CPU replay from unavailable source bytes. */
-int gml_render_resource_pending_device_source_view(
+/* A current version on this device may use a byte-free view without observing CPU pixels.
+ * A consumer without a retained CPU source must checkpoint rather than claim exact replay. */
+int gml_render_resource_device_source_view(
   GmlRenderResource *resource,const GmlRenderDeviceServices *device,
   GmlRenderResourceSource *out_source);
 

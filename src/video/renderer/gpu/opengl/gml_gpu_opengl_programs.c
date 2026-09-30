@@ -962,18 +962,28 @@ int gml_gpu_opengl_execute_shader_draw(GmlGpuBackend *backend,GmlRenderPlan *pla
 
 int gml_gpu_opengl_scene_shader_draw(GmlGpuBackend *backend,const GmlPlanShader *shader,
                                       const GmlRenderDrawStateSnapshot *state,
-                                      GlSceneImage *target,GlSceneImage *source,
+                                      GlSceneImage *target,GmlRenderRect region,
+                                      GlSceneImage *source,
                                       GlSceneImage *const *samplers,uint32_t sampler_count,
                                       int source_over,
                                       char *error,size_t error_capacity){
   GmlRenderPlan plan={0};
   GmlPlanOp operation={0};
   GLuint sampler_names[GML_PLAN_MAX_SAMPLERS]={0};
+  GLuint source_name;
+  int source_origin;
   int drawn;
   GLenum gl_error;
   if(!backend || !shader || !state || !target || !source || !source->texture ||
      !target->framebuffer || !target->width || !target->height ||
      sampler_count!=shader->sampler_count || sampler_count>GML_PLAN_MAX_SAMPLERS) return 0;
+  source_name=source->texture;
+  source_origin=source->rendered_origin;
+  if(source_origin){
+    source_name=gml_gpu_opengl_scene_content_source(backend,source);
+    if(!source_name) return 0;
+    source_origin=0;
+  }
   plan.target_width=target->width;
   plan.target_height=target->height;
   plan.image_count=1u;
@@ -981,15 +991,16 @@ int gml_gpu_opengl_scene_shader_draw(GmlGpuBackend *backend,const GmlPlanShader 
   plan.images[0].height=source->height;
   plan.shader=*shader;
   for(uint32_t index=0;index<sampler_count;index++){
-    if(!samplers || !samplers[index] || !samplers[index]->texture ||
-       !samplers[index]->rendered_origin) return 0;
-    sampler_names[index]=samplers[index]->texture;
+    if(!samplers || !samplers[index] || !samplers[index]->texture) return 0;
+    sampler_names[index]=samplers[index]->rendered_origin
+      ?gml_gpu_opengl_scene_content_source(backend,samplers[index]):samplers[index]->texture;
+    if(!sampler_names[index]) return 0;
     plan.shader.samplers[index].image=index+1u;
   }
   operation.opcode=GML_PLAN_OP_SHADER_DRAW;
   operation.source=0u;
   operation.linear=state->samplers[0].filter==GML_RENDER_FILTER_BILINEAR;
-  operation.destination=(GmlPlanRect){0,0,target->width,target->height};
+  operation.destination=(GmlPlanRect){region.x,region.y,region.width,region.height};
   operation.source_rect=(GmlPlanRect){0,0,source->width,source->height};
   backend->gl.BindFramebuffer(GL_FRAMEBUFFER,target->framebuffer);
   if(source_over){
@@ -999,8 +1010,8 @@ int gml_gpu_opengl_scene_shader_draw(GmlGpuBackend *backend,const GmlPlanShader 
     backend->gl.Enable(GL_BLEND);
   } else backend->gl.Disable(GL_BLEND);
   backend->gl.BindVertexArray(backend->scene.vertex_array);
-  drawn=execute_shader_draw_with_source(backend,&plan,&operation,NULL,source->texture,
-                                        source->rendered_origin,sampler_names,error,error_capacity);
+  drawn=execute_shader_draw_with_source(backend,&plan,&operation,NULL,source_name,
+                                        source_origin,sampler_names,error,error_capacity);
   backend->gl.BindVertexArray(0);
   backend->gl.Disable(GL_BLEND);
   gl_error=backend->gl.GetError();

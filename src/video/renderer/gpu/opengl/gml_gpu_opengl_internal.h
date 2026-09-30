@@ -91,6 +91,9 @@ typedef struct GlAxisMap {
 typedef struct GlSceneImage {
   GmlRenderImageRef ref;
   GLuint texture,framebuffer;
+  GLuint content_source_texture,content_source_framebuffer;
+  uint32_t content_source_width,content_source_height;
+  uint64_t content_source_version;
   uint32_t width,height,pixel_format;
   uint64_t last_used,context_epoch;
   int valid,target,rendered_origin,retired;
@@ -169,7 +172,8 @@ int gml_gpu_opengl_execute_shader_draw(GmlGpuBackend *backend,GmlRenderPlan *pla
                                        char *error,size_t error_capacity);
 int gml_gpu_opengl_scene_shader_draw(GmlGpuBackend *backend,const GmlPlanShader *shader,
                                       const GmlRenderDrawStateSnapshot *state,
-                                      GlSceneImage *target,GlSceneImage *source,
+                                      GlSceneImage *target,GmlRenderRect region,
+                                      GlSceneImage *source,
                                       GlSceneImage *const *samplers,uint32_t sampler_count,
                                       int source_over,
                                       char *error,size_t error_capacity);
@@ -205,6 +209,7 @@ int gml_render_gpu_opengl_apply_effect(GmlGpuBackend *backend,
                                        char *error,size_t error_capacity);
 GlSceneImage *gml_gpu_opengl_scene_image(GmlGpuBackend *backend,GmlRenderImageRef image);
 GlSceneImage *gml_gpu_opengl_scene_target(GmlGpuBackend *backend,const GmlRenderTargetRef *target);
+GLuint gml_gpu_opengl_scene_content_source(GmlGpuBackend *backend,GlSceneImage *source);
 GmlRenderExecutionResult gml_gpu_opengl_scene_submit(GmlGpuBackend *backend,
                                                        const GmlRenderDrawBatch *batch,
                                                        uintptr_t frontend_framebuffer,

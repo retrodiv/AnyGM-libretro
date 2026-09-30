@@ -344,6 +344,108 @@ static int scene_content_source_orientation_case(void){
           bytes[3]==0xFFu,
           "other scene scratch keeps its established render-target orientation");
   gml_gpu_destroy(gpu,1);
+  for(unsigned missing=0;missing<2u;missing++){
+    GmlRenderImageRef source={GML_RENDER_RESOURCE_SURFACE,3u,3u,1u};
+    GmlRenderDrawOp operations[2]={0};
+    GmlRenderDrawStateSnapshot state={0};
+    GmlRenderDrawBatch batch={operations,2u,&state,1u};
+    GmlPlanShader shader={0};
+    GmlRenderExecutionResult result;
+    anygm_test_graphics_reset();
+    if(missing) anygm_test_graphics_withhold("glBlitFramebuffer");
+    gpu=gml_gpu_create();
+    REQUIRE(gpu && gml_gpu_context_reset(gpu,&context),"content-view context adopted");
+    gml_gpu_device_services(gpu,&services);
+    upload.image=source;
+    REQUIRE(services.upload(services.context,&upload),"mutable content source uploaded");
+    shader.identity=1u;shader.content_generation=1u;
+    shader.vertex_es="attribute vec3 in_Position; uniform mat4 gm_Matrices[5]; void main(){gl_Position=gm_Matrices[4]*vec4(in_Position,1.0);}";
+    shader.fragment_es="uniform sampler2D gm_BaseTexture; void main(){gl_FragColor=texture2D(gm_BaseTexture,vec2(0.5));}";
+    for(unsigned channel=0;channel<4u;channel++) shader.vertex_colour[channel]=1.0f;
+    for(unsigned op=0;op<2u;op++){
+      operations[op].target.image=(GmlRenderImageRef){GML_RENDER_RESOURCE_SCREEN,4u,4u,op+1u};
+      operations[op].target.width=operations[op].target.height=4u;
+      operations[op].target.storage_version=1u;
+      operations[op].target.pixel_format=GML_RENDER_PIXEL_ARGB8888;
+      operations[op].target.region=(GmlRenderRect){0,0,4u,4u};
+    }
+    operations[0].opcode=GML_RENDER_OP_CLEAR;
+    operations[0].reconstruction_mode=GML_RENDER_REPLAY_EXACT;
+    operations[0].payload.clear_colour=0xFF223344u;
+    operations[1].opcode=GML_RENDER_OP_CONTENT_SHADER_DRAW;
+    operations[1].reconstruction_mode=GML_RENDER_DEVICE_CHECKPOINT;
+    operations[1].source_count=1u;operations[1].sources=&source;
+    operations[1].payload.shader=&shader;
+    operations[1].target.region=(GmlRenderRect){1,1,2u,2u};
+    state.write_mask=15u;state.alpha=255u;state.colour=0xFFFFFFFFu;
+    state.sampler_count=1u;
+    state.samplers[0].filter=GML_RENDER_FILTER_NEAREST;
+    state.samplers[0].edge_rule=GML_RENDER_EDGE_CLAMP_SUBIMAGE;
+    state.samplers[0].source_region=(GmlRenderRect){0,0,2u,2u};
+    result=services.submit(services.context,&batch);
+    if(missing){
+      REQUIRE(result.status==GML_RENDER_EXEC_UNSUPPORTED && result.accepted_prefix==0u &&
+              anygm_test_graphics_clear_calls()==0 &&
+              anygm_test_graphics_quad_draw_calls()==0 &&
+              anygm_test_graphics_scene_copies()==0u,
+              "a missing orientation entry point refuses the whole batch before its clear");
+      gml_gpu_destroy(gpu,1);
+      continue;
+    }
+    {
+      float u=-1.0f,v=-1.0f;
+      REQUIRE(result.status==GML_RENDER_EXEC_ACCEPTED && result.accepted_prefix==2u &&
+              anygm_test_graphics_scene_copies()==1u &&
+              anygm_test_graphics_scene_copied_pixels()==4u &&
+              anygm_test_graphics_read_pixels()==0u &&
+              anygm_test_graphics_quad_texcoord(0,&u,&v) && u==0.0f && v==0.0f,
+              "contained content geometry uses a native device copy and unchanged authored UV");
+    }
+    for(unsigned op=0;op<2u;op++) operations[op].target.image.content_version+=2u;
+    result=services.submit(services.context,&batch);
+    REQUIRE(result.status==GML_RENDER_EXEC_ACCEPTED && anygm_test_graphics_scene_copies()==1u,
+            "a current content-source version reuses its oriented device view");
+    source.content_version++;upload.image=source;
+    REQUIRE(services.upload(services.context,&upload),"a newer source version uploaded");
+    for(unsigned op=0;op<2u;op++) operations[op].target.image.content_version+=2u;
+    result=services.submit(services.context,&batch);
+    REQUIRE(result.status==GML_RENDER_EXEC_ACCEPTED && anygm_test_graphics_scene_copies()==2u,
+            "a changed source version refreshes its device-only view");
+    {
+      static const GmlRenderRect invalid[]={{-1,1,2u,2u},{1,1,0u,2u},
+        {4,1,2u,2u},{INT32_MAX,1,UINT32_MAX,2u}};
+      int clears=anygm_test_graphics_clear_calls(),draws=anygm_test_graphics_quad_draw_calls();
+      for(unsigned index=0;index<sizeof invalid/sizeof invalid[0];index++){
+        operations[1].target.region=invalid[index];
+        result=services.submit(services.context,&batch);
+        REQUIRE(result.status==GML_RENDER_EXEC_UNSUPPORTED && result.accepted_prefix==0u &&
+                anygm_test_graphics_clear_calls()==clears &&
+                anygm_test_graphics_quad_draw_calls()==draws &&
+                anygm_test_graphics_scene_copies()==2u,
+                "invalid content regions reject the complete batch before writes or copies");
+      }
+    }
+    {
+      int deletes=anygm_test_graphics_deletes();
+      services.retire(services.context,source);
+      REQUIRE(anygm_test_graphics_deletes()==deletes,
+              "logical retirement never deletes while the context might be absent");
+      source.incarnation++;upload.image=source;
+      REQUIRE(services.upload(services.context,&upload),"a new incarnation allocates while current");
+      REQUIRE(anygm_test_graphics_deletes()>=deletes+4,
+              "current allocation collects the retired original and oriented image names");
+    }
+    operations[1].target.region=(GmlRenderRect){1,1,2u,2u};
+    for(unsigned op=0;op<2u;op++) operations[op].target.image.content_version+=2u;
+    result=services.submit(services.context,&batch);
+    REQUIRE(result.status==GML_RENDER_EXEC_ACCEPTED && anygm_test_graphics_scene_copies()==3u,
+            "a new incarnation creates its own oriented view before context loss");
+    gml_gpu_context_lost(gpu);
+    anygm_test_graphics_forbid_calls();
+    gml_gpu_destroy(gpu,1);
+    REQUIRE(anygm_test_graphics_calls_after_forget()==0,
+            "an oriented content source makes no call after context loss");
+  }
   return 1;
 }
 

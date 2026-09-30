@@ -82,6 +82,8 @@ typedef void GLvoid;
 #define GL_LINK_STATUS 0x8B82
 #define GL_INFO_LOG_LENGTH 0x8B84
 #define GL_FRAMEBUFFER 0x8D40
+#define GL_READ_FRAMEBUFFER 0x8CA8
+#define GL_DRAW_FRAMEBUFFER 0x8CA9
 #define GL_VERSION 0x1F02
 #define GL_RENDERER 0x1F01
 #define GL_COLOR_WRITEMASK 0x0C23
@@ -150,6 +152,9 @@ typedef struct GmlGlApi {
                             const void *pixels);
   void     (*CopyTexSubImage2D)(GLenum target,GLint level,GLint xoffset,GLint yoffset,
                                 GLint x,GLint y,GLsizei width,GLsizei height);
+  void     (*BlitFramebuffer)(GLint source_x0,GLint source_y0,GLint source_x1,GLint source_y1,
+                               GLint target_x0,GLint target_y0,GLint target_x1,GLint target_y1,
+                               GLbitfield mask,GLenum filter);
   void     (*PixelStorei)(GLenum pname,GLint param);
   GLuint   (*CreateShader)(GLenum type);
   void     (*ShaderSource)(GLuint shader,GLsizei count,const GLchar *const *string,
