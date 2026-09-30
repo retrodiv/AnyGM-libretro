@@ -440,17 +440,24 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
     family==GML_RENDER_SCENE_BACKGROUND && nearest_mode==5 &&
     !r->interp && fabs(xs)==1.0 && fabs(ys)==1.0 &&
     (colour&0xFFFFFFu)==0xFFFFFFu && alpha>0.0 && alpha<=1.0;
+  /* R03-P9-FILTERED-REAL-TEXT: a demanded real glyph is a physical atlas crop,
+   * not a TPAG entry. It uses the same filtered source/phase preparation as a sprite. */
+  int filtered_real_text=family==GML_RENDER_SCENE_TEXT && page_index==-1 &&
+    part_view && r && r->interp && !rotated_sprite && !corner_colours &&
+    xs>0.0 && ys>0.0 && xs<=1.0 && ys<=1.0 &&
+    part_view->sw<=256 && part_view->sh<=256;
   int span_active=0;
   int margin_left=0,margin_top=0,margin_right=0,margin_bottom=0;
   uint32_t margin_mask=0u;
   if(!r || !r->resident_application_pass ||
      (!r->interp && !box_stretched && !nearest_mode) || !r->win ||
      !(anygm_policy_uses_first_generation_studio(r->win) ||
+       (filtered_real_text && anygm_policy_has_modern_layer_semantics(r->win)) ||
        ((nearest_mode==3 || nearest_mode==6) &&
         anygm_policy_has_modern_layer_semantics(r->win)) ||
        ((rotated_sprite || opaque_target_alpha) &&
         anygm_policy_has_modern_layer_semantics(r->win))) ||
-     page_index<0 || page_index>=r->n_tpag || r->classic ||
+     (!filtered_real_text && (page_index<0 || page_index>=r->n_tpag)) || r->classic ||
      r->gui_pass_active || r->active_shader>=0 || r->alpha_test_enable ||
      !r->alphablend || (r->blendmode && !additive_background) || r->blend_equation!=1 ||
      r->blend_equation_alpha!=1 || r->color_write_mask!=0x0fu ||
@@ -462,6 +469,8 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
      !isfinite(left) || !isfinite(top) || !isfinite(xs) || !isfinite(ys) ||
      (rotated_sprite && !isfinite(rotation)) ||
      !isfinite(alpha) || alpha<=0.0 || alpha>1.0 ||
+     (filtered_real_text && !gml_render_target_preserves_alpha(r) &&
+      (!r->fb_opaque_known || !r->fb_all_opaque)) ||
      (opaque_target_alpha && (!r->fb_opaque_known || !r->fb_all_opaque)) ||
      ((transparent_stretched_trim || box_stretched) &&
       (family!=GML_RENDER_SCENE_SPRITE || rotated_sprite || xs<=0.0 || ys<=0.0)) ||
@@ -498,7 +507,8 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
                           fabs(ys-nearbyint(ys))<1e-9))))) return 0;
   for(int index=0;index<3;index++)
     if(r->classic_interp_phase[index] || r->app_interp_phase[index]) return 0;
-  if(part_view && part_view->atlas!=r->tpag[page_index].atlas) return 0;
+  if(part_view && !filtered_real_text &&
+     part_view->atlas!=r->tpag[page_index].atlas) return 0;
   page=part_view?part_view:&r->tpag[page_index];
   /* The unrotated nearest CPU leaf samples physical sw/sh, not a texture-page item's
    * logical tw/th. A scaled stored rectangle is therefore valid for these exact rules. */
@@ -544,6 +554,7 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
   if(margin_bottom) margin_mask|=GML_RENDER_MARGIN_BOTTOM;
   resident_classify_page(page,atlas);
   if(!page->scene_fully_opaque && family!=GML_RENDER_SCENE_SPRITE &&
+     !filtered_real_text &&
      nearest_mode!=2 && nearest_mode!=5) return 0;
   if(rotated_sprite){
     double minx=1e30,miny=1e30,maxx=-1e30,maxy=-1e30;
@@ -768,6 +779,17 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
     operation.payload.quad.v[2]=operation.payload.quad.v[3]=
       ((double)page->sy+(y0+height-sample_top)/ys-nearest_bias_y)/source.height;
   }
+  /* A fractional glyph origin may project the prepared inverse sample outside
+   * an atlas whose crop touches its physical edge. Reject before submission so
+   * the unchanged CPU sampler handles that draw in order. */
+  if(filtered_real_text)
+    for(int corner=0;corner<4;corner++)
+      if(!isfinite(operation.payload.quad.u[corner]) ||
+         !isfinite(operation.payload.quad.v[corner]) ||
+         operation.payload.quad.u[corner]<0.0 ||
+         operation.payload.quad.u[corner]>1.0 ||
+         operation.payload.quad.v[corner]<0.0 ||
+         operation.payload.quad.v[corner]>1.0) return 0;
   state.write_mask=15u;
   state.colour=0xFFFFFFFFu;
   state.alpha=255u;
@@ -806,6 +828,18 @@ int gml_render_resident_filtered_atlas_page(GmlRender *r,int page_index,
     nearest_rule==GML_RENDER_NEAREST_DIRECT_SNAP_RULE?5:0;
   return resident_filtered_atlas_page(r,page_index,left,top,xs,ys,family,colour,alpha,
                                      part_view,NULL,0.0,NULL,0,0,0,0,mode);
+}
+
+int gml_render_resident_filtered_font_glyph(GmlRender *r,int atlas,
+                                            int source_x,int source_y,int width,int height,
+                                            double left,double top,double xs,double ys,
+                                            uint32_t colour,double alpha){
+  GmlTpag glyph={.atlas=atlas,.sx=source_x,.sy=source_y,.sw=width,.sh=height,
+                 .tw=width,.th=height,.bw=width,.bh=height};
+  int opaque_target_alpha=!gml_render_target_preserves_alpha(r);
+  return resident_filtered_atlas_page(r,-1,left,top,xs,ys,GML_RENDER_SCENE_TEXT,
+                                      colour,alpha,&glyph,NULL,0.0,NULL,
+                                      opaque_target_alpha,0,0,0,0);
 }
 
 static int resident_filtered_sprite(GmlRender *r,GmlSprite *sprite,int subimg,

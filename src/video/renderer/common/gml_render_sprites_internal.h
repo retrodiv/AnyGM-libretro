@@ -46,6 +46,12 @@ int gml_render_resident_font_glyph(GmlRender *render, int atlas,
                                    int source_x, int source_y, int width, int height,
                                    double left, double top, double xscale, double yscale,
                                    uint32_t colour, double alpha);
+int gml_render_resident_filtered_font_glyph(GmlRender *render, int atlas,
+                                            int source_x, int source_y,
+                                            int width, int height,
+                                            double left, double top,
+                                            double xscale, double yscale,
+                                            uint32_t colour, double alpha);
 int gml_render_resident_tiled_sprite(GmlRender *render, int sprite, int subimage,
                                      double x, double y, double xscale, double yscale,
                                      uint32_t blend, double alpha);

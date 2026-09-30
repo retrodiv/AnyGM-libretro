@@ -205,11 +205,18 @@ static void draw_text_real_plain(GmlRender *r, GmlFont *f, double x, double y, c
         if(r->resident_application_pass && !use_rot &&
            !f->subpixel && f->sdf_spread<=0 &&
            !r->software_overlay && !gml_d3_is_active(r) &&
-           isfinite(alpha) && alpha>0.0 && alpha<=1.0 &&
-           (!f->runtime_owned || alpha==1.0) &&
-           resident_integer_text_scale(xs,ys) && !r->interp)
-          resident_glyph=gml_render_resident_font_glyph(r,f->atlas,g->sx,g->sy,
-            g->w,g->h,glyph_x-r->cam_x,glyph_y-r->cam_y,xs,ys,glyph_blend,alpha);
+           isfinite(alpha) && alpha>0.0 && alpha<=1.0){
+          if(r->interp && !f->runtime_owned &&
+             isfinite(xs) && isfinite(ys) &&
+             xs>0.0 && ys>0.0 && xs<=1.0 && ys<=1.0)
+            resident_glyph=gml_render_resident_filtered_font_glyph(
+              r,f->atlas,g->sx,g->sy,g->w,g->h,
+              glyph_x-r->cam_x,glyph_y-r->cam_y,xs,ys,glyph_blend,alpha);
+          else if(!r->interp && (!f->runtime_owned || alpha==1.0) &&
+                  resident_integer_text_scale(xs,ys))
+            resident_glyph=gml_render_resident_font_glyph(r,f->atlas,g->sx,g->sy,
+              g->w,g->h,glyph_x-r->cam_x,glyph_y-r->cam_y,xs,ys,glyph_blend,alpha);
+        }
         if(!resident_glyph){
           if(r->resident_application_pass &&
              !gml_render_resident_application_cpu_barrier(r)) return;

@@ -32,6 +32,8 @@ typedef struct FakeDevice {
   uint32_t readback_colour;
   uint32_t max_texture_extent;
   uint32_t last_opcode,last_source_count,last_shader_identity;
+  uint32_t last_batch_operations,last_batch_states;
+  uint32_t last_batch_source_ids[3],last_batch_state_indices[3];
   uint32_t last_shader_uniform_count,last_shader_sampler_count;
   float last_shader_value;
 } FakeDevice;
@@ -57,6 +59,13 @@ static GmlRenderExecutionResult fake_submit(void *context,const GmlRenderDrawBat
   fake->submits++;
   if(batch && batch->operation_count){
     const GmlRenderDrawOp *last=&batch->operations[batch->operation_count-1u];
+    fake->last_batch_operations=batch->operation_count;
+    fake->last_batch_states=batch->state_count;
+    for(uint32_t index=0;index<batch->operation_count && index<3u;index++){
+      fake->last_batch_source_ids[index]=batch->operations[index].source_count
+        ?batch->operations[index].sources[0].identity:0u;
+      fake->last_batch_state_indices[index]=batch->operations[index].state_index;
+    }
     fake->last_opcode=last->opcode;
     fake->last_source_count=last->source_count;
     if(last->opcode==GML_RENDER_OP_CONTENT_SHADER_DRAW && last->payload.shader){
@@ -1014,6 +1023,79 @@ static int queued_checkpoint_flush_refusal_preserves_target(void){
   CHECK(metrics.authority==GML_RENDER_RESOURCE_INVALID &&
         gml_render_application_scene_flush(render) && fake.submits==2 &&
         !gml_render_application_surface_owned_read(render,NULL));
+  gml_render_free(render);
+  free(render);
+  return 1;
+}
+
+static int queued_immutable_checkpoint_spans_sources_and_states(void){
+  GmlRender *render=(GmlRender*)calloc(1,sizeof *render);
+  uint32_t first_pixels[4]={0xFF315779u,0xFF315779u,0xFF315779u,0xFF315779u};
+  uint32_t second_pixels[4]={0xFF7193B5u,0xFF7193B5u,0xFF7193B5u,0xFF7193B5u};
+  GmlRenderResourceSource first=source_view(first_pixels,1);
+  GmlRenderResourceSource second=source_view(second_pixels,1);
+  GmlRenderDrawStateSnapshot first_state=quad_state(0),second_state=quad_state(0);
+  GmlRenderDrawOp operation=quad_op(2u,&first.image);
+  GmlRenderJournalMetrics metrics={0};
+  FakeDevice fake={0};
+  GmlRenderDeviceServices device=service(&fake);
+  GmlRenderResource *resource;
+  CHECK(render);
+  second.image.identity=3u;
+  second_state.samplers[0].filter=GML_RENDER_FILTER_BILINEAR;
+  second_state.samplers[0].source_region=(GmlRenderRect){1,0,1u,2u};
+  CHECK(gml_render_application_surface_ensure_owned(render,4,4));
+  gml_render_bind_device(render,&device);
+  CHECK(gml_render_begin_resident_owned_application(render,0.0,0.0,0));
+  resource=gml_render_application_resource_ensure(render);
+  CHECK(resource);
+  operation.reconstruction_mode=GML_RENDER_DEVICE_CHECKPOINT;
+  operation.scene_family=GML_RENDER_SCENE_TEXT;
+  operation.target.image=gml_render_resource_image_ref(resource);
+  operation.target.image.content_version++;
+  operation.target.pixel_format=GML_RENDER_PIXEL_ARGB8888;
+  CHECK(gml_render_application_scene_enqueue(render,&operation,&first_state,&first));
+  operation.target.image.content_version++;
+  operation.sources=&second.image;
+  operation.payload.quad.sampling.filter=GML_RENDER_FILTER_BILINEAR;
+  operation.payload.quad.sampling.source_region=second_state.samplers[0].source_region;
+  CHECK(gml_render_application_scene_enqueue(render,&operation,&second_state,&second));
+  operation.target.image.content_version++;
+  operation.sources=&first.image;
+  operation.payload.quad.sampling.filter=GML_RENDER_FILTER_NEAREST;
+  operation.payload.quad.sampling.source_region=first_state.samplers[0].source_region;
+  CHECK(gml_render_application_scene_enqueue(render,&operation,&first_state,&first));
+  CHECK(gml_render_scene_flush(render) && fake.submits==1 && fake.readbacks==1 &&
+        fake.last_batch_operations==3u && fake.last_batch_states==2u &&
+        fake.last_batch_source_ids[0]==2u && fake.last_batch_source_ids[1]==3u &&
+        fake.last_batch_source_ids[2]==2u &&
+        fake.last_batch_state_indices[0]==0u &&
+        fake.last_batch_state_indices[1]==1u &&
+        fake.last_batch_state_indices[2]==0u);
+  gml_render_resource_journal_metrics(resource,&metrics);
+  CHECK(metrics.device_checkpoints==1u && metrics.journal_operations==0u &&
+        metrics.authority==GML_RENDER_RESOURCE_BOTH_CURRENT);
+  first.image.content_version++;
+  second.image.content_version++;
+  operation.target.image=gml_render_resource_image_ref(resource);
+  operation.target.image.content_version++;
+  operation.sources=&first.image;
+  CHECK(gml_render_application_scene_enqueue(render,&operation,&first_state,&first));
+  operation.target.image.content_version++;
+  operation.sources=&second.image;
+  operation.payload.quad.sampling.filter=GML_RENDER_FILTER_BILINEAR;
+  operation.payload.quad.sampling.source_region=second_state.samplers[0].source_region;
+  CHECK(gml_render_application_scene_enqueue(render,&operation,&second_state,&second));
+  fake.fail_upload_at=fake.uploads+2;
+  CHECK(!gml_render_scene_flush(render) && fake.submits==1 && fake.readbacks==1);
+  gml_render_resource_journal_metrics(resource,&metrics);
+  CHECK(metrics.logical_version==4u &&
+        metrics.authority==GML_RENDER_RESOURCE_BOTH_CURRENT);
+  fake.fail_upload_at=0;
+  CHECK(gml_render_scene_flush(render) && fake.submits==2 && fake.readbacks==2);
+  gml_render_resource_journal_metrics(resource,&metrics);
+  CHECK(metrics.logical_version==6u && metrics.device_checkpoints==2u &&
+        metrics.authority==GML_RENDER_RESOURCE_BOTH_CURRENT);
   gml_render_free(render);
   free(render);
   return 1;
@@ -3600,6 +3682,23 @@ static int resident_packaged_real_font_glyph(int runtime_page){
   gml_draw_text_transformed(render,2.0,2.0,"A",1.0,1.0,90.0,0xFFFFFFu,1.0);
   gml_render_flush_pending_fill(render);
   CHECK(!memcmp(render->app_surface_owned,completed,sizeof completed));
+  if(!runtime_page){
+    GmlWin studio={0};
+    int prior_submits=fake.submits;
+    int prior_readbacks=fake.readbacks;
+    studio.bytecode=16;
+    render->win=&studio;
+    render->interp=1;
+    gml_render_bind_device(render,&device);
+    CHECK(gml_render_begin_resident_owned_application(render,0.0,0.0,0));
+    gml_render_set_pending_fill(render,0xFF123456u);
+    gml_draw_text_transformed(render,1.0,1.0,"A",0.5,0.5,0.0,0x80C040u,0.7);
+    CHECK(render->resident_application_pass);
+    CHECK(gml_render_scene_flush(render) && fake.submits==prior_submits+2 &&
+          fake.readbacks==prior_readbacks+1);
+    render->interp=0;
+    render->win=NULL;
+  }
   if(runtime_page){
     uint8_t *replacement;
     render->atlas[0].px[7]=128u;
@@ -4095,6 +4194,7 @@ int main(void){
   passed+=pending_shader_source_cross_target();
   passed+=public_checkpoint_readback_refusal();
   passed+=queued_checkpoint_flush_refusal_preserves_target();
+  passed+=queued_immutable_checkpoint_spans_sources_and_states();
   passed+=rejection_and_isolation();
   passed+=persistent_surface_lifecycle();
   passed+=retained_target_stays_resident();
@@ -4140,6 +4240,6 @@ int main(void){
   passed+=target_pixel_observes_resident_result();
   passed+=nearest_subrectangle_mirrors();
   passed+=source_free_primitive_rect_replay();
-  printf("render resource cases: passed=%d failed=%d\n",passed,58-passed);
-  return passed==58?EXIT_SUCCESS:EXIT_FAILURE;
+  printf("render resource cases: passed=%d failed=%d\n",passed,59-passed);
+  return passed==59?EXIT_SUCCESS:EXIT_FAILURE;
 }

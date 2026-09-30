@@ -42,18 +42,29 @@ static void surface_coverage_counts(const uint32_t *px,int w,int h,int *colour,i
 }
 int surface_slot(int id){ return id>0 && id<=GML_MAX_SURFACES ? id-1 : -1; }
 
-enum { GML_SCENE_BATCH_LIMIT=2048 };
+enum { GML_SCENE_BATCH_LIMIT=2048, GML_SCENE_STATE_LIMIT=128,
+       GML_SCENE_SOURCE_LIMIT=64 };
 struct GmlRenderPendingSceneBatch {
   GmlRenderDrawOp operations[GML_SCENE_BATCH_LIMIT];
-  GmlRenderDrawStateSnapshot state;
-  GmlRenderResourceSource source;
-  GmlRenderImageRef source_ref;
-  uint32_t count;
+  GmlRenderDrawStateSnapshot states[GML_SCENE_STATE_LIMIT];
+  GmlRenderResourceSource sources[GML_SCENE_SOURCE_LIMIT];
+  GmlRenderImageRef source_refs[GML_SCENE_SOURCE_LIMIT];
+  uint32_t count,state_count,source_count;
+  int coalesce_checkpoint_only;
 };
 
 static int same_scene_source(GmlRenderImageRef a,GmlRenderImageRef b){
   return a.resource_class==b.resource_class && a.identity==b.identity &&
          a.incarnation==b.incarnation && a.content_version==b.content_version;
+}
+
+static int same_scene_source_view(const GmlRenderResourceSource *a,
+                                  const GmlRenderResourceSource *b){
+  return a->bytes==b->bytes && a->byte_capacity==b->byte_capacity &&
+         a->width==b->width && a->height==b->height &&
+         a->pixel_format==b->pixel_format && a->stride_bytes==b->stride_bytes &&
+         a->borrowed_immutable==b->borrowed_immutable &&
+         a->resident_resource==b->resident_resource;
 }
 
 GmlRenderImageRef gml_render_application_scene_next_image_ref(
@@ -74,9 +85,10 @@ int gml_render_application_scene_flush(GmlRender *r){
   target=pending->operations[0].target.image.resource_class==GML_RENDER_RESOURCE_SCREEN
     ?r->base_scene_resource:r->app_surface_resource;
   if(!target) return 0;
-  batch=(GmlRenderDrawBatch){pending->operations,pending->count,&pending->state,1u};
+  batch=(GmlRenderDrawBatch){pending->operations,pending->count,
+                              pending->states,pending->state_count};
   result=gml_render_resource_submit(target,gml_render_device(r),
-                                    &batch,&pending->source,1u);
+                                    &batch,pending->sources,pending->source_count);
   if(result==GML_RENDER_RESOURCE_EXEC_FAILED){
     GmlRenderJournalMetrics metrics={0};
     gml_render_resource_journal_metrics(target,&metrics);
@@ -84,10 +96,16 @@ int gml_render_application_scene_flush(GmlRender *r){
      * next glyph demand, so its failed submission must not leave a borrowed pointer queued;
      * the caller will cross the CPU barrier and draw the glyph there instead. */
     if(metrics.authority==GML_RENDER_RESOURCE_INVALID ||
-       !pending->source.borrowed_immutable) pending->count=0;
+       !pending->sources[0].borrowed_immutable){
+      pending->count=0;
+      pending->state_count=0;
+      pending->source_count=0;
+    }
     return 0;
   }
   pending->count=0;
+  pending->state_count=0;
+  pending->source_count=0;
   return 1;
 }
 
@@ -114,6 +132,8 @@ int gml_render_application_scene_enqueue(GmlRender *r,const GmlRenderDrawOp *ope
                                           const GmlRenderResourceSource *source){
   GmlRenderPendingSceneBatch *pending;
   GmlRenderImageRef next;
+  uint32_t state_index=0,source_index=0;
+  int coalescible;
   if(!r || !r->resident_application_pass || !gml_render_device(r) ||
      !gml_render_scene_target_resource_ensure(r) || !operation || !state || !source ||
      (!source->borrowed_immutable &&
@@ -123,19 +143,50 @@ int gml_render_application_scene_enqueue(GmlRender *r,const GmlRenderDrawOp *ope
      (operation->reconstruction_mode!=GML_RENDER_REPLAY_EXACT &&
       operation->reconstruction_mode!=GML_RENDER_DEVICE_CHECKPOINT) ||
      !same_scene_source(operation->sources[0],source->image)) return 0;
+  coalescible=source->borrowed_immutable &&
+    (operation->scene_family==GML_RENDER_SCENE_TEXT ||
+     operation->scene_family==GML_RENDER_SCENE_SPRITE) &&
+    operation->reconstruction_mode==GML_RENDER_DEVICE_CHECKPOINT &&
+    (operation->payload.quad.sampling.filter==GML_RENDER_FILTER_BILINEAR ||
+     operation->payload.quad.sampling.filter==GML_RENDER_FILTER_NEAREST_PHASED ||
+     operation->payload.quad.sampling.filter==GML_RENDER_FILTER_NEAREST);
   pending=r->pending_scene_batch;
-  if(pending && pending->count &&
-     (pending->count==GML_SCENE_BATCH_LIMIT ||
-      !same_scene_source(pending->source_ref,source->image) ||
-      pending->source.bytes!=source->bytes ||
-      memcmp(&pending->state,state,sizeof *state))){
-    if(!gml_render_application_scene_flush(r)) return 0;
+  if(pending && pending->count){
+    int flush=pending->count==GML_SCENE_BATCH_LIMIT ||
+      pending->coalesce_checkpoint_only!=coalescible;
+    if(!flush && coalescible){
+      source_index=pending->source_count;
+      for(uint32_t index=0;index<pending->source_count;index++)
+        if(same_scene_source(pending->source_refs[index],source->image)){
+          if(!same_scene_source_view(&pending->sources[index],source)) flush=1;
+          else source_index=index;
+          break;
+        }
+      state_index=pending->state_count;
+      for(uint32_t index=0;index<pending->state_count;index++)
+        if(!memcmp(&pending->states[index],state,sizeof *state)){
+          state_index=index;
+          break;
+        }
+      if(source_index==GML_SCENE_SOURCE_LIMIT ||
+         state_index==GML_SCENE_STATE_LIMIT) flush=1;
+    } else if(!flush &&
+              (!same_scene_source(pending->source_refs[0],source->image) ||
+               !same_scene_source_view(&pending->sources[0],source) ||
+               memcmp(&pending->states[0],state,sizeof *state))) flush=1;
+    if(flush){
+      if(!gml_render_application_scene_flush(r)) return 0;
+      source_index=state_index=0;
+    }
   }
   if(!pending){
     pending=(GmlRenderPendingSceneBatch*)calloc(1,sizeof *pending);
     if(!pending) return 0;
     r->pending_scene_batch=pending;
   }
+  /* R03-P9-IMMUTABLE-CHECKPOINT-SPAN: sampler/colour changes and distinct
+   * immutable atlas pages may stay in one ordered GPU submission. A CPU reader,
+   * mutable source or capacity boundary still closes and checkpoints it. */
   next=gml_render_application_scene_next_image_ref(
     r,gml_render_scene_target_resource_ensure(r));
   if(next.content_version==UINT64_MAX ||
@@ -144,13 +195,23 @@ int gml_render_application_scene_enqueue(GmlRender *r,const GmlRenderDrawOp *ope
      operation->target.image.identity!=next.identity ||
      operation->target.image.incarnation!=next.incarnation) return 0;
   if(!pending->count){
-    pending->state=*state;
-    pending->source=*source;
-    pending->source_ref=source->image;
+    pending->states[0]=*state;
+    pending->state_count=1u;
+    pending->sources[0]=*source;
+    pending->source_refs[0]=source->image;
+    pending->source_count=1u;
+    pending->coalesce_checkpoint_only=coalescible;
+  } else if(coalescible){
+    if(state_index==pending->state_count)
+      pending->states[pending->state_count++]=*state;
+    if(source_index==pending->source_count){
+      pending->sources[pending->source_count]=*source;
+      pending->source_refs[pending->source_count++]=source->image;
+    }
   }
   pending->operations[pending->count]=*operation;
-  pending->operations[pending->count].sources=&pending->source_ref;
-  pending->operations[pending->count].state_index=0;
+  pending->operations[pending->count].sources=&pending->source_refs[source_index];
+  pending->operations[pending->count].state_index=state_index;
   pending->count++;
   if(r->fb==r->app_surface_owned){
     r->app_surface_opaque=0;
