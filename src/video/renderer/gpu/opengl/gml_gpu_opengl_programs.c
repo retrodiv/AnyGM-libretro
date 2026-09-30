@@ -99,7 +99,7 @@ int gml_gpu_opengl_scene_program(GmlGpuBackend *backend,char *error,size_t error
   GlScene *scene=&backend->scene;
   const char *prefix=backend->api==GML_GPU_API_OPENGLES3
     ?GML_GPU_OPENGL_PREFIX_ES:GML_GPU_OPENGL_PREFIX_DESKTOP;
-  char vertex_source[1024],fragment_source[8192];
+  char vertex_source[1024],fragment_source[12288];
   GLuint vertex,fragment;
   GLint status=GL_FALSE;
   if(scene->program) return 1;

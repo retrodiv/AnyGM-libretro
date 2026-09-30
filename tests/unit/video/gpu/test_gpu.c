@@ -694,6 +694,61 @@ static int scene_alpha_composition_case(void){
             draws==anygm_test_graphics_scene_draw_calls(),
             "unqualified rounded-veil descriptors refuse before their valid clear prefix");
   }
+  /* Opaque stretched magnification has a distinct phase/weight policy, never
+   * an unchecked option for an arbitrary sampled quad. */
+  source.incarnation=3u;
+  for(int index=0;index<4;index++) source_pixels[index]=0xFF123456u;
+  upload.image=source;
+  upload.storage_width=upload.storage_height=2u;
+  upload.region=(GmlRenderRect){0,0,2u,2u};
+  upload.stride_bytes=8u;
+  upload.byte_capacity=sizeof source_pixels;
+  REQUIRE(service.upload(service.context,&upload),"opaque stretched atlas uploaded");
+  memset(&state,0,sizeof state);
+  state.write_mask=15u;
+  state.alpha=255u;
+  state.colour=0xFFFFFFFFu;
+  state.sampler_count=1u;
+  state.samplers[0].filter=GML_RENDER_FILTER_BILINEAR;
+  state.samplers[0].edge_rule=GML_RENDER_EDGE_CLAMP_SUBIMAGE;
+  state.samplers[0].source_region=(GmlRenderRect){0,0,2u,2u};
+  state.samplers[0].quantisation=GML_RENDER_QUANTISE_STRETCHED_FLOAT;
+  for(uint32_t index=0;index<3u;index++){
+    operations[index].target.image.identity=12u;
+    if(index){
+      GmlRenderQuad *quad=&operations[index].payload.quad;
+      operations[index].reconstruction_mode=GML_RENDER_REPLAY_EXACT;
+      quad->sampling=state.samplers[0];
+      quad->span_x[0]=quad->span_y[0]=2.0;
+      quad->span_x[1]=quad->span_y[1]=8.0;
+      quad->span_x[2]=quad->span_y[2]=0.0;
+      quad->span_x[3]=quad->span_y[3]=2.0;
+    }
+  }
+  result=service.submit(service.context,&batch);
+  REQUIRE(result.status==GML_RENDER_EXEC_ACCEPTED && result.accepted_prefix==3u &&
+          !anygm_test_graphics_read_pixels(),
+          "opaque stretched descriptors execute without submission-time CPU reads");
+  for(int variant=0;variant<8;variant++){
+    GmlRenderDrawOp invalid[3];
+    GmlRenderDrawStateSnapshot invalid_state=state;
+    GmlRenderDrawBatch refused={invalid,3u,&invalid_state,1u};
+    int clears=anygm_test_graphics_clear_calls(),draws=anygm_test_graphics_scene_draw_calls();
+    memcpy(invalid,operations,sizeof invalid);
+    if(variant==0) invalid[1].payload.quad.sampling.quantisation=2u;
+    if(variant==1) invalid[1].payload.quad.sampling.filter=GML_RENDER_FILTER_NEAREST;
+    if(variant==2) invalid[1].payload.quad.corner_colour[0]=0xFF123456u;
+    if(variant==3) invalid_state.samplers[0].quantisation=0u;
+    if(variant==4) invalid[1].payload.quad.span_x[1]=8.5;
+    if(variant==5) invalid[1].payload.quad.span_x[0]=16385.0;
+    if(variant==6) invalid[1].payload.quad.span_y[2]=1.0;
+    if(variant==7) invalid[1].scene_family=GML_RENDER_SCENE_TEXT;
+    result=service.submit(service.context,&refused);
+    REQUIRE(result.status==GML_RENDER_EXEC_UNSUPPORTED && !result.accepted_prefix &&
+            clears==anygm_test_graphics_clear_calls() &&
+            draws==anygm_test_graphics_scene_draw_calls(),
+            "unqualified stretched descriptors refuse before their valid clear prefix");
+  }
   gml_gpu_destroy(gpu,1);
   return 1;
 }

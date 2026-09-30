@@ -447,6 +447,7 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
     xs>0.0 && ys>0.0 && xs<=1.0 && ys<=1.0 &&
     part_view->sw<=256 && part_view->sh<=256;
   int span_active=0;
+  int stretched_float=0;
   int margin_left=0,margin_top=0,margin_right=0,margin_bottom=0;
   uint32_t margin_mask=0u;
   if(!r || !r->resident_application_pass ||
@@ -553,6 +554,11 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
   if(margin_right) margin_mask|=GML_RENDER_MARGIN_RIGHT;
   if(margin_bottom) margin_mask|=GML_RENDER_MARGIN_BOTTOM;
   resident_classify_page(page,atlas);
+  stretched_float=family==GML_RENDER_SCENE_SPRITE && opaque_target_alpha &&
+    !rotated_sprite && !corner_colours && !positioned_axis && !nearest_mode &&
+    !box_stretched && !transparent_stretched_trim &&
+    page->scene_fully_opaque && (colour&0xFFFFFFu)==0xFFFFFFu && alpha==1.0 &&
+    xs>1.0 && ys>1.0;
   if(!page->scene_fully_opaque && family!=GML_RENDER_SCENE_SPRITE &&
      !filtered_real_text &&
      nearest_mode!=2 && nearest_mode!=5) return 0;
@@ -607,10 +613,12 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
     y0=fmax(0.0,floor(miny)-1.0);
     width=fmin((double)r->fbw,ceil(maxx)+1.0)-x0;
     height=fmin((double)r->fbh,ceil(maxy)+1.0)-y0;
-  } else if(transparent_stretched_trim || box_stretched){
+  } else if(transparent_stretched_trim || box_stretched || stretched_float){
     x0=left; y0=top;
-    width=box_stretched?nearbyint((double)page->bw*xs):(double)page->bw*xs;
-    height=box_stretched?nearbyint((double)page->bh*ys):(double)page->bh*ys;
+    width=box_stretched || stretched_float
+      ?nearbyint((double)page->bw*xs):(double)page->bw*xs;
+    height=box_stretched || stretched_float
+      ?nearbyint((double)page->bh*ys):(double)page->bh*ys;
   } else {
     /* The positioned axis CPU leaf delegates to blit_one. Its modern world-target half-camera
      * ties select the preceding pixel; other filtered quads keep their established rounding. */
@@ -648,6 +656,10 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
   }
   if(!isfinite(width) || !isfinite(height) || width<1.0 || height<1.0 ||
      x0+width>10000000.0 || y0+height>10000000.0) return 0;
+  if(stretched_float && (width>16384.0 || height>16384.0 ||
+     page->bw>16384 || page->bh>16384 || floor(x0)!=x0 || floor(y0)!=y0 ||
+     !gml_render_stretched_float_phase_exact((uint32_t)page->bw,(uint32_t)width) ||
+     !gml_render_stretched_float_phase_exact((uint32_t)page->bh,(uint32_t)height))) return 0;
   if(x0<=-width || y0<=-height || x0>=r->fbw || y0>=r->fbh){
     /* The unit-scale first-generation point leaf has the same snapped half-open
      * rectangle. A fully clipped draw leaves queued device work untouched. */
@@ -672,7 +684,7 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
   region=(GmlRenderRect){page->sx,page->sy,(uint32_t)page->sw,(uint32_t)page->sh};
   source_ref=source.image;
   operation.opcode=GML_RENDER_OP_TEXTURED_QUAD;
-  operation.reconstruction_mode=additive_background
+  operation.reconstruction_mode=additive_background || stretched_float
     ?GML_RENDER_REPLAY_EXACT:GML_RENDER_DEVICE_CHECKPOINT;
   operation.scene_family=family;
   operation.source_count=1u;
@@ -702,6 +714,8 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
     :(margin_mask && operation.payload.quad.sampling.filter==GML_RENDER_FILTER_BILINEAR
       ?GML_RENDER_EDGE_LOGICAL_TPAG:GML_RENDER_EDGE_CLAMP_SUBIMAGE);
   operation.payload.quad.sampling.source_region=region;
+  operation.payload.quad.sampling.quantisation=stretched_float
+    ?GML_RENDER_QUANTISE_STRETCHED_FLOAT:0u;
   operation.payload.quad.sampling.logical_margin_mask=box_stretched?0u:
     operation.payload.quad.sampling.filter==GML_RENDER_FILTER_BILINEAR
       ?(corner_colours && part_view && margin_mask
@@ -741,14 +755,14 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
       }
       quad->span_active=1u;
     }
-  } else if(box_stretched){
+  } else if(box_stretched || stretched_float){
     GmlRenderQuad *quad=&operation.payload.quad;
     quad->u[0]=quad->u[3]=(double)page->sx/source.width;
     quad->u[1]=quad->u[2]=((double)page->sx+page->sw)/source.width;
     quad->v[0]=quad->v[1]=(double)page->sy/source.height;
     quad->v[2]=quad->v[3]=((double)page->sy+page->sh)/source.height;
-    /* Axis-aligned box quads reuse the otherwise unused span metadata for the exact integer
-     * logical source, destination and trim dimensions used by the established CPU leaf. */
+    /* Axis-aligned stretched quads carry the exact integer logical source,
+     * destination and trim dimensions used by the established CPU leaf. */
     quad->span_x[0]=(double)page->bw;
     quad->span_x[1]=width;
     quad->span_x[2]=(double)page->tx;

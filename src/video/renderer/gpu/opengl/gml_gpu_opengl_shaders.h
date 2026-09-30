@@ -131,6 +131,40 @@
   "  if(any(lessThan(at,ivec2(0))) || any(greaterThanEqual(at,extent))) return vec4(0.0);\n" \
   "  return floor(texelFetch(u_image,at,0)*255.0+0.5);\n" \
   "}\n" \
+  "float stretched_float_phase(int remainder,int denominator){\n" \
+  "  if(remainder==0) return 0.0;\n" \
+  "  uint scaled=uint(remainder),divisor=uint(denominator); int exponent=127;\n" \
+  "  while(scaled<divisor){ scaled<<=1u; exponent--; }\n" \
+  "  uint significand=uint(float(scaled)*8388608.0/float(divisor));\n" \
+  "  // The quotient is within a few codes. Its exact bounded residual survives unsigned wrap.\n" \
+  "  int residual=int((scaled<<23u)-significand*divisor);\n" \
+  "  for(int step=0;step<8;step++){\n" \
+  "    if(residual<0){ significand--; residual+=denominator; }\n" \
+  "    else if(residual>=denominator){ significand++; residual-=denominator; }\n" \
+  "    else break;\n" \
+  "  }\n" \
+  "  if(residual*2>denominator ||\n" \
+  "     (residual*2==denominator && (significand&1u)!=0u)) significand++;\n" \
+  "  if(significand==16777216u){ significand>>=1u; exponent++; }\n" \
+  "  return uintBitsToFloat((uint(exponent)<<23u)|(significand&8388607u));\n" \
+  "}\n" \
+  "float stretched_float_add(float left,float right){\n" \
+  "  // Nonnegative normal channel products only. Preserve each CPU float addition\n" \
+  "  // with guard/round/sticky bits instead of allowing contracted shader arithmetic.\n" \
+  "  uint a=floatBitsToUint(left),b=floatBitsToUint(right);\n" \
+  "  if(a==0u) return right; if(b==0u) return left;\n" \
+  "  if(a<b){ uint swap=a; a=b; b=swap; }\n" \
+  "  uint exponent=(a>>23u)&255u,shift=exponent-((b>>23u)&255u);\n" \
+  "  uint am=((a&8388607u)|8388608u)<<3u,bm=((b&8388607u)|8388608u)<<3u;\n" \
+  "  if(shift>=27u) bm=1u;\n" \
+  "  else if(shift>0u){ uint lost=bm&((1u<<shift)-1u); bm=(bm>>shift)|(lost>0u?1u:0u); }\n" \
+  "  uint total=am+bm;\n" \
+  "  if(total>=134217728u){ total=(total>>1u)|(total&1u); exponent++; }\n" \
+  "  uint significand=total>>3u,tail=total&7u;\n" \
+  "  if(tail>4u || (tail==4u && (significand&1u)!=0u)) significand++;\n" \
+  "  if(significand==16777216u){ significand>>=1u; exponent++; }\n" \
+  "  return uintBitsToFloat((exponent<<23u)|(significand&8388607u));\n" \
+  "}\n" \
   "void main(){\n" \
   "  // R03_SHADER_DIRECT_TEXTURE: nearest/atlas page sampling.\n" \
   "  if(u_filter==0){ o_color=texture(u_image,v_texcoord)*v_colour; return; }\n" \
@@ -170,7 +204,16 @@
   "  vec2 delta=centre-v_map.xy;\n" \
   "  ivec2 lo; vec2 f;\n" \
   "  // R03_SHADER_INVERSE_GEOMETRY: affine inverse or triangle-local page UV.\n" \
-  "  if(u_filter>=2 && u_filter!=7 && u_filter!=8 && u_filter!=9 && u_filter!=10){\n" \
+  "  // R03_SHADER_STRETCHED_FLOAT: exact integer phase before the CPU band's float weights.\n" \
+  "  if(u_filter==11){\n" \
+  "    ivec2 logical=ivec2(v_span_x.x,v_span_y.x),dest=ivec2(v_span_x.y,v_span_y.y);\n" \
+  "    // Add one denominator before division so edge phases never use negative remainder.\n" \
+  "    ivec2 numerator=(ivec2(floor(delta))*2+ivec2(1))*logical+dest;\n" \
+  "    ivec2 denominator=dest*2,remainder=numerator%denominator;\n" \
+  "    lo=numerator/denominator-ivec2(1);\n" \
+  "    f=vec2(stretched_float_phase(remainder.x,denominator.x),\n" \
+  "           stretched_float_phase(remainder.y,denominator.y));\n" \
+  "  } else if(u_filter>=2 && u_filter!=7 && u_filter!=8 && u_filter!=9 && u_filter!=10){\n" \
   "    vec2 local=u_filter>=5\n" \
   "      ?v_texcoord\n" \
   "      :delta.x*v_map.zw+delta.y*v_texcoord+v_step;\n" \
@@ -226,6 +269,14 @@
   "  // sample equation at texel centres, with no separate nearest-colour kernel.\n" \
   "  vec4 weighted=(p00*(1.0-f.x)*(1.0-f.y)+p01*f.x*(1.0-f.y)+\n" \
   "                 p10*(1.0-f.x)*f.y+p11*f.x*f.y);\n" \
+  "  if(u_filter==11){\n" \
+  "    vec4 weights=vec4((1.0-f.x)*(1.0-f.y),f.x*(1.0-f.y),\n" \
+  "                      (1.0-f.x)*f.y,f.x*f.y);\n" \
+  "    vec4 a=p00*weights.x,b=p01*weights.y,c=p10*weights.z,d=p11*weights.w;\n" \
+  "    for(int channel=0;channel<4;channel++)\n" \
+  "      weighted[channel]=stretched_float_add(stretched_float_add(\n" \
+  "        stretched_float_add(a[channel],b[channel]),c[channel]),d[channel]);\n" \
+  "  }\n" \
   "  vec4 sampled=floor(weighted+vec4(0.5));\n" \
   "  // R03_SHADER_TINT_ALPHA: truncating RGB tint and per-draw alpha.\n" \
   "  uvec3 tint=uvec3(floor(v_colour.rgb*255.0+vec3(0.5)));\n" \

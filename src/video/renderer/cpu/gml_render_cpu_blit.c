@@ -1560,6 +1560,41 @@ static void spr_bi_band(void *p, int py0, int py1, int slot){
     }
   }
 }
+int gml_render_cpu_bilinear_sprite_stretch(GmlRender *r,
+                                           const GmlAtlas *a,const GmlTpag *t,
+                                           int x0,int y0,int W,int H,int sw,int sh,
+                                           int bR,int bG,int bB,double alpha){
+  int applied=0;
+  /* per-column/row atlas offsets precomputed (with the tpag crop resolved to a byte offset or -1
+   * for transparent), so the inner loop is 4 reads + float taps — no per-pixel div/floor/branches. */
+  ptrdiff_t *colA=malloc((size_t)W*sizeof(ptrdiff_t)), *colB=malloc((size_t)W*sizeof(ptrdiff_t));
+  float *cfx=malloc((size_t)W*sizeof(float));
+  ptrdiff_t *rowA=malloc((size_t)H*sizeof(ptrdiff_t)), *rowB=malloc((size_t)H*sizeof(ptrdiff_t));
+  float *cfy=malloc((size_t)H*sizeof(float));
+  if(colA&&colB&&cfx&&rowA&&rowB&&cfy){
+    for(int px=0; px<W; px++){
+      double fsx=(px+0.5)*sw/(double)W-0.5; int xa=(int)floor(fsx); cfx[px]=(float)(fsx-xa); int xb=xa+1;
+      if(xa<0)xa=0;else if(xa>sw-1)xa=sw-1; if(xb<0)xb=0;else if(xb>sw-1)xb=sw-1;
+      int ia=xa-t->tx, ib=xb-t->tx;
+      colA[px]=(ia>=0&&ia<t->sw)?(ptrdiff_t)(t->sx+ia)*4:-1;
+      colB[px]=(ib>=0&&ib<t->sw)?(ptrdiff_t)(t->sx+ib)*4:-1;
+    }
+    for(int py=0; py<H; py++){
+      double fsy=(py+0.5)*sh/(double)H-0.5; int ya=(int)floor(fsy); cfy[py]=(float)(fsy-ya); int yb=ya+1;
+      if(ya<0)ya=0;else if(ya>sh-1)ya=sh-1; if(yb<0)yb=0;else if(yb>sh-1)yb=sh-1;
+      int ja=ya-t->ty, jb=yb-t->ty;
+      rowA[py]=(ja>=0&&ja<t->sh)?(ptrdiff_t)(t->sy+ja)*a->w*4:-1;
+      rowB[py]=(jb>=0&&jb<t->sh)?(ptrdiff_t)(t->sy+jb)*a->w*4:-1;
+    }
+    SprBiCtx ctx={ r, a->px, colA, colB, rowA, rowB, cfx, cfy, W, x0, y0,
+      (float)alpha, bR/255.0f,bG/255.0f,bB/255.0f, !r->alphablend };
+    gml_run_row_bands(r,H,spr_bi_band,&ctx);
+    applied=1;
+  }
+  free(colA); free(colB); free(cfx); free(rowA); free(rowB); free(cfy);
+  return applied;
+}
+
 void gml_render_sprite_cache_free(GmlSprite *s){
   if(!s) return;
   free(s->runtime_axis_cache_px);
@@ -6295,32 +6330,7 @@ void gml_render_cpu_blit_sprite_stretched_resolved(GmlRender *r, GmlSprite *s, i
   /* The banded bilinear kernel writes every destination pixel it covers. A dithered pass covers
    * only its pattern cells, so it takes the general loop below, which consults the pattern. */
   if(r->interp && W>sw && H>sh && !shader_ordered_dither_active(r)){
-    /* per-column/row atlas offsets precomputed (with the tpag crop resolved to a byte offset or -1
-     * for transparent), so the inner loop is 4 reads + float taps — no per-pixel div/floor/branches. */
-    ptrdiff_t *colA=malloc((size_t)W*sizeof(ptrdiff_t)), *colB=malloc((size_t)W*sizeof(ptrdiff_t));
-    float *cfx=malloc((size_t)W*sizeof(float));
-    ptrdiff_t *rowA=malloc((size_t)H*sizeof(ptrdiff_t)), *rowB=malloc((size_t)H*sizeof(ptrdiff_t));
-    float *cfy=malloc((size_t)H*sizeof(float));
-    if(colA&&colB&&cfx&&rowA&&rowB&&cfy){
-      for(int px=0; px<W; px++){
-        double fsx=(px+0.5)*sw/(double)W-0.5; int xa=(int)floor(fsx); cfx[px]=(float)(fsx-xa); int xb=xa+1;
-        if(xa<0)xa=0;else if(xa>sw-1)xa=sw-1; if(xb<0)xb=0;else if(xb>sw-1)xb=sw-1;
-        int ia=xa-t->tx, ib=xb-t->tx;
-        colA[px]=(ia>=0&&ia<t->sw)?(ptrdiff_t)(t->sx+ia)*4:-1;
-        colB[px]=(ib>=0&&ib<t->sw)?(ptrdiff_t)(t->sx+ib)*4:-1;
-      }
-      for(int py=0; py<H; py++){
-        double fsy=(py+0.5)*sh/(double)H-0.5; int ya=(int)floor(fsy); cfy[py]=(float)(fsy-ya); int yb=ya+1;
-        if(ya<0)ya=0;else if(ya>sh-1)ya=sh-1; if(yb<0)yb=0;else if(yb>sh-1)yb=sh-1;
-        int ja=ya-t->ty, jb=yb-t->ty;
-        rowA[py]=(ja>=0&&ja<t->sh)?(ptrdiff_t)(t->sy+ja)*a->w*4:-1;
-        rowB[py]=(jb>=0&&jb<t->sh)?(ptrdiff_t)(t->sy+jb)*a->w*4:-1;
-      }
-      SprBiCtx ctx={ r, a->px, colA, colB, rowA, rowB, cfx, cfy, W, x0, y0,
-        (float)alpha, bR/255.0f,bG/255.0f,bB/255.0f, !r->alphablend };
-      gml_run_row_bands(r,H,spr_bi_band,&ctx);
-    }
-    free(colA); free(colB); free(cfx); free(rowA); free(rowB); free(cfy);
+    gml_render_cpu_bilinear_sprite_stretch(r,a,t,x0,y0,W,H,sw,sh,bR,bG,bB,alpha);
     return;
   }
   SprStretchGeneralBand band={r,a,t,x0,y0,W,H,sw,sh,bR,bG,bB,alpha};

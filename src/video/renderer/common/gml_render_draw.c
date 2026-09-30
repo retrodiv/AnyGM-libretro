@@ -5,7 +5,24 @@
 #include "gml_render_internal.h"
 #include "gml_render_surfaces_internal.h"
 
+#include <math.h>
 #include <string.h>
+
+int gml_render_stretched_float_phase_exact(uint32_t logical,uint32_t destination){
+  if(!logical || logical>=destination || destination>16384u) return 0;
+  const uint32_t denominator=destination*2u;
+  for(uint32_t pixel=0;pixel<destination;pixel++){
+    /* The preserved CPU band divides in double before subtracting its integer
+     * tap. Near a float rounding boundary that cancellation need not match a
+     * correctly rounded rational phase. Qualify the whole axis before writes;
+     * this is an admission guard, not another sampling kernel. */
+    double phase=(pixel+0.5)*logical/(double)destination-0.5;
+    uint32_t numerator=(pixel*2u+1u)*logical+destination;
+    if((float)(phase-floor(phase))!=
+       (float)((numerator%denominator)/(double)denominator)) return 0;
+  }
+  return 1;
+}
 
 static void render_unbind_device(GmlRender *render,int context_current){
   if(!render) return;

@@ -6,9 +6,11 @@
 #include "gml_render_cpu_replay.h"
 #include "gml_render_cpu_backend.h"
 #include "gml_render_cpu_blit_internal.h"
+#include "gml_render_cpu_blit.h"
 
 #include <limits.h>
 #include <math.h>
+#include <stdlib.h>
 #include <string.h>
 
 static int same_ref(GmlRenderImageRef a,GmlRenderImageRef b){
@@ -72,6 +74,62 @@ static int blend_rule(const GmlRenderDrawStateSnapshot *state){
   return -1;
 }
 
+static int stretched_float_eligible(const GmlRenderDrawOp *operation,
+                                     const GmlRenderDrawStateSnapshot *state,
+                                     const GmlRenderResourceSource *source){
+  const GmlRenderQuad *quad=&operation->payload.quad;
+  GmlRenderRect region=quad->sampling.source_region;
+  if(operation->scene_family!=GML_RENDER_SCENE_SPRITE || blend_rule(state)!=0 ||
+     operation->target.pixel_format!=GML_RENDER_PIXEL_ARGB8888 ||
+     source->pixel_format!=GML_RENDER_PIXEL_RGBA8888 ||
+     source->stride_bytes!=source->width*4u ||
+     quad->shape!=GML_RENDER_QUAD_AXIS_ALIGNED || quad->span_active ||
+     quad->sampling.filter!=GML_RENDER_FILTER_BILINEAR ||
+     quad->sampling.edge_rule!=GML_RENDER_EDGE_CLAMP_SUBIMAGE ||
+     quad->sampling.logical_margin_mask ||
+     !source_rect(region,source->width,source->height) ||
+     state->samplers[0].quantisation!=quad->sampling.quantisation ||
+     state->samplers[0].filter!=quad->sampling.filter ||
+     state->samplers[0].edge_rule!=quad->sampling.edge_rule ||
+     state->samplers[0].logical_margin_mask ||
+     !same_rect(state->samplers[0].source_region,region)) return 0;
+  for(unsigned axis=0;axis<2u;axis++){
+    const double *span=axis?quad->span_y:quad->span_x;
+    double first=axis?quad->y[0]:quad->x[0];
+    double last=axis?quad->y[2]:quad->x[1];
+    double physical=axis?region.height:region.width;
+    for(unsigned field=0;field<4u;field++)
+      if(!isfinite(span[field]) || floor(span[field])!=span[field]) return 0;
+    if(!isfinite(first) || !isfinite(last) || last>(double)INT_MAX || floor(first)!=first ||
+       first<=-span[1] || first>=
+         (double)(axis?operation->target.height:operation->target.width) ||
+       span[0]!=physical || span[0]<1.0 || span[0]>16384.0 ||
+       span[1]<=span[0] || span[1]>16384.0 || last-first!=span[1] ||
+       span[2]!=0.0 || span[3]!=span[0]) return 0;
+    if(!gml_render_stretched_float_phase_exact((uint32_t)span[0],(uint32_t)span[1]))
+      return 0;
+  }
+  if(quad->x[3]!=quad->x[0] || quad->x[2]!=quad->x[1] ||
+     quad->y[1]!=quad->y[0] || quad->y[3]!=quad->y[2]) return 0;
+  double u0=(double)region.x/source->width;
+  double u1=((double)region.x+region.width)/source->width;
+  double v0=(double)region.y/source->height;
+  double v1=((double)region.y+region.height)/source->height;
+  if(!coordinate_matches(quad->u[0],u0) || !coordinate_matches(quad->u[3],u0) ||
+     !coordinate_matches(quad->u[1],u1) || !coordinate_matches(quad->u[2],u1) ||
+     !coordinate_matches(quad->v[0],v0) || !coordinate_matches(quad->v[1],v0) ||
+     !coordinate_matches(quad->v[2],v1) || !coordinate_matches(quad->v[3],v1)) return 0;
+  for(unsigned corner=0;corner<4u;corner++)
+    if(quad->corner_colour[corner]!=0xFFFFFFFFu) return 0;
+  for(uint32_t y=0;y<region.height;y++) for(uint32_t x=0;x<region.width;x++){
+    const uint8_t *pixel=(const uint8_t*)source->bytes+
+      (size_t)((uint32_t)region.y+y)*source->stride_bytes+
+      ((uint32_t)region.x+x)*4u;
+    if(pixel[3]!=255u) return 0;
+  }
+  return 1;
+}
+
 int gml_render_cpu_replay_eligible(const GmlRenderDrawOp *operation,
                                     const GmlRenderDrawStateSnapshot *state,
                                     const GmlRenderResourceSource *source){
@@ -113,6 +171,8 @@ int gml_render_cpu_replay_eligible(const GmlRenderDrawOp *operation,
        full_rect(state->clip,target->width,target->height))) return 0;
   quad=&operation->payload.quad;
   region=quad->sampling.source_region;
+  if(quad->sampling.quantisation==GML_RENDER_QUANTISE_STRETCHED_FLOAT)
+    return stretched_float_eligible(operation,state,source);
   if(blend_rule(state)==4 &&
      (quad->x[0]!=0.0 || quad->y[0]!=0.0 ||
       quad->x[1]!=(double)target->width || quad->y[2]!=(double)target->height)) return 0;
@@ -205,6 +265,27 @@ int gml_render_cpu_replay_one(uint32_t *target,uint32_t width,uint32_t height,
         target+(size_t)((uint32_t)region->y+y)*width+(uint32_t)region->x,
         (int)region->width,colour);
     return 1;
+  }
+  if(operation->payload.quad.sampling.quantisation==GML_RENDER_QUANTISE_STRETCHED_FLOAT){
+    const GmlRenderQuad *quad=&operation->payload.quad;
+    GmlRenderRect region=quad->sampling.source_region;
+    GmlAtlas atlas={0};
+    GmlTpag page={0};
+    GmlRender *render=(GmlRender*)calloc(1,sizeof *render);
+    if(!render) return 0;
+    atlas.px=(uint8_t*)source->bytes;
+    atlas.w=(int)source->width; atlas.h=(int)source->height;
+    page.sx=region.x; page.sy=region.y;
+    page.sw=page.bw=(int)region.width; page.sh=page.bh=(int)region.height;
+    render->fb=target; render->fbw=(int)width; render->fbh=(int)height;
+    render->active_shader=-1;
+    render->alphablend=render->interp=1;
+    render->color_write_mask=15u;
+    int applied=gml_render_cpu_bilinear_sprite_stretch(render,&atlas,&page,
+      (int)quad->x[0],(int)quad->y[0],(int)quad->span_x[1],(int)quad->span_y[1],
+      (int)region.width,(int)region.height,255,255,255,1.0);
+    free(render);
+    return applied;
   }
   {
     const GmlRenderQuad *quad=&operation->payload.quad;

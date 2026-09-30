@@ -8,6 +8,7 @@
 
 typedef struct GmlTpag GmlTpag;
 typedef struct GmlSprite GmlSprite;
+typedef struct GmlAtlas GmlAtlas;
 
 /* Existing CPU skeletal and raster closures reached after shared sprite preparation. */
 int gml_render_cpu_draw_spine_sprite(GmlRender *render, GmlSprite *sprite,
@@ -21,6 +22,13 @@ void gml_render_cpu_blit_sprite_stretched_resolved(GmlRender *render, GmlSprite 
                                                     int frame, double x, double y,
                                                     double width, double height,
                                                     uint32_t blend, double alpha);
+/* Shared execution of the preserved bilinear band. All scratch is allocated before writes;
+ * failure returns zero without modifying the borrowed target. */
+int gml_render_cpu_bilinear_sprite_stretch(GmlRender *render,
+                                           const GmlAtlas *atlas,const GmlTpag *page,
+                                           int x0,int y0,int width,int height,
+                                           int source_width,int source_height,
+                                           int red,int green,int blue,double alpha);
 void gml_render_cpu_blit_sprite_pos_resolved(GmlRender *render, int sprite, int subimage,
                                               const double x[4], const double y[4], double alpha);
 

@@ -85,6 +85,7 @@ static int qualified_blend(const GmlRenderDrawStateSnapshot *state){
 }
 
 static uint32_t scene_filter(const GmlRenderQuad *quad){
+  if(quad->sampling.quantisation==GML_RENDER_QUANTISE_STRETCHED_FLOAT) return 11u;
   if(quad->sampling.filter==GML_RENDER_FILTER_BOX) return 4u;
   if(quad->sampling.filter==GML_RENDER_FILTER_NEAREST_PHASED) return 7u;
   if(quad->sampling.filter==GML_RENDER_FILTER_NEAREST_PHASED_COPY) return 8u;
@@ -351,7 +352,13 @@ static int scene_preflight(GmlGpuBackend *backend,const GmlRenderDrawBatch *batc
          (sampling->edge_rule!=GML_RENDER_EDGE_CLAMP_SUBIMAGE &&
           sampling->edge_rule!=GML_RENDER_EDGE_LOGICAL_TPAG &&
           sampling->edge_rule!=GML_RENDER_EDGE_TRANSPARENT) ||
-         sampling->quantisation ||
+         (sampling->quantisation &&
+          (sampling->quantisation!=GML_RENDER_QUANTISE_STRETCHED_FLOAT ||
+           sampling->filter!=GML_RENDER_FILTER_BILINEAR ||
+           op->scene_family!=GML_RENDER_SCENE_SPRITE || blend!=0 ||
+           op->payload.quad.shape!=GML_RENDER_QUAD_AXIS_ALIGNED ||
+           sampling->edge_rule!=GML_RENDER_EDGE_CLAMP_SUBIMAGE ||
+           source->rendered_origin)) ||
          (sampling->filter==GML_RENDER_FILTER_BOX
            ? sampling->edge_rule!=GML_RENDER_EDGE_TRANSPARENT ||
              sampling->logical_margin_mask!=0u
@@ -368,6 +375,7 @@ static int scene_preflight(GmlGpuBackend *backend,const GmlRenderDrawBatch *batc
                 : sampling->logical_margin_mask!=0u)) ||
          state->samplers[0].filter!=sampling->filter ||
          state->samplers[0].edge_rule!=sampling->edge_rule ||
+         state->samplers[0].quantisation!=sampling->quantisation ||
          state->samplers[0].logical_margin_mask!=sampling->logical_margin_mask ||
          !same_region(state->samplers[0].source_region,sampling->source_region) ||
          !gml_render_gpu_opengl_draw_textured_quad(op,state,source->width,source->height,
@@ -385,7 +393,8 @@ static int scene_preflight(GmlGpuBackend *backend,const GmlRenderDrawBatch *batc
              !(op->scene_family==GML_RENDER_SCENE_TEXT &&
                sampling->filter==GML_RENDER_FILTER_NEAREST)))) return 0;
         if((colour>>24)!=255u && blend!=1 && blend!=3) return 0;
-        if((blend==4 || blend==5) && colour!=0xFFFFFFFFu) return 0;
+        if((blend==4 || blend==5 || sampling->quantisation) &&
+           colour!=0xFFFFFFFFu) return 0;
       }
       if(op->payload.quad.shape==GML_RENDER_QUAD_AXIS_ALIGNED &&
          sampling->filter==GML_RENDER_FILTER_NEAREST &&

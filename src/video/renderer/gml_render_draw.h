@@ -9,6 +9,10 @@
 
 struct GmlPlanShader;
 
+/* Admission proof for the retained opaque stretch rule, including the CPU
+ * band's double-to-float phase boundary. No target pixels are read or written. */
+int gml_render_stretched_float_phase_exact(uint32_t logical,uint32_t destination);
+
 enum { GML_RENDER_MAX_SAMPLERS=8, GML_RENDER_MAX_UNCERTAIN_TARGETS=8 };
 
 /* Resolved, API-neutral work. No entry may look up mutable content after submission. */
@@ -107,6 +111,12 @@ typedef struct GmlRenderSamplingPolicy {
   uint32_t logical_margin_mask;
 } GmlRenderSamplingPolicy;
 
+enum {
+  /* Opaque white stretched magnification: integral logical/destination sizes
+   * prepare a rational phase and the CPU band's four float weights. */
+  GML_RENDER_QUANTISE_STRETCHED_FLOAT=1u
+};
+
 /* Resolved blend semantics, independent of any device API's enumerant values. Zeroed factors
  * and equations describe disabled blending; unsupported combinations are rejected before writes. */
 typedef enum GmlRenderBlendFactor {
@@ -160,7 +170,7 @@ typedef struct GmlRenderQuad {
   /* Rotated checkpoint: local = (pixel centre - anchor) * [x,y] + offset. */
   double inverse_anchor[2],inverse_x[2],inverse_y[2],inverse_offset[2];
   /* Modern filtered rotation optionally limits each row to the CPU quad span. Axis-aligned
-   * box-filtered stretches instead carry [logical size, destination size, trim, visible size]
+   * box-filtered or float-band stretches carry [logical size, destination size, trim, visible size]
    * in these four components per axis, with span_active left clear. */
   double span_x[4],span_y[4];
   uint32_t span_active;

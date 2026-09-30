@@ -124,7 +124,7 @@ typedef struct GmlSprite { const char *name; int originx, originy, w, h, n_frame
                  /* GMS2.3+ nine-slice: draw scaled with fixed-size borders (corners never scale;
                   * edges/center follow their tile mode: 0=stretch 1=repeat 2=mirror 3=blankrepeat 4=hide) */
                  int ns_enabled, ns_l, ns_t, ns_r, ns_b, ns_tile[5]; } GmlSprite;
-typedef struct {
+typedef struct GmlAtlas {
   uint8_t *px; int w, h;                                          /* RGBA8, decoded lazily */
   uint32_t blob; size_t avail, chunk_end; int decode_attempted;    /* offsets into data.win, never addresses */
   uint8_t *external_blob; size_t external_size;                    /* encoded VFS sidecar, if any */
