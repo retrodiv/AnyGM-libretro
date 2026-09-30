@@ -2869,6 +2869,58 @@ static void gml_render_write_authored_margin(GmlRender *r, const GmlTpag *t,
   r->fb_all_opaque=0;
   r->fb_all_transparent=0;
 }
+void gml_render_cpu_filtered_tpag_band(
+    GmlRender *r,GmlAtlas *a,GmlTpag *t,
+    int flipx,int flipy,int x0,int y0,int xx0,int xx1,int yy0,int yy1,
+    double dx,double dy,double axs,double ays,uint32_t blend,double alpha,
+    const struct GmlShaderPal *solid_mask,const struct GmlShaderPal *solid_blur,
+    const uint32_t *solid_blur_alpha,unsigned long long vispix){
+  int bR=blend&0xFF, bG=(blend>>8)&0xFF, bB=(blend>>16)&0xFF;
+    int columns=xx1-xx0;
+    int *source_a=columns>0?malloc((size_t)columns*sizeof(*source_a)):NULL;
+    double *fraction_x=columns>0?malloc((size_t)columns*sizeof(*fraction_x)):NULL;
+    if(source_a && fraction_x) for(int column=0;column<columns;column++){
+      int xx=xx0+column;
+      int px=flipx?x0-xx:x0+xx;
+      double source_x=(flipx
+        ? dx-((double)px+0.5)
+        : ((double)px+0.5)-dx)/axs-0.5;
+      source_a[column]=(int)floor(source_x);
+      fraction_x[column]=source_x-source_a[column];
+    }
+    const struct GmlShaderPal *interp_solid_mask=
+      r->blendmode==0?solid_mask:NULL;
+    int logical_margin=
+      t->tx>0 || t->ty>0 || t->tx+t->sw<t->bw || t->ty+t->sh<t->bh;
+    uint32_t solid_rgb=interp_solid_mask
+      ? interp_solid_mask->solid_alpha_mask_rgb
+      : (solid_blur_alpha?solid_blur->solid_blur_alpha_rgb:0);
+    /* Recognized solid fragments never read v_vColour; the uniform is the whole tint. */
+    int solid_red=(solid_rgb>>16)&255;
+    int solid_green=(solid_rgb>>8)&255;
+    int solid_blue=solid_rgb&255;
+    GmlInterpBlitBand band={
+      r,a,t,interp_solid_mask,
+      interp_solid_mask&&!logical_margin?tpag_argb_cache(r,t,a):NULL,
+      r->blendmode==0&&solid_blur_alpha?solid_blur:NULL,
+      r->blendmode==0?solid_blur_alpha:NULL,
+      source_a,fraction_x,
+      flipx,flipy,x0,y0,yy0,xx0,xx1,
+      logical_margin,
+      bR,bG,bB,solid_red,solid_green,solid_blue,
+      dx,dy,axs,ays,alpha,blend
+    };
+    if(tpag_interp_draw_cache_try(r,t,&band,yy1-yy0)){
+      free(source_a);
+      free(fraction_x);
+      return;
+    }
+    if(gml_render_row_bands_profitable(r,vispix)) gml_run_row_bands(r,yy1-yy0,interp_blit_band_rows,&band);
+    else interp_blit_band_rows(&band,0,yy1-yy0,0);
+    free(source_a);
+    free(fraction_x);
+    return;
+}
 static void blit_one(GmlRender *r, GmlTpag *t, double dx, double dy, double xs, double ys,
                      uint32_t blend, double alpha,int quantize_alpha){
   if(!r || !t || !r->fb || r->fbw<=0 || r->fbh<=0) return;
@@ -3013,49 +3065,10 @@ static void blit_one(GmlRender *r, GmlTpag *t, double dx, double dy, double xs, 
     r->blendmode==0 && !mapped_shader;
   if(r->interp && studio_texture_filtering && !r->fog_flat &&
      !wave && !uvwave && !exact_studio_white_copy){
-    int columns=xx1-xx0;
-    int *source_a=columns>0?malloc((size_t)columns*sizeof(*source_a)):NULL;
-    double *fraction_x=columns>0?malloc((size_t)columns*sizeof(*fraction_x)):NULL;
-    if(source_a && fraction_x) for(int column=0;column<columns;column++){
-      int xx=xx0+column;
-      int px=flipx?x0-xx:x0+xx;
-      double source_x=(flipx
-        ? dx-((double)px+0.5)
-        : ((double)px+0.5)-dx)/axs-0.5;
-      source_a[column]=(int)floor(source_x);
-      fraction_x[column]=source_x-source_a[column];
-    }
-    const struct GmlShaderPal *interp_solid_mask=
-      r->blendmode==0?solid_mask:NULL;
-    int logical_margin=
-      t->tx>0 || t->ty>0 || t->tx+t->sw<t->bw || t->ty+t->sh<t->bh;
-    uint32_t solid_rgb=interp_solid_mask
-      ? interp_solid_mask->solid_alpha_mask_rgb
-      : (solid_blur_alpha?solid_blur->solid_blur_alpha_rgb:0);
-    /* Recognized solid fragments never read v_vColour; the uniform is the whole tint. */
-    int solid_red=(solid_rgb>>16)&255;
-    int solid_green=(solid_rgb>>8)&255;
-    int solid_blue=solid_rgb&255;
-    GmlInterpBlitBand band={
-      r,a,t,interp_solid_mask,
-      interp_solid_mask&&!logical_margin?tpag_argb_cache(r,t,a):NULL,
-      r->blendmode==0&&solid_blur_alpha?solid_blur:NULL,
-      r->blendmode==0?solid_blur_alpha:NULL,
-      source_a,fraction_x,
-      flipx,flipy,x0,y0,yy0,xx0,xx1,
-      logical_margin,
-      bR,bG,bB,solid_red,solid_green,solid_blue,
-      dx,dy,axs,ays,alpha,blend
-    };
-    if(tpag_interp_draw_cache_try(r,t,&band,yy1-yy0)){
-      free(source_a);
-      free(fraction_x);
-      return;
-    }
-    if(gml_render_row_bands_profitable(r,vispix)) gml_run_row_bands(r,yy1-yy0,interp_blit_band_rows,&band);
-    else interp_blit_band_rows(&band,0,yy1-yy0,0);
-    free(source_a);
-    free(fraction_x);
+    gml_render_cpu_filtered_tpag_band(
+      r,a,t,flipx,flipy,x0,y0,xx0,xx1,yy0,yy1,
+      dx,dy,axs,ays,blend,alpha,
+      solid_mask,solid_blur,solid_blur_alpha,vispix);
     return;
   }
   if(!flipx && !flipy && fabs(axs-1.0)<0.001 && fabs(ays-1.0)<0.001 &&

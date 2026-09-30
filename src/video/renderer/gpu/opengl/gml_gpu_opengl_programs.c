@@ -170,7 +170,7 @@ int gml_gpu_opengl_scene_exact_program(GmlGpuBackend *backend,char *error,
   GlScene *scene=&backend->scene;
   const char *prefix=backend->api==GML_GPU_API_OPENGLES3
     ?GML_GPU_OPENGL_PREFIX_ES:GML_GPU_OPENGL_PREFIX_DESKTOP;
-  char vertex_source[1024],fragment_source[8192];
+  char vertex_source[1024],fragment_source[32768];
   GLuint vertex,fragment;
   GLint status=GL_FALSE;
   int vertex_length,fragment_length;
@@ -236,13 +236,24 @@ int gml_gpu_opengl_scene_exact_program(GmlGpuBackend *backend,char *error,
                                                                "u_effect_linear");
   scene->exact_u_effect_seed=backend->gl.GetUniformLocation(scene->exact_program,
                                                              "u_effect_seed");
+  scene->exact_u_font_origin=backend->gl.GetUniformLocation(scene->exact_program,"u_font_origin");
+  scene->exact_u_font_scale=backend->gl.GetUniformLocation(scene->exact_program,"u_font_scale");
+  scene->exact_u_font_alpha=backend->gl.GetUniformLocation(scene->exact_program,"u_font_alpha");
+  scene->exact_u_font_crop=backend->gl.GetUniformLocation(scene->exact_program,"u_font_crop");
+  scene->exact_u_font_tint=backend->gl.GetUniformLocation(scene->exact_program,"u_font_tint");
+  scene->exact_u_font_mode=backend->gl.GetUniformLocation(scene->exact_program,"u_font_mode");
+  scene->exact_u_font_preserve_alpha=backend->gl.GetUniformLocation(scene->exact_program,
+                                                                  "u_font_preserve_alpha");
   if(scene->exact_a_position<0 || scene->exact_a_texcoord<0 || scene->exact_a_colour<0 ||
      scene->exact_u_extent<0 || scene->exact_u_image<0 || scene->exact_u_previous<0 ||
      scene->exact_u_region_origin<0 || scene->exact_u_repetitions<0 ||
      scene->exact_u_blend_rule<0 || scene->exact_u_additive_alpha<0 ||
      scene->exact_u_effect_colour<0 || scene->exact_u_effect_intensity<0 ||
      scene->exact_u_effect_zoom<0 || scene->exact_u_effect_linear<0 ||
-     scene->exact_u_effect_seed<0){
+     scene->exact_u_effect_seed<0 || scene->exact_u_font_origin<0 ||
+     scene->exact_u_font_scale<0 || scene->exact_u_font_alpha<0 ||
+     scene->exact_u_font_crop<0 || scene->exact_u_font_tint<0 ||
+     scene->exact_u_font_mode<0 || scene->exact_u_font_preserve_alpha<0){
     gml_gpu_opengl_record_error(error,error_capacity,
       "exact scene program is missing an attribute or uniform");
     backend->gl.DeleteProgram(scene->exact_program);

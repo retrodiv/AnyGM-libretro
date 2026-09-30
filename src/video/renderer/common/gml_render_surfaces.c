@@ -50,7 +50,7 @@ struct GmlRenderPendingSceneBatch {
   GmlRenderResourceSource sources[GML_SCENE_SOURCE_LIMIT];
   GmlRenderImageRef source_refs[GML_SCENE_SOURCE_LIMIT];
   uint32_t count,state_count,source_count;
-  int coalesce_checkpoint_only;
+  int coalesce_immutable;
 };
 
 static int same_scene_source(GmlRenderImageRef a,GmlRenderImageRef b){
@@ -133,7 +133,7 @@ int gml_render_application_scene_enqueue(GmlRender *r,const GmlRenderDrawOp *ope
   GmlRenderPendingSceneBatch *pending;
   GmlRenderImageRef next;
   uint32_t state_index=0,source_index=0;
-  int coalescible;
+  int coalescible,exact_filtered_font;
   if(!r || !r->resident_application_pass || !gml_render_device(r) ||
      !gml_render_scene_target_resource_ensure(r) || !operation || !state || !source ||
      (!source->borrowed_immutable &&
@@ -143,17 +143,23 @@ int gml_render_application_scene_enqueue(GmlRender *r,const GmlRenderDrawOp *ope
      (operation->reconstruction_mode!=GML_RENDER_REPLAY_EXACT &&
       operation->reconstruction_mode!=GML_RENDER_DEVICE_CHECKPOINT) ||
      !same_scene_source(operation->sources[0],source->image)) return 0;
+  exact_filtered_font=operation->reconstruction_mode==GML_RENDER_REPLAY_EXACT &&
+    operation->scene_family==GML_RENDER_SCENE_TEXT &&
+    state->rgb_equation==GML_RENDER_BLEND_EXACT_FILTERED_FONT &&
+    state->alpha_equation==GML_RENDER_BLEND_EXACT_FILTERED_FONT &&
+    gml_render_filtered_font_quad_valid(&operation->payload.quad,
+                                        operation->target.width,operation->target.height);
   coalescible=source->borrowed_immutable &&
     (operation->scene_family==GML_RENDER_SCENE_TEXT ||
      operation->scene_family==GML_RENDER_SCENE_SPRITE) &&
-    operation->reconstruction_mode==GML_RENDER_DEVICE_CHECKPOINT &&
+    (operation->reconstruction_mode==GML_RENDER_DEVICE_CHECKPOINT || exact_filtered_font) &&
     (operation->payload.quad.sampling.filter==GML_RENDER_FILTER_BILINEAR ||
      operation->payload.quad.sampling.filter==GML_RENDER_FILTER_NEAREST_PHASED ||
      operation->payload.quad.sampling.filter==GML_RENDER_FILTER_NEAREST);
   pending=r->pending_scene_batch;
   if(pending && pending->count){
     int flush=pending->count==GML_SCENE_BATCH_LIMIT ||
-      pending->coalesce_checkpoint_only!=coalescible;
+      pending->coalesce_immutable!=coalescible;
     if(!flush && coalescible){
       source_index=pending->source_count;
       for(uint32_t index=0;index<pending->source_count;index++)
@@ -184,9 +190,10 @@ int gml_render_application_scene_enqueue(GmlRender *r,const GmlRenderDrawOp *ope
     if(!pending) return 0;
     r->pending_scene_batch=pending;
   }
-  /* R03-P9-IMMUTABLE-CHECKPOINT-SPAN: sampler/colour changes and distinct
-   * immutable atlas pages may stay in one ordered GPU submission. A CPU reader,
-   * mutable source or capacity boundary still closes and checkpoints it. */
+  /* R03-P9-IMMUTABLE-CHECKPOINT-SPAN: sampler/colour changes and distinct immutable
+   * pages stay ordered, including exact filtered glyphs next to checkpoint quads.
+   * A mixed span checkpoints once; an exact-only font span retains its journal.
+   * CPU readers, mutable sources and capacities retain their existing boundaries. */
   next=gml_render_application_scene_next_image_ref(
     r,gml_render_scene_target_resource_ensure(r));
   if(next.content_version==UINT64_MAX ||
@@ -200,7 +207,7 @@ int gml_render_application_scene_enqueue(GmlRender *r,const GmlRenderDrawOp *ope
     pending->sources[0]=*source;
     pending->source_refs[0]=source->image;
     pending->source_count=1u;
-    pending->coalesce_checkpoint_only=coalescible;
+    pending->coalesce_immutable=coalescible;
   } else if(coalescible){
     if(state_index==pending->state_count)
       pending->states[pending->state_count++]=*state;

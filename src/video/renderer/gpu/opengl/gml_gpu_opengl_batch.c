@@ -6,6 +6,7 @@
 #include "gml_gpu_opengl_internal.h"
 
 #include <limits.h>
+#include <float.h>
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
@@ -55,6 +56,13 @@ static int cleared_earlier(const GmlRenderImageRef *cleared,uint32_t count,
 }
 
 static int qualified_blend(const GmlRenderDrawStateSnapshot *state){
+  if(state->rgb_source_factor==GML_RENDER_BLEND_SOURCE_ALPHA &&
+     state->rgb_destination_factor==GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA &&
+     (state->alpha_source_factor==GML_RENDER_BLEND_ONE ||
+      state->alpha_source_factor==GML_RENDER_BLEND_SOURCE_ALPHA) &&
+     state->alpha_destination_factor==GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA &&
+     state->rgb_equation==GML_RENDER_BLEND_EXACT_FILTERED_FONT &&
+     state->alpha_equation==GML_RENDER_BLEND_EXACT_FILTERED_FONT) return 6;
   if(!state->rgb_source_factor && !state->rgb_destination_factor &&
      !state->alpha_source_factor && !state->alpha_destination_factor &&
      !state->rgb_equation && !state->alpha_equation) return 0;
@@ -352,7 +360,15 @@ static int scene_preflight(GmlGpuBackend *backend,const GmlRenderDrawBatch *batc
          (sampling->edge_rule!=GML_RENDER_EDGE_CLAMP_SUBIMAGE &&
           sampling->edge_rule!=GML_RENDER_EDGE_LOGICAL_TPAG &&
           sampling->edge_rule!=GML_RENDER_EDGE_TRANSPARENT) ||
-         (sampling->quantisation &&
+         (blend==6 && (!backend->gl.CopyTexSubImage2D || source->rendered_origin ||
+                       op->scene_family!=GML_RENDER_SCENE_TEXT ||
+                       source->pixel_format!=GML_RENDER_PIXEL_RGBA8888 ||
+                       op->sources[0].resource_class!=GML_RENDER_RESOURCE_ATLAS ||
+                       op->reconstruction_mode!=GML_RENDER_REPLAY_EXACT ||
+                       !gml_render_filtered_font_quad_valid(&op->payload.quad,
+                                                            target->width,target->height) ||
+                       !exact_rect(op,NULL,NULL,NULL,NULL,1))) ||
+         (sampling->quantisation && blend!=6 &&
           (sampling->quantisation!=GML_RENDER_QUANTISE_STRETCHED_FLOAT ||
            sampling->filter!=GML_RENDER_FILTER_BILINEAR ||
            op->scene_family!=GML_RENDER_SCENE_SPRITE || blend!=0 ||
@@ -382,7 +398,7 @@ static int scene_preflight(GmlGpuBackend *backend,const GmlRenderDrawBatch *batc
                                                    source->rendered_origin,probe)) return 0;
       for(uint32_t corner=0;corner<4;corner++){
         uint32_t colour=op->payload.quad.corner_colour[corner];
-        if(colour!=0xFFFFFFFFu &&
+        if(colour!=0xFFFFFFFFu && blend!=6 &&
            (op->reconstruction_mode!=GML_RENDER_DEVICE_CHECKPOINT ||
             (sampling->filter!=GML_RENDER_FILTER_BILINEAR &&
              sampling->filter!=GML_RENDER_FILTER_BOX &&
@@ -393,7 +409,8 @@ static int scene_preflight(GmlGpuBackend *backend,const GmlRenderDrawBatch *batc
              !(op->scene_family==GML_RENDER_SCENE_TEXT &&
                sampling->filter==GML_RENDER_FILTER_NEAREST)))) return 0;
         if((colour>>24)!=255u && blend!=1 && blend!=3) return 0;
-        if((blend==4 || blend==5 || sampling->quantisation) &&
+        if((blend==4 || blend==5 ||
+            (sampling->quantisation && blend!=6)) &&
            colour!=0xFFFFFFFFu) return 0;
       }
       if(op->payload.quad.shape==GML_RENDER_QUAD_AXIS_ALIGNED &&
@@ -527,6 +544,16 @@ static int flush_quads(GmlGpuBackend *backend,GlSceneImage *target,GlSceneImage 
   return 1;
 }
 
+static void double_words(double value,GLint words[2]){
+  _Static_assert(sizeof(double)==sizeof(uint64_t) && DBL_MANT_DIG==53 &&
+                   DBL_MAX_EXP==1024,"Filtered font requires binary64 double");
+  uint64_t bits;
+  uint32_t halves[2];
+  memcpy(&bits,&value,sizeof bits);
+  halves[0]=(uint32_t)bits; halves[1]=(uint32_t)(bits>>32);
+  memcpy(words,halves,sizeof halves);
+}
+
 /* Returns 1 on success, 0 before any target write, and -1 if the draw may have modified it. The
  * snapshot is only the affected rectangle, never the entire surface per overlapping sprite. */
 static int draw_exact_quad(GmlGpuBackend *backend,const GmlRenderDrawOp *op,
@@ -540,7 +567,7 @@ static int draw_exact_quad(GmlGpuBackend *backend,const GmlRenderDrawOp *op,
   GLfloat extent[2]={(GLfloat)target->width,(GLfloat)target->height};
   int outcome;
   if(!exact_rect(op,&left,&bottom,&width,&height,
-                 qualified_blend(state)==4) ||
+                 qualified_blend(state)==4 || qualified_blend(state)==6) ||
      !gml_gpu_opengl_scene_exact_program(backend,error,error_capacity) ||
      !gml_render_gpu_opengl_draw_textured_quad(op,state,source->width,source->height,
                                                source->rendered_origin,
@@ -580,7 +607,30 @@ static int draw_exact_quad(GmlGpuBackend *backend,const GmlRenderDrawOp *op,
                         effect?(effect->kind==GML_RENDER_LAYER_EFFECT_TINT?2:
                                 effect->kind==GML_RENDER_LAYER_EFFECT_COLOURISE?3:
                                 effect->kind==GML_RENDER_LAYER_EFFECT_ZOOM_BLUR?4:5):
-                          (qualified_blend(state)==5?6:qualified_blend(state)==4?1:0));
+                          (qualified_blend(state)==6?7:
+                           qualified_blend(state)==5?6:qualified_blend(state)==4?1:0));
+  if(qualified_blend(state)==6){
+    const GmlRenderQuad *quad=&op->payload.quad;
+    GmlRenderRect crop=quad->sampling.source_region;
+    GLint origin_words[4],scale_words[4],alpha_words[2];
+    uint32_t colour=quad->corner_colour[0];
+    GLint region[4]={crop.x,crop.y,(GLint)crop.width,(GLint)crop.height};
+    GLint tint[4]={(GLint)((colour>>16)&255u),(GLint)((colour>>8)&255u),
+                   (GLint)(colour&255u),255};
+    double_words(quad->inverse_anchor[0],origin_words);
+    double_words(quad->inverse_anchor[1],origin_words+2);
+    double_words(quad->inverse_x[0],scale_words);
+    double_words(quad->inverse_y[1],scale_words+2);
+    double_words(quad->filtered_draw_alpha,alpha_words);
+    backend->gl.Uniform4iv(scene->exact_u_font_origin,1,origin_words);
+    backend->gl.Uniform4iv(scene->exact_u_font_scale,1,scale_words);
+    backend->gl.Uniform2iv(scene->exact_u_font_alpha,1,alpha_words);
+    backend->gl.Uniform4iv(scene->exact_u_font_crop,1,region);
+    backend->gl.Uniform4iv(scene->exact_u_font_tint,1,tint);
+    backend->gl.Uniform1i(scene->exact_u_font_mode,(GLint)quad->sampling.quantisation);
+    backend->gl.Uniform1i(scene->exact_u_font_preserve_alpha,
+                          state->alpha_source_factor==GML_RENDER_BLEND_SOURCE_ALPHA);
+  }
   {
     GLfloat opacity=(GLfloat)state->additive_draw_alpha;
     backend->gl.Uniform1fv(scene->exact_u_additive_alpha,1,&opacity);
@@ -704,7 +754,8 @@ GmlRenderExecutionResult gml_gpu_opengl_scene_submit(GmlGpuBackend *backend,
        pending_blend!=qualified_blend(&batch->states[op->state_index]) ||
        qualified_blend(&batch->states[op->state_index])==2 ||
        qualified_blend(&batch->states[op->state_index])==4 ||
-       qualified_blend(&batch->states[op->state_index])==5)){
+       qualified_blend(&batch->states[op->state_index])==5 ||
+       qualified_blend(&batch->states[op->state_index])==6)){
       if(!flush_quads(backend,active_target,pending_source,pending_filter,
                       pending_blend,pending_count)){
         mark_uncertain(&result,active_target);
@@ -782,8 +833,8 @@ GmlRenderExecutionResult gml_gpu_opengl_scene_submit(GmlGpuBackend *backend,
     }
     pending_filter=scene_filter(&op->payload.quad);
     pending_blend=qualified_blend(&batch->states[op->state_index]);
-    if(pending_blend==2 || pending_blend==4 || pending_blend==5){
-      uint32_t repetitions=exact_repetitions(batch,index);
+    if(pending_blend==2 || pending_blend==4 || pending_blend==5 || pending_blend==6){
+      uint32_t repetitions=pending_blend==6?1u:exact_repetitions(batch,index);
       int drawn=draw_exact_quad(backend,op,&batch->states[op->state_index],
                                 target,pending_source,repetitions,NULL,error,error_capacity);
       if(drawn<0) mark_uncertain(&result,target);

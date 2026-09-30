@@ -49,6 +49,13 @@ static int source_valid(const GmlRenderResourceSource *source){
 }
 
 static int blend_rule(const GmlRenderDrawStateSnapshot *state){
+  if(state->rgb_source_factor==GML_RENDER_BLEND_SOURCE_ALPHA &&
+     state->rgb_destination_factor==GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA &&
+     (state->alpha_source_factor==GML_RENDER_BLEND_ONE ||
+      state->alpha_source_factor==GML_RENDER_BLEND_SOURCE_ALPHA) &&
+     state->alpha_destination_factor==GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA &&
+     state->rgb_equation==GML_RENDER_BLEND_EXACT_FILTERED_FONT &&
+     state->alpha_equation==GML_RENDER_BLEND_EXACT_FILTERED_FONT) return 5;
   if(!state->rgb_source_factor && !state->rgb_destination_factor &&
      !state->alpha_source_factor && !state->alpha_destination_factor &&
      !state->rgb_equation && !state->alpha_equation) return 0;
@@ -171,6 +178,20 @@ int gml_render_cpu_replay_eligible(const GmlRenderDrawOp *operation,
        full_rect(state->clip,target->width,target->height))) return 0;
   quad=&operation->payload.quad;
   region=quad->sampling.source_region;
+  if(blend_rule(state)==5){
+    if(operation->scene_family!=GML_RENDER_SCENE_TEXT ||
+       source->pixel_format!=GML_RENDER_PIXEL_RGBA8888 ||
+       source->stride_bytes!=source->width*4u ||
+       source->image.resource_class!=GML_RENDER_RESOURCE_ATLAS ||
+       !source->borrowed_immutable ||
+       !source_rect(region,source->width,source->height) ||
+       state->samplers[0].quantisation!=quad->sampling.quantisation ||
+       state->samplers[0].filter!=quad->sampling.filter ||
+       state->samplers[0].edge_rule!=quad->sampling.edge_rule ||
+       state->samplers[0].logical_margin_mask ||
+       !same_rect(state->samplers[0].source_region,region)) return 0;
+    return gml_render_filtered_font_quad_valid(quad,target->width,target->height);
+  }
   if(quad->sampling.quantisation==GML_RENDER_QUANTISE_STRETCHED_FLOAT)
     return stretched_float_eligible(operation,state,source);
   if(blend_rule(state)==4 &&
@@ -264,6 +285,40 @@ int gml_render_cpu_replay_one(uint32_t *target,uint32_t width,uint32_t height,
       gml_render_cpu_backend_fill_xrgb(
         target+(size_t)((uint32_t)region->y+y)*width+(uint32_t)region->x,
         (int)region->width,colour);
+    return 1;
+  }
+  if(blend_rule(state)==5){
+    const GmlRenderQuad *q=&operation->payload.quad;
+    GmlRenderRect region=q->sampling.source_region;
+    GmlAtlas atlas={0};
+    GmlTpag page={0};
+    GmlWin content={0};
+    GmlRender *render=(GmlRender*)calloc(1,sizeof *render);
+    if(!render) return 0;
+    content.bytecode=q->sampling.quantisation==GML_RENDER_QUANTISE_FONT_MODERN?17:16;
+    atlas.px=(uint8_t*)source->bytes;
+    atlas.w=(int)source->width; atlas.h=(int)source->height;
+    page.sx=region.x; page.sy=region.y;
+    page.sw=page.tw=page.bw=(int)region.width;
+    page.sh=page.th=page.bh=(int)region.height;
+    render->win=&content;
+    render->fb=target; render->fbw=(int)width; render->fbh=(int)height;
+    render->active_shader=-1;
+    render->alphablend=render->interp=1;
+    render->target_sp=state->alpha_source_factor==GML_RENDER_BLEND_SOURCE_ALPHA?1:0;
+    render->color_write_mask=15u;
+    int x0=(int)q->x[0],y0=(int)q->y[0];
+    int xx0=x0<0?-x0:0,yy0=y0<0?-y0:0;
+    int xx1=(int)fmin(q->x[1],width)-x0;
+    int yy1=(int)fmin(q->y[2],height)-y0;
+    uint32_t rgba=q->corner_colour[0];
+    uint32_t blend=((rgba>>16)&255u)|(rgba&0xFF00u)|((rgba&255u)<<16);
+    gml_render_cpu_filtered_tpag_band(render,&atlas,&page,
+      0,0,x0,y0,xx0,xx1,yy0,yy1,
+      q->inverse_anchor[0],q->inverse_anchor[1],q->inverse_x[0],q->inverse_y[1],
+      blend,q->filtered_draw_alpha,NULL,NULL,NULL,
+      (unsigned long long)(xx1-xx0)*(unsigned long long)(yy1-yy0));
+    free(render);
     return 1;
   }
   if(operation->payload.quad.sampling.quantisation==GML_RENDER_QUANTISE_STRETCHED_FLOAT){

@@ -4,18 +4,12 @@
 #ifndef GML_GPU_OPENGL_SHADERS_H
 #define GML_GPU_OPENGL_SHADERS_H
 
-/* The two shader bodies this backend uses, checked in rather than generated: a production build
- * runs no generator and reaches no network.
- *
- * Both are written so that no colour value passes through arithmetic. The destination pixel picks
- * its source index out of an integer texture and fetches that exact texel, so the only float
- * involved is the fixed 0-or-1 alpha the XRGB contract requires. A float scale factor or a
- * normalized sampler coordinate would reintroduce the rounding this whole path exists to avoid:
- * two conforming drivers can round the same float differently and neither is wrong.
- *
- * The version and precision prefix is chosen at build time from the negotiated API, and the source
- * byte-order swizzle is chosen from the machine's own layout, so one body serves desktop OpenGL and
- * OpenGL ES on either endianness. */
+/* Checked-in shader bodies: a production build runs no generator and reaches no network.
+ * The integer presentation path fetches exact source texels without colour arithmetic. Scene
+ * programs separately implement their qualified sampling, blend and effect rules; bounded exact
+ * rules use explicit integer arithmetic where ordinary device floating point is insufficient.
+ * The version/precision prefix follows the negotiated API, and presentation byte-order swizzling
+ * follows the machine layout, so these bodies serve desktop OpenGL and OpenGL ES. */
 
 #define GML_GPU_OPENGL_PREFIX_DESKTOP \
   "#version 330 core\n"
@@ -293,6 +287,196 @@
   "               u_filter==8?1.0:sampled.a*v_colour.a/255.0);\n" \
   "}\n"
 
+/* The bounded filtered-font rule preserves the CPU's ordered binary64 expression. */
+#define GML_GPU_OPENGL_FILTERED_FONT_BODY \
+  "// R03_SHADER_FILTERED_FONT: bounded normal binary64, round-to-nearest-even.\n" \
+  "// Integer limbs retain the CPU operations on both GL 3.3 and GLES 3.0.\n" \
+  "uniform ivec4 u_font_origin;\n" \
+  "uniform ivec4 u_font_scale;\n" \
+  "uniform ivec2 u_font_alpha;\n" \
+  "uniform ivec4 u_font_crop;\n" \
+  "uniform ivec4 u_font_tint;\n" \
+  "uniform int u_font_mode;\n" \
+  "uniform int u_font_preserve_alpha;\n" \
+  "bool d64_zero(uvec2 a){ return (a.x|(a.y&0x7fffffffu))==0u; }\n" \
+  "bool limb_less(uvec2 a,uvec2 b){ return a.y<b.y || (a.y==b.y && a.x<b.x); }\n" \
+  "uvec2 limb_add(uvec2 a,uvec2 b){\n" \
+  "  uint lo=a.x+b.x; return uvec2(lo,a.y+b.y+uint(lo<a.x));\n" \
+  "}\n" \
+  "uvec2 limb_sub(uvec2 a,uvec2 b){ return uvec2(a.x-b.x,a.y-b.y-uint(a.x<b.x)); }\n" \
+  "uvec2 limb_left(uvec2 a,int n){\n" \
+  "  if(n==0) return a;\n" \
+  "  if(n>=64) return uvec2(0u);\n" \
+  "  if(n>=32) return uvec2(0u,a.x<<uint(n-32));\n" \
+  "  return uvec2(a.x<<uint(n),(a.y<<uint(n))|(a.x>>uint(32-n)));\n" \
+  "}\n" \
+  "uvec2 limb_right(uvec2 a,int n){\n" \
+  "  if(n==0) return a;\n" \
+  "  if(n>=64) return uvec2(0u);\n" \
+  "  if(n>=32) return uvec2(a.y>>uint(n-32),0u);\n" \
+  "  return uvec2((a.x>>uint(n))|(a.y<<uint(32-n)),a.y>>uint(n));\n" \
+  "}\n" \
+  "uvec2 limb_jam(uvec2 a,int n){\n" \
+  "  if(n==0) return a;\n" \
+  "  if(n>=64) return uvec2(uint((a.x|a.y)!=0u),0u);\n" \
+  "  uvec2 q=limb_right(a,n);\n" \
+  "  uvec2 restored=limb_left(q,n);\n" \
+  "  if(any(notEqual(restored,a))) q.x|=1u;\n" \
+  "  return q;\n" \
+  "}\n" \
+  "uvec2 d64_mantissa(uvec2 a){ return uvec2(a.x,(a.y&0xfffffu)|0x100000u); }\n" \
+  "int d64_exponent(uvec2 a){ return int((a.y>>20u)&2047u)-1023; }\n" \
+  "uvec2 d64_pack(uvec2 extended,int exponent,uint sign){\n" \
+  "  if((extended.x|extended.y)==0u) return uvec2(0u);\n" \
+  "  if(extended.y>=0x1000000u){ extended=limb_jam(extended,1); exponent++; }\n" \
+  "  while(extended.y<0x800000u){ extended=limb_left(extended,1); exponent--; }\n" \
+  "  uint residue=extended.x&7u;\n" \
+  "  uvec2 mantissa=limb_right(extended,3);\n" \
+  "  if(residue>4u || (residue==4u && (mantissa.x&1u)!=0u))\n" \
+  "    mantissa=limb_add(mantissa,uvec2(1u,0u));\n" \
+  "  if(mantissa.y>=0x200000u){ mantissa=limb_right(mantissa,1); exponent++; }\n" \
+  "  return uvec2(mantissa.x,sign|(uint(exponent+1023)<<20u)|(mantissa.y&0xfffffu));\n" \
+  "}\n" \
+  "uvec2 d64_uint(uint value){\n" \
+  "  if(value==0u) return uvec2(0u);\n" \
+  "  int exponent=0; uint leading=value;\n" \
+  "  while(leading>=2u){ leading>>=1u; exponent++; }\n" \
+  "  uvec2 m=limb_left(uvec2(value,0u),52-exponent);\n" \
+  "  return uvec2(m.x,(uint(exponent+1023)<<20u)|(m.y&0xfffffu));\n" \
+  "}\n" \
+  "uvec2 d64_int(int value){\n" \
+  "  uvec2 result=d64_uint(uint(value<0?-value:value));\n" \
+  "  if(value<0) result.y|=0x80000000u;\n" \
+  "  return result;\n" \
+  "}\n" \
+  "uvec2 d64_add(uvec2 a,uvec2 b){\n" \
+  "  if(d64_zero(a)) return b;\n" \
+  "  if(d64_zero(b)) return a;\n" \
+  "  int ea=d64_exponent(a),eb=d64_exponent(b);\n" \
+  "  uvec2 ma=limb_left(d64_mantissa(a),3),mb=limb_left(d64_mantissa(b),3);\n" \
+  "  uint sa=a.y&0x80000000u,sb=b.y&0x80000000u;\n" \
+  "  if(ea<eb){ uvec2 swap=ma;ma=mb;mb=swap;int e=ea;ea=eb;eb=e;uint s=sa;sa=sb;sb=s; }\n" \
+  "  mb=limb_jam(mb,ea-eb);\n" \
+  "  if(sa==sb) return d64_pack(limb_add(ma,mb),ea,sa);\n" \
+  "  if(limb_less(ma,mb)) return d64_pack(limb_sub(mb,ma),ea,sb);\n" \
+  "  return d64_pack(limb_sub(ma,mb),ea,sa);\n" \
+  "}\n" \
+  "uvec2 d64_sub(uvec2 a,uvec2 b){ b.y^=0x80000000u; return d64_add(a,b); }\n" \
+  "uvec2 d64_mul(uvec2 a,uvec2 b){\n" \
+  "  if(d64_zero(a) || d64_zero(b)) return uvec2(0u);\n" \
+  "  uvec2 ma=d64_mantissa(a),mb=d64_mantissa(b);\n" \
+  "  uint aa[4],bb[4],p[8];\n" \
+  "  aa[0]=ma.x&65535u;aa[1]=ma.x>>16u;aa[2]=ma.y&65535u;aa[3]=ma.y>>16u;\n" \
+  "  bb[0]=mb.x&65535u;bb[1]=mb.x>>16u;bb[2]=mb.y&65535u;bb[3]=mb.y>>16u;\n" \
+  "  for(int i=0;i<8;i++) p[i]=0u;\n" \
+  "  for(int i=0;i<4;i++){\n" \
+  "    uint carry=0u;\n" \
+  "    for(int j=0;j<4;j++){\n" \
+  "      uint term=aa[i]*bb[j]+p[i+j]+carry;\n" \
+  "      p[i+j]=term&65535u;carry=term>>16u;\n" \
+  "    }\n" \
+  "    p[i+4]=carry;\n" \
+  "  }\n" \
+  "  uvec4 w=uvec4(p[0]|(p[1]<<16u),p[2]|(p[3]<<16u),\n" \
+  "                p[4]|(p[5]<<16u),p[6]|(p[7]<<16u));\n" \
+  "  int high=(p[6]&512u)!=0u?1:0;\n" \
+  "  int shift=49+high;\n" \
+  "  uvec2 extended=uvec2((w.y>>uint(shift-32))|(w.z<<uint(64-shift)),\n" \
+  "                       (w.z>>uint(shift-32))|(w.w<<uint(64-shift)));\n" \
+  "  if(w.x!=0u || (w.y&((1u<<uint(shift-32))-1u))!=0u) extended.x|=1u;\n" \
+  "  return d64_pack(extended,d64_exponent(a)+d64_exponent(b)+high,\n" \
+  "                   (a.y^b.y)&0x80000000u);\n" \
+  "}\n" \
+  "uvec2 d64_div(uvec2 a,uvec2 b){\n" \
+  "  if(d64_zero(a)) return uvec2(0u);\n" \
+  "  uvec2 numerator=d64_mantissa(a),denominator=d64_mantissa(b);\n" \
+  "  int exponent=d64_exponent(a)-d64_exponent(b);\n" \
+  "  if(limb_less(numerator,denominator)){ numerator=limb_left(numerator,1);exponent--; }\n" \
+  "  uvec2 remainder=limb_sub(numerator,denominator),quotient=uvec2(1u,0u);\n" \
+  "  for(int bit=0;bit<55;bit++){\n" \
+  "    remainder=limb_left(remainder,1);quotient=limb_left(quotient,1);\n" \
+  "    if(!limb_less(remainder,denominator)){\n" \
+  "      remainder=limb_sub(remainder,denominator);quotient.x|=1u;\n" \
+  "    }\n" \
+  "  }\n" \
+  "  if((remainder.x|remainder.y)!=0u) quotient.x|=1u;\n" \
+  "  return d64_pack(quotient,exponent,(a.y^b.y)&0x80000000u);\n" \
+  "}\n" \
+  "int d64_floor(uvec2 a){\n" \
+  "  if(d64_zero(a)) return 0;\n" \
+  "  bool negative=(a.y&0x80000000u)!=0u;\n" \
+  "  int exponent=d64_exponent(a);\n" \
+  "  if(exponent<0) return negative?-1:0;\n" \
+  "  uint integral=limb_right(d64_mantissa(a),52-exponent).x;\n" \
+  "  if(!negative) return int(integral);\n" \
+  "  uvec2 absolute=uvec2(a.x,a.y&0x7fffffffu);\n" \
+  "  return -int(integral)-int(any(notEqual(absolute,d64_uint(integral))));\n" \
+  "}\n" \
+  "int d64_round(uvec2 a){ return d64_floor(d64_add(a,uvec2(0u,0x3fe00000u))); }\n" \
+  "int d64_lround(uvec2 a){\n" \
+  "  int integral=d64_floor(a);\n" \
+  "  uvec2 boundary=d64_add(d64_uint(uint(integral)),uvec2(0u,0x3fe00000u));\n" \
+  "  return integral+int(!limb_less(a,boundary));\n" \
+  "}\n" \
+  "uvec2 font_channel(ivec4 a,ivec4 b,ivec4 c,ivec4 d,int channel,\n" \
+  "                   uvec2 wa,uvec2 wb,uvec2 wc,uvec2 wd){\n" \
+  "  uvec2 sum=d64_add(d64_mul(d64_uint(uint(a[channel])),wa),\n" \
+  "                    d64_mul(d64_uint(uint(b[channel])),wb));\n" \
+  "  sum=d64_add(sum,d64_mul(d64_uint(uint(c[channel])),wc));\n" \
+  "  return d64_add(sum,d64_mul(d64_uint(uint(d[channel])),wd));\n" \
+  "}\n" \
+  "ivec4 filtered_font_pixel(ivec4 prior){\n" \
+  "  uvec2 one=uvec2(0u,0x3ff00000u),half_unit=uvec2(0u,0x3fe00000u);\n" \
+  "  ivec2 pixel=ivec2(int(gl_FragCoord.x),int(u_extent.y)-1-int(gl_FragCoord.y));\n" \
+  "  uvec2 px=d64_add(d64_int(pixel.x),half_unit),py=d64_add(d64_int(pixel.y),half_unit);\n" \
+  "  uvec2 sx=d64_sub(d64_div(d64_sub(px,uvec2(u_font_origin.xy)),\n" \
+  "                           uvec2(u_font_scale.xy)),half_unit);\n" \
+  "  uvec2 sy=d64_sub(d64_div(d64_sub(py,uvec2(u_font_origin.zw)),\n" \
+  "                           uvec2(u_font_scale.zw)),half_unit);\n" \
+  "  ivec2 low=ivec2(d64_floor(sx),d64_floor(sy)),high=low+ivec2(1);\n" \
+  "  uvec2 fx=d64_sub(sx,d64_int(low.x)),fy=d64_sub(sy,d64_int(low.y));\n" \
+  "  uvec2 ix=d64_sub(one,fx),iy=d64_sub(one,fy);\n" \
+  "  uvec2 wa=d64_mul(ix,iy),wb=d64_mul(fx,iy),wc=d64_mul(ix,fy),wd=d64_mul(fx,fy);\n" \
+  "  low=clamp(low,ivec2(0),u_font_crop.zw-ivec2(1))+u_font_crop.xy;\n" \
+  "  high=clamp(high,ivec2(0),u_font_crop.zw-ivec2(1))+u_font_crop.xy;\n" \
+  "  ivec4 a=ivec4(round(texelFetch(u_image,ivec2(low.x,low.y),0)*255.0));\n" \
+  "  ivec4 b=ivec4(round(texelFetch(u_image,ivec2(high.x,low.y),0)*255.0));\n" \
+  "  ivec4 c=ivec4(round(texelFetch(u_image,ivec2(low.x,high.y),0)*255.0));\n" \
+  "  ivec4 d=ivec4(round(texelFetch(u_image,ivec2(high.x,high.y),0)*255.0));\n" \
+  "  uvec2 samples[4];\n" \
+  "  for(int channel=0;channel<4;channel++) samples[channel]=font_channel(a,b,c,d,channel,wa,wb,wc,wd);\n" \
+  "  uvec2 alpha=uvec2(u_font_alpha),denominator=d64_uint(255u),sa;\n" \
+  "  uint source_alpha;\n" \
+  "  if(u_font_mode==2){\n" \
+  "    int aa=d64_round(samples[3]);\n" \
+  "    if(aa<=0) return prior;\n" \
+  "    sa=d64_mul(d64_div(d64_uint(uint(aa)),denominator),alpha);\n" \
+  "    source_alpha=uint(d64_lround(d64_mul(d64_uint(uint(aa)),alpha)));\n" \
+  "  } else {\n" \
+  "    sa=d64_div(d64_mul(samples[3],alpha),denominator);\n" \
+  "    if(d64_zero(sa)) return prior;\n" \
+  "    source_alpha=uint(d64_lround(d64_mul(samples[3],alpha)));\n" \
+  "  }\n" \
+  "  uvec2 inverse=d64_sub(one,sa);\n" \
+  "  ivec4 result;\n" \
+  "  for(int channel=0;channel<3;channel++){\n" \
+  "    if(u_font_mode==2){\n" \
+  "      uint tinted=uint(d64_round(samples[channel]))*uint(u_font_tint[channel])/255u;\n" \
+  "      result[channel]=d64_round(d64_mul(d64_uint(tinted),sa))+\n" \
+  "                       d64_round(d64_mul(d64_uint(uint(prior[channel])),inverse));\n" \
+  "    } else {\n" \
+  "      uvec2 tinted=d64_div(d64_mul(samples[channel],d64_uint(uint(u_font_tint[channel]))),denominator);\n" \
+  "      if(!limb_less(sa,one)) result[channel]=d64_round(tinted);\n" \
+  "      else result[channel]=d64_round(d64_add(d64_mul(tinted,sa),\n" \
+  "                                d64_mul(d64_uint(uint(prior[channel])),inverse)));\n" \
+  "    }\n" \
+  "  }\n" \
+  "  result.rgb=clamp(result.rgb,ivec3(0),ivec3(255));\n" \
+  "  result.a=u_font_preserve_alpha!=0\n" \
+  "    ?int(min(255u,(source_alpha*source_alpha+uint(prior.a)*(255u-source_alpha)+127u)/255u)):255;\n" \
+  "  return result;\n" \
+  "}\n"
+
 /* The eight-bit truncating source-over rule used by a characterised CPU leaf. Sampling the
  * previous destination from a copied, bounded region makes overlaps observe prior writes. */
 #define GML_GPU_OPENGL_SCENE_EXACT_FRAGMENT_BODY \
@@ -311,6 +495,7 @@
   "in vec2 v_texcoord;\n" \
   "in vec4 v_colour;\n" \
   "out vec4 o_color;\n" \
+  GML_GPU_OPENGL_FILTERED_FONT_BODY \
   "vec4 effect_capture_sample(vec2 uv){\n" \
   "  vec2 position=clamp(uv,vec2(0.0),vec2(1.0))*u_extent;\n" \
   "  ivec2 maximum=ivec2(u_extent)-ivec2(1);\n" \
@@ -333,6 +518,7 @@
   "void main(){\n" \
   "  ivec4 source=ivec4(round(texture(u_image,v_texcoord)*v_colour*255.0));\n" \
   "  ivec4 prior=ivec4(round(texelFetch(u_previous,ivec2(gl_FragCoord.xy)-u_region_origin,0)*255.0));\n" \
+  "  if(u_blend_rule==7){ o_color=vec4(filtered_font_pixel(prior))/255.0; return; }\n" \
   "  // R03_SHADER_LAYER_RGB_NOISE: the CPU hash and alpha-weighted RGB mix.\n" \
   "  if(u_blend_rule==5){\n" \
   "    uint x=uint(int(gl_FragCoord.x));\n" \

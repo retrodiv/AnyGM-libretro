@@ -114,7 +114,10 @@ typedef struct GmlRenderSamplingPolicy {
 enum {
   /* Opaque white stretched magnification: integral logical/destination sizes
    * prepare a rational phase and the CPU band's four float weights. */
-  GML_RENDER_QUANTISE_STRETCHED_FLOAT=1u
+  GML_RENDER_QUANTISE_STRETCHED_FLOAT=1u,
+  /* Real-font four-tap channels retain the CPU double expression and generation blend. */
+  GML_RENDER_QUANTISE_FONT_FIRSTGEN=2u,
+  GML_RENDER_QUANTISE_FONT_MODERN=3u
 };
 
 /* Resolved blend semantics, independent of any device API's enumerant values. Zeroed factors
@@ -135,7 +138,8 @@ typedef enum GmlRenderBlendEquation {
   GML_RENDER_BLEND_EXACT8_ADDITIVE=3,
   /* Full-target straight-RGBA coarse veil over a known-opaque target: round the complete
    * source-over channel with denominator 255, preserving the CPU veil's double expression. */
-  GML_RENDER_BLEND_EXACT8_ROUND_VEIL=4
+  GML_RENDER_BLEND_EXACT8_ROUND_VEIL=4,
+  GML_RENDER_BLEND_EXACT_FILTERED_FONT=5
 } GmlRenderBlendEquation;
 
 typedef struct GmlRenderDrawStateSnapshot {
@@ -167,8 +171,11 @@ typedef struct GmlRenderQuad {
   /* WARPED carries page-local texel coordinates in u/v; other nonrotated
    * quads carry normalized source UVs. */
   double u[4],v[4];
-  /* Rotated checkpoint: local = (pixel centre - anchor) * [x,y] + offset. */
+  /* Rotated checkpoint: local = (pixel centre - anchor) * [x,y] + offset.
+   * Exact filtered font: anchor is the unsnapped origin; diagonal x/y hold the
+   * original positive scales, with the other components and offset zero. */
   double inverse_anchor[2],inverse_x[2],inverse_y[2],inverse_offset[2];
+  double filtered_draw_alpha;
   /* Modern filtered rotation optionally limits each row to the CPU quad span. Axis-aligned
    * box-filtered or float-band stretches carry [logical size, destination size, trim, visible size]
    * in these four components per axis, with span_active left clear. */
@@ -178,6 +185,10 @@ typedef struct GmlRenderQuad {
   uint32_t shape;
   GmlRenderSamplingPolicy sampling;
 } GmlRenderQuad;
+
+/* Shared admission for the bounded double-expression font rule, before target writes. */
+int gml_render_filtered_font_quad_valid(const GmlRenderQuad *quad,
+                                        uint32_t width,uint32_t height);
 
 typedef struct GmlRenderCopyRegion {
   GmlRenderRect source,destination;

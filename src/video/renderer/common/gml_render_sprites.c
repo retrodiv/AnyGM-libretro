@@ -448,6 +448,7 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
     part_view->sw<=256 && part_view->sh<=256;
   int span_active=0;
   int stretched_float=0;
+  int exact_filtered_font=0;
   int margin_left=0,margin_top=0,margin_right=0,margin_bottom=0;
   uint32_t margin_mask=0u;
   if(!r || !r->resident_application_pass ||
@@ -631,7 +632,7 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
     }
     x0=floor(left+0.5+positioned_x_tie);
     y0=floor(top+0.5+positioned_y_tie);
-    width=(positioned_axis || nearest_mode==3 || nearest_mode==6) &&
+    width=(positioned_axis || filtered_real_text || nearest_mode==3 || nearest_mode==6) &&
       anygm_policy_has_modern_layer_semantics(r->win)
       ?floor((double)page->sw*fabs(xs)+0.5)
       :xs<0.0
@@ -641,7 +642,7 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
       : fabs(xs-nearbyint(xs))>1e-9
         ? floor(left+(double)page->sw*xs+0.5)-x0
         : floor((double)page->sw*xs+0.5);
-    height=(positioned_axis || nearest_mode==3 || nearest_mode==6) &&
+    height=(positioned_axis || filtered_real_text || nearest_mode==3 || nearest_mode==6) &&
       anygm_policy_has_modern_layer_semantics(r->win)
       ?floor((double)page->sh*fabs(ys)+0.5)
       :ys<0.0
@@ -804,10 +805,39 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
          operation.payload.quad.u[corner]>1.0 ||
          operation.payload.quad.v[corner]<0.0 ||
          operation.payload.quad.v[corner]>1.0) return 0;
+  if(filtered_real_text){
+    GmlRenderQuad *quad=&operation.payload.quad;
+    quad->sampling.quantisation=anygm_policy_has_modern_layer_semantics(r->win)
+      ?GML_RENDER_QUANTISE_FONT_MODERN:GML_RENDER_QUANTISE_FONT_FIRSTGEN;
+    quad->inverse_anchor[0]=left; quad->inverse_anchor[1]=top;
+    quad->inverse_x[0]=xs; quad->inverse_y[1]=ys;
+    quad->filtered_draw_alpha=alpha;
+    for(unsigned corner=0;corner<4u;corner++)
+      quad->corner_colour[corner]|=0xFF000000u;
+    exact_filtered_font=gml_render_filtered_font_quad_valid(quad,
+      (uint32_t)r->fbw,(uint32_t)r->fbh) && source.borrowed_immutable &&
+      !(anygm_policy_has_modern_layer_semantics(r->win) &&
+        (fabs(fabs(r->cam_x-nearbyint(r->cam_x))-0.5)<1e-9 ||
+         fabs(fabs(r->cam_y-nearbyint(r->cam_y))-0.5)<1e-9));
+    if(exact_filtered_font) operation.reconstruction_mode=GML_RENDER_REPLAY_EXACT;
+    else {
+      quad->sampling.quantisation=0u;
+      for(unsigned corner=0;corner<4u;corner++)
+        quad->corner_colour[corner]=(draw_alpha<<24)|(quad->corner_colour[corner]&0xFFFFFFu);
+    }
+  }
   state.write_mask=15u;
   state.colour=0xFFFFFFFFu;
   state.alpha=255u;
-  if(additive_background){
+  if(exact_filtered_font){
+    state.rgb_source_factor=GML_RENDER_BLEND_SOURCE_ALPHA;
+    state.rgb_destination_factor=GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA;
+    state.alpha_source_factor=opaque_target_alpha
+      ?GML_RENDER_BLEND_ONE:GML_RENDER_BLEND_SOURCE_ALPHA;
+    state.alpha_destination_factor=GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA;
+    state.rgb_equation=GML_RENDER_BLEND_EXACT_FILTERED_FONT;
+    state.alpha_equation=GML_RENDER_BLEND_EXACT_FILTERED_FONT;
+  } else if(additive_background){
     state.rgb_source_factor=GML_RENDER_BLEND_SOURCE_ALPHA;
     state.rgb_destination_factor=GML_RENDER_BLEND_ONE;
     state.alpha_source_factor=GML_RENDER_BLEND_ONE;

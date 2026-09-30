@@ -9,6 +9,7 @@
 typedef struct GmlTpag GmlTpag;
 typedef struct GmlSprite GmlSprite;
 typedef struct GmlAtlas GmlAtlas;
+struct GmlShaderPal;
 
 /* Existing CPU skeletal and raster closures reached after shared sprite preparation. */
 int gml_render_cpu_draw_spine_sprite(GmlRender *render, GmlSprite *sprite,
@@ -29,6 +30,14 @@ int gml_render_cpu_bilinear_sprite_stretch(GmlRender *render,
                                            int x0,int y0,int width,int height,
                                            int source_width,int source_height,
                                            int red,int green,int blue,double alpha);
+/* Execute the preserved filtered band on a prepared, clipped target. Source and shader
+ * records are borrowed; failed scratch allocation retains the per-pixel inverse map. */
+void gml_render_cpu_filtered_tpag_band(
+    GmlRender *r,GmlAtlas *a,GmlTpag *t,
+    int flipx,int flipy,int x0,int y0,int xx0,int xx1,int yy0,int yy1,
+    double dx,double dy,double axs,double ays,uint32_t blend,double alpha,
+    const struct GmlShaderPal *solid_mask,const struct GmlShaderPal *solid_blur,
+    const uint32_t *solid_blur_alpha,unsigned long long vispix);
 void gml_render_cpu_blit_sprite_pos_resolved(GmlRender *render, int sprite, int subimage,
                                               const double x[4], const double y[4], double alpha);
 

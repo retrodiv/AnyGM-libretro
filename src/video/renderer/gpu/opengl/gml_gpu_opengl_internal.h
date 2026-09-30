@@ -109,6 +109,8 @@ typedef struct GlScene {
   GLint exact_u_blend_rule,exact_u_additive_alpha;
   GLint exact_u_effect_colour,exact_u_effect_intensity;
   GLint exact_u_effect_zoom,exact_u_effect_linear,exact_u_effect_seed;
+  GLint exact_u_font_origin,exact_u_font_scale,exact_u_font_alpha;
+  GLint exact_u_font_crop,exact_u_font_tint,exact_u_font_mode,exact_u_font_preserve_alpha;
   uint32_t snapshot_width,snapshot_height;
   GLint max_texture_units;
   float *vertices;

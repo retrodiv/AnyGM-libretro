@@ -18,6 +18,7 @@
 #include "graphics_driver_fixture.h"
 
 #include <stdint.h>
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -748,6 +749,75 @@ static int scene_alpha_composition_case(void){
             clears==anygm_test_graphics_clear_calls() &&
             draws==anygm_test_graphics_scene_draw_calls(),
             "unqualified stretched descriptors refuse before their valid clear prefix");
+  }
+  /* Filtered font quantisation carries double phase and generation policy,
+   * not the opaque stretched rule or fixed-function source-over. */
+  source.incarnation=4u;
+  upload.image=source;
+  upload.pixel_format=GML_RENDER_PIXEL_RGBA8888;
+  REQUIRE(service.upload(service.context,&upload),"filtered real-font RGBA atlas uploaded");
+  state.rgb_source_factor=GML_RENDER_BLEND_SOURCE_ALPHA;
+  state.rgb_destination_factor=GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA;
+  state.alpha_destination_factor=GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA;
+  state.rgb_equation=state.alpha_equation=GML_RENDER_BLEND_EXACT_FILTERED_FONT;
+  for(unsigned modern=0;modern<2u;modern++) for(unsigned preserve=0;preserve<2u;preserve++){
+    state.alpha_source_factor=preserve?GML_RENDER_BLEND_SOURCE_ALPHA:GML_RENDER_BLEND_ONE;
+    state.samplers[0].quantisation=modern?GML_RENDER_QUANTISE_FONT_MODERN:
+                                          GML_RENDER_QUANTISE_FONT_FIRSTGEN;
+    for(unsigned index=0;index<3u;index++){
+      operations[index].target.image.identity=13u+modern*2u+preserve;
+      operations[index].target.pixel_format=GML_RENDER_PIXEL_ARGB8888;
+      if(!index) continue;
+      GmlRenderQuad *quad=&operations[index].payload.quad;
+      operations[index].scene_family=GML_RENDER_SCENE_TEXT;
+      quad->sampling=state.samplers[0];
+      quad->x[0]=quad->x[3]=quad->y[0]=quad->y[1]=1.0;
+      quad->x[1]=quad->x[2]=quad->y[2]=quad->y[3]=2.0;
+      quad->inverse_anchor[0]=quad->inverse_anchor[1]=1.0;
+      quad->inverse_x[0]=quad->inverse_y[1]=0.5;
+      quad->filtered_draw_alpha=0.7;
+      for(unsigned corner=0;corner<4u;corner++) quad->corner_colour[corner]=0xFF40C080u;
+    }
+    unsigned copies=anygm_test_graphics_scene_copies();
+    uint64_t copied=anygm_test_graphics_scene_copied_pixels();
+    result=service.submit(service.context,&batch);
+    REQUIRE(result.status==GML_RENDER_EXEC_ACCEPTED && result.accepted_prefix==3u &&
+            anygm_test_graphics_scene_copies()==copies+2u &&
+            anygm_test_graphics_scene_copied_pixels()==copied+2u &&
+            !anygm_test_graphics_read_pixels(),
+            "each filtered glyph snapshots only its pixel, without folding order or CPU reads");
+    for(unsigned variant=0;variant<18u;variant++){
+      GmlRenderDrawOp invalid[3];
+      GmlRenderDrawStateSnapshot invalid_state=state;
+      GmlRenderDrawBatch refused={invalid,3u,&invalid_state,1u};
+      int clears=anygm_test_graphics_clear_calls(),draws=anygm_test_graphics_scene_draw_calls();
+      memcpy(invalid,operations,sizeof invalid);
+      GmlRenderQuad *quad=&invalid[2].payload.quad;
+      if(variant==0u) quad->sampling.quantisation=0u;
+      if(variant==1u) quad->sampling.filter=GML_RENDER_FILTER_NEAREST;
+      if(variant==2u) quad->corner_colour[1]=0xFF112233u;
+      if(variant==3u) invalid_state.samplers[0].quantisation=0u;
+      if(variant==4u) quad->inverse_x[0]=0.0;
+      if(variant==5u) quad->inverse_y[1]=-0.5;
+      if(variant==6u) quad->inverse_anchor[0]=NAN;
+      if(variant==7u) quad->inverse_anchor[1]=0x1p-1074;
+      if(variant==8u) quad->filtered_draw_alpha=1.01;
+      if(variant==9u) quad->filtered_draw_alpha=0x1p-33;
+      if(variant==10u) quad->span_active=1u;
+      if(variant==11u) quad->sampling.logical_margin_mask=1u;
+      if(variant==12u) invalid_state.rgb_source_factor=GML_RENDER_BLEND_ZERO;
+      if(variant==13u) invalid[2].scene_family=GML_RENDER_SCENE_SPRITE;
+      if(variant==14u) invalid[2].reconstruction_mode=GML_RENDER_DEVICE_CHECKPOINT;
+      if(variant==15u) quad->inverse_offset[0]=0.5;
+      if(variant==16u) quad->inverse_x[0]=1.5;
+      if(variant==17u) quad->x[2]=3.0;
+      result=service.submit(service.context,&refused);
+      REQUIRE(result.status==GML_RENDER_EXEC_UNSUPPORTED && !result.accepted_prefix &&
+              clears==anygm_test_graphics_clear_calls() &&
+              draws==anygm_test_graphics_scene_draw_calls() &&
+              copies+2u==anygm_test_graphics_scene_copies(),
+              "a later invalid glyph refuses before the valid clear and glyph prefix writes");
+    }
   }
   gml_gpu_destroy(gpu,1);
   return 1;
