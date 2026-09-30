@@ -475,6 +475,15 @@ implementation: an alternative execution is accepted only when it reproduces the
 and any pass that cannot be is replayed here in full. The plan carries value records only — no
 graphics API type, no host callback, no function pointer — and is never serialized under any schema.
 
+The resolved scene journal separately retains exact operations and their source versions. A
+qualified full-target coarse veil pins its four-byte reduced texel and reuses the original CPU
+double channel expression through the header-local `gml_render_cpu_coarse_veil_pixel` helper.
+Its device branch rounds source-over with denominator 255 after an on-device destination snapshot;
+it does not use fixed-function blending or the distinct truncating denominator-256 rule. The
+ordinary CPU raster and no-context replay therefore share one arithmetic owner. This removes
+the veil's recovery readback, not preceding filtered-text checkpoints or final presentation
+transfers, and introduces no serialized operation, graphics name or state schema.
+
 `common/gml_render_surfaces.c` owns surface identity, lookup and coverage metadata,
 allocation, resize, free, target-stack operations, the established CPU-view read barrier,
 screen-raster target policy, and stretched/part/rotated draw-request preparation.

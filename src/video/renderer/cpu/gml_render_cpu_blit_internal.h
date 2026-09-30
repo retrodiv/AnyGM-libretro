@@ -36,6 +36,15 @@ static inline uint32_t blend_fast8_cached(uint32_t dst, uint32_t srb, uint32_t s
   return 0xFF000000u|rb|g;
 }
 
+/* The established flat coarse-veil channel expression, shared with exact journal replay.
+ * Keep the double source values and already-resolved weights for the ordinary CPU leaf. */
+static inline uint32_t gml_render_cpu_coarse_veil_pixel(uint32_t destination,
+                                                       double srcR,double srcG,double srcB,
+                                                       double sa,double ia){
+  int dr=(destination>>16)&0xFF,dg=(destination>>8)&0xFF,db=destination&0xFF;
+  return 0xFF000000u | ((int)(srcR*sa+dr*ia+0.5)<<16) | ((int)(srcG*sa+dg*ia+0.5)<<8) | (int)(srcB*sa+db*ia+0.5);
+}
+
 /* The existing point-sampled bm_add channel rule is also the exact journal replay owner. */
 static inline uint32_t gml_render_cpu_additive_pixel(uint32_t destination,
                                                       int sr,int sg,int sb,double sa){

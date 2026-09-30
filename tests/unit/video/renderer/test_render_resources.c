@@ -3341,6 +3341,94 @@ static int public_surface_part_qualified_dispatch(void){
   return 1;
 }
 
+/* The transient coarse texel must be retained, not checkpointed or borrowed from its caller. */
+static int resident_coarse_veil_exact_recovery(void){
+  const uint8_t alphas[]={0u,1u,17u,127u,128u,254u,255u};
+  GmlRender *render=(GmlRender*)calloc(1,sizeof *render);
+  GmlRenderApplicationWriteView view={0};
+  CHECK(render && gml_render_application_surface_ensure_owned(render,4,4));
+  render->atlas=(GmlAtlas*)calloc(1,sizeof *render->atlas);
+  render->tpag=(GmlTpag*)calloc(1,sizeof *render->tpag);
+  render->spr=(GmlSprite*)calloc(1,sizeof *render->spr);
+  CHECK(render->atlas && render->tpag && render->spr);
+  render->n_atlas=render->n_tpag=render->n_spr=1;
+  render->atlas[0].px=(uint8_t*)malloc(8u*8u*4u);
+  render->spr[0].frame=(int*)calloc(1,sizeof(int));
+  CHECK(render->atlas[0].px && render->spr[0].frame);
+  render->atlas[0].w=render->atlas[0].h=8;
+  render->tpag[0].sw=render->tpag[0].sh=8;
+  render->tpag[0].bw=render->tpag[0].bh=8;
+  render->spr[0].w=render->spr[0].h=8;
+  render->spr[0].n_frames=1;
+  render->color_write_mask=15u;
+  render->interp=1;
+  for(unsigned alpha=0;alpha<sizeof alphas;alpha++) for(int failure=0;failure<4;failure++){
+    FakeDevice fake={0};
+    GmlRenderDeviceServices device=service(&fake);
+    GmlRenderJournalMetrics metrics={0},before_veil={0};
+    const uint32_t operations=alphas[alpha]?3u:1u;
+    const size_t retained=alphas[alpha]?8u:0u;
+    uint32_t expected[16];
+    gml_render_bind_device(render,NULL);
+    CHECK(gml_render_begin_owned_application(render,0.0,0.0,0));
+    gml_render_set_pending_fill(render,0xFF714A24u);
+    for(int pass=0;pass<2;pass++){
+      for(int index=0;index<64;index++){
+        uint8_t *pixel=render->atlas[0].px+index*4;
+        pixel[0]=pass?213u:29u; pixel[1]=pass?19u:203u;
+        pixel[2]=pass?97u:41u; pixel[3]=alphas[alpha];
+      }
+      /* A covering off-target quad is the same flat CPU veil after clipping. */
+      gml_draw_sprite_stretched(render,0,0,-1,-1,6,6,0xFFFFFFu,1.0);
+    }
+    gml_render_flush_pending_fill(render);
+    memcpy(expected,render->app_surface_owned,sizeof expected);
+    gml_render_bind_device(render,&device);
+    CHECK(gml_render_begin_resident_owned_application(render,0.0,0.0,0));
+    gml_render_set_pending_fill(render,0xFF714A24u);
+    gml_render_flush_pending_fill(render);
+    CHECK(fake.submits==1 && fake.readbacks==0);
+    gml_render_resource_journal_metrics(render->app_surface_resource,&before_veil);
+    if(failure==1) fake.status=GML_RENDER_EXEC_UNSUPPORTED;
+    if(failure==2) fake.fail_upload=1;
+    if(failure==3){
+      fake.status=GML_RENDER_EXEC_RECOVERABLE_ERROR;
+      fake.accepted_prefix=1u;
+    }
+    for(int pass=0;pass<2;pass++){
+      for(int index=0;index<64;index++){
+        uint8_t *pixel=render->atlas[0].px+index*4;
+        pixel[0]=pass?213u:29u; pixel[1]=pass?19u:203u;
+        pixel[2]=pass?97u:41u; pixel[3]=alphas[alpha];
+      }
+      gml_draw_sprite_stretched(render,0,0,-1,-1,6,6,0xFFFFFFu,1.0);
+    }
+    CHECK(fake.readbacks==0);
+    gml_render_resource_journal_metrics(render->app_surface_resource,&metrics);
+    if(!failure && (metrics.journal_operations!=operations || metrics.retained_mutable_bytes!=retained ||
+       metrics.cpu_replays!=before_veil.cpu_replays ||
+       metrics.device_checkpoints!=before_veil.device_checkpoints || !render->resident_application_pass))
+      fprintf(stderr,"coarse veil alpha=%u resident=%d operations=%u retained=%zu replay=%llu checkpoint=%llu\n",
+        alphas[alpha],render->resident_application_pass,metrics.journal_operations,
+        metrics.retained_mutable_bytes,(unsigned long long)metrics.cpu_replays,
+        (unsigned long long)metrics.device_checkpoints);
+    if(!failure) CHECK(render->resident_application_pass &&
+      metrics.journal_operations==operations && metrics.retained_mutable_bytes==retained &&
+      metrics.device_checkpoints==before_veil.device_checkpoints &&
+      metrics.cpu_replays==before_veil.cpu_replays);
+    /* Both reduced RGBA texels are now gone; recovery must use their pinned versions. */
+    memset(render->atlas[0].px,0,8u*8u*4u);
+    gml_render_bind_device(render,NULL);
+    fake.forbid_calls=1;
+    CHECK(gml_render_application_surface_owned_view(render,&view) &&
+      !memcmp(view.pixels,expected,sizeof expected) && !fake.readbacks &&
+      !fake.forbidden_calls);
+  }
+  gml_render_free(render);
+  free(render);
+  return 1;
+}
+
 static int resident_opaque_atlas_sprite_gpu(void){
   GmlRender *render=(GmlRender*)calloc(1,sizeof *render);
   GmlRenderApplicationWriteView view={0};
@@ -4229,6 +4317,7 @@ int main(void){
   passed+=public_content_surface_program_chain();
   passed+=public_surface_part_qualified_dispatch();
   passed+=resident_opaque_atlas_sprite_gpu();
+  passed+=resident_coarse_veil_exact_recovery();
   passed+=resident_packaged_sprite_font_glyph();
   passed+=resident_packaged_real_font_glyph(0);
   passed+=resident_packaged_real_font_glyph(1);
@@ -4240,6 +4329,6 @@ int main(void){
   passed+=target_pixel_observes_resident_result();
   passed+=nearest_subrectangle_mirrors();
   passed+=source_free_primitive_rect_replay();
-  printf("render resource cases: passed=%d failed=%d\n",passed,59-passed);
-  return passed==59?EXIT_SUCCESS:EXIT_FAILURE;
+  printf("render resource cases: passed=%d failed=%d\n",passed,60-passed);
+  return passed==60?EXIT_SUCCESS:EXIT_FAILURE;
 }

@@ -350,6 +350,15 @@
   "    o_color=vec4(vec3(colour)/255.0,1.0);\n" \
   "    return;\n" \
   "  }\n" \
+  "  // R03_SHADER_COARSE_VEIL_ROUND: exact rounded straight-alpha composition.\n" \
+  "  if(u_blend_rule==6){\n" \
+  "    if(source.a==0){ o_color=vec4(prior)/255.0; return; }\n" \
+  "    ivec3 colour=prior.rgb;\n" \
+  "    for(int index=0;index<u_repetitions;index++)\n" \
+  "      colour=(source.rgb*source.a+colour*(255-source.a)+ivec3(127))/255;\n" \
+  "    o_color=vec4(vec3(colour)/255.0,1.0);\n" \
+  "    return;\n" \
+  "  }\n" \
   "  int factor=source.a==255?256:source.a;\n" \
   "  // R03_SHADER_EXACT_OVERLAP: ordered destination-dependent eight-bit truncation.\n" \
   "  ivec3 colour=prior.rgb;\n" \

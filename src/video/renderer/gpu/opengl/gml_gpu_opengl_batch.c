@@ -70,6 +70,8 @@ static int qualified_blend(const GmlRenderDrawStateSnapshot *state){
        state->alpha_equation==GML_RENDER_BLEND_ADD) return 1;
     if(state->rgb_equation==GML_RENDER_BLEND_EXACT8_TRUNC &&
        state->alpha_equation==GML_RENDER_BLEND_EXACT8_TRUNC) return 2;
+    if(state->rgb_equation==GML_RENDER_BLEND_EXACT8_ROUND_VEIL &&
+       state->alpha_equation==GML_RENDER_BLEND_EXACT8_ROUND_VEIL) return 5;
   }
   if(state->rgb_source_factor==GML_RENDER_BLEND_SOURCE_ALPHA &&
      state->rgb_destination_factor==GML_RENDER_BLEND_ONE &&
@@ -315,6 +317,16 @@ static int scene_preflight(GmlGpuBackend *backend,const GmlRenderDrawBatch *batc
                        target->pixel_format!=GML_RENDER_PIXEL_ARGB8888 ||
                        sampling->filter!=GML_RENDER_FILTER_NEAREST ||
                        !exact_rect(op,NULL,NULL,NULL,NULL,1))) ||
+         (blend==5 && (!backend->gl.CopyTexSubImage2D ||
+                       op->scene_family!=GML_RENDER_SCENE_SPRITE ||
+                       target->pixel_format!=GML_RENDER_PIXEL_ARGB8888 ||
+                       source->width!=1u || source->height!=1u ||
+                       sampling->filter!=GML_RENDER_FILTER_NEAREST ||
+                       !full_region(sampling->source_region,1u,1u) ||
+                       op->payload.quad.x[0]!=0.0 || op->payload.quad.y[0]!=0.0 ||
+                       op->payload.quad.x[1]!=(double)target->width ||
+                       op->payload.quad.y[2]!=(double)target->height ||
+                       !exact_rect(op,NULL,NULL,NULL,NULL,0))) ||
          state->sampler_count!=1u || state->material_identity || state->material_version ||
          state->coverage_policy ||
          !((state->clip.width==0 && state->clip.height==0) ||
@@ -373,7 +385,7 @@ static int scene_preflight(GmlGpuBackend *backend,const GmlRenderDrawBatch *batc
              !(op->scene_family==GML_RENDER_SCENE_TEXT &&
                sampling->filter==GML_RENDER_FILTER_NEAREST)))) return 0;
         if((colour>>24)!=255u && blend!=1 && blend!=3) return 0;
-        if(blend==4 && colour!=0xFFFFFFFFu) return 0;
+        if((blend==4 || blend==5) && colour!=0xFFFFFFFFu) return 0;
       }
       if(op->payload.quad.shape==GML_RENDER_QUAD_AXIS_ALIGNED &&
          sampling->filter==GML_RENDER_FILTER_NEAREST &&
@@ -559,7 +571,7 @@ static int draw_exact_quad(GmlGpuBackend *backend,const GmlRenderDrawOp *op,
                         effect?(effect->kind==GML_RENDER_LAYER_EFFECT_TINT?2:
                                 effect->kind==GML_RENDER_LAYER_EFFECT_COLOURISE?3:
                                 effect->kind==GML_RENDER_LAYER_EFFECT_ZOOM_BLUR?4:5):
-                          (qualified_blend(state)==4?1:0));
+                          (qualified_blend(state)==5?6:qualified_blend(state)==4?1:0));
   {
     GLfloat opacity=(GLfloat)state->additive_draw_alpha;
     backend->gl.Uniform1fv(scene->exact_u_additive_alpha,1,&opacity);
@@ -682,7 +694,8 @@ GmlRenderExecutionResult gml_gpu_opengl_scene_submit(GmlGpuBackend *backend,
        pending_filter!=scene_filter(&op->payload.quad) ||
        pending_blend!=qualified_blend(&batch->states[op->state_index]) ||
        qualified_blend(&batch->states[op->state_index])==2 ||
-       qualified_blend(&batch->states[op->state_index])==4)){
+       qualified_blend(&batch->states[op->state_index])==4 ||
+       qualified_blend(&batch->states[op->state_index])==5)){
       if(!flush_quads(backend,active_target,pending_source,pending_filter,
                       pending_blend,pending_count)){
         mark_uncertain(&result,active_target);
@@ -760,7 +773,7 @@ GmlRenderExecutionResult gml_gpu_opengl_scene_submit(GmlGpuBackend *backend,
     }
     pending_filter=scene_filter(&op->payload.quad);
     pending_blend=qualified_blend(&batch->states[op->state_index]);
-    if(pending_blend==2 || pending_blend==4){
+    if(pending_blend==2 || pending_blend==4 || pending_blend==5){
       uint32_t repetitions=exact_repetitions(batch,index);
       int drawn=draw_exact_quad(backend,op,&batch->states[op->state_index],
                                 target,pending_source,repetitions,NULL,error,error_capacity);

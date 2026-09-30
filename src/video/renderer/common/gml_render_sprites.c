@@ -1056,7 +1056,7 @@ static int resident_coarse_mip_veil(GmlRender *r,int sprite,int frame,
   source_ref=source.image;
   operation.opcode=GML_RENDER_OP_TEXTURED_QUAD;
   operation.scene_family=GML_RENDER_SCENE_SPRITE;
-  operation.reconstruction_mode=GML_RENDER_DEVICE_CHECKPOINT;
+  operation.reconstruction_mode=GML_RENDER_REPLAY_EXACT;
   operation.source_count=1u;
   operation.sources=&source_ref;
   operation.target.image=image;
@@ -1071,10 +1071,12 @@ static int resident_coarse_mip_veil(GmlRender *r,int sprite,int frame,
   operation.payload.quad.sampling.edge_rule=GML_RENDER_EDGE_CLAMP_SUBIMAGE;
   operation.payload.quad.sampling.source_region=(GmlRenderRect){0,0,1u,1u};
   for(int corner=0;corner<4;corner++) operation.payload.quad.corner_colour[corner]=0xFFFFFFFFu;
-  operation.payload.quad.x[0]=operation.payload.quad.x[3]=x0;
-  operation.payload.quad.x[1]=operation.payload.quad.x[2]=(double)x0+width;
-  operation.payload.quad.y[0]=operation.payload.quad.y[1]=y0;
-  operation.payload.quad.y[2]=operation.payload.quad.y[3]=(double)y0+height;
+  /* The sampled texel is constant and the qualified quad covers the target completely.
+   * Clip its resolved coverage here; replay and the device then share the same finite span. */
+  operation.payload.quad.x[0]=operation.payload.quad.x[3]=0.0;
+  operation.payload.quad.x[1]=operation.payload.quad.x[2]=r->fbw;
+  operation.payload.quad.y[0]=operation.payload.quad.y[1]=0.0;
+  operation.payload.quad.y[2]=operation.payload.quad.y[3]=r->fbh;
   operation.payload.quad.u[0]=operation.payload.quad.u[3]=0.0;
   operation.payload.quad.u[1]=operation.payload.quad.u[2]=1.0;
   operation.payload.quad.v[0]=operation.payload.quad.v[1]=0.0;
@@ -1086,7 +1088,7 @@ static int resident_coarse_mip_veil(GmlRender *r,int sprite,int frame,
   state.rgb_destination_factor=GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA;
   state.alpha_source_factor=GML_RENDER_BLEND_ONE;
   state.alpha_destination_factor=GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA;
-  state.rgb_equation=state.alpha_equation=GML_RENDER_BLEND_ADD;
+  state.rgb_equation=state.alpha_equation=GML_RENDER_BLEND_EXACT8_ROUND_VEIL;
   state.sampler_count=1u;
   state.samplers[0]=operation.payload.quad.sampling;
   batch=(GmlRenderDrawBatch){&operation,1u,&state,1u};

@@ -58,6 +58,8 @@ static int blend_rule(const GmlRenderDrawStateSnapshot *state){
        state->alpha_equation==GML_RENDER_BLEND_EXACT8_TRUNC) return 1;
     if(state->rgb_equation==GML_RENDER_BLEND_ADD &&
        state->alpha_equation==GML_RENDER_BLEND_ADD) return 2;
+    if(state->rgb_equation==GML_RENDER_BLEND_EXACT8_ROUND_VEIL &&
+       state->alpha_equation==GML_RENDER_BLEND_EXACT8_ROUND_VEIL) return 4;
   }
   if(state->rgb_source_factor==GML_RENDER_BLEND_SOURCE_ALPHA &&
      state->rgb_destination_factor==GML_RENDER_BLEND_ONE &&
@@ -104,10 +106,16 @@ int gml_render_cpu_replay_eligible(const GmlRenderDrawOp *operation,
      (blend_rule(state)==1 && target->pixel_format!=GML_RENDER_PIXEL_XRGB8888) ||
      (blend_rule(state)==3 && (target->pixel_format!=GML_RENDER_PIXEL_ARGB8888 ||
                               operation->scene_family!=GML_RENDER_SCENE_BACKGROUND)) ||
+     (blend_rule(state)==4 && (target->pixel_format!=GML_RENDER_PIXEL_ARGB8888 ||
+                              operation->scene_family!=GML_RENDER_SCENE_SPRITE ||
+                              source->width!=1u || source->height!=1u)) ||
      !((state->clip.width==0u && state->clip.height==0u) ||
        full_rect(state->clip,target->width,target->height))) return 0;
   quad=&operation->payload.quad;
   region=quad->sampling.source_region;
+  if(blend_rule(state)==4 &&
+     (quad->x[0]!=0.0 || quad->y[0]!=0.0 ||
+      quad->x[1]!=(double)target->width || quad->y[2]!=(double)target->height)) return 0;
   if(quad->shape!=GML_RENDER_QUAD_AXIS_ALIGNED ||
      quad->sampling.filter!=GML_RENDER_FILTER_NEAREST ||
      quad->sampling.edge_rule!=GML_RENDER_EDGE_CLAMP_SUBIMAGE ||
@@ -209,6 +217,7 @@ int gml_render_cpu_replay_one(uint32_t *target,uint32_t width,uint32_t height,
     int exact=blend_rule(state)==1;
     int binary=blend_rule(state)==2;
     int additive=blend_rule(state)==3;
+    int veil=blend_rule(state)==4;
     uint32_t first_x=additive && left<0?(uint32_t)-left:0u;
     uint32_t first_y=additive && top<0?(uint32_t)-top:0u;
     uint32_t last_x=additive && left+(int64_t)draw_width>width
@@ -223,7 +232,12 @@ int gml_render_cpu_replay_one(uint32_t *target,uint32_t width,uint32_t height,
         (mirror_y?region.height-1u-sample_y:sample_y);
       uint32_t pixel=source_pixel(source,source_x,source_y);
       uint32_t *destination=&target[(size_t)(top+y)*width+(size_t)(left+x)];
-      if(additive){
+      if(veil){
+        if((pixel>>24)==0u) continue;
+        double sa=(pixel>>24)/255.0;
+        *destination=gml_render_cpu_coarse_veil_pixel(*destination,
+          (pixel>>16)&255u,(pixel>>8)&255u,pixel&255u,sa,1.0-sa);
+      } else if(additive){
         if((pixel>>24)==0u) continue;
         double sa=((pixel>>24)/255.0)*state->additive_draw_alpha;
         *destination=gml_render_cpu_additive_pixel(*destination,

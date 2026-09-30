@@ -643,6 +643,57 @@ static int scene_alpha_composition_case(void){
             counters.scene_partial_prefix==0u && counters.scene_readbacks==0u,
             "only the two fully accepted resident batches count as completed scene work");
   }
+  /* The full-target coarse veil is a different rounded rule, not fixed-function or /256. */
+  source.incarnation=2u;
+  upload.image=source;
+  upload.storage_width=upload.storage_height=1u;
+  upload.region=(GmlRenderRect){0,0,1u,1u};
+  upload.stride_bytes=upload.byte_capacity=4u;
+  REQUIRE(service.upload(service.context,&upload),"one retained coarse texel uploaded");
+  state.rgb_source_factor=GML_RENDER_BLEND_SOURCE_ALPHA;
+  state.rgb_equation=state.alpha_equation=GML_RENDER_BLEND_EXACT8_ROUND_VEIL;
+  state.samplers[0].source_region=(GmlRenderRect){0,0,1u,1u};
+  for(uint32_t index=0;index<3u;index++){
+    operations[index].target.image.identity=11u;
+    operations[index].target.pixel_format=GML_RENDER_PIXEL_ARGB8888;
+    if(index){
+      operations[index].scene_family=GML_RENDER_SCENE_SPRITE;
+      operations[index].reconstruction_mode=GML_RENDER_REPLAY_EXACT;
+      operations[index].payload.quad.sampling=state.samplers[0];
+      operations[index].payload.quad.x[0]=operations[index].payload.quad.x[3]=0.0;
+      operations[index].payload.quad.x[1]=operations[index].payload.quad.x[2]=8.0;
+      operations[index].payload.quad.y[0]=operations[index].payload.quad.y[1]=0.0;
+      operations[index].payload.quad.y[2]=operations[index].payload.quad.y[3]=8.0;
+    }
+  }
+  {
+    unsigned copies=anygm_test_graphics_scene_copies();
+    result=service.submit(service.context,&batch);
+    REQUIRE(result.status==GML_RENDER_EXEC_ACCEPTED && result.accepted_prefix==3u &&
+            anygm_test_graphics_scene_copies()==copies+2u &&
+            !anygm_test_graphics_read_pixels(),
+            "rounded veils use ordered device snapshots, never a CPU checkpoint");
+  }
+  for(int variant=0;variant<7;variant++){
+    GmlRenderDrawOp invalid[3];
+    GmlRenderDrawStateSnapshot invalid_state=state;
+    GmlRenderImageRef old_source={GML_RENDER_RESOURCE_ATLAS,8u,1u,1u};
+    GmlRenderDrawBatch refused={invalid,3u,&invalid_state,1u};
+    int clears=anygm_test_graphics_clear_calls(),draws=anygm_test_graphics_scene_draw_calls();
+    memcpy(invalid,operations,sizeof invalid);
+    if(variant==0) invalid[1].target.pixel_format=GML_RENDER_PIXEL_XRGB8888;
+    if(variant==1) invalid[1].scene_family=GML_RENDER_SCENE_BACKGROUND;
+    if(variant==2) invalid[1].payload.quad.x[0]=invalid[1].payload.quad.x[3]=1.0;
+    if(variant==3) invalid[1].payload.quad.sampling.source_region.width=2u;
+    if(variant==4) invalid_state.alpha_equation=GML_RENDER_BLEND_ADD;
+    if(variant==5) invalid[1].payload.quad.corner_colour[0]=0xFF123456u;
+    if(variant==6) invalid[1].sources=&old_source;
+    result=service.submit(service.context,&refused);
+    REQUIRE(result.status==GML_RENDER_EXEC_UNSUPPORTED && !result.accepted_prefix &&
+            clears==anygm_test_graphics_clear_calls() &&
+            draws==anygm_test_graphics_scene_draw_calls(),
+            "unqualified rounded-veil descriptors refuse before their valid clear prefix");
+  }
   gml_gpu_destroy(gpu,1);
   return 1;
 }

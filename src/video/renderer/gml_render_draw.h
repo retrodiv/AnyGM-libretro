@@ -122,7 +122,10 @@ typedef enum GmlRenderBlendEquation {
    * snapshotted before this operation; fixed-function blending is not this rule. */
   GML_RENDER_BLEND_EXACT8_TRUNC=2,
   /* Saturated source-alpha additive RGB with truncation and opaque output alpha. */
-  GML_RENDER_BLEND_EXACT8_ADDITIVE=3
+  GML_RENDER_BLEND_EXACT8_ADDITIVE=3,
+  /* Full-target straight-RGBA coarse veil over a known-opaque target: round the complete
+   * source-over channel with denominator 255, preserving the CPU veil's double expression. */
+  GML_RENDER_BLEND_EXACT8_ROUND_VEIL=4
 } GmlRenderBlendEquation;
 
 typedef struct GmlRenderDrawStateSnapshot {

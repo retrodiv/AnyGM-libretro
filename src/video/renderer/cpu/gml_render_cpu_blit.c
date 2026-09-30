@@ -6282,8 +6282,7 @@ void gml_render_cpu_blit_sprite_stretched_resolved(GmlRender *r, GmlSprite *s, i
             if(shader_ordered_dither_drops(r,(double)xx+0.5+r->cam_x,
                                              (double)yy+0.5+r->cam_y)) continue;
             if(!r->alphablend || sa>=1.0){ *dp=opaque; continue; }
-            uint32_t dv=*dp; int dr=(dv>>16)&0xFF, dg=(dv>>8)&0xFF, db=dv&0xFF;
-            *dp=0xFF000000u | ((int)(srcR*sa+dr*ia+0.5)<<16) | ((int)(srcG*sa+dg*ia+0.5)<<8) | (int)(srcB*sa+db*ia+0.5);
+            *dp=gml_render_cpu_coarse_veil_pixel(*dp,srcR,srcG,srcB,sa,ia);
           }
         }
       }
