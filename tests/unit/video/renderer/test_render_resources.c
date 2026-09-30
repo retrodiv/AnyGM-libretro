@@ -2056,40 +2056,63 @@ static int resident_zero_alpha_layer_fill_noop(void){
 }
 
 static int resident_unit_world_primitive_order(void){
-  GmlRender *cpu=(GmlRender*)calloc(1,sizeof *cpu);
-  GmlRender *gpu=(GmlRender*)calloc(1,sizeof *gpu);
-  uint32_t cpu_pixels[16]={0};
-  FakeDevice fake={0};
-  GmlRenderDeviceServices device=service(&fake);
-  GmlRenderJournalMetrics before={0},after={0};
-  CHECK(cpu && gpu);
-  CHECK(gml_render_init(cpu,NULL)==0 && gml_render_init(gpu,NULL)==0);
-  gml_render_begin(cpu,cpu_pixels,4,4,0.0,0.0);
-  CHECK(gml_render_application_surface_ensure_owned(gpu,4,4));
-  gml_render_bind_device(gpu,&device);
-  CHECK(gml_render_begin_resident_owned_application(gpu,0.0,0.0,0));
-  cpu->world_transform_active=gpu->world_transform_active=1;
-  cpu->world_scale_x=cpu->world_scale_y=1.0;
-  gpu->world_scale_x=gpu->world_scale_y=1.0;
-  gml_render_set_pending_fill(cpu,0xFF102030u);
-  gml_render_set_pending_fill(gpu,0xFF102030u);
-  gml_render_primitive_rectangle(cpu,-1,1,2,3,0x345678u,0);
-  gml_render_primitive_rectangle(gpu,-1,1,2,3,0x345678u,0);
-  gml_render_resource_journal_metrics(gpu->app_surface_resource,&before);
-  CHECK(gpu->resident_application_pass && fake.submits==2 && fake.readbacks==0 &&
-        before.journal_operations==2u && before.cpu_replays==0u);
-  cpu->world_scale_x=gpu->world_scale_x=2.0;
-  gml_render_primitive_rectangle(cpu,3,0,3,0,0x0000ffu,0);
-  gml_render_primitive_rectangle(gpu,3,0,3,0,0x0000ffu,0);
-  gml_render_flush_pending_fill(cpu);
-  gml_render_resource_journal_metrics(gpu->app_surface_resource,&after);
-  CHECK(!gpu->resident_application_pass && fake.submits==2 && fake.readbacks==0 &&
-        after.cpu_replays==before.cpu_replays+1u &&
-        memcmp(cpu_pixels,gpu->app_surface_owned,sizeof cpu_pixels)==0);
-  gml_render_free(cpu);
-  gml_render_free(gpu);
-  free(cpu);
-  free(gpu);
+  const double scales[][2]={{1.0,1.0},{0.5,0.50370370370370365},
+                            {2.0,0.75},{-1.0,1.5}};
+  for(unsigned variant=0;variant<sizeof scales/sizeof scales[0];variant++){
+    GmlRender *cpu=(GmlRender*)calloc(1,sizeof *cpu);
+    GmlRender *gpu=(GmlRender*)calloc(1,sizeof *gpu);
+    uint32_t cpu_pixels[16]={0};
+    FakeDevice fake={0};
+    GmlRenderDeviceServices device=service(&fake);
+    GmlRenderJournalMetrics before={0},after={0};
+    CHECK(cpu && gpu);
+    CHECK(gml_render_init(cpu,NULL)==0 && gml_render_init(gpu,NULL)==0);
+    gml_render_begin(cpu,cpu_pixels,4,4,0.0,0.0);
+    CHECK(gml_render_application_surface_ensure_owned(gpu,4,4));
+    gml_render_bind_device(gpu,&device);
+    CHECK(gml_render_begin_resident_owned_application(gpu,0.0,0.0,0));
+    cpu->world_transform_active=gpu->world_transform_active=1;
+    cpu->world_scale_x=cpu->world_scale_y=1.0;
+    gpu->world_scale_x=gpu->world_scale_y=1.0;
+    gml_render_set_pending_fill(cpu,0xFF102030u);
+    gml_render_set_pending_fill(gpu,0xFF102030u);
+    gml_render_primitive_rectangle(cpu,-1,1,2,3,0x345678u,0);
+    gml_render_primitive_rectangle(gpu,-1,1,2,3,0x345678u,0);
+    gml_render_resource_journal_metrics(gpu->app_surface_resource,&before);
+    CHECK(gpu->resident_application_pass && fake.submits==2 && fake.readbacks==0 &&
+          before.journal_operations==2u && before.cpu_replays==0u);
+    cpu->world_scale_x=gpu->world_scale_x=scales[variant][0];
+    cpu->world_scale_y=gpu->world_scale_y=scales[variant][1];
+    /* These entries receive raster coordinates, even while the world map is nonidentity. */
+    gml_render_primitive_rectangle(cpu,0,0,4,4,0x112233u,0);
+    gml_render_primitive_rectangle(gpu,0,0,4,4,0x112233u,0);
+    gml_render_primitive_point(cpu,3,0,0x0000ffu);
+    gml_render_primitive_point(gpu,3,0,0x0000ffu);
+    gml_render_primitive_rectangle_color(cpu,0,0,0,0,0xabcdefu,0xabcdefu,
+                                          0xabcdefu,0xabcdefu,0);
+    gml_render_primitive_rectangle_color(gpu,0,0,0,0,0xabcdefu,0xabcdefu,
+                                          0xabcdefu,0xabcdefu,0);
+    gml_render_primitive_line(cpu,0,2,2,2,0x00ff00u,1);
+    gml_render_primitive_line(gpu,0,2,2,2,0x00ff00u,1);
+    gml_render_primitive_line_color(cpu,2,0,2,2,0xff0000u,0xff0000u,1);
+    gml_render_primitive_line_color(gpu,2,0,2,2,0xff0000u,0xff0000u,1);
+    gml_render_resource_journal_metrics(gpu->app_surface_resource,&after);
+    CHECK(gpu->resident_application_pass && fake.submits==7 && fake.readbacks==0 &&
+          after.journal_operations==7u && after.cpu_replays==before.cpu_replays);
+    /* Keep the original ordering proof at a real CPU-only partial-alpha boundary. */
+    cpu->alpha=gpu->alpha=0.5;
+    gml_render_primitive_line(cpu,0,0,3,3,0xffffffu,1);
+    gml_render_primitive_line(gpu,0,0,3,3,0xffffffu,1);
+    gml_render_flush_pending_fill(cpu);
+    gml_render_resource_journal_metrics(gpu->app_surface_resource,&after);
+    CHECK(!gpu->resident_application_pass && fake.submits==7 && fake.readbacks==0 &&
+          after.cpu_replays==before.cpu_replays+1u &&
+          memcmp(cpu_pixels,gpu->app_surface_owned,sizeof cpu_pixels)==0);
+    gml_render_free(cpu);
+    gml_render_free(gpu);
+    free(cpu);
+    free(gpu);
+  }
   return 1;
 }
 

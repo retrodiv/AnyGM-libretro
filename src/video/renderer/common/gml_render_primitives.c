@@ -13,13 +13,12 @@
 #include <stdlib.h>
 
 /* Opaque flat coverage has the same half-open pixel region for point-sized and filled
- * rectangles. Keep every non-qualified shape in its established CPU raster body. */
+ * rectangles. Typed entries already receive raster coordinates, so the current world
+ * scale must not reject or remap them. Keep unqualified shapes in their CPU raster body. */
 static int resident_flat_eligible(GmlRender *render){
   return render && render->resident_application_pass && gml_render_device(render) &&
     gml_render_scene_target_matches(render) &&
     !render->target_sp && render->target_id==-1 && !render->gui_pass_active &&
-    (!render->world_transform_active ||
-     (render->world_scale_x==1.0 && render->world_scale_y==1.0)) &&
     !render->classic &&
     !render->classic_phase_y && !render->classic_interp_phase[0] &&
     !render->classic_interp_phase[1] && !render->classic_interp_phase[2] &&

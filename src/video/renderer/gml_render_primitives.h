@@ -1,7 +1,9 @@
 /* SPDX-License-Identifier: MIT
  * Copyright (c) 2026 retrodiv <retrodiv@proton.me>
  */
-/* Typed fixed-function primitive operations. Language argument decoding stays in builtins. */
+/* Typed fixed-function primitive operations consume resolved raster coordinates and radii.
+ * Language argument decoding and view mapping stay in builtins; circle_geometry is the
+ * explicit shared logical-to-raster preparation below. Draw entries do not map again. */
 #ifndef GML_RENDER_PRIMITIVES_H
 #define GML_RENDER_PRIMITIVES_H
 
