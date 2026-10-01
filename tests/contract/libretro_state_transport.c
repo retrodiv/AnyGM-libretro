@@ -74,6 +74,12 @@ AnygmResult anygm_run_frame(AnygmEngine *engine,const AnygmInputFrame *input,
                             AnygmFrameOutput *output){
   (void)engine; (void)input; (void)output; return ANYGM_OK;
 }
+AnygmResult anygm_schedule_frame(AnygmEngine *engine,double hz,uint32_t *steps){
+  (void)engine; (void)hz; *steps=1; return ANYGM_OK;
+}
+AnygmResult anygm_repeat_frame(AnygmEngine *engine,AnygmFrameOutput *output){
+  return anygm_run_frame(engine,NULL,output);
+}
 AnygmResult anygm_set_config(AnygmEngine *engine,const AnygmConfigDelta *delta){
   (void)engine; (void)delta; return ANYGM_OK;
 }

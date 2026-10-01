@@ -197,6 +197,12 @@ AnygmResult anygm_run_frame(AnygmEngine *engine,const AnygmInputFrame *input,
   output->flags=frame_flags;
   return ANYGM_OK;
 }
+AnygmResult anygm_schedule_frame(AnygmEngine *engine,double hz,uint32_t *steps){
+  (void)engine; (void)hz; *steps=1; return ANYGM_OK;
+}
+AnygmResult anygm_repeat_frame(AnygmEngine *engine,AnygmFrameOutput *output){
+  return anygm_run_frame(engine,NULL,output);
+}
 AnygmResult anygm_set_config(AnygmEngine *engine,const AnygmConfigDelta *delta){
   (void)engine;
   if(delta) latest_config=*delta;

@@ -1232,7 +1232,8 @@ int main(void){
 
   if(ok) ok=reject_payload_u32(engine,candidate,state_size,baseline,state_size,
                                STATE_CORE_FIELDS_OFFSET,0,"zero frame width");
-  size_t key_pending_offset=STATE_CORE_FIELDS_OFFSET+44+
+  /* The root clock adds two doubles before the frame counter and input snapshots. */
+  size_t key_pending_offset=STATE_CORE_FIELDS_OFFSET+60+
     sizeof engine->pad_current+sizeof engine->pad_previous+
     sizeof engine->key_current+sizeof engine->key_previous;
   if(ok) ok=reject_payload_u32(engine,candidate,state_size,baseline,state_size,
@@ -1246,6 +1247,21 @@ int main(void){
                                mouse_mask_offset,8,"unsupported mouse suppression bit");
   if(ok) ok=reject_payload_u32(engine,candidate,state_size,baseline,state_size,
                                mouse_mask_offset,UINT32_MAX,"extreme mouse suppression mask");
+  if(ok) ok=reject_payload_u32(engine,candidate,state_size,baseline,state_size,
+                               STATE_CORE_FIELDS_OFFSET+40,UINT32_C(0x3ff00000),
+                               "presentation phase outside unit interval");
+  if(ok) ok=reject_payload_u32(engine,candidate,state_size,baseline,state_size,
+                               STATE_CORE_FIELDS_OFFSET+40,UINT32_C(0xbff00000),
+                               "negative presentation phase");
+  if(ok) ok=reject_payload_u32(engine,candidate,state_size,baseline,state_size,
+                               STATE_CORE_FIELDS_OFFSET+40,UINT32_C(0x7ff80000),
+                               "non-finite presentation phase");
+  if(ok) ok=reject_payload_u32(engine,candidate,state_size,baseline,state_size,
+                               STATE_CORE_FIELDS_OFFSET+48,UINT32_C(0xbff00000),
+                               "negative presentation frequency");
+  if(ok) ok=reject_payload_u32(engine,candidate,state_size,baseline,state_size,
+                               STATE_CORE_FIELDS_OFFSET+48,UINT32_C(0x7ff00000),
+                               "non-finite presentation frequency");
   if(ok){
     memcpy(candidate,baseline,state_size);
     write_u64(candidate+STATE_CORE_FIELDS_OFFSET+12,UINT64_C(0x7ff8000000000000));

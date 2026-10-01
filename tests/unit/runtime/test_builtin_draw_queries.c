@@ -24,6 +24,52 @@ static int string_is(GmlVal v,const char *text){
   else gml_values_release(&v,1);
   return ok;
 }
+typedef struct DisplayHost { uint32_t observed,requested; int asynchronous; } DisplayHost;
+static uint32_t display_query(void *userdata){
+  return ((DisplayHost*)userdata)->observed;
+}
+static AnygmResult display_request(void *userdata,uint32_t hz){
+  DisplayHost *host=userdata;
+  host->requested=hz;
+  if(hz!=50 && hz!=60) return ANYGM_ERROR_UNSUPPORTED;
+  if(!host->asynchronous) host->observed=hz;
+  return ANYGM_OK;
+}
+static int display_frequency_case(void){
+  int ok=1;
+  for(int cached=0;cached<2;cached++){
+    DisplayHost display={.observed=60};
+    AnygmHostServices host={.struct_size=sizeof host,.abi_version=ANYGM_HOST_SERVICES_VERSION,
+      .userdata=&display,.display_frequency=display_query,
+      .display_frequency_request=display_request};
+    GmlVM vm={.host=&host,.frame=7};
+    GmlVal speed[]={vreal(30),vreal(0)},frequency=vreal(50);
+    query(&vm,"game_set_speed",speed,2,cached,&ok);
+    ok &= real_is(query(&vm,"display_get_frequency",NULL,0,cached,&ok),60);
+    ok &= real_is(query(&vm,"display_set_frequency",&frequency,1,cached,&ok),1);
+    ok &= real_is(query(&vm,"display_get_frequency",NULL,0,cached,&ok),50);
+    ok &= real_is(query(&vm,"game_get_speed",speed+1,1,cached,&ok),30) && vm.frame==7;
+    frequency=vreal(53);
+    ok &= real_is(query(&vm,"display_set_frequency",&frequency,1,cached,&ok),0);
+    ok &= display.observed==50 && gml_varmap_get(&vm.globals,"__display_request_hz")->d==50;
+    frequency=vreal(60);
+    ok &= real_is(query(&vm,"display_set_frequency",&frequency,1,cached,&ok),1);
+    display.asynchronous=1; frequency=vreal(50);
+    ok &= real_is(query(&vm,"display_set_frequency",&frequency,1,cached,&ok),1);
+    ok &= real_is(query(&vm,"display_get_frequency",NULL,0,cached,&ok),60);
+    const double invalid[]={0,1,-50,NAN,INFINITY,-INFINITY,1e100};
+    for(size_t i=0;i<sizeof invalid/sizeof invalid[0];i++){
+      display.requested=0; frequency=vreal(invalid[i]);
+      ok &= real_is(query(&vm,"display_set_frequency",&frequency,1,cached,&ok),0);
+      ok &= display.requested==0;
+    }
+    vm.host=NULL; frequency=vreal(50);
+    ok &= real_is(query(&vm,"display_get_frequency",NULL,0,cached,&ok),0);
+    ok &= real_is(query(&vm,"display_set_frequency",&frequency,1,cached,&ok),0);
+    gml_vm_free(&vm);
+  }
+  return ok;
+}
 static int circle_case(void){
   int ok=1;
   for(int cached=0;cached<2;cached++){
@@ -365,7 +411,7 @@ int main(int argc,char **argv){
   const char *filter=NULL;
   if(argc==3 && !strcmp(argv[1],"--case")) filter=argv[2];
   else if(argc!=1) return EXIT_FAILURE;
-  const AnygmTestCase cases[]={{"circle_precision",circle_case},
+  const AnygmTestCase cases[]={{"display_frequency",display_frequency_case},{"circle_precision",circle_case},
     {"application_surface_lifetime",application_surface_lifetime_case},{"shader_asset_names",shader_case},
     {"all_live_layers_at_depth",layers_case},{"retired_alpha_controls",alpha_case},
     {"integer_layer_depth",layer_integer_depth_case},{"alpha_reference_bounds",alpha_reference_bounds_case},

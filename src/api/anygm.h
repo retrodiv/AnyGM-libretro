@@ -15,10 +15,10 @@ extern "C" {
  * runtime library version, and every publishable metadata file declares the literal "Git" instead
  * of a number, so no copy can promise a value that has gone stale. CONTRIBUTING.md owns the single
  * increment step. */
-#define ANYGM_VERSION "0.1.243"
-#define ANYGM_API_VERSION 4u
-#define ANYGM_HOST_SERVICES_VERSION 1u
-#define ANYGM_STATE_SCHEMA 36u
+#define ANYGM_VERSION "0.1.244"
+#define ANYGM_API_VERSION 5u
+#define ANYGM_HOST_SERVICES_VERSION 2u
+#define ANYGM_STATE_SCHEMA 37u
 #define ANYGM_MAX_GAMEPADS 4u
 #define ANYGM_MAX_GAMEPAD_BUTTONS 16u
 #define ANYGM_MAX_GAMEPAD_AXES 4u
@@ -243,6 +243,11 @@ typedef AnygmResult (*AnygmFontResolveFn)(void *userdata,const char *family,
 typedef AnygmResult (*AnygmRichTextRenderFn)(void *userdata,const void *rtf,size_t rtf_size,
                                              uint32_t background_xrgb,void *pixels,
                                              uint32_t width,uint32_t height,size_t pitch);
+/* Display frequency is independent of simulation speed. Zero means that the host cannot query
+ * it. A successful request means accepted by the host; frontend-managed mode selection may be
+ * asynchronous and must not make the query report the requested value as an observation. */
+typedef uint32_t (*AnygmDisplayFrequencyFn)(void *userdata);
+typedef AnygmResult (*AnygmDisplayFrequencyRequestFn)(void *userdata,uint32_t frequency_hz);
 
 enum {
   ANYGM_HOST_CAPABILITY_NETWORK_CONNECTED=1u
@@ -291,6 +296,8 @@ typedef struct AnygmHostServices {
   AnygmDevelopmentSettingFn development_setting;
   AnygmFontResolveFn font_resolve;
   AnygmRichTextRenderFn rich_text_render;
+  AnygmDisplayFrequencyFn display_frequency;
+  AnygmDisplayFrequencyRequestFn display_frequency_request;
 } AnygmHostServices;
 
 typedef uint32_t AnygmContentKind;
@@ -542,6 +549,8 @@ typedef struct AnygmAvInfo {
   double aspect_ratio;
   double frames_per_second;
   uint32_t audio_rate;
+  /* Last host-accepted display request, or zero when content made none. */
+  uint32_t display_frequency_request_hz;
 } AnygmAvInfo;
 
 uint32_t anygm_api_version(void);
@@ -560,6 +569,12 @@ AnygmResult anygm_load(AnygmEngine *engine,const AnygmContentSource *source,
 void anygm_unload(AnygmEngine *engine);
 AnygmResult anygm_reset(AnygmEngine *engine);
 AnygmResult anygm_get_av_info(const AnygmEngine *engine,AnygmAvInfo *info);
+/* Plan logical steps for one presentation tick without changing game FPS. The fractional phase
+ * belongs to the engine and is restored by the ordinary state API. Consume each step's audio
+ * before advancing again, and present only the final picture (repeat the previous one at zero). */
+AnygmResult anygm_schedule_frame(AnygmEngine *engine,double presentation_hz,uint32_t *steps);
+/* Present the completed picture without executing content or consuming mixer samples. */
+AnygmResult anygm_repeat_frame(AnygmEngine *engine,AnygmFrameOutput *output);
 /* Rooms of the loaded content, in the order the content declares them. A host presenting a
  * room chooser has no other way to name what it is offering, and the index it collects is the
  * one ANYGM_CONFIG_START_ROOM takes. Both calls require loaded content.

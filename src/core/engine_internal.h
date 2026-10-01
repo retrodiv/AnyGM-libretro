@@ -270,6 +270,7 @@ struct AnygmEngine {
   int wide_app_restore_width,wide_app_restore_height;
   uint32_t background;
   double fps;
+  double presentation_phase,presentation_hz;
   int fps_room,follow_player,player_object;
   double audio_accumulator;
   int state_just_loaded;

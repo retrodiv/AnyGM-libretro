@@ -371,6 +371,7 @@ ANYGM_LIBRETRO_SOURCES := \
 	src/adapters/libretro/libretro_entry.c \
 	src/adapters/libretro/libretro_cache.c \
 	src/adapters/libretro/libretro_context.c \
+	src/adapters/libretro/libretro_display.c \
 	src/adapters/libretro/libretro_vfs.c \
 	src/adapters/libretro/libretro_options.c \
 	src/adapters/libretro/libretro_input.c \

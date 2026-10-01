@@ -3,8 +3,8 @@
  */
 #include "anygm.h"
 
-_Static_assert(ANYGM_API_VERSION==4u,"unexpected API version");
-_Static_assert(ANYGM_STATE_SCHEMA==36u,"unexpected state schema");
+_Static_assert(ANYGM_API_VERSION==5u,"unexpected API version");
+_Static_assert(ANYGM_STATE_SCHEMA==37u,"unexpected state schema");
 /* The optional graphics seam is framework-neutral by construction: a host describes its context
  * with fixed-width integers, an opaque userdata pointer and two callbacks, and the header names no
  * graphics API type for either of them. */

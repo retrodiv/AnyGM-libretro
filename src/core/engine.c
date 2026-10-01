@@ -59,6 +59,19 @@ static void engine_errorf(AnygmEngine *engine,AnygmResult result,const char *fmt
  * presentation to discard those render-only side effects before simulation resumes. */
 static AnygmResult engine_run_frame(AnygmEngine *engine);
 
+static uint32_t engine_display_request(const AnygmEngine *engine){
+  const GmlVal *frequency=gml_varmap_get((GmlVarMap*)&engine->vm.globals,"__display_request_hz");
+  return frequency && frequency->t==V_REAL && isfinite(frequency->d) &&
+    frequency->d>=2 && frequency->d<=UINT32_MAX?(uint32_t)frequency->d:0;
+}
+
+static void engine_retain_display_request(AnygmEngine *engine,uint32_t previous){
+  /* Reset restarts authored logic, not the host's loaded-session display mode. Create may
+   * observe the already-selected frequency and correctly omit a redundant request. */
+  if(previous && !engine_display_request(engine))
+    *gml_varmap_put(&engine->vm.globals,"__display_request_hz")=vreal(previous);
+}
+
 static int profile_enabled(AnygmEngine *engine){
   if(engine->profile_enabled < 0) engine->profile_enabled = anygm_host_development_setting(&engine->host,"GML_PROFILE") != NULL;
   return engine->profile_enabled;
@@ -387,6 +400,7 @@ static AnygmResult engine_load_content_prepare(AnygmEngine *engine,
  * this boundary before extension scripts and room entry lets a host inspect the shader catalogue,
  * negotiate a session-long context, and only then expose the final shader policy to Create. */
 static int boot_runtime_prepare(AnygmEngine *engine) {
+  engine->presentation_phase=engine->presentation_hz=0;
   /* A reset is a cold boot. Keep engine time on the same timeline as an initial load. */
   { engine->vm.frame = 0; }
   engine->classic_compositor = 0;
@@ -732,6 +746,9 @@ AnygmResult engine_state_stage_content(AnygmEngine *engine,const char *locator,
   AnygmEngine *staged=NULL;
   AnygmResult result=anygm_create(&engine->host,&staged);
   if(result!=ANYGM_OK) return result;
+  /* A trial boot for a state from another content identity must not change the live display.
+   * Its restored VM supplies the accepted request only after the whole state transaction passes. */
+  staged->host.display_frequency_request=NULL;
   staged->config=engine->config;
   staged->locale_from_host=engine->locale_from_host;
   snprintf(staged->language,sizeof staged->language,"%s",engine->language);
@@ -808,6 +825,7 @@ AnygmResult engine_state_stage_content(AnygmEngine *engine,const char *locator,
 
 void engine_state_commit_staged_content(AnygmEngine *engine,AnygmEngine *staged){
   if(!engine || !staged) return;
+  staged->host.display_frequency_request=engine->host.display_frequency_request;
   /* The graphics target belongs to the frontend session rather than to either content runtime.
    * Move it to the accepted runtime; the rejected shell is then an ordinary software-only engine
    * that can be destroyed without issuing calls into a frontend graphics context. */
@@ -1163,11 +1181,13 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
   /* The VM has already fired the final event; translate its lifecycle request to engine output. */
   if(engine->vm.game_end){
     if(engine->vm.game_end == 2){
+      uint32_t display_request=engine_display_request(engine);
       engine->vm.game_end = 0;
       gml_audio_free(engine->audio); engine->audio=NULL; engine->vm.audio=NULL;
       gml_vm_free(&engine->vm);
       gml_render_free(&engine->render);
       if(!boot_runtime(engine)) return ANYGM_ERROR_INVALID_CONTENT;
+      engine_retain_display_request(engine,display_request);
     } else {
       engine->runtime_ended = 1;
       if(!engine->shutdown_sent){
@@ -2400,6 +2420,7 @@ void anygm_unload(AnygmEngine *engine){
 AnygmResult anygm_reset(AnygmEngine *engine){
   if(!engine || engine->guard!=ANYGM_ENGINE_GUARD || engine->lifecycle!=ENGINE_LOADED)
     return ANYGM_ERROR_INVALID_STATE;
+  uint32_t display_request=engine_display_request(engine);
   /* Loads that took their locale from the host keep following it on reset. An explicit load
    * configuration remains pinned for the lifetime of the load. */
   if(engine->locale_from_host && engine->host.locale){
@@ -2416,7 +2437,9 @@ AnygmResult anygm_reset(AnygmEngine *engine){
   engine->frame_authority=ENGINE_FRAME_CPU_MATERIALIZED;
   gml_vm_free(&engine->vm);
   gml_render_free(&engine->render);
-  return boot_runtime(engine)?ANYGM_OK:ANYGM_ERROR_INVALID_CONTENT;
+  if(!boot_runtime(engine)) return ANYGM_ERROR_INVALID_CONTENT;
+  engine_retain_display_request(engine,display_request);
+  return ANYGM_OK;
 }
 
 AnygmResult anygm_get_av_info(const AnygmEngine *engine,AnygmAvInfo *info){
@@ -2436,6 +2459,27 @@ AnygmResult anygm_get_av_info(const AnygmEngine *engine,AnygmAvInfo *info){
   info->aspect_ratio=info->base_height?(double)info->base_width/info->base_height:4.0/3.0;
   info->frames_per_second=engine->fps;
   info->audio_rate=44100;
+  info->display_frequency_request_hz=engine_display_request(engine);
+  return ANYGM_OK;
+}
+
+AnygmResult anygm_schedule_frame(AnygmEngine *engine,double presentation_hz,uint32_t *steps){
+  if(!engine || engine->guard!=ANYGM_ENGINE_GUARD || engine->lifecycle!=ENGINE_LOADED)
+    return ANYGM_ERROR_INVALID_STATE;
+  if(!steps || !isfinite(presentation_hz) || presentation_hz<2)
+    return ANYGM_ERROR_INVALID_ARGUMENT;
+  if(engine->state_just_loaded){ *steps=1; return ANYGM_OK; }
+  sync_room_fps(engine,0);
+  double increment=engine->fps/presentation_hz;
+  if(!isfinite(increment) || increment>65535) return ANYGM_ERROR_INVALID_ARGUMENT;
+  double phase=engine->presentation_hz==presentation_hz?engine->presentation_phase:0;
+  if(!engine->have_presented_frame && increment<1) phase=1-increment;
+  phase+=increment;
+  double whole=floor(phase+1e-12);
+  engine->presentation_phase=phase-whole;
+  if(engine->presentation_phase<0) engine->presentation_phase=0;
+  engine->presentation_hz=presentation_hz;
+  *steps=(uint32_t)whole;
   return ANYGM_OK;
 }
 
@@ -2459,6 +2503,23 @@ AnygmResult anygm_get_room_name(const AnygmEngine *engine,uint32_t index,
   if(gml_room_get(&engine->win,(int)index,&room)!=0) return ANYGM_ERROR_INVALID_CONTENT;
   snprintf(name,capacity,"%s",room.name?room.name:"");
   return ANYGM_OK;
+}
+
+static AnygmResult engine_present_frame_output(AnygmEngine *engine,AnygmFrameOutput *output);
+
+AnygmResult anygm_repeat_frame(AnygmEngine *engine,AnygmFrameOutput *output){
+  if(!engine || engine->guard!=ANYGM_ENGINE_GUARD || engine->lifecycle!=ENGINE_LOADED ||
+     !engine->have_presented_frame || !output) return ANYGM_ERROR_INVALID_STATE;
+  if(output->struct_size<sizeof *output) return ANYGM_ERROR_INCOMPATIBLE_ABI;
+  if(!engine_materialize_completed_frame(engine)) return ANYGM_ERROR_INTERNAL;
+  gml_render_discard_deferred_presentation(&engine->render);
+  engine->frame_authority=ENGINE_FRAME_CPU_MATERIALIZED;
+  size_t audio_frames=engine->audio_frames;
+  engine->audio_frames=0;
+  engine->frame_flags=0;
+  AnygmResult result=engine_present_frame_output(engine,output);
+  engine->audio_frames=audio_frames;
+  return result;
 }
 
 AnygmResult anygm_run_frame(AnygmEngine *engine,const AnygmInputFrame *input,
@@ -2500,6 +2561,10 @@ AnygmResult anygm_run_frame(AnygmEngine *engine,const AnygmInputFrame *input,
   /* Seal all non-reconstructible work before the frontend can return without a current context.
    * This does not manufacture a CPU writer or replay an exact resident SCREEN journal. */
   if(!gml_render_scene_flush(&engine->render)) return ANYGM_ERROR_INTERNAL;
+  return engine_present_frame_output(engine,output);
+}
+
+static AnygmResult engine_present_frame_output(AnygmEngine *engine,AnygmFrameOutput *output){
   const uint32_t *presented_pixels=NULL;
   unsigned presented_width=0,presented_height=0;
   int hardware_frame=0;

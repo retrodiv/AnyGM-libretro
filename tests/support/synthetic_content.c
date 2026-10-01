@@ -1575,7 +1575,7 @@ static int synthetic_framebuffer_content_create(
   int classic_redraw=gpu_sprite==14;
   int classic_transition=gpu_sprite==15;
   int cursor_frame=gpu_sprite==16;
-  int moving_sound=gpu_sprite==17 || gpu_sprite==18;
+  int moving_sound=gpu_sprite==17 || gpu_sprite==18 || gpu_sprite==20;
   char create[192],step[192],draw[192],draw_begin[192],draw_gui[192];
   snprintf(create,sizeof create,"%s/retain-create.gml",fixture->directory);
   snprintf(step,sizeof step,"%s/retain-step.gml",fixture->directory);
@@ -1583,7 +1583,13 @@ static int synthetic_framebuffer_content_create(
   snprintf(draw_begin,sizeof draw_begin,"%s/retain-draw-begin.gml",fixture->directory);
   snprintf(draw_gui,sizeof draw_gui,"%s/retain-draw-gui.gml",fixture->directory);
   snprintf(fixture->path,sizeof fixture->path,"%s/data.win",fixture->directory);
-  if(!write_text(create,moving_sound?
+  if(!write_text(create,gpu_sprite==20?
+       "global.fixture_frame = 0;\n"
+       "audio_play_sound(snd_fixture,1,true);\n"
+       "game_set_speed(30,0);\n"
+       "global.fixture_display_result = 1;\n"
+       "if (display_get_frequency() != 50) global.fixture_display_result = display_set_frequency(50);\n":
+       moving_sound?
        "global.fixture_frame = 0;\n"
        "audio_play_sound(snd_fixture,1,true);\n":
        nested_step_target?
@@ -1863,6 +1869,10 @@ int anygm_synthetic_framebuffer_content_create(AnygmSyntheticContent *fixture){
 
 int anygm_synthetic_moving_sound_content_create(AnygmSyntheticContent *fixture){
   return synthetic_framebuffer_content_create(fixture,0,0,0,17);
+}
+
+int anygm_synthetic_display_cadence_content_create(AnygmSyntheticContent *fixture){
+  return synthetic_framebuffer_content_create(fixture,0,0,0,20);
 }
 
 int anygm_synthetic_large_moving_sound_content_create(AnygmSyntheticContent *fixture){

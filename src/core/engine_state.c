@@ -441,6 +441,7 @@ static void state_write(AnygmEngine *engine,CoreW *s){
                            ANYGM_STATE_LAUNCH_PARAMETERS_SIZE);
   cw_u32(s,engine->width); cw_u32(s,engine->height); cw_u32(s,engine->background); cw_d(s,engine->fps);
   cw_i32(s,engine->follow_player); cw_i32(s,engine->player_object); cw_d(s,engine->audio_accumulator);
+  cw_d(s,engine->presentation_phase); cw_d(s,engine->presentation_hz);
   { cw_i64(s,(int64_t)engine->vm.frame); }
   cw_raw(s,engine->pad_current,sizeof(engine->pad_current)); cw_raw(s,engine->pad_previous,sizeof(engine->pad_previous));
   cw_raw(s,engine->key_current,sizeof(engine->key_current)); cw_raw(s,engine->key_previous,sizeof(engine->key_previous));
@@ -603,6 +604,10 @@ bool state_unserialize_impl(AnygmEngine *engine,const void *d, size_t n, int sch
   if(engine->width>FB_MAX_W || engine->height>FB_MAX_H || engine->width==0 || engine->height==0 || !isfinite(engine->fps) || engine->fps<=0) return false;
   engine->follow_player=cr_i32(&core); engine->player_object=cr_i32(&core); engine->audio_accumulator=cr_d(&core);
   if(!isfinite(engine->audio_accumulator)) return false;
+  engine->presentation_phase=cr_d(&core); engine->presentation_hz=cr_d(&core);
+  if(!isfinite(engine->presentation_phase) || engine->presentation_phase<0 ||
+     engine->presentation_phase>=1 || !isfinite(engine->presentation_hz) ||
+     (engine->presentation_hz!=0 && engine->presentation_hz<2)) return false;
   int64_t frame=cr_i64(&core);
   if(frame<0) frame=0;
   if(frame>(int64_t)LONG_MAX) frame=(int64_t)LONG_MAX;

@@ -3326,6 +3326,24 @@ int main(int argc,char **argv){
   }
   free(map_probe);
   if(visual_word<=map_word){ fprintf(stderr,"canonical visual sections changed order\n"); return 1; }
+  /* This fixture has never scheduled independent presentation ticks. Verify and remove only
+   * the two zero clock words in test scratch, retaining every prior byte/size pin below. */
+  const size_t clock_at=112u+2048u+36u,clock_bytes=16u;
+  size_t clock_core=(size_t)read_u64(deterministic+64);
+  const uint8_t empty_clock[16]={0};
+  if((uint32_t)read_u64(deterministic+4)!=37 || clock_at+clock_bytes>map_vm ||
+     clock_bytes>clock_core || memcmp(deterministic+clock_at,empty_clock,clock_bytes)){
+    fprintf(stderr,"canonical presentation clock framing changed\n"); return 1;
+  }
+  memmove(deterministic+clock_at,deterministic+clock_at+clock_bytes,
+          deterministic_size-clock_at-clock_bytes);
+  deterministic_size-=clock_bytes;
+  preceding_scale_size-=clock_bytes;
+  map_vm-=clock_bytes; map_word-=clock_bytes; visual_word-=clock_bytes;
+  write_u64(deterministic+16,deterministic_size);
+  write_u64(deterministic+64,clock_core-clock_bytes);
+  write_u64(deterministic+96,deterministic_size-112);
+  write_u32(deterministic+4,36);
   /* This fixture has no PCM queues or pending playback notices. Verify the
    * audio section and its two empty counts before removing only those words
    * in test scratch; all preceding byte/size pins below remain mandatory.
@@ -3622,7 +3640,7 @@ int main(int argc,char **argv){
   uint64_t core_size=read_u64(damaged+64);
   uint64_t render_size=read_u64(damaged+72);
   uint64_t payload_size=read_u64(damaged+96);
-  size_t frame_width_offset=112u+2048u+44u+4u+
+  size_t frame_width_offset=112u+2048u+60u+4u+
     sizeof first->pad_current+sizeof first->pad_previous+
     sizeof first->key_current+sizeof first->key_previous+
     sizeof first->key_press_carry+sizeof first->key_release_defer;

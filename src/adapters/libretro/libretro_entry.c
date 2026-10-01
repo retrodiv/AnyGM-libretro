@@ -207,6 +207,7 @@ void retro_deinit(void){
     anygm_destroy(g_libretro.engine);
     g_libretro.engine=NULL;
   }
+  libretro_display_release();
   libretro_cache_end();
   libretro_options_release();
   memset(g_libretro.keyboard_events,0,sizeof g_libretro.keyboard_events);
@@ -236,6 +237,10 @@ static void fill_av_info(struct retro_system_av_info *info){
   info->geometry.max_height=g_libretro.av.max_height?g_libretro.av.max_height:2160;
   info->geometry.aspect_ratio=g_libretro.av.aspect_ratio>0?(float)g_libretro.av.aspect_ratio:4.0f/3.0f;
   info->timing.fps=g_libretro.av.frames_per_second>0?g_libretro.av.frames_per_second:60.0;
+  if(g_libretro.display_notification_pending){
+    if(g_libretro.display_requested_hz) info->timing.fps=g_libretro.display_requested_hz;
+  }
+  else if(g_libretro.display_active_hz) info->timing.fps=g_libretro.display_active_hz;
   info->timing.sample_rate=g_libretro.av.audio_rate?g_libretro.av.audio_rate:44100.0;
 }
 
@@ -252,6 +257,11 @@ void retro_get_system_av_info(struct retro_system_av_info *info){
    * fallback answer is provisional and the exact result is published from the first frame. */
   if(g_libretro.prepared) g_libretro.provisional_av_exposed=true;
   fill_av_info(info);
+  /* The initial AV answer is the frontend's startup cadence, not a SET_SYSTEM_AV_INFO call
+   * outside retro_run. Subsequent requests still require that callback. */
+  if(!g_libretro.frame_completed && g_libretro.display_notification_pending &&
+     g_libretro.display_requested_hz)
+    g_libretro.display_active_hz=g_libretro.display_requested_hz;
 }
 
 void retro_set_controller_port_device(unsigned port,unsigned device){
@@ -270,6 +280,7 @@ void retro_reset(void){
     update_locale();
     libretro_options_apply(true);
     if(anygm_reset(g_libretro.engine)==ANYGM_OK){
+      g_libretro.display_mouse_x=g_libretro.display_mouse_y=g_libretro.display_wheel=0;
       /* RetroArch keeps its rewind ring across Reset and checks its rewind chord before the newly
        * reset core runs. If the chord used while leaving the menu is still active, an old compact
        * ring state would replace the reset immediately. A separately sized complete state remains
@@ -344,6 +355,7 @@ bool libretro_content_start(void){
     char error[512];
     anygm_get_last_error(g_libretro.engine,error,sizeof error);
     libretro_log(RETRO_LOG_ERROR,"Prepared content startup failed (%d): %s\n",result,error);
+    libretro_display_release();
     return false;
   }
   g_libretro.prepared=false;
@@ -447,6 +459,7 @@ void retro_unload_game(void){
   if(!g_libretro.loaded && !g_libretro.prepared) return;
   libretro_hw_render_release();
   anygm_unload(g_libretro.engine);
+  libretro_display_release();
   libretro_cache_end();
   g_libretro.prepared=false;
   g_libretro.loaded=false;
@@ -493,12 +506,51 @@ static void apply_live_options(void){
   anygm_set_config(g_libretro.engine,&delta);
 }
 
+static void update_display_request(void){
+  uint32_t source=g_libretro.av.display_frequency_request_hz;
+  if(source!=g_libretro.display_source_hz){
+    g_libretro.display_source_hz=source;
+    if(source && source!=g_libretro.display_requested_hz)
+      libretro_display_request(NULL,source);
+    else if(!source && g_libretro.display_requested_hz){
+      uint32_t previous_active=g_libretro.display_active_hz;
+      libretro_display_release();
+      /* Releasing the session request does not imply that the frontend accepted a new
+       * cadence. Keep its last accepted clock if it refuses the restoration notification. */
+      g_libretro.display_active_hz=previous_active;
+      g_libretro.display_notification_pending=true;
+    }
+  }
+  if(g_libretro.display_notification_pending){
+    struct retro_system_av_info av;
+    fill_av_info(&av);
+    bool accepted=g_libretro.environment &&
+      g_libretro.environment(RETRO_ENVIRONMENT_SET_SYSTEM_AV_INFO,&av);
+    libretro_log(RETRO_LOG_INFO,
+                 "Display frontend request: hz=%u accepted=%u observed_target=%u\n",
+                 g_libretro.display_requested_hz,accepted?1u:0u,
+                 libretro_display_frequency(NULL));
+    if(accepted) g_libretro.display_active_hz=g_libretro.display_requested_hz;
+    g_libretro.display_notification_pending=false;
+  }
+}
+
+static int32_t accumulated_delta(int32_t previous,int32_t incoming){
+  int64_t total=(int64_t)previous+incoming;
+  return total>INT32_MAX?INT32_MAX:total<INT32_MIN?INT32_MIN:(int32_t)total;
+}
+
 void retro_run(void){
   if(!g_libretro.loaded){
     if(g_libretro.video) g_libretro.video(NULL,288,216,0);
     return;
   }
   apply_live_options();
+  if(g_libretro.display_requested_hz || g_libretro.display_active_hz ||
+     g_libretro.display_notification_pending) {
+    libretro_update_av();
+    update_display_request();
+  }
   /* Fast-forward and run-ahead throw frames away. A frontend that says so in advance saves this
    * core the most expensive work it does, and there is no other way for a software rasterizer to
    * find out. Both default to on, so a frontend that answers nothing loses nothing. */
@@ -513,9 +565,26 @@ void retro_run(void){
   uint32_t width=g_libretro.frame.width?g_libretro.frame.width:g_libretro.av.base_width;
   uint32_t height=g_libretro.frame.height?g_libretro.frame.height:g_libretro.av.base_height;
   libretro_input_snapshot(&input,width,height);
+  uint32_t steps=1;
+  if(g_libretro.display_active_hz &&
+     anygm_schedule_frame(g_libretro.engine,g_libretro.display_active_hz,&steps)!=ANYGM_OK){
+    libretro_log(RETRO_LOG_ERROR,"Could not schedule independent display cadence\n");
+    steps=1;
+  }
+  uint32_t calls=steps?steps:1;
+  if(g_libretro.display_active_hz){
+    g_libretro.display_mouse_x=accumulated_delta(g_libretro.display_mouse_x,input.mouse_delta_x);
+    g_libretro.display_mouse_y=accumulated_delta(g_libretro.display_mouse_y,input.mouse_delta_y);
+    g_libretro.display_wheel=accumulated_delta(g_libretro.display_wheel,input.wheel_delta);
+    input.mouse_delta_x=g_libretro.display_mouse_x;
+    input.mouse_delta_y=g_libretro.display_mouse_y;
+    input.wheel_delta=g_libretro.display_wheel;
+  }
+  for(uint32_t step=0;step<calls;step++){
   memset(&g_libretro.frame,0,sizeof g_libretro.frame);
   g_libretro.frame.struct_size=sizeof g_libretro.frame;
-  AnygmResult result=anygm_run_frame(g_libretro.engine,&input,&g_libretro.frame);
+  AnygmResult result=steps?anygm_run_frame(g_libretro.engine,&input,&g_libretro.frame):
+    anygm_repeat_frame(g_libretro.engine,&g_libretro.frame);
   if(result!=ANYGM_OK){
     /* Reported a bounded number of times: a frame that fails usually fails on every frame after
      * it too, and a message per frame buries the first one under thousands of copies. */
@@ -535,6 +604,11 @@ void retro_run(void){
     return;
   }
   g_libretro.frame_failure_reports=0;
+  if(steps){
+    g_libretro.display_mouse_x=g_libretro.display_mouse_y=g_libretro.display_wheel=0;
+    /* Relative input belongs to this frontend tick, not to every logical step it schedules. */
+    input.mouse_delta_x=input.mouse_delta_y=input.wheel_delta=0;
+  }
   g_libretro.frame_completed=true;
   g_libretro.reset_pending_frame=false;
   /* Announced before the frame it describes, not after it: the frontend sizes what it is about
@@ -566,7 +640,7 @@ void retro_run(void){
     else
       g_libretro.environment(RETRO_ENVIRONMENT_SET_GEOMETRY,&av.geometry);
   }
-  if(g_libretro.video && g_libretro.video_enabled){
+  if(step+1==calls && g_libretro.video && g_libretro.video_enabled){
     /* The engine reports which target it rendered into. The hardware sentinel says the frame is
      * already on the frontend's own framebuffer; without it a complete CPU frame is available and
      * the ordinary pixel callback carries it. The two are never both authoritative. */
@@ -577,7 +651,7 @@ void retro_run(void){
       g_libretro.video(g_libretro.frame.pixels,g_libretro.frame.width,g_libretro.frame.height,
                        g_libretro.frame.pitch);
   }
-  else if(g_libretro.video && g_libretro.can_dupe)
+  else if(step+1==calls && g_libretro.video && g_libretro.can_dupe)
     g_libretro.video(NULL,g_libretro.frame.width,g_libretro.frame.height,0);
   if(g_libretro.frame.audio && g_libretro.frame.audio_frames && g_libretro.audio_enabled){
     if(g_libretro.audio_batch)
@@ -588,6 +662,11 @@ void retro_run(void){
   }
   if((g_libretro.frame.flags&ANYGM_FRAME_SHUTDOWN_REQUESTED) && g_libretro.environment)
     g_libretro.environment(RETRO_ENVIRONMENT_SHUTDOWN,NULL);
+  }
+  if(g_libretro.display_notification_pending){
+    libretro_update_av();
+    update_display_request();
+  }
 }
 
 size_t retro_serialize_size(void){
@@ -700,7 +779,10 @@ bool retro_unserialize(const void *data,size_t size){
     }
     return false;
   }
-  return anygm_state_load(g_libretro.engine,data,size)==ANYGM_OK;
+  if(anygm_state_load(g_libretro.engine,data,size)!=ANYGM_OK) return false;
+  g_libretro.display_mouse_x=g_libretro.display_mouse_y=g_libretro.display_wheel=0;
+  libretro_update_av();
+  return true;
 }
 
 void retro_cheat_reset(void){

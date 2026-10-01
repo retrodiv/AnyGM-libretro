@@ -7,6 +7,42 @@ What this core advertises to a frontend, and why. Everything below is a
 deliberate choice; the point of writing it down is that a reviewer should not
 have to guess which of them are accidents.
 
+## Display frequency requests
+
+The retained `display_set_frequency` builtin requests display Hz independently
+of logical `room_speed` and `game_set_speed`. It does not make the latter run
+faster or slower. This support does not assert that the setter belongs to every
+Studio release's documented standard API.
+
+On Windows, the adapter queries the current primary-display mode, tests a
+frequency change with the current size and depth, and applies a temporary
+`CDS_FULLSCREEN` change. Rejected modes return false. The adapter restores the
+captured current mode on unload or destruction; it does not write the registry
+or force an unsafe mode. The native operation and return codes follow
+[ChangeDisplaySettingsEx](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-changedisplaysettingsexa).
+
+On frontend-managed hosts, an available refresh-target query permits the host
+to enqueue a display request. True means accepted for submission, not confirmed
+physical-mode success. Initial requests enter the startup AV answer; later
+requests use `SET_SYSTEM_AV_INFO` within `retro_run`. Frontends may use that
+cadence for mode selection, including CRT switching. Callback rejection is
+logged and preserves the previously active presentation cadence. The query
+continues to ask the frontend; it never echoes a queued request. A frontend's
+target value may itself be configured rather than physically measured.
+
+Reset clears the fractional clock but retains the loaded session's accepted
+display request unless authored startup accepts a replacement. Startup may
+observe the already-selected frequency and omit a redundant setter call.
+
+One presentation tick can require zero, one or several logical steps. Audio
+from every executed step is consumed before the next one; only the final
+picture is presented. Zero-step ticks repeat the completed picture without
+executing content or mixing duplicate audio. The engine owns and serializes
+the fractional clock phase. Relative mouse and wheel input accumulates across
+zero-step ticks and is consumed once when logical execution resumes.
+Content making no display request retains the
+ordinary one-step-per-callback path.
+
 ## Advertised extensions
 
 ```

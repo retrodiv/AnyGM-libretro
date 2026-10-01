@@ -360,6 +360,8 @@ void libretro_host_services_init(AnygmHostServices *services){
   services->locale=host_locale;
   services->date_time_format=host_date_time_format;
   services->rumble=host_rumble;
+  services->display_frequency=libretro_display_frequency;
+  services->display_frequency_request=libretro_display_request;
 #ifdef _WIN32
   services->rich_text_render=host_rich_text_render;
 #endif

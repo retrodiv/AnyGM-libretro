@@ -215,6 +215,7 @@ INTEGRATION_TESTS += $(TEST_DIR)/test_graphics_state
 endif
 CONTRACT_TESTS := $(TEST_DIR)/dummy_host $(TEST_DIR)/test_builtin_file_io $(TEST_DIR)/test_libretro_state_transport \
 	$(TEST_DIR)/test_libretro_tilemap_state \
+	$(TEST_DIR)/test_libretro_display_cadence \
 	$(TEST_DIR)/test_libretro_crt_output \
 	$(TEST_DIR)/test_libretro_vfs_transport $(TEST_DIR)/test_libretro_option_defaults \
 	$(TEST_DIR)/test_libretro_keyboard_source $(TEST_DIR)/test_libretro_gamepad_ports \
@@ -759,6 +760,7 @@ contract-check: $(CONTRACT_TESTS)
 	$(TEST_DIR)/test_builtin_file_io
 	$(TEST_DIR)/test_libretro_state_transport
 	$(TEST_DIR)/test_libretro_tilemap_state
+	$(TEST_DIR)/test_libretro_display_cadence
 	$(TEST_DIR)/test_libretro_crt_output
 	$(TEST_DIR)/test_libretro_vfs_transport
 	$(TEST_DIR)/test_libretro_option_defaults
@@ -916,14 +918,25 @@ $(TEST_DIR)/dummy_host: tests/contract/dummy_host.c tests/support/synthetic_cont
 
 $(TEST_DIR)/test_libretro_state_transport: tests/contract/libretro_state_transport.c \
 	src/adapters/libretro/libretro_entry.c src/adapters/libretro/libretro_context.c \
-	src/adapters/libretro/libretro_cache.c
+	src/adapters/libretro/libretro_cache.c src/adapters/libretro/libretro_display.c
 	mkdir -p $(dir $@)
-	$(CC) $(LIBRETRO_CPPFLAGS) $(CFLAGS) $^ -o $@
+	$(CC) $(LIBRETRO_CPPFLAGS) $(CFLAGS) $^ -o $@ -lm
 
 $(TEST_DIR)/test_libretro_tilemap_state: tests/contract/libretro_tilemap_state.c \
 	tests/support/synthetic_content.c $(CORE_OBJECTS) $(TEST_HOST_OBJECTS)
 	mkdir -p $(dir $@)
 	$(CC) $(LIBRETRO_CPPFLAGS) -Itests/support $(CFLAGS) $^ -o $@ -lm -pthread $(CXX_RUNTIME_LDLIBS)
+
+$(TEST_DIR)/test_libretro_display_cadence: tests/contract/libretro_display_cadence.c \
+	tests/support/synthetic_content.c $(CORE_OBJECTS) $(TEST_HOST_OBJECTS)
+	mkdir -p $(dir $@)
+	$(CC) $(LIBRETRO_CPPFLAGS) -Itests/support $(CFLAGS) $^ -o $@ -lm -pthread $(CXX_RUNTIME_LDLIBS)
+
+# Explicit Windows-only contract; its controlled APIs never change the host display.
+$(TEST_DIR)/test_libretro_display_windows.exe: tests/contract/libretro_display_windows.c \
+	src/adapters/libretro/libretro_display.c
+	mkdir -p $(dir $@)
+	$(CC) $(LIBRETRO_CPPFLAGS) $(CFLAGS) $< -o $@
 
 $(TEST_DIR)/test_libretro_dynamic_rewind: tests/contract/libretro_dynamic_rewind.c \
 	tests/support/synthetic_content.c tests/support/graphics_driver_fixture.c \
@@ -952,20 +965,21 @@ $(TEST_DIR)/test_libretro_gamepad_ports: tests/contract/libretro_gamepad_ports.c
 	$(CC) $(LIBRETRO_CPPFLAGS) $(CFLAGS) $^ -o $@
 
 $(TEST_DIR)/test_libretro_locale_variables: tests/contract/libretro_locale_variables.c \
-	src/adapters/libretro/libretro_context.c
+	src/adapters/libretro/libretro_context.c src/adapters/libretro/libretro_display.c
 	mkdir -p $(dir $@)
-	$(CC) $(LIBRETRO_CPPFLAGS) $(CFLAGS) $^ -o $@
+	$(CC) $(LIBRETRO_CPPFLAGS) $(CFLAGS) $^ -o $@ -lm
 
 $(TEST_DIR)/test_libretro_wall_time: tests/contract/libretro_wall_time.c \
-	src/adapters/libretro/libretro_context.c
+	src/adapters/libretro/libretro_context.c src/adapters/libretro/libretro_display.c
 	mkdir -p $(dir $@)
-	$(CC) $(LIBRETRO_CPPFLAGS) $(CFLAGS) $^ -o $@
+	$(CC) $(LIBRETRO_CPPFLAGS) $(CFLAGS) $^ -o $@ -lm
 
 $(TEST_DIR)/test_libretro_content_directories: tests/contract/libretro_content_directories.c \
 	src/adapters/libretro/libretro_entry.c src/adapters/libretro/libretro_context.c \
-	src/adapters/libretro/libretro_cache.c src/adapters/libretro/libretro_vfs.c
+	src/adapters/libretro/libretro_cache.c src/adapters/libretro/libretro_vfs.c \
+	src/adapters/libretro/libretro_display.c
 	mkdir -p $(dir $@)
-	$(CC) $(LIBRETRO_CPPFLAGS) $(CFLAGS) $^ -o $@
+	$(CC) $(LIBRETRO_CPPFLAGS) $(CFLAGS) $^ -o $@ -lm
 
 $(TEST_DIR)/test_libretro_vfs_transport: tests/contract/libretro_vfs_transport.c \
 	src/adapters/libretro/libretro_vfs.c

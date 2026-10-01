@@ -9,9 +9,19 @@ marketing version. It is a numeric field in a validated binary header.
 
 ## Save-state schema
 
-The current AnyGM save-state schema is `36`. It is the format transported by
+The current AnyGM save-state schema is `37`. It is the format transported by
 libretro frontends for manual save states, automatic state slots, and rewind
 snapshots. Those features remain supported.
+
+Schema `37` adds two little-endian doubles after the root audio accumulator:
+presentation phase in `[0,1)`, then presentation Hz (zero for an unused clock,
+otherwise finite and at least two). They retain the fractional relationship
+between logical simulation steps and independent frontend presentation ticks.
+The fixed addition is 16 bytes, including before the first frame. The most recent
+host-accepted display request uses the existing VM global-value codec. VM schema
+`19` and audio schema `3` retain their layouts. Native mode handles and frontend
+callback acknowledgements remain host state, not emulated state. Older root
+schemas and invalid clock values reject transactionally without legacy readers.
 
 Schema `36` introduces audio schema `3`; VM schema `19` is unchanged. After
 the established mixer parameters, audio states carry handle-ordered PCM queues:

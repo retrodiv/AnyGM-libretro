@@ -85,7 +85,9 @@ is evaluated at its original extent and read back synchronously before filtering
 readback can cost more on discrete GPUs.
 
 The host receives the final padded or fitted raster aspect. Physical resolution, interlacing,
-refresh rate and TV output remain frontend responsibilities. The libretro option is named
+refresh rate and TV output are host responsibilities. Optional display-frequency host callbacks
+can query and request a native mode, or submit a request to a frontend that owns CRT switching.
+The libretro option is named
 **Adjust for 4:3 CRT TV**, defaults to Off, follows **Render at game resolution**, and is visible
 only while that parent option is On.
 
@@ -263,6 +265,18 @@ directory may likewise be renamed to `AnyGM-cache` to reuse derived content;
 otherwise the cache is rebuilt. The runtime does not migrate directories.
 
 ## Timing and optional services
+
+`display_frequency` queries observed or host-target Hz, returning zero when unavailable.
+`display_frequency_request` accepts or rejects a request without changing logical game FPS.
+An asynchronous host must document acceptance separately from physical completion. It must
+not report the requested Hz from its query merely because it accepted the request.
+
+When the host's presentation cadence differs from `frames_per_second`, call
+`anygm_schedule_frame` once per presentation tick. Execute its returned number of logical
+steps with `anygm_run_frame`, consuming audio before every subsequent step. Present only
+the last picture; use `anygm_repeat_frame` when the planner returns zero. The engine stores
+the fractional phase in states and clears it at Reset. This optional path does not alter the
+ordinary one-call-per-logical-frame contract.
 
 The monotonic callback returns nanoseconds from an arbitrary stable epoch.
 Wall time is separate and must not be used for profiling. Logging receives a

@@ -1193,7 +1193,19 @@ GmlVal gml_builtin_try_draw(GmlVM *vm, const char *nm, GmlVal *a, int n){
       return vreal(0); }
     /* display DPI: return a real 96 (not 0) so `x / display_get_dpi_x()` scaling code never divides by 0. */
     if(!strcmp(nm,"display_get_dpi_x")||!strcmp(nm,"display_get_dpi_y")) return vreal(96);
-    if(!strcmp(nm,"display_get_frequency")) return vreal(60.0);
+    if(!strcmp(nm,"display_get_frequency"))
+      return vreal(vm && vm->host && vm->host->display_frequency?
+                   vm->host->display_frequency(vm->host->userdata):0);
+    if(!strcmp(nm,"display_set_frequency")){
+      double requested=N(a,n,0);
+      if(!isfinite(requested) || requested<2 || requested>UINT32_MAX || !vm ||
+         !vm->host || !vm->host->display_frequency_request) return vreal(0);
+      uint32_t hz=(uint32_t)requested;
+      if(vm->host->display_frequency_request(vm->host->userdata,hz)!=ANYGM_OK)
+        return vreal(0);
+      *gml_varmap_put(&vm->globals,"__display_request_hz")=vreal(hz);
+      return vreal(1);
+    }
     if(!strcmp(nm,"display_get_orientation")) return vreal(0);
     if(!strcmp(nm,"os_lock_orientation")) return vreal(0);
     if(!strcmp(nm,"game_set_speed")){
