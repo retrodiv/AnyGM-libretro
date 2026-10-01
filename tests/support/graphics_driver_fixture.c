@@ -79,6 +79,7 @@ typedef struct FakeDriver {
   unsigned matrix_uniforms;
   GLuint attached_texture;
   unsigned read_pixels;
+  uint8_t readback_alpha;
   unsigned async_read_pixels;
   GLuint bound_pack_buffer;
   unsigned char pack_store[2][64*64*4];
@@ -106,7 +107,9 @@ void anygm_test_graphics_reset(void){
   g_fake.texture_unit_limit=8;
   g_fake.active_uniform_override=-1;
   g_fake.rgb_query_result=1u;
+  g_fake.readback_alpha=255u;
 }
+void anygm_test_graphics_readback_alpha(unsigned alpha){ g_fake.readback_alpha=(uint8_t)alpha; }
 void anygm_test_graphics_rgb_query_result(unsigned result){ g_fake.rgb_query_result=result; }
 void anygm_test_graphics_active_query(unsigned name){ g_fake.active_query=name; }
 unsigned anygm_test_graphics_rgb_queries(void){ return g_fake.rgb_queries; }
@@ -385,7 +388,7 @@ static void fake_ReadPixels(GLint x,GLint y,GLsizei width,GLsizei height,GLenum 
   for(GLsizei row=0;row<height;row++)
     for(GLsizei column=0;column<width;column++){
       uint8_t *px=out+((size_t)row*(size_t)width+(size_t)column)*4u;
-      px[0]=(uint8_t)row; px[1]=(uint8_t)column; px[2]=0x33; px[3]=0xFF;
+      px[0]=(uint8_t)row; px[1]=(uint8_t)column; px[2]=0x33; px[3]=g_fake.readback_alpha;
     }
 }
 static void fake_UniformMatrix3fv(GLint l,GLsizei n,GLboolean t,const GLfloat *v){

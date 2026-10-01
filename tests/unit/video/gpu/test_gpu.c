@@ -653,6 +653,101 @@ static int scene_resident_batch_case(void){
   return 1;
 }
 
+/* Readback conversion is host byte packing, not a restatement of a shader. The driver supplies
+ * independent RGBA rows; check the public formats and every untouched byte around their output. */
+static int scene_readback_formats_case(void){
+  static const uint32_t widths[]={1u,2u,3u,4u,7u,8u,15u,16u,17u,31u,32u,33u,
+                                  127u,128u,129u,257u};
+  static const uint32_t formats[]={GML_RENDER_PIXEL_XRGB8888,GML_RENDER_PIXEL_ARGB8888,
+                                   GML_RENDER_PIXEL_RGBA8888};
+  static const unsigned alphas[]={0u,1u,127u,128u,254u,255u};
+  uint8_t output[(257u*4u+5u)*3u+32u];
+  for(unsigned api_index=0;api_index<2u;api_index++){
+    GmlGpuApi api=api_index?GML_GPU_API_OPENGLES3:GML_GPU_API_OPENGL_CORE;
+    GmlGpuContext context=fake_context(api);
+    GmlGpu *gpu;
+    GmlRenderDeviceServices services={0};
+    GmlRenderDrawOp clear={0};
+    GmlRenderDrawBatch batch={0};
+    GmlRenderImageReadback readback={0};
+    anygm_test_graphics_reset();
+    gpu=gml_gpu_create();
+    REQUIRE(gpu && gml_gpu_context_reset(gpu,&context),"format context adopted");
+    gml_gpu_device_services(gpu,&services);
+    clear.sequence=1u;
+    clear.opcode=GML_RENDER_OP_CLEAR;
+    clear.target.image=(GmlRenderImageRef){GML_RENDER_RESOURCE_SURFACE,101u,1u,1u};
+    clear.target.storage_version=1u;
+    clear.target.width=259u;clear.target.height=9u;
+    clear.target.pixel_format=GML_RENDER_PIXEL_ARGB8888;
+    clear.target.region=(GmlRenderRect){0,0,259u,9u};
+    batch.operations=&clear;batch.operation_count=1u;
+    REQUIRE(services.submit(services.context,&batch).status==GML_RENDER_EXEC_ACCEPTED,
+            "format target is a valid rendered image");
+    readback.image=clear.target.image;
+    readback.storage_width=259u;readback.storage_height=9u;
+    for(size_t width_index=0;width_index<sizeof widths/sizeof widths[0];width_index++)
+      for(uint32_t height=1u;height<=3u;height+=2u)
+        for(size_t format_index=0;format_index<sizeof formats/sizeof formats[0];format_index++)
+          for(size_t alpha_index=0;alpha_index<sizeof alphas/sizeof alphas[0];alpha_index++)
+            for(unsigned padded=0;padded<2u;padded++)
+              for(unsigned unaligned=0;unaligned<2u;unaligned++){
+                uint32_t width=widths[width_index],stride=width*4u+padded*5u;
+                uint8_t *pixels=output+16u+unaligned;
+                readback.region=(GmlRenderRect){1,2,width,height};
+                readback.pixel_format=formats[format_index];
+                readback.stride_bytes=stride;
+                readback.byte_capacity=(size_t)(height-1u)*stride+width*4u;
+                readback.bytes=pixels;
+                memset(output,0xA5,sizeof output);
+                anygm_test_graphics_readback_alpha(alphas[alpha_index]);
+                REQUIRE(services.readback(services.context,&readback),
+                        "tight and padded unaligned format transfers succeed");
+                for(size_t index=0;index<sizeof output;index++){
+                  size_t offset=index-(size_t)(pixels-output);
+                  if(index<(size_t)(pixels-output) || offset>=readback.byte_capacity ||
+                     offset%stride>=width*4u)
+                    REQUIRE(output[index]==0xA5u,"readback leaves guards and row padding intact");
+                }
+                for(uint32_t row=0;row<height;row++)
+                  for(uint32_t column=0;column<width;column++){
+                    const uint8_t *pixel=pixels+(size_t)row*stride+(size_t)column*4u;
+                    if(readback.pixel_format==GML_RENDER_PIXEL_RGBA8888){
+                      REQUIRE(pixel[0]==height-1u-row && pixel[1]==(uint8_t)column &&
+                              pixel[2]==0x33u && pixel[3]==alphas[alpha_index],
+                              "RGBA preserves byte order, alpha and top-down rows");
+                    }else{
+                      uint32_t actual,alpha=readback.pixel_format==GML_RENDER_PIXEL_XRGB8888
+                                             ?255u:alphas[alpha_index];
+                      uint32_t expected=(alpha<<24)|((height-1u-row)<<16)|
+                                        ((uint32_t)(uint8_t)column<<8)|0x33u;
+                      memcpy(&actual,pixel,sizeof actual);
+                      REQUIRE(actual==expected,"native packed words preserve channels and alpha policy");
+                    }
+                  }
+              }
+    for(unsigned invalid=0;invalid<5u;invalid++){
+      unsigned reads=anygm_test_graphics_read_pixels();
+      readback.region=(GmlRenderRect){1,2,17u,3u};
+      readback.pixel_format=GML_RENDER_PIXEL_ARGB8888;
+      readback.stride_bytes=73u;readback.byte_capacity=214u;readback.bytes=output+16u;
+      if(invalid==0u) readback.byte_capacity--;
+      if(invalid==1u) readback.stride_bytes=67u;
+      if(invalid==2u) readback.pixel_format=UINT32_MAX;
+      if(invalid==3u) readback.region.x=-1;
+      if(invalid==4u) readback.region.y=7;
+      memset(output,0xA5,sizeof output);
+      REQUIRE(!services.readback(services.context,&readback) &&
+              anygm_test_graphics_read_pixels()==reads,
+              "invalid transfers refuse before a driver read");
+      for(size_t index=0;index<sizeof output;index++)
+        REQUIRE(output[index]==0xA5u,"a refused transfer writes no destination byte");
+    }
+    gml_gpu_destroy(gpu,1);
+  }
+  return 1;
+}
+
 static int scene_atlas_retire_advanced_version_case(void){
   uint8_t pixels[16]={255u,0u,0u,255u};
   GmlRenderImageRef page={GML_RENDER_RESOURCE_ATLAS,11u,29u,1u};
@@ -1840,6 +1935,7 @@ int main(int argc,char **argv){
     {"scene_optional_entry_refusal",scene_optional_entry_refusal_case},
     {"scene_content_source_orientation",scene_content_source_orientation_case},
     {"scene_resident_batch",scene_resident_batch_case},
+    {"scene_readback_formats",scene_readback_formats_case},
     {"scene_atlas_retire_advanced_version",scene_atlas_retire_advanced_version_case},
     {"scene_alpha_composition",scene_alpha_composition_case},
     {"scene_screen_filtered_alpha_stamp",scene_screen_filtered_alpha_stamp_case},

@@ -616,16 +616,21 @@ int gml_gpu_opengl_scene_readback(GmlGpuBackend *backend,const GmlRenderImageRea
     GL_RGBA,GL_UNSIGNED_BYTE,scene->scratch);
   backend->gl.PixelStorei(GL_PACK_ALIGNMENT,4);
   if(backend->gl.GetError()!=GL_NO_ERROR) return 0;
-  for(uint32_t row=0;row<transfer->region.height;row++){
-    const uint8_t *input=scene->scratch+(size_t)(transfer->region.height-1u-row)*row_bytes;
-    uint8_t *output=(uint8_t*)transfer->bytes+(size_t)row*transfer->stride_bytes;
-    if(transfer->pixel_format==GML_RENDER_PIXEL_RGBA8888){
+  /* The destination can be byte-aligned. Snapshot the validated descriptor rather than
+   * reloading possibly byte-aliased fields for every pixel; the packing rule is unchanged. */
+  const uint32_t width=transfer->region.width,height=transfer->region.height;
+  const uint32_t format=transfer->pixel_format,stride=transfer->stride_bytes;
+  const uint32_t opaque_alpha=format==GML_RENDER_PIXEL_XRGB8888?0xFF000000u:0u;
+  uint8_t *destination=(uint8_t*)transfer->bytes;
+  for(uint32_t row=0;row<height;row++){
+    const uint8_t *input=scene->scratch+(size_t)(height-1u-row)*row_bytes;
+    uint8_t *output=destination+(size_t)row*stride;
+    if(format==GML_RENDER_PIXEL_RGBA8888){
       memcpy(output,input,row_bytes);
-    } else for(uint32_t column=0;column<transfer->region.width;column++){
+    } else for(uint32_t column=0;column<width;column++){
       const uint8_t *pixel=input+(size_t)column*4u;
-      uint32_t packed=((uint32_t)(transfer->pixel_format==GML_RENDER_PIXEL_XRGB8888
-                        ?255u:pixel[3])<<24)|((uint32_t)pixel[0]<<16)|
-                        ((uint32_t)pixel[1]<<8)|pixel[2];
+      uint32_t packed=((uint32_t)pixel[3]<<24)|((uint32_t)pixel[0]<<16)|
+                        ((uint32_t)pixel[1]<<8)|pixel[2]|opaque_alpha;
       memcpy(output+(size_t)column*4u,&packed,sizeof packed);
     }
   }
