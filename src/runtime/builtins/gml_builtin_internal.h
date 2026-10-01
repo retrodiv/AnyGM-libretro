@@ -366,6 +366,9 @@ GmlDSMap *ds_map_slot(GmlVM *vm, int id);
 GmlDSList *ds_list_slot(GmlVM *vm, int id);
 int ds_map_create_id(GmlVM *vm);
 int ds_map_put(GmlVM *vm, int id, GmlVal key, GmlVal value, int overwrite);
+/* Internal metadata only: key must have static lifetime, including after map destruction.
+ * Runtime strings use ds_map_put; value cloning and escaped-reference policy are unchanged. */
+int ds_map_put_static_key(GmlVM *vm, int id, const char *key, GmlVal value, int overwrite);
 void ds_map_mark_child(GmlVM *vm, int id, GmlVal key, int kind);
 void ds_map_destroy_id(GmlVM *vm, int id);
 int ds_list_create_id(GmlVM *vm);

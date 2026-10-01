@@ -2087,9 +2087,9 @@ void gml_fire_async_audio(GmlVM *vm){
     if(!gml_audio_queue_event_pop(audio,&queue,&buffer,&shutdown)){
       ds_map_destroy_id(vm,map); return;
     }
-    ds_map_put(vm,map,vstr("queue_id"),vreal(queue),1);
-    ds_map_put(vm,map,vstr("buffer_id"),vreal(buffer),1);
-    ds_map_put(vm,map,vstr("queue_shutdown"),vreal(shutdown),1);
+    ds_map_put_static_key(vm,map,"queue_id",vreal(queue),1);
+    ds_map_put_static_key(vm,map,"buffer_id",vreal(buffer),1);
+    ds_map_put_static_key(vm,map,"queue_shutdown",vreal(shutdown),1);
     *gml_varmap_put(&vm->globals,"async_load")=vreal(map);
     int instances=vm->inst_count;
     for(int i=0;i<instances;i++) if(vm->inst[i].active && !vm->inst[i].marked)

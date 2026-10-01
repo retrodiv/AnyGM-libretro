@@ -315,7 +315,8 @@ static int ds_map_reserve(GmlDSMap *m, int n){
   memset(e+m->cap,0,(size_t)(nc-m->cap)*sizeof(*e));
   m->entry=e; m->cap=nc; return 1;
 }
-int ds_map_put(GmlVM *vm, int id, GmlVal keyv, GmlVal val, int overwrite){
+static int ds_map_store(GmlVM *vm, int id, GmlVal keyv, GmlVal val,
+                         int overwrite, int static_key){
   GmlDSMap *m=ds_map_slot(vm,id);
   if(!m) return 0;
   DsKeyTemp kt;
@@ -336,7 +337,7 @@ int ds_map_put(GmlVM *vm, int id, GmlVal keyv, GmlVal val, int overwrite){
   if(!key) return 0;
   if(!ds_map_reserve(m,m->len+1)){ free(key); return 0; }
   m->entry[m->len].key=key;
-  m->entry[m->len].key_val=ds_key_val_clone(keyv);
+  m->entry[m->len].key_val=static_key?keyv:ds_key_val_clone(keyv);
   m->entry[m->len].val=ds_val_clone(val);
   m->entry[m->len].child_kind=0;
   memset(m->entry[m->len].state_string_encoding,0,
@@ -344,6 +345,12 @@ int ds_map_put(GmlVM *vm, int id, GmlVal keyv, GmlVal val, int overwrite){
   m->len++;
   ds_map_index_add(m,m->len-1);
   return 1;
+}
+int ds_map_put(GmlVM *vm, int id, GmlVal keyv, GmlVal val, int overwrite){
+  return ds_map_store(vm,id,keyv,val,overwrite,0);
+}
+int ds_map_put_static_key(GmlVM *vm, int id, const char *key, GmlVal val, int overwrite){
+  return key && ds_map_store(vm,id,vstr(key),val,overwrite,1);
 }
 void ds_map_mark_child(GmlVM *vm, int id, GmlVal keyv, int kind){
   GmlDSMap *m=ds_map_slot(vm,id);

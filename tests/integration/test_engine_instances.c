@@ -3326,6 +3326,31 @@ int main(int argc,char **argv){
   }
   free(map_probe);
   if(visual_word<=map_word){ fprintf(stderr,"canonical visual sections changed order\n"); return 1; }
+  /* This fixture has no PCM queues or pending playback notices. Verify the
+   * audio section and its two empty counts before removing only those words
+   * in test scratch; all preceding byte/size pins below remain mandatory.
+   * The runtime continues to reject earlier root and audio schemas. */
+  size_t queue_audio=112+(size_t)read_u64(deterministic+64)+
+                     (size_t)read_u64(deterministic+72)+
+                     (size_t)read_u64(deterministic+80);
+  size_t queue_audio_size=(size_t)read_u64(deterministic+88);
+  const uint8_t empty_queue_counts[8]={0};
+  if((uint32_t)read_u64(deterministic+4)!=36 ||
+     queue_audio>deterministic_size ||
+     queue_audio_size!=deterministic_size-queue_audio || queue_audio_size<16 ||
+     (uint32_t)read_u64(deterministic+queue_audio)!=UINT32_C(0x53554141) ||
+     (uint32_t)read_u64(deterministic+queue_audio+4)!=3 ||
+     memcmp(deterministic+deterministic_size-sizeof empty_queue_counts,
+            empty_queue_counts,sizeof empty_queue_counts)){
+    fprintf(stderr,"canonical empty PCM queue framing changed\n"); return 1;
+  }
+  deterministic_size-=sizeof empty_queue_counts;
+  preceding_scale_size-=sizeof empty_queue_counts;
+  write_u64(deterministic+16,deterministic_size);
+  write_u64(deterministic+88,queue_audio_size-sizeof empty_queue_counts);
+  write_u64(deterministic+96,deterministic_size-112);
+  write_u32(deterministic+4,35);
+  write_u32(deterministic+queue_audio+4,2);
   /* The empty buffer record count is the only new payload word in this fixture.
    * Verify it before projecting test scratch to the preceding layout; preserve
    * every historical size/hash pin. No runtime reader accepts that layout. */

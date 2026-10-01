@@ -3,9 +3,11 @@
  */
 /* Map assignment expression results retain the existing value-storage owner. */
 #include "gml_builtin.h"
+#include "gml_builtin_internal.h"
 #include "anygm_test_runner.h"
 #include <math.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 static int expect(int condition,const char *message){
@@ -122,9 +124,55 @@ static int bounds_case(void){
   }
   return ok;
 }
+static int static_keys_case(void){
+  static const char *const keys[]={"key-00","key-01","key-02","key-03",
+    "key-04","key-05","key-06","key-07","key-08","key-09","key-10","key-11",
+    "key-12","key-13","key-14","key-15"};
+  GmlVM vm={0},other={0}; GmlWin win={0}; AnygmHostServices host={0};
+  host.struct_size=sizeof host; host.abi_version=ANYGM_HOST_SERVICES_VERSION;
+  int initialized=gml_vm_init(&vm,&win,&host)==0 && gml_vm_init(&other,&win,&host)==0;
+  int ok=expect(initialized,"static-key fixture initializes both VMs");
+  GmlVal retained[16]={0}; unsigned char *state=NULL,*control=NULL;
+  if(!initialized) goto cleanup;
+  int map=ds_map_create_id(&vm),copy=ds_map_create_id(&other);
+  for(int i=0;i<16;i++){
+    ok &= expect(ds_map_put_static_key(&vm,map,keys[i],vreal(i),1),"insert permanent metadata key");
+    ok &= expect(ds_map_put(&other,copy,vstr(keys[i]),vreal(i),1),"insert ordinary cloned control key");
+  }
+  GmlDSMap *stored=ds_map_slot(&vm,map),*cloned=ds_map_slot(&other,copy);
+  for(int i=0;i<16;i++){
+    ok &= expect(stored && stored->len==16 && stored->entry[i].key_val.s==keys[i] &&
+      stored->entry[i].key_val.d==0,"permanent key uses its stable non-owned reference");
+    if(cloned && cloned->len==16) retained[i]=cloned->entry[i].key_val;
+    int found=0;
+    ok &= expect(real_is(ds_map_lookup_s(&vm,map,keys[i],&found),i) && found,
+                 "static-key lookup survives index growth");
+  }
+  size_t size=gml_vm_state_size(&vm),control_size=gml_vm_state_size(&other),written=0,control_written=0;
+  state=malloc(size?size:1); control=malloc(control_size?control_size:1);
+  ok &= expect(size>0 && size==control_size && state && control &&
+    gml_vm_state_save(&vm,state,size,&written) && gml_vm_state_save(&other,control,control_size,&control_written) &&
+    written==size && control_written==size && !memcmp(state,control,size),
+    "key storage lifetime does not alter canonical state bytes");
+  ok &= expect(ds_map_put_static_key(&vm,map,keys[0],vreal(91),0),"keep existing entry without overwrite");
+  int found=0;
+  ok &= expect(real_is(ds_map_lookup_s(&vm,map,keys[0],&found),0) && found,"non-overwrite preserves the old value");
+  ok &= expect(ds_map_put_static_key(&vm,map,keys[0],vreal(91),1) &&
+    real_is(ds_map_lookup_s(&vm,map,keys[0],&found),91),"overwrite retains the original insertion rule");
+  GmlVal escaped=gml_builtin_call(&vm,"ds_map_find_first",(GmlVal[]){vreal(map)},1);
+  ds_map_destroy_id(&vm,map);
+  ok &= expect(string_is(escaped,keys[0]) && escaped.s==keys[0] && escaped.d==0,
+               "an escaped permanent key remains valid after destruction");
+  ok &= expect(!ds_map_put_static_key(&vm,map,keys[0],vreal(1),1) &&
+    !ds_map_put_static_key(&other,copy,NULL,vreal(1),1),"dead map and null permanent key are rejected");
+cleanup:
+  free(state); free(control); gml_vm_free(&vm); gml_vm_free(&other);
+  gml_values_release_owned(retained,16);
+  return ok;
+}
 int main(int argc,char **argv){
   const AnygmTestCase cases[]={{"pre",pre_case},{"post",post_case},{"strings",strings_case},
-                               {"arrays",arrays_case},{"bounds",bounds_case}};
+                               {"arrays",arrays_case},{"bounds",bounds_case},{"static_keys",static_keys_case}};
   const AnygmTestGroup group={"map_access",cases,sizeof cases/sizeof cases[0]};
   AnygmTestResult result={0}; const char *filter=argc==3&&!strcmp(argv[1],"--case")?argv[2]:NULL;
   int ok=anygm_test_run_groups(&group,1,filter,&result);

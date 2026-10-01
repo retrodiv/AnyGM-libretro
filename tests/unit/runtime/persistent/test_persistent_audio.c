@@ -170,6 +170,7 @@ int expect_pcm_queue_async_dispatch(void){
       "global.seen_buffer = async_load[? \"buffer_id\"];\n"
       "global.seen_shutdown = async_load[? \"queue_shutdown\"];\n"
       "global.seen_map = async_load;\n"
+      "global.seen_key = ds_map_find_first(async_load);\n"
       "if (global.close_on_receipt) { global.close_on_receipt = 0; audio_free_play_queue(global.seen_queue); }\n")) goto cleanup;
   AnygmHostServices host={0}; host.struct_size=sizeof host;
   host.abi_version=ANYGM_HOST_SERVICES_VERSION; anygm_stdio_vfs_services_init(&host);
@@ -214,6 +215,9 @@ int expect_pcm_queue_async_dispatch(void){
   ok=ok && gml_global_num(&vm,"receipts")==4 && gml_global_num(&vm,"seen_shutdown")==1 &&
     gml_global_num(&vm,"async_load")==-1 && gml_builtin_call(&vm,"ds_exists",map,2).d==0 &&
     gml_audio_queue_event_count(audio)==0;
+  GmlVal *escaped_key=gml_varmap_get(&vm.globals,"seen_key");
+  ok=ok && escaped_key && escaped_key->t==V_STR && escaped_key->s &&
+    escaped_key->d==0 && !strcmp(escaped_key->s,"queue_id");
   gml_vm_free(&vm); gml_audio_free(audio); gml_win_free(&win);
 cleanup:
   if(source_fd>=0) close(source_fd);
