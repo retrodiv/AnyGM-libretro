@@ -69,6 +69,10 @@ int main(int argc,char **argv){
     {"priority_native_read",expect_ds_priority_native_read},
   };
   static const AnygmTestCase audio_cases[]={
+    {"pcm_queue_playback",expect_pcm_queue_playback},
+    {"pcm_queue_resampling_and_state",expect_pcm_queue_resampling_and_state},
+    {"pcm_queue_builtin_ranges",expect_pcm_queue_builtin_ranges},
+    {"pcm_queue_async_dispatch",expect_pcm_queue_async_dispatch},
     {"group_paths",expect_audio_group_paths},
     {"flagged_external_sound",expect_flagged_external_sound_precedes_embedded_audio_id},
     {"streamed_embedded_fallback",

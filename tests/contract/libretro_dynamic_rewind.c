@@ -9,6 +9,7 @@
 #include "gml_render_resources.h"
 #include "graphics_driver_fixture.h"
 #include "synthetic_content.h"
+#include "gml_audio.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -310,7 +311,20 @@ static void growth_dispose(GrowthSnapshot *snapshot){
   ok=0; goto done; \
 } }while(0)
 
-static int run_case(int mode,int response){
+static int queue_fixture_start(void){
+  GmlAudio *audio=g_libretro.engine?g_libretro.engine->audio:NULL;
+  uint8_t pcm[16384];
+  for(unsigned sample=0;sample<sizeof pcm/2u;sample++){
+    int16_t value=(int16_t)((int)(sample%97u)*120-5760);
+    pcm[sample*2u]=(uint8_t)value; pcm[sample*2u+1u]=(uint8_t)((uint16_t)value>>8);
+  }
+  int queue=gml_audio_queue_create(audio,4,48000,1);
+  return queue>=0 && gml_audio_queue_submit(audio,queue,17,pcm,2048) &&
+    gml_audio_queue_submit(audio,queue,18,pcm+2048,sizeof pcm-2048) &&
+    gml_audio_play(audio,queue,0)>=1000000;
+}
+
+static int run_case(int mode,int response,int queued){
   AnygmSyntheticContent fixture={0};
   Snapshot snapshots[6]={0},replay={0},continued={0},repeated={0},after_reset={0};
   GmlGpuCounters before={0},after={0};
@@ -344,6 +358,7 @@ static int run_case(int mode,int response){
   anygm_test_graphics_allow_calls();
   REQUIRE(initial>0 && initial<=32u*1024u*1024u,"pre-frame ring capacity is bounded");
   REQUIRE(state_save(&snapshots[0],initial),"pre-frame ring push");
+  if(queued) REQUIRE(queue_fixture_start(),"queue grows after cold ring allocation");
   for(int frame=0;frame<5;frame++){
     captured_audio_frames=0;
     retro_run();
@@ -411,6 +426,7 @@ static int run_case(int mode,int response){
                    "second GPU continuation also reclaims retired targets");
 
   retro_reset();
+  if(queued) REQUIRE(queue_fixture_start(),"recreate fresh PCM stream after Reset");
   captured_audio_frames=0;
   retro_run();
   REQUIRE(state_save(&after_reset,initial),"frontend ring still accepts first Reset frame");
@@ -421,8 +437,8 @@ static int run_case(int mode,int response){
                   after_reset.audio_frames*2u*sizeof(int16_t)),
           "Reset reproduces first moving image and authored audio");
   REQUIRE(anygm_test_graphics_calls_after_forget()==0,"state callbacks made no GL calls");
-  printf("dynamic rewind: mode=%s negotiation=%d cold=%zu changed=%d audio_nonzero=%d\n",
-         mode?"GPU":"CPU",response,initial,changed_images,nonzero_audio);
+  printf("dynamic rewind: mode=%s negotiation=%d queued=%d cold=%zu changed=%d audio_nonzero=%d\n",
+         mode?"GPU":"CPU",response,queued,initial,changed_images,nonzero_audio);
 done:
   for(size_t i=0;i<6;i++) free(snapshots[i].state);
   free(replay.state);
@@ -579,7 +595,9 @@ done:
 
 int main(void){
   for(int mode=0;mode<=1;mode++)
-    for(int response=-1;response<=1;response++)
-      if(!run_case(mode,response) || !monitor_growth_case(mode,response)) return EXIT_FAILURE;
+    for(int response=-1;response<=1;response++){
+      if(!run_case(mode,response,0) || !run_case(mode,response,1) ||
+         !monitor_growth_case(mode,response)) return EXIT_FAILURE;
+    }
   return EXIT_SUCCESS;
 }

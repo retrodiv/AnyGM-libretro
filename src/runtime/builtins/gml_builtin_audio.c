@@ -2076,6 +2076,33 @@ static GmlVal builtin_gmwwise(GmlVM *vm,const char *name,GmlVal *args,int count)
   return vundef();
 }
 
+void gml_fire_async_audio(GmlVM *vm){
+  GmlAudio *audio=vm?(GmlAudio *)vm->audio:NULL;
+  /* A handler may free a queue. Its new notices belong to the next drain, not this one. */
+  unsigned count=gml_audio_queue_event_count(audio);
+  for(unsigned event=0;event<count;event++){
+    int map=ds_map_create_id(vm);
+    if(map<0) return;
+    int queue,buffer,shutdown;
+    if(!gml_audio_queue_event_pop(audio,&queue,&buffer,&shutdown)){
+      ds_map_destroy_id(vm,map); return;
+    }
+    ds_map_put(vm,map,vstr("queue_id"),vreal(queue),1);
+    ds_map_put(vm,map,vstr("buffer_id"),vreal(buffer),1);
+    ds_map_put(vm,map,vstr("queue_shutdown"),vreal(shutdown),1);
+    *gml_varmap_put(&vm->globals,"async_load")=vreal(map);
+    int instances=vm->inst_count;
+    for(int i=0;i<instances;i++) if(vm->inst[i].active && !vm->inst[i].marked)
+      gml_run_event(vm,&vm->inst[i],"Other_74");
+    *gml_varmap_put(&vm->globals,"async_load")=vreal(-1);
+    ds_map_destroy_id(vm,map);
+  }
+}
+
+static int audio_queue_integer(double value){
+  return isfinite(value) && value>=0 && value<=INT_MAX && floor(value)==value;
+}
+
 GmlVal gml_builtin_try_audio(GmlVM *vm, const char *nm, GmlVal *a, int n){
   GmlRender *R=(GmlRender*)vm->render;
   (void)R;
@@ -2083,6 +2110,26 @@ GmlVal gml_builtin_try_audio(GmlVM *vm, const char *nm, GmlVal *a, int n){
   if(!strncmp(nm,"FAudioGMS_",10)) return builtin_faudio_gms(vm,nm,a,n);
   /* ---- audio ---- */
   { GmlAudio *AU=(GmlAudio*)vm->audio;
+    if(!strcmp(nm,"audio_create_play_queue")){
+      double format=N(a,n,0),rate=N(a,n,1),channels=N(a,n,2);
+      if(n<3 || !audio_queue_integer(format) || !audio_queue_integer(rate) ||
+         !audio_queue_integer(channels)) return vreal(-1);
+      return vreal(gml_audio_queue_create(AU,(int)format,(int)rate,(int)channels));
+    }
+    if(!strcmp(nm,"audio_queue_sound")){
+      double queue=N(a,n,0),buffer=N(a,n,1),offset=N(a,n,2),length=N(a,n,3);
+      if(n<4 || !audio_queue_integer(queue) || !audio_queue_integer(buffer) ||
+         !audio_queue_integer(offset) || !audio_queue_integer(length)) return vreal(0);
+      GmlBuiltinBuffer *source=buffer_at(vm,vm_buffer_slot(vm,(int)buffer));
+      if(source && source->live && source->data && offset<=source->size && length<=source->size-offset)
+        gml_audio_queue_submit(AU,(int)queue,(int)buffer,source->data+(size_t)offset,(size_t)length);
+      return vreal(0);
+    }
+    if(!strcmp(nm,"audio_free_play_queue")){
+      double queue=N(a,n,0);
+      if(n>0 && audio_queue_integer(queue)) gml_audio_queue_free(AU,(int)queue);
+      return vreal(0);
+    }
     if(!strcmp(nm,"action_sound")){ gml_audio_play(AU,(int)N(a,n,0),(int)N(a,n,1)); return vreal(0); }
     if(!strcmp(nm,"action_end_sound")){ gml_audio_stop(AU,(int)N(a,n,0)); return vreal(0); }
     if(!strcmp(nm,"audio_channel_num")){ gml_audio_channel_num(AU,(int)N(a,n,0)); return vreal(0); }

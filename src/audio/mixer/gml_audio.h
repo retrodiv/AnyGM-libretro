@@ -20,6 +20,14 @@ void gml_audio_rebind_content(GmlAudio *audio,GmlWin *win);
 struct GmlFmodBanks *gml_audio_get_fmod(GmlAudio *a);   /* FMOD bank set, or NULL when unused */
 void gml_audio_free(GmlAudio *a);
 
+/* PCM playback queues use regular sound/voice controls. Submitted byte ranges are copied;
+ * completion notices retain the public buffer handle, not a pointer into VM storage. */
+int gml_audio_queue_create(GmlAudio *a,int format,int rate,int channels);
+int gml_audio_queue_submit(GmlAudio *a,int queue,int buffer,const uint8_t *data,size_t bytes);
+void gml_audio_queue_free(GmlAudio *a,int queue);
+unsigned gml_audio_queue_event_count(const GmlAudio *a);
+int gml_audio_queue_event_pop(GmlAudio *a,int *queue,int *buffer,int *shutdown);
+
 /* play sound resource `snd` (SOND index); loop!=0 repeats. Returns a voice handle. */
 int  gml_audio_play(GmlAudio *a, int snd, int loop);
 int  gml_audio_play_on(GmlAudio *a, int snd, int loop, int emitter);

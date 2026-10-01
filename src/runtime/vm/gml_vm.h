@@ -652,6 +652,7 @@ int          gml_colgrid_collect(GmlVM *vm, double l, double t, double r, double
 void         gml_fire_gamepad_connected(GmlVM *vm);
 void gml_fire_async_saveload(GmlVM *vm);  /* drain queued Other_72 (async save/load) events */ /* dispatch GM gamepad-discovered async event */
 void gml_fire_async_http(GmlVM *vm);      /* drain queued Other_62 (async HTTP, always-fail offline) events */
+void gml_fire_async_audio(GmlVM *vm);     /* drain PCM queue completion notices (Other_74) */
 void         gml_room_enter(GmlVM *vm, int room_index);      /* instantiate + Create events */
 int          gml_vm_room_get(GmlVM *vm, int room_index, GmlRoom *out);
 int          gml_vm_room_set_dimension(GmlVM *vm, int room_index, int height, double value);

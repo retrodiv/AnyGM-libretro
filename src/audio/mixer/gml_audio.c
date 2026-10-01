@@ -44,6 +44,13 @@ static uint16_t rd16(const uint8_t *d, uint32_t o){ return (uint16_t)(d[o]|d[o+1
 static float    rdf32(const uint8_t *d, uint32_t o){ float f; memcpy(&f,d+o,4); return f; }
 static int      is_mp3_blob(const uint8_t *d, uint32_t len){ return d && len>=10 && mp3dec_detect_buf(d,len)==0; }
 
+typedef struct GmlAudioBlock {
+  struct GmlAudioBlock *next;
+  int16_t *pcm;
+  uint32_t nval;
+  int queue,buffer,shutdown;
+} GmlAudioBlock;
+
 typedef struct {
   const int16_t *pcm; uint32_t nval; int channels, sample_rate; float vol;
   double gain, pitch; int16_t *own; uint8_t *encoded_own;
@@ -59,6 +66,8 @@ typedef struct {
   uint32_t external_type;
   uint8_t content_sha256[32];
   int content_hash_known;
+  int queue_format,queue_channels;
+  GmlAudioBlock *queue_head,*queue_tail,*queue_shutdown;
 } GmlSound; /* own is decoded/copied PCM; encoded_own backs a dynamic compressed blob */
 typedef struct {
   int snd, loop, active, paused, id, emitter;
@@ -71,6 +80,8 @@ typedef struct {
 #define GML_LOOSE_AUDIO_BYTES_MAX (64u*1024u*1024u)
 #define GML_DYNAMIC_SOUND_LIMIT 65536
 #define GML_EXTERNAL_GROUP_FLAG UINT32_C(0x80000000)
+#define GML_QUEUE_PCM_BYTES_MAX (16u*1024u*1024u)
+#define GML_QUEUE_BLOCKS_MAX 65536u
 struct GmlAudio {
   GmlWin *win;
   GmlSound *snd; int n_snd, n_base_snd;   /* n_base_snd = SOND resources; dynamic sounds follow */
@@ -87,7 +98,48 @@ struct GmlAudio {
   uint32_t grp_size[GML_MAX_AUDIOGROUPS], grp_audo_off[GML_MAX_AUDIOGROUPS], grp_n[GML_MAX_AUDIOGROUPS];
   uint8_t **extbuf; int n_ext;
   uint32_t audo_off, audo_n;   /* data.win AUDO chunk, for streamed-sound embedded fallbacks */
+  GmlAudioBlock *event_head,*event_tail;
+  unsigned event_count,queue_blocks;
+  size_t queue_bytes;
 };
+
+static void audio_block_delete(GmlAudio *a,GmlAudioBlock *block){
+  if(!block) return;
+  a->queue_bytes-=(size_t)block->nval*sizeof(int16_t);
+  a->queue_blocks--;
+  free(block->pcm); free(block);
+}
+static void audio_queue_discard(GmlAudio *a,GmlSound *sound){
+  while(sound->queue_head){
+    GmlAudioBlock *block=sound->queue_head;
+    sound->queue_head=block->next;
+    audio_block_delete(a,block);
+  }
+  audio_block_delete(a,sound->queue_shutdown);
+  sound->queue_head=sound->queue_tail=sound->queue_shutdown=NULL;
+  if(sound->queue_format){ sound->pcm=NULL; sound->nval=0; }
+  sound->queue_format=0;
+}
+static void audio_queue_refresh(GmlSound *sound){
+  sound->pcm=sound->queue_head?sound->queue_head->pcm:NULL;
+  sound->nval=sound->queue_head?sound->queue_head->nval:0;
+}
+/* Reuse the submission node for the event, so completing audio cannot fail allocation. */
+static void audio_queue_event(GmlAudio *a,GmlAudioBlock *block,int shutdown){
+  a->queue_bytes-=(size_t)block->nval*sizeof(int16_t);
+  free(block->pcm); block->pcm=NULL; block->nval=0;
+  block->shutdown=shutdown; block->next=NULL;
+  if(a->event_tail) a->event_tail->next=block; else a->event_head=block;
+  a->event_tail=block; a->event_count++;
+}
+static void audio_queue_clear(GmlAudio *a,GmlSound *sound,int shutdown){
+  while(sound->queue_head){
+    GmlAudioBlock *block=sound->queue_head;
+    sound->queue_head=block->next;
+    audio_queue_event(a,block,shutdown);
+  }
+  sound->queue_tail=NULL; audio_queue_refresh(sound);
+}
 
 void gml_audio_rebind_content(GmlAudio *audio,GmlWin *win){
   if(!audio) return;
@@ -547,8 +599,13 @@ struct GmlFmodBanks *gml_audio_get_fmod(GmlAudio *a){ return a?a->fmod:NULL; }
 void gml_audio_free(GmlAudio *a){ if(!a) return;
   gml_fmod_banks_free(a->fmod);
   for(int i=0;i<a->n_snd;i++){
+    audio_queue_discard(a,&a->snd[i]);
     free(a->snd[i].own);
     free(a->snd[i].encoded_own);
+  }
+  while(a->event_head){
+    GmlAudioBlock *block=a->event_head; a->event_head=block->next;
+    audio_block_delete(a,block);
   }
   for(int g=1;g<GML_MAX_AUDIOGROUPS;g++) if(a->grp_data[g] && a->grp_data[g]!=(uint8_t*)1) free(a->grp_data[g]);
   for(int e=0;e<a->n_ext;e++) free(a->extbuf[e]);
@@ -560,7 +617,11 @@ static int audio_dynamic_slot(GmlAudio *a){
   int slot=-1;                                   /* reuse a freed caster slot */
   for(int i=a->n_base_snd;i<a->n_snd;i++)
     if(!a->snd[i].pcm && !a->snd[i].own && !a->snd[i].encoded_own &&
-       !a->snd[i].ogg && !a->snd[i].mp3 && !a->snd[i].nval){
+       !a->snd[i].ogg && !a->snd[i].mp3 && !a->snd[i].nval && !a->snd[i].queue_format){
+      int pending=0;
+      for(GmlAudioBlock *event=a->event_head;event;event=event->next)
+        if(event->queue==i){ pending=1; break; }
+      if(pending) continue;
       slot=i;
       break;
   }
@@ -599,6 +660,7 @@ static int audio_dynamic_slot_at(GmlAudio *a,int requested){
     a->n_snd=requested+1;
   } else {
     gml_audio_stop(a,requested);
+    audio_queue_discard(a,&a->snd[requested]);
     free(a->snd[requested].own);
     free(a->snd[requested].encoded_own);
   }
@@ -609,6 +671,66 @@ static int audio_dynamic_slot_at(GmlAudio *a,int requested){
   a->snd[requested].pitch=1.0;
   a->snd[requested].sample_rate=44100;
   return requested;
+}
+
+int gml_audio_queue_create(GmlAudio *a,int format,int rate,int channels){
+  if(!a || (format!=1 && format!=4) || rate<1000 || rate>48000 ||
+     channels<0 || channels>2 || a->queue_blocks>=GML_QUEUE_BLOCKS_MAX) return -1;
+  GmlAudioBlock *shutdown=calloc(1,sizeof(*shutdown));
+  if(!shutdown) return -1;
+  int slot=audio_dynamic_slot(a);
+  if(slot<0){ free(shutdown); return -1; }
+  GmlSound *sound=&a->snd[slot];
+  sound->queue_format=format; sound->queue_channels=channels;
+  sound->channels=channels==0?1:channels==1?2:6;
+  sound->sample_rate=rate; sound->queue_shutdown=shutdown;
+  shutdown->queue=slot; shutdown->buffer=-1; a->queue_blocks++;
+  return slot;
+}
+int gml_audio_queue_submit(GmlAudio *a,int queue,int buffer,const uint8_t *data,size_t bytes){
+  if(!a || queue<0 || queue>=a->n_snd || !data || buffer<0 || !bytes ||
+     a->queue_blocks>=GML_QUEUE_BLOCKS_MAX) return 0;
+  GmlSound *sound=&a->snd[queue];
+  if(!sound->queue_format) return 0;
+  unsigned width=sound->queue_format==4?2u:1u;
+  if(bytes%(width*(unsigned)sound->channels)) return 0;
+  size_t values=bytes/width;
+  if(values>UINT32_MAX || values>GML_QUEUE_PCM_BYTES_MAX/sizeof(int16_t) ||
+     values*sizeof(int16_t)>GML_QUEUE_PCM_BYTES_MAX-a->queue_bytes) return 0;
+  GmlAudioBlock *block=calloc(1,sizeof(*block));
+  if(!block) return 0;
+  block->pcm=malloc(values*sizeof(int16_t));
+  if(!block->pcm){ free(block); return 0; }
+  for(size_t i=0;i<values;i++)
+    block->pcm[i]=width==2?(int16_t)rd16(data,(uint32_t)(i*2))
+                           :(int16_t)(((int)data[i]-128)*256);
+  block->nval=(uint32_t)values; block->queue=queue; block->buffer=buffer;
+  if(sound->queue_tail) sound->queue_tail->next=block; else sound->queue_head=block;
+  sound->queue_tail=block; a->queue_blocks++; a->queue_bytes+=values*sizeof(int16_t);
+  audio_queue_refresh(sound);
+  return 1;
+}
+void gml_audio_queue_free(GmlAudio *a,int queue){
+  if(!a || queue<0 || queue>=a->n_snd || !a->snd[queue].queue_format) return;
+  GmlSound *sound=&a->snd[queue];
+  int had_buffers=sound->queue_head!=NULL;
+  gml_audio_stop(a,queue);
+  /* Even an empty queue has a shutdown notice, reserved when it was created. */
+  if(!had_buffers){
+    audio_queue_event(a,sound->queue_shutdown,1); sound->queue_shutdown=NULL;
+  }
+  audio_queue_discard(a,sound); memset(sound,0,sizeof(*sound));
+}
+unsigned gml_audio_queue_event_count(const GmlAudio *a){ return a?a->event_count:0; }
+int gml_audio_queue_event_pop(GmlAudio *a,int *queue,int *buffer,int *shutdown){
+  if(!a || !a->event_head) return 0;
+  GmlAudioBlock *block=a->event_head; a->event_head=block->next;
+  if(!a->event_head) a->event_tail=NULL;
+  if(queue) *queue=block->queue;
+  if(buffer) *buffer=block->buffer;
+  if(shutdown) *shutdown=block->shutdown;
+  a->event_count--; audio_block_delete(a,block);
+  return 1;
 }
 
 /* Register an external OGG blob (caster_load) as a new sound. Decode eagerly to retain the
@@ -832,7 +954,10 @@ int gml_audio_sound_content_hash(GmlAudio *a,int handle,uint8_t digest[32]){
 
 void gml_audio_caster_free(GmlAudio *a, int handle){
   if(!a || handle<a->n_base_snd || handle>=a->n_snd) return;
-  gml_audio_stop(a,handle);
+  /* Internal resource retirement, including state load, must not synthesize game events. */
+  for(int i=0;i<GML_MAX_VOICES;i++)
+    if(a->voice[i].active && a->voice[i].snd==handle) a->voice[i].active=0;
+  audio_queue_discard(a,&a->snd[handle]);
   free(a->snd[handle].own);
   free(a->snd[handle].encoded_own);
   memset(&a->snd[handle],0,sizeof(GmlSound));   /* slot becomes reusable */
@@ -844,6 +969,7 @@ void gml_audio_caster_free_all(GmlAudio *a){
 
 static int sound_ensure_pcm(GmlAudio *a,GmlSound *s){
   if(!s) return 0;
+  if(s->queue_format) return 1;
   if(s->pcm) return 1;
   if(!s->ogg && !s->mp3 && s->external_filename && !audio_sound_load_loose(a,s)){
     if(audio_setting(a,"GML_LOG_AUDIO"))
@@ -934,6 +1060,7 @@ static int audio_voice_prepare(GmlAudio *a, GmlVoice *v){
   if(v->pan<-1.0) v->pan=-1.0; else if(v->pan>1.0) v->pan=1.0;
   GmlSound *s=&a->snd[v->snd];
   if(!sound_ensure_pcm(a,s)){ v->active=0; return 0; }
+  if(s->queue_format) return 1;
   if(s->nval==0){ v->active=0; return 0; }
   if(v->loop_start>(double)s->nval) v->loop_start=0.0;
   if(v->pos>(double)s->nval){
@@ -952,6 +1079,10 @@ static int voice_matches(GmlAudio *a, GmlVoice *v, int target){
 int gml_audio_play_on(GmlAudio *a, int snd, int loop, int emitter){
   if(!a||snd<0||snd>=a->n_snd||!sound_ensure_pcm(a,&a->snd[snd])) return -1;
   int limit=audio_voice_limit(a); if(limit<=0) return -1;
+  /* A queue is one consuming stream, never independent copies of its head buffer. */
+  if(a->snd[snd].queue_format)
+    for(int i=0;i<GML_MAX_VOICES;i++)
+      if(a->voice[i].active && a->voice[i].snd==snd) return a->voice[i].id;
   int slot=-1; for(int i=0;i<limit;i++) if(!a->voice[i].active){ slot=i; break; }
   if(slot<0) slot=0;
   int id=a->next_voice_id++;
@@ -971,8 +1102,14 @@ void gml_audio_stop(GmlAudio *a, int snd){
   if(!a) return;
   for(int i=0;i<GML_MAX_VOICES;i++)
     if(voice_matches(a,&a->voice[i],snd)) a->voice[i].active=0;
+  if(snd>=0 && snd<a->n_snd && a->snd[snd].queue_format)
+    audio_queue_clear(a,&a->snd[snd],1);
 }
-void gml_audio_stop_all(GmlAudio *a){ if(!a) return; for(int i=0;i<GML_MAX_VOICES;i++) a->voice[i].active=0; }
+void gml_audio_stop_all(GmlAudio *a){
+  if(!a) return;
+  for(int i=0;i<GML_MAX_VOICES;i++) a->voice[i].active=0;
+  for(int i=0;i<a->n_snd;i++) if(a->snd[i].queue_format) audio_queue_clear(a,&a->snd[i],1);
+}
 void gml_audio_pause_all(GmlAudio *a, int paused){ if(a) a->paused=paused!=0; }
 void gml_audio_pause_sound(GmlAudio *a, int target, int paused){
   if(!a) return;
@@ -995,7 +1132,7 @@ int gml_audio_exists(GmlAudio *a, int target){
   if(target<0 || target>=a->n_snd) return 0;
   if(target<a->n_base_snd) return 1;
   GmlSound *sound=&a->snd[target];
-  return sound->pcm || sound->own || sound->ogg || sound->mp3 || sound->nval>0;
+  return sound->queue_format || sound->pcm || sound->own || sound->ogg || sound->mp3 || sound->nval>0;
 }
 int  gml_audio_voice_paused(GmlAudio *a, int snd){
   if(!a) return 0;
@@ -1240,6 +1377,23 @@ static double pcm_lerp(const int16_t *pcm, uint32_t nval, uint32_t i0, uint32_t 
   double b=(i1<nval)?pcm[i1]:a;
   return a + (b-a)*frac;
 }
+static double queue_lerp(const GmlSound *sound,uint32_t i0,uint32_t i1,double frac){
+  double first=sound->pcm[i0],second=first;
+  if(i1<sound->nval) second=sound->pcm[i1];
+  else if(sound->queue_head->next && i1-sound->nval<sound->queue_head->next->nval)
+    second=sound->queue_head->next->pcm[i1-sound->nval];
+  return first+(second-first)*frac;
+}
+static int audio_queue_advance(GmlAudio *a,GmlSound *sound,GmlVoice *voice){
+  while(sound->queue_head && voice->pos>=sound->nval){
+    GmlAudioBlock *block=sound->queue_head;
+    voice->pos-=sound->nval; sound->queue_head=block->next;
+    if(!sound->queue_head) sound->queue_tail=NULL;
+    audio_queue_event(a,block,0); audio_queue_refresh(sound);
+  }
+  if(!sound->queue_head){ voice->active=0; voice->pos=0; return 0; }
+  return 1;
+}
 static int16_t audio_soft_clip(int32_t v){
   double x=(double)v;
   const double knee=30000.0, span=2767.0;
@@ -1275,13 +1429,28 @@ static void audio_mix_audo(GmlAudio *a, int16_t *out, int frames){
     double pan=vo->pan, left_pan=pan>0.0?1.0-pan:1.0, right_pan=pan<0.0?1.0+pan:1.0;
     double rate_scale=(double)(s->sample_rate>0?s->sample_rate:44100)/44100.0;
     for(int f=0;f<frames;f++){
+      if(s->queue_format && !audio_queue_advance(a,s,vo)) break;
       if(vo->pos>=s->nval){
         if(vo->loop && s->nval>0){ double span=(double)s->nval-vo->loop_start;
           vo->pos=span>0.0?vo->loop_start+fmod(fmax(0.0,vo->pos-vo->loop_start),span):vo->loop_start; }
         else { vo->active=0; break; }
       }
       double l,r;
-      if(ch>=2){
+      if(s->queue_format){
+        double fp=vo->pos/ch;
+        uint32_t i0=(uint32_t)floor(fp)*(unsigned)ch;
+        double frac=fp-floor(fp);
+        l=queue_lerp(s,i0,i0+(unsigned)ch,frac);
+        r=ch==1?l:queue_lerp(s,i0+1,i0+1+(unsigned)ch,frac);
+        if(ch==6){
+          /* The frontend is stereo: downmix the interleaved 5.1 layout at this boundary. */
+          double center=queue_lerp(s,i0+2,i0+8,frac)*0.7071067811865476;
+          double bass=queue_lerp(s,i0+3,i0+9,frac)*0.5;
+          l+=center+bass+queue_lerp(s,i0+4,i0+10,frac)*0.7071067811865476;
+          r+=center+bass+queue_lerp(s,i0+5,i0+11,frac)*0.7071067811865476;
+        }
+        vo->pos+=ch*vo->pitch*rate_scale;
+      } else if(ch>=2){
         double fp=vo->pos*0.5;
         uint32_t fr=(uint32_t)floor(fp);
         double frac=fp-(double)fr;
@@ -1302,6 +1471,7 @@ static void audio_mix_audo(GmlAudio *a, int16_t *out, int frames){
       mix[f*2]   += (int32_t)lrint(l*vol*sound_level*group_level*left_pan);
       mix[f*2+1] += (int32_t)lrint(r*vol*sound_level*group_level*right_pan);
     }
+    if(s->queue_format && vo->active) audio_queue_advance(a,s,vo);
   }
   for(int sound=0;sound<a->n_snd;sound++) if(a->snd[sound].gain_fade_frames>0){
     GmlSound *entry=&a->snd[sound];
@@ -1339,7 +1509,7 @@ void gml_audio_mix(GmlAudio *a, int16_t *out, int frames){
   if(a && a->fmod) gml_fmod_mix(a->fmod,out,frames,44100);
 }
 
-enum { GML_AUDIO_STATE_SCHEMA=2 };
+enum { GML_AUDIO_STATE_SCHEMA=3 };
 #define GML_AUDIO_STATE_MAGIC UINT32_C(0x53554141)
 typedef struct { uint8_t *data; size_t cap, pos; int ok; } AudW;
 typedef struct { const uint8_t *data; size_t cap, pos; int ok; } AudR;
@@ -1401,10 +1571,100 @@ static void audio_state_write(AudW *s, GmlAudio *a){
     aw_d(s,a?a->group_gain[g]:1.0); aw_d(s,a?a->group_target[g]:1.0);
     aw_i32(s,a?a->group_fade_frames[g]:0);
   }
+  unsigned queues=0;
+  if(a) for(int i=0;i<a->n_snd;i++) if(a->snd[i].queue_format) queues++;
+  aw_u32(s,queues);
+  if(a) for(int i=0;i<a->n_snd;i++) if(a->snd[i].queue_format){
+    GmlSound *sound=&a->snd[i]; unsigned blocks=0;
+    for(GmlAudioBlock *block=sound->queue_head;block;block=block->next) blocks++;
+    aw_i32(s,i); aw_i32(s,sound->queue_format); aw_i32(s,sound->sample_rate);
+    aw_i32(s,sound->queue_channels); aw_u32(s,blocks);
+    for(GmlAudioBlock *block=sound->queue_head;block;block=block->next){
+      aw_i32(s,block->buffer); aw_u32(s,block->nval);
+      for(uint32_t value=0;value<block->nval;value++){
+        uint16_t pcm=(uint16_t)block->pcm[value];
+        uint8_t bytes[2]={(uint8_t)pcm,(uint8_t)(pcm>>8)};
+        aw_raw(s,bytes,2);
+      }
+    }
+  }
+  aw_u32(s,a?a->event_count:0);
+  if(a) for(GmlAudioBlock *event=a->event_head;event;event=event->next){
+    aw_i32(s,event->queue); aw_i32(s,event->buffer); aw_i32(s,event->shutdown);
+  }
 }
 size_t gml_audio_state_size(GmlAudio *a){ AudW s={0}; s.ok=1; audio_state_write(&s,a); return s.pos; }
 int gml_audio_state_save(GmlAudio *a, void *data, size_t len, size_t *written){
   AudW s={(uint8_t*)data,len,0,1}; audio_state_write(&s,a); if(written) *written=s.pos; return s.ok && s.pos<=len;
+}
+/* Decode owned queue data off to the side. Nothing in the live mixer is touched on rejection. */
+static int audio_queues_read(AudR *reader,GmlAudio *stage,int stored_sounds,int base_sounds){
+  stage->n_snd=stored_sounds;
+  if(stored_sounds){
+    stage->snd=calloc((size_t)stored_sounds,sizeof(*stage->snd));
+    if(!stage->snd) return 0;
+  }
+  unsigned queues=ar_u32(reader);
+  if(!reader->ok || queues>GML_QUEUE_BLOCKS_MAX || queues>(unsigned)stored_sounds) return 0;
+  int previous=-1;
+  for(unsigned index=0;index<queues;index++){
+    int handle=ar_i32(reader),format=ar_i32(reader),rate=ar_i32(reader),channels=ar_i32(reader);
+    unsigned blocks=ar_u32(reader);
+    if(!reader->ok || handle<=previous || handle<base_sounds || handle>=stored_sounds ||
+       (unsigned)(handle-base_sounds)>=GML_DYNAMIC_SOUND_LIMIT ||
+       (format!=1 && format!=4) || rate<1000 || rate>48000 || channels<0 || channels>2 ||
+       stage->queue_blocks>=GML_QUEUE_BLOCKS_MAX ||
+       blocks>GML_QUEUE_BLOCKS_MAX-stage->queue_blocks-1u) return 0;
+    previous=handle;
+    GmlSound *sound=&stage->snd[handle];
+    sound->queue_format=format; sound->queue_channels=channels;
+    sound->channels=channels==0?1:channels==1?2:6; sound->sample_rate=rate;
+    sound->vol=1.0f;
+    sound->queue_shutdown=calloc(1,sizeof(*sound->queue_shutdown));
+    if(!sound->queue_shutdown) return 0;
+    sound->queue_shutdown->queue=handle; sound->queue_shutdown->buffer=-1;
+    stage->queue_blocks++;
+    for(unsigned index=0;index<blocks;index++){
+      int buffer=ar_i32(reader); uint32_t values=ar_u32(reader);
+      size_t bytes=(size_t)values*sizeof(int16_t);
+      if(!reader->ok || buffer<0 || !values || values%(unsigned)sound->channels ||
+         values>GML_QUEUE_PCM_BYTES_MAX/sizeof(int16_t) ||
+         bytes>GML_QUEUE_PCM_BYTES_MAX-stage->queue_bytes ||
+         reader->pos>reader->cap || bytes>reader->cap-reader->pos) return 0;
+      GmlAudioBlock *block=calloc(1,sizeof(*block));
+      if(!block) return 0;
+      block->pcm=malloc(bytes);
+      if(!block->pcm){ free(block); return 0; }
+      for(uint32_t value=0;value<values;value++)
+        block->pcm[value]=(int16_t)rd16(reader->data+reader->pos,value*2u);
+      reader->pos+=bytes;
+      block->nval=values; block->queue=handle; block->buffer=buffer;
+      if(sound->queue_tail) sound->queue_tail->next=block; else sound->queue_head=block;
+      sound->queue_tail=block; stage->queue_blocks++; stage->queue_bytes+=bytes;
+    }
+    audio_queue_refresh(sound);
+  }
+  unsigned events=ar_u32(reader);
+  if(!reader->ok || events>GML_QUEUE_BLOCKS_MAX-stage->queue_blocks ||
+     reader->pos>reader->cap || events>(reader->cap-reader->pos)/12u) return 0;
+  for(unsigned index=0;index<events;index++){
+    int queue=ar_i32(reader),buffer=ar_i32(reader),shutdown=ar_i32(reader);
+    if(queue<base_sounds || queue>=stored_sounds || buffer< -1 ||
+       (shutdown!=0 && shutdown!=1) || (buffer==-1 && !shutdown)) return 0;
+    GmlAudioBlock *event=calloc(1,sizeof(*event));
+    if(!event) return 0;
+    event->queue=queue; event->buffer=buffer;
+    stage->queue_blocks++; audio_queue_event(stage,event,shutdown);
+  }
+  return reader->ok;
+}
+static void audio_queues_discard(GmlAudio *stage){
+  for(int i=0;stage->snd && i<stage->n_snd;i++) audio_queue_discard(stage,&stage->snd[i]);
+  while(stage->event_head){
+    GmlAudioBlock *event=stage->event_head; stage->event_head=event->next;
+    audio_block_delete(stage,event);
+  }
+  free(stage->snd); stage->snd=NULL;
 }
 int gml_audio_state_load(GmlAudio *a, const void *data, size_t len, size_t *used){
   AudR s={(const uint8_t*)data,len,0,1};
@@ -1416,22 +1676,12 @@ int gml_audio_state_load(GmlAudio *a, const void *data, size_t len, size_t *used
   double master_gain=ar_d(&s);
   int channel_num=ar_i32(&s);
   GmlVoice tmp[GML_MAX_VOICES];
-  int snd_count=a?a->n_snd:0;
   typedef struct {
     double gain,pitch,loop_start,gain_target;
     int gain_fade_frames,default_loop;
     uint32_t external_type;
   } AudSoundState;
   AudSoundState *sound_state=NULL;
-  if(snd_count>0){
-    sound_state=calloc((size_t)snd_count,sizeof(*sound_state));
-    if(!sound_state) return 0;
-    for(int i=0;i<snd_count;i++){
-      sound_state[i].gain=1.0;
-      sound_state[i].pitch=1.0;
-      sound_state[i].gain_target=1.0;
-    }
-  }
   for(int i=0;i<GML_MAX_VOICES;i++){
     memset(&tmp[i],0,sizeof(tmp[i]));
     tmp[i].spatial_gain=1.0; tmp[i].emitter=-1;
@@ -1440,7 +1690,6 @@ int gml_audio_state_load(GmlAudio *a, const void *data, size_t len, size_t *used
     tmp[i].pos=ar_d(&s); tmp[i].gain=ar_d(&s); tmp[i].pitch=ar_d(&s);
     tmp[i].loop_start=ar_d(&s); tmp[i].spatial_gain=ar_d(&s);
     tmp[i].pan=ar_d(&s); tmp[i].emitter=ar_i32(&s);
-    if(!a || tmp[i].snd<0 || tmp[i].snd>=a->n_snd) tmp[i].active=0;
     if(!tmp[i].active){ memset(&tmp[i],0,sizeof(tmp[i])); continue; }
     if(tmp[i].id<1000000){
       tmp[i].id=next_voice_id++;
@@ -1448,10 +1697,11 @@ int gml_audio_state_load(GmlAudio *a, const void *data, size_t len, size_t *used
     if(!isfinite(tmp[i].pos) || tmp[i].pos<0.0) tmp[i].pos=0.0;
     if(!isfinite(tmp[i].gain) || tmp[i].gain<0.0) tmp[i].gain=1.0;
     if(!isfinite(tmp[i].pitch) || tmp[i].pitch<=0.0) tmp[i].pitch=1.0;
-    if(a && tmp[i].active) audio_voice_prepare(a,&tmp[i]);
   }
   int stored_sounds=ar_i32(&s);
-  if(stored_sounds<0 || stored_sounds>1000000){
+  if(!s.ok || stored_sounds<0 ||
+     (uint64_t)(unsigned)stored_sounds>(uint64_t)(a?a->n_base_snd:0)+GML_DYNAMIC_SOUND_LIMIT || s.pos>s.cap ||
+     (unsigned)stored_sounds>(s.cap-s.pos)/44u){
     free(sound_state); return 0;
   }
   /* Sounds past n_base_snd are created at run time, so a state saved before one existed must not
@@ -1460,30 +1710,28 @@ int gml_audio_state_load(GmlAudio *a, const void *data, size_t len, size_t *used
    * for a frontend that stores and restores every frame. Sounds recorded in a state but missing
    * from this session cannot be recreated -- the format carries their mixer parameters, not their
    * identity -- so a larger stored count still applies index-wise onto what exists. */
-  if(a && stored_sounds>=a->n_base_snd && stored_sounds<a->n_snd){
-    for(int i=stored_sounds;i<a->n_snd;i++) gml_audio_caster_free(a,i);
-    a->n_snd=stored_sounds;
-    if(snd_count>a->n_snd) snd_count=a->n_snd;
-    for(int i=0;i<GML_MAX_VOICES;i++)
-      if(tmp[i].active && (tmp[i].snd<0 || tmp[i].snd>=a->n_snd))
-        memset(&tmp[i],0,sizeof(tmp[i]));
-  }
+  int restored_count=a?a->n_snd:0;
+  if(a && stored_sounds>=a->n_base_snd && stored_sounds<restored_count)
+    restored_count=stored_sounds;
   /* Records are positional and run-time sounds carry no identity, so an index only names the same
    * sound when both tables have the same shape. Resource-backed sounds always do. Run-time ones do
    * only when the counts agree, which the release above arranges whenever the state describes the
    * smaller table; when the state describes a larger one its surplus sounds cannot be recreated, and
    * applying their gains and fades to whatever occupies those slots would corrupt unrelated sounds. */
-  int dynamic_layout_matches=a && stored_sounds==a->n_snd;
-  int applied_limit=snd_count;
+  int dynamic_layout_matches=a && stored_sounds==restored_count;
+  int applied_limit=restored_count;
   if(a && !dynamic_layout_matches && a->n_base_snd<applied_limit)
     applied_limit=a->n_base_snd;
+  free(sound_state);
+  sound_state=stored_sounds?calloc((size_t)stored_sounds,sizeof(*sound_state)):NULL;
+  if(stored_sounds && !sound_state) return 0;
   for(int i=0;i<stored_sounds;i++){
     double g=ar_d(&s), p=ar_d(&s), l=ar_d(&s);
     double target=ar_d(&s);
     int remaining=ar_i32(&s);
     int default_loop=ar_i32(&s);
     uint32_t external_type=ar_u32(&s);
-    if(i<applied_limit){
+    {
       sound_state[i].gain=isfinite(g)&&g>=0.0?g:1.0;
       /* A released run-time slot is serialized as an all-zero record. Preserve that canonical
        * record across a load; playback already treats a live sound's non-positive pitch as the
@@ -1513,17 +1761,57 @@ int gml_audio_state_load(GmlAudio *a, const void *data, size_t len, size_t *used
     }
   }
   if(!s.ok){ free(sound_state); return 0; }
-  if(master_gain<0) master_gain=1.0;
+  GmlAudio stage={0};
+  if(!audio_queues_read(&s,&stage,stored_sounds,a?a->n_base_snd:0)){
+    audio_queues_discard(&stage); free(sound_state); return 0;
+  }
+  /* Owned queues and canonical empty slots can be reconstructed without external media. */
+  for(int i=restored_count;i<stored_sounds;i++)
+    if(stage.snd[i].queue_format ||
+       (!sound_state[i].gain && !sound_state[i].pitch && !sound_state[i].loop_start &&
+        !sound_state[i].gain_target && !sound_state[i].gain_fade_frames &&
+        !sound_state[i].default_loop && !sound_state[i].external_type)) restored_count=i+1;
+  for(GmlAudioBlock *event=stage.event_head;event;event=event->next)
+    if(event->queue>=restored_count) restored_count=event->queue+1;
+  if(a && restored_count>a->n_snd){
+    GmlSound *sounds=realloc(a->snd,(size_t)restored_count*sizeof(*sounds));
+    if(!sounds){ audio_queues_discard(&stage); free(sound_state); return 0; }
+    memset(sounds+a->n_snd,0,(size_t)(restored_count-a->n_snd)*sizeof(*sounds));
+    a->snd=sounds;
+  }
+  if(!isfinite(master_gain) || master_gain<0) master_gain=1.0;
   if(channel_num<0) channel_num=0;
   if(a){
+    for(int i=restored_count;i<a->n_snd;i++) gml_audio_caster_free(a,i);
+    for(int i=0;i<a->n_snd;i++) if(a->snd[i].queue_format){
+      audio_queue_discard(a,&a->snd[i]); memset(&a->snd[i],0,sizeof(a->snd[i]));
+    }
+    while(a->event_head){
+      GmlAudioBlock *event=a->event_head; a->event_head=event->next;
+      audio_block_delete(a,event);
+    }
+    a->n_snd=restored_count;
+    for(int i=0;i<stored_sounds && i<a->n_snd;i++) if(stage.snd[i].queue_format){
+      free(a->snd[i].own); free(a->snd[i].encoded_own);
+      a->snd[i]=stage.snd[i]; memset(&stage.snd[i],0,sizeof(stage.snd[i]));
+    }
+    a->event_head=stage.event_head; a->event_tail=stage.event_tail;
+    a->event_count=stage.event_count; a->queue_blocks=stage.queue_blocks;
+    a->queue_bytes=stage.queue_bytes;
+    stage.event_head=stage.event_tail=NULL; stage.queue_blocks=0; stage.queue_bytes=0;
+    for(int i=0;i<GML_MAX_VOICES;i++){
+      if(tmp[i].active) audio_voice_prepare(a,&tmp[i]);
+      if(!tmp[i].active) memset(&tmp[i],0,sizeof(tmp[i]));
+    }
     a->paused=paused!=0; a->next_voice_id=next_voice_id<1000000?1000000:next_voice_id; a->master_gain=master_gain; a->channel_num=channel_num; memcpy(a->voice,tmp,sizeof(tmp));
     memcpy(a->group_gain,group_gain,sizeof group_gain);
     memcpy(a->group_target,group_target,sizeof group_target);
     memcpy(a->group_fade_frames,group_fade_frames,sizeof group_fade_frames);
     /* Only the sounds the state can actually name are rewritten. A sound the state says nothing
      * trustworthy about keeps what it has, rather than being reset to defaults it never carried. */
-    int restore_limit=a->n_snd<applied_limit?a->n_snd:applied_limit;
+    int restore_limit=a->n_snd<stored_sounds?a->n_snd:stored_sounds;
     for(int i=0;i<restore_limit;i++){
+      if(i>=applied_limit && !a->snd[i].queue_format) continue;
       a->snd[i].gain=sound_state?sound_state[i].gain:1.0;
       a->snd[i].pitch=sound_state?sound_state[i].pitch:1.0;
       a->snd[i].loop_start_seconds=sound_state?sound_state[i].loop_start:0.0;
@@ -1533,6 +1821,7 @@ int gml_audio_state_load(GmlAudio *a, const void *data, size_t len, size_t *used
       a->snd[i].external_type=sound_state?sound_state[i].external_type:0;
     }
   }
+  audio_queues_discard(&stage);
   free(sound_state);
   if(used) *used=s.pos;
   return s.pos<=len;

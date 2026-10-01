@@ -7,6 +7,8 @@
 #include "gml_wwise.h"
 #include "gml_builtin.h"
 #include "stdio_vfs.h"
+#include "gmlc_package.h"
+#include "gmlc_project.h"
 
 #include <math.h>
 #include <stdio.h>
@@ -25,6 +27,200 @@ static void fixture_write_u32(unsigned char *data,size_t off,uint32_t value){
 static void fixture_write_u16(unsigned char *data,size_t off,uint16_t value){
   data[off]=(unsigned char)value;
   data[off+1]=(unsigned char)(value>>8);
+}
+
+int expect_pcm_queue_playback(void){
+  GmlWin win={0}; GmlAudio *audio=gml_audio_create(&win);
+  if(!audio) return 0;
+  int ok=gml_audio_queue_create(audio,2,44100,0)==-1 &&
+         gml_audio_queue_create(audio,4,999,0)==-1 &&
+         gml_audio_queue_create(audio,4,48001,0)==-1 &&
+         gml_audio_queue_create(audio,4,44100,3)==-1;
+  int queue=gml_audio_queue_create(audio,4,44100,1);
+  unsigned char first[8],second[8];
+  for(int i=0;i<2;i++){
+    fixture_write_u16(first,(size_t)i*4,1000); fixture_write_u16(first,(size_t)i*4+2,2000);
+    fixture_write_u16(second,(size_t)i*4,3000); fixture_write_u16(second,(size_t)i*4+2,4000);
+  }
+  ok=ok && queue>=0 && gml_audio_exists(audio,queue) &&
+     !gml_audio_queue_submit(audio,queue,10,first,7) &&
+     gml_audio_queue_submit(audio,queue,10,first,sizeof first) &&
+     gml_audio_queue_submit(audio,queue,11,second,sizeof second);
+  int voice=gml_audio_play(audio,queue,1);
+  ok=ok && voice>=1000000 && gml_audio_play(audio,queue,0)==voice;
+  int16_t mixed[8]={0};
+  gml_audio_pause_sound(audio,voice,1); gml_audio_mix(audio,mixed,4);
+  for(int i=0;i<8;i++) ok=ok && mixed[i]==0;
+  ok=ok && gml_audio_queue_event_count(audio)==0;
+  gml_audio_pause_sound(audio,voice,0); gml_audio_mix(audio,mixed,4);
+  for(int i=0;i<8;i++) ok=ok && mixed[i]==(i<4?(i%2?2000:1000):(i%2?4000:3000));
+  ok=ok && !gml_audio_is_playing(audio,queue) && gml_audio_queue_event_count(audio)==2;
+  int q,b,shutdown;
+  ok=ok && gml_audio_queue_event_pop(audio,&q,&b,&shutdown) && q==queue && b==10 && !shutdown &&
+     gml_audio_queue_event_pop(audio,&q,&b,&shutdown) && q==queue && b==11 && !shutdown;
+  /* A small reusable pool can stream indefinitely rather than filling after one pass. */
+  for(int i=0;i<128 && ok;i++){
+    ok=gml_audio_queue_submit(audio,queue,10,first,sizeof first) && gml_audio_play(audio,queue,0)>=1000000;
+    gml_audio_mix(audio,mixed,2);
+    ok=ok && gml_audio_queue_event_pop(audio,&q,&b,&shutdown) && b==10 && !shutdown;
+  }
+  ok=ok && gml_audio_queue_submit(audio,queue,12,first,sizeof first);
+  gml_audio_stop(audio,queue);
+  ok=ok && gml_audio_exists(audio,queue) && gml_audio_queue_event_pop(audio,&q,&b,&shutdown) && b==12 && shutdown==1;
+  gml_audio_queue_free(audio,queue);
+  ok=ok && !gml_audio_exists(audio,queue) &&
+     gml_audio_queue_event_pop(audio,&q,&b,&shutdown) && q==queue && b==-1 && shutdown==1;
+  queue=gml_audio_queue_create(audio,1,44100,0);
+  unsigned char unsigned_pcm[3]={128,129,127};
+  ok=ok && gml_audio_queue_submit(audio,queue,20,unsigned_pcm,sizeof unsigned_pcm) &&
+     gml_audio_play(audio,queue,0)>=1000000;
+  gml_audio_mix(audio,mixed,3);
+  ok=ok && mixed[0]==0 && mixed[1]==0 && mixed[2]==256 && mixed[3]==256 &&
+     mixed[4]==-256 && mixed[5]==-256;
+  gml_audio_queue_free(audio,queue);
+  gml_audio_free(audio);
+  if(!ok) fprintf(stderr,"PCM queue playback/ownership fixture failed\n");
+  return ok;
+}
+
+int expect_pcm_queue_resampling_and_state(void){
+  GmlWin win={0};
+  GmlAudio *chunked=gml_audio_create(&win),*whole=gml_audio_create(&win),*restored=gml_audio_create(&win);
+  if(!chunked || !whole || !restored){ gml_audio_free(chunked); gml_audio_free(whole); gml_audio_free(restored); return 0; }
+  unsigned char pcm[80];
+  for(unsigned i=0;i<40;i++) fixture_write_u16(pcm,i*2,(uint16_t)(i*200));
+  int queue=gml_audio_queue_create(chunked,4,48000,1),reference=gml_audio_queue_create(whole,4,48000,1);
+  int ok=queue>=0 && reference>=0 &&
+    gml_audio_queue_submit(chunked,queue,30,pcm,12) &&
+    gml_audio_queue_submit(chunked,queue,31,pcm+12,20) &&
+    gml_audio_queue_submit(chunked,queue,32,pcm+32,48) &&
+    gml_audio_queue_submit(whole,reference,30,pcm,sizeof pcm) &&
+    gml_audio_play(chunked,queue,0)>=1000000 && gml_audio_play(whole,reference,0)>=1000000;
+  int16_t out[64],control[64];
+  gml_audio_mix(chunked,out,5); gml_audio_mix(whole,control,5);
+  ok=ok && !memcmp(out,control,10*sizeof(int16_t)) && gml_audio_queue_event_count(chunked)==1;
+  size_t size=gml_audio_state_size(chunked),written=0,used=0;
+  unsigned char *state=malloc(size),*again=malloc(size);
+  ok=ok && state && again && gml_audio_state_save(chunked,state,size,&written) && written==size &&
+    gml_audio_state_load(restored,state,size,&used) && used==size &&
+    gml_audio_state_size(restored)==size && gml_audio_state_save(restored,again,size,NULL) && !memcmp(state,again,size);
+  /* Truncation, an invalid event and an older schema reject without changing the live mixer. */
+  if(ok){
+    ok=!gml_audio_state_load(restored,state,size-1,NULL);
+    state[size-4]=2;
+    ok=ok && !gml_audio_state_load(restored,state,size,NULL);
+    state[size-4]=0; state[4]=2;
+    ok=ok && !gml_audio_state_load(restored,state,size,NULL);
+    state[4]=3;
+    ok=ok && gml_audio_state_save(restored,again,size,NULL) && !memcmp(state,again,size);
+  }
+  gml_audio_mix(chunked,out,32); gml_audio_mix(restored,control,32);
+  ok=ok && !memcmp(out,control,sizeof out);
+  gml_audio_mix(whole,control,32);
+  ok=ok && !memcmp(out,control,sizeof out);
+  for(int buffer=30;buffer<=32 && ok;buffer++){
+    int q,b,shutdown,rq,rb,rs;
+    ok=gml_audio_queue_event_pop(chunked,&q,&b,&shutdown) && b==buffer && !shutdown &&
+       gml_audio_queue_event_pop(restored,&rq,&rb,&rs) && rq==q && rb==b && rs==shutdown;
+  }
+  free(state); free(again);
+  gml_audio_free(chunked); gml_audio_free(whole); gml_audio_free(restored);
+  if(!ok) fprintf(stderr,"PCM queue resampling/state fixture failed\n");
+  return ok;
+}
+
+int expect_pcm_queue_builtin_ranges(void){
+  GmlWin win={0}; AnygmHostServices host={0}; GmlVM vm={0};
+  host.struct_size=sizeof host; host.abi_version=ANYGM_HOST_SERVICES_VERSION;
+  if(gml_vm_init(&vm,&win,&host)!=0) return 0;
+  GmlAudio *audio=gml_audio_create(&win); vm.audio=audio;
+  GmlVal create[3]={vreal(4),vreal(44100),vreal(0)};
+  GmlVal queue=gml_builtin_call(&vm,"audio_create_play_queue",create,3);
+  GmlVal buffer_args[3]={vreal(6),vreal(0),vreal(1)};
+  GmlVal buffer=gml_builtin_call(&vm,"buffer_create",buffer_args,3);
+  GmlVal poke[4]={buffer,vreal(2),vreal(4),vreal(1234)};
+  gml_builtin_call(&vm,"buffer_poke",poke,4);
+  GmlVal submit[4]={queue,buffer,vreal(2),vreal(2)};
+  gml_builtin_call(&vm,"audio_queue_sound",submit,4);
+  submit[2]=vreal(6); submit[3]=vreal(2); gml_builtin_call(&vm,"audio_queue_sound",submit,4);
+  submit[2]=vreal(NAN); gml_builtin_call(&vm,"audio_queue_sound",submit,4);
+  GmlVal play[3]={queue,vreal(0),vreal(0)};
+  GmlVal voice=gml_builtin_call(&vm,"audio_play_sound",play,3);
+  int16_t output[4]={0}; gml_audio_mix(audio,output,2);
+  int ok=audio && queue.d>=0 && buffer.d>=0 && voice.d>=1000000 &&
+    output[0]==1234 && output[1]==1234 && output[2]==0 && output[3]==0 &&
+    gml_audio_queue_event_count(audio)==1;
+  gml_fire_async_audio(&vm);
+  ok=ok && gml_audio_queue_event_count(audio)==0 && gml_global_num(&vm,"async_load")==-1;
+  gml_builtin_call(&vm,"audio_free_play_queue",&queue,1);
+  ok=ok && !gml_audio_exists(audio,(int)queue.d) && gml_audio_queue_event_count(audio)==1;
+  gml_vm_free(&vm); gml_audio_free(audio);
+  if(!ok) fprintf(stderr,"PCM queue builtin range fixture failed\n");
+  return ok;
+}
+
+int expect_pcm_queue_async_dispatch(void){
+  char source_path[]="/tmp/anygm-queue-event-source-XXXXXX";
+  char package_path[]="/tmp/anygm-queue-event-package-XXXXXX";
+  int source_fd=mkstemp(source_path),package_fd=mkstemp(package_path),ok=0;
+  if(source_fd<0 || package_fd<0) goto cleanup;
+  close(source_fd); source_fd=-1; close(package_fd); package_fd=-1;
+  if(!fixture_write_text(source_path,
+      "global.receipts += 1; global.seen_queue = async_load[? \"queue_id\"];\n"
+      "global.seen_buffer = async_load[? \"buffer_id\"];\n"
+      "global.seen_shutdown = async_load[? \"queue_shutdown\"];\n"
+      "global.seen_map = async_load;\n"
+      "if (global.close_on_receipt) { global.close_on_receipt = 0; audio_free_play_queue(global.seen_queue); }\n")) goto cleanup;
+  AnygmHostServices host={0}; host.struct_size=sizeof host;
+  host.abi_version=ANYGM_HOST_SERVICES_VERSION; anygm_stdio_vfs_services_init(&host);
+  GmlcProject project={0}; GmlcObject object={0}; GmlcObjectEvent event={0};
+  GmlcRoom room={0}; GmlcRoomInstance placed[2]={{0}}; int order=0;
+  project.host=&host; project.name="queue-event-fixture";
+  project.objects=&object; project.n_objects=project.cap_objects=1;
+  project.rooms=&room; project.n_rooms=project.cap_rooms=1;
+  project.room_order=&order; project.n_room_order=1;
+  object.id=object.name="obj_pcm_receiver";
+  object.sprite_id=object.mask_id=object.parent_id=-1;
+  object.events=&event; object.n_events=object.cap_events=1;
+  event.event_type=7; event.event_number=74; event.source_path=source_path;
+  room.id=room.name="room_pcm_receiver"; room.width=room.height=64; room.speed=60;
+  room.instances=placed; room.n_instances=room.cap_instances=2;
+  for(int i=0;i<2;i++){
+    placed[i].id=placed[i].name=i?"receiver_second":"receiver_first";
+    placed[i].object_id=0; placed[i].instance_id=100000u+(unsigned)i;
+  }
+  char error[256]={0};
+  if(!gmlc_package_write_structural(&project,package_path,error,sizeof error)){
+    fprintf(stderr,"PCM event fixture package failed: %s\n",error); goto cleanup;
+  }
+  GmlWin win={0}; GmlVM vm={0};
+  if(anygm_stdio_load_win(&win,package_path)) goto cleanup;
+  if(gml_vm_init(&vm,&win,&host)){ gml_win_free(&win); goto cleanup; }
+  win.bytecode=15;
+  GmlAudio *audio=gml_audio_create(&win); vm.audio=audio;
+  gml_room_enter(&vm,0);
+  int queue=gml_audio_queue_create(audio,4,44100,0);
+  unsigned char pcm[2]={0xe8,3}; int16_t output[2];
+  *gml_varmap_put(&vm.globals,"receipts")=vreal(0);
+  *gml_varmap_put(&vm.globals,"close_on_receipt")=vreal(1);
+  ok=queue>=0 && vm.inst_count==2 && gml_audio_queue_submit(audio,queue,17,pcm,sizeof pcm) &&
+     gml_audio_play(audio,queue,0)>=1000000;
+  gml_audio_mix(audio,output,1); gml_fire_async_audio(&vm);
+  ok=ok && gml_global_num(&vm,"receipts")==2 && gml_global_num(&vm,"seen_queue")==queue &&
+    gml_global_num(&vm,"seen_buffer")==17 && gml_global_num(&vm,"seen_shutdown")==0 &&
+    !gml_audio_exists(audio,queue) && gml_audio_queue_event_count(audio)==1;
+  gml_fire_async_audio(&vm);
+  GmlVal map[2]={vreal(gml_global_num(&vm,"seen_map")),vreal(0)};
+  ok=ok && gml_global_num(&vm,"receipts")==4 && gml_global_num(&vm,"seen_shutdown")==1 &&
+    gml_global_num(&vm,"async_load")==-1 && gml_builtin_call(&vm,"ds_exists",map,2).d==0 &&
+    gml_audio_queue_event_count(audio)==0;
+  gml_vm_free(&vm); gml_audio_free(audio); gml_win_free(&win);
+cleanup:
+  if(source_fd>=0) close(source_fd);
+  if(package_fd>=0) close(package_fd);
+  unlink(source_path); unlink(package_path);
+  if(!ok) fprintf(stderr,"PCM queue Async Playback dispatch fixture failed\n");
+  return ok;
 }
 static size_t fixture_pcm16_wav(unsigned char *out,size_t cap,int samples,int16_t value){
   size_t bytes=44u+(size_t)samples*2u;

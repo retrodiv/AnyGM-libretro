@@ -9,9 +9,20 @@ marketing version. It is a numeric field in a validated binary header.
 
 ## Save-state schema
 
-The current AnyGM save-state schema is `35`. It is the format transported by
+The current AnyGM save-state schema is `36`. It is the format transported by
 libretro frontends for manual save states, automatic state slots, and rewind
 snapshots. Those features remain supported.
+
+Schema `36` introduces audio schema `3`; VM schema `19` is unchanged. After
+the established mixer parameters, audio states carry handle-ordered PCM queues:
+format, source rate, channel mode, then buffer handles and bounded little-endian
+signed PCM blocks. Voice positions retain fractional resampling progress. A
+FIFO of undelivered playback notices preserves queue/buffer identities and the
+shutdown flag. Queue PCM is limited to 16 MiB per mixer and all queued blocks,
+reserved shutdown notices and pending events share a 65536-node limit. Queue
+data is decoded in staging storage before publication; rejection leaves the
+live mixer untouched. No host pointer or persisted external state is involved.
+Older root/audio states reject without legacy readers.
 
 Schema `35` introduces VM schema `19`. Live GML buffers are mutable runtime
 memory, no longer discarded host I/O. After the buffer and asynchronous identity
