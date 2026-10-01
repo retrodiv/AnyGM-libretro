@@ -511,6 +511,9 @@ int gml_vm_state_reader_ok(const GmlVmStateReader *reader){
 size_t gml_vm_state_reader_position(const GmlVmStateReader *reader){
   return reader?reader->pos:0;
 }
+size_t gml_vm_state_reader_remaining(const GmlVmStateReader *reader){
+  return reader && reader->ok && reader->pos<=reader->cap ? reader->cap-reader->pos : 0;
+}
 void gml_vm_state_reader_fail(GmlVmStateReader *reader,
                               const char *message,uint32_t detail){
   if(!reader) return;

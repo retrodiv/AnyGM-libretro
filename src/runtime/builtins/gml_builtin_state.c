@@ -12,6 +12,81 @@
 #include <stdlib.h>
 #include <string.h>
 
+static int builtin_state_ds_lower_bound(const GmlDSPool *pool,uint32_t id){
+  int first=0,last=pool->live_count;
+  while(first<last){
+    int middle=first+(last-first)/2;
+    if(pool->order[middle].id<id) first=middle+1;
+    else last=middle;
+  }
+  return first;
+}
+
+void *builtin_state_ds_find(const GmlDSPool *pool,uint32_t id){
+  if(!pool || !id || id>INT_MAX) return NULL;
+  int at=builtin_state_ds_lower_bound(pool,id);
+  return at<pool->live_count && pool->order[at].id==id ?
+    pool->slot[pool->order[at].slot].value : NULL;
+}
+
+static void *builtin_state_ds_allocate(GmlDSPool *pool,uint32_t id,size_t size){
+  if(!id || id>INT_MAX || builtin_state_ds_find(pool,id)) return NULL;
+  int slot=pool->next_free;
+  while(slot<pool->used && pool->slot[slot].id) slot++;
+  if(slot==pool->capacity){
+    if(pool->capacity>INT_MAX/2) return NULL;
+    int capacity=pool->capacity?pool->capacity*2:32;
+    if((size_t)capacity>SIZE_MAX/sizeof(*pool->slot) ||
+       (size_t)capacity>SIZE_MAX/sizeof(*pool->order)) return NULL;
+    GmlDSSlot *slots=calloc((size_t)capacity,sizeof(*slots));
+    GmlDSOrder *order=malloc((size_t)capacity*sizeof(*order));
+    if(!slots || !order){ free(slots); free(order); return NULL; }
+    if(pool->used) memcpy(slots,pool->slot,(size_t)pool->used*sizeof(*slots));
+    if(pool->live_count) memcpy(order,pool->order,(size_t)pool->live_count*sizeof(*order));
+    free(pool->slot);
+    free(pool->order);
+    pool->slot=slots;
+    pool->order=order;
+    pool->capacity=capacity;
+  }
+  if(!pool->slot[slot].value){
+    pool->slot[slot].value=calloc(1,size);
+    if(!pool->slot[slot].value) return NULL;
+  }
+  int at=builtin_state_ds_lower_bound(pool,id);
+  memmove(pool->order+at+1,pool->order+at,
+          (size_t)(pool->live_count-at)*sizeof(*pool->order));
+  pool->order[at]=(GmlDSOrder){id,slot};
+  pool->slot[slot].id=id;
+  pool->live_count++;
+  if(slot==pool->used) pool->used++;
+  pool->next_free=slot+1;
+  return pool->slot[slot].value;
+}
+
+void builtin_state_ds_remove(GmlDSPool *pool,uint32_t id){
+  int at=builtin_state_ds_lower_bound(pool,id);
+  if(at==pool->live_count || pool->order[at].id!=id) return;
+  int slot=pool->order[at].slot;
+  pool->slot[slot].id=0;
+  if(slot<pool->next_free) pool->next_free=slot;
+  pool->live_count--;
+  memmove(pool->order+at,pool->order+at+1,
+          (size_t)(pool->live_count-at)*sizeof(*pool->order));
+}
+
+GmlDSMap *builtin_state_ds_map_allocate(GmlBuiltinState *state,uint32_t id){
+  GmlDSMap *map=builtin_state_ds_allocate(&state->ds_maps,id,sizeof(*map));
+  if(map){ map->live=1; map->id=id; map->last_lookup=-1; state->ds_map_last=map; }
+  return map;
+}
+
+GmlDSList *builtin_state_ds_list_allocate(GmlBuiltinState *state,uint32_t id){
+  GmlDSList *list=builtin_state_ds_allocate(&state->ds_lists,id,sizeof(*list));
+  if(list){ list->live=1; list->id=id; }
+  return list;
+}
+
 GmlTimeSource *gml_builtin_time_source_allocate(GmlVM *vm,int parent){
   GmlBuiltinState *state=gml_builtin_state_ensure(vm);
   if(!state) return NULL;
@@ -48,7 +123,6 @@ static void builtin_state_resource_defaults(GmlBuiltinState *state){
   state->next_buffer_id=1;
   state->async_group_status=1;
   state->next_ds_id=1;
-  state->ds_map_last_slot=-1;
   state->next_time_source_id=GML_TIME_SOURCE_ID_BASE;
   state->time_source_game_state=1;
   state->listener_forward_z=-1;
@@ -258,20 +332,26 @@ void builtin_state_external_audio_clear(GmlBuiltinState *state){
 }
 
 static void builtin_state_ds_reset(GmlBuiltinState *state){
-  for(int i=0;i<GML_DS_MAP_MAX;i++){
-    GmlDSMap *map=&state->ds_map[i];
+  state->ds_map_last=NULL;
+  for(int i=0;i<state->ds_maps.used;i++){
+    GmlDSMap *map=state->ds_maps.slot[i].value;
     for(int j=0;j<map->len;j++) free(map->entry[j].key);
     free(map->entry);
     free(map->hidx);
-    memset(map,0,sizeof(*map));
-    map->last_lookup=-1;
+    free(map);
   }
-  state->ds_map_last_slot=-1;
-  for(int i=0;i<GML_DS_LIST_MAX;i++){
-    free(state->ds_list[i].item);
-    free(state->ds_list[i].child_kind);
-    memset(&state->ds_list[i],0,sizeof(state->ds_list[i]));
+  free(state->ds_maps.slot);
+  free(state->ds_maps.order);
+  memset(&state->ds_maps,0,sizeof(state->ds_maps));
+  for(int i=0;i<state->ds_lists.used;i++){
+    GmlDSList *list=state->ds_lists.slot[i].value;
+    free(list->item);
+    free(list->child_kind);
+    free(list);
   }
+  free(state->ds_lists.slot);
+  free(state->ds_lists.order);
+  memset(&state->ds_lists,0,sizeof(state->ds_lists));
   for(int i=0;i<GML_DS_GRID_MAX;i++){
     free(state->ds_grid[i].cell);
     memset(&state->ds_grid[i],0,sizeof(state->ds_grid[i]));
@@ -284,15 +364,15 @@ void gml_builtin_state_visit_values(const GmlBuiltinState *state,
                                     GmlBuiltinValueVisitor visitor,
                                     void *userdata){
   if(!state || !visitor) return;
-  for(int i=0;i<GML_DS_MAP_MAX;i++) if(state->ds_map[i].live){
-    const GmlDSMap *map=&state->ds_map[i];
+  for(int i=0;i<state->ds_maps.live_count;i++){
+    const GmlDSMap *map=state->ds_maps.slot[state->ds_maps.order[i].slot].value;
     for(int j=0;j<map->len;j++){
       visitor(userdata,map->entry[j].key_val);
       visitor(userdata,map->entry[j].val);
     }
   }
-  for(int i=0;i<GML_DS_LIST_MAX;i++) if(state->ds_list[i].live){
-    const GmlDSList *list=&state->ds_list[i];
+  for(int i=0;i<state->ds_lists.live_count;i++){
+    const GmlDSList *list=state->ds_lists.slot[state->ds_lists.order[i].slot].value;
     for(int j=0;j<list->len;j++) visitor(userdata,list->item[j]);
   }
   for(int i=0;i<GML_DS_GRID_MAX;i++) if(state->ds_grid[i].live){
@@ -420,8 +500,8 @@ void gml_builtin_state_profile_ds(const GmlBuiltinState *state,
   if(byte_totals) memset(byte_totals,0,3*sizeof(*byte_totals));
   if(live_counts) memset(live_counts,0,3*sizeof(*live_counts));
   if(!state) return;
-  for(int i=0;i<GML_DS_MAP_MAX;i++) if(state->ds_map[i].live){
-    const GmlDSMap *map=&state->ds_map[i];
+  for(int i=0;i<state->ds_maps.live_count;i++){
+    const GmlDSMap *map=state->ds_maps.slot[state->ds_maps.order[i].slot].value;
     if(live_counts) live_counts[0]++;
     if(byte_totals){
       byte_totals[0]+=8;
@@ -432,8 +512,8 @@ void gml_builtin_state_profile_ds(const GmlBuiltinState *state,
       }
     }
   }
-  for(int i=0;i<GML_DS_LIST_MAX;i++) if(state->ds_list[i].live){
-    const GmlDSList *list=&state->ds_list[i];
+  for(int i=0;i<state->ds_lists.live_count;i++){
+    const GmlDSList *list=state->ds_lists.slot[state->ds_lists.order[i].slot].value;
     if(live_counts) live_counts[1]++;
     if(byte_totals){
       byte_totals[1]+=8;
@@ -453,7 +533,7 @@ void gml_builtin_state_profile_ds(const GmlBuiltinState *state,
   }
 }
 
-typedef struct { uint32_t id; int slot; } DsStateOrder;
+typedef GmlDSOrder DsStateOrder;
 
 static int ds_state_order_compare(const void *left,const void *right){
   uint32_t a=((const DsStateOrder *)left)->id,b=((const DsStateOrder *)right)->id;
@@ -482,14 +562,11 @@ void gml_builtin_state_write_ini_ds(const GmlBuiltinState *state,
    * Sort the record traversal by ID so uninterrupted and restored execution
    * retain identical bytes, including shared-array definition order. This
    * changes neither container entry order nor the existing keyed format. */
-  DsStateOrder maps[GML_DS_MAP_MAX],lists[GML_DS_LIST_MAX],grids[GML_DS_GRID_MAX];
-  int map_live=0;
-  for(int i=0;i<GML_DS_MAP_MAX;i++) if(state->ds_map[i].live)
-    maps[map_live++]=(DsStateOrder){state->ds_map[i].id,i};
-  qsort(maps,(size_t)map_live,sizeof(*maps),ds_state_order_compare);
+  DsStateOrder grids[GML_DS_GRID_MAX];
+  int map_live=state->ds_maps.live_count;
   gml_vm_state_write_i32(writer,map_live);
   for(int i=0;i<map_live;i++){
-    const GmlDSMap *map=&state->ds_map[maps[i].slot];
+    const GmlDSMap *map=state->ds_maps.slot[state->ds_maps.order[i].slot].value;
     gml_vm_state_write_u32(writer,map->id);
     gml_vm_state_write_i32(writer,map->len);
     for(int j=0;j<map->len;j++){
@@ -500,13 +577,10 @@ void gml_builtin_state_write_ini_ds(const GmlBuiltinState *state,
       gml_vm_state_write_i32(writer,map->entry[j].child_kind);
     }
   }
-  int list_live=0;
-  for(int i=0;i<GML_DS_LIST_MAX;i++) if(state->ds_list[i].live)
-    lists[list_live++]=(DsStateOrder){state->ds_list[i].id,i};
-  qsort(lists,(size_t)list_live,sizeof(*lists),ds_state_order_compare);
+  int list_live=state->ds_lists.live_count;
   gml_vm_state_write_i32(writer,list_live);
   for(int i=0;i<list_live;i++){
-    const GmlDSList *list=&state->ds_list[lists[i].slot];
+    const GmlDSList *list=state->ds_lists.slot[state->ds_lists.order[i].slot].value;
     gml_vm_state_write_u32(writer,list->id);
     gml_vm_state_write_i32(writer,list->len);
     for(int j=0;j<list->len;j++){
@@ -561,27 +635,31 @@ int gml_builtin_state_read_ini_ds(GmlBuiltinState *state,
   }
   if(!gml_vm_state_reader_ok(reader)) return 0;
   state->next_ds_id=gml_vm_state_read_i32(reader);
+  if(state->next_ds_id<1){
+    gml_vm_state_reader_fail(reader,"bad DS identity cursor",(uint32_t)state->next_ds_id);
+    return 0;
+  }
   int map_live=gml_vm_state_read_i32(reader);
-  if(map_live<0 || map_live>GML_DS_MAP_MAX){
+  if(map_live<0 || (size_t)map_live>gml_vm_state_reader_remaining(reader)/8){
     gml_vm_state_reader_fail(reader,"bad ds_map count",(uint32_t)map_live);
     map_live=0;
   }
   for(int mi=0;mi<map_live && gml_vm_state_reader_ok(reader);mi++){
-    int slot=-1;
-    for(int i=0;i<GML_DS_MAP_MAX;i++) if(!state->ds_map[i].live){
-      slot=i;
+    uint32_t id=gml_vm_state_read_u32(reader);
+    if(!id || id>=(uint32_t)state->next_ds_id ||
+       builtin_state_ds_find(&state->ds_maps,id)){
+      gml_vm_state_reader_fail(reader,"bad ds_map identity",id);
       break;
     }
-    if(slot<0){
-      gml_vm_state_reader_fail(reader,"no ds_map slot",(uint32_t)mi);
+    GmlDSMap *map=builtin_state_ds_map_allocate(state,id);
+    if(!map){
+      gml_vm_state_reader_fail(reader,"ds_map pool allocation failed",id);
       break;
     }
-    GmlDSMap *map=&state->ds_map[slot];
-    map->live=1;
-    map->id=gml_vm_state_read_u32(reader);
     map->len=gml_vm_state_read_i32(reader);
     map->last_lookup=-1;
-    if(map->len<0 || map->len>100000){
+    if(map->len<0 || map->len>100000 ||
+       (size_t)map->len>gml_vm_state_reader_remaining(reader)/10){
       gml_vm_state_reader_fail(reader,"bad ds_map len",(uint32_t)map->len);
       map->len=0;
     }
@@ -608,25 +686,25 @@ int gml_builtin_state_read_ini_ds(GmlBuiltinState *state,
   }
   if(!gml_vm_state_reader_ok(reader)) return 0;
   int list_live=gml_vm_state_read_i32(reader);
-  if(list_live<0 || list_live>GML_DS_LIST_MAX){
+  if(list_live<0 || (size_t)list_live>gml_vm_state_reader_remaining(reader)/8){
     gml_vm_state_reader_fail(reader,"bad ds_list count",(uint32_t)list_live);
     list_live=0;
   }
   for(int li=0;li<list_live && gml_vm_state_reader_ok(reader);li++){
-    int slot=-1;
-    for(int i=0;i<GML_DS_LIST_MAX;i++) if(!state->ds_list[i].live){
-      slot=i;
+    uint32_t id=gml_vm_state_read_u32(reader);
+    if(!id || id>=(uint32_t)state->next_ds_id ||
+       builtin_state_ds_find(&state->ds_lists,id)){
+      gml_vm_state_reader_fail(reader,"bad ds_list identity",id);
       break;
     }
-    if(slot<0){
-      gml_vm_state_reader_fail(reader,"no ds_list slot",(uint32_t)li);
+    GmlDSList *list=builtin_state_ds_list_allocate(state,id);
+    if(!list){
+      gml_vm_state_reader_fail(reader,"ds_list pool allocation failed",id);
       break;
     }
-    GmlDSList *list=&state->ds_list[slot];
-    list->live=1;
-    list->id=gml_vm_state_read_u32(reader);
     list->len=gml_vm_state_read_i32(reader);
-    if(list->len<0 || list->len>100000){
+    if(list->len<0 || list->len>100000 ||
+       (size_t)list->len>gml_vm_state_reader_remaining(reader)/5){
       gml_vm_state_reader_fail(reader,"bad ds_list len",(uint32_t)list->len);
       list->len=0;
     }

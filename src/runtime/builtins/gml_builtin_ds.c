@@ -96,55 +96,38 @@ static GmlVal ds_val_clone(GmlVal v){
   return vreal(v.t==V_REAL?v.d:0.0);
 }
 GmlDSMap *ds_map_slot(GmlVM *vm, int id){
-  if(!vm) return NULL;
-  int li=vm->builtins->ds_map_last_slot;
-  if(li>=0 && li<GML_DS_MAP_MAX && vm->builtins->ds_map[li].live && (int)vm->builtins->ds_map[li].id==id)
-    return &vm->builtins->ds_map[li];
-  for(int i=0;i<GML_DS_MAP_MAX;i++) if(vm->builtins->ds_map[i].live && (int)vm->builtins->ds_map[i].id==id){
-    vm->builtins->ds_map_last_slot=i;
-    return &vm->builtins->ds_map[i];
-  }
-  return NULL;
+  if(!vm || !vm->builtins) return NULL;
+  GmlDSMap *map=vm->builtins->ds_map_last;
+  if(map && map->live && map->id==(uint32_t)id) return map;
+  map=builtin_state_ds_find(&vm->builtins->ds_maps,(uint32_t)id);
+  vm->builtins->ds_map_last=map;
+  return map && map->live ? map : NULL;
 }
 int ds_map_create_id(GmlVM *vm){
-  for(int i=0;i<GML_DS_MAP_MAX;i++) if(!vm->builtins->ds_map[i].live){
-    vm->builtins->ds_map[i].live=1;
-    vm->builtins->ds_map[i].id=(uint32_t)vm->builtins->next_ds_id++;
-    vm->builtins->ds_map[i].last_lookup=-1;
-    vm->builtins->ds_map_last_slot=i;
-    if(vm->builtins->next_ds_id<=0) vm->builtins->next_ds_id=1;
-    return (int)vm->builtins->ds_map[i].id;
-  }
-  return -1;
+  GmlBuiltinState *state=builtin_state_ensure(vm);
+  if(!state || state->next_ds_id<=0 || state->next_ds_id==INT_MAX) return -1;
+  GmlDSMap *map=builtin_state_ds_map_allocate(state,(uint32_t)state->next_ds_id);
+  if(!map) return -1;
+  return state->next_ds_id++;
 }
 /* ---- ds_list: an ordered list of GmlVal, parallel to ds_map. Identifiers share the same
  * next_ds_id counter so maps and lists never collide. */
 GmlDSList *ds_list_slot(GmlVM *vm, int id){
-  for(int i=0;i<GML_DS_LIST_MAX;i++) if(vm->builtins->ds_list[i].live && (int)vm->builtins->ds_list[i].id==id) return &vm->builtins->ds_list[i];
-  return NULL;
+  GmlDSList *list=vm && vm->builtins ?
+    builtin_state_ds_find(&vm->builtins->ds_lists,(uint32_t)id) : NULL;
+  return list && list->live ? list : NULL;
 }
 GmlDSList *ds_list_slot_repair(GmlVM *vm, int id){
   GmlDSList *l=ds_list_slot(vm,id);
-  if(l || !vm->builtins->ds_list_compat_repair || id<=0 || id>=vm->builtins->next_ds_id) return l;
-  for(int i=0;i<GML_DS_LIST_MAX;i++) if(!vm->builtins->ds_list[i].live){
-    vm->builtins->ds_list[i].live=1;
-    vm->builtins->ds_list[i].id=(uint32_t)id;
-    vm->builtins->ds_list[i].len=0;
-    vm->builtins->ds_list[i].cap=0;
-    vm->builtins->ds_list[i].item=NULL;
-    vm->builtins->ds_list[i].child_kind=NULL;
-    return &vm->builtins->ds_list[i];
-  }
-  return NULL;
+  if(l || !vm || !vm->builtins || !vm->builtins->ds_list_compat_repair || id<=0 || id>=vm->builtins->next_ds_id) return l;
+  return builtin_state_ds_list_allocate(vm->builtins,(uint32_t)id);
 }
 int ds_list_create_id(GmlVM *vm){
-  for(int i=0;i<GML_DS_LIST_MAX;i++) if(!vm->builtins->ds_list[i].live){
-    vm->builtins->ds_list[i].live=1; vm->builtins->ds_list[i].len=0;
-    vm->builtins->ds_list[i].id=(uint32_t)vm->builtins->next_ds_id++;
-    if(vm->builtins->next_ds_id<=0) vm->builtins->next_ds_id=1;
-    return (int)vm->builtins->ds_list[i].id;
-  }
-  return -1;
+  GmlBuiltinState *state=builtin_state_ensure(vm);
+  if(!state || state->next_ds_id<=0 || state->next_ds_id==INT_MAX) return -1;
+  GmlDSList *list=builtin_state_ds_list_allocate(state,(uint32_t)state->next_ds_id);
+  if(!list) return -1;
+  return state->next_ds_id++;
 }
 void ds_list_push_kind(GmlDSList *l, GmlVal v, int kind){
   if(!l) return;
@@ -216,6 +199,7 @@ static GmlDSGrid *ds_grid_slot(GmlVM *vm, int id){
   return NULL;
 }
 static int ds_grid_make(GmlVM *vm, int w, int h){
+  if(vm->builtins->next_ds_id<=0 || vm->builtins->next_ds_id==INT_MAX) return -1;
   if(w<0) w=0;
   if(h<0) h=0;
   if((long)w*h>8000000) return -1;
@@ -223,7 +207,6 @@ static int ds_grid_make(GmlVM *vm, int w, int h){
     vm->builtins->ds_grid[i].live=1; vm->builtins->ds_grid[i].w=w; vm->builtins->ds_grid[i].h=h;
     vm->builtins->ds_grid[i].cell=(w&&h)?calloc((size_t)w*h,sizeof(GmlVal)):NULL;
     vm->builtins->ds_grid[i].id=(uint32_t)vm->builtins->next_ds_id++;
-    if(vm->builtins->next_ds_id<=0) vm->builtins->next_ds_id=1;
     return (int)vm->builtins->ds_grid[i].id;
   }
   return -1;
@@ -388,16 +371,7 @@ static void ds_map_clear_entries(GmlDSMap *m){
   m->hdirty=1;
   m->last_lookup=-1;
 }
-typedef struct {
-  unsigned char map[GML_DS_MAP_MAX];
-  unsigned char list[GML_DS_LIST_MAX];
-} DsDestroyCtx;
-static int ds_map_slot_index(GmlVM *vm, GmlDSMap *m){
-  return vm && m && m>=vm->builtins->ds_map && m<vm->builtins->ds_map+GML_DS_MAP_MAX ? (int)(m-vm->builtins->ds_map) : -1;
-}
-static int ds_list_slot_index(GmlVM *vm, GmlDSList *l){
-  return vm && l && l>=vm->builtins->ds_list && l<vm->builtins->ds_list+GML_DS_LIST_MAX ? (int)(l-vm->builtins->ds_list) : -1;
-}
+/* Per-container traversal latches break cycles without capacity-sized scratch. */
 static int ds_owned_id(GmlVal v, int *id){
   if(v.t!=V_REAL || !isfinite(v.d)) return 0;
   int n=(int)v.d;
@@ -405,72 +379,71 @@ static int ds_owned_id(GmlVal v, int *id){
   if(id) *id=n;
   return 1;
 }
-static void ds_map_destroy_ctx(GmlVM *vm, GmlDSMap *m, DsDestroyCtx *ctx);
-static void ds_list_destroy_ctx(GmlVM *vm, GmlDSList *l, DsDestroyCtx *ctx);
-static void ds_owned_destroy_ctx(GmlVM *vm, GmlVal v, int kind, DsDestroyCtx *ctx){
+static void ds_map_destroy_ctx(GmlVM *vm, GmlDSMap *m);
+static void ds_list_destroy_ctx(GmlVM *vm, GmlDSList *l);
+static void ds_owned_destroy_ctx(GmlVM *vm, GmlVal v, int kind){
   int id;
   if(!ds_owned_id(v,&id)) return;
-  if(kind==1) ds_list_destroy_ctx(vm,ds_list_slot(vm,id),ctx);
-  else if(kind==2) ds_map_destroy_ctx(vm,ds_map_slot(vm,id),ctx);
+  if(kind==1) ds_list_destroy_ctx(vm,ds_list_slot(vm,id));
+  else if(kind==2) ds_map_destroy_ctx(vm,ds_map_slot(vm,id));
 }
-static void ds_map_destroy_children(GmlVM *vm, GmlDSMap *m, DsDestroyCtx *ctx){
+static void ds_map_destroy_children(GmlVM *vm, GmlDSMap *m){
   if(!m) return;
   for(int i=0;i<m->len;i++){
     int kind=m->entry[i].child_kind;
     m->entry[i].child_kind=0;
-    if(kind) ds_owned_destroy_ctx(vm,m->entry[i].val,kind,ctx);
+    if(kind) ds_owned_destroy_ctx(vm,m->entry[i].val,kind);
   }
 }
-static void ds_list_destroy_children(GmlVM *vm, GmlDSList *l, DsDestroyCtx *ctx){
+static void ds_list_destroy_children(GmlVM *vm, GmlDSList *l){
   if(!l) return;
   for(int i=0;i<l->len;i++){
     int kind=l->child_kind?l->child_kind[i]:0;
     if(l->child_kind) l->child_kind[i]=0;
-    if(kind) ds_owned_destroy_ctx(vm,l->item[i],kind,ctx);
+    if(kind) ds_owned_destroy_ctx(vm,l->item[i],kind);
   }
 }
-static void ds_map_destroy_ctx(GmlVM *vm, GmlDSMap *m, DsDestroyCtx *ctx){
-  int slot=ds_map_slot_index(vm,m);
-  if(slot<0 || !m->live || ctx->map[slot]) return;
-  ctx->map[slot]=1;
+static void ds_map_destroy_ctx(GmlVM *vm, GmlDSMap *m){
+  if(!m || !m->live || m->destroying) return;
+  m->destroying=1;
   m->live=0;                         /* break self/cross cycles before walking children */
-  if(vm->builtins->ds_map_last_slot==slot) vm->builtins->ds_map_last_slot=-1;
-  ds_map_destroy_children(vm,m,ctx);
+  ds_map_destroy_children(vm,m);
   ds_map_clear_entries(m);
   free(m->entry);
   ds_map_index_free(m);
+  builtin_state_ds_remove(&vm->builtins->ds_maps,m->id);
   memset(m,0,sizeof(*m));
   m->last_lookup=-1;
 }
-static void ds_list_destroy_ctx(GmlVM *vm, GmlDSList *l, DsDestroyCtx *ctx){
-  int slot=ds_list_slot_index(vm,l);
-  if(slot<0 || !l->live || ctx->list[slot]) return;
-  ctx->list[slot]=1;
+static void ds_list_destroy_ctx(GmlVM *vm, GmlDSList *l){
+  if(!l || !l->live || l->destroying) return;
+  l->destroying=1;
   l->live=0;
-  ds_list_destroy_children(vm,l,ctx);
+  ds_list_destroy_children(vm,l);
   free(l->item);
   free(l->child_kind);
+  builtin_state_ds_remove(&vm->builtins->ds_lists,l->id);
   memset(l,0,sizeof(*l));
 }
 void ds_map_destroy_id(GmlVM *vm, int id){
-  DsDestroyCtx ctx={0};
-  ds_map_destroy_ctx(vm,ds_map_slot(vm,id),&ctx);
+  ds_map_destroy_ctx(vm,ds_map_slot(vm,id));
 }
 void ds_list_destroy_id(GmlVM *vm, int id){
-  DsDestroyCtx ctx={0};
-  ds_list_destroy_ctx(vm,ds_list_slot(vm,id),&ctx);
+  ds_list_destroy_ctx(vm,ds_list_slot(vm,id));
 }
 static void ds_map_clear_owned(GmlVM *vm, GmlDSMap *m){
-  DsDestroyCtx ctx={0}; int slot=ds_map_slot_index(vm,m);
-  if(slot>=0) ctx.map[slot]=1;
-  ds_map_destroy_children(vm,m,&ctx);
+  if(!m || m->destroying) return;
+  m->destroying=1;
+  ds_map_destroy_children(vm,m);
   ds_map_clear_entries(m);
+  m->destroying=0;
 }
 static void ds_list_clear_owned(GmlVM *vm, GmlDSList *l){
-  DsDestroyCtx ctx={0}; int slot=ds_list_slot_index(vm,l);
-  if(slot>=0) ctx.list[slot]=1;
-  ds_list_destroy_children(vm,l,&ctx);
-  if(l) l->len=0;
+  if(!l || l->destroying) return;
+  l->destroying=1;
+  ds_list_destroy_children(vm,l);
+  l->len=0;
+  l->destroying=0;
 }
 static int ds_map_replace_from_map(GmlVM *vm, int dst_id, int src_id){
   GmlDSMap *dst=ds_map_slot(vm,dst_id);

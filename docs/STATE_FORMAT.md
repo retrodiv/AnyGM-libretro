@@ -290,6 +290,15 @@ canonical bytes and semantics remain unchanged.
   is preserved. Restore may compact the private pools without changing the bytes
   produced after an identical sequence of later allocations.
 - Every variable section is length-delimited and must be consumed exactly.
+- DS map/list pools grow on demand and retain container addresses and public handles.
+  Their live handle indexes are maintained in canonical order; snapshot traversal
+  neither sorts them nor allocates capacity-sized scratch. Unused pool slots and
+  reserved capacity are excluded from bytes. This storage change retains schema
+  `34` and VM schema `18`, because existing record layouts and meaning are unchanged.
+  Restore bounds counts against the remaining section before allocation and
+  rejects duplicate or non-advancing handles within each pool. Runtime growth is
+  bounded by allocation success and the positive signed handle namespace; the
+  existing per-container state element and string bounds still apply.
 - Content, compatibility, and stateful configuration fingerprints are distinct.
 - Active content-override directives join the configuration fingerprint, so a state saved with
   them loads only while they are active. Content without directives keeps the configuration

@@ -43,6 +43,7 @@ GmlVal gml_vm_state_read_value(GmlVmStateReader *reader);
 
 int gml_vm_state_reader_ok(const GmlVmStateReader *reader);
 size_t gml_vm_state_reader_position(const GmlVmStateReader *reader);
+size_t gml_vm_state_reader_remaining(const GmlVmStateReader *reader);
 void gml_vm_state_reader_fail(GmlVmStateReader *reader,
                               const char *message, uint32_t detail);
 size_t gml_vm_state_measure_string(struct GmlVM *vm, const char *value);

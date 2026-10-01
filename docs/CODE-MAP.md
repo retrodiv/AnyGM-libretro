@@ -240,6 +240,17 @@ pending-call pool after its cold capacity query, preserves callbacks across room
 changes and restores, clears them on Reset and checks their restored expiry under
 unsupported, declined and acknowledged-variable serialization negotiations.
 
+The same frontend fixture grows map/list storage beyond both former capacities,
+restores destroyed handles, rejects a checksum-valid late VM failure without
+changing the engine, and exercises geometry changes and Reset. Fixed policies
+retain their cold ring capacity; acknowledged-variable policies may grow.
+`tests/unit/runtime/test_builtin_ds_capacity.c` owns large nested JSON decoding,
+tail values, stable container addresses, cyclic destruction, monotonic handles
+and canonical state roundtrips. Run `make check TEST=builtin_ds_capacity`.
+The builtin-state owner grows pointer tables geometrically and maintains a live
+handle-ordered index; save/rewind traversal neither scans reserved slots nor
+allocates or sorts a map/list traversal table for each snapshot.
+
 `tests/unit/runtime/test_builtin_map_access.c` owns map pre/post assignment
 expression returns, insertion/replacement, retained string/array identity,
 engine isolation and defensive argument bounds. Run `make check TEST=builtin_map_access`.

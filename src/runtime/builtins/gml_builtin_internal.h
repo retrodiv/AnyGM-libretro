@@ -16,8 +16,6 @@
 #define GML_FF_MAX 512
 #define GML_GP_MAX_DEV 16
 #define GML_INI_MAX 16384
-#define GML_DS_MAP_MAX 256
-#define GML_DS_LIST_MAX 1024
 #define GML_DS_GRID_MAX 32
 #define GML_TIME_SOURCE_MAX 256
 #define GML_TIME_SOURCE_ID_BASE UINT32_C(0x48000000)
@@ -35,7 +33,7 @@ typedef struct {
   uint64_t state_string_encoding[3];
 } GmlDSMapEntry;
 typedef struct {
-  int live;
+  int live, destroying;
   uint32_t id;
   GmlDSMapEntry *entry;
   int len, cap;
@@ -43,12 +41,21 @@ typedef struct {
   int hcap, hdirty, last_lookup;
 } GmlDSMap;
 typedef struct {
-  int live;
+  int live, destroying;
   uint32_t id;
   GmlVal *item;
   unsigned char *child_kind;
   int len, cap;
 } GmlDSList;
+typedef struct { uint32_t id; int slot; } GmlDSOrder;
+typedef struct { uint32_t id; void *value; } GmlDSSlot;
+/* Container addresses survive table growth. The live index is ordered by public
+ * handle, so lookups are logarithmic and snapshots need no sorting or allocation. */
+typedef struct {
+  GmlDSSlot *slot;
+  GmlDSOrder *order;
+  int capacity, used, live_count, next_free;
+} GmlDSPool;
 typedef struct {
   int live;
   uint32_t id;
@@ -124,11 +131,10 @@ struct GmlBuiltinState {
   int async_group_active, async_group_id;
   int async_group_status, async_group_count;
   int async_http_q[16], n_async_http;
-  GmlDSMap ds_map[GML_DS_MAP_MAX];
-  GmlDSList ds_list[GML_DS_LIST_MAX];
+  GmlDSPool ds_maps, ds_lists;
+  GmlDSMap *ds_map_last;
   GmlDSGrid ds_grid[GML_DS_GRID_MAX];
   int next_ds_id;
-  int ds_map_last_slot;
   int ds_list_compat_repair;
   GmlTimeSource time_source[GML_TIME_SOURCE_MAX];
   uint32_t next_time_source_id;
@@ -201,6 +207,11 @@ struct GmlBuiltinState {
 };
 
 struct GmlRender;
+
+void *builtin_state_ds_find(const GmlDSPool *pool,uint32_t id);
+void builtin_state_ds_remove(GmlDSPool *pool,uint32_t id);
+GmlDSMap *builtin_state_ds_map_allocate(GmlBuiltinState *state,uint32_t id);
+GmlDSList *builtin_state_ds_list_allocate(GmlBuiltinState *state,uint32_t id);
 
 GmlPhysicsFixture *gml_physics_fixture_new(GmlVM *vm);
 double gml_physics_world_scale(GmlVM *vm);

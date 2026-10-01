@@ -50,6 +50,21 @@ typedef struct Ring {
   unsigned accepted,rejected,serialize_calls;
 } Ring;
 
+static uint64_t read_word64(const uint8_t *bytes){
+  uint64_t value=0;
+  for(int i=0;i<8;i++) value|=(uint64_t)bytes[i]<<(8*i);
+  return value;
+}
+static void write_word64(uint8_t *bytes,uint64_t value){
+  for(int i=0;i<8;i++) bytes[i]=(uint8_t)(value>>(8*i));
+}
+static uint64_t payload_hash(const uint8_t *bytes,size_t size){
+  uint64_t hash=UINT64_C(1469598103934665603);
+  while(size>=8){ hash^=read_word64(bytes); hash*=UINT64_C(1099511628211); bytes+=8; size-=8; }
+  while(size--){ hash^=*bytes++; hash*=UINT64_C(1099511628211); }
+  return hash;
+}
+
 static int push(Ring *ring){
   size_t answer=retro_serialize_size();
   if(!answer || (negotiation<=0 && answer!=ring->initial)){
@@ -218,7 +233,86 @@ done:
   return ok;
 }
 
+static int run_ds_case(int response){
+  AnygmSyntheticContent fixture={0};
+  Ring ring={0};
+  uint8_t *cold=NULL,*saved=NULL;
+  int ok=1;
+  GmlVal map=vreal(-1),list=vreal(-1);
+  negotiation=response;
+  monitor_changed=option_update=0;
+  REQUIRE(anygm_synthetic_content_create(&fixture),"create DS capacity fixture");
+  retro_set_environment(environment); retro_set_video_refresh(video); retro_init();
+  struct retro_game_info info={fixture.path,NULL,0,NULL};
+  REQUIRE(retro_load_game(&info),"load DS capacity fixture");
+  ring.initial=ring.capacity=retro_serialize_size();
+  ring.bytes=malloc(ring.capacity);
+  cold=malloc(ring.capacity);
+  REQUIRE(ring.bytes && cold && push(&ring),"DS ring allocated before first frame");
+  memcpy(cold,ring.bytes,ring.capacity);
+  retro_run();
+  REQUIRE(push(&ring),"DS first completed frame");
+  for(int i=0;i<2300;i++){
+    GmlVM *vm=&g_libretro.engine->vm;
+    map=gml_builtin_call(vm,"ds_map_create",NULL,0);
+    list=gml_builtin_call(vm,"ds_list_create",NULL,0);
+    REQUIRE(map.d>0 && list.d>0,"grow both DS pools after cold ring allocation");
+    GmlVal add[]={map,vstr("number"),vreal(i)};
+    GmlVal push_args[]={list,vreal(i)};
+    gml_builtin_call(vm,"ds_map_add",add,3);
+    gml_builtin_call(vm,"ds_list_add",push_args,2);
+  }
+  REQUIRE(push(&ring),"DS maximum growth push");
+  size_t saved_size=ring.capacity;
+  saved=malloc(saved_size);
+  REQUIRE(saved,"retain DS same-execution snapshot");
+  memcpy(saved,ring.bytes,saved_size);
+  gml_builtin_call(&g_libretro.engine->vm,"ds_map_destroy",&map,1);
+  gml_builtin_call(&g_libretro.engine->vm,"ds_list_destroy",&list,1);
+  REQUIRE(retro_unserialize(saved,saved_size),"restore destroyed DS handles");
+  GmlVal get_map[]={map,vstr("number")},get_list[]={list,vreal(0)};
+  REQUIRE(gml_builtin_call(&g_libretro.engine->vm,"ds_map_find_value",get_map,2).d==2299,
+          "restored last map value beyond former capacity");
+  REQUIRE(gml_builtin_call(&g_libretro.engine->vm,"ds_list_find_value",get_list,2).d==2299,
+          "restored last list value beyond former capacity");
+  /* Corrupt the final object-table count, after both expanded pools decoded.
+   * Keep framing/checksum valid so the engine must exercise its rollback path. */
+  memcpy(ring.bytes,saved,saved_size);
+  size_t vm_end=112+(size_t)read_word64(saved+64)+(size_t)read_word64(saved+72)+
+                     (size_t)read_word64(saved+80);
+  size_t object_bytes=4+28*(size_t)g_libretro.engine->vm.n_objects;
+  REQUIRE(vm_end>=object_bytes && vm_end<=saved_size,"locate VM object table");
+  memset(ring.bytes+vm_end-object_bytes,255,4);
+  size_t payload_size=(size_t)read_word64(saved+96);
+  REQUIRE(payload_size<=saved_size-112,"validate payload checksum span");
+  write_word64(ring.bytes+56,payload_hash(ring.bytes+112,payload_size));
+  REQUIRE(!retro_unserialize(ring.bytes,saved_size),"reject malformed VM after DS decoding");
+  REQUIRE(retro_serialize(ring.bytes,saved_size) && !memcmp(ring.bytes,saved,saved_size),
+          "expanded DS restoration rejection leaves the complete engine unchanged");
+  monitor_changed=option_update=1;
+  retro_run();
+  REQUIRE(push(&ring),"DS push after live geometry change");
+  retro_reset();
+  REQUIRE(push(&ring),"DS push immediately across Reset");
+  REQUIRE(retro_unserialize(saved,saved_size)==(response>0),
+          "Reset accepts complete variable states but rejects frame-free fixed entries before its first frame");
+  retro_run();
+  REQUIRE(push(&ring),"DS push after first fresh reset frame");
+  REQUIRE(retro_unserialize(saved,saved_size),"old DS ring entry after reset first frame");
+  REQUIRE(push(&ring),"DS restored ring entry after Reset");
+  REQUIRE(retro_unserialize(cold,ring.initial),"restore cold state into grown DS session");
+  REQUIRE(push(&ring),"DS cold restoration push");
+  REQUIRE(ring.accepted==8 && ring.rejected==0,"all DS frontend pushes accepted");
+  printf("DS frontend: negotiation=%d cold=%zu final=%zu accepted=%u rejected=%u\n",
+         response,ring.initial,ring.capacity,ring.accepted,ring.rejected);
+done:
+  free(cold); free(saved); free(ring.bytes);
+  retro_unload_game(); retro_deinit(); anygm_synthetic_content_destroy(&fixture);
+  return ok;
+}
+
 int main(void){
   for(int response=-1;response<=1;response++) if(!run_case(response)) return 1;
+  for(int response=-1;response<=1;response++) if(!run_ds_case(response)) return 1;
   return 0;
 }
