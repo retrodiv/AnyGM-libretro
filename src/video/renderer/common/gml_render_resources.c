@@ -484,7 +484,7 @@ int gml_render_resource_checkpoint(GmlRenderResource *resource,
                                     const GmlRenderDeviceServices *device){
   GmlRenderImageReadback readback={0};
   uint32_t *checkpoint;
-  if(!resource) return 0;
+  if(!resource || resource->authority==GML_RENDER_RESOURCE_INVALID) return 0;
   if(resource->authority!=GML_RENDER_RESOURCE_GPU_PENDING_CHECKPOINT) return 1;
   if(!device) device=&resource->checkpoint_device;
   if(!device || !device->readback || !device->context ||
@@ -526,14 +526,28 @@ static GmlRenderResourceExecution resource_submit(
   GmlRenderExecutionResult device_result;
   uint32_t old_source_count;
   size_t old_retained_bytes;
-  int checkpoint_required,replaces_history;
+  int checkpoint_required,replaces_history,pending_prefix,batch_checkpoint_required;
   if(!resource || resource->authority==GML_RENDER_RESOURCE_INVALID ||
      resource->cpu_write_acquired ||
      !batch_valid(resource,batch,sources,source_count,&checkpoint_required))
     return GML_RENDER_RESOURCE_EXEC_FAILED;
-  if(resource->authority==GML_RENDER_RESOURCE_GPU_PENDING_CHECKPOINT &&
-     !gml_render_resource_checkpoint(resource,device))
-    return GML_RENDER_RESOURCE_EXEC_FAILED;
+  batch_checkpoint_required=checkpoint_required;
+  pending_prefix=resource->authority==GML_RENDER_RESOURCE_GPU_PENDING_CHECKPOINT;
+  if(pending_prefix && !defer_checkpoint){
+    if(!gml_render_resource_checkpoint(resource,device))
+      return GML_RENDER_RESOURCE_EXEC_FAILED;
+    pending_prefix=0;
+  }
+  if(pending_prefix){
+    if(!device || device->context!=resource->device_identity ||
+       resource->gpu_version!=resource->image.content_version){
+      resource->authority=GML_RENDER_RESOURCE_INVALID;
+      return GML_RENDER_RESOURCE_EXEC_FAILED;
+    }
+    /* The earlier device-only prefix prevents exact CPU replay of the combined span. Keep
+     * its canonical checkpoint intact and seal the final GPU version at the real observer. */
+    checkpoint_required=1;
+  }
   replaces_history=!checkpoint_required && batch->operation_count==1u &&
     batch->operations[0].opcode==GML_RENDER_OP_CLEAR &&
     batch->operations[0].target.region.x==0 &&
@@ -599,6 +613,17 @@ static GmlRenderResourceExecution resource_submit(
   device_result=device->submit(device->context,batch);
   if(device_result.status!=GML_RENDER_EXEC_ACCEPTED ||
      device_result.accepted_prefix!=batch->operation_count){
+    if(pending_prefix && device_result.status==GML_RENDER_EXEC_UNSUPPORTED &&
+       !device_result.accepted_prefix && !device_result.all_destinations_uncertain &&
+       !device_result.uncertain_target_count){
+      /* A proven pre-write refusal leaves the earlier resident version intact. It can still
+       * be sealed for ordered CPU fallback; a partially failed device result cannot. */
+      if(!gml_render_resource_checkpoint(resource,device))
+        return GML_RENDER_RESOURCE_EXEC_FAILED;
+      return batch_checkpoint_required?GML_RENDER_RESOURCE_EXEC_FAILED:
+        cpu_fallback(resource,batch,sources,source_count);
+    }
+    if(pending_prefix) resource->authority=GML_RENDER_RESOURCE_INVALID;
     if(device->retire) device->retire(device->context,resource->image);
     resource->gpu_version=0;
     resource->device_identity=NULL;
@@ -627,6 +652,12 @@ staging_failed:
     free(resource->sources[index].owned);
   resource->source_count=old_source_count;
   resource->retained_bytes=old_retained_bytes;
+  if(pending_prefix && resource->authority!=GML_RENDER_RESOURCE_INVALID){
+    if(!gml_render_resource_checkpoint(resource,device))
+      return GML_RENDER_RESOURCE_EXEC_FAILED;
+    return batch_checkpoint_required?GML_RENDER_RESOURCE_EXEC_FAILED:
+      cpu_fallback(resource,batch,sources,source_count);
+  }
   return checkpoint_required?GML_RENDER_RESOURCE_EXEC_FAILED:
     cpu_fallback(resource,batch,sources,source_count);
 }
@@ -638,14 +669,10 @@ GmlRenderResourceExecution gml_render_resource_submit(
   return resource_submit(resource,device,batch,sources,source_count,0);
 }
 
-GmlRenderResourceExecution gml_render_resource_submit_deferred_shader(
+GmlRenderResourceExecution gml_render_resource_submit_deferred(
   GmlRenderResource *resource,const GmlRenderDeviceServices *device,
   const GmlRenderDrawBatch *batch,const GmlRenderResourceSource *sources,
   uint32_t source_count){
-  if(!batch || batch->operation_count!=1u ||
-     batch->operations[0].opcode!=GML_RENDER_OP_CONTENT_SHADER_DRAW ||
-     batch->operations[0].reconstruction_mode!=GML_RENDER_DEVICE_CHECKPOINT)
-    return GML_RENDER_RESOURCE_EXEC_FAILED;
   return resource_submit(resource,device,batch,sources,source_count,1);
 }
 

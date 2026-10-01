@@ -87,7 +87,7 @@ int gml_render_application_scene_flush(GmlRender *r){
   if(!target) return 0;
   batch=(GmlRenderDrawBatch){pending->operations,pending->count,
                               pending->states,pending->state_count};
-  result=gml_render_resource_submit(target,gml_render_device(r),
+  result=gml_render_resource_submit_deferred(target,gml_render_device(r),
                                     &batch,pending->sources,pending->source_count);
   if(result==GML_RENDER_RESOURCE_EXEC_FAILED){
     GmlRenderJournalMetrics metrics={0};
@@ -268,7 +268,7 @@ static GmlRenderResourceExecution surface_scene_submit(
   int slot=surface_slot(id);
   if(!resource) return GML_RENDER_RESOURCE_EXEC_FAILED;
   result=deferred_shader
-    ?gml_render_resource_submit_deferred_shader(resource,gml_render_device(r),batch,
+    ?gml_render_resource_submit_deferred(resource,gml_render_device(r),batch,
                                                 sources,source_count)
     :gml_render_resource_submit(resource,gml_render_device(r),batch,sources,source_count);
   if(result!=GML_RENDER_RESOURCE_EXEC_FAILED){
@@ -372,7 +372,7 @@ GmlRenderResourceExecution gml_render_application_scene_submit(
   GmlRenderResourceExecution result;
   if(!resource || !gml_render_application_scene_flush(r))
     return GML_RENDER_RESOURCE_EXEC_FAILED;
-  result=gml_render_resource_submit(resource,gml_render_device(r),batch,sources,source_count);
+  result=gml_render_resource_submit_deferred(resource,gml_render_device(r),batch,sources,source_count);
   if(result!=GML_RENDER_RESOURCE_EXEC_FAILED && r->fb==r->app_surface_owned){
     r->app_surface_opaque=0;
     r->app_presentation_coverage_active=0;

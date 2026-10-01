@@ -74,9 +74,10 @@ GmlRenderResourceExecution gml_render_resource_submit(
   GmlRenderResource *resource,const GmlRenderDeviceServices *device,
   const GmlRenderDrawBatch *batch,const GmlRenderResourceSource *sources,
   uint32_t source_count);
-/* A single content-program draw may defer its required checkpoint within the current frame.
- * CPU observation or frame-end sealing still materialises canonical pixels before context loss. */
-GmlRenderResourceExecution gml_render_resource_submit_deferred_shader(
+/* Consecutive device operations may share a checkpoint span within the current graphics call.
+ * Once device-only work enters the span, exact suffix operations also need its final checkpoint.
+ * CPU observation or frame-end sealing must materialise canonical pixels before host return. */
+GmlRenderResourceExecution gml_render_resource_submit_deferred(
   GmlRenderResource *resource,const GmlRenderDeviceServices *device,
   const GmlRenderDrawBatch *batch,const GmlRenderResourceSource *sources,
   uint32_t source_count);

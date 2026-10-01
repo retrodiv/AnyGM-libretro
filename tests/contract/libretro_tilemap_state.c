@@ -239,6 +239,9 @@ static int run_ds_case(int response){
   uint8_t *cold=NULL,*saved=NULL;
   int ok=1;
   GmlVal map=vreal(-1),list=vreal(-1),buffer=vreal(-1);
+  /* DS strings may escape their containers and intentionally outlive destroy/reset.
+   * These synthetic keys escape nowhere else; retain their copies until engine teardown. */
+  char *fixture_keys[2300]={0};
   negotiation=response;
   monitor_changed=option_update=0;
   REQUIRE(anygm_synthetic_content_create(&fixture),"create DS capacity fixture");
@@ -261,6 +264,11 @@ static int run_ds_case(int response){
     GmlVal push_args[]={list,vreal(i)};
     gml_builtin_call(vm,"ds_map_add",add,3);
     gml_builtin_call(vm,"ds_list_add",push_args,2);
+    GmlVal fixture_key=gml_builtin_call(vm,"ds_map_find_first",&map,1);
+    REQUIRE(fixture_key.t==V_STR && fixture_key.s &&
+            !strcmp(fixture_key.s,"number"),
+            "retain the fixture-owned cloned map key");
+    fixture_keys[i]=(char*)fixture_key.s;
     if(i<64){
       GmlVal size=vreal(8192);
       buffer=gml_builtin_call(vm,"buffer_create",&size,1);
@@ -319,6 +327,7 @@ static int run_ds_case(int response){
 done:
   free(cold); free(saved); free(ring.bytes);
   retro_unload_game(); retro_deinit(); anygm_synthetic_content_destroy(&fixture);
+  for(int i=0;i<2300;i++) free(fixture_keys[i]);
   return ok;
 }
 
