@@ -27,6 +27,9 @@ typedef enum GmlRenderResourceExecution {
 typedef struct GmlRenderResourceLimits {
   size_t journal_bytes;
   size_t retained_mutable_bytes;
+  /* Separate per-resource scratch budget; zero selects the default. Only SCREEN/application
+   * owners retain checkpoint staging, so arbitrary numbered surfaces do not multiply caches. */
+  size_t checkpoint_staging_bytes;
 } GmlRenderResourceLimits;
 
 /* A source version is immutable for the lifetime of one submission. If borrowed_immutable is
@@ -48,6 +51,10 @@ typedef struct GmlRenderJournalMetrics {
   uint64_t logical_version,cpu_version,gpu_version;
   uint64_t cpu_replays,device_checkpoints,consolidations,cpu_fallbacks;
   size_t journal_bytes,retained_mutable_bytes;
+  /* Disposable host scratch, never canonical pixels or serialized state. Allocation count
+   * includes transient checkpoint buffers, not source pins or CPU replay candidates. */
+  size_t checkpoint_staging_bytes;
+  uint64_t checkpoint_allocations;
   uint32_t journal_operations,retained_versions;
   uint32_t authority;
 } GmlRenderJournalMetrics;

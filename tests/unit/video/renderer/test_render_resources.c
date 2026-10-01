@@ -30,6 +30,7 @@ typedef struct FakeDevice {
   int rgb_queries,fail_rgb_query,rgb_query_result;
   int forbid_calls,forbidden_calls;
   int fail_upload,fail_upload_at,fail_readback,shader_failure,prewrite_refusal;
+  int fail_partial_readback;
   uint32_t status,accepted_prefix;
   uint32_t readback_colour;
   uint32_t max_texture_extent;
@@ -97,6 +98,7 @@ static int fake_readback(void *context,const GmlRenderImageReadback *readback){
      readback->byte_capacity<(size_t)readback->storage_width*readback->storage_height*4u)
     return 0;
   pixels=(uint32_t*)readback->bytes;
+  if(fake->fail_partial_readback){ pixels[0]=fake->readback_colour; return 0; }
   for(uint32_t index=0;index<readback->storage_width*readback->storage_height;index++)
     pixels[index]=fake->readback_colour;
   return 1;
@@ -692,7 +694,7 @@ static int pressure_and_fallback(void){
   fill(pixels,0xFF000000u);
   limited=gml_render_resource_create(target_ref(1u,1u),4u,4u,
     GML_RENDER_PIXEL_XRGB8888,pixels,
-    (GmlRenderResourceLimits){metrics.journal_bytes,1u});
+    (GmlRenderResourceLimits){metrics.journal_bytes,1u,0u});
   CHECK(limited);
   CHECK(gml_render_resource_submit(limited,&device,&batch,NULL,0u)==
         GML_RENDER_RESOURCE_EXEC_DEVICE);
@@ -718,7 +720,7 @@ static int pressure_and_fallback(void){
     fill(pixels,0xFF000000u);
     limited=gml_render_resource_create(target_ref(1u,1u),4u,4u,
       GML_RENDER_PIXEL_XRGB8888,pixels,
-      (GmlRenderResourceLimits){metrics.journal_bytes,1u});
+      (GmlRenderResourceLimits){metrics.journal_bytes,1u,0u});
     CHECK(limited);
     batch.operations=&operations[0];
     CHECK(gml_render_resource_submit(limited,&device,&batch,NULL,0u)==
@@ -736,7 +738,7 @@ static int pressure_and_fallback(void){
   /* One descriptor cannot fit. The batch must execute once on CPU, before device work. */
   fill(pixels,0xFF000000u);
   limited=gml_render_resource_create(target_ref(1u,1u),4u,4u,
-    GML_RENDER_PIXEL_XRGB8888,pixels,(GmlRenderResourceLimits){1u,1u});
+    GML_RENDER_PIXEL_XRGB8888,pixels,(GmlRenderResourceLimits){1u,1u,0u});
   CHECK(limited);
   batch.operations=&operations[0];
   {
@@ -756,7 +758,7 @@ static int pressure_and_fallback(void){
     int submits=fake.submits;
     fill(pixels,0xFF000000u);
     limited=gml_render_resource_create(target_ref(1u,1u),4u,4u,
-      GML_RENDER_PIXEL_XRGB8888,pixels,(GmlRenderResourceLimits){1024u,8u});
+    GML_RENDER_PIXEL_XRGB8888,pixels,(GmlRenderResourceLimits){1024u,8u,0u});
     CHECK(limited);
     CHECK(gml_render_resource_submit(limited,&device,&quad_batch,&source,1u)==
           GML_RENDER_RESOURCE_EXEC_CPU);
@@ -843,7 +845,7 @@ static int journal_saturation_stays_bounded(void){
   fill(pixels,0xFF000000u);
   resource=gml_render_resource_create(target_ref(1u,2u),4u,4u,
     GML_RENDER_PIXEL_XRGB8888,pixels,
-    (GmlRenderResourceLimits){one_entry_bytes,16u});
+    (GmlRenderResourceLimits){one_entry_bytes,16u,0u});
   CHECK(resource);
   operation.target.image=target_ref(2u,2u);
   for(uint32_t step=0;step<32u;step++){
@@ -1147,6 +1149,117 @@ static int checkpoint_span_mixed_suffix_and_faults(void){
               observed[0]==0xFFABCDEFu && fake.readbacks==1 && fake.forbidden_calls==0);
       }
     }
+    gml_render_resource_destroy(resource);
+  }
+  return 1;
+}
+
+/* Staging reuse changes allocation lifetime, not device pixels, CPU visibility or failure
+ * publication. Cover both retained owner classes and the deliberately transient surface path. */
+static int bounded_checkpoint_staging_lifecycle(void){
+  const uint32_t classes[]={GML_RENDER_RESOURCE_SCREEN,GML_RENDER_RESOURCE_APPLICATION,
+                            GML_RENDER_RESOURCE_SURFACE};
+  const uint32_t formats[]={GML_RENDER_PIXEL_XRGB8888,GML_RENDER_PIXEL_ARGB8888};
+  for(unsigned owner=0;owner<3u;owner++) for(unsigned format=0;format<2u;format++)
+  for(unsigned budget=0;budget<3u;budget++){
+    uint32_t pixels[16],larger[64],*writer=NULL;
+    const uint32_t *reader=NULL;
+    GmlRenderImageRef image=target_ref(1u,1u);
+    GmlRenderResourceLimits limits={0};
+    GmlRenderJournalMetrics metrics={0};
+    GmlRenderDrawOp operation=clear_op(2u,0u,GML_RENDER_DEVICE_CHECKPOINT);
+    GmlRenderDrawBatch batch={&operation,1u,NULL,0u};
+    FakeDevice fake={0},replacement={0};
+    GmlRenderDeviceServices device=service(&fake),next_device=service(&replacement);
+    GmlRenderResource *resource;
+    int cached=owner<2u && budget!=2u;
+    uint32_t last_colour;
+    image.resource_class=classes[owner];
+    limits.checkpoint_staging_bytes=budget==0u?0u:(budget==1u?64u:63u);
+    fill(pixels,0xFF010203u);
+    operation.target.image=image;
+    operation.target.pixel_format=formats[format];
+    resource=gml_render_resource_create(image,4u,4u,formats[format],pixels,limits);
+    CHECK(resource);
+    gml_render_resource_journal_metrics(resource,&metrics);
+    CHECK(metrics.checkpoint_allocations==0u && metrics.checkpoint_staging_bytes==0u);
+    for(unsigned pass=0;pass<2u;pass++){
+      operation.target.image=gml_render_resource_image_ref(resource);
+      operation.target.image.content_version++;
+      fake.readback_colour=(format?0x7B000000u:0xFF000000u)|(0x123456u+pass);
+      CHECK(gml_render_resource_submit(resource,&device,&batch,NULL,0u)==
+            GML_RENDER_RESOURCE_EXEC_DEVICE);
+      CHECK(gml_render_resource_acquire_cpu_read(resource,&reader) && reader==pixels);
+      for(unsigned index=0;index<16u;index++) CHECK(reader[index]==fake.readback_colour);
+    }
+    gml_render_resource_journal_metrics(resource,&metrics);
+    CHECK(metrics.device_checkpoints==2u && fake.readbacks==2 &&
+          metrics.authority==GML_RENDER_RESOURCE_BOTH_CURRENT &&
+          metrics.checkpoint_allocations==(cached?1u:2u) &&
+          metrics.checkpoint_staging_bytes==(cached?64u:0u));
+    CHECK(gml_render_resource_acquire_cpu_write(resource,&writer) && writer==pixels);
+    fill(writer,0xFF345678u);
+    CHECK(gml_render_resource_commit_cpu_write(resource));
+    gml_render_resource_context_lost(resource);
+    fake.forbid_calls=1;
+    CHECK(gml_render_resource_acquire_cpu_read(resource,&reader) && reader==pixels &&
+          reader[15]==0xFF345678u && fake.forbidden_calls==0 && fake.readbacks==2);
+    operation.target.image=gml_render_resource_image_ref(resource);
+    operation.target.image.content_version++;
+    last_colour=replacement.readback_colour=format?0x4D789ABCu:0xFF789ABCu;
+    CHECK(gml_render_resource_submit(resource,&next_device,&batch,NULL,0u)==
+          GML_RENDER_RESOURCE_EXEC_DEVICE);
+    for(unsigned index=0;index<16u;index++) CHECK(pixels[index]==last_colour);
+    gml_render_resource_journal_metrics(resource,&metrics);
+    CHECK(metrics.checkpoint_allocations==(cached?1u:3u) &&
+          metrics.checkpoint_staging_bytes==(cached?64u:0u));
+    replacement.fail_partial_readback=1;
+    replacement.readback_colour=0xFFEEDDCCu;
+    operation.target.image=gml_render_resource_image_ref(resource);
+    operation.target.image.content_version++;
+    CHECK(gml_render_resource_submit(resource,&next_device,&batch,NULL,0u)==
+          GML_RENDER_RESOURCE_EXEC_FAILED);
+    for(unsigned index=0;index<16u;index++) CHECK(pixels[index]==last_colour);
+    CHECK(!gml_render_resource_acquire_cpu_read(resource,&reader) && !reader &&
+          !gml_render_resource_checkpoint(resource,&next_device) && replacement.readbacks==2);
+    gml_render_resource_journal_metrics(resource,&metrics);
+    CHECK(metrics.authority==GML_RENDER_RESOURCE_INVALID && metrics.device_checkpoints==3u &&
+          metrics.checkpoint_allocations==(cached?1u:4u));
+    gml_render_resource_destroy(resource);
+
+    /* A resized/recreated owner has new scratch; stale successful or partial bytes cannot
+     * become the new incarnation's canonical pixels, including loss before its next seal. */
+    image.incarnation++;
+    for(unsigned index=0;index<64u;index++) larger[index]=0xFF102030u;
+    replacement.fail_partial_readback=0;
+    resource=gml_render_resource_create(image,8u,8u,formats[format],larger,limits);
+    CHECK(resource);
+    gml_render_resource_journal_metrics(resource,&metrics);
+    CHECK(metrics.checkpoint_allocations==0u && metrics.checkpoint_staging_bytes==0u);
+    operation.target.width=operation.target.height=8u;
+    operation.target.region=(GmlRenderRect){0,0,8u,8u};
+    cached=owner<2u && budget==0u;
+    for(unsigned pass=0;pass<2u;pass++){
+      operation.target.image=gml_render_resource_image_ref(resource);
+      operation.target.image.content_version++;
+      last_colour=replacement.readback_colour=(format?0x3A000000u:0xFF000000u)|(0x456789u+pass);
+      CHECK(gml_render_resource_submit(resource,&next_device,&batch,NULL,0u)==
+            GML_RENDER_RESOURCE_EXEC_DEVICE);
+      for(unsigned index=0;index<64u;index++) CHECK(larger[index]==last_colour);
+    }
+    gml_render_resource_journal_metrics(resource,&metrics);
+    CHECK(metrics.checkpoint_allocations==(cached?1u:2u) &&
+          metrics.checkpoint_staging_bytes==(cached?256u:0u));
+    operation.target.image=gml_render_resource_image_ref(resource);
+    operation.target.image.content_version++;
+    CHECK(gml_render_resource_submit_deferred(resource,&next_device,&batch,NULL,0u)==
+          GML_RENDER_RESOURCE_EXEC_DEVICE);
+    gml_render_resource_context_lost(resource);
+    replacement.forbid_calls=1;
+    CHECK(!gml_render_resource_acquire_cpu_read(resource,&reader) && !reader &&
+          !gml_render_resource_checkpoint(resource,&next_device) &&
+          replacement.forbidden_calls==0 && replacement.readbacks==4);
+    for(unsigned index=0;index<64u;index++) CHECK(larger[index]==last_colour);
     gml_render_resource_destroy(resource);
   }
   return 1;
@@ -5162,6 +5275,7 @@ int main(void){
   passed+=public_content_surface_program_chain();
   passed+=resident_checkpoint_span_seals_at_observer();
   passed+=checkpoint_span_mixed_suffix_and_faults();
+  passed+=bounded_checkpoint_staging_lifecycle();
   passed+=public_surface_part_qualified_dispatch();
   passed+=resident_opaque_atlas_sprite_gpu();
   passed+=resident_coarse_veil_exact_recovery();
@@ -5178,6 +5292,6 @@ int main(void){
   passed+=source_free_primitive_rect_replay();
   passed+=stretched_float_exact_replay();
   passed+=filtered_font_exact_recovery();
-  printf("render resource cases: passed=%d failed=%d\n",passed,69-passed);
-  return passed==69?EXIT_SUCCESS:EXIT_FAILURE;
+  printf("render resource cases: passed=%d failed=%d\n",passed,70-passed);
+  return passed==70?EXIT_SUCCESS:EXIT_FAILURE;
 }

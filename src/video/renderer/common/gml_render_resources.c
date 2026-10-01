@@ -12,7 +12,8 @@
 #include <string.h>
 
 enum { DEFAULT_JOURNAL_BYTES=8u*1024u*1024u,
-       DEFAULT_RETAINED_BYTES=64u*1024u*1024u };
+       DEFAULT_RETAINED_BYTES=64u*1024u*1024u,
+       DEFAULT_CHECKPOINT_STAGING_BYTES=64u*1024u*1024u };
 
 typedef struct PinnedSource {
   GmlRenderResourceSource view;
@@ -42,7 +43,9 @@ struct GmlRenderResource {
   int cpu_write_acquired;
   const void *device_identity;
   GmlRenderDeviceServices checkpoint_device;
+  uint32_t *checkpoint_staging;
   uint64_t cpu_replays,device_checkpoints,consolidations,cpu_fallbacks;
+  uint64_t checkpoint_allocations;
 };
 
 static int same_logical(GmlRenderImageRef a,GmlRenderImageRef b){
@@ -156,6 +159,8 @@ GmlRenderResource *gml_render_resource_create(GmlRenderImageRef image,uint32_t w
     ?limits.journal_bytes:DEFAULT_JOURNAL_BYTES;
   resource->limits.retained_mutable_bytes=limits.retained_mutable_bytes
     ?limits.retained_mutable_bytes:DEFAULT_RETAINED_BYTES;
+  resource->limits.checkpoint_staging_bytes=limits.checkpoint_staging_bytes
+    ?limits.checkpoint_staging_bytes:DEFAULT_CHECKPOINT_STAGING_BYTES;
   resource->authority=GML_RENDER_RESOURCE_CPU_CURRENT;
   return resource;
 }
@@ -163,6 +168,7 @@ GmlRenderResource *gml_render_resource_create(GmlRenderImageRef image,uint32_t w
 void gml_render_resource_destroy(GmlRenderResource *resource){
   if(!resource) return;
   clear_history(resource);
+  free(resource->checkpoint_staging);
   free(resource);
 }
 
@@ -484,6 +490,7 @@ int gml_render_resource_checkpoint(GmlRenderResource *resource,
                                     const GmlRenderDeviceServices *device){
   GmlRenderImageReadback readback={0};
   uint32_t *checkpoint;
+  size_t bytes;
   if(!resource || resource->authority==GML_RENDER_RESOURCE_INVALID) return 0;
   if(resource->authority!=GML_RENDER_RESOURCE_GPU_PENDING_CHECKPOINT) return 1;
   if(!device) device=&resource->checkpoint_device;
@@ -493,23 +500,35 @@ int gml_render_resource_checkpoint(GmlRenderResource *resource,
     resource->authority=GML_RENDER_RESOURCE_INVALID;
     return 0;
   }
-  checkpoint=(uint32_t*)malloc((size_t)resource->width*resource->height*4u);
-  if(!checkpoint){ resource->authority=GML_RENDER_RESOURCE_INVALID; return 0; }
+  bytes=(size_t)resource->width*resource->height*4u;
+  checkpoint=resource->checkpoint_staging;
+  if(!checkpoint){
+    checkpoint=(uint32_t*)malloc(bytes);
+    if(!checkpoint){ resource->authority=GML_RENDER_RESOURCE_INVALID; return 0; }
+    resource->checkpoint_allocations++;
+    /* Extents are immutable for this owner. Keep one bounded host plane for the two owned
+     * frame targets; other resources and over-budget targets retain transient allocation.
+     * Staging is scratch, not a checkpoint: only a complete successful read is published. */
+    if((resource->image.resource_class==GML_RENDER_RESOURCE_SCREEN ||
+        resource->image.resource_class==GML_RENDER_RESOURCE_APPLICATION) &&
+       bytes<=resource->limits.checkpoint_staging_bytes)
+      resource->checkpoint_staging=checkpoint;
+  }
   readback.image=resource->image;
   readback.storage_width=resource->width;
   readback.storage_height=resource->height;
   readback.region=(GmlRenderRect){0,0,resource->width,resource->height};
   readback.pixel_format=resource->pixel_format;
   readback.stride_bytes=resource->width*4u;
-  readback.byte_capacity=(size_t)resource->width*resource->height*4u;
+  readback.byte_capacity=bytes;
   readback.bytes=checkpoint;
   if(!device->readback(device->context,&readback)){
-    free(checkpoint);
+    if(checkpoint!=resource->checkpoint_staging) free(checkpoint);
     resource->authority=GML_RENDER_RESOURCE_INVALID;
     return 0;
   }
   memcpy(resource->pixels,checkpoint,readback.byte_capacity);
-  free(checkpoint);
+  if(checkpoint!=resource->checkpoint_staging) free(checkpoint);
   clear_history(resource);
   resource->cpu_version=resource->image.content_version;
   resource->authority=GML_RENDER_RESOURCE_BOTH_CURRENT;
@@ -690,6 +709,9 @@ void gml_render_resource_journal_metrics(const GmlRenderResource *resource,
   out_metrics->cpu_fallbacks=resource->cpu_fallbacks;
   out_metrics->journal_bytes=(size_t)resource->entry_count*sizeof(JournalEntry);
   out_metrics->retained_mutable_bytes=resource->retained_bytes;
+  out_metrics->checkpoint_staging_bytes=resource->checkpoint_staging
+    ?(size_t)resource->width*resource->height*4u:0u;
+  out_metrics->checkpoint_allocations=resource->checkpoint_allocations;
   out_metrics->journal_operations=resource->entry_count;
   out_metrics->retained_versions=resource->source_count;
   out_metrics->authority=resource->authority;
