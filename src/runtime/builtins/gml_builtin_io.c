@@ -414,6 +414,33 @@ static GmlVal nsfs_load_string(GmlVM *vm,const char *raw){
   return text?vstr_owned(text):vstr("");
 }
 
+int builtin_save_image(GmlVM *vm,const char *raw,const uint32_t *pixels,
+                        int width,int height,int opaque){
+  if(!vm || !raw || !*raw || !pixels || width<=0 || height<=0 ||
+     width>INT_MAX/4 || (size_t)height>(size_t)INT_MAX/((size_t)width*4u) ||
+     !anygm_vfs_can_write(vm->host)) return 0;
+  size_t count=(size_t)width*(size_t)height;
+  uint8_t *rgba=malloc(count*4u);
+  if(!rgba) return 0;
+  for(size_t i=0;i<count;i++){
+    uint32_t pixel=pixels[i];
+    rgba[i*4u]=(uint8_t)(pixel>>16);
+    rgba[i*4u+1u]=(uint8_t)(pixel>>8);
+    rgba[i*4u+2u]=(uint8_t)pixel;
+    rgba[i*4u+3u]=opaque?255u:(uint8_t)(pixel>>24);
+  }
+  GmlMediaBuffer png={0};
+  int ok=0;
+  if(gml_image_encode_png(rgba,width,height,4,width*4,&png)){
+    char *path=resolve_write_path(vm,raw);
+    ok=path && anygm_vfs_write_all(vm->host,path,png.data,png.size);
+    free(path);
+  }
+  gml_media_buffer_release(&png);
+  free(rgba);
+  return ok;
+}
+
 static int color_key_file(GmlVM *vm,const char *raw,uint32_t color){
   char *read_path=extension_read_path(vm,raw);
   uint8_t *encoded=NULL;

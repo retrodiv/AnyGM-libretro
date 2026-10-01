@@ -11,6 +11,10 @@
 #include <math.h>
 #include <stdint.h>
 #include <stdlib.h>
+
+/* Encode renderer-native ARGB pixels through the existing writable-content VFS. */
+int builtin_save_image(GmlVM *vm,const char *path,const uint32_t *pixels,
+                        int width,int height,int opaque);
 /* file_find_first/next state (GM exposes one active find). Wildcard match is hand-rolled:
  * mingw has no fnmatch.h and GM masks only use * and ?. Case-insensitive like Windows. */
 #define GML_FF_MAX 512

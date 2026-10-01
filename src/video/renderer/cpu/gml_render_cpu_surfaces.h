@@ -6,6 +6,8 @@
 
 #include "gml_render.h"
 
+const uint32_t *screen_pixels_observe(GmlRender *r,int *w,int *h);
+
 /* Coarse CPU surface composition after shared request preparation. */
 void gml_render_cpu_draw_surface_stretched_impl(GmlRender *render, int surface,
                                                  double x, double y, double width, double height,

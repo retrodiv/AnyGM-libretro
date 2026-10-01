@@ -687,6 +687,9 @@ void gml_surface_resize(GmlRender *r, int id, int w, int h);
 int  gml_surface_width(GmlRender *r, int id);
 int  gml_surface_height(GmlRender *r, int id);
 const uint32_t *gml_surface_pixels_read(GmlRender *r, int id, int *w, int *h);
+/* Borrow the base screen after pending draws and device reads are resolved, independently of
+ * any custom surface target. The borrow ends at the next renderer mutation. */
+const uint32_t *gml_render_screen_pixels_read(GmlRender *r,int *w,int *h);
 void gml_surface_copy(GmlRender *r, int dst, int x, int y, int src);
 void gml_surface_copy_part(GmlRender *r, int dst, int x, int y, int src,
                            int source_x, int source_y, int width, int height);

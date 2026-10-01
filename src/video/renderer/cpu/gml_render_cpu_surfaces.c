@@ -123,6 +123,21 @@ const uint32_t *surface_pixels_observe(GmlRender *r,int id,int *w,int *h){
   return surface_pixels_access(r,id,w,h,0);
 }
 
+const uint32_t *screen_pixels_observe(GmlRender *r,int *w,int *h){
+  if(w) *w=0;
+  if(h) *h=0;
+  if(!r || !r->base_fb || r->base_fbw<=0 || r->base_fbh<=0) return NULL;
+  if(r->fb==r->base_fb) gml_render_maybe_prepare_draw(r);
+  if(!gml_render_completed_screen_read(r,r->base_fb,r->base_fbw,r->base_fbh)) return NULL;
+  if(has_suspended_fill(r,r->base_fb)){
+    if(!gml_render_completed_screen_write(r,r->base_fb,r->base_fbw,r->base_fbh)) return NULL;
+    realize_suspended_fill(r,r->base_fb);
+  }
+  if(w) *w=r->base_fbw;
+  if(h) *h=r->base_fbh;
+  return r->base_fb;
+}
+
 
 void gml_surface_copy(GmlRender *r, int dst, int x, int y, int src){
   if(!r) return;

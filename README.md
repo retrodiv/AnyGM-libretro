@@ -65,6 +65,16 @@ Format recognition does not imply that every built-in operation used by every
 piece of content is implemented. Unsupported or malformed input is rejected
 with a diagnostic instead of selecting a different engine.
 
+## Game image export
+
+The standard GML functions `screen_save(fname)` and `surface_save(surface_id, fname)`
+write PNG images through the host filesystem services. Relative filenames and filenames
+under the game's `working_directory` use the content's writable namespace in the
+frontend-provided save directory. With libretro, this is the directory supplied by
+`RETRO_ENVIRONMENT_GET_SAVE_DIRECTORY`, regardless of the frontend's setting label.
+See [image export and save paths](docs/PORTING.md#game-image-export) for the layout,
+capture timing, and path fallback rules.
+
 ## Independence and trademarks
 
 AnyGM is an independent project. It is not affiliated with or endorsed by

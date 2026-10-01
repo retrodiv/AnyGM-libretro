@@ -4,6 +4,9 @@
 #include "gml_builtin.h"
 #include "anygm_test_runner.h"
 #include "memory_vfs.h"
+#include "gml_render_internal.h"
+#include "gml_image_codec.h"
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -170,12 +173,146 @@ static int rewrite_failure_case(void){
   }
   return ok;
 }
+static int image_is(FileFixture *f,const char *path,int width,int height,
+                     const uint32_t *expected,int opaque){
+  for(size_t i=0;i<f->memory.node_count;i++){
+    AnygmMemoryVfsNode *node=&f->memory.nodes[i];
+    if(strcmp(node->path,path)) continue;
+    GmlMediaBuffer decoded={0}; int w=0,h=0,components=0;
+    int ok=node->size>=8 && !memcmp(node->data,"\x89PNG\r\n\x1a\n",8) &&
+      gml_image_decode_rgba(node->data,node->size,&decoded,&w,&h,&components) &&
+      w==width && h==height;
+    for(size_t pixel=0;ok && pixel<(size_t)width*(size_t)height;pixel++){
+      uint32_t value=expected[pixel];
+      const uint8_t *rgba=decoded.data+pixel*4u;
+      ok=rgba[0]==(uint8_t)(value>>16) && rgba[1]==(uint8_t)(value>>8) &&
+         rgba[2]==(uint8_t)value && rgba[3]==(opaque?255u:(uint8_t)(value>>24));
+    }
+    gml_media_buffer_release(&decoded);
+    if(!ok) fprintf(stderr,"image pixels or dimensions differ: %s\n",path);
+    return ok;
+  }
+  fprintf(stderr,"missing saved image: %s\n",path);
+  return 0;
+}
+static int image_save_case(void){
+  int ok=1;
+  for(int cached=0;cached<2;cached++){
+    FileFixture f; GmlVM vm; GmlWin win={0}; GmlRender render;
+    fixture_init(&f,&vm);
+    snprintf(win.content_dir,sizeof win.content_dir,"/content");
+    snprintf(win.save_dir,sizeof win.save_dir,"/save"); vm.win=&win;
+    if(gml_render_init(&render,&win)!=0) return 0;
+    vm.render=&render;
+    const uint32_t expected_screen[]={0x00112233,0xff445566,0x80778899,0xffaabbcc,0xffddee00,0xff102030};
+    uint32_t screen[6]; memcpy(screen,expected_screen,sizeof screen);
+    uint32_t application[]={0x40abcdef,0x00876543};
+    gml_render_begin(&render,screen,3,2,0,0);
+    gml_render_application_surface_bind(&render,application,2,1,0);
+    gml_render_application_surface_publish(&render);
+    GmlVal path=vstr("screen.png");
+    invoke(&vm,"screen_save",&path,1,cached,&ok);
+    ok &= image_is(&f,"/save/screen.png",3,2,expected_screen,1) &&
+          !memcmp(screen,expected_screen,sizeof screen);
+    GmlVal args[]={vreal(0),vstr("/content/application.png")};
+    invoke(&vm,"surface_save",args,2,cached,&ok);
+    ok &= image_is(&f,"/save/application.png",2,1,application,0);
+    int id=gml_surface_create(&render,2,1);
+    ok &= id>0 && gml_surface_set_target(&render,id);
+    const uint32_t surface[]={0x80010203,0x00040506};
+    if(id>0) memcpy(render.surface[id-1].px,surface,sizeof surface);
+    args[0]=vreal(id); args[1]=vstr("surface.png");
+    invoke(&vm,"surface_save",args,2,cached,&ok);
+    ok &= image_is(&f,"/save/surface.png",2,1,surface,0);
+    /* A screen capture must not sample the currently bound custom surface. */
+    path=vstr("/content/nested/screen.png");
+    invoke(&vm,"screen_save",&path,1,cached,&ok);
+    ok &= image_is(&f,"/save/nested/screen.png",3,2,expected_screen,1) &&
+          !memcmp(screen,expected_screen,sizeof screen) &&
+          gml_surface_get_target(&render)==id;
+    gml_surface_reset_target(&render);
+    /* Realize a deferred screen clear even while its target is suspended. */
+    gml_render_set_pending_fill(&render,0x123456);
+    ok &= gml_surface_set_target(&render,id);
+    path=vstr("filled.png");
+    invoke(&vm,"screen_save",&path,1,cached,&ok);
+    const uint32_t filled[]={0x123456,0x123456,0x123456,0x123456,0x123456,0x123456};
+    ok &= image_is(&f,"/save/filled.png",3,2,filled,1);
+    gml_surface_reset_target(&render);
+    args[1]=vstr("/other/explicit.png");
+    invoke(&vm,"surface_save",args,2,cached,&ok);
+    ok &= image_is(&f,"/other/explicit.png",2,1,surface,0);
+    /* No frontend save directory: retain ordinary content-directory fallback. */
+    win.save_dir[0]=0; path=vstr("fallback.png");
+    invoke(&vm,"screen_save",&path,1,cached,&ok);
+    ok &= image_is(&f,"/content/fallback.png",3,2,filled,1);
+    vm.win=NULL; vm.render=NULL;
+    gml_render_free(&render);
+    ok &= fixture_destroy(&f,&vm);
+  }
+  return ok;
+}
+static int image_save_failure_case(void){
+  int ok=1;
+  for(int cached=0;cached<2;cached++){
+    FileFixture f; GmlVM vm; GmlWin win={0}; GmlRender render;
+    fixture_init(&f,&vm); vm.win=&win;
+    size_t initial_nodes=f.memory.node_count; /* the memory VFS owns a root directory */
+    snprintf(win.save_dir,sizeof win.save_dir,"/save");
+    if(gml_render_init(&render,&win)!=0) return 0;
+    vm.render=&render;
+    GmlVal path=vstr("no-screen.png");
+    invoke(&vm,"screen_save",&path,1,cached,&ok);
+    uint32_t screen[]={0xabcdef};
+    gml_render_begin(&render,screen,1,1,0,0);
+    double invalid[]={-1,65536,NAN,INFINITY,1e100,0.5};
+    GmlVal args[]={vreal(0),vstr("bad-surface.png")};
+    gml_render_application_surface_bind(&render,screen,1,1,0);
+    invoke(&vm,"surface_save",args,2,cached,&ok); /* not published before Draw */
+    for(size_t i=0;i<sizeof invalid/sizeof invalid[0];i++){
+      args[0]=vreal(invalid[i]); invoke(&vm,"surface_save",args,2,cached,&ok);
+    }
+    invoke(&vm,"surface_save",args,1,cached,&ok);
+    invoke(&vm,"screen_save",NULL,0,cached,&ok);
+    path=vstr(""); invoke(&vm,"screen_save",&path,1,cached,&ok);
+    path=vreal(17); invoke(&vm,"screen_save",&path,1,cached,&ok);
+    int id=gml_surface_create(&render,1,1); args[0]=vreal(id);
+    args[1]=vreal(17); invoke(&vm,"surface_save",args,2,cached,&ok);
+    args[1]=vstr(""); invoke(&vm,"surface_save",args,2,cached,&ok);
+    gml_surface_free(&render,id); args[1]=vstr("freed.png");
+    invoke(&vm,"surface_save",args,2,cached,&ok);
+    if(f.memory.node_count!=initial_nodes || f.opened){
+      fprintf(stderr,"invalid image request wrote files: cached=%d nodes=%zu opens=%d\n",
+              cached,f.memory.node_count,f.opened); ok=0;
+    }
+    path=vstr("refused.png"); f.fail_truncate=1;
+    invoke(&vm,"screen_save",&path,1,cached,&ok);
+    f.fail_truncate=0; f.host.file_write=NULL;
+    invoke(&vm,"screen_save",&path,1,cached,&ok);
+    if(f.memory.node_count!=initial_nodes || screen[0]!=0xabcdef){
+      fprintf(stderr,"refused image write changed output: cached=%d nodes=%zu pixel=%08x\n",
+              cached,f.memory.node_count,screen[0]); ok=0;
+    }
+    f.host.file_write=f.base.file_write; f.fail_flush=1;
+    invoke(&vm,"screen_save",&path,1,cached,&ok);
+    if(f.opened!=f.closed || screen[0]!=0xabcdef){
+      fprintf(stderr,"failed image flush changed resources: cached=%d opens=%d closes=%d pixel=%08x\n",
+              cached,f.opened,f.closed,screen[0]); ok=0;
+    }
+    vm.win=NULL; vm.render=NULL;
+    gml_render_free(&render);
+    ok &= fixture_destroy(&f,&vm);
+  }
+  return ok;
+}
 int main(void){
   static const AnygmTestCase cases[]={
     {"digest_vectors_overlay_and_short_reads",digest_case},
     {"digest_injected_failures",digest_failure_case},
     {"rewrite_handle_and_cursor",rewrite_case},
-    {"rewrite_authority_and_failures",rewrite_failure_case}
+    {"rewrite_authority_and_failures",rewrite_failure_case},
+    {"image_save_pixels_and_paths",image_save_case},
+    {"image_save_invalid_inputs_and_host_failures",image_save_failure_case}
   };
   const AnygmTestGroup group={"builtin_file_io",cases,sizeof cases/sizeof cases[0]};
   AnygmTestResult result;

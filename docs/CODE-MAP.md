@@ -330,7 +330,11 @@ These operations change pixels only; they add no retained state or codec section
 unchanged cursor/data and invalid ranges: `make check TEST=builtin_buffer_hash`.
 `tests/contract/test_builtin_file_io.c` covers streamed digest vectors, VFS overlay
 and short-read/error handling, plus rewrite cursor, handle, write authority and
-resource cleanup: `make check TEST=builtin_file_io`.
+resource cleanup: `make check TEST=builtin_file_io`. The same contract verifies PNG
+screen/surface exports, exact decoded pixels and alpha, independent screen and
+surface dimensions, suspended screen clears, content/save path routing, malformed
+arguments, and unavailable host writes. The I/O owner encodes and writes the image;
+draw/platform owners adapt GML arguments and the renderer resolves pixel reads.
 
 ## Build-time audio data
 

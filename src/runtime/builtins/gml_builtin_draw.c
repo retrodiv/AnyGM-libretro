@@ -1030,7 +1030,19 @@ GmlVal gml_builtin_try_draw(GmlVM *vm, const char *nm, GmlVal *a, int n){
       if(R) gml_surface_copy_part(R,(int)N(a,n,0),(int)N(a,n,1),(int)N(a,n,2),(int)N(a,n,3),
                                   (int)N(a,n,4),(int)N(a,n,5),(int)N(a,n,6),(int)N(a,n,7));
       return vreal(0); }
-    if(!strcmp(nm,"surface_save")||!strcmp(nm,"surface_save_part")) return vreal(0);
+    if(!strcmp(nm,"surface_save")){
+      double id=N(a,n,0);
+      if(n<2 || a[1].t!=V_STR || !a[1].s || !*a[1].s ||
+         !isfinite(id) || id<0 || id>INT_MAX || id!=floor(id)) return vreal(0);
+      int width=0,height=0;
+      const uint32_t *pixels=R && gml_surface_exists(R,(int)id)?
+        gml_surface_pixels_read(R,(int)id,&width,&height):NULL;
+      if(!builtin_save_image(vm,a[1].s,pixels,width,height,0))
+        anygm_host_logf(vm?vm->host:NULL,ANYGM_LOG_WARN,
+                        "[gml] surface_save could not save PNG: %s\n",a[1].s);
+      return vreal(0);
+    }
+    if(!strcmp(nm,"surface_save_part")) return vreal(0);
     /* Without a per-surface depth buffer, store the toggle as a latch.
      * Its getter reads back the most recently set value. */
     if(!strcmp(nm,"surface_depth_disable")){ vm->builtins->surface_depth_disabled=(int)N(a,n,0); return vreal(0); }

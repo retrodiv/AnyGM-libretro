@@ -2343,6 +2343,13 @@ static int completed_screen_reader_and_writer(void){
   gml_render_resource_metrics(render,&observer_metrics);
   CHECK(observer_metrics.completed_screen_cpu_reads==2u &&
         observer_metrics.completed_screen_cpu_materializations==1u);
+  int width=0,height=0;
+  const uint32_t *observed=gml_render_screen_pixels_read(render,&width,&height);
+  CHECK(observed==pixels && width==4 && height==3 &&
+        observed[0]==0xFF000000u && observed[11]==0xFF000000u);
+  CHECK(gml_render_completed_screen_image(render,pixels,4,3,&after) &&
+        before.content_version==after.content_version &&
+        before.incarnation==after.incarnation && render->resident_application_pass);
   CHECK(gml_render_completed_screen_write(render,pixels,4,3) &&
         !render->resident_application_pass &&
         !gml_render_completed_screen_image(render,pixels,4,3,&after));

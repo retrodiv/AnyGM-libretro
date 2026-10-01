@@ -218,6 +218,45 @@ current session's used cache directories after unload by default. They do not
 change the cache layout or the portable runtime's policy; see
 [the libretro surface](LIBRETRO.md) for lifecycle and host-filesystem details.
 
+### Game image export
+
+[`screen_save(fname)`](https://manual.gamemaker.io/lts/en/GameMaker_Language/GML_Reference/Cameras_And_Display/screen_save.htm)
+and [`surface_save(surface_id, fname)`](https://manual.gamemaker.io/lts/en/GameMaker_Language/GML_Reference/Drawing/Surfaces/surface_save.htm)
+are standard GML functions. Each writes a PNG to the supplied filename through the same host/VFS
+services and path resolver as ordinary game file writes; neither has a defined
+GML return value. The renderer supplies the pixels and the existing image codec
+encodes them; a frontend screenshot service is not required.
+
+`surface_save` exports the selected surface at its own raster size, preserving
+its RGBA channels, including `application_surface` when that surface is available.
+`screen_save` exports the base game screen at its rendered raster size with opaque
+alpha, independently of a custom surface drawing target. Pending draws and device
+readbacks are resolved before sampling. Call it in Draw GUI End to include the
+completed game drawing; an earlier call observes the screen available at that
+point. Frontend menus, shaders, and subsequent frontend scaling are outside the
+core's captured image.
+
+Relative filenames and absolute filenames beneath the content's working directory
+are routed to its writable namespace:
+
+```text
+<save_directory>/AnyGM/<sanitized-label>-<path-hash>/<filename>
+```
+
+For a libretro host, `save_directory` comes from
+`RETRO_ENVIRONMENT_GET_SAVE_DIRECTORY`. It is the frontend's save-file directory,
+not its save-state or screenshot directory, and its UI label may vary. Filename
+subdirectories are retained and must already be writable. Absolute paths outside
+the content directory retain ordinary file-write behavior and depend on the host's
+permissions. Without a save root, relative writes fall back to the content
+directory. The adapter's existing system-directory fallback still applies when
+the frontend supplies no save directory.
+
+Invalid or unavailable surfaces, a missing screen, and unavailable or failed
+filesystem writes do not produce a successful capture; export failures are logged
+through the host. Capturing does not change the active surface target or rendered
+pixels.
+
 On case-sensitive filesystems, rename an existing lowercase `anygm` directory
 to `AnyGM` to retain the same persistent files. An existing `anygm-cache`
 directory may likewise be renamed to `AnyGM-cache` to reuse derived content;

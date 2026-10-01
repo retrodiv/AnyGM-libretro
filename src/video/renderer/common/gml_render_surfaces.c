@@ -864,6 +864,10 @@ const uint32_t *gml_surface_pixels_read(GmlRender *r, int id, int *w, int *h){
   return surface_pixels_observe(r,id,w,h);
 }
 
+const uint32_t *gml_render_screen_pixels_read(GmlRender *r,int *w,int *h){
+  return screen_pixels_observe(r,w,h);
+}
+
 int gml_surface_create(GmlRender *r, int w, int h){
   if(w<=0||h<=0||w>4096||h>4096) return -1;
   for(int k=0;k<GML_MAX_SURFACES;k++){
