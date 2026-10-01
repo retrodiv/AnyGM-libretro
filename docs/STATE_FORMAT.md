@@ -9,9 +9,26 @@ marketing version. It is a numeric field in a validated binary header.
 
 ## Save-state schema
 
-The current AnyGM save-state schema is `34`. It is the format transported by
+The current AnyGM save-state schema is `35`. It is the format transported by
 libretro frontends for manual save states, automatic state slots, and rewind
 snapshots. Those features remain supported.
+
+Schema `35` introduces VM schema `19`. Live GML buffers are mutable runtime
+memory, no longer discarded host I/O. After the buffer and asynchronous identity
+cursors, a signed count precedes handle-ordered records: unsigned 32-bit ID,
+signed 32-bit logical length and position, then exactly that many raw bytes.
+Unused slots and allocation capacity are absent. Counts and lengths are bounded
+by remaining payload bytes; IDs must be unique, positive and below the next
+buffer ID; position must be within the logical buffer. Root restoration remains
+transactional. Older root/VM states reject without a legacy reader.
+
+`game_save_buffer` retains its destination handle as an empty buffer in the
+embedded snapshot, preventing recursive inclusion of prior snapshot bytes.
+Other buffers are saved normally; restoring that embedded snapshot replaces
+the destination with its empty record. Ordinary frontend snapshots include
+every live buffer's logical bytes. Fixed frontend capacity policy and compact
+completed-frame handling remain unchanged: added live bytes have real memory
+and copy cost, while merely growing the tables adds no reserved-slot bytes.
 
 Schema `34` introduces compatibility schema `2`. The profile fingerprint now
 includes early Studio background compositing. The automatic pass count and
@@ -328,7 +345,7 @@ same form without an intervening mutation produces identical bytes.
 ## VM payload ownership
 
 `src/core/engine_state.c` owns the root framing and section transaction.
-Within the VM section, `src/runtime/vm/gml_vm_state.c` alone owns schema `15`,
+Within the VM section, `src/runtime/vm/gml_vm_state.c` alone owns schema `19`,
 field order, value-graph encoding, sizing, and restore scratch.
 
 Builtin resources have a separate storage and lifetime owner, not a separate
@@ -342,9 +359,9 @@ translation units may consume that boundary.
 There is no nested builtin header, checksum, schema number, or independent load
 transaction. Moving the four existing resource stages to their storage owner
 therefore adds no independent state framing or schema.
-Transient host file handles, binary buffers, asynchronous request queues,
+Transient host file handles, asynchronous request queues,
 search cursors, and derived caches are reset rather than serialized. INI
-values, maps/lists/grids, physics resources, spatial-audio state, external-audio source identities,
+values, live binary buffers, maps/lists/grids, physics resources, spatial-audio state, external-audio source identities,
 Saudio IDs, loaded Wwise-bank identities, and time sources remain serialized.
 
 External-audio states do not embed potentially large MP3/OGG/WAV files. If a dynamic handle loaded

@@ -374,9 +374,9 @@ static void gm_datetime_format(GmlVM *vm,double serial,uint32_t style,
              calendar.hour,calendar.minute,calendar.second);
 }
 static int vm_buffer_slot_from_addr(GmlVM *vm, double addr){
-  uint32_t a=(uint32_t)(uint64_t)addr;
-  if((a & 0xFFFF0000u) != 0xB0000000u) return -1;
-  return vm_buffer_slot(vm,(int)(a & 0xFFFFu));
+  if(!isfinite(addr) || addr<(double)UINT64_C(0xB000000001) ||
+     addr>(double)(UINT64_C(0xB000000000)+INT_MAX)) return -1;
+  return vm_buffer_slot(vm,(int)((uint64_t)addr-UINT64_C(0xB000000000)));
 }
 
 GmlVal gml_builtin_try_platform(GmlVM *vm, const char *nm, GmlVal *a, int n){
@@ -414,9 +414,9 @@ GmlVal gml_builtin_try_platform(GmlVM *vm, const char *nm, GmlVal *a, int n){
        !strcmp(nm,"native_cursor_create_from_full_path_raw")||
        !strcmp(nm,"native_cursor_create_from_buffer_raw")){
       int bi=vm_buffer_slot_from_addr(vm,N(a,n,0));
-      if(bi<0 || vm->builtins->buffer[bi].size<8 || !vm->builtins->buffer[bi].data) return vreal(0);
+      if(bi<0 || buffer_at(vm,bi)->size<8 || !buffer_at(vm,bi)->data) return vreal(0);
       uint64_t handle=0xA9C0DAull;
-      memcpy(vm->builtins->buffer[bi].data,&handle,sizeof handle);
+      memcpy(buffer_at(vm,bi)->data,&handle,sizeof handle);
       return vreal(1);
     }
     if(!strcmp(nm,"native_cursor_get_frame_raw")) return vreal(0);
@@ -739,9 +739,9 @@ GmlVal gml_builtin_try_platform(GmlVM *vm, const char *nm, GmlVal *a, int n){
       int32_t w=target.width>0 ? target.width : (vm&&vm->window_w>0 ? vm->window_w : 1280);
       int32_t h=target.height>0 ? target.height : (vm&&vm->window_h>0 ? vm->window_h : 720);
       int32_t mon[9]={0,0,w,h,0,0,w,h,96};
-      vm->builtins->buffer[bi].pos=0;
+      buffer_at(vm,bi)->pos=0;
       buffer_write_raw(vm,bi,mon,(int)sizeof(mon));
-      vm->builtins->buffer[bi].pos=0;
+      buffer_at(vm,bi)->pos=0;
     }
     return vreal(1);
   }

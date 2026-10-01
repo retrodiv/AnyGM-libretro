@@ -22,11 +22,16 @@ static int builtin_state_ds_lower_bound(const GmlDSPool *pool,uint32_t id){
   return first;
 }
 
-void *builtin_state_ds_find(const GmlDSPool *pool,uint32_t id){
-  if(!pool || !id || id>INT_MAX) return NULL;
+int builtin_state_handle_slot(const GmlDSPool *pool,uint32_t id){
+  if(!pool || !id || id>INT_MAX) return -1;
   int at=builtin_state_ds_lower_bound(pool,id);
   return at<pool->live_count && pool->order[at].id==id ?
-    pool->slot[pool->order[at].slot].value : NULL;
+    pool->order[at].slot : -1;
+}
+
+void *builtin_state_ds_find(const GmlDSPool *pool,uint32_t id){
+  int slot=builtin_state_handle_slot(pool,id);
+  return slot>=0?pool->slot[slot].value:NULL;
 }
 
 static void *builtin_state_ds_allocate(GmlDSPool *pool,uint32_t id,size_t size){
@@ -85,6 +90,12 @@ GmlDSList *builtin_state_ds_list_allocate(GmlBuiltinState *state,uint32_t id){
   GmlDSList *list=builtin_state_ds_allocate(&state->ds_lists,id,sizeof(*list));
   if(list){ list->live=1; list->id=id; }
   return list;
+}
+
+GmlBuiltinBuffer *builtin_state_buffer_allocate(GmlBuiltinState *state,uint32_t id){
+  GmlBuiltinBuffer *buffer=builtin_state_ds_allocate(&state->buffers,id,sizeof(*buffer));
+  if(buffer){ buffer->live=1; buffer->id=id; }
+  return buffer;
 }
 
 GmlTimeSource *gml_builtin_time_source_allocate(GmlVM *vm,int parent){
@@ -435,10 +446,13 @@ void gml_builtin_state_reset(GmlBuiltinState *state){
   if(!state) return;
   builtin_state_release_owned_values(state);
   builtin_io_files_close(state);
-  for(int i=0;i<16;i++){
-    free(state->buffer[i].data);
-    memset(&state->buffer[i],0,sizeof(state->buffer[i]));
+  for(int i=0;i<state->buffers.used;i++){
+    GmlBuiltinBuffer *buffer=state->buffers.slot[i].value;
+    if(buffer){ free(buffer->data); free(buffer); }
   }
+  free(state->buffers.slot);
+  free(state->buffers.order);
+  memset(&state->buffers,0,sizeof(state->buffers));
   builtin_state_ini_reset(state);
   state->next_buffer_id=1;
   state->async_seq=0;
@@ -542,10 +556,18 @@ static int ds_state_order_compare(const void *left,const void *right){
 
 void gml_builtin_state_write_ini_ds(const GmlBuiltinState *state,
                                     GmlVmStateWriter *writer){
-  /* Closed/transient resources are not replayed, but the allocator cursors
-   * determine language-visible identities issued after restoration. */
+  /* Host file handles stay transient. Buffers are ordinary mutable runtime
+   * memory: serialize live handles and logical bytes, not allocator reserves. */
   gml_vm_state_write_i32(writer,state->next_buffer_id);
   gml_vm_state_write_i32(writer,state->async_seq);
+  gml_vm_state_write_i32(writer,state->buffers.live_count);
+  for(int i=0;i<state->buffers.live_count;i++){
+    const GmlBuiltinBuffer *buffer=state->buffers.slot[state->buffers.order[i].slot].value;
+    gml_vm_state_write_u32(writer,buffer->id);
+    gml_vm_state_write_i32(writer,buffer->size);
+    gml_vm_state_write_i32(writer,buffer->pos);
+    gml_vm_state_write_raw(writer,buffer->data,(size_t)buffer->size);
+  }
   gml_vm_state_write_i32(writer,state->ini_n);
   gml_vm_state_write_i32(writer,state->ini_open);
   gml_vm_state_write_string(writer,state->ini_path);
@@ -609,12 +631,34 @@ int gml_builtin_state_read_ini_ds(GmlBuiltinState *state,
   if(!state || !gml_vm_state_reader_ok(reader)) return 0;
   int next_buffer_id=gml_vm_state_read_i32(reader);
   int async_seq=gml_vm_state_read_i32(reader);
-  if(next_buffer_id<1 || next_buffer_id>16 || async_seq<0){
+  if(next_buffer_id<1 || async_seq<0){
     gml_vm_state_reader_fail(reader,"bad I/O identity cursor",(uint32_t)next_buffer_id);
     return 0;
   }
   state->next_buffer_id=next_buffer_id;
   state->async_seq=async_seq;
+  int buffer_live=gml_vm_state_read_i32(reader);
+  if(buffer_live<0 || (size_t)buffer_live>gml_vm_state_reader_remaining(reader)/12u){
+    gml_vm_state_reader_fail(reader,"bad buffer count",(uint32_t)buffer_live);
+    return 0;
+  }
+  for(int i=0;i<buffer_live;i++){
+    uint32_t id=gml_vm_state_read_u32(reader);
+    int size=gml_vm_state_read_i32(reader),pos=gml_vm_state_read_i32(reader);
+    if(!gml_vm_state_reader_ok(reader) || !id || id>=(uint32_t)next_buffer_id ||
+       size<0 || pos<0 || pos>size ||
+       (size_t)size>gml_vm_state_reader_remaining(reader)){
+      gml_vm_state_reader_fail(reader,"bad buffer record",id);
+      return 0;
+    }
+    GmlBuiltinBuffer *buffer=builtin_state_buffer_allocate(state,id);
+    if(!buffer){ gml_vm_state_reader_fail(reader,"buffer allocation failed",id); return 0; }
+    buffer->data=malloc(size>0?(size_t)size:1u);
+    if(!buffer->data){ gml_vm_state_reader_fail(reader,"buffer bytes allocation failed",id); return 0; }
+    if(!size) buffer->data[0]=0;
+    buffer->size=size; buffer->cap=size>0?size:1; buffer->pos=pos;
+    gml_vm_state_read_raw(reader,buffer->data,(size_t)size);
+  }
   state->ini_n=gml_vm_state_read_i32(reader);
   state->ini_open=gml_vm_state_read_i32(reader);
   char *path=gml_vm_state_read_string(reader);

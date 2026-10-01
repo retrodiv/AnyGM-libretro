@@ -393,8 +393,8 @@ static GmlVal nsfs_load_buffer(GmlVM *vm,const char *raw){
   int slot=vm_buffer_slot(vm,id);
   if(slot>=0){
     buffer_resize_slot(vm,slot,(int)size);
-    if(size) memcpy(vm->builtins->buffer[slot].data,data,size);
-    vm->builtins->buffer[slot].pos=0;
+    if(size) memcpy(buffer_at(vm,slot)->data,data,size);
+    buffer_at(vm,slot)->pos=0;
   }
   free(data); free(path);
   return vreal(id);
@@ -594,8 +594,11 @@ int vm_file_read_real(GmlVM *vm,int slot,double *value){
   return 1;
 }
 int vm_buffer_slot(GmlVM *vm, int id){
-  int i=id-1;
-  return (i>=0 && i<16 && vm->builtins->buffer[i].live) ? i : -1;
+  return vm && vm->builtins?builtin_state_handle_slot(&vm->builtins->buffers,(uint32_t)id):-1;
+}
+GmlBuiltinBuffer *buffer_at(GmlVM *vm,int slot){
+  if(!vm || !vm->builtins || slot<0 || slot>=vm->builtins->buffers.used) return NULL;
+  return vm->builtins->buffers.slot[slot].value;
 }
 
 static GmlVal ini_default_string(GmlVM *vm,GmlVal *a,int n){
@@ -762,43 +765,44 @@ GmlVal builtin_file_text_readln(GmlVM *vm, GmlVal *a, int n){
   return vstr_owned(b);
 }
 static int buffer_alloc(GmlVM *vm, int cap){
-  for(int k=0;k<16;k++){
-    int i=(vm->builtins->next_buffer_id+k-1)%16;
-    if(!vm->builtins->buffer[i].live){
-      if(cap<1) cap=1;
-      vm->builtins->buffer[i].data=calloc((size_t)cap,1);
-      vm->builtins->buffer[i].cap=cap; vm->builtins->buffer[i].size=cap; vm->builtins->buffer[i].pos=0; vm->builtins->buffer[i].live=1;
-      vm->builtins->next_buffer_id=i+2; if(vm->builtins->next_buffer_id>16) vm->builtins->next_buffer_id=1;
-      return i+1;
-    }
-  }
-  return -1;
+  if(cap<0 || vm->builtins->next_buffer_id>=INT_MAX) return -1;
+  int alloc=cap>0?cap:1,id=vm->builtins->next_buffer_id;
+  unsigned char *data=calloc((size_t)alloc,1);
+  if(!data) return -1;
+  GmlBuiltinBuffer *buffer=builtin_state_buffer_allocate(vm->builtins,(uint32_t)id);
+  if(!buffer){ free(data); return -1; }
+  buffer->data=data; buffer->cap=alloc; buffer->size=cap; buffer->pos=0;
+  vm->builtins->next_buffer_id++;
+  return id;
 }
-static void buffer_ensure(GmlVM *vm, int bi, int need){
-  if(bi<0||bi>=16||need<=vm->builtins->buffer[bi].cap) return;
-  int nc=vm->builtins->buffer[bi].cap?vm->builtins->buffer[bi].cap:1;
-  while(nc<need) nc*=2;
-  vm->builtins->buffer[bi].data=realloc(vm->builtins->buffer[bi].data,(size_t)nc);
-  memset(vm->builtins->buffer[bi].data+vm->builtins->buffer[bi].cap,0,(size_t)(nc-vm->builtins->buffer[bi].cap));
-  vm->builtins->buffer[bi].cap=nc;
+static int buffer_ensure(GmlVM *vm, int bi, int need){
+  GmlBuiltinBuffer *buffer=buffer_at(vm,bi);
+  if(!buffer || !buffer->live || need<0) return 0;
+  if(need<=buffer->cap) return 1;
+  int nc=buffer->cap?buffer->cap:1;
+  while(nc<need){ if(nc>INT_MAX/2){ nc=need; break; } nc*=2; }
+  unsigned char *data=realloc(buffer->data,(size_t)nc);
+  if(!data) return 0;
+  memset(data+buffer->cap,0,(size_t)(nc-buffer->cap));
+  buffer->data=data; buffer->cap=nc;
+  return 1;
 }
 static void buffer_resize_slot(GmlVM *vm, int bi, int size){
-  if(bi<0||bi>=16||!vm->builtins->buffer[bi].live) return;
+  if(!buffer_at(vm,bi) || !buffer_at(vm,bi)->live) return;
   if(size<0) size=0;
   int alloc=size>0?size:1;
-  unsigned char *nd=realloc(vm->builtins->buffer[bi].data,(size_t)alloc);
+  unsigned char *nd=realloc(buffer_at(vm,bi)->data,(size_t)alloc);
   if(!nd) return;
-  if(size>vm->builtins->buffer[bi].cap) memset(nd+vm->builtins->buffer[bi].cap,0,(size_t)(size-vm->builtins->buffer[bi].cap));
-  vm->builtins->buffer[bi].data=nd;
-  vm->builtins->buffer[bi].cap=alloc;
-  vm->builtins->buffer[bi].size=size;
-  if(vm->builtins->buffer[bi].pos>size) vm->builtins->buffer[bi].pos=size;
+  if(size>buffer_at(vm,bi)->cap) memset(nd+buffer_at(vm,bi)->cap,0,(size_t)(size-buffer_at(vm,bi)->cap));
+  buffer_at(vm,bi)->data=nd;
+  buffer_at(vm,bi)->cap=alloc;
+  buffer_at(vm,bi)->size=size;
+  if(buffer_at(vm,bi)->pos>size) buffer_at(vm,bi)->pos=size;
 }
 static void buffer_write_at(GmlVM *vm, int bi, int pos, const void *p, int n){
-  if(bi<0||bi>=16||pos<0||n<=0) return;
-  buffer_ensure(vm,bi,pos+n);
-  memcpy(vm->builtins->buffer[bi].data+pos,p,(size_t)n);
-  if(vm->builtins->buffer[bi].size<pos+n) vm->builtins->buffer[bi].size=pos+n;
+  if(pos<0 || n<=0 || n>INT_MAX-pos || !buffer_ensure(vm,bi,pos+n)) return;
+  memcpy(buffer_at(vm,bi)->data+pos,p,(size_t)n);
+  if(buffer_at(vm,bi)->size<pos+n) buffer_at(vm,bi)->size=pos+n;
 }
 static int buffer_write_typed_at(GmlVM *vm, int bi, int pos, int type, const char *sv, double dv){
   if(type==11 || type==13){
@@ -817,35 +821,35 @@ static int buffer_write_typed_at(GmlVM *vm, int bi, int pos, int type, const cha
   double v=dv; buffer_write_at(vm,bi,pos,&v,8); return 8;
 }
 void buffer_write_raw(GmlVM *vm, int bi, const void *p, int n){
-  if(n<=0) return;
-  int pos=vm->builtins->buffer[bi].pos;
-  buffer_ensure(vm,bi,pos+n);
-  memcpy(vm->builtins->buffer[bi].data+pos,p,(size_t)n);
-  vm->builtins->buffer[bi].pos=pos+n;
-  if(vm->builtins->buffer[bi].size<vm->builtins->buffer[bi].pos) vm->builtins->buffer[bi].size=vm->builtins->buffer[bi].pos;
+  if(n<=0 || !buffer_at(vm,bi)) return;
+  int pos=buffer_at(vm,bi)->pos;
+  if(n>INT_MAX-pos || !buffer_ensure(vm,bi,pos+n)) return;
+  memcpy(buffer_at(vm,bi)->data+pos,p,(size_t)n);
+  buffer_at(vm,bi)->pos=pos+n;
+  if(buffer_at(vm,bi)->size<buffer_at(vm,bi)->pos) buffer_at(vm,bi)->size=buffer_at(vm,bi)->pos;
 }
 static uint64_t buffer_read_u(GmlVM *vm, int bi, int n){
   uint64_t v=0;
   if(n<=0) return 0;
-  int pos=vm->builtins->buffer[bi].pos, avail=vm->builtins->buffer[bi].size-pos;
+  int pos=buffer_at(vm,bi)->pos, avail=buffer_at(vm,bi)->size-pos;
   if(avail<n) n=avail;
-  if(n>0){ memcpy(&v,vm->builtins->buffer[bi].data+pos,(size_t)n); vm->builtins->buffer[bi].pos=pos+n; }
+  if(n>0){ memcpy(&v,buffer_at(vm,bi)->data+pos,(size_t)n); buffer_at(vm,bi)->pos=pos+n; }
   return v;
 }
 static GmlVal buffer_read_typed_at_pos(GmlVM *vm, int bi, int pos, int type){
-  if(bi<0||bi>=16||!vm->builtins->buffer[bi].live) return vreal(0);
-  int old=vm->builtins->buffer[bi].pos;
+  if(!buffer_at(vm,bi) || !buffer_at(vm,bi)->live) return vreal(0);
+  int old=buffer_at(vm,bi)->pos;
   if(pos<0) pos=0;
-  if(pos>vm->builtins->buffer[bi].size) pos=vm->builtins->buffer[bi].size;
-  vm->builtins->buffer[bi].pos=pos;
+  if(pos>buffer_at(vm,bi)->size) pos=buffer_at(vm,bi)->size;
+  buffer_at(vm,bi)->pos=pos;
   GmlVal out=vreal(0);
   if(type==11){
-    int p=vm->builtins->buffer[bi].pos, e=p;
-    while(e<vm->builtins->buffer[bi].size && vm->builtins->buffer[bi].data[e]) e++;
-    out=vstr_owned(dup_n((char*)vm->builtins->buffer[bi].data+p,e-p));
+    int p=buffer_at(vm,bi)->pos, e=p;
+    while(e<buffer_at(vm,bi)->size && buffer_at(vm,bi)->data[e]) e++;
+    out=vstr_owned(dup_n((char*)buffer_at(vm,bi)->data+p,e-p));
   } else if(type==13){
-    int p=vm->builtins->buffer[bi].pos, e=vm->builtins->buffer[bi].size;
-    out=vstr_owned(dup_n((char*)vm->builtins->buffer[bi].data+p,e-p));
+    int p=buffer_at(vm,bi)->pos, e=buffer_at(vm,bi)->size;
+    out=vstr_owned(dup_n((char*)buffer_at(vm,bi)->data+p,e-p));
   } else if(type==1||type==10) out=vreal((uint8_t)buffer_read_u(vm,bi,1));
   else if(type==2) out=vreal((int8_t)buffer_read_u(vm,bi,1));
   else if(type==3) out=vreal((uint16_t)buffer_read_u(vm,bi,2));
@@ -859,7 +863,7 @@ static GmlVal buffer_read_typed_at_pos(GmlVM *vm, int bi, int pos, int type){
   } else if(type==8){ uint32_t u=(uint32_t)buffer_read_u(vm,bi,4); float f; memcpy(&f,&u,4); out=vreal(f);
   } else if(type==12){ uint64_t u=buffer_read_u(vm,bi,8); out=vreal((double)(int64_t)u);
   } else { uint64_t u=buffer_read_u(vm,bi,8); double d; memcpy(&d,&u,8); out=vreal(d); }
-  vm->builtins->buffer[bi].pos=old;
+  buffer_at(vm,bi)->pos=old;
   return out;
 }
 typedef struct { uint32_t h[4]; uint64_t bits; uint8_t buf[64]; int used; } GmlMd5;
@@ -1351,8 +1355,8 @@ GmlVal gml_builtin_try_io(GmlVM *vm, const char *nm, GmlVal *a, int n){
     int slot=vm_buffer_slot(vm,buffer),ok=0;
     if(slot>=0 && raw[0]){
       char *path=extension_write_path(vm,raw);
-      ok=path && anygm_vfs_write_all(vm->host,path,vm->builtins->buffer[slot].data,
-                                     (size_t)vm->builtins->buffer[slot].size);
+      ok=path && anygm_vfs_write_all(vm->host,path,buffer_at(vm,slot)->data,
+                                     (size_t)buffer_at(vm,slot)->size);
       free(path);
     }
     return vreal(ok);
@@ -1649,24 +1653,31 @@ GmlVal gml_builtin_try_io(GmlVM *vm, const char *nm, GmlVal *a, int n){
   if(!strcmp(nm,"game_save_buffer")){
     int bi=vm_buffer_slot(vm,(int)N(a,n,0));
     if(bi<0) return vreal(0);
+    /* A state container must not recursively embed its previous state bytes.
+     * Its handle is retained as an empty buffer in this snapshot. Serialize
+     * separately so source buffers never overlap the codec's output. */
+    GmlBuiltinBuffer *destination=buffer_at(vm,bi);
+    int old_size=destination->size,old_pos=destination->pos;
+    destination->size=0; destination->pos=0;
     size_t size=gml_vm_state_size(vm), written=0;
-    if(size>(size_t)INT_MAX) return vreal(0);
+    unsigned char *copy=size<=(size_t)INT_MAX?malloc(size?size:1u):NULL;
+    int ok=copy && gml_vm_state_save(vm,copy,size,&written) && written==size;
+    destination->size=old_size; destination->pos=old_pos;
+    if(!ok){ free(copy); return vreal(0); }
     buffer_resize_slot(vm,bi,(int)size);
-    if(vm->builtins->buffer[bi].data && gml_vm_state_save(vm,vm->builtins->buffer[bi].data,size,&written)){
-      vm->builtins->buffer[bi].size=(int)written;
-      vm->builtins->buffer[bi].pos=0;
-      return vreal(1);
-    }
-    return vreal(0);
+    ok=destination->size==(int)size;
+    if(ok){ memcpy(destination->data,copy,size); destination->pos=0; }
+    free(copy);
+    return vreal(ok);
   }
   if(!strcmp(nm,"game_load_buffer")){
     int bi=vm_buffer_slot(vm,(int)N(a,n,0));
-    if(bi<0 || !vm->builtins->buffer[bi].data || vm->builtins->buffer[bi].size<=0) return vreal(0);
-    size_t size=(size_t)vm->builtins->buffer[bi].size, used=0;
-    /* State loading clears transient runtime buffers, including the source handle. */
+    if(bi<0 || !buffer_at(vm,bi)->data || buffer_at(vm,bi)->size<=0) return vreal(0);
+    size_t size=(size_t)buffer_at(vm,bi)->size, used=0;
+    /* State loading replaces runtime buffers, including the source allocation. */
     unsigned char *copy=malloc(size);
     if(!copy) return vreal(0);
-    memcpy(copy,vm->builtins->buffer[bi].data,size);
+    memcpy(copy,buffer_at(vm,bi)->data,size);
     int ok=gml_vm_state_load(vm,copy,size,&used) && used==size;
     free(copy);
     return vreal(ok);
@@ -1725,7 +1736,10 @@ GmlVal gml_builtin_try_io(GmlVM *vm, const char *nm, GmlVal *a, int n){
     return vreal(0); }
   if(!strcmp(nm,"file_text_writeln")){ int i=vm_file_slot(vm,(int)N(a,n,0)); if(i>=0) vm_file_write(vm,i,"\n",1); return vreal(0); }
 
-  if(!strcmp(nm,"buffer_create")){ int id=buffer_alloc(vm,(int)N(a,n,0)); return vreal(id); }
+  if(!strcmp(nm,"buffer_create")){
+    double size=N(a,n,0);
+    return vreal(isfinite(size) && size>=0 && size<=INT_MAX?buffer_alloc(vm,(int)size):-1);
+  }
   if(!strcmp(nm,"buffer_exists")) return vreal(vm_buffer_slot(vm,(int)N(a,n,0))>=0);
   if(!strcmp(nm,"buffer_base64_decode")){
     int len=0; unsigned char *bytes=base64_decode_alloc(S(vm,a,n,0),&len);
@@ -1734,8 +1748,8 @@ GmlVal gml_builtin_try_io(GmlVM *vm, const char *nm, GmlVal *a, int n){
     int bi=vm_buffer_slot(vm,id);
     if(bi>=0){
       buffer_resize_slot(vm,bi,len);
-      if(len>0) memcpy(vm->builtins->buffer[bi].data,bytes,(size_t)len);
-      vm->builtins->buffer[bi].pos=0;
+      if(len>0) memcpy(buffer_at(vm,bi)->data,bytes,(size_t)len);
+      buffer_at(vm,bi)->pos=0;
     }
     free(bytes);
     return vreal(id);
@@ -1745,36 +1759,38 @@ GmlVal gml_builtin_try_io(GmlVM *vm, const char *nm, GmlVal *a, int n){
      * consumes the remaining bytes from the clamped offset. */
     int i=vm_buffer_slot(vm,(int)N(a,n,0));
     if(i<0) return vstr("");
-    int size=vm->builtins->buffer[i].size;
+    int size=buffer_at(vm,i)->size;
     int off=(int)N(a,n,1), len=(int)N(a,n,2);
     if(off<0) off=0;
     if(off>size) off=size;
     if(len<0 || off+len>size) len=size-off;
-    char *text=base64_encode_alloc(vm->builtins->buffer[i].data+off,len);
+    char *text=base64_encode_alloc(buffer_at(vm,i)->data+off,len);
     return text ? vstr_owned(text) : vstr("");
   }
   if(!strcmp(nm,"buffer_delete")){ int i=vm_buffer_slot(vm,(int)N(a,n,0));
-    if(i>=0){ free(vm->builtins->buffer[i].data); memset(&vm->builtins->buffer[i],0,sizeof(vm->builtins->buffer[i])); } return vreal(0); }
-  if(!strcmp(nm,"buffer_get_size")){ int i=vm_buffer_slot(vm,(int)N(a,n,0)); return vreal(i>=0?vm->builtins->buffer[i].size:0); }
+    if(i>=0){ GmlBuiltinBuffer *buffer=buffer_at(vm,i);
+      builtin_state_ds_remove(&vm->builtins->buffers,buffer->id);
+      free(buffer->data); memset(buffer,0,sizeof(*buffer)); } return vreal(0); }
+  if(!strcmp(nm,"buffer_get_size")){ int i=vm_buffer_slot(vm,(int)N(a,n,0)); return vreal(i>=0?buffer_at(vm,i)->size:0); }
   if(!strcmp(nm,"buffer_sha1")){
     double id=N(a,n,0),offset=N(a,n,1),length=N(a,n,2);
-    if(n<3 || !isfinite(id) || id<1 || id>16 || !isfinite(offset) ||
+    if(n<3 || !isfinite(id) || id<1 || id>INT_MAX || !isfinite(offset) ||
        !isfinite(length) || offset<0 || length<0) return vstr("");
     int i=vm_buffer_slot(vm,(int)id);
-    if(i<0 || offset>vm->builtins->buffer[i].size) return vstr("");
+    if(i<0 || offset>buffer_at(vm,i)->size) return vstr("");
     int off=(int)offset;
-    if(length>vm->builtins->buffer[i].size-off) return vstr("");
-    const uint8_t *data=vm->builtins->buffer[i].data;
+    if(length>buffer_at(vm,i)->size-off) return vstr("");
+    const uint8_t *data=buffer_at(vm,i)->data;
     return sha1_hex_val(data?data+off:NULL,(size_t)length);
   }
   if(!strcmp(nm,"buffer_md5")){ int i=vm_buffer_slot(vm,(int)N(a,n,0)); if(i<0) return md5_hex_val(NULL,0);
     int off=(int)N(a,n,1), sz=(int)N(a,n,2);
     if(off<0) off=0;
-    if(off>vm->builtins->buffer[i].size) off=vm->builtins->buffer[i].size;
-    if(sz<0 || off+sz>vm->builtins->buffer[i].size) sz=vm->builtins->buffer[i].size-off;
-    return md5_hex_val(vm->builtins->buffer[i].data+off,(size_t)sz); }
+    if(off>buffer_at(vm,i)->size) off=buffer_at(vm,i)->size;
+    if(sz<0 || off+sz>buffer_at(vm,i)->size) sz=buffer_at(vm,i)->size-off;
+    return md5_hex_val(buffer_at(vm,i)->data+off,(size_t)sz); }
   if(!strcmp(nm,"buffer_get_address")){ int id=(int)N(a,n,0), i=vm_buffer_slot(vm,id);
-    return vreal(i>=0 ? (double)(0xB0000000u | (uint32_t)(id&0xFFFF)) : 0); }
+    return vreal(i>=0 ? (double)(UINT64_C(0xB000000000)+(uint32_t)id) : 0); }
   if(!strcmp(nm,"buffer_get_surface")){  /* Copy surface pixels as R,G,B,A bytes. */
     int di=vm_buffer_slot(vm,(int)N(a,n,0)); int sid=(int)N(a,n,1); int off=(int)N(a,n,2);
     GmlRender *R=(GmlRender*)vm->render;
@@ -1809,23 +1825,23 @@ GmlVal gml_builtin_try_io(GmlVM *vm, const char *nm, GmlVal *a, int n){
     int id=vm_file_open(vm,path,"r");
     free(path);
     return vreal(id); }
-  if(!strcmp(nm,"buffer_tell")){ int i=vm_buffer_slot(vm,(int)N(a,n,0)); return vreal(i>=0?vm->builtins->buffer[i].pos:0); }
+  if(!strcmp(nm,"buffer_tell")){ int i=vm_buffer_slot(vm,(int)N(a,n,0)); return vreal(i>=0?buffer_at(vm,i)->pos:0); }
   if(!strcmp(nm,"buffer_resize")){ int i=vm_buffer_slot(vm,(int)N(a,n,0)); if(i>=0) buffer_resize_slot(vm,i,(int)N(a,n,1)); return vreal(0); }
   if(!strcmp(nm,"buffer_seek")){ int i=vm_buffer_slot(vm,(int)N(a,n,0)); if(i>=0){
       int base=(int)N(a,n,1), off=(int)N(a,n,2), pos=off;
-      if(base==1) pos=vm->builtins->buffer[i].pos+off; else if(base==2) pos=vm->builtins->buffer[i].size+off;
+      if(base==1) pos=buffer_at(vm,i)->pos+off; else if(base==2) pos=buffer_at(vm,i)->size+off;
       if(pos<0) pos=0;
-      if(pos>vm->builtins->buffer[i].size) pos=vm->builtins->buffer[i].size;
-      vm->builtins->buffer[i].pos=pos; }
+      if(pos>buffer_at(vm,i)->size) pos=buffer_at(vm,i)->size;
+      buffer_at(vm,i)->pos=pos; }
     return vreal(0); }
   if(!strcmp(nm,"buffer_copy")){
     int si=vm_buffer_slot(vm,(int)N(a,n,0)), so=(int)N(a,n,1), bytes=(int)N(a,n,2);
     int di=vm_buffer_slot(vm,(int)N(a,n,3)), doff=(int)N(a,n,4);
     if(si>=0 && di>=0 && so>=0 && doff>=0 && bytes>0){
-      if(so+bytes>vm->builtins->buffer[si].size) bytes=vm->builtins->buffer[si].size-so;
+      if(so+bytes>buffer_at(vm,si)->size) bytes=buffer_at(vm,si)->size-so;
       if(bytes>0){
         unsigned char *tmp=malloc((size_t)bytes);
-        if(tmp){ memcpy(tmp,vm->builtins->buffer[si].data+so,(size_t)bytes);
+        if(tmp){ memcpy(tmp,buffer_at(vm,si)->data+so,(size_t)bytes);
           buffer_write_at(vm,di,doff,tmp,bytes); free(tmp); }
       }
     }
@@ -1860,13 +1876,13 @@ GmlVal gml_builtin_try_io(GmlVM *vm, const char *nm, GmlVal *a, int n){
     return buffer_read_typed_at_pos(vm,i,(int)N(a,n,1),(int)N(a,n,2)); }
   if(!strcmp(nm,"buffer_read")){ int i=vm_buffer_slot(vm,(int)N(a,n,0)); if(i<0) return vreal(0);
     int type=(int)N(a,n,1);
-    if(type==11){ int p=vm->builtins->buffer[i].pos, e=p;   /* buffer_string: NUL-terminated */
-      while(e<vm->builtins->buffer[i].size && vm->builtins->buffer[i].data[e]) e++;
-      char *s=dup_n((char*)vm->builtins->buffer[i].data+p,e-p);
-      vm->builtins->buffer[i].pos=(e<vm->builtins->buffer[i].size)?e+1:e; return vstr_owned(s); }
-    if(type==13){ int p=vm->builtins->buffer[i].pos, e=vm->builtins->buffer[i].size;   /* buffer_text: to end */
-      char *s=dup_n((char*)vm->builtins->buffer[i].data+p,e-p);
-      vm->builtins->buffer[i].pos=e; return vstr_owned(s); }
+    if(type==11){ int p=buffer_at(vm,i)->pos, e=p;   /* buffer_string: NUL-terminated */
+      while(e<buffer_at(vm,i)->size && buffer_at(vm,i)->data[e]) e++;
+      char *s=dup_n((char*)buffer_at(vm,i)->data+p,e-p);
+      buffer_at(vm,i)->pos=(e<buffer_at(vm,i)->size)?e+1:e; return vstr_owned(s); }
+    if(type==13){ int p=buffer_at(vm,i)->pos, e=buffer_at(vm,i)->size;   /* buffer_text: to end */
+      char *s=dup_n((char*)buffer_at(vm,i)->data+p,e-p);
+      buffer_at(vm,i)->pos=e; return vstr_owned(s); }
     if(type==1||type==10) return vreal((uint8_t)buffer_read_u(vm,i,1));
     if(type==2) return vreal((int8_t)buffer_read_u(vm,i,1));
     if(type==3) return vreal((uint16_t)buffer_read_u(vm,i,2));
@@ -1887,8 +1903,8 @@ GmlVal gml_builtin_try_io(GmlVM *vm, const char *nm, GmlVal *a, int n){
     int ok=0;
     if(i>=0 && raw[0]){ char *path=resolve_write_path(vm,raw); int off=(int)N(a,n,2), sz=(int)N(a,n,3);
       if(off<0) off=0;
-      if(sz<=0||off+sz>vm->builtins->buffer[i].size) sz=vm->builtins->buffer[i].size-off;
-      if(sz>=0) ok=anygm_vfs_write_all(vm->host,path,vm->builtins->buffer[i].data+off,(size_t)sz);
+      if(sz<=0||off+sz>buffer_at(vm,i)->size) sz=buffer_at(vm,i)->size-off;
+      if(sz>=0) ok=anygm_vfs_write_all(vm->host,path,buffer_at(vm,i)->data+off,(size_t)sz);
       free(path); }
     int req=async_saveload_request(vm, ok);
     return vreal(req); }
@@ -1898,20 +1914,20 @@ GmlVal gml_builtin_try_io(GmlVM *vm, const char *nm, GmlVal *a, int n){
     int ok=0; uint8_t *data=NULL; size_t size=0;
     if(path && i>=0 && anygm_vfs_read_all(vm->host,path,&data,&size,256u*1024u*1024u)){
       if(size==0){
-        vm->builtins->buffer[i].pos=0;
+        buffer_at(vm,i)->pos=0;
         ok=1;
       } else if(size<=(size_t)(INT_MAX-off)){
         int count=(int)size;
-        if(off+count > vm->builtins->buffer[i].cap){
-          int nc=off+count; unsigned char *nd=realloc(vm->builtins->buffer[i].data,(size_t)nc);
-          if(nd){ vm->builtins->buffer[i].data=nd;
-            if(nc>vm->builtins->buffer[i].cap) memset(nd+vm->builtins->buffer[i].cap,0,(size_t)(nc-vm->builtins->buffer[i].cap));
-            vm->builtins->buffer[i].cap=nc; }
+        if(off+count > buffer_at(vm,i)->cap){
+          int nc=off+count; unsigned char *nd=realloc(buffer_at(vm,i)->data,(size_t)nc);
+          if(nd){ buffer_at(vm,i)->data=nd;
+            if(nc>buffer_at(vm,i)->cap) memset(nd+buffer_at(vm,i)->cap,0,(size_t)(nc-buffer_at(vm,i)->cap));
+            buffer_at(vm,i)->cap=nc; }
         }
-        if(off+count <= vm->builtins->buffer[i].cap){
-          memcpy(vm->builtins->buffer[i].data+off,data,size);
-          if(off+count > vm->builtins->buffer[i].size) vm->builtins->buffer[i].size=off+count;
-          vm->builtins->buffer[i].pos=0; ok=1;
+        if(off+count <= buffer_at(vm,i)->cap){
+          memcpy(buffer_at(vm,i)->data+off,data,size);
+          if(off+count > buffer_at(vm,i)->size) buffer_at(vm,i)->size=off+count;
+          buffer_at(vm,i)->pos=0; ok=1;
         }
       }
     }
@@ -1922,26 +1938,26 @@ GmlVal gml_builtin_try_io(GmlVM *vm, const char *nm, GmlVal *a, int n){
   /* Synchronous buffer file I/O. */
   if(!strcmp(nm,"buffer_save")){ int i=vm_buffer_slot(vm,(int)N(a,n,0)); const char *raw=S(vm,a,n,1);
     if(i>=0 && raw[0]){ char *path=resolve_write_path(vm,raw);
-      anygm_vfs_write_all(vm->host,path,vm->builtins->buffer[i].data,(size_t)vm->builtins->buffer[i].size);
+      anygm_vfs_write_all(vm->host,path,buffer_at(vm,i)->data,(size_t)buffer_at(vm,i)->size);
       free(path); }
     return vreal(0); }
   if(!strcmp(nm,"buffer_save_ext")){ int i=vm_buffer_slot(vm,(int)N(a,n,0)); const char *raw=S(vm,a,n,1);
     if(i>=0 && raw[0]){ char *path=resolve_write_path(vm,raw); int off=(int)N(a,n,2), sz=(int)N(a,n,3);
       if(off<0) off=0;
-      if(sz<=0||off+sz>vm->builtins->buffer[i].size) sz=vm->builtins->buffer[i].size-off;
-      if(sz>=0) anygm_vfs_write_all(vm->host,path,vm->builtins->buffer[i].data+off,(size_t)sz);
+      if(sz<=0||off+sz>buffer_at(vm,i)->size) sz=buffer_at(vm,i)->size-off;
+      if(sz>=0) anygm_vfs_write_all(vm->host,path,buffer_at(vm,i)->data+off,(size_t)sz);
       free(path); }
     return vreal(0); }
   if(!strcmp(nm,"buffer_load")){ char *path=resolve_read_path(vm,S(vm,a,n,0)); uint8_t *data=NULL; size_t size=0;
     if(!path || !anygm_vfs_read_all(vm->host,path,&data,&size,256u*1024u*1024u) || size>INT_MAX){ free(data); free(path); return vreal(-1); }
     int id=buffer_alloc(vm,size>0?(int)size:1); int i=vm_buffer_slot(vm,id);
-    if(i>=0){ buffer_resize_slot(vm,i,(int)size); if(size) memcpy(vm->builtins->buffer[i].data,data,size); vm->builtins->buffer[i].pos=0; }
+    if(i>=0){ buffer_resize_slot(vm,i,(int)size); if(size) memcpy(buffer_at(vm,i)->data,data,size); buffer_at(vm,i)->pos=0; }
     free(data); free(path); return vreal(id); }
   if(!strcmp(nm,"buffer_load_ext")){ int i=vm_buffer_slot(vm,(int)N(a,n,0)); char *path=resolve_read_path(vm,S(vm,a,n,1)); int off=(int)N(a,n,2);
     uint8_t *data=NULL; size_t size=0; if(off<0) off=0;
     if(i>=0 && path && anygm_vfs_read_all(vm->host,path,&data,&size,256u*1024u*1024u) &&
-       size<=(size_t)(INT_MAX-off) && off+(int)size<=vm->builtins->buffer[i].size && size)
-      memcpy(vm->builtins->buffer[i].data+off,data,size);
+       size<=(size_t)(INT_MAX-off) && off+(int)size<=buffer_at(vm,i)->size && size)
+      memcpy(buffer_at(vm,i)->data+off,data,size);
     free(data); free(path); return vreal(0); }
   if(!strcmp(nm,"buffer_async_group_begin")){
     vm->builtins->async_group_active=1;

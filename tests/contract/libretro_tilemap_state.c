@@ -238,7 +238,7 @@ static int run_ds_case(int response){
   Ring ring={0};
   uint8_t *cold=NULL,*saved=NULL;
   int ok=1;
-  GmlVal map=vreal(-1),list=vreal(-1);
+  GmlVal map=vreal(-1),list=vreal(-1),buffer=vreal(-1);
   negotiation=response;
   monitor_changed=option_update=0;
   REQUIRE(anygm_synthetic_content_create(&fixture),"create DS capacity fixture");
@@ -261,6 +261,13 @@ static int run_ds_case(int response){
     GmlVal push_args[]={list,vreal(i)};
     gml_builtin_call(vm,"ds_map_add",add,3);
     gml_builtin_call(vm,"ds_list_add",push_args,2);
+    if(i<64){
+      GmlVal size=vreal(8192);
+      buffer=gml_builtin_call(vm,"buffer_create",&size,1);
+      REQUIRE(buffer.d>0,"grow buffer handles after cold ring allocation");
+      GmlVal poke[]={buffer,vreal(8191),vreal(1),vreal(i)};
+      gml_builtin_call(vm,"buffer_poke",poke,4);
+    }
   }
   REQUIRE(push(&ring),"DS maximum growth push");
   size_t saved_size=ring.capacity;
@@ -269,8 +276,12 @@ static int run_ds_case(int response){
   memcpy(saved,ring.bytes,saved_size);
   gml_builtin_call(&g_libretro.engine->vm,"ds_map_destroy",&map,1);
   gml_builtin_call(&g_libretro.engine->vm,"ds_list_destroy",&list,1);
+  gml_builtin_call(&g_libretro.engine->vm,"buffer_delete",&buffer,1);
   REQUIRE(retro_unserialize(saved,saved_size),"restore destroyed DS handles");
   GmlVal get_map[]={map,vstr("number")},get_list[]={list,vreal(0)};
+  GmlVal peek_buffer[]={buffer,vreal(8191),vreal(1)};
+  REQUIRE(gml_builtin_call(&g_libretro.engine->vm,"buffer_peek",peek_buffer,3).d==63,
+          "restored buffer tail bytes beyond former handle capacity");
   REQUIRE(gml_builtin_call(&g_libretro.engine->vm,"ds_map_find_value",get_map,2).d==2299,
           "restored last map value beyond former capacity");
   REQUIRE(gml_builtin_call(&g_libretro.engine->vm,"ds_list_find_value",get_list,2).d==2299,

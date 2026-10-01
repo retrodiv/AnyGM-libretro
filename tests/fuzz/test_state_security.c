@@ -930,7 +930,7 @@ static int io_identity_state_cases(const AnygmHostServices *services,
     if(!memcmp(baseline+at,prefix,sizeof prefix)){ cursor=at; matches++; }
   int ok=candidate && matches==1;
   if(!ok) fail("I/O cursor fixture does not identify its unique record");
-  const uint32_t bad_buffer[]={0,17,UINT32_MAX};
+  const uint32_t bad_buffer[]={0,UINT32_C(0x80000000),UINT32_MAX};
   for(size_t i=0;ok && i<sizeof bad_buffer/sizeof *bad_buffer;i++)
     ok=reject_payload_u32(engine,candidate,size,baseline,size,cursor,bad_buffer[i],
                           "invalid buffer allocator cursor");
@@ -973,6 +973,49 @@ static int io_identity_state_cases(const AnygmHostServices *services,
   }
   free(candidate); free(baseline); anygm_destroy(engine);
   return ok;
+}
+
+static int buffer_state_cases(const AnygmHostServices *services,const AnygmContentSource *source){
+  AnygmEngine *engine=NULL;
+  if(anygm_create(services,&engine)!=ANYGM_OK || anygm_load(engine,source,NULL)!=ANYGM_OK){
+    anygm_destroy(engine); return fail("buffer state fixture load failed");
+  }
+  for(int i=0;i<64;i++){
+    GmlVal length=vreal(32);
+    GmlVal id=gml_builtin_call(&engine->vm,"buffer_create",&length,1);
+    if(id.d!=i+1){ anygm_destroy(engine); return fail("buffer state fixture growth failed"); }
+    GmlVal poke[]={id,vreal(31),vreal(1),vreal(i)};
+    gml_builtin_call(&engine->vm,"buffer_poke",poke,4);
+  }
+  uint8_t *baseline=NULL; size_t size=0;
+  if(!save_state(engine,&baseline,&size)){ anygm_destroy(engine); return 0; }
+  uint8_t *candidate=malloc(size);
+  size_t vm_start=STATE_HEADER_SIZE+(size_t)read_u64(baseline+64)+(size_t)read_u64(baseline+72);
+  size_t vm_end=vm_start+(size_t)read_u64(baseline+80),cursor=0;
+  uint8_t prefix[12]={0}; write_u32(prefix,65); write_u32(prefix+8,64);
+  int matches=0;
+  for(size_t at=vm_start;at+sizeof prefix<=vm_end;at++)
+    if(!memcmp(baseline+at,prefix,sizeof prefix)){ cursor=at; matches++; }
+  int ok=candidate && matches==1;
+  if(!ok) fail("buffer state fixture has no unique record");
+  if(ok) ok=reject_payload_u32(engine,candidate,size,baseline,size,cursor+8,UINT32_MAX,"negative buffer count");
+  if(ok) ok=reject_payload_u32(engine,candidate,size,baseline,size,cursor+8,INT32_MAX,"oversized buffer count");
+  if(ok) ok=reject_payload_u32(engine,candidate,size,baseline,size,cursor+12,0,"zero buffer handle");
+  if(ok) ok=reject_payload_u32(engine,candidate,size,baseline,size,cursor+12,65,"non-advancing buffer handle");
+  if(ok) ok=reject_payload_u32(engine,candidate,size,baseline,size,cursor+16,INT32_MAX,"oversized buffer byte count");
+  if(ok) ok=reject_payload_u32(engine,candidate,size,baseline,size,cursor+20,33,"buffer position beyond bytes");
+  if(ok) ok=reject_payload_u32(engine,candidate,size,baseline,size,cursor+56,1,"duplicate buffer handle");
+  if(ok) ok=reject_payload_u32(engine,candidate,size,baseline,size,vm_start+4,18,"previous transient-buffer VM schema");
+  if(ok) ok=reject_payload_u32(engine,candidate,size,baseline,size,4,34,"previous transient-buffer root schema");
+  if(ok){
+    GmlVal last=vreal(64);
+    gml_builtin_call(&engine->vm,"buffer_delete",&last,1);
+    ok=anygm_state_load(engine,baseline,size)==ANYGM_OK && engine_matches(engine,baseline,size);
+    GmlVal peek[]={last,vreal(31),vreal(1)};
+    ok=ok && gml_builtin_call(&engine->vm,"buffer_peek",peek,3).d==63;
+    if(!ok) fail("live buffer state roundtrip failed");
+  }
+  free(candidate); free(baseline); anygm_destroy(engine); return ok;
 }
 
 int main(void){
@@ -1268,6 +1311,7 @@ int main(void){
   if(ok) ok=delayed_call_state_cases(&services,&source);
 
   if(ok) ok=io_identity_state_cases(&services,&source);
+  if(ok) ok=buffer_state_cases(&services,&source);
 
   if(ok) ok=content_override_state_cases(&services,&fixture);
 

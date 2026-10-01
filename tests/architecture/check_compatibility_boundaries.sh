@@ -146,7 +146,7 @@ if [ "$builtin_state_source_count" -ne 1 ]; then
 fi
 
 vm_builtin_resource_storage=$(grep -n -E \
-  '(^|[^[:alnum:]_])(GmlDS(Map|List|Grid)|GmlTimeSource|GmlPhysics(Fixture|Joint)|GML_(INI_MAX|DS_(MAP|LIST|GRID)_MAX|TIME_SOURCE_(MAX|ID_BASE)|MAX_EMITTERS|PHYS_(FIXTURE|JOINT)_MAX)|ini_(kv|n|open|path)|bin_file|next_buffer_id|async_(sl|http|group)|next_ds_id|ds_(map|list|grid|map_last_slot|list_compat_repair)|next_time_source_id|time_source(_game_state)?|emitter_(live|gain|x|y|z|ref|max|factor)|listener_(x|y|z|forward|up)|audio_falloff_model|phys_(fixture|joint|next_id|gravity|update|paused|debug_draw))([^[:alnum:]_]|$)' \
+  '(^|[^[:alnum:]_])(GmlDS(Map|List|Grid|Pool)|GmlBuiltinBuffer|GmlTimeSource|GmlPhysics(Fixture|Joint)|GML_(INI_MAX|DS_(MAP|LIST|GRID)_MAX|TIME_SOURCE_(MAX|ID_BASE)|MAX_EMITTERS|PHYS_(FIXTURE|JOINT)_MAX)|ini_(kv|n|open|path)|bin_file|buffers|next_buffer_id|async_(sl|http|group)|next_ds_id|ds_(map|maps|list|lists|grid|map_last_slot|map_last|list_compat_repair)|next_time_source_id|time_source(_game_state)?|emitter_(live|gain|x|y|z|ref|max|factor)|listener_(x|y|z|forward|up)|audio_falloff_model|phys_(fixture|joint|next_id|gravity|update|paused|debug_draw))([^[:alnum:]_]|$)' \
   src/runtime/vm/gml_vm.h 2>/dev/null || true)
 fail_matches "GmlVM must retain only the opaque builtin-state pointer, not builtin resource storage:" \
   "$vm_builtin_resource_storage"

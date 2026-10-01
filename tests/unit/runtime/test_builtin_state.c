@@ -157,8 +157,12 @@ static int verify_restored_resources(GmlVM *vm,GmlVal map,GmlVal list,
                        "restored time source");
   ok=ok && expect_real(call(vm,"time_source_get_state",&timer,1),2,
                        "restored time-source state");
-  ok=ok && expect_real(call(vm,"buffer_exists",&buffer,1),0,
-                       "transient buffer after restore");
+  ok=ok && expect_real(call(vm,"buffer_exists",&buffer,1),1,
+                       "restored buffer handle");
+  GmlVal buffer_at[3]={buffer,vreal(0),vreal(1)};
+  ok=ok && expect_real(call(vm,"buffer_peek",buffer_at,3),123,
+                       "restored buffer bytes") &&
+     expect_real(call(vm,"buffer_tell",&buffer,1),1,"restored buffer position");
   return ok;
 }
 

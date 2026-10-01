@@ -3326,6 +3326,23 @@ int main(int argc,char **argv){
   }
   free(map_probe);
   if(visual_word<=map_word){ fprintf(stderr,"canonical visual sections changed order\n"); return 1; }
+  /* The empty buffer record count is the only new payload word in this fixture.
+   * Verify it before projecting test scratch to the preceding layout; preserve
+   * every historical size/hash pin. No runtime reader accepts that layout. */
+  size_t buffer_word=map_word+12;
+  if((uint32_t)read_u64(deterministic+4)!=35 ||
+     (uint32_t)read_u64(deterministic+map_vm+4)!=19 ||
+     buffer_word+4>visual_word || map_vm_size<4 ||
+     memcmp(deterministic+buffer_word,"\0\0\0\0",4)){
+    fprintf(stderr,"canonical buffer framing changed\n"); return 1;
+  }
+  memmove(deterministic+buffer_word,deterministic+buffer_word+4,
+          deterministic_size-buffer_word-4);
+  deterministic_size-=4; preceding_scale_size-=4; visual_word-=4; map_vm_size-=4;
+  write_u64(deterministic+16,deterministic_size);
+  write_u64(deterministic+80,map_vm_size);
+  write_u64(deterministic+96,deterministic_size-112);
+  write_u32(deterministic+4,34); write_u32(deterministic+map_vm+4,18);
   /* Compatibility schema 3 adds classic extended-text blank-line policy to its fingerprint.
    * The fixed Classic fixture resolves that policy and retains the same state payload. Schema 2
    * added early-background compositing; this fixture leaves that policy disabled. Project only

@@ -77,6 +77,7 @@ typedef struct {
 typedef struct {
   unsigned char *data;
   int size, cap, pos, live;
+  uint32_t id;
 } GmlBuiltinBuffer;
 typedef struct {
   char name[40];
@@ -125,7 +126,7 @@ struct GmlBuiltinState {
   int ini_n, ini_open;
   char ini_path[256];
   void *bin_file[16];
-  GmlBuiltinBuffer buffer[16];
+  GmlDSPool buffers;
   int next_buffer_id;
   int async_sl_q[16], async_sl_status[16], n_async_sl, async_seq;
   int async_group_active, async_group_id;
@@ -209,6 +210,8 @@ struct GmlBuiltinState {
 struct GmlRender;
 
 void *builtin_state_ds_find(const GmlDSPool *pool,uint32_t id);
+int builtin_state_handle_slot(const GmlDSPool *pool,uint32_t id);
+GmlBuiltinBuffer *builtin_state_buffer_allocate(GmlBuiltinState *state,uint32_t id);
 void builtin_state_ds_remove(GmlDSPool *pool,uint32_t id);
 GmlDSMap *builtin_state_ds_map_allocate(GmlBuiltinState *state,uint32_t id);
 GmlDSList *builtin_state_ds_list_allocate(GmlBuiltinState *state,uint32_t id);
@@ -420,6 +423,7 @@ GmlVal gml_builtin_json_decode_ds(GmlVM *vm, const char *text);
 void buffer_write_raw(GmlVM *vm, int buffer_index,
                       const void *bytes, int byte_count);
 int vm_buffer_slot(GmlVM *vm, int id);
+GmlBuiltinBuffer *buffer_at(GmlVM *vm,int slot);
 int vm_file_slot(GmlVM *vm, int id);
 void vm_file_ungetc(GmlVM *vm, int slot, int value);
 GmlVal builtin_ini_open_file(GmlVM *vm, GmlVal *args, int count);
