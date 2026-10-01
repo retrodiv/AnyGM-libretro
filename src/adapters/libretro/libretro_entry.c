@@ -372,6 +372,16 @@ bool libretro_content_start(void){
    * always find a free cache slot. */
   memset(g_libretro.setting_cache,0,sizeof g_libretro.setting_cache);
   g_libretro.setting_cache_count=0;
+  AnygmHostServices profile_services;
+  libretro_host_services_init(&profile_services);
+  g_libretro.frame_profile_clock=profile_services.monotonic_time_ns;
+  g_libretro.frame_profile_userdata=profile_services.userdata;
+  const char *profile_setting=profile_services.development_setting?
+    profile_services.development_setting(profile_services.userdata,"GML_PROFILE_LIBRETRO_FRAME"):NULL;
+  g_libretro.frame_profile_enabled=g_libretro.log && g_libretro.frame_profile_clock &&
+    profile_setting && profile_setting[0] && strcmp(profile_setting,"0");
+  g_libretro.frame_profile_tick=0;
+  g_libretro.frame_profile_previous_valid=false;
   libretro_options_publish_rooms();
   libretro_update_av();
   g_libretro.startup_av_notification_pending=provisional_av_exposed;
@@ -474,6 +484,8 @@ void retro_unload_game(void){
   g_libretro.startup_resume_capacity=0;
   g_libretro.state_capacity_growth_reported=false;
   g_libretro.frame_failure_reports=0;
+  g_libretro.frame_profile_enabled=false;
+  g_libretro.frame_profile_previous_valid=false;
   memset(g_libretro.override_used,0,sizeof g_libretro.override_used);
   memset(&g_libretro.frame,0,sizeof g_libretro.frame);
   memset(&g_libretro.av,0,sizeof g_libretro.av);
@@ -540,11 +552,56 @@ static int32_t accumulated_delta(int32_t previous,int32_t incoming){
   return total>INT32_MAX?INT32_MAX:total<INT32_MIN?INT32_MIN:(int32_t)total;
 }
 
+typedef struct LibretroFrameTiming {
+  uint64_t begin_ns,last_ns,video_ns,audio_ns;
+  bool active,valid;
+} LibretroFrameTiming;
+
+static uint64_t frame_profile_now(LibretroFrameTiming *timing){
+  uint64_t now=g_libretro.frame_profile_clock?
+    g_libretro.frame_profile_clock(g_libretro.frame_profile_userdata):0;
+  if(!now || now<timing->last_ns) timing->valid=false;
+  timing->last_ns=now;
+  return now;
+}
+
+static void frame_profile_callback(LibretroFrameTiming *timing,uint64_t begin,uint64_t *elapsed){
+  uint64_t end=frame_profile_now(timing);
+  if(!begin || end<begin || UINT64_MAX-*elapsed<end-begin) timing->valid=false;
+  else *elapsed+=end-begin;
+}
+
+static void frame_profile_report(LibretroFrameTiming *timing,AnygmResult result,uint32_t steps){
+  if(!timing->active) return;
+  uint64_t end=frame_profile_now(timing);
+  bool valid=timing->valid && timing->begin_ns && end>=timing->begin_ns;
+  bool period_valid=valid && g_libretro.frame_profile_previous_valid &&
+    timing->begin_ns>=g_libretro.frame_profile_previous_begin;
+  uint64_t period=period_valid?timing->begin_ns-g_libretro.frame_profile_previous_begin:0;
+  g_libretro.frame_profile_previous_begin=timing->begin_ns;
+  g_libretro.frame_profile_previous_valid=valid;
+  /* These are CPU-visible boundaries, not a promise that another graphics queue has completed.
+   * This log's own cost is excluded from total and included in the following entry period. */
+  libretro_log(RETRO_LOG_INFO,
+    "[libretro-frame] tick=%llu valid=%u total_ns=%llu video_ns=%llu audio_ns=%llu "
+    "period_valid=%u period_ns=%llu logical_steps=%u result=%d\n",
+    (unsigned long long)++g_libretro.frame_profile_tick,valid?1u:0u,
+    (unsigned long long)(valid?end-timing->begin_ns:0),
+    (unsigned long long)(valid?timing->video_ns:0),
+    (unsigned long long)(valid?timing->audio_ns:0),period_valid?1u:0u,
+    (unsigned long long)period,steps,result);
+}
+
 void retro_run(void){
   if(!g_libretro.loaded){
     if(g_libretro.video) g_libretro.video(NULL,288,216,0);
     return;
   }
+  LibretroFrameTiming timing={0};
+  timing.active=g_libretro.frame_profile_enabled;
+  timing.valid=true;
+  timing.begin_ns=timing.active?frame_profile_now(&timing):0;
+  uint32_t completed_steps=0;
   apply_live_options();
   if(g_libretro.display_requested_hz || g_libretro.display_active_hz ||
      g_libretro.display_notification_pending) {
@@ -597,14 +654,19 @@ void retro_run(void){
     }
     /* The frontend still needs a frame. Starving it stalls its own timing, so the previous
      * picture is repeated where the frontend accepts a duplicate and resent otherwise. */
-    if(g_libretro.video)
+    if(g_libretro.video){
+      uint64_t video_started=timing.active?frame_profile_now(&timing):0;
       g_libretro.video(g_libretro.can_dupe?NULL:g_libretro.frame.pixels,
                        g_libretro.av.base_width,g_libretro.av.base_height,
                        g_libretro.can_dupe?0:g_libretro.frame.pitch);
+      if(timing.active) frame_profile_callback(&timing,video_started,&timing.video_ns);
+    }
+    frame_profile_report(&timing,result,completed_steps);
     return;
   }
   g_libretro.frame_failure_reports=0;
   if(steps){
+    completed_steps++;
     g_libretro.display_mouse_x=g_libretro.display_mouse_y=g_libretro.display_wheel=0;
     /* Relative input belongs to this frontend tick, not to every logical step it schedules. */
     input.mouse_delta_x=input.mouse_delta_y=input.wheel_delta=0;
@@ -640,6 +702,7 @@ void retro_run(void){
     else
       g_libretro.environment(RETRO_ENVIRONMENT_SET_GEOMETRY,&av.geometry);
   }
+  uint64_t video_started=timing.active && step+1==calls?frame_profile_now(&timing):0;
   if(step+1==calls && g_libretro.video && g_libretro.video_enabled){
     /* The engine reports which target it rendered into. The hardware sentinel says the frame is
      * already on the frontend's own framebuffer; without it a complete CPU frame is available and
@@ -653,12 +716,18 @@ void retro_run(void){
   }
   else if(step+1==calls && g_libretro.video && g_libretro.can_dupe)
     g_libretro.video(NULL,g_libretro.frame.width,g_libretro.frame.height,0);
+  if(timing.active && step+1==calls && g_libretro.video &&
+     (g_libretro.video_enabled || g_libretro.can_dupe))
+    frame_profile_callback(&timing,video_started,&timing.video_ns);
   if(g_libretro.frame.audio && g_libretro.frame.audio_frames && g_libretro.audio_enabled){
+    uint64_t audio_started=timing.active?frame_profile_now(&timing):0;
     if(g_libretro.audio_batch)
       g_libretro.audio_batch(g_libretro.frame.audio,g_libretro.frame.audio_frames);
     else if(g_libretro.audio_sample)
       for(size_t i=0;i<g_libretro.frame.audio_frames;i++)
         g_libretro.audio_sample(g_libretro.frame.audio[i*2],g_libretro.frame.audio[i*2+1]);
+    if(timing.active && (g_libretro.audio_batch || g_libretro.audio_sample))
+      frame_profile_callback(&timing,audio_started,&timing.audio_ns);
   }
   if((g_libretro.frame.flags&ANYGM_FRAME_SHUTDOWN_REQUESTED) && g_libretro.environment)
     g_libretro.environment(RETRO_ENVIRONMENT_SHUTDOWN,NULL);
@@ -667,6 +736,7 @@ void retro_run(void){
     libretro_update_av();
     update_display_request();
   }
+  frame_profile_report(&timing,ANYGM_OK,completed_steps);
 }
 
 size_t retro_serialize_size(void){

@@ -15,6 +15,15 @@ not the P1 CPU milestone. A planned entry cannot be selected. The historical
 P1 CPU-only classification is retained below only as a dated architectural
 snapshot; the live ledger and rule table here describe current support.
 
+For checkpoint timing, `src/core/engine.c::anygm_run_frame` measures the final
+`gml_render_scene_flush` as the existing profile's `seal` phase. The optional
+adapter trace in `src/adapters/libretro/libretro_entry.c::retro_run` measures
+the entire loaded frontend tick and callback envelopes, including that seal.
+See [call-boundary profiling](LIBRETRO.md#optional-call-boundary-profiling) for
+the exact clock, cadence and GPU-completion exclusions and neutral controls.
+This instrumentation does not change any rule, shader or authority boundary
+mapped below; checkpoint bytes remain product cost, not test overhead.
+
 The later resident prototype supports clear, qualified whole-image quads, and nearest-filtered
 interior atlas subrectangles with integer-sized axis-aligned destinations and optional X/Y mirrors.
 A narrow ordinary sprite path accepts unit-scale, integer-aligned authored trim when its atlas crop

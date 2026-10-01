@@ -82,7 +82,7 @@ typedef struct {
 typedef struct {
   int frames;
   double total_ms, input_ms, step_ms, clear_ms, draw_ms, gui_ms, video_ms, audio_ms;
-  double present_ms,frame_ms;
+  double present_ms,seal_ms,frame_ms;
   double max_ms; long max_frame;
 } CoreProfile;
 typedef struct {

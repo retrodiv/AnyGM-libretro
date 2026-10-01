@@ -994,7 +994,7 @@ $(TEST_DIR)/test_libretro_cache_vfs: tests/contract/libretro_cache_vfs.c \
 $(TEST_DIR)/test_libretro_hardware_render: tests/contract/libretro_hardware_render.c \
 	$(ANYGM_LIBRETRO_SOURCES)
 	mkdir -p $(dir $@)
-	$(CC) $(LIBRETRO_CPPFLAGS) $(CFLAGS) $^ -o $@
+	$(CC) $(LIBRETRO_CPPFLAGS) $(CFLAGS) $^ -o $@ -lm
 
 diagnostic-tests: $(TEST_DIR)/test_load $(TEST_DIR)/test_vm
 

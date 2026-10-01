@@ -102,10 +102,11 @@ static double profile_now_ms(AnygmEngine *engine){
 static void profile_report(AnygmEngine *engine,int force){
   if(!engine->profile.frames || (!force && engine->profile.frames < 300)) return;
   double f = (double)engine->profile.frames;
-  const char *fmt = "[profile] frames=%d avg_ms total=%.3f input=%.3f step=%.3f clear=%.3f draw=%.3f gui=%.3f video=%.3f audio=%.3f present=%.3f max=%.2fms@f%ld\n";
+  const char *fmt = "[profile] frames=%d avg_ms total=%.3f input=%.3f step=%.3f clear=%.3f draw=%.3f gui=%.3f video=%.3f audio=%.3f seal=%.3f present=%.3f max=%.2fms@f%ld\n";
   engine_logf(engine,ANYGM_LOG_INFO,fmt,engine->profile.frames,engine->profile.total_ms/f,engine->profile.input_ms/f,
               engine->profile.step_ms/f,engine->profile.clear_ms/f,engine->profile.draw_ms/f,engine->profile.gui_ms/f,
-              engine->profile.video_ms/f,engine->profile.audio_ms/f,engine->profile.present_ms/f,
+              engine->profile.video_ms/f,engine->profile.audio_ms/f,engine->profile.seal_ms/f,
+              engine->profile.present_ms/f,
               engine->profile.max_ms,engine->profile.max_frame);
   memset(&engine->profile, 0, sizeof(engine->profile));
 }
@@ -2560,7 +2561,16 @@ AnygmResult anygm_run_frame(AnygmEngine *engine,const AnygmInputFrame *input,
   if(result!=ANYGM_OK) return result;
   /* Seal all non-reconstructible work before the frontend can return without a current context.
    * This does not manufacture a CPU writer or replay an exact resident SCREEN journal. */
-  if(!gml_render_scene_flush(&engine->render)) return ANYGM_ERROR_INTERNAL;
+  int prof=profile_enabled(engine);
+  double seal_started=prof?profile_now_ms(engine):0.0;
+  int sealed=gml_render_scene_flush(&engine->render);
+  if(prof){
+    double seal_ms=profile_now_ms(engine)-seal_started;
+    engine->profile.seal_ms+=seal_ms;
+    engine->profile.frame_ms+=seal_ms;
+    engine->profile.total_ms+=seal_ms;
+  }
+  if(!sealed) return ANYGM_ERROR_INTERNAL;
   return engine_present_frame_output(engine,output);
 }
 

@@ -2386,8 +2386,41 @@ static int texture_filter_state_case(void){
   return 1;
 }
 
+static uint64_t profile_test_clock(void *userdata){
+  uint64_t *ticks=userdata;
+  return ++*ticks*1000000u;
+}
+
+static int final_scene_seal_profile_case(void){
+  Session session;
+  uint64_t ticks=0;
+  anygm_test_graphics_reset();
+  REQUIRE(session_open_with_scene(&session,ANYGM_SCENE_RENDERER_OPENGL),
+          "profile control opens a neutral scene");
+  REQUIRE(graphics_adopt(session.engine,ANYGM_GRAPHICS_OPENGLES3)==ANYGM_OK,
+          "profile control adopts its fake device");
+  session.engine->host.monotonic_time_ns=profile_test_clock;
+  session.engine->host.userdata=&ticks;
+  session.engine->profile_enabled=1;
+  REQUIRE(advance(session.engine,1,NULL),"first profiled scene completes");
+  REQUIRE(session.engine->profile.seal_ms==1.0,
+          "profile accounts for the final scene seal separately");
+  REQUIRE(session.engine->profile.total_ms==session.engine->profile.frame_ms+
+          session.engine->profile.present_ms &&
+          session.engine->profile.max_ms==session.engine->profile.total_ms,
+          "seal is included once in total and maximum frame cost");
+  REQUIRE(advance(session.engine,1,NULL) && session.engine->profile.seal_ms==2.0 &&
+          session.engine->profile.frames==2,
+          "sealing accumulates across completed logical frames");
+  session.engine->host.userdata=NULL;
+  session.engine->host.monotonic_time_ns=NULL;
+  session_close(&session);
+  return 1;
+}
+
 int main(void){
   static const struct { const char *name; int (*run)(void); } cases[]={
+    {"final scene seal is included in frame profiling",final_scene_seal_profile_case},
     {"resident world selection retains CPU state",resident_world_selection_case},
     {"viewless classic application accepts Draw scene work",
      classic_viewless_application_scene_case},

@@ -9,8 +9,10 @@
  * a context that arrives synchronously or later, one that arrives again without going away in
  * between, and a context that is taken away properly. The engine is stubbed, so what is under test
  * is the translation and nothing else. */
+#define _POSIX_C_SOURCE 200809L
 #include "libretro_internal.h"
 
+#include <stdarg.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -18,6 +20,9 @@
 
 void retro_set_environment(retro_environment_t callback);
 void retro_set_video_refresh(retro_video_refresh_t callback);
+void retro_set_audio_sample(retro_audio_sample_t callback);
+void retro_set_audio_sample_batch(retro_audio_sample_batch_t callback);
+void retro_set_input_poll(retro_input_poll_t callback);
 void retro_init(void);
 void retro_deinit(void);
 void retro_run(void);
@@ -64,6 +69,58 @@ static uint32_t frame_flags;
 static const void *last_video_pixels;
 static unsigned last_video_width;
 static int video_calls;
+static AnygmResult frame_result;
+static uint32_t scheduled_steps;
+static unsigned audio_calls;
+static uint64_t simulated_ns;
+static unsigned clock_calls,trace_calls;
+static unsigned clock_fail_at;
+static uint64_t clock_fail_value;
+static char trace_message[768];
+static int simulate_cost;
+
+static uint64_t profile_clock(void *userdata){
+  if(userdata!=&simulated_ns) return 0;
+  clock_calls++;
+  if(clock_calls==clock_fail_at) return clock_fail_value;
+  return simulated_ns;
+}
+
+static void log_callback(enum retro_log_level level,const char *format,...){
+  (void)level;
+  char message[768];
+  va_list arguments;
+  va_start(arguments,format);
+  vsnprintf(message,sizeof message,format,arguments);
+  va_end(arguments);
+  if(!strncmp(message,"[libretro-frame] ",17)){
+    snprintf(trace_message,sizeof trace_message,"%s",message);
+    trace_calls++;
+    if(simulate_cost) simulated_ns+=5000000u; /* Deliberately outside the measured call. */
+  }
+}
+
+static void poll_callback(void){ if(simulate_cost) simulated_ns+=1000000u; }
+static size_t audio_callback(const int16_t *data,size_t frames){
+  (void)data;
+  audio_calls++;
+  if(simulate_cost) simulated_ns+=3000000u;
+  return frames;
+}
+static void audio_sample_callback(int16_t left,int16_t right){
+  (void)left; (void)right;
+  audio_calls++;
+  if(simulate_cost) simulated_ns+=1500000u;
+}
+
+static int profile_setting(const char *value){
+#ifdef _WIN32
+  return _putenv_s("GML_PROFILE_LIBRETRO_FRAME",value?value:"")==0;
+#else
+  return value?setenv("GML_PROFILE_LIBRETRO_FRAME",value,1)==0:
+               unsetenv("GML_PROFILE_LIBRETRO_FRAME")==0;
+#endif
+}
 
 /* Values the adapter must forward untouched. */
 static int proc_requests;
@@ -82,6 +139,9 @@ static uintptr_t frontend_get_framebuffer(void){
 
 static bool environment_callback(unsigned command,void *data){
   switch(command){
+    case RETRO_ENVIRONMENT_GET_LOG_INTERFACE:
+      ((struct retro_log_callback*)data)->log=log_callback;
+      return true;
     case RETRO_ENVIRONMENT_GET_VARIABLE:{
       struct retro_variable *variable=data;
       if(!variable || !variable->key) return false;
@@ -143,6 +203,7 @@ static void video_callback(const void *data,unsigned width,unsigned height,size_
   video_calls++;
   last_video_pixels=data;
   last_video_width=width;
+  if(simulate_cost) simulated_ns+=2000000u;
 }
 
 /* The stubbed engine. */
@@ -189,19 +250,26 @@ AnygmResult anygm_run_frame(AnygmEngine *engine,const AnygmInputFrame *input,
                             AnygmFrameOutput *output){
   (void)engine; (void)input;
   if(!output) return ANYGM_ERROR_INVALID_ARGUMENT;
+  if(simulate_cost) simulated_ns+=7000000u;
+  if(frame_result!=ANYGM_OK) return frame_result;
+  static const int16_t audio[4]={1,2,3,4};
   output->pixels=(const void*)(uintptr_t)0x1000u;
   output->width=320;
   output->height=240;
   output->pitch=320*4;
   output->pixel_format=ANYGM_PIXEL_XRGB8888;
   output->flags=frame_flags;
+  output->audio=audio;
+  output->audio_frames=2;
   return ANYGM_OK;
 }
 AnygmResult anygm_schedule_frame(AnygmEngine *engine,double hz,uint32_t *steps){
-  (void)engine; (void)hz; *steps=1; return ANYGM_OK;
+  (void)engine; (void)hz; *steps=scheduled_steps; return ANYGM_OK;
 }
 AnygmResult anygm_repeat_frame(AnygmEngine *engine,AnygmFrameOutput *output){
-  return anygm_run_frame(engine,NULL,output);
+  AnygmResult result=anygm_run_frame(engine,NULL,output);
+  if(result==ANYGM_OK) output->audio_frames=0;
+  return result;
 }
 AnygmResult anygm_set_config(AnygmEngine *engine,const AnygmConfigDelta *delta){
   (void)engine;
@@ -289,6 +357,15 @@ static void begin(const char *value,int available,unsigned preferred,int desktop
   reset_result=ANYGM_OK;
   frame_flags=0;
   video_calls=0;
+  audio_calls=0;
+  frame_result=ANYGM_OK;
+  scheduled_steps=1;
+  simulated_ns=1000000000u;
+  clock_calls=trace_calls=0;
+  clock_fail_at=0;
+  clock_fail_value=0;
+  trace_message[0]='\0';
+  simulate_cost=0;
   last_video_pixels=NULL;
   proc_requests=0;
   framebuffer_requests=0;
@@ -296,6 +373,9 @@ static void begin(const char *value,int available,unsigned preferred,int desktop
   memset(&adopted,0,sizeof adopted);
   retro_set_environment(environment_callback);
   retro_set_video_refresh(video_callback);
+  retro_set_audio_sample(NULL);
+  retro_set_audio_sample_batch(NULL);
+  retro_set_input_poll(NULL);
   retro_init();
 }
 
@@ -577,6 +657,117 @@ static int unload_releases_without_a_current_context(void){
   return 0;
 }
 
+static int whole_call_profile_contract(void){
+  REQUIRE(profile_setting(NULL),"clear optional frame profiling");
+  begin(NULL,0,0,1,1);
+  REQUIRE(load(),"default profile content loads");
+  g_libretro.frame_profile_clock=profile_clock;
+  g_libretro.frame_profile_userdata=&simulated_ns;
+  retro_run();
+  REQUIRE(!g_libretro.frame_profile_enabled && !clock_calls && !trace_calls,
+          "disabled profiling neither samples nor logs");
+  retro_unload_game();
+  REQUIRE(profile_setting("1"),"enable optional frame profiling");
+  REQUIRE(load(),"reload re-reads profile setting");
+  REQUIRE(g_libretro.frame_profile_enabled,"loaded session enables profiling");
+  g_libretro.frame_profile_clock=profile_clock;
+  g_libretro.frame_profile_userdata=&simulated_ns;
+  simulate_cost=1;
+  retro_set_input_poll(poll_callback);
+  retro_set_audio_sample_batch(audio_callback);
+  frame_flags=ANYGM_FRAME_HARDWARE_TARGET;
+  retro_run();
+  REQUIRE(trace_calls==1 && strstr(trace_message,"tick=1 valid=1 total_ns=13000000 ") &&
+          strstr(trace_message,"video_ns=2000000 audio_ns=3000000 ") &&
+          strstr(trace_message,"period_valid=0 period_ns=0 ") &&
+          strstr(trace_message,"logical_steps=1 result=0"),
+          "whole call includes input, sealed engine return, video and audio");
+  REQUIRE(last_video_pixels==RETRO_HW_FRAME_BUFFER_VALID && audio_calls==1,
+          "profiling preserves actual hardware and audio callbacks");
+  simulated_ns+=17000000u;
+  retro_run();
+  REQUIRE(trace_calls==2 && strstr(trace_message,"tick=2 valid=1 total_ns=13000000 ") &&
+          strstr(trace_message,"period_valid=1 period_ns=35000000 "),
+          "entry period includes outside-call and prior trace-log time");
+  retro_set_audio_sample_batch(NULL);
+  retro_set_audio_sample(audio_sample_callback);
+  retro_run();
+  REQUIRE(strstr(trace_message,"audio_ns=3000000 ") && audio_calls==4,
+          "sample callbacks retain their full aggregate cost");
+  g_libretro.display_active_hz=60;
+  scheduled_steps=2;
+  retro_run();
+  REQUIRE(strstr(trace_message,"total_ns=23000000 ") &&
+          strstr(trace_message,"video_ns=2000000 audio_ns=6000000 ") &&
+          strstr(trace_message,"logical_steps=2 result=0"),
+          "one frontend tick includes both logical steps and only final video");
+  scheduled_steps=0;
+  retro_run();
+  REQUIRE(strstr(trace_message,"total_ns=10000000 ") &&
+          strstr(trace_message,"video_ns=2000000 audio_ns=0 ") &&
+          strstr(trace_message,"logical_steps=0 result=0"),
+          "zero-step repetition has its own tick without invented audio or steps");
+  g_libretro.display_active_hz=0;
+  scheduled_steps=1;
+  frame_result=ANYGM_ERROR_INTERNAL;
+  retro_run();
+  REQUIRE(trace_calls==6 && strstr(trace_message,"total_ns=10000000 ") &&
+          strstr(trace_message,"video_ns=2000000 audio_ns=0 ") &&
+          strstr(trace_message,"logical_steps=0 result="),
+          "failed frame includes duplicate callback but no nonexistent audio");
+  frame_result=ANYGM_OK;
+  clock_fail_at=clock_calls+2;
+  retro_run();
+  REQUIRE(strstr(trace_message,"valid=0 total_ns=0 video_ns=0 audio_ns=0 "),
+          "a failed callback clock invalidates the whole sample rather than hiding its cost");
+  clock_fail_at=clock_calls+2;
+  clock_fail_value=1;
+  retro_run();
+  REQUIRE(strstr(trace_message,"valid=0 total_ns=0 video_ns=0 audio_ns=0 "),
+          "a backward callback-start clock cannot inflate callback cost");
+  clock_fail_at=0;
+  g_libretro.audio_enabled=false;
+  retro_set_video_refresh(NULL);
+  retro_run();
+  REQUIRE(strstr(trace_message,"total_ns=8000000 video_ns=0 audio_ns=0 "),
+          "absent video and disabled audio add no callback duration");
+  g_libretro.audio_enabled=true;
+  retro_set_video_refresh(video_callback);
+  simulated_ns=0;
+  simulate_cost=0;
+  retro_run();
+  REQUIRE(strstr(trace_message,"valid=0 total_ns=0 ") &&
+          strstr(trace_message,"period_valid=0 period_ns=0 "),
+          "unavailable clock does not manufacture a duration");
+  simulated_ns=1000;
+  retro_run();
+  REQUIRE(strstr(trace_message,"valid=1 ") && strstr(trace_message,"period_valid=0 "),
+          "clock recovery starts a fresh period");
+  simulated_ns=500;
+  retro_run();
+  REQUIRE(strstr(trace_message,"period_valid=0 period_ns=0 "),
+          "backward entry clock never wraps the period");
+  g_libretro.frame_profile_clock=NULL;
+  retro_run();
+  REQUIRE(strstr(trace_message,"valid=0 total_ns=0 "),"null clock is rejected safely");
+  retro_unload_game();
+  unsigned previous_traces=trace_calls;
+  retro_run();
+  REQUIRE(trace_calls==previous_traces,"unloaded ticks are not content samples");
+  REQUIRE(load(),"profile session reloads again");
+  g_libretro.frame_profile_clock=profile_clock;
+  g_libretro.frame_profile_userdata=&simulated_ns;
+  retro_run();
+  REQUIRE(strstr(trace_message,"tick=1 valid=1 ") && strstr(trace_message,"period_valid=0 "),
+          "reloaded content resets tick identity and previous entry");
+  retro_unload_game();
+  REQUIRE(profile_setting("0"),"explicitly disable optional profile");
+  REQUIRE(load() && !g_libretro.frame_profile_enabled,"zero is disabled on a fresh load");
+  finish();
+  REQUIRE(profile_setting(NULL),"restore optional profile environment");
+  return 0;
+}
+
 int main(void){
   if(option_none_negotiates_nothing()) return EXIT_FAILURE;
   if(rejection_keeps_software()) return EXIT_FAILURE;
@@ -590,6 +781,7 @@ int main(void){
   if(content_glsl_requests_only_for_candidates()) return EXIT_FAILURE;
   if(scene_renderer_requests_context_independently()) return EXIT_FAILURE;
   if(unload_releases_without_a_current_context()) return EXIT_FAILURE;
+  if(whole_call_profile_contract()) return EXIT_FAILURE;
   printf("libretro hardware render contract: ok\n");
   return EXIT_SUCCESS;
 }

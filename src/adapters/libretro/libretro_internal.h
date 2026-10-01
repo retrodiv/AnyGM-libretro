@@ -57,6 +57,12 @@ typedef struct LibretroAdapter {
   bool video_enabled;
   bool audio_enabled;
   unsigned frame_failure_reports;
+  /* Optional call-boundary timing is host instrumentation, never serialized state. */
+  AnygmMonotonicTimeFn frame_profile_clock;
+  void *frame_profile_userdata;
+  bool frame_profile_enabled;
+  bool frame_profile_previous_valid;
+  uint64_t frame_profile_tick,frame_profile_previous_begin;
   char save_directory[1024];
   char cache_directory[1024];
   char **cache_paths;

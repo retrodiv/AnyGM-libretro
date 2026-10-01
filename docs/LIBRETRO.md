@@ -43,6 +43,46 @@ zero-step ticks and is consumed once when logical execution resumes.
 Content making no display request retains the
 ordinary one-step-per-callback path.
 
+## Optional call-boundary profiling
+
+`GML_PROFILE_LIBRETRO_FRAME=1` enables one `[libretro-frame]` log per loaded
+`retro_run` tick when the frontend supplies logging. The setting is read at
+content start; unset, empty or `0` leaves the timing path disabled. Reloading
+resets the tick identity and previous-entry witness. It uses the adapter's
+existing host monotonic clock, not a graphics timestamp or another OS clock.
+
+`total_ns` covers live options, input, all scheduled engine calls (including
+their mandatory scene sealing), AV notifications, video and audio callbacks,
+and shutdown submission. `video_ns` and `audio_ns` are callback envelopes;
+audio includes every executed logical step. `logical_steps` counts successful
+simulation steps, not frontend ticks: a zero-step repeat still has a measured
+tick. Failed frames retain the cost of their duplicate-video callback and
+report the engine result. A missing, zero or backward clock invalidates the
+sample (`valid=0`, zero durations); these records must not enter statistics.
+
+`period_ns` measures consecutive entry-to-entry elapsed time only when
+`period_valid=1`. It includes frontend work outside the call, such as state
+transport, ring/compression work, pacing, and the previous trace log's cost.
+It does not isolate those contributions. The first tick after loading or an
+invalid clock has no valid period. `total_ns` ends immediately before the
+trace log, so its own logging cost is excluded there. Profiling perturbs the
+run; retain this qualification in measurements.
+
+These are CPU-visible boundaries. Returning from a video callback does not
+promise completion of another graphics context or queue. Completed-GPU-work
+measurements need a separately verified host/frontend completion boundary;
+neither a hardware sentinel nor this trace establishes one.
+
+The engine's existing `[profile]` phase averages now include final scene
+sealing in `seal`, `total` and the maximum frame cost. The rounded `[spike]`
+split remains the pre-seal logical-engine phase observation, not the complete
+libretro or completed-GPU-work cost. Phase averages and frontend tick counts
+are distinct when independent display cadence schedules repeats or multiple
+steps. The neutral `tests/contract/libretro_hardware_render.c` whole-call
+control checks callback costs, cadence, failures, clocks and reloads;
+`tests/integration/test_graphics_state.c::final_scene_seal_profile_case`
+checks the existing engine seal accounting.
+
 ## Advertised extensions
 
 ```
