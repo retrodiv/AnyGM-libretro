@@ -122,6 +122,19 @@ typedef void GLvoid;
 #define GL_MAX_TEXTURE_SIZE 0x0D33
 #define GL_MAX_TEXTURE_IMAGE_UNITS 0x8872
 #define GL_FUNC_ADD 0x8006
+#define GL_ANY_SAMPLES_PASSED 0x8C2F
+#define GL_ANY_SAMPLES_PASSED_CONSERVATIVE 0x8D6A
+#define GL_SAMPLES_PASSED 0x8914
+#define GL_CURRENT_QUERY 0x8865
+#define GL_QUERY_RESULT 0x8866
+#define GL_RASTERIZER_DISCARD 0x8C89
+#define GL_SAMPLE_COVERAGE 0x80A0
+#define GL_SAMPLE_ALPHA_TO_COVERAGE 0x809E
+#define GL_SAMPLE_MASK 0x8E51
+#define GL_MAJOR_VERSION 0x821B
+#define GL_MINOR_VERSION 0x821C
+#define GL_FRONT_AND_BACK 0x0408
+#define GL_FILL 0x1B02
 
 /* Every entry point the backend uses, resolved once per context reset into an engine-owned table.
  * The mandatory ones are listed in the implementation; a missing name is named exactly and rejects
@@ -132,6 +145,7 @@ typedef struct GmlGlApi {
   void     (*GetIntegerv)(GLenum name,GLint *value);
   void     (*Enable)(GLenum cap);
   void     (*Disable)(GLenum cap);
+  void     (*PolygonMode)(GLenum face,GLenum mode);
   void     (*Viewport)(GLint x,GLint y,GLsizei width,GLsizei height);
   void     (*Scissor)(GLint x,GLint y,GLsizei width,GLsizei height);
   void     (*ClearColor)(GLfloat red,GLfloat green,GLfloat blue,GLfloat alpha);
@@ -181,6 +195,12 @@ typedef struct GmlGlApi {
   void     (*BlendEquationSeparate)(GLenum rgb,GLenum alpha);
   void     (*Flush)(void);
   void     (*Finish)(void);
+  void     (*GenQueries)(GLsizei count,GLuint *names);
+  void     (*DeleteQueries)(GLsizei count,const GLuint *names);
+  void     (*BeginQuery)(GLenum target,GLuint name);
+  void     (*EndQuery)(GLenum target);
+  void     (*GetQueryiv)(GLenum target,GLenum pname,GLint *value);
+  void     (*GetQueryObjectuiv)(GLuint name,GLenum pname,GLuint *value);
   /* Used only to execute the content's own programs. */
   GLint    (*GetAttribLocation)(GLuint program,const GLchar *name);
   void     (*VertexAttribPointer)(GLuint index,GLint size,GLenum type,GLboolean normalized,

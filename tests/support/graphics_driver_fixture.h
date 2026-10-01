@@ -35,6 +35,10 @@ void anygm_test_graphics_active_uniform_limit(int count);
 /* Anything reaching the driver after this is counted as a call that should not have happened. */
 void anygm_test_graphics_forbid_calls(void);
 void anygm_test_graphics_allow_calls(void);
+/* Query results test ownership/call order only; real-device controls establish RGB pixels. */
+void anygm_test_graphics_rgb_query_result(unsigned result);
+void anygm_test_graphics_active_query(unsigned name);
+unsigned anygm_test_graphics_rgb_queries(void);
 
 /* The two callbacks a host supplies, in their raw shapes. A caller casts them into whichever
  * boundary it is testing; both boundaries declare the same two shapes. */

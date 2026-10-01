@@ -449,6 +449,70 @@ static int scene_content_source_orientation_case(void){
   return 1;
 }
 
+static int scene_completed_screen_query_case(void){
+  for(unsigned api=GML_GPU_API_OPENGL_CORE;api<=GML_GPU_API_OPENGLES3;api++){
+    uint32_t pixels[6]={0xFF000000u,0u,0xFF000000u,0u,0u,0x00000001u};
+    GmlRenderImageRef image={GML_RENDER_RESOURCE_SCREEN,0u,91u,1u};
+    GmlRenderImageUpload upload={0};
+    GmlRenderDeviceServices services={0};
+    GmlGpuCounters counters={0};
+    int has_rgb=-1;
+    anygm_test_graphics_reset();
+    GmlGpu *gpu=gml_gpu_create();
+    GmlGpuContext context=fake_context(api);
+    REQUIRE(gpu && gml_gpu_context_reset(gpu,&context),"query context adopted");
+    gml_gpu_device_services(gpu,&services);
+    upload.image=image;
+    upload.storage_width=2u; upload.storage_height=3u;
+    upload.region=(GmlRenderRect){0,0,2u,3u};
+    upload.pixel_format=GML_RENDER_PIXEL_ARGB8888;
+    upload.stride_bytes=8u; upload.byte_capacity=sizeof pixels; upload.bytes=pixels;
+    REQUIRE(services.upload(services.context,&upload),"current SCREEN uploaded for query fixture");
+    anygm_test_graphics_rgb_query_result(0u);
+    REQUIRE(services.has_rgb && services.has_rgb(services.context,image,&has_rgb) && !has_rgb,
+            "a completed exact query may report RGB black");
+    anygm_test_graphics_rgb_query_result(1u);
+    REQUIRE(services.has_rgb(services.context,image,&has_rgb) && has_rgb &&
+            anygm_test_graphics_rgb_queries()==2u && !anygm_test_graphics_read_pixels(),
+            "query returns a boolean without pixel readback");
+    REQUIRE(anygm_test_graphics_color_mask_all() &&
+            !anygm_test_graphics_bound_program() && !anygm_test_graphics_bound_vertex_array(),
+            "query restores write mask and unbinds its program and array");
+    GmlRenderImageRef stale=image; stale.content_version++;
+    REQUIRE(!services.has_rgb(services.context,stale,&has_rgb) &&
+            anygm_test_graphics_rgb_queries()==2u,"stale image rejected before query draw");
+    anygm_test_graphics_active_query(77u);
+    REQUIRE(!services.has_rgb(services.context,image,&has_rgb) &&
+            anygm_test_graphics_rgb_queries()==2u,"a foreign active query is not commandeered");
+    anygm_test_graphics_active_query(0u);
+    gml_gpu_counters(gpu,&counters);
+    REQUIRE(counters.scene_rgb_queries==2u && counters.scene_rgb_query_refusals==2u &&
+            counters.scene_readbacks==0u,"query costs and refusals remain separate from checkpoints");
+    gml_gpu_context_lost(gpu);
+    anygm_test_graphics_forbid_calls();
+    REQUIRE(!services.has_rgb(services.context,image,&has_rgb),"lost context refuses without a call");
+    gml_gpu_destroy(gpu,0);
+    REQUIRE(!anygm_test_graphics_calls_after_forget(),"query names are forgotten outside context");
+    const char *optional_queries[]={"glGenQueries","glDeleteQueries","glBeginQuery",
+      "glEndQuery","glGetQueryiv","glGetQueryObjectuiv","glPolygonMode"};
+    for(unsigned missing=0;missing<sizeof optional_queries/sizeof optional_queries[0];missing++){
+      if(api==GML_GPU_API_OPENGLES3 && missing==6u) continue;
+      anygm_test_graphics_reset();
+      anygm_test_graphics_withhold(optional_queries[missing]);
+      gpu=gml_gpu_create(); context=fake_context(api);
+      REQUIRE(gpu && gml_gpu_context_reset(gpu,&context),
+              "missing optional query entries do not reject a working graphics context");
+      gml_gpu_device_services(gpu,&services);
+      REQUIRE(services.upload(services.context,&upload) &&
+              !services.has_rgb(services.context,image,&has_rgb) &&
+              !anygm_test_graphics_rgb_queries() && !anygm_test_graphics_read_pixels(),
+              "an unavailable exact query refuses before drawing or reading pixels");
+      gml_gpu_destroy(gpu,1);
+    }
+  }
+  return 1;
+}
+
 static int scene_resident_batch_case(void){
   enum { QUADS=500 };
   uint32_t pixels[4]={0xFF112233u,0xFF445566u,0xFF778899u,0xFFAABBCCu};
@@ -1779,6 +1843,7 @@ int main(int argc,char **argv){
     {"scene_atlas_retire_advanced_version",scene_atlas_retire_advanced_version_case},
     {"scene_alpha_composition",scene_alpha_composition_case},
     {"scene_screen_filtered_alpha_stamp",scene_screen_filtered_alpha_stamp_case},
+    {"scene_completed_screen_query",scene_completed_screen_query_case},
   };
   static const AnygmTestCase execution_cases[]={
     {"state_and_geometry",execute_state_and_geometry_case},

@@ -344,6 +344,7 @@ enum {
 
 typedef struct {
   int atlas_count, sprite_count, texture_page_count;
+  uint64_t completed_screen_cpu_reads,completed_screen_cpu_materializations;
 } GmlRenderResourceMetrics;
 
 typedef struct {
@@ -578,6 +579,16 @@ void gml_render_set_pending_fill(GmlRender *r, uint32_t color);
 void gml_render_flush_pending_fill(GmlRender *r);
 /* Finish queued resident draws before an observer leaves the world pass. */
 int gml_render_scene_flush(GmlRender *r);
+/* Completed SCREEN ownership is independent of the current borrowed Draw target. Readers retain
+ * its device version; an actual CPU writer invalidates that version before modifying pixels. */
+int gml_render_completed_screen_read(GmlRender *r,uint32_t *pixels,int width,int height);
+int gml_render_completed_screen_write(GmlRender *r,uint32_t *pixels,int width,int height);
+int gml_render_completed_screen_image(GmlRender *r,const uint32_t *pixels,int width,int height,
+                                      GmlRenderImageRef *image);
+/* Exact RGB-zero observation, ignoring the coverage byte. A device result never replaces the
+ * required non-reconstructible checkpoint or makes CPU pixels current. */
+int gml_render_completed_screen_has_rgb(GmlRender *r,uint32_t *pixels,int width,int height,
+                                        int *has_rgb);
 void gml_render_cancel_pending_fill(GmlRender *r);
 void gml_render_clear(GmlRender *r,uint32_t color,double alpha);
 void gml_render_cancel_pending_underlay(GmlRender *r);

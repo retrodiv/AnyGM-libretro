@@ -105,7 +105,7 @@ typedef struct GlScene {
   GLint a_position,a_texcoord,a_colour,a_clamp,a_map,a_step,a_margin;
   GLint a_span_x,a_span_y,a_span_active;
   GLint u_extent,u_image,u_filter;
-  GLuint exact_program,snapshot_texture;
+  GLuint exact_program,snapshot_texture,rgb_query;
   GLint exact_a_position,exact_a_texcoord,exact_a_colour;
   GLint exact_u_extent,exact_u_image,exact_u_previous,exact_u_region_origin;
   GLint exact_u_repetitions;
@@ -121,6 +121,7 @@ typedef struct GlScene {
   size_t scratch_capacity;
   uint64_t use_clock,context_epoch;
   GLint max_texture_size;
+  int supports_sample_mask;
   int available;
 } GlScene;
 
@@ -138,7 +139,7 @@ struct GmlGpuBackend {
   GLint u_dest_x;
   GLint u_dest_y;
   GLint u_target_height;
-  GLint u_source_height,u_resident_source;
+  GLint u_source_height,u_resident_source,u_rgb_query;
   GlSourceTexture sources[GML_PLAN_MAX_IMAGES];
   GlAxisMap maps[GL_MAP_SLOTS];
   uint16_t *map_scratch;

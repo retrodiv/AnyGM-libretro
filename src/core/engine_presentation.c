@@ -156,7 +156,7 @@ int resolve_host_frame(AnygmEngine *engine,const uint32_t **pixels,
   unsigned host_height=engine->host_output_height?engine->host_output_height:engine->output_height;
   engine->host_plan_valid=0;
   /* Every path from here reads the completed frame, so it has to be the canonical one. */
-  engine_materialize_completed_frame(engine);
+  if(!engine_materialize_completed_frame(engine)) return 0;
   if(!engine->host_canvas_active){
     if(pixels) *pixels=present_shift_frame(engine,engine->screen,host_width,host_height);
     if(width) *width=host_width;
@@ -206,6 +206,7 @@ void engine_host_extent(const AnygmEngine *engine,unsigned *width,unsigned *heig
 }
 
 int engine_materialize_completed_frame(AnygmEngine *engine){
+  GmlRenderResourceMetrics before={0},after={0};
   if(!engine) return 0;
   /* The renderer holds the frame's last operation and the exact kernel that produces it, so
    * materializing is writing that operation. It runs no game code, no Draw event and no audio, and
@@ -214,6 +215,14 @@ int engine_materialize_completed_frame(AnygmEngine *engine){
     gml_render_flush_deferred_presentation(&engine->render);
     engine->frame_materializations++;
   }
+  gml_render_resource_metrics(&engine->render,&before);
+  if(engine->screen && engine->output_width && engine->output_height &&
+     !gml_render_completed_screen_read(&engine->render,engine->screen,
+                                       (int)engine->output_width,
+                                       (int)engine->output_height)) return 0;
+  gml_render_resource_metrics(&engine->render,&after);
+  if(after.completed_screen_cpu_materializations>before.completed_screen_cpu_materializations)
+    engine->frame_materializations++;
   engine->frame_authority=ENGINE_FRAME_CPU_MATERIALIZED;
   return 1;
 }
@@ -227,7 +236,8 @@ int engine_materialize_completed_frame(AnygmEngine *engine){
 void log_present_pass(AnygmEngine *engine,const char *pass, const uint32_t *px, int w, int h){
   if(!anygm_host_development_setting(&engine->host,"GML_LOG_PRESENT_PASSES") || !px || w<=0 || h<=0) return;
   /* A diagnostic that reports the buffer rather than the frame is worse than none. */
-  engine_materialize_completed_frame(engine);
+  if(!engine_materialize_completed_frame(engine) ||
+     !gml_render_completed_screen_read(&engine->render,(uint32_t*)px,w,h)) return;
   const char *at=anygm_host_development_setting(&engine->host,"GML_LOG_PRESENT_FRAME");
   if(at && *at){ if(engine->vm.frame!=atol(at)) return; }
   else if(engine->vm.frame>8) return;
@@ -358,6 +368,8 @@ void draw_game_cursor(AnygmEngine *engine,unsigned width,unsigned height){
   /* This CPU cursor is an ordered suffix of the completed frame. Beginning its
    * screen target first would discard a deferred resident presentation. */
   if(!engine_materialize_completed_frame(engine)) return;
+  if(!gml_render_completed_screen_write(
+       &engine->render,engine->screen,(int)width,(int)height)) return;
   gml_render_begin(&engine->render,engine->screen,(int)width,(int)height,0.0,0.0);
   GmlRenderDrawState draw_state={
     .alpha_blend=1,

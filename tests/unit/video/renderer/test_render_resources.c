@@ -27,6 +27,7 @@
 
 typedef struct FakeDevice {
   int uploads,submits,shader_submits,readbacks,retires;
+  int rgb_queries,fail_rgb_query,rgb_query_result;
   int forbid_calls,forbidden_calls;
   int fail_upload,fail_upload_at,fail_readback,shader_failure;
   uint32_t status,accepted_prefix;
@@ -118,6 +119,16 @@ static int fake_capabilities(void *context,GmlRenderDeviceCaps *out_caps){
 
 static int fake_barrier(void *context){
   return !fake_call_forbidden((FakeDevice*)context);
+}
+
+static int fake_has_rgb(void *context,GmlRenderImageRef image,int *has_rgb){
+  FakeDevice *fake=(FakeDevice*)context;
+  if(fake_call_forbidden(fake)) return 0;
+  fake->rgb_queries++;
+  if(fake->fail_rgb_query || !has_rgb || image.resource_class!=GML_RENDER_RESOURCE_SCREEN)
+    return 0;
+  *has_rgb=fake->rgb_query_result;
+  return 1;
 }
 
 static int fake_content_program_failed(void *context,const GmlPlanShader *shader){
@@ -2171,6 +2182,66 @@ static int resident_flat_primitive_public_order(void){
   gml_render_free(gpu);
   free(cpu);
   free(gpu);
+  return 1;
+}
+
+static int completed_screen_reader_and_writer(void){
+  GmlRender *render=(GmlRender*)calloc(1,sizeof *render);
+  uint32_t pixels[12];
+  FakeDevice fake={0};
+  GmlRenderDeviceServices device=service(&fake);
+  GmlRenderImageRef before={0},after={0};
+  GmlRenderJournalMetrics metrics={0};
+  GmlRenderResourceMetrics observer_metrics={0};
+  int has_rgb=-1;
+  CHECK(render);
+  for(size_t index=0;index<12u;index++) pixels[index]=0x00123456u;
+  device.has_rgb=fake_has_rgb;
+  gml_render_bind_device(render,&device);
+  CHECK(gml_render_begin_resident_base(render,pixels,4,3,0.0,0.0));
+  gml_render_set_pending_fill(render,0xFF000000u);
+  gml_render_flush_pending_fill(render);
+  CHECK(gml_render_scene_flush(render));
+  CHECK(gml_render_completed_screen_image(render,pixels,4,3,&before) &&
+        before.resource_class==GML_RENDER_RESOURCE_SCREEN);
+  gml_render_resource_journal_metrics(render->base_scene_resource,&metrics);
+  CHECK(metrics.cpu_replays==0u && metrics.journal_operations==1u &&
+        pixels[0]==0x00123456u);
+  CHECK(gml_render_completed_screen_has_rgb(render,pixels,4,3,&has_rgb) && !has_rgb &&
+        fake.rgb_queries==1 && pixels[0]==0x00123456u);
+  gml_render_resource_metrics(render,&observer_metrics);
+  CHECK(!observer_metrics.completed_screen_cpu_reads &&
+        !observer_metrics.completed_screen_cpu_materializations);
+  /* An unavailable or refused exact query must retain the original canonical CPU decision. */
+  fake.fail_rgb_query=1;
+  CHECK(gml_render_completed_screen_has_rgb(render,pixels,4,3,&has_rgb) && !has_rgb);
+  CHECK(gml_render_completed_screen_image(render,pixels,4,3,&after) &&
+        before.content_version==after.content_version &&
+        before.incarnation==after.incarnation && render->resident_application_pass);
+  gml_render_resource_journal_metrics(render->base_scene_resource,&metrics);
+  CHECK(metrics.cpu_replays==1u && metrics.gpu_version==metrics.logical_version &&
+        metrics.cpu_version==metrics.logical_version && !fake.readbacks &&
+        pixels[0]==0xFF000000u && pixels[11]==0xFF000000u);
+  gml_render_resource_metrics(render,&observer_metrics);
+  CHECK(fake.rgb_queries==2 && observer_metrics.completed_screen_cpu_reads==1u &&
+        observer_metrics.completed_screen_cpu_materializations==1u);
+  CHECK(gml_render_completed_screen_read(render,pixels,4,3));
+  gml_render_resource_metrics(render,&observer_metrics);
+  CHECK(observer_metrics.completed_screen_cpu_reads==2u &&
+        observer_metrics.completed_screen_cpu_materializations==1u);
+  CHECK(gml_render_completed_screen_write(render,pixels,4,3) &&
+        !render->resident_application_pass &&
+        !gml_render_completed_screen_image(render,pixels,4,3,&after));
+  pixels[11]=0x00000001u;
+  CHECK(gml_render_completed_screen_has_rgb(render,pixels,4,3,&has_rgb) && has_rgb);
+  pixels[11]=0xFE000000u;
+  CHECK(gml_render_completed_screen_has_rgb(render,pixels,4,3,&has_rgb) && !has_rgb);
+  gml_render_bind_device(render,NULL);
+  fake.forbid_calls=1;
+  CHECK(gml_render_completed_screen_read(render,pixels,4,3) &&
+        !fake.forbidden_calls && pixels[11]==0xFE000000u);
+  gml_render_free(render);
+  free(render);
   return 1;
 }
 
@@ -4874,6 +4945,7 @@ int main(void){
   passed+=resident_layer_effect_continuation_authority();
   passed+=resident_flat_primitive_public_order();
   passed+=resident_viewless_base_canvas_order();
+  passed+=completed_screen_reader_and_writer();
   passed+=resident_borrowed_surface_zero_screen_shader();
   passed+=surface_metadata_preserves_device_authority();
   passed+=resident_centered_full_source_shader();
@@ -4912,6 +4984,6 @@ int main(void){
   passed+=source_free_primitive_rect_replay();
   passed+=stretched_float_exact_replay();
   passed+=filtered_font_exact_recovery();
-  printf("render resource cases: passed=%d failed=%d\n",passed,66-passed);
-  return passed==66?EXIT_SUCCESS:EXIT_FAILURE;
+  printf("render resource cases: passed=%d failed=%d\n",passed,67-passed);
+  return passed==67?EXIT_SUCCESS:EXIT_FAILURE;
 }

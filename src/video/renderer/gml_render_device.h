@@ -19,6 +19,8 @@ typedef struct GmlRenderDeviceServices {
   int (*wait)(void *context);
   /* Query a cached compiler refusal for the exact scene program after a failed submission. */
   int (*content_program_failed)(void *context,const struct GmlPlanShader *shader);
+  /* Optional exact RGB-zero query of this current image; transfers only the boolean result. */
+  int (*has_rgb)(void *context,GmlRenderImageRef image,int *has_rgb);
 } GmlRenderDeviceServices;
 
 #endif

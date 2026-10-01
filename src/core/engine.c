@@ -1741,7 +1741,7 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
 			    double screen_cam_y=(engine->aspect_force_active || aspect_gui_center)
 			                        ? 0.0 : -(double)engine->gui_offset_y;
 			    /* The indirect GUI is a separate physical SCREEN target. Its existing
-			     * CPU barrier below makes the scaled source visible before the unchanged
+			     * CPU observation below makes the scaled source visible before the unchanged
 			     * nearest/box composition into the output raster. */
 			    if(!engine->composed_frame && !engine->aspect_force_active &&
 			       !aspect_gui_center &&
@@ -1751,6 +1751,9 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
 			        anygm_host_development_setting(&engine->host,"GML_SCENE_GPU_PROTOTYPE")))
 			      resident_screen_began=gml_render_begin_resident_base(
 			        &engine->render,gtarget,gtw,gth,screen_cam_x,screen_cam_y);
+			    if(!resident_screen_began &&
+			       !gml_render_completed_screen_write(&engine->render,gtarget,gtw,gth))
+			      return ANYGM_ERROR_INTERNAL;
 			    if(!resident_screen_began && engine->composed_frame)
 			      gml_render_begin_retaining_target(&engine->render, gtarget, gtw, gth,
 			                                        screen_cam_x, screen_cam_y);
@@ -1975,8 +1978,7 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
      !gml_render_defer_resident_underlay(&engine->render))
     gml_render_flush_pending_underlay(&engine->render);
   gml_render_flush_pending_fill(&engine->render);
-  if(resident_screen_began &&
-     !gml_render_resident_application_cpu_barrier(&engine->render))
+  if(resident_screen_began && !gml_render_scene_flush(&engine->render))
     return ANYGM_ERROR_INTERNAL;
   log_present_pass(engine,"flushed",gtarget,gtw,gth);
   if (anygm_host_development_setting(&engine->host,"GML_LOG_PRESENT")) {
@@ -1998,8 +2000,10 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
   if (!render_presentation.application_draw_enabled && !engine->composed_frame &&
       !anygm_host_development_setting(&engine->host,"GML_NO_CRT") &&
       !gml_render_deferred_presentation(&engine->render,NULL)) {
-    int screen_empty = 1;
-    for (int i = 0; i < gtw * gth; i++) if (gtarget[i] & 0xFFFFFF) { screen_empty = 0; break; }
+    int screen_has_rgb=0;
+    if(!gml_render_completed_screen_has_rgb(
+         &engine->render,gtarget,gtw,gth,&screen_has_rgb)) return ANYGM_ERROR_INTERNAL;
+    int screen_empty=!screen_has_rgb;
     if (screen_empty) {
       int fb_has = 0,app_width=0,app_height=0;
       const uint32_t *app_pixels=
@@ -2023,7 +2027,10 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
 	      }
 	    }
 	  }
-			  if (aspect_gui_center || gui_indirect) engine_materialize_completed_frame(engine);
+			  if (aspect_gui_center || gui_indirect) {
+			    if(!gml_render_completed_screen_read(&engine->render,gtarget,gtw,gth) ||
+			       !engine_materialize_completed_frame(engine)) return ANYGM_ERROR_INTERNAL;
+			  }
 			  if (aspect_gui_center) {
 			    /* Composite the complete logical frame first: the world raster with the centered GUI
 			     * crop laid back over it. At logical output this lands in the screen directly; a
@@ -2094,8 +2101,11 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
 	      }
 	    }
 	  }
-	  if(engine->classic_transition.active || engine->vm.classic_info_active)
-	    engine_materialize_completed_frame(engine);
+	  if(engine->classic_transition.active || engine->vm.classic_info_active){
+      if(!engine_materialize_completed_frame(engine) ||
+         !gml_render_completed_screen_write(&engine->render,engine->screen,(int)ow,(int)oh))
+        return ANYGM_ERROR_INTERNAL;
+    }
 	  classic_transition_apply(engine,engine->screen,ow,oh);
 	  if(engine->vm.classic_info_active && engine->win.classic_game_information_size)
 	    gml_draw_classic_game_information(&engine->render,engine->screen,(int)ow,(int)oh,
@@ -2462,8 +2472,8 @@ AnygmResult anygm_run_frame(AnygmEngine *engine,const AnygmInputFrame *input,
   /* A shutdown keeps the last completed picture without another Draw. If that picture was
    * presented directly from a resident scene, reconstruct its CPU copy before forgetting the
    * deferred presentation: the host target itself cannot be assumed to survive another frame. */
-  if(engine->runtime_ended)
-    engine_materialize_completed_frame(engine);
+  if(engine->runtime_ended && !engine_materialize_completed_frame(engine))
+    return ANYGM_ERROR_INTERNAL;
   /* The previous frame's deferred presentation describes a target that is about to be rebuilt, and
    * content code runs before anything would flush it. Forget it here, ahead of all of that. */
   gml_render_discard_deferred_presentation(&engine->render);
@@ -2487,6 +2497,9 @@ AnygmResult anygm_run_frame(AnygmEngine *engine,const AnygmInputFrame *input,
   engine->frame_flags=0;
   AnygmResult result=engine_run_frame(engine);
   if(result!=ANYGM_OK) return result;
+  /* Seal all non-reconstructible work before the frontend can return without a current context.
+   * This does not manufacture a CPU writer or replay an exact resident SCREEN journal. */
+  if(!gml_render_scene_flush(&engine->render)) return ANYGM_ERROR_INTERNAL;
   const uint32_t *presented_pixels=NULL;
   unsigned presented_width=0,presented_height=0;
   int hardware_frame=0;

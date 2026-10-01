@@ -534,6 +534,30 @@ static int resident_indirect_gui_variant(
           counters.scene_operations[GML_RENDER_OP_CLEAR]>0u &&
           counters.scene_operations[GML_RENDER_OP_TEXTURED_QUAD]>0u,
           "GUI uses a counted resident SCREEN clear and sprite");
+  if(scale_direction<-1){
+    if(selected.engine->screen_pass_frames!=1u || counters.cpu_upload_frames!=0u){
+      fprintf(stderr,"direct SCREEN passes=%u transport=%u fallback=%u error=%s\n",
+              selected.engine->screen_pass_frames,counters.cpu_upload_frames,
+              selected.engine->host_plan.fallback_reason,
+              gml_gpu_last_error(selected.engine->gpu)?gml_gpu_last_error(selected.engine->gpu):"");
+    }
+    REQUIRE(selected.engine->screen_pass_frames==1u &&
+            counters.cpu_upload_frames==0u &&
+            gpu.pixels==NULL && (gpu.flags&ANYGM_FRAME_HARDWARE_TARGET),
+            "direct GUI presents its resident SCREEN without CPU frame transport");
+    REQUIRE(selected.engine->frame_materializations==0u,
+            "resident SCREEN delivery does not replay a completed CPU plane");
+    size_t cpu_size=0,gpu_size=0;
+    uint8_t *cpu_state=serialize(plain.engine,&cpu_size);
+    uint8_t *gpu_state=serialize(selected.engine,&gpu_size);
+    int same_state=cpu_state && gpu_state && cpu_size==gpu_size &&
+                   !memcmp(cpu_state,gpu_state,cpu_size) &&
+                   selected.engine->frame_materializations==1u;
+    free(cpu_state); free(gpu_state);
+    REQUIRE(same_state,"serialization observes the exact resident SCREEN and simulation state");
+  }
+  REQUIRE(engine_materialize_completed_frame(selected.engine),
+          "the completed GUI frame remains observable by CPU without another Draw");
   matching=cpu.pixels && selected.engine->screen &&
            cpu.width==selected.engine->output_width &&
            cpu.height==selected.engine->output_height &&
@@ -564,6 +588,7 @@ static int resident_indirect_gui_variant(
     memset(&gpu,0,sizeof gpu); gpu.struct_size=sizeof gpu;
     matching=anygm_run_frame(plain.engine,&input,&cpu)==ANYGM_OK &&
              anygm_run_frame(selected.engine,&input,&gpu)==ANYGM_OK &&
+             engine_materialize_completed_frame(selected.engine) &&
              cpu.pixels && selected.engine->screen &&
              cpu.width==selected.engine->output_width &&
              cpu.height==selected.engine->output_height &&
@@ -582,7 +607,9 @@ static int resident_indirect_gui_case(void){
          resident_indirect_gui_variant(
            anygm_synthetic_indirect_gui_reduce_content_create,0) &&
          resident_indirect_gui_variant(
-           anygm_synthetic_direct_gui_sprite_content_create,-1);
+           anygm_synthetic_direct_gui_sprite_content_create,-1) &&
+         resident_indirect_gui_variant(
+           anygm_synthetic_resident_direct_gui_content_create,-2);
 }
 
 static int resident_indirect_gui_alpha_fallback_case(void){

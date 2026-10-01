@@ -39,6 +39,7 @@ int anygm_synthetic_indirect_gui_upscale_content_create(AnygmSyntheticContent *f
 int anygm_synthetic_indirect_gui_reduce_content_create(AnygmSyntheticContent *fixture);
 int anygm_synthetic_indirect_gui_alpha_content_create(AnygmSyntheticContent *fixture);
 int anygm_synthetic_direct_gui_sprite_content_create(AnygmSyntheticContent *fixture);
+int anygm_synthetic_resident_direct_gui_content_create(AnygmSyntheticContent *fixture);
 int anygm_synthetic_surface_canvas_content_create(AnygmSyntheticContent *fixture);
 int anygm_synthetic_background_color_content_create(AnygmSyntheticContent *fixture);
 int anygm_synthetic_framebuffer_content_create(AnygmSyntheticContent *fixture);

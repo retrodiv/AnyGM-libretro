@@ -41,6 +41,7 @@ int gml_gpu_opengl_scene_capabilities(const GmlGpuBackend *backend,GmlRenderDevi
 int gml_gpu_opengl_scene_upload(GmlGpuBackend *backend,const GmlRenderImageUpload *transfer,
                                 int *did_upload);
 int gml_gpu_opengl_scene_readback(GmlGpuBackend *backend,const GmlRenderImageReadback *transfer);
+int gml_gpu_opengl_scene_has_rgb(GmlGpuBackend *backend,GmlRenderImageRef image,int *has_rgb);
 void gml_gpu_opengl_scene_retire(GmlGpuBackend *backend,GmlRenderImageRef image);
 int gml_gpu_opengl_scene_flush(GmlGpuBackend *backend);
 int gml_gpu_opengl_scene_wait(GmlGpuBackend *backend);

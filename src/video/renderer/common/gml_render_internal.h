@@ -617,6 +617,8 @@ typedef struct GmlRender {
   int      lut_shader_log_count;
   int      stretched_shader_log_count;
   long     generated_sprite_log_count;
+  /* Diagnostic ownership counters, not state or image authority. */
+  uint64_t completed_screen_cpu_reads,completed_screen_cpu_materializations;
 } GmlRender;
 
 /* Preserve alpha on explicit surface targets and on a first-generation Studio

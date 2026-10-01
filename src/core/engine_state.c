@@ -96,7 +96,7 @@ static void state_write_completed_frame(AnygmEngine *engine,CoreW *state){
    * the processor has to be produced here first: serializing the buffer as it stands would write
    * whatever the previous frame left in it. */
   if(!engine->state_omit_frame){
-    engine_materialize_completed_frame(engine);
+    if(!engine_materialize_completed_frame(engine)){ state->ok=0; return; }
     if(engine->have_presented_frame && engine->screen && engine->output_width && engine->output_height){
       width=engine->output_width;
       height=engine->output_height;

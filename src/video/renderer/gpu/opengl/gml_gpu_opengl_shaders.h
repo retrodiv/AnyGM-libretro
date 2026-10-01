@@ -42,8 +42,15 @@
   "uniform int u_target_height;\n" \
   "uniform int u_source_height;\n" \
   "uniform int u_resident_source;\n" \
+  "uniform int u_rgb_query;\n" \
   "out vec4 o_color;\n" \
   "void main(){\n" \
+  "  // R03_SHADER_SCREEN_RGB_QUERY: discard only exact RGB zero; coverage is irrelevant.\n" \
+  "  if(u_rgb_query!=0){\n" \
+  "    vec3 rgb=texelFetch(u_source,ivec2(gl_FragCoord.xy),0).rgb;\n" \
+  "    if(all(equal(rgb,vec3(0.0)))) discard;\n" \
+  "    o_color=vec4(1.0); return;\n" \
+  "  }\n" \
   "  int dx=int(gl_FragCoord.x)-u_dest_x;\n" \
   "  int dy=(u_target_height-1-int(gl_FragCoord.y))-u_dest_y;\n" \
   "  int sx=int(texelFetch(u_map_x,ivec2(dx,0),0).r);\n" \

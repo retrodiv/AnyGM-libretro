@@ -95,6 +95,7 @@ void engine_graphics_release(AnygmEngine *engine,int context_is_current){
  * this; the counters themselves are increments at pass granularity. */
 void engine_graphics_report(AnygmEngine *engine){
   GmlGpuCounters counters;
+  GmlRenderResourceMetrics resources={0};
   if(!engine) return;
   if(!anygm_host_development_setting(&engine->host,"GML_GRAPHICS_DEVICE_STATS")) return;
   if(!engine->gpu){
@@ -108,6 +109,7 @@ void engine_graphics_report(AnygmEngine *engine){
     return;
   }
   gml_gpu_counters(engine->gpu,&counters);
+  gml_render_resource_metrics(&engine->render,&resources);
   engine->scene_graphics_reported=1u;
   engine_logf(engine,ANYGM_LOG_INFO,
     "[graphics-device] frames=%u accepted=%u replayed=%u transport=%u draws=%u uploads=%u "
@@ -138,7 +140,8 @@ void engine_graphics_report(AnygmEngine *engine){
     "refused=%llu partial_prefix=%llu "
     "texture=%llu primitive=%llu surface=%llu effect=%llu presentation=%llu "
     "shader=%llu software3d=%llu uploads=%llu upload_bytes=%llu "
-    "readbacks=%llu readback_bytes=%llu\n",
+    "readbacks=%llu readback_bytes=%llu rgb_queries=%llu rgb_query_bytes=%llu "
+    "rgb_query_refusals=%llu screen_cpu_reads=%llu screen_cpu_materializations=%llu\n",
     engine->scene_renderer_session==ANYGM_SCENE_RENDERER_OPENGL?"OpenGL":"CPU",
     counters.scene_batches_accepted?"OpenGL":"CPU",
     counters.scene_batches_accepted?"accepted":
@@ -160,7 +163,12 @@ void engine_graphics_report(AnygmEngine *engine){
     (unsigned long long)counters.scene_uploads,
     (unsigned long long)counters.scene_uploaded_bytes,
     (unsigned long long)counters.scene_readbacks,
-    (unsigned long long)counters.scene_readback_bytes);
+    (unsigned long long)counters.scene_readback_bytes,
+    (unsigned long long)counters.scene_rgb_queries,
+    (unsigned long long)(counters.scene_rgb_queries*4u),
+    (unsigned long long)counters.scene_rgb_query_refusals,
+    (unsigned long long)resources.completed_screen_cpu_reads,
+    (unsigned long long)resources.completed_screen_cpu_materializations);
   engine_logf(engine,ANYGM_LOG_INFO,
     "[graphics-scene-families] sprite=%llu background=%llu tile=%llu surface=%llu text=%llu primitive=%llu effect=%llu unclassified=%llu\n",
     (unsigned long long)counters.scene_families[GML_RENDER_SCENE_SPRITE],
@@ -371,7 +379,30 @@ int engine_present_hardware_screen(AnygmEngine *engine,unsigned *width,unsigned 
   if(!hybrid && !shaders && !scene) return 0;
   int crt_readback=engine->host_crt_active && engine->host_canvas_active;
   if(engine->host_canvas_active && !crt_readback) return 0;
-  if(!gml_render_deferred_presentation(&engine->render,&record)) return 0;
+  if(!gml_render_deferred_presentation(&engine->render,&record)){
+    GmlRenderImageRef completed={0};
+    /* R03_COMPLETED_SCREEN_PRESENT: the scene already owns the final raster. The
+     * application surface is not its substitute, and CPU pixels are not an upload source. */
+    if(!scene || engine->host_canvas_active ||
+       engine->present_shift_x || engine->present_shift_y ||
+       engine->present_crop_left || engine->present_crop_top ||
+       engine->present_crop_right || engine->present_crop_bottom ||
+       !gml_render_completed_screen_image(&engine->render,engine->screen,
+                                          (int)engine->output_width,
+                                          (int)engine->output_height,&completed)) return 0;
+    memset(&record,0,sizeof record);
+    record.target_pixels=engine->screen;
+    record.target_width=record.source_width=record.source_pitch=record.destination_width=
+      (int)engine->output_width;
+    record.target_height=record.source_height=record.destination_height=(int)engine->output_height;
+    record.identity=completed.identity;
+    record.generation=engine->host_frame_generation;
+    record.resident_image=completed;
+    record.shader=-1;
+    record.sampling_rule=GML_RENDER_PRESENTATION_LEADING_EDGE;
+    record.extent_x=engine->output_width;
+    record.extent_y=engine->output_height;
+  }
   if(record.target_pixels!=engine->screen) return 0;
   if((unsigned)record.target_width!=engine->output_width ||
      (unsigned)record.target_height!=engine->output_height) return 0;
@@ -389,7 +420,8 @@ int engine_present_hardware_screen(AnygmEngine *engine,unsigned *width,unsigned 
    * that covers everything anyway. */
   if(!gml_render_plan_add_clear(plan,whole,record.has_fill?record.fill_color:0x000000u)) return 0;
   memset(&source,0,sizeof source);
-  source.image_class=GML_PLAN_IMAGE_APPLICATION_SURFACE;
+  source.image_class=record.resident_image.resource_class==GML_RENDER_RESOURCE_SCREEN
+    ?GML_PLAN_IMAGE_COMPLETED_FRAME:GML_PLAN_IMAGE_APPLICATION_SURFACE;
   source.identity=record.identity;
   source.content_generation=record.generation;
   source.pixel_generation=record.generation;
@@ -492,7 +524,7 @@ int engine_present_hardware_canvas(AnygmEngine *engine,unsigned *width,unsigned 
   if(!engine_hybrid_presentation_active(engine)) return 0;
   if(!engine->screen || !engine->output_width || !engine->output_height) return 0;
   /* This pass reads the completed frame, so it has to be the canonical one. */
-  engine_materialize_completed_frame(engine);
+  if(!engine_materialize_completed_frame(engine)) return 0;
   engine_host_extent(engine,&host_width,&host_height);
   if(!host_width || !host_height) return 0;
   if(!engine->host_canvas_active){

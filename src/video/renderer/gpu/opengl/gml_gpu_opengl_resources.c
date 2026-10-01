@@ -164,9 +164,10 @@ void gml_gpu_opengl_scene_forget(GmlGpuBackend *backend){
   GlScene *scene=&backend->scene;
   memset(scene->images,0,sizeof scene->images);
   scene->program=scene->vertex_buffer=scene->vertex_array=0;
-  scene->exact_program=scene->snapshot_texture=0;
+  scene->exact_program=scene->snapshot_texture=scene->rgb_query=0;
   scene->snapshot_width=scene->snapshot_height=0;
   scene->max_texture_size=0;
+  scene->supports_sample_mask=0;
   scene->available=0;
 }
 
@@ -178,6 +179,8 @@ void gml_gpu_opengl_scene_destroy(GmlGpuBackend *backend,int context_is_current)
     if(scene->program) backend->gl.DeleteProgram(scene->program);
     if(scene->exact_program) backend->gl.DeleteProgram(scene->exact_program);
     if(scene->snapshot_texture) backend->gl.DeleteTextures(1,&scene->snapshot_texture);
+    if(scene->rgb_query && backend->gl.DeleteQueries)
+      backend->gl.DeleteQueries(1,&scene->rgb_query);
     if(scene->vertex_array) backend->gl.DeleteVertexArrays(1,&scene->vertex_array);
     if(scene->vertex_buffer) backend->gl.DeleteBuffers(1,&scene->vertex_buffer);
   }
@@ -208,10 +211,24 @@ void gml_gpu_opengl_scene_reset(GmlGpuBackend *backend,const GmlGpuContext *cont
   GL_SCENE_LOAD(BlendEquationSeparate,"glBlendEquationSeparate");
   GL_SCENE_LOAD(Flush,"glFlush");
   GL_SCENE_LOAD(Finish,"glFinish");
+  GL_SCENE_LOAD(GenQueries,"glGenQueries");
+  GL_SCENE_LOAD(DeleteQueries,"glDeleteQueries");
+  GL_SCENE_LOAD(BeginQuery,"glBeginQuery");
+  GL_SCENE_LOAD(EndQuery,"glEndQuery");
+  GL_SCENE_LOAD(GetQueryiv,"glGetQueryiv");
+  GL_SCENE_LOAD(GetQueryObjectuiv,"glGetQueryObjectuiv");
+  GL_SCENE_LOAD(PolygonMode,"glPolygonMode");
 #undef GL_SCENE_LOAD
   if(!backend->gl.GetIntegerv || !backend->gl.Finish) return;
   backend->gl.GetIntegerv(GL_MAX_TEXTURE_SIZE,&scene->max_texture_size);
   backend->gl.GetIntegerv(GL_MAX_TEXTURE_IMAGE_UNITS,&scene->max_texture_units);
+  if(backend->api==GML_GPU_API_OPENGL_CORE) scene->supports_sample_mask=1;
+  else {
+    GLint major=0,minor=0;
+    backend->gl.GetIntegerv(GL_MAJOR_VERSION,&major);
+    backend->gl.GetIntegerv(GL_MINOR_VERSION,&minor);
+    scene->supports_sample_mask=major>3 || (major==3 && minor>=1);
+  }
   scene->available=scene->max_texture_size>0;
 }
 
@@ -266,6 +283,78 @@ GlSceneImage *gml_gpu_opengl_scene_image(GmlGpuBackend *backend,GmlRenderImageRe
     }
   }
   return NULL;
+}
+
+int gml_gpu_opengl_scene_has_rgb(GmlGpuBackend *backend,GmlRenderImageRef image,int *has_rgb){
+  GlSceneImage *source;
+  GLint active=0;
+  GLuint result=0;
+  int succeeded;
+  if(has_rgb) *has_rgb=0;
+  if(!backend || !backend->loaded || !has_rgb ||
+     !backend->gl.GenQueries || !backend->gl.DeleteQueries ||
+     !backend->gl.BeginQuery || !backend->gl.EndQuery ||
+     !backend->gl.GetQueryiv || !backend->gl.GetQueryObjectuiv ||
+     (backend->api==GML_GPU_API_OPENGL_CORE && !backend->gl.PolygonMode) ||
+     !(source=gml_gpu_opengl_scene_image(backend,image)) ||
+     !source->rendered_origin || source->pixel_format!=GML_RENDER_PIXEL_ARGB8888) return 0;
+  /* Never take a query owned by the frontend. Both desktop occlusion targets share one slot. */
+  backend->gl.GetQueryiv(GL_ANY_SAMPLES_PASSED,GL_CURRENT_QUERY,&active);
+  if(active) return 0;
+  if(backend->api==GML_GPU_API_OPENGL_CORE){
+    backend->gl.GetQueryiv(GL_SAMPLES_PASSED,GL_CURRENT_QUERY,&active);
+    if(active) return 0;
+  } else {
+    backend->gl.GetQueryiv(GL_ANY_SAMPLES_PASSED_CONSERVATIVE,GL_CURRENT_QUERY,&active);
+    if(active) return 0;
+  }
+  if(backend->gl.GetError()!=GL_NO_ERROR) return 0;
+  if(!backend->scene.rgb_query){
+    backend->gl.GenQueries(1,&backend->scene.rgb_query);
+    if(!backend->scene.rgb_query) return 0;
+  }
+  /* A separate attachment prevents a texture feedback loop even though colour writes are off.
+   * No CPU plane, image upload, axis map or full-frame readback is allocated for this query. */
+  if(!gml_gpu_opengl_bind_readback_target(backend,source->width,source->height,NULL,0u)) return 0;
+  backend->gl.Disable(GL_BLEND);
+  backend->gl.Disable(GL_DEPTH_TEST);
+  backend->gl.Disable(GL_STENCIL_TEST);
+  backend->gl.Disable(GL_CULL_FACE);
+  backend->gl.Disable(GL_DITHER);
+  backend->gl.Disable(GL_SCISSOR_TEST);
+  backend->gl.Disable(GL_RASTERIZER_DISCARD);
+  backend->gl.Disable(GL_SAMPLE_COVERAGE);
+  backend->gl.Disable(GL_SAMPLE_ALPHA_TO_COVERAGE);
+  if(backend->scene.supports_sample_mask) backend->gl.Disable(GL_SAMPLE_MASK);
+  if(backend->api==GML_GPU_API_OPENGL_CORE)
+    backend->gl.PolygonMode(GL_FRONT_AND_BACK,GL_FILL);
+  backend->gl.ColorMask(GL_FALSE,GL_FALSE,GL_FALSE,GL_FALSE);
+  backend->gl.DepthMask(GL_FALSE);
+  backend->gl.Viewport(0,0,(GLsizei)source->width,(GLsizei)source->height);
+  backend->gl.BindVertexArray(backend->vertex_array);
+  backend->gl.UseProgram(backend->program);
+  backend->gl.Uniform1i(backend->u_source,0);
+  backend->gl.Uniform1i(backend->u_map_x,1);
+  backend->gl.Uniform1i(backend->u_map_y,2);
+  backend->gl.Uniform1i(backend->u_rgb_query,1);
+  backend->gl.ActiveTexture(GL_TEXTURE0);
+  backend->gl.BindTexture(GL_TEXTURE_2D,source->texture);
+  backend->gl.BeginQuery(GL_ANY_SAMPLES_PASSED,backend->scene.rgb_query);
+  if(backend->gl.GetError()!=GL_NO_ERROR){ succeeded=0; goto query_done; }
+  backend->gl.DrawArrays(GL_TRIANGLES,0,3);
+  backend->gl.EndQuery(GL_ANY_SAMPLES_PASSED);
+  backend->gl.GetQueryObjectuiv(backend->scene.rgb_query,GL_QUERY_RESULT,&result);
+  succeeded=backend->gl.GetError()==GL_NO_ERROR;
+query_done:
+  backend->gl.Uniform1i(backend->u_rgb_query,0);
+  backend->gl.ColorMask(GL_TRUE,GL_TRUE,GL_TRUE,GL_TRUE);
+  backend->gl.BindTexture(GL_TEXTURE_2D,0);
+  backend->gl.UseProgram(0);
+  backend->gl.BindVertexArray(0);
+  backend->gl.BindFramebuffer(GL_FRAMEBUFFER,0);
+  if(!succeeded) return 0;
+  *has_rgb=result!=0u;
+  return 1;
 }
 
 static int scene_extent_valid(const GlScene *scene,uint32_t width,uint32_t height){

@@ -49,6 +49,7 @@ int gml_gpu_opengl_execute(GmlGpuBackend *backend,const GmlGpuContext *context,
   backend->gl.BindVertexArray(backend->vertex_array);
   backend->gl.UseProgram(backend->program);
   backend->gl.Uniform1i(backend->u_source,0);
+  backend->gl.Uniform1i(backend->u_rgb_query,0);
   backend->gl.Uniform1i(backend->u_map_x,1);
   backend->gl.Uniform1i(backend->u_map_y,2);
   backend->gl.Uniform1i(backend->u_target_height,(GLint)plan->target_height);

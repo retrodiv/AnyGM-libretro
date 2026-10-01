@@ -93,6 +93,7 @@ typedef struct FakeDriver {
   int texture_unit_limit;
   int active_uniform_override;
   unsigned compile_calls;
+  unsigned active_query,rgb_query_result,rgb_queries;
 } FakeDriver;
 
 static FakeDriver g_fake;
@@ -104,7 +105,11 @@ void anygm_test_graphics_reset(void){
   g_fake.framebuffer=7;
   g_fake.texture_unit_limit=8;
   g_fake.active_uniform_override=-1;
+  g_fake.rgb_query_result=1u;
 }
+void anygm_test_graphics_rgb_query_result(unsigned result){ g_fake.rgb_query_result=result; }
+void anygm_test_graphics_active_query(unsigned name){ g_fake.active_query=name; }
+unsigned anygm_test_graphics_rgb_queries(void){ return g_fake.rgb_queries; }
 
 int anygm_test_graphics_reuse_name(unsigned name){
   if(!name || name>=FAKE_MAX_TEXTURES || name<g_fake.next_name) return 0;
@@ -125,6 +130,7 @@ static void fake_GetIntegerv(GLenum name,GLint *value){
 }
 static void fake_Flush(void){ note_call(); }
 static void fake_Finish(void){ note_call(); }
+static void fake_PolygonMode(GLenum face,GLenum mode){ (void)face;(void)mode; note_call(); }
 static void fake_BlendFuncSeparate(GLenum a,GLenum b,GLenum c,GLenum d){
   note_call();
   if(a==GL_SRC_ALPHA && b==GL_ONE_MINUS_SRC_ALPHA &&
@@ -476,6 +482,23 @@ static void fake_BufferData(GLenum target,GLsizeiptr size,const void *data,GLenu
   if(data) memcpy(g_fake.buffer_data,data,floats*sizeof(float));
 }
 static void fake_DeleteBuffers(GLsizei n,const GLuint *names){ (void)names; note_call(); g_fake.deletes_issued+=n; }
+static void fake_GenQueries(GLsizei count,GLuint *names){
+  note_call();
+  for(GLsizei index=0;index<count;index++) names[index]=g_fake.next_name++;
+}
+static void fake_DeleteQueries(GLsizei count,const GLuint *names){
+  (void)names; note_call(); g_fake.deletes_issued+=count;
+}
+static void fake_BeginQuery(GLenum target,GLuint name){
+  (void)target; note_call(); g_fake.active_query=name; g_fake.rgb_queries++;
+}
+static void fake_EndQuery(GLenum target){ (void)target; note_call(); g_fake.active_query=0u; }
+static void fake_GetQueryiv(GLenum target,GLenum pname,GLint *value){
+  (void)target; (void)pname; note_call(); *value=(GLint)g_fake.active_query;
+}
+static void fake_GetQueryObjectuiv(GLuint name,GLenum pname,GLuint *value){
+  (void)name; (void)pname; note_call(); *value=g_fake.rgb_query_result;
+}
 static void fake_Uniform1fv(GLint l,GLsizei n,const GLfloat *v){ (void)l;(void)n;(void)v; note_call(); g_fake.float_uniforms++; }
 static void fake_Uniform2fv(GLint l,GLsizei n,const GLfloat *v){ (void)l;(void)n;(void)v; note_call(); g_fake.float_uniforms++; }
 static void fake_Uniform3fv(GLint l,GLsizei n,const GLfloat *v){ (void)l;(void)n;(void)v; note_call(); g_fake.float_uniforms++; }
@@ -496,6 +519,13 @@ void (*anygm_test_graphics_proc(void *userdata,const char *name))(void){
     {"glGetError",(void*)fake_GetError},
     {"glGetString",(void*)fake_GetString},
     {"glGetIntegerv",(void*)fake_GetIntegerv},
+    {"glPolygonMode",(void*)fake_PolygonMode},
+    {"glGenQueries",(void*)fake_GenQueries},
+    {"glDeleteQueries",(void*)fake_DeleteQueries},
+    {"glBeginQuery",(void*)fake_BeginQuery},
+    {"glEndQuery",(void*)fake_EndQuery},
+    {"glGetQueryiv",(void*)fake_GetQueryiv},
+    {"glGetQueryObjectuiv",(void*)fake_GetQueryObjectuiv},
     {"glFlush",(void*)fake_Flush},
     {"glFinish",(void*)fake_Finish},
     {"glBlendFuncSeparate",(void*)fake_BlendFuncSeparate},

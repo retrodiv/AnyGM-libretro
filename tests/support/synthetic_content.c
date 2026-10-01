@@ -1348,7 +1348,7 @@ static int synthetic_window_gui_content_create(AnygmSyntheticContent *fixture,in
       "window_set_size(64,48);\n"
       "display_set_gui_size(128,96);\n"
       "application_surface_draw_enable(false);\n":explicit_gui_size==3?
-      "window_set_size(128,96);\n":explicit_gui_size==6?
+      "window_set_size(128,96);\n":explicit_gui_size==6 || explicit_gui_size==7?
       "window_set_size(64,48);\n"
       "application_surface_draw_enable(false);\n":explicit_gui_size==2?
       "window_set_size(64,48);\n"
@@ -1370,7 +1370,9 @@ static int synthetic_window_gui_content_create(AnygmSyntheticContent *fixture,in
       explicit_gui_size==3 || explicit_gui_size==4 || explicit_gui_size==6?
       "draw_clear(c_blue);\n"
       "draw_sprite(spr_fixture,0,12,12);\n"
-      "draw_set_color(c_white); draw_rectangle(8,6,11,9,false);\n":explicit_gui_size==2?
+      "draw_set_color(c_white); draw_rectangle(8,6,11,9,false);\n":explicit_gui_size==7?
+      "draw_clear(c_blue);\n"
+      "draw_sprite(spr_fixture,0,12,12);\n":explicit_gui_size==2?
       "display_set_gui_size(64,48); draw_clear(c_black);\n"
       "draw_surface(canvas,0,0);\n":explicit_gui_size?
       "var w = window_get_width(); var h = window_get_height();\n"
@@ -1400,7 +1402,7 @@ static int synthetic_window_gui_content_create(AnygmSyntheticContent *fixture,in
   project.rooms=&room; project.n_rooms=project.cap_rooms=1;
   project.room_order=&order; project.n_room_order=1;
   if(explicit_gui_size==3 || explicit_gui_size==4 || explicit_gui_size==5 ||
-     explicit_gui_size==6){
+     explicit_gui_size==6 || explicit_gui_size==7){
     uint8_t pixels[8u*8u*4u];
     for(int y=0;y<8;y++) for(int x=0;x<8;x++){
       size_t pixel=((size_t)y*8u+(size_t)x)*4u;
@@ -1481,6 +1483,9 @@ int anygm_synthetic_indirect_gui_alpha_content_create(AnygmSyntheticContent *fix
 
 int anygm_synthetic_direct_gui_sprite_content_create(AnygmSyntheticContent *fixture){
   return synthetic_window_gui_content_create(fixture,6);
+}
+int anygm_synthetic_resident_direct_gui_content_create(AnygmSyntheticContent *fixture){
+  return synthetic_window_gui_content_create(fixture,7);
 }
 
 int anygm_synthetic_surface_canvas_content_create(AnygmSyntheticContent *fixture){

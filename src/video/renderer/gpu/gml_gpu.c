@@ -141,6 +141,16 @@ static int scene_content_program_failed(void *context,const GmlPlanShader *shade
   return gpu && gpu->context_active &&
     gml_gpu_opengl_content_program_failed(gpu->backend,shader);
 }
+static int scene_has_rgb(void *context,GmlRenderImageRef image,int *has_rgb){
+  GmlGpu *gpu=(GmlGpu*)context;
+  if(!gpu || !gpu->context_active) return 0;
+  if(!gml_gpu_opengl_scene_has_rgb(gpu->backend,image,has_rgb)){
+    gpu->counters.scene_rgb_query_refusals++;
+    return 0;
+  }
+  gpu->counters.scene_rgb_queries++;
+  return 1;
+}
 
 void gml_gpu_device_services(GmlGpu *gpu,GmlRenderDeviceServices *out_services){
   if(!out_services) return;
@@ -155,6 +165,7 @@ void gml_gpu_device_services(GmlGpu *gpu,GmlRenderDeviceServices *out_services){
   out_services->flush=scene_flush;
   out_services->wait=scene_wait;
   out_services->content_program_failed=scene_content_program_failed;
+  out_services->has_rgb=scene_has_rgb;
 }
 
 int gml_gpu_execute_plan(GmlGpu *gpu,GmlRenderPlan *plan){

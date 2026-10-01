@@ -893,6 +893,14 @@ static int plan_validation_case(void){
     plan.images[index].opaque=0u;
     REQUIRE(!gml_render_plan_validate(&plan),"translucent resident copy is refused");
     plan.images[index].opaque=1u;
+    plan.images[index].resident_image.resource_class=GML_RENDER_RESOURCE_SCREEN;
+    REQUIRE(!gml_render_plan_validate(&plan),"SCREEN is not labelled as an application image");
+    plan.images[index].image_class=GML_PLAN_IMAGE_COMPLETED_FRAME;
+    REQUIRE(gml_render_plan_validate(&plan) && gml_render_plan_gpu_eligible(&plan),
+            "a typed completed SCREEN is eligible without a CPU borrow");
+    plan.images[index].resident_image.resource_class=GML_RENDER_RESOURCE_SURFACE;
+    REQUIRE(!gml_render_plan_validate(&plan),"numbered surface is not a completed SCREEN");
+    plan.images[index].resident_image.resource_class=GML_RENDER_RESOURCE_SCREEN;
     plan.images[index].resident_image.content_version=0u;
     REQUIRE(!gml_render_plan_validate(&plan),"unversioned resident copy is refused");
   }
