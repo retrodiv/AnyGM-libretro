@@ -26,7 +26,7 @@ REQUIRED_RULES = {
     "R03-P7-LAYER-CONTINUATION",
     "R03-P7-LAYER-SAMPLER-FALLBACK", "R03-P7-LAYER-BLUR-GLOW-FALLBACK",
     "R03-P7-LAYER-NUMBERED-TARGET", "R03-P7-VIEWLESS-BASE", "R03-P7-INDIRECT-GUI",
-    "R03-P9-CLASSIC-VIEWLESS",
+    "R03-P9-CLASSIC-VIEWLESS", "R03-P9-GUI-FILTERED-ATLAS",
     "R03-P7-MULTIVIEW-SEED", "R03-P7-MULTIVIEW-RETAINED",
     "R03-P7-MULTIVIEW-SURFACE", "R03-P7-PRESENT-GEOMETRY",
     "R03-P7-PRESENT-FILTER-FALLBACK", "R03-P7-TEMPORAL-PRESENT",
@@ -248,6 +248,10 @@ def self_test() -> None:
             "", 1),
         "\n".join(line for line in document.splitlines()
                   if not line.startswith("| R03-SPR-STRETCH-BOX |")),
+        "\n".join(line for line in document.splitlines()
+                  if not line.startswith("| R03-P9-GUI-FILTERED-ATLAS |")),
+        document.replace("::R03_SHADER_GUI_FILTERED_ALPHA_STAMP",
+                         "::OBSOLETE_GUI_FILTERED_ALPHA_STAMP", 1),
     ):
         try:
             check_repair_map(broken, ledger, ROOT)

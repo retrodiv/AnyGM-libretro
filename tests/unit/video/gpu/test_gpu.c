@@ -631,6 +631,120 @@ static int scene_atlas_retire_advanced_version_case(void){
   return 1;
 }
 
+static int scene_screen_filtered_alpha_stamp_case(void){
+  const uint8_t pixels[16]={255,0,0,128,0,255,0,0,0,0,255,255,255,255,255,64};
+  GmlRenderImageRef source={GML_RENDER_RESOURCE_ATLAS,91u,1u,1u};
+  GmlRenderImageRef target={GML_RENDER_RESOURCE_SCREEN,92u,1u,1u};
+  GmlRenderImageUpload upload={0};
+  GmlRenderDrawStateSnapshot state={0};
+  GmlRenderDrawOp operations[3]={0};
+  GmlRenderDrawBatch batch={0};
+  GmlRenderDeviceServices service;
+  GmlGpuContext context;
+  GmlGpu *gpu;
+  anygm_test_graphics_reset();
+  gpu=gml_gpu_create();
+  REQUIRE(gpu!=NULL,"screen alpha device allocated");
+  context=fake_context(GML_GPU_API_OPENGL_CORE);
+  REQUIRE(gml_gpu_context_reset(gpu,&context),"screen alpha context adopted");
+  gml_gpu_device_services(gpu,&service);
+  upload.image=source;
+  upload.storage_width=upload.storage_height=2u;
+  upload.region=(GmlRenderRect){0,0,2u,2u};
+  upload.pixel_format=GML_RENDER_PIXEL_RGBA8888;
+  upload.stride_bytes=8u;
+  upload.byte_capacity=sizeof pixels;
+  upload.bytes=pixels;
+  REQUIRE(service.upload(service.context,&upload),"screen alpha source uploaded");
+  state.write_mask=15u;
+  state.alpha=255u;
+  state.colour=0xffffffffu;
+  state.sampler_count=1u;
+  state.coverage_policy=GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA;
+  state.rgb_source_factor=state.alpha_source_factor=GML_RENDER_BLEND_SOURCE_ALPHA;
+  state.rgb_destination_factor=state.alpha_destination_factor=
+    GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA;
+  state.rgb_equation=state.alpha_equation=GML_RENDER_BLEND_ADD;
+  state.samplers[0].filter=GML_RENDER_FILTER_BILINEAR;
+  state.samplers[0].edge_rule=GML_RENDER_EDGE_CLAMP_SUBIMAGE;
+  state.samplers[0].source_region=upload.region;
+  for(unsigned index=0;index<3u;index++){
+    GmlRenderDrawOp *op=&operations[index];
+    op->sequence=index+1u;
+    op->target.image=target;
+    op->target.image.content_version=index+1u;
+    op->target.storage_version=index+1u;
+    op->target.width=op->target.height=8u;
+    op->target.pixel_format=GML_RENDER_PIXEL_ARGB8888;
+    op->target.region=(GmlRenderRect){0,0,8u,8u};
+    if(!index){
+      op->opcode=GML_RENDER_OP_CLEAR;
+      op->payload.clear_colour=0x40102030u;
+      continue;
+    }
+    op->opcode=GML_RENDER_OP_TEXTURED_QUAD;
+    op->scene_family=GML_RENDER_SCENE_BACKGROUND;
+    op->reconstruction_mode=GML_RENDER_DEVICE_CHECKPOINT;
+    op->sources=&source;
+    op->source_count=1u;
+    op->payload.quad.shape=GML_RENDER_QUAD_AXIS_ALIGNED;
+    op->payload.quad.filtered_draw_alpha=0.6;
+    op->payload.quad.sampling=state.samplers[0];
+    for(unsigned corner=0;corner<4u;corner++)
+      op->payload.quad.corner_colour[corner]=0x99a0c0e0u;
+    op->payload.quad.x[0]=op->payload.quad.x[3]=1.0;
+    op->payload.quad.x[1]=op->payload.quad.x[2]=3.0;
+    op->payload.quad.y[0]=op->payload.quad.y[1]=1.0;
+    op->payload.quad.y[2]=op->payload.quad.y[3]=3.0;
+    op->payload.quad.u[1]=op->payload.quad.u[2]=1.0;
+    op->payload.quad.v[2]=op->payload.quad.v[3]=1.0;
+  }
+  batch.operations=operations;
+  batch.operation_count=3u;
+  batch.states=&state;
+  batch.state_count=1u;
+  GmlRenderExecutionResult result=service.submit(service.context,&batch);
+  REQUIRE(result.status==GML_RENDER_EXEC_ACCEPTED && result.accepted_prefix==3u &&
+          anygm_test_graphics_scene_draw_calls()==2 &&
+          anygm_test_graphics_scene_vertices()==24 &&
+          anygm_test_graphics_color_mask_all() && !anygm_test_graphics_blend_enabled() &&
+          anygm_test_graphics_read_pixels()==0 && anygm_test_graphics_scene_copies()==0,
+          "two ordered filtered quads reuse one RGB draw and one alpha-only draw without copies");
+  for(unsigned variant=0;variant<13u;variant++){
+    GmlRenderDrawStateSnapshot invalid_state=state;
+    GmlRenderDrawOp invalid_operations[3];
+    GmlRenderDrawBatch invalid_batch=batch;
+    memcpy(invalid_operations,operations,sizeof operations);
+    invalid_batch.operations=invalid_operations;
+    invalid_batch.states=&invalid_state;
+    if(variant==0) invalid_state.coverage_policy=2u;
+    if(variant==1) for(unsigned index=0;index<3u;index++)
+      invalid_operations[index].target.image.resource_class=GML_RENDER_RESOURCE_SURFACE;
+    if(variant==2) invalid_state.samplers[0].filter=GML_RENDER_FILTER_NEAREST;
+    if(variant==3) invalid_operations[2].reconstruction_mode=GML_RENDER_REPLAY_EXACT;
+    if(variant==4) invalid_operations[2].payload.quad.shape=GML_RENDER_QUAD_GENERAL;
+    if(variant==5) invalid_operations[2].scene_family=GML_RENDER_SCENE_TEXT;
+    if(variant==6) invalid_state.alpha_source_factor=GML_RENDER_BLEND_ONE;
+    if(variant==7) invalid_state.samplers[0].quantisation=GML_RENDER_QUANTISE_STRETCHED_FLOAT;
+    if(variant==8) invalid_state.write_mask=7u;
+    if(variant==9) invalid_operations[2].target.pixel_format=GML_RENDER_PIXEL_XRGB8888;
+    if(variant==10) invalid_operations[2].payload.quad.filtered_draw_alpha=0.0;
+    if(variant==11) invalid_operations[2].payload.quad.filtered_draw_alpha=NAN;
+    if(variant==12) invalid_operations[2].payload.quad.corner_colour[0]=0x00a0c0e0u;
+    if(variant==2 || variant==7) for(unsigned index=1;index<3u;index++)
+      invalid_operations[index].payload.quad.sampling=invalid_state.samplers[0];
+    int clears=anygm_test_graphics_clear_calls();
+    int draws=anygm_test_graphics_scene_draw_calls();
+    result=service.submit(service.context,&invalid_batch);
+    REQUIRE(result.status==GML_RENDER_EXEC_UNSUPPORTED && result.accepted_prefix==0u &&
+            anygm_test_graphics_clear_calls()==clears &&
+            anygm_test_graphics_scene_draw_calls()==draws,
+            "unqualified screen coverage refuses the complete batch before its clear and prefix");
+  }
+  gml_gpu_destroy(gpu,1);
+  return 1;
+}
+
 static int scene_alpha_composition_case(void){
   uint32_t source_pixels[4]={0x80FF0000u,0x0000FF00u,0xFF0000FFu,0x40FFFFFFu};
   GmlRenderImageRef source={GML_RENDER_RESOURCE_ATLAS,8u,1u,1u};
@@ -1664,6 +1778,7 @@ int main(int argc,char **argv){
     {"scene_resident_batch",scene_resident_batch_case},
     {"scene_atlas_retire_advanced_version",scene_atlas_retire_advanced_version_case},
     {"scene_alpha_composition",scene_alpha_composition_case},
+    {"scene_screen_filtered_alpha_stamp",scene_screen_filtered_alpha_stamp_case},
   };
   static const AnygmTestCase execution_cases[]={
     {"state_and_geometry",execute_state_and_geometry_case},

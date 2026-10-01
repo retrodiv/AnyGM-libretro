@@ -183,7 +183,8 @@
   "    o_color=vec4(vec3(rgb)/255.0,sampled.a*v_colour.a/255.0); return;\n" \
   "  }\n" \
   "  // R03_SHADER_ROW_SPAN: conditional rotated/warped CPU coverage.\n" \
-  "  if(u_filter>=2 && u_filter!=7 && u_filter!=8 && u_filter!=9 && u_filter!=10 && v_span_active>0.5){\n" \
+  "  if(u_filter>=2 && u_filter!=7 && u_filter!=8 && u_filter!=9 && u_filter!=10 &&\n" \
+  "     u_filter!=12 && u_filter!=13 && v_span_active>0.5){\n" \
   "    float mn=1e30,mx=-1e30; int hits=0;\n" \
   "    for(int i=0;i<4;i++){\n" \
   "      int j=(i+1)&3; float a=v_span_y[i],b=v_span_y[j];\n" \
@@ -207,7 +208,8 @@
   "    lo=numerator/denominator-ivec2(1);\n" \
   "    f=vec2(stretched_float_phase(remainder.x,denominator.x),\n" \
   "           stretched_float_phase(remainder.y,denominator.y));\n" \
-  "  } else if(u_filter>=2 && u_filter!=7 && u_filter!=8 && u_filter!=9 && u_filter!=10){\n" \
+  "  } else if(u_filter>=2 && u_filter!=7 && u_filter!=8 && u_filter!=9 && u_filter!=10 &&\n" \
+  "            u_filter!=12 && u_filter!=13){\n" \
   "    vec2 local=u_filter>=5\n" \
   "      ?v_texcoord\n" \
   "      :delta.x*v_map.zw+delta.y*v_texcoord+v_step;\n" \
@@ -238,6 +240,18 @@
   "    vec2 whole=floor(delta);\n" \
   "    vec2 remainder=(delta-whole)+delta*v_step+v_map.zw+\n" \
   "                   (u_filter==7 || u_filter==8 || u_filter==9 || u_filter==10?vec2(0.000001):vec2(-0.5));\n" \
+  "    // R03_SHADER_GUI_AXIS_PHASE: keep integral products out of the fractional\n" \
+  "    // sum and restore the vertex preparator's low phase/reciprocal residuals.\n" \
+  "    if(u_filter==12 || u_filter==13){\n" \
+  "      vec2 high_delta=floor(delta/4096.0)*4096.0,low_delta=delta-high_delta;\n" \
+  "      vec2 high_step=uintBitsToFloat(floatBitsToUint(v_step)&uvec2(0xffffe000u));\n" \
+  "      vec2 high_product=high_delta*high_step,low_product=low_delta*high_step;\n" \
+  "      vec2 integral=floor(high_product)+floor(low_product);\n" \
+  "      vec2 residual=delta*(v_step-high_step)+delta*vec2(v_span_x.y,v_span_y.y);\n" \
+  "      remainder=fract(high_product)+fract(low_product)+residual+(delta-whole)+\n" \
+  "                v_map.zw+vec2(v_span_x.x,v_span_y.x)-vec2(0.5);\n" \
+  "      whole+=integral;\n" \
+  "    }\n" \
   "    lo=ivec2(whole+floor(remainder)); f=fract(remainder);\n" \
   "  }\n" \
   "  // R03_SHADER_NEAREST_PHASED: retain point phase. First-generation exact ties use the\n" \
@@ -275,10 +289,11 @@
   "  // R03_SHADER_TINT_ALPHA: truncating RGB tint and per-draw alpha.\n" \
   "  uvec3 tint=uvec3(floor(v_colour.rgb*255.0+vec3(0.5)));\n" \
   "  uvec3 rgb=uvec3(sampled.rgb)*tint/uvec3(255u);\n" \
-  "  // R03_SHADER_MODERN_NEAREST_ALPHA_STAMP: only source-covered texels\n" \
-  "  // replace destination alpha in the modern screen stage.\n" \
-  "  if(u_filter==10){\n" \
-  "    if(sampled.a*v_colour.a<=0.0) discard;\n" \
+  "  // R03_SHADER_MODERN_NEAREST_ALPHA_STAMP / R03_SHADER_GUI_FILTERED_ALPHA_STAMP:\n" \
+  "  // only source-covered texels replace screen alpha. Filtered GUI admission has\n" \
+  "  // positive original draw alpha, even when its packed RGB factor rounds to zero.\n" \
+  "  if(u_filter==10 || u_filter==13){\n" \
+  "    if(sampled.a<=0.0 || (u_filter==10 && v_colour.a<=0.0)) discard;\n" \
   "    o_color=vec4(0.0,0.0,0.0,1.0); return;\n" \
   "  }\n" \
   "  // R03_SHADER_DIRECT_NEAREST_COPY: the full-alpha CPU point writer replaces ARGB,\n" \

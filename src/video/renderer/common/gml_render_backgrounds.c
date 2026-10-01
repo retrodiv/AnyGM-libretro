@@ -147,6 +147,9 @@ int gml_render_resident_filtered_atlas_part(GmlRender *r,int page_index,
    * may reach physical atlas neighbours beyond the selected visible crop. */
   view.tw=view.sw;
   view.th=view.sh;
+  /* Match the existing selected CPU writer: tile cells project authored edges,
+   * while ordinary background parts round their screen extent independently. */
+  view.project_authored_edges=family==GML_RENDER_SCENE_TILE;
   return gml_render_resident_filtered_atlas_page(
     r,page_index,x+(anchor_x-sx)*xs-r->cam_x,
     y+(anchor_y-sy)*ys-r->cam_y,cell_xs,cell_ys,

@@ -2449,6 +2449,99 @@ static int resident_borrowed_surface_zero_screen_shader(void){
   return 1;
 }
 
+static int resident_identity_gui_filtered_atlas(void){
+  enum { WIDTH=12,HEIGHT=10,ATLAS=6,PAGE=4 };
+  GmlRender *render=(GmlRender*)calloc(1,sizeof *render);
+  GmlWin content={0};
+  uint32_t cpu[WIDTH*HEIGHT]={0},screen[WIDTH*HEIGHT]={0};
+  FakeDevice fake={0};
+  GmlRenderDeviceServices device=service(&fake);
+  CHECK(render && gml_render_init(render,NULL)==0);
+  const int atlas_index=render->n_atlas;
+  GmlAtlas *atlases=(GmlAtlas*)realloc(render->atlas,
+      (size_t)(atlas_index+1)*sizeof *render->atlas);
+  CHECK(atlases);
+  render->atlas=atlases;
+  memset(&render->atlas[atlas_index],0,sizeof *render->atlas);
+  render->n_atlas=atlas_index+1;
+  render->tpag=(GmlTpag*)calloc(1,sizeof *render->tpag);
+  render->bg=(GmlBg*)calloc(1,sizeof *render->bg);
+  render->spr=(GmlSprite*)calloc(1,sizeof *render->spr);
+  CHECK(render->atlas && render->tpag && render->bg && render->spr);
+  render->n_tpag=render->n_bg=render->n_spr=1;
+  render->atlas[atlas_index].px=(uint8_t*)malloc(ATLAS*ATLAS*4u);
+  render->spr[0].frame=(int*)calloc(1,sizeof(int));
+  CHECK(render->atlas[atlas_index].px && render->spr[0].frame);
+  for(unsigned index=0;index<ATLAS*ATLAS;index++){
+    uint8_t *pixel=render->atlas[atlas_index].px+index*4u;
+    pixel[0]=(uint8_t)(32u+index*3u);
+    pixel[1]=(uint8_t)(48u+index*2u);
+    pixel[2]=(uint8_t)(64u+index);
+    pixel[3]=255u;
+  }
+  render->atlas[atlas_index].w=render->atlas[atlas_index].h=ATLAS;
+  render->tpag[0].atlas=atlas_index;
+  render->tpag[0].sx=render->tpag[0].sy=1;
+  render->tpag[0].sw=render->tpag[0].sh=PAGE;
+  render->tpag[0].tw=render->tpag[0].th=PAGE;
+  render->tpag[0].bw=render->tpag[0].bh=PAGE;
+  render->spr[0].w=render->spr[0].h=PAGE;
+  render->spr[0].n_frames=1;
+  content.bytecode=15;
+  render->win=&content;
+  render->interp=1;
+  for(unsigned variant=0;variant<6u;variant++){
+    unsigned visible=0;
+    for(unsigned accelerated=0;accelerated<2u;accelerated++){
+      GmlRenderJournalMetrics baseline={0};
+      uint32_t *pixels=accelerated?screen:cpu;
+      gml_render_bind_device(render,accelerated?&device:NULL);
+      if(accelerated)
+        CHECK(gml_render_begin_resident_base(render,pixels,WIDTH,HEIGHT,0.0,0.0));
+      else gml_render_begin(render,pixels,WIDTH,HEIGHT,0.0,0.0);
+      if(accelerated)
+        gml_render_resource_journal_metrics(render->base_scene_resource,&baseline);
+      gml_render_gui_begin(render,WIDTH,HEIGHT);
+      gml_render_set_pending_fill(render,0xff102030u);
+      switch(variant){
+        case 0: gml_draw_background(render,0,0.25,0.3); break;
+        case 1: gml_draw_background_ext(render,0,-0.6,-1.25,1.6796875,1.715,
+                                       0xffffffu,1.0); break;
+        case 2: gml_draw_background_part_ext(render,0,1.0,0.0,2.0,3.0,
+                    0.3,0.5,1.715,1.4814814814814814,0xa0c0e0u,0.6); break;
+        case 3: gml_draw_sprite_ext(render,0,0,0.3,0.5,1.6796875,1.715,
+                                     0.0,0xa0c0e0u,0.6); break;
+        case 4: gml_draw_background_stretched(render,0,0.3,0.5,6.0,7.0,
+                                              0xffffffu,1.0); break;
+        default: gml_draw_background_tile(render,0,1.0,1.0,2.0,2.0,
+                   0.3,0.5,1.715,1.4814814814814814,1,1,0,0xffffffu,1.0); break;
+      }
+      if(!accelerated){
+        gml_render_flush_pending_fill(render);
+        for(unsigned index=0;index<WIDTH*HEIGHT;index++)
+          if(cpu[index]!=0xff102030u) visible++;
+        CHECK(visible>0u);
+      } else {
+        int submits=fake.submits;
+        GmlRenderJournalMetrics metrics={0};
+        CHECK(render->resident_application_pass && render->gui_pass_active);
+        CHECK(gml_render_scene_flush(render) && fake.submits>submits &&
+              fake.last_opcode==GML_RENDER_OP_TEXTURED_QUAD);
+        CHECK(gml_render_resource_image_ref(render->base_scene_resource).resource_class==
+              GML_RENDER_RESOURCE_SCREEN);
+        gml_render_resource_journal_metrics(render->base_scene_resource,&metrics);
+        CHECK(metrics.authority==GML_RENDER_RESOURCE_BOTH_CURRENT &&
+              metrics.device_checkpoints==baseline.device_checkpoints+1u &&
+              metrics.cpu_replays==baseline.cpu_replays);
+      }
+      gml_render_gui_end(render);
+    }
+  }
+  gml_render_free(render);
+  free(render);
+  return 1;
+}
+
 static int resident_zero_alpha_layer_fill_noop(void){
   GmlRender *cpu=(GmlRender*)calloc(1,sizeof *cpu);
   GmlRender *gpu=(GmlRender*)calloc(1,sizeof *gpu);
@@ -4784,6 +4877,7 @@ int main(void){
   passed+=resident_borrowed_surface_zero_screen_shader();
   passed+=surface_metadata_preserves_device_authority();
   passed+=resident_centered_full_source_shader();
+  passed+=resident_identity_gui_filtered_atlas();
   passed+=resident_zero_alpha_layer_fill_noop();
   passed+=resident_unit_world_primitive_order();
   passed+=resident_gradient_primitive_cpu_boundary();
@@ -4818,6 +4912,6 @@ int main(void){
   passed+=source_free_primitive_rect_replay();
   passed+=stretched_float_exact_replay();
   passed+=filtered_font_exact_recovery();
-  printf("render resource cases: passed=%d failed=%d\n",passed,65-passed);
-  return passed==65?EXIT_SUCCESS:EXIT_FAILURE;
+  printf("render resource cases: passed=%d failed=%d\n",passed,66-passed);
+  return passed==66?EXIT_SUCCESS:EXIT_FAILURE;
 }

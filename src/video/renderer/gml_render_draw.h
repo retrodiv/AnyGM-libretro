@@ -142,6 +142,12 @@ typedef enum GmlRenderBlendEquation {
   GML_RENDER_BLEND_EXACT_FILTERED_FONT=5
 } GmlRenderBlendEquation;
 
+enum {
+  /* Physical-screen source-over forces opaque alpha only at source-covered texels.
+   * Sampling and RGB composition keep their separately resolved rules. */
+  GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA=1u
+};
+
 typedef struct GmlRenderDrawStateSnapshot {
   uint32_t rgb_source_factor,rgb_destination_factor;
   uint32_t alpha_source_factor,alpha_destination_factor;
@@ -175,6 +181,8 @@ typedef struct GmlRenderQuad {
    * Exact filtered font: anchor is the unsnapped origin; diagonal x/y hold the
    * original positive scales, with the other components and offset zero. */
   double inverse_anchor[2],inverse_x[2],inverse_y[2],inverse_offset[2];
+  /* Exact filtered fonts and physical-screen opaque-written coverage retain the
+   * original positive draw alpha separately from the packed vertex RGB factor. */
   double filtered_draw_alpha;
   /* Modern filtered rotation optionally limits each row to the CPU quad span. Axis-aligned
    * box-filtered or float-band stretches carry [logical size, destination size, trim, visible size]

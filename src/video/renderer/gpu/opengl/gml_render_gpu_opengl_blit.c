@@ -113,6 +113,21 @@ int gml_render_gpu_opengl_draw_textured_quad(const GmlRenderDrawOp *op,
       vertex[19+span]=(float)quad->span_x[span];
       vertex[23+span]=(float)quad->span_y[span];
     }
+    if(state->coverage_policy==GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA){
+      /* The axis screen rule has no rotated/box span. Retain low residuals of
+       * its existing phase and reciprocal so a wide quad does not accumulate
+       * a float-step error into a different rounded source channel. */
+      double phase_x=quad->u[0]*source_width-region.x;
+      double phase_y=quad->v[0]*source_height-region_storage_y;
+      double step_x=(quad->u[1]-quad->u[0])*source_width/
+                     (quad->x[1]-quad->x[0])-1.0;
+      double step_y=(quad->v[2]-quad->v[0])*source_height/
+                     (quad->y[2]-quad->y[0])-1.0;
+      vertex[19]=(float)(phase_x-(double)vertex[14]);
+      vertex[20]=(float)(step_x-(double)vertex[16]);
+      vertex[23]=(float)(phase_y-(double)vertex[15]);
+      vertex[24]=(float)(step_y-(double)vertex[17]);
+    }
     vertex[27]=quad->span_active?1.0f:0.0f;
   }
   if(rotated){

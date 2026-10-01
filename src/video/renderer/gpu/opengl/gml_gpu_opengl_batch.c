@@ -92,7 +92,9 @@ static int qualified_blend(const GmlRenderDrawStateSnapshot *state){
   return -1;
 }
 
-static uint32_t scene_filter(const GmlRenderQuad *quad){
+static uint32_t scene_filter(const GmlRenderQuad *quad,
+                             const GmlRenderDrawStateSnapshot *state){
+  if(state->coverage_policy==GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA) return 12u;
   if(quad->sampling.quantisation==GML_RENDER_QUANTISE_STRETCHED_FLOAT) return 11u;
   if(quad->sampling.filter==GML_RENDER_FILTER_BOX) return 4u;
   if(quad->sampling.filter==GML_RENDER_FILTER_NEAREST_PHASED) return 7u;
@@ -338,7 +340,22 @@ static int scene_preflight(GmlGpuBackend *backend,const GmlRenderDrawBatch *batc
                        op->payload.quad.y[2]!=(double)target->height ||
                        !exact_rect(op,NULL,NULL,NULL,NULL,0))) ||
          state->sampler_count!=1u || state->material_identity || state->material_version ||
-         state->coverage_policy ||
+         (state->coverage_policy &&
+          (state->coverage_policy!=GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA ||
+           target->image.resource_class!=GML_RENDER_RESOURCE_SCREEN ||
+           target->pixel_format!=GML_RENDER_PIXEL_ARGB8888 ||
+           op->sources[0].resource_class!=GML_RENDER_RESOURCE_ATLAS ||
+           source->rendered_origin ||
+           (op->scene_family!=GML_RENDER_SCENE_SPRITE &&
+            op->scene_family!=GML_RENDER_SCENE_BACKGROUND &&
+            op->scene_family!=GML_RENDER_SCENE_TILE) ||
+           sampling->filter!=GML_RENDER_FILTER_BILINEAR || sampling->quantisation ||
+           op->payload.quad.shape!=GML_RENDER_QUAD_AXIS_ALIGNED ||
+           !isfinite(op->payload.quad.filtered_draw_alpha) ||
+           op->payload.quad.filtered_draw_alpha<=0.0 ||
+           op->payload.quad.filtered_draw_alpha>1.0 ||
+           op->reconstruction_mode!=GML_RENDER_DEVICE_CHECKPOINT ||
+           (blend!=0 && blend!=3))) ||
          !((state->clip.width==0 && state->clip.height==0) ||
            full_region(state->clip,target->width,target->height)) ||
          !full_region(target->region,target->width,target->height) ||
@@ -399,6 +416,9 @@ static int scene_preflight(GmlGpuBackend *backend,const GmlRenderDrawBatch *batc
                                                    source->rendered_origin,probe)) return 0;
       for(uint32_t corner=0;corner<4;corner++){
         uint32_t colour=op->payload.quad.corner_colour[corner];
+        if(state->coverage_policy==GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA &&
+           (colour>>24)!=(uint32_t)lround(op->payload.quad.filtered_draw_alpha*255.0))
+          return 0;
         if(colour!=0xFFFFFFFFu && blend!=6 &&
            (op->reconstruction_mode!=GML_RENDER_DEVICE_CHECKPOINT ||
             (sampling->filter!=GML_RENDER_FILTER_BILINEAR &&
@@ -474,7 +494,8 @@ static int flush_quads(GmlGpuBackend *backend,GlSceneImage *target,GlSceneImage 
     backend->gl.BlendEquationSeparate(GL_FUNC_ADD,GL_FUNC_ADD);
     backend->gl.Enable(GL_BLEND);
   } else backend->gl.Disable(GL_BLEND);
-  if(filter==9u) backend->gl.ColorMask(GL_TRUE,GL_TRUE,GL_TRUE,GL_FALSE);
+  if(filter==9u || filter==12u)
+    backend->gl.ColorMask(GL_TRUE,GL_TRUE,GL_TRUE,GL_FALSE);
   backend->gl.UseProgram(scene->program);
   backend->gl.Uniform2fv(scene->u_extent,1,extent);
   backend->gl.Uniform1i(scene->u_image,0);
@@ -514,13 +535,13 @@ static int flush_quads(GmlGpuBackend *backend,GlSceneImage *target,GlSceneImage 
   backend->gl.VertexAttribPointer((GLuint)scene->a_span_active,1,GL_FLOAT,GL_FALSE,stride,
                                   (const void*)(27*sizeof(float)));
   backend->gl.DrawArrays(GL_TRIANGLES,0,(GLsizei)(count*6u));
-  if(filter==9u){
-    /* The modern CPU world target keeps alpha opaque at every written texel,
-     * even when its prior alpha is unknown. Reuse the sampled vertices in an
-     * alpha-only pass; the shader discards source-zero texels. */
+  if(filter==9u || filter==12u){
+    /* The CPU screen writer keeps alpha opaque at every covered texel,
+     * even when its prior alpha is unknown. Reuse the sampled vertices and
+     * the same sampler in an alpha-only pass; source-zero texels stay untouched. */
     backend->gl.ColorMask(GL_FALSE,GL_FALSE,GL_FALSE,GL_TRUE);
     backend->gl.Disable(GL_BLEND);
-    backend->gl.Uniform1i(scene->u_filter,10);
+    backend->gl.Uniform1i(scene->u_filter,filter==9u?10:13);
     backend->gl.DrawArrays(GL_TRIANGLES,0,(GLsizei)(count*6u));
     backend->gl.ColorMask(GL_TRUE,GL_TRUE,GL_TRUE,GL_TRUE);
   }
@@ -751,7 +772,7 @@ GmlRenderExecutionResult gml_gpu_opengl_scene_submit(GmlGpuBackend *backend,
        !active_target || !same_logical(active_target->ref,op->target.image) ||
        pending_count==GL_SCENE_MAX_QUADS ||
        !pending_source || !same_version(pending_source->ref,op->sources[0]) ||
-       pending_filter!=scene_filter(&op->payload.quad) ||
+       pending_filter!=scene_filter(&op->payload.quad,&batch->states[op->state_index]) ||
        pending_blend!=qualified_blend(&batch->states[op->state_index]) ||
        qualified_blend(&batch->states[op->state_index])==2 ||
        qualified_blend(&batch->states[op->state_index])==4 ||
@@ -832,7 +853,7 @@ GmlRenderExecutionResult gml_gpu_opengl_scene_submit(GmlGpuBackend *backend,
       result.status=GML_RENDER_EXEC_RESOURCE_ERROR;
       break;
     }
-    pending_filter=scene_filter(&op->payload.quad);
+    pending_filter=scene_filter(&op->payload.quad,&batch->states[op->state_index]);
     pending_blend=qualified_blend(&batch->states[op->state_index]);
     if(pending_blend==2 || pending_blend==4 || pending_blend==5 || pending_blend==6){
       uint32_t repetitions=pending_blend==6?1u:exact_repetitions(batch,index);

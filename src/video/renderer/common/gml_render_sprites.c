@@ -446,6 +446,13 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
     part_view && r && r->interp && !rotated_sprite && !corner_colours &&
     xs>0.0 && ys>0.0 && xs<=1.0 && ys<=1.0 &&
     part_view->sw<=256 && part_view->sh<=256;
+  /* R03-P9-GUI-FILTERED-ATLAS: an identity physical-screen GUI axis draw uses
+   * the same resolved CPU sampling coordinates as the existing world rule.
+   * Other GUI geometry and distinct rotated/stretched/font samplers stay CPU. */
+  int identity_gui_atlas=r && resident_identity_screen_gui(r) && r->interp &&
+    !rotated_sprite && !corner_colours && !opaque_target_alpha &&
+    !transparent_stretched_trim && !box_stretched && !positioned_axis &&
+    !filtered_real_text && !nearest_mode;
   int span_active=0;
   int stretched_float=0;
   int exact_filtered_font=0;
@@ -460,7 +467,8 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
        ((rotated_sprite || opaque_target_alpha) &&
         anygm_policy_has_modern_layer_semantics(r->win))) ||
      (!filtered_real_text && (page_index<0 || page_index>=r->n_tpag)) || r->classic ||
-     r->gui_pass_active || r->active_shader>=0 || r->alpha_test_enable ||
+     (r->gui_pass_active && !identity_gui_atlas) ||
+     r->active_shader>=0 || r->alpha_test_enable ||
      !r->alphablend || (r->blendmode && !additive_background) || r->blend_equation!=1 ||
      r->blend_equation_alpha!=1 || r->color_write_mask!=0x0fu ||
      (rotated_sprite && anygm_policy_has_modern_layer_semantics(r->win) &&
@@ -470,7 +478,7 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
      !gml_render_scene_target_matches(r) ||
      !isfinite(left) || !isfinite(top) || !isfinite(xs) || !isfinite(ys) ||
      (rotated_sprite && !isfinite(rotation)) ||
-     !isfinite(alpha) || alpha<=0.0 || alpha>1.0 ||
+     !isfinite(alpha) || alpha<0.0 || alpha>1.0 ||
      (filtered_real_text && !gml_render_target_preserves_alpha(r) &&
       (!r->fb_opaque_known || !r->fb_all_opaque)) ||
      (opaque_target_alpha && (!r->fb_opaque_known || !r->fb_all_opaque)) ||
@@ -509,6 +517,9 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
                           fabs(ys-nearbyint(ys))<1e-9))))) return 0;
   for(int index=0;index<3;index++)
     if(r->classic_interp_phase[index] || r->app_interp_phase[index]) return 0;
+  /* blit_one skips every destination at zero draw alpha. Preserve the queued
+   * prefix without a write, shader call or source snapshot in this ordinary state. */
+  if(alpha==0.0) return 1;
   if(part_view && !filtered_real_text &&
      part_view->atlas!=r->tpag[page_index].atlas) return 0;
   page=part_view?part_view:&r->tpag[page_index];
@@ -561,7 +572,7 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
     page->scene_fully_opaque && (colour&0xFFFFFFu)==0xFFFFFFu && alpha==1.0 &&
     xs>1.0 && ys>1.0;
   if(!page->scene_fully_opaque && family!=GML_RENDER_SCENE_SPRITE &&
-     !filtered_real_text &&
+     !filtered_real_text && !identity_gui_atlas &&
      nearest_mode!=2 && nearest_mode!=5) return 0;
   if(rotated_sprite){
     double minx=1e30,miny=1e30,maxx=-1e30,maxy=-1e30;
@@ -632,7 +643,11 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
     }
     x0=floor(left+0.5+positioned_x_tie);
     y0=floor(top+0.5+positioned_y_tie);
-    width=(positioned_axis || filtered_real_text || nearest_mode==3 || nearest_mode==6) &&
+    /* blit_one rounds screen extents independently unless the authored tile
+     * requests edge projection; application-surface coverage keeps its old rule. */
+    width=identity_gui_atlas && !page->project_authored_edges
+      ?floor((double)page->sw*fabs(xs)+0.5)
+      :(positioned_axis || filtered_real_text || nearest_mode==3 || nearest_mode==6) &&
       anygm_policy_has_modern_layer_semantics(r->win)
       ?floor((double)page->sw*fabs(xs)+0.5)
       :xs<0.0
@@ -642,7 +657,9 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
       : fabs(xs-nearbyint(xs))>1e-9
         ? floor(left+(double)page->sw*xs+0.5)-x0
         : floor((double)page->sw*xs+0.5);
-    height=(positioned_axis || filtered_real_text || nearest_mode==3 || nearest_mode==6) &&
+    height=identity_gui_atlas && !page->project_authored_edges
+      ?floor((double)page->sh*fabs(ys)+0.5)
+      :(positioned_axis || filtered_real_text || nearest_mode==3 || nearest_mode==6) &&
       anygm_policy_has_modern_layer_semantics(r->win)
       ?floor((double)page->sh*fabs(ys)+0.5)
       :ys<0.0
@@ -829,6 +846,10 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
   state.write_mask=15u;
   state.colour=0xFFFFFFFFu;
   state.alpha=255u;
+  if(identity_gui_atlas){
+    state.coverage_policy=GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA;
+    operation.payload.quad.filtered_draw_alpha=alpha;
+  }
   if(exact_filtered_font){
     state.rgb_source_factor=GML_RENDER_BLEND_SOURCE_ALPHA;
     state.rgb_destination_factor=GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA;
