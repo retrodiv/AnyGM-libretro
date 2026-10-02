@@ -117,7 +117,10 @@ enum {
   GML_RENDER_QUANTISE_STRETCHED_FLOAT=1u,
   /* Real-font four-tap channels retain the CPU double expression and generation blend. */
   GML_RENDER_QUANTISE_FONT_FIRSTGEN=2u,
-  GML_RENDER_QUANTISE_FONT_MODERN=3u
+  GML_RENDER_QUANTISE_FONT_MODERN=3u,
+  /* First-generation SCREEN/numbered coverage rounds the extent independently,
+   * while keeping the same first-generation channel and blend arithmetic. */
+  GML_RENDER_QUANTISE_FONT_FIRSTGEN_INDEPENDENT=4u
 };
 
 /* Resolved blend semantics, independent of any device API's enumerant values. Zeroed factors

@@ -649,7 +649,9 @@ static int draw_exact_quad(GmlGpuBackend *backend,const GmlRenderDrawOp *op,
     backend->gl.Uniform2iv(scene->exact_u_font_alpha,1,alpha_words);
     backend->gl.Uniform4iv(scene->exact_u_font_crop,1,region);
     backend->gl.Uniform4iv(scene->exact_u_font_tint,1,tint);
-    backend->gl.Uniform1i(scene->exact_u_font_mode,(GLint)quad->sampling.quantisation);
+    backend->gl.Uniform1i(scene->exact_u_font_mode,
+      quad->sampling.quantisation==GML_RENDER_QUANTISE_FONT_FIRSTGEN_INDEPENDENT
+        ?GML_RENDER_QUANTISE_FONT_FIRSTGEN:(GLint)quad->sampling.quantisation);
     backend->gl.Uniform1i(scene->exact_u_font_preserve_alpha,
                           state->alpha_source_factor==GML_RENDER_BLEND_SOURCE_ALPHA);
   }

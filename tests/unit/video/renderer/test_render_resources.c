@@ -4763,6 +4763,120 @@ static int resident_packaged_sprite_font_glyph(void){
   return 1;
 }
 
+static int resident_filtered_gui_real_font(void){
+  enum { WIDTH=24,HEIGHT=18,ATLAS=12 };
+  GmlRender *render=(GmlRender*)calloc(1,sizeof *render);
+  GmlWin content={0};
+  uint32_t reference[WIDTH*HEIGHT],screen[WIDTH*HEIGHT],sentinel[WIDTH*HEIGHT];
+  CHECK(render);
+  render->atlas=(GmlAtlas*)calloc(1,sizeof *render->atlas);
+  CHECK(render->atlas);
+  render->n_atlas=render->n_fonts=1;
+  render->atlas[0].px=(uint8_t*)calloc(ATLAS*ATLAS,4u);
+  CHECK(render->atlas[0].px);
+  render->atlas[0].w=render->atlas[0].h=ATLAS;
+  for(unsigned y=0;y<5u;y++) for(unsigned x=0;x<5u;x++){
+    uint8_t *pixel=render->atlas[0].px+((y+3u)*ATLAS+x+3u)*4u;
+    pixel[0]=(uint8_t)(40u+x*35u);
+    pixel[1]=(uint8_t)(200u-y*30u);
+    pixel[2]=(uint8_t)(60u+(x+y)*15u);
+    pixel[3]=(uint8_t)((x+y)%5u*63u);
+  }
+  GmlFont *font=&render->fonts[0];
+  font->real=1; font->sprite=-1; font->atlas=0;
+  font->line_height=font->align_height=5;
+  font->glyphs=(GmlGlyph*)calloc(1,sizeof *font->glyphs);
+  CHECK(font->glyphs);
+  for(int index=0;index<256;index++) font->glyph_by_char[index]=-1;
+  font->n_glyphs=1;
+  font->glyphs[0]=(GmlGlyph){.sx=3,.sy=3,.w=5,.h=5,.shift=5,.ch='A'};
+  font->glyph_by_char['A']=0;
+  render->font=0;
+  render->color_write_mask=0x0Fu;
+  render->interp=1;
+  render->win=&content;
+  /* Distinct behaviors, rather than a Cartesian GUI-state matrix: identity,
+   * nonuniform mapping, partial destination alpha, multiline alignment,
+   * clipped coverage, world alpha, a mid-run size change and ordered exclusions. */
+  for(unsigned modern=0;modern<2u;modern++) for(unsigned variant=0;variant<13u;variant++){
+    const uint32_t background=variant==0u || variant==3u?0xFF123456u:
+                              variant==2u?0x40123456u:0x00123456u;
+    const double x=variant==4u?-0.35:2.125,y=1.75;
+    for(unsigned accelerated=0;accelerated<2u;accelerated++){
+      FakeDevice fake={0};
+      GmlRenderDeviceServices device=service(&fake);
+      uint32_t *pixels=accelerated?screen:reference;
+      content.bytecode=modern?17:15;
+      gml_render_bind_device(render,accelerated?&device:NULL);
+      for(unsigned index=0;index<WIDTH*HEIGHT;index++)
+        pixels[index]=sentinel[index]=0xA5123456u;
+      if(accelerated)
+        CHECK(gml_render_begin_resident_base(render,pixels,WIDTH,HEIGHT,0.0,0.0));
+      else gml_render_begin(render,pixels,WIDTH,HEIGHT,0.0,0.0);
+      render->halign=variant==3u?1:0;
+      render->valign=0;
+      font->runtime_owned=0;
+      font->sdf_spread=0;
+      if(variant!=5u){
+        gml_render_gui_begin(render,WIDTH,HEIGHT);
+        if(variant!=0u) gml_render_gui_set_size(render,10,7);
+      }
+      const double xs=0.75/render->gui_scale_x;
+      const double ys=0.7555555555555555/render->gui_scale_y;
+      gml_render_set_pending_fill(render,background);
+      gml_draw_text_transformed(render,x,y,variant==3u?"AA#A":"A",
+                                xs,ys,0.0,0u,0.8);
+      if(variant==6u) gml_render_gui_set_size(render,12,9);
+      if(variant==8u)
+        gml_render_gui_set_maximise(render,1,1.2,1.3,0.25,0.75,WIDTH,HEIGHT);
+      if(variant==9u){
+        render->world_transform_active=1;
+        render->world_scale_x=render->world_scale_y=2.0;
+      }
+      if(variant==11u) font->runtime_owned=1;
+      if(variant==12u) font->sdf_spread=1;
+      gml_draw_text_transformed(render,x+0.25,y+0.25,"A",
+        0.75/render->gui_scale_x,0.7555555555555555/render->gui_scale_y,
+        variant==7u?30.0:0.0,0x80C040u,variant==10u?0x1p-40:0.7);
+      if(!accelerated){
+        unsigned visible=0;
+        gml_render_flush_pending_fill(render);
+        for(unsigned index=0;index<WIDTH*HEIGHT;index++)
+          if(reference[index]!=background) visible++;
+        CHECK(visible>0u);
+      } else {
+        GmlRenderJournalMetrics before={0},after={0};
+        CHECK(render->resident_application_pass==(variant<7u));
+        CHECK(gml_render_scene_flush(render) && fake.submits>0 && fake.readbacks==0);
+        gml_render_resource_journal_metrics(render->base_scene_resource,&before);
+        if(variant<7u){
+          CHECK(before.authority==GML_RENDER_RESOURCE_GPU_REPLAYABLE &&
+                before.journal_operations>=3u && before.retained_mutable_bytes==0u);
+          CHECK(!memcmp(screen,sentinel,sizeof screen));
+        }
+        fake.forbid_calls=1;
+        gml_render_abandon_device(render);
+        CHECK(gml_render_completed_screen_read(render,screen,WIDTH,HEIGHT));
+        if(memcmp(screen,reference,sizeof screen))
+          for(unsigned index=0;index<WIDTH*HEIGHT;index++) if(screen[index]!=reference[index]){
+            fprintf(stderr,"filtered GUI font: modern=%u variant=%u pixel=(%u,%u) CPU=%08x replay=%08x\n",
+                    modern,variant,index%WIDTH,index/WIDTH,reference[index],screen[index]);
+            break;
+          }
+        CHECK(!memcmp(screen,reference,sizeof screen));
+        gml_render_resource_journal_metrics(render->base_scene_resource,&after);
+        CHECK(fake.readbacks==0 && fake.forbidden_calls==0 &&
+              after.cpu_version==after.logical_version &&
+              (variant>=7u || after.cpu_replays>before.cpu_replays));
+      }
+      gml_render_gui_end(render);
+    }
+  }
+  gml_render_free(render);
+  free(render);
+  return 1;
+}
+
 static int resident_packaged_real_font_glyph(int runtime_page){
   GmlRender *render=(GmlRender*)calloc(1,sizeof *render);
   GmlRenderApplicationWriteView view={0};
@@ -5444,6 +5558,7 @@ int main(void){
   passed+=resident_opaque_atlas_sprite_gpu();
   passed+=resident_coarse_veil_exact_recovery();
   passed+=resident_packaged_sprite_font_glyph();
+  passed+=resident_filtered_gui_real_font();
   passed+=resident_packaged_real_font_glyph(0);
   passed+=resident_packaged_real_font_glyph(1);
   passed+=resident_binary_atlas_sprite_gpu();
@@ -5456,6 +5571,6 @@ int main(void){
   passed+=source_free_primitive_rect_replay();
   passed+=stretched_float_exact_replay();
   passed+=filtered_font_exact_recovery();
-  printf("render resource cases: passed=%d failed=%d\n",passed,72-passed);
-  return passed==72?EXIT_SUCCESS:EXIT_FAILURE;
+  printf("render resource cases: passed=%d failed=%d\n",passed,73-passed);
+  return passed==73?EXIT_SUCCESS:EXIT_FAILURE;
 }

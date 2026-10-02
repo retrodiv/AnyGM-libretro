@@ -28,7 +28,8 @@ int gml_render_filtered_font_quad_valid(const GmlRenderQuad *q,
                                         uint32_t width,uint32_t height){
   if(!q || !width || !height || width>16384u || height>16384u ||
      (q->sampling.quantisation!=GML_RENDER_QUANTISE_FONT_FIRSTGEN &&
-      q->sampling.quantisation!=GML_RENDER_QUANTISE_FONT_MODERN) ||
+      q->sampling.quantisation!=GML_RENDER_QUANTISE_FONT_MODERN &&
+      q->sampling.quantisation!=GML_RENDER_QUANTISE_FONT_FIRSTGEN_INDEPENDENT) ||
      q->shape!=GML_RENDER_QUAD_AXIS_ALIGNED || q->span_active ||
      q->sampling.filter!=GML_RENDER_FILTER_BILINEAR ||
      q->sampling.edge_rule!=GML_RENDER_EDGE_CLAMP_SUBIMAGE ||

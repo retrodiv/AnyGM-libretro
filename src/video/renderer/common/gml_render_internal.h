@@ -627,6 +627,12 @@ typedef struct GmlRender {
  * draws must not reapply partial coverage during presentation. A classic direct
  * frame is not a sampled application surface; preserving its coverage would
  * let subtract blending remove visible frame coverage. */
+static inline int gml_render_target_is_first_generation_application_surface(
+    const GmlRender *render){
+  return render && render->win &&
+    anygm_policy_uses_first_generation_studio(render->win) &&
+    render->app_surface && render->fb==render->app_surface;
+}
 static inline int gml_render_target_preserves_alpha(const GmlRender *render){
   if(!render) return 0;
   if(render->target_sp>0) return 1;

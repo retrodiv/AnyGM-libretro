@@ -838,12 +838,6 @@ static inline int gml_blend_family(const GmlRender *r){
   if(policy==ANYGM_BLEND_CLASSIC) return GML_BLEND_CLASSIC;
   return policy==ANYGM_BLEND_STUDIO_SECOND?GML_BLEND_STUDIO2:GML_BLEND_STUDIO1;
 }
-static inline int gml_render_target_is_first_generation_application_surface(
-    const GmlRender *render){
-  return render && render->win &&
-    anygm_policy_uses_first_generation_studio(render->win) &&
-    render->app_surface && render->fb==render->app_surface;
-}
 static inline uint32_t gml_sprite_target_alpha(const GmlRender *r,uint32_t dst,
                                                unsigned source_alpha){
   if(!gml_render_target_preserves_alpha(r)) return 0xFF000000u;
