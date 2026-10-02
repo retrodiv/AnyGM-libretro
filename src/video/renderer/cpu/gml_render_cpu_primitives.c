@@ -903,6 +903,9 @@ void gml_render_cpu_triangle_alpha(GmlRender *render,
 
 void gml_render_cpu_rectangle(GmlRender *render,int x1,int y1,int x2,int y2,
                               uint32_t color,int outline){
+  /* R03-P9-RECTANGLE-NOOP: the existing filled raster returns before touching pixels at
+   * non-positive alpha. Do not acquire a CPU write or settle pending draws for that no-op. */
+  if(render && !outline && render->alpha<=0.0) return;
   if(!gml_render_resident_application_cpu_barrier(render)) return;
   draw_rect_prim(render,x1,y1,x2,y2,color,outline);
 }
@@ -910,6 +913,8 @@ void gml_render_cpu_rectangle(GmlRender *render,int x1,int y1,int x2,int y2,
 void gml_render_cpu_rectangle_color(GmlRender *render,int x1,int y1,int x2,int y2,
                                     uint32_t color1,uint32_t color2,
                                     uint32_t color3,uint32_t color4,int outline){
+  /* The same no-write proof covers both uniform and nonuniform filled colour rectangles. */
+  if(render && !outline && render->alpha<=0.0) return;
   if(!gml_render_resident_application_cpu_barrier(render)) return;
   draw_rect_colour_prim(render,x1,y1,x2,y2,color1,color2,color3,color4,outline);
 }

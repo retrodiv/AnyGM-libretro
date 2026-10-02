@@ -3177,6 +3177,104 @@ static int resident_zero_alpha_layer_fill_noop(void){
   return 1;
 }
 
+static int resident_rectangle_fill_noop(void){
+  for(unsigned screen=0;screen<2u;screen++) for(unsigned variant=0;variant<8u;variant++){
+    GmlRender *cpu=(GmlRender*)calloc(1,sizeof *cpu);
+    GmlRender *gpu=(GmlRender*)calloc(1,sizeof *gpu);
+    GmlWin content={0};
+    uint32_t cpu_pixels[16]={0},screen_pixels[16]={0};
+    FakeDevice fake={0};
+    GmlRenderDeviceServices device=service(&fake);
+    GmlRenderJournalMetrics before={0},after={0};
+    CHECK(cpu && gpu && gml_render_init(cpu,NULL)==0 && gml_render_init(gpu,NULL)==0);
+    content.bytecode=15;
+    cpu->win=gpu->win=&content;
+    CHECK(gml_render_application_surface_ensure_owned(gpu,4,4));
+    if(screen){
+      CHECK(gml_render_application_surface_ensure_owned(cpu,4,4));
+      CHECK(gml_render_application_surface_owned_clear(cpu,0xff405060u,NULL));
+      CHECK(gml_render_application_surface_owned_clear(gpu,0xff405060u,NULL));
+      gml_render_application_surface_select_owned(cpu,1);
+      gml_render_application_surface_select_owned(gpu,1);
+    }
+    gml_render_begin(cpu,cpu_pixels,4,4,0.0,0.0);
+    gml_render_bind_device(gpu,&device);
+    if(screen){
+      CHECK(gml_render_begin_resident_base(gpu,screen_pixels,4,4,0.0,0.0));
+      gml_render_gui_begin(cpu,4,4);
+      gml_render_gui_begin(gpu,4,4);
+      gml_render_gui_set_size(cpu,2,3);
+      gml_render_gui_set_size(gpu,2,3);
+    } else CHECK(gml_render_begin_resident_owned_application(gpu,0.0,0.0,0));
+    GmlRenderResource *resource=screen?gpu->base_scene_resource:gpu->app_surface_resource;
+    uint32_t *gpu_pixels=screen?screen_pixels:gpu->app_surface_owned;
+    gml_render_set_pending_fill(cpu,0xff102030u);
+    gml_render_set_pending_fill(gpu,0xff102030u);
+    if(!(variant&2u)){
+      gml_render_flush_pending_fill(cpu);
+      gml_render_flush_pending_fill(gpu);
+    }
+    if(screen && (variant&4u)){
+      gml_render_set_pending_underlay(cpu,0,0,4,4);
+      gml_render_set_pending_underlay(gpu,0,0,4,4);
+      CHECK(cpu->pending_underlay && gpu->pending_underlay);
+    }
+    cpu->alpha=gpu->alpha=variant==7u?-INFINITY:(variant&1u)?-1.0:0.0;
+    cpu->blendmode=gpu->blendmode=(variant==4u)?1:0;
+    cpu->alphablend=gpu->alphablend=variant!=5u;
+    cpu->color_write_mask=gpu->color_write_mask=variant==6u?7u:15u;
+    gml_render_resource_journal_metrics(resource,&before);
+    int submits=fake.submits,reads=fake.readbacks,uploads=fake.uploads;
+    int pending_fill=gpu->pending_fill,pending_underlay=gpu->pending_underlay;
+    uint32_t shadow[16];
+    memcpy(shadow,gpu_pixels,sizeof shadow);
+    for(unsigned operation=0;operation<4u;operation++){
+      if(operation<2u){
+        int first=operation?7:-2,last=operation?-2:7;
+        gml_render_primitive_rectangle(cpu,first,first,last,last,0xffffffu,0);
+        gml_render_primitive_rectangle(gpu,first,first,last,last,0xffffffu,0);
+      } else {
+        uint32_t last=operation==2u?0x123456u:0xabcdefu;
+        gml_render_primitive_rectangle_color(cpu,-1,0,6,4,
+          0x123456u,0x123456u,0x123456u,last,0);
+        gml_render_primitive_rectangle_color(gpu,-1,0,6,4,
+          0x123456u,0x123456u,0x123456u,last,0);
+      }
+    }
+    gml_render_resource_journal_metrics(resource,&after);
+    CHECK(gpu->resident_application_pass && gpu->pending_fill==pending_fill &&
+          gpu->pending_underlay==pending_underlay && fake.submits==submits &&
+          fake.readbacks==reads && fake.uploads==uploads &&
+          !memcmp(shadow,gpu_pixels,sizeof shadow) &&
+          after.logical_version==before.logical_version &&
+          after.cpu_version==before.cpu_version && after.gpu_version==before.gpu_version &&
+          after.authority==before.authority && after.journal_operations==before.journal_operations &&
+          after.cpu_replays==before.cpu_replays && after.device_checkpoints==before.device_checkpoints);
+    /* Outlines retain their established CPU write boundary, even at alpha zero.
+     * The following positive-alpha fill also proves the guard does not erase real work. */
+    cpu->alpha=gpu->alpha=0.0;
+    cpu->blendmode=gpu->blendmode=0;
+    cpu->alphablend=gpu->alphablend=1;
+    cpu->color_write_mask=gpu->color_write_mask=15u;
+    gml_render_bind_device(gpu,NULL);
+    gml_render_primitive_rectangle(cpu,0,0,2,2,0xffffffu,1);
+    gml_render_primitive_rectangle(gpu,0,0,2,2,0xffffffu,1);
+    CHECK(!gpu->resident_application_pass && fake.readbacks==reads);
+    cpu->alpha=gpu->alpha=0.5;
+    gml_render_primitive_rectangle(cpu,0,0,1,1,0xffffffu,0);
+    gml_render_primitive_rectangle(gpu,0,0,1,1,0xffffffu,0);
+    gml_render_flush_pending_fill(cpu);
+    gml_render_flush_pending_fill(gpu);
+    CHECK(!memcmp(cpu_pixels,gpu_pixels,sizeof cpu_pixels));
+    CHECK(cpu_pixels[0]!=(screen && (variant&4u)?0xff405060u:0xff102030u));
+    gml_render_free(cpu);
+    gml_render_free(gpu);
+    free(cpu);
+    free(gpu);
+  }
+  return 1;
+}
+
 static int resident_unit_world_primitive_order(void){
   const double scales[][2]={{1.0,1.0},{0.5,0.50370370370370365},
                             {2.0,0.75},{-1.0,1.5}};
@@ -5770,6 +5868,7 @@ int main(void){
   passed+=resident_centered_full_source_shader();
   passed+=resident_identity_gui_filtered_atlas();
   passed+=resident_zero_alpha_layer_fill_noop();
+  passed+=resident_rectangle_fill_noop();
   passed+=resident_unit_world_primitive_order();
   passed+=resident_gradient_primitive_cpu_boundary();
   passed+=resident_particle_square_public_order();
@@ -5809,6 +5908,6 @@ int main(void){
   passed+=source_free_primitive_rect_replay();
   passed+=stretched_float_exact_replay();
   passed+=filtered_font_exact_recovery();
-  printf("render resource cases: passed=%d failed=%d\n",passed,76-passed);
-  return passed==76?EXIT_SUCCESS:EXIT_FAILURE;
+  printf("render resource cases: passed=%d failed=%d\n",passed,77-passed);
+  return passed==77?EXIT_SUCCESS:EXIT_FAILURE;
 }
