@@ -245,6 +245,9 @@ int gml_gpu_opengl_scene_exact_program(GmlGpuBackend *backend,char *error,
   scene->exact_u_font_mode=backend->gl.GetUniformLocation(scene->exact_program,"u_font_mode");
   scene->exact_u_font_preserve_alpha=backend->gl.GetUniformLocation(scene->exact_program,
                                                                   "u_font_preserve_alpha");
+  scene->exact_u_underlay_size=backend->gl.GetUniformLocation(scene->exact_program,"u_underlay_size");
+  scene->exact_u_underlay_origin=backend->gl.GetUniformLocation(scene->exact_program,"u_underlay_origin");
+  scene->exact_u_underlay_flags=backend->gl.GetUniformLocation(scene->exact_program,"u_underlay_flags");
   if(scene->exact_a_position<0 || scene->exact_a_texcoord<0 || scene->exact_a_colour<0 ||
      scene->exact_u_extent<0 || scene->exact_u_image<0 || scene->exact_u_previous<0 ||
      scene->exact_u_region_origin<0 || scene->exact_u_repetitions<0 ||
@@ -254,7 +257,9 @@ int gml_gpu_opengl_scene_exact_program(GmlGpuBackend *backend,char *error,
      scene->exact_u_effect_seed<0 || scene->exact_u_font_origin<0 ||
      scene->exact_u_font_scale<0 || scene->exact_u_font_alpha<0 ||
      scene->exact_u_font_crop<0 || scene->exact_u_font_tint<0 ||
-     scene->exact_u_font_mode<0 || scene->exact_u_font_preserve_alpha<0){
+     scene->exact_u_font_mode<0 || scene->exact_u_font_preserve_alpha<0 ||
+     scene->exact_u_underlay_size<0 || scene->exact_u_underlay_origin<0 ||
+     scene->exact_u_underlay_flags<0){
     gml_gpu_opengl_record_error(error,error_capacity,
       "exact scene program is missing an attribute or uniform");
     backend->gl.DeleteProgram(scene->exact_program);

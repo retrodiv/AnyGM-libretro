@@ -29,6 +29,8 @@ GmlRenderResource *gml_render_application_resource_ensure(GmlRender *render);
 void gml_render_application_resource_dispose(GmlRender *render);
 GmlRenderResource *gml_render_scene_target_resource_ensure(GmlRender *render);
 int gml_render_scene_target_matches(const GmlRender *render);
+/* Attempt the host-owned pending application composite before a SCREEN scene draw. */
+int gml_render_compose_resident_underlay(GmlRender *render);
 void gml_render_base_resource_dispose(GmlRender *render);
 GmlRenderResourceExecution gml_render_application_scene_submit(
   GmlRender *render,const GmlRenderDrawBatch *batch,

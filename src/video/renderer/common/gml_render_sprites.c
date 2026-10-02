@@ -439,6 +439,7 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
                                       int transparent_stretched_trim,
                                       int box_stretched,int positioned_axis,
                                       int nearest_mode){
+  if(r && r->pending_underlay && !gml_render_compose_resident_underlay(r)) return 0;
   GmlTpag *page;
   GmlAtlas *atlas;
   GmlRenderResourceSource source={0};

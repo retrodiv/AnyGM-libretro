@@ -16,12 +16,16 @@ int gml_render_gpu_opengl_draw_textured_quad(const GmlRenderDrawOp *op,
   const GmlRenderQuad *quad;
   GmlRenderRect region;
   uint32_t region_storage_y;
-  int rotated,warped,stretched_float;
+  int rotated,warped,stretched_float,automatic_surface;
   if(!op || !state || !vertices || !source_width || !source_height) return 0;
   quad=&op->payload.quad;
   rotated=quad->shape==GML_RENDER_QUAD_CARDINAL || quad->shape==GML_RENDER_QUAD_GENERAL;
   warped=quad->shape==GML_RENDER_QUAD_WARPED;
   stretched_float=quad->sampling.quantisation==GML_RENDER_QUANTISE_STRETCHED_FLOAT;
+  automatic_surface=quad->sampling.quantisation==GML_RENDER_QUANTISE_AUTOMATIC_SURFACE_FIRSTGEN ||
+                    quad->sampling.quantisation==GML_RENDER_QUANTISE_AUTOMATIC_SURFACE_MODERN;
+  if(automatic_surface && !gml_render_automatic_surface_quad_valid(quad,
+       op->target.width,op->target.height)) return 0;
   if(quad->shape!=GML_RENDER_QUAD_AXIS_ALIGNED && !rotated && !warped) return 0;
   if(warped && (rendered_source_origin ||
      op->reconstruction_mode!=GML_RENDER_DEVICE_CHECKPOINT ||
@@ -35,7 +39,7 @@ int gml_render_gpu_opengl_draw_textured_quad(const GmlRenderDrawOp *op,
   if(region.x<0 || region.y<0 || !region.width || !region.height ||
      (uint64_t)(uint32_t)region.x+region.width>source_width ||
      (uint64_t)(uint32_t)region.y+region.height>source_height) return 0;
-  if(quad->sampling.filter==GML_RENDER_FILTER_BOX || stretched_float){
+  if(!automatic_surface && (quad->sampling.filter==GML_RENDER_FILTER_BOX || stretched_float)){
     if(rotated || rendered_source_origin || quad->span_active ||
        (!stretched_float && op->reconstruction_mode!=GML_RENDER_DEVICE_CHECKPOINT)) return 0;
     for(uint32_t axis=0;axis<2;axis++){

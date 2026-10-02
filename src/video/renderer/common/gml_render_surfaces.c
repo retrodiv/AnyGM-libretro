@@ -379,6 +379,79 @@ GmlRenderResourceExecution gml_render_application_scene_submit(
   }
   return result;
 }
+int gml_render_compose_resident_underlay(GmlRender *r){
+  GmlRenderResourceSource source={0};
+  GmlRenderDrawOp operation={0};
+  GmlRenderDrawStateSnapshot state={0};
+  GmlRenderResource *target;
+  GmlRenderImageRef image,source_ref;
+  if(!r || !r->pending_underlay || !r->resident_application_pass || !r->win ||
+     r->classic || r->fb!=r->base_fb || r->fb==r->app_surface_owned ||
+     !gml_render_scene_target_matches(r) || !gml_render_device(r) ||
+     r->app_surface!=r->app_surface_owned || !r->app_surface_resource ||
+     r->app_presentation_coverage_active || r->pending_presentation ||
+     r->rotated_batch_count || r->rotated_batch_building ||
+     r->target_sp || r->target_id>=0 || r->active_shader>=0 || r->blendmode ||
+     !r->alphablend || r->blend_equation!=1 || r->blend_equation_alpha!=1 ||
+     r->alpha_test_enable || r->color_write_mask!=15u ||
+     r->classic_phase_y || !isfinite(r->cam_x) || !isfinite(r->cam_y) ||
+     !(anygm_policy_uses_first_generation_studio(r->win) ||
+       anygm_policy_has_modern_layer_semantics(r->win))) return 0;
+  for(unsigned index=0;index<3u;index++)
+    if(r->classic_interp_phase[index] || r->app_interp_phase[index]) return 0;
+  GmlRenderQuad *q=&operation.payload.quad;
+  q->shape=GML_RENDER_QUAD_AXIS_ALIGNED;
+  q->x[0]=q->x[3]=floor(r->underlay_x-r->cam_x);
+  q->y[0]=q->y[1]=floor(r->underlay_y-r->cam_y);
+  q->x[1]=q->x[2]=q->x[0]+r->underlay_w;
+  q->y[2]=q->y[3]=q->y[0]+r->underlay_h;
+  q->sampling.filter=r->interp?GML_RENDER_FILTER_BOX:GML_RENDER_FILTER_NEAREST;
+  q->sampling.edge_rule=GML_RENDER_EDGE_CLAMP_SUBIMAGE;
+  q->sampling.source_region=(GmlRenderRect){0,0,(uint32_t)r->app_w,(uint32_t)r->app_h};
+  int first_generation=anygm_policy_uses_first_generation_studio(r->win);
+  q->sampling.quantisation=first_generation?GML_RENDER_QUANTISE_AUTOMATIC_SURFACE_FIRSTGEN:
+                                             GML_RENDER_QUANTISE_AUTOMATIC_SURFACE_MODERN;
+  q->source_opaque=first_generation || r->app_surface_opaque;
+  for(unsigned corner=0;corner<4u;corner++){
+    q->corner_colour[corner]=0xFFFFFFFFu;
+    q->u[corner]=corner==0u || corner==3u?0.0:1.0;
+    q->v[corner]=corner<2u?0.0:1.0;
+  }
+  if(!gml_render_automatic_surface_quad_valid(q,(uint32_t)r->fbw,(uint32_t)r->fbh) ||
+     !gml_render_application_scene_flush(r) ||
+     !gml_render_resource_device_source_view(r->app_surface_resource,gml_render_device(r),&source))
+    return 0;
+  gml_render_flush_pending_fill(r);
+  if(r->pending_fill || !r->resident_application_pass ||
+     !(target=gml_render_scene_target_resource_ensure(r))) return 0;
+  image=gml_render_resource_image_ref(target);
+  if(image.content_version==UINT64_MAX) return 0;
+  image.content_version++;
+  source_ref=source.image;
+  operation.opcode=GML_RENDER_OP_TEXTURED_QUAD;
+  operation.scene_family=GML_RENDER_SCENE_SURFACE;
+  operation.reconstruction_mode=GML_RENDER_REPLAY_EXACT;
+  operation.target=(GmlRenderTargetRef){.image=image,.storage_version=1u,
+    .width=(uint32_t)r->fbw,.height=(uint32_t)r->fbh,
+    .pixel_format=GML_RENDER_PIXEL_ARGB8888,
+    .region={0,0,(uint32_t)r->fbw,(uint32_t)r->fbh}};
+  operation.sources=&source_ref; operation.source_count=1u;
+  state.write_mask=15u; state.colour=0xFFFFFFFFu; state.alpha=255u;
+  state.rgb_source_factor=GML_RENDER_BLEND_SOURCE_ALPHA;
+  state.rgb_destination_factor=GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA;
+  state.alpha_source_factor=GML_RENDER_BLEND_ONE;
+  state.alpha_destination_factor=GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA;
+  state.rgb_equation=state.alpha_equation=GML_RENDER_BLEND_EXACT_AUTOMATIC_SURFACE;
+  state.sampler_count=1u; state.samplers[0]=q->sampling;
+  GmlRenderDrawBatch batch={&operation,1u,&state,1u};
+  GmlRenderResourceExecution result=gml_render_application_scene_submit(r,&batch,&source,1u);
+  if(result==GML_RENDER_RESOURCE_EXEC_FAILED) return 0;
+  r->pending_underlay=0;
+  if(result==GML_RENDER_RESOURCE_EXEC_CPU) r->resident_application_pass=0;
+  r->fb_opaque_known=r->fb_all_opaque=r->fb_all_transparent=0;
+  return 1;
+}
+
 int surface_known_opaque(GmlRender *r, int id){
   if(!r) return 0;
   if(id==0) return r->app_surface_opaque;

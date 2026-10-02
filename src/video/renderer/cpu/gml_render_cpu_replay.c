@@ -7,6 +7,7 @@
 #include "gml_render_cpu_backend.h"
 #include "gml_render_cpu_blit_internal.h"
 #include "gml_render_cpu_blit.h"
+#include "gml_render_cpu_surfaces.h"
 
 #include <limits.h>
 #include <math.h>
@@ -38,17 +39,26 @@ static int coordinate_matches(double actual,double expected){
 
 static int source_valid(const GmlRenderResourceSource *source){
   uint64_t required;
-  if(!source || !source->bytes || !source->width || !source->height ||
+  if(!source || !source->width || !source->height ||
      source->width>INT_MAX || source->height>INT_MAX ||
      source->width>UINT32_MAX/4u || source->stride_bytes<source->width*4u ||
      (source->pixel_format!=GML_RENDER_PIXEL_XRGB8888 &&
       source->pixel_format!=GML_RENDER_PIXEL_ARGB8888 &&
       source->pixel_format!=GML_RENDER_PIXEL_RGBA8888)) return 0;
+  if(!source->bytes)
+    return source->resident_resource && !source->byte_capacity &&
+           !source->borrowed_immutable && source->stride_bytes==source->width*4u;
   required=(uint64_t)(source->height-1u)*source->stride_bytes+(uint64_t)source->width*4u;
   return required<=source->byte_capacity;
 }
 
 static int blend_rule(const GmlRenderDrawStateSnapshot *state){
+  if(state->rgb_source_factor==GML_RENDER_BLEND_SOURCE_ALPHA &&
+     state->rgb_destination_factor==GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA &&
+     state->alpha_source_factor==GML_RENDER_BLEND_ONE &&
+     state->alpha_destination_factor==GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA &&
+     state->rgb_equation==GML_RENDER_BLEND_EXACT_AUTOMATIC_SURFACE &&
+     state->alpha_equation==GML_RENDER_BLEND_EXACT_AUTOMATIC_SURFACE) return 6;
   if(state->rgb_source_factor==GML_RENDER_BLEND_SOURCE_ALPHA &&
      state->rgb_destination_factor==GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA &&
      (state->alpha_source_factor==GML_RENDER_BLEND_ONE ||
@@ -178,6 +188,20 @@ int gml_render_cpu_replay_eligible(const GmlRenderDrawOp *operation,
        full_rect(state->clip,target->width,target->height))) return 0;
   quad=&operation->payload.quad;
   region=quad->sampling.source_region;
+  if(blend_rule(state)==6)
+    return operation->scene_family==GML_RENDER_SCENE_SURFACE &&
+      target->image.resource_class==GML_RENDER_RESOURCE_SCREEN &&
+      source->image.resource_class==GML_RENDER_RESOURCE_APPLICATION &&
+      target->pixel_format==GML_RENDER_PIXEL_ARGB8888 &&
+      source->pixel_format==GML_RENDER_PIXEL_ARGB8888 &&
+      region.width==source->width && region.height==source->height &&
+      !memcmp(&state->samplers[0],&quad->sampling,sizeof quad->sampling) &&
+      gml_render_automatic_surface_quad_valid(quad,target->width,target->height);
+  /* Byte-free source geometry is eligible only for sample-independent replacement.
+   * The resource owner separately proves and retains its complete exact source recipe. */
+  if(!source->bytes && (blend_rule(state)!=0 ||
+                       quad->sampling.quantisation ||
+                       quad->sampling.filter!=GML_RENDER_FILTER_NEAREST)) return 0;
   if(blend_rule(state)==5){
     if(operation->scene_family!=GML_RENDER_SCENE_TEXT ||
        source->pixel_format!=GML_RENDER_PIXEL_RGBA8888 ||
@@ -271,6 +295,7 @@ int gml_render_cpu_replay_one(uint32_t *target,uint32_t width,uint32_t height,
                                const GmlRenderResourceSource *source){
   if(!target || !operation || operation->target.width!=width ||
      operation->target.height!=height ||
+     (operation->source_count && (!source || !source->bytes)) ||
      !gml_render_cpu_replay_eligible(operation,state,source)) return 0;
   if(operation->opcode==GML_RENDER_OP_CLEAR){
     gml_render_cpu_backend_fill_xrgb(target,(int)((size_t)width*height),
@@ -285,6 +310,25 @@ int gml_render_cpu_replay_one(uint32_t *target,uint32_t width,uint32_t height,
       gml_render_cpu_backend_fill_xrgb(
         target+(size_t)((uint32_t)region->y+y)*width+(uint32_t)region->x,
         (int)region->width,colour);
+    return 1;
+  }
+  if(blend_rule(state)==6){
+    const GmlRenderQuad *q=&operation->payload.quad;
+    GmlWin content={0};
+    GmlRender *render=(GmlRender*)calloc(1,sizeof *render);
+    if(!render) return 0;
+    content.bytecode=q->sampling.quantisation==GML_RENDER_QUANTISE_AUTOMATIC_SURFACE_FIRSTGEN?15:17;
+    render->win=&content;
+    render->fb=render->base_fb=target;
+    render->fbw=(int)width; render->fbh=(int)height;
+    render->app_surface=(uint32_t*)source->bytes;
+    render->app_w=(int)source->width; render->app_h=(int)source->height;
+    render->app_surface_opaque=(int)q->source_opaque;
+    render->active_shader=-1; render->alphablend=1; render->color_write_mask=15u;
+    render->interp=q->sampling.filter==GML_RENDER_FILTER_BOX;
+    draw_surface_region(render,0,0,0,source->width,source->height,
+      q->x[0],q->y[0],q->x[1]-q->x[0],q->y[2]-q->y[0],0xFFFFFFu,1.0);
+    free(render);
     return 1;
   }
   if(blend_rule(state)==5){

@@ -531,6 +531,9 @@
   "uniform ivec2 u_region_origin;\n" \
   "uniform int u_repetitions;\n" \
   "uniform int u_blend_rule;\n" \
+  "uniform ivec4 u_underlay_size;\n" \
+  "uniform ivec2 u_underlay_origin;\n" \
+  "uniform int u_underlay_flags;\n" \
   "uniform float u_additive_alpha;\n" \
   "uniform ivec4 u_effect_colour;\n" \
   "uniform float u_effect_intensity;\n" \
@@ -541,6 +544,63 @@
   "in vec4 v_colour;\n" \
   "out vec4 o_color;\n" \
   GML_GPU_OPENGL_FILTERED_FONT_BODY \
+  "// R03_SHADER_AUTOMATIC_UNDERLAY: the host surface's point/box and coverage rules.\n" \
+  "int underlay_point(int pixel,int source,int extent){\n" \
+  "  return extent>=source?pixel*source/extent:((pixel*2+1)*source-1)/(extent*2);\n" \
+  "}\n" \
+  "ivec4 underlay_texel(ivec2 at){\n" \
+  "  if((u_underlay_flags&8)!=0) at.y=u_underlay_size.y-1-at.y;\n" \
+  "  return ivec4(floor(texelFetch(u_image,at,0)*255.0+0.5));\n" \
+  "}\n" \
+  "ivec4 automatic_underlay_pixel(ivec4 prior){\n" \
+  "  ivec2 source=u_underlay_size.xy,extent=u_underlay_size.zw;\n" \
+  "  ivec2 origin=u_underlay_origin;\n" \
+  "  ivec2 p=ivec2(int(gl_FragCoord.x),int(u_extent.y)-1-int(gl_FragCoord.y))-origin;\n" \
+  "  bool opaque=(u_underlay_flags&1)!=0,filtered=(u_underlay_flags&2)!=0;\n" \
+  "  bool firstgen=(u_underlay_flags&4)!=0;\n" \
+  "  if(all(equal(source,extent))){\n" \
+  "    ivec4 sampled=underlay_texel(p);\n" \
+  "    if(opaque || sampled.a==255) return sampled;\n" \
+  "    if(sampled.a==0) return prior;\n" \
+  "    if(firstgen) return ivec4((sampled.rgb*sampled.a+prior.rgb*(255-sampled.a)+127)/255,255);\n" \
+  "    int factor=sampled.a*256/255;\n" \
+  "    return ivec4((sampled.rgb*factor+prior.rgb*(256-factor))/256,255);\n" \
+  "  }\n" \
+  "  if(opaque && all(equal(origin,ivec2(0))) && all(equal(extent,ivec2(u_extent))) &&\n" \
+  "     all(equal(extent%source,ivec2(0)))){\n" \
+  "    ivec4 sampled=underlay_texel(p/(extent/source)); return ivec4(sampled.rgb,255);\n" \
+  "  }\n" \
+  "  if(opaque && !filtered && extent.x<source.x){\n" \
+  "    int left=max(0,-origin.x),right=min(extent.x,int(u_extent.x)-origin.x);\n" \
+  "    if(underlay_point(right-1,source.x,extent.x)-underlay_point(left,source.x,extent.x)==right-left-1)\n" \
+  "      return underlay_texel(ivec2(underlay_point(p.x,source.x,extent.x),\n" \
+  "                                  underlay_point(p.y,source.y,extent.y)));\n" \
+  "  }\n" \
+  "  ivec2 lo,hi;\n" \
+  "  for(int axis=0;axis<2;axis++){\n" \
+  "    lo[axis]=filtered?p[axis]*source[axis]/extent[axis]:\n" \
+  "                       underlay_point(p[axis],source[axis],extent[axis]);\n" \
+  "    hi[axis]=filtered && extent[axis]<source[axis]?\n" \
+  "      max((p[axis]+1)*source[axis]/extent[axis],lo[axis]+1):lo[axis]+1;\n" \
+  "    lo[axis]=max(lo[axis],0); hi[axis]=min(hi[axis],source[axis]);\n" \
+  "  }\n" \
+  "  ivec4 total=ivec4(0); int count=0;\n" \
+  "  for(int y=lo.y;y<hi.y;y++) for(int x=lo.x;x<hi.x;x++){\n" \
+  "    total+=underlay_texel(ivec2(x,y)); count++;\n" \
+  "  }\n" \
+  "  if(count==0 || total.a==0) return prior;\n" \
+  "  ivec3 rgb=total.rgb/count;\n" \
+  "  if(total.a==count*255) return ivec4(rgb,255);\n" \
+  "  if(count==1 && firstgen) return ivec4((rgb*total.a+prior.rgb*(255-total.a)+127)/255,255);\n" \
+  "  uvec2 one=uvec2(0u,0x3ff00000u);\n" \
+  "  uvec2 alpha=d64_div(d64_div(d64_uint(uint(total.a)),d64_uint(uint(count))),d64_uint(255u));\n" \
+  "  uvec2 inverse=d64_sub(one,alpha);\n" \
+  "  ivec4 result=ivec4(0,0,0,255);\n" \
+  "  for(int channel=0;channel<3;channel++)\n" \
+  "    result[channel]=d64_floor(d64_add(d64_mul(d64_uint(uint(rgb[channel])),alpha),\n" \
+  "                                      d64_mul(d64_uint(uint(prior[channel])),inverse)));\n" \
+  "  return result;\n" \
+  "}\n" \
   "vec4 effect_capture_sample(vec2 uv){\n" \
   "  vec2 position=clamp(uv,vec2(0.0),vec2(1.0))*u_extent;\n" \
   "  ivec2 maximum=ivec2(u_extent)-ivec2(1);\n" \
@@ -564,6 +624,7 @@
   "  ivec4 source=ivec4(round(texture(u_image,v_texcoord)*v_colour*255.0));\n" \
   "  ivec4 prior=ivec4(round(texelFetch(u_previous,ivec2(gl_FragCoord.xy)-u_region_origin,0)*255.0));\n" \
   "  if(u_blend_rule==7){ o_color=vec4(filtered_font_pixel(prior))/255.0; return; }\n" \
+  "  if(u_blend_rule==8){ o_color=vec4(automatic_underlay_pixel(prior))/255.0; return; }\n" \
   "  // R03_SHADER_LAYER_RGB_NOISE: the CPU hash and alpha-weighted RGB mix.\n" \
   "  if(u_blend_rule==5){\n" \
   "    uint x=uint(int(gl_FragCoord.x));\n" \

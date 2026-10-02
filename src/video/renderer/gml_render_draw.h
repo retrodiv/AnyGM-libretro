@@ -120,7 +120,10 @@ enum {
   GML_RENDER_QUANTISE_FONT_MODERN=3u,
   /* First-generation SCREEN/numbered coverage rounds the extent independently,
    * while keeping the same first-generation channel and blend arithmetic. */
-  GML_RENDER_QUANTISE_FONT_FIRSTGEN_INDEPENDENT=4u
+  GML_RENDER_QUANTISE_FONT_FIRSTGEN_INDEPENDENT=4u,
+  /* Host-owned full application presentation, before subsequent SCREEN draws. */
+  GML_RENDER_QUANTISE_AUTOMATIC_SURFACE_FIRSTGEN=5u,
+  GML_RENDER_QUANTISE_AUTOMATIC_SURFACE_MODERN=6u
 };
 
 /* Resolved blend semantics, independent of any device API's enumerant values. Zeroed factors
@@ -142,7 +145,8 @@ typedef enum GmlRenderBlendEquation {
   /* Full-target straight-RGBA coarse veil over a known-opaque target: round the complete
    * source-over channel with denominator 255, preserving the CPU veil's double expression. */
   GML_RENDER_BLEND_EXACT8_ROUND_VEIL=4,
-  GML_RENDER_BLEND_EXACT_FILTERED_FONT=5
+  GML_RENDER_BLEND_EXACT_FILTERED_FONT=5,
+  GML_RENDER_BLEND_EXACT_AUTOMATIC_SURFACE=6
 } GmlRenderBlendEquation;
 
 enum {
@@ -195,11 +199,15 @@ typedef struct GmlRenderQuad {
   uint32_t corner_colour[4];
   uint32_t shape;
   GmlRenderSamplingPolicy sampling;
+  /* Automatic surface presentation's existing opacity certificate; never a pixel scan. */
+  uint32_t source_opaque;
 } GmlRenderQuad;
 
 /* Shared admission for the bounded double-expression font rule, before target writes. */
 int gml_render_filtered_font_quad_valid(const GmlRenderQuad *quad,
                                         uint32_t width,uint32_t height);
+int gml_render_automatic_surface_quad_valid(const GmlRenderQuad *quad,
+                                             uint32_t width,uint32_t height);
 
 typedef struct GmlRenderCopyRegion {
   GmlRenderRect source,destination;

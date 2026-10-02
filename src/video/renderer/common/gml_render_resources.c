@@ -13,12 +13,17 @@
 
 enum { DEFAULT_JOURNAL_BYTES=8u*1024u*1024u,
        DEFAULT_RETAINED_BYTES=64u*1024u*1024u,
-       DEFAULT_CHECKPOINT_STAGING_BYTES=64u*1024u*1024u };
+       DEFAULT_CHECKPOINT_STAGING_BYTES=64u*1024u*1024u,
+       MAX_REPLAY_RECIPE_DEPTH=8u };
+
+typedef struct ReplayRecipe ReplayRecipe;
 
 typedef struct PinnedSource {
   GmlRenderResourceSource view;
   uint8_t *owned;
   size_t charged_bytes;
+  size_t recipe_bytes;
+  ReplayRecipe *recipe;
 } PinnedSource;
 
 typedef struct JournalEntry {
@@ -27,6 +32,16 @@ typedef struct JournalEntry {
   GmlRenderImageRef source;
   uint32_t source_index;
 } JournalEntry;
+
+/* Immutable version, rooted at an exact full clear. No completed pixel plane is retained.
+ * Source versions form a bounded DAG; materialisation uses the existing CPU replay owner. */
+struct ReplayRecipe {
+  GmlRenderImageRef image;
+  uint32_t width,height,entry_count,source_count,depth,references;
+  JournalEntry *entries;
+  PinnedSource *sources;
+  size_t journal_bytes,retained_bytes;
+};
 
 struct GmlRenderResource {
   GmlRenderImageRef image;
@@ -38,7 +53,8 @@ struct GmlRenderResource {
   uint32_t entry_count;
   PinnedSource *sources;
   uint32_t source_count;
-  size_t retained_bytes;
+  size_t retained_bytes,recipe_bytes;
+  ReplayRecipe *frozen_recipe;
   uint32_t authority;
   int cpu_write_acquired;
   const void *device_identity;
@@ -49,6 +65,42 @@ struct GmlRenderResource {
   uint64_t cpu_replays,device_checkpoints,consolidations,cpu_fallbacks;
   uint64_t checkpoint_allocations;
 };
+
+static void release_recipe(ReplayRecipe *recipe);
+static ReplayRecipe *retain_resource_recipe(GmlRenderResource *resource);
+static int materialise_pin(PinnedSource *pin);
+
+static void release_pin(PinnedSource *pin){
+  free(pin->owned);
+  release_recipe(pin->recipe);
+  memset(pin,0,sizeof *pin);
+}
+
+static void release_recipe(ReplayRecipe *recipe){
+  if(!recipe || --recipe->references) return;
+  for(uint32_t index=0;index<recipe->source_count;index++)
+    release_pin(&recipe->sources[index]);
+  free(recipe->sources);
+  free(recipe->entries);
+  free(recipe);
+}
+
+static void discard_frozen_recipe(GmlRenderResource *resource){
+  release_recipe(resource->frozen_recipe);
+  resource->frozen_recipe=NULL;
+}
+
+static int recipe_available(const GmlRenderResource *resource){
+  const GmlRenderDrawOp *first;
+  if(!resource || resource->authority!=GML_RENDER_RESOURCE_GPU_REPLAYABLE ||
+     !resource->entry_count) return 0;
+  first=&resource->entries[0].operation;
+  return first->opcode==GML_RENDER_OP_CLEAR &&
+    first->reconstruction_mode==GML_RENDER_REPLAY_EXACT &&
+    first->target.region.x==0 && first->target.region.y==0 &&
+    first->target.region.width==resource->width &&
+    first->target.region.height==resource->height;
+}
 
 static int same_logical(GmlRenderImageRef a,GmlRenderImageRef b){
   return a.resource_class==b.resource_class && a.identity==b.identity &&
@@ -111,6 +163,14 @@ static int pin_source(PinnedSource *pin,const GmlRenderResourceSource *view){
   if(!source_view_valid(view)) return 0;
   pin->view=*view;
   if(view->borrowed_immutable) return 1;
+  if(!view->bytes){
+    pin->recipe=retain_resource_recipe((GmlRenderResource*)view->resident_resource);
+    if(!pin->recipe) return 0;
+    pin->view.resident_resource=NULL;
+    pin->recipe_bytes=pin->recipe->journal_bytes;
+    pin->charged_bytes=pin->recipe->retained_bytes;
+    return 1;
+  }
   if((size_t)view->width>SIZE_MAX/4u/(size_t)view->height) return 0;
   bytes=(size_t)view->width*view->height*4u;
   pin->owned=(uint8_t*)malloc(bytes);
@@ -127,15 +187,113 @@ static int pin_source(PinnedSource *pin,const GmlRenderResourceSource *view){
   return 1;
 }
 
+static ReplayRecipe *retain_resource_recipe(GmlRenderResource *resource){
+  ReplayRecipe *recipe;
+  if(!recipe_available(resource)) return NULL;
+  if(resource->frozen_recipe){
+    if(resource->frozen_recipe->references==UINT32_MAX) return NULL;
+    resource->frozen_recipe->references++;
+    return resource->frozen_recipe;
+  }
+  recipe=(ReplayRecipe*)calloc(1,sizeof *recipe);
+  if(!recipe) return NULL;
+  recipe->references=1u;
+  recipe->image=resource->image;
+  recipe->width=resource->width; recipe->height=resource->height;
+  recipe->depth=1u;
+  recipe->journal_bytes=sizeof *recipe+
+    (size_t)resource->entry_count*sizeof *recipe->entries+
+    (size_t)resource->source_count*sizeof *recipe->sources;
+  if(recipe->journal_bytes>resource->limits.journal_bytes) goto failed;
+  recipe->entries=(JournalEntry*)malloc((size_t)resource->entry_count*sizeof *recipe->entries);
+  if(!recipe->entries) goto failed;
+  memcpy(recipe->entries,resource->entries,(size_t)resource->entry_count*sizeof *recipe->entries);
+  recipe->entry_count=resource->entry_count;
+  if(resource->source_count){
+    recipe->sources=(PinnedSource*)calloc(resource->source_count,sizeof *recipe->sources);
+    if(!recipe->sources) goto failed;
+  }
+  for(uint32_t index=0;index<resource->source_count;index++){
+    PinnedSource *pin=&recipe->sources[index];
+    const PinnedSource *original=&resource->sources[index];
+    if(original->recipe){
+      if(original->recipe->references==UINT32_MAX ||
+         original->recipe->depth>=MAX_REPLAY_RECIPE_DEPTH)
+        goto failed;
+      pin->view=original->view;
+      pin->view.bytes=NULL; pin->view.byte_capacity=0u;
+      pin->recipe=original->recipe; pin->recipe->references++;
+      pin->recipe_bytes=original->recipe_bytes;
+      pin->charged_bytes=original->charged_bytes;
+      if(recipe->depth<=pin->recipe->depth) recipe->depth=pin->recipe->depth+1u;
+    } else if(!pin_source(pin,&original->view)) goto failed;
+    recipe->source_count++;
+    if(pin->recipe_bytes>resource->limits.journal_bytes-recipe->journal_bytes ||
+       pin->charged_bytes>resource->limits.retained_mutable_bytes-recipe->retained_bytes)
+      goto failed;
+    recipe->journal_bytes+=pin->recipe_bytes;
+    recipe->retained_bytes+=pin->charged_bytes;
+  }
+  resource->frozen_recipe=recipe;
+  recipe->references++;
+  return recipe;
+failed:
+  release_recipe(recipe);
+  return NULL;
+}
+
+static int replay_entries(JournalEntry *entries,uint32_t entry_count,
+                          PinnedSource *sources,uint32_t width,uint32_t height,
+                          uint32_t *destination){
+  for(uint32_t index=0;index<entry_count;index++){
+    const JournalEntry *entry=&entries[index];
+    PinnedSource *pin=entry->operation.source_count?&sources[entry->source_index]:NULL;
+    PinnedSource materialised={0};
+    GmlRenderDrawOp operation=entry->operation;
+    if(pin && !pin->view.bytes){
+      materialised=*pin;
+      materialised.owned=NULL;
+      if(!materialise_pin(&materialised)) return 0;
+      pin=&materialised;
+    }
+    operation.sources=operation.source_count?&entry->source:NULL;
+    int applied=gml_render_cpu_replay_one(destination,width,height,&operation,&entry->state,
+                                          pin?&pin->view:NULL);
+    free(materialised.owned);
+    if(!applied) return 0;
+  }
+  return 1;
+}
+
+static int materialise_pin(PinnedSource *pin){
+  size_t bytes;
+  uint32_t *pixels;
+  if(pin->view.bytes) return 1;
+  if(!pin->recipe || (size_t)pin->view.width>SIZE_MAX/4u/pin->view.height) return 0;
+  bytes=(size_t)pin->view.width*pin->view.height*4u;
+  pixels=(uint32_t*)calloc(1,bytes);
+  if(!pixels) return 0;
+  if(!replay_entries(pin->recipe->entries,pin->recipe->entry_count,pin->recipe->sources,
+                     pin->recipe->width,pin->recipe->height,pixels)){
+    free(pixels);
+    return 0;
+  }
+  pin->owned=(uint8_t*)pixels;
+  pin->view.bytes=pixels;
+  pin->view.byte_capacity=bytes;
+  return 1;
+}
+
 static void clear_history(GmlRenderResource *resource){
   for(uint32_t index=0;index<resource->source_count;index++)
-    free(resource->sources[index].owned);
+    release_pin(&resource->sources[index]);
+  discard_frozen_recipe(resource);
   free(resource->sources);
   free(resource->entries);
   resource->sources=NULL;
   resource->entries=NULL;
   resource->source_count=resource->entry_count=0;
-  resource->retained_bytes=0;
+  resource->retained_bytes=resource->recipe_bytes=0;
 }
 
 GmlRenderResource *gml_render_resource_create(GmlRenderImageRef image,uint32_t width,
@@ -180,16 +338,8 @@ GmlRenderImageRef gml_render_resource_image_ref(const GmlRenderResource *resourc
 }
 
 static int replay_history(const GmlRenderResource *resource,uint32_t *destination){
-  for(uint32_t index=0;index<resource->entry_count;index++){
-    const JournalEntry *entry=&resource->entries[index];
-    const GmlRenderResourceSource *source=entry->operation.source_count
-      ?&resource->sources[entry->source_index].view:NULL;
-    GmlRenderDrawOp operation=entry->operation;
-    operation.sources=operation.source_count?&entry->source:NULL;
-    if(!gml_render_cpu_replay_one(destination,resource->width,resource->height,
-                                  &operation,&entry->state,source)) return 0;
-  }
-  return 1;
+  return replay_entries(resource->entries,resource->entry_count,resource->sources,
+                         resource->width,resource->height,destination);
 }
 
 int gml_render_resource_acquire_cpu_read(GmlRenderResource *resource,
@@ -271,6 +421,7 @@ int gml_render_resource_commit_cpu_write(GmlRenderResource *resource){
      !resource->cpu_write_acquired || resource->entry_count ||
      resource->image.content_version==UINT64_MAX) return 0;
   resource->image.content_version++;
+  discard_frozen_recipe(resource);
   resource->cpu_version=resource->image.content_version;
   resource->authority=GML_RENDER_RESOURCE_CPU_CURRENT;
   resource->cpu_write_acquired=0;
@@ -313,11 +464,32 @@ static GmlRenderResourceExecution cpu_fallback(GmlRenderResource *resource,
       ?NULL:&batch->states[operation->state_index];
     const GmlRenderResourceSource *source=operation->source_count
       ?find_input(sources,source_count,operation->sources[0]):NULL;
+    PinnedSource pin={0};
+    GmlRenderResourceSource observed_source={0};
+    if(source && !source->bytes){
+      if(pin_source(&pin,source)){
+        if(!materialise_pin(&pin)){
+          release_pin(&pin); free(copy); return GML_RENDER_RESOURCE_EXEC_FAILED;
+        }
+        source=&pin.view;
+      } else {
+        /* Recipe pressure is a CPU boundary, not lost source data. Observe the still-current
+         * owner only here, before destination publication; ordinary device retention stays
+         * byte-free and no over-budget recipe is manufactured for the fallback. */
+        if(!gml_render_resource_source_view((GmlRenderResource*)source->resident_resource,
+                                             &observed_source)){
+          release_pin(&pin); free(copy); return GML_RENDER_RESOURCE_EXEC_FAILED;
+        }
+        source=&observed_source;
+      }
+    }
     if(!gml_render_cpu_replay_one(copy,resource->width,resource->height,
                                   operation,state,source)){
+      release_pin(&pin);
       free(copy);
       return GML_RENDER_RESOURCE_EXEC_FAILED;
     }
+    release_pin(&pin);
   }
   memcpy(resource->pixels,copy,bytes);
   free(copy);
@@ -371,7 +543,8 @@ static int batch_valid(const GmlRenderResource *resource,const GmlRenderDrawBatc
        (!operation->payload.shader ||
         operation->reconstruction_mode!=GML_RENDER_DEVICE_CHECKPOINT)) return 0;
     if(operation->reconstruction_mode==GML_RENDER_REPLAY_EXACT){
-      if(source && !source->bytes) *checkpoint_required=1;
+      if(source && !source->bytes && !recipe_available(source->resident_resource))
+        *checkpoint_required=1;
       else if(!gml_render_cpu_replay_eligible(operation,state,source)) return 0;
     } else if(operation->reconstruction_mode==GML_RENDER_DEVICE_CHECKPOINT){
       *checkpoint_required=1;
@@ -480,11 +653,12 @@ static int append_history(GmlRenderResource *resource,const GmlRenderDrawBatch *
  * already-reserved entry array for the new clear; release only its old source pins and cursor. */
 static void discard_superseded_history(GmlRenderResource *resource){
   for(uint32_t index=0;index<resource->source_count;index++)
-    free(resource->sources[index].owned);
+    release_pin(&resource->sources[index]);
+  discard_frozen_recipe(resource);
   free(resource->sources);
   resource->sources=NULL;
   resource->source_count=0;
-  resource->retained_bytes=0;
+  resource->retained_bytes=resource->recipe_bytes=0;
   resource->entry_count=0;
 }
 
@@ -575,7 +749,7 @@ static GmlRenderResourceExecution resource_submit(
   uint32_t source_count,int defer_checkpoint){
   GmlRenderExecutionResult device_result;
   uint32_t old_source_count;
-  size_t old_retained_bytes;
+  size_t old_retained_bytes,old_recipe_bytes;
   int checkpoint_required,replaces_history,pending_prefix,batch_checkpoint_required;
   if(!resource || resource->authority==GML_RENDER_RESOURCE_INVALID ||
      resource->cpu_write_acquired ||
@@ -610,7 +784,7 @@ static GmlRenderResourceExecution resource_submit(
   }
   if(!checkpoint_required && !replaces_history && resource->entry_count &&
      ((uint64_t)resource->entry_count+batch->operation_count>
-      resource->limits.journal_bytes/sizeof(JournalEntry) ||
+      (resource->limits.journal_bytes-resource->recipe_bytes)/sizeof(JournalEntry) ||
       resource->retained_bytes>resource->limits.retained_mutable_bytes)){
     if(!gml_render_resource_acquire_cpu_read(resource,NULL))
       return GML_RENDER_RESOURCE_EXEC_FAILED;
@@ -624,6 +798,7 @@ static GmlRenderResourceExecution resource_submit(
       cpu_fallback(resource,batch,sources,source_count);
   old_source_count=resource->source_count;
   old_retained_bytes=resource->retained_bytes;
+  old_recipe_bytes=resource->recipe_bytes;
   if(!checkpoint_required){
     JournalEntry *entries=(JournalEntry*)realloc(resource->entries,
       (size_t)(resource->entry_count+batch->operation_count)*sizeof *entries);
@@ -648,14 +823,17 @@ static GmlRenderResourceExecution resource_submit(
         resource->sources=grown;
       }
       if(!pin_source(&resource->sources[resource->source_count],view)) goto staging_failed;
-      if(resource->sources[resource->source_count].charged_bytes>
-         resource->limits.retained_mutable_bytes-resource->retained_bytes){
-        free(resource->sources[resource->source_count].owned);
-        memset(&resource->sources[resource->source_count],0,
-               sizeof resource->sources[resource->source_count]);
+      PinnedSource *pin=&resource->sources[resource->source_count];
+      size_t journal_bytes=(size_t)(resource->entry_count+batch->operation_count)*
+                             sizeof(JournalEntry)+resource->recipe_bytes;
+      if(pin->charged_bytes>resource->limits.retained_mutable_bytes-resource->retained_bytes ||
+         journal_bytes>resource->limits.journal_bytes ||
+         pin->recipe_bytes>resource->limits.journal_bytes-journal_bytes){
+        release_pin(pin);
         goto staging_failed;
       }
-      resource->retained_bytes+=resource->sources[resource->source_count].charged_bytes;
+      resource->retained_bytes+=pin->charged_bytes;
+      resource->recipe_bytes+=pin->recipe_bytes;
       resource->source_count++;
     }
   }
@@ -679,6 +857,7 @@ static GmlRenderResourceExecution resource_submit(
     resource->device_identity=NULL;
     goto staging_failed;
   }
+  discard_frozen_recipe(resource);
   resource->image.content_version=batch->operations[batch->operation_count-1u]
                                   .target.image.content_version;
   resource->gpu_version=resource->image.content_version;
@@ -699,9 +878,10 @@ static GmlRenderResourceExecution resource_submit(
   return GML_RENDER_RESOURCE_EXEC_DEVICE;
 staging_failed:
   for(uint32_t index=old_source_count;index<resource->source_count;index++)
-    free(resource->sources[index].owned);
+    release_pin(&resource->sources[index]);
   resource->source_count=old_source_count;
   resource->retained_bytes=old_retained_bytes;
+  resource->recipe_bytes=old_recipe_bytes;
   if(pending_prefix && resource->authority!=GML_RENDER_RESOURCE_INVALID){
     if(!gml_render_resource_checkpoint(resource,device))
       return GML_RENDER_RESOURCE_EXEC_FAILED;
@@ -738,8 +918,18 @@ void gml_render_resource_journal_metrics(const GmlRenderResource *resource,
   out_metrics->device_checkpoints=resource->device_checkpoints;
   out_metrics->consolidations=resource->consolidations;
   out_metrics->cpu_fallbacks=resource->cpu_fallbacks;
-  out_metrics->journal_bytes=(size_t)resource->entry_count*sizeof(JournalEntry);
+  out_metrics->journal_bytes=(size_t)resource->entry_count*sizeof(JournalEntry)+
+                               resource->recipe_bytes;
   out_metrics->retained_mutable_bytes=resource->retained_bytes;
+  if(resource->frozen_recipe){
+    out_metrics->cached_replay_bytes=resource->frozen_recipe->journal_bytes+
+                                      resource->frozen_recipe->retained_bytes;
+    out_metrics->retained_replay_depth=resource->frozen_recipe->depth;
+  }
+  for(uint32_t index=0;index<resource->source_count;index++)
+    if(resource->sources[index].recipe &&
+       out_metrics->retained_replay_depth<resource->sources[index].recipe->depth)
+      out_metrics->retained_replay_depth=resource->sources[index].recipe->depth;
   out_metrics->checkpoint_staging_bytes=resource->checkpoint_staging
     ?(size_t)resource->width*resource->height*4u:0u;
   out_metrics->checkpoint_allocations=resource->checkpoint_allocations;

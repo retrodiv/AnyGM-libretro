@@ -1162,6 +1162,10 @@ int gml_render_completed_screen_has_rgb(GmlRender *r,uint32_t *pixels,int width,
 void gml_render_flush_pending_underlay(GmlRender *r){
   gml_render_flush_rotated_batch(r);
   if(!r || !r->pending_underlay) return;
+  if(gml_render_compose_resident_underlay(r)) return;
+  /* The internal compositor calls the CPU leaf directly, unlike public surface dispatch.
+   * Materialise and leave a resident SCREEN before that leaf observes or writes it. */
+  if(!gml_render_resident_application_cpu_barrier(r)) return;
   int x=r->underlay_x, y=r->underlay_y, w=r->underlay_w, h=r->underlay_h;
   r->pending_underlay=0;
   /* This is the host's internal application-surface presentation, not a GML draw call.

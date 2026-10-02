@@ -58,6 +58,12 @@ static int cleared_earlier(const GmlRenderImageRef *cleared,uint32_t count,
 static int qualified_blend(const GmlRenderDrawStateSnapshot *state){
   if(state->rgb_source_factor==GML_RENDER_BLEND_SOURCE_ALPHA &&
      state->rgb_destination_factor==GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA &&
+     state->alpha_source_factor==GML_RENDER_BLEND_ONE &&
+     state->alpha_destination_factor==GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA &&
+     state->rgb_equation==GML_RENDER_BLEND_EXACT_AUTOMATIC_SURFACE &&
+     state->alpha_equation==GML_RENDER_BLEND_EXACT_AUTOMATIC_SURFACE) return 7;
+  if(state->rgb_source_factor==GML_RENDER_BLEND_SOURCE_ALPHA &&
+     state->rgb_destination_factor==GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA &&
      (state->alpha_source_factor==GML_RENDER_BLEND_ONE ||
       state->alpha_source_factor==GML_RENDER_BLEND_SOURCE_ALPHA) &&
      state->alpha_destination_factor==GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA &&
@@ -135,6 +141,7 @@ static int exact_rect(const GmlRenderDrawOp *op,GLint *left,GLint *bottom,
 
 static int same_resolved_quad(const GmlRenderQuad *a,const GmlRenderQuad *b){
   if(a->shape!=b->shape || a->sampling.filter!=b->sampling.filter ||
+     a->source_opaque!=b->source_opaque ||
      a->sampling.edge_rule!=b->sampling.edge_rule ||
      a->sampling.quantisation!=b->sampling.quantisation ||
      a->sampling.logical_margin_mask!=b->sampling.logical_margin_mask ||
@@ -386,14 +393,25 @@ static int scene_preflight(GmlGpuBackend *backend,const GmlRenderDrawBatch *batc
                        !gml_render_filtered_font_quad_valid(&op->payload.quad,
                                                             target->width,target->height) ||
                        !exact_rect(op,NULL,NULL,NULL,NULL,1))) ||
-         (sampling->quantisation && blend!=6 &&
+         (blend==7 && (!backend->gl.CopyTexSubImage2D ||
+                       op->scene_family!=GML_RENDER_SCENE_SURFACE ||
+                       target->image.resource_class!=GML_RENDER_RESOURCE_SCREEN ||
+                       target->pixel_format!=GML_RENDER_PIXEL_ARGB8888 ||
+                       source->pixel_format!=GML_RENDER_PIXEL_ARGB8888 ||
+                       op->sources[0].resource_class!=GML_RENDER_RESOURCE_APPLICATION ||
+                       !full_region(sampling->source_region,source->width,source->height) ||
+                       op->reconstruction_mode!=GML_RENDER_REPLAY_EXACT ||
+                       !gml_render_automatic_surface_quad_valid(&op->payload.quad,
+                                                                 target->width,target->height) ||
+                       !exact_rect(op,NULL,NULL,NULL,NULL,1))) ||
+         (sampling->quantisation && blend!=6 && blend!=7 &&
           (sampling->quantisation!=GML_RENDER_QUANTISE_STRETCHED_FLOAT ||
            sampling->filter!=GML_RENDER_FILTER_BILINEAR ||
            op->scene_family!=GML_RENDER_SCENE_SPRITE || blend!=0 ||
            op->payload.quad.shape!=GML_RENDER_QUAD_AXIS_ALIGNED ||
            sampling->edge_rule!=GML_RENDER_EDGE_CLAMP_SUBIMAGE ||
            source->rendered_origin)) ||
-         (sampling->filter==GML_RENDER_FILTER_BOX
+         (blend!=7 && (sampling->filter==GML_RENDER_FILTER_BOX
            ? sampling->edge_rule!=GML_RENDER_EDGE_TRANSPARENT ||
              sampling->logical_margin_mask!=0u
            : (sampling->edge_rule==GML_RENDER_EDGE_LOGICAL_TPAG ||
@@ -406,7 +424,7 @@ static int scene_preflight(GmlGpuBackend *backend,const GmlRenderDrawBatch *batc
                    (sampling->edge_rule!=GML_RENDER_EDGE_LOGICAL_TPAG ||
                     (op->payload.quad.shape!=GML_RENDER_QUAD_CARDINAL &&
                      op->payload.quad.shape!=GML_RENDER_QUAD_GENERAL)))
-                : sampling->logical_margin_mask!=0u)) ||
+                : sampling->logical_margin_mask!=0u))) ||
          state->samplers[0].filter!=sampling->filter ||
          state->samplers[0].edge_rule!=sampling->edge_rule ||
          state->samplers[0].quantisation!=sampling->quantisation ||
@@ -589,7 +607,8 @@ static int draw_exact_quad(GmlGpuBackend *backend,const GmlRenderDrawOp *op,
   GLfloat extent[2]={(GLfloat)target->width,(GLfloat)target->height};
   int outcome;
   if(!exact_rect(op,&left,&bottom,&width,&height,
-                 qualified_blend(state)==4 || qualified_blend(state)==6) ||
+                 qualified_blend(state)==4 || qualified_blend(state)==6 ||
+                 qualified_blend(state)==7) ||
      !gml_gpu_opengl_scene_exact_program(backend,error,error_capacity) ||
      !gml_render_gpu_opengl_draw_textured_quad(op,state,source->width,source->height,
                                                source->rendered_origin,
@@ -629,8 +648,21 @@ static int draw_exact_quad(GmlGpuBackend *backend,const GmlRenderDrawOp *op,
                         effect?(effect->kind==GML_RENDER_LAYER_EFFECT_TINT?2:
                                 effect->kind==GML_RENDER_LAYER_EFFECT_COLOURISE?3:
                                 effect->kind==GML_RENDER_LAYER_EFFECT_ZOOM_BLUR?4:5):
-                          (qualified_blend(state)==6?7:
+                          (qualified_blend(state)==7?8:qualified_blend(state)==6?7:
                            qualified_blend(state)==5?6:qualified_blend(state)==4?1:0));
+  if(qualified_blend(state)==7){
+    const GmlRenderQuad *q=&op->payload.quad;
+    GLint size[4]={(GLint)source->width,(GLint)source->height,
+                   (GLint)(q->x[1]-q->x[0]),(GLint)(q->y[2]-q->y[0])};
+    GLint underlay_origin[2]={(GLint)q->x[0],(GLint)q->y[0]};
+    GLint flags=(GLint)q->source_opaque |
+      (q->sampling.filter==GML_RENDER_FILTER_BOX?2:0) |
+      (q->sampling.quantisation==GML_RENDER_QUANTISE_AUTOMATIC_SURFACE_FIRSTGEN?4:0) |
+      (source->rendered_origin?8:0);
+    backend->gl.Uniform4iv(scene->exact_u_underlay_size,1,size);
+    backend->gl.Uniform2iv(scene->exact_u_underlay_origin,1,underlay_origin);
+    backend->gl.Uniform1i(scene->exact_u_underlay_flags,flags);
+  }
   if(qualified_blend(state)==6){
     const GmlRenderQuad *quad=&op->payload.quad;
     GmlRenderRect crop=quad->sampling.source_region;
@@ -857,8 +889,9 @@ GmlRenderExecutionResult gml_gpu_opengl_scene_submit(GmlGpuBackend *backend,
     }
     pending_filter=scene_filter(&op->payload.quad,&batch->states[op->state_index]);
     pending_blend=qualified_blend(&batch->states[op->state_index]);
-    if(pending_blend==2 || pending_blend==4 || pending_blend==5 || pending_blend==6){
-      uint32_t repetitions=pending_blend==6?1u:exact_repetitions(batch,index);
+    if(pending_blend==2 || pending_blend==4 || pending_blend==5 || pending_blend==6 ||
+       pending_blend==7){
+      uint32_t repetitions=pending_blend>=6?1u:exact_repetitions(batch,index);
       int drawn=draw_exact_quad(backend,op,&batch->states[op->state_index],
                                 target,pending_source,repetitions,NULL,error,error_capacity);
       if(drawn<0) mark_uncertain(&result,target);

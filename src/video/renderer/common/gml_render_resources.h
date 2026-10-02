@@ -35,7 +35,9 @@ typedef struct GmlRenderResourceLimits {
 /* A source version is immutable for the lifetime of one submission. If borrowed_immutable is
  * true, bytes must remain stable until the journal is materialised or the resource is destroyed;
  * authored immutable atlas pages can meet that contract without duplication. Mutable versions
- * are copied once per distinct ref before any device write and charged to the retained budget. */
+ * are copied once per distinct ref before any device write and charged to the retained budget.
+ * A byte-free resident source rooted at an exact full clear instead pins its immutable replay
+ * recipe, charged to the journal budget, without observing or duplicating completed pixels. */
 typedef struct GmlRenderResourceSource {
   GmlRenderImageRef image;
   uint32_t width,height,pixel_format,stride_bytes;
@@ -51,6 +53,10 @@ typedef struct GmlRenderJournalMetrics {
   uint64_t logical_version,cpu_version,gpu_version;
   uint64_t cpu_replays,device_checkpoints,consolidations,cpu_fallbacks;
   size_t journal_bytes,retained_mutable_bytes;
+  /* Pinned recipes are included in journal_bytes. A reusable current-version snapshot has
+   * its own bounded metadata/source storage; report that cache without hiding shared costs. */
+  size_t cached_replay_bytes;
+  uint32_t retained_replay_depth;
   /* Disposable host scratch, never canonical pixels or serialized state. Allocation count
    * includes transient checkpoint buffers, not source pins or CPU replay candidates. */
   size_t checkpoint_staging_bytes;
@@ -68,7 +74,8 @@ GmlRenderImageRef gml_render_resource_image_ref(const GmlRenderResource *resourc
 int gml_render_resource_source_view(GmlRenderResource *resource,
                                     GmlRenderResourceSource *out_source);
 /* A current version on this device may use a byte-free view without observing CPU pixels.
- * A consumer without a retained CPU source must checkpoint rather than claim exact replay. */
+ * Exact replacement may retain a bounded complete-clear source recipe; sources without that
+ * proof still require a checkpoint. No completed pixel buffer is allocated to retain a recipe. */
 int gml_render_resource_device_source_view(
   GmlRenderResource *resource,const GmlRenderDeviceServices *device,
   GmlRenderResourceSource *out_source);

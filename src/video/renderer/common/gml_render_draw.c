@@ -62,6 +62,39 @@ int gml_render_filtered_font_quad_valid(const GmlRenderQuad *q,
   return 1;
 }
 
+int gml_render_automatic_surface_quad_valid(const GmlRenderQuad *q,
+                                             uint32_t width,uint32_t height){
+  if(!q || !width || !height || width>16384u || height>16384u ||
+     (q->sampling.quantisation!=GML_RENDER_QUANTISE_AUTOMATIC_SURFACE_FIRSTGEN &&
+      q->sampling.quantisation!=GML_RENDER_QUANTISE_AUTOMATIC_SURFACE_MODERN) ||
+     q->shape!=GML_RENDER_QUAD_AXIS_ALIGNED || q->span_active || q->source_opaque>1u ||
+     (q->sampling.filter!=GML_RENDER_FILTER_NEAREST &&
+      q->sampling.filter!=GML_RENDER_FILTER_BOX) ||
+     q->sampling.edge_rule!=GML_RENDER_EDGE_CLAMP_SUBIMAGE ||
+     q->sampling.logical_margin_mask || q->sampling.source_region.x ||
+     q->sampling.source_region.y || !q->sampling.source_region.width ||
+     !q->sampling.source_region.height || q->sampling.source_region.width>16384u ||
+     q->sampling.source_region.height>16384u) return 0;
+  uint32_t samples=1u;
+  for(unsigned axis=0;axis<2u;axis++){
+    double first=axis?q->y[0]:q->x[0],last=axis?q->y[2]:q->x[1];
+    uint32_t source=axis?q->sampling.source_region.height:q->sampling.source_region.width;
+    if(!isfinite(first) || !isfinite(last) || floor(first)!=first || floor(last)!=last ||
+       first<-16384.0 || first>=16384.0 || last>32768.0 || last<=0.0 ||
+       first>=(double)(axis?height:width) || last<=first || last-first>16384.0) return 0;
+    uint32_t extent=(uint32_t)(last-first);
+    samples*=(source+extent-1u)/extent;
+  }
+  if(q->sampling.filter==GML_RENDER_FILTER_BOX && samples>4096u) return 0;
+  if(q->x[3]!=q->x[0] || q->x[2]!=q->x[1] ||
+     q->y[1]!=q->y[0] || q->y[3]!=q->y[2]) return 0;
+  for(unsigned corner=0;corner<4u;corner++)
+    if(q->corner_colour[corner]!=0xFFFFFFFFu ||
+       q->u[corner]!=(corner==0u || corner==3u?0.0:1.0) ||
+       q->v[corner]!=(corner<2u?0.0:1.0)) return 0;
+  return 1;
+}
+
 static void render_unbind_device(GmlRender *render,int context_current){
   if(!render) return;
   if(context_current) (void)gml_render_checkpoint_pending_resources(render);
