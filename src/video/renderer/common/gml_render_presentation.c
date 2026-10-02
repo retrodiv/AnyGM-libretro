@@ -76,6 +76,7 @@ int render_record_deferred_underlay(GmlRender *r,const uint32_t *src,int sw,int 
     if(captured_fill) gml_render_cancel_pending_fill(r);
     gml_render_maybe_prepare_draw(r);
     r->presentation.sampling_rule=GML_RENDER_PRESENTATION_LEADING_EDGE;
+    r->presentation.cpu_rgb_only=0;
     r->presentation.target_pixels=r->fb;
     r->presentation.target_width=r->fbw;
     r->presentation.target_height=r->fbh;
@@ -124,6 +125,7 @@ void render_present_first_generation(GmlRender *r,int surf,const uint32_t *src,i
   if(deferrable && captured_fill) gml_render_cancel_pending_fill(r);
   gml_render_maybe_prepare_draw(r);
   r->presentation.sampling_rule=GML_RENDER_PRESENTATION_PIXEL_CENTRE;
+  r->presentation.cpu_rgb_only=0;
   r->presentation.target_pixels=r->fb;
   r->presentation.target_width=r->fbw;
   r->presentation.target_height=r->fbh;
@@ -173,6 +175,7 @@ int render_present_content_shader(GmlRender *r,int surf,const uint32_t *src,int 
   if(captured_fill) gml_render_cancel_pending_fill(r);
   gml_render_maybe_prepare_draw(r);
   r->presentation.sampling_rule=GML_RENDER_PRESENTATION_PIXEL_CENTRE;
+  r->presentation.cpu_rgb_only=0;
   r->presentation.target_pixels=r->fb;
   r->presentation.target_width=r->fbw;
   r->presentation.target_height=r->fbh;

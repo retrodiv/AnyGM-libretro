@@ -213,6 +213,7 @@ int engine_materialize_completed_frame(AnygmEngine *engine){
    * consumes nothing from the random sequence. */
   if(gml_render_deferred_presentation(&engine->render,NULL)){
     gml_render_flush_deferred_presentation(&engine->render);
+    if(gml_render_deferred_presentation(&engine->render,NULL)) return 0;
     engine->frame_materializations++;
   }
   gml_render_resource_metrics(&engine->render,&before);

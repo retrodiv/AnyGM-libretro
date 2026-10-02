@@ -534,6 +534,48 @@ static int resident_indirect_gui_variant(
           counters.scene_operations[GML_RENDER_OP_CLEAR]>0u &&
           counters.scene_operations[GML_RENDER_OP_TEXTURED_QUAD]>0u,
           "GUI uses a counted resident SCREEN clear and sprite");
+  if(scale_direction>1){
+    if(selected.engine->screen_pass_frames!=1u || counters.cpu_upload_frames!=0u){
+      fprintf(stderr,"upscaled SCREEN passes=%u transport=%u pending=%d materializations=%u "
+              "canvas=%d target=%d/%d resident=%d deferred=%d source=%u %dx%d "
+              "fallback=%u error=%s\n",selected.engine->screen_pass_frames,
+              counters.cpu_upload_frames,
+              gml_render_deferred_presentation(&selected.engine->render,NULL),
+              selected.engine->frame_materializations,selected.engine->host_canvas_active,
+              selected.engine->render.target_id,selected.engine->render.target_sp,
+              selected.engine->render.resident_application_pass,
+              selected.engine->render.presentation_deferral_enabled,
+              selected.engine->render.presentation.resident_image.resource_class,
+              selected.engine->render.presentation.source_width,
+              selected.engine->render.presentation.source_height,
+              selected.engine->host_plan.fallback_reason,
+              gml_gpu_last_error(selected.engine->gpu)?gml_gpu_last_error(selected.engine->gpu):"");
+    }
+    REQUIRE(selected.engine->screen_pass_frames==1u &&
+            counters.cpu_upload_frames==0u &&
+            gpu.pixels==NULL && (gpu.flags&ANYGM_FRAME_HARDWARE_TARGET),
+            "upscaled GUI presents its current SCREEN without complete CPU transport");
+    REQUIRE(selected.engine->frame_materializations==0u &&
+            gml_render_deferred_presentation(&selected.engine->render,NULL),
+            "upscaled GUI retains its completed-picture recipe without CPU raster shadow");
+    uint64_t source_version=selected.engine->render.presentation.resident_image.content_version;
+    uint32_t before_pixel=selected.engine->screen[0];
+    selected.engine->render.presentation.resident_image.content_version++;
+    REQUIRE(!engine_materialize_completed_frame(selected.engine) &&
+            gml_render_deferred_presentation(&selected.engine->render,NULL) &&
+            selected.engine->screen[0]==before_pixel &&
+            selected.engine->frame_materializations==0u,
+            "stale GUI observation rejects transactionally without consuming the recipe");
+    selected.engine->render.presentation.resident_image.content_version=source_version;
+    size_t cpu_size=0,gpu_size=0;
+    uint8_t *cpu_state=serialize(plain.engine,&cpu_size);
+    uint8_t *gpu_state=serialize(selected.engine,&gpu_size);
+    int same_state=cpu_state && gpu_state && cpu_size==gpu_size &&
+                   !memcmp(cpu_state,gpu_state,cpu_size) &&
+                   selected.engine->frame_materializations==1u;
+    free(cpu_state); free(gpu_state);
+    REQUIRE(same_state,"serialization observes exact upscaled GUI bytes and simulation state");
+  }
   if(scale_direction<-1){
     if(selected.engine->screen_pass_frames!=1u || counters.cpu_upload_frames!=0u){
       fprintf(stderr,"direct SCREEN passes=%u transport=%u fallback=%u error=%s\n",
@@ -603,6 +645,8 @@ static int resident_indirect_gui_variant(
 
 static int resident_indirect_gui_case(void){
   return resident_indirect_gui_variant(
+           anygm_synthetic_resident_indirect_gui_upscale_content_create,2) &&
+         resident_indirect_gui_variant(
            anygm_synthetic_indirect_gui_upscale_content_create,1) &&
          resident_indirect_gui_variant(
            anygm_synthetic_indirect_gui_reduce_content_create,0) &&

@@ -254,6 +254,8 @@ def self_test() -> None:
                   if not line.startswith("| R03-P9-GUI-FILTERED-ATLAS |")),
         document.replace("::R03_SHADER_GUI_FILTERED_ALPHA_STAMP",
                          "::OBSOLETE_GUI_FILTERED_ALPHA_STAMP", 1),
+        document.replace("::gml_render_defer_resident_screen_upscale",
+                         "::obsolete_resident_screen_upscale", 1),
     ):
         try:
             check_repair_map(broken, ledger, ROOT)

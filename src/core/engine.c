@@ -1761,9 +1761,9 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
 			                        ? 0.0 : -(double)engine->gui_offset_x;
 			    double screen_cam_y=(engine->aspect_force_active || aspect_gui_center)
 			                        ? 0.0 : -(double)engine->gui_offset_y;
-			    /* The indirect GUI is a separate physical SCREEN target. Its existing
-			     * CPU observation below makes the scaled source visible before the unchanged
-			     * nearest/box composition into the output raster. */
+			    /* The indirect GUI is a separate physical SCREEN target. A complete current
+			     * raster can supply its terminal nearest enlargement; excluded writers and
+			     * reductions retain the existing CPU observation and composition below. */
 			    if(!engine->composed_frame && !engine->aspect_force_active &&
 			       !aspect_gui_center &&
 			       (gui_indirect || !render_presentation.application_draw_enabled) &&
@@ -2048,7 +2048,13 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
 	      }
 	    }
 	  }
-			  if (aspect_gui_center || gui_indirect) {
+			  int resident_gui_present=gui_indirect && resident_screen_began &&
+        !engine->host_canvas_active && !engine->present_shift_x && !engine->present_shift_y &&
+        !engine->present_crop_left && !engine->present_crop_top &&
+        !engine->present_crop_right && !engine->present_crop_bottom &&
+        gml_render_defer_resident_screen_upscale(&engine->render,gtarget,gtw,gth,
+                                                 engine->screen,(int)ow,(int)oh);
+			  if ((aspect_gui_center || gui_indirect) && !resident_gui_present) {
 			    if(!gml_render_completed_screen_read(&engine->render,gtarget,gtw,gth) ||
 			       !engine_materialize_completed_frame(engine)) return ANYGM_ERROR_INTERNAL;
 			  }
@@ -2086,7 +2092,7 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
 		        if (yacc >= oh * 2u) { yacc -= oh * 2u; sy++; }
 		      }
 		    }
-	  } else if (gui_indirect) {
+	  } else if (gui_indirect && !resident_gui_present) {
 		    if (ow >= (unsigned)gtw && oh >= (unsigned)gth) {
 		      /* The generic box path degenerates to one source pixel during an upscale. Walk the
 		       * pixel-centred floor((x+.5)*src/dst) mapping incrementally, without per-pixel

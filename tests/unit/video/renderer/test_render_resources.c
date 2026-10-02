@@ -2568,6 +2568,79 @@ static int completed_screen_reader_and_writer(void){
   return 1;
 }
 
+static int completed_screen_deferred_upscale(void){
+  const int widths[]={7,9,14,19},heights[]={5,7,10,13};
+  for(unsigned variant=0;variant<16u;variant++){
+    GmlRender *cpu=(GmlRender*)calloc(1,sizeof *cpu);
+    GmlRender *gpu=(GmlRender*)calloc(1,sizeof *gpu);
+    uint32_t cpu_pixels[35]={0},gpu_pixels[35],target[19*13];
+    int width=widths[variant%4u],height=heights[variant/4u];
+    FakeDevice fake={0};
+    GmlRenderDeviceServices device=service(&fake);
+    GmlRenderJournalMetrics before={0},after={0};
+    GmlRenderDeferredPresentation record={0};
+    CHECK(cpu && gpu);
+    CHECK(gml_render_init(cpu,NULL)==0 && gml_render_init(gpu,NULL)==0);
+    for(unsigned at=0;at<35u;at++) gpu_pixels[at]=0x12345678u;
+    for(unsigned at=0;at<19u*13u;at++) target[at]=0x89ABCDEFu;
+    gml_render_begin(cpu,cpu_pixels,7,5,0.0,0.0);
+    gml_render_bind_device(gpu,&device);
+    CHECK(gml_render_begin_resident_base(gpu,gpu_pixels,7,5,0.0,0.0));
+    gml_render_set_pending_fill(cpu,0xFF102030u);
+    gml_render_set_pending_fill(gpu,0xFF102030u);
+    gml_render_primitive_rectangle(cpu,1,1,5,3,0x345678u,0);
+    gml_render_primitive_rectangle(gpu,1,1,5,3,0x345678u,0);
+    gml_render_primitive_point(cpu,6,4,0xABCDEFu);
+    gml_render_primitive_point(gpu,6,4,0xABCDEFu);
+    gml_render_flush_pending_fill(cpu);
+    CHECK(gml_render_scene_flush(gpu));
+    gml_render_resource_journal_metrics(gpu->base_scene_resource,&before);
+    CHECK(before.cpu_replays==0u && gpu_pixels[0]==0x12345678u && !fake.readbacks);
+    CHECK(!gml_render_defer_resident_screen_upscale(gpu,gpu_pixels,7,5,target,width,height));
+    gml_render_set_deferred_presentation(gpu,1);
+    CHECK(!gml_render_defer_resident_screen_upscale(gpu,gpu_pixels,7,5,gpu_pixels,7,5));
+    CHECK(!gml_render_defer_resident_screen_upscale(gpu,cpu_pixels,7,5,target,width,height));
+    CHECK(!gml_render_defer_resident_screen_upscale(gpu,gpu_pixels,6,5,target,width,height));
+    CHECK(!gml_render_defer_resident_screen_upscale(gpu,gpu_pixels,7,5,target,6,height));
+    CHECK(!gml_render_defer_resident_screen_upscale(gpu,gpu_pixels,7,5,target,width,4));
+    CHECK(gml_render_defer_resident_screen_upscale(gpu,gpu_pixels,7,5,target,width,height));
+    CHECK(gml_render_deferred_presentation(gpu,&record) && record.cpu_rgb_only &&
+          record.resident_image.resource_class==GML_RENDER_RESOURCE_SCREEN &&
+          record.target_pixels==target && gpu_pixels[0]==0x12345678u &&
+          target[0]==0x89ABCDEFu && !fake.readbacks);
+    CHECK(!gml_render_defer_resident_screen_upscale(gpu,gpu_pixels,7,5,target,width,height));
+    /* A stale recipe is rejected before writes and remains recoverable. */
+    gpu->presentation.resident_image.content_version++;
+    gml_render_flush_deferred_presentation(gpu);
+    CHECK(gml_render_deferred_presentation(gpu,NULL) && target[0]==0x89ABCDEFu &&
+          gpu_pixels[0]==0x12345678u && !fake.readbacks);
+    gpu->presentation.resident_image.content_version=record.resident_image.content_version;
+    if(variant&1u){
+      gml_render_abandon_device(gpu);
+      fake.forbid_calls=1;
+    }
+    gml_render_flush_deferred_presentation(gpu);
+    CHECK(!gml_render_deferred_presentation(gpu,NULL) &&
+          !fake.readbacks && !fake.forbidden_calls);
+    for(int y=0;y<height;y++) for(int x=0;x<width;x++){
+      int sx=((2*x+1)*7)/(2*width),sy=((2*y+1)*5)/(2*height);
+      CHECK(target[y*width+x]==(cpu_pixels[sy*7+sx]&0x00FFFFFFu));
+    }
+    for(unsigned at=(unsigned)(width*height);at<19u*13u;at++)
+      CHECK(target[at]==0x89ABCDEFu);
+    gml_render_resource_journal_metrics(gpu->base_scene_resource,&after);
+    CHECK(after.cpu_replays==1u && after.logical_version==before.logical_version &&
+          memcmp(cpu_pixels,gpu_pixels,sizeof cpu_pixels)==0);
+    if(!(variant&1u)){
+      CHECK(gml_render_completed_screen_write(gpu,gpu_pixels,7,5));
+      CHECK(!gml_render_defer_resident_screen_upscale(gpu,gpu_pixels,7,5,target,width,height));
+    }
+    gml_render_free(cpu); gml_render_free(gpu);
+    free(cpu); free(gpu);
+  }
+  return 1;
+}
+
 static int resident_viewless_base_canvas_order(void){
   GmlRender *cpu=(GmlRender*)calloc(1,sizeof *cpu);
   GmlRender *gpu=(GmlRender*)calloc(1,sizeof *gpu);
@@ -5340,6 +5413,7 @@ int main(void){
   passed+=resident_flat_primitive_public_order();
   passed+=resident_viewless_base_canvas_order();
   passed+=completed_screen_reader_and_writer();
+  passed+=completed_screen_deferred_upscale();
   passed+=resident_borrowed_surface_zero_screen_shader();
   passed+=surface_metadata_preserves_device_authority();
   passed+=resident_centered_full_source_shader();
@@ -5382,6 +5456,6 @@ int main(void){
   passed+=source_free_primitive_rect_replay();
   passed+=stretched_float_exact_replay();
   passed+=filtered_font_exact_recovery();
-  printf("render resource cases: passed=%d failed=%d\n",passed,71-passed);
-  return passed==71?EXIT_SUCCESS:EXIT_FAILURE;
+  printf("render resource cases: passed=%d failed=%d\n",passed,72-passed);
+  return passed==72?EXIT_SUCCESS:EXIT_FAILURE;
 }

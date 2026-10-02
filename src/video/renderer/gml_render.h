@@ -268,6 +268,9 @@ typedef struct {
   int shader;
   /* Whether the content asked for interpolated sampling when it drew. */
   int linear;
+  /* Indirect GUI keeps a zero XRGB high byte in its canonical CPU picture.
+   * Hardware presentation still writes an opaque frontend attachment. */
+  int cpu_rgb_only;
 } GmlRenderDeferredPresentation;
 
 /* The content's own program and what the content set on it, as the graphics backend needs them.
@@ -585,6 +588,10 @@ int gml_render_completed_screen_read(GmlRender *r,uint32_t *pixels,int width,int
 int gml_render_completed_screen_write(GmlRender *r,uint32_t *pixels,int width,int height);
 int gml_render_completed_screen_image(GmlRender *r,const uint32_t *pixels,int width,int height,
                                       GmlRenderImageRef *image);
+/* Retain a complete current SCREEN for pixel-centre nearest enlargement without a CPU shadow. */
+int gml_render_defer_resident_screen_upscale(GmlRender *r,const uint32_t *source,
+                                            int source_width,int source_height,
+                                            uint32_t *target,int target_width,int target_height);
 /* Exact RGB-zero observation, ignoring the coverage byte. A device result never replaces the
  * required non-reconstructible checkpoint or makes CPU pixels current. */
 int gml_render_completed_screen_has_rgb(GmlRender *r,uint32_t *pixels,int width,int height,

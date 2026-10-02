@@ -1112,6 +1112,38 @@ int gml_render_completed_screen_image(GmlRender *r,const uint32_t *pixels,int wi
   *image=source.image;
   return image->resource_class==GML_RENDER_RESOURCE_SCREEN;
 }
+int gml_render_defer_resident_screen_upscale(GmlRender *r,const uint32_t *source,
+                                            int source_width,int source_height,
+                                            uint32_t *target,int target_width,int target_height){
+  GmlRenderDeferredPresentation record={0};
+  GmlRenderImageRef image={0};
+  if(!r || !source || !target || source==target ||
+     source_width<=0 || source_height<=0 ||
+     target_width<source_width || target_height<source_height ||
+     !r->presentation_deferral_enabled || r->pending_fill || r->pending_underlay ||
+     r->pending_presentation || r->target_sp || r->target_id>=0 ||
+     r->fb!=source || r->base_fb!=source ||
+     !gml_render_completed_screen_image(r,source,source_width,source_height,&image)) return 0;
+  /* R03_INDIRECT_GUI_PRESENT: the complete GUI raster is the source, not an
+   * application substitute or a borrowed CPU plane uploaded for presentation. */
+  record.sampling_rule=GML_RENDER_PRESENTATION_PIXEL_CENTRE;
+  record.target_pixels=target;
+  record.target_width=record.destination_width=target_width;
+  record.target_height=record.destination_height=target_height;
+  record.source_pixels=source;
+  record.source_width=record.source_pitch=source_width;
+  record.source_height=source_height;
+  record.extent_x=target_width;
+  record.extent_y=target_height;
+  record.identity=image.identity;
+  record.generation=r->presentation.generation+1u;
+  record.resident_image=image;
+  record.shader=-1;
+  record.cpu_rgb_only=1;
+  r->presentation=record;
+  r->pending_presentation=1;
+  return 1;
+}
 int gml_render_completed_screen_has_rgb(GmlRender *r,uint32_t *pixels,int width,int height,
                                         int *has_rgb){
   GmlRenderImageRef image={0};
