@@ -16,12 +16,14 @@ int gml_render_gpu_opengl_draw_textured_quad(const GmlRenderDrawOp *op,
   const GmlRenderQuad *quad;
   GmlRenderRect region;
   uint32_t region_storage_y;
-  int rotated,warped,stretched_float,automatic_surface;
+  int rotated,warped,stretched_float,stretched_blend,automatic_surface;
   if(!op || !state || !vertices || !source_width || !source_height) return 0;
   quad=&op->payload.quad;
   rotated=quad->shape==GML_RENDER_QUAD_CARDINAL || quad->shape==GML_RENDER_QUAD_GENERAL;
   warped=quad->shape==GML_RENDER_QUAD_WARPED;
   stretched_float=quad->sampling.quantisation==GML_RENDER_QUANTISE_STRETCHED_FLOAT;
+  stretched_blend=stretched_float &&
+    state->rgb_equation==GML_RENDER_BLEND_EXACT_STRETCHED_FLOAT;
   automatic_surface=quad->sampling.quantisation==GML_RENDER_QUANTISE_AUTOMATIC_SURFACE_FIRSTGEN ||
                     quad->sampling.quantisation==GML_RENDER_QUANTISE_AUTOMATIC_SURFACE_MODERN;
   if(automatic_surface && !gml_render_automatic_surface_quad_valid(quad,
@@ -49,16 +51,24 @@ int gml_render_gpu_opengl_draw_textured_quad(const GmlRenderDrawOp *op,
       for(uint32_t field=0;field<4;field++)
         if(!isfinite(span[field]) || span[field]!=floor(span[field])) return 0;
       double maximum=stretched_float?16384.0:4096.0;
-      if(span[0]<1.0 || span[0]>maximum || span[1]<1.0 || span[1]>maximum ||
+      double destination_maximum=stretched_blend?1000000.0:maximum;
+      if(span[0]<1.0 || span[0]>maximum || span[1]<1.0 || span[1]>destination_maximum ||
          span[2]<0.0 || span[3]!=physical ||
          span[2]+span[3]>span[0] || extent!=span[1] ||
          ((uint32_t)span[0]+(uint32_t)span[1]-1u)/(uint32_t)span[1]>8u)
         return 0;
-      if(stretched_float && (span[1]<=span[0] || span[2]!=0.0 ||
-         span[3]!=span[0] ||
-         !gml_render_stretched_float_phase_exact((uint32_t)span[0],(uint32_t)span[1]) ||
-         (axis?quad->y[0]:quad->x[0])!=floor(axis?quad->y[0]:quad->x[0])))
-        return 0;
+      if(stretched_float){
+        double first=axis?quad->y[0]:quad->x[0];
+        double target_extent=axis?op->target.height:op->target.width;
+        if(span[1]<=span[0] || (!stretched_blend &&
+           (span[2]!=0.0 || span[3]!=span[0])) || first!=floor(first) ||
+           first<=-span[1] || first>=target_extent) return 0;
+        uint32_t phase_first=stretched_blend?(uint32_t)fmax(0.0,-first):0u;
+        uint32_t phase_last=stretched_blend
+          ?(uint32_t)fmin(span[1],target_extent-first):(uint32_t)span[1];
+        if(!gml_render_stretched_float_visible_phase_exact((uint32_t)span[0],(uint32_t)span[1],
+                                                           phase_first,phase_last-phase_first)) return 0;
+      }
     }
   }
   region_storage_y=rendered_source_origin
@@ -92,6 +102,7 @@ int gml_render_gpu_opengl_draw_textured_quad(const GmlRenderDrawOp *op,
     vertex[5]=(float)((colour>>8)&255u)/255.0f;
     vertex[6]=(float)(colour&255u)/255.0f;
     vertex[7]=(float)((colour>>24)&255u)/255.0f*(float)state->alpha/255.0f;
+    if(stretched_blend) vertex[7]=(float)quad->filtered_draw_alpha;
     vertex[8]=(float)region.x;
     vertex[9]=(float)region_storage_y;
     vertex[10]=(float)((uint32_t)region.x+region.width-1u);

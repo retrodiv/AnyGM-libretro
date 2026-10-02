@@ -1259,6 +1259,80 @@ static int scene_alpha_composition_api(GmlGpuApi api){
             draws==anygm_test_graphics_scene_draw_calls(),
             "unqualified stretched descriptors refuse before their valid clear prefix");
   }
+  /* Covered float magnifications keep original draw alpha and ordered GPU
+   * destination snapshots. A later bad descriptor refuses the entire batch. */
+  {
+    static const uint8_t low_alpha[16]={255,32,16,1,32,255,16,1,
+                                       16,32,255,1,255,255,255,1};
+    GmlRenderImageRef covered_source={GML_RENDER_RESOURCE_ATLAS,31u,1u,1u};
+    GmlRenderImageUpload covered_upload=upload;
+    GmlRenderDrawOp covered_operations[3];
+    GmlRenderDrawStateSnapshot covered_state=state;
+    GmlRenderDrawBatch covered_batch={covered_operations,3u,&covered_state,1u};
+    covered_upload.image=covered_source;
+    covered_upload.pixel_format=GML_RENDER_PIXEL_RGBA8888;
+    covered_upload.bytes=low_alpha;
+    REQUIRE(service.upload(service.context,&covered_upload),"low-alpha stretched atlas uploaded");
+    memcpy(covered_operations,operations,sizeof covered_operations);
+    covered_state.rgb_source_factor=GML_RENDER_BLEND_SOURCE_ALPHA;
+    covered_state.rgb_destination_factor=GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA;
+    covered_state.alpha_source_factor=GML_RENDER_BLEND_ONE;
+    covered_state.alpha_destination_factor=GML_RENDER_BLEND_ZERO;
+    covered_state.rgb_equation=covered_state.alpha_equation=GML_RENDER_BLEND_EXACT_STRETCHED_FLOAT;
+    for(unsigned index=0;index<3u;index++){
+      covered_operations[index].target.image.resource_class=GML_RENDER_RESOURCE_SCREEN;
+      covered_operations[index].target.image.identity=32u;
+      if(!index) continue;
+      covered_operations[index].sources=&covered_source;
+      covered_operations[index].reconstruction_mode=GML_RENDER_DEVICE_CHECKPOINT;
+      covered_operations[index].payload.quad.filtered_draw_alpha=index==1u?0.6:0x1p-53;
+      for(unsigned corner=0;corner<4u;corner++)
+        covered_operations[index].payload.quad.corner_colour[corner]=0xFFa0c0e0u;
+    }
+    unsigned copies=anygm_test_graphics_scene_copies();
+    int draws=anygm_test_graphics_scene_draw_calls();
+    result=service.submit(service.context,&covered_batch);
+    REQUIRE(result.status==GML_RENDER_EXEC_ACCEPTED && result.accepted_prefix==3u &&
+            anygm_test_graphics_scene_copies()==copies+2u &&
+            anygm_test_graphics_scene_draw_calls()==draws+2 &&
+            !anygm_test_graphics_read_pixels(),
+            "overlapping float blends snapshot their own GPU predecessor without CPU reads");
+    for(unsigned variant=0;variant<12u;variant++){
+      GmlRenderDrawOp invalid[3];
+      GmlRenderDrawStateSnapshot invalid_state=covered_state;
+      GmlRenderDrawBatch refused={invalid,3u,&invalid_state,1u};
+      memcpy(invalid,covered_operations,sizeof invalid);
+      if(variant==0) invalid[2].payload.quad.filtered_draw_alpha=NAN;
+      if(variant==1) invalid[2].payload.quad.filtered_draw_alpha=0x1p-65;
+      if(variant==2) invalid[2].payload.quad.filtered_draw_alpha=1.1;
+      if(variant==3) invalid[2].scene_family=GML_RENDER_SCENE_BACKGROUND;
+      if(variant==4) invalid[2].reconstruction_mode=GML_RENDER_REPLAY_EXACT;
+      if(variant==5) invalid[2].payload.quad.x[0]=invalid[2].payload.quad.x[3]=0.25;
+      if(variant==6) invalid[2].payload.quad.span_x[0]=1.0;
+      if(variant==7) invalid[2].payload.quad.span_x[1]=1000001.0;
+      if(variant==8) invalid[2].payload.quad.corner_colour[1]=0xFF123456u;
+      if(variant==9) invalid[2].payload.quad.sampling.quantisation=0u;
+      if(variant==10) invalid_state.alpha_equation=GML_RENDER_BLEND_ADD;
+      if(variant==11) invalid[2].target.pixel_format=GML_RENDER_PIXEL_XRGB8888;
+      int clears=anygm_test_graphics_clear_calls();
+      draws=anygm_test_graphics_scene_draw_calls();
+      copies=anygm_test_graphics_scene_copies();
+      result=service.submit(service.context,&refused);
+      REQUIRE(result.status==GML_RENDER_EXEC_UNSUPPORTED && !result.accepted_prefix &&
+              anygm_test_graphics_clear_calls()==clears &&
+              anygm_test_graphics_scene_draw_calls()==draws &&
+              anygm_test_graphics_scene_copies()==copies,
+              "unqualified float descriptor refuses before its clear, prefix and snapshot");
+    }
+    draws=anygm_test_graphics_scene_draw_calls();
+    anygm_test_graphics_fail_scene_draw_at((unsigned)draws+2u);
+    result=service.submit(service.context,&covered_batch);
+    REQUIRE(result.status==GML_RENDER_EXEC_RECOVERABLE_ERROR && result.accepted_prefix==2u &&
+            result.uncertain_target_count==1u &&
+            result.uncertain_targets[0].identity==32u,
+            "a later float draw failure keeps the accepted prefix and marks its target uncertain");
+    anygm_test_graphics_fail_scene_draw_at(0u);
+  }
   /* Filtered font quantisation carries double phase and generation policy,
    * not the opaque stretched rule or fixed-function source-over. */
   source.incarnation=4u;

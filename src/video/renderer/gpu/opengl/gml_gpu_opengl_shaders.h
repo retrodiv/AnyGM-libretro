@@ -133,6 +133,8 @@
 
 #define GML_GPU_OPENGL_SCENE_FRAGMENT_BODY \
   "uniform sampler2D u_image;\n" \
+  "uniform sampler2D u_previous;\n" \
+  "uniform ivec2 u_region_origin;\n" \
   "uniform int u_filter;\n" \
   "uniform vec2 u_extent;\n" \
   "in vec2 v_texcoord;\n" \
@@ -230,7 +232,7 @@
   "  ivec2 lo; vec2 f;\n" \
   "  // R03_SHADER_INVERSE_GEOMETRY: affine inverse or triangle-local page UV.\n" \
   "  // R03_SHADER_STRETCHED_FLOAT: exact integer phase before the CPU band's float weights.\n" \
-  "  if(u_filter==11){\n" \
+  "  if(u_filter==11 || u_filter==14){\n" \
   "    ivec2 logical=ivec2(v_span_x.x,v_span_y.x),dest=ivec2(v_span_x.y,v_span_y.y);\n" \
   "    // Add one denominator before division so edge phases never use negative remainder.\n" \
   "    ivec2 numerator=(ivec2(floor(delta))*2+ivec2(1))*logical+dest;\n" \
@@ -290,7 +292,16 @@
   "  ivec2 first=ivec2(v_clamp.xy),last=ivec2(v_clamp.zw-v_clamp.xy);\n" \
   "  vec4 p00,p01,p10,p11;\n" \
   "  // R03_SHADER_FILTERED_MARGIN: logical trim and physical atlas edge taps.\n" \
-  "  if(v_margin<0.5){\n" \
+  "  if(u_filter==14){\n" \
+  "    // Clamp logical source edges before resolving transparent packed trim.\n" \
+  "    ivec2 logical=ivec2(v_span_x.x,v_span_y.x),trim=ivec2(v_span_x.z,v_span_y.z);\n" \
+  "    ivec2 a=clamp(lo,ivec2(0),logical-ivec2(1))-trim;\n" \
+  "    ivec2 b=clamp(lo+ivec2(1),ivec2(0),logical-ivec2(1))-trim;\n" \
+  "    p00=margin_tap(a,first,last,31);\n" \
+  "    p01=margin_tap(ivec2(b.x,a.y),first,last,31);\n" \
+  "    p10=margin_tap(ivec2(a.x,b.y),first,last,31);\n" \
+  "    p11=margin_tap(b,first,last,31);\n" \
+  "  } else if(v_margin<0.5){\n" \
   "    ivec2 a=clamp(lo,ivec2(0),last),b=clamp(lo+ivec2(1),ivec2(0),last);\n" \
   "    p00=floor(texelFetch(u_image,first+a,0)*255.0+0.5);\n" \
   "    p01=floor(texelFetch(u_image,first+ivec2(b.x,a.y),0)*255.0+0.5);\n" \
@@ -307,13 +318,29 @@
   "  // sample equation at texel centres, with no separate nearest-colour kernel.\n" \
   "  vec4 weighted=(p00*(1.0-f.x)*(1.0-f.y)+p01*f.x*(1.0-f.y)+\n" \
   "                 p10*(1.0-f.x)*f.y+p11*f.x*f.y);\n" \
-  "  if(u_filter==11){\n" \
+  "  if(u_filter==11 || u_filter==14){\n" \
   "    vec4 weights=vec4((1.0-f.x)*(1.0-f.y),f.x*(1.0-f.y),\n" \
   "                      (1.0-f.x)*f.y,f.x*f.y);\n" \
   "    vec4 a=p00*weights.x,b=p01*weights.y,c=p10*weights.z,d=p11*weights.w;\n" \
   "    for(int channel=0;channel<4;channel++)\n" \
   "      weighted[channel]=stretched_float_add(stretched_float_add(\n" \
   "        stretched_float_add(a[channel],b[channel]),c[channel]),d[channel]);\n" \
+  "  }\n" \
+  "  // R03_SHADER_STRETCHED_COVERED_ALPHA: the CPU float band blends unrounded\n" \
+  "  // channels and stamps alpha only where unrounded effective alpha is positive.\n" \
+  "  if(u_filter==14){\n" \
+  "    float oa=(weighted.a*(1.0/255.0))*v_colour.a;\n" \
+  "    if(oa<=0.0) discard;\n" \
+  "    vec3 rgb=weighted.rgb*v_colour.rgb;\n" \
+  "    if(oa<1.0){\n" \
+  "      vec3 previous=floor(texelFetch(u_previous,ivec2(gl_FragCoord.xy)-u_region_origin,0).rgb*255.0+vec3(0.5));\n" \
+  "      float ia=1.0-oa;\n" \
+  "      for(int channel=0;channel<3;channel++)\n" \
+  "        rgb[channel]=stretched_float_add(rgb[channel]*oa,previous[channel]*ia);\n" \
+  "    }\n" \
+  "    for(int channel=0;channel<3;channel++)\n" \
+  "      rgb[channel]=floor(stretched_float_add(rgb[channel],0.5));\n" \
+  "    o_color=vec4(rgb/255.0,1.0); return;\n" \
   "  }\n" \
   "  vec4 sampled=floor(weighted+vec4(0.5));\n" \
   "  // R03_SHADER_TINT_ALPHA: truncating RGB tint and per-draw alpha.\n" \

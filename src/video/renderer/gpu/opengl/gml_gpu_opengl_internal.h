@@ -132,7 +132,7 @@ typedef struct GlScene {
   GLuint program,vertex_buffer,vertex_array;
   GLint a_position,a_texcoord,a_colour,a_clamp,a_map,a_step,a_margin;
   GLint a_span_x,a_span_y,a_span_active;
-  GLint u_extent,u_image,u_filter;
+  GLint u_extent,u_image,u_filter,u_previous,u_region_origin;
   GlSceneExactProgram exact_programs[3];
   GLuint snapshot_texture,rgb_query;
   uint32_t snapshot_width,snapshot_height;

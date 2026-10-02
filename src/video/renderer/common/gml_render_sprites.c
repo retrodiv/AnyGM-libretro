@@ -480,6 +480,10 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
     !positioned_axis && !filtered_real_text && !nearest_mode;
   int span_active=0;
   int stretched_float=0;
+  int stretched_replay_exact=0;
+  int stretched_magnification=family==GML_RENDER_SCENE_SPRITE && opaque_target_alpha &&
+    !rotated_sprite && !corner_colours && !positioned_axis && !nearest_mode &&
+    !box_stretched && xs>1.0 && ys>1.0;
   int exact_filtered_font=0;
   int margin_left=0,margin_top=0,margin_right=0,margin_bottom=0;
   uint32_t margin_mask=0u;
@@ -504,7 +508,7 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
      !isfinite(left) || !isfinite(top) || !isfinite(xs) || !isfinite(ys) ||
      (rotated_sprite && !isfinite(rotation)) ||
      !isfinite(alpha) || alpha<0.0 || alpha>1.0 ||
-     (opaque_target_alpha && !filtered_real_text &&
+     (opaque_target_alpha && !filtered_real_text && !stretched_magnification &&
       (!r->fb_opaque_known || !r->fb_all_opaque)) ||
      ((transparent_stretched_trim || box_stretched) &&
       (family!=GML_RENDER_SCENE_SPRITE || rotated_sprite || xs<=0.0 || ys<=0.0)) ||
@@ -572,7 +576,7 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
      (uint64_t)(uint32_t)page->sy+(uint32_t)page->sh>source.height) return 0;
   /* The full logical quad can extend beyond the visible page, but its prepared UVs must remain
    * inside the atlas even though transparent taps themselves never fetch those neighbours. */
-  if(transparent_stretched_trim && !box_stretched &&
+  if(transparent_stretched_trim && !box_stretched && !stretched_magnification &&
      ((uint32_t)page->sx<(uint32_t)page->tx ||
       (uint32_t)page->sy<(uint32_t)page->ty ||
       (uint64_t)(uint32_t)page->sx+(uint32_t)page->bw-(uint32_t)page->tx>source.width ||
@@ -590,11 +594,12 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
   if(margin_right) margin_mask|=GML_RENDER_MARGIN_RIGHT;
   if(margin_bottom) margin_mask|=GML_RENDER_MARGIN_BOTTOM;
   resident_classify_page(page,atlas);
-  stretched_float=family==GML_RENDER_SCENE_SPRITE && opaque_target_alpha &&
-    !rotated_sprite && !corner_colours && !positioned_axis && !nearest_mode &&
-    !box_stretched && !transparent_stretched_trim &&
-    page->scene_fully_opaque && (colour&0xFFFFFFu)==0xFFFFFFu && alpha==1.0 &&
-    xs>1.0 && ys>1.0;
+  /* R03-P9-STRETCHED-COVERED-ALPHA: magnification's original CPU band
+   * keeps float channels and alpha before blending, including logical trim.
+   * Opaque-white pages retain the older exact retained-source recipe. */
+  stretched_float=stretched_magnification;
+  stretched_replay_exact=stretched_float && !transparent_stretched_trim &&
+    page->scene_fully_opaque && (colour&0xFFFFFFu)==0xFFFFFFu && alpha==1.0;
   if(!page->scene_fully_opaque && family!=GML_RENDER_SCENE_SPRITE &&
      !filtered_real_text && !identity_gui_atlas &&
      nearest_mode!=2 && nearest_mode!=5) return 0;
@@ -702,16 +707,26 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
   }
   if(!isfinite(width) || !isfinite(height) || width<1.0 || height<1.0 ||
      x0+width>10000000.0 || y0+height>10000000.0) return 0;
-  if(stretched_float && (width>16384.0 || height>16384.0 ||
-     page->bw>16384 || page->bh>16384 || floor(x0)!=x0 || floor(y0)!=y0 ||
-     !gml_render_stretched_float_phase_exact((uint32_t)page->bw,(uint32_t)width) ||
-     !gml_render_stretched_float_phase_exact((uint32_t)page->bh,(uint32_t)height))) return 0;
   if(x0<=-width || y0<=-height || x0>=r->fbw || y0>=r->fbh){
     /* The unit-scale first-generation point leaf has the same snapped half-open
      * rectangle. A fully clipped draw leaves queued device work untouched. */
     if((nearest_mode==4 && !rotated_sprite && xs==1.0 && ys==1.0) ||
        additive_background) return 1;
     return 0;
+  }
+  if(stretched_float){
+    if(width>1000000.0 || height>1000000.0 || page->bw>16384 || page->bh>16384 ||
+       floor(x0)!=x0 || floor(y0)!=y0 || alpha<0x1p-64) return 0;
+    uint32_t first_x=(uint32_t)fmax(0.0,-x0),first_y=(uint32_t)fmax(0.0,-y0);
+    uint32_t last_x=(uint32_t)fmin(width,(double)r->fbw-x0);
+    uint32_t last_y=(uint32_t)fmin(height,(double)r->fbh-y0);
+    if(!gml_render_stretched_float_visible_phase_exact((uint32_t)page->bw,(uint32_t)width,
+                                               first_x,last_x-first_x) ||
+       !gml_render_stretched_float_visible_phase_exact((uint32_t)page->bh,(uint32_t)height,
+                                               first_y,last_y-first_y)) return 0;
+    stretched_replay_exact=stretched_replay_exact && width<=16384.0 && height<=16384.0 &&
+      gml_render_stretched_float_phase_exact((uint32_t)page->bw,(uint32_t)width) &&
+      gml_render_stretched_float_phase_exact((uint32_t)page->bh,(uint32_t)height);
   }
   if((nearest_mode==3 || nearest_mode==6) &&
      (!modern_nearest_axis_bias(left,x0,xs,width,page->sw,&nearest_bias_x) ||
@@ -730,7 +745,7 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
   region=(GmlRenderRect){page->sx,page->sy,(uint32_t)page->sw,(uint32_t)page->sh};
   source_ref=source.image;
   operation.opcode=GML_RENDER_OP_TEXTURED_QUAD;
-  operation.reconstruction_mode=additive_background || stretched_float
+  operation.reconstruction_mode=additive_background || stretched_replay_exact
     ?GML_RENDER_REPLAY_EXACT:GML_RENDER_DEVICE_CHECKPOINT;
   operation.scene_family=family;
   operation.source_count=1u;
@@ -885,7 +900,16 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
     state.coverage_policy=GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA;
     operation.payload.quad.filtered_draw_alpha=alpha;
   }
-  if(exact_filtered_font){
+  if(stretched_float && !stretched_replay_exact){
+    operation.payload.quad.filtered_draw_alpha=alpha;
+    for(unsigned corner=0;corner<4u;corner++)
+      operation.payload.quad.corner_colour[corner]|=0xFF000000u;
+    state.rgb_source_factor=GML_RENDER_BLEND_SOURCE_ALPHA;
+    state.rgb_destination_factor=GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA;
+    state.alpha_source_factor=GML_RENDER_BLEND_ONE;
+    state.alpha_destination_factor=GML_RENDER_BLEND_ZERO;
+    state.rgb_equation=state.alpha_equation=GML_RENDER_BLEND_EXACT_STRETCHED_FLOAT;
+  } else if(exact_filtered_font){
     state.rgb_source_factor=GML_RENDER_BLEND_SOURCE_ALPHA;
     state.rgb_destination_factor=GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA;
     state.alpha_source_factor=opaque_target_alpha

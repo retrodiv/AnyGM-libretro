@@ -71,7 +71,8 @@ typedef struct FakeDriver {
   GLuint scene_texture;
   unsigned shader_stage[256];
   /* The uniforms the last linked program declares, read from the text it was linked from. */
-  struct { char name[48]; GLenum type; GLint size; } uniform[64];
+  /* The declaration parser admits 63 name bytes, plus an array's [0] suffix. */
+  struct { char name[68]; GLenum type; GLint size; } uniform[64];
   int uniform_declared;
   char shader_source[2][4096];
   GLint strip_draw_calls;
@@ -342,7 +343,8 @@ static void fake_declare_uniforms(const char *text){
       char *bracket=strchr(name,'[');
       GLint size=1;
       if(bracket){ size=atoi(bracket+1); *bracket='\0'; }
-      snprintf(g_fake.uniform[g_fake.uniform_declared].name,48,"%s%s",name,bracket?"[0]":"");
+      snprintf(g_fake.uniform[g_fake.uniform_declared].name,
+               sizeof g_fake.uniform[0].name,"%s%s",name,bracket?"[0]":"");
       g_fake.uniform[g_fake.uniform_declared].type=fake_uniform_type(type_word);
       g_fake.uniform[g_fake.uniform_declared].size=size;
       g_fake.uniform_declared++;

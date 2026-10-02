@@ -507,6 +507,11 @@ static int stretched_float_exact_replay(void){
   CHECK(!gml_render_stretched_float_phase_exact(0u,4u));
   CHECK(!gml_render_stretched_float_phase_exact(4u,4u));
   CHECK(!gml_render_stretched_float_phase_exact(2u,16385u));
+  CHECK(gml_render_stretched_float_visible_phase_exact(32u,240958u,23998u,12u));
+  CHECK(!gml_render_stretched_float_visible_phase_exact(32u,1000001u,23998u,12u));
+  CHECK(!gml_render_stretched_float_visible_phase_exact(16384u,1000000u,990000u,10u));
+  CHECK(!gml_render_stretched_float_visible_phase_exact(32u,240958u,23998u,0u));
+  CHECK(!gml_render_stretched_float_visible_phase_exact(32u,240958u,240957u,2u));
   static const uint8_t authored[16]={255,0,0,255,0,255,0,255,
                                     0,0,255,255,255,255,255,255};
   static const uint32_t expected[16]={
@@ -1481,7 +1486,7 @@ static int bounded_checkpoint_staging_lifecycle(void){
 
 static int pending_shader_source_cross_target(void){
   uint32_t first_pixels[16],second_pixels[16],source_pixels[4];
-  GmlRenderResourceSource source=source_view(source_pixels,1),pending={0};
+  GmlRenderResourceSource source={0},pending={0};
   GmlRenderImageRef first_ref=target_ref(1u,1u),second_ref=target_ref(1u,2u);
   GmlRenderDrawOp first_op={0},second_op={0};
   GmlRenderDrawStateSnapshot first_state=quad_state(0),second_state=quad_state(0);
@@ -1496,6 +1501,7 @@ static int pending_shader_source_cross_target(void){
   fill(first_pixels,0xFF010203u);
   fill(second_pixels,0xFF040506u);
   for(int index=0;index<4;index++) source_pixels[index]=0xFF112233u;
+  source=source_view(source_pixels,1);
   fake.readback_colour=0xFF6587A9u;
   first=gml_render_resource_create(first_ref,4u,4u,GML_RENDER_PIXEL_ARGB8888,
     first_pixels,(GmlRenderResourceLimits){0});
@@ -3053,27 +3059,34 @@ static int resident_identity_gui_filtered_atlas(void){
   CHECK(render && gml_render_init(render,NULL)==0);
   const int atlas_index=render->n_atlas;
   GmlAtlas *atlases=(GmlAtlas*)realloc(render->atlas,
-      (size_t)(atlas_index+1)*sizeof *render->atlas);
+      (size_t)(atlas_index+2)*sizeof *render->atlas);
   CHECK(atlases);
   render->atlas=atlases;
-  memset(&render->atlas[atlas_index],0,sizeof *render->atlas);
-  render->n_atlas=atlas_index+1;
-  render->tpag=(GmlTpag*)calloc(1,sizeof *render->tpag);
+  memset(&render->atlas[atlas_index],0,2u*sizeof *render->atlas);
+  render->n_atlas=atlas_index+2;
+  render->tpag=(GmlTpag*)calloc(2,sizeof *render->tpag);
   render->bg=(GmlBg*)calloc(1,sizeof *render->bg);
-  render->spr=(GmlSprite*)calloc(1,sizeof *render->spr);
+  render->spr=(GmlSprite*)calloc(2,sizeof *render->spr);
   CHECK(render->atlas && render->tpag && render->bg && render->spr);
-  render->n_tpag=render->n_bg=render->n_spr=1;
+  render->n_tpag=render->n_spr=2;
+  render->n_bg=1;
   render->atlas[atlas_index].px=(uint8_t*)malloc(ATLAS*ATLAS*4u);
+  render->atlas[atlas_index+1].px=(uint8_t*)malloc(ATLAS*ATLAS*4u);
   render->spr[0].frame=(int*)calloc(1,sizeof(int));
-  CHECK(render->atlas[atlas_index].px && render->spr[0].frame);
+  render->spr[1].frame=(int*)calloc(1,sizeof(int));
+  CHECK(render->atlas[atlas_index].px && render->atlas[atlas_index+1].px &&
+        render->spr[0].frame && render->spr[1].frame);
   for(unsigned index=0;index<ATLAS*ATLAS;index++){
     uint8_t *pixel=render->atlas[atlas_index].px+index*4u;
     pixel[0]=(uint8_t)(32u+index*3u);
     pixel[1]=(uint8_t)(48u+index*2u);
     pixel[2]=(uint8_t)(64u+index);
     pixel[3]=255u;
+    memcpy(render->atlas[atlas_index+1].px+index*4u,pixel,4u);
+    render->atlas[atlas_index+1].px[index*4u+3u]=1u;
   }
   render->atlas[atlas_index].w=render->atlas[atlas_index].h=ATLAS;
+  render->atlas[atlas_index+1].w=render->atlas[atlas_index+1].h=ATLAS;
   render->tpag[0].atlas=atlas_index;
   render->tpag[0].sx=render->tpag[0].sy=1;
   render->tpag[0].sw=render->tpag[0].sh=PAGE;
@@ -3081,17 +3094,29 @@ static int resident_identity_gui_filtered_atlas(void){
   render->tpag[0].bw=render->tpag[0].bh=PAGE;
   render->spr[0].w=render->spr[0].h=PAGE;
   render->spr[0].n_frames=1;
+  render->tpag[1]=render->tpag[0];
+  render->tpag[1].atlas=atlas_index+1;
+  render->spr[1].w=render->spr[1].h=PAGE;
+  render->spr[1].n_frames=1;
+  render->spr[1].frame[0]=1;
   content.bytecode=15;
   render->win=&content;
   render->interp=1;
   /* Keep the qualified identity cases, then exercise the same pixel rules on
    * an owned nonuniformly mapped GUI screen: ordinary/ext, stretched tint,
    * reflection, trim and bounded reduction share one mapping boundary. */
-  for(unsigned variant=0;variant<14u;variant++){
-    const int trimmed=variant==11u || variant==12u;
+  for(unsigned variant=0;variant<21u;variant++){
+    const int trimmed=variant==11u || variant==12u || variant==15u || variant==19u;
+    const uint32_t fill=variant==15u || variant==19u?0x00102030u:
+      variant>=14u?0x40102030u:0xff102030u;
+    content.bytecode=variant==20u?17:15;
+    render->tpag[0].scene_opaque_checked=0;
     render->tpag[0].tx=render->tpag[0].ty=trimmed;
     render->tpag[0].bw=render->tpag[0].bh=PAGE+trimmed;
     render->spr[0].w=render->spr[0].h=PAGE+trimmed;
+    render->tpag[1].tx=render->tpag[1].ty=trimmed;
+    render->tpag[1].bw=render->tpag[1].bh=PAGE+trimmed;
+    render->spr[1].w=render->spr[1].h=PAGE+trimmed;
     unsigned visible=0;
     for(unsigned accelerated=0;accelerated<2u;accelerated++){
       GmlRenderJournalMetrics baseline={0};
@@ -3104,7 +3129,7 @@ static int resident_identity_gui_filtered_atlas(void){
         gml_render_resource_journal_metrics(render->base_scene_resource,&baseline);
       gml_render_gui_begin(render,WIDTH,HEIGHT);
       if(variant>=6u) gml_render_gui_set_size(render,5,4);
-      gml_render_set_pending_fill(render,0xff102030u);
+      gml_render_set_pending_fill(render,fill);
       switch(variant){
         case 0: gml_draw_background(render,0,0.25,0.3); break;
         case 1: gml_draw_background_ext(render,0,-0.6,-1.25,1.6796875,1.715,
@@ -3130,14 +3155,32 @@ static int resident_identity_gui_filtered_atlas(void){
                                              0xa0c0e0u,0.6); break;
         case 12: gml_draw_sprite_ext(render,0,0,0.3,0.5,0.75,0.65,
                                       0.0,0xffffffu,1.0); break;
-        default: gml_draw_sprite_stretched(render,0,0,0.3,0.5,1.0,1.0,
+        case 13: gml_draw_sprite_stretched(render,0,0,0.3,0.5,1.0,1.0,
+                                             0xffffffu,1.0); break;
+        case 14: gml_draw_sprite_stretched(render,0,0,-0.3,0.5,6.0,5.0,
+                                             0xa0c0e0u,0.6); break;
+        case 15: gml_draw_sprite_stretched(render,0,0,-0.3,0.5,6.0,5.0,
+                                             0xa0c0e0u,0.6); break;
+        case 16: gml_draw_sprite_stretched(render,0,0,-9999.0,-9999.0,
+                                             100399.0,100224.0,0u,1.0); break;
+        case 17: gml_draw_sprite_stretched(render,0,0,-9999.0,-9999.0,
+                                             100399.0,100224.0,0u,0x1p-53); break;
+        case 19: gml_draw_sprite_stretched(render,1,0,-0.3,0.5,6.0,5.0,
+                                             0xa0c0e0u,0.6); break;
+        default: gml_draw_sprite_stretched(render,0,0,0.3,0.5,6.0,5.0,
                                              0xffffffu,1.0); break;
       }
       if(!accelerated){
         gml_render_flush_pending_fill(render);
         for(unsigned index=0;index<WIDTH*HEIGHT;index++)
-          if(cpu[index]!=0xff102030u) visible++;
+          if(cpu[index]!=fill) visible++;
         CHECK(visible>0u);
+        if(variant==17u){
+          /* Positive float alpha still stamps covered destination alpha even
+           * when its RGB contribution rounds to zero. */
+          for(unsigned index=0;index<WIDTH*HEIGHT;index++)
+            CHECK(cpu[index]==0xff102030u);
+        }
       } else {
         int submits=fake.submits;
         GmlRenderJournalMetrics metrics={0};
@@ -3147,7 +3190,7 @@ static int resident_identity_gui_filtered_atlas(void){
         CHECK(gml_render_resource_image_ref(render->base_scene_resource).resource_class==
               GML_RENDER_RESOURCE_SCREEN);
         gml_render_resource_journal_metrics(render->base_scene_resource,&metrics);
-        if(variant==8u){
+        if(variant==8u || variant==18u || variant==20u){
           const uint32_t *recovered=NULL;
           /* The already exact opaque-white stretched sampler retains its
            * recipe rather than publishing a device checkpoint. */

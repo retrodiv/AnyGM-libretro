@@ -27,7 +27,7 @@ REQUIRED_RULES = {
     "R03-P7-LAYER-SAMPLER-FALLBACK", "R03-P7-LAYER-BLUR-GLOW-FALLBACK",
     "R03-P7-LAYER-NUMBERED-TARGET", "R03-P7-VIEWLESS-BASE", "R03-P7-INDIRECT-GUI",
     "R03-P9-CLASSIC-VIEWLESS", "R03-P9-GUI-FILTERED-ATLAS",
-    "R03-P9-GUI-MAPPED-SPRITE",
+    "R03-P9-GUI-MAPPED-SPRITE", "R03-P9-STRETCHED-COVERED-ALPHA",
     "R03-P9-DEVICE-CHECKPOINT-SPAN",
     "R03-P7-MULTIVIEW-SEED", "R03-P7-MULTIVIEW-RETAINED",
     "R03-P7-MULTIVIEW-SURFACE", "R03-P7-PRESENT-GEOMETRY",
@@ -257,6 +257,11 @@ def self_test() -> None:
                   if not line.startswith("| R03-P9-GUI-FILTERED-ATLAS |")),
         "\n".join(line for line in document.splitlines()
                   if not line.startswith("| R03-P9-GUI-MAPPED-SPRITE |")),
+        "\n".join(line for line in document.splitlines()
+                  if not line.startswith("| R03-P9-STRETCHED-COVERED-ALPHA |")),
+        document.replace("::R03_SHADER_STRETCHED_COVERED_ALPHA",
+                         "::OBSOLETE_STRETCHED_COVERED_ALPHA", 1),
+        document.replace("::scene_snapshot_region", "::obsolete_snapshot_region", 1),
         document.replace("::R03_SHADER_GUI_FILTERED_ALPHA_STAMP",
                          "::OBSOLETE_GUI_FILTERED_ALPHA_STAMP", 1),
         document.replace("::gml_render_defer_resident_screen_upscale",

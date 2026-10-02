@@ -12,6 +12,8 @@ struct GmlPlanShader;
 /* Admission proof for the retained opaque stretch rule, including the CPU
  * band's double-to-float phase boundary. No target pixels are read or written. */
 int gml_render_stretched_float_phase_exact(uint32_t logical,uint32_t destination);
+int gml_render_stretched_float_visible_phase_exact(uint32_t logical,uint32_t destination,
+                                                  uint32_t first,uint32_t count);
 
 enum { GML_RENDER_MAX_SAMPLERS=8, GML_RENDER_MAX_UNCERTAIN_TARGETS=8 };
 
@@ -112,7 +114,7 @@ typedef struct GmlRenderSamplingPolicy {
 } GmlRenderSamplingPolicy;
 
 enum {
-  /* Opaque white stretched magnification: integral logical/destination sizes
+  /* Stretched magnification: integral logical/destination sizes
    * prepare a rational phase and the CPU band's four float weights. */
   GML_RENDER_QUANTISE_STRETCHED_FLOAT=1u,
   /* Real-font four-tap channels retain the CPU double expression and generation blend. */
@@ -146,7 +148,10 @@ typedef enum GmlRenderBlendEquation {
    * source-over channel with denominator 255, preserving the CPU veil's double expression. */
   GML_RENDER_BLEND_EXACT8_ROUND_VEIL=4,
   GML_RENDER_BLEND_EXACT_FILTERED_FONT=5,
-  GML_RENDER_BLEND_EXACT_AUTOMATIC_SURFACE=6
+  GML_RENDER_BLEND_EXACT_AUTOMATIC_SURFACE=6,
+  /* The stretched CPU band keeps unrounded float channels/alpha and writes
+   * opaque coverage. Mix against an ordered device-local destination snapshot. */
+  GML_RENDER_BLEND_EXACT_STRETCHED_FLOAT=7
 } GmlRenderBlendEquation;
 
 enum {
