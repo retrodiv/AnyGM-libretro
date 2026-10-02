@@ -80,6 +80,8 @@ typedef struct FakeDriver {
   GLuint attached_texture;
   unsigned read_pixels;
   uint8_t readback_alpha;
+  int checkpoint_mask;
+  unsigned readback_error_at,pending_error;
   unsigned async_read_pixels;
   GLuint bound_pack_buffer;
   unsigned char pack_store[2][64*64*4];
@@ -108,8 +110,11 @@ void anygm_test_graphics_reset(void){
   g_fake.active_uniform_override=-1;
   g_fake.rgb_query_result=1u;
   g_fake.readback_alpha=255u;
+  g_fake.checkpoint_mask=-1;
 }
 void anygm_test_graphics_readback_alpha(unsigned alpha){ g_fake.readback_alpha=(uint8_t)alpha; }
+void anygm_test_graphics_checkpoint_mask(unsigned bits){ g_fake.checkpoint_mask=(int)(bits&63u); }
+void anygm_test_graphics_fail_readback_at(unsigned ordinal){ g_fake.readback_error_at=ordinal; }
 void anygm_test_graphics_rgb_query_result(unsigned result){ g_fake.rgb_query_result=result; }
 void anygm_test_graphics_active_query(unsigned name){ g_fake.active_query=name; }
 unsigned anygm_test_graphics_rgb_queries(void){ return g_fake.rgb_queries; }
@@ -124,7 +129,11 @@ static void note_call(void){
   if(!g_fake.allow_calls) g_fake.calls_after_forget++;
 }
 
-static GLenum fake_GetError(void){ note_call(); return GL_NO_ERROR; }
+static GLenum fake_GetError(void){
+  unsigned error=g_fake.pending_error;
+  note_call();g_fake.pending_error=0;
+  return error;
+}
 static const GLubyte *fake_GetString(GLenum name){ (void)name; note_call(); return (const GLubyte*)"fake"; }
 static void fake_GetIntegerv(GLenum name,GLint *value){
   note_call();
@@ -385,10 +394,15 @@ static void fake_ReadPixels(GLint x,GLint y,GLsizei width,GLsizei height,GLenum 
     return;
   }
   g_fake.read_pixels++;
+  if(g_fake.read_pixels==g_fake.readback_error_at) g_fake.pending_error=0x0502u;
   for(GLsizei row=0;row<height;row++)
     for(GLsizei column=0;column<width;column++){
       uint8_t *px=out+((size_t)row*(size_t)width+(size_t)column)*4u;
       px[0]=(uint8_t)row; px[1]=(uint8_t)column; px[2]=0x33; px[3]=g_fake.readback_alpha;
+      if(width==3 && height==2 && g_fake.checkpoint_mask>=0){
+        px[0]=(g_fake.checkpoint_mask&(1<<(row*3+column)))?255u:0u;
+        px[1]=px[2]=0u;px[3]=255u;
+      }
     }
 }
 static void fake_UniformMatrix3fv(GLint l,GLsizei n,GLboolean t,const GLfloat *v){

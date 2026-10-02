@@ -141,6 +141,7 @@ void engine_graphics_report(AnygmEngine *engine){
     "texture=%llu primitive=%llu surface=%llu effect=%llu presentation=%llu "
     "shader=%llu software3d=%llu uploads=%llu upload_bytes=%llu "
     "readbacks=%llu readback_bytes=%llu rgb_queries=%llu rgb_query_bytes=%llu "
+    "checkpoint_masks=%llu checkpoint_mask_bytes=%llu "
     "rgb_query_refusals=%llu screen_cpu_reads=%llu screen_cpu_materializations=%llu\n",
     engine->scene_renderer_session==ANYGM_SCENE_RENDERER_OPENGL?"OpenGL":"CPU",
     counters.scene_batches_accepted?"OpenGL":"CPU",
@@ -166,6 +167,8 @@ void engine_graphics_report(AnygmEngine *engine){
     (unsigned long long)counters.scene_readback_bytes,
     (unsigned long long)counters.scene_rgb_queries,
     (unsigned long long)(counters.scene_rgb_queries*4u),
+    (unsigned long long)counters.scene_readback_masks,
+    (unsigned long long)counters.scene_readback_mask_bytes,
     (unsigned long long)counters.scene_rgb_query_refusals,
     (unsigned long long)resources.completed_screen_cpu_reads,
     (unsigned long long)resources.completed_screen_cpu_materializations);

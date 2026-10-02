@@ -44,6 +44,8 @@ struct GmlRenderResource {
   const void *device_identity;
   GmlRenderDeviceServices checkpoint_device;
   uint32_t *checkpoint_staging;
+  uint64_t checkpoint_staging_version;
+  const void *checkpoint_staging_device;
   uint64_t cpu_replays,device_checkpoints,consolidations,cpu_fallbacks;
   uint64_t checkpoint_allocations;
 };
@@ -489,6 +491,7 @@ static void discard_superseded_history(GmlRenderResource *resource){
 int gml_render_resource_checkpoint(GmlRenderResource *resource,
                                     const GmlRenderDeviceServices *device){
   GmlRenderImageReadback readback={0};
+  GmlRenderImageReadbackResult result={0};
   uint32_t *checkpoint;
   size_t bytes;
   if(!resource || resource->authority==GML_RENDER_RESOURCE_INVALID) return 0;
@@ -522,12 +525,40 @@ int gml_render_resource_checkpoint(GmlRenderResource *resource,
   readback.stride_bytes=resource->width*4u;
   readback.byte_capacity=bytes;
   readback.bytes=checkpoint;
-  if(!device->readback(device->context,&readback)){
+  result.updated_region=readback.region;
+  readback.result=&result;
+  if(checkpoint==resource->checkpoint_staging){
+    readback.checkpoint=1u;
+    if(resource->checkpoint_staging_device==device->context &&
+       resource->checkpoint_staging_version==resource->cpu_version)
+      readback.checkpoint_baseline_version=resource->checkpoint_staging_version;
+  }
+  if(!device->readback(device->context,&readback) ||
+     (result.updated_region.width &&
+      (result.updated_region.x<0 || result.updated_region.y<0 || !result.updated_region.height ||
+       (uint64_t)(uint32_t)result.updated_region.x+result.updated_region.width>resource->width ||
+       (uint64_t)(uint32_t)result.updated_region.y+result.updated_region.height>resource->height)) ||
+     (!readback.checkpoint_baseline_version &&
+      (result.updated_region.x!=0 || result.updated_region.y!=0 ||
+       result.updated_region.width!=resource->width || result.updated_region.height!=resource->height))){
     if(checkpoint!=resource->checkpoint_staging) free(checkpoint);
+    resource->checkpoint_staging_version=0;
+    resource->checkpoint_staging_device=NULL;
     resource->authority=GML_RENDER_RESOURCE_INVALID;
     return 0;
   }
-  memcpy(resource->pixels,checkpoint,readback.byte_capacity);
+  if(result.updated_region.x==0 && result.updated_region.y==0 &&
+     result.updated_region.width==resource->width && result.updated_region.height==resource->height)
+    memcpy(resource->pixels,checkpoint,readback.byte_capacity);
+  else for(uint32_t row=0;row<result.updated_region.height && result.updated_region.width;row++){
+    size_t first=(size_t)((uint32_t)result.updated_region.y+row)*resource->width+
+                   (uint32_t)result.updated_region.x;
+    memcpy(resource->pixels+first,checkpoint+first,(size_t)result.updated_region.width*4u);
+  }
+  if(checkpoint==resource->checkpoint_staging){
+    resource->checkpoint_staging_version=resource->image.content_version;
+    resource->checkpoint_staging_device=device->context;
+  }
   if(checkpoint!=resource->checkpoint_staging) free(checkpoint);
   clear_history(resource);
   resource->cpu_version=resource->image.content_version;

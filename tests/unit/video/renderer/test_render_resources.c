@@ -31,6 +31,9 @@ typedef struct FakeDevice {
   int forbid_calls,forbidden_calls;
   int fail_upload,fail_upload_at,fail_readback,shader_failure,prewrite_refusal;
   int fail_partial_readback;
+  int incremental_readback;
+  uint32_t last_checkpoint;
+  uint64_t last_checkpoint_baseline;
   uint32_t status,accepted_prefix;
   uint32_t readback_colour;
   uint32_t max_texture_extent;
@@ -94,11 +97,25 @@ static int fake_readback(void *context,const GmlRenderImageReadback *readback){
   uint32_t *pixels;
   if(fake_call_forbidden(fake)) return 0;
   fake->readbacks++;
+  fake->last_checkpoint=readback?readback->checkpoint:0u;
+  fake->last_checkpoint_baseline=readback?readback->checkpoint_baseline_version:0u;
   if(fake->fail_readback || !readback || !readback->bytes ||
      readback->byte_capacity<(size_t)readback->storage_width*readback->storage_height*4u)
     return 0;
   pixels=(uint32_t*)readback->bytes;
   if(fake->fail_partial_readback){ pixels[0]=fake->readback_colour; return 0; }
+  if(fake->incremental_readback &&
+     (readback->checkpoint_baseline_version || fake->incremental_readback>=5) && readback->result){
+    readback->result->updated_region=(GmlRenderRect){1,2,2u,1u};
+    if(fake->incremental_readback==2 || fake->incremental_readback==6)
+      readback->result->updated_region=(GmlRenderRect){0};
+    else {
+      pixels[9]=pixels[10]=fake->readback_colour;
+      if(fake->incremental_readback==3) return 0;
+      if(fake->incremental_readback==4) readback->result->updated_region.x=3;
+    }
+    return 1;
+  }
   for(uint32_t index=0;index<readback->storage_width*readback->storage_height;index++)
     pixels[index]=fake->readback_colour;
   return 1;
@@ -1148,6 +1165,78 @@ static int checkpoint_span_mixed_suffix_and_faults(void){
         CHECK(gml_render_resource_acquire_cpu_read(resource,&observed) &&
               observed[0]==0xFFABCDEFu && fake.readbacks==1 && fake.forbidden_calls==0);
       }
+    }
+    gml_render_resource_destroy(resource);
+  }
+  return 1;
+}
+
+/* An explicit staging version authorizes partial publication, never a pointer-identity guess. */
+static int incremental_checkpoint_publication(void){
+  for(unsigned target=0;target<2u;target++) for(unsigned fault=0;fault<5u;fault++){
+    uint32_t pixels[16],before[16],*writer=NULL;
+    GmlRenderImageRef image=target_ref(1u,1u);
+    GmlRenderDrawOp operation=clear_op(2u,0u,GML_RENDER_DEVICE_CHECKPOINT);
+    GmlRenderDrawBatch batch={&operation,1u,NULL,0u};
+    FakeDevice fake={0},replacement={0};
+    GmlRenderDeviceServices device=service(&fake),next_device=service(&replacement);
+    GmlRenderResource *resource;
+    image.resource_class=target?GML_RENDER_RESOURCE_APPLICATION:GML_RENDER_RESOURCE_SCREEN;
+    fill(pixels,0xFF010203u);
+    operation.target.image=image;
+    resource=gml_render_resource_create(image,4u,4u,GML_RENDER_PIXEL_XRGB8888,pixels,
+                                         (GmlRenderResourceLimits){0});
+    CHECK(resource);
+    fake.readback_colour=0xFF123456u;
+    operation.target.image.content_version=2u;
+    if(fault>=3u){
+      memcpy(before,pixels,sizeof before);
+      fake.incremental_readback=(int)fault+2;
+      CHECK(gml_render_resource_submit(resource,&device,&batch,NULL,0u)==GML_RENDER_RESOURCE_EXEC_FAILED);
+      CHECK(fake.last_checkpoint_baseline==0u && !memcmp(before,pixels,sizeof before) &&
+            !gml_render_resource_acquire_cpu_read(resource,NULL));
+      gml_render_resource_destroy(resource);
+      continue;
+    }
+    CHECK(gml_render_resource_submit(resource,&device,&batch,NULL,0u)==GML_RENDER_RESOURCE_EXEC_DEVICE);
+    CHECK(fake.last_checkpoint==1u && fake.last_checkpoint_baseline==0u);
+    memcpy(before,pixels,sizeof before);
+    fake.incremental_readback=1;
+    fake.readback_colour=0xFFABCDEFu;
+    operation.target.image.content_version=3u;
+    CHECK(gml_render_resource_submit(resource,&device,&batch,NULL,0u)==GML_RENDER_RESOURCE_EXEC_DEVICE);
+    CHECK(fake.last_checkpoint_baseline==2u);
+    for(unsigned index=0;index<16u;index++)
+      CHECK(pixels[index]==(index==9u || index==10u?fake.readback_colour:before[index]));
+    memcpy(before,pixels,sizeof before);
+    fake.incremental_readback=2;
+    operation.target.image.content_version=4u;
+    CHECK(gml_render_resource_submit(resource,&device,&batch,NULL,0u)==GML_RENDER_RESOURCE_EXEC_DEVICE);
+    CHECK(fake.last_checkpoint_baseline==3u && !memcmp(before,pixels,sizeof before));
+    CHECK(gml_render_resource_acquire_cpu_write(resource,&writer) && writer==pixels);
+    fill(writer,0xFF998877u);
+    CHECK(gml_render_resource_commit_cpu_write(resource));
+    operation.target.image=gml_render_resource_image_ref(resource);
+    operation.target.image.content_version++;
+    CHECK(gml_render_resource_submit(resource,&device,&batch,NULL,0u)==GML_RENDER_RESOURCE_EXEC_DEVICE);
+    CHECK(fake.last_checkpoint_baseline==0u && pixels[0]==fake.readback_colour);
+    operation.target.image.content_version++;
+    replacement.readback_colour=0xFF334455u;
+    CHECK(gml_render_resource_submit(resource,&next_device,&batch,NULL,0u)==GML_RENDER_RESOURCE_EXEC_DEVICE);
+    CHECK(replacement.last_checkpoint_baseline==0u && pixels[15]==replacement.readback_colour);
+    memcpy(before,pixels,sizeof before);
+    replacement.incremental_readback=fault?fault+2:1;
+    replacement.readback_colour=0xFF556677u;
+    operation.target.image.content_version++;
+    CHECK(gml_render_resource_submit(resource,&next_device,&batch,NULL,0u)==
+            (fault?GML_RENDER_RESOURCE_EXEC_FAILED:GML_RENDER_RESOURCE_EXEC_DEVICE));
+    if(fault) CHECK(!memcmp(before,pixels,sizeof before) &&
+                     !gml_render_resource_acquire_cpu_read(resource,NULL));
+    else {
+      gml_render_resource_context_lost(resource);
+      replacement.forbid_calls=1;
+      CHECK(gml_render_resource_acquire_cpu_read(resource,NULL) && pixels[9]==replacement.readback_colour &&
+            pixels[0]==before[0] && !replacement.forbidden_calls);
     }
     gml_render_resource_destroy(resource);
   }
@@ -5276,6 +5365,7 @@ int main(void){
   passed+=resident_checkpoint_span_seals_at_observer();
   passed+=checkpoint_span_mixed_suffix_and_faults();
   passed+=bounded_checkpoint_staging_lifecycle();
+  passed+=incremental_checkpoint_publication();
   passed+=public_surface_part_qualified_dispatch();
   passed+=resident_opaque_atlas_sprite_gpu();
   passed+=resident_coarse_veil_exact_recovery();
@@ -5292,6 +5382,6 @@ int main(void){
   passed+=source_free_primitive_rect_replay();
   passed+=stretched_float_exact_replay();
   passed+=filtered_font_exact_recovery();
-  printf("render resource cases: passed=%d failed=%d\n",passed,70-passed);
-  return passed==70?EXIT_SUCCESS:EXIT_FAILURE;
+  printf("render resource cases: passed=%d failed=%d\n",passed,71-passed);
+  return passed==71?EXIT_SUCCESS:EXIT_FAILURE;
 }

@@ -163,6 +163,10 @@ static void scene_delete_image(GmlGpuBackend *backend,GlSceneImage *image){
 void gml_gpu_opengl_scene_forget(GmlGpuBackend *backend){
   GlScene *scene=&backend->scene;
   memset(scene->images,0,sizeof scene->images);
+  memset(scene->checkpoints,0,sizeof scene->checkpoints);
+  scene->checkpoint_program=scene->checkpoint_mask=scene->checkpoint_framebuffer=0;
+  scene->checkpoint_mask_width=scene->checkpoint_mask_height=0;
+  scene->checkpoint_program_failed=0;
   scene->program=scene->vertex_buffer=scene->vertex_array=0;
   scene->exact_program=scene->snapshot_texture=scene->rgb_query=0;
   scene->snapshot_width=scene->snapshot_height=0;
@@ -176,6 +180,13 @@ void gml_gpu_opengl_scene_destroy(GmlGpuBackend *backend,int context_is_current)
   if(context_is_current && backend->loaded){
     for(size_t index=0;index<GL_SCENE_MAX_IMAGES;index++)
       scene_delete_image(backend,&scene->images[index]);
+    for(size_t index=0;index<2u;index++)
+      if(scene->checkpoints[index].texture)
+        backend->gl.DeleteTextures(1,&scene->checkpoints[index].texture);
+    if(scene->checkpoint_program) backend->gl.DeleteProgram(scene->checkpoint_program);
+    if(scene->checkpoint_mask) backend->gl.DeleteTextures(1,&scene->checkpoint_mask);
+    if(scene->checkpoint_framebuffer)
+      backend->gl.DeleteFramebuffers(1,&scene->checkpoint_framebuffer);
     if(scene->program) backend->gl.DeleteProgram(scene->program);
     if(scene->exact_program) backend->gl.DeleteProgram(scene->exact_program);
     if(scene->snapshot_texture) backend->gl.DeleteTextures(1,&scene->snapshot_texture);
@@ -589,27 +600,18 @@ GLuint gml_gpu_opengl_scene_content_source(GmlGpuBackend *backend,GlSceneImage *
   return source->content_source_texture;
 }
 
-int gml_gpu_opengl_scene_readback(GmlGpuBackend *backend,const GmlRenderImageReadback *transfer){
-  GlSceneImage *image;
-  GlScene *scene;
-  size_t row_bytes,bytes;
-  if(!backend || !transfer || !transfer->bytes || !backend->loaded) return 0;
-  scene=&backend->scene;
-  image=gml_gpu_opengl_scene_image(backend,transfer->image);
-  if(!image || !image->target || !image->framebuffer ||
-     image->width!=transfer->storage_width || image->height!=transfer->storage_height ||
-     !scene_region_valid(transfer->region,image->width,image->height) ||
-     (transfer->pixel_format!=GML_RENDER_PIXEL_XRGB8888 &&
-      transfer->pixel_format!=GML_RENDER_PIXEL_ARGB8888 &&
-      transfer->pixel_format!=GML_RENDER_PIXEL_RGBA8888)) return 0;
-  row_bytes=(size_t)transfer->region.width*4u;
-  if(transfer->stride_bytes<row_bytes ||
-     (uint64_t)(transfer->region.height-1u)*transfer->stride_bytes+row_bytes>
-       transfer->byte_capacity) return 0;
-  bytes=row_bytes*transfer->region.height;
+/* The established row/channel packing body serves both full and bounded reads. */
+static int scene_readback_pixels(GmlGpuBackend *backend,GlSceneImage *image,
+                                  const GmlRenderImageReadback *transfer,
+                                  GmlRenderImageReadbackResult *result){
+  GlScene *scene=&backend->scene;
+  size_t row_bytes=(size_t)transfer->region.width*4u;
+  size_t bytes=row_bytes*transfer->region.height;
   if(!scene_scratch_ready(scene,bytes)) return 0;
   backend->gl.BindFramebuffer(GL_FRAMEBUFFER,image->framebuffer);
   backend->gl.PixelStorei(GL_PACK_ALIGNMENT,1);
+  result->pixel_reads++;
+  result->pixel_bytes+=bytes;
   backend->gl.ReadPixels(transfer->region.x,
     (GLint)(image->height-(uint32_t)transfer->region.y-transfer->region.height),
     (GLsizei)transfer->region.width,(GLsizei)transfer->region.height,
@@ -637,6 +639,170 @@ int gml_gpu_opengl_scene_readback(GmlGpuBackend *backend,const GmlRenderImageRea
   return 1;
 }
 
+/* A mask never becomes a CPU picture. It describes exact device differences from an explicitly
+ * preserved successful checkpoint; the one union rectangle bounds the existing pixel reader. */
+static int scene_checkpoint_region(GmlGpuBackend *backend,GlSceneImage *image,
+                                    const GlSceneCheckpoint *checkpoint,uint32_t format,
+                                    GmlRenderImageReadbackResult *result){
+  GlScene *scene=&backend->scene;
+  uint32_t columns=(image->width+31u)/32u,rows=(image->height+31u)/32u;
+  uint32_t left=columns,right=0,bottom=rows,top=0;
+  size_t bytes=(size_t)columns*rows*4u;
+  GLint active=0;
+  if(!backend->gl.GetQueryiv || !scene_scratch_ready(scene,bytes) ||
+     !gml_gpu_opengl_checkpoint_program(backend)) return 0;
+  backend->gl.GetQueryiv(GL_ANY_SAMPLES_PASSED,GL_CURRENT_QUERY,&active);
+  if(active) return 0;
+  backend->gl.GetQueryiv(backend->api==GML_GPU_API_OPENGL_CORE?GL_SAMPLES_PASSED:
+                           GL_ANY_SAMPLES_PASSED_CONSERVATIVE,GL_CURRENT_QUERY,&active);
+  if(active || backend->gl.GetError()!=GL_NO_ERROR) return 0;
+  if(!scene->checkpoint_mask) backend->gl.GenTextures(1,&scene->checkpoint_mask);
+  if(!scene->checkpoint_framebuffer)
+    backend->gl.GenFramebuffers(1,&scene->checkpoint_framebuffer);
+  if(!scene->checkpoint_mask || !scene->checkpoint_framebuffer) return 0;
+  backend->gl.ActiveTexture(GL_TEXTURE0);
+  backend->gl.BindTexture(GL_TEXTURE_2D,scene->checkpoint_mask);
+  if(scene->checkpoint_mask_width<columns || scene->checkpoint_mask_height<rows){
+    uint32_t width=scene->checkpoint_mask_width>columns?scene->checkpoint_mask_width:columns;
+    uint32_t height=scene->checkpoint_mask_height>rows?scene->checkpoint_mask_height:rows;
+    backend->gl.TexImage2D(GL_TEXTURE_2D,0,GL_RGBA8,(GLsizei)width,(GLsizei)height,
+                            0,GL_RGBA,GL_UNSIGNED_BYTE,NULL);
+    backend->gl.TexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,GL_NEAREST);
+    backend->gl.TexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAG_FILTER,GL_NEAREST);
+    if(backend->gl.GetError()!=GL_NO_ERROR) return 0;
+    scene->checkpoint_mask_width=width;scene->checkpoint_mask_height=height;
+  }
+  backend->gl.BindFramebuffer(GL_FRAMEBUFFER,scene->checkpoint_framebuffer);
+  backend->gl.FramebufferTexture2D(GL_FRAMEBUFFER,GL_COLOR_ATTACHMENT0,GL_TEXTURE_2D,
+                                    scene->checkpoint_mask,0);
+  if(backend->gl.CheckFramebufferStatus(GL_FRAMEBUFFER)!=GL_FRAMEBUFFER_COMPLETE) return 0;
+  backend->gl.Disable(GL_BLEND);backend->gl.Disable(GL_DEPTH_TEST);
+  backend->gl.Disable(GL_STENCIL_TEST);backend->gl.Disable(GL_CULL_FACE);
+  backend->gl.Disable(GL_DITHER);backend->gl.Disable(GL_SCISSOR_TEST);
+  backend->gl.Disable(GL_RASTERIZER_DISCARD);backend->gl.Disable(GL_SAMPLE_COVERAGE);
+  backend->gl.Disable(GL_SAMPLE_ALPHA_TO_COVERAGE);
+  if(scene->supports_sample_mask) backend->gl.Disable(GL_SAMPLE_MASK);
+  if(backend->api==GML_GPU_API_OPENGL_CORE){
+    backend->gl.Disable(GL_FRAMEBUFFER_SRGB);
+    backend->gl.PolygonMode(GL_FRONT_AND_BACK,GL_FILL);
+  }
+  backend->gl.ColorMask(GL_TRUE,GL_TRUE,GL_TRUE,GL_TRUE);
+  backend->gl.DepthMask(GL_FALSE);
+  backend->gl.Viewport(0,0,(GLsizei)columns,(GLsizei)rows);
+  backend->gl.BindVertexArray(backend->vertex_array);
+  backend->gl.UseProgram(scene->checkpoint_program);
+  backend->gl.Uniform1i(scene->checkpoint_u_image,0);
+  backend->gl.Uniform1i(scene->checkpoint_u_previous,1);
+  backend->gl.Uniform1i(scene->checkpoint_u_alpha,format!=GML_RENDER_PIXEL_XRGB8888);
+  backend->gl.ActiveTexture(GL_TEXTURE0);backend->gl.BindTexture(GL_TEXTURE_2D,image->texture);
+  backend->gl.ActiveTexture(GL_TEXTURE1);backend->gl.BindTexture(GL_TEXTURE_2D,checkpoint->texture);
+  backend->gl.DrawArrays(GL_TRIANGLES,0,3);
+  backend->gl.PixelStorei(GL_PACK_ALIGNMENT,1);
+  if(backend->gl.GetError()!=GL_NO_ERROR) return 0;
+  result->mask_reads++;result->mask_bytes+=bytes;
+  backend->gl.ReadPixels(0,0,(GLsizei)columns,(GLsizei)rows,GL_RGBA,GL_UNSIGNED_BYTE,scene->scratch);
+  backend->gl.PixelStorei(GL_PACK_ALIGNMENT,4);
+  backend->gl.UseProgram(0);backend->gl.BindVertexArray(0);
+  backend->gl.BindTexture(GL_TEXTURE_2D,0);backend->gl.ActiveTexture(GL_TEXTURE0);
+  backend->gl.BindTexture(GL_TEXTURE_2D,0);
+  if(backend->gl.GetError()!=GL_NO_ERROR) return 0;
+  for(uint32_t y=0;y<rows;y++) for(uint32_t x=0;x<columns;x++)
+    if(scene->scratch[((size_t)y*columns+x)*4u]){
+      if(x<left) left=x;
+      if(x+1u>right) right=x+1u;
+      if(y<bottom) bottom=y;
+      if(y+1u>top) top=y+1u;
+    }
+  if(!right){ result->updated_region=(GmlRenderRect){0};return 1; }
+  right=right*32u>image->width?image->width:right*32u;
+  top=top*32u>image->height?image->height:top*32u;
+  result->updated_region=(GmlRenderRect){(int32_t)(left*32u),(int32_t)(image->height-top),
+                                         right-left*32u,top-bottom*32u};
+  return 1;
+}
+
+static void scene_checkpoint_remember(GmlGpuBackend *backend,GlSceneImage *image,
+                                       GlSceneCheckpoint *checkpoint,uint32_t format,
+                                       int changed){
+  int resize=checkpoint->width!=image->width || checkpoint->height!=image->height;
+  if(!changed && checkpoint->image.content_version){ checkpoint->image=image->ref;return; }
+  checkpoint->image.content_version=0;
+  if(!backend->gl.CopyTexSubImage2D) return;
+  if(!checkpoint->texture) backend->gl.GenTextures(1,&checkpoint->texture);
+  if(!checkpoint->texture) return;
+  backend->gl.ActiveTexture(GL_TEXTURE0);
+  backend->gl.BindTexture(GL_TEXTURE_2D,checkpoint->texture);
+  if(resize){
+    backend->gl.TexImage2D(GL_TEXTURE_2D,0,GL_RGBA8,(GLsizei)image->width,(GLsizei)image->height,
+                            0,GL_RGBA,GL_UNSIGNED_BYTE,NULL);
+    backend->gl.TexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,GL_NEAREST);
+    backend->gl.TexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAG_FILTER,GL_NEAREST);
+    backend->gl.TexParameteri(GL_TEXTURE_2D,GL_TEXTURE_WRAP_S,GL_CLAMP_TO_EDGE);
+    backend->gl.TexParameteri(GL_TEXTURE_2D,GL_TEXTURE_WRAP_T,GL_CLAMP_TO_EDGE);
+    if(backend->gl.GetError()!=GL_NO_ERROR) return;
+    checkpoint->width=image->width;checkpoint->height=image->height;
+  }
+  backend->gl.BindFramebuffer(GL_FRAMEBUFFER,image->framebuffer);
+  backend->gl.CopyTexSubImage2D(GL_TEXTURE_2D,0,0,0,0,0,(GLsizei)image->width,(GLsizei)image->height);
+  backend->gl.BindTexture(GL_TEXTURE_2D,0);
+  if(backend->gl.GetError()!=GL_NO_ERROR) return;
+  checkpoint->image=image->ref;checkpoint->pixel_format=format;
+}
+
+int gml_gpu_opengl_scene_readback(GmlGpuBackend *backend,const GmlRenderImageReadback *transfer){
+  GlSceneImage *image;
+  GlSceneCheckpoint *checkpoint=NULL;
+  GmlRenderImageReadbackResult result={0};
+  GmlRenderImageReadback selected;
+  size_t row_bytes;
+  int success=1;
+  if(transfer && transfer->result) *transfer->result=result;
+  if(!backend || !transfer || !transfer->bytes || !backend->loaded) return 0;
+  image=gml_gpu_opengl_scene_image(backend,transfer->image);
+  if(!image || !image->target || !image->framebuffer ||
+     image->width!=transfer->storage_width || image->height!=transfer->storage_height ||
+     !scene_region_valid(transfer->region,image->width,image->height) ||
+     (transfer->pixel_format!=GML_RENDER_PIXEL_XRGB8888 &&
+      transfer->pixel_format!=GML_RENDER_PIXEL_ARGB8888 &&
+      transfer->pixel_format!=GML_RENDER_PIXEL_RGBA8888)) return 0;
+  row_bytes=(size_t)transfer->region.width*4u;
+  if(transfer->stride_bytes<row_bytes ||
+     (uint64_t)(transfer->region.height-1u)*transfer->stride_bytes+row_bytes>
+       transfer->byte_capacity) return 0;
+  result.updated_region=transfer->region;
+  if(transfer->checkpoint && transfer->result && transfer->region.x==0 && transfer->region.y==0 &&
+     transfer->region.width==image->width && transfer->region.height==image->height &&
+     (uint64_t)image->width*image->height*4u<=32u*1024u*1024u){
+    if(image->ref.resource_class==GML_RENDER_RESOURCE_SCREEN) checkpoint=&backend->scene.checkpoints[0];
+    if(image->ref.resource_class==GML_RENDER_RESOURCE_APPLICATION) checkpoint=&backend->scene.checkpoints[1];
+  }
+  if(checkpoint && transfer->checkpoint_baseline_version &&
+     scene_same_logical(checkpoint->image,image->ref) &&
+     checkpoint->image.content_version==transfer->checkpoint_baseline_version &&
+     checkpoint->width==image->width && checkpoint->height==image->height &&
+     checkpoint->pixel_format==transfer->pixel_format){
+    if(!scene_checkpoint_region(backend,image,checkpoint,transfer->pixel_format,&result)){
+      /* Optional detection failure cannot weaken an otherwise available exact full read. */
+      backend->gl.GetError();
+      result.updated_region=transfer->region;
+    }
+  }
+  if(result.updated_region.width){
+    size_t offset=(size_t)(uint32_t)result.updated_region.y*transfer->stride_bytes+
+                   (size_t)(uint32_t)result.updated_region.x*4u;
+    selected=*transfer;selected.region=result.updated_region;
+    if(checkpoint){ selected.bytes=(uint8_t*)transfer->bytes+offset;selected.byte_capacity-=offset; }
+    success=scene_readback_pixels(backend,image,&selected,&result);
+  }
+  if(checkpoint){
+    if(success) scene_checkpoint_remember(backend,image,checkpoint,transfer->pixel_format,
+                                          result.updated_region.width!=0u);
+    else checkpoint->image.content_version=0;
+  }
+  if(transfer->result) *transfer->result=result;
+  return success;
+}
+
 void gml_gpu_opengl_scene_retire(GmlGpuBackend *backend,GmlRenderImageRef image){
   int retire_incarnation=image.resource_class==GML_RENDER_RESOURCE_ATLAS ||
                      image.resource_class==GML_RENDER_RESOURCE_SCREEN ||
@@ -646,6 +812,9 @@ void gml_gpu_opengl_scene_retire(GmlGpuBackend *backend,GmlRenderImageRef image)
                      image.resource_class==GML_RENDER_RESOURCE_SHADER_SAMPLER ||
                      image.resource_class==GML_RENDER_RESOURCE_SHADER_SOURCE;
   if(!backend || !backend->loaded) return;
+  for(size_t index=0;index<2u;index++)
+    if(scene_same_logical(backend->scene.checkpoints[index].image,image))
+      backend->scene.checkpoints[index].image.content_version=0;
   for(size_t index=0;index<GL_SCENE_MAX_IMAGES;index++){
     GlSceneImage *candidate=&backend->scene.images[index];
     /* A CPU handoff or runtime atlas growth can advance the version after its last device

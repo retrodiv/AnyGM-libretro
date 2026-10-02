@@ -108,6 +108,29 @@
   "  v_span_active=in_SpanActive;\n" \
   "}\n"
 
+/* R03_SHADER_CHECKPOINT_TILE: exact comparison of two RGBA8 device images, with no filtering,
+ * hashes, temporal lag or lossy colour arithmetic. XRGB canonical state deliberately ignores
+ * source alpha; every other format compares it. Edge tiles fetch only existing texels. */
+#define GML_GPU_OPENGL_CHECKPOINT_FRAGMENT_BODY \
+  "uniform sampler2D u_image;\n" \
+  "uniform sampler2D u_previous;\n" \
+  "uniform int u_alpha;\n" \
+  "out vec4 fragment_colour;\n" \
+  "bool checkpoint_tile_changed(ivec2 origin){\n" \
+  "  ivec2 extent=textureSize(u_image,0);\n" \
+  "  for(int y=0;y<32;y++) for(int x=0;x<32;x++){\n" \
+  "    ivec2 p=origin+ivec2(x,y);\n" \
+  "    if(p.x>=extent.x || p.y>=extent.y) continue;\n" \
+  "    vec4 a=texelFetch(u_image,p,0),b=texelFetch(u_previous,p,0);\n" \
+  "    if(any(notEqual(a.rgb,b.rgb)) || (u_alpha!=0 && a.a!=b.a)) return true;\n" \
+  "  }\n" \
+  "  return false;\n" \
+  "}\n" \
+  "void main(){\n" \
+  "  float changed=checkpoint_tile_changed(ivec2(gl_FragCoord.xy)*32)?1.0:0.0;\n" \
+  "  fragment_colour=vec4(changed,0.0,0.0,1.0);\n" \
+  "}\n"
+
 #define GML_GPU_OPENGL_SCENE_FRAGMENT_BODY \
   "uniform sampler2D u_image;\n" \
   "uniform int u_filter;\n" \

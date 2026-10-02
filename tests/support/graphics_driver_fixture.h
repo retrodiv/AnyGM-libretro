@@ -71,6 +71,10 @@ unsigned anygm_test_graphics_matrix_uniforms(void);
 unsigned anygm_test_graphics_read_pixels(void);
 /* Alpha returned by ordinary synthetic RGBA reads; reset restores opaque alpha. */
 void anygm_test_graphics_readback_alpha(unsigned alpha);
+/* Authored six-bit 3x2 mask and an absolute failing read ordinal. These model driver replies,
+ * never the comparison shader; real-context controls prove which tiles actually change. */
+void anygm_test_graphics_checkpoint_mask(unsigned bits);
+void anygm_test_graphics_fail_readback_at(unsigned ordinal);
 /* Read-backs issued into a pack buffer, which do not wait for the device. */
 unsigned anygm_test_graphics_async_read_pixels(void);
 /* The texture coordinate of one corner of the last quad drawn through a content program. */

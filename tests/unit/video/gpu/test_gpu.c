@@ -653,6 +653,140 @@ static int scene_resident_batch_case(void){
   return 1;
 }
 
+/* The fake driver supplies masks and faults; the real-device comparator proves shader pixels. */
+static int incremental_checkpoint_contract_case(void){
+  for(unsigned api=0;api<2u;api++) for(unsigned owner=0;owner<2u;owner++)
+  for(unsigned variant=0;variant<7u;variant++){
+    uint32_t pixels[65u*33u],before[65u*33u];
+    GmlGpu *gpu;
+    GmlGpuContext context=fake_context(api?GML_GPU_API_OPENGLES3:GML_GPU_API_OPENGL_CORE);
+    GmlRenderDeviceServices device={0};
+    GmlRenderDrawOp clear={0};
+    GmlRenderDrawBatch batch={&clear,1u,NULL,0u};
+    GmlRenderImageReadback readback={0};
+    GmlRenderImageReadbackResult result={0};
+    GmlGpuCounters counters;
+    unsigned reads;
+    anygm_test_graphics_reset();
+    if(variant==5u) anygm_test_graphics_withhold("glCopyTexSubImage2D");
+    gpu=gml_gpu_create();
+    REQUIRE(gpu && gml_gpu_context_reset(gpu,&context),"checkpoint context adopted");
+    gml_gpu_device_services(gpu,&device);
+    clear.opcode=GML_RENDER_OP_CLEAR;
+    clear.target.image=(GmlRenderImageRef){owner?GML_RENDER_RESOURCE_APPLICATION:GML_RENDER_RESOURCE_SCREEN,
+                                         101u,1u,2u};
+    clear.target.storage_version=1u;clear.target.width=65u;clear.target.height=33u;
+    clear.target.pixel_format=GML_RENDER_PIXEL_ARGB8888;
+    clear.target.region=(GmlRenderRect){0,0,65u,33u};
+    REQUIRE(device.submit(device.context,&batch).status==GML_RENDER_EXEC_ACCEPTED,"checkpoint target created");
+    readback.image=clear.target.image;readback.storage_width=65u;readback.storage_height=33u;
+    readback.region=clear.target.region;readback.pixel_format=GML_RENDER_PIXEL_ARGB8888;
+    readback.stride_bytes=65u*4u;readback.byte_capacity=sizeof pixels;readback.bytes=pixels;
+    readback.checkpoint=1u;readback.result=&result;
+    REQUIRE(device.readback(device.context,&readback) && result.pixel_reads==1u &&
+            result.pixel_bytes==sizeof pixels && !result.mask_reads,"cold checkpoint reads all bytes");
+    memcpy(before,pixels,sizeof before);
+    clear.target.image.content_version++;
+    REQUIRE(device.submit(device.context,&batch).status==GML_RENDER_EXEC_ACCEPTED,"next checkpoint version drawn");
+    readback.image=clear.target.image;readback.checkpoint_baseline_version=2u;
+    anygm_test_graphics_checkpoint_mask(0u);
+    reads=anygm_test_graphics_read_pixels();
+    if(variant==1u) anygm_test_graphics_fail_compile(1);
+    if(variant==6u) anygm_test_graphics_fail_link(1);
+    if(variant==2u) anygm_test_graphics_active_query(999u);
+    if(variant==3u) anygm_test_graphics_fail_readback_at(reads+1u);
+    if(variant==4u){
+      anygm_test_graphics_checkpoint_mask(32u);
+      anygm_test_graphics_fail_readback_at(reads+2u);
+    }
+    if(variant==4u){
+      REQUIRE(!device.readback(device.context,&readback) && !memcmp(before,pixels,sizeof before) &&
+              result.mask_reads==1u && result.pixel_reads==1u && result.pixel_bytes==4u,
+              "failed sparse read preserves destination bytes and counts attempted work");
+      REQUIRE(device.readback(device.context,&readback) && result.pixel_bytes==sizeof pixels &&
+              !result.mask_reads,"failed sparse read cannot reuse its GPU baseline");
+    }else{
+      REQUIRE(device.readback(device.context,&readback),"checkpoint detection or full fallback succeeds");
+      REQUIRE(result.pixel_reads==(variant?1u:0u) && result.pixel_bytes==(variant?sizeof pixels:0u),
+              "unchanged mask elides pixels; optional detector failures retain full reads");
+      REQUIRE(result.mask_reads==(variant==0u || variant==3u?1u:0u),"mask attempts remain explicit");
+      REQUIRE(!memcmp(before,pixels,sizeof before),"unchanged or fallback buffer is exact");
+      if(variant==1u || variant==6u){
+        unsigned compiles=anygm_test_graphics_compile_calls();
+        REQUIRE(device.readback(device.context,&readback) && !result.mask_reads &&
+                result.pixel_bytes==sizeof pixels && anygm_test_graphics_compile_calls()==compiles,
+                "a refused optional detector does not retry its compilation every checkpoint");
+      }
+    }
+    if(variant==0u){
+      clear.target.image.content_version++;
+      REQUIRE(device.submit(device.context,&batch).status==GML_RENDER_EXEC_ACCEPTED,"sparse version drawn");
+      readback.image=clear.target.image;readback.checkpoint_baseline_version=3u;
+      anygm_test_graphics_checkpoint_mask(32u);
+      REQUIRE(device.readback(device.context,&readback) && result.pixel_reads==1u && result.pixel_bytes==4u &&
+              result.mask_reads==1u && result.mask_bytes==24u && result.updated_region.x==64 &&
+              result.updated_region.y==0 && result.updated_region.width==1u && result.updated_region.height==1u,
+              "bottom-up mask clips the odd top-right tile to one canonical pixel");
+      for(unsigned index=0;index<65u*33u;index++)
+        REQUIRE(pixels[index]==(index==64u?0xFF000033u:before[index]),"sparse write preserves every other byte");
+      REQUIRE(strstr(anygm_test_graphics_shader_source(1),"checkpoint_tile_changed") &&
+              strstr(anygm_test_graphics_shader_source(1),"texelFetch"),"real comparison branch is compiled");
+      gml_gpu_counters(gpu,&counters);
+      REQUIRE(counters.scene_readbacks==2u && counters.scene_readback_bytes==sizeof pixels+4u &&
+              counters.scene_readback_masks==2u && counters.scene_readback_mask_bytes==48u,
+              "facade counters reflect physical pixels and auxiliary masks, not logical image sizes");
+      gml_gpu_context_lost(gpu);
+      REQUIRE(gml_gpu_context_reset(gpu,&context),"replacement context adopted");
+      gml_gpu_device_services(gpu,&device);
+      REQUIRE(device.submit(device.context,&batch).status==GML_RENDER_EXEC_ACCEPTED,"replacement target drawn");
+      REQUIRE(device.readback(device.context,&readback) && !result.mask_reads && result.pixel_bytes==sizeof pixels,
+              "same logical version in a new context cannot reuse a forgotten checkpoint");
+    }
+    anygm_test_graphics_active_query(0u);anygm_test_graphics_fail_compile(0);anygm_test_graphics_fail_link(0);
+    gml_gpu_destroy(gpu,1);
+  }
+  return 1;
+}
+
+static int incremental_checkpoint_budget_case(void){
+  const uint32_t width=4096u,height=2049u;
+  size_t bytes=(size_t)width*height*4u;
+  uint8_t *pixels=(uint8_t*)malloc(bytes+16u);
+  GmlGpu *gpu;
+  GmlGpuContext context=fake_context(GML_GPU_API_OPENGL_CORE);
+  GmlRenderDeviceServices device={0};
+  GmlRenderDrawOp clear={0};
+  GmlRenderDrawBatch batch={&clear,1u,NULL,0u};
+  GmlRenderImageReadback readback={0};
+  GmlRenderImageReadbackResult result={0};
+  REQUIRE(pixels,"over-budget checkpoint buffer allocated");
+  memset(pixels+bytes,0xA5,16u);
+  anygm_test_graphics_reset();
+  gpu=gml_gpu_create();
+  REQUIRE(gpu && gml_gpu_context_reset(gpu,&context),"budget context adopted");
+  gml_gpu_device_services(gpu,&device);
+  clear.opcode=GML_RENDER_OP_CLEAR;
+  clear.target.image=(GmlRenderImageRef){GML_RENDER_RESOURCE_SCREEN,102u,1u,1u};
+  clear.target.storage_version=1u;clear.target.width=width;clear.target.height=height;
+  clear.target.pixel_format=GML_RENDER_PIXEL_XRGB8888;
+  clear.target.region=(GmlRenderRect){0,0,width,height};
+  readback.storage_width=width;readback.storage_height=height;readback.region=clear.target.region;
+  readback.pixel_format=GML_RENDER_PIXEL_XRGB8888;readback.stride_bytes=width*4u;
+  readback.byte_capacity=bytes;readback.bytes=pixels;readback.checkpoint=1u;readback.result=&result;
+  for(unsigned pass=0;pass<2u;pass++){
+    clear.target.image.content_version++;
+    REQUIRE(device.submit(device.context,&batch).status==GML_RENDER_EXEC_ACCEPTED,"over-budget target drawn");
+    readback.image=clear.target.image;
+    readback.checkpoint_baseline_version=pass?clear.target.image.content_version-1u:0u;
+    REQUIRE(device.readback(device.context,&readback) && result.pixel_reads==1u &&
+            result.pixel_bytes==bytes && !result.mask_reads && !anygm_test_graphics_scene_copies(),
+            "a target above 32 MiB never allocates or trusts an incremental baseline");
+    for(unsigned index=0;index<16u;index++) REQUIRE(pixels[bytes+index]==0xA5u,"over-budget guards preserved");
+  }
+  gml_gpu_destroy(gpu,1);free(pixels);
+  return 1;
+}
+
 /* Readback conversion is host byte packing, not a restatement of a shader. The driver supplies
  * independent RGBA rows; check the public formats and every untouched byte around their output. */
 static int scene_readback_formats_case(void){
@@ -1936,6 +2070,8 @@ int main(int argc,char **argv){
     {"scene_content_source_orientation",scene_content_source_orientation_case},
     {"scene_resident_batch",scene_resident_batch_case},
     {"scene_readback_formats",scene_readback_formats_case},
+    {"incremental_checkpoint_contract",incremental_checkpoint_contract_case},
+    {"incremental_checkpoint_budget",incremental_checkpoint_budget_case},
     {"scene_atlas_retire_advanced_version",scene_atlas_retire_advanced_version_case},
     {"scene_alpha_composition",scene_alpha_composition_case},
     {"scene_screen_filtered_alpha_stamp",scene_screen_filtered_alpha_stamp_case},

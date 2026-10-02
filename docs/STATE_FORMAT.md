@@ -9,6 +9,17 @@ marketing version. It is a numeric field in a validated binary header.
 
 ## Save-state schema
 
+Incremental device checkpoints do not change state bytes or capacity policy.
+Retained frame-target staging names an explicit successful baseline; the device
+may download only exact changed regions, but the resource publishes them only
+after success and keeps a complete current CPU-canonical image before frontend
+return. Baseline textures, change masks and staging versions are disposable
+context/resource metadata, never serialized state. Cold or invalid baselines
+use full reads. CPU writes and restoration cannot inherit stale baseline data;
+failed partial reads leave the canonical image unpublished and invalid as a
+current resource. See R03-P9-INCREMENTAL-CHECKPOINT in
+[the renderer map](RENDERER_BACKENDS.md) for owners and controls.
+
 The current AnyGM save-state schema is `37`. It is the format transported by
 libretro frontends for manual save states, automatic state slots, and rewind
 snapshots. Those features remain supported.

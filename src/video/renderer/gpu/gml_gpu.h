@@ -60,6 +60,7 @@ typedef struct GmlGpuCounters {
   uint64_t scene_operations[GML_RENDER_OPERATION_COUNT];
   uint64_t scene_families[GML_RENDER_SCENE_FAMILY_COUNT];
   uint64_t scene_uploads,scene_uploaded_bytes,scene_readbacks,scene_readback_bytes;
+  uint64_t scene_readback_masks,scene_readback_mask_bytes;
   uint64_t scene_rgb_queries,scene_rgb_query_refusals;
 } GmlGpuCounters;
 

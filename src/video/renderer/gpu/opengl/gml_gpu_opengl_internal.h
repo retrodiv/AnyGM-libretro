@@ -99,8 +99,20 @@ typedef struct GlSceneImage {
   int valid,target,rendered_origin,retired;
 } GlSceneImage;
 
+typedef struct GlSceneCheckpoint {
+  GmlRenderImageRef image;
+  GLuint texture;
+  uint32_t width,height,pixel_format;
+} GlSceneCheckpoint;
+
 typedef struct GlScene {
   GlSceneImage images[GL_SCENE_MAX_IMAGES];
+  /* Exactly one bounded baseline for each owned frame-target class, never per surface. */
+  GlSceneCheckpoint checkpoints[2];
+  GLuint checkpoint_program,checkpoint_mask,checkpoint_framebuffer;
+  GLint checkpoint_u_image,checkpoint_u_previous,checkpoint_u_alpha;
+  uint32_t checkpoint_mask_width,checkpoint_mask_height;
+  int checkpoint_program_failed;
   GLuint program,vertex_buffer,vertex_array;
   GLint a_position,a_texcoord,a_colour,a_clamp,a_map,a_step,a_margin;
   GLint a_span_x,a_span_y,a_span_active;
@@ -168,6 +180,7 @@ void gml_gpu_opengl_set_rect(GmlGpuBackend *backend,const GmlPlanRect *rect,
 int gml_gpu_opengl_build_program(GmlGpuBackend *backend,char *error,size_t error_capacity);
 int gml_gpu_opengl_scene_program(GmlGpuBackend *backend,char *error,size_t error_capacity);
 int gml_gpu_opengl_scene_exact_program(GmlGpuBackend *backend,char *error,size_t error_capacity);
+int gml_gpu_opengl_checkpoint_program(GmlGpuBackend *backend);
 int gml_gpu_opengl_execute_shader_draw(GmlGpuBackend *backend,GmlRenderPlan *plan,
                                         const GmlPlanOp *op,GmlGpuCounters *counters,
                                        char *error,size_t error_capacity);

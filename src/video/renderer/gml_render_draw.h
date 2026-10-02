@@ -287,6 +287,13 @@ typedef struct GmlRenderImageUpload {
   const void *bytes;
 } GmlRenderImageUpload;
 
+/* Physical transfers, not logical image size. updated_region is in storage coordinates;
+ * an empty region means a preserved checkpoint needs no publication. */
+typedef struct GmlRenderImageReadbackResult {
+  GmlRenderRect updated_region;
+  uint64_t pixel_reads,pixel_bytes,mask_reads,mask_bytes;
+} GmlRenderImageReadbackResult;
+
 typedef struct GmlRenderImageReadback {
   GmlRenderImageRef image;
   uint32_t storage_width,storage_height;
@@ -295,6 +302,12 @@ typedef struct GmlRenderImageReadback {
   uint32_t stride_bytes;
   size_t byte_capacity;
   void *bytes;
+  /* Opt-in only for a retained complete-target checkpoint buffer. A nonzero baseline names
+   * its last successfully published version; the caller preserves those bytes until return.
+   * Zero requests a cold full read. No pointer-identity or arbitrary observer cache is allowed. */
+  uint32_t checkpoint;
+  uint64_t checkpoint_baseline_version;
+  GmlRenderImageReadbackResult *result;
 } GmlRenderImageReadback;
 
 typedef struct GmlRenderDeviceCaps {

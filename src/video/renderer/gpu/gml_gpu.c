@@ -113,12 +113,21 @@ static int scene_upload(void *context,const GmlRenderImageUpload *transfer){
 
 static int scene_readback(void *context,const GmlRenderImageReadback *transfer){
   GmlGpu *gpu=(GmlGpu*)context;
-  if(!gpu || !gpu->context_active ||
-     !gml_gpu_opengl_scene_readback(gpu->backend,transfer)) return 0;
-  gpu->counters.scene_readbacks++;
-  gpu->counters.scene_readback_bytes+=(uint64_t)transfer->region.width*
-                                      transfer->region.height*4u;
-  return 1;
+  GmlRenderImageReadback selected;
+  GmlRenderImageReadbackResult result={0};
+  int success;
+  if(!gpu || !gpu->context_active || !transfer) return 0;
+  selected=*transfer;selected.result=&result;
+  /* Preserve opt-in ownership: an arbitrary caller without a publication result cannot skip
+   * destination bytes merely because the facade supplies accounting storage. */
+  if(!transfer->result) selected.checkpoint=0;
+  success=gml_gpu_opengl_scene_readback(gpu->backend,&selected);
+  gpu->counters.scene_readbacks+=result.pixel_reads;
+  gpu->counters.scene_readback_bytes+=result.pixel_bytes;
+  gpu->counters.scene_readback_masks+=result.mask_reads;
+  gpu->counters.scene_readback_mask_bytes+=result.mask_bytes;
+  if(transfer->result) *transfer->result=result;
+  return success;
 }
 
 static void scene_retire(void *context,GmlRenderImageRef image){

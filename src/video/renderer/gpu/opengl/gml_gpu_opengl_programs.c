@@ -264,6 +264,46 @@ int gml_gpu_opengl_scene_exact_program(GmlGpuBackend *backend,char *error,
   return 1;
 }
 
+int gml_gpu_opengl_checkpoint_program(GmlGpuBackend *backend){
+  GlScene *scene=&backend->scene;
+  const char *prefix=backend->api==GML_GPU_API_OPENGLES3
+    ?GML_GPU_OPENGL_PREFIX_ES:GML_GPU_OPENGL_PREFIX_DESKTOP;
+  char vertex_source[512],fragment_source[2048];
+  GLuint vertex,fragment;
+  GLint status=GL_FALSE;
+  if(scene->checkpoint_program) return 1;
+  if(scene->checkpoint_program_failed) return 0;
+  scene->checkpoint_program_failed=1;
+  snprintf(vertex_source,sizeof vertex_source,"%s%s",prefix,GML_GPU_OPENGL_VERTEX_BODY);
+  snprintf(fragment_source,sizeof fragment_source,"%s%s",prefix,
+           GML_GPU_OPENGL_CHECKPOINT_FRAGMENT_BODY);
+  vertex=compile_stage(backend,GL_VERTEX_SHADER,vertex_source,NULL,0u);
+  if(!vertex) return 0;
+  fragment=compile_stage(backend,GL_FRAGMENT_SHADER,fragment_source,NULL,0u);
+  if(!fragment){ backend->gl.DeleteShader(vertex); return 0; }
+  scene->checkpoint_program=backend->gl.CreateProgram();
+  if(scene->checkpoint_program){
+    backend->gl.AttachShader(scene->checkpoint_program,vertex);
+    backend->gl.AttachShader(scene->checkpoint_program,fragment);
+    backend->gl.LinkProgram(scene->checkpoint_program);
+    backend->gl.GetProgramiv(scene->checkpoint_program,GL_LINK_STATUS,&status);
+  }
+  backend->gl.DeleteShader(vertex);
+  backend->gl.DeleteShader(fragment);
+  if(status!=GL_TRUE) goto refused;
+  scene->checkpoint_u_image=backend->gl.GetUniformLocation(scene->checkpoint_program,"u_image");
+  scene->checkpoint_u_previous=backend->gl.GetUniformLocation(scene->checkpoint_program,"u_previous");
+  scene->checkpoint_u_alpha=backend->gl.GetUniformLocation(scene->checkpoint_program,"u_alpha");
+  if(scene->checkpoint_u_image<0 || scene->checkpoint_u_previous<0 ||
+     scene->checkpoint_u_alpha<0) goto refused;
+  scene->checkpoint_program_failed=0;
+  return 1;
+refused:
+  if(scene->checkpoint_program) backend->gl.DeleteProgram(scene->checkpoint_program);
+  scene->checkpoint_program=0;
+  return 0;
+}
+
 /* ---- The content's own programs ----
  *
  * A Studio payload ships its shaders as GLSL ES 1.00 text, with a desktop GLSL 1.20 rendering
