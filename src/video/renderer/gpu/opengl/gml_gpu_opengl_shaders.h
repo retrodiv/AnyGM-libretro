@@ -332,7 +332,10 @@
   "               u_filter==8?1.0:sampled.a*v_colour.a/255.0);\n" \
   "}\n"
 
-/* The bounded filtered-font rule preserves the CPU's ordered binary64 expression. */
+/* The bounded filtered-font rule preserves the CPU's ordered binary64 expression.
+ * Embedded programs specialise the generation and write one RGB channel per pass:
+ * inlining all generations/channels together overwhelms small-device compilers.
+ * Desktop programs retain their combined single-pass interface. */
 #define GML_GPU_OPENGL_FILTERED_FONT_BODY \
   "// R03_SHADER_FILTERED_FONT: bounded normal binary64, round-to-nearest-even.\n" \
   "// Integer limbs retain the CPU operations on both GL 3.3 and GLES 3.0.\n" \
@@ -341,7 +344,12 @@
   "uniform ivec2 u_font_alpha;\n" \
   "uniform ivec4 u_font_crop;\n" \
   "uniform ivec4 u_font_tint;\n" \
+  "#if GML_EXACT_FONT_MODE>0\n" \
+  "#define u_font_mode GML_EXACT_FONT_MODE\n" \
+  "uniform int u_font_channel;\n" \
+  "#else\n" \
   "uniform int u_font_mode;\n" \
+  "#endif\n" \
   "uniform int u_font_preserve_alpha;\n" \
   "bool d64_zero(uvec2 a){ return (a.x|(a.y&0x7fffffffu))==0u; }\n" \
   "bool limb_less(uvec2 a,uvec2 b){ return a.y<b.y || (a.y==b.y && a.x<b.x); }\n" \
@@ -350,31 +358,39 @@
   "}\n" \
   "uvec2 limb_sub(uvec2 a,uvec2 b){ return uvec2(a.x-b.x,a.y-b.y-uint(a.x<b.x)); }\n" \
   "uvec2 limb_left(uvec2 a,int n){\n" \
-  "  if(n==0) return a;\n" \
-  "  if(n>=64) return uvec2(0u);\n" \
-  "  if(n>=32) return uvec2(0u,a.x<<uint(n-32));\n" \
-  "  return uvec2(a.x<<uint(n),(a.y<<uint(n))|(a.x>>uint(32-n)));\n" \
+  "  // Callers use nonnegative counts; every evaluated native shift stays below 32.\n" \
+  "  uint k=uint(n)&31u;\n" \
+  "  uint lo=a.x<<k,hi=(a.y<<k)|((a.x>>((32u-k)&31u))*uint(k!=0u));\n" \
+  "  uvec2 q=n<32?uvec2(lo,hi):uvec2(0u,lo);\n" \
+  "  return n<64?q:uvec2(0u);\n" \
   "}\n" \
   "uvec2 limb_right(uvec2 a,int n){\n" \
-  "  if(n==0) return a;\n" \
-  "  if(n>=64) return uvec2(0u);\n" \
-  "  if(n>=32) return uvec2(a.y>>uint(n-32),0u);\n" \
-  "  return uvec2((a.x>>uint(n))|(a.y<<uint(32-n)),a.y>>uint(n));\n" \
+  "  uint k=uint(n)&31u;\n" \
+  "  uint hi=a.y>>k,lo=(a.x>>k)|((a.y<<((32u-k)&31u))*uint(k!=0u));\n" \
+  "  uvec2 q=n<32?uvec2(lo,hi):uvec2(hi,0u);\n" \
+  "  return n<64?q:uvec2(0u);\n" \
   "}\n" \
   "uvec2 limb_jam(uvec2 a,int n){\n" \
-  "  if(n==0) return a;\n" \
-  "  if(n>=64) return uvec2(uint((a.x|a.y)!=0u),0u);\n" \
   "  uvec2 q=limb_right(a,n);\n" \
-  "  uvec2 restored=limb_left(q,n);\n" \
-  "  if(any(notEqual(restored,a))) q.x|=1u;\n" \
+  "  q.x|=uint(any(notEqual(limb_left(q,n),a)));\n" \
   "  return q;\n" \
   "}\n" \
   "uvec2 d64_mantissa(uvec2 a){ return uvec2(a.x,(a.y&0xfffffu)|0x100000u); }\n" \
   "int d64_exponent(uvec2 a){ return int((a.y>>20u)&2047u)-1023; }\n" \
+  "int d64_high_bit(uint value){\n" \
+  "  int result=0; uint n=value>=65536u?16u:0u; value>>=n; result+=int(n);\n" \
+  "  n=value>=256u?8u:0u; value>>=n; result+=int(n);\n" \
+  "  n=value>=16u?4u:0u; value>>=n; result+=int(n);\n" \
+  "  n=value>=4u?2u:0u; value>>=n; result+=int(n);\n" \
+  "  return result+int(value>=2u);\n" \
+  "}\n" \
   "uvec2 d64_pack(uvec2 extended,int exponent,uint sign){\n" \
   "  if((extended.x|extended.y)==0u) return uvec2(0u);\n" \
   "  if(extended.y>=0x1000000u){ extended=limb_jam(extended,1); exponent++; }\n" \
-  "  while(extended.y<0x800000u){ extended=limb_left(extended,1); exponent--; }\n" \
+  "  // Inputs contain at most 57 bits. The one-bit carry leaves high<=55.\n" \
+  "  // Find the same normalisation as repeated left shifts without a shader loop.\n" \
+  "  int high=extended.y!=0u?32+d64_high_bit(extended.y):d64_high_bit(extended.x);\n" \
+  "  int shift=55-high; extended=limb_left(extended,shift); exponent-=shift;\n" \
   "  uint residue=extended.x&7u;\n" \
   "  uvec2 mantissa=limb_right(extended,3);\n" \
   "  if(residue>4u || (residue==4u && (mantissa.x&1u)!=0u))\n" \
@@ -384,8 +400,7 @@
   "}\n" \
   "uvec2 d64_uint(uint value){\n" \
   "  if(value==0u) return uvec2(0u);\n" \
-  "  int exponent=0; uint leading=value;\n" \
-  "  while(leading>=2u){ leading>>=1u; exponent++; }\n" \
+  "  int exponent=d64_high_bit(value);\n" \
   "  uvec2 m=limb_left(uvec2(value,0u),52-exponent);\n" \
   "  return uvec2(m.x,(uint(exponent+1023)<<20u)|(m.y&0xfffffu));\n" \
   "}\n" \
@@ -402,9 +417,11 @@
   "  uint sa=a.y&0x80000000u,sb=b.y&0x80000000u;\n" \
   "  if(ea<eb){ uvec2 swap=ma;ma=mb;mb=swap;int e=ea;ea=eb;eb=e;uint s=sa;sa=sb;sb=s; }\n" \
   "  mb=limb_jam(mb,ea-eb);\n" \
-  "  if(sa==sb) return d64_pack(limb_add(ma,mb),ea,sa);\n" \
-  "  if(limb_less(ma,mb)) return d64_pack(limb_sub(mb,ma),ea,sb);\n" \
-  "  return d64_pack(limb_sub(ma,mb),ea,sa);\n" \
+  "  uvec2 extended;\n" \
+  "  if(sa==sb) extended=limb_add(ma,mb);\n" \
+  "  else if(limb_less(ma,mb)){ extended=limb_sub(mb,ma);sa=sb; }\n" \
+  "  else extended=limb_sub(ma,mb);\n" \
+  "  return d64_pack(extended,ea,sa);\n" \
   "}\n" \
   "uvec2 d64_sub(uvec2 a,uvec2 b){ b.y^=0x80000000u; return d64_add(a,b); }\n" \
   "uvec2 d64_mul(uvec2 a,uvec2 b){\n" \
@@ -489,7 +506,12 @@
   "  ivec4 c=ivec4(round(texelFetch(u_image,ivec2(low.x,high.y),0)*255.0));\n" \
   "  ivec4 d=ivec4(round(texelFetch(u_image,ivec2(high.x,high.y),0)*255.0));\n" \
   "  uvec2 samples[4];\n" \
+  "#if GML_EXACT_FONT_MODE>0\n" \
+  "  samples[3]=font_channel(a,b,c,d,3,wa,wb,wc,wd);\n" \
+  "  uvec2 sample_rgb=font_channel(a,b,c,d,u_font_channel,wa,wb,wc,wd);\n" \
+  "#else\n" \
   "  for(int channel=0;channel<4;channel++) samples[channel]=font_channel(a,b,c,d,channel,wa,wb,wc,wd);\n" \
+  "#endif\n" \
   "  uvec2 alpha=uvec2(u_font_alpha),denominator=d64_uint(255u),sa;\n" \
   "  uint source_alpha;\n" \
   "  if(u_font_mode==2){\n" \
@@ -503,14 +525,20 @@
   "    source_alpha=uint(d64_lround(d64_mul(samples[3],alpha)));\n" \
   "  }\n" \
   "  uvec2 inverse=d64_sub(one,sa);\n" \
-  "  ivec4 result;\n" \
+  "  ivec4 result=prior;\n" \
+  "#if GML_EXACT_FONT_MODE>0\n" \
+  "  int channel=u_font_channel; {\n" \
+  "    uvec2 sample_value=sample_rgb;\n" \
+  "#else\n" \
   "  for(int channel=0;channel<3;channel++){\n" \
+  "    uvec2 sample_value=samples[channel];\n" \
+  "#endif\n" \
   "    if(u_font_mode==2){\n" \
-  "      uint tinted=uint(d64_round(samples[channel]))*uint(u_font_tint[channel])/255u;\n" \
+  "      uint tinted=uint(d64_round(sample_value))*uint(u_font_tint[channel])/255u;\n" \
   "      result[channel]=d64_round(d64_mul(d64_uint(tinted),sa))+\n" \
   "                       d64_round(d64_mul(d64_uint(uint(prior[channel])),inverse));\n" \
   "    } else {\n" \
-  "      uvec2 tinted=d64_div(d64_mul(samples[channel],d64_uint(uint(u_font_tint[channel]))),denominator);\n" \
+  "      uvec2 tinted=d64_div(d64_mul(sample_value,d64_uint(uint(u_font_tint[channel]))),denominator);\n" \
   "      if(!limb_less(sa,one)) result[channel]=d64_round(tinted);\n" \
   "      else result[channel]=d64_round(d64_add(d64_mul(tinted,sa),\n" \
   "                                d64_mul(d64_uint(uint(prior[channel])),inverse)));\n" \
@@ -620,10 +648,18 @@
   "             texelFetch(u_image,ivec2(high.x,high.y),0),weight.x);\n" \
   "  return mix(a,b,weight.y);\n" \
   "}\n" \
+  "#if GML_EXACT_FONT_MODE>0\n" \
+  "void main(){\n" \
+  "  ivec4 prior=ivec4(round(texelFetch(u_previous,ivec2(gl_FragCoord.xy)-u_region_origin,0)*255.0));\n" \
+  "  o_color=vec4(filtered_font_pixel(prior))/255.0;\n" \
+  "}\n" \
+  "#else\n" \
   "void main(){\n" \
   "  ivec4 source=ivec4(round(texture(u_image,v_texcoord)*v_colour*255.0));\n" \
   "  ivec4 prior=ivec4(round(texelFetch(u_previous,ivec2(gl_FragCoord.xy)-u_region_origin,0)*255.0));\n" \
+  "#if GML_EXACT_FONT_MODE<0\n" \
   "  if(u_blend_rule==7){ o_color=vec4(filtered_font_pixel(prior))/255.0; return; }\n" \
+  "#endif\n" \
   "  if(u_blend_rule==8){ o_color=vec4(automatic_underlay_pixel(prior))/255.0; return; }\n" \
   "  // R03_SHADER_LAYER_RGB_NOISE: the CPU hash and alpha-weighted RGB mix.\n" \
   "  if(u_blend_rule==5){\n" \
@@ -708,6 +744,7 @@
   "  for(int index=0;index<u_repetitions;index++)\n" \
   "    colour=(source.rgb*factor+colour*(256-factor))/256;\n" \
   "  o_color=vec4(vec3(colour)/255.0,1.0);\n" \
-  "}\n"
+  "}\n" \
+  "#endif\n"
 
 #endif

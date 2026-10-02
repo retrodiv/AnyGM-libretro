@@ -166,35 +166,43 @@ int gml_gpu_opengl_scene_program(GmlGpuBackend *backend,char *error,size_t error
   return 1;
 }
 
-int gml_gpu_opengl_scene_exact_program(GmlGpuBackend *backend,char *error,
-                                       size_t error_capacity){
-  GlScene *scene=&backend->scene;
+GlSceneExactProgram *gml_gpu_opengl_scene_exact_program(GmlGpuBackend *backend,int font_mode,
+                                                       char *error,size_t error_capacity){
+  int embedded=backend->api==GML_GPU_API_OPENGLES3;
+  /* Keep unrelated exact effects out of specialised embedded font programs. */
+  unsigned slot=embedded?(font_mode==2?1u:font_mode==3?2u:0u):0u;
+  GlSceneExactProgram *scene=&backend->scene.exact_programs[slot];
   const char *prefix=backend->api==GML_GPU_API_OPENGLES3
     ?GML_GPU_OPENGL_PREFIX_ES:GML_GPU_OPENGL_PREFIX_DESKTOP;
   char vertex_source[1024],fragment_source[32768];
   GLuint vertex,fragment;
   GLint status=GL_FALSE;
   int vertex_length,fragment_length;
-  if(scene->exact_program) return 1;
+  if(font_mode!=0 && font_mode!=2 && font_mode!=3){
+    gml_gpu_opengl_record_error(error,error_capacity,"exact font policy is unsupported");
+    return NULL;
+  }
+  if(scene->exact_program) return scene;
   vertex_length=snprintf(vertex_source,sizeof vertex_source,"%s%s",prefix,
                          GML_GPU_OPENGL_SCENE_VERTEX_BODY);
-  fragment_length=snprintf(fragment_source,sizeof fragment_source,"%s%s",prefix,
-                           GML_GPU_OPENGL_SCENE_EXACT_FRAGMENT_BODY);
+  fragment_length=snprintf(fragment_source,sizeof fragment_source,
+                           "%s#define GML_EXACT_FONT_MODE %d\n%s",prefix,
+                           embedded?font_mode:-1,GML_GPU_OPENGL_SCENE_EXACT_FRAGMENT_BODY);
   if(vertex_length<0 || (size_t)vertex_length>=sizeof vertex_source ||
      fragment_length<0 || (size_t)fragment_length>=sizeof fragment_source){
     gml_gpu_opengl_record_error(error,error_capacity,"exact scene program source is too long");
-    return 0;
+    return NULL;
   }
   vertex=compile_stage(backend,GL_VERTEX_SHADER,vertex_source,error,error_capacity);
-  if(!vertex) return 0;
+  if(!vertex) return NULL;
   fragment=compile_stage(backend,GL_FRAGMENT_SHADER,fragment_source,error,error_capacity);
-  if(!fragment){ backend->gl.DeleteShader(vertex); return 0; }
+  if(!fragment){ backend->gl.DeleteShader(vertex); return NULL; }
   scene->exact_program=backend->gl.CreateProgram();
   if(!scene->exact_program){
     backend->gl.DeleteShader(vertex);
     backend->gl.DeleteShader(fragment);
     gml_gpu_opengl_record_error(error,error_capacity,"exact scene program object could not be created");
-    return 0;
+    return NULL;
   }
   backend->gl.AttachShader(scene->exact_program,vertex);
   backend->gl.AttachShader(scene->exact_program,fragment);
@@ -211,7 +219,7 @@ int gml_gpu_opengl_scene_exact_program(GmlGpuBackend *backend,char *error,
     gml_gpu_opengl_record_error(error,error_capacity,"exact scene program failed to link: %s",log);
     backend->gl.DeleteProgram(scene->exact_program);
     scene->exact_program=0;
-    return 0;
+    return NULL;
   }
   scene->exact_a_position=backend->gl.GetAttribLocation(scene->exact_program,"in_Position");
   scene->exact_a_texcoord=backend->gl.GetAttribLocation(scene->exact_program,"in_TextureCoord");
@@ -243,30 +251,36 @@ int gml_gpu_opengl_scene_exact_program(GmlGpuBackend *backend,char *error,
   scene->exact_u_font_crop=backend->gl.GetUniformLocation(scene->exact_program,"u_font_crop");
   scene->exact_u_font_tint=backend->gl.GetUniformLocation(scene->exact_program,"u_font_tint");
   scene->exact_u_font_mode=backend->gl.GetUniformLocation(scene->exact_program,"u_font_mode");
+  scene->exact_u_font_channel=embedded && font_mode
+    ?backend->gl.GetUniformLocation(scene->exact_program,"u_font_channel"):-1;
   scene->exact_u_font_preserve_alpha=backend->gl.GetUniformLocation(scene->exact_program,
                                                                   "u_font_preserve_alpha");
   scene->exact_u_underlay_size=backend->gl.GetUniformLocation(scene->exact_program,"u_underlay_size");
   scene->exact_u_underlay_origin=backend->gl.GetUniformLocation(scene->exact_program,"u_underlay_origin");
   scene->exact_u_underlay_flags=backend->gl.GetUniformLocation(scene->exact_program,"u_underlay_flags");
-  if(scene->exact_a_position<0 || scene->exact_a_texcoord<0 || scene->exact_a_colour<0 ||
+  if(scene->exact_a_position<0 ||
      scene->exact_u_extent<0 || scene->exact_u_image<0 || scene->exact_u_previous<0 ||
-     scene->exact_u_region_origin<0 || scene->exact_u_repetitions<0 ||
-     scene->exact_u_blend_rule<0 || scene->exact_u_additive_alpha<0 ||
-     scene->exact_u_effect_colour<0 || scene->exact_u_effect_intensity<0 ||
-     scene->exact_u_effect_zoom<0 || scene->exact_u_effect_linear<0 ||
-     scene->exact_u_effect_seed<0 || scene->exact_u_font_origin<0 ||
-     scene->exact_u_font_scale<0 || scene->exact_u_font_alpha<0 ||
-     scene->exact_u_font_crop<0 || scene->exact_u_font_tint<0 ||
-     scene->exact_u_font_mode<0 || scene->exact_u_font_preserve_alpha<0 ||
-     scene->exact_u_underlay_size<0 || scene->exact_u_underlay_origin<0 ||
-     scene->exact_u_underlay_flags<0){
+     scene->exact_u_region_origin<0 ||
+     ((!embedded || !font_mode) &&
+      (scene->exact_a_texcoord<0 || scene->exact_a_colour<0 ||
+       scene->exact_u_repetitions<0 || scene->exact_u_blend_rule<0 ||
+       scene->exact_u_additive_alpha<0 || scene->exact_u_effect_colour<0 ||
+       scene->exact_u_effect_intensity<0 || scene->exact_u_effect_zoom<0 ||
+       scene->exact_u_effect_linear<0 || scene->exact_u_effect_seed<0 ||
+       scene->exact_u_underlay_size<0 || scene->exact_u_underlay_origin<0 ||
+       scene->exact_u_underlay_flags<0)) ||
+     ((!embedded || font_mode) &&
+      (scene->exact_u_font_origin<0 || scene->exact_u_font_scale<0 ||
+       scene->exact_u_font_alpha<0 || scene->exact_u_font_crop<0 ||
+       scene->exact_u_font_tint<0 || scene->exact_u_font_preserve_alpha<0 ||
+       (embedded?scene->exact_u_font_channel<0:scene->exact_u_font_mode<0)))){
     gml_gpu_opengl_record_error(error,error_capacity,
       "exact scene program is missing an attribute or uniform");
     backend->gl.DeleteProgram(scene->exact_program);
     scene->exact_program=0;
-    return 0;
+    return NULL;
   }
-  return 1;
+  return scene;
 }
 
 int gml_gpu_opengl_checkpoint_program(GmlGpuBackend *backend){

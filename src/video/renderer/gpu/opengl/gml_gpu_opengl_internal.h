@@ -105,6 +105,22 @@ typedef struct GlSceneCheckpoint {
   uint32_t width,height,pixel_format;
 } GlSceneCheckpoint;
 
+/* Ordinary exact composition and the two GLES font generation policies have distinct
+ * programs. Uniform locations belong to their program, not to the current draw. */
+typedef struct GlSceneExactProgram {
+  GLuint exact_program;
+  GLint exact_a_position,exact_a_texcoord,exact_a_colour;
+  GLint exact_u_extent,exact_u_image,exact_u_previous,exact_u_region_origin;
+  GLint exact_u_repetitions;
+  GLint exact_u_blend_rule,exact_u_additive_alpha;
+  GLint exact_u_effect_colour,exact_u_effect_intensity;
+  GLint exact_u_effect_zoom,exact_u_effect_linear,exact_u_effect_seed;
+  GLint exact_u_font_origin,exact_u_font_scale,exact_u_font_alpha;
+  GLint exact_u_font_crop,exact_u_font_tint,exact_u_font_mode,exact_u_font_preserve_alpha;
+  GLint exact_u_font_channel;
+  GLint exact_u_underlay_size,exact_u_underlay_origin,exact_u_underlay_flags;
+} GlSceneExactProgram;
+
 typedef struct GlScene {
   GlSceneImage images[GL_SCENE_MAX_IMAGES];
   /* Exactly one bounded baseline for each owned frame-target class, never per surface. */
@@ -117,16 +133,8 @@ typedef struct GlScene {
   GLint a_position,a_texcoord,a_colour,a_clamp,a_map,a_step,a_margin;
   GLint a_span_x,a_span_y,a_span_active;
   GLint u_extent,u_image,u_filter;
-  GLuint exact_program,snapshot_texture,rgb_query;
-  GLint exact_a_position,exact_a_texcoord,exact_a_colour;
-  GLint exact_u_extent,exact_u_image,exact_u_previous,exact_u_region_origin;
-  GLint exact_u_repetitions;
-  GLint exact_u_blend_rule,exact_u_additive_alpha;
-  GLint exact_u_effect_colour,exact_u_effect_intensity;
-  GLint exact_u_effect_zoom,exact_u_effect_linear,exact_u_effect_seed;
-  GLint exact_u_font_origin,exact_u_font_scale,exact_u_font_alpha;
-  GLint exact_u_font_crop,exact_u_font_tint,exact_u_font_mode,exact_u_font_preserve_alpha;
-  GLint exact_u_underlay_size,exact_u_underlay_origin,exact_u_underlay_flags;
+  GlSceneExactProgram exact_programs[3];
+  GLuint snapshot_texture,rgb_query;
   uint32_t snapshot_width,snapshot_height;
   GLint max_texture_units;
   float *vertices;
@@ -180,7 +188,8 @@ void gml_gpu_opengl_set_rect(GmlGpuBackend *backend,const GmlPlanRect *rect,
                               uint32_t target_height);
 int gml_gpu_opengl_build_program(GmlGpuBackend *backend,char *error,size_t error_capacity);
 int gml_gpu_opengl_scene_program(GmlGpuBackend *backend,char *error,size_t error_capacity);
-int gml_gpu_opengl_scene_exact_program(GmlGpuBackend *backend,char *error,size_t error_capacity);
+GlSceneExactProgram *gml_gpu_opengl_scene_exact_program(GmlGpuBackend *backend,int font_mode,
+                                                       char *error,size_t error_capacity);
 int gml_gpu_opengl_checkpoint_program(GmlGpuBackend *backend);
 int gml_gpu_opengl_execute_shader_draw(GmlGpuBackend *backend,GmlRenderPlan *plan,
                                         const GmlPlanOp *op,GmlGpuCounters *counters,

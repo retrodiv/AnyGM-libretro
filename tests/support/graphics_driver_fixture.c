@@ -55,6 +55,7 @@ typedef struct FakeDriver {
   int dither_enabled;
   int scissor_enabled;
   int color_mask_all;
+  unsigned color_mask_bits;
   int depth_mask;
   GLint viewport[4];
   GLint scissor[4];
@@ -62,6 +63,10 @@ typedef struct FakeDriver {
   GLfloat clear_colour[4];
   GLint draw_calls;
   GLint scene_draw_calls;
+  unsigned scene_draw_error_at,flush_calls;
+  struct { GLint location; GLuint program; } font_channel_locations[64];
+  unsigned font_channel_location_count,font_channel_draws[3],font_channel_errors;
+  GLint font_channel;
   GLint scene_vertices;
   GLuint scene_texture;
   unsigned shader_stage[256];
@@ -115,6 +120,7 @@ void anygm_test_graphics_reset(void){
 void anygm_test_graphics_readback_alpha(unsigned alpha){ g_fake.readback_alpha=(uint8_t)alpha; }
 void anygm_test_graphics_checkpoint_mask(unsigned bits){ g_fake.checkpoint_mask=(int)(bits&63u); }
 void anygm_test_graphics_fail_readback_at(unsigned ordinal){ g_fake.readback_error_at=ordinal; }
+void anygm_test_graphics_fail_scene_draw_at(unsigned ordinal){ g_fake.scene_draw_error_at=ordinal; }
 void anygm_test_graphics_rgb_query_result(unsigned result){ g_fake.rgb_query_result=result; }
 void anygm_test_graphics_active_query(unsigned name){ g_fake.active_query=name; }
 unsigned anygm_test_graphics_rgb_queries(void){ return g_fake.rgb_queries; }
@@ -140,7 +146,7 @@ static void fake_GetIntegerv(GLenum name,GLint *value){
   if(value) *value=name==GL_MAX_TEXTURE_SIZE?4096:
                    name==GL_MAX_TEXTURE_IMAGE_UNITS?g_fake.texture_unit_limit:0;
 }
-static void fake_Flush(void){ note_call(); }
+static void fake_Flush(void){ note_call(); g_fake.flush_calls++; }
 static void fake_Finish(void){ note_call(); }
 static void fake_PolygonMode(GLenum face,GLenum mode){ (void)face;(void)mode; note_call(); }
 static void fake_BlendFuncSeparate(GLenum a,GLenum b,GLenum c,GLenum d){
@@ -205,6 +211,7 @@ static void fake_Clear(GLbitfield mask){ (void)mask; note_call(); g_fake.clear_c
 static void fake_ColorMask(GLboolean r,GLboolean g,GLboolean b,GLboolean a){
   note_call();
   g_fake.color_mask_all=r&&g&&b&&a;
+  g_fake.color_mask_bits=(r?1u:0u)|(g?2u:0u)|(b?4u:0u)|(a?8u:0u);
 }
 static void fake_DepthMask(GLboolean flag){ note_call(); g_fake.depth_mask=flag; }
 static void fake_BindFramebuffer(GLenum target,GLuint name){
@@ -426,12 +433,21 @@ static void fake_GetProgramInfoLog(GLuint p,GLsizei size,GLsizei *written,GLchar
 static void fake_UseProgram(GLuint p){ note_call(); g_fake.bound_program=p; }
 static void fake_DeleteProgram(GLuint p){ (void)p; note_call(); g_fake.deletes_issued++; }
 static GLint fake_GetUniformLocation(GLuint p,const GLchar *name){
-  (void)p; (void)name; note_call();
+  note_call();
+  if(!strcmp(name,"u_font_channel") && g_fake.font_channel_location_count<64u){
+    unsigned index=g_fake.font_channel_location_count++;
+    g_fake.font_channel_locations[index].location=g_fake.uniform_count;
+    g_fake.font_channel_locations[index].program=p;
+  }
   return g_fake.uniform_count++;
 }
 static void fake_Uniform1i(GLint location,GLint value){
   note_call();
   if(location>=0 && location<8) g_fake.uniforms[location]=value;
+  for(unsigned index=0;index<g_fake.font_channel_location_count;index++)
+    if(g_fake.font_channel_locations[index].location==location &&
+       g_fake.font_channel_locations[index].program==g_fake.bound_program)
+      g_fake.font_channel=value;
 }
 static void fake_GenVertexArrays(GLsizei n,GLuint *names){
   note_call();
@@ -449,6 +465,18 @@ static void fake_DrawArrays(GLenum mode,GLint first,GLsizei count){
     g_fake.scene_draw_calls++;
     g_fake.scene_vertices+=count;
     g_fake.scene_texture=g_fake.bound_texture[0];
+    int font_program=0;
+    for(unsigned index=0;index<g_fake.font_channel_location_count;index++)
+      if(g_fake.font_channel_locations[index].program==g_fake.bound_program) font_program=1;
+    if(font_program){
+      int channel=g_fake.font_channel;
+      unsigned mask=channel==0?1u:channel==1?2u:12u;
+      if(channel>=0 && channel<3 && g_fake.color_mask_bits==mask)
+        g_fake.font_channel_draws[channel]++;
+      else g_fake.font_channel_errors++;
+    }
+    if((unsigned)g_fake.scene_draw_calls==g_fake.scene_draw_error_at)
+      g_fake.pending_error=0x0502u; /* GL_INVALID_OPERATION after a possibly partial write. */
   }
   if(mode==GL_TRIANGLE_STRIP && first==0 && count==4){
     g_fake.strip_draw_calls++;
@@ -647,6 +675,11 @@ int anygm_test_graphics_scene_vertices(void){ return g_fake.scene_vertices; }
 unsigned anygm_test_graphics_scene_texture(void){ return g_fake.scene_texture; }
 int anygm_test_graphics_quad_draw_calls(void){ return g_fake.strip_draw_calls; }
 unsigned anygm_test_graphics_compile_calls(void){ return g_fake.compile_calls; }
+unsigned anygm_test_graphics_flush_calls(void){ return g_fake.flush_calls; }
+unsigned anygm_test_graphics_font_channel_draws(unsigned channel){
+  return channel<3u?g_fake.font_channel_draws[channel]:0u;
+}
+unsigned anygm_test_graphics_font_channel_errors(void){ return g_fake.font_channel_errors; }
 unsigned anygm_test_graphics_quad_texture(unsigned unit){ return unit<3?g_fake.quad_texture[unit]:0; }
 int anygm_test_graphics_quad_filter(unsigned unit){ return unit<3?g_fake.quad_filter[unit]:0; }
 const char *anygm_test_graphics_shader_source(int fragment){ return g_fake.shader_source[fragment?1:0]; }

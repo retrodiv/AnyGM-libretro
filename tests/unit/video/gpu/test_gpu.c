@@ -1038,7 +1038,7 @@ static int scene_screen_filtered_alpha_stamp_case(void){
   return 1;
 }
 
-static int scene_alpha_composition_case(void){
+static int scene_alpha_composition_api(GmlGpuApi api){
   uint32_t source_pixels[4]={0x80FF0000u,0x0000FF00u,0xFF0000FFu,0x40FFFFFFu};
   GmlRenderImageRef source={GML_RENDER_RESOURCE_ATLAS,8u,1u,1u};
   GmlRenderImageRef target={GML_RENDER_RESOURCE_SURFACE,9u,1u,1u};
@@ -1053,7 +1053,7 @@ static int scene_alpha_composition_case(void){
   anygm_test_graphics_reset();
   gpu=gml_gpu_create();
   REQUIRE(gpu!=NULL,"device metadata allocated");
-  context=fake_context(GML_GPU_API_OPENGL_CORE);
+  context=fake_context(api);
   REQUIRE(gml_gpu_context_reset(gpu,&context),"context adopted");
   gml_gpu_device_services(gpu,&service);
   upload.image=source;
@@ -1289,12 +1289,26 @@ static int scene_alpha_composition_case(void){
     }
     unsigned copies=anygm_test_graphics_scene_copies();
     uint64_t copied=anygm_test_graphics_scene_copied_pixels();
+    int draws=anygm_test_graphics_scene_draw_calls();
+    unsigned flushes=anygm_test_graphics_flush_calls();
+    unsigned channels[3];
+    for(unsigned channel=0;channel<3u;channel++)
+      channels[channel]=anygm_test_graphics_font_channel_draws(channel);
     result=service.submit(service.context,&batch);
     REQUIRE(result.status==GML_RENDER_EXEC_ACCEPTED && result.accepted_prefix==3u &&
             anygm_test_graphics_scene_copies()==copies+2u &&
             anygm_test_graphics_scene_copied_pixels()==copied+2u &&
             !anygm_test_graphics_read_pixels(),
             "each filtered glyph snapshots only its pixel, without folding order or CPU reads");
+    REQUIRE(anygm_test_graphics_scene_draw_calls()==draws+(api==GML_GPU_API_OPENGLES3?6:2) &&
+            anygm_test_graphics_flush_calls()==flushes+(api==GML_GPU_API_OPENGLES3?2u:0u) &&
+            anygm_test_graphics_color_mask_all() &&
+            !anygm_test_graphics_font_channel_errors(),
+            "font writes use the API-qualified pass count and restore the complete colour mask");
+    if(api==GML_GPU_API_OPENGLES3)
+      for(unsigned channel=0;channel<3u;channel++)
+        REQUIRE(anygm_test_graphics_font_channel_draws(channel)==channels[channel]+2u,
+                "each GLES glyph writes each selected RGB component and alpha only on the last");
     for(unsigned variant=0;variant<18u;variant++){
       GmlRenderDrawOp invalid[3];
       GmlRenderDrawStateSnapshot invalid_state=state;
@@ -1328,8 +1342,36 @@ static int scene_alpha_composition_case(void){
               "a later invalid glyph refuses before the valid clear and glyph prefix writes");
     }
   }
+  if(api==GML_GPU_API_OPENGLES3){
+    unsigned compiled=anygm_test_graphics_compile_calls();
+    int draws=anygm_test_graphics_scene_draw_calls();
+    anygm_test_graphics_fail_scene_draw_at((unsigned)draws+2u);
+    result=service.submit(service.context,&batch);
+    REQUIRE(result.status==GML_RENDER_EXEC_RECOVERABLE_ERROR &&
+            result.accepted_prefix==1u && result.uncertain_target_count==1u &&
+            anygm_test_graphics_scene_draw_calls()==draws+2 &&
+            anygm_test_graphics_color_mask_all() &&
+            !anygm_test_graphics_attributes_enabled() &&
+            !anygm_test_graphics_bound_program(),
+            "a failed middle component stops before blue/alpha and invalidates the partial target");
+    anygm_test_graphics_fail_scene_draw_at(0u);
+    result=service.submit(service.context,&batch);
+    REQUIRE(result.status==GML_RENDER_EXEC_ACCEPTED && result.accepted_prefix==3u &&
+            anygm_test_graphics_compile_calls()==compiled &&
+            !anygm_test_graphics_font_channel_errors() &&
+            !anygm_test_graphics_read_pixels(),
+            "a fresh clear recovers with the cached generation program without CPU reads");
+  }
   gml_gpu_destroy(gpu,1);
   return 1;
+}
+
+static int scene_alpha_composition_case(void){
+  return scene_alpha_composition_api(GML_GPU_API_OPENGL_CORE);
+}
+
+static int scene_gles_font_programs_case(void){
+  return scene_alpha_composition_api(GML_GPU_API_OPENGLES3);
 }
 
 static int execute_state_and_geometry_case(void){
@@ -2074,6 +2116,7 @@ int main(int argc,char **argv){
     {"incremental_checkpoint_budget",incremental_checkpoint_budget_case},
     {"scene_atlas_retire_advanced_version",scene_atlas_retire_advanced_version_case},
     {"scene_alpha_composition",scene_alpha_composition_case},
+    {"scene_gles_font_programs",scene_gles_font_programs_case},
     {"scene_screen_filtered_alpha_stamp",scene_screen_filtered_alpha_stamp_case},
     {"scene_completed_screen_query",scene_completed_screen_query_case},
   };

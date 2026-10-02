@@ -602,14 +602,21 @@ static int draw_exact_quad(GmlGpuBackend *backend,const GmlRenderDrawOp *op,
                            uint32_t repetitions,const GmlRenderLayerEffect *effect,
                            char *error,size_t error_capacity){
   GlScene *scene=&backend->scene;
+  GlSceneExactProgram *exact;
   GLint left,bottom,origin[2];
   GLsizei width,height,stride=GL_SCENE_VERTEX_FLOATS*(GLsizei)sizeof(float);
   GLfloat extent[2]={(GLfloat)target->width,(GLfloat)target->height};
-  int outcome;
+  int outcome,font_mode=0;
+  if(qualified_blend(state)==6)
+    font_mode=op->payload.quad.sampling.quantisation==GML_RENDER_QUANTISE_FONT_MODERN?3:2;
+  if(font_mode && backend->api==GML_GPU_API_OPENGLES3 && !backend->gl.Flush){
+    gml_gpu_opengl_record_error(error,error_capacity,"exact font submission is unavailable");
+    return 0;
+  }
   if(!exact_rect(op,&left,&bottom,&width,&height,
                  qualified_blend(state)==4 || qualified_blend(state)==6 ||
                  qualified_blend(state)==7) ||
-     !gml_gpu_opengl_scene_exact_program(backend,error,error_capacity) ||
+     !(exact=gml_gpu_opengl_scene_exact_program(backend,font_mode,error,error_capacity)) ||
      !gml_render_gpu_opengl_draw_textured_quad(op,state,source->width,source->height,
                                                source->rendered_origin,
                                                scene->vertices)) return 0;
@@ -639,12 +646,12 @@ static int draw_exact_quad(GmlGpuBackend *backend,const GmlRenderDrawOp *op,
   backend->gl.BindTexture(GL_TEXTURE_2D,source->texture);
   backend->gl.TexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,GL_NEAREST);
   backend->gl.TexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAG_FILTER,GL_NEAREST);
-  backend->gl.UseProgram(scene->exact_program);
-  backend->gl.Uniform2fv(scene->exact_u_extent,1,extent);
-  backend->gl.Uniform1i(scene->exact_u_image,0);
-  backend->gl.Uniform1i(scene->exact_u_previous,1);
-  backend->gl.Uniform1i(scene->exact_u_repetitions,(GLint)repetitions);
-  backend->gl.Uniform1i(scene->exact_u_blend_rule,
+  backend->gl.UseProgram(exact->exact_program);
+  backend->gl.Uniform2fv(exact->exact_u_extent,1,extent);
+  backend->gl.Uniform1i(exact->exact_u_image,0);
+  backend->gl.Uniform1i(exact->exact_u_previous,1);
+  backend->gl.Uniform1i(exact->exact_u_repetitions,(GLint)repetitions);
+  backend->gl.Uniform1i(exact->exact_u_blend_rule,
                         effect?(effect->kind==GML_RENDER_LAYER_EFFECT_TINT?2:
                                 effect->kind==GML_RENDER_LAYER_EFFECT_COLOURISE?3:
                                 effect->kind==GML_RENDER_LAYER_EFFECT_ZOOM_BLUR?4:5):
@@ -659,9 +666,9 @@ static int draw_exact_quad(GmlGpuBackend *backend,const GmlRenderDrawOp *op,
       (q->sampling.filter==GML_RENDER_FILTER_BOX?2:0) |
       (q->sampling.quantisation==GML_RENDER_QUANTISE_AUTOMATIC_SURFACE_FIRSTGEN?4:0) |
       (source->rendered_origin?8:0);
-    backend->gl.Uniform4iv(scene->exact_u_underlay_size,1,size);
-    backend->gl.Uniform2iv(scene->exact_u_underlay_origin,1,underlay_origin);
-    backend->gl.Uniform1i(scene->exact_u_underlay_flags,flags);
+    backend->gl.Uniform4iv(exact->exact_u_underlay_size,1,size);
+    backend->gl.Uniform2iv(exact->exact_u_underlay_origin,1,underlay_origin);
+    backend->gl.Uniform1i(exact->exact_u_underlay_flags,flags);
   }
   if(qualified_blend(state)==6){
     const GmlRenderQuad *quad=&op->payload.quad;
@@ -676,60 +683,85 @@ static int draw_exact_quad(GmlGpuBackend *backend,const GmlRenderDrawOp *op,
     double_words(quad->inverse_x[0],scale_words);
     double_words(quad->inverse_y[1],scale_words+2);
     double_words(quad->filtered_draw_alpha,alpha_words);
-    backend->gl.Uniform4iv(scene->exact_u_font_origin,1,origin_words);
-    backend->gl.Uniform4iv(scene->exact_u_font_scale,1,scale_words);
-    backend->gl.Uniform2iv(scene->exact_u_font_alpha,1,alpha_words);
-    backend->gl.Uniform4iv(scene->exact_u_font_crop,1,region);
-    backend->gl.Uniform4iv(scene->exact_u_font_tint,1,tint);
-    backend->gl.Uniform1i(scene->exact_u_font_mode,
+    backend->gl.Uniform4iv(exact->exact_u_font_origin,1,origin_words);
+    backend->gl.Uniform4iv(exact->exact_u_font_scale,1,scale_words);
+    backend->gl.Uniform2iv(exact->exact_u_font_alpha,1,alpha_words);
+    backend->gl.Uniform4iv(exact->exact_u_font_crop,1,region);
+    backend->gl.Uniform4iv(exact->exact_u_font_tint,1,tint);
+    backend->gl.Uniform1i(exact->exact_u_font_mode,
       quad->sampling.quantisation==GML_RENDER_QUANTISE_FONT_FIRSTGEN_INDEPENDENT
         ?GML_RENDER_QUANTISE_FONT_FIRSTGEN:(GLint)quad->sampling.quantisation);
-    backend->gl.Uniform1i(scene->exact_u_font_preserve_alpha,
+    backend->gl.Uniform1i(exact->exact_u_font_preserve_alpha,
                           state->alpha_source_factor==GML_RENDER_BLEND_SOURCE_ALPHA);
   }
   {
     GLfloat opacity=(GLfloat)state->additive_draw_alpha;
-    backend->gl.Uniform1fv(scene->exact_u_additive_alpha,1,&opacity);
+    backend->gl.Uniform1fv(exact->exact_u_additive_alpha,1,&opacity);
   }
   {
     uint32_t colour=effect?effect->colour:0xFFFFFFFFu;
     GLint rgba[4]={(GLint)((colour>>16)&255u),(GLint)((colour>>8)&255u),
                    (GLint)(colour&255u),(GLint)(colour>>24)};
     GLfloat intensity=effect?(GLfloat)effect->intensity:1.0f;
-    backend->gl.Uniform4iv(scene->exact_u_effect_colour,1,rgba);
-    backend->gl.Uniform1fv(scene->exact_u_effect_intensity,1,&intensity);
+    backend->gl.Uniform4iv(exact->exact_u_effect_colour,1,rgba);
+    backend->gl.Uniform1fv(exact->exact_u_effect_intensity,1,&intensity);
     GLfloat zoom[4]={effect?(GLfloat)effect->centre[0]:0.0f,
                      effect?(GLfloat)effect->centre[1]:0.0f,
                      intensity,effect?(GLfloat)effect->focus_radius:0.0f};
-    backend->gl.Uniform4fv(scene->exact_u_effect_zoom,1,zoom);
-    backend->gl.Uniform1i(scene->exact_u_effect_linear,
+    backend->gl.Uniform4fv(exact->exact_u_effect_zoom,1,zoom);
+    backend->gl.Uniform1i(exact->exact_u_effect_linear,
                           effect?(GLint)effect->linear:0);
-    backend->gl.Uniform1i(scene->exact_u_effect_seed,
+    backend->gl.Uniform1i(exact->exact_u_effect_seed,
                           effect?(GLint)effect->phase_seed:0);
   }
   origin[0]=left;
   origin[1]=bottom;
-  backend->gl.Uniform2iv(scene->exact_u_region_origin,1,origin);
+  backend->gl.Uniform2iv(exact->exact_u_region_origin,1,origin);
   backend->gl.BindVertexArray(scene->vertex_array);
   backend->gl.BindBuffer(GL_ARRAY_BUFFER,scene->vertex_buffer);
   backend->gl.BufferData(GL_ARRAY_BUFFER,6u*GL_SCENE_VERTEX_FLOATS*sizeof(float),
                          scene->vertices,GL_STREAM_DRAW);
-  backend->gl.EnableVertexAttribArray((GLuint)scene->exact_a_position);
-  backend->gl.EnableVertexAttribArray((GLuint)scene->exact_a_texcoord);
-  backend->gl.EnableVertexAttribArray((GLuint)scene->exact_a_colour);
-  backend->gl.VertexAttribPointer((GLuint)scene->exact_a_position,2,GL_FLOAT,GL_FALSE,stride,
+  backend->gl.EnableVertexAttribArray((GLuint)exact->exact_a_position);
+  if(exact->exact_a_texcoord>=0)
+    backend->gl.EnableVertexAttribArray((GLuint)exact->exact_a_texcoord);
+  if(exact->exact_a_colour>=0)
+    backend->gl.EnableVertexAttribArray((GLuint)exact->exact_a_colour);
+  backend->gl.VertexAttribPointer((GLuint)exact->exact_a_position,2,GL_FLOAT,GL_FALSE,stride,
                                   (const void*)0);
-  backend->gl.VertexAttribPointer((GLuint)scene->exact_a_texcoord,2,GL_FLOAT,GL_FALSE,stride,
-                                  (const void*)(2*sizeof(float)));
-  backend->gl.VertexAttribPointer((GLuint)scene->exact_a_colour,4,GL_FLOAT,GL_FALSE,stride,
-                                  (const void*)(4*sizeof(float)));
+  if(exact->exact_a_texcoord>=0)
+    backend->gl.VertexAttribPointer((GLuint)exact->exact_a_texcoord,2,GL_FLOAT,GL_FALSE,stride,
+                                    (const void*)(2*sizeof(float)));
+  if(exact->exact_a_colour>=0)
+    backend->gl.VertexAttribPointer((GLuint)exact->exact_a_colour,4,GL_FLOAT,GL_FALSE,stride,
+                                    (const void*)(4*sizeof(float)));
   if(backend->gl.GetError()!=GL_NO_ERROR){ outcome=0; goto cleanup; }
-  backend->gl.DrawArrays(GL_TRIANGLES,0,6);
-  outcome=backend->gl.GetError()==GL_NO_ERROR?1:-1;
+  if(font_mode && backend->api==GML_GPU_API_OPENGLES3){
+    /* All three writes sample the same immutable pre-glyph rectangle. Alpha is written
+     * once, with the final colour, so overlaps retain the original ordered source-over. */
+    outcome=-1;
+    for(GLint channel=0;channel<3;channel++){
+      backend->gl.Uniform1i(exact->exact_u_font_channel,channel);
+      backend->gl.ColorMask(channel==0,channel==1,channel==2,channel==2);
+      backend->gl.DrawArrays(GL_TRIANGLES,0,6);
+      if(backend->gl.GetError()!=GL_NO_ERROR) goto cleanup;
+    }
+    /* Submit the complete masked write before its target can become another pass's
+     * sampled source. V3D otherwise loses preceding RGB writes on translucent sources.
+     * Flush submits work; it neither waits for completion nor reads pixels to the CPU. */
+    backend->gl.Flush();
+    if(backend->gl.GetError()!=GL_NO_ERROR) goto cleanup;
+    outcome=1;
+  } else {
+    backend->gl.DrawArrays(GL_TRIANGLES,0,6);
+    outcome=backend->gl.GetError()==GL_NO_ERROR?1:-1;
+  }
 cleanup:
-  backend->gl.DisableVertexAttribArray((GLuint)scene->exact_a_position);
-  backend->gl.DisableVertexAttribArray((GLuint)scene->exact_a_texcoord);
-  backend->gl.DisableVertexAttribArray((GLuint)scene->exact_a_colour);
+  backend->gl.ColorMask(GL_TRUE,GL_TRUE,GL_TRUE,GL_TRUE);
+  backend->gl.DisableVertexAttribArray((GLuint)exact->exact_a_position);
+  if(exact->exact_a_texcoord>=0)
+    backend->gl.DisableVertexAttribArray((GLuint)exact->exact_a_texcoord);
+  if(exact->exact_a_colour>=0)
+    backend->gl.DisableVertexAttribArray((GLuint)exact->exact_a_colour);
   backend->gl.BindBuffer(GL_ARRAY_BUFFER,0);
   backend->gl.BindVertexArray(0);
   backend->gl.UseProgram(0);
