@@ -28,6 +28,19 @@ the exact clock, cadence and GPU-completion exclusions and neutral controls.
 This instrumentation does not change any rule, shader or authority boundary
 mapped below; checkpoint bytes remain product cost, not test overhead.
 
+Completed-picture save preparation is owned by
+`src/core/engine_state.c::state_write_completed_frame` and `::state_write`,
+not a shader or raster executor. `::engine_state_save` permits an early stop
+only after both existing encoding lower bounds exceed the supplied capacity;
+the established frame-free writer then supplies the same bytes. A failed
+compact attempt restores the original complete-plus-compact failure path.
+`::engine_state_size` and all fitting complete writes retain the full codec.
+The comparative owner is
+`tests/integration/test_graphics_state.c::completed_frame_capacity_case`;
+fixed/variable transport and non-current-context rewind are additionally
+covered by the existing libretro state contracts. This CPU codec optimization
+does not remove GPU checkpoints or change their authority/residency rule.
+
 The later resident prototype supports clear, qualified whole-image quads, and nearest-filtered
 interior atlas subrectangles with integer-sized axis-aligned destinations and optional X/Y mirrors.
 A narrow ordinary sprite path accepts unit-scale, integer-aligned authored trim when its atlas crop

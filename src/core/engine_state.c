@@ -90,7 +90,8 @@ size_t engine_state_frame_capacity(const AnygmEngine *engine){
   return 12u+4u*w*h;
 }
 
-static void state_write_completed_frame(AnygmEngine *engine,CoreW *state){
+static void state_write_completed_frame(AnygmEngine *engine,CoreW *state,
+                                        int *frame_exceeds_capacity){
   unsigned width=0,height=0;
   /* The state carries the exact completed frame. A frame that was produced somewhere other than
    * the processor has to be produced here first: serializing the buffer as it stands would write
@@ -132,6 +133,18 @@ static void state_write_completed_frame(AnygmEngine *engine,CoreW *state){
   size_t pixels=(size_t)width*height;
   size_t raw_bytes=pixels*4u;
   size_t rle_base=(size_t)height*4u+8u;
+  size_t available=state->pos<=state->cap?state->cap-state->pos:0u;
+  int check_capacity=frame_exceeds_capacity && state->data && state->ok &&
+                     raw_bytes+4u>available;
+  size_t available_runs=available>=rle_base+4u?(available-rle_base-4u)/8u:0u;
+  /* Only a save which can retry without the picture uses this proof. Both encodings must already
+   * exceed its remaining capacity; a large but compressible picture still keeps its exact bytes.
+   * Size queries and failure replays retain the original complete counting path. */
+  if(check_capacity && (rle_base+4u>available || literal_rows>available_runs)){
+    *frame_exceeds_capacity=1;
+    free(rows);
+    return;
+  }
   int use_raw=raw_bytes<=rle_base;
   for(uint32_t y=0;y<height && state->ok;y++){
     if(use_raw) break;
@@ -142,6 +155,11 @@ static void state_write_completed_frame(AnygmEngine *engine,CoreW *state){
       while(rend<width && row[rend]==value) rend++;
       if(runs==UINT32_MAX){ state->ok=0; break; }
       runs++; at=rend;
+      if(check_capacity && runs>available_runs){
+        *frame_exceeds_capacity=1;
+        free(rows);
+        return;
+      }
       /* Every remaining literal can only make the RLE larger. Stop as soon as its lower bound
        * reaches raw size instead of scanning the rest of a detailed frame. */
       if((size_t)runs>(raw_bytes-rle_base)/8u){ use_raw=1; break; }
@@ -431,7 +449,7 @@ static int state_launch_matches_engine(const AnygmEngine *engine,
     !strcmp(engine->launch_parameters,launch->launch_parameters);
 }
 
-static void state_write(AnygmEngine *engine,CoreW *s){
+static void state_write(AnygmEngine *engine,CoreW *s,int *frame_exceeds_capacity){
   uint8_t empty_header[ANYGM_STATE_HEADER_SIZE]={0};
   cw_raw(s,empty_header,sizeof empty_header);
   size_t core_start=s->pos;
@@ -448,7 +466,8 @@ static void state_write(AnygmEngine *engine,CoreW *s){
   cw_raw(s,engine->key_press_carry,sizeof engine->key_press_carry);
   cw_raw(s,engine->key_release_defer,sizeof engine->key_release_defer);
   cw_u32(s,engine->mouse_button_cleared);
-  state_write_completed_frame(engine,s);
+  state_write_completed_frame(engine,s,frame_exceeds_capacity);
+  if(frame_exceeds_capacity && *frame_exceeds_capacity) return;
   size_t coren=s->pos-core_start;
   size_t render_start=s->pos;
   int derived_view_surface=(int)gml_global_arr(&engine->vm,"view_surface_id",0);
@@ -508,7 +527,7 @@ size_t engine_state_size(AnygmEngine *engine){
   if(!engine->loaded) return 0;
   CoreW measure={0};
   measure.ok=1;
-  state_write(engine,&measure);
+  state_write(engine,&measure,NULL);
   return measure.ok?measure.pos:0;
 }
 size_t engine_state_resume_size(AnygmEngine *engine){
@@ -517,13 +536,14 @@ size_t engine_state_resume_size(AnygmEngine *engine){
   engine->state_omit_frame=1;
   CoreW measure={0};
   measure.ok=1;
-  state_write(engine,&measure);
+  state_write(engine,&measure,NULL);
   engine->state_omit_frame=previous;
   return measure.ok?measure.pos:0;
 }
 bool engine_state_save(AnygmEngine *engine,void *d,size_t n,size_t *written){
   if(!engine->loaded || !d) return false;
-  CoreW s={(uint8_t*)d,n,0,1}; state_write(engine,&s);
+  int frame_exceeds_capacity=0;
+  CoreW s={(uint8_t*)d,n,0,1}; state_write(engine,&s,&frame_exceeds_capacity);
   /* The completed frame is the one section a state can be restored without, and it is the section
    * that grows by megabytes the moment a virtual monitor is selected. A frontend that fixed its
    * rewind buffer from an earlier, smaller answer offers a buffer that can no longer hold one, and
@@ -532,9 +552,9 @@ bool engine_state_save(AnygmEngine *engine,void *d,size_t n,size_t *written){
    * back to them. So write the state again without the frame and keep the history. The restored
    * picture is then the one the next frame draws, which is what a state without a frame has always
    * presented. */
-  if(s.pos > n && !engine->state_omit_frame){
+  if(frame_exceeds_capacity || (s.pos > n && !engine->state_omit_frame)){
     engine->state_omit_frame=1;
-    CoreW retry={(uint8_t*)d,n,0,1}; state_write(engine,&retry);
+    CoreW retry={(uint8_t*)d,n,0,1}; state_write(engine,&retry,NULL);
     engine->state_omit_frame=0;
     if(retry.ok && retry.pos<=n){
       if(written) *written=retry.pos;
@@ -546,6 +566,18 @@ bool engine_state_save(AnygmEngine *engine,void *d,size_t n,size_t *written){
                     (unsigned long long)n);
       }
       return true;
+    }
+    if(frame_exceeds_capacity){
+      /* A lower bound is not the historical failed-save size. If even the compact form fails,
+       * replay both original attempts, in their original order, to retain that size and buffer. */
+      s=(CoreW){(uint8_t*)d,n,0,1};
+      state_write(engine,&s,NULL);
+      if(s.pos>n){
+        engine->state_omit_frame=1;
+        retry=(CoreW){(uint8_t*)d,n,0,1};
+        state_write(engine,&retry,NULL);
+        engine->state_omit_frame=0;
+      }
     }
   }
   if(written) *written=s.pos;
@@ -565,7 +597,7 @@ bool engine_state_save_for_resume(AnygmEngine *engine,void *d,size_t n,size_t *w
   int previous=engine->state_omit_frame;
   engine->state_omit_frame=1;
   CoreW s={(uint8_t*)d,n,0,1};
-  state_write(engine,&s);
+  state_write(engine,&s,NULL);
   engine->state_omit_frame=previous;
   if(written) *written=s.pos;
   if(s.pos>n){
@@ -742,13 +774,13 @@ bool engine_state_load(AnygmEngine *engine,const void *d,size_t n){
   }
 
   CoreW measure={0}; measure.ok=1;
-  state_write(engine,&measure);
+  state_write(engine,&measure,NULL);
   if(!measure.ok || !measure.pos) return false;
   size_t snapshot_size=measure.pos;
   uint8_t *snapshot=malloc(snapshot_size);
   if(!snapshot) return false;
   CoreW snapshot_writer={snapshot,snapshot_size,0,1};
-  state_write(engine,&snapshot_writer);
+  state_write(engine,&snapshot_writer,NULL);
   if(!snapshot_writer.ok || snapshot_writer.pos!=snapshot_size){
     free(snapshot);
     return false;

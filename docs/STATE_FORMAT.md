@@ -416,6 +416,17 @@ first attempts the complete encoded picture and falls back to the explicit frame
 when the picture does not fit. The representation cannot depend on whether the caller is a rewind
 push or a manual save because the libretro ABI does not identify those consumers.
 
+The root writer may stop counting completed-picture runs when both the raw encoding and the
+already-proven row-RLE lower bound exceed the offered buffer's remaining capacity. It then uses
+the same frame-free writer; it does not assume that another picture of the same dimensions will
+also overflow. Large repeated pictures retain their complete encoding whenever it fits. Exact
+size queries still count the full selected encoding. If the compact attempt fails too, the
+original complete-plus-compact attempts are replayed to retain failed-save size and buffer
+behavior. This changes neither state bytes nor slot capacity, materialization, schema or restore
+semantics. `tests/integration/test_graphics_state.c::completed_frame_capacity_case` compares raw,
+row-RLE and adjacent-row repetition at exact, near-fit, compact and failed capacities against
+the ordinary complete and explicit resume bytes, with canaries and unchanged live-state checks.
+
 A frontend that explicitly acknowledges variable sizes uses the same compact pre-frame policy.
 A one-MiB ring is also sufficient when the complete-frame ceiling plus twice the known required
 state fits within it. This keeps the bounded raw-picture cost separate from the simulation growth

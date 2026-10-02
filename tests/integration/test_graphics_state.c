@@ -2291,6 +2291,85 @@ static int completed_frame_encodings_case(void){
   return ok;
 }
 
+/* Capacity is not an encoding policy. A detailed picture can exceed a small slot while a later
+ * repeated picture of exactly the same extent fits; each successful write must equal the ordinary
+ * complete or explicit resume writer. Failed attempts must not change the live canonical state. */
+static int completed_frame_capacity_case(void){
+  Session session;
+  AnygmConfigDelta presentation={0};
+  size_t pixels,complete_size,resume_size,written;
+  uint8_t *complete=NULL,*resume=NULL,*buffer=NULL,*after=NULL;
+  int ok=1;
+  anygm_test_graphics_reset();
+  REQUIRE(session_open_fixture_with_scene(&session,ANYGM_SCENE_RENDERER_CPU,
+          anygm_synthetic_large_moving_sound_content_create),
+          "capacity control loads a large authored neutral fixture");
+  presentation.struct_size=sizeof presentation;
+  presentation.values.struct_size=sizeof presentation.values;
+  presentation.fields=ANYGM_CONFIG_PRESENT_LOGICAL_RASTER|ANYGM_CONFIG_ASPECT_MODE;
+  presentation.values.present_logical_raster=1u;
+  presentation.values.aspect_mode=GMC_ASPECT_FORCE_NONE;
+  REQUIRE(anygm_set_config(session.engine,&presentation)==ANYGM_OK &&
+          advance(session.engine,1,NULL) && session.engine->output_width==1920u &&
+          session.engine->output_height==1080u,"capacity control presents its large raster");
+  pixels=(size_t)session.engine->output_width*session.engine->output_height;
+  for(unsigned variant=0;variant<4u && ok;variant++){
+    for(size_t index=0;index<pixels;index++){
+      size_t row=index/1920u,column=index%1920u;
+      size_t value=variant==0u?index:
+                   variant==1u?row*160u+column/12u:
+                   variant==2u?(row/16u)*160u+column/12u:0u;
+      session.engine->screen[index]=UINT32_C(0xFF000000)|
+        (uint32_t)((value*UINT32_C(2654435761))&UINT32_C(0x00FFFFFF));
+    }
+    complete=serialize(session.engine,&complete_size);
+    resume_size=anygm_state_resume_size(session.engine);
+    resume=malloc(resume_size);
+    ok=complete && resume && resume_size>1u &&
+       anygm_state_save_for_resume(session.engine,resume,resume_size,&written)==ANYGM_OK &&
+       written==resume_size;
+    ok=ok && (variant<2u?complete_size>1048576u:complete_size<1048576u);
+    const size_t capacities[]={1u,8192u,resume_size-1u,resume_size,resume_size+32u,
+                               1048576u,complete_size-1u,complete_size,complete_size+16u};
+    for(size_t choice=0;choice<sizeof capacities/sizeof capacities[0] && ok;choice++){
+      size_t capacity=capacities[choice];
+      buffer=malloc(capacity+16u);
+      if(!buffer){ ok=0; break; }
+      memset(buffer,0xA5,capacity+16u);
+      written=0;
+      anygm_test_graphics_forbid_calls();
+      AnygmResult result=anygm_state_save(session.engine,buffer,capacity,&written);
+      anygm_test_graphics_allow_calls();
+      ok=session.engine->state_omit_frame==0 && !anygm_test_graphics_calls_after_forget();
+      for(size_t guard=capacity;guard<capacity+16u;guard++)
+        ok=ok && buffer[guard]==0xA5u;
+      if(capacity<resume_size){
+        ok=ok && result!=ANYGM_OK && written>capacity;
+      } else {
+        const uint8_t *expected=capacity>=complete_size?complete:resume;
+        size_t expected_size=capacity>=complete_size?complete_size:resume_size;
+        ok=ok && result==ANYGM_OK && written==expected_size &&
+           !memcmp(buffer,expected,expected_size);
+      }
+      size_t after_size=0;
+      after=serialize(session.engine,&after_size);
+      ok=ok && after && after_size==complete_size &&
+         !memcmp(after,complete,complete_size);
+      if(!ok)
+        fprintf(stderr,"frame capacity failed: variant=%u capacity=%zu complete=%zu "
+                       "resume=%zu result=%d written=%zu\n",
+                variant,capacity,complete_size,resume_size,(int)result,written);
+      free(after); after=NULL;
+      free(buffer); buffer=NULL;
+    }
+    free(resume); resume=NULL;
+    free(complete); complete=NULL;
+  }
+  free(after); free(buffer); free(resume); free(complete);
+  session_close(&session);
+  return ok;
+}
+
 /* A terminal content program must finish at its authored raster before CRT filtering. The fake
  * proves synchronous readback, ownership and transport; the software plan cases own filter pixels. */
 static int crt_terminal_program_extent(unsigned source_w,unsigned source_h,
@@ -2463,6 +2542,7 @@ int main(void){
     {"a buffer too short for the frame still takes the state",short_buffer_drops_the_frame_case},
     {"an explicit resume state omits only the completed frame",explicit_resume_state_case},
     {"raw and repeated-row completed frames roundtrip",completed_frame_encodings_case},
+    {"completed frame capacity retains exact fitting bytes",completed_frame_capacity_case},
     {"CRT preserves terminal content programs",crt_terminal_program_case},
   };
   int failed=0;
