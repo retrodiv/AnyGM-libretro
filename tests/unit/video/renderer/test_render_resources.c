@@ -3084,7 +3084,14 @@ static int resident_identity_gui_filtered_atlas(void){
   content.bytecode=15;
   render->win=&content;
   render->interp=1;
-  for(unsigned variant=0;variant<6u;variant++){
+  /* Keep the qualified identity cases, then exercise the same pixel rules on
+   * an owned nonuniformly mapped GUI screen: ordinary/ext, stretched tint,
+   * reflection, trim and bounded reduction share one mapping boundary. */
+  for(unsigned variant=0;variant<14u;variant++){
+    const int trimmed=variant==11u || variant==12u;
+    render->tpag[0].tx=render->tpag[0].ty=trimmed;
+    render->tpag[0].bw=render->tpag[0].bh=PAGE+trimmed;
+    render->spr[0].w=render->spr[0].h=PAGE+trimmed;
     unsigned visible=0;
     for(unsigned accelerated=0;accelerated<2u;accelerated++){
       GmlRenderJournalMetrics baseline={0};
@@ -3096,6 +3103,7 @@ static int resident_identity_gui_filtered_atlas(void){
       if(accelerated)
         gml_render_resource_journal_metrics(render->base_scene_resource,&baseline);
       gml_render_gui_begin(render,WIDTH,HEIGHT);
+      if(variant>=6u) gml_render_gui_set_size(render,5,4);
       gml_render_set_pending_fill(render,0xff102030u);
       switch(variant){
         case 0: gml_draw_background(render,0,0.25,0.3); break;
@@ -3107,8 +3115,23 @@ static int resident_identity_gui_filtered_atlas(void){
                                      0.0,0xa0c0e0u,0.6); break;
         case 4: gml_draw_background_stretched(render,0,0.3,0.5,6.0,7.0,
                                               0xffffffu,1.0); break;
-        default: gml_draw_background_tile(render,0,1.0,1.0,2.0,2.0,
+        case 5: gml_draw_background_tile(render,0,1.0,1.0,2.0,2.0,
                    0.3,0.5,1.715,1.4814814814814814,1,1,0,0xffffffu,1.0); break;
+        case 6: gml_draw_sprite(render,0,0,0.25,0.3); break;
+        case 7: gml_draw_sprite_ext(render,0,0,0.3,0.5,0.75,0.65,
+                                     0.0,0xa0c0e0u,0.6); break;
+        case 8: gml_draw_sprite_stretched(render,0,0,0.3,0.5,6.0,5.0,
+                                            0xffffffu,1.0); break;
+        case 9: gml_draw_sprite_stretched(render,0,0,-0.3,0.5,6.0,5.0,
+                                            0xa0c0e0u,0.6); break;
+        case 10: gml_draw_sprite_ext(render,0,0,4.1,0.25,-0.65,0.75,
+                                      0.0,0xffffffu,1.0); break;
+        case 11: gml_draw_sprite_stretched(render,0,0,-0.3,0.5,6.0,5.0,
+                                             0xa0c0e0u,0.6); break;
+        case 12: gml_draw_sprite_ext(render,0,0,0.3,0.5,0.75,0.65,
+                                      0.0,0xffffffu,1.0); break;
+        default: gml_draw_sprite_stretched(render,0,0,0.3,0.5,1.0,1.0,
+                                             0xffffffu,1.0); break;
       }
       if(!accelerated){
         gml_render_flush_pending_fill(render);
@@ -3124,9 +3147,23 @@ static int resident_identity_gui_filtered_atlas(void){
         CHECK(gml_render_resource_image_ref(render->base_scene_resource).resource_class==
               GML_RENDER_RESOURCE_SCREEN);
         gml_render_resource_journal_metrics(render->base_scene_resource,&metrics);
-        CHECK(metrics.authority==GML_RENDER_RESOURCE_BOTH_CURRENT &&
-              metrics.device_checkpoints==baseline.device_checkpoints+1u &&
-              metrics.cpu_replays==baseline.cpu_replays);
+        if(variant==8u){
+          const uint32_t *recovered=NULL;
+          /* The already exact opaque-white stretched sampler retains its
+           * recipe rather than publishing a device checkpoint. */
+          CHECK(metrics.authority==GML_RENDER_RESOURCE_GPU_REPLAYABLE &&
+                metrics.device_checkpoints==baseline.device_checkpoints &&
+                metrics.cpu_replays==baseline.cpu_replays);
+          CHECK(gml_render_resource_acquire_cpu_read(render->base_scene_resource,&recovered) &&
+                !memcmp(recovered,cpu,sizeof cpu));
+          gml_render_resource_journal_metrics(render->base_scene_resource,&metrics);
+          CHECK(metrics.cpu_replays==baseline.cpu_replays+1u &&
+                metrics.device_checkpoints==baseline.device_checkpoints);
+        } else {
+          CHECK(metrics.authority==GML_RENDER_RESOURCE_BOTH_CURRENT &&
+                metrics.device_checkpoints==baseline.device_checkpoints+1u &&
+                metrics.cpu_replays==baseline.cpu_replays);
+        }
       }
       gml_render_gui_end(render);
     }

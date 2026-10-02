@@ -467,11 +467,17 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
   int mapped_gui_font=filtered_real_text && resident_mapped_screen_gui_font(r);
   /* R03-P9-GUI-FILTERED-ATLAS: an identity physical-screen GUI axis draw uses
    * the same resolved CPU sampling coordinates as the existing world rule.
-   * Other GUI geometry and distinct rotated/stretched/font samplers stay CPU. */
+   * Mapped sprites below retain their separate admission and sampling rules. */
   int identity_gui_atlas=r && resident_identity_screen_gui(r) && r->interp &&
     !rotated_sprite && !corner_colours && !opaque_target_alpha &&
     !transparent_stretched_trim && !box_stretched && !positioned_axis &&
     !filtered_real_text && !nearest_mode;
+  /* R03-P9-GUI-MAPPED-SPRITE: shared sprite entries already map their point/scale or stretched extent.
+   * Reuse the owned mapped-screen predicate; sampling and trim keep their
+   * existing CPU-rule branches below rather than mapping the quad twice. */
+  int mapped_gui_sprite=family==GML_RENDER_SCENE_SPRITE && r && r->interp &&
+    resident_mapped_screen_gui_font(r) && !rotated_sprite && !corner_colours &&
+    !positioned_axis && !filtered_real_text && !nearest_mode;
   int span_active=0;
   int stretched_float=0;
   int exact_filtered_font=0;
@@ -486,7 +492,7 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
        ((rotated_sprite || opaque_target_alpha) &&
         anygm_policy_has_modern_layer_semantics(r->win))) ||
      (!filtered_real_text && (page_index<0 || page_index>=r->n_tpag)) || r->classic ||
-     (r->gui_pass_active && !identity_gui_atlas && !mapped_gui_font) ||
+     (r->gui_pass_active && !identity_gui_atlas && !mapped_gui_font && !mapped_gui_sprite) ||
      r->active_shader>=0 || r->alpha_test_enable ||
      !r->alphablend || (r->blendmode && !additive_background) || r->blend_equation!=1 ||
      r->blend_equation_alpha!=1 || r->color_write_mask!=0x0fu ||
@@ -663,7 +669,7 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
     y0=floor(top+0.5+positioned_y_tie);
     /* blit_one rounds screen extents independently unless the authored tile
      * requests edge projection; application-surface coverage keeps its old rule. */
-    width=identity_gui_atlas && !page->project_authored_edges
+    width=(identity_gui_atlas || mapped_gui_sprite) && !page->project_authored_edges
       ?floor((double)page->sw*fabs(xs)+0.5)
       :filtered_real_text && !gml_render_target_is_first_generation_application_surface(r)
       ?floor((double)page->sw*fabs(xs)+0.5)
@@ -677,7 +683,7 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
       : fabs(xs-nearbyint(xs))>1e-9
         ? floor(left+(double)page->sw*xs+0.5)-x0
         : floor((double)page->sw*xs+0.5);
-    height=identity_gui_atlas && !page->project_authored_edges
+    height=(identity_gui_atlas || mapped_gui_sprite) && !page->project_authored_edges
       ?floor((double)page->sh*fabs(ys)+0.5)
       :filtered_real_text && !gml_render_target_is_first_generation_application_surface(r)
       ?floor((double)page->sh*fabs(ys)+0.5)
@@ -875,7 +881,7 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
   state.write_mask=15u;
   state.colour=0xFFFFFFFFu;
   state.alpha=255u;
-  if(identity_gui_atlas){
+  if(identity_gui_atlas || (mapped_gui_sprite && !opaque_target_alpha)){
     state.coverage_policy=GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA;
     operation.payload.quad.filtered_draw_alpha=alpha;
   }
