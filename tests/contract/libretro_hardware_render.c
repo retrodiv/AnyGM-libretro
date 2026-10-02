@@ -26,6 +26,9 @@ void retro_set_input_poll(retro_input_poll_t callback);
 void retro_init(void);
 void retro_deinit(void);
 void retro_run(void);
+size_t retro_serialize_size(void);
+bool retro_serialize(void *data,size_t size);
+bool retro_unserialize(const void *data,size_t size);
 bool retro_load_game(const struct retro_game_info *info);
 void retro_unload_game(void);
 void retro_get_system_av_info(struct retro_system_av_info *info);
@@ -78,6 +81,12 @@ static unsigned clock_fail_at;
 static uint64_t clock_fail_value;
 static char trace_message[768];
 static int simulate_cost;
+static unsigned state_trace_calls;
+static char state_trace_message[768];
+static int serialization_reply;
+static int simulate_state_cost;
+static size_t state_written;
+static AnygmResult state_save_result,state_resume_result,state_load_result;
 
 static uint64_t profile_clock(void *userdata){
   if(userdata!=&simulated_ns) return 0;
@@ -97,6 +106,11 @@ static void log_callback(enum retro_log_level level,const char *format,...){
     snprintf(trace_message,sizeof trace_message,"%s",message);
     trace_calls++;
     if(simulate_cost) simulated_ns+=5000000u; /* Deliberately outside the measured call. */
+  }
+  if(!strncmp(message,"[libretro-state] ",17)){
+    snprintf(state_trace_message,sizeof state_trace_message,"%s",message);
+    state_trace_calls++;
+    if(simulate_state_cost) simulated_ns+=5000000u;
   }
 }
 
@@ -181,8 +195,12 @@ static bool environment_callback(unsigned command,void *data){
       rejected_requests++;
       return false; }
     case RETRO_ENVIRONMENT_SET_PIXEL_FORMAT:
-    case RETRO_ENVIRONMENT_SET_SERIALIZATION_QUIRKS:
     case RETRO_ENVIRONMENT_SET_SUPPORT_NO_GAME:
+      return true;
+    case RETRO_ENVIRONMENT_SET_SERIALIZATION_QUIRKS:
+      if(serialization_reply<0) return false;
+      if(serialization_reply>0 && data)
+        *(uint64_t*)data|=RETRO_SERIALIZATION_QUIRK_FRONT_VARIABLE_SIZE;
       return true;
     case RETRO_ENVIRONMENT_SET_GEOMETRY:
       geometry_updates++;
@@ -281,23 +299,31 @@ AnygmResult anygm_set_runtime_override(AnygmEngine *engine,uint32_t slot,uint32_
   (void)engine; (void)slot; (void)enabled; (void)expression; return ANYGM_OK;
 }
 size_t anygm_state_size(AnygmEngine *engine){ (void)engine; return 0; }
-size_t anygm_state_resume_size(AnygmEngine *engine){ (void)engine; return 0; }
+size_t anygm_state_resume_size(AnygmEngine *engine){
+  (void)engine;
+  if(simulate_state_cost) simulated_ns+=3000000u;
+  return 0;
+}
 size_t anygm_state_capacity_hint(const AnygmEngine *engine){ (void)engine; return 0; }
 size_t anygm_state_resume_capacity_hint(const AnygmEngine *engine){ (void)engine; return 0; }
 uint32_t anygm_state_capacity_flags(const AnygmEngine *engine){ (void)engine; return 0; }
 AnygmResult anygm_state_save(AnygmEngine *engine,void *data,size_t capacity,size_t *written){
   (void)engine; (void)data; (void)capacity;
-  if(written) *written=0;
-  return ANYGM_OK;
+  if(simulate_state_cost) simulated_ns+=4000000u;
+  if(written) *written=state_written;
+  return state_save_result;
 }
 AnygmResult anygm_state_save_for_resume(AnygmEngine *engine,void *data,size_t capacity,
                                         size_t *written){
   (void)engine; (void)data; (void)capacity;
-  if(written) *written=0;
-  return ANYGM_OK;
+  if(simulate_state_cost) simulated_ns+=6000000u;
+  if(written) *written=state_written;
+  return state_resume_result;
 }
 AnygmResult anygm_state_load(AnygmEngine *engine,const void *data,size_t size){
-  (void)engine; (void)data; (void)size; return ANYGM_OK;
+  (void)engine; (void)data; (void)size;
+  if(simulate_state_cost) simulated_ns+=7000000u;
+  return state_load_result;
 }
 size_t anygm_get_last_error(const AnygmEngine *engine,char *buffer,size_t capacity){
   (void)engine;
@@ -366,6 +392,11 @@ static void begin(const char *value,int available,unsigned preferred,int desktop
   clock_fail_value=0;
   trace_message[0]='\0';
   simulate_cost=0;
+  state_trace_calls=0;
+  state_trace_message[0]='\0';
+  simulate_state_cost=0;
+  state_written=0;
+  state_save_result=state_resume_result=state_load_result=ANYGM_OK;
   last_video_pixels=NULL;
   proc_requests=0;
   framebuffer_requests=0;
@@ -768,6 +799,91 @@ static int whole_call_profile_contract(void){
   return 0;
 }
 
+static int state_call_profile_contract(void){
+  uint8_t state[64];
+  serialization_reply=0;
+  REQUIRE(profile_setting(NULL),"clear state call profiling");
+  begin(NULL,0,0,1,1);
+  REQUIRE(load(),"unprofiled state session loads");
+  g_libretro.frame_profile_clock=profile_clock;
+  g_libretro.frame_profile_userdata=&simulated_ns;
+  REQUIRE(retro_serialize_size()>0 && retro_serialize(state,sizeof state) &&
+          retro_unserialize(state,sizeof state),"unprofiled state operations work");
+  REQUIRE(!clock_calls && !state_trace_calls,"disabled state profiling does not sample or log");
+  finish();
+  for(int reply=-1;reply<=1;reply++){
+    REQUIRE(profile_setting("1"),"enable existing call-boundary profiler");
+    serialization_reply=reply;
+    begin(NULL,0,0,1,1);
+    REQUIRE(load(),"profiled state session loads");
+    g_libretro.frame_profile_clock=profile_clock;
+    g_libretro.frame_profile_userdata=&simulated_ns;
+    simulate_state_cost=1;
+    REQUIRE(retro_serialize_size()==4194304u,"capacity answer is preserved");
+    REQUIRE(state_trace_calls==1 && strstr(state_trace_message,"op=size tick=0 valid=1 ") &&
+            strstr(state_trace_message,"total_ns=3000000 capacity=0 bytes=4194304 success=1"),
+            "cold query records the actual answer and excludes its own log cost");
+    REQUIRE(g_libretro.variable_state_supported==(reply>0) &&
+            strstr(state_trace_message,reply>0?"variable=1":"variable=0"),
+            "only explicit frontend acknowledgement permits variable sizes");
+    REQUIRE(retro_serialize_size()==4194304u,"repeated capacity answer is preserved");
+    REQUIRE(strstr(state_trace_message,reply>0?"total_ns=3000000 ":"total_ns=0 "),
+            "cached fixed query is distinguished from variable remeasurement");
+    state_written=32;
+    memset(state,0xA5,sizeof state);
+    REQUIRE(retro_serialize(state,sizeof state),"small supplied slot is accepted");
+    REQUIRE(strstr(state_trace_message,"op=save tick=0 valid=1 total_ns=6000000 ") &&
+            strstr(state_trace_message,"capacity=64 bytes=32 success=1"),
+            "actual compact write reports offered capacity and logical written bytes");
+    for(size_t i=32;i<sizeof state;i++) REQUIRE(!state[i],"successful slot padding is preserved");
+    state_resume_result=ANYGM_ERROR_INTERNAL;
+    REQUIRE(!retro_serialize(state,sizeof state),"failed writer remains rejected");
+    REQUIRE(strstr(state_trace_message,"capacity=64 bytes=32 success=0"),
+            "failed serialization is reported without converting it to success");
+    state_resume_result=ANYGM_OK;
+    state_written=sizeof state+1u;
+    REQUIRE(!retro_serialize(state,sizeof state),"oversized reported write stays rejected");
+    REQUIRE(strstr(state_trace_message,"capacity=64 bytes=65 success=0"),
+            "overflow is visible even when the writer reports success");
+    state_written=32;
+    g_libretro.frame_completed=true;
+    g_libretro.startup_ring_compact=true;
+    g_libretro.startup_resume_capacity=sizeof state;
+    state_save_result=ANYGM_ERROR_INTERNAL;
+    REQUIRE(retro_serialize(state,sizeof state),"complete-first retry keeps its policy");
+    REQUIRE(strstr(state_trace_message,"total_ns=10000000 ") &&
+            strstr(state_trace_message,"success=1"),"envelope includes both attempted writers");
+    REQUIRE(retro_unserialize(state,sizeof state),"successful load remains accepted");
+    REQUIRE(strstr(state_trace_message,"op=load tick=0 valid=1 total_ns=7000000 ") &&
+            strstr(state_trace_message,"capacity=64 bytes=64 success=1"),
+            "load reports its actual supplied bytes and return value");
+    state_load_result=ANYGM_ERROR_INTERNAL;
+    REQUIRE(!retro_unserialize(state,sizeof state),"rejected load remains rejected");
+    REQUIRE(strstr(state_trace_message,"success=0"),"load rejection is visible");
+    state_load_result=ANYGM_OK;
+    g_libretro.reset_pending_frame=true;
+    REQUIRE(!retro_unserialize(state,sizeof state),"pre-reset compact slot stays rejected");
+    REQUIRE(strstr(state_trace_message,"success=0"),"pre-reset early refusal is recorded");
+    g_libretro.reset_pending_frame=false;
+    clock_fail_at=clock_calls+2;
+    REQUIRE(retro_unserialize(state,sizeof state),"clock failure does not change load success");
+    REQUIRE(strstr(state_trace_message,"valid=0 total_ns=0 ") &&
+            strstr(state_trace_message,"success=1"),"invalid clock is not a transport rejection");
+    clock_fail_at=0;
+    clock_fail_value=1;
+    clock_fail_at=clock_calls+2;
+    REQUIRE(retro_unserialize(state,sizeof state),"backward clock does not change load success");
+    REQUIRE(strstr(state_trace_message,"valid=0 total_ns=0 "),"backward duration never wraps");
+    finish();
+    unsigned previous=state_trace_calls;
+    REQUIRE(!retro_serialize_size() && !retro_serialize(state,sizeof state) &&
+            !retro_unserialize(state,sizeof state),"unloaded state calls stay rejected");
+    REQUIRE(state_trace_calls==previous,"unloaded session produces no state samples");
+  }
+  REQUIRE(profile_setting(NULL),"restore call-boundary profiler environment");
+  return 0;
+}
+
 int main(void){
   if(option_none_negotiates_nothing()) return EXIT_FAILURE;
   if(rejection_keeps_software()) return EXIT_FAILURE;
@@ -782,6 +898,7 @@ int main(void){
   if(scene_renderer_requests_context_independently()) return EXIT_FAILURE;
   if(unload_releases_without_a_current_context()) return EXIT_FAILURE;
   if(whole_call_profile_contract()) return EXIT_FAILURE;
+  if(state_call_profile_contract()) return EXIT_FAILURE;
   printf("libretro hardware render contract: ok\n");
   return EXIT_SUCCESS;
 }

@@ -73,6 +73,30 @@ promise completion of another graphics context or queue. Completed-GPU-work
 measurements need a separately verified host/frontend completion boundary;
 neither a hardware sentinel nor this trace establishes one.
 
+The same opt-in setting also emits `[libretro-state]` for the actual
+`retro_serialize_size`, `retro_serialize` and `retro_unserialize` calls.
+`op=size/save/load` identifies the boundary, and `tick` is the last completed
+profiled frontend tick (zero before the first one); state calls neither advance
+that identity nor reset its entry-period witness. `capacity` is the supplied
+save/load buffer size, or zero for a size query. `bytes` is the size answer,
+the writer's reported logical bytes (including an unsuccessful attempt), or
+the supplied load length, respectively. `success` preserves the actual adapter
+return, independently of timing validity. `variable=1` means the frontend
+explicitly acknowledged variable-size state transport, not merely that the
+core requested it.
+
+The CPU-visible `total_ns` includes every attempted writer, padding of a
+successful slot, and load-time AV notification, but excludes this log's own
+cost. It uses the same zero/backward-clock rejection as frame profiling and
+changes no state bytes, capacity, compact-picture or Reset policy. A successful
+save proves the core returned true, not that the frontend stored a rewind delta;
+frontend ring/copy/compression/restore scheduling needs its own witness. Neither
+the byte count nor this trace proves saved-picture versus frame-free encoding.
+Unloaded sessions produce no samples. The neutral state-call control in
+`tests/contract/libretro_hardware_render.c` covers disabled profiling, all three
+variable-size negotiations, actual return values, complete-first retry, padding,
+Reset refusal and invalid clocks.
+
 The engine's existing `[profile]` phase averages now include final scene
 sealing in `seal`, `total` and the maximum frame cost. The rounded `[spike]`
 split remains the pre-seal logical-engine phase observation, not the complete

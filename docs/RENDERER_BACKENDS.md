@@ -19,6 +19,10 @@ For checkpoint timing, `src/core/engine.c::anygm_run_frame` measures the final
 `gml_render_scene_flush` as the existing profile's `seal` phase. The optional
 adapter trace in `src/adapters/libretro/libretro_entry.c::retro_run` measures
 the entire loaded frontend tick and callback envelopes, including that seal.
+Its `retro_serialize_size`, `retro_serialize` and `retro_unserialize` boundaries
+also report actual state-call results and CPU-visible costs through
+`state_profile_begin` / `state_profile_report`, without changing state transport
+or claiming frontend ring acceptance.
 See [call-boundary profiling](LIBRETRO.md#optional-call-boundary-profiling) for
 the exact clock, cadence and GPU-completion exclusions and neutral controls.
 This instrumentation does not change any rule, shader or authority boundary

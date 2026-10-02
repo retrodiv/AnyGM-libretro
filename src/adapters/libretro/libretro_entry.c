@@ -592,6 +592,30 @@ static void frame_profile_report(LibretroFrameTiming *timing,AnygmResult result,
     (unsigned long long)period,steps,result);
 }
 
+static LibretroFrameTiming state_profile_begin(void){
+  LibretroFrameTiming timing={0};
+  timing.active=g_libretro.frame_profile_enabled;
+  timing.valid=true;
+  timing.begin_ns=timing.active?frame_profile_now(&timing):0;
+  return timing;
+}
+
+static void state_profile_report(LibretroFrameTiming *timing,const char *operation,
+                                 size_t capacity,size_t bytes,bool success){
+  if(!timing->active) return;
+  uint64_t end=frame_profile_now(timing);
+  bool valid=timing->valid && timing->begin_ns && end>=timing->begin_ns;
+  /* This observes the actual adapter return, not a frontend ring push or compression result.
+   * Keep the last completed tick identity without advancing the frame or its period witness. */
+  libretro_log(RETRO_LOG_INFO,
+    "[libretro-state] op=%s tick=%llu valid=%u total_ns=%llu capacity=%llu bytes=%llu "
+    "success=%u variable=%u\n",
+    operation,(unsigned long long)g_libretro.frame_profile_tick,valid?1u:0u,
+    (unsigned long long)(valid?end-timing->begin_ns:0),
+    (unsigned long long)capacity,(unsigned long long)bytes,success?1u:0u,
+    g_libretro.variable_state_supported?1u:0u);
+}
+
 void retro_run(void){
   if(!g_libretro.loaded){
     if(g_libretro.video) g_libretro.video(NULL,288,216,0);
@@ -740,12 +764,18 @@ void retro_run(void){
 }
 
 size_t retro_serialize_size(void){
-  if(!g_libretro.loaded) return 0;
+  LibretroFrameTiming timing=state_profile_begin();
+  if(!g_libretro.loaded){
+    state_profile_report(&timing,"size",0,0,false);
+    return 0;
+  }
   /* A frontend that did not acknowledge variable sizes owns one fixed allocation for the loaded
    * session. Re-measuring the complete runtime graph cannot change the answer in that contract,
    * and doing it before every rewind snapshot duplicates the most expensive half of saving it. */
-  if(g_libretro.fixed_state_capacity && !g_libretro.variable_state_supported)
+  if(g_libretro.fixed_state_capacity && !g_libretro.variable_state_supported){
+    state_profile_report(&timing,"size",0,g_libretro.fixed_state_capacity,true);
     return g_libretro.fixed_state_capacity;
+  }
   /* A large completed-frame ceiling may establish a smaller pre-frame rewind ring from only the
    * required sections. A fixed frontend keeps that capacity for the complete loaded session;
    * acknowledged variable-size frontends may grow later. In either contract, an earlier compact
@@ -803,12 +833,18 @@ size_t retro_serialize_size(void){
     g_libretro.startup_resume_capacity=g_libretro.fixed_state_capacity;
     g_libretro.startup_ring_compact=compact_startup;
   }
+  state_profile_report(&timing,"size",0,g_libretro.fixed_state_capacity,
+                       g_libretro.fixed_state_capacity!=0);
   return g_libretro.fixed_state_capacity;
 }
 
 bool retro_serialize(void *data,size_t size){
+  LibretroFrameTiming timing=state_profile_begin();
   size_t written=0;
-  if(!g_libretro.loaded) return false;
+  if(!g_libretro.loaded){
+    state_profile_report(&timing,"save",size,0,false);
+    return false;
+  }
   bool startup_slot=g_libretro.frame_completed && g_libretro.startup_ring_compact &&
                     g_libretro.startup_resume_capacity &&
                     size<=g_libretro.startup_resume_capacity;
@@ -828,16 +864,24 @@ bool retro_serialize(void *data,size_t size){
   } else {
     result=anygm_state_save(g_libretro.engine,data,size,&written);
   }
-  if(result!=ANYGM_OK || written>size) return false;
+  if(result!=ANYGM_OK || written>size){
+    state_profile_report(&timing,"save",size,written,false);
+    return false;
+  }
   /* libretro persists the full advertised buffer, while AnyGM records its exact logical size in
    * the state header. Clear the capacity tail so files and rewind deltas never contain stale host
    * memory and remain deterministic for an identical runtime state. */
   if(written<size) memset((uint8_t*)data+written,0,size-written);
+  state_profile_report(&timing,"save",size,written,true);
   return true;
 }
 
 bool retro_unserialize(const void *data,size_t size){
-  if(!g_libretro.loaded) return false;
+  LibretroFrameTiming timing=state_profile_begin();
+  if(!g_libretro.loaded){
+    state_profile_report(&timing,"load",size,size,false);
+    return false;
+  }
   if(g_libretro.reset_pending_frame && g_libretro.startup_ring_compact &&
      g_libretro.startup_resume_capacity &&
      size<=g_libretro.startup_resume_capacity){
@@ -847,11 +891,16 @@ bool retro_unserialize(const void *data,size_t size){
                    "Ignored a pre-reset rewind slot until the restarted runtime produced its "
                    "first frame\n");
     }
+    state_profile_report(&timing,"load",size,size,false);
     return false;
   }
-  if(anygm_state_load(g_libretro.engine,data,size)!=ANYGM_OK) return false;
+  if(anygm_state_load(g_libretro.engine,data,size)!=ANYGM_OK){
+    state_profile_report(&timing,"load",size,size,false);
+    return false;
+  }
   g_libretro.display_mouse_x=g_libretro.display_mouse_y=g_libretro.display_wheel=0;
   libretro_update_av();
+  state_profile_report(&timing,"load",size,size,true);
   return true;
 }
 
