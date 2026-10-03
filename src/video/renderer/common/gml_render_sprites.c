@@ -654,9 +654,6 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
   stretched_float=stretched_magnification;
   stretched_replay_exact=stretched_float && !transparent_stretched_trim &&
     page->scene_fully_opaque && (colour&0xFFFFFFu)==0xFFFFFFu && alpha==1.0;
-  if(!page->scene_fully_opaque && family!=GML_RENDER_SCENE_SPRITE &&
-     !filtered_real_text && !identity_gui_atlas &&
-     nearest_mode!=2 && nearest_mode!=5) return 0;
   if(rotated_sprite){
     double minx=1e30,miny=1e30,maxx=-1e30,maxy=-1e30;
     int source_x0=corner_colours && part_view?-page->tx:
@@ -765,12 +762,18 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
    * This rule retains the existing 16-bit nearest coverage, not that policy. */
   if(mapped_gui_rotation && width*height>=262144.0) return 0;
   if(x0<=-width || y0<=-height || x0>=r->fbw || y0>=r->fbh){
-    /* The unit-scale first-generation point leaf has the same snapped half-open
-     * rectangle. A fully clipped draw leaves queued device work untouched. */
+    /* Unit-sign filtered background parts share this snapped half-open coverage
+     * with their CPU leaf, even with partial source alpha. As with the qualified
+     * point leaf, a fully clipped draw must leave queued device work untouched. */
     if((nearest_mode==4 && !rotated_sprite && xs==1.0 && ys==1.0) ||
-       additive_background) return 1;
+       additive_background ||
+       (family==GML_RENDER_SCENE_BACKGROUND && part_view && !rotated_sprite &&
+        !nearest_mode && fabs(xs)==1.0 && fabs(ys)==1.0)) return 1;
     return 0;
   }
+  if(!page->scene_fully_opaque && family!=GML_RENDER_SCENE_SPRITE &&
+     !filtered_real_text && !identity_gui_atlas &&
+     nearest_mode!=2 && nearest_mode!=5) return 0;
   if(stretched_float){
     if(width>1000000.0 || height>1000000.0 || page->bw>16384 || page->bh>16384 ||
        floor(x0)!=x0 || floor(y0)!=y0 || alpha<0x1p-64) return 0;
