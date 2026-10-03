@@ -38,6 +38,7 @@ int main(int argc,char **argv){
     {"room_camera_reservation",expect_room_camera_reservation},
     {"revision16_legacy_room_view",expect_revision16_room_uses_legacy_view},
     {"room_order_boundaries",expect_room_order_boundaries},
+    {"temporary_string_teardown",expect_temporary_string_teardown},
     {"alarm_dispatch_order",expect_alarm_dispatch_order},
     {"alarm_newborn_deferral",expect_alarm_newborn_deferral},
     {"automatic_motion_order",expect_automatic_motion_order},

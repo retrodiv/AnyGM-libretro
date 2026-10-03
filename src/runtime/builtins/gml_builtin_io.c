@@ -7,6 +7,7 @@
 #include "anygm_host.h"
 #include "anygm_vfs.h"
 #include "gml_image_codec.h"
+#include "gml_hash.h"
 
 #include <ctype.h>
 #include <inttypes.h>
@@ -1799,6 +1800,60 @@ GmlVal gml_builtin_try_io(GmlVM *vm, const char *nm, GmlVal *a, int n){
       builtin_state_ds_remove(&vm->builtins->buffers,buffer->id);
       free(buffer->data); memset(buffer,0,sizeof(*buffer)); } return vreal(0); }
   if(!strcmp(nm,"buffer_get_size")){ int i=vm_buffer_slot(vm,(int)N(a,n,0)); return vreal(i>=0?buffer_at(vm,i)->size:0); }
+  if(!strcmp(nm,"buffer_sizeof")){
+    static const unsigned char widths[]={0,1,1,2,2,4,4,2,4,8,1,0,8,0};
+    double type=N(a,n,0);
+    return vreal(n>=1 && isfinite(type) && type>=0 && type<sizeof widths &&
+                 type==floor(type)?widths[(int)type]:0);
+  }
+  if(!strcmp(nm,"buffer_compress") || !strcmp(nm,"buffer_decompress")){
+    /* Match the bounded file-buffer input policy. Decoding never allocates an unbounded
+     * expansion, and neither operation changes the source bytes or cursor. */
+    const size_t limit=256u*1024u*1024u;
+    double handle=N(a,n,0);
+    if(n<1 || !isfinite(handle) || handle<1 || handle>INT_MAX || handle!=floor(handle))
+      return vreal(-1);
+    int i=vm_buffer_slot(vm,(int)handle);
+    if(i<0 || buffer_at(vm,i)->size<0 || (size_t)buffer_at(vm,i)->size>limit) return vreal(-1);
+    GmlBuiltinBuffer *source=buffer_at(vm,i);
+    GmlMediaBuffer output={0};
+    if(!strcmp(nm,"buffer_compress")){
+      double offset=N(a,n,1),length=N(a,n,2);
+      if(n<3 || !isfinite(offset) || !isfinite(length) || offset<0 || length<0 ||
+         offset!=floor(offset) || length!=floor(length) || offset>source->size ||
+         length>source->size-offset) return vreal(-1);
+      if(!gml_deflate_encode_zlib(source->data+(size_t)offset,(size_t)length,&output))
+        return vreal(-1);
+    } else {
+      size_t size=(size_t)source->size;
+      const uint8_t *bytes=source->data;
+      if(size<6 || (bytes[0]&15u)!=8u || (bytes[0]>>4)>7u ||
+         (((unsigned)bytes[0]<<8)|bytes[1])%31u || (bytes[1]&32u)) return vreal(-1);
+      output.data=malloc(limit);
+      if(!output.data) return vreal(-1);
+      if(!gml_deflate_decode_to_buffer(bytes+2,size-6,GML_DEFLATE_RAW,
+                                      output.data,limit,&output.size)){
+        gml_media_buffer_release(&output); return vreal(-1);
+      }
+      const uint8_t *tail=bytes+size-4;
+      uint32_t expected=(uint32_t)tail[0]<<24|(uint32_t)tail[1]<<16|(uint32_t)tail[2]<<8|tail[3];
+      if(gml_adler32(output.data,output.size)!=expected){
+        gml_media_buffer_release(&output); return vreal(-1);
+      }
+    }
+    if(output.size>INT_MAX){ gml_media_buffer_release(&output); return vreal(-1); }
+    size_t capacity=output.size?output.size:1;
+    unsigned char *smaller=realloc(output.data,capacity);
+    if(!smaller){ gml_media_buffer_release(&output); return vreal(-1); }
+    output.data=smaller;
+    int id=buffer_alloc(vm,0),slot=vm_buffer_slot(vm,id);
+    if(slot<0){ gml_media_buffer_release(&output); return vreal(-1); }
+    GmlBuiltinBuffer *destination=buffer_at(vm,slot);
+    free(destination->data);
+    destination->data=output.data; destination->cap=(int)capacity;
+    destination->size=(int)output.size; destination->pos=0;
+    return vreal(id);
+  }
   if(!strcmp(nm,"buffer_sha1")){
     double id=N(a,n,0),offset=N(a,n,1),length=N(a,n,2);
     if(n<3 || !isfinite(id) || id<1 || id>INT_MAX || !isfinite(offset) ||

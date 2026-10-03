@@ -4,20 +4,10 @@
 #include "content_pipeline.h"
 #include "content_transform.h"
 #include "gml_image_codec.h"
+#include "gml_hash.h"
 
 #include <stdlib.h>
 #include <string.h>
-
-static uint32_t adler32(const uint8_t *bytes,size_t size){
-  uint32_t first=1,second=0;
-  while(size){
-    size_t count=size<5552u?size:5552u;
-    size-=count;
-    while(count--){ first+=*bytes++; second+=first; }
-    first%=65521u; second%=65521u;
-  }
-  return (second<<16)|first;
-}
 
 static int operation(const char *step,size_t *capacity){
   *capacity=0;
@@ -74,7 +64,7 @@ int anygm_content_pipeline_builtin_run(const char *step,const void *input,size_t
     const uint8_t *tail=bytes+size-4u;
     uint32_t expected=(uint32_t)tail[0]<<24|(uint32_t)tail[1]<<16|
       (uint32_t)tail[2]<<8|tail[3];
-    if(adler32(result,length)!=expected){ free(result); return 0; }
+    if(gml_adler32(result,length)!=expected){ free(result); return 0; }
   }
   *output=result; *output_size=length;
   return 1;

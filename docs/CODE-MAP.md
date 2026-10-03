@@ -329,6 +329,12 @@ These operations change pixels only; they add no retained state or codec section
 
 `tests/unit/runtime/test_builtin_buffer_hash.c` covers exact buffer SHA-1 slices,
 unchanged cursor/data and invalid ranges: `make check TEST=builtin_buffer_hash`.
+`tests/unit/runtime/test_builtin_buffer_codecs.c` covers fixed-width type sizes, new
+zlib buffer ownership, unchanged sources, empty streams and malformed input rejection:
+`make check TEST=builtin_buffer_codecs`. Decoded data is capped at 256 MiB; both
+codecs reuse the media owner, and Adler-32 is shared with the content pipeline.
+`make check TEST=persistent_room PERSISTENT_TEST_ARGS='--case temporary_string_teardown'`
+exercises long temporary-string cleanup with live local, array and global aliases.
 `tests/contract/test_builtin_file_io.c` covers streamed digest vectors, VFS overlay
 and short-read/error handling, plus rewrite cursor, handle, write authority and
 resource cleanup: `make check TEST=builtin_file_io`. The same contract verifies PNG

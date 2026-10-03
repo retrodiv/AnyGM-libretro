@@ -20,6 +20,10 @@
 static int inst_is_struct_ref(const GmlInstance *in);
 static void method_cache_invalidate(GmlInstance *in, const char *nm);
 static GmlVal *struct_field_get_h(GmlVM *vm, GmlInstance *in, const char *nm, uint32_t nh);
+static int owned_string_pointer_compare(const void *left,const void *right){
+  uintptr_t a=(uintptr_t)*(void *const *)left,b=(uintptr_t)*(void *const *)right;
+  return (a>b)-(a<b);
+}
 enum {
   GML_HASH_METHOD_FN   = 0x35836763u,
   GML_HASH_METHOD_SELF = 0x61c0232du,
@@ -3817,10 +3821,14 @@ static GmlVal vm_run_code_impl(GmlVM *vm, int ci, GmlInstance *self, GmlInstance
     if(tracked) GC_UNTRACK(ret.s);   /* live temp: hand ownership to the caller, no copy */
     else { char *rc=strdup(ret.s); ret = rc? vstr_owned(rc) : vstr(""); }  /* a var's string: copy it */
   }
+  /* Sort before freeing so duplicate ownership entries remain safe without a quadratic
+   * teardown for long finite scripts that produce many temporary strings. */
+  if(str_gc_n>1) qsort(str_gc,(size_t)str_gc_n,sizeof *str_gc,owned_string_pointer_compare);
+  uintptr_t previous=0;
   for(int i=0;i<str_gc_n;i++){
-    void *p=str_gc[i]; if(!p) continue;
-    free(p);
-    for(int j=i+1;j<str_gc_n;j++) if(str_gc[j]==p) str_gc[j]=NULL;   /* de-dup: never double-free */
+    uintptr_t address=(uintptr_t)str_gc[i];
+    if(address && address!=previous) free(str_gc[i]);
+    previous=address;
   }
   free(str_gc);
   #undef GC_TRACK

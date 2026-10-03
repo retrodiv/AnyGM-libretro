@@ -5,6 +5,17 @@
 
 #include <string.h>
 
+uint32_t gml_adler32(const uint8_t *bytes,size_t size){
+  uint32_t first=1,second=0;
+  while(size){
+    size_t count=size<5552u?size:5552u;
+    size-=count;
+    while(count--){ first+=*bytes++; second+=first; }
+    first%=65521u; second%=65521u;
+  }
+  return (second<<16)|first;
+}
+
 static uint32_t rotate_right(uint32_t value,unsigned bits){
   return (value>>bits)|(value<<(32u-bits));
 }
