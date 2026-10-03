@@ -3,6 +3,8 @@
  */
 #include "gml_render_internal.h"
 #include "gml_render_primitives.h"
+#include "gml_builtin.h"
+#include "gml_vm_internal.h"
 
 #include <stdint.h>
 #include <stdio.h>
@@ -29,6 +31,155 @@ static uint64_t pixel_hash_update(uint64_t hash,const uint32_t *pixels,size_t co
 
 static uint64_t pixel_hash(const uint32_t *pixels,size_t count){
   return pixel_hash_update(UINT64_C(1469598103934665603),pixels,count);
+}
+
+static uint32_t destination_colour_expected(uint32_t source,uint32_t destination,
+                                             int source_factor,int destination_factor){
+  uint32_t result=0;
+  for(unsigned shift=0;shift<32;shift+=8){
+    unsigned s=(source>>shift)&255u,d=(destination>>shift)&255u;
+    unsigned sf=source_factor==7?destination>>24:d;
+    unsigned df=destination_factor==3?s:d;
+    unsigned value=(s*sf+d*df+127u)/255u;
+    if(value>255u) value=255u;
+    result|=value<<shift;
+  }
+  return result;
+}
+
+static int destination_colour_factor_case(void){
+  GmlRender render={0}; GmlVM vm={0}; uint32_t base[16]={0};
+  const int pairs[3][2]={{9,3},{9,9},{7,9}};
+  const unsigned alphas[3]={0u,64u,255u};
+  render.next_surface_id=1;
+  gml_render_begin(&render,base,4,4,0,0);
+  render.alphablend=1; render.active_shader=-1;
+  render.color_write_mask=0x0Fu;
+  render.blend_equation=render.blend_equation_alpha=1;
+  vm.render=&render;
+  int source=gml_surface_create(&render,1,1),target=gml_surface_create(&render,4,4);
+  REQUIRE(source>0 && target>0,"destination-colour factor surfaces allocated");
+  for(int pair=0;pair<3;pair++) for(int coverage=0;coverage<3;coverage++){
+    uint32_t authored=(alphas[coverage]<<24)|0x004080C0u;
+    uint32_t destination=0x605078A0u;
+    uint32_t expected=destination_colour_expected(authored,destination,
+                                                 pairs[pair][0],pairs[pair][1]);
+    *surface_pixels(&render,source,NULL,NULL)=authored;
+    render.surface[source-1].opaque_known=0;
+    render.surface[source-1].all_transparent=0;
+    REQUIRE(gml_surface_set_target(&render,target),"factor target bound");
+    GmlVal factors[2]={vreal(pairs[pair][0]),vreal(pairs[pair][1])};
+    (void)gml_builtin_call(&vm,"gpu_set_blendmode_ext",factors,2);
+    for(int raster=0;raster<3;raster++){
+      for(int index=0;index<16;index++) render.fb[index]=destination;
+      if(raster==0) gml_draw_surface_ext(&render,source,0,0,1,1,0,0xFFFFFFu,1);
+      else if(raster==1) gml_draw_surface_stretched(&render,source,0,0,2,2,0xFFFFFFu,1);
+      else gml_draw_surface_ext(&render,source,0,2,1,1,90,0xFFFFFFu,1);
+      if(render.fb[0]!=expected){
+        fprintf(stderr,"destination-colour factors (%d,%d), alpha %u, raster %d: "
+                "%08x != %08x\n",pairs[pair][0],pairs[pair][1],alphas[coverage],
+                raster,render.fb[0],expected);
+        gml_surface_reset_target(&render); gml_render_free(&render); return 1;
+      }
+    }
+    render.fb[0]=destination;
+    render.alpha=alphas[coverage]/255.0;
+    GmlVal point[3]={vreal(0),vreal(0),vreal(0xC08040)};
+    (void)gml_builtin_call(&vm,"draw_point_colour",point,3);
+    REQUIRE(render.fb[0]==expected,"point uses the same destination-dependent factors");
+    render.fb[0]=destination;
+    gml_render_primitive_rectangle_color(&render,0,0,0,0,
+      0xC08040u,0xC08040u,0xC08040u,0xC08040u,0);
+    REQUIRE(render.fb[0]==expected,"colour rectangle uses destination-dependent factors");
+    render.fb[0]=destination;
+    render.alpha_test_enable=1; render.alpha_test_ref=254;
+    gml_draw_surface_ext(&render,source,0,0,1,1,0,0xFFFFFFu,1);
+    REQUIRE(render.fb[0]==(alphas[coverage]==255u?expected:destination),
+            "explicit alpha testing admits fragments before factor blending");
+    render.alpha_test_enable=0;
+    render.fb[0]=destination;
+    render.color_write_mask=1u;
+    gml_draw_surface_ext(&render,source,0,0,1,1,0,0xFFFFFFu,1);
+    REQUIRE(render.fb[0]==((expected&0x00FF0000u)|(destination&0xFF00FFFFu)),
+            "destination factors preserve disabled colour channels");
+    render.color_write_mask=0x0Fu;
+    render.fb[0]=destination;
+    render.alphablend=0;
+    gml_draw_surface_ext(&render,source,0,0,1,1,0,0xFFFFFFu,1);
+    uint32_t disabled=render.fb[0];
+    int active_mode=render.blendmode;
+    render.blendmode=0; render.fb[0]=destination;
+    gml_draw_surface_ext(&render,source,0,0,1,1,0,0xFFFFFFu,1);
+    REQUIRE(render.fb[0]==disabled,
+            "disabled blending retains the established surface copy policy");
+    render.blendmode=active_mode;
+    render.alphablend=1;
+    gml_surface_reset_target(&render);
+  }
+  gml_render_free(&render);
+  return 0;
+}
+
+static int destination_colour_sprite_case(void){
+  GmlRender render={0}; GmlVM vm={0}; uint32_t base[16]={0};
+  GmlWin win={0}; win.bytecode=17;
+  GmlSprite sprite={0}; GmlTpag page={0}; GmlAtlas atlas={0};
+  uint8_t rgba[4]={64,128,192,64}; int frame=0;
+  const int pairs[3][2]={{9,3},{9,9},{7,9}};
+  render.next_surface_id=1;
+  gml_render_begin(&render,base,4,4,0,0);
+  render.win=&win; vm.win=&win;
+  render.spr=&sprite; render.n_spr=1; render.tpag=&page; render.n_tpag=1;
+  render.atlas=&atlas; render.n_atlas=1;
+  sprite.w=sprite.h=1; sprite.n_frames=1; sprite.frame=&frame;
+  page.sw=page.sh=page.bw=page.bh=1;
+  atlas.px=rgba; atlas.w=atlas.h=1; atlas.decode_attempted=1;
+  render.alphablend=1; render.active_shader=-1;
+  render.color_write_mask=0x0Fu;
+  render.blend_equation=render.blend_equation_alpha=1;
+  vm.render=&render;
+  int target=gml_surface_create(&render,4,4);
+  REQUIRE(target>0 && gml_surface_set_target(&render,target),"sprite factor target bound");
+  for(int pair=0;pair<3;pair++) for(int coverage=0;coverage<3;coverage++){
+    rgba[3]=coverage?64:0;
+    double draw_alpha=coverage==2?0.0:1.0;
+    page.alpha_scanned=0;
+    GmlVal factors[2]={vreal(pairs[pair][0]),vreal(pairs[pair][1])};
+    (void)gml_builtin_call(&vm,"gpu_set_blendmode_ext",factors,2);
+    uint32_t expected=destination_colour_expected((coverage==2?0u:(uint32_t)rgba[3]<<24)|0x4080C0u,
+                                                 0x605078A0u,pairs[pair][0],pairs[pair][1]);
+    for(int raster=0;raster<10;raster++){
+      for(int index=0;index<16;index++) render.fb[index]=0x605078A0u;
+      sprite.runtime_rgba=raster>=4?rgba:NULL;
+      render.interp=raster&1;
+      int rotated=(raster%4)>=2;
+      render.fb_opaque_known=1;
+      if(raster>=8) gml_draw_sprite_part_ext(&render,0,0,0,0,1,1,0,0,
+                                             raster==9?2:1,raster==9?2:1,
+                                             0xFFFFFFu,draw_alpha);
+      else gml_draw_sprite_ext(&render,0,0,0,rotated?2:0,1,1,
+                               rotated?90:0,0xFFFFFFu,draw_alpha);
+      if(render.fb[0]!=expected){
+        fprintf(stderr,"sprite destination factors (%d,%d), alpha %u, raster %d: "
+                "%08x != %08x\n",pairs[pair][0],pairs[pair][1],rgba[3],raster,
+                render.fb[0],expected); return 1;
+      }
+      for(int index=1;index<16;index++){
+        uint32_t outside_expected=raster==9 && (index==1 || index==4 || index==5)?
+                                   expected:0x605078A0u;
+        if(render.fb[index]==outside_expected) continue;
+        fprintf(stderr,"sprite factor quad spill: raster %d, coverage %d, index %d: %08x\n",
+                raster,coverage,index,render.fb[index]); return 1;
+      }
+      REQUIRE(!render.fb_opaque_known,"factor sprites invalidate target coverage metadata");
+    }
+  }
+  gml_surface_reset_target(&render);
+  free(page.alpha_row_min); free(page.alpha_row_max);
+  render.spr=NULL; render.n_spr=0; render.tpag=NULL; render.n_tpag=0;
+  render.atlas=NULL; render.n_atlas=0;
+  gml_render_free(&render);
+  return 0;
 }
 
 static int owned_application_begin_case(void){
@@ -1288,6 +1439,8 @@ int main(void){
           "threshold palette surface case");
   REQUIRE(declared_canvas_preview_case()==0,"declared canvas preview case");
   REQUIRE(composition_cases()==0,"composition cases");
+  REQUIRE(destination_colour_factor_case()==0,"destination-colour factor case");
+  REQUIRE(destination_colour_sprite_case()==0,"destination-colour sprite case");
   REQUIRE(screen_raster_part_case()==0,"screen raster part case");
   REQUIRE(first_generation_point_sampling_case()==0,
           "first-generation point sampling case");

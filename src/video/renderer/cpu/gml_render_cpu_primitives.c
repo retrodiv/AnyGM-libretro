@@ -14,6 +14,7 @@
 #include "gml_render_cpu_backend.h"
 #include "gml_render_internal.h"
 #include "gml_render_surfaces_internal.h"
+#include "gml_render_cpu_pixel_internal.h"
 
 static void draw_additive_span(GmlRender *render,uint32_t *pixels,int count,
                                uint32_t color,double alpha){
@@ -151,7 +152,7 @@ static void draw_rect_prim_alpha(GmlRender *R, int x1, int y1, int x2, int y2, u
   if(x2>=R->fbw) x2=R->fbw-1;
   if(y2>=R->fbh) y2=R->fbh-1;
   if(alpha>1) alpha=1; else if(alpha<0) alpha=0;
-  if(!outline && alpha<=0) return;
+  if(!outline && alpha<=0 && !destination_colour_blend_active(R)) return;
   /* An untextured fragment shader receives the primitive coordinates and produces its own colour;
    * draw_set_color/alpha need not affect it when the shader source does not consume vertex colour. */
   if(!outline && R->blendmode==0 && (alpha>=1 || !R->alphablend)){   /* opaque filled rect: fast per-row fill */
@@ -214,7 +215,7 @@ void gml_draw_layer_color_fill(GmlRender *R, uint32_t gmcol, double alpha){
   if(!R) return;
   /* The rectangle body already returns before drawing for non-positive alpha.
    * Do not end a resident pass before reaching that no-op. */
-  if(alpha<=0.0) return;
+  if(alpha<=0.0 && !destination_colour_blend_active(R)) return;
   /* The existing opaque full-target branch records a deferred fill without writing CPU pixels.
    * Preserve that resident path; only a compositing raster needs current CPU authority. */
   if(!(R->blendmode==0 && (alpha>=1.0 || !R->alphablend)) &&
@@ -278,12 +279,13 @@ static void draw_rect_colour_prim(GmlRender *R, int x1, int y1, int x2, int y2,
   if(y2>=R->fbh) y2=R->fbh-1;
   int x_off=x1-ox1, y_off=y1-oy1;
   double alpha=R->alpha; if(alpha>1) alpha=1; else if(alpha<0) alpha=0;
-  if(alpha<=0) return;
-  if(alpha>=1.0 || !R->alphablend) gml_render_maybe_prepare_opaque_rect(R,x1,y1,x2+1,y2+1);
+  if(alpha<=0 && !destination_colour_blend_active(R)) return;
+  if((alpha>=1.0 || !R->alphablend) && !destination_colour_blend_active(R))
+    gml_render_maybe_prepare_opaque_rect(R,x1,y1,x2+1,y2+1);
   else gml_render_maybe_prepare_draw(R);
   uint32_t tl=gml_render_cpu_backend_color_to_xrgb(c1), tr=gml_render_cpu_backend_color_to_xrgb(c2), br=gml_render_cpu_backend_color_to_xrgb(c3), bl=gml_render_cpu_backend_color_to_xrgb(c4);
   int wden=owden, hden=ohden, n=x2-x1+1;
-  if(alpha>=1.0){
+  if(alpha>=1.0 && !destination_colour_blend_active(R)){
     GmlGradientRows rows={R,x1,y1,n,hden,tl,tr,br,bl,x_off,y_off,wden};
     if((size_t)n*(size_t)(y2-y1+1)>=262144u)
       gml_run_row_bands(R,y2-y1+1,draw_gradient_rows,&rows);
@@ -905,7 +907,7 @@ void gml_render_cpu_rectangle(GmlRender *render,int x1,int y1,int x2,int y2,
                               uint32_t color,int outline){
   /* R03-P9-RECTANGLE-NOOP: the existing filled raster returns before touching pixels at
    * non-positive alpha. Do not acquire a CPU write or settle pending draws for that no-op. */
-  if(render && !outline && render->alpha<=0.0) return;
+  if(render && !outline && render->alpha<=0.0 && !destination_colour_blend_active(render)) return;
   if(!gml_render_resident_application_cpu_barrier(render)) return;
   draw_rect_prim(render,x1,y1,x2,y2,color,outline);
 }
@@ -914,7 +916,7 @@ void gml_render_cpu_rectangle_color(GmlRender *render,int x1,int y1,int x2,int y
                                     uint32_t color1,uint32_t color2,
                                     uint32_t color3,uint32_t color4,int outline){
   /* The same no-write proof covers both uniform and nonuniform filled colour rectangles. */
-  if(render && !outline && render->alpha<=0.0) return;
+  if(render && !outline && render->alpha<=0.0 && !destination_colour_blend_active(render)) return;
   if(!gml_render_resident_application_cpu_barrier(render)) return;
   draw_rect_colour_prim(render,x1,y1,x2,y2,color1,color2,color3,color4,outline);
 }

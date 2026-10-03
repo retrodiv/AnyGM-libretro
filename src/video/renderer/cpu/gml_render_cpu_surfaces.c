@@ -757,7 +757,7 @@ void draw_surface_region(GmlRender *r, int surf, double sx0d, double sy0d, doubl
   int x0=(int)floor(dx), y0=(int)floor(dy), W=(int)lround(dw), H=(int)lround(dh);
   if(swd<=0||shd<=0||W==0||H==0) return;
   int flipx=W<0, flipy=H<0; if(W<0) W=-W; if(H<0) H=-H;
-  if(alpha<=0) return;
+  if(alpha<=0 && !destination_colour_blend_active(r)) return;
   /* Mode 6 is (one, zero): everywhere a gate admits the plain normal path below, it admits the
    * replace pair too, because for the opaque pixels those paths copy the two are identical and
    * only the partial-coverage runs branch on it. */
@@ -791,7 +791,7 @@ void draw_surface_region(GmlRender *r, int surf, double sx0d, double sy0d, doubl
     return;
   }
   int src_all_transparent=surface_known_transparent(r,surf);
-  if(src_all_transparent && src!=r->fb) return;
+  if(src_all_transparent && src!=r->fb && !destination_colour_blend_active(r)) return;
   uint32_t *copy=NULL;
   if(src==r->fb) gml_render_maybe_prepare_draw(r);
   if(src==r->fb){
@@ -879,7 +879,8 @@ void draw_surface_region(GmlRender *r, int surf, double sx0d, double sy0d, doubl
         r->fb_opaque_known=0;
         free(copy);
         return;
-      } else if(r->blendmode==3){
+      } else if(r->blendmode==3 || destination_colour_blend_active(r)){
+        if(destination_colour_blend_active(r)) r->fb_opaque_known=0;
         for(int yy=0; yy<ch; yy++){
           const uint32_t *sp=src+(size_t)(sy_start+yy)*sw+sx_start;
           uint32_t *dp=r->fb+(size_t)(cy0+yy)*r->fbw+cx0;
@@ -889,7 +890,11 @@ void draw_surface_region(GmlRender *r, int surf, double sx0d, double sy0d, doubl
             else if(slut) sv=lut_map_px(r,slut,sv);
             else if(sgrid) sv=grid_map_px_cached(r,sgrid,sv,&grid_cache);
             int sr=((sv>>16)&255)*bR/255,sg=((sv>>8)&255)*bG/255,sb=(sv&255)*bB/255;
-            dp[xx]=color_write_merge(r,old,blend_multiply_pixel(r,old,sr,sg,sb));
+            if(destination_colour_blend_active(r)){
+              unsigned sa=(unsigned)lround((double)(sv>>24)*alpha);
+              if(shader_discards_alpha(r,sv>>24) && shader_alpha_test_active(r)) continue;
+              dp[xx]=color_write_merge(r,old,blend_destination_colour_pixel(r,old,sr,sg,sb,sa));
+            } else dp[xx]=color_write_merge(r,old,blend_multiply_pixel(r,old,sr,sg,sb));
           }
         }
       } else if(r->blendmode==4 || r->blendmode==8){
@@ -1131,15 +1136,23 @@ void draw_surface_region(GmlRender *r, int surf, double sx0d, double sy0d, doubl
       for(int sy=sy0;sy<sy1;sy++) for(int sx=sx0;sx<sx1;sx++){
         uint32_t s=src[(size_t)sy*sw+sx]; R+=(s>>16)&0xFF; G+=(s>>8)&0xFF; B+=s&0xFF; A+=s>>24; n++; }
       if(!n) continue;
-      if(shader_discards_alpha_value(r,A/(double)n)) continue;
-      double pa=(A/(double)n)/255.0; if(pa<=0) continue;   /* box-averaged coverage */
+      if(shader_discards_alpha_value(r,A/(double)n) &&
+         !(destination_colour_blend_active(r) && !shader_alpha_test_active(r))) continue;
+      double pa=(A/(double)n)/255.0;
+      if(pa<=0 && !destination_colour_blend_active(r)) continue;   /* box-averaged coverage */
       uint32_t av=((uint32_t)(R/n)<<16)|((uint32_t)(G/n)<<8)|(uint32_t)(B/n);
       if(sremap) av=mapped_texture_pixel(r,av);
       else if(slut) av=lut_map_px(r,slut,av);
       int sr=((av>>16)&0xFF)*bR/255, sg=((av>>8)&0xFF)*bG/255, sb=(av&0xFF)*bB/255;
       uint32_t *dp=&r->fb[(size_t)ty_*r->fbw+tx_];
       double ea=alpha*pa;
-      if(r->blendmode==3){ uint32_t old=*dp; *dp=color_write_merge(r,old,blend_multiply_pixel(r,old,sr,sg,sb)); }
+      if(destination_colour_blend_active(r)){
+        uint32_t old=*dp;
+        unsigned sa=(unsigned)lround((A/(double)n)*alpha);
+        *dp=color_write_merge(r,old,blend_destination_colour_pixel(r,old,sr,sg,sb,sa));
+        r->fb_opaque_known=0;
+      }
+      else if(r->blendmode==3){ uint32_t old=*dp; *dp=color_write_merge(r,old,blend_multiply_pixel(r,old,sr,sg,sb)); }
       else if(r->blendmode==4 || r->blendmode==8){
         uint32_t old=*dp;
         unsigned source_alpha=(unsigned)lround((A/(double)n)*alpha);
@@ -1357,8 +1370,10 @@ int gml_render_cpu_backend_surface_stretched(GmlRender *r,int surf,double dx,dou
 void gml_render_cpu_draw_surface_ext_mapped(GmlRender *r,int surf,double x,double y,
                                            double xs,double ys,double rr,uint32_t blend,double alpha){
   int sw=0,sh=0; const uint32_t *src=surface_pixels_observe(r,surf,&sw,&sh);
-  if(!r||!r->fb||!src||sw<=0||sh<=0||xs==0.0||ys==0.0||alpha<=0.0) return;
+  if(!r||!r->fb||!src||sw<=0||sh<=0||xs==0.0||ys==0.0||
+     (alpha<=0.0 && !destination_colour_blend_active(r))) return;
   if(alpha>1.0) alpha=1.0;
+  if(alpha<0.0 && destination_colour_blend_active(r)) alpha=0.0;
   uint32_t *copy=NULL;
   if(src==r->fb){
     gml_render_maybe_prepare_draw(r);
@@ -1416,7 +1431,12 @@ void gml_render_cpu_draw_surface_ext_mapped(GmlRender *r,int surf,double x,doubl
     int sr=((sv>>16)&255)*bR/255,sg=((sv>>8)&255)*bG/255,sb=(sv&255)*bB/255;
     uint32_t *dp=&r->fb[(size_t)py*r->fbw+px],old=*dp,out;
     double sa=((sv>>24)/255.0)*alpha;
-    if(r->blendmode==3) out=blend_multiply_pixel(r,old,sr,sg,sb);
+    if(destination_colour_blend_active(r)){
+      if(shader_discards_alpha(r,sv>>24) && shader_alpha_test_active(r)) continue;
+      unsigned source_alpha=(unsigned)lround((double)(sv>>24)*alpha);
+      out=blend_destination_colour_pixel(r,old,sr,sg,sb,source_alpha);
+    }
+    else if(r->blendmode==3) out=blend_multiply_pixel(r,old,sr,sg,sb);
     else if(r->blendmode==4 || r->blendmode==8){
       unsigned source_alpha=(unsigned)lround((double)(sv>>24)*alpha);
       out=r->blendmode==8?blend_destination_factor_pixel(r,old,sr,sg,sb,source_alpha):

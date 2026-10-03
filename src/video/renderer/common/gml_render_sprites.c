@@ -1149,7 +1149,9 @@ void gml_render_sprite_ext_unmasked(GmlRender *r, int sprite, int subimg, double
      * existing CPU leaves. Normalize only the GPU argument; CPU fallback and
      * specialised preparation retain the original caller value and order. */
     double resident_alpha=isfinite(alpha) && alpha>1.0?1.0:alpha;
-    if(isfinite(alpha) && alpha<=0.0 && sprite>=0 && sprite<r->n_spr &&
+    if(isfinite(alpha) && alpha<=0.0 &&
+       !(r->alphablend && gml_render_blend_uses_destination_colour(r->blendmode)) &&
+       sprite>=0 && sprite<r->n_spr &&
        !r->classic && (!r->gui_pass_active || resident_mapped_screen_gui_font(r)) &&
        r->active_shader<0 &&
        !r->spr[sprite].spine && !r->spr[sprite].ns_enabled &&
@@ -1165,7 +1167,8 @@ void gml_render_sprite_ext_unmasked(GmlRender *r, int sprite, int subimg, double
      gml_render_cpu_draw_spine_sprite(r,&r->spr[sprite],x,y,xs,ys,rot,blend,alpha)) return;
   if(gml_d3_draw_sprite_2d(r,sprite,subimg,x,y,xs,ys,rot,blend,alpha)) return;
   if(sprite<0||sprite>=r->n_spr) return;
-  if(alpha<=0) return;
+  if(alpha<=0 && !(r->alphablend &&
+     gml_render_blend_uses_destination_colour(r->blendmode))) return;
   GmlSprite *s=&r->spr[sprite]; if(s->n_frames<=0) return;
   /* A sprite drawn through a program this renderer does not execute goes to the same executor as
    * a surface, evaluated at the destination's size. Unrotated, unflipped draws only: the composed
@@ -1623,7 +1626,9 @@ void gml_draw_sprite_pos(GmlRender *r,int sprite,int subimg,
     if(r && r->sprite_position_log_count++<16) anygm_host_logf(r && r->win ? r->win->host : NULL,ANYGM_LOG_DEBUG,"[sprite-pos] sprite=%d sub=%d alpha=%.3f p=(%.2f,%.2f)(%.2f,%.2f)(%.2f,%.2f)(%.2f,%.2f)\n",
       sprite,subimg,alpha,x[0],y[0],x[1],y[1],x[2],y[2],x[3],y[3]);
   }
-  if(!r||!r->fb||sprite<0||sprite>=r->n_spr||alpha<=0) return;
+  if(!r||!r->fb||sprite<0||sprite>=r->n_spr||
+     (alpha<=0 && !(r->alphablend &&
+       gml_render_blend_uses_destination_colour(r->blendmode)))) return;
   if(alpha>1) alpha=1;
   for(int i=0;i<4;i++) if(!isfinite(x[i])||!isfinite(y[i])) return;
   gml_render_cpu_blit_sprite_pos_resolved(r,sprite,subimg,x,y,alpha);
@@ -1920,7 +1925,8 @@ general_cpu:
      !isfinite(xs) || !isfinite(ys) || !isfinite(alpha) ||
      sx<0.0 || sy<0.0 || sw<=0.0 || sh<=0.0 || xs==0.0 || ys==0.0 ||
      sx>INT_MAX || sy>INT_MAX || sw>INT_MAX || sh>INT_MAX ||
-     alpha<=0.0) return;
+     (alpha<=0.0 && !(r->alphablend &&
+       gml_render_blend_uses_destination_colour(r->blendmode)))) return;
   if(gml_d3_is_active(r) || r->spr[sprite].spine || r->spr[sprite].ns_enabled){
     gml_draw_sprite_part_ext(r,sprite,subimg,sx,sy,sw,sh,x,y,xs,ys,
                              corner_colour[0],alpha);
@@ -2086,7 +2092,9 @@ void gml_draw_layer_background_sprite(GmlRender *r, int sprite, int subimg, doub
                                       int htiled, int vtiled){
   gml_render_draw_map_point(r,&x,&y);
   gml_render_draw_map_scale(r,&xs,&ys);
-  if(!r || sprite<0 || sprite>=r->n_spr || alpha<=0) return;
+  if(!r || sprite<0 || sprite>=r->n_spr ||
+     (alpha<=0 && !(r->alphablend &&
+       gml_render_blend_uses_destination_colour(r->blendmode)))) return;
   GmlSprite *s=&r->spr[sprite]; if(s->n_frames<=0) return;
   double bw=s->w*fabs(xs), bh=s->h*fabs(ys); if(bw<=0 || bh<=0) return;
   if(r->resident_application_pass && !r->interp &&

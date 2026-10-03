@@ -55,6 +55,36 @@ static inline uint32_t blend_multiply_pixel(const GmlRender *r,uint32_t dst,int 
   return alpha|((uint32_t)rr<<16)|((uint32_t)gg<<8)|(uint32_t)bb;
 }
 
+/* Destination-dependent pairs apply factors to RGBA, even when source coverage is zero.
+ * Alpha testing is a separate fragment-admission decision made by the sampling kernel. */
+static inline uint32_t blend_destination_colour_pixel(const GmlRender *r,uint32_t destination,
+                                                        int sr,int sg,int sb,unsigned sa){
+  unsigned source[4]={(unsigned)sr,(unsigned)sg,(unsigned)sb,sa>255u?255u:sa};
+  unsigned dest[4]={(destination>>16)&255u,(destination>>8)&255u,
+                    destination&255u,destination>>24};
+  unsigned out[4];
+  for(int channel=0;channel<4;channel++){
+    unsigned sf=r->blendmode==GML_RENDER_BLEND_DEST_ALPHA_DEST_COLOUR?dest[3]:dest[channel];
+    unsigned df=r->blendmode==GML_RENDER_BLEND_DEST_SOURCE_COLOUR?source[channel]:dest[channel];
+    int equation=channel==3?r->blend_equation_alpha:r->blend_equation;
+    int value;
+    if(equation==2) value=source[channel]>dest[channel]?source[channel]:dest[channel];
+    else if(equation==5) value=source[channel]<dest[channel]?source[channel]:dest[channel];
+    else {
+      int s=(int)(source[channel]*sf),d=(int)(dest[channel]*df);
+      int scaled=equation==3?d-s:equation==4?s-d:s+d;
+      value=scaled<=0?0:(scaled+127)/255;
+    }
+    out[channel]=value>255?255u:(unsigned)value;
+  }
+  if(!gml_render_target_preserves_alpha(r)) out[3]=255u;
+  return (out[3]<<24)|(out[0]<<16)|(out[1]<<8)|out[2];
+}
+
+static inline int destination_colour_blend_active(const GmlRender *r){
+  return r && r->alphablend && gml_render_blend_uses_destination_colour(r->blendmode);
+}
+
 /* Basic maximum preset: (source alpha, inverse source colour) with the add equation.  The name
  * describes the preset's visual purpose; unlike the independent maximum equation, both blend
  * factors remain active.  Source RGB has already been texture/tint modulated by the caller. */
