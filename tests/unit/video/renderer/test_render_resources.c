@@ -6139,6 +6139,104 @@ static int state_without_context(void){
   return 1;
 }
 
+static int metadata_state_capacity_preserves_pending_pixels(void){
+  GmlRender *original=(GmlRender*)calloc(1,sizeof *original);
+  GmlRender *restored=(GmlRender*)calloc(1,sizeof *restored);
+  FakeDevice fake={0};
+  GmlRenderDeviceServices device=service(&fake);
+  GmlRenderResource *resource;
+  GmlRenderJournalMetrics before={0},after={0};
+  GmlRenderDrawOp operation;
+  GmlRenderDrawBatch batch;
+  uint8_t *state=NULL,*again=NULL;
+  size_t bound=0,derived_bound=0,written=0,used=0,again_written=0;
+  int id;
+  CHECK(original && restored);
+  original->next_surface_id=1;
+  original->circle_precision=4;
+  id=gml_surface_create(original,4,4);
+  CHECK(id>0);
+  gml_render_bind_device(original,&device);
+  resource=gml_render_surface_resource_ensure(original,id);
+  CHECK(resource);
+  operation=clear_op(2u,0xFF010203u,GML_RENDER_DEVICE_CHECKPOINT);
+  operation.target.image=gml_render_resource_image_ref(resource);
+  operation.target.image.content_version=2u;
+  operation.target.pixel_format=GML_RENDER_PIXEL_ARGB8888;
+  batch=(GmlRenderDrawBatch){&operation,1u,NULL,0u};
+  fake.readback_colour=0x40335577u;
+  CHECK(gml_render_resource_submit_deferred(resource,&device,&batch,NULL,0u)==
+        GML_RENDER_RESOURCE_EXEC_DEVICE && !fake.readbacks);
+  gml_render_resource_journal_metrics(resource,&before);
+  CHECK(before.authority==GML_RENDER_RESOURCE_GPU_PENDING_CHECKPOINT &&
+        before.cpu_version!=before.logical_version && !original->surface[id-1].rle);
+  fake.forbid_calls=1;
+  bound=gml_render_state_capacity(original,0);
+  derived_bound=gml_render_state_capacity(original,id);
+  CHECK(bound>derived_bound && bound-derived_bound==16u*8u-8u &&
+        gml_render_state_capacity(original,0)==bound);
+  gml_render_resource_journal_metrics(resource,&after);
+  CHECK(!fake.forbidden_calls && !fake.readbacks && !original->surface[id-1].rle &&
+        original->surface[id-1].px[0]==0u && original->surface[id-1].px[15]==0u &&
+        !memcmp(&before,&after,sizeof before));
+  fake.forbid_calls=0;
+  state=(uint8_t*)malloc(bound);
+  again=(uint8_t*)malloc(bound);
+  CHECK(state && again);
+  CHECK(gml_render_state_save(original,0,state,bound,&written) &&
+        written>0u && written<=bound && fake.readbacks==1);
+  CHECK(gml_render_state_load(restored,state,written,&used) && used==written &&
+        restored->surface[id-1].px[0]==fake.readback_colour &&
+        restored->surface[id-1].px[15]==fake.readback_colour);
+  CHECK(gml_render_state_capacity(original,0)==bound);
+  CHECK(gml_render_state_capacity(restored,0)==bound);
+  CHECK(gml_render_state_save(restored,0,again,bound,&again_written));
+  CHECK(again_written==written);
+  if(memcmp(state,again,written))
+    for(size_t index=0;index<written;index++) if(state[index]!=again[index]){
+      fprintf(stderr,"pending metadata state first difference at %zu: %u/%u\n",
+              index,state[index],again[index]);
+      break;
+    }
+  CHECK(!memcmp(state,again,written));
+  free(state); free(again);
+  gml_render_free(original); gml_render_free(restored);
+  free(original); free(restored);
+  return 1;
+}
+
+static int metadata_state_capacity_skips_pixel_compression(void){
+  for(int detailed=0;detailed<2;detailed++){
+    GmlRender *render=(GmlRender*)calloc(1,sizeof *render);
+    uint8_t *rgba=(uint8_t*)calloc(1,32u*32u*4u),*state=NULL;
+    size_t bound=0,written=0;
+    int id,sprite;
+    CHECK(render && rgba);
+    render->next_surface_id=1;
+    render->font=-1;
+    id=gml_surface_create(render,4,4);
+    CHECK(id>0);
+    for(unsigned index=0;index<16u;index++)
+      render->surface[id-1].px[index]=detailed?0xFF000000u+index:0u;
+    sprite=gml_sprite_append_from_rgba_frames(render,rgba,32,32,1,0,0,NULL);
+    CHECK(sprite==0 && !render->spr[sprite].runtime_state_cached &&
+          !render->surface[id-1].rle);
+    bound=gml_render_state_capacity(render,0);
+    CHECK(bound>0u && gml_render_state_capacity(render,0)==bound &&
+          !render->spr[sprite].runtime_state_cached &&
+          !render->spr[sprite].runtime_state_data && !render->surface[id-1].rle);
+    state=(uint8_t*)malloc(bound);
+    CHECK(state && gml_render_state_save(render,0,state,bound,&written) &&
+          written<=bound && render->spr[sprite].runtime_state_cached &&
+          render->spr[sprite].runtime_state_data && render->surface[id-1].rle &&
+          gml_render_state_capacity(render,0)==bound &&
+          render->surface[id-1].rle_len==(detailed?132u:12u));
+    free(state);
+    gml_render_free(render); free(render);
+  }
+  return 1;
+}
+
 static int zero_base_runtime_sprite_state(void){
   GmlRender *render=(GmlRender*)calloc(1,sizeof *render);
   uint8_t *rgba=(uint8_t*)malloc(16u);
@@ -6485,6 +6583,8 @@ int main(void){
   passed+=resident_binary_atlas_sprite_gpu();
   passed+=resident_integer_scaled_atlas_sprite_gpu();
   passed+=state_without_context();
+  passed+=metadata_state_capacity_preserves_pending_pixels();
+  passed+=metadata_state_capacity_skips_pixel_compression();
   passed+=zero_base_runtime_sprite_state();
   passed+=surface_draw_sources_are_read_only();
   passed+=target_pixel_observes_resident_result();
@@ -6492,6 +6592,6 @@ int main(void){
   passed+=source_free_primitive_rect_replay();
   passed+=stretched_float_exact_replay();
   passed+=filtered_font_exact_recovery();
-  printf("render resource cases: passed=%d failed=%d\n",passed,83-passed);
-  return passed==83?EXIT_SUCCESS:EXIT_FAILURE;
+  printf("render resource cases: passed=%d failed=%d\n",passed,85-passed);
+  return passed==85?EXIT_SUCCESS:EXIT_FAILURE;
 }

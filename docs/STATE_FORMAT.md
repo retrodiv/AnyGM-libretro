@@ -369,8 +369,16 @@ canonical bytes and semantics remain unchanged.
   absent from the configuration fingerprint, and a state saved under one graphics policy loads
   under another.
 
-`anygm_state_size` returns the exact size of the current complete canonical state.
-`anygm_state_resume_size` returns its frame-free size, and
+`anygm_state_size` returns the buffer requirement for the current complete canonical state.
+It remains exact in CPU mode. With active scene GPU execution, it counts metadata-only ceilings:
+raw completed-frame RGBA, at most one surface RLE run per pixel, and raw inline sprite pixels.
+Neither complete nor frame-free queries materialise pixels, replay GPU work, read a device or
+prepare pixel-compression caches. The bound is stable across pixel changes at fixed geometry;
+language allocations and resource metadata may still change it. The actual writer retains the
+existing lossless encodings and returns the canonical payload length in `written`, which can be
+smaller than the GPU buffer requirement. Load and transactional rollback consume that length,
+not uninitialised capacity bytes. State bytes and schema are unchanged by this sizing policy.
+`anygm_state_resume_size` returns the corresponding frame-free buffer requirement, and
 `anygm_state_save_for_resume` writes that form explicitly. Repeated serialization through the
 same form without an intervening mutation produces identical bytes.
 
@@ -414,7 +422,7 @@ serialization to match the first byte for byte.
 ## Variable state size
 
 The state can grow as language-level containers grow. The portable API reports
-the exact current size and writes into a caller-owned buffer.
+the current buffer requirement and writes into a caller-owned buffer.
 
 The libretro adapter advertises the variable-size serialization quirk and records whether the
 frontend acknowledges it. Requesting the quirk is not sufficient: a declined or unsupported
@@ -431,7 +439,8 @@ The root writer may stop counting completed-picture runs when both the raw encod
 already-proven row-RLE lower bound exceed the offered buffer's remaining capacity. It then uses
 the same frame-free writer; it does not assume that another picture of the same dimensions will
 also overflow. Large repeated pictures retain their complete encoding whenever it fits. Exact
-size queries still count the full selected encoding. If the compact attempt fails too, the
+CPU size queries still count the full selected encoding; scene GPU queries use the metadata
+ceiling described above. If the compact attempt fails too, the
 original complete-plus-compact attempts are replayed to retain failed-save size and buffer
 behavior. This changes neither state bytes nor slot capacity, materialization, schema or restore
 semantics. `tests/integration/test_graphics_state.c::completed_frame_capacity_case` compares raw,

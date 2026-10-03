@@ -66,19 +66,21 @@ static void cost_add(double duration,double *total,double *maximum){
   if(duration>*maximum) *maximum=duration;
 }
 
-/* The frontend can query size repeatedly before every push. Measure the first CPU observation
- * separately from repeated queries/saves of one unchanged GPU-produced frame: only the first may
- * materialise it, and no query may borrow a GL context that the frontend has not lent. */
+/* The frontend can query size repeatedly before every push. Active scene GPU queries count
+ * metadata only; the first save may materialise the frame. Subsequent saves must retain exact
+ * payload bytes, and no observation may borrow a context that the frontend has not lent. */
 static int observation_cost(AnygmEngine *engine,const char *phase,size_t ring_capacity){
   GmlGpuCounters before_gpu={0},after_gpu={0};
   GmlRenderJournalMetrics journal={0};
   uint8_t *first=NULL,*again=NULL;
-  size_t bytes=0,written=0;
-  unsigned before_materializations,after_first;
-  int before_forbidden,ok=1;
+  size_t bytes=0,written=0,first_written=0;
+  unsigned before_materializations,after_first,after_save=0;
+  int before_forbidden,gpu_bound,ok=1;
   double first_query=0.0,repeat_queries=0.0,repeat_max=0.0;
   double saves=0.0,save_max=0.0;
   if(!engine) return 0;
+  gpu_bound=engine->scene_renderer_session==ANYGM_SCENE_RENDERER_OPENGL &&
+            engine_graphics_active(engine);
   before_materializations=engine->frame_materializations;
   before_forbidden=anygm_test_graphics_calls_after_forget();
   if(engine->gpu) gml_gpu_counters(engine->gpu,&before_gpu);
@@ -89,6 +91,7 @@ static int observation_cost(AnygmEngine *engine,const char *phase,size_t ring_ca
   after_first=engine->frame_materializations;
   ok=bytes>0 && after_first>=before_materializations &&
      after_first-before_materializations<=1u;
+  if(gpu_bound) ok=ok && after_first==before_materializations;
   for(int repeat=0;repeat<3 && ok;repeat++){
     start=elapsed_ms();
     size_t measured=anygm_state_size(engine);
@@ -103,11 +106,18 @@ static int observation_cost(AnygmEngine *engine,const char *phase,size_t ring_ca
   for(int repeat=0;repeat<4 && ok;repeat++){
     uint8_t *destination=repeat?again:first;
     start=elapsed_ms();
-    ok=anygm_state_save(engine,destination,bytes,&written)==ANYGM_OK && written==bytes;
+    ok=anygm_state_save(engine,destination,bytes,&written)==ANYGM_OK &&
+       written>0 && written<=bytes && (gpu_bound || written==bytes);
     cost_add(elapsed_ms()-start,&saves,&save_max);
-    ok=ok && engine->frame_materializations==after_first &&
-       (!repeat || !memcmp(first,again,bytes));
+    if(!repeat){
+      first_written=written;
+      after_save=engine->frame_materializations;
+      ok=ok && after_save>=after_first && after_save-after_first<=(gpu_bound?1u:0u);
+    }else
+      ok=ok && written==first_written && !memcmp(first,again,first_written) &&
+         engine->frame_materializations==after_save;
   }
+  ok=ok && anygm_state_size(engine)==bytes;
   ok=ok && anygm_test_graphics_calls_after_forget()==before_forbidden;
   anygm_test_graphics_allow_calls();
   if(engine->gpu) gml_gpu_counters(engine->gpu,&after_gpu);
@@ -118,13 +128,15 @@ static int observation_cost(AnygmEngine *engine,const char *phase,size_t ring_ca
     gml_render_resource_journal_metrics(engine->render.app_surface_resource,&journal);
   ok=ok && journal.journal_bytes<=8u*1024u*1024u &&
      journal.retained_mutable_bytes<=64u*1024u*1024u;
-  printf("state observation cost: mode=%s phase=%s frame=%ld state=%zu screen=%zu "
-         "ring_initial=%zu materializations=%u first_query=%.3f repeated_query_avg_max=%.3f/%.3f "
+  printf("state observation cost: mode=%s phase=%s frame=%ld capacity=%zu payload=%zu screen=%zu "
+         "ring_initial=%zu query_materializations=%u save_materializations=%u "
+         "first_query=%.3f repeated_query_avg_max=%.3f/%.3f "
          "save_avg_max=%.3f/%.3f ms journal=%zu/%u retained=%zu/%u "
          "replay=%llu checkpoints=%llu readback_delta=%llu/%llu\n",
-         gpu_requested?"GPU":"CPU",phase,engine->vm.frame,bytes,
+         gpu_requested?"GPU":"CPU",phase,engine->vm.frame,bytes,first_written,
          (size_t)engine->output_width*engine->output_height*4u,ring_capacity,
-         after_first-before_materializations,first_query,repeat_queries/3.0,repeat_max,
+         after_first-before_materializations,after_save-after_first,
+         first_query,repeat_queries/3.0,repeat_max,
          saves/4.0,save_max,journal.journal_bytes,journal.journal_operations,
          journal.retained_mutable_bytes,journal.retained_versions,
          (unsigned long long)journal.cpu_replays,

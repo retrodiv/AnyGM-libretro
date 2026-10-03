@@ -388,7 +388,8 @@ the consumer.
 
 Owning subsystem serializer -> root state framing in `engine_state.c` -> transactional
 load test -> two-instance integration test -> review stable size bound and
-schema compatibility. `anygm_state_size` remains the exact canonical size; any
+schema compatibility. `anygm_state_size` remains exact in CPU mode; active scene GPU sizing uses
+metadata-only upper bounds while the writer returns the actual canonical length. Any
 fixed-capacity transport fallback belongs to an adapter.
 
 ### Add another frontend framework

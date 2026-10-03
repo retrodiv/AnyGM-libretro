@@ -15,7 +15,7 @@ extern "C" {
  * runtime library version, and every publishable metadata file declares the literal "Git" instead
  * of a number, so no copy can promise a value that has gone stale. CONTRIBUTING.md owns the single
  * increment step. */
-#define ANYGM_VERSION "0.1.264"
+#define ANYGM_VERSION "0.1.265"
 #define ANYGM_API_VERSION 5u
 #define ANYGM_HOST_SERVICES_VERSION 2u
 #define ANYGM_STATE_SCHEMA 37u
@@ -591,14 +591,16 @@ AnygmResult anygm_set_config(AnygmEngine *engine,const AnygmConfigDelta *delta);
  * disable, or serialized as active policy. */
 AnygmResult anygm_set_runtime_override(AnygmEngine *engine,uint32_t slot,uint32_t enabled,
                                        const char *expression);
+/* Buffer requirement for the current complete state: exact in CPU mode, a metadata-only upper
+ * bound with active scene GPU execution. The save operation returns the actual bytes written. */
 size_t anygm_state_size(AnygmEngine *engine);
-/* The exact size of the same canonical state without its optional completed-frame section. A host
+/* The same buffer requirement without its optional completed-frame section. A host
  * that resumes simulation from frequent in-memory snapshots can provision this smaller form. It
  * loads through anygm_state_load and the next run continues from the restored post-frame state. */
 size_t anygm_state_resume_size(AnygmEngine *engine);
 /* The capacity advised for frame-free states: at least the largest size remembered from an earlier
  * session, raised by mutable render allocations whose dimensions are already known at load. It is
- * a bounded advisory hint, just like anygm_state_capacity_hint; the current exact requirement is
+ * a bounded advisory hint, just like anygm_state_capacity_hint; the current buffer requirement is
  * always anygm_state_resume_size. */
 size_t anygm_state_resume_capacity_hint(const AnygmEngine *engine);
 enum {
@@ -613,8 +615,8 @@ uint32_t anygm_state_capacity_flags(const AnygmEngine *engine);
 /* The capacity the engine advises a host to provision for complete states: at least the completed
  * frame's ceiling under the current output geometry, raised by the largest serialized size this
  * content is known to have reached in earlier sessions and remembered as a disposable cache entry
- * in the content's writable namespace. A hint is advisory: the exact size of the current complete
- * state is always anygm_state_size. */
+ * in the content's writable namespace. A hint is advisory: the current complete-state buffer
+ * requirement is always anygm_state_size. */
 size_t anygm_state_capacity_hint(const AnygmEngine *engine);
 AnygmResult anygm_state_save(AnygmEngine *engine,void *data,size_t capacity,size_t *written);
 /* Writes the canonical state without its optional completed frame. This is the explicit form of

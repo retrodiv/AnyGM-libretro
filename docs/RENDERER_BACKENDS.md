@@ -51,12 +51,25 @@ not a shader or raster executor. `::engine_state_save` permits an early stop
 only after both existing encoding lower bounds exceed the supplied capacity;
 the established frame-free writer then supplies the same bytes. A failed
 compact attempt restores the original complete-plus-compact failure path.
-`::engine_state_size` and all fitting complete writes retain the full codec.
+CPU `::engine_state_size` and all fitting complete writes retain the full codec.
 The comparative owner is
 `tests/integration/test_graphics_state.c::completed_frame_capacity_case`;
 fixed/variable transport and non-current-context rewind are additionally
 covered by the existing libretro state contracts. This CPU codec optimization
 does not remove GPU checkpoints or change their authority/residency rule.
+
+Active scene GPU size queries use `src/core/engine_state.c::state_size_is_metadata_only` and
+`common/gml_render_state.c::gml_render_state_capacity`: metadata-only raw completed-frame and
+inline-sprite ceilings, plus the existing surface RLE worst case. They neither observe device
+pixels nor replay a frame or prepare pixel-compression caches. The actual save codec and
+transactional rollback still consume exact canonical bytes, using the writer's payload length
+rather than the allocation bound. CPU sizing remains exact. The controls are
+`tests/integration/test_graphics_state.c::scene_size_query_is_metadata_only_case`,
+`tests/unit/video/renderer/test_render_resources.c::metadata_state_capacity_preserves_pending_pixels`
+and `::metadata_state_capacity_skips_pixel_compression`; the frontend observation-cost control
+retains exact saved-byte, image/audio, fixed/variable ring and no-current-context checks.
+This is a sizing prerequisite, not on-demand GPU preservation, volatile loss or removal of ordinary
+replay/checkpoints. No raster rule or its EXACT/TOLERANCE classification changes.
 
 The later resident prototype supports clear, qualified whole-image quads, and nearest-filtered
 interior atlas subrectangles with integer-sized axis-aligned destinations and optional X/Y mirrors.

@@ -245,7 +245,8 @@ static int runtime_path_rebuild(const GmlRender *render,int root,const char *sto
   return 1;
 }
 
-static void render_state_write(GmlRender *render,int view_surface,CoreW *s){
+static void render_state_write(GmlRender *render,int view_surface,CoreW *s,
+                               int metadata_only){
   if(render->n_fonts<0 || render->n_fonts>GML_MAX_FONTS){ s->ok=0; return; }
   cw_i32(s,render->n_fonts);
   for(int i=0;i<GML_MAX_FONTS;i++){
@@ -285,6 +286,17 @@ static void render_state_write(GmlRender *render,int view_surface,CoreW *s){
     GmlSurface *sf=&render->surface[i];
     cw_i32(s,sf->live); cw_i32(s,sf->w); cw_i32(s,sf->h);
     if(sf->live && sf->px && sf->w>0 && sf->h>0){
+      if(metadata_only){
+        size_t run_bytes=0;
+        if(!state_bounded_product3((size_t)sf->w,(size_t)sf->h,8u,
+                                   SIZE_MAX-4u,&run_bytes)){
+          s->ok=0; return;
+        }
+        /* One run per pixel is the existing surface encoding's ceiling. Counting that
+         * ceiling observes neither the device nor a stale CPU plane/RLE cache. */
+        cw_raw(s,NULL,view_surface>0 && i==view_surface-1 ? 12u:4u+run_bytes);
+        continue;
+      }
       if(sf->resource){
         GmlRenderJournalMetrics metrics;
         gml_render_resource_journal_metrics(sf->resource,&metrics);
@@ -352,8 +364,13 @@ static void render_state_write(GmlRender *render,int view_surface,CoreW *s){
         s->ok=0;return;
       }
       size_t bytes=pixels*4;
-      if(!sprite_state_cache_prepare(sp,bytes)){ s->ok=0; return; }
-      if(sp->runtime_state_data && bytes<=compressed_budget){
+      if(metadata_only){
+        /* Compression is selected only when its length word plus payload is smaller
+         * than raw RGBA. The raw bound needs no compression or cache mutation. */
+        cw_i32(s,0);
+        cw_raw(s,NULL,bytes);
+      }else if(!sprite_state_cache_prepare(sp,bytes)){ s->ok=0; return; }
+      else if(sp->runtime_state_data && bytes<=compressed_budget){
         compressed_budget-=bytes;
         cw_i32(s,2);
         cw_u32(s,(uint32_t)sp->runtime_state_size);
@@ -715,7 +732,15 @@ size_t gml_render_state_size(GmlRender *render,int derived_view_surface){
   if(!render) return 0;
   CoreW state={0};
   state.ok=1;
-  render_state_write(render,derived_view_surface,&state);
+  render_state_write(render,derived_view_surface,&state,0);
+  return state.ok?state.pos:0;
+}
+
+size_t gml_render_state_capacity(GmlRender *render,int derived_view_surface){
+  if(!render) return 0;
+  CoreW state={0};
+  state.ok=1;
+  render_state_write(render,derived_view_surface,&state,1);
   return state.ok?state.pos:0;
 }
 
@@ -723,7 +748,7 @@ int gml_render_state_save(GmlRender *render,int derived_view_surface,
                           void *data,size_t length,size_t *written){
   if(!render || !data) return 0;
   CoreW state={(uint8_t*)data,length,0,1};
-  render_state_write(render,derived_view_surface,&state);
+  render_state_write(render,derived_view_surface,&state,0);
   if(written) *written=state.pos;
   return state.ok && state.pos<=length;
 }

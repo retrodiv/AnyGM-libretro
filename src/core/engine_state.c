@@ -72,6 +72,11 @@ static double cr_d(CoreR *s){ uint64_t bits=cr_u64(s); double value=0; memcpy(&v
 #define ANYGM_FRAME_ROW_LITERAL UINT32_C(0xFFFFFFFF)
 enum { ANYGM_FRAME_ENCODING_RAW=1, ANYGM_FRAME_ENCODING_ROW_RLE=2 };
 
+static int state_size_is_metadata_only(const AnygmEngine *engine){
+  return engine->scene_renderer_session==ANYGM_SCENE_RENDERER_OPENGL &&
+         engine_graphics_active(engine);
+}
+
 size_t engine_state_frame_capacity(const AnygmEngine *engine){
   /* Ceiling of state_write_completed_frame under the geometry this session is already known to
    * reach: width, height and encoding cost 12 bytes, then raw RGBA costs four bytes per pixel. The
@@ -93,11 +98,14 @@ size_t engine_state_frame_capacity(const AnygmEngine *engine){
 static void state_write_completed_frame(AnygmEngine *engine,CoreW *state,
                                         int *frame_exceeds_capacity){
   unsigned width=0,height=0;
+  int metadata_only=!state->data && state_size_is_metadata_only(engine);
   /* The state carries the exact completed frame. A frame that was produced somewhere other than
    * the processor has to be produced here first: serializing the buffer as it stands would write
    * whatever the previous frame left in it. */
   if(!engine->state_omit_frame){
-    if(!engine_materialize_completed_frame(engine)){ state->ok=0; return; }
+    if(!metadata_only && !engine_materialize_completed_frame(engine)){
+      state->ok=0; return;
+    }
     if(engine->have_presented_frame && engine->screen && engine->output_width && engine->output_height){
       width=engine->output_width;
       height=engine->output_height;
@@ -114,6 +122,14 @@ static void state_write_completed_frame(AnygmEngine *engine,CoreW *state,
   cw_u32(state,width);
   cw_u32(state,height);
   if(!width || !height){ cw_u32(state,0); return; }
+  if(metadata_only){
+    /* The complete writer always chooses an encoding no larger than raw RGBA.
+     * A size query keeps the GPU image/recipe authoritative instead of replaying it
+     * merely to learn which lossless encoding would be smaller. */
+    cw_u32(state,ANYGM_FRAME_ENCODING_RAW);
+    cw_raw(state,NULL,(size_t)width*height*4u);
+    return;
+  }
   uint32_t *rows=malloc((size_t)height*sizeof(uint32_t));
   if(!rows){ state->ok=0; return; }
   uint32_t literal_rows=0;
@@ -479,9 +495,11 @@ static void state_write(AnygmEngine *engine,CoreW *s,int *frame_exceeds_capacity
       s->ok=0;
     s->pos+=written;
   } else {
-    size_t measured=gml_render_state_size(&engine->render,derived_view_surface);
+    size_t measured=state_size_is_metadata_only(engine)
+      ?gml_render_state_capacity(&engine->render,derived_view_surface)
+      :gml_render_state_size(&engine->render,derived_view_surface);
     if(!measured) s->ok=0;
-    s->pos+=measured;
+    cw_raw(s,NULL,measured);
   }
   size_t rendern=s->pos-render_start;
   size_t vmn=0, audn=0;
@@ -776,15 +794,20 @@ bool engine_state_load(AnygmEngine *engine,const void *d,size_t n){
   CoreW measure={0}; measure.ok=1;
   state_write(engine,&measure,NULL);
   if(!measure.ok || !measure.pos) return false;
-  size_t snapshot_size=measure.pos;
-  uint8_t *snapshot=malloc(snapshot_size);
+  size_t snapshot_capacity=measure.pos;
+  uint8_t *snapshot=malloc(snapshot_capacity);
   if(!snapshot) return false;
-  CoreW snapshot_writer={snapshot,snapshot_size,0,1};
+  CoreW snapshot_writer={snapshot,snapshot_capacity,0,1};
   state_write(engine,&snapshot_writer,NULL);
-  if(!snapshot_writer.ok || snapshot_writer.pos!=snapshot_size){
+  if(!snapshot_writer.ok || !snapshot_writer.pos ||
+     snapshot_writer.pos>snapshot_capacity ||
+     (!state_size_is_metadata_only(engine) && snapshot_writer.pos!=snapshot_capacity)){
     free(snapshot);
     return false;
   }
+  /* The allocation bound is not a payload length. Rollback consumes only the canonical
+   * bytes actually written, never the uninitialised capacity tail of a GPU-sized buffer. */
+  size_t snapshot_size=snapshot_writer.pos;
   GmlRenderFontCheckpoint *font_checkpoint=NULL;
   if(!gml_render_font_checkpoint_create(&engine->render,&font_checkpoint)){
     free(snapshot);

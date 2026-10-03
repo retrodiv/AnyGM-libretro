@@ -165,6 +165,67 @@ static int advance(AnygmEngine *engine,int frames,uint32_t *last_flags){
 
 static uint8_t *serialize(AnygmEngine *engine,size_t *size);
 
+static int scene_size_query_is_metadata_only_case(void){
+  Session plain={0},selected={0};
+  GmlRenderResourceMetrics before={0},after={0};
+  uint32_t *shadow=NULL;
+  uint8_t *saved=NULL,*reference=NULL;
+  size_t capacity=0,resume=0,written=0,reference_size=0,pixels=0;
+  uint32_t materializations=0,authority=0;
+  int pure=0,ok=0;
+  anygm_test_graphics_reset();
+  REQUIRE(session_open(&plain),"metadata-size CPU reference loads");
+  REQUIRE(session_open_with_scene(&selected,ANYGM_SCENE_RENDERER_OPENGL),
+          "metadata-size GPU session loads");
+  REQUIRE(graphics_adopt(selected.engine,ANYGM_GRAPHICS_OPENGLES3)==ANYGM_OK &&
+          advance(plain.engine,1,NULL) && advance(selected.engine,1,NULL),
+          "metadata-size sessions complete matching frames");
+  REQUIRE(selected.engine->frame_materializations==0u &&
+          selected.engine->frame_authority!=ENGINE_FRAME_CPU_MATERIALIZED,
+          "metadata-size positive control leaves the completed frame GPU-resident");
+  pixels=(size_t)selected.engine->output_width*selected.engine->output_height;
+  shadow=(uint32_t*)malloc(pixels*sizeof *shadow);
+  REQUIRE(shadow && selected.engine->screen,"metadata-size shadow exists");
+  memcpy(shadow,selected.engine->screen,pixels*sizeof *shadow);
+  materializations=selected.engine->frame_materializations;
+  authority=selected.engine->frame_authority;
+  gml_render_resource_metrics(&selected.engine->render,&before);
+  anygm_test_graphics_forbid_calls();
+  capacity=anygm_state_size(selected.engine);
+  resume=anygm_state_resume_size(selected.engine);
+  pure=capacity>resume && resume>0u &&
+       anygm_state_size(selected.engine)==capacity &&
+       anygm_state_resume_size(selected.engine)==resume &&
+       selected.engine->frame_materializations==materializations &&
+       selected.engine->frame_authority==authority &&
+       !memcmp(shadow,selected.engine->screen,pixels*sizeof *shadow) &&
+       anygm_test_graphics_calls_after_forget()==0;
+  gml_render_resource_metrics(&selected.engine->render,&after);
+  pure=pure && before.completed_screen_cpu_materializations==
+                 after.completed_screen_cpu_materializations;
+  anygm_test_graphics_allow_calls();
+  if(!pure){
+    fprintf(stderr,"GPU size query observed pixels: capacity=%zu resume=%zu "
+            "materializations=%u/%u authority=%u/%u\n",capacity,resume,
+            materializations,selected.engine->frame_materializations,
+            authority,selected.engine->frame_authority);
+    goto done;
+  }
+  saved=(uint8_t*)malloc(capacity);
+  reference=serialize(plain.engine,&reference_size);
+  if(!saved || !reference) goto done;
+  ok=anygm_state_save(selected.engine,saved,capacity,&written)==ANYGM_OK &&
+     written>0u && written<=capacity && written==reference_size &&
+     !memcmp(saved,reference,written) && selected.engine->frame_materializations==1u &&
+     anygm_state_size(selected.engine)==capacity &&
+     anygm_state_resume_size(selected.engine)==resume;
+  if(!ok) fprintf(stderr,"metadata-sized save changed canonical bytes or exceeded its bound\n");
+done:
+  free(saved); free(reference); free(shadow);
+  session_close(&selected); session_close(&plain);
+  return ok;
+}
+
 static int resident_world_selection_case(void){
   Session plain,selected;
   GmlGpuCounters counters={0};
@@ -1307,7 +1368,10 @@ static uint8_t *serialize(AnygmEngine *engine,size_t *size){
   uint8_t *data=(uint8_t*)malloc(capacity?capacity:1);
   size_t written=0;
   if(!data) return NULL;
-  if(anygm_state_save(engine,data,capacity,&written)!=ANYGM_OK || written!=capacity){
+  int gpu_bound=engine->scene_renderer_session==ANYGM_SCENE_RENDERER_OPENGL &&
+                engine_graphics_active(engine);
+  if(anygm_state_save(engine,data,capacity,&written)!=ANYGM_OK || written>capacity ||
+     (!gpu_bound && written!=capacity)){
     free(data);
     return NULL;
   }
@@ -2572,6 +2636,7 @@ static int final_scene_seal_profile_case(void){
 
 int main(void){
   static const struct { const char *name; int (*run)(void); } cases[]={
+    {"scene state size queries do not observe pixels",scene_size_query_is_metadata_only_case},
     {"final scene seal is included in frame profiling",final_scene_seal_profile_case},
     {"resident world selection retains CPU state",resident_world_selection_case},
     {"viewless classic application accepts Draw scene work",
