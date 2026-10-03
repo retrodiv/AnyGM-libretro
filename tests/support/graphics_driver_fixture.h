@@ -21,6 +21,8 @@
  * fakes of one driver drift and the one that drifts is always the one nobody is reading. */
 
 void anygm_test_graphics_reset(void);
+/* A renderer identity belongs to the current synthetic context; NULL tests an unavailable query. */
+void anygm_test_graphics_renderer(const char *renderer);
 /* A replacement GL namespace may recycle a numeric name from a lost context. Arrange that the
  * next generated object gets that otherwise free value, without restoring the old object. */
 int anygm_test_graphics_reuse_name(unsigned name);

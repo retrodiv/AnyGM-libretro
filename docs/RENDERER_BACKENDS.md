@@ -333,9 +333,15 @@ The R03-P9-FILTERED-REAL-TEXT arithmetic has separate cached GLES programs for
 first-generation and modern text. Each writes three GPU passes, one RGB channel
 at a time; alpha is written only with blue. All passes sample the same bounded
 pre-glyph device snapshot, preserving source-over order and alpha. Each complete
-GLES glyph is submitted with `glFlush` before another pass can sample its target;
-this prevents lost RGB writes on translucent V3D sources without a completion
-wait or CPU pixel read. The general
+GLES glyph on a reported V3D renderer, or when the renderer identity is unavailable,
+is submitted with `glFlush` before another pass can sample its target. This prevents
+the measured lost RGB writes on translucent V3D sources without a completion wait or
+CPU pixel read. Other identified renderers retain the ordered same-context command
+stream without that per-glyph submission. The decision is cached per context and
+recomputed at reset; arithmetic, snapshots and channel/alpha ordering are unchanged.
+`scene_gles_font_programs_case` checks both submission policies, missing/empty identity
+and V3D wrapped renderer strings with the same whole-batch/failure/channel controls.
+The general
 exact GLES program excludes font arithmetic; desktop GL retains its combined
 single-pass program. Integer-limb shifts avoid undefined native shift counts,
 and a bounded highest-bit search replaces repeated normalisation shifts without

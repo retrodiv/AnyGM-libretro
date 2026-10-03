@@ -173,6 +173,7 @@ void gml_gpu_opengl_scene_forget(GmlGpuBackend *backend){
   scene->snapshot_width=scene->snapshot_height=0;
   scene->max_texture_size=0;
   scene->supports_sample_mask=0;
+  scene->font_write_flush=1;
   scene->available=0;
 }
 
@@ -214,6 +215,12 @@ void gml_gpu_opengl_scene_reset(GmlGpuBackend *backend,const GmlGpuContext *cont
   /* This table belongs to one backend/engine. A reset starts a new context epoch even when a
    * frontend skipped the old destroy callback; forgotten names must not reach its replacement. */
   scene->context_epoch++;
+  {
+    const char *renderer=(const char*)backend->gl.GetString(GL_RENDERER);
+    /* Same-context commands are ordered. V3D needs the measured masked-write
+     * submission workaround; an unavailable identity retains that safe path. */
+    scene->font_write_flush=!renderer || !*renderer || strstr(renderer,"V3D")!=NULL;
+  }
 #define GL_SCENE_LOAD(field,name) do { \
   proc=context->get_proc_address(context->userdata,name); \
   memcpy(&backend->gl.field,&proc,sizeof proc); \

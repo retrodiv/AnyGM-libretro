@@ -146,6 +146,7 @@ typedef struct GlScene {
   uint64_t use_clock,context_epoch;
   GLint max_texture_size;
   int supports_sample_mask;
+  int font_write_flush;
   int available;
 } GlScene;
 

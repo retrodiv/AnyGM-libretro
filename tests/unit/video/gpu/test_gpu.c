@@ -1165,7 +1165,7 @@ static int scene_screen_filtered_alpha_stamp_case(void){
   return 1;
 }
 
-static int scene_alpha_composition_api(GmlGpuApi api){
+static int scene_alpha_composition_api(GmlGpuApi api,const char *renderer,int font_flush){
   uint32_t source_pixels[4]={0x80FF0000u,0x0000FF00u,0xFF0000FFu,0x40FFFFFFu};
   GmlRenderImageRef source={GML_RENDER_RESOURCE_ATLAS,8u,1u,1u};
   GmlRenderImageRef target={GML_RENDER_RESOURCE_SURFACE,9u,1u,1u};
@@ -1178,6 +1178,7 @@ static int scene_alpha_composition_api(GmlGpuApi api){
   GmlGpu *gpu;
   GmlGpuContext context;
   anygm_test_graphics_reset();
+  anygm_test_graphics_renderer(renderer);
   gpu=gml_gpu_create();
   REQUIRE(gpu!=NULL,"device metadata allocated");
   context=fake_context(api);
@@ -1502,7 +1503,8 @@ static int scene_alpha_composition_api(GmlGpuApi api){
             !anygm_test_graphics_read_pixels(),
             "each filtered glyph snapshots only its pixel, without folding order or CPU reads");
     REQUIRE(anygm_test_graphics_scene_draw_calls()==draws+(api==GML_GPU_API_OPENGLES3?6:2) &&
-            anygm_test_graphics_flush_calls()==flushes+(api==GML_GPU_API_OPENGLES3?2u:0u) &&
+            anygm_test_graphics_flush_calls()==flushes+
+              (api==GML_GPU_API_OPENGLES3 && font_flush?2u:0u) &&
             anygm_test_graphics_color_mask_all() &&
             !anygm_test_graphics_font_channel_errors(),
             "font writes use the API-qualified pass count and restore the complete colour mask");
@@ -1630,11 +1632,22 @@ static int scene_alpha_composition_api(GmlGpuApi api){
 }
 
 static int scene_alpha_composition_case(void){
-  return scene_alpha_composition_api(GML_GPU_API_OPENGL_CORE);
+  return scene_alpha_composition_api(GML_GPU_API_OPENGL_CORE,"V3D synthetic",0);
 }
 
 static int scene_gles_font_programs_case(void){
-  return scene_alpha_composition_api(GML_GPU_API_OPENGLES3);
+  static const struct { const char *renderer; int font_flush; } drivers[]={
+    {"D3D12 (NVIDIA synthetic)",0},
+    {"llvmpipe synthetic",0},
+    {"V3D synthetic",1},
+    {"ANGLE (V3D synthetic)",1},
+    {NULL,1},
+    {"",1},
+  };
+  for(size_t index=0;index<sizeof drivers/sizeof drivers[0];index++)
+    if(!scene_alpha_composition_api(GML_GPU_API_OPENGLES3,
+          drivers[index].renderer,drivers[index].font_flush)) return 0;
+  return 1;
 }
 
 static int execute_state_and_geometry_case(void){

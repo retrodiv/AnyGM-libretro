@@ -868,10 +868,9 @@ static int draw_exact_quad(GmlGpuBackend *backend,const GmlRenderDrawOp *op,
       backend->gl.DrawArrays(GL_TRIANGLES,0,6);
       if(backend->gl.GetError()!=GL_NO_ERROR) goto cleanup;
     }
-    /* Submit the complete masked write before its target can become another pass's
-     * sampled source. V3D otherwise loses preceding RGB writes on translucent sources.
-     * Flush submits work; it neither waits for completion nor reads pixels to the CPU. */
-    backend->gl.Flush();
+    /* V3D needs the complete masked write submitted before a later pass samples it.
+     * Other identified renderers retain the context's ordinary ordered command stream. */
+    if(scene->font_write_flush) backend->gl.Flush();
     if(backend->gl.GetError()!=GL_NO_ERROR) goto cleanup;
     outcome=1;
   } else {

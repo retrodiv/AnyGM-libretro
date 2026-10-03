@@ -30,6 +30,7 @@ typedef struct FakeDriver {
   /* Which entry point the loader is not allowed to resolve, so that a missing one can be tested
    * exactly rather than by removing code. */
   const char *withhold;
+  const char *renderer;
   int deletes_issued;
   int calls_after_forget;
   int allow_calls;
@@ -117,7 +118,9 @@ void anygm_test_graphics_reset(void){
   g_fake.rgb_query_result=1u;
   g_fake.readback_alpha=255u;
   g_fake.checkpoint_mask=-1;
+  g_fake.renderer="fake";
 }
+void anygm_test_graphics_renderer(const char *renderer){ g_fake.renderer=renderer; }
 void anygm_test_graphics_readback_alpha(unsigned alpha){ g_fake.readback_alpha=(uint8_t)alpha; }
 void anygm_test_graphics_checkpoint_mask(unsigned bits){ g_fake.checkpoint_mask=(int)(bits&63u); }
 void anygm_test_graphics_fail_readback_at(unsigned ordinal){ g_fake.readback_error_at=ordinal; }
@@ -141,7 +144,10 @@ static GLenum fake_GetError(void){
   note_call();g_fake.pending_error=0;
   return error;
 }
-static const GLubyte *fake_GetString(GLenum name){ (void)name; note_call(); return (const GLubyte*)"fake"; }
+static const GLubyte *fake_GetString(GLenum name){
+  note_call();
+  return (const GLubyte*)(name==GL_RENDERER?g_fake.renderer:"fake");
+}
 static void fake_GetIntegerv(GLenum name,GLint *value){
   note_call();
   if(value) *value=name==GL_MAX_TEXTURE_SIZE?4096:
