@@ -538,7 +538,7 @@ int expect_revision16_room_uses_legacy_view(void){
   return ok;
 }
 
-int expect_temporary_string_teardown(void){
+static int expect_string_work_fixture(const char *script,double iterations){
   GmlcProject project={0}; GmlcObject object={0}; GmlcObjectEvent event={0};
   GmlcRoom room={0}; GmlcRoomInstance placed={0}; AnygmHostServices services={0};
   char source_path[]="/tmp/gml-temporary-strings-source-XXXXXX";
@@ -546,10 +546,7 @@ int expect_temporary_string_teardown(void){
   int source_fd=mkstemp(source_path),package_fd=mkstemp(package_path),ok=0;
   if(source_fd<0 || package_fd<0) goto cleanup;
   close(source_fd); source_fd=-1; close(package_fd); package_fd=-1;
-  if(!fixture_write_text(source_path,
-       "var kept=string(123); global.kept=kept; var aliases=[kept,kept]; "
-       "for(var i=0;i<200000;i++){string(i);} "
-       "global.joined=kept+aliases[0]+aliases[1]; global.done=i;\n")) goto cleanup;
+  if(!fixture_write_text(source_path,script)) goto cleanup;
   services.struct_size=sizeof services; services.abi_version=ANYGM_HOST_SERVICES_VERSION;
   anygm_stdio_vfs_services_init(&services);
   project.name="temporary-string-fixture"; project.host=&services;
@@ -572,13 +569,26 @@ int expect_temporary_string_teardown(void){
   GmlVal *done=gml_varmap_get(&vm.globals,"done");
   ok=kept && kept->t==V_STR && !strcmp(kept->s,"123") &&
      joined && joined->t==V_STR && !strcmp(joined->s,"123123123") &&
-     done && done->t==V_REAL && done->d==200000;
+     done && done->t==V_REAL && done->d==iterations;
   gml_vm_free(&vm); gml_win_free(&win);
 cleanup:
   if(source_fd>=0) close(source_fd);
   if(package_fd>=0) close(package_fd);
   unlink(source_path); unlink(package_path);
   return ok;
+}
+
+int expect_temporary_string_teardown(void){
+  return expect_string_work_fixture(
+    "var kept=string(123); global.kept=kept; var aliases=[kept,kept]; "
+    "for(var i=0;i<200000;i++){string(i);} "
+    "global.joined=kept+aliases[0]+aliases[1]; global.done=i;\n",200000);
+}
+
+int expect_finite_script_work(void){
+  return expect_string_work_fixture(
+    "var kept=string(123); global.kept=kept; global.joined=kept+kept+kept; "
+    "var count=0; for(var i=0;i<6000000;i++){count+=1;} global.done=count;\n",6000000);
 }
 
 int expect_room_order_boundaries(void){

@@ -2929,12 +2929,12 @@ static GmlVal vm_run_code_impl(GmlVM *vm, int ci, GmlInstance *self, GmlInstance
   int cp = codeprof_on(vm);
   int hp_builtin = builtin_hotprof_on(vm);
   double cp_t0 = cp ? codeprof_now_ms(vm) : 0.0;
-  /* Watchdog: a single code run should never execute more than a few million instructions. If one
-   * blows past a large budget it is a runaway loop (e.g. a control-flow condition corrupted by an
-   * unimplemented opcode) — abort the run instead of freezing the whole host. Real per-event
-   * code, even heavy tile/particle loops, stays orders of magnitude under this. */
+  /* A finite bulk parser may legitimately execute hundreds of millions of instructions within
+   * one invocation. Keep a hard work bound, including optimized-loop accounting, without treating
+   * the smaller per-frame workload as an upper bound on initialization. This is not a wall-clock
+   * deadline; hosts running untrusted content still need process scheduling/resource limits. */
   uint64_t watchdog=0;
-  const uint64_t WATCHDOG_MAX=64000000ull;
+  const uint64_t WATCHDOG_MAX=1024000000ull;
   uint32_t ip=0;
   /* Blocking input wait: the call site this run has already waited at once, the resume point a
    * park is being taken at, and whether this run left its state to a GmlWaitFrame. */

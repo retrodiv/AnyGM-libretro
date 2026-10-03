@@ -335,6 +335,8 @@ zlib buffer ownership, unchanged sources, empty streams and malformed input reje
 codecs reuse the media owner, and Adler-32 is shared with the content pipeline.
 `make check TEST=persistent_room PERSISTENT_TEST_ARGS='--case temporary_string_teardown'`
 exercises long temporary-string cleanup with live local, array and global aliases.
+The neighboring `finite_script_work` case verifies a bounded counting loop whose
+work exceeds the former per-invocation instruction limit.
 `tests/contract/test_builtin_file_io.c` covers streamed digest vectors, VFS overlay
 and short-read/error handling, plus rewrite cursor, handle, write authority and
 resource cleanup: `make check TEST=builtin_file_io`. The same contract verifies PNG

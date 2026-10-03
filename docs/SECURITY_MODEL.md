@@ -13,6 +13,11 @@ namespaces and capabilities explicitly supplied by the host.
 The host remains responsible for process isolation, operating-system access
 control, scheduling limits, and deciding which files a VFS path can name.
 
+Each bytecode invocation has a hard limit of 1,024,000,000 executed instructions,
+including equivalent work consumed by optimized loops. Large finite initialization
+parsers need a larger bound than ordinary per-frame events. The limit is not a
+wall-clock deadline or a memory ceiling; the host must enforce those independently.
+
 ## Trust boundaries
 
 The following inputs are untrusted:
