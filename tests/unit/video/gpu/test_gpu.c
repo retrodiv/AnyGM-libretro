@@ -1010,7 +1010,7 @@ static int scene_screen_filtered_alpha_stamp_case(void){
     memcpy(invalid_operations,operations,sizeof operations);
     invalid_batch.operations=invalid_operations;
     invalid_batch.states=&invalid_state;
-    if(variant==0) invalid_state.coverage_policy=2u;
+    if(variant==0) invalid_state.coverage_policy=3u;
     if(variant==1) for(unsigned index=0;index<3u;index++)
       invalid_operations[index].target.image.resource_class=GML_RENDER_RESOURCE_SURFACE;
     if(variant==2) invalid_state.samplers[0].filter=GML_RENDER_FILTER_NEAREST;
@@ -1034,6 +1034,133 @@ static int scene_screen_filtered_alpha_stamp_case(void){
             anygm_test_graphics_scene_draw_calls()==draws,
             "unqualified screen coverage refuses the complete batch before its clear and prefix");
   }
+  state.samplers[0].filter=GML_RENDER_FILTER_NEAREST;
+  for(unsigned index=1;index<3u;index++){
+    GmlRenderQuad *quad=&operations[index].payload.quad;
+    operations[index].scene_family=GML_RENDER_SCENE_SPRITE;
+    quad->shape=index==1u?GML_RENDER_QUAD_CARDINAL:GML_RENDER_QUAD_GENERAL;
+    quad->sampling=state.samplers[0];
+    quad->inverse_anchor[0]=quad->inverse_anchor[1]=1.0;
+    quad->inverse_x[0]=quad->inverse_y[1]=1.0;
+  }
+  int draws=anygm_test_graphics_scene_draw_calls();
+  unsigned copies=anygm_test_graphics_scene_copies();
+  result=service.submit(service.context,&batch);
+  REQUIRE(result.status==GML_RENDER_EXEC_ACCEPTED && result.accepted_prefix==3u &&
+          anygm_test_graphics_scene_draw_calls()==draws+2 &&
+          anygm_test_graphics_color_mask_all() && !anygm_test_graphics_blend_enabled() &&
+          anygm_test_graphics_read_pixels()==0 && anygm_test_graphics_scene_copies()==copies+2u,
+          "overlapping cardinal/arbitrary quads retain distinct exact device-local predecessors");
+  for(unsigned variant=0;variant<10u;variant++){
+    GmlRenderDrawStateSnapshot invalid_state=state;
+    GmlRenderDrawOp invalid_operations[3];
+    GmlRenderDrawBatch invalid_batch=batch;
+    memcpy(invalid_operations,operations,sizeof operations);
+    invalid_batch.operations=invalid_operations;
+    invalid_batch.states=&invalid_state;
+    GmlRenderQuad *quad=&invalid_operations[2].payload.quad;
+    if(variant==0) invalid_operations[2].scene_family=GML_RENDER_SCENE_BACKGROUND;
+    if(variant==1){
+      invalid_state.samplers[0].filter=GML_RENDER_FILTER_BILINEAR;
+      for(unsigned index=1;index<3u;index++)
+        invalid_operations[index].payload.quad.sampling=invalid_state.samplers[0];
+    }
+    if(variant==2) quad->filtered_draw_alpha=1.9;
+    if(variant==3) quad->inverse_x[0]=NAN;
+    if(variant==4) for(unsigned index=0;index<3u;index++)
+      invalid_operations[index].target.image.resource_class=GML_RENDER_RESOURCE_APPLICATION;
+    if(variant==5) quad->shape=GML_RENDER_QUAD_AXIS_ALIGNED;
+    if(variant==6){
+      quad->x[1]=quad->x[2]=513.0;
+      quad->y[2]=quad->y[3]=513.0;
+    }
+    if(variant==7) quad->corner_colour[1]=0x00a0c0e0u;
+    if(variant==8) invalid_operations[2].reconstruction_mode=GML_RENDER_REPLAY_EXACT;
+    if(variant==9) invalid_state.write_mask=7u;
+    int clears=anygm_test_graphics_clear_calls();
+    draws=anygm_test_graphics_scene_draw_calls();
+    result=service.submit(service.context,&invalid_batch);
+    REQUIRE(result.status==GML_RENDER_EXEC_UNSUPPORTED && !result.accepted_prefix &&
+            anygm_test_graphics_clear_calls()==clears &&
+            anygm_test_graphics_scene_draw_calls()==draws,
+            "unqualified rotated SCREEN metadata refuses before the clear and valid prefix");
+  }
+  draws=anygm_test_graphics_scene_draw_calls();
+  anygm_test_graphics_fail_scene_draw_at((unsigned)draws+2u);
+  result=service.submit(service.context,&batch);
+  REQUIRE(result.status==GML_RENDER_EXEC_RECOVERABLE_ERROR &&
+          result.accepted_prefix==2u &&
+          result.uncertain_target_count==1u &&
+          result.uncertain_targets[0].identity==target.identity,
+          "failure of the second exact rotated draw fences its partially written target");
+  anygm_test_graphics_fail_scene_draw_at(0u);
+  state.coverage_policy=GML_RENDER_COVERAGE_ROTATED_VECTOR_ALPHA;
+  state.alpha_source_factor=GML_RENDER_BLEND_ONE;
+  draws=anygm_test_graphics_scene_draw_calls();
+  copies=anygm_test_graphics_scene_copies();
+  result=service.submit(service.context,&batch);
+  REQUIRE(result.status==GML_RENDER_EXEC_ACCEPTED && result.accepted_prefix==3u &&
+          anygm_test_graphics_scene_draw_calls()==draws+2 &&
+          anygm_test_graphics_color_mask_all() && !anygm_test_graphics_blend_enabled() &&
+          anygm_test_graphics_read_pixels()==0 && anygm_test_graphics_scene_copies()==copies+2u,
+          "vector rotated coverage uses exact ordered RGBA blending without a CPU read");
+  for(unsigned variant=0;variant<4u;variant++){
+    GmlRenderDrawStateSnapshot invalid_state=state;
+    GmlRenderDrawOp invalid_operations[3];
+    GmlRenderDrawBatch invalid_batch=batch;
+    memcpy(invalid_operations,operations,sizeof operations);
+    invalid_batch.operations=invalid_operations;
+    invalid_batch.states=&invalid_state;
+    if(variant==0) invalid_state.alpha_source_factor=GML_RENDER_BLEND_SOURCE_ALPHA;
+    if(variant==1) invalid_operations[2].payload.quad.shape=GML_RENDER_QUAD_AXIS_ALIGNED;
+    if(variant==2){
+      invalid_state.samplers[0].filter=GML_RENDER_FILTER_BILINEAR;
+      for(unsigned index=1;index<3u;index++)
+        invalid_operations[index].payload.quad.sampling=invalid_state.samplers[0];
+    }
+    if(variant==3) invalid_state.alpha_destination_factor=GML_RENDER_BLEND_ZERO;
+    int clears=anygm_test_graphics_clear_calls();
+    draws=anygm_test_graphics_scene_draw_calls();
+    result=service.submit(service.context,&invalid_batch);
+    REQUIRE(result.status==GML_RENDER_EXEC_UNSUPPORTED && !result.accepted_prefix &&
+            anygm_test_graphics_clear_calls()==clears &&
+            anygm_test_graphics_scene_draw_calls()==draws,
+            "vector coverage rejects a different sampler, geometry or alpha equation before writes");
+  }
+  GmlRenderDrawOp disjoint[3];
+  GmlRenderDrawStateSnapshot mixed_states[2]={state,state};
+  GmlRenderDrawBatch mixed_batch=batch;
+  memcpy(disjoint,operations,sizeof disjoint);
+  mixed_batch.operations=disjoint;
+  mixed_batch.states=mixed_states;
+  mixed_batch.state_count=2u;
+  mixed_states[1].coverage_policy=GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA;
+  mixed_states[1].alpha_source_factor=GML_RENDER_BLEND_SOURCE_ALPHA;
+  disjoint[2].state_index=1u;
+  disjoint[2].target.storage_version=disjoint[1].target.storage_version;
+  disjoint[2].payload.quad.x[0]=disjoint[2].payload.quad.x[3]=3.0;
+  disjoint[2].payload.quad.x[1]=disjoint[2].payload.quad.x[2]=5.0;
+  draws=anygm_test_graphics_scene_draw_calls();
+  copies=anygm_test_graphics_scene_copies();
+  uint64_t copied_pixels=anygm_test_graphics_scene_copied_pixels();
+  result=service.submit(service.context,&mixed_batch);
+  REQUIRE(result.status==GML_RENDER_EXEC_ACCEPTED && result.accepted_prefix==3u &&
+          anygm_test_graphics_scene_draw_calls()==draws+1 &&
+          anygm_test_graphics_scene_copies()==copies+1u &&
+          anygm_test_graphics_scene_copied_pixels()==copied_pixels+8u &&
+          !anygm_test_graphics_read_pixels(),
+          "disjoint scalar/vector regions share one exact eight-pixel GPU-local predecessor");
+  gml_gpu_destroy(gpu,1);
+  anygm_test_graphics_reset();
+  anygm_test_graphics_withhold("glCopyTexSubImage2D");
+  gpu=gml_gpu_create();
+  REQUIRE(gpu && gml_gpu_context_reset(gpu,&context),"no-copy rotated context adopted");
+  gml_gpu_device_services(gpu,&service);
+  REQUIRE(service.upload(service.context,&upload),"no-copy source uploaded");
+  result=service.submit(service.context,&batch);
+  REQUIRE(result.status==GML_RENDER_EXEC_UNSUPPORTED && !result.accepted_prefix &&
+          !anygm_test_graphics_clear_calls() && !anygm_test_graphics_scene_draw_calls(),
+          "missing exact snapshot service rejects rotated metadata before clear and prefix");
   gml_gpu_destroy(gpu,1);
   return 1;
 }
@@ -1436,6 +1563,68 @@ static int scene_alpha_composition_api(GmlGpuApi api){
             !anygm_test_graphics_read_pixels(),
             "a fresh clear recovers with the cached generation program without CPU reads");
   }
+  /* The ordinary GUI sprite recipe shares exact sampling arithmetic, but
+   * remains a SPRITE checkpoint and stamps only source-covered SCREEN alpha. */
+  state.alpha_source_factor=GML_RENDER_BLEND_ONE;
+  state.coverage_policy=0u;
+  state.samplers[0].quantisation=GML_RENDER_QUANTISE_SPRITE_FIRSTGEN_INDEPENDENT;
+  for(unsigned index=0;index<3u;index++){
+    operations[index].target.image.resource_class=GML_RENDER_RESOURCE_SCREEN;
+    operations[index].target.image.identity=31u;
+    if(!index) continue;
+    operations[index].scene_family=GML_RENDER_SCENE_SPRITE;
+    operations[index].reconstruction_mode=GML_RENDER_DEVICE_CHECKPOINT;
+    operations[index].payload.quad.sampling=state.samplers[0];
+  }
+  unsigned copies=anygm_test_graphics_scene_copies();
+  uint64_t copied=anygm_test_graphics_scene_copied_pixels();
+  int draws=anygm_test_graphics_scene_draw_calls();
+  unsigned compiled=anygm_test_graphics_compile_calls();
+  result=service.submit(service.context,&batch);
+  REQUIRE(result.status==GML_RENDER_EXEC_ACCEPTED && result.accepted_prefix==3u &&
+          anygm_test_graphics_scene_copies()==copies+2u &&
+          anygm_test_graphics_scene_copied_pixels()==copied+2u &&
+          anygm_test_graphics_scene_draw_calls()==draws+(api==GML_GPU_API_OPENGLES3?6:2) &&
+          anygm_test_graphics_compile_calls()==compiled &&
+          anygm_test_graphics_color_mask_all() && !anygm_test_graphics_read_pixels(),
+          "ordinary filtered sprites reuse the exact legacy program and bounded GPU snapshots");
+  for(unsigned variant=0;variant<12u;variant++){
+    GmlRenderDrawOp invalid[3];
+    GmlRenderDrawStateSnapshot invalid_state=state;
+    GmlRenderDrawBatch refused={invalid,3u,&invalid_state,1u};
+    memcpy(invalid,operations,sizeof invalid);
+    GmlRenderQuad *quad=&invalid[2].payload.quad;
+    if(variant==0u) invalid[2].scene_family=GML_RENDER_SCENE_TEXT;
+    if(variant==1u) for(unsigned index=0;index<3u;index++)
+      invalid[index].target.image.resource_class=GML_RENDER_RESOURCE_APPLICATION;
+    if(variant==2u) invalid[2].reconstruction_mode=GML_RENDER_REPLAY_EXACT;
+    if(variant==3u) invalid_state.alpha_source_factor=GML_RENDER_BLEND_SOURCE_ALPHA;
+    if(variant==4u) quad->inverse_x[0]=0.0;
+    if(variant==5u) quad->inverse_x[0]=4.01;
+    if(variant==6u) quad->inverse_anchor[0]=NAN;
+    if(variant==7u) quad->inverse_anchor[1]=0x1p-1074;
+    if(variant==8u) quad->filtered_draw_alpha=0x1p-33;
+    if(variant==9u) quad->sampling.logical_margin_mask=16u;
+    if(variant==10u) quad->corner_colour[1]=0xff112233u;
+    if(variant==11u) quad->sampling.quantisation=GML_RENDER_QUANTISE_FONT_FIRSTGEN;
+    int clears=anygm_test_graphics_clear_calls();
+    draws=anygm_test_graphics_scene_draw_calls();
+    copies=anygm_test_graphics_scene_copies();
+    result=service.submit(service.context,&refused);
+    REQUIRE(result.status==GML_RENDER_EXEC_UNSUPPORTED && !result.accepted_prefix &&
+            anygm_test_graphics_clear_calls()==clears &&
+            anygm_test_graphics_scene_draw_calls()==draws &&
+            anygm_test_graphics_scene_copies()==copies,
+            "invalid ordinary filtered metadata rejects the complete batch before any write");
+  }
+  draws=anygm_test_graphics_scene_draw_calls();
+  unsigned passes=api==GML_GPU_API_OPENGLES3?3u:1u;
+  anygm_test_graphics_fail_scene_draw_at((unsigned)draws+passes+1u);
+  result=service.submit(service.context,&batch);
+  REQUIRE(result.status==GML_RENDER_EXEC_RECOVERABLE_ERROR && result.accepted_prefix==2u &&
+          result.uncertain_target_count==1u && anygm_test_graphics_color_mask_all(),
+          "a failed ordinary exact draw preserves the prefix and fences its target");
+  anygm_test_graphics_fail_scene_draw_at(0u);
   gml_gpu_destroy(gpu,1);
   return 1;
 }

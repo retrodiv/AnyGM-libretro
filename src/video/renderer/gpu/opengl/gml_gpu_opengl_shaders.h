@@ -135,6 +135,7 @@
   "uniform sampler2D u_image;\n" \
   "uniform sampler2D u_previous;\n" \
   "uniform ivec2 u_region_origin;\n" \
+  "uniform ivec4 u_rotated_alpha16[64];\n" \
   "uniform int u_filter;\n" \
   "uniform vec2 u_extent;\n" \
   "in vec2 v_texcoord;\n" \
@@ -242,17 +243,30 @@
   "           stretched_float_phase(remainder.y,denominator.y));\n" \
   "  } else if(u_filter>=2 && u_filter!=7 && u_filter!=8 && u_filter!=9 && u_filter!=10 &&\n" \
   "            u_filter!=12 && u_filter!=13){\n" \
-  "    vec2 local=u_filter>=5\n" \
+  "    vec2 local=u_filter>=5 && u_filter!=15 && u_filter!=17\n" \
   "      ?v_texcoord\n" \
   "      :delta.x*v_map.zw+delta.y*v_texcoord+v_step;\n" \
   "    // R03_SHADER_POSITIONED_NEAREST: integer texel selection and tint.\n" \
-  "    if(u_filter==3 || u_filter==5){\n" \
+  "    if(u_filter==3 || u_filter==5 || u_filter==15 || u_filter==17){\n" \
   "      ivec2 size=ivec2(v_clamp.zw-v_clamp.xy+vec2(1.0));\n" \
   "      ivec2 point=ivec2(floor(local));\n" \
-  "      if(u_filter==3 && (any(lessThan(point,ivec2(0))) ||\n" \
+  "      if(u_filter!=5 && (any(lessThan(point,ivec2(0))) ||\n" \
   "         any(greaterThanEqual(point,size)))) discard;\n" \
   "      point=clamp(point,ivec2(0),size-ivec2(1));\n" \
   "      vec4 sampled=floor(texelFetch(u_image,ivec2(v_clamp.xy)+point,0)*255.0+0.5);\n" \
+  "      // R03_SHADER_GUI_ROTATED_NEAREST_COVERAGE: shared binary64 alpha LUT,\n" \
+  "      // exact16 integer source-over and the CPU packet/tail alpha policy.\n" \
+  "      if(u_filter==15 || u_filter==17){\n" \
+  "        int source_alpha=int(sampled.a);\n" \
+  "        int factor=u_rotated_alpha16[source_alpha/4][source_alpha%4];\n" \
+  "        if(factor==0) discard;\n" \
+  "        ivec3 tint=ivec3(floor(v_colour.rgb*255.0+vec3(0.5)));\n" \
+  "        ivec4 pixel=ivec4(ivec3(sampled.rgb)*tint/255,255);\n" \
+  "        ivec4 prior=ivec4(floor(texelFetch(u_previous,ivec2(gl_FragCoord.xy)-u_region_origin,0)*255.0+0.5));\n" \
+  "        ivec4 result=(pixel*factor+prior*(65536-factor))/65536;\n" \
+  "        if(v_margin<0.5) result.a=255;\n" \
+  "        o_color=vec4(result)/255.0; return;\n" \
+  "      }\n" \
   "      uvec3 tint=uvec3(floor(v_colour.rgb*255.0+vec3(0.5)));\n" \
   "      uvec3 rgb=uvec3(sampled.rgb)*tint/uvec3(255u);\n" \
   "      o_color=vec4(vec3(rgb)/255.0,sampled.a*v_colour.a/255.0); return;\n" \
@@ -371,6 +385,7 @@
   "uniform ivec2 u_font_alpha;\n" \
   "uniform ivec4 u_font_crop;\n" \
   "uniform ivec4 u_font_tint;\n" \
+  "uniform int u_font_margin;\n" \
   "#if GML_EXACT_FONT_MODE>0\n" \
   "#define u_font_mode GML_EXACT_FONT_MODE\n" \
   "uniform int u_font_channel;\n" \
@@ -514,6 +529,17 @@
   "  sum=d64_add(sum,d64_mul(d64_uint(uint(c[channel])),wc));\n" \
   "  return d64_add(sum,d64_mul(d64_uint(uint(d[channel])),wd));\n" \
   "}\n" \
+  "// R03_SHADER_GUI_FILTERED_EXACT_TAPS: retain the CPU TPAG tap decision.\n" \
+  "ivec4 font_tpag_tap(ivec2 local){\n" \
+  "  bool neighbour=(local.x<0 && (u_font_margin&1)!=0) ||\n" \
+  "    (local.y<0 && (u_font_margin&2)!=0) ||\n" \
+  "    (local.x>=u_font_crop.z && (u_font_margin&4)!=0) ||\n" \
+  "    (local.y>=u_font_crop.w && (u_font_margin&8)!=0);\n" \
+  "  ivec2 tap=(neighbour?local:clamp(local,ivec2(0),u_font_crop.zw-ivec2(1)))+u_font_crop.xy;\n" \
+  "  ivec2 size=textureSize(u_image,0);\n" \
+  "  if(any(lessThan(tap,ivec2(0))) || any(greaterThanEqual(tap,size))) return ivec4(0);\n" \
+  "  return ivec4(round(texelFetch(u_image,tap,0)*255.0));\n" \
+  "}\n" \
   "ivec4 filtered_font_pixel(ivec4 prior){\n" \
   "  uvec2 one=uvec2(0u,0x3ff00000u),half_unit=uvec2(0u,0x3fe00000u);\n" \
   "  ivec2 pixel=ivec2(int(gl_FragCoord.x),int(u_extent.y)-1-int(gl_FragCoord.y));\n" \
@@ -526,12 +552,8 @@
   "  uvec2 fx=d64_sub(sx,d64_int(low.x)),fy=d64_sub(sy,d64_int(low.y));\n" \
   "  uvec2 ix=d64_sub(one,fx),iy=d64_sub(one,fy);\n" \
   "  uvec2 wa=d64_mul(ix,iy),wb=d64_mul(fx,iy),wc=d64_mul(ix,fy),wd=d64_mul(fx,fy);\n" \
-  "  low=clamp(low,ivec2(0),u_font_crop.zw-ivec2(1))+u_font_crop.xy;\n" \
-  "  high=clamp(high,ivec2(0),u_font_crop.zw-ivec2(1))+u_font_crop.xy;\n" \
-  "  ivec4 a=ivec4(round(texelFetch(u_image,ivec2(low.x,low.y),0)*255.0));\n" \
-  "  ivec4 b=ivec4(round(texelFetch(u_image,ivec2(high.x,low.y),0)*255.0));\n" \
-  "  ivec4 c=ivec4(round(texelFetch(u_image,ivec2(low.x,high.y),0)*255.0));\n" \
-  "  ivec4 d=ivec4(round(texelFetch(u_image,ivec2(high.x,high.y),0)*255.0));\n" \
+  "  ivec4 a=font_tpag_tap(ivec2(low.x,low.y)),b=font_tpag_tap(ivec2(high.x,low.y));\n" \
+  "  ivec4 c=font_tpag_tap(ivec2(low.x,high.y)),d=font_tpag_tap(ivec2(high.x,high.y));\n" \
   "  uvec2 samples[4];\n" \
   "#if GML_EXACT_FONT_MODE>0\n" \
   "  samples[3]=font_channel(a,b,c,d,3,wa,wb,wc,wd);\n" \

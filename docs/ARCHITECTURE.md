@@ -465,6 +465,21 @@ or cross-unit calls. Its size is therefore an intentional exception to the
 soft source-size trigger, supported by the frame-boundary allocation and
 performance characterization; new non-raster policy does not belong there.
 
+The rotation closure also exposes `gml_render_rotated_nearest_regions` through
+the private renderer boundary. Its existing bounds, fixed-point skip and packet
+selection are shared with the CPU band, producing only disjoint geometry and
+architecture-dependent alpha-policy records for the resident mapped GUI path.
+It never samples destination pixels or duplicates the colour kernel; CPU pixel
+arithmetic remains in the original band. These transient records are not state.
+`gml_render_rotated_alpha16_factor` shares its existing binary64 alpha-LUT rule
+with device preparation. The OpenGL sampler consumes 256 packed integer factors
+and composites all channels exactly; scalar tails stamp alpha while vector
+packets retain the original destination-alpha blend. A bounded ordered disjoint
+run shares one affected-region GPU-local predecessor snapshot. An overlapping
+draw, changed alpha/source/storage or exhausted batch takes a fresh snapshot.
+These copies never transfer destination pixels to the CPU; mandatory canonical
+checkpoints remain separately accounted.
+
 The coarse presentation passes are additionally described by a framework-neutral render plan.
 The scene-operation ownership, current CPU anchors, planned OpenGL counterparts,
 and synchronization boundaries are indexed in [Renderer backend correspondence](RENDERER_BACKENDS.md).

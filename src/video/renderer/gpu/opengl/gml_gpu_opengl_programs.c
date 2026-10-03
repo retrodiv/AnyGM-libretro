@@ -100,7 +100,10 @@ int gml_gpu_opengl_scene_program(GmlGpuBackend *backend,char *error,size_t error
   GlScene *scene=&backend->scene;
   const char *prefix=backend->api==GML_GPU_API_OPENGLES3
     ?GML_GPU_OPENGL_PREFIX_ES:GML_GPU_OPENGL_PREFIX_DESKTOP;
-  char vertex_source[1024],fragment_source[12288];
+  char vertex_source[sizeof(GML_GPU_OPENGL_PREFIX_ES)+
+                     sizeof(GML_GPU_OPENGL_PREFIX_DESKTOP)+sizeof(GML_GPU_OPENGL_SCENE_VERTEX_BODY)];
+  char fragment_source[sizeof(GML_GPU_OPENGL_PREFIX_ES)+
+                       sizeof(GML_GPU_OPENGL_PREFIX_DESKTOP)+sizeof(GML_GPU_OPENGL_SCENE_FRAGMENT_BODY)];
   GLuint vertex,fragment;
   GLint status=GL_FALSE;
   if(scene->program) return 1;
@@ -156,11 +159,13 @@ int gml_gpu_opengl_scene_program(GmlGpuBackend *backend,char *error,size_t error
   scene->u_filter=backend->gl.GetUniformLocation(scene->program,"u_filter");
   scene->u_previous=backend->gl.GetUniformLocation(scene->program,"u_previous");
   scene->u_region_origin=backend->gl.GetUniformLocation(scene->program,"u_region_origin");
+  scene->u_rotated_alpha16=backend->gl.GetUniformLocation(scene->program,"u_rotated_alpha16[0]");
+  scene->rotated_alpha16_valid=0;
   if(scene->a_position<0 || scene->a_texcoord<0 || scene->a_colour<0 ||
      scene->a_clamp<0 || scene->a_map<0 || scene->a_step<0 || scene->a_margin<0 ||
      scene->a_span_x<0 || scene->a_span_y<0 || scene->a_span_active<0 ||
      scene->u_extent<0 || scene->u_image<0 || scene->u_filter<0 ||
-     scene->u_previous<0 || scene->u_region_origin<0){
+     scene->u_previous<0 || scene->u_region_origin<0 || scene->u_rotated_alpha16<0){
     gml_gpu_opengl_record_error(error,error_capacity,"scene program is missing an attribute or uniform");
     backend->gl.DeleteProgram(scene->program);
     scene->program=0;
@@ -253,6 +258,7 @@ GlSceneExactProgram *gml_gpu_opengl_scene_exact_program(GmlGpuBackend *backend,i
   scene->exact_u_font_alpha=backend->gl.GetUniformLocation(scene->exact_program,"u_font_alpha");
   scene->exact_u_font_crop=backend->gl.GetUniformLocation(scene->exact_program,"u_font_crop");
   scene->exact_u_font_tint=backend->gl.GetUniformLocation(scene->exact_program,"u_font_tint");
+  scene->exact_u_font_margin=backend->gl.GetUniformLocation(scene->exact_program,"u_font_margin");
   scene->exact_u_font_mode=backend->gl.GetUniformLocation(scene->exact_program,"u_font_mode");
   scene->exact_u_font_channel=embedded && font_mode
     ?backend->gl.GetUniformLocation(scene->exact_program,"u_font_channel"):-1;
@@ -274,7 +280,7 @@ GlSceneExactProgram *gml_gpu_opengl_scene_exact_program(GmlGpuBackend *backend,i
        scene->exact_u_underlay_flags<0)) ||
      ((!embedded || font_mode) &&
       (scene->exact_u_font_origin<0 || scene->exact_u_font_scale<0 ||
-       scene->exact_u_font_alpha<0 || scene->exact_u_font_crop<0 ||
+       scene->exact_u_font_alpha<0 || scene->exact_u_font_crop<0 || scene->exact_u_font_margin<0 ||
        scene->exact_u_font_tint<0 || scene->exact_u_font_preserve_alpha<0 ||
        (embedded?scene->exact_u_font_channel<0:scene->exact_u_font_mode<0)))){
     gml_gpu_opengl_record_error(error,error_capacity,

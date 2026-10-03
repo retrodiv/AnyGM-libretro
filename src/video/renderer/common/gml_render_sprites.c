@@ -429,6 +429,50 @@ static int modern_nearest_axis_bias(double leading,double snapped,double scale,
   return 1;
 }
 
+static int resident_rotated_packet_regions(GmlRender *r,GmlSprite *sprite,GmlTpag *page,
+                                            double left,double top,double xs,double ys,
+                                            double rotation,const GmlRenderDrawOp *operation,
+                                            const GmlRenderDrawStateSnapshot *state,
+                                            const GmlRenderResourceSource *source){
+  enum { REGION_LIMIT=8192 };
+  GmlRenderRotatedCoverageRegion *regions=(GmlRenderRotatedCoverageRegion*)
+    malloc(REGION_LIMIT*sizeof *regions);
+  GmlRenderDrawOp *operations=NULL;
+  GmlRenderDrawStateSnapshot states[2]={*state,*state};
+  uint32_t count=0;
+  int accepted=0;
+  if(!regions || !gml_render_rotated_nearest_regions(r,sprite,page,left+r->cam_x,
+       top+r->cam_y,xs,ys,rotation,regions,REGION_LIMIT,&count)) goto done;
+  if(!count){ accepted=1; goto done; }
+  operations=(GmlRenderDrawOp*)malloc((size_t)count*sizeof *operations);
+  if(!operations || operation->target.image.content_version>UINT64_MAX-(count-1u)) goto done;
+  states[1].coverage_policy=GML_RENDER_COVERAGE_ROTATED_VECTOR_ALPHA;
+  states[1].rgb_source_factor=GML_RENDER_BLEND_SOURCE_ALPHA;
+  states[1].rgb_destination_factor=GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA;
+  states[1].alpha_source_factor=GML_RENDER_BLEND_ONE;
+  states[1].alpha_destination_factor=GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA;
+  states[1].rgb_equation=states[1].alpha_equation=GML_RENDER_BLEND_ADD;
+  for(uint32_t index=0;index<count;index++){
+    const GmlRenderRect *region=&regions[index].region;
+    operations[index]=*operation;
+    operations[index].state_index=regions[index].vector_alpha;
+    operations[index].target.image.content_version+=index;
+    GmlRenderQuad *quad=&operations[index].payload.quad;
+    quad->x[0]=quad->x[3]=(double)region->x;
+    quad->x[1]=quad->x[2]=(double)region->x+region->width;
+    quad->y[0]=quad->y[1]=(double)region->y;
+    quad->y[2]=quad->y[3]=(double)region->y+region->height;
+  }
+  GmlRenderDrawBatch batch={operations,count,states,2u};
+  GmlRenderResourceExecution result=gml_render_application_scene_submit(r,&batch,source,1u);
+  if(result==GML_RENDER_RESOURCE_EXEC_CPU) r->resident_application_pass=0;
+  accepted=result!=GML_RENDER_RESOURCE_EXEC_FAILED;
+done:
+  free(operations);
+  free(regions);
+  return accepted;
+}
+
 static int resident_filtered_atlas_page(GmlRender *r,int page_index,
                                       double left,double top,double xs,double ys,
                                       GmlRenderSceneFamily family,uint32_t colour,double alpha,
@@ -478,6 +522,14 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
   int mapped_gui_sprite=family==GML_RENDER_SCENE_SPRITE && r && r->interp &&
     resident_mapped_screen_gui_font(r) && !rotated_sprite && !corner_colours &&
     !positioned_axis && !filtered_real_text && !nearest_mode;
+  /* R03-P9-GUI-ROTATED-SPRITE: first-generation rotation remains nearest,
+   * including when interpolation is enabled. The resolved point/scale is
+   * already in SCREEN coordinates; only destination coverage differs from
+   * the existing application-target rotation. */
+  int mapped_gui_rotation=family==GML_RENDER_SCENE_SPRITE && r && r->interp &&
+    resident_mapped_screen_gui_font(r) && rotated_sprite && !corner_colours &&
+    !positioned_axis && !filtered_real_text && !nearest_mode && r->win &&
+    anygm_policy_uses_first_generation_studio(r->win);
   int span_active=0;
   int stretched_float=0;
   int stretched_replay_exact=0;
@@ -485,6 +537,7 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
     !rotated_sprite && !corner_colours && !positioned_axis && !nearest_mode &&
     !box_stretched && xs>1.0 && ys>1.0;
   int exact_filtered_font=0;
+  int exact_filtered_sprite=0;
   int margin_left=0,margin_top=0,margin_right=0,margin_bottom=0;
   uint32_t margin_mask=0u;
   if(!r || !r->resident_application_pass ||
@@ -496,7 +549,8 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
        ((rotated_sprite || opaque_target_alpha) &&
         anygm_policy_has_modern_layer_semantics(r->win))) ||
      (!filtered_real_text && (page_index<0 || page_index>=r->n_tpag)) || r->classic ||
-     (r->gui_pass_active && !identity_gui_atlas && !mapped_gui_font && !mapped_gui_sprite) ||
+     (r->gui_pass_active && !identity_gui_atlas && !mapped_gui_font &&
+      !mapped_gui_sprite && !mapped_gui_rotation) ||
      r->active_shader>=0 || r->alpha_test_enable ||
      !r->alphablend || (r->blendmode && !additive_background) || r->blend_equation!=1 ||
      r->blend_equation_alpha!=1 || r->color_write_mask!=0x0fu ||
@@ -707,6 +761,9 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
   }
   if(!isfinite(width) || !isfinite(height) || width<1.0 || height<1.0 ||
      x0+width>10000000.0 || y0+height>10000000.0) return 0;
+  /* Larger CPU rotations can select their separate 8-bit/culling kernel.
+   * This rule retains the existing 16-bit nearest coverage, not that policy. */
+  if(mapped_gui_rotation && width*height>=262144.0) return 0;
   if(x0<=-width || y0<=-height || x0>=r->fbw || y0>=r->fbh){
     /* The unit-scale first-generation point leaf has the same snapped half-open
      * rectangle. A fully clipped draw leaves queued device work untouched. */
@@ -893,10 +950,35 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
         quad->corner_colour[corner]=(draw_alpha<<24)|(quad->corner_colour[corner]&0xFFFFFFu);
     }
   }
+  /* R03-P9-GUI-MAPPED-SPRITE: the ordinary first-generation CPU sampler
+   * retains binary64 phase/channel arithmetic, unlike stretched float bands.
+   * Reuse the existing exact filtered arithmetic, with actual SPRITE metadata
+   * and a checkpoint until this ordinary recipe has its own exact replay. */
+  int ordinary_white_copy=xs>0.0 && ys>0.0 && fabs(xs-1.0)<0.001 &&
+    fabs(ys-1.0)<0.001 && fabs(left-nearbyint(left))<1e-9 &&
+    fabs(top-nearbyint(top))<1e-9 && alpha==1.0 && (colour&0xFFFFFFu)==0xFFFFFFu;
+  if(mapped_gui_sprite && !opaque_target_alpha && !transparent_stretched_trim &&
+     !box_stretched && !page->project_authored_edges && source.borrowed_immutable &&
+     !ordinary_white_copy){
+    GmlRenderQuad *quad=&operation.payload.quad;
+    quad->sampling.quantisation=GML_RENDER_QUANTISE_SPRITE_FIRSTGEN_INDEPENDENT;
+    quad->inverse_anchor[0]=left; quad->inverse_anchor[1]=top;
+    quad->inverse_x[0]=xs; quad->inverse_y[1]=ys;
+    quad->filtered_draw_alpha=alpha;
+    for(unsigned corner=0;corner<4u;corner++) quad->corner_colour[corner]|=0xFF000000u;
+    exact_filtered_sprite=gml_render_filtered_font_quad_valid(quad,
+      (uint32_t)r->fbw,(uint32_t)r->fbh);
+    if(!exact_filtered_sprite){
+      quad->sampling.quantisation=0u;
+      for(unsigned corner=0;corner<4u;corner++)
+        quad->corner_colour[corner]=(draw_alpha<<24)|(quad->corner_colour[corner]&0xFFFFFFu);
+    }
+  }
   state.write_mask=15u;
   state.colour=0xFFFFFFFFu;
   state.alpha=255u;
-  if(identity_gui_atlas || (mapped_gui_sprite && !opaque_target_alpha)){
+  if((identity_gui_atlas || (mapped_gui_sprite && !opaque_target_alpha) ||
+     mapped_gui_rotation) && !exact_filtered_sprite){
     state.coverage_policy=GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA;
     operation.payload.quad.filtered_draw_alpha=alpha;
   }
@@ -909,10 +991,10 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
     state.alpha_source_factor=GML_RENDER_BLEND_ONE;
     state.alpha_destination_factor=GML_RENDER_BLEND_ZERO;
     state.rgb_equation=state.alpha_equation=GML_RENDER_BLEND_EXACT_STRETCHED_FLOAT;
-  } else if(exact_filtered_font){
+  } else if(exact_filtered_font || exact_filtered_sprite){
     state.rgb_source_factor=GML_RENDER_BLEND_SOURCE_ALPHA;
     state.rgb_destination_factor=GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA;
-    state.alpha_source_factor=opaque_target_alpha
+    state.alpha_source_factor=opaque_target_alpha || exact_filtered_sprite
       ?GML_RENDER_BLEND_ONE:GML_RENDER_BLEND_SOURCE_ALPHA;
     state.alpha_destination_factor=GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA;
     state.rgb_equation=GML_RENDER_BLEND_EXACT_FILTERED_FONT;
@@ -939,6 +1021,12 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
   }
   state.sampler_count=1u;
   state.samplers[0]=operation.payload.quad.sampling;
+  if(mapped_gui_rotation && (!r->fb_opaque_known || !r->fb_all_opaque)){
+    if(!resident_rotated_packet_regions(r,rotated_sprite,page,left,top,xs,ys,rotation,
+                                        &operation,&state,&source)) return 0;
+    r->fb_all_transparent=0;
+    return 1;
+  }
   if(!gml_render_application_scene_enqueue(r,&operation,&state,&source)) return 0;
   r->fb_all_transparent=0;
   return 1;
@@ -988,13 +1076,15 @@ static int resident_filtered_sprite(GmlRender *r,GmlSprite *sprite,int subimg,
   /* The CPU entry treats a narrow near-zero interval as an axis draw. */
   if(rotation!=0.0 && (normalized_rotation<0.001 ||
                        fabs(normalized_rotation-360.0)<0.001)) return 0;
+  /* Retain the CPU's two rounded products and ordered additions. Folding
+   * (origin - trim) changes original-double phases at channel half-code ties. */
+  double left=x-(double)sprite->originx*xs+(double)page->tx*xs-r->cam_x;
+  double top=y-(double)sprite->originy*ys+(double)page->ty*ys-r->cam_y;
   if(!r->interp){
     /* R03-SPR-FIRSTGEN-NEAREST-REDUCE: retain independent authored far-edge coverage
      * and fractional point phase for unit scale and bounded non-reciprocal reduction. */
     if(rotation==0.0 && anygm_policy_uses_first_generation_studio(r->win) &&
        xs>0.0 && ys>0.0 && xs<=1.0 && ys<=1.0){
-      double left=x-((double)sprite->originx-(double)page->tx)*xs-r->cam_x;
-      double top=y-((double)sprite->originy-(double)page->ty)*ys-r->cam_y;
       if(r->app_surface && r->fb==r->app_surface)
         return resident_filtered_atlas_page(r,page_index,left,top,xs,ys,
           GML_RENDER_SCENE_SPRITE,blend,alpha,NULL,NULL,0.0,NULL,0,0,0,0,4);
@@ -1010,12 +1100,9 @@ static int resident_filtered_sprite(GmlRender *r,GmlSprite *sprite,int subimg,
     if(rotation==0.0 && anygm_policy_has_modern_layer_semantics(r->win) &&
        xs>0.0 && ys>0.0 && xs<=1.0 && ys<=1.0)
       return resident_filtered_atlas_page(r,page_index,
-        x-((double)sprite->originx-(double)page->tx)*xs-r->cam_x,
-        y-((double)sprite->originy-(double)page->ty)*ys-r->cam_y,
+        left,top,
         xs,ys,GML_RENDER_SCENE_SPRITE,blend,alpha,NULL,NULL,0.0,NULL,
         0,0,0,0,r->fb_opaque_known && r->fb_all_opaque?3:6);
-    double left=x-((double)sprite->originx-(double)page->tx)*xs-r->cam_x;
-    double top=y-((double)sprite->originy-(double)page->ty)*ys-r->cam_y;
     if(rotation!=0.0 || fabs(xs)!=1.0 || fabs(ys)!=1.0 ||
        !isfinite(left) || !isfinite(top) ||
        fabs(left)>1000000.0 || fabs(top)>1000000.0) return 0;
@@ -1031,8 +1118,7 @@ static int resident_filtered_sprite(GmlRender *r,GmlSprite *sprite,int subimg,
                                        GML_RENDER_SCENE_SPRITE,blend,alpha,NULL,sprite,
                                        normalized_rotation,NULL,0,0,0,0,0);
   return gml_render_resident_filtered_atlas_page(
-      r,page_index,x-((double)sprite->originx-(double)page->tx)*xs-r->cam_x,
-      y-((double)sprite->originy-(double)page->ty)*ys-r->cam_y,
+      r,page_index,left,top,
       xs,ys,GML_RENDER_SCENE_SPRITE,blend,alpha,NULL,0);
 }
 
@@ -1046,17 +1132,20 @@ void gml_render_sprite_ext_unmasked(GmlRender *r, int sprite, int subimg, double
   gml_render_draw_map_point(r,&x,&y);
   gml_render_draw_map_scale(r,&xs,&ys);
   if(r && r->resident_application_pass){
-    /* The ordinary CPU path returns before touching pixels for zero alpha. Keep already queued
-     * device work resident; specialised spine, shader, 3D and GUI paths retain their old order. */
-    if(alpha==0.0 && sprite>=0 && sprite<r->n_spr &&
-       !r->classic && !r->gui_pass_active && r->active_shader<0 &&
+    /* R03-P9-SPRITE-ALPHA-BOUNDARY: ordinary finite alpha is clamped by the
+     * existing CPU leaves. Normalize only the GPU argument; CPU fallback and
+     * specialised preparation retain the original caller value and order. */
+    double resident_alpha=isfinite(alpha) && alpha>1.0?1.0:alpha;
+    if(isfinite(alpha) && alpha<=0.0 && sprite>=0 && sprite<r->n_spr &&
+       !r->classic && (!r->gui_pass_active || resident_mapped_screen_gui_font(r)) &&
+       r->active_shader<0 &&
        !r->spr[sprite].spine && !r->spr[sprite].ns_enabled &&
        !gml_d3_is_active(r) && gml_render_scene_target_matches(r))
       return;
     if(sprite>=0 && sprite<r->n_spr &&
-       resident_integer_sprite(r,&r->spr[sprite],subimg,x,y,xs,ys,rot,blend,alpha)) return;
+       resident_integer_sprite(r,&r->spr[sprite],subimg,x,y,xs,ys,rot,blend,resident_alpha)) return;
     if(sprite>=0 && sprite<r->n_spr &&
-       resident_filtered_sprite(r,&r->spr[sprite],subimg,x,y,xs,ys,rot,blend,alpha)) return;
+       resident_filtered_sprite(r,&r->spr[sprite],subimg,x,y,xs,ys,rot,blend,resident_alpha)) return;
     if(!gml_render_resident_application_cpu_barrier(r)) return;
   }
   if(r && sprite>=0 && sprite<r->n_spr &&

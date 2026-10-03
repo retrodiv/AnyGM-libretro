@@ -772,5 +772,15 @@ void blit_rgba_sprite(GmlRender *r,GmlSprite *owner,const uint8_t *source,
                       const int *row_min,const int *row_max,int source_opaque);
 void blit_rotated(GmlRender *r,GmlSprite *sprite,GmlTpag *tpag,double x,double y,
                   double xscale,double yscale,double rotation,uint32_t blend,double alpha);
+/* Geometry only: the preserved nearest row walker selects vector packets and
+ * scalar tails without reading or writing the destination. */
+typedef struct GmlRenderRotatedCoverageRegion {
+  GmlRenderRect region;
+  uint32_t vector_alpha;
+} GmlRenderRotatedCoverageRegion;
+int gml_render_rotated_nearest_regions(GmlRender *r,GmlSprite *sprite,GmlTpag *tpag,
+                                       double x,double y,double xscale,double yscale,
+                                       double rotation,GmlRenderRotatedCoverageRegion *regions,
+                                       uint32_t capacity,uint32_t *count);
 
 #endif

@@ -7,6 +7,14 @@
 #include <stddef.h>
 #include <stdint.h>
 
+/* Preserve the nearest rotation writer's binary64 evaluation and truncation.
+ * Device preparation uploads these 256 source-alpha factors, not pixels. */
+static inline uint32_t gml_render_rotated_alpha16_factor(unsigned source_alpha,
+                                                         double draw_alpha){
+  double sa=(source_alpha/255.0)*draw_alpha;
+  return sa>=1.0?65536u:(uint32_t)(sa*65536.0);
+}
+
 struct GmlPlanShader;
 
 /* Admission proof for the retained opaque stretch rule, including the CPU
@@ -125,7 +133,10 @@ enum {
   GML_RENDER_QUANTISE_FONT_FIRSTGEN_INDEPENDENT=4u,
   /* Host-owned full application presentation, before subsequent SCREEN draws. */
   GML_RENDER_QUANTISE_AUTOMATIC_SURFACE_FIRSTGEN=5u,
-  GML_RENDER_QUANTISE_AUTOMATIC_SURFACE_MODERN=6u
+  GML_RENDER_QUANTISE_AUTOMATIC_SURFACE_MODERN=6u,
+  /* Ordinary first-generation SCREEN sprite sampling reuses the exact
+   * filtered channel/blend rule, with independent extent and TPAG margins. */
+  GML_RENDER_QUANTISE_SPRITE_FIRSTGEN_INDEPENDENT=7u
 };
 
 /* Resolved blend semantics, independent of any device API's enumerant values. Zeroed factors
@@ -157,7 +168,10 @@ typedef enum GmlRenderBlendEquation {
 enum {
   /* Physical-screen source-over forces opaque alpha only at source-covered texels.
    * Sampling and RGB composition keep their separately resolved rules. */
-  GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA=1u
+  GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA=1u,
+  /* A first-generation nearest SCREEN SIMD packet blends its packed alpha
+   * toward opaque, unlike the scalar tail's unconditional opaque coverage. */
+  GML_RENDER_COVERAGE_ROTATED_VECTOR_ALPHA=2u
 };
 
 typedef struct GmlRenderDrawStateSnapshot {

@@ -117,7 +117,7 @@ typedef struct GlSceneExactProgram {
   GLint exact_u_effect_zoom,exact_u_effect_linear,exact_u_effect_seed;
   GLint exact_u_font_origin,exact_u_font_scale,exact_u_font_alpha;
   GLint exact_u_font_crop,exact_u_font_tint,exact_u_font_mode,exact_u_font_preserve_alpha;
-  GLint exact_u_font_channel;
+  GLint exact_u_font_channel,exact_u_font_margin;
   GLint exact_u_underlay_size,exact_u_underlay_origin,exact_u_underlay_flags;
 } GlSceneExactProgram;
 
@@ -133,6 +133,9 @@ typedef struct GlScene {
   GLint a_position,a_texcoord,a_colour,a_clamp,a_map,a_step,a_margin;
   GLint a_span_x,a_span_y,a_span_active;
   GLint u_extent,u_image,u_filter,u_previous,u_region_origin;
+  GLint u_rotated_alpha16;
+  double rotated_alpha16_value;
+  int rotated_alpha16_valid;
   GlSceneExactProgram exact_programs[3];
   GLuint snapshot_texture,rgb_query;
   uint32_t snapshot_width,snapshot_height;

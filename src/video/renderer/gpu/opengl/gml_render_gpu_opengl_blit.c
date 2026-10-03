@@ -79,6 +79,13 @@ int gml_render_gpu_opengl_draw_textured_quad(const GmlRenderDrawOp *op,
                 (quad->y[1]-quad->y[0])*(quad->x[3]-quad->x[0]);
     if(!isfinite(area) || fabs(area)<1e-10) return 0;
   }
+  if(rotated && state->coverage_policy){
+    /* R03-P9-GUI-ROTATED-SPRITE: retain the original double for the shared
+     * LUT preparator. The packet alpha policy replaces unused margin bits;
+     * scalar tails stamp alpha while vector packets blend all four channels. */
+    if(!isfinite(quad->filtered_draw_alpha) || quad->filtered_draw_alpha<=0.0 ||
+       quad->filtered_draw_alpha>1.0) return 0;
+  }
   for(uint32_t index=0;index<6;index++){
     uint32_t corner=corners[index];
     uint32_t colour=quad->corner_colour[corner];
@@ -102,7 +109,8 @@ int gml_render_gpu_opengl_draw_textured_quad(const GmlRenderDrawOp *op,
     vertex[5]=(float)((colour>>8)&255u)/255.0f;
     vertex[6]=(float)(colour&255u)/255.0f;
     vertex[7]=(float)((colour>>24)&255u)/255.0f*(float)state->alpha/255.0f;
-    if(stretched_blend) vertex[7]=(float)quad->filtered_draw_alpha;
+    if(stretched_blend || (rotated && state->coverage_policy))
+      vertex[7]=(float)quad->filtered_draw_alpha;
     vertex[8]=(float)region.x;
     vertex[9]=(float)region_storage_y;
     vertex[10]=(float)((uint32_t)region.x+region.width-1u);
@@ -124,11 +132,13 @@ int gml_render_gpu_opengl_draw_textured_quad(const GmlRenderDrawOp *op,
     vertex[18]=quad->sampling.edge_rule==GML_RENDER_EDGE_TRANSPARENT
       ?16.0f+(float)quad->sampling.logical_margin_mask
       :(float)quad->sampling.logical_margin_mask;
+    if(rotated && state->coverage_policy)
+      vertex[18]=state->coverage_policy==GML_RENDER_COVERAGE_ROTATED_VECTOR_ALPHA?1.0f:0.0f;
     for(uint32_t span=0;span<4;span++){
       vertex[19+span]=(float)quad->span_x[span];
       vertex[23+span]=(float)quad->span_y[span];
     }
-    if(state->coverage_policy==GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA){
+    if(!rotated && state->coverage_policy==GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA){
       /* The axis screen rule has no rotated/box span. Retain low residuals of
        * its existing phase and reciprocal so a wide quad does not accumulate
        * a float-step error into a different rounded source channel. */

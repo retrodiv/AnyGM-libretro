@@ -28,6 +28,7 @@ REQUIRED_RULES = {
     "R03-P7-LAYER-NUMBERED-TARGET", "R03-P7-VIEWLESS-BASE", "R03-P7-INDIRECT-GUI",
     "R03-P9-CLASSIC-VIEWLESS", "R03-P9-GUI-FILTERED-ATLAS",
     "R03-P9-GUI-MAPPED-SPRITE", "R03-P9-STRETCHED-COVERED-ALPHA",
+    "R03-P9-GUI-ROTATED-SPRITE", "R03-P9-SPRITE-ALPHA-BOUNDARY",
     "R03-P9-DEVICE-CHECKPOINT-SPAN",
     "R03-P7-MULTIVIEW-SEED", "R03-P7-MULTIVIEW-RETAINED",
     "R03-P7-MULTIVIEW-SURFACE", "R03-P7-PRESENT-GEOMETRY",
@@ -70,7 +71,7 @@ REQUIRED_RULES = {
     "R03-BG-REPEAT", "R03-TILE-CELL", "R03-SCENE-ORDER",
     "R03-ALPHA-NOOP", "R03-RESIDENT-PRESENT",
 }
-MAP_ANCHOR = re.compile(r"`([a-zA-Z0-9_./-]+)::([a-zA-Z_][a-zA-Z0-9_]*)`")
+MAP_ANCHOR = re.compile(r"`([a-zA-Z0-9_./-]*)::([a-zA-Z_][a-zA-Z0-9_]*)`")
 PAIR_SUFFIX = {
     "TEXTURED_QUAD": "draw_textured_quad",
     "TEXTURED_TRIANGLES": "draw_textured_triangles",
@@ -196,7 +197,14 @@ def check_repair_map(document: str, gpu_table: dict[str, tuple[str, ...]],
             if not anchors and not (index == 5 and fields[index].startswith("No shader")) \
                     and not (index == 7 and "Core comparison pending" in fields[index]):
                 raise ValueError(f"{rule}: missing path::symbol anchor in field {index}")
+            previous_relative = ""
             for relative, symbol in anchors:
+                # A grouped ::helper inherits only the preceding file in this field.
+                if not relative:
+                    if not previous_relative:
+                        raise ValueError(f"{rule}: unqualified shorthand anchor ::{symbol}")
+                    relative = previous_relative
+                previous_relative = relative
                 if ".." in Path(relative).parts or relative.startswith("/"):
                     raise ValueError(f"{rule}: invalid anchor path {relative}")
                 path = root / relative if relative.startswith(("tests/", "src/")) else \
@@ -243,6 +251,13 @@ def self_test() -> None:
     check_repair_map(document, ledger, ROOT)
     for broken in (
         document.replace("::resident_filtered_sprite", "::obsolete_filtered_sprite", 1),
+        document.replace("::rotated_nearest_packet", "::obsolete_rotated_packet", 1),
+        document.replace("::R03_SHADER_GUI_ROTATED_NEAREST_COVERAGE",
+                         "::OBSOLETE_GUI_ROTATED_NEAREST_COVERAGE", 1),
+        "\n".join(line for line in document.splitlines()
+                  if not line.startswith("| R03-P9-GUI-ROTATED-SPRITE |")),
+        "\n".join(line for line in document.splitlines()
+                  if not line.startswith("| R03-P9-SPRITE-ALPHA-BOUNDARY |")),
         document.replace("::R03_SHADER_EXACT_OVERLAP", "::OBSOLETE_EXACT_OVERLAP", 1),
         document.replace("::R03_SHADER_NEAREST_PHASED", "::OBSOLETE_NEAREST_PHASED", 1),
         document.replace("device comparison R03-P3-JOURNAL", "comparison missing", 1),
@@ -264,6 +279,9 @@ def self_test() -> None:
         document.replace("::scene_snapshot_region", "::obsolete_snapshot_region", 1),
         document.replace("::R03_SHADER_GUI_FILTERED_ALPHA_STAMP",
                          "::OBSOLETE_GUI_FILTERED_ALPHA_STAMP", 1),
+        document.replace("::gml_render_rotated_alpha16_factor",
+                         "::obsolete_rotated_alpha16_factor", 1),
+        document.replace("::draw_rotated_regions", "::obsolete_rotated_regions", 1),
         document.replace("::gml_render_defer_resident_screen_upscale",
                          "::obsolete_resident_screen_upscale", 1),
     ):

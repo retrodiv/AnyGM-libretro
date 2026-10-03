@@ -3050,6 +3050,37 @@ static int resident_borrowed_surface_zero_screen_shader(void){
 }
 
 static int resident_identity_gui_filtered_atlas(void){
+  GmlRenderQuad exact={0};
+  exact.shape=GML_RENDER_QUAD_AXIS_ALIGNED;
+  exact.sampling.filter=GML_RENDER_FILTER_BILINEAR;
+  exact.sampling.quantisation=GML_RENDER_QUANTISE_SPRITE_FIRSTGEN_INDEPENDENT;
+  exact.sampling.edge_rule=GML_RENDER_EDGE_LOGICAL_TPAG;
+  exact.sampling.logical_margin_mask=GML_RENDER_MARGIN_LEFT|GML_RENDER_MARGIN_TOP;
+  exact.sampling.source_region=(GmlRenderRect){1,1,4u,4u};
+  exact.inverse_anchor[0]=4.25; exact.inverse_anchor[1]=1.25;
+  exact.inverse_x[0]=-0.75; exact.inverse_y[1]=1.5;
+  exact.x[0]=exact.x[3]=1.0; exact.x[1]=exact.x[2]=4.0;
+  exact.y[0]=exact.y[1]=1.0; exact.y[2]=exact.y[3]=7.0;
+  exact.filtered_draw_alpha=0.6;
+  for(unsigned corner=0;corner<4u;corner++) exact.corner_colour[corner]=0xffa0c0e0u;
+  CHECK(gml_render_filtered_font_quad_valid(&exact,12u,10u));
+  for(unsigned variant=0;variant<8u;variant++){
+    GmlRenderQuad invalid=exact;
+    if(variant==0u) invalid.sampling.quantisation=GML_RENDER_QUANTISE_FONT_FIRSTGEN_INDEPENDENT;
+    if(variant==1u) invalid.sampling.edge_rule=GML_RENDER_EDGE_CLAMP_SUBIMAGE;
+    if(variant==2u) invalid.sampling.logical_margin_mask=16u;
+    if(variant==3u) invalid.inverse_x[0]=-4.01;
+    if(variant==4u) invalid.inverse_y[1]=0x1p-17;
+    if(variant==5u) invalid.filtered_draw_alpha=0x1p-33;
+    if(variant==6u) invalid.inverse_anchor[0]=0x1p-1074;
+    if(variant==7u) invalid.x[3]=2.0;
+    CHECK(!gml_render_filtered_font_quad_valid(&invalid,12u,10u));
+  }
+  CHECK(gml_render_rotated_alpha16_factor(255u,258.0/65536.0-0x1p-40)==257u);
+  CHECK(gml_render_rotated_alpha16_factor(255u,258.0/65536.0+0x1p-40)==258u);
+  CHECK(gml_render_rotated_alpha16_factor(255u,5.0/16.0)==20480u);
+  CHECK(gml_render_rotated_alpha16_factor(1u,1.0/512.0)==0u);
+  CHECK(gml_render_rotated_alpha16_factor(1u,1.0/256.0)==1u);
   enum { WIDTH=12,HEIGHT=10,ATLAS=6,PAGE=4 };
   GmlRender *render=(GmlRender*)calloc(1,sizeof *render);
   GmlWin content={0};
@@ -3105,8 +3136,9 @@ static int resident_identity_gui_filtered_atlas(void){
   /* Keep the qualified identity cases, then exercise the same pixel rules on
    * an owned nonuniformly mapped GUI screen: ordinary/ext, stretched tint,
    * reflection, trim and bounded reduction share one mapping boundary. */
-  for(unsigned variant=0;variant<21u;variant++){
-    const int trimmed=variant==11u || variant==12u || variant==15u || variant==19u;
+  for(unsigned variant=0;variant<27u;variant++){
+    const int trimmed=variant==11u || variant==12u || variant==15u || variant==19u ||
+      variant>=21u;
     const uint32_t fill=variant==15u || variant==19u?0x00102030u:
       variant>=14u?0x40102030u:0xff102030u;
     content.bytecode=variant==20u?17:15;
@@ -3117,6 +3149,7 @@ static int resident_identity_gui_filtered_atlas(void){
     render->tpag[1].tx=render->tpag[1].ty=trimmed;
     render->tpag[1].bw=render->tpag[1].bh=PAGE+trimmed;
     render->spr[1].w=render->spr[1].h=PAGE+trimmed;
+    render->spr[0].originx=render->spr[0].originy=variant>=21u?2:0;
     unsigned visible=0;
     for(unsigned accelerated=0;accelerated<2u;accelerated++){
       GmlRenderJournalMetrics baseline={0};
@@ -3130,6 +3163,7 @@ static int resident_identity_gui_filtered_atlas(void){
       gml_render_gui_begin(render,WIDTH,HEIGHT);
       if(variant>=6u) gml_render_gui_set_size(render,5,4);
       gml_render_set_pending_fill(render,fill);
+      int submits=fake.submits;
       switch(variant){
         case 0: gml_draw_background(render,0,0.25,0.3); break;
         case 1: gml_draw_background_ext(render,0,-0.6,-1.25,1.6796875,1.715,
@@ -3167,11 +3201,18 @@ static int resident_identity_gui_filtered_atlas(void){
                                              100399.0,100224.0,0u,0x1p-53); break;
         case 19: gml_draw_sprite_stretched(render,1,0,-0.3,0.5,6.0,5.0,
                                              0xa0c0e0u,0.6); break;
+        case 21: case 22: case 23: case 24: case 25: case 26:
+          gml_draw_sprite_ext(render,0,0,1.4,1.9,
+            variant==23u?-0.75:0.75,variant==24u?-0.65:0.65,
+            variant==22u?90.0:variant==24u?-80.0:-40.0,
+            0xa0c0e0u,variant==25u?1.9:variant==26u?0.9999999999999991:0.6);
+          break;
         default: gml_draw_sprite_stretched(render,0,0,0.3,0.5,6.0,5.0,
                                              0xffffffu,1.0); break;
       }
       if(!accelerated){
         gml_render_flush_pending_fill(render);
+        gml_render_flush_rotated_batch(render);
         for(unsigned index=0;index<WIDTH*HEIGHT;index++)
           if(cpu[index]!=fill) visible++;
         CHECK(visible>0u);
@@ -3182,11 +3223,12 @@ static int resident_identity_gui_filtered_atlas(void){
             CHECK(cpu[index]==0xff102030u);
         }
       } else {
-        int submits=fake.submits;
         GmlRenderJournalMetrics metrics={0};
         CHECK(render->resident_application_pass && render->gui_pass_active);
         CHECK(gml_render_scene_flush(render) && fake.submits>submits &&
               fake.last_opcode==GML_RENDER_OP_TEXTURED_QUAD);
+        if(variant>=21u)
+          CHECK(fake.last_batch_operations>1u && fake.last_batch_states==2u);
         CHECK(gml_render_resource_image_ref(render->base_scene_resource).resource_class==
               GML_RENDER_RESOURCE_SCREEN);
         gml_render_resource_journal_metrics(render->base_scene_resource,&metrics);
@@ -3211,6 +3253,64 @@ static int resident_identity_gui_filtered_atlas(void){
       gml_render_gui_end(render);
     }
   }
+  /* Characterize the preserved CPU packet policy within one authored draw.
+   * A one-code source contributes less than one RGB/alpha code over this
+   * transparent destination. SSE2 packets keep zero destination alpha after
+   * truncation; the same row's scalar tail forces opaque written alpha.
+   * This is implementation evidence, not an original-runner correctness oracle. */
+  content.bytecode=15;
+  render->tpag[1].tx=render->tpag[1].ty=0;
+  render->tpag[1].bw=render->tpag[1].bh=PAGE;
+  render->spr[1].w=render->spr[1].h=PAGE;
+  render->spr[1].originx=render->spr[1].originy=0;
+  gml_render_bind_device(render,NULL);
+  gml_render_begin(render,cpu,WIDTH,HEIGHT,0.0,0.0);
+  gml_render_gui_begin(render,WIDTH,HEIGHT);
+  gml_render_set_pending_fill(render,0x00102030u);
+  gml_draw_sprite_ext(render,1,0,5.2,5.2,1.0,1.0,90.0,0xffffffu,1.0);
+  gml_render_flush_pending_fill(render);
+  gml_render_flush_rotated_batch(render);
+  unsigned opaque=0;
+  for(unsigned index=0;index<WIDTH*HEIGHT;index++){
+    CHECK(cpu[index]==0x00102030u || cpu[index]==0xff102030u);
+    opaque+=(cpu[index]>>24)==255u;
+  }
+#if defined(__SSE2__)
+  CHECK(opaque>0u && opaque<16u);
+#else
+  CHECK(opaque==16u);
+#endif
+  GmlRenderRotatedCoverageRegion regions[64];
+  uint32_t region_count=0,vector_regions=0,scalar_regions=0;
+  uint32_t unchanged[WIDTH*HEIGHT];
+  memcpy(unchanged,cpu,sizeof unchanged);
+  CHECK(gml_render_rotated_nearest_regions(render,&render->spr[1],&render->tpag[1],
+          5.2,5.2,1.0,1.0,90.0,regions,64u,&region_count) && region_count>1u);
+  for(uint32_t index=0;index<region_count;index++){
+    const GmlRenderRect *region=&regions[index].region;
+    CHECK(region->x>=0 && region->y>=0 && region->width && region->height==1u &&
+          (uint64_t)(uint32_t)region->x+region->width<=WIDTH && region->y<HEIGHT);
+    if(index && region->y==regions[index-1u].region.y)
+      CHECK((uint64_t)(uint32_t)regions[index-1u].region.x+
+            regions[index-1u].region.width<=(uint32_t)region->x);
+    vector_regions+=regions[index].vector_alpha!=0u;
+    scalar_regions+=regions[index].vector_alpha==0u;
+  }
+#if defined(__SSE2__)
+  CHECK(vector_regions && scalar_regions);
+#else
+  CHECK(!vector_regions && scalar_regions);
+#endif
+  CHECK(!gml_render_rotated_nearest_regions(render,&render->spr[1],&render->tpag[1],
+          5.2,5.2,1.0,1.0,90.0,regions,1u,&region_count));
+  CHECK(!gml_render_rotated_nearest_regions(render,&render->spr[1],&render->tpag[1],
+          1e100,5.2,1.0,1.0,90.0,regions,64u,&region_count));
+  CHECK(!gml_render_rotated_nearest_regions(render,&render->spr[1],&render->tpag[1],
+          5.2,5.2,0x1p-100,1.0,90.0,regions,64u,&region_count));
+  CHECK(!gml_render_rotated_nearest_regions(render,&render->spr[1],&render->tpag[1],
+          5.2,5.2,1.0,1.0,NAN,regions,64u,&region_count));
+  CHECK(!memcmp(unchanged,cpu,sizeof unchanged));
+  gml_render_gui_end(render);
   gml_render_free(render);
   free(render);
   return 1;

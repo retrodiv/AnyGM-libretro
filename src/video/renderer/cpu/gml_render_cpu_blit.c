@@ -4679,6 +4679,26 @@ typedef struct {
   int64_t delta_x, delta_y;
   uint32_t alpha_lut[256];
 } GmlExactRotatedBand;
+/* Shared packet selection retains the original fixed-point skip, four-pixel
+ * vector and scalar-run order. Pixel arithmetic remains in its existing band. */
+static int rotated_nearest_packet(GmlTpag *tpag,int64_t lx_fp,int64_t ly_fp,
+                                   int64_t delta_x,int64_t delta_y,int maxrun,
+                                   int vector_pixels,int *source_x,int *source_y,
+                                   int *skip,int *vector){
+  *source_x=floor_fixed20(lx_fp);
+  *source_y=floor_fixed20(ly_fp);
+  *skip=alpha_span_skip_run(tpag,*source_x,*source_y,lx_fp,ly_fp,
+                             delta_x,delta_y,maxrun);
+  *vector=0;
+  if(*skip>0) return *skip;
+  if(vector_pixels && maxrun>=4){ *vector=1; return 4; }
+  int run_x=fixed20_run_to_change(lx_fp,delta_x,*source_x,maxrun);
+  int run_y=fixed20_run_to_change(ly_fp,delta_y,*source_y,maxrun);
+  int run=run_x<run_y?run_x:run_y;
+  if(run<1) run=1;
+  return run;
+}
+
 static void GML_HOT_RENDER exact_rotated_band_rows(
     void *context, int row_start, int row_end, int slot){
   GmlExactRotatedBand *band=(GmlExactRotatedBand*)context;
@@ -4699,17 +4719,18 @@ static void GML_HOT_RENDER exact_rotated_band_rows(
     int64_t lx_fp=(int64_t)floor(local_x*(double)RFP_ONE);
     int64_t ly_fp=(int64_t)floor(local_y*(double)RFP_ONE);
     for(int px=rx0;px<rx1;){
-      int source_x=floor_fixed20(lx_fp), source_y=floor_fixed20(ly_fp);
+      int source_x,source_y,skip,vector;
       int maxrun=rx1-px;
-      int skip=alpha_span_skip_run(
-        tpag,source_x,source_y,lx_fp,ly_fp,band->delta_x,band->delta_y,maxrun);
+      int run=rotated_nearest_packet(tpag,lx_fp,ly_fp,band->delta_x,band->delta_y,
+                                      maxrun,band->vector_pixels,
+                                      &source_x,&source_y,&skip,&vector);
       if(skip>0){
         lx_fp+=band->delta_x*(int64_t)skip;
         ly_fp+=band->delta_y*(int64_t)skip;
         px+=skip;
         continue;
       }
-      if(band->vector_pixels && maxrun>=4){
+      if(vector){
         uint32_t sources[4]={0xFF000000u,0xFF000000u,0xFF000000u,0xFF000000u};
         uint32_t factors[4]={0,0,0,0};
         for(int i=0;i<4;i++){
@@ -4741,10 +4762,6 @@ static void GML_HOT_RENDER exact_rotated_band_rows(
         px+=4;
         continue;
       }
-      int run_x=fixed20_run_to_change(lx_fp,band->delta_x,source_x,maxrun);
-      int run_y=fixed20_run_to_change(ly_fp,band->delta_y,source_y,maxrun);
-      int run=run_x<run_y?run_x:run_y;
-      if(run<1) run=1;
       if(source_x>=0&&source_y>=0&&source_x<tpag->sw&&source_y<tpag->sh){
         uint32_t packed=band->argb[(size_t)source_y*tpag->sw+source_x];
         uint32_t source_alpha=packed>>24;
@@ -4937,6 +4954,121 @@ static void rot_interp_band_rows(void *context, int row_start, int row_end, int 
   }
 }
 
+typedef struct GmlRotatedGeometry {
+  double c,sn,invxs,invys,ax,ay,qx[4],qy[4];
+  int abx0,aby0,abx1,aby1,x0,x1,y0,y1;
+} GmlRotatedGeometry;
+
+static int rotated_geometry_prepare(GmlRender *r,GmlSprite *spr,GmlTpag *t,
+                                      GmlAtlas *a,double x,double y,double xs,double ys,
+                                      double rot,int solid_blur_alpha,int checked_geometry,
+                                      GmlRotatedGeometry *geometry){
+  double c,sn; render_rotation_sincos(rot,&c,&sn);
+  double invxs=1.0/xs, invys=1.0/ys;
+  double ax=x-r->cam_x, ay=y-r->cam_y;
+  render_modern_cardinal_anchor(r,rot,xs,ys,c,sn,&ax,&ay);
+  int abx0=0, aby0=0, abx1=t->sw-1, aby1=t->sh-1;
+  if(!solid_blur_alpha &&
+     !tpag_alpha_bounds(r,t,a,&abx0,&aby0,&abx1,&aby1)) return 0;
+  double minx=1e30,miny=1e30,maxx=-1e30,maxy=-1e30;
+  double qx[4], qy[4];
+  double sx0=t->tx+abx0, sy0=t->ty+aby0, sx1=t->tx+abx1+1, sy1=t->ty+aby1+1;
+  double corners[4][2]={{sx0,sy0},{sx1,sy0},{sx1,sy1},{sx0,sy1}};
+  for(int i=0;i<4;i++){
+    double px=(corners[i][0]-spr->originx)*xs, py=(corners[i][1]-spr->originy)*ys;
+    double dx=ax + px*c + py*sn, dy=ay - px*sn + py*c;
+    if(checked_geometry && (!isfinite(dx) || !isfinite(dy) ||
+       fabs(dx)>10000000.0 || fabs(dy)>10000000.0)) return -1;
+    qx[i]=dx;
+    qy[i]=dy;
+    if(dx<minx) minx=dx;
+    if(dx>maxx) maxx=dx;
+    if(dy<miny) miny=dy;
+    if(dy>maxy) maxy=dy;
+  }
+  int x0=(int)floor(minx)-1, x1=(int)ceil(maxx)+1;
+  int y0=(int)floor(miny)-1, y1=(int)ceil(maxy)+1;
+  if(x0<0) x0=0;
+  if(y0<0) y0=0;
+  if(x1>r->fbw) x1=r->fbw;
+  if(y1>r->fbh) y1=r->fbh;
+  if(x1<=x0 || y1<=y0) return 0;
+  *geometry=(GmlRotatedGeometry){.c=c,.sn=sn,.invxs=invxs,.invys=invys,.ax=ax,.ay=ay,
+    .abx0=abx0,.aby0=aby0,.abx1=abx1,.aby1=aby1,.x0=x0,.x1=x1,.y0=y0,.y1=y1};
+  memcpy(geometry->qx,qx,sizeof qx); memcpy(geometry->qy,qy,sizeof qy);
+  return 1;
+}
+
+int gml_render_rotated_nearest_regions(GmlRender *r,GmlSprite *spr,GmlTpag *t,
+                                       double x,double y,double xs,double ys,double rot,
+                                       GmlRenderRotatedCoverageRegion *regions,
+                                       uint32_t capacity,uint32_t *count){
+  GmlRotatedGeometry geometry;
+  if(!r || !spr || !t || !regions || !capacity || !count ||
+     !isfinite(x) || !isfinite(y) || !isfinite(xs) || !isfinite(ys) ||
+     !isfinite(rot) || xs==0.0 || ys==0.0 ||
+     !isfinite(1.0/xs) || !isfinite(1.0/ys) ||
+     fabs(1.0/xs)>16384.0 || fabs(1.0/ys)>16384.0 ||
+     t->atlas<0 || t->atlas>=r->n_atlas ||
+     !atlas_pixels(r,t->atlas)) return 0;
+  *count=0u;
+  int prepared=rotated_geometry_prepare(r,spr,t,&r->atlas[t->atlas],x,y,xs,ys,rot,0,1,&geometry);
+  if(prepared<=0) return prepared==0;
+  const GmlRotatedGeometry *g=&geometry;
+  unsigned long long vispix=(unsigned long long)(g->x1-g->x0)*(g->y1-g->y0);
+  if(vispix>=262144ull) return 0;
+  double qarea=fabs(g->qx[0]*g->qy[1]-g->qx[1]*g->qy[0] +
+                    g->qx[1]*g->qy[2]-g->qx[2]*g->qy[1] +
+                    g->qx[2]*g->qy[3]-g->qx[3]*g->qy[2] +
+                    g->qx[3]*g->qy[0]-g->qx[0]*g->qy[3])*0.5;
+  int use_quad_span=qarea>0.0 && qarea<(double)vispix*0.85;
+  double dlx=g->c*g->invxs,dly=g->sn*g->invys;
+  int vector_pixels=fabs(dlx)>=0.125 || fabs(dly)>=0.125;
+  const double local_x_offset=(double)((int64_t)spr->originx-t->tx);
+  const double local_y_offset=(double)((int64_t)spr->originy-t->ty);
+  int64_t delta_x=(int64_t)llround(dlx*(double)RFP_ONE);
+  int64_t delta_y=(int64_t)llround(dly*(double)RFP_ONE);
+  for(int py=g->y0;py<g->y1;py++){
+    int rx0=g->x0,rx1=g->x1;
+    if(use_quad_span && !rotated_quad_row_span(g->qx,g->qy,py+0.5,g->x0,g->x1,&rx0,&rx1))
+      continue;
+    double ry=py+0.5-g->ay,rx=rx0+0.5-g->ax;
+    double local_x=(rx*g->c-ry*g->sn)*g->invxs+local_x_offset;
+    double local_y=(rx*g->sn+ry*g->c)*g->invys+local_y_offset;
+    /* The shared packet helper uses int source coordinates. Check both ends
+     * before fixed-point conversion; metadata refusal never changes CPU input. */
+    if(!isfinite(local_x) || !isfinite(local_y) ||
+       fabs(local_x)+fabs(dlx)*(rx1-rx0)>(double)INT_MAX-4.0 ||
+       fabs(local_y)+fabs(dly)*(rx1-rx0)>(double)INT_MAX-4.0) return 0;
+    int64_t lx_fp=(int64_t)floor(local_x*(double)RFP_ONE);
+    int64_t ly_fp=(int64_t)floor(local_y*(double)RFP_ONE);
+    for(int px=rx0;px<rx1;){
+      int source_x,source_y,skip,vector;
+      int run=rotated_nearest_packet(t,lx_fp,ly_fp,delta_x,delta_y,rx1-px,
+                                      vector_pixels,&source_x,&source_y,&skip,&vector);
+      if(!skip){
+        uint32_t vector_alpha=0u;
+#if defined(__SSE2__)
+        vector_alpha=vector?1u:0u;
+#endif
+        GmlRenderRotatedCoverageRegion *last=*count?&regions[*count-1u]:NULL;
+        if(last && last->vector_alpha==vector_alpha && last->region.y==py &&
+           (int64_t)last->region.x+last->region.width==px)
+          last->region.width+=(uint32_t)run;
+        else {
+          if(*count==capacity) return 0;
+          regions[(*count)++]=(GmlRenderRotatedCoverageRegion){
+            {px,py,(uint32_t)run,1u},vector_alpha};
+        }
+      }
+      lx_fp+=delta_x*(int64_t)run;
+      ly_fp+=delta_y*(int64_t)run;
+      px+=run;
+    }
+  }
+  return 1;
+}
+
 void GML_HOT_RENDER blit_rotated(GmlRender *r, GmlSprite *spr, GmlTpag *t, double x, double y,
                          double xs, double ys, double rot, uint32_t blend, double alpha){
   if(t->atlas<0 || t->atlas>=r->n_atlas) return;
@@ -4954,34 +5086,13 @@ void GML_HOT_RENDER blit_rotated(GmlRender *r, GmlSprite *spr, GmlTpag *t, doubl
   if(alpha<=0) return;
   if(xs==0||ys==0) return;
   int bR=blend&0xFF, bG=(blend>>8)&0xFF, bB=(blend>>16)&0xFF;
-  double c,sn; render_rotation_sincos(rot,&c,&sn);
-  double invxs=1.0/xs, invys=1.0/ys;
-  double ax=x-r->cam_x, ay=y-r->cam_y;
-  render_modern_cardinal_anchor(r,rot,xs,ys,c,sn,&ax,&ay);
-  int abx0=0, aby0=0, abx1=t->sw-1, aby1=t->sh-1;
-  if(!solid_blur_alpha &&
-     !tpag_alpha_bounds(r,t,a,&abx0,&aby0,&abx1,&aby1)) return;
-  double minx=1e30,miny=1e30,maxx=-1e30,maxy=-1e30;
-  double qx[4], qy[4];
-  double sx0=t->tx+abx0, sy0=t->ty+aby0, sx1=t->tx+abx1+1, sy1=t->ty+aby1+1;
-  double corners[4][2]={{sx0,sy0},{sx1,sy0},{sx1,sy1},{sx0,sy1}};
-  for(int i=0;i<4;i++){
-    double px=(corners[i][0]-spr->originx)*xs, py=(corners[i][1]-spr->originy)*ys;
-    double dx=ax + px*c + py*sn, dy=ay - px*sn + py*c;
-    qx[i]=dx;
-    qy[i]=dy;
-    if(dx<minx) minx=dx;
-    if(dx>maxx) maxx=dx;
-    if(dy<miny) miny=dy;
-    if(dy>maxy) maxy=dy;
-  }
-  int x0=(int)floor(minx)-1, x1=(int)ceil(maxx)+1;
-  int y0=(int)floor(miny)-1, y1=(int)ceil(maxy)+1;
-  if(x0<0) x0=0;
-  if(y0<0) y0=0;
-  if(x1>r->fbw) x1=r->fbw;
-  if(y1>r->fbh) y1=r->fbh;
-  if(x1<=x0 || y1<=y0) return;
+  GmlRotatedGeometry geometry;
+  if(!rotated_geometry_prepare(r,spr,t,a,x,y,xs,ys,rot,solid_blur_alpha!=NULL,0,&geometry)) return;
+  double c=geometry.c,sn=geometry.sn,invxs=geometry.invxs,invys=geometry.invys;
+  double ax=geometry.ax,ay=geometry.ay,qx[4],qy[4];
+  int abx0=geometry.abx0,aby0=geometry.aby0,abx1=geometry.abx1,aby1=geometry.aby1;
+  int x0=geometry.x0,x1=geometry.x1,y0=geometry.y0,y1=geometry.y1;
+  memcpy(qx,geometry.qx,sizeof qx); memcpy(qy,geometry.qy,sizeof qy);
   /* Axis-aligned blits materialize a deferred clear before touching the framebuffer. Rotated
    * sprites must do the same: otherwise they are rendered first and then erased when the next
    * axis-aligned draw flushes that pending clear. */
@@ -5049,7 +5160,7 @@ void GML_HOT_RENDER blit_rotated(GmlRender *r, GmlSprite *spr, GmlTpag *t, doubl
         mapped_alpha=(int)(mapped_texture_pixel(r,(uint32_t)i<<24)>>24);
       double sa=(mapped_alpha/255.0)*alpha;
       sa_lut[i]=sa; ia_lut[i]=1.0-sa;
-      a16_lut[i]=sa>=1.0 ? 65536u : (uint32_t)(sa*65536.0);
+      a16_lut[i]=gml_render_rotated_alpha16_factor((unsigned)mapped_alpha,alpha);
       a8_lut[i]=sa>=1.0 ? 256u : (uint32_t)(sa*256.0);
     }
   }
@@ -5072,6 +5183,7 @@ void GML_HOT_RENDER blit_rotated(GmlRender *r, GmlSprite *spr, GmlTpag *t, doubl
       }
       if(qx1<qx0 || qy1<qy0) return;
       if(qx0!=abx0 || qy0!=aby0 || qx1!=abx1 || qy1!=aby1){
+        double minx,miny,maxx,maxy,sx0,sy0,sx1,sy1;
         abx0=qx0; aby0=qy0; abx1=qx1; aby1=qy1;
         minx=1e30; miny=1e30; maxx=-1e30; maxy=-1e30;
         sx0=t->tx+abx0; sy0=t->ty+aby0; sx1=t->tx+abx1+1; sy1=t->ty+aby1+1;
