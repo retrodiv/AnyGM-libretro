@@ -3935,34 +3935,49 @@ static int resident_clipped_filtered_background_part_noop(void){
   render->bg[1].tpag=1;
   content.bytecode=15;
   render->win=&content;
-  for(unsigned variant=0;variant<20u;variant++){
-    int visible=variant>=16u;
-    double xs=!visible && (variant&4u)?-1.0:1.0;
-    double ys=!visible && (variant&8u)?-1.0:1.0;
+  CHECK(gml_render_application_surface_select_owned(render,0));
+  const double scales[][2]={{1.0,1.0},{0.5,0.75},{0.75,0.625},
+                            {1.5,1.25},{0.875,0.75}};
+  for(unsigned variant=0;variant<100u;variant++){
+    unsigned scale=variant/20u,placement=variant%20u;
+    int visible=placement>=16u,mapped=scale==4u;
+    double world_x=mapped?scales[scale][0]:1.0;
+    double world_y=mapped?scales[scale][1]:1.0;
+    double xs=(mapped?1.0:scales[scale][0])*
+      (!visible && (placement&4u)?-1.0:1.0);
+    double ys=(mapped?1.0:scales[scale][1])*
+      (!visible && (placement&8u)?-1.0:1.0);
+    double extent_x=2.0*fabs(xs*world_x),extent_y=2.0*fabs(ys*world_y);
     double x=3.0,y=3.0,cam_x=0.125,cam_y=0.25;
-    switch(variant&3u){
-      case 0: x=visible?WIDTH-1:xs>0?WIDTH:WIDTH+2;break;
-      case 1: x=visible?-1.0:xs>0?-2.0:0.0;break;
-      case 2: y=visible?HEIGHT-1:ys>0?HEIGHT:HEIGHT+2;break;
-      case 3: y=visible?-1.0:ys>0?-2.0:0.0;break;
+    switch(placement&3u){
+      case 0: x=visible?WIDTH-1:xs>0?WIDTH:WIDTH+extent_x;break;
+      case 1: x=visible?(scale?0.0:-1.0):xs>0?-extent_x:0.0;break;
+      case 2: y=visible?HEIGHT-1:ys>0?HEIGHT:HEIGHT+extent_y;break;
+      case 3: y=visible?(scale?0.0:-1.0):ys>0?-extent_y:0.0;break;
     }
-    x+=cam_x+0.3;y+=cam_y+0.3;
+    x=(x+cam_x+0.3)/world_x;y=(y+cam_y+0.3)/world_y;
     gml_render_bind_device(render,NULL);
     gml_render_begin(render,render->app_surface_owned,WIDTH,HEIGHT,cam_x,cam_y);
+    render->world_transform_active=0;
     gml_render_set_pending_fill(render,0x40102030u);
     render->interp=0;
     gml_draw_background(render,0,cam_x+1.0,cam_y+1.0);
     memcpy(cpu,render->app_surface_owned,sizeof cpu);
     render->interp=1;
+    render->world_transform_active=mapped;
+    render->world_scale_x=world_x;render->world_scale_y=world_y;
     gml_draw_background_part_ext(render,1,1,1,2,2,x,y,xs,ys,0xa0c0e0u,0.6);
     CHECK((memcmp(cpu,render->app_surface_owned,sizeof cpu)!=0)==visible);
     memcpy(expected,render->app_surface_owned,sizeof expected);
     gml_render_bind_device(render,&device);
     CHECK(gml_render_begin_resident_owned_application(render,cam_x,cam_y,0));
+    render->world_transform_active=0;
     gml_render_set_pending_fill(render,0x40102030u);
     render->interp=0;
     gml_draw_background(render,0,cam_x+1.0,cam_y+1.0);
     render->interp=1;
+    render->world_transform_active=mapped;
+    render->world_scale_x=world_x;render->world_scale_y=world_y;
     GmlRenderJournalMetrics before={0},after={0};
     gml_render_resource_journal_metrics(render->app_surface_resource,&before);
     int submits=fake.submits,uploads=fake.uploads,reads=fake.readbacks;

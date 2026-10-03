@@ -762,13 +762,14 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
    * This rule retains the existing 16-bit nearest coverage, not that policy. */
   if(mapped_gui_rotation && width*height>=262144.0) return 0;
   if(x0<=-width || y0<=-height || x0>=r->fbw || y0>=r->fbh){
-    /* Unit-sign filtered background parts share this snapped half-open coverage
-     * with their CPU leaf, even with partial source alpha. As with the qualified
-     * point leaf, a fully clipped draw must leave queued device work untouched. */
+    /* Filtered background parts on first-generation application surfaces share
+     * this projected half-open coverage with their CPU leaf at fractional scales.
+     * Unit-sign parts retain their qualified coverage on other targets too. */
     if((nearest_mode==4 && !rotated_sprite && xs==1.0 && ys==1.0) ||
        additive_background ||
        (family==GML_RENDER_SCENE_BACKGROUND && part_view && !rotated_sprite &&
-        !nearest_mode && fabs(xs)==1.0 && fabs(ys)==1.0)) return 1;
+        !nearest_mode && ((fabs(xs)==1.0 && fabs(ys)==1.0) ||
+          gml_render_target_is_first_generation_application_surface(r)))) return 1;
     return 0;
   }
   if(!page->scene_fully_opaque && family!=GML_RENDER_SCENE_SPRITE &&
