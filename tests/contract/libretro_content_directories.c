@@ -18,6 +18,7 @@
 #endif
 
 void retro_set_environment(retro_environment_t callback);
+void retro_get_system_info(struct retro_system_info *info);
 void retro_init(void);
 void retro_deinit(void);
 bool retro_load_game(const struct retro_game_info *info);
@@ -439,6 +440,12 @@ static void cache_lifecycle(void){
 }
 
 int main(void){
+  struct retro_system_info system_info={0};
+  retro_get_system_info(&system_info);
+  require(system_info.valid_extensions && strstr(system_info.valid_extensions,"|ios|"),
+          "the frontend may select Apple Studio payloads");
+  require(system_info.need_fullpath && system_info.block_extract,
+          "platform payloads retain the direct-path content contract");
   cache_lives_under_the_save_root();
   no_save_root_leaves_both_unset();
   an_unfittable_root_reports_no_cache();

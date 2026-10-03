@@ -26,7 +26,7 @@ container each format defines:
 - **Game Maker 8** — the `.gmk` editor project standard, classic revision 800.
 - **Game Maker 8.1** — the `.gm81` editor project standard, classic revision 810.
 - **GameMaker Studio 1.x** — the Studio data container (`data.win`,
-  `game.droid`, `game.unx`) at bytecode revisions 14, 15, and 16, with classic
+  `game.droid`, `game.unx`, `game.ios`) at bytecode revisions 14, 15, and 16, with classic
   Studio semantics.
 - **GameMaker Studio 2.x** — the same data container with modern function,
   struct, and layer semantics. Revision 17 is the common case; an early Studio 2
@@ -48,7 +48,7 @@ Two limits apply to every generation:
 ### Container forms
 
 - Path-backed content selected by the extensions the core declares to the
-  frontend: `win`, `droid`, `unx`, `zip`, `port`, `apk`, `yyp`, `yyz`, `gmd`,
+  frontend: `win`, `droid`, `unx`, `ios`, `zip`, `port`, `apk`, `yyp`, `yyz`, `gmd`,
   `gmk`, `gm6`, `gm81`, `exe`, and `anygm`, the anchor that names the payload
   beside it; see [Supported formats](docs/SUPPORTED_FORMATS.md).
 - Single-runtime PE executables carrying one embedded, unfiltered LZX-21

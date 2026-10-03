@@ -303,9 +303,10 @@ Path-backed routing recognizes the extensions declared by the core:
 validation still determine whether the input is accepted.
 
 An exporter names the Studio data container after the platform it was exported
-for: `data.win` on Windows, `game.droid` on Android, and `game.unx` on Linux.
-They are one container under three names, so any of them is accepted as the
-directly loaded payload, and the same three names are what an archive, a
+for: `data.win` on Windows, `game.droid` on Android, `game.unx` on Linux, and
+`game.ios` in Apple exports. These names select the same structural container reader.
+They are one container under platform-specific names, so any of them is accepted as the
+directly loaded payload, and the same names are what an archive, a
 self-extracting package, and the sibling search beside a launcher select.
 
 When a structurally valid PE has no supported internal payload, the core may load the exact

@@ -2553,6 +2553,19 @@ int main(void){
      resolve_archive(&services,root,"safe.zip",&safe_archive,1);
 
   if(ok){
+    static const uint8_t apple_name[]="Resources/game.ios";
+    ZipEntry apple={apple_name,sizeof apple_name-1,form,sizeof form-1,
+                    sizeof form-1,0,0,0,0};
+    Buffer archive={0};
+    ok=build_zip(&apple,1,&archive)&&
+       resolve_archive(&services,root,"apple.zip",&archive,1);
+    free(archive.data);
+    char label[128]={0};
+    anygm_content_save_label("Example/Resources/game.ios",label,sizeof label);
+    if(ok && strcmp(label,"Resources")) ok=fail("platform payload save label used its generic filename");
+  }
+
+  if(ok){
     static const uint8_t payload_name[]="assets/game.droid";
     static const uint8_t unused_upper[]="unused/Example.bin";
     static const uint8_t unused_lower[]="unused/example.bin";

@@ -561,7 +561,8 @@ static int cab_name_is_payload(const char *path){
   const char *name=strrchr(path,'/');
   name=name?name+1:path;
   return !strcasecmp(name,"data.win") || !strcasecmp(name,"data.alternate.win") ||
-         !strcasecmp(name,"game.unx") || !strcasecmp(name,"game.droid");
+         !strcasecmp(name,"game.unx") || !strcasecmp(name,"game.droid") ||
+         !strcasecmp(name,"game.ios");
 }
 
 static int cab_name_is_native(const char *path){

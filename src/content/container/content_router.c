@@ -174,10 +174,11 @@ void anygm_content_path_parent(const char *path, char *out, size_t outsz) {
 
 static int path_name_is_generic_payload(const char *name){
   /* Exporters use platform-specific payload names. They contain the same data and share
-   * one loader, so recognize the Linux name alongside the Windows and Android names. */
+   * one loader, so recognize their names regardless of the target platform. */
   return name && (!strcasecmp(name,"data.win") ||
                   !strcasecmp(name,"data.alternate.win") ||
                   !strcasecmp(name,"game.unx") ||
+                  !strcasecmp(name,"game.ios") ||
                   !strcasecmp(name,"game.droid"));
 }
 
@@ -935,9 +936,9 @@ static int zip_content_score(const char *name){
   int score=0;
   if(!strcasecmp(base,"data.win")) score=400;
   else if(!strcasecmp(base,"game.droid")) score=300;
-  /* The Linux export name, ranked with its Android sibling: both are the platform's spelling of
-   * data.win, and neither is more authoritative than the other when an archive carries only one. */
+  /* Platform export names have equal rank: each is the target platform's spelling of data.win. */
   else if(!strcasecmp(base,"game.unx")) score=300;
+  else if(!strcasecmp(base,"game.ios")) score=300;
   else if(!strcasecmp(base,"data.alternate.win")) score=200;
   else if(zip_endswith(base,".win")) score=100;
   if(score){ for(const char *p=name;*p;p++) if(*p=='/') score--; }

@@ -251,7 +251,8 @@ static int nsis_payload_name(const char *path){
   const char *name=strrchr(path,'/');
   name=name?name+1u:path;
   return !strcasecmp(name,"data.win") || !strcasecmp(name,"game.win") ||
-         !strcasecmp(name,"game.unx") || !strcasecmp(name,"game.droid");
+         !strcasecmp(name,"game.unx") || !strcasecmp(name,"game.droid") ||
+         !strcasecmp(name,"game.ios");
 }
 
 static void nsis_plan_free(NsisPlan *plan){
