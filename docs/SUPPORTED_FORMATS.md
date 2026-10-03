@@ -306,8 +306,9 @@ An exporter names the Studio data container after the platform it was exported
 for: `data.win` on Windows, `game.droid` on Android, `game.unx` on Linux, and
 `game.ios` in Apple exports. These names select the same structural container reader.
 They are one container under platform-specific names, so any of them is accepted as the
-directly loaded payload, and the same names are what an archive, a
-self-extracting package, and the sibling search beside a launcher select.
+directly loaded payload. Archives and self-extracting packages select these canonical names.
+Automatic sibling lookup beside a launcher searches `data.win`, `game.droid`, and `game.unx`
+in its existing locations; load an Apple payload directly or name it in an explicit anchor.
 
 When a structurally valid PE has no supported internal payload, the core may load the exact
 regular `data.win` beside it. The sibling passes through ordinary Studio validation. A
