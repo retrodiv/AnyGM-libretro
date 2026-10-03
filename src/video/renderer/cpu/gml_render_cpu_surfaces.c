@@ -711,10 +711,11 @@ static void draw_surface_interp_phase(GmlRender *r,uint32_t *plane,const uint32_
       sb=(sampled&0xFF)*bB/255;
       uint32_t *dp=&drow[px];
       double sa=(aa/255.0)*alpha;
-      if(r->blendmode==4){
+      if(r->blendmode==4 || r->blendmode==8){
         unsigned source_alpha=(unsigned)lround((double)aa*alpha);
         uint32_t old=*dp;
         *dp=color_write_merge(r,old,
+          r->blendmode==8?blend_destination_factor_pixel(r,old,sr,sg,sb,source_alpha):
           blend_max_preset_pixel(r,old,sr,sg,sb,source_alpha));
       } else if(r->blendmode==1||r->blendmode==2){
         int dr=(*dp>>16)&0xFF,dg=(*dp>>8)&0xFF,db=*dp&0xFF;
@@ -891,7 +892,7 @@ void draw_surface_region(GmlRender *r, int surf, double sx0d, double sy0d, doubl
             dp[xx]=color_write_merge(r,old,blend_multiply_pixel(r,old,sr,sg,sb));
           }
         }
-      } else if(r->blendmode==4){
+      } else if(r->blendmode==4 || r->blendmode==8){
         if(r->target_sp>0){
           r->fb_opaque_known=0;
           r->fb_all_opaque=0;
@@ -908,6 +909,7 @@ void draw_surface_region(GmlRender *r, int surf, double sx0d, double sy0d, doubl
             int sr=((sv>>16)&255)*bR/255,sg=((sv>>8)&255)*bG/255,sb=(sv&255)*bB/255;
             source_alpha=(unsigned)lround(source_alpha*alpha);
             dp[xx]=color_write_merge(r,old,
+              r->blendmode==8?blend_destination_factor_pixel(r,old,sr,sg,sb,source_alpha):
               blend_max_preset_pixel(r,old,sr,sg,sb,source_alpha));
           }
         }
@@ -1138,10 +1140,11 @@ void draw_surface_region(GmlRender *r, int surf, double sx0d, double sy0d, doubl
       uint32_t *dp=&r->fb[(size_t)ty_*r->fbw+tx_];
       double ea=alpha*pa;
       if(r->blendmode==3){ uint32_t old=*dp; *dp=color_write_merge(r,old,blend_multiply_pixel(r,old,sr,sg,sb)); }
-      else if(r->blendmode==4){
+      else if(r->blendmode==4 || r->blendmode==8){
         uint32_t old=*dp;
         unsigned source_alpha=(unsigned)lround((A/(double)n)*alpha);
         *dp=color_write_merge(r,old,
+          r->blendmode==8?blend_destination_factor_pixel(r,old,sr,sg,sb,source_alpha):
           blend_max_preset_pixel(r,old,sr,sg,sb,source_alpha));
       }
       else if(replace || (r->classic && src==r->app_surface)){
@@ -1414,9 +1417,10 @@ void gml_render_cpu_draw_surface_ext_mapped(GmlRender *r,int surf,double x,doubl
     uint32_t *dp=&r->fb[(size_t)py*r->fbw+px],old=*dp,out;
     double sa=((sv>>24)/255.0)*alpha;
     if(r->blendmode==3) out=blend_multiply_pixel(r,old,sr,sg,sb);
-    else if(r->blendmode==4){
+    else if(r->blendmode==4 || r->blendmode==8){
       unsigned source_alpha=(unsigned)lround((double)(sv>>24)*alpha);
-      out=blend_max_preset_pixel(r,old,sr,sg,sb,source_alpha);
+      out=r->blendmode==8?blend_destination_factor_pixel(r,old,sr,sg,sb,source_alpha):
+        blend_max_preset_pixel(r,old,sr,sg,sb,source_alpha);
     }
     else if(r->blendmode==1||r->blendmode==2){
       int dr=(old>>16)&255,dg=(old>>8)&255,db=old&255;

@@ -301,7 +301,9 @@ IDs, lengths and positions without changing the live engine.
 `tests/unit/runtime/test_builtin_draw_queries.c` covers retained circle precision,
 owned shader names, live depth-matched layers, retired alpha controls and source-region
 background pixels, canonical and legacy background-name lookup, and authored/runtime font
-style queries through ordinary and cached dispatch:
+style queries through ordinary and cached dispatch. Its inverse-destination-colour case
+checks the extended blend pair across primitives, authored/runtime sprites, filtering,
+rotation and surface composition, including partial offscreen coverage:
 `make check TEST=builtin_draw_queries`.
 
 `tests/unit/runtime/test_builtin_tile_draw.c` owns synthetic explicit tile and map drawing:

@@ -86,7 +86,7 @@ void builtin_set_interpolation(GmlRender *render,int enabled){
 void builtin_set_blendmode_ext(GmlVM *vm,GmlRender *R,int src,int dst){
   if(!R) return;
   /* Documented factor constants: zero=1, one=2, src_alpha=5, inv_src_alpha=6,
-   * dest_colour=9. Preserve the common preset-equivalent pairs and the fixed-function multiply
+   * dest_colour=9, inv_dest_colour=10. Preserve the common preset-equivalent pairs and the fixed-function multiply
    * pair used for light/shadow masks. Unknown pairs still replace the old state with normal. */
   GmlRenderDrawState state={0};
   if(src==9 && dst==1) state.blend_mode=3;             /* src * destination colour */
@@ -102,6 +102,7 @@ void builtin_set_blendmode_ext(GmlVM *vm,GmlRender *R,int src,int dst){
   /* Mode 5 implements this factor pair. */
   else if(src==3 && dst==2) state.blend_mode=5;
   else if(src==8 && dst==7) state.blend_mode=7;        /* inverse destination alpha, destination alpha */
+  else if(src==10 && dst==1) state.blend_mode=8;       /* source * inverse destination colour */
   else state.blend_mode=0;                             /* includes normal (5,6) */
   gml_render_draw_state_update(R,&state,GML_RENDER_DRAW_STATE_BLEND_MODE);
   if(builtin_setting(vm,"GML_DBG_BM"))

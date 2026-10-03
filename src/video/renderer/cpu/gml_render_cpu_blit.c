@@ -203,7 +203,7 @@ void gml_render_cpu_backend_draw_pixel_alpha(GmlRender *R, int x, int y, uint32_
    * previously filled edge to edge therefore stops being provably opaque as soon as one of
    * these fragments lands on it. Keep the coverage certificate conservative so a later
    * surface composite does not take the opaque-copy fast path through punched-out pixels. */
-  if(preserve_alpha && R->alphablend && R->blendmode==2){
+  if(preserve_alpha && R->alphablend && (R->blendmode==2 || R->blendmode==8)){
     R->fb_opaque_known=0;
     R->fb_all_opaque=0;
   }
@@ -218,6 +218,7 @@ void gml_render_cpu_backend_draw_pixel_alpha(GmlRender *R, int x, int y, uint32_
       int eq=k==3?R->blend_equation_alpha:R->blend_equation;
       if(R->blendmode==4) df=1.0-sc[k]/255.0;
       if(R->blendmode==5) sf=sc[k]/255.0;   /* bm_src_colour scales the source by itself */
+      if(R->blendmode==8){ sf=1.0-dc[k]/255.0; df=0.0; }
       double v;
       if(eq==2) v=sc[k]>dc[k]?sc[k]:dc[k];
       else if(eq==5) v=sc[k]<dc[k]?sc[k]:dc[k];
@@ -238,10 +239,10 @@ void gml_render_cpu_backend_draw_pixel_alpha(GmlRender *R, int x, int y, uint32_
     int dr=(*dp>>16)&0xff, dg=(*dp>>8)&0xff, db=*dp&0xff;
     int or_,og,ob;
     uint32_t oc=preserve_alpha ? *dp>>24 : 0xff;
-    if(R->blendmode==7){
+    if(R->blendmode==7 || R->blendmode==8){
       unsigned source_alpha=(unsigned)lround(alpha*255.0);
       *dp=color_write_merge(R,*dp,
-        blend_inverse_destination_alpha_pixel(R,*dp,sr,sg,sb,source_alpha));
+        blend_destination_factor_pixel(R,*dp,sr,sg,sb,source_alpha));
       return;
     } else if(R->blendmode==4){
       unsigned source_alpha=(unsigned)lround(alpha*255.0);
@@ -1929,7 +1930,7 @@ static int GML_HOT_RENDER blit_rgba_sprite_axis(GmlRender *r, GmlSprite *owner, 
   unsigned long long vispix=(unsigned long long)(x1-x0)*(unsigned long long)(y1-y0);
   if(opaque && alpha>=1.0 && r->blendmode==0) gml_render_maybe_prepare_opaque_rect(r,x0,y0,x1,y1);
   else gml_render_maybe_prepare_draw(r);
-  if((alpha<1.0 || r->blendmode==2 || !opaque) && r->alphablend)
+  if((alpha<1.0 || r->blendmode==2 || r->blendmode==8 || !opaque) && r->alphablend)
     gml_sprite_target_may_change_alpha(r);
   /* The global texture filter reaches runtime RGBA sprites as well as atlas sprites.
    * Sampling identity holds at an integer-aligned 1:1 draw, so that case keeps the exact
@@ -2218,7 +2219,7 @@ void blit_rgba_sprite(GmlRender *r, GmlSprite *owner, const uint8_t *src, int sw
   if(y1>r->fbh) y1=r->fbh;
   if(x1<=x0 || y1<=y0) return;
   gml_render_maybe_prepare_draw(r);
-  if((alpha<1.0 || r->blendmode==2 || !opaque) && r->alphablend)
+  if((alpha<1.0 || r->blendmode==2 || r->blendmode==8 || !opaque) && r->alphablend)
     gml_sprite_target_may_change_alpha(r);
   /* The global texture filter reaches rotated and flipped runtime sprites too; the wave
    * samplers keep their own indexed fetches. */
@@ -2291,10 +2292,10 @@ void blit_rgba_sprite(GmlRender *r, GmlSprite *owner, const uint8_t *src, int sw
           blend_max_preset_pixel(r,*dp,sr,sg,sb,source_alpha));
         continue;
       }
-      if(r->blendmode==7){
+      if(r->blendmode==7 || r->blendmode==8){
         unsigned source_alpha=(unsigned)lround((double)sample_a*alpha);
         *dp=color_write_merge(r,*dp,
-          blend_inverse_destination_alpha_pixel(r,*dp,sr,sg,sb,source_alpha));
+          blend_destination_factor_pixel(r,*dp,sr,sg,sb,source_alpha));
         continue;
       }
       int or_=(int)(sr*sa+dr*(1-sa)); if(or_>255) or_=255; else if(or_<0) or_=0;
@@ -2802,10 +2803,10 @@ static void blit_one_band_rows(void *context,int row_start,int row_end,int slot)
           blend_max_preset_pixel(r,*dp,sr,sg,sb,source_alpha));
         continue;
       }
-      if(r->blendmode==7){
+      if(r->blendmode==7 || r->blendmode==8){
         unsigned source_alpha=(unsigned)lround((double)sample_a*alpha);
         *dp=color_write_merge(r,*dp,
-          blend_inverse_destination_alpha_pixel(r,*dp,sr,sg,sb,source_alpha));
+          blend_destination_factor_pixel(r,*dp,sr,sg,sb,source_alpha));
         continue;
       }
       /* clamp each channel to [0,255]: a blend>255 or a (legitimately clamped) alpha can still push
@@ -3034,7 +3035,7 @@ static void blit_one(GmlRender *r, GmlTpag *t, double dx, double dy, double xs, 
    * therefore makes an opaque render target non-opaque even when the draw alpha is one. Keep the
    * coverage certificate honest so a later surface composite does not take an opaque-copy path.
    * First-generation application surfaces present opaque independently of texel coverage. */
-  if((alpha<1.0 || r->blendmode==2 ||
+  if((alpha<1.0 || r->blendmode==2 || r->blendmode==8 ||
       (t->alpha_partial && !gml_render_target_is_first_generation_application_surface(r)) ||
       (r->interp && t->alpha_max>0) || mapped_shader) && r->alphablend)
     gml_sprite_target_may_change_alpha(r);
@@ -3996,10 +3997,10 @@ static void blit_interp_sample(GmlRender *r, uint32_t *dp, const GmlAtlas *atlas
     uint32_t out=blend_max_preset_pixel(r,*dp,sr,sg,sb,source_alpha);
     *dp=color_write_merge(r,*dp,out);
     return;
-  } else if(r->blendmode==7){
+  } else if(r->blendmode==7 || r->blendmode==8){
     unsigned source_alpha=(unsigned)lround((precise_margin?faa:(double)aa)*alpha);
     *dp=color_write_merge(r,*dp,
-      blend_inverse_destination_alpha_pixel(r,*dp,sr,sg,sb,source_alpha));
+      blend_destination_factor_pixel(r,*dp,sr,sg,sb,source_alpha));
     return;
   } else if(sa>=1.0){
     rr=sr; rg=sg; rb=sb;
@@ -5099,7 +5100,7 @@ void GML_HOT_RENDER blit_rotated(GmlRender *r, GmlSprite *spr, GmlTpag *t, doubl
   if(batchable_rotation) r->rotated_batch_building++;
   gml_render_maybe_prepare_draw(r);
   if(batchable_rotation) r->rotated_batch_building--;
-  if((alpha<1.0 || r->blendmode==2 || t->alpha_partial || r->interp ||
+  if((alpha<1.0 || r->blendmode==2 || r->blendmode==8 || t->alpha_partial || r->interp ||
       mapped_shader) && r->alphablend)
     gml_sprite_target_may_change_alpha(r);
   unsigned long long vispix=(unsigned long long)(x1-x0)*(unsigned long long)(y1-y0);
@@ -5662,10 +5663,10 @@ cached_rotated_fallback:
           blend_max_preset_pixel(r,*dp,sr,sg,sb,source_alpha));
         continue;
       }
-      if(r->blendmode==7){
+      if(r->blendmode==7 || r->blendmode==8){
         unsigned source_alpha=(unsigned)lround((double)aa*alpha);
         *dp=color_write_merge(r,*dp,
-          blend_inverse_destination_alpha_pixel(r,*dp,sr,sg,sb,source_alpha));
+          blend_destination_factor_pixel(r,*dp,sr,sg,sb,source_alpha));
         continue;
       }
       double ia=ia_lut[aa];
@@ -5787,10 +5788,10 @@ static void sprite_pos_pixel(GmlRender *r,int x,int y,const double sample[4],dou
       blend_max_preset_pixel(r,*dst,sr,sg,sb,source_alpha));
     return;
   }
-  if(r->blendmode==7){
+  if(r->blendmode==7 || r->blendmode==8){
     unsigned source_alpha=(unsigned)lround(sample[3]*alpha);
     *dst=color_write_merge(r,*dst,
-      blend_inverse_destination_alpha_pixel(r,*dst,sr,sg,sb,source_alpha));
+      blend_destination_factor_pixel(r,*dst,sr,sg,sb,source_alpha));
     return;
   }
   if(sa>1) sa=1;

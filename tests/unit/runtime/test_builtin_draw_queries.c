@@ -407,6 +407,75 @@ static int runtime_font_styles_case(void){
   return ok;
 }
 
+static int inverse_destination_colour_case(void){
+  int ok=1;
+  for(int cached=0;cached<2;cached++){
+    GmlWin win={.bytecode=17}; GmlRender render; GmlVM vm={.win=&win};
+    if(gml_render_init(&render,&win)) return 0;
+    vm.render=&render;
+    uint32_t *pixels=malloc(512u*384u*sizeof *pixels);
+    render.atlas=calloc(1,sizeof *render.atlas); render.n_atlas=1;
+    render.tpag=calloc(1,sizeof *render.tpag); render.n_tpag=1;
+    render.spr=calloc(1,sizeof *render.spr); render.n_spr=render.spr_cap=1;
+    if(!pixels || !render.atlas || !render.tpag || !render.spr) return 0;
+    render.atlas[0].px=malloc(4); render.atlas[0].w=render.atlas[0].h=1;
+    render.spr[0].frame=malloc(sizeof(int));
+    if(!render.atlas[0].px || !render.spr[0].frame) return 0;
+    memset(render.atlas[0].px,255,4); render.spr[0].frame[0]=0;
+    render.spr[0].w=render.spr[0].h=render.spr[0].n_frames=1;
+    render.tpag[0]=(GmlTpag){.sw=1,.sh=1,.bw=1,.bh=1,.atlas=0};
+    uint8_t *runtime_pixels=malloc(4); if(!runtime_pixels) return 0;
+    memset(runtime_pixels,255,4);
+    int runtime=gml_sprite_append_from_rgba(&render,runtime_pixels,1,1,0,0,NULL);
+    int surface=gml_surface_create(&render,2,2);
+    if(runtime<0 || surface<0) return 0;
+    gml_surface_set_target(&render,surface);
+    query(&vm,"draw_clear",(GmlVal[]){vreal(0xFFFFFF)},1,0,&ok);
+    gml_surface_reset_target(&render);
+    GmlVal factors[]={vreal(10),vreal(1)};
+    for(int path=0;path<8;path++){
+      for(int i=0;i<512*384;i++) pixels[i]=0xFF204080u;
+      gml_render_begin(&render,pixels,512,384,0,0);
+      query(&vm,"gpu_set_blendmode_ext",factors,2,cached,&ok);
+      render.interp=path==4;
+      if(path==0){
+        GmlVal rectangle[]={vreal(0),vreal(0),vreal(511),vreal(383),vreal(0)};
+        query(&vm,"draw_set_color",(GmlVal[]){vreal(0xFFFFFF)},1,cached,&ok);
+        query(&vm,"draw_rectangle",rectangle,5,0,&ok);
+      } else if(path>=5){
+        if(path==5) gml_draw_surface_stretched(&render,surface,0,0,512,384,0xFFFFFF,1);
+        else gml_draw_surface_ext(&render,surface,0,path==7?384:0,
+                                 path==7?192:256,path==7?256:192,
+                                 path==7?90:0,0xFFFFFF,1);
+      } else {
+        GmlVal sprite[]={vreal(path==1?runtime:0),vreal(0),vreal(0),vreal(path==3?384:0),
+          vreal(path==3?384:512),vreal(path==3?512:384),vreal(path==3?90:0),
+          vreal(0xFFFFFF),vreal(1)};
+        query(&vm,"draw_sprite_ext",sprite,9,cached,&ok);
+      }
+      gml_render_prepare_draw(&render);
+      if(pixels[160*512+240]!=0xFFDFBF7Fu){
+        fprintf(stderr,"inverse destination colour: cached=%d path=%d got=%08x\n",
+                cached,path,pixels[160*512+240]); ok=0;
+      }
+    }
+    gml_surface_set_target(&render,surface);
+    query(&vm,"draw_clear_alpha",(GmlVal[]){vreal(0x804020),vreal(64.0/255.0)},2,0,&ok);
+    query(&vm,"gpu_set_blendmode_ext",factors,2,cached,&ok);
+    query(&vm,"draw_set_color",(GmlVal[]){vreal(0xFF8040)},1,cached,&ok);
+    query(&vm,"draw_set_alpha",(GmlVal[]){vreal(128.0/255.0)},1,cached,&ok);
+    query(&vm,"draw_rectangle",(GmlVal[]){vreal(0),vreal(0),vreal(1),vreal(1),vreal(0)},5,0,&ok);
+    gml_render_prepare_draw(&render);
+    if(render.fb[0]!=0x6038607Fu || render.fb_all_opaque){
+      fprintf(stderr,"inverse destination surface coverage: cached=%d got=%08x opaque=%d\n",
+              cached,render.fb[0],render.fb_all_opaque); ok=0;
+    }
+    gml_surface_reset_target(&render);
+    vm.render=NULL; vm.win=NULL; gml_vm_free(&vm); gml_render_free(&render); free(pixels);
+  }
+  return ok;
+}
+
 int main(int argc,char **argv){
   const char *filter=NULL;
   if(argc==3 && !strcmp(argv[1],"--case")) filter=argv[2];
@@ -416,7 +485,8 @@ int main(int argc,char **argv){
     {"all_live_layers_at_depth",layers_case},{"retired_alpha_controls",alpha_case},
     {"integer_layer_depth",layer_integer_depth_case},{"alpha_reference_bounds",alpha_reference_bounds_case},
     {"background_source_region",background_part_case},{"background_name_alias",background_names_case},
-    {"authored_font_styles",font_styles_case},{"runtime_font_styles",runtime_font_styles_case}};
+    {"authored_font_styles",font_styles_case},{"runtime_font_styles",runtime_font_styles_case},
+    {"inverse_destination_colour",inverse_destination_colour_case}};
   const AnygmTestGroup group={"draw_queries",cases,sizeof cases/sizeof cases[0]};
   AnygmTestResult result;
   anygm_test_run_groups(&group,1,filter,&result);

@@ -18,8 +18,9 @@ static inline uint32_t color_write_merge(const GmlRender *r, uint32_t old, uint3
   return (old&~bits)|(value&bits);
 }
 
-/* Fixed-function factors (inverse destination alpha, destination alpha). */
-static inline uint32_t blend_inverse_destination_alpha_pixel(
+/* Fixed-function destination-dependent pairs: (inverse destination alpha, destination alpha)
+ * and (inverse destination colour, zero). The latter uses alpha only for surface coverage. */
+static inline uint32_t blend_destination_factor_pixel(
     const GmlRender *render,uint32_t destination,
     int source_red,int source_green,int source_blue,unsigned source_alpha){
   unsigned destination_alpha=destination>>24;
@@ -27,6 +28,14 @@ static inline uint32_t blend_inverse_destination_alpha_pixel(
   unsigned destination_red=(destination>>16)&255u;
   unsigned destination_green=(destination>>8)&255u;
   unsigned destination_blue=destination&255u;
+  if(render->blendmode==8){
+    unsigned red=((unsigned)source_red*(255u-destination_red)+127u)/255u;
+    unsigned green=((unsigned)source_green*(255u-destination_green)+127u)/255u;
+    unsigned blue=((unsigned)source_blue*(255u-destination_blue)+127u)/255u;
+    unsigned coverage=gml_render_target_preserves_alpha(render)?
+      (source_alpha*inverse+127u)/255u:255u;
+    return (coverage<<24)|(red<<16)|(green<<8)|blue;
+  }
   unsigned red=((unsigned)source_red*inverse+destination_red*destination_alpha+127u)/255u;
   unsigned green=((unsigned)source_green*inverse+
                   destination_green*destination_alpha+127u)/255u;

@@ -144,6 +144,8 @@ void draw_surface_dual_sample(GmlRender *r,const struct GmlShaderPal *sp,int sur
       uint32_t *dp=&r->fb[(size_t)ty*r->fbw+tx],old=*dp,out=old;
       if(r->blendmode==3){
         out=blend_multiply_pixel(r,old,sr,sg,sb);
+      } else if(r->blendmode==8){
+        out=blend_destination_factor_pixel(r,old,sr,sg,sb,(unsigned)sa);
       } else if(r->blendmode==4){
         out=blend_max_preset_pixel(r,old,sr,sg,sb,(unsigned)sa);
       } else if(r->blendmode==1 || r->blendmode==2){
