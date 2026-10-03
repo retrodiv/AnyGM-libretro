@@ -1336,6 +1336,7 @@ int anygm_synthetic_shifted_port_content_create(AnygmSyntheticContent *fixture){
 }
 
 static int synthetic_window_gui_content_create(AnygmSyntheticContent *fixture,int explicit_gui_size){
+  int automatic_gui=explicit_gui_size>=9 && explicit_gui_size<=12;
   if(!fixture) return 0;
   memset(fixture,0,sizeof *fixture);
   if(!create_fixture_directory(fixture->directory,sizeof fixture->directory)) return 0;
@@ -1354,7 +1355,9 @@ static int synthetic_window_gui_content_create(AnygmSyntheticContent *fixture,in
       "window_set_size(64,48);\n"
       "surface_resize(application_surface,64,48);\n"
       "canvas=surface_create(64,48);\n"
-      "application_surface_draw_enable(false);\n":explicit_gui_size?
+      "application_surface_draw_enable(false);\n":automatic_gui?
+      "window_set_size(64,48);\n"
+      "texture_set_interpolation(true);\n":explicit_gui_size?
       "window_set_size(64,48);\n"
       "surface_resize(application_surface,64,48);\n"
       "application_surface_draw_enable(false);\n":
@@ -1372,7 +1375,9 @@ static int synthetic_window_gui_content_create(AnygmSyntheticContent *fixture,in
       "draw_sprite(spr_fixture,0,12,12);\n"
       "draw_set_color(c_white); draw_rectangle(8,6,11,9,false);\n":explicit_gui_size==7 || explicit_gui_size==8?
       "draw_clear(c_blue);\n"
-      "draw_sprite(spr_fixture,0,12,12);\n":explicit_gui_size==2?
+      "draw_sprite(spr_fixture,0,12,12);\n":explicit_gui_size==9 || explicit_gui_size==11?
+      "draw_sprite_stretched(spr_fixture,0,12,12,16,16);\n":explicit_gui_size==10 || explicit_gui_size==12?
+      "draw_sprite_stretched_ext(spr_fixture,0,12,12,16,16,c_gray,0.7);\n":explicit_gui_size==2?
       "display_set_gui_size(64,48); draw_clear(c_black);\n"
       "draw_surface(canvas,0,0);\n":explicit_gui_size?
       "var w = window_get_width(); var h = window_get_height();\n"
@@ -1402,7 +1407,8 @@ static int synthetic_window_gui_content_create(AnygmSyntheticContent *fixture,in
   project.rooms=&room; project.n_rooms=project.cap_rooms=1;
   project.room_order=&order; project.n_room_order=1;
   if(explicit_gui_size==3 || explicit_gui_size==4 || explicit_gui_size==5 ||
-     explicit_gui_size==6 || explicit_gui_size==7 || explicit_gui_size==8){
+     explicit_gui_size==6 || explicit_gui_size==7 || explicit_gui_size==8 ||
+     automatic_gui){
     uint8_t pixels[8u*8u*4u];
     for(int y=0;y<8;y++) for(int x=0;x<8;x++){
       size_t pixel=((size_t)y*8u+(size_t)x)*4u;
@@ -1444,6 +1450,10 @@ static int synthetic_window_gui_content_create(AnygmSyntheticContent *fixture,in
   if(explicit_gui_size==2){
     room.height=room.views[0].hview=40;
     room.background_color=0xFF0000;
+  }
+  if(automatic_gui) room.background_color=0x00FF00;
+  if(explicit_gui_size==11 || explicit_gui_size==12){
+    room.view_enabled=0; room.views[0].visible=0;
   }
   room.views[0].hspeed=room.views[0].vspeed=-1; room.views[0].object_id=-1;
   room.instances=&instance; room.n_instances=room.cap_instances=1;
@@ -1490,6 +1500,22 @@ int anygm_synthetic_direct_gui_sprite_content_create(AnygmSyntheticContent *fixt
 }
 int anygm_synthetic_resident_direct_gui_content_create(AnygmSyntheticContent *fixture){
   return synthetic_window_gui_content_create(fixture,7);
+}
+
+int anygm_synthetic_automatic_direct_gui_content_create(AnygmSyntheticContent *fixture){
+  return synthetic_window_gui_content_create(fixture,9);
+}
+
+int anygm_synthetic_automatic_alpha_gui_content_create(AnygmSyntheticContent *fixture){
+  return synthetic_window_gui_content_create(fixture,10);
+}
+
+int anygm_synthetic_automatic_viewless_gui_content_create(AnygmSyntheticContent *fixture){
+  return synthetic_window_gui_content_create(fixture,11);
+}
+
+int anygm_synthetic_automatic_viewless_alpha_gui_content_create(AnygmSyntheticContent *fixture){
+  return synthetic_window_gui_content_create(fixture,12);
 }
 
 int anygm_synthetic_surface_canvas_content_create(AnygmSyntheticContent *fixture){

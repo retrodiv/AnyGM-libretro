@@ -31,6 +31,10 @@ int main(int argc,char **argv){
   int gui_up=argc==2 && !strcmp(argv[1],"--keep-gui-upscale");
   int gui_resident_up=argc==2 && !strcmp(argv[1],"--keep-gui-resident-upscale");
   int gui_reduce=argc==2 && !strcmp(argv[1],"--keep-gui-reduce");
+  int gui_automatic=argc==2 && !strcmp(argv[1],"--keep-gui-automatic");
+  int gui_automatic_alpha=argc==2 && !strcmp(argv[1],"--keep-gui-automatic-alpha");
+  int gui_automatic_viewless=argc==2 && !strcmp(argv[1],"--keep-gui-automatic-viewless");
+  int gui_automatic_viewless_alpha=argc==2 && !strcmp(argv[1],"--keep-gui-automatic-viewless-alpha");
   int multiview=argc==2 && !strcmp(argv[1],"--keep-multiview");
   int multiview_offset=argc==2 && !strcmp(argv[1],"--keep-multiview-offset");
   int multiview_fractional=argc==2 && !strcmp(argv[1],"--keep-multiview-fractional");
@@ -53,6 +57,10 @@ int main(int argc,char **argv){
        gui_up?anygm_synthetic_indirect_gui_upscale_content_create(&fixture):
        gui_resident_up?anygm_synthetic_resident_indirect_gui_upscale_content_create(&fixture):
        gui_reduce?anygm_synthetic_indirect_gui_reduce_content_create(&fixture):
+       gui_automatic?anygm_synthetic_automatic_direct_gui_content_create(&fixture):
+       gui_automatic_alpha?anygm_synthetic_automatic_alpha_gui_content_create(&fixture):
+       gui_automatic_viewless?anygm_synthetic_automatic_viewless_gui_content_create(&fixture):
+       gui_automatic_viewless_alpha?anygm_synthetic_automatic_viewless_alpha_gui_content_create(&fixture):
        ended_frame?anygm_synthetic_ended_frame_content_create(&fixture):
        cursor_frame?anygm_synthetic_cursor_frame_content_create(&fixture):
        classic_redraw?anygm_synthetic_classic_redraw_content_create(&fixture):
@@ -72,7 +80,9 @@ int main(int argc,char **argv){
        multiview?anygm_synthetic_multiview_gpu_content_create(&fixture):
        dense?anygm_synthetic_gpu_dense_scene_route_content_create(&fixture):
              anygm_synthetic_gpu_scene_route_content_create(&fixture))) return 1;
-  if(gui_up || gui_resident_up || gui_reduce || multiview || multiview_offset ||
+  if(gui_up || gui_resident_up || gui_reduce || gui_automatic || gui_automatic_alpha ||
+     gui_automatic_viewless || gui_automatic_viewless_alpha ||
+     multiview || multiview_offset ||
      multiview_fractional || multiview_step || multiview_nested || multiview_assigned ||
      canvas_geometry || window_raster || centered_gui ||
      crt_native || crt_scaled || host_box || ended_frame || cursor_frame ||
@@ -87,6 +97,8 @@ int main(int argc,char **argv){
   if(argc!=1 && !(argc==2 && dense)){
     fputs("usage: test_gpu_scene_route [--dense|--keep|--keep-dense|"
           "--keep-gui-upscale|--keep-gui-resident-upscale|--keep-gui-reduce|--keep-multiview|"
+          "--keep-gui-automatic|--keep-gui-automatic-alpha|"
+          "--keep-gui-automatic-viewless|--keep-gui-automatic-viewless-alpha|"
           "--keep-multiview-offset|--keep-multiview-fractional|"
           "--keep-multiview-step-target|--keep-multiview-nested-target|"
           "--keep-multiview-assigned-surface|--keep-canvas-geometry|"

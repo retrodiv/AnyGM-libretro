@@ -1763,10 +1763,14 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
 			                        ? 0.0 : -(double)engine->gui_offset_y;
 			    /* The indirect GUI is a separate physical SCREEN target. A complete current
 			     * raster can supply its terminal nearest enlargement; excluded writers and
-			     * reductions retain the existing CPU observation and composition below. */
+			     * reductions retain the existing CPU observation and composition below.
+			     * Direct automatic composition needs the same owned SCREEN before its
+			     * first GUI draw; otherwise the pending underlay cannot stay resident. */
 			    if(!engine->composed_frame && !engine->aspect_force_active &&
 			       !aspect_gui_center &&
-			       (gui_indirect || !render_presentation.application_draw_enabled) &&
+			       (gui_indirect || !render_presentation.application_draw_enabled ||
+			        (frame_view_count<=1 && !gml_render_is_classic(&engine->render) &&
+			         render_presentation.application_owned)) &&
 			       engine_graphics_active(engine) &&
 			       (engine->scene_renderer_session==ANYGM_SCENE_RENDERER_OPENGL ||
 			        anygm_host_development_setting(&engine->host,"GML_SCENE_GPU_PROTOTYPE")))

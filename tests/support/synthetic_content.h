@@ -41,6 +41,11 @@ int anygm_synthetic_indirect_gui_reduce_content_create(AnygmSyntheticContent *fi
 int anygm_synthetic_indirect_gui_alpha_content_create(AnygmSyntheticContent *fixture);
 int anygm_synthetic_direct_gui_sprite_content_create(AnygmSyntheticContent *fixture);
 int anygm_synthetic_resident_direct_gui_content_create(AnygmSyntheticContent *fixture);
+/* Direct SCREEN keeps automatic application composition before the first GUI stretch. */
+int anygm_synthetic_automatic_direct_gui_content_create(AnygmSyntheticContent *fixture);
+int anygm_synthetic_automatic_alpha_gui_content_create(AnygmSyntheticContent *fixture);
+int anygm_synthetic_automatic_viewless_gui_content_create(AnygmSyntheticContent *fixture);
+int anygm_synthetic_automatic_viewless_alpha_gui_content_create(AnygmSyntheticContent *fixture);
 int anygm_synthetic_surface_canvas_content_create(AnygmSyntheticContent *fixture);
 int anygm_synthetic_background_color_content_create(AnygmSyntheticContent *fixture);
 int anygm_synthetic_framebuffer_content_create(AnygmSyntheticContent *fixture);

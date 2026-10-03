@@ -519,7 +519,8 @@ static int resident_indirect_gui_variant(
   if(!selected.engine->render.base_scene_resource ||
      counters.scene_operations[GML_RENDER_OP_TEXTURED_QUAD]==0u)
     fprintf(stderr,"GUI %s clear=%llu textured=%llu offered=%llu accepted=%llu "
-            "sprite=%llu target=%p gui=%p\n",
+            "sprite=%llu target=%p gui=%p automatic=%d covered=%d interp=%d resident=%d "
+            "underlay=%d source=%dx%d mask=%d\n",
             scale_direction>0?"upscale":scale_direction==0?"reduce":"direct",
             (unsigned long long)counters.scene_operations[GML_RENDER_OP_CLEAR],
             (unsigned long long)counters.scene_operations[GML_RENDER_OP_TEXTURED_QUAD],
@@ -527,13 +528,37 @@ static int resident_indirect_gui_variant(
             (unsigned long long)counters.scene_batches_accepted,
             (unsigned long long)counters.scene_families[GML_RENDER_SCENE_SPRITE],
             (void *)selected.engine->render.base_scene_resource,
-            (void *)selected.engine->gui_buffer);
+            (void *)selected.engine->gui_buffer,
+            create_fixture==anygm_synthetic_automatic_direct_gui_content_create,
+            create_fixture==anygm_synthetic_automatic_alpha_gui_content_create,
+            selected.engine->render.interp,selected.engine->render.resident_application_pass,
+            selected.engine->render.pending_underlay,selected.engine->render.app_w,
+            selected.engine->render.app_h,selected.engine->render.app_presentation_coverage_active);
   REQUIRE(selected.engine->render.base_scene_resource &&
           selected.engine->render.base_scene_resource_pixels==
             (scale_direction>=0?selected.engine->gui_buffer:selected.engine->screen) &&
           counters.scene_operations[GML_RENDER_OP_CLEAR]>0u &&
           counters.scene_operations[GML_RENDER_OP_TEXTURED_QUAD]>0u,
           "GUI uses a counted resident SCREEN clear and sprite");
+  if(create_fixture==anygm_synthetic_automatic_direct_gui_content_create ||
+    create_fixture==anygm_synthetic_automatic_alpha_gui_content_create ||
+    create_fixture==anygm_synthetic_automatic_viewless_gui_content_create ||
+    create_fixture==anygm_synthetic_automatic_viewless_alpha_gui_content_create){
+    GmlRenderPresentationMetrics presentation={0};
+    gml_render_presentation_metrics(&selected.engine->render,&presentation);
+    REQUIRE(presentation.application_draw_enabled &&
+            counters.scene_families[GML_RENDER_SCENE_SURFACE]>0u &&
+            counters.scene_families[GML_RENDER_SCENE_SPRITE]>0u &&
+            cpu.pixels &&
+            (((const uint32_t *)cpu.pixels)[0]&0xFFFFFFu)==0x00FF00u,
+            "visible automatic application underlay precedes the first GPU GUI stretch");
+    if(create_fixture==anygm_synthetic_automatic_viewless_gui_content_create){
+      GmlVal *views=gml_varmap_get(&selected.engine->vm.globals,"view_enabled");
+      REQUIRE(views && views->t==V_REAL && views->d==0.0 &&
+              present_view_count(selected.engine,NULL,NULL,NULL)==0,
+              "automatic viewless GUI keeps the authored view-disabled state");
+    }
+  }
   if(scale_direction>1){
     if(selected.engine->screen_pass_frames!=1u || counters.cpu_upload_frames!=0u){
       fprintf(stderr,"upscaled SCREEN passes=%u transport=%u pending=%d materializations=%u "
@@ -653,7 +678,11 @@ static int resident_indirect_gui_case(void){
          resident_indirect_gui_variant(
            anygm_synthetic_direct_gui_sprite_content_create,-1) &&
          resident_indirect_gui_variant(
-           anygm_synthetic_resident_direct_gui_content_create,-2);
+           anygm_synthetic_resident_direct_gui_content_create,-2) &&
+         resident_indirect_gui_variant(
+           anygm_synthetic_automatic_direct_gui_content_create,-2) &&
+         resident_indirect_gui_variant(
+           anygm_synthetic_automatic_viewless_gui_content_create,-2);
 }
 
 static int resident_indirect_gui_alpha_fallback_case(void){
