@@ -41,8 +41,19 @@ The default Unix outputs are `anygm_libretro.so` and
 `build/unix/libanygm_runtime.a`. Set `platform` to select a supported platform
 shape (`unix`, `win`, `osx`, `android`, or the Apple `ios`/`tvos` variants), as
 the platform-targets section below spells out. `CC`, `CXX`, `AR`,
-`CROSS_COMPILE`, `CPPFLAGS`, `CFLAGS`, `LDFLAGS`, `LDLIBS`, `STATIC_LINKING`, and
+`CROSS_COMPILE`, `CPPFLAGS`, `CFLAGS`, `CXXFLAGS`, `LDFLAGS`, `LDLIBS`, `STATIC_LINKING`, and
 `BUILD_DIR` remain caller-owned build inputs.
+
+Core and runtime objects rebuild when the selected compiler commands, compilation
+flags or SDK environment change. Linker and archiver settings are tracked separately:
+changing only `LDFLAGS` relinks without recompiling. Repeating an unchanged build
+retains its objects and library. Use separate `BUILD_DIR` values for concurrent
+builds with different settings. If a toolchain or SDK is replaced in place while
+its command and settings stay identical, clean that build directory first.
+
+Dependencies compile directly from the source lists below; the core build does
+not invoke Autoconf or consume `CONFIGURE_HOST` / `CONFIGURE_BUILD`. Set the actual
+compiler commands and their flags for cross compilation.
 
 The source lists and their order are defined in `Makefile.common`. A build does
 not discover sources by walking the filesystem, which keeps buildbot and local
@@ -75,6 +86,7 @@ build machine for a graphics SDK.
 ```sh
 make warnings-check
 make architecture-check
+make build-config-check
 make builtin-registry-check
 make api-check
 make contract-check

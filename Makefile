@@ -242,9 +242,38 @@ core: $(CORE_TARGET)
 
 runtime: $(RUNTIME_LIBRARY)
 
+# Track caller toolchain settings without adding a generator to ordinary builds.
+# Expand before target-specific warning flags can be inherited from one object.
+build_quote = '$(subst ','"'"',$(1))'
+COMPILE_CONFIG := $(BUILD_DIR)/.compile-config
+LINK_CONFIG := $(BUILD_DIR)/.link-config
+COMPILE_SETTINGS := $(foreach name,CC CXX CPPFLAGS CFLAGS CXXFLAGS PIC_FLAGS LIBRETRO_CPPFLAGS MACOSX_DEPLOYMENT_TARGET SDKROOT PATH CPATH C_INCLUDE_PATH CPLUS_INCLUDE_PATH,$(call build_quote,$(name)=$($(name))))
+LINK_SETTINGS := $(foreach name,CC CXX AR ARFLAGS LDFLAGS LDLIBS CORE_SHARED_FLAG CORE_PLATFORM_LDFLAGS CORE_PLATFORM_LDLIBS STATIC_LINKING CORE_OBJECTS RUNTIME_OBJECTS MACOSX_DEPLOYMENT_TARGET SDKROOT PATH LIBRARY_PATH,$(call build_quote,$(name)=$($(name))))
+
+.PHONY: FORCE_BUILD_CONFIG build-config-check
+FORCE_BUILD_CONFIG:
+
+$(COMPILE_CONFIG): FORCE_BUILD_CONFIG
+	@mkdir -p $(dir $@)
+	@printf '%s\n' $(COMPILE_SETTINGS) > $@.tmp
+	@cmp -s $@.tmp $@ || cp $@.tmp $@
+
+$(LINK_CONFIG): FORCE_BUILD_CONFIG
+	@mkdir -p $(dir $@)
+	@printf '%s\n' $(LINK_SETTINGS) > $@.tmp
+	@cmp -s $@.tmp $@ || cp $@.tmp $@
+
+$(RUNTIME_OBJECTS) $(LIBRETRO_OBJECTS) $(TEST_HOST_OBJECTS): $(COMPILE_CONFIG) Makefile Makefile.common
+$(CORE_TARGET) $(RUNTIME_LIBRARY): $(LINK_CONFIG)
+
+build-config-check:
+	python3 tests/architecture/check_build_config.py
+
+check: build-config-check
+
 ifeq ($(STATIC_LINKING),1)
 $(CORE_TARGET): $(CORE_OBJECTS)
-	$(AR) $(ARFLAGS) $@ $^
+	$(AR) $(ARFLAGS) $@ $(CORE_OBJECTS)
 else
 $(CORE_TARGET): $(CORE_OBJECTS) $(CORE_LINK_INPUTS)
 	$(CXX) $(LDFLAGS) $(CORE_SHARED_FLAG) $(PIC_FLAGS) $(CORE_PLATFORM_LDFLAGS) -o $@ $(CORE_OBJECTS) $(LDLIBS) $(CORE_PLATFORM_LDLIBS)
@@ -252,7 +281,7 @@ endif
 
 $(RUNTIME_LIBRARY): $(RUNTIME_OBJECTS)
 	mkdir -p $(dir $@)
-	$(AR) $(ARFLAGS) $@ $^
+	$(AR) $(ARFLAGS) $@ $(RUNTIME_OBJECTS)
 
 $(BUILD_DIR)/obj/%.o: %.c
 	mkdir -p $(dir $@)
