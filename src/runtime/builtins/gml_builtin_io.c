@@ -738,6 +738,22 @@ GmlVal builtin_ini_open_file(GmlVM *vm, GmlVal *a, int n){
 GmlVal builtin_file_text_open_read(GmlVM *vm, GmlVal *a, int n){
   char *path=resolve_read_path(vm,S(vm,a,n,0));
   int id=vm_file_open(vm,path,"r");
+  int slot=id>0?vm_file_slot(vm,id):-1;
+  /* An initial UTF-8 signature describes the text encoding, not the first
+   * line's contents. Keep incomplete signatures and binary readers untouched. */
+  if(slot>=0 && vm_file_seek(vm,slot,0,ANYGM_SEEK_START)==0){
+    int first=vm_file_getc(vm,slot);
+    int second=first==0xef?vm_file_getc(vm,slot):EOF;
+    int third=second==0xbb?vm_file_getc(vm,slot):EOF;
+    if(first!=0xef || second!=0xbb || third!=0xbf){
+      if(vm_file_seek(vm,slot,0,ANYGM_SEEK_START)!=0){
+        /* A host may refuse a later rewind. Reopen rather than returning a
+         * reader whose first ordinary bytes have already been consumed. */
+        vm_file_close(vm,slot);
+        id=vm_file_open(vm,path,"r");
+      }
+    }
+  }
   if(builtin_setting(vm,"GML_LOG_IO"))
     anygm_host_logf(vm?vm->host:NULL,ANYGM_LOG_DEBUG,
                     "[io] file_text_open_read path=%s handle=%d\n",

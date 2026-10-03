@@ -78,6 +78,41 @@ static int string_is(GmlVal value,const char *expected){
   return ok;
 }
 static int real_is(GmlVal value,double expected){ return value.t==V_REAL && value.d==expected; }
+static int text_signature_case(void){
+  static const char *inputs[]={
+    "\xef\xbb\xbf" "header\r\nnext", "header\r\nnext", "", "\xef", "\xef\xbb",
+    "\xef\xbb!", "x\xef\xbb\xbf"
+  };
+  static const char *expected[]={"header","header","","\xef","\xef\xbb","\xef\xbb!","x\xef\xbb\xbf"};
+  int ok=1;
+  for(int cached=0;cached<2;cached++){
+    for(size_t input=0;input<sizeof inputs/sizeof inputs[0];input++){
+      FileFixture f; GmlVM vm; fixture_init(&f,&vm);
+      f.read_limit=1;
+      ok &= anygm_memory_vfs_add_file(&f.memory,"/text.txt",inputs[input],strlen(inputs[input]));
+      GmlVal path=vstr("/text.txt");
+      GmlVal handle=invoke(&vm,"file_text_open_read",&path,1,cached,&ok);
+      ok &= handle.t==V_REAL && handle.d>0;
+      ok &= string_is(invoke(&vm,"file_text_read_string",&handle,1,cached,&ok),expected[input]);
+      if(input<2){
+        ok &= string_is(invoke(&vm,"file_text_readln",&handle,1,cached,&ok),"\r\n");
+        ok &= string_is(invoke(&vm,"file_text_read_string",&handle,1,cached,&ok),"next");
+      }
+      invoke(&vm,"file_text_close",&handle,1,cached,&ok);
+      handle=invoke(&vm,"file_text_open_read",&path,1,cached,&ok);
+      const char *line=input<2?"header\r\n":expected[input];
+      ok &= string_is(invoke(&vm,"file_text_readln",&handle,1,cached,&ok),line);
+      invoke(&vm,"file_text_close",&handle,1,cached,&ok);
+      GmlVal binary_args[]={path,vreal(0)};
+      handle=invoke(&vm,"file_bin_open",binary_args,2,cached,&ok);
+      double first=*inputs[input]?(unsigned char)inputs[input][0]:0;
+      ok &= real_is(invoke(&vm,"file_bin_read_byte",&handle,1,cached,&ok),first);
+      invoke(&vm,"file_bin_close",&handle,1,cached,&ok);
+      ok &= fixture_destroy(&f,&vm);
+    }
+  }
+  return ok;
+}
 static int digest_case(void){
   const char *names[]={"md5_file","sha1_file"};
   const char *hashes[][3]={
@@ -307,6 +342,7 @@ static int image_save_failure_case(void){
 }
 int main(void){
   static const AnygmTestCase cases[]={
+    {"text_signature_and_binary_preservation",text_signature_case},
     {"digest_vectors_overlay_and_short_reads",digest_case},
     {"digest_injected_failures",digest_failure_case},
     {"rewrite_handle_and_cursor",rewrite_case},
