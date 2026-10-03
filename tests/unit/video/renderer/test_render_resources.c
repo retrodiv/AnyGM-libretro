@@ -8,6 +8,7 @@
 #include "gml_render_internal.h"
 #include "gml_render_state.h"
 #include "gml_render_surfaces_internal.h"
+#include "gml_render_sprites_internal.h"
 #include "gml_render_shaders.h"
 #include "gml_render_texture.h"
 #include "gml_builtin.h"
@@ -3783,6 +3784,70 @@ static int resident_outline_coverage_public_order(void){
   return 1;
 }
 
+static int resident_atlas_uv_refusal_preserves_queued_prefix(void){
+  GmlRender *render=(GmlRender*)calloc(1,sizeof *render);
+  GmlWin content={0};
+  FakeDevice fake={0};
+  GmlRenderDeviceServices device=service(&fake);
+  GmlRenderJournalMetrics metrics={0};
+  CHECK(render && gml_render_init(render,NULL)==0);
+  const int atlas_index=render->n_atlas;
+  GmlAtlas *atlases=(GmlAtlas*)realloc(render->atlas,
+      (size_t)(atlas_index+1)*sizeof *render->atlas);
+  CHECK(atlases);
+  render->atlas=atlases;
+  memset(&render->atlas[atlas_index],0,sizeof *render->atlas);
+  render->n_atlas=atlas_index+1;
+  render->atlas[atlas_index].w=render->atlas[atlas_index].h=8;
+  render->atlas[atlas_index].px=(uint8_t*)malloc(8u*8u*4u);
+  render->tpag=(GmlTpag*)calloc(1,sizeof *render->tpag);
+  CHECK(render->atlas[atlas_index].px && render->tpag);
+  for(unsigned index=0;index<8u*8u;index++){
+    uint8_t *pixel=render->atlas[atlas_index].px+index*4u;
+    pixel[0]=32u; pixel[1]=64u; pixel[2]=96u; pixel[3]=128u;
+  }
+  render->n_tpag=1;
+  GmlTpag *page=&render->tpag[0];
+  page->atlas=atlas_index;
+  page->sx=page->sy=1;
+  page->sw=page->sh=page->tw=page->th=page->bw=page->bh=2;
+  content.bytecode=15;
+  render->win=&content;
+  render->interp=1;
+  CHECK(gml_render_application_surface_ensure_owned(render,8,8));
+  gml_render_bind_device(render,&device);
+  CHECK(gml_render_begin_resident_owned_application(render,0.0,0.0,0));
+  CHECK(gml_render_resident_filtered_atlas_page(render,0,2.49,2.49,0.6,0.6,
+        GML_RENDER_SCENE_SPRITE,0xFFFFFFu,1.0,NULL,0));
+  for(unsigned variant=0;variant<4u;variant++){
+    page->sx=page->sy=1;
+    page->tx=page->ty=0;
+    page->bw=page->bh=2;
+    double left=2.49,top=2.49,xs=0.6,ys=0.6;
+    if(variant==0u){ page->sx=6; page->tx=1; page->bw=3; left=2.47; xs=0.26; }
+    if(variant==1u){ page->sx=0; page->bw=3; }
+    if(variant==2u){ page->sy=6; page->ty=1; page->bh=3; top=2.47; ys=0.26; }
+    if(variant==3u){ page->sy=0; page->bh=3; }
+    page->scene_opaque_checked=0;
+    /* Fractional snapped coverage can extrapolate a vertex outside the atlas
+     * although the stored source rectangle is valid. Refuse before enqueue. */
+    CHECK(!gml_render_resident_filtered_atlas_page(render,0,left,top,xs,ys,
+          GML_RENDER_SCENE_SPRITE,0xFFFFFFu,1.0,NULL,0));
+    CHECK(render->resident_application_pass && fake.submits==0 && fake.readbacks==0);
+  }
+  fake.readback_colour=0x80406080u;
+  CHECK(gml_render_scene_flush(render) && fake.submits==1 &&
+        fake.last_batch_operations==1u && fake.readbacks==1);
+  gml_render_resource_journal_metrics(render->app_surface_resource,&metrics);
+  CHECK(metrics.authority==GML_RENDER_RESOURCE_BOTH_CURRENT &&
+        metrics.logical_version==2u && metrics.cpu_version==2u);
+  CHECK(gml_render_resident_application_cpu_barrier(render) &&
+        !render->resident_application_pass && fake.readbacks==1);
+  gml_render_free(render);
+  free(render);
+  return 1;
+}
+
 static int resident_application_sprite_cpu_fallback(void){
   GmlRender *render=(GmlRender*)calloc(1,sizeof *render);
   GmlRenderDeviceServices device;
@@ -6056,6 +6121,7 @@ int main(void){
   passed+=resident_filled_span_public_order();
   passed+=resident_line_coverage_public_order();
   passed+=resident_outline_coverage_public_order();
+  passed+=resident_atlas_uv_refusal_preserves_queued_prefix();
   passed+=resident_application_sprite_cpu_fallback();
   passed+=resident_background_and_tile_cpu_barriers();
   passed+=atlas_scene_identity_and_retirement();
@@ -6088,6 +6154,6 @@ int main(void){
   passed+=source_free_primitive_rect_replay();
   passed+=stretched_float_exact_replay();
   passed+=filtered_font_exact_recovery();
-  printf("render resource cases: passed=%d failed=%d\n",passed,77-passed);
-  return passed==77?EXIT_SUCCESS:EXIT_FAILURE;
+  printf("render resource cases: passed=%d failed=%d\n",passed,78-passed);
+  return passed==78?EXIT_SUCCESS:EXIT_FAILURE;
 }

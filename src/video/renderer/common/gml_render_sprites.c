@@ -1027,6 +1027,15 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
     r->fb_all_transparent=0;
     return 1;
   }
+  /* Rounded coverage can extrapolate a vertex beyond a valid atlas rectangle.
+   * Match the device's axis-quad bounds before an immutable queued batch can
+   * become unsubmitable; the caller retains its ordered CPU fallback. */
+  const GmlRenderQuad *quad=&operation.payload.quad;
+  if(quad->shape==GML_RENDER_QUAD_AXIS_ALIGNED) for(unsigned corner=0;corner<4u;corner++){
+    if(!isfinite(quad->u[corner]) || !isfinite(quad->v[corner]) ||
+       quad->u[corner]<0.0 || quad->u[corner]>1.0 ||
+       quad->v[corner]<0.0 || quad->v[corner]>1.0) return 0;
+  }
   if(!gml_render_application_scene_enqueue(r,&operation,&state,&source)) return 0;
   r->fb_all_transparent=0;
   return 1;

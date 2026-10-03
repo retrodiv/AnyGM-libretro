@@ -154,6 +154,13 @@ set of qualified scene operations or change CPU raster bodies.
 
 ## Current operation support and repair-level rules
 
+`common/gml_render_sprites.c::resident_filtered_atlas_page` checks finite normalised
+atlas UV coordinates within [0,1] before enqueuing an axis-aligned candidate. A valid physical
+source rectangle does not guarantee this after fractional coverage rounding. Unqualified
+coordinates retain the ordered CPU path; they are not clamped or admitted into an immutable
+batch which the device would refuse. `tests/unit/video/renderer/test_render_resources.c::resident_atlas_uv_refusal_preserves_queued_prefix`
+checks all four atlas boundaries and successful completion of the preceding valid queued draw.
+
 This is the live operation-ledger view, distinct from the P1 snapshot below.
 `TEXTURED_QUAD` also carries the already-qualified two-triangle positioned and
 corner-colour geometry; the separate `TEXTURED_TRIANGLES` opcode is not selected.
