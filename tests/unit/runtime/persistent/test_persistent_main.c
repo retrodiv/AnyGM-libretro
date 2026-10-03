@@ -41,6 +41,7 @@ int main(int argc,char **argv){
     {"temporary_string_teardown",expect_temporary_string_teardown},
     {"finite_script_work",expect_finite_script_work},
     {"alarm_dispatch_order",expect_alarm_dispatch_order},
+    {"normal_step_resource_order",expect_normal_step_resource_order},
     {"alarm_newborn_deferral",expect_alarm_newborn_deferral},
     {"automatic_motion_order",expect_automatic_motion_order},
     {"legacy_jump_to_start",expect_legacy_jump_to_start},

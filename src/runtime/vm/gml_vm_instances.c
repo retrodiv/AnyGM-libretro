@@ -520,7 +520,8 @@ void gml_vm_instances_run_classic_event(GmlVM *vm, const char *suffix){
     int count=gml_vm_instances_collect_object_slots(vm,object);
     if(count>=0){
       for(int k=count-1;k>=0;k--){ int i=vm->event_ord[k];
-        if(i<vm->inst_count && vm->inst[i].active && !vm->inst[i].marked && vm->inst[i].obj==object){
+        if(i<vm->inst_count && vm->inst[i].active && !vm->inst[i].marked && vm->inst[i].obj==object &&
+           gml_vm_instances_step_snapshot_member(vm,&vm->inst[i])){
           gml_run_event(vm,&vm->inst[i],suffix);
           /* A classic room request is committed after the requesting event completes.  Code
            * following room_goto inside that handler has already run, but no later instance from
@@ -529,7 +530,8 @@ void gml_vm_instances_run_classic_event(GmlVM *vm, const char *suffix){
         } }
     } else {
       int extent=vm->inst_count;
-      for(int i=0;i<extent;i++) if(vm->inst[i].active && !vm->inst[i].marked && vm->inst[i].obj==object){
+      for(int i=0;i<extent;i++) if(vm->inst[i].active && !vm->inst[i].marked && vm->inst[i].obj==object &&
+          gml_vm_instances_step_snapshot_member(vm,&vm->inst[i])){
         gml_run_event(vm,&vm->inst[i],suffix);
         if(vm->pending_room>=0) return;
       }

@@ -693,11 +693,21 @@ void gml_vm_step(GmlVM *vm){
    * after Alarm and input, so instances created earlier in the frame join normal Step. The later
    * policy retains the frame-start snapshot. */
   gml_vm_instances_run_classic_triggers(vm,0);
-  /* Normal Step retains its existing index bound without an identity watermark. Slot
-   * reuse may affect whether a new instance runs in this phase; the required timing
-   * remains unverified, so this behavior is unchanged. */
+  /* Modern Studio shares resource-major Normal Step with classic formats, but retains its
+   * frame-start identity snapshot. The already measured Animation End room-entry phase
+   * remains pool-ordered: its concrete-handler filter and reused-slot timing are separate
+   * from ordinary steady-room dispatch. Earlier Studio retains its existing flat order. */
   uint32_t step_first_id=vm->next_id; (void)step_first_id;
-  if(vm->win && anygm_policy_uses_classic_runtime(vm->win)) gml_vm_instances_run_classic_event(vm,"Step_0");
+  if(vm->win && anygm_policy_resource_major_normal_step(vm->win) &&
+     !animation_transition_limits_normal_step){
+    gml_vm_instances_run_classic_event(vm,"Step_0");
+    if(!anygm_policy_uses_classic_runtime(vm->win) && vm->pending_room>=0){
+      gml_vm_apply_pending_room(vm,0);
+      gml_vm_finish_step(vm,prev_alloc_base);
+      VMPROF_MARK(rest);
+      return;
+    }
+  }
   else {
     int step_count=anygm_policy_snapshot_instance_iteration(vm->win)?n:vm->inst_count;
     for(int i=0;i<step_count;i++){

@@ -45,6 +45,7 @@ int expect_room_order_boundaries(void);
 int expect_temporary_string_teardown(void);
 int expect_finite_script_work(void);
 int expect_alarm_dispatch_order(void);
+int expect_normal_step_resource_order(void);
 int expect_alarm_newborn_deferral(void);
 int expect_automatic_motion_order(void);
 int expect_legacy_jump_to_start(void);

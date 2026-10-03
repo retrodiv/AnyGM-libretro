@@ -223,6 +223,13 @@ static inline int anygm_policy_snapshot_instance_iteration(const GmlWin *content
   return p?p->instance_iteration==ANYGM_INSTANCE_ITERATION_FRAME_SNAPSHOT:
     (content&&!content->classic_version&&content->bytecode>=17);
 }
+/* Normal Step's cross-object order is independent of the Alarm policy. Modern Studio
+ * uses resource-major Normal Step while keeping its frame-start identity snapshot. */
+static inline int anygm_policy_resource_major_normal_step(const GmlWin *content){
+  const AnygmCompatibilityProfile *p=anygm_profile(content);
+  return p?(p->uses_classic_runtime || p->diagnostic_family==ANYGM_FAMILY_STUDIO_SECOND):
+    (content&&(content->classic_version || content->bytecode>=17));
+}
 static inline int anygm_policy_alarm_at_zero(const GmlWin *content){
   const AnygmCompatibilityProfile *p=anygm_profile(content);
   return p?p->alarm_threshold==ANYGM_ALARM_TRIGGER_AT_ZERO:

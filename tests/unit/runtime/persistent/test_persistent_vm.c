@@ -701,6 +701,107 @@ cleanup:
 }
 
 
+int expect_normal_step_resource_order(void){
+  GmlcProject project={0};
+  GmlcObject objects[3]={{0}};
+  GmlcObjectEvent events[3][3]={{{0}}};
+  GmlcRoom room={0};
+  GmlcRoomInstance placed[3]={{0}};
+  int room_order[1]={0};
+  const int placement_order[3]={2,0,1};
+  const int event_subtypes[3]={1,0,2};
+  const char *names[3]={"obj_phase_producer","obj_phase_middle","obj_phase_consumer"};
+  AnygmHostServices services={0};
+  char begin_path[]="/tmp/gml-step-order-begin-XXXXXX";
+  char normal_path[]="/tmp/gml-step-order-normal-XXXXXX";
+  char end_path[]="/tmp/gml-step-order-end-XXXXXX";
+  char package_path[]="/tmp/gml-step-order-package-XXXXXX";
+  char *paths[4]={begin_path,normal_path,end_path,package_path};
+  int descriptors[4]={-1,-1,-1,-1};
+  int ok=0;
+  for(int i=0;i<4;i++){
+    descriptors[i]=mkstemp(paths[i]);
+    if(descriptors[i]<0) goto cleanup;
+    close(descriptors[i]); descriptors[i]=-1;
+  }
+  if(!fixture_write_text(begin_path,"global.begin_order=global.begin_order*10+x;\n") ||
+     !fixture_write_text(normal_path,
+       "global.normal_order=global.normal_order*10+x;\n"
+       "if(x==1) global.produced=global.produced+1;\n"
+       "if(x==3) global.observed=global.produced;\n") ||
+     !fixture_write_text(end_path,"global.end_order=global.end_order*10+x;\n")) goto cleanup;
+  services.struct_size=sizeof services;
+  services.abi_version=ANYGM_HOST_SERVICES_VERSION;
+  anygm_stdio_vfs_services_init(&services);
+  project.name="normal-step-order-fixture";
+  project.host=&services;
+  project.objects=objects; project.n_objects=project.cap_objects=3;
+  project.rooms=&room; project.n_rooms=project.cap_rooms=1;
+  project.room_order=room_order; project.n_room_order=1;
+  for(int i=0;i<3;i++){
+    objects[i].id=objects[i].name=(char*)names[i];
+    objects[i].sprite_id=objects[i].mask_id=objects[i].parent_id=-1;
+    objects[i].events=events[i]; objects[i].n_events=objects[i].cap_events=3;
+    for(int e=0;e<3;e++){
+      events[i][e].event_type=3;
+      events[i][e].event_number=event_subtypes[e];
+      events[i][e].source_path=paths[e];
+    }
+    placed[i].id=placed[i].name=(char*)"placed_phase_instance";
+    placed[i].object_id=placement_order[i];
+    placed[i].instance_id=100000+i;
+    placed[i].x=placement_order[i]+1;
+  }
+  room.id=room.name=(char*)"room_phase_order";
+  room.width=320; room.height=240; room.speed=60;
+  room.instances=placed; room.n_instances=room.cap_instances=3;
+  {
+    char error[256]={0};
+    if(!gmlc_package_write_structural(&project,package_path,error,sizeof error)){
+      fprintf(stderr,"normal Step fixture package failed: %s\n",error);
+      goto cleanup;
+    }
+  }
+  ok=1;
+  for(int revision=16;revision<=17;revision++){
+    GmlWin win;
+    if(anygm_stdio_load_win(&win,package_path)){ ok=0; break; }
+    win.bytecode=(uint8_t)revision;
+    GmlVM vm;
+    if(gml_vm_init(&vm,&win,&services)){ gml_win_free(&win); ok=0; break; }
+    gml_room_enter(&vm,0);
+    *gml_varmap_put(&vm.globals,"produced")=vreal(0);
+    for(int frame=0;frame<3;frame++){
+      const char *order_names[3]={"begin_order","normal_order","end_order"};
+      for(int e=0;e<3;e++) *gml_varmap_put(&vm.globals,order_names[e])=vreal(0);
+      gml_vm_step(&vm);
+      double expected[3]={312,revision==17?123:312,312};
+      for(int e=0;e<3;e++){
+        GmlVal *value=gml_varmap_get(&vm.globals,order_names[e]);
+        if(!value || value->t!=V_REAL || value->d!=expected[e]){
+          fprintf(stderr,"revision %d %s frame %d: got %.0f expected %.0f\n",
+            revision,order_names[e],frame,value&&value->t==V_REAL?value->d:-1,expected[e]);
+          ok=0;
+        }
+      }
+      GmlVal *observed=gml_varmap_get(&vm.globals,"observed");
+      double expected_observed=frame+(revision==17?1:0);
+      if(!observed || observed->t!=V_REAL || observed->d!=expected_observed){
+        fprintf(stderr,"revision %d consumer frame %d: got %.0f expected %.0f\n",
+          revision,frame,observed&&observed->t==V_REAL?observed->d:-1,expected_observed);
+        ok=0;
+      }
+    }
+    gml_vm_free(&vm); gml_win_free(&win);
+  }
+cleanup:
+  for(int i=0;i<4;i++){
+    if(descriptors[i]>=0) close(descriptors[i]);
+    unlink(paths[i]);
+  }
+  return ok;
+}
+
 static int expect_alarm_dispatch_order_for_revision(const char *package_path,
                                                     uint32_t bytecode,
                                                     double expected_order,
