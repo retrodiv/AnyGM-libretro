@@ -85,6 +85,7 @@ static uint32_t *surface_pixels_access(GmlRender *r, int id, int *w, int *h,
   }
   int i=surface_slot(id);
   if(i<0 || !r->surface[i].live || !r->surface[i].px) return NULL;
+  if(!gml_render_application_scene_flush(r)) return NULL;
   if(r->surface[i].resource){
     uint32_t *canonical=NULL;
     int write=writable || has_suspended_fill(r,r->surface[i].px);

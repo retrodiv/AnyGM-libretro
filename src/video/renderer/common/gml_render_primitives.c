@@ -18,7 +18,7 @@
 static int resident_flat_eligible(GmlRender *render){
   return render && render->resident_application_pass && gml_render_device(render) &&
     gml_render_scene_target_matches(render) &&
-    !render->target_sp && render->target_id==-1 && !render->gui_pass_active &&
+    !render->gui_pass_active &&
     !render->classic &&
     !render->classic_phase_y && !render->classic_interp_phase[0] &&
     !render->classic_interp_phase[1] && !render->classic_interp_phase[2] &&

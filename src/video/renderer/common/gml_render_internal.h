@@ -259,6 +259,7 @@ typedef struct GmlRender {
     int target_id, opaque_known, all_opaque, all_transparent;
     int pending_underlay, underlay_x, underlay_y, underlay_w, underlay_h;
     int pending_fill; uint32_t fill_color;
+    int resident_pass;
   } target_stack[GML_SURFACE_STACK]; int target_sp;
   int target_id;
   double    cam_x, cam_y;
@@ -308,6 +309,8 @@ typedef struct GmlRender {
   int base_scene_resource_width,base_scene_resource_height;
   /* Only the explicit resident begin opts into scene dispatch for this pass. */
   int resident_application_pass;
+  /* Explicit device-pass selection survives a CPU fallback on a different target. */
+  int resident_scene_pass;
   /* Optional classic 2x vertical coverage plane.  The game pass replays texture draws at the
    * half-row samples as well as at logical pixel centres; the presentation pass then interleaves
    * them without a GPU.  This is a borrowed scratch buffer owned by the host. */

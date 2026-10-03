@@ -444,7 +444,8 @@ int gml_render_begin_resident_owned_application(GmlRender *r,double camx,double 
       r,r->app_surface_owned,r->app_w,r->app_h,camx,camy);
   else
     gml_render_begin(r,r->app_surface_owned,r->app_w,r->app_h,camx,camy);
-  r->resident_application_pass=r->fb==r->app_surface_owned && r->target_id<=0;
+  r->resident_scene_pass=1;
+  r->resident_application_pass=gml_render_scene_target_matches(r);
   return 1;
 }
 int gml_render_begin_resident_base(GmlRender *r,uint32_t *pixels,int width,int height,
@@ -465,6 +466,7 @@ int gml_render_begin_resident_base(GmlRender *r,uint32_t *pixels,int width,int h
   r->base_scene_resource_height=height;
   if(!gml_render_scene_target_resource_ensure(r)) return 0;
   r->resident_application_pass=1;
+  r->resident_scene_pass=1;
   return 1;
 }
 int gml_render_application_surface_owned_clear(
@@ -891,6 +893,7 @@ void gml_render_begin(GmlRender *r, uint32_t *fb, int w, int h, double cx, doubl
   if(!gml_render_application_scene_flush(r)) return;
   gml_render_flush_rotated_batch(r);
   r->resident_application_pass=0;
+  r->resident_scene_pass=0;
   r->fb=fb; r->fbw=w; r->fbh=h; r->base_fb=fb; r->base_fbw=w; r->base_fbh=h;
   r->gui_pass_active=0;
   r->gui_base_logical_w=r->gui_base_logical_h=0;
@@ -1049,12 +1052,16 @@ int gml_render_resident_application_cpu_barrier(GmlRender *r){
   uint32_t *pixels=NULL;
   GmlRenderResource *resource;
   if(!r) return 0;
-  if(!r->resident_application_pass) return 1;
-  /* A nested numbered target borrows a different framebuffer. Preserve the
-   * suspended application's GPU authority while its own CPU writer runs. */
-  if(r->target_id>0 && r->target_id<=GML_MAX_SURFACES &&
-     r->surface[r->target_id-1].live &&
-     r->fb==r->surface[r->target_id-1].px) return 1;
+  if(!r->resident_application_pass){
+    /* A child binding may have written the same allocation on GPU after this
+     * CPU parent was suspended, or sampled it and made its GPU copy current. */
+    GmlRenderJournalMetrics metrics={0};
+    if(!r->resident_scene_pass || !gml_render_scene_target_matches(r)) return 1;
+    resource=gml_render_scene_target_resource_ensure(r);
+    if(!resource) return 0;
+    gml_render_resource_journal_metrics(resource,&metrics);
+    if(metrics.authority==GML_RENDER_RESOURCE_CPU_CURRENT) return 1;
+  }
   if(!gml_render_scene_target_matches(r)) return 0;
   gml_render_flush_pending_fill(r);
   if(r->pending_fill) return 0;

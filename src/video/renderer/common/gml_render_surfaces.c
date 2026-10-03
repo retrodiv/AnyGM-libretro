@@ -82,9 +82,17 @@ int gml_render_application_scene_flush(GmlRender *r){
   GmlRenderDrawBatch batch;
   GmlRenderResourceExecution result;
   if(!pending || !pending->count) return 1;
-  target=pending->operations[0].target.image.resource_class==GML_RENDER_RESOURCE_SCREEN
-    ?r->base_scene_resource:r->app_surface_resource;
+  GmlRenderImageRef image=pending->operations[0].target.image;
+  if(image.resource_class==GML_RENDER_RESOURCE_SCREEN) target=r->base_scene_resource;
+  else if(image.resource_class==GML_RENDER_RESOURCE_APPLICATION) target=r->app_surface_resource;
+  else if(image.resource_class==GML_RENDER_RESOURCE_SURFACE &&
+          image.identity>0u && image.identity<=GML_MAX_SURFACES)
+    target=r->surface[image.identity-1u].resource;
+  else target=NULL;
   if(!target) return 0;
+  GmlRenderImageRef current=gml_render_resource_image_ref(target);
+  if(current.resource_class!=image.resource_class || current.identity!=image.identity ||
+     current.incarnation!=image.incarnation) return 0;
   batch=(GmlRenderDrawBatch){pending->operations,pending->count,
                               pending->states,pending->state_count};
   result=gml_render_resource_submit_deferred(target,gml_render_device(r),
@@ -311,10 +319,15 @@ GmlRenderResource *gml_render_application_resource_ensure(GmlRender *r){
   return r->app_surface_resource;
 }
 int gml_render_scene_target_matches(const GmlRender *r){
-  return r && r->fb && r->fbw>0 && r->fbh>0 && r->target_id==-1 &&
-    !r->target_sp &&
-    ((r->fb==r->app_surface_owned && r->fbw==r->app_w && r->fbh==r->app_h) ||
-     (r->fb==r->base_scene_resource_pixels &&
+  if(!r || !r->fb || r->fbw<=0 || r->fbh<=0) return 0;
+  int slot=surface_slot(r->target_id);
+  if(slot>=0) return r->target_sp>0 && r->surface[slot].live &&
+    r->fb==r->surface[slot].px && r->fbw==r->surface[slot].w &&
+    r->fbh==r->surface[slot].h;
+  return (r->target_id==-1 || r->target_id==0) &&
+    ((r->fb==r->app_surface_owned && r->fbw==r->app_w && r->fbh==r->app_h &&
+      r->app_surface==r->app_surface_owned) ||
+     (r->target_id==-1 && !r->target_sp && r->fb==r->base_scene_resource_pixels &&
       r->fbw==r->base_scene_resource_width &&
       r->fbh==r->base_scene_resource_height));
 }
@@ -334,8 +347,8 @@ void gml_render_base_resource_dispose(GmlRender *r){
 GmlRenderResource *gml_render_scene_target_resource_ensure(GmlRender *r){
   GmlRenderImageRef image;
   uint64_t incarnation;
-  if(!r || !r->fb || r->fbw<=0 || r->fbh<=0 || r->target_id!=-1 || r->target_sp)
-    return NULL;
+  if(!gml_render_scene_target_matches(r)) return NULL;
+  if(r->target_id>0) return gml_render_surface_resource_ensure(r,r->target_id);
   if(r->fb==r->app_surface_owned && r->fbw==r->app_w && r->fbh==r->app_h)
     return gml_render_application_resource_ensure(r);
   if(r->fb!=r->base_scene_resource_pixels ||
@@ -472,9 +485,13 @@ static void surface_store_target_coverage(GmlRender *r){
   if(!r) return;
   int i=surface_slot(r->target_id);
   if(i>=0 && r->surface[i].live){
+    GmlRenderJournalMetrics metrics={0};
+    GmlRenderResource *resource=r->surface[i].resource;
+    if(resource) gml_render_resource_journal_metrics(resource,&metrics);
     /* No-op draws and readbacks can conservatively dirty this bit; verify cleared targets
      * at target close so later composites can skip surfaces with no covered pixels. */
-    if(!r->fb_all_transparent && r->fb_opaque_known && !r->fb_all_opaque &&
+    if((!resource || metrics.cpu_version==metrics.logical_version) &&
+       !r->fb_all_transparent && r->fb_opaque_known && !r->fb_all_opaque &&
        r->fb && r->fbw>0 && r->fbh>0 &&
        surface_alpha_all_zero(r->fb,(size_t)r->fbw*(size_t)r->fbh)){
       r->fb_all_transparent=1;
@@ -726,6 +743,7 @@ static int resident_surface_shader(GmlRender *r,int surf,double dx,double dy,dou
       prepared++;
     }
   }
+  if(!gml_render_application_scene_flush(r)) goto sampler_fallback;
   gml_render_flush_pending_fill(r);
   if(r->pending_fill || !r->resident_application_pass ||
      !(target=application_target?gml_render_scene_target_resource_ensure(r):
@@ -1080,8 +1098,32 @@ void gml_surface_resize(GmlRender *r, int id, int w, int h){
   r->surface[i].all_transparent=was_transparent;
 }
 int gml_surface_set_target(GmlRender *r, int id){
+  if(!r || r->target_sp>=GML_SURFACE_STACK) return 0;
   if(!gml_render_application_scene_flush(r)) return 0;
-  int w=0,h=0; uint32_t *px=surface_pixels(r,id,&w,&h);
+  int w=0,h=0,si=surface_slot(id);
+  uint32_t *px=NULL;
+  int resident=r->resident_scene_pass && gml_render_device(r) && !r->classic;
+  if(resident){
+    /* Resolve pending parent writes before another binding can alias its allocation.
+     * Binding itself borrows storage metadata, not CPU-current raster bytes. */
+    gml_render_flush_pending_underlay(r);
+    gml_render_flush_pending_fill(r);
+    if(r->pending_underlay || r->pending_fill) return 0;
+    if(si>=0 && r->surface[si].live &&
+       gml_render_surface_resource_ensure(r,id)){
+      px=r->surface[si].px; w=r->surface[si].w; h=r->surface[si].h;
+    } else if(id==0 && r->app_surface==r->app_surface_owned &&
+              gml_render_application_resource_ensure(r)){
+      px=r->app_surface_owned; w=r->app_w; h=r->app_h;
+    }
+  }
+  if(!px){ resident=0; px=surface_pixels(r,id,&w,&h); }
+  if(resident && px){
+    GmlRenderJournalMetrics metrics={0};
+    GmlRenderResource *resource=si>=0?r->surface[si].resource:r->app_surface_resource;
+    gml_render_resource_journal_metrics(resource,&metrics);
+    if(metrics.authority==GML_RENDER_RESOURCE_INVALID) return 0;
+  }
   if(!px || r->target_sp>=GML_SURFACE_STACK) return 0;
   /* Classic target assignment replaces the current target; one reset returns to the base. Other runtime families retain nested targets. */
   if(r->classic && r->target_id>=0){
@@ -1089,13 +1131,12 @@ int gml_surface_set_target(GmlRender *r, int id){
     px=surface_pixels(r,id,&w,&h);
     if(!px || r->target_sp>=GML_SURFACE_STACK) return 0;
   }
-  int si=surface_slot(id);
   { if(si>=0) r->surface[si].dirty=1; }   /* about to be drawn into */
   r->target_stack[r->target_sp++]=(typeof(r->target_stack[0])){
     r->fb,r->fbw,r->fbh,r->cam_x,r->cam_y,r->projection_cam_x,r->projection_cam_y,
     r->target_id,r->fb_opaque_known,r->fb_all_opaque,r->fb_all_transparent,
     r->pending_underlay,r->underlay_x,r->underlay_y,r->underlay_w,r->underlay_h,
-    r->pending_fill,r->pending_fill_color
+    r->pending_fill,r->pending_fill_color,r->resident_application_pass
   };
   if(render_setting(r,"GML_LOG_SURF")){
     /* Count existing RGB and alpha before this surface becomes the active target. */
@@ -1107,6 +1148,7 @@ int gml_surface_set_target(GmlRender *r, int id){
   }
   r->fb=px; r->fbw=w; r->fbh=h;
   r->target_id=id;
+  r->resident_application_pass=resident;
   r->fb_opaque_known=(si>=0)?r->surface[si].opaque_known:0;
   r->fb_all_opaque=(si>=0)?r->surface[si].all_opaque:0;
   r->fb_all_transparent=(si>=0)?r->surface[si].all_transparent:0;
@@ -1158,6 +1200,11 @@ void gml_surface_reset_target(GmlRender *r){
   }
   if(r->target_sp>0){
     typeof(r->target_stack[0]) t=r->target_stack[--r->target_sp];
+    if(t.fb==r->fb && r->resident_scene_pass){
+      t.opaque_known=r->fb_opaque_known;
+      t.all_opaque=r->fb_all_opaque;
+      t.all_transparent=r->fb_all_transparent;
+    }
     r->fb=t.fb; r->fbw=t.w; r->fbh=t.h;
     r->projection_cam_x=t.projection_cx; r->projection_cam_y=t.projection_cy;
     r->cam_x=t.cx; r->cam_y=t.cy;
@@ -1173,9 +1220,11 @@ void gml_surface_reset_target(GmlRender *r){
     r->underlay_h=t.underlay_h;
     r->pending_fill=t.pending_fill;
     r->pending_fill_color=t.fill_color;
+    r->resident_application_pass=t.resident_pass;
   } else if(r->base_fb){
     r->fb=r->base_fb; r->fbw=r->base_fbw; r->fbh=r->base_fbh;
     r->target_id=-1;
+    r->resident_application_pass=0;
     r->fb_opaque_known=0;
     r->fb_all_opaque=0;
     r->fb_all_transparent=0;
@@ -1251,6 +1300,9 @@ static void begin_retaining_target(GmlRender *r, uint32_t *fb, int w, int h,
   r->target_stack[0].underlay_w=r->target_stack[0].underlay_h=0;
   r->target_stack[0].pending_fill=0;
   r->target_stack[0].fill_color=0;
+  for(int index=0;index<depth;index++)
+    if(!resident_selection) r->target_stack[index].resident_pass=0;
+  r->target_stack[0].resident_pass=resident_selection;
   r->fb=px; r->fbw=sw; r->fbh=sh;
   r->target_id=retained;
   r->fb_opaque_known=retained_opaque_known;

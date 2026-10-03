@@ -704,6 +704,9 @@ static int render_state_read(GmlRender *render,CoreR *s){
     gml_render_application_resource_dispose(render);
     gml_render_base_resource_dispose(render);
     render->resident_application_pass=0;
+    render->resident_scene_pass=0;
+    for(int index=0;index<render->target_sp;index++)
+      render->target_stack[index].resident_pass=0;
   }
   return s->ok;
 }

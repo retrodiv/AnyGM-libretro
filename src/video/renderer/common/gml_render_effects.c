@@ -209,7 +209,7 @@ int gml_render_layer_filter_begin(GmlRender *r,const GmlLayerFilter *filter){
     r->fb,r->fbw,r->fbh,r->cam_x,r->cam_y,r->projection_cam_x,r->projection_cam_y,
     r->target_id,r->fb_opaque_known,r->fb_all_opaque,r->fb_all_transparent,
     r->pending_underlay,r->underlay_x,r->underlay_y,r->underlay_w,r->underlay_h,
-    r->pending_fill,r->pending_fill_color
+    r->pending_fill,r->pending_fill_color,r->resident_application_pass
   };
   r->fb=r->layer_filter_src; r->target_id=-2;
   r->fb_opaque_known=filter->affects_below?captured_known:1;
