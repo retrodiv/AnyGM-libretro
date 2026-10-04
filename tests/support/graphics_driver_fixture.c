@@ -71,6 +71,8 @@ typedef struct FakeDriver {
   GLint font_channel;
   GLint scene_vertices;
   GLuint scene_texture;
+  GLint scene_filter;
+  GLenum blend_factors[4];
   unsigned shader_stage[256];
   /* The uniforms the last linked program declares, read from the text it was linked from. */
   /* The declaration parser admits 63 name bytes, plus an array's [0] suffix. */
@@ -165,6 +167,8 @@ static void fake_Finish(void){ note_call(); }
 static void fake_PolygonMode(GLenum face,GLenum mode){ (void)face;(void)mode; note_call(); }
 static void fake_BlendFuncSeparate(GLenum a,GLenum b,GLenum c,GLenum d){
   note_call();
+  g_fake.blend_factors[0]=a;g_fake.blend_factors[1]=b;
+  g_fake.blend_factors[2]=c;g_fake.blend_factors[3]=d;
   if(a==GL_SRC_ALPHA && b==GL_ONE_MINUS_SRC_ALPHA &&
      c==GL_ONE && d==GL_ONE_MINUS_SRC_ALPHA) g_fake.blend_configurations++;
 }
@@ -484,6 +488,8 @@ static void fake_DrawArrays(GLenum mode,GLint first,GLsizei count){
     g_fake.scene_draw_calls++;
     g_fake.scene_vertices+=count;
     g_fake.scene_texture=g_fake.bound_texture[0];
+    g_fake.scene_filter=g_fake.scene_texture<FAKE_MAX_TEXTURES
+      ?g_fake.textures[g_fake.scene_texture].min_filter:0;
     int font_program=0;
     for(unsigned index=0;index<g_fake.font_channel_location_count;index++)
       if(g_fake.font_channel_locations[index].program==g_fake.bound_program) font_program=1;
@@ -725,6 +731,10 @@ unsigned anygm_test_graphics_attached_texture(void){ return g_fake.attached_text
 int anygm_test_graphics_clear_calls(void){ return g_fake.clear_calls; }
 unsigned anygm_test_graphics_framebuffer_queries(void){ return g_fake.framebuffer_queries; }
 int anygm_test_graphics_blend_enabled(void){ return g_fake.blend_enabled; }
+int anygm_test_graphics_scene_filter(void){ return g_fake.scene_filter; }
+void anygm_test_graphics_blend_factors(unsigned factors[4]){
+  for(unsigned index=0;index<4u;index++) factors[index]=g_fake.blend_factors[index];
+}
 unsigned anygm_test_graphics_blend_configurations(void){ return g_fake.blend_configurations; }
 unsigned anygm_test_graphics_scene_copies(void){ return g_fake.scene_copies; }
 uint64_t anygm_test_graphics_scene_copied_pixels(void){ return g_fake.scene_copied_pixels; }

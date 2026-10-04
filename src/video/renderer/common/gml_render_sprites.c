@@ -502,6 +502,14 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
     family==GML_RENDER_SCENE_BACKGROUND && nearest_mode==5 &&
     !r->interp && fabs(xs)==1.0 && fabs(ys)==1.0 &&
     (colour&0xFFFFFFu)==0xFFFFFFu && alpha>0.0 && alpha<=1.0;
+  /* R03-P9-FIXED-ADDITIVE: experimental admission; composed pixel qualification
+   * is separate from call/state proof and required before integration. */
+  int tolerant_additive=r && r->interp && r->blendmode==1 &&
+    !rotated_sprite && !corner_colours && !opaque_target_alpha &&
+    !transparent_stretched_trim && !box_stretched && !positioned_axis &&
+    !nearest_mode && !r->gui_pass_active && family==GML_RENDER_SCENE_SPRITE &&
+    r->device.context && r->device.observe_on_demand &&
+    r->device.observe_on_demand(r->device.context);
   /* R03-P9-FILTERED-REAL-TEXT: a demanded real glyph is a physical atlas crop,
    * not a TPAG entry. It uses the same filtered source/phase preparation as a sprite. */
   int filtered_real_text=family==GML_RENDER_SCENE_TEXT && page_index==-1 &&
@@ -552,7 +560,8 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
      (r->gui_pass_active && !identity_gui_atlas && !mapped_gui_font &&
       !mapped_gui_sprite && !mapped_gui_rotation) ||
      r->active_shader>=0 || r->alpha_test_enable ||
-     !r->alphablend || (r->blendmode && !additive_background) || r->blend_equation!=1 ||
+     !r->alphablend || (r->blendmode && !additive_background && !tolerant_additive) ||
+     r->blend_equation!=1 ||
      r->blend_equation_alpha!=1 || r->color_write_mask!=0x0fu ||
      (rotated_sprite && anygm_policy_has_modern_layer_semantics(r->win) &&
       (!r->fb_opaque_known || !r->fb_all_opaque)) ||
@@ -647,6 +656,7 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
   if(margin_top) margin_mask|=GML_RENDER_MARGIN_TOP;
   if(margin_right) margin_mask|=GML_RENDER_MARGIN_RIGHT;
   if(margin_bottom) margin_mask|=GML_RENDER_MARGIN_BOTTOM;
+  if(tolerant_additive && margin_mask) return 0;
   resident_classify_page(page,atlas);
   /* R03-P9-STRETCHED-COVERED-ALPHA: magnification's original CPU band
    * keeps float channels and alpha before blending, including logical trim.
@@ -725,7 +735,9 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
     y0=floor(top+0.5+positioned_y_tie);
     /* blit_one rounds screen extents independently unless the authored tile
      * requests edge projection; application-surface coverage keeps its old rule. */
-    width=(identity_gui_atlas || mapped_gui_sprite) && !page->project_authored_edges
+    width=(identity_gui_atlas || mapped_gui_sprite ||
+      (tolerant_additive && !gml_render_target_is_first_generation_application_surface(r))) &&
+      !page->project_authored_edges
       ?floor((double)page->sw*fabs(xs)+0.5)
       :filtered_real_text && !gml_render_target_is_first_generation_application_surface(r)
       ?floor((double)page->sw*fabs(xs)+0.5)
@@ -739,7 +751,9 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
       : fabs(xs-nearbyint(xs))>1e-9
         ? floor(left+(double)page->sw*xs+0.5)-x0
         : floor((double)page->sw*xs+0.5);
-    height=(identity_gui_atlas || mapped_gui_sprite) && !page->project_authored_edges
+    height=(identity_gui_atlas || mapped_gui_sprite ||
+      (tolerant_additive && !gml_render_target_is_first_generation_application_surface(r))) &&
+      !page->project_authored_edges
       ?floor((double)page->sh*fabs(ys)+0.5)
       :filtered_real_text && !gml_render_target_is_first_generation_application_surface(r)
       ?floor((double)page->sh*fabs(ys)+0.5)
@@ -822,7 +836,8 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
     ?(fabs(rotation-nearbyint(rotation/90.0)*90.0)<1e-10
       ?GML_RENDER_QUAD_CARDINAL:GML_RENDER_QUAD_GENERAL)
     :GML_RENDER_QUAD_AXIS_ALIGNED;
-  operation.payload.quad.sampling.filter=box_stretched?GML_RENDER_FILTER_BOX:
+  operation.payload.quad.sampling.filter=tolerant_additive?GML_RENDER_FILTER_HARDWARE_BILINEAR:
+    box_stretched?GML_RENDER_FILTER_BOX:
     nearest_mode==5?(additive_background?GML_RENDER_FILTER_NEAREST:
                      GML_RENDER_FILTER_NEAREST_PHASED_COPY):
     nearest_mode==6?GML_RENDER_FILTER_NEAREST_PHASED_OPAQUE_ALPHA:
@@ -986,7 +1001,16 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
     state.coverage_policy=GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA;
     operation.payload.quad.filtered_draw_alpha=alpha;
   }
-  if(stretched_float && !stretched_replay_exact){
+  if(tolerant_additive){
+    operation.payload.quad.filtered_draw_alpha=alpha;
+    /* Quantise the additive contribution once, then let fixed-function blending
+     * combine ordered predecessors without a destination snapshot per quad. */
+    state.rgb_source_factor=GML_RENDER_BLEND_ONE;
+    state.rgb_destination_factor=GML_RENDER_BLEND_ONE;
+    state.alpha_source_factor=GML_RENDER_BLEND_SOURCE_ALPHA;
+    state.alpha_destination_factor=GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA;
+    state.rgb_equation=state.alpha_equation=GML_RENDER_BLEND_ADD;
+  } else if(stretched_float && !stretched_replay_exact){
     operation.payload.quad.filtered_draw_alpha=alpha;
     for(unsigned corner=0;corner<4u;corner++)
       operation.payload.quad.corner_colour[corner]|=0xFF000000u;

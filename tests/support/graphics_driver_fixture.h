@@ -54,6 +54,8 @@ int anygm_test_graphics_draw_calls(void);
 int anygm_test_graphics_scene_draw_calls(void);
 int anygm_test_graphics_scene_vertices(void);
 unsigned anygm_test_graphics_scene_texture(void);
+int anygm_test_graphics_scene_filter(void);
+void anygm_test_graphics_blend_factors(unsigned factors[4]);
 /* Quads drawn through a content program, as opposed to the presentation triangle. */
 int anygm_test_graphics_quad_draw_calls(void);
 unsigned anygm_test_graphics_compile_calls(void);

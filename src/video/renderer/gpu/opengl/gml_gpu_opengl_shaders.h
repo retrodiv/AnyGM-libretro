@@ -195,6 +195,19 @@
   "void main(){\n" \
   "  // R03_SHADER_DIRECT_TEXTURE: nearest/atlas page sampling.\n" \
   "  if(u_filter==0){ o_color=texture(u_image,v_texcoord)*v_colour; return; }\n" \
+  "  // R03_SHADER_HARDWARE_FILTERED_ADDITIVE: Hardware bilinear additive without destination sampling.\n" \
+  "  if(u_filter==18){\n" \
+  "    vec2 extent=vec2(textureSize(u_image,0));\n" \
+  "    vec2 uv=clamp(v_texcoord,(v_clamp.xy+vec2(0.5))/extent,\n" \
+  "                            (v_clamp.zw+vec2(0.5))/extent);\n" \
+  "    vec4 sampled=floor(texture(u_image,uv)*255.0+vec4(0.5));\n" \
+  "    float alpha=sampled.a*v_colour.a;\n" \
+  "    if(alpha<=0.0) discard;\n" \
+  "    uvec3 tint=uvec3(floor(v_colour.rgb*255.0+vec3(0.5)));\n" \
+  "    uvec3 rgb=uvec3(sampled.rgb)*tint/uvec3(255u);\n" \
+  "    o_color=vec4(floor(vec3(rgb)*(alpha/255.0))/255.0,floor(alpha+0.5)/255.0);\n" \
+  "    return;\n" \
+  "  }\n" \
   "  vec2 centre=vec2(gl_FragCoord.x,u_extent.y-gl_FragCoord.y);\n" \
   "  // R03_SHADER_BOX_REDUCTION: stretched integer source-box average.\n" \
   "  if(u_filter==4){\n" \
