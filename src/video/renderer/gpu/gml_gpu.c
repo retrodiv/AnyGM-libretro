@@ -9,6 +9,13 @@
 #include <stdlib.h>
 #include <string.h>
 
+/* Missing proof retains the established host-current call contract. An installed proof may
+ * revoke access temporarily without declaring the adopted GL namespace lost. */
+static int context_accessible(const GmlGpu *gpu){
+  return gpu && gpu->context_active &&
+    (!gpu->context.is_current || gpu->context.is_current(gpu->context.userdata));
+}
+
 GmlGpu *gml_gpu_create(void){
   GmlGpu *gpu=(GmlGpu*)calloc(1,sizeof *gpu);
   if(!gpu) return NULL;
@@ -19,6 +26,8 @@ GmlGpu *gml_gpu_create(void){
 
 void gml_gpu_destroy(GmlGpu *gpu,int context_is_current){
   if(!gpu) return;
+  if(context_is_current && gpu->context.is_current &&
+     !gpu->context.is_current(gpu->context.userdata)) context_is_current=0;
   gml_gpu_opengl_destroy(gpu->backend,context_is_current && gpu->context_active);
   free(gpu);
 }
@@ -36,6 +45,11 @@ int gml_gpu_context_reset(GmlGpu *gpu,const GmlGpuContext *context){
   gpu->context=*context;
   gpu->context_active=0;
   gpu->error[0]='\0';
+  if(context->is_current && !context->is_current(context->userdata)){
+    snprintf(gpu->error,sizeof gpu->error,"graphics context is not current");
+    memset(&gpu->context,0,sizeof gpu->context);
+    return 0;
+  }
   if(!gml_gpu_opengl_reset(gpu->backend,&gpu->context,gpu->error,sizeof gpu->error)){
     gpu->counters.program_failures++;
     gml_gpu_opengl_forget(gpu->backend);
@@ -59,6 +73,34 @@ int gml_gpu_context_active(const GmlGpu *gpu){
   return gpu && gpu->context_active;
 }
 
+int gml_gpu_context_has_access_proof(const GmlGpu *gpu){
+  return gpu && gpu->context_active && gpu->context.is_current;
+}
+
+int gml_gpu_context_is_current(const GmlGpu *gpu){
+  return gpu && gpu->context_active && gpu->context.is_current &&
+         gpu->context.is_current(gpu->context.userdata);
+}
+
+int gml_gpu_capture_completed_frame(GmlGpu *gpu,uint32_t width,uint32_t height,
+                                   uint64_t generation){
+  if(!gml_gpu_context_is_current(gpu) ||
+     !gml_gpu_opengl_capture_completed_frame(gpu->backend,
+       gpu->context.get_current_framebuffer(gpu->context.userdata),width,height,generation))
+    return 0;
+  gpu->counters.completed_frame_copies++;
+  gpu->counters.completed_frame_copy_bytes+=(uint64_t)width*height*4u;
+  return 1;
+}
+
+int gml_gpu_read_completed_frame(GmlGpu *gpu,uint32_t *pixels,uint32_t pitch_pixels,
+                                uint32_t width,uint32_t height,uint64_t generation){
+  return gml_gpu_context_is_current(gpu) &&
+    gml_gpu_opengl_read_completed_frame(gpu->backend,
+      gpu->context.get_current_framebuffer(gpu->context.userdata),pixels,pitch_pixels,
+      width,height,generation,&gpu->counters);
+}
+
 static int scene_capabilities(void *context,GmlRenderDeviceCaps *out_caps){
   GmlGpu *gpu=(GmlGpu*)context;
   if(!gpu || !out_caps || !gpu->context_active) return 0;
@@ -70,7 +112,7 @@ static GmlRenderExecutionResult scene_submit(void *context,const GmlRenderDrawBa
   GmlGpu *gpu=(GmlGpu*)context;
   memset(&result,0,sizeof result);
   result.status=GML_RENDER_EXEC_UNSUPPORTED;
-  if(gpu && gpu->context_active && gpu->context.get_current_framebuffer){
+  if(context_accessible(gpu) && gpu->context.get_current_framebuffer){
     gpu->counters.scene_batches_offered++;
     result=gml_gpu_opengl_scene_submit(gpu->backend,batch,
       gpu->context.get_current_framebuffer(gpu->context.userdata),
@@ -101,7 +143,7 @@ static GmlRenderExecutionResult scene_submit(void *context,const GmlRenderDrawBa
 static int scene_upload(void *context,const GmlRenderImageUpload *transfer){
   GmlGpu *gpu=(GmlGpu*)context;
   int did_upload=0;
-  if(!gpu || !gpu->context_active ||
+  if(!context_accessible(gpu) ||
      !gml_gpu_opengl_scene_upload(gpu->backend,transfer,&did_upload)) return 0;
   if(did_upload){
     gpu->counters.scene_uploads++;
@@ -116,7 +158,7 @@ static int scene_readback(void *context,const GmlRenderImageReadback *transfer){
   GmlRenderImageReadback selected;
   GmlRenderImageReadbackResult result={0};
   int success;
-  if(!gpu || !gpu->context_active || !transfer) return 0;
+  if(!context_accessible(gpu) || !transfer) return 0;
   selected=*transfer;selected.result=&result;
   /* Preserve opt-in ownership: an arbitrary caller without a publication result cannot skip
    * destination bytes merely because the facade supplies accounting storage. */
@@ -132,17 +174,18 @@ static int scene_readback(void *context,const GmlRenderImageReadback *transfer){
 
 static void scene_retire(void *context,GmlRenderImageRef image){
   GmlGpu *gpu=(GmlGpu*)context;
+  /* This only revokes cached logical access; deletion is deferred until a current allocation. */
   if(gpu && gpu->context_active) gml_gpu_opengl_scene_retire(gpu->backend,image);
 }
 
 static int scene_flush(void *context){
   GmlGpu *gpu=(GmlGpu*)context;
-  return gpu && gpu->context_active && gml_gpu_opengl_scene_flush(gpu->backend);
+  return context_accessible(gpu) && gml_gpu_opengl_scene_flush(gpu->backend);
 }
 
 static int scene_wait(void *context){
   GmlGpu *gpu=(GmlGpu*)context;
-  return gpu && gpu->context_active && gml_gpu_opengl_scene_wait(gpu->backend);
+  return context_accessible(gpu) && gml_gpu_opengl_scene_wait(gpu->backend);
 }
 
 static int scene_content_program_failed(void *context,const GmlPlanShader *shader){
@@ -152,7 +195,7 @@ static int scene_content_program_failed(void *context,const GmlPlanShader *shade
 }
 static int scene_has_rgb(void *context,GmlRenderImageRef image,int *has_rgb){
   GmlGpu *gpu=(GmlGpu*)context;
-  if(!gpu || !gpu->context_active) return 0;
+  if(!context_accessible(gpu)) return 0;
   if(!gml_gpu_opengl_scene_has_rgb(gpu->backend,image,has_rgb)){
     gpu->counters.scene_rgb_query_refusals++;
     return 0;
@@ -180,7 +223,7 @@ void gml_gpu_device_services(GmlGpu *gpu,GmlRenderDeviceServices *out_services){
 int gml_gpu_execute_plan(GmlGpu *gpu,GmlRenderPlan *plan){
   if(!gpu || !plan) return 0;
   gpu->counters.frames_offered++;
-  if(!gpu->context_active){
+  if(!context_accessible(gpu)){
     plan->fallback_reason=GML_PLAN_FALLBACK_CONTEXT_UNAVAILABLE;
     gpu->counters.fallbacks[GML_PLAN_FALLBACK_CONTEXT_UNAVAILABLE]++;
     gpu->counters.passes_replayed++;

@@ -37,6 +37,12 @@ void gml_gpu_opengl_set_readback_pipelined(GmlGpuBackend *backend,int pipelined)
 int gml_gpu_opengl_execute(GmlGpuBackend *backend,const GmlGpuContext *context,
                        GmlRenderPlan *plan,GmlGpuCounters *counters,
                        char *error,size_t error_capacity);
+int gml_gpu_opengl_capture_completed_frame(GmlGpuBackend *backend,uintptr_t framebuffer,
+                                            uint32_t width,uint32_t height,uint64_t generation);
+int gml_gpu_opengl_read_completed_frame(GmlGpuBackend *backend,uintptr_t framebuffer,
+                                         uint32_t *pixels,uint32_t pitch_pixels,
+                                         uint32_t width,uint32_t height,uint64_t generation,
+                                         GmlGpuCounters *counters);
 int gml_gpu_opengl_scene_capabilities(const GmlGpuBackend *backend,GmlRenderDeviceCaps *caps);
 int gml_gpu_opengl_scene_upload(GmlGpuBackend *backend,const GmlRenderImageUpload *transfer,
                                 int *did_upload);

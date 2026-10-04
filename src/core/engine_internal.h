@@ -388,8 +388,9 @@ struct AnygmEngine {
   /* Advances once per completed frame. It is what a GPU mirror of the completed frame is keyed on,
    * because the buffer address stays the same while its pixels do not. */
   uint32_t host_frame_generation;
-  /* The optional host graphics target. A derived cache with a lifecycle: never serialized, never
-   * part of the state configuration fingerprint, and safe to drop and rebuild at any point. */
+  /* The optional host graphics owner is never serialized or part of the state fingerprint.
+   * Device-only scene images require observation before controlled release; genuine loss may
+   * discard volatile images while immutable resources rebuild from their retained sources. */
   GmlGpu *gpu;
   /* How many times the canonical CPU pixels of a completed frame had to be rebuilt because
    * something needed them after a pass produced only the host target. */
@@ -480,15 +481,16 @@ int engine_present_crop_rect(const AnygmEngine *engine,unsigned source_width,
 /* Describe the final host presentation as a neutral plan against the given target class. */
 int engine_build_host_plan(AnygmEngine *engine,GmlRenderPlan *plan,uint32_t target,
                            unsigned host_width,unsigned host_height,int include_clear);
-/* Where the canonical completed-frame pixels are. A frame presented only through a host graphics
- * target is reconstructible from the retained plan; nothing may read stale pixels instead. */
+/* Where completed-frame pixels are. A qualified device snapshot preserves the actual terminal
+ * RGBA; the context-free path retains its CPU recipe. Neither permits reading stale pixels. */
 enum {
   ENGINE_FRAME_CPU_MATERIALIZED=0,
   ENGINE_FRAME_GPU_PRESENTED_CPU_RECONSTRUCTIBLE=1,
-  ENGINE_FRAME_NONE=2
+  ENGINE_FRAME_NONE=2,
+  ENGINE_FRAME_GPU_PRESENTED_DEVICE_RESIDENT=3
 };
-/* Bring the canonical CPU pixels of the completed frame up to date, by replaying the retained plan
- * through the exact software executor when they are not. Runs no game code, no Draw event, no
+/* Bring the canonical CPU pixels of the completed frame up to date, by observing its retained
+ * device snapshot or executing the context-free CPU recipe. Runs no game code, no Draw event, no
  * audio, and consumes nothing from the random sequence. Returns zero only when the frame genuinely
  * cannot be produced, and never leaves a caller reading stale pixels. */
 int engine_materialize_completed_frame(AnygmEngine *engine);
@@ -525,6 +527,9 @@ void engine_graphics_report(AnygmEngine *engine);
 /* Whether a host graphics target is adopted right now. The one question core coordination asks
  * about the feature, so it has an answer in a build without the backend as well. */
 int engine_graphics_active(const AnygmEngine *engine);
+int engine_graphics_is_current(const AnygmEngine *engine);
+int engine_graphics_has_access_proof(const AnygmEngine *engine);
+int engine_graphics_finish_scene(AnygmEngine *engine);
 void engine_graphics_bind_renderer(AnygmEngine *engine);
 int engine_hybrid_presentation_active(const AnygmEngine *engine);
 int engine_content_shaders_active(const AnygmEngine *engine);

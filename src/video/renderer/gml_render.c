@@ -1076,6 +1076,9 @@ int gml_render_scene_flush(GmlRender *r){
   return gml_render_application_scene_flush(r) &&
     gml_render_checkpoint_pending_resources(r);
 }
+int gml_render_scene_submit_pending(GmlRender *r){
+  return r && gml_render_application_scene_flush(r);
+}
 static GmlRenderResource *completed_screen_resource(const GmlRender *r,
                                                     const uint32_t *pixels,
                                                     int width,int height){
@@ -1107,6 +1110,12 @@ int gml_render_completed_screen_write(GmlRender *r,uint32_t *pixels,int width,in
                  current!=pixels || !gml_render_resource_commit_cpu_write(resource))) return 0;
   if(r->fb==pixels) r->resident_application_pass=0;
   return 1;
+}
+void gml_render_completed_screen_publish(GmlRender *r,uint32_t *pixels,int width,int height){
+  if(!r || !pixels || width<=0 || height<=0) return;
+  if(completed_screen_resource(r,pixels,width,height)) gml_render_base_resource_dispose(r);
+  gml_render_discard_deferred_presentation(r);
+  if(r->fb==pixels) r->resident_application_pass=0;
 }
 int gml_render_completed_screen_image(GmlRender *r,const uint32_t *pixels,int width,int height,
                                       GmlRenderImageRef *image){

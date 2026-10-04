@@ -129,10 +129,89 @@ int gml_render_checkpoint_pending_resources(GmlRender *r){
     gml_render_resource_checkpoint(r->base_scene_resource,device);
 }
 
+int gml_render_observe_device_resources(GmlRender *r){
+  const GmlRenderDeviceServices *device=gml_render_device(r);
+  if(!r || !device || !gml_render_application_scene_flush(r)) return 0;
+  for(int index=0;index<GML_MAX_SURFACES;index++)
+    if(r->surface[index].resource &&
+       !gml_render_resource_observe_device(r->surface[index].resource,device)) return 0;
+  if(r->app_surface_resource &&
+     !gml_render_resource_observe_device(r->app_surface_resource,device)) return 0;
+  return !r->base_scene_resource ||
+    gml_render_resource_observe_device(r->base_scene_resource,device);
+}
+
 void gml_render_application_scene_queue_dispose(GmlRender *r){
   if(!r) return;
   free(r->pending_scene_batch);
   r->pending_scene_batch=NULL;
+}
+
+static int resource_loses_device_pixels(const GmlRenderResource *resource){
+  GmlRenderJournalMetrics metrics={0};
+  if(!resource) return 0;
+  gml_render_resource_journal_metrics(resource,&metrics);
+  return metrics.authority==GML_RENDER_RESOURCE_INVALID ||
+         metrics.cpu_version!=metrics.logical_version;
+}
+
+int gml_render_device_observation_pending(const GmlRender *r){
+  if(!r) return 0;
+  if(r->pending_scene_batch && r->pending_scene_batch->count) return 1;
+  for(int index=0;index<GML_MAX_SURFACES;index++)
+    if(resource_loses_device_pixels(r->surface[index].resource)) return 1;
+  return resource_loses_device_pixels(r->app_surface_resource) ||
+         resource_loses_device_pixels(r->base_scene_resource);
+}
+
+void gml_render_lose_volatile_device(GmlRender *r){
+  uint64_t lost_surfaces=0u;
+  int lost_application,owned_width,owned_height;
+  if(!r) return;
+  for(int index=0;index<GML_MAX_SURFACES;index++)
+    if(resource_loses_device_pixels(r->surface[index].resource))
+      lost_surfaces|=UINT64_C(1)<<index;
+  lost_application=resource_loses_device_pixels(r->app_surface_resource);
+  owned_width=r->app_surface_resource?r->app_surface_resource_width:
+    r->app_surface==r->app_surface_owned?r->app_w:0;
+  owned_height=r->app_surface_resource?r->app_surface_resource_height:
+    r->app_surface==r->app_surface_owned?r->app_h:0;
+  if(r->pending_scene_batch && r->pending_scene_batch->count){
+    GmlRenderImageRef image=r->pending_scene_batch->operations[0].target.image;
+    if(image.resource_class==GML_RENDER_RESOURCE_SURFACE &&
+       image.identity>0u && image.identity<=GML_MAX_SURFACES)
+      lost_surfaces|=UINT64_C(1)<<(image.identity-1u);
+    else if(image.resource_class==GML_RENDER_RESOURCE_APPLICATION) lost_application=1;
+  }
+  /* Ordinary unbinding can replay an exact queued batch. Real scene loss must discard it
+   * before that existing path, and disable delayed CPU writes before unwinding target borrows. */
+  gml_render_application_scene_queue_dispose(r);
+  r->pending_fill=r->pending_underlay=0;
+  r->rotated_batch_count=r->rotated_batch_building=0;
+  gml_render_discard_deferred_presentation(r);
+  for(int stack=0;stack<r->target_sp;stack++){
+    r->target_stack[stack].pending_fill=r->target_stack[stack].pending_underlay=0;
+    r->target_stack[stack].resident_pass=0;
+    r->target_stack[stack].opaque_known=r->target_stack[stack].all_opaque=
+      r->target_stack[stack].all_transparent=0;
+  }
+  gml_render_abandon_device(r);
+  for(int index=0;index<GML_MAX_SURFACES;index++)
+    if(lost_surfaces&(UINT64_C(1)<<index)) gml_surface_free(r,index+1);
+  r->content_authored_surfaces&=~lost_surfaces;
+  if(lost_application){
+    gml_render_application_resource_dispose(r);
+    if(r->app_surface_owned && owned_width>0 && owned_height>0)
+      memset(r->app_surface_owned,0,(size_t)owned_width*owned_height*sizeof(uint32_t));
+    r->app_surface_opaque=r->app_presentation_coverage_active=0;
+  }
+  /* A freed user surface may have been borrowed as surface zero. Recover the separately
+   * owned application allocation only with its known extent; otherwise the next Draw binds it. */
+  if(!r->app_surface && r->app_surface_owned && owned_width>0 && owned_height>0)
+    gml_render_application_surface_bind(r,r->app_surface_owned,owned_width,owned_height,0);
+  gml_render_base_resource_dispose(r);
+  r->resident_application_pass=r->resident_scene_pass=0;
+  r->fb_opaque_known=r->fb_all_opaque=r->fb_all_transparent=0;
 }
 
 int gml_render_application_scene_enqueue(GmlRender *r,const GmlRenderDrawOp *operation,

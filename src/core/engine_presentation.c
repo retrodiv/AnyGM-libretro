@@ -208,6 +208,18 @@ void engine_host_extent(const AnygmEngine *engine,unsigned *width,unsigned *heig
 int engine_materialize_completed_frame(AnygmEngine *engine){
   GmlRenderResourceMetrics before={0},after={0};
   if(!engine) return 0;
+#if ANYGM_HARDWARE_RENDER
+  if(engine->frame_authority==ENGINE_FRAME_GPU_PRESENTED_DEVICE_RESIDENT){
+    if(!gml_gpu_read_completed_frame(engine->gpu,engine->screen,engine->output_width,
+                                     engine->output_width,engine->output_height,
+                                     engine->host_frame_generation)) return 0;
+    gml_render_completed_screen_publish(&engine->render,engine->screen,
+                                        (int)engine->output_width,(int)engine->output_height);
+    engine->frame_authority=ENGINE_FRAME_CPU_MATERIALIZED;
+    engine->frame_materializations++;
+    return 1;
+  }
+#endif
   /* The renderer holds the frame's last operation and the exact kernel that produces it, so
    * materializing is writing that operation. It runs no game code, no Draw event and no audio, and
    * consumes nothing from the random sequence. */
@@ -1651,7 +1663,7 @@ int render_multiview_application(AnygmEngine *engine) {
     if (have_room && !gml_draws_bg) draw_runtime_backgrounds(engine,1);
     gml_render_flush_pending_fill(&engine->render);
     if(resident_view_began &&
-       (!gml_render_scene_flush(&engine->render) ||
+       (!engine_graphics_finish_scene(engine) ||
         !gml_render_resident_application_cpu_barrier(&engine->render))) return -1;
     int view_surface=(int)gml_global_arr(&engine->vm,"view_surface_id",v->index);
     if(view_surface>0 && gml_surface_exists(&engine->render,view_surface)){

@@ -15,6 +15,19 @@
 
 #if ANYGM_HARDWARE_RENDER
 
+static void engine_graphics_lose_scene_context(AnygmEngine *engine){
+  gml_render_lose_volatile_device(&engine->render);
+  engine->host_plan_valid=0u;
+  engine->host_clear_valid=0;
+  if(engine->frame_authority!=ENGINE_FRAME_CPU_MATERIALIZED &&
+     engine->frame_authority!=ENGINE_FRAME_NONE){
+    engine->frame_authority=ENGINE_FRAME_NONE;
+    engine->have_presented_frame=0;
+    engine->state_frame_available=0;
+    engine->state_just_loaded=0;
+  }
+}
+
 AnygmResult anygm_graphics_context_reset(AnygmEngine *engine,const AnygmGraphicsContext *context){
   GmlGpuContext adopted;
   if(!engine || engine->guard!=ANYGM_ENGINE_GUARD) return ANYGM_ERROR_INVALID_STATE;
@@ -34,13 +47,17 @@ AnygmResult anygm_graphics_context_reset(AnygmEngine *engine,const AnygmGraphics
    * cast is what keeps the public header free of a subsystem type. */
   adopted.get_proc_address=(GmlGpuGetProcFn)context->get_proc_address;
   adopted.get_current_framebuffer=(GmlGpuGetFramebufferFn)context->get_current_framebuffer;
+  adopted.is_current=(GmlGpuIsCurrentFn)context->is_current;
   if(!engine->gpu){
     engine->gpu=gml_gpu_create();
     if(!engine->gpu) return ANYGM_ERROR_OUT_OF_MEMORY;
   }
   /* Context reset replaces the old GL namespace before this callback; its pending-only images
    * cannot be read through the new context and must not masquerade as canonical CPU pixels. */
-  gml_render_abandon_device(&engine->render);
+  if(engine_graphics_active(engine) &&
+     engine->scene_renderer_session==ANYGM_SCENE_RENDERER_OPENGL)
+    engine_graphics_lose_scene_context(engine);
+  else gml_render_abandon_device(&engine->render);
   if(!gml_gpu_context_reset(engine->gpu,&adopted)){
     const char *reason=gml_gpu_last_error(engine->gpu);
     engine_logf(engine,ANYGM_LOG_WARN,"The graphics context could not be adopted: %s\n",
@@ -70,6 +87,14 @@ int engine_graphics_active(const AnygmEngine *engine){
   return engine && engine->gpu && gml_gpu_context_active(engine->gpu);
 }
 
+int engine_graphics_is_current(const AnygmEngine *engine){
+  return engine && gml_gpu_context_is_current(engine->gpu);
+}
+
+int engine_graphics_has_access_proof(const AnygmEngine *engine){
+  return engine && gml_gpu_context_has_access_proof(engine->gpu);
+}
+
 int engine_hybrid_presentation_active(const AnygmEngine *engine){
   return engine_graphics_active(engine) && engine->config.hybrid_gpu_presentation?1:0;
 }
@@ -80,8 +105,29 @@ int engine_content_shaders_active(const AnygmEngine *engine){
 }
 
 void engine_graphics_release(AnygmEngine *engine,int context_is_current){
+  int preserved=1;
   if(!engine || !engine->gpu) return;
-  if(context_is_current) gml_render_bind_device(&engine->render,NULL);
+  if(context_is_current && engine_graphics_has_access_proof(engine) &&
+     !engine_graphics_is_current(engine)) context_is_current=0;
+  if(context_is_current && engine->scene_renderer_session==ANYGM_SCENE_RENDERER_OPENGL &&
+     engine_graphics_has_access_proof(engine)){
+    preserved=0;
+    /* The destruction notification cannot defer host teardown. Retry one transient failure,
+     * but never replace an unread GPU image by its approximate CPU recipe. */
+    for(unsigned attempt=0;attempt<2u;attempt++){
+      if(gml_render_observe_device_resources(&engine->render) &&
+         engine_materialize_completed_frame(engine)){
+        preserved=1;
+        break;
+      }
+    }
+    if(!preserved) engine_logf(engine,ANYGM_LOG_ERROR,
+      "GPU pixels could not be preserved before controlled graphics destruction; "
+      "unobserved volatile pixels are lost\n");
+  }
+  if(context_is_current && preserved) gml_render_bind_device(&engine->render,NULL);
+  else if(engine->scene_renderer_session==ANYGM_SCENE_RENDERER_OPENGL)
+    engine_graphics_lose_scene_context(engine);
   else gml_render_abandon_device(&engine->render);
   gml_render_set_shader_device(&engine->render,0);
   /* Report before the counters go away with the object. A host releases the context when content
@@ -172,6 +218,12 @@ void engine_graphics_report(AnygmEngine *engine){
     (unsigned long long)counters.scene_rgb_query_refusals,
     (unsigned long long)resources.completed_screen_cpu_reads,
     (unsigned long long)resources.completed_screen_cpu_materializations);
+  engine_logf(engine,ANYGM_LOG_INFO,
+    "[graphics-completed-state] copies=%llu copy_bytes=%llu reads=%llu read_bytes=%llu\n",
+    (unsigned long long)counters.completed_frame_copies,
+    (unsigned long long)counters.completed_frame_copy_bytes,
+    (unsigned long long)counters.completed_frame_reads,
+    (unsigned long long)counters.completed_frame_read_bytes);
   engine_logf(engine,ANYGM_LOG_INFO,
     "[graphics-scene-families] sprite=%llu background=%llu tile=%llu surface=%llu text=%llu primitive=%llu effect=%llu unclassified=%llu\n",
     (unsigned long long)counters.scene_families[GML_RENDER_SCENE_SPRITE],
@@ -511,11 +563,15 @@ int engine_present_hardware_screen(AnygmEngine *engine,unsigned *width,unsigned 
   if(!gml_render_plan_add_blit_nearest(plan,image,destination,axis_x,axis_y,0xFFu)) return 0;
   if(!gml_gpu_execute_plan(engine->gpu,plan)) return 0;
 presented:
+  if(scene && engine_graphics_is_current(engine)){
+    if(!gml_gpu_capture_completed_frame(engine->gpu,engine->output_width,engine->output_height,
+                                        engine->host_frame_generation)) return 0;
+    engine->frame_authority=ENGINE_FRAME_GPU_PRESENTED_DEVICE_RESIDENT;
+  } else engine->frame_authority=ENGINE_FRAME_GPU_PRESENTED_CPU_RECONSTRUCTIBLE;
   engine->host_plan_valid=1;
   engine->screen_pass_frames++;
   /* The processor's copy of the frame was not written. Saying so is what keeps anything that needs
    * those pixels from reading the buffer instead of asking for them. */
-  engine->frame_authority=ENGINE_FRAME_GPU_PRESENTED_CPU_RECONSTRUCTIBLE;
   engine->host_clear_valid=0;
   if(width) *width=engine->output_width;
   if(height) *height=engine->output_height;
@@ -639,6 +695,16 @@ int engine_graphics_active(const AnygmEngine *engine){
   return 0;
 }
 
+int engine_graphics_is_current(const AnygmEngine *engine){
+  (void)engine;
+  return 0;
+}
+
+int engine_graphics_has_access_proof(const AnygmEngine *engine){
+  (void)engine;
+  return 0;
+}
+
 int engine_hybrid_presentation_active(const AnygmEngine *engine){
   (void)engine;
   return 0;
@@ -659,3 +725,13 @@ int engine_present_hardware_frame(AnygmEngine *engine,const uint32_t *pixels,
 }
 
 #endif
+
+int engine_graphics_finish_scene(AnygmEngine *engine){
+  if(!engine) return 0;
+  /* A witnessed scene retains actual persistent pixels until an explicit observer. CPU and
+   * hosts without a save-access witness retain the established context-free recovery path. */
+  if(engine->scene_renderer_session==ANYGM_SCENE_RENDERER_OPENGL &&
+     engine_graphics_is_current(engine))
+    return gml_render_scene_submit_pending(&engine->render);
+  return gml_render_scene_flush(&engine->render);
+}

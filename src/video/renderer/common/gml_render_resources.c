@@ -662,26 +662,33 @@ static void discard_superseded_history(GmlRenderResource *resource){
   resource->entry_count=0;
 }
 
-int gml_render_resource_checkpoint(GmlRenderResource *resource,
-                                    const GmlRenderDeviceServices *device){
+static int resource_checkpoint(GmlRenderResource *resource,
+                                 const GmlRenderDeviceServices *device,
+                                 int observe_replayable){
   GmlRenderImageReadback readback={0};
   GmlRenderImageReadbackResult result={0};
   uint32_t *checkpoint;
   size_t bytes;
   if(!resource || resource->authority==GML_RENDER_RESOURCE_INVALID) return 0;
-  if(resource->authority!=GML_RENDER_RESOURCE_GPU_PENDING_CHECKPOINT) return 1;
-  if(!device) device=&resource->checkpoint_device;
+  int pending=resource->authority==GML_RENDER_RESOURCE_GPU_PENDING_CHECKPOINT;
+  if(!pending &&
+     (!observe_replayable || resource->authority!=GML_RENDER_RESOURCE_GPU_REPLAYABLE))
+    return 1;
+  if(!device && !observe_replayable) device=&resource->checkpoint_device;
   if(!device || !device->readback || !device->context ||
      device->context!=resource->device_identity ||
      resource->gpu_version!=resource->image.content_version){
-    resource->authority=GML_RENDER_RESOURCE_INVALID;
+    if(pending && !observe_replayable) resource->authority=GML_RENDER_RESOURCE_INVALID;
     return 0;
   }
   bytes=(size_t)resource->width*resource->height*4u;
   checkpoint=resource->checkpoint_staging;
   if(!checkpoint){
     checkpoint=(uint32_t*)malloc(bytes);
-    if(!checkpoint){ resource->authority=GML_RENDER_RESOURCE_INVALID; return 0; }
+    if(!checkpoint){
+      if(pending && !observe_replayable) resource->authority=GML_RENDER_RESOURCE_INVALID;
+      return 0;
+    }
     resource->checkpoint_allocations++;
     /* Extents are immutable for this owner. Keep one bounded host plane for the two owned
      * frame targets; other resources and over-budget targets retain transient allocation.
@@ -718,7 +725,7 @@ int gml_render_resource_checkpoint(GmlRenderResource *resource,
     if(checkpoint!=resource->checkpoint_staging) free(checkpoint);
     resource->checkpoint_staging_version=0;
     resource->checkpoint_staging_device=NULL;
-    resource->authority=GML_RENDER_RESOURCE_INVALID;
+    if(pending && !observe_replayable) resource->authority=GML_RENDER_RESOURCE_INVALID;
     return 0;
   }
   if(result.updated_region.x==0 && result.updated_region.y==0 &&
@@ -741,6 +748,16 @@ int gml_render_resource_checkpoint(GmlRenderResource *resource,
   resource->cpu_write_acquired=0;
   memset(&resource->checkpoint_device,0,sizeof resource->checkpoint_device);
   return 1;
+}
+
+int gml_render_resource_checkpoint(GmlRenderResource *resource,
+                                    const GmlRenderDeviceServices *device){
+  return resource_checkpoint(resource,device,0);
+}
+
+int gml_render_resource_observe_device(GmlRenderResource *resource,
+                                        const GmlRenderDeviceServices *device){
+  return resource_checkpoint(resource,device,1);
 }
 
 static GmlRenderResourceExecution resource_submit(

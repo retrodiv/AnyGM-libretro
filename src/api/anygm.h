@@ -15,8 +15,8 @@ extern "C" {
  * runtime library version, and every publishable metadata file declares the literal "Git" instead
  * of a number, so no copy can promise a value that has gone stale. CONTRIBUTING.md owns the single
  * increment step. */
-#define ANYGM_VERSION "0.1.270"
-#define ANYGM_API_VERSION 5u
+#define ANYGM_VERSION "0.1.271"
+#define ANYGM_API_VERSION 6u
 #define ANYGM_HOST_SERVICES_VERSION 2u
 #define ANYGM_STATE_SCHEMA 37u
 #define ANYGM_MAX_GAMEPADS 4u
@@ -515,6 +515,7 @@ enum {
 typedef void (*AnygmGraphicsProc)(void);
 typedef AnygmGraphicsProc (*AnygmGraphicsGetProcAddressFn)(void *userdata,const char *name);
 typedef uintptr_t (*AnygmGraphicsGetFramebufferFn)(void *userdata);
+typedef uint32_t (*AnygmGraphicsIsCurrentFn)(void *userdata);
 
 typedef struct AnygmGraphicsContext {
   uint32_t struct_size;
@@ -523,8 +524,18 @@ typedef struct AnygmGraphicsContext {
   uint32_t version_minor;
   void *userdata;
   AnygmGraphicsGetProcAddressFn get_proc_address;
-  /* Queried once per rendered frame. A host is free to hand over a different target each time. */
+  /* Queried for device submissions and observations. A host may lend a different target each
+   * time; the returned framebuffer must belong to the currently adopted context. */
   AnygmGraphicsGetFramebufferFn get_current_framebuffer;
+  /* Optional, side-effect-free host proof that this exact borrowed context is
+   * current on the calling thread. It must issue no graphics/resource call and
+   * must return zero for no context, an unrelated context or unavailable proof.
+   * State writers may observe device pixels only after a positive answer. Size
+   * queries never invoke it. Absence retains the established CPU state path.
+   * A negative answer cannot replace unobserved GPU pixels with a CPU recipe:
+   * writers reject without altering them and may retry after the host rebinds.
+   * Already observed CPU images need no current context. */
+  AnygmGraphicsIsCurrentFn is_current;
 } AnygmGraphicsContext;
 
 /* Adopt a host graphics context, or adopt a recreated one. Valid before or after content is
@@ -537,7 +548,10 @@ AnygmResult anygm_graphics_context_reset(AnygmEngine *engine,const AnygmGraphics
 /* Release everything the engine created in the host context. Objects are deleted only when
  * `context_is_current` says the context is still current on the calling thread; otherwise the
  * handles are forgotten and only CPU-side records are released. Destroying an engine without a
- * current context is safe and issues no graphics call. */
+ * current context is safe and issues no graphics call. An installed is_current witness may
+ * revoke a positive argument. Controlled observation retries one transient read failure;
+ * a persistent failure loses only still-unobserved volatile scene pixels, never valid CPU/state
+ * images, and reports the failure instead of publishing reconstructed GPU pixels. */
 void anygm_graphics_context_destroy(AnygmEngine *engine,uint32_t context_is_current);
 
 typedef struct AnygmAvInfo {

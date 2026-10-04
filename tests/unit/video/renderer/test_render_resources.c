@@ -2165,6 +2165,110 @@ static int resident_numbered_target_queued_atlas_observation(void){
   return 1;
 }
 
+static int volatile_loss_discards_queued_nested_target(void){
+  GmlRender *render=(GmlRender*)calloc(1,sizeof *render);
+  uint32_t source_pixels[4]={0xFF315779u,0xFF315779u,0xFF315779u,0xFF315779u};
+  GmlRenderResourceSource source=source_view(source_pixels,1);
+  GmlRenderDrawOp operation=quad_op(2u,&source.image);
+  GmlRenderDrawStateSnapshot state=quad_state(0);
+  GmlRenderResource *resource;
+  GmlRenderImageRef previous;
+  FakeDevice fake={0};
+  GmlRenderDeviceServices device=service(&fake);
+  int backed,queued;
+  CHECK(render && gml_render_init(render,NULL)==0 &&
+        gml_render_application_surface_ensure_owned(render,4,4));
+  render->next_surface_id=1;
+  backed=gml_surface_create(render,4,4);
+  queued=gml_surface_create(render,4,4);
+  CHECK(backed>0 && queued>0);
+  fill(render->surface[backed-1].px,0x71423324u);
+  gml_render_application_surface_publish(render);
+  gml_render_bind_device(render,&device);
+  CHECK(gml_render_begin_resident_owned_application(render,0.0,0.0,0) &&
+        gml_surface_set_target(render,backed) &&
+        gml_surface_set_target(render,queued) && gml_surface_set_target(render,queued));
+  resource=render->surface[queued-1].resource;
+  CHECK(resource && render->target_sp==3);
+  previous=gml_render_resource_image_ref(resource);
+  gml_render_application_surface_bind(render,render->surface[queued-1].px,4,4,0);
+  operation.target.image=previous;
+  operation.target.image.content_version++;
+  operation.target.pixel_format=GML_RENDER_PIXEL_ARGB8888;
+  CHECK(gml_render_application_scene_enqueue(render,&operation,&state,&source) &&
+        render->pending_scene_batch && fake.submits==0);
+  /* Both the current clear and the suspended CPU-parent clear are delayed work. */
+  render->pending_fill=render->target_stack[1].pending_fill=1;
+  render->pending_fill_color=render->target_stack[1].fill_color=0xFFABCDEFu;
+  fake.forbid_calls=1;
+  gml_render_lose_volatile_device(render);
+  CHECK(fake.forbidden_calls==0 && !gml_render_device(render) &&
+        !render->pending_scene_batch && !render->pending_fill &&
+        !gml_surface_exists(render,queued) && gml_surface_exists(render,backed) &&
+        render->surface[backed-1].px[0]==0x71423324u &&
+        render->target_id==backed && render->target_sp==1 &&
+        render->app_surface==render->app_surface_owned && gml_surface_exists(render,0));
+  render->next_surface_id=queued;
+  CHECK(gml_surface_create(render,4,4)==queued);
+  resource=gml_render_surface_resource_ensure(render,queued);
+  CHECK(resource && gml_render_resource_image_ref(resource).incarnation!=previous.incarnation);
+  gml_render_free(render);
+  free(render);
+  return 1;
+}
+
+static int volatile_loss_recreates_only_unobserved_application(void){
+  for(unsigned observed=0u;observed<2u;observed++){
+    GmlRender *render=(GmlRender*)calloc(1,sizeof *render);
+    GmlRenderResource *resource;
+    GmlRenderImageRef previous;
+    GmlRenderDrawOp operation=clear_op(2u,0xFF556677u,GML_RENDER_REPLAY_EXACT);
+    GmlRenderDrawBatch batch={&operation,1u,NULL,0u};
+    GmlRenderJournalMetrics metrics={0};
+    FakeDevice fake={0};
+    GmlRenderDeviceServices device=service(&fake);
+    CHECK(render && gml_render_init(render,NULL)==0 &&
+          gml_render_application_surface_ensure_owned(render,4,4));
+    fill(render->app_surface_owned,0x71423324u);
+    gml_render_application_surface_publish(render);
+    gml_render_bind_device(render,&device);
+    CHECK(gml_render_begin_resident_owned_application(render,0.0,0.0,0));
+    resource=gml_render_application_resource_ensure(render);
+    CHECK(resource);
+    previous=gml_render_resource_image_ref(resource);
+    operation.target.image=previous;
+    operation.target.image.content_version++;
+    operation.target.pixel_format=GML_RENDER_PIXEL_ARGB8888;
+    CHECK(gml_render_application_scene_submit(render,&batch,NULL,0u)==
+          GML_RENDER_RESOURCE_EXEC_DEVICE);
+    fake.readback_colour=0x50778899u;
+    if(observed) CHECK(gml_render_observe_device_resources(render));
+    int backed=gml_surface_create(render,4,4);
+    CHECK(backed>0);
+    render->fb_opaque_known=1;
+    render->fb_all_opaque=!observed;
+    render->fb_all_transparent=0;
+    CHECK(gml_surface_set_target(render,backed) && render->target_sp==1);
+    fake.forbid_calls=1;
+    gml_render_lose_volatile_device(render);
+    CHECK(fake.forbidden_calls==0 && !gml_render_device(render) &&
+          !render->pending_scene_batch && !render->base_scene_resource &&
+          render->app_surface==render->app_surface_owned && gml_surface_exists(render,0) &&
+          !render->target_stack[0].opaque_known && !render->target_stack[0].all_opaque);
+    for(int index=0;index<16;index++)
+      CHECK(render->app_surface_owned[index]==(observed?fake.readback_colour:0u));
+    resource=gml_render_application_resource_ensure(render);
+    CHECK(resource &&
+          (gml_render_resource_image_ref(resource).incarnation==previous.incarnation)==observed);
+    gml_render_resource_journal_metrics(resource,&metrics);
+    CHECK(metrics.authority==GML_RENDER_RESOURCE_CPU_CURRENT && !metrics.gpu_version &&
+          metrics.cpu_version==metrics.logical_version && !metrics.journal_operations);
+    gml_render_free(render);
+    free(render);
+  }
+  return 1;
+}
+
 static int resident_numbered_target_rebind_retention_and_reuse(void){
   GmlRender *render=(GmlRender*)calloc(1,sizeof *render);
   FakeDevice fake={0};
@@ -6139,6 +6243,65 @@ static int state_without_context(void){
   return 1;
 }
 
+static int device_observation_preserves_actual_replayable_pixels(void){
+  uint32_t pixels[16],before[16];
+  FakeDevice fake={0},foreign={0};
+  GmlRenderDeviceServices device=service(&fake),other=service(&foreign);
+  GmlRenderDrawOp operation=clear_op(2u,0x40556677u,GML_RENDER_REPLAY_EXACT);
+  GmlRenderDrawBatch batch={&operation,1u,NULL,0u};
+  GmlRenderJournalMetrics original={0},observed={0};
+  GmlRenderResource *resource;
+  const uint32_t *current=NULL;
+  fill(pixels,0x80112233u);
+  memcpy(before,pixels,sizeof before);
+  resource=gml_render_resource_create(target_ref(1u,1u),4u,4u,
+    GML_RENDER_PIXEL_ARGB8888,pixels,(GmlRenderResourceLimits){0});
+  CHECK(resource);
+  operation.target.pixel_format=GML_RENDER_PIXEL_ARGB8888;
+  /* A synthetic device response deliberately differs from its replay recipe.
+   * This tests the observation contract, not the fidelity of a real clear. */
+  fake.readback_colour=0x41566778u;
+  CHECK(gml_render_resource_submit_deferred(resource,&device,&batch,NULL,0u)==
+        GML_RENDER_RESOURCE_EXEC_DEVICE && !fake.readbacks);
+  gml_render_resource_journal_metrics(resource,&original);
+  CHECK(original.authority==GML_RENDER_RESOURCE_GPU_REPLAYABLE &&
+        original.journal_operations==1u && original.cpu_version==1u);
+  fake.forbid_calls=foreign.forbid_calls=1;
+  CHECK(!gml_render_resource_observe_device(resource,NULL) &&
+        !gml_render_resource_observe_device(resource,&other));
+  gml_render_resource_journal_metrics(resource,&observed);
+  CHECK(!memcmp(&original,&observed,sizeof original) &&
+        !memcmp(pixels,before,sizeof before) &&
+        !fake.forbidden_calls && !foreign.forbidden_calls);
+  fake.forbid_calls=0;
+  fake.fail_partial_readback=1;
+  CHECK(!gml_render_resource_observe_device(resource,&device) && fake.readbacks==1);
+  gml_render_resource_journal_metrics(resource,&observed);
+  CHECK(observed.authority==original.authority &&
+        observed.cpu_version==original.cpu_version &&
+        observed.logical_version==original.logical_version &&
+        observed.journal_operations==original.journal_operations &&
+        !memcmp(pixels,before,sizeof before));
+  fake.fail_partial_readback=0;
+  CHECK(gml_render_resource_observe_device(resource,&device) && fake.readbacks==2);
+  gml_render_resource_journal_metrics(resource,&observed);
+  CHECK(observed.cpu_version==2u && observed.gpu_version==2u &&
+        observed.authority==GML_RENDER_RESOURCE_BOTH_CURRENT &&
+        observed.cpu_replays==0u && observed.device_checkpoints==1u &&
+        !observed.journal_operations);
+  for(unsigned index=0;index<16u;index++) CHECK(pixels[index]==fake.readback_colour);
+  fake.forbid_calls=1;
+  CHECK(gml_render_resource_observe_device(resource,NULL) &&
+        gml_render_resource_acquire_cpu_read(resource,&current) && current==pixels &&
+        !fake.forbidden_calls && fake.readbacks==2);
+  gml_render_resource_context_lost(resource);
+  CHECK(gml_render_resource_acquire_cpu_read(resource,&current) &&
+        pixels[0]==fake.readback_colour && pixels[15]==fake.readback_colour &&
+        !fake.forbidden_calls);
+  gml_render_resource_destroy(resource);
+  return 1;
+}
+
 static int metadata_state_capacity_preserves_pending_pixels(void){
   GmlRender *original=(GmlRender*)calloc(1,sizeof *original);
   GmlRender *restored=(GmlRender*)calloc(1,sizeof *restored);
@@ -6529,6 +6692,8 @@ int main(void){
   passed+=retained_target_stays_resident();
   passed+=resident_numbered_target_nested_cpu_boundary();
   passed+=resident_numbered_target_queued_atlas_observation();
+  passed+=volatile_loss_discards_queued_nested_target();
+  passed+=volatile_loss_recreates_only_unobserved_application();
   passed+=resident_numbered_target_rebind_retention_and_reuse();
   passed+=resident_target_alias_resumes_cpu_parent();
   passed+=numbered_surface_resize_replays_and_retires();
@@ -6583,6 +6748,7 @@ int main(void){
   passed+=resident_binary_atlas_sprite_gpu();
   passed+=resident_integer_scaled_atlas_sprite_gpu();
   passed+=state_without_context();
+  passed+=device_observation_preserves_actual_replayable_pixels();
   passed+=metadata_state_capacity_preserves_pending_pixels();
   passed+=metadata_state_capacity_skips_pixel_compression();
   passed+=zero_base_runtime_sprite_state();
@@ -6592,6 +6758,6 @@ int main(void){
   passed+=source_free_primitive_rect_replay();
   passed+=stretched_float_exact_replay();
   passed+=filtered_font_exact_recovery();
-  printf("render resource cases: passed=%d failed=%d\n",passed,85-passed);
-  return passed==85?EXIT_SUCCESS:EXIT_FAILURE;
+  printf("render resource cases: passed=%d failed=%d\n",passed,88-passed);
+  return passed==88?EXIT_SUCCESS:EXIT_FAILURE;
 }

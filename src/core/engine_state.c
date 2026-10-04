@@ -466,6 +466,22 @@ static int state_launch_matches_engine(const AnygmEngine *engine,
 }
 
 static void state_write(AnygmEngine *engine,CoreW *s,int *frame_exceeds_capacity){
+  /* A proven current context lets a writer preserve the actual resident pixels,
+   * rather than substituting their CPU recipe. Metadata queries do neither, and
+   * hosts without this proof retain the established context-free state path. */
+  if(s->data && engine->scene_renderer_session==ANYGM_SCENE_RENDERER_OPENGL &&
+     engine_graphics_has_access_proof(engine)){
+    int current=engine_graphics_is_current(engine);
+    if((current && !gml_render_observe_device_resources(&engine->render)) ||
+       (!current && (gml_render_device_observation_pending(&engine->render) ||
+                    (!engine->state_omit_frame &&
+                     engine->frame_authority==ENGINE_FRAME_GPU_PRESENTED_DEVICE_RESIDENT)))){
+      /* Reject before a renderer writer can turn replayable GPU authority into CPU bytes.
+       * Already observed CPU images remain serializable while the host is unbound. */
+      s->ok=0;
+      return;
+    }
+  }
   uint8_t empty_header[ANYGM_STATE_HEADER_SIZE]={0};
   cw_raw(s,empty_header,sizeof empty_header);
   size_t core_start=s->pos;

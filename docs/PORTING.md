@@ -104,17 +104,55 @@ requires closing and reopening content. When a frame is placed in the current fr
 engine sets `ANYGM_FRAME_HARDWARE_TARGET`; a frame without that flag still carries complete CPU
 pixels, and the two are never both authoritative.
 
+API 6 adds the optional `AnygmGraphicsContext.is_current` callback. It is a host
+proof that this exact borrowed context is current on the calling thread, not a
+test of whether entry points were resolved. It must be side-effect-free and make
+no GL resource call. Size queries never invoke it. A scene GPU state writer may
+observe persistent device pixels after a positive answer. A host without this
+callback retains the established context-free state path. With positive proof,
+eligible scene presentation also captures the completed RGBA into separate GPU
+storage before returning the borrowed target; actual observation reads that
+storage, not a CPU presentation recipe or a later frontend frame. An unbound
+context cannot observe an unmaterialised device-only completed image: the call
+fails before any surface recipe, pixel plane or caller payload is changed and can retry after
+rebinding. This also applies to persistent resources, frame-free states and restore rollback;
+already observed CPU images remain available without context access. Controlled
+current-context destruction observes the image before deleting its storage. An installed
+negative witness revokes a positive destruction notice and forbids graphics calls. One
+transient read failure is retried; persistent failure reports lost, still-unobserved volatile
+pixels instead of publishing CPU reconstructions. Valid CPU/state images survive that fault.
+Witnessed scene passes submit queued work without automatically observing every pending
+persistent resource at Draw or frame end. Actual CPU readers, save/rewind and healthy controlled
+destruction still observe their required pixels. CPU scenes and hosts without this callback
+retain the established sealing path. The per-call proof is not a promise that future callbacks
+will have context access: the host must qualify its save/rewind configuration and lend the owning
+context for those observations before using device-resident scene state. GPU entry points refuse
+an installed negative proof before graphics calls; temporary unbinding does not itself lose the
+adopted resource namespace, and access can retry after rebinding.
+
 The rules a host has to honour:
 
-- the framebuffer callback is asked once per rendered frame, so a host may hand over a different
-  target each time;
+- the framebuffer callback may be asked for each device submission or observation. It answers with
+  the currently owned target, which may differ from the one borrowed for an earlier frame;
 - the frame is written in the framebuffer's own bottom-left row order;
 - a reset with no destroy before it means the previous context is already gone, and the engine
   forgets its objects instead of deleting them into the new one;
-- `anygm_graphics_context_destroy` deletes only when told the context is still current;
+- `anygm_graphics_context_destroy` deletes only when told the context is still current and an
+  installed exact-context witness does not revoke that access;
 - destroying the engine without a current context releases memory and issues no graphics call;
 - an unusable context returns `ANYGM_ERROR_UNSUPPORTED` and leaves the engine fully usable in
   software.
+
+In scene mode, replacement of an active context without controlled destruction is genuine loss.
+Numbered surfaces whose current image exists only on the device, and targets of discarded queued
+device work, become nonexistent. Current CPU images, including valid restored state pixels,
+remain available. The managed application allocation is retained and cleared only when its
+device image was not observed; it is not exposed as a lost numbered surface. Pending batches,
+deferred draws and stale resource incarnations are discarded without a readback or an old-context
+callback. An unmaterialised completed image is withdrawn and the next frame redraws with lazily
+rebuilt immutable resources. Initial context adoption, Reset, valid load and the default CPU
+scene retain their established behavior. Destroying an already lost scene context applies the
+same volatile policy; healthy controlled destruction retains the on-demand observation above.
 
 The context and both execution policies are not emulated state. The policies live in
 `AnygmConfig`, but neither they nor the context enter the state configuration fingerprint or any

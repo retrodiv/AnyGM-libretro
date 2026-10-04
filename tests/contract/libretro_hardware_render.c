@@ -139,9 +139,29 @@ static int profile_setting(const char *value){
 /* Values the adapter must forward untouched. */
 static int proc_requests;
 static int framebuffer_requests;
+static int context_proc_available;
+static void *current_context;
+
+#ifdef _WIN32
+static void *__stdcall frontend_get_current_context(void){ return current_context; }
+#else
+static void *frontend_get_current_context(void){ return current_context; }
+#endif
 
 static retro_proc_address_t frontend_get_proc(const char *name){
-  (void)name;
+  if(!strcmp(name,"glXGetCurrentContext") || !strcmp(name,"wglGetCurrentContext") ||
+     !strcmp(name,"eglGetCurrentContext")){
+    retro_proc_address_t proc=NULL;
+    if(context_proc_available){
+      void *(
+#ifdef _WIN32
+        __stdcall
+#endif
+        *getter)(void)=frontend_get_current_context;
+      memcpy(&proc,&getter,sizeof proc);
+    }
+    return proc;
+  }
   proc_requests++;
   return (retro_proc_address_t)(void(*)(void))retro_deinit;
 }
@@ -400,6 +420,8 @@ static void begin(const char *value,int available,unsigned preferred,int desktop
   last_video_pixels=NULL;
   proc_requests=0;
   framebuffer_requests=0;
+  context_proc_available=0;
+  current_context=NULL;
   memset(&declared,0,sizeof declared);
   memset(&adopted,0,sizeof adopted);
   retro_set_environment(environment_callback);
@@ -522,6 +544,65 @@ static int context_lifecycle_reaches_the_engine(void){
   REQUIRE(destroy_calls==1,"the destroy reached the engine");
   REQUIRE(destroy_current==1u,"a controlled destroy says the context is still current");
   finish();
+  return 0;
+}
+
+static int context_access_proof_tracks_exact_owner(void){
+  begin("OpenGL",0,0,1,1);
+  REQUIRE(load(),"context access control loads");
+  declared.context_reset();
+  REQUIRE(!adopted.is_current,"an unavailable platform query grants no device observation");
+  finish();
+  begin("OpenGL",0,0,1,1);
+  context_proc_available=1;
+  REQUIRE(load(),"unbound context access control loads");
+  declared.context_reset();
+  REQUIRE(!adopted.is_current,"a resolved getter with no context grants no observation");
+  finish();
+  begin("OpenGL",0,0,1,1);
+  context_proc_available=1;
+  current_context=(void*)(uintptr_t)41u;
+  REQUIRE(load(),"owning context access control loads");
+  declared.context_reset();
+  REQUIRE(adopted.is_current && adopted.is_current(adopted.userdata),
+          "the exact owning current context grants observation");
+  current_context=NULL;
+  REQUIRE(!adopted.is_current(adopted.userdata),"unbinding revokes context access");
+  current_context=(void*)(uintptr_t)42u;
+  REQUIRE(!adopted.is_current(adopted.userdata),"a foreign context grants no resource access");
+  current_context=(void*)(uintptr_t)41u;
+  REQUIRE(adopted.is_current(adopted.userdata),"rebinding the owner restores context access");
+  current_context=(void*)(uintptr_t)43u;
+  declared.context_reset();
+  REQUIRE(adopted.is_current && adopted.is_current(adopted.userdata),
+          "reset adopts the new context identity");
+  current_context=(void*)(uintptr_t)41u;
+  REQUIRE(!adopted.is_current(adopted.userdata),"the former context is not the new owner");
+  current_context=(void*)(uintptr_t)43u;
+  declared.context_destroy();
+  REQUIRE(destroy_current==1u,"positive owning-context proof permits controlled deletion");
+  REQUIRE(!adopted.is_current(adopted.userdata),"controlled destruction revokes the proof");
+  finish();
+  begin("OpenGL",0,0,1,1);
+  context_proc_available=1;
+  current_context=(void*)(uintptr_t)41u;
+  REQUIRE(load(),"foreign destroy context control loads");
+  declared.context_reset();
+  current_context=(void*)(uintptr_t)42u;
+  declared.context_destroy();
+  REQUIRE(destroy_current==0u && !adopted.is_current(adopted.userdata),
+          "a controlled notice cannot override negative owning-context proof");
+  finish();
+  begin("OpenGL",0,0,1,1);
+  context_proc_available=1;
+  current_context=(void*)(uintptr_t)41u;
+  REQUIRE(load(),"unload context access control loads");
+  declared.context_reset();
+  AnygmGraphicsIsCurrentFn released_proof=adopted.is_current;
+  void *released_userdata=adopted.userdata;
+  finish();
+  REQUIRE(released_proof && !released_proof(released_userdata),
+          "unload revokes the borrowed context witness without a destroy notification");
   return 0;
 }
 
@@ -890,6 +971,7 @@ int main(void){
   if(desktop_is_requested_first()) return EXIT_FAILURE;
   if(embedded_preference_is_followed()) return EXIT_FAILURE;
   if(context_lifecycle_reaches_the_engine()) return EXIT_FAILURE;
+  if(context_access_proof_tracks_exact_owner()) return EXIT_FAILURE;
   if(synchronous_context_starts_once()) return EXIT_FAILURE;
   if(provisional_av_is_corrected()) return EXIT_FAILURE;
   if(failed_adoption_keeps_software()) return EXIT_FAILURE;

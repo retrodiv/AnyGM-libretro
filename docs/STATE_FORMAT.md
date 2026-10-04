@@ -378,6 +378,43 @@ language allocations and resource metadata may still change it. The actual write
 existing lossless encodings and returns the canonical payload length in `written`, which can be
 smaller than the GPU buffer requirement. Load and transactional rollback consume that length,
 not uninitialised capacity bytes. State bytes and schema are unchanged by this sizing policy.
+When a scene GPU host supplies a positive owning-context proof, the actual writer
+first observes dirty numbered, application and owned SCREEN resources through
+`gml_render_observe_device_resources`. Observation preserves the device RGBA,
+even when a CPU replay recipe exists. Failed reads do not publish partial pixels
+or discard that recipe; a retry can still observe the resident image. An absent
+witness retains the established resource writer. A negative installed witness
+rejects an unobserved resource before the renderer writer can replay it, including
+frame-free states and restore rollback; already observed CPU images remain usable.
+The observation
+callback and device services are transport metadata, not serialized fields.
+Witnessed scene passes retain pending persistent device images across Draw and frame end;
+automatic all-resource seals remain for CPU scenes and hosts without the callback. An explicit
+save observes the pending GPU version, not an earlier CPU plane. This changes observation timing,
+not state bytes, capacity, schemas or transactional restore. CPU content readers retain their
+resource barriers, and availability of the host's actual save-time context remains required.
+An eligible completed scene presentation with positive context proof is copied
+GPU-to-GPU into separate completed-frame storage before the frontend can reuse
+its target. The actual complete writer observes those exact RGBA bytes through
+`gml_gpu_read_completed_frame`; ordinary shader readback targets cannot overwrite
+them. A failed read leaves the CPU frame unpublished and can retry. Successful
+observation retires the pre-presentation SCREEN recipe instead of replaying it
+over the observed pixels. Controlled current-context destruction observes both
+persistent resources and this completed frame before deleting GPU storage.
+An installed negative witness forbids graphics calls even after a controlled notice.
+Destruction retries one transient observation failure. Persistent failure reports
+loss and invalidates only still-unobserved volatile pixels instead of publishing
+CPU recipes as actual GPU bytes; valid CPU images and saved states remain intact.
+No host handle, snapshot generation or context callback enters the state layout.
+Unmaterialised device-only completed pixels cannot be saved with a temporarily
+unbound context; rejection is not substituted CPU reconstruction. Hosts without
+context proof retain the old path. Qualification of frontend access transitions
+and removal of ordinary checkpoints remains separate work. Genuine scene-context
+loss discards device-only volatile user surfaces and unmaterialised completed
+images instead of replaying them. Current CPU images and valid saved bytes are
+not invalidated; a saved image restores exactly onto a replacement context.
+Managed application storage is recreated separately. This lifecycle policy
+changes neither the state layout nor the default CPU recovery behavior.
 `anygm_state_resume_size` returns the corresponding frame-free buffer requirement, and
 `anygm_state_save_for_resume` writes that form explicitly. Repeated serialization through the
 same form without an intervening mutation produces identical bytes.

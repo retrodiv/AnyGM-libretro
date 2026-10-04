@@ -88,15 +88,22 @@ GmlRenderResourceExecution gml_render_resource_submit(
   GmlRenderResource *resource,const GmlRenderDeviceServices *device,
   const GmlRenderDrawBatch *batch,const GmlRenderResourceSource *sources,
   uint32_t source_count);
-/* Consecutive device operations may share a checkpoint span within the current graphics call.
- * Once device-only work enters the span, exact suffix operations also need its final checkpoint.
- * CPU observation or frame-end sealing must materialise canonical pixels before host return. */
+/* Consecutive device operations may share a pending observation span. Once device-only work
+ * enters the span, exact suffix operations also retain device authority. CPU/state observation
+ * or a host-required seal materialises canonical pixels. An on-demand host may keep the span
+ * across frames while the device and its observation services remain alive. */
 GmlRenderResourceExecution gml_render_resource_submit_deferred(
   GmlRenderResource *resource,const GmlRenderDeviceServices *device,
   const GmlRenderDrawBatch *batch,const GmlRenderResourceSource *sources,
   uint32_t source_count);
 int gml_render_resource_checkpoint(GmlRenderResource *resource,
                                     const GmlRenderDeviceServices *device);
+/* Observe the actual resident device pixels, even when a CPU replay recipe exists.
+ * The caller must lend the owning current context through device; no stored service
+ * is used when it is absent. Failed observation does not discard a replayable image
+ * or publish partially read pixels. Already current CPU pixels need no device call. */
+int gml_render_resource_observe_device(GmlRenderResource *resource,
+                                        const GmlRenderDeviceServices *device);
 
 /* CPU access is complete without a current graphics context. A write acquisition materialises
  * first; the caller then commits a new logical version after changing the borrowed pixel plane. */

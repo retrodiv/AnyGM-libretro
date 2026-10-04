@@ -49,6 +49,7 @@ typedef struct FakeDriver {
   int blend_enabled;
   unsigned blend_configurations;
   unsigned scene_copies;
+  unsigned copy_error_at,last_copy_framebuffer,last_read_framebuffer;
   uint64_t scene_copied_pixels;
   int depth_enabled;
   int stencil_enabled;
@@ -124,6 +125,12 @@ void anygm_test_graphics_renderer(const char *renderer){ g_fake.renderer=rendere
 void anygm_test_graphics_readback_alpha(unsigned alpha){ g_fake.readback_alpha=(uint8_t)alpha; }
 void anygm_test_graphics_checkpoint_mask(unsigned bits){ g_fake.checkpoint_mask=(int)(bits&63u); }
 void anygm_test_graphics_fail_readback_at(unsigned ordinal){ g_fake.readback_error_at=ordinal; }
+void anygm_test_graphics_fail_all_readbacks(int failing){
+  g_fake.readback_error_at=failing?UINT32_MAX:0u;
+}
+void anygm_test_graphics_fail_copy_at(unsigned ordinal){ g_fake.copy_error_at=ordinal; }
+unsigned anygm_test_graphics_last_read_framebuffer(void){ return g_fake.last_read_framebuffer; }
+unsigned anygm_test_graphics_last_copy_framebuffer(void){ return g_fake.last_copy_framebuffer; }
 void anygm_test_graphics_fail_scene_draw_at(unsigned ordinal){ g_fake.scene_draw_error_at=ordinal; }
 void anygm_test_graphics_rgb_query_result(unsigned result){ g_fake.rgb_query_result=result; }
 void anygm_test_graphics_active_query(unsigned name){ g_fake.active_query=name; }
@@ -168,6 +175,8 @@ static void fake_CopyTexSubImage2D(GLenum a,GLint b,GLint c,GLint d,GLint e,GLin
   note_call();
   g_fake.scene_copies++;
   g_fake.scene_copied_pixels+=(uint64_t)(unsigned)g*(unsigned)h;
+  g_fake.last_copy_framebuffer=g_fake.framebuffer;
+  if(g_fake.scene_copies==g_fake.copy_error_at) g_fake.pending_error=0x0502u;
 }
 static void fake_BlitFramebuffer(GLint sx0,GLint sy0,GLint sx1,GLint sy1,
                                   GLint dx0,GLint dy0,GLint dx1,GLint dy1,
@@ -396,6 +405,7 @@ static GLboolean fake_UnmapBuffer(GLenum target){ (void)target; note_call(); ret
 static void fake_ReadPixels(GLint x,GLint y,GLsizei width,GLsizei height,GLenum format,GLenum type,void *pixels){
   uint8_t *out=(uint8_t*)pixels;
   (void)x;(void)y;(void)format;(void)type; note_call();
+  g_fake.last_read_framebuffer=g_fake.framebuffer;
   if(g_fake.bound_pack_buffer){
     /* Asynchronous: fill the fixture's storage for the bound buffer, hand nothing back now. */
     uint8_t *store=g_fake.pack_store[g_fake.bound_pack_buffer&1u];
@@ -409,7 +419,8 @@ static void fake_ReadPixels(GLint x,GLint y,GLsizei width,GLsizei height,GLenum 
     return;
   }
   g_fake.read_pixels++;
-  if(g_fake.read_pixels==g_fake.readback_error_at) g_fake.pending_error=0x0502u;
+  if(g_fake.read_pixels==g_fake.readback_error_at || g_fake.readback_error_at==UINT32_MAX)
+    g_fake.pending_error=0x0502u;
   for(GLsizei row=0;row<height;row++)
     for(GLsizei column=0;column<width;column++){
       uint8_t *px=out+((size_t)row*(size_t)width+(size_t)column)*4u;

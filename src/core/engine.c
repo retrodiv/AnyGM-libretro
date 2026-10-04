@@ -1572,7 +1572,7 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
   engine->aspect_event_view_stack_pointer = 0;
   engine->aspect_event_view_overflow = 0;
   gml_render_flush_pending_fill(&engine->render);
-  if(!gml_render_scene_flush(&engine->render)) return ANYGM_ERROR_INTERNAL;
+  if(!engine_graphics_finish_scene(engine)) return ANYGM_ERROR_INTERNAL;
   if(base_world_began &&
      !gml_render_resident_application_cpu_barrier(&engine->render))
     return ANYGM_ERROR_INTERNAL;
@@ -2003,7 +2003,7 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
      !gml_render_defer_resident_underlay(&engine->render))
     gml_render_flush_pending_underlay(&engine->render);
   gml_render_flush_pending_fill(&engine->render);
-  if(resident_screen_began && !gml_render_scene_flush(&engine->render))
+  if(resident_screen_began && !engine_graphics_finish_scene(engine))
     return ANYGM_ERROR_INTERNAL;
   log_present_pass(engine,"flushed",gtarget,gtw,gth);
   if (anygm_host_development_setting(&engine->host,"GML_LOG_PRESENT")) {
@@ -2569,11 +2569,11 @@ AnygmResult anygm_run_frame(AnygmEngine *engine,const AnygmInputFrame *input,
   engine->frame_flags=0;
   AnygmResult result=engine_run_frame(engine);
   if(result!=ANYGM_OK) return result;
-  /* Seal all non-reconstructible work before the frontend can return without a current context.
-   * This does not manufacture a CPU writer or replay an exact resident SCREEN journal. */
+  /* Submit the final queue. Witnessed GPU scenes retain their persistent pixels on device;
+   * the established context-free path still seals hosts without that observation contract. */
   int prof=profile_enabled(engine);
   double seal_started=prof?profile_now_ms(engine):0.0;
-  int sealed=gml_render_scene_flush(&engine->render);
+  int sealed=engine_graphics_finish_scene(engine);
   if(prof){
     double seal_ms=profile_now_ms(engine)-seal_started;
     engine->profile.seal_ms+=seal_ms;

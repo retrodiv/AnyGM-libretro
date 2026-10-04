@@ -115,6 +115,201 @@ static int lifecycle_reset_case(void){
   return 1;
 }
 
+static uint32_t completed_context_is_current(void *userdata){
+  return *(const uint32_t*)userdata;
+}
+
+static int unbound_context_access_case(void){
+  for(unsigned api=GML_GPU_API_OPENGL_CORE;api<=GML_GPU_API_OPENGLES3;api++){
+    uint32_t current=1u,pixels[4]={0xFF102030u,0xFF405060u,0xFF708090u,0xFFA0B0C0u};
+    uint32_t observed[4]={0},before[4]={0};
+    GmlGpuContext context=fake_context(api);
+    GmlRenderImageRef image={GML_RENDER_RESOURCE_ATLAS,8u,1u,1u};
+    GmlRenderImageUpload upload={0};
+    GmlRenderImageReadback readback={0};
+    GmlRenderDrawOp clear={0};
+    GmlRenderDrawBatch batch={0};
+    GmlRenderDeviceServices services={0};
+    GmlRenderDeviceCaps caps={0};
+    GmlRenderExecutionResult result;
+    GmlGpuCounters counters={0};
+    GmlRenderPlan plan;
+    int has_rgb=-1;
+    unsigned framebuffer_queries;
+    context.userdata=&current;
+    context.is_current=completed_context_is_current;
+    anygm_test_graphics_reset();
+    GmlGpu *gpu=gml_gpu_create();
+    REQUIRE(gpu && gml_gpu_context_reset(gpu,&context),"access context adopted while current");
+    gml_gpu_device_services(gpu,&services);
+    upload.image=image;
+    upload.storage_width=upload.storage_height=2u;
+    upload.region=(GmlRenderRect){0,0,2u,2u};
+    upload.pixel_format=GML_RENDER_PIXEL_ARGB8888;
+    upload.stride_bytes=8u;upload.byte_capacity=sizeof pixels;upload.bytes=pixels;
+    REQUIRE(services.upload(services.context,&upload),"current access upload succeeds");
+    clear.opcode=GML_RENDER_OP_CLEAR;
+    clear.target.image=(GmlRenderImageRef){GML_RENDER_RESOURCE_SURFACE,9u,1u,1u};
+    clear.target.storage_version=1u;
+    clear.target.width=clear.target.height=2u;
+    clear.target.pixel_format=GML_RENDER_PIXEL_ARGB8888;
+    clear.target.region=(GmlRenderRect){0,0,2u,2u};
+    batch.operations=&clear;batch.operation_count=1u;
+    result=services.submit(services.context,&batch);
+    REQUIRE(result.status==GML_RENDER_EXEC_ACCEPTED && result.accepted_prefix==1u,
+            "current access submits a real target clear");
+    readback.image=clear.target.image;readback.region=upload.region;
+    readback.storage_width=readback.storage_height=2u;
+    readback.pixel_format=upload.pixel_format;
+    readback.stride_bytes=8u;readback.byte_capacity=sizeof observed;readback.bytes=observed;
+    REQUIRE(services.readback(services.context,&readback),"current access reads its device target");
+    memcpy(before,observed,sizeof before);
+    REQUIRE(build_canvas_plan(&plan,pixels,2u,2u,8u,8u,2,2,4u,4u),
+            "an otherwise eligible terminal plan is built");
+    current=0u;
+    anygm_test_graphics_forbid_calls();
+    framebuffer_queries=anygm_test_graphics_framebuffer_queries();
+    REQUIRE(gml_gpu_context_active(gpu) && gml_gpu_context_has_access_proof(gpu) &&
+            !gml_gpu_context_is_current(gpu) &&
+            services.capabilities(services.context,&caps),
+            "temporary unbinding keeps adopted metadata without driver calls");
+    REQUIRE(!services.upload(services.context,&upload),"unbound upload is refused");
+    REQUIRE(!services.readback(services.context,&readback) &&
+            !memcmp(observed,before,sizeof observed),"unbound read publishes no caller bytes");
+    clear.target.image.content_version++;
+    result=services.submit(services.context,&batch);
+    REQUIRE(result.status==GML_RENDER_EXEC_UNSUPPORTED && !result.accepted_prefix &&
+            !result.uncertain_target_count && !result.all_destinations_uncertain,
+            "unbound scene refuses before modifying any destination");
+    REQUIRE(!services.flush(services.context) && !services.wait(services.context) &&
+            !services.has_rgb(services.context,image,&has_rgb) && has_rgb==-1,
+            "unbound flush, wait and synchronous query are refused");
+    services.retire(services.context,
+                    (GmlRenderImageRef){GML_RENDER_RESOURCE_ATLAS,99u,1u,1u});
+    REQUIRE(!gml_gpu_execute_plan(gpu,&plan) &&
+            plan.fallback_reason==GML_PLAN_FALLBACK_CONTEXT_UNAVAILABLE &&
+            !anygm_test_graphics_calls_after_forget() &&
+            framebuffer_queries==anygm_test_graphics_framebuffer_queries(),
+            "unbound execution makes neither GL calls nor framebuffer queries");
+    gml_gpu_counters(gpu,&counters);
+    REQUIRE(counters.fallbacks[GML_PLAN_FALLBACK_CONTEXT_UNAVAILABLE]==1u &&
+            counters.passes_replayed==1u && counters.scene_readbacks==1u,
+            "unavailable access is counted without inventing completed work");
+    current=1u;
+    anygm_test_graphics_allow_calls();
+    REQUIRE(services.upload(services.context,&upload) &&
+            services.readback(services.context,&readback),
+            "rebound access reuses the existing image version without a context reset");
+    result=services.submit(services.context,&batch);
+    REQUIRE(result.status==GML_RENDER_EXEC_ACCEPTED && result.accepted_prefix==1u &&
+            gml_gpu_execute_plan(gpu,&plan),"rebound scene and terminal plan can retry");
+    current=0u;
+    anygm_test_graphics_forbid_calls();
+    gml_gpu_destroy(gpu,1);
+    REQUIRE(!anygm_test_graphics_calls_after_forget(),"unbound destruction revokes its caller flag");
+    gpu=gml_gpu_create();
+    REQUIRE(gpu && !gml_gpu_context_reset(gpu,&context) && !gml_gpu_context_active(gpu) &&
+            !anygm_test_graphics_calls_after_forget(),
+            "initial adoption cannot resolve or execute an explicitly unbound context");
+    current=1u;
+    anygm_test_graphics_allow_calls();
+    REQUIRE(gml_gpu_context_reset(gpu,&context),"initial adoption can retry after binding");
+    gml_gpu_destroy(gpu,1);
+  }
+  return 1;
+}
+
+static int completed_frame_snapshot_case(void){
+  GmlGpu *gpu;
+  GmlGpuContext context=fake_context(GML_GPU_API_OPENGLES3);
+  GmlGpuCounters counters={0};
+  GmlRenderPlan plan;
+  uint32_t current=1u,pixels[40],before[40],source[16]={0},other[32]={0};
+  unsigned owned_framebuffer,copy_texture;
+  context.userdata=&current;
+  context.is_current=completed_context_is_current;
+  anygm_test_graphics_reset();
+  gpu=gml_gpu_create();
+  REQUIRE(gpu && gml_gpu_context_reset(gpu,&context),"completed context adopted");
+  REQUIRE(gml_gpu_capture_completed_frame(gpu,8u,4u,11u) &&
+          !anygm_test_graphics_read_pixels() &&
+          anygm_test_graphics_scene_copies()==1u &&
+          anygm_test_graphics_last_copy_framebuffer()==7u,
+          "completed capture copies the borrowed target without a CPU read");
+  copy_texture=anygm_test_graphics_attached_texture();
+  REQUIRE(copy_texture && anygm_test_graphics_texture_width(copy_texture)==8 &&
+          anygm_test_graphics_texture_height(copy_texture)==4,
+          "completed capture has separately owned storage");
+  for(unsigned index=0;index<40u;index++) pixels[index]=UINT32_C(0xDEADBEEF);
+  memcpy(before,pixels,sizeof before);
+  anygm_test_graphics_readback_alpha(0x41u);
+  anygm_test_graphics_fail_readback_at(1u);
+  REQUIRE(!gml_gpu_read_completed_frame(gpu,pixels,10u,8u,4u,11u) &&
+          !memcmp(before,pixels,sizeof pixels),
+          "failed completed read does not publish partial pixels");
+  owned_framebuffer=anygm_test_graphics_last_read_framebuffer();
+  REQUIRE(owned_framebuffer && owned_framebuffer!=7u,
+          "completed observation reads its own target, not the frontend target");
+  anygm_test_graphics_fail_readback_at(0u);
+  REQUIRE(gml_gpu_read_completed_frame(gpu,pixels,10u,8u,4u,11u),
+          "a failed completed read can retry the same generation");
+  for(unsigned row=0;row<4u;row++){
+    for(unsigned column=0;column<8u;column++)
+      REQUIRE(pixels[row*10u+column]==(UINT32_C(0x41000033)|
+                ((3u-row)<<16)|(column<<8)),
+              "completed read preserves RGBA and flips rows exactly once");
+    REQUIRE(pixels[row*10u+8u]==UINT32_C(0xDEADBEEF) &&
+            pixels[row*10u+9u]==UINT32_C(0xDEADBEEF),"completed read respects caller pitch");
+  }
+  REQUIRE(build_canvas_plan(&plan,source,4u,4u,8u,4u,0,0,8u,4u),
+          "separate ordinary readback plan builds");
+  plan.target=GML_PLAN_TARGET_READBACK;
+  plan.readback_pixels=other;
+  plan.readback_pitch_pixels=8u;
+  REQUIRE(gml_gpu_execute_plan(gpu,&plan) &&
+          anygm_test_graphics_attached_texture()!=copy_texture &&
+          gml_gpu_read_completed_frame(gpu,pixels,10u,8u,4u,11u) &&
+          anygm_test_graphics_last_read_framebuffer()==owned_framebuffer,
+          "ordinary shader readback cannot replace the completed-frame target");
+  gml_gpu_counters(gpu,&counters);
+  REQUIRE(counters.completed_frame_copies==1u && counters.completed_frame_copy_bytes==128u &&
+          counters.completed_frame_reads==3u && counters.completed_frame_read_bytes==384u,
+          "completed copy and attempted read traffic have separate counters");
+  anygm_test_graphics_forbid_calls();
+  REQUIRE(!gml_gpu_read_completed_frame(gpu,pixels,10u,8u,4u,12u) &&
+          !gml_gpu_read_completed_frame(gpu,pixels,7u,8u,4u,11u) &&
+          !gml_gpu_read_completed_frame(gpu,pixels,10u,7u,4u,11u) &&
+          !anygm_test_graphics_calls_after_forget(),
+          "stale generation, extent and pitch reject before a graphics call");
+  current=0u;
+  REQUIRE(!gml_gpu_capture_completed_frame(gpu,8u,4u,12u) &&
+          !gml_gpu_read_completed_frame(gpu,pixels,10u,8u,4u,11u) &&
+          !anygm_test_graphics_calls_after_forget(),
+          "an unbound context cannot capture or read completed pixels");
+  current=1u;
+  gml_gpu_context_lost(gpu);
+  REQUIRE(!gml_gpu_capture_completed_frame(gpu,8u,4u,12u) &&
+          !gml_gpu_read_completed_frame(gpu,pixels,10u,8u,4u,11u) &&
+          !anygm_test_graphics_calls_after_forget(),
+          "a lost completed-frame context is never called");
+  anygm_test_graphics_allow_calls();
+  REQUIRE(gml_gpu_context_reset(gpu,&context),"completed context is recreated");
+  anygm_test_graphics_forbid_calls();
+  REQUIRE(!gml_gpu_read_completed_frame(gpu,pixels,10u,8u,4u,11u) &&
+          !anygm_test_graphics_calls_after_forget(),
+          "a replacement context cannot reuse a stale completed snapshot");
+  anygm_test_graphics_allow_calls();
+  anygm_test_graphics_fail_copy_at(anygm_test_graphics_scene_copies()+1u);
+  REQUIRE(!gml_gpu_capture_completed_frame(gpu,5u,3u,12u),
+          "a failed GPU copy is not published as a completed frame");
+  anygm_test_graphics_fail_copy_at(0u);
+  REQUIRE(gml_gpu_capture_completed_frame(gpu,5u,3u,12u) &&
+          gml_gpu_read_completed_frame(gpu,pixels,10u,5u,3u,12u),
+          "completed capture retries allocation after a failed resize");
+  gml_gpu_destroy(gpu,1);
+  return 1;
+}
+
 static int lifecycle_loss_case(void){
   GmlGpu *gpu;
   GmlGpuContext context;
@@ -2380,6 +2575,8 @@ int main(int argc,char **argv){
   static const AnygmTestCase lifecycle_cases[]={
     {"reset",lifecycle_reset_case},
     {"context_loss",lifecycle_loss_case},
+    {"unbound_context_access",unbound_context_access_case},
+    {"completed_frame_snapshot",completed_frame_snapshot_case},
     {"destroy_without_context",lifecycle_destroy_without_context_case},
     {"missing_entry_point",missing_entry_point_case},
     {"program_failure",program_failure_case},

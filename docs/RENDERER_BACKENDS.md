@@ -71,6 +71,70 @@ retains exact saved-byte, image/audio, fixed/variable ring and no-current-contex
 This is a sizing prerequisite, not on-demand GPU preservation, volatile loss or removal of ordinary
 replay/checkpoints. No raster rule or its EXACT/TOLERANCE classification changes.
 
+The explicit state observer is `common/gml_render_resources.c::gml_render_resource_observe_device`,
+using the existing staged checkpoint body without substituting a replay recipe.
+`common/gml_render_surfaces.c::gml_render_observe_device_resources` drains pending work and
+observes dirty numbered/application/owned SCREEN resources. The root writer calls it only after
+`src/core/engine_graphics.c::engine_graphics_is_current` receives the host's positive owning-thread
+proof. An absent witness retains the existing resource writer. Negative installed proof rejects
+unobserved images before CPU replay, using the metadata-only
+`common/gml_render_surfaces.c::gml_render_device_observation_pending`; already observed CPU
+images remain usable. Size queries never ask for that proof.
+The adapter may resolve a thread-local platform getter through the frontend and compare the exact
+adopted context identity at each observation; resolving GL entry points alone grants no access.
+The controls are `tests/integration/test_graphics_state.c::scene_state_observes_lent_device_case`,
+`tests/unit/video/renderer/test_render_resources.c::device_observation_preserves_actual_replayable_pixels`
+and `tests/contract/libretro_hardware_render.c::context_access_proof_tracks_exact_owner`.
+They cover actual RGBA instead of a different synthetic replay response, failed-read publication,
+unbound/foreign/replaced contexts and unchanged context-free state bytes. This does not remove
+the exact recovery journal or certify every frontend configuration.
+`src/core/engine_graphics.c::engine_graphics_finish_scene` uses
+`gml_render.c::gml_render_scene_submit_pending` for witnessed current scene passes instead of
+the all-resource checkpoint seal, including world, GUI, multiview and final frame boundaries.
+Existing CPU-reader barriers remain; CPU scenes and absent-witness hosts keep the established
+seal. `tests/integration/test_graphics_state.c::scene_frame_end_defers_observation_case` keeps a
+pending persistent image across three frames without a checkpoint/replay, then saves/restores
+the actual GPU RGBA; its absent-witness control still seals each frame.
+`tests/unit/video/gpu/test_gpu.c::unbound_context_access_case` checks desktop/embedded refusal
+before upload, readback, submit, flush, wait, synchronous query and terminal-plan graphics calls,
+with rebind/retry and initial-adoption refusal. Cached capabilities, program failures and logical
+retirement remain metadata-only; ordinary GL work requires positive installed proof when present.
+`tests/integration/test_graphics_state.c::scene_state_unbound_observation_is_retryable_case`
+also preserves resource/frame authority and caller bytes across unavailable complete, frame-free
+and rollback observations, then rebinds and restores actual RGBA.
+`::scene_destroy_observation_fault_case` covers negative proof, one bounded transient retry and
+persistent read failure. The latter reports loss and invalidates still-unobserved volatile pixels
+rather than fabricating GPU bytes. Healthy controlled destruction preserves the actual pixels.
+
+Completed-frame transport is EXACT for the actual GPU input RGBA, not a claim that a mixed scene
+matches the CPU raster byte for byte. `src/core/engine_graphics.c::engine_present_hardware_screen`
+captures eligible scene output with positive context proof through
+`gpu/gml_gpu.c::gml_gpu_capture_completed_frame`; `gpu/opengl/gml_render_gpu_opengl_presentation.c`
+owns a separate snapshot texture/FBO, extent and generation, never the ordinary shader readback target.
+Capture performs GPU-to-GPU copy only. `src/core/engine_presentation.c::engine_materialize_completed_frame`
+reads this snapshot on observation and `gml_render.c::gml_render_completed_screen_publish` retires the
+earlier SCREEN recipe after success. The existing row/channel conversion is reused; failed reads
+publish nothing and stale/unbound/lost contexts are refused. Controlled current-context destruction
+observes resources and the completed image before deletion. `GmlGpuCounters.completed_frame_*`
+separates this traffic from scene checkpoints and content reads. The controls are
+`tests/unit/video/gpu/test_gpu.c::completed_frame_snapshot_case` and
+`tests/integration/test_graphics_state.c::scene_state_preserves_completed_device_case`.
+Missing proof, excluded presentation variants and ordinary replay/checkpoint policy retain their
+existing paths. Context-access transitions, full frontend qualification and removal of ordinary
+maintenance remain open; this transport adds no raster family.
+
+Scene-mode genuine loss is owned by `common/gml_render_surfaces.c::gml_render_lose_volatile_device`
+and `src/core/engine_graphics.c::engine_graphics_lose_scene_context`. Device-authoritative numbered
+surfaces and targets of discarded queued work become nonexistent; current CPU/state images
+survive. Existing surface-free target unwinding and incarnation allocation are reused. Managed
+application storage is reinitialised only when unobserved; lost completed device images are
+withdrawn rather than replayed. No dead-context callback, checkpoint or deletion is permitted.
+The controls are `tests/integration/test_graphics_state.c::scene_volatile_context_loss_case`,
+`tests/unit/video/renderer/test_render_resources.c::volatile_loss_discards_queued_nested_target`
+and `::volatile_loss_recreates_only_unobserved_application`. These are lifecycle controls, not
+new raster coverage, ordinary-read removal or whole-frontend qualification. CPU-mode context
+recovery, initial adoption, Reset and valid saved-image restoration keep their existing paths.
+
 The later resident prototype supports clear, qualified whole-image quads, and nearest-filtered
 interior atlas subrectangles with integer-sized axis-aligned destinations and optional X/Y mirrors.
 A narrow ordinary sprite path accepts unit-scale, integer-aligned authored trim when its atlas crop

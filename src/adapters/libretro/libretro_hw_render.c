@@ -16,6 +16,48 @@ static struct retro_hw_render_callback g_hardware;
 static bool g_hardware_requested;
 static bool g_hardware_adopted;
 
+#ifdef _WIN32
+typedef void *(__stdcall *HardwareGetCurrentFn)(void);
+#else
+typedef void *(*HardwareGetCurrentFn)(void);
+#endif
+static HardwareGetCurrentFn g_get_current_context;
+static void *g_owning_context;
+
+static uint32_t hardware_context_is_current(void *userdata){
+  (void)userdata;
+  return g_get_current_context && g_owning_context &&
+         g_get_current_context()==g_owning_context;
+}
+
+static void hardware_resolve_context_access(void){
+  static const char *const names[]={
+#ifdef _WIN32
+    "wglGetCurrentContext","eglGetCurrentContext"
+#else
+    "glXGetCurrentContext","eglGetCurrentContext"
+#endif
+  };
+  g_get_current_context=NULL;
+  g_owning_context=NULL;
+  if(!g_hardware.get_proc_address) return;
+  /* Resolve through the frontend, never through an ambient graphics loader.
+   * These thread-local platform queries need no GL object or current context.
+   * A missing getter keeps observation on the established CPU state path. */
+  for(size_t index=0;index<sizeof names/sizeof names[0];index++){
+    retro_proc_address_t proc=g_hardware.get_proc_address(names[index]);
+    HardwareGetCurrentFn getter=NULL;
+    if(!proc) continue;
+    memcpy(&getter,&proc,sizeof getter);
+    void *current=getter();
+    if(current){
+      g_get_current_context=getter;
+      g_owning_context=current;
+      return;
+    }
+  }
+}
+
 static AnygmGraphicsProc hardware_get_proc(void *userdata,const char *name){
   (void)userdata;
   if(!g_hardware.get_proc_address || !name) return NULL;
@@ -43,8 +85,12 @@ static void hardware_context_reset(void){
   context.userdata=NULL;
   context.get_proc_address=hardware_get_proc;
   context.get_current_framebuffer=hardware_get_framebuffer;
+  hardware_resolve_context_access();
+  if(g_get_current_context) context.is_current=hardware_context_is_current;
   result=anygm_graphics_context_reset(g_libretro.engine,&context);
   g_hardware_adopted=result==ANYGM_OK;
+  libretro_log(RETRO_LOG_INFO,"[graphics-context-access] state_observation=%s\n",
+               g_hardware_adopted && g_get_current_context?"owning-current":"CPU-fallback");
   if(!g_hardware_adopted){
     char error[512];
     anygm_get_last_error(g_libretro.engine,error,sizeof error);
@@ -63,10 +109,13 @@ static void hardware_context_reset(void){
 
 static void hardware_context_destroy(void){
   if(!g_libretro.engine) return;
-  /* A destroy notification means the context is still current, so the engine may delete what it
-   * created in it. A reset that arrives without one means the opposite. */
-  anygm_graphics_context_destroy(g_libretro.engine,1u);
+  /* Controlled teardown normally lends the context. An available exact-context witness is
+   * stronger than that notification; never name old objects in an unbound or foreign context. */
+  anygm_graphics_context_destroy(g_libretro.engine,
+    !g_get_current_context || hardware_context_is_current(NULL)?1u:0u);
   g_hardware_adopted=false;
+  g_get_current_context=NULL;
+  g_owning_context=NULL;
 }
 
 static bool request_context(enum retro_hw_context_type type,unsigned major,unsigned minor){
@@ -78,9 +127,9 @@ static bool request_context(enum retro_hw_context_type type,unsigned major,unsig
   g_hardware.context_destroy=hardware_context_destroy;
   g_hardware.depth=false;
   g_hardware.stencil=false;
-  /* The engine holds nothing across a context change that it cannot rebuild from CPU state, so
-   * asking the frontend to preserve the context would buy nothing and hide the reset path that
-   * has to work anyway. */
+  /* Controlled destruction observes resident scene pixels first. Unexpected loss instead
+   * invalidates volatile device-only surfaces and rebuilds immutable resources on next Draw;
+   * neither path requires the frontend to retain the old namespace. */
   g_hardware.cache_context=false;
   g_hardware.debug_context=false;
   /* AnyGM addresses rows from the top and the backend writes them into a bottom-left framebuffer
@@ -96,6 +145,8 @@ bool libretro_hw_render_request(bool needed){
   bool prefers_embedded=false;
   g_hardware_requested=false;
   g_hardware_adopted=false;
+  g_get_current_context=NULL;
+  g_owning_context=NULL;
   memset(&g_hardware,0,sizeof g_hardware);
   /* A selector rather than a switch, so a second backend is a new value beside this one. Match the
    * chosen backend exactly: a value this build does not implement -- a newer core's setting read
@@ -137,6 +188,8 @@ void libretro_hw_render_release(void){
   }
   g_hardware_adopted=false;
   g_hardware_requested=false;
+  g_get_current_context=NULL;
+  g_owning_context=NULL;
   memset(&g_hardware,0,sizeof g_hardware);
 }
 

@@ -16,6 +16,10 @@ void gml_render_bind_device(GmlRender *render,const GmlRenderDeviceServices *ser
 /* The host has already lost the old context: invalidate uncheckpointed device-only pixels
  * without invoking any callback on the former GL context. */
 void gml_render_abandon_device(GmlRender *render);
+/* Scene-mode genuine loss discards queued work and user surfaces without current CPU pixels.
+ * Valid CPU/state images survive; managed application storage is reinitialised separately.
+ * Like abandon_device, this never invokes a callback against the dead context. */
+void gml_render_lose_volatile_device(GmlRender *render);
 const GmlRenderDeviceServices *gml_render_device(const GmlRender *render);
 
 enum { GML_RENDER_TEXTURE_STAGES=8 };
@@ -383,6 +387,13 @@ void gml_render_control_update(GmlRender *r,const GmlRenderControl *control,
                                unsigned fields);
 int gml_render_resource_metrics(const GmlRender *r,
                                 GmlRenderResourceMetrics *metrics);
+/* Snapshot persistent device-produced pixels while the host lends the owning
+ * current context. Does not replay pixel recipes. This is an explicit observer,
+ * never an ordinary frame-end maintenance operation or a size query. */
+int gml_render_observe_device_resources(GmlRender *r);
+/* Metadata-only: whether queued work or persistent resources still need device observation.
+ * This never flushes, replays, invokes a device callback or reads a pixel plane. */
+int gml_render_device_observation_pending(const GmlRender *r);
 int gml_render_diagnostic_metrics(const GmlRender *r,
                                   GmlRenderDiagnosticMetrics *metrics);
 /* Visible world rectangle in authored coordinates; see the definition for why the target
@@ -582,10 +593,16 @@ void gml_render_set_pending_fill(GmlRender *r, uint32_t color);
 void gml_render_flush_pending_fill(GmlRender *r);
 /* Finish queued resident draws before an observer leaves the world pass. */
 int gml_render_scene_flush(GmlRender *r);
+/* Submit queued draws while retaining unobserved device pixels. CPU readers and explicit
+ * state observations still cross their resource-owned observation barriers. */
+int gml_render_scene_submit_pending(GmlRender *r);
 /* Completed SCREEN ownership is independent of the current borrowed Draw target. Readers retain
  * its device version; an actual CPU writer invalidates that version before modifying pixels. */
 int gml_render_completed_screen_read(GmlRender *r,uint32_t *pixels,int width,int height);
 int gml_render_completed_screen_write(GmlRender *r,uint32_t *pixels,int width,int height);
+/* After a successful full terminal-image observation, retire the pre-presentation SCREEN
+ * recipe instead of replaying it over the published pixels. No CPU pixel reconstruction. */
+void gml_render_completed_screen_publish(GmlRender *r,uint32_t *pixels,int width,int height);
 int gml_render_completed_screen_image(GmlRender *r,const uint32_t *pixels,int width,int height,
                                       GmlRenderImageRef *image);
 /* Retain a complete current SCREEN for pixel-centre nearest enlargement without a CPU shadow. */

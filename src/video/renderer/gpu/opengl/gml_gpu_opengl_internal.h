@@ -179,6 +179,12 @@ struct GmlGpuBackend {
   size_t readback_scratch_capacity;
   GlReadbackSlot readback_slots[GL_READBACK_SLOTS];
   int readback_pipelined;
+  /* Completed transport pixels must outlive the borrowed frontend target and ordinary
+   * content readback plans. Only metadata is retained on CPU until observation. */
+  GLuint completed_framebuffer,completed_texture;
+  uint32_t completed_width,completed_height;
+  uint64_t completed_generation;
+  int completed_valid,completed_attached;
   GlScene scene;
 };
 

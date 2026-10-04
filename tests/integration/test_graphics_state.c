@@ -16,6 +16,8 @@
  * that question needs a separate framebuffer comparison against the software renderer. */
 #include "anygm.h"
 #include "engine_internal.h"
+#include "gml_render_resources.h"
+#include "gml_render_surfaces_internal.h"
 #include "graphics_driver_fixture.h"
 #include "stdio_vfs.h"
 #include "synthetic_content.h"
@@ -164,6 +166,540 @@ static int advance(AnygmEngine *engine,int frames,uint32_t *last_flags){
 }
 
 static uint8_t *serialize(AnygmEngine *engine,size_t *size);
+
+typedef struct CurrentContextWitness {
+  uint32_t current,queries;
+} CurrentContextWitness;
+
+static uint32_t graphics_context_is_current(void *userdata){
+  CurrentContextWitness *witness=(CurrentContextWitness*)userdata;
+  witness->queries++;
+  return witness->current;
+}
+
+static int scene_frame_end_defers_observation_case(void){
+  for(unsigned witnessed=0;witnessed<2u;witnessed++){
+    Session selected={0},restored={0};
+    CurrentContextWitness witness={1u,0u};
+    AnygmGraphicsContext context=graphics_context(ANYGM_GRAPHICS_OPENGLES3);
+    GmlRenderDrawOp operation={0};
+    GmlRenderDrawBatch batch={&operation,1u,NULL,0u};
+    GmlRenderJournalMetrics metrics={0};
+    GmlRenderResource *resource;
+    uint8_t *saved=NULL;
+    size_t capacity=0,written=0;
+    int id;
+    anygm_test_graphics_reset();
+    REQUIRE(session_open_with_scene(&selected,ANYGM_SCENE_RENDERER_OPENGL) &&
+            session_open(&restored),"on-demand observation opens fresh scene and restore sessions");
+    context.userdata=&witness;
+    context.is_current=witnessed?graphics_context_is_current:NULL;
+    REQUIRE(anygm_graphics_context_reset(selected.engine,&context)==ANYGM_OK &&
+            advance(selected.engine,1,NULL),"on-demand observation begins with a completed frame");
+    id=gml_surface_create(&selected.engine->render,4,4);
+    resource=gml_render_surface_resource_ensure(&selected.engine->render,id);
+    REQUIRE(id>0 && resource,"on-demand observation creates a persistent device target");
+    operation.opcode=GML_RENDER_OP_CLEAR;
+    operation.reconstruction_mode=GML_RENDER_DEVICE_CHECKPOINT;
+    operation.target.storage_version=1u;
+    operation.target.width=operation.target.height=4u;
+    operation.target.pixel_format=GML_RENDER_PIXEL_ARGB8888;
+    operation.target.region=(GmlRenderRect){0,0,4u,4u};
+    operation.payload.clear_colour=0x40556677u;
+    for(unsigned frame=0;frame<3u;frame++){
+      operation.target.image=gml_render_resource_image_ref(resource);
+      operation.target.image.content_version++;
+      REQUIRE(gml_render_resource_submit_deferred(resource,
+                gml_render_device(&selected.engine->render),&batch,NULL,0u)==
+                GML_RENDER_RESOURCE_EXEC_DEVICE && advance(selected.engine,1,NULL),
+              "a persistent pending device image survives the next ordinary frame");
+      gml_render_resource_journal_metrics(resource,&metrics);
+      if(metrics.authority!=(witnessed?GML_RENDER_RESOURCE_GPU_PENDING_CHECKPOINT:
+                                       GML_RENDER_RESOURCE_BOTH_CURRENT) ||
+         metrics.device_checkpoints!=(witnessed?0u:frame+1u))
+        fprintf(stderr,"frame observation: witnessed=%u frame=%u authority=%u checkpoints=%llu\n",
+                witnessed,frame,metrics.authority,(unsigned long long)metrics.device_checkpoints);
+      REQUIRE(metrics.authority==(witnessed?GML_RENDER_RESOURCE_GPU_PENDING_CHECKPOINT:
+                                            GML_RENDER_RESOURCE_BOTH_CURRENT) &&
+              metrics.device_checkpoints==(witnessed?0u:frame+1u) && !metrics.cpu_replays &&
+              !metrics.journal_operations,
+              "witnessed frames leave pixels resident; unwitnessed frames retain their seal");
+    }
+    witness.queries=0u;
+    anygm_test_graphics_forbid_calls();
+    capacity=anygm_state_size(selected.engine);
+    REQUIRE(capacity && !witness.queries && !anygm_test_graphics_calls_after_forget(),
+            "pending persistent pixels do not change metadata-only state sizing");
+    anygm_test_graphics_allow_calls();
+    saved=(uint8_t*)malloc(capacity);
+    REQUIRE(saved,"on-demand observation allocates advertised state capacity");
+    anygm_test_graphics_readback_alpha(0x4Du);
+    REQUIRE(anygm_state_save(selected.engine,saved,capacity,&written)==ANYGM_OK && written &&
+            written<=capacity && anygm_state_load(restored.engine,saved,written)==ANYGM_OK,
+            "explicit state observation preserves a pending image in the same execution");
+    const uint32_t *pixels=gml_surface_pixels_read(&restored.engine->render,id,NULL,NULL);
+    gml_render_resource_journal_metrics(resource,&metrics);
+    REQUIRE(pixels && metrics.device_checkpoints==(witnessed?1u:3u) && !metrics.cpu_replays &&
+            (witnessed?(pixels[0]==0x4D030033u && pixels[15]==0x4D000333u):
+                         (pixels[0]==0xFF030033u && pixels[15]==0xFF000333u)),
+            "saving reads actual persistent RGBA only when its device version is unobserved");
+    free(saved);
+    session_close(&selected);session_close(&restored);
+  }
+  return 1;
+}
+
+static int scene_state_unbound_observation_is_retryable_case(void){
+  for(unsigned completed=0;completed<2u;completed++){
+    Session selected={0},restored={0};
+    CurrentContextWitness witness={1u,0u};
+    AnygmGraphicsContext context=graphics_context(ANYGM_GRAPHICS_OPENGLES3);
+    GmlRenderDrawOp operation={0};
+    GmlRenderDrawBatch batch={&operation,1u,NULL,0u};
+    GmlRenderJournalMetrics before={0},after={0};
+    GmlRenderResource *resource;
+    uint8_t *saved=NULL,*prior=NULL;
+    uint32_t shadow[16],frame_authority=0;
+    size_t capacity=0,written=0,prior_size=0;
+    unsigned reads=0;
+    int id;
+    anygm_test_graphics_reset();
+    REQUIRE(session_open_with_scene(&selected,ANYGM_SCENE_RENDERER_OPENGL) &&
+            session_open(&restored),"unbound observation starts from fresh content");
+    prior=serialize(restored.engine,&prior_size);
+    REQUIRE(prior && prior_size,"unbound restore input is created in this execution");
+    context.userdata=&witness;
+    context.is_current=graphics_context_is_current;
+    REQUIRE(anygm_graphics_context_reset(selected.engine,&context)==ANYGM_OK &&
+            (!completed || advance(selected.engine,1,NULL)),
+            "unbound observation starts with an accessible owning context");
+    id=gml_surface_create(&selected.engine->render,4,4);
+    resource=gml_render_surface_resource_ensure(&selected.engine->render,id);
+    REQUIRE(id>0 && resource,"unbound observation creates a persistent target");
+    operation.opcode=GML_RENDER_OP_CLEAR;
+    operation.reconstruction_mode=GML_RENDER_REPLAY_EXACT;
+    operation.target.image=gml_render_resource_image_ref(resource);
+    operation.target.image.content_version++;
+    operation.target.storage_version=1u;
+    operation.target.width=operation.target.height=4u;
+    operation.target.pixel_format=GML_RENDER_PIXEL_ARGB8888;
+    operation.target.region=(GmlRenderRect){0,0,4u,4u};
+    operation.payload.clear_colour=0x40556677u;
+    REQUIRE(gml_render_surface_scene_submit(&selected.engine->render,id,&batch,NULL,0u)==
+            GML_RENDER_RESOURCE_EXEC_DEVICE,"unbound observation actually dirties device pixels");
+    memcpy(shadow,selected.engine->render.surface[id-1].px,sizeof shadow);
+    gml_render_resource_journal_metrics(resource,&before);
+    REQUIRE(before.authority==GML_RENDER_RESOURCE_GPU_REPLAYABLE &&
+            before.cpu_version!=before.logical_version,
+            "unbound observation retains an exact recipe but not actual GPU bytes");
+    frame_authority=selected.engine->frame_authority;
+    reads=anygm_test_graphics_read_pixels();
+    witness.current=0u;
+    witness.queries=0u;
+    anygm_test_graphics_forbid_calls();
+    capacity=anygm_state_size(selected.engine);
+    REQUIRE(capacity>0u && anygm_state_resume_size(selected.engine)>0u && !witness.queries,
+            "unbound metadata queries need neither access proof nor pixels");
+    saved=(uint8_t*)malloc(capacity);
+    REQUIRE(saved,"unbound observation allocates advertised capacity");
+    memset(saved,0xA5,capacity);
+    REQUIRE(anygm_state_save(selected.engine,saved,capacity,&written)!=ANYGM_OK && !written,
+            "unbound save refuses before substituting CPU surface recipes");
+    REQUIRE(anygm_state_save_for_resume(selected.engine,saved,capacity,&written)!=ANYGM_OK &&
+            !written && anygm_state_load(selected.engine,prior,prior_size)!=ANYGM_OK,
+            "resume and rollback also refuse an unavailable actual device image");
+    gml_render_resource_journal_metrics(resource,&after);
+    REQUIRE(after.authority==before.authority && after.cpu_version==before.cpu_version &&
+            after.gpu_version==before.gpu_version && after.logical_version==before.logical_version &&
+            after.journal_operations==before.journal_operations &&
+            after.cpu_replays==before.cpu_replays &&
+            !memcmp(shadow,selected.engine->render.surface[id-1].px,sizeof shadow) &&
+            selected.engine->frame_authority==frame_authority && saved[0]==0xA5 &&
+            anygm_test_graphics_read_pixels()==reads &&
+            !anygm_test_graphics_calls_after_forget(),
+            "unavailable observation preserves authority, CPU planes, frame and caller bytes");
+    anygm_test_graphics_allow_calls();
+    witness.current=1u;
+    anygm_test_graphics_readback_alpha(0x49u);
+    REQUIRE(anygm_state_save(selected.engine,saved,capacity,&written)==ANYGM_OK &&
+            written>0u && written<=capacity &&
+            anygm_state_load(restored.engine,saved,written)==ANYGM_OK,
+            "rebinding permits retry and context-free restoration of actual device pixels");
+    const uint32_t *pixels=gml_surface_pixels_read(&restored.engine->render,id,NULL,NULL);
+    REQUIRE(pixels && pixels[0]==0x49030033u && pixels[15]==0x49000333u,
+            "retry observes the actual RGBA instead of the retained clear recipe");
+    free(saved); free(prior);
+    session_close(&selected); session_close(&restored);
+  }
+  return 1;
+}
+
+static int scene_destroy_observation_fault_case(void){
+  for(unsigned fault=0;fault<3u;fault++){
+    Session selected={0};
+    CurrentContextWitness witness={1u,0u};
+    AnygmGraphicsContext context=graphics_context(ANYGM_GRAPHICS_OPENGLES3);
+    GmlRenderDrawOp operation={0};
+    GmlRenderDrawBatch batch={&operation,1u,NULL,0u};
+    GmlRenderResource *resource;
+    unsigned reads=0,deletes=0;
+    int id,backed;
+    anygm_test_graphics_reset();
+    REQUIRE(session_open_with_scene(&selected,ANYGM_SCENE_RENDERER_OPENGL),
+            "destruction fault starts from fresh content");
+    context.userdata=&witness;
+    context.is_current=graphics_context_is_current;
+    REQUIRE(anygm_graphics_context_reset(selected.engine,&context)==ANYGM_OK &&
+            advance(selected.engine,1,NULL),"destruction fault completes a device frame");
+    id=gml_surface_create(&selected.engine->render,4,4);
+    backed=gml_surface_create(&selected.engine->render,2,2);
+    resource=gml_render_surface_resource_ensure(&selected.engine->render,id);
+    REQUIRE(id>0 && backed>0 && resource,"destruction fault owns device and CPU surfaces");
+    selected.engine->render.surface[backed-1].px[0]=0x72554433u;
+    operation.opcode=GML_RENDER_OP_CLEAR;
+    operation.reconstruction_mode=GML_RENDER_REPLAY_EXACT;
+    operation.target.image=gml_render_resource_image_ref(resource);
+    operation.target.image.content_version++;
+    operation.target.storage_version=1u;
+    operation.target.width=operation.target.height=4u;
+    operation.target.pixel_format=GML_RENDER_PIXEL_ARGB8888;
+    operation.target.region=(GmlRenderRect){0,0,4u,4u};
+    operation.payload.clear_colour=0x40556677u;
+    REQUIRE(gml_render_surface_scene_submit(&selected.engine->render,id,&batch,NULL,0u)==
+            GML_RENDER_RESOURCE_EXEC_DEVICE,"destruction fault leaves unobserved device pixels");
+    reads=anygm_test_graphics_read_pixels();
+    deletes=(unsigned)anygm_test_graphics_deletes();
+    anygm_test_graphics_readback_alpha(0x4Bu);
+    if(fault==0u){
+      witness.current=0u;
+      anygm_test_graphics_forbid_calls();
+    } else if(fault==1u) anygm_test_graphics_fail_readback_at(reads+1u);
+    else anygm_test_graphics_fail_all_readbacks(1);
+    /* A notification is not stronger evidence than the exact-context witness. */
+    anygm_graphics_context_destroy(selected.engine,1u);
+    REQUIRE(!engine_graphics_active(selected.engine) &&
+            gml_surface_exists(&selected.engine->render,backed) &&
+            selected.engine->render.surface[backed-1].px[0]==0x72554433u,
+            "destruction always preserves already-current CPU surfaces");
+    if(fault==1u){
+      const uint32_t *pixels=gml_surface_pixels_read(&selected.engine->render,id,NULL,NULL);
+      REQUIRE(pixels && pixels[0]==0x4B030033u && pixels[15]==0x4B000333u &&
+              selected.engine->frame_authority==ENGINE_FRAME_CPU_MATERIALIZED &&
+              anygm_test_graphics_read_pixels()>reads+1u,
+              "one transient destruction read failure retries and preserves actual RGBA");
+    } else {
+      REQUIRE(!gml_surface_exists(&selected.engine->render,id) &&
+              selected.engine->frame_authority==ENGINE_FRAME_NONE &&
+              !selected.engine->have_presented_frame,
+              "unrecoverable destruction cannot publish CPU recipes as actual device pixels");
+      if(fault==0u)
+        REQUIRE(anygm_test_graphics_read_pixels()==reads &&
+                (unsigned)anygm_test_graphics_deletes()==deletes &&
+                !anygm_test_graphics_calls_after_forget(),
+                "negative exact-context proof forbids all graphics calls despite destroy notice");
+      else REQUIRE(anygm_test_graphics_read_pixels()==reads+2u,
+                   "persistent failure uses exactly two bounded observation attempts");
+    }
+    anygm_test_graphics_allow_calls();
+    anygm_test_graphics_fail_all_readbacks(0);
+    session_close(&selected);
+  }
+  return 1;
+}
+
+static int scene_state_observes_lent_device_case(void){
+  for(unsigned lent=0;lent<2u;lent++){
+    Session selected={0},restored={0};
+    CurrentContextWitness witness={lent,0u};
+    AnygmGraphicsContext context=graphics_context(ANYGM_GRAPHICS_OPENGLES3);
+    GmlRenderJournalMetrics before={0},after={0};
+    GmlRenderDrawOp operation={0};
+    GmlRenderDrawBatch batch={&operation,1u,NULL,0u};
+    GmlRenderResource *resource;
+    uint8_t *saved=NULL,*again=NULL;
+    size_t capacity=0,written=0,again_written=0;
+    int id;
+    anygm_test_graphics_reset();
+    REQUIRE(session_open_with_scene(&selected,ANYGM_SCENE_RENDERER_OPENGL) &&
+            session_open(&restored),"observed state sessions load fresh content");
+    context.userdata=&witness;
+    context.is_current=lent?graphics_context_is_current:NULL;
+    REQUIRE(anygm_graphics_context_reset(selected.engine,&context)==ANYGM_OK,
+            "observed state lends an explicitly witnessed context");
+    id=gml_surface_create(&selected.engine->render,4,4);
+    resource=gml_render_surface_resource_ensure(&selected.engine->render,id);
+    REQUIRE(id>0 && resource,"observed state owns a persistent numbered surface");
+    operation.opcode=GML_RENDER_OP_CLEAR;
+    operation.reconstruction_mode=GML_RENDER_REPLAY_EXACT;
+    operation.target.image=gml_render_resource_image_ref(resource);
+    operation.target.image.content_version++;
+    operation.target.storage_version=1u;
+    operation.target.width=operation.target.height=4u;
+    operation.target.pixel_format=GML_RENDER_PIXEL_ARGB8888;
+    operation.target.region=(GmlRenderRect){0,0,4u,4u};
+    operation.payload.clear_colour=0x40556677u;
+    REQUIRE(gml_render_surface_scene_submit(&selected.engine->render,id,&batch,NULL,0u)==
+            GML_RENDER_RESOURCE_EXEC_DEVICE,"observed state actually executes device work");
+    gml_render_resource_journal_metrics(resource,&before);
+    REQUIRE(before.authority==GML_RENDER_RESOURCE_GPU_REPLAYABLE &&
+            before.cpu_version!=before.logical_version &&
+            !anygm_test_graphics_read_pixels(),"observed state starts with stale CPU pixels");
+    witness.queries=0u;
+    anygm_test_graphics_forbid_calls();
+    capacity=anygm_state_size(selected.engine);
+    REQUIRE(capacity>0u && anygm_state_resume_size(selected.engine)>0u &&
+            !witness.queries && !anygm_test_graphics_calls_after_forget(),
+            "state sizing never queries context access or observes pixels");
+    anygm_test_graphics_allow_calls();
+    saved=(uint8_t*)malloc(capacity);
+    again=(uint8_t*)malloc(capacity);
+    REQUIRE(saved && again,"observed state allocates its advertised capacity");
+    /* The fake's patterned response is intentionally not its clear recipe. */
+    anygm_test_graphics_readback_alpha(0x41u);
+    if(lent){
+      anygm_test_graphics_fail_readback_at(1u);
+      REQUIRE(anygm_state_save(selected.engine,saved,capacity,&written)!=ANYGM_OK &&
+              selected.engine->render.surface[id-1].px[0]==0u &&
+              selected.engine->render.surface[id-1].px[15]==0u,
+              "failed device state observation does not publish a partial surface");
+      gml_render_resource_journal_metrics(resource,&after);
+      REQUIRE(after.authority==before.authority &&
+              after.cpu_version==before.cpu_version &&
+              after.logical_version==before.logical_version &&
+              after.journal_operations==before.journal_operations,
+              "failed state observation retains the resource and its recovery recipe");
+      anygm_test_graphics_fail_readback_at(0u);
+    } else anygm_test_graphics_forbid_calls();
+    REQUIRE(anygm_state_save(selected.engine,saved,capacity,&written)==ANYGM_OK &&
+            written>0u && written<=capacity && (lent?witness.queries>0u:!witness.queries),
+            "state writes through the witnessed observation policy");
+    anygm_test_graphics_allow_calls();
+    REQUIRE(anygm_state_load(restored.engine,saved,written)==ANYGM_OK,
+            "observed state loads without a graphics context");
+    const uint32_t *pixels=gml_surface_pixels_read(&restored.engine->render,id,NULL,NULL);
+    gml_render_resource_journal_metrics(resource,&after);
+    REQUIRE(pixels,"observed persistent surface is restored");
+    if(lent){
+      REQUIRE((pixels[0]&0xFF0000FFu)==0x41000033u &&
+              (pixels[15]&0xFF0000FFu)==0x41000033u &&
+              after.cpu_replays==0u && after.device_checkpoints==1u &&
+              anygm_test_graphics_read_pixels()==2u,
+              "state preserves actual device RGBA, not CPU replay RGBA");
+    } else {
+      REQUIRE(pixels[0]==operation.payload.clear_colour &&
+              pixels[15]==operation.payload.clear_colour &&
+              after.cpu_replays==1u && !after.device_checkpoints &&
+              !anygm_test_graphics_read_pixels() &&
+              !anygm_test_graphics_calls_after_forget(),
+              "host without an access witness retains the existing GL-free state path");
+    }
+    witness.current=0u;
+    anygm_test_graphics_forbid_calls();
+    REQUIRE(anygm_state_save(selected.engine,again,capacity,&again_written)==ANYGM_OK &&
+            again_written==written && !memcmp(saved,again,written) &&
+            !anygm_test_graphics_calls_after_forget(),
+            "observed state bytes remain exact after the host unbinds its context");
+    anygm_test_graphics_allow_calls();
+    free(saved); free(again);
+    session_close(&selected); session_close(&restored);
+  }
+  return 1;
+}
+
+static int scene_state_preserves_completed_device_case(void){
+  Session selected={0},restored={0};
+  CurrentContextWitness witness={1u,0u};
+  AnygmGraphicsContext context=graphics_context(ANYGM_GRAPHICS_OPENGLES3);
+  uint8_t *saved=NULL,*again=NULL;
+  uint32_t *shadow=NULL,flags=0u;
+  size_t capacity=0,written=0,again_written=0,pixels=0;
+  unsigned width=0,height=0,reads=0;
+  anygm_test_graphics_reset();
+  REQUIRE(session_open_with_scene(&selected,ANYGM_SCENE_RENDERER_OPENGL) &&
+          session_open(&restored),"completed-device state starts from fresh content");
+  context.userdata=&witness;
+  context.is_current=graphics_context_is_current;
+  REQUIRE(anygm_graphics_context_reset(selected.engine,&context)==ANYGM_OK &&
+          advance(selected.engine,1,&flags) && (flags&ANYGM_FRAME_HARDWARE_TARGET),
+          "completed-device state presents an actual hardware frame");
+  width=selected.engine->output_width;
+  height=selected.engine->output_height;
+  pixels=(size_t)width*height;
+  shadow=(uint32_t*)malloc(pixels*sizeof *shadow);
+  REQUIRE(shadow && width>1u && height>1u,"completed-device shadow exists");
+  memcpy(shadow,selected.engine->screen,pixels*sizeof *shadow);
+  reads=anygm_test_graphics_read_pixels();
+  witness.queries=0u;
+  anygm_test_graphics_forbid_calls();
+  capacity=anygm_state_size(selected.engine);
+  REQUIRE(capacity>0u && !witness.queries &&
+          !anygm_test_graphics_calls_after_forget(),
+          "completed-device size does not observe the saved framebuffer");
+  anygm_test_graphics_allow_calls();
+  anygm_test_graphics_readback_alpha(0x43u);
+  anygm_test_graphics_fail_readback_at(reads+1u);
+  REQUIRE(!engine_materialize_completed_frame(selected.engine) &&
+          !memcmp(shadow,selected.engine->screen,pixels*sizeof *shadow),
+          "failed completed-device read publishes no partial CPU image");
+  anygm_test_graphics_fail_readback_at(0u);
+  saved=(uint8_t*)malloc(capacity);
+  again=(uint8_t*)malloc(capacity);
+  REQUIRE(saved && again,"completed-device state allocates advertised capacity");
+  REQUIRE(anygm_state_save(selected.engine,saved,capacity,&written)==ANYGM_OK &&
+          written>0u && written<=capacity &&
+          anygm_state_load(restored.engine,saved,written)==ANYGM_OK,
+          "completed-device pixels save and restore without a target");
+  REQUIRE(restored.engine->state_frame_available &&
+          restored.engine->state_frame_width==width &&
+          restored.engine->state_frame_height==height,
+          "completed-device state retains the authored completed extent");
+  for(unsigned row=0;row<height;row++){
+    for(unsigned column=0;column<width;column++){
+      uint32_t expected=UINT32_C(0x43000033)|
+        (((height-1u-row)&255u)<<16)|((column&255u)<<8);
+      REQUIRE(restored.engine->screen[(size_t)row*width+column]==expected,
+              "completed-device state preserves actual RGBA rather than CPU reconstruction");
+    }
+  }
+  witness.current=0u;
+  reads=anygm_test_graphics_read_pixels();
+  anygm_test_graphics_forbid_calls();
+  REQUIRE(anygm_state_save(selected.engine,again,capacity,&again_written)==ANYGM_OK &&
+          again_written==written && !memcmp(saved,again,written) &&
+          anygm_test_graphics_read_pixels()==reads &&
+          !anygm_test_graphics_calls_after_forget(),
+          "observed completed state remains byte-identical without a context");
+  anygm_test_graphics_allow_calls();
+  witness.current=1u;
+  REQUIRE(advance(selected.engine,1,&flags) && (flags&ANYGM_FRAME_HARDWARE_TARGET),
+          "controlled destruction starts with another resident completed frame");
+  anygm_test_graphics_readback_alpha(0x45u);
+  reads=anygm_test_graphics_read_pixels();
+  anygm_graphics_context_destroy(selected.engine,1u);
+  REQUIRE(!engine_graphics_active(selected.engine) &&
+          selected.engine->frame_authority==ENGINE_FRAME_CPU_MATERIALIZED &&
+          anygm_test_graphics_read_pixels()>reads,
+          "controlled destruction observes completed GPU pixels before deleting resources");
+  witness.current=0u;
+  anygm_test_graphics_forbid_calls();
+  REQUIRE(anygm_state_save(selected.engine,again,capacity,&again_written)==ANYGM_OK &&
+          !anygm_test_graphics_calls_after_forget() &&
+          anygm_state_load(restored.engine,again,again_written)==ANYGM_OK,
+          "state after controlled destruction needs no graphics context");
+  for(unsigned row=0;row<height;row++) for(unsigned column=0;column<width;column++){
+    uint32_t expected=UINT32_C(0x45000033)|
+      (((height-1u-row)&255u)<<16)|((column&255u)<<8);
+    REQUIRE(restored.engine->screen[(size_t)row*width+column]==expected,
+            "controlled destruction retains actual completed RGBA, not a CPU replay");
+  }
+  anygm_test_graphics_allow_calls();
+  free(saved); free(again); free(shadow);
+  session_close(&selected); session_close(&restored);
+  return 1;
+}
+
+static int scene_volatile_context_loss_case(void){
+  for(unsigned scene=0u;scene<2u;scene++){
+    Session selected={0};
+    CurrentContextWitness witness={1u,0u};
+    AnygmGraphicsContext context=graphics_context(ANYGM_GRAPHICS_OPENGLES3);
+    GmlRenderDrawOp operation={0};
+    GmlRenderDrawBatch batch={&operation,1u,NULL,0u};
+    GmlRenderResource *resource;
+    GmlRenderImageRef previous;
+    GmlGpuCounters before={0},after={0};
+    uint8_t *saved=NULL,*lost=NULL;
+    size_t capacity=0,written=0,lost_written=0;
+    uint32_t backed_pixel=0u,flags=0u;
+    unsigned reads=0u,deletions=0u;
+    int volatile_id,backed_id,reused;
+    anygm_test_graphics_reset();
+    REQUIRE(session_open_with_scene(&selected,scene?ANYGM_SCENE_RENDERER_OPENGL:
+                                                   ANYGM_SCENE_RENDERER_CPU),
+            "volatile-loss control starts from fresh content");
+    volatile_id=gml_surface_create(&selected.engine->render,4,4);
+    REQUIRE(volatile_id>0,"volatile-loss control creates a pre-context surface");
+    context.userdata=&witness;
+    context.is_current=graphics_context_is_current;
+    REQUIRE(anygm_graphics_context_reset(selected.engine,&context)==ANYGM_OK &&
+            gml_surface_exists(&selected.engine->render,volatile_id) &&
+            advance(selected.engine,1,&flags),
+            "initial adoption does not masquerade as volatile context loss");
+    backed_id=gml_surface_create(&selected.engine->render,4,4);
+    resource=gml_render_surface_resource_ensure(&selected.engine->render,volatile_id);
+    REQUIRE(resource && backed_id>0,"volatile-loss control owns both surface classes");
+    operation.opcode=GML_RENDER_OP_CLEAR;
+    operation.reconstruction_mode=GML_RENDER_REPLAY_EXACT;
+    operation.target.image=gml_render_resource_image_ref(resource);
+    operation.target.image.content_version++;
+    operation.target.storage_version=1u;
+    operation.target.width=operation.target.height=4u;
+    operation.target.pixel_format=GML_RENDER_PIXEL_ARGB8888;
+    operation.target.region=(GmlRenderRect){0,0,4u,4u};
+    operation.payload.clear_colour=0x40556677u;
+    REQUIRE(gml_render_surface_scene_submit(&selected.engine->render,volatile_id,
+              &batch,NULL,0u)==GML_RENDER_RESOURCE_EXEC_DEVICE,
+            "volatile-loss control actually writes device pixels");
+    capacity=anygm_state_size(selected.engine);
+    saved=(uint8_t*)malloc(capacity); lost=(uint8_t*)malloc(capacity);
+    REQUIRE(saved && lost &&
+            anygm_state_save(selected.engine,saved,capacity,&written)==ANYGM_OK,
+            "volatile-loss control retains an earlier valid same-run save");
+    selected.engine->render.surface[backed_id-1].px[0]=0x71423324u;
+    backed_pixel=selected.engine->render.surface[backed_id-1].px[0];
+    REQUIRE(advance(selected.engine,1,&flags),"volatile-loss control advances after its save");
+    resource=selected.engine->render.surface[volatile_id-1].resource;
+    REQUIRE(resource,"volatile-loss source remains live before the real loss");
+    previous=gml_render_resource_image_ref(resource);
+    operation.target.image=previous;
+    operation.target.image.content_version++;
+    operation.payload.clear_colour=0x50778899u;
+    REQUIRE(gml_render_surface_scene_submit(&selected.engine->render,volatile_id,
+              &batch,NULL,0u)==GML_RENDER_RESOURCE_EXEC_DEVICE,
+            "volatile-loss control dirties GPU pixels beyond the saved CPU version");
+    reads=anygm_test_graphics_read_pixels();
+    deletions=(unsigned)anygm_test_graphics_deletes();
+    gml_gpu_counters(selected.engine->gpu,&before);
+    REQUIRE(anygm_graphics_context_reset(selected.engine,&context)==ANYGM_OK &&
+            anygm_test_graphics_read_pixels()==reads &&
+            (unsigned)anygm_test_graphics_deletes()==deletions,
+            "replacement neither reads nor deletes objects in the dead namespace");
+    REQUIRE(gml_surface_exists(&selected.engine->render,backed_id) &&
+            selected.engine->render.surface[backed_id-1].px[0]==backed_pixel,
+            "current CPU pixels survive a graphics-cache loss");
+    if(scene){
+      REQUIRE(!gml_surface_exists(&selected.engine->render,volatile_id) &&
+              !gml_surface_width(&selected.engine->render,volatile_id) &&
+              !gml_surface_height(&selected.engine->render,volatile_id),
+              "device-only user surfaces become nonexistent after genuine context loss");
+      REQUIRE(!selected.engine->have_presented_frame &&
+              selected.engine->frame_authority==ENGINE_FRAME_NONE &&
+              !selected.engine->host_plan_valid &&
+              anygm_state_save(selected.engine,lost,capacity,&lost_written)==ANYGM_OK,
+              "lost device-only frame is omitted rather than reconstructed from CPU recipes");
+      selected.engine->render.next_surface_id=volatile_id;
+      reused=gml_surface_create(&selected.engine->render,4,4);
+      resource=gml_render_surface_resource_ensure(&selected.engine->render,reused);
+      REQUIRE(reused==volatile_id && resource &&
+              gml_render_resource_image_ref(resource).incarnation!=previous.incarnation,
+              "reused volatile surface IDs cannot revive the lost image incarnation");
+    } else {
+      const uint32_t *pixels=gml_surface_pixels_read(&selected.engine->render,volatile_id,NULL,NULL);
+      REQUIRE(pixels && pixels[0]==operation.payload.clear_colour,
+              "default CPU scene retains its existing exact recovery behaviour");
+    }
+    REQUIRE(anygm_state_load(selected.engine,saved,written)==ANYGM_OK &&
+            gml_surface_exists(&selected.engine->render,volatile_id) &&
+            advance(selected.engine,1,&flags) && (flags&ANYGM_FRAME_HARDWARE_TARGET),
+            "a valid saved image still restores and redraws on the replacement context");
+    gml_gpu_counters(selected.engine->gpu,&after);
+    REQUIRE(after.context_resets==before.context_resets+1u && after.passes_accepted>before.passes_accepted,
+            "immutable resources rebuild for accepted work after loss");
+    free(saved); free(lost);
+    session_close(&selected);
+  }
+  return 1;
+}
 
 static int scene_size_query_is_metadata_only_case(void){
   Session plain={0},selected={0};
@@ -2636,6 +3172,16 @@ static int final_scene_seal_profile_case(void){
 
 int main(void){
   static const struct { const char *name; int (*run)(void); } cases[]={
+    {"witnessed frame end submits without automatic pixel observation",
+     scene_frame_end_defers_observation_case},
+    {"unbound state observation preserves actual device authority for retry",
+     scene_state_unbound_observation_is_retryable_case},
+    {"destruction respects access proof and bounded observation failure",
+     scene_destroy_observation_fault_case},
+    {"scene state observes explicitly lent device pixels",scene_state_observes_lent_device_case},
+    {"scene device-only surfaces are volatile on genuine context loss",scene_volatile_context_loss_case},
+    {"scene state preserves the actual completed device framebuffer",
+     scene_state_preserves_completed_device_case},
     {"scene state size queries do not observe pixels",scene_size_query_is_metadata_only_case},
     {"final scene seal is included in frame profiling",final_scene_seal_profile_case},
     {"resident world selection retains CPU state",resident_world_selection_case},

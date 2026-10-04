@@ -14,8 +14,9 @@
  * frontend-adapter type appears, and the only way into a graphics API is the entry-point callback
  * the host supplied.
  *
- * A GmlGpu is a derived cache with a lifecycle, never state. Nothing it owns is serialized under
- * any schema, and losing all of it costs a rebuild rather than a wrong frame. */
+ * Context handles and dispatch are never serialized. Immutable sources are rebuilt after loss;
+ * GPU-owned persistent/completed pixels are observed before controlled destruction. Unexpected
+ * loss is a separate mutable-resource policy, not permission to publish stale CPU pixels. */
 
 typedef struct GmlGpu GmlGpu;
 
@@ -28,6 +29,7 @@ enum {
 typedef void (*GmlGpuProc)(void);
 typedef GmlGpuProc (*GmlGpuGetProcFn)(void *userdata,const char *name);
 typedef uintptr_t (*GmlGpuGetFramebufferFn)(void *userdata);
+typedef uint32_t (*GmlGpuIsCurrentFn)(void *userdata);
 
 typedef struct GmlGpuContext {
   GmlGpuApi api;
@@ -36,6 +38,7 @@ typedef struct GmlGpuContext {
   void *userdata;
   GmlGpuGetProcFn get_proc_address;
   GmlGpuGetFramebufferFn get_current_framebuffer;
+  GmlGpuIsCurrentFn is_current;
 } GmlGpuContext;
 
 /* Opt-in, content-neutral counters. A normal build pays nothing for these beyond the increments
@@ -62,6 +65,8 @@ typedef struct GmlGpuCounters {
   uint64_t scene_uploads,scene_uploaded_bytes,scene_readbacks,scene_readback_bytes;
   uint64_t scene_readback_masks,scene_readback_mask_bytes;
   uint64_t scene_rgb_queries,scene_rgb_query_refusals;
+  uint64_t completed_frame_copies,completed_frame_copy_bytes;
+  uint64_t completed_frame_reads,completed_frame_read_bytes;
 } GmlGpuCounters;
 
 /* Creation allocates CPU metadata only and issues no graphics call, so an engine may own a GmlGpu
@@ -76,6 +81,10 @@ int gml_gpu_context_reset(GmlGpu *gpu,const GmlGpuContext *context);
 /* The context went away without notice. Forget every handle without issuing a call. */
 void gml_gpu_context_lost(GmlGpu *gpu);
 int gml_gpu_context_active(const GmlGpu *gpu);
+/* Whether the host installed an access witness; this metadata query does not invoke it. */
+int gml_gpu_context_has_access_proof(const GmlGpu *gpu);
+/* Host proof of owning-thread access, not merely an adopted dispatch table. */
+int gml_gpu_context_is_current(const GmlGpu *gpu);
 
 /* Copies an API-neutral scene service table. Capabilities state the currently qualified scene
  * variants; unsupported submissions are rejected before a device write. */
@@ -85,6 +94,15 @@ void gml_gpu_device_services(GmlGpu *gpu,GmlRenderDeviceServices *out_services);
  * partial work when any part of the plan cannot be executed exactly, so the caller can replay the
  * whole pass in software. The plan's fallback reason names why. */
 int gml_gpu_execute_plan(GmlGpu *gpu,GmlRenderPlan *plan);
+
+/* Preserve a completed host target in a separate device image before the frontend reuses it.
+ * Both calls require the host's owning-context proof. Capture performs no CPU read; observation
+ * publishes top-origin ARGB words only after a successful full read of the matching generation.
+ * Other readback plans cannot overwrite this image. Context loss forgets it without a call. */
+int gml_gpu_capture_completed_frame(GmlGpu *gpu,uint32_t width,uint32_t height,
+                                   uint64_t generation);
+int gml_gpu_read_completed_frame(GmlGpu *gpu,uint32_t *pixels,uint32_t pitch_pixels,
+                                uint32_t width,uint32_t height,uint64_t generation);
 
 void gml_gpu_counters(const GmlGpu *gpu,GmlGpuCounters *counters);
 /* The most recent lifecycle failure, as a bounded, content-neutral string, or NULL. */
