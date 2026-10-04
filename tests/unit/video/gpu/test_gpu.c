@@ -942,12 +942,12 @@ static int scene_resident_batch_case(void){
 /* Call/state proof only. Composed pixel qualification needs a real device. */
 static int scene_hardware_filtered_batch_case(unsigned kind){
   enum { QUADS=2049 };
-  int additive=kind==1u,combined=kind==2u,surface=kind==3u;
+  int additive=kind==1u,combined=kind==2u,surface=kind>=3u,nearest=kind>=4u;
   const uint8_t pixels[16]={11,22,33,255,44,55,66,100,77,88,99,0,111,122,133,200};
   for(unsigned api=0;api<2u;api++)
-  for(unsigned excluded=0;excluded<((combined || surface)?7u:4u);excluded++){
+  for(unsigned excluded=0;excluded<(nearest?8u:(combined || surface)?7u:4u);excluded++){
     GmlGpuContext context=fake_context(api?GML_GPU_API_OPENGLES3:GML_GPU_API_OPENGL_CORE);
-    GmlRenderImageRef source={surface?GML_RENDER_RESOURCE_SURFACE:
+    GmlRenderImageRef source={kind==5u?GML_RENDER_RESOURCE_APPLICATION:surface?GML_RENDER_RESOURCE_SURFACE:
       GML_RENDER_RESOURCE_ATLAS,91u,1u,1u};
     GmlRenderDrawOp *ops=(GmlRenderDrawOp*)calloc(QUADS+1u,sizeof *ops);
     GmlRenderDrawStateSnapshot state={0};
@@ -969,7 +969,7 @@ static int scene_hardware_filtered_batch_case(unsigned kind){
     upload.bytes=pixels;upload.byte_capacity=sizeof pixels;upload.stride_bytes=8u;
     REQUIRE(device.upload(device.context,&upload),"hardware batch atlas uploaded");
     state.write_mask=15u;state.alpha=255u;state.colour=0xFFFFFFFFu;state.sampler_count=1u;
-    state.samplers[0].filter=GML_RENDER_FILTER_HARDWARE_BILINEAR;
+    state.samplers[0].filter=nearest?GML_RENDER_FILTER_NEAREST:GML_RENDER_FILTER_HARDWARE_BILINEAR;
     state.samplers[0].edge_rule=GML_RENDER_EDGE_CLAMP_SUBIMAGE;
     state.samplers[0].source_region=upload.region;
     if(combined) state.samplers[0].quantisation=GML_RENDER_QUANTISE_HARDWARE_COMBINED;
@@ -1003,8 +1003,8 @@ static int scene_hardware_filtered_batch_case(unsigned kind){
       quad->filtered_draw_alpha=additive || surface?.7:1.0;
       for(unsigned corner=0;corner<4u;corner++)
         quad->corner_colour[corner]=combined?0xFFFFFFFFu:0xB3123456u;
-      quad->x[1]=quad->x[2]=combined?2.0:8.0;
-      quad->y[2]=quad->y[3]=combined?2.0:8.0;
+      quad->x[1]=quad->x[2]=combined || nearest?2.0:8.0;
+      quad->y[2]=quad->y[3]=combined || nearest?2.0:8.0;
       quad->u[1]=quad->u[2]=quad->v[2]=quad->v[3]=1.0;
     }
     if(excluded==3u) ops[QUADS].payload.quad.filtered_draw_alpha=NAN;
@@ -1015,6 +1015,7 @@ static int scene_hardware_filtered_batch_case(unsigned kind){
     }
     if(excluded==5u) ops[QUADS].payload.quad.corner_colour[0]=0xFFFEFFFFu;
     if(excluded==6u) ops[QUADS].payload.quad.u[1]=.9;
+    if(excluded==7u) ops[QUADS].payload.quad.x[1]=ops[QUADS].payload.quad.x[2]=3.0;
     GmlRenderDrawBatch batch={ops,QUADS+1u,&state,1u};
     result=device.submit(device.context,&batch);
     if(excluded){
@@ -1028,7 +1029,7 @@ static int scene_hardware_filtered_batch_case(unsigned kind){
       REQUIRE(anygm_test_graphics_scene_draw_calls()==(surface?4:2) &&
               anygm_test_graphics_scene_vertices()==QUADS*(surface?12:6),
               "only the declared quad capacity cuts compatible overlaps");
-      REQUIRE(anygm_test_graphics_scene_filter()==GL_LINEAR &&
+      REQUIRE(anygm_test_graphics_scene_filter()==(nearest?GL_NEAREST:GL_LINEAR) &&
               factors[0]==(combined || surface?GL_SRC_ALPHA:GL_ONE) &&
               factors[1]==(additive?GL_ONE:GL_ONE_MINUS_SRC_ALPHA) &&
               factors[2]==(surface?GL_ONE:GL_SRC_ALPHA) &&
@@ -1053,6 +1054,12 @@ static int scene_hardware_combined_batch_case(void){
 }
 static int scene_hardware_surface_batch_case(void){
   return scene_hardware_filtered_batch_case(3);
+}
+static int scene_nearest_surface_batch_case(void){
+  return scene_hardware_filtered_batch_case(4);
+}
+static int scene_nearest_application_batch_case(void){
+  return scene_hardware_filtered_batch_case(5);
 }
 
 /* The fake driver supplies masks and faults; the real-device comparator proves shader pixels. */
@@ -2795,6 +2802,8 @@ int main(int argc,char **argv){
     {"scene_hardware_background_batch",scene_hardware_background_batch_case},
     {"scene_hardware_combined_batch",scene_hardware_combined_batch_case},
     {"scene_hardware_surface_batch",scene_hardware_surface_batch_case},
+    {"scene_nearest_surface_batch",scene_nearest_surface_batch_case},
+    {"scene_nearest_application_batch",scene_nearest_application_batch_case},
     {"scene_readback_formats",scene_readback_formats_case},
     {"incremental_checkpoint_contract",incremental_checkpoint_contract_case},
     {"incremental_checkpoint_budget",incremental_checkpoint_budget_case},

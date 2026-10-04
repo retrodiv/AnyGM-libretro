@@ -5872,7 +5872,8 @@ static int resident_filtered_gui_real_font(void){
   return 1;
 }
 
-static int filtered_surface_pending_source_lifetime(void){
+static int surface_pending_source_lifetime(int nearest){
+  for(unsigned interpolation=0;interpolation<(nearest?2u:1u);interpolation++)
   for(unsigned variant=0;variant<6u;variant++){
     GmlRender *render=(GmlRender*)calloc(1,sizeof *render);
     GmlWin content={.bytecode=15};
@@ -5889,12 +5890,17 @@ static int filtered_surface_pending_source_lifetime(void){
     CHECK(gml_render_surface_mirror_pixels(render,source,pixels,4,4,0));
     gml_render_bind_device(render,&device);
     CHECK(gml_render_begin_resident_owned_application(render,0,0,0));
-    render->interp=render->alphablend=1;
+    render->interp=nearest?(int)interpolation:1;
+    render->alphablend=1;
     gml_render_set_pending_fill(render,0x40123456u);
     gml_render_flush_pending_fill(render);
     int submits=fake.submits;
     for(unsigned draw=0;draw<8u;draw++)
-      gml_draw_surface_stretched(render,source,3.25,4.125,17.3,13.1,0x3267B9u,.5);
+      gml_draw_surface_stretched(render,source,3.25,4.125,
+                                 nearest?4.0:17.3,nearest?4.0:13.1,0x3267B9u,.5);
+    if(!render->resident_application_pass || fake.submits!=submits || fake.readbacks)
+      fprintf(stderr,"surface lifetime: nearest=%d interp=%u variant=%u pass=%d submits=%d/%d reads=%d\n",
+        nearest,interpolation,variant,render->resident_application_pass,fake.submits,submits,fake.readbacks);
     CHECK(render->resident_application_pass && fake.submits==submits && !fake.readbacks);
     if(variant==5u){
       gml_render_free(render);free(render);
@@ -5921,6 +5927,40 @@ static int filtered_surface_pending_source_lifetime(void){
           fake.submits==submits+(variant==4u?2:1));
     if(variant==3u) gml_surface_reset_target(render);
     gml_render_free(render);free(render);
+  }
+  return 1;
+}
+
+static int application_surface_pending_source_lifetime(void){
+  for(unsigned variant=0;variant<3u;variant++){
+    GmlRender *render=calloc(1,sizeof *render);
+    GmlWin content={.bytecode=15};
+    FakeDevice fake={.on_demand=1};
+    GmlRenderDeviceServices device=service(&fake);
+    GmlRenderApplicationWriteView view={0};
+    uint32_t screen[48*32]={0};
+    device.observe_on_demand=fake_observe_on_demand;
+    CHECK(render && gml_render_init(render,NULL)==0);
+    render->win=&content;
+    CHECK(gml_render_application_surface_ensure_owned(render,4,4));
+    gml_render_application_surface_publish(render);
+    for(unsigned pixel=0;pixel<16u;pixel++) render->app_surface_owned[pixel]=0xFF1267B9u;
+    gml_render_bind_device(render,&device);
+    CHECK(gml_render_begin_resident_base(render,screen,48,32,0,0));
+    gml_render_set_pending_fill(render,0x40123456u);
+    gml_render_flush_pending_fill(render);
+    int submits=fake.submits;
+    for(unsigned draw=0;draw<8u;draw++)
+      gml_draw_surface_stretched(render,0,3.25,4.125,4,4,0x3267B9u,.5);
+    CHECK(render->resident_application_pass && fake.submits==submits && !fake.readbacks);
+    if(variant==0u){
+      CHECK(gml_render_application_surface_owned_view(render,&view));
+      view.pixels[0]=0xFF2468ACu;
+    } else if(variant==1u){
+      CHECK(gml_render_application_surface_ensure_owned(render,5,5));
+    }
+    gml_render_free(render);free(render);
+    CHECK(fake.submits==submits+1 && fake.last_batch_operations==8u && !fake.readbacks);
   }
   return 1;
 }
@@ -7158,7 +7198,9 @@ int main(void){
   passed+=resident_coarse_veil_exact_recovery();
   passed+=resident_packaged_sprite_font_glyph();
   passed+=resident_filtered_gui_real_font();
-  passed+=filtered_surface_pending_source_lifetime();
+  passed+=surface_pending_source_lifetime(0);
+  passed+=surface_pending_source_lifetime(1);
+  passed+=application_surface_pending_source_lifetime();
   passed+=current_cpu_source_view_is_not_observer();
   passed+=resident_current_cpu_application_underlay();
   passed+=resident_automatic_underlay_exclusions();
@@ -7180,6 +7222,6 @@ int main(void){
   passed+=source_free_primitive_rect_replay();
   passed+=stretched_float_exact_replay();
   passed+=filtered_font_exact_recovery();
-  printf("render resource cases: passed=%d failed=%d\n",passed,95-passed);
-  return passed==95?EXIT_SUCCESS:EXIT_FAILURE;
+  printf("render resource cases: passed=%d failed=%d\n",passed,97-passed);
+  return passed==97?EXIT_SUCCESS:EXIT_FAILURE;
 }

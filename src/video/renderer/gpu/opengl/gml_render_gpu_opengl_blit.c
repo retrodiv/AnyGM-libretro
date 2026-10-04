@@ -110,6 +110,8 @@ int gml_render_gpu_opengl_draw_textured_quad(const GmlRenderDrawOp *op,
     vertex[6]=(float)(colour&255u)/255.0f;
     vertex[7]=(float)((colour>>24)&255u)/255.0f*(float)state->alpha/255.0f;
     if(stretched_blend || (rotated && state->coverage_policy) ||
+       (op->scene_family==GML_RENDER_SCENE_SURFACE &&
+        state->coverage_policy==GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA) ||
        quad->sampling.filter==GML_RENDER_FILTER_HARDWARE_BILINEAR)
       vertex[7]=(float)quad->filtered_draw_alpha;
     vertex[8]=(float)region.x;
