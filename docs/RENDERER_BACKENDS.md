@@ -86,8 +86,22 @@ The controls are `tests/integration/test_graphics_state.c::scene_state_observes_
 `tests/unit/video/renderer/test_render_resources.c::device_observation_preserves_actual_replayable_pixels`
 and `tests/contract/libretro_hardware_render.c::context_access_proof_tracks_exact_owner`.
 They cover actual RGBA instead of a different synthetic replay response, failed-read publication,
-unbound/foreign/replaced contexts and unchanged context-free state bytes. This does not remove
-the exact recovery journal or certify every frontend configuration.
+unbound/foreign/replaced contexts and unchanged context-free state bytes. This does not certify
+every frontend configuration.
+Witnessed GPU scene services opt into `gml_gpu.c::scene_observe_on_demand` through
+`gml_render_device.h::GmlRenderDeviceServices`. Successful resource submissions then publish
+`GML_RENDER_RESOURCE_GPU_RESIDENT` without retaining operation journals, mutable source copies
+or replay recipes, even for an EXACT operation. Consecutive draws and byte-free resident sources
+keep actual device authority until a CPU/state observer; temporary observation failure preserves
+that version for retry. Proven pre-write refusal observes an earlier resident prefix before
+ordered CPU fallback; uncertain writes invalidate it instead of replaying stale CPU pixels.
+Actual context loss invalidates unobserved resident resources without calling the dead device.
+`src/core/engine_graphics.c::engine_graphics_bind_renderer` enables this policy only for GPU scenes;
+CPU scenes, absent witnesses and negative initial proofs retain their established journal policy.
+The controls are `tests/unit/video/renderer/test_render_resources.c::resident_authority_avoids_replay_retention`,
+`::resident_observation_retry_and_fallback`, `::resident_source_copy_and_loss` and the existing
+engine state/loss controls below. EXACT/TOLERANCE raster classification and CPU kernels are unchanged.
+Content CPU fallbacks still require observation; this is not a zero-read or performance claim.
 `src/core/engine_graphics.c::engine_graphics_finish_scene` uses
 `gml_render.c::gml_render_scene_submit_pending` for witnessed current scene passes instead of
 the all-resource checkpoint seal, including world, GUI, multiview and final frame boundaries.

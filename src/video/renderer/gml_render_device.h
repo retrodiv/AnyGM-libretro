@@ -21,6 +21,10 @@ typedef struct GmlRenderDeviceServices {
   int (*content_program_failed)(void *context,const struct GmlPlanShader *shader);
   /* Optional exact RGB-zero query of this current image; transfers only the boolean result. */
   int (*has_rgb)(void *context,GmlRenderImageRef image,int *has_rgb);
+  /* Optional side-effect-free ownership proof for on-demand pixel observation. A positive
+   * answer keeps successful work resident without retaining CPU replay operations or sources.
+   * The host must support observation at CPU/state barriers and controlled destruction. */
+  int (*observe_on_demand)(void *context);
 } GmlRenderDeviceServices;
 
 #endif

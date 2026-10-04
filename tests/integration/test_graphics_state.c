@@ -214,12 +214,12 @@ static int scene_frame_end_defers_observation_case(void){
                 GML_RENDER_RESOURCE_EXEC_DEVICE && advance(selected.engine,1,NULL),
               "a persistent pending device image survives the next ordinary frame");
       gml_render_resource_journal_metrics(resource,&metrics);
-      if(metrics.authority!=(witnessed?GML_RENDER_RESOURCE_GPU_PENDING_CHECKPOINT:
+      if(metrics.authority!=(witnessed?GML_RENDER_RESOURCE_GPU_RESIDENT:
                                        GML_RENDER_RESOURCE_BOTH_CURRENT) ||
          metrics.device_checkpoints!=(witnessed?0u:frame+1u))
         fprintf(stderr,"frame observation: witnessed=%u frame=%u authority=%u checkpoints=%llu\n",
                 witnessed,frame,metrics.authority,(unsigned long long)metrics.device_checkpoints);
-      REQUIRE(metrics.authority==(witnessed?GML_RENDER_RESOURCE_GPU_PENDING_CHECKPOINT:
+      REQUIRE(metrics.authority==(witnessed?GML_RENDER_RESOURCE_GPU_RESIDENT:
                                             GML_RENDER_RESOURCE_BOTH_CURRENT) &&
               metrics.device_checkpoints==(witnessed?0u:frame+1u) && !metrics.cpu_replays &&
               !metrics.journal_operations,
@@ -289,9 +289,10 @@ static int scene_state_unbound_observation_is_retryable_case(void){
             GML_RENDER_RESOURCE_EXEC_DEVICE,"unbound observation actually dirties device pixels");
     memcpy(shadow,selected.engine->render.surface[id-1].px,sizeof shadow);
     gml_render_resource_journal_metrics(resource,&before);
-    REQUIRE(before.authority==GML_RENDER_RESOURCE_GPU_REPLAYABLE &&
-            before.cpu_version!=before.logical_version,
-            "unbound observation retains an exact recipe but not actual GPU bytes");
+    REQUIRE(before.authority==GML_RENDER_RESOURCE_GPU_RESIDENT &&
+            before.cpu_version!=before.logical_version && !before.journal_operations &&
+            !before.retained_versions && !before.journal_bytes,
+            "unbound observation retains actual device authority without a CPU recipe");
     frame_authority=selected.engine->frame_authority;
     reads=anygm_test_graphics_read_pixels();
     witness.current=0u;
@@ -441,7 +442,8 @@ static int scene_state_observes_lent_device_case(void){
     REQUIRE(gml_render_surface_scene_submit(&selected.engine->render,id,&batch,NULL,0u)==
             GML_RENDER_RESOURCE_EXEC_DEVICE,"observed state actually executes device work");
     gml_render_resource_journal_metrics(resource,&before);
-    REQUIRE(before.authority==GML_RENDER_RESOURCE_GPU_REPLAYABLE &&
+    REQUIRE(before.authority==(lent?GML_RENDER_RESOURCE_GPU_RESIDENT:
+                                   GML_RENDER_RESOURCE_GPU_REPLAYABLE) &&
             before.cpu_version!=before.logical_version &&
             !anygm_test_graphics_read_pixels(),"observed state starts with stale CPU pixels");
     witness.queries=0u;

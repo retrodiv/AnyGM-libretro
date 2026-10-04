@@ -15,7 +15,10 @@ typedef enum GmlRenderResourceAuthority {
   GML_RENDER_RESOURCE_BOTH_CURRENT=2,
   GML_RENDER_RESOURCE_GPU_REPLAYABLE=3,
   GML_RENDER_RESOURCE_GPU_PENDING_CHECKPOINT=4,
-  GML_RENDER_RESOURCE_INVALID=5
+  GML_RENDER_RESOURCE_INVALID=5,
+  /* Actual device pixels, without a replay recipe. Failed observation is retryable while
+   * the owning namespace survives; a genuinely lost namespace invalidates this image. */
+  GML_RENDER_RESOURCE_GPU_RESIDENT=6
 } GmlRenderResourceAuthority;
 
 typedef enum GmlRenderResourceExecution {
@@ -80,10 +83,11 @@ int gml_render_resource_device_source_view(
   GmlRenderResource *resource,const GmlRenderDeviceServices *device,
   GmlRenderResourceSource *out_source);
 
-/* Submission reserves replay storage before issuing device work. Reconstructible rejected or
+/* Legacy submission reserves replay storage before issuing device work. Reconstructible rejected or
  * partially failed batches replay once on CPU. A non-reconstructible DEVICE_CHECKPOINT result is
  * read back before return; a device failure before that checkpoint returns FAILED and retains
- * only the previous valid CPU representation. */
+ * only the previous valid CPU representation. A witnessed on-demand device instead retains its
+ * actual pixels without replay storage or an automatic read. Explicit observation seals them. */
 GmlRenderResourceExecution gml_render_resource_submit(
   GmlRenderResource *resource,const GmlRenderDeviceServices *device,
   const GmlRenderDrawBatch *batch,const GmlRenderResourceSource *sources,
@@ -105,8 +109,9 @@ int gml_render_resource_checkpoint(GmlRenderResource *resource,
 int gml_render_resource_observe_device(GmlRenderResource *resource,
                                         const GmlRenderDeviceServices *device);
 
-/* CPU access is complete without a current graphics context. A write acquisition materialises
- * first; the caller then commits a new logical version after changing the borrowed pixel plane. */
+/* CPU access materialises first: legacy recipes need no graphics context, while device-only
+ * pixels need their owning current context. The caller commits a new logical version after
+ * changing the borrowed pixel plane. Failed resident observation never publishes stale pixels. */
 int gml_render_resource_acquire_cpu_read(GmlRenderResource *resource,
                                           const uint32_t **out_pixels);
 int gml_render_resource_acquire_cpu_write(GmlRenderResource *resource,

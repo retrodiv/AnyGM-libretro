@@ -142,6 +142,8 @@ static int unbound_context_access_case(void){
     GmlGpu *gpu=gml_gpu_create();
     REQUIRE(gpu && gml_gpu_context_reset(gpu,&context),"access context adopted while current");
     gml_gpu_device_services(gpu,&services);
+    REQUIRE(services.observe_on_demand && services.observe_on_demand(services.context),
+            "positive owning-context proof enables resident observation without replay");
     upload.image=image;
     upload.storage_width=upload.storage_height=2u;
     upload.region=(GmlRenderRect){0,0,2u,2u};
@@ -171,6 +173,7 @@ static int unbound_context_access_case(void){
     framebuffer_queries=anygm_test_graphics_framebuffer_queries();
     REQUIRE(gml_gpu_context_active(gpu) && gml_gpu_context_has_access_proof(gpu) &&
             !gml_gpu_context_is_current(gpu) &&
+            !services.observe_on_demand(services.context) &&
             services.capabilities(services.context,&caps),
             "temporary unbinding keeps adopted metadata without driver calls");
     REQUIRE(!services.upload(services.context,&upload),"unbound upload is refused");

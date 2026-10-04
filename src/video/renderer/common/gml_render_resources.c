@@ -123,7 +123,8 @@ static int source_view_valid(const GmlRenderResourceSource *source){
   resident=source->resident_resource;
   if(!source->bytes){
     return resident && !source->borrowed_immutable &&
-           (resident->authority==GML_RENDER_RESOURCE_GPU_PENDING_CHECKPOINT ||
+           (resident->authority==GML_RENDER_RESOURCE_GPU_RESIDENT ||
+            resident->authority==GML_RENDER_RESOURCE_GPU_PENDING_CHECKPOINT ||
             resident->authority==GML_RENDER_RESOURCE_GPU_REPLAYABLE ||
             resident->authority==GML_RENDER_RESOURCE_BOTH_CURRENT) &&
            !resident->cpu_write_acquired &&
@@ -348,7 +349,8 @@ int gml_render_resource_acquire_cpu_read(GmlRenderResource *resource,
   size_t bytes;
   if(out_pixels) *out_pixels=NULL;
   if(!resource || !resource->pixels || resource->authority==GML_RENDER_RESOURCE_INVALID) return 0;
-  if(resource->authority==GML_RENDER_RESOURCE_GPU_PENDING_CHECKPOINT &&
+  if((resource->authority==GML_RENDER_RESOURCE_GPU_RESIDENT ||
+      resource->authority==GML_RENDER_RESOURCE_GPU_PENDING_CHECKPOINT) &&
      !gml_render_resource_checkpoint(resource,NULL)) return 0;
   if(resource->entry_count){
     bytes=(size_t)resource->width*resource->height*4u;
@@ -390,7 +392,8 @@ int gml_render_resource_device_source_view(
   GmlRenderResourceSource *out_source){
   if(out_source) memset(out_source,0,sizeof *out_source);
   if(!out_source || !resource || !device || !device->context ||
-     (resource->authority!=GML_RENDER_RESOURCE_GPU_PENDING_CHECKPOINT &&
+     (resource->authority!=GML_RENDER_RESOURCE_GPU_RESIDENT &&
+      resource->authority!=GML_RENDER_RESOURCE_GPU_PENDING_CHECKPOINT &&
       resource->authority!=GML_RENDER_RESOURCE_GPU_REPLAYABLE &&
       resource->authority!=GML_RENDER_RESOURCE_BOTH_CURRENT) ||
      resource->cpu_write_acquired || !resource->width || !resource->height ||
@@ -430,7 +433,8 @@ int gml_render_resource_commit_cpu_write(GmlRenderResource *resource){
 
 void gml_render_resource_context_lost(GmlRenderResource *resource){
   if(!resource) return;
-  if(resource->authority==GML_RENDER_RESOURCE_GPU_PENDING_CHECKPOINT)
+  if(resource->authority==GML_RENDER_RESOURCE_GPU_RESIDENT ||
+     resource->authority==GML_RENDER_RESOURCE_GPU_PENDING_CHECKPOINT)
     resource->authority=GML_RENDER_RESOURCE_INVALID;
   resource->gpu_version=0;
   resource->device_identity=NULL;
@@ -671,7 +675,8 @@ static int resource_checkpoint(GmlRenderResource *resource,
   size_t bytes;
   if(!resource || resource->authority==GML_RENDER_RESOURCE_INVALID) return 0;
   int pending=resource->authority==GML_RENDER_RESOURCE_GPU_PENDING_CHECKPOINT;
-  if(!pending &&
+  int resident=resource->authority==GML_RENDER_RESOURCE_GPU_RESIDENT;
+  if(!pending && !resident &&
      (!observe_replayable || resource->authority!=GML_RENDER_RESOURCE_GPU_REPLAYABLE))
     return 1;
   if(!device && !observe_replayable) device=&resource->checkpoint_device;
@@ -768,12 +773,21 @@ static GmlRenderResourceExecution resource_submit(
   uint32_t old_source_count;
   size_t old_retained_bytes,old_recipe_bytes;
   int checkpoint_required,replaces_history,pending_prefix,batch_checkpoint_required;
+  int resident_policy;
   if(!resource || resource->authority==GML_RENDER_RESOURCE_INVALID ||
      resource->cpu_write_acquired ||
      !batch_valid(resource,batch,sources,source_count,&checkpoint_required))
     return GML_RENDER_RESOURCE_EXEC_FAILED;
   batch_checkpoint_required=checkpoint_required;
-  pending_prefix=resource->authority==GML_RENDER_RESOURCE_GPU_PENDING_CHECKPOINT;
+  resident_policy=resource->authority==GML_RENDER_RESOURCE_GPU_RESIDENT ||
+    (device && device->context && device->observe_on_demand &&
+     device->observe_on_demand(device->context));
+  if(resident_policy){
+    checkpoint_required=1;
+    defer_checkpoint=1;
+  }
+  pending_prefix=resource->authority==GML_RENDER_RESOURCE_GPU_RESIDENT ||
+    resource->authority==GML_RENDER_RESOURCE_GPU_PENDING_CHECKPOINT;
   if(pending_prefix && !defer_checkpoint){
     if(!gml_render_resource_checkpoint(resource,device))
       return GML_RENDER_RESOURCE_EXEC_FAILED;
@@ -811,7 +825,7 @@ static GmlRenderResourceExecution resource_submit(
      batch->operation_count>resource->limits.journal_bytes/sizeof(JournalEntry))
     return cpu_fallback(resource,batch,sources,source_count);
   if(!ensure_target_current(resource,device,batch))
-    return checkpoint_required?GML_RENDER_RESOURCE_EXEC_FAILED:
+    return batch_checkpoint_required?GML_RENDER_RESOURCE_EXEC_FAILED:
       cpu_fallback(resource,batch,sources,source_count);
   old_source_count=resource->source_count;
   old_retained_bytes=resource->retained_bytes;
@@ -881,7 +895,9 @@ static GmlRenderResourceExecution resource_submit(
   resource->device_identity=device->context;
   if(replaces_history) discard_superseded_history(resource);
   if(checkpoint_required){
-    resource->authority=GML_RENDER_RESOURCE_GPU_PENDING_CHECKPOINT;
+    if(resident_policy) clear_history(resource);
+    resource->authority=resident_policy?GML_RENDER_RESOURCE_GPU_RESIDENT:
+      GML_RENDER_RESOURCE_GPU_PENDING_CHECKPOINT;
     resource->checkpoint_device=*device;
     if(!defer_checkpoint && !gml_render_resource_checkpoint(resource,device))
       return GML_RENDER_RESOURCE_EXEC_FAILED;
@@ -903,9 +919,11 @@ staging_failed:
     if(!gml_render_resource_checkpoint(resource,device))
       return GML_RENDER_RESOURCE_EXEC_FAILED;
     return batch_checkpoint_required?GML_RENDER_RESOURCE_EXEC_FAILED:
-      cpu_fallback(resource,batch,sources,source_count);
+        cpu_fallback(resource,batch,sources,source_count);
   }
-  return checkpoint_required?GML_RENDER_RESOURCE_EXEC_FAILED:
+  if(resource->authority==GML_RENDER_RESOURCE_INVALID)
+    return GML_RENDER_RESOURCE_EXEC_FAILED;
+  return batch_checkpoint_required?GML_RENDER_RESOURCE_EXEC_FAILED:
     cpu_fallback(resource,batch,sources,source_count);
 }
 

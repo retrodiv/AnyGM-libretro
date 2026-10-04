@@ -204,6 +204,10 @@ static int scene_has_rgb(void *context,GmlRenderImageRef image,int *has_rgb){
   return 1;
 }
 
+static int scene_observe_on_demand(void *context){
+  return gml_gpu_context_is_current((GmlGpu*)context);
+}
+
 void gml_gpu_device_services(GmlGpu *gpu,GmlRenderDeviceServices *out_services){
   if(!out_services) return;
   memset(out_services,0,sizeof *out_services);
@@ -218,6 +222,7 @@ void gml_gpu_device_services(GmlGpu *gpu,GmlRenderDeviceServices *out_services){
   out_services->wait=scene_wait;
   out_services->content_program_failed=scene_content_program_failed;
   out_services->has_rgb=scene_has_rgb;
+  out_services->observe_on_demand=scene_observe_on_demand;
 }
 
 int gml_gpu_execute_plan(GmlGpu *gpu,GmlRenderPlan *plan){

@@ -1234,7 +1234,8 @@ int gml_render_defer_resident_underlay(GmlRender *r){
   gml_render_resource_journal_metrics(r->app_surface_resource,&metrics);
   if(image.resource_class!=GML_RENDER_RESOURCE_APPLICATION ||
      image.content_version!=metrics.gpu_version ||
-     (metrics.authority!=GML_RENDER_RESOURCE_GPU_REPLAYABLE &&
+     (metrics.authority!=GML_RENDER_RESOURCE_GPU_RESIDENT &&
+      metrics.authority!=GML_RENDER_RESOURCE_GPU_REPLAYABLE &&
       metrics.authority!=GML_RENDER_RESOURCE_BOTH_CURRENT)) return 0;
   x=r->underlay_x; y=r->underlay_y; w=r->underlay_w; h=r->underlay_h;
   r->pending_underlay=0;

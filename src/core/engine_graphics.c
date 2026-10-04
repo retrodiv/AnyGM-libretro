@@ -73,6 +73,8 @@ void engine_graphics_bind_renderer(AnygmEngine *engine){
   GmlRenderDeviceServices services;
   if(!engine || !engine_graphics_active(engine)) return;
   gml_gpu_device_services(engine->gpu,&services);
+  if(engine->scene_renderer_session!=ANYGM_SCENE_RENDERER_OPENGL)
+    services.observe_on_demand=NULL;
   gml_render_bind_device(&engine->render,&services);
   /* Hybrid presentation and content GLSL share this context but are independent policies. */
   gml_render_set_shader_device(&engine->render,engine_content_shaders_active(engine));
