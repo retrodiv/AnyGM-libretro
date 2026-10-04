@@ -107,8 +107,23 @@ int engine_content_shaders_active(const AnygmEngine *engine){
 }
 
 void engine_graphics_release(AnygmEngine *engine,int context_is_current){
-  int preserved=1;
+  int preserved=1,report,access_proof;
+  unsigned attempts=0,materializations=0;
+  uint64_t started=0;
+  GmlGpuCounters before={0},after={0};
+  GmlRenderResourceMetrics resources_before={0},resources_after={0};
   if(!engine || !engine->gpu) return;
+  report=anygm_host_development_setting(&engine->host,"GML_GRAPHICS_DEVICE_STATS")!=NULL;
+  access_proof=engine_graphics_has_access_proof(engine);
+  /* The render interval ends before the required persistence observation. Keep that cost in
+   * a separate delta report without clearing counters or changing the destruction protocol. */
+  engine_graphics_report(engine);
+  if(report){
+    gml_gpu_counters(engine->gpu,&before);
+    gml_render_resource_metrics(&engine->render,&resources_before);
+    materializations=engine->frame_materializations;
+    started=anygm_host_monotonic_time_ns(&engine->host);
+  }
   if(context_is_current && engine_graphics_has_access_proof(engine) &&
      !engine_graphics_is_current(engine)) context_is_current=0;
   if(context_is_current && engine->scene_renderer_session==ANYGM_SCENE_RENDERER_OPENGL &&
@@ -117,6 +132,7 @@ void engine_graphics_release(AnygmEngine *engine,int context_is_current){
     /* The destruction notification cannot defer host teardown. Retry one transient failure,
      * but never replace an unread GPU image by its approximate CPU recipe. */
     for(unsigned attempt=0;attempt<2u;attempt++){
+      attempts++;
       if(gml_render_observe_device_resources(&engine->render) &&
          engine_materialize_completed_frame(engine)){
         preserved=1;
@@ -132,9 +148,37 @@ void engine_graphics_release(AnygmEngine *engine,int context_is_current){
     engine_graphics_lose_scene_context(engine);
   else gml_render_abandon_device(&engine->render);
   gml_render_set_shader_device(&engine->render,0);
-  /* Report before the counters go away with the object. A host releases the context when content
-   * closes, which is before the engine's own teardown. */
-  engine_graphics_report(engine);
+  if(report){
+    uint64_t ended=anygm_host_monotonic_time_ns(&engine->host);
+    gml_gpu_counters(engine->gpu,&after);
+    gml_render_resource_metrics(&engine->render,&resources_after);
+    engine_logf(engine,ANYGM_LOG_INFO,
+      "[graphics-release-observation] context_current=%d access_witness=%d attempts=%u "
+      "observed=%d elapsed_ns=%llu timing_available=%d materializations=%u "
+      "scene_reads=%llu scene_read_bytes=%llu checkpoint_masks=%llu checkpoint_mask_bytes=%llu "
+      "rgb_queries=%llu rgb_query_refusals=%llu completed_reads=%llu completed_read_bytes=%llu "
+      "completed_copies=%llu completed_copy_bytes=%llu scene_uploads=%llu scene_upload_bytes=%llu "
+      "screen_cpu_reads=%llu screen_cpu_materializations=%llu\n",
+      context_is_current,access_proof,attempts,attempts && preserved,
+      (unsigned long long)(ended>=started?ended-started:0u),
+      engine->host.monotonic_time_ns!=NULL,engine->frame_materializations-materializations,
+      (unsigned long long)(after.scene_readbacks-before.scene_readbacks),
+      (unsigned long long)(after.scene_readback_bytes-before.scene_readback_bytes),
+      (unsigned long long)(after.scene_readback_masks-before.scene_readback_masks),
+      (unsigned long long)(after.scene_readback_mask_bytes-before.scene_readback_mask_bytes),
+      (unsigned long long)(after.scene_rgb_queries-before.scene_rgb_queries),
+      (unsigned long long)(after.scene_rgb_query_refusals-before.scene_rgb_query_refusals),
+      (unsigned long long)(after.completed_frame_reads-before.completed_frame_reads),
+      (unsigned long long)(after.completed_frame_read_bytes-before.completed_frame_read_bytes),
+      (unsigned long long)(after.completed_frame_copies-before.completed_frame_copies),
+      (unsigned long long)(after.completed_frame_copy_bytes-before.completed_frame_copy_bytes),
+      (unsigned long long)(after.scene_uploads-before.scene_uploads),
+      (unsigned long long)(after.scene_uploaded_bytes-before.scene_uploaded_bytes),
+      (unsigned long long)(resources_after.completed_screen_cpu_reads-
+                           resources_before.completed_screen_cpu_reads),
+      (unsigned long long)(resources_after.completed_screen_cpu_materializations-
+                           resources_before.completed_screen_cpu_materializations));
+  }
   gml_gpu_destroy(engine->gpu,context_is_current);
   engine->gpu=NULL;
 }

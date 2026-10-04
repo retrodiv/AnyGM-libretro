@@ -155,9 +155,10 @@ whose names begin with `draw_` are not counted as draws.
 
 ## Graphics-device counters
 
-`GML_GRAPHICS_DEVICE_STATS` reports two bounded lines when the graphics context is released or
-content is unloaded. It covers the shared context used by the independent content-GLSL and hybrid
-presentation policies:
+`GML_GRAPHICS_DEVICE_STATS` reports the bounded render-interval lines when the graphics context is
+released or content is unloaded. On release these precede the required persistence observation,
+which has a separate delta line. It covers the shared context used by the independent content-GLSL
+and hybrid presentation policies:
 
 ```text
 [graphics-device] frames=N accepted=N replayed=N transport=N draws=N uploads=N bytes=N resets=N
@@ -169,9 +170,19 @@ presentation policies:
              surface=N effect=N presentation=N shader=N software3d=N uploads=N
              upload_bytes=N readbacks=N readback_bytes=N
 [graphics-scene-families] sprite=N background=N tile=N surface=N text=N unclassified=N
+[graphics-release-observation] context_current=N access_witness=N attempts=N observed=N
+             elapsed_ns=N timing_available=N materializations=N scene_reads=N scene_read_bytes=N
+             checkpoint_masks=N checkpoint_mask_bytes=N rgb_queries=N rgb_query_refusals=N
+             completed_reads=N completed_read_bytes=N completed_copies=N completed_copy_bytes=N
+             scene_uploads=N scene_upload_bytes=N screen_cpu_reads=N screen_cpu_materializations=N
 ```
 
-The second line counts the resident scene service separately from hybrid plan transport.
+The scene line counts the resident scene service separately from hybrid plan transport.
+The release line records only persistence-and-detach deltas before device destruction, not a
+frame or object-deletion time. Add its observations to the preceding render report for whole-context
+totals; no counters are cleared. `observed=1` means an attempted witnessed preservation succeeded;
+zero attempts do not prove that volatile GPU images survived a lost/unavailable context. Explicit
+state/content observations before release remain in the render report and are not reclassified.
 Operation-family counts include only complete accepted batches; `partial_prefix` records how many
 operations a failed batch reported as already accepted and is never treated as completed work.
 The `text` scene family counts accepted packaged sprite-font glyph quads, not layout calls or

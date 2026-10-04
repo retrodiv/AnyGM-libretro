@@ -508,6 +508,32 @@ static int scene_state_observes_lent_device_case(void){
   return 1;
 }
 
+static struct {
+  unsigned render_reports,release_reports,reads_at_render,reads_at_release;
+  unsigned render_materializations;
+  char release[2048];
+} release_report;
+
+static const char *release_report_setting(void *userdata,const char *name){
+  (void)userdata;
+  return !strcmp(name,"GML_GRAPHICS_DEVICE_STATS")?"1":NULL;
+}
+
+static void release_report_log(void *userdata,AnygmLogLevel level,const char *message){
+  (void)userdata;(void)level;
+  if(strstr(message,"[graphics-device] ")){
+    const char *field=strstr(message," materializations=");
+    release_report.render_reports++;
+    release_report.reads_at_render=anygm_test_graphics_read_pixels();
+    if(field) sscanf(field," materializations=%u",&release_report.render_materializations);
+  }
+  if(strstr(message,"[graphics-release-observation] ")){
+    release_report.release_reports++;
+    release_report.reads_at_release=anygm_test_graphics_read_pixels();
+    snprintf(release_report.release,sizeof release_report.release,"%s",message);
+  }
+}
+
 static int scene_state_preserves_completed_device_case(void){
   Session selected={0},restored={0};
   CurrentContextWitness witness={1u,0u};
@@ -577,11 +603,27 @@ static int scene_state_preserves_completed_device_case(void){
           "controlled destruction starts with another resident completed frame");
   anygm_test_graphics_readback_alpha(0x45u);
   reads=anygm_test_graphics_read_pixels();
+  unsigned materializations=selected.engine->frame_materializations;
+  memset(&release_report,0,sizeof release_report);
+  selected.engine->host.development_setting=release_report_setting;
+  selected.engine->host.log=release_report_log;
   anygm_graphics_context_destroy(selected.engine,1u);
   REQUIRE(!engine_graphics_active(selected.engine) &&
           selected.engine->frame_authority==ENGINE_FRAME_CPU_MATERIALIZED &&
           anygm_test_graphics_read_pixels()>reads,
           "controlled destruction observes completed GPU pixels before deleting resources");
+  REQUIRE(release_report.render_reports==1u && release_report.release_reports==1u &&
+          release_report.reads_at_render==reads &&
+          release_report.reads_at_release==anygm_test_graphics_read_pixels() &&
+          release_report.render_materializations==materializations && materializations>0u &&
+          selected.engine->frame_materializations==materializations+1u &&
+          strstr(release_report.release,"context_current=1 access_witness=1 attempts=1 observed=1") &&
+          strstr(release_report.release," materializations=1 ") &&
+          strstr(release_report.release," completed_reads=1 "),
+          "render report precedes required release reads without clearing prior observer counters");
+  engine_graphics_report(selected.engine);
+  REQUIRE(release_report.render_reports==1u && release_report.release_reports==1u,
+          "later engine unload does not duplicate a released context report");
   witness.current=0u;
   anygm_test_graphics_forbid_calls();
   REQUIRE(anygm_state_save(selected.engine,again,capacity,&again_written)==ANYGM_OK &&
