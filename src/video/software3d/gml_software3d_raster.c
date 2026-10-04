@@ -764,7 +764,34 @@ static void d3_draw_ellipsoid(GmlRender *R,double x1,double y1,double z1,
     }
   }
 }
-void gml_d3_set_draw_depth(GmlRender *R,double depth){ if(GML_GRAPHICS) g_d3.draw_depth=depth; }
+void gml_d3_sync_sprite_fog(GmlRender *R){
+  GmlSoftware3D *graphics=GML_GRAPHICS;
+  if(!graphics) return;
+  const GmlD3State *state=&graphics->d3;
+  /* Ordinary Studio sprites use the default camera at depth -16000. This
+   * shortcut covers only fragments at/beyond the end of the range, not the
+   * linear transition. Active 3D retains its established per-vertex fog. */
+  int full=state->fog && state->fog_end<=state->fog_start;
+  if(state->fog && !full && !state->active && !state->classic){
+    /* An explicit view/transform is not the default camera. Do not flatten
+     * its depth-dependent fog from a guessed camera position. */
+    int default_camera=1;
+    for(int i=0;i<16;i++){
+      double identity=i%5==0?1.0:0.0;
+      if(graphics->matrix_view[i]!=identity || state->transform[i]!=identity){
+        default_camera=0;
+        break;
+      }
+    }
+    full=default_camera && 16000.0+state->draw_depth>=state->fog_end;
+  }
+  gml_render_cpu_backend_set_flat_fog(R,full,state->fog_color);
+}
+void gml_d3_set_draw_depth(GmlRender *R,double depth){
+  if(!GML_GRAPHICS) return;
+  g_d3.draw_depth=depth;
+  gml_d3_sync_sprite_fog(R);
+}
 int gml_d3_is_active(GmlRender *R){ return GML_GRAPHICS && g_d3.active; }
 int gml_d3_draw_sprite_2d(GmlRender *R,int sprite_id,int subimg,double x,double y,
                           double xs,double ys,double rotation,uint32_t blend,double alpha){

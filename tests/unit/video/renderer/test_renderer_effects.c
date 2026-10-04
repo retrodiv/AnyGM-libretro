@@ -1115,6 +1115,70 @@ static void check_flat_fog_silhouette_pixels(void) {
   }
 }
 
+/* Studio's default two-dimensional camera is at depth -16000, not on
+ * the sprite plane. Only the fully fogged region uses the flat silhouette
+ * shortcut; an ordinary range must not be mistaken for a degenerate one. */
+static void check_default_camera_full_fog(void) {
+  GmlRender render = {0};
+  GmlSoftware3D *graphics = gml_software3d_create();
+  GmlSoftware3DControl control = {0};
+  expect(graphics != NULL, "could not create the fog control fixture");
+  if (!graphics) return;
+  gml_software3d_reset(graphics);
+  gml_render_bind_software3d(&render, graphics);
+  control.fog = 1;
+  control.fog_color = 0x000000ffu;
+  control.fog_end = 1000;
+  gml_software3d_control_update(graphics, &control, GML_SOFTWARE3D_CONTROL_FOG);
+  gml_d3_set_draw_depth(&render, 0);
+  expect(render.fog_flat && render.fog_flat_rgb == 0x00ff0000u,
+         "a default-camera sprite beyond the fog end did not become a silhouette");
+
+  control.fog_start = 16000;
+  control.fog_end = 17000;
+  gml_software3d_control_update(graphics, &control, GML_SOFTWARE3D_CONTROL_FOG);
+  gml_d3_set_draw_depth(&render, 0);
+  expect(!render.fog_flat, "a sprite at the fog start was fully fogged");
+  gml_d3_set_draw_depth(&render, 500);
+  expect(!render.fog_flat, "a sprite inside a fog range was fully fogged");
+  gml_d3_set_draw_depth(&render, 1000);
+  expect(render.fog_flat, "the sprite depth did not advance to the fog end");
+  gml_d3_set_draw_depth(&render, -1000);
+  expect(!render.fog_flat, "a nearer sprite inherited the farther sprite's fog");
+
+  {
+    int flags[GML_SOFTWARE3D_STATE_FLAG_COUNT] = {0};
+    double values[GML_SOFTWARE3D_STATE_VALUE_COUNT] = {0};
+    uint32_t colors[GML_SOFTWARE3D_STATE_COLOR_COUNT] = {0};
+    gml_d3_set_draw_depth(&render, 1000);
+    gml_software3d_state_get(graphics, flags, values, colors);
+    gml_software3d_reset(graphics);
+    gml_d3_set_draw_depth(&render, 0);
+    expect(!render.fog_flat, "reset retained a derived sprite fog silhouette");
+    gml_software3d_state_set(graphics, flags, values, colors);
+    gml_d3_sync_sprite_fog(&render);
+    expect(render.fog_flat, "restored controls did not reconstruct the sprite fog silhouette");
+  }
+
+  {
+    double matrix[16] = {0};
+    for(int i=0;i<16;i+=5) matrix[i]=1.0;
+    matrix[14]=100.0;
+    gml_software3d_matrix_set(&render, GML_SOFTWARE3D_MATRIX_VIEW, matrix);
+    gml_d3_set_draw_depth(&render, 1000);
+    expect(!render.fog_flat, "an explicit camera inherited the default-camera shortcut");
+    matrix[14]=0.0;
+    gml_software3d_matrix_set(&render, GML_SOFTWARE3D_MATRIX_VIEW, matrix);
+  }
+
+  control.fog = 0;
+  gml_software3d_control_update(graphics, &control, GML_SOFTWARE3D_CONTROL_FOG);
+  gml_d3_set_draw_depth(&render, 2000);
+  expect(!render.fog_flat, "disabled fog left the silhouette shortcut enabled");
+  gml_render_bind_software3d(&render, NULL);
+  gml_software3d_destroy(graphics);
+}
+
 static void check_solid_blur_alpha_pixels(void) {
   uint8_t rgba[3 * 3 * 4];
   int frame_index = 0;
@@ -1921,6 +1985,7 @@ int main(void) {
   check_stretched_sample_clamps_to_atlas();
   check_interpolated_sample_clamps_to_atlas();
   check_flat_fog_silhouette_pixels();
+  check_default_camera_full_fog();
   check_solid_blur_alpha_pixels();
   check_skeleton_asset_and_pose();
   check_optimized_primitives();

@@ -64,6 +64,8 @@ int gml_render_cpu_backend_texture_view(GmlRender *render,int handle,int full_at
 int gml_render_cpu_backend_atlas_view(GmlRender *render,int atlas,
                                   GmlRenderCpuBackendTextureView *view);
 GmlSoftware3D *gml_render_cpu_backend_software3d(GmlRender *render);
+/* Update the derived full-fog silhouette cache without entering draw preparation. */
+void gml_render_cpu_backend_set_flat_fog(GmlRender *render,int enabled,uint32_t colour);
 int gml_render_cpu_backend_draw_view(GmlRender *render,GmlRenderCpuBackendDrawView *view);
 void gml_render_cpu_backend_prepare_draw(GmlRender *render);
 int gml_render_cpu_backend_prepare_draw_view(GmlRender *render,

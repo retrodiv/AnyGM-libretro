@@ -561,14 +561,10 @@ int gml_render_surface_mirror_pixels(GmlRender *r,int destination,
   return mirrored;
 }
 /* Fully fogged fragments use the fog colour after texture and diffuse colour,
- * retaining sprite coverage. A degenerate range applies at every depth; an
- * ordinary range leaves near-plane sprite drawing unchanged. */
+ * retaining sprite coverage. The fixed-function owner resolves whether the
+ * current depth is fully fogged before selecting this raster shortcut. */
 void gml_render_set_flat_fog(GmlRender *r,int enabled,uint32_t colour){
-  if(!r) return;
-  r->fog_flat=enabled?1:0;
-  /* The caller hands a content colour, which orders its channels blue-green-red; the framebuffer
-   * orders them the other way. */
-  r->fog_flat_rgb=((colour&0xFFu)<<16)|(colour&0xFF00u)|((colour>>16)&0xFFu);
+  gml_render_cpu_backend_set_flat_fog(r,enabled,colour);
 }
 int gml_render_draw_state_get(const GmlRender *r,GmlRenderDrawState *state){
   if(!state) return 0;

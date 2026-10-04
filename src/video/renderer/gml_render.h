@@ -658,6 +658,7 @@ int  gml_d3_draw_surface_part_2d(GmlRender *r, int surface,
                                  double x, double y, double xs, double ys,
                                  uint32_t blend, double alpha);
 void gml_d3_set_draw_depth(GmlRender *render,double depth);
+void gml_d3_sync_sprite_fog(GmlRender *render);
 int  gml_d3_is_active(GmlRender *render);
 void gml_d3_sync_render_camera(GmlRender *render);
 int  gml_d3_draw_rectangle_2d(GmlRender *r,double x1,double y1,double x2,double y2,

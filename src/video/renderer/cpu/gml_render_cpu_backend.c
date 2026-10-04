@@ -138,6 +138,13 @@ GmlSoftware3D *gml_render_cpu_backend_software3d(GmlRender *r){
   return r?r->software3d:NULL;
 }
 
+void gml_render_cpu_backend_set_flat_fog(GmlRender *r,int enabled,uint32_t colour){
+  if(!r) return;
+  r->fog_flat=enabled?1:0;
+  /* Content colours are BGR; framebuffer colours are RGB. */
+  r->fog_flat_rgb=((colour&0xFFu)<<16)|(colour&0xFF00u)|((colour>>16)&0xFFu);
+}
+
 int gml_render_cpu_backend_draw_view(GmlRender *r,GmlRenderCpuBackendDrawView *view){
   if(view) memset(view,0,sizeof(*view));
   if(!r || !view) return 0;

@@ -190,6 +190,7 @@ void gml_vm_software3d_state_set(
   const double values[GML_SOFTWARE3D_STATE_VALUE_COUNT],
   const uint32_t colors[GML_SOFTWARE3D_STATE_COLOR_COUNT]){
   gml_software3d_state_set(gml_vm_software3d_ensure(vm),flags,values,colors);
+  if(vm && vm->render) gml_d3_sync_sprite_fog((GmlRender*)vm->render);
 }
 
 void gml_vm_set_launch_parameters(GmlVM *vm,const char *executable,const char *parameters){
