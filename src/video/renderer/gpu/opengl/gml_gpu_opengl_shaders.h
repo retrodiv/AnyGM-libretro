@@ -208,6 +208,19 @@
   "    o_color=vec4(floor(vec3(rgb)*(alpha/255.0))/255.0,floor(alpha+0.5)/255.0);\n" \
   "    return;\n" \
   "  }\n" \
+  "  // R03_SHADER_HARDWARE_FILTERED_BACKGROUND: rounded source plus fixed destination weight.\n" \
+  "  if(u_filter==19){\n" \
+  "    vec2 extent=vec2(textureSize(u_image,0));\n" \
+  "    int mask=int(floor(v_margin+0.5));\n" \
+  "    vec2 low=v_clamp.xy+vec2(0.5)-vec2((mask&1)!=0?1.0:0.0,(mask&2)!=0?1.0:0.0);\n" \
+  "    vec2 high=v_clamp.zw+vec2(0.5)+vec2((mask&4)!=0?1.0:0.0,(mask&8)!=0?1.0:0.0);\n" \
+  "    uvec4 sampled=uvec4(floor(texture(u_image,clamp(v_texcoord,low/extent,high/extent))*255.0+0.5));\n" \
+  "    if(sampled.a==0u) discard;\n" \
+  "    uvec3 tint=uvec3(floor(v_colour.rgb*255.0+0.5));\n" \
+  "    uvec3 rgb=sampled.rgb*tint/uvec3(255u);\n" \
+  "    rgb=(rgb*sampled.a+uvec3(127u))/uvec3(255u);\n" \
+  "    o_color=vec4(vec3(rgb)/255.0,float(sampled.a)/255.0); return;\n" \
+  "  }\n" \
   "  vec2 centre=vec2(gl_FragCoord.x,u_extent.y-gl_FragCoord.y);\n" \
   "  // R03_SHADER_BOX_REDUCTION: stretched integer source-box average.\n" \
   "  if(u_filter==4){\n" \

@@ -57,6 +57,12 @@ static int cleared_earlier(const GmlRenderImageRef *cleared,uint32_t count,
 
 static int qualified_blend(const GmlRenderDrawStateSnapshot *state){
   if(state->rgb_source_factor==GML_RENDER_BLEND_ONE &&
+     state->rgb_destination_factor==GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA &&
+     state->alpha_source_factor==GML_RENDER_BLEND_SOURCE_ALPHA &&
+     state->alpha_destination_factor==GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA &&
+     state->rgb_equation==GML_RENDER_BLEND_ADD &&
+     state->alpha_equation==GML_RENDER_BLEND_ADD) return 10;
+  if(state->rgb_source_factor==GML_RENDER_BLEND_ONE &&
      state->rgb_destination_factor==GML_RENDER_BLEND_ONE &&
      state->alpha_source_factor==GML_RENDER_BLEND_SOURCE_ALPHA &&
      state->alpha_destination_factor==GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA &&
@@ -112,7 +118,8 @@ static int qualified_blend(const GmlRenderDrawStateSnapshot *state){
 
 static uint32_t scene_filter(const GmlRenderQuad *quad,
                              const GmlRenderDrawStateSnapshot *state){
-  if(quad->sampling.filter==GML_RENDER_FILTER_HARDWARE_BILINEAR) return 18u;
+  if(quad->sampling.filter==GML_RENDER_FILTER_HARDWARE_BILINEAR)
+    return qualified_blend(state)==10?19u:18u;
   if(qualified_blend(state)==8) return 14u;
   if(state->coverage_policy==GML_RENDER_COVERAGE_ROTATED_VECTOR_ALPHA) return 17u;
   if(state->coverage_policy==GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA)
@@ -341,7 +348,7 @@ static int scene_preflight(GmlGpuBackend *backend,const GmlRenderDrawBatch *batc
          same_logical(op->sources[0],target->image) ||
          state->write_mask!=15u || state->alpha!=255u ||
          state->colour!=0xFFFFFFFFu || state->alpha_test_enabled ||
-         blend<0 || ((blend==1 || blend==9) && (!backend->gl.BlendFuncSeparate ||
+         blend<0 || ((blend==1 || blend==9 || blend==10) && (!backend->gl.BlendFuncSeparate ||
                                  !backend->gl.BlendEquationSeparate)) ||
          (blend==9 && (sampling->filter!=GML_RENDER_FILTER_HARDWARE_BILINEAR ||
                        sampling->quantisation || sampling->logical_margin_mask ||
@@ -354,7 +361,17 @@ static int scene_preflight(GmlGpuBackend *backend,const GmlRenderDrawBatch *batc
                        !isfinite(op->payload.quad.filtered_draw_alpha) ||
                        op->payload.quad.filtered_draw_alpha<=0.0 ||
                        op->payload.quad.filtered_draw_alpha>1.0)) ||
-         (sampling->filter==GML_RENDER_FILTER_HARDWARE_BILINEAR && blend!=9) ||
+         (blend==10 && (sampling->filter!=GML_RENDER_FILTER_HARDWARE_BILINEAR ||
+                        sampling->quantisation || sampling->logical_margin_mask>15u ||
+                        (sampling->edge_rule!=GML_RENDER_EDGE_CLAMP_SUBIMAGE &&
+                         sampling->edge_rule!=GML_RENDER_EDGE_LOGICAL_TPAG) ||
+                        op->payload.quad.shape!=GML_RENDER_QUAD_AXIS_ALIGNED ||
+                        op->scene_family!=GML_RENDER_SCENE_BACKGROUND ||
+                        op->sources[0].resource_class!=GML_RENDER_RESOURCE_ATLAS ||
+                        source->rendered_origin || source->pixel_format!=GML_RENDER_PIXEL_RGBA8888 ||
+                        op->reconstruction_mode!=GML_RENDER_DEVICE_CHECKPOINT ||
+                        op->payload.quad.filtered_draw_alpha!=1.0)) ||
+         (sampling->filter==GML_RENDER_FILTER_HARDWARE_BILINEAR && blend!=9 && blend!=10) ||
          (blend==8 && (!backend->gl.CopyTexSubImage2D ||
                        op->scene_family!=GML_RENDER_SCENE_SPRITE ||
                        target->pixel_format!=GML_RENDER_PIXEL_ARGB8888 ||
@@ -476,7 +493,8 @@ static int scene_preflight(GmlGpuBackend *backend,const GmlRenderDrawBatch *batc
              sampling->logical_margin_mask!=0u
            : (sampling->edge_rule==GML_RENDER_EDGE_LOGICAL_TPAG ||
               sampling->edge_rule==GML_RENDER_EDGE_TRANSPARENT
-                ? sampling->filter!=GML_RENDER_FILTER_BILINEAR ||
+                ? (sampling->filter!=GML_RENDER_FILTER_BILINEAR &&
+                   !(blend==10 && sampling->filter==GML_RENDER_FILTER_HARDWARE_BILINEAR)) ||
                   !sampling->logical_margin_mask ||
                   (sampling->logical_margin_mask>15u &&
                    sampling->logical_margin_mask!=GML_RENDER_MARGIN_VISIBLE_CENTRE) ||
@@ -509,7 +527,7 @@ static int scene_preflight(GmlGpuBackend *backend,const GmlRenderDrawBatch *batc
              op->payload.quad.shape==GML_RENDER_QUAD_AXIS_ALIGNED &&
              !(op->scene_family==GML_RENDER_SCENE_TEXT &&
                sampling->filter==GML_RENDER_FILTER_NEAREST)))) return 0;
-        if((colour>>24)!=255u && blend!=1 && blend!=3 && blend!=9) return 0;
+        if((colour>>24)!=255u && blend!=1 && blend!=3 && blend!=9 && blend!=10) return 0;
         if((blend==4 || blend==5 ||
             (sampling->quantisation && blend!=6 && blend!=8)) &&
            colour!=0xFFFFFFFFu) return 0;
@@ -584,7 +602,7 @@ static int flush_quads(GmlGpuBackend *backend,GlSceneImage *target,GlSceneImage 
                        uint32_t filter,int blend,uint32_t count){
   GlScene *scene=&backend->scene;
   GLfloat extent[2]={(GLfloat)target->width,(GLfloat)target->height};
-  GLenum texture_filter=filter==18u?GL_LINEAR:GL_NEAREST;
+  GLenum texture_filter=filter==18u || filter==19u?GL_LINEAR:GL_NEAREST;
   GLsizei stride=GL_SCENE_VERTEX_FLOATS*(GLsizei)sizeof(float);
   if(!count) return 1;
   backend->gl.BindFramebuffer(GL_FRAMEBUFFER,target->framebuffer);
@@ -595,9 +613,9 @@ static int flush_quads(GmlGpuBackend *backend,GlSceneImage *target,GlSceneImage 
   backend->gl.TexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,(GLint)texture_filter);
   backend->gl.TexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAG_FILTER,(GLint)texture_filter);
   if(blend && blend!=8 && filter!=15u && filter!=17u){
-    backend->gl.BlendFuncSeparate(blend==9?GL_ONE:GL_SRC_ALPHA,
+    backend->gl.BlendFuncSeparate(blend==9 || blend==10?GL_ONE:GL_SRC_ALPHA,
                                   blend==9?GL_ONE:GL_ONE_MINUS_SRC_ALPHA,
-                                  blend==3 || blend==9?GL_SRC_ALPHA:GL_ONE,
+                                  blend==3 || blend==9 || blend==10?GL_SRC_ALPHA:GL_ONE,
                                   GL_ONE_MINUS_SRC_ALPHA);
     backend->gl.BlendEquationSeparate(GL_FUNC_ADD,GL_FUNC_ADD);
     backend->gl.Enable(GL_BLEND);

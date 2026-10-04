@@ -852,7 +852,7 @@ static int scene_resident_batch_case(void){
 }
 
 /* Call/state proof only. Composed pixel qualification needs a real device. */
-static int scene_hardware_additive_batch_case(void){
+static int scene_hardware_filtered_batch_case(int additive){
   enum { QUADS=2049 };
   const uint8_t pixels[16]={11,22,33,255,44,55,66,100,77,88,99,0,111,122,133,200};
   for(unsigned api=0;api<2u;api++) for(unsigned excluded=0;excluded<4u;excluded++){
@@ -881,6 +881,7 @@ static int scene_hardware_additive_batch_case(void){
     state.samplers[0].edge_rule=GML_RENDER_EDGE_CLAMP_SUBIMAGE;
     state.samplers[0].source_region=upload.region;
     state.rgb_source_factor=state.rgb_destination_factor=GML_RENDER_BLEND_ONE;
+    if(!additive) state.rgb_destination_factor=GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA;
     state.alpha_source_factor=GML_RENDER_BLEND_SOURCE_ALPHA;
     state.alpha_destination_factor=GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA;
     state.rgb_equation=state.alpha_equation=GML_RENDER_BLEND_ADD;
@@ -894,11 +895,11 @@ static int scene_hardware_additive_batch_case(void){
       op->opcode=index?GML_RENDER_OP_TEXTURED_QUAD:GML_RENDER_OP_CLEAR;
       if(!index){op->payload.clear_colour=0x40123456u;continue;}
       op->reconstruction_mode=GML_RENDER_DEVICE_CHECKPOINT;
-      op->scene_family=GML_RENDER_SCENE_SPRITE;
+      op->scene_family=additive?GML_RENDER_SCENE_SPRITE:GML_RENDER_SCENE_BACKGROUND;
       op->sources=&source;op->source_count=1u;
       GmlRenderQuad *quad=&op->payload.quad;
       quad->shape=GML_RENDER_QUAD_AXIS_ALIGNED;quad->sampling=state.samplers[0];
-      quad->filtered_draw_alpha=.7;
+      quad->filtered_draw_alpha=additive?.7:1.0;
       for(unsigned corner=0;corner<4u;corner++) quad->corner_colour[corner]=0xB3123456u;
       quad->x[1]=quad->x[2]=8.0;quad->y[2]=quad->y[3]=8.0;
       quad->u[1]=quad->u[2]=quad->v[2]=quad->v[3]=1.0;
@@ -918,15 +919,22 @@ static int scene_hardware_additive_batch_case(void){
               anygm_test_graphics_scene_vertices()==QUADS*6,
               "only the declared quad capacity cuts compatible overlaps");
       REQUIRE(anygm_test_graphics_scene_filter()==GL_LINEAR &&
-              factors[0]==GL_ONE && factors[1]==GL_ONE &&
+              factors[0]==GL_ONE && factors[1]==(additive?GL_ONE:GL_ONE_MINUS_SRC_ALPHA) &&
               factors[2]==GL_SRC_ALPHA && factors[3]==GL_ONE_MINUS_SRC_ALPHA,
-              "hardware filtering and independent additive alpha factors are configured");
+              "hardware filtering and independent alpha factors are configured");
       REQUIRE(!anygm_test_graphics_scene_copies() && !anygm_test_graphics_read_pixels(),
               "ordinary overlap needs no destination snapshots or CPU readbacks");
     }
     gml_gpu_destroy(gpu,1);free(ops);
   }
   return 1;
+}
+
+static int scene_hardware_additive_batch_case(void){
+  return scene_hardware_filtered_batch_case(1);
+}
+static int scene_hardware_background_batch_case(void){
+  return scene_hardware_filtered_batch_case(0);
 }
 
 /* The fake driver supplies masks and faults; the real-device comparator proves shader pixels. */
@@ -2666,6 +2674,7 @@ int main(int argc,char **argv){
     {"scene_content_source_orientation",scene_content_source_orientation_case},
     {"scene_resident_batch",scene_resident_batch_case},
     {"scene_hardware_additive_batch",scene_hardware_additive_batch_case},
+    {"scene_hardware_background_batch",scene_hardware_background_batch_case},
     {"scene_readback_formats",scene_readback_formats_case},
     {"incremental_checkpoint_contract",incremental_checkpoint_contract_case},
     {"incremental_checkpoint_budget",incremental_checkpoint_budget_case},
