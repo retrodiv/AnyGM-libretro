@@ -5847,7 +5847,7 @@ static int current_cpu_source_view_is_not_observer(void){
 
 static int resident_current_cpu_application_underlay(void){
   enum { WIDTH=4,HEIGHT=4 };
-  for(unsigned modern=0;modern<2u;modern++) for(unsigned variant=0;variant<4u;variant++){
+  for(unsigned modern=0;modern<2u;modern++) for(unsigned variant=0;variant<6u;variant++){
     uint32_t screen[WIDTH*HEIGHT],sentinel[WIDTH*HEIGHT],*writable=NULL;
     GmlRender *render=(GmlRender*)calloc(1,sizeof *render);
     GmlWin content={.bytecode=modern?17:15};
@@ -5871,6 +5871,8 @@ static int resident_current_cpu_application_underlay(void){
     CHECK(gml_render_begin_resident_base(render,screen,WIDTH,HEIGHT,0.0,0.0));
     gml_render_set_pending_fill(render,0x40123456u);
     gml_render_set_pending_underlay(render,0,0,WIDTH,HEIGHT);
+    if(variant==4u) render->underlay_w=WIDTH/2;
+    if(variant==5u) render->underlay_h=HEIGHT/2;
     if(variant==3u)
       CHECK(gml_render_resource_acquire_cpu_write(render->app_surface_resource,&writable));
     int submits=fake.submits,uploads=fake.uploads;

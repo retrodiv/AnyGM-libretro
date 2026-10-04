@@ -515,9 +515,10 @@ int gml_render_compose_resident_underlay(GmlRender *r){
   const GmlRenderDeviceServices *device=gml_render_device(r);
   if(!gml_render_resource_device_source_view(r->app_surface_resource,device,&source)){
     /* A mixed application pass can finish on CPU while SCREEN remains resident. Upload its
-     * already current committed source; do not read SCREEN merely to execute the same quad.
-     * Legacy recovery and unavailable ownership keep their existing CPU-source exclusion. */
-    if(!device->observe_on_demand || !device->observe_on_demand(device->context) ||
+     * committed 1:1 source without observing SCREEN. Scaled CPU sources, legacy recovery
+     * and unavailable ownership keep their existing CPU-source exclusion. */
+    if(r->underlay_w!=r->app_w || r->underlay_h!=r->app_h ||
+       !device->observe_on_demand || !device->observe_on_demand(device->context) ||
        !gml_render_resource_current_cpu_source_view(r->app_surface_resource,&source)) return 0;
   }
   gml_render_flush_pending_fill(r);
