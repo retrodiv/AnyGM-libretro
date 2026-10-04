@@ -28,7 +28,8 @@ static int primitive_raster_coordinate(const GmlVM *vm,double coordinate){
 static void builtin_set_game_speed(GmlVM *vm, double fps){
   if(!vm) return;
   if(fps<=0) fps=60.0;
-  if(fabs(fps-60.0)<0.000001 && !gml_varmap_get(&vm->globals,"__game_speed_fps")) return;
+  /* An explicit sixty-Hz request can replace a different content declaration;
+   * the absence of an override does not establish the current cadence. */
   *gml_varmap_put(&vm->globals,"__game_speed_fps")=vreal(fps);
 }
 static double gml_shader_get_sampler(GmlRender *R, int sh, const char *name){

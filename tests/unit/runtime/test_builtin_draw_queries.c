@@ -70,6 +70,27 @@ static int display_frequency_case(void){
   }
   return ok;
 }
+static int explicit_default_speed_case(void){
+  int ok=1;
+  for(int cached=0;cached<2;cached++){
+    GmlWin win={.game_speed=30};
+    GmlVM vm={.win=&win,.frame=7};
+    GmlVal speed[]={vreal(60),vreal(0)};
+    query(&vm,"game_set_speed",speed,2,cached,&ok);
+    GmlVal *explicit_speed=gml_varmap_get(&vm.globals,"__game_speed_fps");
+    ok &= explicit_speed && real_is(*explicit_speed,60);
+    ok &= gml_room_speed(&vm)==60 && vm.frame==7;
+    ok &= real_is(query(&vm,"game_get_speed",speed+1,1,cached,&ok),60);
+    speed[0]=vreal(30);
+    query(&vm,"game_set_speed",speed,2,cached,&ok);
+    ok &= gml_room_speed(&vm)==30;
+    speed[0]=vreal(60);
+    query(&vm,"game_set_speed",speed,2,cached,&ok);
+    ok &= gml_room_speed(&vm)==60 && vm.frame==7;
+    gml_vm_free(&vm);
+  }
+  return ok;
+}
 static int circle_case(void){
   int ok=1;
   for(int cached=0;cached<2;cached++){
@@ -524,7 +545,8 @@ int main(int argc,char **argv){
   const char *filter=NULL;
   if(argc==3 && !strcmp(argv[1],"--case")) filter=argv[2];
   else if(argc!=1) return EXIT_FAILURE;
-  const AnygmTestCase cases[]={{"display_frequency",display_frequency_case},{"circle_precision",circle_case},
+  const AnygmTestCase cases[]={{"display_frequency",display_frequency_case},
+    {"explicit_default_speed",explicit_default_speed_case},{"circle_precision",circle_case},
     {"application_surface_lifetime",application_surface_lifetime_case},{"shader_asset_names",shader_case},
     {"all_live_layers_at_depth",layers_case},{"retired_alpha_controls",alpha_case},
     {"integer_layer_depth",layer_integer_depth_case},{"alpha_reference_bounds",alpha_reference_bounds_case},
