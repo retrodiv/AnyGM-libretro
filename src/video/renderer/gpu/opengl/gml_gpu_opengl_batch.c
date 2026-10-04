@@ -119,8 +119,8 @@ static int qualified_blend(const GmlRenderDrawStateSnapshot *state){
 static uint32_t scene_filter(const GmlRenderQuad *quad,
                              const GmlRenderDrawStateSnapshot *state){
   if(quad->sampling.filter==GML_RENDER_FILTER_HARDWARE_BILINEAR)
-    return qualified_blend(state)==10
-      ?(quad->sampling.quantisation==GML_RENDER_QUANTISE_HARDWARE_COMBINED?20u:19u):18u;
+    return quad->sampling.quantisation==GML_RENDER_QUANTISE_HARDWARE_COMBINED
+      ?20u:qualified_blend(state)==10?19u:18u;
   if(qualified_blend(state)==8) return 14u;
   if(state->coverage_policy==GML_RENDER_COVERAGE_ROTATED_VECTOR_ALPHA) return 17u;
   if(state->coverage_policy==GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA)
@@ -366,7 +366,9 @@ static int scene_preflight(GmlGpuBackend *backend,const GmlRenderDrawBatch *batc
          same_logical(op->sources[0],target->image) ||
          state->write_mask!=15u || state->alpha!=255u ||
          state->colour!=0xFFFFFFFFu || state->alpha_test_enabled ||
-         blend<0 || ((blend==1 || blend==9 || blend==10) && (!backend->gl.BlendFuncSeparate ||
+         blend<0 || ((blend==1 || blend==9 || blend==10 ||
+                       (blend==3 && sampling->filter==GML_RENDER_FILTER_HARDWARE_BILINEAR)) &&
+                      (!backend->gl.BlendFuncSeparate ||
                                  !backend->gl.BlendEquationSeparate)) ||
          (blend==9 && (sampling->filter!=GML_RENDER_FILTER_HARDWARE_BILINEAR ||
                        sampling->quantisation || sampling->logical_margin_mask ||
@@ -379,10 +381,10 @@ static int scene_preflight(GmlGpuBackend *backend,const GmlRenderDrawBatch *batc
                        !isfinite(op->payload.quad.filtered_draw_alpha) ||
                        op->payload.quad.filtered_draw_alpha<=0.0 ||
                        op->payload.quad.filtered_draw_alpha>1.0)) ||
-         (blend==10 && (sampling->filter!=GML_RENDER_FILTER_HARDWARE_BILINEAR ||
-                        (sampling->quantisation &&
-                         (sampling->quantisation!=GML_RENDER_QUANTISE_HARDWARE_COMBINED ||
-                          !hardware_combined_quad_valid(op,source))) ||
+         ((blend==10 || (blend==3 && sampling->filter==GML_RENDER_FILTER_HARDWARE_BILINEAR)) &&
+                       (sampling->filter!=GML_RENDER_FILTER_HARDWARE_BILINEAR ||
+                        sampling->quantisation!=(blend==3?GML_RENDER_QUANTISE_HARDWARE_COMBINED:0u) ||
+                        (blend==3 && !hardware_combined_quad_valid(op,source)) ||
                         sampling->logical_margin_mask>15u ||
                         (sampling->edge_rule!=GML_RENDER_EDGE_CLAMP_SUBIMAGE &&
                          sampling->edge_rule!=GML_RENDER_EDGE_LOGICAL_TPAG) ||
@@ -392,7 +394,8 @@ static int scene_preflight(GmlGpuBackend *backend,const GmlRenderDrawBatch *batc
                         source->rendered_origin || source->pixel_format!=GML_RENDER_PIXEL_RGBA8888 ||
                         op->reconstruction_mode!=GML_RENDER_DEVICE_CHECKPOINT ||
                         op->payload.quad.filtered_draw_alpha!=1.0)) ||
-         (sampling->filter==GML_RENDER_FILTER_HARDWARE_BILINEAR && blend!=9 && blend!=10) ||
+         (sampling->filter==GML_RENDER_FILTER_HARDWARE_BILINEAR && blend!=9 && blend!=10 &&
+          !(blend==3 && sampling->quantisation==GML_RENDER_QUANTISE_HARDWARE_COMBINED)) ||
          (blend==8 && (!backend->gl.CopyTexSubImage2D ||
                        op->scene_family!=GML_RENDER_SCENE_SPRITE ||
                        target->pixel_format!=GML_RENDER_PIXEL_ARGB8888 ||
@@ -501,7 +504,9 @@ static int scene_preflight(GmlGpuBackend *backend,const GmlRenderDrawBatch *batc
                        !gml_render_automatic_surface_quad_valid(&op->payload.quad,
                                                                  target->width,target->height) ||
                        !exact_rect(op,NULL,NULL,NULL,NULL,1))) ||
-         (sampling->quantisation && blend!=6 && blend!=7 && blend!=10 &&
+         (sampling->quantisation && blend!=6 && blend!=7 &&
+          !(blend==3 && sampling->filter==GML_RENDER_FILTER_HARDWARE_BILINEAR &&
+            sampling->quantisation==GML_RENDER_QUANTISE_HARDWARE_COMBINED) &&
           (sampling->quantisation!=GML_RENDER_QUANTISE_STRETCHED_FLOAT ||
            sampling->filter!=GML_RENDER_FILTER_BILINEAR ||
            op->scene_family!=GML_RENDER_SCENE_SPRITE || (blend!=0 && blend!=8) ||
@@ -515,7 +520,8 @@ static int scene_preflight(GmlGpuBackend *backend,const GmlRenderDrawBatch *batc
            : (sampling->edge_rule==GML_RENDER_EDGE_LOGICAL_TPAG ||
               sampling->edge_rule==GML_RENDER_EDGE_TRANSPARENT
                 ? (sampling->filter!=GML_RENDER_FILTER_BILINEAR &&
-                   !(blend==10 && sampling->filter==GML_RENDER_FILTER_HARDWARE_BILINEAR)) ||
+                   !((blend==10 || blend==3) &&
+                     sampling->filter==GML_RENDER_FILTER_HARDWARE_BILINEAR)) ||
                   !sampling->logical_margin_mask ||
                   (sampling->logical_margin_mask>15u &&
                    sampling->logical_margin_mask!=GML_RENDER_MARGIN_VISIBLE_CENTRE) ||

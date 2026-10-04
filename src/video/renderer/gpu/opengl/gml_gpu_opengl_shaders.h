@@ -245,7 +245,7 @@
   "    if(sampled.a==0u) discard;\n" \
   "    if(u_filter==20){\n" \
   "      // Unit-white application draws leave combined rounding to the framebuffer.\n" \
-  "      o_color=vec4(vec3(sampled.rgb)*(float(sampled.a)/65025.0),float(sampled.a)/255.0);\n" \
+  "      o_color=vec4(vec3(sampled.rgb)/255.0,float(sampled.a)/255.0);\n" \
   "      return;\n" \
   "    }\n" \
   "    uvec3 tint=uvec3(floor(v_colour.rgb*255.0+0.5));\n" \

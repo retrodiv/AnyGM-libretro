@@ -1018,7 +1018,7 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
     operation.payload.quad.filtered_draw_alpha=alpha;
     /* The unit-white application leaf rounds the combined sum; ordinary
      * filtered coverage first rounds its source term. Both use fixed blending. */
-    state.rgb_source_factor=GML_RENDER_BLEND_ONE;
+    state.rgb_source_factor=hardware_combined?GML_RENDER_BLEND_SOURCE_ALPHA:GML_RENDER_BLEND_ONE;
     state.rgb_destination_factor=GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA;
     state.alpha_source_factor=GML_RENDER_BLEND_SOURCE_ALPHA;
     state.alpha_destination_factor=GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA;

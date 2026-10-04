@@ -884,6 +884,7 @@ static int scene_hardware_filtered_batch_case(unsigned kind){
     state.samplers[0].source_region=upload.region;
     if(combined) state.samplers[0].quantisation=GML_RENDER_QUANTISE_HARDWARE_COMBINED;
     state.rgb_source_factor=state.rgb_destination_factor=GML_RENDER_BLEND_ONE;
+    if(combined) state.rgb_source_factor=GML_RENDER_BLEND_SOURCE_ALPHA;
     if(!additive) state.rgb_destination_factor=GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA;
     state.alpha_source_factor=GML_RENDER_BLEND_SOURCE_ALPHA;
     state.alpha_destination_factor=GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA;
@@ -911,7 +912,8 @@ static int scene_hardware_filtered_batch_case(unsigned kind){
       quad->u[1]=quad->u[2]=quad->v[2]=quad->v[3]=1.0;
     }
     if(excluded==3u) ops[QUADS].payload.quad.filtered_draw_alpha=NAN;
-    if(excluded==4u) ops[QUADS].target.image.resource_class=GML_RENDER_RESOURCE_SURFACE;
+    if(excluded==4u) for(unsigned index=0;index<QUADS+1u;index++)
+      ops[index].target.image.resource_class=GML_RENDER_RESOURCE_SURFACE;
     if(excluded==5u) ops[QUADS].payload.quad.corner_colour[0]=0xFFFEFFFFu;
     if(excluded==6u) ops[QUADS].payload.quad.u[1]=.9;
     GmlRenderDrawBatch batch={ops,QUADS+1u,&state,1u};
@@ -928,7 +930,8 @@ static int scene_hardware_filtered_batch_case(unsigned kind){
               anygm_test_graphics_scene_vertices()==QUADS*6,
               "only the declared quad capacity cuts compatible overlaps");
       REQUIRE(anygm_test_graphics_scene_filter()==GL_LINEAR &&
-              factors[0]==GL_ONE && factors[1]==(additive?GL_ONE:GL_ONE_MINUS_SRC_ALPHA) &&
+              factors[0]==(combined?GL_SRC_ALPHA:GL_ONE) &&
+              factors[1]==(additive?GL_ONE:GL_ONE_MINUS_SRC_ALPHA) &&
               factors[2]==GL_SRC_ALPHA && factors[3]==GL_ONE_MINUS_SRC_ALPHA,
               "hardware filtering and independent alpha factors are configured");
       REQUIRE(!anygm_test_graphics_scene_copies() && !anygm_test_graphics_read_pixels(),
