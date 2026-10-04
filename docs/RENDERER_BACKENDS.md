@@ -15,6 +15,37 @@ not the P1 CPU milestone. A planned entry cannot be selected. The historical
 P1 CPU-only classification is retained below only as a dated architectural
 snapshot; the live ledger and rule table here describe current support.
 
+## Experimental scene fidelity contract
+
+CPU remains the default, exact reference. The optional GPU scene backend uses
+EXACT for the qualified cheap exact rules and TOLERANCE±2 for an individual
+filtered or partially blended draw with identical inputs. A composed real-workload
+image permits TOLERANCE±4 per eight-bit RGBA channel at every pixel. Geometry,
+coverage, draw order, runtime state and restoration of actual saved GPU pixels
+are not relaxed. TOLERANCE±2 labels below describe individual draws; older
+composed±2 qualification notes are historical evidence, not the current gate.
+Synthetic repeated-surface accumulation is informative unless drift greater than
+sixteen levels is demonstrated in a pattern used by an actual workload.
+
+The same 864 physical controls on native NVIDIA Core OpenGL and llvmpipe
+GLES/Core OpenGL preserve the exact clear/copy control and keep all 288 single
+draws within one level in RGBA. Known synthetic accumulation maxima are
+RGBA17/13/28/0 on native NVIDIA and RGBA32/21/32/0 on llvmpipe; the historical
+composed±2 assertion fails 228 and 284 controls respectively. This is not solely
+a D3D12 translation-layer effect. Four full-raster real-workload checkpoints on
+each driver family remain within three RGB levels, meeting the composed±4 bound.
+CPU frontend XRGB does not define alpha, so those checkpoints do not qualify
+persistent-image alpha or every scene variant. Synthetic RGBA proof and exact
+state restoration controls remain distinct from frontend-visible RGB evidence.
+
+Qualified magnified numbered-source composition is still experimental, not a
+general claim of zero-transfer rendering. Unqualified geometry, source/state
+variants, CPU content consumers and absent context-ownership proof retain their
+established fallback. Boot-route read/mask/transport counters and single-pair
+timings do not establish an ordinary-gameplay per-frame transfer budget. The
+hardware additive descriptor remains backend-only; this contract does not itself
+admit public additive sprite variants without workload qualification.
+
 For checkpoint timing, `src/core/engine.c::anygm_run_frame` measures the final
 `gml_render_scene_flush` as the existing profile's `seal` phase. The optional
 adapter trace in `src/adapters/libretro/libretro_entry.c::retro_run` measures
@@ -245,8 +276,9 @@ set of qualified scene operations or change CPU raster bodies.
 
 ## Current operation support and repair-level rules
 
-The experimental magnified full-source numbered-surface rule is TOLERANCE±2, pending composed
-RGBA qualification. `common/gml_render_surfaces.c::resident_surface_filtered` uses the unchanged
+The experimental magnified full-source numbered-surface rule is TOLERANCE±2 per draw,
+with the composed-image contract and remaining RGBA limitations above.
+`common/gml_render_surfaces.c::resident_surface_filtered` uses the unchanged
 CPU stretched rectangle's floor/round geometry, metadata-only current source views, and the
 existing versioned target queue. CPU source writes, target switches, resize, free, and renderer
 teardown flush before borrowed source storage can change. `gpu/opengl/gml_gpu_opengl_batch.c::hardware_surface_quad_valid`
@@ -257,7 +289,7 @@ uses hardware filtering and no CPU-float emulation. The unchanged CPU comparison
 `cpu/gml_render_cpu_blit_internal.h::surf_bi_band`. `tests/unit/video/gpu/test_gpu.c::scene_hardware_surface_batch_case`
 checks capacity, separate functions and pre-write exclusion; `tests/unit/video/renderer/test_render_resources.c::filtered_surface_pending_source_lifetime`
 checks write/resize/free/target/teardown boundaries and retained retry after a pre-write refusal.
-These call/lifetime checks do not establish composed pixel, whole-route or performance coverage.
+These call/lifetime checks do not themselves establish composed pixel, whole-route or performance coverage.
 Application sources, reduction, mirrors, active shaders and special blend state keep their existing paths.
 
 `common/gml_render_sprites.c::resident_filtered_atlas_page` checks finite normalised
