@@ -5,6 +5,15 @@
 #include "gml_render_internal.h"
 #include <math.h>
 
+int gml_render_view_surface_begin(GmlRender *r,int surface,double cx,double cy){
+  if(!gml_surface_set_target(r,surface)) return 0;
+  /* A view keeps its room camera, unlike an explicit surface_set_target call. */
+  r->projection_cam_x=r->cam_x=cx;
+  r->projection_cam_y=r->cam_y=cy;
+  gml_d3_sync_render_camera(r);
+  return 1;
+}
+
 void gml_render_world_set_logical_extent(GmlRender *r,int width,int height){
   if(!r || width<=0 || height<=0 || r->fbw<=0 || r->fbh<=0 ||
      r->target_sp!=0 || r->target_id>=0) return;

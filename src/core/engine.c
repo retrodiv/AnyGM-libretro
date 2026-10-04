@@ -1457,6 +1457,7 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
   int multiview_rendered = engine->aspect_force_active?0:render_multiview_application(engine);
   if(multiview_rendered<0) return ANYGM_ERROR_INTERNAL;
   int direct_owned_world=0;
+  int direct_view_surface=0;
   uint32_t *world_pixels=engine->fb;
   int world_width=(int)engine->width;
   int world_height=(int)engine->height;
@@ -1537,6 +1538,17 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
     else if(!base_world_began)
       gml_render_begin(&engine->render,world_pixels,world_width,world_height,cam_x,cam_y);
   }
+  /* Native-sized assigned views are real render targets. Retain the established sampling
+   * policy for resized surfaces, composed frames and forced-aspect presentation. */
+  if(!direct_owned_world && !engine->composed_frame && !engine->aspect_force_active &&
+     frame_view_count==1 && view_surface>0 &&
+     frame_views[0].w==(double)world_width && frame_views[0].h==(double)world_height &&
+     gml_surface_width(&engine->render,view_surface)==world_width &&
+     gml_surface_height(&engine->render,view_surface)==world_height){
+    direct_view_surface=gml_render_view_surface_begin(
+      &engine->render,view_surface,cam_x,cam_y);
+    if(!direct_view_surface) return ANYGM_ERROR_INTERNAL;
+  }
   if(direct_owned_world)
     gml_render_world_set_logical_extent(
       &engine->render,(int)engine->width,(int)engine->height);
@@ -1579,11 +1591,16 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
   if(direct_owned_world)
     (void)gml_render_application_surface_owned_extent(
       &engine->render,&world_width,&world_height);
+  if(direct_view_surface)
+    gml_surface_reset_target(&engine->render);
   aspect_mask_outside_room(engine,cam_x, cam_y);
   if(prof){ t1 = profile_now_ms(engine); engine->profile.draw_ms += t1 - t0; t0 = t1; }
   gml_render_presentation_metrics(&engine->render,&render_presentation);
   int log_draw=anygm_host_development_setting(&engine->host,"GML_LOG_DRAW")!=NULL;
-  const uint32_t *observed_world_pixels=world_pixels;
+  const uint32_t *observed_world_pixels=direct_view_surface?NULL:world_pixels;
+  if(direct_view_surface && log_draw)
+    observed_world_pixels=gml_surface_pixels_read(
+      &engine->render,view_surface,&world_width,&world_height);
   if(direct_owned_world &&
      (log_draw || (view_surface>0 && gml_surface_exists(&engine->render,view_surface)))){
     GmlRenderApplicationReadView read_view={0};
@@ -1603,13 +1620,12 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
               engine->diagnostics.draw_frame,engine->vm.room_index,engine->vm.inst_count,live,deactivated,dormant,highest,world_width,world_height,nz,
               render_presentation.application_draw_enabled); }
     engine->diagnostics.draw_frame++; }
-  /* Studio view-to-surface: when view 0 targets a surface, mirror the rendered frame into it so
-   * Draw GUI can composite the surface. */
+  /* Resized and composed views retain their established frame-mirror sampling policy. */
   {
     int vs = view_surface;
     GmlRenderTargetCoverage render_coverage={0};
     gml_render_target_coverage(&engine->render,&render_coverage);
-    if (vs > 0 && gml_render_surface_mirror_pixels(
+    if (!direct_view_surface && vs > 0 && gml_render_surface_mirror_pixels(
           &engine->render,vs,observed_world_pixels,world_width,world_height,
           render_coverage.opaque_known && render_coverage.all_opaque)) {
       if(anygm_host_development_setting(&engine->host,"GML_LOG_SHADER")){

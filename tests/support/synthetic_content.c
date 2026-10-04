@@ -1285,6 +1285,76 @@ int anygm_synthetic_draw_content_create(AnygmSyntheticContent *fixture){
   return 1;
 }
 
+int anygm_synthetic_view_surface_target_content_create(AnygmSyntheticContent *fixture){
+  if(!fixture) return 0;
+  memset(fixture,0,sizeof *fixture);
+  if(!create_fixture_directory(fixture->directory,sizeof fixture->directory)) return 0;
+  snprintf(fixture->path,sizeof fixture->path,"%s/data.win",fixture->directory);
+  char create[192],draw[192],gui[192];
+  snprintf(create,sizeof create,"%s/startup.gml",fixture->directory);
+  snprintf(draw,sizeof draw,"%s/draw-normal.gml",fixture->directory);
+  snprintf(gui,sizeof gui,"%s/draw-post.gml",fixture->directory);
+  if(!write_text(create,
+       "global.fixture_surface=surface_create(64,48);\n"
+       "view_set_surface_id(0,global.fixture_surface);\n"
+       "surface_set_target(global.fixture_surface);\n"
+       "draw_clear_alpha(16777215,0); surface_reset_target();\n"
+       "window_set_size(64,48); display_set_gui_size(64,48);\n") ||
+     !write_text(draw,
+       "global.fixture_draw_target=surface_get_target();\n"
+       "draw_set_colour(255); draw_rectangle(24,16,32,24,false);\n") ||
+     !write_text(gui,
+       "global.fixture_bound_target=view_get_surface_id(0);\n"
+       "draw_clear(16711680); draw_surface(global.fixture_surface,0,0);\n"
+       "surface_set_target(global.fixture_surface);\n"
+       "draw_clear_alpha(16777215,0); surface_reset_target();\n")){
+    anygm_synthetic_content_destroy(fixture);
+    return 0;
+  }
+  AnygmHostServices services={0};
+  services.struct_size=sizeof services;
+  services.abi_version=ANYGM_HOST_SERVICES_VERSION;
+  anygm_stdio_vfs_services_init(&services);
+  GmlcProject project={0};
+  GmlcObject object={0};
+  GmlcObjectEvent events[3]={{0}};
+  GmlcRoom room={0};
+  GmlcRoomInstance instance={0};
+  int room_order=0;
+  project.host=&services;
+  project.name=(char *)"neutral-view-surface-target";
+  project.objects=&object; project.n_objects=project.cap_objects=1;
+  project.rooms=&room; project.n_rooms=project.cap_rooms=1;
+  project.room_order=&room_order; project.n_room_order=1;
+  object.id=object.name=(char *)"object_fixture";
+  object.sprite_id=object.mask_id=object.parent_id=-1;
+  object.visible=1; object.events=events; object.n_events=object.cap_events=3;
+  events[0].event_type=0; events[0].event_number=0; events[0].source_path=create;
+  events[1].event_type=8; events[1].event_number=0; events[1].source_path=draw;
+  events[2].event_type=8; events[2].event_number=64; events[2].source_path=gui;
+  room.id=room.name=(char *)"room_fixture";
+  room.width=128; room.height=96; room.speed=60;
+  room.draw_background_color=0;
+  room.view_enabled=1; room.n_views=1;
+  room.views[0].visible=1;
+  room.views[0].xview=20; room.views[0].yview=12;
+  room.views[0].wview=room.views[0].wport=64;
+  room.views[0].hview=room.views[0].hport=48;
+  room.views[0].hspeed=room.views[0].vspeed=-1;
+  room.views[0].object_id=-1;
+  room.instances=&instance; room.n_instances=room.cap_instances=1;
+  instance.id=instance.name=(char *)"instance_fixture";
+  instance.object_id=0; instance.instance_id=100000;
+  instance.sx=instance.sy=1.0f; instance.color=0xFFFFFFFFu;
+  char error[256]={0};
+  int ok=gmlc_package_write_structural(&project,fixture->path,error,sizeof error);
+  if(!ok){
+    fprintf(stderr,"view surface target package failed: %s\n",error);
+    anygm_synthetic_content_destroy(fixture);
+  }
+  return ok;
+}
+
 int anygm_synthetic_shifted_port_content_create(AnygmSyntheticContent *fixture){
   if(!fixture) return 0;
   memset(fixture,0,sizeof *fixture);

@@ -1780,6 +1780,56 @@ static int view_surface_room_lifetime_policy(void){
   return view_surface_room_lifetime_case(0) && view_surface_room_lifetime_case(1);
 }
 
+static int view_surface_actual_target_policy(void){
+  AnygmSyntheticContent fixture;
+  if(!anygm_synthetic_view_surface_target_content_create(&fixture)) return 0;
+  AnygmHostServices services={0};
+  services.struct_size=sizeof services;
+  services.abi_version=ANYGM_HOST_SERVICES_VERSION;
+  anygm_stdio_vfs_services_init(&services);
+  AnygmContentSource source={0};
+  source.struct_size=sizeof source;
+  source.kind=ANYGM_CONTENT_PATH;
+  source.path=fixture.path;
+  source.cache_directory=source.save_directory=fixture.directory;
+  AnygmEngine *engine=NULL;
+  int ok=anygm_create(&services,&engine)==ANYGM_OK &&
+         anygm_load(engine,&source,NULL)==ANYGM_OK;
+  AnygmInputFrame input={0}; input.struct_size=sizeof input;
+  input.pointer_x=input.pointer_y=-1;
+  AnygmFrameOutput output={0}; output.struct_size=sizeof output;
+  for(int frame=0;ok && frame<2;frame++){
+    ok=anygm_run_frame(engine,&input,&output)==ANYGM_OK;
+    double surface=gml_global_num(&engine->vm,"fixture_surface");
+    double drawn=gml_global_num(&engine->vm,"fixture_draw_target");
+    double bound=gml_global_num(&engine->vm,"fixture_bound_target");
+    if(ok && (surface<=0 || drawn!=surface || bound!=surface)){
+      fprintf(stderr,"view target at frame %d: surface %.0f draw %.0f binding %.0f\n",
+              frame,surface,drawn,bound);
+      ok=0;
+    }
+    if(ok && (!output.pixels || output.width!=64 || output.height!=48)){
+      fprintf(stderr,"view target raster %ux%u instead of 64x48\n",
+              output.width,output.height);
+      ok=0;
+    }
+    if(ok){
+      const uint32_t *pixels=output.pixels;
+      size_t stride=output.pitch/sizeof(uint32_t);
+      if((pixels[0]&0xFFFFFFu)!=0x0000FFu ||
+         (pixels[6*stride+6]&0xFFFFFFu)!=0xFF0000u){
+        fprintf(stderr,"view target lost transparent underlay or camera: %08x/%08x\n",
+                pixels[0],pixels[6*stride+6]);
+        ok=0;
+      }
+    }
+  }
+  if(!ok) fputs("view surface actual target policy failed\n",stderr);
+  if(engine) anygm_destroy(engine);
+  anygm_synthetic_content_destroy(&fixture);
+  return ok;
+}
+
 static int view_surface_frame_mirror_policy(void){
   AnygmSyntheticContent fixture;
   if(!anygm_synthetic_gpu_scene_route_content_create(&fixture)) return 0;
@@ -2958,6 +3008,8 @@ int main(int argc,char **argv){
       return view_surface_room_lifetime_policy()?0:1;
     if(!strcmp(argv[2],"view_surface_frame_mirror"))
       return view_surface_frame_mirror_policy()?0:1;
+    if(!strcmp(argv[2],"view_surface_actual_target"))
+      return view_surface_actual_target_policy()?0:1;
     if(!strcmp(argv[2],"multi_view_application_canvas"))
       return framebuffer_retention_case(
         anygm_synthetic_multiview_framebuffer_content_create,"multi-view")?0:1;
@@ -3005,7 +3057,8 @@ int main(int argc,char **argv){
           "explicit_gui_surface_logical_raster|"
           "automatic_surface_monitor_fit|"
           "first_generation_oversized_gui|"
-          "background_color|view_surface_room_lifetime|multi_view_application_canvas|game_change|"
+          "background_color|view_surface_room_lifetime|view_surface_frame_mirror|"
+          "view_surface_actual_target|multi_view_application_canvas|game_change|"
           "input_binding_ownership|simulated_key_lifetime|simulated_key_frame_lifetime|"
           "bridged_key_press_delivery|bridged_key_hold|bridged_key_restore|undefined_placement|"
           "room_start_deactivation]\n",stderr);
@@ -3039,6 +3092,7 @@ int main(int argc,char **argv){
   if(!background_color_policy()) return 1;
   if(!view_surface_room_lifetime_policy()) return 1;
   if(!view_surface_frame_mirror_policy()) return 1;
+  if(!view_surface_actual_target_policy()) return 1;
   if(!framebuffer_retention_policy()) return 1;
   if(!clear_view_background_policy()) return 1;
   if(!game_restart_policy()) return 1;
