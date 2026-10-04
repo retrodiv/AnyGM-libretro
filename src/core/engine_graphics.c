@@ -204,7 +204,8 @@ void engine_graphics_report(AnygmEngine *engine){
     (unsigned long long)(counters.scene_operations[GML_RENDER_OP_COLOURED_PRIMITIVE]+
                          counters.scene_operations[GML_RENDER_OP_CLEAR]),
     (unsigned long long)(counters.scene_operations[GML_RENDER_OP_COPY_IMAGE]+
-                         counters.scene_operations[GML_RENDER_OP_COMPOSE_SURFACE]),
+                         counters.scene_operations[GML_RENDER_OP_COMPOSE_SURFACE]+
+                         counters.scene_operations[GML_RENDER_OP_RECOVER_EMPTY_SCREEN]),
     (unsigned long long)counters.scene_operations[GML_RENDER_OP_LAYER_EFFECT],
     (unsigned long long)counters.scene_operations[GML_RENDER_OP_PRESENT_IMAGE],
     (unsigned long long)counters.scene_operations[GML_RENDER_OP_CONTENT_SHADER_DRAW],

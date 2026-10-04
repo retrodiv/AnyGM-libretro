@@ -127,7 +127,8 @@ static GmlRenderExecutionResult scene_submit(void *context,const GmlRenderDrawBa
         if((opcode==GML_RENDER_OP_TEXTURED_QUAD ||
             opcode==GML_RENDER_OP_COLOURED_PRIMITIVE ||
             opcode==GML_RENDER_OP_LAYER_EFFECT ||
-            opcode==GML_RENDER_OP_CONTENT_SHADER_DRAW) &&
+            opcode==GML_RENDER_OP_CONTENT_SHADER_DRAW ||
+            opcode==GML_RENDER_OP_RECOVER_EMPTY_SCREEN) &&
            batch->operations[index].scene_family<GML_RENDER_SCENE_FAMILY_COUNT)
           gpu->counters.scene_families[batch->operations[index].scene_family]++;
       }

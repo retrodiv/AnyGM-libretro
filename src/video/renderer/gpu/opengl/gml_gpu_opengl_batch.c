@@ -211,6 +211,46 @@ static int hardware_surface_quad_valid(const GmlRenderDrawOp *op,
   return 1;
 }
 
+static int recovery_quad_valid(GmlGpuBackend *backend,const GmlRenderDrawOp *op,
+                                const GmlRenderDrawStateSnapshot *state){
+  GlSceneImage *source=gml_gpu_opengl_scene_image(backend,op->sources[0]);
+  const GmlRenderQuad *q=&op->payload.quad;
+  if(!source || !source->rendered_origin || source->pixel_format!=GML_RENDER_PIXEL_ARGB8888 ||
+     op->sources[0].resource_class!=GML_RENDER_RESOURCE_APPLICATION ||
+     op->target.image.resource_class!=GML_RENDER_RESOURCE_SCREEN ||
+     op->target.pixel_format!=GML_RENDER_PIXEL_ARGB8888 ||
+     same_logical(source->ref,op->target.image) ||
+     op->scene_family!=GML_RENDER_SCENE_SURFACE ||
+     op->reconstruction_mode!=GML_RENDER_DEVICE_CHECKPOINT ||
+     backend->scene.max_texture_units<4 ||
+     (backend->api==GML_GPU_API_OPENGL_CORE && !backend->gl.PolygonMode) ||
+     !backend->gl.BlendFuncSeparate || !backend->gl.BlendEquationSeparate ||
+     state->write_mask!=15u || state->alpha!=255u || state->colour!=0xFFFFFFFFu ||
+     state->alpha_test_enabled || state->material_identity || state->material_version ||
+     qualified_blend(state)!=1 || state->coverage_policy!=GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA ||
+     state->sampler_count!=1u ||
+     !((!state->clip.width && !state->clip.height) ||
+       full_region(state->clip,op->target.width,op->target.height)) ||
+     !full_region(op->target.region,op->target.width,op->target.height) ||
+     q->shape!=GML_RENDER_QUAD_AXIS_ALIGNED || q->span_active ||
+     q->sampling.filter!=GML_RENDER_FILTER_NEAREST || q->sampling.quantisation ||
+     q->sampling.logical_margin_mask || q->sampling.edge_rule!=GML_RENDER_EDGE_CLAMP_SUBIMAGE ||
+     !full_region(q->sampling.source_region,source->width,source->height) ||
+     state->samplers[0].filter!=q->sampling.filter ||
+     state->samplers[0].edge_rule!=q->sampling.edge_rule ||
+     state->samplers[0].quantisation || state->samplers[0].logical_margin_mask ||
+     !same_region(state->samplers[0].source_region,q->sampling.source_region) ||
+     !exact_rect(op,NULL,NULL,NULL,NULL,1) || q->filtered_draw_alpha!=1.0 ||
+     q->x[0]<-16384.0 || q->y[0]<-16384.0 ||
+     q->x[1]-q->x[0]<source->width || q->y[2]-q->y[0]<source->height ||
+     q->x[1]-q->x[0]>16384.0 || q->y[2]-q->y[0]>16384.0) return 0;
+  for(unsigned corner=0;corner<4u;corner++)
+    if(q->corner_colour[corner]!=0xFFFFFFFFu ||
+       q->u[corner]!=((corner==1u || corner==2u)?1.0:0.0) ||
+       q->v[corner]!=(corner>=2u?1.0:0.0)) return 0;
+  return 1;
+}
+
 static int same_resolved_quad(const GmlRenderQuad *a,const GmlRenderQuad *b){
   if(a->shape!=b->shape || a->sampling.filter!=b->sampling.filter ||
      a->source_opaque!=b->source_opaque ||
@@ -382,10 +422,15 @@ static int scene_preflight(GmlGpuBackend *backend,const GmlRenderDrawBatch *batc
       }
       continue;
     }
-    if(op->opcode!=GML_RENDER_OP_TEXTURED_QUAD || !batch->states ||
+    if((op->opcode!=GML_RENDER_OP_TEXTURED_QUAD &&
+        op->opcode!=GML_RENDER_OP_RECOVER_EMPTY_SCREEN) || !batch->states ||
        op->state_index>=batch->state_count || op->source_count!=1 || !op->sources ||
        (!existing_target(backend,target) &&
         !cleared_earlier(cleared,clear_count,target->image))) return 0;
+    if(op->opcode==GML_RENDER_OP_RECOVER_EMPTY_SCREEN){
+      if(!recovery_quad_valid(backend,op,&batch->states[op->state_index])) return 0;
+      continue;
+    }
     {
       const GmlRenderDrawStateSnapshot *state=&batch->states[op->state_index];
       GlSceneImage *source=gml_gpu_opengl_scene_image(backend,op->sources[0]);
@@ -681,7 +726,7 @@ static int flush_quads(GmlGpuBackend *backend,GlSceneImage *target,GlSceneImage 
     backend->gl.BlendEquationSeparate(GL_FUNC_ADD,GL_FUNC_ADD);
     backend->gl.Enable(GL_BLEND);
   } else backend->gl.Disable(GL_BLEND);
-  if(filter==9u || filter==12u || filter==21u)
+  if(filter==9u || filter==12u || filter==21u || filter==23u)
     backend->gl.ColorMask(GL_TRUE,GL_TRUE,GL_TRUE,GL_FALSE);
   backend->gl.UseProgram(scene->program);
   backend->gl.Uniform2fv(scene->u_extent,1,extent);
@@ -723,13 +768,13 @@ static int flush_quads(GmlGpuBackend *backend,GlSceneImage *target,GlSceneImage 
   backend->gl.VertexAttribPointer((GLuint)scene->a_span_active,1,GL_FLOAT,GL_FALSE,stride,
                                   (const void*)(27*sizeof(float)));
   backend->gl.DrawArrays(GL_TRIANGLES,0,(GLsizei)(count*6u));
-  if(filter==9u || filter==12u || filter==21u){
+  if(filter==9u || filter==12u || filter==21u || filter==23u){
     /* The CPU screen writer keeps alpha opaque at every covered texel,
      * even when its prior alpha is unknown. Reuse the sampled vertices and
      * the same sampler in an alpha-only pass; source-zero texels stay untouched. */
     backend->gl.ColorMask(GL_FALSE,GL_FALSE,GL_FALSE,GL_TRUE);
     backend->gl.Disable(GL_BLEND);
-    backend->gl.Uniform1i(scene->u_filter,filter==21u?22:filter==9u?10:13);
+    backend->gl.Uniform1i(scene->u_filter,filter==23u?24:filter==21u?22:filter==9u?10:13);
     backend->gl.DrawArrays(GL_TRIANGLES,0,(GLsizei)(count*6u));
     backend->gl.ColorMask(GL_TRUE,GL_TRUE,GL_TRUE,GL_TRUE);
   }
@@ -1144,6 +1189,34 @@ GmlRenderExecutionResult gml_gpu_opengl_scene_submit(GmlGpuBackend *backend,
       result.status=GML_RENDER_EXEC_RESOURCE_ERROR;
       break;
     }
+    if(op->opcode==GML_RENDER_OP_RECOVER_EMPTY_SCREEN){
+      GLint rect[4]={(GLint)op->payload.quad.x[0],(GLint)op->payload.quad.y[0],
+        (GLint)(op->payload.quad.x[1]-op->payload.quad.x[0]),
+        (GLint)(op->payload.quad.y[2]-op->payload.quad.y[0])};
+      if(!gml_gpu_opengl_scene_reduce_rgb(backend,target,0u) ||
+         !gml_gpu_opengl_scene_reduce_rgb(backend,pending_source,1u) ||
+         !gml_render_gpu_opengl_draw_textured_quad(op,&batch->states[op->state_index],
+           pending_source->width,pending_source->height,pending_source->rendered_origin,
+           backend->scene.vertices)){
+        result.status=GML_RENDER_EXEC_RESOURCE_ERROR;
+        break;
+      }
+      backend->gl.UseProgram(backend->scene.program);
+      backend->gl.Uniform1i(backend->scene.u_recovery_screen,2);
+      backend->gl.Uniform1i(backend->scene.u_recovery_application,3);
+      backend->gl.Uniform4iv(backend->scene.u_recovery_rect,1,rect);
+      backend->gl.ActiveTexture(GL_TEXTURE2);
+      backend->gl.BindTexture(GL_TEXTURE_2D,backend->scene.rgb_reduce_texture[2]);
+      backend->gl.ActiveTexture(GL_TEXTURE3);
+      backend->gl.BindTexture(GL_TEXTURE_2D,backend->scene.rgb_reduce_texture[3]);
+      if(!flush_quads(backend,target,pending_source,23u,1,1u)){
+        mark_uncertain(&result,target);
+        break;
+      }
+      result.accepted_prefix=index+1u;
+      pending_count=0;
+      continue;
+    }
     pending_filter=scene_filter(&op->payload.quad,&batch->states[op->state_index]);
     pending_blend=qualified_blend(&batch->states[op->state_index]);
     if(pending_filter==15u || pending_filter==17u){
@@ -1214,6 +1287,10 @@ GmlRenderExecutionResult gml_gpu_opengl_scene_submit(GmlGpuBackend *backend,
       result.accepted_prefix=batch->operation_count;
     }
   }
+  backend->gl.ActiveTexture(GL_TEXTURE3);
+  backend->gl.BindTexture(GL_TEXTURE_2D,0);
+  backend->gl.ActiveTexture(GL_TEXTURE2);
+  backend->gl.BindTexture(GL_TEXTURE_2D,0);
   backend->gl.ActiveTexture(GL_TEXTURE1);
   backend->gl.BindTexture(GL_TEXTURE_2D,0);
   backend->gl.ActiveTexture(GL_TEXTURE0);

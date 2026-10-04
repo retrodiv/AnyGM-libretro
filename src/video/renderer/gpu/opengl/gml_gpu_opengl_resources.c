@@ -170,6 +170,10 @@ void gml_gpu_opengl_scene_forget(GmlGpuBackend *backend){
   scene->program=scene->vertex_buffer=scene->vertex_array=0;
   memset(scene->exact_programs,0,sizeof scene->exact_programs);
   scene->snapshot_texture=scene->rgb_query=0;
+  scene->rgb_reduce_program=scene->rgb_reduce_framebuffer=0;
+  memset(scene->rgb_reduce_texture,0,sizeof scene->rgb_reduce_texture);
+  memset(scene->rgb_reduce_width,0,sizeof scene->rgb_reduce_width);
+  memset(scene->rgb_reduce_height,0,sizeof scene->rgb_reduce_height);
   scene->snapshot_width=scene->snapshot_height=0;
   scene->max_texture_size=0;
   scene->supports_sample_mask=0;
@@ -196,6 +200,12 @@ void gml_gpu_opengl_scene_destroy(GmlGpuBackend *backend,int context_is_current)
     if(scene->snapshot_texture) backend->gl.DeleteTextures(1,&scene->snapshot_texture);
     if(scene->rgb_query && backend->gl.DeleteQueries)
       backend->gl.DeleteQueries(1,&scene->rgb_query);
+    if(scene->rgb_reduce_program) backend->gl.DeleteProgram(scene->rgb_reduce_program);
+    if(scene->rgb_reduce_framebuffer)
+      backend->gl.DeleteFramebuffers(1,&scene->rgb_reduce_framebuffer);
+    for(size_t index=0;index<4u;index++)
+      if(scene->rgb_reduce_texture[index])
+        backend->gl.DeleteTextures(1,&scene->rgb_reduce_texture[index]);
     if(scene->vertex_array) backend->gl.DeleteVertexArrays(1,&scene->vertex_array);
     if(scene->vertex_buffer) backend->gl.DeleteBuffers(1,&scene->vertex_buffer);
   }
@@ -262,9 +272,11 @@ int gml_gpu_opengl_scene_capabilities(const GmlGpuBackend *backend,GmlRenderDevi
                              (UINT64_C(1)<<GML_RENDER_OP_COLOURED_PRIMITIVE)|
                              (UINT64_C(1)<<GML_RENDER_OP_TEXTURED_QUAD)|
                              (UINT64_C(1)<<GML_RENDER_OP_LAYER_EFFECT)|
-                             (UINT64_C(1)<<GML_RENDER_OP_CONTENT_SHADER_DRAW);
+                             (UINT64_C(1)<<GML_RENDER_OP_CONTENT_SHADER_DRAW)|
+                             (UINT64_C(1)<<GML_RENDER_OP_RECOVER_EMPTY_SCREEN);
   caps->supported_families=GML_RENDER_FAMILY_TEXTURE|GML_RENDER_FAMILY_PRIMITIVE|
-                           GML_RENDER_FAMILY_EFFECT|GML_RENDER_FAMILY_SHADER;
+                           GML_RENDER_FAMILY_EFFECT|GML_RENDER_FAMILY_SHADER|
+                           GML_RENDER_FAMILY_SURFACE;
   caps->supports_rgb_alpha_separate=backend->gl.BlendFuncSeparate &&
                                      backend->gl.BlendEquationSeparate;
   caps->soft_cache_bytes=128u*1024u*1024u;
@@ -304,6 +316,71 @@ GlSceneImage *gml_gpu_opengl_scene_image(GmlGpuBackend *backend,GmlRenderImageRe
     }
   }
   return NULL;
+}
+
+/* Reduce actual RGB bytes to one exact flag, entirely in this context. Intermediate allocations
+ * may be larger than the written level: the shader's explicit extent excludes stale border data.
+ * Separate final flags keep SCREEN alive while APPLICATION reuses both scratch planes. */
+int gml_gpu_opengl_scene_reduce_rgb(GmlGpuBackend *backend,GlSceneImage *source,
+                                    unsigned predicate){
+  GlScene *scene=&backend->scene;
+  GLuint input;
+  uint32_t width,height;
+  unsigned cursor=0;
+  if(predicate>1u || !source || !source->valid || !source->rendered_origin ||
+     !gml_gpu_opengl_rgb_reduce_program(backend)) return 0;
+  if(!scene->rgb_reduce_framebuffer){
+    backend->gl.GenFramebuffers(1,&scene->rgb_reduce_framebuffer);
+    if(!scene->rgb_reduce_framebuffer) return 0;
+  }
+  backend->gl.Disable(GL_BLEND);
+  backend->gl.Disable(GL_SCISSOR_TEST);
+  backend->gl.Disable(GL_RASTERIZER_DISCARD);
+  backend->gl.Disable(GL_SAMPLE_COVERAGE);
+  backend->gl.Disable(GL_SAMPLE_ALPHA_TO_COVERAGE);
+  if(scene->supports_sample_mask) backend->gl.Disable(GL_SAMPLE_MASK);
+  if(backend->api==GML_GPU_API_OPENGL_CORE)
+    backend->gl.PolygonMode(GL_FRONT_AND_BACK,GL_FILL);
+  backend->gl.ColorMask(GL_TRUE,GL_TRUE,GL_TRUE,GL_TRUE);
+  backend->gl.UseProgram(scene->rgb_reduce_program);
+  backend->gl.BindBuffer(GL_PIXEL_UNPACK_BUFFER,0);
+  backend->gl.Uniform1i(scene->rgb_reduce_u_image,0);
+  backend->gl.BindVertexArray(backend->vertex_array);
+  input=source->texture;width=source->width;height=source->height;
+  do {
+    uint32_t next_width=(width+7u)/8u,next_height=(height+7u)/8u;
+    unsigned slot=next_width==1u && next_height==1u?2u+predicate:cursor;
+    GLint extent[2]={(GLint)width,(GLint)height};
+    if(!scene->rgb_reduce_texture[slot]){
+      backend->gl.GenTextures(1,&scene->rgb_reduce_texture[slot]);
+      if(!scene->rgb_reduce_texture[slot]) return 0;
+    }
+    backend->gl.ActiveTexture(GL_TEXTURE0);
+    backend->gl.BindTexture(GL_TEXTURE_2D,scene->rgb_reduce_texture[slot]);
+    if(scene->rgb_reduce_width[slot]<next_width || scene->rgb_reduce_height[slot]<next_height){
+      backend->gl.TexImage2D(GL_TEXTURE_2D,0,GL_RGBA8,(GLsizei)next_width,(GLsizei)next_height,
+                             0,GL_RGBA,GL_UNSIGNED_BYTE,NULL);
+      backend->gl.TexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,GL_NEAREST);
+      backend->gl.TexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAG_FILTER,GL_NEAREST);
+      backend->gl.TexParameteri(GL_TEXTURE_2D,GL_TEXTURE_WRAP_S,GL_CLAMP_TO_EDGE);
+      backend->gl.TexParameteri(GL_TEXTURE_2D,GL_TEXTURE_WRAP_T,GL_CLAMP_TO_EDGE);
+      if(backend->gl.GetError()!=GL_NO_ERROR) return 0;
+      scene->rgb_reduce_width[slot]=next_width;scene->rgb_reduce_height[slot]=next_height;
+    }
+    backend->gl.BindFramebuffer(GL_FRAMEBUFFER,scene->rgb_reduce_framebuffer);
+    backend->gl.FramebufferTexture2D(GL_FRAMEBUFFER,GL_COLOR_ATTACHMENT0,GL_TEXTURE_2D,
+                                     scene->rgb_reduce_texture[slot],0);
+    if(backend->gl.CheckFramebufferStatus(GL_FRAMEBUFFER)!=GL_FRAMEBUFFER_COMPLETE) return 0;
+    backend->gl.BindTexture(GL_TEXTURE_2D,input);
+    backend->gl.Uniform2iv(scene->rgb_reduce_u_extent,1,extent);
+    backend->gl.Viewport(0,0,(GLsizei)next_width,(GLsizei)next_height);
+    backend->gl.DrawArrays(GL_TRIANGLES,0,3);
+    if(backend->gl.GetError()!=GL_NO_ERROR) return 0;
+    input=scene->rgb_reduce_texture[slot];width=next_width;height=next_height;
+    cursor^=1u;
+  } while(width!=1u || height!=1u);
+  backend->gl.Enable(GL_SCISSOR_TEST);
+  return 1;
 }
 
 int gml_gpu_opengl_scene_has_rgb(GmlGpuBackend *backend,GmlRenderImageRef image,int *has_rgb){

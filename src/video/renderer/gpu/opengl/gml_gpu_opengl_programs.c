@@ -160,12 +160,16 @@ int gml_gpu_opengl_scene_program(GmlGpuBackend *backend,char *error,size_t error
   scene->u_previous=backend->gl.GetUniformLocation(scene->program,"u_previous");
   scene->u_region_origin=backend->gl.GetUniformLocation(scene->program,"u_region_origin");
   scene->u_rotated_alpha16=backend->gl.GetUniformLocation(scene->program,"u_rotated_alpha16[0]");
+  scene->u_recovery_screen=backend->gl.GetUniformLocation(scene->program,"u_recovery_screen");
+  scene->u_recovery_application=backend->gl.GetUniformLocation(scene->program,"u_recovery_application");
+  scene->u_recovery_rect=backend->gl.GetUniformLocation(scene->program,"u_recovery_rect");
   scene->rotated_alpha16_valid=0;
   if(scene->a_position<0 || scene->a_texcoord<0 || scene->a_colour<0 ||
      scene->a_clamp<0 || scene->a_map<0 || scene->a_step<0 || scene->a_margin<0 ||
      scene->a_span_x<0 || scene->a_span_y<0 || scene->a_span_active<0 ||
      scene->u_extent<0 || scene->u_image<0 || scene->u_filter<0 ||
-     scene->u_previous<0 || scene->u_region_origin<0 || scene->u_rotated_alpha16<0){
+     scene->u_previous<0 || scene->u_region_origin<0 || scene->u_rotated_alpha16<0 ||
+     scene->u_recovery_screen<0 || scene->u_recovery_application<0 || scene->u_recovery_rect<0){
     gml_gpu_opengl_record_error(error,error_capacity,"scene program is missing an attribute or uniform");
     backend->gl.DeleteProgram(scene->program);
     scene->program=0;
@@ -290,6 +294,38 @@ GlSceneExactProgram *gml_gpu_opengl_scene_exact_program(GmlGpuBackend *backend,i
     return NULL;
   }
   return scene;
+}
+
+int gml_gpu_opengl_rgb_reduce_program(GmlGpuBackend *backend){
+  GlScene *scene=&backend->scene;
+  const char *prefix=backend->api==GML_GPU_API_OPENGLES3
+    ?GML_GPU_OPENGL_PREFIX_ES:GML_GPU_OPENGL_PREFIX_DESKTOP;
+  char vertex_source[512],fragment_source[2048];
+  GLuint vertex,fragment;
+  GLint status=GL_FALSE;
+  if(scene->rgb_reduce_program) return 1;
+  snprintf(vertex_source,sizeof vertex_source,"%s%s",prefix,GML_GPU_OPENGL_VERTEX_BODY);
+  snprintf(fragment_source,sizeof fragment_source,"%s%s",prefix,GML_GPU_OPENGL_RGB_REDUCE_FRAGMENT_BODY);
+  vertex=compile_stage(backend,GL_VERTEX_SHADER,vertex_source,NULL,0u);
+  if(!vertex) return 0;
+  fragment=compile_stage(backend,GL_FRAGMENT_SHADER,fragment_source,NULL,0u);
+  if(!fragment){ backend->gl.DeleteShader(vertex); return 0; }
+  scene->rgb_reduce_program=backend->gl.CreateProgram();
+  if(scene->rgb_reduce_program){
+    backend->gl.AttachShader(scene->rgb_reduce_program,vertex);
+    backend->gl.AttachShader(scene->rgb_reduce_program,fragment);
+    backend->gl.LinkProgram(scene->rgb_reduce_program);
+    backend->gl.GetProgramiv(scene->rgb_reduce_program,GL_LINK_STATUS,&status);
+  }
+  backend->gl.DeleteShader(vertex);backend->gl.DeleteShader(fragment);
+  if(status!=GL_TRUE) goto refused;
+  scene->rgb_reduce_u_image=backend->gl.GetUniformLocation(scene->rgb_reduce_program,"u_image");
+  scene->rgb_reduce_u_extent=backend->gl.GetUniformLocation(scene->rgb_reduce_program,"u_source_extent");
+  if(scene->rgb_reduce_u_image>=0 && scene->rgb_reduce_u_extent>=0) return 1;
+refused:
+  if(scene->rgb_reduce_program) backend->gl.DeleteProgram(scene->rgb_reduce_program);
+  scene->rgb_reduce_program=0;
+  return 0;
 }
 
 int gml_gpu_opengl_checkpoint_program(GmlGpuBackend *backend){

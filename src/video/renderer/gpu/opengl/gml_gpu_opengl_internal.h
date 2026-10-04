@@ -138,6 +138,11 @@ typedef struct GlScene {
   int rotated_alpha16_valid;
   GlSceneExactProgram exact_programs[3];
   GLuint snapshot_texture,rgb_query;
+  /* Two reusable reduction planes and two independent final predicates. No host observation. */
+  GLuint rgb_reduce_program,rgb_reduce_framebuffer,rgb_reduce_texture[4];
+  uint32_t rgb_reduce_width[4],rgb_reduce_height[4];
+  GLint rgb_reduce_u_image,rgb_reduce_u_extent;
+  GLint u_recovery_screen,u_recovery_application,u_recovery_rect;
   uint32_t snapshot_width,snapshot_height;
   GLint max_texture_units;
   float *vertices;
@@ -201,6 +206,9 @@ int gml_gpu_opengl_scene_program(GmlGpuBackend *backend,char *error,size_t error
 GlSceneExactProgram *gml_gpu_opengl_scene_exact_program(GmlGpuBackend *backend,int font_mode,
                                                        char *error,size_t error_capacity);
 int gml_gpu_opengl_checkpoint_program(GmlGpuBackend *backend);
+int gml_gpu_opengl_rgb_reduce_program(GmlGpuBackend *backend);
+int gml_gpu_opengl_scene_reduce_rgb(GmlGpuBackend *backend,GlSceneImage *source,
+                                    unsigned predicate);
 int gml_gpu_opengl_execute_shader_draw(GmlGpuBackend *backend,GmlRenderPlan *plan,
                                         const GmlPlanOp *op,GmlGpuCounters *counters,
                                        char *error,size_t error_capacity);

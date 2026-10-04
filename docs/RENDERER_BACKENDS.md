@@ -38,6 +38,21 @@ CPU frontend XRGB does not define alpha, so those checkpoints do not qualify
 persistent-image alpha or every scene variant. Synthetic RGBA proof and exact
 state restoration controls remain distinct from frontend-visible RGB evidence.
 
+An additional full-output CRT workload comparison at 3440-by-1600 has one red
+pixel five levels from CPU at its transition checkpoint on both native NVIDIA
+and D3D12. Its other two checkpoints meet the four-level composed bound. This
+known experimental deviation is not specific to the translation layer, does
+not qualify the complete route, and does not change the per-pixel contract.
+
+The empty-screen recovery operation reduces exact RGB-zero predicates to two
+RGBA8 device flags, then conditionally draws the application image with the
+existing leading-edge point geometry and fixed RGB blending. It neither assumes
+a content shader drew nonblack pixels nor removes recovery when it did not.
+Only plain Studio magnification on a witnessed resident SCREEN is admitted;
+classic, active-program, full-width, reduction and other state variants retain
+the old query/recovery path. The device-only conditional image is observed for
+state or controlled destruction, not retained as a CPU replay recipe.
+
 Qualified magnified numbered-source composition is still experimental, not a
 general claim of zero-transfer rendering. Unqualified geometry, source/state
 variants, CPU content consumers and absent context-ownership proof retain their
@@ -320,10 +335,11 @@ classifying the fallback does not establish ordinary-route GPU residency.
 | `PRESENT_IMAGE` | `fallback` | The terminal resident-source optimization belongs to the existing plan; other presentation uses coherent CPU materialization. No selected neutral scene-op or zero-transfer gameplay claim. |
 | `CONTENT_SHADER_DRAW` | `supported` | Qualified full-target programs preserve per-draw uniforms/samplers and distinct-target multipass without an intermediate checkpoint. Excluded target/program variants retain their mapped ordered fallback; there is no exact software shader interpreter. |
 | `SOFTWARE3D_PASS` | `fallback` | Ordered CPU bridge, not accelerated 3D. |
+| `RECOVER_EMPTY_SCREEN` | `supported` | Qualified plain Studio magnified application recovery: EXACT global RGB-zero predicate and leading-edge point placement; opaque/binary draws EXACT, partial RGB blending TOLERANCE±2. GPU reduction flags gate the blit without a result query or pixel read. Other variants retain the existing query/recovery owner. |
 
 `gpu/opengl/gml_gpu_opengl_resources.c::gml_gpu_opengl_scene_capabilities`
-advertises the five selected opcode bits and their neutral TEXTURE, PRIMITIVE,
-EFFECT and SHADER families. Family bits describe the catalogue's opcodes, not
+advertises the six selected opcode bits and their neutral TEXTURE, PRIMITIVE,
+SURFACE, EFFECT and SHADER families. Family bits describe the catalogue's opcodes, not
 public-draw counter attribution: a SURFACE-attributed textured quad does not advertise
 `COPY_IMAGE` or `COMPOSE_SURFACE`. The exact masks and transactional refusal of
 all four unselected opcodes are checked by

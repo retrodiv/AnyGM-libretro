@@ -12,3 +12,4 @@ GML_RENDER_CPU_OPERATION(LAYER_EFFECT, supported, gml_render_cpu_layer_filter_en
 GML_RENDER_CPU_OPERATION(PRESENT_IMAGE, supported, gml_render_cpu_present_image, "existing output materialization")
 GML_RENDER_CPU_OPERATION(CONTENT_SHADER_DRAW, fallback, gml_render_cpu_shader_pass_surface, "existing host-program handoff and CPU composition; no exact software shader interpreter")
 GML_RENDER_CPU_OPERATION(SOFTWARE3D_PASS, supported, gml_d3_draw_sprite_2d, "existing conservative software-3D bridge")
+GML_RENDER_CPU_OPERATION(RECOVER_EMPTY_SCREEN, fallback, gml_render_completed_screen_has_rgb, "Existing engine RGB query and conditional application-surface draw; no CPU replay recipe for the device-only conditional operation")

@@ -669,6 +669,86 @@ static int resident_surface_shader(GmlRender *r,int surf,double dx,double dy,dou
 static int resident_surface_filtered(GmlRender *r,int surf,double dx,double dy,double dw,double dh,
                                      uint32_t blend,double alpha);
 
+int gml_render_recover_empty_screen(GmlRender *r,uint32_t *pixels,int width,int height,
+                                     double x,double y,double w,double h,int zero_camera){
+  const GmlRenderDeviceServices *device;
+  GmlRenderDeviceCaps caps={0};
+  GmlRenderResource *application,*target;
+  GmlRenderResourceSource source={0};
+  GmlRenderDrawOp op={0};
+  GmlRenderDrawStateSnapshot state={0};
+  GmlRenderImageRef ref;
+  double left,top;
+  /* Plain Studio full-source magnification uses leading-edge point samples here.
+   * Active shaders, classic phases, full-width policy and other geometry retain their owner. */
+  if(!r || r->classic || !r->resident_application_pass ||
+     !gml_render_scene_target_matches(r) || r->fb!=pixels || r->fbw!=width ||
+     r->fbh!=height || r->target_sp || r->target_id!=-1 ||
+     !r->app_surface_published || r->app_surface!=r->app_surface_owned ||
+     r->app_surface==pixels || r->app_w<=0 || r->app_h<=0 ||
+     r->pending_fill || r->pending_underlay || r->pending_presentation ||
+     r->active_shader>=0 || r->aspect_fullwidth || gml_render_gui_transform_active(r) ||
+     !r->interp || !r->alphablend || r->blendmode || r->alpha_test_enable ||
+     r->color_write_mask!=15u || r->blend_equation!=1 || r->blend_equation_alpha!=1 ||
+     gml_d3_is_active(r) || !isfinite(x) || !isfinite(y) ||
+     !isfinite(w) || !isfinite(h) || w<r->app_w || h<r->app_h ||
+     w>16384.0 || h>16384.0 ||
+     !(device=gml_render_device(r)) || !device->observe_on_demand ||
+     !device->observe_on_demand(device->context) || !device->capabilities ||
+     !device->capabilities(device->context,&caps) ||
+     !(caps.supported_operations&(UINT64_C(1)<<GML_RENDER_OP_RECOVER_EMPTY_SCREEN))) return 0;
+  gml_render_draw_map_point(r,&x,&y);
+  gml_render_draw_map_scale(r,&w,&h);
+  if(!isfinite(x) || !isfinite(y) || !isfinite(w) || !isfinite(h) ||
+     w<r->app_w || h<r->app_h || w>16384.0 || h>16384.0) return 0;
+  left=floor(x-(zero_camera?0.0:r->cam_x));
+  top=floor(y-(zero_camera?0.0:r->cam_y));
+  w=(double)lround(w);h=(double)lround(h);
+  if(!isfinite(left) || !isfinite(top) || left< -16384.0 || top< -16384.0 ||
+     left>=width || top>=height || left+w<=0.0 || top+h<=0.0) return 0;
+  application=gml_render_application_resource_ensure(r);
+  target=gml_render_scene_target_resource_ensure(r);
+  if(!application || !target || !gml_render_application_scene_flush(r) ||
+     (!gml_render_resource_device_source_view(application,device,&source) &&
+      !gml_render_resource_current_cpu_source_view(application,&source)) ||
+     source.pixel_format!=GML_RENDER_PIXEL_ARGB8888) return 0;
+  ref=source.image;
+  op.opcode=GML_RENDER_OP_RECOVER_EMPTY_SCREEN;
+  op.scene_family=GML_RENDER_SCENE_SURFACE;
+  op.reconstruction_mode=GML_RENDER_DEVICE_CHECKPOINT;
+  op.sources=&ref;op.source_count=1u;
+  op.target.image=gml_render_application_scene_next_image_ref(r,target);
+  if(op.target.image.content_version==UINT64_MAX) return 0;
+  op.target.image.content_version++;
+  op.target.storage_version=1u;
+  op.target.width=(uint32_t)width;op.target.height=(uint32_t)height;
+  op.target.pixel_format=GML_RENDER_PIXEL_ARGB8888;
+  op.target.region=(GmlRenderRect){0,0,(uint32_t)width,(uint32_t)height};
+  GmlRenderQuad *quad=&op.payload.quad;
+  quad->shape=GML_RENDER_QUAD_AXIS_ALIGNED;
+  quad->sampling.filter=GML_RENDER_FILTER_NEAREST;
+  quad->sampling.edge_rule=GML_RENDER_EDGE_CLAMP_SUBIMAGE;
+  quad->sampling.source_region=(GmlRenderRect){0,0,source.width,source.height};
+  quad->filtered_draw_alpha=1.0;
+  quad->x[0]=quad->x[3]=left;quad->x[1]=quad->x[2]=left+w;
+  quad->y[0]=quad->y[1]=top;quad->y[2]=quad->y[3]=top+h;
+  quad->u[1]=quad->u[2]=quad->v[2]=quad->v[3]=1.0;
+  for(unsigned corner=0;corner<4u;corner++) quad->corner_colour[corner]=0xFFFFFFFFu;
+  state.rgb_source_factor=GML_RENDER_BLEND_SOURCE_ALPHA;
+  state.rgb_destination_factor=GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA;
+  state.alpha_source_factor=GML_RENDER_BLEND_ONE;
+  state.alpha_destination_factor=GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA;
+  state.rgb_equation=state.alpha_equation=GML_RENDER_BLEND_ADD;
+  state.coverage_policy=GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA;
+  state.write_mask=15u;state.alpha=255u;state.colour=0xFFFFFFFFu;
+  state.sampler_count=1u;state.samplers[0]=quad->sampling;
+  GmlRenderDrawBatch batch={&op,1u,&state,1u};
+  if(gml_render_application_scene_submit(r,&batch,&source,1u)!=
+     GML_RENDER_RESOURCE_EXEC_DEVICE) return 0;
+  r->fb_opaque_known=r->fb_all_opaque=r->fb_all_transparent=0;
+  return 1;
+}
+
 void gml_draw_surface_stretched(GmlRender *r,int surf,double dx,double dy,
                                 double dw,double dh,uint32_t blend,double alpha){
   int resident_success=0;

@@ -39,6 +39,8 @@ typedef struct FakeDevice {
   uint32_t status,accepted_prefix;
   uint32_t readback_colour;
   uint32_t max_texture_extent;
+  uint64_t supported_operations;
+  double recovery_rect[4];
   uint32_t last_opcode,last_source_count,last_shader_identity;
   GmlRenderImageRef last_target_image;
   GmlRenderRect last_target_region;
@@ -80,6 +82,11 @@ static GmlRenderExecutionResult fake_submit(void *context,const GmlRenderDrawBat
     fake->last_target_image=last->target.image;
     fake->last_target_region=last->target.region;
     fake->last_source_count=last->source_count;
+    if(last->opcode==GML_RENDER_OP_RECOVER_EMPTY_SCREEN){
+      const GmlRenderQuad *q=&last->payload.quad;
+      fake->recovery_rect[0]=q->x[0];fake->recovery_rect[1]=q->y[0];
+      fake->recovery_rect[2]=q->x[1]-q->x[0];fake->recovery_rect[3]=q->y[2]-q->y[0];
+    }
     if(last->opcode==GML_RENDER_OP_CONTENT_SHADER_DRAW && last->payload.shader){
       fake->shader_submits++;
       fake->last_shader_identity=last->payload.shader->identity;
@@ -138,6 +145,7 @@ static int fake_capabilities(void *context,GmlRenderDeviceCaps *out_caps){
   if(!out_caps) return 0;
   memset(out_caps,0,sizeof *out_caps);
   out_caps->max_texture_extent=fake->max_texture_extent?fake->max_texture_extent:4096u;
+  out_caps->supported_operations=fake->supported_operations;
   return 1;
 }
 
@@ -3035,6 +3043,63 @@ static int completed_screen_reader_and_writer(void){
   gml_render_free(render);
   free(render);
   return 1;
+}
+
+static int conditional_screen_recovery_authority(void){
+  GmlRender *render=(GmlRender*)calloc(1,sizeof *render);
+  uint32_t screen[14u*9u],sentinel[14u*9u];
+  FakeDevice fake={.on_demand=1,.supported_operations=UINT64_C(1)<<GML_RENDER_OP_RECOVER_EMPTY_SCREEN};
+  GmlRenderDeviceServices device=service(&fake);
+  GmlRenderJournalMetrics metrics={0};
+  CHECK(render && gml_render_init(render,NULL)==0);
+  CHECK(gml_render_application_surface_ensure_owned(render,4,3) &&
+        gml_render_begin_owned_application(render,0.0,0.0,0));
+  gml_render_application_surface_publish(render);
+  gml_render_set_pending_fill(render,0x7F123456u);
+  gml_render_flush_pending_fill(render);
+  CHECK(gml_render_application_resource_ensure(render));
+  device.observe_on_demand=fake_observe_on_demand;device.has_rgb=fake_has_rgb;
+  gml_render_bind_device(render,&device);
+  for(unsigned p=0;p<14u*9u;p++) screen[p]=sentinel[p]=0xAB112233u;
+  CHECK(gml_render_begin_resident_base(render,screen,14,9,2.0,3.0));
+  render->interp=render->alphablend=1;
+  gml_render_set_pending_fill(render,0x11000000u);gml_render_flush_pending_fill(render);
+  CHECK(gml_render_scene_submit_pending(render));
+  int submits=fake.submits;
+  for(unsigned variant=0;variant<7u;variant++){
+    if(variant==0u) fake.on_demand=0;
+    if(variant==1u) fake.supported_operations=0;
+    if(variant==2u) render->interp=0;
+    if(variant==3u) render->active_shader=1;
+    if(variant==4u) render->aspect_fullwidth=1;
+    if(variant==5u) render->color_write_mask=7u;
+    if(variant==6u) render->classic=1;
+    CHECK(!gml_render_recover_empty_screen(render,screen,14,9,3.0,4.0,10.0,7.0,0) &&
+          fake.submits==submits && !fake.rgb_queries && !fake.readbacks);
+    fake.on_demand=1;fake.supported_operations=UINT64_C(1)<<GML_RENDER_OP_RECOVER_EMPTY_SCREEN;
+    render->interp=1;render->active_shader=-1;render->aspect_fullwidth=0;
+    render->color_write_mask=15u;render->classic=0;
+  }
+  CHECK(gml_render_recover_empty_screen(render,screen,14,9,3.0,4.0,10.0,7.0,0) &&
+        fake.submits==submits+1 && fake.last_opcode==GML_RENDER_OP_RECOVER_EMPTY_SCREEN &&
+        !fake.rgb_queries && !fake.readbacks && !memcmp(screen,sentinel,sizeof screen) &&
+        fake.recovery_rect[0]==1.0 && fake.recovery_rect[1]==1.0 &&
+        fake.recovery_rect[2]==10.0 && fake.recovery_rect[3]==7.0);
+  gml_render_resource_journal_metrics(render->base_scene_resource,&metrics);
+  CHECK(metrics.authority==GML_RENDER_RESOURCE_GPU_RESIDENT &&
+        metrics.gpu_version==metrics.logical_version && metrics.cpu_version<metrics.logical_version &&
+        !metrics.journal_operations && !metrics.cpu_replays);
+  CHECK(gml_render_recover_empty_screen(render,screen,14,9,3.0,4.0,10.0,7.0,1) &&
+        fake.submits==submits+2 && !fake.readbacks &&
+        fake.recovery_rect[0]==3.0 && fake.recovery_rect[1]==4.0);
+  render->world_transform_active=1;render->world_scale_x=render->world_scale_y=2.0;
+  CHECK(gml_render_recover_empty_screen(render,screen,14,9,3.0,4.0,10.0,7.0,0) &&
+        fake.submits==submits+3 && !fake.readbacks && fake.recovery_rect[0]==4.0 &&
+        fake.recovery_rect[1]==5.0 && fake.recovery_rect[2]==20.0 && fake.recovery_rect[3]==14.0);
+  gml_render_abandon_device(render);fake.forbid_calls=1;
+  CHECK(!gml_render_recover_empty_screen(render,screen,14,9,3.0,4.0,10.0,7.0,0) &&
+        !fake.forbidden_calls);
+  gml_render_free(render);free(render);return 1;
 }
 
 static int completed_screen_deferred_upscale(void){
@@ -7050,6 +7115,7 @@ int main(void){
   passed+=resident_flat_primitive_public_order();
   passed+=resident_viewless_base_canvas_order();
   passed+=completed_screen_reader_and_writer();
+  passed+=conditional_screen_recovery_authority();
   passed+=completed_screen_deferred_upscale();
   passed+=resident_borrowed_surface_zero_screen_shader();
   passed+=surface_metadata_preserves_device_authority();
@@ -7107,6 +7173,6 @@ int main(void){
   passed+=source_free_primitive_rect_replay();
   passed+=stretched_float_exact_replay();
   passed+=filtered_font_exact_recovery();
-  printf("render resource cases: passed=%d failed=%d\n",passed,94-passed);
-  return passed==94?EXIT_SUCCESS:EXIT_FAILURE;
+  printf("render resource cases: passed=%d failed=%d\n",passed,95-passed);
+  return passed==95?EXIT_SUCCESS:EXIT_FAILURE;
 }

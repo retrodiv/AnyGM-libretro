@@ -391,9 +391,11 @@ static int scene_service_contract_case(void){
     (UINT64_C(1)<<GML_RENDER_OP_TEXTURED_QUAD)|
     (UINT64_C(1)<<GML_RENDER_OP_COLOURED_PRIMITIVE)|
     (UINT64_C(1)<<GML_RENDER_OP_LAYER_EFFECT)|
-    (UINT64_C(1)<<GML_RENDER_OP_CONTENT_SHADER_DRAW);
+    (UINT64_C(1)<<GML_RENDER_OP_CONTENT_SHADER_DRAW)|
+    (UINT64_C(1)<<GML_RENDER_OP_RECOVER_EMPTY_SCREEN);
   const uint32_t supported_families=GML_RENDER_FAMILY_TEXTURE|
-    GML_RENDER_FAMILY_PRIMITIVE|GML_RENDER_FAMILY_EFFECT|GML_RENDER_FAMILY_SHADER;
+    GML_RENDER_FAMILY_PRIMITIVE|GML_RENDER_FAMILY_EFFECT|GML_RENDER_FAMILY_SHADER|
+    GML_RENDER_FAMILY_SURFACE;
   GmlGpu *gpu;
   GmlGpuContext context;
   GmlRenderDeviceServices services;
@@ -643,6 +645,92 @@ static int scene_content_source_orientation_case(void){
     gml_gpu_destroy(gpu,1);
     REQUIRE(anygm_test_graphics_calls_after_forget()==0,
             "an oriented content source makes no call after context loss");
+  }
+  return 1;
+}
+
+static int scene_empty_screen_recovery_case(void){
+  for(unsigned embedded=0;embedded<2u;embedded++){
+    GmlGpu *gpu;
+    GmlGpuContext context=fake_context(embedded?GML_GPU_API_OPENGLES3:GML_GPU_API_OPENGL_CORE);
+    GmlRenderDeviceServices device={0};
+    GmlRenderImageRef source={GML_RENDER_RESOURCE_APPLICATION,0u,1u,1u};
+    GmlRenderDrawStateSnapshot state={0};
+    GmlRenderDrawOp operations[2]={0};
+    GmlRenderDrawBatch batch={operations,2u,&state,1u};
+    uint32_t pixels[9u*5u]={0};
+    GmlRenderImageUpload upload={0};
+    anygm_test_graphics_reset();
+    gpu=gml_gpu_create();
+    REQUIRE(gpu && gml_gpu_context_reset(gpu,&context),"recovery context adopted");
+    gml_gpu_device_services(gpu,&device);
+    upload.image=source;upload.storage_width=9u;upload.storage_height=5u;
+    upload.region=(GmlRenderRect){0,0,9u,5u};upload.pixel_format=GML_RENDER_PIXEL_ARGB8888;
+    upload.stride_bytes=36u;upload.byte_capacity=sizeof pixels;upload.bytes=pixels;
+    REQUIRE(device.upload(device.context,&upload),"odd application uploaded");
+    state.write_mask=15u;state.alpha=255u;state.colour=0xFFFFFFFFu;
+    state.rgb_source_factor=GML_RENDER_BLEND_SOURCE_ALPHA;
+    state.rgb_destination_factor=GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA;
+    state.alpha_source_factor=GML_RENDER_BLEND_ONE;
+    state.alpha_destination_factor=GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA;
+    state.rgb_equation=state.alpha_equation=GML_RENDER_BLEND_ADD;
+    state.coverage_policy=GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA;
+    state.sampler_count=1u;
+    state.samplers[0]=(GmlRenderSamplingPolicy){0};
+    state.samplers[0].filter=GML_RENDER_FILTER_NEAREST;
+    state.samplers[0].edge_rule=GML_RENDER_EDGE_CLAMP_SUBIMAGE;
+    state.samplers[0].source_region=upload.region;
+    for(unsigned index=0;index<2u;index++){
+      GmlRenderDrawOp *op=&operations[index];
+      op->target.image=(GmlRenderImageRef){GML_RENDER_RESOURCE_SCREEN,0u,2u,index+1u};
+      op->target.storage_version=1u;op->target.width=35u;op->target.height=17u;
+      op->target.pixel_format=GML_RENDER_PIXEL_ARGB8888;
+      op->target.region=(GmlRenderRect){0,0,35u,17u};
+      op->reconstruction_mode=index?GML_RENDER_DEVICE_CHECKPOINT:GML_RENDER_REPLAY_EXACT;
+      op->opcode=index?GML_RENDER_OP_RECOVER_EMPTY_SCREEN:GML_RENDER_OP_CLEAR;
+      if(!index) continue;
+      op->scene_family=GML_RENDER_SCENE_SURFACE;op->sources=&source;op->source_count=1u;
+      GmlRenderQuad *q=&op->payload.quad;
+      q->shape=GML_RENDER_QUAD_AXIS_ALIGNED;q->sampling=state.samplers[0];
+      q->filtered_draw_alpha=1.0;
+      q->x[1]=q->x[2]=35.0;q->y[2]=q->y[3]=17.0;
+      q->u[1]=q->u[2]=q->v[2]=q->v[3]=1.0;
+      for(unsigned corner=0;corner<4u;corner++) q->corner_colour[corner]=0xFFFFFFFFu;
+    }
+    GmlRenderExecutionResult result=device.submit(device.context,&batch);
+    REQUIRE(result.status==GML_RENDER_EXEC_ACCEPTED && result.accepted_prefix==2u &&
+            !anygm_test_graphics_rgb_queries() && !anygm_test_graphics_read_pixels() &&
+            !anygm_test_graphics_scene_copies() && anygm_test_graphics_scene_draw_calls()==2,
+            "reduction and conditional RGB/alpha blit have no query, snapshot or CPU read");
+    REQUIRE(anygm_test_graphics_color_mask_all() && !anygm_test_graphics_attributes_enabled() &&
+            !anygm_test_graphics_bound_program() && !anygm_test_graphics_bound_vertex_array(),
+            "conditional draw restores shared write/array/program state");
+    for(unsigned variant=0;variant<10u;variant++){
+      GmlRenderDrawOp invalid[2];GmlRenderDrawStateSnapshot bad_state=state;
+      GmlRenderDrawBatch refused={invalid,2u,&bad_state,1u};
+      memcpy(invalid,operations,sizeof invalid);
+      if(variant==0u) invalid[1].reconstruction_mode=GML_RENDER_REPLAY_EXACT;
+      if(variant==1u) invalid[1].scene_family=GML_RENDER_SCENE_SPRITE;
+      if(variant==2u) invalid[1].target.image.resource_class=GML_RENDER_RESOURCE_APPLICATION;
+      if(variant==3u) invalid[1].payload.quad.x[1]=35.25;
+      if(variant==4u) invalid[1].payload.quad.sampling.filter=GML_RENDER_FILTER_BILINEAR;
+      if(variant==5u) bad_state.coverage_policy=0u;
+      if(variant==6u) bad_state.write_mask=7u;
+      if(variant==7u) bad_state.clip=(GmlRenderRect){1,1,2u,2u};
+      if(variant==8u) invalid[1].payload.quad.corner_colour[2]=0x80FFFFFFu;
+      if(variant==9u) invalid[1].payload.quad.u[1]=0.5;
+      int clears=anygm_test_graphics_clear_calls(),draws=anygm_test_graphics_draw_calls();
+      result=device.submit(device.context,&refused);
+      REQUIRE(result.status==GML_RENDER_EXEC_UNSUPPORTED && !result.accepted_prefix &&
+              clears==anygm_test_graphics_clear_calls() && draws==anygm_test_graphics_draw_calls(),
+              "invalid conditional metadata refuses before the valid clear prefix");
+    }
+    gml_gpu_context_lost(gpu);
+    anygm_test_graphics_forbid_calls();
+    result=device.submit(device.context,&batch);
+    REQUIRE(result.status==GML_RENDER_EXEC_UNSUPPORTED && !anygm_test_graphics_calls_after_forget(),
+            "lost conditional namespace is never reused or observed");
+    anygm_test_graphics_allow_calls();gml_gpu_destroy(gpu,0);
   }
   return 1;
 }
@@ -2715,6 +2803,7 @@ int main(int argc,char **argv){
     {"scene_gles_font_programs",scene_gles_font_programs_case},
     {"scene_screen_filtered_alpha_stamp",scene_screen_filtered_alpha_stamp_case},
     {"scene_completed_screen_query",scene_completed_screen_query_case},
+    {"scene_empty_screen_recovery",scene_empty_screen_recovery_case},
   };
   static const AnygmTestCase execution_cases[]={
     {"state_and_geometry",execute_state_and_geometry_case},

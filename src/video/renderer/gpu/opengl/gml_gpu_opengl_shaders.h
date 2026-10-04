@@ -111,6 +111,22 @@
 /* R03_SHADER_CHECKPOINT_TILE: exact comparison of two RGBA8 device images, with no filtering,
  * hashes, temporal lag or lossy colour arithmetic. XRGB canonical state deliberately ignores
  * source alpha; every other format compares it. Edge tiles fetch only existing texels. */
+#define GML_GPU_OPENGL_RGB_REDUCE_FRAGMENT_BODY \
+  "uniform sampler2D u_image;\n" \
+  "uniform ivec2 u_source_extent;\n" \
+  "out vec4 o_color;\n" \
+  "void main(){\n" \
+  "  ivec2 first=ivec2(gl_FragCoord.xy)*8;\n" \
+  "  for(int y=0;y<8;y++) for(int x=0;x<8;x++){\n" \
+  "    ivec2 p=first+ivec2(x,y);\n" \
+  "    if(all(lessThan(p,u_source_extent)) &&\n" \
+  "       any(notEqual(texelFetch(u_image,p,0).rgb,vec3(0.0)))){\n" \
+  "      o_color=vec4(1.0); return;\n" \
+  "    }\n" \
+  "  }\n" \
+  "  o_color=vec4(0.0);\n" \
+  "}\n"
+
 #define GML_GPU_OPENGL_CHECKPOINT_FRAGMENT_BODY \
   "uniform sampler2D u_image;\n" \
   "uniform sampler2D u_previous;\n" \
@@ -137,6 +153,8 @@
   "uniform ivec2 u_region_origin;\n" \
   "uniform ivec4 u_rotated_alpha16[64];\n" \
   "uniform int u_filter;\n" \
+  "uniform sampler2D u_recovery_screen,u_recovery_application;\n" \
+  "uniform ivec4 u_recovery_rect;\n" \
   "uniform vec2 u_extent;\n" \
   "in vec2 v_texcoord;\n" \
   "in vec4 v_colour;\n" \
@@ -222,6 +240,17 @@
   "  return uintBitsToFloat((exponent<<23u)|(significand&8388607u));\n" \
   "}\n" \
   "void main(){\n" \
+  "  // Exact global RGB predicate; no CPU query or destination sampling in the blit.\n" \
+  "  if(u_filter==23 || u_filter==24){\n" \
+  "    if(texelFetch(u_recovery_screen,ivec2(0),0).r!=0.0 ||\n" \
+  "       texelFetch(u_recovery_application,ivec2(0),0).r==0.0) discard;\n" \
+  "    ivec2 pixel=ivec2(floor(vec2(gl_FragCoord.x,u_extent.y-gl_FragCoord.y)))-u_recovery_rect.xy;\n" \
+  "    ivec2 size=textureSize(u_image,0);\n" \
+  "    ivec2 point=clamp(pixel*size/u_recovery_rect.zw,ivec2(0),size-ivec2(1));\n" \
+  "    vec4 sampled=texelFetch(u_image,ivec2(point.x,size.y-1-point.y),0);\n" \
+  "    if(sampled.a==0.0) discard;\n" \
+  "    o_color=u_filter==24?vec4(0.0,0.0,0.0,1.0):sampled; return;\n" \
+  "  }\n" \
   "  // R03_SHADER_DIRECT_TEXTURE: nearest/atlas page sampling.\n" \
   "  if(u_filter==0){ o_color=texture(u_image,v_texcoord)*v_colour; return; }\n" \
   "  // R03_SHADER_HARDWARE_FILTERED_ADDITIVE: Hardware bilinear additive without destination sampling.\n" \

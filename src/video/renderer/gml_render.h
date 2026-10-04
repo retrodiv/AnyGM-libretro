@@ -614,6 +614,10 @@ int gml_render_defer_resident_screen_upscale(GmlRender *r,const uint32_t *source
  * required non-reconstructible checkpoint or makes CPU pixels current. */
 int gml_render_completed_screen_has_rgb(GmlRender *r,uint32_t *pixels,int width,int height,
                                         int *has_rgb);
+/* Returns one only when the entire conditional recovery was submitted on the device.
+ * Refusal leaves the existing engine query/recovery path responsible for the frame. */
+int gml_render_recover_empty_screen(GmlRender *r,uint32_t *pixels,int width,int height,
+                                     double x,double y,double w,double h,int zero_camera);
 void gml_render_cancel_pending_fill(GmlRender *r);
 void gml_render_clear(GmlRender *r,uint32_t color,double alpha);
 void gml_render_cancel_pending_underlay(GmlRender *r);
