@@ -852,10 +852,12 @@ static int scene_resident_batch_case(void){
 }
 
 /* Call/state proof only. Composed pixel qualification needs a real device. */
-static int scene_hardware_filtered_batch_case(int additive){
+static int scene_hardware_filtered_batch_case(unsigned kind){
   enum { QUADS=2049 };
+  int additive=kind==1u,combined=kind==2u;
   const uint8_t pixels[16]={11,22,33,255,44,55,66,100,77,88,99,0,111,122,133,200};
-  for(unsigned api=0;api<2u;api++) for(unsigned excluded=0;excluded<4u;excluded++){
+  for(unsigned api=0;api<2u;api++)
+  for(unsigned excluded=0;excluded<(combined?7u:4u);excluded++){
     GmlGpuContext context=fake_context(api?GML_GPU_API_OPENGLES3:GML_GPU_API_OPENGL_CORE);
     GmlRenderImageRef source={GML_RENDER_RESOURCE_ATLAS,91u,1u,1u};
     GmlRenderDrawOp *ops=(GmlRenderDrawOp*)calloc(QUADS+1u,sizeof *ops);
@@ -880,6 +882,7 @@ static int scene_hardware_filtered_batch_case(int additive){
     state.samplers[0].filter=GML_RENDER_FILTER_HARDWARE_BILINEAR;
     state.samplers[0].edge_rule=GML_RENDER_EDGE_CLAMP_SUBIMAGE;
     state.samplers[0].source_region=upload.region;
+    if(combined) state.samplers[0].quantisation=GML_RENDER_QUANTISE_HARDWARE_COMBINED;
     state.rgb_source_factor=state.rgb_destination_factor=GML_RENDER_BLEND_ONE;
     if(!additive) state.rgb_destination_factor=GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA;
     state.alpha_source_factor=GML_RENDER_BLEND_SOURCE_ALPHA;
@@ -888,7 +891,8 @@ static int scene_hardware_filtered_batch_case(int additive){
     for(unsigned index=0;index<QUADS+1u;index++){
       GmlRenderDrawOp *op=&ops[index];
       op->sequence=index+1u;
-      op->target.image=(GmlRenderImageRef){GML_RENDER_RESOURCE_SURFACE,92u,1u,index+1u};
+      op->target.image=(GmlRenderImageRef){combined?GML_RENDER_RESOURCE_APPLICATION:
+        GML_RENDER_RESOURCE_SURFACE,92u,1u,index+1u};
       op->target.storage_version=1u;op->target.width=op->target.height=64u;
       op->target.pixel_format=GML_RENDER_PIXEL_ARGB8888;
       op->target.region=(GmlRenderRect){0,0,64u,64u};
@@ -900,17 +904,22 @@ static int scene_hardware_filtered_batch_case(int additive){
       GmlRenderQuad *quad=&op->payload.quad;
       quad->shape=GML_RENDER_QUAD_AXIS_ALIGNED;quad->sampling=state.samplers[0];
       quad->filtered_draw_alpha=additive?.7:1.0;
-      for(unsigned corner=0;corner<4u;corner++) quad->corner_colour[corner]=0xB3123456u;
-      quad->x[1]=quad->x[2]=8.0;quad->y[2]=quad->y[3]=8.0;
+      for(unsigned corner=0;corner<4u;corner++)
+        quad->corner_colour[corner]=combined?0xFFFFFFFFu:0xB3123456u;
+      quad->x[1]=quad->x[2]=combined?2.0:8.0;
+      quad->y[2]=quad->y[3]=combined?2.0:8.0;
       quad->u[1]=quad->u[2]=quad->v[2]=quad->v[3]=1.0;
     }
     if(excluded==3u) ops[QUADS].payload.quad.filtered_draw_alpha=NAN;
+    if(excluded==4u) ops[QUADS].target.image.resource_class=GML_RENDER_RESOURCE_SURFACE;
+    if(excluded==5u) ops[QUADS].payload.quad.corner_colour[0]=0xFFFEFFFFu;
+    if(excluded==6u) ops[QUADS].payload.quad.u[1]=.9;
     GmlRenderDrawBatch batch={ops,QUADS+1u,&state,1u};
     result=device.submit(device.context,&batch);
     if(excluded){
       REQUIRE(result.status==GML_RENDER_EXEC_UNSUPPORTED && !result.accepted_prefix &&
               !anygm_test_graphics_clear_calls() && !anygm_test_graphics_scene_draw_calls(),
-              "missing blend service or invalid alpha rejects before the clear prefix");
+              "missing blend service or invalid hardware policy rejects before the clear prefix");
     }else{
       anygm_test_graphics_blend_factors(factors);
       REQUIRE(result.status==GML_RENDER_EXEC_ACCEPTED && result.accepted_prefix==QUADS+1u,
@@ -935,6 +944,9 @@ static int scene_hardware_additive_batch_case(void){
 }
 static int scene_hardware_background_batch_case(void){
   return scene_hardware_filtered_batch_case(0);
+}
+static int scene_hardware_combined_batch_case(void){
+  return scene_hardware_filtered_batch_case(2);
 }
 
 /* The fake driver supplies masks and faults; the real-device comparator proves shader pixels. */
@@ -2675,6 +2687,7 @@ int main(int argc,char **argv){
     {"scene_resident_batch",scene_resident_batch_case},
     {"scene_hardware_additive_batch",scene_hardware_additive_batch_case},
     {"scene_hardware_background_batch",scene_hardware_background_batch_case},
+    {"scene_hardware_combined_batch",scene_hardware_combined_batch_case},
     {"scene_readback_formats",scene_readback_formats_case},
     {"incremental_checkpoint_contract",incremental_checkpoint_contract_case},
     {"incremental_checkpoint_budget",incremental_checkpoint_budget_case},

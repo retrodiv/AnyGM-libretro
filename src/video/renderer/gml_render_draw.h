@@ -138,7 +138,10 @@ enum {
   GML_RENDER_QUANTISE_AUTOMATIC_SURFACE_MODERN=6u,
   /* Ordinary first-generation SCREEN sprite sampling reuses the exact
    * filtered channel/blend rule, with independent extent and TPAG margins. */
-  GML_RENDER_QUANTISE_SPRITE_FIRSTGEN_INDEPENDENT=7u
+  GML_RENDER_QUANTISE_SPRITE_FIRSTGEN_INDEPENDENT=7u,
+  /* Unit-white application draws round the complete source-over sum in the
+   * framebuffer, rather than quantising the source contribution separately. */
+  GML_RENDER_QUANTISE_HARDWARE_COMBINED=8u
 };
 
 /* Resolved blend semantics, independent of any device API's enumerant values. Zeroed factors

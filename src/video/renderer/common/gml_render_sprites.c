@@ -502,8 +502,8 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
     family==GML_RENDER_SCENE_BACKGROUND && nearest_mode==5 &&
     !r->interp && fabs(xs)==1.0 && fabs(ys)==1.0 &&
     (colour&0xFFFFFFu)==0xFFFFFFu && alpha>0.0 && alpha<=1.0;
-  /* R03-P9-FIXED-BACKGROUND: normal filtered coverage uses a rounded source
-   * contribution and hardware destination weighting, without a per-quad snapshot. */
+  /* R03-P9-FIXED-BACKGROUND: retain the CPU leaf's source quantisation policy
+   * while hardware weights ordered destinations without a per-quad snapshot. */
   int hardware_background=r && r->interp && !r->blendmode && alpha==1.0 &&
     !rotated_sprite && !corner_colours && !opaque_target_alpha &&
     !transparent_stretched_trim && !box_stretched && !positioned_axis &&
@@ -659,6 +659,16 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
   if(margin_bottom) margin_mask|=GML_RENDER_MARGIN_BOTTOM;
   resident_classify_page(page,atlas);
   hardware_background=hardware_background && !page->scene_fully_opaque;
+  int hardware_combined=hardware_background &&
+    gml_render_target_is_first_generation_application_surface(r) &&
+    (colour&0xFFFFFFu)==0xFFFFFFu && xs>0.0 && ys>0.0 &&
+    fabs(xs-1.0)<0.001 && fabs(ys-1.0)<0.001 &&
+    fabs(left-nearbyint(left))<1e-9 && fabs(top-nearbyint(top))<1e-9;
+  if(hardware_combined){
+    /* The CPU unit-white leaf indexes source texels from the snapped origin,
+     * even when its accepted authored scale is only approximately one. */
+    left=nearbyint(left); top=nearbyint(top); xs=ys=1.0;
+  }
   /* R03-P9-STRETCHED-COVERED-ALPHA: magnification's original CPU band
    * keeps float channels and alpha before blending, including logical trim.
    * Opaque-white pages retain the older exact retained-source recipe. */
@@ -854,7 +864,8 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
       ?GML_RENDER_EDGE_LOGICAL_TPAG:GML_RENDER_EDGE_CLAMP_SUBIMAGE);
   operation.payload.quad.sampling.source_region=region;
   operation.payload.quad.sampling.quantisation=stretched_float
-    ?GML_RENDER_QUANTISE_STRETCHED_FLOAT:0u;
+    ?GML_RENDER_QUANTISE_STRETCHED_FLOAT:
+    hardware_combined?GML_RENDER_QUANTISE_HARDWARE_COMBINED:0u;
   operation.payload.quad.sampling.logical_margin_mask=box_stretched?0u:
     (operation.payload.quad.sampling.filter==GML_RENDER_FILTER_BILINEAR || hardware_background)
       ?(corner_colours && part_view && margin_mask
@@ -1005,8 +1016,8 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
   }
   if(hardware_background){
     operation.payload.quad.filtered_draw_alpha=alpha;
-    /* Quantise the source contribution once, then let fixed-function blending
-     * combine ordered predecessors without a destination snapshot per quad. */
+    /* The unit-white application leaf rounds the combined sum; ordinary
+     * filtered coverage first rounds its source term. Both use fixed blending. */
     state.rgb_source_factor=GML_RENDER_BLEND_ONE;
     state.rgb_destination_factor=GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA;
     state.alpha_source_factor=GML_RENDER_BLEND_SOURCE_ALPHA;

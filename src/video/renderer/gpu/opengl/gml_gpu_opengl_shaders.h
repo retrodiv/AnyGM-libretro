@@ -158,6 +158,35 @@
   "  if(any(lessThan(at,ivec2(0))) || any(greaterThanEqual(at,extent))) return vec4(0.0);\n" \
   "  return floor(texelFetch(u_image,at,0)*255.0+0.5);\n" \
   "}\n" \
+  "vec4 hardware_background_tap(ivec2 at){\n" \
+  "  ivec2 extent=textureSize(u_image,0);\n" \
+  "  if(any(lessThan(at,ivec2(0))) || any(greaterThanEqual(at,extent))) return vec4(0.0);\n" \
+  "  return texelFetch(u_image,at,0);\n" \
+  "}\n" \
+  "vec4 hardware_background_sample(vec2 uv,ivec2 first,ivec2 last,int mask){\n" \
+  "  ivec2 low=first-ivec2((mask&1)!=0?1:0,(mask&2)!=0?1:0);\n" \
+  "  ivec2 high=last+ivec2((mask&4)!=0?1:0,(mask&8)!=0?1:0);\n" \
+  "  vec2 extent=vec2(textureSize(u_image,0));\n" \
+  "  vec4 result=texture(u_image,clamp(uv,(vec2(low)+0.5)/extent,(vec2(high)+0.5)/extent));\n" \
+  "  vec2 p=uv*extent-vec2(0.5);\n" \
+  "  bool x_plain=(p.x<float(first.x)&&(mask&1)==0)||(p.x>float(last.x)&&(mask&4)==0);\n" \
+  "  bool y_plain=(p.y<float(first.y)&&(mask&2)==0)||(p.y>float(last.y)&&(mask&8)==0);\n" \
+  "  bool x_pad=(p.x<float(first.x)&&(mask&1)!=0)||(p.x>float(last.x)&&(mask&4)!=0);\n" \
+  "  bool y_pad=(p.y<float(first.y)&&(mask&2)!=0)||(p.y>float(last.y)&&(mask&8)!=0);\n" \
+  "  if(!((x_plain&&y_pad)||(y_plain&&x_pad))) return result;\n" \
+  "  // A padded tap escapes both axes; repair only these mixed logical corners.\n" \
+  "  ivec2 base=ivec2(floor(p)); vec2 f=fract(p);\n" \
+  "  for(int y=0;y<2;y++) for(int x=0;x<2;x++){\n" \
+  "    ivec2 at=base+ivec2(x,y);\n" \
+  "    bool escape=(at.x<first.x&&(mask&1)!=0)||(at.x>last.x&&(mask&4)!=0)||\n" \
+  "                (at.y<first.y&&(mask&2)!=0)||(at.y>last.y&&(mask&8)!=0);\n" \
+  "    ivec2 authored=escape?at:clamp(at,first,last),hardware=clamp(at,low,high);\n" \
+  "    if(any(notEqual(authored,hardware))) result+=\n" \
+  "      (hardware_background_tap(authored)-hardware_background_tap(hardware))*\n" \
+  "      (x==0?1.0-f.x:f.x)*(y==0?1.0-f.y:f.y);\n" \
+  "  }\n" \
+  "  return clamp(result,vec4(0.0),vec4(1.0));\n" \
+  "}\n" \
   "float stretched_float_phase(int remainder,int denominator){\n" \
   "  if(remainder==0) return 0.0;\n" \
   "  uint scaled=uint(remainder),divisor=uint(denominator); int exponent=127;\n" \
@@ -208,14 +237,17 @@
   "    o_color=vec4(floor(vec3(rgb)*(alpha/255.0))/255.0,floor(alpha+0.5)/255.0);\n" \
   "    return;\n" \
   "  }\n" \
-  "  // R03_SHADER_HARDWARE_FILTERED_BACKGROUND: rounded source plus fixed destination weight.\n" \
-  "  if(u_filter==19){\n" \
-  "    vec2 extent=vec2(textureSize(u_image,0));\n" \
+  "  // R03_SHADER_HARDWARE_FILTERED_BACKGROUND: hardware sampling and fixed source-over.\n" \
+  "  if(u_filter==19 || u_filter==20){\n" \
   "    int mask=int(floor(v_margin+0.5));\n" \
-  "    vec2 low=v_clamp.xy+vec2(0.5)-vec2((mask&1)!=0?1.0:0.0,(mask&2)!=0?1.0:0.0);\n" \
-  "    vec2 high=v_clamp.zw+vec2(0.5)+vec2((mask&4)!=0?1.0:0.0,(mask&8)!=0?1.0:0.0);\n" \
-  "    uvec4 sampled=uvec4(floor(texture(u_image,clamp(v_texcoord,low/extent,high/extent))*255.0+0.5));\n" \
+  "    uvec4 sampled=uvec4(floor(hardware_background_sample(v_texcoord,\n" \
+  "                          ivec2(v_clamp.xy),ivec2(v_clamp.zw),mask)*255.0+0.5));\n" \
   "    if(sampled.a==0u) discard;\n" \
+  "    if(u_filter==20){\n" \
+  "      // Unit-white application draws leave combined rounding to the framebuffer.\n" \
+  "      o_color=vec4(vec3(sampled.rgb)*(float(sampled.a)/65025.0),float(sampled.a)/255.0);\n" \
+  "      return;\n" \
+  "    }\n" \
   "    uvec3 tint=uvec3(floor(v_colour.rgb*255.0+0.5));\n" \
   "    uvec3 rgb=sampled.rgb*tint/uvec3(255u);\n" \
   "    rgb=(rgb*sampled.a+uvec3(127u))/uvec3(255u);\n" \

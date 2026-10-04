@@ -119,7 +119,8 @@ static int qualified_blend(const GmlRenderDrawStateSnapshot *state){
 static uint32_t scene_filter(const GmlRenderQuad *quad,
                              const GmlRenderDrawStateSnapshot *state){
   if(quad->sampling.filter==GML_RENDER_FILTER_HARDWARE_BILINEAR)
-    return qualified_blend(state)==10?19u:18u;
+    return qualified_blend(state)==10
+      ?(quad->sampling.quantisation==GML_RENDER_QUANTISE_HARDWARE_COMBINED?20u:19u):18u;
   if(qualified_blend(state)==8) return 14u;
   if(state->coverage_policy==GML_RENDER_COVERAGE_ROTATED_VECTOR_ALPHA) return 17u;
   if(state->coverage_policy==GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA)
@@ -159,6 +160,23 @@ static int exact_rect(const GmlRenderDrawOp *op,GLint *left,GLint *bottom,
   if(bottom) *bottom=(GLint)op->target.height-(GLint)y1;
   if(width) *width=(GLsizei)(x1-x0);
   if(height) *height=(GLsizei)(y1-y0);
+  return 1;
+}
+
+static int hardware_combined_quad_valid(const GmlRenderDrawOp *op,
+                                        const GlSceneImage *source){
+  const GmlRenderQuad *quad=&op->payload.quad;
+  GmlRenderRect region=quad->sampling.source_region;
+  if(op->target.image.resource_class!=GML_RENDER_RESOURCE_APPLICATION ||
+     !exact_rect(op,NULL,NULL,NULL,NULL,1) ||
+     quad->x[1]-quad->x[0]!=(double)region.width ||
+     quad->y[2]-quad->y[0]!=(double)region.height) return 0;
+  for(unsigned corner=0;corner<4u;corner++){
+    double u=((double)region.x+((corner==1u || corner==2u)?region.width:0u))/source->width;
+    double v=((double)region.y+(corner>=2u?region.height:0u))/source->height;
+    if(quad->corner_colour[corner]!=0xFFFFFFFFu ||
+       fabs(quad->u[corner]-u)>1e-12 || fabs(quad->v[corner]-v)>1e-12) return 0;
+  }
   return 1;
 }
 
@@ -362,7 +380,10 @@ static int scene_preflight(GmlGpuBackend *backend,const GmlRenderDrawBatch *batc
                        op->payload.quad.filtered_draw_alpha<=0.0 ||
                        op->payload.quad.filtered_draw_alpha>1.0)) ||
          (blend==10 && (sampling->filter!=GML_RENDER_FILTER_HARDWARE_BILINEAR ||
-                        sampling->quantisation || sampling->logical_margin_mask>15u ||
+                        (sampling->quantisation &&
+                         (sampling->quantisation!=GML_RENDER_QUANTISE_HARDWARE_COMBINED ||
+                          !hardware_combined_quad_valid(op,source))) ||
+                        sampling->logical_margin_mask>15u ||
                         (sampling->edge_rule!=GML_RENDER_EDGE_CLAMP_SUBIMAGE &&
                          sampling->edge_rule!=GML_RENDER_EDGE_LOGICAL_TPAG) ||
                         op->payload.quad.shape!=GML_RENDER_QUAD_AXIS_ALIGNED ||
@@ -480,7 +501,7 @@ static int scene_preflight(GmlGpuBackend *backend,const GmlRenderDrawBatch *batc
                        !gml_render_automatic_surface_quad_valid(&op->payload.quad,
                                                                  target->width,target->height) ||
                        !exact_rect(op,NULL,NULL,NULL,NULL,1))) ||
-         (sampling->quantisation && blend!=6 && blend!=7 &&
+         (sampling->quantisation && blend!=6 && blend!=7 && blend!=10 &&
           (sampling->quantisation!=GML_RENDER_QUANTISE_STRETCHED_FLOAT ||
            sampling->filter!=GML_RENDER_FILTER_BILINEAR ||
            op->scene_family!=GML_RENDER_SCENE_SPRITE || (blend!=0 && blend!=8) ||
@@ -602,7 +623,7 @@ static int flush_quads(GmlGpuBackend *backend,GlSceneImage *target,GlSceneImage 
                        uint32_t filter,int blend,uint32_t count){
   GlScene *scene=&backend->scene;
   GLfloat extent[2]={(GLfloat)target->width,(GLfloat)target->height};
-  GLenum texture_filter=filter==18u || filter==19u?GL_LINEAR:GL_NEAREST;
+  GLenum texture_filter=filter==18u || filter==19u || filter==20u?GL_LINEAR:GL_NEAREST;
   GLsizei stride=GL_SCENE_VERTEX_FLOATS*(GLsizei)sizeof(float);
   if(!count) return 1;
   backend->gl.BindFramebuffer(GL_FRAMEBUFFER,target->framebuffer);
