@@ -407,6 +407,12 @@ void gml_vm_step(GmlVM *vm){
     if(!gml_vm_wait_resume(vm)) return;
     vm->frame--;   /* the ordinary step below counts this frame itself */
   }
+  /* Initial Create and Room Start requests precede the first Studio frame, not its Begin Step.
+   * Enter their target before collecting phase membership so its Begin Step can initialize state
+   * consumed by later events. Keep requests made within a running phase on their own boundary. */
+  if(vm->frame==0 && vm->pending_room>=0 &&
+     !anygm_policy_uses_classic_runtime(vm->win))
+    gml_vm_apply_pending_room(vm,0);
   /* The classic animation advance owed by the previous frame's draw (see gml_vm_post_draw). */
   if(vm->animation_due){ vm->animation_due=0; advance_instance_animations(vm); }
   vm->frame++;

@@ -52,6 +52,7 @@ int expect_legacy_jump_to_start(void);
 int expect_relative_object_condition(void);
 int expect_linear_motion_collision_filters(void);
 int expect_event_boundary_room_transition(void);
+int expect_initial_create_redirect_begin_step(void);
 int expect_room_transition_animation_phase(void);
 int expect_animation_end_room_transition_reuses_step_slot(void);
 int expect_frozen_animation_wrap_fires_animation_end(void);

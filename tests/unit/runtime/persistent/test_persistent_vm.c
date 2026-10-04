@@ -1676,6 +1676,133 @@ int expect_event_boundary_room_transition(void){
 }
 
 
+static int expect_initial_create_redirect_begin_step_revision(int revision,int entry_event){
+  GmlcProject project={0};
+  GmlcObject objects[3]={{0}};
+  GmlcObjectEvent events[5]={{0}};
+  GmlcRoom rooms[3]={{0}};
+  GmlcRoomInstance placed[3]={{0}};
+  int room_order[3]={0,1,2};
+  AnygmHostServices services={0};
+  char paths[6][64]={
+    "/tmp/gml-initial-redirect-create-XXXXXX",
+    "/tmp/gml-initial-redirect-old-begin-XXXXXX",
+    "/tmp/gml-initial-redirect-begin-XXXXXX",
+    "/tmp/gml-initial-redirect-step-XXXXXX",
+    "/tmp/gml-initial-redirect-leaf-XXXXXX",
+    "/tmp/gml-initial-redirect-package-XXXXXX"
+  };
+  const char *sources[5]={
+    "global.factor=0; global.old_begin_hits=0; room_goto_next();\n",
+    "global.old_begin_hits+=1;\n",
+    "global.factor=2;\n",
+    "if(room==1) room_goto_next();\n",
+    "global.created_factor=global.factor; alarm[0]=60*global.factor;\n"
+  };
+  int created=0,ok=0;
+  for(int index=0;index<6;index++){
+    int fd=mkstemp(paths[index]);
+    if(fd<0) goto cleanup;
+    close(fd);
+    created++;
+    if(index<5 && !fixture_write_text(paths[index],sources[index])) goto cleanup;
+  }
+  services.struct_size=sizeof services;
+  services.abi_version=ANYGM_HOST_SERVICES_VERSION;
+  anygm_stdio_vfs_services_init(&services);
+  project.name="initial-create-redirect-fixture";
+  project.host=&services;
+  project.objects=objects;
+  project.n_objects=project.cap_objects=3;
+  project.rooms=rooms;
+  project.n_rooms=project.cap_rooms=3;
+  project.room_order=room_order;
+  project.n_room_order=3;
+  const char *object_names[3]={"obj_boot","obj_initializer","obj_leaf"};
+  const char *room_names[3]={"room_boot","room_initialize","room_leaf"};
+  for(int index=0;index<3;index++){
+    objects[index].id=objects[index].name=(char*)object_names[index];
+    objects[index].sprite_id=objects[index].mask_id=objects[index].parent_id=-1;
+    objects[index].visible=1;
+    rooms[index].id=rooms[index].name=(char*)room_names[index];
+    rooms[index].width=320;
+    rooms[index].height=240;
+    rooms[index].speed=60;
+    placed[index].id=placed[index].name=(char*)object_names[index];
+    placed[index].object_id=index;
+    placed[index].instance_id=100000+(uint32_t)index;
+    rooms[index].instances=&placed[index];
+    rooms[index].n_instances=rooms[index].cap_instances=1;
+  }
+  objects[0].events=&events[0];
+  objects[0].n_events=objects[0].cap_events=2;
+  objects[1].events=&events[2];
+  objects[1].n_events=objects[1].cap_events=2;
+  objects[2].events=&events[4];
+  objects[2].n_events=objects[2].cap_events=1;
+  for(int index=0;index<5;index++) events[index].source_path=paths[index];
+  events[0].event_type=events[4].event_type=0;
+  if(entry_event){
+    events[0].event_type=7;
+    events[0].event_number=entry_event;
+  }
+  events[1].event_type=events[2].event_type=events[3].event_type=3;
+  events[1].event_number=events[2].event_number=1;
+  {
+    char error[256]={0};
+    if(!gmlc_package_write_structural(&project,paths[5],error,sizeof error)){
+      fprintf(stderr,"initial Create redirect package failed: %s\n",error);
+      goto cleanup;
+    }
+    GmlWin win;
+    if(anygm_stdio_load_win(&win,paths[5])) goto cleanup;
+    win.bytecode=revision;
+    AnygmContentFacts facts={0};
+    AnygmCompatibilityProfile profile={0};
+    if(!anygm_content_facts_detect(&win,&facts,error,sizeof error) ||
+       !anygm_compatibility_resolve(&facts,&profile,error,sizeof error)){
+      fprintf(stderr,"initial Create redirect profile failed: %s\n",error);
+      gml_win_free(&win);
+      goto cleanup;
+    }
+    win.compatibility=&profile;
+    GmlVM vm;
+    if(gml_vm_init(&vm,&win,&services)){
+      win.compatibility=NULL;
+      gml_win_free(&win);
+      goto cleanup;
+    }
+    gml_room_enter(&vm,0);
+    gml_vm_step(&vm);
+    GmlInstance *leaf=find_slot(&vm,100002);
+    GmlVal *factor=gml_varmap_get(&vm.globals,"created_factor");
+    GmlVal *old_begin=gml_varmap_get(&vm.globals,"old_begin_hits");
+    ok=vm.room_index==2 && leaf && leaf->active && leaf->alarm[0]==120 &&
+       factor && factor->t==V_REAL && factor->d==2 &&
+       old_begin && old_begin->t==V_REAL && old_begin->d==0;
+    if(!ok)
+      fprintf(stderr,
+        "revision %d entry event %d redirect mismatch: room=%d factor=%.0f alarm=%.0f old_begin=%.0f\n",
+        revision,entry_event,vm.room_index,factor&&factor->t==V_REAL?factor->d:-1.0,
+        leaf?leaf->alarm[0]:-1.0,old_begin&&old_begin->t==V_REAL?old_begin->d:-1.0);
+    gml_vm_free(&vm);
+    win.compatibility=NULL;
+    gml_win_free(&win);
+  }
+cleanup:
+  for(int index=0;index<created;index++) unlink(paths[index]);
+  return ok;
+}
+
+int expect_initial_create_redirect_begin_step(void){
+  int ok=1;
+  const int entry_events[3]={0,2,4}; /* Create, Game Start, Room Start. */
+  for(int revision=16;revision<=17;revision++)
+    for(int index=0;index<3;index++)
+      if(!expect_initial_create_redirect_begin_step_revision(revision,entry_events[index])) ok=0;
+  return ok;
+}
+
 int expect_room_transition_animation_phase(void){
   GmlcProject project={0};
   GmlcSprite project_sprite={0};
