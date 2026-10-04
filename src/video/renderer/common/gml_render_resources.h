@@ -76,6 +76,10 @@ void gml_render_resource_destroy(GmlRenderResource *resource);
 GmlRenderImageRef gml_render_resource_image_ref(const GmlRenderResource *resource);
 int gml_render_resource_source_view(GmlRenderResource *resource,
                                     GmlRenderResourceSource *out_source);
+/* Borrow only an already committed CPU-current version. Never replay, checkpoint or observe
+ * the device, and never expose an open CPU write lease as a committed source version. */
+int gml_render_resource_current_cpu_source_view(
+  GmlRenderResource *resource,GmlRenderResourceSource *out_source);
 /* A current version on this device may use a byte-free view without observing CPU pixels.
  * Exact replacement may retain a bounded complete-clear source recipe; sources without that
  * proof still require a checkpoint. No completed pixel buffer is allocated to retain a recipe. */

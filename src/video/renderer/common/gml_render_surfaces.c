@@ -510,9 +510,16 @@ int gml_render_compose_resident_underlay(GmlRender *r){
     q->v[corner]=corner<2u?0.0:1.0;
   }
   if(!gml_render_automatic_surface_quad_valid(q,(uint32_t)r->fbw,(uint32_t)r->fbh) ||
-     !gml_render_application_scene_flush(r) ||
-     !gml_render_resource_device_source_view(r->app_surface_resource,gml_render_device(r),&source))
+     !gml_render_application_scene_flush(r))
     return 0;
+  const GmlRenderDeviceServices *device=gml_render_device(r);
+  if(!gml_render_resource_device_source_view(r->app_surface_resource,device,&source)){
+    /* A mixed application pass can finish on CPU while SCREEN remains resident. Upload its
+     * already current committed source; do not read SCREEN merely to execute the same quad.
+     * Legacy recovery and unavailable ownership keep their existing CPU-source exclusion. */
+    if(!device->observe_on_demand || !device->observe_on_demand(device->context) ||
+       !gml_render_resource_current_cpu_source_view(r->app_surface_resource,&source)) return 0;
+  }
   gml_render_flush_pending_fill(r);
   if(r->pending_fill || !r->resident_application_pass ||
      !(target=gml_render_scene_target_resource_ensure(r))) return 0;

@@ -387,6 +387,16 @@ int gml_render_resource_source_view(GmlRenderResource *resource,
   return 1;
 }
 
+int gml_render_resource_current_cpu_source_view(
+  GmlRenderResource *resource,GmlRenderResourceSource *out_source){
+  if(out_source) memset(out_source,0,sizeof *out_source);
+  if(!out_source || !resource || resource->cpu_write_acquired ||
+     (resource->authority!=GML_RENDER_RESOURCE_CPU_CURRENT &&
+      resource->authority!=GML_RENDER_RESOURCE_BOTH_CURRENT) ||
+     resource->cpu_version!=resource->image.content_version) return 0;
+  return gml_render_resource_source_view(resource,out_source);
+}
+
 int gml_render_resource_device_source_view(
   GmlRenderResource *resource,const GmlRenderDeviceServices *device,
   GmlRenderResourceSource *out_source){
