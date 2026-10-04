@@ -1159,6 +1159,73 @@ static int subtract_surface_coverage_case(void){
   return 0;
 }
 
+static int masked_sprite_channels_case(void){
+  enum { MAX_WIDTH=9,HEIGHT=5 };
+  static const uint8_t source[24]={
+    13,29,47,0, 61,79,97,63, 113,131,149,127,
+    167,181,199,191, 211,227,239,255, 251,233,217,31
+  };
+  static const uint32_t channel_bits[4]={
+    0x00FF0000u,0x0000FF00u,0x000000FFu,0xFF000000u
+  };
+  GmlRender render={0};
+  uint32_t storage[MAX_WIDTH*HEIGHT+2],initial[MAX_WIDTH*HEIGHT];
+  uint32_t unmasked[MAX_WIDTH*HEIGHT];
+  render.fb=render.base_fb=storage+1;
+  render.fbh=render.base_fbh=HEIGHT;
+  render.target_id=-1; render.alphablend=1; render.alpha=1.0;
+  render.active_shader=-1; render.lut_pal_sprite=-1;
+  render.blend_equation=render.blend_equation_alpha=1;
+  render.n_spr=1;
+  render.spr=calloc(1,sizeof(*render.spr));
+  REQUIRE(render.spr!=NULL,"channel-mask sprite allocation");
+  render.spr[0].w=3; render.spr[0].h=2; render.spr[0].n_frames=1;
+  render.spr[0].runtime_owned=1;
+  render.spr[0].runtime_rgba=malloc(sizeof source);
+  REQUIRE(render.spr[0].runtime_rgba!=NULL,"channel-mask sprite pixels");
+  memcpy(render.spr[0].runtime_rgba,source,sizeof source);
+  for(int classic=0;classic<2;classic++) for(int interp=0;interp<2;interp++)
+    for(int width=1;width<=MAX_WIDTH;width++) for(int variant=0;variant<5;variant++){
+      size_t pixels=(size_t)width*HEIGHT;
+      render.fbw=render.base_fbw=width;
+      render.classic=classic; render.interp=interp;
+      render.blendmode=variant==4?1:0;
+      for(size_t index=0;index<pixels;index++)
+        initial[index]=UINT32_C(0x192F435B)+(uint32_t)index*UINT32_C(0x0305070B);
+      for(unsigned mask=0;mask<=16;mask++){
+        unsigned requested=mask==0?15u:mask-1u;
+        memcpy(render.fb,initial,pixels*sizeof(*initial));
+        storage[0]=storage[pixels+1]=UINT32_C(0x5A6B7C8D);
+        render.fb_opaque_known=render.fb_all_opaque=render.fb_all_transparent=0;
+        render.color_write_mask=(uint8_t)requested;
+        if(variant==3)
+          gml_draw_sprite_tiled_ext(&render,0,0,-0.25,0.75,1.5,1.25,0xB3D5F7u,0.625);
+        else
+          gml_draw_sprite_ext(&render,0,0,variant==1?4.25:0.25,1.25,
+                              variant==1?-1.5:1.5,1.25,
+                              variant==2?33.0:0.0,0xB3D5F7u,0.625);
+        REQUIRE(render.color_write_mask==requested,"sprite restores requested channel mask");
+        REQUIRE(storage[0]==UINT32_C(0x5A6B7C8D) &&
+                storage[pixels+1]==UINT32_C(0x5A6B7C8D),"channel restore respects framebuffer bounds");
+        if(mask==0){ memcpy(unmasked,render.fb,pixels*sizeof(*unmasked)); continue; }
+        uint32_t bits=0;
+        for(unsigned channel=0;channel<4;channel++)
+          if(requested&(1u<<channel)) bits|=channel_bits[channel];
+        for(size_t index=0;index<pixels;index++){
+          uint32_t expected=(initial[index]&~bits)|(unmasked[index]&bits);
+          if(render.fb[index]!=expected){
+            fprintf(stderr,"sprite channel mask %u, width %d, variant %d, classic %d, "
+                    "interp %d, pixel %zu: %08x != %08x\n",requested,width,variant,
+                    classic,interp,index,render.fb[index],expected);
+            gml_render_free(&render); return 1;
+          }
+        }
+      }
+    }
+  gml_render_free(&render);
+  return 0;
+}
+
 static int masked_sprite_surface_case(int classic,uint32_t expected_blue){
   enum { WIDTH=4,HEIGHT=3 };
   GmlRender render;
@@ -1535,6 +1602,7 @@ int main(void){
           "classic masked sprite surface case");
   REQUIRE(masked_sprite_surface_case(0,0xFF00003Fu)==0,
           "modern masked sprite surface case");
+  REQUIRE(masked_sprite_channels_case()==0,"all sprite channel masks and restore tails");
   REQUIRE(world_raster_scale_case()==0,"world raster scale case");
   REQUIRE(replace_and_classic_present_case()==0,"replace and classic present case");
   REQUIRE(suspended_clear_read_back_case()==0,"suspended clear read-back case");

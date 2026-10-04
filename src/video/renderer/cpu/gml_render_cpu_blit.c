@@ -6194,8 +6194,30 @@ static void masked_sprite_draw_end(GmlRender *r,GmlMaskedSpriteDraw draw){
   gml_render_flush_rotated_batch(r);
   r->color_write_mask=draw.mask;
   if(r->fb==draw.framebuffer){
-    for(size_t index=0;index<draw.pixel_count;index++)
-      r->fb[index]=color_write_merge(r,r->color_write_scratch[index],r->fb[index]);
+    /* The write mask is constant across this restore. Merge packed pixels without
+     * changing the sprite kernel's blend arithmetic or any preserved channel. */
+    uint32_t bits=color_write_merge(r,0,UINT32_MAX);
+    size_t index=0;
+#if defined(__SSE2__)
+    __m128i mask=_mm_set1_epi32((int)bits);
+    for(;draw.pixel_count-index>=4;index+=4){
+      __m128i old=_mm_loadu_si128((const __m128i*)(r->color_write_scratch+index));
+      __m128i value=_mm_loadu_si128((const __m128i*)(r->fb+index));
+      value=_mm_xor_si128(old,_mm_and_si128(_mm_xor_si128(old,value),mask));
+      _mm_storeu_si128((__m128i*)(r->fb+index),value);
+    }
+#elif defined(__ARM_NEON) || defined(__ARM_NEON__)
+    uint32x4_t mask=vdupq_n_u32(bits);
+    for(;draw.pixel_count-index>=4;index+=4){
+      uint32x4_t old=vld1q_u32(r->color_write_scratch+index);
+      uint32x4_t value=vld1q_u32(r->fb+index);
+      vst1q_u32(r->fb+index,vbslq_u32(mask,value,old));
+    }
+#endif
+    for(;index<draw.pixel_count;index++){
+      uint32_t old=r->color_write_scratch[index];
+      r->fb[index]=old^((old^r->fb[index])&bits);
+    }
     r->fb_opaque_known=0;
     r->fb_all_opaque=0;
     r->fb_all_transparent=0;
