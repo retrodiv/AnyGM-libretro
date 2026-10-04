@@ -245,6 +245,21 @@ set of qualified scene operations or change CPU raster bodies.
 
 ## Current operation support and repair-level rules
 
+The experimental magnified full-source numbered-surface rule is TOLERANCE±2, pending composed
+RGBA qualification. `common/gml_render_surfaces.c::resident_surface_filtered` uses the unchanged
+CPU stretched rectangle's floor/round geometry, metadata-only current source views, and the
+existing versioned target queue. CPU source writes, target switches, resize, free, and renderer
+teardown flush before borrowed source storage can change. `gpu/opengl/gml_gpu_opengl_batch.c::hardware_surface_quad_valid`
+requires ordinary source-over, full-source hardware bilinear magnification and matching opaque
+written-alpha coverage; `::flush_quads` uses one RGB draw plus one alpha-only draw per compatible
+batch, without destination snapshots. `gpu/opengl/gml_gpu_opengl_shaders.h::R03_SHADER_HARDWARE_FILTERED_SURFACE`
+uses hardware filtering and no CPU-float emulation. The unchanged CPU comparison owner is
+`cpu/gml_render_cpu_blit_internal.h::surf_bi_band`. `tests/unit/video/gpu/test_gpu.c::scene_hardware_surface_batch_case`
+checks capacity, separate functions and pre-write exclusion; `tests/unit/video/renderer/test_render_resources.c::filtered_surface_pending_source_lifetime`
+checks write/resize/free/target/teardown boundaries and retained retry after a pre-write refusal.
+These call/lifetime checks do not establish composed pixel, whole-route or performance coverage.
+Application sources, reduction, mirrors, active shaders and special blend state keep their existing paths.
+
 `common/gml_render_sprites.c::resident_filtered_atlas_page` checks finite normalised
 atlas UV coordinates within [0,1] before enqueuing an axis-aligned candidate. A valid physical
 source rectangle does not guarantee this after fractional coverage rounding. Unqualified

@@ -5800,6 +5800,59 @@ static int resident_filtered_gui_real_font(void){
   return 1;
 }
 
+static int filtered_surface_pending_source_lifetime(void){
+  for(unsigned variant=0;variant<6u;variant++){
+    GmlRender *render=(GmlRender*)calloc(1,sizeof *render);
+    GmlWin content={.bytecode=15};
+    FakeDevice fake={.on_demand=1};
+    GmlRenderDeviceServices device=service(&fake);
+    uint32_t pixels[16];
+    device.observe_on_demand=fake_observe_on_demand;
+    CHECK(render && gml_render_init(render,NULL)==0);
+    render->win=&content;
+    CHECK(gml_render_application_surface_ensure_owned(render,48,32));
+    int source=gml_surface_create(render,4,4);
+    CHECK(source>0);
+    for(unsigned pixel=0;pixel<16u;pixel++) pixels[pixel]=0x7F1267B9u;
+    CHECK(gml_render_surface_mirror_pixels(render,source,pixels,4,4,0));
+    gml_render_bind_device(render,&device);
+    CHECK(gml_render_begin_resident_owned_application(render,0,0,0));
+    render->interp=render->alphablend=1;
+    gml_render_set_pending_fill(render,0x40123456u);
+    gml_render_flush_pending_fill(render);
+    int submits=fake.submits;
+    for(unsigned draw=0;draw<8u;draw++)
+      gml_draw_surface_stretched(render,source,3.25,4.125,17.3,13.1,0x3267B9u,.5);
+    CHECK(render->resident_application_pass && fake.submits==submits && !fake.readbacks);
+    if(variant==5u){
+      gml_render_free(render);free(render);
+      CHECK(fake.submits==submits+1 && fake.last_batch_operations==8u && !fake.readbacks);
+      continue;
+    }
+    if(variant==0u){
+      pixels[0]=0xFF2468ACu;
+      CHECK(gml_render_surface_mirror_pixels(render,source,pixels,4,4,0));
+    } else if(variant==1u) gml_surface_resize(render,source,5,5);
+    else if(variant==2u) gml_surface_free(render,source);
+    else if(variant==3u) CHECK(gml_surface_set_target(render,source));
+    else {
+      fake.status=GML_RENDER_EXEC_UNSUPPORTED;fake.prewrite_refusal=1;
+      CHECK(!gml_render_scene_submit_pending(render));
+      /* The existing pre-write refusal seals the prior destination for ordered fallback. */
+      CHECK(gml_surface_exists(render,source) && fake.readbacks==1);
+      fake.status=0;
+      CHECK(gml_render_scene_submit_pending(render));
+    }
+    CHECK(fake.submits==submits+(variant==4u?2:1) &&
+          fake.last_batch_operations==8u && fake.readbacks==(variant==4u?1:0));
+    CHECK(gml_render_scene_submit_pending(render) &&
+          fake.submits==submits+(variant==4u?2:1));
+    if(variant==3u) gml_surface_reset_target(render);
+    gml_render_free(render);free(render);
+  }
+  return 1;
+}
+
 static int current_cpu_source_view_is_not_observer(void){
   uint32_t pixels[16],*writable=NULL;
   const uint32_t *observed=NULL;
@@ -7032,6 +7085,7 @@ int main(void){
   passed+=resident_coarse_veil_exact_recovery();
   passed+=resident_packaged_sprite_font_glyph();
   passed+=resident_filtered_gui_real_font();
+  passed+=filtered_surface_pending_source_lifetime();
   passed+=current_cpu_source_view_is_not_observer();
   passed+=resident_current_cpu_application_underlay();
   passed+=resident_automatic_underlay_exclusions();
@@ -7053,6 +7107,6 @@ int main(void){
   passed+=source_free_primitive_rect_replay();
   passed+=stretched_float_exact_replay();
   passed+=filtered_font_exact_recovery();
-  printf("render resource cases: passed=%d failed=%d\n",passed,93-passed);
-  return passed==93?EXIT_SUCCESS:EXIT_FAILURE;
+  printf("render resource cases: passed=%d failed=%d\n",passed,94-passed);
+  return passed==94?EXIT_SUCCESS:EXIT_FAILURE;
 }

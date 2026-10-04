@@ -139,7 +139,8 @@ int gml_render_gpu_opengl_draw_textured_quad(const GmlRenderDrawOp *op,
       vertex[19+span]=(float)quad->span_x[span];
       vertex[23+span]=(float)quad->span_y[span];
     }
-    if(!rotated && state->coverage_policy==GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA){
+    if(!rotated && state->coverage_policy==GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA &&
+       quad->sampling.filter!=GML_RENDER_FILTER_HARDWARE_BILINEAR){
       /* The axis screen rule has no rotated/box span. Retain low residuals of
        * its existing phase and reciprocal so a wide quad does not accumulate
        * a float-step error into a different rounded source channel. */

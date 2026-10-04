@@ -821,6 +821,10 @@ void gml_render_interpolated_subrect_cache_clear(GmlRender *render){
 }
 void gml_render_free(GmlRender *r){
   gml_render_flush_rotated_batch(r);
+  /* Pending draws can borrow numbered sources. Finish while their allocations still exist;
+   * a failed teardown submission must not survive into the later target-resource retirement. */
+  (void)gml_render_application_scene_flush(r);
+  gml_render_application_scene_queue_dispose(r);
   atlas_pool_free(r);   /* before atlas teardown: workers read r->atlas/win */
   gml_row_pool_free(r);  /* compositor workers must stop before their renderer workspaces vanish */
   gml_render_atlas_scene_retire_all(r);

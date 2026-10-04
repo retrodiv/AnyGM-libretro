@@ -104,7 +104,8 @@ int gml_render_application_scene_flush(GmlRender *r){
      * next glyph demand, so its failed submission must not leave a borrowed pointer queued;
      * the caller will cross the CPU barrier and draw the glyph there instead. */
     if(metrics.authority==GML_RENDER_RESOURCE_INVALID ||
-       !pending->sources[0].borrowed_immutable){
+       (!pending->sources[0].borrowed_immutable &&
+        !pending->sources[0].resident_resource)){
       pending->count=0;
       pending->state_count=0;
       pending->source_count=0;
@@ -220,10 +221,16 @@ int gml_render_application_scene_enqueue(GmlRender *r,const GmlRenderDrawOp *ope
   GmlRenderPendingSceneBatch *pending;
   GmlRenderImageRef next;
   uint32_t state_index=0,source_index=0;
-  int coalescible,exact_filtered_font;
+  int coalescible,exact_filtered_font,versioned_surface;
+  versioned_surface=operation && source && source->resident_resource &&
+    source->image.resource_class==GML_RENDER_RESOURCE_SURFACE &&
+    operation->scene_family==GML_RENDER_SCENE_SURFACE &&
+    operation->reconstruction_mode==GML_RENDER_DEVICE_CHECKPOINT &&
+    operation->opcode==GML_RENDER_OP_TEXTURED_QUAD &&
+    operation->payload.quad.sampling.filter==GML_RENDER_FILTER_HARDWARE_BILINEAR;
   if(!r || !r->resident_application_pass || !gml_render_device(r) ||
      !gml_render_scene_target_resource_ensure(r) || !operation || !state || !source ||
-     (!source->borrowed_immutable &&
+     (!source->borrowed_immutable && !versioned_surface &&
       (source->image.resource_class!=GML_RENDER_RESOURCE_ATLAS ||
        source->resident_resource)) || !operation->sources ||
      operation->source_count!=1u || operation->opcode!=GML_RENDER_OP_TEXTURED_QUAD ||
@@ -313,7 +320,9 @@ int gml_render_application_scene_enqueue(GmlRender *r,const GmlRenderDrawOp *ope
   }
   /* A runtime font may grow or relocate its atlas on the next glyph lookup.
    * Pin/upload this mutable version before the caller can mutate those bytes. */
-  return source->borrowed_immutable || gml_render_application_scene_flush(r);
+  /* Surface writes, target changes, resize and free flush this version before mutation. */
+  return source->borrowed_immutable || versioned_surface ||
+    gml_render_application_scene_flush(r);
 }
 
 GmlRenderResource *gml_render_surface_resource_ensure(GmlRender *r,int id){
@@ -657,6 +666,8 @@ static int resident_surface_part(GmlRender *r,int surf,double sx,double sy,doubl
                                  uint32_t blend,double alpha);
 static int resident_surface_shader(GmlRender *r,int surf,double dx,double dy,double dw,double dh,
                                    uint32_t blend,double alpha);
+static int resident_surface_filtered(GmlRender *r,int surf,double dx,double dy,double dw,double dh,
+                                     uint32_t blend,double alpha);
 
 void gml_draw_surface_stretched(GmlRender *r,int surf,double dx,double dy,
                                 double dw,double dh,uint32_t blend,double alpha){
@@ -676,6 +687,9 @@ void gml_draw_surface_stretched(GmlRender *r,int surf,double dx,double dy,
       }
       resident_success=resident_surface_shader(r,surf,mapped_x,mapped_y,
         mapped_width,mapped_height,blend,alpha);
+      if(!resident_success)
+        resident_success=resident_surface_filtered(r,surf,mapped_x,mapped_y,
+          mapped_width,mapped_height,blend,alpha);
       if(!resident_success && surf>0)
         resident_success=resident_surface_part(r,surf,0.0,0.0,
           (double)source_width,(double)source_height,mapped_x,mapped_y,
@@ -693,6 +707,86 @@ void gml_draw_surface_stretched(GmlRender *r,int surf,double dx,double dy,
     r->content_composited_screen=1;
   if(resident_success) return;
   gml_render_cpu_draw_surface_stretched_impl(r,surf,dx,dy,dw,dh,blend,alpha,1);
+}
+
+/* Magnified full-source surfaces use the CPU rectangle's coverage, hardware filtering,
+ * and fixed RGB blending. The batched alpha-only pass preserves opaque written pixels. */
+static int resident_surface_filtered(GmlRender *r,int surf,double dx,double dy,double dw,double dh,
+                                     uint32_t blend,double alpha){
+  int slot=surface_slot(surf);
+  double left,top,width,height;
+  GmlRenderResource *resource,*target;
+  GmlRenderResourceSource source={0};
+  GmlRenderDrawOp operation={0};
+  GmlRenderDrawStateSnapshot state={0};
+  GmlRenderImageRef source_ref,image;
+  const GmlRenderDeviceServices *device;
+  if(!r || slot<0 || !r->surface[slot].live || r->classic ||
+     !r->resident_application_pass || !gml_render_scene_target_matches(r) ||
+     !(device=gml_render_device(r)) || !device->observe_on_demand ||
+     !device->observe_on_demand(device->context) ||
+     r->surface[slot].px==r->fb || surf==r->surface_canvas ||
+     (r->surface_canvas>=0 && r->target_id==r->surface_canvas) ||
+     r->pending_underlay || r->pending_presentation ||
+     r->active_shader>=0 || !r->interp || !r->alphablend || r->blendmode ||
+     r->alpha_test_enable || r->color_write_mask!=15u || r->blend_equation!=1 ||
+     r->blend_equation_alpha!=1 || gml_d3_is_active(r) ||
+     !isfinite(alpha) || alpha<=0.0 || !isfinite(dx) || !isfinite(dy) ||
+     !isfinite(dw) || !isfinite(dh) || dw<=0.0 || dh<=0.0 ||
+     dw>(double)INT_MAX/2 || dh>(double)INT_MAX/2) return 0;
+  left=floor(dx-r->cam_x);top=floor(dy-r->cam_y);
+  width=(double)lround(dw);height=(double)lround(dh);
+  if(!isfinite(left) || !isfinite(top) || left<(double)INT_MIN/2 ||
+     top<(double)INT_MIN/2 || left>(double)INT_MAX/2 || top>(double)INT_MAX/2 ||
+     width<=r->surface[slot].w || height<=r->surface[slot].h ||
+     left>=r->fbw || top>=r->fbh || left+width<=0.0 || top+height<=0.0) return 0;
+  for(int index=0;index<r->target_sp;index++)
+    if(r->target_stack[index].fb==r->surface[slot].px &&
+       r->target_stack[index].pending_fill) return 0;
+  resource=gml_render_surface_resource_ensure(r,surf);
+  if(!resource ||
+     (!gml_render_resource_device_source_view(resource,device,&source) &&
+      !gml_render_resource_current_cpu_source_view(resource,&source)) ||
+     source.pixel_format!=GML_RENDER_PIXEL_ARGB8888) return 0;
+  gml_render_flush_pending_fill(r);
+  if(r->pending_fill || !r->resident_application_pass ||
+     !(target=gml_render_scene_target_resource_ensure(r))) return 0;
+  image=gml_render_application_scene_next_image_ref(r,target);
+  if(image.content_version==UINT64_MAX) return 0;
+  if(alpha>1.0) alpha=1.0;
+  source_ref=source.image;
+  operation.opcode=GML_RENDER_OP_TEXTURED_QUAD;
+  operation.scene_family=GML_RENDER_SCENE_SURFACE;
+  operation.reconstruction_mode=GML_RENDER_DEVICE_CHECKPOINT;
+  operation.sources=&source_ref;operation.source_count=1u;
+  operation.target.image=image;operation.target.image.content_version++;
+  operation.target.storage_version=1u;
+  operation.target.width=(uint32_t)r->fbw;operation.target.height=(uint32_t)r->fbh;
+  operation.target.pixel_format=GML_RENDER_PIXEL_ARGB8888;
+  operation.target.region=(GmlRenderRect){0,0,(uint32_t)r->fbw,(uint32_t)r->fbh};
+  GmlRenderQuad *quad=&operation.payload.quad;
+  quad->shape=GML_RENDER_QUAD_AXIS_ALIGNED;
+  quad->sampling.filter=GML_RENDER_FILTER_HARDWARE_BILINEAR;
+  quad->sampling.edge_rule=GML_RENDER_EDGE_CLAMP_SUBIMAGE;
+  quad->sampling.source_region=(GmlRenderRect){0,0,source.width,source.height};
+  quad->filtered_draw_alpha=alpha;
+  quad->x[0]=quad->x[3]=left;quad->x[1]=quad->x[2]=left+width;
+  quad->y[0]=quad->y[1]=top;quad->y[2]=quad->y[3]=top+height;
+  quad->u[1]=quad->u[2]=quad->v[2]=quad->v[3]=1.0;
+  uint32_t colour=((uint32_t)lround(alpha*255.0)<<24)|
+    ((blend&255u)<<16)|(blend&0xFF00u)|((blend>>16)&255u);
+  for(int corner=0;corner<4;corner++) quad->corner_colour[corner]=colour;
+  state.rgb_source_factor=GML_RENDER_BLEND_SOURCE_ALPHA;
+  state.rgb_destination_factor=GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA;
+  state.alpha_source_factor=GML_RENDER_BLEND_ONE;
+  state.alpha_destination_factor=GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA;
+  state.rgb_equation=state.alpha_equation=GML_RENDER_BLEND_ADD;
+  state.coverage_policy=GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA;
+  state.write_mask=15u;state.alpha=255u;state.colour=0xFFFFFFFFu;
+  state.sampler_count=1u;state.samplers[0]=quad->sampling;
+  if(!gml_render_application_scene_enqueue(r,&operation,&state,&source)) return 0;
+  r->fb_opaque_known=r->fb_all_opaque=r->fb_all_transparent=0;
+  return 1;
 }
 
 /* A contained integer content-program rectangle uses the terminal plan's compiler/draw state.
