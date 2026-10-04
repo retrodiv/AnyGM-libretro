@@ -16,6 +16,9 @@ typedef struct {
 } GmlRenderSpritePosGeometry;
 
 int gml_render_sprite_log_enabled(const GmlRender *render);
+int gml_render_resident_masked_sprite(GmlRender *render, int sprite, int subimage,
+                                      double x, double y, double xscale, double yscale,
+                                      double rotation, uint32_t colour, double alpha);
 /* Submit a qualified atlas crop shared by ordinary sprites, backgrounds, and tiles. */
 int gml_render_resident_atlas_page(GmlRender *render, int page_index,
                                   double left, double top, double xscale, double yscale,

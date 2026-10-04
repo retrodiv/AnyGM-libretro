@@ -53,6 +53,8 @@ int anygm_test_graphics_calls_after_forget(void);
 int anygm_test_graphics_draw_calls(void);
 int anygm_test_graphics_scene_draw_calls(void);
 int anygm_test_graphics_scene_vertices(void);
+/* Number of scene draws made with this exact RGBA write mask, not a pixel emulator. */
+unsigned anygm_test_graphics_scene_mask_draws(unsigned mask);
 unsigned anygm_test_graphics_scene_texture(void);
 int anygm_test_graphics_scene_filter(void);
 void anygm_test_graphics_blend_factors(unsigned factors[4]);

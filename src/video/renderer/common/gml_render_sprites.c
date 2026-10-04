@@ -590,6 +590,11 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
     !box_stretched && xs>1.0 && ys>1.0;
   int exact_filtered_font=0;
   int exact_filtered_sprite=0;
+  int masked_numbered_sprite=r && r->color_write_mask<15u && r->target_id>0 &&
+    family==GML_RENDER_SCENE_SPRITE && (nearest_mode==3 || nearest_mode==6) &&
+    !r->interp && !r->fog_flat && !r->gui_pass_active;
+  int nearest_preserved_alpha=r && (nearest_mode==3 || nearest_mode==6) &&
+    gml_render_target_preserves_alpha(r);
   int margin_left=0,margin_top=0,margin_right=0,margin_bottom=0;
   uint32_t margin_mask=0u;
   if(!r || !r->resident_application_pass ||
@@ -606,7 +611,8 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
      r->active_shader>=0 || r->alpha_test_enable ||
      !r->alphablend || (r->blendmode && !additive_background) ||
      r->blend_equation!=1 ||
-     r->blend_equation_alpha!=1 || r->color_write_mask!=0x0fu ||
+     r->blend_equation_alpha!=1 ||
+     (r->color_write_mask!=0x0fu && !masked_numbered_sprite) ||
      (rotated_sprite && anygm_policy_has_modern_layer_semantics(r->win) &&
       (!r->fb_opaque_known || !r->fb_all_opaque)) ||
      r->classic_phase_y || r->rotated_batch_count || r->rotated_batch_building ||
@@ -652,6 +658,7 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
                           fabs(ys-nearbyint(ys))<1e-9))))) return 0;
   for(int index=0;index<3;index++)
     if(r->classic_interp_phase[index] || r->app_interp_phase[index]) return 0;
+  if(masked_numbered_sprite && !r->color_write_mask) return 1;
   /* blit_one skips every destination at zero draw alpha. Preserve the queued
    * prefix without a write, shader call or source snapshot in this ordinary state. */
   if(alpha==0.0) return 1;
@@ -894,8 +901,8 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
     box_stretched?GML_RENDER_FILTER_BOX:
     nearest_mode==5?(additive_background?GML_RENDER_FILTER_NEAREST:
                      GML_RENDER_FILTER_NEAREST_PHASED_COPY):
-    nearest_mode==6?GML_RENDER_FILTER_NEAREST_PHASED_OPAQUE_ALPHA:
-    (nearest_mode==2 || nearest_mode==3 || nearest_mode==4 || nearest_mode==5)
+    nearest_mode==6 && !nearest_preserved_alpha?GML_RENDER_FILTER_NEAREST_PHASED_OPAQUE_ALPHA:
+    (nearest_mode==2 || nearest_mode==3 || nearest_mode==4 || nearest_mode==5 || nearest_mode==6)
       ?GML_RENDER_FILTER_NEAREST_PHASED:
     rotated_sprite && !anygm_policy_has_modern_layer_semantics(r->win) &&
     !(corner_colours && fabs(fmod(rotation,360.0))<0.001)
@@ -1049,7 +1056,7 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
         quad->corner_colour[corner]=(draw_alpha<<24)|(quad->corner_colour[corner]&0xFFFFFFu);
     }
   }
-  state.write_mask=15u;
+  state.write_mask=masked_numbered_sprite?r->color_write_mask:15u;
   state.colour=0xFFFFFFFFu;
   state.alpha=255u;
   if((identity_gui_atlas || (mapped_gui_sprite && !opaque_target_alpha) ||
@@ -1095,7 +1102,8 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
      margin_left || margin_top || margin_right || margin_bottom)){
     state.rgb_source_factor=GML_RENDER_BLEND_SOURCE_ALPHA;
     state.rgb_destination_factor=GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA;
-    state.alpha_source_factor=opaque_target_alpha || nearest_mode==3 ||
+    state.alpha_source_factor=nearest_preserved_alpha?GML_RENDER_BLEND_SOURCE_ALPHA:
+      opaque_target_alpha || nearest_mode==3 ||
       nearest_mode==6 ||
       (rotated_sprite && anygm_policy_has_modern_layer_semantics(r->win))
         ?GML_RENDER_BLEND_ONE:GML_RENDER_BLEND_SOURCE_ALPHA;
@@ -1218,6 +1226,22 @@ static int resident_filtered_sprite(GmlRender *r,GmlSprite *sprite,int subimg,
 void gml_draw_sprite(GmlRender *r, int sprite, int subimg, double x, double y){
   gml_draw_sprite_ext(r,sprite,subimg,x,y,1,1,0,0xFFFFFF,
                       r && !r->classic ? r->alpha : 1.0);
+}
+
+int gml_render_resident_masked_sprite(GmlRender *r,int sprite,int subimg,
+                                      double x,double y,double xs,double ys,double rotation,
+                                      uint32_t colour,double alpha){
+  /* Try only the established modern point sampler on numbered targets. The CPU wrapper
+   * keeps its snapshot/merge path for fog, filtering, rotation and every excluded state. */
+  if(!r || !r->resident_application_pass || r->target_id<=0 || r->fog_flat ||
+     r->color_write_mask>=15u || r->interp || r->gui_pass_active ||
+     !anygm_policy_has_modern_layer_semantics(r->win) || sprite<0 || sprite>=r->n_spr)
+    return 0;
+  gml_render_draw_map_point(r,&x,&y);
+  gml_render_draw_map_scale(r,&xs,&ys);
+  double resident_alpha=isfinite(alpha) && alpha>1.0?1.0:alpha;
+  return resident_filtered_sprite(r,&r->spr[sprite],subimg,x,y,xs,ys,rotation,
+                                  colour,resident_alpha);
 }
 
 void gml_render_sprite_ext_unmasked(GmlRender *r, int sprite, int subimg, double x, double y,

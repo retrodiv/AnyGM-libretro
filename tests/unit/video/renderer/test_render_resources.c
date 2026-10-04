@@ -44,6 +44,7 @@ typedef struct FakeDevice {
   uint64_t supported_operations;
   double recovery_rect[4];
   uint32_t last_opcode,last_source_count,last_shader_identity;
+  uint32_t last_write_mask,last_filter;
   GmlRenderImageRef last_target_image;
   GmlRenderRect last_target_region;
   GmlRenderDrawOp last_primitive;
@@ -87,6 +88,11 @@ static GmlRenderExecutionResult fake_submit(void *context,const GmlRenderDrawBat
     fake->last_source_count=last->source_count;
     if(last->opcode==GML_RENDER_OP_COLOURED_PRIMITIVE)
       fake->last_primitive=*last;
+    if(last->opcode==GML_RENDER_OP_TEXTURED_QUAD && batch->states &&
+       last->state_index<batch->state_count){
+      fake->last_write_mask=batch->states[last->state_index].write_mask;
+      fake->last_filter=last->payload.quad.sampling.filter;
+    }
     if(last->opcode==GML_RENDER_OP_RECOVER_EMPTY_SCREEN){
       const GmlRenderQuad *q=&last->payload.quad;
       fake->recovery_rect[0]=q->x[0];fake->recovery_rect[1]=q->y[0];
@@ -5820,6 +5826,56 @@ static int resident_coarse_veil_exact_recovery(void){
   return 1;
 }
 
+static int resident_numbered_sprite_channel_masks(void){
+  const uint8_t rgba[16]={208,32,16,128,16,208,32,255,32,16,208,64,192,176,160,0};
+  for(unsigned mask=0;mask<16u;mask++){
+    GmlRender *render=(GmlRender*)calloc(1,sizeof *render);
+    GmlWin content={.bytecode=17};
+    FakeDevice fake={.on_demand=1};
+    GmlRenderDeviceServices device=service(&fake);
+    GmlRenderJournalMetrics metrics={0};
+    CHECK(render);
+    device.observe_on_demand=fake_observe_on_demand;
+    render->win=&content;render->active_shader=-1;render->color_write_mask=15u;
+    render->alphablend=1;render->blend_equation=render->blend_equation_alpha=1;
+    render->next_surface_id=1;
+    CHECK(gml_render_application_surface_ensure_owned(render,4,4));
+    render->atlas=(GmlAtlas*)calloc(1,sizeof *render->atlas);
+    render->tpag=(GmlTpag*)calloc(1,sizeof *render->tpag);
+    render->spr=(GmlSprite*)calloc(1,sizeof *render->spr);
+    CHECK(render->atlas && render->tpag && render->spr);
+    render->n_atlas=render->n_tpag=render->n_spr=1;
+    render->atlas[0].px=(uint8_t*)malloc(sizeof rgba);
+    render->spr[0].frame=(int*)calloc(1,sizeof(int));
+    CHECK(render->atlas[0].px && render->spr[0].frame);
+    memcpy(render->atlas[0].px,rgba,sizeof rgba);
+    render->atlas[0].w=render->atlas[0].h=2;
+    render->tpag[0].sw=render->tpag[0].sh=render->tpag[0].tw=render->tpag[0].th=2;
+    render->tpag[0].bw=render->tpag[0].bh=2;
+    render->spr[0].w=render->spr[0].h=2;render->spr[0].n_frames=1;
+    gml_render_bind_device(render,&device);
+    CHECK(gml_render_begin_resident_owned_application(render,0.0,0.0,0));
+    int id=gml_surface_create(render,4,4);
+    CHECK(id>0 && gml_surface_set_target(render,id));
+    gml_render_clear(render,0x332211u,0.5);
+    render->color_write_mask=(uint8_t)mask;
+    gml_draw_sprite_ext(render,0,0,1.0,1.0,0.5,0.5,0.0,0xA0C0E0u,0.6);
+    CHECK(render->resident_application_pass && !render->color_write_scratch &&
+          gml_render_scene_submit_pending(render) && !fake.readbacks);
+    if(mask){
+      CHECK(fake.last_opcode==GML_RENDER_OP_TEXTURED_QUAD && fake.last_write_mask==mask &&
+            fake.last_filter==GML_RENDER_FILTER_NEAREST_PHASED);
+      gml_render_resource_journal_metrics(render->surface[id-1].resource,&metrics);
+      CHECK(metrics.authority==GML_RENDER_RESOURCE_GPU_RESIDENT &&
+            !metrics.cpu_replays && !metrics.device_checkpoints);
+    }
+    /* Disposing an unread test-device result is not pixel evidence. */
+    gml_render_abandon_device(render);
+    gml_render_free(render);free(render);
+  }
+  return 1;
+}
+
 static int resident_opaque_atlas_sprite_gpu(void){
   GmlRender *render=(GmlRender*)calloc(1,sizeof *render);
   GmlRenderApplicationWriteView view={0};
@@ -7748,6 +7804,7 @@ int main(void){
   passed+=incremental_checkpoint_publication();
   passed+=public_surface_part_qualified_dispatch();
   passed+=resident_opaque_atlas_sprite_gpu();
+  passed+=resident_numbered_sprite_channel_masks();
   passed+=resident_coarse_veil_exact_recovery();
   passed+=resident_packaged_sprite_font_glyph();
   passed+=resident_filtered_gui_real_font();
@@ -7779,6 +7836,6 @@ int main(void){
   passed+=source_free_primitive_rect_replay();
   passed+=stretched_float_exact_replay();
   passed+=filtered_font_exact_recovery();
-  printf("render resource cases: passed=%d failed=%d\n",passed,105-passed);
-  return passed==105?EXIT_SUCCESS:EXIT_FAILURE;
+  printf("render resource cases: passed=%d failed=%d\n",passed,106-passed);
+  return passed==106?EXIT_SUCCESS:EXIT_FAILURE;
 }

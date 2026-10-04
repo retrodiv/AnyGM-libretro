@@ -1392,6 +1392,122 @@ static int scene_atlas_retire_advanced_version_case(void){
   return 1;
 }
 
+/* Driver call/state proof for independent channel masks. Real pixels are qualified separately. */
+static int scene_numbered_sprite_channel_masks_case(void){
+  const uint8_t pixels[16]={255,0,0,128,0,255,0,0,0,0,255,255,255,255,255,64};
+  for(unsigned api=0;api<2u;api++)
+  for(unsigned mode=0;mode<3u;mode++){
+    unsigned stamp=mode==1u;
+    GmlRenderImageRef source={GML_RENDER_RESOURCE_ATLAS,93u,1u,1u};
+    GmlRenderImageRef target={GML_RENDER_RESOURCE_SURFACE,94u,1u,1u};
+    GmlRenderImageUpload upload={0};
+    GmlRenderDrawStateSnapshot states[16]={0};
+    GmlRenderDrawOp operations[17]={0};
+    GmlRenderDeviceServices service;
+    GmlGpuContext context=fake_context(api?GML_GPU_API_OPENGLES3:GML_GPU_API_OPENGL_CORE);
+    anygm_test_graphics_reset();
+    GmlGpu *gpu=gml_gpu_create();
+    REQUIRE(gpu && gml_gpu_context_reset(gpu,&context),"masked sprite context adopted");
+    gml_gpu_device_services(gpu,&service);
+    upload.image=source;upload.storage_width=upload.storage_height=2u;
+    upload.region=(GmlRenderRect){0,0,2u,2u};
+    upload.pixel_format=GML_RENDER_PIXEL_RGBA8888;
+    upload.stride_bytes=8u;upload.byte_capacity=sizeof pixels;upload.bytes=pixels;
+    REQUIRE(service.upload(service.context,&upload),"masked sprite source uploaded");
+    for(unsigned index=0;index<17u;index++){
+      GmlRenderDrawOp *op=&operations[index];
+      op->sequence=index+1u;op->target.image=target;
+      op->target.image.content_version=index+1u;op->target.storage_version=1u;
+      op->target.width=op->target.height=8u;
+      op->target.pixel_format=GML_RENDER_PIXEL_ARGB8888;
+      op->target.region=(GmlRenderRect){0,0,8u,8u};
+      if(!index){op->opcode=GML_RENDER_OP_CLEAR;op->payload.clear_colour=0x40102030u;continue;}
+      unsigned mask=index-1u;
+      GmlRenderDrawStateSnapshot *state=&states[mask];
+      state->write_mask=mask;state->alpha=255u;state->colour=0xffffffffu;
+      state->sampler_count=1u;
+      state->rgb_source_factor=GML_RENDER_BLEND_SOURCE_ALPHA;
+      state->alpha_source_factor=mode==2u?GML_RENDER_BLEND_SOURCE_ALPHA:GML_RENDER_BLEND_ONE;
+      state->rgb_destination_factor=state->alpha_destination_factor=
+        GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA;
+      state->rgb_equation=state->alpha_equation=GML_RENDER_BLEND_ADD;
+      state->samplers[0].filter=stamp?GML_RENDER_FILTER_NEAREST_PHASED_OPAQUE_ALPHA:
+                                      GML_RENDER_FILTER_NEAREST_PHASED;
+      state->samplers[0].edge_rule=GML_RENDER_EDGE_CLAMP_SUBIMAGE;
+      state->samplers[0].source_region=upload.region;
+      op->opcode=GML_RENDER_OP_TEXTURED_QUAD;op->scene_family=GML_RENDER_SCENE_SPRITE;
+      op->reconstruction_mode=GML_RENDER_DEVICE_CHECKPOINT;
+      op->state_index=mask;op->sources=&source;op->source_count=1u;
+      GmlRenderQuad *quad=&op->payload.quad;
+      quad->shape=GML_RENDER_QUAD_AXIS_ALIGNED;quad->sampling=state->samplers[0];
+      quad->x[1]=quad->x[2]=quad->y[2]=quad->y[3]=4.0;
+      quad->u[1]=quad->u[2]=quad->v[2]=quad->v[3]=1.0;
+      for(unsigned corner=0;corner<4u;corner++) quad->corner_colour[corner]=0x80402010u;
+    }
+    GmlRenderDrawBatch batch={operations,17u,states,16u};
+    GmlRenderExecutionResult result=service.submit(service.context,&batch);
+    REQUIRE(result.status==GML_RENDER_EXEC_ACCEPTED && result.accepted_prefix==17u,
+            "all channel masks submit on a numbered sprite target");
+    for(unsigned mask=0;mask<16u;mask++){
+      unsigned expected=stamp?(mask<8u?2u:mask==8u?8u:0u):1u;
+      REQUIRE(anygm_test_graphics_scene_mask_draws(mask)==expected,
+              "mask changes split batches and alpha stamping respects its enabled bit");
+    }
+    REQUIRE(anygm_test_graphics_color_mask_all() && !anygm_test_graphics_blend_enabled(),
+            "masked draws restore complete writes and disabled blending");
+    REQUIRE(anygm_test_graphics_read_pixels()==0,"channel masks do not observe the target");
+    for(unsigned variant=0;variant<12u;variant++){
+      GmlRenderDrawStateSnapshot invalid_states[16];
+      GmlRenderDrawOp invalid_operations[17];
+      memcpy(invalid_states,states,sizeof states);
+      memcpy(invalid_operations,operations,sizeof operations);
+      GmlRenderDrawBatch invalid_batch={invalid_operations,17u,invalid_states,16u};
+      GmlRenderDrawStateSnapshot *state=&invalid_states[14];
+      GmlRenderDrawOp *op=&invalid_operations[15];
+      if(variant<2u) for(unsigned index=0;index<17u;index++)
+        invalid_operations[index].target.image.resource_class=variant?
+          GML_RENDER_RESOURCE_APPLICATION:GML_RENDER_RESOURCE_SCREEN;
+      if(variant==2u) op->scene_family=GML_RENDER_SCENE_BACKGROUND;
+      if(variant==3u) state->samplers[0].filter=GML_RENDER_FILTER_BILINEAR;
+      if(variant==4u) state->samplers[0].quantisation=GML_RENDER_QUANTISE_STRETCHED_FLOAT;
+      if(variant==5u) state->samplers[0].logical_margin_mask=1u;
+      if(variant==6u) state->coverage_policy=GML_RENDER_COVERAGE_ROTATED_VECTOR_ALPHA;
+      if(variant==7u) state->rgb_source_factor=GML_RENDER_BLEND_ZERO;
+      if(variant==8u) op->reconstruction_mode=GML_RENDER_REPLAY_EXACT;
+      if(variant==9u) op->payload.quad.shape=GML_RENDER_QUAD_GENERAL;
+      if(variant==10u) state->alpha_test_enabled=1u;
+      if(variant==11u) state->write_mask=16u;
+      op->payload.quad.sampling=state->samplers[0];
+      int clears=anygm_test_graphics_clear_calls();
+      int draws=anygm_test_graphics_scene_draw_calls();
+      result=service.submit(service.context,&invalid_batch);
+      REQUIRE(result.status==GML_RENDER_EXEC_UNSUPPORTED && !result.accepted_prefix &&
+              !result.uncertain_target_count && !result.all_destinations_uncertain &&
+              anygm_test_graphics_clear_calls()==clears &&
+              anygm_test_graphics_scene_draw_calls()==draws &&
+              anygm_test_graphics_color_mask_all() && !anygm_test_graphics_blend_enabled(),
+              "unqualified masked suffix refuses before the clear and qualified prefix");
+    }
+    GmlRenderDrawOp failing_operations[2]={operations[0],operations[8]};
+    GmlRenderDrawBatch failing_batch={failing_operations,2u,states,16u};
+    anygm_test_graphics_fail_scene_draw_at((unsigned)anygm_test_graphics_scene_draw_calls()+1u);
+    result=service.submit(service.context,&failing_batch);
+    REQUIRE(result.status==GML_RENDER_EXEC_RECOVERABLE_ERROR && result.accepted_prefix==1u &&
+            result.uncertain_target_count==1u &&
+            result.uncertain_targets[0].identity==target.identity &&
+            anygm_test_graphics_color_mask_all() && !anygm_test_graphics_blend_enabled() &&
+            !anygm_test_graphics_attributes_enabled() &&
+            anygm_test_graphics_read_pixels()==0,
+            "failed masked draw fences its target and restores shared driver state without a read");
+    anygm_test_graphics_fail_scene_draw_at(0u);
+    result=service.submit(service.context,&batch);
+    REQUIRE(result.status==GML_RENDER_EXEC_ACCEPTED && result.accepted_prefix==17u,
+            "fresh clear and masked batch recover after a fenced driver failure");
+    gml_gpu_destroy(gpu,1);
+  }
+  return 1;
+}
+
 static int scene_screen_filtered_alpha_stamp_case(void){
   const uint8_t pixels[16]={255,0,0,128,0,255,0,0,0,0,255,255,255,255,255,64};
   GmlRenderImageRef source={GML_RENDER_RESOURCE_ATLAS,91u,1u,1u};
@@ -2871,6 +2987,7 @@ int main(int argc,char **argv){
     {"scene_alpha_composition",scene_alpha_composition_case},
     {"scene_gles_font_programs",scene_gles_font_programs_case},
     {"scene_screen_filtered_alpha_stamp",scene_screen_filtered_alpha_stamp_case},
+    {"scene_numbered_sprite_channel_masks",scene_numbered_sprite_channel_masks_case},
     {"scene_completed_screen_query",scene_completed_screen_query_case},
     {"scene_empty_screen_recovery",scene_empty_screen_recovery_case},
   };

@@ -65,6 +65,7 @@ typedef struct FakeDriver {
   GLfloat clear_colour[4];
   GLint draw_calls;
   GLint scene_draw_calls;
+  unsigned scene_mask_draws[16];
   unsigned scene_draw_error_at,flush_calls;
   struct { GLint location; GLuint program; } font_channel_locations[64];
   unsigned font_channel_location_count,font_channel_draws[3],font_channel_errors;
@@ -486,6 +487,7 @@ static void fake_DrawArrays(GLenum mode,GLint first,GLsizei count){
   if(mode==GL_TRIANGLES && first==0 && count==3) g_fake.draw_calls++;
   if(mode==GL_TRIANGLES && first==0 && count>=6 && count%6==0){
     g_fake.scene_draw_calls++;
+    g_fake.scene_mask_draws[g_fake.color_mask_bits&15u]++;
     g_fake.scene_vertices+=count;
     g_fake.scene_texture=g_fake.bound_texture[0];
     g_fake.scene_filter=g_fake.scene_texture<FAKE_MAX_TEXTURES
@@ -732,6 +734,9 @@ int anygm_test_graphics_clear_calls(void){ return g_fake.clear_calls; }
 unsigned anygm_test_graphics_framebuffer_queries(void){ return g_fake.framebuffer_queries; }
 int anygm_test_graphics_blend_enabled(void){ return g_fake.blend_enabled; }
 int anygm_test_graphics_scene_filter(void){ return g_fake.scene_filter; }
+unsigned anygm_test_graphics_scene_mask_draws(unsigned mask){
+  return mask<16u?g_fake.scene_mask_draws[mask]:0u;
+}
 void anygm_test_graphics_blend_factors(unsigned factors[4]){
   for(unsigned index=0;index<4u;index++) factors[index]=g_fake.blend_factors[index];
 }
