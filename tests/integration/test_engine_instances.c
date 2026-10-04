@@ -71,6 +71,57 @@ static uint64_t state_checksum(const uint8_t *data,size_t size){
   return hash;
 }
 
+static int native_raster_window_query_policy(void){
+  AnygmEngine engine={0};
+  engine.win.bytecode=17;
+  engine.win.disp_w=1920;
+  engine.win.disp_h=1080;
+  engine.width=288;
+  engine.height=216;
+  engine.vm.win=&engine.win;
+  engine.vm.render=&engine.render;
+  engine.config.present_logical_raster=1;
+  gml_render_application_surface_set_draw_enabled(&engine.render,0);
+  gml_vm_global_array_set(&engine.vm,"view_visible",0,1);
+  gml_vm_global_array_set(&engine.vm,"view_hview",0,216);
+  gml_vm_global_array_set(&engine.vm,"view_hport",0,216);
+  const int widths[]={288,384,288,288,384,288};
+  int ok=1;
+  for(size_t i=0;i<sizeof widths/sizeof widths[0];i++){
+    engine.vm.gui_maximise_active=i>=3;
+    engine.width=(unsigned)widths[i];
+    engine.vm.gui_w=widths[i];
+    engine.vm.gui_h=216;
+    gml_vm_global_array_set(&engine.vm,"view_wview",0,widths[i]);
+    gml_vm_global_array_set(&engine.vm,"view_wport",0,widths[i]);
+    GmlVal request[]={vreal(widths[i]),vreal(216)};
+    gml_builtin_call(&engine.vm,"window_set_size",request,2);
+    compute_present(&engine);
+    GmlVal width=gml_builtin_call(&engine.vm,"window_get_width",NULL,0);
+    GmlVal height=gml_builtin_call(&engine.vm,"window_get_height",NULL,0);
+    GmlRenderPresentationMetrics metrics={0};
+    gml_render_presentation_metrics(&engine.render,&metrics);
+    int phase_ok=width.t==V_REAL && width.d==widths[i] &&
+                 height.t==V_REAL && height.d==216 &&
+                 engine.output_width==(unsigned)widths[i] && engine.output_height==216 &&
+                 metrics.effective_width==widths[i] && metrics.effective_height==216;
+    if(!phase_ok)
+      fprintf(stderr,"native window query phase %zu: requested=%dx216 query=%.0fx%.0f"
+              " output=%ux%u effective=%dx%d\n",i,widths[i],width.d,height.d,
+              engine.output_width,engine.output_height,
+              metrics.effective_width,metrics.effective_height);
+    ok=ok && phase_ok;
+  }
+  /* A request does not change the last settled raster before presentation. */
+  GmlVal request[]={vreal(800),vreal(600)};
+  gml_builtin_call(&engine.vm,"window_set_size",request,2);
+  GmlVal width=gml_builtin_call(&engine.vm,"window_get_width",NULL,0);
+  GmlVal height=gml_builtin_call(&engine.vm,"window_get_height",NULL,0);
+  ok=ok && width.t==V_REAL && width.d==288 && height.t==V_REAL && height.d==216;
+  gml_vm_free(&engine.vm);
+  return ok;
+}
+
 static int virtual_monitor_geometry_policy(void){
   AnygmEngine engine={0};
   engine.win.bytecode=15;
@@ -2958,6 +3009,8 @@ int main(int argc,char **argv){
       return shifted_view_port_policy()?0:1;
     if(!strcmp(argv[2],"virtual_monitor_geometry"))
       return virtual_monitor_geometry_policy()?0:1;
+    if(!strcmp(argv[2],"native_raster_window_query"))
+      return native_raster_window_query_policy()?0:1;
     if(!strcmp(argv[2],"live_monitor_override"))
       return live_monitor_override_policy()?0:1;
     if(!strcmp(argv[2],"host_canvas_scale"))
@@ -3038,7 +3091,7 @@ int main(int argc,char **argv){
   }
   if(argc!=1){
     fputs("usage: test_engine_instances [--case screen_refresh_present_latch|"
-          "virtual_monitor_geometry|live_monitor_override|host_canvas_scale|"
+          "virtual_monitor_geometry|native_raster_window_query|live_monitor_override|host_canvas_scale|"
           "application_surface_port_scale|"
           "first_generation_application_surface|"
           "shifted_view_port|"
@@ -3065,6 +3118,7 @@ int main(int argc,char **argv){
     return 1;
   }
   if(!virtual_monitor_geometry_policy()) return 1;
+  if(!native_raster_window_query_policy()) return 1;
   if(!live_monitor_override_policy()) return 1;
   if(!host_canvas_scale_policy()) return 1;
   if(!room_order_redirect_policy()) return 1;
