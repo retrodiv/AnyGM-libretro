@@ -48,7 +48,9 @@ The empty-screen recovery operation reduces exact RGB-zero predicates to two
 RGBA8 device flags, then conditionally draws the application image with the
 existing leading-edge point geometry and fixed RGB blending. It neither assumes
 a content shader drew nonblack pixels nor removes recovery when it did not.
-Only plain Studio magnification on a witnessed resident SCREEN is admitted;
+Only plain Studio magnification on a witnessed resident SCREEN is admitted,
+with either texture-interpolation setting: both CPU branches use the same
+leading-edge point indices for magnification. Reductions do not share that rule;
 classic, active-program, full-width, reduction and other state variants retain
 the old query/recovery path. The device-only conditional image is observed for
 state or controlled destruction, not retained as a CPU replay recipe.

@@ -688,7 +688,7 @@ int gml_render_recover_empty_screen(GmlRender *r,uint32_t *pixels,int width,int 
      r->app_surface==pixels || r->app_w<=0 || r->app_h<=0 ||
      r->pending_fill || r->pending_underlay || r->pending_presentation ||
      r->active_shader>=0 || r->aspect_fullwidth || gml_render_gui_transform_active(r) ||
-     !r->interp || !r->alphablend || r->blendmode || r->alpha_test_enable ||
+     !r->alphablend || r->blendmode || r->alpha_test_enable ||
      r->color_write_mask!=15u || r->blend_equation!=1 || r->blend_equation_alpha!=1 ||
      gml_d3_is_active(r) || !isfinite(x) || !isfinite(y) ||
      !isfinite(w) || !isfinite(h) || w<r->app_w || h<r->app_h ||

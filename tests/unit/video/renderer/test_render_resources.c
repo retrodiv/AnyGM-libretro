@@ -3066,14 +3066,13 @@ static int conditional_screen_recovery_authority(void){
   gml_render_set_pending_fill(render,0x11000000u);gml_render_flush_pending_fill(render);
   CHECK(gml_render_scene_submit_pending(render));
   int submits=fake.submits;
-  for(unsigned variant=0;variant<7u;variant++){
+  for(unsigned variant=0;variant<6u;variant++){
     if(variant==0u) fake.on_demand=0;
     if(variant==1u) fake.supported_operations=0;
-    if(variant==2u) render->interp=0;
-    if(variant==3u) render->active_shader=1;
-    if(variant==4u) render->aspect_fullwidth=1;
-    if(variant==5u) render->color_write_mask=7u;
-    if(variant==6u) render->classic=1;
+    if(variant==2u) render->active_shader=1;
+    if(variant==3u) render->aspect_fullwidth=1;
+    if(variant==4u) render->color_write_mask=7u;
+    if(variant==5u) render->classic=1;
     CHECK(!gml_render_recover_empty_screen(render,screen,14,9,3.0,4.0,10.0,7.0,0) &&
           fake.submits==submits && !fake.rgb_queries && !fake.readbacks);
     fake.on_demand=1;fake.supported_operations=UINT64_C(1)<<GML_RENDER_OP_RECOVER_EMPTY_SCREEN;
@@ -3089,12 +3088,20 @@ static int conditional_screen_recovery_authority(void){
   CHECK(metrics.authority==GML_RENDER_RESOURCE_GPU_RESIDENT &&
         metrics.gpu_version==metrics.logical_version && metrics.cpu_version<metrics.logical_version &&
         !metrics.journal_operations && !metrics.cpu_replays);
+  render->interp=0;
+  CHECK(gml_render_recover_empty_screen(render,screen,14,9,3.0,4.0,10.0,7.0,0) &&
+        fake.submits==submits+2 && !fake.rgb_queries && !fake.readbacks &&
+        fake.recovery_rect[0]==1.0 && fake.recovery_rect[1]==1.0 &&
+        fake.recovery_rect[2]==10.0 && fake.recovery_rect[3]==7.0);
+  CHECK(!gml_render_recover_empty_screen(render,screen,14,9,3.0,4.0,3.0,2.0,0) &&
+        fake.submits==submits+2 && !fake.rgb_queries && !fake.readbacks);
+  render->interp=1;
   CHECK(gml_render_recover_empty_screen(render,screen,14,9,3.0,4.0,10.0,7.0,1) &&
-        fake.submits==submits+2 && !fake.readbacks &&
+        fake.submits==submits+3 && !fake.readbacks &&
         fake.recovery_rect[0]==3.0 && fake.recovery_rect[1]==4.0);
   render->world_transform_active=1;render->world_scale_x=render->world_scale_y=2.0;
   CHECK(gml_render_recover_empty_screen(render,screen,14,9,3.0,4.0,10.0,7.0,0) &&
-        fake.submits==submits+3 && !fake.readbacks && fake.recovery_rect[0]==4.0 &&
+        fake.submits==submits+4 && !fake.readbacks && fake.recovery_rect[0]==4.0 &&
         fake.recovery_rect[1]==5.0 && fake.recovery_rect[2]==20.0 && fake.recovery_rect[3]==14.0);
   gml_render_abandon_device(render);fake.forbid_calls=1;
   CHECK(!gml_render_recover_empty_screen(render,screen,14,9,3.0,4.0,10.0,7.0,0) &&
