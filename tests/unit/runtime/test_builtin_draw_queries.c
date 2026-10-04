@@ -476,6 +476,50 @@ static int inverse_destination_colour_case(void){
   return ok;
 }
 
+static int camera_capacity_case(void){
+  int ok=1;
+  for(int modern=0;modern<2;modern++) for(int cached=0;cached<2;cached++){
+    AnygmCompatibilityProfile profile={0};
+    profile.has_modern_layer_semantics=modern;
+    GmlWin win={.compatibility=&profile};
+    GmlVM vm={.win=&win};
+    int first=modern?GML_ROOM_CAMERA_COUNT:0;
+    GmlVal last=vreal(-1);
+    for(int index=0;index<160;index++){
+      GmlVal args[]={vreal(index*3),vreal(index*2),vreal(384),vreal(216),vreal(0)};
+      last=query(&vm,"camera_create_view",args,5,cached,&ok);
+      if(!real_is(last,first+index)){
+        fprintf(stderr,"camera capacity: modern=%d cached=%d index=%d handle=%.0f\n",
+                modern,cached,index,last.t==V_REAL?last.d:-2.0);
+        ok=0; break;
+      }
+    }
+    if(ok){
+      GmlVal binding[]={vreal(0),last};
+      query(&vm,"view_set_camera",binding,2,cached,&ok);
+      GmlVal view=vreal(0);
+      ok &= real_is(query(&vm,"view_get_camera",&view,1,cached,&ok),last.d);
+      ok &= real_is(query(&vm,"camera_get_view_x",&last,1,cached,&ok),477);
+      /* The 64-bit configuration selector must not alias higher runtime handles. */
+      GmlVal high=vreal(127),low=vreal(63);
+      double before=query(&vm,"camera_get_view_x",&high,1,cached,&ok).d;
+      ok &= gml_camera_override_mask(&vm,UINT64_C(1)<<63,0,700)==1;
+      ok &= real_is(query(&vm,"camera_get_view_x",&low,1,cached,&ok),700);
+      ok &= real_is(query(&vm,"camera_get_view_x",&high,1,cached,&ok),before);
+      for(int index=first+160;index<GML_CAMERA_LIMIT;index++)
+        ok &= real_is(query(&vm,"camera_create",NULL,0,cached,&ok),index);
+      ok &= real_is(query(&vm,"camera_create",NULL,0,cached,&ok),-1);
+      query(&vm,"camera_destroy",&high,1,cached,&ok);
+      GmlVal reused=query(&vm,"camera_create",NULL,0,cached,&ok);
+      ok &= real_is(reused,127);
+      ok &= real_is(query(&vm,"camera_get_view_x",&reused,1,cached,&ok),0);
+    }
+    vm.win=NULL;
+    gml_vm_free(&vm);
+  }
+  return ok;
+}
+
 int main(int argc,char **argv){
   const char *filter=NULL;
   if(argc==3 && !strcmp(argv[1],"--case")) filter=argv[2];
@@ -486,7 +530,8 @@ int main(int argc,char **argv){
     {"integer_layer_depth",layer_integer_depth_case},{"alpha_reference_bounds",alpha_reference_bounds_case},
     {"background_source_region",background_part_case},{"background_name_alias",background_names_case},
     {"authored_font_styles",font_styles_case},{"runtime_font_styles",runtime_font_styles_case},
-    {"inverse_destination_colour",inverse_destination_colour_case}};
+    {"inverse_destination_colour",inverse_destination_colour_case},
+    {"camera_capacity",camera_capacity_case}};
   const AnygmTestGroup group={"draw_queries",cases,sizeof cases/sizeof cases[0]};
   AnygmTestResult result;
   anygm_test_run_groups(&group,1,filter,&result);

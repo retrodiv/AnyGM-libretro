@@ -171,6 +171,11 @@ comma-separated handles and inclusive ranges. These operations affect only runti
 already exist; they do not rerun content initialization or manufacture missing objects, cameras, or
 surfaces.
 
+Camera configuration selectors address handles 0 through 63. This 64-bit selector is independent
+of the runtime camera pool, which supports up to 1024 simultaneous handles, including reserved
+room-view handles. A camera outside the selector range remains usable through ordinary GML camera
+and room-binding functions.
+
 ### Fixed-coordinate surface compositors
 
 An aspect-scoped `surface_canvas|OBJECT|VARIABLE|W|H` declares the native canvas

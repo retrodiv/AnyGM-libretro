@@ -16,7 +16,9 @@ struct GmlRoomVisualState;
 #define GML_ALARMS 12
 #define GML_ALARM_PAUSES 16
 #define GML_ROOM_CAMERA_COUNT 8
-#define GML_CAMERA_LIMIT 64
+/* Runtime resources do not share the configuration selector's bit width. */
+#define GML_CAMERA_LIMIT 1024
+#define GML_CAMERA_OVERRIDE_COUNT 64
 #define GML_GAME_CHANGE_TEXT_MAX 1024
 #define GML_PARAMETER_COUNT_MAX 64
 #define GML_PARAMETER_TEXT_MAX 256

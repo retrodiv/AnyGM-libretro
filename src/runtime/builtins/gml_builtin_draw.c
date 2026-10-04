@@ -482,7 +482,7 @@ static void gml_camera_field_set(GmlVM *vm,int id,int field,double value){
 int gml_camera_override_mask(GmlVM *vm,uint64_t camera_mask,int field,double value){
   if(!vm || field<GML_CAM_X || field>GML_CAM_H) return 0;
   int changed=0;
-  for(int camera=0;camera<GML_CAMERA_LIMIT;camera++){
+  for(int camera=0;camera<GML_CAMERA_OVERRIDE_COUNT;camera++){
     if(!(camera_mask&(UINT64_C(1)<<camera)) || !gml_camera_live(vm,camera)) continue;
     gml_camera_field_set(vm,camera,field,value);
     if(field==GML_CAM_X || field==GML_CAM_Y)

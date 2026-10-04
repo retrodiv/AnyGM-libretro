@@ -222,11 +222,11 @@ static int cheat_parse_camera_mask(const char **cursor,uint64_t *mask){
   s++; *mask=0;
   while(*s && *s!=']'){
     int first=-1,last=-1;
-    if(!parse_nonnegative_index(&s,&first) || first>=GML_CAMERA_LIMIT) return 0;
+    if(!parse_nonnegative_index(&s,&first) || first>=GML_CAMERA_OVERRIDE_COUNT) return 0;
     last=first;
     if(*s=='-'){
       s++;
-      if(!parse_nonnegative_index(&s,&last) || last<first || last>=GML_CAMERA_LIMIT) return 0;
+      if(!parse_nonnegative_index(&s,&last) || last<first || last>=GML_CAMERA_OVERRIDE_COUNT) return 0;
     }
     for(int camera=first;camera<=last;camera++) *mask|=UINT64_C(1)<<camera;
     if(*s==',') s++;
