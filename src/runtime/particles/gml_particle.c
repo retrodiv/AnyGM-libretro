@@ -780,6 +780,15 @@ static void plot_line_shape(const GmlRenderCpuBackendDrawView *draw,
   }
 }
 
+void gml_particle_raster_line(uint32_t *pixels,int width,int height,
+                              double x,double y,double xs,double ys,double angle,
+                              uint32_t colour,double alpha,int interpolate,int alpha_blend){
+  GmlRenderCpuBackendDrawView draw={0};
+  draw.pixels=pixels; draw.width=width; draw.height=height;
+  draw.interpolate=interpolate; draw.alpha_blend=alpha_blend;
+  plot_line_shape(&draw,x,y,xs,ys,angle,colour,alpha);
+}
+
 /* The textured classic shapes occupy a 64x64 cell.  Generate the soft,
  * irregular explosion field from an analytic function at startup rather than
  * shipping a precomputed bitmap.  Keeping the field in a small mask also avoids
@@ -1046,6 +1055,12 @@ void gml_part_system_drawit(GmlParticleState *state,GmlRender *r,int id){
          !gml_d3_is_active(r) &&
          gml_render_try_opaque_primitive_rect(r,cx-half_x,cy-half_y,
                                                cx+half_x,cy+half_y,col)) continue;
+      if(t->shape==3 && !gml_d3_is_active(r) &&
+         gml_render_try_particle_line(r,p->x*coordinate_scale_x-camera_x,
+           p->y*coordinate_scale_y-camera_y,
+           draw_size*t->xscale*coordinate_scale_x,
+           draw_size*t->yscale*coordinate_scale_y,
+           draw_ori+(t->ori_rel?p->dir:0),col,alpha)) continue;
       GmlRenderCpuBackendDrawView draw;
       if(!gml_render_cpu_backend_prepare_draw_view(r,&draw) || !draw.pixels) continue;
       if(t->shape==1 || t->shape==5 || t->shape==6 || t->shape==7){

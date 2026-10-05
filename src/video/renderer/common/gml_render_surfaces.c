@@ -104,7 +104,7 @@ int gml_render_application_scene_flush(GmlRender *r){
      * next glyph demand, so its failed submission must not leave a borrowed pointer queued;
      * the caller will cross the CPU barrier and draw the glyph there instead. */
     if(metrics.authority==GML_RENDER_RESOURCE_INVALID ||
-       (!pending->sources[0].borrowed_immutable &&
+       (pending->source_count && !pending->sources[0].borrowed_immutable &&
         !pending->sources[0].resident_resource)){
       pending->count=0;
       pending->state_count=0;
@@ -215,6 +215,39 @@ void gml_render_lose_volatile_device(GmlRender *r){
   r->fb_opaque_known=r->fb_all_opaque=r->fb_all_transparent=0;
 }
 
+int gml_render_application_scene_enqueue_primitive(GmlRender *r,
+                                                   const GmlRenderDrawOp *operation){
+  if(!r || !r->resident_application_pass || !gml_render_device(r) ||
+     !gml_render_particle_line_valid(operation)) return 0;
+  GmlRenderResource *target=gml_render_scene_target_resource_ensure(r);
+  if(!target) return 0;
+  GmlRenderPendingSceneBatch *pending=r->pending_scene_batch;
+  if(pending && pending->count &&
+     (pending->source_count || pending->count==GML_SCENE_BATCH_LIMIT ||
+      pending->operations[0].target.image.resource_class!=operation->target.image.resource_class ||
+      pending->operations[0].target.image.identity!=operation->target.image.identity ||
+      pending->operations[0].target.image.incarnation!=operation->target.image.incarnation) &&
+     !gml_render_application_scene_flush(r)) return 0;
+  GmlRenderImageRef next=gml_render_application_scene_next_image_ref(r,target);
+  if(next.content_version==UINT64_MAX ||
+     operation->target.image.content_version!=next.content_version+1u ||
+     operation->target.image.resource_class!=next.resource_class ||
+     operation->target.image.identity!=next.identity ||
+     operation->target.image.incarnation!=next.incarnation) return 0;
+  if(!pending){
+    pending=(GmlRenderPendingSceneBatch*)calloc(1,sizeof *pending);
+    if(!pending) return 0;
+    r->pending_scene_batch=pending;
+  }
+  pending->operations[pending->count]=*operation;
+  pending->operations[pending->count++].sources=NULL;
+  if(r->fb==r->app_surface_owned){
+    r->app_surface_opaque=0;
+    r->app_presentation_coverage_active=0;
+  }
+  return 1;
+}
+
 int gml_render_application_scene_enqueue(GmlRender *r,const GmlRenderDrawOp *operation,
                                           const GmlRenderDrawStateSnapshot *state,
                                           const GmlRenderResourceSource *source){
@@ -255,7 +288,7 @@ int gml_render_application_scene_enqueue(GmlRender *r,const GmlRenderDrawOp *ope
      operation->payload.quad.sampling.filter==GML_RENDER_FILTER_NEAREST);
   pending=r->pending_scene_batch;
   if(pending && pending->count){
-    int flush=pending->count==GML_SCENE_BATCH_LIMIT ||
+    int flush=!pending->source_count || pending->count==GML_SCENE_BATCH_LIMIT ||
       pending->coalesce_immutable!=coalescible;
     if(!flush && coalescible){
       source_index=pending->source_count;

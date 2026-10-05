@@ -19,6 +19,11 @@ void gml_part_reset_all(GmlParticleState *state);
 void gml_part_update_all(GmlParticleState *state);
 void gml_part_system_draw_all(GmlParticleState *state, GmlRender *render);
 
+/* Resolved CPU recovery delegates to the single existing procedural raster. */
+void gml_particle_raster_line(uint32_t *pixels,int width,int height,
+                              double x,double y,double xs,double ys,double angle,
+                              uint32_t colour,double alpha,int interpolate,int alpha_blend);
+
 size_t gml_part_state_size(GmlParticleState *state);
 int gml_part_state_save(GmlParticleState *state, void *data, size_t len, size_t *written);
 int gml_part_state_load(GmlParticleState *state, const void *data, size_t len, size_t *used);

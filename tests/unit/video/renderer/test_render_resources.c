@@ -11,6 +11,8 @@
 #include "gml_render_sprites_internal.h"
 #include "gml_render_shaders.h"
 #include "gml_render_texture.h"
+#include "gml_render_primitives.h"
+#include "gml_render_cpu_replay.h"
 #include "gml_builtin.h"
 #include "gml_particle.h"
 #include "gml_software3d.h"
@@ -44,6 +46,7 @@ typedef struct FakeDevice {
   uint32_t last_opcode,last_source_count,last_shader_identity;
   GmlRenderImageRef last_target_image;
   GmlRenderRect last_target_region;
+  GmlRenderDrawOp last_primitive;
   uint32_t last_batch_operations,last_batch_states;
   uint32_t last_batch_source_ids[3],last_batch_state_indices[3];
   uint32_t last_shader_uniform_count,last_shader_sampler_count;
@@ -82,6 +85,8 @@ static GmlRenderExecutionResult fake_submit(void *context,const GmlRenderDrawBat
     fake->last_target_image=last->target.image;
     fake->last_target_region=last->target.region;
     fake->last_source_count=last->source_count;
+    if(last->opcode==GML_RENDER_OP_COLOURED_PRIMITIVE)
+      fake->last_primitive=*last;
     if(last->opcode==GML_RENDER_OP_RECOVER_EMPTY_SCREEN){
       const GmlRenderQuad *q=&last->payload.quad;
       fake->recovery_rect[0]=q->x[0];fake->recovery_rect[1]=q->y[0];
@@ -4015,6 +4020,139 @@ static int resident_particle_square_public_order(void){
   return 1;
 }
 
+static int resident_particle_line_public_order(void){
+  GmlRender *gpu=(GmlRender*)calloc(1,sizeof *gpu);
+  GmlParticleState *particles=gml_particle_state_create(NULL);
+  FakeDevice fake={.on_demand=1,.readback_colour=0x7F123456u};
+  GmlRenderDeviceServices device=service(&fake);
+  GmlRenderJournalMetrics metrics={0};
+  CHECK(gpu && particles && gml_render_init(gpu,NULL)==0);
+  device.observe_on_demand=fake_observe_on_demand;
+  CHECK(gml_render_application_surface_ensure_owned(gpu,96,48));
+  gml_render_bind_device(gpu,&device);
+  CHECK(gml_render_begin_resident_owned_application(gpu,0.0,0.0,0));
+  int system=gml_part_system_create(particles),type=gml_part_type_create(particles);
+  CHECK(system && type);
+  gml_part_type_shape(particles,type,3);
+  gml_part_type_size(particles,type,1,1,0,0);
+  gml_part_type_scale(particles,type,0.75,1.5);
+  gml_part_type_orientation(particles,type,17,17,0,0,0);
+  gml_part_type_alpha(particles,type,1,0.5,0.5,0.5);
+  gml_part_particles_create_color(particles,system,40,24,type,0x123456u,8);
+  gml_render_set_pending_fill(gpu,0x7F203040u);
+  gml_part_system_drawit(particles,gpu,system);
+  CHECK(gpu->resident_application_pass && fake.submits==1 && fake.readbacks==0);
+  CHECK(gml_render_scene_submit_pending(gpu));
+  CHECK(fake.submits==2 && fake.last_batch_operations==8u &&
+        fake.last_batch_states==0u && fake.last_source_count==0u &&
+        fake.last_primitive.payload.primitive.kind==GML_RENDER_PRIMITIVE_PARTICLE_LINE &&
+        gml_render_particle_line_valid(&fake.last_primitive));
+  gml_render_resource_journal_metrics(gpu->app_surface_resource,&metrics);
+  CHECK(metrics.authority==GML_RENDER_RESOURCE_GPU_RESIDENT &&
+        metrics.journal_operations==0u && metrics.cpu_replays==0u && fake.readbacks==0);
+  GmlRenderDrawOp valid=fake.last_primitive,invalid=valid;
+  invalid.payload.primitive.alpha=NAN;
+  CHECK(!gml_render_particle_line_valid(&invalid));
+  invalid=valid; invalid.target.image.resource_class=GML_RENDER_RESOURCE_ATLAS;
+  CHECK(!gml_render_particle_line_valid(&invalid));
+  invalid=valid; invalid.reconstruction_mode=GML_RENDER_REPLAY_EXACT;
+  CHECK(!gml_render_particle_line_valid(&invalid) &&
+        !gml_render_cpu_replay_eligible(&invalid,NULL,NULL));
+  int submits=fake.submits;
+  CHECK(!gml_render_try_particle_line(gpu,40,24,0,1,0,0x123456u,1));
+  CHECK(!gml_render_try_particle_line(gpu,40,24,1,1,0,0x123456u,NAN));
+  gpu->color_write_mask=7u;
+  CHECK(!gml_render_try_particle_line(gpu,40,24,1,1,0,0x123456u,1));
+  gpu->color_write_mask=15u;
+  CHECK(gml_render_try_particle_line(gpu,-1024,-1024,1,1,0,0x123456u,1));
+  CHECK(fake.submits==submits && fake.readbacks==0);
+  /* An earlier non-coalescible textured span leaves reusable array slots, not
+   * live source/state entries for a later source-free primitive span. */
+  uint32_t source_pixels[4]={0xFF7193B5u,0xFF7193B5u,0xFF7193B5u,0xFF7193B5u};
+  GmlRenderResourceSource source=source_view(source_pixels,1);
+  GmlRenderDrawOp quad=quad_op(1u,&source.image);
+  GmlRenderDrawStateSnapshot state=quad_state(0);
+  quad.reconstruction_mode=GML_RENDER_DEVICE_CHECKPOINT;
+  quad.target=valid.target;
+  quad.target.image=gml_render_application_scene_next_image_ref(gpu,gpu->app_surface_resource);
+  quad.target.image.content_version++;
+  CHECK(gml_render_application_scene_enqueue(gpu,&quad,&state,&source) &&
+        gml_render_scene_submit_pending(gpu));
+  CHECK(fake.last_batch_operations==1u && fake.last_batch_states==1u &&
+        fake.last_source_count==1u && fake.readbacks==0);
+  CHECK(gml_render_try_particle_line(gpu,40,24,1,1,0,0x123456u,0.25));
+  submits=fake.submits;
+  quad.target.image=gml_render_application_scene_next_image_ref(gpu,gpu->app_surface_resource);
+  quad.target.image.content_version++;
+  CHECK(gml_render_application_scene_enqueue(gpu,&quad,&state,&source));
+  CHECK(fake.submits==submits+1 && fake.last_batch_operations==1u &&
+        fake.last_batch_states==0u && fake.last_source_count==0u);
+  CHECK(gml_render_scene_submit_pending(gpu) && fake.submits==submits+2 &&
+        fake.last_batch_operations==1u && fake.last_batch_states==1u &&
+        fake.last_source_count==1u && fake.readbacks==0);
+  submits=fake.submits;
+  CHECK(gml_render_try_particle_line(gpu,40,24,1,1,0,0x123456u,0.25));
+  fake.fail_readback=1;
+  GmlRenderApplicationWriteView observed={0};
+  CHECK(!gml_render_application_surface_owned_view(gpu,&observed));
+  CHECK(fake.submits==submits+1 && fake.readbacks==1 && gpu->resident_application_pass);
+  fake.fail_readback=0;
+  CHECK(gml_render_application_surface_owned_view(gpu,&observed));
+  CHECK(fake.submits==submits+1 && fake.readbacks==2 &&
+        observed.pixels[0]==fake.readback_colour);
+  gml_particle_state_destroy(particles);
+  gml_render_free(gpu);
+  free(gpu);
+  return 1;
+}
+
+static int particle_line_recovery_uses_cpu_raster(void){
+  enum { WIDTH=96,HEIGHT=48 };
+  static const double angles[]={0,17,90,-43};
+  GmlRender *cpu=(GmlRender*)calloc(1,sizeof *cpu);
+  GmlRender *gpu=(GmlRender*)calloc(1,sizeof *gpu);
+  GmlParticleState *particles=gml_particle_state_create(NULL);
+  uint32_t cpu_pixels[WIDTH*HEIGHT],replayed[WIDTH*HEIGHT];
+  CHECK(cpu && gpu && particles && gml_render_init(cpu,NULL)==0 &&
+        gml_render_init(gpu,NULL)==0);
+  CHECK(gml_render_application_surface_ensure_owned(gpu,WIDTH,HEIGHT));
+  int system=gml_part_system_create(particles),type=gml_part_type_create(particles);
+  CHECK(system && type);
+  gml_part_type_shape(particles,type,3);
+  gml_part_type_size(particles,type,1,1,0,0);
+  gml_part_type_alpha(particles,type,1,0.375,0.375,0.375);
+  for(unsigned test=0;test<16u;test++){
+    FakeDevice fake={.on_demand=1};
+    GmlRenderDeviceServices device=service(&fake);
+    device.observe_on_demand=fake_observe_on_demand;
+    gml_render_bind_device(gpu,&device);
+    CHECK(gml_render_begin_resident_owned_application(gpu,0.0,0.0,0));
+    for(unsigned pixel=0;pixel<WIDTH*HEIGHT;pixel++)
+      cpu_pixels[pixel]=replayed[pixel]=0x49273859u;
+    gml_render_begin(cpu,cpu_pixels,WIDTH,HEIGHT,0.0,0.0);
+    cpu->interp=gpu->interp=(test>>2u)&1u;
+    cpu->alphablend=gpu->alphablend=(test>>3u)&1u;
+    gml_part_type_scale(particles,type,test&1u?-0.75:1.25,test&2u?-1.5:0.5);
+    gml_part_type_orientation(particles,type,angles[test%4u],angles[test%4u],0,0,0);
+    gml_part_system_clear(particles,system);
+    gml_part_particles_create_color(particles,system,test&1u?4.25:48.25,23.75,
+                                    type,0x7193B5u,1);
+    gml_render_set_pending_fill(gpu,0x49273859u);
+    gml_part_system_drawit(particles,cpu,system);
+    gml_part_system_drawit(particles,gpu,system);
+    CHECK(gpu->resident_application_pass && gml_render_scene_submit_pending(gpu));
+    CHECK(fake.last_batch_operations==1u && fake.readbacks==0 &&
+          gml_render_particle_line_valid(&fake.last_primitive));
+    CHECK(gml_render_cpu_replay_one(replayed,WIDTH,HEIGHT,&fake.last_primitive,NULL,NULL));
+    CHECK(memcmp(cpu_pixels,replayed,sizeof replayed)==0);
+    gml_render_bind_device(gpu,NULL);
+  }
+  gml_particle_state_destroy(particles);
+  gml_render_free(cpu); gml_render_free(gpu);
+  free(cpu); free(gpu);
+  return 1;
+}
+
 static int resident_software3d_primitive_cpu_bridge(void){
   GmlRender *cpu=(GmlRender*)calloc(1,sizeof *cpu);
   GmlRender *gpu=(GmlRender*)calloc(1,sizeof *gpu);
@@ -7409,6 +7547,8 @@ int main(void){
   passed+=resident_unit_world_primitive_order();
   passed+=resident_gradient_primitive_cpu_boundary();
   passed+=resident_particle_square_public_order();
+  passed+=resident_particle_line_public_order();
+  passed+=particle_line_recovery_uses_cpu_raster();
   passed+=resident_software3d_primitive_cpu_bridge();
   passed+=resident_filled_span_public_order();
   passed+=resident_line_coverage_public_order();
@@ -7462,6 +7602,6 @@ int main(void){
   passed+=source_free_primitive_rect_replay();
   passed+=stretched_float_exact_replay();
   passed+=filtered_font_exact_recovery();
-  printf("render resource cases: passed=%d failed=%d\n",passed,101-passed);
-  return passed==101?EXIT_SUCCESS:EXIT_FAILURE;
+  printf("render resource cases: passed=%d failed=%d\n",passed,103-passed);
+  return passed==103?EXIT_SUCCESS:EXIT_FAILURE;
 }

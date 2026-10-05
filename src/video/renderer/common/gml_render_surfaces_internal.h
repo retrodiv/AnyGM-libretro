@@ -43,6 +43,8 @@ int gml_render_application_scene_enqueue(GmlRender *render,const GmlRenderDrawOp
                                           const GmlRenderDrawStateSnapshot *state,
                                           const GmlRenderResourceSource *source);
 int gml_render_application_scene_flush(GmlRender *render);
+int gml_render_application_scene_enqueue_primitive(GmlRender *render,
+                                                   const GmlRenderDrawOp *operation);
 int gml_render_checkpoint_pending_resources(GmlRender *render);
 void gml_render_application_scene_queue_dispose(GmlRender *render);
 /* Call before a CPU leaf writes an explicitly resident application pass. The pending GPU clear

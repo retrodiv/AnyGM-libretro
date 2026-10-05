@@ -239,7 +239,31 @@
   "  if(significand==16777216u){ significand>>=1u; exponent++; }\n" \
   "  return uintBitsToFloat((exponent<<23u)|(significand&8388607u));\n" \
   "}\n" \
+  "float particle_line_cell(vec2 p){\n" \
+  "  float x=clamp(min((p.x+29.0)/5.0,(28.0-p.x)/5.0),0.0,1.0);\n" \
+  "  float y=clamp(min((p.y+5.75)/2.5,(4.75-p.y)/2.5),0.0,1.0);\n" \
+  "  return x*y;\n" \
+  "}\n" \
   "void main(){\n" \
+  "  if(u_filter==27){\n" \
+  "    // R03_SHADER_PARTICLE_LINE: procedural soft coverage, separate fixed source-over.\n" \
+  "    vec2 pixel=vec2(floor(gl_FragCoord.x),u_extent.y-1.0-floor(gl_FragCoord.y));\n" \
+  "    vec2 delta=pixel-v_map.xy;\n" \
+  "    vec2 local=vec2(v_map.z*delta.x-v_map.w*delta.y,v_map.w*delta.x+v_map.z*delta.y);\n" \
+  "    vec2 point=(local+vec2(0.5))/v_step-vec2(0.5);\n" \
+  "    float coverage;\n" \
+  "    if(v_span_x.z==0.0) coverage=particle_line_cell(floor(point+vec2(0.5)));\n" \
+  "    else {\n" \
+  "      vec2 low=floor(point),phase=fract(point);\n" \
+  "      float a=particle_line_cell(low),b=particle_line_cell(low+vec2(1.0,0.0));\n" \
+  "      float c=particle_line_cell(low+vec2(0.0,1.0)),d=particle_line_cell(low+vec2(1.0));\n" \
+  "      coverage=mix(mix(a,b,phase.x),mix(c,d,phase.x),phase.y);\n" \
+  "    }\n" \
+  "    if(coverage<=0.0) discard;\n" \
+  "    float alpha=v_span_x.w==0.0?1.0:floor(clamp(coverage*v_colour.a,0.0,1.0)*255.0+0.5)/255.0;\n" \
+  "    if(alpha==0.0) discard;\n" \
+  "    o_color=vec4(v_colour.rgb,alpha); return;\n" \
+  "  }\n" \
   "  // Exact global RGB predicate; no CPU query or destination sampling in the blit.\n" \
   "  if(u_filter==23 || u_filter==24){\n" \
   "    if(texelFetch(u_recovery_screen,ivec2(0),0).r!=0.0 ||\n" \

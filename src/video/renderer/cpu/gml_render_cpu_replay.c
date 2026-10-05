@@ -8,6 +8,7 @@
 #include "gml_render_cpu_blit_internal.h"
 #include "gml_render_cpu_blit.h"
 #include "gml_render_cpu_surfaces.h"
+#include "gml_particle.h"
 
 #include <limits.h>
 #include <math.h>
@@ -166,6 +167,7 @@ int gml_render_cpu_replay_eligible(const GmlRenderDrawOp *operation,
     return operation->source_count==0u;
   if(operation->opcode==GML_RENDER_OP_COLOURED_PRIMITIVE)
     return operation->source_count==0u && !operation->sources && !source &&
+      operation->payload.primitive.kind==GML_RENDER_PRIMITIVE_FLAT &&
       (operation->payload.primitive.colour>>24)==255u &&
       source_rect(operation->payload.primitive.region,target->width,target->height);
   if(operation->opcode!=GML_RENDER_OP_TEXTURED_QUAD || !state || !source_valid(source) ||
@@ -296,7 +298,8 @@ int gml_render_cpu_replay_one(uint32_t *target,uint32_t width,uint32_t height,
   if(!target || !operation || operation->target.width!=width ||
      operation->target.height!=height ||
      (operation->source_count && (!source || !source->bytes)) ||
-     !gml_render_cpu_replay_eligible(operation,state,source)) return 0;
+     (!gml_render_particle_line_valid(operation) &&
+      !gml_render_cpu_replay_eligible(operation,state,source))) return 0;
   if(operation->opcode==GML_RENDER_OP_CLEAR){
     gml_render_cpu_backend_fill_xrgb(target,(int)((size_t)width*height),
       operation->target.pixel_format==GML_RENDER_PIXEL_XRGB8888
@@ -304,6 +307,13 @@ int gml_render_cpu_replay_one(uint32_t *target,uint32_t width,uint32_t height,
     return 1;
   }
   if(operation->opcode==GML_RENDER_OP_COLOURED_PRIMITIVE){
+    if(operation->payload.primitive.kind==GML_RENDER_PRIMITIVE_PARTICLE_LINE){
+      const GmlRenderPrimitiveRect *p=&operation->payload.primitive;
+      uint32_t colour=((p->colour&255u)<<16)|(p->colour&0xFF00u)|((p->colour>>16)&255u);
+      gml_particle_raster_line(target,(int)width,(int)height,p->centre_x,p->centre_y,
+        p->scale_x,p->scale_y,p->angle,colour,p->alpha,p->interpolate,p->alpha_blend);
+      return 1;
+    }
     const GmlRenderRect *region=&operation->payload.primitive.region;
     uint32_t colour=operation->payload.primitive.colour;
     for(uint32_t y=0;y<region->height;y++)

@@ -255,7 +255,14 @@ typedef struct GmlRenderCopyRegion {
 typedef struct GmlRenderPrimitiveRect {
   GmlRenderRect region;
   uint32_t colour;
+  /* Zero retains the flat rectangle rule. Procedural particle lines carry
+   * resolved raster geometry, not a mutable particle-system reference. */
+  uint32_t kind;
+  double centre_x,centre_y,scale_x,scale_y,angle,alpha;
+  uint32_t interpolate,alpha_blend;
 } GmlRenderPrimitiveRect;
+
+enum { GML_RENDER_PRIMITIVE_FLAT=0, GML_RENDER_PRIMITIVE_PARTICLE_LINE=1 };
 
 typedef enum GmlRenderLayerEffectKind {
   GML_RENDER_LAYER_EFFECT_TINT=1,
@@ -311,6 +318,8 @@ typedef struct GmlRenderDrawOp {
     const struct GmlPlanShader *shader;
   } payload;
 } GmlRenderDrawOp;
+
+int gml_render_particle_line_valid(const GmlRenderDrawOp *operation);
 
 /* Snapshots and per-operation source arrays are immutable for this submission. The caller owns
  * every referenced array until submit returns; a reconstruction record must copy or pin anything

@@ -366,7 +366,16 @@ static int scene_preflight(GmlGpuBackend *backend,const GmlRenderDrawBatch *batc
       continue;
     }
     if(op->opcode==GML_RENDER_OP_COLOURED_PRIMITIVE){
+      if(op->payload.primitive.kind==GML_RENDER_PRIMITIVE_PARTICLE_LINE){
+        if(!gml_render_particle_line_valid(op) ||
+           (op->payload.primitive.alpha_blend &&
+            (!backend->gl.BlendFuncSeparate || !backend->gl.BlendEquationSeparate)) ||
+           (!existing_target(backend,target) &&
+            !cleared_earlier(cleared,clear_count,target->image))) return 0;
+        continue;
+      }
       if(op->reconstruction_mode!=GML_RENDER_REPLAY_EXACT ||
+         op->payload.primitive.kind!=GML_RENDER_PRIMITIVE_FLAT ||
          op->source_count || op->sources ||
          !full_region(target->region,target->width,target->height) ||
          !valid_region(op->payload.primitive.region,target->width,target->height) ||
@@ -762,9 +771,11 @@ static int flush_quads(GmlGpuBackend *backend,GlSceneImage *target,GlSceneImage 
   backend->gl.Viewport(0,0,(GLsizei)target->width,(GLsizei)target->height);
   backend->gl.Scissor(0,0,(GLsizei)target->width,(GLsizei)target->height);
   backend->gl.ActiveTexture(GL_TEXTURE0);
-  backend->gl.BindTexture(GL_TEXTURE_2D,source->texture);
-  backend->gl.TexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,(GLint)texture_filter);
-  backend->gl.TexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAG_FILTER,(GLint)texture_filter);
+  backend->gl.BindTexture(GL_TEXTURE_2D,source?source->texture:0u);
+  if(source){
+    backend->gl.TexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,(GLint)texture_filter);
+    backend->gl.TexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAG_FILTER,(GLint)texture_filter);
+  }
   if(blend && blend!=8 && filter!=15u && filter!=17u){
     backend->gl.BlendFuncSeparate(blend==9 || blend==10?GL_ONE:GL_SRC_ALPHA,
                                   blend==9?GL_ONE:GL_ONE_MINUS_SRC_ALPHA,
@@ -1149,7 +1160,13 @@ GmlRenderExecutionResult gml_gpu_opengl_scene_submit(GmlGpuBackend *backend,
   for(uint32_t index=0;index<batch->operation_count;index++){
     const GmlRenderDrawOp *op=&batch->operations[index];
     GlSceneImage *target;
-    if(pending_count && (op->opcode!=GML_RENDER_OP_TEXTURED_QUAD ||
+    int particle=op->opcode==GML_RENDER_OP_COLOURED_PRIMITIVE &&
+      op->payload.primitive.kind==GML_RENDER_PRIMITIVE_PARTICLE_LINE;
+    if(pending_count && (particle
+       ? !active_target || !same_logical(active_target->ref,op->target.image) ||
+         pending_count==GL_SCENE_MAX_QUADS || pending_filter!=27u ||
+         pending_blend!=(int)op->payload.primitive.alpha_blend
+       : (op->opcode!=GML_RENDER_OP_TEXTURED_QUAD ||
        !active_target || !same_logical(active_target->ref,op->target.image) ||
        pending_count==GL_SCENE_MAX_QUADS ||
        !pending_source || !same_version(pending_source->ref,op->sources[0]) ||
@@ -1160,7 +1177,7 @@ GmlRenderExecutionResult gml_gpu_opengl_scene_submit(GmlGpuBackend *backend,
        qualified_blend(&batch->states[op->state_index])==5 ||
        qualified_blend(&batch->states[op->state_index])==6 ||
        scene_filter(&op->payload.quad,&batch->states[op->state_index],op->scene_family)==15u ||
-       scene_filter(&op->payload.quad,&batch->states[op->state_index],op->scene_family)==17u)){
+       scene_filter(&op->payload.quad,&batch->states[op->state_index],op->scene_family)==17u))){
       if(!flush_quads(backend,active_target,pending_source,pending_filter,
                       pending_blend,pending_count)){
         mark_uncertain(&result,active_target);
@@ -1193,6 +1210,32 @@ GmlRenderExecutionResult gml_gpu_opengl_scene_submit(GmlGpuBackend *backend,
       continue;
     }
     if(op->opcode==GML_RENDER_OP_COLOURED_PRIMITIVE){
+      if(particle){
+        const GmlRenderPrimitiveRect *p=&op->payload.primitive;
+        static const unsigned corners[6]={0,1,2,0,2,3};
+        double rad=p->angle*3.14159265358979323846/180.0;
+        double co=cos(rad),si=sin(rad);
+        for(unsigned vertex=0;vertex<6u;vertex++){
+          unsigned corner=corners[vertex];
+          float *v=backend->scene.vertices+
+            ((size_t)pending_count*6u+vertex)*GL_SCENE_VERTEX_FLOATS;
+          memset(v,0,GL_SCENE_VERTEX_FLOATS*sizeof *v);
+          v[0]=(float)p->region.x+((corner==1u || corner==2u)?p->region.width:0u);
+          v[1]=(float)p->region.y+(corner>=2u?p->region.height:0u);
+          v[4]=(float)((p->colour>>16)&255u)/255.0f;
+          v[5]=(float)((p->colour>>8)&255u)/255.0f;
+          v[6]=(float)(p->colour&255u)/255.0f;
+          v[7]=(float)p->alpha;
+          v[12]=(float)p->centre_x; v[13]=(float)p->centre_y;
+          v[14]=(float)co; v[15]=(float)si;
+          v[16]=(float)p->scale_x; v[17]=(float)p->scale_y;
+          v[21]=(float)p->interpolate; v[22]=(float)p->alpha_blend;
+        }
+        pending_source=NULL; pending_filter=27u; pending_blend=(int)p->alpha_blend;
+        pending_count++;
+        target->valid=1; target->rendered_origin=1;
+        continue;
+      }
       if(!gml_render_gpu_opengl_draw_primitive(backend,op,target)){
         mark_uncertain(&result,target);
         break;

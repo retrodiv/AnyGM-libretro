@@ -1043,6 +1043,65 @@ static int scene_hardware_filtered_batch_case(unsigned kind){
   return 1;
 }
 
+static int scene_particle_line_batch_case(void){
+  for(unsigned variant=0;variant<7u;variant++){
+    enum { LINES=2049 };
+    GmlRenderDrawOp *ops=(GmlRenderDrawOp*)calloc(LINES+1u,sizeof *ops);
+    GmlGpuContext context=fake_context(GML_GPU_API_OPENGLES3);
+    GmlRenderDeviceServices device={0};
+    unsigned factors[4]={0};
+    anygm_test_graphics_reset();
+    if(variant==1u) anygm_test_graphics_withhold("glBlendFuncSeparate");
+    GmlGpu *gpu=gml_gpu_create();
+    REQUIRE(ops && gpu && gml_gpu_context_reset(gpu,&context),"particle context created");
+    gml_gpu_device_services(gpu,&device);
+    ops[0].opcode=GML_RENDER_OP_CLEAR;
+    ops[0].target=(GmlRenderTargetRef){
+      .image={GML_RENDER_RESOURCE_APPLICATION,141u,1u,2u},.storage_version=1u,
+      .width=96u,.height=48u,.pixel_format=GML_RENDER_PIXEL_ARGB8888,
+      .region={0,0,96u,48u}};
+    ops[0].payload.clear_colour=0x49273859u;
+    for(unsigned line=0;line<LINES;line++){
+      ops[line+1u]=ops[0];
+      ops[line+1u].opcode=GML_RENDER_OP_COLOURED_PRIMITIVE;
+      ops[line+1u].scene_family=GML_RENDER_SCENE_PRIMITIVE;
+      ops[line+1u].reconstruction_mode=GML_RENDER_DEVICE_CHECKPOINT;
+      ops[line+1u].target.image.content_version=3u+line;
+      ops[line+1u].payload.primitive=(GmlRenderPrimitiveRect){
+        .kind=GML_RENDER_PRIMITIVE_PARTICLE_LINE,.region={0,0,96u,48u},
+        .colour=0xFF7193B5u,.centre_x=48.25,.centre_y=23.75,
+        .scale_x=1.25,.scale_y=0.5,.angle=17,.alpha=0.375,
+        .interpolate=line%2u,.alpha_blend=1u};
+    }
+    if(variant==2u) ops[LINES].payload.primitive.alpha=NAN;
+    if(variant==3u) ops[LINES].payload.primitive.kind=9u;
+    if(variant==4u) ops[LINES].reconstruction_mode=GML_RENDER_REPLAY_EXACT;
+    if(variant==5u) ops[LINES].payload.primitive.region.width=97u;
+    if(variant==6u) ops[LINES].payload.primitive.alpha_blend=0u;
+    GmlRenderDrawBatch batch={ops,LINES+1u,NULL,0u};
+    GmlRenderExecutionResult result=device.submit(device.context,&batch);
+    if(variant && variant!=6u){
+      REQUIRE(result.status==GML_RENDER_EXEC_UNSUPPORTED && !result.accepted_prefix &&
+              !anygm_test_graphics_clear_calls() && !anygm_test_graphics_scene_draw_calls(),
+              "particle refusal is transactional before its clear prefix");
+    }else{
+      anygm_test_graphics_blend_factors(factors);
+      REQUIRE(result.status==GML_RENDER_EXEC_ACCEPTED && result.accepted_prefix==LINES+1u,
+              "source-free particle batch accepted");
+      REQUIRE(anygm_test_graphics_scene_draw_calls()==2 &&
+              anygm_test_graphics_scene_vertices()==LINES*6,
+              "compatible lines batch to the declared capacity, independent of interpolation");
+      REQUIRE(factors[0]==GL_SRC_ALPHA && factors[1]==GL_ONE_MINUS_SRC_ALPHA &&
+              factors[2]==GL_ONE && factors[3]==GL_ONE_MINUS_SRC_ALPHA,
+              "particle source-over preserves the separate destination alpha rule");
+      REQUIRE(!anygm_test_graphics_scene_copies() && !anygm_test_graphics_read_pixels(),
+              "particle batch needs no target snapshot or ordinary readback");
+    }
+    gml_gpu_destroy(gpu,1); free(ops);
+  }
+  return 1;
+}
+
 static int scene_hardware_additive_batch_case(void){
   return scene_hardware_filtered_batch_case(1);
 }
@@ -2798,6 +2857,7 @@ int main(int argc,char **argv){
     {"scene_optional_entry_refusal",scene_optional_entry_refusal_case},
     {"scene_content_source_orientation",scene_content_source_orientation_case},
     {"scene_resident_batch",scene_resident_batch_case},
+    {"scene_particle_line_batch",scene_particle_line_batch_case},
     {"scene_hardware_additive_batch",scene_hardware_additive_batch_case},
     {"scene_hardware_background_batch",scene_hardware_background_batch_case},
     {"scene_hardware_combined_batch",scene_hardware_combined_batch_case},

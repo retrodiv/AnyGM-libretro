@@ -29,6 +29,55 @@ static int resident_flat_eligible(GmlRender *render){
     !render->rotated_batch_building;
 }
 
+int gml_render_try_particle_line(GmlRender *r,double x,double y,
+                                 double xs,double ys,double angle,
+                                 uint32_t colour,double alpha){
+  const GmlRenderDeviceServices *device=gml_render_device(r);
+  if(!r || !r->resident_application_pass || !device || !device->observe_on_demand ||
+     !device->observe_on_demand(device->context) || !gml_render_scene_target_matches(r) ||
+     r->active_shader>=0 || r->color_write_mask!=15u || r->alpha_test_enable ||
+     r->blendmode || r->blend_equation!=1 || r->blend_equation_alpha!=1 ||
+     r->pending_presentation || r->rotated_batch_count || r->rotated_batch_building ||
+     (r->target_sp==0 && r->fb==r->base_fb &&
+      (r->classic_interp_phase[0] || r->classic_interp_phase[1] || r->classic_interp_phase[2])) ||
+     !isfinite(x) || !isfinite(y) || !isfinite(xs) || !isfinite(ys) ||
+     !isfinite(angle) || !isfinite(alpha) || alpha<=0.0 || alpha>1.0 ||
+     fabs(xs)<1.0/128.0 || fabs(ys)<1.0/128.0 || fabs(xs)>128.0 || fabs(ys)>128.0 ||
+     fabs(x)>16384.0 || fabs(y)>16384.0 || fabs(angle)>360.0) return 0;
+  double radians=angle*3.14159265358979323846/180.0;
+  double co=cos(radians),si=sin(radians);
+  double ex=fabs(co)*29.0*fabs(xs)+fabs(si)*6.0*fabs(ys)+1.0;
+  double ey=fabs(si)*29.0*fabs(xs)+fabs(co)*6.0*fabs(ys)+1.0;
+  double x0=fmax(0.0,floor(x-ex)),x1=fmin((double)r->fbw-1.0,ceil(x+ex));
+  double y0=fmax(0.0,floor(y-ey)),y1=fmin((double)r->fbh-1.0,ceil(y+ey));
+  if(x1<x0 || y1<y0) return 1;
+  if(r->pending_underlay && !gml_render_compose_resident_underlay(r)) return 0;
+  gml_render_flush_pending_fill(r);
+  GmlRenderResource *target=gml_render_scene_target_resource_ensure(r);
+  if(r->pending_fill || !target) return 0;
+  GmlRenderImageRef next=gml_render_application_scene_next_image_ref(r,target);
+  if(next.content_version==UINT64_MAX) return 0;
+  GmlRenderDrawOp operation={0};
+  operation.opcode=GML_RENDER_OP_COLOURED_PRIMITIVE;
+  operation.scene_family=GML_RENDER_SCENE_PRIMITIVE;
+  operation.reconstruction_mode=GML_RENDER_DEVICE_CHECKPOINT;
+  operation.target=(GmlRenderTargetRef){.image=next,.storage_version=1u,
+    .width=(uint32_t)r->fbw,.height=(uint32_t)r->fbh,
+    .pixel_format=GML_RENDER_PIXEL_ARGB8888,
+    .region={0,0,(uint32_t)r->fbw,(uint32_t)r->fbh}};
+  operation.target.image.content_version++;
+  operation.payload.primitive=(GmlRenderPrimitiveRect){
+    .region={(int32_t)x0,(int32_t)y0,(uint32_t)(x1-x0+1.0),(uint32_t)(y1-y0+1.0)},
+    .colour=gml_render_cpu_backend_color_to_xrgb(colour),
+    .kind=GML_RENDER_PRIMITIVE_PARTICLE_LINE,.centre_x=x,.centre_y=y,
+    .scale_x=xs,.scale_y=ys,.angle=angle,.alpha=alpha,
+    .interpolate=r->interp?1u:0u,.alpha_blend=r->alphablend?1u:0u};
+  if(!gml_render_application_scene_enqueue_primitive(r,&operation)) return 0;
+  r->fb_all_transparent=0;
+  r->fb_opaque_known=r->fb_all_opaque=0;
+  return 1;
+}
+
 int gml_render_try_opaque_primitive_rect(GmlRender *render,int x1,int y1,int x2,int y2,
                                          uint32_t color){
   GmlRenderResource *resource;
