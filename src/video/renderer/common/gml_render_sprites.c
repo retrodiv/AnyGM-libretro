@@ -142,9 +142,9 @@ static int resident_integer_sprite(GmlRender *r,GmlSprite *sprite,int subimg,
      sprite->spine || sprite->ns_enabled || sprite->n_frames<=0 ||
      sprite->w<=0 || sprite->h<=0 ||
      (r->classic && (anygm_policy_classic_modern_presentation(r->win) ||
-                     r->interp || xs!=1.0 || ys!=1.0)) ||
-     (r->world_transform_active &&
-                    (r->world_scale_x!=1.0 || r->world_scale_y!=1.0)) ||
+                     r->interp || xs!=1.0 || ys!=1.0 ||
+                     (r->world_transform_active &&
+                      (r->world_scale_x!=1.0 || r->world_scale_y!=1.0)))) ||
      (r->gui_pass_active && !resident_identity_screen_gui(r)) ||
      r->active_shader>=0 || r->alpha_test_enable || !r->alphablend ||
      r->blendmode || r->blend_equation!=1 || r->blend_equation_alpha!=1 ||
@@ -174,6 +174,9 @@ static int resident_integer_sprite(GmlRender *r,GmlSprite *sprite,int subimg,
      page->atlas<0 || page->atlas>=r->n_atlas) return 0;
   left=x-(double)sprite->originx*xs+(double)page->tx*xs-r->cam_x;
   top=y-(double)sprite->originy*ys+(double)page->ty*ys-r->cam_y;
+  /* R03-SPR-NEAREST: public dispatch has already projected point and scale.
+   * The crop validates final integral coverage; world state is not a second
+   * transform or an independent reason to reject an exact nearest sprite. */
   /* A fully offscreen crop cannot write the application surface. Keep the
    * margin conservative for fractional coordinates and mirrored draws. */
   {
@@ -210,7 +213,8 @@ static int resident_atlas_crop_from_page(GmlRender *r,GmlTpag *page,
                      anygm_policy_classic_modern_presentation(r->win) ||
                      r->interp || xs!=1.0 || ys!=1.0)) ||
      (r->world_transform_active &&
-                    (r->world_scale_x!=1.0 || r->world_scale_y!=1.0)) ||
+      (r->world_scale_x!=1.0 || r->world_scale_y!=1.0) &&
+      (r->classic || family!=GML_RENDER_SCENE_SPRITE || r->interp)) ||
      (r->gui_pass_active &&
       (family!=GML_RENDER_SCENE_SPRITE || !resident_identity_screen_gui(r))) ||
      r->active_shader>=0 || r->alpha_test_enable ||

@@ -6481,6 +6481,92 @@ static int resident_integer_scaled_atlas_sprite_gpu(void){
   return 1;
 }
 
+static int resident_integer_world_sprite(void){
+  enum { WIDTH=24,HEIGHT=24,POSITIVES=40,VARIANTS=45 };
+  const double world[5][2]={{2,2},{4,4},{2,3},{0.5,0.5},{-2,-3}};
+  for(unsigned modern=0;modern<2u;modern++)
+  for(unsigned variant=0;variant<VARIANTS;variant++){
+    GmlRender *render=(GmlRender*)calloc(1,sizeof *render);
+    GmlWin content={0};
+    GmlRenderApplicationWriteView view={0};
+    FakeDevice fake={0};
+    GmlRenderDeviceServices device=service(&fake);
+    uint32_t candidate[WIDTH*HEIGHT];
+    uint8_t rgba[16]={208,32,16,255,16,208,32,255,
+                      32,16,208,255,192,176,160,255};
+    unsigned mapping=variant<POSITIVES?variant/8u:0u;
+    unsigned signs=variant<POSITIVES?(variant/2u)%4u:0u;
+    double xs=mapping==3u?4.0:1.0,ys=xs;
+    double cam=0.5;
+    CHECK(render && gml_render_application_surface_ensure_owned(render,WIDTH,HEIGHT));
+    content.bytecode=modern?17:15;
+    render->win=&content;
+    render->atlas=(GmlAtlas*)calloc(1,sizeof *render->atlas);
+    render->tpag=(GmlTpag*)calloc(1,sizeof *render->tpag);
+    render->spr=(GmlSprite*)calloc(1,sizeof *render->spr);
+    CHECK(render->atlas && render->tpag && render->spr);
+    render->n_atlas=render->n_tpag=render->n_spr=1;
+    render->atlas[0].px=(uint8_t*)malloc(sizeof rgba);
+    render->spr[0].frame=(int*)calloc(1,sizeof(int));
+    CHECK(render->atlas[0].px && render->spr[0].frame);
+    if(variant%2u) rgba[7]=0;
+    memcpy(render->atlas[0].px,rgba,sizeof rgba);
+    render->atlas[0].w=render->atlas[0].h=2;
+    render->tpag[0].sw=render->tpag[0].sh=2;
+    render->tpag[0].tw=render->tpag[0].th=2;
+    render->tpag[0].bw=render->tpag[0].bh=4;
+    render->tpag[0].tx=render->tpag[0].ty=1;
+    render->spr[0].w=render->spr[0].h=4;
+    render->spr[0].originx=render->spr[0].originy=2;
+    render->spr[0].n_frames=1;
+    render->active_shader=-1;
+    render->color_write_mask=15u;
+    if(signs&1u) xs=-xs;
+    if(signs&2u) ys=-ys;
+    double projected_xs=xs*world[mapping][0],projected_ys=ys*world[mapping][1];
+    double x=(6.0+projected_xs+(projected_xs<0.0?-2.0*projected_xs:0.0)+cam)/world[mapping][0];
+    double y=(6.0+projected_ys+(projected_ys<0.0?-2.0*projected_ys:0.0)+cam)/world[mapping][1];
+    double second_x=x+1.0/world[mapping][0];
+    gml_render_bind_device(render,&device);
+    CHECK(gml_render_begin_resident_owned_application(render,cam,cam,0));
+    render->world_transform_active=1;
+    render->world_scale_x=world[mapping][0];render->world_scale_y=world[mapping][1];
+    gml_render_set_pending_fill(render,0x80123456u);
+    gml_draw_sprite_ext(render,0,0,x,y,xs,ys,0.0,0xFFFFFFu,1.0);
+    CHECK(render->resident_application_pass);
+    unsigned exclusion=variant-POSITIVES;
+    if(variant==POSITIVES) render->interp=1;
+    if(variant==POSITIVES+1u) second_x+=0.125;
+    if(variant==POSITIVES+2u) xs=0.75;
+    if(variant==POSITIVES+3u) render->color_write_mask=7u;
+    if(variant==POSITIVES+4u) second_x=(-1.0+projected_xs+cam)/world[mapping][0];
+    gml_draw_sprite_ext(render,0,0,second_x,y,xs,ys,0.0,0xFFFFFFu,1.0);
+    CHECK(render->resident_application_pass==(variant<POSITIVES));
+    CHECK(gml_render_scene_flush(render) && fake.submits==2 && fake.readbacks==0);
+    CHECK(variant>=POSITIVES || fake.last_batch_operations==2u);
+    CHECK(gml_render_application_surface_owned_view(render,&view));
+    memcpy(candidate,view.pixels,sizeof candidate);
+    render->interp=0;render->color_write_mask=15u;
+    xs=projected_xs/world[mapping][0];
+    CHECK(gml_render_begin_owned_application(render,cam,cam,0));
+    render->world_transform_active=1;
+    render->world_scale_x=world[mapping][0];render->world_scale_y=world[mapping][1];
+    gml_render_set_pending_fill(render,0x80123456u);
+    gml_draw_sprite_ext(render,0,0,x,y,xs,ys,0.0,0xFFFFFFu,1.0);
+    if(variant>=POSITIVES){
+      if(exclusion==0u) render->interp=1;
+      if(exclusion==2u) xs=0.75;
+      if(exclusion==3u) render->color_write_mask=7u;
+    }
+    gml_draw_sprite_ext(render,0,0,second_x,y,xs,ys,0.0,0xFFFFFFu,1.0);
+    gml_render_flush_pending_fill(render);
+    CHECK(!memcmp(candidate,render->app_surface_owned,sizeof candidate));
+    gml_render_free(render);
+    free(render);
+  }
+  return 1;
+}
+
 static int state_without_context(void){
   GmlRender *original=(GmlRender*)calloc(1,sizeof *original);
   GmlRender *restored=(GmlRender*)calloc(1,sizeof *restored);
@@ -7208,6 +7294,7 @@ int main(void){
   passed+=resident_packaged_real_font_glyph(1);
   passed+=resident_binary_atlas_sprite_gpu();
   passed+=resident_integer_scaled_atlas_sprite_gpu();
+  passed+=resident_integer_world_sprite();
   passed+=state_without_context();
   passed+=device_observation_preserves_actual_replayable_pixels();
   passed+=resident_authority_avoids_replay_retention();
@@ -7222,6 +7309,6 @@ int main(void){
   passed+=source_free_primitive_rect_replay();
   passed+=stretched_float_exact_replay();
   passed+=filtered_font_exact_recovery();
-  printf("render resource cases: passed=%d failed=%d\n",passed,97-passed);
-  return passed==97?EXIT_SUCCESS:EXIT_FAILURE;
+  printf("render resource cases: passed=%d failed=%d\n",passed,98-passed);
+  return passed==98?EXIT_SUCCESS:EXIT_FAILURE;
 }
