@@ -5,6 +5,7 @@
 #include "gml_render_cpu_backend.h"
 #include "gml_render_cpu_blit.h"
 #include "gml_render_cpu_blit_internal.h"
+#include "gml_render_cpu_dispatch_internal.h"
 #include "gml_render_internal.h"
 #include "gml_render_sprites_internal.h"
 #include "gml_render_surfaces_internal.h"
@@ -206,6 +207,7 @@ void gml_render_cpu_backend_draw_pixel_alpha(GmlRender *R, int x, int y, uint32_
    * touching a pixel; otherwise the end-of-frame flush paints over the completed primitive.
    * Keep the check here so every such path has the same ordering semantics. */
   if(R->pending_underlay || R->pending_fill) gml_render_prepare_draw(R);
+  gml_render_dispatch_cpu_scope_write(R);
   int preserve_alpha=gml_render_target_preserves_alpha(R);
   R->fb_all_transparent=0;
   /* The subtract preset also applies inverse source alpha to offscreen coverage. A surface
@@ -947,6 +949,7 @@ static void record_first_generation_complete_black_mask(GmlRender *r,GmlTpag *t,
 static inline void blend_argb_src_over_exact(GmlRender *r,uint32_t *dp,const uint32_t *sp,
                                              int run,uint32_t aa,int family){
   if(run<=0 || !aa) return;
+  gml_render_dispatch_cpu_scope_write(r);
   if(aa>=255u){ memcpy(dp,sp,(size_t)run*sizeof(uint32_t)); return; }
   uint32_t ia=255u-aa;
   for(int k=0; k<run; k++){
@@ -1239,6 +1242,7 @@ static inline void blend_argb_src_over_double_reverse(GmlRender *r,uint32_t *dp,
 static inline void blend_argb_src_over_draw_alpha(GmlRender *r,uint32_t *dp,const uint32_t *sp,
                                                   int run,uint32_t aa,double alpha,int family){
   if(run<=0 || !aa || alpha<=0.0) return;
+  gml_render_dispatch_cpu_scope_write(r);
   if(family==GML_BLEND_CLASSIC){
     uint32_t effective=(uint32_t)(aa*alpha+0.5);
     if(effective>255u) effective=255u;
@@ -1310,6 +1314,7 @@ static int blit_tpag_scale1_white_exact(GmlRender *r, GmlTpag *t, GmlAtlas *a,
       uint32_t *dp=r->fb+(size_t)(y0+yy)*r->fbw+x0+sx0;
       const uint32_t *sp=cache+(size_t)yy*t->sw+sx0;
       int n=sx1-sx0;
+      gml_render_dispatch_cpu_scope_write(r);
       if(!r->alphablend) copy_argb_force_opaque(dp,sp,n);
       else if(ar->alpha==255u) memcpy(dp,sp,(size_t)n*sizeof(uint32_t));
       else blend_argb_src_over_exact(r,dp,sp,n,(uint32_t)ar->alpha,quantize_alpha?GML_BLEND_CLASSIC:gml_blend_family(r));
@@ -1330,7 +1335,10 @@ static int blit_tpag_scale1_white_exact(GmlRender *r, GmlTpag *t, GmlAtlas *a,
         while(i<n && !(sp[i]>>24)) i++;
         int j=i;
         while(j<n && (sp[j]>>24)) j++;
-        if(j>i) copy_argb_force_opaque(dp+i,sp+i,j-i);
+        if(j>i){
+          gml_render_dispatch_cpu_scope_write(r);
+          copy_argb_force_opaque(dp+i,sp+i,j-i);
+        }
         i=j;
       }
       continue;
@@ -1368,7 +1376,10 @@ static int blit_tpag_scale1_white_draw_alpha(GmlRender *r, GmlTpag *t, GmlAtlas 
     uint32_t *dp=r->fb+(size_t)(y0+yy)*r->fbw+x0+sx0;
     const uint32_t *sp=cache+(size_t)yy*t->sw+sx0;
     int n=sx1-sx0;
-    if(!r->alphablend) copy_argb_force_opaque(dp,sp,n);
+    if(!r->alphablend){
+      gml_render_dispatch_cpu_scope_write(r);
+      copy_argb_force_opaque(dp,sp,n);
+    }
     else if(quantize_alpha)
       blend_argb_src_over_exact(r,dp,sp,n,(uint32_t)lround(ar->alpha*alpha),GML_BLEND_CLASSIC);
     else blend_argb_src_over_draw_alpha(r,dp,sp,n,(uint32_t)ar->alpha,alpha,
@@ -1404,12 +1415,14 @@ static int blit_tpag_scale1_white_exact_flipped(GmlRender *r, GmlTpag *t, GmlAtl
       int px=x0+sx0;
       if(px<0 || px+n>r->fbw) continue;
       uint32_t *dp=r->fb+(size_t)py*r->fbw+px;
+      gml_render_dispatch_cpu_scope_write(r);
       if(!r->alphablend) copy_argb_force_opaque(dp,sp,n);
       else blend_argb_src_over_double(r,dp,sp,n,(uint32_t)ar->alpha);
     } else {
       int px=x0-sx0;
       if(px-(n-1)<0 || px>=r->fbw) continue;
       uint32_t *dp=r->fb+(size_t)py*r->fbw+px;
+      gml_render_dispatch_cpu_scope_write(r);
       if(!r->alphablend) copy_argb_force_opaque_reverse(dp,sp,n);
       else blend_argb_src_over_double_reverse(r,dp,sp,n,(uint32_t)ar->alpha);
     }
@@ -1457,6 +1470,7 @@ static int blit_tpag_scale1_white_exact_rotated_tile(
         cache[(size_t)(local_y+tile_y)*t->sw+local_x+tile_x];
       uint32_t source_alpha=source>>24;
       if(!source_alpha) continue;
+      gml_render_dispatch_cpu_scope_write(r);
       if(!r->alphablend){
         *destination=0xFF000000u|(source&0x00FFFFFFu);
       } else if(source_alpha>=255u){
@@ -1469,7 +1483,7 @@ static int blit_tpag_scale1_white_exact_rotated_tile(
   }
   return 1;
 }
-int gml_render_cpu_try_exact_rotated_background_tile(
+static int try_exact_rotated_background_tile_impl(
     GmlRender *r, GmlTpag *page, double sx, double sy, double sw, double sh,
     double x, double y, double xs, double ys, int mirror, int flip,
     uint32_t color, double alpha){
@@ -1488,6 +1502,16 @@ int gml_render_cpu_try_exact_rotated_background_tile(
        source_x,source_y,source_width,source_height,
        screen_x,screen_y,mirror,flip)) return 1;
   return 0;
+}
+int gml_render_cpu_try_exact_rotated_background_tile(
+    GmlRender *r,GmlTpag *page,double sx,double sy,double sw,double sh,
+    double x,double y,double xs,double ys,int mirror,int flip,uint32_t color,double alpha){
+  GmlRenderDispatchCpuScope scope;
+  gml_render_dispatch_cpu_scope_begin(r,&scope,GML_RENDER_SCENE_TILE);
+  int result=try_exact_rotated_background_tile_impl(r,page,sx,sy,sw,sh,
+                                                   x,y,xs,ys,mirror,flip,color,alpha);
+  gml_render_dispatch_cpu_scope_end(r,&scope);
+  return result;
 }
 static int tpag_alpha_qrows(GmlRender *r, GmlTpag *t, GmlAtlas *a, int min_alpha,
                             const uint16_t **row_min, const uint16_t **row_max){
@@ -1563,6 +1587,7 @@ static void spr_bi_band(void *p, int py0, int py1, int slot){
         sample_b=(float)(sampled&255);
       }
       float oa=(Av*(1.0f/255.0f))*c->fa; if(oa<=0.0f) continue;
+      gml_render_dispatch_cpu_scope_write(r);
       float sR=sample_r*c->fbRr, sG=sample_g*c->fbGg, sB=sample_b*c->fbBb;
       uint32_t *dp=&dprow[tx_];
       if(c->noblend || oa>=1.0f){ *dp=0xFF000000u|((int)(sR+0.5f)<<16)|((int)(sG+0.5f)<<8)|(int)(sB+0.5f); }
@@ -1639,6 +1664,7 @@ static void GML_HOT_RENDER runtime_axis_cache_copy(GmlRender *r, GmlSprite *s){
     uint32_t *dp=r->fb+(size_t)k->y0*r->fbw;
     uint32_t *sp=s->runtime_axis_cache_px;
     int n=k->w*k->h;
+    if(n>0) gml_render_dispatch_cpu_scope_write(r);
     if(s->runtime_axis_cache_uniform_alpha && !s->runtime_axis_cache_copy_255)
       blend_fast8_src_run(dp,sp,n,(uint32_t)s->runtime_axis_cache_uniform_alpha,
                           blend_fast8_rounds(r));
@@ -1652,6 +1678,7 @@ static void GML_HOT_RENDER runtime_axis_cache_copy(GmlRender *r, GmlSprite *s){
       uint32_t *dp=r->fb+(size_t)(k->y0+run->y)*r->fbw+k->x0+run->x;
       uint32_t *sp=s->runtime_axis_cache_px+(size_t)run->y*k->w+run->x;
       uint32_t af=run->alpha;
+      if(af && run->len>0) gml_render_dispatch_cpu_scope_write(r);
       if(s->runtime_axis_cache_copy_255 && af==255u) memcpy(dp,sp,(size_t)run->len*sizeof(uint32_t));
       else blend_fast8_src_run(dp,sp,run->len,af,blend_fast8_rounds(r));
     }
@@ -1665,6 +1692,7 @@ static void GML_HOT_RENDER runtime_axis_cache_copy(GmlRender *r, GmlSprite *s){
     uint8_t *ap=s->runtime_axis_cache_alpha ? s->runtime_axis_cache_alpha+(size_t)yy*k->w+mn : NULL;
     if(!ap){
       int run=mx-mn+1;
+      gml_render_dispatch_cpu_scope_write(r);
       if(s->runtime_axis_cache_uniform_alpha && !s->runtime_axis_cache_copy_255)
         blend_fast8_src_run(dp,sp,run,(uint32_t)s->runtime_axis_cache_uniform_alpha,
                             blend_fast8_rounds(r));
@@ -1677,6 +1705,7 @@ static void GML_HOT_RENDER runtime_axis_cache_copy(GmlRender *r, GmlSprite *s){
       int run=1;
       while(xx+run<=mx && ap[run]==af) run++;
       if(!af){ dp+=run; sp+=run; ap+=run; xx+=run; continue; }
+      gml_render_dispatch_cpu_scope_write(r);
       if(s->runtime_axis_cache_copy_255 && af==255u){
         memcpy(dp,sp,(size_t)run*sizeof(uint32_t));
       } else {
@@ -1893,16 +1922,20 @@ static void axis_sprite_band(void *context,int row_start,int row_end,int slot){
           uint32_t srcpx=0xFF000000u|((uint32_t)sr<<16)|((uint32_t)sg<<8)|(uint32_t)sb;
           uint32_t *dp=&row[px];
           if(!r->alphablend){
+            gml_render_dispatch_cpu_scope_write(r);
             fill_u32_run(dp,run,srcpx);
           } else {
             if(fast8_blend){
               uint32_t af=a8_lut[aa];
+              if(af) gml_render_dispatch_cpu_scope_write(r);
               blend_fast8_run(dp,run,srcpx,af,blend_fast8_rounds(r));
             } else {
               uint32_t af=a16_lut[aa];
               if(af>=65536u){
+                gml_render_dispatch_cpu_scope_write(r);
                 fill_u32_run(dp,run,srcpx);
               } else if(af){
+                gml_render_dispatch_cpu_scope_write(r);
                 uint32_t ia=65536u-af;
                 uint32_t srp=(uint32_t)sr*af, sgp=(uint32_t)sg*af, sbp=(uint32_t)sb*af;
                 for(int k=0;k<run;k++){
@@ -2015,6 +2048,7 @@ static int GML_HOT_RENDER blit_rgba_sprite_axis(GmlRender *r, GmlSprite *owner, 
       const uint8_t *sp=src+((size_t)ly*sw+lx)*4;
       uint32_t *dp=r->fb+(size_t)py*r->fbw+px0;
       if(opaque && alpha>=1.0 && (!r->alphablend || fast8_blend)){
+        gml_render_dispatch_cpu_scope_write(r);
         if(white){
           for(int px=px0; px<px1; px++, sp+=4, dp++)
             *dp=0xFF000000u|((uint32_t)sp[0]<<16)|((uint32_t)sp[1]<<8)|(uint32_t)sp[2];
@@ -2031,19 +2065,21 @@ static int GML_HOT_RENDER blit_rgba_sprite_axis(GmlRender *r, GmlSprite *owner, 
         if(!aa) continue;
         int sr=white?sp[0]:sp[0]*bR/255, sg=white?sp[1]:sp[1]*bG/255, sb=white?sp[2]:sp[2]*bB/255;
         uint32_t srcpx=0xFF000000u|((uint32_t)sr<<16)|((uint32_t)sg<<8)|(uint32_t)sb;
-        if(!r->alphablend){ *dp=srcpx; continue; }
+        if(!r->alphablend){ gml_render_dispatch_cpu_scope_write(r); *dp=srcpx; continue; }
         if(fast8_blend){
           uint32_t af=a8_lut[aa];
-          if(af>=256u){ *dp=srcpx; continue; }
+          if(af>=256u){ gml_render_dispatch_cpu_scope_write(r); *dp=srcpx; continue; }
           if(!af) continue;
+          gml_render_dispatch_cpu_scope_write(r);
           uint32_t ia=256u-af;
           uint32_t srb=(srcpx & 0x00FF00FFu)*af;
           uint32_t sgc=(srcpx & 0x0000FF00u)*af;
           *dp=blend_fast8_cached(*dp,srb,sgc,ia,blend_fast8_rounds(r));
         } else {
           uint32_t af=a16_lut[aa];
-          if(af>=65536u){ *dp=srcpx; continue; }
+          if(af>=65536u){ gml_render_dispatch_cpu_scope_write(r); *dp=srcpx; continue; }
           if(!af) continue;
+          gml_render_dispatch_cpu_scope_write(r);
           uint32_t ia=65536u-af;
           uint32_t srp=(uint32_t)sr*af, sgp=(uint32_t)sg*af, sbp=(uint32_t)sb*af;
           uint32_t dv=*dp;
@@ -2083,6 +2119,7 @@ static int GML_HOT_RENDER blit_rgba_sprite_axis(GmlRender *r, GmlSprite *owner, 
             int lx=floor_fixed20(lx_fp);
             if(lx<0 || lx>=sw) continue;
             const uint8_t *sp=srow+(size_t)lx*4;
+            gml_render_dispatch_cpu_scope_write(r);
             row[px]=0xFF000000u|((uint32_t)sp[0]<<16)|((uint32_t)sp[1]<<8)|(uint32_t)sp[2];
           }
         } else {
@@ -2091,6 +2128,7 @@ static int GML_HOT_RENDER blit_rgba_sprite_axis(GmlRender *r, GmlSprite *owner, 
             if(lx<0 || lx>=sw) continue;
             const uint8_t *sp=srow+(size_t)lx*4;
             int sr=sp[0]*bR/255, sg=sp[1]*bG/255, sb=sp[2]*bB/255;
+            gml_render_dispatch_cpu_scope_write(r);
             row[px]=0xFF000000u|((uint32_t)sr<<16)|((uint32_t)sg<<8)|(uint32_t)sb;
           }
         }
@@ -2105,19 +2143,21 @@ static int GML_HOT_RENDER blit_rgba_sprite_axis(GmlRender *r, GmlSprite *owner, 
         int sr=white?sp[0]:sp[0]*bR/255, sg=white?sp[1]:sp[1]*bG/255, sb=white?sp[2]:sp[2]*bB/255;
         uint32_t srcpx=0xFF000000u|((uint32_t)sr<<16)|((uint32_t)sg<<8)|(uint32_t)sb;
         uint32_t *dp=&row[px];
-        if(!r->alphablend){ *dp=srcpx; continue; }
+        if(!r->alphablend){ gml_render_dispatch_cpu_scope_write(r); *dp=srcpx; continue; }
         if(fast8_blend){
           uint32_t af=a8_lut[aa];
-          if(af>=256u){ *dp=srcpx; continue; }
+          if(af>=256u){ gml_render_dispatch_cpu_scope_write(r); *dp=srcpx; continue; }
           if(!af) continue;
+          gml_render_dispatch_cpu_scope_write(r);
           uint32_t ia=256u-af;
           uint32_t srb=(srcpx & 0x00FF00FFu)*af;
           uint32_t sgc=(srcpx & 0x0000FF00u)*af;
           *dp=blend_fast8_cached(*dp,srb,sgc,ia,blend_fast8_rounds(r));
         } else {
           uint32_t af=a16_lut[aa];
-          if(af>=65536u){ *dp=srcpx; continue; }
+          if(af>=65536u){ gml_render_dispatch_cpu_scope_write(r); *dp=srcpx; continue; }
           if(!af) continue;
+          gml_render_dispatch_cpu_scope_write(r);
           uint32_t ia=65536u-af;
           uint32_t srp=(uint32_t)sr*af, sgp=(uint32_t)sg*af, sbp=(uint32_t)sb*af;
           uint32_t dv=*dp;
@@ -2167,16 +2207,20 @@ static int GML_HOT_RENDER blit_rgba_sprite_axis(GmlRender *r, GmlSprite *owner, 
           uint32_t srcpx=0xFF000000u|((uint32_t)sr<<16)|((uint32_t)sg<<8)|(uint32_t)sb;
           uint32_t *dp=&row[px];
           if(!r->alphablend){
+            gml_render_dispatch_cpu_scope_write(r);
             fill_u32_run(dp,run,srcpx);
           } else {
             if(fast8_blend){
               uint32_t af=a8_lut[aa];
+              if(af) gml_render_dispatch_cpu_scope_write(r);
               blend_fast8_run(dp,run,srcpx,af,blend_fast8_rounds(r));
             } else {
               uint32_t af=a16_lut[aa];
               if(af>=65536u){
+                gml_render_dispatch_cpu_scope_write(r);
                 fill_u32_run(dp,run,srcpx);
               } else if(af){
+                gml_render_dispatch_cpu_scope_write(r);
                 uint32_t ia=65536u-af;
                 uint32_t srp=(uint32_t)sr*af, sgp=(uint32_t)sg*af, sbp=(uint32_t)sb*af;
                 for(int k=0;k<run;k++){
@@ -2198,7 +2242,7 @@ static int GML_HOT_RENDER blit_rgba_sprite_axis(GmlRender *r, GmlSprite *owner, 
   }
   return 1;
 }
-void blit_rgba_sprite(GmlRender *r, GmlSprite *owner, const uint8_t *src, int sw, int sh, double x, double y,
+static void blit_rgba_sprite_impl(GmlRender *r, GmlSprite *owner, const uint8_t *src, int sw, int sh, double x, double y,
                              double xs, double ys, double rot, int originx, int originy,
                              uint32_t blend, double alpha, int world_space,
                              const int *row_min, const int *row_max, int opaque){
@@ -2294,6 +2338,7 @@ void blit_rgba_sprite(GmlRender *r, GmlSprite *owner, const uint8_t *src, int sw
       int sample_a=(int)(sampled>>24);
       double sa=(sample_a/255.0)*alpha;
       if(sa<=0 && r->blendmode!=2 && !destination_colour_blend_active(r)) continue;
+      gml_render_dispatch_cpu_scope_write(r);
       uint32_t *dp=&r->fb[(size_t)py*r->fbw+px];
       int sr=((sampled>>16)&255)*bR/255;
       int sg=((sampled>>8)&255)*bG/255;
@@ -2333,7 +2378,18 @@ void blit_rgba_sprite(GmlRender *r, GmlSprite *owner, const uint8_t *src, int sw
     *dp=gml_sprite_target_alpha(r,destination,source_alpha)|(or_<<16)|(og<<8)|ob;
   }
 }
-void gml_render_cpu_blit_rgba_region(GmlRender *r, const uint8_t *src, int iw, int ih,
+void blit_rgba_sprite(GmlRender *r,GmlSprite *owner,const uint8_t *src,int sw,int sh,
+                       double x,double y,double xs,double ys,double rotation,
+                       int originx,int originy,uint32_t blend,double alpha,int world_space,
+                       const int *row_min,const int *row_max,int opaque){
+  GmlRenderDispatchCpuScope scope;
+  gml_render_dispatch_cpu_scope_begin(r,&scope,GML_RENDER_SCENE_SPRITE);
+  blit_rgba_sprite_impl(r,owner,src,sw,sh,x,y,xs,ys,rotation,originx,originy,
+                        blend,alpha,world_space,row_min,row_max,opaque);
+  gml_render_dispatch_cpu_scope_end(r,&scope);
+}
+
+static void blit_rgba_region_impl(GmlRender *r, const uint8_t *src, int iw, int ih,
                              double sx0d, double sy0d, double swd, double shd,
                              double dx, double dy, double dw, double dh,
                              uint32_t blend, double alpha){
@@ -2369,6 +2425,7 @@ void gml_render_cpu_blit_rgba_region(GmlRender *r, const uint8_t *src, int iw, i
         int sample_a=(int)(sampled>>24);
         double sa=(sample_a/255.0)*alpha;
         if(sa<=0 && !destination_colour_blend_active(r)) continue;
+        gml_render_dispatch_cpu_scope_write(r);
         int sr=((sampled>>16)&255)*bR/255;
         int sg=((sampled>>8)&255)*bG/255;
         int sb=(sampled&255)*bB/255;
@@ -2430,6 +2487,7 @@ void gml_render_cpu_blit_rgba_region(GmlRender *r, const uint8_t *src, int iw, i
       }
       double oa=(sample_a/255.0)*alpha;
       if(oa<=0 && !destination_colour_blend_active(r)) continue;
+      gml_render_dispatch_cpu_scope_write(r);
       uint32_t *dp=&r->fb[(size_t)ty_*r->fbw+tx_];
       int sr=sample_r*bR/255, sg=sample_g*bG/255, sb=sample_b*bB/255;
       if(!r->alphablend){ *dp=0xFF000000u|(sr<<16)|(sg<<8)|sb; continue; }
@@ -2447,6 +2505,16 @@ void gml_render_cpu_blit_rgba_region(GmlRender *r, const uint8_t *src, int iw, i
     }
   }
 }
+void gml_render_cpu_blit_rgba_region(GmlRender *r,const uint8_t *src,int iw,int ih,
+                                     double sx,double sy,double sw,double sh,
+                                     double dx,double dy,double dw,double dh,
+                                     uint32_t blend,double alpha){
+  GmlRenderDispatchCpuScope scope;
+  gml_render_dispatch_cpu_scope_begin(r,&scope,GML_RENDER_SCENE_SPRITE);
+  blit_rgba_region_impl(r,src,iw,ih,sx,sy,sw,sh,dx,dy,dw,dh,blend,alpha);
+  gml_render_dispatch_cpu_scope_end(r,&scope);
+}
+
 /* The selected source rectangle is snapped outwards to whole texels, because a texel is the
  * smallest thing the sampler can address. Along an axis where the continuous selection lies inside
  * a single texel that snapping also inflates the DESTINATION extent, from `selected*scale` up to a
@@ -2486,13 +2554,19 @@ void gml_render_cpu_blit_tpag_part_background(GmlRender *r, GmlTpag *t,
                                       double sx, double sy, double sw, double sh,
                                       double dx, double dy, double xs, double ys,
                                       uint32_t blend, double alpha){
+  GmlRenderDispatchCpuScope scope;
+  gml_render_dispatch_cpu_scope_begin(r,&scope,GML_RENDER_SCENE_BACKGROUND);
   blit_tpag_part_with_phase(r,t,sx,sy,sw,sh,dx,dy,xs,ys,blend,alpha,1,0);
+  gml_render_dispatch_cpu_scope_end(r,&scope);
 }
 void gml_render_cpu_blit_tpag_part_tile(GmlRender *r, GmlTpag *t,
                                 double sx, double sy, double sw, double sh,
                                 double dx, double dy, double xs, double ys,
                                 uint32_t blend, double alpha){
+  GmlRenderDispatchCpuScope scope;
+  gml_render_dispatch_cpu_scope_begin(r,&scope,GML_RENDER_SCENE_TILE);
   blit_tpag_part_with_phase(r,t,sx,sy,sw,sh,dx,dy,xs,ys,blend,alpha,0,1);
+  gml_render_dispatch_cpu_scope_end(r,&scope);
 }
 /* alpha (0-255) of a sprite frame at SPRITE-LOCAL pixel (lx,ly) in [0,w)x[0,h); 0 outside the
  * trimmed image. Used for per-pixel (precise) collision masks. */
@@ -2572,6 +2646,8 @@ static void nearest_solid_mask_band_rows(
         alpha[lane]=(source_x>=0 && source_x<band->tpag->sw)
           ? band->mapped_alpha[source_row[source_x]>>24] : 0;
       }
+      if(alpha[0] || alpha[1] || alpha[2] || alpha[3])
+        gml_render_dispatch_cpu_scope_write(band->render);
       blend_solid_trunc255_4(
         destination_row+band->destination_x+xx,band->solid_rgb,alpha);
     }
@@ -2580,6 +2656,7 @@ static void nearest_solid_mask_band_rows(
       if(source_x<0 || source_x>=band->tpag->sw) continue;
       unsigned alpha=band->mapped_alpha[source_row[source_x]>>24];
       if(!alpha) continue;
+      gml_render_dispatch_cpu_scope_write(band->render);
       uint32_t *destination=destination_row+band->destination_x+xx;
       uint32_t value=*destination;
       unsigned inverse=255u-alpha;
@@ -2673,6 +2750,7 @@ static void nearest_opaque_alpha_band_rows(
         output_x++,destination+=destination_step){
       int local_x=source_x[output_x-output_x0];
       if(local_x<0 || local_x>=tpag->sw) continue;
+      gml_render_dispatch_cpu_scope_write(render);
       uint32_t source_pixel=source_row[local_x];
       uint32_t destination_pixel=*destination;
       int source_red=(source_pixel>>16)&255;
@@ -2749,6 +2827,7 @@ static void blit_one_band_rows(void *context,int row_start,int row_end,int slot)
         if(sx<0) sx=0; else if(sx>sx_max) sx=sx_max;
         const uint8_t *sp=srow + (size_t)sx*4u;
         int aa=sp[3]; if(!aa) continue;
+        gml_render_dispatch_cpu_scope_write(r);
         int px = flipx ? (x0-xx) : (x0+xx);
         uint32_t *dp=&drow[px];
         if(aa==255){ *dp=0xFF000000u|((uint32_t)sp[0]<<16)|((uint32_t)sp[1]<<8)|sp[2]; continue; }
@@ -2808,6 +2887,7 @@ static void blit_one_band_rows(void *context,int row_start,int row_end,int slot)
        * with rather than at the coverage a source-over pass would have left. */
       int replace=r->blendmode==6;
       if(sa<=0 && r->blendmode!=2 && !replace && !destination_colour_blend_active(r)) continue;
+      gml_render_dispatch_cpu_scope_write(r);
       uint32_t *dp=&r->fb[(size_t)py*r->fbw+px];
       if(replace){
         unsigned source_alpha=(unsigned)lround((double)sample_a*alpha);
@@ -2906,6 +2986,7 @@ static void gml_render_write_authored_margin(GmlRender *r, const GmlTpag *t,
   if(bx1>r->fbw) bx1=r->fbw;
   if(by1>r->fbh) by1=r->fbh;
   if(bx1<=bx0 || by1<=by0) return;
+  gml_render_dispatch_cpu_scope_write(r);
   /* The empty source fragment: no coverage where the target keeps alpha, and the black it carries
    * where the target has none, which is what the pair writes on a display. */
   uint32_t empty=gml_render_target_preserves_alpha(r)?0x00000000u:0xFF000000u;
@@ -3136,6 +3217,7 @@ static void blit_one(GmlRender *r, GmlTpag *t, double dx, double dy, double xs, 
         for(int xx=0; xx<cw; xx++, sp+=4){
           int aa=sp[3];
           if(aa<=0) continue;
+          gml_render_dispatch_cpu_scope_write(r);
           int sr=sp[0], sg=sp[1], sb=sp[2];
           if(!r->alphablend || aa>=255) dp[xx]=0xFF000000u|(sr<<16)|(sg<<8)|sb;
           else {
@@ -3342,6 +3424,7 @@ static void blit_one(GmlRender *r, GmlTpag *t, double dx, double dy, double xs, 
               ((uint32_t)(int)(red*source_alpha)<<16)|
               ((uint32_t)(int)(green*source_alpha)<<8)|
               (uint32_t)(int)(blue*source_alpha);
+            gml_render_dispatch_cpu_scope_write(r);
             blend_additive_rgb_run(destination_row+xx,end-xx,increment);
           }
         }
@@ -3694,6 +3777,7 @@ static void GML_HOT_RENDER tpag_interp_draw_cache_replay(
       key->destination_x+run->x;
     const uint32_t *source=tpag->interp_draw_cache+
       (size_t)run->y*key->width+run->x;
+    if(run->len>0) gml_render_dispatch_cpu_scope_write(render);
     if(run->opaque){
       memcpy(destination,source,(size_t)run->len*sizeof(*destination));
       continue;
@@ -3837,6 +3921,7 @@ static void blit_interp_pretinted_constant_alpha_sample(
     GmlRender *r,uint32_t *destination,int red,int green,int blue,
     int alpha,double draw_alpha){
   if(alpha<=0) return;
+  gml_render_dispatch_cpu_scope_write(r);
   if(!r->alphablend){
     *destination=0xFF000000u|((uint32_t)red<<16)|((uint32_t)green<<8)|(uint32_t)blue;
     return;
@@ -4003,6 +4088,7 @@ static void blit_interp_sample(GmlRender *r, uint32_t *dp, const GmlAtlas *atlas
     double tr=fsr*(double)bR/255.0, tg=fsg*(double)bG/255.0, tb=fsb*(double)bB/255.0;
     double sa=faa*alpha/255.0;
     if(sa<=0.0) return;
+    gml_render_dispatch_cpu_scope_write(r);
     int rr,rg,rb;
     if(!r->alphablend || sa>=1.0){
       rr=(int)floor(tr+0.5); rg=(int)floor(tg+0.5); rb=(int)floor(tb+0.5);
@@ -4034,6 +4120,7 @@ static void blit_interp_sample(GmlRender *r, uint32_t *dp, const GmlAtlas *atlas
   int precise_margin=transparent_tap && alpha>=1.0 &&
     (blend&0xFFFFFFu)==0xFFFFFFu && r->blendmode==0 && r->alphablend;
   double sa=((precise_margin?faa:(double)aa)/255.0)*alpha;
+  gml_render_dispatch_cpu_scope_write(r);
   if(!r->alphablend){
     *dp=0xFF000000u|((uint32_t)sr<<16)|((uint32_t)sg<<8)|(uint32_t)sb;
     return;
@@ -4422,7 +4509,7 @@ static void blit_phase_plane_previous(GmlRender *r, uint32_t *plane, GmlTpag *t,
   if(!t || t->sh<=0) return;
   blit_phase_plane(r,plane,t,dx,dy,xs,ys,blend,alpha);
 }
-void gml_render_cpu_blit_with_phase(GmlRender *r, GmlTpag *t, double dx, double dy,
+static void blit_with_phase_impl(GmlRender *r, GmlTpag *t, double dx, double dy,
                             double xs, double ys, uint32_t blend, double alpha,
                             int phase_mode,int quantize_alpha){
   int phase=r && r->target_sp==0 && r->fb==r->base_fb && r->classic_phase_y;
@@ -4448,6 +4535,14 @@ void gml_render_cpu_blit_with_phase(GmlRender *r, GmlTpag *t, double dx, double 
   else
     blit_phase_plane_previous(r,r->classic_phase_y,t,dx,dy,xs,ys,blend,alpha);
 }
+void gml_render_cpu_blit_with_phase(GmlRender *r,GmlTpag *t,double dx,double dy,
+                                  double xs,double ys,uint32_t blend,double alpha,
+                                  int phase_mode,int quantize_alpha){
+  GmlRenderDispatchCpuScope scope;
+  gml_render_dispatch_cpu_scope_begin(r,&scope,GML_RENDER_SCENE_SPRITE);
+  blit_with_phase_impl(r,t,dx,dy,xs,ys,blend,alpha,phase_mode,quantize_alpha);
+  gml_render_dispatch_cpu_scope_end(r,&scope);
+}
 void blit(GmlRender *r, GmlTpag *t, double dx, double dy, double xs, double ys,
                  uint32_t blend, double alpha){
   gml_render_cpu_blit_with_phase(r,t,dx,dy,xs,ys,blend,alpha,4,0);
@@ -4457,6 +4552,8 @@ void blit(GmlRender *r, GmlTpag *t, double dx, double dy, double xs, double ys,
  * half a logical row above the sprites sharing its frame. */
 void gml_render_cpu_blit_background_phase(GmlRender *r, GmlTpag *t, double dx, double dy,
                                   double xs, double ys, uint32_t blend, double alpha){
+  GmlRenderDispatchCpuScope scope;
+  gml_render_dispatch_cpu_scope_begin(r,&scope,GML_RENDER_SCENE_BACKGROUND);
   int quantize_alpha=!r->interp && t->atlas>=0 && t->atlas<r->n_atlas &&
     (r->atlas[t->atlas].blob || r->atlas[t->atlas].external_blob) &&
     anygm_policy_uses_early_background_compositing(r->win);
@@ -4466,6 +4563,7 @@ void gml_render_cpu_blit_background_phase(GmlRender *r, GmlTpag *t, double dx, d
    * floating draw opacity. The point-sampled native controls distinguish both. */
   if(quantize_alpha && alpha>0.0 && alpha<1.0) alpha=floor(alpha*255.0)/255.0;
   gml_render_cpu_blit_with_phase(r,t,dx,dy,xs,ys,blend,alpha,4,quantize_alpha);
+  gml_render_dispatch_cpu_scope_end(r,&scope);
 }
 typedef struct {
   GmlRender *r;
@@ -4483,6 +4581,7 @@ typedef struct {
   int64_t delta_x, delta_y;
   uint32_t alpha_lut[256];
   uint32_t source;
+  atomic_int *dispatch_written;
 } GmlSolidMaskRotatedBand;
 static void GML_HOT_RENDER solid_mask_alpha8_vector_rows(
     void *context,int row_start,int row_end,int slot){
@@ -4519,11 +4618,14 @@ static void GML_HOT_RENDER solid_mask_alpha8_vector_rows(
               band->alpha8[(size_t)sample_y*t->sw+sample_x]];
         }
         if(factors[0]>=256u && factors[1]>=256u &&
-           factors[2]>=256u && factors[3]>=256u)
+           factors[2]>=256u && factors[3]>=256u){
+          gml_render_dispatch_cpu_coverage_write(band->dispatch_written);
           fill_u32_run(&row[px],4,band->source);
-        else if(factors[0]||factors[1]||factors[2]||factors[3])
+        } else if(factors[0]||factors[1]||factors[2]||factors[3]){
+          gml_render_dispatch_cpu_coverage_write(band->dispatch_written);
           blend_solid_fast8_4(&row[px],band->source,factors,
                               blend_fast8_rounds(band->r));
+        }
         lx_fp+=band->delta_x*4;
         ly_fp+=band->delta_y*4;
         px+=4;
@@ -4536,8 +4638,10 @@ static void GML_HOT_RENDER solid_mask_alpha8_vector_rows(
       if(source_x>=0 && source_y>=0 && source_x<t->sw && source_y<t->sh){
         uint32_t alpha=band->alpha_lut[
           band->alpha8[(size_t)source_y*t->sw+source_x]];
-        if(alpha) blend_fast8_run(&row[px],run,band->source,alpha,
-                                  blend_fast8_rounds(band->r));
+        if(alpha){
+          gml_render_dispatch_cpu_coverage_write(band->dispatch_written);
+          blend_fast8_run(&row[px],run,band->source,alpha,blend_fast8_rounds(band->r));
+        }
       }
       lx_fp+=band->delta_x*(int64_t)run;
       ly_fp+=band->delta_y*(int64_t)run;
@@ -4592,9 +4696,11 @@ static void GML_HOT_RENDER solid_mask_rotated_band_rows(
             factors[i]=band->alpha_lut[source_alpha];
           }
         }
-        if(factors[0]||factors[1]||factors[2]||factors[3])
+        if(factors[0]||factors[1]||factors[2]||factors[3]){
+          gml_render_dispatch_cpu_coverage_write(band->dispatch_written);
           blend_solid_fast8_4(&row[px],band->source,factors,
                               blend_fast8_rounds(band->r));
+        }
         lx_fp+=band->delta_x*4;
         ly_fp+=band->delta_y*4;
         px+=4;
@@ -4609,8 +4715,10 @@ static void GML_HOT_RENDER solid_mask_rotated_band_rows(
         uint32_t source_alpha=band->alpha8
           ? band->alpha8[source_index] : band->argb[source_index]>>24;
         uint32_t alpha=band->alpha_lut[source_alpha];
-        if(alpha) blend_fast8_run(&row[px],run,band->source,alpha,
-                                  blend_fast8_rounds(band->r));
+        if(alpha){
+          gml_render_dispatch_cpu_coverage_write(band->dispatch_written);
+          blend_fast8_run(&row[px],run,band->source,alpha,blend_fast8_rounds(band->r));
+        }
       }
       lx_fp+=band->delta_x*(int64_t)run;
       ly_fp+=band->delta_y*(int64_t)run;
@@ -4632,6 +4740,7 @@ typedef struct {
   int blend_r, blend_g, blend_b;
   int64_t delta_x, delta_y;
   uint32_t alpha_lut[256];
+  atomic_int *dispatch_written;
 } GmlCachedRotatedBand;
 static void GML_HOT_RENDER cached_rotated_band_rows(
     void *context, int row_start, int row_end, int slot){
@@ -4687,9 +4796,11 @@ static void GML_HOT_RENDER cached_rotated_band_rows(
                        (uint32_t)blue;
           }
         }
-        if(factors[0]||factors[1]||factors[2]||factors[3])
+        if(factors[0]||factors[1]||factors[2]||factors[3]){
+          gml_render_dispatch_cpu_coverage_write(band->dispatch_written);
           blend_pixels_fast8_4(&row[px],sources,factors,
                                blend_fast8_rounds(band->r));
+        }
         lx_fp+=band->delta_x*4;
         ly_fp+=band->delta_y*4;
         px+=4;
@@ -4705,6 +4816,7 @@ static void GML_HOT_RENDER cached_rotated_band_rows(
           ? band->draw_cache[source_index] : band->argb[source_index];
         uint32_t alpha=band->draw_cache ? packed>>24 : band->alpha_lut[packed>>24];
         if(alpha){
+          gml_render_dispatch_cpu_coverage_write(band->dispatch_written);
           uint32_t source;
           if(band->draw_cache || band->white){
             source=0xFF000000u|(packed&0x00FFFFFFu);
@@ -4738,6 +4850,7 @@ typedef struct {
   int blend_r, blend_g, blend_b;
   int64_t delta_x, delta_y;
   uint32_t alpha_lut[256];
+  atomic_int *dispatch_written;
 } GmlExactRotatedBand;
 /* Shared packet selection retains the original fixed-point skip, four-pixel
  * vector and scalar-run order. Pixel arithmetic remains in its existing band. */
@@ -4812,6 +4925,7 @@ static void GML_HOT_RENDER exact_rotated_band_rows(
                      (uint32_t)blue;
         }
         if(factors[0]||factors[1]||factors[2]||factors[3]){
+          gml_render_dispatch_cpu_coverage_write(band->dispatch_written);
           if(band->round_blend)
             blend_pixels_exact16_round_4(&row[px],sources,factors);
           else
@@ -4827,6 +4941,7 @@ static void GML_HOT_RENDER exact_rotated_band_rows(
         uint32_t source_alpha=packed>>24;
         uint32_t alpha=band->alpha_lut[source_alpha];
         if(alpha){
+          gml_render_dispatch_cpu_coverage_write(band->dispatch_written);
           int red=(packed>>16)&255;
           int green=(packed>>8)&255;
           int blue=packed&255;
@@ -4867,6 +4982,8 @@ static void GML_HOT_RENDER exact_rotated_band_rows(
 }
 typedef struct {
   int kind;
+  unsigned dispatch_family,dispatch_reason;
+  atomic_int dispatch_written;
   union {
     GmlSolidMaskRotatedBand solid;
     GmlCachedRotatedBand cached;
@@ -4928,6 +5045,14 @@ void gml_render_flush_rotated_batch(GmlRender *r){
   unsigned long long bounds_area=0;
   for(int i=0;i<count;i++){
     int kind=item[i].kind;
+    atomic_int *written=NULL;
+    if(r->dispatch_metrics.enabled){
+      atomic_init(&item[i].dispatch_written,0);
+      written=&item[i].dispatch_written;
+    }
+    if(kind==1) item[i].draw.solid.dispatch_written=written;
+    else if(kind==2) item[i].draw.cached.dispatch_written=written;
+    else item[i].draw.exact.dispatch_written=written;
     int x0=kind==1?item[i].draw.solid.x0:
            kind==2?item[i].draw.cached.x0:item[i].draw.exact.x0;
     int x1=kind==1?item[i].draw.solid.x1:
@@ -4959,6 +5084,10 @@ void gml_render_flush_rotated_batch(GmlRender *r){
   }
   gml_run_row_bands_n(r,thread_count>1?thread_count:max_y,thread_count,
                       rotated_batch_rows,&rows);
+  if(r->dispatch_metrics.enabled)
+    for(int i=0;i<count;i++)
+      if(atomic_load_explicit(&item[i].dispatch_written,memory_order_relaxed))
+        gml_render_dispatch_cpu_record(r,item[i].dispatch_family,item[i].dispatch_reason,1u);
 }
 static GmlRotatedBatchItem *rotated_batch_append(GmlRender *r,int kind){
   if(!r) return NULL;
@@ -4975,6 +5104,12 @@ static GmlRotatedBatchItem *rotated_batch_append(GmlRender *r,int kind){
     &((GmlRotatedBatchItem*)r->rotated_batch)[r->rotated_batch_count++];
   memset(item,0,sizeof *item);
   item->kind=kind;
+  /* Capture the dispatch context before later draws or barriers change it. An
+   * operation queued outside enabled accounting has unknown provenance. */
+  item->dispatch_family=r->dispatch_cpu_depth
+    ?r->dispatch_cpu_family:GML_RENDER_SCENE_UNCLASSIFIED;
+  item->dispatch_reason=r->dispatch_cpu_depth
+    ?r->dispatch_cpu_reason:gml_render_dispatch_cpu_reason(r);
   return item;
 }
 /* One filtered rotated draw: per destination pixel the sprite-local position is mapped back to
@@ -5129,7 +5264,7 @@ int gml_render_rotated_nearest_regions(GmlRender *r,GmlSprite *spr,GmlTpag *t,
   return 1;
 }
 
-void GML_HOT_RENDER blit_rotated(GmlRender *r, GmlSprite *spr, GmlTpag *t, double x, double y,
+static void GML_HOT_RENDER blit_rotated_impl(GmlRender *r, GmlSprite *spr, GmlTpag *t, double x, double y,
                          double xs, double ys, double rot, uint32_t blend, double alpha){
   if(t->atlas<0 || t->atlas>=r->n_atlas) return;
   GmlAtlas *a=&r->atlas[t->atlas]; if(!atlas_pixels(r,t->atlas)) return;
@@ -5297,6 +5432,7 @@ void GML_HOT_RENDER blit_rotated(GmlRender *r, GmlSprite *spr, GmlTpag *t, doubl
     GmlSolidMaskRotatedBand band;
     memset(&band,0,sizeof band);
     band.r=r;
+    band.dispatch_written=gml_render_dispatch_cpu_scope_coverage(r);
     band.framebuffer=r->fb;
     band.framebuffer_width=r->fbw;
     band.tpag=t;
@@ -5354,6 +5490,7 @@ void GML_HOT_RENDER blit_rotated(GmlRender *r, GmlSprite *spr, GmlTpag *t, doubl
       goto cached_rotated_fallback;
     }
     band.r=r;
+    band.dispatch_written=gml_render_dispatch_cpu_scope_coverage(r);
     band.framebuffer=r->fb;
     band.framebuffer_width=r->fbw;
     band.tpag=t;
@@ -5401,6 +5538,7 @@ void GML_HOT_RENDER blit_rotated(GmlRender *r, GmlSprite *spr, GmlTpag *t, doubl
     if(immutable_argb){
       GmlExactRotatedBand band;
       memset(&band,0,sizeof band);
+      band.dispatch_written=gml_render_dispatch_cpu_scope_coverage(r);
       band.framebuffer=r->fb;
       band.framebuffer_width=r->fbw;
       band.tpag=t;
@@ -5478,6 +5616,7 @@ cached_rotated_fallback:
             uint32_t packed=draw_cache[si];
             uint32_t af=packed>>24;
             if(af){
+              gml_render_dispatch_cpu_scope_write(r);
               uint32_t src=0xFF000000u|(packed&0x00FFFFFFu);
               if(fast8_cache_copy_255 && af==255u) fill_u32_run(dp,run,src);
               else blend_fast8_run(dp,run,src,af,blend_fast8_rounds(r));
@@ -5489,6 +5628,7 @@ cached_rotated_fallback:
             if(aa){
             uint32_t af=a8_lut[aa];
             if(af){
+              gml_render_dispatch_cpu_scope_write(r);
               uint32_t src;
               if(white){
                 src=0xFF000000u|(packed&0x00FFFFFFu);
@@ -5560,6 +5700,7 @@ cached_rotated_fallback:
           if(aa){
             uint32_t af=a8_lut[aa];
             if(af){
+              gml_render_dispatch_cpu_scope_write(r);
               int mapped_r=(packed>>16)&255,mapped_g=(packed>>8)&255,mapped_b=packed&255;
               int sr=white?mapped_r:mapped_r*bR/255;
               int sg=white?mapped_g:mapped_g*bG/255;
@@ -5621,16 +5762,22 @@ cached_rotated_fallback:
               uint32_t src=0xFF000000u|((uint32_t)sr<<16)|((uint32_t)sg<<8)|(uint32_t)sb;
               uint32_t *dp=&row[px];
               if(!r->alphablend){
+                gml_render_dispatch_cpu_scope_write(r);
                 fill_u32_run(dp,run,src);
               } else {
                 if(fast8_blend){
                   uint32_t af=a8_lut[aa];
-                  if(af) blend_fast8_run(dp,run,src,af,blend_fast8_rounds(r));
+                  if(af){
+                    gml_render_dispatch_cpu_scope_write(r);
+                    blend_fast8_run(dp,run,src,af,blend_fast8_rounds(r));
+                  }
                 } else {
                   uint32_t af=a16_lut[aa];
                   if(af>=65536u){
+                    gml_render_dispatch_cpu_scope_write(r);
                     fill_u32_run(dp,run,src);
                   } else if(af){
+                    gml_render_dispatch_cpu_scope_write(r);
                     uint32_t ia=65536u-af;
                     uint32_t srp=(uint32_t)sr*af, sgp=(uint32_t)sg*af, sbp=(uint32_t)sb*af;
                     for(int k=0;k<run;k++){
@@ -5678,6 +5825,7 @@ cached_rotated_fallback:
       int mapped_r=(packed>>16)&255,mapped_g=(packed>>8)&255,mapped_b=packed&255;
       uint32_t *dp=&row[px];
       if(!r->alphablend){
+        gml_render_dispatch_cpu_scope_write(r);
         int sr=white?mapped_r:mapped_r*bR/255;
         int sg=white?mapped_g:mapped_g*bG/255;
         int sb=white?mapped_b:mapped_b*bB/255;
@@ -5687,6 +5835,7 @@ cached_rotated_fallback:
       int dr=(destination>>16)&0xFF, dg=(destination>>8)&0xFF, db=destination&0xFF;
       if(r->blendmode==0 && white){
         uint32_t af=a16_lut[aa]; if(!af) continue;
+        gml_render_dispatch_cpu_scope_write(r);
         if(af>=65536u){
           *dp=0xFF000000u|((uint32_t)mapped_r<<16)|((uint32_t)mapped_g<<8)|
               (uint32_t)mapped_b;
@@ -5702,6 +5851,7 @@ cached_rotated_fallback:
       int sr=mapped_r*bR/255, sg=mapped_g*bG/255, sb=mapped_b*bB/255;
       if(r->blendmode==0){
         uint32_t af=a16_lut[aa]; if(!af) continue;
+        gml_render_dispatch_cpu_scope_write(r);
         if(af>=65536u){ *dp=0xFF000000u|(sr<<16)|(sg<<8)|sb; continue; }
         uint32_t ia=65536u-af;
         unsigned source_alpha=(unsigned)lround((double)aa*alpha);
@@ -5711,6 +5861,7 @@ cached_rotated_fallback:
         continue;
       }
       double sa=sa_lut[aa]; if(sa<=0 && !destination_colour_blend_active(r)) continue;
+      gml_render_dispatch_cpu_scope_write(r);
       if(destination_colour_blend_active(r)){
         unsigned source_alpha=(unsigned)lround((double)aa*alpha);
         *dp=color_write_merge(r,*dp,blend_destination_colour_pixel(r,*dp,sr,sg,sb,source_alpha));
@@ -5748,6 +5899,15 @@ cached_rotated_fallback:
   }
 }
 
+void GML_HOT_RENDER blit_rotated(GmlRender *r,GmlSprite *sprite,GmlTpag *page,
+                               double x,double y,double xs,double ys,double rotation,
+                               uint32_t blend,double alpha){
+  GmlRenderDispatchCpuScope scope;
+  gml_render_dispatch_cpu_scope_begin(r,&scope,GML_RENDER_SCENE_SPRITE);
+  blit_rotated_impl(r,sprite,page,x,y,xs,ys,rotation,blend,alpha);
+  gml_render_dispatch_cpu_scope_end(r,&scope);
+}
+
 static void blit_rotated_plane(GmlRender *r, uint32_t *plane, GmlSprite *spr, GmlTpag *t,
                                double x, double y, double xs, double ys, double rot,
                                uint32_t blend, double alpha){
@@ -5769,6 +5929,8 @@ static void blit_rotated_plane(GmlRender *r, uint32_t *plane, GmlSprite *spr, Gm
 static void blit_rotated_with_phase(GmlRender *r, GmlSprite *spr, GmlTpag *t,
                                     double x, double y, double xs, double ys, double rot,
                                     uint32_t blend, double alpha){
+  GmlRenderDispatchCpuScope scope;
+  gml_render_dispatch_cpu_scope_begin(r,&scope,GML_RENDER_SCENE_SPRITE);
   int phase=r && r->target_sp==0 && r->fb==r->base_fb && r->classic_phase_y;
   int interp_phase=r && r->target_sp==0 && r->fb==r->base_fb &&
                    r->classic_interp_phase[0] && r->classic_interp_phase[1] &&
@@ -5782,6 +5944,7 @@ static void blit_rotated_with_phase(GmlRender *r, GmlSprite *spr, GmlTpag *t,
       blit_rotated_plane(r,r->classic_interp_phase[q],spr,t,x,y,xs,ys,rot,blend,alpha);
   if(phase)
     blit_rotated_plane(r,r->classic_phase_y,spr,t,x,y,xs,ys,rot,blend,alpha);
+  gml_render_dispatch_cpu_scope_end(r,&scope);
 }
 
 static int sprite_pos_triangle(double px,double py,
@@ -5831,6 +5994,7 @@ static void sprite_pos_sample(const uint8_t *rgba,int stride,int ox,int oy,int s
 static void sprite_pos_pixel(GmlRender *r,int x,int y,const double sample[4],double alpha){
   double sa=sample[3]*alpha/255.0;
   if(sa<=0 && !destination_colour_blend_active(r)) return;
+  gml_render_dispatch_cpu_scope_write(r);
   int sr=(int)lround(sample[0]),sg=(int)lround(sample[1]),sb=(int)lround(sample[2]);
   uint32_t *dst=&r->fb[(size_t)y*r->fbw+x];
   if(!r->alphablend){ *dst=0xFF000000u|((uint32_t)sr<<16)|((uint32_t)sg<<8)|(uint32_t)sb; return; }
@@ -5877,7 +6041,7 @@ static void sprite_pos_pixel(GmlRender *r,int x,int y,const double sample[4],dou
        ((uint32_t)gg<<8)|(uint32_t)bb;
 }
 
-void gml_render_cpu_blit_sprite_pos_resolved(GmlRender *r,int sprite,int subimg,
+static void blit_sprite_pos_impl(GmlRender *r,int sprite,int subimg,
                                               const double x[4],const double y[4],double alpha){
   GmlSprite *s=&r->spr[sprite]; if(s->n_frames<=0) return;
   const uint8_t *rgba=NULL; int stride=0,ox=0,oy=0,sw=0,sh=0;
@@ -5910,6 +6074,14 @@ void gml_render_cpu_blit_sprite_pos_resolved(GmlRender *r,int sprite,int subimg,
       hit=sprite_pos_triangle(px+.5,py+.5,geometry.tx[part],geometry.ty[part],geometry.tu[part],geometry.tv[part],&u,&v);
     if(hit){ double sample[4]; sprite_pos_sample(rgba,stride,ox,oy,sw,sh,u,v,r->interp,sample); sprite_pos_pixel(r,px,py,sample,alpha); }
   }
+}
+
+void gml_render_cpu_blit_sprite_pos_resolved(GmlRender *r,int sprite,int subimg,
+                                            const double x[4],const double y[4],double alpha){
+  GmlRenderDispatchCpuScope scope;
+  gml_render_dispatch_cpu_scope_begin(r,&scope,GML_RENDER_SCENE_SPRITE);
+  blit_sprite_pos_impl(r,sprite,subimg,x,y,alpha);
+  gml_render_dispatch_cpu_scope_end(r,&scope);
 }
 
 static void draw_spine_item(GmlRender *r,const GmlSpineDrawItem *item,
@@ -5978,7 +6150,12 @@ int gml_render_cpu_draw_spine_sprite(GmlRender *r,GmlSprite *sprite,double x,dou
   int count=gml_render_spine_build_items(
     r,sprite,x,y,xs,ys,rotation,items,256);
   gml_render_flush_rotated_batch(r);
-  for(int i=0;i<count;i++) draw_spine_item(r,&items[i],blend,alpha);
+  for(int i=0;i<count;i++){
+    GmlRenderDispatchCpuScope scope;
+    gml_render_dispatch_cpu_scope_begin(r,&scope,GML_RENDER_SCENE_SPRITE);
+    draw_spine_item(r,&items[i],blend,alpha);
+    gml_render_dispatch_cpu_scope_end(r,&scope);
+  }
   return 1;
 }
 
@@ -6025,7 +6202,7 @@ static void masked_sprite_draw_end(GmlRender *r,GmlMaskedSpriteDraw draw){
   }
 }
 
-void gml_render_cpu_blit_sprite_general_coloured(GmlRender *r, GmlSprite *sprite,
+static void blit_sprite_general_coloured_impl(GmlRender *r, GmlSprite *sprite,
                                                   int subimg, double sx, double sy,
                                                   double sw, double sh, double x,
                                                   double y, double xs, double ys,
@@ -6135,6 +6312,7 @@ void gml_render_cpu_blit_sprite_general_coloured(GmlRender *r, GmlSprite *sprite
        * conversion rounds the final source-over channel, unlike the legacy sprite-pos leaf. */
       double source_alpha=fmin(1.0,sample[3]*alpha/255.0);
       if(source_alpha>0.0){
+        gml_render_dispatch_cpu_scope_write(r);
         uint32_t *destination=&r->fb[(size_t)py*r->fbw+px];
         uint32_t previous=*destination;
         double inverse=1.0-source_alpha;
@@ -6151,6 +6329,17 @@ void gml_render_cpu_blit_sprite_general_coloured(GmlRender *r, GmlSprite *sprite
     } else sprite_pos_pixel(r,px,py,sample,alpha);
   }
   masked_sprite_draw_end(r,masked);
+}
+
+void gml_render_cpu_blit_sprite_general_coloured(GmlRender *r,GmlSprite *sprite,
+                                                int subimg,double sx,double sy,
+                                                double sw,double sh,double x,double y,
+                                                double xs,double ys,double rotation,
+                                                const uint32_t colour[4],double alpha){
+  GmlRenderDispatchCpuScope scope;
+  gml_render_dispatch_cpu_scope_begin(r,&scope,GML_RENDER_SCENE_SPRITE);
+  blit_sprite_general_coloured_impl(r,sprite,subimg,sx,sy,sw,sh,x,y,xs,ys,rotation,colour,alpha);
+  gml_render_dispatch_cpu_scope_end(r,&scope);
 }
 
 void gml_render_cpu_blit_sprite_general_rotated(GmlRender *r, GmlSprite *sprite,
@@ -6313,6 +6502,8 @@ void gml_render_cpu_blit_rotated_background_tile(GmlRender *r, GmlTpag *view,
                                                   double draw_x, double draw_y,
                                                   double tile_xscale, double tile_yscale,
                                                   double degrees, uint32_t color, double alpha){
+  GmlRenderDispatchCpuScope scope;
+  gml_render_dispatch_cpu_scope_begin(r,&scope,GML_RENDER_SCENE_TILE);
   GmlSprite sprite;
   memset(&sprite,0,sizeof sprite);
   sprite.w=view->bw; sprite.h=view->bh;
@@ -6320,6 +6511,7 @@ void gml_render_cpu_blit_rotated_background_tile(GmlRender *r, GmlTpag *view,
   blit_rotated(r,&sprite,view,draw_x,draw_y,
                tile_xscale,tile_yscale,degrees,color,alpha);
   if(r->rotated_batch_count>queued_before) gml_render_flush_rotated_batch(r);
+  gml_render_dispatch_cpu_scope_end(r,&scope);
 }
 /* draw_sprite_stretched: blit a sprite frame stretched into the screen rect (dx,dy,dw,dh), box-
  * averaging the source per dest pixel (matches the GPU's filtered down-stretch). Screen-space. */
@@ -6377,6 +6569,7 @@ static void spr_stretch_general_band(void *context,int row_start,int row_end,int
         sample_b=sampled&255;
       }
       double oa=(sample_a/255.0)*alpha; if(oa<=0) continue;
+      gml_render_dispatch_cpu_scope_write(r);
       double srcR=sample_r*bR/255.0;
       double srcG=sample_g*bG/255.0;
       double srcB=sample_b*bB/255.0;
@@ -6393,7 +6586,7 @@ static void spr_stretch_general_band(void *context,int row_start,int row_end,int
   }
 }
 
-void gml_render_cpu_blit_sprite_stretched_resolved(GmlRender *r, GmlSprite *s, int frame,
+static void blit_sprite_stretched_impl(GmlRender *r, GmlSprite *s, int frame,
                                                     double dx, double dy, double dw, double dh,
                                                     uint32_t blend, double alpha){
   dx-=r->cam_x; dy-=r->cam_y;
@@ -6465,6 +6658,7 @@ void gml_render_cpu_blit_sprite_stretched_resolved(GmlRender *r, GmlSprite *s, i
         int sample_a=(int)(sampled>>24);
         double oa=(sample_a/255.0)*alpha;
         if(oa<=0) continue;
+        gml_render_dispatch_cpu_scope_write(r);
         int sr=((sampled>>16)&255)*bR/255;
         int sg=((sampled>>8)&255)*bG/255;
         int sb=(sampled&255)*bB/255;
@@ -6515,6 +6709,7 @@ void gml_render_cpu_blit_sprite_stretched_resolved(GmlRender *r, GmlSprite *s, i
              * destination pixels in the framebuffer. */
             if(shader_ordered_dither_drops(r,(double)xx+0.5+r->cam_x,
                                              (double)yy+0.5+r->cam_y)) continue;
+            gml_render_dispatch_cpu_scope_write(r);
             if(!r->alphablend || sa>=1.0){ *dp=opaque; continue; }
             *dp=gml_render_cpu_coarse_veil_pixel(*dp,srcR,srcG,srcB,sa,ia);
           }
@@ -6537,4 +6732,12 @@ void gml_render_cpu_blit_sprite_stretched_resolved(GmlRender *r, GmlSprite *s, i
     gml_run_row_bands(r,H,spr_stretch_general_band,&band);
   else
     spr_stretch_general_band(&band,0,H,0);
+}
+void gml_render_cpu_blit_sprite_stretched_resolved(GmlRender *r,GmlSprite *sprite,int frame,
+                                                 double dx,double dy,double dw,double dh,
+                                                 uint32_t blend,double alpha){
+  GmlRenderDispatchCpuScope scope;
+  gml_render_dispatch_cpu_scope_begin(r,&scope,GML_RENDER_SCENE_SPRITE);
+  blit_sprite_stretched_impl(r,sprite,frame,dx,dy,dw,dh,blend,alpha);
+  gml_render_dispatch_cpu_scope_end(r,&scope);
 }

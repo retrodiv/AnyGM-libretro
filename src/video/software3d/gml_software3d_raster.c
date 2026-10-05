@@ -325,7 +325,7 @@ static void d3_sample(GmlRender *R,const GmlRenderCpuBackendDrawView *draw,
 static double d3_edge(double ax,double ay,double bx,double by,double px,double py){
   return (px-ax)*(by-ay)-(py-ay)*(bx-ax);
 }
-static void d3_raster_triangle(GmlRender *R, const GmlD3Vertex in[3], const GmlD3Texture *texture,
+static void d3_raster_triangle_impl(GmlRender *R, const GmlD3Vertex in[3], const GmlD3Texture *texture,
                                int joined){
   GmlRenderCpuBackendDrawView draw;
   if(!d3_depth_prepare(R) || !gml_render_cpu_backend_prepare_draw_view(R,&draw) ||
@@ -453,6 +453,7 @@ static void d3_raster_triangle(GmlRender *R, const GmlD3Vertex in[3], const GmlD
       }
       draw.pixels[di]=0xFF000000u|((uint32_t)sampled[0]<<16)|
                       ((uint32_t)sampled[1]<<8)|(uint32_t)sampled[2];
+      gml_render_cpu_backend_dispatch_mark(&draw);
       if(d3->hidden&&d3->zwrite) d3->depth[di]=(float)ztest;
       continue;
     }
@@ -492,9 +493,20 @@ static void d3_raster_triangle(GmlRender *R, const GmlD3Vertex in[3], const GmlD
     }
     double alpha=(sampled[3]/255.0)*vertex_alpha;
     gml_render_cpu_backend_draw_pixel_alpha(R,x,y,color,alpha);
+    if(!(alpha<=0.0) || draw.zero_alpha_writes)
+      gml_render_cpu_backend_dispatch_mark(&draw);
     if(d3->hidden && d3->zwrite && alpha>0.0) d3->depth[di]=(float)ztest;
   }
   }
+}
+static void d3_raster_triangle(GmlRender *R,const GmlD3Vertex in[3],
+                                const GmlD3Texture *texture,int joined){
+  GmlRenderCpuBackendDispatchScope scope;
+  GmlSoftware3D *graphics=graphics_state_for_render(R);
+  gml_render_cpu_backend_dispatch_begin(R,&scope,GML_RENDER_SCENE_PRIMITIVE,
+                                         graphics && graphics->d3.hidden);
+  d3_raster_triangle_impl(R,in,texture,joined);
+  gml_render_cpu_backend_dispatch_end(R,&scope);
 }
 static GmlD3Vertex d3_camera_vertex(GmlRender *R,double x,double y,double z,double u,double v){
   d3_transform_point(R,&x,&y,&z);
@@ -1025,6 +1037,8 @@ static void d3_raster_sample(GmlRender *R,const GmlRenderCpuBackendDrawView *dra
   }
   double final_alpha=(sampled[3]/255.0)*alpha;
   gml_render_cpu_backend_draw_pixel_alpha(R,x,y,(uint32_t)cr|((uint32_t)cg<<8)|((uint32_t)cb<<16),final_alpha);
+  if(!(final_alpha<=0.0) || draw->zero_alpha_writes)
+    gml_render_cpu_backend_dispatch_mark(draw);
   if(g_d3.hidden && g_d3.zwrite && final_alpha>0) g_d3.depth[index]=(float)depth;
 }
 static int d3_clip_segment_plane(GmlD3Vertex *a,GmlD3Vertex *b,double plane,int keep_greater){
@@ -1038,7 +1052,7 @@ static int d3_clip_segment_plane(GmlD3Vertex *a,GmlD3Vertex *b,double plane,int 
   }
   return 1;
 }
-static void d3_emit_point(GmlRender *R,GmlD3Vertex world,const GmlD3Texture *texture){
+static void d3_emit_point_impl(GmlRender *R,GmlD3Vertex world,const GmlD3Texture *texture){
   GmlRenderCpuBackendDrawView draw;
   if(!gml_render_cpu_backend_prepare_draw_view(R,&draw)) return;
   if(g_d3.lighting){ double factor[3]; if(d3_vertex_light_factor(R,&world,factor)) d3_apply_light_factor(&world,factor); }
@@ -1049,7 +1063,15 @@ static void d3_emit_point(GmlRender *R,GmlD3Vertex world,const GmlD3Texture *tex
   d3_raster_sample(R,&draw,(int)lround(x),(int)lround(y),depth,distance,camera.u,camera.v,
                    camera.r,camera.g,camera.b,camera.alpha,texture);
 }
-static void d3_emit_line(GmlRender *R,GmlD3Vertex a,GmlD3Vertex b,const GmlD3Texture *texture){
+static void d3_emit_point(GmlRender *R,GmlD3Vertex world,const GmlD3Texture *texture){
+  GmlRenderCpuBackendDispatchScope scope;
+  GmlSoftware3D *graphics=graphics_state_for_render(R);
+  gml_render_cpu_backend_dispatch_begin(R,&scope,GML_RENDER_SCENE_PRIMITIVE,
+                                         graphics && graphics->d3.hidden);
+  d3_emit_point_impl(R,world,texture);
+  gml_render_cpu_backend_dispatch_end(R,&scope);
+}
+static void d3_emit_line_impl(GmlRender *R,GmlD3Vertex a,GmlD3Vertex b,const GmlD3Texture *texture){
   GmlRenderCpuBackendDrawView draw;
   if(!gml_render_cpu_backend_prepare_draw_view(R,&draw)) return;
   if(g_d3.lighting){
@@ -1100,6 +1122,14 @@ static void d3_emit_line(GmlRender *R,GmlD3Vertex a,GmlD3Vertex b,const GmlD3Tex
     int x=(int)lround(ax+(bx-ax)*amount),y=(int)lround(ay+(by-ay)*amount);
     d3_raster_sample(R,&draw,x,y,depth,distance,u,v,red,green,blue,alpha,texture);
   }
+}
+static void d3_emit_line(GmlRender *R,GmlD3Vertex a,GmlD3Vertex b,const GmlD3Texture *texture){
+  GmlRenderCpuBackendDispatchScope scope;
+  GmlSoftware3D *graphics=graphics_state_for_render(R);
+  gml_render_cpu_backend_dispatch_begin(R,&scope,GML_RENDER_SCENE_PRIMITIVE,
+                                         graphics && graphics->d3.hidden);
+  d3_emit_line_impl(R,a,b,texture);
+  gml_render_cpu_backend_dispatch_end(R,&scope);
 }
 static void d3_primitive_flush(GmlRender *R){
   if(!R || g_d3_prim_n<=0) return;

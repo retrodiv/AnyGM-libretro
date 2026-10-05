@@ -38,6 +38,9 @@ int gml_render_cpu_classic_info_subpixel_glyph(GmlRender *r,GmlFont *font,GmlGly
   if(y0+last_y>r->fbh) last_y=r->fbh-y0;
   if(first_x>=last_x||first_y>=last_y) return 1;
   int foreground_r=color&255,foreground_g=(color>>8)&255,foreground_b=(color>>16)&255;
+  unsigned reason=r->dispatch_metrics.enabled
+    ?gml_render_dispatch_cpu_reason(r):GML_RENDER_DISPATCH_UNQUALIFIED;
+  int written=0;
   gml_render_maybe_prepare_draw(r);
   for(int yy=first_y;yy<last_y;yy++){
     uint32_t *destination=r->fb+(size_t)(y0+yy)*r->fbw+x0+first_x;
@@ -51,6 +54,7 @@ int gml_render_cpu_classic_info_subpixel_glyph(GmlRender *r,GmlFont *font,GmlGly
       const uint8_t *source=atlas->px+
         ((size_t)(glyph->sy+source_y)*atlas->w+glyph->sx+source_x)*4;
       if(!source[3]) continue;
+      written=1;
       int coverage_r=255-source[0],coverage_g=255-source[1],coverage_b=255-source[2];
       uint32_t previous=*destination;
       int background_r=(previous>>16)&255,background_g=(previous>>8)&255,background_b=previous&255;
@@ -63,5 +67,7 @@ int gml_render_cpu_classic_info_subpixel_glyph(GmlRender *r,GmlFont *font,GmlGly
       *destination=0xFF000000u|((uint32_t)output_r<<16)|((uint32_t)output_g<<8)|(uint32_t)output_b;
     }
   }
+  if(written && r->dispatch_metrics.enabled)
+    gml_render_dispatch_cpu_record(r,GML_RENDER_SCENE_TEXT,reason,1u);
   return 1;
 }

@@ -7,6 +7,7 @@
 #include "gml_render_sprites_internal.h"
 #include "gml_render_surfaces_internal.h"
 #include "gml_render_cpu_blit.h"
+#include "gml_render_cpu_backend.h"
 #include "anygm_host.h"
 
 #include <stdlib.h>
@@ -71,8 +72,11 @@ void gml_draw_tile(GmlRender *r, int def, int sx, int sy, int w, int h, double x
   tt.interp_draw_cache_bytes=0; tt.interp_draw_run_count=0;
   tt.interp_draw_cache_valid=0; tt.interp_draw_pending_count=0;
 
+  GmlRenderCpuBackendDispatchScope tile_scope;
+  gml_render_cpu_backend_dispatch_begin(r,&tile_scope,GML_RENDER_SCENE_TILE,0);
   gml_render_cpu_blit_background_phase(r,&tt, x - r->cam_x, y - r->cam_y,
                         draw_xscale,draw_yscale,0xFFFFFF,1);
+  gml_render_cpu_backend_dispatch_end(r,&tile_scope);
 }
 void gml_draw_room_tiles(GmlRender *r, uint32_t tile_ptr){
   if(!tile_ptr) return;
@@ -124,7 +128,10 @@ void gml_draw_room_tiles(GmlRender *r, uint32_t tile_ptr){
     tt.interp_draw_cache_bytes=0; tt.interp_draw_run_count=0;
     tt.interp_draw_cache_valid=0; tt.interp_draw_pending_count=0;
 
+    GmlRenderCpuBackendDispatchScope tile_scope;
+    gml_render_cpu_backend_dispatch_begin(r,&tile_scope,GML_RENDER_SCENE_TILE,0);
     gml_render_cpu_blit_background_phase(r,&tt, t->x - r->cam_x, t->y - r->cam_y, 1,1, 0xFFFFFF, 1);
+    gml_render_cpu_backend_dispatch_end(r,&tile_scope);
   }
   free(tiles);
 }

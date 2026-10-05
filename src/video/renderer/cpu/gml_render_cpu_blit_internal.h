@@ -4,6 +4,7 @@
 /* Header-local hot helpers shared by sprite and surface composition kernels. */
 #ifndef GML_RENDER_CPU_BLIT_INTERNAL_H
 #define GML_RENDER_CPU_BLIT_INTERNAL_H
+#include "gml_render_cpu_dispatch_internal.h"
 
 #include "gml_render_cpu_sampling_internal.h"
 
@@ -202,6 +203,7 @@ static inline void rgba_bi_band(void *p, int py0, int py1, int slot){
       float Av=p00[3]*w00+p01[3]*w01+p10[3]*w10+p11[3]*w11;
       if(shader_discards_alpha_value(r,Av)) continue;
       float ea=(Av*(1.0f/255.0f))*c->fa; if(ea<=0.0f) continue;
+      gml_render_dispatch_cpu_scope_write(r);
       float Rv=p00[0]*w00+p01[0]*w01+p10[0]*w10+p11[0]*w11;
       float Gv=p00[1]*w00+p01[1]*w01+p10[1]*w10+p11[1]*w11;
       float Bv=p00[2]*w00+p01[2]*w01+p10[2]*w10+p11[2]*w11;

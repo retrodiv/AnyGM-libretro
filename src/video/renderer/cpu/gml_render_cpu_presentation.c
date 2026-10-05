@@ -62,8 +62,17 @@ void gml_render_cpu_present_image(GmlRender *r){
         remaining-=(size_t)run;
       }
       r->fb_all_transparent=0;
+      if(r->dispatch_metrics.enabled)
+        gml_render_dispatch_cpu_record(r,GML_RENDER_SCENE_PRIMITIVE,
+                                         gml_render_dispatch_cpu_reason(r),1u);
     }
     if(!src || span<=0 || y1<=y0 || sw<=0 || sh<=0 || dw<=0.0 || dh<=0.0) return;
+    /* Both allocation outcomes below execute a complete copy, with no callback
+     * or early rejection. This is a separate draw even when a later primitive
+     * triggered its materialization inside that primitive's coverage scope. */
+    if(r->dispatch_metrics.enabled)
+      gml_render_dispatch_cpu_record(r,GML_RENDER_SCENE_SURFACE,
+                                       gml_render_dispatch_cpu_reason(r),1u);
     column=span<=(int)(sizeof column_stack/sizeof *column_stack)?column_stack:
            (int*)malloc((size_t)span*sizeof(*column));
     if(!column){

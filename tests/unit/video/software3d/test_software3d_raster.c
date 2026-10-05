@@ -3,6 +3,98 @@
  */
 #include "software3d_test_fixture.h"
 
+int software3d_dispatch_fixture(void){
+  enum { WIDTH=64,HEIGHT=48,PARTICLE_VARIANTS=14 };
+  uint32_t pixels[WIDTH*HEIGHT],reference[WIDTH*HEIGHT];
+  const int shapes[PARTICLE_VARIANTS]={0,1,3,4,5,6,7,8,9,10,13,2,12,14};
+  for(int variant=0;variant<2+PARTICLE_VARIANTS+4;variant++){
+    for(int diagnostic=0;diagnostic<2;diagnostic++){
+      GmlRender render={0}; GmlVM vm={0}; GmlRenderDispatchMetrics metrics={0};
+      int ok=1,active=variant<2 || variant>=2+PARTICLE_VARIANTS;
+      int hidden=variant==1 || variant>=2+PARTICLE_VARIANTS+2;
+      uint64_t expected_cpu=variant<2?3u:1u,expected_depth=0;
+      render.color=0xFFFFFFu; render.alpha=1.0; render.alphablend=1;
+      render.color_write_mask=15u; render.blend_equation=render.blend_equation_alpha=1;
+      vm.render=&render; vm.particles=gml_particle_state_create(&vm);
+      gml_vm_software3d_reset(&vm);
+      memset(pixels,0,sizeof pixels);
+      gml_render_begin(&render,pixels,WIDTH,HEIGHT,0,0);
+      gml_render_dispatch_diagnostics_enable(&render,diagnostic);
+      if(active){
+        call_numbers(&vm,"d3d_start",NULL,0);
+        call_numbers(&vm,"d3d_set_projection_ortho",(double[]){0,0,WIDTH,HEIGHT,0},5);
+        call_numbers(&vm,"d3d_set_hidden",hidden?software3d_enable:software3d_disable,1);
+      }
+      if(variant<2){
+        const double triangle[3][2]={{4,4},{14,4},{4,14}};
+        const uint32_t colors[3]={255u,255u,255u};
+        gml_software3d_draw_triangle_2d(&render,triangle,colors,.5,0);
+        gml_software3d_draw_point_2d(&render,20,5,255u,.5);
+        gml_software3d_draw_line_2d(&render,20,8,28,8,255u,255u,.5,1.0);
+        if(hidden){ expected_cpu=0; expected_depth=3; }
+        /* Clipped and alpha-zero fragments do not execute a color write. */
+        const double clipped[3][2]={{-40,-40},{-30,-40},{-40,-30}};
+        gml_software3d_draw_triangle_2d(&render,clipped,colors,.5,0);
+        gml_software3d_draw_point_2d(&render,-20,-20,255u,.5);
+        gml_software3d_draw_line_2d(&render,-20,-20,-10,-20,255u,255u,.5,1.0);
+        gml_software3d_draw_triangle_2d(&render,triangle,colors,0.0,0);
+        gml_software3d_draw_point_2d(&render,20,5,255u,0.0);
+        gml_software3d_draw_line_2d(&render,20,8,28,8,255u,255u,0.0,1.0);
+        if(hidden){
+          uint32_t before[WIDTH*HEIGHT]; memcpy(before,pixels,sizeof before);
+          gml_d3_set_draw_depth(&render,1.0);
+          gml_software3d_draw_triangle_2d(&render,triangle,colors,.5,0);
+          gml_software3d_draw_point_2d(&render,20,5,255u,.5);
+          gml_software3d_draw_line_2d(&render,20,8,28,8,255u,255u,.5,1.0);
+          ok=ok && !memcmp(before,pixels,sizeof before);
+          gml_d3_set_draw_depth(&render,0.0);
+        }
+        /* A destination-dependent blend still writes at zero source alpha. */
+        render.blendmode=GML_RENDER_BLEND_DEST_SOURCE_COLOUR;
+        gml_software3d_draw_triangle_2d(&render,triangle,colors,0.0,0);
+        if(hidden) expected_depth++;
+        else expected_cpu++;
+      } else if(vm.particles){
+        int system=gml_part_system_create(vm.particles),type=gml_part_type_create(vm.particles);
+        int shape=variant<2+PARTICLE_VARIANTS?shapes[variant-2]:
+          ((variant-2-PARTICLE_VARIANTS)%2?0:1);
+        gml_part_type_shape(vm.particles,type,shape);
+        gml_part_type_size(vm.particles,type,.5,.5,0,0);
+        gml_part_type_alpha(vm.particles,type,1,1,1,1);
+        gml_part_particles_create_color(vm.particles,system,32,24,type,255u,1);
+        gml_part_system_drawit(vm.particles,&render,system);
+        if(active && !shape){
+          expected_cpu=hidden?0u:2u;
+          expected_depth=hidden?2u:0u;
+        }
+        gml_part_system_clear(vm.particles,system);
+        gml_part_particles_create_color(vm.particles,system,-1000,-1000,type,255u,1);
+        gml_part_system_drawit(vm.particles,&render,system);
+        gml_part_system_clear(vm.particles,system);
+        gml_part_type_alpha(vm.particles,type,1,0,0,0);
+        gml_part_particles_create_color(vm.particles,system,32,24,type,255u,1);
+        gml_part_system_drawit(vm.particles,&render,system);
+      } else ok=0;
+      ok=ok && colored_pixels(pixels,WIDTH*HEIGHT)>0 && !render.dispatch_cpu_depth &&
+        gml_render_dispatch_metrics(&render,&metrics) && !metrics.complete &&
+        !metrics.failed && !metrics.unclassified && !metrics.overflow &&
+        metrics.cpu[GML_RENDER_SCENE_PRIMITIVE][GML_RENDER_DISPATCH_NO_DEVICE]==
+          (diagnostic?expected_cpu:0u) &&
+        metrics.exceptions[GML_RENDER_SCENE_PRIMITIVE][GML_RENDER_DISPATCH_EXCEPTION_DEPTH]==
+          (diagnostic?expected_depth:0u);
+      if(!diagnostic) memcpy(reference,pixels,sizeof reference);
+      else ok=ok && !memcmp(reference,pixels,sizeof reference);
+      if(!ok) fprintf(stderr,"software dispatch variant=%d diagnostic=%d cpu=%llu depth=%llu\n",
+        variant,diagnostic,
+        (unsigned long long)metrics.cpu[GML_RENDER_SCENE_PRIMITIVE][GML_RENDER_DISPATCH_NO_DEVICE],
+        (unsigned long long)metrics.exceptions[GML_RENDER_SCENE_PRIMITIVE][GML_RENDER_DISPATCH_EXCEPTION_DEPTH]);
+      gml_render_free(&render); vm.render=NULL; gml_vm_free(&vm);
+      if(!ok) return 0;
+    }
+  }
+  return 1;
+}
+
 static int rounded_fixture(int coloured){
   GmlRender render={0}; GmlVM vm={0};
   uint32_t pixels[24*20],reference[24*20];

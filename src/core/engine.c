@@ -128,6 +128,93 @@ static int boot_runtime_prepare(AnygmEngine *engine);
 static void boot_runtime_start(AnygmEngine *engine);
 static int boot_runtime(AnygmEngine *engine);
 static void engine_unload(AnygmEngine *engine);
+
+static void engine_dispatch_renderer_begin(AnygmEngine *engine){
+  EngineDiagnostics *diagnostics=&engine->diagnostics;
+  diagnostics->dispatch_renderer_active=
+    diagnostics->dispatch_enabled && !diagnostics->dispatch_suppressed;
+  gml_render_dispatch_diagnostics_enable(&engine->render,diagnostics->dispatch_renderer_active);
+  if(diagnostics->dispatch_renderer_active){
+    if(diagnostics->dispatch_renderer_epochs==UINT64_MAX)
+      diagnostics->dispatch_retired.overflow=1;
+    else diagnostics->dispatch_renderer_epochs++;
+  }
+}
+
+static void engine_dispatch_renderer_retire(AnygmEngine *engine){
+  /* Existing teardown completes queued draws before destroying their sources. */
+  gml_render_free(&engine->render);
+  if(engine->diagnostics.dispatch_renderer_active){
+    GmlRenderDispatchMetrics epoch={0};
+    gml_render_dispatch_metrics(&engine->render,&epoch);
+    gml_render_dispatch_metrics_accumulate(&engine->diagnostics.dispatch_retired,&epoch);
+    engine->diagnostics.dispatch_renderer_active=0;
+  }
+}
+
+int engine_dispatch_metrics(const AnygmEngine *engine,GmlRenderDispatchMetrics *out){
+  if(!out) return 0;
+  memset(out,0,sizeof *out);
+  if(!engine) return 0;
+  *out=engine->diagnostics.dispatch_retired;
+  if(engine->diagnostics.dispatch_renderer_active){
+    GmlRenderDispatchMetrics epoch={0};
+    gml_render_dispatch_metrics(&engine->render,&epoch);
+    gml_render_dispatch_metrics_accumulate(out,&epoch);
+  }
+  out->enabled=engine->diagnostics.dispatch_enabled && !engine->diagnostics.dispatch_suppressed;
+  /* The setting is pinned before Create, and every renderer epoch is retained.
+   * Unknown work, an accounting gap or saturation cannot qualify a zero census. */
+  out->complete=out->enabled && engine->diagnostics.dispatch_renderer_epochs>0u &&
+    !out->unclassified && !out->overflow &&
+    (!engine->diagnostics.dispatch_renderer_active || engine->render.dispatch_metrics.enabled);
+  return 1;
+}
+
+static void engine_dispatch_report(AnygmEngine *engine){
+  GmlRenderDispatchMetrics metrics={0},totals={0};
+  if(!engine->diagnostics.dispatch_enabled || engine->diagnostics.dispatch_suppressed) return;
+  engine_dispatch_metrics(engine,&metrics);
+  /* Reuse saturation rather than letting a summary sum wrap to zero. */
+  for(unsigned family=1;family<GML_RENDER_SCENE_FAMILY_COUNT;family++){
+    GmlRenderDispatchMetrics folded={0};
+    folded.gpu[1]=metrics.gpu[family];
+    gml_render_dispatch_metrics_accumulate(&totals,&folded);
+    for(unsigned reason=0;reason<GML_RENDER_DISPATCH_REASON_COUNT;reason++){
+      memset(&folded,0,sizeof folded);
+      folded.cpu[1][0]=metrics.cpu[family][reason];
+      gml_render_dispatch_metrics_accumulate(&totals,&folded);
+    }
+    for(unsigned exception=0;exception<GML_RENDER_DISPATCH_EXCEPTION_COUNT;exception++){
+      memset(&folded,0,sizeof folded);
+      folded.exceptions[1][0]=metrics.exceptions[family][exception];
+      gml_render_dispatch_metrics_accumulate(&totals,&folded);
+    }
+  }
+  engine_logf(engine,ANYGM_LOG_INFO,
+    "[graphics-dispatch] enabled=%d complete=%d epochs=%llu gpu=%llu cpu=%llu exceptions=%llu "
+    "failed=%llu unclassified=%llu overflow=%d\n",
+    metrics.enabled,metrics.complete,
+    (unsigned long long)engine->diagnostics.dispatch_renderer_epochs,
+    (unsigned long long)totals.gpu[1],(unsigned long long)totals.cpu[1][0],
+    (unsigned long long)totals.exceptions[1][0],(unsigned long long)metrics.failed,
+    (unsigned long long)metrics.unclassified,metrics.overflow || totals.overflow);
+  static const char *const families[]={"unclassified","sprite","background","tile",
+    "surface","text","primitive","effect"};
+  _Static_assert(sizeof families/sizeof families[0]==GML_RENDER_SCENE_FAMILY_COUNT,
+                 "dispatch footer must name every family");
+  for(unsigned family=1;family<GML_RENDER_SCENE_FAMILY_COUNT;family++)
+    engine_logf(engine,ANYGM_LOG_INFO,
+      "[graphics-dispatch-family] family=%s gpu=%llu cpu_no_device=%llu cpu_no_scene=%llu "
+      "cpu_unqualified=%llu cpu_replay=%llu cpu_composition=%llu exception_depth=%llu\n",
+      families[family],(unsigned long long)metrics.gpu[family],
+      (unsigned long long)metrics.cpu[family][GML_RENDER_DISPATCH_NO_DEVICE],
+      (unsigned long long)metrics.cpu[family][GML_RENDER_DISPATCH_NO_SCENE],
+      (unsigned long long)metrics.cpu[family][GML_RENDER_DISPATCH_UNQUALIFIED],
+      (unsigned long long)metrics.cpu[family][GML_RENDER_DISPATCH_REPLAY],
+      (unsigned long long)metrics.cpu[family][GML_RENDER_DISPATCH_COMPOSITION],
+      (unsigned long long)metrics.exceptions[family][GML_RENDER_DISPATCH_EXCEPTION_DEPTH]);
+}
 static AnygmResult engine_apply_game_change(AnygmEngine *engine,int *changed);
 
 typedef struct {
@@ -448,6 +535,7 @@ static int boot_runtime_prepare(AnygmEngine *engine) {
     /* Reset and replacement callers have already released the old renderer. Initialize its
      * new owner before the ordinary unload transaction, including on a rejected VM load. */
     gml_render_init(&engine->render,&engine->win);
+    engine_dispatch_renderer_begin(engine);
     engine_unload(engine);
     engine->lifecycle=ENGINE_EMPTY;
     engine_errorf(engine,ANYGM_ERROR_INVALID_CONTENT,"Runtime resource initialization failed");
@@ -458,6 +546,7 @@ static int boot_runtime_prepare(AnygmEngine *engine) {
   engine_input_bind(engine);
   setup_platform_locale(engine,&engine->vm);
   gml_render_init(&engine->render, &engine->win);
+  engine_dispatch_renderer_begin(engine);
   /* Reset and in-content replacement recreate the renderer without recreating the host GL
    * context. Bind its new device facade before any authored Create event can draw. */
   engine_graphics_bind_renderer(engine);
@@ -759,6 +848,12 @@ AnygmResult engine_state_stage_content(AnygmEngine *engine,const char *locator,
   staged->profile_enabled=engine->profile_enabled;
   staged->profile=engine->profile;
   staged->diagnostics=engine->diagnostics;
+  /* A trial runtime is not published drawing, and a rejected trial must never
+   * duplicate the live session's footer or consume its accounting history. */
+  memset(&staged->diagnostics.dispatch_retired,0,sizeof staged->diagnostics.dispatch_retired);
+  staged->diagnostics.dispatch_renderer_epochs=0;
+  staged->diagnostics.dispatch_renderer_active=0;
+  staged->diagnostics.dispatch_suppressed=1;
   staged->host_frame_generation=engine->host_frame_generation;
   staged->frame_materializations=engine->frame_materializations;
   staged->screen_pass_frames=engine->screen_pass_frames;
@@ -838,6 +933,14 @@ void engine_state_commit_staged_content(AnygmEngine *engine,AnygmEngine *staged)
   *staged=previous;
   engine_rebind_moved_runtime(engine);
   engine_rebind_moved_runtime(staged);
+  /* Retire the accepted transaction's old runtime exactly as destroy would,
+   * then transfer its monotonic, nonserialized history to the new runtime. */
+  staged->diagnostics.dispatch_suppressed=1;
+  anygm_unload(staged);
+  engine->diagnostics.dispatch_retired=staged->diagnostics.dispatch_retired;
+  engine->diagnostics.dispatch_renderer_epochs=staged->diagnostics.dispatch_renderer_epochs;
+  engine->diagnostics.dispatch_suppressed=0;
+  engine_dispatch_renderer_begin(engine);
   anygm_destroy(staged);
 }
 
@@ -886,7 +989,7 @@ static AnygmResult engine_apply_game_change(AnygmEngine *engine,int *changed){
   gml_vm_fire_game_end(&engine->vm);
   gml_audio_free(engine->audio); engine->audio=NULL; engine->vm.audio=NULL;
   gml_vm_free(&engine->vm);
-  gml_render_free(&engine->render);
+  engine_dispatch_renderer_retire(engine);
   gml_win_free(&engine->win);
 
   engine->win=prepared.win;
@@ -936,7 +1039,7 @@ static void engine_unload(AnygmEngine *engine){
   profile_report(engine,1);
   gml_audio_free(engine->audio); engine->audio=NULL; engine->vm.audio=NULL;
   gml_vm_free(&engine->vm);
-  gml_render_free(&engine->render);
+  engine_dispatch_renderer_retire(engine);
   gml_win_free(&engine->win);
   classic_transition_release(engine);
   engine->have_presented_frame=0; engine->audio_accumulator=0.0; engine->fps=60.0; engine->fps_room=-1;
@@ -1186,7 +1289,7 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
       engine->vm.game_end = 0;
       gml_audio_free(engine->audio); engine->audio=NULL; engine->vm.audio=NULL;
       gml_vm_free(&engine->vm);
-      gml_render_free(&engine->render);
+      engine_dispatch_renderer_retire(engine);
       if(!boot_runtime(engine)) return ANYGM_ERROR_INVALID_CONTENT;
       engine_retain_display_request(engine,display_request);
     } else {
@@ -1649,7 +1752,7 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
   } else if(gml_render_application_surface_owned_clear(&engine->render,engine->background,&app_view)){
     int aw=app_view.width, ah=app_view.height;
     if(multiview_rendered)
-      compose_view_rect(engine->fb,(int)engine->width,(int)engine->height,
+      compose_view_rect(&engine->render,engine->fb,(int)engine->width,(int)engine->height,
                         app_view.pixels,aw,ah,0,0,aw,ah);
     else if(!(view_surface>0 && gml_surface_exists(&engine->render,view_surface))){
       GmlPresentView v;
@@ -1689,10 +1792,10 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
          * widened raster; preserve the translation without fitting that raster back into the
          * authored narrow width. */
         if(one_view && wide_window_raster){ dw=aw; dh=ah; }
-        compose_view_rect(engine->fb,(int)engine->width,(int)engine->height,app_view.pixels,aw,ah,
+        compose_view_rect(&engine->render,engine->fb,(int)engine->width,(int)engine->height,app_view.pixels,aw,ah,
                           dx,dy,dw,dh);
       } else
-        compose_view_rect(engine->fb,(int)engine->width,(int)engine->height,app_view.pixels,aw,ah,
+        compose_view_rect(&engine->render,engine->fb,(int)engine->width,(int)engine->height,app_view.pixels,aw,ah,
                           0,0,aw,ah);
     }
     gml_render_application_surface_select_owned(&engine->render,1);
@@ -1741,6 +1844,7 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
 		             engine->fb + (size_t)(aspect_gui_y + yy) * engine->width + aspect_gui_x,
 	             (size_t)aspect_gui_w * sizeof(uint32_t));
 	    }
+        gml_render_dispatch_cpu_composition(&engine->render,GML_RENDER_SCENE_SURFACE);
 	    GmlRenderTargetCoverage render_coverage={0};
 	    gml_render_target_coverage(&engine->render,&render_coverage);
 	    gml_render_application_surface_bind(
@@ -2087,17 +2191,23 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
 			     * transform the un-forced window-raster path performs. */
 			    uint32_t *logical = ow == engine->width && oh == engine->height
 			                      ? engine->screen : engine->fb;
-			    if (logical == engine->screen)
+			    if (logical == engine->screen){
 			      memcpy(engine->screen, engine->fb, (size_t)ow * oh * sizeof(uint32_t));
+                  if(ow && oh) gml_render_dispatch_cpu_composition(&engine->render,GML_RENDER_SCENE_SURFACE);
+                }
+                int gui_copied=0;
 			    for (int yy = 0; yy < aspect_gui_h && aspect_gui_y + yy < (int)engine->height; yy++) {
 			      if (aspect_gui_x >= (int)engine->width) continue;
 		      int copy_w = aspect_gui_w;
 		      if (aspect_gui_x + copy_w > (int)engine->width) copy_w = (int)engine->width - aspect_gui_x;
-		      if (copy_w > 0)
+		      if (copy_w > 0){
 		        memcpy(logical + (size_t)(aspect_gui_y + yy) * engine->width + aspect_gui_x,
 		               engine->gui_buffer + (size_t)yy * aspect_gui_w,
 		               (size_t)copy_w * sizeof(uint32_t));
+                    gui_copied=1;
+                  }
 		    }
+                if(gui_copied) gml_render_dispatch_cpu_composition(&engine->render,GML_RENDER_SCENE_SURFACE);
 		    if (logical != engine->screen) {
 		      unsigned lw = engine->width, lh = engine->height;
 		      unsigned sy = 0, yacc = lh;
@@ -2113,6 +2223,7 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
 		        yacc += lh * 2u;
 		        if (yacc >= oh * 2u) { yacc -= oh * 2u; sy++; }
 		      }
+                  if(ow && oh) gml_render_dispatch_cpu_composition(&engine->render,GML_RENDER_SCENE_SURFACE);
 		    }
 	  } else if (gui_indirect && !resident_gui_present) {
 		    if (ow >= (unsigned)gtw && oh >= (unsigned)gth) {
@@ -2132,6 +2243,7 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
 		        yacc += (unsigned)gth * 2u;
 		        if (yacc >= oh * 2u) { yacc -= oh * 2u; sy++; }
 		      }
+                  if(ow && oh) gml_render_dispatch_cpu_composition(&engine->render,GML_RENDER_SCENE_SURFACE);
 		    } else {
 		      /* Box-downscale the GUI-space frame onto the native output. */
 		      for (unsigned oy2 = 0; oy2 < oh; oy2++) {
@@ -2148,6 +2260,7 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
           engine->screen[oy2 * ow + ox2] = ((rs / n) << 16) | ((gs / n) << 8) | (bs / n);
 	        }
 	      }
+              if(ow && oh) gml_render_dispatch_cpu_composition(&engine->render,GML_RENDER_SCENE_SURFACE);
 	    }
 	  }
 	  if(engine->classic_transition.active || engine->vm.classic_info_active){
@@ -2385,6 +2498,12 @@ AnygmResult anygm_load_prepare(AnygmEngine *engine,const AnygmContentSource *sou
   }
   engine->scene_renderer_session=engine->config.scene_renderer;
   engine->scene_graphics_reported=0u;
+  memset(&engine->diagnostics.dispatch_retired,0,sizeof engine->diagnostics.dispatch_retired);
+  engine->diagnostics.dispatch_renderer_epochs=0;
+  engine->diagnostics.dispatch_renderer_active=0;
+  engine->diagnostics.dispatch_suppressed=0;
+  engine->diagnostics.dispatch_enabled=
+    anygm_host_development_setting(&engine->host,"GML_RENDER_DISPATCH_STATS")!=NULL;
   AnygmLoadConfig resolved_config={0};
   char host_language[16]={0},host_region[16]={0},host_tag[32]={0};
   const AnygmLoadConfig *load_config=config;
@@ -2442,6 +2561,7 @@ void anygm_unload(AnygmEngine *engine){
   }
   engine_graphics_report(engine);
   engine_unload(engine);
+  engine_dispatch_report(engine);
   engine_override_reset(engine);
   engine->lifecycle=ENGINE_EMPTY;
 }
@@ -2465,7 +2585,7 @@ AnygmResult anygm_reset(AnygmEngine *engine){
   gml_render_discard_deferred_presentation(&engine->render);
   engine->frame_authority=ENGINE_FRAME_CPU_MATERIALIZED;
   gml_vm_free(&engine->vm);
-  gml_render_free(&engine->render);
+  engine_dispatch_renderer_retire(engine);
   if(!boot_runtime(engine)) return ANYGM_ERROR_INVALID_CONTENT;
   engine_retain_display_request(engine,display_request);
   return ANYGM_OK;

@@ -15,6 +15,12 @@
 
 #if ANYGM_HARDWARE_RENDER
 
+static int engine_execute_graphics_plan(AnygmEngine *engine,GmlRenderPlan *plan){
+  int succeeded=gml_gpu_execute_plan(engine->gpu,plan);
+  gml_render_dispatch_gpu_plan_completion(&engine->render,plan,succeeded);
+  return succeeded;
+}
+
 static void engine_graphics_lose_scene_context(AnygmEngine *engine){
   gml_render_lose_volatile_device(&engine->render);
   engine->host_plan_valid=0u;
@@ -439,7 +445,7 @@ int engine_execute_content_shader(void *context,const GmlRenderShaderRequest *re
                                          request->serial,request->linear,colour)) return 0;
   }
   started=anygm_host_monotonic_time_ns(&engine->host);
-  if(!gml_gpu_execute_plan(engine->gpu,&plan)){
+  if(!engine_execute_graphics_plan(engine,&plan)){
     if(plan.fallback_reason==GML_PLAN_FALLBACK_SHADER_FAILURE)
       gml_render_shader_mark_failed(&engine->render,request->shader);
     return 0;
@@ -583,7 +589,7 @@ int engine_present_hardware_screen(AnygmEngine *engine,unsigned *width,unsigned 
         plan->readback_pixels=engine->screen;
         plan->readback_pitch_pixels=engine->output_width;
         gml_gpu_set_readback_pipelined(engine->gpu,0);
-        int executed=gml_gpu_execute_plan(engine->gpu,plan);
+        int executed=engine_execute_graphics_plan(engine,plan);
         gml_gpu_set_readback_pipelined(engine->gpu,engine->readback_is_pipelined);
         if(executed){
           gml_render_discard_deferred_presentation(&engine->render);
@@ -592,7 +598,7 @@ int engine_present_hardware_screen(AnygmEngine *engine,unsigned *width,unsigned 
           engine->host_clear_valid=0;
           return 0; /* The caller still has to fit and present these pixels. */
         }
-      } else if(gml_gpu_execute_plan(engine->gpu,plan)) goto presented;
+      } else if(engine_execute_graphics_plan(engine,plan)) goto presented;
       if(plan->fallback_reason==GML_PLAN_FALLBACK_SHADER_FAILURE)
         gml_render_shader_mark_failed(&engine->render,record.shader);
     }
@@ -608,7 +614,7 @@ int engine_present_hardware_screen(AnygmEngine *engine,unsigned *width,unsigned 
   if(!hybrid && !scene) return 0;
   /* The presentation writes an opaque frame: the top byte is set, not carried. */
   if(!gml_render_plan_add_blit_nearest(plan,image,destination,axis_x,axis_y,0xFFu)) return 0;
-  if(!gml_gpu_execute_plan(engine->gpu,plan)) return 0;
+  if(!engine_execute_graphics_plan(engine,plan)) return 0;
 presented:
   if(scene && engine_graphics_is_current(engine)){
     if(!gml_gpu_capture_completed_frame(engine->gpu,engine->output_width,engine->output_height,
@@ -643,7 +649,7 @@ int engine_present_hardware_canvas(AnygmEngine *engine,unsigned *width,unsigned 
    * buffer persists. */
   if(!engine_build_host_plan(engine,&engine->host_plan,GML_PLAN_TARGET_HOST_FRAMEBUFFER,
                              host_width,host_height,1)) return 0;
-  if(!gml_gpu_execute_plan(engine->gpu,&engine->host_plan)) return 0;
+  if(!engine_execute_graphics_plan(engine,&engine->host_plan)) return 0;
   engine->host_plan_valid=1;
   engine->canvas_pass_frames++;
   /* The host-sized copy was not written this frame, so its margins can no longer be assumed to
@@ -684,7 +690,7 @@ int engine_present_hardware_frame(AnygmEngine *engine,const uint32_t *pixels,
   whole.width=width;
   whole.height=height;
   if(!gml_render_plan_add_present_cpu_frame(&plan,image,whole)) return 0;
-  if(!gml_gpu_execute_plan(engine->gpu,&plan)) return 0;
+  if(!engine_execute_graphics_plan(engine,&plan)) return 0;
   return 1;
 }
 

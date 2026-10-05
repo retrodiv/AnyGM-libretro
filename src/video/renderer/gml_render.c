@@ -7,6 +7,7 @@
 #include "gml_render_internal.h"
 #include "gml_render_surfaces_internal.h"
 #include "gml_render_cpu_blit_internal.h"
+#include "gml_render_cpu_dispatch_internal.h"
 #include "gml_render_cpu_pixel_internal.h"
 #include "gml_render_cpu_sampling_internal.h"
 #include "gml_render_cpu_backend.h"
@@ -204,7 +205,13 @@ void gml_render_bind_software3d(GmlRender *r,GmlSoftware3D *software3d){
   if(r) r->software3d=software3d;
 }
 void gml_render_rebind_content(GmlRender *r,GmlWin *win){
-  if(r) r->win=win;
+  if(r){
+    r->win=win;
+    gml_render_resource_bind_dispatch(r->app_surface_resource,r);
+    gml_render_resource_bind_dispatch(r->base_scene_resource,r);
+    for(int index=0;index<GML_MAX_SURFACES;index++)
+      gml_render_resource_bind_dispatch(r->surface[index].resource,r);
+  }
 }
 GmlSoftware3D *gml_render_software3d(GmlRender *r){
   return gml_render_cpu_backend_software3d(r);
@@ -482,6 +489,7 @@ int gml_render_application_surface_owned_clear(
   }
   size_t count=(size_t)r->app_w*(size_t)r->app_h;
   for(size_t i=0;i<count;i++) r->app_surface_owned[i]=color;
+  if(count) gml_render_dispatch_cpu_composition(r,GML_RENDER_SCENE_PRIMITIVE);
   r->app_presentation_coverage_active=0;
   if(view){
     view->pixels=r->app_surface_owned;
@@ -972,6 +980,7 @@ void gml_render_set_pending_fill(GmlRender *r, uint32_t color){
   r->fb_opaque_known=1;
   r->fb_all_opaque=((color>>24)==255u);
   r->fb_all_transparent=((color>>24)==0u);
+  int phase_written=0;
   if(r->target_sp==0 && r->classic_phase_y){
     size_t n=(size_t)r->fbw*(size_t)r->fbh;
     uint32_t *p=r->classic_phase_y; size_t left=n;
@@ -979,6 +988,7 @@ void gml_render_set_pending_fill(GmlRender *r, uint32_t color){
       int run=left>(size_t)INT_MAX?INT_MAX:(int)left;
       gml_render_cpu_backend_fill_xrgb(p,run,color); p+=run; left-=(size_t)run;
     }
+    phase_written=1;
   }
   if(r->target_sp==0){
     size_t n=(size_t)r->fbw*(size_t)r->fbh;
@@ -988,12 +998,18 @@ void gml_render_set_pending_fill(GmlRender *r, uint32_t color){
         int run=left>(size_t)INT_MAX?INT_MAX:(int)left;
         gml_render_cpu_backend_fill_xrgb(p,run,color); p+=run; left-=(size_t)run;
       }
+      phase_written=1;
     }
   }
+  if(phase_written && r->dispatch_metrics.enabled)
+    gml_render_dispatch_cpu_record(r,GML_RENDER_SCENE_PRIMITIVE,
+                                     gml_render_dispatch_cpu_reason(r),1u);
 }
 void gml_render_flush_pending_fill(GmlRender *r){
   gml_render_flush_rotated_batch(r);
   if(!r || !r->pending_fill || !r->fb || r->fbw<=0 || r->fbh<=0) return;
+  unsigned reason=r->dispatch_metrics.enabled
+    ?gml_render_dispatch_cpu_reason(r):GML_RENDER_DISPATCH_UNQUALIFIED;
   if(r->resident_application_pass && gml_render_scene_target_matches(r)){
     GmlRenderResource *resource=gml_render_scene_target_resource_ensure(r);
     if(!resource) return;
@@ -1047,6 +1063,8 @@ void gml_render_flush_pending_fill(GmlRender *r){
     p+=run;
     n-=(size_t)run;
   }
+  if(r->dispatch_metrics.enabled)
+    gml_render_dispatch_cpu_record(r,GML_RENDER_SCENE_PRIMITIVE,reason,1u);
 }
 int gml_render_resident_application_cpu_barrier(GmlRender *r){
   uint32_t *pixels=NULL;
@@ -1216,7 +1234,10 @@ void gml_render_flush_pending_underlay(GmlRender *r){
          * attenuate automatic first-generation presentation a second time. */
         r->app_surface_opaque=1;
       }
+      GmlRenderDispatchCpuSuspension dispatch;
+      gml_render_dispatch_cpu_scope_suspend(r,&dispatch);
       draw_surface_region(r,0,0,0,sw,sh,x,y,w,h,0xFFFFFF,1.0);
+      gml_render_dispatch_cpu_scope_resume(r,&dispatch);
       if(use_presentation_coverage)
         for(size_t i=0;i<count;i++)
           r->app_surface[i]=(r->app_surface[i]&0x00ffffffu)|

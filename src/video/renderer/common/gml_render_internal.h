@@ -9,6 +9,7 @@
 #include "gml_render_resources.h"
 
 #include "anygm_compatibility.h"
+#include <stdatomic.h>
 
 typedef struct { uint16_t y, x, len; uint8_t alpha; } GmlTpagAlphaRun;
 typedef struct {
@@ -218,6 +219,10 @@ typedef struct GmlRender {
   int device_bound;
   GmlRenderPendingSceneBatch *pending_scene_batch;
   uint64_t scene_source_epoch; /* process-unique source incarnation, assigned on first upload */
+  GmlRenderDispatchMetrics dispatch_metrics;
+  unsigned dispatch_cpu_depth;
+  unsigned dispatch_cpu_family,dispatch_cpu_reason;
+  atomic_int dispatch_cpu_written;
   /* Borrowed engine-owned fixed-function context. */
   GmlSoftware3D *software3d;
   long frame;                     /* simulation frame supplied by the owning VM */
@@ -777,6 +782,13 @@ void blit_rgba_sprite(GmlRender *r,GmlSprite *owner,const uint8_t *source,
                       const int *row_min,const int *row_max,int source_opaque);
 void blit_rotated(GmlRender *r,GmlSprite *sprite,GmlTpag *tpag,double x,double y,
                   double xscale,double yscale,double rotation,uint32_t blend,double alpha);
+unsigned gml_render_dispatch_cpu_reason(const GmlRender *render);
+void gml_render_dispatch_cpu_record(GmlRender *render,unsigned family,unsigned reason,
+                                     uint64_t count);
+void gml_render_dispatch_cpu_exception_record(GmlRender *render,unsigned family,
+                                              unsigned exception,uint64_t count);
+void gml_render_dispatch_batch_record(GmlRender *render,const GmlRenderDrawBatch *batch,
+                                       GmlRenderResourceExecution result);
 /* Geometry only: the preserved nearest row walker selects vector packets and
  * scalar tails without reading or writing the destination. */
 typedef struct GmlRenderRotatedCoverageRegion {

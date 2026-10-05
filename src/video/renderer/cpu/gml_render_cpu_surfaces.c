@@ -36,6 +36,9 @@ static void realize_suspended_fill(GmlRender *r,const uint32_t *px){
       p+=run; n-=(size_t)run;
     }
     r->target_stack[i].pending_fill=0;
+    if(r->dispatch_metrics.enabled)
+      gml_render_dispatch_cpu_record(r,GML_RENDER_SCENE_PRIMITIVE,
+                                       gml_render_dispatch_cpu_reason(r),1u);
   }
 }
 static int has_suspended_fill(const GmlRender *r,const uint32_t *px){
@@ -142,6 +145,8 @@ const uint32_t *screen_pixels_observe(GmlRender *r,int *w,int *h){
 
 void gml_surface_copy(GmlRender *r, int dst, int x, int y, int src){
   if(!r) return;
+  unsigned reason=r->dispatch_metrics.enabled
+    ?gml_render_dispatch_cpu_reason(r):GML_RENDER_DISPATCH_UNQUALIFIED;
   int sw=0, sh=0, dw=0, dh=0;
   const uint32_t *sp=surface_pixels_observe(r,src,&sw,&sh);
   uint32_t *dp=surface_pixels(r,dst,&dw,&dh);
@@ -172,6 +177,8 @@ void gml_surface_copy(GmlRender *r, int dst, int x, int y, int src){
     for(int yy=0; yy<ch; yy++)
       memcpy(dp+(size_t)(dy0+yy)*dw+dx0, sp+(size_t)(sy0+yy)*sw+sx0, (size_t)cw*sizeof(uint32_t));
   }
+  if(r->dispatch_metrics.enabled)
+    gml_render_dispatch_cpu_record(r,GML_RENDER_SCENE_SURFACE,reason,1u);
 
   int di=surface_slot(dst);
   if(di>=0 && r->surface[di].live){
@@ -190,6 +197,8 @@ void gml_surface_copy(GmlRender *r, int dst, int x, int y, int src){
 void gml_surface_copy_part(GmlRender *r, int dst, int x, int y, int src,
                            int source_x, int source_y, int width, int height){
   if(!r || width<=0 || height<=0) return;
+  unsigned reason=r->dispatch_metrics.enabled
+    ?gml_render_dispatch_cpu_reason(r):GML_RENDER_DISPATCH_UNQUALIFIED;
   int sw=0,sh=0,dw=0,dh=0;
   const uint32_t *sp=surface_pixels_observe(r,src,&sw,&sh);
   uint32_t *dp=surface_pixels(r,dst,&dw,&dh);
@@ -230,6 +239,8 @@ void gml_surface_copy_part(GmlRender *r, int dst, int x, int y, int src,
              sp+(size_t)(sy+yy)*(size_t)sw+(size_t)sx,
              (size_t)cw*sizeof(uint32_t));
   }
+  if(r->dispatch_metrics.enabled)
+    gml_render_dispatch_cpu_record(r,GML_RENDER_SCENE_SURFACE,reason,1u);
 
   int di=surface_slot(dst);
   if(di>=0 && r->surface[di].live){
@@ -307,6 +318,7 @@ static void scaled_band(void *context,int row_start,int row_end,int slot){
       if(sx1 == sx0 + 1 && sy1 == sy0 + 1){
         uint32_t s = src[(size_t)sy0 * sw + sx0];
         uint32_t a = s >> 24;
+        if(a) gml_render_dispatch_cpu_scope_write(r);
         if(a == 255){
           *dp = s | 0xFF000000u;
         } else if(a){
@@ -348,6 +360,7 @@ static void scaled_band(void *context,int row_start,int row_end,int slot){
       if(!n) n = 1;
       double pa = (A / (double)n) / 255.0;
       if(pa > 0.0){
+        gml_render_dispatch_cpu_scope_write(r);
         int sr = (int)(R / n), sg = (int)(G / n), sb = (int)(B / n);
         if(pa >= 1.0) *dp = 0xFF000000u | ((uint32_t)sr << 16) | ((uint32_t)sg << 8) | (uint32_t)sb;
         else {
@@ -378,6 +391,7 @@ static int draw_scaled_full_surface_normal(GmlRender *r, const uint32_t *src, in
    * reconstruct those edge samples. */
   if(r->classic && r->interp && r->app_surface==src && W==sw*2 && H==sh*2 &&
      r->app_interp_phase[0] && r->app_interp_phase[1] && r->app_interp_phase[2]){
+    gml_render_dispatch_cpu_scope_write(r);
     for(int py=py0;py<py1;py++){
       int sy=py>>1, oddy=py&1;
       uint32_t *dp=r->fb+(size_t)(y0+py)*r->fbw+(x0+px0);
@@ -446,6 +460,7 @@ static int draw_scaled_full_surface_normal(GmlRender *r, const uint32_t *src, in
       for(int px=px0;px<px1;px++){
         int sx=xmap[px];
         uint32_t s=src[(size_t)sy*sw+sx],a=s>>24;
+        if(a) gml_render_dispatch_cpu_scope_write(r);
         if(a==255) *dp=s|0xFF000000u;
         else if(a){
           if(r->classic && src==r->app_surface){
@@ -473,6 +488,7 @@ static int draw_scaled_full_surface_normal(GmlRender *r, const uint32_t *src, in
    * those checks for every pixel of a certified opaque full-target blit is unnecessary work. */
   if(source_all_opaque && x0==0 && y0==0 && W==r->fbw && H==r->fbh &&
      W%sw==0 && H%sh==0){
+    gml_render_dispatch_cpu_scope_write(r);
     int xscale=W/sw,yscale=H/sh;
     for(int sy=0;sy<sh;sy++){
       uint32_t *first=r->fb+(size_t)(sy*yscale)*W;
@@ -511,6 +527,7 @@ static int draw_scaled_full_surface_normal(GmlRender *r, const uint32_t *src, in
         }
       }
       if(sampled_all_opaque){
+        gml_render_dispatch_cpu_scope_write(r);
         for(int py=py0;py<py1;py++){
           int sy=surface_point_index(py,sh,H);
           memcpy(r->fb+(size_t)(y0+py)*r->fbw+(x0+px0),
@@ -581,6 +598,7 @@ static int draw_scaled_full_surface_normal(GmlRender *r, const uint32_t *src, in
       if(sx1 == sx0 + 1 && sy1 == sy0 + 1){
         uint32_t s = src[(size_t)sy0 * sw + sx0];
         uint32_t a = s >> 24;
+        if(a) gml_render_dispatch_cpu_scope_write(r);
         if(a == 255){
           *dp = s | 0xFF000000u;
         } else if(a){
@@ -622,6 +640,7 @@ static int draw_scaled_full_surface_normal(GmlRender *r, const uint32_t *src, in
       if(!n) n = 1;
       double pa = (A / (double)n) / 255.0;
       if(pa > 0.0){
+        gml_render_dispatch_cpu_scope_write(r);
         int sr = (int)(R / n), sg = (int)(G / n), sb = (int)(B / n);
         if(pa >= 1.0) *dp = 0xFF000000u | ((uint32_t)sr << 16) | ((uint32_t)sg << 8) | (uint32_t)sb;
         else {
@@ -702,6 +721,7 @@ static void draw_surface_interp_phase(GmlRender *r,uint32_t *plane,const uint32_
       int sb=(int)((p00&0xFF)*w00+(p01&0xFF)*w01+(p10&0xFF)*w10+(p11&0xFF)*w11);
       int aa=(int)((p00>>24)*w00+(p01>>24)*w01+(p10>>24)*w10+(p11>>24)*w11);
       if(aa<=0 || shader_discards_alpha(r,(unsigned)aa)) continue;
+      gml_render_dispatch_cpu_scope_write(r);
       uint32_t sampled=((uint32_t)aa<<24)|((uint32_t)sr<<16)|((uint32_t)sg<<8)|(uint32_t)sb;
       if(sremap) sampled=mapped_texture_pixel(r,sampled);
       else if(slut) sampled=lut_map_px(r,slut,sampled);
@@ -748,7 +768,7 @@ static void draw_surface_interp_phase(GmlRender *r,uint32_t *plane,const uint32_
   }
 }
 
-void draw_surface_region(GmlRender *r, int surf, double sx0d, double sy0d, double swd, double shd,
+static void draw_surface_region_impl(GmlRender *r, int surf, double sx0d, double sy0d, double swd, double shd,
                                 double dx, double dy, double dw, double dh, uint32_t blend, double alpha){
   int sw=0, sh=0; const uint32_t *src=surface_pixels_observe(r,surf,&sw,&sh);
   if(!src || !r->fb) return;
@@ -775,6 +795,7 @@ void draw_surface_region(GmlRender *r, int surf, double sx0d, double sy0d, doubl
       uint32_t *dp=r->fb+(size_t)ty*r->fbw;
       for(int ox=0;ox<W;ox++){
         int tx=x0+ox; if(tx<0||tx>=r->fbw) continue;
+        gml_render_dispatch_cpu_scope_write(r);
         int sx=(ox+1)>>1;
         if(sx<sw){ dp[tx]=sample_row[sx]; continue; }
         /* The half-texel phase leaves the far-edge sample one quarter beyond the
@@ -844,6 +865,7 @@ void draw_surface_region(GmlRender *r, int surf, double sx0d, double sy0d, doubl
          src!=r->fb && cx0==0 && cy0==0 && cw==r->fbw && ch==r->fbh &&
          sx_start==0 && sy_start==0 && sw==r->fbw && sh==r->fbh){
         gml_render_maybe_prepare_opaque_rect(r,cx0,cy0,cx1,cy1);
+        gml_render_dispatch_cpu_scope_write(r);
         memcpy(r->fb,src,(size_t)r->fbw*(size_t)r->fbh*sizeof(uint32_t));
         r->fb_opaque_known=1;
         r->fb_all_opaque=1;
@@ -862,6 +884,7 @@ void draw_surface_region(GmlRender *r, int surf, double sx0d, double sy0d, doubl
           for(int xx=0; xx<cw; xx++){
             uint32_t sv=sp[xx], sa=sv>>24;
             if(!sa) continue;
+            gml_render_dispatch_cpu_scope_write(r);
             uint32_t old=dp[xx], out;
             if(!r->alphablend || sa==255) out=sv;
             else {
@@ -893,8 +916,12 @@ void draw_surface_region(GmlRender *r, int surf, double sx0d, double sy0d, doubl
             if(destination_colour_blend_active(r)){
               unsigned sa=(unsigned)lround((double)(sv>>24)*alpha);
               if(shader_discards_alpha(r,sv>>24) && shader_alpha_test_active(r)) continue;
+              gml_render_dispatch_cpu_scope_write(r);
               dp[xx]=color_write_merge(r,old,blend_destination_colour_pixel(r,old,sr,sg,sb,sa));
-            } else dp[xx]=color_write_merge(r,old,blend_multiply_pixel(r,old,sr,sg,sb));
+            } else {
+              gml_render_dispatch_cpu_scope_write(r);
+              dp[xx]=color_write_merge(r,old,blend_multiply_pixel(r,old,sr,sg,sb));
+            }
           }
         }
       } else if(r->blendmode==4 || r->blendmode==8){
@@ -908,6 +935,7 @@ void draw_surface_region(GmlRender *r, int surf, double sx0d, double sy0d, doubl
           for(int xx=0; xx<cw; xx++){
             uint32_t sv=sp[xx],source_alpha=sv>>24,old=dp[xx];
             if(!source_alpha) continue;
+            gml_render_dispatch_cpu_scope_write(r);
             if(sremap) sv=mapped_texture_pixel(r,sv);
             else if(slut) sv=lut_map_px(r,slut,sv);
             else if(sgrid) sv=grid_map_px_cached(r,sgrid,sv,&grid_cache);
@@ -934,6 +962,7 @@ void draw_surface_region(GmlRender *r, int surf, double sx0d, double sy0d, doubl
           for(int xx=0; xx<cw; xx++){
             uint32_t sv=sp[xx]; uint32_t sa8=sv>>24;
             if(!sa8) continue;
+            gml_render_dispatch_cpu_scope_write(r);
             double sa=(sa8/255.0)*alpha;
             int source_r=((sv>>16)&0xFF)*bR/255;
             int source_g=((sv>>8)&0xFF)*bG/255;
@@ -962,6 +991,7 @@ void draw_surface_region(GmlRender *r, int surf, double sx0d, double sy0d, doubl
           const uint32_t *sp=src+(size_t)(sy_start+yy)*sw+sx_start;
           uint32_t *dp=r->fb+(size_t)(cy0+yy)*r->fbw+cx0;
           for(int xx=0; xx<cw; xx++){ if(r->alphablend && !(sp[xx]>>24)) continue;
+            gml_render_dispatch_cpu_scope_write(r);
             dp[xx]=mapped_texture_pixel(r,sp[xx]); }
         }
       } else if((!r->alphablend || alpha>=1.0) && white && squant){
@@ -969,19 +999,23 @@ void draw_surface_region(GmlRender *r, int surf, double sx0d, double sy0d, doubl
           const uint32_t *sp=src+(size_t)(sy_start+yy)*sw+sx_start;
           uint32_t *dp=r->fb+(size_t)(cy0+yy)*r->fbw+cx0;
           for(int xx=0; xx<cw; xx++){ if(!(sp[xx]>>24)) continue;
+            gml_render_dispatch_cpu_scope_write(r);
             dp[xx]=quantise4_map_px(squant,sp[xx]); }
         }
       } else if((!r->alphablend || alpha>=1.0) && white && slut){
         for(int yy=0; yy<ch; yy++){
           const uint32_t *sp=src+(size_t)(sy_start+yy)*sw+sx_start;
           uint32_t *dp=r->fb+(size_t)(cy0+yy)*r->fbw+cx0;
-          for(int xx=0; xx<cw; xx++){ if(!(sp[xx]>>24)) continue; dp[xx]=lut_map_px(r,slut,sp[xx]); }
+          for(int xx=0; xx<cw; xx++){ if(!(sp[xx]>>24)) continue;
+            gml_render_dispatch_cpu_scope_write(r);
+            dp[xx]=lut_map_px(r,slut,sp[xx]); }
         }
       } else if((!r->alphablend || alpha>=1.0) && white && sgrid){
         for(int yy=0; yy<ch; yy++){
           const uint32_t *sp=src+(size_t)(sy_start+yy)*sw+sx_start;
           uint32_t *dp=r->fb+(size_t)(cy0+yy)*r->fbw+cx0;
           for(int xx=0; xx<cw; xx++){ if(!(sp[xx]>>24)) continue;
+            gml_render_dispatch_cpu_scope_write(r);
             dp[xx]=grid_map_px_cached(r,sgrid,sp[xx],&grid_cache); }
         }
       } else if((!r->alphablend || alpha>=1.0) && white){
@@ -992,11 +1026,13 @@ void draw_surface_region(GmlRender *r, int surf, double sx0d, double sy0d, doubl
           const uint32_t *sp=src+(size_t)(sy_start+yy)*sw+sx_start;
           uint32_t *dp=r->fb+(size_t)(cy0+yy)*r->fbw+cx0;
           if(src_all_opaque){
+            gml_render_dispatch_cpu_scope_write(r);
             memcpy(dp,sp,(size_t)cw*sizeof(uint32_t));
             continue;
           }
           if(row_all_transparent32(sp,cw)) continue;
           if(row_all_opaque32(sp,cw)){
+            gml_render_dispatch_cpu_scope_write(r);
             memcpy(dp,sp,(size_t)cw*sizeof(uint32_t));
             continue;
           }
@@ -1004,6 +1040,7 @@ void draw_surface_region(GmlRender *r, int surf, double sx0d, double sy0d, doubl
             uint32_t sa8=sp[xx]>>24;
             int run=1;
             while(xx+run<cw && (sp[xx+run]>>24)==sa8) run++;
+            if(sa8) gml_render_dispatch_cpu_scope_write(r);
             if(sa8==255){
               memcpy(dp+xx,sp+xx,(size_t)run*sizeof(uint32_t));
             } else if(sa8){
@@ -1046,6 +1083,7 @@ void draw_surface_region(GmlRender *r, int surf, double sx0d, double sy0d, doubl
             uint32_t sv=sp[xx];
             double pa=(sv>>24)/255.0;             /* per-pixel coverage x call alpha */
             if(pa<=0) continue;
+            gml_render_dispatch_cpu_scope_write(r);
             if(sremap) sv=mapped_texture_pixel(r,sv);
             else if(slut) sv=lut_map_px(r,slut,sv);
             else if(sgrid) sv=grid_map_px_cached(r,sgrid,sv,&grid_cache);
@@ -1140,6 +1178,7 @@ void draw_surface_region(GmlRender *r, int surf, double sx0d, double sy0d, doubl
          !(destination_colour_blend_active(r) && !shader_alpha_test_active(r))) continue;
       double pa=(A/(double)n)/255.0;
       if(pa<=0 && !destination_colour_blend_active(r)) continue;   /* box-averaged coverage */
+      gml_render_dispatch_cpu_scope_write(r);
       uint32_t av=((uint32_t)(R/n)<<16)|((uint32_t)(G/n)<<8)|(uint32_t)(B/n);
       if(sremap) av=mapped_texture_pixel(r,av);
       else if(slut) av=lut_map_px(r,slut,av);
@@ -1173,6 +1212,13 @@ void draw_surface_region(GmlRender *r, int surf, double sx0d, double sy0d, doubl
     }
   }
   free(copy);
+}
+void draw_surface_region(GmlRender *r,int surf,double sx,double sy,double sw,double sh,
+                          double dx,double dy,double dw,double dh,uint32_t blend,double alpha){
+  GmlRenderDispatchCpuScope scope;
+  gml_render_dispatch_cpu_scope_begin(r,&scope,GML_RENDER_SCENE_SURFACE);
+  draw_surface_region_impl(r,surf,sx,sy,sw,sh,dx,dy,dw,dh,blend,alpha);
+  gml_render_dispatch_cpu_scope_end(r,&scope);
 }
 /* First-generation GUI composition samples the application-surface quad at destination pixel
  * centres, both with fractional GUI transforms and with content-owned window presentation.
@@ -1367,7 +1413,7 @@ int gml_render_cpu_backend_surface_stretched(GmlRender *r,int surf,double dx,dou
 /* draw_surface_ext rotates around its (x,y) origin, unlike a stretched surface call. Keep this
  * portable software path independent of shaders/GPU APIs; it also provides the fixed-function
  * multiply blend used by surface light masks. */
-void gml_render_cpu_draw_surface_ext_mapped(GmlRender *r,int surf,double x,double y,
+static void draw_surface_ext_mapped_impl(GmlRender *r,int surf,double x,double y,
                                            double xs,double ys,double rr,uint32_t blend,double alpha){
   int sw=0,sh=0; const uint32_t *src=surface_pixels_observe(r,surf,&sw,&sh);
   if(!r||!r->fb||!src||sw<=0||sh<=0||xs==0.0||ys==0.0||
@@ -1463,10 +1509,19 @@ void gml_render_cpu_draw_surface_ext_mapped(GmlRender *r,int surf,double x,doubl
       out=0xFF000000u|((uint32_t)(sr*sa+dr*(1-sa)+0.5)<<16)|
           ((uint32_t)(sg*sa+dg*(1-sa)+0.5)<<8)|(uint32_t)(sb*sa+db*(1-sa)+0.5);
     }
+    gml_render_dispatch_cpu_scope_write(r);
     *dp=color_write_merge(r,old,out);
   }
   r->fb_opaque_known=0;
   free(copy);
+}
+void gml_render_cpu_draw_surface_ext_mapped(GmlRender *r,int surf,double x,double y,
+                                           double xs,double ys,double rotation,
+                                           uint32_t blend,double alpha){
+  GmlRenderDispatchCpuScope scope;
+  gml_render_dispatch_cpu_scope_begin(r,&scope,GML_RENDER_SCENE_SURFACE);
+  draw_surface_ext_mapped_impl(r,surf,x,y,xs,ys,rotation,blend,alpha);
+  gml_render_dispatch_cpu_scope_end(r,&scope);
 }
 void gml_render_cpu_draw_surface_part_mapped(GmlRender *r,int surf,double sx,double sy,double sw,double sh,
                                     double dx,double dy,double xs,double ys,uint32_t blend,double alpha){

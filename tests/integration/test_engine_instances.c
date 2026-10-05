@@ -2995,8 +2995,292 @@ static int expect_rejected_unchanged(AnygmEngine *engine,const uint8_t *candidat
   return unchanged;
 }
 
+typedef struct {
+  int enabled,footers;
+  char footer[512];
+} DispatchSessionControl;
+
+static const char *dispatch_session_setting(void *userdata,const char *name){
+  DispatchSessionControl *control=userdata;
+  if(!strcmp(name,"GML_RENDER_DISPATCH_STATS")) return control->enabled?"1":NULL;
+  if(!strcmp(name,"GML_ROW_THREADS")) return "1";
+  return NULL;
+}
+
+static void dispatch_session_log(void *userdata,AnygmLogLevel level,const char *message){
+  DispatchSessionControl *control=userdata;
+  (void)level;
+  if(!strncmp(message,"[graphics-dispatch] ",20)){
+    control->footers++;
+    snprintf(control->footer,sizeof control->footer,"%s",message);
+  }
+}
+
+static uint64_t dispatch_session_cpu(const GmlRenderDispatchMetrics *metrics){
+  uint64_t total=0;
+  for(unsigned family=0;family<GML_RENDER_SCENE_FAMILY_COUNT;family++)
+    for(unsigned reason=0;reason<GML_RENDER_DISPATCH_REASON_COUNT;reason++)
+      total+=metrics->cpu[family][reason];
+  return total;
+}
+
+static int dispatch_session_monotonic(const GmlRenderDispatchMetrics *before,
+                                       const GmlRenderDispatchMetrics *after){
+  if(after->failed<before->failed || after->unclassified<before->unclassified) return 0;
+  for(unsigned family=0;family<GML_RENDER_SCENE_FAMILY_COUNT;family++){
+    if(after->gpu[family]<before->gpu[family]) return 0;
+    for(unsigned reason=0;reason<GML_RENDER_DISPATCH_REASON_COUNT;reason++)
+      if(after->cpu[family][reason]<before->cpu[family][reason]) return 0;
+    for(unsigned exception=0;exception<GML_RENDER_DISPATCH_EXCEPTION_COUNT;exception++)
+      if(after->exceptions[family][exception]<before->exceptions[family][exception]) return 0;
+  }
+  return 1;
+}
+
+static int dispatch_session_policy(void){
+  typedef int (*CreateFixture)(AnygmSyntheticContent *);
+  static const CreateFixture creators[]={anygm_synthetic_draw_content_create,
+    anygm_synthetic_game_restart_content_create,anygm_synthetic_game_change_content_create};
+  int ok=1;
+  for(unsigned kind=0;kind<sizeof creators/sizeof creators[0];kind++){
+    AnygmSyntheticContent fixture;
+    if(!creators[kind](&fixture)) return 0;
+    uint8_t *reference_state=NULL;
+    size_t reference_size=0;
+    uint32_t reference_frame[80*50];
+    unsigned reference_width=0,reference_height=0;
+    for(int enabled=0;enabled<2;enabled++){
+      DispatchSessionControl control={enabled,0,{0}};
+      AnygmHostServices services={0};
+      services.struct_size=sizeof services;
+      services.abi_version=ANYGM_HOST_SERVICES_VERSION;
+      anygm_stdio_vfs_services_init(&services);
+      services.userdata=&control;
+      services.development_setting=dispatch_session_setting;
+      services.log=dispatch_session_log;
+      AnygmEngine *engine=NULL;
+      AnygmContentSource source={0};
+      source.struct_size=sizeof source;
+      source.kind=ANYGM_CONTENT_PATH;
+      source.path=fixture.path;
+      source.cache_directory=source.save_directory=fixture.directory;
+      AnygmConfigDelta config={0};
+      config.struct_size=sizeof config;
+      config.fields=ANYGM_CONFIG_PRESENT_LOGICAL_RASTER;
+      config.values.struct_size=sizeof config.values;
+      config.values.present_logical_raster=1;
+      GmlRenderDispatchMetrics before={0},after={0};
+      int passed=anygm_create(&services,&engine)==ANYGM_OK &&
+        anygm_set_config(engine,&config)==ANYGM_OK &&
+        anygm_load_prepare(engine,&source,NULL,NULL)==ANYGM_OK &&
+        engine_dispatch_metrics(engine,&before) && before.enabled==enabled && before.complete==enabled &&
+        engine->diagnostics.dispatch_renderer_epochs==(uint64_t)enabled;
+      /* Accounting starts before Create. Exercise a real prepared target copy. */
+      uint32_t source_pixels[]={0xFF123456u,0xFFABCDEFu,0xFF2468ACu,0xFF13579Bu};
+      if(passed) compose_view_rect(&engine->render,source_pixels,2,2,engine->screen,
+                                  engine->width,engine->height,0,0,2,2);
+      passed=passed && engine_dispatch_metrics(engine,&after) &&
+        after.cpu[GML_RENDER_SCENE_SURFACE][GML_RENDER_DISPATCH_COMPOSITION]==
+          before.cpu[GML_RENDER_SCENE_SURFACE][GML_RENDER_DISPATCH_COMPOSITION]+(unsigned)enabled &&
+        anygm_load_start(engine)==ANYGM_OK;
+      uint8_t *root_state=NULL;
+      size_t root_size=0;
+      passed=passed && save_state(engine,&root_state,&root_size);
+      /* Changing the host setting cannot partially enable or disable a load. */
+      control.enabled=!enabled;
+      AnygmInputFrame input={0};
+      input.struct_size=sizeof input;
+      input.pointer_x=input.pointer_y=-1;
+      AnygmFrameOutput output={0};
+      for(int frame=0;passed && frame<3;frame++){
+        before=after;
+        output.struct_size=sizeof output;
+        passed=anygm_run_frame(engine,&input,&output)==ANYGM_OK &&
+          engine_dispatch_metrics(engine,&after) && dispatch_session_monotonic(&before,&after);
+      }
+      if(passed && output.pixels && output.width*output.height<=80u*50u){
+        if(!enabled){
+          reference_width=output.width; reference_height=output.height;
+          for(unsigned row=0;row<output.height;row++)
+            memcpy(reference_frame+(size_t)row*output.width,
+                   (const uint8_t*)output.pixels+(size_t)row*output.pitch,output.width*sizeof(uint32_t));
+        }else{
+          passed=output.width==reference_width && output.height==reference_height;
+          for(unsigned row=0;passed && row<output.height;row++)
+            passed=!memcmp(reference_frame+(size_t)row*output.width,
+                (const uint8_t*)output.pixels+(size_t)row*output.pitch,output.width*sizeof(uint32_t));
+        }
+      }else passed=0;
+      uint8_t *state=NULL;
+      size_t state_size=0;
+      passed=passed && save_state(engine,&state,&state_size);
+      if(passed && !enabled){ reference_state=state; reference_size=state_size; state=NULL; }
+      if(passed && enabled) passed=state_size==reference_size && !memcmp(state,reference_state,state_size);
+      free(state);
+      before=after;
+      passed=passed && anygm_reset(engine)==ANYGM_OK && engine_dispatch_metrics(engine,&after) &&
+        dispatch_session_monotonic(&before,&after);
+      before=after;
+      /* The changed-content fixture requires transactional runtime replacement. */
+      passed=passed && anygm_state_load(engine,root_state,root_size)==ANYGM_OK &&
+        engine_dispatch_metrics(engine,&after) && dispatch_session_monotonic(&before,&after) &&
+        anygm_state_load(engine,reference_state,reference_size)==ANYGM_OK &&
+        engine_dispatch_metrics(engine,&after) && dispatch_session_monotonic(&before,&after) &&
+        !control.footers;
+      free(root_state);
+      if(passed && enabled) passed=dispatch_session_cpu(&after)>0 &&
+        engine->diagnostics.dispatch_renderer_epochs>=2u && after.complete && !after.failed && !after.unclassified;
+      before=after;
+      if(engine) anygm_unload(engine);
+      passed=passed && engine_dispatch_metrics(engine,&after) &&
+        dispatch_session_monotonic(&before,&after) && control.footers==enabled;
+      if(passed && enabled){
+        char expected[64];
+        snprintf(expected,sizeof expected," cpu=%llu ",(unsigned long long)dispatch_session_cpu(&after));
+        passed=strstr(control.footer,expected)!=NULL && strstr(control.footer,"complete=1")!=NULL;
+      }
+      /* Reusing the engine for a new load starts a new accounting session. */
+      control.enabled=enabled;
+      passed=passed && anygm_load_prepare(engine,&source,NULL,NULL)==ANYGM_OK &&
+        engine_dispatch_metrics(engine,&after) &&
+        !dispatch_session_cpu(&after) && after.complete==enabled &&
+        engine->diagnostics.dispatch_renderer_epochs==(uint64_t)enabled;
+      if(passed && enabled){
+        gml_render_dispatch_diagnostics_enable(&engine->render,0);
+        gml_render_dispatch_diagnostics_enable(&engine->render,1);
+        passed=engine_dispatch_metrics(engine,&after) && !after.complete && after.unclassified==1u;
+      }
+      anygm_destroy(engine);
+      if(!passed) fprintf(stderr,"dispatch session kind=%u enabled=%d failed\n",kind,enabled);
+      ok &=passed;
+    }
+    free(reference_state);
+    anygm_synthetic_content_destroy(&fixture);
+  }
+  return ok;
+}
+
+static int dispatch_narrow_room_policy(void){
+  AnygmSyntheticContent fixture;
+  if(!anygm_synthetic_draw_content_create(&fixture)) return 0;
+  int ok=1;
+  for(int kind=0;kind<5;kind++){
+    uint32_t images[2][80*50]={{0}};
+    for(int enabled=0;enabled<2;enabled++){
+      AnygmHostServices services={0};
+      services.struct_size=sizeof services;
+      services.abi_version=ANYGM_HOST_SERVICES_VERSION;
+      anygm_stdio_vfs_services_init(&services);
+      AnygmEngine *engine=NULL;
+      AnygmContentSource source={0};
+      source.struct_size=sizeof source;
+      source.kind=ANYGM_CONTENT_PATH;
+      source.path=fixture.path;
+      source.cache_directory=source.save_directory=fixture.directory;
+      int passed=anygm_create(&services,&engine)==ANYGM_OK &&
+        anygm_load(engine,&source,NULL)==ANYGM_OK;
+      if(passed){
+        engine->width=kind==4?64u:80u;
+        engine->height=kind==4?48u:50u;
+        engine->aspect_force_active=kind!=3;
+        for(unsigned pixel=0;pixel<80u*50u;pixel++) engine->fb[pixel]=0xFF123456u;
+        gml_render_dispatch_diagnostics_enable(&engine->render,enabled);
+        aspect_mask_outside_room(engine,kind==1?-7:kind==2?-100:0,kind==1?-1:kind==2?-100:0);
+        GmlRenderDispatchMetrics metrics={0};
+        passed=gml_render_dispatch_metrics(&engine->render,&metrics) &&
+          dispatch_session_cpu(&metrics)==(uint64_t)(enabled && kind<3) &&
+          metrics.cpu[GML_RENDER_SCENE_PRIMITIVE][GML_RENDER_DISPATCH_COMPOSITION]==
+            (uint64_t)(enabled && kind<3);
+        memcpy(images[enabled],engine->fb,sizeof images[enabled]);
+      }
+      anygm_destroy(engine);
+      if(!passed) fprintf(stderr,"dispatch narrow-room kind=%d enabled=%d failed\n",kind,enabled);
+      ok &=passed;
+    }
+    ok &=!memcmp(images[0],images[1],sizeof images[0]);
+  }
+  anygm_synthetic_content_destroy(&fixture);
+  return ok;
+}
+
+static int dispatch_presentation_policy(void){
+  enum { COPY,SCALE,CROP,CLIPPED,EMPTY,NULL_SOURCE,SHIFT,NO_SHIFT,LARGE_SHIFT,
+         TRANSITION_OLD,TRANSITION_MID,TRANSITION_NEW,NO_TRANSITION,BAD_TRANSITION,
+         COMPOSITION_CASES };
+  int ok=1;
+  for(int kind=0;kind<COMPOSITION_CASES;kind++){
+    uint32_t images[2][8*8];
+    for(int enabled=0;enabled<2;enabled++){
+      AnygmEngine *engine=calloc(1,sizeof *engine);
+      if(!engine) return 0;
+      uint32_t source[4*4],old[8*8];
+      for(int pixel=0;pixel<16;pixel++) source[pixel]=0xA0305070u+(unsigned)pixel;
+      for(int pixel=0;pixel<64;pixel++) images[enabled][pixel]=old[pixel]=0xE0102030u+(unsigned)pixel;
+      gml_render_dispatch_diagnostics_enable(&engine->render,enabled);
+      if(kind<=NULL_SOURCE){
+        compose_view_rect(&engine->render,kind==NULL_SOURCE?NULL:source,4,4,
+                          images[enabled],8,8,kind==CROP?-2:kind==CLIPPED?20:2,2,
+                          kind==EMPTY?0:kind==SCALE?5:4,kind==SCALE?5:4);
+      }else if(kind<=LARGE_SHIFT){
+        engine->screen=source; engine->output_width=engine->output_height=4;
+        engine->present_shift_x=kind==NO_SHIFT?0:kind==LARGE_SHIFT?4:1;
+        const uint32_t *pixels=NULL;
+        unsigned width=0,height=0;
+        ok &=resolve_host_frame(engine,&pixels,&width,&height) && pixels && width==4 && height==4;
+        if(pixels) memcpy(images[enabled],pixels,sizeof source);
+        for(int pixel=0;pixel<16;pixel++) ok &=source[pixel]==0xA0305070u+(unsigned)pixel;
+      }else{
+        engine->classic_transition.old_frame=old;
+        engine->classic_transition.width=engine->classic_transition.height=8;
+        engine->classic_transition.phases=5;
+        engine->classic_transition.phase=kind==TRANSITION_NEW?4:kind==TRANSITION_MID?2:0;
+        engine->classic_transition.active=kind!=NO_TRANSITION;
+        classic_transition_apply(engine,images[enabled],kind==BAD_TRANSITION?7:8,8);
+        engine->classic_transition.old_frame=NULL;
+      }
+      GmlRenderDispatchMetrics metrics;
+      uint64_t expected=kind==CLIPPED || kind==EMPTY || kind==NULL_SOURCE ||
+                        kind==NO_SHIFT || kind==LARGE_SHIFT || kind==NO_TRANSITION || kind==BAD_TRANSITION?0u:1u;
+      unsigned family=kind>=TRANSITION_OLD?GML_RENDER_SCENE_EFFECT:GML_RENDER_SCENE_SURFACE;
+      uint64_t cpu=0,gpu=0,exceptions=0;
+      ok &=gml_render_dispatch_metrics(&engine->render,&metrics);
+      for(unsigned f=0;f<GML_RENDER_SCENE_FAMILY_COUNT;f++){
+        gpu+=metrics.gpu[f];
+        for(unsigned why=0;why<GML_RENDER_DISPATCH_REASON_COUNT;why++) cpu+=metrics.cpu[f][why];
+        for(unsigned why=0;why<GML_RENDER_DISPATCH_EXCEPTION_COUNT;why++) exceptions+=metrics.exceptions[f][why];
+      }
+      int counted=cpu==(enabled?expected:0u) &&
+        metrics.cpu[family][GML_RENDER_DISPATCH_COMPOSITION]==(enabled?expected:0u) &&
+        !gpu && !exceptions && !metrics.failed && !metrics.unclassified && !metrics.complete;
+      if(!counted) fprintf(stderr,"presentation dispatch kind=%d enabled=%d cpu=%llu wanted=%llu\n",
+        kind,enabled,(unsigned long long)cpu,(unsigned long long)(enabled?expected:0u));
+      ok &=counted;
+      if(kind<=NULL_SOURCE || kind>=TRANSITION_OLD){
+        int changed=0;
+        for(int pixel=0;pixel<64;pixel++) changed|=images[enabled][pixel]!=0xE0102030u+(unsigned)pixel;
+        if(changed!=(expected!=0)) fprintf(stderr,"presentation dispatch kind=%d fixture coverage=%d wanted=%d\n",
+                                             kind,changed,expected!=0);
+        ok &=changed==(expected!=0);
+      }
+      free(engine->present_shift_screen);
+      gml_render_free(&engine->render);
+      gml_vm_free(&engine->vm);
+      free(engine);
+    }
+    ok &=!memcmp(images[0],images[1],sizeof images[0]);
+  }
+  if(!ok) fputs("engine software composition dispatch control failed\n",stderr);
+  return ok;
+}
+
 int main(int argc,char **argv){
   if(argc==3 && !strcmp(argv[1],"--case")){
+    if(!strcmp(argv[2],"dispatch_session"))
+      return dispatch_session_policy()?0:1;
+    if(!strcmp(argv[2],"dispatch_narrow_room"))
+      return dispatch_narrow_room_policy()?0:1;
+    if(!strcmp(argv[2],"dispatch_presentation"))
+      return dispatch_presentation_policy()?0:1;
     if(!strcmp(argv[2],"fullwidth_gui_transition"))
       return fullwidth_gui_transition_policy()?0:1;
     if(!strcmp(argv[2],"fullwidth_explicit_gui_transition"))
@@ -3090,7 +3374,7 @@ int main(int argc,char **argv){
     return 1;
   }
   if(argc!=1){
-    fputs("usage: test_engine_instances [--case screen_refresh_present_latch|"
+    fputs("usage: test_engine_instances [--case dispatch_session|dispatch_narrow_room|dispatch_presentation|screen_refresh_present_latch|"
           "virtual_monitor_geometry|native_raster_window_query|live_monitor_override|host_canvas_scale|"
           "application_surface_port_scale|"
           "first_generation_application_surface|"
@@ -3118,6 +3402,9 @@ int main(int argc,char **argv){
     return 1;
   }
   if(!virtual_monitor_geometry_policy()) return 1;
+  if(!dispatch_session_policy()) return 1;
+  if(!dispatch_narrow_room_policy()) return 1;
+  if(!dispatch_presentation_policy()) return 1;
   if(!native_raster_window_query_policy()) return 1;
   if(!live_monitor_override_policy()) return 1;
   if(!host_canvas_scale_policy()) return 1;

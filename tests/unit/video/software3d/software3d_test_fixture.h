@@ -59,6 +59,8 @@ int member_function_self_fixture(void);
 int member_function_argument_fixture(void);
 
 int software3d_operation_boundary_fixture(void);
+int software3d_dispatch_fixture(void);
+int classic_information_dispatch_fixture(void);
 int matrix_inverse_fixture(void);
 int surface_tiled_fixture(void);
 int rounded_geometry_fixture(void);

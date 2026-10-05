@@ -12,9 +12,17 @@
 #include "gml_render.h"
 #include "gml_render_cpu_primitives.h"
 #include "gml_render_cpu_backend.h"
+#include "gml_render_cpu_dispatch_internal.h"
 #include "gml_render_internal.h"
 #include "gml_render_surfaces_internal.h"
 #include "gml_render_cpu_pixel_internal.h"
+
+static inline void dispatch_primitive_pixel(GmlRender *render,int x,int y,double alpha){
+  if(render && render->dispatch_cpu_depth && render->fb &&
+     x>=0 && y>=0 && x<render->fbw && y<render->fbh &&
+     (alpha>0.0 || destination_colour_blend_active(render)))
+    gml_render_dispatch_cpu_scope_write(render);
+}
 
 static void draw_additive_span(GmlRender *render,uint32_t *pixels,int count,
                                uint32_t color,double alpha){
@@ -138,6 +146,7 @@ static void draw_rectangle_cpu_outline_pixel(void *context,int x1,int y1,
   GmlCpuOutlinePixel *pixel=(GmlCpuOutlinePixel*)context;
   (void)x2;
   (void)y2;
+  dispatch_primitive_pixel(pixel->render,x1,y1,pixel->alpha);
   gml_render_cpu_backend_draw_pixel_alpha(pixel->render,x1,y1,color,pixel->alpha);
 }
 
@@ -162,10 +171,12 @@ static void draw_rect_prim_alpha(GmlRender *R, int x1, int y1, int x2, int y2, u
       gml_render_set_pending_fill(R,src);
       return;
     }
+    gml_render_dispatch_cpu_scope_write(R);
     for(int y=y1;y<=y2;y++) gml_render_cpu_backend_fill_xrgb(R->fb+(size_t)y*R->fbw+x1,x2-x1+1,src);
     return;
   }
   if(!outline){
+    gml_render_dispatch_cpu_scope_write(R);
     gml_render_maybe_prepare_draw(R);
     if(R->blendmode!=0){
       if(R->alphablend && R->blendmode==1 &&
@@ -218,9 +229,15 @@ void gml_draw_layer_color_fill(GmlRender *R, uint32_t gmcol, double alpha){
   if(alpha<=0.0 && !destination_colour_blend_active(R)) return;
   /* The existing opaque full-target branch records a deferred fill without writing CPU pixels.
    * Preserve that resident path; only a compositing raster needs current CPU authority. */
+  GmlRenderDispatchCpuScope scope;
+  gml_render_dispatch_cpu_scope_begin(R,&scope,GML_RENDER_SCENE_PRIMITIVE);
   if(!(R->blendmode==0 && (alpha>=1.0 || !R->alphablend)) &&
-     !gml_render_resident_application_cpu_barrier(R)) return;
+     !gml_render_resident_application_cpu_barrier(R)){
+    gml_render_dispatch_cpu_scope_end(R,&scope);
+    return;
+  }
   draw_rect_prim_alpha(R,0,0,R->fbw-1,R->fbh-1,gmcol,0,alpha);
+  gml_render_dispatch_cpu_scope_end(R,&scope);
 }
 
 typedef struct {
@@ -280,6 +297,7 @@ static void draw_rect_colour_prim(GmlRender *R, int x1, int y1, int x2, int y2,
   int x_off=x1-ox1, y_off=y1-oy1;
   double alpha=R->alpha; if(alpha>1) alpha=1; else if(alpha<0) alpha=0;
   if(alpha<=0 && !destination_colour_blend_active(R)) return;
+  gml_render_dispatch_cpu_scope_write(R);
   if((alpha>=1.0 || !R->alphablend) && !destination_colour_blend_active(R))
     gml_render_maybe_prepare_opaque_rect(R,x1,y1,x2+1,y2+1);
   else gml_render_maybe_prepare_draw(R);
@@ -508,6 +526,7 @@ int gml_render_circle_filled_spans(GmlRender *R,double cx,double cy,double rx,do
 typedef struct {GmlRender *render;uint32_t color;} GmlCircleCpuSpan;
 static void draw_circle_cpu_span(void *context,int x0,int x1,int y){
   GmlCircleCpuSpan *span=(GmlCircleCpuSpan*)context;
+  dispatch_primitive_pixel(span->render,x0,y,span->render->alpha);
   for(int x=x0;x<=x1;x++)
     gml_render_cpu_backend_draw_pixel(span->render,x,y,span->color);
 }
@@ -540,6 +559,7 @@ static void draw_circle_prim_ex(GmlRender *R, double cx, double cy, double rx, d
                                 uint32_t gmcol, int outline){
   if(!R||rx<0.0||ry<0.0) return;
   if(!(rx>0.0)||!(ry>0.0)){
+    dispatch_primitive_pixel(R,(int)floor(cx),(int)floor(cy),R->alpha);
     gml_render_cpu_backend_draw_pixel(R,(int)floor(cx),(int)floor(cy),gmcol);
     return;
   }
@@ -558,6 +578,7 @@ static uint32_t gm_color_lerp_fan(uint32_t inner,uint32_t outer,double amount){
   return gm_color_lerp_amount(inner,outer,amount);
 }
 static void draw_px_fan(GmlRender *R,int x,int y,uint32_t inner,uint32_t outer,double amount){
+  dispatch_primitive_pixel(R,x,y,R?R->alpha:0.0);
   if(R && R->alphablend && R->blendmode==2 &&
      R->blend_equation==1 && R->blend_equation_alpha==1 &&
      x>=0 && y>=0 && x<R->fbw && y<R->fbh && R->alpha>0.0){
@@ -594,6 +615,7 @@ static void draw_circle_colour_prim_ex(GmlRender *R,double cx,double cy,double r
   if(!R||rx<0.0||ry<0.0) return;
   if(inner==outer){ draw_circle_prim_ex(R,cx,cy,rx,ry,inner,outline); return; }
   if(!(rx>0.0)||!(ry>0.0)){
+    dispatch_primitive_pixel(R,(int)floor(cx),(int)floor(cy),R->alpha);
     gml_render_cpu_backend_draw_pixel(R,(int)floor(cx),(int)floor(cy),inner);
     return;
   }
@@ -712,6 +734,7 @@ static void draw_opaque_triangle_rows(void *context,int row_start,int row_end,in
 
 static void draw_triangle_cpu_span(void *context,int x0,int x1,int y){
   GmlOpaqueTriangleRows *rows=(GmlOpaqueTriangleRows*)context;
+  gml_render_dispatch_cpu_scope_write(rows->render);
   gml_render_cpu_backend_fill_xrgb(
     rows->render->fb+(size_t)y*rows->render->fbw+x0,x1-x0+1,rows->source);
 }
@@ -821,6 +844,7 @@ static void draw_triangle_cpu_pixel(void *context,int x1,int y1,int x2,int y2,
   GmlCpuTrianglePixel *pixel=(GmlCpuTrianglePixel*)context;
   (void)x2;
   (void)y2;
+  dispatch_primitive_pixel(pixel->render,x1,y1,pixel->alpha);
   gml_render_cpu_backend_draw_pixel_alpha(pixel->render,x1,y1,color,pixel->alpha);
 }
 
@@ -852,25 +876,36 @@ static void prim_tri_fill_ex(GmlRender *R, double X1,double Y1,double X2,double 
 
 void gml_render_cpu_point(GmlRender *render,
                           int x,int y,uint32_t color){
-  if(!gml_render_resident_application_cpu_barrier(render)) return;
-  gml_render_maybe_prepare_draw(render);
-  gml_render_cpu_backend_draw_pixel(render,x,y,color);
+  GmlRenderDispatchCpuScope scope;
+  gml_render_dispatch_cpu_scope_begin(render,&scope,GML_RENDER_SCENE_PRIMITIVE);
+  if(gml_render_resident_application_cpu_barrier(render)){
+    gml_render_maybe_prepare_draw(render);
+    dispatch_primitive_pixel(render,x,y,render?render->alpha:0.0);
+    gml_render_cpu_backend_draw_pixel(render,x,y,color);
+  }
+  gml_render_dispatch_cpu_scope_end(render,&scope);
 }
 
 
 void gml_render_cpu_line(GmlRender *render,
                          int x1,int y1,int x2,int y2,
                          uint32_t color,int width){
-  if(!gml_render_resident_application_cpu_barrier(render)) return;
-  draw_line_colour_prim(render,x1,y1,x2,y2,color,color,width);
+  GmlRenderDispatchCpuScope scope;
+  gml_render_dispatch_cpu_scope_begin(render,&scope,GML_RENDER_SCENE_PRIMITIVE);
+  if(gml_render_resident_application_cpu_barrier(render))
+    draw_line_colour_prim(render,x1,y1,x2,y2,color,color,width);
+  gml_render_dispatch_cpu_scope_end(render,&scope);
 }
 
 void gml_render_cpu_line_color(GmlRender *render,
                                int x1,int y1,int x2,int y2,
                                uint32_t color1,uint32_t color2,
                                int width){
-  if(!gml_render_resident_application_cpu_barrier(render)) return;
-  draw_line_colour_prim(render,x1,y1,x2,y2,color1,color2,width);
+  GmlRenderDispatchCpuScope scope;
+  gml_render_dispatch_cpu_scope_begin(render,&scope,GML_RENDER_SCENE_PRIMITIVE);
+  if(gml_render_resident_application_cpu_barrier(render))
+    draw_line_colour_prim(render,x1,y1,x2,y2,color1,color2,width);
+  gml_render_dispatch_cpu_scope_end(render,&scope);
 }
 
 void gml_render_cpu_line_color_subpixel(GmlRender *render,
@@ -878,29 +913,41 @@ void gml_render_cpu_line_color_subpixel(GmlRender *render,
                                         double x2,double y2,
                                         uint32_t color1,uint32_t color2,
                                         int width){
-  if(!gml_render_resident_application_cpu_barrier(render)) return;
-  draw_line_colour_subpixel_prim(render,x1,y1,x2,y2,color1,color2,width);
+  GmlRenderDispatchCpuScope scope;
+  gml_render_dispatch_cpu_scope_begin(render,&scope,GML_RENDER_SCENE_PRIMITIVE);
+  if(gml_render_resident_application_cpu_barrier(render))
+    draw_line_colour_subpixel_prim(render,x1,y1,x2,y2,color1,color2,width);
+  gml_render_dispatch_cpu_scope_end(render,&scope);
 }
 
 void gml_render_cpu_circle(GmlRender *render,double center_x,double center_y,
                            double radius_x,double radius_y,uint32_t color,int outline){
-  if(!gml_render_resident_application_cpu_barrier(render)) return;
-  draw_circle_prim_ex(render,center_x,center_y,radius_x,radius_y,color,outline);
+  GmlRenderDispatchCpuScope scope;
+  gml_render_dispatch_cpu_scope_begin(render,&scope,GML_RENDER_SCENE_PRIMITIVE);
+  if(gml_render_resident_application_cpu_barrier(render))
+    draw_circle_prim_ex(render,center_x,center_y,radius_x,radius_y,color,outline);
+  gml_render_dispatch_cpu_scope_end(render,&scope);
 }
 
 void gml_render_cpu_circle_color(GmlRender *render,double center_x,double center_y,
                                  double radius_x,double radius_y,uint32_t inner,
                                  uint32_t outer,int outline){
-  if(!gml_render_resident_application_cpu_barrier(render)) return;
-  draw_circle_colour_prim_ex(render,center_x,center_y,radius_x,radius_y,inner,outer,outline);
+  GmlRenderDispatchCpuScope scope;
+  gml_render_dispatch_cpu_scope_begin(render,&scope,GML_RENDER_SCENE_PRIMITIVE);
+  if(gml_render_resident_application_cpu_barrier(render))
+    draw_circle_colour_prim_ex(render,center_x,center_y,radius_x,radius_y,inner,outer,outline);
+  gml_render_dispatch_cpu_scope_end(render,&scope);
 }
 
 void gml_render_cpu_triangle_alpha(GmlRender *render,
                                    double x1,double y1,double x2,double y2,
                                    double x3,double y3,uint32_t color,
                                    double alpha,int outline){
-  if(!gml_render_resident_application_cpu_barrier(render)) return;
-  prim_tri_fill_ex(render,x1,y1,x2,y2,x3,y3,color,alpha,outline);
+  GmlRenderDispatchCpuScope scope;
+  gml_render_dispatch_cpu_scope_begin(render,&scope,GML_RENDER_SCENE_PRIMITIVE);
+  if(gml_render_resident_application_cpu_barrier(render))
+    prim_tri_fill_ex(render,x1,y1,x2,y2,x3,y3,color,alpha,outline);
+  gml_render_dispatch_cpu_scope_end(render,&scope);
 }
 
 void gml_render_cpu_rectangle(GmlRender *render,int x1,int y1,int x2,int y2,
@@ -908,8 +955,11 @@ void gml_render_cpu_rectangle(GmlRender *render,int x1,int y1,int x2,int y2,
   /* R03-P9-RECTANGLE-NOOP: the existing filled raster returns before touching pixels at
    * non-positive alpha. Do not acquire a CPU write or settle pending draws for that no-op. */
   if(render && !outline && render->alpha<=0.0 && !destination_colour_blend_active(render)) return;
-  if(!gml_render_resident_application_cpu_barrier(render)) return;
-  draw_rect_prim(render,x1,y1,x2,y2,color,outline);
+  GmlRenderDispatchCpuScope scope;
+  gml_render_dispatch_cpu_scope_begin(render,&scope,GML_RENDER_SCENE_PRIMITIVE);
+  if(gml_render_resident_application_cpu_barrier(render))
+    draw_rect_prim(render,x1,y1,x2,y2,color,outline);
+  gml_render_dispatch_cpu_scope_end(render,&scope);
 }
 
 void gml_render_cpu_rectangle_color(GmlRender *render,int x1,int y1,int x2,int y2,
@@ -917,6 +967,9 @@ void gml_render_cpu_rectangle_color(GmlRender *render,int x1,int y1,int x2,int y
                                     uint32_t color3,uint32_t color4,int outline){
   /* The same no-write proof covers both uniform and nonuniform filled colour rectangles. */
   if(render && !outline && render->alpha<=0.0 && !destination_colour_blend_active(render)) return;
-  if(!gml_render_resident_application_cpu_barrier(render)) return;
-  draw_rect_colour_prim(render,x1,y1,x2,y2,color1,color2,color3,color4,outline);
+  GmlRenderDispatchCpuScope scope;
+  gml_render_dispatch_cpu_scope_begin(render,&scope,GML_RENDER_SCENE_PRIMITIVE);
+  if(gml_render_resident_application_cpu_barrier(render))
+    draw_rect_colour_prim(render,x1,y1,x2,y2,color1,color2,color3,color4,outline);
+  gml_render_dispatch_cpu_scope_end(render,&scope);
 }

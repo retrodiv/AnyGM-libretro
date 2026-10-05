@@ -106,6 +106,9 @@ typedef struct {
   int state_frame_dropped_reported;
   int state_overflow_warned;
   int state_time_prints;
+  GmlRenderDispatchMetrics dispatch_retired;
+  uint64_t dispatch_renderer_epochs;
+  int dispatch_enabled,dispatch_renderer_active,dispatch_suppressed;
 } EngineDiagnostics;
 typedef struct {
   int active;
@@ -524,6 +527,8 @@ enum {
 };
 /* Report the opt-in hardware counters once, as one bounded content-neutral line. */
 void engine_graphics_report(AnygmEngine *engine);
+/* Metadata-only totals for this loaded session, including retired renderers. */
+int engine_dispatch_metrics(const AnygmEngine *engine,GmlRenderDispatchMetrics *out);
 /* Whether a host graphics target is adopted right now. The one question core coordination asks
  * about the feature, so it has an answer in a build without the backend as well. */
 int engine_graphics_active(const AnygmEngine *engine);
@@ -570,7 +575,7 @@ int room_clears_application_surface(const GmlWin *content, const GmlRoom *room);
 void draw_runtime_backgrounds(AnygmEngine *engine,int foreground);
 void aspect_mask_outside_room(AnygmEngine *engine,double camera_x,double camera_y);
 void setup_display(AnygmEngine *engine);
-void compose_view_rect(const uint32_t *source,int source_width,int source_height,
+void compose_view_rect(GmlRender *render,const uint32_t *source,int source_width,int source_height,
                        uint32_t *destination,int destination_width,int destination_height,
                        int x,int y,int width,int height);
 /* Returns one when composed, zero when not applicable, and negative on a failed resident handoff. */

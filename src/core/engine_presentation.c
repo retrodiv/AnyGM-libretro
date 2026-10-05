@@ -148,6 +148,7 @@ static const uint32_t *present_shift_frame(AnygmEngine *engine,const uint32_t *s
     engine->present_shift_cap=need;
   }
   present_shift_rows(engine->present_shift_screen,source,width,height,dx,dy);
+  gml_render_dispatch_cpu_composition(&engine->render,GML_RENDER_SCENE_SURFACE);
   return engine->present_shift_screen;
 }
 int resolve_host_frame(AnygmEngine *engine,const uint32_t **pixels,
@@ -355,6 +356,7 @@ void classic_transition_apply(AnygmEngine *engine,uint32_t *frame,unsigned width
     unsigned b=classic_transition_scale(v&255u,numerator,scale_den);
     frame[i]=(r<<16)|(g<<8)|b;
   }
+  if(pixels) gml_render_dispatch_cpu_composition(&engine->render,GML_RENDER_SCENE_EFFECT);
   if(++t->phase>=t->phases){
     classic_transition_reset(engine);
     gml_set_global_scalar(&engine->vm,"transition_kind",0);
@@ -1547,6 +1549,9 @@ void aspect_mask_outside_room(AnygmEngine *engine,double cam_x, double cam_y) {
     for (int xx = 0; xx < x0; xx++) row[xx] = black;
     for (unsigned xx = (unsigned)x1; xx < engine->width; xx++) row[xx] = black;
   }
+  /* A successful visible-room query guarantees a narrower room and a nonempty
+   * target, so at least one of the existing black spans was written. */
+  gml_render_dispatch_cpu_composition(&engine->render,GML_RENDER_SCENE_PRIMITIVE);
   GmlRenderTargetCoverage coverage={.all_transparent=0};
   gml_render_target_coverage_update(&engine->render,&coverage,
                                     GML_RENDER_COVERAGE_ALL_TRANSPARENT);
@@ -1560,7 +1565,7 @@ void setup_display(AnygmEngine *engine) {
   if (engine->height > FB_MAX_H) engine->height = FB_MAX_H;
 }
 
-void compose_view_rect(const uint32_t *src, int sw, int sh,
+void compose_view_rect(GmlRender *render,const uint32_t *src, int sw, int sh,
                               uint32_t *dst, int dw, int dh,
                               int dx, int dy, int rw, int rh) {
   if (!src || !dst || sw <= 0 || sh <= 0 || dw <= 0 || dh <= 0 || rw <= 0 || rh <= 0) return;
@@ -1575,6 +1580,7 @@ void compose_view_rect(const uint32_t *src, int sw, int sh,
       memcpy(dst + (size_t)y * dw + x0,
              src + (size_t)(y - dy) * sw + sx,
              (size_t)(x1 - x0) * sizeof(uint32_t));
+    gml_render_dispatch_cpu_composition(render,GML_RENDER_SCENE_SURFACE);
     return;
   }
   /* View ports use a point-sampled fixed-function path when interpolation is off.
@@ -1594,9 +1600,10 @@ void compose_view_rect(const uint32_t *src, int sw, int sh,
       drow[x] = srow[sx];
     }
   }
+  gml_render_dispatch_cpu_composition(render,GML_RENDER_SCENE_SURFACE);
 }
 
-static void seed_view_rect(const uint32_t *src,int sw,int sh,
+static void seed_view_rect(GmlRender *render,const uint32_t *src,int sw,int sh,
                            uint32_t *dst,int dw,int dh,
                            int sx,int sy,int rw,int rh){
   if(!src || !dst || sw<=0 || sh<=0 || dw<=0 || dh<=0 || rw<=0 || rh<=0) return;
@@ -1616,6 +1623,7 @@ static void seed_view_rect(const uint32_t *src,int sw,int sh,
       dst[(size_t)dy*dw+dx]=src[(size_t)y*sw+x];
     }
   }
+  gml_render_dispatch_cpu_composition(render,GML_RENDER_SCENE_SURFACE);
 }
 
 /* Render every visible GMS view once, in view-index order, then composite each camera into its
@@ -1631,8 +1639,11 @@ int render_multiview_application(AnygmEngine *engine) {
   GmlRoom rm;
   int have_room = gml_vm_room_get(&engine->vm, engine->vm.room_index, &rm) == 0;
   int clear_background = !have_room || room_clears_application_surface(&engine->win, &rm);
-  if(clear_background)
+  if(clear_background){
     for(unsigned i=0;i<engine->width*engine->height;i++) engine->fb[i]=0xFF000000u;
+    if(engine->width && engine->height)
+      gml_render_dispatch_cpu_composition(&engine->render,GML_RENDER_SCENE_PRIMITIVE);
+  }
   const char *bg_renderer = anygm_host_development_setting(&engine->host,"GML_BG_RENDERER_OBJ");
   int pobj = (bg_renderer && *bg_renderer) ? gml_object_index_by_name(&engine->vm, bg_renderer) : -1;
   int gml_draws_bg = pobj >= 0 && gml_find_instance(&engine->vm, pobj) != NULL;
@@ -1646,7 +1657,7 @@ int render_multiview_application(AnygmEngine *engine) {
     gml_render_sample_planes_update(&engine->render,&planes,
                                     GML_RENDER_SAMPLE_PLANES_APPLICATION);
     if(!clear_background)
-      seed_view_rect(engine->fb,(int)engine->width,(int)engine->height,
+      seed_view_rect(&engine->render,engine->fb,(int)engine->width,(int)engine->height,
                      view_buffer,vw,vh,v->px,v->py,v->pw,v->ph);
     int resident_view_began=0;
     if(!engine->composed_frame && engine_graphics_active(engine) &&
@@ -1677,7 +1688,7 @@ int render_multiview_application(AnygmEngine *engine) {
            &engine->render,view_surface,view_buffer,vw,vh,
            coverage.opaque_known && coverage.all_opaque)) return -1;
     }
-    compose_view_rect(view_buffer, vw, vh, engine->fb, (int)engine->width, (int)engine->height,
+    compose_view_rect(&engine->render,view_buffer, vw, vh, engine->fb, (int)engine->width, (int)engine->height,
                       v->px, v->py, v->pw, v->ph);
   }
   *gml_varmap_put(&engine->vm.globals, "view_current") = vreal(0);

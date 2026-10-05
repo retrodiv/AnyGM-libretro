@@ -13,8 +13,9 @@ int gml_render_cpu_plan_execute(const GmlRenderPlan *plan,uint32_t *target,
 
 /* The same execution, with row-independent full-frame operations split across the renderer's
  * row-band pool when one is offered and the destination is large enough to pay for the fork.
- * The renderer is a pool owner here and nothing else; NULL executes on the calling thread and is
- * exactly the function above. Identical bytes either way, at any band count. */
+ * The renderer supplies the pool and optional transient execution accounting; NULL executes on
+ * the calling thread and is exactly the function above. Identical bytes either way, at any band
+ * count. */
 struct GmlRender;
 int gml_render_cpu_plan_execute_pooled(const GmlRenderPlan *plan,uint32_t *target,
                                        uint32_t target_pitch_pixels,

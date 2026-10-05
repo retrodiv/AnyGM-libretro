@@ -7,6 +7,20 @@
 
 #include "gml_render.h"
 #include "gml_render_texture.h"
+#include <stdatomic.h>
+
+/* Coarse diagnostic scope shared with non-reentrant software clients. Values
+ * are transient; no renderer-private record or pixel kernel crosses this seam. */
+typedef struct {
+  unsigned family,reason,exception;
+  int active,outer;
+} GmlRenderCpuBackendDispatchScope;
+
+void gml_render_cpu_backend_dispatch_begin(GmlRender *render,
+                                           GmlRenderCpuBackendDispatchScope *scope,
+                                           unsigned family,int depth_dependent);
+void gml_render_cpu_backend_dispatch_end(GmlRender *render,
+                                         GmlRenderCpuBackendDispatchScope *scope);
 
 typedef struct {
   uint8_t red[256],green[256],blue[256];
@@ -43,7 +57,17 @@ typedef struct {
   double coordinate_scale_x, coordinate_scale_y;
   int width, height;
   int interpolate, alpha_blend, blend_mode, circle_precision;
+  int zero_alpha_writes;
+  atomic_int *dispatch_written;
 } GmlRenderCpuBackendDrawView;
+
+/* Borrowed renderer-owned coverage, never a caller stack address. Clients mark
+ * only after clipping and discard decisions, with no per-pixel service call. */
+static inline void gml_render_cpu_backend_dispatch_mark(const GmlRenderCpuBackendDrawView *view){
+  if(view && view->dispatch_written &&
+     !atomic_load_explicit(view->dispatch_written,memory_order_relaxed))
+    atomic_store_explicit(view->dispatch_written,1,memory_order_relaxed);
+}
 
 uint32_t gml_render_cpu_backend_color_to_xrgb(uint32_t color);
 uint32_t gml_render_cpu_backend_lerp_xrgb(uint32_t first,uint32_t second,

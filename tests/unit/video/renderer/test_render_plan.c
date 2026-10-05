@@ -608,6 +608,99 @@ static int deferred_underlay_case(void){
   return 1;
 }
 
+static int dispatch_deferred_fill_case(void){
+  enum { W=8,H=6 };
+  GmlWin content={0};
+  GmlRender render;
+  GmlRenderDispatchMetrics metrics={0};
+  uint32_t source[4],target[W*H],phase[W*H],interp[W*H];
+  content.bytecode=17;
+  memset(source,0,sizeof source);
+  for(unsigned i=0;i<W*H;i++) target[i]=0xFF123456u;
+  render_reset(&render,&content,source,2,2,target,W,H,1);
+  gml_render_dispatch_diagnostics_enable(&render,1);
+  gml_render_set_pending_fill(&render,0xFF214365u);
+  REQUIRE(gml_render_dispatch_metrics(&render,&metrics) &&
+          !metrics.cpu[GML_RENDER_SCENE_PRIMITIVE][GML_RENDER_DISPATCH_NO_DEVICE] &&
+          target[0]==0xFF123456u,"recording a deferred clear is not execution");
+  gml_render_cancel_pending_fill(&render);
+  gml_render_flush_pending_fill(&render);
+  REQUIRE(gml_render_dispatch_metrics(&render,&metrics) &&
+          !metrics.cpu[GML_RENDER_SCENE_PRIMITIVE][GML_RENDER_DISPATCH_NO_DEVICE],
+          "a discarded clear executes nothing");
+  gml_render_set_pending_fill(&render,0xFF315779u);
+  gml_render_flush_pending_fill(&render);
+  gml_render_flush_pending_fill(&render);
+  REQUIRE(gml_render_dispatch_metrics(&render,&metrics) &&
+          metrics.cpu[GML_RENDER_SCENE_PRIMITIVE][GML_RENDER_DISPATCH_NO_DEVICE]==1u &&
+          target[0]==0xFF315779u && target[W*H-1]==0xFF315779u,
+          "a materialized clear counts once");
+  render.classic_phase_y=phase;
+  render.classic_interp_phase[0]=interp;
+  gml_render_set_pending_fill(&render,0xFF42688Au);
+  REQUIRE(gml_render_dispatch_metrics(&render,&metrics) &&
+          metrics.cpu[GML_RENDER_SCENE_PRIMITIVE][GML_RENDER_DISPATCH_NO_DEVICE]==2u &&
+          phase[0]==0xFF42688Au && interp[W*H-1]==0xFF42688Au &&
+          target[0]==0xFF315779u,"phase-plane writes count even with the base clear deferred");
+  gml_render_flush_pending_fill(&render);
+  REQUIRE(gml_render_dispatch_metrics(&render,&metrics) &&
+          metrics.cpu[GML_RENDER_SCENE_PRIMITIVE][GML_RENDER_DISPATCH_NO_DEVICE]==3u &&
+          !metrics.unclassified && !metrics.complete,"the base clear is another execution");
+  render.classic_phase_y=NULL;
+  render.classic_interp_phase[0]=NULL;
+  gml_render_free(&render);
+  return 1;
+}
+
+static int dispatch_deferred_presentation_case(void){
+  enum { W=24,H=20 };
+  uint32_t source[4*3],off[W*H],on[W*H];
+  GmlWin content={0};
+  content.bytecode=17;
+  fill_asymmetric(source,4,3);
+  for(int scenario=0;scenario<5;scenario++){
+    for(int diagnostics=0;diagnostics<2;diagnostics++){
+      GmlRender render;
+      GmlRenderDispatchMetrics metrics={0};
+      uint32_t *target=diagnostics?on:off;
+      for(unsigned i=0;i<W*H;i++) target[i]=0xFF5A5A5Au;
+      render_reset(&render,&content,source,4,3,target,W,H,1);
+      gml_render_set_deferred_presentation(&render,scenario!=4);
+      gml_render_dispatch_diagnostics_enable(&render,diagnostics);
+      gml_render_set_pending_fill(&render,0xFF102030u);
+      gml_render_set_pending_underlay(&render,2,3,W-4,H-6);
+      if(scenario!=4){
+        gml_render_flush_pending_underlay(&render);
+        REQUIRE(gml_render_deferred_presentation(&render,NULL),"underlay is deferred");
+      } else REQUIRE(render.pending_underlay,"the CPU underlay waits for the next draw");
+      REQUIRE(gml_render_dispatch_metrics(&render,&metrics) &&
+              !metrics.cpu[GML_RENDER_SCENE_SURFACE][GML_RENDER_DISPATCH_NO_DEVICE] &&
+              !metrics.cpu[GML_RENDER_SCENE_PRIMITIVE][GML_RENDER_DISPATCH_NO_DEVICE],
+              "recording a filled presentation executes neither operation");
+      if(scenario==0) gml_render_discard_deferred_presentation(&render);
+      else if(scenario==1){
+        gml_render_flush_deferred_presentation(&render);
+        gml_render_flush_deferred_presentation(&render);
+      } else if(scenario==2 || scenario==4)
+        gml_render_primitive_point(&render,1,1,0xABCDEFu);
+      else {
+        render.presentation.source_pixels=NULL;
+        gml_render_flush_deferred_presentation(&render);
+      }
+      REQUIRE(gml_render_dispatch_metrics(&render,&metrics) &&
+              metrics.cpu[GML_RENDER_SCENE_SURFACE][GML_RENDER_DISPATCH_NO_DEVICE]==
+                (uint64_t)(diagnostics && (scenario==1 || scenario==2 || scenario==4)) &&
+              metrics.cpu[GML_RENDER_SCENE_PRIMITIVE][GML_RENDER_DISPATCH_NO_DEVICE]==
+                (uint64_t)(diagnostics?(scenario==0?0:(scenario==2 || scenario==4)?2:1):0) &&
+              !metrics.unclassified && !metrics.failed && !metrics.complete,
+              "discard, repeated flush, nested draw and fill-only execution are separate");
+      gml_render_free(&render);
+    }
+    REQUIRE(!memcmp(off,on,sizeof on),"presentation diagnostics leave every channel unchanged");
+  }
+  return 1;
+}
+
 /* ---- the host-canvas passes, described and executed as a plan ---- */
 
 static GmlPlanImage plan_image(const uint32_t *pixels,uint32_t width,uint32_t height){
@@ -639,6 +732,117 @@ static uint32_t accumulator_reference(uint32_t destination,uint32_t source_exten
                                       uint32_t destination_extent){
   return (uint32_t)(((uint64_t)source_extent*(2u*(uint64_t)destination+1u))/
                     (2u*(uint64_t)destination_extent));
+}
+
+static int dispatch_host_plan_case(void){
+  enum { W=8,H=6 };
+  GmlRenderPlan plan;
+  GmlRender owner={0};
+  GmlRenderDispatchMetrics metrics={0};
+  uint32_t source[4*3],off[W*H],on[W*H];
+  fill_asymmetric(source,4,3);
+  GmlPlanImage image=plan_image(source,4,3);
+  GmlPlanRect whole={0,0,W,H},small={1,1,2,2},source_size={2,2,4,3};
+  gml_render_plan_reset(&plan,GML_PLAN_TARGET_CPU_FRAME,W,H);
+  REQUIRE(gml_render_plan_add_clear(&plan,whole,0x123456u),"dispatch plan clear");
+  uint32_t index=gml_render_plan_add_image(&plan,&image);
+  REQUIRE(index!=GML_PLAN_NO_IMAGE,"dispatch plan source");
+  REQUIRE(gml_render_plan_add_blit_nearest(&plan,index,whole,
+            accumulator_axis(4,W),accumulator_axis(3,H),0u),"dispatch plan nearest");
+  REQUIRE(gml_render_plan_add_blit_box(&plan,index,small,0u),"dispatch plan box");
+  REQUIRE(gml_render_plan_add_blit_sharp_bilinear(&plan,index,whole,0u),
+          "dispatch plan sharp bilinear");
+  REQUIRE(gml_render_plan_add_present_cpu_frame(&plan,index,source_size),"dispatch plan copy");
+  REQUIRE(gml_render_cpu_plan_execute_pooled(&plan,off,W,&owner),"uninstrumented plan executes");
+  gml_render_dispatch_diagnostics_enable(&owner,1);
+  REQUIRE(gml_render_cpu_plan_execute_pooled(&plan,on,W,&owner),"instrumented plan executes");
+  REQUIRE(!memcmp(off,on,sizeof on),"plan diagnostics preserve the full target");
+  REQUIRE(gml_render_dispatch_metrics(&owner,&metrics) &&
+          metrics.cpu[GML_RENDER_SCENE_PRIMITIVE][GML_RENDER_DISPATCH_NO_DEVICE]==1u &&
+          metrics.cpu[GML_RENDER_SCENE_SURFACE][GML_RENDER_DISPATCH_NO_DEVICE]==4u &&
+          !metrics.unclassified && !metrics.complete,"each executed plan operation counts once");
+  plan.images[index].pitch_pixels=0;
+  REQUIRE(!gml_render_cpu_plan_execute_pooled(&plan,on,W,&owner) &&
+          !memcmp(off,on,sizeof on),"a rejected plan writes nothing");
+  REQUIRE(gml_render_dispatch_metrics(&owner,&metrics) &&
+          metrics.cpu[GML_RENDER_SCENE_PRIMITIVE][GML_RENDER_DISPATCH_NO_DEVICE]==1u &&
+          metrics.cpu[GML_RENDER_SCENE_SURFACE][GML_RENDER_DISPATCH_NO_DEVICE]==4u,
+          "a rejected plan is not counted as completed drawing");
+  gml_render_free(&owner);
+  return 1;
+}
+
+static int dispatch_device_plan_case(void){
+  GmlRender owner={0};
+  GmlRenderPlan plan={0},before;
+  GmlRenderDispatchMetrics metrics={0};
+  static const unsigned opcodes[]={GML_PLAN_OP_CLEAR_XRGB,GML_PLAN_OP_BLIT_OPAQUE_NEAREST,
+    GML_PLAN_OP_BLIT_OPAQUE_BOX,GML_PLAN_OP_BLIT_OPAQUE_SHARP_BILINEAR,
+    GML_PLAN_OP_PRESENT_CPU_FRAME,GML_PLAN_OP_SHADER_DRAW};
+  plan.operation_count=sizeof opcodes/sizeof opcodes[0];
+  for(unsigned index=0;index<plan.operation_count;index++)
+    plan.operations[index].opcode=opcodes[index];
+  before=plan;
+  gml_render_dispatch_gpu_plan_completion(&owner,&plan,1);
+  REQUIRE(gml_render_dispatch_metrics(&owner,&metrics) && !metrics.gpu[GML_RENDER_SCENE_SURFACE],
+          "device plan accounting is opt-in");
+  gml_render_dispatch_diagnostics_enable(&owner,1);
+  gml_render_dispatch_gpu_plan_completion(&owner,&plan,1);
+  REQUIRE(gml_render_dispatch_metrics(&owner,&metrics) &&
+          metrics.gpu[GML_RENDER_SCENE_PRIMITIVE]==1u &&
+          metrics.gpu[GML_RENDER_SCENE_SURFACE]==4u &&
+          metrics.gpu[GML_RENDER_SCENE_EFFECT]==1u && !metrics.failed &&
+          !metrics.unclassified && !metrics.complete && !memcmp(&plan,&before,sizeof plan),
+          "completion only reads bounded operation metadata without changing the plan");
+  gml_render_dispatch_gpu_plan_completion(&owner,&plan,0);
+  REQUIRE(gml_render_dispatch_metrics(&owner,&metrics) && metrics.failed==6u &&
+          metrics.gpu[GML_RENDER_SCENE_SURFACE]==4u,
+          "a failed pass is not completed GPU drawing");
+  plan.operation_count=1u;
+  plan.operations[0].opcode=UINT32_MAX;
+  gml_render_dispatch_gpu_plan_completion(&owner,&plan,1);
+  plan.operation_count=GML_PLAN_MAX_OPERATIONS+1u;
+  gml_render_dispatch_gpu_plan_completion(&owner,&plan,1);
+  plan.operation_count=0u;
+  gml_render_dispatch_gpu_plan_completion(&owner,&plan,1);
+  gml_render_dispatch_gpu_plan_completion(&owner,NULL,1);
+  REQUIRE(gml_render_dispatch_metrics(&owner,&metrics) && metrics.unclassified==4u,
+          "unknown, over-capacity, empty and absent completion records cannot qualify a route");
+  owner.dispatch_metrics.gpu[GML_RENDER_SCENE_PRIMITIVE]=UINT64_MAX;
+  plan.operation_count=1u;
+  plan.operations[0].opcode=GML_PLAN_OP_CLEAR_XRGB;
+  gml_render_dispatch_gpu_plan_completion(&owner,&plan,1);
+  REQUIRE(gml_render_dispatch_metrics(&owner,&metrics) && metrics.overflow &&
+          metrics.gpu[GML_RENDER_SCENE_PRIMITIVE]==UINT64_MAX,
+          "device completion counters saturate rather than wrapping");
+  return 1;
+}
+
+static int dispatch_epoch_accumulation_case(void){
+  GmlRenderDispatchMetrics total={0},epoch={0};
+  epoch.enabled=1;
+  epoch.gpu[GML_RENDER_SCENE_TILE]=7u;
+  epoch.cpu[GML_RENDER_SCENE_TEXT][GML_RENDER_DISPATCH_NO_SCENE]=11u;
+  epoch.cpu[GML_RENDER_SCENE_SURFACE][GML_RENDER_DISPATCH_COMPOSITION]=13u;
+  epoch.exceptions[GML_RENDER_SCENE_PRIMITIVE][GML_RENDER_DISPATCH_EXCEPTION_DEPTH]=17u;
+  epoch.failed=19u; epoch.unclassified=23u;
+  gml_render_dispatch_metrics_accumulate(&total,&epoch);
+  gml_render_dispatch_metrics_accumulate(&total,&epoch);
+  REQUIRE(total.enabled && !total.complete && !total.overflow &&
+          total.gpu[GML_RENDER_SCENE_TILE]==14u &&
+          total.cpu[GML_RENDER_SCENE_TEXT][GML_RENDER_DISPATCH_NO_SCENE]==22u &&
+          total.cpu[GML_RENDER_SCENE_SURFACE][GML_RENDER_DISPATCH_COMPOSITION]==26u &&
+          total.exceptions[GML_RENDER_SCENE_PRIMITIVE][GML_RENDER_DISPATCH_EXCEPTION_DEPTH]==34u &&
+          total.failed==38u && total.unclassified==46u,
+          "retired epochs preserve every backend, reason, exception and disqualifier");
+  total.failed=UINT64_MAX;
+  gml_render_dispatch_metrics_accumulate(&total,&epoch);
+  REQUIRE(total.failed==UINT64_MAX && total.overflow,"epoch merges saturate failures");
+  memset(&total,0,sizeof total);
+  epoch.overflow=1;
+  gml_render_dispatch_metrics_accumulate(&total,&epoch);
+  REQUIRE(total.overflow,"an epoch overflow cannot disappear at retirement");
+  return 1;
 }
 
 static int host_canvas_magnify_case(void){
@@ -1151,6 +1355,8 @@ int main(int argc,char **argv){
     {"mid_frame_content_shader",mid_frame_content_shader_case},
     {"shaded_primitive_and_device",shaded_primitive_and_device_case},
     {"deferred_underlay",deferred_underlay_case},
+    {"dispatch_deferred_fill",dispatch_deferred_fill_case},
+    {"dispatch_deferred_presentation",dispatch_deferred_presentation_case},
   };
   static const AnygmTestCase plan_cases[]={
     {"host_canvas_magnify",host_canvas_magnify_case},
@@ -1160,6 +1366,9 @@ int main(int argc,char **argv){
     {"axis_map",axis_map_case},
     {"validation",plan_validation_case},
     {"shader_draw_validation",shader_draw_validation_case},
+    {"dispatch_host_plan",dispatch_host_plan_case},
+    {"dispatch_device_plan",dispatch_device_plan_case},
+    {"dispatch_epoch_accumulation",dispatch_epoch_accumulation_case},
   };
   const AnygmTestGroup groups[]={
     {"presentation",presentation_cases,

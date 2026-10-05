@@ -3,6 +3,162 @@
 
 # Opt-in VM diagnostics
 
+## Resolved draw dispatch accounting
+
+`gml_render_dispatch_diagnostics_enable` opts one renderer into transient, metadata-only
+accounting. `gml_render_dispatch_metrics` does not flush work, read pixels or invoke a
+device callback. Diagnostics are disabled by default and never enter canonical state.
+
+The engine's `GML_RENDER_DISPATCH_STATS` development setting pins accounting for one complete
+content load, before Create executes. Reset, authored restart and content replacement retire
+the old renderer's completed counters without resetting session totals. A private trial boot
+for transactional state restoration neither publishes a second footer nor copies an earlier
+diagnostic history into the replacement. On acceptance, the live session's retired history is
+transferred once; restoring state never restores counters. A new content load starts a new
+session. Unload emits `[graphics-dispatch]` and seven bounded
+`[graphics-dispatch-family]` lines after the existing renderer teardown completes queued work.
+This report exists even in CPU-only builds or when no GPU scene was admitted.
+
+Completed scene submissions are counted by their resolved family. Queued work is not counted
+until successful submission; CPU recipe execution is a fallback, not GPU work. Failed batches
+and unclassified families remain separate disqualifiers. Saturating counters flag overflow
+instead of wrapping to zero. The existing device partial-prefix report continues to describe
+physical writes from an unsuccessful batch.
+
+Actual retained-history and nested source-recipe execution reports `cpu_replay` after the
+existing replay executor returns. Reconstruction is counted even when the original submission
+ran on the device. Newly rejected operations are credited by their submitting facade, not twice
+by the replay helper. An opaque borrowed renderer owner is rebound when a runtime moves;
+immutable recipes never retain that pointer. Repeated CPU-current reads add no drawing.
+
+All six engine-owned coarse GPU plan execution edges report their returned result, including
+mid-frame content programs, terminal programs/readback, nearest presentation, host-canvas
+composition and CPU-frame transport. Clears are primitives, image passes are surfaces and
+content programs are effects. Reporting reads bounded operation metadata only. A CPU-frame
+transport remains transport, not proof of scene acceleration; its preceding CPU draws remain
+in the ordinary CPU counters and the existing device report names transport separately.
+
+Software primitive scopes include complete CPU-only passes and every subsequent CPU draw.
+The first covered span or pixel marks the operation; the owner counts it once after any row
+workers join. Clipped, zero-alpha and degenerate no-ops remain uncounted. The pre-barrier reason
+is retained, rather than relabelling the first fallback as merely an already inactive scene.
+Successful software surface copies and classic subpixel glyphs are also counted; observations,
+empty copies and fully transparent glyphs are not drawings.
+Normal, filtered, mirrored and rotated software surface kernels mark their actual writes,
+including parallel row bands. Layer filters and the recognized two-sample post-process group
+their software fragments into one effect operation; noise and tint retain their no-op guards.
+
+Software-3D triangle, line and point kernels mark surviving color writes through a borrowed,
+renderer-owned atomic coverage flag. Depth-tested draws use the separate
+`exceptions[family][GML_RENDER_DISPATCH_EXCEPTION_DEPTH]` counter; a merely active 3D pipeline
+with hidden-surface testing disabled remains an ordinary CPU fallback. Procedural particle
+shapes, including auxiliary interpolation planes, count once per covered particle and are not
+exempted by a 3D-active flag. A particle square routed through the software-3D bridge instead
+uses its actual triangle/depth classification. Diagnostics introduce no pixel observations or
+additional allocation sites.
+
+Runtime RGBA sprite kernels now mark surviving nearest, axis-scaled, filtered, rotated,
+region and positioned/general-color writes. Their scopes close only after row workers finish;
+nested region helpers do not count the same sprite twice. Axis-cache build/hit copies count as
+draws, not as GPU execution; source-cache construction itself is not a target draw. Existing
+alpha quantization, clipping, shader discard and zero-coverage guards still exclude no-ops.
+Destination-dependent and subtract fragments that actually write with zero alpha remain counted.
+
+Synchronous atlas point-sampled, filtered, stretched and cardinal-tile kernels likewise mark
+actual target writes, including the warmed filtered draw cache and real row workers. Source-cache
+construction alone is not counted. Background and tile-part entry points retain their resolved
+families through nested sprite helpers. Classic auxiliary sampling planes belong to the same
+draw, while replacement writes to authored transparent margins remain counted.
+
+Rotated atlas execution retains the existing queue and painter order. Each queued operation owns
+an atomic coverage flag in the existing queue allocation. Worker contexts borrow those flags only
+after the queue stops growing, and the owner records each covered operation after all workers
+join. Empty/discarded operations, enqueue and repeated empty flushes add nothing. Family and
+pre-barrier reason are copied as values from the enclosing dispatch; a pending underlay temporarily
+suspends and restores those values. A flush inside another draw does not merge its operations
+with that draw. Commands queued before diagnostics were enabled remain unclassified if executed
+under accounting, rather than silently qualifying a partially observed route. Immediate filtered,
+special-blend and classic auxiliary-plane draws retain their own scopes and actual no-op guards.
+
+Deferred clears count at CPU materialization, not at recording or cancellation. Immediate
+classic auxiliary-plane clear writes count independently of a still-deferred base clear.
+Recorded CPU presentations count their optional clear and actual image copy separately, even
+when a later ordinary draw triggers the flush. Discarded records, empty copies and repeated
+flushes add nothing. A non-deferred automatic CPU underlay also keeps its independent draw
+scope when materialized inside the following draw's preparation. Valid pooled CPU host-canvas
+plans count each executed operation after its
+existing kernel completes; a plan rejected before execution adds no completed draw. Source-free
+scene clears are classified as primitives without changing retained operation or state bytes.
+
+Shared ordinary atlas, runtime, rotated, filtered and distance-field glyphs retain the TEXT
+family at their actual CPU leaf. String measurement and unpainted sprite-font spaces add no draw.
+Successful depth bridges keep their own software-3D classification, outside these ordinary scopes.
+Classic repeated backgrounds and public/room tiles retain BACKGROUND/TILE instead of inheriting
+the sprite helper's family. Each actually covered skeletal attachment is counted independently;
+a handled return without color writes is not completed drawing.
+Position-dependent text programs retain the CPU glyph gathering and final composition as
+separate executed stages. Cached shader source construction is not another draw; a rejected
+host shader still counts the existing plain composition. These stages do not imply completed
+GPU execution merely because a host shader callback ran.
+
+Engine-owned view copies/scales/crops, multiview seeding, GUI copies/scales, presentation
+shifts, narrow-room black spans, owned application clears and classic transition blending
+report `cpu_composition` after their existing nonempty writes. Failed/empty/clipped copies,
+inactive transitions and unchanged shifts add nothing. Native cached information pages count
+one TEXT copy; the software page counts its primitive page/row backgrounds, surviving
+underlines and actual glyph stages.
+Building the native page cache or capturing an immutable transition source is not a target draw.
+
+The standalone renderer snapshot always reports `complete = 0`: it cannot certify that
+accounting started before content executed. The engine session report supplies `complete = 1`
+only for a pinned, enabled load with at least one recorded renderer epoch and no unknown work,
+accounting gap or overflow. Temporarily disabling an enabled renderer leaves a sticky unknown
+marker. Failed execution remains a separate disqualifier, even when coverage is complete.
+A zero ordinary CPU total qualifies only with complete route execution, a valid session footer,
+no failures/unknowns/overflow and a witnessed active GPU producer on every selected route;
+device-only transport totals cannot substitute for this check. Pixel queries, source/cache
+construction, immutable captures and state decoding are not drawings. Neither a 3D-active
+flag nor a serialization call implicitly exempts an ordinary raster draw. Driver qualification
+and complete route selection/provenance remain measurement prerequisites, not counter values.
+
+Focused controls: `make check TEST=renderer_primitives` and `make check TEST=render_resources`.
+The primitive controls compare diagnostics on/off pixels, metadata-only state bytes, nested
+scopes and coverage marks from four actual row-band slots. Surface-copy controls include
+clipping, empty input, observation and overlapping self-copy.
+Also run `make check TEST=renderer_surfaces`, `make check TEST=renderer_effects` and
+`make check TEST=renderer_postprocess` for visible, discarded, clipped and no-op composition.
+`make check TEST=d3_state D3_TEST_ARGS='--case boundary.dispatch_accounting'` compares
+diagnostics on/off for triangle/line/point draws, fourteen procedural particle shapes and
+active-3D particles with and without depth testing, including clipped and alpha-zero no-ops.
+`make check TEST=render_plan` also checks deferred/cancelled clears, auxiliary-plane clear
+writes, discarded/repeated/nested presentation flushes, fill-only presentation and rejected plans,
+with complete diagnostics on/off pixel comparisons for presentation and host-plan execution.
+The effect controls also compare twenty-five complete RGBA texture diagnostics-off/on pairs,
+including actual row workers and warmed axis-cache copies, and twenty-five atlas pairs covering
+family attribution, discarded draws, auxiliary planes, stretched and warmed filtered-cache
+execution. They retain all prior effect hashes.
+Twenty rotated-queue pairs check cached/exact/mask, vector/scalar and real-worker execution;
+forty-command queue growth; nested flushes; family/reason retention across underlay preparation;
+late diagnostic enable; discarded coverage; and immediate classic/filtered/blend paths.
+The font controls add twenty-four diagnostics-off/on glyph pairs, including metadata-only
+measurement, actual synthetic shader callbacks/cache/refusal and complete base/phase RGBA.
+The tile controls add eighteen public/background/room/repeated-cell pairs. Nine skeletal pairs
+distinguish actual attachment writes from clipped, transparent and missing-source handled returns.
+The skeletal alpha-test-state control observes the existing writer; it does not change its policy
+or assert original-runner correctness.
+Engine controls add fourteen presentation pairs, five narrow-room pairs and three complete
+load/session pairs with full target and canonical-state comparisons. They cover prepared
+accounting, host-setting pinning, Reset, authored restart, content change, accepted state-runtime
+replacement, retired totals, footer publication, reloading the same engine and accounting gaps.
+Eight information page pairs compare software/underline/native/cached/refused/invalid/empty/resized
+execution. Five resource pairs cover retained history, CPU fallback, nested recipes, repeated
+reads and app/base/numbered owner rebinding, with complete pixels and forbidden device callbacks.
+Plan controls
+also cover completion metadata, malformed/failed reports and saturating epoch accumulation;
+these bookkeeping controls are not qualification of a real graphics driver.
+
+## Fine VM trace
+
 The fine VM trace is development instrumentation, not release functionality.
 It is absent from a normal build, including its parser, strings, state pointer,
 and hot-loop calls. Build it explicitly:

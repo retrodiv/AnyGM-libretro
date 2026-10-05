@@ -391,6 +391,141 @@ static int nearest_subrectangle_mirrors(void){
   return 1;
 }
 
+static int dispatch_retained_replay(void){
+  for(unsigned kind=0;kind<4u;kind++){
+    uint32_t images[2][16];
+    for(int enabled=0;enabled<2;enabled++){
+      GmlRender *owner=calloc(1,sizeof *owner);
+      CHECK(owner);
+      gml_render_dispatch_diagnostics_enable(owner,enabled);
+      uint32_t source_pixels[16];
+      fill(images[enabled],0xA5123456u);
+      fill(source_pixels,0xFF234567u);
+      FakeDevice fake={0};
+      GmlRenderDeviceServices device=service(&fake);
+      GmlRenderResource *destination=gml_render_resource_create(target_ref(1u,1u),4u,4u,
+        GML_RENDER_PIXEL_ARGB8888,images[enabled],(GmlRenderResourceLimits){0});
+      CHECK(destination);
+      gml_render_resource_bind_dispatch(destination,owner);
+      GmlRenderResource *source_resource=NULL;
+      GmlRenderResourceSource source=source_view(source_pixels,1);
+      GmlRenderImageRef source_image=source.image;
+      if(kind>=2u){
+        GmlRenderImageRef identity={GML_RENDER_RESOURCE_SURFACE,2u,9u,1u};
+        source_resource=gml_render_resource_create(identity,4u,4u,GML_RENDER_PIXEL_ARGB8888,
+          source_pixels,(GmlRenderResourceLimits){0});
+        CHECK(source_resource);
+        gml_render_resource_bind_dispatch(source_resource,owner);
+        GmlRenderDrawOp clear=clear_op(2u,0xFF234567u,GML_RENDER_REPLAY_EXACT);
+        clear.target.image=identity; clear.target.image.content_version=2u;
+        clear.target.pixel_format=GML_RENDER_PIXEL_ARGB8888;
+        GmlRenderDrawBatch source_batch={&clear,1u,NULL,0u};
+        GmlRenderResourceExecution result=gml_render_resource_submit(source_resource,&device,
+          &source_batch,NULL,0u);
+        gml_render_dispatch_batch_record(owner,&source_batch,result);
+        CHECK(result==GML_RENDER_RESOURCE_EXEC_DEVICE &&
+          gml_render_resource_device_source_view(source_resource,&device,&source) && !source.bytes);
+        source_image=source.image;
+      }
+      GmlRenderDrawOp operations[2]={clear_op(2u,0xFF102030u,GML_RENDER_REPLAY_EXACT),
+                                     quad_op(3u,&source_image)};
+      GmlRenderDrawStateSnapshot state=quad_state(0);
+      for(unsigned index=0;index<2u;index++) operations[index].target.pixel_format=GML_RENDER_PIXEL_ARGB8888;
+      operations[1].scene_family=GML_RENDER_SCENE_SPRITE;
+      if(kind>=2u){
+        operations[1].payload.quad.sampling.source_region=(GmlRenderRect){0,0,4u,4u};
+        operations[1].payload.quad.x[0]=operations[1].payload.quad.x[3]=0.0;
+        operations[1].payload.quad.x[1]=operations[1].payload.quad.x[2]=4.0;
+        operations[1].payload.quad.y[0]=operations[1].payload.quad.y[1]=0.0;
+        operations[1].payload.quad.y[2]=operations[1].payload.quad.y[3]=4.0;
+        state.samplers[0].source_region=(GmlRenderRect){0,0,4u,4u};
+      }
+      GmlRenderDrawBatch batch={operations,2u,&state,1u};
+      GmlRenderResourceExecution result=gml_render_resource_submit(destination,&device,&batch,&source,1u);
+      gml_render_dispatch_batch_record(owner,&batch,result);
+      CHECK(result==GML_RENDER_RESOURCE_EXEC_DEVICE);
+      GmlRenderDispatchMetrics metrics={0};
+      CHECK(gml_render_dispatch_metrics(owner,&metrics) &&
+        !metrics.cpu[GML_RENDER_SCENE_PRIMITIVE][GML_RENDER_DISPATCH_REPLAY] &&
+        !metrics.cpu[GML_RENDER_SCENE_SPRITE][GML_RENDER_DISPATCH_REPLAY]);
+      if(kind==1u || kind==3u){
+        GmlRenderDrawOp suffix=flat_rect_op(4u,(GmlRenderRect){1,1,2u,2u},0xFFABCDEFu);
+        suffix.target.pixel_format=GML_RENDER_PIXEL_ARGB8888;
+        suffix.scene_family=GML_RENDER_SCENE_PRIMITIVE;
+        GmlRenderDrawBatch fallback={&suffix,1u,NULL,0u};
+        fake.status=GML_RENDER_EXEC_UNSUPPORTED; fake.prewrite_refusal=1;
+        result=gml_render_resource_submit(destination,&device,&fallback,NULL,0u);
+        gml_render_dispatch_batch_record(owner,&fallback,result);
+        CHECK(result==GML_RENDER_RESOURCE_EXEC_CPU);
+      }
+      /* Frozen source recipes survive their original resource, without borrowing its owner. */
+      gml_render_resource_destroy(source_resource);
+      fake.forbid_calls=1;
+      CHECK(gml_render_resource_acquire_cpu_read(destination,NULL));
+      unsigned primitive_replays=1u+(kind==1u || kind==3u)+(kind>=2u);
+      CHECK(gml_render_dispatch_metrics(owner,&metrics) &&
+        metrics.cpu[GML_RENDER_SCENE_PRIMITIVE][GML_RENDER_DISPATCH_REPLAY]==
+          (enabled?primitive_replays:0u) &&
+        metrics.cpu[GML_RENDER_SCENE_SPRITE][GML_RENDER_DISPATCH_REPLAY]==(unsigned)enabled &&
+        !metrics.failed && !metrics.unclassified && !metrics.complete &&
+        !fake.readbacks && !fake.forbidden_calls);
+      GmlRenderDispatchMetrics before=metrics;
+      CHECK(gml_render_resource_acquire_cpu_read(destination,NULL) &&
+        gml_render_dispatch_metrics(owner,&metrics) && !memcmp(&before,&metrics,sizeof metrics));
+      gml_render_resource_destroy(destination);
+      free(owner);
+    }
+    CHECK(!memcmp(images[0],images[1],sizeof images[0]));
+  }
+  return 1;
+}
+
+static int dispatch_replay_owner_move(void){
+  uint32_t images[2][3][16];
+  for(int enabled=0;enabled<2;enabled++){
+    GmlRender *old=calloc(1,sizeof *old),*moved=calloc(1,sizeof *moved);
+    CHECK(old && moved);
+    gml_render_dispatch_diagnostics_enable(old,enabled);
+    FakeDevice fake={0};
+    GmlRenderDeviceServices device=service(&fake);
+    GmlRenderResource *resources[3]={0};
+    for(unsigned index=0;index<3u;index++){
+      GmlRenderImageRef identity={index==0?GML_RENDER_RESOURCE_APPLICATION:
+        index==1?GML_RENDER_RESOURCE_SCREEN:GML_RENDER_RESOURCE_SURFACE,index==2?1u:0u,7u,1u};
+      fill(images[enabled][index],0xFF556677u);
+      resources[index]=gml_render_resource_create(identity,4u,4u,GML_RENDER_PIXEL_ARGB8888,
+        images[enabled][index],(GmlRenderResourceLimits){0});
+      CHECK(resources[index]);
+      gml_render_resource_bind_dispatch(resources[index],old);
+      GmlRenderDrawOp clear=clear_op(2u,0xFF123456u+index,GML_RENDER_REPLAY_EXACT);
+      clear.target.image=identity; clear.target.image.content_version=2u;
+      clear.target.pixel_format=GML_RENDER_PIXEL_ARGB8888;
+      GmlRenderDrawBatch batch={&clear,1u,NULL,0u};
+      CHECK(gml_render_resource_submit(resources[index],&device,&batch,NULL,0u)==
+            GML_RENDER_RESOURCE_EXEC_DEVICE);
+    }
+    old->app_surface_resource=resources[0];
+    old->base_scene_resource=resources[1];
+    old->surface[0].resource=resources[2];
+    *moved=*old;
+    GmlWin content={0};
+    gml_render_rebind_content(moved,&content);
+    gml_render_dispatch_diagnostics_enable(old,0);
+    fake.forbid_calls=1;
+    for(unsigned index=0;index<3u;index++) CHECK(gml_render_resource_acquire_cpu_read(resources[index],NULL));
+    GmlRenderDispatchMetrics metrics={0};
+    CHECK(gml_render_dispatch_metrics(moved,&metrics) &&
+      metrics.cpu[GML_RENDER_SCENE_PRIMITIVE][GML_RENDER_DISPATCH_REPLAY]==(enabled?3u:0u) &&
+      !metrics.failed && !metrics.unclassified && !fake.forbidden_calls && !fake.readbacks);
+    CHECK(gml_render_dispatch_metrics(old,&metrics) &&
+      !metrics.cpu[GML_RENDER_SCENE_PRIMITIVE][GML_RENDER_DISPATCH_REPLAY]);
+    for(unsigned index=0;index<3u;index++) gml_render_resource_destroy(resources[index]);
+    free(old); free(moved);
+  }
+  CHECK(!memcmp(images[0],images[1],sizeof images[0]));
+  return 1;
+}
+
 static int journal_loss_and_mutation(void){
   uint32_t pixels[16],source_pixels[4]={0x80FF0000u,0x40FF0000u,
                                        0xFFFF0000u,0x00FF0000u};
@@ -1722,6 +1857,7 @@ static int queued_immutable_checkpoint_spans_sources_and_states(void){
   GmlRenderDrawStateSnapshot first_state=quad_state(0),second_state=quad_state(0);
   GmlRenderDrawOp operation=quad_op(2u,&first.image);
   GmlRenderJournalMetrics metrics={0};
+  GmlRenderDispatchMetrics dispatch={0};
   FakeDevice fake={0};
   GmlRenderDeviceServices device=service(&fake);
   GmlRenderResource *resource;
@@ -1732,6 +1868,7 @@ static int queued_immutable_checkpoint_spans_sources_and_states(void){
   CHECK(gml_render_application_surface_ensure_owned(render,4,4));
   gml_render_bind_device(render,&device);
   CHECK(gml_render_begin_resident_owned_application(render,0.0,0.0,0));
+  gml_render_dispatch_diagnostics_enable(render,1);
   resource=gml_render_application_resource_ensure(render);
   CHECK(resource);
   operation.reconstruction_mode=GML_RENDER_DEVICE_CHECKPOINT;
@@ -1750,6 +1887,8 @@ static int queued_immutable_checkpoint_spans_sources_and_states(void){
   operation.payload.quad.sampling.filter=GML_RENDER_FILTER_NEAREST;
   operation.payload.quad.sampling.source_region=first_state.samplers[0].source_region;
   CHECK(gml_render_application_scene_enqueue(render,&operation,&first_state,&first));
+  CHECK(gml_render_dispatch_metrics(render,&dispatch) &&
+        !dispatch.gpu[GML_RENDER_SCENE_TEXT] && !fake.submits && !fake.readbacks);
   CHECK(gml_render_scene_flush(render) && fake.submits==1 && fake.readbacks==1 &&
         fake.last_batch_operations==3u && fake.last_batch_states==2u &&
         fake.last_batch_source_ids[0]==2u && fake.last_batch_source_ids[1]==3u &&
@@ -1757,6 +1896,8 @@ static int queued_immutable_checkpoint_spans_sources_and_states(void){
         fake.last_batch_state_indices[0]==0u &&
         fake.last_batch_state_indices[1]==1u &&
         fake.last_batch_state_indices[2]==0u);
+  CHECK(gml_render_dispatch_metrics(render,&dispatch) &&
+        dispatch.gpu[GML_RENDER_SCENE_TEXT]==3u && !dispatch.failed);
   gml_render_resource_journal_metrics(resource,&metrics);
   CHECK(metrics.device_checkpoints==1u && metrics.journal_operations==0u &&
         metrics.authority==GML_RENDER_RESOURCE_BOTH_CURRENT);
@@ -1773,11 +1914,15 @@ static int queued_immutable_checkpoint_spans_sources_and_states(void){
   CHECK(gml_render_application_scene_enqueue(render,&operation,&second_state,&second));
   fake.fail_upload_at=fake.uploads+2;
   CHECK(!gml_render_scene_flush(render) && fake.submits==1 && fake.readbacks==1);
+  CHECK(gml_render_dispatch_metrics(render,&dispatch) &&
+        dispatch.gpu[GML_RENDER_SCENE_TEXT]==3u && dispatch.failed==2u);
   gml_render_resource_journal_metrics(resource,&metrics);
   CHECK(metrics.logical_version==4u &&
         metrics.authority==GML_RENDER_RESOURCE_BOTH_CURRENT);
   fake.fail_upload_at=0;
   CHECK(gml_render_scene_flush(render) && fake.submits==2 && fake.readbacks==2);
+  CHECK(gml_render_dispatch_metrics(render,&dispatch) &&
+        dispatch.gpu[GML_RENDER_SCENE_TEXT]==5u && dispatch.failed==2u && !dispatch.complete);
   gml_render_resource_journal_metrics(resource,&metrics);
   CHECK(metrics.logical_version==6u && metrics.device_checkpoints==2u &&
         metrics.authority==GML_RENDER_RESOURCE_BOTH_CURRENT);
@@ -1939,6 +2084,7 @@ static int persistent_surface_lifecycle(void){
   pixels=gml_surface_pixels_read(render,first,&w,&h);
   CHECK(pixels && w==4 && h==4 && pixels[0]==0x40224466u);
   CHECK(fake.readbacks==0);
+  gml_render_dispatch_diagnostics_enable(render,1);
   gml_render_resource_journal_metrics(render->surface[first-1].resource,&source_before);
   gml_surface_copy(render,second,0,0,first);
   gml_render_resource_journal_metrics(render->surface[first-1].resource,&source_after);
@@ -1952,6 +2098,18 @@ static int persistent_surface_lifecycle(void){
         source_after.cpu_version==source_before.cpu_version);
   pixels=gml_surface_pixels_read(render,second,&w,&h);
   CHECK(pixels && pixels[5]==0x40224466u && pixels[10]==0x40224466u);
+  gml_surface_copy(render,second,4,4,first);
+  gml_surface_copy(render,-1,0,0,first);
+  gml_surface_copy_part(render,second,0,0,first,0,0,0,2);
+  gml_surface_copy_part(render,second,0,0,first,4,4,2,2);
+  GmlRenderDispatchMetrics dispatch={0};
+  CHECK(gml_render_dispatch_metrics(render,&dispatch) &&
+        dispatch.cpu[GML_RENDER_SCENE_SURFACE][GML_RENDER_DISPATCH_NO_DEVICE]==2u);
+  gml_surface_copy(render,first,1,1,first);
+  gml_surface_copy_part(render,second,1,1,second,0,0,2,2);
+  CHECK(gml_render_dispatch_metrics(render,&dispatch) &&
+        dispatch.cpu[GML_RENDER_SCENE_SURFACE][GML_RENDER_DISPATCH_NO_DEVICE]==4u &&
+        !dispatch.complete && !fake.readbacks);
   gml_surface_free(render,first);
   render->next_surface_id=first;
   reused=gml_surface_create(render,4,4);
@@ -2955,6 +3113,8 @@ static int resident_flat_primitive_public_order(void){
   CHECK(gml_render_begin_resident_owned_application(gpu,0.0,0.0,0));
   gml_render_set_pending_fill(cpu,0xFF102030u);
   gml_render_set_pending_fill(gpu,0xFF102030u);
+  gml_render_dispatch_diagnostics_enable(cpu,1);
+  gml_render_dispatch_diagnostics_enable(gpu,1);
   gml_render_primitive_rectangle(cpu,1,1,2,2,0x345678u,0);
   gml_render_primitive_rectangle(gpu,1,1,2,2,0x345678u,0);
   gml_render_primitive_rectangle_color(cpu,0,0,0,0,0xabcdefu,0xabcdefu,
@@ -2970,12 +3130,27 @@ static int resident_flat_primitive_public_order(void){
   gml_render_resource_journal_metrics(gpu->app_surface_resource,&metrics);
   CHECK(gpu->resident_application_pass && fake.submits==6 && fake.readbacks==0 &&
         metrics.journal_operations==6u && metrics.cpu_replays==0u);
+  GmlRenderDispatchMetrics dispatch_cpu={0},dispatch_gpu={0};
+  CHECK(gml_render_dispatch_metrics(cpu,&dispatch_cpu) &&
+        gml_render_dispatch_metrics(gpu,&dispatch_gpu) &&
+        dispatch_cpu.cpu[GML_RENDER_SCENE_PRIMITIVE][GML_RENDER_DISPATCH_NO_DEVICE]==6u &&
+        dispatch_gpu.gpu[GML_RENDER_SCENE_PRIMITIVE]==6u && !dispatch_gpu.unclassified &&
+        !dispatch_gpu.cpu[GML_RENDER_SCENE_PRIMITIVE][GML_RENDER_DISPATCH_NO_DEVICE] &&
+        !dispatch_gpu.complete);
   cpu->alpha=gpu->alpha=0.5;
   gml_render_primitive_line(cpu,0,0,3,3,0xffffffu,1);
   gml_render_primitive_line(gpu,0,0,3,3,0xffffffu,1);
   gml_render_flush_pending_fill(cpu);
   CHECK(!gpu->resident_application_pass && fake.readbacks==0 &&
         memcmp(cpu_pixels,gpu->app_surface_owned,sizeof cpu_pixels)==0);
+  for(int index=0;index<3;index++){
+    gml_render_primitive_point(cpu,index,0,0xabcdefu);
+    gml_render_primitive_point(gpu,index,0,0xabcdefu);
+  }
+  CHECK(gml_render_dispatch_metrics(gpu,&dispatch_gpu) &&
+        dispatch_gpu.cpu[GML_RENDER_SCENE_PRIMITIVE][GML_RENDER_DISPATCH_NO_SCENE]==3u &&
+        dispatch_gpu.cpu[GML_RENDER_SCENE_PRIMITIVE][GML_RENDER_DISPATCH_UNQUALIFIED]==1u &&
+        !fake.readbacks && !memcmp(cpu_pixels,gpu->app_surface_owned,sizeof cpu_pixels));
   gml_render_free(cpu);
   gml_render_free(gpu);
   free(cpu);
@@ -7499,6 +7674,8 @@ static int target_pixel_observes_resident_result(void){
 
 int main(void){
   int passed=0;
+  passed+=dispatch_retained_replay();
+  passed+=dispatch_replay_owner_move();
   passed+=journal_loss_and_mutation();
   passed+=argb_surface_replay();
   passed+=additive_background_exact_replay();
@@ -7602,6 +7779,6 @@ int main(void){
   passed+=source_free_primitive_rect_replay();
   passed+=stretched_float_exact_replay();
   passed+=filtered_font_exact_recovery();
-  printf("render resource cases: passed=%d failed=%d\n",passed,103-passed);
-  return passed==103?EXIT_SUCCESS:EXIT_FAILURE;
+  printf("render resource cases: passed=%d failed=%d\n",passed,105-passed);
+  return passed==105?EXIT_SUCCESS:EXIT_FAILURE;
 }

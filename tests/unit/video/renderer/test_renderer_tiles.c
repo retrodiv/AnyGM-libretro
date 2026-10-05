@@ -1551,6 +1551,97 @@ static void check_modern_opaque_scaled_partial_alpha(void){
   free(fast_pixels);
 }
 
+static void check_dispatch_background_family(void){
+  enum { BASIC,SCALED,PART,STRETCHED,TILE,TILE_ROTATED,MODERN_TILED,
+         CLASSIC_VERTICAL,CLASSIC_GRID,CLASSIC_PHASE,ROOM,
+         CLIPPED,TRANSPARENT,ZERO_ALPHA,DISCARDED,INVALID,PUBLIC_TILE,ROOM_TILES,CASE_COUNT };
+  for(int kind=0;kind<CASE_COUNT;kind++){
+    uint32_t images[2][8*8],phases[2][8*8];
+    for(int enabled=0;enabled<2;enabled++){
+      uint8_t rgba[3*3*4],data[64]={0};
+      GmlWin content={.data=data,.size=sizeof data};
+      GmlAtlas atlas={.px=rgba,.w=3,.h=3};
+      GmlTpag page={.sw=3,.sh=3,.bw=3,.bh=3,.tw=3,.th=3,.atlas=0};
+      GmlBg background={.tpag=0};
+      GmlRender render={0};
+      for(int pixel=0;pixel<9;pixel++){
+        rgba[pixel*4]=(uint8_t)(40+pixel*10);
+        rgba[pixel*4+1]=90; rgba[pixel*4+2]=150;
+        rgba[pixel*4+3]=kind==TRANSPARENT?0:255;
+      }
+      for(int pixel=0;pixel<64;pixel++) images[enabled][pixel]=phases[enabled][pixel]=0xFF182838u;
+      render.win=&content; render.atlas=&atlas; render.n_atlas=1;
+      render.tpag=&page; render.n_tpag=1; render.bg=&background; render.n_bg=1;
+      render.fb=render.base_fb=images[enabled];
+      render.fbw=render.fbh=render.base_fbw=render.base_fbh=8;
+      render.color_write_mask=15; render.alphablend=1;
+      render.blend_equation=render.blend_equation_alpha=1;
+      render.alpha=kind==ZERO_ALPHA?0:1; render.active_shader=-1; render.font=-1;
+      render.target_id=-1;
+      render.classic=kind==CLASSIC_VERTICAL || kind==CLASSIC_GRID || kind==CLASSIC_PHASE;
+      if(kind==CLASSIC_PHASE) render.classic_phase_y=phases[enabled];
+      if(kind==DISCARDED){ render.alpha_test_enable=1; render.alpha_test_ref=255; }
+      gml_render_dispatch_diagnostics_enable(&render,enabled);
+      double x=kind==CLIPPED?-100:2;
+      if(kind==SCALED) gml_draw_background_ext(&render,0,x,2,1.5,1.5,0xFFFFFFu,1);
+      else if(kind==PART) gml_draw_background_part_ext(&render,0,0,0,2,2,x,2,1,1,0xFFFFFFu,1);
+      else if(kind==STRETCHED) gml_draw_background_stretched(&render,0,x,2,4,4,0xFFFFFFu,1);
+      else if(kind==TILE || kind==TILE_ROTATED)
+        gml_draw_background_tile(&render,0,0,0,3,3,x,2,1,1,0,0,kind==TILE_ROTATED,0xFFFFFFu,1);
+      else if(kind==CLASSIC_VERTICAL || kind==CLASSIC_PHASE)
+        gml_draw_background_tiled(&render,0,x,2,0,1);
+      else if(kind==CLASSIC_GRID || kind==MODERN_TILED)
+        gml_draw_background_tiled(&render,0,x,2,1,1);
+      else if(kind==PUBLIC_TILE) gml_draw_tile(&render,0,0,0,3,3,x,2);
+      else if(kind==ROOM_TILES){
+        write_u32(data,4,1); write_u32(data,8,16);
+        write_u32(data,16,2); write_u32(data,20,2);
+        write_u32(data,36,3); write_u32(data,40,3);
+        gml_draw_room_tiles(&render,4);
+      }else if(kind==ROOM){
+        write_u32(data,4,1); write_u32(data,8,16); write_u32(data,16,1);
+        write_u32(data,28,2); write_u32(data,32,2);
+        gml_draw_room_backgrounds(&render,4,0);
+      }else gml_draw_background(&render,kind==INVALID?-1:0,x,2);
+      gml_render_flush_rotated_batch(&render);
+      GmlRenderDispatchMetrics metrics;
+      uint64_t expected=kind==CLIPPED || kind==TRANSPARENT || kind==ZERO_ALPHA ||
+                        kind==DISCARDED || kind==INVALID?0u:
+                        kind==CLASSIC_GRID || kind==MODERN_TILED?9u:
+                        kind==CLASSIC_VERTICAL || kind==CLASSIC_PHASE?3u:1u;
+      unsigned family=kind==TILE || kind==TILE_ROTATED || kind==PUBLIC_TILE || kind==ROOM_TILES?
+                      GML_RENDER_SCENE_TILE:GML_RENDER_SCENE_BACKGROUND;
+      uint64_t cpu=0,gpu=0,exceptions=0;
+      int counted=gml_render_dispatch_metrics(&render,&metrics);
+      for(unsigned f=0;f<GML_RENDER_SCENE_FAMILY_COUNT;f++){
+        gpu+=metrics.gpu[f];
+        for(unsigned why=0;why<GML_RENDER_DISPATCH_REASON_COUNT;why++) cpu+=metrics.cpu[f][why];
+        for(unsigned why=0;why<GML_RENDER_DISPATCH_EXCEPTION_COUNT;why++) exceptions+=metrics.exceptions[f][why];
+      }
+      counted &=cpu==(enabled?expected:0u) &&
+        metrics.cpu[family][GML_RENDER_DISPATCH_NO_DEVICE]==(enabled?expected:0u) &&
+        !gpu && !exceptions && !metrics.failed && !metrics.unclassified &&
+        !metrics.complete && !render.dispatch_cpu_depth;
+      if(!counted) fprintf(stderr,"background dispatch kind=%d enabled=%d cpu=%llu family=%llu wanted=%llu\n",
+        kind,enabled,(unsigned long long)cpu,
+        (unsigned long long)metrics.cpu[family][GML_RENDER_DISPATCH_NO_DEVICE],
+        (unsigned long long)(enabled?expected:0u));
+      expect(counted,"background cell dispatch preserves its actual family and coverage");
+      int changed=0;
+      for(int pixel=0;pixel<64;pixel++) changed|=images[enabled][pixel]!=0xFF182838u;
+      expect(changed==(expected!=0),"background dispatch fixture reaches its declared visible/no-op path");
+      gml_render_texture_page_cache_clear(&render,&page);
+      render.classic_phase_y=NULL; render.win=NULL;
+      render.atlas=NULL; render.n_atlas=0; render.tpag=NULL; render.n_tpag=0;
+      render.bg=NULL; render.n_bg=0;
+      gml_render_free(&render);
+    }
+    expect(!memcmp(images[0],images[1],sizeof images[0]) &&
+           !memcmp(phases[0],phases[1],sizeof phases[0]),
+           "background dispatch accounting preserves complete base/phase RGBA");
+  }
+}
+
 int main(void){
   static const uint32_t transformed[8][4]={
     {0xffff0000,0xff00ff00,0xff0000ff,0xffffffff},
@@ -1563,6 +1654,7 @@ int main(void){
     {0xff00ff00,0xffffffff,0xffff0000,0xff0000ff}
   };
   check_tileset_layout(0);
+  check_dispatch_background_family();
   check_positioned_sprite_geometry();
   check_nineslice_band_order();
   check_tileset_layout(1);

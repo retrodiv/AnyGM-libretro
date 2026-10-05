@@ -641,6 +641,7 @@ static void plot_square(const GmlRenderCpuBackendDrawView *draw,uint32_t *target
   if(x1>draw->width) x1=draw->width;
   if(y1>draw->height) y1=draw->height;
   if(x1<=x0 || y1<=y0) return;
+  gml_render_cpu_backend_dispatch_mark(draw);
   int ia=(int)(a*255+0.5), iia=255-ia;
   uint32_t src=0xFF000000u|((uint32_t)br<<16)|((uint32_t)bg<<8)|(uint32_t)bb;
   if(ia>=255 || !draw->alpha_blend){
@@ -1062,7 +1063,22 @@ void gml_part_system_drawit(GmlParticleState *state,GmlRender *r,int id){
            draw_size*t->yscale*coordinate_scale_y,
            draw_ori+(t->ori_rel?p->dir:0),col,alpha)) continue;
       GmlRenderCpuBackendDrawView draw;
-      if(!gml_render_cpu_backend_prepare_draw_view(r,&draw) || !draw.pixels) continue;
+      GmlRenderCpuBackendDispatchScope scope;
+      gml_render_cpu_backend_dispatch_begin(r,&scope,GML_RENDER_SCENE_PRIMITIVE,0);
+      if(!gml_render_cpu_backend_prepare_draw_view(r,&draw) || !draw.pixels){
+        gml_render_cpu_backend_dispatch_end(r,&scope);
+        continue;
+      }
+      if(square_shape && gml_d3_is_active(r)){
+        /* This branch emits real software-3D triangles. Let their depth test,
+         * rather than the particle system's active flag, classify the draw. */
+        gml_render_cpu_backend_dispatch_end(r,&scope);
+        gml_d3_draw_rectangle_2d(r,
+          (p->x-half)*coordinate_scale_x,(p->y-half)*coordinate_scale_y,
+          (p->x+half+1)*coordinate_scale_x,(p->y+half+1)*coordinate_scale_y,
+          col,alpha,0);
+        continue;
+      }
       if(t->shape==1 || t->shape==5 || t->shape==6 || t->shape==7){
         plot_circle_shape(state,&draw,p->x*coordinate_scale_x-camera_x,
                           p->y*coordinate_scale_y-camera_y,
@@ -1099,6 +1115,7 @@ void gml_part_system_drawit(GmlParticleState *state,GmlRender *r,int id){
                     col,alpha,0) &&
                 gml_render_cpu_backend_prepare_draw_view(r,&draw))
         plot_square(&draw,draw.pixels,cx,cy,half_x,half_y,col,alpha);
+      gml_render_cpu_backend_dispatch_end(r,&scope);
     }
   }
 }

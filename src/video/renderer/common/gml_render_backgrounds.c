@@ -7,6 +7,7 @@
 #include "gml_render_sprites_internal.h"
 #include "gml_render_surfaces_internal.h"
 #include "gml_render_cpu_blit.h"
+#include "gml_render_cpu_backend.h"
 #include "anygm_host.h"
 
 #include <math.h>
@@ -416,9 +417,12 @@ static void do_bg_tiled_ext(GmlRender *r, int bg, double x, double y, double xs,
     }
     for(double yy=y0; yy<yend; yy+=logical_h)
       for(double xx=x0; xx<xend; xx+=logical_w){
-        if(vtiled && logical_h<r->fbh)
+        if(vtiled && logical_h<r->fbh){
+          GmlRenderCpuBackendDispatchScope cell_scope;
+          gml_render_cpu_backend_dispatch_begin(r,&cell_scope,GML_RENDER_SCENE_BACKGROUND,0);
           gml_render_cpu_blit_with_phase(r,t,xx+t->tx*xs,yy+t->ty*ys,xs,ys,color,alpha,2,0);
-        else
+          gml_render_cpu_backend_dispatch_end(r,&cell_scope);
+        }else
           gml_render_cpu_blit_background_phase(r,t,xx+t->tx*xs,yy+t->ty*ys,xs,ys,color,alpha);
     }
     return;

@@ -3,6 +3,89 @@
  */
 #include "software3d_test_fixture.h"
 
+typedef struct { int calls,refuse; } InformationHostProbe;
+
+static AnygmResult information_host_pixels(void *userdata,const void *rtf,size_t size,
+                                            uint32_t background,void *pixels,
+                                            uint32_t width,uint32_t height,size_t pitch){
+  InformationHostProbe *probe=userdata;
+  (void)rtf; (void)size; (void)background;
+  probe->calls++;
+  if(probe->refuse) return ANYGM_ERROR_UNSUPPORTED;
+  for(uint32_t y=0;y<height;y++){
+    uint32_t *row=(uint32_t*)((uint8_t*)pixels+(size_t)y*pitch);
+    for(uint32_t x=0;x<width;x++) row[x]=0x00102030u+x+y*width;
+  }
+  return ANYGM_OK;
+}
+
+int classic_information_dispatch_fixture(void){
+  enum { SOFTWARE,UNDERLINE,NATIVE,CACHED,REFUSED,INVALID,ZERO_EXTENT,RESIZED,INFO_CASES };
+  enum { WIDTH=80,HEIGHT=48 };
+  int ok=1;
+  for(int kind=0;kind<INFO_CASES;kind++){
+    uint32_t images[2][WIDTH*HEIGHT];
+    for(int enabled=0;enabled<2;enabled++){
+      uint8_t record[256];
+      size_t size=classic_information_record(record,sizeof record);
+      if(kind==UNDERLINE && size){
+        const char text[]="{\\rtf1\\ansi\\fs18\\ul I\\par}";
+        size_t length_at=12u+(size_t)u32(record,8)+8u*4u+8u;
+        if(length_at+4u+sizeof text-1u>sizeof record) return 0;
+        store_u32le(record+length_at,(uint32_t)(sizeof text-1u));
+        memcpy(record+length_at+4u,text,sizeof text-1u);
+        size=length_at+4u+sizeof text-1u;
+      }
+      InformationHostProbe probe={.refuse=kind==REFUSED};
+      AnygmHostServices host={.userdata=&probe,.rich_text_render=information_host_pixels};
+      GmlWin content={.classic_version=800,.host=kind==SOFTWARE || kind==UNDERLINE?NULL:&host};
+      GmlRender render;
+      if(!size || gml_render_init(&render,&content)!=0) return 0;
+      gml_render_dispatch_diagnostics_enable(&render,enabled);
+      for(int pixel=0;pixel<WIDTH*HEIGHT;pixel++) images[enabled][pixel]=0xE0123456u;
+      int draws=kind==CACHED || kind==RESIZED?2:1;
+      for(int draw=0;draw<draws;draw++)
+        gml_draw_classic_game_information(&render,images[enabled],
+          kind==ZERO_EXTENT?0:kind==RESIZED && draw?WIDTH-1:WIDTH,HEIGHT,
+          record,kind==INVALID?11:size);
+      GmlRenderDispatchMetrics metrics;
+      ok &=gml_render_dispatch_metrics(&render,&metrics);
+      uint64_t cpu=0,gpu=0,exceptions=0;
+      for(unsigned family=0;family<GML_RENDER_SCENE_FAMILY_COUNT;family++){
+        gpu+=metrics.gpu[family];
+        for(unsigned why=0;why<GML_RENDER_DISPATCH_REASON_COUNT;why++) cpu+=metrics.cpu[family][why];
+        for(unsigned why=0;why<GML_RENDER_DISPATCH_EXCEPTION_COUNT;why++) exceptions+=metrics.exceptions[family][why];
+      }
+      int empty=kind==INVALID || kind==ZERO_EXTENT;
+      int software=kind==SOFTWARE || kind==UNDERLINE || kind==REFUSED;
+      /* This narrow page reaches two wrapped heading rows, before the
+       * underlined paragraph. The minimal underline case instead reaches one
+       * row and its underline. Both have three actual primitive stages. */
+      uint64_t primitive=enabled && !empty && software?3u:0u;
+      uint64_t text=enabled && !empty && !software?(uint64_t)draws:0u;
+      int counted=metrics.cpu[GML_RENDER_SCENE_PRIMITIVE][GML_RENDER_DISPATCH_COMPOSITION]==primitive &&
+        metrics.cpu[GML_RENDER_SCENE_TEXT][GML_RENDER_DISPATCH_COMPOSITION]==text &&
+        ((!enabled || empty)?cpu==0u:software?cpu>1u:cpu==(uint64_t)draws) &&
+        !gpu && !exceptions && !metrics.failed && !metrics.unclassified && !metrics.complete;
+      if(!counted) fprintf(stderr,"information dispatch kind=%d enabled=%d cpu=%llu primitive=%llu text=%llu\n",
+        kind,enabled,(unsigned long long)cpu,
+        (unsigned long long)metrics.cpu[GML_RENDER_SCENE_PRIMITIVE][GML_RENDER_DISPATCH_COMPOSITION],
+        (unsigned long long)metrics.cpu[GML_RENDER_SCENE_TEXT][GML_RENDER_DISPATCH_COMPOSITION]);
+      ok &=counted;
+      int calls=empty || kind==SOFTWARE || kind==UNDERLINE?0:kind==RESIZED?2:1;
+      if(probe.calls!=calls) fprintf(stderr,"information host calls kind=%d actual=%d wanted=%d\n",kind,probe.calls,calls);
+      ok &=probe.calls==calls;
+      int changed=0;
+      for(int pixel=0;pixel<WIDTH*HEIGHT;pixel++) changed|=images[enabled][pixel]!=0xE0123456u;
+      ok &=changed==!empty;
+      gml_render_free(&render);
+    }
+    ok &=!memcmp(images[0],images[1],sizeof images[0]);
+  }
+  if(!ok) fputs("classic information dispatch changed accounting or complete pixels\n",stderr);
+  return ok;
+}
+
 static int matrix_array_matches(GmlVal value,const double expected[16]){
   if(value.t!=V_ARR || gml_val_array_length(value)<16) return 0;
   for(int i=0;i<16;i++){

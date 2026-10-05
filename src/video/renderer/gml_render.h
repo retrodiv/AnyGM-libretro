@@ -10,6 +10,45 @@
 
 typedef struct GmlRender GmlRender;
 
+/* Transient dispatch diagnostics, not canonical state. Counts refer to resolved raster
+ * operations, not GML calls or pixel queries. Missing coverage must never qualify a census. */
+enum {
+  GML_RENDER_DISPATCH_NO_DEVICE,
+  GML_RENDER_DISPATCH_NO_SCENE,
+  GML_RENDER_DISPATCH_UNQUALIFIED,
+  GML_RENDER_DISPATCH_REPLAY,
+  GML_RENDER_DISPATCH_COMPOSITION,
+  GML_RENDER_DISPATCH_REASON_COUNT
+};
+enum {
+  GML_RENDER_DISPATCH_EXCEPTION_DEPTH,
+  GML_RENDER_DISPATCH_EXCEPTION_COUNT
+};
+typedef struct {
+  uint64_t gpu[GML_RENDER_SCENE_FAMILY_COUNT];
+  uint64_t cpu[GML_RENDER_SCENE_FAMILY_COUNT][GML_RENDER_DISPATCH_REASON_COUNT];
+  uint64_t exceptions[GML_RENDER_SCENE_FAMILY_COUNT][GML_RENDER_DISPATCH_EXCEPTION_COUNT];
+  uint64_t failed,unclassified;
+  int enabled,overflow,complete;
+} GmlRenderDispatchMetrics;
+void gml_render_dispatch_diagnostics_enable(GmlRender *render,int enabled);
+int gml_render_dispatch_metrics(const GmlRender *render,GmlRenderDispatchMetrics *out);
+/* Accumulate completed renderer epochs without executing work or restoring state. */
+void gml_render_dispatch_metrics_accumulate(GmlRenderDispatchMetrics *total,
+                                            const GmlRenderDispatchMetrics *epoch);
+/* Metadata-only completion for existing engine-owned software composition.
+ * Call after an actual nonempty target write, never at preparation or observation. */
+void gml_render_dispatch_cpu_composition(GmlRender *render,unsigned family);
+/* Executed retained history/source recipes, not new operations already credited
+ * by CPU fallback submission. Failed replay remains a separate disqualifier. */
+void gml_render_dispatch_cpu_replay_completion(GmlRender *render,
+                                               const GmlRenderDrawOp *operation,int succeeded);
+struct GmlRenderPlan;
+/* Report a coarse device pass only after its executor returns. This borrows no
+ * pixels and does not execute, validate, or materialize the plan. */
+void gml_render_dispatch_gpu_plan_completion(GmlRender *render,
+  const struct GmlRenderPlan *plan,int succeeded);
+
 /* A borrowed device service bound only by the engine graphics owner. Binding copies callbacks,
  * never a device-owned handle. An absent service keeps the established immediate CPU path. */
 void gml_render_bind_device(GmlRender *render,const GmlRenderDeviceServices *services);

@@ -5,9 +5,25 @@
 #include "gml_render_cpu_backend.h"
 #include "gml_render_internal.h"
 #include "gml_render_surfaces_internal.h"
+#include "gml_render_cpu_dispatch_internal.h"
+#include "gml_render_cpu_pixel_internal.h"
 #include "anygm_host.h"
 
 #include <string.h>
+
+void gml_render_cpu_backend_dispatch_begin(GmlRender *render,
+                                           GmlRenderCpuBackendDispatchScope *scope,
+                                           unsigned family,int depth_dependent){
+  if(!scope) return;
+  gml_render_dispatch_cpu_scope_begin(render,scope,family);
+  if(scope->active && depth_dependent)
+    scope->exception=GML_RENDER_DISPATCH_EXCEPTION_DEPTH;
+}
+
+void gml_render_cpu_backend_dispatch_end(GmlRender *render,
+                                         GmlRenderCpuBackendDispatchScope *scope){
+  if(scope) gml_render_dispatch_cpu_scope_end(render,scope);
+}
 
 static void backend_texture_view_reset(GmlRenderCpuBackendTextureView *view){
   if(view) memset(view,0,sizeof(*view));
@@ -167,6 +183,8 @@ int gml_render_cpu_backend_draw_view(GmlRender *r,GmlRenderCpuBackendDrawView *v
   view->interpolate=r->interp;
   view->alpha_blend=r->alphablend; view->blend_mode=r->blendmode;
   view->circle_precision=r->circle_precision;
+  view->zero_alpha_writes=destination_colour_blend_active(r);
+  if(r->dispatch_cpu_depth) view->dispatch_written=&r->dispatch_cpu_written;
   return 1;
 }
 void gml_render_cpu_backend_prepare_draw(GmlRender *r){

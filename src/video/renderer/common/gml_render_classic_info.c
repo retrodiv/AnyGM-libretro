@@ -372,6 +372,8 @@ static double classic_info_draw_row(GmlRender *r,ClassicInfoLine *line,int first
     for(int xx=background_x0;xx<background_x1;xx++)
       *destination++=0xFF000000u|text_background;
   }
+  if(background_x1>background_x0 && background_y1>background_y0)
+    gml_render_dispatch_cpu_composition(r,GML_RENDER_SCENE_PRIMITIVE);
   int position=first;
   while(position<last){
     ClassicInfoRun *run=classic_info_run_at(line,position);
@@ -397,6 +399,7 @@ static double classic_info_draw_row(GmlRender *r,ClassicInfoLine *line,int first
                        ((run->color>>16)&255u);
           uint32_t *row=r->fb+(size_t)underline_y*r->fbw;
           for(int x=x0;x<x1;x++) row[x]=rgb;
+          gml_render_dispatch_cpu_composition(r,GML_RENDER_SCENE_PRIMITIVE);
         }
       }
       r->font=-1;
@@ -455,6 +458,7 @@ static int classic_info_native_cached(GmlRender *r,uint32_t *framebuffer,
   if(!r->classic_info_native_pixels) return 0;
   memcpy(framebuffer,r->classic_info_native_pixels,
          (size_t)width*(size_t)height*sizeof(uint32_t));
+  gml_render_dispatch_cpu_composition(r,GML_RENDER_SCENE_TEXT);
   return 1;
 }
 
@@ -500,6 +504,7 @@ void gml_draw_classic_game_information(GmlRender *r,uint32_t *framebuffer,
       framebuffer[(size_t)y*width+width-2]=0xFFFFFFu;
     }
   }
+  gml_render_dispatch_cpu_composition(r,GML_RENDER_SCENE_PRIMITIVE);
   uint32_t text_background=background;
   unsigned background_green=(text_background>>8)&255u;
   if(background_green>0&&background_green<128)

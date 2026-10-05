@@ -410,11 +410,157 @@ static int malformed_record_case(void){
   return ok;
 }
 
+typedef struct { int calls,refuse; } GlyphShaderProbe;
+
+/* Authored host stand-in: copy the selected source, without claiming device work. */
+static int glyph_shader_copy(void *context,const GmlRenderShaderRequest *request){
+  GlyphShaderProbe *probe=context;
+  probe->calls++;
+  if(probe->refuse) return 0;
+  if(!request || !request->source || !request->output ||
+     request->width<=0 || request->height<=0) return 0;
+  for(int y=0;y<request->height;y++) for(int x=0;x<request->width;x++){
+    int sx=request->region_x+x*request->region_width/request->width;
+    int sy=request->region_y+y*request->region_height/request->height;
+    request->output[y*request->width+x]=request->source[sy*request->source_pitch+sx];
+  }
+  return 1;
+}
+
+/* Compare complete targets, not just counters, at the shared glyph dispatch. */
+static int dispatch_glyph_family_case(void){
+  enum { REAL,REAL_ROTATED,REAL_FILTERED,REAL_SUBPIXEL,REAL_SDF,
+         ATLAS,ATLAS_ROTATED,RUNTIME,RUNTIME_ROTATED,EXTENDED,
+         SPACE,CLIPPED,TRANSPARENT,ZERO_ALPHA,DISCARDED,MEASURE,
+         CLASSIC_PHASE,SHADER_DECLINED,NO_SCENE,SHADER_GLYPH,SHADER_RUN,
+         SHADER_RUN_REFUSED,SHADER_GLYPH_REFUSED,SHADER_RUN_TRANSPARENT,GLYPH_CASES };
+  int ok=1;
+  for(int kind=0;kind<GLYPH_CASES;kind++){
+    uint32_t images[2][96*48],phases[2][96*48];
+    for(int enabled=0;enabled<2;enabled++){
+      FontFixture *f=fixture_create();
+      if(!f) return 0;
+      GmlRender *r=&f->render;
+      struct GmlShaderPal shader={0};
+      GlyphShaderProbe probe={0};
+      r->atlas=calloc(1,sizeof *r->atlas);
+      r->tpag=calloc(1,sizeof *r->tpag);
+      r->spr=calloc(1,sizeof *r->spr);
+      if(!r->atlas || !r->tpag || !r->spr){ fixture_destroy(f); return 0; }
+      r->n_atlas=r->n_tpag=r->n_spr=1;
+      GmlAtlas *atlas=&r->atlas[0];
+      GmlTpag *page=&r->tpag[0];
+      GmlSprite *sprite=&r->spr[0];
+      atlas->w=atlas->h=2;
+      atlas->px=malloc(16);
+      sprite->frame=malloc(sizeof *sprite->frame);
+      r->fonts[0].glyphs=calloc(1,sizeof *r->fonts[0].glyphs);
+      if(!atlas->px || !sprite->frame || !r->fonts[0].glyphs){ fixture_destroy(f); return 0; }
+      for(int pixel=0;pixel<4;pixel++){
+        atlas->px[pixel*4]=(uint8_t)(90+pixel*20);
+        atlas->px[pixel*4+1]=120;
+        atlas->px[pixel*4+2]=180;
+        atlas->px[pixel*4+3]=kind==TRANSPARENT || kind==SHADER_RUN_TRANSPARENT?0:255;
+      }
+      *sprite->frame=0;
+      sprite->w=sprite->h=2; sprite->n_frames=1;
+      page->sw=page->sh=page->bw=page->bh=page->tw=page->th=2;
+      page->atlas=0;
+      GmlFont *font=&r->fonts[0];
+      font->real=kind!=ATLAS && kind!=ATLAS_ROTATED &&
+                 kind!=RUNTIME && kind!=RUNTIME_ROTATED && kind!=SPACE;
+      font->sprite=0; font->first='A'; font->sep=1;
+      font->atlas=0; font->n_glyphs=1; font->line_height=3;
+      font->glyphs[0]=(GmlGlyph){.ch='A',.w=2,.h=2,.shift=4};
+      font->subpixel=kind==REAL_SUBPIXEL;
+      font->sdf_spread=kind==REAL_SDF?1:0;
+      if(kind==RUNTIME || kind==RUNTIME_ROTATED){
+        sprite->runtime_rgba=malloc(16);
+        if(!sprite->runtime_rgba){ fixture_destroy(f); return 0; }
+        memcpy(sprite->runtime_rgba,atlas->px,16);
+      }
+      for(int pixel=0;pixel<96*48;pixel++)
+        f->frame[pixel]=phases[enabled][pixel]=0xFF182838u;
+      gml_render_dispatch_diagnostics_enable(r,enabled);
+      gml_render_begin(r,f->frame,96,48,0,0);
+      r->font=0; r->n_fonts=1; r->active_shader=kind==SHADER_DECLINED?0:-1;
+      r->color_write_mask=15; r->blend_equation=r->blend_equation_alpha=1;
+      r->interp=kind==REAL_FILTERED;
+      if(kind>=SHADER_GLYPH){
+        shader.source_vertex_es="attribute vec3 in_Position; void main(){ gl_Position=vec4(in_Position,1.0); }";
+        shader.source_fragment_es="void main(){ gl_FragColor=vec4(1.0); }";
+        shader.position_dependent=kind==SHADER_RUN || kind==SHADER_RUN_REFUSED || kind==SHADER_RUN_TRANSPARENT;
+        probe.refuse=kind==SHADER_RUN_REFUSED || kind==SHADER_GLYPH_REFUSED;
+        r->shader_pal=&shader; r->n_shader_pal=1; r->active_shader=0;
+        gml_render_set_shader_executor(r,glyph_shader_copy,&probe);
+      }
+      if(kind==ZERO_ALPHA) r->alpha=0;
+      if(kind==DISCARDED){ r->alpha_test_enable=1; r->alpha_test_ref=255; }
+      if(kind==CLASSIC_PHASE){
+        r->classic=1; r->classic_phase_y=phases[enabled];
+      }
+      if(kind==NO_SCENE) r->device_bound=1;
+      double x=kind==CLIPPED?-100:12;
+      double rotation=kind==REAL_ROTATED || kind==ATLAS_ROTATED ||
+                      kind==RUNTIME_ROTATED?23:0;
+      if(kind==MEASURE){
+        ok &=gml_text_width(r,"AA")>0 && gml_text_height(r,"AA")>0;
+      }else if(kind==EXTENDED){
+        gml_draw_text_ext(r,x,12,"A\nA",5,20);
+      }else{
+        gml_draw_text_transformed(r,x,12,kind==SPACE?"  ":"AA",
+                                  1,1,rotation,r->color,r->alpha);
+      }
+      gml_render_flush_rotated_batch(r);
+      GmlRenderDispatchMetrics metrics;
+      unsigned reason=kind==NO_SCENE?GML_RENDER_DISPATCH_NO_SCENE:GML_RENDER_DISPATCH_NO_DEVICE;
+      uint64_t expected=kind==SPACE || kind==CLIPPED || kind==TRANSPARENT ||
+                        kind==ZERO_ALPHA || kind==DISCARDED || kind==MEASURE || kind==SHADER_RUN_TRANSPARENT?0u:
+                        kind==SHADER_RUN || kind==SHADER_RUN_REFUSED?3u:2u;
+      uint64_t cpu=0,gpu=0,exceptions=0;
+      ok &=gml_render_dispatch_metrics(r,&metrics);
+      for(unsigned family=0;family<GML_RENDER_SCENE_FAMILY_COUNT;family++){
+        gpu+=metrics.gpu[family];
+        for(unsigned why=0;why<GML_RENDER_DISPATCH_REASON_COUNT;why++) cpu+=metrics.cpu[family][why];
+        for(unsigned why=0;why<GML_RENDER_DISPATCH_EXCEPTION_COUNT;why++) exceptions+=metrics.exceptions[family][why];
+      }
+      int counted=cpu==(enabled?expected:0u) &&
+        metrics.cpu[GML_RENDER_SCENE_TEXT][reason]==(enabled?expected:0u) &&
+        !gpu && !exceptions && !metrics.failed && !metrics.unclassified &&
+        !metrics.complete && !r->dispatch_cpu_depth;
+      if(!counted) fprintf(stderr,"glyph dispatch kind=%d enabled=%d cpu=%llu text=%llu wanted=%llu\n",
+        kind,enabled,(unsigned long long)cpu,
+        (unsigned long long)metrics.cpu[GML_RENDER_SCENE_TEXT][reason],
+        (unsigned long long)(enabled?expected:0u));
+      ok &=counted;
+      if(kind>=SHADER_GLYPH){
+        int calls=kind==SHADER_GLYPH_REFUSED?2:1;
+        if(probe.calls!=calls) fprintf(stderr,"glyph shader kind=%d calls=%d wanted=%d\n",kind,probe.calls,calls);
+        ok &=probe.calls==calls && !r->run_plane_active && !r->shade_vertex_colour_valid;
+      }
+      int changed=0;
+      for(int pixel=0;pixel<96*48;pixel++) changed|=f->frame[pixel]!=0xFF182838u;
+      if(changed!=(expected!=0)) fprintf(stderr,"glyph dispatch kind=%d fixture coverage=%d wanted=%d\n",
+                                            kind,changed,expected!=0);
+      ok &=changed==(expected!=0);
+      memcpy(images[enabled],f->frame,sizeof f->frame);
+      r->classic_phase_y=NULL; r->device_bound=0;
+      r->shader_pal=NULL; r->n_shader_pal=0;
+      fixture_destroy(f);
+    }
+    ok &= !memcmp(images[0],images[1],sizeof images[0]) &&
+          !memcmp(phases[0],phases[1],sizeof phases[0]);
+  }
+  if(!ok) fprintf(stderr,"shared glyph dispatch accounting changed family, coverage or RGBA\n");
+  return ok;
+}
+
 int main(int argc,char **argv){
   const char *filter=NULL;
   if(argc==3 && !strcmp(argv[1],"--case")) filter=argv[2];
   else if(argc!=1){ fprintf(stderr,"usage: %s [--case filter]\n",argv[0]); return 2; }
   const AnygmTestCase cases[]={
+    {"dispatch_glyph_family",dispatch_glyph_family_case},
     {"classic_subpixel_channels",classic_subpixel_case},
     {"runtime_sprite_font_mapping",runtime_sprite_font_mapping_case},
     {"runtime_renderer_reinit_generation",runtime_renderer_reinit_generation_case},

@@ -4,9 +4,158 @@
 /* Neutral device binding. Operation preparation and barriers grow here as scene families land. */
 #include "gml_render_internal.h"
 #include "gml_render_surfaces_internal.h"
+#include "gml_render_plan.h"
 
 #include <math.h>
 #include <string.h>
+
+static void dispatch_add(GmlRenderDispatchMetrics *metrics,uint64_t *value,uint64_t count);
+
+void gml_render_dispatch_diagnostics_enable(GmlRender *render,int enabled){
+  if(!render) return;
+  /* A subsequent re-enable cannot hide work performed during an accounting gap. */
+  if(render->dispatch_metrics.enabled && !enabled)
+    dispatch_add(&render->dispatch_metrics,&render->dispatch_metrics.unclassified,1u);
+  render->dispatch_metrics.enabled=enabled?1:0;
+}
+
+int gml_render_dispatch_metrics(const GmlRender *render,GmlRenderDispatchMetrics *out){
+  if(!out) return 0;
+  if(!render){memset(out,0,sizeof *out);return 0;}
+  *out=render->dispatch_metrics;
+  /* A standalone renderer snapshot cannot certify accounting for a whole load.
+   * The engine owns that guarantee across renderer replacement and teardown. */
+  out->complete=0;
+  return 1;
+}
+
+static void dispatch_add(GmlRenderDispatchMetrics *metrics,uint64_t *value,uint64_t count){
+  if(count>UINT64_MAX-*value){
+    *value=UINT64_MAX;
+    metrics->overflow=1;
+  } else *value+=count;
+}
+
+void gml_render_dispatch_metrics_accumulate(GmlRenderDispatchMetrics *total,
+                                            const GmlRenderDispatchMetrics *epoch){
+  if(!total || !epoch) return;
+  for(unsigned family=0;family<GML_RENDER_SCENE_FAMILY_COUNT;family++){
+    dispatch_add(total,&total->gpu[family],epoch->gpu[family]);
+    for(unsigned reason=0;reason<GML_RENDER_DISPATCH_REASON_COUNT;reason++)
+      dispatch_add(total,&total->cpu[family][reason],epoch->cpu[family][reason]);
+    for(unsigned exception=0;exception<GML_RENDER_DISPATCH_EXCEPTION_COUNT;exception++)
+      dispatch_add(total,&total->exceptions[family][exception],epoch->exceptions[family][exception]);
+  }
+  dispatch_add(total,&total->failed,epoch->failed);
+  dispatch_add(total,&total->unclassified,epoch->unclassified);
+  total->overflow=total->overflow || epoch->overflow;
+  total->enabled=total->enabled || epoch->enabled;
+  /* This metadata helper cannot certify a whole content-load session. */
+  total->complete=0;
+}
+
+unsigned gml_render_dispatch_cpu_reason(const GmlRender *render){
+  if(!gml_render_device(render)) return GML_RENDER_DISPATCH_NO_DEVICE;
+  if(!render->resident_application_pass) return GML_RENDER_DISPATCH_NO_SCENE;
+  /* Admission has multiple independent exclusions. Do not infer a particular
+   * geometry, blend or mask rejection merely from the current draw state. */
+  return GML_RENDER_DISPATCH_UNQUALIFIED;
+}
+
+void gml_render_dispatch_cpu_record(GmlRender *render,unsigned family,unsigned reason,
+                                     uint64_t count){
+  if(!render || !render->dispatch_metrics.enabled || !count) return;
+  GmlRenderDispatchMetrics *metrics=&render->dispatch_metrics;
+  if(!family || family>=GML_RENDER_SCENE_FAMILY_COUNT ||
+     reason>=GML_RENDER_DISPATCH_REASON_COUNT){
+    dispatch_add(metrics,&metrics->unclassified,count);
+    return;
+  }
+  dispatch_add(metrics,&metrics->cpu[family][reason],count);
+}
+
+void gml_render_dispatch_cpu_exception_record(GmlRender *render,unsigned family,
+                                              unsigned exception,uint64_t count){
+  if(!render || !render->dispatch_metrics.enabled || !count) return;
+  GmlRenderDispatchMetrics *metrics=&render->dispatch_metrics;
+  if(!family || family>=GML_RENDER_SCENE_FAMILY_COUNT ||
+     exception>=GML_RENDER_DISPATCH_EXCEPTION_COUNT){
+    dispatch_add(metrics,&metrics->unclassified,count);
+    return;
+  }
+  dispatch_add(metrics,&metrics->exceptions[family][exception],count);
+}
+
+void gml_render_dispatch_cpu_composition(GmlRender *render,unsigned family){
+  gml_render_dispatch_cpu_record(render,family,GML_RENDER_DISPATCH_COMPOSITION,1u);
+}
+
+void gml_render_dispatch_cpu_replay_completion(GmlRender *render,
+                                               const GmlRenderDrawOp *operation,int succeeded){
+  GmlRenderDrawBatch completed={operation,operation?1u:0u,NULL,0u};
+  gml_render_dispatch_batch_record(render,&completed,
+    succeeded?GML_RENDER_RESOURCE_EXEC_CPU:GML_RENDER_RESOURCE_EXEC_FAILED);
+}
+
+void gml_render_dispatch_gpu_plan_completion(GmlRender *render,
+                                              const GmlRenderPlan *plan,int succeeded){
+  if(!render || !render->dispatch_metrics.enabled) return;
+  GmlRenderDispatchMetrics *metrics=&render->dispatch_metrics;
+  if(!plan || !plan->operation_count || plan->operation_count>GML_PLAN_MAX_OPERATIONS){
+    dispatch_add(metrics,&metrics->unclassified,1u);
+    return;
+  }
+  if(!succeeded){
+    /* Partial device prefixes are not credited as completed operations. */
+    dispatch_add(metrics,&metrics->failed,plan->operation_count);
+    return;
+  }
+  for(uint32_t index=0;index<plan->operation_count;index++){
+    unsigned family;
+    switch(plan->operations[index].opcode){
+      case GML_PLAN_OP_CLEAR_XRGB: family=GML_RENDER_SCENE_PRIMITIVE; break;
+      case GML_PLAN_OP_BLIT_OPAQUE_NEAREST:
+      case GML_PLAN_OP_BLIT_OPAQUE_BOX:
+      case GML_PLAN_OP_BLIT_OPAQUE_SHARP_BILINEAR:
+      case GML_PLAN_OP_PRESENT_CPU_FRAME: family=GML_RENDER_SCENE_SURFACE; break;
+      case GML_PLAN_OP_SHADER_DRAW: family=GML_RENDER_SCENE_EFFECT; break;
+      default: dispatch_add(metrics,&metrics->unclassified,1u); continue;
+    }
+    dispatch_add(metrics,&metrics->gpu[family],1u);
+  }
+}
+
+void gml_render_dispatch_batch_record(GmlRender *render,const GmlRenderDrawBatch *batch,
+                                       GmlRenderResourceExecution result){
+  if(!render || !render->dispatch_metrics.enabled) return;
+  GmlRenderDispatchMetrics *metrics=&render->dispatch_metrics;
+  if(!batch || !batch->operations || !batch->operation_count){
+    dispatch_add(metrics,&metrics->unclassified,1u);
+    return;
+  }
+  if(result==GML_RENDER_RESOURCE_EXEC_FAILED){
+    /* A failed or retried batch is not completed GPU work. The device's existing
+     * partial-prefix counters retain physical writes from an unsuccessful batch. */
+    dispatch_add(metrics,&metrics->failed,batch->operation_count);
+    return;
+  }
+  if(result!=GML_RENDER_RESOURCE_EXEC_DEVICE && result!=GML_RENDER_RESOURCE_EXEC_CPU){
+    dispatch_add(metrics,&metrics->unclassified,batch->operation_count);
+    return;
+  }
+  for(uint32_t index=0;index<batch->operation_count;index++){
+    unsigned family=batch->operations[index].scene_family;
+    /* Clears are source-free primitive operations; older prepared records did
+     * not need a content-family tag. Do not change their journal/state bytes. */
+    if(!family && batch->operations[index].opcode==GML_RENDER_OP_CLEAR)
+      family=GML_RENDER_SCENE_PRIMITIVE;
+    if(result==GML_RENDER_RESOURCE_EXEC_CPU)
+      gml_render_dispatch_cpu_record(render,family,GML_RENDER_DISPATCH_REPLAY,1u);
+    else if(!family || family>=GML_RENDER_SCENE_FAMILY_COUNT)
+      dispatch_add(metrics,&metrics->unclassified,1u);
+    else dispatch_add(metrics,&metrics->gpu[family],1u);
+  }
+}
 
 int gml_render_particle_line_valid(const GmlRenderDrawOp *operation){
   if(!operation || operation->opcode!=GML_RENDER_OP_COLOURED_PRIMITIVE ||

@@ -8,6 +8,7 @@
 #include "gml_render_internal.h"
 #include "gml_render_cpu_pixel_internal.h"
 #include "gml_render_cpu_backend.h"
+#include "gml_render_cpu_dispatch_internal.h"
 
 #include "anygm_host.h"
 #include "gml_thread.h"
@@ -75,13 +76,14 @@ static void dual_fast_band(void *p,int py0,int py1,int slot){
       if(rr>255) rr=255;
       if(gg>255) gg=255;
       if(bb>255) bb=255;
+      gml_render_dispatch_cpu_scope_write(c->r);
       drow[tx]=0xFF000000u|((uint32_t)rr<<16)|((uint32_t)gg<<8)|(uint32_t)bb;
     }
   }
 }
 /* Software execution of the structurally parsed two-sample offset fragment. Unlike a brightness
  * approximation, this preserves the second lookup, its channel isolation and sub-texel offsets. */
-void draw_surface_dual_sample(GmlRender *r,const struct GmlShaderPal *sp,int surf,
+static void draw_surface_dual_sample_impl(GmlRender *r,const struct GmlShaderPal *sp,int surf,
                                      double sx,double sy,double swd,double shd,
                                      double dx,double dy,double dw,double dh,uint32_t blend,double alpha){
   int sw=0,sh=0; const uint32_t *src=surface_pixels_observe(r,surf,&sw,&sh);
@@ -172,9 +174,20 @@ void draw_surface_dual_sample(GmlRender *r,const struct GmlShaderPal *sp,int sur
         int oa=r->target_sp==0?255:sa+(da*ia+127)/255; if(oa>255)oa=255;
         out=((uint32_t)oa<<24)|((uint32_t)rr<<16)|((uint32_t)gg<<8)|(uint32_t)bb;
       }
+      gml_render_dispatch_cpu_scope_write(r);
       *dp=color_write_merge(r,old,out);
     }
   }
   r->fb_opaque_known=0;
   free(copy);
+}
+
+void draw_surface_dual_sample(GmlRender *r,const struct GmlShaderPal *sp,int surf,
+                              double sx,double sy,double swd,double shd,
+                              double dx,double dy,double dw,double dh,
+                              uint32_t blend,double alpha){
+  GmlRenderDispatchCpuScope scope;
+  gml_render_dispatch_cpu_scope_begin(r,&scope,GML_RENDER_SCENE_EFFECT);
+  draw_surface_dual_sample_impl(r,sp,surf,sx,sy,swd,shd,dx,dy,dw,dh,blend,alpha);
+  gml_render_dispatch_cpu_scope_end(r,&scope);
 }

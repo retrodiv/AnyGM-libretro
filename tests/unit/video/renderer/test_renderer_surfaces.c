@@ -3,6 +3,7 @@
  */
 #include "gml_render_internal.h"
 #include "gml_render_primitives.h"
+#include "gml_render_cpu_surfaces.h"
 #include "gml_builtin.h"
 #include "gml_vm_internal.h"
 
@@ -45,6 +46,76 @@ static uint32_t destination_colour_expected(uint32_t source,uint32_t destination
     result|=value<<shift;
   }
   return result;
+}
+
+enum { DISPATCH_SURFACE_CONTROLS=19 };
+static int dispatch_surface_control(int kind,int diagnostics,uint64_t *hash,
+                                     GmlRenderDispatchMetrics *metrics){
+  GmlRender render={0};
+  int extent=(kind==0 || kind==1 || kind==4 || kind==5 || kind==14)?16:4;
+  int target_extent=kind==18?128:16;
+  uint32_t *target=(uint32_t*)calloc((size_t)target_extent*target_extent,sizeof(*target));
+  REQUIRE(target && gml_render_init(&render,NULL)==0,"dispatch surface fixture allocation");
+  gml_render_begin(&render,target,target_extent,target_extent,0,0);
+  int source=gml_surface_create(&render,extent,extent);
+  REQUIRE(source>0,"dispatch surface source allocation");
+  uint32_t *pixels=surface_pixels(&render,source,NULL,NULL);
+  REQUIRE(pixels!=NULL,"dispatch surface source access");
+  unsigned alpha=(kind==10 || kind==18)?128u:(kind==13 || kind==15)?0u:255u;
+  for(int index=0;index<extent*extent;index++)
+    pixels[index]=(alpha<<24)|((unsigned)(index*773u+0x123456u)&0xffffffu);
+  render.surface[source-1].opaque_known=1;
+  render.surface[source-1].all_opaque=alpha==255u;
+  render.surface[source-1].all_transparent=alpha==0u;
+  if(kind==9) REQUIRE(gml_surface_set_target(&render,source),"self-composition target");
+  if(kind==10){render.alpha_test_enable=1;render.alpha_test_ref=254;}
+  if(kind==14) render.color_write_mask=7u;
+  if(kind==15) render.blendmode=GML_RENDER_BLEND_DEST_SOURCE_COLOUR;
+  if(kind==16) render.blendmode=3;
+  if(kind==17) render.blendmode=6;
+  render.interp=kind==2;
+  gml_render_dispatch_diagnostics_enable(&render,diagnostics);
+  double width=extent,height=extent,x=0,y=0,draw_alpha=1.0;
+  if(kind==1){x=y=5;}
+  if(kind==2 || kind==3){width=height=12;x=y=2;}
+  if(kind==4){width=height=13;}
+  if(kind==5){width=height=7;}
+  if(kind==6 || kind==16 || kind==17){width=height=9;draw_alpha=0.5;}
+  if(kind==7){width=-9;height=9;x=7;}
+  if(kind==11){x=y=target_extent;}
+  if(kind==12) draw_alpha=0.0;
+  if(kind==18){width=height=target_extent;}
+  if(kind==8)
+    gml_render_cpu_draw_surface_ext_mapped(&render,source,8,8,2,2,45,0xffffffu,0.5);
+  else
+    draw_surface_region(&render,source,0,0,extent,extent,x,y,width,height,0xffffffu,draw_alpha);
+  REQUIRE(gml_render_dispatch_metrics(&render,metrics) && !render.dispatch_cpu_depth,
+          "surface dispatch snapshot or scope cleanup");
+  *hash=pixel_hash(render.fb,(size_t)render.fbw*render.fbh);
+  if(kind==9) gml_surface_reset_target(&render);
+  gml_surface_free(&render,source);
+  gml_render_free(&render);
+  free(target);
+  return 0;
+}
+static int dispatch_surface_coverage_case(void){
+  for(int kind=0;kind<DISPATCH_SURFACE_CONTROLS;kind++){
+    uint64_t baseline=0,observed=0;
+    GmlRenderDispatchMetrics disabled={0},enabled={0};
+    REQUIRE(!dispatch_surface_control(kind,0,&baseline,&disabled) &&
+            !dispatch_surface_control(kind,1,&observed,&enabled),"surface dispatch control");
+    unsigned expected=kind>=10 && kind<=13?0u:1u;
+    if(baseline!=observed ||
+       disabled.cpu[GML_RENDER_SCENE_SURFACE][GML_RENDER_DISPATCH_NO_DEVICE]!=0u ||
+       enabled.cpu[GML_RENDER_SCENE_SURFACE][GML_RENDER_DISPATCH_NO_DEVICE]!=expected ||
+       enabled.complete){
+      fprintf(stderr,"surface dispatch control %d: count=%llu expected=%u pixels_equal=%d\n",
+        kind,(unsigned long long)enabled.cpu[GML_RENDER_SCENE_SURFACE][GML_RENDER_DISPATCH_NO_DEVICE],
+        expected,baseline==observed);
+      return 1;
+    }
+  }
+  return 0;
 }
 
 static int destination_colour_factor_case(void){
@@ -1327,6 +1398,7 @@ static int suspended_clear_read_back_case(void){
 
   int composed=gml_surface_create(&render,WIDTH,HEIGHT);
   REQUIRE(composed==1,"composed surface id");
+  gml_render_dispatch_diagnostics_enable(&render,1);
   gml_render_clear(&render,0x000000u,1.0);
   REQUIRE(screen[0]==0xFF3060A0u,
           "the clear was performed at once, so this case cannot observe the deferred one");
@@ -1337,6 +1409,11 @@ static int suspended_clear_read_back_case(void){
   for(int i=0;i<WIDTH*HEIGHT;i++)
     REQUIRE((composed_pixels[i]&0x00FFFFFFu)==0u,
             "the composed surface carries the picture the clear replaced");
+  GmlRenderDispatchMetrics metrics={0};
+  REQUIRE(gml_render_dispatch_metrics(&render,&metrics) &&
+          metrics.cpu[GML_RENDER_SCENE_PRIMITIVE][GML_RENDER_DISPATCH_NO_DEVICE]==1u &&
+          metrics.cpu[GML_RENDER_SCENE_SURFACE][GML_RENDER_DISPATCH_NO_DEVICE]==1u,
+          "the suspended clear and its subsequent composition both executed on CPU");
   gml_surface_reset_target(&render);
   gml_surface_free(&render,composed);
   return 0;
@@ -1461,6 +1538,7 @@ int main(void){
   REQUIRE(world_raster_scale_case()==0,"world raster scale case");
   REQUIRE(replace_and_classic_present_case()==0,"replace and classic present case");
   REQUIRE(suspended_clear_read_back_case()==0,"suspended clear read-back case");
+  REQUIRE(dispatch_surface_coverage_case()==0,"resolved CPU surface dispatch coverage");
   puts("renderer surfaces: ok");
   return 0;
 }

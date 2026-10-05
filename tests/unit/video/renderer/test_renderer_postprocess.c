@@ -88,11 +88,38 @@ int main(void){
   }
   render.n_shader_pal=1;
 
+  gml_render_dispatch_diagnostics_enable(&render,1);
   uint64_t dual=render_dual_case(&render,target);
   int failed=0;
   if(dual!=UINT64_C(0xec8ea81439a0ebe9)){
     fprintf(stderr,"renderer post-process: dual hash=%016llx\n",
             (unsigned long long)dual);
+    failed=1;
+  }
+  GmlRenderDispatchMetrics dispatch={0};
+  if(!gml_render_dispatch_metrics(&render,&dispatch) ||
+     dispatch.cpu[GML_RENDER_SCENE_EFFECT][GML_RENDER_DISPATCH_NO_DEVICE]!=1u ||
+     render.dispatch_cpu_depth || dispatch.complete){
+    fputs("renderer post-process: software dual dispatch accounting\n",stderr);
+    failed=1;
+  }
+  gml_render_dispatch_diagnostics_enable(&render,0);
+  uint64_t fast_baseline=render_recognized_case(&render,target,0,0,1.0);
+  gml_render_dispatch_diagnostics_enable(&render,1);
+  uint64_t fast_observed=render_recognized_case(&render,target,0,0,1.0);
+  draw_surface_dual_sample(&render,&render.shader_pal[0],0,
+                           0,0,SOURCE_WIDTH,SOURCE_HEIGHT,
+                           TARGET_WIDTH,TARGET_HEIGHT,TARGET_WIDTH,TARGET_HEIGHT,
+                           0xffffffu,1.0);
+  draw_surface_dual_sample(&render,&render.shader_pal[0],0,
+                           0,0,SOURCE_WIDTH,SOURCE_HEIGHT,0,0,TARGET_WIDTH,TARGET_HEIGHT,
+                           0xffffffu,0.0);
+  if(fast_baseline!=fast_observed || fast_observed!=pixel_hash(target,TARGET_WIDTH*TARGET_HEIGHT) ||
+     !gml_render_dispatch_metrics(&render,&dispatch) ||
+     dispatch.cpu[GML_RENDER_SCENE_EFFECT][GML_RENDER_DISPATCH_NO_DEVICE]!=2u ||
+     dispatch.unclassified!=1u || dispatch.complete ||
+     render.dispatch_cpu_depth){
+    fputs("renderer post-process: fast, clipped or zero-alpha dispatch control\n",stderr);
     failed=1;
   }
   gml_render_free(&render);

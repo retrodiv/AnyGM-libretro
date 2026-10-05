@@ -97,6 +97,7 @@ int gml_render_application_scene_flush(GmlRender *r){
                               pending->states,pending->state_count};
   result=gml_render_resource_submit_deferred(target,gml_render_device(r),
                                     &batch,pending->sources,pending->source_count);
+  gml_render_dispatch_batch_record(r,&batch,result);
   if(result==GML_RENDER_RESOURCE_EXEC_FAILED){
     GmlRenderJournalMetrics metrics={0};
     gml_render_resource_journal_metrics(target,&metrics);
@@ -377,6 +378,7 @@ GmlRenderResource *gml_render_surface_resource_ensure(GmlRender *r,int id){
   surface->resource=gml_render_resource_create(image,(uint32_t)surface->w,
     (uint32_t)surface->h,GML_RENDER_PIXEL_ARGB8888,surface->px,
     (GmlRenderResourceLimits){0});
+  gml_render_resource_bind_dispatch(surface->resource,r);
   return surface->resource;
 }
 
@@ -403,6 +405,7 @@ static GmlRenderResourceExecution surface_scene_submit(
     ?gml_render_resource_submit_deferred(resource,gml_render_device(r),batch,
                                                 sources,source_count)
     :gml_render_resource_submit(resource,gml_render_device(r),batch,sources,source_count);
+  gml_render_dispatch_batch_record(r,batch,result);
   if(result!=GML_RENDER_RESOURCE_EXEC_FAILED){
     r->surface[slot].dirty=1;
     r->surface[slot].opaque_known=0;
@@ -437,6 +440,7 @@ GmlRenderResource *gml_render_application_resource_ensure(GmlRender *r){
     (uint32_t)r->app_h,GML_RENDER_PIXEL_ARGB8888,r->app_surface_owned,
     (GmlRenderResourceLimits){0});
   if(r->app_surface_resource){
+    gml_render_resource_bind_dispatch(r->app_surface_resource,r);
     r->app_surface_resource_width=r->app_w;
     r->app_surface_resource_height=r->app_h;
   }
@@ -484,6 +488,7 @@ GmlRenderResource *gml_render_scene_target_resource_ensure(GmlRender *r){
   image=(GmlRenderImageRef){GML_RENDER_RESOURCE_SCREEN,0u,incarnation,1u};
   r->base_scene_resource=gml_render_resource_create(image,(uint32_t)r->fbw,
     (uint32_t)r->fbh,GML_RENDER_PIXEL_ARGB8888,r->fb,(GmlRenderResourceLimits){0});
+  gml_render_resource_bind_dispatch(r->base_scene_resource,r);
   return r->base_scene_resource;
 }
 void gml_render_application_resource_dispose(GmlRender *r){
@@ -510,6 +515,7 @@ GmlRenderResourceExecution gml_render_application_scene_submit(
   if(!resource || !gml_render_application_scene_flush(r))
     return GML_RENDER_RESOURCE_EXEC_FAILED;
   result=gml_render_resource_submit_deferred(resource,gml_render_device(r),batch,sources,source_count);
+  gml_render_dispatch_batch_record(r,batch,result);
   if(result!=GML_RENDER_RESOURCE_EXEC_FAILED && r->fb==r->app_surface_owned){
     r->app_surface_opaque=0;
     r->app_presentation_coverage_active=0;

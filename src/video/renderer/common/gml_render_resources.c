@@ -6,6 +6,7 @@
 #include "gml_render_resources.h"
 #include "gml_render_cpu_replay.h"
 #include "gml_render_plan.h"
+#include "gml_render.h"
 
 #include <limits.h>
 #include <stdlib.h>
@@ -64,11 +65,12 @@ struct GmlRenderResource {
   const void *checkpoint_staging_device;
   uint64_t cpu_replays,device_checkpoints,consolidations,cpu_fallbacks;
   uint64_t checkpoint_allocations;
+  GmlRender *dispatch_owner;
 };
 
 static void release_recipe(ReplayRecipe *recipe);
 static ReplayRecipe *retain_resource_recipe(GmlRenderResource *resource);
-static int materialise_pin(PinnedSource *pin);
+static int materialise_pin(PinnedSource *pin,GmlRender *dispatch_owner);
 
 static void release_pin(PinnedSource *pin){
   free(pin->owned);
@@ -245,7 +247,7 @@ failed:
 
 static int replay_entries(JournalEntry *entries,uint32_t entry_count,
                           PinnedSource *sources,uint32_t width,uint32_t height,
-                          uint32_t *destination){
+                          uint32_t *destination,GmlRender *dispatch_owner){
   for(uint32_t index=0;index<entry_count;index++){
     const JournalEntry *entry=&entries[index];
     PinnedSource *pin=entry->operation.source_count?&sources[entry->source_index]:NULL;
@@ -254,19 +256,20 @@ static int replay_entries(JournalEntry *entries,uint32_t entry_count,
     if(pin && !pin->view.bytes){
       materialised=*pin;
       materialised.owned=NULL;
-      if(!materialise_pin(&materialised)) return 0;
+      if(!materialise_pin(&materialised,dispatch_owner)) return 0;
       pin=&materialised;
     }
     operation.sources=operation.source_count?&entry->source:NULL;
     int applied=gml_render_cpu_replay_one(destination,width,height,&operation,&entry->state,
                                           pin?&pin->view:NULL);
+    gml_render_dispatch_cpu_replay_completion(dispatch_owner,&operation,applied);
     free(materialised.owned);
     if(!applied) return 0;
   }
   return 1;
 }
 
-static int materialise_pin(PinnedSource *pin){
+static int materialise_pin(PinnedSource *pin,GmlRender *dispatch_owner){
   size_t bytes;
   uint32_t *pixels;
   if(pin->view.bytes) return 1;
@@ -275,7 +278,7 @@ static int materialise_pin(PinnedSource *pin){
   pixels=(uint32_t*)calloc(1,bytes);
   if(!pixels) return 0;
   if(!replay_entries(pin->recipe->entries,pin->recipe->entry_count,pin->recipe->sources,
-                     pin->recipe->width,pin->recipe->height,pixels)){
+                     pin->recipe->width,pin->recipe->height,pixels,dispatch_owner)){
     free(pixels);
     return 0;
   }
@@ -333,6 +336,10 @@ void gml_render_resource_destroy(GmlRenderResource *resource){
   free(resource);
 }
 
+void gml_render_resource_bind_dispatch(GmlRenderResource *resource,GmlRender *render){
+  if(resource) resource->dispatch_owner=render;
+}
+
 GmlRenderImageRef gml_render_resource_image_ref(const GmlRenderResource *resource){
   GmlRenderImageRef image={0};
   return resource?resource->image:image;
@@ -340,7 +347,7 @@ GmlRenderImageRef gml_render_resource_image_ref(const GmlRenderResource *resourc
 
 static int replay_history(const GmlRenderResource *resource,uint32_t *destination){
   return replay_entries(resource->entries,resource->entry_count,resource->sources,
-                         resource->width,resource->height,destination);
+                         resource->width,resource->height,destination,resource->dispatch_owner);
 }
 
 int gml_render_resource_acquire_cpu_read(GmlRenderResource *resource,
@@ -482,7 +489,7 @@ static GmlRenderResourceExecution cpu_fallback(GmlRenderResource *resource,
     GmlRenderResourceSource observed_source={0};
     if(source && !source->bytes){
       if(pin_source(&pin,source)){
-        if(!materialise_pin(&pin)){
+        if(!materialise_pin(&pin,resource->dispatch_owner)){
           release_pin(&pin); free(copy); return GML_RENDER_RESOURCE_EXEC_FAILED;
         }
         source=&pin.view;

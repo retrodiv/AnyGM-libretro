@@ -5,6 +5,7 @@
 #include "gml_render.h"
 #include "gml_render_internal.h"
 #include "gml_render_cpu_effects.h"
+#include "gml_render_cpu_dispatch_internal.h"
 #include "gml_render_surfaces_internal.h"
 
 #include "anygm_host.h"
@@ -80,6 +81,8 @@ void gml_render_cpu_layer_rgb_noise(GmlRender *r, uint32_t sampler_tpag_ptr,
     r->layer_noise_animation=animation;
     r->layer_noise_colour=rgb&0xFFFFFFu;
   }
+  unsigned reason=r->dispatch_metrics.enabled
+    ?gml_render_dispatch_cpu_reason(r):GML_RENDER_DISPATCH_UNQUALIFIED;
   if(!layer_inline_cpu_write_ready(r)) return;
   float intensity=(float)intensity_d;
   if(intensity>1.0f) intensity=1.0f;
@@ -94,9 +97,13 @@ void gml_render_cpu_layer_rgb_noise(GmlRender *r, uint32_t sampler_tpag_ptr,
     r->fb[i]=(base&0xFF000000u)|(rr<<16)|(rg<<8)|rb;
   }
   r->fb_all_transparent=0;
+  if(r->dispatch_metrics.enabled)
+    gml_render_dispatch_cpu_record(r,GML_RENDER_SCENE_EFFECT,reason,1u);
 }
 void gml_render_layer_tint(GmlRender *r, uint32_t rgba){
   if(!r || !r->fb || r->fbw<=0 || r->fbh<=0 || rgba==0xFFFFFFFFu) return;
+  unsigned reason=r->dispatch_metrics.enabled
+    ?gml_render_dispatch_cpu_reason(r):GML_RENDER_DISPATCH_UNQUALIFIED;
   if(!layer_inline_cpu_write_ready(r)) return;
   uint32_t ta=(rgba>>24)&255, tr=(rgba>>16)&255, tg=(rgba>>8)&255, tb=rgba&255;
   size_t count=(size_t)r->fbw*(size_t)r->fbh;
@@ -110,6 +117,8 @@ void gml_render_layer_tint(GmlRender *r, uint32_t rgba){
   }
   if(ta<255u){ r->fb_opaque_known=0; r->fb_all_opaque=0; }
   r->fb_all_transparent=0;
+  if(r->dispatch_metrics.enabled)
+    gml_render_dispatch_cpu_record(r,GML_RENDER_SCENE_EFFECT,reason,1u);
 }
 
 static inline float layer_clamp01(float v){ return v<0.0f?0.0f:(v>1.0f?1.0f:v); }
@@ -200,6 +209,7 @@ static void layer_composite_normal(GmlRender *r,const uint32_t *src,int w,int h,
   for(size_t i=0;i<count;i++){
     uint32_t sv=src[i]; float sa=(float)((sv>>24)&255)*(1.0f/255.0f)*(float)alpha;
     if(sa<=0.0f) continue;
+    gml_render_dispatch_cpu_scope_write(r);
     uint32_t dv=r->fb[i]; float ia=1.0f-sa;
     int sr=(sv>>16)&255,sg=(sv>>8)&255,sb=sv&255;
     int dr=(dv>>16)&255,dg=(dv>>8)&255,db=dv&255;
@@ -222,6 +232,7 @@ static void layer_composite_premultiplied(GmlRender *r,const uint32_t *src,int w
     uint32_t sv=src[i],dv=r->fb[i]; float scale=(float)alpha;
     float sa=((sv>>24)&255)*(1.0f/255.0f)*scale,ia=1.0f-sa;
     if(sa<=0.0f) continue;
+    gml_render_dispatch_cpu_scope_write(r);
     int sr=(int)floorf(((sv>>16)&255)*scale+0.5f),sg=(int)floorf(((sv>>8)&255)*scale+0.5f);
     int sb=(int)floorf((sv&255)*scale+0.5f);
     int rr=sr+(int)floorf(((dv>>16)&255)*ia+0.5f);
@@ -238,6 +249,7 @@ static void layer_composite_add(GmlRender *r,const uint32_t *src,int w,int h,dou
   if(!r || !r->fb || !src || w!=r->fbw || h!=r->fbh || scale<=0.0) return;
   float t=(float)scale; size_t count=(size_t)w*h;
   for(size_t i=0;i<count;i++){
+    gml_render_dispatch_cpu_scope_write(r);
     uint32_t s=src[i],d=r->fb[i];
     unsigned rr=((d>>16)&255)+(unsigned)floorf(((s>>16)&255)*t+0.5f);
     unsigned gg=((d>>8)&255)+(unsigned)floorf(((s>>8)&255)*t+0.5f);
@@ -547,7 +559,7 @@ static void layer_filter_underwater(GmlRender *r,const uint32_t *src,uint32_t *d
 }
 
 
-void gml_render_cpu_layer_filter_end(GmlRender *r,const GmlLayerFilter *filter,
+static void layer_filter_end_impl(GmlRender *r,const GmlLayerFilter *filter,
                                      double time_seconds,int w,int h,
                                      double camx,double camy,int source_empty){
   if(!r || !filter || !r->fb || r->fbw!=w || r->fbh!=h) return;
@@ -605,4 +617,13 @@ void gml_render_cpu_layer_filter_end(GmlRender *r,const GmlLayerFilter *filter,
     default: memcpy(work,src,count*sizeof(uint32_t)); break;
   }
   layer_composite_premultiplied(r,work,w,h,1.0);
+}
+
+void gml_render_cpu_layer_filter_end(GmlRender *r,const GmlLayerFilter *filter,
+                                     double time_seconds,int w,int h,
+                                     double camx,double camy,int source_empty){
+  GmlRenderDispatchCpuScope scope;
+  gml_render_dispatch_cpu_scope_begin(r,&scope,GML_RENDER_SCENE_EFFECT);
+  layer_filter_end_impl(r,filter,time_seconds,w,h,camx,camy,source_empty);
+  gml_render_dispatch_cpu_scope_end(r,&scope);
 }

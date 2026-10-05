@@ -73,6 +73,10 @@ GmlRenderResource *gml_render_resource_create(GmlRenderImageRef image,uint32_t w
                                                uint32_t *canonical_pixels,
                                                GmlRenderResourceLimits limits);
 void gml_render_resource_destroy(GmlRenderResource *resource);
+struct GmlRender;
+/* Borrow the renderer only for transient replay-completion accounting. Rebind
+ * after moving that owner; retained source recipes never capture this pointer. */
+void gml_render_resource_bind_dispatch(GmlRenderResource *resource,struct GmlRender *render);
 GmlRenderImageRef gml_render_resource_image_ref(const GmlRenderResource *resource);
 int gml_render_resource_source_view(GmlRenderResource *resource,
                                     GmlRenderResourceSource *out_source);

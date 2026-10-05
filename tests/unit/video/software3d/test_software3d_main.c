@@ -55,6 +55,8 @@ int main(int argc,char **argv){
     {"rounded_geometry",rounded_geometry_fixture},
     {"rounded_colour",rounded_colour_fixture},
     {"software3d_operations",software3d_operation_boundary_fixture},
+    {"dispatch_accounting",software3d_dispatch_fixture},
+    {"information_dispatch",classic_information_dispatch_fixture},
     {"renderer_state",renderer_state_boundary_fixture},
     {"asset_lookup",asset_lookup_fixture},
     {"external_texture_group",external_texture_group_fixture},

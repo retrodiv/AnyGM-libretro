@@ -7,6 +7,7 @@
 #include "gml_render_surfaces_internal.h"
 #include "gml_render_sprites_internal.h"
 #include "gml_render_cpu_text.h"
+#include "gml_render_cpu_backend.h"
 
 #include "anygm_compatibility.h"
 #include "anygm_host.h"
@@ -138,7 +139,10 @@ static void draw_text_real(GmlRender *r, GmlFont *f, double x, double y, const c
     y1=(int)ceil(y-r->cam_y+nlines*lh*(ys>0?ys:1.0)+margin);
     /* Gather plain pixels; pass the drawing colour separately as quad vertex colour. */
     draw_text_real_plain(r,f,x,y,str,xs,ys,alignment_xscale,rotation,ca,sa,use_rot,0xFFFFFFu,1.0,family);
+    GmlRenderCpuBackendDispatchScope composition;
+    gml_render_cpu_backend_dispatch_begin(r,&composition,GML_RENDER_SCENE_TEXT,0);
     gml_render_shaded_run_end(r,saved_fb,saved_shader,x0,y0,x1,y1,blend,alpha);
+    gml_render_cpu_backend_dispatch_end(r,&composition);
     return;
   }
   draw_text_real_plain(r,f,x,y,str,xs,ys,alignment_xscale,rotation,ca,sa,use_rot,blend,alpha,family);
@@ -235,9 +239,12 @@ static void draw_text_real_plain(GmlRender *r, GmlFont *f, double x, double y, c
             r->interp=1;
           }
           if(use_rot){
+            GmlRenderCpuBackendDispatchScope glyph_scope;
+            gml_render_cpu_backend_dispatch_begin(r,&glyph_scope,GML_RENDER_SCENE_TEXT,0);
             GmlSprite glyph_sprite={.w=g->w,.h=g->h,.originx=0,.originy=0};
             blit_rotated(r,&glyph_sprite,&gt,glyph_x-r->cam_x,glyph_y-r->cam_y,
                          xs,ys,rotation,blend,alpha);
+            gml_render_cpu_backend_dispatch_end(r,&glyph_scope);
           } else if(f->subpixel && r->software_overlay &&
              gml_render_cpu_classic_info_subpixel_glyph(r,f,g,glyph_x-r->cam_x,glyph_y-r->cam_y,
                                                          xs,ys,blend,alpha)){
@@ -245,6 +252,8 @@ static void draw_text_real_plain(GmlRender *r, GmlFont *f, double x, double y, c
           } else if(r->software_overlay ||
              !gml_d3_draw_atlas_part_2d(r,f->atlas,g->sx,g->sy,g->w,g->h,
                                         glyph_x,glyph_y,xs,ys,glyph_blend,alpha)){
+            GmlRenderCpuBackendDispatchScope glyph_scope;
+            gml_render_cpu_backend_dispatch_begin(r,&glyph_scope,GML_RENDER_SCENE_TEXT,0);
             /* A glyph drawn through a program this renderer does not execute is a rectangle of a
              * texture page like any other: the program's answer for it is evaluated once and kept,
              * so a screen of text costs one device evaluation per distinct glyph rather than one
@@ -254,6 +263,7 @@ static void draw_text_real_plain(GmlRender *r, GmlFont *f, double x, double y, c
                                                 glyph_x,glyph_y,gt.sw*xs,gt.sh*ys,
                                                 glyph_blend,alpha)))
               blit(r,&gt,glyph_x-r->cam_x,glyph_y-r->cam_y,xs,ys,glyph_blend,alpha);
+            gml_render_cpu_backend_dispatch_end(r,&glyph_scope);
           }
           r->interp=saved_interp;
           r->font_sdf_active=saved_sdf_active;
@@ -398,6 +408,8 @@ static void draw_text_transformed_font(GmlRender *r, GmlFont *f,
           if(gml_d3_draw_sprite_2d(r,f->sprite,fr,glyph_x,glyph_y,xs,ys,rr,blend,alpha)){
             /* The D3 hook projects the glyph quad at the current draw depth. */
           } else if(s->runtime_rgba){
+            GmlRenderCpuBackendDispatchScope glyph_scope;
+            gml_render_cpu_backend_dispatch_begin(r,&glyph_scope,GML_RENDER_SCENE_TEXT,0);
             const uint8_t *fr_rgba=runtime_frame_rgba(s,fr);
             if(fr_rgba){
               if(use_rot){
@@ -416,8 +428,11 @@ static void draw_text_transformed_font(GmlRender *r, GmlFont *f,
                                  s->runtime_opaque);
               }
             }
+            gml_render_cpu_backend_dispatch_end(r,&glyph_scope);
           } else if(s->frame){ int ti=s->frame[fr];
             if(ti>=0 && ti<r->n_tpag){ GmlTpag *t=&r->tpag[ti];
+            GmlRenderCpuBackendDispatchScope glyph_scope;
+            gml_render_cpu_backend_dispatch_begin(r,&glyph_scope,GML_RENDER_SCENE_TEXT,0);
             GmlTpag gt=*t;
             gt.interp_draw_cache=NULL; gt.interp_draw_runs=NULL;
             gt.interp_draw_cache_bytes=0; gt.interp_draw_run_count=0;
@@ -434,7 +449,9 @@ static void draw_text_transformed_font(GmlRender *r, GmlFont *f,
                * font retains the horizontal offset within its full cell. */
               blit(r,&gt, x + (cx-s->originx+(f->prop?0:gt.tx))*xs - r->cam_x,
                 y + (base_y-s->originy+gt.ty)*ys - r->cam_y, xs,ys, blend, alpha);
-            } } }
+            }
+            gml_render_cpu_backend_dispatch_end(r,&glyph_scope);
+            } }
           }
         }
       cx += glyph_w(r,f,fr,cp)+f->sep;

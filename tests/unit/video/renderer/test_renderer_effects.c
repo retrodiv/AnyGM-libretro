@@ -3,6 +3,7 @@
  */
 #include "gml_render_internal.h"
 #include "gml_render_cpu_backend.h"
+#include "gml_render_cpu_blit.h"
 #include "gml_render_cpu_sampling_internal.h"
 #include "anygm.h"
 
@@ -105,10 +106,16 @@ static uint64_t run_filter(const GmlLayerFilter *filter) {
   render.fb_opaque_known = 0;
   render.fb_all_opaque = 0;
   render.fb_all_transparent = 0;
+  gml_render_dispatch_diagnostics_enable(&render,1);
   gml_render_layer_filter_end(&render, filter, 0.375);
   expect(!render.layer_filter_active && render.target_sp == 0 &&
          render.fb == background,
          "filter end did not restore the original target transactionally");
+  GmlRenderDispatchMetrics dispatch={0};
+  expect(gml_render_dispatch_metrics(&render,&dispatch) &&
+         dispatch.cpu[GML_RENDER_SCENE_EFFECT][GML_RENDER_DISPATCH_NO_DEVICE]==1u &&
+         !render.dispatch_cpu_depth && !dispatch.complete,
+         "a software layer filter was omitted or counted per composite/fragment");
 
   uint64_t result = pixel_hash(background, PIXEL_COUNT);
   release_effect_state(&render);
@@ -140,7 +147,13 @@ static uint64_t run_noise(void) {
   render.n_tpag = 1;
   render.atlas = &atlas;
   render.n_atlas = 1;
+  gml_render_dispatch_diagnostics_enable(&render,1);
   gml_render_layer_rgb_noise(&render, tpag_pointer, 0.625, 0.375, 0x80c040u);
+  gml_render_layer_rgb_noise(&render, tpag_pointer, 0.0, 0.375, 0x80c040u);
+  GmlRenderDispatchMetrics dispatch={0};
+  expect(gml_render_dispatch_metrics(&render,&dispatch) &&
+         dispatch.cpu[GML_RENDER_SCENE_EFFECT][GML_RENDER_DISPATCH_NO_DEVICE]==1u,
+         "software RGB noise was omitted, counted per pixel or counted with zero intensity");
 
   uint64_t result = pixel_hash(pixels, PIXEL_COUNT);
   release_effect_state(&render);
@@ -157,7 +170,13 @@ static uint64_t run_tint(void) {
   render.fbh = HEIGHT;
   render.fb_opaque_known = 1;
   render.fb_all_opaque = 1;
+  gml_render_dispatch_diagnostics_enable(&render,1);
   gml_render_layer_tint(&render, 0xc08040a0u);
+  gml_render_layer_tint(&render,0xffffffffu);
+  GmlRenderDispatchMetrics dispatch={0};
+  expect(gml_render_dispatch_metrics(&render,&dispatch) &&
+         dispatch.cpu[GML_RENDER_SCENE_EFFECT][GML_RENDER_DISPATCH_NO_DEVICE]==1u,
+         "software layer tint was omitted, counted per pixel or counted for the identity");
   return pixel_hash(pixels, PIXEL_COUNT);
 }
 
@@ -1352,6 +1371,63 @@ static void check_skeleton_asset_and_pose(void) {
   expect(count==1 && items[0].u[0]==0.5 && items[0].u[1]==1.0,
          "skeletal attachment timeline did not select its keyed region");
   gml_render_skeleton_state_set(&render,NULL);
+  enum { SPINE_VISIBLE,SPINE_CLIPPED,SPINE_TRANSPARENT,SPINE_ZERO_ALPHA,
+         SPINE_ALPHA_TEST_STATE,SPINE_REPEATED,SPINE_NO_SCENE,SPINE_PARTIAL,SPINE_MISSING,
+         SPINE_CONTROLS };
+  for(int kind=0;kind<SPINE_CONTROLS;kind++){
+    uint32_t images[2][20*20];
+    for(int enabled=0;enabled<2;enabled++){
+      uint8_t rgba[4*2*4];
+      for(int pixel=0;pixel<8;pixel++){
+        rgba[pixel*4]=110; rgba[pixel*4+1]=140; rgba[pixel*4+2]=190;
+        rgba[pixel*4+3]=kind==SPINE_TRANSPARENT?0:kind==SPINE_PARTIAL?128:255;
+      }
+      atlas.px=kind==SPINE_MISSING?NULL:rgba;
+      render.fb=render.base_fb=images[enabled];
+      render.fbw=render.fbh=render.base_fbw=render.base_fbh=20;
+      render.target_id=-1; render.active_shader=-1; render.font=-1;
+      render.color_write_mask=15; render.alphablend=1;
+      render.blend_equation=render.blend_equation_alpha=1;
+      render.alpha_test_enable=kind==SPINE_ALPHA_TEST_STATE;
+      render.alpha_test_ref=255;
+      render.device_bound=kind==SPINE_NO_SCENE;
+      memset(&render.dispatch_metrics,0,sizeof render.dispatch_metrics);
+      gml_render_dispatch_diagnostics_enable(&render,enabled);
+      for(int pixel=0;pixel<400;pixel++) images[enabled][pixel]=0xFF182838u;
+      int draws=kind==SPINE_REPEATED?2:1;
+      for(int draw=0;draw<draws;draw++)
+        expect(gml_render_cpu_draw_spine_sprite(&render,&sprite,
+          kind==SPINE_CLIPPED?-100:8,8,1,1,0,0xFFFFFFu,
+          kind==SPINE_ZERO_ALPHA?0:1),"skeletal software emitter retains its handled result");
+      GmlRenderDispatchMetrics metrics;
+      unsigned reason=kind==SPINE_NO_SCENE?GML_RENDER_DISPATCH_NO_SCENE:GML_RENDER_DISPATCH_NO_DEVICE;
+      /* This existing skeletal leaf still writes with fixed alpha-test state.
+       * Account execution, without treating a state flag as a proven discard. */
+      uint64_t expected=kind==SPINE_CLIPPED || kind==SPINE_TRANSPARENT ||
+                        kind==SPINE_ZERO_ALPHA || kind==SPINE_MISSING?0u:
+                        (uint64_t)draws;
+      uint64_t cpu=0,gpu=0,exceptions=0;
+      int counted=gml_render_dispatch_metrics(&render,&metrics);
+      for(unsigned family=0;family<GML_RENDER_SCENE_FAMILY_COUNT;family++){
+        gpu+=metrics.gpu[family];
+        for(unsigned why=0;why<GML_RENDER_DISPATCH_REASON_COUNT;why++) cpu+=metrics.cpu[family][why];
+        for(unsigned why=0;why<GML_RENDER_DISPATCH_EXCEPTION_COUNT;why++) exceptions+=metrics.exceptions[family][why];
+      }
+      counted &=cpu==(enabled?expected:0u) &&
+        metrics.cpu[GML_RENDER_SCENE_SPRITE][reason]==(enabled?expected:0u) &&
+        !gpu && !exceptions && !metrics.failed && !metrics.unclassified &&
+        !metrics.complete && !render.dispatch_cpu_depth;
+      if(!counted) fprintf(stderr,"skeletal dispatch kind=%d enabled=%d cpu=%llu wanted=%llu\n",
+        kind,enabled,(unsigned long long)cpu,(unsigned long long)(enabled?expected:0u));
+      expect(counted,"skeletal dispatch counts covered attachments, not successful no-op returns");
+      int changed=0;
+      for(int pixel=0;pixel<400;pixel++) changed|=images[enabled][pixel]!=0xFF182838u;
+      expect(changed==(expected!=0),"skeletal dispatch fixture reaches its declared visible/no-op path");
+      atlas.px=NULL; render.device_bound=0;
+    }
+    expect(!memcmp(images[0],images[1],sizeof images[0]),
+           "skeletal dispatch diagnostics preserve complete RGBA");
+  }
   gml_render_free_spine(sprite.spine);
 }
 
@@ -1956,6 +2032,419 @@ static void check_content_binding_capacity(void) {
          "an excess content uniform silently left a partial GPU program available");
 }
 
+static uint64_t dispatch_cpu_total(const GmlRenderDispatchMetrics *metrics){
+  uint64_t total=0;
+  for(unsigned family=0;family<GML_RENDER_SCENE_FAMILY_COUNT;family++)
+    for(unsigned reason=0;reason<GML_RENDER_DISPATCH_REASON_COUNT;reason++)
+      total+=metrics->cpu[family][reason];
+  return total;
+}
+
+static void check_dispatch_rotated_queue(void){
+  enum {
+    ROT_EXACT,ROT_CACHED,ROT_MASK_VECTOR,ROT_MASK_SCALAR,ROT_EMPTY_LUT,
+    ROT_MIXED,ROT_FILTER_FLUSH,ROT_PRIMITIVE_FLUSH,ROT_RELOCATE,ROT_REASON,
+    ROT_TILE,ROT_TEXT,ROT_LATE_ENABLE,ROT_CLASSIC_PHASE,ROT_ADD,
+    ROT_DEST_ALPHA_ZERO,ROT_ALPHA_DISCARD,ROT_CLIPPED,ROT_EXACT_SCALAR,
+    ROT_TEXT_UNDERLAY,ROT_CONTROL_COUNT
+  };
+  for(int kind=0;kind<ROT_CONTROL_COUNT;kind++){
+    int large=kind==ROT_CACHED || kind==ROT_MASK_SCALAR;
+    int mask=kind==ROT_MASK_VECTOR || kind==ROT_MASK_SCALAR;
+    int target_extent=large?640:mask?128:64;
+    int source_extent=kind==ROT_CACHED?128:mask?32:8;
+    size_t target_count=(size_t)target_extent*target_extent;
+    size_t source_count=(size_t)source_extent*source_extent;
+    uint8_t *source=malloc(source_count*4u);
+    uint32_t *off=malloc(target_count*sizeof(*off)),*on=malloc(target_count*sizeof(*on));
+    uint32_t *phase_off=malloc(target_count*sizeof(*phase_off));
+    uint32_t *phase_on=malloc(target_count*sizeof(*phase_on));
+    expect(source && off && on && phase_off && phase_on,"rotated dispatch fixture allocation");
+    if(!source || !off || !on || !phase_off || !phase_on){
+      free(source); free(off); free(on); free(phase_off); free(phase_on); continue;
+    }
+    for(size_t pixel=0;pixel<source_count;pixel++){
+      source[pixel*4u]=(uint8_t)(17u+pixel*13u);
+      source[pixel*4u+1u]=(uint8_t)(31u+pixel*23u);
+      source[pixel*4u+2u]=(uint8_t)(43u+pixel*37u);
+      source[pixel*4u+3u]=(uint8_t)(128u+pixel%128u);
+    }
+    for(int diagnostics=0;diagnostics<2;diagnostics++){
+      GmlRender render={0}; GmlWin content={0};
+      GmlSprite sprite={0}; GmlTpag page={0}; GmlAtlas atlas={0};
+      struct GmlShaderPal shader={0};
+      GmlRenderDispatchMetrics metrics={0};
+      GmlRenderCpuBackendDispatchScope outer;
+      int frame=0;
+      content.bytecode=kind==ROT_CACHED?14:17;
+      render.win=&content;
+      render.fb=render.base_fb=diagnostics?on:off;
+      render.fbw=render.fbh=render.base_fbw=render.base_fbh=target_extent;
+      render.target_id=-1; render.alpha=1.0; render.alphablend=1;
+      render.color_write_mask=15u;
+      render.blend_equation=render.blend_equation_alpha=1;
+      render.active_shader=render.lut_pal_sprite=-1;
+      sprite.w=sprite.h=source_extent; sprite.n_frames=1; sprite.frame=&frame;
+      page.sw=page.sh=page.bw=page.bh=source_extent; page.atlas=0;
+      atlas.w=atlas.h=source_extent; atlas.px=source; atlas.decode_attempted=1;
+      render.spr=&sprite; render.n_spr=1;
+      render.tpag=&page; render.n_tpag=1;
+      render.atlas=&atlas; render.n_atlas=1;
+      for(size_t pixel=0;pixel<target_count;pixel++){
+        render.fb[pixel]=0xFF102030u;
+        (diagnostics?phase_on:phase_off)[pixel]=0xFF203040u;
+      }
+      if(mask){
+        shader.solid_alpha_mask=1; shader.solid_alpha_mask_rgb=0xFF0000u;
+        render.shader_pal=&shader; render.n_shader_pal=1; render.active_shader=0;
+      }
+      if(kind==ROT_CLASSIC_PHASE){
+        render.classic=1;
+        render.classic_phase_y=diagnostics?phase_on:phase_off;
+      }
+      if(kind==ROT_REASON) render.device_bound=1;
+      if(kind==ROT_ADD) render.blendmode=1;
+      if(kind==ROT_DEST_ALPHA_ZERO) render.blendmode=GML_RENDER_BLEND_DEST_SOURCE_COLOUR;
+      if(kind==ROT_ALPHA_DISCARD){ render.alpha_test_enable=1; render.alpha_test_ref=255; }
+      if(kind==ROT_TEXT_UNDERLAY){
+        render.app_surface=diagnostics?phase_on:phase_off;
+        render.app_w=render.app_h=target_extent;
+        gml_render_set_pending_underlay(&render,0,0,target_extent,target_extent);
+      }
+      gml_render_dispatch_diagnostics_enable(&render,kind==ROT_LATE_ENABLE?0:diagnostics);
+      if(kind==ROT_TEXT || kind==ROT_TEXT_UNDERLAY)
+        gml_render_cpu_backend_dispatch_begin(&render,&outer,GML_RENDER_SCENE_TEXT,0);
+      int draws=kind==ROT_RELOCATE?40:
+                kind==ROT_EMPTY_LUT || kind>=ROT_LATE_ENABLE?1:2;
+      int immediate=kind==ROT_CLASSIC_PHASE || kind==ROT_ADD || kind==ROT_DEST_ALPHA_ZERO;
+      for(int index=0;index<draws;index++){
+        if(mask) shader.solid_alpha_mask_rgb=index?0x0000FFu:0xFF0000u;
+        double scale=kind==ROT_CACHED?5:kind==ROT_MASK_SCALAR || kind==ROT_EXACT_SCALAR?16:mask?4:2;
+        double x=large || mask?0:kind==ROT_CLIPPED?10000:8+index%10;
+        double y=large || mask?0:24;
+        double rotation=large || mask?0:37;
+        double alpha=kind==ROT_EMPTY_LUT || (kind==ROT_MIXED && !index)?1e-20:
+                     kind==ROT_DEST_ALPHA_ZERO?0.0:0.65;
+        if(kind==ROT_CLASSIC_PHASE)
+          gml_render_cpu_blit_sprite_ext_resolved(&render,&sprite,0,0,x,y,scale,scale,rotation,0xFFFFFFu,alpha);
+        else blit_rotated(&render,&sprite,&page,x,y,scale,scale,rotation,0xFFFFFFu,alpha);
+      }
+      if(kind==ROT_TEXT || kind==ROT_TEXT_UNDERLAY)
+        gml_render_cpu_backend_dispatch_end(&render,&outer);
+      int queued=kind==ROT_CLIPPED || immediate?0:draws;
+      expect(render.rotated_batch_count==queued,"rotated diagnostics retain the existing queue boundary");
+      expect(gml_render_dispatch_metrics(&render,&metrics),"rotated dispatch snapshot before flush");
+      expect(dispatch_cpu_total(&metrics)==(diagnostics && (immediate || kind==ROT_TEXT_UNDERLAY)?1u:0u) &&
+             !metrics.unclassified,
+             "metadata snapshot does not execute or count queued draws");
+      if(queued){
+        int unchanged=1;
+        for(size_t pixel=0;pixel<target_count;pixel++)
+          if(render.fb[pixel]!=(kind==ROT_TEXT_UNDERLAY?0xFF203040u:0xFF102030u)){
+            unchanged=0; break;
+          }
+        expect(unchanged,"queued draws have not written the target before their flush");
+      }
+      if(kind==ROT_FILTER_FLUSH){
+        render.interp=1;
+        blit_rotated(&render,&sprite,&page,9,25,2,2,53,0xFFFFFFu,0.5);
+      } else if(kind==ROT_PRIMITIVE_FLUSH)
+        gml_render_primitive_point(&render,1,1,0xFFFFFFu);
+      else if(kind==ROT_TILE)
+        gml_render_cpu_blit_rotated_background_tile(&render,&page,10,26,2,2,41,0xFFFFFFu,0.5);
+      else {
+        if(kind==ROT_REASON) render.device_bound=0;
+        if(kind==ROT_LATE_ENABLE) gml_render_dispatch_diagnostics_enable(&render,diagnostics);
+        gml_render_flush_rotated_batch(&render);
+      }
+      uint64_t wanted=kind==ROT_EMPTY_LUT || kind==ROT_ALPHA_DISCARD || kind==ROT_CLIPPED ||
+                      kind==ROT_LATE_ENABLE?0u:kind==ROT_MIXED?1u:
+                      kind==ROT_TEXT_UNDERLAY?2u:
+                      kind==ROT_FILTER_FLUSH || kind==ROT_PRIMITIVE_FLUSH || kind==ROT_TILE?3u:(uint64_t)draws;
+      uint64_t unknown=kind==ROT_LATE_ENABLE?1u:0u;
+      int valid=gml_render_dispatch_metrics(&render,&metrics) &&
+        dispatch_cpu_total(&metrics)==(diagnostics?wanted:0u) &&
+        metrics.unclassified==(diagnostics?unknown:0u) && !metrics.failed && !metrics.complete &&
+        !render.dispatch_cpu_depth && !render.rotated_batch_count;
+      if(kind==ROT_REASON) valid=valid &&
+        metrics.cpu[GML_RENDER_SCENE_SPRITE][GML_RENDER_DISPATCH_NO_SCENE]==(diagnostics?2u:0u);
+      if(kind==ROT_TEXT) valid=valid &&
+        metrics.cpu[GML_RENDER_SCENE_TEXT][GML_RENDER_DISPATCH_NO_DEVICE]==(diagnostics?2u:0u);
+      if(kind==ROT_TEXT_UNDERLAY) valid=valid &&
+        metrics.cpu[GML_RENDER_SCENE_TEXT][GML_RENDER_DISPATCH_NO_DEVICE]==(diagnostics?1u:0u) &&
+        metrics.cpu[GML_RENDER_SCENE_SURFACE][GML_RENDER_DISPATCH_NO_DEVICE]==(diagnostics?1u:0u);
+      if(kind==ROT_TILE) valid=valid &&
+        metrics.cpu[GML_RENDER_SCENE_TILE][GML_RENDER_DISPATCH_NO_DEVICE]==(diagnostics?1u:0u) &&
+        metrics.cpu[GML_RENDER_SCENE_SPRITE][GML_RENDER_DISPATCH_NO_DEVICE]==(diagnostics?2u:0u);
+      if(kind==ROT_PRIMITIVE_FLUSH) valid=valid &&
+        metrics.cpu[GML_RENDER_SCENE_PRIMITIVE][GML_RENDER_DISPATCH_NO_DEVICE]==(diagnostics?1u:0u) &&
+        metrics.cpu[GML_RENDER_SCENE_SPRITE][GML_RENDER_DISPATCH_NO_DEVICE]==(diagnostics?2u:0u);
+      if(!valid) fprintf(stderr,"rotated dispatch control %d: actual=%llu unknown=%llu wanted=%llu/%llu enabled=%d\n",
+        kind,(unsigned long long)dispatch_cpu_total(&metrics),(unsigned long long)metrics.unclassified,
+        (unsigned long long)(diagnostics?wanted:0u),(unsigned long long)(diagnostics?unknown:0u),diagnostics);
+      expect(valid,"rotated operations count actual completed execution, not enqueue or flush attempts");
+      gml_render_flush_rotated_batch(&render);
+      GmlRenderDispatchMetrics repeated;
+      expect(gml_render_dispatch_metrics(&render,&repeated) &&
+             !memcmp(&metrics,&repeated,sizeof metrics),"repeated empty rotated flush adds no counters");
+      if(large) expect(render.row_pool!=NULL,"rotated dispatch uses actual row workers");
+      gml_render_texture_page_cache_clear(&render,&page);
+      render.spr=NULL; render.n_spr=0; render.tpag=NULL; render.n_tpag=0;
+      render.atlas=NULL; render.n_atlas=0; render.shader_pal=NULL; render.n_shader_pal=0;
+      render.classic_phase_y=NULL; render.device_bound=0;
+      render.app_surface=NULL;
+      gml_render_free(&render);
+    }
+    expect(!memcmp(off,on,target_count*sizeof(*on)),"rotated dispatch diagnostics preserve all target pixels");
+    expect(!memcmp(phase_off,phase_on,target_count*sizeof(*phase_on)),
+           "rotated dispatch diagnostics preserve auxiliary-plane pixels");
+    free(source); free(off); free(on); free(phase_off); free(phase_on);
+  }
+}
+
+static void check_dispatch_atlas_textures(void){
+  for(int kind=0;kind<25;kind++){
+    int large=kind==20 || kind==21;
+    int target_extent=large?512:32;
+    int source_extent=kind==12?64:large?256:8;
+    size_t target_count=(size_t)target_extent*target_extent;
+    size_t source_count=(size_t)source_extent*source_extent;
+    uint8_t *source=(uint8_t*)malloc(source_count*4u);
+    uint32_t *off=(uint32_t*)malloc(target_count*sizeof(*off));
+    uint32_t *on=(uint32_t*)malloc(target_count*sizeof(*on));
+    uint32_t *phase_off=(uint32_t*)malloc(target_count*sizeof(*phase_off));
+    uint32_t *phase_on=(uint32_t*)malloc(target_count*sizeof(*phase_on));
+    expect(source && off && on && phase_off && phase_on,"atlas dispatch fixture allocation");
+    if(!source || !off || !on || !phase_off || !phase_on){
+      free(source); free(off); free(on); free(phase_off); free(phase_on); continue;
+    }
+    for(size_t pixel=0;pixel<source_count;pixel++){
+      source[pixel*4u]=(uint8_t)(17u+pixel*13u);
+      source[pixel*4u+1u]=(uint8_t)(31u+pixel*23u);
+      source[pixel*4u+2u]=(uint8_t)(43u+pixel*37u);
+      source[pixel*4u+3u]=(uint8_t)(128u+pixel%128u);
+      if(kind==13 || kind==17 || kind==18) source[pixel*4u+3u]=0;
+      if(kind==21) source[pixel*4u+3u]=255u;
+    }
+    for(int diagnostics=0;diagnostics<2;diagnostics++){
+      GmlRender render={0};
+      GmlWin content={0};
+      GmlSprite sprite={0};
+      GmlTpag page={0};
+      GmlAtlas atlas={0};
+      GmlRenderDispatchMetrics metrics={0};
+      StretchBandSettings settings={"4","1"};
+      AnygmHostServices host={0};
+      int frame=0;
+      host.struct_size=sizeof host;
+      host.userdata=&settings;
+      host.development_setting=stretch_band_setting;
+      content.bytecode=kind==20?14:17;
+      content.host=&host;
+      render.win=&content;
+      render.fb=render.base_fb=diagnostics?on:off;
+      render.fbw=render.fbh=render.base_fbw=render.base_fbh=target_extent;
+      render.target_id=-1;
+      render.alpha=1.0;
+      render.alphablend=1;
+      render.color_write_mask=15u;
+      render.blend_equation=render.blend_equation_alpha=1;
+      render.active_shader=render.lut_pal_sprite=-1;
+      render.interp=kind==4 || kind==10 || kind==20;
+      sprite.w=sprite.h=source_extent;
+      sprite.n_frames=1;
+      sprite.frame=&frame;
+      page.sw=page.sh=page.bw=page.bh=source_extent;
+      page.atlas=0;
+      atlas.w=atlas.h=source_extent;
+      atlas.px=source;
+      atlas.decode_attempted=1;
+      render.spr=&sprite; render.n_spr=1;
+      render.tpag=&page; render.n_tpag=1;
+      render.atlas=&atlas; render.n_atlas=1;
+      for(size_t pixel=0;pixel<target_count;pixel++){
+        render.fb[pixel]=0xFF102030u|(uint32_t)(pixel&255u);
+        (diagnostics?phase_on:phase_off)[pixel]=0xFF203040u;
+      }
+      if(kind==23) render.classic_phase_y=diagnostics?phase_on:phase_off;
+      gml_render_dispatch_diagnostics_enable(&render,diagnostics);
+      double alpha=kind==14 || kind==18?0.0:kind==1 || kind==21?0.65:1.0;
+      uint32_t tint=kind==3?0xA0B0C0u:0xFFFFFFu;
+      if(kind==16){ render.alpha_test_enable=1; render.alpha_test_ref=255; }
+      if(kind==5) render.alphablend=0;
+      if(kind==17) render.blendmode=2;
+      if(kind==18) render.blendmode=GML_RENDER_BLEND_DEST_SOURCE_COLOUR;
+      if(kind==19){ page.tx=page.ty=1; page.bw=page.bh=10; render.blendmode=6; }
+      unsigned family=kind==6 || kind==24?GML_RENDER_SCENE_TILE:
+                      kind==7 || kind==22?GML_RENDER_SCENE_BACKGROUND:GML_RENDER_SCENE_SPRITE;
+      if(kind==24){
+        expect(gml_render_cpu_try_exact_rotated_background_tile(&render,&page,
+                 0,0,8,8,2,2,1,1,1,0,tint,alpha),"atlas dispatch reaches the cardinal tile kernel");
+      } else if(kind>=6 && kind<=8){
+        if(kind==6) gml_render_cpu_blit_tpag_part_tile(&render,&page,1,1,5,5,
+                                                     2,2,1.25,1.5,tint,alpha);
+        else if(kind==7) gml_render_cpu_blit_tpag_part_background(&render,&page,1,1,5,5,
+                                                               2,2,1.25,1.5,tint,alpha);
+        else gml_render_cpu_blit_tpag_part(&render,&page,1,1,5,5,
+                                         2,2,1.25,1.5,tint,alpha);
+      } else if(kind>=9 && kind<=12){
+        double extent=kind==9?8:kind==12?4:17;
+        gml_render_cpu_blit_sprite_stretched_resolved(&render,&sprite,0,
+          kind==12?0:1,kind==12?0:1,kind==12?32:extent,kind==12?32:extent,tint,alpha);
+      } else {
+        double x=kind==2?12:kind==15?100:kind==20?0.2:kind==21?0:1;
+        double y=kind==15?100:kind==20?0.3:kind==21?0:1;
+        double xs=kind==2?-1:kind==3?1.25:kind==4?1.3:kind==20?1.9:kind==21?2.1:1;
+        double ys=kind==3?1.5:kind==4?1.4:kind==20?1.9:kind==21?2.1:1;
+        if(kind==22) gml_render_cpu_blit_background_phase(&render,&page,x,y,xs,ys,tint,alpha);
+        else blit(&render,&page,x,y,xs,ys,tint,alpha);
+        if(kind==20){
+          blit(&render,&page,x,y,xs,ys,tint,alpha);
+          expect(page.interp_draw_cache_valid,"atlas dispatch reaches its warmed filtered cache");
+          blit(&render,&page,x,y,xs,ys,tint,alpha);
+        }
+      }
+      if(kind==21) expect(render.row_pool!=NULL,"atlas dispatch reaches real row workers");
+      uint64_t wanted=kind==13 || kind==14 || kind==15 || kind==16?0u:kind==20?3u:1u;
+      int changed=0;
+      for(size_t pixel=0;pixel<target_count;pixel++)
+        if(render.fb[pixel]!=(0xFF102030u|(uint32_t)(pixel&255u))){ changed=1; break; }
+      expect(changed==(wanted!=0u),"atlas dispatch fixture independently distinguishes visible draws and no-ops");
+      uint64_t total=0;
+      int valid=gml_render_dispatch_metrics(&render,&metrics) &&
+        metrics.cpu[family][GML_RENDER_DISPATCH_NO_DEVICE]==(diagnostics?wanted:0u) &&
+        !metrics.unclassified && !metrics.failed && !metrics.complete && !render.dispatch_cpu_depth;
+      for(unsigned f=0;f<GML_RENDER_SCENE_FAMILY_COUNT;f++)
+        for(unsigned reason=0;reason<GML_RENDER_DISPATCH_REASON_COUNT;reason++)
+          total+=metrics.cpu[f][reason];
+      valid=valid && total==(diagnostics?wanted:0u);
+      if(!valid) fprintf(stderr,"atlas dispatch control %d: family=%u total=%llu expected=%llu enabled=%d\n",
+        kind,family,(unsigned long long)total,(unsigned long long)(diagnostics?wanted:0u),diagnostics);
+      expect(valid,"actual atlas execution counts once in its resolved family, excluding no-ops");
+      gml_render_texture_page_cache_clear(&render,&page);
+      render.spr=NULL; render.n_spr=0;
+      render.tpag=NULL; render.n_tpag=0;
+      render.atlas=NULL; render.n_atlas=0;
+      render.classic_phase_y=NULL;
+      gml_render_free(&render);
+    }
+    expect(!memcmp(off,on,target_count*sizeof(*on)),"atlas dispatch diagnostics preserve all pixels");
+    expect(!memcmp(phase_off,phase_on,target_count*sizeof(*phase_on)),
+           "atlas dispatch diagnostics preserve auxiliary-plane pixels");
+    free(source); free(off); free(on); free(phase_off); free(phase_on);
+  }
+}
+
+static void check_dispatch_rgba_textures(void){
+  for(int kind=0;kind<25;kind++){
+    int large=kind==2 || kind>=21;
+    if(kind==24) large=0;
+    int target_extent=large?512:32;
+    int source_extent=kind==2?300:large?512:8;
+    size_t target_count=(size_t)target_extent*target_extent;
+    size_t source_count=(size_t)source_extent*source_extent;
+    uint8_t *source=(uint8_t*)malloc(source_count*4u);
+    uint32_t *off=(uint32_t*)malloc(target_count*sizeof(*off));
+    uint32_t *on=(uint32_t*)malloc(target_count*sizeof(*on));
+    expect(source && off && on,"RGBA dispatch fixture allocation");
+    if(!source || !off || !on){ free(source); free(off); free(on); continue; }
+    for(size_t pixel=0;pixel<source_count;pixel++){
+      source[pixel*4u]=(uint8_t)(17u+pixel*13u);
+      source[pixel*4u+1u]=(uint8_t)(31u+pixel*23u);
+      source[pixel*4u+2u]=(uint8_t)(43u+pixel*37u);
+      source[pixel*4u+3u]=(uint8_t)(128u+pixel%128u);
+      if(kind==13 || kind==16 || kind==17 || kind==20) source[pixel*4u+3u]=0;
+      if(kind==22) source[pixel*4u+3u]=255u;
+    }
+    for(int diagnostics=0;diagnostics<2;diagnostics++){
+      GmlRender render={0};
+      GmlWin content={0};
+      GmlSprite sprite={0};
+      GmlRenderDispatchMetrics metrics={0};
+      StretchBandSettings settings={"4","1"};
+      AnygmHostServices host={0};
+      host.struct_size=sizeof host;
+      host.userdata=&settings;
+      host.development_setting=stretch_band_setting;
+      content.bytecode=17;
+      content.host=&host;
+      render.win=&content;
+      render.fb=render.base_fb=diagnostics?on:off;
+      render.fbw=render.fbh=render.base_fbw=render.base_fbh=target_extent;
+      render.target_id=-1;
+      render.alpha=1.0;
+      render.alphablend=1;
+      render.color_write_mask=15u;
+      render.blend_equation=render.blend_equation_alpha=1;
+      render.active_shader=render.lut_pal_sprite=-1;
+      render.interp=kind==5 || kind==6;
+      sprite.w=sprite.h=source_extent;
+      sprite.n_frames=1;
+      sprite.runtime_rgba=source;
+      render.spr=&sprite;
+      render.n_spr=1;
+      for(size_t pixel=0;pixel<target_count;pixel++)
+        render.fb[pixel]=0xFF102030u|(uint32_t)(pixel&255u);
+      gml_render_dispatch_diagnostics_enable(&render,diagnostics);
+      double alpha=kind==14 || kind==18?0.0:kind==23?1.0/1024.0:
+                   kind==24?1.0/262144.0:kind==21?0.65:1.0;
+      if(kind==16) render.blendmode=2;
+      if(kind==17 || kind==18) render.blendmode=GML_RENDER_BLEND_DEST_SOURCE_COLOUR;
+      if(kind==19){ render.alpha_test_enable=1; render.alpha_test_ref=255; }
+      if(kind==20) render.alphablend=0;
+      if(kind>=7 && kind<=9)
+        gml_render_cpu_blit_rgba_region(&render,source,source_extent,source_extent,
+          0,0,source_extent,source_extent,1,1,kind==7?8:kind==9?-17:17,
+          kind==7?8:13,0xFFFFFFu,alpha);
+      else if(kind==10 || kind==11){
+        double x[4]={1,15,kind==10?17:15,kind==10?3:1};
+        double y[4]={1,kind==10?3:1,17,kind==10?15:17};
+        gml_render_cpu_blit_sprite_pos_resolved(&render,0,0,x,y,alpha);
+      } else if(kind==12){
+        const uint32_t colours[4]={0xFFFFFFu,0xB0C0D0u,0x507090u,0x203040u};
+        gml_render_cpu_blit_sprite_general_coloured(&render,&sprite,0,0,0,8,8,
+          4,4,1.5,1.25,17,colours,alpha);
+      } else {
+        double x=kind==3?16:kind==4 || kind==6?12:kind==15?100:0;
+        double y=kind==4 || kind==6?12:kind==15?100:0;
+        double xs=kind==1?1.25:kind==2?1.8:kind==3?-1:kind==5?1.3:1;
+        double ys=kind==1?1.2:kind==2?1.8:kind==5?1.4:1;
+        double rotation=kind==4?37:kind==6?53:0;
+        blit_rgba_sprite(&render,kind==21?&sprite:NULL,source,source_extent,source_extent,
+          x,y,xs,ys,rotation,0,0,0xFFFFFFu,alpha,0,NULL,NULL,kind==22);
+        if(kind==21){
+          blit_rgba_sprite(&render,&sprite,source,source_extent,source_extent,
+            x,y,xs,ys,rotation,0,0,0xFFFFFFu,alpha,0,NULL,NULL,0);
+          expect(sprite.runtime_axis_cache_px!=NULL,"RGBA dispatch reaches the axis cache");
+          blit_rgba_sprite(&render,&sprite,source,source_extent,source_extent,
+            x,y,xs,ys,rotation,0,0,0xFFFFFFu,alpha,0,NULL,NULL,0);
+        }
+      }
+      if(kind==2) expect(render.row_pool!=NULL,"RGBA dispatch reaches real row workers");
+      uint64_t wanted=kind==13 || kind==14 || kind==15 || kind==19 ||
+                      kind==20 || kind==23 || kind==24?0u:kind==21?3u:1u;
+      int changed=0;
+      for(size_t pixel=0;pixel<target_count;pixel++)
+        if(render.fb[pixel]!=(0xFF102030u|(uint32_t)(pixel&255u))){ changed=1; break; }
+      expect(changed==(wanted!=0u),"RGBA dispatch fixture independently distinguishes visible draws and no-ops");
+      int valid=gml_render_dispatch_metrics(&render,&metrics) &&
+        metrics.cpu[GML_RENDER_SCENE_SPRITE][GML_RENDER_DISPATCH_NO_DEVICE]==
+          (diagnostics?wanted:0u) && !metrics.unclassified && !metrics.failed &&
+        !metrics.complete && !render.dispatch_cpu_depth;
+      if(!valid) fprintf(stderr,"RGBA dispatch control %d: actual=%llu expected=%llu enabled=%d\n",
+        kind,(unsigned long long)metrics.cpu[GML_RENDER_SCENE_SPRITE][GML_RENDER_DISPATCH_NO_DEVICE],
+        (unsigned long long)(diagnostics?wanted:0u),diagnostics);
+      expect(valid,"actual RGBA execution is counted, with no-op and nested exclusions");
+      gml_render_sprite_cache_free(&sprite);
+      render.spr=NULL;
+      render.n_spr=0;
+      gml_render_free(&render);
+    }
+    expect(!memcmp(off,on,target_count*sizeof(*on)),"RGBA dispatch diagnostics preserve all pixels");
+    free(source); free(off); free(on);
+  }
+}
+
 int main(void) {
   static const struct {
     const char *name;
@@ -1976,6 +2465,9 @@ int main(void) {
   uint64_t tint = run_tint();
   check_shader_recognition();
   check_content_binding_capacity();
+  check_dispatch_rgba_textures();
+  check_dispatch_atlas_textures();
+  check_dispatch_rotated_queue();
   check_named_palette_sampler();
   check_opaque_stretched_underlay();
   check_channel_mask_pixels();

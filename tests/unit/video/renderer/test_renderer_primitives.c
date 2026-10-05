@@ -3,6 +3,10 @@
  */
 #include "gml_render_internal.h"
 #include "gml_render_primitives.h"
+#include "gml_render_state.h"
+#include "gml_render_cpu_text.h"
+#include "gml_render_cpu_workers.h"
+#include "gml_render_cpu_dispatch_internal.h"
 
 #include <math.h>
 #include <stdint.h>
@@ -181,11 +185,305 @@ static void check_circle_geometry_applies_the_measured_bias(void){
          "a fractional mapped radius was quantized by the geometry mapping");
 }
 
+static void check_dispatch_metadata_does_not_enter_state(void){
+  GmlRender render;
+  GmlRenderDispatchMetrics metrics;
+  reset_render(&render,12);
+  size_t size=gml_render_state_size(&render,0),first_written=0,second_written=0;
+  uint8_t *first=(uint8_t*)malloc(size),*second=(uint8_t*)malloc(size);
+  expect(size && first && second,"dispatch state control allocation failed");
+  if(!size || !first || !second){free(first);free(second);return;}
+  expect(gml_render_state_save(&render,0,first,size,&first_written),
+         "dispatch baseline state could not be saved");
+  gml_render_dispatch_diagnostics_enable(&render,1);
+  gml_render_dispatch_cpu_record(&render,GML_RENDER_SCENE_PRIMITIVE,
+                                 GML_RENDER_DISPATCH_NO_SCENE,3u);
+  gml_render_dispatch_cpu_exception_record(&render,GML_RENDER_SCENE_PRIMITIVE,
+                                           GML_RENDER_DISPATCH_EXCEPTION_DEPTH,7u);
+  expect(gml_render_dispatch_metrics(&render,&metrics) && !metrics.complete &&
+         metrics.cpu[GML_RENDER_SCENE_PRIMITIVE][GML_RENDER_DISPATCH_NO_SCENE]==3u,
+         "dispatch metadata control did not record its operations");
+  GmlRenderDispatchCpuScope scope;
+  gml_render_dispatch_cpu_scope_begin(&render,&scope,GML_RENDER_SCENE_PRIMITIVE);
+  gml_render_dispatch_cpu_scope_write(&render);
+  expect(gml_render_state_size(&render,0)==size &&
+         gml_render_state_save(&render,0,second,size,&second_written) &&
+         first_written==size && second_written==size && !memcmp(first,second,size),
+         "dispatch diagnostics entered canonical state bytes or changed their size");
+  gml_render_dispatch_cpu_scope_end(&render,&scope);
+  expect(!render.dispatch_cpu_depth,"state observation left an active CPU dispatch scope");
+  free(first);free(second);
+}
+
+static void check_dispatch_exception_rejection_and_overflow(void){
+  GmlRender render; GmlRenderDispatchMetrics metrics;
+  reset_render(&render,12);
+  gml_render_dispatch_diagnostics_enable(&render,1);
+  gml_render_dispatch_cpu_exception_record(&render,GML_RENDER_SCENE_PRIMITIVE,
+                                           GML_RENDER_DISPATCH_EXCEPTION_COUNT,1u);
+  gml_render_dispatch_cpu_exception_record(&render,GML_RENDER_SCENE_UNCLASSIFIED,
+                                           GML_RENDER_DISPATCH_EXCEPTION_DEPTH,1u);
+  gml_render_dispatch_cpu_exception_record(&render,GML_RENDER_SCENE_PRIMITIVE,
+                                           GML_RENDER_DISPATCH_EXCEPTION_DEPTH,UINT64_MAX);
+  gml_render_dispatch_cpu_exception_record(&render,GML_RENDER_SCENE_PRIMITIVE,
+                                           GML_RENDER_DISPATCH_EXCEPTION_DEPTH,1u);
+  expect(gml_render_dispatch_metrics(&render,&metrics) && metrics.unclassified==2u &&
+         metrics.overflow &&
+         metrics.exceptions[GML_RENDER_SCENE_PRIMITIVE][GML_RENDER_DISPATCH_EXCEPTION_DEPTH]==UINT64_MAX &&
+         !metrics.cpu[GML_RENDER_SCENE_PRIMITIVE][GML_RENDER_DISPATCH_NO_DEVICE],
+         "invalid or overflowing exceptions were accepted as an ordinary zero fallback");
+}
+
+static void check_dispatch_counts_cpu_only_pass_and_suffix(void){
+  GmlRender render;
+  GmlRenderDispatchMetrics metrics;
+  uint32_t pixel;
+  reset_render(&render,12);
+  gml_render_primitive_point(&render,10,10,0x123456u);
+  expect(gml_render_dispatch_metrics(&render,&metrics) && !metrics.enabled &&
+         !metrics.cpu[GML_RENDER_SCENE_PRIMITIVE][GML_RENDER_DISPATCH_NO_DEVICE],
+         "dispatch diagnostics changed the default path");
+  gml_render_dispatch_diagnostics_enable(&render,1);
+  for(int i=0;i<3;i++) gml_render_primitive_point(&render,11+i,10,0x123456u);
+  expect(gml_render_dispatch_metrics(&render,&metrics) &&
+         metrics.cpu[GML_RENDER_SCENE_PRIMITIVE][GML_RENDER_DISPATCH_NO_DEVICE]==3u,
+         "CPU-only draws were omitted after the first dispatch");
+  gml_render_primitive_point(&render,-1,10,0x123456u);
+  render.alpha=0.0;
+  gml_render_primitive_point(&render,11,11,0x123456u);
+  expect(gml_render_target_pixel(&render,11,10,&pixel) && pixel==0xff563412u,
+         "dispatch diagnostics altered the point's pixels");
+  expect(gml_render_dispatch_metrics(&render,&metrics) &&
+         metrics.cpu[GML_RENDER_SCENE_PRIMITIVE][GML_RENDER_DISPATCH_NO_DEVICE]==3u,
+         "a clipped/zero-alpha point or pixel query counted as a draw");
+  render.alpha=1.0;
+  render.device_bound=1;
+  render.device.context=&render;
+  for(int i=0;i<3;i++) gml_render_primitive_point(&render,11+i,12,0x123456u);
+  expect(gml_render_dispatch_metrics(&render,&metrics) &&
+         metrics.cpu[GML_RENDER_SCENE_PRIMITIVE][GML_RENDER_DISPATCH_NO_SCENE]==3u,
+         "an inactive scene's complete CPU suffix was omitted");
+  expect(!metrics.complete,"partial dispatcher coverage qualified a zero-fallback census");
+}
+
+static void check_dispatch_rejection_and_overflow_are_not_zero(void){
+  GmlRender render;
+  GmlRenderDispatchMetrics metrics;
+  GmlRenderDrawOp operations[3]={{0}};
+  GmlRenderDrawBatch batch={operations,3u,NULL,0u};
+  reset_render(&render,12);
+  gml_render_dispatch_diagnostics_enable(&render,1);
+  operations[0].scene_family=GML_RENDER_SCENE_SPRITE;
+  operations[1].scene_family=GML_RENDER_SCENE_TEXT;
+  operations[2].scene_family=GML_RENDER_SCENE_UNCLASSIFIED;
+  gml_render_dispatch_batch_record(&render,&batch,GML_RENDER_RESOURCE_EXEC_DEVICE);
+  gml_render_dispatch_batch_record(&render,&batch,GML_RENDER_RESOURCE_EXEC_CPU);
+  gml_render_dispatch_batch_record(&render,&batch,GML_RENDER_RESOURCE_EXEC_FAILED);
+  expect(gml_render_dispatch_metrics(&render,&metrics) &&
+         metrics.gpu[GML_RENDER_SCENE_SPRITE]==1u &&
+         metrics.gpu[GML_RENDER_SCENE_TEXT]==1u && metrics.unclassified==2u &&
+         metrics.cpu[GML_RENDER_SCENE_SPRITE][GML_RENDER_DISPATCH_REPLAY]==1u &&
+         metrics.cpu[GML_RENDER_SCENE_TEXT][GML_RENDER_DISPATCH_REPLAY]==1u &&
+         metrics.failed==3u,
+         "failed batches, CPU replay or unknown families became completed GPU work");
+  gml_render_dispatch_cpu_record(&render,GML_RENDER_SCENE_PRIMITIVE,
+                                 GML_RENDER_DISPATCH_NO_DEVICE,UINT64_MAX);
+  gml_render_dispatch_cpu_record(&render,GML_RENDER_SCENE_PRIMITIVE,
+                                 GML_RENDER_DISPATCH_NO_DEVICE,1u);
+  expect(gml_render_dispatch_metrics(&render,&metrics) && metrics.overflow &&
+         metrics.cpu[GML_RENDER_SCENE_PRIMITIVE][GML_RENDER_DISPATCH_NO_DEVICE]==UINT64_MAX,
+         "dispatch overflow wrapped a fallback counter to zero");
+  expect(!gml_render_dispatch_metrics(NULL,&metrics) && !metrics.enabled &&
+         !gml_render_dispatch_metrics(&render,NULL),
+         "invalid diagnostic snapshots were accepted");
+}
+
+enum { DISPATCH_PRIMITIVE_CONTROLS=18 };
+static void dispatch_primitive_control(GmlRender *render,int kind,int offset){
+  int x=80+offset,y=80+offset;
+  switch(kind){
+    case 0:gml_render_primitive_point(render,x,y,0x123456u);break;
+    case 1:gml_render_primitive_rectangle(render,x,y,x+15,y+12,0x123456u,0);break;
+    case 2:gml_render_primitive_rectangle(render,x,y,x+15,y+12,0x123456u,1);break;
+    case 3:gml_render_primitive_rectangle_color(render,x,y,x+15,y+12,
+               0x123456u,0x234567u,0x345678u,0x456789u,0);break;
+    case 4:gml_render_primitive_rectangle_color(render,x,y,x+15,y+12,
+               0x123456u,0x234567u,0x345678u,0x456789u,1);break;
+    case 5:gml_render_primitive_line(render,x,y,x+15,y+12,0x123456u,3);break;
+    case 6:gml_render_primitive_line_color(render,x,y,x+15,y+12,
+               0x123456u,0x345678u,3);break;
+    case 7:gml_render_primitive_line_color_subpixel(render,x+0.25,y+0.25,
+               x+15.25,y+12.25,0x123456u,0x345678u,1);break;
+    case 8:gml_render_primitive_circle_subpixel(render,x,y,15,12,0x123456u,0);break;
+    case 9:gml_render_primitive_circle_subpixel(render,x,y,15,12,0x123456u,1);break;
+    case 10:gml_render_primitive_circle_subpixel(render,x,y,0,0,0x123456u,0);break;
+    case 11:gml_render_primitive_circle_color_subpixel(render,x,y,15,12,
+               0x123456u,0x345678u,0);break;
+    case 12:gml_render_primitive_circle_color_subpixel(render,x,y,15,12,
+               0x123456u,0x345678u,1);break;
+    case 13:gml_render_primitive_circle_color_subpixel(render,x,y,0,0,
+               0x123456u,0x345678u,0);break;
+    case 14:gml_render_primitive_triangle_alpha(render,x,y,x+15,y,x,y+12,
+               0x123456u,render->alpha,0);break;
+    case 15:gml_render_primitive_triangle_alpha(render,x,y,x+15.25,y+0.25,x,y+12,
+               0x123456u,render->alpha,0);break;
+    case 16:gml_render_primitive_triangle_alpha(render,x,y,x+15,y,x,y+12,
+               0x123456u,render->alpha,1);break;
+    case 17:gml_render_primitive_rectangle_color(render,x,y,x+15,y+12,
+               0x123456u,0x123456u,0x123456u,0x123456u,0);break;
+  }
+}
+
+static void check_dispatch_complete_cpu_primitive_kernels(void){
+  GmlRender render;
+  GmlRenderDispatchMetrics metrics;
+  uint32_t *baseline=(uint32_t*)malloc(sizeof frame);
+  expect(baseline!=NULL,"primitive dispatch pixel control allocation failed");
+  if(!baseline) return;
+  for(int kind=0;kind<DISPATCH_PRIMITIVE_CONTROLS;kind++){
+    for(int partial=0;partial<2;partial++){
+      reset_render(&render,12);
+      render.alpha=partial?0.5:1.0;
+      dispatch_primitive_control(&render,kind,0);
+      memcpy(baseline,frame,sizeof frame);
+      reset_render(&render,12);
+      render.alpha=partial?0.5:1.0;
+      gml_render_dispatch_diagnostics_enable(&render,1);
+      dispatch_primitive_control(&render,kind,0);
+      expect(gml_render_dispatch_metrics(&render,&metrics) &&
+             metrics.cpu[GML_RENDER_SCENE_PRIMITIVE][GML_RENDER_DISPATCH_NO_DEVICE]==1u &&
+             !render.dispatch_cpu_depth && !memcmp(baseline,frame,sizeof frame),
+             "a CPU primitive was omitted, counted per fragment or changed by diagnostics");
+    }
+    reset_render(&render,12);
+    gml_render_dispatch_diagnostics_enable(&render,1);
+    dispatch_primitive_control(&render,kind,WIDTH);
+    render.alpha=0.0;
+    dispatch_primitive_control(&render,kind,0);
+    expect(gml_render_dispatch_metrics(&render,&metrics) &&
+           !metrics.cpu[GML_RENDER_SCENE_PRIMITIVE][GML_RENDER_DISPATCH_NO_DEVICE] &&
+           !covered_pixels() && !render.dispatch_cpu_depth,
+           "a clipped or zero-alpha CPU primitive counted as executed work");
+  }
+  reset_render(&render,12);
+  gml_render_dispatch_diagnostics_enable(&render,1);
+  gml_render_primitive_triangle_alpha(&render,80,80,85,85,90,90,0x123456u,1.0,0);
+  expect(gml_render_dispatch_metrics(&render,&metrics) &&
+         !metrics.cpu[GML_RENDER_SCENE_PRIMITIVE][GML_RENDER_DISPATCH_NO_DEVICE],
+         "a degenerate triangle counted as an executed CPU primitive");
+  gml_draw_layer_color_fill(&render,0x123456u,0.5);
+  expect(gml_render_dispatch_metrics(&render,&metrics) &&
+         metrics.cpu[GML_RENDER_SCENE_PRIMITIVE][GML_RENDER_DISPATCH_NO_DEVICE]==1u,
+         "a software room-layer colour fill was omitted");
+  free(baseline);
+}
+
+static void check_dispatch_cpu_scope_nested(void){
+  GmlRender render;
+  GmlRenderDispatchCpuScope outer,inner;
+  GmlRenderDispatchMetrics metrics;
+  reset_render(&render,12);
+  gml_render_dispatch_diagnostics_enable(&render,1);
+  gml_render_dispatch_cpu_scope_begin(&render,&outer,GML_RENDER_SCENE_PRIMITIVE);
+  gml_render_dispatch_cpu_scope_begin(&render,&inner,GML_RENDER_SCENE_PRIMITIVE);
+  gml_render_dispatch_cpu_scope_write(&render);
+  gml_render_dispatch_cpu_scope_write(&render);
+  gml_render_dispatch_cpu_scope_end(&render,&inner);
+  expect(render.dispatch_cpu_depth==1u,
+         "a nested CPU accounting scope lost its parent");
+  gml_render_dispatch_cpu_scope_end(&render,&outer);
+  expect(gml_render_dispatch_metrics(&render,&metrics) &&
+         metrics.cpu[GML_RENDER_SCENE_PRIMITIVE][GML_RENDER_DISPATCH_NO_DEVICE]==1u &&
+         !render.dispatch_cpu_depth,
+         "nested software spans were not grouped into one resolved operation");
+  gml_render_dispatch_cpu_scope_end(&render,&outer);
+  expect(gml_render_dispatch_metrics(&render,&metrics) && metrics.unclassified==1u &&
+         !render.dispatch_cpu_depth,"an unbalanced scope underflow became a zero fallback");
+  render.dispatch_cpu_depth=UINT_MAX;
+  gml_render_dispatch_cpu_scope_begin(&render,&outer,GML_RENDER_SCENE_PRIMITIVE);
+  gml_render_dispatch_cpu_scope_end(&render,&outer);
+  expect(gml_render_dispatch_metrics(&render,&metrics) && metrics.unclassified==2u &&
+         render.dispatch_cpu_depth==UINT_MAX,"scope nesting overflow wrapped into a clean census");
+  render.dispatch_cpu_depth=0u;
+}
+
+typedef struct { GmlRender *render; int seen[4]; } DispatchWorkerControl;
+static void dispatch_worker_control(void *context,int first,int last,int slot){
+  DispatchWorkerControl *control=(DispatchWorkerControl*)context;
+  for(int row=first;row<last;row++) gml_render_dispatch_cpu_scope_write(control->render);
+  if(slot>=0 && slot<4) control->seen[slot]=1;
+}
+static void check_dispatch_cpu_scope_row_workers(void){
+  GmlRender render;
+  GmlRenderDispatchCpuScope scope;
+  GmlRenderDispatchMetrics metrics;
+  DispatchWorkerControl control={0};
+  reset_render(&render,12);
+  control.render=&render;
+  gml_render_dispatch_diagnostics_enable(&render,1);
+  gml_render_dispatch_cpu_scope_begin(&render,&scope,GML_RENDER_SCENE_PRIMITIVE);
+  gml_run_row_bands_n(&render,64,4,dispatch_worker_control,&control);
+  gml_render_dispatch_cpu_scope_end(&render,&scope);
+  expect(control.seen[0] && control.seen[1] && control.seen[2] && control.seen[3],
+         "the dispatch coverage control did not exercise all four row-band slots");
+  expect(gml_render_dispatch_metrics(&render,&metrics) &&
+         metrics.cpu[GML_RENDER_SCENE_PRIMITIVE][GML_RENDER_DISPATCH_NO_DEVICE]==1u &&
+         !render.dispatch_cpu_depth,
+         "row workers counted fragments separately or lost their coverage mark");
+  gml_row_pool_free(&render);
+}
+
+static void check_dispatch_subpixel_glyph_requires_visible_source(void){
+  GmlRender render;
+  GmlRenderDispatchMetrics metrics;
+  GmlFont font={0};
+  GmlGlyph glyph={0};
+  GmlAtlas atlas={0};
+  uint8_t rgba[16]={0};
+  uint32_t baseline[4];
+  reset_render(&render,12);
+  atlas.px=rgba;atlas.w=atlas.h=2;
+  render.atlas=&atlas;render.n_atlas=1;
+  font.subpixel=1;font.atlas=0;
+  glyph.w=glyph.h=2;
+  gml_render_dispatch_diagnostics_enable(&render,1);
+  expect(gml_render_cpu_classic_info_subpixel_glyph(&render,&font,&glyph,
+           10,10,1,1,0x123456u,1.0),"transparent subpixel glyph dispatch was rejected");
+  rgba[3]=rgba[7]=rgba[11]=rgba[15]=255u;
+  expect(gml_render_cpu_classic_info_subpixel_glyph(&render,&font,&glyph,
+           WIDTH,HEIGHT,1,1,0x123456u,1.0),"clipped subpixel glyph dispatch was rejected");
+  expect(gml_render_dispatch_metrics(&render,&metrics) &&
+         !metrics.cpu[GML_RENDER_SCENE_TEXT][GML_RENDER_DISPATCH_NO_DEVICE],
+         "an empty or clipped subpixel glyph counted as a CPU draw");
+  gml_render_dispatch_diagnostics_enable(&render,0);
+  expect(gml_render_cpu_classic_info_subpixel_glyph(&render,&font,&glyph,
+           10,10,1,1,0x123456u,1.0),"baseline subpixel glyph dispatch was rejected");
+  baseline[0]=frame[10*WIDTH+10];baseline[1]=frame[10*WIDTH+11];
+  baseline[2]=frame[11*WIDTH+10];baseline[3]=frame[11*WIDTH+11];
+  memset(frame,0,sizeof frame);
+  gml_render_dispatch_diagnostics_enable(&render,1);
+  expect(gml_render_cpu_classic_info_subpixel_glyph(&render,&font,&glyph,
+           10,10,1,1,0x123456u,1.0),"observed subpixel glyph dispatch was rejected");
+  expect(gml_render_dispatch_metrics(&render,&metrics) &&
+         metrics.cpu[GML_RENDER_SCENE_TEXT][GML_RENDER_DISPATCH_NO_DEVICE]==1u &&
+         frame[10*WIDTH+10]==baseline[0] && frame[10*WIDTH+11]==baseline[1] &&
+         frame[11*WIDTH+10]==baseline[2] && frame[11*WIDTH+11]==baseline[3],
+         "a subpixel glyph was omitted, counted per pixel or altered by diagnostics");
+}
+
 int main(void){
   check_fractional_radius_is_not_truncated();
   check_fractional_centre_is_not_quantized();
   check_integer_entry_point_is_unchanged();
   check_circle_geometry_applies_the_measured_bias();
+  check_dispatch_metadata_does_not_enter_state();
+  check_dispatch_counts_cpu_only_pass_and_suffix();
+  check_dispatch_rejection_and_overflow_are_not_zero();
+  check_dispatch_exception_rejection_and_overflow();
+  check_dispatch_complete_cpu_primitive_kernels();
+  check_dispatch_cpu_scope_nested();
+  check_dispatch_cpu_scope_row_workers();
+  check_dispatch_subpixel_glyph_requires_visible_source();
   if(failures){
     fprintf(stderr,"renderer primitives: %d failure(s)\n",failures);
     return 1;
