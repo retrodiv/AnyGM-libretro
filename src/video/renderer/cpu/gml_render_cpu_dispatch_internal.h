@@ -5,7 +5,10 @@
 #ifndef GML_RENDER_CPU_DISPATCH_INTERNAL_H
 #define GML_RENDER_CPU_DISPATCH_INTERNAL_H
 
-#include "gml_render_internal.h"
+/* Only renderer implementation owners include this after their storage header. */
+#ifndef GML_RENDER_INTERNAL_H
+#error "CPU dispatch helpers require renderer-owner storage"
+#endif
 #include "gml_render_cpu_backend.h"
 #include <limits.h>
 #include <stdatomic.h>

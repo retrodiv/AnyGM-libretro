@@ -11,7 +11,8 @@
 #include <stdlib.h>
 #include <string.h>
 
-enum { FAKE_MAX_TEXTURES=32,FAKE_MAX_CALLS=4096,FAKE_MAX_PIXELS=1u<<16 };
+enum { FAKE_MAX_TEXTURES=32,FAKE_MAX_CALLS=4096,FAKE_MAX_PIXELS=1u<<16,
+       FAKE_TEXTURE_UNITS=4 };
 
 typedef struct FakeTexture {
   int created;
@@ -36,7 +37,9 @@ typedef struct FakeDriver {
   int allow_calls;
   GLuint next_name;
   FakeTexture textures[FAKE_MAX_TEXTURES];
-  GLuint bound_texture[3];
+  GLuint bound_texture[FAKE_TEXTURE_UNITS];
+  GLuint scene_sampler_texture[FAKE_TEXTURE_UNITS];
+  GLuint upload_error_texture;
   GLuint quad_texture[3];
   GLint quad_filter[3];
   GLuint active_unit;
@@ -135,6 +138,7 @@ void anygm_test_graphics_fail_copy_at(unsigned ordinal){ g_fake.copy_error_at=or
 unsigned anygm_test_graphics_last_read_framebuffer(void){ return g_fake.last_read_framebuffer; }
 unsigned anygm_test_graphics_last_copy_framebuffer(void){ return g_fake.last_copy_framebuffer; }
 void anygm_test_graphics_fail_scene_draw_at(unsigned ordinal){ g_fake.scene_draw_error_at=ordinal; }
+void anygm_test_graphics_fail_texture_upload(unsigned name){ g_fake.upload_error_texture=name; }
 void anygm_test_graphics_rgb_query_result(unsigned result){ g_fake.rgb_query_result=result; }
 void anygm_test_graphics_active_query(unsigned name){ g_fake.active_query=name; }
 unsigned anygm_test_graphics_rgb_queries(void){ return g_fake.rgb_queries; }
@@ -254,20 +258,24 @@ static void fake_DeleteTextures(GLsizei n,const GLuint *names){
 }
 static void fake_BindTexture(GLenum target,GLuint name){
   (void)target; note_call();
-  if(g_fake.active_unit<3) g_fake.bound_texture[g_fake.active_unit]=name;
+  if(g_fake.active_unit<FAKE_TEXTURE_UNITS) g_fake.bound_texture[g_fake.active_unit]=name;
 }
 static void fake_ActiveTexture(GLenum unit){ note_call(); g_fake.active_unit=unit-GL_TEXTURE0; }
 static void fake_TexParameteri(GLenum t,GLenum p,GLint v){
   (void)t; note_call();
-  GLuint name=g_fake.active_unit<3?g_fake.bound_texture[g_fake.active_unit]:0;
+  GLuint name=g_fake.active_unit<FAKE_TEXTURE_UNITS?g_fake.bound_texture[g_fake.active_unit]:0;
   if(name<FAKE_MAX_TEXTURES && p==GL_TEXTURE_MIN_FILTER) g_fake.textures[name].min_filter=v;
 }
 static void fake_TexImage2D(GLenum target,GLint level,GLint internal_format,GLsizei width,
                             GLsizei height,GLint border,GLenum format,GLenum type,
                             const void *pixels){
-  GLuint name=g_fake.active_unit<3?g_fake.bound_texture[g_fake.active_unit]:0;
+  GLuint name=g_fake.active_unit<FAKE_TEXTURE_UNITS?g_fake.bound_texture[g_fake.active_unit]:0;
   (void)target; (void)level; (void)border; (void)format;
   note_call();
+  if(pixels && name && name==g_fake.upload_error_texture){
+    g_fake.pending_error=0x0505u; /* GL_OUT_OF_MEMORY leaves the old texture unmodified. */
+    return;
+  }
   if(name<FAKE_MAX_TEXTURES){
     FakeTexture *texture=&g_fake.textures[name];
     size_t stride=type==GL_UNSIGNED_SHORT?2u:4u;
@@ -283,9 +291,13 @@ static void fake_TexImage2D(GLenum target,GLint level,GLint internal_format,GLsi
 }
 static void fake_TexSubImage2D(GLenum target,GLint level,GLint x,GLint y,GLsizei width,
                                GLsizei height,GLenum format,GLenum type,const void *pixels){
-  GLuint name=g_fake.active_unit<3?g_fake.bound_texture[g_fake.active_unit]:0;
+  GLuint name=g_fake.active_unit<FAKE_TEXTURE_UNITS?g_fake.bound_texture[g_fake.active_unit]:0;
   (void)target; (void)level; (void)x; (void)y; (void)format;
   note_call();
+  if(pixels && name && name==g_fake.upload_error_texture){
+    g_fake.pending_error=0x0505u;
+    return;
+  }
   if(name<FAKE_MAX_TEXTURES){
     FakeTexture *texture=&g_fake.textures[name];
     size_t stride=type==GL_UNSIGNED_SHORT?2u:4u;
@@ -490,6 +502,7 @@ static void fake_DrawArrays(GLenum mode,GLint first,GLsizei count){
     g_fake.scene_mask_draws[g_fake.color_mask_bits&15u]++;
     g_fake.scene_vertices+=count;
     g_fake.scene_texture=g_fake.bound_texture[0];
+    memcpy(g_fake.scene_sampler_texture,g_fake.bound_texture,sizeof g_fake.bound_texture);
     g_fake.scene_filter=g_fake.scene_texture<FAKE_MAX_TEXTURES
       ?g_fake.textures[g_fake.scene_texture].min_filter:0;
     int font_program=0;
@@ -700,6 +713,9 @@ int anygm_test_graphics_draw_calls(void){ return g_fake.draw_calls; }
 int anygm_test_graphics_scene_draw_calls(void){ return g_fake.scene_draw_calls; }
 int anygm_test_graphics_scene_vertices(void){ return g_fake.scene_vertices; }
 unsigned anygm_test_graphics_scene_texture(void){ return g_fake.scene_texture; }
+unsigned anygm_test_graphics_scene_sampler_texture(unsigned unit){
+  return unit<FAKE_TEXTURE_UNITS?g_fake.scene_sampler_texture[unit]:0u;
+}
 int anygm_test_graphics_quad_draw_calls(void){ return g_fake.strip_draw_calls; }
 unsigned anygm_test_graphics_compile_calls(void){ return g_fake.compile_calls; }
 unsigned anygm_test_graphics_flush_calls(void){ return g_fake.flush_calls; }

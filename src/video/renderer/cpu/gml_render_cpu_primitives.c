@@ -12,8 +12,8 @@
 #include "gml_render.h"
 #include "gml_render_cpu_primitives.h"
 #include "gml_render_cpu_backend.h"
-#include "gml_render_cpu_dispatch_internal.h"
 #include "gml_render_internal.h"
+#include "gml_render_cpu_dispatch_internal.h"
 #include "gml_render_surfaces_internal.h"
 #include "gml_render_cpu_pixel_internal.h"
 

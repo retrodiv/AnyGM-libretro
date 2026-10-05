@@ -153,6 +153,7 @@ static void engine_dispatch_renderer_retire(AnygmEngine *engine){
 }
 
 int engine_dispatch_metrics(const AnygmEngine *engine,GmlRenderDispatchMetrics *out){
+  int renderer_epoch_enabled=1;
   if(!out) return 0;
   memset(out,0,sizeof *out);
   if(!engine) return 0;
@@ -160,6 +161,7 @@ int engine_dispatch_metrics(const AnygmEngine *engine,GmlRenderDispatchMetrics *
   if(engine->diagnostics.dispatch_renderer_active){
     GmlRenderDispatchMetrics epoch={0};
     gml_render_dispatch_metrics(&engine->render,&epoch);
+    renderer_epoch_enabled=epoch.enabled;
     gml_render_dispatch_metrics_accumulate(out,&epoch);
   }
   out->enabled=engine->diagnostics.dispatch_enabled && !engine->diagnostics.dispatch_suppressed;
@@ -167,7 +169,7 @@ int engine_dispatch_metrics(const AnygmEngine *engine,GmlRenderDispatchMetrics *
    * Unknown work, an accounting gap or saturation cannot qualify a zero census. */
   out->complete=out->enabled && engine->diagnostics.dispatch_renderer_epochs>0u &&
     !out->unclassified && !out->overflow &&
-    (!engine->diagnostics.dispatch_renderer_active || engine->render.dispatch_metrics.enabled);
+    renderer_epoch_enabled;
   return 1;
 }
 

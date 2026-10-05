@@ -472,28 +472,27 @@ static int modern_nearest_axis_bias(double leading,double snapped,double scale,
   return 1;
 }
 
-/* The modern CPU point leaf snaps a reflected anchor, rounds extent independently,
- * and skips samples outside the physical crop instead of clamping them. Keep only
- * its writable span, then reuse the established float-boundary discriminator. */
-static int modern_numbered_nearest_axis(double leading,double scale,int source_extent,
-                                        double *start,double *extent,double *anchor,double *bias){
-  if(*extent>4096.0 || source_extent>4096) return 0;
-  *anchor=scale<0.0?floor(leading+0.5):leading;
-  double phase=*start+0.5-*anchor;
+/* Use the point writer's original loop index and phase even when clipping
+ * removes a rounded edge. Reflections iterate from anchor-1 toward the left. */
+static void modern_point_axis_prune(double leading,double scale,int source_extent,
+                                    double *start,double *extent){
+  int anchor=(int)floor(leading+0.5),reflected=scale<0.0;
+  double phase=reflected?0.5:anchor+0.5-leading;
   int first=0,last=(int)*extent;
   while(first<last){
-    double sample=((double)first+phase)/scale;
-    if(sample>=0.0 && sample<source_extent) break;
+    int pixel=reflected?anchor-1-(int)*start-first:(int)*start+first-anchor;
+    int sample=gml_render_point_axis_index(pixel,phase,fabs(scale));
+    if(sample>=0 && sample<source_extent) break;
     first++;
   }
   while(last>first){
-    double sample=((double)(last-1)+phase)/scale;
-    if(sample>=0.0 && sample<source_extent) break;
+    int pixel=reflected?anchor-1-(int)*start-(last-1):(int)*start+(last-1)-anchor;
+    int sample=gml_render_point_axis_index(pixel,phase,fabs(scale));
+    if(sample>=0 && sample<source_extent) break;
     last--;
   }
-  *start+=first; *extent=last-first;
-  return last==first || modern_nearest_axis_bias(*anchor,*start,scale,*extent,
-                                                 source_extent,bias);
+  *start+=first;
+  *extent=last-first;
 }
 
 static int resident_rotated_packet_regions(GmlRender *r,GmlSprite *sprite,GmlTpag *page,
@@ -898,12 +897,12 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
       gml_render_stretched_float_phase_exact((uint32_t)page->bh,(uint32_t)height);
   }
   if(modern_numbered_sprite){
-    if(!modern_numbered_nearest_axis(left,xs,page->sw,&x0,&width,
-                                    &nearest_anchor_x,&nearest_bias_x) ||
-       !modern_numbered_nearest_axis(top,ys,page->sh,&y0,&height,
-                                    &nearest_anchor_y,&nearest_bias_y)) return 0;
-    /* Edge pruning can remove the sole rounded column/row touching the target.
-     * Do not enqueue an empty snapshot rectangle behind a resident prefix. */
+    /* Exact point indices are prepared per visible axis on the device path.
+     * Conflicting binary64 ties and reflected crops need no global UV bias;
+     * out-of-crop samples remain unwritten, just as on the CPU leaf. */
+    if(width>4096.0 || height>4096.0 || page->sw>4096 || page->sh>4096) return 0;
+    modern_point_axis_prune(left,xs,page->sw,&x0,&width);
+    modern_point_axis_prune(top,ys,page->sh,&y0,&height);
     if(width==0.0 || height==0.0 || x0+width<=0.0 || y0+height<=0.0 ||
        x0>=r->fbw || y0>=r->fbh) return 1;
   } else if((nearest_mode==3 || nearest_mode==6) &&
@@ -975,6 +974,15 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
   operation.payload.quad.x[1]=operation.payload.quad.x[2]=x0+width;
   operation.payload.quad.y[0]=operation.payload.quad.y[1]=y0;
   operation.payload.quad.y[2]=operation.payload.quad.y[3]=y0+height;
+  if(modern_numbered_sprite){
+    GmlRenderQuad *quad=&operation.payload.quad;
+    quad->inverse_anchor[0]=floor(left+0.5);
+    quad->inverse_anchor[1]=floor(top+0.5);
+    quad->inverse_x[0]=xs;
+    quad->inverse_y[1]=ys;
+    quad->inverse_x[1]=xs<0.0?0.5:quad->inverse_anchor[0]+0.5-left;
+    quad->inverse_y[0]=ys<0.0?0.5:quad->inverse_anchor[1]+0.5-top;
+  }
   if(rotated_sprite){
     GmlRenderQuad *quad=&operation.payload.quad;
     if(corner_colours){
@@ -1202,6 +1210,111 @@ int gml_render_resident_filtered_font_glyph(GmlRender *r,int atlas,
                                       opaque_target_alpha,0,0,0,0);
 }
 
+static int resident_modern_nearest_rotation(GmlRender *r,GmlSprite *sprite,GmlTpag *page,
+                                            double x,double y,double xs,double ys,double rotation,
+                                            uint32_t colour,double alpha){
+  enum { REGION_LIMIT=8192 };
+  GmlRenderResourceSource source={0};
+  GmlRenderRotatedCoverageRegion *regions=NULL;
+  GmlRenderDrawOp *operations=NULL;
+  GmlRenderDrawStateSnapshot state={0};
+  GmlRenderResource *target;
+  uint32_t count=0;
+  int accepted=0,rows=0;
+  uint32_t capacity=r->fbh>0 && r->fbh<REGION_LIMIT?(uint32_t)r->fbh:REGION_LIMIT;
+  const GmlRenderDeviceServices *device=gml_render_device(r);
+  if(!device || !device->observe_on_demand || !device->observe_on_demand(device->context))
+    return 0;
+  if(!r->resident_application_pass || r->interp || r->target_id<=0 ||
+     !anygm_policy_has_modern_layer_semantics(r->win) || !gml_render_target_preserves_alpha(r) ||
+     r->fog_flat || r->gui_pass_active || r->active_shader>=0 || r->alpha_test_enable ||
+     !r->alphablend || r->blendmode || r->blend_equation!=1 || r->blend_equation_alpha!=1 ||
+     fabs(rotation)>1000000.0 ||
+     r->color_write_mask!=15u || r->classic_phase_y || r->rotated_batch_count ||
+     r->rotated_batch_building || r->pending_underlay || r->pending_presentation ||
+     !gml_render_scene_target_matches(r) || page->project_authored_edges ||
+     page->sw<=0 || page->sh<=0 || page->sx<0 || page->sy<0 ||
+     page->tx<0 || page->ty<0 || (int64_t)page->tx+page->sw>page->bw ||
+     (int64_t)page->ty+page->sh>page->bh ||
+     !gml_render_atlas_scene_source_view(r,page->atlas,&source) ||
+     source.width>16384u || source.height>16384u ||
+     (uint64_t)(uint32_t)page->sx+(uint32_t)page->sw>source.width ||
+     (uint64_t)(uint32_t)page->sy+(uint32_t)page->sh>source.height) return 0;
+  for(int index=0;index<3;index++)
+    if(r->classic_interp_phase[index] || r->app_interp_phase[index]) return 0;
+  regions=malloc(capacity*sizeof *regions);
+  if(!regions) goto done;
+  rows=r->fbw<=16384 && r->fbh<=16384 &&
+    gml_render_rotated_nearest_row_regions(r,sprite,page,x,y,xs,ys,rotation,
+                                          regions,capacity,&count);
+  if(!rows){
+    GmlRenderRotatedCoverageRegion *expanded=realloc(regions,REGION_LIMIT*sizeof *regions);
+    if(!expanded) goto done;
+    regions=expanded;
+    if(!gml_render_rotated_nearest_texel_regions(r,sprite,page,x,y,xs,ys,
+         rotation,colour,regions,REGION_LIMIT,&count)) goto done;
+  }
+  if(!count){accepted=1;goto done;}
+  operations=calloc(count,sizeof *operations);
+  if(!operations) goto done;
+  gml_render_flush_pending_fill(r);
+  if(r->pending_fill || !(target=gml_render_scene_target_resource_ensure(r))) goto done;
+  GmlRenderImageRef image=gml_render_application_scene_next_image_ref(r,target);
+  if(image.content_version>UINT64_MAX-count) goto done;
+  state.write_mask=15u;state.colour=0xFFFFFFFFu;state.alpha=255u;
+  state.rgb_source_factor=state.alpha_source_factor=GML_RENDER_BLEND_SOURCE_ALPHA;
+  state.rgb_destination_factor=state.alpha_destination_factor=GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA;
+  state.rgb_equation=state.alpha_equation=GML_RENDER_BLEND_ADD;
+  state.sampler_count=1u;
+  uint32_t tint=((colour&255u)<<16)|(colour&0xFF00u)|((colour>>16)&255u);
+  for(uint32_t index=0;index<count;index++){
+    const GmlRenderRect *rect=&regions[index].region;
+    GmlRenderDrawOp *op=&operations[index];
+    op->opcode=GML_RENDER_OP_TEXTURED_QUAD;op->reconstruction_mode=GML_RENDER_DEVICE_CHECKPOINT;
+    op->scene_family=GML_RENDER_SCENE_SPRITE;op->source_count=1u;op->sources=&source.image;
+    op->target.image=image;op->target.image.content_version+=index+1u;
+    op->target.storage_version=1u;op->target.width=(uint32_t)r->fbw;op->target.height=(uint32_t)r->fbh;
+    op->target.pixel_format=GML_RENDER_PIXEL_ARGB8888;
+    op->target.region=(GmlRenderRect){0,0,(uint32_t)r->fbw,(uint32_t)r->fbh};
+    GmlRenderQuad *quad=&op->payload.quad;
+    quad->shape=GML_RENDER_QUAD_AXIS_ALIGNED;
+    quad->sampling.filter=GML_RENDER_FILTER_NEAREST_PHASED;
+    quad->sampling.edge_rule=GML_RENDER_EDGE_CLAMP_SUBIMAGE;
+    quad->sampling.quantisation=GML_RENDER_QUANTISE_SPRITE_MODERN_ROTATED_NEAREST;
+    quad->sampling.source_region=(GmlRenderRect){page->sx,page->sy,(uint32_t)page->sw,(uint32_t)page->sh};
+    quad->filtered_draw_alpha=alpha;
+    if(rows){
+      quad->span_active=GML_RENDER_SPAN_FIXED20_ROW;
+      const int64_t fixed[4]={regions[index].fixed_x,regions[index].delta_x,
+                              regions[index].fixed_y,regions[index].delta_y};
+      for(unsigned axis=0;axis<2u;axis++){
+        double *span=axis?quad->span_y:quad->span_x;
+        for(unsigned component=0;component<2u;component++){
+          int64_t value=fixed[axis*2u+component];
+          int64_t high=(int64_t)floor((double)value/65536.0);
+          span[component*2u]=(double)high;
+          span[component*2u+1u]=(double)(value-high*65536);
+        }
+      }
+    }
+    quad->x[0]=quad->x[3]=rect->x;quad->x[1]=quad->x[2]=(double)rect->x+rect->width;
+    quad->y[0]=quad->y[1]=rect->y;quad->y[2]=quad->y[3]=(double)rect->y+rect->height;
+    for(unsigned corner=0;corner<4u;corner++){
+      quad->corner_colour[corner]=((uint32_t)lround(alpha*255.0)<<24)|tint;
+      quad->u[corner]=rows?0.0:((double)page->sx+regions[index].source_x+0.5)/source.width;
+      quad->v[corner]=rows?0.0:((double)page->sy+regions[index].source_y+0.5)/source.height;
+    }
+  }
+  state.samplers[0]=operations[0].payload.quad.sampling;
+  GmlRenderDrawBatch batch={operations,count,&state,1u};
+  GmlRenderResourceExecution result=gml_render_application_scene_submit(r,&batch,&source,1u);
+  if(result==GML_RENDER_RESOURCE_EXEC_CPU) r->resident_application_pass=0;
+  accepted=result!=GML_RENDER_RESOURCE_EXEC_FAILED;
+  if(accepted){r->fb_all_transparent=0;r->fb_opaque_known=0;}
+done:
+  free(operations);free(regions);return accepted;
+}
+
 static int resident_filtered_sprite(GmlRender *r,GmlSprite *sprite,int subimg,
                                     double x,double y,double xs,double ys,double rotation,
                                     uint32_t blend,double alpha){
@@ -1229,6 +1342,8 @@ static int resident_filtered_sprite(GmlRender *r,GmlSprite *sprite,int subimg,
   double left=x-(double)sprite->originx*xs+(double)page->tx*xs-r->cam_x;
   double top=y-(double)sprite->originy*ys+(double)page->ty*ys-r->cam_y;
   if(!r->interp){
+    if(rotation!=0.0 && anygm_policy_has_modern_layer_semantics(r->win))
+      return resident_modern_nearest_rotation(r,sprite,page,x,y,xs,ys,rotation,blend,alpha);
     /* R03-SPR-FIRSTGEN-NEAREST-REDUCE: retain independent authored far-edge coverage
      * and fractional point phase for unit scale and bounded non-reciprocal reduction. */
     if(rotation==0.0 && anygm_policy_uses_first_generation_studio(r->win) &&

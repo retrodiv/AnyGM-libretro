@@ -4,9 +4,9 @@
 /* Cohesive software blit and pixel kernels. */
 #include "gml_render_cpu_backend.h"
 #include "gml_render_cpu_blit.h"
+#include "gml_render_internal.h"
 #include "gml_render_cpu_blit_internal.h"
 #include "gml_render_cpu_dispatch_internal.h"
-#include "gml_render_internal.h"
 #include "gml_render_sprites_internal.h"
 #include "gml_render_surfaces_internal.h"
 #include "gml_render_cpu_pixel_internal.h"
@@ -2804,7 +2804,7 @@ static void blit_one_band_rows(void *context,int row_start,int row_end,int slot)
   for(int row=row_start; row<row_end; row++){
     int yy=yy0+row;
     int py = flipy ? (y0-yy) : (y0+yy);
-    int ly=(int)((yy+sample_y)/ays);
+    int ly=gml_render_point_axis_index(yy,sample_y,ays);
     if(t->project_authored_edges){
       if(ly<0) ly=0;
       else if(ly>=t->sh) ly=t->sh-1;
@@ -2857,7 +2857,7 @@ static void blit_one_band_rows(void *context,int row_start,int row_end,int slot)
     }
     for(int xx=xx0; xx<xx1; xx++){
       int px = flipx ? (x0-xx) : (x0+xx);
-      int lx=lxtab? lxtab[xx-xx0] : (int)((xx+sample_x)/axs);
+      int lx=lxtab? lxtab[xx-xx0] : gml_render_point_axis_index(xx,sample_x,axs);
       if(t->project_authored_edges){
         if(lx<0) lx=0;
         else if(lx>=t->sw) lx=t->sw-1;
@@ -3308,7 +3308,7 @@ static void blit_one(GmlRender *r, GmlTpag *t, double dx, double dy, double xs, 
   if(first_generation_quad_phase_y)
     sample_y=first_generation_integer_magnification_y?y0+1.0-dy-1e-9:y0+0.5-dy;
   if(lxtab) for(int xx=xx0;xx<xx1;xx++){
-    int source_x=(int)((xx+sample_x)/axs);
+    int source_x=gml_render_point_axis_index(xx,sample_x,axs);
     if(t->project_authored_edges){
       if(source_x<0) source_x=0;
       else if(source_x>=t->sw) source_x=t->sw-1;
@@ -5194,10 +5194,10 @@ static int rotated_geometry_prepare(GmlRender *r,GmlSprite *spr,GmlTpag *t,
   return 1;
 }
 
-int gml_render_rotated_nearest_regions(GmlRender *r,GmlSprite *spr,GmlTpag *t,
+static int rotated_nearest_regions(GmlRender *r,GmlSprite *spr,GmlTpag *t,
                                        double x,double y,double xs,double ys,double rot,
                                        GmlRenderRotatedCoverageRegion *regions,
-                                       uint32_t capacity,uint32_t *count){
+                                       uint32_t capacity,uint32_t *count,int texel_regions,uint32_t colour){
   GmlRotatedGeometry geometry;
   if(!r || !spr || !t || !regions || !capacity || !count ||
      !isfinite(x) || !isfinite(y) || !isfinite(xs) || !isfinite(ys) ||
@@ -5206,6 +5206,10 @@ int gml_render_rotated_nearest_regions(GmlRender *r,GmlSprite *spr,GmlTpag *t,
      fabs(1.0/xs)>16384.0 || fabs(1.0/ys)>16384.0 ||
      t->atlas<0 || t->atlas>=r->n_atlas ||
      !atlas_pixels(r,t->atlas)) return 0;
+  GmlAtlas *atlas=&r->atlas[t->atlas];
+  if(texel_regions && (t->sx<0 || t->sy<0 || t->sw<=0 || t->sh<=0 ||
+     (uint64_t)(uint32_t)t->sx+(uint32_t)t->sw>(uint32_t)atlas->w ||
+     (uint64_t)(uint32_t)t->sy+(uint32_t)t->sh>(uint32_t)atlas->h)) return 0;
   *count=0u;
   int prepared=rotated_geometry_prepare(r,spr,t,&r->atlas[t->atlas],x,y,xs,ys,rot,0,1,&geometry);
   if(prepared<=0) return prepared==0;
@@ -5230,6 +5234,11 @@ int gml_render_rotated_nearest_regions(GmlRender *r,GmlSprite *spr,GmlTpag *t,
     double ry=py+0.5-g->ay,rx=rx0+0.5-g->ax;
     double local_x=(rx*g->c-ry*g->sn)*g->invxs+local_x_offset;
     double local_y=(rx*g->sn+ry*g->c)*g->invys+local_y_offset;
+    if(texel_regions){
+      /* Preserve the scalar point leaf's ordered additions, including cancellation. */
+      local_x=(rx*g->c-ry*g->sn)*g->invxs+spr->originx-t->tx;
+      local_y=(rx*g->sn+ry*g->c)*g->invys+spr->originy-t->ty;
+    }
     /* The shared packet helper uses int source coordinates. Check both ends
      * before fixed-point conversion; metadata refusal never changes CPU input. */
     if(!isfinite(local_x) || !isfinite(local_y) ||
@@ -5237,10 +5246,42 @@ int gml_render_rotated_nearest_regions(GmlRender *r,GmlSprite *spr,GmlTpag *t,
        fabs(local_y)+fabs(dly)*(rx1-rx0)>(double)INT_MAX-4.0) return 0;
     int64_t lx_fp=(int64_t)floor(local_x*(double)RFP_ONE);
     int64_t ly_fp=(int64_t)floor(local_y*(double)RFP_ONE);
+    if(texel_regions==2){
+      int64_t last=(int64_t)rx1-rx0-1;
+      /* Every shader multiply and sum must fit independently, not merely their final sum. */
+      if(last<0 || lx_fp<INT32_MIN || lx_fp>INT32_MAX || ly_fp<INT32_MIN || ly_fp>INT32_MAX ||
+         delta_x<INT32_MIN || delta_x>INT32_MAX || delta_y<INT32_MIN || delta_y>INT32_MAX ||
+         llabs(delta_x)*last>INT32_MAX || llabs(delta_y)*last>INT32_MAX ||
+         lx_fp+delta_x*last<INT32_MIN || lx_fp+delta_x*last>INT32_MAX ||
+         ly_fp+delta_y*last<INT32_MIN || ly_fp+delta_y*last>INT32_MAX ||
+         *count==capacity) return 0;
+      regions[(*count)++]=(GmlRenderRotatedCoverageRegion){
+        .region={rx0,py,(uint32_t)(rx1-rx0),1u},
+        .fixed_x=lx_fp,.fixed_y=ly_fp,.delta_x=delta_x,.delta_y=delta_y};
+      continue;
+    }
     for(int px=rx0;px<rx1;){
       int source_x,source_y,skip,vector;
-      int run=rotated_nearest_packet(t,lx_fp,ly_fp,delta_x,delta_y,rx1-px,
-                                      vector_pixels,&source_x,&source_y,&skip,&vector);
+      int run;
+      uint32_t sample_key=0u;
+      if(texel_regions){
+        source_x=floor_fixed20(lx_fp);source_y=floor_fixed20(ly_fp);vector=0;
+        int runx=fixed20_run_to_change(lx_fp,delta_x,source_x,rx1-px);
+        int runy=fixed20_run_to_change(ly_fp,delta_y,source_y,rx1-px);
+        run=runx<runy?runx:runy;if(run<1) run=1;
+        skip=source_x<0 || source_y<0 || source_x>=t->sw || source_y>=t->sh;
+        if(!skip){
+          const uint8_t *pixel=atlas->px+((size_t)(t->sy+source_y)*atlas->w+t->sx+source_x)*4u;
+          skip=pixel[3]==0u;
+          /* Equal tinted source bytes have equal scalar16 RGB and destination-alpha effects.
+           * A representative texel can therefore cover adjacent CPU-selected runs exactly. */
+          sample_key=((uint32_t)pixel[3]<<24)|
+            (((uint32_t)pixel[0]*(colour&255u)/255u)<<16)|
+            (((uint32_t)pixel[1]*((colour>>8)&255u)/255u)<<8)|
+            ((uint32_t)pixel[2]*((colour>>16)&255u)/255u);
+        }
+      } else run=rotated_nearest_packet(t,lx_fp,ly_fp,delta_x,delta_y,rx1-px,
+                                        vector_pixels,&source_x,&source_y,&skip,&vector);
       if(!skip){
         uint32_t vector_alpha=0u;
 #if defined(__SSE2__)
@@ -5248,12 +5289,14 @@ int gml_render_rotated_nearest_regions(GmlRender *r,GmlSprite *spr,GmlTpag *t,
 #endif
         GmlRenderRotatedCoverageRegion *last=*count?&regions[*count-1u]:NULL;
         if(last && last->vector_alpha==vector_alpha && last->region.y==py &&
+           (!texel_regions || last->sample_key==sample_key) &&
            (int64_t)last->region.x+last->region.width==px)
           last->region.width+=(uint32_t)run;
         else {
           if(*count==capacity) return 0;
           regions[(*count)++]=(GmlRenderRotatedCoverageRegion){
-            {px,py,(uint32_t)run,1u},vector_alpha};
+            .region={px,py,(uint32_t)run,1u},.vector_alpha=vector_alpha,
+            .source_x=source_x,.source_y=source_y,.sample_key=sample_key};
         }
       }
       lx_fp+=delta_x*(int64_t)run;
@@ -5262,6 +5305,27 @@ int gml_render_rotated_nearest_regions(GmlRender *r,GmlSprite *spr,GmlTpag *t,
     }
   }
   return 1;
+}
+
+int gml_render_rotated_nearest_regions(GmlRender *r,GmlSprite *spr,GmlTpag *t,
+                                       double x,double y,double xs,double ys,double rot,
+                                       GmlRenderRotatedCoverageRegion *regions,
+                                       uint32_t capacity,uint32_t *count){
+  return rotated_nearest_regions(r,spr,t,x,y,xs,ys,rot,regions,capacity,count,0,0u);
+}
+
+int gml_render_rotated_nearest_texel_regions(GmlRender *r,GmlSprite *spr,GmlTpag *t,
+                                             double x,double y,double xs,double ys,double rot,uint32_t colour,
+                                             GmlRenderRotatedCoverageRegion *regions,
+                                             uint32_t capacity,uint32_t *count){
+  return rotated_nearest_regions(r,spr,t,x,y,xs,ys,rot,regions,capacity,count,1,colour);
+}
+
+int gml_render_rotated_nearest_row_regions(GmlRender *r,GmlSprite *spr,GmlTpag *t,
+                                           double x,double y,double xs,double ys,double rot,
+                                           GmlRenderRotatedCoverageRegion *regions,
+                                           uint32_t capacity,uint32_t *count){
+  return rotated_nearest_regions(r,spr,t,x,y,xs,ys,rot,regions,capacity,count,2,0u);
 }
 
 static void GML_HOT_RENDER blit_rotated_impl(GmlRender *r, GmlSprite *spr, GmlTpag *t, double x, double y,

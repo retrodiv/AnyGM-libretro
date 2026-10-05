@@ -7,6 +7,12 @@
 #include <stddef.h>
 #include <stdint.h>
 
+/* Keep the point writer's binary64 addition before division. Device axis
+ * preparation reuses this expression instead of approximating texel ties. */
+static inline int gml_render_point_axis_index(int pixel,double phase,double scale){
+  return (int)((pixel+phase)/scale);
+}
+
 /* Preserve the nearest rotation writer's binary64 evaluation and truncation.
  * Device preparation uploads these 256 source-alpha factors, not pixels. */
 static inline uint32_t gml_render_rotated_alpha16_factor(unsigned source_alpha,
@@ -143,7 +149,9 @@ enum {
    * framebuffer, rather than quantising the source contribution separately. */
   GML_RENDER_QUANTISE_HARDWARE_COMBINED=8u,
   /* Modern numbered point sprites round tint and the complete source-over sum. */
-  GML_RENDER_QUANTISE_SPRITE_MODERN_NEAREST=9u
+  GML_RENDER_QUANTISE_SPRITE_MODERN_NEAREST=9u,
+  /* Modern numbered rotation: CPU fixed-point texel spans and truncating exact16 blend. */
+  GML_RENDER_QUANTISE_SPRITE_MODERN_ROTATED_NEAREST=10u
 };
 
 /* Resolved blend semantics, independent of any device API's enumerant values. Zeroed factors
@@ -241,7 +249,9 @@ typedef struct GmlRenderQuad {
   double filtered_draw_alpha;
   /* Modern filtered rotation optionally limits each row to the CPU quad span. Axis-aligned
    * box-filtered or float-band stretches carry [logical size, destination size, trim, visible size]
-   * in these four components per axis, with span_active left clear. */
+   * in these four components per axis, with span_active left clear. Modern nearest rotation
+   * may instead carry signed fixed20 [base high16, base low16, step high16, step low16],
+   * relative to the crop and the row's left edge, under GML_RENDER_SPAN_FIXED20_ROW. */
   double span_x[4],span_y[4];
   uint32_t span_active;
   uint32_t corner_colour[4];
@@ -250,6 +260,8 @@ typedef struct GmlRenderQuad {
   /* Automatic surface presentation's existing opacity certificate; never a pixel scan. */
   uint32_t source_opaque;
 } GmlRenderQuad;
+
+enum { GML_RENDER_SPAN_FIXED20_ROW=2u };
 
 /* Shared admission for the bounded double-expression font rule, before target writes. */
 int gml_render_filtered_font_quad_valid(const GmlRenderQuad *quad,

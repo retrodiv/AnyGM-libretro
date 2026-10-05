@@ -7,6 +7,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <limits.h>
+#include <math.h>
 
 static GlSourceTexture *acquire_source(GmlGpuBackend *backend,const GmlPlanImage *image,int linear){
   GlSourceTexture *slot=NULL;
@@ -90,19 +91,20 @@ static int axis_matches(const GlAxisMap *slot,const GmlPlanAxis *axis,uint32_t c
          slot->origin==axis->origin && slot->extent==axis->extent;
 }
 
-int gml_gpu_opengl_upload_axis(GmlGpuBackend *backend,uint32_t slot_index,const GmlPlanAxis *axis,
-                       uint32_t count,GmlGpuCounters *counters,GLuint *out_name){
-  GlAxisMap *slot;
-  if(slot_index>=GL_MAP_SLOTS || count==0u) return 0;
-  slot=&backend->maps[slot_index];
-  if(axis_matches(slot,axis,count) && slot->name){ *out_name=slot->name; return 1; }
+static int reserve_axis_scratch(GmlGpuBackend *backend,uint32_t count){
   if(backend->map_scratch_capacity<count){
     uint16_t *grown=(uint16_t*)realloc(backend->map_scratch,(size_t)count*sizeof *grown);
     if(!grown) return 0;
     backend->map_scratch=grown;
     backend->map_scratch_capacity=count;
   }
-  if(!gml_render_plan_axis_map(axis,backend->map_scratch,count)) return 0;
+  return 1;
+}
+
+/* Both terminal and scene maps use the same preserved integer texture upload.
+ * Their distinct cache keys never select one another's sampling rule. */
+static int upload_axis_map(GmlGpuBackend *backend,GlAxisMap *slot,const GmlPlanAxis *axis,
+                           uint32_t count,GmlGpuCounters *counters,GLuint *out_name){
   if(!slot->name){
     backend->gl.GenTextures(1,&slot->name);
     if(!slot->name) return 0;
@@ -127,6 +129,13 @@ int gml_gpu_opengl_upload_axis(GmlGpuBackend *backend,uint32_t slot_index,const 
                               GL_RED_INTEGER,GL_UNSIGNED_SHORT,backend->map_scratch);
   }
   backend->gl.PixelStorei(GL_UNPACK_ALIGNMENT,4);
+  /* Never publish a rejected upload's key. Storage failure also invalidates
+   * the capacity hint so a retry allocates before supplying its new samples. */
+  if(backend->gl.GetError()!=GL_NO_ERROR){
+    slot->valid=0;
+    slot->capacity=0;
+    return 0;
+  }
   slot->count=count;
   slot->rule=axis->rule;
   slot->source_extent=axis->source_extent;
@@ -138,6 +147,46 @@ int gml_gpu_opengl_upload_axis(GmlGpuBackend *backend,uint32_t slot_index,const 
   if(counters) counters->uploaded_bytes+=(uint64_t)count*2u;
   *out_name=slot->name;
   return 1;
+}
+
+int gml_gpu_opengl_upload_axis(GmlGpuBackend *backend,uint32_t slot_index,const GmlPlanAxis *axis,
+                       uint32_t count,GmlGpuCounters *counters,GLuint *out_name){
+  if(slot_index>=GL_PLAN_MAP_SLOTS || count==0u) return 0;
+  GlAxisMap *slot=&backend->maps[slot_index];
+  if(axis_matches(slot,axis,count) && slot->name){ *out_name=slot->name; return 1; }
+  if(!reserve_axis_scratch(backend,count) ||
+     !gml_render_plan_axis_map(axis,backend->map_scratch,count)) return 0;
+  return upload_axis_map(backend,slot,axis,count,counters,out_name);
+}
+
+int gml_gpu_opengl_upload_point_axis(GmlGpuBackend *backend,unsigned axis,
+                                    double anchor,double phase,double scale,
+                                    int first,uint32_t count,uint32_t source_extent,
+                                    GLuint *out_name){
+  /* UINT32_MAX is a private cache identity, not a terminal plan-axis rule.
+   * The extra two slots are disposable context-local scene maps. */
+  if(axis>1u || first<0 || first>10000000 ||
+     !count || count>4096u || !source_extent || source_extent>4096u ||
+     !isfinite(anchor) || anchor!=floor(anchor) || fabs(anchor)>10000000.0 ||
+     !isfinite(phase) || phase<0.0 || phase>1.0 ||
+     !isfinite(scale) || scale==0.0 || fabs(scale)>1000000.0) return 0;
+  int reflected=scale<0.0;
+  int pixel=reflected?(int)anchor-1-first:first-(int)anchor;
+  double extent=floor(source_extent*fabs(scale)+0.5);
+  if(extent<1.0 || extent>4096.0 || pixel<0 || pixel>=extent ||
+     (reflected?pixel<(int)count-1:pixel+(int)count>extent)) return 0;
+  GmlPlanAxis key={.rule=UINT32_MAX,.source_extent=source_extent,
+    .destination_extent=count,.destination_first=pixel,.origin=phase,.extent=scale};
+  GlAxisMap *slot=&backend->maps[GL_PLAN_MAP_SLOTS+axis];
+  if(axis_matches(slot,&key,count) && slot->name){ *out_name=slot->name; return 1; }
+  if(!reserve_axis_scratch(backend,count)) return 0;
+  for(uint32_t index=0;index<count;index++){
+    int sample=gml_render_point_axis_index(pixel+(reflected?-(int)index:(int)index),
+                                           phase,fabs(scale));
+    backend->map_scratch[index]=sample>=0 && (uint32_t)sample<source_extent
+      ?(uint16_t)sample:UINT16_MAX;
+  }
+  return upload_axis_map(backend,slot,&key,count,NULL,out_name);
 }
 
 /* Scene storage is derived and disposable. Logical identity and content versions are supplied by

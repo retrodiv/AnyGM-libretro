@@ -67,6 +67,10 @@ unsigned anygm_test_graphics_flush_calls(void);
 unsigned anygm_test_graphics_font_channel_draws(unsigned channel);
 unsigned anygm_test_graphics_font_channel_errors(void);
 void anygm_test_graphics_fail_scene_draw_at(unsigned ordinal);
+/* Refuse data uploads to this texture without changing its stored bytes; zero disables it. */
+void anygm_test_graphics_fail_texture_upload(unsigned name);
+/* Texture bound to this sampler at the most recent scene draw, not shader emulation. */
+unsigned anygm_test_graphics_scene_sampler_texture(unsigned unit);
 /* Texture identity and minification filter captured at the last content draw. */
 unsigned anygm_test_graphics_quad_texture(unsigned unit);
 int anygm_test_graphics_quad_filter(unsigned unit);

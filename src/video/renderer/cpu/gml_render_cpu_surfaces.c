@@ -6,8 +6,8 @@
 #include "gml_render_cpu_surfaces.h"
 #include "gml_render_cpu_backend.h"
 #include "gml_render_cpu_shader_pass.h"
-#include "gml_render_cpu_blit_internal.h"
 #include "gml_render_internal.h"
+#include "gml_render_cpu_blit_internal.h"
 #include "gml_render_surfaces_internal.h"
 #include "gml_render_cpu_pixel_internal.h"
 

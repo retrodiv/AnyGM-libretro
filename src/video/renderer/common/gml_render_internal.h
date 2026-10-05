@@ -794,10 +794,21 @@ void gml_render_dispatch_batch_record(GmlRender *render,const GmlRenderDrawBatch
 typedef struct GmlRenderRotatedCoverageRegion {
   GmlRenderRect region;
   uint32_t vector_alpha;
+  int source_x,source_y;
+  uint32_t sample_key;
+  int64_t fixed_x,fixed_y,delta_x,delta_y;
 } GmlRenderRotatedCoverageRegion;
 int gml_render_rotated_nearest_regions(GmlRender *r,GmlSprite *sprite,GmlTpag *tpag,
                                        double x,double y,double xscale,double yscale,
                                        double rotation,GmlRenderRotatedCoverageRegion *regions,
                                        uint32_t capacity,uint32_t *count);
+int gml_render_rotated_nearest_texel_regions(GmlRender *r,GmlSprite *sprite,GmlTpag *tpag,
+                                             double x,double y,double xscale,double yscale,
+                                             double rotation,uint32_t colour,GmlRenderRotatedCoverageRegion *regions,
+                                             uint32_t capacity,uint32_t *count);
+int gml_render_rotated_nearest_row_regions(GmlRender *r,GmlSprite *sprite,GmlTpag *tpag,
+                                           double x,double y,double xscale,double yscale,
+                                           double rotation,GmlRenderRotatedCoverageRegion *regions,
+                                           uint32_t capacity,uint32_t *count);
 
 #endif

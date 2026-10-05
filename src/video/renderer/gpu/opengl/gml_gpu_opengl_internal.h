@@ -8,7 +8,8 @@
 #include "gml_gpu_opengl_api.h"
 
 enum {
-  GL_MAP_SLOTS=GML_PLAN_MAX_OPERATIONS*2,
+  GL_PLAN_MAP_SLOTS=GML_PLAN_MAX_OPERATIONS*2,
+  GL_MAP_SLOTS=GL_PLAN_MAP_SLOTS+2,
   GL_INFO_LOG_LIMIT=512,
   GL_CONTENT_PROGRAMS=16,
   GL_CONTENT_UNIFORMS=64,
@@ -135,6 +136,7 @@ typedef struct GlScene {
   GLint a_span_x,a_span_y,a_span_active;
   GLint u_extent,u_image,u_filter,u_previous,u_region_origin;
   GLint u_rotated_alpha16;
+  GLint u_point_map_x,u_point_map_y,u_point_origin;
   double rotated_alpha16_value;
   int rotated_alpha16_valid;
   int rotated_alpha16_modern_nearest;
@@ -200,6 +202,10 @@ int gml_gpu_opengl_upload_source(GmlGpuBackend *backend,const GmlPlanImage *imag
 int gml_gpu_opengl_upload_axis(GmlGpuBackend *backend,uint32_t slot_index,
                                 const GmlPlanAxis *axis,uint32_t count,
                                 GmlGpuCounters *counters,GLuint *out_name);
+int gml_gpu_opengl_upload_point_axis(GmlGpuBackend *backend,unsigned axis,
+                                    double anchor,double phase,double scale,
+                                    int first,uint32_t count,uint32_t source_extent,
+                                    GLuint *out_name);
 void gml_gpu_opengl_record_error(char *error,size_t capacity,const char *format,...);
 void gml_gpu_opengl_set_rect(GmlGpuBackend *backend,const GmlPlanRect *rect,
                               uint32_t target_height);

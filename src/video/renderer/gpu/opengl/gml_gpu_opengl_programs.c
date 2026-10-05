@@ -160,6 +160,9 @@ int gml_gpu_opengl_scene_program(GmlGpuBackend *backend,char *error,size_t error
   scene->u_previous=backend->gl.GetUniformLocation(scene->program,"u_previous");
   scene->u_region_origin=backend->gl.GetUniformLocation(scene->program,"u_region_origin");
   scene->u_rotated_alpha16=backend->gl.GetUniformLocation(scene->program,"u_rotated_alpha16[0]");
+  scene->u_point_map_x=backend->gl.GetUniformLocation(scene->program,"u_point_map_x");
+  scene->u_point_map_y=backend->gl.GetUniformLocation(scene->program,"u_point_map_y");
+  scene->u_point_origin=backend->gl.GetUniformLocation(scene->program,"u_point_origin");
   scene->u_recovery_screen=backend->gl.GetUniformLocation(scene->program,"u_recovery_screen");
   scene->u_recovery_application=backend->gl.GetUniformLocation(scene->program,"u_recovery_application");
   scene->u_recovery_rect=backend->gl.GetUniformLocation(scene->program,"u_recovery_rect");
@@ -169,6 +172,7 @@ int gml_gpu_opengl_scene_program(GmlGpuBackend *backend,char *error,size_t error
      scene->a_span_x<0 || scene->a_span_y<0 || scene->a_span_active<0 ||
      scene->u_extent<0 || scene->u_image<0 || scene->u_filter<0 ||
      scene->u_previous<0 || scene->u_region_origin<0 || scene->u_rotated_alpha16<0 ||
+     scene->u_point_map_x<0 || scene->u_point_map_y<0 || scene->u_point_origin<0 ||
      scene->u_recovery_screen<0 || scene->u_recovery_application<0 || scene->u_recovery_rect<0){
     gml_gpu_opengl_record_error(error,error_capacity,"scene program is missing an attribute or uniform");
     backend->gl.DeleteProgram(scene->program);

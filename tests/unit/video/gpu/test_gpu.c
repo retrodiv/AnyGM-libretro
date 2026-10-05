@@ -1479,6 +1479,105 @@ static int scene_atlas_retire_advanced_version_case(void){
   return 1;
 }
 
+static int scene_numbered_rotated_texel_spans_case(void){
+  const uint8_t pixels[16]={255,0,0,128,0,255,0,0,0,0,255,255,255,255,255,64};
+  for(unsigned mode=0;mode<2u;mode++)
+  for(unsigned api=0;api<2u;api++){
+    GmlRenderImageRef source={GML_RENDER_RESOURCE_ATLAS,95u,1u,1u};
+    GmlRenderImageRef target={GML_RENDER_RESOURCE_SURFACE,96u,1u,1u};
+    GmlRenderDrawStateSnapshot states[2]={0};GmlRenderDrawOp operations[3]={0};
+    GmlRenderImageUpload upload={0};GmlRenderDeviceServices service;
+    GmlGpuContext context=fake_context(api?GML_GPU_API_OPENGLES3:GML_GPU_API_OPENGL_CORE);
+    anygm_test_graphics_reset();
+    GmlGpu *gpu=gml_gpu_create();
+    REQUIRE(gpu && gml_gpu_context_reset(gpu,&context),"texel-span context adopted");
+    gml_gpu_device_services(gpu,&service);
+    upload.image=source;upload.storage_width=upload.storage_height=2u;
+    upload.region=(GmlRenderRect){0,0,2u,2u};upload.pixel_format=GML_RENDER_PIXEL_RGBA8888;
+    upload.stride_bytes=8u;upload.byte_capacity=sizeof pixels;upload.bytes=pixels;
+    REQUIRE(service.upload(service.context,&upload),"texel-span source uploaded");
+    for(unsigned index=0;index<3u;index++){
+      GmlRenderDrawOp *op=&operations[index];
+      op->target.image=target;op->target.image.content_version=index+1u;
+      op->target.storage_version=1u;op->target.width=op->target.height=8u;
+      op->target.pixel_format=GML_RENDER_PIXEL_ARGB8888;
+      op->target.region=(GmlRenderRect){0,0,8u,8u};
+      if(!index){op->opcode=GML_RENDER_OP_CLEAR;op->payload.clear_colour=0x40102030u;continue;}
+      GmlRenderDrawStateSnapshot *state=&states[index-1u];
+      state->write_mask=15u;state->alpha=255u;state->colour=0xffffffffu;state->sampler_count=1u;
+      state->rgb_source_factor=state->alpha_source_factor=GML_RENDER_BLEND_SOURCE_ALPHA;
+      state->rgb_destination_factor=state->alpha_destination_factor=GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA;
+      state->rgb_equation=state->alpha_equation=GML_RENDER_BLEND_ADD;
+      state->samplers[0].filter=GML_RENDER_FILTER_NEAREST_PHASED;
+      state->samplers[0].edge_rule=GML_RENDER_EDGE_CLAMP_SUBIMAGE;
+      state->samplers[0].quantisation=GML_RENDER_QUANTISE_SPRITE_MODERN_ROTATED_NEAREST;
+      state->samplers[0].source_region=(GmlRenderRect){(int)index-1,0,1u,1u};
+      op->opcode=GML_RENDER_OP_TEXTURED_QUAD;op->scene_family=GML_RENDER_SCENE_SPRITE;
+      op->reconstruction_mode=GML_RENDER_DEVICE_CHECKPOINT;
+      op->state_index=index-1u;op->sources=&source;op->source_count=1u;
+      GmlRenderQuad *q=&op->payload.quad;q->shape=GML_RENDER_QUAD_AXIS_ALIGNED;
+      q->sampling=state->samplers[0];q->filtered_draw_alpha=0.5;
+      q->x[0]=q->x[3]=(index-1u)*3u;q->x[1]=q->x[2]=index*3u;
+      q->y[2]=q->y[3]=1.0;
+      for(unsigned corner=0;corner<4u;corner++){
+        q->u[corner]=((double)index-0.5)/2.0;q->v[corner]=0.25;
+        q->corner_colour[corner]=0x80402010u;
+      }
+      if(mode){
+        q->span_active=GML_RENDER_SPAN_FIXED20_ROW;
+        q->sampling.source_region=(GmlRenderRect){0,0,2u,2u};
+        state->samplers[0]=q->sampling;
+        q->span_x[0]=index==1u?8.0:24.0;
+        q->span_x[2]=index==1u?8.0:-8.0;
+        q->span_y[0]=8.0;
+        for(unsigned corner=0;corner<4u;corner++) q->u[corner]=q->v[corner]=0.0;
+      }
+    }
+    GmlRenderDrawBatch batch={operations,3u,states,2u};
+    unsigned copies=anygm_test_graphics_scene_copies();
+    GmlRenderExecutionResult result=service.submit(service.context,&batch);
+    REQUIRE(result.status==GML_RENDER_EXEC_ACCEPTED && result.accepted_prefix==3u,
+            "two disjoint CPU-selected texel spans accepted");
+    REQUIRE(anygm_test_graphics_scene_copies()==copies+1u && anygm_test_graphics_read_pixels()==0u,
+            "disjoint spans share one device predecessor without CPU observation");
+    REQUIRE(anygm_test_graphics_color_mask_all() && !anygm_test_graphics_blend_enabled(),
+            "texel-span composition restores write mask and blending");
+    for(unsigned variant=0;variant<(mode?10u:8u);variant++){
+      GmlRenderDrawStateSnapshot invalid_states[2];GmlRenderDrawOp invalid_operations[3];
+      memcpy(invalid_states,states,sizeof states);memcpy(invalid_operations,operations,sizeof operations);
+      GmlRenderDrawStateSnapshot *state=&invalid_states[0];GmlRenderQuad *q=&invalid_operations[1].payload.quad;
+      if(mode){
+        if(variant==0u) state->write_mask=7u;
+        if(variant==1u) q->y[2]=q->y[3]=2.0;
+        if(variant==2u) q->span_active=1u;
+        if(variant==3u) q->span_x[1]=65536.0;
+        if(variant==4u) q->span_x[0]=32768.0;
+        if(variant==5u){q->span_x[2]=32767.0;q->span_x[3]=65535.0;}
+        if(variant==6u){q->span_x[0]=32767.0;q->span_x[1]=65535.0;}
+        if(variant==7u) q->filtered_draw_alpha=0.0;
+        if(variant==8u) q->span_y[1]=0.5;
+        if(variant==9u) invalid_operations[1].target.width=16385u;
+      } else {
+        if(variant==0u) state->write_mask=7u;
+        if(variant==1u) q->y[2]=q->y[3]=2.0;
+        if(variant==2u) q->sampling.source_region.x=2;
+        if(variant==3u) q->u[0]+=0.125;
+        if(variant==4u) q->span_active=1u;
+        if(variant==5u) invalid_operations[1].target.image.resource_class=GML_RENDER_RESOURCE_SCREEN;
+        if(variant==6u) invalid_operations[1].reconstruction_mode=GML_RENDER_REPLAY_EXACT;
+        if(variant==7u) q->filtered_draw_alpha=0.0;
+      }
+      state->samplers[0]=q->sampling;
+      GmlRenderDrawBatch invalid={invalid_operations,3u,invalid_states,2u};
+      result=service.submit(service.context,&invalid);
+      REQUIRE(result.status!=GML_RENDER_EXEC_ACCEPTED && result.accepted_prefix==0u,
+              "unqualified texel span is refused before any target write");
+    }
+    gml_gpu_destroy(gpu,1);
+  }
+  return 1;
+}
+
 /* Driver call/state proof for independent channel masks. Real pixels are qualified separately. */
 static int scene_numbered_sprite_channel_masks_case(void){
   const uint8_t pixels[16]={255,0,0,128,0,255,0,0,0,0,255,255,255,255,255,64};
@@ -1529,7 +1628,11 @@ static int scene_numbered_sprite_channel_masks_case(void){
       op->state_index=mask;op->sources=&source;op->source_count=1u;
       GmlRenderQuad *quad=&op->payload.quad;
       quad->shape=GML_RENDER_QUAD_AXIS_ALIGNED;quad->sampling=state->samplers[0];
-      if(modern) quad->filtered_draw_alpha=0.5;
+      if(modern){
+        quad->filtered_draw_alpha=0.5;
+        quad->inverse_x[0]=quad->inverse_y[1]=2.0;
+        quad->inverse_x[1]=quad->inverse_y[0]=0.5;
+      }
       quad->x[1]=quad->x[2]=quad->y[2]=quad->y[3]=4.0;
       quad->u[1]=quad->u[2]=quad->v[2]=quad->v[3]=1.0;
       for(unsigned corner=0;corner<4u;corner++) quad->corner_colour[corner]=0x80402010u;
@@ -1549,7 +1652,37 @@ static int scene_numbered_sprite_channel_masks_case(void){
     REQUIRE(anygm_test_graphics_read_pixels()==0,"channel masks do not observe the target");
     if(modern) REQUIRE(anygm_test_graphics_scene_copies()==copies+16u,
             "modern masked source-over takes ordered device predecessors across mask changes");
-    for(unsigned variant=0;variant<(modern?19u:12u);variant++){
+    if(modern){
+      unsigned map_x=anygm_test_graphics_first_texture_with_format(GL_R16UI);
+      unsigned map_y=anygm_test_graphics_texture_with_format(GL_R16UI);
+      REQUIRE(map_x && map_y && map_x!=map_y &&
+              anygm_test_graphics_scene_sampler_texture(2u)==map_x &&
+              anygm_test_graphics_scene_sampler_texture(3u)==map_y &&
+              anygm_test_graphics_texture_width(map_x)==4 &&
+              anygm_test_graphics_texture_height(map_x)==1 &&
+              anygm_test_graphics_texture_width(map_y)==4 &&
+              anygm_test_graphics_texture_height(map_y)==1,
+              "both independent integer point axes bind at the real scene draw");
+      GmlRenderDrawOp upload_operations[2]={operations[0],operations[8]};
+      GmlRenderDrawBatch upload_batch={upload_operations,2u,states,16u};
+      upload_operations[1].payload.quad.inverse_x[1]=0.25;
+      unsigned uploaded=anygm_test_graphics_texture_data_uploads(map_x);
+      int draws=anygm_test_graphics_scene_draw_calls();
+      unsigned before_copies=anygm_test_graphics_scene_copies();
+      anygm_test_graphics_fail_texture_upload(map_x);
+      result=service.submit(service.context,&upload_batch);
+      REQUIRE(result.status!=GML_RENDER_EXEC_ACCEPTED &&
+              anygm_test_graphics_scene_draw_calls()==draws &&
+              anygm_test_graphics_scene_copies()==before_copies &&
+              anygm_test_graphics_texture_data_uploads(map_x)==uploaded,
+              "failed point-axis replacement refuses before its predecessor or draw");
+      anygm_test_graphics_fail_texture_upload(0u);
+      result=service.submit(service.context,&upload_batch);
+      REQUIRE(result.status==GML_RENDER_EXEC_ACCEPTED && result.accepted_prefix==2u &&
+              anygm_test_graphics_texture_data_uploads(map_x)==uploaded+1u,
+              "retry uploads the rejected point-axis key instead of reusing stale samples");
+    }
+    for(unsigned variant=0;variant<(modern?28u:12u);variant++){
       GmlRenderDrawStateSnapshot invalid_states[16];
       GmlRenderDrawOp invalid_operations[17];
       memcpy(invalid_states,states,sizeof states);
@@ -1579,6 +1712,15 @@ static int scene_numbered_sprite_channel_masks_case(void){
       if(variant==17u) op->payload.quad.x[0]=op->payload.quad.x[3]=0.25;
       if(variant==18u) for(unsigned index=0;index<17u;index++)
         invalid_operations[index].target.pixel_format=GML_RENDER_PIXEL_XRGB8888;
+      if(variant==19u) op->payload.quad.inverse_x[0]=0.0;
+      if(variant==20u) op->payload.quad.inverse_y[1]=NAN;
+      if(variant==21u) op->payload.quad.inverse_anchor[0]=0.25;
+      if(variant==22u) op->payload.quad.inverse_anchor[1]=INFINITY;
+      if(variant==23u) op->payload.quad.inverse_x[1]=-0.25;
+      if(variant==24u) op->payload.quad.inverse_y[0]=1.25;
+      if(variant==25u) op->payload.quad.inverse_x[0]=-2.0;
+      if(variant==26u) op->payload.quad.inverse_y[1]=2049.0;
+      if(variant==27u) op->payload.quad.span_active=1u;
       op->payload.quad.sampling=state->samplers[0];
       int clears=anygm_test_graphics_clear_calls();
       int draws=anygm_test_graphics_scene_draw_calls();
@@ -3093,6 +3235,7 @@ int main(int argc,char **argv){
     {"scene_gles_font_programs",scene_gles_font_programs_case},
     {"scene_screen_filtered_alpha_stamp",scene_screen_filtered_alpha_stamp_case},
     {"scene_numbered_sprite_channel_masks",scene_numbered_sprite_channel_masks_case},
+    {"scene_numbered_rotated_texel_spans",scene_numbered_rotated_texel_spans_case},
     {"scene_completed_screen_query",scene_completed_screen_query_case},
     {"scene_empty_screen_recovery",scene_empty_screen_recovery_case},
   };

@@ -153,6 +153,8 @@
   "uniform ivec2 u_region_origin;\n" \
   "uniform ivec4 u_rotated_alpha16[64];\n" \
   "uniform int u_filter;\n" \
+  "uniform usampler2D u_point_map_x,u_point_map_y;\n" \
+  "uniform ivec2 u_point_origin;\n" \
   "uniform sampler2D u_recovery_screen,u_recovery_application;\n" \
   "uniform ivec4 u_recovery_rect;\n" \
   "uniform vec2 u_extent;\n" \
@@ -276,6 +278,29 @@
   "    o_color=u_filter==24?vec4(0.0,0.0,0.0,1.0):sampled; return;\n" \
   "  }\n" \
   "  // R03_SHADER_DIRECT_TEXTURE: nearest/atlas page sampling.\n" \
+  "  // Exact CPU-selected rotated texel spans, truncating tint and scalar16 RGB.\n" \
+  "  if(u_filter==29){\n" \
+  "    ivec2 point=ivec2(floor(v_texcoord*vec2(textureSize(u_image,0))));\n" \
+  "    if(v_span_active>0.5){\n" \
+  "      int offset=int(floor(gl_FragCoord.x))-int(v_map.x);\n" \
+  "      ivec4 sx=ivec4(v_span_x),sy=ivec4(v_span_y);\n" \
+  "      int px=(sx.x*65536+sx.y+offset*(sx.z*65536+sx.w))>>20;\n" \
+  "      int py=(sy.x*65536+sy.y+offset*(sy.z*65536+sy.w))>>20;\n" \
+  "      point=ivec2(px,py)+ivec2(v_clamp.xy);\n" \
+  "      if(any(lessThan(point,ivec2(v_clamp.xy))) || any(greaterThan(point,ivec2(v_clamp.zw)))) discard;\n" \
+  "    }\n" \
+  "    ivec4 sampled=ivec4(floor(texelFetch(u_image,point,0)*255.0+0.5));\n" \
+  "    int encoded=u_rotated_alpha16[sampled.a/4][sampled.a%4];\n" \
+  "    int factor=encoded&131071;\n" \
+  "    if(factor==0) discard;\n" \
+  "    ivec3 tint=ivec3(floor(v_colour.rgb*255.0+0.5));\n" \
+  "    ivec3 rgb=sampled.rgb*tint/255;\n" \
+  "    ivec4 prior=ivec4(floor(texelFetch(u_previous,ivec2(gl_FragCoord.xy)-u_region_origin,0)*255.0+0.5));\n" \
+  "    rgb=(rgb*factor+prior.rgb*(65536-factor))/65536;\n" \
+  "    int alpha=encoded>>17;\n" \
+  "    alpha=(alpha*alpha+prior.a*(255-alpha)+127)/255;\n" \
+  "    o_color=vec4(rgb,alpha)/255.0; return;\n" \
+  "  }\n" \
   "  if(u_filter==0){ o_color=texture(u_image,v_texcoord)*v_colour; return; }\n" \
   "  // R03_SHADER_HARDWARE_FILTERED_ADDITIVE: Hardware bilinear additive without destination sampling.\n" \
   "  if(u_filter==18){\n" \
@@ -360,7 +385,15 @@
   "  ivec2 lo; vec2 f;\n" \
   "  // R03_SHADER_INVERSE_GEOMETRY: affine inverse or triangle-local page UV.\n" \
   "  // R03_SHADER_STRETCHED_FLOAT: exact integer phase before the CPU band's float weights.\n" \
-  "  if(u_filter==11 || u_filter==14){\n" \
+  "  // R03_SHADER_MODERN_NUMBERED_POINT_MAP: original binary64 point indices,\n" \
+  "  // including reflected anchors and skipped physical crop edges.\n" \
+  "  if(u_filter==27){\n" \
+  "    ivec2 p=ivec2(floor(centre))-u_point_origin;\n" \
+  "    lo=ivec2(texelFetch(u_point_map_x,ivec2(p.x,0),0).r,\n" \
+  "             texelFetch(u_point_map_y,ivec2(p.y,0),0).r);\n" \
+  "    if(any(equal(lo,ivec2(65535)))) discard;\n" \
+  "    f=vec2(0.0);\n" \
+  "  } else if(u_filter==11 || u_filter==14){\n" \
   "    ivec2 logical=ivec2(v_span_x.x,v_span_y.x),dest=ivec2(v_span_x.y,v_span_y.y);\n" \
   "    // Add one denominator before division so edge phases never use negative remainder.\n" \
   "    ivec2 numerator=(ivec2(floor(delta))*2+ivec2(1))*logical+dest;\n" \

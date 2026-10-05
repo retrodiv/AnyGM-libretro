@@ -5,6 +5,7 @@
  * kernels remain the arithmetic owner; this unit borrows the checkpoint and retained source. */
 #include "gml_render_cpu_replay.h"
 #include "gml_render_cpu_backend.h"
+#include "gml_render_internal.h"
 #include "gml_render_cpu_blit_internal.h"
 #include "gml_render_cpu_blit.h"
 #include "gml_render_cpu_surfaces.h"
