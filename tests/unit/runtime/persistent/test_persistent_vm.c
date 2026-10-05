@@ -5,6 +5,7 @@
 
 #include "gml_builtin.h"
 #include "gml_vm_internal.h"
+#include "gml_value_internal.h"
 #include "gml_render.h"
 #include "gml_render_internal.h"
 #include "gml_audio.h"
@@ -2987,6 +2988,59 @@ int expect_array_function_gap_closure(void){
   return ok;
 }
 
+
+/* Updating a cell in an existing array of rows must not reinterpret ordinary
+ * matrix[i] bytecode as a flattened legacy cell accessor. */
+int expect_array_2d_preserves_nested_rows(void){
+  unsigned char data[24]={0};
+  fixture_word(data,0,(OP_PUSH<<24)|(DT_INT16<<16)|(uint16_t)IT_GLOBAL);
+  fixture_word(data,1,(OP_PUSH<<24)|(DT_INT16<<16)|1u);
+  fixture_word(data,2,(OP_PUSH<<24)|(DT_VAR<<16));
+  fixture_word(data,3,0u);
+  fixture_word(data,4,(OP_RET<<24)|(DT_VAR<<16));
+  uint32_t reference=12;
+  const char *name="matrix";
+  GmlCode code={0}; code.name="gml_Script_nested_rows_fixture"; code.length=20;
+  GmlWin win={0}; win.data=data; win.size=sizeof data; win.bytecode=17;
+  win.code=&code; win.n_code=1;
+  win.ref_addr=&reference; win.ref_name=&name; win.n_refs=1;
+  GmlVM vm={0}; vm.win=&win; vm.cur_code_index=-1; vm.math_epsilon=1e-5;
+  GmlVal matrix=gml_arr_new(2,vreal(0));
+  GmlVal row0=gml_arr_new(3,vreal(13)),row1=gml_arr_new(3,vreal(17));
+  gml_arr_set(matrix,0,row0); gml_arr_set(matrix,1,row1);
+  GmlVal args[4]={matrix,vreal(1),vreal(2),vreal(29)};
+  (void)gml_builtin_call(&vm,"array_set_2D",args,4);
+  *gml_varmap_put(&vm.globals,name)=matrix;
+  GmlVal row=gml_vm_run_code(&vm,0,NULL,NULL,NULL,0);
+  int ok=row.t==V_ARR && row.arr==row1.arr &&
+    gml_arr_get(row,2).t==V_REAL && gml_arr_get(row,2).d==29 &&
+    gml_arr_get(row0,1).d==13;
+  /* The compact representation created by the legacy compatibility function
+   * still supports its established flattened bytecode access. */
+  GmlVal compact=gml_arr_new(0,vreal(0)),cell=vreal(0);
+  gml_arr_set_2d(compact,1,2,vreal(31));
+  gml_arr_set_2d(compact,1,2,vreal(37));
+  int compact_ok=gml_arr_nested_get_flat(compact,GML_2D_STRIDE+2,&cell) &&
+    cell.t==V_REAL && cell.d==37;
+  /* An already-flat legacy array keeps its representation and neighbouring
+   * cell when the same compatibility function updates an existing row. */
+  GmlVal flat=gml_arr_new(0,vreal(0));
+  GmlArr *flat_array=(GmlArr *)flat.arr;
+  gml_arr_note_legacy_2d_set(flat_array,GML_2D_STRIDE+1);
+  gml_arr_set(flat,GML_2D_STRIDE+1,vreal(41));
+  gml_arr_set_2d(flat,1,2,vreal(43));
+  int flat_ok=flat_array->is_2d && !flat_array->nested_2d &&
+    gml_arr_get(flat,GML_2D_STRIDE+1).d==41 &&
+    gml_arr_get(flat,GML_2D_STRIDE+2).d==43 &&
+    gml_arr_get_2d(flat,1,2).d==43 && gml_val_array_length_2d(flat,1)==3;
+  ok=ok && compact_ok && flat_ok;
+  if(!ok) fprintf(stderr,"nested row accessor changed after cell update: type=%d\n",row.t);
+  gml_varmap_free(&vm.globals);
+  gml_values_release(&compact,1);
+  gml_values_release(&flat,1);
+  free(code.insn); free(code.insn_pc); free(code.branch_index); free(win.ref_hix);
+  return ok;
+}
 
 static int expect_array_compound_shape(int retained_reference){
   unsigned char data[128]={0};

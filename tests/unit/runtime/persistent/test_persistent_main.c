@@ -63,6 +63,7 @@ int main(int argc,char **argv){
     {"sequence_asset_keys_and_parameters",expect_sequence_asset_keys_and_parameters},
     {"hash_layer_gpu",expect_hash_layer_gpu_gap_closure},
     {"array_functions",expect_array_function_gap_closure},
+    {"array_2d_nested_rows",expect_array_2d_preserves_nested_rows},
     {"struct_alarm_array_namespace",expect_struct_alarm_array_namespace},
     {"room_lifecycle",expect_persistent_lifecycle},
   };

@@ -232,9 +232,13 @@ void gml_arr_set_2d(GmlVal arr, int row, int column, GmlVal val){
     return;
   }
   gml_arr_index_ensure(A,row); if(row>=A->cap) return;
-  if(A->data[row].t!=V_ARR || !A->data[row].arr)
+  if(A->data[row].t!=V_ARR || !A->data[row].arr){
     A->data[row]=gml_arr_new(0,vreal(0));
-  A->nested_2d=1;
+    A->nested_2d=1;
+  }
+  /* A caller-provided row already has ordinary nested-array indexing. Updating
+   * its cell must not turn matrix[i] into the legacy flattened cell accessor.
+   * Newly materialized compatibility rows retain the established flag above. */
   gml_arr_set(A->data[row],column,val);
 }
 GmlVal gml_arr_get_2d(GmlVal arr, int row, int column){
