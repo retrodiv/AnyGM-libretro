@@ -108,7 +108,7 @@ static int resident_atlas_crop_from_page(GmlRender *r,GmlTpag *page,
                                          int crop_x,int crop_y,int crop_width,int crop_height,
                                          double left,double top,double xs,double ys,
                                          GmlRenderSceneFamily family,uint32_t colour,
-                                         double draw_alpha);
+                                         double draw_alpha,int physical_sprite_page);
 static int resident_identity_screen_gui(const GmlRender *r){
   return r && r->gui_pass_active && r->base_scene_resource &&
          r->fb==r->base_scene_resource_pixels &&
@@ -173,11 +173,16 @@ static int resident_integer_sprite(GmlRender *r,GmlSprite *sprite,int subimg,
   page_index=sprite->frame[sub];
   if(page_index<0 || page_index>=r->n_tpag) return 0;
   page=&r->tpag[page_index];
+  /* Ordinary Studio nearest blits project and sample the physical sw/sh crop.
+   * Stored tw/th does not rescale that leaf. Keep the original page identity
+   * and cached alpha classification; other callers retain their layout guard. */
   if(page->sw<=0 || page->sh<=0 || page->sx<0 || page->sy<0 ||
      page->tx<0 || page->ty<0 ||
      (uint64_t)(uint32_t)page->tx+(uint32_t)page->sw>(uint32_t)sprite->w ||
      (uint64_t)(uint32_t)page->ty+(uint32_t)page->sh>(uint32_t)sprite->h ||
-     page->tw!=page->sw || page->th!=page->sh ||
+     page->tw<=0 || page->th<=0 ||
+     ((r->classic || r->interp) &&
+      (page->tw!=page->sw || page->th!=page->sh)) ||
      page->bw!=sprite->w || page->bh!=sprite->h ||
      page->atlas<0 || page->atlas>=r->n_atlas) return 0;
   left=x-(double)sprite->originx*xs+(double)page->tx*xs-r->cam_x;
@@ -196,14 +201,15 @@ static int resident_integer_sprite(GmlRender *r,GmlSprite *sprite,int subimg,
       return 1;
   }
   return resident_atlas_crop_from_page(r,page,0,0,page->sw,page->sh,
-                                       left,top,xs,ys,GML_RENDER_SCENE_SPRITE,blend,alpha);
+                                       left,top,xs,ys,GML_RENDER_SCENE_SPRITE,blend,alpha,
+                                       !r->classic && !r->interp);
 }
 
 static int resident_atlas_crop_from_page(GmlRender *r,GmlTpag *page,
                                          int crop_x,int crop_y,int crop_width,int crop_height,
                                          double left,double top,double xs,double ys,
                                          GmlRenderSceneFamily family,uint32_t colour,
-                                         double draw_alpha){
+                                         double draw_alpha,int physical_sprite_page){
   GmlAtlas *atlas;
   GmlRenderResourceSource source={0};
   GmlRenderResource *target;
@@ -243,7 +249,9 @@ static int resident_atlas_crop_from_page(GmlRender *r,GmlTpag *page,
     if(r->classic_interp_phase[index] || r->app_interp_phase[index]) return 0;
   if(page->sw<=0 || page->sh<=0 || page->sx<0 || page->sy<0 ||
      page->atlas<0 || page->atlas>=r->n_atlas ||
-     page->tw!=page->sw || page->th!=page->sh ||
+     ((!physical_sprite_page || family!=GML_RENDER_SCENE_SPRITE ||
+       r->classic || r->interp) &&
+      (page->tw!=page->sw || page->th!=page->sh)) ||
      crop_x<0 || crop_y<0 || crop_width<=0 || crop_height<=0 ||
      (uint64_t)(uint32_t)crop_x+(uint32_t)crop_width>(uint32_t)page->sw ||
      (uint64_t)(uint32_t)crop_y+(uint32_t)crop_height>(uint32_t)page->sh) return 0;
@@ -417,7 +425,7 @@ int gml_render_resident_atlas_crop(GmlRender *r,int page_index,
                                   GmlRenderSceneFamily family){
   if(!r || page_index<0 || page_index>=r->n_tpag) return 0;
   return resident_atlas_crop_from_page(r,&r->tpag[page_index],
-    crop_x,crop_y,crop_width,crop_height,left,top,xs,ys,family,0xFFFFFFu,1.0);
+    crop_x,crop_y,crop_width,crop_height,left,top,xs,ys,family,0xFFFFFFu,1.0,0);
 }
 
 int gml_render_resident_font_glyph(GmlRender *r,int atlas,int source_x,int source_y,
@@ -426,7 +434,7 @@ int gml_render_resident_font_glyph(GmlRender *r,int atlas,int source_x,int sourc
   GmlTpag page={.atlas=atlas,.sx=source_x,.sy=source_y,.sw=width,.sh=height,
                 .tw=width,.th=height,.bw=width,.bh=height};
   return resident_atlas_crop_from_page(r,&page,0,0,width,height,left,top,xs,ys,
-                                       GML_RENDER_SCENE_TEXT,colour,alpha);
+                                       GML_RENDER_SCENE_TEXT,colour,alpha,0);
 }
 
 int gml_render_resident_atlas_page(GmlRender *r,int page_index,

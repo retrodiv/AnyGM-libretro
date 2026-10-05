@@ -6567,11 +6567,12 @@ static int resident_integer_world_sprite(void){
   return 1;
 }
 
-static int resident_integer_world_sourceover_sprite(void){
+static int resident_integer_world_sourceover_pages(int packed_pages){
   enum { WIDTH=24,HEIGHT=24 };
   const double world[5][2]={{2,2},{4,4},{2,3},{0.5,0.5},{-2,-3}};
   const double alpha[3]={0.25,0.75,1.0};
   for(unsigned modern=0;modern<2u;modern++)
+  for(unsigned stored=packed_pages?1u:0u;stored<(packed_pages?4u:1u);stored++)
   for(unsigned mapping=0;mapping<5u;mapping++)
   for(unsigned signs=0;signs<4u;signs++)
   for(unsigned source_alpha=0;source_alpha<3u;source_alpha++)
@@ -6600,7 +6601,8 @@ static int resident_integer_world_sourceover_sprite(void){
     memcpy(render->atlas[0].px,rgba,sizeof rgba);
     render->atlas[0].w=render->atlas[0].h=2;
     render->tpag[0].sw=render->tpag[0].sh=2;
-    render->tpag[0].tw=render->tpag[0].th=2;
+    render->tpag[0].tw=stored==0u?2:stored==3u?4:1;
+    render->tpag[0].th=stored==0u?2:stored==2u?3:stored==3u?4:1;
     render->tpag[0].bw=render->tpag[0].bh=4;
     render->tpag[0].tx=render->tpag[0].ty=1;
     render->spr[0].w=render->spr[0].h=4;
@@ -6619,6 +6621,13 @@ static int resident_integer_world_sourceover_sprite(void){
     render->world_transform_active=1;
     render->world_scale_x=world[mapping][0];render->world_scale_y=world[mapping][1];
     gml_render_set_pending_fill(render,modern?0xFF123456u:0x80123456u);
+    if(stored){
+      /* Only complete ordinary sprite dispatch bypasses stored-layout scaling. */
+      for(unsigned family=GML_RENDER_SCENE_SPRITE;family<=GML_RENDER_SCENE_TEXT;family++)
+        CHECK(!gml_render_resident_atlas_crop(render,0,0,0,2,2,6,6,
+                  physical_xs,physical_ys,(GmlRenderSceneFamily)family));
+      CHECK(render->resident_application_pass && fake.readbacks==0);
+    }
     for(unsigned draw=0;draw<8u;draw++){
       gml_draw_sprite_ext(render,0,0,x+(draw%2u)/world[mapping][0],y,
                          xs,ys,0.0,0xFFFFFFu,alpha[opacity]);
@@ -6640,6 +6649,9 @@ static int resident_integer_world_sourceover_sprite(void){
           metrics.cpu_replays==0 && metrics.journal_bytes==0 &&
           metrics.retained_mutable_bytes==0);
     CHECK(fake.readbacks==0);
+    CHECK(render->tpag[0].tw==(stored==0u?2:stored==3u?4:1) &&
+          render->tpag[0].th==(stored==0u?2:stored==2u?3:stored==3u?4:1) &&
+          render->tpag[0].scene_opaque_checked);
     /* A real pixel observation, not each sprite, materialises the mocked device bytes. */
     CHECK(gml_render_application_surface_owned_view(render,&view));
     CHECK(fake.readbacks==1 && view.pixels[0]==fake.readback_colour &&
@@ -6650,7 +6662,16 @@ static int resident_integer_world_sourceover_sprite(void){
   return 1;
 }
 
+static int resident_integer_world_sourceover_sprite(void){
+  return resident_integer_world_sourceover_pages(0);
+}
+
+static int resident_integer_world_packed_sprite(void){
+  return resident_integer_world_sourceover_pages(1);
+}
+
 static int resident_integer_sourceover_exclusions(void){
+  for(unsigned packed=0;packed<2u;packed++)
   for(unsigned variant=0;variant<6u;variant++){
     GmlRender *render=(GmlRender*)calloc(1,sizeof *render);
     GmlWin content={.bytecode=variant==5u?17:15};
@@ -6671,7 +6692,7 @@ static int resident_integer_sourceover_exclusions(void){
     memcpy(render->atlas[0].px,rgba,sizeof rgba);
     render->atlas[0].w=render->atlas[0].h=2;
     render->tpag[0].sw=render->tpag[0].sh=2;
-    render->tpag[0].tw=render->tpag[0].th=2;
+    render->tpag[0].tw=render->tpag[0].th=packed?1:2;
     render->tpag[0].bw=render->tpag[0].bh=2;
     render->spr[0].w=render->spr[0].h=2;render->spr[0].n_frames=1;
     render->active_shader=-1;render->color_write_mask=15u;
@@ -7425,6 +7446,7 @@ int main(void){
   passed+=resident_integer_scaled_atlas_sprite_gpu();
   passed+=resident_integer_world_sprite();
   passed+=resident_integer_world_sourceover_sprite();
+  passed+=resident_integer_world_packed_sprite();
   passed+=resident_integer_sourceover_exclusions();
   passed+=state_without_context();
   passed+=device_observation_preserves_actual_replayable_pixels();
@@ -7440,6 +7462,6 @@ int main(void){
   passed+=source_free_primitive_rect_replay();
   passed+=stretched_float_exact_replay();
   passed+=filtered_font_exact_recovery();
-  printf("render resource cases: passed=%d failed=%d\n",passed,100-passed);
-  return passed==100?EXIT_SUCCESS:EXIT_FAILURE;
+  printf("render resource cases: passed=%d failed=%d\n",passed,101-passed);
+  return passed==101?EXIT_SUCCESS:EXIT_FAILURE;
 }
