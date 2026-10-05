@@ -716,8 +716,11 @@ GmlVal gml_builtin_try_values_strings(GmlVM *vm, const char *nm, GmlVal *a, int 
     while(*p){ if((all||!done) && !strncmp(p,sub,(size_t)sl)){ memcpy(w,rep?rep:"",(size_t)rl); w+=rl; p+=sl; done=1; }
       else *w++=*p++; }
     *w=0; return vstr_owned(o); }
-  if(!strcmp(nm,"string_hash_to_newline")){ /* legacy text helper: keep the string intact (safer than 0) */
-    const char*s=S(vm,a,n,0); return vstr_owned(strdup(s?s:"")); }
+  if(!strcmp(nm,"string_hash_to_newline")){
+    const char*s=S(vm,a,n,0); char *text=strdup(s?s:"");
+    if(!text) return vstr("");
+    for(char *p=text;*p;p++) if(*p=='#') *p='\n';
+    return vstr_owned(text); }
   if(!strcmp(nm,"int64")){ return vreal((double)(int64_t)N(a,n,0)); }
   if(!strcmp(nm,"ptr")){  /* pointers are opaque numbers here; the conversion must keep the value */
     return vreal(N(a,n,0)); }

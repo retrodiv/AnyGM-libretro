@@ -41,6 +41,23 @@ int main(void){
                       gml_builtin_call(&vm,"string_concat",concatenate,3),
                       "High Score 17");
 
+  /* The explicit compatibility helper converts hashes before modern text metrics
+   * measure the result. It is not the renderer's implicit hash-break policy. */
+  struct HashCase { const char *input, *output; } hash_cases[]={
+    {"", ""},
+    {"plain text", "plain text"},
+    {"first#second", "first\nsecond"},
+    {"#A##B#", "\nA\n\nB\n"},
+    {"alpha\n\xce\xb2#gamma", "alpha\n\xce\xb2\ngamma"}
+  };
+  for(size_t i=0;i<sizeof hash_cases/sizeof hash_cases[0];i++){
+    GmlVal text[]={vstr(hash_cases[i].input)};
+    ok &= expect_string("explicit hash conversion retains all other bytes",
+                        gml_builtin_call(&vm,"string_hash_to_newline",text,1),
+                        hash_cases[i].output);
+    ok &= !strcmp(text[0].s,hash_cases[i].input);
+  }
+
   GmlVal has_suffix[]={vstr("status-ready"),vstr("ready")};
   ok &= expect("a matching suffix is reported",
                gml_builtin_call(&vm,"string_ends_with",has_suffix,2),1);
