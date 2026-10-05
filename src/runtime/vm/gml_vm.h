@@ -581,6 +581,9 @@ GmlVal  gml_vm_run_code(GmlVM *vm, int code_index, GmlInstance *self, GmlInstanc
 /* Invoke one zero-argument GMS script by asset name with an isolated scratch instance.
  * This is the coarse content-override boundary; a caller never supplies a CODE entry name. */
 int     gml_vm_run_script_named(GmlVM *vm, const char *name);
+/* Invoke a named content script on a live instance without manufacturing a receiver. */
+int     gml_vm_run_script_on_instance(GmlVM *vm,const char *name,GmlInstance *self,
+                                     GmlVal *args,int n_args);
 /* Studio extension init scripts, run once before the first room. */
 void    gml_vm_run_extension_init_scripts(GmlVM *vm);
 /* Invoke a function value or bound method using the same receiver rules as OP_CALLV.

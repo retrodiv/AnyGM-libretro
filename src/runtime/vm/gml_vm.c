@@ -38,13 +38,24 @@ int gml_real_compare(double lhs, double rhs, int cmp, int classic){
   return gml_real_compare_epsilon(lhs,rhs,cmp,classic?1e-13:1e-5);
 }
 
-int gml_vm_run_script_named(GmlVM *vm,const char *name){
+static int run_script_named(GmlVM *vm,const char *name,GmlInstance *self,
+                            GmlVal *args,int n_args){
   if(!vm || !vm->win || !name || !name[0]) return 0;
   char code_name[192];
   int written=snprintf(code_name,sizeof code_name,"gml_Script_%s",name);
   if(written<0 || (size_t)written>=sizeof code_name) return 0;
   int ci=gml_code_index_by_name(vm->win,code_name);
   if(ci<0) return 0;
+  GmlVal result=gml_vm_run_code(vm,ci,self,NULL,args,n_args);
+  if(result.t==V_STR && result.d!=0) free((char *)result.s);
+  return 1;
+}
+int gml_vm_run_script_on_instance(GmlVM *vm,const char *name,GmlInstance *self,
+                                 GmlVal *args,int n_args){
+  if(!self || !self->active || n_args<0 || (n_args && !args)) return 0;
+  return run_script_named(vm,name,self,args,n_args);
+}
+int gml_vm_run_script_named(GmlVM *vm,const char *name){
   GmlInstance scratch;
   memset(&scratch,0,sizeof scratch);
   scratch.active=1; scratch.obj=-1; scratch.id=0;
@@ -52,10 +63,9 @@ int gml_vm_run_script_named(GmlVM *vm,const char *name){
   scratch.sprite_index=-1; scratch.mask_index=-1; scratch.path_index=-1;
   scratch.timeline_index=-1; scratch.timeline_speed=1;
   for(int alarm=0;alarm<GML_ALARMS;alarm++) scratch.alarm[alarm]=-1;
-  GmlVal result=gml_vm_run_code(vm,ci,&scratch,NULL,NULL,0);
-  if(result.t==V_STR && result.d!=0) free((char *)result.s);
+  int ran=run_script_named(vm,name,&scratch,NULL,0);
   gml_varmap_free_ex(&scratch.vars,0);
-  return 1;
+  return ran;
 }
 
 /* Generic cheat/debug primitive used by the host cheat interface and development probe.

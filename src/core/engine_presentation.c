@@ -1362,6 +1362,8 @@ void aspect_draw_event_hook(GmlVM *vm, GmlInstance *in, const char *suffix,
     }
     if (engine->aspect_event_view_stack_pointer <= 0) return;
     AspectEventViewOverlay ov = engine->aspect_event_view_stack[--engine->aspect_event_view_stack_pointer];
+    if(ctx->room_index==ov.room && suffix && !strcmp(suffix,"Draw_0"))
+      engine_overrides_after_draw(engine,ctx,ov.instance_id);
     if (!ov.active || ctx->room_index != ov.room) return;
     gml_set_global_arr(ctx, "view_xview", 0, ov.xview);
     gml_set_global_arr(ctx, "view_yview", 0, ov.yview);
@@ -1378,6 +1380,8 @@ void aspect_draw_event_hook(GmlVM *vm, GmlInstance *in, const char *suffix,
   }
   AspectEventViewOverlay ov;
   memset(&ov, 0, sizeof(ov));
+  ov.room=ctx->room_index;
+  ov.instance_id=in?in->id:0;
   int custom_draw = GMC_ASPECT_DRAW_DEFAULT;
   if (engine->aspect_force_active && engine->aspect_draw_full_context)
     custom_draw = aspect_draw_full_view_gen(engine,in, suffix);

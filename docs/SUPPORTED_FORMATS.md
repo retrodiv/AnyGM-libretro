@@ -80,6 +80,23 @@ does not borrow an active game's instance. Restoring a state marks the call as
 already made: its effects are represented by the restored state and must not
 run a second time.
 
+`afterdraw|object_name|script_name|value` appends one named content script to each
+completed ordinary Draw event (`Draw_0`) of that exact object. The script receives
+the event's live instance as `self`, no `other`, and one finite literal numeric
+argument. It runs in the event's current render target and projection before any
+event-local view policy is withdrawn. It does not reorder existing events, create
+objects or invent a cursor. Missing objects/scripts do nothing. An invisible,
+inactive or destroyed receiver receives no extra draw. Inherited events may run
+on the exact declared object, but descendants must opt in separately.
+
+The declaration respects Content overrides, `?gameres`, `?aspect` and `?global`
+activation; `?monitor` is not valid because this is a draw-time operation, not a
+monitor-transition write. Withdrawal stops the appended calls without undoing
+authored script side effects. Nested `screen_redraw` does not append the script
+recursively. Reset retains the parsed declaration, and restored frames do not
+execute it until the next ordinary draw. Use a drawing-only authored helper;
+this is not permission to suppress a menu or to modify payload bytes.
+
 `listset|target|variable[index]|item|value` repairs one numeric item in a DS list. `target` is an
 object name for a list held by its first active instance, or the reserved word `global` for a list
 held by a global variable. The array index is optional when the variable holds the list handle

@@ -21,6 +21,9 @@ int anygm_synthetic_tilemap_content_create(AnygmSyntheticContent *fixture);
  * deliberately rewrites both so a persistent content override can prove it runs after Step. */
 int anygm_synthetic_list_override_content_create(AnygmSyntheticContent *fixture);
 int anygm_synthetic_anchor_script_content_create(AnygmSyntheticContent *fixture);
+/* A modal draw fills the frame and preserves a green question marker; its script draws red. */
+int anygm_synthetic_after_draw_content_create(AnygmSyntheticContent *fixture);
+int anygm_synthetic_after_draw_anchor_content_create(AnygmSyntheticContent *fixture);
 int anygm_synthetic_simulated_key_content_create(AnygmSyntheticContent *fixture);
 /* One synthetic instance presses and releases a key in one Step and owns
  * the matching Key Press event. The event records the Step count observed. */

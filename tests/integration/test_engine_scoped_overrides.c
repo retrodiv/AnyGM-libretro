@@ -339,6 +339,180 @@ static unsigned count_colour(const uint32_t *pixels,unsigned count,uint32_t rgb)
 
 /* Synthetic markers distinguish the value read during drawing from the
  * value read during the step phase. */
+static int after_draw_case(void){
+  AnygmSyntheticContent fixture;
+  if(!anygm_synthetic_after_draw_content_create(&fixture)) return 0;
+  int ok=0;
+  AnygmHostServices services={0};
+  services.struct_size=sizeof services;
+  services.abi_version=ANYGM_HOST_SERVICES_VERSION;
+  anygm_stdio_vfs_services_init(&services);
+  AnygmContentSource source={0};
+  source.struct_size=sizeof source;
+  source.kind=ANYGM_CONTENT_PATH;
+  source.path=fixture.path;
+  AnygmEngine *engine=create_loaded_engine(&services,&source);
+  static uint32_t frame[32768];
+  unsigned w=0,h=0;
+  if(!engine) goto done;
+  static const char *invalid[]={
+    "afterdraw||anchor_call|0", "afterdraw|obj_fixture||0",
+    "afterdraw|obj_fixture|anchor_call|", "afterdraw|obj_fixture|anchor_call|nan",
+    "afterdraw|obj_fixture|anchor_call|inf", "afterdraw|obj_fixture|anchor_call|1e9999",
+    "afterdraw|obj_fixture|anchor_call|0|1", "?monitor afterdraw|obj_fixture|anchor_call|0"
+  };
+  CheatSlot slots[GML_MAX_CHEATS]; int count=0; char error[160]={0};
+  for(size_t i=0;i<sizeof invalid/sizeof invalid[0];i++){
+    if(engine_boot_overrides_parse(invalid[i],slots,&count,error,sizeof error)){
+      fprintf(stderr,"scoped overrides: accepted malformed after-draw directive: %s\n",invalid[i]);
+      goto done;
+    }
+  }
+  if(!engine_boot_overrides_parse(
+    "afterdraw|obj_fixture|anchor_call|8\nafterdraw|obj_fixture|anchor_call|16\n",
+    slots,&count,error,sizeof error) || count!=1 || slots[0].act.val.lit!=16) goto done;
+  if(anygm_set_runtime_override(engine,0,1,
+     "?gameres afterdraw|obj_fixture|anchor_call|16")!=ANYGM_OK) goto done;
+  if(!capture_frame(engine,frame,&w,&h,"after-draw scope closed") ||
+     count_colour(frame,w*h,0x00FF0000u)!=0) goto done;
+  if(!select_logical_raster(engine,1)) goto done;
+  double calls=gml_global_num(&engine->vm,"fixture_anchor_calls");
+  if(!capture_frame(engine,frame,&w,&h,"after-draw scope open") ||
+     count_colour(frame,w*h,0x00FF0000u)!=64 || count_colour(frame,w*h,65280)!=64 ||
+     gml_global_num(&engine->vm,"fixture_anchor_calls")!=calls+1 ||
+     gml_global_num(&engine->vm,"fixture_after_arg")!=16 ||
+     gml_global_num(&engine->vm,"fixture_after_self")!=100000){
+    fprintf(stderr,"scoped overrides: after-draw red=%u green=%u calls=%.0f/%.0f arg=%.0f self=%.0f\n",
+      count_colour(frame,w*h,0x00FF0000u),count_colour(frame,w*h,65280),
+      gml_global_num(&engine->vm,"fixture_anchor_calls"),calls+1,
+      gml_global_num(&engine->vm,"fixture_after_arg"),
+      gml_global_num(&engine->vm,"fixture_after_self"));
+    goto done;
+  }
+  engine->vm.inst[0].visible=0;
+  calls=gml_global_num(&engine->vm,"fixture_anchor_calls");
+  if(!run_frames(engine,1) ||
+     gml_global_num(&engine->vm,"fixture_anchor_calls")!=calls) goto done;
+  engine->vm.inst[0].visible=1;
+  gml_set_global_scalar(&engine->vm,"fixture_redraw",1);
+  calls=gml_global_num(&engine->vm,"fixture_anchor_calls");
+  if(!capture_frame(engine,frame,&w,&h,"after-draw nested redraw") ||
+     gml_global_num(&engine->vm,"fixture_anchor_calls")!=calls+1 ||
+     count_colour(frame,w*h,0x00FF0000u)!=64) goto done;
+  gml_set_global_scalar(&engine->vm,"fixture_redraw",0);
+  if(!select_logical_raster(engine,0) ||
+     !capture_frame(engine,frame,&w,&h,"after-draw withdrawn") ||
+     count_colour(frame,w*h,0x00FF0000u)!=0 || count_colour(frame,w*h,65280)!=64) goto done;
+  if(!select_logical_raster(engine,1) ||
+     !capture_frame(engine,frame,&w,&h,"after-draw reopened") ||
+     count_colour(frame,w*h,0x00FF0000u)!=64) goto done;
+  if(anygm_set_runtime_override(engine,0,0,NULL)!=ANYGM_OK ||
+     !capture_frame(engine,frame,&w,&h,"after-draw removed") ||
+     count_colour(frame,w*h,0x00FF0000u)!=0) goto done;
+  calls=gml_global_num(&engine->vm,"fixture_anchor_calls");
+  if(anygm_set_runtime_override(engine,0,1,
+     "afterdraw|obj_fixture|absent_script|16")!=ANYGM_OK ||
+     !capture_frame(engine,frame,&w,&h,"after-draw missing script") ||
+     count_colour(frame,w*h,0x00FF0000u)!=0 ||
+     gml_global_num(&engine->vm,"fixture_anchor_calls")!=calls ||
+     anygm_set_runtime_override(engine,0,1,
+     "afterdraw|absent_object|anchor_call|16")!=ANYGM_OK ||
+     !capture_frame(engine,frame,&w,&h,"after-draw missing object") ||
+     count_colour(frame,w*h,0x00FF0000u)!=0 ||
+     gml_global_num(&engine->vm,"fixture_anchor_calls")!=calls) goto done;
+  if(anygm_set_runtime_override(engine,0,1,
+     "afterdraw|obj_fixture|anchor_call|16")!=ANYGM_OK) goto done;
+  gml_set_global_scalar(&engine->vm,"fixture_hide",1);
+  if(!capture_frame(engine,frame,&w,&h,"receiver hidden during Draw") ||
+     count_colour(frame,w*h,0x00FF0000u)!=0 ||
+     count_colour(frame,w*h,65280)!=64 ||
+     gml_global_num(&engine->vm,"fixture_anchor_calls")!=calls){
+    fputs("scoped overrides: appended a call after Draw hid its receiver\n",stderr);
+    goto done;
+  }
+  gml_set_global_scalar(&engine->vm,"fixture_hide",0);
+  engine->vm.inst[0].visible=1;
+  if(anygm_set_runtime_override(engine,0,1,
+     "?global.fixture_gate afterdraw|obj_fixture|anchor_call|16")!=ANYGM_OK) goto done;
+  gml_set_global_scalar(&engine->vm,"fixture_gate",1);
+  if(!capture_frame(engine,frame,&w,&h,"after-draw value scope") ||
+     count_colour(frame,w*h,0x00FF0000u)!=64) goto done;
+  gml_set_global_scalar(&engine->vm,"fixture_gate",0);
+  if(!capture_frame(engine,frame,&w,&h,"after-draw value withdrawn") ||
+     count_colour(frame,w*h,0x00FF0000u)!=0) goto done;
+  gml_set_global_scalar(&engine->vm,"fixture_gate",1);
+  gml_set_global_scalar(&engine->vm,"fixture_destroy",1);
+  calls=gml_global_num(&engine->vm,"fixture_anchor_calls");
+  if(!run_frames(engine,1) ||
+     gml_global_num(&engine->vm,"fixture_anchor_calls")!=calls) goto done;
+  ok=1;
+done:
+  if(!ok) fputs("scoped overrides: after-draw contract failed\n",stderr);
+  anygm_destroy(engine);
+  anygm_synthetic_content_destroy(&fixture);
+  return ok;
+}
+
+static int after_draw_anchor_state_case(void){
+  AnygmSyntheticContent fixture;
+  if(!anygm_synthetic_after_draw_anchor_content_create(&fixture)) return 0;
+  int ok=0;
+  const char *stage="load, draw and save";
+  uint8_t *state=NULL; size_t written=0;
+  AnygmHostServices services={0};
+  services.struct_size=sizeof services;
+  services.abi_version=ANYGM_HOST_SERVICES_VERSION;
+  anygm_stdio_vfs_services_init(&services);
+  AnygmContentSource source={0};
+  source.struct_size=sizeof source; source.kind=ANYGM_CONTENT_PATH; source.path=fixture.path;
+  AnygmEngine *engine=create_loaded_engine(&services,&source);
+  static uint32_t frame[32768]; unsigned w=0,h=0;
+  if(!engine || !select_logical_raster(engine,1) ||
+     !capture_frame(engine,frame,&w,&h,"anchored after-draw") ||
+     count_colour(frame,w*h,0x00FF0000u)!=64 || !save_state(engine,&state,&written)) goto done;
+  double calls=gml_global_num(&engine->vm,"fixture_anchor_calls");
+  stage="same-run restore and continuation";
+  if(!run_frames(engine,1) || anygm_state_load(engine,state,written)!=ANYGM_OK ||
+     gml_global_num(&engine->vm,"fixture_anchor_calls")!=calls ||
+     !capture_frame(engine,frame,&w,&h,"after-draw completed frame replay") ||
+     gml_global_num(&engine->vm,"fixture_anchor_calls")!=calls ||
+     count_colour(frame,w*h,0x00FF0000u)!=64 ||
+     !capture_frame(engine,frame,&w,&h,"after-draw state continuation") ||
+     gml_global_num(&engine->vm,"fixture_anchor_calls")!=calls+1 ||
+     count_colour(frame,w*h,0x00FF0000u)!=64) goto done;
+  AnygmConfigDelta delta={0}; delta.struct_size=sizeof delta;
+  delta.fields=ANYGM_CONFIG_CONTENT_OVERRIDES; delta.values.struct_size=sizeof delta.values;
+  delta.values.content_overrides=0;
+  stage="disabled anchor and Reset";
+  if(anygm_set_config(engine,&delta)!=ANYGM_OK ||
+     !capture_frame(engine,frame,&w,&h,"anchor disabled") ||
+     count_colour(frame,w*h,0x00FF0000u)!=0 || count_colour(frame,w*h,65280)!=64 ||
+     anygm_reset(engine)!=ANYGM_OK ||
+     !capture_frame(engine,frame,&w,&h,"disabled anchor after Reset") ||
+     count_colour(frame,w*h,0x00FF0000u)!=0) goto done;
+  delta.values.content_overrides=1;
+  stage="reenabled anchor and Reset";
+  if(anygm_set_config(engine,&delta)!=ANYGM_OK ||
+     !capture_frame(engine,frame,&w,&h,"anchor reenabled") ||
+     count_colour(frame,w*h,0x00FF0000u)!=64 || anygm_reset(engine)!=ANYGM_OK ||
+     !capture_frame(engine,frame,&w,&h,"enabled anchor after Reset") ||
+     count_colour(frame,w*h,0x00FF0000u)!=64 ||
+     gml_global_num(&engine->vm,"fixture_anchor_calls")!=1 ||
+     anygm_state_load(engine,state,written)!=ANYGM_OK ||
+     gml_global_num(&engine->vm,"fixture_anchor_calls")!=calls ||
+     !capture_frame(engine,frame,&w,&h,"same-session state after Reset") ||
+     count_colour(frame,w*h,0x00FF0000u)!=64) goto done;
+  ok=1;
+done:
+  if(!ok) fprintf(stderr,"scoped overrides: anchored after-draw failed at %s, red=%u calls=%.0f\n",
+    stage,count_colour(frame,w*h,0x00FF0000u),
+    engine?gml_global_num(&engine->vm,"fixture_anchor_calls"):-1);
+  free(state);
+  anygm_destroy(engine);
+  anygm_synthetic_content_destroy(&fixture);
+  return ok;
+}
+
 static int draw_hold_case(void){
   AnygmSyntheticContent fixture;
   if(!anygm_synthetic_scoped_override_content_create(&fixture)){
@@ -560,6 +734,8 @@ int main(void){
   if(!presentation_crop_case()) return 1;
   if(!presentation_shift_case()) return 1;
   if(!draw_hold_case()) return 1;
+  if(!after_draw_case()) return 1;
+  if(!after_draw_anchor_state_case()) return 1;
   if(!value_scope_case()) return 1;
   puts("scoped overrides: ok");
   return 0;

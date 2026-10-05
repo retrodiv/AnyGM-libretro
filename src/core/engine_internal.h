@@ -113,6 +113,7 @@ typedef struct {
 typedef struct {
   int active;
   int room;
+  unsigned instance_id;
   double xview, yview, wview, hview, wport, hport;
 } AspectEventViewOverlay;
 
@@ -138,7 +139,7 @@ enum {
 typedef enum {
   CK_NONE=0, CK_ROOM, CK_GARR, CK_GSCALAR, CK_INST, CK_INST_SET, CK_ENGINE, CK_ROUTE,
   CK_CAMERA, CK_SURFACE, CK_MONITOR_VIEW, CK_ALARM_PAUSE, CK_SCRIPT, CK_LIST_SET,
-  CK_DRAW_HOLD, CK_SURFACE_CANVAS
+  CK_DRAW_HOLD, CK_SURFACE_CANVAS, CK_AFTER_DRAW
 } CheatKind;
 typedef enum {
   TK_LIT=0, TK_BASE_W, TK_BASE_H, TK_FORCED_W, TK_FORCED_H, TK_EXTRA_W, TK_EXTRA_H,
@@ -365,6 +366,7 @@ struct AnygmEngine {
   int present_mouse_source_width,present_mouse_source_height;
   AspectEventViewOverlay aspect_event_view_stack[ASPECT_EVENT_VIEW_STACK_MAX];
   int aspect_event_view_stack_pointer,aspect_event_view_overflow;
+  int after_draw_active; /* transient recursion guard, never state transport */
   CheatSlot cheats[GML_MAX_CHEATS],boot_cheats[GML_MAX_CHEATS];
   int cheat_count,boot_cheat_count;
   /* Room the override passes last captured against; see cheat_room_scope_refresh. */
@@ -423,6 +425,7 @@ void engine_logf(AnygmEngine *engine,AnygmLogLevel level,const char *fmt,...);
 void classic_transition_reset(AnygmEngine *engine);
 void aspect_draw_event_hook(GmlVM *vm,GmlInstance *instance,const char *suffix,
                             int begin,void *user);
+void engine_overrides_after_draw(AnygmEngine *engine,GmlVM *vm,unsigned instance_id);
 void screen_redraw_room_layer_hook(GmlVM *vm,int foreground,void *user);
 void screen_refresh_present_latch_hook(GmlVM *vm,void *user);
 void sync_room_fps(AnygmEngine *engine,int publish_changes);

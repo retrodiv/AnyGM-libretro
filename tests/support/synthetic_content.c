@@ -62,11 +62,12 @@ static int synthetic_content_create(
   memset(fixture,0,sizeof *fixture);
   if(!create_fixture_directory(fixture->directory,sizeof fixture->directory)) return 0;
 
-  char startup[192],create[192],step[192],anchor_call[192];
+  char startup[192],create[192],step[192],anchor_call[192],draw[192];
   snprintf(startup,sizeof startup,"%s/startup.gml",fixture->directory);
   snprintf(create,sizeof create,"%s/create.gml",fixture->directory);
   snprintf(step,sizeof step,"%s/step.gml",fixture->directory);
   snprintf(anchor_call,sizeof anchor_call,"%s/anchor-call.gml",fixture->directory);
+  snprintf(draw,sizeof draw,"%s/draw.gml",fixture->directory);
   snprintf(fixture->path,sizeof fixture->path,"%s/data.win",fixture->directory);
   const char *startup_text=list_fixture?
     "global.fixture_counter = 0;\n"
@@ -96,7 +97,19 @@ static int synthetic_content_create(
                   "ds_list_add(fixture_list, 0, 0);\n"
                   "fixture_lists[0] = fixture_list;\n")) ||
      !write_text(step,step_text) ||
-     (anchor_script && !write_text(anchor_call,"global.fixture_anchor_calls += 1;\n"))){
+     (anchor_script && !write_text(anchor_call,anchor_script==2?
+                  "global.fixture_anchor_calls += 1;\n"
+                  "global.fixture_after_arg = argument0;\n"
+                  "global.fixture_after_self = id;\n"
+                  "if (global.fixture_redraw) screen_redraw();\n"
+                  "draw_set_color(255);\n"
+                  "draw_rectangle(argument0,16,argument0+7,23,0);\n":
+                  "global.fixture_anchor_calls += 1;\n")) ||
+     (anchor_script==2 && !write_text(draw,
+                  "draw_set_color(16777215); draw_rectangle(0,0,63,47,0);\n"
+                  "draw_set_color(65280); draw_rectangle(56,0,63,7,0);\n"
+                  "if (global.fixture_hide) visible = 0.25;\n"
+                  "if (global.fixture_destroy) instance_destroy();\n"))){
     anygm_synthetic_content_destroy(fixture);
     return 0;
   }
@@ -132,9 +145,9 @@ static int synthetic_content_create(
 
   object.id=object.name=(char *)"obj_fixture";
   object.sprite_id=object.mask_id=object.parent_id=-1;
-  object.visible=0;
+  object.visible=anchor_script==2;
   object.events=events;
-  object.n_events=object.cap_events=list_fixture?2:1;
+  object.n_events=object.cap_events=(list_fixture || anchor_script==2)?2:1;
   if(list_fixture){
     events[0].event_type=0;
     events[0].event_number=0;
@@ -143,6 +156,11 @@ static int synthetic_content_create(
   events[list_fixture?1:0].event_type=3;
   events[list_fixture?1:0].event_number=0;
   events[list_fixture?1:0].source_path=step;
+  if(anchor_script==2){
+    events[1].event_type=8;
+    events[1].event_number=0;
+    events[1].source_path=draw;
+  }
 
   room.id=room.name=(char *)"room_fixture";
   room.width=width;
@@ -177,6 +195,20 @@ int anygm_synthetic_list_override_content_create(AnygmSyntheticContent *fixture)
 }
 int anygm_synthetic_anchor_script_content_create(AnygmSyntheticContent *fixture){
   return synthetic_content_create(fixture,1,0,64,48);
+}
+int anygm_synthetic_after_draw_content_create(AnygmSyntheticContent *fixture){
+  return synthetic_content_create(fixture,2,0,64,48);
+}
+int anygm_synthetic_after_draw_anchor_content_create(AnygmSyntheticContent *fixture){
+  if(!anygm_synthetic_after_draw_content_create(fixture)) return 0;
+  snprintf(fixture->path,sizeof fixture->path,"%s/draw-policy.anygm",fixture->directory);
+  if(!write_text(fixture->path,
+     "[anygm]\npayload=data.win\n[overrides]\n"
+     "?gameres afterdraw|obj_fixture|anchor_call|16\n")){
+    anygm_synthetic_content_destroy(fixture);
+    return 0;
+  }
+  return 1;
 }
 
 int anygm_synthetic_tilemap_content_create(AnygmSyntheticContent *fixture){
@@ -2380,6 +2412,12 @@ int anygm_synthetic_game_restart_content_create(AnygmSyntheticContent *fixture){
 void anygm_synthetic_content_destroy(AnygmSyntheticContent *fixture){
   if(!fixture || !fixture->directory[0]) return;
   char path[256];
+  snprintf(path,sizeof path,"%s/draw-policy.anygm",fixture->directory);
+  anygm_test_unlink(path);
+  snprintf(path,sizeof path,"%s/anchor-call.gml",fixture->directory);
+  anygm_test_unlink(path);
+  snprintf(path,sizeof path,"%s/draw.gml",fixture->directory);
+  anygm_test_unlink(path);
   snprintf(path,sizeof path,"%s/startup.gml",fixture->directory);
   anygm_test_unlink(path);
   snprintf(path,sizeof path,"%s/step.gml",fixture->directory);

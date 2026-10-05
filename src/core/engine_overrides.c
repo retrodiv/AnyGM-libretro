@@ -67,6 +67,7 @@ int core_opt_redirect_room_order(AnygmEngine *engine) {
  *   alarmpause|obj|i            hold alarm i still on every instance of `obj` and its descendants
  *   drawhold|name|V             hold global `name` at V for the length of one frame's drawing
  *   call|script                 invoke a zero-argument content script once after the first Step
+ *   afterdraw|obj|script|V      invoke a script with one numeric argument after ordinary Draw
  *   listset|target|var[i]|j|V   keep a DS-list item at V; target is an object or `global`
  *   camera[LIST]:field=V        write x, y, width, or height on selected live camera handles
  *   surface|obj|var|W|H         resize surfaces named by an instance variable
@@ -298,6 +299,23 @@ static void cheat_parse(const char *code, CheatAct *a){
     if(!*s){ a->kind=CK_NONE; return; }
     cheat_parse_val(s,&a->val);
     a->kind=CK_DRAW_HOLD; return;
+  }
+  if(!strncmp(s,"afterdraw|",10)){
+    s+=10;
+    char *names[]={a->obj,a->var};
+    for(int i=0;i<2;i++){
+      const char *start=s;
+      while(*s && CHEAT_NAMECH(*s)) s++;
+      size_t length=(size_t)(s-start);
+      if(!length || length>=64 || *s!='|'){ a->kind=CK_NONE; return; }
+      memcpy(names[i],start,length); names[i][length]=0; s++;
+    }
+    char *end=NULL;
+    a->val.lit=strtod(s,&end);
+    if(end==s || *end || !isfinite(a->val.lit) || a->scope_monitor){
+      a->kind=CK_NONE; return;
+    }
+    a->kind=CK_AFTER_DRAW; return;
   }
   if(!strncmp(s,"call|",5)){
     s+=5; const char *name=s; while(*s && CHEAT_NAMECH(*s)) s++;
@@ -1048,7 +1066,7 @@ static void cheat_sticky_pass(AnygmEngine *engine,CheatSlot *arr, int n, int cha
     if(a->kind==CK_ROOM || a->kind==CK_INST_SET || a->kind==CK_NONE) continue;
     /* A hold belongs to the drawing, not to the post-step pass: writing it here would make it the
      * freeze it exists not to be. */
-    if(a->kind==CK_DRAW_HOLD || a->kind==CK_SURFACE_CANVAS) continue;
+    if(a->kind==CK_DRAW_HOLD || a->kind==CK_SURFACE_CANVAS || a->kind==CK_AFTER_DRAW) continue;
     if(room_owned_only && !cheat_slot_is_room_owned(a)) continue;
     int applies=channel_on && slot->enabled && cheat_scope_ok(engine,a,0);
     /* A script override is an edge at fresh startup, not a value to restore when its channel is
@@ -1174,6 +1192,31 @@ void engine_overrides_draw_hold_end(AnygmEngine *engine){
    * and a channel switched off between the two would otherwise leave the held value behind. */
   cheat_draw_hold_pass(engine,engine->cheats,engine->cheat_count,1,0);
   cheat_draw_hold_pass(engine,engine->boot_cheats,engine->boot_cheat_count,1,0);
+}
+/* Reuse the event's target and receiver, not a second global frame pass. Resolve by id because
+ * the authored event can destroy its receiver or grow the instance pool. Nested screen_redraw
+ * runs the ordinary content events but cannot recursively append this policy. */
+void engine_overrides_after_draw(AnygmEngine *engine,GmlVM *vm,unsigned instance_id){
+  if(!engine || !vm || engine->after_draw_active || !engine->loaded) return;
+  int room=vm->room_index;
+  engine->after_draw_active=1;
+  for(int table=0;table<2 && vm->room_index==room;table++){
+    CheatSlot *slots=table?engine->boot_cheats:engine->cheats;
+    int count=table?engine_boot_cheats_active(engine):engine->cheat_count;
+    for(int i=0;i<count && vm->room_index==room;i++){
+      CheatSlot *slot=&slots[i];
+      CheatAct *a=&slot->act;
+      if(!slot->enabled || a->kind!=CK_AFTER_DRAW ||
+         !cheat_scope_ok(engine,a,a->scope_aspect?1:0)) continue;
+      GmlInstance *in=gml_vm_instance_by_id(vm,instance_id);
+      if(!in || !in->active || in->visible<0.5 || in->obj<0 || in->obj>=vm->n_objects) continue;
+      const char *name=vm->objects[in->obj].name;
+      if(!name || strcmp(name,a->obj)) continue;
+      GmlVal arg=vreal(a->val.lit);
+      (void)gml_vm_run_script_on_instance(vm,a->var,in,&arg,1);
+    }
+  }
+  engine->after_draw_active=0;
 }
 /* A state restores VM and renderer fields, but presentation policy belongs to the live host. Read
  * the current targets before those sections are replaced so a state made under the opposite scope
