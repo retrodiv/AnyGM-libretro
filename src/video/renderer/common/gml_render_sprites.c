@@ -870,7 +870,10 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
     /* Filtered background parts on first-generation application surfaces share
      * this projected half-open coverage with their CPU leaf at fractional scales.
      * Unit-sign parts retain their qualified coverage on other targets too. */
-    if((nearest_mode==4 && !rotated_sprite && xs==1.0 && ys==1.0) ||
+    /* The qualified numbered point leaf cannot expand this rounded coverage.
+     * A wholly clipped sprite is a no-op before its later sample-edge pruning. */
+    if(modern_numbered_sprite ||
+       (nearest_mode==4 && !rotated_sprite && xs==1.0 && ys==1.0) ||
        additive_background ||
        (family==GML_RENDER_SCENE_BACKGROUND && part_view && !rotated_sprite &&
         !nearest_mode && ((fabs(xs)==1.0 && fabs(ys)==1.0) ||

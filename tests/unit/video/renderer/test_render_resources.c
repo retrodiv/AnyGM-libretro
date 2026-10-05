@@ -5930,6 +5930,15 @@ static int resident_numbered_sprite_channel_masks(void){
     CHECK(render->resident_application_pass && gml_render_scene_submit_pending(render) &&
           fake.submits==submits && !fake.readbacks &&
           gml_render_resource_image_ref(render->surface[id-1].resource).content_version==version);
+    /* Wholly off-target coloured point sprites skip pixels before edge pruning too.
+     * Keep the visible GPU prefix and target version for every channel mask. */
+    gml_draw_sprite_ext(render,0,0,-8.0,1.25,1.0,1.0,0.0,0x000000u,1.0);
+    gml_draw_sprite_ext(render,0,0,8.0,1.25,-1.0,1.0,0.0,0x000000u,1.0);
+    gml_draw_sprite_ext(render,0,0,1.25,-8.0,1.0,1.0,0.0,0x000000u,1.0);
+    gml_draw_sprite_ext(render,0,0,1.25,8.0,1.0,-1.0,0.0,0x000000u,1.0);
+    CHECK(render->resident_application_pass && gml_render_scene_submit_pending(render) &&
+          fake.submits==submits && !fake.readbacks &&
+          gml_render_resource_image_ref(render->surface[id-1].resource).content_version==version);
     /* Disposing an unread test-device result is not pixel evidence. */
     gml_render_abandon_device(render);
     gml_render_free(render);free(render);
