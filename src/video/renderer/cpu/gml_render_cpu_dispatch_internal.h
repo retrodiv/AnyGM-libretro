@@ -48,6 +48,7 @@ static inline void gml_render_dispatch_cpu_scope_resume(GmlRender *render,
 static inline void gml_render_dispatch_cpu_scope_begin(GmlRender *render,
                                                        GmlRenderDispatchCpuScope *scope,
                                                        unsigned family){
+  scope->reason=GML_RENDER_DISPATCH_UNQUALIFIED;
   scope->active=render && render->dispatch_metrics.enabled;
   if(!scope->active) return;
   if(render->dispatch_cpu_depth==UINT_MAX){

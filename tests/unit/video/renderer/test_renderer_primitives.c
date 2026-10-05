@@ -383,6 +383,11 @@ static void check_dispatch_cpu_scope_nested(void){
   GmlRenderDispatchCpuScope outer,inner;
   GmlRenderDispatchMetrics metrics;
   reset_render(&render,12);
+  outer.reason=UINT_MAX;
+  gml_render_dispatch_cpu_scope_begin(&render,&outer,GML_RENDER_SCENE_PRIMITIVE);
+  expect(!outer.active && outer.reason==GML_RENDER_DISPATCH_UNQUALIFIED,
+         "an inactive dispatch scope retained an undefined reason");
+  gml_render_dispatch_cpu_scope_end(&render,&outer);
   gml_render_dispatch_diagnostics_enable(&render,1);
   gml_render_dispatch_cpu_scope_begin(&render,&outer,GML_RENDER_SCENE_PRIMITIVE);
   gml_render_dispatch_cpu_scope_begin(&render,&inner,GML_RENDER_SCENE_PRIMITIVE);
