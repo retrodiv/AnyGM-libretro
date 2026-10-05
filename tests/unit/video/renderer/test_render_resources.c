@@ -5874,6 +5874,17 @@ static int resident_numbered_sprite_channel_masks(void){
       CHECK(metrics.authority==GML_RENDER_RESOURCE_GPU_RESIDENT &&
             !metrics.cpu_replays && !metrics.device_checkpoints);
     }
+    /* Independent extent rounding touches each edge only in a CPU-skipped texel.
+     * These suffixes must not advance storage or submit an empty device region. */
+    int submits=fake.submits;
+    uint64_t version=gml_render_resource_image_ref(render->surface[id-1].resource).content_version;
+    gml_draw_sprite_ext(render,0,0,-1.4,1.0,0.75,0.5,0.0,0xA0C0E0u,0.6);
+    gml_draw_sprite_ext(render,0,0,5.0,1.0,-0.75,0.5,0.0,0xA0C0E0u,0.6);
+    gml_draw_sprite_ext(render,0,0,1.0,-1.4,0.5,0.75,0.0,0xA0C0E0u,0.6);
+    gml_draw_sprite_ext(render,0,0,1.0,5.0,0.5,-0.75,0.0,0xA0C0E0u,0.6);
+    CHECK(render->resident_application_pass && gml_render_scene_submit_pending(render) &&
+          fake.submits==submits && !fake.readbacks &&
+          gml_render_resource_image_ref(render->surface[id-1].resource).content_version==version);
     /* Disposing an unread test-device result is not pixel evidence. */
     gml_render_abandon_device(render);
     gml_render_free(render);free(render);

@@ -899,7 +899,10 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
                                     &nearest_anchor_x,&nearest_bias_x) ||
        !modern_numbered_nearest_axis(top,ys,page->sh,&y0,&height,
                                     &nearest_anchor_y,&nearest_bias_y)) return 0;
-    if(width==0.0 || height==0.0) return 1;
+    /* Edge pruning can remove the sole rounded column/row touching the target.
+     * Do not enqueue an empty snapshot rectangle behind a resident prefix. */
+    if(width==0.0 || height==0.0 || x0+width<=0.0 || y0+height<=0.0 ||
+       x0>=r->fbw || y0>=r->fbh) return 1;
   } else if((nearest_mode==3 || nearest_mode==6) &&
      (!modern_nearest_axis_bias(left,x0,xs,width,page->sw,&nearest_bias_x) ||
       !modern_nearest_axis_bias(top,y0,ys,height,page->sh,&nearest_bias_y))) return 0;
