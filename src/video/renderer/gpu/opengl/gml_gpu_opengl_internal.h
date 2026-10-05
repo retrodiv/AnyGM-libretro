@@ -119,6 +119,7 @@ typedef struct GlSceneExactProgram {
   GLint exact_u_font_crop,exact_u_font_tint,exact_u_font_mode,exact_u_font_preserve_alpha;
   GLint exact_u_font_channel,exact_u_font_margin;
   GLint exact_u_underlay_size,exact_u_underlay_origin,exact_u_underlay_flags;
+  GLint exact_u_surface_rule,exact_u_surface_tint,exact_u_surface_alpha;
 } GlSceneExactProgram;
 
 typedef struct GlScene {

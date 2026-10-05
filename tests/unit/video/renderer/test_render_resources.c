@@ -46,6 +46,7 @@ typedef struct FakeDevice {
   uint32_t last_opcode,last_source_count,last_shader_identity;
   uint32_t last_write_mask,last_filter,last_quantisation;
   double last_filtered_draw_alpha;
+  GmlRenderDrawStateSnapshot last_quad_state;
   GmlRenderImageRef last_target_image;
   GmlRenderRect last_target_region;
   GmlRenderDrawOp last_primitive;
@@ -95,6 +96,7 @@ static GmlRenderExecutionResult fake_submit(void *context,const GmlRenderDrawBat
       fake->last_filter=last->payload.quad.sampling.filter;
       fake->last_quantisation=last->payload.quad.sampling.quantisation;
       fake->last_filtered_draw_alpha=last->payload.quad.filtered_draw_alpha;
+      fake->last_quad_state=batch->states[last->state_index];
     }
     if(last->opcode==GML_RENDER_OP_RECOVER_EMPTY_SCREEN){
       const GmlRenderQuad *q=&last->payload.quad;
@@ -3103,6 +3105,49 @@ static int resident_layer_effect_continuation_authority(void){
           render->app_surface_owned[0]!=fake.readback_colour);
     gml_render_free(render);
     free(render);
+  }
+  return 1;
+}
+
+static int resident_numbered_layer_effect_target(void){
+  for(unsigned family=0;family<3u;family++) for(unsigned below=0;below<2u;below++){
+    GmlRender *render=calloc(1,sizeof *render);
+    FakeDevice fake={.readback_colour=0xFF203040u};
+    GmlRenderDeviceServices device=service(&fake);
+    GmlLayerFilter filter={0};GmlRenderJournalMetrics effect={0},writer={0};
+    CHECK(render && gml_render_init(render,NULL)==0);
+    CHECK(gml_render_application_surface_ensure_owned(render,4,4));
+    gml_render_bind_device(render,&device);
+    CHECK(gml_render_begin_resident_owned_application(render,0,0,0));
+    int id=gml_surface_create(render,4,4);
+    CHECK(id>0 && gml_surface_set_target(render,id));
+    gml_render_set_pending_fill(render,0xFF193557u);gml_render_flush_pending_fill(render);
+    int submits=fake.submits;
+    filter.kind=family==0u?GML_LAYER_FILTER_TINT:
+      family==1u?GML_LAYER_FILTER_COLOURISE:GML_LAYER_FILTER_ZOOM_BLUR;
+    filter.affects_below=(int)below;
+    if(!family) filter.u.tint.colour=0xB0C080E0u;
+    else if(family==1u){filter.u.colourise.tint_colour=0x0080C040u;filter.u.colourise.intensity=.65;}
+    else {filter.u.zoom_blur.centre[0]=.25;filter.u.zoom_blur.centre[1]=.75;
+      filter.u.zoom_blur.intensity=.85;filter.u.zoom_blur.focus_radius=.2;}
+    CHECK(gml_render_layer_filter_begin(render,&filter) && render->layer_filter_gpu_candidate);
+    render->fb[0]=0xA0403020u;render->fb_all_transparent=0;
+    gml_render_layer_filter_end(render,&filter,.375);
+    CHECK(fake.submits==submits+1 && fake.last_opcode==GML_RENDER_OP_LAYER_EFFECT &&
+      fake.last_target_image.resource_class==GML_RENDER_RESOURCE_SURFACE &&
+      fake.last_target_image.identity==(uint32_t)id && render->resident_application_pass &&
+      fake.readbacks==1 && render->app_surface_owned[0]==0u);
+    GmlRenderResource *resource=gml_render_surface_resource_ensure(render,id);
+    gml_render_resource_journal_metrics(resource,&effect);
+    CHECK(effect.authority==GML_RENDER_RESOURCE_BOTH_CURRENT &&
+      effect.cpu_version==effect.logical_version && effect.gpu_version==effect.logical_version);
+    render->alpha=.5;
+    gml_render_primitive_line(render,0,0,3,3,0xFFFFFFu,1);
+    gml_render_resource_journal_metrics(resource,&writer);
+    CHECK(!render->resident_application_pass && writer.authority==GML_RENDER_RESOURCE_CPU_CURRENT &&
+      writer.logical_version==effect.logical_version+1u && writer.cpu_version==writer.logical_version &&
+      writer.gpu_version==effect.gpu_version && render->surface[id-1].px[0]!=fake.readback_colour);
+    gml_render_free(render);free(render);
   }
   return 1;
 }
@@ -6257,8 +6302,9 @@ static int resident_filtered_gui_real_font(void){
   return 1;
 }
 
-static int surface_pending_source_lifetime(int nearest){
+static int surface_pending_source_lifetime(int nearest,int destination_mode){
   for(unsigned interpolation=0;interpolation<(nearest?2u:1u);interpolation++)
+  for(unsigned scale=0;scale<(destination_mode?3u:1u);scale++)
   for(unsigned variant=0;variant<6u;variant++){
     GmlRender *render=(GmlRender*)calloc(1,sizeof *render);
     GmlWin content={.bytecode=15};
@@ -6277,16 +6323,33 @@ static int surface_pending_source_lifetime(int nearest){
     CHECK(gml_render_begin_resident_owned_application(render,0,0,0));
     render->interp=nearest?(int)interpolation:1;
     render->alphablend=1;
+    render->blendmode=destination_mode;
     gml_render_set_pending_fill(render,0x40123456u);
     gml_render_flush_pending_fill(render);
     int submits=fake.submits;
     for(unsigned draw=0;draw<8u;draw++)
       gml_draw_surface_stretched(render,source,3.25,4.125,
-                                 nearest?4.0:17.3,nearest?4.0:13.1,0x3267B9u,.5);
+                                 scale==1u?3.0:scale==2u?5.0:nearest?4.0:17.3,
+                                 scale==1u?2.0:scale==2u?6.0:nearest?4.0:13.1,0x3267B9u,.5);
     if(!render->resident_application_pass || fake.submits!=submits || fake.readbacks)
       fprintf(stderr,"surface lifetime: nearest=%d interp=%u variant=%u pass=%d submits=%d/%d reads=%d\n",
         nearest,interpolation,variant,render->resident_application_pass,fake.submits,submits,fake.readbacks);
     CHECK(render->resident_application_pass && fake.submits==submits && !fake.readbacks);
+    if(destination_mode){
+      GmlRenderResource *target=gml_render_scene_target_resource_ensure(render);
+      GmlRenderImageRef prefix=gml_render_application_scene_next_image_ref(render,target);
+      int uploads=fake.uploads;
+      double w=scale==1u?3.0:scale==2u?5.0:4.0;
+      double h=scale==1u?2.0:scale==2u?6.0:4.0;
+      for(unsigned edge=0;edge<4u;edge++){
+        double x=edge==0u?48.25:edge==1u?-w+.25:3.25;
+        double y=edge==2u?32.125:edge==3u?-h+.125:4.125;
+        gml_draw_surface_stretched(render,source,x,y,w,h,0x3267B9u,.5);
+        GmlRenderImageRef after=gml_render_application_scene_next_image_ref(render,target);
+        CHECK(render->resident_application_pass && prefix.content_version==after.content_version &&
+          fake.submits==submits && fake.uploads==uploads && !fake.readbacks);
+      }
+    }
     if(variant==5u){
       gml_render_free(render);free(render);
       CHECK(fake.submits==submits+1 && fake.last_batch_operations==8u && !fake.readbacks);
@@ -6308,6 +6371,17 @@ static int surface_pending_source_lifetime(int nearest){
     }
     CHECK(fake.submits==submits+(variant==4u?2:1) &&
           fake.last_batch_operations==8u && fake.readbacks==(variant==4u?1:0));
+    if(destination_mode){
+      CHECK(fake.last_filtered_draw_alpha==.5 &&
+        fake.last_filter==(scale && interpolation?GML_RENDER_FILTER_BOX:GML_RENDER_FILTER_NEAREST) &&
+        fake.last_quad_state.coverage_policy==0u &&
+        fake.last_quad_state.rgb_equation==GML_RENDER_BLEND_EXACT_DESTINATION_ADD &&
+        fake.last_quad_state.alpha_equation==GML_RENDER_BLEND_EXACT_DESTINATION_ADD &&
+        fake.last_quad_state.rgb_source_factor==(destination_mode==11?
+          GML_RENDER_BLEND_DESTINATION_ALPHA:GML_RENDER_BLEND_DESTINATION_COLOUR) &&
+        fake.last_quad_state.rgb_destination_factor==(destination_mode==9?
+          GML_RENDER_BLEND_SOURCE_COLOUR:GML_RENDER_BLEND_DESTINATION_COLOUR));
+    }
     CHECK(gml_render_scene_submit_pending(render) &&
           fake.submits==submits+(variant==4u?2:1));
     if(variant==3u) gml_surface_reset_target(render);
@@ -7782,6 +7856,7 @@ int main(void){
   passed+=resident_layer_filter_capture_barrier();
   passed+=resident_inline_layer_effect_cpu_bridge();
   passed+=resident_layer_effect_continuation_authority();
+  passed+=resident_numbered_layer_effect_target();
   passed+=resident_flat_primitive_public_order();
   passed+=resident_viewless_base_canvas_order();
   passed+=completed_screen_reader_and_writer();
@@ -7824,8 +7899,11 @@ int main(void){
   passed+=resident_coarse_veil_exact_recovery();
   passed+=resident_packaged_sprite_font_glyph();
   passed+=resident_filtered_gui_real_font();
-  passed+=surface_pending_source_lifetime(0);
-  passed+=surface_pending_source_lifetime(1);
+  passed+=surface_pending_source_lifetime(0,0);
+  passed+=surface_pending_source_lifetime(1,0);
+  passed+=surface_pending_source_lifetime(1,9);
+  passed+=surface_pending_source_lifetime(1,10);
+  passed+=surface_pending_source_lifetime(1,11);
   passed+=application_surface_pending_source_lifetime();
   passed+=current_cpu_source_view_is_not_observer();
   passed+=resident_current_cpu_application_underlay();
@@ -7852,6 +7930,6 @@ int main(void){
   passed+=source_free_primitive_rect_replay();
   passed+=stretched_float_exact_replay();
   passed+=filtered_font_exact_recovery();
-  printf("render resource cases: passed=%d failed=%d\n",passed,106-passed);
-  return passed==106?EXIT_SUCCESS:EXIT_FAILURE;
+  printf("render resource cases: passed=%d failed=%d\n",passed,110-passed);
+  return passed==110?EXIT_SUCCESS:EXIT_FAILURE;
 }

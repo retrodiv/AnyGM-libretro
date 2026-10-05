@@ -52,7 +52,10 @@ static int layer_effect_submit_gpu(GmlRender *r,const uint32_t *source_pixels,
      (size_t)width>SIZE_MAX/4u/(size_t)height ||
      (size_t)width*(size_t)height>16u*1024u*1024u ||
      !source_pixels || !r->fb || !effect || !isfinite(effect->intensity)) return 0;
-  application=gml_render_scene_target_matches(r);
+  /* The shared scene matcher also accepts numbered targets. After capture its
+   * resident flag is cleared, so the application submitter would select the
+   * owned application resource instead of this restored numbered destination. */
+  application=r->target_id<=0 && gml_render_scene_target_matches(r);
   if(!application && !(r->target_id>0 && r->target_id<=GML_MAX_SURFACES &&
      r->surface[r->target_id-1].live &&
      r->fb==r->surface[r->target_id-1].px &&
@@ -100,10 +103,10 @@ static int layer_effect_submit_gpu(GmlRender *r,const uint32_t *source_pixels,
   if(device->retire) device->retire(device->context,source_ref);
   if(result==GML_RENDER_RESOURCE_EXEC_DEVICE){
     /* The source capture crossed the CPU barrier, but the accepted effect
-     * makes this application target device-current again. Re-enter the
+     * makes this target device-current again. Re-enter the
      * resident draw contract so a later CPU-only draw crosses its write
      * barrier and invalidates that device version. */
-    if(application) r->resident_application_pass=1;
+    if(gml_render_scene_target_matches(r)) r->resident_application_pass=1;
     r->fb_opaque_known=0;
     r->fb_all_transparent=0;
     return 1;
@@ -155,7 +158,7 @@ void gml_render_layer_rgb_noise(GmlRender *r,uint32_t sampler_tpag_ptr,
                                 double intensity,double animation,uint32_t rgb){
   int gpu_candidate=r && r->fb && r->fbw>0 && r->fbh>0 &&
     r->resident_application_pass && gml_render_device(r) &&
-    gml_render_scene_target_matches(r) &&
+    r->target_id<=0 && gml_render_scene_target_matches(r) &&
     !r->layer_filter_active && !r->gui_pass_active && !r->classic &&
     r->active_shader<0 && isfinite(intensity) && intensity>0.0 && intensity<=1.0 &&
     isfinite(animation) &&

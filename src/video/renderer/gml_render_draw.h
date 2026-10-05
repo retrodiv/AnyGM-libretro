@@ -152,7 +152,10 @@ typedef enum GmlRenderBlendFactor {
   GML_RENDER_BLEND_ZERO=1,
   GML_RENDER_BLEND_ONE=2,
   GML_RENDER_BLEND_SOURCE_ALPHA=3,
-  GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA=4
+  GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA=4,
+  GML_RENDER_BLEND_SOURCE_COLOUR=5,
+  GML_RENDER_BLEND_DESTINATION_COLOUR=6,
+  GML_RENDER_BLEND_DESTINATION_ALPHA=7
 } GmlRenderBlendFactor;
 
 /* Software selectors for destination-dependent fixed-function factor pairs. */
@@ -181,7 +184,14 @@ typedef enum GmlRenderBlendEquation {
   GML_RENDER_BLEND_EXACT_AUTOMATIC_SURFACE=6,
   /* The stretched CPU band keeps unrounded float channels/alpha and writes
    * opaque coverage. Mix against an ordered device-local destination snapshot. */
-  GML_RENDER_BLEND_EXACT_STRETCHED_FLOAT=7
+  GML_RENDER_BLEND_EXACT_STRETCHED_FLOAT=7,
+  /* Integer destination-factor surface channels: add, max, reverse subtract,
+   * subtract and min. These are resolved CPU rules, not GL enum values. */
+  GML_RENDER_BLEND_EXACT_DESTINATION_ADD=8,
+  GML_RENDER_BLEND_EXACT_DESTINATION_MAX=9,
+  GML_RENDER_BLEND_EXACT_DESTINATION_REVERSE_SUBTRACT=10,
+  GML_RENDER_BLEND_EXACT_DESTINATION_SUBTRACT=11,
+  GML_RENDER_BLEND_EXACT_DESTINATION_MIN=12
 } GmlRenderBlendEquation;
 
 enum {

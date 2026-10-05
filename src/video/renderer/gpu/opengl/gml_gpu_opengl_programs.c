@@ -271,6 +271,9 @@ GlSceneExactProgram *gml_gpu_opengl_scene_exact_program(GmlGpuBackend *backend,i
   scene->exact_u_underlay_size=backend->gl.GetUniformLocation(scene->exact_program,"u_underlay_size");
   scene->exact_u_underlay_origin=backend->gl.GetUniformLocation(scene->exact_program,"u_underlay_origin");
   scene->exact_u_underlay_flags=backend->gl.GetUniformLocation(scene->exact_program,"u_underlay_flags");
+  scene->exact_u_surface_rule=backend->gl.GetUniformLocation(scene->exact_program,"u_surface_rule");
+  scene->exact_u_surface_tint=backend->gl.GetUniformLocation(scene->exact_program,"u_surface_tint");
+  scene->exact_u_surface_alpha=backend->gl.GetUniformLocation(scene->exact_program,"u_surface_alpha");
   if(scene->exact_a_position<0 ||
      scene->exact_u_extent<0 || scene->exact_u_image<0 || scene->exact_u_previous<0 ||
      scene->exact_u_region_origin<0 ||
@@ -281,7 +284,8 @@ GlSceneExactProgram *gml_gpu_opengl_scene_exact_program(GmlGpuBackend *backend,i
        scene->exact_u_effect_intensity<0 || scene->exact_u_effect_zoom<0 ||
        scene->exact_u_effect_linear<0 || scene->exact_u_effect_seed<0 ||
        scene->exact_u_underlay_size<0 || scene->exact_u_underlay_origin<0 ||
-       scene->exact_u_underlay_flags<0)) ||
+       scene->exact_u_underlay_flags<0 || scene->exact_u_surface_rule<0 ||
+       scene->exact_u_surface_tint<0 || scene->exact_u_surface_alpha<0)) ||
      ((!embedded || font_mode) &&
       (scene->exact_u_font_origin<0 || scene->exact_u_font_scale<0 ||
        scene->exact_u_font_alpha<0 || scene->exact_u_font_crop<0 || scene->exact_u_font_margin<0 ||

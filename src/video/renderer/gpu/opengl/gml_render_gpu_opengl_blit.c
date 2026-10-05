@@ -16,7 +16,7 @@ int gml_render_gpu_opengl_draw_textured_quad(const GmlRenderDrawOp *op,
   const GmlRenderQuad *quad;
   GmlRenderRect region;
   uint32_t region_storage_y;
-  int rotated,warped,stretched_float,stretched_blend,automatic_surface;
+  int rotated,warped,stretched_float,stretched_blend,automatic_surface,destination_surface;
   if(!op || !state || !vertices || !source_width || !source_height) return 0;
   quad=&op->payload.quad;
   rotated=quad->shape==GML_RENDER_QUAD_CARDINAL || quad->shape==GML_RENDER_QUAD_GENERAL;
@@ -41,7 +41,20 @@ int gml_render_gpu_opengl_draw_textured_quad(const GmlRenderDrawOp *op,
   if(region.x<0 || region.y<0 || !region.width || !region.height ||
      (uint64_t)(uint32_t)region.x+region.width>source_width ||
      (uint64_t)(uint32_t)region.y+region.height>source_height) return 0;
-  if(!automatic_surface && (quad->sampling.filter==GML_RENDER_FILTER_BOX || stretched_float)){
+  /* Exact full-surface destination-factor sampling is resolved by its integer
+   * fragment rule, not the stretched sprite's logical-trim span metadata. */
+  destination_surface=op->scene_family==GML_RENDER_SCENE_SURFACE &&
+    op->reconstruction_mode==GML_RENDER_DEVICE_CHECKPOINT &&
+    quad->shape==GML_RENDER_QUAD_AXIS_ALIGNED && !quad->span_active &&
+    state->rgb_equation>=GML_RENDER_BLEND_EXACT_DESTINATION_ADD &&
+    state->rgb_equation<=GML_RENDER_BLEND_EXACT_DESTINATION_MIN &&
+    state->alpha_equation>=GML_RENDER_BLEND_EXACT_DESTINATION_ADD &&
+    state->alpha_equation<=GML_RENDER_BLEND_EXACT_DESTINATION_MIN &&
+    quad->sampling.edge_rule==GML_RENDER_EDGE_CLAMP_SUBIMAGE &&
+    !quad->sampling.quantisation && !quad->sampling.logical_margin_mask &&
+    region.x==0 && region.y==0 && region.width==source_width && region.height==source_height;
+  if(!automatic_surface && !destination_surface &&
+     (quad->sampling.filter==GML_RENDER_FILTER_BOX || stretched_float)){
     if(rotated || rendered_source_origin || quad->span_active ||
        (!stretched_float && op->reconstruction_mode!=GML_RENDER_DEVICE_CHECKPOINT)) return 0;
     for(uint32_t axis=0;axis<2;axis++){

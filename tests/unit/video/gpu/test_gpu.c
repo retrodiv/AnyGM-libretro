@@ -1121,6 +1121,93 @@ static int scene_nearest_application_batch_case(void){
   return scene_hardware_filtered_batch_case(5);
 }
 
+/* Dispatch, ordered predecessor copies and whole-batch refusal, not shader pixel evidence. */
+static int scene_destination_surface_case(void){
+  const uint32_t pixels[4]={0x001267B9u,0x552679B3u,0xAAC39526u,0xFF7193C5u};
+  const unsigned extents[][2]={{2u,2u},{1u,1u},{3u,4u},{2u,3u}};
+  for(unsigned api=0;api<2u;api++) for(unsigned mode=9;mode<=11u;mode++)
+  for(unsigned scale=0;scale<sizeof extents/sizeof *extents;scale++)
+  for(unsigned filtered=0;filtered<2u;filtered++)
+  for(unsigned excluded=0;excluded<18u;excluded++){
+    GmlGpuContext context=fake_context(api?GML_GPU_API_OPENGLES3:GML_GPU_API_OPENGL_CORE);
+    GmlRenderImageRef source={GML_RENDER_RESOURCE_SURFACE,95u,1u,1u};
+    GmlRenderImageUpload upload={0};GmlRenderDrawOp ops[3]={0};
+    GmlRenderDrawStateSnapshot states[2]={0};GmlRenderDeviceServices device={0};
+    anygm_test_graphics_reset();
+    if(excluded==1u) anygm_test_graphics_withhold("glCopyTexSubImage2D");
+    GmlGpu *gpu=gml_gpu_create();
+    REQUIRE(gpu && gml_gpu_context_reset(gpu,&context),"destination surface context adopted");
+    gml_gpu_device_services(gpu,&device);
+    upload.image=source;upload.storage_width=upload.storage_height=2u;
+    upload.region=(GmlRenderRect){0,0,2u,2u};upload.pixel_format=GML_RENDER_PIXEL_ARGB8888;
+    upload.bytes=pixels;upload.byte_capacity=sizeof pixels;upload.stride_bytes=8u;
+    REQUIRE(device.upload(device.context,&upload),"destination surface source uploaded");
+    for(unsigned index=0;index<3u;index++){
+      GmlRenderDrawOp *op=&ops[index];
+      op->target.image=(GmlRenderImageRef){GML_RENDER_RESOURCE_SURFACE,96u,1u,index+1u};
+      op->target.storage_version=1u;op->target.width=op->target.height=8u;
+      op->target.pixel_format=GML_RENDER_PIXEL_ARGB8888;
+      op->target.region=(GmlRenderRect){0,0,8u,8u};op->sequence=index+1u;
+      if(!index){op->opcode=GML_RENDER_OP_CLEAR;op->payload.clear_colour=0x71123456u;continue;}
+      GmlRenderDrawStateSnapshot *state=&states[index-1u];
+      state->write_mask=15u;state->alpha=255u;state->colour=0xFFFFFFFFu;
+      state->rgb_source_factor=state->alpha_source_factor=mode==11u?
+        GML_RENDER_BLEND_DESTINATION_ALPHA:GML_RENDER_BLEND_DESTINATION_COLOUR;
+      state->rgb_destination_factor=state->alpha_destination_factor=mode==9u?
+        GML_RENDER_BLEND_SOURCE_COLOUR:GML_RENDER_BLEND_DESTINATION_COLOUR;
+      state->rgb_equation=GML_RENDER_BLEND_EXACT_DESTINATION_ADD;
+      state->alpha_equation=index==1u?GML_RENDER_BLEND_EXACT_DESTINATION_MIN:
+                                    GML_RENDER_BLEND_EXACT_DESTINATION_MAX;
+      state->sampler_count=1u;
+      state->samplers[0].filter=filtered?GML_RENDER_FILTER_BOX:GML_RENDER_FILTER_NEAREST;
+      state->samplers[0].edge_rule=GML_RENDER_EDGE_CLAMP_SUBIMAGE;
+      state->samplers[0].source_region=upload.region;
+      op->opcode=GML_RENDER_OP_TEXTURED_QUAD;op->scene_family=GML_RENDER_SCENE_SURFACE;
+      op->state_index=index-1u;op->sources=&source;op->source_count=1u;
+      op->reconstruction_mode=GML_RENDER_DEVICE_CHECKPOINT;
+      GmlRenderQuad *q=&op->payload.quad;
+      q->shape=GML_RENDER_QUAD_AXIS_ALIGNED;q->sampling=state->samplers[0];
+      q->filtered_draw_alpha=.5;
+      q->x[1]=q->x[2]=extents[scale][0];q->y[2]=q->y[3]=extents[scale][1];
+      q->u[1]=q->u[2]=q->v[2]=q->v[3]=1.0;
+      for(unsigned corner=0;corner<4u;corner++) q->corner_colour[corner]=0x809371C5u;
+    }
+    if(excluded==2u) ops[2].payload.quad.filtered_draw_alpha=NAN;
+    if(excluded==3u) ops[2].payload.quad.x[1]=ops[2].payload.quad.x[2]=3.5;
+    if(excluded==4u) ops[2].scene_family=GML_RENDER_SCENE_BACKGROUND;
+    if(excluded==5u) ops[2].payload.quad.corner_colour[1]^=1u;
+    if(excluded==6u) ops[2].payload.quad.u[1]=.9;
+    if(excluded==7u) states[1].write_mask=7u;
+    if(excluded==8u) states[1].alpha_test_enabled=1u;
+    if(excluded==9u) states[1].alpha_source_factor=GML_RENDER_BLEND_ONE;
+    if(excluded==10u) states[1].rgb_equation=GML_RENDER_BLEND_ADD;
+    if(excluded==11u) ops[2].payload.quad.filtered_draw_alpha=0x1p-40;
+    if(excluded==12u) for(unsigned corner=0;corner<4u;corner++)
+      ops[2].payload.quad.corner_colour[corner]=0x7F9371C5u;
+    if(excluded==13u) states[1].samplers[0].filter=GML_RENDER_FILTER_HARDWARE_BILINEAR;
+    if(excluded==14u) ops[2].payload.quad.x[1]=ops[2].payload.quad.x[2]=4097.0;
+    if(excluded==15u) states[1].samplers[0].quantisation=GML_RENDER_QUANTISE_STRETCHED_FLOAT;
+    if(excluded==16u) states[1].samplers[0].edge_rule=GML_RENDER_EDGE_TRANSPARENT;
+    if(excluded==17u) ops[2].payload.quad.y[2]=ops[2].payload.quad.y[3]=0.0;
+    ops[2].payload.quad.sampling=states[1].samplers[0];
+    GmlRenderDrawBatch batch={ops,3u,states,2u};
+    GmlRenderExecutionResult result=device.submit(device.context,&batch);
+    if(excluded){
+      REQUIRE(result.status==GML_RENDER_EXEC_UNSUPPORTED && !result.accepted_prefix &&
+        !anygm_test_graphics_clear_calls() && !anygm_test_graphics_scene_draw_calls() &&
+        !anygm_test_graphics_scene_copies(),"invalid suffix refuses before clear, copies or draws");
+    } else {
+      REQUIRE(result.status==GML_RENDER_EXEC_ACCEPTED && result.accepted_prefix==3u &&
+        anygm_test_graphics_scene_draw_calls()==2 && anygm_test_graphics_scene_copies()==2 &&
+        anygm_test_graphics_scene_copied_pixels()==2u*extents[scale][0]*extents[scale][1] &&
+        !anygm_test_graphics_read_pixels(),
+        "each ordered surface samples a bounded predecessor without CPU readback");
+    }
+    gml_gpu_destroy(gpu,1);
+  }
+  return 1;
+}
+
 /* The fake driver supplies masks and faults; the real-device comparator proves shader pixels. */
 static int incremental_checkpoint_contract_case(void){
   for(unsigned api=0;api<2u;api++) for(unsigned owner=0;owner<2u;owner++)
@@ -2997,6 +3084,7 @@ int main(int argc,char **argv){
     {"scene_hardware_surface_batch",scene_hardware_surface_batch_case},
     {"scene_nearest_surface_batch",scene_nearest_surface_batch_case},
     {"scene_nearest_application_batch",scene_nearest_application_batch_case},
+    {"scene_destination_surface",scene_destination_surface_case},
     {"scene_readback_formats",scene_readback_formats_case},
     {"incremental_checkpoint_contract",incremental_checkpoint_contract_case},
     {"incremental_checkpoint_budget",incremental_checkpoint_budget_case},

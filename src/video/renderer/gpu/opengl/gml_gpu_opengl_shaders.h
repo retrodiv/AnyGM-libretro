@@ -749,6 +749,9 @@
   "uniform ivec2 u_region_origin;\n" \
   "uniform int u_repetitions;\n" \
   "uniform int u_blend_rule;\n" \
+  "uniform ivec4 u_surface_rule;\n" \
+  "uniform ivec4 u_surface_tint;\n" \
+  "uniform ivec2 u_surface_alpha;\n" \
   "uniform ivec4 u_underlay_size;\n" \
   "uniform ivec2 u_underlay_origin;\n" \
   "uniform int u_underlay_flags;\n" \
@@ -851,6 +854,40 @@
   "  if(u_blend_rule==7){ o_color=vec4(filtered_font_pixel(prior))/255.0; return; }\n" \
   "#endif\n" \
   "  if(u_blend_rule==8){ o_color=vec4(automatic_underlay_pixel(prior))/255.0; return; }\n" \
+  "  // R03_SHADER_SURFACE_DESTINATION: rounded integer factors, independent RGBA equations.\n" \
+  "  if(u_blend_rule==9){\n" \
+  "    ivec2 source_size=u_underlay_size.xy,extent=u_underlay_size.zw;\n" \
+  "    ivec2 p=ivec2(int(gl_FragCoord.x),int(u_extent.y)-1-int(gl_FragCoord.y))-u_underlay_origin;\n" \
+  "    ivec2 lo=p*source_size/extent;\n" \
+  "    ivec2 hi=(u_underlay_flags&2)!=0?max((p+ivec2(1))*source_size/extent,lo+ivec2(1)):lo+ivec2(1);\n" \
+  "    hi=min(hi,source_size);\n" \
+  "    ivec4 total=ivec4(0);int count=0;\n" \
+  "    for(int y=lo.y;y<hi.y;y++) for(int x=lo.x;x<hi.x;x++){\n" \
+  "      total+=underlay_texel(ivec2(x,y));count++;\n" \
+  "    }\n" \
+  "    if(count==0){o_color=vec4(prior)/255.0;return;}\n" \
+  "    ivec4 sampled=total/count;\n" \
+  "    sampled.rgb=sampled.rgb*u_surface_tint.rgb/255;\n" \
+  "    // Positive rational channel averages round exactly at unit draw alpha.\n" \
+  "    if(all(equal(u_surface_alpha,ivec2(0,0x3ff00000)))) sampled.a=(2*total.a+count)/(2*count);\n" \
+  "    else {\n" \
+  "      uvec2 average=count==1?d64_uint(uint(total.a)):d64_div(d64_uint(uint(total.a)),d64_uint(uint(count)));\n" \
+  "      sampled.a=d64_lround(d64_mul(average,uvec2(u_surface_alpha)));\n" \
+  "    }\n" \
+  "    ivec4 result;\n" \
+  "    for(int channel=0;channel<4;channel++){\n" \
+  "      int equation=channel==3?u_surface_rule.z:u_surface_rule.y;\n" \
+  "      int sf=u_surface_rule.x==11?prior.a:prior[channel];\n" \
+  "      int df=u_surface_rule.x==9?sampled[channel]:prior[channel];\n" \
+  "      int s=sampled[channel]*sf,d=prior[channel]*df;\n" \
+  "      int scaled=equation==3?d-s:equation==4?s-d:s+d;\n" \
+  "      int value=equation==2?max(sampled[channel],prior[channel]):\n" \
+  "                equation==5?min(sampled[channel],prior[channel]):max(0,scaled+127)/255;\n" \
+  "      result[channel]=min(value,255);\n" \
+  "    }\n" \
+  "    if(u_surface_rule.w==0) result.a=255;\n" \
+  "    o_color=vec4(result)/255.0; return;\n" \
+  "  }\n" \
   "  // R03_SHADER_LAYER_RGB_NOISE: the CPU hash and alpha-weighted RGB mix.\n" \
   "  if(u_blend_rule==5){\n" \
   "    uint x=uint(int(gl_FragCoord.x));\n" \

@@ -44,6 +44,7 @@ REQUIRED_RULES = {
     "R03-P5-SURFACE-RESIZE", "R03-P5-SURFACE-FREE",
     "R03-P5-SURFACE-PART", "R03-P5-SURFACE-STRETCHED",
     "R03-P5-SURFACE-ROTATED",
+    "R03-P5-SURFACE-DESTINATION-UNIT",
     "R03-TEXT-SPRITE-PACKAGED", "R03-TEXT-REAL-PACKAGED",
     "R03-TEXT-PACKAGED-INTEGER-SCALE", "R03-TEXT-PACKAGED-TINT",
     "R03-TEXT-PACKAGED-PARTIAL-ALPHA",
@@ -265,6 +266,9 @@ def self_test() -> None:
         "\n".join(line for line in document.splitlines()
                   if not line.startswith("| R03-P9-SPRITE-ALPHA-BOUNDARY |")),
         document.replace("::R03_SHADER_EXACT_OVERLAP", "::OBSOLETE_EXACT_OVERLAP", 1),
+        document.replace("::R03_SHADER_SURFACE_DESTINATION", "::OBSOLETE_SURFACE_DESTINATION", 1),
+        "\n".join(line for line in document.splitlines()
+                  if not line.startswith("| R03-P5-SURFACE-DESTINATION-UNIT |")),
         document.replace("::R03_SHADER_NEAREST_PHASED", "::OBSOLETE_NEAREST_PHASED", 1),
         document.replace("::R03_SHADER_MODERN_NUMBERED_NEAREST",
                          "::OBSOLETE_MODERN_NUMBERED_NEAREST", 1),

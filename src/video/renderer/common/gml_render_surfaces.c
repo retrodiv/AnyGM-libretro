@@ -263,8 +263,18 @@ int gml_render_application_scene_enqueue(GmlRender *r,const GmlRenderDrawOp *ope
     operation->reconstruction_mode==GML_RENDER_DEVICE_CHECKPOINT &&
     operation->opcode==GML_RENDER_OP_TEXTURED_QUAD &&
     (operation->payload.quad.sampling.filter==GML_RENDER_FILTER_HARDWARE_BILINEAR ||
-     (operation->payload.quad.sampling.filter==GML_RENDER_FILTER_NEAREST && state &&
-      state->coverage_policy==GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA));
+     ((operation->payload.quad.sampling.filter==GML_RENDER_FILTER_NEAREST ||
+       (operation->payload.quad.sampling.filter==GML_RENDER_FILTER_BOX && state &&
+        state->rgb_equation>=GML_RENDER_BLEND_EXACT_DESTINATION_ADD &&
+        state->rgb_equation<=GML_RENDER_BLEND_EXACT_DESTINATION_MIN &&
+        state->alpha_equation>=GML_RENDER_BLEND_EXACT_DESTINATION_ADD &&
+        state->alpha_equation<=GML_RENDER_BLEND_EXACT_DESTINATION_MIN)) && state &&
+      (state->coverage_policy==GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA ||
+       (state->coverage_policy==0u &&
+        state->rgb_equation>=GML_RENDER_BLEND_EXACT_DESTINATION_ADD &&
+        state->rgb_equation<=GML_RENDER_BLEND_EXACT_DESTINATION_MIN &&
+        state->alpha_equation>=GML_RENDER_BLEND_EXACT_DESTINATION_ADD &&
+        state->alpha_equation<=GML_RENDER_BLEND_EXACT_DESTINATION_MIN))));
   if(!r || !r->resident_application_pass || !gml_render_device(r) ||
      !gml_render_scene_target_resource_ensure(r) || !operation || !state || !source ||
      (!source->borrowed_immutable && !versioned_surface &&
@@ -844,6 +854,7 @@ static int resident_surface_filtered(GmlRender *r,int surf,double dx,double dy,d
   GmlRenderDrawStateSnapshot state={0};
   GmlRenderImageRef source_ref,image;
   const GmlRenderDeviceServices *device;
+  int destination_blend=r && gml_render_blend_uses_destination_colour(r->blendmode);
   if(!r || (surf!=0 && (slot<0 || !r->surface[slot].live)) || r->classic ||
      (surf==0 && (!r->app_surface_published || !r->app_surface ||
                   r->app_surface!=r->app_surface_owned)) ||
@@ -853,9 +864,11 @@ static int resident_surface_filtered(GmlRender *r,int surf,double dx,double dy,d
      (surf==0?r->app_surface:r->surface[slot].px)==r->fb ||
      (r->surface_canvas>0 && (surf==r->surface_canvas || r->target_id==r->surface_canvas)) ||
      r->pending_underlay || r->pending_presentation ||
-     r->active_shader>=0 || !r->alphablend || r->blendmode ||
-     r->alpha_test_enable || r->color_write_mask!=15u || r->blend_equation!=1 ||
-     r->blend_equation_alpha!=1 || gml_d3_is_active(r) ||
+     r->active_shader>=0 || !r->alphablend || (r->blendmode && !destination_blend) ||
+     r->alpha_test_enable || r->color_write_mask!=15u ||
+     (destination_blend?(r->blend_equation<1 || r->blend_equation>5 ||
+                         r->blend_equation_alpha<1 || r->blend_equation_alpha>5):
+                        (r->blend_equation!=1 || r->blend_equation_alpha!=1)) || gml_d3_is_active(r) ||
      !isfinite(alpha) || alpha<=0.0 || !isfinite(dx) || !isfinite(dy) ||
      !isfinite(dw) || !isfinite(dh) || dw<=0.0 || dh<=0.0 ||
      dw>(double)INT_MAX/2 || dh>(double)INT_MAX/2) return 0;
@@ -864,11 +877,22 @@ static int resident_surface_filtered(GmlRender *r,int surf,double dx,double dy,d
   source_width=surf==0?r->app_w:r->surface[slot].w;
   source_height=surf==0?r->app_h:r->surface[slot].h;
   unit=width==source_width && height==source_height;
+  /* Bound exact integer phase products and filtered tap accumulation. The CPU
+   * destination-factor leaf uses left-edge point/box sampling, even when enlarged. */
+  if(destination_blend && (alpha<0x1p-32 || width<1.0 || height<1.0 ||
+     width>4096.0 || height>4096.0 || source_width>4096 || source_height>4096 ||
+     (r->interp && ((double)source_width>width*8.0 ||
+                    (double)source_height>height*8.0)))) return 0;
   if(!isfinite(left) || !isfinite(top) || left<(double)INT_MIN/2 ||
      top<(double)INT_MIN/2 || left>(double)INT_MAX/2 || top>(double)INT_MAX/2 ||
      source_width<=0 || source_height<=0 ||
-     (!unit && (!r->interp || surf==0 || width<=source_width || height<=source_height)) ||
-     left>=r->fbw || top>=r->fbh || left+width<=0.0 || top+height<=0.0) return 0;
+     (!destination_blend && !unit &&
+      (!r->interp || surf==0 || width<=source_width || height<=source_height))) return 0;
+  /* The CPU rectangle is half-open after these same origin/extent roundings.
+   * A fully clipped destination-factor draw cannot sample or write a pixel;
+   * preserve the queued prefix without acquiring its source or target. */
+  if(left>=r->fbw || top>=r->fbh || left+width<=0.0 || top+height<=0.0)
+    return destination_blend?1:0;
   for(int index=0;index<r->target_sp;index++)
     if(r->target_stack[index].fb==(surf==0?r->app_surface:r->surface[slot].px) &&
        r->target_stack[index].pending_fill) return 0;
@@ -896,7 +920,9 @@ static int resident_surface_filtered(GmlRender *r,int surf,double dx,double dy,d
   operation.target.region=(GmlRenderRect){0,0,(uint32_t)r->fbw,(uint32_t)r->fbh};
   GmlRenderQuad *quad=&operation.payload.quad;
   quad->shape=GML_RENDER_QUAD_AXIS_ALIGNED;
-  quad->sampling.filter=unit?GML_RENDER_FILTER_NEAREST:GML_RENDER_FILTER_HARDWARE_BILINEAR;
+  quad->sampling.filter=destination_blend
+    ?(!unit && r->interp?GML_RENDER_FILTER_BOX:GML_RENDER_FILTER_NEAREST)
+    :unit?GML_RENDER_FILTER_NEAREST:GML_RENDER_FILTER_HARDWARE_BILINEAR;
   quad->sampling.edge_rule=GML_RENDER_EDGE_CLAMP_SUBIMAGE;
   quad->sampling.source_region=(GmlRenderRect){0,0,source.width,source.height};
   quad->filtered_draw_alpha=alpha;
@@ -912,6 +938,18 @@ static int resident_surface_filtered(GmlRender *r,int surf,double dx,double dy,d
   state.alpha_destination_factor=GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA;
   state.rgb_equation=state.alpha_equation=GML_RENDER_BLEND_ADD;
   state.coverage_policy=GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA;
+  if(destination_blend){
+    state.rgb_source_factor=state.alpha_source_factor=
+      r->blendmode==GML_RENDER_BLEND_DEST_ALPHA_DEST_COLOUR
+        ?GML_RENDER_BLEND_DESTINATION_ALPHA:GML_RENDER_BLEND_DESTINATION_COLOUR;
+    state.rgb_destination_factor=state.alpha_destination_factor=
+      r->blendmode==GML_RENDER_BLEND_DEST_SOURCE_COLOUR
+        ?GML_RENDER_BLEND_SOURCE_COLOUR:GML_RENDER_BLEND_DESTINATION_COLOUR;
+    state.rgb_equation=GML_RENDER_BLEND_EXACT_DESTINATION_ADD+(uint32_t)r->blend_equation-1u;
+    state.alpha_equation=GML_RENDER_BLEND_EXACT_DESTINATION_ADD+(uint32_t)r->blend_equation_alpha-1u;
+    state.coverage_policy=gml_render_target_preserves_alpha(r)?0u:
+      GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA;
+  }
   state.write_mask=15u;state.alpha=255u;state.colour=0xFFFFFFFFu;
   state.sampler_count=1u;state.samplers[0]=quad->sampling;
   if(!gml_render_application_scene_enqueue(r,&operation,&state,&source)) return 0;
