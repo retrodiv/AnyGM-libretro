@@ -293,6 +293,21 @@ set of qualified scene operations or change CPU raster bodies.
 
 ## Current operation support and repair-level rules
 
+The single-view coordinator also selects the existing resident base preparation
+before entering a native-sized numbered `view_surface_id` target. This applies
+only to non-classic, non-composed, non-forced-aspect frames with one visible view,
+matching world and surface dimensions, an active device and selected OpenGL scene
+rendering. The view retains its resolved room camera and the ordinary numbered
+target facade; unsupported draws still take their existing ordered CPU barrier.
+After sealing, only a drawn base is immediately observed for CPU composition;
+an assigned destination remains resource-owned until an actual consumer reads it.
+Resized assignments and absent or ineligible contexts retain the established CPU
+path. No CPU raster, shader, state schema, multiview compositor or sampling rule
+changes. `tests/integration/test_graphics_state.c::resident_native_assigned_view_case`
+checks admission with application drawing enabled and disabled, a displaced camera,
+resized-target exclusion, exact canonical state crossing, completed-frame restoration
+and context loss/recreation. Its fake driver is not real-device pixel or speed proof.
+
 The experimental magnified full-source numbered-surface rule is TOLERANCE±2 per draw,
 with the composed-image contract and remaining RGBA limitations above.
 `common/gml_render_surfaces.c::resident_surface_filtered` uses the unchanged

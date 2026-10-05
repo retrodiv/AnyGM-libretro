@@ -1564,6 +1564,12 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
   uint32_t *world_pixels=engine->fb;
   int world_width=(int)engine->width;
   int world_height=(int)engine->height;
+  /* A native assigned view uses its own numbered target, not the application image. */
+  int native_assigned_view=!engine->composed_frame && !engine->aspect_force_active &&
+    frame_view_count==1 && view_surface>0 &&
+    frame_views[0].w==(double)world_width && frame_views[0].h==(double)world_height &&
+    gml_surface_width(&engine->render,view_surface)==world_width &&
+    gml_surface_height(&engine->render,view_surface)==world_height;
   if(engine->aspect_force_active && aspect_surface_canvas_size(engine,NULL,NULL) &&
      frame_view_count==1 && render_presentation.application_owned &&
      gml_render_application_surface_owned_extent(&engine->render,NULL,NULL))
@@ -1629,7 +1635,8 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
     world_width=(int)engine->width;
     world_height=(int)engine->height;
     if(!engine->composed_frame && !engine->aspect_force_active &&
-       !render_presentation.application_draw_enabled && frame_view_count==0 &&
+       ((!render_presentation.application_draw_enabled && frame_view_count==0) ||
+        (native_assigned_view && !gml_render_is_classic(&engine->render))) &&
        engine_graphics_active(engine) &&
        (engine->scene_renderer_session==ANYGM_SCENE_RENDERER_OPENGL ||
         anygm_host_development_setting(&engine->host,"GML_SCENE_GPU_PROTOTYPE")))
@@ -1643,11 +1650,7 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
   }
   /* Native-sized assigned views are real render targets. Retain the established sampling
    * policy for resized surfaces, composed frames and forced-aspect presentation. */
-  if(!direct_owned_world && !engine->composed_frame && !engine->aspect_force_active &&
-     frame_view_count==1 && view_surface>0 &&
-     frame_views[0].w==(double)world_width && frame_views[0].h==(double)world_height &&
-     gml_surface_width(&engine->render,view_surface)==world_width &&
-     gml_surface_height(&engine->render,view_surface)==world_height){
+  if(!direct_owned_world && native_assigned_view){
     direct_view_surface=gml_render_view_surface_begin(
       &engine->render,view_surface,cam_x,cam_y);
     if(!direct_view_surface) return ANYGM_ERROR_INTERNAL;
@@ -1688,7 +1691,9 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
   engine->aspect_event_view_overflow = 0;
   gml_render_flush_pending_fill(&engine->render);
   if(!engine_graphics_finish_scene(engine)) return ANYGM_ERROR_INTERNAL;
-  if(base_world_began &&
+  /* Only a drawn base needs immediate CPU composition. Assigned target pixels remain
+   * resource-owned until a real surface, state or fallback consumer observes them. */
+  if(base_world_began && !direct_view_surface &&
      !gml_render_resident_application_cpu_barrier(&engine->render))
     return ANYGM_ERROR_INTERNAL;
   if(direct_owned_world)

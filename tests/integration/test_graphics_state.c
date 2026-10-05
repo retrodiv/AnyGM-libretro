@@ -1678,6 +1678,109 @@ static int resident_multiview_assigned_surface_restore_case(void){
   return 1;
 }
 
+static int resident_native_assigned_view_variant(int draw_enabled,int native_surface){
+  Session plain={0},selected={0};
+  AnygmInputFrame input={0};
+  uint8_t *saved=NULL,*selected_saved=NULL;
+  size_t saved_size=0,selected_size=0;
+  int matching=1;
+  anygm_test_graphics_reset();
+  REQUIRE(session_open_fixture_with_scene(
+            &plain,ANYGM_SCENE_RENDERER_CPU,
+            anygm_synthetic_multiview_assigned_surface_content_create),
+          "native assigned-view CPU fixture loads");
+  REQUIRE(session_open_fixture_with_scene(
+            &selected,ANYGM_SCENE_RENDERER_OPENGL,
+            anygm_synthetic_multiview_assigned_surface_content_create),
+          "native assigned-view scene fixture loads");
+  Session *sessions[2]={&plain,&selected};
+  for(int index=0;index<2;index++){
+    AnygmEngine *engine=sessions[index]->engine;
+    int surface=(int)gml_global_num(&engine->vm,"fixture_surface");
+    gml_surface_resize(&engine->render,surface,native_surface?64:32,native_surface?48:24);
+    gml_render_application_surface_set_draw_enabled(&engine->render,draw_enabled);
+    gml_set_global_arr(&engine->vm,"view_visible",1,0);
+    gml_set_global_arr(&engine->vm,"view_wview",0,64);
+    gml_set_global_arr(&engine->vm,"view_hview",0,48);
+    gml_set_global_arr(&engine->vm,"view_wport",0,64);
+    gml_set_global_arr(&engine->vm,"view_hport",0,48);
+    gml_set_global_arr(&engine->vm,"view_xview",0,2);
+    gml_set_global_arr(&engine->vm,"view_yview",0,3);
+    int camera=(int)gml_global_arr(&engine->vm,"view_camera",0);
+    if(camera>=0 && camera<GML_CAMERA_LIMIT &&
+       gml_global_arr(&engine->vm,"__gml_camera_live",camera)>=0.5){
+      gml_set_global_arr(&engine->vm,"__gml_camera_x",camera,2);
+      gml_set_global_arr(&engine->vm,"__gml_camera_y",camera,3);
+      gml_set_global_arr(&engine->vm,"__gml_camera_w",camera,64);
+      gml_set_global_arr(&engine->vm,"__gml_camera_h",camera,48);
+    }
+  }
+  REQUIRE(graphics_adopt(selected.engine,ANYGM_GRAPHICS_OPENGLES3)==ANYGM_OK,
+          "native assigned-view context adopts");
+  input.struct_size=sizeof input;
+  input.pointer_x=input.pointer_y=-1;
+  for(int frame=0;matching && frame<4;frame++){
+    if(frame==2) anygm_graphics_context_destroy(selected.engine,1u);
+    if(frame==3)
+      matching=graphics_adopt(selected.engine,ANYGM_GRAPHICS_OPENGLES3)==ANYGM_OK;
+    AnygmFrameOutput cpu={0},gpu={0};
+    cpu.struct_size=gpu.struct_size=sizeof cpu;
+    matching=matching && anygm_run_frame(plain.engine,&input,&cpu)==ANYGM_OK &&
+             anygm_run_frame(selected.engine,&input,&gpu)==ANYGM_OK &&
+             cpu.pixels && selected.engine->screen && cpu.width==64u && cpu.height==48u &&
+             gpu.width==cpu.width && gpu.height==cpu.height &&
+             !memcmp(cpu.pixels,selected.engine->screen,64u*48u*sizeof(uint32_t));
+    int surface=(int)gml_global_num(&plain.engine->vm,"fixture_surface");
+    int selected_surface=(int)gml_global_num(&selected.engine->vm,"fixture_surface");
+    int width=0,height=0,selected_width=0,selected_height=0;
+    const uint32_t *pixels=gml_surface_pixels_read(
+      &plain.engine->render,surface,&width,&height);
+    const uint32_t *scene_pixels=gml_surface_pixels_read(
+      &selected.engine->render,selected_surface,&selected_width,&selected_height);
+    matching=matching && pixels && scene_pixels && width==(native_surface?64:32) &&
+             height==(native_surface?48:24) && selected_width==width && selected_height==height &&
+             !memcmp(pixels,scene_pixels,(size_t)width*height*sizeof(uint32_t)) &&
+             gml_global_num(&plain.engine->vm,"fixture_seen")==frame+1;
+    if(matching && native_surface)
+      matching=pixels[0]==0xFF0000FFu && pixels[9u*64u+6u]==0xFF2030C0u;
+    if(matching && frame==0){
+      GmlGpuCounters counts={0};
+      gml_gpu_counters(selected.engine->gpu,&counts);
+      unsigned long long sprites=(unsigned long long)counts.scene_families[GML_RENDER_SCENE_SPRITE];
+      matching=native_surface?sprites>=1u:sprites==0u;
+      if(!matching)
+        fprintf(stderr,"native assigned view: draw=%d native=%d sprites=%llu expected=%s\n",
+                draw_enabled,native_surface,sprites,native_surface?"resident":"CPU fallback");
+      saved=matching?serialize(plain.engine,&saved_size):NULL;
+      selected_saved=matching?serialize(selected.engine,&selected_size):NULL;
+      matching=matching && saved && selected_saved && saved_size==selected_size &&
+               !memcmp(saved,selected_saved,saved_size) &&
+               anygm_state_load(plain.engine,selected_saved,selected_size)==ANYGM_OK &&
+               anygm_state_load(selected.engine,saved,saved_size)==ANYGM_OK;
+      if(matching){
+        AnygmFrameOutput restored_cpu={0},restored_gpu={0};
+        restored_cpu.struct_size=restored_gpu.struct_size=sizeof restored_cpu;
+        matching=anygm_run_frame(plain.engine,&input,&restored_cpu)==ANYGM_OK &&
+                 anygm_run_frame(selected.engine,&input,&restored_gpu)==ANYGM_OK &&
+                 restored_cpu.pixels && selected.engine->screen &&
+                 !memcmp(restored_cpu.pixels,selected.engine->screen,64u*48u*sizeof(uint32_t)) &&
+                 plain.engine->vm.frame==1 && selected.engine->vm.frame==1 &&
+                 gml_global_num(&plain.engine->vm,"fixture_seen")==1;
+      }
+    }
+  }
+  free(selected_saved); free(saved);
+  session_close(&selected); session_close(&plain);
+  REQUIRE(matching,"native assigned view keeps camera, output and cross-restored state");
+  return 1;
+}
+
+static int resident_native_assigned_view_case(void){
+  return resident_native_assigned_view_variant(1,1) &&
+         resident_native_assigned_view_variant(0,1) &&
+         resident_native_assigned_view_variant(1,0);
+}
+
 static int presentation_geometry_variant(
     const char *name,int (*create_fixture)(AnygmSyntheticContent *),
     unsigned logical_raster,unsigned aspect_mode,unsigned monitor_width,
@@ -3243,6 +3346,8 @@ int main(void){
     {"two-view Step target survives Draw Begin and GUI",resident_multiview_step_target_case},
     {"assigned views repopulate a derived surface before restored GUI",
      resident_multiview_assigned_surface_restore_case},
+    {"native assigned view accepts scene work and preserves restored output",
+     resident_native_assigned_view_case},
     {"presentation geometry remains visible across selected scenes",
      presentation_geometry_case},
     {"CRT and box presentation preserve a resident scene through CPU filtering",
