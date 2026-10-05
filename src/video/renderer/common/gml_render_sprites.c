@@ -101,8 +101,14 @@ const uint8_t *runtime_frame_rgba(GmlSprite *s, int frame){
 /* An integer-aligned atlas crop at an integer scale has exact nearest texel centres. Unit scale
  * also has identity sampling when interpolation is enabled. Authored trim offsets move the
  * visible crop, not its texels. Binary-alpha crops use endpoint source-over; ordinary sprites
- * with filtered scaling, fractional scale, intermediate alpha or programs keep the CPU blit.
+ * with filtering, fractional scale or programs retain their separately qualified paths. Partial-alpha Studio
+ * sprites use fixed source-over only with witnessed on-demand device authority.
  * The separate TEXT family admits unit-scale intermediate source alpha with a checkpoint. */
+static int resident_atlas_crop_from_page(GmlRender *r,GmlTpag *page,
+                                         int crop_x,int crop_y,int crop_width,int crop_height,
+                                         double left,double top,double xs,double ys,
+                                         GmlRenderSceneFamily family,uint32_t colour,
+                                         double draw_alpha);
 static int resident_identity_screen_gui(const GmlRender *r){
   return r && r->gui_pass_active && r->base_scene_resource &&
          r->fb==r->base_scene_resource_pixels &&
@@ -153,7 +159,9 @@ static int resident_integer_sprite(GmlRender *r,GmlSprite *sprite,int subimg,
      r->pending_underlay || r->pending_presentation ||
      !gml_render_scene_target_matches(r) ||
      !isfinite(xs) || !isfinite(ys) || xs==0.0 || ys==0.0 ||
-     rotation!=0.0 || blend!=0xFFFFFFu || alpha!=1.0 ||
+     rotation!=0.0 || blend!=0xFFFFFFu ||
+     !isfinite(alpha) || alpha<=0.0 || alpha>1.0 ||
+     (r->classic && alpha!=1.0) ||
      (r->interp && (xs!=1.0 || ys!=1.0)))
     return 0;
   /* A plain sprite reads only the base image; the other texture-stage filter flags do not
@@ -187,8 +195,8 @@ static int resident_integer_sprite(GmlRender *r,GmlSprite *sprite,int subimg,
         fmax(top,bottom)<=-1.0 || fmin(top,bottom)>=(double)r->fbh+1.0))
       return 1;
   }
-  return gml_render_resident_atlas_page(r,page_index,left,top,xs,ys,
-                                        GML_RENDER_SCENE_SPRITE);
+  return resident_atlas_crop_from_page(r,page,0,0,page->sw,page->sh,
+                                       left,top,xs,ys,GML_RENDER_SCENE_SPRITE,blend,alpha);
 }
 
 static int resident_atlas_crop_from_page(GmlRender *r,GmlTpag *page,
@@ -204,7 +212,7 @@ static int resident_atlas_crop_from_page(GmlRender *r,GmlTpag *page,
   GmlRenderImageRef source_ref,image;
   GmlRenderRect region;
   double scaled_width,scaled_height,source_left,source_right,source_top,source_bottom;
-  int checkpoint_alpha_background,checkpoint_alpha_text;
+  int checkpoint_alpha_background,checkpoint_alpha_text,checkpoint_alpha_sprite;
   /* R03-TEXT-PACKAGED-PARTIAL-ALPHA: the shared glyph crop keeps the CPU
    * source-over policy's target-alpha boundary and checkpoints the GPU result. */
   if(!r || !page || !r->resident_application_pass ||
@@ -225,7 +233,8 @@ static int resident_atlas_crop_from_page(GmlRender *r,GmlTpag *page,
      !gml_render_scene_target_matches(r) ||
      !isfinite(xs) || !isfinite(ys) || xs==0.0 || ys==0.0 ||
      !isfinite(draw_alpha) || draw_alpha<=0.0 || draw_alpha>1.0 ||
-     (family!=GML_RENDER_SCENE_TEXT && draw_alpha!=1.0) ||
+     (family!=GML_RENDER_SCENE_TEXT && family!=GML_RENDER_SCENE_SPRITE &&
+      draw_alpha!=1.0) ||
      (family==GML_RENDER_SCENE_TEXT && draw_alpha<1.0 &&
       !gml_render_target_preserves_alpha(r) &&
       (!r->fb_opaque_known || !r->fb_all_opaque)) ||
@@ -271,8 +280,27 @@ static int resident_atlas_crop_from_page(GmlRender *r,GmlTpag *page,
     crop_x==0 && crop_y==0 && crop_width==page->sw && crop_height==page->sh &&
     !page->tx && !page->ty && page->bw==page->sw && page->bh==page->sh &&
     xs==1.0 && ys==1.0;
+  /* R03-SPR-INTEGER-SOURCEOVER: integral nearest coverage needs no float
+   * emulation or destination snapshot. A witnessed device owns partial-alpha
+   * results until a genuine pixel/state observation requests canonical bytes. */
+  checkpoint_alpha_sprite=family==GML_RENDER_SCENE_SPRITE && !r->classic &&
+    !r->interp && r->fb==r->app_surface_owned && r->target_sp==0 &&
+    (draw_alpha<1.0 || !page->scene_binary_alpha);
+  if(checkpoint_alpha_sprite &&
+     (!r->device.context || !r->device.observe_on_demand ||
+      !r->device.observe_on_demand(r->device.context) ||
+      (!gml_render_target_preserves_alpha(r) &&
+       (!r->fb_opaque_known || !r->fb_all_opaque)))) return 0;
+  /* The CPU full-target unit sheet also prepares an application presentation
+   * mask. Keep that preparation on its existing leaf until separately qualified. */
+  if(checkpoint_alpha_sprite && anygm_policy_uses_first_generation_studio(r->win) &&
+     r->app_surface && r->fb==r->app_surface && left==0.0 && top==0.0 &&
+     xs==1.0 && ys==1.0 && crop_width==r->fbw && crop_height==r->fbh)
+    return 0;
+  if(family==GML_RENDER_SCENE_SPRITE && draw_alpha<1.0 &&
+     !checkpoint_alpha_sprite) return 0;
   if(!page->scene_binary_alpha && !checkpoint_alpha_background &&
-     !checkpoint_alpha_text) return 0;
+     !checkpoint_alpha_text && !checkpoint_alpha_sprite) return 0;
   scaled_width=(double)crop_width*fabs(xs);
   scaled_height=(double)crop_height*fabs(ys);
   if(xs<0.0) left-=scaled_width;
@@ -321,6 +349,7 @@ static int resident_atlas_crop_from_page(GmlRender *r,GmlTpag *page,
   source_ref=source.image;
   operation.opcode=GML_RENDER_OP_TEXTURED_QUAD;
   operation.reconstruction_mode=checkpoint_alpha_background || checkpoint_alpha_text ||
+    checkpoint_alpha_sprite ||
     colour!=0xFFFFFFu || draw_alpha<1.0
     ?GML_RENDER_DEVICE_CHECKPOINT:GML_RENDER_REPLAY_EXACT;
   operation.scene_family=family;
@@ -361,6 +390,7 @@ static int resident_atlas_crop_from_page(GmlRender *r,GmlTpag *page,
     state.rgb_source_factor=GML_RENDER_BLEND_SOURCE_ALPHA;
     state.rgb_destination_factor=GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA;
     state.alpha_source_factor=checkpoint_alpha_background ||
+      (checkpoint_alpha_sprite && gml_render_target_preserves_alpha(r)) ||
       (family==GML_RENDER_SCENE_TEXT && draw_alpha<1.0 &&
        gml_render_target_preserves_alpha(r))
       ?GML_RENDER_BLEND_SOURCE_ALPHA:GML_RENDER_BLEND_ONE;
@@ -372,10 +402,11 @@ static int resident_atlas_crop_from_page(GmlRender *r,GmlTpag *page,
   state.samplers[0]=operation.payload.quad.sampling;
   if(!gml_render_application_scene_enqueue(r,&operation,&state,&source)) return 0;
   r->fb_all_transparent=0;
-  if(family==GML_RENDER_SCENE_TEXT && draw_alpha<1.0 &&
+  if(((family==GML_RENDER_SCENE_TEXT && draw_alpha<1.0) || checkpoint_alpha_sprite) &&
      gml_render_target_preserves_alpha(r)){
     r->fb_opaque_known=0;
     r->fb_all_opaque=0;
+    if(r->app_surface && r->fb==r->app_surface) r->app_surface_opaque=0;
   }
   return 1;
 }

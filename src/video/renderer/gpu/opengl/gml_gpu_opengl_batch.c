@@ -167,6 +167,41 @@ static int exact_rect(const GmlRenderDrawOp *op,GLint *left,GLint *bottom,
   return 1;
 }
 
+/* R03-SPR-INTEGER-SOURCEOVER: the shared crop supplies integral physical
+ * coverage and exact nearest UV endpoints. Admit white-RGB draw alpha only;
+ * unrelated tint, SCREEN, filtering and fractional geometry remain fenced. */
+static int integer_sourceover_sprite_valid(const GmlRenderDrawOp *op,
+                                           const GlSceneImage *source){
+  const GmlRenderQuad *quad=&op->payload.quad;
+  GmlRenderRect region=quad->sampling.source_region;
+  if(!source || op->scene_family!=GML_RENDER_SCENE_SPRITE ||
+     op->target.image.resource_class!=GML_RENDER_RESOURCE_APPLICATION ||
+     op->target.pixel_format!=GML_RENDER_PIXEL_ARGB8888 ||
+     op->sources[0].resource_class!=GML_RENDER_RESOURCE_ATLAS ||
+     source->pixel_format!=GML_RENDER_PIXEL_RGBA8888 || source->rendered_origin ||
+     op->reconstruction_mode!=GML_RENDER_DEVICE_CHECKPOINT ||
+     quad->shape!=GML_RENDER_QUAD_AXIS_ALIGNED ||
+     quad->sampling.filter!=GML_RENDER_FILTER_NEAREST ||
+     quad->sampling.quantisation || quad->sampling.logical_margin_mask ||
+     quad->sampling.edge_rule!=GML_RENDER_EDGE_CLAMP_SUBIMAGE ||
+     !valid_region(region,source->width,source->height) ||
+     !exact_rect(op,NULL,NULL,NULL,NULL,0)) return 0;
+  double xs=(quad->x[1]-quad->x[0])/region.width;
+  double ys=(quad->y[2]-quad->y[0])/region.height;
+  if(xs<1.0 || ys<1.0 || floor(xs)!=xs || floor(ys)!=ys) return 0;
+  double u0=(double)region.x/source->width,u1=((double)region.x+region.width)/source->width;
+  double v0=(double)region.y/source->height,v1=((double)region.y+region.height)/source->height;
+  int flip_x=fabs(quad->u[0]-u1)<1e-12,flip_y=fabs(quad->v[0]-v1)<1e-12;
+  for(unsigned corner=0;corner<4u;corner++){
+    double u=((corner==1u || corner==2u)^flip_x)?u1:u0;
+    double v=((corner>=2u)^flip_y)?v1:v0;
+    if((quad->corner_colour[corner]&0xFFFFFFu)!=0xFFFFFFu ||
+       quad->corner_colour[corner]!=quad->corner_colour[0] ||
+       fabs(quad->u[corner]-u)>1e-12 || fabs(quad->v[corner]-v)>1e-12) return 0;
+  }
+  return 1;
+}
+
 static int hardware_combined_quad_valid(const GmlRenderDrawOp *op,
                                         const GlSceneImage *source){
   const GmlRenderQuad *quad=&op->payload.quad;
@@ -446,13 +481,15 @@ static int scene_preflight(GmlGpuBackend *backend,const GmlRenderDrawBatch *batc
       const GmlRenderSamplingPolicy *sampling=&op->payload.quad.sampling;
       int blend=qualified_blend(state);
       int hardware_surface=hardware_surface_quad_valid(op,state,source);
+      int integer_sourceover=integer_sourceover_sprite_valid(op,source) &&
+        (blend==1 || blend==3);
       if(!source || (source->pixel_format!=GML_RENDER_PIXEL_XRGB8888 &&
                      source->pixel_format!=GML_RENDER_PIXEL_ARGB8888 &&
                      source->pixel_format!=GML_RENDER_PIXEL_RGBA8888) ||
          same_logical(op->sources[0],target->image) ||
          state->write_mask!=15u || state->alpha!=255u ||
          state->colour!=0xFFFFFFFFu || state->alpha_test_enabled ||
-         blend<0 || ((blend==1 || blend==9 || blend==10 ||
+         blend<0 || ((integer_sourceover || blend==1 || blend==9 || blend==10 ||
                        (blend==3 && sampling->filter==GML_RENDER_FILTER_HARDWARE_BILINEAR)) &&
                       (!backend->gl.BlendFuncSeparate ||
                                  !backend->gl.BlendEquationSeparate)) ||
@@ -639,7 +676,8 @@ static int scene_preflight(GmlGpuBackend *backend,const GmlRenderDrawBatch *batc
              sampling->filter!=GML_RENDER_FILTER_NEAREST_PHASED_OPAQUE_ALPHA &&
              sampling->filter!=GML_RENDER_FILTER_HARDWARE_BILINEAR &&
              op->payload.quad.shape==GML_RENDER_QUAD_AXIS_ALIGNED &&
-             !hardware_surface && !(op->scene_family==GML_RENDER_SCENE_TEXT &&
+             !hardware_surface && !integer_sourceover &&
+             !(op->scene_family==GML_RENDER_SCENE_TEXT &&
                sampling->filter==GML_RENDER_FILTER_NEAREST)))) return 0;
         if((colour>>24)!=255u && blend!=1 && blend!=3 && blend!=9 && blend!=10) return 0;
         if((blend==4 || blend==5 ||
