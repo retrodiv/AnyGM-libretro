@@ -541,7 +541,7 @@ int gml_render_compose_resident_underlay(GmlRender *r){
   if(!r || !r->pending_underlay || !r->resident_application_pass || !r->win ||
      r->classic || r->fb!=r->base_fb || r->fb==r->app_surface_owned ||
      !gml_render_scene_target_matches(r) || !gml_render_device(r) ||
-     r->app_surface!=r->app_surface_owned || !r->app_surface_resource ||
+     r->app_surface!=r->app_surface_owned ||
      r->app_presentation_coverage_active || r->pending_presentation ||
      r->rotated_batch_count || r->rotated_batch_building ||
      r->target_sp || r->target_id>=0 || r->active_shader>=0 || r->blendmode ||
@@ -574,6 +574,13 @@ int gml_render_compose_resident_underlay(GmlRender *r){
      !gml_render_application_scene_flush(r))
     return 0;
   const GmlRenderDeviceServices *device=gml_render_device(r);
+  /* A CPU-only application pass may not have needed a resource yet. Retain the
+   * established witnessed 1:1 CPU-source policy before registering its storage. */
+  if(!r->app_surface_resource){
+    if(r->underlay_w!=r->app_w || r->underlay_h!=r->app_h ||
+       !device->observe_on_demand || !device->observe_on_demand(device->context) ||
+       !gml_render_application_resource_ensure(r)) return 0;
+  }
   if(!gml_render_resource_device_source_view(r->app_surface_resource,device,&source)){
     /* A mixed application pass can finish on CPU while SCREEN remains resident. Upload its
      * committed 1:1 source without observing SCREEN. Scaled CPU sources, legacy recovery

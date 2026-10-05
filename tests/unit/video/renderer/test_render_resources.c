@@ -6621,6 +6621,60 @@ static int resident_current_cpu_application_underlay(void){
   return 1;
 }
 
+static int resident_unregistered_cpu_application_underlay(void){
+  enum { WIDTH=4,HEIGHT=4 };
+  for(unsigned modern=0;modern<2u;modern++) for(unsigned witness=0;witness<2u;witness++){
+    uint32_t screen[WIDTH*HEIGHT],sentinel[WIDTH*HEIGHT];
+    GmlRender *render=(GmlRender*)calloc(1,sizeof *render);
+    GmlWin content={.bytecode=modern?17:15};
+    FakeDevice fake={.on_demand=witness!=0u};
+    GmlRenderDeviceServices device=service(&fake);
+    GmlRenderJournalMetrics source={0},target={0};
+    CHECK(render);
+    device.observe_on_demand=fake_observe_on_demand;
+    render->win=&content;render->color_write_mask=15u;
+    CHECK(gml_render_application_surface_ensure_owned(render,WIDTH,HEIGHT) &&
+          gml_render_begin_owned_application(render,0.0,0.0,0));
+    gml_render_set_pending_fill(render,0xFF25C080u);
+    gml_render_flush_pending_fill(render);
+    render->app_surface_opaque=1;
+    CHECK(!render->app_surface_resource);
+    for(unsigned index=0;index<WIDTH*HEIGHT;index++)
+      screen[index]=sentinel[index]=0xA5123456u;
+    gml_render_bind_device(render,&device);
+    CHECK(gml_render_begin_resident_base(render,screen,WIDTH,HEIGHT,0.0,0.0));
+    gml_render_set_pending_fill(render,0x40123456u);
+    gml_render_set_pending_underlay(render,0,0,WIDTH,HEIGHT);
+    if(!witness){
+      CHECK(!gml_render_compose_resident_underlay(render) && render->pending_underlay &&
+            !render->app_surface_resource && !fake.submits && !fake.uploads && !fake.readbacks);
+      fake.forbid_calls=1;
+      gml_render_abandon_device(render);
+      CHECK(!fake.forbidden_calls);
+      gml_render_free(render);free(render);
+      continue;
+    }
+    CHECK(gml_render_compose_resident_underlay(render) &&
+          !render->pending_underlay && render->resident_application_pass &&
+          gml_render_scene_submit_pending(render));
+    CHECK(render->app_surface_resource);
+    gml_render_resource_journal_metrics(render->app_surface_resource,&source);
+    gml_render_resource_journal_metrics(render->base_scene_resource,&target);
+    CHECK(source.authority==GML_RENDER_RESOURCE_CPU_CURRENT &&
+          source.cpu_version==source.logical_version &&
+          target.authority==GML_RENDER_RESOURCE_GPU_RESIDENT &&
+          target.gpu_version==target.logical_version &&
+          fake.last_opcode==GML_RENDER_OP_TEXTURED_QUAD &&
+          fake.uploads>0 && !fake.readbacks && !memcmp(screen,sentinel,sizeof screen));
+    /* This fake device proves admission/authority, not actual GL raster output. */
+    fake.forbid_calls=1;
+    gml_render_abandon_device(render);
+    CHECK(!fake.forbidden_calls);
+    gml_render_free(render);free(render);
+  }
+  return 1;
+}
+
 static int resident_automatic_underlay_exclusions(void){
   enum { WIDTH=4,HEIGHT=4 };
   uint32_t reference[WIDTH*HEIGHT],screen[WIDTH*HEIGHT];
@@ -7988,6 +8042,7 @@ int main(void){
   passed+=application_surface_pending_source_lifetime();
   passed+=current_cpu_source_view_is_not_observer();
   passed+=resident_current_cpu_application_underlay();
+  passed+=resident_unregistered_cpu_application_underlay();
   passed+=resident_automatic_underlay_exclusions();
   passed+=resident_packaged_real_font_glyph(0);
   passed+=resident_packaged_real_font_glyph(1);
@@ -8011,6 +8066,6 @@ int main(void){
   passed+=source_free_primitive_rect_replay();
   passed+=stretched_float_exact_replay();
   passed+=filtered_font_exact_recovery();
-  printf("render resource cases: passed=%d failed=%d\n",passed,111-passed);
-  return passed==111?EXIT_SUCCESS:EXIT_FAILURE;
+  printf("render resource cases: passed=%d failed=%d\n",passed,112-passed);
+  return passed==112?EXIT_SUCCESS:EXIT_FAILURE;
 }
