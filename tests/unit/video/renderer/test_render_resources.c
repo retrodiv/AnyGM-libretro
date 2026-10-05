@@ -6390,6 +6390,77 @@ static int surface_pending_source_lifetime(int nearest,int destination_mode){
   return 1;
 }
 
+static int clipped_destination_surface_after_cpu_suffix(void){
+  for(unsigned numbered=0;numbered<2u;numbered++)
+  for(unsigned interpolation=0;interpolation<2u;interpolation++)
+  for(int mode=9;mode<=11;mode++)
+  for(unsigned scale=0;scale<3u;scale++){
+    GmlRender *render=calloc(1,sizeof *render);
+    GmlWin content={.bytecode=15};
+    FakeDevice fake={.on_demand=1,.readback_colour=0x7F1267B9u};
+    GmlRenderDeviceServices device=service(&fake);
+    GmlRenderJournalMetrics source_before={0},target_before={0},after={0};
+    uint32_t before[48*32];
+    device.observe_on_demand=fake_observe_on_demand;
+    CHECK(render && gml_render_init(render,NULL)==0);
+    render->win=&content;
+    CHECK(gml_render_application_surface_ensure_owned(render,48,32));
+    int source=gml_surface_create(render,4,4);
+    int destination=numbered?gml_surface_create(render,48,32):0;
+    CHECK(source>0 && (!numbered || destination>0));
+    gml_render_bind_device(render,&device);
+    CHECK(gml_render_begin_resident_owned_application(render,0,0,0));
+    CHECK(gml_surface_set_target(render,source));
+    gml_render_set_pending_fill(render,0x7F1267B9u);
+    gml_render_flush_pending_fill(render);
+    gml_surface_reset_target(render);
+    if(numbered) CHECK(gml_surface_set_target(render,destination));
+    CHECK(gml_render_resident_application_cpu_barrier(render));
+    CHECK(render->resident_scene_pass && !render->resident_application_pass);
+    for(unsigned pixel=0;pixel<48u*32u;pixel++) render->fb[pixel]=0x40123456u;
+    memcpy(before,render->fb,sizeof before);
+    GmlRenderResource *source_resource=gml_render_surface_resource_ensure(render,source);
+    GmlRenderResource *target=gml_render_scene_target_resource_ensure(render);
+    CHECK(source_resource && target);
+    gml_render_resource_journal_metrics(source_resource,&source_before);
+    gml_render_resource_journal_metrics(target,&target_before);
+    CHECK(source_before.authority==GML_RENDER_RESOURCE_GPU_RESIDENT &&
+          target_before.authority==GML_RENDER_RESOURCE_CPU_CURRENT);
+    render->interp=(int)interpolation;
+    render->alphablend=1;render->blendmode=mode;
+    double w=scale==1u?3.0:scale==2u?5.0:4.0;
+    double h=scale==1u?2.0:scale==2u?6.0:4.0;
+    int reads=fake.readbacks,uploads=fake.uploads,submits=fake.submits;
+    fake.forbid_calls=1;
+    for(unsigned edge=0;edge<4u;edge++){
+      double x=edge==0u?48.25:edge==1u?-w+.25:3.25;
+      double y=edge==2u?32.125:edge==3u?-h+.125:4.125;
+      gml_draw_surface_stretched(render,source,x,y,w,h,0x3267B9u,.5);
+      CHECK(!fake.forbidden_calls && fake.readbacks==reads && fake.uploads==uploads &&
+            fake.submits==submits && !render->resident_application_pass &&
+            !memcmp(before,render->fb,sizeof before));
+      gml_render_resource_journal_metrics(source_resource,&after);
+      CHECK(after.authority==source_before.authority &&
+            after.logical_version==source_before.logical_version &&
+            after.cpu_version==source_before.cpu_version &&
+            after.gpu_version==source_before.gpu_version);
+      gml_render_resource_journal_metrics(target,&after);
+      CHECK(after.authority==target_before.authority &&
+            after.logical_version==target_before.logical_version &&
+            after.cpu_version==target_before.cpu_version);
+    }
+    /* One covered column is not a no-op: preserve the established CPU suffix
+     * and observe the device-current source exactly once, without GPU admission. */
+    fake.forbid_calls=0;
+    gml_draw_surface_stretched(render,source,47.25,4.125,w,h,0x3267B9u,.5);
+    CHECK(fake.readbacks==reads+1 && fake.submits==submits &&
+          !render->resident_application_pass && memcmp(before,render->fb,sizeof before));
+    if(numbered) gml_surface_reset_target(render);
+    gml_render_free(render);free(render);
+  }
+  return 1;
+}
+
 static int application_surface_pending_source_lifetime(void){
   for(unsigned variant=0;variant<3u;variant++){
     GmlRender *render=calloc(1,sizeof *render);
@@ -7904,6 +7975,7 @@ int main(void){
   passed+=surface_pending_source_lifetime(1,9);
   passed+=surface_pending_source_lifetime(1,10);
   passed+=surface_pending_source_lifetime(1,11);
+  passed+=clipped_destination_surface_after_cpu_suffix();
   passed+=application_surface_pending_source_lifetime();
   passed+=current_cpu_source_view_is_not_observer();
   passed+=resident_current_cpu_application_underlay();
@@ -7930,6 +8002,6 @@ int main(void){
   passed+=source_free_primitive_rect_replay();
   passed+=stretched_float_exact_replay();
   passed+=filtered_font_exact_recovery();
-  printf("render resource cases: passed=%d failed=%d\n",passed,110-passed);
-  return passed==110?EXIT_SUCCESS:EXIT_FAILURE;
+  printf("render resource cases: passed=%d failed=%d\n",passed,111-passed);
+  return passed==111?EXIT_SUCCESS:EXIT_FAILURE;
 }

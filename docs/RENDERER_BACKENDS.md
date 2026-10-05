@@ -380,6 +380,11 @@ unit, reduced/nonuniform, enlarged/nonuniform and reflected world state. The
 explicit logical circle preparation remains `common/gml_render_primitives.c::gml_render_circle_geometry`.
 Geometry budgets and ordinary opaque state restrictions are unchanged.
 
+The bounded destination-factor surface rule may skip a fully clipped rectangle
+after a CPU suffix while the witnessed scene session remains active. This observes
+neither source nor destination and changes no resource version. A visible rectangle
+still retains that CPU suffix; it never resumes GPU writing through this exception.
+
 <!-- R03-RULES:START -->
 | Rule ID | Public operation and grouped variants | Shared preparation | Actual CPU implementation | GPU preparation and executor | Shader rule where arithmetic lives | Current limit and fallback | Discriminating comparison |
 |---|---|---|---|---|---|---|---|

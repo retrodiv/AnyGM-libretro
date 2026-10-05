@@ -808,7 +808,7 @@ void gml_draw_surface_stretched(GmlRender *r,int surf,double dx,double dy,
   if(r && ((source_slot>=0 && r->surface[source_slot].live) ||
            (surf==0 && r->app_surface_published && r->app_surface)) &&
      !(source_slot>=0 && surf==r->surface_canvas) &&
-     r->resident_application_pass && gml_render_device(r)){
+     r->resident_scene_pass && gml_render_device(r)){
     int source_width=surf==0?r->app_w:r->surface[source_slot].w;
     int source_height=surf==0?r->app_h:r->surface[source_slot].h;
     if(source_width>0 && source_height>0){
@@ -858,7 +858,7 @@ static int resident_surface_filtered(GmlRender *r,int surf,double dx,double dy,d
   if(!r || (surf!=0 && (slot<0 || !r->surface[slot].live)) || r->classic ||
      (surf==0 && (!r->app_surface_published || !r->app_surface ||
                   r->app_surface!=r->app_surface_owned)) ||
-     !r->resident_application_pass || !gml_render_scene_target_matches(r) ||
+     !r->resident_scene_pass || !gml_render_scene_target_matches(r) ||
      !(device=gml_render_device(r)) || !device->observe_on_demand ||
      !device->observe_on_demand(device->context) ||
      (surf==0?r->app_surface:r->surface[slot].px)==r->fb ||
@@ -893,6 +893,9 @@ static int resident_surface_filtered(GmlRender *r,int surf,double dx,double dy,d
    * preserve the queued prefix without acquiring its source or target. */
   if(left>=r->fbw || top>=r->fbh || left+width<=0.0 || top+height<=0.0)
     return destination_blend?1:0;
+  /* A CPU suffix still permits a genuinely empty rectangle above, but never
+   * resumes GPU writing for a visible draw or observes its source prematurely. */
+  if(!r->resident_application_pass) return 0;
   for(int index=0;index<r->target_sp;index++)
     if(r->target_stack[index].fb==(surf==0?r->app_surface:r->surface[slot].px) &&
        r->target_stack[index].pending_fill) return 0;
