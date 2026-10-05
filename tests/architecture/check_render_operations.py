@@ -66,6 +66,7 @@ REQUIRED_RULES = {
     "R03-SPR-NEAREST", "R03-SPR-NEAREST-SOURCEOVER", "R03-SPR-INTEGER-SOURCEOVER",
     "R03-SPR-FIRSTGEN-NEAREST-REDUCE",
     "R03-SPR-MODERN-NEAREST",
+    "R03-SPR-NUMBERED-NEAREST",
     "R03-SPR-FILTER-TRIM", "R03-SPR-ROTATE-GENERAL",
     "R03-SPR-CORNER-COLOUR", "R03-SPR-POSITIONED-AXIS",
     "R03-SPR-POSITIONED-QUAD", "R03-SPR-STRETCH-MAG",
@@ -265,6 +266,10 @@ def self_test() -> None:
                   if not line.startswith("| R03-P9-SPRITE-ALPHA-BOUNDARY |")),
         document.replace("::R03_SHADER_EXACT_OVERLAP", "::OBSOLETE_EXACT_OVERLAP", 1),
         document.replace("::R03_SHADER_NEAREST_PHASED", "::OBSOLETE_NEAREST_PHASED", 1),
+        document.replace("::R03_SHADER_MODERN_NUMBERED_NEAREST",
+                         "::OBSOLETE_MODERN_NUMBERED_NEAREST", 1),
+        "\n".join(line for line in document.splitlines()
+                  if not line.startswith("| R03-SPR-NUMBERED-NEAREST |")),
         document.replace("device comparison R03-P3-JOURNAL", "comparison missing", 1),
         document.replace("`supported` | Only the bounded", "`planned` | Only the bounded", 1),
         document.replace(

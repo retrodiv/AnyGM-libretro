@@ -118,6 +118,7 @@ static int qualified_blend(const GmlRenderDrawStateSnapshot *state){
 
 static uint32_t scene_filter(const GmlRenderQuad *quad,
                              const GmlRenderDrawStateSnapshot *state,uint32_t family){
+  if(quad->sampling.quantisation==GML_RENDER_QUANTISE_SPRITE_MODERN_NEAREST) return 27u;
   if(family==GML_RENDER_SCENE_SURFACE &&
      quad->sampling.filter==GML_RENDER_FILTER_NEAREST &&
      state->coverage_policy==GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA) return 25u;
@@ -492,6 +493,21 @@ static int scene_preflight(GmlGpuBackend *backend,const GmlRenderDrawBatch *batc
       int hardware_surface=hardware_surface_quad_valid(op,state,source);
       int integer_sourceover=integer_sourceover_sprite_valid(op,source) &&
         (blend==1 || blend==3);
+      int modern_numbered_sprite=
+        sampling->quantisation==GML_RENDER_QUANTISE_SPRITE_MODERN_NEAREST &&
+        state->write_mask<=15u &&
+        op->scene_family==GML_RENDER_SCENE_SPRITE &&
+        target->image.resource_class==GML_RENDER_RESOURCE_SURFACE &&
+        target->pixel_format==GML_RENDER_PIXEL_ARGB8888 &&
+        op->sources[0].resource_class==GML_RENDER_RESOURCE_ATLAS &&
+        source && !source->rendered_origin && source->pixel_format==GML_RENDER_PIXEL_RGBA8888 &&
+        op->reconstruction_mode==GML_RENDER_DEVICE_CHECKPOINT && blend==3 &&
+        op->payload.quad.shape==GML_RENDER_QUAD_AXIS_ALIGNED && !state->coverage_policy &&
+        sampling->filter==GML_RENDER_FILTER_NEAREST_PHASED &&
+        sampling->edge_rule==GML_RENDER_EDGE_CLAMP_SUBIMAGE && !sampling->logical_margin_mask &&
+        isfinite(op->payload.quad.filtered_draw_alpha) &&
+        op->payload.quad.filtered_draw_alpha>0.0 && op->payload.quad.filtered_draw_alpha<=1.0 &&
+        backend->gl.CopyTexSubImage2D && exact_rect(op,NULL,NULL,NULL,NULL,1);
       /* Independent channel writes do not change a qualified point sprite's sampling or
        * source-over RGB. Keep the new domain numbered, checkpointed and axis-aligned;
        * screen/other sampler and blend variants retain their existing refusal. */
@@ -511,7 +527,9 @@ static int scene_preflight(GmlGpuBackend *backend,const GmlRenderDrawBatch *batc
                      source->pixel_format!=GML_RENDER_PIXEL_ARGB8888 &&
                      source->pixel_format!=GML_RENDER_PIXEL_RGBA8888) ||
          same_logical(op->sources[0],target->image) ||
-         (state->write_mask!=15u && !masked_numbered_sprite) || state->alpha!=255u ||
+         (state->write_mask!=15u && !masked_numbered_sprite && !modern_numbered_sprite) ||
+         (sampling->quantisation==GML_RENDER_QUANTISE_SPRITE_MODERN_NEAREST &&
+          !modern_numbered_sprite) || state->alpha!=255u ||
          state->colour!=0xFFFFFFFFu || state->alpha_test_enabled ||
          blend<0 || ((integer_sourceover || blend==1 || blend==9 || blend==10 ||
                        (blend==3 && sampling->filter==GML_RENDER_FILTER_HARDWARE_BILINEAR)) &&
@@ -652,7 +670,7 @@ static int scene_preflight(GmlGpuBackend *backend,const GmlRenderDrawBatch *batc
                        !gml_render_automatic_surface_quad_valid(&op->payload.quad,
                                                                  target->width,target->height) ||
                        !exact_rect(op,NULL,NULL,NULL,NULL,1))) ||
-         (sampling->quantisation && blend!=6 && blend!=7 &&
+         (sampling->quantisation && blend!=6 && blend!=7 && !modern_numbered_sprite &&
           !(blend==3 && sampling->filter==GML_RENDER_FILTER_HARDWARE_BILINEAR &&
             sampling->quantisation==GML_RENDER_QUANTISE_HARDWARE_COMBINED) &&
           (sampling->quantisation!=GML_RENDER_QUANTISE_STRETCHED_FLOAT ||
@@ -687,6 +705,8 @@ static int scene_preflight(GmlGpuBackend *backend,const GmlRenderDrawBatch *batc
                                                    source->rendered_origin,probe)) return 0;
       for(uint32_t corner=0;corner<4;corner++){
         uint32_t colour=op->payload.quad.corner_colour[corner];
+        if(modern_numbered_sprite && (colour!=op->payload.quad.corner_colour[0] ||
+           (colour>>24)!=(uint32_t)lround(op->payload.quad.filtered_draw_alpha*255.0))) return 0;
         if(blend==8 && colour!=op->payload.quad.corner_colour[0]) return 0;
         if(state->coverage_policy &&
            (colour>>24)!=(uint32_t)lround(op->payload.quad.filtered_draw_alpha*255.0))
@@ -705,7 +725,7 @@ static int scene_preflight(GmlGpuBackend *backend,const GmlRenderDrawBatch *batc
                sampling->filter==GML_RENDER_FILTER_NEAREST)))) return 0;
         if((colour>>24)!=255u && blend!=1 && blend!=3 && blend!=9 && blend!=10) return 0;
         if((blend==4 || blend==5 ||
-            (sampling->quantisation && blend!=6 && blend!=8)) &&
+            (sampling->quantisation && blend!=6 && blend!=8 && !modern_numbered_sprite)) &&
            colour!=0xFFFFFFFFu) return 0;
       }
       if(op->payload.quad.shape==GML_RENDER_QUAD_AXIS_ALIGNED &&
@@ -881,6 +901,8 @@ static int draw_rotated_regions(GmlGpuBackend *backend,const GmlRenderDrawBatch 
                                  uint32_t *consumed){
   GlScene *scene=&backend->scene;
   const GmlRenderDrawOp *base=&batch->operations[first];
+  const GmlRenderDrawStateSnapshot *base_state=&batch->states[base->state_index];
+  int modern=scene_filter(&base->payload.quad,base_state,base->scene_family)==27u;
   GLint left=0,bottom=0,right=0,top=0,last_left=0,last_top=0;
   GLsizei last_width=0,last_height=0;
   uint32_t count=0;
@@ -889,8 +911,11 @@ static int draw_rotated_regions(GmlGpuBackend *backend,const GmlRenderDrawBatch 
     GLint x,y;
     GLsizei w,h;
     if(op->opcode!=GML_RENDER_OP_TEXTURED_QUAD || op->source_count!=1u ||
-       (scene_filter(&op->payload.quad,&batch->states[op->state_index],op->scene_family)!=15u &&
-        scene_filter(&op->payload.quad,&batch->states[op->state_index],op->scene_family)!=17u) ||
+       (modern
+         ?scene_filter(&op->payload.quad,&batch->states[op->state_index],op->scene_family)!=27u
+         :scene_filter(&op->payload.quad,&batch->states[op->state_index],op->scene_family)!=15u &&
+          scene_filter(&op->payload.quad,&batch->states[op->state_index],op->scene_family)!=17u) ||
+       batch->states[op->state_index].write_mask!=base_state->write_mask ||
        !same_version(op->sources[0],base->sources[0]) ||
        !same_logical(op->target.image,base->target.image) ||
        op->target.storage_version!=base->target.storage_version ||
@@ -922,22 +947,31 @@ static int draw_rotated_regions(GmlGpuBackend *backend,const GmlRenderDrawBatch 
   if(!count || !scene_snapshot_region(backend,target,left,bottom,right-left,top-bottom))
     return 0;
   backend->gl.UseProgram(scene->program);
-  if(!scene->rotated_alpha16_valid ||
+  if(!scene->rotated_alpha16_valid || scene->rotated_alpha16_modern_nearest!=modern ||
      scene->rotated_alpha16_value!=base->payload.quad.filtered_draw_alpha){
     GLint factors[256];
-    for(unsigned alpha=0;alpha<256u;alpha++)
-      factors[alpha]=(GLint)gml_render_rotated_alpha16_factor(
-        alpha,base->payload.quad.filtered_draw_alpha);
+    for(unsigned alpha=0;alpha<256u;alpha++){
+      double draw_alpha=base->payload.quad.filtered_draw_alpha;
+      if(modern){
+        /* RGB retains a combined 22-bit weight; alpha independently uses the CPU's
+         * binary64 rounded source byte. Both fit in one positive signed uniform. */
+        double weight=(alpha/255.0)*draw_alpha;
+        unsigned factor=(unsigned)lround(weight*4194304.0);
+        unsigned source_alpha=(unsigned)lround(alpha*draw_alpha);
+        factors[alpha]=(GLint)((source_alpha<<23)|factor);
+      } else factors[alpha]=(GLint)gml_render_rotated_alpha16_factor(alpha,draw_alpha);
+    }
     /* Pack four entries per vector to remain below the GLES uniform minimum. */
     backend->gl.Uniform4iv(scene->u_rotated_alpha16,64,factors);
     if(backend->gl.GetError()!=GL_NO_ERROR){ scene->rotated_alpha16_valid=0; return 0; }
     scene->rotated_alpha16_value=base->payload.quad.filtered_draw_alpha;
+    scene->rotated_alpha16_modern_nearest=modern;
     scene->rotated_alpha16_valid=1;
   }
   GLint origin[2]={left,bottom};
   backend->gl.Uniform2iv(scene->u_region_origin,1,origin);
   if(backend->gl.GetError()!=GL_NO_ERROR) return 0;
-  if(!flush_quads(backend,target,source,15u,0,count,15u)) return -1;
+  if(!flush_quads(backend,target,source,modern?27u:15u,0,count,base_state->write_mask)) return -1;
   *consumed=count;
   return 1;
 }
@@ -1180,7 +1214,7 @@ GmlRenderExecutionResult gml_gpu_opengl_scene_submit(GmlGpuBackend *backend,
       op->payload.primitive.kind==GML_RENDER_PRIMITIVE_PARTICLE_LINE;
     if(pending_count && (particle
        ? !active_target || !same_logical(active_target->ref,op->target.image) ||
-         pending_count==GL_SCENE_MAX_QUADS || pending_filter!=27u ||
+         pending_count==GL_SCENE_MAX_QUADS || pending_filter!=28u ||
          pending_blend!=(int)op->payload.primitive.alpha_blend
        : (op->opcode!=GML_RENDER_OP_TEXTURED_QUAD ||
        !active_target || !same_logical(active_target->ref,op->target.image) ||
@@ -1194,7 +1228,8 @@ GmlRenderExecutionResult gml_gpu_opengl_scene_submit(GmlGpuBackend *backend,
        qualified_blend(&batch->states[op->state_index])==5 ||
        qualified_blend(&batch->states[op->state_index])==6 ||
        scene_filter(&op->payload.quad,&batch->states[op->state_index],op->scene_family)==15u ||
-       scene_filter(&op->payload.quad,&batch->states[op->state_index],op->scene_family)==17u))){
+       scene_filter(&op->payload.quad,&batch->states[op->state_index],op->scene_family)==17u ||
+       scene_filter(&op->payload.quad,&batch->states[op->state_index],op->scene_family)==27u))){
       if(!flush_quads(backend,active_target,pending_source,pending_filter,
                       pending_blend,pending_count,pending_write_mask)){
         mark_uncertain(&result,active_target);
@@ -1248,7 +1283,7 @@ GmlRenderExecutionResult gml_gpu_opengl_scene_submit(GmlGpuBackend *backend,
           v[16]=(float)p->scale_x; v[17]=(float)p->scale_y;
           v[21]=(float)p->interpolate; v[22]=(float)p->alpha_blend;
         }
-        pending_source=NULL; pending_filter=27u; pending_blend=(int)p->alpha_blend;
+        pending_source=NULL; pending_filter=28u; pending_blend=(int)p->alpha_blend;
         pending_count++;
         target->valid=1; target->rendered_origin=1;
         continue;
@@ -1327,7 +1362,7 @@ GmlRenderExecutionResult gml_gpu_opengl_scene_submit(GmlGpuBackend *backend,
     pending_filter=scene_filter(&op->payload.quad,&batch->states[op->state_index],op->scene_family);
     pending_blend=qualified_blend(&batch->states[op->state_index]);
     pending_write_mask=batch->states[op->state_index].write_mask;
-    if(pending_filter==15u || pending_filter==17u){
+    if(pending_filter==15u || pending_filter==17u || pending_filter==27u){
       uint32_t consumed=0;
       int drawn=draw_rotated_regions(backend,batch,index,target,pending_source,&consumed);
       if(drawn<0) mark_uncertain(&result,target);

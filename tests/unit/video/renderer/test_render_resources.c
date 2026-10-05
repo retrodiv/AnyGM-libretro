@@ -44,7 +44,8 @@ typedef struct FakeDevice {
   uint64_t supported_operations;
   double recovery_rect[4];
   uint32_t last_opcode,last_source_count,last_shader_identity;
-  uint32_t last_write_mask,last_filter;
+  uint32_t last_write_mask,last_filter,last_quantisation;
+  double last_filtered_draw_alpha;
   GmlRenderImageRef last_target_image;
   GmlRenderRect last_target_region;
   GmlRenderDrawOp last_primitive;
@@ -92,6 +93,8 @@ static GmlRenderExecutionResult fake_submit(void *context,const GmlRenderDrawBat
        last->state_index<batch->state_count){
       fake->last_write_mask=batch->states[last->state_index].write_mask;
       fake->last_filter=last->payload.quad.sampling.filter;
+      fake->last_quantisation=last->payload.quad.sampling.quantisation;
+      fake->last_filtered_draw_alpha=last->payload.quad.filtered_draw_alpha;
     }
     if(last->opcode==GML_RENDER_OP_RECOVER_EMPTY_SCREEN){
       const GmlRenderQuad *q=&last->payload.quad;
@@ -5864,7 +5867,9 @@ static int resident_numbered_sprite_channel_masks(void){
           gml_render_scene_submit_pending(render) && !fake.readbacks);
     if(mask){
       CHECK(fake.last_opcode==GML_RENDER_OP_TEXTURED_QUAD && fake.last_write_mask==mask &&
-            fake.last_filter==GML_RENDER_FILTER_NEAREST_PHASED);
+            fake.last_filter==GML_RENDER_FILTER_NEAREST_PHASED &&
+            fake.last_quantisation==GML_RENDER_QUANTISE_SPRITE_MODERN_NEAREST &&
+            fake.last_filtered_draw_alpha==0.6);
       gml_render_resource_journal_metrics(render->surface[id-1].resource,&metrics);
       CHECK(metrics.authority==GML_RENDER_RESOURCE_GPU_RESIDENT &&
             !metrics.cpu_replays && !metrics.device_checkpoints);

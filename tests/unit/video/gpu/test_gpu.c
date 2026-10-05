@@ -1396,8 +1396,9 @@ static int scene_atlas_retire_advanced_version_case(void){
 static int scene_numbered_sprite_channel_masks_case(void){
   const uint8_t pixels[16]={255,0,0,128,0,255,0,0,0,0,255,255,255,255,255,64};
   for(unsigned api=0;api<2u;api++)
-  for(unsigned mode=0;mode<3u;mode++){
+  for(unsigned mode=0;mode<4u;mode++){
     unsigned stamp=mode==1u;
+    unsigned modern=mode==3u;
     GmlRenderImageRef source={GML_RENDER_RESOURCE_ATLAS,93u,1u,1u};
     GmlRenderImageRef target={GML_RENDER_RESOURCE_SURFACE,94u,1u,1u};
     GmlRenderImageUpload upload={0};
@@ -1427,7 +1428,7 @@ static int scene_numbered_sprite_channel_masks_case(void){
       state->write_mask=mask;state->alpha=255u;state->colour=0xffffffffu;
       state->sampler_count=1u;
       state->rgb_source_factor=GML_RENDER_BLEND_SOURCE_ALPHA;
-      state->alpha_source_factor=mode==2u?GML_RENDER_BLEND_SOURCE_ALPHA:GML_RENDER_BLEND_ONE;
+      state->alpha_source_factor=mode>=2u?GML_RENDER_BLEND_SOURCE_ALPHA:GML_RENDER_BLEND_ONE;
       state->rgb_destination_factor=state->alpha_destination_factor=
         GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA;
       state->rgb_equation=state->alpha_equation=GML_RENDER_BLEND_ADD;
@@ -1435,16 +1436,19 @@ static int scene_numbered_sprite_channel_masks_case(void){
                                       GML_RENDER_FILTER_NEAREST_PHASED;
       state->samplers[0].edge_rule=GML_RENDER_EDGE_CLAMP_SUBIMAGE;
       state->samplers[0].source_region=upload.region;
+      if(modern) state->samplers[0].quantisation=GML_RENDER_QUANTISE_SPRITE_MODERN_NEAREST;
       op->opcode=GML_RENDER_OP_TEXTURED_QUAD;op->scene_family=GML_RENDER_SCENE_SPRITE;
       op->reconstruction_mode=GML_RENDER_DEVICE_CHECKPOINT;
       op->state_index=mask;op->sources=&source;op->source_count=1u;
       GmlRenderQuad *quad=&op->payload.quad;
       quad->shape=GML_RENDER_QUAD_AXIS_ALIGNED;quad->sampling=state->samplers[0];
+      if(modern) quad->filtered_draw_alpha=0.5;
       quad->x[1]=quad->x[2]=quad->y[2]=quad->y[3]=4.0;
       quad->u[1]=quad->u[2]=quad->v[2]=quad->v[3]=1.0;
       for(unsigned corner=0;corner<4u;corner++) quad->corner_colour[corner]=0x80402010u;
     }
     GmlRenderDrawBatch batch={operations,17u,states,16u};
+    unsigned copies=anygm_test_graphics_scene_copies();
     GmlRenderExecutionResult result=service.submit(service.context,&batch);
     REQUIRE(result.status==GML_RENDER_EXEC_ACCEPTED && result.accepted_prefix==17u,
             "all channel masks submit on a numbered sprite target");
@@ -1456,7 +1460,9 @@ static int scene_numbered_sprite_channel_masks_case(void){
     REQUIRE(anygm_test_graphics_color_mask_all() && !anygm_test_graphics_blend_enabled(),
             "masked draws restore complete writes and disabled blending");
     REQUIRE(anygm_test_graphics_read_pixels()==0,"channel masks do not observe the target");
-    for(unsigned variant=0;variant<12u;variant++){
+    if(modern) REQUIRE(anygm_test_graphics_scene_copies()==copies+16u,
+            "modern masked source-over takes ordered device predecessors across mask changes");
+    for(unsigned variant=0;variant<(modern?19u:12u);variant++){
       GmlRenderDrawStateSnapshot invalid_states[16];
       GmlRenderDrawOp invalid_operations[17];
       memcpy(invalid_states,states,sizeof states);
@@ -1477,14 +1483,25 @@ static int scene_numbered_sprite_channel_masks_case(void){
       if(variant==9u) op->payload.quad.shape=GML_RENDER_QUAD_GENERAL;
       if(variant==10u) state->alpha_test_enabled=1u;
       if(variant==11u) state->write_mask=16u;
+      if(variant==12u) op->payload.quad.filtered_draw_alpha=0.0;
+      if(variant==13u) op->payload.quad.filtered_draw_alpha=1.1;
+      if(variant==14u) op->payload.quad.filtered_draw_alpha=NAN;
+      if(variant==15u) op->payload.quad.corner_colour[1]^=1u;
+      if(variant==16u) for(unsigned corner=0;corner<4u;corner++)
+        op->payload.quad.corner_colour[corner]^=0x01000000u;
+      if(variant==17u) op->payload.quad.x[0]=op->payload.quad.x[3]=0.25;
+      if(variant==18u) for(unsigned index=0;index<17u;index++)
+        invalid_operations[index].target.pixel_format=GML_RENDER_PIXEL_XRGB8888;
       op->payload.quad.sampling=state->samplers[0];
       int clears=anygm_test_graphics_clear_calls();
       int draws=anygm_test_graphics_scene_draw_calls();
+      copies=anygm_test_graphics_scene_copies();
       result=service.submit(service.context,&invalid_batch);
       REQUIRE(result.status==GML_RENDER_EXEC_UNSUPPORTED && !result.accepted_prefix &&
               !result.uncertain_target_count && !result.all_destinations_uncertain &&
               anygm_test_graphics_clear_calls()==clears &&
               anygm_test_graphics_scene_draw_calls()==draws &&
+              anygm_test_graphics_scene_copies()==copies &&
               anygm_test_graphics_color_mask_all() && !anygm_test_graphics_blend_enabled(),
               "unqualified masked suffix refuses before the clear and qualified prefix");
     }

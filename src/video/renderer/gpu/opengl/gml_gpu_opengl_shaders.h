@@ -245,7 +245,7 @@
   "  return x*y;\n" \
   "}\n" \
   "void main(){\n" \
-  "  if(u_filter==27){\n" \
+  "  if(u_filter==28){\n" \
   "    // R03_SHADER_PARTICLE_LINE: procedural soft coverage, separate fixed source-over.\n" \
   "    vec2 pixel=vec2(floor(gl_FragCoord.x),u_extent.y-1.0-floor(gl_FragCoord.y));\n" \
   "    vec2 delta=pixel-v_map.xy;\n" \
@@ -343,7 +343,7 @@
   "    o_color=vec4(vec3(rgb)/255.0,sampled.a*v_colour.a/255.0); return;\n" \
   "  }\n" \
   "  // R03_SHADER_ROW_SPAN: conditional rotated/warped CPU coverage.\n" \
-  "  if(u_filter>=2 && u_filter!=7 && u_filter!=8 && u_filter!=9 && u_filter!=10 &&\n" \
+  "  if(u_filter>=2 && u_filter!=7 && u_filter!=8 && u_filter!=9 && u_filter!=10 && u_filter!=27 &&\n" \
   "     u_filter!=12 && u_filter!=13 && v_span_active>0.5){\n" \
   "    float mn=1e30,mx=-1e30; int hits=0;\n" \
   "    for(int i=0;i<4;i++){\n" \
@@ -368,7 +368,7 @@
   "    lo=numerator/denominator-ivec2(1);\n" \
   "    f=vec2(stretched_float_phase(remainder.x,denominator.x),\n" \
   "           stretched_float_phase(remainder.y,denominator.y));\n" \
-  "  } else if(u_filter>=2 && u_filter!=7 && u_filter!=8 && u_filter!=9 && u_filter!=10 &&\n" \
+  "  } else if(u_filter>=2 && u_filter!=7 && u_filter!=8 && u_filter!=9 && u_filter!=10 && u_filter!=27 &&\n" \
   "            u_filter!=12 && u_filter!=13){\n" \
   "    vec2 local=u_filter>=5 && u_filter!=15 && u_filter!=17\n" \
   "      ?v_texcoord\n" \
@@ -412,7 +412,7 @@
   "  } else {\n" \
   "    vec2 whole=floor(delta);\n" \
   "    vec2 remainder=(delta-whole)+delta*v_step+v_map.zw+\n" \
-  "                   (u_filter==7 || u_filter==8 || u_filter==9 || u_filter==10?vec2(0.000001):vec2(-0.5));\n" \
+  "                   (u_filter==7 || u_filter==8 || u_filter==9 || u_filter==10 || u_filter==27?vec2(0.000001):vec2(-0.5));\n" \
   "    // R03_SHADER_GUI_AXIS_PHASE: keep integral products out of the fractional\n" \
   "    // sum and restore the vertex preparator's low phase/reciprocal residuals.\n" \
   "    if(u_filter==12 || u_filter==13){\n" \
@@ -429,7 +429,7 @@
   "  }\n" \
   "  // R03_SHADER_NEAREST_PHASED: retain point phase. First-generation exact ties use the\n" \
   "  // positive tolerance; modern ordinary sprites prepare a bounded per-axis UV bias.\n" \
-  "  if(u_filter==7 || u_filter==8 || u_filter==9 || u_filter==10) f=vec2(0.0);\n" \
+  "  if(u_filter==7 || u_filter==8 || u_filter==9 || u_filter==10 || u_filter==27) f=vec2(0.0);\n" \
   "  ivec2 first=ivec2(v_clamp.xy),last=ivec2(v_clamp.zw-v_clamp.xy);\n" \
   "  vec4 p00,p01,p10,p11;\n" \
   "  // R03_SHADER_FILTERED_MARGIN: logical trim and physical atlas edge taps.\n" \
@@ -484,6 +484,20 @@
   "    o_color=vec4(rgb/255.0,1.0); return;\n" \
   "  }\n" \
   "  vec4 sampled=floor(weighted+vec4(0.5));\n" \
+  "  // R03_SHADER_MODERN_NUMBERED_NEAREST: ordered predecessor and binary64-prepared alpha LUT.\n" \
+  "  if(u_filter==27){\n" \
+  "    int source_alpha=int(sampled.a);\n" \
+  "    int encoded=u_rotated_alpha16[source_alpha/4][source_alpha%4];\n" \
+  "    int factor=encoded&8388607;\n" \
+  "    if(factor==0) discard;\n" \
+  "    ivec3 tint=ivec3(floor(v_colour.rgb*255.0+vec3(0.5)));\n" \
+  "    ivec3 rgb=(ivec3(sampled.rgb)*tint+ivec3(127))/255;\n" \
+  "    ivec4 prior=ivec4(floor(texelFetch(u_previous,ivec2(gl_FragCoord.xy)-u_region_origin,0)*255.0+0.5));\n" \
+  "    rgb=(rgb*factor+prior.rgb*(4194304-factor)+ivec3(2097152))/4194304;\n" \
+  "    int alpha=encoded>>23;\n" \
+  "    alpha=(alpha*alpha+prior.a*(255-alpha)+127)/255;\n" \
+  "    o_color=vec4(rgb,alpha)/255.0; return;\n" \
+  "  }\n" \
   "  // R03_SHADER_TINT_ALPHA: truncating RGB tint and per-draw alpha.\n" \
   "  uvec3 tint=uvec3(floor(v_colour.rgb*255.0+vec3(0.5)));\n" \
   "  uvec3 rgb=uvec3(sampled.rgb)*tint/uvec3(255u);\n" \

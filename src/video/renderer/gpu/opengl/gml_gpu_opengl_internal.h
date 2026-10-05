@@ -136,6 +136,7 @@ typedef struct GlScene {
   GLint u_rotated_alpha16;
   double rotated_alpha16_value;
   int rotated_alpha16_valid;
+  int rotated_alpha16_modern_nearest;
   GlSceneExactProgram exact_programs[3];
   GLuint snapshot_texture,rgb_query;
   /* Two reusable reduction planes and two independent final predicates. No host observation. */

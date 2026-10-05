@@ -141,7 +141,9 @@ enum {
   GML_RENDER_QUANTISE_SPRITE_FIRSTGEN_INDEPENDENT=7u,
   /* Unit-white application draws round the complete source-over sum in the
    * framebuffer, rather than quantising the source contribution separately. */
-  GML_RENDER_QUANTISE_HARDWARE_COMBINED=8u
+  GML_RENDER_QUANTISE_HARDWARE_COMBINED=8u,
+  /* Modern numbered point sprites round tint and the complete source-over sum. */
+  GML_RENDER_QUANTISE_SPRITE_MODERN_NEAREST=9u
 };
 
 /* Resolved blend semantics, independent of any device API's enumerant values. Zeroed factors

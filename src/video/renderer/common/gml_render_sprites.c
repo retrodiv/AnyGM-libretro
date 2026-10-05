@@ -472,6 +472,30 @@ static int modern_nearest_axis_bias(double leading,double snapped,double scale,
   return 1;
 }
 
+/* The modern CPU point leaf snaps a reflected anchor, rounds extent independently,
+ * and skips samples outside the physical crop instead of clamping them. Keep only
+ * its writable span, then reuse the established float-boundary discriminator. */
+static int modern_numbered_nearest_axis(double leading,double scale,int source_extent,
+                                        double *start,double *extent,double *anchor,double *bias){
+  if(*extent>4096.0 || source_extent>4096) return 0;
+  *anchor=scale<0.0?floor(leading+0.5):leading;
+  double phase=*start+0.5-*anchor;
+  int first=0,last=(int)*extent;
+  while(first<last){
+    double sample=((double)first+phase)/scale;
+    if(sample>=0.0 && sample<source_extent) break;
+    first++;
+  }
+  while(last>first){
+    double sample=((double)(last-1)+phase)/scale;
+    if(sample>=0.0 && sample<source_extent) break;
+    last--;
+  }
+  *start+=first; *extent=last-first;
+  return last==first || modern_nearest_axis_bias(*anchor,*start,scale,*extent,
+                                                 source_extent,bias);
+}
+
 static int resident_rotated_packet_regions(GmlRender *r,GmlSprite *sprite,GmlTpag *page,
                                             double left,double top,double xs,double ys,
                                             double rotation,const GmlRenderDrawOp *operation,
@@ -537,6 +561,7 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
   GmlRenderRect region;
   double x0,y0,width,height,cosine=1.0,sine=0.0;
   double nearest_bias_x=0.0,nearest_bias_y=0.0;
+  double nearest_anchor_x=left,nearest_anchor_y=top;
   double positioned_x_tie=0.0,positioned_y_tie=0.0;
   double span_x[4]={0},span_y[4]={0};
   int modern_rotation=rotated_sprite && r && r->win &&
@@ -590,9 +615,12 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
     !box_stretched && xs>1.0 && ys>1.0;
   int exact_filtered_font=0;
   int exact_filtered_sprite=0;
-  int masked_numbered_sprite=r && r->color_write_mask<15u && r->target_id>0 &&
+  int modern_numbered_sprite=r && r->target_id>0 && r->color_write_mask<=15u &&
     family==GML_RENDER_SCENE_SPRITE && (nearest_mode==3 || nearest_mode==6) &&
-    !r->interp && !r->fog_flat && !r->gui_pass_active;
+    !r->interp && !r->fog_flat && !r->gui_pass_active &&
+    anygm_policy_has_modern_layer_semantics(r->win) &&
+    gml_render_target_preserves_alpha(r);
+  int masked_numbered_sprite=modern_numbered_sprite && r->color_write_mask<15u;
   int nearest_preserved_alpha=r && (nearest_mode==3 || nearest_mode==6) &&
     gml_render_target_preserves_alpha(r);
   int margin_left=0,margin_top=0,margin_right=0,margin_bottom=0;
@@ -631,15 +659,16 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
        (part_view && (part_view->sw<=1 || part_view->sh<=1)) ||
        floor(left)!=left || floor(top)!=top)) ||
      (nearest_mode==3 && (r->interp || family!=GML_RENDER_SCENE_SPRITE ||
-       rotated_sprite || corner_colours || part_view || xs<=0.0 || ys<=0.0 ||
-       xs>1.0 || ys>1.0 || !r->fb_opaque_known || !r->fb_all_opaque ||
+       rotated_sprite || corner_colours || part_view ||
+       !r->fb_opaque_known || !r->fb_all_opaque ||
+       (!modern_numbered_sprite && (xs<=0.0 || ys<=0.0 || xs>1.0 || ys>1.0 ||
        fabs(fabs(r->cam_x-nearbyint(r->cam_x))-0.5)<1e-9 ||
-       fabs(fabs(r->cam_y-nearbyint(r->cam_y))-0.5)<1e-9)) ||
+       fabs(fabs(r->cam_y-nearbyint(r->cam_y))-0.5)<1e-9)))) ||
      (nearest_mode==6 && (r->interp || family!=GML_RENDER_SCENE_SPRITE ||
-       rotated_sprite || corner_colours || part_view || xs<=0.0 || ys<=0.0 ||
-       xs>1.0 || ys>1.0 ||
+       rotated_sprite || corner_colours || part_view ||
+       (!modern_numbered_sprite && (xs<=0.0 || ys<=0.0 || xs>1.0 || ys>1.0 ||
        fabs(fabs(r->cam_x-nearbyint(r->cam_x))-0.5)<1e-9 ||
-       fabs(fabs(r->cam_y-nearbyint(r->cam_y))-0.5)<1e-9)) ||
+       fabs(fabs(r->cam_y-nearbyint(r->cam_y))-0.5)<1e-9)))) ||
      (nearest_mode==4 && (r->interp || family!=GML_RENDER_SCENE_SPRITE ||
        rotated_sprite || corner_colours || part_view || xs<=0.0 || ys<=0.0 ||
        xs>1.0 || ys>1.0 ||
@@ -665,6 +694,7 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
   if(part_view && !filtered_real_text &&
      part_view->atlas!=r->tpag[page_index].atlas) return 0;
   page=part_view?part_view:&r->tpag[page_index];
+  if(modern_numbered_sprite && page->project_authored_edges) return 0;
   /* The unrotated nearest CPU leaf samples physical sw/sh, not a texture-page item's
    * logical tw/th. A scaled stored rectangle is therefore valid for these exact rules. */
   if(page->sw<=0 || page->sh<=0 || page->sx<0 || page->sy<0 ||
@@ -864,7 +894,13 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
       gml_render_stretched_float_phase_exact((uint32_t)page->bw,(uint32_t)width) &&
       gml_render_stretched_float_phase_exact((uint32_t)page->bh,(uint32_t)height);
   }
-  if((nearest_mode==3 || nearest_mode==6) &&
+  if(modern_numbered_sprite){
+    if(!modern_numbered_nearest_axis(left,xs,page->sw,&x0,&width,
+                                    &nearest_anchor_x,&nearest_bias_x) ||
+       !modern_numbered_nearest_axis(top,ys,page->sh,&y0,&height,
+                                    &nearest_anchor_y,&nearest_bias_y)) return 0;
+    if(width==0.0 || height==0.0) return 1;
+  } else if((nearest_mode==3 || nearest_mode==6) &&
      (!modern_nearest_axis_bias(left,x0,xs,width,page->sw,&nearest_bias_x) ||
       !modern_nearest_axis_bias(top,y0,ys,height,page->sh,&nearest_bias_y))) return 0;
   if(rotated_sprite){
@@ -915,7 +951,9 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
   operation.payload.quad.sampling.source_region=region;
   operation.payload.quad.sampling.quantisation=stretched_float
     ?GML_RENDER_QUANTISE_STRETCHED_FLOAT:
-    hardware_combined?GML_RENDER_QUANTISE_HARDWARE_COMBINED:0u;
+    hardware_combined?GML_RENDER_QUANTISE_HARDWARE_COMBINED:
+    modern_numbered_sprite?GML_RENDER_QUANTISE_SPRITE_MODERN_NEAREST:0u;
+  if(modern_numbered_sprite) operation.payload.quad.filtered_draw_alpha=alpha;
   operation.payload.quad.sampling.logical_margin_mask=box_stretched?0u:
     (operation.payload.quad.sampling.filter==GML_RENDER_FILTER_BILINEAR || hardware_background)
       ?(corner_colours && part_view && margin_mask
@@ -974,6 +1012,9 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
   } else {
     double sample_left=left+(transparent_stretched_trim?(double)page->tx*xs:0.0);
     double sample_top=top+(transparent_stretched_trim?(double)page->ty*ys:0.0);
+    if(modern_numbered_sprite){
+      sample_left=nearest_anchor_x; sample_top=nearest_anchor_y;
+    }
     /* The first-generation nearest CPU leaf samples a reflected background part from its
      * snapped half-open anchor, while an unreflected axis retains the fractional draw phase. */
     if(nearest_mode==2 && xs<0.0) sample_left=floor(left+0.5);
@@ -1098,7 +1139,7 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
     state.rgb_equation=GML_RENDER_BLEND_EXACT8_ADDITIVE;
     state.alpha_equation=GML_RENDER_BLEND_EXACT8_ADDITIVE;
     state.additive_draw_alpha=alpha;
-  } else if(nearest_mode!=5 && (!page->scene_fully_opaque || alpha<1.0 ||
+  } else if(nearest_mode!=5 && (modern_numbered_sprite || !page->scene_fully_opaque || alpha<1.0 ||
      margin_left || margin_top || margin_right || margin_bottom)){
     state.rgb_source_factor=GML_RENDER_BLEND_SOURCE_ALPHA;
     state.rgb_destination_factor=GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA;
@@ -1199,7 +1240,8 @@ static int resident_filtered_sprite(GmlRender *r,GmlSprite *sprite,int subimg,
       return 0;
     }
     if(rotation==0.0 && anygm_policy_has_modern_layer_semantics(r->win) &&
-       xs>0.0 && ys>0.0 && xs<=1.0 && ys<=1.0)
+       ((r->target_id>0 && !r->fog_flat && !r->gui_pass_active) ||
+        (xs>0.0 && ys>0.0 && xs<=1.0 && ys<=1.0)))
       return resident_filtered_atlas_page(r,page_index,
         left,top,
         xs,ys,GML_RENDER_SCENE_SPRITE,blend,alpha,NULL,NULL,0.0,NULL,
