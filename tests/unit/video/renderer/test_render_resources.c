@@ -6006,6 +6006,7 @@ static int resident_coarse_veil_exact_recovery(void){
 /* Identity SCREEN GUI veils keep device bytes until a real observation requests them. */
 static int resident_gui_coarse_veil_on_demand(void){
   const uint8_t alphas[]={0u,1u,127u,255u};
+  for(unsigned interpolation=0;interpolation<2u;interpolation++)
   for(unsigned witness=0;witness<2u;witness++)
   for(unsigned destination=0;destination<3u;destination++)
   for(unsigned coverage=0;coverage<sizeof alphas;coverage++){
@@ -6038,7 +6039,7 @@ static int resident_gui_coarse_veil_on_demand(void){
     gml_render_bind_device(render,&device);
     CHECK(gml_render_begin_resident_base(render,screen,4,4,0.0,0.0));
     gml_render_gui_begin(render,4,4);
-    render->interp=1;
+    render->interp=(int)interpolation;
     gml_render_set_pending_fill(render,destination?0xA5714A24u:0xFF714A24u);
     gml_render_flush_pending_fill(render);
     /* Submission is not an observation: scene_flush would explicitly seal the GPU clear. */

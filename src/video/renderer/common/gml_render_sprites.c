@@ -1524,7 +1524,7 @@ static int resident_coarse_mip_veil(GmlRender *r,int sprite,int frame,
   uint8_t pixel[4];
   int x0,y0,width,height,sub,page_index;
   if(!r || !r->resident_application_pass || !(device=gml_render_device(r)) ||
-     !device->retire || !r->interp || r->classic ||
+     !device->retire || (!r->interp && !r->gui_pass_active) || r->classic ||
      (r->gui_pass_active &&
       (!resident_identity_screen_gui(r) || r->world_transform_active ||
        !device->context || !device->observe_on_demand ||

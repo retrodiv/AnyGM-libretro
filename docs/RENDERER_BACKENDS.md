@@ -17,7 +17,8 @@ snapshot; the live ledger and rule table here describe current support.
 
 ## Experimental scene fidelity contract
 
-The identity SCREEN GUI extension of R03-SPR-COARSE-MIP uses fixed-function
+The identity SCREEN GUI extension of R03-SPR-COARSE-MIP, with interpolation
+enabled or disabled as in the unchanged full-target CPU leaf, uses fixed-function
 source-over, with EXACT zero/full-alpha endpoints and TOLERANCE±2 partial-alpha
 single draws. Admission requires default fragment state,
 full minified coverage and a positive owning-context on-demand witness. The
