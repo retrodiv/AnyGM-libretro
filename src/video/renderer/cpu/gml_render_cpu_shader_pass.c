@@ -4,8 +4,11 @@
 /* CPU shader capture, host handoff, and shaded-plane composition. */
 #include "gml_render_cpu_shader_pass.h"
 #include "gml_render_cpu_backend.h"
+#include "gml_render_cpu_blit.h"
 #include "gml_render_internal.h"
+#include "gml_render_cpu_dispatch_internal.h"
 
+#include <limits.h>
 #include <math.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -287,16 +290,7 @@ int gml_render_shade_atlas_rect_at(GmlRender *r,int atlas,int sx,int sy,int w,in
   }
 }
 
-/* Compose an already-shaded plane as a rotated sprite. The ordinary sprite blit already has the
- * pivot, the filtering and the edge rules, and it reads the byte order a decoded page uses, so the
- * plane is handed over in that order rather than a second rotation being written here. */
-int gml_render_compose_shaded_rotated(GmlRender *r,GmlSprite *owner,const uint32_t *plane,
-                                      int w,int h,double x,double y,double xs,double ys,
-                                      double rot,int origin_x,int origin_y,
-                                      uint32_t blend,double alpha){
-  size_t count;
-  if(!r || !plane || w<=0 || h<=0) return 0;
-  count=(size_t)w*(size_t)h;
+static int prepare_shaded_sprite_bytes(GmlRender *r,const uint32_t *plane,size_t count){
   if(count>SIZE_MAX/4u) return 0;
   if(count*4u>r->shaded_bytes_capacity){
     uint8_t *grown=(uint8_t*)realloc(r->shaded_bytes,count*4u);
@@ -311,6 +305,18 @@ int gml_render_compose_shaded_rotated(GmlRender *r,GmlSprite *owner,const uint32
     r->shaded_bytes[i*4u+2]=(uint8_t)px;
     r->shaded_bytes[i*4u+3]=(uint8_t)(px>>24);
   }
+  return 1;
+}
+
+/* Compose an already-shaded plane as a rotated sprite. The ordinary sprite blit already has the
+ * pivot, the filtering and the edge rules, and it reads the byte order a decoded page uses, so the
+ * plane is handed over in that order rather than a second rotation being written here. */
+int gml_render_compose_shaded_rotated(GmlRender *r,GmlSprite *owner,const uint32_t *plane,
+                                      int w,int h,double x,double y,double xs,double ys,
+                                      double rot,int origin_x,int origin_y,
+                                      uint32_t blend,double alpha){
+  if(!r || !plane || w<=0 || h<=0) return 0;
+  if(!prepare_shaded_sprite_bytes(r,plane,(size_t)w*(size_t)h)) return 0;
   {
     int saved=r->active_shader;
     r->active_shader=-1;
@@ -318,6 +324,54 @@ int gml_render_compose_shaded_rotated(GmlRender *r,GmlSprite *owner,const uint32
                      NULL,NULL,0);
     r->active_shader=saved;
   }
+  r->shaded_draws++;
+  return 1;
+}
+
+/* A filtered sprite program still carries the sprite's fragment coverage. The surface
+ * compositor has a different additive alpha policy. Reuse the existing filtered sprite
+ * leaf for a complete unit-scale page on a numbered target; other geometry retains
+ * its established composition path. */
+static int compose_filtered_additive_sprite(GmlRender *r,const uint32_t *plane,int w,int h,
+                                             double rx,double ry,double rw,double rh,
+                                             double dx,double dy,double dw,double dh,
+                                             uint32_t blend,double alpha){
+  if(!r || !plane || w<=0 || h<=0 || !r->win ||
+     !anygm_policy_has_modern_layer_semantics(r->win) || !r->interp ||
+     !r->alphablend || r->blendmode!=1 || r->target_sp<=0 ||
+     r->color_write_mask!=15u || r->fog_flat || r->font_sdf_active ||
+     r->pending_presentation || r->alpha_test_enable ||
+     r->blend_equation!=1 || r->blend_equation_alpha!=1 ||
+     rx!=0.0 || ry!=0.0 || rw!=(double)w || rh!=(double)h ||
+     dw!=(double)w || dh!=(double)h || !isfinite(alpha) || alpha<=0.0) return 0;
+  double left=dx-r->cam_x,top=dy-r->cam_y;
+  if(!isfinite(left) || !isfinite(top) || left!=floor(left) || top!=floor(top) ||
+     left<INT_MIN || left>INT_MAX-w || top<INT_MIN || top>INT_MAX-h) return 0;
+  if(left+w<=0.0 || top+h<=0.0 || left>=r->fbw || top>=r->fbh){
+    r->shaded_draws++;return 1;
+  }
+  int x0=(int)left,y0=(int)top;
+  int xx0=x0<0?-x0:0,yy0=y0<0?-y0:0;
+  int xx1=x0+w>r->fbw?r->fbw-x0:w;
+  int yy1=y0+h>r->fbh?r->fbh-y0:h;
+  if(xx1<=xx0 || yy1<=yy0){r->shaded_draws++;return 1;}
+  size_t count=(size_t)w*(size_t)h;
+  if(count>SIZE_MAX/4u || count>(16u<<20)) return 0;
+  gml_render_maybe_prepare_draw(r);
+  if(!prepare_shaded_sprite_bytes(r,plane,count)) return 0;
+  GmlAtlas source={0};GmlTpag page={0};
+  source.px=r->shaded_bytes;source.w=w;source.h=h;
+  page.sw=page.tw=page.bw=w;page.sh=page.th=page.bh=h;page.atlas=-1;
+  int saved=r->active_shader;r->active_shader=-1;
+  GmlRenderDispatchCpuScope scope;
+  gml_render_dispatch_cpu_scope_begin(r,&scope,GML_RENDER_SCENE_SPRITE);
+  gml_render_cpu_filtered_tpag_band(r,&source,&page,0,0,x0,y0,xx0,xx1,yy0,yy1,
+                                    left,top,1.0,1.0,blend,alpha>1.0?1.0:alpha,
+                                    NULL,NULL,NULL,
+                                    (unsigned long long)(xx1-xx0)*(unsigned)(yy1-yy0));
+  gml_render_dispatch_cpu_scope_end(r,&scope);
+  r->active_shader=saved;
+  r->fb_opaque_known=r->fb_all_opaque=r->fb_all_transparent=0;
   r->shaded_draws++;
   return 1;
 }
@@ -368,6 +422,8 @@ int gml_render_shade_target_sprite_part(GmlRender *r,int sprite,int frame,
     }
     shaded=gml_render_shaded_atlas_rect(r,atlas,sx,sy,w,h);
     if(!shaded){ return 0; }
+    if(compose_filtered_additive_sprite(r,shaded,w,h,rx,ry,rw,rh,dx,dy,dw,dh,
+                                        blend,alpha)) return 1;
     if(!gml_render_compose_shaded_plane(r,shaded,w,h,rx,ry,rw,rh,dx,dy,dw,dh,blend,alpha)){
       return 0; }
     return 1;

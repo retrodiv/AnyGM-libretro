@@ -1800,6 +1800,87 @@ static int suspended_clear_read_back_case(void){
   return 0;
 }
 
+static int sprite_identity_executor(void *context,const GmlRenderShaderRequest *request){
+  int *calls=context;
+  (*calls)++;
+  if(!request->source || !request->output || request->width!=3 || request->height!=2 ||
+     request->source_width!=3 || request->source_height!=2) return 0;
+  for(int y=0;y<2;y++) for(int x=0;x<3;x++)
+    request->output[y*3+x]=request->source[y*request->source_pitch+x];
+  return 1;
+}
+
+static int filtered_additive_shader_sprite_case(void){
+  GmlRender render={0};GmlWin content={0};GmlSprite sprite={0};
+  GmlTpag page={0};GmlAtlas atlas={0};struct GmlShaderPal program={0};
+  uint32_t base[24]={0},plain[24];int frame=0,calls=0;
+  uint8_t pixels[24]={17,35,53,152,71,89,107,196,125,143,161,0,
+                      179,197,215,255,233,15,33,32,51,69,87,64};
+  REQUIRE(gml_render_init(&render,NULL)==0,"identity sprite renderer initialization");
+  content.bytecode=17;render.win=&content;
+  gml_render_begin(&render,base,6,4,0,0);
+  render.interp=1;render.blendmode=1;render.active_shader=-1;
+  render.spr=&sprite;render.n_spr=1;render.tpag=&page;render.n_tpag=1;
+  render.atlas=&atlas;render.n_atlas=1;
+  sprite.w=3;sprite.h=2;sprite.n_frames=1;sprite.frame=&frame;
+  page.sw=page.tw=page.bw=3;page.sh=page.th=page.bh=2;
+  atlas.px=pixels;atlas.w=3;atlas.h=2;atlas.decode_attempted=1;
+  program.source_vertex_es="void main(){gl_Position=vec4(0.0);}";
+  program.source_fragment_es="void main(){gl_FragColor=vec4(1.0);}";
+  render.shader_pal=&program;render.n_shader_pal=1;
+  int target=gml_surface_create(&render,6,4);
+  REQUIRE(target>0 && gml_surface_set_target(&render,target),"identity sprite numbered target");
+  gml_render_set_shader_executor(&render,sprite_identity_executor,&calls);
+  for(int variant=0;variant<8;variant++){
+    double x=(variant&1)?-1.0:0.0,y=(variant&1)?-1.0:0.0;
+    double alpha=(variant&2)?0.6:1.0;
+    uint32_t colour=(variant&4)?0u:0xffffffu;
+    render.active_shader=-1;gml_render_clear(&render,0,0);
+    gml_draw_sprite_ext(&render,0,0,x,y,1,1,0,colour,alpha);
+    gml_render_maybe_prepare_draw(&render);
+    memcpy(plain,render.fb,sizeof plain);
+    if(variant==0) REQUIRE((plain[0]>>24)==91u,"plain fragment coverage control");
+    gml_render_clear(&render,0,0);render.active_shader=0;
+    gml_draw_sprite_ext(&render,0,0,x,y,1,1,0,colour,alpha);
+    gml_render_maybe_prepare_draw(&render);
+    if(memcmp(plain,render.fb,sizeof plain)){
+      fprintf(stderr,"filtered additive identity sprite variant %d: plain=%08x shaded=%08x\n",
+              variant,plain[0],render.fb[0]);
+      return 1;
+    }
+    REQUIRE(render.active_shader==0,"identity sprite restores the content binding");
+  }
+  uint32_t plane[6];
+  for(int i=0;i<6;i++) plane[i]=((uint32_t)pixels[i*4+3]<<24)|
+    ((uint32_t)pixels[i*4]<<16)|((uint32_t)pixels[i*4+1]<<8)|pixels[i*4+2];
+  for(int variant=0;variant<6;variant++){
+    double rx=variant==5?1.0:0.0,rw=variant==5?2.0:3.0;
+    double dx=variant==4?0.5:0.0,dw=variant==3?6.0:rw;
+    render.interp=variant==0?0:1;render.blendmode=variant==1?0:1;
+    render.color_write_mask=variant==2?7u:15u;
+    render.active_shader=-1;gml_render_clear(&render,0,0);
+    REQUIRE(gml_render_compose_shaded_plane(&render,plane,3,2,rx,0,rw,2,
+                                            dx,0,dw,2,0xffffffu,1),
+            "excluded sprite surface-composition control");
+    gml_render_maybe_prepare_draw(&render);memcpy(plain,render.fb,sizeof plain);
+    gml_render_clear(&render,0,0);render.active_shader=0;
+    REQUIRE(gml_render_shade_target_sprite_part(&render,0,0,rx,0,rw,2,
+                                                dx,0,dw,2,0xffffffu,1),
+            "excluded sprite shaded draw");
+    gml_render_maybe_prepare_draw(&render);
+    REQUIRE(memcmp(plain,render.fb,sizeof plain)==0,
+            "excluded sprite preserves its established composition path");
+    REQUIRE(render.active_shader==0,"excluded sprite restores the content binding");
+  }
+  REQUIRE(calls==1,"identity sprite executes and reuses the immutable shaded page");
+  render.active_shader=-1;gml_surface_reset_target(&render);
+  gml_render_texture_page_cache_clear(&render,&page);
+  render.spr=NULL;render.n_spr=0;render.tpag=NULL;render.n_tpag=0;
+  render.atlas=NULL;render.n_atlas=0;render.shader_pal=NULL;render.n_shader_pal=0;
+  gml_render_free(&render);
+  return 0;
+}
+
 int main(void){
   GmlRender render;
   uint32_t base[8*6];
@@ -1908,6 +1989,7 @@ int main(void){
   REQUIRE(automatic_underlay_shader_case()==0,"automatic underlay shader case");
   REQUIRE(deferred_shader_alpha_case()==0,"deferred shader alpha case");
   REQUIRE(deferred_shader_geometry_case()==0,"deferred shader geometry case");
+  REQUIRE(filtered_additive_shader_sprite_case()==0,"filtered additive shader sprite case");
   REQUIRE(point_downscale_case()==0,"point downscale case");
   REQUIRE(opaque_near_identity_reduction_case()==0,
           "opaque near-identity reduction case");
