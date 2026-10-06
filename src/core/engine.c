@@ -2063,7 +2063,7 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
 	      engine->vm.gui_maximise_xscale,engine->vm.gui_maximise_yscale,
 	      engine->vm.gui_maximise_xoffset,engine->vm.gui_maximise_yoffset,
 	      (int)engine->output_width,(int)engine->output_height);
-	  /* GM screen-stage events: Pre-Draw -> [default app-surface blit] -> Post-Draw -> GUI.
+	  /* GM screen-stage events: Pre-Draw -> Post-Draw -> [default app-surface blit] -> GUI.
 	   * Content that composites the application surface itself, for example through a presentation
 	   * object applying a palette shader in Post-Draw) disable the default blit and draw here.
 	   * Post-Draw remains anchored to the fitted application viewport: negative coordinates may

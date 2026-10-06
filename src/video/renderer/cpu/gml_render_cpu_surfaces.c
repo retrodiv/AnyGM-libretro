@@ -832,7 +832,8 @@ static void draw_surface_region_impl(GmlRender *r, int surf, double sx0d, double
   }
   int bR=blend&0xFF, bG=(blend>>8)&0xFF, bB=(blend>>16)&0xFF;
   int src_all_opaque=surface_known_opaque(r,surf);
-  int sremap=indexed_brightness_active(r)!=NULL || threshold_palette_active(r)!=NULL;
+  int sremap=indexed_brightness_active(r)!=NULL || threshold_palette_active(r)!=NULL ||
+             channel_mask_active(r)!=NULL;
   const struct GmlShaderPal *slut=lut_active(r);
   const struct GmlShaderPal *sgrid=grid_active(r);
   /* The one-to-one surface kernel needs a dedicated four-band branch so

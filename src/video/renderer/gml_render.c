@@ -11,6 +11,7 @@
 #include "gml_render_cpu_pixel_internal.h"
 #include "gml_render_cpu_sampling_internal.h"
 #include "gml_render_cpu_backend.h"
+#include "gml_render_cpu_shader_pass.h"
 #include "gml_render_cpu_workers.h"
 #include "gml_render_content.h"
 #include "gml_render_shaders.h"
@@ -953,6 +954,10 @@ void gml_render_set_pending_underlay(GmlRender *r, int x, int y, int w, int h){
   r->underlay_y=y;
   r->underlay_w=w;
   r->underlay_h=h;
+  /* Post-Draw selects the program for automatic presentation. Complete that operation now,
+   * before GUI events can reset its program, uniforms, samplers or draw state. Unshaded
+   * presentation keeps its established deferral and resident composition paths. */
+  if(r->active_shader>=0) gml_render_flush_pending_underlay(r);
 }
 void gml_render_cancel_pending_underlay(GmlRender *r){
   if(!r) return;
@@ -1204,12 +1209,16 @@ void gml_render_flush_pending_underlay(GmlRender *r){
   r->pending_underlay=0;
   /* This is the host's internal application-surface presentation, not a GML draw call.
    * Routing it through gml_draw_surface_stretched while d3d is active projects the already-rendered
-   * frame through the active camera a second time, producing missing scanline bands. Bypass
-   * content shaders and projection, and perform the ordinary screen-space copy directly. */
+   * frame through the active camera a second time, producing missing scanline bands. Keep the
+   * copy and any content-program handoff in screen space, bypassing public draw projection. */
   if(w>0 && h>0){
     int sw=r->app_w,sh=r->app_h;
     if(sw>0 && sh>0){
       int saved_application_opaque=r->app_surface_opaque;
+      int shader=r->active_shader;
+      int content_program=shader>=0 && r->shader_executor && r->app_surface!=r->fb &&
+        gml_render_shader_content_candidate(r,shader);
+      if(content_program && surface_pixels_observe(r,0,NULL,NULL)!=r->app_surface) return;
       int first_generation=r->win && anygm_policy_uses_first_generation_studio(r->win);
       size_t count=(size_t)sw*(size_t)sh;
       int use_presentation_coverage=first_generation &&
@@ -1236,13 +1245,28 @@ void gml_render_flush_pending_underlay(GmlRender *r){
       }
       GmlRenderDispatchCpuSuspension dispatch;
       gml_render_dispatch_cpu_scope_suspend(r,&dispatch);
-      draw_surface_region(r,0,0,0,sw,sh,x,y,w,h,0xFFFFFF,1.0);
+      /* The CPU leaf subtracts the camera; the internal presentation rectangle already names
+       * screen pixels. Compensate only that subtraction, without applying a world/D3 transform. */
+      double dx=(double)x+r->cam_x,dy=(double)y+r->cam_y;
+      float saved_vertex_colour[4];
+      int saved_vertex_colour_valid=r->shade_vertex_colour_valid;
+      memcpy(saved_vertex_colour,r->shade_vertex_colour,sizeof saved_vertex_colour);
+      /* Automatic presentation carries white, not a tint left by the previous content draw. */
+      for(int channel=0;channel<4;channel++) r->shade_vertex_colour[channel]=1.0f;
+      r->shade_vertex_colour_valid=1;
+      int shaded=content_program && gml_render_cpu_shader_pass_surface(
+        r,0,r->app_surface,sw,sh,0,0,sw,sh,dx,dy,w,h,0xFFFFFF,1.0);
+      memcpy(r->shade_vertex_colour,saved_vertex_colour,sizeof saved_vertex_colour);
+      r->shade_vertex_colour_valid=saved_vertex_colour_valid;
+      if(!shaded) draw_surface_region(r,0,0,0,sw,sh,dx,dy,w,h,0xFFFFFF,1.0);
       gml_render_dispatch_cpu_scope_resume(r,&dispatch);
       if(use_presentation_coverage)
         for(size_t i=0;i<count;i++)
           r->app_surface[i]=(r->app_surface[i]&0x00ffffffu)|
                             ((uint32_t)r->app_presentation_alpha_scratch[i]<<24);
       r->app_surface_opaque=saved_application_opaque;
+      if(shader>=0)
+        gml_render_shader_account(r,shader,GML_RENDER_SHADER_DRAW_SURFACE,shaded);
     }
   }
 }

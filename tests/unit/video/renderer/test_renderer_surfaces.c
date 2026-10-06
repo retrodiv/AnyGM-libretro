@@ -6,6 +6,7 @@
 #include "gml_render_cpu_surfaces.h"
 #include "gml_builtin.h"
 #include "gml_vm_internal.h"
+#include "gml_software3d.h"
 
 #include <stdint.h>
 #include <stdio.h>
@@ -852,6 +853,123 @@ static int first_generation_high_magnification_case(void){
   return 0;
 }
 
+typedef struct {
+  GmlRender *render;
+  const uint32_t *source;
+  int calls,valid,accept;
+} UnderlayShaderControl;
+
+static int underlay_shader_execute(void *context,const GmlRenderShaderRequest *request){
+  UnderlayShaderControl *control=(UnderlayShaderControl*)context;
+  control->calls++;
+  control->valid=request->shader==0 && control->render->active_shader==0 &&
+    request->source==control->source && request->source_identity==0 &&
+    request->source_width==2 && request->source_height==2 && request->source_pitch==2 &&
+    request->region_x==0 && request->region_y==0 &&
+    request->region_width==2 && request->region_height==2 &&
+    request->width==4 && request->height==4 &&
+    request->target_width==8 && request->target_height==6 &&
+    request->dest_x==2 && request->dest_y==1 &&
+    request->vertex_colour[0]==1.0f && request->vertex_colour[1]==1.0f &&
+    request->vertex_colour[2]==1.0f && request->vertex_colour[3]==1.0f &&
+    control->render->shader_pal[0].generic_uniform[0].value[0]==0.25f;
+  if(!control->accept) return 0;
+  for(int index=0;index<request->width*request->height;index++)
+    request->output[index]=0xFF315273u;
+  return 1;
+}
+
+static int automatic_underlay_shader_case(void){
+  uint32_t source[4]={0xFF204060u,0xFF204060u,0xFF204060u,0xFF204060u};
+  /* Accepted and refused executors, software palette and channel-mask shaders,
+   * no shader and no executor, plus shaded and plain presentations with D3 active.
+   * The source and target are distinct: this is automatic presentation, not feedback. */
+  for(int kind=0;kind<8;kind++){
+    GmlRender render={0};
+    struct GmlShaderPal shader={0};
+    uint32_t target[8*6];
+    UnderlayShaderControl control={&render,source,0,0,kind==0 || kind==6};
+    for(int index=0;index<8*6;index++) target[index]=0xFF102030u;
+    render.app_surface=source;
+    render.app_w=render.app_h=2;
+    render.app_surface_opaque=1;
+    render.alphablend=1;
+    render.color_write_mask=0x0F;
+    render.blend_equation=render.blend_equation_alpha=1;
+    render.app_draw_enable=1;
+    render.lut_pal_sprite=-1;
+    gml_render_begin(&render,target,8,6,3.0,-2.0);
+    if(kind>=6){
+      render.software3d=gml_software3d_create();
+      REQUIRE(render.software3d!=NULL,"automatic presentation D3 fixture allocation");
+      gml_software3d_begin(&render,11.0,17.0,23.0,29.0,13.0);
+      GmlSoftware3DStatus status={0};
+      REQUIRE(gml_software3d_status_get(render.software3d,&status) && status.active,
+              "automatic presentation D3 fixture is active");
+    }
+    render.shader_pal=&shader;
+    render.n_shader_pal=1;
+    shader.source_vertex_es="void main(){gl_Position=vec4(0.0);}";
+    shader.source_fragment_es="void main(){gl_FragColor=vec4(0.25,0.5,0.75,1.0);}";
+    shader.generic_uniform_count=1;
+    strcpy(shader.generic_uniform[0].name,"fixture_gain");
+    shader.generic_uniform[0].count=1;
+    shader.generic_uniform[0].value[0]=0.25f;
+    if(kind==2){
+      shader.threshold_palette=1;
+      shader.threshold_palette_red=0.25f;
+      shader.threshold_palette_set=0x3ffu;
+      for(int index=0;index<10;index++) shader.threshold_palette_colour[index][0]=32;
+    }
+    if(kind==5){ shader.channel_mask=1; shader.channel_mask_keep=4; }
+    render.shade_vertex_colour_valid=1;
+    render.shade_vertex_colour[2]=render.shade_vertex_colour[3]=0.5f;
+    int plain=kind==3 || kind==7;
+    render.active_shader=plain?-1:0;
+    gml_render_set_shader_executor(&render,kind==4?NULL:underlay_shader_execute,&control);
+    gml_render_set_pending_underlay(&render,2,1,4,4);
+    if(kind<2 || kind==6)
+      REQUIRE(control.calls==1 && control.valid,
+              "automatic shader executes at the screen rectangle before GUI state changes");
+    else
+      REQUIRE(control.calls==0,"recognized and absent shaders do not use the host executor");
+    if(!plain)
+      REQUIRE(!render.pending_underlay,"active presentation shader completes before GUI");
+    else
+      REQUIRE(render.pending_underlay,"unshaded presentation retains deferred composition");
+    REQUIRE(render.active_shader==(plain?-1:0) &&
+            render.cam_x==3.0 && render.cam_y==-2.0 && !render.dispatch_cpu_depth &&
+            render.shade_vertex_colour_valid && render.shade_vertex_colour[0]==0.0f &&
+            render.shade_vertex_colour[2]==0.5f && render.shade_vertex_colour[3]==0.5f,
+            "automatic shader preserves camera and draw state");
+    /* A GUI Begin shader reset must not discard or change the earlier presentation. */
+    render.active_shader=-1;
+    shader.generic_uniform[0].value[0]=0.75f;
+    render.cam_x=render.cam_y=0.0;
+    gml_render_flush_pending_underlay(&render);
+    uint32_t colour=(kind==0 || kind==6)?0xFF315273u:
+      (kind==2 || kind==5)?0xFF200000u:0xFF204060u;
+    for(int y=0;y<6;y++) for(int x=0;x<8;x++){
+      uint32_t expected=x>=2 && x<6 && y>=1 && y<5?colour:0xFF102030u;
+      if(target[y*8+x]!=expected){
+        fprintf(stderr,"automatic underlay kind %d at %d,%d: %08x != %08x\n",
+                kind,x,y,target[y*8+x],expected);
+        REQUIRE(0,"automatic presentation is screen-space and survives a GUI shader reset");
+      }
+    }
+    REQUIRE(!memcmp(source,(uint32_t[]){0xFF204060u,0xFF204060u,0xFF204060u,0xFF204060u},
+                    sizeof source),"automatic shader does not overwrite its source");
+    free(render.shaded_plane);
+    if(kind>=6){
+      GmlSoftware3DStatus status={0};
+      REQUIRE(gml_software3d_status_get(render.software3d,&status) && status.active,
+              "automatic presentation preserves active D3 state");
+      gml_software3d_destroy(render.software3d);
+    }
+  }
+  return 0;
+}
+
 static int opaque_integer_scale_case(void){
   enum { SOURCE_WIDTH=5,SOURCE_HEIGHT=3,TARGET_WIDTH=20,TARGET_HEIGHT=12 };
   uint32_t source[SOURCE_WIDTH*SOURCE_HEIGHT];
@@ -1591,6 +1709,7 @@ int main(void){
   REQUIRE(first_generation_high_magnification_case()==0,
           "first-generation high magnification case");
   REQUIRE(opaque_integer_scale_case()==0,"opaque integer scale case");
+  REQUIRE(automatic_underlay_shader_case()==0,"automatic underlay shader case");
   REQUIRE(point_downscale_case()==0,"point downscale case");
   REQUIRE(opaque_near_identity_reduction_case()==0,
           "opaque near-identity reduction case");
