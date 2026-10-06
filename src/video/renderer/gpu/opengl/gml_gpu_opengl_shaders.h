@@ -305,8 +305,10 @@
   "  // R03_SHADER_APPLICATION_PIXEL_CENTRE: opaque presentation copies RGB and stamps alpha.\n" \
   "  if(u_filter==30){\n" \
   "    vec2 extent=vec2(textureSize(u_image,0));\n" \
-  "    vec2 uv=clamp(v_texcoord,(v_clamp.xy+vec2(0.5))/extent,\n" \
-  "                            (v_clamp.zw+vec2(0.5))/extent);\n" \
+  "    vec2 position=vec2(gl_FragCoord.x,v_step.y-gl_FragCoord.y);\n" \
+  "    vec2 uv=(position-v_map.xy)/v_map.zw;\n" \
+  "    if(v_step.x!=0.0) uv.y=1.0-uv.y;\n" \
+  "    uv=clamp(uv,(v_clamp.xy+vec2(0.5))/extent,(v_clamp.zw+vec2(0.5))/extent);\n" \
   "    o_color=vec4(texture(u_image,uv).rgb,1.0); return;\n" \
   "  }\n" \
   "  // R03_SHADER_HARDWARE_FILTERED_ADDITIVE: Hardware bilinear additive without destination sampling.\n" \
