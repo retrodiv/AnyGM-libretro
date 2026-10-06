@@ -293,6 +293,24 @@ set of qualified scene operations or change CPU raster bodies.
 
 ## Current operation support and repair-level rules
 
+Forced-aspect owned admission preserves EXACT target placement and coverage;
+each draw retains its existing EXACT or TOLERANCE±2 sampling/blending rule.
+With OpenGL selected, one nonclassic, noncomposed view may use the resident
+owned application when an existing declared surface canvas already selects it,
+or when its full-origin view fills a same-sized forced application raster.
+This reuses CPU's existing full-raster forced-view composition, not a new fit.
+The resident SCREEN pass follows only a successful resident world begin and
+retains the centered-GUI exclusion. Narrow-room masks, translated ports, live
+assigned view surfaces, multiple views and ineligible contexts keep their
+ordered CPU paths; those ordinary fallbacks remain unfinished GPU coverage,
+not newly documented rare exceptions. No raster kernel or state schema changes.
+`tests/integration/test_graphics_state.c::forced_owned_scene_case` compares
+complete CPU/selected images and positively checks scene admission plus the
+narrow-room exclusion. The same neutral fixture is exported by
+`test_gpu_scene_route --keep-forced-owned` and `--keep-forced-narrow` for real
+device comparison. Recording-driver success alone is not device pixel,
+ordinary-transfer or whole-route performance qualification.
+
 The single-view coordinator also selects the existing resident base preparation
 before entering a native-sized numbered `view_surface_id` target. This applies
 only to non-classic, non-composed, non-forced-aspect frames with one visible view,

@@ -1443,6 +1443,7 @@ int anygm_synthetic_shifted_port_content_create(AnygmSyntheticContent *fixture){
 
 static int synthetic_window_gui_content_create(AnygmSyntheticContent *fixture,int explicit_gui_size){
   int automatic_gui=explicit_gui_size>=9 && explicit_gui_size<=12;
+  int forced_owned=explicit_gui_size==13 || explicit_gui_size==14;
   if(!fixture) return 0;
   memset(fixture,0,sizeof *fixture);
   if(!create_fixture_directory(fixture->directory,sizeof fixture->directory)) return 0;
@@ -1454,7 +1455,7 @@ static int synthetic_window_gui_content_create(AnygmSyntheticContent *fixture,in
   if(!write_text(create,explicit_gui_size==4 || explicit_gui_size==5?
       "window_set_size(64,48);\n"
       "display_set_gui_size(128,96);\n"
-      "application_surface_draw_enable(false);\n":explicit_gui_size==3 || explicit_gui_size==8?
+      "application_surface_draw_enable(false);\n":explicit_gui_size==3 || explicit_gui_size==8 || forced_owned?
       "window_set_size(128,96);\n":explicit_gui_size==6 || explicit_gui_size==7?
       "window_set_size(64,48);\n"
       "application_surface_draw_enable(false);\n":explicit_gui_size==2?
@@ -1479,7 +1480,7 @@ static int synthetic_window_gui_content_create(AnygmSyntheticContent *fixture,in
       explicit_gui_size==3 || explicit_gui_size==4 || explicit_gui_size==6?
       "draw_clear(c_blue);\n"
       "draw_sprite(spr_fixture,0,12,12);\n"
-      "draw_set_color(c_white); draw_rectangle(8,6,11,9,false);\n":explicit_gui_size==7 || explicit_gui_size==8?
+      "draw_set_color(c_white); draw_rectangle(8,6,11,9,false);\n":explicit_gui_size==7 || explicit_gui_size==8 || forced_owned?
       "draw_clear(c_blue);\n"
       "draw_sprite(spr_fixture,0,12,12);\n":explicit_gui_size==9 || explicit_gui_size==11?
       "draw_sprite_stretched(spr_fixture,0,12,12,16,16);\n":explicit_gui_size==10 || explicit_gui_size==12?
@@ -1514,7 +1515,7 @@ static int synthetic_window_gui_content_create(AnygmSyntheticContent *fixture,in
   project.room_order=&order; project.n_room_order=1;
   if(explicit_gui_size==3 || explicit_gui_size==4 || explicit_gui_size==5 ||
      explicit_gui_size==6 || explicit_gui_size==7 || explicit_gui_size==8 ||
-     automatic_gui){
+     automatic_gui || forced_owned){
     uint8_t pixels[8u*8u*4u];
     for(int y=0;y<8;y++) for(int x=0;x<8;x++){
       size_t pixel=((size_t)y*8u+(size_t)x)*4u;
@@ -1561,6 +1562,10 @@ static int synthetic_window_gui_content_create(AnygmSyntheticContent *fixture,in
   if(explicit_gui_size==11 || explicit_gui_size==12){
     room.view_enabled=0; room.views[0].visible=0;
   }
+  if(forced_owned){
+    room.width=explicit_gui_size==13?256:64;
+    room.height=256;
+  }
   room.views[0].hspeed=room.views[0].vspeed=-1; room.views[0].object_id=-1;
   room.instances=&instance; room.n_instances=room.cap_instances=1;
   instance.id=instance.name=(char *)"instance_fixture"; instance.object_id=0;
@@ -1591,6 +1596,14 @@ int anygm_synthetic_indirect_gui_upscale_content_create(AnygmSyntheticContent *f
 
 int anygm_synthetic_resident_indirect_gui_upscale_content_create(AnygmSyntheticContent *fixture){
   return synthetic_window_gui_content_create(fixture,8);
+}
+
+int anygm_synthetic_forced_owned_content_create(AnygmSyntheticContent *fixture){
+  return synthetic_window_gui_content_create(fixture,13);
+}
+
+int anygm_synthetic_forced_narrow_content_create(AnygmSyntheticContent *fixture){
+  return synthetic_window_gui_content_create(fixture,14);
 }
 
 int anygm_synthetic_indirect_gui_reduce_content_create(AnygmSyntheticContent *fixture){

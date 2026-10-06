@@ -1567,6 +1567,8 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
   if(multiview_rendered<0) return ANYGM_ERROR_INTERNAL;
   int direct_owned_world=0;
   int direct_view_surface=0;
+  int forced_owned_scene=0;
+  int forced_owned_scene_began=0;
   uint32_t *world_pixels=engine->fb;
   int world_width=(int)engine->width;
   int world_height=(int)engine->height;
@@ -1614,6 +1616,21 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
         render_presentation.application_width,render_presentation.application_height)))) &&
       gml_render_application_surface_owned_extent(&engine->render,NULL,NULL);
   }
+  /* A forced canvas already supplies its logical camera and owned target. Keep
+   * narrow-room CPU masks and translated view composition on their owner. A
+   * full-origin forced view already fills a same-sized application below. */
+  forced_owned_scene=engine->aspect_force_active &&
+    !engine->composed_frame && !gml_render_is_classic(&engine->render) &&
+    render_presentation.application_owned && frame_view_count==1 &&
+    !(view_surface>0 && gml_surface_exists(&engine->render,view_surface)) &&
+    engine->scene_renderer_session==ANYGM_SCENE_RENDERER_OPENGL &&
+    engine_graphics_active(engine) &&
+    !aspect_visible_room_rect(engine,cam_x,cam_y,NULL,NULL,NULL,NULL) &&
+    (direct_owned_world ||
+     (frame_views[0].px==0 && frame_views[0].py==0 &&
+      render_presentation.application_width==(int)engine->width &&
+      render_presentation.application_height==(int)engine->height));
+  if(forced_owned_scene) direct_owned_world=1;
   if(engine->vm.frame<6 &&
      anygm_host_development_setting(&engine->host,"GML_LOG_APPTARGET"))
     engine_logf(engine,ANYGM_LOG_DEBUG,
@@ -1623,12 +1640,14 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
   int owned_world_began=0;
   int base_world_began=0;
   /* Unsupported operations still take the checked CPU barrier. */
-  if(direct_owned_world && !engine->composed_frame && !engine->aspect_force_active &&
+  if(direct_owned_world && !engine->composed_frame &&
+     (!engine->aspect_force_active || forced_owned_scene) &&
      engine_graphics_active(engine) &&
      (engine->scene_renderer_session==ANYGM_SCENE_RENDERER_OPENGL ||
       anygm_host_development_setting(&engine->host,"GML_SCENE_GPU_PROTOTYPE")))
     owned_world_began=gml_render_begin_resident_owned_application(
       &engine->render,cam_x,cam_y,0);
+  forced_owned_scene_began=forced_owned_scene && owned_world_began;
   if(direct_owned_world &&
      (owned_world_began || gml_render_begin_owned_application(
        &engine->render,cam_x,cam_y,engine->composed_frame))){
@@ -1897,7 +1916,8 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
 			     * reductions retain the existing CPU observation and composition below.
 			     * Direct automatic composition needs the same owned SCREEN before its
 			     * first GUI draw; otherwise the pending underlay cannot stay resident. */
-			    if(!engine->composed_frame && !engine->aspect_force_active &&
+			    if(!engine->composed_frame &&
+			       (!engine->aspect_force_active || forced_owned_scene_began) &&
 			       !aspect_gui_center &&
 			       (gui_indirect || !render_presentation.application_draw_enabled ||
 			        (frame_view_count<=1 && !gml_render_is_classic(&engine->render) &&

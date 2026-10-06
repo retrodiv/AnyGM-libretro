@@ -1936,6 +1936,69 @@ static int presentation_geometry_case(void){
            1u,GMC_ASPECT_FORCE_21_9,0u,0u,2);
 }
 
+static int forced_owned_scene_variant(int narrow_room){
+  Session plain={0},selected={0};
+  AnygmInputFrame input={0};
+  AnygmConfigDelta presentation={0};
+  int matching=1;
+  int (*create_fixture)(AnygmSyntheticContent *)=narrow_room?
+    anygm_synthetic_forced_narrow_content_create:anygm_synthetic_forced_owned_content_create;
+  anygm_test_graphics_reset();
+  REQUIRE(session_open_fixture_with_scene(&plain,ANYGM_SCENE_RENDERER_CPU,
+            create_fixture) &&
+          session_open_fixture_with_scene(&selected,ANYGM_SCENE_RENDERER_OPENGL,
+            create_fixture),
+          "forced owned sessions load");
+  presentation.struct_size=sizeof presentation;
+  presentation.values.struct_size=sizeof presentation.values;
+  presentation.fields=ANYGM_CONFIG_PRESENT_LOGICAL_RASTER|ANYGM_CONFIG_ASPECT_MODE;
+  presentation.values.present_logical_raster=1u;
+  presentation.values.aspect_mode=GMC_ASPECT_FORCE_21_9;
+  REQUIRE(anygm_set_config(plain.engine,&presentation)==ANYGM_OK &&
+          anygm_set_config(selected.engine,&presentation)==ANYGM_OK,
+          "forced owned geometry selected");
+  const char *overrides[]={"?aspect @compositor_fullwidth=1",
+                          "?aspect @wide_gameplay_view=1"};
+  for(unsigned slot=0;slot<2u;slot++)
+    REQUIRE(anygm_set_runtime_override(plain.engine,slot,1u,overrides[slot])==ANYGM_OK &&
+            anygm_set_runtime_override(selected.engine,slot,1u,overrides[slot])==ANYGM_OK,
+            "forced owned declaration selected");
+  REQUIRE(graphics_adopt(selected.engine,ANYGM_GRAPHICS_OPENGLES3)==ANYGM_OK,
+          "forced owned context selected");
+  input.struct_size=sizeof input;
+  input.pointer_x=input.pointer_y=-1;
+  for(int frame=0;matching && frame<3;frame++){
+    AnygmFrameOutput cpu={0},gpu={0};
+    GmlGpuCounters counters={0};
+    const uint32_t *pixels=NULL;
+    unsigned width=0,height=0;
+    cpu.struct_size=gpu.struct_size=sizeof cpu;
+    matching=anygm_run_frame(plain.engine,&input,&cpu)==ANYGM_OK &&
+             anygm_run_frame(selected.engine,&input,&gpu)==ANYGM_OK &&
+             plain.engine->aspect_force_active && selected.engine->aspect_force_active &&
+             selected.engine->width>selected.engine->base_width &&
+             cpu.width==gpu.width && cpu.height==gpu.height;
+    gml_gpu_counters(selected.engine->gpu,&counters);
+    matching=matching && (narrow_room?counters.scene_batches_offered==0u:
+                                    counters.scene_batches_accepted>0u);
+    matching=matching && resolve_host_frame(selected.engine,&pixels,&width,&height) &&
+             pixels && cpu.pixels && width==cpu.width && height==cpu.height &&
+             !memcmp(cpu.pixels,pixels,(size_t)cpu.pitch*cpu.height);
+    if(!matching)
+      fprintf(stderr,"forced owned narrow=%d frame=%d scene=%llu/%llu cpu=%ux%u gpu=%ux%u\n",
+              narrow_room,frame,(unsigned long long)counters.scene_batches_offered,
+              (unsigned long long)counters.scene_batches_accepted,
+              cpu.width,cpu.height,gpu.width,gpu.height);
+  }
+  session_close(&selected); session_close(&plain);
+  REQUIRE(matching,"forced owned scene matches CPU and preserves narrow-room fallback");
+  return 1;
+}
+
+static int forced_owned_scene_case(void){
+  return forced_owned_scene_variant(0) && forced_owned_scene_variant(1);
+}
+
 static int presentation_filter_variant(
     const char *name,int (*create_fixture)(AnygmSyntheticContent *),int variant){
   Session plain={0},selected={0};
@@ -3709,6 +3772,8 @@ int main(void){
      resident_native_assigned_view_case},
     {"presentation geometry remains visible across selected scenes",
      presentation_geometry_case},
+    {"forced owned scene retains geometry and narrow-room fallback",
+     forced_owned_scene_case},
     {"CRT and box presentation preserve a resident scene through CPU filtering",
      presentation_filter_case},
     {"primary and auxiliary scratch uploads stay independent",content_sampler_upload_lifetime_case},

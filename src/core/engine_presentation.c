@@ -1510,8 +1510,8 @@ void draw_runtime_backgrounds(AnygmEngine *engine,int want_fg) {
                                   1.0, 1.0, 0xFFFFFF, alpha, ht, vt);
   }
 }
-static int aspect_visible_room_rect(AnygmEngine *engine,double cam_x, double cam_y,
-                                    int *out_x, int *out_y, int *out_w, int *out_h) {
+int aspect_visible_room_rect(AnygmEngine *engine,double cam_x, double cam_y,
+                             int *out_x, int *out_y, int *out_w, int *out_h) {
   if (!engine->aspect_force_active || !engine->width || !engine->height) return 0;
   GmlRoom rm;
   if (gml_vm_room_get(&engine->vm, engine->vm.room_index, &rm) != 0) return 0;

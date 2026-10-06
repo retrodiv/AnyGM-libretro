@@ -435,6 +435,8 @@ void screen_stage_gui_geometry(
   int *logical_width,int *logical_height);
 void aspect_forced_camera(AnygmEngine *engine,double raw_x,double raw_y,
                           double *out_x,double *out_y);
+int aspect_visible_room_rect(AnygmEngine *engine,double camera_x,double camera_y,
+                             int *x,int *y,int *width,int *height);
 int aspect_compositor_fullwidth_gen(AnygmEngine *engine);
 int aspect_surface_canvas_size(AnygmEngine *engine,int *width,int *height);
 void aspect_surface_canvas_update(AnygmEngine *engine,double camera_x);
