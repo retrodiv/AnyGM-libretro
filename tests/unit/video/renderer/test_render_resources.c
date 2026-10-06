@@ -5975,10 +5975,11 @@ static int resident_gui_coarse_veil_on_demand(void){
     render->interp=1;
     gml_render_set_pending_fill(render,0xFF714A24u);
     gml_render_flush_pending_fill(render);
-    CHECK(gml_render_scene_flush(render));
+    /* Submission is not an observation: scene_flush would explicitly seal the GPU clear. */
+    CHECK(gml_render_scene_submit_pending(render) && !fake.readbacks && !fake.rgb_queries);
     int submits=fake.submits;
     gml_draw_sprite_stretched(render,0,0,-1,-1,6,6,0xFFFFFFu,1.0);
-    CHECK(gml_render_scene_flush(render) && !fake.readbacks && !fake.rgb_queries);
+    CHECK(gml_render_scene_submit_pending(render) && !fake.readbacks && !fake.rgb_queries);
     if(witness){
       CHECK(render->resident_application_pass && !memcmp(screen,sentinel,sizeof screen));
       if(alphas[coverage]){
@@ -5987,20 +5988,21 @@ static int resident_gui_coarse_veil_on_demand(void){
               fake.last_filter==GML_RENDER_FILTER_NEAREST &&
               fake.last_quad_state.rgb_equation==GML_RENDER_BLEND_ADD &&
               fake.last_quad_state.alpha_equation==GML_RENDER_BLEND_ADD);
-        gml_render_resource_journal_metrics(render->base_scene_resource,&metrics);
-        CHECK(metrics.authority==GML_RENDER_RESOURCE_GPU_RESIDENT &&
-              metrics.gpu_version==metrics.logical_version &&
-              metrics.cpu_version<metrics.logical_version &&
-              !metrics.journal_operations && !metrics.retained_mutable_bytes &&
-              !metrics.cpu_replays && !metrics.device_checkpoints);
-        CHECK(gml_render_completed_screen_read(render,screen,4,4) && fake.readbacks==1);
-        for(unsigned index=0;index<16u;index++) CHECK(screen[index]==fake.readback_colour);
       }else CHECK(fake.submits==submits);
+      gml_render_resource_journal_metrics(render->base_scene_resource,&metrics);
+      CHECK(metrics.authority==GML_RENDER_RESOURCE_GPU_RESIDENT &&
+            metrics.gpu_version==metrics.logical_version &&
+            metrics.cpu_version<metrics.logical_version &&
+            !metrics.journal_operations && !metrics.retained_mutable_bytes &&
+            !metrics.cpu_replays && !metrics.device_checkpoints);
+      /* Even a transparent veil leaves the preceding GPU clear to be observed explicitly. */
+      CHECK(gml_render_completed_screen_read(render,screen,4,4) && fake.readbacks==1);
+      for(unsigned index=0;index<16u;index++) CHECK(screen[index]==fake.readback_colour);
     }else CHECK(!render->resident_application_pass && fake.submits==submits);
     gml_render_bind_device(render,NULL);
     fake.forbid_calls=1;
     CHECK(gml_render_completed_screen_read(render,screen,4,4) && !fake.forbidden_calls &&
-          fake.readbacks==(witness && alphas[coverage]?1:0));
+          fake.readbacks==(witness?1:0));
     gml_render_free(render);
     free(render);
   }
