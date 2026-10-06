@@ -288,7 +288,9 @@ static int hardware_screen_veil_valid(const GmlRenderDrawOp *op,
                                       const GmlRenderDrawStateSnapshot *state,
                                       const GlSceneImage *source){
   const GmlRenderQuad *quad=&op->payload.quad;
-  if(!source || source->rendered_origin || source->width!=1u || source->height!=1u ||
+  /* SCRATCH uploads use the render-target origin; reversing a single constant row
+   * changes neither this texel nor the full-target coverage. */
+  if(!source || source->width!=1u || source->height!=1u ||
      source->pixel_format!=GML_RENDER_PIXEL_RGBA8888 ||
      op->sources[0].resource_class!=GML_RENDER_RESOURCE_SCRATCH ||
      op->scene_family!=GML_RENDER_SCENE_SPRITE ||
