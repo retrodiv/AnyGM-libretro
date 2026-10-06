@@ -1820,6 +1820,7 @@ static int filtered_additive_shader_sprite_case(void){
   uint8_t pixels[24]={17,35,53,152,71,89,107,196,125,143,161,0,
                       179,197,215,255,233,15,33,32,51,69,87,64};
   REQUIRE(gml_render_init(&render,NULL)==0,"identity sprite renderer initialization");
+  GmlAtlas *owned_atlas=render.atlas;int owned_atlas_count=render.n_atlas;
   content.bytecode=17;render.win=&content;
   gml_render_begin(&render,base,6,4,0,0);
   render.interp=1;render.blendmode=1;render.active_shader=-1;
@@ -1879,7 +1880,8 @@ static int filtered_additive_shader_sprite_case(void){
   render.active_shader=-1;gml_surface_reset_target(&render);
   gml_render_texture_page_cache_clear(&render,&page);
   render.spr=NULL;render.n_spr=0;render.tpag=NULL;render.n_tpag=0;
-  render.atlas=NULL;render.n_atlas=0;render.shader_pal=NULL;render.n_shader_pal=0;
+  render.atlas=owned_atlas;render.n_atlas=owned_atlas_count;
+  render.shader_pal=NULL;render.n_shader_pal=0;
   gml_render_free(&render);
   return 0;
 }
