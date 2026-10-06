@@ -522,6 +522,7 @@ static int mid_frame_content_shader_case(void){
     render.shader_pal=NULL;
     render.n_shader_pal=0;
     gml_render_set_shader_executor(&render,NULL,NULL);
+    gml_render_free(&render);
   }
   /* The declined draw is the plain draw: compare against a pass with no shader at all. */
   {
