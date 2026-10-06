@@ -47,7 +47,7 @@ typedef struct GmlPlanImage {
   /* A borrow that is valid for the frame in which the plan was built, and for as long afterwards
    * as the owner keeps the plan retained. NULL when the owner did not lend the pixels. */
   const uint32_t *cpu_pixels;
-  /* A current, context-local scene image may replace the CPU borrow for an opaque nearest
+  /* A current, context-local scene image may replace the CPU borrow for an opaque nearest or box
    * presentation. Its full version prevents a stale texture from being mistaken for this frame. */
   GmlRenderImageRef resident_image;
 } GmlPlanImage;
@@ -82,8 +82,9 @@ typedef struct GmlPlanAxis {
 typedef enum GmlPlanOpcode {
   GML_PLAN_OP_CLEAR_XRGB=0,
   GML_PLAN_OP_BLIT_OPAQUE_NEAREST=1,
-  /* The box-averaging reduction. Software-only: an ordinary bilinear sample is not equivalent, and
-   * no GPU reduction has been characterized against its integer channel sums and division. */
+  /* Integer source-footprint box reduction. The CPU reference truncates channel averages;
+   * resident GPU sources use bounded tolerant hardware-filtered averages over the same footprint.
+   * Borrowed CPU sources retain the established software reduction boundary. */
   GML_PLAN_OP_BLIT_OPAQUE_BOX=2,
   /* Fallback transport: present a complete CPU frame unchanged. */
   GML_PLAN_OP_PRESENT_CPU_FRAME=3,

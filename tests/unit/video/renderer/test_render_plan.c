@@ -1152,6 +1152,40 @@ static int plan_validation_case(void){
   return 1;
 }
 
+/* A versioned resident box source adds no permission to read a CPU shadow. */
+static int resident_host_box_case(void){
+  const GmlPlanRect whole={0,0,11u,9u},canvas={2,1,7u,5u};
+  GmlRenderPlan plan;
+  GmlPlanImage source={0};
+  uint32_t untouched[11u*9u];
+  source.image_class=GML_PLAN_IMAGE_COMPLETED_FRAME;
+  source.width=source.pitch_pixels=17u;
+  source.height=11u;
+  source.opaque=1u;
+  source.resident_image=(GmlRenderImageRef){GML_RENDER_RESOURCE_SCREEN,0u,1u,2u};
+  gml_render_plan_reset(&plan,GML_PLAN_TARGET_HOST_FRAMEBUFFER,11u,9u);
+  uint32_t image=gml_render_plan_add_image(&plan,&source);
+  REQUIRE(image!=GML_PLAN_NO_IMAGE && gml_render_plan_add_clear(&plan,whole,0u) &&
+          gml_render_plan_add_blit_box(&plan,image,canvas,0xFFu),
+          "resident host reduction recorded with explicit margins");
+  REQUIRE(gml_render_plan_validate(&plan) && gml_render_plan_gpu_eligible(&plan),
+          "opaque versioned SCREEN box fit is device eligible");
+  for(size_t index=0;index<99u;index++) untouched[index]=0x12345678u;
+  REQUIRE(!gml_render_cpu_plan_execute(&plan,untouched,11u),
+          "resident box source is never read by the CPU executor");
+  for(size_t index=0;index<99u;index++)
+    REQUIRE(untouched[index]==0x12345678u,"CPU refusal precedes margin clear");
+  plan.images[image].resident_image.content_version=0u;
+  REQUIRE(!gml_render_plan_validate(&plan),"unversioned resident box source refused");
+  plan.images[image].resident_image.content_version=2u;
+  plan.images[image].opaque=0u;
+  REQUIRE(!gml_render_plan_validate(&plan),"translucent resident box source refused");
+  plan.images[image].opaque=1u;
+  plan.images[image].resident_image.resource_class=GML_RENDER_RESOURCE_SURFACE;
+  REQUIRE(!gml_render_plan_validate(&plan),"numbered source cannot impersonate SCREEN");
+  return 1;
+}
+
 /* A content-program draw carries names and text the plan cannot check, and indices it can. */
 static int shader_draw_validation_case(void){
   uint32_t source[8*8];
@@ -1365,6 +1399,7 @@ int main(int argc,char **argv){
     {"pooled_box_identity",pooled_box_identity_case},
     {"axis_map",axis_map_case},
     {"validation",plan_validation_case},
+    {"resident_host_box",resident_host_box_case},
     {"shader_draw_validation",shader_draw_validation_case},
     {"dispatch_host_plan",dispatch_host_plan_case},
     {"dispatch_device_plan",dispatch_device_plan_case},

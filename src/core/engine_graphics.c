@@ -680,10 +680,22 @@ presented:
 
 int engine_present_hardware_canvas(AnygmEngine *engine,unsigned *width,unsigned *height){
   unsigned host_width=0,host_height=0;
-  if(!engine_hybrid_presentation_active(engine)) return 0;
+  GmlRenderImageRef completed={0};
+  int resident=0;
+  if(!engine) return 0;
+  int scene=engine->scene_renderer_session==ANYGM_SCENE_RENDERER_OPENGL &&
+            engine_graphics_active(engine);
+  if(!scene && !engine_hybrid_presentation_active(engine)) return 0;
   if(!engine->screen || !engine->output_width || !engine->output_height) return 0;
-  /* This pass reads the completed frame, so it has to be the canonical one. */
-  if(!engine_materialize_completed_frame(engine)) return 0;
+  /* A current logical SCREEN is already complete. Host fitting must not observe its CPU shadow
+   * or replace the saved logical raster with the host-sized filtered picture. CRT, shifted and
+   * cropped paths retain their separate, established presentation boundaries. */
+  if(scene && !engine->host_crt_active && !engine->present_shift_x && !engine->present_shift_y &&
+     !engine->present_crop_left && !engine->present_crop_top &&
+     !engine->present_crop_right && !engine->present_crop_bottom)
+    resident=gml_render_completed_screen_image(&engine->render,engine->screen,
+                (int)engine->output_width,(int)engine->output_height,&completed);
+  if(!resident && !engine_materialize_completed_frame(engine)) return 0;
   engine_host_extent(engine,&host_width,&host_height);
   if(!host_width || !host_height) return 0;
   if(!engine->host_canvas_active){
@@ -696,7 +708,13 @@ int engine_present_hardware_canvas(AnygmEngine *engine,unsigned *width,unsigned 
    * buffer persists. */
   if(!engine_build_host_plan(engine,&engine->host_plan,GML_PLAN_TARGET_HOST_FRAMEBUFFER,
                              host_width,host_height,1)) return 0;
+  if(resident){
+    GmlPlanImage *source=&engine->host_plan.images[0];
+    source->cpu_pixels=NULL;
+    source->resident_image=completed;
+  }
   if(!engine_execute_graphics_plan(engine,&engine->host_plan)) return 0;
+  if(resident) engine->frame_authority=ENGINE_FRAME_GPU_PRESENTED_CPU_RECONSTRUCTIBLE;
   engine->host_plan_valid=1;
   engine->canvas_pass_frames++;
   /* The host-sized copy was not written this frame, so its margins can no longer be assumed to

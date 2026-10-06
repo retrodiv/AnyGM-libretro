@@ -43,6 +43,7 @@
   "uniform int u_source_height;\n" \
   "uniform int u_resident_source;\n" \
   "uniform int u_rgb_query;\n" \
+  "uniform ivec2 u_box_destination;\n" \
   "out vec4 o_color;\n" \
   "void main(){\n" \
   "  // R03_SHADER_SCREEN_RGB_QUERY: discard only exact RGB zero; coverage is irrelevant.\n" \
@@ -53,6 +54,24 @@
   "  }\n" \
   "  int dx=int(gl_FragCoord.x)-u_dest_x;\n" \
   "  int dy=(u_target_height-1-int(gl_FragCoord.y))-u_dest_y;\n" \
+  "  // R03_SHADER_HOST_BOX: the same integer footprint, hardware-averaged in 2x2 cells.\n" \
+  "  if(u_box_destination.x>0){\n" \
+  "    ivec2 size=textureSize(u_source,0),p=ivec2(dx,dy);\n" \
+  "    ivec2 first=p*size/u_box_destination;\n" \
+  "    ivec2 last=min(size,max((p+ivec2(1))*size/u_box_destination,first+ivec2(1)));\n" \
+  "    vec3 total=vec3(0.0);\n" \
+  "    for(int y=first.y;y<last.y;y+=2){\n" \
+  "      int rows=min(2,last.y-y); vec3 row=vec3(0.0);\n" \
+  "      for(int x=first.x;x<last.x;x+=2){\n" \
+  "        int columns=min(2,last.x-x);\n" \
+  "        vec2 centre=vec2(float(x)+float(columns)*0.5,float(y)+float(rows)*0.5);\n" \
+  "        vec2 uv=vec2(centre.x,float(size.y)-centre.y)/vec2(size);\n" \
+  "        row+=textureLod(u_source,uv,0.0).rgb*float(columns);\n" \
+  "      }\n" \
+  "      total+=row/float(last.x-first.x)*float(rows);\n" \
+  "    }\n" \
+  "    o_color=vec4(total/float(last.y-first.y),1.0); return;\n" \
+  "  }\n" \
   "  int sx=int(texelFetch(u_map_x,ivec2(dx,0),0).r);\n" \
   "  int sy=int(texelFetch(u_map_y,ivec2(dy,0),0).r);\n" \
   "  // R03_SHADER_RESIDENT_PRESENT: use the current scene image without upload.\n" \

@@ -75,6 +75,9 @@ int gml_gpu_opengl_execute(GmlGpuBackend *backend,const GmlGpuContext *context,
       GmlPlanAxis axis_y=op->axis_y;
       GLuint source_name=0,map_x=0,map_y=0;
       int resident_source=0;
+      int box=op->opcode==GML_PLAN_OP_BLIT_OPAQUE_BOX;
+      GLint box_destination[2]={box?(GLint)op->destination.width:0,
+                                box?(GLint)op->destination.height:0};
       if(op->opcode==GML_PLAN_OP_PRESENT_CPU_FRAME){
         axis_x=identity_axis(image->width);
         axis_y=identity_axis(image->height);
@@ -94,8 +97,9 @@ int gml_gpu_opengl_execute(GmlGpuBackend *backend,const GmlGpuContext *context,
         failed=1;
         break;
       }
-      if(!gml_gpu_opengl_upload_axis(backend,index*2u,&axis_x,op->destination.width,counters,&map_x) ||
-         !gml_gpu_opengl_upload_axis(backend,index*2u+1u,&axis_y,op->destination.height,counters,&map_y)){
+      if(!box &&
+         (!gml_gpu_opengl_upload_axis(backend,index*2u,&axis_x,op->destination.width,counters,&map_x) ||
+          !gml_gpu_opengl_upload_axis(backend,index*2u+1u,&axis_y,op->destination.height,counters,&map_y))){
         gml_gpu_opengl_record_error(error,error_capacity,"graphics axis map upload failed");
         failed=1;
         break;
@@ -105,14 +109,24 @@ int gml_gpu_opengl_execute(GmlGpuBackend *backend,const GmlGpuContext *context,
       backend->gl.Uniform1i(backend->u_dest_y,op->destination.y);
       backend->gl.Uniform1i(backend->u_source_height,(GLint)image->height);
       backend->gl.Uniform1i(backend->u_resident_source,resident_source);
+      backend->gl.Uniform2iv(backend->u_box_destination,1,box_destination);
       backend->gl.ActiveTexture(GL_TEXTURE0);
       backend->gl.BindTexture(GL_TEXTURE_2D,source_name);
+      if(box){
+        backend->gl.TexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,GL_LINEAR);
+        backend->gl.TexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAG_FILTER,GL_LINEAR);
+      }
       backend->gl.ActiveTexture(GL_TEXTURE1);
       backend->gl.BindTexture(GL_TEXTURE_2D,map_x);
       backend->gl.ActiveTexture(GL_TEXTURE2);
       backend->gl.BindTexture(GL_TEXTURE_2D,map_y);
       backend->gl.DrawArrays(GL_TRIANGLES,0,3);
       if(counters) counters->draw_calls++;
+      if(box){
+        backend->gl.ActiveTexture(GL_TEXTURE0);
+        backend->gl.TexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,GL_NEAREST);
+        backend->gl.TexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAG_FILTER,GL_NEAREST);
+      }
     }
   }
 
