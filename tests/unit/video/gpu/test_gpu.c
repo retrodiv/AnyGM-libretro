@@ -2165,15 +2165,22 @@ static int scene_alpha_composition_api(GmlGpuApi api,const char *renderer,int fo
   /* Constant SCREEN veils retain unknown-alpha coverage without a predecessor copy.
    * Compatible overlapping veils share one RGB pass and one opaque-alpha pass. */
   {
+    const uint8_t veil_pixels[4]={255u,0u,0u,128u};
     GmlRenderImageRef veil_source={GML_RENDER_RESOURCE_SCRATCH,101u,1u,1u};
+    GmlRenderImageRef argb_source={GML_RENDER_RESOURCE_SCRATCH,102u,1u,1u};
     GmlRenderImageUpload veil_upload=upload;
+    GmlRenderImageUpload argb_upload=upload;
     GmlRenderDrawOp veil_ops[3];
     GmlRenderDrawStateSnapshot veil_state=state;
     GmlRenderDrawBatch veil_batch={veil_ops,3u,&veil_state,1u};
     unsigned copies=anygm_test_graphics_scene_copies();
     int draws=anygm_test_graphics_scene_draw_calls();
     veil_upload.image=veil_source;
+    veil_upload.pixel_format=GML_RENDER_PIXEL_RGBA8888;
+    veil_upload.bytes=veil_pixels;
     REQUIRE(service.upload(service.context,&veil_upload),"constant screen veil uploaded");
+    argb_upload.image=argb_source;
+    REQUIRE(service.upload(service.context,&argb_upload),"unqualified ARGB screen veil uploaded");
     memcpy(veil_ops,operations,sizeof veil_ops);
     veil_state.rgb_equation=veil_state.alpha_equation=GML_RENDER_BLEND_ADD;
     veil_state.coverage_policy=GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA;
@@ -2193,7 +2200,7 @@ static int scene_alpha_composition_api(GmlGpuApi api,const char *renderer,int fo
             anygm_test_graphics_scene_draw_calls()==draws+2 &&
             anygm_test_graphics_scene_copies()==copies && !anygm_test_graphics_read_pixels(),
             "overlapping constant screen veils batch RGB and opaque alpha without copies or reads");
-    for(unsigned variant=0;variant<6u;variant++){
+    for(unsigned variant=0;variant<7u;variant++){
       GmlRenderDrawOp invalid[3];
       GmlRenderDrawBatch refused={invalid,3u,&veil_state,1u};
       int clears=anygm_test_graphics_clear_calls();
@@ -2205,6 +2212,7 @@ static int scene_alpha_composition_api(GmlGpuApi api,const char *renderer,int fo
       if(variant==3u) invalid[1].payload.quad.filtered_draw_alpha=0.5;
       if(variant==4u) invalid[1].reconstruction_mode=GML_RENDER_REPLAY_EXACT;
       if(variant==5u) invalid[1].payload.quad.sampling.source_region.width=2u;
+      if(variant==6u) invalid[1].sources=&argb_source;
       result=service.submit(service.context,&refused);
       REQUIRE(result.status==GML_RENDER_EXEC_UNSUPPORTED && !result.accepted_prefix &&
               clears==anygm_test_graphics_clear_calls() &&
@@ -2213,6 +2221,7 @@ static int scene_alpha_composition_api(GmlGpuApi api,const char *renderer,int fo
               "unqualified constant veil variants reject transactionally before their clear prefix");
     }
     service.retire(service.context,veil_source);
+    service.retire(service.context,argb_source);
   }
   /* Opaque stretched magnification has a distinct phase/weight policy, never
    * an unchecked option for an arbitrary sampled quad. */
