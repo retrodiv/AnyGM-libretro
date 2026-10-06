@@ -5938,6 +5938,75 @@ static int resident_coarse_veil_exact_recovery(void){
   return 1;
 }
 
+/* Identity SCREEN GUI veils keep device bytes until a real observation requests them. */
+static int resident_gui_coarse_veil_on_demand(void){
+  const uint8_t alphas[]={0u,1u,127u,255u};
+  for(unsigned witness=0;witness<2u;witness++)
+  for(unsigned coverage=0;coverage<sizeof alphas;coverage++){
+    GmlRender *render=(GmlRender*)calloc(1,sizeof *render);
+    FakeDevice fake={.on_demand=witness!=0u,.readback_colour=0xFF456789u};
+    GmlRenderDeviceServices device=service(&fake);
+    GmlRenderJournalMetrics metrics={0};
+    uint32_t screen[16],sentinel[16];
+    CHECK(render);
+    render->atlas=(GmlAtlas*)calloc(1,sizeof *render->atlas);
+    render->tpag=(GmlTpag*)calloc(1,sizeof *render->tpag);
+    render->spr=(GmlSprite*)calloc(1,sizeof *render->spr);
+    CHECK(render->atlas && render->tpag && render->spr);
+    render->n_atlas=render->n_tpag=render->n_spr=1;
+    render->atlas[0].px=(uint8_t*)malloc(8u*8u*4u);
+    render->spr[0].frame=(int*)calloc(1,sizeof(int));
+    CHECK(render->atlas[0].px && render->spr[0].frame);
+    render->atlas[0].w=render->atlas[0].h=8;
+    render->tpag[0].sw=render->tpag[0].sh=8;
+    render->tpag[0].bw=render->tpag[0].bh=8;
+    render->spr[0].w=render->spr[0].h=8;
+    render->spr[0].n_frames=1;
+    render->color_write_mask=15u;
+    for(unsigned index=0;index<64u;index++){
+      uint8_t *pixel=render->atlas[0].px+index*4u;
+      pixel[0]=29u;pixel[1]=203u;pixel[2]=41u;pixel[3]=alphas[coverage];
+    }
+    for(unsigned index=0;index<16u;index++) screen[index]=sentinel[index]=0xA5123456u;
+    device.observe_on_demand=fake_observe_on_demand;
+    gml_render_bind_device(render,&device);
+    CHECK(gml_render_begin_resident_base(render,screen,4,4,0.0,0.0));
+    gml_render_gui_begin(render,4,4);
+    render->interp=1;
+    gml_render_set_pending_fill(render,0xFF714A24u);
+    gml_render_flush_pending_fill(render);
+    CHECK(gml_render_scene_flush(render));
+    int submits=fake.submits;
+    gml_draw_sprite_stretched(render,0,0,-1,-1,6,6,0xFFFFFFu,1.0);
+    CHECK(gml_render_scene_flush(render) && !fake.readbacks && !fake.rgb_queries);
+    if(witness){
+      CHECK(render->resident_application_pass && !memcmp(screen,sentinel,sizeof screen));
+      if(alphas[coverage]){
+        CHECK(fake.submits==submits+1 && fake.last_opcode==GML_RENDER_OP_TEXTURED_QUAD &&
+              fake.last_target_image.resource_class==GML_RENDER_RESOURCE_SCREEN &&
+              fake.last_filter==GML_RENDER_FILTER_NEAREST &&
+              fake.last_quad_state.rgb_equation==GML_RENDER_BLEND_ADD &&
+              fake.last_quad_state.alpha_equation==GML_RENDER_BLEND_ADD);
+        gml_render_resource_journal_metrics(render->base_scene_resource,&metrics);
+        CHECK(metrics.authority==GML_RENDER_RESOURCE_GPU_RESIDENT &&
+              metrics.gpu_version==metrics.logical_version &&
+              metrics.cpu_version<metrics.logical_version &&
+              !metrics.journal_operations && !metrics.retained_mutable_bytes &&
+              !metrics.cpu_replays && !metrics.device_checkpoints);
+        CHECK(gml_render_completed_screen_read(render,screen,4,4) && fake.readbacks==1);
+        for(unsigned index=0;index<16u;index++) CHECK(screen[index]==fake.readback_colour);
+      }else CHECK(fake.submits==submits);
+    }else CHECK(!render->resident_application_pass && fake.submits==submits);
+    gml_render_bind_device(render,NULL);
+    fake.forbid_calls=1;
+    CHECK(gml_render_completed_screen_read(render,screen,4,4) && !fake.forbidden_calls &&
+          fake.readbacks==(witness && alphas[coverage]?1:0));
+    gml_render_free(render);
+    free(render);
+  }
+  return 1;
+}
+
 static int resident_numbered_sprite_channel_masks(void){
   const uint8_t rgba[16]={208,32,16,128,16,208,32,255,32,16,208,64,192,176,160,0};
   for(unsigned mask=0;mask<16u;mask++){
@@ -8096,6 +8165,7 @@ int main(void){
   passed+=resident_opaque_atlas_sprite_gpu();
   passed+=resident_numbered_sprite_channel_masks();
   passed+=resident_coarse_veil_exact_recovery();
+  passed+=resident_gui_coarse_veil_on_demand();
   passed+=resident_packaged_sprite_font_glyph();
   passed+=resident_filtered_gui_real_font();
   passed+=surface_pending_source_lifetime(0,0);
@@ -8131,6 +8201,6 @@ int main(void){
   passed+=source_free_primitive_rect_replay();
   passed+=stretched_float_exact_replay();
   passed+=filtered_font_exact_recovery();
-  printf("render resource cases: passed=%d failed=%d\n",passed,113-passed);
-  return passed==113?EXIT_SUCCESS:EXIT_FAILURE;
+  printf("render resource cases: passed=%d failed=%d\n",passed,114-passed);
+  return passed==114?EXIT_SUCCESS:EXIT_FAILURE;
 }

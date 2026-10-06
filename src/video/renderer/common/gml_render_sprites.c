@@ -1468,7 +1468,8 @@ void gml_render_sprite_ext_unmasked(GmlRender *r, int sprite, int subimg, double
 
 /* R03-SPR-COARSE-MIP: the CPU leaf already reduces a full-target minified page to one
  * straight-RGBA texel. Share that exact preparation, then let the device compose the veil.
- * The bounded rule keeps the CPU leaf for transformed targets and special fragment state. */
+ * Identity SCREEN GUI uses fixed blending and witnessed on-demand device authority; the
+ * established world rule retains its exact blend/replay. Other GUI and special states stay CPU. */
 static int resident_coarse_mip_veil(GmlRender *r,int sprite,int frame,
                                    double dx,double dy,double dw,double dh,
                                    uint32_t blend,double alpha){
@@ -1488,7 +1489,11 @@ static int resident_coarse_mip_veil(GmlRender *r,int sprite,int frame,
   uint8_t pixel[4];
   int x0,y0,width,height,sub,page_index;
   if(!r || !r->resident_application_pass || !(device=gml_render_device(r)) ||
-     !device->retire || !r->interp || r->classic || r->gui_pass_active ||
+     !device->retire || !r->interp || r->classic ||
+     (r->gui_pass_active &&
+      (!resident_identity_screen_gui(r) || r->world_transform_active ||
+       !device->context || !device->observe_on_demand ||
+       !device->observe_on_demand(device->context))) ||
      r->active_shader>=0 || r->alpha_test_enable || !r->alphablend ||
      r->blendmode || r->blend_equation!=1 || r->blend_equation_alpha!=1 ||
      r->color_write_mask!=0x0Fu || r->classic_phase_y ||
@@ -1553,7 +1558,8 @@ static int resident_coarse_mip_veil(GmlRender *r,int sprite,int frame,
   source_ref=source.image;
   operation.opcode=GML_RENDER_OP_TEXTURED_QUAD;
   operation.scene_family=GML_RENDER_SCENE_SPRITE;
-  operation.reconstruction_mode=GML_RENDER_REPLAY_EXACT;
+  operation.reconstruction_mode=r->gui_pass_active
+    ?GML_RENDER_DEVICE_CHECKPOINT:GML_RENDER_REPLAY_EXACT;
   operation.source_count=1u;
   operation.sources=&source_ref;
   operation.target.image=image;
@@ -1585,7 +1591,8 @@ static int resident_coarse_mip_veil(GmlRender *r,int sprite,int frame,
   state.rgb_destination_factor=GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA;
   state.alpha_source_factor=GML_RENDER_BLEND_ONE;
   state.alpha_destination_factor=GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA;
-  state.rgb_equation=state.alpha_equation=GML_RENDER_BLEND_EXACT8_ROUND_VEIL;
+  state.rgb_equation=state.alpha_equation=r->gui_pass_active
+    ?GML_RENDER_BLEND_ADD:GML_RENDER_BLEND_EXACT8_ROUND_VEIL;
   state.sampler_count=1u;
   state.samplers[0]=operation.payload.quad.sampling;
   batch=(GmlRenderDrawBatch){&operation,1u,&state,1u};
