@@ -6711,6 +6711,58 @@ static int application_surface_pending_source_lifetime(void){
   return 1;
 }
 
+/* Content-owned point presentation followed by a filtered alpha surface draw
+ * must not acquire SCREEN or the application on the CPU between the draws. */
+static int resident_gui_application_composition(void){
+  const double geometry[][4]={{0,0,48,32},{3,4,17,13},{3.25,4.125,17.25,13.5},
+                              {-4.25,-3.125,17.25,13.5},{2,3,4,3},{0,0,48,32}};
+  for(unsigned variant=0;variant<sizeof geometry/sizeof *geometry;variant++){
+    GmlRender *render=calloc(1,sizeof *render);
+    GmlWin content={.bytecode=15};
+    FakeDevice fake={.on_demand=1};
+    GmlRenderDeviceServices device=service(&fake);
+    uint32_t screen[48*32]={0};
+    device.observe_on_demand=fake_observe_on_demand;
+    CHECK(render && gml_render_init(render,NULL)==0);
+    render->win=&content;
+    CHECK(gml_render_application_surface_ensure_owned(render,6,4));
+    gml_render_application_surface_publish(render);
+    gml_render_application_surface_set_draw_enabled(render,0);
+    render->app_surface_opaque=1;
+    for(unsigned pixel=0;pixel<24u;pixel++)
+      render->app_surface_owned[pixel]=0xFF1267B9u;
+    gml_render_bind_device(render,&device);
+    CHECK(gml_render_begin_resident_base(render,screen,48,32,0,0));
+    gml_render_gui_begin(render,48,32);
+    if(variant==5u) gml_render_gui_set_size(render,24,16);
+    gml_render_set_pending_fill(render,0x40123456u);
+    render->interp=0;render->alphablend=1;
+    int submits=fake.submits,reads=fake.readbacks;
+    gml_draw_surface_stretched(render,0,geometry[variant][0],geometry[variant][1],
+      geometry[variant][2],geometry[variant][3],0xFFFFFFu,1.0);
+    CHECK(render->resident_application_pass && !render->pending_presentation &&
+          fake.readbacks==reads);
+    CHECK(gml_render_scene_submit_pending(render));
+    CHECK(fake.submits>submits && fake.last_opcode==GML_RENDER_OP_TEXTURED_QUAD &&
+          fake.last_filtered_draw_alpha==1.0 && fake.readbacks==reads);
+    if(variant<2u || variant==5u){
+      submits=fake.submits;
+      render->interp=1;
+      for(unsigned draw=0;draw<8u;draw++)
+        gml_draw_surface_stretched(render,0,0,0,48,32,0xFFFFFFu,.7);
+      CHECK(render->resident_application_pass && fake.submits==submits &&
+            fake.readbacks==reads);
+      CHECK(gml_render_scene_submit_pending(render) && fake.submits==submits+1 &&
+            fake.last_batch_operations==8u &&
+            fake.last_filter==GML_RENDER_FILTER_HARDWARE_BILINEAR &&
+            fake.last_filtered_draw_alpha==.7 && fake.readbacks==reads);
+    }
+    gml_render_gui_end(render);
+    gml_render_free(render);free(render);
+  }
+  return 1;
+}
+
 static int current_cpu_source_view_is_not_observer(void){
   uint32_t pixels[16],*writable=NULL;
   const uint32_t *observed=NULL;
@@ -8327,6 +8379,7 @@ int main(void){
   passed+=surface_pending_source_lifetime(1,11);
   passed+=clipped_destination_surface_after_cpu_suffix();
   passed+=application_surface_pending_source_lifetime();
+  passed+=resident_gui_application_composition();
   passed+=current_cpu_source_view_is_not_observer();
   passed+=resident_current_cpu_application_underlay();
   passed+=resident_unregistered_cpu_application_underlay();
@@ -8354,6 +8407,6 @@ int main(void){
   passed+=source_free_primitive_rect_replay();
   passed+=stretched_float_exact_replay();
   passed+=filtered_font_exact_recovery();
-  printf("render resource cases: passed=%d failed=%d\n",passed,116-passed);
-  return passed==116?EXIT_SUCCESS:EXIT_FAILURE;
+  printf("render resource cases: passed=%d failed=%d\n",passed,117-passed);
+  return passed==117?EXIT_SUCCESS:EXIT_FAILURE;
 }

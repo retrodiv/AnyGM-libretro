@@ -263,6 +263,7 @@ int gml_render_application_scene_enqueue(GmlRender *r,const GmlRenderDrawOp *ope
     operation->reconstruction_mode==GML_RENDER_DEVICE_CHECKPOINT &&
     operation->opcode==GML_RENDER_OP_TEXTURED_QUAD &&
     (operation->payload.quad.sampling.filter==GML_RENDER_FILTER_HARDWARE_BILINEAR ||
+     operation->payload.quad.sampling.filter==GML_RENDER_FILTER_HARDWARE_PIXEL_CENTRE_POINT ||
      ((operation->payload.quad.sampling.filter==GML_RENDER_FILTER_NEAREST ||
        (operation->payload.quad.sampling.filter==GML_RENDER_FILTER_BOX && state &&
         state->rgb_equation>=GML_RENDER_BLEND_EXACT_DESTINATION_ADD &&
@@ -862,7 +863,7 @@ void gml_draw_surface_stretched(GmlRender *r,int surf,double dx,double dy,
 static int resident_surface_filtered(GmlRender *r,int surf,double dx,double dy,double dw,double dh,
                                      uint32_t blend,double alpha){
   int slot=surface_slot(surf);
-  int source_width,source_height,unit;
+  int source_width,source_height,unit,point_presentation;
   double left,top,width,height;
   GmlRenderResource *resource,*target;
   GmlRenderResourceSource source={0};
@@ -892,6 +893,33 @@ static int resident_surface_filtered(GmlRender *r,int surf,double dx,double dy,d
   width=(double)lround(dw);height=(double)lround(dh);
   source_width=surf==0?r->app_w:r->surface[slot].w;
   source_height=surf==0?r->app_h:r->surface[slot].h;
+  /* The preserved first-generation GUI leaf selects pixel-centre point samples
+   * for opaque, white content-owned application presentation. Other ordinary
+   * surface requests keep their floor/lround geometry and filter selection. */
+  point_presentation=surf==0 && r->win &&
+    anygm_policy_uses_first_generation_studio(r->win) &&
+    gml_render_gui_transform_active(r) && !r->target_sp && r->target_id<0 &&
+    !r->interp && !destination_blend && alpha>=1.0 &&
+    (blend&0xFFFFFFu)==0xFFFFFFu && surface_known_opaque(r,0) &&
+    (!r->app_draw_enable ||
+     (fabs(dw-(double)source_width*r->gui_scale_x)<=.001 &&
+      fabs(dh-(double)source_height*r->gui_scale_y)<=.001 &&
+      (fabs(dw-lround(dw))>=.001 || fabs(dh-lround(dh))>=.001)));
+  /* A full-width correction still belongs to its existing CPU geometry owner. */
+  if(surf==0 && r->aspect_fullwidth && !r->target_sp &&
+     source_width==r->aspect_wide_w && source_height==r->aspect_wide_h &&
+     dh>=(double)r->fbh*.75 && dw/dh+.01<(double)source_width/source_height)
+    return 0;
+  if(point_presentation){
+    if(dw>16384.0 || dh>16384.0 || fabs(dx-r->cam_x)>16384.0 ||
+       fabs(dy-r->cam_y)>16384.0) return 0;
+    double right=ceil(dx-r->cam_x+dw-.5),bottom=ceil(dy-r->cam_y+dh-.5);
+    left=fmax(0.0,ceil(dx-r->cam_x-.5));
+    top=fmax(0.0,ceil(dy-r->cam_y-.5));
+    width=fmin((double)r->fbw,right)-left;
+    height=fmin((double)r->fbh,bottom)-top;
+    if(width<=0.0 || height<=0.0) return 1;
+  }
   unit=width==source_width && height==source_height;
   /* Bound exact integer phase products and filtered tap accumulation. The CPU
    * destination-factor leaf uses left-edge point/box sampling, even when enlarged. */
@@ -902,8 +930,9 @@ static int resident_surface_filtered(GmlRender *r,int surf,double dx,double dy,d
   if(!isfinite(left) || !isfinite(top) || left<(double)INT_MIN/2 ||
      top<(double)INT_MIN/2 || left>(double)INT_MAX/2 || top>(double)INT_MAX/2 ||
      source_width<=0 || source_height<=0 ||
-     (!destination_blend && !unit &&
-      (!r->interp || surf==0 || width<=source_width || height<=source_height))) return 0;
+     (!point_presentation && !destination_blend && !unit &&
+      (!r->interp || width<=source_width || height<=source_height ||
+       (surf==0 && alpha>=1.0 && (blend&0xFFFFFFu)==0xFFFFFFu)))) return 0;
   /* The CPU rectangle is half-open after these same origin/extent roundings.
    * A fully clipped destination-factor draw cannot sample or write a pixel;
    * preserve the queued prefix without acquiring its source or target. */
@@ -939,7 +968,7 @@ static int resident_surface_filtered(GmlRender *r,int surf,double dx,double dy,d
   operation.target.region=(GmlRenderRect){0,0,(uint32_t)r->fbw,(uint32_t)r->fbh};
   GmlRenderQuad *quad=&operation.payload.quad;
   quad->shape=GML_RENDER_QUAD_AXIS_ALIGNED;
-  quad->sampling.filter=destination_blend
+  quad->sampling.filter=point_presentation?GML_RENDER_FILTER_HARDWARE_PIXEL_CENTRE_POINT:destination_blend
     ?(!unit && r->interp?GML_RENDER_FILTER_BOX:GML_RENDER_FILTER_NEAREST)
     :unit?GML_RENDER_FILTER_NEAREST:GML_RENDER_FILTER_HARDWARE_BILINEAR;
   quad->sampling.edge_rule=GML_RENDER_EDGE_CLAMP_SUBIMAGE;
@@ -948,6 +977,15 @@ static int resident_surface_filtered(GmlRender *r,int surf,double dx,double dy,d
   quad->x[0]=quad->x[3]=left;quad->x[1]=quad->x[2]=left+width;
   quad->y[0]=quad->y[1]=top;quad->y[2]=quad->y[3]=top+height;
   quad->u[1]=quad->u[2]=quad->v[2]=quad->v[3]=1.0;
+  if(point_presentation){
+    quad->source_opaque=1u;
+    quad->inverse_anchor[0]=dx-r->cam_x;quad->inverse_anchor[1]=dy-r->cam_y;
+    quad->inverse_x[0]=dw;quad->inverse_y[1]=dh;
+    for(unsigned corner=0;corner<4u;corner++){
+      quad->u[corner]=(quad->x[corner]-quad->inverse_anchor[0])/dw;
+      quad->v[corner]=(quad->y[corner]-quad->inverse_anchor[1])/dh;
+    }
+  }
   uint32_t colour=((uint32_t)lround(alpha*255.0)<<24)|
     ((blend&255u)<<16)|(blend&0xFF00u)|((blend>>16)&255u);
   for(int corner=0;corner<4;corner++) quad->corner_colour[corner]=colour;

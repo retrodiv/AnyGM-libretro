@@ -107,7 +107,9 @@ int gml_render_gpu_opengl_draw_textured_quad(const GmlRenderDrawOp *op,
        (!rotated && (!isfinite(quad->u[corner]) || !isfinite(quad->v[corner]))) ||
        quad->x[corner]<-10000000.0 || quad->x[corner]>10000000.0 ||
        quad->y[corner]<-10000000.0 || quad->y[corner]>10000000.0 ||
-       (!rotated && !warped && (quad->u[corner]<0.0 || quad->u[corner]>1.0 ||
+       (!rotated && !warped &&
+        quad->sampling.filter!=GML_RENDER_FILTER_HARDWARE_PIXEL_CENTRE_POINT &&
+        (quad->u[corner]<0.0 || quad->u[corner]>1.0 ||
                                quad->v[corner]<0.0 || quad->v[corner]>1.0)) ||
        (warped && (!isfinite(quad->u[corner]) || !isfinite(quad->v[corner]) ||
                    quad->u[corner]<0.0 || quad->u[corner]>region.width ||
@@ -155,7 +157,8 @@ int gml_render_gpu_opengl_draw_textured_quad(const GmlRenderDrawOp *op,
       vertex[23+span]=(float)quad->span_y[span];
     }
     if(!rotated && state->coverage_policy==GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA &&
-       quad->sampling.filter!=GML_RENDER_FILTER_HARDWARE_BILINEAR){
+       quad->sampling.filter!=GML_RENDER_FILTER_HARDWARE_BILINEAR &&
+       quad->sampling.filter!=GML_RENDER_FILTER_HARDWARE_PIXEL_CENTRE_POINT){
       /* The axis screen rule has no rotated/box span. Retain low residuals of
        * its existing phase and reciprocal so a wide quad does not accumulate
        * a float-step error into a different rounded source channel. */

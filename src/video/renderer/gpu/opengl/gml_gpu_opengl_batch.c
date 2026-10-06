@@ -132,6 +132,7 @@ static uint32_t scene_filter(const GmlRenderQuad *quad,
                              const GmlRenderDrawStateSnapshot *state,uint32_t family){
   if(quad->sampling.quantisation==GML_RENDER_QUANTISE_SPRITE_MODERN_NEAREST) return 27u;
   if(quad->sampling.quantisation==GML_RENDER_QUANTISE_SPRITE_MODERN_ROTATED_NEAREST) return 29u;
+  if(quad->sampling.filter==GML_RENDER_FILTER_HARDWARE_PIXEL_CENTRE_POINT) return 30u;
   if(family==GML_RENDER_SCENE_SURFACE &&
      quad->sampling.filter==GML_RENDER_FILTER_NEAREST &&
      state->coverage_policy==GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA) return 25u;
@@ -238,6 +239,7 @@ static int hardware_surface_quad_valid(const GmlRenderDrawOp *op,
                                        const GlSceneImage *source){
   const GmlRenderQuad *quad=&op->payload.quad;
   int destination_blend=qualified_blend(state)==11;
+  int point=quad->sampling.filter==GML_RENDER_FILTER_HARDWARE_PIXEL_CENTRE_POINT;
   if(!source || op->scene_family!=GML_RENDER_SCENE_SURFACE ||
      (op->sources[0].resource_class!=GML_RENDER_RESOURCE_SURFACE &&
       op->sources[0].resource_class!=GML_RENDER_RESOURCE_APPLICATION) ||
@@ -250,6 +252,7 @@ static int hardware_surface_quad_valid(const GmlRenderDrawOp *op,
      quad->shape!=GML_RENDER_QUAD_AXIS_ALIGNED ||
      (quad->sampling.filter!=GML_RENDER_FILTER_HARDWARE_BILINEAR &&
       quad->sampling.filter!=GML_RENDER_FILTER_NEAREST &&
+      !point &&
       !(destination_blend && quad->sampling.filter==GML_RENDER_FILTER_BOX)) ||
      quad->sampling.quantisation || quad->sampling.logical_margin_mask || quad->span_active ||
      quad->sampling.edge_rule!=GML_RENDER_EDGE_CLAMP_SUBIMAGE ||
@@ -259,10 +262,11 @@ static int hardware_surface_quad_valid(const GmlRenderDrawOp *op,
                         state->coverage_policy!=GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA ||
                         qualified_blend(state)!=1) ||
      !exact_rect(op,NULL,NULL,NULL,NULL,1) ||
-     (!destination_blend && (quad->sampling.filter==GML_RENDER_FILTER_NEAREST
+     (!point && !destination_blend && (quad->sampling.filter==GML_RENDER_FILTER_NEAREST
        ?quad->x[1]-quad->x[0]!=(double)source->width ||
         quad->y[2]-quad->y[0]!=(double)source->height
-       :op->sources[0].resource_class!=GML_RENDER_RESOURCE_SURFACE ||
+       :(op->sources[0].resource_class!=GML_RENDER_RESOURCE_SURFACE &&
+         op->sources[0].resource_class!=GML_RENDER_RESOURCE_APPLICATION) ||
         quad->x[1]-quad->x[0]<=(double)source->width ||
         quad->y[2]-quad->y[0]<=(double)source->height)) ||
      (destination_blend && (source->width>4096u || source->height>4096u ||
@@ -273,10 +277,29 @@ static int hardware_surface_quad_valid(const GmlRenderDrawOp *op,
      !isfinite(quad->filtered_draw_alpha) || quad->filtered_draw_alpha<=0.0 ||
      quad->filtered_draw_alpha>1.0 ||
      (destination_blend && quad->filtered_draw_alpha<0x1p-32)) return 0;
+  if(point){
+    if(destination_blend || op->sources[0].resource_class!=GML_RENDER_RESOURCE_APPLICATION ||
+       op->target.image.resource_class!=GML_RENDER_RESOURCE_SCREEN ||
+       !quad->source_opaque || quad->filtered_draw_alpha!=1.0 ||
+       quad->corner_colour[0]!=0xFFFFFFFFu) return 0;
+    for(unsigned axis=0;axis<2u;axis++){
+      double origin=quad->inverse_anchor[axis];
+      double extent=axis?quad->inverse_y[1]:quad->inverse_x[0];
+      double first=axis?quad->y[0]:quad->x[0];
+      double last=axis?quad->y[2]:quad->x[1];
+      double target_extent=axis?op->target.height:op->target.width;
+      if(!isfinite(origin) || fabs(origin)>16384.0 ||
+         !isfinite(extent) || extent<=0.0 || extent>16384.0 ||
+         first!=fmax(0.0,ceil(origin-.5)) ||
+         last!=fmin(target_extent,ceil(origin+extent-.5))) return 0;
+    }
+  }
   for(unsigned corner=0;corner<4u;corner++)
     if(quad->corner_colour[corner]!=quad->corner_colour[0] ||
-       quad->u[corner]!=((corner==1u || corner==2u)?1.0:0.0) ||
-       quad->v[corner]!=(corner>=2u?1.0:0.0)) return 0;
+       quad->u[corner]!=(point?(quad->x[corner]-quad->inverse_anchor[0])/quad->inverse_x[0]:
+                               ((corner==1u || corner==2u)?1.0:0.0)) ||
+       quad->v[corner]!=(point?(quad->y[corner]-quad->inverse_anchor[1])/quad->inverse_y[1]:
+                               (corner>=2u?1.0:0.0))) return 0;
   if(destination_blend && (quad->corner_colour[0]>>24)!=
      (uint32_t)lround(quad->filtered_draw_alpha*255.0)) return 0;
   return 1;
@@ -752,7 +775,9 @@ static int scene_preflight(GmlGpuBackend *backend,const GmlRenderDrawBatch *batc
           sampling->filter!=GML_RENDER_FILTER_NEAREST_PHASED &&
           sampling->filter!=GML_RENDER_FILTER_NEAREST_PHASED_COPY &&
           sampling->filter!=GML_RENDER_FILTER_NEAREST_PHASED_OPAQUE_ALPHA &&
+          sampling->filter!=GML_RENDER_FILTER_HARDWARE_PIXEL_CENTRE_POINT &&
           sampling->filter!=GML_RENDER_FILTER_HARDWARE_BILINEAR) ||
+         (sampling->filter==GML_RENDER_FILTER_HARDWARE_PIXEL_CENTRE_POINT && !hardware_surface) ||
          ((sampling->filter==GML_RENDER_FILTER_NEAREST_PHASED ||
            sampling->filter==GML_RENDER_FILTER_NEAREST_PHASED_COPY ||
            sampling->filter==GML_RENDER_FILTER_NEAREST_PHASED_OPAQUE_ALPHA) &&

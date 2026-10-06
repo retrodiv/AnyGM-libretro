@@ -17,6 +17,17 @@ snapshot; the live ledger and rule table here describe current support.
 
 ## Experimental scene fidelity contract
 
+The R03-P5-SURFACE-STRETCHED application-to-SCREEN candidate admits the
+content-owned first-generation opaque GUI point-presentation leaf and ordinary
+filtered magnified alpha/tint draws. Point coverage uses destination pixel
+centres; hardware nearest copies RGB and writes opaque alpha. Qualified 1:1 or
+integer point geometry remains EXACT; fractional point and hardware-bilinear
+single draws require TOLERANCE±2. Both use fixed-function source-over and
+versioned application sources, without predecessor copies or CPU replay.
+Resource/backend call controls cover admission, clipping, refusal and capacity
+batching; real-device pixel, lifecycle and workload qualification is still pending.
+Full-width corrections and other unqualified states keep ordered CPU fallback.
+
 The identity SCREEN GUI extension of R03-SPR-COARSE-MIP, with interpolation
 enabled or disabled as in the unchanged full-target CPU leaf, uses fixed-function
 source-over, with EXACT zero/full-alpha endpoints and TOLERANCE±2 partial-alpha

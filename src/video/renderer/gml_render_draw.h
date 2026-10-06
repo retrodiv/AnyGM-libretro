@@ -106,7 +106,9 @@ typedef enum GmlRenderFilter {
   GML_RENDER_FILTER_NEAREST_PHASED_COPY=5,
   GML_RENDER_FILTER_NEAREST_PHASED_OPAQUE_ALPHA=6,
   /* Device filtering with the composed RGBA tolerance, not an exact replay recipe. */
-  GML_RENDER_FILTER_HARDWARE_BILINEAR=7
+  GML_RENDER_FILTER_HARDWARE_BILINEAR=7,
+  /* Content-owned application presentation uses destination pixel centres. */
+  GML_RENDER_FILTER_HARDWARE_PIXEL_CENTRE_POINT=8
 } GmlRenderFilter;
 
 typedef enum GmlRenderEdgeRule {
