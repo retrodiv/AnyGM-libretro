@@ -6,6 +6,7 @@
 #include "gml_gpu_opengl_shaders.h"
 
 #include <ctype.h>
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -940,7 +941,20 @@ static int execute_shader_draw_with_source(GmlGpuBackend *backend,GmlRenderPlan 
   float matrices[5*16];
   float vertices[4*9];
   const float w=(float)op->destination.width,h=(float)op->destination.height;
+  const float x=shader->geometry.valid?(float)shader->geometry.origin_x:0.0f;
+  const float y=shader->geometry.valid?(float)shader->geometry.origin_y:0.0f;
+  const float width=shader->geometry.valid?(float)shader->geometry.extent_x:w;
+  const float height=shader->geometry.valid?(float)shader->geometry.extent_y:h;
+  const float scale_x=2.0f/width,scale_y=-2.0f/height;
+  const float offset_x=-1.0f-scale_x*x,offset_y=1.0f-scale_y*y;
   static const GLenum units[GML_PLAN_MAX_SAMPLERS]={GL_TEXTURE1,GL_TEXTURE2,GL_TEXTURE3,GL_TEXTURE4};
+  if(!isfinite(x) || !isfinite(y) || !isfinite(width) || !isfinite(height) ||
+     !isfinite(x+width) || !isfinite(y+height) || x+width==x || y+height==y ||
+     !isfinite(scale_x) || !isfinite(scale_y) || !isfinite(offset_x) || !isfinite(offset_y)){
+    gml_gpu_opengl_record_error(error,error_capacity,"content draw coordinates are not representable");
+    plan->fallback_reason=GML_PLAN_FALLBACK_UNSUPPORTED_OPERATION;
+    return 0;
+  }
   if(shader->uniform_count>GML_PLAN_MAX_UNIFORMS ||
      shader->sampler_count>GML_PLAN_MAX_SAMPLERS){
     gml_gpu_opengl_record_error(error,error_capacity,"content program binding count exceeds capacity");
@@ -980,12 +994,15 @@ static int execute_shader_draw_with_source(GmlGpuBackend *backend,GmlRenderPlan 
   backend->gl.UseProgram(program->program);
   /* Five matrices in the runtime's order: view, projection, world, world-view,
    * world-view-projection. The last maps the quad to clip space; the others are the identity, and
-   * the projection is the same map so a program that multiplies by it alone still lands. */
+   * the projection is the same map so a program that multiplies by it alone still lands. The
+   * position attribute retains authored coordinates; rebasing this projection, not the vertices,
+   * keeps their mapped target rectangle unchanged. */
   memset(matrices,0,sizeof matrices);
   for(int m=0;m<5;m++){ matrices[m*16+0]=1.0f; matrices[m*16+5]=1.0f; matrices[m*16+10]=1.0f; matrices[m*16+15]=1.0f; }
   for(int m=1;m<5;m+=3){
     float *target=matrices+m*16;
-    target[0]=2.0f/w; target[5]=-2.0f/h; target[10]=1.0f; target[12]=-1.0f; target[13]=1.0f; target[15]=1.0f;
+    target[0]=scale_x; target[5]=scale_y; target[10]=1.0f;
+    target[12]=offset_x; target[13]=offset_y; target[15]=1.0f;
   }
   if(program->u_matrices>=0) backend->gl.UniformMatrix4fv(program->u_matrices,5,GL_FALSE,matrices);
   if(program->u_base_texture>=0){ GLint zero=0; backend->gl.Uniform1iv(program->u_base_texture,1,&zero); }
@@ -1022,7 +1039,8 @@ static int execute_shader_draw_with_source(GmlGpuBackend *backend,GmlRenderPlan 
     }
     for(int v=0;v<4;v++){
       float *row=vertices+v*9;
-      row[0]=corners[v][0]; row[1]=corners[v][1]; row[2]=0.0f;
+      row[0]=x+width*(corners[v][0]/w);
+      row[1]=y+height*(corners[v][1]/h); row[2]=0.0f;
       row[3]=shader->vertex_colour[0]; row[4]=shader->vertex_colour[1];
       row[5]=shader->vertex_colour[2]; row[6]=shader->vertex_colour[3];
       row[7]=u0+(u1-u0)*(corners[v][0]/w);

@@ -23,6 +23,13 @@ static inline uint32_t gml_render_rotated_alpha16_factor(unsigned source_alpha,
 
 struct GmlPlanShader;
 
+/* Draw coordinates before the renderer's target mapping. The signed extents follow the source
+ * corners, including a mirrored composition. Ephemeral shader input, never canonical state. */
+typedef struct GmlRenderShaderGeometry {
+  double origin_x,origin_y,extent_x,extent_y;
+  uint32_t valid;
+} GmlRenderShaderGeometry;
+
 /* Admission proof for the retained opaque stretch rule, including the CPU
  * band's double-to-float phase boundary. No target pixels are read or written. */
 int gml_render_stretched_float_phase_exact(uint32_t logical,uint32_t destination);

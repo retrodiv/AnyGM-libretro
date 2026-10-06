@@ -1867,6 +1867,73 @@ static void check_stretched_band_lazy_lut(void) {
   free(parallel);
 }
 
+/* A cached atlas answer is invalid when a vertex varying carries the draw position. The alias
+ * control uses the same single in_Position read as the ordinary vertex, so occurrence counting
+ * cannot distinguish it. These are independently authored source fixtures. */
+static void check_position_varying_cache_eligibility(void) {
+  static const char *const vertices[]={
+    "attribute vec3 in_Position; uniform mat4 gm_Matrices[5]; "
+    "attribute vec2 in_TextureCoord; varying vec2 fixture_uv; "
+    "void main(){fixture_uv=in_TextureCoord; "
+    "gl_Position=gm_Matrices[4]*vec4(in_Position,1.0);}",
+    "attribute vec3 in_Position; uniform mat4 gm_Matrices[5]; "
+    "varying vec2 fixture_position; void main(){fixture_position=in_Position.xy; "
+    "gl_Position=gm_Matrices[4]*vec4(in_Position,1.0);}",
+    "attribute vec3 in_Position; uniform mat4 gm_Matrices[5]; "
+    "varying vec2 fixture_position; void main(){vec4 fixture_local=vec4(in_Position,1.0); "
+    "gl_Position=gm_Matrices[4]*fixture_local; fixture_position=fixture_local.xy;}",
+    "attribute vec3 in_Position; attribute vec2 in_TextureCoord; "
+    "uniform mat4 gm_Matrices[5]; varying vec2 fixture_uv; "
+    "void main(){/* fixture_position=in_Position.xy; */ fixture_uv=in_TextureCoord; "
+    "gl_Position=gm_Matrices[4]*vec4(in_Position,1.0);}",
+    "attribute vec3 in_Position; attribute vec2 in_TextureCoord; "
+    "uniform mat4 gm_Matrices[5]; varying vec2 fixture_uv; "
+    "void main(){vec4 fixture_local=vec4(in_Position,1.0); "
+    "gl_Position=gm_Matrices[4]*fixture_local; fixture_uv=in_TextureCoord;}",
+    "attribute vec3 in_Position; uniform mat4 gm_Matrices[5]; varying vec2 fixture_uv; "
+    "void main(){fixture_uv=vec2(0.0); if(in_Position.x>0.0)fixture_uv=vec2(1.0); "
+    "gl_Position=gm_Matrices[4]*vec4(in_Position,1.0);}"
+  };
+  static const char *const fragments[]={
+    "precision mediump float; varying vec2 fixture_uv; "
+    "void main(){gl_FragColor=texture2D(gm_BaseTexture,fixture_uv);}",
+    "precision mediump float; varying vec2 fixture_position; "
+    "void main(){gl_FragColor=texture2D(gm_BaseTexture,fixture_position/32.0);}",
+    "precision mediump float; varying vec2 fixture_position; "
+    "void main(){gl_FragColor=texture2D(gm_BaseTexture,fixture_position/32.0);}",
+    "precision mediump float; varying vec2 fixture_uv; "
+    "void main(){gl_FragColor=texture2D(gm_BaseTexture,fixture_uv);}",
+    "precision mediump float; varying vec2 fixture_uv; uniform float fixture_local; "
+    "void main(){gl_FragColor=texture2D(gm_BaseTexture,fixture_uv)*fixture_local;}",
+    "precision mediump float; varying vec2 fixture_uv; "
+    "void main(){gl_FragColor=texture2D(gm_BaseTexture,fixture_uv);}"
+  };
+  const int dependent[]={0,1,1,0,0,1};
+  for(unsigned variant=0;variant<6;variant++){
+    uint8_t data[2048]={0};
+    GmlWin content={0};
+    GmlRender render;
+    size_t fragment_offset=96+strlen(vertices[variant])+1;
+    expect(fragment_offset+strlen(fragments[variant])+1<sizeof data,
+           "position varying fixture remains bounded");
+    write_u32(data,0,1); write_u32(data,4,32);
+    write_u32(data,32+8,96);
+    write_u32(data,32+12,(uint32_t)fragment_offset);
+    memcpy(data+96,vertices[variant],strlen(vertices[variant])+1);
+    memcpy(data+fragment_offset,fragments[variant],strlen(fragments[variant])+1);
+    content.data=data; content.size=sizeof data; content.n_chunks=1;
+    memcpy(content.chunks[0].name,"SHDR",4); content.chunks[0].size=8;
+    expect(gml_render_init(&render,&content)==0,"position varying renderer initializes");
+    int valid=render.n_shader_pal==1 && render.shader_pal &&
+      render.shader_pal[0].source_vertex_es && render.shader_pal[0].source_fragment_es &&
+      render.shader_pal[0].position_dependent==dependent[variant];
+    if(!valid) fprintf(stderr,"position varying cache eligibility variant=%u: dependent=%d\n",
+                       variant,render.shader_pal?render.shader_pal[0].position_dependent:-1);
+    expect(valid,"vertex position varyings cannot reuse a position-independent atlas answer");
+    gml_render_free(&render);
+  }
+}
+
 static void check_named_palette_sampler(void) {
   static const char fragment[] =
     "uniform sampler2D u_lookup;uniform float u_row;"
@@ -2464,6 +2531,7 @@ int main(void) {
   uint64_t noise = run_noise();
   uint64_t tint = run_tint();
   check_shader_recognition();
+  check_position_varying_cache_eligibility();
   check_content_binding_capacity();
   check_dispatch_rgba_textures();
   check_dispatch_atlas_textures();

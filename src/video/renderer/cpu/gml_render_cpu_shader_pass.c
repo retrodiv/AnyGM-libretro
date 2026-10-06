@@ -19,12 +19,14 @@
 /* Run the content's active program over a destination through the host's executor and compose the
  * result at the current target with the given blend, alpha and flips. `source` is the picture the
  * program samples (its region names the part shown); a procedural program ignores it. `dx,dy` are
- * in target pixels — the caller resolved any camera offset — and the composition adds the camera
- * back before draw_surface_region takes it off again. Returns 0 when the host cannot. */
+ * mapped draw coordinates: the request subtracts the camera to locate the target rectangle,
+ * while the position attribute retains the draw coordinates before mapping. Returns 0 when the
+ * host cannot. An explicit geometry names raster-space/internal presentation draws. */
 static int shade_source_to_target(GmlRender *r,const uint32_t *source,int sw,int sh,
                                    double rx,double ry,double rw,double rh,uint32_t identity,
                                    double dx,double dy,double dw,double dh,
-                                   uint32_t blend,double alpha){
+                                   uint32_t blend,double alpha,
+                                   const GmlRenderShaderGeometry *geometry){
   enum { SHADED_MAX_EXTENT=4096, SHADED_MAX_PIXELS=16u<<20 };
   GmlRenderShaderRequest request;
   int width=(int)lround(fabs(dw)),height=(int)lround(fabs(dh));
@@ -64,6 +66,8 @@ static int shade_source_to_target(GmlRender *r,const uint32_t *source,int sw,int
   request.target_height=r->fbh;
   request.dest_x=(int)lround(dx-r->cam_x);
   request.dest_y=(int)lround(dy-r->cam_y);
+  request.geometry=geometry?*geometry:gml_render_shader_geometry(r,dx,dy,dw,dh,1);
+  if(!request.geometry.valid) return 0;
   request.linear=r->interp?1:0;
   if(r->shade_vertex_colour_valid)
     memcpy(request.vertex_colour,r->shade_vertex_colour,sizeof request.vertex_colour);
@@ -85,9 +89,10 @@ static int shade_source_to_target(GmlRender *r,const uint32_t *source,int sw,int
 int gml_render_cpu_shader_pass_surface(GmlRender *r,int surf,const uint32_t *spx,int sw,int sh,
                                         double rx,double ry,double rw,double rh,
                                         double dx,double dy,double dw,double dh,
-                                        uint32_t blend,double alpha){
+                                        uint32_t blend,double alpha,
+                                        const GmlRenderShaderGeometry *geometry){
   return shade_source_to_target(r,spx,sw,sh,rx,ry,rw,rh,
-                                (uint32_t)(surf<0?0x7FFFFFFF:surf),dx,dy,dw,dh,blend,alpha);
+                                (uint32_t)(surf<0?0x7FFFFFFF:surf),dx,dy,dw,dh,blend,alpha,geometry);
 }
 
 int gml_render_shade_target_rect(GmlRender *r,int x1,int y1,int x2,int y2,uint32_t colour,double alpha){
@@ -102,7 +107,7 @@ int gml_render_shade_target_rect(GmlRender *r,int x1,int y1,int x2,int y2,uint32
   source=gml_render_cpu_backend_color_to_xrgb(colour)|0xFF000000u;
   return shade_source_to_target(r,&source,1,1,0,0,1,1,0xFFFFFFFFu,
                                 (double)x1+r->cam_x,(double)y1+r->cam_y,
-                                (double)(x2-x1),(double)(y2-y1),0xFFFFFFu,alpha);
+                                (double)(x2-x1),(double)(y2-y1),0xFFFFFFu,alpha,NULL);
 }
 
 /* The program's answer for one atlas rectangle, evaluated on the device once and kept. A sprite
@@ -240,7 +245,7 @@ void gml_render_shaded_run_end(GmlRender *r,uint32_t *saved_fb,int saved_shader,
   memcpy(r->shade_vertex_colour,colour,sizeof colour);
   if(!shade_source_to_target(r,plane,r->fbw,r->fbh,x0,y0,w,h,0xFFFFFFFEu,
                              (double)x0+r->cam_x,(double)y0+r->cam_y,(double)w,(double)h,
-                             0xFFFFFFu,1.0)){
+                             0xFFFFFFu,1.0,NULL)){
     r->shade_vertex_colour_valid=0;
     /* The device could not: put the gathered picture down unshaded rather than lose it. */
     int saved=r->active_shader;
@@ -270,7 +275,7 @@ int gml_render_shade_atlas_rect_at(GmlRender *r,int atlas,int sx,int sy,int w,in
     if(!gml_render_atlas_rect_plane(r,atlas,sx,sy,w,h,&px) || !px) return 0;
     return shade_source_to_target(r,px,w,h,0,0,w,h,
                                   ((uint32_t)atlas<<20)^((uint32_t)sx<<10)^(uint32_t)sy,
-                                  dx,dy,dw,dh,blend,alpha);
+                                  dx,dy,dw,dh,blend,alpha,NULL);
   }
   {
     const uint32_t *shaded=gml_render_shaded_atlas_rect(r,atlas,sx,sy,w,h);
@@ -356,7 +361,7 @@ int gml_render_shade_target_sprite_part(GmlRender *r,int sprite,int frame,
       if(ry+rh>h) rh=h-ry;
       return shade_source_to_target(r,px,w,h,rx,ry,rw,rh,
                                     ((uint32_t)atlas<<20)^((uint32_t)sx<<10)^(uint32_t)sy,
-                                    dx,dy,dw,dh,blend,alpha);
+                                    dx,dy,dw,dh,blend,alpha,NULL);
     }
     shaded=gml_render_shaded_atlas_rect(r,atlas,sx,sy,w,h);
     if(!shaded){ return 0; }
@@ -375,7 +380,7 @@ int gml_render_shade_target_sprite_part(GmlRender *r,int sprite,int frame,
     if(ry+rh>h) rh=h-ry;
     return shade_source_to_target(r,px,w,h,rx,ry,rw,rh,
                                   ((uint32_t)sprite<<10)|((uint32_t)frame&0x3FFu),
-                                  dx,dy,dw,dh,blend,alpha);
+                                  dx,dy,dw,dh,blend,alpha,NULL);
   }
 }
 

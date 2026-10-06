@@ -102,6 +102,10 @@ unsigned anygm_test_graphics_async_read_pixels(void);
 int anygm_test_graphics_quad_texcoord(int corner,float *u,float *v);
 /* The vertex colour of one corner of the last quad drawn through a content program. */
 int anygm_test_graphics_quad_colour(int corner,float *rgba);
+/* The submitted position attribute, before the content's vertex program runs. */
+int anygm_test_graphics_quad_position(int corner,float *xyz);
+/* One of the last five content-program matrices, in the submitted column-major order. */
+int anygm_test_graphics_content_matrix(unsigned index,float *matrix);
 unsigned anygm_test_graphics_attached_texture(void);
 int anygm_test_graphics_clear_calls(void);
 unsigned anygm_test_graphics_framebuffer_queries(void);

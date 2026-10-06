@@ -309,6 +309,7 @@ typedef struct {
    * software write of the record is always the plain blit: that is what the runtime draws when no
    * device executes the program. */
   int shader;
+  GmlRenderShaderGeometry shader_geometry;
   /* Whether the content asked for interpolated sampling when it drew. */
   int linear;
   /* Indirect GUI keeps a zero XRGB high byte in its canonical CPU picture.
@@ -552,6 +553,7 @@ typedef struct {
    * reads its place on the target must be evaluated there and nowhere else, so the device draws
    * into a target of this size at this offset and reads back only the rectangle. */
   int target_width,target_height,dest_x,dest_y;
+  GmlRenderShaderGeometry geometry;
   int linear;
   /* The colour the drawing carried, for the program to multiply by. All ones for none. */
   float vertex_colour[4];
@@ -622,6 +624,9 @@ void gml_render_gui_set_maximise(GmlRender *r, int active, double xscale, double
 void gml_render_gui_end(GmlRender *r);
 void gml_render_draw_map_point(const GmlRender *r,double *x,double *y);
 void gml_render_draw_map_scale(const GmlRender *r,double *xscale,double *yscale);
+/* Recover draw coordinates from an already mapped rectangle; raster draws bypass that mapping. */
+GmlRenderShaderGeometry gml_render_shader_geometry(const GmlRender *r,double x,double y,
+                                                   double width,double height,int mapped);
 int gml_render_gui_transform_active(const GmlRender *r);
 void gml_render_gui_map_point(const GmlRender *r, double *x, double *y);
 void gml_render_gui_map_scale(const GmlRender *r, double *xscale, double *yscale);

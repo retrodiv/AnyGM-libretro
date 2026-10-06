@@ -165,6 +165,7 @@ typedef struct GmlPlanShader {
    * by it after program evaluation rather than before. RGBA in
    * 0..1; all ones when the caller has nothing to say. */
   float vertex_colour[4];
+  GmlRenderShaderGeometry geometry;
   GmlPlanSampler samplers[GML_PLAN_MAX_SAMPLERS];
 } GmlPlanShader;
 

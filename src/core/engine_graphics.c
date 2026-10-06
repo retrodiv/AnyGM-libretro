@@ -468,6 +468,7 @@ int engine_execute_content_shader(void *context,const GmlRenderShaderRequest *re
       engine_content_program_pixels_release(&plan,&owned);
       return 0;
     }
+    plan.shader.geometry=request->geometry;
   }
   started=anygm_host_monotonic_time_ns(&engine->host);
   int executed=engine_execute_graphics_plan(engine,&plan);
@@ -610,6 +611,18 @@ int engine_present_hardware_screen(AnygmEngine *engine,unsigned *width,unsigned 
      * asking again, and this frame falls back to the unshaded blit below. */
     if(engine_plan_content_program(engine,plan,image,destination,record.shader,record.generation,
                                    record.linear,&owned)){
+      /* The recorded draw may outlive its world/GUI transform. Its clipped corners still name
+       * the same authored positions, independently of the frontend's target rectangle. */
+      plan->shader.geometry=record.shader_geometry;
+      if(plan->shader.geometry.valid){
+        GmlRenderShaderGeometry *geometry=&plan->shader.geometry;
+        geometry->origin_x+=(record.destination_x-record.origin_x)*
+                              geometry->extent_x/record.extent_x;
+        geometry->origin_y+=(record.destination_y-record.origin_y)*
+                              geometry->extent_y/record.extent_y;
+        geometry->extent_x*=record.destination_width/record.extent_x;
+        geometry->extent_y*=record.destination_height/record.extent_y;
+      }
       if(crt_readback){
         /* Preserve the content's terminal program at its authored extent before the CPU CRT
          * filter. A terminal frame must be current even when mid-frame readbacks are pipelined. */

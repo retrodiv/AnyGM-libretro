@@ -711,7 +711,8 @@ int rect_covers_target(GmlRender *r,int x0,int y0,int x1,int y1);
 /* Keep deferred terminal presentation recording outside the composition kernels. */
 int render_present_content_shader(GmlRender *r,int surf,const uint32_t *src,int sw,int sh,
                                   int x0,int y0,int x1,int y1,
-                                  double dx,double dy,double dw,double dh,int shader);
+                                  double dx,double dy,double dw,double dh,int shader,
+                                  const GmlRenderShaderGeometry *geometry);
 int render_record_deferred_underlay(GmlRender *r,const uint32_t *src,int sw,int sh,
                                     int x0,int y0,int W,int H,int source_all_opaque);
 void render_present_first_generation(GmlRender *r,int surf,const uint32_t *src,int sw,int sh,

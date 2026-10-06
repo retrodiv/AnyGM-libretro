@@ -870,6 +870,9 @@ static int underlay_shader_execute(void *context,const GmlRenderShaderRequest *r
     request->width==4 && request->height==4 &&
     request->target_width==8 && request->target_height==6 &&
     request->dest_x==2 && request->dest_y==1 &&
+    request->geometry.valid && request->geometry.origin_x==2.0 &&
+    request->geometry.origin_y==1.0 && request->geometry.extent_x==4.0 &&
+    request->geometry.extent_y==4.0 &&
     request->vertex_colour[0]==1.0f && request->vertex_colour[1]==1.0f &&
     request->vertex_colour[2]==1.0f && request->vertex_colour[3]==1.0f &&
     control->render->shader_pal[0].generic_uniform[0].value[0]==0.25f;

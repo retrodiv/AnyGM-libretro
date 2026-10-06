@@ -1333,6 +1333,8 @@ void gml_render_cpu_draw_surface_stretched_impl(GmlRender *r,int surf,double dx,
    * signal self-composition. Sticky; the host reads this next frame to supersample that pass. */
   if(r && !r->app_draw_enable && r->interp) r->composites_app=1;
   if(sdual){ draw_surface_dual_sample(r,sdual,surf,0,0,sw,sh,dx,dy,dw,dh,blend,alpha); return; }
+  GmlRenderShaderGeometry geometry=gml_render_shader_geometry(r,
+    canvas_present?dx-r->cam_x:dx,canvas_present?dy-r->cam_y:dy,dw,dh,!explicit_target_raster);
   /* A surface presented through a program this renderer does not execute: the frame's last
    * operation, recorded for the host's graphics context when one is adopted, and otherwise drawn
    * plain below exactly as before. The shape is the content-owned presentation's: base target,
@@ -1349,12 +1351,14 @@ void gml_render_cpu_draw_surface_stretched_impl(GmlRender *r,int surf,double dx,
     if(x1>r->fbw) x1=r->fbw;
     if(y1>r->fbh) y1=r->fbh;
     if(x0<x1 && y0<y1 &&
-       render_present_content_shader(r,surf,spx,sw,sh,x0,y0,x1,y1,ldx,ldy,dw,dh,r->active_shader))
+       render_present_content_shader(r,surf,spx,sw,sh,x0,y0,x1,y1,ldx,ldy,dw,dh,
+                                      r->active_shader,&geometry))
       return;
   }
   if(r->active_shader>=0 && r->shader_executor && spx!=r->fb &&
      gml_render_shader_content_candidate(r,r->active_shader) &&
-     gml_render_cpu_shader_pass_surface(r,surf,spx,sw,sh,0,0,sw,sh,dx,dy,dw,dh,blend,alpha)) return;
+     gml_render_cpu_shader_pass_surface(r,surf,spx,sw,sh,0,0,sw,sh,dx,dy,dw,dh,
+                                        blend,alpha,&geometry)) return;
   if(draw_first_generation_gui_app_surface(r,surf,spx,sw,sh,dx,dy,dw,dh,blend,alpha)) return;
   if(r->surface_draw_logging < 0) r->surface_draw_logging = render_setting(r,"GML_LOG_SURF_DRAW") != NULL;
   const char *log_surf_frame = r->surface_draw_logging ? render_setting(r,"GML_LOG_SURF_DRAW_FRAME") : NULL;
@@ -1525,7 +1529,8 @@ void gml_render_cpu_draw_surface_ext_mapped(GmlRender *r,int surf,double x,doubl
   gml_render_dispatch_cpu_scope_end(r,&scope);
 }
 void gml_render_cpu_draw_surface_part_mapped(GmlRender *r,int surf,double sx,double sy,double sw,double sh,
-                                    double dx,double dy,double xs,double ys,uint32_t blend,double alpha){
+                                    double dx,double dy,double xs,double ys,uint32_t blend,double alpha,
+                                    const GmlRenderShaderGeometry *geometry){
   const struct GmlShaderPal *sdual=dual_active(r);
   if(!sdual && !mapped_texture_active(r) &&
      gml_d3_draw_surface_part_2d(r,surf,sx,sy,sw,sh,dx,dy,xs,ys,blend,alpha)) return;
@@ -1539,7 +1544,8 @@ void gml_render_cpu_draw_surface_part_mapped(GmlRender *r,int surf,double sx,dou
     int psw=0,psh=0;
     const uint32_t *ppx=surface_pixels_observe(r,surf,&psw,&psh);
     if(ppx && ppx!=r->fb && psw>0 && psh>0 &&
-       gml_render_cpu_shader_pass_surface(r,surf,ppx,psw,psh,sx,sy,sw,sh,dx,dy,sw*xs,sh*ys,blend,alpha))
+       gml_render_cpu_shader_pass_surface(r,surf,ppx,psw,psh,sx,sy,sw,sh,dx,dy,sw*xs,sh*ys,
+                                          blend,alpha,geometry))
       return;
   }
   int prof=rprof_enabled();
@@ -1581,6 +1587,6 @@ void gml_draw_surface_tiled_ext(GmlRender *r,int surf,double x,double y,
   for(int64_t row=0;row<rows;row++) for(int64_t column=0;column<columns;column++){
     double dx=first_x+column*width+r->cam_x;
     double dy=first_y+row*height+r->cam_y;
-    gml_render_cpu_draw_surface_part_mapped(r,surf,0,0,sw,sh,dx,dy,xs,ys,blend,alpha);
+    gml_render_cpu_draw_surface_part_mapped(r,surf,0,0,sw,sh,dx,dy,xs,ys,blend,alpha,NULL);
   }
 }

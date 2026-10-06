@@ -15,7 +15,8 @@ void gml_render_cpu_draw_surface_stretched_impl(GmlRender *render, int surface,
 void gml_render_cpu_draw_surface_part_mapped(GmlRender *render, int surface,
                                               double sx, double sy, double sw, double sh,
                                               double x, double y, double xs, double ys,
-                                              uint32_t blend, double alpha);
+                                              uint32_t blend, double alpha,
+                                              const GmlRenderShaderGeometry *geometry);
 void gml_render_cpu_draw_surface_ext_mapped(GmlRender *render, int surface,
                                               double x, double y, double xs, double ys,
                                               double rotation, uint32_t blend, double alpha);

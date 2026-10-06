@@ -24,6 +24,7 @@
 #include "../unit/media/font_test_fixture.h"
 
 #include <stdio.h>
+#include <math.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -3252,6 +3253,192 @@ static int crt_terminal_program_case(void){
          crt_terminal_program_extent(240,240,320,240,1);
 }
 
+/* A surface's vertex coordinates belong to the draw's authored space, not a local shader tile. */
+static int content_surface_authored_position_case(void){
+  Session session;
+  struct GmlShaderPal program[1]={0};
+  uint32_t target[16]={0};
+  anygm_test_graphics_reset();
+  REQUIRE(session_open(&session),"authored surface position session loads");
+  REQUIRE(graphics_adopt(session.engine,ANYGM_GRAPHICS_OPENGLES3)==ANYGM_OK,
+          "authored surface position context adopted");
+  GmlRender *render=&session.engine->render;
+  struct GmlShaderPal *saved_programs=render->shader_pal;
+  int saved_program_count=render->n_shader_pal;
+  render->shader_pal=program; render->n_shader_pal=1;
+  session.engine->config.content_shader_device_expected=1;
+  session.engine->config.content_shader_readback=ANYGM_SHADER_READBACK_ALWAYS;
+  program[0].source_vertex_es=
+    "attribute vec3 in_Position; uniform mat4 gm_Matrices[5]; "
+    "varying vec2 fixture_position; void main(){fixture_position=in_Position.xy; "
+    "gl_Position=gm_Matrices[4]*vec4(in_Position,1.0);}";
+  program[0].source_fragment_es=
+    "precision mediump float; varying vec2 fixture_position; "
+    "void main(){gl_FragColor=vec4(fixture_position.x/32.0,0.,0.,1.);}";
+  gml_render_set_shader_executor(render,engine_execute_content_shader,session.engine);
+  int surface=gml_surface_create(render,2,2);
+  int ok=surface>0;
+  if(ok){
+    uint32_t *pixels=render->surface[surface-1].px;
+    ok=pixels!=NULL;
+    if(pixels) for(unsigned pixel=0;pixel<4;pixel++) pixels[pixel]=0xFFFFFFFFu;
+  }
+  /* The viewport remains at x=4 in both cases. The vertex attribute must retain the authored
+   * x=4 or x=14, not local zero or camera-relative x=4. Observe submission, not fake pixels. */
+  for(unsigned variant=0;variant<7 && surface>0;variant++){
+    double camera=variant==1 || variant==2?10.0:0.0;
+    double authored_x=4.0+camera;
+    double authored_width=2.0;
+    gml_render_begin(render,target,8,2,camera,0);
+    if(variant==2){
+      gml_render_world_set_logical_extent(render,4,2);
+      authored_x=12.0; authored_width=1.0;
+    } else if(variant>=3 && variant<=4){
+      gml_render_gui_begin(render,8,2);
+      gml_render_gui_set_size(render,4,2);
+      authored_x=2.0; authored_width=1.0;
+      if(variant==4){
+        gml_render_gui_set_maximise(render,1,2.0,1.0,1.0,0.0,8,2);
+        authored_x=1.5;
+      }
+    }
+    gml_render_shader_set_current(render,0);
+    render->alphablend=0;
+    unsigned before=anygm_test_graphics_quad_draw_calls();
+    if(variant==5)
+      gml_draw_surface_part_ext(render,surface,1,0,1,2,authored_x,0,2,1,0xFFFFFFu,1.0);
+    else if(variant==6){
+      authored_x=8; authored_width=-2;
+      gml_draw_surface_stretched(render,surface,authored_x,0,authored_width,2,0xFFFFFFu,1.0);
+    } else
+      gml_draw_surface_stretched(render,surface,authored_x,0,authored_width,2,0xFFFFFFu,1.0);
+    unsigned after=anygm_test_graphics_quad_draw_calls();
+    int vx=0,vy=0,vw=0,vh=0;
+    anygm_test_graphics_viewport(&vx,&vy,&vw,&vh);
+    /* Signed draws retain the existing temporary readback target, then compose the flip. */
+    int matches=after==before+1u && vx==(variant==6?0:4) && vy==0 && vw==2 && vh==2;
+    float projection[16]={0},combined[16]={0};
+    matches=matches && anygm_test_graphics_content_matrix(1,projection) &&
+                       anygm_test_graphics_content_matrix(4,combined);
+    for(int corner=0;corner<4;corner++){
+      float xyz[3]={0};
+      float expected_x=(float)authored_x+(corner&1?(float)authored_width:0.0f);
+      float expected_y=corner&2?2.0f:0.0f;
+      if(!anygm_test_graphics_quad_position(corner,xyz) ||
+         xyz[0]!=expected_x || xyz[1]!=expected_y || xyz[2]!=0.0f){
+        fprintf(stderr,"authored surface position camera=%.0f corner=%d: "
+                "(%g,%g,%g) != (%g,%g,0)\n",camera,corner,
+                xyz[0],xyz[1],xyz[2],expected_x,expected_y);
+        matches=0;
+      }
+      /* Observe the paired transform as well: fixing the attribute must not move the quad. */
+      for(unsigned matrix=0;matrix<2;matrix++){
+        const float *values=matrix?combined:projection;
+        float clip_x=values[0]*xyz[0]+values[4]*xyz[1]+values[12];
+        float clip_y=values[1]*xyz[0]+values[5]*xyz[1]+values[13];
+        if(fabsf(clip_x-(corner&1?1.0f:-1.0f))>0.00001f ||
+           fabsf(clip_y-(corner&2?-1.0f:1.0f))>0.00001f){
+          fprintf(stderr,"surface projection variant=%u matrix=%u corner=%d: (%g,%g)\n",
+                  variant,matrix,corner,clip_x,clip_y);
+          matches=0;
+        }
+      }
+    }
+    if(!matches) fprintf(stderr,"authored surface position draws=%u->%u viewport=%d,%d %dx%d\n",
+                         before,after,vx,vy,vw,vh);
+    ok=ok && matches;
+    if(variant>=3 && variant<=4) gml_render_gui_end(render);
+  }
+  gml_render_shader_set_current(render,-1);
+  render->shader_pal=saved_programs; render->n_shader_pal=saved_program_count;
+  if(surface>0) gml_surface_free(render,surface);
+  session_close(&session);
+  REQUIRE(ok,"surface shaders preserve authored positions and camera-relative target placement");
+  return 1;
+}
+
+/* A recorded shader draw keeps its authored space after GUI teardown and target clipping. */
+static int content_terminal_authored_position_case(void){
+  Session session;
+  struct GmlShaderPal program[1]={0};
+  anygm_test_graphics_reset();
+  REQUIRE(session_open(&session),"terminal authored-position session loads");
+  REQUIRE(graphics_adopt(session.engine,ANYGM_GRAPHICS_OPENGLES3)==ANYGM_OK,
+          "terminal authored-position context adopted");
+  AnygmEngine *engine=session.engine;
+  GmlRender *render=&engine->render;
+  struct GmlShaderPal *saved_programs=render->shader_pal;
+  int saved_program_count=render->n_shader_pal;
+  render->shader_pal=program; render->n_shader_pal=1;
+  engine->config.content_shader_device_expected=1;
+  engine->config.content_shader_readback=ANYGM_SHADER_READBACK_ALWAYS;
+  engine->output_width=8; engine->output_height=4;
+  program[0].source_vertex_es=
+    "attribute vec3 in_Position; uniform mat4 gm_Matrices[5]; "
+    "varying vec2 fixture_position; void main(){fixture_position=in_Position.xy; "
+    "gl_Position=gm_Matrices[4]*vec4(in_Position,1.0);}";
+  program[0].source_fragment_es=
+    "precision mediump float; varying vec2 fixture_position; "
+    "void main(){gl_FragColor=vec4(fixture_position.x/32.0,0.,0.,1.);}";
+  int surface=gml_surface_create(render,2,2),ok=surface>0;
+  if(surface>0) for(unsigned pixel=0;pixel<4;pixel++)
+    render->surface[surface-1].px[pixel]=0xFFFFFFFFu;
+  gml_render_set_deferred_presentation(render,1);
+  for(unsigned variant=0;variant<3 && surface>0;variant++){
+    double x=variant? -1.0:10.0,y=variant? -1.0:3.0;
+    double width=variant?6.0:8.0,height=4.0;
+    double expected_x=variant==2? -0.5:variant?0.0:10.0;
+    double expected_y=variant?0.0:3.0;
+    double expected_width=variant?4.0:8.0,expected_height=variant?2.0:4.0;
+    gml_render_begin(render,engine->screen,8,4,variant?0:10,variant?0:3);
+    if(variant){
+      gml_render_gui_begin(render,8,4);
+      gml_render_gui_set_size(render,4,2);
+      if(variant==2)
+        gml_render_gui_set_maximise(render,1,2,2,1,0,8,4);
+    }
+    gml_render_shader_set_current(render,0);
+    gml_draw_surface_stretched(render,surface,x,y,width,height,0xFFFFFFu,1.0);
+    GmlRenderDeferredPresentation recorded={0};
+    int matches=gml_render_deferred_presentation(render,&recorded) &&
+      recorded.shader_geometry.valid && recorded.shader_geometry.origin_x==x &&
+      recorded.shader_geometry.origin_y==y && recorded.shader_geometry.extent_x==width &&
+      recorded.shader_geometry.extent_y==height;
+    gml_render_shader_set_current(render,-1);
+    if(variant) gml_render_gui_end(render);
+    unsigned before=anygm_test_graphics_quad_draw_calls();
+    matches=matches && engine_present_hardware_screen(engine,NULL,NULL) &&
+      (unsigned)anygm_test_graphics_quad_draw_calls()==before+1u;
+    int vx=0,vy=0,vw=0,vh=0;
+    anygm_test_graphics_viewport(&vx,&vy,&vw,&vh);
+    matches=matches && vx==0 && vy==0 && vw==8 && vh==4;
+    float projection[16]={0};
+    matches=matches && anygm_test_graphics_content_matrix(4,projection);
+    for(int corner=0;corner<4;corner++){
+      float xyz[3]={0};
+      float expected_corner_x=(float)(expected_x+(corner&1?expected_width:0));
+      float expected_corner_y=(float)(expected_y+(corner&2?expected_height:0));
+      if(!anygm_test_graphics_quad_position(corner,xyz) ||
+         xyz[0]!=expected_corner_x || xyz[1]!=expected_corner_y || xyz[2]!=0 ||
+         fabsf(projection[0]*xyz[0]+projection[12]-(corner&1?1.0f:-1.0f))>0.00001f ||
+         fabsf(projection[5]*xyz[1]+projection[13]-(corner&2?-1.0f:1.0f))>0.00001f){
+        fprintf(stderr,"terminal authored position variant=%u corner=%d (%g,%g) expected (%g,%g)\n",
+                variant,corner,xyz[0],xyz[1],expected_corner_x,expected_corner_y);
+        matches=0;
+      }
+    }
+    if(!matches) fprintf(stderr,"terminal authored position variant=%u recorded=%u viewport=%d,%d %dx%d\n",
+                         variant,recorded.shader_geometry.valid,vx,vy,vw,vh);
+    ok=ok && matches;
+  }
+  gml_render_discard_deferred_presentation(render);
+  render->shader_pal=saved_programs; render->n_shader_pal=saved_program_count;
+  if(surface>0) gml_surface_free(render,surface);
+  session_close(&session);
+  REQUIRE(ok,"terminal shader retains draw-time coordinates through clipping and GUI teardown");
+  return 1;
+}
+
 /* Observe uploaded bytes, not fake shader output. Each input must survive the next scratch
  * accessor, including a larger auxiliary that grows the shared allocation. */
 static int content_sampler_upload_lifetime_case(void){
@@ -3525,6 +3712,8 @@ int main(void){
     {"CRT and box presentation preserve a resident scene through CPU filtering",
      presentation_filter_case},
     {"primary and auxiliary scratch uploads stay independent",content_sampler_upload_lifetime_case},
+    {"surface shader vertices retain authored positions",content_surface_authored_position_case},
+    {"terminal shader retains clipped authored positions",content_terminal_authored_position_case},
     {"texture filters and GPU stack restore",texture_filter_state_case},
     {"state bytes match with and without a target",state_bytes_match_case},
     {"save, load and save again produce the same bytes",save_load_save_case},

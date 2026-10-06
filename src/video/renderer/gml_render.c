@@ -1274,8 +1274,9 @@ void gml_render_flush_pending_underlay(GmlRender *r){
       /* Automatic presentation carries white, not a tint left by the previous content draw. */
       for(int channel=0;channel<4;channel++) r->shade_vertex_colour[channel]=1.0f;
       r->shade_vertex_colour_valid=1;
+      GmlRenderShaderGeometry geometry=gml_render_shader_geometry(r,x,y,w,h,0);
       int shaded=content_program && gml_render_cpu_shader_pass_surface(
-        r,0,r->app_surface,sw,sh,0,0,sw,sh,dx,dy,w,h,0xFFFFFF,1.0);
+        r,0,r->app_surface,sw,sh,0,0,sw,sh,dx,dy,w,h,0xFFFFFF,1.0,&geometry);
       memcpy(r->shade_vertex_colour,saved_vertex_colour,sizeof saved_vertex_colour);
       r->shade_vertex_colour_valid=saved_vertex_colour_valid;
       if(!shaded) draw_surface_region(r,0,0,0,sw,sh,dx,dy,w,h,0xFFFFFF,1.0);

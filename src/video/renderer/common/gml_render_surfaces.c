@@ -724,7 +724,8 @@ static int resident_surface_part(GmlRender *r,int surf,double sx,double sy,doubl
                                  double dx,double dy,double xs,double ys,
                                  uint32_t blend,double alpha);
 static int resident_surface_shader(GmlRender *r,int surf,double dx,double dy,double dw,double dh,
-                                   uint32_t blend,double alpha);
+                                   uint32_t blend,double alpha,
+                                   const GmlRenderShaderGeometry *geometry);
 static int resident_surface_filtered(GmlRender *r,int surf,double dx,double dy,double dw,double dh,
                                      uint32_t blend,double alpha);
 
@@ -820,12 +821,15 @@ void gml_draw_surface_stretched(GmlRender *r,int surf,double dx,double dy,
     int source_height=surf==0?r->app_h:r->surface[source_slot].h;
     if(source_width>0 && source_height>0){
       double mapped_x=dx,mapped_y=dy,mapped_width=dw,mapped_height=dh;
-      if(!gml_render_surface_draw_targets_screen_raster(r,surf,dw,dh)){
+      int mapped=!gml_render_surface_draw_targets_screen_raster(r,surf,dw,dh);
+      if(mapped){
         gml_render_draw_map_point(r,&mapped_x,&mapped_y);
         gml_render_draw_map_scale(r,&mapped_width,&mapped_height);
       }
+      GmlRenderShaderGeometry geometry=gml_render_shader_geometry(r,mapped_x,mapped_y,
+        mapped_width,mapped_height,mapped);
       resident_success=resident_surface_shader(r,surf,mapped_x,mapped_y,
-        mapped_width,mapped_height,blend,alpha);
+        mapped_width,mapped_height,blend,alpha,&geometry);
       if(!resident_success)
         resident_success=resident_surface_filtered(r,surf,mapped_x,mapped_y,
           mapped_width,mapped_height,blend,alpha);
@@ -971,7 +975,8 @@ static int resident_surface_filtered(GmlRender *r,int surf,double dx,double dy,d
  * A numbered destination retains its device result until a CPU observer or the frame boundary;
  * a later distinct surface draw can consume that result on the same device. */
 static int resident_surface_shader(GmlRender *r,int surf,double dx,double dy,double dw,double dh,
-                                   uint32_t blend,double alpha){
+                                   uint32_t blend,double alpha,
+                                   const GmlRenderShaderGeometry *geometry){
   enum { MAX_AUXILIARY_SNAPSHOT_BYTES=64u*1024u*1024u };
   int slot=surface_slot(surf),target_id,target_slot,application_target,transient_source=0;
   double left,top;
@@ -1019,6 +1024,8 @@ static int resident_surface_shader(GmlRender *r,int surf,double dx,double dy,dou
             r->fbw!=r->surface[target_slot].w ||
             r->fbh!=r->surface[target_slot].h) return 0;
   if(!gml_render_shader_plan_snapshot(r,r->active_shader,0u,white,&shader)) return 0;
+  if(!geometry || !geometry->valid) return 0;
+  shader.geometry=*geometry;
   source_resource=surf==0?gml_render_application_resource_ensure(r):
     gml_render_surface_resource_ensure(r,surf);
   if(source_resource && gml_render_resource_device_source_view(
@@ -1277,6 +1284,8 @@ void gml_draw_surface_part_ext(GmlRender *r,int surf,double sx,double sy,double 
     gml_render_draw_map_point(r,&dx,&dy);
     gml_render_draw_map_scale(r,&xs,&ys);
   }
+  GmlRenderShaderGeometry geometry=gml_render_shader_geometry(r,dx,dy,sw*xs,sh*ys,
+                                                               !explicit_target_raster);
   /* R03-P7-CONTENT-SURFACE: a part call selecting the whole source and covering
    * the whole destination is the same content-program operation as stretched.
    * Preserve the part call's own coordinate mapping, then share its program
@@ -1289,11 +1298,11 @@ void gml_draw_surface_part_ext(GmlRender *r,int surf,double sx,double sy,double 
       slot>=0 && r->surface[slot].live?r->surface[slot].h:0;
     if(sx==0.0 && sy==0.0 && sw==(double)source_width &&
        sh==(double)source_height && source_width>0 && source_height>0 &&
-       resident_surface_shader(r,surf,dx,dy,sw*xs,sh*ys,blend,alpha)) return;
+       resident_surface_shader(r,surf,dx,dy,sw*xs,sh*ys,blend,alpha,&geometry)) return;
   }
   if(resident_surface_part(r,surf,sx,sy,sw,sh,dx,dy,xs,ys,blend,alpha)) return;
   if(!gml_render_resident_application_cpu_barrier(r)) return;
-  gml_render_cpu_draw_surface_part_mapped(r,surf,sx,sy,sw,sh,dx,dy,xs,ys,blend,alpha);
+  gml_render_cpu_draw_surface_part_mapped(r,surf,sx,sy,sw,sh,dx,dy,xs,ys,blend,alpha,&geometry);
 }
 void gml_draw_surface_ext(GmlRender *r,int surf,double x,double y,
                           double xs,double ys,double rot,uint32_t blend,double alpha){

@@ -1165,6 +1165,120 @@ static int glsl_token_count(const char *source,const char *token){
   return count;
 }
 
+static int glsl_range_identifier(const char *start,const char *end,const char *name){
+  size_t length=strlen(name);
+  for(const char *at=start;(at=strstr(at,name)) && at+length<=end;at+=length){
+    if((at==start || !(isalnum((unsigned char)at[-1]) || at[-1]=='_')) &&
+       (at+length==end || !(isalnum((unsigned char)at[length]) || at[length]=='_')))
+      return 1;
+  }
+  return 0;
+}
+
+static int glsl_fragment_varying(const char *source,const char *name){
+  int braces=0,parentheses=0;
+  for(const char *cursor=source;*cursor;){
+    char token[64]={0};
+    if(*cursor=='{') braces++;
+    if(*cursor=='}') braces--;
+    if(*cursor=='(') parentheses++;
+    if(*cursor==')') parentheses--;
+    if(isalpha((unsigned char)*cursor) || *cursor=='_'){
+      if(!glsl_take_identifier(&cursor,token,sizeof token)) return 1;
+      if(!braces && !parentheses && (!strcmp(token,"varying") || !strcmp(token,"in"))){
+        const char *end=strchr(cursor,';');
+        if(!end) return 1;
+        if(glsl_range_identifier(cursor,end,name)) return 1;
+      }
+    } else cursor++;
+  }
+  return 0;
+}
+
+/* A bounded dependency filter for the atlas cache, not a GLSL compiler. Propagate position
+ * through assignments and aliases, excluding the final clip-position output. A fragment-visible
+ * dependent identifier makes the answer draw-dependent. Unknown position-consuming statements,
+ * allocation failure or a dependency beyond these bounds conservatively disable reuse; the
+ * actual content program remains the device's responsibility. Comments and identifier suffixes
+ * cannot invent a dependency. */
+static int glsl_vertex_position_dependent(const char *vertex,const char *fragment){
+  enum { MAX_NAMES=64, NAME_BYTES=64, MAX_SOURCE=65536 };
+  char names[MAX_NAMES][NAME_BYTES]={"in_Position","gl_Position"};
+  unsigned count=2;
+  int dependent=0;
+  char *compact=NULL,*frag=NULL;
+  if(!vertex || !fragment) return 0;
+  if(strlen(vertex)>MAX_SOURCE || strlen(fragment)>MAX_SOURCE) return 1;
+  compact=glsl_compact_source(vertex);
+  frag=glsl_compact_source(fragment);
+  if(!compact || !frag){ dependent=1; goto done; }
+  for(unsigned pass=0;pass<MAX_NAMES;pass++){
+    unsigned before=count;
+    for(const char *statement=compact;*statement;){
+      const char *end=strchr(statement,';');
+      if(!end) end=statement+strlen(statement);
+      const char *assign=NULL;
+      for(const char *at=statement;at<end;at++){
+        if(*at=='=' && (at+1==end || at[1]!='=') &&
+           (at==statement || (at[-1]!='=' && at[-1]!='!' && at[-1]!='<' && at[-1]!='>'))){
+          assign=at; break;
+        }
+      }
+      int reads_position=0;
+      for(unsigned name=0;name<count && !reads_position;name++)
+        reads_position=glsl_range_identifier(statement,end,names[name]);
+      if(reads_position){
+        /* The input declaration does not consume its own value. */
+        if(!assign){
+          int declaration=glsl_range_identifier(statement,end,"attribute") ||
+                          glsl_range_identifier(statement,end,"in");
+          if(!declaration){ dependent=1; goto done; }
+        } else {
+          char lhs[NAME_BYTES]={0};
+          const char *lhs_end=assign;
+          if(lhs_end>statement && strchr("+-*/%",lhs_end[-1])) lhs_end--;
+          if(!glsl_identifier_before(statement,lhs_end,lhs,sizeof lhs)){
+            dependent=1; goto done;
+          }
+          /* A swizzle assignment depends on the base identifier, not the swizzle spelling. */
+          while(lhs_end>statement){
+            const char *base_end=lhs_end-strlen(lhs);
+            if(base_end==statement || base_end[-1]!='.') break;
+            lhs_end=base_end-1;
+            if(!glsl_identifier_before(statement,lhs_end,lhs,sizeof lhs)){
+              dependent=1; goto done;
+            }
+          }
+          /* Position-dependent control flow and nested assignments are not a proved reusable
+           * texel expression. Do not infer independence from just the last assignment's RHS. */
+          const char *lhs_start=lhs_end-strlen(lhs);
+          for(unsigned name=0;name<count;name++){
+            if(glsl_range_identifier(statement,lhs_start,names[name])){
+              dependent=1; goto done;
+            }
+          }
+          if(memchr(assign+1,'=',(size_t)(end-assign-1))){ dependent=1; goto done; }
+          if(strcmp(lhs,"gl_Position")){
+            if(glsl_fragment_varying(frag,lhs)){ dependent=1; goto done; }
+            unsigned name=0;
+            while(name<count && strcmp(names[name],lhs)) name++;
+            if(name==count){
+              if(count==MAX_NAMES){ dependent=1; goto done; }
+              snprintf(names[count++],NAME_BYTES,"%s",lhs);
+            }
+          }
+        }
+      }
+      statement=*end?end+1:end;
+    }
+    if(count==before) goto done;
+  }
+  dependent=1;
+done:
+  free(frag); free(compact);
+  return dependent;
+}
+
 
 void parse_shader_palettes(GmlRender *r){
   r->active_shader=-1;
@@ -1288,7 +1402,11 @@ void parse_shader_palettes(GmlRender *r){
     /* gl_FragCoord is the pixel's place on the render target. A fragment that reads it produces
      * something whose value moves with the draw, so its answer is not a property of the picture it
      * samples and cannot be evaluated once for a texture-page rectangle and reused. */
-    r->shader_pal[i].position_dependent=strstr(src,"gl_FragCoord")?1:0;
+    r->shader_pal[i].position_dependent=strstr(src,"gl_FragCoord") ||
+      glsl_vertex_position_dependent(r->shader_pal[i].source_vertex_es,
+                                    r->shader_pal[i].source_fragment_es) ||
+      glsl_vertex_position_dependent(r->shader_pal[i].source_vertex_gl,
+                                    r->shader_pal[i].source_fragment_gl);
     if(glsl_parse_indexed_brightness(src,&r->shader_pal[i])){
       const struct GmlShaderPal *sp=&r->shader_pal[i];
       if(render_setting(r,"GML_LOG_SHADER"))

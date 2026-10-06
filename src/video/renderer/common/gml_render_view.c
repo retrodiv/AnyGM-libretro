@@ -158,6 +158,25 @@ void gml_render_draw_map_point(const GmlRender *r,double *x,double *y){
 void gml_render_draw_map_scale(const GmlRender *r,double *xscale,double *yscale){
   render_draw_map_scale_local(r,xscale,yscale);
 }
+GmlRenderShaderGeometry gml_render_shader_geometry(const GmlRender *r,double x,double y,
+                                                   double width,double height,int mapped){
+  GmlRenderShaderGeometry geometry={x,y,width,height,0u};
+  if(mapped && render_gui_transform_active_local(r)){
+    geometry.origin_x=(x-r->gui_maximise_xoffset)/r->gui_scale_x;
+    geometry.origin_y=(y-r->gui_maximise_yoffset)/r->gui_scale_y;
+    geometry.extent_x=width/r->gui_scale_x;
+    geometry.extent_y=height/r->gui_scale_y;
+  } else if(mapped && render_world_transform_active_local(r)){
+    geometry.origin_x=x/r->world_scale_x;
+    geometry.origin_y=y/r->world_scale_y;
+    geometry.extent_x=width/r->world_scale_x;
+    geometry.extent_y=height/r->world_scale_y;
+  }
+  geometry.valid=isfinite(geometry.origin_x) && isfinite(geometry.origin_y) &&
+    isfinite(geometry.extent_x) && isfinite(geometry.extent_y) &&
+    geometry.extent_x!=0.0 && geometry.extent_y!=0.0;
+  return geometry;
+}
 void gml_render_gui_map_point(const GmlRender *r, double *x, double *y){
   render_gui_map_point_local(r,x,y);
 }

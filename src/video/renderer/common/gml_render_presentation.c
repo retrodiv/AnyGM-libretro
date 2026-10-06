@@ -165,12 +165,13 @@ void render_present_first_generation(GmlRender *r,int surf,const uint32_t *src,i
  * does not execute. Returns whether the draw was taken; when it was not, the caller draws it. */
 int render_present_content_shader(GmlRender *r,int surf,const uint32_t *src,int sw,int sh,
                                   int x0,int y0,int x1,int y1,
-                                  double dx,double dy,double dw,double dh,int shader){
+                                  double dx,double dy,double dw,double dh,int shader,
+                                  const GmlRenderShaderGeometry *geometry){
   int covers=rect_covers_target(r,x0,y0,x1,y1);
   int deferrable=r->presentation_deferral_enabled && !r->pending_underlay;
   int captured_fill=deferrable && r->pending_fill;
   uint32_t captured_colour=captured_fill?r->pending_fill_color:0u;
-  if(!deferrable) return 0;
+  if(!deferrable || !geometry || !geometry->valid) return 0;
   if(!captured_fill && !covers) return 0;
   if(captured_fill) gml_render_cancel_pending_fill(r);
   gml_render_maybe_prepare_draw(r);
@@ -198,6 +199,7 @@ int render_present_content_shader(GmlRender *r,int surf,const uint32_t *src,int 
   r->presentation.identity=(uint32_t)surf;
   memset(&r->presentation.resident_image,0,sizeof r->presentation.resident_image);
   r->presentation.shader=shader;
+  r->presentation.shader_geometry=*geometry;
   /* Recorded for the device to run: the accounting counts it as reaching the device, because it
    * does — the engine executes it at the presentation rather than here. */
   r->shaded_draws++;

@@ -91,6 +91,8 @@ typedef struct FakeDriver {
   float buffer_data[64];
   unsigned float_uniforms;
   unsigned matrix_uniforms;
+  float content_matrices[5*16];
+  int content_matrices_valid;
   GLuint attached_texture;
   unsigned read_pixels;
   uint8_t readback_alpha;
@@ -596,7 +598,11 @@ static void fake_Uniform2iv(GLint l,GLsizei n,const GLint *v){ (void)l;(void)n;(
 static void fake_Uniform3iv(GLint l,GLsizei n,const GLint *v){ (void)l;(void)n;(void)v; note_call(); }
 static void fake_Uniform4iv(GLint l,GLsizei n,const GLint *v){ (void)l;(void)n;(void)v; note_call(); }
 static void fake_UniformMatrix4fv(GLint l,GLsizei n,GLboolean t,const GLfloat *v){
-  (void)l;(void)t;(void)v; note_call(); g_fake.matrix_uniforms+=(unsigned)n;
+  (void)l;(void)t; note_call(); g_fake.matrix_uniforms+=(unsigned)n;
+  if(n==5 && v){
+    memcpy(g_fake.content_matrices,v,sizeof g_fake.content_matrices);
+    g_fake.content_matrices_valid=1;
+  }
 }
 
 void (*anygm_test_graphics_proc(void *userdata,const char *name))(void){
@@ -736,6 +742,17 @@ unsigned anygm_test_graphics_async_read_pixels(void){ return g_fake.async_read_p
 int anygm_test_graphics_quad_colour(int corner,float *rgba){
   if(corner<0 || corner>3 || g_fake.buffer_bytes<(size_t)(4*9*sizeof(float))) return 0;
   for(int i=0;i<4;i++) rgba[i]=g_fake.buffer_data[corner*9+3+i];
+  return 1;
+}
+int anygm_test_graphics_quad_position(int corner,float *xyz){
+  if(!xyz || corner<0 || corner>3 ||
+     g_fake.buffer_bytes<(size_t)(4*9*sizeof(float))) return 0;
+  for(int i=0;i<3;i++) xyz[i]=g_fake.buffer_data[corner*9+i];
+  return 1;
+}
+int anygm_test_graphics_content_matrix(unsigned index,float *matrix){
+  if(index>=5 || !matrix || !g_fake.content_matrices_valid) return 0;
+  memcpy(matrix,g_fake.content_matrices+index*16,16*sizeof(float));
   return 1;
 }
 int anygm_test_graphics_quad_texcoord(int corner,float *u,float *v){
