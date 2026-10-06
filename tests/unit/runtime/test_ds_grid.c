@@ -2,6 +2,7 @@
  * Copyright (c) 2026 retrodiv <retrodiv@proton.me>
  */
 #include "gml_vm.h"
+#include "gml_builtin.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -238,7 +239,51 @@ static int grid_row_sort(void){
   return ok;
 }
 
+static int grid_handles_grow(void){
+  GmlVM vm;
+  memset(&vm,0,sizeof(vm));
+  GmlVal grids[256];
+  GmlVal make[]={vreal(3),vreal(1)};
+  int ok=1;
+  for(int i=0;i<256;i++){
+    grids[i]=call(&vm,"ds_grid_create",make,2);
+    if(grids[i].t!=V_REAL || grids[i].d<=0){
+      fprintf(stderr,"grid allocation %d returned an invalid handle\n",i+1);
+      ok=0;
+      break;
+    }
+    GmlVal set[]={grids[i],vreal(2),vreal(0),vreal(i+7)};
+    call(&vm,"ds_grid_set",set,4);
+  }
+  if(ok){
+    for(int i=0;i<256;i++){
+      GmlVal get[]={grids[i],vreal(2),vreal(0)};
+      ok&=expect_real("grid growth preserves every cell",call(&vm,"ds_grid_get",get,3),i+7);
+    }
+    for(int i=0;i<256;i+=2) call(&vm,"ds_grid_destroy",&grids[i],1);
+    for(int i=0;i<128;i++){
+      GmlVal replacement=call(&vm,"ds_grid_create",make,2);
+      if(replacement.t!=V_REAL || replacement.d<=grids[255].d){
+        fprintf(stderr,"grid replacement reused a retained public identity\n");
+        ok=0;
+        break;
+      }
+      GmlVal get[]={replacement,vreal(2),vreal(0)};
+      ok&=expect_real("reused grid storage is empty",call(&vm,"ds_grid_get",get,3),0);
+    }
+    for(int i=1;i<256;i+=2){
+      GmlVal get[]={grids[i],vreal(2),vreal(0)};
+      ok&=expect_real("grid reuse preserves live neighbors",call(&vm,"ds_grid_get",get,3),i+7);
+    }
+    GmlVal stale[]={grids[0],vreal(2),vreal(0)};
+    ok&=expect_real("destroyed grid handle stays invalid",call(&vm,"ds_grid_get",stale,3),0);
+  }
+  gml_builtin_state_destroy(vm.builtins);
+  return ok;
+}
+
 int main(void){
+  if(!grid_handles_grow()) return 1;
   if(!grid_value_fixtures()) return 1;
   if(!grid_region_aggregates()) return 1;
   if(!grid_region_mutators()) return 1;

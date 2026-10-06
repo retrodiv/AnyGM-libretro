@@ -195,21 +195,22 @@ static void ds_grid_store(GmlDSGrid *g, int x, int y, GmlVal v){
 }
 /* ---- ds_grid: two-dimensional GmlVal storage. ---- */
 static GmlDSGrid *ds_grid_slot(GmlVM *vm, int id){
-  for(int i=0;i<32;i++) if(vm->builtins->ds_grid[i].live && (int)vm->builtins->ds_grid[i].id==id) return &vm->builtins->ds_grid[i];
-  return NULL;
+  GmlDSGrid *grid=vm && vm->builtins ?
+    builtin_state_ds_find(&vm->builtins->ds_grids,(uint32_t)id) : NULL;
+  return grid && grid->live ? grid : NULL;
 }
 static int ds_grid_make(GmlVM *vm, int w, int h){
   if(vm->builtins->next_ds_id<=0 || vm->builtins->next_ds_id==INT_MAX) return -1;
   if(w<0) w=0;
   if(h<0) h=0;
-  if((long)w*h>8000000) return -1;
-  for(int i=0;i<32;i++) if(!vm->builtins->ds_grid[i].live){
-    vm->builtins->ds_grid[i].live=1; vm->builtins->ds_grid[i].w=w; vm->builtins->ds_grid[i].h=h;
-    vm->builtins->ds_grid[i].cell=(w&&h)?calloc((size_t)w*h,sizeof(GmlVal)):NULL;
-    vm->builtins->ds_grid[i].id=(uint32_t)vm->builtins->next_ds_id++;
-    return (int)vm->builtins->ds_grid[i].id;
-  }
-  return -1;
+  if((long long)w*h>8000000) return -1;
+  GmlVal *cell=(w&&h)?calloc((size_t)w*h,sizeof(*cell)):NULL;
+  if(w && h && !cell) return -1;
+  GmlDSGrid *grid=builtin_state_ds_grid_allocate(vm->builtins,
+                         (uint32_t)vm->builtins->next_ds_id);
+  if(!grid){ free(cell); return -1; }
+  grid->w=w; grid->h=h; grid->cell=cell;
+  return vm->builtins->next_ds_id++;
 }
 static int ds_grid_resize_cells(GmlDSGrid *g,int w,int h){
   if(!g || w<0 || h<0 || (long)w*h>8000000) return 0;
@@ -1521,7 +1522,8 @@ GmlVal gml_builtin_try_ds(GmlVM *vm, const char *nm, GmlVal *a, int n){
     int id=(int)N(a,n,0); return vreal(ds_list_slot_repair(vm,id)!=NULL || ds_map_slot(vm,id)!=NULL || ds_grid_slot(vm,id)!=NULL); }
   if(!strcmp(nm,"ds_grid_create")) return vreal((double)ds_grid_make(vm,(int)N(a,n,0),(int)N(a,n,1)));
   if(!strcmp(nm,"ds_grid_destroy")){ GmlDSGrid *g=ds_grid_slot(vm,(int)N(a,n,0));
-    if(g){ free(g->cell); memset(g,0,sizeof(*g)); } return vreal(0); }
+    if(g){ builtin_state_ds_remove(&vm->builtins->ds_grids,g->id);
+      free(g->cell); memset(g,0,sizeof(*g)); } return vreal(0); }
   if(!strcmp(nm,"ds_grid_resize")){ GmlDSGrid *g=ds_grid_slot(vm,(int)N(a,n,0));
     return vreal(ds_grid_resize_cells(g,(int)N(a,n,1),(int)N(a,n,2))); }
   if(!strcmp(nm,"ds_grid_width")){ GmlDSGrid *g=ds_grid_slot(vm,(int)N(a,n,0)); return vreal(g?g->w:0); }

@@ -339,7 +339,7 @@ canonical bytes and semantics remain unchanged.
   is preserved. Restore may compact the private pools without changing the bytes
   produced after an identical sequence of later allocations.
 - Every variable section is length-delimited and must be consumed exactly.
-- DS map/list pools grow on demand and retain container addresses and public handles.
+- DS map/list/grid pools grow on demand and retain container addresses and public handles.
   Their live handle indexes are maintained in canonical order; snapshot traversal
   neither sorts them nor allocates capacity-sized scratch. Unused pool slots and
   reserved capacity are excluded from bytes. This storage change retains schema
@@ -348,6 +348,10 @@ canonical bytes and semantics remain unchanged.
   rejects duplicate or non-advancing handles within each pool. Runtime growth is
   bounded by allocation success and the positive signed handle namespace; the
   existing per-container state element and string bounds still apply.
+  Grid records retain their ID, width, height and tagged-cell encoding. The live
+  grid count is bounded by the remaining record bytes rather than a fixed private
+  slot table. Grid identities must be positive, unique and below the restored
+  allocation cursor. Individual grids retain the eight-million-cell limit.
 - Content, compatibility, and stateful configuration fingerprints are distinct.
 - Active content-override directives join the configuration fingerprint, so a state saved with
   them loads only while they are active. Content without directives keeps the configuration

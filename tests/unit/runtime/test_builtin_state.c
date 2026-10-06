@@ -166,7 +166,69 @@ static int verify_restored_resources(GmlVM *vm,GmlVal map,GmlVal list,
   return ok;
 }
 
+static int many_grids_roundtrip(void){
+  GmlWin win={0};
+  GmlVM vm={0};
+  vm.win=&win;
+  vm.room_index=vm.pending_room=-1;
+  vm.next_creation_seq=1;
+  vm.particles=gml_particle_state_create(&vm);
+  if(!vm.particles) return 0;
+  gml_vm_software3d_reset(&vm);
+  GmlVal grids[192];
+  GmlVal make[]={vreal(3),vreal(1)};
+  unsigned char *before=NULL,*after=NULL;
+  int ok=0;
+  for(int i=0;i<192;i++){
+    grids[i]=call(&vm,"ds_grid_create",make,2);
+    if(grids[i].t!=V_REAL || grids[i].d<=0){
+      fprintf(stderr,"state grid allocation %d failed\n",i+1);
+      goto done;
+    }
+    GmlVal set[]={grids[i],vreal(2),vreal(0),vreal(i+7)};
+    call(&vm,"ds_grid_set",set,4);
+  }
+  /* Loading compacts holes; canonical bytes must not depend on physical slots. */
+  for(int i=0;i<96;i+=2) call(&vm,"ds_grid_destroy",&grids[i],1);
+  size_t size=gml_vm_state_size(&vm),written=0,used=0,repeated=0;
+  before=malloc(size?size:1);
+  after=malloc(size?size:1);
+  if(!before || !after ||
+     !gml_vm_state_save(&vm,before,size,&written) || written!=size){
+    fprintf(stderr,"many-grid state save failed\n");
+    goto done;
+  }
+  gml_builtin_state_reset(vm.builtins);
+  if(!gml_vm_state_load(&vm,before,written,&used) || used!=written){
+    fprintf(stderr,"many-grid state restore failed\n");
+    goto done;
+  }
+  for(int i=0;i<192;i++){
+    GmlVal get[]={grids[i],vreal(2),vreal(0)};
+    double expected=i<96 && !(i%2)?0:i+7;
+    if(!expect_real(call(&vm,"ds_grid_get",get,3),expected,"restored grid cell"))
+      goto done;
+  }
+  if(!gml_vm_state_save(&vm,after,size,&repeated) || repeated!=written ||
+     memcmp(before,after,written)){
+    fprintf(stderr,"many-grid canonical bytes changed after compaction\n");
+    goto done;
+  }
+  GmlVal replacement=call(&vm,"ds_grid_create",make,2);
+  if(replacement.t!=V_REAL || replacement.d<=grids[191].d){
+    fprintf(stderr,"restored grid identity cursor did not advance\n");
+    goto done;
+  }
+  ok=1;
+done:
+  free(before);
+  free(after);
+  gml_vm_free(&vm);
+  return ok;
+}
+
 int main(void){
+  if(!many_grids_roundtrip()) return 1;
   GmlWin win={0};
   GmlVM vm={0};
   vm.win=&win;

@@ -1018,6 +1018,63 @@ static int buffer_state_cases(const AnygmHostServices *services,const AnygmConte
   free(candidate); free(baseline); anygm_destroy(engine); return ok;
 }
 
+static int grid_state_cases(const AnygmHostServices *services,const AnygmContentSource *source){
+  AnygmEngine *engine=NULL;
+  if(anygm_create(services,&engine)!=ANYGM_OK || anygm_load(engine,source,NULL)!=ANYGM_OK){
+    anygm_destroy(engine); return fail("grid state fixture load failed");
+  }
+  GmlVal grids[64];
+  for(int i=0;i<64;i++){
+    GmlVal dimensions[]={vreal(2),vreal(1)};
+    grids[i]=gml_builtin_call(&engine->vm,"ds_grid_create",dimensions,2);
+    if(grids[i].t!=V_REAL || grids[i].d<=0){
+      anygm_destroy(engine); return fail("grid state fixture growth failed");
+    }
+    GmlVal set[]={grids[i],vreal(0),vreal(0),vreal(i+37)};
+    gml_builtin_call(&engine->vm,"ds_grid_set",set,4);
+  }
+  uint8_t *baseline=NULL; size_t size=0;
+  if(!save_state(engine,&baseline,&size)){ anygm_destroy(engine); return 0; }
+  uint8_t *candidate=malloc(size);
+  size_t vm_start=STATE_HEADER_SIZE+(size_t)read_u64(baseline+64)+(size_t)read_u64(baseline+72);
+  size_t vm_end=vm_start+(size_t)read_u64(baseline+80),cursor=0;
+  uint8_t prefix[16]={0};
+  write_u32(prefix,64); write_u32(prefix+4,(uint32_t)grids[0].d);
+  write_u32(prefix+8,2); write_u32(prefix+12,1);
+  int matches=0;
+  for(size_t at=vm_start;at+sizeof prefix<=vm_end;at++)
+    if(!memcmp(baseline+at,prefix,sizeof prefix)){ cursor=at; matches++; }
+  int ok=candidate && matches==1 && cursor+4+64*36<=vm_end;
+  if(!ok) fail("grid state fixture has no unique bounded record");
+  if(ok) ok=reject_payload_u32(engine,candidate,size,baseline,size,cursor,UINT32_MAX,"negative grid count");
+  if(ok) ok=reject_payload_u32(engine,candidate,size,baseline,size,cursor,INT32_MAX,"oversized grid count");
+  if(ok) ok=reject_payload_u32(engine,candidate,size,baseline,size,cursor+4,0,"zero grid handle");
+  if(ok) ok=reject_payload_u32(engine,candidate,size,baseline,size,cursor+4,
+                               (uint32_t)grids[63].d+1,"non-advancing grid handle");
+  if(ok) ok=reject_payload_u32(engine,candidate,size,baseline,size,cursor+4,UINT32_MAX,"out-of-domain grid handle");
+  /* Each two-real-cell record has three words followed by two tagged doubles. */
+  if(ok) ok=reject_payload_u32(engine,candidate,size,baseline,size,cursor+40,
+                               (uint32_t)grids[0].d,"duplicate grid handle");
+  if(ok) ok=reject_payload_u32(engine,candidate,size,baseline,size,cursor+8,UINT32_MAX,"negative grid width");
+  if(ok) ok=reject_payload_u32(engine,candidate,size,baseline,size,cursor+12,UINT32_MAX,"negative grid height");
+  if(ok) ok=reject_payload_u32(engine,candidate,size,baseline,size,cursor+8,INT32_MAX,"oversized grid extent");
+  if(ok){
+    memcpy(candidate,baseline,size);
+    write_double(candidate+cursor+20,91);
+    write_u32(candidate+vm_end,0); /* Reject after decoding a valid changed grid. */
+    refresh_checksum(candidate);
+    ok=reject_unchanged(engine,candidate,size,baseline,size,"late rejection after grid decoding");
+  }
+  if(ok){
+    gml_builtin_call(&engine->vm,"ds_grid_destroy",&grids[63],1);
+    ok=anygm_state_load(engine,baseline,size)==ANYGM_OK && engine_matches(engine,baseline,size);
+    GmlVal get[]={grids[63],vreal(0),vreal(0)};
+    ok=ok && gml_builtin_call(&engine->vm,"ds_grid_get",get,3).d==100;
+    if(!ok) fail("live grid state roundtrip failed");
+  }
+  free(candidate); free(baseline); anygm_destroy(engine); return ok;
+}
+
 int main(void){
   AnygmSyntheticContent fixture;
   if(!anygm_synthetic_list_override_content_create(&fixture))
@@ -1328,6 +1385,7 @@ int main(void){
 
   if(ok) ok=io_identity_state_cases(&services,&source);
   if(ok) ok=buffer_state_cases(&services,&source);
+  if(ok) ok=grid_state_cases(&services,&source);
 
   if(ok) ok=content_override_state_cases(&services,&fixture);
 

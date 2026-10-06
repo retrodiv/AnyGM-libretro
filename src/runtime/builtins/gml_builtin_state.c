@@ -92,6 +92,12 @@ GmlDSList *builtin_state_ds_list_allocate(GmlBuiltinState *state,uint32_t id){
   return list;
 }
 
+GmlDSGrid *builtin_state_ds_grid_allocate(GmlBuiltinState *state,uint32_t id){
+  GmlDSGrid *grid=builtin_state_ds_allocate(&state->ds_grids,id,sizeof(*grid));
+  if(grid){ grid->live=1; grid->id=id; }
+  return grid;
+}
+
 GmlBuiltinBuffer *builtin_state_buffer_allocate(GmlBuiltinState *state,uint32_t id){
   GmlBuiltinBuffer *buffer=builtin_state_ds_allocate(&state->buffers,id,sizeof(*buffer));
   if(buffer){ buffer->live=1; buffer->id=id; }
@@ -363,10 +369,14 @@ static void builtin_state_ds_reset(GmlBuiltinState *state){
   free(state->ds_lists.slot);
   free(state->ds_lists.order);
   memset(&state->ds_lists,0,sizeof(state->ds_lists));
-  for(int i=0;i<GML_DS_GRID_MAX;i++){
-    free(state->ds_grid[i].cell);
-    memset(&state->ds_grid[i],0,sizeof(state->ds_grid[i]));
+  for(int i=0;i<state->ds_grids.used;i++){
+    GmlDSGrid *grid=state->ds_grids.slot[i].value;
+    free(grid->cell);
+    free(grid);
   }
+  free(state->ds_grids.slot);
+  free(state->ds_grids.order);
+  memset(&state->ds_grids,0,sizeof(state->ds_grids));
   state->next_ds_id=1;
   state->ds_list_compat_repair=0;
 }
@@ -386,8 +396,8 @@ void gml_builtin_state_visit_values(const GmlBuiltinState *state,
     const GmlDSList *list=state->ds_lists.slot[state->ds_lists.order[i].slot].value;
     for(int j=0;j<list->len;j++) visitor(userdata,list->item[j]);
   }
-  for(int i=0;i<GML_DS_GRID_MAX;i++) if(state->ds_grid[i].live){
-    const GmlDSGrid *grid=&state->ds_grid[i];
+  for(int i=0;i<state->ds_grids.live_count;i++){
+    const GmlDSGrid *grid=state->ds_grids.slot[state->ds_grids.order[i].slot].value;
     long long cells=(long long)grid->w*grid->h;
     for(long long j=0;j<cells;j++) visitor(userdata,grid->cell[j]);
   }
@@ -535,8 +545,8 @@ void gml_builtin_state_profile_ds(const GmlBuiltinState *state,
         byte_totals[1]+=gml_vm_state_measure_value(state->vm,list->item[j]);
     }
   }
-  for(int i=0;i<GML_DS_GRID_MAX;i++) if(state->ds_grid[i].live){
-    const GmlDSGrid *grid=&state->ds_grid[i];
+  for(int i=0;i<state->ds_grids.live_count;i++){
+    const GmlDSGrid *grid=state->ds_grids.slot[state->ds_grids.order[i].slot].value;
     if(live_counts) live_counts[2]++;
     if(byte_totals){
       byte_totals[2]+=12;
@@ -545,13 +555,6 @@ void gml_builtin_state_profile_ds(const GmlBuiltinState *state,
         byte_totals[2]+=gml_vm_state_measure_value(state->vm,grid->cell[j]);
     }
   }
-}
-
-typedef GmlDSOrder DsStateOrder;
-
-static int ds_state_order_compare(const void *left,const void *right){
-  uint32_t a=((const DsStateOrder *)left)->id,b=((const DsStateOrder *)right)->id;
-  return (a>b)-(a<b);
 }
 
 void gml_builtin_state_write_ini_ds(const GmlBuiltinState *state,
@@ -584,7 +587,6 @@ void gml_builtin_state_write_ini_ds(const GmlBuiltinState *state,
    * Sort the record traversal by ID so uninterrupted and restored execution
    * retain identical bytes, including shared-array definition order. This
    * changes neither container entry order nor the existing keyed format. */
-  DsStateOrder grids[GML_DS_GRID_MAX];
   int map_live=state->ds_maps.live_count;
   gml_vm_state_write_i32(writer,map_live);
   for(int i=0;i<map_live;i++){
@@ -610,13 +612,10 @@ void gml_builtin_state_write_ini_ds(const GmlBuiltinState *state,
       gml_vm_state_write_i32(writer,list->child_kind?list->child_kind[j]:0);
     }
   }
-  int grid_live=0;
-  for(int i=0;i<GML_DS_GRID_MAX;i++) if(state->ds_grid[i].live)
-    grids[grid_live++]=(DsStateOrder){state->ds_grid[i].id,i};
-  qsort(grids,(size_t)grid_live,sizeof(*grids),ds_state_order_compare);
+  int grid_live=state->ds_grids.live_count;
   gml_vm_state_write_i32(writer,grid_live);
   for(int i=0;i<grid_live;i++){
-    const GmlDSGrid *grid=&state->ds_grid[grids[i].slot];
+    const GmlDSGrid *grid=state->ds_grids.slot[state->ds_grids.order[i].slot].value;
     gml_vm_state_write_u32(writer,grid->id);
     gml_vm_state_write_i32(writer,grid->w);
     gml_vm_state_write_i32(writer,grid->h);
@@ -778,23 +777,22 @@ int gml_builtin_state_read_ini_ds(GmlBuiltinState *state,
   }
   if(!gml_vm_state_reader_ok(reader)) return 0;
   int grid_live=gml_vm_state_read_i32(reader);
-  if(grid_live<0 || grid_live>GML_DS_GRID_MAX){
+  if(grid_live<0 || (size_t)grid_live>gml_vm_state_reader_remaining(reader)/12u){
     gml_vm_state_reader_fail(reader,"bad ds_grid count",(uint32_t)grid_live);
     grid_live=0;
   }
   for(int gi=0;gi<grid_live && gml_vm_state_reader_ok(reader);gi++){
-    int slot=-1;
-    for(int i=0;i<GML_DS_GRID_MAX;i++) if(!state->ds_grid[i].live){
-      slot=i;
+    uint32_t id=gml_vm_state_read_u32(reader);
+    if(!id || id>=(uint32_t)state->next_ds_id ||
+       builtin_state_ds_find(&state->ds_grids,id)){
+      gml_vm_state_reader_fail(reader,"bad ds_grid identity",id);
       break;
     }
-    if(slot<0){
-      gml_vm_state_reader_fail(reader,"no ds_grid slot",(uint32_t)gi);
+    GmlDSGrid *grid=builtin_state_ds_grid_allocate(state,id);
+    if(!grid){
+      gml_vm_state_reader_fail(reader,"ds_grid pool allocation failed",id);
       break;
     }
-    GmlDSGrid *grid=&state->ds_grid[slot];
-    grid->live=1;
-    grid->id=gml_vm_state_read_u32(reader);
     grid->w=gml_vm_state_read_i32(reader);
     grid->h=gml_vm_state_read_i32(reader);
     long long cells=(long long)grid->w*grid->h;

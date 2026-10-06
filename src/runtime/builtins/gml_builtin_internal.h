@@ -20,7 +20,6 @@ int builtin_save_image(GmlVM *vm,const char *path,const uint32_t *pixels,
 #define GML_FF_MAX 512
 #define GML_GP_MAX_DEV 16
 #define GML_INI_MAX 16384
-#define GML_DS_GRID_MAX 32
 #define GML_TIME_SOURCE_MAX 256
 #define GML_TIME_SOURCE_ID_BASE UINT32_C(0x48000000)
 #define GML_TIME_SOURCE_HIDDEN_PARENT 2
@@ -136,9 +135,8 @@ struct GmlBuiltinState {
   int async_group_active, async_group_id;
   int async_group_status, async_group_count;
   int async_http_q[16], n_async_http;
-  GmlDSPool ds_maps, ds_lists;
+  GmlDSPool ds_maps, ds_lists, ds_grids;
   GmlDSMap *ds_map_last;
-  GmlDSGrid ds_grid[GML_DS_GRID_MAX];
   int next_ds_id;
   int ds_list_compat_repair;
   GmlTimeSource time_source[GML_TIME_SOURCE_MAX];
@@ -219,6 +217,7 @@ GmlBuiltinBuffer *builtin_state_buffer_allocate(GmlBuiltinState *state,uint32_t 
 void builtin_state_ds_remove(GmlDSPool *pool,uint32_t id);
 GmlDSMap *builtin_state_ds_map_allocate(GmlBuiltinState *state,uint32_t id);
 GmlDSList *builtin_state_ds_list_allocate(GmlBuiltinState *state,uint32_t id);
+GmlDSGrid *builtin_state_ds_grid_allocate(GmlBuiltinState *state,uint32_t id);
 
 GmlPhysicsFixture *gml_physics_fixture_new(GmlVM *vm);
 double gml_physics_world_scale(GmlVM *vm);
