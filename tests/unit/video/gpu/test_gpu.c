@@ -2162,6 +2162,58 @@ static int scene_alpha_composition_api(GmlGpuApi api,const char *renderer,int fo
             draws==anygm_test_graphics_scene_draw_calls(),
             "unqualified rounded-veil descriptors refuse before their valid clear prefix");
   }
+  /* Constant SCREEN veils retain unknown-alpha coverage without a predecessor copy.
+   * Compatible overlapping veils share one RGB pass and one opaque-alpha pass. */
+  {
+    GmlRenderImageRef veil_source={GML_RENDER_RESOURCE_SCRATCH,101u,1u,1u};
+    GmlRenderImageUpload veil_upload=upload;
+    GmlRenderDrawOp veil_ops[3];
+    GmlRenderDrawStateSnapshot veil_state=state;
+    GmlRenderDrawBatch veil_batch={veil_ops,3u,&veil_state,1u};
+    unsigned copies=anygm_test_graphics_scene_copies();
+    int draws=anygm_test_graphics_scene_draw_calls();
+    veil_upload.image=veil_source;
+    REQUIRE(service.upload(service.context,&veil_upload),"constant screen veil uploaded");
+    memcpy(veil_ops,operations,sizeof veil_ops);
+    veil_state.rgb_equation=veil_state.alpha_equation=GML_RENDER_BLEND_ADD;
+    veil_state.coverage_policy=GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA;
+    veil_state.samplers[0].filter=GML_RENDER_FILTER_HARDWARE_BILINEAR;
+    for(unsigned index=0;index<3u;index++){
+      veil_ops[index].target.image.resource_class=GML_RENDER_RESOURCE_SCREEN;
+      veil_ops[index].target.image.identity=13u;
+      if(index){
+        veil_ops[index].sources=&veil_source;
+        veil_ops[index].reconstruction_mode=GML_RENDER_DEVICE_CHECKPOINT;
+        veil_ops[index].payload.quad.filtered_draw_alpha=1.0;
+        veil_ops[index].payload.quad.sampling=veil_state.samplers[0];
+      }
+    }
+    result=service.submit(service.context,&veil_batch);
+    REQUIRE(result.status==GML_RENDER_EXEC_ACCEPTED && result.accepted_prefix==3u &&
+            anygm_test_graphics_scene_draw_calls()==draws+2 &&
+            anygm_test_graphics_scene_copies()==copies && !anygm_test_graphics_read_pixels(),
+            "overlapping constant screen veils batch RGB and opaque alpha without copies or reads");
+    for(unsigned variant=0;variant<6u;variant++){
+      GmlRenderDrawOp invalid[3];
+      GmlRenderDrawBatch refused={invalid,3u,&veil_state,1u};
+      int clears=anygm_test_graphics_clear_calls();
+      draws=anygm_test_graphics_scene_draw_calls();
+      memcpy(invalid,veil_ops,sizeof invalid);
+      if(variant==0u) invalid[1].target.image.resource_class=GML_RENDER_RESOURCE_APPLICATION;
+      if(variant==1u) invalid[1].scene_family=GML_RENDER_SCENE_BACKGROUND;
+      if(variant==2u) invalid[1].payload.quad.x[0]=invalid[1].payload.quad.x[3]=1.0;
+      if(variant==3u) invalid[1].payload.quad.filtered_draw_alpha=0.5;
+      if(variant==4u) invalid[1].reconstruction_mode=GML_RENDER_REPLAY_EXACT;
+      if(variant==5u) invalid[1].payload.quad.sampling.source_region.width=2u;
+      result=service.submit(service.context,&refused);
+      REQUIRE(result.status==GML_RENDER_EXEC_UNSUPPORTED && !result.accepted_prefix &&
+              clears==anygm_test_graphics_clear_calls() &&
+              draws==anygm_test_graphics_scene_draw_calls() &&
+              anygm_test_graphics_scene_copies()==copies && !anygm_test_graphics_read_pixels(),
+              "unqualified constant veil variants reject transactionally before their clear prefix");
+    }
+    service.retire(service.context,veil_source);
+  }
   /* Opaque stretched magnification has a distinct phase/weight policy, never
    * an unchecked option for an arbitrary sampled quad. */
   source.incarnation=3u;

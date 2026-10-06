@@ -1501,7 +1501,7 @@ static int resident_coarse_mip_veil(GmlRender *r,int sprite,int frame,
      r->pending_underlay || r->pending_presentation ||
      r->target_sp || r->target_id!=-1 ||
      !gml_render_scene_target_matches(r) ||
-     !r->fb_opaque_known || !r->fb_all_opaque ||
+     (!r->gui_pass_active && (!r->fb_opaque_known || !r->fb_all_opaque)) ||
      (r->world_transform_active &&
       (!isfinite(r->world_scale_x) || !isfinite(r->world_scale_y) ||
        r->world_scale_x<=0.0 || r->world_scale_y<=0.0)) ||
@@ -1570,7 +1570,10 @@ static int resident_coarse_mip_veil(GmlRender *r,int sprite,int frame,
   operation.target.pixel_format=GML_RENDER_PIXEL_ARGB8888;
   operation.target.region=(GmlRenderRect){0,0,(uint32_t)r->fbw,(uint32_t)r->fbh};
   operation.payload.quad.shape=GML_RENDER_QUAD_AXIS_ALIGNED;
-  operation.payload.quad.sampling.filter=GML_RENDER_FILTER_NEAREST;
+  int stamp_alpha=r->gui_pass_active && (!r->fb_opaque_known || !r->fb_all_opaque);
+  operation.payload.quad.sampling.filter=stamp_alpha
+    ?GML_RENDER_FILTER_HARDWARE_BILINEAR:GML_RENDER_FILTER_NEAREST;
+  operation.payload.quad.filtered_draw_alpha=1.0;
   operation.payload.quad.sampling.edge_rule=GML_RENDER_EDGE_CLAMP_SUBIMAGE;
   operation.payload.quad.sampling.source_region=(GmlRenderRect){0,0,1u,1u};
   for(int corner=0;corner<4;corner++) operation.payload.quad.corner_colour[corner]=0xFFFFFFFFu;
@@ -1587,6 +1590,7 @@ static int resident_coarse_mip_veil(GmlRender *r,int sprite,int frame,
   state.write_mask=15u;
   state.colour=0xFFFFFFFFu;
   state.alpha=255u;
+  state.coverage_policy=stamp_alpha?GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA:0u;
   state.rgb_source_factor=GML_RENDER_BLEND_SOURCE_ALPHA;
   state.rgb_destination_factor=GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA;
   state.alpha_source_factor=GML_RENDER_BLEND_ONE;
@@ -1599,7 +1603,10 @@ static int resident_coarse_mip_veil(GmlRender *r,int sprite,int frame,
   result=gml_render_application_scene_submit(r,&batch,&source,1u);
   device->retire(device->context,source.image);
   if(result==GML_RENDER_RESOURCE_EXEC_CPU) r->resident_application_pass=0;
-  if(result!=GML_RENDER_RESOURCE_EXEC_FAILED) r->fb_all_transparent=0;
+  if(result!=GML_RENDER_RESOURCE_EXEC_FAILED){
+    r->fb_all_transparent=0;
+    r->fb_opaque_known=r->fb_all_opaque=1;
+  }
   return result!=GML_RENDER_RESOURCE_EXEC_FAILED;
 }
 

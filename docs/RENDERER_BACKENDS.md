@@ -19,11 +19,15 @@ snapshot; the live ledger and rule table here describe current support.
 
 The identity SCREEN GUI extension of R03-SPR-COARSE-MIP uses fixed-function
 source-over, with EXACT zero/full-alpha endpoints and TOLERANCE±2 partial-alpha
-single draws. Admission requires default fragment state, an opaque destination,
+single draws. Admission requires default fragment state,
 full minified coverage and a positive owning-context on-demand witness. The
 existing four-byte coarse-texel preparation/upload remains; the new GUI branch
 needs no predecessor snapshot or CPU replay retention and preserves actual device
-bytes only on observation. Nonidentity GUI and unavailable witnesses retain the
+bytes only on observation. Unknown or nonopaque SCREEN destinations reuse the
+hardware-sampled, batched alpha-only coverage pass: a positive full-target veil
+writes opaque alpha as the unchanged CPU leaf does; a zero-alpha veil preserves
+the destination. Known-opaque destinations keep their single-pass path.
+Nonidentity GUI and unavailable witnesses retain the
 ordered CPU path. `test_render_resources::resident_gui_coarse_veil_on_demand`
 checks authority, witness refusal and explicit observation; the real-device
 R03-SPR-COARSE-MIP GUI comparator checks RGBA, no ordinary reads/copies and exact

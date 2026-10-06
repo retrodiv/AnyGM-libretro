@@ -5942,6 +5942,7 @@ static int resident_coarse_veil_exact_recovery(void){
 static int resident_gui_coarse_veil_on_demand(void){
   const uint8_t alphas[]={0u,1u,127u,255u};
   for(unsigned witness=0;witness<2u;witness++)
+  for(unsigned destination=0;destination<3u;destination++)
   for(unsigned coverage=0;coverage<sizeof alphas;coverage++){
     GmlRender *render=(GmlRender*)calloc(1,sizeof *render);
     FakeDevice fake={.on_demand=witness!=0u,.readback_colour=0xFF456789u};
@@ -5973,10 +5974,11 @@ static int resident_gui_coarse_veil_on_demand(void){
     CHECK(gml_render_begin_resident_base(render,screen,4,4,0.0,0.0));
     gml_render_gui_begin(render,4,4);
     render->interp=1;
-    gml_render_set_pending_fill(render,0xFF714A24u);
+    gml_render_set_pending_fill(render,destination?0xA5714A24u:0xFF714A24u);
     gml_render_flush_pending_fill(render);
     /* Submission is not an observation: scene_flush would explicitly seal the GPU clear. */
     CHECK(gml_render_scene_submit_pending(render) && !fake.readbacks && !fake.rgb_queries);
+    if(destination==2u) render->fb_opaque_known=render->fb_all_opaque=0;
     int submits=fake.submits;
     gml_draw_sprite_stretched(render,0,0,-1,-1,6,6,0xFFFFFFu,1.0);
     CHECK(gml_render_scene_submit_pending(render) && !fake.readbacks && !fake.rgb_queries);
@@ -5985,9 +5987,13 @@ static int resident_gui_coarse_veil_on_demand(void){
       if(alphas[coverage]){
         CHECK(fake.submits==submits+1 && fake.last_opcode==GML_RENDER_OP_TEXTURED_QUAD &&
               fake.last_target_image.resource_class==GML_RENDER_RESOURCE_SCREEN &&
-              fake.last_filter==GML_RENDER_FILTER_NEAREST &&
+              fake.last_filter==(destination?GML_RENDER_FILTER_HARDWARE_BILINEAR:
+                                            GML_RENDER_FILTER_NEAREST) &&
+              fake.last_quad_state.coverage_policy==(destination?
+                GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA:0u) &&
               fake.last_quad_state.rgb_equation==GML_RENDER_BLEND_ADD &&
-              fake.last_quad_state.alpha_equation==GML_RENDER_BLEND_ADD);
+              fake.last_quad_state.alpha_equation==GML_RENDER_BLEND_ADD &&
+              render->fb_opaque_known && render->fb_all_opaque);
       }else CHECK(fake.submits==submits);
       gml_render_resource_journal_metrics(render->base_scene_resource,&metrics);
       CHECK(metrics.authority==GML_RENDER_RESOURCE_GPU_RESIDENT &&
