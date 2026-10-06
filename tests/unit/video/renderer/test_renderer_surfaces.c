@@ -1881,6 +1881,75 @@ static int filtered_additive_shader_sprite_case(void){
   return 0;
 }
 
+static int replacement_sprite_variant(int interpolation,int mode,double alpha,
+                                      unsigned source_alpha,unsigned mask,int discard){
+  GmlRender *render=calloc(1,sizeof *render);
+  GmlWin content={0};GmlSprite sprite={0};GmlTpag page={0};GmlAtlas atlas={0};
+  struct GmlShaderPal program={0};
+  uint32_t base[16]={0};uint8_t texel[4]={255,255,255,(uint8_t)source_alpha};int frame=0;
+  REQUIRE(render!=NULL,"replacement sprite renderer allocation");
+  REQUIRE(gml_render_init(render,NULL)==0,"replacement sprite renderer initialization");
+  content.bytecode=17;render->win=&content;
+  gml_render_begin(render,base,4,4,0,0);
+  render->interp=interpolation;render->blendmode=mode;render->color_write_mask=mask;
+  render->active_shader=-1;
+  sprite.w=sprite.h=1;sprite.n_frames=1;sprite.frame=&frame;
+  page.sw=page.sh=page.tw=page.th=page.bw=page.bh=1;
+  atlas.w=atlas.h=1;atlas.px=texel;atlas.decode_attempted=1;
+  render->spr=&sprite;render->n_spr=1;render->tpag=&page;render->n_tpag=1;
+  render->atlas=&atlas;render->n_atlas=1;
+  if(discard==1){render->alpha_test_enable=1;render->alpha_test_ref=128;}
+  if(discard==2){
+    program.alpha_discard=program.alpha_discard_inclusive=1;
+    program.alpha_discard_cutoff=0.5f;
+    render->shader_pal=&program;render->n_shader_pal=1;render->active_shader=0;
+  }
+  int target=gml_surface_create(render,4,4);
+  REQUIRE(target>0 && gml_surface_set_target(render,target),"replacement sprite numbered target");
+  for(int i=0;i<16;i++) render->fb[i]=0xff563412u;
+  render->fb_opaque_known=render->fb_all_opaque=1;render->fb_all_transparent=0;
+  gml_draw_sprite_ext(render,0,0,1,1,2,2,0,0x332211u,alpha);
+  gml_render_maybe_prepare_draw(render);
+  uint32_t fragment=((uint32_t)lround(alpha*source_alpha)<<24)|0x112233u;
+  uint32_t bits=(mask&1u?0xff0000u:0)|(mask&2u?0xff00u:0)|
+    (mask&4u?0xffu:0)|(mask&8u?0xff000000u:0);
+  uint32_t expected=(0xff563412u&~bits)|(fragment&bits);
+  int rejected=(discard==1 && source_alpha<=128u) ||
+               (discard==2 && source_alpha<=127u);
+  if(mode==0 || rejected) expected=0xff563412u;
+  int failures=0;
+  for(int y=0;y<4;y++) for(int x=0;x<4;x++){
+    uint32_t want=(x>=1 && x<=2 && y>=1 && y<=2)?expected:0xff563412u;
+    if(render->fb[y*4+x]!=want) failures++;
+  }
+  if(mode==6 && !rejected && (fragment>>24)<255u && (mask&8u) &&
+     render->fb_all_opaque) failures++;
+  if(failures)
+    fprintf(stderr,"replacement sprite: interp=%d mode=%d alpha=%g source=%u mask=%u "
+                   "discard=%d middle=%08x expected=%08x failures=%d\n",
+            interpolation,mode,alpha,source_alpha,mask,discard,render->fb[5],expected,failures);
+  gml_surface_reset_target(render);
+  gml_render_texture_page_cache_clear(render,&page);
+  render->win=NULL;render->spr=NULL;render->n_spr=0;render->tpag=NULL;render->n_tpag=0;
+  render->atlas=NULL;render->n_atlas=0;render->shader_pal=NULL;render->n_shader_pal=0;
+  gml_render_free(render);free(render);
+  return failures!=0;
+}
+
+static int replacement_sprite_case(void){
+  const double alpha[]={0,0.5,1};const unsigned source_alpha[]={0,128,255};
+  int failures=0;
+  for(int interpolation=0;interpolation<2;interpolation++){
+    failures+=replacement_sprite_variant(interpolation,0,0,255,15,0);
+    for(unsigned a=0;a<3;a++) for(unsigned s=0;s<3;s++) for(unsigned mask=0;mask<16;mask++)
+      failures+=replacement_sprite_variant(interpolation,6,alpha[a],source_alpha[s],mask,0);
+    for(int discard=1;discard<=2;discard++) for(unsigned s=0;s<3;s++)
+      failures+=replacement_sprite_variant(interpolation,6,1,source_alpha[s],15,discard);
+  }
+  REQUIRE(failures==0,"nearest and filtered replacement sprites, masks, coverage and discard");
+  return 0;
+}
+
 int main(void){
   GmlRender render;
   uint32_t base[8*6];
@@ -1990,6 +2059,7 @@ int main(void){
   REQUIRE(deferred_shader_alpha_case()==0,"deferred shader alpha case");
   REQUIRE(deferred_shader_geometry_case()==0,"deferred shader geometry case");
   REQUIRE(filtered_additive_shader_sprite_case()==0,"filtered additive shader sprite case");
+  REQUIRE(replacement_sprite_case()==0,"replacement sprite case");
   REQUIRE(point_downscale_case()==0,"point downscale case");
   REQUIRE(opaque_near_identity_reduction_case()==0,
           "opaque near-identity reduction case");

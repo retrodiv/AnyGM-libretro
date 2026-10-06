@@ -1417,7 +1417,8 @@ void gml_render_sprite_ext_unmasked(GmlRender *r, int sprite, int subimg, double
      * specialised preparation retain the original caller value and order. */
     double resident_alpha=isfinite(alpha) && alpha>1.0?1.0:alpha;
     if(isfinite(alpha) && alpha<=0.0 &&
-       !(r->alphablend && gml_render_blend_uses_destination_colour(r->blendmode)) &&
+       !(r->alphablend && (r->blendmode==6 ||
+                          gml_render_blend_uses_destination_colour(r->blendmode))) &&
        sprite>=0 && sprite<r->n_spr &&
        !r->classic && (!r->gui_pass_active || resident_mapped_screen_gui_font(r)) &&
        r->active_shader<0 &&
@@ -1434,8 +1435,8 @@ void gml_render_sprite_ext_unmasked(GmlRender *r, int sprite, int subimg, double
      gml_render_cpu_draw_spine_sprite(r,&r->spr[sprite],x,y,xs,ys,rot,blend,alpha)) return;
   if(gml_d3_draw_sprite_2d(r,sprite,subimg,x,y,xs,ys,rot,blend,alpha)) return;
   if(sprite<0||sprite>=r->n_spr) return;
-  if(alpha<=0 && !(r->alphablend &&
-     gml_render_blend_uses_destination_colour(r->blendmode))) return;
+  if(alpha<=0 && !(r->alphablend && (r->blendmode==6 ||
+     gml_render_blend_uses_destination_colour(r->blendmode)))) return;
   GmlSprite *s=&r->spr[sprite]; if(s->n_frames<=0) return;
   /* A sprite drawn through a program this renderer does not execute goes to the same executor as
    * a surface, evaluated at the destination's size. Unrotated, unflipped draws only: the composed

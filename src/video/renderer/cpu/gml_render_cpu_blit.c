@@ -2869,7 +2869,8 @@ static void blit_one_band_rows(void *context,int row_start,int row_end,int slot)
         ? a->px+(size_t)wave_map[(size_t)ly*t->sw+lx]*4u
         : a->px+((size_t)sy*a->w+sx)*4u;
       if(shader_discards_alpha(r,sp[3]) &&
-         !((r->blendmode==2 || destination_colour_blend_active(r)) && !shader_alpha_test_active(r))) continue;
+         !((r->blendmode==2 || (r->alphablend && r->blendmode==6) ||
+            destination_colour_blend_active(r)) && !shader_alpha_test_active(r))) continue;
       uint32_t sampled=((uint32_t)sp[3]<<24)|((uint32_t)sp[0]<<16)|
                        ((uint32_t)sp[1]<<8)|(uint32_t)sp[2];
       if(solid_blur_alpha)
@@ -3054,7 +3055,8 @@ static void blit_one(GmlRender *r, GmlTpag *t, double dx, double dy, double xs, 
                      uint32_t blend, double alpha,int quantize_alpha){
   if(!r || !t || !r->fb || r->fbw<=0 || r->fbh<=0) return;
   if(alpha>1) alpha=1; else if(alpha<0) alpha=0;   /* GM clamps draw alpha to [0,1] */
-  if(alpha<=0 && !destination_colour_blend_active(r)) return;
+  if(alpha<=0 && !(r->alphablend && r->blendmode==6) &&
+     !destination_colour_blend_active(r)) return;
   double axs=fabs(xs), ays=fabs(ys); if(axs<=0||ays<=0) return;
   int bR=blend&0xFF, bG=(blend>>8)&0xFF, bB=(blend>>16)&0xFF;  /* GM blend = BBGGRR */
   /* Sprite quads normally snap fractional positions by rounding half up. On modern
@@ -3169,8 +3171,9 @@ static void blit_one(GmlRender *r, GmlTpag *t, double dx, double dy, double xs, 
   /* SRCALPHA/INVSRCALPHA also blends the destination alpha channel. A partially covered texel
    * therefore makes an opaque render target non-opaque even when the draw alpha is one. Keep the
    * coverage certificate honest so a later surface composite does not take an opaque-copy path.
+   * Replacement also writes zero-alpha texels, which alpha_partial deliberately excludes.
    * First-generation application surfaces present opaque independently of texel coverage. */
-  if((alpha<1.0 || r->blendmode==2 || r->blendmode==8 || destination_colour_blend_active(r) ||
+  if((alpha<1.0 || r->blendmode==2 || r->blendmode==6 || r->blendmode==8 || destination_colour_blend_active(r) ||
       (t->alpha_partial && !gml_render_target_is_first_generation_application_surface(r)) ||
       (r->interp && t->alpha_max>0) || mapped_shader) && r->alphablend)
     gml_sprite_target_may_change_alpha(r);
@@ -4080,7 +4083,8 @@ static void blit_interp_sample(GmlRender *r, uint32_t *dp, const GmlAtlas *atlas
     fsr=fsg=fsb=255.0;
   }
   if(shader_discards_alpha_value(r,faa) &&
-     !((r->blendmode==2 || destination_colour_blend_active(r)) && !shader_alpha_test_active(r))) return;
+     !((r->blendmode==2 || (r->alphablend && r->blendmode==6) ||
+        destination_colour_blend_active(r)) && !shader_alpha_test_active(r))) return;
   /* A Studio 2 shader receives the filtered sample as floating-point colour. Keep that precision
    * through vertex-colour modulation and ordinary source-alpha blending; quantizing the sample
    * first produces systematic one-channel errors on minified artwork. */
@@ -4108,12 +4112,14 @@ static void blit_interp_sample(GmlRender *r, uint32_t *dp, const GmlAtlas *atlas
   }
   int sr=(int)(fsr+0.5), sg=(int)(fsg+0.5), sb=(int)(fsb+0.5);
   int aa=(int)(faa+0.5);
-  if(aa<=0 && r->blendmode!=2 && !destination_colour_blend_active(r)) return;
+  if(aa<=0 && r->blendmode!=2 && !(r->alphablend && r->blendmode==6) &&
+     !destination_colour_blend_active(r)) return;
   if(mapped_texture_active(r)){
     uint32_t sampled=mapped_texture_pixel(r,((uint32_t)aa<<24)|((uint32_t)sr<<16)|
                                              ((uint32_t)sg<<8)|(uint32_t)sb);
     aa=(int)(sampled>>24); sr=(sampled>>16)&255; sg=(sampled>>8)&255; sb=sampled&255;
-    if(aa<=0 && r->blendmode!=2 && !destination_colour_blend_active(r)) return;
+    if(aa<=0 && r->blendmode!=2 && !(r->alphablend && r->blendmode==6) &&
+       !destination_colour_blend_active(r)) return;
   }
   int tint_bias=gml_blend_family(r)==GML_BLEND_STUDIO2?127:0;
   sr=(sr*bR+tint_bias)/255; sg=(sg*bG+tint_bias)/255; sb=(sb*bB+tint_bias)/255;
@@ -4123,6 +4129,15 @@ static void blit_interp_sample(GmlRender *r, uint32_t *dp, const GmlAtlas *atlas
   gml_render_dispatch_cpu_scope_write(r);
   if(!r->alphablend){
     *dp=0xFF000000u|((uint32_t)sr<<16)|((uint32_t)sg<<8)|(uint32_t)sb;
+    return;
+  }
+  /* One/zero replaces straight colour and coverage even when the source is
+   * transparent. Keep the existing filtered sample and discard decisions. */
+  if(r->blendmode==6){
+    unsigned source_alpha=(unsigned)lround((double)aa*alpha);
+    uint32_t coverage=gml_render_target_preserves_alpha(r)
+      ?(uint32_t)source_alpha<<24:0xFF000000u;
+    *dp=color_write_merge(r,*dp,coverage|((uint32_t)sr<<16)|((uint32_t)sg<<8)|(uint32_t)sb);
     return;
   }
   if(destination_colour_blend_active(r)){
