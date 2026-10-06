@@ -3252,6 +3252,178 @@ static int crt_terminal_program_case(void){
          crt_terminal_program_extent(240,240,320,240,1);
 }
 
+/* Observe uploaded bytes, not fake shader output. Each input must survive the next scratch
+ * accessor, including a larger auxiliary that grows the shared allocation. */
+static int content_sampler_upload_lifetime_case(void){
+  Session session;
+  GmlSprite sprites[3]={0};
+  struct GmlShaderPal program[1]={0};
+  uint8_t rgba[3][36]={{0}};
+  uint32_t primary[4]={0xFF204060u,0xFF408020u,0xFF608040u,0xFF802060u};
+  const uint32_t auxiliary[2]={0xFF306090u,0xFF90C030u};
+  anygm_test_graphics_reset();
+  REQUIRE(session_open(&session),"sampler lifetime session loads");
+  REQUIRE(graphics_adopt(session.engine,ANYGM_GRAPHICS_OPENGLES3)==ANYGM_OK,
+          "sampler lifetime context adopted");
+  GmlRender *render=&session.engine->render;
+  GmlSprite *saved_sprites=render->spr;
+  int saved_sprite_count=render->n_spr;
+  struct GmlShaderPal *saved_programs=render->shader_pal;
+  int saved_program_count=render->n_shader_pal;
+  render->spr=sprites; render->n_spr=3;
+  render->shader_pal=program; render->n_shader_pal=1;
+  session.engine->config.content_shader_device_expected=1;
+  session.engine->config.content_shader_readback=ANYGM_SHADER_READBACK_ALWAYS;
+  program[0].source_vertex_es=
+    "attribute vec3 in_Position; attribute vec2 in_TextureCoord; "
+    "uniform mat4 gm_Matrices[5]; varying vec2 fixture_uv; "
+    "void main(){fixture_uv=in_TextureCoord; "
+    "gl_Position=gm_Matrices[4]*vec4(in_Position,1.0);}";
+  program[0].source_fragment_es=
+    "precision mediump float; varying vec2 fixture_uv; uniform sampler2D gm_BaseTexture; "
+    "uniform sampler2D fixture_a; uniform sampler2D fixture_b; "
+    "void main(){gl_FragColor=texture2D(gm_BaseTexture,fixture_uv) "
+    "+texture2D(fixture_a,fixture_uv)+texture2D(fixture_b,fixture_uv);}";
+  int ok=1;
+  unsigned serial=0;
+  for(unsigned enlarged=0;enlarged<2 && ok;enlarged++){
+    for(unsigned sprite=0;sprite<3;sprite++){
+      sprites[sprite].w=sprites[sprite].h=sprite && enlarged?3:2;
+      sprites[sprite].n_frames=1;
+      sprites[sprite].runtime_rgba=rgba[sprite];
+      for(int pixel=0;pixel<sprites[sprite].w*sprites[sprite].h;pixel++){
+        uint32_t value=sprite?auxiliary[sprite-1]:primary[pixel];
+        for(unsigned channel=0;channel<3;channel++)
+          rgba[sprite][pixel*4+channel]=(uint8_t)(value>>(16-channel*8));
+        rgba[sprite][pixel*4+3]=255;
+      }
+    }
+    for(unsigned sampler_count=1;sampler_count<=2 && ok;sampler_count++){
+      program[0].generic_sampler_count=(int)sampler_count;
+      for(unsigned index=0;index<sampler_count;index++){
+        snprintf(program[0].generic_sampler[index].name,32,"fixture_%c",'a'+index);
+        program[0].generic_sampler[index].texture=
+          gml_render_sprite_texture_handle((int)index+1,0);
+      }
+      for(unsigned scratch=0;scratch<2 && ok;scratch++){
+        GmlRenderShaderRequest request={0};
+        uint32_t output[4]={0};
+        const uint32_t *source=primary;
+        if(scratch && !gml_render_sprite_frame_plane(render,0,0,NULL,NULL,&source)){ ok=0; break; }
+        const uint32_t *scratch_before=render->content_sampler_plane;
+        size_t scratch_capacity=render->content_sampler_plane_capacity;
+        request.shader=0; request.source=source; request.output=output;
+        request.source_width=request.source_height=request.source_pitch=2;
+        request.width=request.height=request.region_width=request.region_height=2;
+        request.target_width=request.target_height=2;
+        request.source_identity=17; request.serial=++serial;
+        for(unsigned i=0;i<4;i++) request.vertex_colour[i]=1.0f;
+        if(!engine_execute_content_shader(session.engine,&request)){ ok=0; break; }
+        if(memcmp(source,primary,sizeof primary) ||
+           render->content_sampler_plane!=scratch_before ||
+           render->content_sampler_plane_capacity!=scratch_capacity){ ok=0; break; }
+        for(unsigned unit=0;unit<=sampler_count;unit++){
+          size_t bytes=0;
+          unsigned texture=anygm_test_graphics_quad_texture(unit);
+          const unsigned char *uploaded=anygm_test_graphics_texture_bytes(texture,&bytes);
+          unsigned pixels=unit?(unsigned)(sprites[unit].w*sprites[unit].h):4u;
+          if(!texture || !uploaded || bytes!=pixels*sizeof(uint32_t)){ ok=0; break; }
+          for(unsigned pixel=0;pixel<pixels;pixel++){
+            uint32_t actual=0,expected=unit?auxiliary[unit-1]:primary[pixel];
+            memcpy(&actual,uploaded+pixel*sizeof actual,sizeof actual);
+            if(actual!=expected){
+              fprintf(stderr,"sampler upload enlarged=%u samplers=%u scratch=%u "
+                      "unit=%u pixel=%u: %08x != %08x\n",enlarged,sampler_count,scratch,
+                      unit,pixel,actual,expected);
+              ok=0; break;
+            }
+          }
+          if(!ok) break;
+        }
+      }
+    }
+  }
+  if(ok){
+    /* The retained terminal presentation uses the same sampler preparation as a mid-frame
+     * readback, but its plan lives in the engine after these temporary uploads are consumed. */
+    /* Start a new graphics namespace: the bounded fake records texture names below 32, while
+     * the preceding eight submissions also allocate program, target and buffer names. */
+    anygm_graphics_context_destroy(session.engine,1);
+    anygm_test_graphics_reset();
+    ok=graphics_adopt(session.engine,ANYGM_GRAPHICS_OPENGLES3)==ANYGM_OK;
+  }
+  if(ok){
+    session.engine->output_width=session.engine->output_height=2;
+    session.engine->host_canvas_active=0;
+    gml_render_application_surface_bind(render,primary,2,2,1);
+    gml_render_application_surface_set_draw_enabled(render,0);
+    gml_render_set_deferred_presentation(render,1);
+    gml_render_begin(render,session.engine->screen,2,2,0,0);
+    gml_render_gui_begin(render,2,2);
+    gml_render_gui_set_size(render,2,2);
+    gml_render_shader_set_current(render,0);
+    gml_draw_surface_stretched(render,0,0,0,2,2,0xFFFFFFu,1.0);
+    gml_render_shader_set_current(render,-1);
+    GmlRenderDeferredPresentation terminal={0};
+    int deferred=gml_render_deferred_presentation(render,&terminal);
+    unsigned draws_before=anygm_test_graphics_quad_draw_calls();
+    int presented=deferred?engine_present_hardware_screen(session.engine,NULL,NULL):0;
+    ok=deferred && presented;
+    if(!ok) fprintf(stderr,"sampler terminal deferred=%d presented=%d shader=%d "
+                    "images=%u fallback=%u\n",deferred,presented,render->active_shader,
+                    session.engine->host_plan.image_count,session.engine->host_plan.fallback_reason);
+    for(unsigned unit=0;unit<3 && ok;unit++){
+      size_t bytes=0;
+      const unsigned char *uploaded=anygm_test_graphics_texture_bytes(
+        anygm_test_graphics_quad_texture(unit),&bytes);
+      unsigned pixels=unit?9u:4u;
+      ok=uploaded && bytes==pixels*sizeof(uint32_t);
+      if(!ok) fprintf(stderr,"sampler terminal unit=%u texture=%u bytes=%zu expected=%zu "
+                      "shader=%d draws=%u->%u images=%u fallback=%u error=%s\n",
+                      unit,anygm_test_graphics_quad_texture(unit),bytes,pixels*sizeof(uint32_t),
+                      terminal.shader,draws_before,anygm_test_graphics_quad_draw_calls(),
+                      session.engine->host_plan.image_count,session.engine->host_plan.fallback_reason,
+                      gml_gpu_last_error(session.engine->gpu));
+      for(unsigned pixel=0;pixel<pixels && ok;pixel++){
+        uint32_t actual=0,expected=unit?auxiliary[unit-1]:primary[pixel];
+        memcpy(&actual,uploaded+pixel*sizeof actual,sizeof actual);
+        ok=actual==expected;
+        if(!ok) fprintf(stderr,"sampler terminal unit=%u pixel=%u %08x != %08x\n",
+                        unit,pixel,actual,expected);
+      }
+    }
+    ok=ok && session.engine->host_plan.images[1].cpu_pixels==NULL &&
+       session.engine->host_plan.images[2].cpu_pixels==NULL;
+    gml_render_gui_end(render);
+    gml_render_application_surface_bind(render,session.engine->fb,
+                                        session.engine->width,session.engine->height,1);
+  }
+  if(ok){
+    /* Refuse after one owned auxiliary has been prepared. The software fallback must still
+     * have its original borrowed source and no partly written shader output. */
+    GmlRenderShaderRequest request={0};
+    uint32_t output[4]={0xFFAABBCCu,0xFFAABBCCu,0xFFAABBCCu,0xFFAABBCCu};
+    uint32_t before[4];
+    const uint32_t *source=NULL;
+    program[0].generic_sampler_count=2;
+    program[0].generic_sampler[1].texture=gml_render_sprite_texture_handle(99,0);
+    ok=gml_render_sprite_frame_plane(render,0,0,NULL,NULL,&source);
+    memcpy(before,output,sizeof before);
+    request.shader=0; request.source=source; request.output=output;
+    request.source_width=request.source_height=request.source_pitch=2;
+    request.width=request.height=request.region_width=request.region_height=2;
+    request.target_width=request.target_height=2;
+    request.source_identity=17; request.serial=++serial;
+    ok=ok && !engine_execute_content_shader(session.engine,&request) &&
+       !memcmp(source,primary,sizeof primary) && !memcmp(output,before,sizeof before);
+  }
+  render->spr=saved_sprites; render->n_spr=saved_sprite_count;
+  render->shader_pal=saved_programs; render->n_shader_pal=saved_program_count;
+  session_close(&session);
+  REQUIRE(ok,"primary and auxiliary uploads retain independent draw-time pixels");
+  return 1;
+}
+
 static int texture_filter_state_case(void){
   Session source,destination;
   REQUIRE(session_open(&source),"filter source loads");
@@ -3352,6 +3524,7 @@ int main(void){
      presentation_geometry_case},
     {"CRT and box presentation preserve a resident scene through CPU filtering",
      presentation_filter_case},
+    {"primary and auxiliary scratch uploads stay independent",content_sampler_upload_lifetime_case},
     {"texture filters and GPU stack restore",texture_filter_state_case},
     {"state bytes match with and without a target",state_bytes_match_case},
     {"save, load and save again produce the same bytes",save_load_save_case},

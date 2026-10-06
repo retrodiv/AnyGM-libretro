@@ -300,10 +300,26 @@ void engine_graphics_report(AnygmEngine *engine){
  * values and pictures the content bound. Everything comes from the renderer by name; nothing here
  * knows what the program computes. Returns the plan-building result; a refusal is the caller's
  * unshaded blit. */
+typedef struct EngineContentProgramPixels {
+  uint32_t *plane[GML_PLAN_MAX_SAMPLERS];
+  uint32_t count;
+} EngineContentProgramPixels;
+
+static void engine_content_program_pixels_release(GmlRenderPlan *plan,
+                                                   EngineContentProgramPixels *pixels){
+  for(uint32_t index=0;index<pixels->count;index++){
+    for(uint32_t image=0;image<plan->image_count;image++)
+      if(plan->images[image].cpu_pixels==pixels->plane[index])
+        plan->images[image].cpu_pixels=NULL;
+    free(pixels->plane[index]);
+  }
+  pixels->count=0;
+}
+
 static int engine_plan_content_program_part(AnygmEngine *engine,GmlRenderPlan *plan,uint32_t image,
                                             GmlPlanRect destination,GmlPlanRect source_rect,
                                             int shader_id,uint32_t generation,int linear,
-                                            const float colour[4]){
+                                            const float colour[4],EngineContentProgramPixels *owned){
   GmlPlanShader shader;
   GmlRenderShaderSampler samplers[GML_PLAN_MAX_SAMPLERS];
   uint32_t count;
@@ -321,8 +337,13 @@ static int engine_plan_content_program_part(AnygmEngine *engine,GmlRenderPlan *p
       picture.image_class=GML_PLAN_IMAGE_SURFACE;
       picture.identity=(uint32_t)samplers[index].surface;
     } else if(samplers[index].sprite>=0){
-      if(!gml_render_sprite_frame_plane(&engine->render,samplers[index].sprite,
-                                        samplers[index].frame,&w,&h,&pixels)) return 0;
+      uint32_t *plane=NULL;
+      /* Each expansion stays alive until synchronous plan submission consumes all inputs.
+       * The primary source may itself be the renderer's next-call-invalidated scratch plane. */
+      if(!gml_render_sprite_frame_plane_owned(&engine->render,samplers[index].sprite,
+                                              samplers[index].frame,&w,&h,&plane)) return 0;
+      owned->plane[owned->count++]=plane;
+      pixels=plane;
       picture.image_class=GML_PLAN_IMAGE_SPRITE;
       picture.identity=((uint32_t)samplers[index].sprite<<10)|((uint32_t)samplers[index].frame&0x3FFu);
     } else continue;
@@ -345,11 +366,11 @@ static int engine_plan_content_program_part(AnygmEngine *engine,GmlRenderPlan *p
 
 static int engine_plan_content_program(AnygmEngine *engine,GmlRenderPlan *plan,uint32_t image,
                                        GmlPlanRect destination,int shader_id,uint32_t generation,
-                                       int linear){
+                                       int linear,EngineContentProgramPixels *owned){
   static const float white[4]={1.0f,1.0f,1.0f,1.0f};
   GmlPlanRect whole={0,0,0,0};
   return engine_plan_content_program_part(engine,plan,image,destination,whole,shader_id,generation,
-                                          linear,white);
+                                          linear,white,owned);
 }
 
 /* The renderer's request to run a content program in the middle of a frame: the source is
@@ -381,6 +402,7 @@ int engine_execute_content_shader(void *context,const GmlRenderShaderRequest *re
   GmlPlanRect whole;
   uint32_t image;
   uint64_t started;
+  EngineContentProgramPixels owned={0};
   if(!engine || !request || !engine_content_shaders_active(engine)) return 0;
   if(engine->readback_refused) return 0;
   /* Start pipelined read-back with the first pass. Waiting for the device adds latency;
@@ -442,10 +464,15 @@ int engine_execute_content_shader(void *context,const GmlRenderShaderRequest *re
     const float *colour=(request->vertex_colour[3]>0.0f||request->vertex_colour[0]>0.0f)
                         ?request->vertex_colour:white;
     if(!engine_plan_content_program_part(engine,&plan,image,whole,region,request->shader,
-                                         request->serial,request->linear,colour)) return 0;
+                                         request->serial,request->linear,colour,&owned)){
+      engine_content_program_pixels_release(&plan,&owned);
+      return 0;
+    }
   }
   started=anygm_host_monotonic_time_ns(&engine->host);
-  if(!engine_execute_graphics_plan(engine,&plan)){
+  int executed=engine_execute_graphics_plan(engine,&plan);
+  engine_content_program_pixels_release(&plan,&owned);
+  if(!executed){
     if(plan.fallback_reason==GML_PLAN_FALLBACK_SHADER_FAILURE)
       gml_render_shader_mark_failed(&engine->render,request->shader);
     return 0;
@@ -577,11 +604,12 @@ int engine_present_hardware_screen(AnygmEngine *engine,unsigned *width,unsigned 
     axis_y.extent=record.extent_y;
   }
   if(record.shader>=0 && shaders){
+    EngineContentProgramPixels owned={0};
     /* The content drew its frame through its own program. Run that program on the device; when
      * the device refuses it, the renderer is told so the next frame draws unshaded rather than
      * asking again, and this frame falls back to the unshaded blit below. */
     if(engine_plan_content_program(engine,plan,image,destination,record.shader,record.generation,
-                                   record.linear)){
+                                   record.linear,&owned)){
       if(crt_readback){
         /* Preserve the content's terminal program at its authored extent before the CPU CRT
          * filter. A terminal frame must be current even when mid-frame readbacks are pipelined. */
@@ -591,6 +619,7 @@ int engine_present_hardware_screen(AnygmEngine *engine,unsigned *width,unsigned 
         gml_gpu_set_readback_pipelined(engine->gpu,0);
         int executed=engine_execute_graphics_plan(engine,plan);
         gml_gpu_set_readback_pipelined(engine->gpu,engine->readback_is_pipelined);
+        engine_content_program_pixels_release(plan,&owned);
         if(executed){
           gml_render_discard_deferred_presentation(&engine->render);
           engine->frame_authority=ENGINE_FRAME_CPU_MATERIALIZED;
@@ -598,10 +627,15 @@ int engine_present_hardware_screen(AnygmEngine *engine,unsigned *width,unsigned 
           engine->host_clear_valid=0;
           return 0; /* The caller still has to fit and present these pixels. */
         }
-      } else if(engine_execute_graphics_plan(engine,plan)) goto presented;
+      } else {
+        int executed=engine_execute_graphics_plan(engine,plan);
+        engine_content_program_pixels_release(plan,&owned);
+        if(executed) goto presented;
+      }
       if(plan->fallback_reason==GML_PLAN_FALLBACK_SHADER_FAILURE)
         gml_render_shader_mark_failed(&engine->render,record.shader);
     }
+    engine_content_program_pixels_release(plan,&owned);
     gml_render_plan_reset(plan,GML_PLAN_TARGET_HOST_FRAMEBUFFER,
                           engine->output_width,engine->output_height);
     if(!gml_render_plan_add_clear(plan,whole,record.has_fill?record.fill_color:0x000000u)) return 0;

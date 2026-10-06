@@ -588,6 +588,10 @@ enum { GML_RENDER_SHADED_SURFACE=-2 };
  * next call. */
 int gml_render_sprite_frame_plane(GmlRender *r,int sprite,int frame,int *width,int *height,
                                   const uint32_t **pixels);
+/* The same bounded expansion in caller-owned storage. Free the returned plane after submission;
+ * obtaining another sampler never invalidates it or the renderer's borrowed scratch source. */
+int gml_render_sprite_frame_plane_owned(GmlRender *r,int sprite,int frame,int *width,int *height,
+                                        uint32_t **pixels);
 /* A runtime surface's pixels, for a sampler upload. */
 int gml_render_surface_plane(GmlRender *r,int surface,int *width,int *height,
                              const uint32_t **pixels);

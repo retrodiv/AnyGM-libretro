@@ -695,8 +695,8 @@ int gml_render_is_classic(const GmlRender *r){
   return r?r->classic:0;
 }
 
-int gml_render_sprite_frame_plane(GmlRender *r,int sprite,int frame,int *width,int *height,
-                                  const uint32_t **pixels){
+static int sprite_frame_plane(GmlRender *r,int sprite,int frame,uint32_t **plane,
+                               size_t *capacity,int *width,int *height,const uint32_t **pixels){
   if(!r || !pixels || sprite<0 || sprite>=r->n_spr) return 0;
   {
     GmlSprite *s=&r->spr[sprite];
@@ -708,13 +708,13 @@ int gml_render_sprite_frame_plane(GmlRender *r,int sprite,int frame,int *width,i
       const uint8_t *rgba=NULL;
       int atlas_w=0,ax0=0,ay0=0,lx0=0,ly0=0,lw=0,lh=0;
       if(count>16777216u) return 0;
-      if(count>r->content_sampler_plane_capacity){
-        uint32_t *grown=realloc(r->content_sampler_plane,count*sizeof *grown);
+      if(count>*capacity){
+        uint32_t *grown=realloc(*plane,count*sizeof *grown);
         if(!grown) return 0;
-        r->content_sampler_plane=grown;
-        r->content_sampler_plane_capacity=count;
+        *plane=grown;
+        *capacity=count;
       }
-      memset(r->content_sampler_plane,0,count*sizeof *r->content_sampler_plane);
+      memset(*plane,0,count*sizeof **plane);
       if(s->runtime_rgba){ rgba=s->runtime_rgba; atlas_w=w; lw=w; lh=h; }
       else if(s->frame){
         int ti=s->frame[frame];
@@ -737,17 +737,37 @@ int gml_render_sprite_frame_plane(GmlRender *r,int sprite,int frame,int *width,i
           for(int x=0;x<lw;x++){
             int dx=lx0+x; if(dx<0 || dx>=w) continue;
             const uint8_t *px=rgba+((size_t)(ay0+y)*atlas_w+(ax0+x))*4u;
-            r->content_sampler_plane[(size_t)dy*w+dx]=
+            (*plane)[(size_t)dy*w+dx]=
               ((uint32_t)px[3]<<24)|((uint32_t)px[0]<<16)|((uint32_t)px[1]<<8)|(uint32_t)px[2];
           }
         }
       }
       if(width) *width=w;
       if(height) *height=h;
-      *pixels=r->content_sampler_plane;
+      *pixels=*plane;
       return 1;
     }
   }
+}
+int gml_render_sprite_frame_plane(GmlRender *r,int sprite,int frame,int *width,int *height,
+                                  const uint32_t **pixels){
+  if(!r) return 0;
+  return sprite_frame_plane(r,sprite,frame,&r->content_sampler_plane,
+                              &r->content_sampler_plane_capacity,width,height,pixels);
+}
+int gml_render_sprite_frame_plane_owned(GmlRender *r,int sprite,int frame,int *width,int *height,
+                                        uint32_t **pixels){
+  uint32_t *plane=NULL;
+  size_t capacity=0;
+  const uint32_t *view=NULL;
+  if(!pixels) return 0;
+  *pixels=NULL;
+  if(!sprite_frame_plane(r,sprite,frame,&plane,&capacity,width,height,&view)){
+    free(plane);
+    return 0;
+  }
+  *pixels=plane;
+  return 1;
 }
 /* An atlas rectangle as one ARGB plane in renderer-owned scratch. A sprite frame and a font glyph
  * are both this, which is why one function serves both. Valid until the next call. */
