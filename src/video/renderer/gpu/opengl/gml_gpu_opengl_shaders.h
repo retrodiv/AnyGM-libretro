@@ -306,10 +306,10 @@
   "  if(u_filter==30){\n" \
   "    vec2 extent=vec2(textureSize(u_image,0));\n" \
   "    vec2 position=vec2(gl_FragCoord.x,v_step.y-gl_FragCoord.y);\n" \
-  "    vec2 uv=(position-v_map.xy)/v_map.zw;\n" \
-  "    if(v_step.x!=0.0) uv.y=1.0-uv.y;\n" \
-  "    uv=clamp(uv,(v_clamp.xy+vec2(0.5))/extent,(v_clamp.zw+vec2(0.5))/extent);\n" \
-  "    o_color=vec4(texture(u_image,uv).rgb,1.0); return;\n" \
+  "    vec2 texel=floor((position-v_map.xy)*extent/v_map.zw);\n" \
+  "    if(v_step.x!=0.0) texel.y=extent.y-1.0-texel.y;\n" \
+  "    texel=clamp(texel,v_clamp.xy,v_clamp.zw);\n" \
+  "    o_color=vec4(texture(u_image,(texel+vec2(0.5))/extent).rgb,1.0); return;\n" \
   "  }\n" \
   "  // R03_SHADER_HARDWARE_FILTERED_ADDITIVE: Hardware bilinear additive without destination sampling.\n" \
   "  if(u_filter==18){\n" \
