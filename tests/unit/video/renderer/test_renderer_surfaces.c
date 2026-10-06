@@ -189,6 +189,7 @@ static int destination_colour_factor_case(void){
     render.alphablend=1;
     gml_surface_reset_target(&render);
   }
+  gml_vm_free(&vm);
   gml_render_free(&render);
   return 0;
 }
@@ -251,6 +252,7 @@ static int destination_colour_sprite_case(void){
   free(page.alpha_row_min); free(page.alpha_row_max);
   render.spr=NULL; render.n_spr=0; render.tpag=NULL; render.n_tpag=0;
   render.atlas=NULL; render.n_atlas=0;
+  gml_vm_free(&vm);
   gml_render_free(&render);
   return 0;
 }
@@ -964,6 +966,7 @@ static int automatic_underlay_shader_case(void){
     REQUIRE(!memcmp(source,(uint32_t[]){0xFF204060u,0xFF204060u,0xFF204060u,0xFF204060u},
                     sizeof source),"automatic shader does not overwrite its source");
     free(render.shaded_plane);
+    free(render.shader_account);
     if(kind>=6){
       GmlSoftware3DStatus status={0};
       REQUIRE(gml_software3d_status_get(render.software3d,&status) && status.active,
