@@ -10,6 +10,7 @@
 
 #include <stdint.h>
 #include <stdio.h>
+#include <math.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -973,6 +974,198 @@ static int automatic_underlay_shader_case(void){
   return 0;
 }
 
+typedef struct {
+  GmlRender *render;
+  int calls,change_alpha,valid;
+} DeferredShaderControl;
+
+static int deferred_shader_execute(void *context,const GmlRenderShaderRequest *request){
+  DeferredShaderControl *control=context;
+  control->calls++;
+  control->valid=request->shader==0 && request->geometry.valid &&
+    request->width==8 && request->height==6 &&
+    request->target_width==8 && request->target_height==6 &&
+    request->dest_x==0 && request->dest_y==0 &&
+    request->source_width==8 && request->source_height==6 &&
+    control->render->shader_pal[0].generic_uniform[0].value[0]==0.25f;
+  for(int y=0;y<6;y++) for(int x=0;x<8;x++){
+    uint32_t pixel=request->source[y*request->source_pitch+x];
+    if(control->change_alpha)
+      pixel=(pixel&0xFFFFFFu)|((x==4 && y==3)?0u:0x99000000u);
+    request->output[y*8+x]=pixel;
+  }
+  return 1;
+}
+
+/* Full-target coverage is not an opaque overwrite. Compare the same shader draw with and
+ * without deferral, including a program that makes an opaque input partially transparent. */
+static int deferred_shader_alpha_case(void){
+  for(int change_alpha=0;change_alpha<2;change_alpha++) for(int mutate=0;mutate<6;mutate++){
+    uint32_t reference[48]={0};
+    for(int deferred=0;deferred<2;deferred++){
+      GmlRender render={0};
+      struct GmlShaderPal shader={0};
+      uint32_t target[48];
+      DeferredShaderControl control={&render,0,change_alpha,0};
+      render.next_surface_id=1;
+      render.color_write_mask=15;
+      render.lut_pal_sprite=-1;
+      render.shader_pal=&shader; render.n_shader_pal=1;
+      shader.source_vertex_es="void main(){gl_Position=vec4(0.0);}";
+      shader.source_fragment_es="void main(){gl_FragColor=vec4(0.0);}";
+      shader.generic_uniform_count=1;
+      strcpy(shader.generic_uniform[0].name,"fixture_gain");
+      shader.generic_uniform[0].count=1;
+      shader.generic_uniform[0].value[0]=0.25f;
+      gml_render_begin(&render,target,8,6,0,0);
+      gml_render_clear(&render,0x0D0B07u,1.0);
+      int surface=gml_surface_create(&render,8,6);
+      REQUIRE(surface>0,"deferred shader source allocated");
+      uint32_t *source=surface_pixels(&render,surface,NULL,NULL);
+      for(int pixel=0;pixel<48;pixel++) source[pixel]=
+        change_alpha?0xFF000000u:pixel==28?0u:0x99000000u;
+      render.surface[surface-1].opaque_known=0;
+      render.surface[surface-1].all_transparent=0;
+      gml_render_set_shader_executor(&render,deferred_shader_execute,&control);
+      gml_render_set_deferred_presentation(&render,deferred);
+      gml_render_shader_set_current(&render,0);
+      gml_draw_surface_stretched(&render,surface,0,0,8,6,0xFFFFFFu,1.0);
+      gml_render_shader_set_current(&render,-1);
+      if(mutate==1){
+        double value=0.75;
+        int handle=gml_render_shader_uniform_handle(&render,0,"fixture_gain");
+        gml_render_shader_uniform_set_values(&render,handle,&value,1,0);
+        REQUIRE(shader.generic_uniform[0].value[0]==0.75f,
+                "later uniform setter keeps its requested value");
+      }
+      if(mutate==2){
+        REQUIRE(gml_surface_set_target(&render,surface),"later target binds");
+        gml_render_clear(&render,0xFFFFFFu,1.0);
+        gml_surface_reset_target(&render);
+      }
+      if(mutate==3) gml_surface_free(&render,surface);
+      if(mutate==4){
+        uint32_t *writable=surface_pixels(&render,surface,NULL,NULL);
+        memset(writable,0,48*sizeof *writable);
+      }
+      if(mutate==5) gml_surface_resize(&render,surface,1,1);
+      /* Materialization must use normal state without leaking it into the later draw. */
+      render.interp=1; render.blendmode=6; render.color_write_mask=7;
+      gml_render_primitive_point(&render,7,5,0xFFFFFFu);
+      int matches=control.calls==1 && control.valid && target[28]==0xFF070B0Du &&
+        target[0]==0xFF020405u && render.active_shader==-1 &&
+        render.interp==1 && render.blendmode==6 && render.color_write_mask==7;
+      if(!deferred) memcpy(reference,target,sizeof reference);
+      matches=matches && !memcmp(reference,target,sizeof reference);
+      if(!matches)
+        fprintf(stderr,"deferred alpha source_opaque=%d mutation=%d enabled=%d calls=%d valid=%d "
+                       "corner=%08x center=%08x equal=%d\n",
+                change_alpha,mutate,deferred,control.calls,control.valid,target[0],target[28],
+                !memcmp(reference,target,sizeof reference));
+      gml_surface_free(&render,surface);
+      free(render.shaded_plane);
+      REQUIRE(matches,"deferred shader preserves destination and shader-output alpha");
+    }
+  }
+  return 0;
+}
+
+typedef struct {
+  GmlRenderShaderGeometry geometry;
+  int calls,valid,reject,width,height,dest_x,dest_y;
+  float vertex;
+} DeferredGeometryControl;
+
+static int deferred_geometry_execute(void *context,const GmlRenderShaderRequest *request){
+  DeferredGeometryControl *control=context;
+  control->calls++;
+  control->valid=request->width==control->width && request->height==control->height &&
+    request->dest_x==control->dest_x && request->dest_y==control->dest_y &&
+    request->geometry.origin_x==control->geometry.origin_x &&
+    request->geometry.origin_y==control->geometry.origin_y &&
+    request->geometry.extent_x==control->geometry.extent_x &&
+    request->geometry.extent_y==control->geometry.extent_y &&
+    request->geometry.valid==control->geometry.valid &&
+    request->vertex_colour[0]==control->vertex;
+  if(!control->valid)
+    fprintf(stderr,"deferred request size=%dx%d/%dx%d destination=%d,%d/%d,%d "
+                   "geometry=(%g,%g %gx%g)/(%g,%g %gx%g) vertex=%g/%g\n",
+            request->width,request->height,
+            control->width,control->height,request->dest_x,request->dest_y,
+            control->dest_x,control->dest_y,
+            request->geometry.origin_x,request->geometry.origin_y,
+            request->geometry.extent_x,request->geometry.extent_y,
+            control->geometry.origin_x,control->geometry.origin_y,
+            control->geometry.extent_x,control->geometry.extent_y,
+            request->vertex_colour[0],control->vertex);
+  if(control->reject) return 0;
+  for(int y=0;y<request->height;y++) for(int x=0;x<request->width;x++){
+    int sx=x*request->source_width/request->width;
+    int sy=y*request->source_height/request->height;
+    uint32_t pixel=request->source[sy*request->source_pitch+sx];
+    if(control->vertex!=1.0f) pixel=(pixel&0xFF000000u)|0x00102030u;
+    request->output[y*request->width+x]=pixel;
+  }
+  return 1;
+}
+
+/* Exercise geometry retained across a camera change, executor refusal/absence, and draw state
+ * which the terminal record cannot represent. The immediate path is the controlled comparator. */
+static int deferred_shader_geometry_case(void){
+  for(int clipped=0;clipped<2;clipped++) for(int executor=0;executor<3;executor++)
+    for(int tinted=0;tinted<2;tinted++){
+      uint32_t reference[48]={0};
+      for(int deferred=0;deferred<2;deferred++){
+        GmlRender render={0};
+        struct GmlShaderPal shader={0};
+        uint32_t target[48];
+        double x=clipped?-1.25:0.0,y=clipped?-0.75:0.0;
+        double width=clipped?10.0:8.0,height=clipped?8.0:6.0;
+        DeferredGeometryControl control={0};
+        render.next_surface_id=1; render.color_write_mask=15; render.lut_pal_sprite=-1;
+        render.shader_pal=&shader; render.n_shader_pal=1;
+        shader.source_vertex_es="void main(){gl_Position=vec4(0.0);}";
+        shader.source_fragment_es="void main(){gl_FragColor=vec4(0.0);}";
+        gml_render_begin(&render,target,8,6,2.5,1.5);
+        gml_render_clear(&render,0x0D0B07u,1.0);
+        int surface=gml_surface_create(&render,8,6);
+        REQUIRE(surface>0,"geometry shader source allocated");
+        uint32_t *source=surface_pixels(&render,surface,NULL,NULL);
+        for(int pixel=0;pixel<48;pixel++) source[pixel]=pixel==28?0u:0x991A2B3Cu;
+        /* This resource-free fixture writes storage directly, so its creation-time transparent
+         * certificate is no longer valid. Ordinary target draws update that metadata themselves. */
+        render.surface[surface-1].opaque_known=0;
+        render.surface[surface-1].all_transparent=0;
+        control.geometry=gml_render_shader_geometry(&render,x+2.5,y+1.5,width,height,1);
+        control.width=(int)width; control.height=(int)height;
+        control.dest_x=(int)lround(x); control.dest_y=(int)lround(y);
+        control.reject=executor==1; control.vertex=tinted?0.5f:1.0f;
+        render.shade_vertex_colour_valid=1;
+        for(int channel=0;channel<4;channel++) render.shade_vertex_colour[channel]=control.vertex;
+        if(executor!=2) gml_render_set_shader_executor(&render,deferred_geometry_execute,&control);
+        gml_render_set_deferred_presentation(&render,deferred);
+        gml_render_shader_set_current(&render,0);
+        gml_draw_surface_stretched(&render,surface,x+2.5,y+1.5,width,height,0xFFFFFFu,1.0);
+        if(deferred && !tinted) REQUIRE(render.pending_presentation,"eligible draw is retained");
+        if(tinted) REQUIRE(!render.pending_presentation,"nonwhite vertex draw executes immediately");
+        gml_render_shader_set_current(&render,-1);
+        render.cam_x=7.0; render.cam_y=-3.0;
+        gml_render_primitive_point(&render,14,2,0xFFFFFFu);
+        int matches=control.calls==(executor==2?0:1) && (executor==2 || control.valid) &&
+          render.cam_x==7.0 && render.cam_y==-3.0 && render.active_shader==-1 &&
+          render.shade_vertex_colour_valid && render.shade_vertex_colour[0]==control.vertex;
+        if(!deferred) memcpy(reference,target,sizeof reference);
+        matches=matches && !memcmp(reference,target,sizeof reference);
+        if(!matches) fprintf(stderr,"deferred geometry clipped=%d executor=%d tinted=%d deferred=%d "
+                            "calls=%d valid=%d equal=%d\n",clipped,executor,tinted,deferred,
+                            control.calls,control.valid,!memcmp(reference,target,sizeof reference));
+        gml_surface_free(&render,surface); free(render.shaded_plane);
+        REQUIRE(matches,"deferred shader matches immediate geometry and fallback composition");
+      }
+    }
+  return 0;
+}
+
 static int opaque_integer_scale_case(void){
   enum { SOURCE_WIDTH=5,SOURCE_HEIGHT=3,TARGET_WIDTH=20,TARGET_HEIGHT=12 };
   uint32_t source[SOURCE_WIDTH*SOURCE_HEIGHT];
@@ -1713,6 +1906,8 @@ int main(void){
           "first-generation high magnification case");
   REQUIRE(opaque_integer_scale_case()==0,"opaque integer scale case");
   REQUIRE(automatic_underlay_shader_case()==0,"automatic underlay shader case");
+  REQUIRE(deferred_shader_alpha_case()==0,"deferred shader alpha case");
+  REQUIRE(deferred_shader_geometry_case()==0,"deferred shader geometry case");
   REQUIRE(point_downscale_case()==0,"point downscale case");
   REQUIRE(opaque_near_identity_reduction_case()==0,
           "opaque near-identity reduction case");

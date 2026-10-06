@@ -1345,6 +1345,8 @@ int gml_surface_create(GmlRender *r, int w, int h){
 void gml_surface_free(GmlRender *r, int id){
   int i=surface_slot(id);
   if(!r || i<0 || !r->surface[i].live) return;
+  if(r->pending_presentation && r->presentation.shader>=0)
+    gml_render_maybe_prepare_draw(r);
   if(!gml_render_application_scene_flush(r)) return;
   uint32_t *old=r->surface[i].px;
   /* Close each active binding while its storage is still valid. The same surface can be
@@ -1421,6 +1423,9 @@ int gml_render_application_surface_ensure_owned(GmlRender *r,int w,int h){
 }
 void gml_surface_resize(GmlRender *r, int id, int w, int h){
   if(!r || w<=0 || h<=0 || w>4096 || h>4096) return;
+  if(r->pending_presentation && r->presentation.shader>=0 &&
+     (id==0 || (id>0 && id<=GML_MAX_SURFACES && r->surface[id-1].live)))
+    gml_render_maybe_prepare_draw(r);
   if(id==0){
     /* Surface zero follows the same explicit resize request in every generation. */
     if(!r->win) return;
@@ -1467,6 +1472,10 @@ void gml_surface_resize(GmlRender *r, int id, int w, int h){
 }
 int gml_surface_set_target(GmlRender *r, int id){
   if(!r || r->target_sp>=GML_SURFACE_STACK) return 0;
+  /* A presentation is a base-target operation, never a child-target stack entry. Finish it
+   * before changing target identity or permitting writes to its borrowed samplers. */
+  if(r->pending_presentation && r->presentation.shader>=0)
+    gml_render_maybe_prepare_draw(r);
   if(!gml_render_application_scene_flush(r)) return 0;
   int w=0,h=0,si=surface_slot(id);
   uint32_t *px=NULL;

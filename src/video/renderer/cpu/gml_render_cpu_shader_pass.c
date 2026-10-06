@@ -33,6 +33,9 @@ static int shade_source_to_target(GmlRender *r,const uint32_t *source,int sw,int
   size_t pixels;
   int saved;
   if(!source || sw<=0 || sh<=0) return 0;
+  /* Complete an earlier presentation before allocating or filling shared shader scratch. Its
+   * materialization can itself execute a program and must not overwrite this draw's output. */
+  if(r->pending_presentation) gml_render_maybe_prepare_draw(r);
   if(width<=0 || height<=0 || width>SHADED_MAX_EXTENT || height>SHADED_MAX_EXTENT) return 0;
   pixels=(size_t)width*(size_t)height;
   if(pixels>SHADED_MAX_PIXELS) return 0;

@@ -305,9 +305,9 @@ typedef struct {
   /* Nonzero only when the automatic opaque underlay was retained on the device. The software
    * fallback reconstructs this exact resource before reading source_pixels. */
   GmlRenderImageRef resident_image;
-  /* The content shader the presentation was drawn through, or -1 for the plain blit. The
-   * software write of the record is always the plain blit: that is what the runtime draws when no
-   * device executes the program. */
+  /* The content shader the presentation was drawn through, or -1 for the plain blit. A CPU suffix
+   * executes and alpha-composes the retained program, falling back to an alpha-composed plain
+   * source only when no executor accepts it. */
   int shader;
   GmlRenderShaderGeometry shader_geometry;
   /* Whether the content asked for interpolated sampling when it drew. */

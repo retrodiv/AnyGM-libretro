@@ -12,6 +12,13 @@
 #include <stdlib.h>
 #include <string.h>
 
+/* A terminal record borrows its program's controls. Complete it before a setter changes those
+ * controls, while shader_reset alone may leave the original program retained for presentation. */
+static void flush_recorded_program(GmlRender *r,int shader){
+  if(r && r->pending_presentation && r->presentation.shader>=0 &&
+     (shader<0 || r->presentation.shader==shader)) gml_render_maybe_prepare_draw(r);
+}
+
 void gml_render_shader_set_current(GmlRender *r,int shader){
   if(r) r->active_shader=shader;
 }
@@ -190,12 +197,14 @@ static int texture_filter_stage(const GmlRender *r,int handle){
 }
 void gml_render_texture_filter_all(GmlRender *r,int enabled){
   if(!r) return;
+  flush_recorded_program(r,-1);
   r->interp=enabled?1:0;
   for(int i=0;i<GML_RENDER_TEXTURE_STAGES-1;i++) r->texture_filter[i]=r->interp;
 }
 void gml_render_texture_filter_set(GmlRender *r,int sampler,int enabled){
   if(!r) return;
   int stage=texture_filter_stage(r,sampler);
+  if(stage>=0) flush_recorded_program(r,-1);
   if(stage==0) r->interp=enabled?1:0;
   else if(stage>0) r->texture_filter[stage-1]=enabled?1:0;
 }
@@ -213,6 +222,7 @@ void gml_render_shader_uniform_set_values(GmlRender *r,int handle,const double *
   {
     struct GmlShaderPal *recognized=&r->shader_pal[shader];
     if(index>=recognized->generic_uniform_count) return;
+    flush_recorded_program(r,shader);
     if(count>16u) count=16u;
     for(uint32_t component=0;component<count;component++)
       recognized->generic_uniform[index].value[component]=(float)values[component];
@@ -230,6 +240,7 @@ void gml_render_shader_uniform_set(GmlRender *r,int handle,const double values[4
   int shader=handle/GML_RENDER_SHADER_HANDLE_STRIDE;
   int slot=handle%GML_RENDER_SHADER_HANDLE_STRIDE;
   if(shader<0 || shader>=r->n_shader_pal || !r->shader_pal) return;
+  flush_recorded_program(r,shader);
   struct GmlShaderPal *recognized=&r->shader_pal[shader];
   if(recognized->indexed_brightness && slot==54){
     recognized->indexed_brightness_value=(float)values[0];
@@ -361,6 +372,7 @@ int gml_render_shader_texture_stage_set(
       struct GmlShaderPal *recognized=&r->shader_pal[generic_shader];
       if(generic_index>=recognized->generic_sampler_count) return 0;
       if(kind!=GML_TEX_SPR_TAG && kind!=GML_TEX_SURF_TAG) return 0;
+      flush_recorded_program(r,generic_shader);
       recognized->generic_sampler[generic_index].texture=texture;
       const char *name=recognized->generic_sampler[generic_index].name;
       int palette=(recognized->lut && !strcmp(name,recognized->lut_sampler)) ||

@@ -159,10 +159,8 @@ void render_present_first_generation(GmlRender *r,int surf,const uint32_t *src,i
   if(!deferrable) gml_render_cpu_present_image(r);
 }
 
-/* A surface drawn through the content's own program as the frame's last operation. Recorded only:
- * when something other than the processor takes the record it executes the program, and when the
- * processor writes it, it writes the plain blit, which is what this runtime draws for a program it
- * does not execute. Returns whether the draw was taken; when it was not, the caller draws it. */
+/* A possible terminal draw through the content's own program. The host executes a retained
+ * terminal record; a later CPU suffix executes and alpha-composes it before that suffix. */
 int render_present_content_shader(GmlRender *r,int surf,const uint32_t *src,int sw,int sh,
                                   int x0,int y0,int x1,int y1,
                                   double dx,double dy,double dw,double dh,int shader,
@@ -206,10 +204,9 @@ int render_present_content_shader(GmlRender *r,int surf,const uint32_t *src,int 
   r->presentation.linear=r->interp?1:0;
   r->presentation.generation++;
   r->pending_presentation=1;
-  if(covers){
-    r->fb_opaque_known=1;
-    r->fb_all_opaque=1;
-    r->fb_all_transparent=0;
-  }
+  /* A program may create transparent fragments even from an opaque source. */
+  r->fb_opaque_known=0;
+  r->fb_all_opaque=0;
+  r->fb_all_transparent=0;
   return 1;
 }

@@ -50,6 +50,9 @@ static int has_suspended_fill(const GmlRender *r,const uint32_t *px){
 }
 static uint32_t *surface_pixels_access(GmlRender *r, int id, int *w, int *h,
                                         int writable){
+  /* Writable borrows can change a primary or auxiliary sampler of a retained program. */
+  if(writable && r && r->pending_presentation && r->presentation.shader>=0)
+    gml_render_maybe_prepare_draw(r);
   if(id==GML_RENDER_SHADED_SURFACE){
     if(r->shaded_plane_width<=0 || r->shaded_plane_height<=0) return NULL;
     if(w) *w=r->shaded_plane_width;
@@ -1335,14 +1338,17 @@ void gml_render_cpu_draw_surface_stretched_impl(GmlRender *r,int surf,double dx,
   if(sdual){ draw_surface_dual_sample(r,sdual,surf,0,0,sw,sh,dx,dy,dw,dh,blend,alpha); return; }
   GmlRenderShaderGeometry geometry=gml_render_shader_geometry(r,
     canvas_present?dx-r->cam_x:dx,canvas_present?dy-r->cam_y:dy,dw,dh,!explicit_target_raster);
-  /* A surface presented through a program this renderer does not execute: the frame's last
-   * operation, recorded for the host's graphics context when one is adopted, and otherwise drawn
-   * plain below exactly as before. The shape is the content-owned presentation's: base target,
-   * opaque, unblended, covering the target or sitting on a fill that does. */
+  /* A possible terminal content program. A later CPU draw must materialize the same ordinary
+   * source-alpha operation, so defer only the normal draw state the record represents. Covering
+   * the target says nothing about source or shader-output opacity. */
   if(r->active_shader>=0 && gml_render_shader_content_candidate(r,r->active_shader) &&
      r->presentation_deferral_enabled && r->target_sp==0 && r->target_id<0 && r->fb==r->base_fb &&
      spx!=r->fb && alpha>=1.0 && (blend&0xFFFFFFu)==0xFFFFFFu && r->blendmode==0 &&
-     r->color_write_mask==0x0F && dw>0.0 && dh>0.0){
+     r->color_write_mask==0x0F && r->alphablend && !r->alpha_test_enable && !r->fog_flat &&
+     (!r->shade_vertex_colour_valid ||
+      (r->shade_vertex_colour[0]==1.0f && r->shade_vertex_colour[1]==1.0f &&
+       r->shade_vertex_colour[2]==1.0f && r->shade_vertex_colour[3]==1.0f)) &&
+     r->blend_equation==1 && r->blend_equation_alpha==1 && dw>0.0 && dh>0.0){
     double ldx=dx-r->cam_x,ldy=dy-r->cam_y;
     int x0=(int)ceil(ldx-0.5),y0=(int)ceil(ldy-0.5);
     int x1=(int)ceil(ldx+dw-0.5),y1=(int)ceil(ldy+dh-0.5);
