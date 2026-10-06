@@ -560,6 +560,7 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
   GmlRenderRect region;
   double x0,y0,width,height,cosine=1.0,sine=0.0;
   double nearest_bias_x=0.0,nearest_bias_y=0.0;
+  uint32_t nearest_contiguous_x=0u,nearest_contiguous_y=0u;
   double nearest_anchor_x=left,nearest_anchor_y=top;
   double positioned_x_tie=0.0,positioned_y_tie=0.0;
   double span_x[4]={0},span_y[4]={0};
@@ -900,14 +901,21 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
   }
   if(nearest_mode==4 && (xs>1.0 || ys>1.0)){
     if(page->project_authored_edges || width>4096.0 || height>4096.0) return 0;
-    /* The point leaf snaps a unit axis and uses the trailing-centre boundary
-     * at integer enlargement. Prune its unwritten last texel before submission. */
+    /* The white/full-alpha point leaf can consume one contiguous physical
+     * atlas texel at its far edge. Other draws leave that sample unwritten. */
     double phase_x=xs==1.0?0.5:x0+0.5-left;
     double phase_y=ys==1.0?0.5:y0+0.5-top;
     if(xs>1.0 && fabs(xs-nearbyint(xs))<1e-9) phase_x+=0.5-1e-9;
     if(ys>1.0 && fabs(ys-nearbyint(ys))<1e-9) phase_y+=0.5-1e-9;
-    if(gml_render_point_axis_index((int)width-1,phase_x,xs)>=page->sw) width-=1.0;
-    if(gml_render_point_axis_index((int)height-1,phase_y,ys)>=page->sh) height-=1.0;
+    int last_x=gml_render_point_axis_index((int)width-1,phase_x,xs);
+    int last_y=gml_render_point_axis_index((int)height-1,phase_y,ys);
+    int white_point=alpha==1.0 && (colour&0xFFFFFFu)==0xFFFFFFu && !r->fog_flat;
+    nearest_contiguous_x=white_point && xs!=1.0 && last_x==page->sw &&
+      (uint64_t)(uint32_t)page->sx+(uint32_t)page->sw<source.width;
+    nearest_contiguous_y=white_point && ys!=1.0 && last_y==page->sh &&
+      (uint64_t)(uint32_t)page->sy+(uint32_t)page->sh<source.height;
+    if(last_x>=page->sw && !nearest_contiguous_x) width-=1.0;
+    if(last_y>=page->sh && !nearest_contiguous_y) height-=1.0;
     if(width==0.0 || height==0.0) return 1;
   }
   if(modern_numbered_sprite){
@@ -933,7 +941,8 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
   if(r->pending_fill || !(target=gml_render_scene_target_resource_ensure(r))) return 0;
   image=gml_render_application_scene_next_image_ref(r,target);
   if(image.content_version==UINT64_MAX) return 0;
-  region=(GmlRenderRect){page->sx,page->sy,(uint32_t)page->sw,(uint32_t)page->sh};
+  region=(GmlRenderRect){page->sx,page->sy,(uint32_t)page->sw+nearest_contiguous_x,
+                       (uint32_t)page->sh+nearest_contiguous_y};
   source_ref=source.image;
   operation.opcode=GML_RENDER_OP_TEXTURED_QUAD;
   operation.reconstruction_mode=additive_background || stretched_replay_exact
@@ -1178,6 +1187,7 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
     state.alpha_equation=GML_RENDER_BLEND_EXACT8_ADDITIVE;
     state.additive_draw_alpha=alpha;
   } else if(nearest_mode!=5 && (modern_numbered_sprite || !page->scene_fully_opaque || alpha<1.0 ||
+     nearest_contiguous_x || nearest_contiguous_y ||
      margin_left || margin_top || margin_right || margin_bottom)){
     state.rgb_source_factor=GML_RENDER_BLEND_SOURCE_ALPHA;
     state.rgb_destination_factor=GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA;

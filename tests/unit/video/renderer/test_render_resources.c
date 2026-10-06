@@ -7281,7 +7281,7 @@ static int resident_integer_scaled_atlas_sprite_gpu(void){
 }
 
 static int resident_firstgen_nearest_magnification_authority(void){
-  for(unsigned variant=0;variant<4u;variant++){
+  for(unsigned variant=0;variant<6u;variant++){
     GmlRender *render=calloc(1,sizeof *render);
     GmlWin content={.bytecode=15};
     FakeDevice fake={.on_demand=variant!=1u};
@@ -7296,16 +7296,21 @@ static int resident_firstgen_nearest_magnification_authority(void){
     render->spr=calloc(1,sizeof *render->spr);
     CHECK(render->atlas && render->tpag && render->spr);
     render->n_atlas=render->n_tpag=render->n_spr=1;
-    render->atlas[0].px=malloc(8u*8u*4u);
+    unsigned atlas_width=variant>=4u?12u:8u,atlas_height=variant>=4u?10u:8u;
+    render->atlas[0].px=malloc(atlas_width*atlas_height*4u);
     render->spr[0].frame=calloc(1,sizeof(int));
     CHECK(render->atlas[0].px && render->spr[0].frame);
-    render->atlas[0].w=render->atlas[0].h=8;
-    for(unsigned index=0;index<64u;index++){
+    render->atlas[0].w=(int)atlas_width;render->atlas[0].h=(int)atlas_height;
+    for(unsigned index=0;index<atlas_width*atlas_height;index++){
       uint8_t *pixel=render->atlas[0].px+index*4u;
       pixel[0]=208;pixel[1]=32;pixel[2]=16;pixel[3]=128;
     }
     render->tpag[0]=(GmlTpag){.sx=2,.sy=2,.sw=4,.sh=4,.tw=4,.th=4,.bw=4,.bh=4};
     render->spr[0].w=render->spr[0].h=4;render->spr[0].n_frames=1;
+    if(variant>=4u){
+      render->tpag[0]=(GmlTpag){.sx=2,.sy=2,.sw=8,.sh=6,.tw=8,.th=6,.bw=8,.bh=6};
+      render->spr[0].w=8;render->spr[0].h=6;
+    }
     render->active_shader=-1;render->color_write_mask=15u;
     gml_render_bind_device(render,&device);
     CHECK(gml_render_begin_resident_owned_application(render,0.0,0.0,0));
@@ -7314,10 +7319,14 @@ static int resident_firstgen_nearest_magnification_authority(void){
     CHECK(gml_render_scene_submit_pending(render));
     int submits=fake.submits;
     double scale=variant==2u?5.0:4.0/3.0;
-    gml_draw_sprite_ext(render,0,0,0.25,0.25,scale,1.0,variant==3u?10.0:0.0,0xA8C4E0u,0.61);
-    if(variant){
+    if(variant>=4u)
+      gml_draw_sprite_ext(render,0,0,0.5,0.5,1.0,4.0/3.0,0.0,
+                          variant==4u?0xFFFFFFu:0xA8C4E0u,variant==4u?1.0:0.61);
+    else
+      gml_draw_sprite_ext(render,0,0,0.25,0.25,scale,1.0,variant==3u?10.0:0.0,0xA8C4E0u,0.61);
+    if(variant>0u && variant<4u){
       CHECK(!render->resident_application_pass);
-    }else{
+    }else if(variant==0u){
       gml_draw_sprite_ext(render,0,0,2.25,1.25,scale,1.0,0.0,0xA8C4E0u,0.61);
       CHECK(render->resident_application_pass && fake.submits==submits);
       CHECK(gml_render_scene_submit_pending(render) && fake.submits==submits+1 &&
@@ -7328,6 +7337,18 @@ static int resident_firstgen_nearest_magnification_authority(void){
       gml_render_resource_journal_metrics(render->app_surface_resource,&metrics);
       CHECK(metrics.authority==GML_RENDER_RESOURCE_GPU_RESIDENT &&
             metrics.cpu_version<metrics.logical_version && metrics.gpu_version==metrics.logical_version &&
+            !metrics.journal_operations && !metrics.cpu_replays && !metrics.device_checkpoints);
+    }else{
+      CHECK(render->resident_application_pass && fake.submits==submits &&
+            gml_render_scene_submit_pending(render) && fake.submits==submits+1 &&
+            fake.last_batch_operations==1u && !fake.readbacks && !fake.rgb_queries);
+      const GmlRenderRect *crop=&fake.last_quad_state.samplers[0].source_region;
+      CHECK(crop->x==2 && crop->y==2 && crop->width==8u &&
+            crop->height==(variant==4u?7u:6u) &&
+            fake.last_quad_state.rgb_source_factor==GML_RENDER_BLEND_SOURCE_ALPHA &&
+            fake.last_quad_state.rgb_destination_factor==GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA);
+      gml_render_resource_journal_metrics(render->app_surface_resource,&metrics);
+      CHECK(metrics.authority==GML_RENDER_RESOURCE_GPU_RESIDENT &&
             !metrics.journal_operations && !metrics.cpu_replays && !metrics.device_checkpoints);
     }
     /* This fake device establishes authority and batching, not actual device pixels. */
