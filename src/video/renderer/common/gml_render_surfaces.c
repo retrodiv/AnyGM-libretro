@@ -740,14 +740,15 @@ int gml_render_recover_empty_screen(GmlRender *r,uint32_t *pixels,int width,int 
   GmlRenderImageRef ref;
   double left,top;
   /* Plain Studio full-source magnification uses leading-edge point samples here.
-   * Active shaders, classic phases, full-width policy and other geometry retain their owner. */
+   * Full-width recovery is admitted only when the source and screen are identical rasters;
+   * the CPU aspect correction cannot change that rectangle. Other geometry retains its owner. */
   if(!r || r->classic || !r->resident_application_pass ||
      !gml_render_scene_target_matches(r) || r->fb!=pixels || r->fbw!=width ||
      r->fbh!=height || r->target_sp || r->target_id!=-1 ||
      !r->app_surface_published || r->app_surface!=r->app_surface_owned ||
      r->app_surface==pixels || r->app_w<=0 || r->app_h<=0 ||
      r->pending_fill || r->pending_underlay || r->pending_presentation ||
-     r->active_shader>=0 || r->aspect_fullwidth || gml_render_gui_transform_active(r) ||
+     r->active_shader>=0 || gml_render_gui_transform_active(r) ||
      !r->alphablend || r->blendmode || r->alpha_test_enable ||
      r->color_write_mask!=15u || r->blend_equation!=1 || r->blend_equation_alpha!=1 ||
      gml_d3_is_active(r) || !isfinite(x) || !isfinite(y) ||
@@ -761,6 +762,10 @@ int gml_render_recover_empty_screen(GmlRender *r,uint32_t *pixels,int width,int 
   gml_render_draw_map_scale(r,&w,&h);
   if(!isfinite(x) || !isfinite(y) || !isfinite(w) || !isfinite(h) ||
      w<r->app_w || h<r->app_h || w>16384.0 || h>16384.0) return 0;
+  if(r->aspect_fullwidth &&
+     (!zero_camera || r->world_transform_active || x!=0.0 || y!=0.0 ||
+      w!=(double)width || h!=(double)height || r->app_w!=width || r->app_h!=height ||
+      r->aspect_wide_w!=width || r->aspect_wide_h!=height)) return 0;
   left=floor(x-(zero_camera?0.0:r->cam_x));
   top=floor(y-(zero_camera?0.0:r->cam_y));
   w=(double)lround(w);h=(double)lround(h);

@@ -3407,6 +3407,71 @@ static int conditional_screen_recovery_authority(void){
   gml_render_free(render);free(render);return 1;
 }
 
+static int conditional_screen_recovery_fullwidth_authority(void){
+  GmlRender *render=(GmlRender*)calloc(1,sizeof *render);
+  uint32_t screen[12],sentinel[12];
+  FakeDevice fake={.on_demand=1,.supported_operations=UINT64_C(1)<<GML_RENDER_OP_RECOVER_EMPTY_SCREEN};
+  GmlRenderDeviceServices device=service(&fake);
+  GmlRenderJournalMetrics before={0},after={0};
+  CHECK(render && gml_render_init(render,NULL)==0);
+  CHECK(gml_render_application_surface_ensure_owned(render,4,3) &&
+        gml_render_begin_owned_application(render,0.0,0.0,0));
+  gml_render_application_surface_publish(render);
+  gml_render_set_pending_fill(render,0x7F123456u);
+  gml_render_flush_pending_fill(render);
+  CHECK(gml_render_application_resource_ensure(render));
+  device.observe_on_demand=fake_observe_on_demand;device.has_rgb=fake_has_rgb;
+  gml_render_bind_device(render,&device);
+  for(unsigned p=0;p<12u;p++) screen[p]=sentinel[p]=0xAB112233u;
+  CHECK(gml_render_begin_resident_base(render,screen,4,3,2.0,3.0));
+  render->aspect_fullwidth=1;render->aspect_wide_w=4;render->aspect_wide_h=3;
+  gml_render_set_pending_fill(render,0x11000000u);gml_render_flush_pending_fill(render);
+  CHECK(gml_render_scene_submit_pending(render));
+  int submits=fake.submits;
+  gml_render_resource_journal_metrics(render->base_scene_resource,&before);
+  for(unsigned variant=0;variant<10u;variant++){
+    double x=0.0,y=0.0,w=4.0,h=3.0;
+    int zero_camera=1;
+    if(variant==0u) zero_camera=0;
+    if(variant==1u) x=0.25;
+    if(variant==2u) y=0.25;
+    if(variant==3u) w=5.0;
+    if(variant==4u) h=4.0;
+    if(variant==5u) render->aspect_wide_w=5;
+    if(variant==6u) render->aspect_wide_h=4;
+    if(variant==7u){
+      render->world_transform_active=1;render->world_scale_x=render->world_scale_y=2.0;
+    }
+    if(variant==8u) render->app_w=3;
+    if(variant==9u) render->app_h=2;
+    CHECK(!gml_render_recover_empty_screen(render,screen,4,3,x,y,w,h,zero_camera) &&
+          fake.submits==submits && !fake.rgb_queries && !fake.readbacks &&
+          !memcmp(screen,sentinel,sizeof screen));
+    gml_render_resource_journal_metrics(render->base_scene_resource,&after);
+    CHECK(after.logical_version==before.logical_version &&
+          after.gpu_version==before.gpu_version && after.cpu_version==before.cpu_version);
+    render->aspect_wide_w=render->app_w=4;render->aspect_wide_h=render->app_h=3;
+    render->world_transform_active=0;render->world_scale_x=render->world_scale_y=1.0;
+  }
+  for(unsigned filtered=0;filtered<2u;filtered++){
+    render->interp=(int)filtered;
+    CHECK(gml_render_recover_empty_screen(render,screen,4,3,0.0,0.0,4.0,3.0,1) &&
+          fake.submits==submits+(int)filtered+1 &&
+          fake.last_opcode==GML_RENDER_OP_RECOVER_EMPTY_SCREEN &&
+          fake.recovery_rect[0]==0.0 && fake.recovery_rect[1]==0.0 &&
+          fake.recovery_rect[2]==4.0 && fake.recovery_rect[3]==3.0 &&
+          !fake.rgb_queries && !fake.readbacks && !memcmp(screen,sentinel,sizeof screen));
+    gml_render_resource_journal_metrics(render->base_scene_resource,&after);
+    CHECK(after.authority==GML_RENDER_RESOURCE_GPU_RESIDENT &&
+          after.gpu_version==after.logical_version && after.cpu_version<after.logical_version &&
+          !after.journal_operations && !after.cpu_replays);
+  }
+  gml_render_abandon_device(render);fake.forbid_calls=1;
+  CHECK(!gml_render_recover_empty_screen(render,screen,4,3,0.0,0.0,4.0,3.0,1) &&
+        !fake.forbidden_calls);
+  gml_render_free(render);free(render);return 1;
+}
+
 static int completed_screen_deferred_upscale(void){
   const int widths[]={7,9,14,19},heights[]={5,7,10,13};
   for(unsigned variant=0;variant<16u;variant++){
@@ -8137,6 +8202,7 @@ int main(void){
   passed+=resident_viewless_base_canvas_order();
   passed+=completed_screen_reader_and_writer();
   passed+=conditional_screen_recovery_authority();
+  passed+=conditional_screen_recovery_fullwidth_authority();
   passed+=completed_screen_deferred_upscale();
   passed+=resident_borrowed_surface_zero_screen_shader();
   passed+=surface_metadata_preserves_device_authority();
@@ -8209,6 +8275,6 @@ int main(void){
   passed+=source_free_primitive_rect_replay();
   passed+=stretched_float_exact_replay();
   passed+=filtered_font_exact_recovery();
-  printf("render resource cases: passed=%d failed=%d\n",passed,114-passed);
-  return passed==114?EXIT_SUCCESS:EXIT_FAILURE;
+  printf("render resource cases: passed=%d failed=%d\n",passed,115-passed);
+  return passed==115?EXIT_SUCCESS:EXIT_FAILURE;
 }
