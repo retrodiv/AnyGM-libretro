@@ -38,6 +38,87 @@ int gml_real_compare(double lhs, double rhs, int cmp, int classic){
   return gml_real_compare_epsilon(lhs,rhs,cmp,classic?1e-13:1e-5);
 }
 
+int gml_input_text_variable(const char *name){
+  return name && (!strcmp(name,"keyboard_string") || !strcmp(name,"keyboard_lastchar"));
+}
+GmlVal gml_input_text_value(GmlVM *vm,const char *name){
+  GmlVal *value=gml_varmap_get(&vm->globals,name);
+  if(value && value->t!=V_STR) return *value;
+  if(!value || !value->s || !value->s[0]) return vstr("");
+  char *copy=strdup(value->s);
+  return copy?vstr_owned(copy):vstr("");
+}
+void gml_vm_input_text_release(GmlVM *vm){
+  for(size_t i=0;i<2;i++){
+    free(vm->input_text_owned[i]); vm->input_text_owned[i]=NULL;
+  }
+}
+int gml_input_text(GmlVM *vm,const uint32_t *events,size_t count){
+  enum { limit=1024 };
+  if(!vm || (count && !events)) return 0;
+  if(!count) return 1;
+  char text[limit*4+1],last[5]={0};
+  size_t offsets[limit+1],characters=0,bytes=0;
+  GmlVal *source=gml_varmap_get(&vm->globals,"keyboard_string");
+  const unsigned char *cursor=(const unsigned char *)(
+    source && source->t==V_STR && source->s?source->s:"");
+  /* Existing authored strings may exceed the typing limit. Retain their
+   * latest characters using the same traversal as the string builtin. */
+  const unsigned char *start=cursor;
+  size_t total=0;
+  for(const unsigned char *p=cursor;*p;p+=gml_utf8_character_bytes(p)) total++;
+  for(size_t skip=total>limit?total-limit:0;skip;skip--)
+    start+=gml_utf8_character_bytes(start);
+  cursor=start; offsets[0]=0;
+  while(*cursor && characters<limit){
+    int length=gml_utf8_character_bytes(cursor);
+    memcpy(text+bytes,cursor,(size_t)length); bytes+=(size_t)length;
+    offsets[++characters]=bytes; cursor+=length;
+  }
+  int changed=0;
+  for(size_t i=0;i<count;i++){
+    uint32_t cp=events[i];
+    if(cp==8){
+      if(characters) bytes=offsets[--characters];
+      last[0]=8; last[1]=0; changed=1; continue;
+    }
+    if(cp<32 || (cp>=127 && cp<=159) || cp>0x10ffff ||
+       (cp>=0xd800 && cp<=0xdfff)) continue;
+    size_t length;
+    if(cp<0x80){ last[0]=(char)cp; length=1; }
+    else if(cp<0x800){
+      last[0]=(char)(0xc0|(cp>>6)); last[1]=(char)(0x80|(cp&63)); length=2;
+    } else if(cp<0x10000){
+      last[0]=(char)(0xe0|(cp>>12)); last[1]=(char)(0x80|((cp>>6)&63));
+      last[2]=(char)(0x80|(cp&63)); length=3;
+    } else {
+      last[0]=(char)(0xf0|(cp>>18)); last[1]=(char)(0x80|((cp>>12)&63));
+      last[2]=(char)(0x80|((cp>>6)&63)); last[3]=(char)(0x80|(cp&63)); length=4;
+    }
+    last[length]=0;
+    if(characters==limit){
+      size_t removed=offsets[1]; bytes-=removed;
+      memmove(text,text+removed,bytes);
+      for(size_t j=1;j<limit;j++) offsets[j]=offsets[j+1]-removed;
+      characters--;
+    }
+    memcpy(text+bytes,last,length); bytes+=length;
+    offsets[++characters]=bytes; changed=1;
+  }
+  if(!changed) return 1;
+  text[bytes]=0;
+  char *buffer=strdup(text),*character=strdup(last);
+  if(!buffer || !character){ free(buffer); free(character); return 0; }
+  /* Reads copy through the existing value/temporary owners. Only these two
+   * current host allocations are ours to retire, never restored borrowed
+   * strings or an authored assignment's independently owned storage. */
+  gml_vm_input_text_release(vm);
+  vm->input_text_owned[0]=buffer; vm->input_text_owned[1]=character;
+  *gml_varmap_put(&vm->globals,"keyboard_string")=vstr(buffer);
+  *gml_varmap_put(&vm->globals,"keyboard_lastchar")=vstr(character);
+  return 1;
+}
+
 static int run_script_named(GmlVM *vm,const char *name,GmlInstance *self,
                             GmlVal *args,int n_args){
   if(!vm || !vm->win || !name || !name[0]) return 0;
@@ -410,6 +491,7 @@ void gml_vm_free(GmlVM *vm){
           free(vm->diagnostics.code_seen); vm->diagnostics.code_seen=NULL; }
   GML_VM_DIAGNOSTIC_DESTROY(vm);
   gml_vm_wait_cancel(vm);   /* a run parked by a blocking input wait owns locals and strings */
+  gml_vm_input_text_release(vm);
   gml_colgrid_invalidate(vm);
   gml_vm_instances_reset_caches(vm);
   if(vm->obj_desc){ for(int i=0;i<vm->n_objects;i++) free(vm->obj_desc[i]); }

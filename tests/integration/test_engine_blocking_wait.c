@@ -23,6 +23,26 @@ static int run_frames(AnygmEngine *engine,int count){
   return 1;
 }
 
+static int type_text(AnygmEngine *engine,uint32_t first,uint32_t second){
+  AnygmInputFrame input={0};
+  input.struct_size=sizeof input;
+  input.pointer_x=input.pointer_y=-1;
+  input.text_event_count=second?2:1;
+  input.text_events[0]=first;
+  input.text_events[1]=second;
+  AnygmFrameOutput output={0};
+  output.struct_size=sizeof output;
+  return anygm_run_frame(engine,&input,&output)==ANYGM_OK &&
+         (output.flags&ANYGM_FRAME_TEXT_INPUT_CONSUMED)!=0;
+}
+
+static int text_matches(AnygmEngine *engine,const char *name,const char *expected){
+  GmlVal *value=gml_varmap_get(&engine->vm.globals,name);
+  int matches=value && value->t==V_STR && value->s && !strcmp(value->s,expected);
+  if(!matches) fprintf(stderr,"blocking wait: %s did not retain its text value\n",name);
+  return matches;
+}
+
 static int save_state(AnygmEngine *engine,uint8_t **data,size_t *written){
   size_t capacity=anygm_state_size(engine);
   *data=malloc(capacity?capacity:1);
@@ -62,7 +82,7 @@ static int blocking_wait_case(void){
   }
 
   /* Enough frames for the alarm to fire and the wait to begin. */
-  if(!run_frames(engine,4)){
+  if(!type_text(engine,'a',0xe9) || !run_frames(engine,3)){
     fputs("blocking wait: opening frames failed\n",stderr);
     failed=1;
     goto done;
@@ -80,7 +100,8 @@ static int blocking_wait_case(void){
   }
 
   /* While a wait is outstanding no event runs, so the step counter cannot move. */
-  if(!run_frames(engine,10)){
+  if(!type_text(engine,'x',0) || !run_frames(engine,9) ||
+     !text_matches(engine,"keyboard_string","a\xc3\xa9x")){
     fputs("blocking wait: held frames failed\n",stderr);
     failed=1;
     goto done;
@@ -114,6 +135,11 @@ static int blocking_wait_case(void){
     failed=1;
     goto done;
   }
+  if(!text_matches(engine,"fixture_saved_text","a\xc3\xa9") ||
+     !text_matches(engine,"fixture_reflected_text","a\xc3\xa9")){
+    failed=1;
+    goto done;
+  }
   if(gml_global_num(&engine->vm,"fixture_steps")<=held_steps){
     fputs("blocking wait: the simulation did not resume after the wait ended\n",stderr);
     failed=1;
@@ -134,7 +160,8 @@ static int blocking_wait_case(void){
     goto done;
   }
   double restored_steps=gml_global_num(&engine->vm,"fixture_steps");
-  if(!run_frames(engine,6)){
+  if(!run_frames(engine,1) || !type_text(engine,'y',0) || !run_frames(engine,4) ||
+     !text_matches(engine,"keyboard_string","a\xc3\xa9xy")){
     fputs("blocking wait: restored held frames failed\n",stderr);
     failed=1;
     goto done;
@@ -153,6 +180,11 @@ static int blocking_wait_case(void){
   }
   if(gml_global_num(&engine->vm,"fixture_resumed")!=1.0){
     fputs("blocking wait: the restored run did not continue past its wait\n",stderr);
+    failed=1;
+    goto done;
+  }
+  if(!text_matches(engine,"fixture_saved_text","a\xc3\xa9") ||
+     !text_matches(engine,"fixture_reflected_text","a\xc3\xa9")){
     failed=1;
     goto done;
   }

@@ -211,6 +211,7 @@ void retro_deinit(void){
   libretro_cache_end();
   libretro_options_release();
   memset(g_libretro.keyboard_events,0,sizeof g_libretro.keyboard_events);
+  g_libretro.keyboard_text_count=0;
   memset(g_libretro.override_used,0,sizeof g_libretro.override_used);
   g_libretro.prepared=false;
   g_libretro.loaded=false;
@@ -280,6 +281,7 @@ void retro_reset(void){
     update_locale();
     libretro_options_apply(true);
     if(anygm_reset(g_libretro.engine)==ANYGM_OK){
+      g_libretro.keyboard_text_count=0;
       g_libretro.display_mouse_x=g_libretro.display_mouse_y=g_libretro.display_wheel=0;
       /* RetroArch keeps its rewind ring across Reset and checks its rewind chord before the newly
        * reset core runs. If the chord used while leaving the menu is still active, an old compact
@@ -397,6 +399,7 @@ bool retro_load_game(const struct retro_game_info *info){
     return false;
   }
   if(g_libretro.loaded || g_libretro.prepared) retro_unload_game();
+  g_libretro.keyboard_text_count=0;
   g_libretro.provisional_av_exposed=false;
   g_libretro.startup_av_notification_pending=false;
   memset(g_libretro.setting_cache,0,sizeof g_libretro.setting_cache);
@@ -492,6 +495,7 @@ void retro_unload_game(void){
   /* A key held while one game is unloaded is not held by the next one. Left latched, the second
    * load starts with input the player never gave it. */
   memset(g_libretro.keyboard_events,0,sizeof g_libretro.keyboard_events);
+  g_libretro.keyboard_text_count=0;
   g_libretro.pointer_seen=0;
 }
 
@@ -666,6 +670,10 @@ void retro_run(void){
   g_libretro.frame.struct_size=sizeof g_libretro.frame;
   AnygmResult result=steps?anygm_run_frame(g_libretro.engine,&input,&g_libretro.frame):
     anygm_repeat_frame(g_libretro.engine,&g_libretro.frame);
+  if(g_libretro.frame.flags&ANYGM_FRAME_TEXT_INPUT_CONSUMED){
+    libretro_input_text_acknowledge(input.text_event_count);
+    input.text_event_count=0;
+  }
   if(result!=ANYGM_OK){
     /* Reported a bounded number of times: a frame that fails usually fails on every frame after
      * it too, and a message per frame buries the first one under thousands of copies. */
@@ -898,6 +906,7 @@ bool retro_unserialize(const void *data,size_t size){
     state_profile_report(&timing,"load",size,size,false);
     return false;
   }
+  g_libretro.keyboard_text_count=0;
   g_libretro.display_mouse_x=g_libretro.display_mouse_y=g_libretro.display_wheel=0;
   libretro_update_av();
   state_profile_report(&timing,"load",size,size,true);

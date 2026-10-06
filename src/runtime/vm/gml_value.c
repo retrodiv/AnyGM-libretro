@@ -14,6 +14,25 @@
  * variable must hit the same slot regardless of which pointer carries the name. */
 unsigned gml_value_name_hash(const char *p){ unsigned h=2166136261u; if(!p) p=""; while(*p){ h^=(unsigned char)*p++; h*=16777619u; } return h; }
 
+int gml_utf8_character_bytes(const unsigned char *text){
+  if(!text || !text[0]) return 0;
+  if(text[0]<0x80) return 1;
+  if((text[0]&0xe0)==0xc0 && text[1] && (text[1]&0xc0)==0x80){
+    unsigned value=((unsigned)(text[0]&0x1f)<<6)|(text[1]&0x3f);
+    if(value>=0x80) return 2;
+  } else if((text[0]&0xf0)==0xe0 && text[1] && text[2] &&
+            (text[1]&0xc0)==0x80 && (text[2]&0xc0)==0x80){
+    unsigned value=((unsigned)(text[0]&15)<<12)|((unsigned)(text[1]&0x3f)<<6)|(text[2]&0x3f);
+    if(value>=0x800 && (value<0xd800 || value>0xdfff)) return 3;
+  } else if((text[0]&0xf8)==0xf0 && text[1] && text[2] && text[3] &&
+            (text[1]&0xc0)==0x80 && (text[2]&0xc0)==0x80 && (text[3]&0xc0)==0x80){
+    unsigned value=((unsigned)(text[0]&7)<<18)|((unsigned)(text[1]&0x3f)<<12)|
+                   ((unsigned)(text[2]&0x3f)<<6)|(text[3]&0x3f);
+    if(value>=0x10000 && value<=0x10ffff) return 4;
+  }
+  return 1;
+}
+
 static void varmap_grow(GmlVarMap *m){
   int nc = m->cap? m->cap*2 : 16;
   GmlVarSlot *ns = calloc(nc,sizeof(GmlVarSlot));

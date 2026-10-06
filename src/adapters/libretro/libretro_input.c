@@ -115,9 +115,23 @@ static const struct retro_input_descriptor g_input_descriptors[]={
 
 static void RETRO_CALLCONV keyboard_event(bool down,unsigned keycode,uint32_t character,
                                           uint16_t modifiers){
-  (void)character;
   (void)modifiers;
   if(keycode<ANYGM_MAX_KEYS) g_libretro.keyboard_events[keycode]=down?1u:0u;
+  if(!down) return;
+  if(keycode==RETROK_BACKSPACE && !character) character=8;
+  if(character!=8 && (character<32 || (character>=127 && character<=159) ||
+     character>0x10ffff || (character>=0xd800 && character<=0xdfff))) return;
+  /* Keep the oldest ordered batch when a host floods a suspended runtime.
+   * A release is never text, while repeated delivered presses remain text. */
+  if(g_libretro.keyboard_text_count<ANYGM_MAX_TEXT_EVENTS)
+    g_libretro.keyboard_text[g_libretro.keyboard_text_count++]=character;
+}
+
+void libretro_input_text_acknowledge(uint32_t count){
+  if(count>g_libretro.keyboard_text_count) count=g_libretro.keyboard_text_count;
+  g_libretro.keyboard_text_count-=count;
+  memmove(g_libretro.keyboard_text,g_libretro.keyboard_text+count,
+          (size_t)g_libretro.keyboard_text_count*sizeof g_libretro.keyboard_text[0]);
 }
 
 void libretro_input_register(void){
@@ -151,6 +165,9 @@ void libretro_input_snapshot(AnygmInputFrame *input,uint32_t width,uint32_t heig
   input->pointer_x=-1;
   input->pointer_y=-1;
   if(g_libretro.input_poll) g_libretro.input_poll();
+  input->text_event_count=g_libretro.keyboard_text_count;
+  memcpy(input->text_events,g_libretro.keyboard_text,
+         (size_t)input->text_event_count*sizeof input->text_events[0]);
 
   /* Snapshot every supported port. Capacity and controller declarations do not establish
    * occupancy, and idle and absent ports both report zero input. Ownership still controls whether

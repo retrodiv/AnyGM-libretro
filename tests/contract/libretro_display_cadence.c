@@ -15,11 +15,16 @@ static unsigned videos,av_calls;
 static size_t samples;
 static uint32_t target_hz,mode_pending;
 static double announced_hz;
+static retro_keyboard_event_t text_callback;
 static int16_t input_state(unsigned port,unsigned device,unsigned index,unsigned id){
   (void)port; (void)index;
   return device==RETRO_DEVICE_MOUSE && id==RETRO_DEVICE_ID_MOUSE_X?1:0;
 }
 static bool environment(unsigned command,void *data){
+  if(command==RETRO_ENVIRONMENT_SET_KEYBOARD_CALLBACK){
+    text_callback=((struct retro_keyboard_callback*)data)->callback;
+    return true;
+  }
   if(command==RETRO_ENVIRONMENT_SET_SERIALIZATION_QUIRKS){
     if(negotiation>0) *(uint64_t*)data|=RETRO_SERIALIZATION_QUIRK_FRONT_VARIABLE_SIZE;
     return negotiation>=0;
@@ -63,6 +68,12 @@ static void speed(double fps){
   GmlVal arguments[]={vreal(fps),vreal(0)};
   gml_builtin_call(&g_libretro.engine->vm,"game_set_speed",arguments,2);
 }
+static int text_is(const char *expected){
+  GmlVal text=gml_vm_identifier_get(&g_libretro.engine->vm,"keyboard_string");
+  int matches=text.t==V_STR && text.s && !strcmp(text.s,expected);
+  if(text.t==V_STR && text.d) free((char*)text.s);
+  return matches;
+}
 static int snapshot(uint8_t **bytes,size_t *capacity,size_t initial){
   size_t answer=retro_serialize_size();
   if(!answer || (negotiation<=0 && answer!=initial)) return 0;
@@ -103,7 +114,19 @@ static int run_case(int response){
   long frame=g_libretro.engine->vm.frame;
   int mouse_x=g_libretro.engine->mouse_pixel_x<0?
     (int)g_libretro.engine->output_width/2:(int)g_libretro.engine->mouse_pixel_x;
-  for(int i=0;i<10;i++) tick();
+  char expected_text[24]={0}; unsigned delivered=0,consumed=0;
+  REQUIRE(text_callback && text_is(""),"cold text defaults and accepted callback");
+  for(int i=0;i<10;i++){
+    text_callback(true,RETROK_UNKNOWN,'a'+i,0);
+    expected_text[delivered++]=(char)('a'+i);
+    long before_frame=g_libretro.engine->vm.frame;
+    tick();
+    if(g_libretro.engine->vm.frame!=before_frame) consumed=delivered;
+    char terminator=expected_text[consumed]; expected_text[consumed]=0;
+    REQUIRE(text_is(expected_text),"zero-step ticks retain ordered text until a logical step");
+    expected_text[consumed]=terminator;
+    REQUIRE(g_libretro.keyboard_text_count==delivered-consumed,"only actual input consumption acknowledges text");
+  }
   REQUIRE(videos==10 && g_libretro.engine->vm.frame-frame==6,
           "ten presentation ticks retain six logical steps at thirty FPS");
   REQUIRE(samples==8820,"thirty-FPS mixer advances six times, not ten");
@@ -114,7 +137,13 @@ static int run_case(int response){
   REQUIRE(snapshot(&ring,&capacity,initial),"ring after completed frames");
   speed(60); frame=g_libretro.engine->vm.frame; samples=0;
   mouse_x=g_libretro.engine->mouse_pixel_x;
-  for(int i=0;i<10;i++) tick();
+  for(int i=0;i<10;i++){
+    text_callback(true,RETROK_UNKNOWN,'k'+i,0);
+    expected_text[delivered++]=(char)('k'+i);
+    tick();
+    REQUIRE(text_is(expected_text) && !g_libretro.keyboard_text_count,
+            "multiple logical steps consume a delivered batch exactly once");
+  }
   REQUIRE(g_libretro.engine->vm.frame-frame==12 && samples==8820,
           "multiple logical steps preserve sixty FPS and audio duration");
   REQUIRE(g_libretro.engine->mouse_pixel_x==mouse_x+10,
@@ -134,19 +163,31 @@ static int run_case(int response){
   long saved_frame=g_libretro.engine->vm.frame;
   for(int i=0;i<7;i++) tick();
   long expected=g_libretro.engine->vm.frame;
+  text_callback(true,RETROK_UNKNOWN,'X',0);
   REQUIRE(retro_unserialize(saved,saved_capacity),"same-run clock restore");
+  REQUIRE(!g_libretro.keyboard_text_count && text_is(expected_text),
+          "successful restore restores text and discards pre-restore pending events");
   REQUIRE(g_libretro.engine->presentation_phase==phase &&
           g_libretro.engine->vm.frame==saved_frame,"restore fractional clock and logical state");
+  text_callback(true,RETROK_UNKNOWN,'Y',0);
   tick();
   REQUIRE(g_libretro.engine->presentation_phase==phase &&
           g_libretro.engine->vm.frame==saved_frame,"restore picture does not advance either clock");
+  REQUIRE(g_libretro.keyboard_text_count==1 && text_is(expected_text),
+          "inert restored picture retains new text without acknowledging it");
   for(int i=0;i<7;i++) tick();
   REQUIRE(g_libretro.engine->vm.frame==expected,"rewind repeats logical cadence exactly");
+  expected_text[delivered++]='Y';
+  REQUIRE(!g_libretro.keyboard_text_count && text_is(expected_text),
+          "later logical step resumes restored strings and consumes retained text once");
   REQUIRE(snapshot(&ring,&capacity,initial),"ring after restoration");
   before=malloc(capacity); after=malloc(capacity);
   REQUIRE(before && after && retro_serialize(before,capacity),"capture canonical bytes");
   saved[4]=(uint8_t)(ANYGM_STATE_SCHEMA-1);
+  text_callback(true,RETROK_UNKNOWN,'Z',0);
   REQUIRE(!retro_unserialize(saved,saved_capacity),"older root schema rejected");
+  REQUIRE(g_libretro.keyboard_text_count==1 && text_is(expected_text),
+          "rejected state does not mutate text or pending input");
   REQUIRE(retro_serialize(after,capacity) && !memcmp(before,after,capacity),
           "schema rejection leaves engine transactionally unchanged");
   /* A restored VM with no display request returns to logical cadence. Here the frontend
@@ -156,7 +197,10 @@ static int run_case(int response){
   REQUIRE(g_libretro.display_requested_hz==0 && g_libretro.display_active_hz==50 &&
           announced_hz==50 && target_hz==50,"refused restoration keeps accepted cadence");
   REQUIRE(call("display_set_frequency",50)==1,"request after refused restoration"); tick();
+  text_callback(true,RETROK_UNKNOWN,'W',0);
   retro_reset();
+  REQUIRE(!g_libretro.keyboard_text_count && text_is(""),
+          "Reset discards pending text and restores empty defaults");
   REQUIRE(g_libretro.av.display_frequency_request_hz==50,
           "Reset retains session mode when Create observes the requested frequency");
   REQUIRE(g_libretro.engine->presentation_phase==0 && g_libretro.engine->presentation_hz==0,

@@ -474,7 +474,7 @@ static int inst_sprite_metric_get(GmlVM *vm, GmlInstance *in, const char *name, 
  * read and write. Hash-hit => run the original chain (its strcmps confirm; collisions are
  * safe); miss => the name is provably not special, go straight to the varmap. */
 static const char *const g_special_var_names[]={
-  "undefined","infinity","room","room_first","room_last","keyboard_lastkey","keyboard_key","room_speed","working_directory","program_directory",
+  "undefined","infinity","room","room_first","room_last","keyboard_lastkey","keyboard_key","keyboard_string","keyboard_lastchar","room_speed","working_directory","program_directory",
   "fps","delta_time","view_current","view_enabled","room_persistent","background_color","background_colour",
   "view_left","view_top","view_width","view_height","view_x","view_y",
   "brush_color","brush_style","pen_color","pen_size",
@@ -638,6 +638,9 @@ static GmlVal var_get_h(GmlVM *vm, int inst, const char *name, uint32_t nh){
   }
   if(!strcmp(name,"keyboard_lastkey")) return vreal(vm->last_key); /* GM: last key pressed */
   if(!strcmp(name,"keyboard_key")) return vreal(vm->current_key);  /* GM: the key held right now */
+  if(!strcmp(name,"keyboard_string") || !strcmp(name,"keyboard_lastchar")){
+    return gml_input_text_value(vm,name);
+  }
   if(!strcmp(name,"room_speed")) return vreal(gml_room_speed(vm));
   if(!strcmp(name,"working_directory")){
     /* This is the installed file-bundle root. The file API overlays save_dir on reads and
@@ -850,6 +853,10 @@ static void var_set_h(GmlVM *vm, int inst, const char *name, uint32_t nh, GmlVal
    * writable variables and not read-only reports. */
   if(!strcmp(name,"keyboard_key")){ vm->current_key=asnum(v); return; }
   if(!strcmp(name,"keyboard_lastkey")){ vm->last_key=asnum(v); return; }
+  if(!strcmp(name,"keyboard_string") || !strcmp(name,"keyboard_lastchar")){
+    *gml_varmap_put_hashed(&vm->globals,name,nh)=v;
+    return;
+  }
   if(!strcmp(name,"room_speed")||!strcmp(name,"view_current")||!strcmp(name,"room_persistent")){
     *gml_varmap_put_hashed(&vm->globals,name,nh)=v;
     return;
@@ -2566,6 +2573,9 @@ static int draw_loop_variable_value(
     GmlVM *vm,GmlVarMap *locals,const GmlInsn *instruction,GmlVal *value){
   if(!draw_loop_normal_variable_push(instruction) || !value) return 0;
   const char *name=instruction->refname;
+  /* Text reads allocate value snapshots; let the ordinary interpreter track
+   * their lifetime rather than borrowing one as an optimized scalar. */
+  if(gml_input_text_variable(name)) return 0;
   uint32_t hash=instruction->refhash
     ? instruction->refhash : gml_value_name_hash(name);
   if(instruction->inst==IT_LOCAL){
@@ -3085,6 +3095,7 @@ static GmlVal vm_run_code_impl(GmlVM *vm, int ci, GmlInstance *self, GmlInstance
         else if(in.type1==DT_VAR){
           const char *nm=in.refname?in.refname:gml_ref_name(w,in.refaddr);
           uint32_t nh=in.refhash?in.refhash:gml_value_name_hash(nm);
+          int scope_read=0;
           if(in.reftype==0x00){ /* Array */
             int idx=(int)(sp>0?asnum(stk[--sp]):0);
             GmlVal itv=sp>0?stk[--sp]:vreal(0);
@@ -3139,8 +3150,9 @@ static GmlVal vm_run_code_impl(GmlVM *vm, int ci, GmlInstance *self, GmlInstance
             GmlVal iv=sp>0?stk[--sp]:vreal(0);
             if(anygm_policy_has_modern_function_values(w) && sp>0 && iv.t==V_REAL && iv.d==-9.0) iv=stk[--sp];
             int it=(int)asnum(iv);
-            if(iv.t==V_REAL && !GML_IS_STRUCT_ID(iv.d) && it<100000)
-              v=var_get_h(vm,it,nm,nh);
+            if(iv.t==V_REAL && !GML_IS_STRUCT_ID(iv.d) && it<100000){
+              v=var_get_h(vm,it,nm,nh); scope_read=1;
+            }
             else {
               GmlInstance *t=vm_inst_from_ref(vm,iv);
               v=t?inst_get_any_h(vm,t,nm,nh):vreal(0);
@@ -3157,14 +3169,16 @@ static GmlVal vm_run_code_impl(GmlVM *vm, int ci, GmlInstance *self, GmlInstance
              * scope reader only when no instance was found. Struct identifiers retain the
              * instance path and IT_STACK remains a marker rather than an owner scope. */
             else if(iv.t==V_REAL && !GML_IS_STRUCT_ID(iv.d) &&
-                    gml_it_is_scope_to_read((int)iv.d))
-              v=var_get_h(vm,(int)iv.d,nm,nh);
+                    gml_it_is_scope_to_read((int)iv.d)){
+              v=var_get_h(vm,(int)iv.d,nm,nh); scope_read=1;
+            }
             else v=vreal(0);
           } else if(in.inst==0 && in.reftype==0xA0 && prev_conv_v_i32){
             GmlVal iv=sp>0?stk[--sp]:vreal(0);
             int it=(int)asnum(iv);
-            if(iv.t==V_REAL && !GML_IS_STRUCT_ID(iv.d) && it<100000)
-              v=var_get_h(vm,it,nm,nh);
+            if(iv.t==V_REAL && !GML_IS_STRUCT_ID(iv.d) && it<100000){
+              v=var_get_h(vm,it,nm,nh); scope_read=1;
+            }
             else {
               GmlInstance *t=vm_inst_from_ref(vm,iv);
               v=t?inst_get_any_h(vm,t,nm,nh):vreal(0);
@@ -3173,7 +3187,8 @@ static GmlVal vm_run_code_impl(GmlVM *vm, int ci, GmlInstance *self, GmlInstance
             if(argument_get(vm,nm,&v)){}
             else { GmlVal *pp=gml_varmap_get_hashed(&locals,nm,nh);
               v=pp?*pp:vreal(0); }
-          } else v=var_get_h(vm,in.inst,nm,nh);
+          } else { v=var_get_h(vm,in.inst,nm,nh); scope_read=1; }
+          if(scope_read && STR_IS_HEAP(v) && gml_input_text_variable(nm)) GC_TRACK(v.s);
         } else v=vreal(0);
         if(sp<STK){ stk[sp]=v; stkt[sp]=in.type1; sp++; }
         break;

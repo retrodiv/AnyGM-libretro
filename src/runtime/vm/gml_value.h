@@ -45,6 +45,8 @@ typedef struct { GmlVarSlot *slots; int cap, len; } GmlVarMap;
 #define GML_ARR_MAX_CAP   67108864
 
 int          gml_val_array_length(GmlVal v);   /* array_length_1d: logical length of a V_ARR value, else 0 */
+/* One existing UTF-8 character traversal rule: malformed bytes advance by one. */
+int          gml_utf8_character_bytes(const unsigned char *text);
 int          gml_val_array_height_2d(GmlVal v);
 int          gml_val_array_length_2d(GmlVal v, int row);
 /* GMS2.3 array-function forms (array_create/get/set/push/pop/resize/copy) — operate on V_ARR values */

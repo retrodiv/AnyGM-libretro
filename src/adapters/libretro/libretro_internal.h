@@ -31,6 +31,8 @@ typedef struct LibretroAdapter {
   int32_t display_mouse_x,display_mouse_y,display_wheel;
   uint8_t keyboard_events[ANYGM_MAX_KEYS];
   bool keyboard_events_accepted;
+  uint32_t keyboard_text[ANYGM_MAX_TEXT_EVENTS];
+  uint32_t keyboard_text_count;
   uint8_t override_used[ANYGM_MAX_RUNTIME_OVERRIDES];
   uint32_t port_device[ANYGM_MAX_GAMEPADS];
   unsigned pointer_seen;
@@ -113,6 +115,7 @@ static inline bool libretro_hw_render_requested(void){ return false; }
 bool libretro_content_start(void);
 void libretro_input_register(void);
 void libretro_input_snapshot(AnygmInputFrame *input,uint32_t width,uint32_t height);
+void libretro_input_text_acknowledge(uint32_t count);
 void libretro_update_av(void);
 uint32_t libretro_display_frequency(void *userdata);
 AnygmResult libretro_display_request(void *userdata,uint32_t hz);

@@ -1218,6 +1218,10 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
   /* Record whether a wait preceded this frame. A newly parked event may complete its draw; later held frames retain the completed picture. */
   int wait_held_frame = engine->vm.wait.active;
   if(run_step){
+    if(!gml_input_text(&engine->vm,engine->input.text_events,
+                       engine->input.text_event_count)) return ANYGM_ERROR_INTERNAL;
+    engine->frame_flags|=ANYGM_FRAME_TEXT_INPUT_CONSUMED;
+    engine->input.text_event_count=0;
     AspectViewOverlay step_ov;
     aspect_view_overlay_begin(engine,&step_ov, 0, ASPECT_VIEW_TRACKING);
     /* For a classic frame with a retained target, bind the new presented base before Step. The active target remains bound until the program resets it. */
@@ -2684,6 +2688,8 @@ AnygmResult anygm_run_frame(AnygmEngine *engine,const AnygmInputFrame *input,
     return ANYGM_ERROR_INVALID_STATE;
   if(output->struct_size<sizeof *output || (input && input->struct_size<sizeof *input))
     return ANYGM_ERROR_INCOMPATIBLE_ABI;
+  if(input && input->text_event_count>ANYGM_MAX_TEXT_EVENTS)
+    return ANYGM_ERROR_INVALID_ARGUMENT;
   if(input) memcpy(&engine->input,input,sizeof engine->input);
   else { memset(&engine->input,0,sizeof engine->input); engine->input.pointer_x=-1; engine->input.pointer_y=-1; }
   /* A shutdown keeps the last completed picture without another Draw. If that picture was
@@ -2713,6 +2719,9 @@ AnygmResult anygm_run_frame(AnygmEngine *engine,const AnygmInputFrame *input,
   engine_readback_open_frame(engine);
   engine->frame_flags=0;
   AnygmResult result=engine_run_frame(engine);
+  /* Input may have been consumed before a later execution/presentation error.
+   * Its acknowledgement is still authoritative; retrying is not new typing. */
+  output->flags=engine->frame_flags;
   if(result!=ANYGM_OK) return result;
   /* Submit the final queue. Witnessed GPU scenes retain their persistent pixels on device;
    * the established context-free path still seals hosts without that observation contract. */

@@ -15,8 +15,8 @@ extern "C" {
  * runtime library version, and every publishable metadata file declares the literal "Git" instead
  * of a number, so no copy can promise a value that has gone stale. CONTRIBUTING.md owns the single
  * increment step. */
-#define ANYGM_VERSION "0.1.319"
-#define ANYGM_API_VERSION 6u
+#define ANYGM_VERSION "0.1.320"
+#define ANYGM_API_VERSION 7u
 #define ANYGM_HOST_SERVICES_VERSION 2u
 #define ANYGM_STATE_SCHEMA 37u
 #define ANYGM_MAX_GAMEPADS 4u
@@ -25,6 +25,7 @@ extern "C" {
 /* gamepad_connected: beyond Off (0) and On (1), the default resolves per content. */
 #define ANYGM_GAMEPAD_AUTO 2u
 #define ANYGM_MAX_KEYS 512u
+#define ANYGM_MAX_TEXT_EVENTS 256u
 #define ANYGM_MAX_RUNTIME_OVERRIDES 256u
 #define ANYGM_MAX_RUNTIME_OVERRIDE_EXPRESSION 127u
 
@@ -465,6 +466,12 @@ typedef struct AnygmInputFrame {
   int32_t wheel_delta;
   uint8_t mouse_buttons[3];
   uint8_t pointer_pressed;
+  /* Ordered Unicode scalar values delivered by the host, not inferred from
+   * held keys. U+0008 erases the preceding character. Other controls and
+   * invalid scalars are ignored. Retain this batch until the output reports
+   * ANYGM_FRAME_TEXT_INPUT_CONSUMED, then omit it from later logical steps. */
+  uint32_t text_event_count;
+  uint32_t text_events[ANYGM_MAX_TEXT_EVENTS];
 } AnygmInputFrame;
 
 typedef uint32_t AnygmPixelFormat;
@@ -494,7 +501,11 @@ enum {
    * `width`/`height` still describe the rendered area, so a host that announced a hardware target
    * presents that target instead of the pixel view. Without this flag a CPU frame is always
    * available, and the two are never both authoritative for the same frame. */
-  ANYGM_FRAME_HARDWARE_TARGET=1u<<3
+  ANYGM_FRAME_HARDWARE_TARGET=1u<<3,
+  /* The logical input phase accepted this call's text batch. Repeated or
+   * restored completed pictures do not acknowledge unexecuted input. This
+   * acknowledgement remains valid if later execution or presentation fails. */
+  ANYGM_FRAME_TEXT_INPUT_CONSUMED=1u<<4
 };
 
 /* Optional host graphics target.

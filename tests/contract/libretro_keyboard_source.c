@@ -110,12 +110,62 @@ static void device_still_serves_a_frontend_without_events(void){
     fprintf(stderr,"libretro keyboard source: a frontend without events lost its keyboard\n");
     failures++;
   }
+  if(input.text_event_count){
+    fputs("libretro keyboard source: a held key manufactured text\n",stderr);
+    failures++;
+  }
+}
+
+static void delivered_text_is_ordered_and_acknowledged(void){
+  memset(&g_libretro,0,sizeof g_libretro);
+  g_libretro.environment=environment_callback;
+  keyboard_callback_accepted=1; libretro_input_register();
+  registered_callback(true,RETROK_a,'A',RETROKMOD_SHIFT);
+  registered_callback(false,RETROK_a,'A',0);
+  registered_callback(true,ANYGM_MAX_KEYS+1,0xe9,0);
+  registered_callback(true,RETROK_a,0xe9,0); /* frontend text repeat */
+  registered_callback(true,RETROK_BACKSPACE,0,0);
+  registered_callback(true,RETROK_RETURN,13,0);
+  registered_callback(true,RETROK_UNKNOWN,0xd800,0);
+  registered_callback(true,RETROK_UNKNOWN,0x110000,0);
+  AnygmInputFrame input;
+  snapshot(&input);
+  const uint32_t expected[]={'A',0xe9,0xe9,8};
+  if(input.text_event_count!=4 || memcmp(input.text_events,expected,sizeof expected)){
+    fputs("libretro keyboard source: delivered text order/filter changed\n",stderr);
+    failures++;
+  }
+  snapshot(&input);
+  if(input.text_event_count!=4){
+    fputs("libretro keyboard source: snapshot prematurely drained text\n",stderr);
+    failures++;
+  }
+  registered_callback(true,RETROK_UNKNOWN,0x1f642,0);
+  libretro_input_text_acknowledge(4);
+  snapshot(&input);
+  if(input.text_event_count!=1 || input.text_events[0]!=0x1f642){
+    fputs("libretro keyboard source: acknowledgement discarded later text\n",stderr);
+    failures++;
+  }
+  libretro_input_text_acknowledge(1);
+  for(unsigned i=0;i<ANYGM_MAX_TEXT_EVENTS+3;i++)
+    registered_callback(true,RETROK_UNKNOWN,'x'+(i&1),0);
+  snapshot(&input);
+  if(input.text_event_count!=ANYGM_MAX_TEXT_EVENTS ||
+     input.text_events[ANYGM_MAX_TEXT_EVENTS-1]!='y'){
+    fputs("libretro keyboard source: bounded oldest-batch policy failed\n",stderr);
+    failures++;
+  }
+  libretro_input_text_acknowledge(UINT32_MAX);
+  snapshot(&input);
+  if(input.text_event_count) failures++;
 }
 
 int main(void){
   reserved_key_stays_with_the_frontend();
   delivered_key_reaches_the_content();
   device_still_serves_a_frontend_without_events();
+  delivered_text_is_ordered_and_acknowledged();
   if(failures) return 1;
   puts("libretro keyboard source: ok");
   return 0;

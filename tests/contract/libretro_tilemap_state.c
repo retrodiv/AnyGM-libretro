@@ -14,8 +14,12 @@
  * Internal inspection observes map identities; every snapshot crosses libretro. */
 static int negotiation,option_update,monitor_changed;
 static unsigned frames,frame_width,frame_height;
+static retro_keyboard_event_t text_callback;
 
 static bool environment(unsigned command,void *data){
+  if(command==RETRO_ENVIRONMENT_SET_KEYBOARD_CALLBACK){
+    text_callback=((struct retro_keyboard_callback*)data)->callback; return true;
+  }
   if(command==RETRO_ENVIRONMENT_SET_SERIALIZATION_QUIRKS){
     if(negotiation>0) *(uint64_t*)data|=RETRO_SERIALIZATION_QUIRK_FRONT_VARIABLE_SIZE;
     return negotiation>=0;
@@ -102,6 +106,20 @@ static int timer_roots(void){
   gml_builtin_state_visit_values(g_libretro.engine->vm.builtins,count_root,&count);
   return count;
 }
+static int maximum_text(void){
+  GmlVal text=gml_vm_identifier_get(&g_libretro.engine->vm,"keyboard_string");
+  int correct=text.t==V_STR && text.s && strlen(text.s)==4096;
+  if(correct) for(size_t i=0;i<1024;i++)
+    if(memcmp(text.s+4*i,"\xf0\x9f\x99\x82",4)){ correct=0; break; }
+  if(text.t==V_STR && text.d) free((char*)text.s);
+  return correct;
+}
+static int empty_text(void){
+  GmlVal text=gml_vm_identifier_get(&g_libretro.engine->vm,"keyboard_string");
+  int correct=text.t==V_STR && text.s && !text.s[0];
+  if(text.t==V_STR && text.d) free((char*)text.s);
+  return correct;
+}
 
 #define REQUIRE(condition,message) do { if(!(condition)){ \
   fprintf(stderr,"tilemap frontend (%d): %s\n",negotiation,message); ok=0; goto done; \
@@ -140,8 +158,18 @@ static int run_case(int response){
     REQUIRE(timer.t==V_REAL && timer.d>=3,"allocate pending call after cold capacity query");
   }
   REQUIRE(timer_roots()==512,"all pending calls retained before first frame");
+  uint32_t text_batch[ANYGM_MAX_TEXT_EVENTS];
+  for(size_t i=0;i<ANYGM_MAX_TEXT_EVENTS;i++) text_batch[i]=0x1f642;
+  for(int batch=0;batch<3;batch++)
+    REQUIRE(gml_input_text(&g_libretro.engine->vm,text_batch,ANYGM_MAX_TEXT_EVENTS),
+            "prepare Unicode growth after the cold capacity query");
+  REQUIRE(text_callback,"text callback is accepted");
+  for(size_t i=0;i<ANYGM_MAX_TEXT_EVENTS;i++)
+    text_callback(true,RETROK_UNKNOWN,0x1f642,0);
   retro_run();
   REQUIRE(frames==1 && frame_width==1280 && frame_height==960,"first authored raster");
+  REQUIRE(maximum_text() && !g_libretro.keyboard_text_count,
+          "first input phase completes the largest UTF-8 text buffer exactly once");
   REQUIRE(push(&ring),"first completed-frame push");
 
   GmlVal xargs[]={vreal(id),vreal(9.25)};
@@ -168,6 +196,7 @@ static int run_case(int response){
   gml_room_enter(&g_libretro.engine->vm,1);
   REQUIRE(g_libretro.engine->vm.n_tilemaps==0 && push(&ring),"empty-room push");
   REQUIRE(retro_unserialize(saved,saved_size) && retained(id,next),"restore maps from empty room");
+  REQUIRE(maximum_text(),"frontend restoration preserves maximum text contents");
   REQUIRE(timer_roots()==512,"hidden callbacks survive room change and frontend restoration");
 
   *gml_varmap_put(&g_libretro.engine->vm.globals,"room_persistent")=vreal(1);
@@ -189,10 +218,12 @@ static int run_case(int response){
   REQUIRE(g_libretro.engine->config.monitor_width==1920 &&
           g_libretro.engine->config.monitor_height==1080,"live monitor option transition");
   REQUIRE(push(&ring),"push after live monitor transition");
+  REQUIRE(maximum_text(),"live geometry does not alter text contents");
 
   retro_reset();
   REQUIRE(g_libretro.reset_pending_frame,"Reset awaits its first new frame");
   REQUIRE(timer_roots()==0,"Reset removes pending callbacks");
+  REQUIRE(empty_text(),"Reset restores empty text defaults with the old ring alive");
   size_t reset_size=anygm_state_size(g_libretro.engine),written=0;
   before_reset_load=malloc(reset_size); after_reset_load=malloc(reset_size);
   REQUIRE(before_reset_load && after_reset_load,"allocate Reset guard");
@@ -206,6 +237,7 @@ static int run_case(int response){
   retro_run();
   REQUIRE(push(&ring),"first reset-frame push");
   REQUIRE(retro_unserialize(saved,saved_size) && retained(id,next),"restore retained map after Reset");
+  REQUIRE(maximum_text(),"a same-run pre-Reset snapshot restores maximum text");
   REQUIRE(timer_roots()==512,"pre-Reset pending callbacks restore through frontend");
   REQUIRE(push(&ring),"restored map push");
   REQUIRE(retro_unserialize(dormant,dormant_size) && g_libretro.engine->vm.room_index==1,

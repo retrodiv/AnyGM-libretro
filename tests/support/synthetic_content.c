@@ -802,7 +802,11 @@ int anygm_synthetic_blocking_wait_content_create(AnygmSyntheticContent *fixture)
                  "global.fixture_resumed = 0;\n"
                  "alarm[0] = 1;\n") ||
      !write_text(alarm,
+                 "var saved_text = keyboard_string;\n"
+                 "var reflected_text = variable_global_get(\"keyboard_string\");\n"
                  "while (global.fixture_release == 0) { sleep(10); }\n"
+                 "global.fixture_saved_text = saved_text;\n"
+                 "global.fixture_reflected_text = reflected_text;\n"
                  "global.fixture_resumed = 1;\n") ||
      !write_text(step,
                  "global.fixture_steps += 1;\n")){

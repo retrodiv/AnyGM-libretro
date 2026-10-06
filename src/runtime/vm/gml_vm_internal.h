@@ -122,6 +122,7 @@ int gml_vm_rooms_load_maps(GmlVM *vm,int room_index,GmlTileMap **maps,
                            int *count,int *capacity,int *next_id);
 void gml_vm_frame_cleanup(GmlVM *vm);
 void gml_vm_state_runtime_strings_clear(GmlVM *vm);
+void gml_vm_input_text_release(GmlVM *vm);
 int gml_vm_struct_ensure_capacity(GmlVM *vm, int need);
 void gml_vm_struct_free_slot_push(GmlVM *vm, int slot);
 int gml_vm_tilemap_ensure_owned(GmlTileMap *tilemap);

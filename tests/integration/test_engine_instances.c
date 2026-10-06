@@ -4180,6 +4180,42 @@ int main(int argc,char **argv){
   }
   free(display_state);
 
+  /* Text is an ordered event batch, not a held-key interpretation. Invalid
+   * batch sizes must be rejected before changing the emulated state. */
+  {
+    AnygmInputFrame text=input;
+    text.text_event_count=2; text.text_events[0]='a'; text.text_events[1]=0xe9;
+    if(anygm_run_frame(first,&text,&first_output)!=ANYGM_OK ||
+       !(first_output.flags&ANYGM_FRAME_TEXT_INPUT_CONSUMED)){
+      fputs("engine text batch was not acknowledged\n",stderr); return 1;
+    }
+    GmlVal observed=gml_vm_identifier_get(&first->vm,"keyboard_string");
+    int matches=observed.t==V_STR && observed.s && !strcmp(observed.s,"a\xc3\xa9");
+    if(observed.t==V_STR && observed.d) free((char*)observed.s);
+    if(!matches){ fputs("engine text batch did not reach the VM\n",stderr); return 1; }
+    text.text_event_count=0; text.keys[ANYGM_KEY_a]=1;
+    if(anygm_run_frame(first,&text,&first_output)!=ANYGM_OK ||
+       anygm_run_frame(second,&text,&second_output)!=ANYGM_OK) return 1;
+    observed=gml_vm_identifier_get(&first->vm,"keyboard_string");
+    matches=observed.t==V_STR && observed.s && !strcmp(observed.s,"a\xc3\xa9");
+    if(observed.t==V_STR && observed.d) free((char*)observed.s);
+    if(!matches){ fputs("held keys manufactured engine text\n",stderr); return 1; }
+    observed=gml_vm_identifier_get(&second->vm,"keyboard_string");
+    matches=observed.t==V_STR && observed.s && !observed.s[0];
+    if(observed.t==V_STR && observed.d) free((char*)observed.s);
+    if(!matches){ fputs("engine text escaped to another instance\n",stderr); return 1; }
+    uint8_t *before=NULL,*after=NULL; size_t before_size=0,after_size=0;
+    if(!save_state(first,&before,&before_size)) return 1;
+    text.text_event_count=ANYGM_MAX_TEXT_EVENTS+1;
+    if(anygm_run_frame(first,&text,&first_output)!=ANYGM_ERROR_INVALID_ARGUMENT ||
+       !save_state(first,&after,&after_size) || before_size!=after_size ||
+       memcmp(before,after,before_size)){
+      fputs("oversized text batch mutated the engine\n",stderr);
+      free(before); free(after); return 1;
+    }
+    free(before); free(after);
+  }
+
   free(first_state); free(second_state);
   anygm_destroy(first);
   anygm_destroy(second);

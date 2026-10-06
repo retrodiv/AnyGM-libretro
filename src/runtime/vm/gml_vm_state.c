@@ -778,6 +778,7 @@ static void runtime_release_builtin_value(void *userdata,GmlVal value){
 
 static void runtime_clear(GmlVM *vm,GmlArr **partial_arrays,uint32_t partial_count){
   gml_vm_wait_cancel(vm);   /* the state about to be read decides what is parked, if anything */
+  gml_vm_input_text_release(vm);
   gml_vm_rooms_clear_stored_visuals(vm);
   gml_vm_rooms_clear_tilemaps(vm);
   GmlValueFreeContext free_context={0};

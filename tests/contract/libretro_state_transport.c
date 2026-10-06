@@ -30,6 +30,9 @@ static unsigned resume_hint_queries;
 static int variable_frontend;
 static int serialization_query_seen;
 static int development_setting_seen;
+static AnygmResult stub_frame_result;
+static int stub_text_consumed;
+static unsigned text_acknowledgements;
 
 static bool environment_callback(unsigned command,void *data){
   if(command==RETRO_ENVIRONMENT_SET_SERIALIZATION_QUIRKS){
@@ -72,7 +75,9 @@ AnygmResult anygm_get_av_info(const AnygmEngine *engine,AnygmAvInfo *info){
 }
 AnygmResult anygm_run_frame(AnygmEngine *engine,const AnygmInputFrame *input,
                             AnygmFrameOutput *output){
-  (void)engine; (void)input; (void)output; return ANYGM_OK;
+  (void)engine; (void)input;
+  output->flags=stub_text_consumed?ANYGM_FRAME_TEXT_INPUT_CONSUMED:0;
+  return stub_frame_result;
 }
 AnygmResult anygm_schedule_frame(AnygmEngine *engine,double hz,uint32_t *steps){
   (void)engine; (void)hz; *steps=1; return ANYGM_OK;
@@ -171,6 +176,12 @@ void libretro_input_snapshot(AnygmInputFrame *input,uint32_t width,uint32_t heig
   (void)width; (void)height;
   memset(input,0,sizeof *input);
   input->struct_size=sizeof *input;
+  input->text_event_count=g_libretro.keyboard_text_count;
+}
+void libretro_input_text_acknowledge(uint32_t count){
+  text_acknowledgements++;
+  if(count>g_libretro.keyboard_text_count) count=g_libretro.keyboard_text_count;
+  g_libretro.keyboard_text_count-=count;
 }
 
 static int begin_frontend(int variable_support){
@@ -178,6 +189,7 @@ static int begin_frontend(int variable_support){
   variable_frontend=variable_support;
   serialization_query_seen=0;
   development_setting_seen=0;
+  stub_frame_result=ANYGM_OK; stub_text_consumed=0; text_acknowledgements=0;
   last_load_bytes=0;
   stub_hint_bytes=0;
   stub_resume_hint_bytes=0;
@@ -622,6 +634,19 @@ static int restart_rereads_settings(void){
   return ok;
 }
 
+static int frame_failure_acknowledges_only_consumed_text(void){
+  if(!begin_frontend(1)) return 0;
+  g_libretro.keyboard_text_count=1;
+  stub_frame_result=ANYGM_ERROR_INTERNAL;
+  retro_run();
+  int ok=g_libretro.keyboard_text_count==1 && text_acknowledgements==0;
+  stub_text_consumed=1;
+  retro_run();
+  ok=ok && !g_libretro.keyboard_text_count && text_acknowledgements==1;
+  if(!ok) fputs("failed frame lost unconsumed text or retained consumed text\n",stderr);
+  retro_unload_game(); retro_deinit(); return ok;
+}
+
 int main(void){
   uint8_t byte=0;
   memset(&g_libretro,0,sizeof g_libretro);
@@ -652,7 +677,8 @@ int main(void){
      !restart_rejects_only_an_immediate_old_ring_state(1) ||
      !restart_rejects_only_an_immediate_old_ring_state(0) ||
      !restart_rejects_only_an_immediate_old_ring_state(-1) ||
-     !restart_rereads_settings() || !starting_declares_the_settings()){
+     !restart_rereads_settings() || !starting_declares_the_settings() ||
+     !frame_failure_acknowledges_only_consumed_text()){
     fprintf(stderr,"libretro state transport contract failed\n");
     return 1;
   }

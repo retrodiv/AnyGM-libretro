@@ -430,24 +430,6 @@ static GmlVal gml_string_concat_ext(GmlVal *args, int count){
   output[used]=0;
   return vstr_owned(output);
 }
-static int utf8_character_bytes(const unsigned char *text){
-  if(!text || !text[0]) return 0;
-  if(text[0]<0x80) return 1;
-  if((text[0]&0xe0)==0xc0 && text[1] && (text[1]&0xc0)==0x80){
-    unsigned value=((unsigned)(text[0]&0x1f)<<6)|(text[1]&0x3f);
-    if(value>=0x80) return 2;
-  } else if((text[0]&0xf0)==0xe0 && text[1] && text[2] &&
-            (text[1]&0xc0)==0x80 && (text[2]&0xc0)==0x80){
-    unsigned value=((unsigned)(text[0]&15)<<12)|((unsigned)(text[1]&0x3f)<<6)|(text[2]&0x3f);
-    if(value>=0x800 && (value<0xd800 || value>0xdfff)) return 3;
-  } else if((text[0]&0xf8)==0xf0 && text[1] && text[2] && text[3] &&
-            (text[1]&0xc0)==0x80 && (text[2]&0xc0)==0x80 && (text[3]&0xc0)==0x80){
-    unsigned value=((unsigned)(text[0]&7)<<18)|((unsigned)(text[1]&0x3f)<<12)|
-                   ((unsigned)(text[2]&0x3f)<<6)|(text[3]&0x3f);
-    if(value>=0x10000 && value<=0x10ffff) return 4;
-  }
-  return 1;
-}
 /* Unicode hash variants consume UTF-16 code units. Runtime strings are UTF-8 here,
  * so encode valid scalar values as little-endian UTF-16 and replace malformed sequences. */
 static uint8_t *utf16le_alloc(const char *text, size_t *out_len){
@@ -565,7 +547,7 @@ GmlVal gml_builtin_try_values_strings(GmlVM *vm, const char *nm, GmlVal *a, int 
     if(!start || !width){ free(start); free(width); return vreal(0); }
     int characters=0;
     for(const unsigned char *cursor=(const unsigned char*)text;*cursor;){
-      int length=utf8_character_bytes(cursor);
+      int length=gml_utf8_character_bytes(cursor);
       start[characters]=(const char*)cursor; width[characters]=(unsigned char)length;
       characters++; cursor+=length;
     }
@@ -1065,7 +1047,9 @@ GmlVal gml_builtin_try_values_variables(GmlVM *vm, const char *nm, GmlVal *a, in
   if(!strcmp(nm,"variable_clone")) return gml_variable_clone(vm,a,n);
   if(!strcmp(nm,"variable_global_exists")) return vreal(gml_varmap_get(&vm->globals,S(vm,a,n,0))!=NULL);
   if(!strcmp(nm,"variable_global_get")){
-    GmlVal *p=gml_varmap_get(&vm->globals,S(vm,a,n,0));
+    const char *key=S(vm,a,n,0);
+    if(gml_input_text_variable(key)) return gml_input_text_value(vm,key);
+    GmlVal *p=gml_varmap_get(&vm->globals,key);
     if(!p) return vundef();
     GmlVal out=*p; if(out.t==V_STR) out.d=0;
     return out;

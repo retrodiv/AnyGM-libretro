@@ -193,6 +193,7 @@ double gml_global_num(GmlVM *vm, const char *name){
   if(vm && name && gml_vm_variable_name_maybe_special(vm,name,gml_value_name_hash(name))){
     GmlVal value=gml_vm_variable_get_h(vm,IT_GLOBAL,name,gml_value_name_hash(name));
     if(value.t==V_REAL) return value.d;
+    if(value.t==V_STR && value.d!=0) free((char*)value.s);
   }
   { GmlVal *slot=gml_varmap_get_hashed(&vm->globals,name,gml_value_name_hash(name));
     if(slot) return slot->t==V_REAL? slot->d : 0; }

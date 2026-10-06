@@ -243,8 +243,11 @@ static int classic_execute_call_value(GmlVM *vm,const char **cursor,GmlVal *valu
     char field[128];
     if(!classic_execute_identifier(&source,field,sizeof field)) return 0;
     if(!strcmp(first,"global")){
-      GmlVal *slot=gml_varmap_get(&vm->globals,field);
-      *value=slot?*slot:vreal(0);
+      if(gml_input_text_variable(field)) *value=gml_input_text_value(vm,field);
+      else {
+        GmlVal *slot=gml_varmap_get(&vm->globals,field);
+        *value=slot?*slot:vreal(0);
+      }
     } else {
       GmlVal scope;
       if(!strcmp(first,"self")) scope=vreal(IT_SELF);

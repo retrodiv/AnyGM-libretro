@@ -218,6 +218,23 @@ anygm_unload(engine);
 anygm_destroy(engine);
 ```
 
+### Keyboard text
+
+`keys` describes held physical keys. Text is a separate ordered stream of host-delivered Unicode
+scalars in `text_events`, bounded by `ANYGM_MAX_TEXT_EVENTS`; a held key never manufactures text.
+U+0008 removes the last character. Other C0/C1 controls and invalid scalars are ignored. The
+language-owned writable `keyboard_string` keeps the latest 1024 characters, and
+`keyboard_lastchar` retains the last accepted character until changed by content or later input.
+
+Keep an unacknowledged text batch across zero-step display ticks and restored-picture presentation.
+When `ANYGM_FRAME_TEXT_INPUT_CONSUMED` appears, retire that batch before another logical step.
+The acknowledgement remains valid when a later phase fails; a retry must not replay consumed text.
+Pending host events are transport, not serialized content state. Discard them on successful
+load, unload, Reset or state restoration, but preserve them after a rejected restore. The language
+strings themselves travel through the ordinary globals codec, and reads own stable value copies.
+The libretro adapter uses the accepted keyboard callback as text authority, keeps its oldest
+256 pending events on overflow, and provides no guessed text for a polling-only frontend.
+
 ## VFS and paths
 
 Paths passed across the API belong to the host VFS namespace. Portable modules

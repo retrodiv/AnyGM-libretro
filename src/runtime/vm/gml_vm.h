@@ -305,6 +305,9 @@ typedef struct GmlVM {
   GmlSoftware3D *software3d;
   GmlVmDiagnostics diagnostics;
   GmlVarMap globals;
+  /* The two current host-text allocations. Language reads receive independent
+   * values; the ordinary globals codec stores their contents, not these pointers. */
+  char *input_text_owned[2];
   /* Function-static storage. Each CODE entry owns one persistent scope and the
    * initialization latch driven by the isstaticok/setstatic bytecode pair. */
   GmlVarMap *code_static; unsigned char *code_static_init; int code_static_count;
@@ -549,6 +552,13 @@ void    gml_keyboard_set_map(GmlVM *vm, int source, int destination);
 void    gml_keyboard_unset_map(GmlVM *vm);
 void    gml_keyboard_clear(GmlVM *vm, int logical_vk);
 int     gml_input_key(GmlVM *vm,int key,int edge);
+/* Apply one ordered host text batch before the logical Step. No held-key
+ * synthesis; returns zero on allocation failure without changing the roots. */
+int     gml_input_text(GmlVM *vm,const uint32_t *events,size_t count);
+int     gml_input_text_variable(const char *name);
+/* New text variables return owned snapshots, including through reflective
+ * reads, so later host input cannot mutate a parked operand or stored value. */
+GmlVal  gml_input_text_value(GmlVM *vm,const char *name);
 void    gml_input_key_clear(GmlVM *vm,int key);
 void    gml_input_key_press(GmlVM *vm,int key);
 void    gml_input_key_release(GmlVM *vm,int key);
@@ -593,7 +603,9 @@ GmlVal  gml_vm_call_member_callable(GmlVM *vm, GmlVal receiver,
                                     GmlVal callable, GmlVal *args,
                                     int n_args);
 /* Resolve one identifier in the current classic execution scope. This is the bounded
- * execute_string seam and follows the same self/globalvar rules as an interpreted load. */
+ * execute_string seam and follows the same self/globalvar rules as an interpreted load.
+ * A returned string marked owned (d != 0), including a text-input snapshot, belongs
+ * to the caller and must be released after use. */
 GmlVal  gml_vm_identifier_get(GmlVM *vm,const char *name);
 void    gml_time_sources_tick(GmlVM *vm);          /* between Begin Step and normal Step */
 int     gml_code_index_by_name(GmlWin *win, const char *name);  /* exact */

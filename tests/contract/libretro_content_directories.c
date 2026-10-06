@@ -232,6 +232,7 @@ void libretro_input_snapshot(AnygmInputFrame *input,uint32_t width,uint32_t heig
   memset(input,0,sizeof *input);
   input->struct_size=sizeof *input;
 }
+void libretro_input_text_acknowledge(uint32_t count){ (void)count; }
 
 /* One load, from a frontend that answers `directory` for its save root. */
 static int load_with_save_directory(const char *directory){
