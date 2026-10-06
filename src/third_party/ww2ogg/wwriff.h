@@ -5,7 +5,6 @@
 #define __STDC_CONSTANT_MACROS
 #endif
 #include <string>
-#include <iostream>
 #include <fstream>
 #include <sstream>
 #include "Bit_stream.h"
@@ -76,7 +75,7 @@ public:
       ForcePacketFormat force_packet_format
       );
 
-    void print_info(void);
+    void print_info(ostream& output);
 
     void generate_ogg(ostream& of);
     void generate_ogg_header(Bit_oggstream& os, bool * & mode_blockflag, int & mode_bits);

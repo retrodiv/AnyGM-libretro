@@ -18,10 +18,27 @@ templates pass `CROSS_COMPILE=1` as a flag and name the target in
 `LIBRETRO_APPLE_PLATFORM`; the build recognizes that spelling and turns it into
 `-target`/`-isysroot` instead of prefixing the compiler.
 
-**The test suite is POSIX-only** even though the core cross-builds for Windows:
+**The general test suite is POSIX-only** even though the core cross-builds for Windows:
 the harness uses `mkstemp` templates under `/tmp`, and `nm` and `cmp` for the
 contract checks. Build for Windows from a POSIX host and run `make check`
 there.
+
+The explicit `windows-dll-lifetime-probe` and `windows-dll-lifetime-check` targets
+are MinGW x64 exceptions. Cross-build the probe and intentional negative-control
+DLL with the same `platform=win`, compiler prefix and private `BUILD_DIR` as the
+core. The check requires `WINDOWS_DLL_CORE` and `WINDOWS_DLL_NEGATIVE` as explicit
+Windows-visible paths to the unstripped core and generated negative DLL. It
+runs both dynamic unload and process-exit modes, requiring the negative fixture
+to report a TLS read-after-free and the core to finish cleanly. Every mode runs
+in a fresh process with a fifteen-second timeout, no content and no frontend.
+Set `WINDOWS_DLL_RUNNER` to an explicit Wine executable when native execution
+is unavailable; the DLL arguments must use paths visible to that runner.
+
+The probe resolves the existing COFF emutls symbol without changing exports,
+exercises zero-initialized/reused TLS, and instruments only that test process's
+loaded image imports. Stripped images or missing instrumentation are failures,
+not skipped controls. The negative fixture deliberately includes console-stream
+global destruction and must never be linked into a production artifact.
 
 ## Core and portable runtime
 

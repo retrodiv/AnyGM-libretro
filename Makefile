@@ -968,6 +968,28 @@ $(TEST_DIR)/test_libretro_display_cadence: tests/contract/libretro_display_caden
 	mkdir -p $(dir $@)
 	$(CC) $(LIBRETRO_CPPFLAGS) -Itests/support $(CFLAGS) $^ -o $@ -lm -pthread $(CXX_RUNTIME_LDLIBS)
 
+# Explicit MinGW-only contract; every mode starts without content or a frontend.
+.PHONY: windows-dll-lifetime-probe windows-dll-lifetime-check
+windows-dll-lifetime-probe: $(TEST_DIR)/windows_dll_lifetime.exe \
+	$(TEST_DIR)/windows_dll_lifetime_negative.dll
+
+$(TEST_DIR)/windows_dll_lifetime.exe: tests/contract/windows_dll_lifetime.c
+	mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) -Werror $< -o $@
+
+$(TEST_DIR)/windows_dll_lifetime_negative.dll: tests/contract/windows_dll_lifetime_negative.cpp
+	mkdir -p $(dir $@)
+	$(CXX) $(CXXFLAGS) -Werror -shared -Wl,--no-insert-timestamp \
+		-static-libgcc -static-libstdc++ $< -o $@
+
+windows-dll-lifetime-check: windows-dll-lifetime-probe
+	@test -n $(call build_quote,$(WINDOWS_DLL_CORE)) -a -n $(call build_quote,$(WINDOWS_DLL_NEGATIVE)) || \
+		{ echo "Set WINDOWS_DLL_CORE and WINDOWS_DLL_NEGATIVE to explicit Windows-visible DLL paths"; exit 2; }
+	python3 tests/contract/check_windows_dll_lifetime.py \
+		--probe "$(TEST_DIR)/windows_dll_lifetime.exe" \
+		--core $(call build_quote,$(WINDOWS_DLL_CORE)) --negative $(call build_quote,$(WINDOWS_DLL_NEGATIVE)) \
+		$(foreach runner,$(WINDOWS_DLL_RUNNER),--runner $(call build_quote,$(runner)))
+
 # Explicit Windows-only contract; its controlled APIs never change the host display.
 $(TEST_DIR)/test_libretro_display_windows.exe: tests/contract/libretro_display_windows.c \
 	src/adapters/libretro/libretro_display.c

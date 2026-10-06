@@ -1,5 +1,4 @@
 #define __STDC_CONSTANT_MACROS
-#include <iostream>
 #include <cstring>
 #include "stdint.h"
 #include "errors.h"
@@ -451,7 +450,7 @@ Wwise_RIFF_Vorbis::Wwise_RIFF_Vorbis(
     }
 }
 
-void Wwise_RIFF_Vorbis::print_info(void)
+void Wwise_RIFF_Vorbis::print_info(ostream& cout)
 {
     if (_little_endian)
     {

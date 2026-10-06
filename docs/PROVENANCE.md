@@ -154,10 +154,14 @@ The in-memory Wwise Vorbis reconstruction in `src/third_party/ww2ogg/` is
 adapted from [ww2ogg](https://github.com/hcs64/ww2ogg) under its retained
 BSD-style terms in `LICENSES/ww2ogg.txt`. The `codebook_library` constructor
 takes a byte range, `Wwise_RIFF_Vorbis` reads RIFF and catalog bytes from
-memory, and `generate_ogg` writes to an output stream. The CRC files are
-unmodified upstream copies; `Bit_stream.h` and `errors.h` differ only in
-trailing whitespace. The upstream revision and file-by-file comparison values
-are recorded in external verification evidence.
+memory, and `generate_ogg` writes to an output stream. Console-stream headers
+are replaced with the required input/output stream headers, and `print_info`
+takes a caller-owned output stream. No process-global console stream is
+initialized by the in-memory library. This avoids global stream destruction
+consulting already-released MinGW emulated TLS when a Windows DLL detaches;
+the packet reconstruction and information-formatting bodies are preserved.
+The CRC files are unmodified upstream copies. The upstream revision and
+file-by-file comparison values are recorded in external verification evidence.
 
 ## Vendored third-party sources
 

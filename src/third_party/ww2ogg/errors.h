@@ -1,7 +1,7 @@
 #ifndef _ERRORS_H
 #define _ERRORS_H
 
-#include <iostream>
+#include <ostream>
 #include <string>
 using namespace std;
 

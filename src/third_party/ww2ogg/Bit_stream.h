@@ -4,7 +4,8 @@
 #ifndef __STDC_CONSTANT_MACROS
 #define __STDC_CONSTANT_MACROS
 #endif
-#include <iostream>
+#include <istream>
+#include <ostream>
 #include <limits>
 #include <stdint.h>
 
