@@ -776,6 +776,14 @@ static void draw_surface_region_impl(GmlRender *r, int surf, double sx0d, double
   int sw=0, sh=0; const uint32_t *src=surface_pixels_observe(r,surf,&sw,&sh);
   if(!src || !r->fb) return;
   dx-=r->cam_x; dy-=r->cam_y;   /* draws are camera/GUI-offset relative, like every other path */
+  /* Shader output is already an integer raster. Preserve its integer origin
+   * across inverse-camera roundoff, without quantizing authored subpixel draws.
+   * One nanopixel is the numerical policy, not a sampling/alignment tolerance. */
+  if(surf==GML_RENDER_SHADED_SURFACE){
+    double raster_x=round(dx),raster_y=round(dy);
+    if(fabs(dx-raster_x)<1e-9) dx=raster_x;
+    if(fabs(dy-raster_y)<1e-9) dy=raster_y;
+  }
   if(alpha>1) alpha=1; else if(alpha<0) alpha=0;
   int x0=(int)floor(dx), y0=(int)floor(dy), W=(int)lround(dw), H=(int)lround(dh);
   if(swd<=0||shd<=0||W==0||H==0) return;

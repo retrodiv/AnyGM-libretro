@@ -1169,6 +1169,52 @@ static int deferred_shader_geometry_case(void){
   return 0;
 }
 
+/* An integer shader-output raster must not move by a texel when inverse-camera
+ * arithmetic leaves a sub-nanopixel residual on either side of its origin. */
+static int shader_raster_origin_roundoff_case(void){
+  const double cameras[]={0.0,1.1368683772161603e-13,-1.1368683772161603e-13};
+  uint32_t reference[48]={0};
+  for(int deferred=0;deferred<2;deferred++) for(int phase=0;phase<3;phase++){
+    GmlRender render={0};
+    struct GmlShaderPal shader={0};
+    uint32_t target[48]={0};
+    DeferredGeometryControl control={0};
+    render.next_surface_id=1;render.color_write_mask=15;render.lut_pal_sprite=-1;
+    render.shader_pal=&shader;render.n_shader_pal=1;
+    shader.source_vertex_es="void main(){gl_Position=vec4(0.0);}";
+    shader.source_fragment_es="void main(){gl_FragColor=vec4(0.0);}";
+    gml_render_begin(&render,target,8,6,cameras[phase],cameras[phase]*2);
+    gml_render_clear(&render,0x0D0B07u,1.0);
+    int surface=gml_surface_create(&render,8,6);
+    REQUIRE(surface>0,"roundoff shader source allocated");
+    uint32_t *source=surface_pixels(&render,surface,NULL,NULL);
+    for(int y=0;y<6;y++) for(int x=0;x<8;x++)
+      source[y*8+x]=0x99000000u|((17u+23u*x+7u*y)<<16)|
+                    ((29u+11u*x+19u*y)<<8)|(31u+13u*x+17u*y);
+    render.surface[surface-1].opaque_known=0;
+    render.surface[surface-1].all_transparent=0;
+    control.geometry=gml_render_shader_geometry(&render,0,0,8,6,1);
+    control.width=8;control.height=6;control.vertex=1.0f;
+    render.shade_vertex_colour_valid=1;
+    for(int channel=0;channel<4;channel++) render.shade_vertex_colour[channel]=1.0f;
+    gml_render_set_shader_executor(&render,deferred_geometry_execute,&control);
+    gml_render_set_deferred_presentation(&render,deferred);
+    gml_render_shader_set_current(&render,0);
+    gml_draw_surface_stretched(&render,surface,0,0,8,6,0xFFFFFFu,1.0);
+    gml_render_flush_deferred_presentation(&render);
+    int matches=control.calls==1 && control.valid;
+    if(!deferred && !phase) memcpy(reference,target,sizeof reference);
+    matches=matches && !memcmp(reference,target,sizeof reference);
+    if(!matches)
+      fprintf(stderr,"shader raster origin deferred=%d camera=%.17g calls=%d valid=%d "
+                     "first=%08x/%08x last=%08x/%08x\n",deferred,cameras[phase],
+              control.calls,control.valid,target[0],reference[0],target[47],reference[47]);
+    gml_surface_free(&render,surface);free(render.shaded_plane);free(render.shader_account);
+    REQUIRE(matches,"shader raster origin is stable across camera roundoff");
+  }
+  return 0;
+}
+
 static int opaque_integer_scale_case(void){
   enum { SOURCE_WIDTH=5,SOURCE_HEIGHT=3,TARGET_WIDTH=20,TARGET_HEIGHT=12 };
   uint32_t source[SOURCE_WIDTH*SOURCE_HEIGHT];
@@ -2063,6 +2109,7 @@ int main(void){
   REQUIRE(automatic_underlay_shader_case()==0,"automatic underlay shader case");
   REQUIRE(deferred_shader_alpha_case()==0,"deferred shader alpha case");
   REQUIRE(deferred_shader_geometry_case()==0,"deferred shader geometry case");
+  REQUIRE(shader_raster_origin_roundoff_case()==0,"shader raster origin roundoff case");
   REQUIRE(filtered_additive_shader_sprite_case()==0,"filtered additive shader sprite case");
   REQUIRE(replacement_sprite_case()==0,"replacement sprite case");
   REQUIRE(point_downscale_case()==0,"point downscale case");
