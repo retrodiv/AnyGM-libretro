@@ -2809,6 +2809,70 @@ static int resident_application_pending_clear(void){
   return 1;
 }
 
+static int resident_pending_clear_after_queued_draw(void){
+  for(int on_demand=0;on_demand<2;on_demand++)
+    for(int target=0;target<3;target++){
+      GmlRender *render=(GmlRender*)calloc(1,sizeof *render);
+      uint32_t base_pixels[16]={0};
+      uint32_t source_pixels[4]={0xFF315779u,0xFF315779u,0xFF315779u,0xFF315779u};
+      GmlRenderResourceSource source=source_view(source_pixels,1);
+      GmlRenderDrawStateSnapshot state=quad_state(0);
+      GmlRenderDrawOp operation=quad_op(2u,&source.image);
+      GmlRenderJournalMetrics before={0},after={0};
+      GmlRenderDispatchMetrics dispatch={0};
+      FakeDevice fake={0};
+      fake.on_demand=on_demand;
+      GmlRenderDeviceServices device=service(&fake);
+      device.observe_on_demand=fake_observe_on_demand;
+      GmlRenderResource *resource;
+      const uint32_t *pixels=NULL;
+      CHECK(render && gml_render_init(render,NULL)==0 &&
+            gml_render_application_surface_ensure_owned(render,4,4));
+      gml_render_bind_device(render,&device);
+      if(target==1){
+        CHECK(gml_render_begin_resident_base(render,base_pixels,4,4,0.0,0.0));
+      } else {
+        CHECK(gml_render_begin_resident_owned_application(render,0.0,0.0,0));
+        if(target==2){
+          int id=gml_surface_create(render,4,4);
+          CHECK(id>0 && gml_surface_set_target(render,id));
+        }
+      }
+      gml_render_dispatch_diagnostics_enable(render,1);
+      resource=gml_render_scene_target_resource_ensure(render);
+      CHECK(resource);
+      gml_render_resource_journal_metrics(resource,&before);
+      operation.scene_family=GML_RENDER_SCENE_SPRITE;
+      operation.target.image=gml_render_resource_image_ref(resource);
+      operation.target.image.content_version++;
+      operation.target.pixel_format=GML_RENDER_PIXEL_ARGB8888;
+      CHECK(gml_render_application_scene_enqueue(render,&operation,&state,&source) &&
+            fake.submits==0 && fake.readbacks==0);
+      /* The deferred clear follows the queued draw, even before its version is published. */
+      gml_render_set_pending_fill(render,0xFF26486Au);
+      gml_render_flush_pending_fill(render);
+      gml_render_resource_journal_metrics(resource,&after);
+      CHECK(gml_render_dispatch_metrics(render,&dispatch) && !dispatch.failed &&
+            !dispatch.unclassified && !dispatch.overflow &&
+            dispatch.gpu[GML_RENDER_SCENE_SPRITE]==1u &&
+            dispatch.gpu[GML_RENDER_SCENE_PRIMITIVE]==1u &&
+            fake.submits==2 && fake.readbacks==0 && !render->pending_fill &&
+            after.logical_version==before.logical_version+2u &&
+            fake.last_opcode==GML_RENDER_OP_CLEAR &&
+            fake.last_target_image.content_version==after.logical_version &&
+            render->fb[0]==0u && render->fb[15]==0u);
+      CHECK(after.authority==(on_demand?GML_RENDER_RESOURCE_GPU_RESIDENT:
+                                        GML_RENDER_RESOURCE_GPU_REPLAYABLE));
+      fake.readback_colour=0xFF26486Au;
+      CHECK(gml_render_resource_acquire_cpu_read(resource,&pixels) &&
+            pixels==render->fb && fake.readbacks==on_demand);
+      for(int index=0;index<16;index++) CHECK(pixels[index]==0xFF26486Au);
+      gml_render_free(render);
+      free(render);
+    }
+  return 1;
+}
+
 static int first_generation_underlay_resource_borrow(void){
   GmlRender *cpu=(GmlRender*)calloc(1,sizeof *cpu);
   GmlRender *resident=(GmlRender*)calloc(1,sizeof *resident);
@@ -7986,6 +8050,7 @@ int main(void){
   passed+=numbered_surface_free_bound_resource();
   passed+=owned_application_resize_and_context_loss();
   passed+=resident_application_pending_clear();
+  passed+=resident_pending_clear_after_queued_draw();
   passed+=first_generation_underlay_resource_borrow();
   passed+=resident_layer_filter_capture_barrier();
   passed+=resident_inline_layer_effect_cpu_bridge();
@@ -8066,6 +8131,6 @@ int main(void){
   passed+=source_free_primitive_rect_replay();
   passed+=stretched_float_exact_replay();
   passed+=filtered_font_exact_recovery();
-  printf("render resource cases: passed=%d failed=%d\n",passed,112-passed);
-  return passed==112?EXIT_SUCCESS:EXIT_FAILURE;
+  printf("render resource cases: passed=%d failed=%d\n",passed,113-passed);
+  return passed==113?EXIT_SUCCESS:EXIT_FAILURE;
 }

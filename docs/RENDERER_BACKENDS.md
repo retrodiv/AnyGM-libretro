@@ -288,7 +288,11 @@ source/state changes still close the batch. The existing
 resource authority and CPU replay path still own partial device failure and
 context-loss recovery. A successful full-target clear supersedes the older
 replay journal only after the device accepts that clear; an unsuccessful clear
-retains the older journal for fallback. These optimizations do not broaden the
+retains the older journal for fallback. A deferred resident clear projects its
+next target version through the queued prefix before submission, preserving
+EXACT order without a CPU pixel borrow. The neutral resource control
+`resident_pending_clear_after_queued_draw` covers application, SCREEN and numbered
+targets with exact replay and on-demand authority. These optimizations do not broaden the
 set of qualified scene operations or change CPU raster bodies.
 
 ## Current operation support and repair-level rules

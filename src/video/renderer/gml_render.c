@@ -1039,7 +1039,8 @@ void gml_render_flush_pending_fill(GmlRender *r){
     GmlRenderResource *resource=gml_render_scene_target_resource_ensure(r);
     if(!resource) return;
     if(resource){
-      GmlRenderImageRef image=gml_render_resource_image_ref(resource);
+      /* The clear is submitted after the queued prefix publishes its versions. */
+      GmlRenderImageRef image=gml_render_application_scene_next_image_ref(r,resource);
       if(image.content_version<UINT64_MAX){
         GmlRenderDrawOp operation={0};
         operation.opcode=GML_RENDER_OP_CLEAR;
