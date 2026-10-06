@@ -416,6 +416,13 @@ static int resident_atlas_crop_from_page(GmlRender *r,GmlTpag *page,
     r->fb_all_opaque=0;
     if(r->app_surface && r->fb==r->app_surface) r->app_surface_opaque=0;
   }
+  /* Enqueue conservatively invalidates application opacity. A complete nearest
+   * replacement from an opaque page proves every target alpha without reading it. */
+  if(page->scene_fully_opaque && draw_alpha==1.0 && left==0.0 && top==0.0 &&
+     scaled_width==r->fbw && scaled_height==r->fbh){
+    r->fb_opaque_known=r->fb_all_opaque=1;
+    if(r->app_surface && r->fb==r->app_surface) r->app_surface_opaque=1;
+  }
   return 1;
 }
 

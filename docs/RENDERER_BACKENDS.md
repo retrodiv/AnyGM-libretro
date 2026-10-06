@@ -27,6 +27,11 @@ versioned application sources, without predecessor copies or CPU replay.
 Resource/backend call controls cover admission, clipping, refusal and capacity
 batching; real-device pixel, lifecycle and workload qualification is still pending.
 Full-width corrections and other unqualified states keep ordered CPU fallback.
+An admitted complete nearest replacement from a proven opaque atlas page at full
+draw alpha restores the application-opacity metadata discarded by generic enqueue.
+Partial coverage, binary/partial source alpha and partial draw alpha do not gain
+that proof. This enables device-produced opaque application point presentation
+without a source readback; CPU drawing bodies and expectations remain unchanged.
 
 The identity SCREEN GUI extension of R03-SPR-COARSE-MIP, with interpolation
 enabled or disabled as in the unchanged full-target CPU leaf, uses fixed-function

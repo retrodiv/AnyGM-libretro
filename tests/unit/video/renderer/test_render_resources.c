@@ -7496,6 +7496,59 @@ static int resident_integer_world_sprite(void){
   return 1;
 }
 
+static int resident_opaque_sprite_complete_application(void){
+  for(unsigned variant=0;variant<7u;variant++){
+    GmlRender *render=calloc(1,sizeof *render);
+    GmlWin content={.bytecode=15};
+    FakeDevice fake={.on_demand=1};
+    GmlRenderDeviceServices device=service(&fake);
+    GmlRenderJournalMetrics metrics={0};
+    uint8_t rgba[16]={208,32,16,255,16,208,32,255,
+                      32,16,208,255,192,176,160,255};
+    int extent=variant==1u || variant>=3u?4:2;
+    double x=variant==2u?2.0:variant>=3u?1.0:0.0;
+    double y=variant>=3u?1.0:0.0;
+    double xs=variant==1u?2.0:variant==2u?-1.0:1.0;
+    double ys=variant==1u?2.0:1.0;
+    double alpha=variant==6u?.75:1.0;
+    CHECK(render && gml_render_init(render,NULL)==0);
+    render->win=&content;
+    CHECK(gml_render_application_surface_ensure_owned(render,extent,extent));
+    render->atlas=calloc(1,sizeof *render->atlas);
+    render->tpag=calloc(1,sizeof *render->tpag);
+    render->spr=calloc(1,sizeof *render->spr);
+    CHECK(render->atlas && render->tpag && render->spr);
+    render->n_atlas=render->n_tpag=render->n_spr=1;
+    render->atlas[0].px=malloc(sizeof rgba);
+    render->spr[0].frame=calloc(1,sizeof(int));
+    CHECK(render->atlas[0].px && render->spr[0].frame);
+    if(variant==4u) rgba[7]=0;
+    if(variant==5u) rgba[7]=128;
+    memcpy(render->atlas[0].px,rgba,sizeof rgba);
+    render->atlas[0].w=render->atlas[0].h=2;
+    render->tpag[0]=(GmlTpag){.sw=2,.sh=2,.tw=2,.th=2,.bw=2,.bh=2};
+    render->spr[0].w=render->spr[0].h=2;
+    render->spr[0].n_frames=1;
+    device.observe_on_demand=fake_observe_on_demand;
+    gml_render_bind_device(render,&device);
+    CHECK(gml_render_begin_resident_owned_application(render,0,0,0));
+    render->interp=0;
+    gml_render_set_pending_fill(render,0x40123456u);
+    gml_draw_sprite_ext(render,0,0,x,y,xs,ys,0,0xFFFFFFu,alpha);
+    CHECK(render->resident_application_pass && fake.readbacks==0);
+    CHECK(render->app_surface_opaque==(variant<3u));
+    if(variant<3u) CHECK(render->fb_opaque_known && render->fb_all_opaque);
+    CHECK(gml_render_scene_submit_pending(render) && fake.readbacks==0);
+    CHECK(render->app_surface_opaque==(variant<3u));
+    gml_render_resource_journal_metrics(render->app_surface_resource,&metrics);
+    CHECK(metrics.gpu_version==metrics.logical_version &&
+          metrics.cpu_version<metrics.logical_version && metrics.cpu_replays==0 &&
+          metrics.device_checkpoints==0);
+    gml_render_free(render);free(render);
+  }
+  return 1;
+}
+
 static int resident_integer_world_sourceover_pages(int packed_pages){
   enum { WIDTH=24,HEIGHT=24 };
   const double world[5][2]={{2,2},{4,4},{2,3},{0.5,0.5},{-2,-3}};
@@ -8390,6 +8443,7 @@ int main(void){
   passed+=resident_integer_scaled_atlas_sprite_gpu();
   passed+=resident_firstgen_nearest_magnification_authority();
   passed+=resident_integer_world_sprite();
+  passed+=resident_opaque_sprite_complete_application();
   passed+=resident_integer_world_sourceover_sprite();
   passed+=resident_integer_world_packed_sprite();
   passed+=resident_integer_sourceover_exclusions();
@@ -8407,6 +8461,6 @@ int main(void){
   passed+=source_free_primitive_rect_replay();
   passed+=stretched_float_exact_replay();
   passed+=filtered_font_exact_recovery();
-  printf("render resource cases: passed=%d failed=%d\n",passed,117-passed);
-  return passed==117?EXIT_SUCCESS:EXIT_FAILURE;
+  printf("render resource cases: passed=%d failed=%d\n",passed,118-passed);
+  return passed==118?EXIT_SUCCESS:EXIT_FAILURE;
 }
