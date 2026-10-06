@@ -7280,6 +7280,62 @@ static int resident_integer_scaled_atlas_sprite_gpu(void){
   return 1;
 }
 
+static int resident_firstgen_nearest_magnification_authority(void){
+  for(unsigned variant=0;variant<4u;variant++){
+    GmlRender *render=calloc(1,sizeof *render);
+    GmlWin content={.bytecode=15};
+    FakeDevice fake={.on_demand=variant!=1u};
+    GmlRenderDeviceServices device=service(&fake);
+    device.observe_on_demand=fake_observe_on_demand;
+    GmlRenderJournalMetrics metrics={0};
+    CHECK(render && gml_render_init(render,NULL)==0 &&
+          gml_render_application_surface_ensure_owned(render,16,16));
+    render->win=&content;
+    render->atlas=calloc(1,sizeof *render->atlas);
+    render->tpag=calloc(1,sizeof *render->tpag);
+    render->spr=calloc(1,sizeof *render->spr);
+    CHECK(render->atlas && render->tpag && render->spr);
+    render->n_atlas=render->n_tpag=render->n_spr=1;
+    render->atlas[0].px=malloc(8u*8u*4u);
+    render->spr[0].frame=calloc(1,sizeof(int));
+    CHECK(render->atlas[0].px && render->spr[0].frame);
+    render->atlas[0].w=render->atlas[0].h=8;
+    for(unsigned index=0;index<64u;index++){
+      uint8_t *pixel=render->atlas[0].px+index*4u;
+      pixel[0]=208;pixel[1]=32;pixel[2]=16;pixel[3]=128;
+    }
+    render->tpag[0]=(GmlTpag){.sx=2,.sy=2,.sw=4,.sh=4,.tw=4,.th=4,.bw=4,.bh=4};
+    render->spr[0].w=render->spr[0].h=4;render->spr[0].n_frames=1;
+    render->active_shader=-1;render->color_write_mask=15u;
+    gml_render_bind_device(render,&device);
+    CHECK(gml_render_begin_resident_owned_application(render,0.0,0.0,0));
+    gml_render_set_pending_fill(render,0xFF714A24u);
+    gml_render_flush_pending_fill(render);
+    CHECK(gml_render_scene_submit_pending(render));
+    int submits=fake.submits;
+    double scale=variant==2u?5.0:4.0/3.0;
+    gml_draw_sprite_ext(render,0,0,0.25,0.25,scale,1.0,variant==3u?10.0:0.0,0xA8C4E0u,0.61);
+    if(variant){
+      CHECK(!render->resident_application_pass);
+    }else{
+      gml_draw_sprite_ext(render,0,0,2.25,1.25,scale,1.0,0.0,0xA8C4E0u,0.61);
+      CHECK(render->resident_application_pass && fake.submits==submits);
+      CHECK(gml_render_scene_submit_pending(render) && fake.submits==submits+1 &&
+            fake.last_batch_operations==2u && fake.last_filter==GML_RENDER_FILTER_NEAREST_PHASED &&
+            fake.last_quad_state.rgb_equation==GML_RENDER_BLEND_ADD &&
+            fake.last_quad_state.alpha_equation==GML_RENDER_BLEND_ADD &&
+            !fake.readbacks && !fake.rgb_queries);
+      gml_render_resource_journal_metrics(render->app_surface_resource,&metrics);
+      CHECK(metrics.authority==GML_RENDER_RESOURCE_GPU_RESIDENT &&
+            metrics.cpu_version<metrics.logical_version && metrics.gpu_version==metrics.logical_version &&
+            !metrics.journal_operations && !metrics.cpu_replays && !metrics.device_checkpoints);
+    }
+    /* This fake device establishes authority and batching, not actual device pixels. */
+    gml_render_abandon_device(render);gml_render_free(render);free(render);
+  }
+  return 1;
+}
+
 static int resident_integer_world_sprite(void){
   enum { WIDTH=24,HEIGHT=24,POSITIVES=40,VARIANTS=45 };
   const double world[5][2]={{2,2},{4,4},{2,3},{0.5,0.5},{-2,-3}};
@@ -8257,6 +8313,7 @@ int main(void){
   passed+=resident_packaged_real_font_glyph(1);
   passed+=resident_binary_atlas_sprite_gpu();
   passed+=resident_integer_scaled_atlas_sprite_gpu();
+  passed+=resident_firstgen_nearest_magnification_authority();
   passed+=resident_integer_world_sprite();
   passed+=resident_integer_world_sourceover_sprite();
   passed+=resident_integer_world_packed_sprite();
@@ -8275,6 +8332,6 @@ int main(void){
   passed+=source_free_primitive_rect_replay();
   passed+=stretched_float_exact_replay();
   passed+=filtered_font_exact_recovery();
-  printf("render resource cases: passed=%d failed=%d\n",passed,115-passed);
-  return passed==115?EXIT_SUCCESS:EXIT_FAILURE;
+  printf("render resource cases: passed=%d failed=%d\n",passed,116-passed);
+  return passed==116?EXIT_SUCCESS:EXIT_FAILURE;
 }

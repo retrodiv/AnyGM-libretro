@@ -65,7 +65,7 @@ REQUIRED_RULES = {
     "R03-P8-RUNTIME-SPRITE-BASE", "R03-P8-STATE-RETIRE",
     "R03-P3-OPAQUE-ELISION",
     "R03-SPR-NEAREST", "R03-SPR-NEAREST-SOURCEOVER", "R03-SPR-INTEGER-SOURCEOVER",
-    "R03-SPR-FIRSTGEN-NEAREST-REDUCE",
+    "R03-SPR-FIRSTGEN-NEAREST-REDUCE", "R03-SPR-FIRSTGEN-NEAREST-MAG",
     "R03-SPR-MODERN-NEAREST",
     "R03-SPR-NUMBERED-NEAREST",
     "R03-SPR-FILTER-TRIM", "R03-SPR-ROTATE-GENERAL",
@@ -274,6 +274,8 @@ def self_test() -> None:
                          "::OBSOLETE_MODERN_NUMBERED_NEAREST", 1),
         "\n".join(line for line in document.splitlines()
                   if not line.startswith("| R03-SPR-NUMBERED-NEAREST |")),
+        "\n".join(line for line in document.splitlines()
+                  if not line.startswith("| R03-SPR-FIRSTGEN-NEAREST-MAG |")),
         document.replace("device comparison R03-P3-JOURNAL", "comparison missing", 1),
         document.replace("`supported` | Only the bounded", "`planned` | Only the bounded", 1),
         document.replace(

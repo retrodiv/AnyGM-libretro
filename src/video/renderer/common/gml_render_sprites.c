@@ -670,7 +670,9 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
        fabs(fabs(r->cam_y-nearbyint(r->cam_y))-0.5)<1e-9)))) ||
      (nearest_mode==4 && (r->interp || family!=GML_RENDER_SCENE_SPRITE ||
        rotated_sprite || corner_colours || part_view || xs<=0.0 || ys<=0.0 ||
-       xs>1.0 || ys>1.0 ||
+       xs>4.0 || ys>4.0 ||
+       ((xs>1.0 || ys>1.0) && (!r->device.context ||
+        !r->device.observe_on_demand || !r->device.observe_on_demand(r->device.context))) ||
        (xs!=1.0 && fabs(1.0/xs-nearbyint(1.0/xs))<1e-9) ||
        (ys!=1.0 && fabs(1.0/ys-nearbyint(1.0/ys))<1e-9))) ||
      (nearest_mode==5 && (r->interp || family!=GML_RENDER_SCENE_BACKGROUND ||
@@ -896,6 +898,18 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
       gml_render_stretched_float_phase_exact((uint32_t)page->bw,(uint32_t)width) &&
       gml_render_stretched_float_phase_exact((uint32_t)page->bh,(uint32_t)height);
   }
+  if(nearest_mode==4 && (xs>1.0 || ys>1.0)){
+    if(page->project_authored_edges || width>4096.0 || height>4096.0) return 0;
+    /* The point leaf snaps a unit axis and uses the trailing-centre boundary
+     * at integer enlargement. Prune its unwritten last texel before submission. */
+    double phase_x=xs==1.0?0.5:x0+0.5-left;
+    double phase_y=ys==1.0?0.5:y0+0.5-top;
+    if(xs>1.0 && fabs(xs-nearbyint(xs))<1e-9) phase_x+=0.5-1e-9;
+    if(ys>1.0 && fabs(ys-nearbyint(ys))<1e-9) phase_y+=0.5-1e-9;
+    if(gml_render_point_axis_index((int)width-1,phase_x,xs)>=page->sw) width-=1.0;
+    if(gml_render_point_axis_index((int)height-1,phase_y,ys)>=page->sh) height-=1.0;
+    if(width==0.0 || height==0.0) return 1;
+  }
   if(modern_numbered_sprite){
     /* Exact point indices are prepared per visible axis on the device path.
      * Conflicting binary64 ties and reflected crops need no global UV bias;
@@ -1026,6 +1040,16 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
   } else {
     double sample_left=left+(transparent_stretched_trim?(double)page->tx*xs:0.0);
     double sample_top=top+(transparent_stretched_trim?(double)page->ty*ys:0.0);
+    if(nearest_mode==4 && (xs>1.0 || ys>1.0)){
+      if(xs==1.0) sample_left=floor(left+0.5);
+      else if(xs>1.0 && fabs(xs-nearbyint(xs))<1e-9){
+        sample_left-=0.5;nearest_bias_x=0.00001;
+      }
+      if(ys==1.0) sample_top=floor(top+0.5);
+      else if(ys>1.0 && fabs(ys-nearbyint(ys))<1e-9){
+        sample_top-=0.5;nearest_bias_y=0.00001;
+      }
+    }
     if(modern_numbered_sprite){
       sample_left=nearest_anchor_x; sample_top=nearest_anchor_y;
     }
@@ -1344,10 +1368,11 @@ static int resident_filtered_sprite(GmlRender *r,GmlSprite *sprite,int subimg,
   if(!r->interp){
     if(rotation!=0.0 && anygm_policy_has_modern_layer_semantics(r->win))
       return resident_modern_nearest_rotation(r,sprite,page,x,y,xs,ys,rotation,blend,alpha);
-    /* R03-SPR-FIRSTGEN-NEAREST-REDUCE: retain independent authored far-edge coverage
-     * and fractional point phase for unit scale and bounded non-reciprocal reduction. */
+    /* R03-SPR-FIRSTGEN-NEAREST-REDUCE / R03-SPR-FIRSTGEN-NEAREST-MAG:
+     * retain independent authored far-edge coverage and fractional point phase.
+     * Enlarged device results additionally require witnessed on-demand observation. */
     if(rotation==0.0 && anygm_policy_uses_first_generation_studio(r->win) &&
-       xs>0.0 && ys>0.0 && xs<=1.0 && ys<=1.0){
+       xs>0.0 && ys>0.0 && xs<=4.0 && ys<=4.0){
       if(r->app_surface && r->fb==r->app_surface)
         return resident_filtered_atlas_page(r,page_index,left,top,xs,ys,
           GML_RENDER_SCENE_SPRITE,blend,alpha,NULL,NULL,0.0,NULL,0,0,0,0,4);
