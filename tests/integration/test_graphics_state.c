@@ -2110,6 +2110,43 @@ static int presentation_filter_case(void){
            "host box",anygm_synthetic_host_box_content_create,2);
 }
 
+static int scene_canvas_cpu_source_case(void){
+  Session selected={0};
+  AnygmConfigDelta presentation={0};
+  GmlGpuCounters before={0},after={0};
+  GmlRenderDispatchMetrics dispatch={0};
+  GmlRenderImageRef image={0};
+  unsigned width=7u,height=9u;
+  anygm_test_graphics_reset();
+  REQUIRE(session_open_fixture_with_scene(&selected,ANYGM_SCENE_RENDERER_OPENGL,
+          anygm_synthetic_host_box_content_create),"cold canvas fixture loads");
+  presentation.struct_size=sizeof presentation;
+  presentation.values.struct_size=sizeof presentation.values;
+  presentation.fields=ANYGM_CONFIG_HYBRID_GPU_PRESENTATION|
+    ANYGM_CONFIG_PRESENT_LOGICAL_RASTER|ANYGM_CONFIG_MONITOR_WIDTH|ANYGM_CONFIG_MONITOR_HEIGHT;
+  presentation.values.monitor_width=presentation.values.monitor_height=64u;
+  REQUIRE(anygm_set_config(selected.engine,&presentation)==ANYGM_OK &&
+          advance(selected.engine,1,NULL),"cold canvas completes a CPU source before adoption");
+  REQUIRE(selected.engine->host_canvas_active && selected.engine->output_width==128u &&
+          selected.engine->output_height==96u,"cold canvas selects the box presentation path");
+  REQUIRE(graphics_adopt(selected.engine,ANYGM_GRAPHICS_OPENGLES3)==ANYGM_OK,
+          "cold canvas adopts a scene-only context");
+  REQUIRE(!gml_render_completed_screen_image(&selected.engine->render,selected.engine->screen,
+          128,96,&image),"cold canvas has no current resident source");
+  gml_render_dispatch_diagnostics_enable(&selected.engine->render,1);
+  gml_gpu_counters(selected.engine->gpu,&before);
+  REQUIRE(!engine_present_hardware_canvas(selected.engine,&width,&height),
+          "cold scene canvas retains software presentation");
+  gml_gpu_counters(selected.engine->gpu,&after);
+  REQUIRE(gml_render_dispatch_metrics(&selected.engine->render,&dispatch) &&
+          dispatch.failed==0u && dispatch.unclassified==0u &&
+          after.frames_offered==before.frames_offered && after.draw_calls==before.draw_calls &&
+          after.full_uploads==before.full_uploads && width==7u && height==9u,
+          "cold scene canvas does not submit an unqualified borrowed-source plan");
+  session_close(&selected);
+  return 1;
+}
+
 static uint8_t *serialize(AnygmEngine *engine,size_t *size){
   size_t capacity=anygm_state_size(engine);
   uint8_t *data=(uint8_t*)malloc(capacity?capacity:1);
@@ -3776,6 +3813,8 @@ int main(void){
      forced_owned_scene_case},
     {"CRT and box presentation preserve a resident scene through CPU filtering",
      presentation_filter_case},
+    {"scene-only cold canvas retains CPU presentation without failed device work",
+     scene_canvas_cpu_source_case},
     {"primary and auxiliary scratch uploads stay independent",content_sampler_upload_lifetime_case},
     {"surface shader vertices retain authored positions",content_surface_authored_position_case},
     {"terminal shader retains clipped authored positions",content_terminal_authored_position_case},

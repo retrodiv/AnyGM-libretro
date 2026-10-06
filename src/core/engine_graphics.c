@@ -685,7 +685,8 @@ int engine_present_hardware_canvas(AnygmEngine *engine,unsigned *width,unsigned 
   if(!engine) return 0;
   int scene=engine->scene_renderer_session==ANYGM_SCENE_RENDERER_OPENGL &&
             engine_graphics_active(engine);
-  if(!scene && !engine_hybrid_presentation_active(engine)) return 0;
+  int hybrid=engine_hybrid_presentation_active(engine);
+  if(!scene && !hybrid) return 0;
   if(!engine->screen || !engine->output_width || !engine->output_height) return 0;
   /* A current logical SCREEN is already complete. Host fitting must not observe its CPU shadow
    * or replace the saved logical raster with the host-sized filtered picture. CRT, shifted and
@@ -695,6 +696,9 @@ int engine_present_hardware_canvas(AnygmEngine *engine,unsigned *width,unsigned 
      !engine->present_crop_right && !engine->present_crop_bottom)
     resident=gml_render_completed_screen_image(&engine->render,engine->screen,
                 (int)engine->output_width,(int)engine->output_height,&completed);
+  /* Scene-only fitting requires a resident source. A cold or restored CPU image belongs to
+   * the software presentation path, not a failed device submission. */
+  if(!resident && !hybrid) return 0;
   if(!resident && !engine_materialize_completed_frame(engine)) return 0;
   engine_host_extent(engine,&host_width,&host_height);
   if(!host_width || !host_height) return 0;
