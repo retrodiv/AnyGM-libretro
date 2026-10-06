@@ -497,6 +497,32 @@ static int inverse_destination_colour_case(void){
   return ok;
 }
 
+static int color_query_roundtrip_case(void){
+  const char *setters[]={"draw_set_color","draw_set_colour"};
+  const char *getters[]={"draw_get_color","draw_get_colour"};
+  const uint32_t colors[]={0u,0xFFFFFFu,0x0000FFu,0xFF0000u,0x123456u,0x0A7B3Cu};
+  int ok=1;
+  for(int cached=0;cached<2;cached++){
+    GmlRender render={.alpha=0.375}; GmlVM vm={.render=&render};
+    for(size_t setter=0;setter<sizeof setters/sizeof setters[0];setter++)
+      for(size_t color=0;color<sizeof colors/sizeof colors[0];color++){
+        GmlVal value=vreal(colors[color]);
+        query(&vm,setters[setter],&value,1,cached,&ok);
+        for(size_t getter=0;getter<sizeof getters/sizeof getters[0];getter++){
+          GmlVal observed=query(&vm,getters[getter],NULL,0,cached,&ok);
+          if(!real_is(observed,colors[color])){
+            fprintf(stderr,"draw colour roundtrip: cached=%d set=%s get=%s expected=%06x got=%.0f\n",
+                    cached,setters[setter],getters[getter],colors[color],observed.d);
+            ok=0;
+          }
+          ok &= render.color==colors[color] && render.alpha==0.375;
+        }
+      }
+    vm.render=NULL; gml_vm_free(&vm);
+  }
+  return ok;
+}
+
 static int camera_capacity_case(void){
   int ok=1;
   for(int modern=0;modern<2;modern++) for(int cached=0;cached<2;cached++){
@@ -553,6 +579,7 @@ int main(int argc,char **argv){
     {"background_source_region",background_part_case},{"background_name_alias",background_names_case},
     {"authored_font_styles",font_styles_case},{"runtime_font_styles",runtime_font_styles_case},
     {"inverse_destination_colour",inverse_destination_colour_case},
+    {"color_query_roundtrip",color_query_roundtrip_case},
     {"camera_capacity",camera_capacity_case}};
   const AnygmTestGroup group={"draw_queries",cases,sizeof cases/sizeof cases[0]};
   AnygmTestResult result;
