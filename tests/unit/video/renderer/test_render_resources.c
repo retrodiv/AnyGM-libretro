@@ -7344,7 +7344,9 @@ static int resident_firstgen_nearest_magnification_authority(void){
     CHECK(render && gml_render_init(render,NULL)==0 &&
           gml_render_application_surface_ensure_owned(render,16,16));
     render->win=&content;
-    render->atlas=calloc(1,sizeof *render->atlas);
+    CHECK(render->atlas && render->n_atlas==1);
+    free(render->atlas[0].px);
+    memset(&render->atlas[0],0,sizeof render->atlas[0]);
     render->tpag=calloc(1,sizeof *render->tpag);
     render->spr=calloc(1,sizeof *render->spr);
     CHECK(render->atlas && render->tpag && render->spr);
@@ -7514,7 +7516,9 @@ static int resident_opaque_sprite_complete_application(void){
     CHECK(render && gml_render_init(render,NULL)==0);
     render->win=&content;
     CHECK(gml_render_application_surface_ensure_owned(render,extent,extent));
-    render->atlas=calloc(1,sizeof *render->atlas);
+    CHECK(render->atlas && render->n_atlas==1);
+    free(render->atlas[0].px);
+    memset(&render->atlas[0],0,sizeof render->atlas[0]);
     render->tpag=calloc(1,sizeof *render->tpag);
     render->spr=calloc(1,sizeof *render->spr);
     CHECK(render->atlas && render->tpag && render->spr);
