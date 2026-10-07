@@ -192,7 +192,8 @@ static int integer_sourceover_sprite_valid(const GmlRenderDrawOp *op,
   const GmlRenderQuad *quad=&op->payload.quad;
   GmlRenderRect region=quad->sampling.source_region;
   if(!source || op->scene_family!=GML_RENDER_SCENE_SPRITE ||
-     !((op->target.image.resource_class==GML_RENDER_RESOURCE_APPLICATION &&
+     !(((op->target.image.resource_class==GML_RENDER_RESOURCE_APPLICATION ||
+         op->target.image.resource_class==GML_RENDER_RESOURCE_SURFACE) &&
         !state->coverage_policy) ||
        (op->target.image.resource_class==GML_RENDER_RESOURCE_SCREEN &&
         state->coverage_policy==GML_RENDER_COVERAGE_OPAQUE_TARGET &&

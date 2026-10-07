@@ -148,7 +148,6 @@ static int resident_integer_sprite(GmlRender *r,GmlSprite *sprite,int subimg,
      sprite->spine || sprite->ns_enabled || sprite->n_frames<=0 ||
      sprite->w<=0 || sprite->h<=0 ||
      (r->classic && (gml_d3_is_active(r) ||
-                     anygm_policy_classic_modern_presentation(r->win) ||
                      r->interp || xs!=1.0 || ys!=1.0 ||
                      (r->world_transform_active &&
                       (r->world_scale_x!=1.0 || r->world_scale_y!=1.0)))) ||
@@ -231,7 +230,8 @@ static int resident_atlas_crop_from_page(GmlRender *r,GmlTpag *page,
   if(!r || !page || !r->resident_application_pass ||
      (r->classic && ((family!=GML_RENDER_SCENE_SPRITE &&
                       family!=GML_RENDER_SCENE_TEXT) ||
-                     anygm_policy_classic_modern_presentation(r->win) ||
+                     (family==GML_RENDER_SCENE_TEXT &&
+                      anygm_policy_classic_modern_presentation(r->win)) ||
                      r->interp || xs!=1.0 || ys!=1.0)) ||
      (r->world_transform_active &&
       (r->world_scale_x!=1.0 || r->world_scale_y!=1.0) &&
@@ -277,6 +277,7 @@ static int resident_atlas_crop_from_page(GmlRender *r,GmlTpag *page,
   if(r->classic &&
      ((family==GML_RENDER_SCENE_TEXT && !page->scene_binary_alpha) ||
       (family==GML_RENDER_SCENE_SPRITE && !page->scene_fully_opaque &&
+       !(r->target_id>0 && r->target_sp>0) &&
        (r->fb!=r->app_surface || r->fb!=r->base_scene_resource_pixels)))) return 0;
   colour&=0xFFFFFFu;
   if(colour!=0xFFFFFFu &&
@@ -298,9 +299,10 @@ static int resident_atlas_crop_from_page(GmlRender *r,GmlTpag *page,
    * emulation or destination snapshot. A witnessed device owns partial-alpha
    * results until a genuine pixel/state observation requests canonical bytes. */
   checkpoint_alpha_sprite=family==GML_RENDER_SCENE_SPRITE &&
-    !r->interp && r->target_sp==0 &&
-    ((!r->classic && r->fb==r->app_surface_owned) ||
-     (r->classic && !anygm_policy_classic_modern_presentation(r->win) &&
+    !r->interp &&
+    ((!r->classic && r->target_sp==0 && r->fb==r->app_surface_owned) ||
+     (r->classic && r->target_id>0 && r->target_sp>0) ||
+     (r->classic && r->target_sp==0 &&
       !r->gui_pass_active && r->fb==r->app_surface &&
       r->fb==r->base_scene_resource_pixels)) &&
     (draw_alpha<1.0 || !page->scene_binary_alpha);
@@ -417,7 +419,7 @@ static int resident_atlas_crop_from_page(GmlRender *r,GmlTpag *page,
     state.alpha_equation=GML_RENDER_BLEND_ADD;
   }
   state.sampler_count=1u;
-  if(checkpoint_alpha_sprite && r->classic)
+  if(checkpoint_alpha_sprite && r->classic && !gml_render_target_preserves_alpha(r))
     state.coverage_policy=GML_RENDER_COVERAGE_OPAQUE_TARGET;
   state.samplers[0]=operation.payload.quad.sampling;
   if(!gml_render_application_scene_enqueue(r,&operation,&state,&source)) return 0;

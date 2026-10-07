@@ -456,12 +456,16 @@ int gml_render_begin_resident_owned_application(GmlRender *r,double camx,double 
   r->resident_application_pass=gml_render_scene_target_matches(r);
   return 1;
 }
-int gml_render_begin_resident_base(GmlRender *r,uint32_t *pixels,int width,int height,
-                                   double camx,double camy){
+static int begin_resident_base(GmlRender *r,uint32_t *pixels,int width,int height,
+                               double camx,double camy,int retain_target){
   if(!r || !pixels || width<=0 || height<=0 || !gml_render_device(r) ||
-     r->rotated_batch_count || r->rotated_batch_building || r->pending_fill ||
-     r->pending_underlay || r->pending_presentation || r->target_sp) return 0;
+     r->rotated_batch_count || r->rotated_batch_building ||
+     (!retain_target && (r->pending_fill || r->target_sp)) ||
+     r->pending_underlay || r->pending_presentation) return 0;
   if(!gml_render_application_scene_flush(r)) return 0;
+  if(retain_target && r->target_sp>0 &&
+     (r->target_id<=0 || r->target_id>GML_MAX_SURFACES ||
+      !gml_render_surface_resource_ensure(r,r->target_id))) return 0;
   if(r->base_scene_resource &&
      (r->base_scene_resource_pixels!=pixels ||
       r->base_scene_resource_width!=width ||
@@ -472,7 +476,10 @@ int gml_render_begin_resident_base(GmlRender *r,uint32_t *pixels,int width,int h
        !gml_render_resource_acquire_cpu_read(r->base_scene_resource,NULL)) return 0;
     gml_render_base_resource_dispose(r);
   }
-  gml_render_begin(r,pixels,width,height,camx,camy);
+  if(retain_target)
+    gml_render_begin_retaining_resident_target(r,pixels,width,height,camx,camy);
+  else
+    gml_render_begin(r,pixels,width,height,camx,camy);
   r->base_scene_resource_pixels=pixels;
   r->base_scene_resource_width=width;
   r->base_scene_resource_height=height;
@@ -480,6 +487,14 @@ int gml_render_begin_resident_base(GmlRender *r,uint32_t *pixels,int width,int h
   r->resident_application_pass=1;
   r->resident_scene_pass=1;
   return 1;
+}
+int gml_render_begin_resident_base(GmlRender *r,uint32_t *pixels,int width,int height,
+                                   double camx,double camy){
+  return begin_resident_base(r,pixels,width,height,camx,camy,0);
+}
+int gml_render_begin_resident_base_retaining_target(GmlRender *r,uint32_t *pixels,
+                                                   int width,int height,double camx,double camy){
+  return begin_resident_base(r,pixels,width,height,camx,camy,1);
 }
 int gml_render_application_surface_owned_clear(
   GmlRender *r,uint32_t color,GmlRenderApplicationWriteView *view){

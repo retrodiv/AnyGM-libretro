@@ -1582,6 +1582,15 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
                              !engine->canvas_mode && !engine->aspect_force_active &&
                              classic_pixels<=SIZE_MAX/3 &&
                              ensure_classic_phase(engine,classic_pixels*3);
+  /* A content-held classic target is an independent numbered raster, not an application
+   * redraw. Retain its binding and metadata across Draw; phase presentation stays with CPU. */
+  int classic_retained_scene=engine->composed_frame &&
+    anygm_policy_uses_classic_runtime(&engine->win) &&
+    !classic_phase && !classic_interp_phase && !render_presentation.interpolation &&
+    !engine->aspect_force_active && !engine->canvas_mode &&
+    engine->scene_renderer_session==ANYGM_SCENE_RENDERER_OPENGL &&
+    engine_graphics_active(engine) &&
+    gml_surface_get_target(&engine->render)>0;
   int view_surface = (int)gml_global_arr(&engine->vm, "view_surface_id", frame_view_index);
   int multiview_rendered = engine->aspect_force_active?0:render_multiview_application(engine);
   if(multiview_rendered<0) return ANYGM_ERROR_INTERNAL;
@@ -1679,6 +1688,9 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
     world_pixels=engine->fb;
     world_width=(int)engine->width;
     world_height=(int)engine->height;
+    if(classic_retained_scene)
+      base_world_began=gml_render_begin_resident_base_retaining_target(
+        &engine->render,world_pixels,world_width,world_height,cam_x,cam_y);
     if(!engine->composed_frame && !engine->aspect_force_active &&
        ((!render_presentation.application_draw_enabled && frame_view_count==0) ||
         (native_assigned_view && !gml_render_is_classic(&engine->render)) ||
@@ -1957,6 +1969,9 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
 			       (engine->scene_renderer_session==ANYGM_SCENE_RENDERER_OPENGL ||
 			        anygm_host_development_setting(&engine->host,"GML_SCENE_GPU_PROTOTYPE")))
 			      resident_screen_began=gml_render_begin_resident_base(
+			        &engine->render,gtarget,gtw,gth,screen_cam_x,screen_cam_y);
+			    if(!resident_screen_began && classic_retained_scene)
+			      resident_screen_began=gml_render_begin_resident_base_retaining_target(
 			        &engine->render,gtarget,gtw,gth,screen_cam_x,screen_cam_y);
 			    if(!resident_screen_began &&
 			       !gml_render_completed_screen_write(&engine->render,gtarget,gtw,gth))

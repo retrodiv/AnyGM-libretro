@@ -1133,6 +1133,71 @@ static int classic_single_view_draw_contracts_case(void){
   return 1;
 }
 
+static int classic_retained_target_scene_case(void){
+  int (*factories[])(AnygmSyntheticContent *)={
+    anygm_synthetic_classic_retained_target_content_create,
+    anygm_synthetic_classic_late_retained_target_content_create
+  };
+  for(unsigned variant=0;variant<sizeof factories/sizeof factories[0];variant++){
+    Session plain={0},selected={0};
+    AnygmInputFrame input={.struct_size=sizeof input,.pointer_x=-1,.pointer_y=-1};
+    AnygmFrameOutput cpu={0},gpu={0};
+    GmlGpuCounters counters={0};
+    int matching=1;
+    anygm_test_graphics_reset();
+    REQUIRE(session_open_fixture_with_scene(&plain,ANYGM_SCENE_RENDERER_CPU,factories[variant]) &&
+            session_open_fixture_with_scene(&selected,ANYGM_SCENE_RENDERER_OPENGL,factories[variant]),
+            "classic retained-target CPU/GPU fixtures load");
+    REQUIRE(graphics_adopt(selected.engine,ANYGM_GRAPHICS_OPENGLES3)==ANYGM_OK,
+            "classic retained-target context adopts");
+    for(unsigned frame=0;frame<4u && matching;frame++){
+      cpu.struct_size=gpu.struct_size=sizeof cpu;
+      matching=anygm_run_frame(plain.engine,&input,&cpu)==ANYGM_OK &&
+               anygm_run_frame(selected.engine,&input,&gpu)==ANYGM_OK &&
+               engine_materialize_completed_frame(selected.engine) && cpu.pixels &&
+               selected.engine->screen && cpu.width==gpu.width && cpu.height==gpu.height &&
+               !memcmp(cpu.pixels,selected.engine->screen,(size_t)cpu.width*cpu.height*4u);
+      GmlVal *cpu_id=gml_varmap_get(&plain.engine->vm.globals,"fixture_surface");
+      GmlVal *gpu_id=gml_varmap_get(&selected.engine->vm.globals,"fixture_surface");
+      const uint32_t *cpu_surface=cpu_id?
+        gml_surface_pixels_read(&plain.engine->render,(int)cpu_id->d,NULL,NULL):NULL;
+      const uint32_t *gpu_surface=gpu_id?
+        gml_surface_pixels_read(&selected.engine->render,(int)gpu_id->d,NULL,NULL):NULL;
+      matching=matching && cpu_surface && gpu_surface &&
+        !memcmp(cpu_surface,gpu_surface,8u*8u*4u) &&
+        cpu_surface[0]==0xFF0000FFu && cpu_surface[18]!=0xFF0000FFu &&
+        gml_surface_get_target(&selected.engine->render)==-1;
+      if(!matching){
+        size_t frame_difference=SIZE_MAX,surface_difference=SIZE_MAX;
+        if(cpu.pixels && selected.engine->screen && cpu.width==gpu.width && cpu.height==gpu.height)
+          for(size_t pixel=0;pixel<(size_t)cpu.width*cpu.height;pixel++)
+            if(((const uint32_t *)cpu.pixels)[pixel]!=selected.engine->screen[pixel]){
+              frame_difference=pixel;break;
+            }
+        if(cpu_surface && gpu_surface)
+          for(size_t pixel=0;pixel<64u;pixel++)
+            if(cpu_surface[pixel]!=gpu_surface[pixel]){surface_difference=pixel;break;}
+        fprintf(stderr,"classic retained-target variant=%u frame=%u dimensions=%ux%u/%ux%u "
+          "frame_difference=%zu surface_difference=%zu cpu_surface=%08x/%08x "
+          "gpu_surface=%08x/%08x target=%d\n",variant,frame,cpu.width,cpu.height,
+          gpu.width,gpu.height,frame_difference,surface_difference,
+          cpu_surface?cpu_surface[0]:0u,cpu_surface?cpu_surface[18]:0u,
+          gpu_surface?gpu_surface[0]:0u,gpu_surface?gpu_surface[18]:0u,
+          gml_surface_get_target(&selected.engine->render));
+      }
+    }
+    gml_gpu_counters(selected.engine->gpu,&counters);
+    matching=matching && counters.scene_families[GML_RENDER_SCENE_SPRITE]==4u &&
+      counters.scene_batches_refused==0u;
+    if(!matching) fprintf(stderr,"classic retained-target variant=%u sprite=%llu refused=%llu\n",
+      variant,(unsigned long long)counters.scene_families[GML_RENDER_SCENE_SPRITE],
+      (unsigned long long)counters.scene_batches_refused);
+    session_close(&selected);session_close(&plain);
+    REQUIRE(matching,"classic Step target survives GPU Draw and GUI before exact composition");
+  }
+  return 1;
+}
+
 static int classic_single_view_cpu_observers_case(void){
   int (*factories[])(AnygmSyntheticContent *)={
     anygm_synthetic_classic_single_view_read_content_create,
@@ -4087,6 +4152,7 @@ int main(void){
     {"classic single view preserves later geometry transitions",classic_single_view_geometry_transition_case},
     {"classic single view preserves CPU observers",classic_single_view_cpu_observers_case},
     {"classic single view executes nearest draw contracts",classic_single_view_draw_contracts_case},
+    {"classic Step target survives GPU Draw and GUI",classic_retained_target_scene_case},
     {"ended resident frame remains visible and canonical",ended_frame_retention_case},
     {"authored cursor preserves a resident completed frame",resident_cursor_frame_case},
     {"transition snapshot reads a resident completed frame",resident_transition_snapshot_case},

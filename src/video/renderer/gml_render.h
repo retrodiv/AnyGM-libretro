@@ -485,6 +485,9 @@ int gml_render_begin_resident_owned_application(GmlRender *r,double camx,double 
                                                 int retain_target);
 int gml_render_begin_resident_base(GmlRender *r,uint32_t *pixels,int width,int height,
                                    double camx,double camy);
+/* Replace the base of a resident pass without discarding a numbered content target held by Step. */
+int gml_render_begin_resident_base_retaining_target(GmlRender *r,uint32_t *pixels,
+                                                   int width,int height,double camx,double camy);
 /* Materialise an opt-in scene target before host code observes its CPU pixels. */
 int gml_render_resident_application_cpu_barrier(GmlRender *r);
 int gml_render_application_surface_owned_clear(

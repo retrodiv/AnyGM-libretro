@@ -1527,7 +1527,7 @@ int gml_surface_set_target(GmlRender *r, int id){
   if(!gml_render_application_scene_flush(r)) return 0;
   int w=0,h=0,si=surface_slot(id);
   uint32_t *px=NULL;
-  int resident=r->resident_scene_pass && gml_render_device(r) && !r->classic;
+  int resident=r->resident_scene_pass && gml_render_device(r) && (!r->classic || id>0);
   if(resident){
     /* Resolve pending parent writes before another binding can alias its allocation.
      * Binding itself borrows storage metadata, not CPU-current raster bytes. */
@@ -1553,7 +1553,9 @@ int gml_surface_set_target(GmlRender *r, int id){
   /* Classic target assignment replaces the current target; one reset returns to the base. Other runtime families retain nested targets. */
   if(r->classic && r->target_id>=0){
     gml_surface_reset_target(r);
-    px=surface_pixels(r,id,&w,&h);
+    if(resident && si>=0 && r->surface[si].live){
+      px=r->surface[si].px;w=r->surface[si].w;h=r->surface[si].h;
+    } else px=surface_pixels(r,id,&w,&h);
     if(!px || r->target_sp>=GML_SURFACE_STACK) return 0;
   }
   { if(si>=0) r->surface[si].dirty=1; }   /* about to be drawn into */

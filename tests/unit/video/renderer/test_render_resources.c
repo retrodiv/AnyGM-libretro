@@ -7546,6 +7546,132 @@ static int resident_integer_scaled_atlas_sprite_gpu(void){
   return 1;
 }
 
+static int resident_classic_nonphase_sprite_targets(void){
+  for(unsigned generation=0;generation<2u;generation++)
+  for(unsigned numbered=0;numbered<2u;numbered++)
+  for(unsigned source_kind=0;source_kind<3u;source_kind++){
+    GmlRender *render=calloc(1,sizeof *render);
+    GmlWin content={.classic_version=generation?810:800};
+    FakeDevice fake={.on_demand=source_kind==2u};
+    GmlRenderDeviceServices device=service(&fake);
+    uint32_t pixels[64],reference[64];
+    GmlRenderJournalMetrics metrics={0};
+    const uint32_t *observed=NULL;
+    const uint8_t rgba[16]={208,32,16,255,16,208,32,255,
+                            32,16,208,255,192,176,160,255};
+    CHECK(render && gml_render_init(render,NULL)==0);
+    render->win=&content;render->classic=1;
+    CHECK(render->n_atlas==1);
+    free(render->atlas[0].px);
+    memset(render->atlas,0,sizeof *render->atlas);
+    render->atlas[0].w=render->atlas[0].h=2;
+    render->atlas[0].px=malloc(sizeof rgba);
+    render->tpag=calloc(1,sizeof *render->tpag);
+    render->spr=calloc(1,sizeof *render->spr);
+    CHECK(render->atlas[0].px && render->tpag && render->spr);
+    memcpy(render->atlas[0].px,rgba,sizeof rgba);
+    if(source_kind) render->atlas[0].px[7]=source_kind==1u?0:128;
+    render->n_tpag=render->n_spr=1;
+    render->tpag[0]=(GmlTpag){.sw=2,.sh=2,.tw=2,.th=2,.bw=4,.bh=4,.tx=1,.ty=1};
+    render->spr[0].w=render->spr[0].h=4;
+    render->spr[0].originx=render->spr[0].originy=2;
+    render->spr[0].n_frames=1;
+    render->spr[0].frame=calloc(1,sizeof(int));
+    CHECK(render->spr[0].frame);
+    for(unsigned i=0;i<64u;i++) pixels[i]=reference[i]=0xFF123456u;
+    gml_render_begin(render,reference,8,8,0.0,0.0);
+    int id=numbered?gml_surface_create(render,8,8):0;
+    if(numbered){
+      CHECK(id>0 && gml_surface_set_target(render,id));
+      memcpy(render->surface[id-1].px,reference,sizeof reference);
+    }
+    gml_draw_sprite_ext(render,0,-1,3.25,2.75,1.0,1.0,0.0,0xFFFFFFu,1.0);
+    if(numbered){
+      memcpy(reference,render->surface[id-1].px,sizeof reference);
+      gml_surface_reset_target(render);
+    }
+    device.observe_on_demand=fake_observe_on_demand;
+    gml_render_application_surface_bind(render,pixels,8,8,1);
+    gml_render_bind_device(render,&device);
+    CHECK(gml_render_begin_resident_base(render,pixels,8,8,0.0,0.0));
+    if(numbered){
+      for(unsigned i=0;i<64u;i++) render->surface[id-1].px[i]=0xFF123456u;
+      CHECK(gml_surface_set_target(render,id));
+    }
+    CHECK(render->resident_application_pass);
+    render->fb_opaque_known=render->fb_all_opaque=1;
+    gml_draw_sprite_ext(render,0,-1,3.25,2.75,1.0,1.0,0.0,0xFFFFFFu,1.0);
+    CHECK(render->resident_application_pass && !fake.submits && !fake.readbacks);
+    CHECK(gml_render_scene_submit_pending(render) && fake.submits==1 && !fake.readbacks);
+    GmlRenderResource *resource=gml_render_scene_target_resource_ensure(render);
+    CHECK(resource);
+    gml_render_resource_journal_metrics(resource,&metrics);
+    if(source_kind<2u){
+      CHECK(gml_render_resource_acquire_cpu_read(resource,&observed) &&
+            !memcmp(observed,reference,sizeof reference) && !fake.readbacks);
+    } else {
+      CHECK(metrics.authority==GML_RENDER_RESOURCE_GPU_RESIDENT &&
+            metrics.cpu_version<metrics.logical_version && !metrics.cpu_replays &&
+            !metrics.journal_operations && !metrics.device_checkpoints);
+    }
+    gml_render_abandon_device(render);gml_render_free(render);free(render);
+  }
+  return 1;
+}
+
+static int resident_classic_retained_numbered_target(void){
+  for(unsigned generation=0;generation<2u;generation++){
+    GmlRender *render=calloc(1,sizeof *render);
+    GmlWin content={.classic_version=generation?810:800};
+    FakeDevice fake={0};
+    GmlRenderDeviceServices device=service(&fake);
+    uint32_t old_base[64]={0},new_base[126]={0};
+    GmlRenderJournalMetrics before={0},after={0};
+    CHECK(render && gml_render_init(render,NULL)==0);
+    render->win=&content;render->classic=1;
+    gml_render_bind_device(render,&device);
+    CHECK(gml_render_begin_resident_base(render,old_base,8,8,0.0,0.0));
+    int first=gml_surface_create(render,4,3),second=gml_surface_create(render,2,2);
+    CHECK(first>0 && second>0 && gml_surface_set_target(render,first) &&
+          render->resident_application_pass);
+    gml_render_set_pending_fill(render,0xFF315779u);
+    gml_render_flush_pending_fill(render);
+    CHECK(fake.submits==1 && !fake.readbacks);
+    GmlRenderResource *resource=render->surface[first-1].resource;
+    CHECK(resource);
+    gml_render_resource_journal_metrics(resource,&before);
+    /* A new pass retains the actual Step target, not the application surface or old base. */
+    CHECK(gml_render_begin_resident_base_retaining_target(
+            render,new_base,14,9,2.0,3.0) && render->resident_application_pass &&
+          render->resident_scene_pass && render->target_id==first && render->target_sp==1 &&
+          render->fb==render->surface[first-1].px && render->fbw==4 && render->fbh==3 &&
+          render->base_fb==new_base && render->base_fbw==14 && render->base_fbh==9);
+    gml_render_resource_journal_metrics(resource,&after);
+    CHECK(after.logical_version==before.logical_version &&
+          after.cpu_version==before.cpu_version && after.gpu_version==before.gpu_version &&
+          after.cpu_replays==before.cpu_replays && !fake.readbacks);
+    /* Classic assignment replaces its target. It must neither nest nor observe the new one. */
+    CHECK(gml_surface_set_target(render,second) && render->target_sp==1 &&
+          render->target_id==second && render->resident_application_pass && !fake.readbacks);
+    gml_render_set_pending_fill(render,0xFFABCDEFu);
+    gml_render_flush_pending_fill(render);
+    CHECK(fake.submits==2 && !fake.readbacks);
+    CHECK(gml_surface_set_target(render,first) && render->target_sp==1 &&
+          render->resident_application_pass && !fake.readbacks);
+    gml_render_resource_journal_metrics(resource,&after);
+    CHECK(after.cpu_version==before.cpu_version && after.cpu_replays==before.cpu_replays &&
+          after.logical_version==before.logical_version);
+    gml_surface_reset_target(render);
+    CHECK(render->target_sp==0 && render->target_id==-1 && render->fb==new_base &&
+          render->fbw==14 && render->fbh==9 && render->cam_x==2.0 && render->cam_y==3.0 &&
+          render->resident_application_pass && !fake.readbacks);
+    CHECK(gml_surface_pixels_read(render,first,NULL,NULL)[0]==0xFF315779u &&
+          gml_surface_pixels_read(render,second,NULL,NULL)[0]==0xFFABCDEFu && !fake.readbacks);
+    gml_render_free(render);free(render);
+  }
+  return 1;
+}
+
 static int resident_firstgen_nearest_magnification_authority(void){
   for(unsigned variant=0;variant<6u;variant++){
     GmlRender *render=calloc(1,sizeof *render);
@@ -8662,6 +8788,8 @@ int main(void){
   passed+=resident_packaged_real_font_glyph(1);
   passed+=resident_binary_atlas_sprite_gpu();
   passed+=resident_integer_scaled_atlas_sprite_gpu();
+  passed+=resident_classic_nonphase_sprite_targets();
+  passed+=resident_classic_retained_numbered_target();
   passed+=resident_firstgen_nearest_magnification_authority();
   passed+=resident_integer_world_sprite();
   passed+=resident_opaque_sprite_complete_application();
@@ -8682,6 +8810,6 @@ int main(void){
   passed+=source_free_primitive_rect_replay();
   passed+=stretched_float_exact_replay();
   passed+=filtered_font_exact_recovery();
-  printf("render resource cases: passed=%d failed=%d\n",passed,122-passed);
-  return passed==122?EXIT_SUCCESS:EXIT_FAILURE;
+  printf("render resource cases: passed=%d failed=%d\n",passed,124-passed);
+  return passed==124?EXIT_SUCCESS:EXIT_FAILURE;
 }
