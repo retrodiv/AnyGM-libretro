@@ -192,6 +192,11 @@ static int resident_integer_sprite(GmlRender *r,GmlSprite *sprite,int subimg,
      * Keep texelFetch sampling exact after projecting that same coverage. */
     left=floor(left+0.5);
     top=floor(top+0.5);
+    /* This positive unit crop has exact half-open coverage, including the target edge.
+     * An empty draw must not drain the preceding device batch into a CPU handoff. */
+    if(left>=(double)r->fbw || top>=(double)r->fbh ||
+       left+(double)page->sw<=0.0 || top+(double)page->sh<=0.0)
+      return 1;
   }
   /* R03-SPR-NEAREST: public dispatch has already projected point and scale.
    * The crop validates final integral coverage; world state is not a second

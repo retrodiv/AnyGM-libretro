@@ -7619,6 +7619,87 @@ static int resident_classic_nonphase_sprite_targets(void){
   return 1;
 }
 
+static int resident_classic_clipped_sprite_noops(void){
+  const double anchors[12][2]={{8.0,1.0},{1.0,8.0},{-2.0,1.0},{1.0,-2.0},
+    {7.5,1.0},{1.0,7.5},{-2.5,1.0},{1.0,-2.5},
+    {7.499,1.0},{1.0,7.499},{-1.5,1.0},{1.0,-1.5}};
+  for(unsigned generation=0;generation<2u;generation++)
+  for(unsigned numbered=0;numbered<2u;numbered++)
+  for(unsigned source_kind=0;source_kind<3u;source_kind++)
+  for(unsigned placement=0;placement<(source_kind==2u?8u:12u);placement++){
+    GmlRender *render=calloc(1,sizeof *render);
+    GmlWin content={.classic_version=generation?810:800};
+    FakeDevice fake={0};
+    GmlRenderDeviceServices device=service(&fake);
+    uint32_t base[64],reference[64];
+    const uint32_t *observed=NULL;
+    uint8_t rgba[32]={208,32,16,255,16,208,32,255,32,16,208,255,192,176,160,255,
+                      16,208,32,255,208,32,16,255,192,176,160,255,32,16,208,255};
+    CHECK(render && gml_render_init(render,NULL)==0);
+    render->win=&content;render->classic=1;
+    CHECK(render->n_atlas==1);
+    free(render->atlas[0].px);
+    memset(render->atlas,0,sizeof *render->atlas);
+    render->atlas[0].w=4;render->atlas[0].h=2;
+    render->atlas[0].px=malloc(sizeof rgba);
+    render->tpag=calloc(2,sizeof *render->tpag);
+    render->spr=calloc(2,sizeof *render->spr);
+    CHECK(render->atlas[0].px && render->tpag && render->spr);
+    if(source_kind) rgba[11]=source_kind==1u?0:128;
+    memcpy(render->atlas[0].px,rgba,sizeof rgba);
+    render->n_tpag=render->n_spr=2;
+    render->tpag[0]=(GmlTpag){.sw=2,.sh=2,.tw=2,.th=2,.bw=2,.bh=2};
+    render->tpag[1]=(GmlTpag){.sx=2,.sw=2,.sh=2,.tw=2,.th=2,.bw=4,.bh=4,.tx=1,.ty=1};
+    for(unsigned index=0;index<2u;index++){
+      render->spr[index].w=render->spr[index].h=index?4:2;
+      render->spr[index].originx=render->spr[index].originy=index?2:0;
+      render->spr[index].n_frames=1;
+      render->spr[index].frame=calloc(1,sizeof(int));
+      CHECK(render->spr[index].frame);
+      render->spr[index].frame[0]=(int)index;
+    }
+    uint32_t initial=numbered?0x40123456u:0xFF123456u;
+    for(unsigned index=0;index<64u;index++) base[index]=reference[index]=initial;
+    gml_render_begin(render,reference,8,8,0.25,-0.25);
+    int id=numbered?gml_surface_create(render,8,8):0;
+    if(numbered){
+      CHECK(id>0 && gml_surface_set_target(render,id));
+      memcpy(render->surface[id-1].px,reference,sizeof reference);
+    }
+    double camx=render->cam_x,camy=render->cam_y;
+    double x=anchors[placement][0]+1.0+camx;
+    double y=anchors[placement][1]+1.0+camy;
+    gml_draw_sprite_ext(render,0,0,2.0+camx,2.0+camy,1.0,1.0,0.0,0xFFFFFFu,1.0);
+    gml_draw_sprite_ext(render,1,0,x,y,1.0,1.0,0.0,0xFFFFFFu,1.0);
+    gml_draw_sprite_ext(render,0,0,4.0+camx,4.0+camy,1.0,1.0,0.0,0xFFFFFFu,1.0);
+    if(numbered){
+      memcpy(reference,render->surface[id-1].px,sizeof reference);
+      gml_surface_reset_target(render);
+    }
+    gml_render_application_surface_bind(render,base,8,8,1);
+    gml_render_bind_device(render,&device);
+    CHECK(gml_render_begin_resident_base(render,base,8,8,0.25,-0.25));
+    if(numbered){
+      for(unsigned index=0;index<64u;index++) render->surface[id-1].px[index]=initial;
+      CHECK(gml_surface_set_target(render,id));
+    }
+    CHECK(render->cam_x==camx && render->cam_y==camy);
+    gml_draw_sprite_ext(render,0,0,2.0+camx,2.0+camy,1.0,1.0,0.0,0xFFFFFFu,1.0);
+    CHECK(render->resident_application_pass && !fake.submits && !fake.readbacks);
+    gml_draw_sprite_ext(render,1,0,x,y,1.0,1.0,0.0,0xFFFFFFu,1.0);
+    CHECK(render->resident_application_pass && !fake.readbacks);
+    if(placement<8u) CHECK(!fake.submits);
+    gml_draw_sprite_ext(render,0,0,4.0+camx,4.0+camy,1.0,1.0,0.0,0xFFFFFFu,1.0);
+    CHECK(gml_render_scene_submit_pending(render) && fake.submits>0 && !fake.readbacks);
+    if(placement<8u) CHECK(fake.submits==1 && fake.last_batch_operations==2u);
+    GmlRenderResource *resource=gml_render_scene_target_resource_ensure(render);
+    CHECK(resource && gml_render_resource_acquire_cpu_read(resource,&observed) &&
+          !memcmp(observed,reference,sizeof reference) && !fake.readbacks);
+    gml_render_abandon_device(render);gml_render_free(render);free(render);
+  }
+  return 1;
+}
+
 static int resident_classic_unit_background_targets(void){
   const double positions[4][2]={{0.0,0.0},{0.5,-0.5},{-1.25,2.75},{-24.5,24.5}};
   for(unsigned generation=0;generation<2u;generation++)
@@ -8852,6 +8933,7 @@ int main(void){
   passed+=resident_binary_atlas_sprite_gpu();
   passed+=resident_integer_scaled_atlas_sprite_gpu();
   passed+=resident_classic_nonphase_sprite_targets();
+  passed+=resident_classic_clipped_sprite_noops();
   passed+=resident_classic_unit_background_targets();
   passed+=resident_classic_retained_numbered_target();
   passed+=resident_firstgen_nearest_magnification_authority();
@@ -8874,6 +8956,6 @@ int main(void){
   passed+=source_free_primitive_rect_replay();
   passed+=stretched_float_exact_replay();
   passed+=filtered_font_exact_recovery();
-  printf("render resource cases: passed=%d failed=%d\n",passed,125-passed);
-  return passed==125?EXIT_SUCCESS:EXIT_FAILURE;
+  printf("render resource cases: passed=%d failed=%d\n",passed,126-passed);
+  return passed==126?EXIT_SUCCESS:EXIT_FAILURE;
 }
