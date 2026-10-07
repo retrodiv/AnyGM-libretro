@@ -1419,7 +1419,7 @@ GmlRenderExecutionResult gml_gpu_opengl_scene_submit(GmlGpuBackend *backend,
       op->payload.primitive.kind==GML_RENDER_PRIMITIVE_PARTICLE_LINE;
     int alpha_rect=op->opcode==GML_RENDER_OP_COLOURED_PRIMITIVE &&
       op->payload.primitive.kind==GML_RENDER_PRIMITIVE_CLASSIC_ALPHA_RECT;
-    uint32_t primitive_filter=particle?28u:30u;
+    uint32_t primitive_filter=particle?28u:31u;
     if(pending_count && (particle || alpha_rect
        ? !active_target || !same_logical(active_target->ref,op->target.image) ||
          pending_count==GL_SCENE_MAX_QUADS || pending_filter!=primitive_filter ||

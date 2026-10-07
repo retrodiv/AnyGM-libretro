@@ -1208,6 +1208,10 @@ static int scene_application_point_batch_case(void){
               "opaque point presentation batches only at capacity");
       REQUIRE(!anygm_test_graphics_scene_copies() && !anygm_test_graphics_read_pixels(),
               "point presentation needs no predecessor or CPU observation");
+      const char *fragment=anygm_test_graphics_shader_source(1);
+      const char *point_dispatch=fragment?strstr(fragment,"if(u_filter==30){"):NULL;
+      REQUIRE(point_dispatch && !strstr(point_dispatch+1,"if(u_filter==30){"),
+              "point presentation selector has one fragment dispatch branch");
     }
     gml_gpu_destroy(gpu,1);free(ops);
   }

@@ -82,7 +82,7 @@ typedef struct FakeDriver {
   /* The declaration parser admits 63 name bytes, plus an array's [0] suffix. */
   struct { char name[68]; GLenum type; GLint size; } uniform[64];
   int uniform_declared;
-  char shader_source[2][4096];
+  char shader_source[2][65536];
   GLint strip_draw_calls;
   int no_attributes;
   int attributes_enabled;
