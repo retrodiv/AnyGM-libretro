@@ -436,17 +436,29 @@ int gml_render_begin_owned_application(GmlRender *r,double camx,double camy,
 }
 int gml_render_begin_resident_owned_application(GmlRender *r,double camx,double camy,
                                                 int retain_target){
-  if(!r || !gml_render_device(r) ||
-     !gml_render_application_surface_owned_extent(r,NULL,NULL) ||
-     r->rotated_batch_count || r->rotated_batch_building ||
-     r->pending_fill || r->pending_underlay || r->pending_presentation) return 0;
+  if(!r) return 0;
+  if(!gml_render_device(r))
+    return gml_render_dispatch_resident_reject(r,GML_RENDER_RESIDENT_NO_DEVICE);
+  if(!gml_render_application_surface_owned_extent(r,NULL,NULL))
+    return gml_render_dispatch_resident_reject(r,GML_RENDER_RESIDENT_OWNED_EXTENT);
+  if(r->rotated_batch_count || r->rotated_batch_building)
+    return gml_render_dispatch_resident_reject(r,GML_RENDER_RESIDENT_ROTATED_BATCH);
+  if(r->pending_fill)
+    return gml_render_dispatch_resident_reject(r,GML_RENDER_RESIDENT_PENDING_FILL);
+  if(r->pending_underlay)
+    return gml_render_dispatch_resident_reject(r,GML_RENDER_RESIDENT_PENDING_UNDERLAY);
+  if(r->pending_presentation)
+    return gml_render_dispatch_resident_reject(r,GML_RENDER_RESIDENT_PENDING_PRESENTATION);
   for(int index=0;index<r->target_sp;index++)
     if(r->target_stack[index].pending_fill ||
-       r->target_stack[index].pending_underlay) return 0;
+       r->target_stack[index].pending_underlay)
+      return gml_render_dispatch_resident_reject(r,GML_RENDER_RESIDENT_STACK_PENDING);
   if(retain_target && r->target_id>0 && r->target_sp>0 &&
      (r->target_id>GML_MAX_SURFACES ||
-      !r->surface[r->target_id-1].resource)) return 0;
-  if(!gml_render_application_resource_ensure(r)) return 0;
+      !r->surface[r->target_id-1].resource))
+    return gml_render_dispatch_resident_reject(r,GML_RENDER_RESIDENT_TARGET_RESOURCE);
+  if(!gml_render_application_resource_ensure(r))
+    return gml_render_dispatch_resident_reject(r,GML_RENDER_RESIDENT_RESOURCE);
   if(retain_target)
     gml_render_begin_retaining_resident_target(
       r,r->app_surface_owned,r->app_w,r->app_h,camx,camy);
@@ -454,18 +466,33 @@ int gml_render_begin_resident_owned_application(GmlRender *r,double camx,double 
     gml_render_begin(r,r->app_surface_owned,r->app_w,r->app_h,camx,camy);
   r->resident_scene_pass=1;
   r->resident_application_pass=gml_render_scene_target_matches(r);
+  if(r->resident_application_pass) gml_render_dispatch_resident_admitted(r);
+  else gml_render_dispatch_resident_reject(r,GML_RENDER_RESIDENT_TARGET_RESOURCE);
   return 1;
 }
 static int begin_resident_base(GmlRender *r,uint32_t *pixels,int width,int height,
                                double camx,double camy,int retain_target){
-  if(!r || !pixels || width<=0 || height<=0 || !gml_render_device(r) ||
-     r->rotated_batch_count || r->rotated_batch_building ||
-     (!retain_target && (r->pending_fill || r->target_sp)) ||
-     r->pending_underlay || r->pending_presentation) return 0;
-  if(!gml_render_application_scene_flush(r)) return 0;
+  if(!r) return 0;
+  if(!pixels || width<=0 || height<=0)
+    return gml_render_dispatch_resident_reject(r,GML_RENDER_RESIDENT_INVALID_TARGET);
+  if(!gml_render_device(r))
+    return gml_render_dispatch_resident_reject(r,GML_RENDER_RESIDENT_NO_DEVICE);
+  if(r->rotated_batch_count || r->rotated_batch_building)
+    return gml_render_dispatch_resident_reject(r,GML_RENDER_RESIDENT_ROTATED_BATCH);
+  if(!retain_target && r->pending_fill)
+    return gml_render_dispatch_resident_reject(r,GML_RENDER_RESIDENT_PENDING_FILL);
+  if(!retain_target && r->target_sp)
+    return gml_render_dispatch_resident_reject(r,GML_RENDER_RESIDENT_TARGET_STACK);
+  if(r->pending_underlay)
+    return gml_render_dispatch_resident_reject(r,GML_RENDER_RESIDENT_PENDING_UNDERLAY);
+  if(r->pending_presentation)
+    return gml_render_dispatch_resident_reject(r,GML_RENDER_RESIDENT_PENDING_PRESENTATION);
+  if(!gml_render_application_scene_flush(r))
+    return gml_render_dispatch_resident_reject(r,GML_RENDER_RESIDENT_SCENE_FLUSH);
   if(retain_target && r->target_sp>0 &&
      (r->target_id<=0 || r->target_id>GML_MAX_SURFACES ||
-      !gml_render_surface_resource_ensure(r,r->target_id))) return 0;
+      !gml_render_surface_resource_ensure(r,r->target_id)))
+    return gml_render_dispatch_resident_reject(r,GML_RENDER_RESIDENT_TARGET_RESOURCE);
   if(r->base_scene_resource &&
      (r->base_scene_resource_pixels!=pixels ||
       r->base_scene_resource_width!=width ||
@@ -473,7 +500,8 @@ static int begin_resident_base(GmlRender *r,uint32_t *pixels,int width,int heigh
     /* A borrowed allocation keeps its bytes when a view changes stride. Observe only
      * this real geometry transition before replacing the device resource. */
     if(r->base_scene_resource_pixels==pixels &&
-       !gml_render_resource_acquire_cpu_read(r->base_scene_resource,NULL)) return 0;
+       !gml_render_resource_acquire_cpu_read(r->base_scene_resource,NULL))
+      return gml_render_dispatch_resident_reject(r,GML_RENDER_RESIDENT_CPU_OBSERVE);
     gml_render_base_resource_dispose(r);
   }
   if(retain_target)
@@ -483,9 +511,11 @@ static int begin_resident_base(GmlRender *r,uint32_t *pixels,int width,int heigh
   r->base_scene_resource_pixels=pixels;
   r->base_scene_resource_width=width;
   r->base_scene_resource_height=height;
-  if(!gml_render_scene_target_resource_ensure(r)) return 0;
+  if(!gml_render_scene_target_resource_ensure(r))
+    return gml_render_dispatch_resident_reject(r,GML_RENDER_RESIDENT_RESOURCE);
   r->resident_application_pass=1;
   r->resident_scene_pass=1;
+  gml_render_dispatch_resident_admitted(r);
   return 1;
 }
 int gml_render_begin_resident_base(GmlRender *r,uint32_t *pixels,int width,int height,
@@ -940,6 +970,9 @@ void gml_render_free(GmlRender *r){
 void gml_render_begin(GmlRender *r, uint32_t *fb, int w, int h, double cx, double cy){
   if(!gml_render_application_scene_flush(r)) return;
   gml_render_flush_rotated_batch(r);
+  if(r->resident_application_pass && r->dispatch_frame_accounting &&
+     r->dispatch_frame_accounting->pending_cause==GML_RENDER_RESIDENT_UNKNOWN)
+    gml_render_dispatch_resident_lost(r,GML_RENDER_RESIDENT_PASS_RESTART);
   r->resident_application_pass=0;
   r->resident_scene_pass=0;
   r->fb=fb; r->fbw=w; r->fbh=h; r->base_fb=fb; r->base_fbw=w; r->base_fbh=h;
@@ -1132,6 +1165,7 @@ int gml_render_resident_application_cpu_barrier(GmlRender *r){
   resource=gml_render_scene_target_resource_ensure(r);
   if(!resource || !gml_render_resource_acquire_cpu_write(resource,&pixels) ||
      pixels!=r->fb || !gml_render_resource_commit_cpu_write(resource)) return 0;
+  gml_render_dispatch_resident_lost(r,GML_RENDER_RESIDENT_CPU_BARRIER);
   r->resident_application_pass=0;
   return 1;
 }
@@ -1176,14 +1210,22 @@ int gml_render_completed_screen_write(GmlRender *r,uint32_t *pixels,int width,in
   resource=completed_screen_resource(r,pixels,width,height);
   if(resource && (!gml_render_resource_acquire_cpu_write(resource,&current) ||
                  current!=pixels || !gml_render_resource_commit_cpu_write(resource))) return 0;
-  if(r->fb==pixels) r->resident_application_pass=0;
+  if(r->fb==pixels){
+    if(r->resident_application_pass)
+      gml_render_dispatch_resident_lost(r,GML_RENDER_RESIDENT_CPU_BARRIER);
+    r->resident_application_pass=0;
+  }
   return 1;
 }
 void gml_render_completed_screen_publish(GmlRender *r,uint32_t *pixels,int width,int height){
   if(!r || !pixels || width<=0 || height<=0) return;
   if(completed_screen_resource(r,pixels,width,height)) gml_render_base_resource_dispose(r);
   gml_render_discard_deferred_presentation(r);
-  if(r->fb==pixels) r->resident_application_pass=0;
+  if(r->fb==pixels){
+    if(r->resident_application_pass)
+      gml_render_dispatch_resident_lost(r,GML_RENDER_RESIDENT_CPU_BARRIER);
+    r->resident_application_pass=0;
+  }
 }
 int gml_render_completed_screen_image(GmlRender *r,const uint32_t *pixels,int width,int height,
                                       GmlRenderImageRef *image){

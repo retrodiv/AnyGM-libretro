@@ -220,6 +220,7 @@ typedef struct GmlRender {
   GmlRenderPendingSceneBatch *pending_scene_batch;
   uint64_t scene_source_epoch; /* process-unique source incarnation, assigned on first upload */
   GmlRenderDispatchMetrics dispatch_metrics;
+  GmlRenderDispatchFrames *dispatch_frame_accounting;
   unsigned dispatch_cpu_depth;
   unsigned dispatch_cpu_family,dispatch_cpu_reason;
   atomic_int dispatch_cpu_written;
@@ -790,6 +791,9 @@ void gml_render_dispatch_cpu_exception_record(GmlRender *render,unsigned family,
                                               unsigned exception,uint64_t count);
 void gml_render_dispatch_batch_record(GmlRender *render,const GmlRenderDrawBatch *batch,
                                        GmlRenderResourceExecution result);
+int gml_render_dispatch_resident_reject(GmlRender *render,unsigned cause);
+void gml_render_dispatch_resident_admitted(GmlRender *render);
+void gml_render_dispatch_resident_lost(GmlRender *render,unsigned cause);
 /* Geometry only: the preserved nearest row walker selects vector packets and
  * scalar tails without reading or writing the destination. */
 typedef struct GmlRenderRotatedCoverageRegion {

@@ -19,6 +19,36 @@ session. Unload emits `[graphics-dispatch]` and seven bounded
 `[graphics-dispatch-family]` lines after the existing renderer teardown completes queued work.
 This report exists even in CPU-only builds or when no GPU scene was admitted.
 
+The same setting adds a metadata-only resident-pass frame census. Unload emits one
+`[graphics-resident-frames]` summary, one `[graphics-resident-cause]` line for each
+bounded cause and seven `[graphics-resident-first-cpu]` family lines. `frames` counts
+validated public frame attempts, including failed execution/presentation; it is not
+a clock or a draw count. `cpu_frames` charges the first ordinary completed CPU draw
+in each frame, and `no_scene_frames` charges the first such draw whose preserved
+dispatch reason is `no_scene`. Each has its own once-per-frame cause histogram;
+`first-cpu` describes the first ordinary CPU family, not every family in the frame.
+Documented depth exceptions do not enter these ordinary counts.
+
+Caller-side policy skips and actual resident begin rejections record the predicate
+that prevents the selected pass. A successful alternative clears an earlier
+rejection without charging a CPU frame. The first `EXEC_CPU` submission that drops a
+resident pass, a CPU barrier or an explicit pass restart remains the loss cause for
+the subsequent CPU suffix. A later rejected begin can supply the more immediate
+cause. Composition and a missing device have their own dispatch causes.
+`frame_start` means ordinary CPU work preceded any instrumented admission attempt;
+it does not prove that a later world/GUI pass was rejected. `unknown` means an
+unobserved loss, not permission to classify the frame as accelerated.
+
+The engine owns this transient history across renderer replacement and rebinds the
+borrowed pointer after a runtime move. State restoration never restores counters.
+`outside_cpu` counts ordinary CPU draws outside public frame boundaries, rather
+than inventing frames for Create, teardown or explicit observation. Failed frames,
+unknown boundaries/causes, overflow, outside-frame CPU work or incomplete draw
+accounting make the frame summary `complete=0`. The original draw footer remains
+the authority for zero ordinary fallbacks across the complete content load. The
+frame census ranks admission/loss opportunities only; it neither establishes that
+all those frames are recoverable nor qualifies fidelity, transport or performance.
+
 Completed scene submissions are counted by their resolved family. Queued work is not counted
 until successful submission; CPU recipe execution is a fallback, not GPU work. Failed batches
 and unclassified families remain separate disqualifiers. Saturating counters flag overflow

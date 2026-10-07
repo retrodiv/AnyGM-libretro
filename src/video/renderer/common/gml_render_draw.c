@@ -11,11 +11,106 @@
 
 static void dispatch_add(GmlRenderDispatchMetrics *metrics,uint64_t *value,uint64_t count);
 
+static void dispatch_frame_add(GmlRenderDispatchFrames *frames,uint64_t *value,uint64_t count){
+  if(count>UINT64_MAX-*value){ *value=UINT64_MAX; frames->overflow=1; }
+  else *value+=count;
+}
+
+static void dispatch_frame_unknown(GmlRenderDispatchFrames *frames){
+  if(!frames || !frames->enabled || frames->unknown_seen) return;
+  dispatch_frame_add(frames,&frames->unknown_frames,1u);
+  frames->unknown_seen=1;
+}
+
+void gml_render_dispatch_frame_bind(GmlRender *render,GmlRenderDispatchFrames *frames){
+  if(render) render->dispatch_frame_accounting=frames;
+}
+
+void gml_render_dispatch_frame_open(GmlRenderDispatchFrames *frames){
+  if(!frames || !frames->enabled) return;
+  if(frames->active){
+    dispatch_frame_unknown(frames);
+    dispatch_frame_add(frames,&frames->failed_frames,1u);
+  }
+  frames->active=1;
+  frames->cpu_seen=frames->no_scene_seen=frames->unknown_seen=0;
+  frames->pending_cause=GML_RENDER_RESIDENT_FRAME_START;
+  frames->loss_cause=GML_RENDER_RESIDENT_UNKNOWN;
+  dispatch_frame_add(frames,&frames->frames,1u);
+}
+
+void gml_render_dispatch_frame_close(GmlRenderDispatchFrames *frames,int succeeded){
+  if(!frames || !frames->enabled) return;
+  if(!frames->active){
+    /* A missing boundary is not evidence of a zero-fallback frame. */
+    frames->unknown_seen=0;
+    dispatch_frame_unknown(frames);
+    return;
+  }
+  if(!succeeded) dispatch_frame_add(frames,&frames->failed_frames,1u);
+  frames->active=0;
+}
+
+void gml_render_dispatch_resident_skip(GmlRender *render,unsigned cause){
+  GmlRenderDispatchFrames *frames=render?render->dispatch_frame_accounting:NULL;
+  if(!frames || !frames->enabled || !frames->active) return;
+  frames->pending_cause=cause<GML_RENDER_RESIDENT_CAUSE_COUNT?cause:GML_RENDER_RESIDENT_UNKNOWN;
+}
+
+int gml_render_dispatch_resident_reject(GmlRender *render,unsigned cause){
+  gml_render_dispatch_resident_skip(render,cause);
+  return 0;
+}
+
+void gml_render_dispatch_resident_admitted(GmlRender *render){
+  GmlRenderDispatchFrames *frames=render?render->dispatch_frame_accounting:NULL;
+  if(!frames || !frames->enabled || !frames->active) return;
+  /* An unsuccessful alternative is not a CPU frame when the selected pass succeeds. */
+  frames->pending_cause=frames->loss_cause=GML_RENDER_RESIDENT_UNKNOWN;
+}
+
+void gml_render_dispatch_resident_lost(GmlRender *render,unsigned cause){
+  GmlRenderDispatchFrames *frames=render?render->dispatch_frame_accounting:NULL;
+  if(!frames || !frames->enabled || !frames->active || frames->loss_cause) return;
+  frames->loss_cause=cause<GML_RENDER_RESIDENT_CAUSE_COUNT?cause:GML_RENDER_RESIDENT_UNKNOWN;
+}
+
+static void dispatch_frame_cpu(GmlRender *render,unsigned family,unsigned reason,uint64_t count){
+  GmlRenderDispatchFrames *frames=render->dispatch_frame_accounting;
+  if(!frames || !frames->enabled) return;
+  if(!frames->active){
+    dispatch_frame_add(frames,&frames->outside_cpu,count);
+    return;
+  }
+  if(frames->cpu_seen && (reason!=GML_RENDER_DISPATCH_NO_SCENE || frames->no_scene_seen)) return;
+  unsigned cause=frames->loss_cause?frames->loss_cause:frames->pending_cause;
+  if(frames->pending_cause!=GML_RENDER_RESIDENT_UNKNOWN &&
+     frames->pending_cause!=GML_RENDER_RESIDENT_FRAME_START)
+    cause=frames->pending_cause;
+  if(reason==GML_RENDER_DISPATCH_NO_DEVICE) cause=GML_RENDER_RESIDENT_NO_DEVICE;
+  if(reason==GML_RENDER_DISPATCH_COMPOSITION) cause=GML_RENDER_RESIDENT_COMPOSITION;
+  if(cause>=GML_RENDER_RESIDENT_CAUSE_COUNT) cause=GML_RENDER_RESIDENT_UNKNOWN;
+  if(!cause) dispatch_frame_unknown(frames);
+  if(!frames->cpu_seen){
+    frames->cpu_seen=1;
+    dispatch_frame_add(frames,&frames->cpu_frames,1u);
+    dispatch_frame_add(frames,&frames->cpu_causes[cause],1u);
+    dispatch_frame_add(frames,&frames->first_cpu_family[family],1u);
+  }
+  if(reason==GML_RENDER_DISPATCH_NO_SCENE && !frames->no_scene_seen){
+    frames->no_scene_seen=1;
+    dispatch_frame_add(frames,&frames->no_scene_frames,1u);
+    dispatch_frame_add(frames,&frames->no_scene_causes[cause],1u);
+  }
+}
+
 void gml_render_dispatch_diagnostics_enable(GmlRender *render,int enabled){
   if(!render) return;
   /* A subsequent re-enable cannot hide work performed during an accounting gap. */
-  if(render->dispatch_metrics.enabled && !enabled)
+  if(render->dispatch_metrics.enabled && !enabled){
     dispatch_add(&render->dispatch_metrics,&render->dispatch_metrics.unclassified,1u);
+    dispatch_frame_unknown(render->dispatch_frame_accounting);
+  }
   render->dispatch_metrics.enabled=enabled?1:0;
 }
 
@@ -72,6 +167,7 @@ void gml_render_dispatch_cpu_record(GmlRender *render,unsigned family,unsigned r
     return;
   }
   dispatch_add(metrics,&metrics->cpu[family][reason],count);
+  dispatch_frame_cpu(render,family,reason,count);
 }
 
 void gml_render_dispatch_cpu_exception_record(GmlRender *render,unsigned family,
@@ -143,6 +239,8 @@ void gml_render_dispatch_batch_record(GmlRender *render,const GmlRenderDrawBatch
     dispatch_add(metrics,&metrics->unclassified,batch->operation_count);
     return;
   }
+  if(result==GML_RENDER_RESOURCE_EXEC_CPU && render->resident_application_pass)
+    gml_render_dispatch_resident_lost(render,GML_RENDER_RESIDENT_EXEC_CPU);
   for(uint32_t index=0;index<batch->operation_count;index++){
     unsigned family=batch->operations[index].scene_family;
     /* Clears are source-free primitive operations; older prepared records did

@@ -212,6 +212,8 @@ void gml_render_lose_volatile_device(GmlRender *r){
   if(!r->app_surface && r->app_surface_owned && owned_width>0 && owned_height>0)
     gml_render_application_surface_bind(r,r->app_surface_owned,owned_width,owned_height,0);
   gml_render_base_resource_dispose(r);
+  if(r->resident_application_pass)
+    gml_render_dispatch_resident_lost(r,GML_RENDER_RESIDENT_NO_DEVICE);
   r->resident_application_pass=r->resident_scene_pass=0;
   r->fb_opaque_known=r->fb_all_opaque=r->fb_all_transparent=0;
 }
@@ -1654,6 +1656,8 @@ void gml_surface_reset_target(GmlRender *r){
   } else if(r->base_fb){
     r->fb=r->base_fb; r->fbw=r->base_fbw; r->fbh=r->base_fbh;
     r->target_id=-1;
+    if(r->resident_application_pass)
+      gml_render_dispatch_resident_lost(r,GML_RENDER_RESIDENT_PASS_RESTART);
     r->resident_application_pass=0;
     r->fb_opaque_known=0;
     r->fb_all_opaque=0;

@@ -133,6 +133,8 @@ static void engine_dispatch_renderer_begin(AnygmEngine *engine){
   EngineDiagnostics *diagnostics=&engine->diagnostics;
   diagnostics->dispatch_renderer_active=
     diagnostics->dispatch_enabled && !diagnostics->dispatch_suppressed;
+  gml_render_dispatch_frame_bind(&engine->render,diagnostics->dispatch_renderer_active
+    ?&diagnostics->dispatch_frames:NULL);
   gml_render_dispatch_diagnostics_enable(&engine->render,diagnostics->dispatch_renderer_active);
   if(diagnostics->dispatch_renderer_active){
     if(diagnostics->dispatch_renderer_epochs==UINT64_MAX)
@@ -216,6 +218,45 @@ static void engine_dispatch_report(AnygmEngine *engine){
       (unsigned long long)metrics.cpu[family][GML_RENDER_DISPATCH_REPLAY],
       (unsigned long long)metrics.cpu[family][GML_RENDER_DISPATCH_COMPOSITION],
       (unsigned long long)metrics.exceptions[family][GML_RENDER_DISPATCH_EXCEPTION_DEPTH]);
+  const GmlRenderDispatchFrames *frames=&engine->diagnostics.dispatch_frames;
+  int frame_complete=metrics.complete && !metrics.failed && frames->enabled &&
+    !frames->active && !frames->overflow && !frames->unknown_frames &&
+    !frames->failed_frames && !frames->outside_cpu;
+  engine_logf(engine,ANYGM_LOG_INFO,
+    "[graphics-resident-frames] enabled=%d complete=%d frames=%llu cpu_frames=%llu "
+    "no_scene_frames=%llu outside_cpu=%llu failed_frames=%llu unknown_frames=%llu overflow=%d\n",
+    frames->enabled,frame_complete,(unsigned long long)frames->frames,
+    (unsigned long long)frames->cpu_frames,(unsigned long long)frames->no_scene_frames,
+    (unsigned long long)frames->outside_cpu,(unsigned long long)frames->failed_frames,
+    (unsigned long long)frames->unknown_frames,frames->overflow);
+  static const char *const causes[]={"unknown","no_device","cpu_renderer","composed",
+    "forced_aspect","centred_gui","target_policy","invalid_target","owned_extent",
+    "rotated_batch","pending_fill","pending_underlay","pending_presentation",
+    "target_stack","stack_pending","target_resource","scene_flush","cpu_observe",
+    "resource","cpu_barrier","exec_cpu","composition","pass_restart","frame_start"};
+  _Static_assert(sizeof causes/sizeof causes[0]==GML_RENDER_RESIDENT_CAUSE_COUNT,
+                 "resident footer must name every cause");
+  for(unsigned cause=0;cause<GML_RENDER_RESIDENT_CAUSE_COUNT;cause++)
+    engine_logf(engine,ANYGM_LOG_INFO,
+      "[graphics-resident-cause] cause=%s cpu_frames=%llu no_scene_frames=%llu\n",
+      causes[cause],(unsigned long long)frames->cpu_causes[cause],
+      (unsigned long long)frames->no_scene_causes[cause]);
+  for(unsigned family=1;family<GML_RENDER_SCENE_FAMILY_COUNT;family++)
+    engine_logf(engine,ANYGM_LOG_INFO,"[graphics-resident-first-cpu] family=%s frames=%llu\n",
+      families[family],(unsigned long long)frames->first_cpu_family[family]);
+}
+
+static void engine_dispatch_admission_skip(AnygmEngine *engine,int centred_gui,int forced_allowed){
+  if(!engine->diagnostics.dispatch_renderer_active) return;
+  unsigned cause=GML_RENDER_RESIDENT_TARGET_POLICY;
+  if(engine->scene_renderer_session!=ANYGM_SCENE_RENDERER_OPENGL &&
+     !anygm_host_development_setting(&engine->host,"GML_SCENE_GPU_PROTOTYPE"))
+    cause=GML_RENDER_RESIDENT_CPU_RENDERER;
+  else if(!engine_graphics_active(engine)) cause=GML_RENDER_RESIDENT_NO_DEVICE;
+  else if(engine->composed_frame) cause=GML_RENDER_RESIDENT_COMPOSED;
+  else if(engine->aspect_force_active && !forced_allowed) cause=GML_RENDER_RESIDENT_FORCED_ASPECT;
+  else if(centred_gui) cause=GML_RENDER_RESIDENT_CENTRED_GUI;
+  gml_render_dispatch_resident_skip(&engine->render,cause);
 }
 static AnygmResult engine_apply_game_change(AnygmEngine *engine,int *changed);
 
@@ -808,6 +849,8 @@ static void engine_rebind_moved_runtime(AnygmEngine *engine){
   gml_vm_rebind(&engine->vm,&engine->win,&engine->host);
   engine_input_bind(engine);
   gml_render_rebind_content(&engine->render,&engine->win);
+  gml_render_dispatch_frame_bind(&engine->render,engine->diagnostics.dispatch_renderer_active
+    ?&engine->diagnostics.dispatch_frames:NULL);
   engine->vm.render=&engine->render;
   gml_render_bind_software3d(&engine->render,engine->vm.software3d);
   gml_audio_rebind_content(engine->audio,&engine->win);
@@ -853,6 +896,7 @@ AnygmResult engine_state_stage_content(AnygmEngine *engine,const char *locator,
   /* A trial runtime is not published drawing, and a rejected trial must never
    * duplicate the live session's footer or consume its accounting history. */
   memset(&staged->diagnostics.dispatch_retired,0,sizeof staged->diagnostics.dispatch_retired);
+  memset(&staged->diagnostics.dispatch_frames,0,sizeof staged->diagnostics.dispatch_frames);
   staged->diagnostics.dispatch_renderer_epochs=0;
   staged->diagnostics.dispatch_renderer_active=0;
   staged->diagnostics.dispatch_suppressed=1;
@@ -940,6 +984,7 @@ void engine_state_commit_staged_content(AnygmEngine *engine,AnygmEngine *staged)
   staged->diagnostics.dispatch_suppressed=1;
   anygm_unload(staged);
   engine->diagnostics.dispatch_retired=staged->diagnostics.dispatch_retired;
+  engine->diagnostics.dispatch_frames=staged->diagnostics.dispatch_frames;
   engine->diagnostics.dispatch_renderer_epochs=staged->diagnostics.dispatch_renderer_epochs;
   engine->diagnostics.dispatch_suppressed=0;
   engine_dispatch_renderer_begin(engine);
@@ -1668,6 +1713,7 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
       render_presentation.application_owned);
   int owned_world_began=0;
   int base_world_began=0;
+  engine_dispatch_admission_skip(engine,0,forced_owned_scene);
   /* Unsupported operations still take the checked CPU barrier. */
   if(direct_owned_world && !engine->composed_frame &&
      (!engine->aspect_force_active || forced_owned_scene) &&
@@ -1949,6 +1995,7 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
 			  int gtw = (aspect_gui_center || gui_indirect) ? gsw : (int)ow;
 			  int gth = (aspect_gui_center || gui_indirect) ? gsh : (int)oh;
 			  int resident_screen_began=0;
+			  engine_dispatch_admission_skip(engine,aspect_gui_center,forced_owned_scene_began);
 			  {
 			    double screen_cam_x=(engine->aspect_force_active || aspect_gui_center)
 			                        ? 0.0 : -(double)engine->gui_offset_x;
@@ -2581,6 +2628,8 @@ AnygmResult anygm_load_prepare(AnygmEngine *engine,const AnygmContentSource *sou
   engine->diagnostics.dispatch_suppressed=0;
   engine->diagnostics.dispatch_enabled=
     anygm_host_development_setting(&engine->host,"GML_RENDER_DISPATCH_STATS")!=NULL;
+  memset(&engine->diagnostics.dispatch_frames,0,sizeof engine->diagnostics.dispatch_frames);
+  engine->diagnostics.dispatch_frames.enabled=engine->diagnostics.dispatch_enabled;
   AnygmLoadConfig resolved_config={0};
   char host_language[16]={0},host_region[16]={0},host_tag[32]={0};
   const AnygmLoadConfig *load_config=config;
@@ -2756,13 +2805,16 @@ AnygmResult anygm_run_frame(AnygmEngine *engine,const AnygmInputFrame *input,
     return ANYGM_ERROR_INCOMPATIBLE_ABI;
   if(input && input->text_event_count>ANYGM_MAX_TEXT_EVENTS)
     return ANYGM_ERROR_INVALID_ARGUMENT;
+  gml_render_dispatch_frame_open(&engine->diagnostics.dispatch_frames);
   if(input) memcpy(&engine->input,input,sizeof engine->input);
   else { memset(&engine->input,0,sizeof engine->input); engine->input.pointer_x=-1; engine->input.pointer_y=-1; }
   /* A shutdown keeps the last completed picture without another Draw. If that picture was
    * presented directly from a resident scene, reconstruct its CPU copy before forgetting the
    * deferred presentation: the host target itself cannot be assumed to survive another frame. */
-  if(engine->runtime_ended && !engine_materialize_completed_frame(engine))
+  if(engine->runtime_ended && !engine_materialize_completed_frame(engine)){
+    gml_render_dispatch_frame_close(&engine->diagnostics.dispatch_frames,0);
     return ANYGM_ERROR_INTERNAL;
+  }
   /* The previous frame's deferred presentation describes a target that is about to be rebuilt, and
    * content code runs before anything would flush it. Forget it here, ahead of all of that. */
   gml_render_discard_deferred_presentation(&engine->render);
@@ -2788,7 +2840,10 @@ AnygmResult anygm_run_frame(AnygmEngine *engine,const AnygmInputFrame *input,
   /* Input may have been consumed before a later execution/presentation error.
    * Its acknowledgement is still authoritative; retrying is not new typing. */
   output->flags=engine->frame_flags;
-  if(result!=ANYGM_OK) return result;
+  if(result!=ANYGM_OK){
+    gml_render_dispatch_frame_close(&engine->diagnostics.dispatch_frames,0);
+    return result;
+  }
   /* Submit the final queue. Witnessed GPU scenes retain their persistent pixels on device;
    * the established context-free path still seals hosts without that observation contract. */
   int prof=profile_enabled(engine);
@@ -2800,8 +2855,13 @@ AnygmResult anygm_run_frame(AnygmEngine *engine,const AnygmInputFrame *input,
     engine->profile.frame_ms+=seal_ms;
     engine->profile.total_ms+=seal_ms;
   }
-  if(!sealed) return ANYGM_ERROR_INTERNAL;
-  return engine_present_frame_output(engine,output);
+  if(!sealed){
+    gml_render_dispatch_frame_close(&engine->diagnostics.dispatch_frames,0);
+    return ANYGM_ERROR_INTERNAL;
+  }
+  result=engine_present_frame_output(engine,output);
+  gml_render_dispatch_frame_close(&engine->diagnostics.dispatch_frames,result==ANYGM_OK);
+  return result;
 }
 
 static AnygmResult engine_present_frame_output(AnygmEngine *engine,AnygmFrameOutput *output){

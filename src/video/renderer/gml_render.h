@@ -31,6 +31,51 @@ typedef struct {
   uint64_t failed,unclassified;
   int enabled,overflow,complete;
 } GmlRenderDispatchMetrics;
+
+/* First ordinary CPU work in a public frame, independent of draw volume.
+ * These diagnostics borrow engine-owned storage across renderer replacement;
+ * neither counters nor the current frame are serialized. */
+enum {
+  GML_RENDER_RESIDENT_UNKNOWN,
+  GML_RENDER_RESIDENT_NO_DEVICE,
+  GML_RENDER_RESIDENT_CPU_RENDERER,
+  GML_RENDER_RESIDENT_COMPOSED,
+  GML_RENDER_RESIDENT_FORCED_ASPECT,
+  GML_RENDER_RESIDENT_CENTRED_GUI,
+  GML_RENDER_RESIDENT_TARGET_POLICY,
+  GML_RENDER_RESIDENT_INVALID_TARGET,
+  GML_RENDER_RESIDENT_OWNED_EXTENT,
+  GML_RENDER_RESIDENT_ROTATED_BATCH,
+  GML_RENDER_RESIDENT_PENDING_FILL,
+  GML_RENDER_RESIDENT_PENDING_UNDERLAY,
+  GML_RENDER_RESIDENT_PENDING_PRESENTATION,
+  GML_RENDER_RESIDENT_TARGET_STACK,
+  GML_RENDER_RESIDENT_STACK_PENDING,
+  GML_RENDER_RESIDENT_TARGET_RESOURCE,
+  GML_RENDER_RESIDENT_SCENE_FLUSH,
+  GML_RENDER_RESIDENT_CPU_OBSERVE,
+  GML_RENDER_RESIDENT_RESOURCE,
+  GML_RENDER_RESIDENT_CPU_BARRIER,
+  GML_RENDER_RESIDENT_EXEC_CPU,
+  GML_RENDER_RESIDENT_COMPOSITION,
+  GML_RENDER_RESIDENT_PASS_RESTART,
+  GML_RENDER_RESIDENT_FRAME_START,
+  GML_RENDER_RESIDENT_CAUSE_COUNT
+};
+typedef struct {
+  uint64_t frames,cpu_frames,no_scene_frames;
+  uint64_t cpu_causes[GML_RENDER_RESIDENT_CAUSE_COUNT];
+  uint64_t no_scene_causes[GML_RENDER_RESIDENT_CAUSE_COUNT];
+  uint64_t first_cpu_family[GML_RENDER_SCENE_FAMILY_COUNT];
+  uint64_t outside_cpu,failed_frames,unknown_frames;
+  int enabled,overflow,active,cpu_seen,no_scene_seen,unknown_seen;
+  unsigned pending_cause,loss_cause;
+} GmlRenderDispatchFrames;
+void gml_render_dispatch_frame_bind(GmlRender *render,GmlRenderDispatchFrames *frames);
+void gml_render_dispatch_frame_open(GmlRenderDispatchFrames *frames);
+void gml_render_dispatch_frame_close(GmlRenderDispatchFrames *frames,int succeeded);
+/* A skipped caller-side attempt is not charged unless ordinary CPU work occurs. */
+void gml_render_dispatch_resident_skip(GmlRender *render,unsigned cause);
 void gml_render_dispatch_diagnostics_enable(GmlRender *render,int enabled);
 int gml_render_dispatch_metrics(const GmlRender *render,GmlRenderDispatchMetrics *out);
 /* Accumulate completed renderer epochs without executing work or restoring state. */

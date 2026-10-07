@@ -846,6 +846,141 @@ static int dispatch_epoch_accumulation_case(void){
   return 1;
 }
 
+static int dispatch_frame_causes_case(void){
+  GmlRender first={0},replacement={0};
+  GmlRenderDispatchFrames frames={0};
+  frames.enabled=1;
+  gml_render_dispatch_diagnostics_enable(&first,1);
+  gml_render_dispatch_diagnostics_enable(&replacement,1);
+  gml_render_dispatch_frame_bind(&first,&frames);
+  gml_render_dispatch_frame_bind(&replacement,&frames);
+  gml_render_dispatch_frame_open(&frames);
+  gml_render_dispatch_resident_skip(&first,GML_RENDER_RESIDENT_FORCED_ASPECT);
+  for(unsigned draw=0;draw<100;draw++)
+    gml_render_dispatch_cpu_record(&first,GML_RENDER_SCENE_SPRITE,GML_RENDER_DISPATCH_NO_SCENE,1u);
+  /* A renderer replacement shares the same public-frame owner, not a second frame. */
+  gml_render_dispatch_resident_skip(&replacement,GML_RENDER_RESIDENT_COMPOSED);
+  gml_render_dispatch_cpu_record(&replacement,GML_RENDER_SCENE_SURFACE,GML_RENDER_DISPATCH_NO_SCENE,20u);
+  gml_render_dispatch_frame_close(&frames,1);
+  REQUIRE(frames.frames==1u && frames.cpu_frames==1u && frames.no_scene_frames==1u &&
+          frames.cpu_causes[GML_RENDER_RESIDENT_FORCED_ASPECT]==1u &&
+          frames.no_scene_causes[GML_RENDER_RESIDENT_FORCED_ASPECT]==1u &&
+          frames.first_cpu_family[GML_RENDER_SCENE_SPRITE]==1u &&
+          !frames.cpu_causes[GML_RENDER_RESIDENT_COMPOSED],
+          "draw volume and replacement do not multiply the first frame cause");
+  gml_render_dispatch_frame_open(&frames);
+  gml_render_dispatch_resident_reject(&first,GML_RENDER_RESIDENT_OWNED_EXTENT);
+  gml_render_dispatch_resident_admitted(&first);
+  gml_render_dispatch_cpu_exception_record(&first,GML_RENDER_SCENE_PRIMITIVE,
+                                            GML_RENDER_DISPATCH_EXCEPTION_DEPTH,1u);
+  gml_render_dispatch_frame_close(&frames,1);
+  REQUIRE(frames.frames==2u && frames.cpu_frames==1u && frames.no_scene_frames==1u &&
+          !frames.cpu_causes[GML_RENDER_RESIDENT_OWNED_EXTENT],
+          "failed alternatives and separate exceptions are not ordinary CPU frames");
+  gml_render_dispatch_frame_open(&frames);
+  gml_render_dispatch_resident_admitted(&first);
+  first.resident_application_pass=1;
+  GmlRenderDrawOp operation={0};
+  operation.opcode=GML_RENDER_OP_CLEAR;
+  operation.scene_family=GML_RENDER_SCENE_PRIMITIVE;
+  GmlRenderDrawBatch batch={&operation,1u,NULL,0u};
+  gml_render_dispatch_batch_record(&first,&batch,GML_RENDER_RESOURCE_EXEC_CPU);
+  first.resident_application_pass=0;
+  gml_render_dispatch_resident_lost(&first,GML_RENDER_RESIDENT_CPU_BARRIER);
+  gml_render_dispatch_cpu_record(&first,GML_RENDER_SCENE_TEXT,GML_RENDER_DISPATCH_NO_SCENE,50u);
+  gml_render_dispatch_frame_close(&frames,1);
+  REQUIRE(frames.cpu_frames==2u && frames.no_scene_frames==2u &&
+          frames.cpu_causes[GML_RENDER_RESIDENT_EXEC_CPU]==1u &&
+          frames.no_scene_causes[GML_RENDER_RESIDENT_EXEC_CPU]==1u &&
+          !frames.cpu_causes[GML_RENDER_RESIDENT_CPU_BARRIER],
+          "the first EXEC_CPU loss survives the later CPU suffix");
+  gml_render_dispatch_frame_open(&frames);
+  gml_render_dispatch_resident_admitted(&first);
+  gml_render_dispatch_resident_lost(&first,GML_RENDER_RESIDENT_CPU_BARRIER);
+  gml_render_dispatch_cpu_record(&first,GML_RENDER_SCENE_TILE,GML_RENDER_DISPATCH_NO_SCENE,1u);
+  gml_render_dispatch_frame_close(&frames,1);
+  REQUIRE(frames.cpu_causes[GML_RENDER_RESIDENT_CPU_BARRIER]==1u &&
+          frames.no_scene_causes[GML_RENDER_RESIDENT_CPU_BARRIER]==1u,
+          "the real resident CPU barrier has its own frame cause");
+  gml_render_dispatch_cpu_record(&first,GML_RENDER_SCENE_SURFACE,GML_RENDER_DISPATCH_COMPOSITION,7u);
+  REQUIRE(frames.outside_cpu==7u && frames.frames==4u && frames.cpu_frames==3u,
+          "outside-frame writes cannot silently qualify a zero frame census");
+  gml_render_dispatch_frame_open(&frames);
+  gml_render_dispatch_resident_admitted(&first);
+  gml_render_dispatch_cpu_record(&first,GML_RENDER_SCENE_SPRITE,GML_RENDER_DISPATCH_NO_SCENE,1u);
+  gml_render_dispatch_frame_close(&frames,0);
+  REQUIRE(frames.unknown_frames==1u && frames.failed_frames==1u &&
+          frames.no_scene_causes[GML_RENDER_RESIDENT_UNKNOWN]==1u,
+          "an uninstrumented pass loss and failed frame remain explicit gaps");
+  frames.frames=UINT64_MAX;
+  frames.cpu_frames=UINT64_MAX;
+  gml_render_dispatch_frame_open(&frames);
+  gml_render_dispatch_cpu_record(&first,GML_RENDER_SCENE_SPRITE,GML_RENDER_DISPATCH_NO_SCENE,1u);
+  gml_render_dispatch_frame_close(&frames,1);
+  REQUIRE(frames.overflow && frames.frames==UINT64_MAX && frames.cpu_frames==UINT64_MAX,
+          "frame counters saturate and disqualify rather than wrapping");
+  memset(&frames,0,sizeof frames);
+  frames.enabled=1;
+  gml_render_dispatch_frame_open(&frames);
+  gml_render_dispatch_diagnostics_enable(&first,0);
+  gml_render_dispatch_diagnostics_enable(&first,1);
+  gml_render_dispatch_frame_close(&frames,1);
+  REQUIRE(frames.frames==1u && frames.unknown_frames==1u && !frames.cpu_frames,
+          "a diagnostic gap cannot silently qualify an empty frame");
+  gml_render_dispatch_frame_open(&frames);
+  gml_render_dispatch_frame_open(&frames);
+  REQUIRE(frames.frames==3u && frames.failed_frames==1u && frames.unknown_frames==2u,
+          "overlapping boundaries retain an explicit failed frame");
+  gml_render_dispatch_frame_close(&frames,1);
+  gml_render_dispatch_frame_close(&frames,1);
+  REQUIRE(frames.unknown_frames==3u,
+          "a missing opening boundary is an explicit accounting gap");
+  memset(&frames,0,sizeof frames);
+  gml_render_dispatch_frame_open(&frames);
+  gml_render_dispatch_cpu_record(&first,GML_RENDER_SCENE_SURFACE,GML_RENDER_DISPATCH_NO_SCENE,1u);
+  gml_render_dispatch_frame_close(&frames,1);
+  REQUIRE(!frames.frames && !frames.cpu_frames && !frames.outside_cpu && !frames.active,
+          "disabled frame diagnostics perform no accounting");
+  return 1;
+}
+
+static int dispatch_frame_rejections_case(void){
+  static const unsigned expected[]={GML_RENDER_RESIDENT_INVALID_TARGET,GML_RENDER_RESIDENT_NO_DEVICE,
+    GML_RENDER_RESIDENT_ROTATED_BATCH,GML_RENDER_RESIDENT_PENDING_FILL,
+    GML_RENDER_RESIDENT_TARGET_STACK,GML_RENDER_RESIDENT_PENDING_UNDERLAY,
+    GML_RENDER_RESIDENT_PENDING_PRESENTATION,GML_RENDER_RESIDENT_OWNED_EXTENT,
+    GML_RENDER_RESIDENT_STACK_PENDING};
+  uint32_t pixels[4]={0};
+  for(unsigned kind=0;kind<sizeof expected/sizeof expected[0];kind++){
+    GmlRender owner={0};
+    GmlRenderDispatchFrames frames={0};
+    frames.enabled=1;
+    owner.device_bound=kind!=1u;
+    owner.app_surface_owned=pixels;
+    owner.app_w=owner.app_h=2;
+    if(kind==2u) owner.rotated_batch_count=1;
+    if(kind==3u) owner.pending_fill=1;
+    if(kind==4u) owner.target_sp=1;
+    if(kind==5u) owner.pending_underlay=1;
+    if(kind==6u) owner.pending_presentation=1;
+    if(kind==7u) owner.app_surface_owned=NULL;
+    if(kind==8u){ owner.target_sp=1; owner.target_stack[0].pending_fill=1; }
+    gml_render_dispatch_diagnostics_enable(&owner,1);
+    gml_render_dispatch_frame_bind(&owner,&frames);
+    gml_render_dispatch_frame_open(&frames);
+    /* Every selected rejection precedes any use of a graphics callback. */
+    int accepted=kind>=7u?gml_render_begin_resident_owned_application(&owner,0.0,0.0,0):
+      gml_render_begin_resident_base(&owner,kind==0u?NULL:pixels,2,2,0.0,0.0);
+    REQUIRE(!accepted && frames.pending_cause==expected[kind] && !frames.cpu_frames,
+            "an actual begin rejection records its exact predicate without charging a frame");
+    gml_render_dispatch_cpu_record(&owner,GML_RENDER_SCENE_SPRITE,GML_RENDER_DISPATCH_NO_SCENE,1u);
+    gml_render_dispatch_frame_close(&frames,1);
+    REQUIRE(frames.cpu_frames==1u && frames.no_scene_causes[expected[kind]]==1u,
+            "only subsequent ordinary CPU execution charges the rejected frame");
+  }
+  return 1;
+}
+
 static int host_canvas_magnify_case(void){
   enum { SOURCE_WIDTH=37,SOURCE_HEIGHT=23,HOST_WIDTH=311,HOST_HEIGHT=197,
          CANVAS_X=17,CANVAS_Y=11,CANVAS_WIDTH=277,CANVAS_HEIGHT=173 };
@@ -1405,6 +1540,8 @@ int main(int argc,char **argv){
     {"dispatch_host_plan",dispatch_host_plan_case},
     {"dispatch_device_plan",dispatch_device_plan_case},
     {"dispatch_epoch_accumulation",dispatch_epoch_accumulation_case},
+    {"dispatch_frame_causes",dispatch_frame_causes_case},
+    {"dispatch_frame_rejections",dispatch_frame_rejections_case},
   };
   const AnygmTestGroup groups[]={
     {"presentation",presentation_cases,

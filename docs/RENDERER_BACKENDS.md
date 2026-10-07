@@ -17,6 +17,13 @@ snapshot; the live ledger and rule table here describe current support.
 
 ## Experimental scene fidelity contract
 
+Resident begin/loss causes are recorded only under the existing opt-in dispatch
+diagnostics; see [resolved draw dispatch accounting](DIAGNOSTICS.md#resolved-draw-dispatch-accounting).
+The per-public-frame census separates admission skips, begin predicates and the
+first CPU execution that loses residency from draw volume. This metadata changes
+no raster rule, EXACT/TOLERANCE classification or CPU reference behavior; a cause
+count alone is not GPU execution or performance qualification.
+
 The R03-P5-SURFACE-STRETCHED application-to-SCREEN candidate admits the
 content-owned first-generation opaque GUI point-presentation leaf and ordinary
 filtered magnified alpha/tint draws. Point coverage uses destination pixel
@@ -849,7 +856,7 @@ be enforced by this inventory alone.
 | `src/video/renderer/cpu/gml_render_cpu_surfaces.c::gml_surface_copy` | `CPU` | DEBT | `c23faaa5057e273b5fe154c21d581d7f517ad5a27b6171601740602e551ae543` | Full/partial public copies execute the CPU snapshot/copy kernel; GPU copy remains debt. |
 | `src/video/renderer/cpu/gml_render_cpu_surfaces.c::gml_surface_copy_part` | `CPU` | DEBT | `e3d9d9e06dc3701e5956335383321c2b011d9ea5d38628bf2a0745099c73219c` | Full/partial public copies execute the CPU snapshot/copy kernel; GPU copy remains debt. |
 | `src/video/renderer/cpu/gml_render_cpu_surfaces.c::gml_draw_surface_tiled_ext` | `CPU` | DEBT | `4a0c92f17df7e4bb0b42da0eb2d73155a05052c0f18edf864bf987e12fbcddfd` | Tiled surface composition remains a CPU writer; no resident tiled-surface executor. |
-| `src/video/renderer/gml_render.c::gml_render_resident_application_cpu_barrier` | `CPU` | HELPER | `784f51b5dfd340f19f254d7598bd1d51cb5ee2e8d9dba90ca33ae5d25679957d` | Ordered CPU handoff; flushing prior GPU work is not GPU execution of this draw. |
+| `src/video/renderer/gml_render.c::gml_render_resident_application_cpu_barrier` | `CPU` | HELPER | `0b14ce2c7d3e0d378c1d9cd0925d023bbb446fc6a0c374760cf1502afb737855` | Ordered CPU handoff; flushing prior GPU work is not GPU execution of this draw. The opt-in resident cause marker changes metadata only, not admitted variants or raster execution. |
 | `src/video/renderer/gpu/opengl/gml_gpu_opengl_batch.c::gml_render_gpu_opengl_apply_effect` | `DEVICE:gml_render_gpu_opengl_apply_effect` | DEVICE | `ec1291413425ace4a9901c3d972e8d938ac218b2a886315947bec5d36961c816` | Device execution/encoding boundary; accepted payload variants remain qualified separately by the R03 map. |
 | `src/video/renderer/gpu/opengl/gml_gpu_opengl_batch.c::gml_gpu_opengl_scene_submit` | `DEVICE:gml_gpu_opengl_scene_submit` | DEVICE | `92b45b32dd2bd2abc8bf6ec78d4ed8fdd5a1ef0c9af92afe4222cafd0ae37a6f` | Device execution/encoding boundary; accepted payload variants remain qualified separately by the R03 map. |
 | `src/video/renderer/gpu/opengl/gml_gpu_opengl_programs.c::gml_gpu_opengl_execute_shader_draw` | `DEVICE:gml_gpu_opengl_execute_shader_draw` | DEVICE | `352d8bb0d1a7573e6bea167f8788f12539f38300501ead0515f26298384dd5c3` | Device execution/encoding boundary; accepted payload variants remain qualified separately by the R03 map. |

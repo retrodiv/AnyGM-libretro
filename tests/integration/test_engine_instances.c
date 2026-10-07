@@ -2998,6 +2998,8 @@ static int expect_rejected_unchanged(AnygmEngine *engine,const uint8_t *candidat
 typedef struct {
   int enabled,footers;
   char footer[512];
+  int resident_footers,resident_causes,resident_families;
+  char resident_footer[512];
 } DispatchSessionControl;
 
 static const char *dispatch_session_setting(void *userdata,const char *name){
@@ -3014,6 +3016,12 @@ static void dispatch_session_log(void *userdata,AnygmLogLevel level,const char *
     control->footers++;
     snprintf(control->footer,sizeof control->footer,"%s",message);
   }
+  if(!strncmp(message,"[graphics-resident-frames] ",26)){
+    control->resident_footers++;
+    snprintf(control->resident_footer,sizeof control->resident_footer,"%s",message);
+  }
+  if(!strncmp(message,"[graphics-resident-cause] ",25)) control->resident_causes++;
+  if(!strncmp(message,"[graphics-resident-first-cpu] ",29)) control->resident_families++;
 }
 
 static uint64_t dispatch_session_cpu(const GmlRenderDispatchMetrics *metrics){
@@ -3050,7 +3058,8 @@ static int dispatch_session_policy(void){
     uint32_t reference_frame[80*50];
     unsigned reference_width=0,reference_height=0;
     for(int enabled=0;enabled<2;enabled++){
-      DispatchSessionControl control={enabled,0,{0}};
+      DispatchSessionControl control={0};
+      control.enabled=enabled;
       AnygmHostServices services={0};
       services.struct_size=sizeof services;
       services.abi_version=ANYGM_HOST_SERVICES_VERSION;
@@ -3098,6 +3107,12 @@ static int dispatch_session_policy(void){
         passed=anygm_run_frame(engine,&input,&output)==ANYGM_OK &&
           engine_dispatch_metrics(engine,&after) && dispatch_session_monotonic(&before,&after);
       }
+      if(passed){
+        const GmlRenderDispatchFrames *frames=&engine->diagnostics.dispatch_frames;
+        passed=frames->enabled==enabled && frames->frames==3u*(unsigned)enabled &&
+          !frames->active && !frames->failed_frames && !frames->overflow &&
+          (!enabled || engine->render.dispatch_frame_accounting==frames);
+      }
       if(passed && output.pixels && output.width*output.height<=80u*50u){
         if(!enabled){
           reference_width=output.width; reference_height=output.height;
@@ -3126,18 +3141,28 @@ static int dispatch_session_policy(void){
         engine_dispatch_metrics(engine,&after) && dispatch_session_monotonic(&before,&after) &&
         anygm_state_load(engine,reference_state,reference_size)==ANYGM_OK &&
         engine_dispatch_metrics(engine,&after) && dispatch_session_monotonic(&before,&after) &&
-        !control.footers;
+        !control.footers && !control.resident_footers;
+      if(passed){
+        const GmlRenderDispatchFrames *frames=&engine->diagnostics.dispatch_frames;
+        passed=frames->frames==3u*(unsigned)enabled && !frames->active &&
+          (!enabled || engine->render.dispatch_frame_accounting==frames);
+      }
       free(root_state);
       if(passed && enabled) passed=dispatch_session_cpu(&after)>0 &&
         engine->diagnostics.dispatch_renderer_epochs>=2u && after.complete && !after.failed && !after.unclassified;
       before=after;
       if(engine) anygm_unload(engine);
       passed=passed && engine_dispatch_metrics(engine,&after) &&
-        dispatch_session_monotonic(&before,&after) && control.footers==enabled;
+        dispatch_session_monotonic(&before,&after) && control.footers==enabled &&
+        control.resident_footers==enabled &&
+        control.resident_causes==enabled*GML_RENDER_RESIDENT_CAUSE_COUNT &&
+        control.resident_families==enabled*(GML_RENDER_SCENE_FAMILY_COUNT-1);
       if(passed && enabled){
         char expected[64];
         snprintf(expected,sizeof expected," cpu=%llu ",(unsigned long long)dispatch_session_cpu(&after));
-        passed=strstr(control.footer,expected)!=NULL && strstr(control.footer,"complete=1")!=NULL;
+        passed=strstr(control.footer,expected)!=NULL && strstr(control.footer,"complete=1")!=NULL &&
+          strstr(control.resident_footer,"enabled=1 complete=0 frames=3 ")!=NULL &&
+          engine->diagnostics.dispatch_frames.outside_cpu>0;
       }
       /* Reusing the engine for a new load starts a new accounting session. */
       control.enabled=enabled;
@@ -3145,6 +3170,8 @@ static int dispatch_session_policy(void){
         engine_dispatch_metrics(engine,&after) &&
         !dispatch_session_cpu(&after) && after.complete==enabled &&
         engine->diagnostics.dispatch_renderer_epochs==(uint64_t)enabled;
+      passed=passed && !engine->diagnostics.dispatch_frames.frames &&
+        engine->diagnostics.dispatch_frames.enabled==enabled;
       if(passed && enabled){
         gml_render_dispatch_diagnostics_enable(&engine->render,0);
         gml_render_dispatch_diagnostics_enable(&engine->render,1);
