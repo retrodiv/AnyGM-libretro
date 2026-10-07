@@ -70,6 +70,7 @@ REQUIRED_RULES = {
     "R03-P8-RUNTIME-SPRITE-BASE", "R03-P8-STATE-RETIRE",
     "R03-P3-OPAQUE-ELISION",
     "R03-SPR-NEAREST", "R03-SPR-NEAREST-SOURCEOVER", "R03-SPR-INTEGER-SOURCEOVER",
+    "R03-SPR-GUI-REPLACE",
     "R03-SPR-FIRSTGEN-NEAREST-REDUCE", "R03-SPR-FIRSTGEN-NEAREST-MAG",
     "R03-SPR-MODERN-NEAREST",
     "R03-SPR-NUMBERED-NEAREST",
@@ -130,6 +131,7 @@ DISPATCH_HELPERS = {
     "resident_flat_eligible_rule", "resident_flat_eligible", "resident_line_bounds",
     "resident_classify_page", "resident_identity_screen_gui",
     "resident_mapped_screen_gui_font", "resident_integer_text_scale",
+    "resident_identity_gui_replacement",
     "gml_render_resident_application_cpu_barrier",
 }
 DISPATCH_DEFERRED = {"render_present_first_generation", "render_present_content_shader"}

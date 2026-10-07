@@ -138,12 +138,24 @@ static int resident_mapped_screen_gui_font(const GmlRender *r){
          r->target_sp==0 && r->target_id<0 &&
          !r->world_transform_active && r->cam_x==0.0 && r->cam_y==0.0;
 }
+/* R03-SPR-GUI-REPLACE: ONE/ZERO copies even zero-alpha source RGB. The
+ * identity SCREEN leaf stamps opaque alpha; it needs neither a predecessor
+ * snapshot nor a source-over approximation. Keep other replacement states out. */
+static int resident_identity_gui_replacement(const GmlRender *r,double xs,double ys,
+                                            uint32_t colour,double alpha){
+  return r && !r->classic && r->blendmode==6 && !r->interp && !r->fog_flat &&
+         r->target_id<0 && r->target_sp==0 && resident_identity_screen_gui(r) &&
+         xs==1.0 && ys==1.0 && colour==0xFFFFFFu && alpha==1.0 &&
+         r->device.context && r->device.observe_on_demand &&
+         r->device.observe_on_demand(r->device.context);
+}
 static int resident_integer_sprite(GmlRender *r,GmlSprite *sprite,int subimg,
                                   double x,double y,double xs,double ys,double rotation,
                                   uint32_t blend,double alpha){
   GmlTpag *page;
   double left,top;
   int sub,page_index;
+  int replace=resident_identity_gui_replacement(r,xs,ys,blend,alpha);
   if(!r || !r->resident_application_pass || !sprite || sprite->runtime_rgba ||
      sprite->spine || sprite->ns_enabled || sprite->n_frames<=0 ||
      sprite->w<=0 || sprite->h<=0 ||
@@ -153,7 +165,7 @@ static int resident_integer_sprite(GmlRender *r,GmlSprite *sprite,int subimg,
                       (r->world_scale_x!=1.0 || r->world_scale_y!=1.0)))) ||
      (r->gui_pass_active && !resident_identity_screen_gui(r)) ||
      r->active_shader>=0 || r->alpha_test_enable || !r->alphablend ||
-     r->blendmode || r->blend_equation!=1 || r->blend_equation_alpha!=1 ||
+     (r->blendmode && !replace) || r->blend_equation!=1 || r->blend_equation_alpha!=1 ||
      r->color_write_mask!=0x0Fu || r->classic_phase_y ||
      r->rotated_batch_count || r->rotated_batch_building ||
      r->pending_underlay || r->pending_presentation ||
@@ -172,6 +184,10 @@ static int resident_integer_sprite(GmlRender *r,GmlSprite *sprite,int subimg,
   page_index=sprite->frame[sub];
   if(page_index<0 || page_index>=r->n_tpag) return 0;
   page=&r->tpag[page_index];
+  /* Replacement writes authored transparent margins as opaque black on SCREEN.
+   * A cropped quad alone cannot implement that additional logical coverage. */
+  if(replace && (page->tx || page->ty || page->bw!=page->sw || page->bh!=page->sh ||
+                 page->tw!=page->sw || page->th!=page->sh)) return 0;
   /* Ordinary Studio nearest blits project and sample the physical sw/sh crop.
    * Stored tw/th does not rescale that leaf. Keep the original page identity
    * and cached alpha classification; other callers retain their layout guard. */
@@ -230,6 +246,11 @@ static int resident_atlas_crop_from_page(GmlRender *r,GmlTpag *page,
   GmlRenderRect region;
   double scaled_width,scaled_height,source_left,source_right,source_top,source_bottom;
   int checkpoint_alpha_background,checkpoint_alpha_text,checkpoint_alpha_sprite;
+  int replace=physical_sprite_page && family==GML_RENDER_SCENE_SPRITE &&
+    resident_identity_gui_replacement(r,xs,ys,colour,draw_alpha);
+  if(replace && page && (page->tx || page->ty || page->bw!=page->sw ||
+                         page->bh!=page->sh || page->tw!=page->sw || page->th!=page->sh))
+    return 0;
   /* R03-TEXT-PACKAGED-PARTIAL-ALPHA: the shared glyph crop keeps the CPU
    * source-over policy's target-alpha boundary and checkpoints the GPU result. */
   if(!r || !page || !r->resident_application_pass ||
@@ -245,7 +266,7 @@ static int resident_atlas_crop_from_page(GmlRender *r,GmlTpag *page,
      (r->gui_pass_active &&
       (family!=GML_RENDER_SCENE_SPRITE || !resident_identity_screen_gui(r))) ||
      r->active_shader>=0 || r->alpha_test_enable ||
-     !r->alphablend || r->blendmode || r->blend_equation!=1 ||
+     !r->alphablend || (r->blendmode && !replace) || r->blend_equation!=1 ||
      r->blend_equation_alpha!=1 || r->color_write_mask!=0x0Fu ||
      r->classic_phase_y || r->rotated_batch_count || r->rotated_batch_building ||
      r->pending_underlay || r->pending_presentation ||
@@ -314,7 +335,7 @@ static int resident_atlas_crop_from_page(GmlRender *r,GmlTpag *page,
   /* R03-SPR-INTEGER-SOURCEOVER: integral nearest coverage needs no float
    * emulation or destination snapshot. A witnessed device owns partial-alpha
    * results until a genuine pixel/state observation requests canonical bytes. */
-  checkpoint_alpha_sprite=family==GML_RENDER_SCENE_SPRITE &&
+  checkpoint_alpha_sprite=!replace && family==GML_RENDER_SCENE_SPRITE &&
     !r->interp &&
     ((!r->classic && r->target_sp==0 && r->fb==r->app_surface_owned) ||
      (r->classic && r->target_id>0 && r->target_sp>0) ||
@@ -335,7 +356,7 @@ static int resident_atlas_crop_from_page(GmlRender *r,GmlTpag *page,
     return 0;
   if(family==GML_RENDER_SCENE_SPRITE && draw_alpha<1.0 &&
      !checkpoint_alpha_sprite) return 0;
-  if(!page->scene_binary_alpha && !checkpoint_alpha_background &&
+  if(!replace && !page->scene_binary_alpha && !checkpoint_alpha_background &&
      !checkpoint_alpha_text && !checkpoint_alpha_sprite) return 0;
   scaled_width=(double)crop_width*fabs(xs);
   scaled_height=(double)crop_height*fabs(ys);
@@ -384,7 +405,7 @@ static int resident_atlas_crop_from_page(GmlRender *r,GmlTpag *page,
                          (uint32_t)crop_width,(uint32_t)crop_height};
   source_ref=source.image;
   operation.opcode=GML_RENDER_OP_TEXTURED_QUAD;
-  operation.reconstruction_mode=checkpoint_alpha_background || checkpoint_alpha_text ||
+  operation.reconstruction_mode=replace || checkpoint_alpha_background || checkpoint_alpha_text ||
     checkpoint_alpha_sprite ||
     colour!=0xFFFFFFu || draw_alpha<1.0
     ?GML_RENDER_DEVICE_CHECKPOINT:GML_RENDER_REPLAY_EXACT;
@@ -399,7 +420,8 @@ static int resident_atlas_crop_from_page(GmlRender *r,GmlTpag *page,
   operation.target.pixel_format=GML_RENDER_PIXEL_ARGB8888;
   operation.target.region=(GmlRenderRect){0,0,(uint32_t)r->fbw,(uint32_t)r->fbh};
   operation.payload.quad.shape=GML_RENDER_QUAD_AXIS_ALIGNED;
-  operation.payload.quad.sampling.filter=GML_RENDER_FILTER_NEAREST;
+  operation.payload.quad.sampling.filter=replace
+    ?GML_RENDER_FILTER_NEAREST_PHASED_COPY:GML_RENDER_FILTER_NEAREST;
   operation.payload.quad.sampling.edge_rule=GML_RENDER_EDGE_CLAMP_SUBIMAGE;
   operation.payload.quad.sampling.source_region=region;
   /* GML colours are BBGGRR; neutral quad colours are AARRGGBB. */
@@ -422,7 +444,7 @@ static int resident_atlas_crop_from_page(GmlRender *r,GmlTpag *page,
   state.write_mask=15u;
   state.colour=0xFFFFFFFFu;
   state.alpha=255u;
-  if(!page->scene_fully_opaque || draw_alpha<1.0){
+  if(!replace && (!page->scene_fully_opaque || draw_alpha<1.0)){
     state.rgb_source_factor=GML_RENDER_BLEND_SOURCE_ALPHA;
     state.rgb_destination_factor=GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA;
     state.alpha_source_factor=checkpoint_alpha_background ||
@@ -448,7 +470,7 @@ static int resident_atlas_crop_from_page(GmlRender *r,GmlTpag *page,
   }
   /* Enqueue conservatively invalidates application opacity. A complete nearest
    * replacement from an opaque page proves every target alpha without reading it. */
-  if(page->scene_fully_opaque && draw_alpha==1.0 && left==0.0 && top==0.0 &&
+  if((replace || page->scene_fully_opaque) && draw_alpha==1.0 && left==0.0 && top==0.0 &&
      scaled_width==r->fbw && scaled_height==r->fbh){
     r->fb_opaque_known=r->fb_all_opaque=1;
     if(r->app_surface && r->fb==r->app_surface) r->app_surface_opaque=1;

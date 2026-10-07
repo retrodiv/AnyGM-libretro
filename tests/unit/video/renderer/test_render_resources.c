@@ -7895,6 +7895,76 @@ static int resident_firstgen_nearest_magnification_authority(void){
   return 1;
 }
 
+static int resident_gui_replacement_sprite(void){
+  for(unsigned variant=0;variant<14u;variant++){
+    GmlRender *render=calloc(1,sizeof *render);
+    GmlWin content={.bytecode=17};
+    FakeDevice fake={.on_demand=1};
+    GmlRenderDeviceServices device=service(&fake);
+    GmlRenderJournalMetrics metrics={0};
+    uint32_t screen[64]={0};
+    const uint8_t rgba[16]={208,32,16,0,16,208,32,1,
+                            32,16,208,128,192,176,160,255};
+    CHECK(render && gml_render_init(render,NULL)==0);
+    render->win=&content;
+    free(render->atlas[0].px);
+    memset(&render->atlas[0],0,sizeof render->atlas[0]);
+    render->atlas[0].px=malloc(sizeof rgba);
+    render->tpag=calloc(1,sizeof *render->tpag);
+    render->spr=calloc(1,sizeof *render->spr);
+    CHECK(render->atlas[0].px && render->tpag && render->spr);
+    memcpy(render->atlas[0].px,rgba,sizeof rgba);
+    render->atlas[0].w=render->atlas[0].h=2;
+    render->n_tpag=render->n_spr=1;
+    render->tpag[0]=(GmlTpag){.sw=2,.sh=2,.tw=2,.th=2,.bw=2,.bh=2};
+    render->spr[0].w=render->spr[0].h=2;
+    render->spr[0].n_frames=1;
+    render->spr[0].frame=calloc(1,sizeof(int));
+    CHECK(render->spr[0].frame);
+    device.observe_on_demand=fake_observe_on_demand;
+    gml_render_bind_device(render,&device);
+    CHECK(gml_render_begin_resident_base(render,screen,8,8,0,0));
+    gml_render_gui_begin(render,8,8);
+    render->interp=0;
+    render->blendmode=6;
+    double x=1.0,xs=1.0,alpha=1.0;
+    uint32_t colour=0xFFFFFFu;
+    if(variant==1u) x=-1.0; /* Unit crop clipped at the SCREEN edge. */
+    if(variant==2u) render->interp=1;
+    if(variant==3u) x+=0.25;
+    if(variant==4u) xs=2.0;
+    if(variant==5u) xs=-1.0;
+    if(variant==6u) colour=0x80C0E0u;
+    if(variant==7u) alpha=0.5;
+    if(variant==8u) render->color_write_mask=7u;
+    if(variant==9u) fake.on_demand=0;
+    if(variant==10u) render->gui_scale_x=2.0;
+    if(variant==11u) render->blend_equation=2;
+    if(variant==12u){
+      render->tpag[0].bw=render->tpag[0].bh=4;
+      render->tpag[0].tx=render->tpag[0].ty=1;
+      render->spr[0].w=render->spr[0].h=4;
+    }
+    gml_render_set_pending_fill(render,0x40123456u);
+    if(variant==13u)
+      gml_draw_sprite_part_ext(render,0,0,0,0,2,2,x,1.0,xs,1.0,colour,alpha);
+    else
+      gml_draw_sprite_ext(render,0,0,x,1.0,xs,1.0,0.0,colour,alpha);
+    CHECK(render->resident_application_pass==(variant<2u));
+    if(variant<2u){
+      CHECK(gml_render_scene_submit_pending(render) && !fake.readbacks);
+      CHECK(fake.last_filter==GML_RENDER_FILTER_NEAREST_PHASED_COPY &&
+            !fake.last_quad_state.rgb_source_factor &&
+            !fake.last_quad_state.alpha_source_factor);
+      gml_render_resource_journal_metrics(render->base_scene_resource,&metrics);
+      CHECK(metrics.authority==GML_RENDER_RESOURCE_GPU_RESIDENT &&
+            !metrics.cpu_replays && !metrics.device_checkpoints && !metrics.journal_bytes);
+    }
+    gml_render_free(render);free(render);
+  }
+  return 1;
+}
+
 static int resident_integer_world_sprite(void){
   enum { WIDTH=24,HEIGHT=24,POSITIVES=40,VARIANTS=45 };
   const double world[5][2]={{2,2},{4,4},{2,3},{0.5,0.5},{-2,-3}};
@@ -8938,6 +9008,7 @@ int main(void){
   passed+=resident_classic_retained_numbered_target();
   passed+=resident_firstgen_nearest_magnification_authority();
   passed+=resident_integer_world_sprite();
+  passed+=resident_gui_replacement_sprite();
   passed+=resident_opaque_sprite_complete_application();
   passed+=resident_integer_world_sourceover_sprite();
   passed+=resident_integer_world_packed_sprite();
@@ -8956,6 +9027,6 @@ int main(void){
   passed+=source_free_primitive_rect_replay();
   passed+=stretched_float_exact_replay();
   passed+=filtered_font_exact_recovery();
-  printf("render resource cases: passed=%d failed=%d\n",passed,126-passed);
-  return passed==126?EXIT_SUCCESS:EXIT_FAILURE;
+  printf("render resource cases: passed=%d failed=%d\n",passed,127-passed);
+  return passed==127?EXIT_SUCCESS:EXIT_FAILURE;
 }
