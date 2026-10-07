@@ -10,6 +10,8 @@ import hashlib
 import re
 from pathlib import Path
 
+import check_builtin_registry as builtin_registry
+
 
 ROOT = Path(__file__).resolve().parents[2]
 RENDERER = ROOT / "src/video/renderer"
@@ -135,6 +137,17 @@ DISPATCH_DEVICE_EXTRA = {
     "gml_gpu_opengl_scene_submit", "gml_gpu_opengl_execute_shader_draw",
     "gml_gpu_opengl_scene_shader_draw", "gml_gpu_opengl_execute",
 }
+API_DRAW_PREFIXES = (
+    "draw_", "action_draw_", "d3d_draw_", "surface_copy", "vertex_submit",
+    "part_system_drawit",
+)
+API_NONPAINT = {
+    "draw_enable_alphablend", "draw_enable_drawevent", "draw_getpixel", "draw_texture_flush",
+}
+API_CONTEXT_ADAPTERS = {
+    "src/runtime/builtins/gml_builtin.c": ("d3_try_draw_2d_builtin",),
+}
+API_DIRECT_ADAPTER = "gml_builtin_call_fast_id_impl"
 C_FUNCTION = re.compile(
     r"(?m)^[ \t]*(?:static\s+)?(?:[A-Za-z_]\w*\s+)+\**"
     r"([A-Za-z_]\w*)\s*\([^;{}]*\)\s*\{"
@@ -255,6 +268,243 @@ def check_dispatch_inventory(document: str, inventory: dict[str, tuple[str, str]
             raise ValueError(f"{point}: D8 GPU route changed; update its debt row")
         if entries[point][1] != actual[1]:
             raise ValueError(f"{point}: D8 dispatch body changed; recheck variants and update its row")
+
+
+def statement_end(tokens: list[builtin_registry.Token], start: int) -> int:
+    """Read one C statement, including nested control statements and else arms."""
+    if start >= len(tokens):
+        raise ValueError("D8 API adapter has no statement")
+    if tokens[start].value == "{":
+        return builtin_registry.matching(tokens, start, "{", "}") + 1
+    if tokens[start].value in {"if", "for", "while", "switch"}:
+        if tokens[start + 1].value != "(":
+            raise ValueError("D8 API control statement has no condition")
+        condition_end = builtin_registry.matching(tokens, start + 1, "(", ")")
+        end = statement_end(tokens, condition_end + 1)
+        if tokens[start].value == "if" and end < len(tokens) and tokens[end].value == "else":
+            end = statement_end(tokens, end + 1)
+        return end
+    cursor = start
+    while cursor < len(tokens):
+        value = tokens[cursor].value
+        if value == ";":
+            return cursor + 1
+        if value in {"(", "[", "{"}:
+            cursor = builtin_registry.matching(tokens, cursor, value,
+                                                {"(": ")", "[": "]", "{": "}"}[value])
+        cursor += 1
+    raise ValueError("D8 API adapter has an unterminated statement")
+
+
+def named_api_branches(data: bytes, symbol: str) -> dict[str, list[str]]:
+    """Reuse the canonical builtin lexer for exact-name adapter branches."""
+    tokens = builtin_registry.function_tokens(data, symbol)
+    result: dict[str, list[str]] = {}
+    for index, token in enumerate(tokens):
+        if token.value != "if" or tokens[index + 1].value != "(":
+            continue
+        closing = builtin_registry.matching(tokens, index + 1, "(", ")")
+        names = builtin_registry.compared_names(tokens[index + 2:closing], {"nm", "name"})
+        if not names:
+            continue
+        end = statement_end(tokens, index)
+        branch = data[token.start:tokens[end - 1].end].decode("utf-8")
+        for name in names:
+            result.setdefault(name, []).append(branch)
+    return result
+
+
+def direct_api_branches(data: bytes, symbol: str) -> dict[str, list[str]]:
+    """Retain each direct-ID arm, including consecutive shared case labels."""
+    tokens = builtin_registry.function_tokens(data, symbol)
+    depths = []
+    depth = 0
+    for token in tokens:
+        depths.append(depth)
+        depth += (token.value == "{") - (token.value == "}")
+    result: dict[str, list[str]] = {}
+    for index, token in enumerate(tokens[:-2]):
+        if token.value != "case" or not tokens[index + 1].value.startswith("BID_"):
+            continue
+        if tokens[index + 2].value != ":":
+            raise ValueError("D8 direct API arm has an unexpected label")
+        cursor = index + 3
+        while cursor + 2 < len(tokens) and tokens[cursor].value == "case" \
+                and tokens[cursor + 2].value == ":":
+            cursor += 3
+        end = cursor
+        while end < len(tokens):
+            if depths[end] < depths[index] or (depths[end] == depths[index]
+                                              and tokens[end].value in {"case", "default"}):
+                break
+            end += 1
+        if end == cursor:
+            raise ValueError("D8 direct API arm has no implementation")
+        branch = data[token.start:tokens[end - 1].end].decode("utf-8")
+        result.setdefault(tokens[index + 1].value.removeprefix("BID_"), []).append(branch)
+    return result
+
+
+def drawing_calls(body: str) -> set[str]:
+    names = re.findall(r"\b([A-Za-z_]\w*)\s*\(", C_NONCODE.sub(" ", body))
+    return {name for name in names if name not in DISPATCH_CPU_BOUNDARIES
+            and "_cpu_" not in name and not name.startswith((
+                "gml_builtin_try_", "builtin_call", "gml_builtin_call", "gml_vm_",
+                "gml_render_completed_screen_"))}
+
+
+def literal_api_delegates(body: str) -> set[str]:
+    """Resolve only explicit spellings in the builtin call's name argument."""
+    tokens = builtin_registry.c_tokens(body.encode())
+    names = set()
+    for index, token in enumerate(tokens[:-1]):
+        if token.value != "gml_builtin_call" or tokens[index + 1].value != "(":
+            continue
+        closing = builtin_registry.matching(tokens, index + 1, "(", ")")
+        cursor = index + 2
+        argument = 0
+        while cursor < closing:
+            value = tokens[cursor].value
+            if value == ",":
+                argument += 1
+                if argument > 1:
+                    break
+            elif argument == 1 and tokens[cursor].kind == "string":
+                names.add(builtin_registry.decode_c_string(value))
+            elif value in {"(", "[", "{"}:
+                cursor = builtin_registry.matching(tokens, cursor, value,
+                                                    {"(": ")", "[": "]", "{": "}"}[value])
+            cursor += 1
+    return names
+
+
+def api_dispatch_inventory(root: Path, renderer_functions: dict[str, str],
+                           dispatch: dict[str, tuple[str, str]]) -> dict[str, tuple[str, ...]]:
+    """Discover exact drawing spellings and their fast, slow and contextual arms.
+
+    This supplements, rather than replaces, the canonical builtin registry check.
+    A possible facade is not evidence that an API's entire variant space is GPU.
+    """
+    directory = root / "src/runtime/builtins"
+    source = {path.relative_to(root).as_posix(): path.read_bytes()
+              for path in sorted(directory.glob("*.c"))}
+    functions = dict(renderer_functions)
+    for path, data in source.items():
+        for symbol, body in c_function_definitions(data.decode("utf-8"), path).items():
+            functions[f"{path}::{symbol}"] = body
+    for path in sorted((root / "src/runtime/particles").glob("*.c")):
+        for symbol, body in c_function_definitions(path.read_text(), str(path)).items():
+            functions[f"{path.relative_to(root).as_posix()}::{symbol}"] = body
+    facade_routes = {key.split("::")[1]: {key.split("::")[1]} for key in dispatch
+                     if key.split("::")[1] not in DISPATCH_HELPERS
+                     and "/gpu/opengl/" not in key}
+    facade_symbols = {key.split("::")[1] for key in dispatch}
+    calls: dict[str, set[str]] = {}
+    for key, body in functions.items():
+        # A generic builtin/event router does not mean every callee belongs to
+        # this particular name. Its unresolved dynamic arm remains explicit debt.
+        calls.setdefault(key.split("::")[1], set()).update(drawing_calls(body))
+    while True:
+        changed = False
+        for symbol, destinations in calls.items():
+            if symbol in facade_symbols:
+                continue
+            found = set().union(*(facade_routes.get(name, set()) for name in destinations))
+            if found != facade_routes.get(symbol, set()):
+                facade_routes[symbol] = found
+                changed = True
+        if not changed:
+            break
+    branches: dict[str, list[tuple[str, str]]] = {}
+    for stage in builtin_registry.STAGES:
+        for symbol in stage.functions:
+            # These adapters have established source ownership distinct from the
+            # generic stage file; the canonical registry checks the same owners.
+            path = stage.source
+            if symbol == "builtin_input_kbgp":
+                path = "src/runtime/builtins/gml_builtin.c"
+            elif symbol == "builtin_skeleton":
+                path = "src/runtime/builtins/gml_builtin_animation.c"
+            elif symbol == "builtin_layer_exact":
+                path = "src/runtime/builtins/gml_builtin_layers.c"
+            for name, bodies in named_api_branches(source[path], symbol).items():
+                branches.setdefault(name, []).extend((f"{path}::{symbol}", body) for body in bodies)
+    for path, symbols in API_CONTEXT_ADAPTERS.items():
+        for symbol in symbols:
+            for name, bodies in named_api_branches(source[path], symbol).items():
+                branches.setdefault(name, []).extend((f"{path}::{symbol}", body) for body in bodies)
+    direct = direct_api_branches(source[builtin_registry.LEGACY_SOURCE_PATH.as_posix()],
+                                 API_DIRECT_ADAPTER)
+    rows = builtin_registry.parse_rows((root / builtin_registry.REGISTRY_PATH).read_text())
+    api_arms = {}
+    api_facades = {}
+    api_delegates = {}
+    for row in rows:
+        arms = list(branches.get(row.name, []))
+        arms.extend((f"{builtin_registry.LEGACY_SOURCE_PATH.as_posix()}::{API_DIRECT_ADAPTER}", body)
+                    for body in direct.get(row.symbol, []))
+        api_arms[row.name] = arms
+        api_facades[row.name] = set().union(*(
+            facade_routes.get(name, set()) for _, body in arms for name in drawing_calls(body)))
+        api_delegates[row.name] = set().union(*(literal_api_delegates(body) for _, body in arms))
+    while True:
+        changed = False
+        for name, targets in api_delegates.items():
+            found = set().union(*(api_facades.get(target, set()) for target in targets))
+            if found - api_facades[name]:
+                api_facades[name].update(found)
+                changed = True
+        if not changed:
+            break
+    inventory = {}
+    gpu_facades = {key.split("::")[1] for key, (route, _) in dispatch.items() if route != "CPU"}
+    for row in rows:
+        arms = api_arms[row.name]
+        reached = api_facades[row.name]
+        named_draw = row.name.startswith(API_DRAW_PREFIXES) \
+            and not row.name.startswith(("draw_set_", "draw_get_")) and row.name not in API_NONPAINT
+        if not reached and not named_draw and row.name not in {"d3d_model_draw", "screen_redraw"}:
+            continue
+        if not arms:
+            raise ValueError(f"{row.name}: drawing API has no discovered implementation arm")
+        identity = f"BID_{row.symbol}/{row.value}/{row.owner}/{row.stage}/{row.cache}/" \
+            + ("alias" if row.alias else "entry")
+        adapters = ",".join(sorted({adapter for adapter, _ in arms}))
+        revision_parts = []
+        for adapter, body in sorted(set(arms)):
+            uncommented = C_NONCODE.sub(
+                lambda match: " " if match[0].startswith(("/*", "//")) else match[0], body)
+            revision_parts.append(adapter + ":" + " ".join(C_TOKENS.findall(uncommented)))
+        revision = hashlib.sha256("\n".join(revision_parts).encode()).hexdigest()
+        status = "PARTIAL" if reached & gpu_facades else "DEBT"
+        inventory[row.name] = (identity, adapters, ",".join(sorted(reached)) or "indirect",
+                               status, revision)
+    return inventory
+
+
+def check_api_dispatch_inventory(document: str, inventory: dict[str, tuple[str, ...]]) -> None:
+    start, end = "<!-- D8-API:START -->", "<!-- D8-API:END -->"
+    if document.count(start) != 1 or document.count(end) != 1:
+        raise ValueError("D8 drawing API inventory markers are missing or repeated")
+    entries = {}
+    for line in document.split(start)[1].split(end)[0].splitlines():
+        if not line.startswith("| `"):
+            continue
+        fields = [field.strip().strip("`") for field in line.strip("|").split("|")]
+        if len(fields) != 7 or not all(fields):
+            raise ValueError("D8 API row requires seven nonempty fields")
+        name, identity, adapters, facades, status, revision, reason = fields
+        if name in entries:
+            raise ValueError(f"{name}: duplicate D8 API row")
+        if status not in {"PARTIAL", "DEBT"} or reason == "Pending":
+            raise ValueError(f"{name}: D8 API needs an explicit status and reason")
+        entries[name] = (identity, adapters, facades, status, revision)
+    if entries.keys() != inventory.keys():
+        raise ValueError(f"D8 API coverage: missing={sorted(inventory.keys() - entries.keys())}, "
+                         f"extra={sorted(entries.keys() - inventory.keys())}")
+    for name, actual in inventory.items():
+        if entries[name] != actual:
+            raise ValueError(f"{name}: D8 API dispatch changed; recheck its adapters and debt row")
 
 
 def rows(path: Path, pattern: re.Pattern[str]) -> dict[str, tuple[str, ...]]:
@@ -415,6 +665,7 @@ def self_test() -> None:
             continue
         raise ValueError("render operation negative probe unexpectedly passed")
     self_test_dispatch_inventory()
+    self_test_api_dispatch_inventory()
     document = BACKEND_MAP.read_text(encoding="utf-8")
     ledger = rows(GPU_TABLE, EXECUTOR_ROW)
     check_repair_map(document, ledger, ROOT)
@@ -559,6 +810,82 @@ gml_draw_multiline(void){
     check_dispatch_inventory(document_for(changed_inventory), changed_inventory)
 
 
+def self_test_api_dispatch_inventory() -> None:
+    source = b'''
+void adapter(const char *nm){
+  /* if(!strcmp(nm,"draw_hidden")) paint(); */
+  note("if(strcmp(nm,draw_fake)) {}");
+  if(!strcmp(nm,"draw_probe") || !strcmp(nm,"draw_probe_alias")){
+    if(active) paint(); else other();
+  }
+  if(!strcmp(nm,"draw_single")) if(active) paint(); else other();
+  if(!strcmp(nm,"draw_else")) paint(); else if(active) other();
+}
+void direct(int id){
+  switch(id){
+    case BID_PROBE:
+    case BID_ALIAS:
+      if(active){ switch(mode){ case 0: nested(); break; default: break; } }
+      paint(); return;
+    case BID_SINGLE: other(); return;
+    default: return;
+  }
+}
+'''
+    branches = named_api_branches(source, "adapter")
+    if set(branches) != {"draw_probe", "draw_probe_alias", "draw_single", "draw_else"} \
+            or branches["draw_probe"] != branches["draw_probe_alias"] \
+            or "else other();" not in branches["draw_single"][0] \
+            or "else if(active) other();" not in branches["draw_else"][0]:
+        raise ValueError("D8 named API parser lost an alias, nested statement or else arm")
+    direct = direct_api_branches(source, "direct")
+    if set(direct) != {"PROBE", "ALIAS", "SINGLE"} \
+            or any("paint(); return;" not in direct[name][0] for name in ("PROBE", "ALIAS")) \
+            or "other();" in direct["PROBE"][0] or "paint();" in direct["SINGLE"][0]:
+        raise ValueError("D8 direct API parser lost shared labels or crossed a switch arm")
+    if literal_api_delegates(
+        'gml_builtin_call(vm, choose(nm)?"draw_one":"draw_two", args, count);'
+    ) != {"draw_one", "draw_two"} or literal_api_delegates(
+        'note("gml_builtin_call(vm, draw_fake, args, count)"); '
+        'gml_builtin_call(vm, dynamic_name, args, count);'
+    ):
+        raise ValueError("D8 API delegation credited a dynamic name or lost literal targets")
+    if drawing_calls('gml_builtin_try_draw(); gml_render_maybe_prepare_draw(); '
+                     'note("gml_draw_fake()"); gml_draw_probe();') != {"note", "gml_draw_probe"}:
+        raise ValueError("D8 API facade graph credited a generic router or CPU preparation")
+    inventory = {"draw_probe": ("BID_PROBE/1/DRAW/DRAW/ALWAYS/entry",
+                                "src/runtime/builtins/probe.c::adapter", "gml_draw_probe",
+                                "PARTIAL", "a" * 64)}
+    def document_for(entries: dict[str, tuple[str, ...]]) -> str:
+        result = ["<!-- D8-API:START -->"]
+        for name, fields in entries.items():
+            result.append("| `" + "` | `".join((name, *fields)) + "` | Authored scope reason. |")
+        return "\n".join(result + ["<!-- D8-API:END -->"])
+    document = document_for(inventory)
+    check_api_dispatch_inventory(document, inventory)
+    changed = dict(inventory)
+    changed["draw_probe"] = (*inventory["draw_probe"][:3], "DEBT", "b" * 64)
+    new_alias = dict(inventory, draw_new_alias=inventory["draw_probe"])
+    for broken, actual in (
+        (document, new_alias),
+        (document, changed),
+        (document.replace("ALWAYS/entry", "NEVER/alias"), inventory),
+        (document.replace("src/runtime/builtins/probe.c::adapter", "missing_adapter"), inventory),
+        (document.replace("gml_draw_probe", "gml_draw_other"), inventory),
+        (document.replace("a" * 64, "b" * 64), inventory),
+        (document.replace("<!-- D8-API:END -->", ""), inventory),
+        (document.replace("<!-- D8-API:END -->", document), inventory),
+        (document.replace("Authored scope reason.", "Pending"), inventory),
+        (document.replace("`PARTIAL`", "`HELPER`"), inventory),
+    ):
+        try:
+            check_api_dispatch_inventory(broken, actual)
+        except ValueError:
+            continue
+        raise ValueError("D8 drawing API negative probe unexpectedly passed")
+    check_api_dispatch_inventory(document_for(changed), changed)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--require-delivered", action="store_true")
@@ -574,13 +901,16 @@ def main() -> None:
         cpu_defs, gpu_defs = definitions(ROOT)
         check_symbols(cpu, gpu, cpu_defs, gpu_defs, args.require_delivered)
         check_repair_map(BACKEND_MAP.read_text(encoding="utf-8"), gpu, ROOT)
-        inventory = dispatch_inventory(dispatch_functions(ROOT))
+        functions = dispatch_functions(ROOT)
+        inventory = dispatch_inventory(functions)
         check_dispatch_inventory(BACKEND_MAP.read_text(encoding="utf-8"), inventory)
-    except (OSError, ValueError) as error:
+        api_inventory = api_dispatch_inventory(ROOT, functions, inventory)
+        check_api_dispatch_inventory(BACKEND_MAP.read_text(encoding="utf-8"), api_inventory)
+    except (OSError, ValueError, RuntimeError) as error:
         parser.exit(1, f"render operations: {error}\n")
     print(f"render operations: ok ({len(catalogue)} IDs, "
           f"{sum(value[2] == 'planned' for value in gpu.values())} GPU planned, "
-          f"{len(inventory)} function dispatch points)")
+          f"{len(inventory)} function dispatch points, {len(api_inventory)} drawing API spellings)")
 
 
 if __name__ == "__main__":
