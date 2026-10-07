@@ -147,7 +147,8 @@ static int resident_integer_sprite(GmlRender *r,GmlSprite *sprite,int subimg,
   if(!r || !r->resident_application_pass || !sprite || sprite->runtime_rgba ||
      sprite->spine || sprite->ns_enabled || sprite->n_frames<=0 ||
      sprite->w<=0 || sprite->h<=0 ||
-     (r->classic && (anygm_policy_classic_modern_presentation(r->win) ||
+     (r->classic && (gml_d3_is_active(r) ||
+                     anygm_policy_classic_modern_presentation(r->win) ||
                      r->interp || xs!=1.0 || ys!=1.0 ||
                      (r->world_transform_active &&
                       (r->world_scale_x!=1.0 || r->world_scale_y!=1.0)))) ||
@@ -161,7 +162,6 @@ static int resident_integer_sprite(GmlRender *r,GmlSprite *sprite,int subimg,
      !isfinite(xs) || !isfinite(ys) || xs==0.0 || ys==0.0 ||
      rotation!=0.0 || blend!=0xFFFFFFu ||
      !isfinite(alpha) || alpha<=0.0 || alpha>1.0 ||
-     (r->classic && alpha!=1.0) ||
      (r->interp && (xs!=1.0 || ys!=1.0)))
     return 0;
   /* A plain sprite reads only the base image; the other texture-stage filter flags do not
@@ -187,6 +187,13 @@ static int resident_integer_sprite(GmlRender *r,GmlSprite *sprite,int subimg,
      page->atlas<0 || page->atlas>=r->n_atlas) return 0;
   left=x-(double)sprite->originx*xs+(double)page->tx*xs-r->cam_x;
   top=y-(double)sprite->originy*ys+(double)page->ty*ys-r->cam_y;
+  if(r->classic && isfinite(left) && isfinite(top) &&
+     fabs(left)<1000000.0 && fabs(top)<1000000.0){
+    /* The established early-classic unit blit rounds the physical crop origin half up.
+     * Keep texelFetch sampling exact after projecting that same coverage. */
+    left=floor(left+0.5);
+    top=floor(top+0.5);
+  }
   /* R03-SPR-NEAREST: public dispatch has already projected point and scale.
    * The crop validates final integral coverage; world state is not a second
    * transform or an independent reason to reject an exact nearest sprite. */
@@ -267,11 +274,10 @@ static int resident_atlas_crop_from_page(GmlRender *r,GmlTpag *page,
      (uint64_t)(uint32_t)page->sx+(uint32_t)page->sw>source.width ||
      (uint64_t)(uint32_t)page->sy+(uint32_t)page->sh>source.height) return 0;
   resident_classify_page(page,atlas);
-  /* Early classic keeps its distinct partial-alpha coverage on CPU. Only opaque sprites and
-   * binary glyph cells share the exact nearest device rule. */
   if(r->classic &&
-     ((family==GML_RENDER_SCENE_SPRITE && !page->scene_fully_opaque) ||
-      (family==GML_RENDER_SCENE_TEXT && !page->scene_binary_alpha))) return 0;
+     ((family==GML_RENDER_SCENE_TEXT && !page->scene_binary_alpha) ||
+      (family==GML_RENDER_SCENE_SPRITE && !page->scene_fully_opaque &&
+       (r->fb!=r->app_surface || r->fb!=r->base_scene_resource_pixels)))) return 0;
   colour&=0xFFFFFFu;
   if(colour!=0xFFFFFFu &&
      (family!=GML_RENDER_SCENE_TEXT || !page->scene_binary_alpha)) return 0;
@@ -291,8 +297,12 @@ static int resident_atlas_crop_from_page(GmlRender *r,GmlTpag *page,
   /* R03-SPR-INTEGER-SOURCEOVER: integral nearest coverage needs no float
    * emulation or destination snapshot. A witnessed device owns partial-alpha
    * results until a genuine pixel/state observation requests canonical bytes. */
-  checkpoint_alpha_sprite=family==GML_RENDER_SCENE_SPRITE && !r->classic &&
-    !r->interp && r->fb==r->app_surface_owned && r->target_sp==0 &&
+  checkpoint_alpha_sprite=family==GML_RENDER_SCENE_SPRITE &&
+    !r->interp && r->target_sp==0 &&
+    ((!r->classic && r->fb==r->app_surface_owned) ||
+     (r->classic && !anygm_policy_classic_modern_presentation(r->win) &&
+      !r->gui_pass_active && r->fb==r->app_surface &&
+      r->fb==r->base_scene_resource_pixels)) &&
     (draw_alpha<1.0 || !page->scene_binary_alpha);
   if(checkpoint_alpha_sprite &&
      (!r->device.context || !r->device.observe_on_demand ||
@@ -407,6 +417,8 @@ static int resident_atlas_crop_from_page(GmlRender *r,GmlTpag *page,
     state.alpha_equation=GML_RENDER_BLEND_ADD;
   }
   state.sampler_count=1u;
+  if(checkpoint_alpha_sprite && r->classic)
+    state.coverage_policy=GML_RENDER_COVERAGE_OPAQUE_TARGET;
   state.samplers[0]=operation.payload.quad.sampling;
   if(!gml_render_application_scene_enqueue(r,&operation,&state,&source)) return 0;
   r->fb_all_transparent=0;
@@ -1462,7 +1474,7 @@ void gml_render_sprite_ext_unmasked(GmlRender *r, int sprite, int subimg, double
        !(r->alphablend && (r->blendmode==6 ||
                           gml_render_blend_uses_destination_colour(r->blendmode))) &&
        sprite>=0 && sprite<r->n_spr &&
-       !r->classic && (!r->gui_pass_active || resident_mapped_screen_gui_font(r)) &&
+       (!r->gui_pass_active || resident_mapped_screen_gui_font(r)) &&
        r->active_shader<0 &&
        !r->spr[sprite].spine && !r->spr[sprite].ns_enabled &&
        !gml_d3_is_active(r) && gml_render_scene_target_matches(r))
@@ -2044,6 +2056,15 @@ void gml_render_sprite_nineslice(GmlRender *r, GmlSprite *s, GmlTpag *t,
 void gml_draw_sprite_part_ext(GmlRender *r, int sprite, int subimg, double sx, double sy,
                               double sw, double sh, double x, double y,
                               double xs, double ys, uint32_t blend, double alpha){
+  /* The ordinary CPU part leaf writes nothing at finite nonpositive alpha. Keep a
+   * queued prefix resident, but do not bypass specialised shader or blend semantics. */
+  if(r && r->resident_application_pass && isfinite(alpha) && alpha<=0.0 &&
+     !(r->alphablend && (r->blendmode==6 ||
+                        gml_render_blend_uses_destination_colour(r->blendmode))) &&
+     sprite>=0 && sprite<r->n_spr &&
+     (!r->gui_pass_active || resident_mapped_screen_gui_font(r)) &&
+     r->active_shader<0 && !r->spr[sprite].spine && !r->spr[sprite].ns_enabled &&
+     !gml_d3_is_active(r) && gml_render_scene_target_matches(r)) return;
   if(r && r->resident_application_pass &&
      isfinite(alpha) && alpha>0.0 && alpha<=1.0 && sprite>=0 && sprite<r->n_spr &&
      isfinite(sx) && isfinite(sy) && isfinite(sw) && isfinite(sh) &&

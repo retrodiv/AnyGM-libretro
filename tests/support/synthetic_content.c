@@ -1725,6 +1725,7 @@ static int synthetic_framebuffer_content_create(
   int classic_transition=gpu_sprite==15;
   int cursor_frame=gpu_sprite==16;
   int moving_sound=gpu_sprite==17 || gpu_sprite==18 || gpu_sprite==20;
+  int single_classic_view=gpu_sprite>=21 && gpu_sprite<=36;
   char create[192],step[192],draw[192],draw_begin[192],draw_gui[192];
   snprintf(create,sizeof create,"%s/retain-create.gml",fixture->directory);
   snprintf(step,sizeof step,"%s/retain-step.gml",fixture->directory);
@@ -1732,7 +1733,10 @@ static int synthetic_framebuffer_content_create(
   snprintf(draw_begin,sizeof draw_begin,"%s/retain-draw-begin.gml",fixture->directory);
   snprintf(draw_gui,sizeof draw_gui,"%s/retain-draw-gui.gml",fixture->directory);
   snprintf(fixture->path,sizeof fixture->path,"%s/data.win",fixture->directory);
-  if(!write_text(create,gpu_sprite==20?
+  if(!write_text(create,gpu_sprite==22?
+       "global.fixture_frame = 0;\n"
+       "texture_set_interpolation(true);\n":
+       gpu_sprite==20?
        "global.fixture_frame = 0;\n"
        "audio_play_sound(snd_fixture,1,true);\n"
        "game_set_speed(30,0);\n"
@@ -1774,7 +1778,13 @@ static int synthetic_framebuffer_content_create(
        "global.fixture_frame = 0;\n"
        "view_xview[0] = 0.5; view_xview[1] = 32.25;\n":
        "global.fixture_frame = 0;\n") ||
-     !write_text(step,moving_sound?
+     !write_text(step,gpu_sprite==29?
+                 "global.fixture_frame += 1;\n"
+                 "if (global.fixture_frame == 4) texture_set_interpolation(true);\n":
+                 gpu_sprite==26?
+                 "if (global.fixture_frame >= 3) room_goto(1);\n"
+                 "global.fixture_frame += 1;\n":
+                 moving_sound?
                  "global.fixture_frame += 1;\n":
                  nested_step_target?
                  "surface_set_target(global.fixture_surface);\n"
@@ -1802,6 +1812,47 @@ static int synthetic_framebuffer_content_create(
        classic_redraw?
        "global.fixture_seen += 1;\n"
        "draw_sprite(spr_fixture,0,8,12);\n":
+       gpu_sprite==31?
+       "draw_sprite_ext(spr_fixture,0,48,16,1,1,0,c_white,0);\n"
+       "draw_sprite(spr_fixture,0,48,16);\n"
+       "draw_set_color(c_white); draw_text(8,30,\"GPU\");\n":
+       gpu_sprite==32?
+       "draw_set_color(c_black); draw_rectangle(0,0,65,49,false);\n"
+       "draw_set_color(c_red); draw_rectangle(-4,-3,7,8,false);\n"
+       "draw_set_color(c_lime); draw_rectangle(30,20,20,12,false);\n"
+       "draw_set_color(c_blue); draw_rectangle(12,4,12,4,false);\n"
+       "draw_sprite(spr_fixture,0,48,16);\n"
+       "draw_set_color(c_white); draw_text(8,30,\"GPU\");\n":
+       gpu_sprite==33?
+       "draw_sprite(spr_fixture,0,47.375,16.5);\n"
+       "draw_set_color(c_white); draw_text(8,30,\"GPU\");\n":
+       gpu_sprite==34?
+       "draw_sprite_ext(spr_fixture,0,47.375,16.5,1,1,0,c_white,0.07692307692307693);\n"
+       "draw_set_color(c_white); draw_text(8,30,\"GPU\");\n":
+       gpu_sprite==36?
+       "draw_sprite(spr_fixture,0,48,16);\n"
+       "d3d_start(); d3d_set_projection_ortho(0,0,32,24,0);\n"
+       "draw_sprite(spr_fixture,0,8,4);\n"
+       "d3d_end();\n":
+       gpu_sprite==35?
+       "draw_sprite(spr_fixture,0,48,16);\n"
+       "draw_sprite_part_ext(spr_fixture,0,0,0,7,6,8,4,1,1,c_white,0);\n"
+       "draw_sprite_part_ext(spr_fixture,0,1,1,6,6,20,24,1,1,c_white,-1);\n"
+       "draw_sprite(spr_fixture,0,24,8);\n"
+       "draw_set_color(c_white); draw_text(8,30,\"GPU\");\n":
+       gpu_sprite==27?
+       "global.fixture_application_width = surface_get_width(application_surface);\n"
+       "global.fixture_application_height = surface_get_height(application_surface);\n"
+       "draw_sprite(spr_fixture,0,48,16);\n"
+       "global.fixture_pixel = surface_getpixel(application_surface,48,16);\n"
+       "draw_set_color(c_white); draw_text(8,30,\"GPU\");\n":
+       gpu_sprite==30?
+       "draw_sprite_ext(spr_fixture,0,48,16,1,1,0,c_white,0.5);\n":
+       single_classic_view?
+       "global.fixture_application_width = surface_get_width(application_surface);\n"
+       "global.fixture_application_height = surface_get_height(application_surface);\n"
+       "draw_sprite(spr_fixture,0,48,16);\n"
+       "draw_set_color(c_white); draw_text(8,30,\"GPU\");\n":
        gpu_sprite==19?
        "draw_sprite(spr_fixture,0,48,16);\n"
        "draw_set_color(c_white); draw_text(8,30,\"GPU\");\n"
@@ -1825,8 +1876,11 @@ static int synthetic_framebuffer_content_create(
          "if (view_current == 0) {\n"
          "  draw_clear(c_blue); surface_reset_target();\n"
          "}\n")) ||
-     ((retained_step_target || assigned_view_surface || canvas_geometry || window_geometry) &&
-      !write_text(draw_gui,canvas_geometry?
+     ((retained_step_target || assigned_view_surface || canvas_geometry || window_geometry ||
+       gpu_sprite==28) &&
+      !write_text(draw_gui,gpu_sprite==28?
+         "draw_set_color(c_red); draw_rectangle(4,4,12,12,false);\n":
+         canvas_geometry?
          "draw_surface_stretched(application_surface,0,0,64,32);\n"
          "draw_sprite(spr_fixture,0,12,12);\n"
          "draw_set_color(c_white); draw_rectangle(0,0,3,3,false);\n":
@@ -1873,6 +1927,10 @@ static int synthetic_framebuffer_content_create(
       pixels[at+1u]=(uint8_t)(48+y*12);
       pixels[at+2u]=192u;
       pixels[at+3u]=255u;
+      if(gpu_sprite==33 || gpu_sprite==34){
+        if(x==0 || x==7 || y==0 || y==7 || (x+y)%3==0) pixels[at+3u]=0u;
+        else if(gpu_sprite==34 && (x+y)%3==1) pixels[at+3u]=127u;
+      }
     }
     sprite_frame=gmlc_project_add_memory_file(&project,"sprite",GMLC_MEMORY_RGBA,
                                                 pixels,sizeof pixels,8,8);
@@ -1919,7 +1977,8 @@ static int synthetic_framebuffer_content_create(
     project.n_sounds=project.cap_sounds=1;
   }
   if(classic){
-    project.classic_version=gpu_sprite==19?530:800;
+    project.classic_version=gpu_sprite==19 ||
+                            (single_classic_view && gpu_sprite!=24)?530:800;
     /* Distinct from both room colors so a cleared classic frame cannot be mistaken for a
      * retained one or for the room the fixture painted first. */
     project.classic_outside_color=0x00204060u;
@@ -1930,7 +1989,7 @@ static int synthetic_framebuffer_content_create(
   object.visible=gpu_sprite;
   object.events=events;
   object.n_events=object.cap_events=retained_step_target || assigned_view_surface?5:
-                                     canvas_geometry || window_geometry?4:gpu_sprite?3:2;
+                                     canvas_geometry || window_geometry || gpu_sprite==28?4:gpu_sprite?3:2;
   events[0].event_type=0;
   events[0].event_number=0;
   events[0].source_path=create;
@@ -1948,7 +2007,7 @@ static int synthetic_framebuffer_content_create(
     events[4].event_type=8;
     events[4].event_number=64;
     events[4].source_path=draw_gui;
-  } else if(canvas_geometry || window_geometry){
+  } else if(canvas_geometry || window_geometry || gpu_sprite==28){
     events[3].event_type=8;
     events[3].event_number=64;
     events[3].source_path=draw_gui;
@@ -1995,6 +2054,24 @@ static int synthetic_framebuffer_content_create(
         rooms[room].views[view].hspeed=rooms[room].views[view].vspeed=-1;
         rooms[room].views[view].object_id=-1;
       }
+    }
+  }
+  if(single_classic_view){
+    for(int room=0;room<2;room++){
+      if(gpu_sprite==26 && room==1){
+        rooms[room].width=80;
+        rooms[room].height=60;
+      }
+      rooms[room].view_enabled=1;
+      rooms[room].n_views=1;
+      rooms[room].views[0].visible=1;
+      rooms[room].views[0].wview=rooms[room].width;
+      rooms[room].views[0].hview=rooms[room].height;
+      rooms[room].views[0].wport=gpu_sprite==23?96:rooms[room].width*2;
+      rooms[room].views[0].hport=gpu_sprite==23?72:rooms[room].height*2;
+      rooms[room].views[0].xport=gpu_sprite==25?4:0;
+      rooms[room].views[0].hspeed=rooms[room].views[0].vspeed=-1;
+      rooms[room].views[0].object_id=-1;
     }
   }
 
@@ -2094,6 +2171,56 @@ int anygm_synthetic_classic_redraw_content_create(AnygmSyntheticContent *fixture
 
 int anygm_synthetic_classic_viewless_draw_content_create(AnygmSyntheticContent *fixture){
   return synthetic_framebuffer_content_create(fixture,0,0,1,19);
+}
+
+int anygm_synthetic_classic_single_view_draw_content_create(AnygmSyntheticContent *fixture){
+  return synthetic_framebuffer_content_create(fixture,0,0,1,21);
+}
+int anygm_synthetic_classic_single_view_filtered_content_create(AnygmSyntheticContent *fixture){
+  return synthetic_framebuffer_content_create(fixture,0,0,1,22);
+}
+int anygm_synthetic_classic_single_view_fractional_content_create(AnygmSyntheticContent *fixture){
+  return synthetic_framebuffer_content_create(fixture,0,0,1,23);
+}
+int anygm_synthetic_classic_single_view_modern_content_create(AnygmSyntheticContent *fixture){
+  return synthetic_framebuffer_content_create(fixture,0,0,1,24);
+}
+int anygm_synthetic_classic_single_view_offset_content_create(AnygmSyntheticContent *fixture){
+  return synthetic_framebuffer_content_create(fixture,0,0,1,25);
+}
+int anygm_synthetic_classic_single_view_geometry_content_create(AnygmSyntheticContent *fixture){
+  return synthetic_framebuffer_content_create(fixture,0,0,1,26);
+}
+int anygm_synthetic_classic_single_view_read_content_create(AnygmSyntheticContent *fixture){
+  return synthetic_framebuffer_content_create(fixture,0,0,1,27);
+}
+int anygm_synthetic_classic_single_view_cpu_gui_content_create(AnygmSyntheticContent *fixture){
+  return synthetic_framebuffer_content_create(fixture,0,0,1,28);
+}
+int anygm_synthetic_classic_single_view_filter_transition_content_create(AnygmSyntheticContent *fixture){
+  return synthetic_framebuffer_content_create(fixture,0,0,1,29);
+}
+int anygm_synthetic_classic_single_view_partial_alpha_content_create(AnygmSyntheticContent *fixture){
+  return synthetic_framebuffer_content_create(fixture,0,0,1,30);
+}
+int anygm_synthetic_classic_single_view_zero_alpha_content_create(AnygmSyntheticContent *fixture){
+  return synthetic_framebuffer_content_create(fixture,0,0,1,31);
+}
+
+int anygm_synthetic_classic_single_view_rectangle_content_create(AnygmSyntheticContent *fixture){
+  return synthetic_framebuffer_content_create(fixture,0,0,1,32);
+}
+int anygm_synthetic_classic_single_view_binary_content_create(AnygmSyntheticContent *fixture){
+  return synthetic_framebuffer_content_create(fixture,0,0,1,33);
+}
+int anygm_synthetic_classic_single_view_source_alpha_content_create(AnygmSyntheticContent *fixture){
+  return synthetic_framebuffer_content_create(fixture,0,0,1,34);
+}
+int anygm_synthetic_classic_single_view_zero_alpha_part_content_create(AnygmSyntheticContent *fixture){
+  return synthetic_framebuffer_content_create(fixture,0,0,1,35);
+}
+int anygm_synthetic_classic_single_view_software3d_content_create(AnygmSyntheticContent *fixture){
+  return synthetic_framebuffer_content_create(fixture,0,0,1,36);
 }
 
 int anygm_synthetic_classic_transition_content_create(AnygmSyntheticContent *fixture){

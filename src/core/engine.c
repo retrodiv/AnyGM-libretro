@@ -1533,6 +1533,26 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
      gml_render_application_surface_ensure_owned(
        &engine->render,(int)engine->width,(int)engine->height))
     gml_render_presentation_metrics(&engine->render,&render_presentation);
+  /* A sole early-classic integer viewport draws at the borrowed logical raster.
+   * GPU residency must not turn that borrow into a persistent explicit surface resize. */
+  int early_classic_full_view=engine->scene_renderer_session==ANYGM_SCENE_RENDERER_OPENGL &&
+    frame_view_count==1 &&
+    frame_views[0].px==0 && frame_views[0].py==0 &&
+    frame_views[0].w==(double)engine->width &&
+    frame_views[0].h==(double)engine->height &&
+    frame_views[0].pw>0 && frame_views[0].ph>0 &&
+    engine->width>0 && engine->height>0 &&
+    frame_views[0].pw%(int)engine->width==0 &&
+    frame_views[0].ph%(int)engine->height==0 &&
+    frame_views[0].pw/(int)engine->width==frame_views[0].ph/(int)engine->height &&
+    !render_presentation.interpolation;
+  int early_classic_borrowed_world=early_classic_full_view &&
+    !render_presentation.application_owned &&
+    render_presentation.application_draw_enabled && app_surface_is_draw_target &&
+    anygm_policy_uses_classic_runtime(&engine->win) &&
+    !anygm_policy_classic_modern_presentation(&engine->win) &&
+    render_presentation.application_width==(int)engine->width &&
+    render_presentation.application_height==(int)engine->height;
   /* An early-classic, viewless, exact-size application target can keep Draw on the same resident
    * resource as a sole full view. Later classic temporal presentation retains its CPU policy. */
   if(!render_presentation.application_owned && frame_view_count==0 &&
@@ -1661,12 +1681,18 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
     world_height=(int)engine->height;
     if(!engine->composed_frame && !engine->aspect_force_active &&
        ((!render_presentation.application_draw_enabled && frame_view_count==0) ||
-        (native_assigned_view && !gml_render_is_classic(&engine->render))) &&
+        (native_assigned_view && !gml_render_is_classic(&engine->render)) ||
+        (early_classic_borrowed_world &&
+         !(view_surface>0 && gml_surface_exists(&engine->render,view_surface)))) &&
        engine_graphics_active(engine) &&
        (engine->scene_renderer_session==ANYGM_SCENE_RENDERER_OPENGL ||
         anygm_host_development_setting(&engine->host,"GML_SCENE_GPU_PROTOTYPE")))
       base_world_began=gml_render_begin_resident_base(
         &engine->render,world_pixels,world_width,world_height,cam_x,cam_y);
+    if(!base_world_began &&
+       !gml_render_completed_screen_write(
+         &engine->render,world_pixels,world_width,world_height))
+      return ANYGM_ERROR_INTERNAL;
     if(!base_world_began && engine->composed_frame)
       gml_render_begin_retaining_target(&engine->render,world_pixels,world_width,world_height,
                                         cam_x,cam_y);
@@ -1717,8 +1743,9 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
   gml_render_flush_pending_fill(&engine->render);
   if(!engine_graphics_finish_scene(engine)) return ANYGM_ERROR_INTERNAL;
   /* Only a drawn base needs immediate CPU composition. Assigned target pixels remain
-   * resource-owned until a real surface, state or fallback consumer observes them. */
-  if(base_world_began && !direct_view_surface &&
+   * resource-owned until a real surface, state or fallback consumer observes them; a
+   * certified borrowed classic world is already the logical application raster. */
+  if(base_world_began && !direct_view_surface && !early_classic_borrowed_world &&
      !gml_render_resident_application_cpu_barrier(&engine->render))
     return ANYGM_ERROR_INTERNAL;
   if(direct_owned_world)
@@ -1730,6 +1757,10 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
   if(prof){ t1 = profile_now_ms(engine); engine->profile.draw_ms += t1 - t0; t0 = t1; }
   gml_render_presentation_metrics(&engine->render,&render_presentation);
   int log_draw=anygm_host_development_setting(&engine->host,"GML_LOG_DRAW")!=NULL;
+  if(log_draw && early_classic_borrowed_world &&
+     !gml_render_completed_screen_read(
+       &engine->render,world_pixels,world_width,world_height))
+    return ANYGM_ERROR_INTERNAL;
   const uint32_t *observed_world_pixels=direct_view_surface?NULL:world_pixels;
   if(direct_view_surface && log_draw)
     observed_world_pixels=gml_surface_pixels_read(

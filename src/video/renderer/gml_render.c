@@ -466,6 +466,10 @@ int gml_render_begin_resident_base(GmlRender *r,uint32_t *pixels,int width,int h
      (r->base_scene_resource_pixels!=pixels ||
       r->base_scene_resource_width!=width ||
       r->base_scene_resource_height!=height)){
+    /* A borrowed allocation keeps its bytes when a view changes stride. Observe only
+     * this real geometry transition before replacing the device resource. */
+    if(r->base_scene_resource_pixels==pixels &&
+       !gml_render_resource_acquire_cpu_read(r->base_scene_resource,NULL)) return 0;
     gml_render_base_resource_dispose(r);
   }
   gml_render_begin(r,pixels,width,height,camx,camy);
@@ -1149,6 +1153,11 @@ int gml_render_completed_screen_write(GmlRender *r,uint32_t *pixels,int width,in
   GmlRenderResource *resource;
   if(!r || !pixels || width<=0 || height<=0 ||
      !gml_render_application_scene_flush(r)) return 0;
+  if(r->base_scene_resource && r->base_scene_resource_pixels==pixels &&
+     (r->base_scene_resource_width!=width || r->base_scene_resource_height!=height)){
+    if(!gml_render_resource_acquire_cpu_read(r->base_scene_resource,NULL)) return 0;
+    gml_render_base_resource_dispose(r);
+  }
   resource=completed_screen_resource(r,pixels,width,height);
   if(resource && (!gml_render_resource_acquire_cpu_write(resource,&current) ||
                  current!=pixels || !gml_render_resource_commit_cpu_write(resource))) return 0;
@@ -1294,16 +1303,31 @@ void gml_render_flush_pending_underlay(GmlRender *r){
 }
 int gml_render_defer_resident_underlay(GmlRender *r){
   GmlRenderJournalMetrics metrics={0};
+  GmlRenderResource *resource=NULL;
   GmlRenderImageRef image;
   int x,y,w,h;
   if(!r || !r->pending_underlay || !r->presentation_deferral_enabled ||
-     !r->app_surface_opaque || !r->app_surface_resource ||
-     r->app_surface!=r->app_surface_owned || r->classic ||
+     !r->app_surface_opaque ||
      r->fb!=r->base_fb || r->target_sp || r->target_id>=0) return 0;
+  if(r->app_surface==r->app_surface_owned) resource=r->app_surface_resource;
+  else if(r->classic && r->app_surface==r->base_scene_resource_pixels &&
+          r->app_w==r->base_scene_resource_width &&
+          r->app_h==r->base_scene_resource_height) resource=r->base_scene_resource;
+  if(!resource) return 0;
+  /* Early classic nearest integer presentation uses the same leading-edge samples.
+   * Temporal phase planes and filtered or fractional ports retain their checked CPU path. */
+  if(r->classic && (!r->win || anygm_policy_classic_modern_presentation(r->win) ||
+     r->interp || r->app_w<=0 || r->app_h<=0 || r->underlay_w<=0 || r->underlay_h<=0 ||
+     r->underlay_w%r->app_w || r->underlay_h%r->app_h ||
+     r->classic_phase_y || r->app_phase_y)) return 0;
+  if(r->classic)
+    for(unsigned index=0;index<3u;index++)
+      if(r->classic_interp_phase[index] || r->app_interp_phase[index]) return 0;
   if(!gml_render_application_scene_flush(r)) return 0;
-  image=gml_render_resource_image_ref(r->app_surface_resource);
-  gml_render_resource_journal_metrics(r->app_surface_resource,&metrics);
-  if(image.resource_class!=GML_RENDER_RESOURCE_APPLICATION ||
+  image=gml_render_resource_image_ref(resource);
+  gml_render_resource_journal_metrics(resource,&metrics);
+  if((image.resource_class!=GML_RENDER_RESOURCE_APPLICATION &&
+      image.resource_class!=GML_RENDER_RESOURCE_SCREEN) ||
      image.content_version!=metrics.gpu_version ||
      (metrics.authority!=GML_RENDER_RESOURCE_GPU_RESIDENT &&
       metrics.authority!=GML_RENDER_RESOURCE_GPU_REPLAYABLE &&

@@ -184,13 +184,19 @@ static int exact_rect(const GmlRenderDrawOp *op,GLint *left,GLint *bottom,
 
 /* R03-SPR-INTEGER-SOURCEOVER: the shared crop supplies integral physical
  * coverage and exact nearest UV endpoints. Admit white-RGB draw alpha only;
- * unrelated tint, SCREEN, filtering and fractional geometry remain fenced. */
+ * SCREEN needs an explicit opaque-target certificate; unrelated tint, filtering and
+ * fractional geometry remain fenced. */
 static int integer_sourceover_sprite_valid(const GmlRenderDrawOp *op,
+                                           const GmlRenderDrawStateSnapshot *state,
                                            const GlSceneImage *source){
   const GmlRenderQuad *quad=&op->payload.quad;
   GmlRenderRect region=quad->sampling.source_region;
   if(!source || op->scene_family!=GML_RENDER_SCENE_SPRITE ||
-     op->target.image.resource_class!=GML_RENDER_RESOURCE_APPLICATION ||
+     !((op->target.image.resource_class==GML_RENDER_RESOURCE_APPLICATION &&
+        !state->coverage_policy) ||
+       (op->target.image.resource_class==GML_RENDER_RESOURCE_SCREEN &&
+        state->coverage_policy==GML_RENDER_COVERAGE_OPAQUE_TARGET &&
+        qualified_blend(state)==1)) ||
      op->target.pixel_format!=GML_RENDER_PIXEL_ARGB8888 ||
      op->sources[0].resource_class!=GML_RENDER_RESOURCE_ATLAS ||
      source->pixel_format!=GML_RENDER_PIXEL_RGBA8888 || source->rendered_origin ||
@@ -573,7 +579,7 @@ static int scene_preflight(GmlGpuBackend *backend,const GmlRenderDrawBatch *batc
       int blend=qualified_blend(state);
       int hardware_surface=hardware_surface_quad_valid(op,state,source);
       int hardware_veil=hardware_screen_veil_valid(op,state,source);
-      int integer_sourceover=integer_sourceover_sprite_valid(op,source) &&
+      int integer_sourceover=integer_sourceover_sprite_valid(op,state,source) &&
         (blend==1 || blend==3);
       int modern_numbered_sprite=
         (sampling->quantisation==GML_RENDER_QUANTISE_SPRITE_MODERN_NEAREST ||
@@ -738,7 +744,7 @@ static int scene_preflight(GmlGpuBackend *backend,const GmlRenderDrawBatch *batc
                        op->payload.quad.y[2]!=(double)target->height ||
                        !exact_rect(op,NULL,NULL,NULL,NULL,0))) ||
          state->sampler_count!=1u || state->material_identity || state->material_version ||
-         (state->coverage_policy && !hardware_surface && !hardware_veil &&
+         (state->coverage_policy && !hardware_surface && !hardware_veil && !integer_sourceover &&
           ((state->coverage_policy!=GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA &&
             state->coverage_policy!=GML_RENDER_COVERAGE_ROTATED_VECTOR_ALPHA) ||
            target->image.resource_class!=GML_RENDER_RESOURCE_SCREEN ||
@@ -853,7 +859,7 @@ static int scene_preflight(GmlGpuBackend *backend,const GmlRenderDrawBatch *batc
         if(modern_numbered_sprite && (colour!=op->payload.quad.corner_colour[0] ||
            (colour>>24)!=(uint32_t)lround(op->payload.quad.filtered_draw_alpha*255.0))) return 0;
         if(blend==8 && colour!=op->payload.quad.corner_colour[0]) return 0;
-        if(state->coverage_policy &&
+        if(state->coverage_policy && !integer_sourceover &&
            (colour>>24)!=(uint32_t)lround(op->payload.quad.filtered_draw_alpha*255.0))
           return 0;
         if(colour!=0xFFFFFFFFu && blend!=6 &&

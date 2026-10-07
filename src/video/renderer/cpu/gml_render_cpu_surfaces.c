@@ -86,6 +86,14 @@ static uint32_t *surface_pixels_access(GmlRender *r, int id, int *w, int *h,
       if(write && !gml_render_resource_commit_cpu_write(r->app_surface_resource)) return NULL;
       return canonical;
     }
+    /* A borrowed logical application can alias a resident base resource without
+     * acquiring explicit-resize ownership. Its GML dimensions remain the borrow's. */
+    if(r->app_surface==r->base_scene_resource_pixels && r->base_scene_resource){
+      int width=r->base_scene_resource_width,height=r->base_scene_resource_height;
+      if(writable || has_suspended_fill(r,r->app_surface)){
+        if(!gml_render_completed_screen_write(r,r->app_surface,width,height)) return NULL;
+      } else if(!gml_render_completed_screen_read(r,r->app_surface,width,height)) return NULL;
+    }
     realize_suspended_fill(r,r->app_surface);
     return r->app_surface;
   }

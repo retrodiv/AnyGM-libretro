@@ -675,6 +675,8 @@ static int surface_dimensions(const GmlRender *r,int id,int *width,int *height){
       if(r->app_surface_resource_width!=r->app_w ||
          r->app_surface_resource_height!=r->app_h) return 0;
       resource=r->app_surface_resource;
+    } else if(r->app_surface==r->base_scene_resource_pixels){
+      resource=r->base_scene_resource;
     }
     w=r->app_w?r->app_w:(r->base_fbw?r->base_fbw:r->fbw);
     h=r->app_h?r->app_h:(r->base_fbh?r->base_fbh:r->fbh);
@@ -1439,6 +1441,8 @@ static int application_surface_resize(GmlRender *r,int w,int h){
     oldw=r->app_surface_resource_width;
     oldh=r->app_surface_resource_height;
     if(!gml_render_resource_acquire_cpu_read(r->app_surface_resource,NULL)) return 0;
+  } else if(old==r->base_scene_resource_pixels && r->base_scene_resource){
+    if(!gml_render_resource_acquire_cpu_read(r->base_scene_resource,NULL)) return 0;
   }
   uint32_t *px=calloc((size_t)w*(size_t)h,sizeof(uint32_t));
   if(!px) return 0;

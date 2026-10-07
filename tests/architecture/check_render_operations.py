@@ -27,6 +27,7 @@ REQUIRED_RULES = {
     "R03-P7-LAYER-SAMPLER-FALLBACK", "R03-P7-LAYER-BLUR-GLOW-FALLBACK",
     "R03-P7-LAYER-NUMBERED-TARGET", "R03-P7-VIEWLESS-BASE", "R03-P7-INDIRECT-GUI",
     "R03-P9-CLASSIC-VIEWLESS", "R03-P9-GUI-FILTERED-ATLAS",
+    "R03-CLASSIC-BORROWED-VIEW", "R03-SPR-CLASSIC-NEAREST", "R03-SPR-ZERO-ALPHA-PART",
     "R03-P9-GUI-MAPPED-SPRITE", "R03-P9-STRETCHED-COVERED-ALPHA",
     "R03-P9-GUI-ROTATED-SPRITE", "R03-P9-SPRITE-ALPHA-BOUNDARY",
     "R03-P9-DEVICE-CHECKPOINT-SPAN",
@@ -266,6 +267,13 @@ def self_test() -> None:
                   if not line.startswith("| R03-P9-GUI-ROTATED-SPRITE |")),
         "\n".join(line for line in document.splitlines()
                   if not line.startswith("| R03-P9-SPRITE-ALPHA-BOUNDARY |")),
+        "\n".join(line for line in document.splitlines()
+                  if not line.startswith("| R03-CLASSIC-BORROWED-VIEW |")),
+        "\n".join(line for line in document.splitlines()
+                  if not line.startswith("| R03-SPR-CLASSIC-NEAREST |")),
+        "\n".join(line for line in document.splitlines()
+                  if not line.startswith("| R03-SPR-ZERO-ALPHA-PART |")),
+        document.replace("::resident_opaque_rect", "::obsolete_opaque_rect", 1),
         document.replace("::R03_SHADER_EXACT_OVERLAP", "::OBSOLETE_EXACT_OVERLAP", 1),
         document.replace("::R03_SHADER_SURFACE_DESTINATION", "::OBSOLETE_SURFACE_DESTINATION", 1),
         "\n".join(line for line in document.splitlines()

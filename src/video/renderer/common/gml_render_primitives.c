@@ -15,11 +15,14 @@
 /* Opaque flat coverage has the same half-open pixel region for point-sized and filled
  * rectangles. Typed entries already receive raster coordinates, so the current world
  * scale must not reject or remap them. Keep unqualified shapes in their CPU raster body. */
-static int resident_flat_eligible(GmlRender *render){
+static int resident_flat_eligible_rule(GmlRender *render,int classic_rectangle){
   return render && render->resident_application_pass && gml_render_device(render) &&
     gml_render_scene_target_matches(render) &&
     !render->gui_pass_active &&
-    !render->classic &&
+    (!render->classic || (classic_rectangle &&
+      !anygm_policy_classic_modern_presentation(render->win) &&
+      render->fb==render->app_surface &&
+      render->fb==render->base_scene_resource_pixels)) &&
     !render->classic_phase_y && !render->classic_interp_phase[0] &&
     !render->classic_interp_phase[1] && !render->classic_interp_phase[2] &&
     render->active_shader<0 && render->alpha==1.0 && !render->blendmode &&
@@ -27,6 +30,10 @@ static int resident_flat_eligible(GmlRender *render){
     render->color_write_mask==15u && !render->alpha_test_enable &&
     !render->pending_presentation && !render->rotated_batch_count &&
     !render->rotated_batch_building;
+}
+
+static int resident_flat_eligible(GmlRender *render){
+  return resident_flat_eligible_rule(render,0);
 }
 
 int gml_render_try_particle_line(GmlRender *r,double x,double y,
@@ -78,14 +85,16 @@ int gml_render_try_particle_line(GmlRender *r,double x,double y,
   return 1;
 }
 
-int gml_render_try_opaque_primitive_rect(GmlRender *render,int x1,int y1,int x2,int y2,
-                                         uint32_t color){
+static int resident_opaque_rect(GmlRender *render,int x1,int y1,int x2,int y2,
+                                uint32_t color,int classic_rectangle){
   GmlRenderResource *resource;
   GmlRenderImageRef image;
   GmlRenderDrawOp operation={0};
   GmlRenderDrawBatch batch;
   GmlRenderResourceExecution result;
-  if(!resident_flat_eligible(render)) return 0;
+  /* This entry receives the existing CPU rectangle's inclusive raster bounds. Early
+   * classic filled rectangles share that exact coverage; other shapes keep their gate. */
+  if(!resident_flat_eligible_rule(render,classic_rectangle)) return 0;
   if(x1>x2){int swap=x1;x1=x2;x2=swap;}
   if(y1>y2){int swap=y1;y1=y2;y2=swap;}
   if(x2<0 || y2<0 || x1>=render->fbw || y1>=render->fbh) return 0;
@@ -117,6 +126,11 @@ int gml_render_try_opaque_primitive_rect(GmlRender *render,int x1,int y1,int x2,
   result=gml_render_application_scene_submit(render,&batch,NULL,0u);
   if(result==GML_RENDER_RESOURCE_EXEC_CPU) render->resident_application_pass=0;
   return result!=GML_RENDER_RESOURCE_EXEC_FAILED;
+}
+
+int gml_render_try_opaque_primitive_rect(GmlRender *render,int x1,int y1,int x2,int y2,
+                                         uint32_t color){
+  return resident_opaque_rect(render,x1,y1,x2,y2,color,0);
 }
 
 typedef struct {
@@ -398,7 +412,7 @@ void gml_render_primitive_rectangle(GmlRender *render,
   if(outline && resident_outline_rectangle(render,x1,y1,x2,y2,color)) return;
   if(!outline && gml_render_shade_target_rect(render,x1,y1,x2,y2,color,render?render->alpha:1.0))
     return;
-  if(!outline && gml_render_try_opaque_primitive_rect(render,x1,y1,x2,y2,color)) return;
+  if(!outline && resident_opaque_rect(render,x1,y1,x2,y2,color,1)) return;
   gml_render_cpu_rectangle(render,x1,y1,x2,y2,color,outline);
 }
 
@@ -411,7 +425,7 @@ void gml_render_primitive_rectangle_color(GmlRender *render,
   if(!outline && color1==color2 && color2==color3 && color3==color4 &&
      gml_render_shade_target_rect(render,x1,y1,x2,y2,color1,render?render->alpha:1.0)) return;
   if(!outline && color1==color2 && color2==color3 && color3==color4 &&
-     gml_render_try_opaque_primitive_rect(render,x1,y1,x2,y2,color1)) return;
+     resident_opaque_rect(render,x1,y1,x2,y2,color1,1)) return;
   gml_render_cpu_rectangle_color(render,x1,y1,x2,y2,color1,color2,color3,color4,outline);
 }
 

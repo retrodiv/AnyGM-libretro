@@ -217,7 +217,9 @@ enum {
   GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA=1u,
   /* A first-generation nearest SCREEN SIMD packet blends its packed alpha
    * toward opaque, unlike the scalar tail's unconditional opaque coverage. */
-  GML_RENDER_COVERAGE_ROTATED_VECTOR_ALPHA=2u
+  GML_RENDER_COVERAGE_ROTATED_VECTOR_ALPHA=2u,
+  /* Fixed source-over preserves an already opaque target without a destination copy. */
+  GML_RENDER_COVERAGE_OPAQUE_TARGET=3u
 };
 
 typedef struct GmlRenderDrawStateSnapshot {

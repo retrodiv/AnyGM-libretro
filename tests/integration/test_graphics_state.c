@@ -906,6 +906,294 @@ static int classic_viewless_application_scene_case(void){
   return 1;
 }
 
+/* A sole enlarged classic port keeps the logical Draw raster, not a larger per-sprite target. */
+static int classic_single_view_application_scene_case(void){
+  Session plain={0},selected={0};
+  AnygmInputFrame input={0};
+  AnygmFrameOutput cpu={0},gpu={0};
+  GmlGpuCounters counters={0};
+  GmlRenderPresentationMetrics metrics={0};
+  int matching=1;
+  anygm_test_graphics_reset();
+  REQUIRE(session_open_fixture_with_scene(
+            &plain,ANYGM_SCENE_RENDERER_CPU,
+            anygm_synthetic_classic_single_view_draw_content_create),
+          "single-view classic CPU fixture loads");
+  REQUIRE(session_open_fixture_with_scene(
+            &selected,ANYGM_SCENE_RENDERER_OPENGL,
+            anygm_synthetic_classic_single_view_draw_content_create),
+          "single-view classic GPU fixture loads");
+  REQUIRE(graphics_adopt(selected.engine,ANYGM_GRAPHICS_OPENGLES3)==ANYGM_OK,
+          "single-view classic GPU context adopts");
+  gml_render_presentation_metrics(&selected.engine->render,&metrics);
+  REQUIRE(!metrics.application_owned && metrics.application_width==128 &&
+          metrics.application_height==96,
+          "single-view classic initially borrows the display-size application");
+  input.struct_size=sizeof input;
+  input.pointer_x=input.pointer_y=-1;
+  for(int frame=0;frame<3 && matching;frame++){
+    cpu.struct_size=gpu.struct_size=sizeof cpu;
+    matching=anygm_run_frame(plain.engine,&input,&cpu)==ANYGM_OK &&
+             anygm_run_frame(selected.engine,&input,&gpu)==ANYGM_OK &&
+             engine_materialize_completed_frame(selected.engine) &&
+             cpu.pixels && selected.engine->screen &&
+             cpu.width==128u && cpu.height==96u &&
+             gpu.width==cpu.width && gpu.height==cpu.height &&
+             selected.engine->width==64u && selected.engine->height==48u &&
+             selected.engine->present_mouse_width==plain.engine->present_mouse_width &&
+             selected.engine->present_mouse_height==plain.engine->present_mouse_height &&
+             selected.engine->vm.room_index==plain.engine->vm.room_index &&
+             selected.engine->vm.frame==plain.engine->vm.frame &&
+             !memcmp(cpu.pixels,selected.engine->screen,
+                     (size_t)cpu.width*cpu.height*sizeof(uint32_t));
+    if(!matching)
+      fprintf(stderr,"single-view classic frame=%d cpu=%ux%u gpu=%ux%u "
+                     "logical=%ux%u/%ux%u room=%d/%d frame=%ld/%ld pixels=%d/%d\n",
+              frame,cpu.width,cpu.height,gpu.width,gpu.height,
+              plain.engine->width,plain.engine->height,
+              selected.engine->width,selected.engine->height,
+              plain.engine->vm.room_index,selected.engine->vm.room_index,
+              plain.engine->vm.frame,selected.engine->vm.frame,
+             cpu.pixels!=NULL,selected.engine->screen!=NULL);
+    gml_gpu_counters(selected.engine->gpu,&counters);
+    gml_render_presentation_metrics(&selected.engine->render,&metrics);
+    /* The first Draw still exposes the display-size borrowed surface. Only subsequent
+     * same-logical-size frames qualify, including the retained room transition. */
+    GmlVal *cpu_width=gml_varmap_get(&plain.engine->vm.globals,"fixture_application_width");
+    GmlVal *gpu_width=gml_varmap_get(&selected.engine->vm.globals,"fixture_application_width");
+    GmlVal *cpu_height=gml_varmap_get(&plain.engine->vm.globals,"fixture_application_height");
+    GmlVal *gpu_height=gml_varmap_get(&selected.engine->vm.globals,"fixture_application_height");
+    matching=matching && cpu_width && gpu_width && cpu_height && gpu_height &&
+      cpu_width->d==gpu_width->d && cpu_height->d==gpu_height->d &&
+      cpu_width->d==(frame==0?128.0:64.0) && cpu_height->d==(frame==0?96.0:48.0) &&
+      !metrics.application_owned &&
+      counters.scene_families[GML_RENDER_SCENE_SPRITE]==(uint64_t)frame &&
+      counters.scene_families[GML_RENDER_SCENE_TEXT]==(uint64_t)frame*3u;
+  }
+  gml_render_presentation_metrics(&selected.engine->render,&metrics);
+  gml_gpu_counters(selected.engine->gpu,&counters);
+  if(!matching || metrics.application_owned ||
+     metrics.application_width!=64 || metrics.application_height!=48 ||
+     counters.scene_families[GML_RENDER_SCENE_SPRITE]!=2u ||
+     counters.scene_families[GML_RENDER_SCENE_TEXT]==0u ||
+     counters.scene_batches_refused!=0u)
+    fprintf(stderr,"single-view classic: matching=%d owned=%d app=%dx%d "
+                   "output=%ux%u sprite=%llu text=%llu refused=%llu\n",
+            matching,metrics.application_owned,metrics.application_width,
+            metrics.application_height,cpu.width,cpu.height,
+            (unsigned long long)counters.scene_families[GML_RENDER_SCENE_SPRITE],
+            (unsigned long long)counters.scene_families[GML_RENDER_SCENE_TEXT],
+            (unsigned long long)counters.scene_batches_refused);
+  matching=matching && !metrics.application_owned &&
+           metrics.application_width==64 && metrics.application_height==48 &&
+           counters.scene_families[GML_RENDER_SCENE_SPRITE]==2u &&
+           counters.scene_families[GML_RENDER_SCENE_TEXT]>0u &&
+           counters.scene_batches_refused==0u;
+  session_close(&selected); session_close(&plain);
+  REQUIRE(matching,"single classic view admits logical Draw without changing its presentation");
+  return 1;
+}
+
+static int classic_single_view_geometry_transition_case(void){
+  Session plain={0},selected={0};
+  AnygmInputFrame input={.struct_size=sizeof input,.pointer_x=-1,.pointer_y=-1};
+  AnygmFrameOutput cpu={0},gpu={0};
+  int matching=1;
+  anygm_test_graphics_reset();
+  REQUIRE(session_open_fixture_with_scene(&plain,ANYGM_SCENE_RENDERER_CPU,
+            anygm_synthetic_classic_single_view_geometry_content_create) &&
+          session_open_fixture_with_scene(&selected,ANYGM_SCENE_RENDERER_OPENGL,
+            anygm_synthetic_classic_single_view_geometry_content_create),
+          "classic geometry transition fixtures load");
+  REQUIRE(graphics_adopt(selected.engine,ANYGM_GRAPHICS_OPENGLES3)==ANYGM_OK,
+          "classic geometry transition context adopts");
+  for(unsigned frame=0;frame<6u && matching;frame++){
+    cpu.struct_size=gpu.struct_size=sizeof cpu;
+    matching=anygm_run_frame(plain.engine,&input,&cpu)==ANYGM_OK &&
+             anygm_run_frame(selected.engine,&input,&gpu)==ANYGM_OK &&
+             engine_materialize_completed_frame(selected.engine) &&
+             cpu.pixels && selected.engine->screen && cpu.width==gpu.width &&
+             cpu.height==gpu.height && plain.engine->vm.room_index==selected.engine->vm.room_index &&
+             !memcmp(cpu.pixels,selected.engine->screen,(size_t)cpu.width*cpu.height*4u);
+    GmlVal *cpu_width=gml_varmap_get(&plain.engine->vm.globals,"fixture_application_width");
+    GmlVal *gpu_width=gml_varmap_get(&selected.engine->vm.globals,"fixture_application_width");
+    GmlVal *cpu_height=gml_varmap_get(&plain.engine->vm.globals,"fixture_application_height");
+    GmlVal *gpu_height=gml_varmap_get(&selected.engine->vm.globals,"fixture_application_height");
+    matching=matching && cpu_width && gpu_width && cpu_height && gpu_height &&
+             cpu_width->d==gpu_width->d && cpu_height->d==gpu_height->d;
+    if(!matching) fprintf(stderr,"classic geometry transition frame=%u room=%d/%d logical=%ux%u/%ux%u "
+      "output=%ux%u/%ux%u application=%.0fx%.0f/%.0fx%.0f\n",frame,
+      plain.engine->vm.room_index,selected.engine->vm.room_index,
+      plain.engine->width,plain.engine->height,selected.engine->width,selected.engine->height,
+      cpu.width,cpu.height,gpu.width,gpu.height,
+      cpu_width?cpu_width->d:-1.0,cpu_height?cpu_height->d:-1.0,
+      gpu_width?gpu_width->d:-1.0,gpu_height?gpu_height->d:-1.0);
+  }
+  session_close(&selected); session_close(&plain);
+  REQUIRE(matching,"classic GPU admission preserves a later logical geometry transition");
+  return 1;
+}
+
+static int classic_single_view_exclusions_case(void){
+  int (*factories[])(AnygmSyntheticContent *)={
+    anygm_synthetic_classic_single_view_filtered_content_create,
+    anygm_synthetic_classic_single_view_fractional_content_create,
+    anygm_synthetic_classic_single_view_modern_content_create,
+    anygm_synthetic_classic_single_view_offset_content_create
+  };
+  for(unsigned variant=0;variant<sizeof factories/sizeof factories[0];variant++){
+    Session plain={0},selected={0};
+    AnygmInputFrame input={.struct_size=sizeof input,.pointer_x=-1,.pointer_y=-1};
+    AnygmFrameOutput cpu={0},gpu={0};
+    GmlRenderPresentationMetrics metrics={0};
+    GmlGpuCounters counters={0};
+    int matching=1;
+    anygm_test_graphics_reset();
+    REQUIRE(session_open_fixture_with_scene(&plain,ANYGM_SCENE_RENDERER_CPU,factories[variant]) &&
+            session_open_fixture_with_scene(&selected,ANYGM_SCENE_RENDERER_OPENGL,factories[variant]),
+            "excluded single-view classic CPU/GPU fixtures load");
+    REQUIRE(graphics_adopt(selected.engine,ANYGM_GRAPHICS_OPENGLES3)==ANYGM_OK,
+            "excluded single-view classic context adopts");
+    for(unsigned frame=0;frame<3u && matching;frame++){
+      cpu.struct_size=gpu.struct_size=sizeof cpu;
+      matching=anygm_run_frame(plain.engine,&input,&cpu)==ANYGM_OK &&
+               anygm_run_frame(selected.engine,&input,&gpu)==ANYGM_OK &&
+               engine_materialize_completed_frame(selected.engine) && cpu.pixels &&
+               selected.engine->screen && cpu.width==gpu.width && cpu.height==gpu.height &&
+               !memcmp(cpu.pixels,selected.engine->screen,(size_t)cpu.width*cpu.height*4u);
+      gml_render_presentation_metrics(&selected.engine->render,&metrics);
+      matching=matching && !metrics.application_owned;
+    }
+    gml_gpu_counters(selected.engine->gpu,&counters);
+    matching=matching && counters.scene_families[GML_RENDER_SCENE_SPRITE]==0u &&
+             counters.scene_families[GML_RENDER_SCENE_TEXT]==0u;
+    if(!matching) fprintf(stderr,"excluded classic single-view variant=%u owned=%d sprite=%llu text=%llu\n",
+      variant,metrics.application_owned,
+      (unsigned long long)counters.scene_families[GML_RENDER_SCENE_SPRITE],
+      (unsigned long long)counters.scene_families[GML_RENDER_SCENE_TEXT]);
+    session_close(&selected); session_close(&plain);
+    REQUIRE(matching,"filtered, fractional, modern and translated classic views retain CPU policy");
+  }
+  return 1;
+}
+
+static int classic_single_view_draw_contracts_case(void){
+  int (*factories[])(AnygmSyntheticContent *)={
+    anygm_synthetic_classic_single_view_rectangle_content_create,
+    anygm_synthetic_classic_single_view_binary_content_create,
+    anygm_synthetic_classic_single_view_partial_alpha_content_create,
+    anygm_synthetic_classic_single_view_source_alpha_content_create
+  };
+  for(unsigned variant=0;variant<sizeof factories/sizeof factories[0];variant++){
+    Session plain={0},selected={0};
+    AnygmInputFrame input={.struct_size=sizeof input,.pointer_x=-1,.pointer_y=-1};
+    AnygmFrameOutput cpu={0},gpu={0};
+    int matching=1;
+    unsigned maximum[4]={0};
+    anygm_test_graphics_reset();
+    REQUIRE(session_open_fixture_with_scene(&plain,ANYGM_SCENE_RENDERER_CPU,factories[variant]) &&
+            session_open_fixture_with_scene(&selected,ANYGM_SCENE_RENDERER_OPENGL,factories[variant]),
+            "classic draw contract fixtures load");
+    REQUIRE(graphics_adopt(selected.engine,ANYGM_GRAPHICS_OPENGLES3)==ANYGM_OK,
+            "classic draw contract GPU context adopts");
+    for(unsigned frame=0;frame<6u && matching;frame++){
+      cpu.struct_size=gpu.struct_size=sizeof cpu;
+      matching=anygm_run_frame(plain.engine,&input,&cpu)==ANYGM_OK &&
+               anygm_run_frame(selected.engine,&input,&gpu)==ANYGM_OK &&
+               engine_materialize_completed_frame(selected.engine) && cpu.pixels &&
+               selected.engine->screen && cpu.width==gpu.width && cpu.height==gpu.height;
+      if(matching){
+        const uint8_t *a=(const uint8_t *)cpu.pixels;
+        const uint8_t *b=(const uint8_t *)selected.engine->screen;
+        for(size_t byte=0;byte<(size_t)cpu.width*cpu.height*4u;byte++){
+          unsigned difference=(unsigned)abs((int)a[byte]-(int)b[byte]);
+          if(difference>maximum[byte%4u]) maximum[byte%4u]=difference;
+          if(difference>0u) matching=0;
+        }
+      }
+      GmlRenderPresentationMetrics metrics={0};
+      gml_render_presentation_metrics(&selected.engine->render,&metrics);
+      matching=matching && !metrics.application_owned;
+    }
+    GmlGpuCounters counters={0};
+    gml_gpu_counters(selected.engine->gpu,&counters);
+    /* This fake context deliberately has no owning-context witness. Exact replay draws
+     * qualify here; tolerant pixels require the separate real-driver controls. */
+    matching=matching && counters.scene_families[GML_RENDER_SCENE_SPRITE]==(variant<2u?5u:0u) &&
+             counters.scene_batches_refused==0u;
+    if(variant==0u) matching=matching &&
+      counters.scene_families[GML_RENDER_SCENE_PRIMITIVE]==20u;
+    fprintf(stderr,"classic draw variant=%u max_bytes=%u,%u,%u,%u sprite=%llu primitive=%llu matching=%d\n",
+      variant,maximum[0],maximum[1],maximum[2],maximum[3],
+      (unsigned long long)counters.scene_families[GML_RENDER_SCENE_SPRITE],
+      (unsigned long long)counters.scene_families[GML_RENDER_SCENE_PRIMITIVE],matching);
+    session_close(&selected); session_close(&plain);
+    REQUIRE(matching,"classic exact draws qualify while unwitnessed tolerant draws retain CPU fallback");
+  }
+  return 1;
+}
+
+static int classic_single_view_cpu_observers_case(void){
+  int (*factories[])(AnygmSyntheticContent *)={
+    anygm_synthetic_classic_single_view_read_content_create,
+    anygm_synthetic_classic_single_view_cpu_gui_content_create,
+    anygm_synthetic_classic_single_view_filter_transition_content_create,
+    anygm_synthetic_classic_single_view_zero_alpha_content_create,
+    anygm_synthetic_classic_single_view_zero_alpha_part_content_create,
+    anygm_synthetic_classic_single_view_software3d_content_create
+  };
+  for(unsigned variant=0;variant<sizeof factories/sizeof factories[0];variant++){
+    Session plain={0},selected={0};
+    AnygmInputFrame input={.struct_size=sizeof input,.pointer_x=-1,.pointer_y=-1};
+    AnygmFrameOutput cpu={0},gpu={0};
+    int matching=1;
+    anygm_test_graphics_reset();
+    REQUIRE(session_open_fixture_with_scene(&plain,ANYGM_SCENE_RENDERER_CPU,factories[variant]) &&
+            session_open_fixture_with_scene(&selected,ANYGM_SCENE_RENDERER_OPENGL,factories[variant]),
+            "classic application observation fixtures load");
+    REQUIRE(graphics_adopt(selected.engine,ANYGM_GRAPHICS_OPENGLES3)==ANYGM_OK,
+            "classic observation GPU context adopts");
+    for(unsigned frame=0;frame<6u && matching;frame++){
+      cpu.struct_size=gpu.struct_size=sizeof cpu;
+      matching=anygm_run_frame(plain.engine,&input,&cpu)==ANYGM_OK &&
+               anygm_run_frame(selected.engine,&input,&gpu)==ANYGM_OK &&
+               engine_materialize_completed_frame(selected.engine) && cpu.pixels &&
+               selected.engine->screen && cpu.width==gpu.width && cpu.height==gpu.height &&
+               !memcmp(cpu.pixels,selected.engine->screen,(size_t)cpu.width*cpu.height*4u);
+      GmlRenderPresentationMetrics metrics={0};
+      gml_render_presentation_metrics(&selected.engine->render,&metrics);
+      matching=matching && !metrics.application_owned;
+      if(variant==0u){
+        GmlVal *cpu_pixel=gml_varmap_get(&plain.engine->vm.globals,"fixture_pixel");
+        GmlVal *gpu_pixel=gml_varmap_get(&selected.engine->vm.globals,"fixture_pixel");
+        matching=matching && cpu_pixel && gpu_pixel && cpu_pixel->d==gpu_pixel->d;
+      }
+      if(!matching) fprintf(stderr,"classic observer variant=%u frame=%u\n",variant,frame);
+    }
+    GmlGpuCounters counters={0};
+    gml_gpu_counters(selected.engine->gpu,&counters);
+    if(variant==3u)
+      matching=matching && counters.scene_families[GML_RENDER_SCENE_SPRITE]==5u &&
+               counters.scene_families[GML_RENDER_SCENE_TEXT]==15u;
+    if(variant==4u)
+      matching=matching && counters.scene_families[GML_RENDER_SCENE_SPRITE]==10u &&
+               counters.scene_families[GML_RENDER_SCENE_TEXT]==15u;
+    if(variant==5u)
+      matching=matching && counters.scene_families[GML_RENDER_SCENE_SPRITE]==5u &&
+               counters.scene_families[GML_RENDER_SCENE_TEXT]==0u;
+    if(!matching || !counters.scene_families[GML_RENDER_SCENE_SPRITE])
+      fprintf(stderr,"classic observer variant=%u sprite=%llu text=%llu refused=%llu matching=%d\n",
+        variant,(unsigned long long)counters.scene_families[GML_RENDER_SCENE_SPRITE],
+        (unsigned long long)counters.scene_families[GML_RENDER_SCENE_TEXT],
+        (unsigned long long)counters.scene_batches_refused,matching);
+    matching=matching && counters.scene_families[GML_RENDER_SCENE_SPRITE]>0u &&
+             counters.scene_batches_refused==0u;
+    session_close(&selected); session_close(&plain);
+    REQUIRE(matching,"borrowed GPU application preserves CPU observers, 3D and zero-alpha prefixes");
+  }
+  return 1;
+}
+
 /* The target can be discarded between two frontend calls even after the runtime has ended.
  * Replaying the final frame then needs the completed CPU picture, not a stale screen buffer. */
 static int ended_frame_retention_variant(int lose_context){
@@ -3793,6 +4081,12 @@ int main(void){
     {"resident world selection retains CPU state",resident_world_selection_case},
     {"viewless classic application accepts Draw scene work",
      classic_viewless_application_scene_case},
+    {"single classic view admits logical Draw without changing presentation",
+     classic_single_view_application_scene_case},
+    {"excluded single classic views retain CPU presentation",classic_single_view_exclusions_case},
+    {"classic single view preserves later geometry transitions",classic_single_view_geometry_transition_case},
+    {"classic single view preserves CPU observers",classic_single_view_cpu_observers_case},
+    {"classic single view executes nearest draw contracts",classic_single_view_draw_contracts_case},
     {"ended resident frame remains visible and canonical",ended_frame_retention_case},
     {"authored cursor preserves a resident completed frame",resident_cursor_frame_case},
     {"transition snapshot reads a resident completed frame",resident_transition_snapshot_case},
