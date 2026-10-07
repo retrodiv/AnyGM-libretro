@@ -1466,6 +1466,12 @@ void gml_render_sprite_ext_unmasked(GmlRender *r, int sprite, int subimg, double
   gml_render_draw_map_point(r,&x,&y);
   gml_render_draw_map_scale(r,&xs,&ys);
   if(r && r->resident_application_pass){
+    /* Invalid and frameless ordinary sprites have no raster work to order
+     * after the queued prefix. Spine and active 3D retain their earlier CPU
+     * preparation, which does not share the ordinary frame-count rule. */
+    if(!gml_d3_is_active(r) &&
+       (sprite<0 || sprite>=r->n_spr ||
+        (!r->spr[sprite].spine && r->spr[sprite].n_frames<=0))) return;
     /* R03-P9-SPRITE-ALPHA-BOUNDARY: ordinary finite alpha is clamped by the
      * existing CPU leaves. Normalize only the GPU argument; CPU fallback and
      * specialised preparation retain the original caller value and order. */

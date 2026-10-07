@@ -4887,6 +4887,85 @@ static int resident_zero_alpha_sprite_part_noop(void){
   return 1;
 }
 
+static int resident_empty_sprite_preserves_queued_draws(void){
+  const uint8_t rgba[16]={
+    0xD0u,0x20u,0x10u,0xFFu, 0x10u,0xD0u,0x20u,0xFFu,
+    0x20u,0x10u,0xD0u,0xFFu, 0xC0u,0xB0u,0xA0u,0xFFu
+  };
+  for(int classic=0;classic<2;classic++) for(int diagnostics=0;diagnostics<2;diagnostics++){
+    GmlRender *render=(GmlRender*)calloc(1,sizeof *render);
+    FakeDevice fake={0};
+    GmlRenderDeviceServices device=service(&fake);
+    GmlRenderApplicationWriteView view={0};
+    GmlRenderJournalMetrics before={0},after={0};
+    GmlRenderDispatchMetrics dispatch={0};
+    uint32_t completed[16];
+    CHECK(render && gml_render_application_surface_ensure_owned(render,4,4));
+    render->atlas=(GmlAtlas*)calloc(1,sizeof *render->atlas);
+    render->tpag=(GmlTpag*)calloc(1,sizeof *render->tpag);
+    render->spr=(GmlSprite*)calloc(2,sizeof *render->spr);
+    CHECK(render->atlas && render->tpag && render->spr);
+    render->n_atlas=render->n_tpag=1;render->n_spr=2;
+    render->atlas[0].px=(uint8_t*)malloc(sizeof rgba);
+    render->spr[1].frame=(int*)calloc(1,sizeof(int));
+    CHECK(render->atlas[0].px && render->spr[1].frame);
+    memcpy(render->atlas[0].px,rgba,sizeof rgba);
+    render->atlas[0].w=render->atlas[0].h=2;
+    render->tpag[0].sw=render->tpag[0].sh=2;
+    render->tpag[0].tw=render->tpag[0].th=2;
+    render->tpag[0].bw=render->tpag[0].bh=2;
+    render->spr[1].w=render->spr[1].h=2;render->spr[1].n_frames=1;
+    render->classic=classic;render->active_shader=-1;render->color_write_mask=15u;
+    gml_render_dispatch_diagnostics_enable(render,diagnostics);
+    gml_render_bind_device(render,&device);
+    CHECK(gml_render_begin_resident_owned_application(render,0.0,0.0,0));
+    gml_render_set_pending_fill(render,0xFF102030u);
+    gml_render_resource_journal_metrics(render->app_surface_resource,&before);
+    /* Empty and invalid resources have no CPU raster to order after the prefix. */
+    const int empty_ids[3]={0,-1,2};
+    for(unsigned index=0;index<3u;index++){
+      gml_draw_sprite_ext(render,empty_ids[index],0,128.0,237.0,2.0,2.0,0.0,
+                          0xFFFFFFu,1.0);
+      gml_render_resource_journal_metrics(render->app_surface_resource,&after);
+      CHECK(render->resident_application_pass && render->pending_fill &&
+            !fake.submits && !fake.readbacks &&
+            after.logical_version==before.logical_version &&
+            after.cpu_replays==before.cpu_replays);
+    }
+    gml_draw_sprite_ext(render,1,0,1.0,1.0,1.0,1.0,0.0,0xFFFFFFu,1.0);
+    CHECK(render->resident_application_pass);
+    int submits=fake.submits;
+    gml_render_resource_journal_metrics(render->app_surface_resource,&before);
+    gml_draw_sprite_ext(render,0,0,128.0,237.0,2.0,2.0,0.0,0xFFFFFFu,1.0);
+    gml_render_resource_journal_metrics(render->app_surface_resource,&after);
+    CHECK(render->resident_application_pass && fake.submits==submits &&
+          !fake.readbacks && after.logical_version==before.logical_version);
+    CHECK(render->resident_application_pass && gml_render_scene_submit_pending(render));
+    CHECK(gml_render_dispatch_metrics(render,&dispatch) &&
+          dispatch.gpu[GML_RENDER_SCENE_SPRITE]==(uint64_t)diagnostics &&
+          !dispatch.failed && !dispatch.unclassified && !dispatch.overflow);
+    for(unsigned family=0;family<GML_RENDER_SCENE_FAMILY_COUNT;family++)
+      for(unsigned reason=0;reason<GML_RENDER_DISPATCH_REASON_COUNT;reason++)
+        CHECK(!dispatch.cpu[family][reason]);
+    /* Explicit observation reconstructs the fake device's exact retained result. */
+    CHECK(gml_render_application_surface_owned_view(render,&view) &&
+          view.pixels[0]==0xFF102030u && view.pixels[5]==0xFFD02010u &&
+          view.pixels[6]==0xFF10D020u && view.pixels[9]==0xFF2010D0u &&
+          view.pixels[10]==0xFFC0B0A0u && !fake.readbacks);
+    memcpy(completed,view.pixels,sizeof completed);
+    CHECK(gml_render_begin_owned_application(render,0.0,0.0,0));
+    gml_render_set_pending_fill(render,0xFF102030u);
+    for(unsigned index=0;index<3u;index++)
+      gml_draw_sprite_ext(render,empty_ids[index],0,128.0,237.0,2.0,2.0,0.0,
+                          0xFFFFFFu,1.0);
+    gml_draw_sprite_ext(render,1,0,1.0,1.0,1.0,1.0,0.0,0xFFFFFFu,1.0);
+    gml_render_flush_pending_fill(render);
+    CHECK(!memcmp(completed,render->app_surface_owned,sizeof completed));
+    gml_render_free(render);free(render);
+  }
+  return 1;
+}
+
 static int resident_application_sprite_cpu_fallback(void){
   GmlRender *render=(GmlRender*)calloc(1,sizeof *render);
   GmlRenderDeviceServices device;
@@ -8544,6 +8623,7 @@ int main(void){
   passed+=resident_outline_coverage_public_order();
   passed+=resident_atlas_uv_refusal_preserves_queued_prefix();
   passed+=resident_application_sprite_cpu_fallback();
+  passed+=resident_empty_sprite_preserves_queued_draws();
   passed+=resident_zero_alpha_sprite_part_noop();
   passed+=resident_clipped_filtered_background_part_noop();
   passed+=resident_background_and_tile_cpu_barriers();
@@ -8602,6 +8682,6 @@ int main(void){
   passed+=source_free_primitive_rect_replay();
   passed+=stretched_float_exact_replay();
   passed+=filtered_font_exact_recovery();
-  printf("render resource cases: passed=%d failed=%d\n",passed,121-passed);
-  return passed==121?EXIT_SUCCESS:EXIT_FAILURE;
+  printf("render resource cases: passed=%d failed=%d\n",passed,122-passed);
+  return passed==122?EXIT_SUCCESS:EXIT_FAILURE;
 }
