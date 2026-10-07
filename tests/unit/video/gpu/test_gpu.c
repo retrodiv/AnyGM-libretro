@@ -1043,7 +1043,7 @@ static int scene_hardware_filtered_batch_case(unsigned kind){
   return 1;
 }
 
-static int scene_particle_line_batch_case(void){
+static int scene_source_free_alpha_batch_case(unsigned kind){
   for(unsigned variant=0;variant<7u;variant++){
     enum { LINES=2049 };
     GmlRenderDrawOp *ops=(GmlRenderDrawOp*)calloc(LINES+1u,sizeof *ops);
@@ -1057,10 +1057,12 @@ static int scene_particle_line_batch_case(void){
     gml_gpu_device_services(gpu,&device);
     ops[0].opcode=GML_RENDER_OP_CLEAR;
     ops[0].target=(GmlRenderTargetRef){
-      .image={GML_RENDER_RESOURCE_APPLICATION,141u,1u,2u},.storage_version=1u,
+      .image={kind==GML_RENDER_PRIMITIVE_CLASSIC_ALPHA_RECT
+                ?GML_RENDER_RESOURCE_SCREEN:GML_RENDER_RESOURCE_APPLICATION,141u,1u,2u},.storage_version=1u,
       .width=96u,.height=48u,.pixel_format=GML_RENDER_PIXEL_ARGB8888,
       .region={0,0,96u,48u}};
-    ops[0].payload.clear_colour=0x49273859u;
+    ops[0].payload.clear_colour=kind==GML_RENDER_PRIMITIVE_CLASSIC_ALPHA_RECT
+      ?0xFF273859u:0x49273859u;
     for(unsigned line=0;line<LINES;line++){
       ops[line+1u]=ops[0];
       ops[line+1u].opcode=GML_RENDER_OP_COLOURED_PRIMITIVE;
@@ -1068,10 +1070,10 @@ static int scene_particle_line_batch_case(void){
       ops[line+1u].reconstruction_mode=GML_RENDER_DEVICE_CHECKPOINT;
       ops[line+1u].target.image.content_version=3u+line;
       ops[line+1u].payload.primitive=(GmlRenderPrimitiveRect){
-        .kind=GML_RENDER_PRIMITIVE_PARTICLE_LINE,.region={0,0,96u,48u},
+        .kind=kind,.region={0,0,96u,48u},
         .colour=0xFF7193B5u,.centre_x=48.25,.centre_y=23.75,
         .scale_x=1.25,.scale_y=0.5,.angle=17,.alpha=0.375,
-        .interpolate=line%2u,.alpha_blend=1u};
+        .interpolate=kind==GML_RENDER_PRIMITIVE_PARTICLE_LINE?line%2u:0u,.alpha_blend=1u};
     }
     if(variant==2u) ops[LINES].payload.primitive.alpha=NAN;
     if(variant==3u) ops[LINES].payload.primitive.kind=9u;
@@ -1080,7 +1082,7 @@ static int scene_particle_line_batch_case(void){
     if(variant==6u) ops[LINES].payload.primitive.alpha_blend=0u;
     GmlRenderDrawBatch batch={ops,LINES+1u,NULL,0u};
     GmlRenderExecutionResult result=device.submit(device.context,&batch);
-    if(variant && variant!=6u){
+    if(variant && (variant!=6u || kind==GML_RENDER_PRIMITIVE_CLASSIC_ALPHA_RECT)){
       REQUIRE(result.status==GML_RENDER_EXEC_UNSUPPORTED && !result.accepted_prefix &&
               !anygm_test_graphics_clear_calls() && !anygm_test_graphics_scene_draw_calls(),
               "particle refusal is transactional before its clear prefix");
@@ -1100,6 +1102,14 @@ static int scene_particle_line_batch_case(void){
     gml_gpu_destroy(gpu,1); free(ops);
   }
   return 1;
+}
+
+static int scene_particle_line_batch_case(void){
+  return scene_source_free_alpha_batch_case(GML_RENDER_PRIMITIVE_PARTICLE_LINE);
+}
+
+static int scene_classic_alpha_rect_batch_case(void){
+  return scene_source_free_alpha_batch_case(GML_RENDER_PRIMITIVE_CLASSIC_ALPHA_RECT);
 }
 
 static int scene_hardware_additive_batch_case(void){
@@ -3451,6 +3461,7 @@ int main(int argc,char **argv){
     {"scene_content_source_orientation",scene_content_source_orientation_case},
     {"scene_resident_batch",scene_resident_batch_case},
     {"scene_particle_line_batch",scene_particle_line_batch_case},
+    {"scene_classic_alpha_rect_batch",scene_classic_alpha_rect_batch_case},
     {"scene_hardware_additive_batch",scene_hardware_additive_batch_case},
     {"scene_hardware_background_batch",scene_hardware_background_batch_case},
     {"scene_hardware_combined_batch",scene_hardware_combined_batch_case},

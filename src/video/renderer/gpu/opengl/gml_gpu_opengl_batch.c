@@ -454,8 +454,9 @@ static int scene_preflight(GmlGpuBackend *backend,const GmlRenderDrawBatch *batc
       continue;
     }
     if(op->opcode==GML_RENDER_OP_COLOURED_PRIMITIVE){
-      if(op->payload.primitive.kind==GML_RENDER_PRIMITIVE_PARTICLE_LINE){
-        if(!gml_render_particle_line_valid(op) ||
+      if(op->payload.primitive.kind==GML_RENDER_PRIMITIVE_PARTICLE_LINE ||
+         op->payload.primitive.kind==GML_RENDER_PRIMITIVE_CLASSIC_ALPHA_RECT){
+        if((!gml_render_particle_line_valid(op) && !gml_render_classic_alpha_rect_valid(op)) ||
            (op->payload.primitive.alpha_blend &&
             (!backend->gl.BlendFuncSeparate || !backend->gl.BlendEquationSeparate)) ||
            (!existing_target(backend,target) &&
@@ -1415,9 +1416,12 @@ GmlRenderExecutionResult gml_gpu_opengl_scene_submit(GmlGpuBackend *backend,
     GlSceneImage *target;
     int particle=op->opcode==GML_RENDER_OP_COLOURED_PRIMITIVE &&
       op->payload.primitive.kind==GML_RENDER_PRIMITIVE_PARTICLE_LINE;
-    if(pending_count && (particle
+    int alpha_rect=op->opcode==GML_RENDER_OP_COLOURED_PRIMITIVE &&
+      op->payload.primitive.kind==GML_RENDER_PRIMITIVE_CLASSIC_ALPHA_RECT;
+    uint32_t primitive_filter=particle?28u:30u;
+    if(pending_count && (particle || alpha_rect
        ? !active_target || !same_logical(active_target->ref,op->target.image) ||
-         pending_count==GL_SCENE_MAX_QUADS || pending_filter!=28u ||
+         pending_count==GL_SCENE_MAX_QUADS || pending_filter!=primitive_filter ||
          pending_blend!=(int)op->payload.primitive.alpha_blend
        : (op->opcode!=GML_RENDER_OP_TEXTURED_QUAD ||
        !active_target || !same_logical(active_target->ref,op->target.image) ||
@@ -1467,7 +1471,7 @@ GmlRenderExecutionResult gml_gpu_opengl_scene_submit(GmlGpuBackend *backend,
       continue;
     }
     if(op->opcode==GML_RENDER_OP_COLOURED_PRIMITIVE){
-      if(particle){
+      if(particle || alpha_rect){
         const GmlRenderPrimitiveRect *p=&op->payload.primitive;
         static const unsigned corners[6]={0,1,2,0,2,3};
         double rad=p->angle*3.14159265358979323846/180.0;
@@ -1488,7 +1492,8 @@ GmlRenderExecutionResult gml_gpu_opengl_scene_submit(GmlGpuBackend *backend,
           v[16]=(float)p->scale_x; v[17]=(float)p->scale_y;
           v[21]=(float)p->interpolate; v[22]=(float)p->alpha_blend;
         }
-        pending_source=NULL; pending_filter=28u; pending_blend=(int)p->alpha_blend;
+        pending_source=NULL; pending_filter=primitive_filter; pending_blend=(int)p->alpha_blend;
+        if(alpha_rect) pending_write_mask=15u;
         pending_count++;
         target->valid=1; target->rendered_origin=1;
         continue;

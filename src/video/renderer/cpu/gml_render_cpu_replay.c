@@ -9,6 +9,7 @@
 #include "gml_render_cpu_blit_internal.h"
 #include "gml_render_cpu_blit.h"
 #include "gml_render_cpu_surfaces.h"
+#include "gml_render_cpu_primitives.h"
 #include "gml_particle.h"
 
 #include <limits.h>
@@ -300,6 +301,7 @@ int gml_render_cpu_replay_one(uint32_t *target,uint32_t width,uint32_t height,
      operation->target.height!=height ||
      (operation->source_count && (!source || !source->bytes)) ||
      (!gml_render_particle_line_valid(operation) &&
+      !gml_render_classic_alpha_rect_valid(operation) &&
       !gml_render_cpu_replay_eligible(operation,state,source))) return 0;
   if(operation->opcode==GML_RENDER_OP_CLEAR){
     gml_render_cpu_backend_fill_xrgb(target,(int)((size_t)width*height),
@@ -308,6 +310,21 @@ int gml_render_cpu_replay_one(uint32_t *target,uint32_t width,uint32_t height,
     return 1;
   }
   if(operation->opcode==GML_RENDER_OP_COLOURED_PRIMITIVE){
+    if(operation->payload.primitive.kind==GML_RENDER_PRIMITIVE_CLASSIC_ALPHA_RECT){
+      const GmlRenderPrimitiveRect *p=&operation->payload.primitive;
+      GmlRender *render=(GmlRender*)calloc(1,sizeof *render);
+      if(!render) return 0;
+      render->fb=render->base_fb=target;
+      render->fbw=(int)width; render->fbh=(int)height;
+      render->classic=1; render->alphablend=1; render->active_shader=-1;
+      render->blend_equation=render->blend_equation_alpha=1;
+      render->alpha=p->alpha; render->color_write_mask=15u;
+      uint32_t colour=((p->colour&255u)<<16)|(p->colour&0xFF00u)|((p->colour>>16)&255u);
+      gml_render_cpu_rectangle(render,p->region.x,p->region.y,
+        p->region.x+(int)p->region.width-1,p->region.y+(int)p->region.height-1,colour,0);
+      free(render);
+      return 1;
+    }
     if(operation->payload.primitive.kind==GML_RENDER_PRIMITIVE_PARTICLE_LINE){
       const GmlRenderPrimitiveRect *p=&operation->payload.primitive;
       uint32_t colour=((p->colour&255u)<<16)|(p->colour&0xFF00u)|((p->colour>>16)&255u);

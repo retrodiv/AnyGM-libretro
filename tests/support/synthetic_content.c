@@ -1725,7 +1725,7 @@ static int synthetic_framebuffer_content_create(
   int classic_transition=gpu_sprite==15;
   int cursor_frame=gpu_sprite==16;
   int moving_sound=gpu_sprite==17 || gpu_sprite==18 || gpu_sprite==20;
-  int single_classic_view=gpu_sprite>=21 && gpu_sprite<=36;
+  int single_classic_view=gpu_sprite>=21 && gpu_sprite<=37;
   char create[192],step[192],draw[192],draw_begin[192],draw_gui[192];
   snprintf(create,sizeof create,"%s/retain-create.gml",fixture->directory);
   snprintf(step,sizeof step,"%s/retain-step.gml",fixture->directory);
@@ -1815,6 +1815,14 @@ static int synthetic_framebuffer_content_create(
        gpu_sprite==31?
        "draw_sprite_ext(spr_fixture,0,48,16,1,1,0,c_white,0);\n"
        "draw_sprite(spr_fixture,0,48,16);\n"
+       "draw_set_color(c_white); draw_text(8,30,\"GPU\");\n":
+       gpu_sprite==37?
+       "draw_sprite(spr_fixture,0,48,16);\n"
+       "draw_set_color(c_black); draw_set_alpha(0.2); draw_rectangle(0,0,65,49,false);\n"
+       "draw_set_alpha(0.4); draw_rectangle(30,20,20,12,false);\n"
+       "draw_set_color(c_blue); draw_set_alpha(0.6000000000000001); draw_rectangle(-4,-3,7,8,false);\n"
+       "draw_set_color(c_red); draw_set_alpha(0.8); draw_rectangle(12,4,12,4,false);\n"
+       "draw_set_alpha(1); draw_sprite(spr_fixture,0,24,8);\n"
        "draw_set_color(c_white); draw_text(8,30,\"GPU\");\n":
        gpu_sprite==32?
        "draw_set_color(c_black); draw_rectangle(0,0,65,49,false);\n"
@@ -2209,6 +2217,9 @@ int anygm_synthetic_classic_single_view_zero_alpha_content_create(AnygmSynthetic
 
 int anygm_synthetic_classic_single_view_rectangle_content_create(AnygmSyntheticContent *fixture){
   return synthetic_framebuffer_content_create(fixture,0,0,1,32);
+}
+int anygm_synthetic_classic_single_view_alpha_rectangle_content_create(AnygmSyntheticContent *fixture){
+  return synthetic_framebuffer_content_create(fixture,0,0,1,37);
 }
 int anygm_synthetic_classic_single_view_binary_content_create(AnygmSyntheticContent *fixture){
   return synthetic_framebuffer_content_create(fixture,0,0,1,33);

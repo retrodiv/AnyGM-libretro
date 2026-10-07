@@ -297,7 +297,8 @@ typedef struct GmlRenderPrimitiveRect {
   uint32_t interpolate,alpha_blend;
 } GmlRenderPrimitiveRect;
 
-enum { GML_RENDER_PRIMITIVE_FLAT=0, GML_RENDER_PRIMITIVE_PARTICLE_LINE=1 };
+enum { GML_RENDER_PRIMITIVE_FLAT=0, GML_RENDER_PRIMITIVE_PARTICLE_LINE=1,
+       GML_RENDER_PRIMITIVE_CLASSIC_ALPHA_RECT=2 };
 
 typedef enum GmlRenderLayerEffectKind {
   GML_RENDER_LAYER_EFFECT_TINT=1,
@@ -355,6 +356,7 @@ typedef struct GmlRenderDrawOp {
 } GmlRenderDrawOp;
 
 int gml_render_particle_line_valid(const GmlRenderDrawOp *operation);
+int gml_render_classic_alpha_rect_valid(const GmlRenderDrawOp *operation);
 
 /* Snapshots and per-operation source arrays are immutable for this submission. The caller owns
  * every referenced array until submit returns; a reconstruction record must copy or pin anything

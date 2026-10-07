@@ -60,6 +60,7 @@ int main(int argc,char **argv){
   int classic_filter_transition=argc==2 && !strcmp(argv[1],"--keep-classic-single-view-filter-transition");
   int classic_partial_alpha=argc==2 && !strcmp(argv[1],"--keep-classic-single-view-partial-alpha");
   int classic_rectangle=argc==2 && !strcmp(argv[1],"--keep-classic-single-view-rectangle");
+  int classic_alpha_rectangle=argc==2 && !strcmp(argv[1],"--keep-classic-single-view-alpha-rectangle");
   int classic_binary=argc==2 && !strcmp(argv[1],"--keep-classic-single-view-binary");
   int classic_source_alpha=argc==2 && !strcmp(argv[1],"--keep-classic-single-view-source-alpha");
   int classic_zero_alpha_part=argc==2 && !strcmp(argv[1],"--keep-classic-single-view-zero-alpha-part");
@@ -87,6 +88,7 @@ int main(int argc,char **argv){
        classic_filter_transition?anygm_synthetic_classic_single_view_filter_transition_content_create(&fixture):
        classic_partial_alpha?anygm_synthetic_classic_single_view_partial_alpha_content_create(&fixture):
        classic_rectangle?anygm_synthetic_classic_single_view_rectangle_content_create(&fixture):
+       classic_alpha_rectangle?anygm_synthetic_classic_single_view_alpha_rectangle_content_create(&fixture):
        classic_binary?anygm_synthetic_classic_single_view_binary_content_create(&fixture):
        classic_source_alpha?anygm_synthetic_classic_single_view_source_alpha_content_create(&fixture):
        classic_zero_alpha_part?anygm_synthetic_classic_single_view_zero_alpha_part_content_create(&fixture):
@@ -114,7 +116,7 @@ int main(int argc,char **argv){
      crt_native || crt_scaled || host_box || ended_frame || cursor_frame ||
      classic_redraw || classic_viewless || classic_single_view || classic_geometry ||
      classic_read || classic_cpu_gui || classic_filter_transition || classic_partial_alpha ||
-     classic_rectangle || classic_binary || classic_source_alpha || classic_zero_alpha_part ||
+     classic_rectangle || classic_alpha_rectangle || classic_binary || classic_source_alpha || classic_zero_alpha_part ||
      classic_software3d ||
      classic_transition || large_moving_sound){
     puts(fixture.path);
@@ -141,6 +143,7 @@ int main(int argc,char **argv){
           "--keep-classic-single-view-read|--keep-classic-single-view-cpu-gui|"
           "--keep-classic-single-view-filter-transition|--keep-classic-single-view-partial-alpha|"
           "--keep-classic-single-view-rectangle|--keep-classic-single-view-binary|"
+          "--keep-classic-single-view-alpha-rectangle|"
           "--keep-classic-single-view-source-alpha|"
           "--keep-classic-single-view-zero-alpha-part|"
           "--keep-classic-single-view-software3d|"

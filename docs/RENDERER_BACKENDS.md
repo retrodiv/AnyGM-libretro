@@ -443,6 +443,17 @@ capture barrier comparison is
 `tests/unit/video/renderer/test_render_resources.c::resident_layer_filter_capture_barrier`.
 Neither path establishes zero-transfer effect composition.
 
+`R03-PRIM-CLASSIC-ALPHA-RECT` is `TOLERANCE±2`: filled, uniform-colour rectangles
+with finite partial alpha on the known-opaque borrowed early-classic SCREEN retain
+their inclusive CPU raster bounds and use batched, source-free fixed source-over.
+The owning-context observation witness is required. Numbered targets, unknown or
+nonopaque destination alpha, outlines, gradients and other blend states retain CPU
+fallback. No destination predecessor, pixel read or float-arithmetic emulation is
+required during drawing; observations preserve the actual produced image. Neutral
+controls are `resident_classic_alpha_rectangle_scope` and
+`scene_classic_alpha_rect_batch`; the latter checks the quad-capacity boundary and
+transactional rejection. CPU fallback reuses the existing rectangle raster body.
+
 Typed primitive entries consume raster coordinates already resolved by the builtin
 view mapping; `common/gml_render_primitives.c::resident_flat_eligible` must not
 apply or reject them based on the current world scale. The flat regions, filled

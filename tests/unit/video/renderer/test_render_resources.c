@@ -3315,6 +3315,52 @@ static int resident_classic_rectangle_scope(void){
   return 1;
 }
 
+static int resident_classic_alpha_rectangle_scope(void){
+  static const double alphas[]={0.2,0.4,0.6000000000000001,0.8,
+                                 0.07692307692307693,0.00392156862745098};
+  for(unsigned variant=0;variant<sizeof alphas/sizeof alphas[0];variant++){
+    GmlRender *cpu=(GmlRender*)calloc(1,sizeof *cpu);
+    GmlRender *gpu=(GmlRender*)calloc(1,sizeof *gpu);
+    GmlWin content={.classic_version=530};
+    FakeDevice fake={.on_demand=1};
+    GmlRenderDeviceServices device=service(&fake);
+    uint32_t cpu_pixels[64],gpu_pixels[64],replayed[64];
+    device.observe_on_demand=fake_observe_on_demand;
+    CHECK(cpu && gpu && gml_render_init(cpu,NULL)==0 && gml_render_init(gpu,NULL)==0);
+    for(unsigned i=0;i<64u;i++) cpu_pixels[i]=gpu_pixels[i]=replayed[i]=
+      0xFF000000u|((i*9317u)&0xFFFFFFu);
+    cpu->classic=gpu->classic=1;
+    cpu->win=gpu->win=&content;
+    gml_render_begin(cpu,cpu_pixels,8,8,0.0,0.0);
+    gml_render_application_surface_bind(gpu,gpu_pixels,8,8,1);
+    gml_render_bind_device(gpu,&device);
+    CHECK(gml_render_begin_resident_base(gpu,gpu_pixels,8,8,0.0,0.0));
+    gpu->fb_opaque_known=gpu->fb_all_opaque=1;
+    cpu->alpha=gpu->alpha=alphas[variant];
+    gml_render_primitive_rectangle(cpu,6,5,-2,1,0x345678u,0);
+    gml_render_primitive_rectangle(gpu,6,5,-2,1,0x345678u,0);
+    CHECK(gpu->resident_application_pass && !fake.submits && !fake.readbacks);
+    CHECK(gml_render_application_scene_flush(gpu) && fake.submits==1 && !fake.readbacks);
+    CHECK(gml_render_classic_alpha_rect_valid(&fake.last_primitive));
+    CHECK(gml_render_cpu_replay_one(replayed,8u,8u,&fake.last_primitive,NULL,NULL));
+    CHECK(!memcmp(cpu_pixels,replayed,sizeof replayed));
+    for(unsigned rectangle=0;rectangle<3u;rectangle++)
+      gml_render_primitive_rectangle(gpu,rectangle,0,rectangle+1,2,0x56789au,0);
+    CHECK(gpu->resident_application_pass && fake.submits==1 && !fake.readbacks);
+    CHECK(gml_render_application_scene_flush(gpu) && fake.submits==2 &&
+          fake.last_batch_operations==3u && !fake.readbacks);
+    GmlRenderDrawOp malformed=fake.last_primitive;
+    malformed.payload.primitive.alpha=NAN;
+    CHECK(!gml_render_classic_alpha_rect_valid(&malformed) &&
+          !gml_render_cpu_replay_one(replayed,8u,8u,&malformed,NULL,NULL));
+    malformed=fake.last_primitive;
+    malformed.target.image.resource_class=GML_RENDER_RESOURCE_SURFACE;
+    CHECK(!gml_render_classic_alpha_rect_valid(&malformed));
+    gml_render_free(cpu); gml_render_free(gpu); free(cpu); free(gpu);
+  }
+  return 1;
+}
+
 static int completed_screen_reader_and_writer(void){
   GmlRender *render=(GmlRender*)calloc(1,sizeof *render);
   uint32_t pixels[12];
@@ -8475,6 +8521,7 @@ int main(void){
   passed+=resident_numbered_layer_effect_target();
   passed+=resident_flat_primitive_public_order();
   passed+=resident_classic_rectangle_scope();
+  passed+=resident_classic_alpha_rectangle_scope();
   passed+=resident_viewless_base_canvas_order();
   passed+=completed_screen_reader_and_writer();
   passed+=conditional_screen_recovery_authority();
@@ -8555,6 +8602,6 @@ int main(void){
   passed+=source_free_primitive_rect_replay();
   passed+=stretched_float_exact_replay();
   passed+=filtered_font_exact_recovery();
-  printf("render resource cases: passed=%d failed=%d\n",passed,120-passed);
-  return passed==120?EXIT_SUCCESS:EXIT_FAILURE;
+  printf("render resource cases: passed=%d failed=%d\n",passed,121-passed);
+  return passed==121?EXIT_SUCCESS:EXIT_FAILURE;
 }

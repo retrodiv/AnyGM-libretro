@@ -219,7 +219,8 @@ void gml_render_lose_volatile_device(GmlRender *r){
 int gml_render_application_scene_enqueue_primitive(GmlRender *r,
                                                    const GmlRenderDrawOp *operation){
   if(!r || !r->resident_application_pass || !gml_render_device(r) ||
-     !gml_render_particle_line_valid(operation)) return 0;
+     (!gml_render_particle_line_valid(operation) &&
+      !gml_render_classic_alpha_rect_valid(operation))) return 0;
   GmlRenderResource *target=gml_render_scene_target_resource_ensure(r);
   if(!target) return 0;
   GmlRenderPendingSceneBatch *pending=r->pending_scene_batch;
