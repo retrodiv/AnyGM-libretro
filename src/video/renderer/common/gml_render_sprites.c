@@ -229,6 +229,7 @@ static int resident_atlas_crop_from_page(GmlRender *r,GmlTpag *page,
    * source-over policy's target-alpha boundary and checkpoints the GPU result. */
   if(!r || !page || !r->resident_application_pass ||
      (r->classic && ((family!=GML_RENDER_SCENE_SPRITE &&
+                      family!=GML_RENDER_SCENE_BACKGROUND &&
                       family!=GML_RENDER_SCENE_TEXT) ||
                      (family==GML_RENDER_SCENE_TEXT &&
                       anygm_policy_classic_modern_presentation(r->win)) ||
@@ -274,6 +275,16 @@ static int resident_atlas_crop_from_page(GmlRender *r,GmlTpag *page,
      (uint64_t)(uint32_t)page->sx+(uint32_t)page->sw>source.width ||
      (uint64_t)(uint32_t)page->sy+(uint32_t)page->sh>source.height) return 0;
   resident_classify_page(page,atlas);
+  if(r->classic && family==GML_RENDER_SCENE_BACKGROUND){
+    /* Classic point backgrounds share the unchanged CPU writer's half-up crop
+     * anchor. Logical trim and repeat periods remain with the background owner. */
+    if(!page->scene_binary_alpha || !isfinite(left) || !isfinite(top) ||
+       fabs(left)>=1000000.0 || fabs(top)>=1000000.0) return 0;
+    left=floor(left+0.5);
+    top=floor(top+0.5);
+    if(left>=r->fbw || top>=r->fbh ||
+       left+(double)crop_width<=0.0 || top+(double)crop_height<=0.0) return 1;
+  }
   if(r->classic &&
      ((family==GML_RENDER_SCENE_TEXT && !page->scene_binary_alpha) ||
       (family==GML_RENDER_SCENE_SPRITE && !page->scene_fully_opaque &&

@@ -293,12 +293,15 @@ int gml_render_application_scene_enqueue(GmlRender *r,const GmlRenderDrawOp *ope
     gml_render_filtered_font_quad_valid(&operation->payload.quad,
                                         operation->target.width,operation->target.height);
   coalescible=source->borrowed_immutable &&
-    (operation->scene_family==GML_RENDER_SCENE_TEXT ||
+    (((operation->scene_family==GML_RENDER_SCENE_TEXT ||
      operation->scene_family==GML_RENDER_SCENE_SPRITE) &&
     (operation->reconstruction_mode==GML_RENDER_DEVICE_CHECKPOINT || exact_filtered_font) &&
     (operation->payload.quad.sampling.filter==GML_RENDER_FILTER_BILINEAR ||
      operation->payload.quad.sampling.filter==GML_RENDER_FILTER_NEAREST_PHASED ||
-     operation->payload.quad.sampling.filter==GML_RENDER_FILTER_NEAREST);
+     operation->payload.quad.sampling.filter==GML_RENDER_FILTER_NEAREST)) ||
+     (operation->scene_family==GML_RENDER_SCENE_BACKGROUND &&
+      operation->reconstruction_mode==GML_RENDER_REPLAY_EXACT &&
+      operation->payload.quad.sampling.filter==GML_RENDER_FILTER_NEAREST));
   pending=r->pending_scene_batch;
   if(pending && pending->count){
     int flush=!pending->source_count || pending->count==GML_SCENE_BATCH_LIMIT ||

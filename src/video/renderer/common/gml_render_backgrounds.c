@@ -394,7 +394,6 @@ static void do_bg_tiled_ext(GmlRender *r, int bg, double x, double y, double xs,
       bg,ti,t->sx,t->sy,t->sw,t->sh,t->tx,t->ty,t->bw,t->bh,t->atlas,
       x,y,xs,ys,htiled,vtiled,alpha);
   if(r->classic){
-    if(!gml_render_resident_application_cpu_barrier(r)) return;
     /* Keep the anchor where the content put it and let the blit apply its nearest-pixel snapping.
      * Truncating here would make the layer follow a different rule from other draws: a parallax
      * position derived from a view that oscillates by a fraction of a pixel can sit on an integer
@@ -411,12 +410,17 @@ static void do_bg_tiled_ext(GmlRender *r, int bg, double x, double y, double xs,
         "[bg-anchor] def=%d cam=(%.3f,%.3f) anchor=(%.3f,%.3f) start=(%.3f,%.3f)\n",
         bg,r->cam_x,r->cam_y,anchor_x,anchor_y,x0,y0);
     if(gml_d3_is_active(r)){
+      if(!gml_render_resident_application_cpu_barrier(r)) return;
       for(double yy=y0; yy<yend; yy+=logical_h) for(double xx=x0; xx<xend; xx+=logical_w)
         gml_d3_draw_background_2d(r,bg,xx+r->cam_x,yy+r->cam_y,xs,ys,color,alpha);
       return;
     }
     for(double yy=y0; yy<yend; yy+=logical_h)
       for(double xx=x0; xx<xend; xx+=logical_w){
+        if((color&0xFFFFFFu)==0xFFFFFFu && alpha==1.0 && !r->interp &&
+           gml_render_resident_atlas_page(r,ti,xx+t->tx*xs,yy+t->ty*ys,xs,ys,
+                                          GML_RENDER_SCENE_BACKGROUND)) continue;
+        if(!gml_render_resident_application_cpu_barrier(r)) return;
         if(vtiled && logical_h<r->fbh){
           GmlRenderCpuBackendDispatchScope cell_scope;
           gml_render_cpu_backend_dispatch_begin(r,&cell_scope,GML_RENDER_SCENE_BACKGROUND,0);

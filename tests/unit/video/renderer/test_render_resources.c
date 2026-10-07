@@ -7619,6 +7619,69 @@ static int resident_classic_nonphase_sprite_targets(void){
   return 1;
 }
 
+static int resident_classic_unit_background_targets(void){
+  const double positions[4][2]={{0.0,0.0},{0.5,-0.5},{-1.25,2.75},{-24.5,24.5}};
+  for(unsigned generation=0;generation<2u;generation++)
+  for(unsigned numbered=0;numbered<2u;numbered++)
+  for(unsigned binary=0;binary<2u;binary++)
+  for(unsigned excluded=0;excluded<6u;excluded++)
+  for(unsigned placement=0;placement<(excluded?1u:4u);placement++)
+  for(unsigned axes=0;axes<(excluded?1u:4u);axes++){
+    GmlRender *render=calloc(1,sizeof *render);
+    GmlWin content={.classic_version=generation?810:800};
+    FakeDevice fake={0};
+    GmlRenderDeviceServices device=service(&fake);
+    uint32_t base[64]={0},reference[64];
+    const uint32_t *observed=NULL;
+    uint8_t rgba[16]={208,32,16,255,16,208,32,255,32,16,208,255,192,176,160,255};
+    uint32_t clear=numbered?0x40123456u:0xFF123456u;
+    double xs=excluded==2u?1.5:1.0,alpha=excluded==4u?0.5:1.0;
+    uint32_t colour=excluded==3u?0x80C0E0u:0xFFFFFFu;
+    CHECK(render && gml_render_init(render,NULL)==0);
+    render->win=&content;render->classic=1;render->interp=excluded==1u;
+    free(render->atlas[0].px);
+    memset(render->atlas,0,sizeof *render->atlas);
+    render->atlas[0].w=render->atlas[0].h=2;
+    render->atlas[0].px=malloc(sizeof rgba);
+    render->tpag=calloc(1,sizeof *render->tpag);
+    render->bg=calloc(1,sizeof *render->bg);
+    CHECK(render->atlas[0].px && render->tpag && render->bg);
+    if(binary) rgba[7]=0;
+    if(excluded==5u) rgba[7]=128;
+    memcpy(render->atlas[0].px,rgba,sizeof rgba);
+    render->n_tpag=render->n_bg=1;
+    render->tpag[0]=(GmlTpag){.sw=2,.sh=2,.tw=2,.th=2,.bw=4,.bh=4,.tx=1,.ty=1};
+    gml_render_begin(render,base,8,8,0.25,0.75);
+    int id=numbered?gml_surface_create(render,8,8):0;
+    if(numbered) CHECK(id>0 && gml_surface_set_target(render,id));
+    gml_render_set_pending_fill(render,clear);
+    gml_draw_background_tiled_ext(render,0,positions[placement][0],positions[placement][1],
+                                  xs,1.0,colour,alpha,axes&1u,axes&2u);
+    gml_render_flush_pending_fill(render);
+    memcpy(reference,render->fb,sizeof reference);
+    if(numbered) gml_surface_reset_target(render);
+    gml_render_application_surface_bind(render,base,8,8,1);
+    gml_render_bind_device(render,&device);
+    CHECK(gml_render_begin_resident_base(render,base,8,8,0.25,0.75));
+    if(numbered) CHECK(gml_surface_set_target(render,id));
+    gml_render_set_pending_fill(render,clear);
+    gml_draw_background_tiled_ext(render,0,positions[placement][0],positions[placement][1],
+                                  xs,1.0,colour,alpha,axes&1u,axes&2u);
+    CHECK(render->resident_application_pass==!excluded && !fake.readbacks);
+    if(excluded){
+      CHECK(!memcmp(render->fb,reference,sizeof reference));
+    }else{
+      CHECK(gml_render_scene_submit_pending(render));
+      CHECK(fake.submits<=2);
+      GmlRenderResource *resource=gml_render_scene_target_resource_ensure(render);
+      CHECK(resource && gml_render_resource_acquire_cpu_read(resource,&observed) &&
+            !memcmp(observed,reference,sizeof reference) && !fake.readbacks);
+    }
+    gml_render_free(render);free(render);
+  }
+  return 1;
+}
+
 static int resident_classic_retained_numbered_target(void){
   for(unsigned generation=0;generation<2u;generation++){
     GmlRender *render=calloc(1,sizeof *render);
@@ -8789,6 +8852,7 @@ int main(void){
   passed+=resident_binary_atlas_sprite_gpu();
   passed+=resident_integer_scaled_atlas_sprite_gpu();
   passed+=resident_classic_nonphase_sprite_targets();
+  passed+=resident_classic_unit_background_targets();
   passed+=resident_classic_retained_numbered_target();
   passed+=resident_firstgen_nearest_magnification_authority();
   passed+=resident_integer_world_sprite();
@@ -8810,6 +8874,6 @@ int main(void){
   passed+=source_free_primitive_rect_replay();
   passed+=stretched_float_exact_replay();
   passed+=filtered_font_exact_recovery();
-  printf("render resource cases: passed=%d failed=%d\n",passed,124-passed);
-  return passed==124?EXIT_SUCCESS:EXIT_FAILURE;
+  printf("render resource cases: passed=%d failed=%d\n",passed,125-passed);
+  return passed==125?EXIT_SUCCESS:EXIT_FAILURE;
 }
