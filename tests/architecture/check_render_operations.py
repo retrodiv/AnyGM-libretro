@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import re
 from pathlib import Path
 
@@ -96,6 +97,164 @@ EXECUTOR_ROW = re.compile(
     r'GML_RENDER_(CPU|GPU)_OPERATION\(([A-Z][A-Z0-9_]*), '
     r'(supported|fallback|planned), ([a-z][a-z0-9_]*), "([^"\n]+)"\)'
 )
+
+# These are actual typed work admission ports, not a successful execution claim.
+# Stop traversal here: following resource replay would make CPU kernels appear
+# GPU-capable merely because the resource owner also implements device submission.
+DISPATCH_PORTS = {
+    "gml_render_application_scene_enqueue",
+    "gml_render_application_scene_enqueue_primitive",
+    "gml_render_application_scene_submit",
+    "gml_render_surface_scene_submit",
+    "gml_render_resource_submit",
+}
+DISPATCH_PREFIXES = (
+    "gml_draw_", "gml_render_primitive_", "gml_software3d_draw_",
+    "gml_d3_draw_", "gml_surface_copy", "gml_render_try_", "gml_render_resident_", "resident_",
+)
+DISPATCH_CPU_BOUNDARIES = {
+    "gml_render_maybe_prepare_draw", "gml_render_prepare_draw",
+    "gml_render_flush_pending_fill", "gml_render_application_scene_flush",
+    "gml_render_resident_application_cpu_barrier",
+    "surface_pixels", "surface_pixels_observe", "surface_pixels_access",
+}
+DISPATCH_ADDITIONAL = {
+    "gml_render_layer_rgb_noise", "gml_render_layer_filter_end",
+    "gml_render_compose_resident_underlay", "gml_render_recover_empty_screen",
+    "render_present_first_generation", "render_present_content_shader",
+    "gml_software3d_vertex_submit_buffer", "gml_software3d_model_draw",
+}
+DISPATCH_HELPERS = {
+    "resident_flat_eligible_rule", "resident_flat_eligible", "resident_line_bounds",
+    "resident_classify_page", "resident_identity_screen_gui",
+    "resident_mapped_screen_gui_font", "resident_integer_text_scale",
+    "gml_render_resident_application_cpu_barrier",
+}
+DISPATCH_DEFERRED = {"render_present_first_generation", "render_present_content_shader"}
+DISPATCH_DEVICE_EXTRA = {
+    "gml_gpu_opengl_scene_submit", "gml_gpu_opengl_execute_shader_draw",
+    "gml_gpu_opengl_scene_shader_draw", "gml_gpu_opengl_execute",
+}
+C_FUNCTION = re.compile(
+    r"(?m)^[ \t]*(?:static\s+)?(?:[A-Za-z_]\w*\s+)+\**"
+    r"([A-Za-z_]\w*)\s*\([^;{}]*\)\s*\{"
+)
+C_NONCODE = re.compile(r'/\*.*?\*/|//[^\n]*|"(?:\\.|[^"\\])*"|\'(?:\\.|[^\'\\])*\'', re.S)
+C_TOKENS = re.compile(
+    r'"(?:\\.|[^"\\])*"|\'(?:\\.|[^\'\\])*\'|\w+|'
+    r'>>=|<<=|\.\.\.|\+\+|--|->|<<|>>|<=|>=|==|!=|&&|\|\||'
+    r'\+=|-=|\*=|/=|%=|&=|\|=|\^=|##|[^\s]'
+)
+
+
+def c_function_definitions(raw: str, label: str) -> dict[str, str]:
+    source = C_NONCODE.sub(lambda match: re.sub(r"[^\n]", " ", match[0]), raw)
+    result = {}
+    for match in C_FUNCTION.finditer(source):
+        if match[1] in {"if", "for", "while", "switch"}:
+            continue
+        depth = 1
+        end = match.end()
+        while end < len(source) and depth:
+            depth += (source[end] == "{") - (source[end] == "}")
+            end += 1
+        if depth:
+            raise ValueError(f"{label}: unclosed function {match[1]}")
+        if match[1] in result:
+            raise ValueError(f"{label}::{match[1]}: ambiguous dispatch definition")
+        result[match[1]] = raw[match.start():end].strip()
+    return result
+
+
+def dispatch_functions(root: Path) -> dict[str, str]:
+    """Read C definitions, ignoring braces/calls hidden in strings or comments."""
+    result: dict[str, str] = {}
+    for subtree in (root / "src/video/renderer", root / "src/video/software3d"):
+        for path in sorted(subtree.rglob("*.c")):
+            raw = path.read_text(encoding="utf-8")
+            for symbol, body in c_function_definitions(raw, str(path)).items():
+                result[f"{path.relative_to(root).as_posix()}::{symbol}"] = body
+    return result
+
+
+def dispatch_inventory(functions: dict[str, str]) -> dict[str, tuple[str, str]]:
+    """Discover drawing facades and resident preparators, independently of rows.
+
+    The call graph is deliberately conservative for duplicate private names.
+    It proves only a possible typed submission, never state/variant admission.
+    API adapters and packet/shader variant coverage are separate parity gates.
+    """
+    calls: dict[str, set[str]] = {}
+    for key, body in functions.items():
+        symbol = key.split("::")[1]
+        code = C_NONCODE.sub(" ", body)
+        destinations = set(re.findall(r"\b([A-Za-z_]\w*)\s*\(", code))
+        destinations = {name for name in destinations if name not in DISPATCH_CPU_BOUNDARIES
+                        and "_cpu_" not in name and not name.startswith("gml_render_completed_screen_")}
+        calls.setdefault(symbol, set()).update(destinations)
+    routes = {symbol: symbol for symbol in DISPATCH_PORTS}
+    while True:
+        added = {}
+        for symbol, destinations in calls.items():
+            if symbol not in routes:
+                found = sorted(destinations & routes.keys())
+                if found:
+                    added[symbol] = routes[found[0]]
+        if not added:
+            break
+        routes.update(added)
+    inventory = {}
+    for key, body in functions.items():
+        symbol = key.split("::")[1]
+        device = "/gpu/opengl/" in key and (symbol.startswith("gml_render_gpu_opengl_")
+                                            or symbol in DISPATCH_DEVICE_EXTRA)
+        if symbol.startswith(DISPATCH_PREFIXES) or symbol in DISPATCH_ADDITIONAL or device:
+            uncommented = C_NONCODE.sub(
+                lambda match: " " if match[0].startswith(("/*", "//")) else match[0], body)
+            tokens = C_TOKENS.findall(uncommented)
+            revision = hashlib.sha256(" ".join(tokens).encode()).hexdigest()
+            inventory[key] = (f"DEVICE:{symbol}" if device else routes.get(symbol, "CPU"), revision)
+    return inventory
+
+
+def check_dispatch_inventory(document: str, inventory: dict[str, tuple[str, str]]) -> None:
+    start, end = "<!-- D8-DISPATCH:START -->", "<!-- D8-DISPATCH:END -->"
+    if document.count(start) != 1 or document.count(end) != 1:
+        raise ValueError("D8 dispatch inventory markers are missing or repeated")
+    section = document.split(start)[1].split(end)[0]
+    entries = {}
+    for line in section.splitlines():
+        if not line.startswith("| `src/"):
+            continue
+        fields = [field.strip() for field in line.strip("|").split("|")]
+        if len(fields) != 5 or not all(fields):
+            raise ValueError("D8 dispatch inventory row requires five fields")
+        point, route, status, revision, reason = fields
+        point, route, revision = (value.strip("`") for value in (point, route, revision))
+        if point in entries:
+            raise ValueError(f"{point}: duplicate D8 dispatch row")
+        symbol = point.split("::")[-1]
+        if status not in {"PARTIAL", "DEBT", "HELPER", "DEFERRED", "DEVICE"}:
+            raise ValueError(f"{point}: invalid D8 dispatch status")
+        if status == "HELPER" and symbol not in DISPATCH_HELPERS:
+            raise ValueError(f"{point}: a drawing dispatch cannot be classified as a helper")
+        if status == "DEFERRED" and symbol not in DISPATCH_DEFERRED:
+            raise ValueError(f"{point}: unknown deferred presentation adapter")
+        if (status == "DEVICE") != route.startswith("DEVICE:"):
+            raise ValueError(f"{point}: device executor status disagreement")
+        if (route == "CPU") != (status in {"DEBT", "HELPER", "DEFERRED"}):
+            raise ValueError(f"{point}: CPU debt/GPU admission status disagreement")
+        if not reason.strip() or reason == "Pending":
+            raise ValueError(f"{point}: D8 debt needs a reason")
+        entries[point] = (route, revision)
+    if entries.keys() != inventory.keys():
+        raise ValueError(f"D8 dispatch coverage: missing={sorted(inventory.keys() - entries.keys())}, "
+                         f"extra={sorted(entries.keys() - inventory.keys())}")
+    for point, actual in inventory.items():
+        if entries[point][0] != actual[0]:
+            raise ValueError(f"{point}: D8 GPU route changed; update its debt row")
+        if entries[point][1] != actual[1]:
+            raise ValueError(f"{point}: D8 dispatch body changed; recheck variants and update its row")
 
 
 def rows(path: Path, pattern: re.Pattern[str]) -> dict[str, tuple[str, ...]]:
@@ -255,6 +414,7 @@ def self_test() -> None:
         except ValueError:
             continue
         raise ValueError("render operation negative probe unexpectedly passed")
+    self_test_dispatch_inventory()
     document = BACKEND_MAP.read_text(encoding="utf-8")
     ledger = rows(GPU_TABLE, EXECUTOR_ROW)
     check_repair_map(document, ledger, ROOT)
@@ -317,6 +477,88 @@ def self_test() -> None:
         raise ValueError("R03 repair-map negative probe unexpectedly passed")
 
 
+def self_test_dispatch_inventory() -> None:
+    fixture = '''
+void declared_only(void);
+/* void gml_draw_hidden(void){} */
+static int
+gml_draw_multiline(void){
+  if(ready) { note("} fake_gpu_call(); {"); }
+  else if(other) { note("plain"); }
+  return 1;
+}
+'''
+    parsed = c_function_definitions(fixture, "authored fixture")
+    if set(parsed) != {"gml_draw_multiline"} or "return 1;" not in parsed["gml_draw_multiline"]:
+        raise ValueError("D8 definition reader lost a multiline function or followed non-code")
+    prefix = "src/video/renderer/common/probe.c::"
+    functions = {
+        prefix + "gml_draw_probe": "void gml_draw_probe(void){ cpu_paint(); }",
+        prefix + "gml_draw_gpu_probe":
+            "void gml_draw_gpu_probe(void){ gml_render_application_scene_enqueue(); }",
+        prefix + "cpu_paint": "void cpu_paint(void){ gml_render_maybe_prepare_draw(); }",
+        prefix + "gml_render_maybe_prepare_draw":
+            "void gml_render_maybe_prepare_draw(void){ gml_render_application_scene_enqueue(); }",
+    }
+    inventory = dispatch_inventory(functions)
+    if inventory[prefix + "gml_draw_probe"][0] != "CPU":
+        raise ValueError("D8 CPU preparation falsely credited an earlier GPU prefix")
+    def document_for(entries: dict[str, tuple[str, str]]) -> str:
+        result = ["<!-- D8-DISPATCH:START -->"]
+        for key, (route, revision) in entries.items():
+            status = "DEBT" if route == "CPU" else "PARTIAL"
+            result.append(f"| `{key}` | `{route}` | {status} | `{revision}` | Authored test reason. |")
+        return "\n".join(result + ["<!-- D8-DISPATCH:END -->"])
+    document = document_for(inventory)
+    check_dispatch_inventory(document, inventory)
+    changed = dict(functions)
+    changed[prefix + "gml_draw_probe"] = \
+        "void gml_draw_probe(void){ gml_render_application_scene_enqueue(); }"
+    changed_inventory = dispatch_inventory(changed)
+    # Even refreshing a source digest must not hide CPU debt gaining a GPU route.
+    digest_only = document.replace(inventory[prefix + "gml_draw_probe"][1],
+                                   changed_inventory[prefix + "gml_draw_probe"][1])
+    new = dict(functions, **{prefix + "gml_draw_unregistered": "void gml_draw_unregistered(void){}"})
+    gpu_new = dict(functions, **{
+        "src/video/renderer/gpu/opengl/probe.c::gml_render_gpu_opengl_unregistered":
+        "int gml_render_gpu_opengl_unregistered(void){ return 1; }",
+    })
+    body_changed = dict(functions)
+    body_changed[prefix + "gml_draw_probe"] = "void gml_draw_probe(void){ cpu_other_paint(); }"
+    for broken, actual in (
+        (document, dispatch_inventory(new)),
+        (document, dispatch_inventory(gpu_new)),
+        (document, changed_inventory),
+        (digest_only, changed_inventory),
+        (document, dispatch_inventory(body_changed)),
+        (document.replace("<!-- D8-DISPATCH:END -->", ""), inventory),
+        (document.replace("Authored test reason.", "Pending"), inventory),
+        (document.replace("| DEBT |", "| HELPER |"), inventory),
+        (document.replace("<!-- D8-DISPATCH:END -->", document), inventory),
+    ):
+        try:
+            check_dispatch_inventory(broken, actual)
+        except ValueError:
+            continue
+        raise ValueError("D8 dispatch negative probe unexpectedly passed")
+    with_comment = dict(functions)
+    with_comment[prefix + "gml_draw_probe"] = \
+        'void gml_draw_probe(void){ /* gml_render_application_scene_enqueue(); { */ cpu_paint(); }'
+    if dispatch_inventory(with_comment) != inventory:
+        raise ValueError("D8 comments changed a dispatch route or source revision")
+    with_string = dict(functions)
+    with_string[prefix + "gml_draw_probe"] = \
+        'void gml_draw_probe(void){ note("gml_render_application_scene_enqueue(); }"); cpu_paint(); }'
+    if dispatch_inventory(with_string)[prefix + "gml_draw_probe"][0] != "CPU":
+        raise ValueError("D8 string falsely credited GPU admission")
+    for first, second in (("a ++ b", "a + + b"), ('note("one")', 'note("two")')):
+        one = {prefix + "gml_draw_probe": f"void gml_draw_probe(void){{ {first}; }}"}
+        two = {prefix + "gml_draw_probe": f"void gml_draw_probe(void){{ {second}; }}"}
+        if dispatch_inventory(one) == dispatch_inventory(two):
+            raise ValueError("D8 revision lost an operator or string change")
+    check_dispatch_inventory(document_for(changed_inventory), changed_inventory)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--require-delivered", action="store_true")
@@ -332,10 +574,13 @@ def main() -> None:
         cpu_defs, gpu_defs = definitions(ROOT)
         check_symbols(cpu, gpu, cpu_defs, gpu_defs, args.require_delivered)
         check_repair_map(BACKEND_MAP.read_text(encoding="utf-8"), gpu, ROOT)
+        inventory = dispatch_inventory(dispatch_functions(ROOT))
+        check_dispatch_inventory(BACKEND_MAP.read_text(encoding="utf-8"), inventory)
     except (OSError, ValueError) as error:
         parser.exit(1, f"render operations: {error}\n")
     print(f"render operations: ok ({len(catalogue)} IDs, "
-          f"{sum(value[2] == 'planned' for value in gpu.values())} GPU planned)")
+          f"{sum(value[2] == 'planned' for value in gpu.values())} GPU planned, "
+          f"{len(inventory)} function dispatch points)")
 
 
 if __name__ == "__main__":
