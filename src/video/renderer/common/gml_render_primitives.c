@@ -15,12 +15,13 @@
 /* Opaque flat coverage has the same half-open pixel region for point-sized and filled
  * rectangles. Typed entries already receive raster coordinates, so the current world
  * scale must not reject or remap them. Keep unqualified shapes in their CPU raster body. */
-static int resident_flat_eligible_rule(GmlRender *render,int classic_rectangle,int partial_alpha,
+static int resident_flat_eligible_rule(GmlRender *render,int filled_rectangle,int partial_alpha,
                                         int blendmode){
   return render && render->resident_application_pass && gml_render_device(render) &&
     gml_render_scene_target_matches(render) &&
-    !render->gui_pass_active &&
-    (!render->classic || (classic_rectangle &&
+    /* Filled Studio rectangles already carry the builtin's resolved GUI raster bounds. */
+    (!render->gui_pass_active || (filled_rectangle && !render->classic)) &&
+    (!render->classic || (filled_rectangle &&
       !anygm_policy_classic_modern_presentation(render->win) &&
       render->fb==render->app_surface &&
       render->fb==render->base_scene_resource_pixels)) &&

@@ -3377,6 +3377,61 @@ static int resident_classic_rectangle_scope(void){
   return 1;
 }
 
+static int resident_studio_gui_rectangle_scope(void){
+  for(unsigned generation=0;generation<2u;generation++)
+  for(unsigned variant=0;variant<9u;variant++){
+    GmlRender *cpu=calloc(1,sizeof *cpu),*gpu=calloc(1,sizeof *gpu);
+    GmlWin content={.bytecode=generation?17:15};
+    FakeDevice fake={0};
+    GmlRenderDeviceServices device=service(&fake);
+    uint32_t reference[96]={0},screen[96]={0};
+    const uint32_t *sealed=NULL;
+    CHECK(cpu && gpu && !gml_render_init(cpu,NULL) && !gml_render_init(gpu,NULL));
+    cpu->win=gpu->win=&content;
+    gml_render_begin(cpu,reference,12,8,-3.0,2.0);
+    gml_render_application_surface_bind(gpu,screen,12,8,1);
+    gml_render_bind_device(gpu,&device);
+    CHECK(gml_render_begin_resident_base(gpu,screen,12,8,-3.0,2.0));
+    gml_render_gui_begin(cpu,10,6);gml_render_gui_begin(gpu,10,6);
+    gml_render_gui_set_size(cpu,20,18);gml_render_gui_set_size(gpu,20,18);
+    cpu->world_transform_active=gpu->world_transform_active=1;
+    cpu->world_scale_x=gpu->world_scale_x=2.0;
+    cpu->world_scale_y=gpu->world_scale_y=3.0;
+    gml_render_set_pending_fill(cpu,0xFF102030u);
+    gml_render_set_pending_fill(gpu,0xFF102030u);
+    if(variant==3u) cpu->alpha=gpu->alpha=0.5;
+    if(variant==4u){cpu->classic=gpu->classic=1;content.classic_version=530;}
+    if(variant==8u) cpu->color_write_mask=gpu->color_write_mask=7u;
+    if(variant==7u){
+      gml_render_primitive_point(cpu,2,2,0x345678u);
+      gml_render_primitive_point(gpu,2,2,0x345678u);
+    } else if(variant==6u){
+      gml_render_primitive_rectangle_color(cpu,1,1,4,3,0u,0xFFFFFFu,0u,0xFFFFFFu,0);
+      gml_render_primitive_rectangle_color(gpu,1,1,4,3,0u,0xFFFFFFu,0u,0xFFFFFFu,0);
+    } else if(variant==1u){
+      gml_render_primitive_rectangle_color(cpu,4,3,-2,1,0x345678u,0x345678u,0x345678u,0x345678u,0);
+      gml_render_primitive_rectangle_color(gpu,4,3,-2,1,0x345678u,0x345678u,0x345678u,0x345678u,0);
+    } else {
+      int far_x=variant==2u?11:4,far_y=variant==2u?7:3;
+      int near_x=variant==2u?0:1,near_y=variant==2u?0:1;
+      gml_render_primitive_rectangle(cpu,near_x,near_y,far_x,far_y,0x345678u,variant==5u);
+      gml_render_primitive_rectangle(gpu,near_x,near_y,far_x,far_y,0x345678u,variant==5u);
+    }
+    CHECK(gpu->resident_application_pass==(variant<3u));
+    if(variant<3u){
+      GmlRenderResource *target=gml_render_scene_target_resource_ensure(gpu);
+      CHECK(target && gpu->gui_pass_active && fake.submits && !fake.readbacks &&
+            fake.last_opcode==GML_RENDER_OP_COLOURED_PRIMITIVE &&
+            fake.last_primitive.payload.primitive.kind==GML_RENDER_PRIMITIVE_FLAT);
+      gml_render_flush_pending_fill(cpu);
+      CHECK(gml_render_resource_acquire_cpu_read(target,&sealed) &&
+            !memcmp(reference,sealed,sizeof reference) && !fake.readbacks);
+    }
+    gml_render_free(cpu);gml_render_free(gpu);free(cpu);free(gpu);
+  }
+  return 1;
+}
+
 static int resident_classic_alpha_rectangle_scope(void){
   static const double alphas[]={0.2,0.4,0.6000000000000001,0.8,
                                  0.07692307692307693,0.00392156862745098};
@@ -9823,6 +9878,7 @@ int main(void){
   passed+=resident_numbered_layer_effect_target();
   passed+=resident_flat_primitive_public_order();
   passed+=resident_classic_rectangle_scope();
+  passed+=resident_studio_gui_rectangle_scope();
   passed+=resident_classic_alpha_rectangle_scope();
   passed+=resident_classic_inverse_rectangle_scope();
   passed+=resident_viewless_base_canvas_order();
@@ -9921,6 +9977,6 @@ int main(void){
   passed+=source_free_primitive_rect_replay();
   passed+=stretched_float_exact_replay();
   passed+=filtered_font_exact_recovery();
-  printf("render resource cases: passed=%d failed=%d\n",passed,139-passed);
-  return passed==139?EXIT_SUCCESS:EXIT_FAILURE;
+  printf("render resource cases: passed=%d failed=%d\n",passed,140-passed);
+  return passed==140?EXIT_SUCCESS:EXIT_FAILURE;
 }
