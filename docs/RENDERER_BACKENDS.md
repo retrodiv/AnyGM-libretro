@@ -537,6 +537,20 @@ unit, reduced/nonuniform, enlarged/nonuniform and reflected world state. The
 explicit logical circle preparation remains `common/gml_render_primitives.c::gml_render_circle_geometry`.
 Geometry budgets and ordinary opaque state restrictions are unchanged.
 
+R03-PRIM-LINE-ALPHA-NOOP is EXACT RGBA0: the three typed integer/colour/subpixel
+line ports retain a resident pass when drawing alpha is nonpositive and no enabled
+destination-colour blend can write. The unchanged CPU filled-box leaf already
+performs no pixel write in this state. The common predicate preserves pending
+fills, stale CPU pixels, resource authority and versions without submitting an
+operation or reading the destination. A no-op is not credited as a GPU draw.
+Positive alpha, NaN and enabled destination-colour blends retain the existing
+executor and CPU-boundary policy; visible GUI line admission is not broadened.
+`tests/unit/video/renderer/test_render_resources.c::resident_line_alpha_noop`
+checks all three ports, pending/committed prefixes and visible exclusions.
+Device comparison R03-PRIM-LINE-ALPHA-NOOP pairs144 complete-RGBA controls
+containing432 line calls, including SCREEN/owned/numbered targets and mapped GUI;
+prefix/suffix bytes and explicitly sealed no-current bytes require EXACT0.
+
 The bounded destination-factor surface rule may skip a fully clipped rectangle
 after a CPU suffix while the witnessed scene session remains active. This observes
 neither source nor destination and changes no resource version. A visible rectangle
@@ -892,15 +906,16 @@ be enforced by this inventory alone.
 | `src/video/renderer/common/gml_render_primitives.c::resident_filled_triangle` | `gml_render_application_scene_submit` | PARTIAL | `9c9370976891ec86cf0cea61c179d024d773fb0bc5a4e73538e1a628c1dfc961` | Bounded primitive admission only; outlines, alpha, gradient and state exclusions remain in the R03 primitive rules. |
 | `src/video/renderer/common/gml_render_primitives.c::resident_outline_triangle` | `gml_render_application_scene_submit` | PARTIAL | `8c818646cfff1af19ece74d30a1b3c080b5e75bd00d49eda91945023469d2228` | Bounded primitive admission only; outlines, alpha, gradient and state exclusions remain in the R03 primitive rules. |
 | `src/video/renderer/common/gml_render_primitives.c::resident_line_bounds` | `CPU` | HELPER | `25b77e5c55c2619211b433e6fb0b931281022e7101fadde9421e93d647eec767` | Pure admission/coverage helper; does not submit or execute a draw. |
+| `src/video/renderer/common/gml_render_primitives.c::resident_line_alpha_noop` | `CPU` | HELPER | `bb35327c19768dab14bd0b0bc2c21c4879e97e79ba557aee13d318285be63a20` | Pure exact no-op predicate; R03-PRIM-LINE-ALPHA-NOOP submits no operation and preserves enabled destination-colour writes. |
 | `src/video/renderer/common/gml_render_primitives.c::resident_outline_rectangle` | `gml_render_application_scene_submit` | PARTIAL | `4cd3f9c0b1f25985f9a2597eb4197dac2abc7a8254fe0b92b4c8f27a9d0cb78f` | Bounded primitive admission only; outlines, alpha, gradient and state exclusions remain in the R03 primitive rules. |
 | `src/video/renderer/common/gml_render_primitives.c::resident_outline_circle` | `gml_render_application_scene_submit` | PARTIAL | `a079d1fe96c662e9a5351f4e3175a8d295fd0f45a8c9a176ef733b5ccbc54dd4` | Bounded primitive admission only; outlines, alpha, gradient and state exclusions remain in the R03 primitive rules. |
 | `src/video/renderer/common/gml_render_primitives.c::resident_line_integer` | `gml_render_application_scene_submit` | PARTIAL | `7160b0341d438bcb52ad40e3c0e93d5e15c65ff725c2deff5e24204f89f2ddab` | Bounded primitive admission only; outlines, alpha, gradient and state exclusions remain in the R03 primitive rules. |
 | `src/video/renderer/common/gml_render_primitives.c::resident_line_subpixel` | `gml_render_application_scene_submit` | PARTIAL | `1c03bde01b9ca36da8ad845e6e69c8cda8bb22aeeea63262b289cdeb86a7c86b` | Bounded primitive admission only; outlines, alpha, gradient and state exclusions remain in the R03 primitive rules. |
 | `src/video/renderer/common/gml_render_primitives.c::resident_axis_line` | `gml_render_application_scene_submit` | PARTIAL | `7fcdcba8e2964b94e3f792ccdf66f93594b597c9108c52df3f9815bc9cd1b3a5` | Bounded primitive admission only; outlines, alpha, gradient and state exclusions remain in the R03 primitive rules. |
 | `src/video/renderer/common/gml_render_primitives.c::gml_render_primitive_point` | `gml_render_application_scene_submit` | PARTIAL | `2450bea7d50c296ce86cb89ccacd32982637873cfc753a7fd7f66243636bf71d` | Bounded primitive admission only; outlines, alpha, gradient and state exclusions remain in the R03 primitive rules. |
-| `src/video/renderer/common/gml_render_primitives.c::gml_render_primitive_line` | `gml_render_application_scene_submit` | PARTIAL | `709ec8a23c4b5c9cc366bf03c6a15649e1c68ff235905a7b0c3585c790ca77dc` | Bounded primitive admission only; outlines, alpha, gradient and state exclusions remain in the R03 primitive rules. |
-| `src/video/renderer/common/gml_render_primitives.c::gml_render_primitive_line_color` | `gml_render_application_scene_submit` | PARTIAL | `0b208c34c30318c18e1e60dc82823586b897f0a8cb3896ce448e8974666e7d21` | Bounded primitive admission only; outlines, alpha, gradient and state exclusions remain in the R03 primitive rules. |
-| `src/video/renderer/common/gml_render_primitives.c::gml_render_primitive_line_color_subpixel` | `gml_render_application_scene_submit` | PARTIAL | `8f9c85801bf8feffd9dbbee2254f0832228e0daae12dc8a10f48dfaaad167373` | Bounded primitive admission only; outlines, alpha, gradient and state exclusions remain in the R03 primitive rules. |
+| `src/video/renderer/common/gml_render_primitives.c::gml_render_primitive_line` | `gml_render_application_scene_submit` | PARTIAL | `f6a3a47b18154eeb4e84091efecf3fccf0951ea75d0a6dfc485669bc6406a075` | R03-PRIM-LINE-ALPHA-NOOP preserves exact empty writes; visible primitive admission and its exclusions are unchanged. |
+| `src/video/renderer/common/gml_render_primitives.c::gml_render_primitive_line_color` | `gml_render_application_scene_submit` | PARTIAL | `255ec949a6db26d1b01c8796f098f58df7aab846c7da5bafaee489bb969b52cf` | R03-PRIM-LINE-ALPHA-NOOP preserves exact empty writes; visible primitive admission and its exclusions are unchanged. |
+| `src/video/renderer/common/gml_render_primitives.c::gml_render_primitive_line_color_subpixel` | `gml_render_application_scene_submit` | PARTIAL | `3af4d777ee6044753aed8bfaf50a91560fb307502d0886e27fa85a6a34d77989` | R03-PRIM-LINE-ALPHA-NOOP preserves exact empty writes; visible primitive admission and its exclusions are unchanged. |
 | `src/video/renderer/common/gml_render_primitives.c::gml_render_primitive_rectangle` | `gml_render_application_scene_enqueue_primitive` | PARTIAL | `0fa5fbbe43e55cc21a86b6398b78f31a4259707a3d49a909c27a02fe8ced48df` | Bounded primitive admission only; outlines, alpha, gradient and state exclusions remain in the R03 primitive rules. |
 | `src/video/renderer/common/gml_render_primitives.c::gml_render_primitive_rectangle_color` | `gml_render_application_scene_enqueue_primitive` | PARTIAL | `5470490889d4232854ef9a2398c1df8b26f0d82f32a9c7d48d024188700f6047` | Bounded primitive admission only; outlines, alpha, gradient and state exclusions remain in the R03 primitive rules. |
 | `src/video/renderer/common/gml_render_primitives.c::gml_render_primitive_circle` | `gml_render_application_scene_submit` | PARTIAL | `7fb45aaf003f9724ac25c1ad58c879c91b1319cc2efcd76f4bd1a6b5c37aebbd` | Bounded primitive admission only; outlines, alpha, gradient and state exclusions remain in the R03 primitive rules. |
