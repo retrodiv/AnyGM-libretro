@@ -7,6 +7,7 @@
 #include "gml_render_sprites_internal.h"
 #include "gml_render_surfaces_internal.h"
 #include "gml_render_cpu_blit.h"
+#include "gml_software3d.h"
 #include "anygm_host.h"
 
 #include <math.h>
@@ -246,6 +247,8 @@ static int resident_atlas_crop_from_page(GmlRender *r,GmlTpag *page,
   GmlRenderRect region;
   double scaled_width,scaled_height,source_left,source_right,source_top,source_bottom;
   int checkpoint_alpha_background,checkpoint_alpha_text,checkpoint_alpha_sprite;
+  /* Mode 2 is only the separately proved, opaque depth-free orthographic crop. */
+  int orthographic=physical_sprite_page==2;
   int replace=physical_sprite_page && family==GML_RENDER_SCENE_SPRITE &&
     resident_identity_gui_replacement(r,xs,ys,colour,draw_alpha);
   if(replace && page && (page->tx || page->ty || page->bw!=page->sw ||
@@ -259,7 +262,7 @@ static int resident_atlas_crop_from_page(GmlRender *r,GmlTpag *page,
                       family!=GML_RENDER_SCENE_TEXT) ||
                      (family==GML_RENDER_SCENE_TEXT &&
                       anygm_policy_classic_modern_presentation(r->win)) ||
-                     r->interp || xs!=1.0 || ys!=1.0)) ||
+                     r->interp || (!orthographic && (xs!=1.0 || ys!=1.0)))) ||
      (r->world_transform_active &&
       (r->world_scale_x!=1.0 || r->world_scale_y!=1.0) &&
       (r->classic || family!=GML_RENDER_SCENE_SPRITE || r->interp)) ||
@@ -484,6 +487,39 @@ static int resident_atlas_crop_from_page(GmlRender *r,GmlTpag *page,
     if(r->app_surface && r->fb==r->app_surface) r->app_surface_opaque=1;
   }
   return 1;
+}
+
+/* R03-SPR-CLASSIC-ORTHO: active fixed-function state need not imply depth work.
+ * Keep the existing camera/trim producer and the ordinary opaque nearest batch. */
+static int resident_depth_free_ortho_sprite(GmlRender *r,int sprite,int subimg,
+                                            double x,double y,double xs,double ys,
+                                            double rotation,uint32_t colour,double alpha){
+  if(!r || !r->classic || !gml_d3_is_active(r) || r->gui_pass_active ||
+     r->world_transform_active || xs!=1.0 || ys!=1.0 || rotation!=0.0 ||
+     colour!=0xFFFFFFu || alpha!=1.0 || sprite<0 || sprite>=r->n_spr ||
+     sprite>0xFFFF || subimg<0 || subimg>0x3FF) return 0;
+  GmlSprite *s=&r->spr[sprite];
+  if(s->runtime_rgba || s->spine || s->ns_enabled || s->n_frames<=0 ||
+     s->w<=0 || s->h<=0 || !s->frame) return 0;
+  int page_index=s->frame[gml_render_runtime_frame_index(s,subimg)];
+  if(page_index<0 || page_index>=r->n_tpag) return 0;
+  GmlTpag *page=&r->tpag[page_index];
+  if(page->atlas<0 || page->atlas>=r->n_atlas || page->sw<=0 || page->sh<=0 ||
+     page->sx<0 || page->sy<0 || page->tx<0 || page->ty<0 ||
+     page->tw!=page->sw || page->th!=page->sh || page->bw!=s->w || page->bh!=s->h ||
+     (uint64_t)(uint32_t)page->tx+(uint32_t)page->sw>(uint32_t)s->w ||
+     (uint64_t)(uint32_t)page->ty+(uint32_t)page->sh>(uint32_t)s->h) return 0;
+  GmlAtlas *atlas=&r->atlas[page->atlas];
+  if(!atlas->px || (uint64_t)(uint32_t)page->sx+(uint32_t)page->sw>(uint32_t)atlas->w ||
+     (uint64_t)(uint32_t)page->sy+(uint32_t)page->sh>(uint32_t)atlas->h) return 0;
+  resident_classify_page(page,atlas);
+  double rectangle[4];
+  if(!page->scene_fully_opaque ||
+     !gml_software3d_project_sprite_axis(r,sprite,subimg,x,y,rectangle) ||
+     !gml_software3d_prepare_resident_sprite(r)) return 0;
+  return resident_atlas_crop_from_page(r,page,0,0,page->sw,page->sh,
+    rectangle[0],rectangle[1],rectangle[2],rectangle[3],
+    GML_RENDER_SCENE_SPRITE,colour,alpha,2);
 }
 
 int gml_render_resident_atlas_crop(GmlRender *r,int page_index,
@@ -1787,6 +1823,8 @@ void gml_render_sprite_ext_unmasked(GmlRender *r, int sprite, int subimg, double
        !r->spr[sprite].spine && !r->spr[sprite].ns_enabled &&
        !gml_d3_is_active(r) && gml_render_scene_target_matches(r))
       return;
+    if(sprite>=0 && sprite<r->n_spr &&
+       resident_depth_free_ortho_sprite(r,sprite,subimg,x,y,xs,ys,rot,blend,resident_alpha)) return;
     if(sprite>=0 && sprite<r->n_spr &&
        resident_integer_sprite(r,&r->spr[sprite],subimg,x,y,xs,ys,rot,blend,resident_alpha)) return;
     if(sprite>=0 && sprite<r->n_spr &&

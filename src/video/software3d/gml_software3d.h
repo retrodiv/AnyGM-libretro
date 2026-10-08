@@ -138,6 +138,12 @@ int gml_software3d_matrix_set(struct GmlRender *render,int type,
                               const double matrix[16]);
 int gml_software3d_matrix_prepend(struct GmlRender *render,
                                   const double matrix[16]);
+/* Exact depth-free classic point projection: left, top, positive integer X/Y scales.
+ * Failure leaves the output untouched. This only prepares geometry, never pixels. */
+int gml_software3d_project_sprite_axis(struct GmlRender *render,int sprite,int subimg,
+                                       double x,double y,double rectangle[4]);
+/* Preserve the existing sprite's derived depth/shade preparation without a CPU draw. */
+int gml_software3d_prepare_resident_sprite(struct GmlRender *render);
 int gml_software3d_transform_stack(struct GmlRender *render,int action);
 
 void gml_software3d_vertex_format_begin(GmlSoftware3D *software3d);

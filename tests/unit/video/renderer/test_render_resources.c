@@ -7826,6 +7826,105 @@ static int resident_classic_clipped_sprite_noops(void){
   return 1;
 }
 
+static int resident_classic_depth_free_sprites(void){
+  enum { WIDTH=64,HEIGHT=48 };
+  for(unsigned target=0;target<3;target++)
+  for(unsigned trim=0;trim<2;trim++)
+  for(unsigned scale=1;scale<=4;scale++)
+  for(unsigned culling=0;culling<2;culling++)
+  for(unsigned zwrite=0;zwrite<2;zwrite++){
+    GmlRender *r=calloc(1,sizeof *r);
+    GmlSoftware3D *graphics=gml_software3d_create();
+    FakeDevice fake={0};
+    GmlRenderDeviceServices device=service(&fake);
+    uint32_t base[WIDTH*HEIGHT],reference[WIDTH*HEIGHT];
+    const uint32_t *pixels=NULL;
+    CHECK(r && graphics && gml_render_init(r,NULL)==0);
+    gml_software3d_reset(graphics);
+    gml_software3d_set_classic(graphics,1);
+    gml_render_bind_software3d(r,graphics);r->classic=1;
+    free(r->atlas[0].px);memset(r->atlas,0,sizeof *r->atlas);
+    r->atlas[0].w=7;r->atlas[0].h=5;r->atlas[0].px=malloc(7*5*4);
+    r->tpag=calloc(1,sizeof *r->tpag);r->spr=calloc(1,sizeof *r->spr);
+    CHECK(r->atlas[0].px && r->tpag && r->spr);
+    for(unsigned i=0;i<7*5;i++){
+      uint8_t *p=r->atlas[0].px+i*4;
+      p[0]=(i*43+7)&255;p[1]=(i*17+31)&255;p[2]=(i*61+11)&255;p[3]=255;
+    }
+    r->n_tpag=r->n_spr=1;
+    r->tpag[0]=(GmlTpag){.sx=1,.sy=1,.sw=5,.sh=3,.tw=5,.th=3,
+      .tx=trim,.ty=trim,.bw=5+trim*2,.bh=3+trim*2};
+    r->spr[0]=(GmlSprite){.w=5+trim*2,.h=3+trim*2,.originx=2,.originy=1,
+      .n_frames=1,.frame=calloc(1,sizeof(int))};
+    CHECK(r->spr[0].frame);
+    if(target==1) CHECK(gml_render_application_surface_ensure_owned(r,WIDTH,HEIGHT) &&
+                       gml_render_begin_owned_application(r,0,0,0));
+    else gml_render_begin(r,base,WIDTH,HEIGHT,0,0);
+    int id=target==2?gml_surface_create(r,WIDTH,HEIGHT):0;
+    if(target==2) CHECK(id>0 && gml_surface_set_target(r,id));
+    gml_software3d_begin(r,0,0,WIDTH,HEIGHT,0);
+    GmlSoftware3DControl control={.ortho=1,.ortho_w=(double)WIDTH/scale,
+      .ortho_h=(double)HEIGHT/scale,.culling=(int)culling,.zwrite=(int)zwrite};
+    gml_software3d_control_update(graphics,&control,GML_SOFTWARE3D_CONTROL_ORTHOGRAPHIC |
+      GML_SOFTWARE3D_CONTROL_HIDDEN | GML_SOFTWARE3D_CONTROL_CULLING |
+      GML_SOFTWARE3D_CONTROL_ZWRITE | GML_SOFTWARE3D_CONTROL_FOG |
+      GML_SOFTWARE3D_CONTROL_LIGHTING);
+    gml_render_set_pending_fill(r,0xA5123456u);
+    gml_draw_sprite_ext(r,0,0,3,2,1,1,0,0xFFFFFFu,1);
+    gml_draw_sprite_ext(r,0,0,7,6,1,1,0,0xFFFFFFu,1);
+    gml_render_flush_pending_fill(r);memcpy(reference,r->fb,sizeof reference);
+    if(target==2) gml_surface_reset_target(r);
+    gml_render_bind_device(r,&device);
+    if(target==1) CHECK(gml_render_begin_resident_owned_application(r,0,0,0));
+    else{
+      gml_render_application_surface_bind(r,base,WIDTH,HEIGHT,1);
+      CHECK(gml_render_begin_resident_base(r,base,WIDTH,HEIGHT,0,0));
+      if(target==2) CHECK(gml_surface_set_target(r,id));
+    }
+    gml_render_set_pending_fill(r,0xA5123456u);
+    gml_draw_sprite_ext(r,0,0,3,2,1,1,0,0xFFFFFFu,1);
+    gml_draw_sprite_ext(r,0,0,7,6,1,1,0,0xFFFFFFu,1);
+    CHECK(r->resident_application_pass && !fake.readbacks);
+    CHECK(gml_render_scene_submit_pending(r) && fake.last_batch_operations==2);
+    GmlRenderResource *resource=gml_render_scene_target_resource_ensure(r);
+    CHECK(resource && gml_render_resource_acquire_cpu_read(resource,&pixels) &&
+          !memcmp(pixels,reference,sizeof reference) && !fake.readbacks);
+    double rectangle[4]={11,22,33,44};
+    const double sentinel[4]={11,22,33,44};
+    CHECK(!gml_software3d_project_sprite_axis(r,0,-1,3,2,rectangle) &&
+          !gml_software3d_project_sprite_axis(r,0,1024,3,2,rectangle) &&
+          !gml_software3d_project_sprite_axis(r,65536,0,3,2,rectangle) &&
+          !memcmp(rectangle,sentinel,sizeof rectangle));
+    control.hidden=1;
+    gml_software3d_control_update(graphics,&control,GML_SOFTWARE3D_CONTROL_HIDDEN);
+    CHECK(!gml_software3d_project_sprite_axis(r,0,0,3,2,rectangle) &&
+          !memcmp(rectangle,sentinel,sizeof rectangle));
+    control.hidden=0;control.fog=1;
+    gml_software3d_control_update(graphics,&control,GML_SOFTWARE3D_CONTROL_HIDDEN |
+                                                     GML_SOFTWARE3D_CONTROL_FOG);
+    CHECK(!gml_software3d_project_sprite_axis(r,0,0,3,2,rectangle));
+    control.fog=0;control.lighting=1;
+    gml_software3d_control_update(graphics,&control,GML_SOFTWARE3D_CONTROL_FOG |
+                                                     GML_SOFTWARE3D_CONTROL_LIGHTING);
+    CHECK(!gml_software3d_project_sprite_axis(r,0,0,3,2,rectangle));
+    control.lighting=0;control.ortho_angle=15;
+    gml_software3d_control_update(graphics,&control,GML_SOFTWARE3D_CONTROL_LIGHTING |
+                                                     GML_SOFTWARE3D_CONTROL_ORTHOGRAPHIC);
+    CHECK(!gml_software3d_project_sprite_axis(r,0,0,3,2,rectangle));
+    control.ortho_angle=0;
+    gml_software3d_control_update(graphics,&control,GML_SOFTWARE3D_CONTROL_ORTHOGRAPHIC);
+    r->interp=1;
+    CHECK(!gml_software3d_project_sprite_axis(r,0,0,3,2,rectangle));
+    r->interp=0;
+    double matrix[16];gml_software3d_matrix_identity(matrix);matrix[12]=1;
+    CHECK(gml_software3d_matrix_set(r,GML_SOFTWARE3D_MATRIX_TRANSFORM,matrix) &&
+          !gml_software3d_project_sprite_axis(r,0,0,3,2,rectangle));
+    gml_render_abandon_device(r);gml_render_free(r);free(r);
+    gml_software3d_destroy(graphics);
+  }
+  return 1;
+}
+
 static int resident_studio_unit_background_noops(void){
   enum { WIDTH=16,HEIGHT=12 };
   const double anchors[12][2]={{WIDTH,4},{4,HEIGHT},{-2,4},{4,-2},
@@ -9293,6 +9392,7 @@ int main(void){
   passed+=resident_classic_nonphase_sprite_targets();
   passed+=resident_classic_clipped_sprite_noops();
   passed+=resident_studio_unit_background_noops();
+  passed+=resident_classic_depth_free_sprites();
   passed+=resident_classic_unit_background_targets();
   passed+=resident_classic_retained_numbered_target();
   passed+=resident_firstgen_nearest_magnification_authority();
@@ -9317,6 +9417,6 @@ int main(void){
   passed+=source_free_primitive_rect_replay();
   passed+=stretched_float_exact_replay();
   passed+=filtered_font_exact_recovery();
-  printf("render resource cases: passed=%d failed=%d\n",passed,131-passed);
-  return passed==131?EXIT_SUCCESS:EXIT_FAILURE;
+  printf("render resource cases: passed=%d failed=%d\n",passed,132-passed);
+  return passed==132?EXIT_SUCCESS:EXIT_FAILURE;
 }

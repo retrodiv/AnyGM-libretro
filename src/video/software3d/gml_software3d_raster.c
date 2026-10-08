@@ -805,24 +805,18 @@ void gml_d3_set_draw_depth(GmlRender *R,double depth){
   gml_d3_sync_sprite_fog(R);
 }
 int gml_d3_is_active(GmlRender *R){ return GML_GRAPHICS && g_d3.active; }
-int gml_d3_draw_sprite_2d(GmlRender *R,int sprite_id,int subimg,double x,double y,
-                          double xs,double ys,double rotation,uint32_t blend,double alpha){
-  if(!GML_GRAPHICS || !g_d3.active) return 0;
-  if(!R || alpha<=0) return 1;
-  int handle=(int)(GML_TEX_SPR_TAG|((sprite_id&0xFFFF)<<10)|(subimg&0x3FF));
-  GmlRenderCpuBackendTextureView view;
-  if(!gml_render_cpu_backend_texture_view(R,handle,0,&view)) return 1;
-  double left=-view.origin_x,top=-view.origin_y;
-  double right=view.logical_width-view.origin_x,bottom=view.logical_height-view.origin_y;
-  if(!view.runtime){
-    left=view.trim_x-view.origin_x; top=view.trim_y-view.origin_y;
-    right=left+view.width; bottom=top+view.height;
+static void d3_sprite_vertices(GmlRender *R,const GmlRenderCpuBackendTextureView *view,
+                                double x,double y,double xs,double ys,double rotation,
+                                uint32_t blend,double alpha,GmlD3Vertex vertex[4]){
+  double left=-view->origin_x,top=-view->origin_y;
+  double right=view->logical_width-view->origin_x,bottom=view->logical_height-view->origin_y;
+  if(!view->runtime){
+    left=view->trim_x-view->origin_x; top=view->trim_y-view->origin_y;
+    right=left+view->width; bottom=top+view->height;
   }
-  GmlD3Texture texture={0}; if(!d3_texture_from_backend_view(&view,&texture)) return 1;
   double radians=rotation*M_PI/180.0,cs=cos(radians),sn=sin(radians);
   const double local[4][2]={{left,top},{right,top},{right,bottom},{left,bottom}};
   const double uv[4][2]={{0,0},{1,0},{1,1},{0,1}};
-  GmlD3Vertex vertex[4];
   for(int i=0;i<4;i++){
     double px=local[i][0]*xs,py=local[i][1]*ys;
     memset(&vertex[i],0,sizeof(vertex[i]));
@@ -830,6 +824,59 @@ int gml_d3_draw_sprite_2d(GmlRender *R,int sprite_id,int subimg,double x,double 
     vertex[i].u=uv[i][0]; vertex[i].v=uv[i][1];
     vertex[i].r=blend&255; vertex[i].g=(blend>>8)&255; vertex[i].b=(blend>>16)&255; vertex[i].alpha=alpha;
   }
+}
+int gml_software3d_project_sprite_axis(GmlRender *R,int sprite_id,int subimg,
+                                       double x,double y,double rectangle[4]){
+  GmlRenderCpuBackendDrawView draw;
+  GmlRenderCpuBackendTextureView view;
+  if(!R || !rectangle || sprite_id<0 || sprite_id>0xFFFF || subimg<0 || subimg>0x3FF ||
+     !GML_GRAPHICS || !g_d3.active || !g_d3.classic ||
+     !g_d3.ortho || g_d3.perspective || g_d3.hidden || g_d3.fog || g_d3.lighting ||
+     g_d3.ortho_angle!=0.0 || !isfinite(g_d3.draw_depth) ||
+     !isfinite(x) || !isfinite(y) ||
+     !gml_render_cpu_backend_draw_view(R,&draw) || draw.interpolate ||
+     draw.width<=0 || draw.height<=0) return 0;
+  for(int i=0;i<16;i++) if(g_d3.transform[i]!=(i%5==0?1.0:0.0)) return 0;
+  int handle=(int)(GML_TEX_SPR_TAG|((sprite_id&0xFFFF)<<10)|(subimg&0x3FF));
+  if(!gml_render_cpu_backend_texture_view(R,handle,0,&view) || view.runtime ||
+     view.width<=0 || view.height<=0) return 0;
+  double ow=g_d3.ortho_w,oh=g_d3.ortho_h;
+  double xs=draw.width/ow,ys=draw.height/oh;
+  if(!isfinite(xs) || !isfinite(ys) || xs<1 || xs>4 || ys<1 || ys>4 ||
+     floor(xs)!=xs || floor(ys)!=ys ||
+     (double)view.width*xs>=65535.0 || (double)view.height*ys>=256.0) return 0;
+  GmlD3Vertex vertex[4];
+  d3_sprite_vertices(R,&view,x,y,1,1,0,0xFFFFFFu,1,vertex);
+  double px[4],py[4];
+  for(int i=0;i<4;i++){
+    GmlD3Vertex camera=d3_vertex_camera(R,vertex[i]);
+    px[i]=camera.x*draw.width/ow;py[i]=camera.y*draw.height/oh;
+    if(!isfinite(px[i]) || !isfinite(py[i]) || floor(px[i])!=px[i] ||
+       floor(py[i])!=py[i] || fabs(px[i])>=1000000 || fabs(py[i])>=1000000) return 0;
+  }
+  if(px[0]!=px[3] || px[1]!=px[2] || py[0]!=py[1] || py[2]!=py[3] ||
+     px[1]-px[0]!=view.width*xs || py[2]-py[0]!=view.height*ys) return 0;
+  /* For these integer rectangles the classic half-pixel anchor yields half-open
+   * coverage. The source-size bounds keep both existing point-sample phases
+   * inside the same texel, including the first row; no phase emulation is needed. */
+  rectangle[0]=px[0];rectangle[1]=py[0];rectangle[2]=xs;rectangle[3]=ys;
+  return 1;
+}
+int gml_software3d_prepare_resident_sprite(GmlRender *R){
+  if(!R || !GML_GRAPHICS || !d3_depth_prepare(R)) return 0;
+  g_d3.shade_r=g_d3.shade_g=g_d3.shade_b=1;
+  return 1;
+}
+int gml_d3_draw_sprite_2d(GmlRender *R,int sprite_id,int subimg,double x,double y,
+                          double xs,double ys,double rotation,uint32_t blend,double alpha){
+  if(!GML_GRAPHICS || !g_d3.active) return 0;
+  if(!R || alpha<=0) return 1;
+  int handle=(int)(GML_TEX_SPR_TAG|((sprite_id&0xFFFF)<<10)|(subimg&0x3FF));
+  GmlRenderCpuBackendTextureView view;
+  if(!gml_render_cpu_backend_texture_view(R,handle,0,&view)) return 1;
+  GmlD3Texture texture={0}; if(!d3_texture_from_backend_view(&view,&texture)) return 1;
+  GmlD3Vertex vertex[4];
+  d3_sprite_vertices(R,&view,x,y,xs,ys,rotation,blend,alpha,vertex);
   g_d3.shade_r=g_d3.shade_g=g_d3.shade_b=1;
   gml_render_cpu_backend_prepare_draw(R);
   GmlD3Vertex first[3]={vertex[0],vertex[1],vertex[2]};
