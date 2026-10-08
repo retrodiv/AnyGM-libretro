@@ -8140,7 +8140,8 @@ static int resident_classic_clipped_sprite_noops(void){
   for(unsigned generation=0;generation<2u;generation++)
   for(unsigned numbered=0;numbered<2u;numbered++)
   for(unsigned source_kind=0;source_kind<3u;source_kind++)
-  for(unsigned placement=0;placement<(source_kind==2u?8u:12u);placement++){
+  for(unsigned signs=0;signs<4u;signs++)
+  for(unsigned placement=0;placement<(!signs && source_kind==2u?8u:12u);placement++){
     GmlRender *render=calloc(1,sizeof *render);
     GmlWin content={.classic_version=generation?810:800};
     FakeDevice fake={0};
@@ -8181,10 +8182,11 @@ static int resident_classic_clipped_sprite_noops(void){
       memcpy(render->surface[id-1].px,reference,sizeof reference);
     }
     double camx=render->cam_x,camy=render->cam_y;
-    double x=anchors[placement][0]+1.0+camx;
-    double y=anchors[placement][1]+1.0+camy;
+    double xs=signs&1u?-1.0:1.0,ys=signs&2u?-1.0:1.0;
+    double x=anchors[placement][0]+xs+(xs<0.0?2.0:0.0)+camx;
+    double y=anchors[placement][1]+ys+(ys<0.0?2.0:0.0)+camy;
     gml_draw_sprite_ext(render,0,0,2.0+camx,2.0+camy,1.0,1.0,0.0,0xFFFFFFu,1.0);
-    gml_draw_sprite_ext(render,1,0,x,y,1.0,1.0,0.0,0xFFFFFFu,1.0);
+    gml_draw_sprite_ext(render,1,0,x,y,xs,ys,0.0,0xFFFFFFu,1.0);
     gml_draw_sprite_ext(render,0,0,4.0+camx,4.0+camy,1.0,1.0,0.0,0xFFFFFFu,1.0);
     if(numbered){
       memcpy(reference,render->surface[id-1].px,sizeof reference);
@@ -8200,7 +8202,15 @@ static int resident_classic_clipped_sprite_noops(void){
     CHECK(render->cam_x==camx && render->cam_y==camy);
     gml_draw_sprite_ext(render,0,0,2.0+camx,2.0+camy,1.0,1.0,0.0,0xFFFFFFu,1.0);
     CHECK(render->resident_application_pass && !fake.submits && !fake.readbacks);
-    gml_draw_sprite_ext(render,1,0,x,y,1.0,1.0,0.0,0xFFFFFFu,1.0);
+    gml_draw_sprite_ext(render,1,0,x,y,xs,ys,0.0,0xFFFFFFu,1.0);
+    if(signs && placement>=8u){
+      /* Adjacent reflected coverage is visible, so it retains the CPU writer. */
+      CHECK(!render->resident_application_pass && fake.submits==1 && !fake.readbacks);
+      gml_draw_sprite_ext(render,0,0,4.0+camx,4.0+camy,1.0,1.0,0.0,0xFFFFFFu,1.0);
+      CHECK(!memcmp(render->fb,reference,sizeof reference));
+      gml_render_abandon_device(render);gml_render_free(render);free(render);
+      continue;
+    }
     CHECK(render->resident_application_pass && !fake.readbacks);
     if(placement<8u) CHECK(!fake.submits);
     gml_draw_sprite_ext(render,0,0,4.0+camx,4.0+camy,1.0,1.0,0.0,0xFFFFFFu,1.0);

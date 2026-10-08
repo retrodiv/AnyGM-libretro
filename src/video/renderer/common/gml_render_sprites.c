@@ -161,7 +161,7 @@ static int resident_integer_sprite(GmlRender *r,GmlSprite *sprite,int subimg,
      sprite->spine || sprite->ns_enabled || sprite->n_frames<=0 ||
      sprite->w<=0 || sprite->h<=0 ||
      (r->classic && (gml_d3_is_active(r) ||
-                     r->interp || xs!=1.0 || ys!=1.0 ||
+                     r->interp || fabs(xs)!=1.0 || fabs(ys)!=1.0 ||
                      (r->world_transform_active &&
                       (r->world_scale_x!=1.0 || r->world_scale_y!=1.0)))) ||
      (r->gui_pass_active && !resident_identity_screen_gui(r)) ||
@@ -209,12 +209,16 @@ static int resident_integer_sprite(GmlRender *r,GmlSprite *sprite,int subimg,
      * Keep texelFetch sampling exact after projecting that same coverage. */
     left=floor(left+0.5);
     top=floor(top+0.5);
-    /* This positive unit crop has exact half-open coverage, including the target edge.
-     * An empty draw must not drain the preceding device batch into a CPU handoff. */
-    if(left>=(double)r->fbw || top>=(double)r->fbh ||
-       left+(double)page->sw<=0.0 || top+(double)page->sh<=0.0)
+    /* R03-SPR-CLASSIC-SIGNED-NOOP: both unit signs have exact half-open
+     * coverage. A clipped reflected crop must not drain a queued GPU prefix.
+     * Visible reflected sprites retain their existing CPU path below. */
+    double right=left+(double)page->sw*xs;
+    double bottom=top+(double)page->sh*ys;
+    if(fmin(left,right)>=(double)r->fbw || fmin(top,bottom)>=(double)r->fbh ||
+       fmax(left,right)<=0.0 || fmax(top,bottom)<=0.0)
       return 1;
   }
+  if(r->classic && (xs<0.0 || ys<0.0)) return 0;
   /* R03-SPR-NEAREST: public dispatch has already projected point and scale.
    * The crop validates final integral coverage; world state is not a second
    * transform or an independent reason to reject an exact nearest sprite. */
