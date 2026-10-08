@@ -5910,10 +5910,10 @@ static int immutable_font_scene_preparation(void){
   GmlRenderResourceSource source={0};
   const uint8_t encoded[]={ 'f','i','o','q',1,0,1,0,0,0,0,0,0xFF,17,39,61,255 };
   CHECK(render);
-  render->n_atlas=4;render->n_fonts=5;
-  render->atlas=(GmlAtlas*)calloc(4,sizeof *render->atlas);
+  render->n_atlas=5;render->n_fonts=5;
+  render->atlas=(GmlAtlas*)calloc(5,sizeof *render->atlas);
   CHECK(render->atlas);
-  for(int index=0;index<4;index++){
+  for(int index=0;index<5;index++){
     render->atlas[index].external_blob=(uint8_t*)malloc(sizeof encoded);
     CHECK(render->atlas[index].external_blob);
     memcpy(render->atlas[index].external_blob,encoded,sizeof encoded);
@@ -5943,12 +5943,17 @@ static int immutable_font_scene_preparation(void){
   CHECK(!render->atlas[0].px && !fake.uploads && !fake.forbidden_calls);
   fake.forbid_calls=0;fake.on_demand=1;
   gml_render_prepare_scene_fonts(render);
-  CHECK(fake.uploads==1 && !fake.submits && !fake.readbacks && !fake.retires);
+  CHECK(fake.uploads==2 && !fake.submits && !fake.readbacks && !fake.retires);
   CHECK(render->atlas[0].px && render->atlas[0].decode_attempted &&
         !memcmp(render->atlas[0].px,encoded+13,4));
   for(int index=1;index<4;index++)
     CHECK(!render->atlas[index].px && !render->atlas[index].decode_attempted);
-  CHECK(gml_render_atlas_scene_source_view(render,0,&source));
+  CHECK(render->atlas[4].px && render->atlas[4].decode_attempted &&
+        !memcmp(render->atlas[4].px,encoded+13,4));
+  /* The unreferenced immutable page spends the remaining budget only after fonts, while
+   * runtime-owned, runtime-font and over-budget pages remain undecoded. */
+  CHECK(gml_render_atlas_scene_source_view(render,4,&source));
+  CHECK(fake.last_upload.image.identity==4u);
   CHECK(fake.last_upload.image.resource_class==source.image.resource_class &&
         fake.last_upload.image.identity==source.image.identity &&
         fake.last_upload.image.incarnation==source.image.incarnation &&
@@ -5963,13 +5968,13 @@ static int immutable_font_scene_preparation(void){
   gml_render_prepare_scene_fonts(render);
   fake.fail_upload=0;
   gml_render_prepare_scene_fonts(render);
-  CHECK(fake.uploads==3 && fake.last_upload.image.incarnation==source.image.incarnation);
+  CHECK(fake.uploads==6 && fake.last_upload.image.incarnation==source.image.incarnation);
   fake.on_demand=0;fake.forbid_calls=1;
   gml_render_prepare_scene_fonts(render);
-  CHECK(fake.uploads==3 && !fake.forbidden_calls);
+  CHECK(fake.uploads==6 && !fake.forbidden_calls);
   fake.forbid_calls=0;
   gml_render_free(render);free(render);
-  CHECK(fake.retires==1);
+  CHECK(fake.retires==2);
   return 1;
 }
 

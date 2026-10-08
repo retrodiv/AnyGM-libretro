@@ -17,21 +17,24 @@ snapshot; the live ledger and rule table here describe current support.
 
 ## Experimental scene fidelity contract
 
-GPU scene binding at load, Reset and context recreation prepares the common scene and
-automatic-composition programs, geometry handles and destination-copy capacity at the current
+GPU scene binding at load, Reset and context recreation prepares the common scene,
+automatic-composition and fixed font programs, geometry handles and destination-copy capacity at the current
 engine extent through `gml_gpu_prepare_scene`. CPU scene selection does not call it.
-Preparation requires accessible owning-context dispatch, issues no draw, pixel transfer or
-frontend-framebuffer query, and gives no scene-execution credit. Repeated bindings reuse
-capacity; context loss forgets it. Specialised content/font programs and larger future extents
+Preparation requires accessible owning-context dispatch. Once per context, it executes the existing
+terminal pipeline into a private 1x1 target and waits during preparation, not gameplay: linking alone
+need not finish driver compilation. The real frontend target is restored, never written or read;
+the tiny upload and draw are counted, without scene-execution credit or published image authority.
+Repeated bindings reuse capacity; context loss forgets it. Content programs and larger future extents
 retain their existing demand-driven paths. Preparation failure is nonfatal and retains ordinary
 lazy retry. Raster rules, EXACT/TOLERANCE classifications and state bytes are unchanged.
 
 Room warming at initial start, Reset and room entry additionally prepares GPU copies of its
 already decoded sprite/background pages. Packaged real/sprite-font pages are decoded/uploaded once
 per distinct page at each boundary, within a 64 MiB aggregate speculative budget; the device
-reuses existing immutable identity/version uploads. Mutable/runtime-rasterized pages, unsupported extents,
+reuses existing immutable identity/version uploads. Fonts have priority; remaining budget also prepares
+immutable pages whose first users are not yet live room instances. Mutable/runtime-rasterized pages, unsupported extents,
 missing current-context proof and failures keep ordinary lazy paths. CPU warming is unchanged;
-mask-only pages are not uploaded solely for collision use. This is resource preparation, not
+the sprite/background helpers do not upload mask-only pages solely for collision use. This is resource preparation, not
 new draw admission, fallback exemption or zero first-use cost for every future content resource.
 
 R03-P9-AUTOMATIC-UNDERLAY also prepares an already queued underlay before an

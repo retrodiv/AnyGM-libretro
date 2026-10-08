@@ -489,6 +489,11 @@ void gml_render_prepare_scene_fonts(GmlRender *r){
   if(!visited) return;
   for(int font=0;font<r->n_fonts && font<GML_MAX_FONTS;font++){
     GmlFont *entry=&r->fonts[font];
+    if(entry->real && entry->runtime_owned && entry->atlas>=0 && entry->atlas<r->n_atlas)
+      visited[entry->atlas]=1;
+  }
+  for(int font=0;font<r->n_fonts && font<GML_MAX_FONTS;font++){
+    GmlFont *entry=&r->fonts[font];
     if(entry->real){
       if(!entry->runtime_owned)
         prepare_scene_font_atlas(r,entry->atlas,device,&caps,visited,&remaining);
@@ -502,6 +507,10 @@ void gml_render_prepare_scene_fonts(GmlRender *r){
       }
     }
   }
+  /* Fonts keep priority. Spend only the remaining immutable-page budget on pages whose first
+   * users may not be live room instances yet; runtime-owned pages retain their lazy boundary. */
+  for(int atlas=0;atlas<r->n_atlas && remaining;atlas++)
+    prepare_scene_font_atlas(r,atlas,device,&caps,visited,&remaining);
   free(visited);
 }
 

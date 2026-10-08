@@ -86,9 +86,9 @@ int gml_gpu_context_has_access_proof(const GmlGpu *gpu);
 /* Host proof of owning-thread access, not merely an adopted dispatch table. */
 int gml_gpu_context_is_current(const GmlGpu *gpu);
 
-/* Prepare the common scene programs, geometry and reusable destination-copy storage at a load
- * boundary. Requires current context access; does not draw, copy, observe or publish any image.
- * Repeated calls reuse resources. Failure leaves ordinary lazy preparation available. */
+/* Prepare fixed scene programs, geometry and destination-copy storage at a load boundary.
+ * Requires current context access; one private terminal draw/wait warms the driver without reading
+ * pixels or publishing an image. Repeated calls reuse resources; failure retains lazy retry. */
 int gml_gpu_prepare_scene(GmlGpu *gpu,uint32_t width,uint32_t height);
 
 /* Copies an API-neutral scene service table. Capabilities state the currently qualified scene

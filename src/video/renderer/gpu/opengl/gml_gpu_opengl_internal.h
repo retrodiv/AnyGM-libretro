@@ -167,6 +167,7 @@ struct GmlGpuBackend {
   GLint max_texture_size;
   GLuint program;
   GLuint vertex_array;
+  int presentation_prepared;
   GLint u_source;
   GLint u_map_x;
   GLint u_map_y;

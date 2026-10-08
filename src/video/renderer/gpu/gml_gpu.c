@@ -84,7 +84,9 @@ int gml_gpu_context_is_current(const GmlGpu *gpu){
 
 int gml_gpu_prepare_scene(GmlGpu *gpu,uint32_t width,uint32_t height){
   return context_accessible(gpu) &&
-    gml_gpu_opengl_scene_prepare(gpu->backend,width,height,gpu->error,sizeof gpu->error);
+    gml_gpu_opengl_scene_prepare(gpu->backend,width,height,gpu->error,sizeof gpu->error) &&
+    gml_gpu_opengl_prepare_presentation(gpu->backend,&gpu->context,&gpu->counters,
+                                       gpu->error,sizeof gpu->error);
 }
 
 int gml_gpu_capture_completed_frame(GmlGpu *gpu,uint32_t width,uint32_t height,

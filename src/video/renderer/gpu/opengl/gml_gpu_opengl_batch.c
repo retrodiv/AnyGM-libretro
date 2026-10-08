@@ -1040,9 +1040,11 @@ int gml_gpu_opengl_scene_prepare(GmlGpuBackend *backend,uint32_t width,uint32_t 
      width>(uint32_t)backend->scene.max_texture_size ||
      height>(uint32_t)backend->scene.max_texture_size) return 0;
   if(!scene_prepare_geometry(backend,error,error_capacity) ||
-     !gml_gpu_opengl_scene_exact_program(backend,0,error,error_capacity)) return 0;
-  /* Storage alone has no image identity or pixel authority. Specialised content/font programs
-   * remain demand-driven; the common automatic-composition program is shared across scenes. */
+     !gml_gpu_opengl_scene_exact_program(backend,0,error,error_capacity) ||
+     !gml_gpu_opengl_scene_exact_program(backend,2,error,error_capacity) ||
+     !gml_gpu_opengl_scene_exact_program(backend,3,error,error_capacity)) return 0;
+  /* Storage alone has no image identity or pixel authority. Prepare the fixed font policies too;
+   * content-owned programs remain demand-driven. Desktop policies reuse the common program. */
   int prepared=scene_snapshot_storage(backend,(GLsizei)width,(GLsizei)height);
   backend->gl.BindTexture(GL_TEXTURE_2D,0);
   backend->gl.ActiveTexture(GL_TEXTURE0);

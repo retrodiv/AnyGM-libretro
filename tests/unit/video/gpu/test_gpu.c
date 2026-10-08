@@ -125,6 +125,7 @@ static int scene_preparation_case(void){
     GmlGpuCounters counters={0};
     uint32_t current=1u;
     unsigned texture,compiles,queries;
+    unsigned preparation_compiles=api==GML_GPU_API_OPENGLES3?8u:4u;
     context.userdata=&current;
     context.is_current=completed_context_is_current;
     anygm_test_graphics_reset();
@@ -136,9 +137,9 @@ static int scene_preparation_case(void){
             !gml_gpu_prepare_scene(gpu,UINT32_MAX,12u),"invalid preparation extents refused");
     REQUIRE(anygm_test_graphics_compile_calls()==compiles,"invalid extents compile nothing");
     REQUIRE(gml_gpu_prepare_scene(gpu,16u,12u),"common scene resources prepared");
-    REQUIRE(anygm_test_graphics_compile_calls()==compiles+4u,
-            "only common scene and automatic-composition programs compile");
-    texture=anygm_test_graphics_texture_with_format(GL_RGBA8);
+    REQUIRE(anygm_test_graphics_compile_calls()==compiles+preparation_compiles,
+            "common scene, composition and fixed font policies compile once");
+    texture=anygm_test_graphics_first_texture_with_format(GL_RGBA8);
     REQUIRE(texture && anygm_test_graphics_texture_width(texture)==16 &&
             anygm_test_graphics_texture_height(texture)==12 &&
             anygm_test_graphics_texture_uploads(texture)==1u &&
@@ -146,21 +147,27 @@ static int scene_preparation_case(void){
             "destination-copy capacity allocated without pixel upload");
     REQUIRE(gml_gpu_prepare_scene(gpu,16u,12u) && gml_gpu_prepare_scene(gpu,8u,6u),
             "repeated and smaller preparation reuse resources");
-    REQUIRE(anygm_test_graphics_compile_calls()==compiles+4u &&
+    REQUIRE(anygm_test_graphics_compile_calls()==compiles+preparation_compiles &&
             anygm_test_graphics_texture_uploads(texture)==1u,"no repeated compile or storage");
     REQUIRE(gml_gpu_prepare_scene(gpu,20u,6u) &&
             anygm_test_graphics_texture_width(texture)==20 &&
             anygm_test_graphics_texture_height(texture)==12 &&
             anygm_test_graphics_texture_uploads(texture)==2u,
             "growth retains the other axis capacity");
-    REQUIRE(anygm_test_graphics_draw_calls()==0 && anygm_test_graphics_scene_draw_calls()==0 &&
+    REQUIRE(anygm_test_graphics_draw_calls()==1 && anygm_test_graphics_scene_draw_calls()==0 &&
             anygm_test_graphics_read_pixels()==0 && anygm_test_graphics_scene_copies()==0u &&
-            anygm_test_graphics_framebuffer_queries()==0u,
-            "preparation neither draws nor observes or queries the frontend target");
+            anygm_test_graphics_framebuffer_queries()==1u &&
+            anygm_test_graphics_last_draw_framebuffer()!=0u &&
+            anygm_test_graphics_last_draw_framebuffer()!=7u &&
+            anygm_test_graphics_finish_calls()==1u &&
+            anygm_test_graphics_bound_framebuffer()==7u,
+            "one private terminal draw never writes or reads the restored frontend target");
     gml_gpu_counters(gpu,&counters);
     REQUIRE(!counters.scene_batches_offered && !counters.scene_uploads &&
             !counters.scene_readbacks && !counters.completed_frame_copies,
             "resource preparation does not claim draw or transport credit");
+    REQUIRE(counters.draw_calls==1u && counters.full_uploads==1u && counters.uploaded_bytes==8u,
+            "private terminal preparation reports its actual draw and tiny uploads");
     current=0u;
     queries=anygm_test_graphics_framebuffer_queries();
     anygm_test_graphics_forbid_calls();
@@ -174,9 +181,12 @@ static int scene_preparation_case(void){
     anygm_test_graphics_allow_calls();
     current=1u;
     int deletes=anygm_test_graphics_deletes();
-    REQUIRE(gml_gpu_context_reset(gpu,&context) && gml_gpu_prepare_scene(gpu,16u,12u),
-            "replacement context rebuilds preparation");
+    REQUIRE(gml_gpu_context_reset(gpu,&context),"replacement context adopted");
     REQUIRE(anygm_test_graphics_deletes()==deletes,"old namespace never deleted into replacement");
+    REQUIRE(gml_gpu_prepare_scene(gpu,16u,12u),"replacement context rebuilds preparation");
+    REQUIRE(anygm_test_graphics_draw_calls()==2 &&
+            anygm_test_graphics_bound_framebuffer()==7u,
+            "context replacement repeats private preparation and restores the frontend target");
     gml_gpu_destroy(gpu,1);
   }
   return 1;
@@ -579,6 +589,21 @@ static int scene_optional_entry_refusal_case(void){
   REQUIRE(gml_gpu_prepare_scene(gpu,16u,12u),"ordinary preparation can retry after failure");
   REQUIRE(anygm_test_graphics_scene_draw_calls()==0 && anygm_test_graphics_read_pixels()==0,
           "failed and retried preparation never publishes pixels");
+  gml_gpu_context_lost(gpu);
+  REQUIRE(gml_gpu_context_reset(gpu,&context),"terminal retry context adopted");
+  unsigned draws=(unsigned)anygm_test_graphics_draw_calls();
+  unsigned finishes=anygm_test_graphics_finish_calls();
+  anygm_test_graphics_fail_terminal_draw_at(draws+1u);
+  REQUIRE(!gml_gpu_prepare_scene(gpu,16u,12u) &&
+          anygm_test_graphics_bound_framebuffer()==7u &&
+          anygm_test_graphics_finish_calls()==finishes && !anygm_test_graphics_read_pixels(),
+          "failed private terminal preparation restores the frontend without observation");
+  anygm_test_graphics_fail_terminal_draw_at(0u);
+  REQUIRE(gml_gpu_prepare_scene(gpu,16u,12u) && gml_gpu_prepare_scene(gpu,16u,12u) &&
+          anygm_test_graphics_draw_calls()==(int)draws+2 &&
+          anygm_test_graphics_finish_calls()==finishes+1u &&
+          anygm_test_graphics_bound_framebuffer()==7u,
+          "failed terminal warm-up retries once, then reuses its completed preparation");
   gml_gpu_destroy(gpu,1);
   return 1;
 }

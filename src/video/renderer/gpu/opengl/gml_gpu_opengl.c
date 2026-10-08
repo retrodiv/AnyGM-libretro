@@ -49,6 +49,7 @@ void gml_gpu_opengl_forget(GmlGpuBackend *backend){
   backend->loaded=0;
   backend->program=0;
   backend->vertex_array=0;
+  backend->presentation_prepared=0;
   memset(&backend->gl,0,sizeof backend->gl);
   for(size_t index=0;index<GML_PLAN_MAX_IMAGES;index++){
     memset(&backend->sources[index],0,sizeof backend->sources[index]);

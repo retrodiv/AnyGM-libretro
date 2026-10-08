@@ -159,3 +159,46 @@ int gml_gpu_opengl_execute(GmlGpuBackend *backend,const GmlGpuContext *context,
   }
   return failed?0:1;
 }
+
+static uintptr_t preparation_framebuffer(void *userdata){
+  return *(const uintptr_t*)userdata;
+}
+
+int gml_gpu_opengl_prepare_presentation(GmlGpuBackend *backend,const GmlGpuContext *context,
+                                        GmlGpuCounters *counters,char *error,size_t error_capacity){
+  const uint32_t pixel=0xFF102030u;
+  GmlRenderPlan plan={0};
+  uintptr_t frontend,private_target;
+  GmlGpuContext private_context;
+  int prepared;
+  if(!backend || !backend->loaded || !context || !context->get_current_framebuffer) return 0;
+  if(backend->presentation_prepared) return 1;
+  frontend=context->get_current_framebuffer(context->userdata);
+  backend->gl.BindBuffer(GL_PIXEL_UNPACK_BUFFER,0);
+  if(!gml_gpu_opengl_bind_readback_target(backend,1u,1u,error,error_capacity)){
+    backend->gl.BindFramebuffer(GL_FRAMEBUFFER,(GLuint)frontend);
+    return 0;
+  }
+  private_target=backend->readback_framebuffer;
+  private_context=*context;
+  private_context.userdata=&private_target;
+  private_context.get_current_framebuffer=preparation_framebuffer;
+  plan.target=GML_PLAN_TARGET_HOST_FRAMEBUFFER;
+  plan.target_width=plan.target_height=1u;
+  plan.image_count=plan.operation_count=1u;
+  /* NONE cannot alias a real plan image. No borrowed address survives the synchronous upload. */
+  plan.images[0]=(GmlPlanImage){.image_class=GML_PLAN_IMAGE_NONE,.width=1u,.height=1u,
+    .pitch_pixels=1u,.opaque=1u,.cpu_pixels=&pixel};
+  plan.operations[0]=(GmlPlanOp){.opcode=GML_PLAN_OP_PRESENT_CPU_FRAME,
+    .destination={0,0,1u,1u},.alpha_write=255u};
+  /* Linking alone may leave expensive driver compilation until the first draw. Execute the
+   * preserved terminal pipeline privately, and retire its work during preparation, never per frame.
+   * HOST_FRAMEBUFFER selects execution without the READBACK target's CPU observation. */
+  prepared=gml_gpu_opengl_execute(backend,&private_context,&plan,counters,error,error_capacity) &&
+           gml_gpu_opengl_scene_wait(backend);
+  /* The ordinary bounded mirror cache owns the tiny source until eviction or context loss.
+   * It retains only identity/generation, never the borrowed CPU pointer. */
+  backend->gl.BindFramebuffer(GL_FRAMEBUFFER,(GLuint)frontend);
+  backend->presentation_prepared=prepared;
+  return prepared;
+}

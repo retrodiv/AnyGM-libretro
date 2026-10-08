@@ -43,7 +43,7 @@ typedef struct FakeDriver {
   GLuint quad_texture[3];
   GLint quad_filter[3];
   GLuint active_unit;
-  GLuint framebuffer;
+  GLuint framebuffer,last_draw_framebuffer;
   uint32_t framebuffer_queries;
   GLuint program;
   GLuint vertex_array;
@@ -69,7 +69,7 @@ typedef struct FakeDriver {
   GLint draw_calls;
   GLint scene_draw_calls;
   unsigned scene_mask_draws[16];
-  unsigned scene_draw_error_at,flush_calls;
+  unsigned scene_draw_error_at,terminal_draw_error_at,flush_calls,finish_calls;
   struct { GLint location; GLuint program; } font_channel_locations[64];
   unsigned font_channel_location_count,font_channel_draws[3],font_channel_errors;
   GLint font_channel;
@@ -140,6 +140,7 @@ void anygm_test_graphics_fail_copy_at(unsigned ordinal){ g_fake.copy_error_at=or
 unsigned anygm_test_graphics_last_read_framebuffer(void){ return g_fake.last_read_framebuffer; }
 unsigned anygm_test_graphics_last_copy_framebuffer(void){ return g_fake.last_copy_framebuffer; }
 void anygm_test_graphics_fail_scene_draw_at(unsigned ordinal){ g_fake.scene_draw_error_at=ordinal; }
+void anygm_test_graphics_fail_terminal_draw_at(unsigned ordinal){ g_fake.terminal_draw_error_at=ordinal; }
 void anygm_test_graphics_fail_texture_upload(unsigned name){ g_fake.upload_error_texture=name; }
 void anygm_test_graphics_rgb_query_result(unsigned result){ g_fake.rgb_query_result=result; }
 void anygm_test_graphics_active_query(unsigned name){ g_fake.active_query=name; }
@@ -170,7 +171,7 @@ static void fake_GetIntegerv(GLenum name,GLint *value){
                    name==GL_MAX_TEXTURE_IMAGE_UNITS?g_fake.texture_unit_limit:0;
 }
 static void fake_Flush(void){ note_call(); g_fake.flush_calls++; }
-static void fake_Finish(void){ note_call(); }
+static void fake_Finish(void){ note_call();g_fake.finish_calls++; }
 static void fake_PolygonMode(GLenum face,GLenum mode){ (void)face;(void)mode; note_call(); }
 static void fake_BlendFuncSeparate(GLenum a,GLenum b,GLenum c,GLenum d){
   note_call();
@@ -498,7 +499,12 @@ static void fake_DeleteVertexArrays(GLsizei n,const GLuint *names){
 }
 static void fake_DrawArrays(GLenum mode,GLint first,GLsizei count){
   note_call();
-  if(mode==GL_TRIANGLES && first==0 && count==3) g_fake.draw_calls++;
+  g_fake.last_draw_framebuffer=g_fake.framebuffer;
+  if(mode==GL_TRIANGLES && first==0 && count==3){
+    g_fake.draw_calls++;
+    if((unsigned)g_fake.draw_calls==g_fake.terminal_draw_error_at)
+      g_fake.pending_error=0x0502u;
+  }
   if(mode==GL_TRIANGLES && first==0 && count>=6 && count%6==0){
     g_fake.scene_draw_calls++;
     g_fake.scene_mask_draws[g_fake.color_mask_bits&15u]++;
@@ -765,6 +771,9 @@ int anygm_test_graphics_quad_texcoord(int corner,float *u,float *v){
 unsigned anygm_test_graphics_attached_texture(void){ return g_fake.attached_texture; }
 int anygm_test_graphics_clear_calls(void){ return g_fake.clear_calls; }
 unsigned anygm_test_graphics_framebuffer_queries(void){ return g_fake.framebuffer_queries; }
+unsigned anygm_test_graphics_bound_framebuffer(void){ return g_fake.framebuffer; }
+unsigned anygm_test_graphics_finish_calls(void){ return g_fake.finish_calls; }
+unsigned anygm_test_graphics_last_draw_framebuffer(void){ return g_fake.last_draw_framebuffer; }
 int anygm_test_graphics_blend_enabled(void){ return g_fake.blend_enabled; }
 int anygm_test_graphics_scene_filter(void){ return g_fake.scene_filter; }
 unsigned anygm_test_graphics_scene_mask_draws(unsigned mask){

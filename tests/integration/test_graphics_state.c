@@ -884,7 +884,7 @@ static int resident_world_selection_case(void){
   REQUIRE(graphics_adopt(selected.engine,ANYGM_GRAPHICS_OPENGLES3)==ANYGM_OK,
           "resident world fixture adopts a context");
   unsigned prepared_compiles=anygm_test_graphics_compile_calls();
-  unsigned prepared_texture=anygm_test_graphics_texture_with_format(0x8058); /* RGBA8 storage. */
+  unsigned prepared_texture=anygm_test_graphics_first_texture_with_format(0x8058); /* RGBA8 storage. */
   REQUIRE(prepared_texture &&
           anygm_test_graphics_texture_width(prepared_texture)==(int)selected.engine->width &&
           anygm_test_graphics_texture_height(prepared_texture)==(int)selected.engine->height &&

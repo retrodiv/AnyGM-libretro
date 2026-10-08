@@ -67,6 +67,7 @@ unsigned anygm_test_graphics_flush_calls(void);
 unsigned anygm_test_graphics_font_channel_draws(unsigned channel);
 unsigned anygm_test_graphics_font_channel_errors(void);
 void anygm_test_graphics_fail_scene_draw_at(unsigned ordinal);
+void anygm_test_graphics_fail_terminal_draw_at(unsigned ordinal);
 /* Refuse data uploads to this texture without changing its stored bytes; zero disables it. */
 void anygm_test_graphics_fail_texture_upload(unsigned name);
 /* Texture bound to this sampler at the most recent scene draw, not shader emulation. */
@@ -109,6 +110,9 @@ int anygm_test_graphics_content_matrix(unsigned index,float *matrix);
 unsigned anygm_test_graphics_attached_texture(void);
 int anygm_test_graphics_clear_calls(void);
 unsigned anygm_test_graphics_framebuffer_queries(void);
+unsigned anygm_test_graphics_bound_framebuffer(void);
+unsigned anygm_test_graphics_finish_calls(void);
+unsigned anygm_test_graphics_last_draw_framebuffer(void);
 int anygm_test_graphics_blend_enabled(void);
 unsigned anygm_test_graphics_blend_configurations(void);
 unsigned anygm_test_graphics_scene_copies(void);

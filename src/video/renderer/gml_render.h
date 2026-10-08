@@ -658,7 +658,8 @@ void gml_render_prefetch_bg(GmlRender *r, int bg);
 void gml_render_warm_sprite(GmlRender *r, int sprite);
 void gml_render_warm_bg(GmlRender *r, int bg);
 /* Best-effort device uploads at room boundaries, separate from unchanged CPU warming.
- * Only a witnessed on-demand device participates. Fonts prepare at most 64 MiB per boundary;
+ * Only a witnessed on-demand device participates. Fonts have priority within a 64 MiB budget,
+ * with remaining capacity spent on other immutable pages at that boundary;
  * runtime/mutable pages, oversized pages and failures retain their ordinary lazy paths. */
 void gml_render_prepare_scene_sprite(GmlRender *r,int sprite);
 void gml_render_prepare_scene_bg(GmlRender *r,int bg);
