@@ -367,6 +367,14 @@ static int resident_atlas_crop_from_page(GmlRender *r,GmlTpag *page,
      floor(left)!=left || floor(top)!=top ||
      fabs(xs)>INT_MAX || fabs(ys)>INT_MAX ||
      xs!=(double)(int)xs || ys!=(double)(int)ys) return 0;
+  /* R03-BG-UNIT-CLIPPED-NOOP: a trimmed repeat cell can have no physical
+   * coverage even while its logical cell intersects the target. Keep the
+   * qualified unit-nearest prefix queued instead of handing an empty draw
+   * to the CPU. The source, state and whole-texel guards above still apply. */
+  if(family==GML_RENDER_SCENE_BACKGROUND && page->scene_binary_alpha &&
+     xs==1.0 && ys==1.0 &&
+     (left>=r->fbw || top>=r->fbh ||
+      left+scaled_width<=0.0 || top+scaled_height<=0.0)) return 1;
   if(left>=r->fbw || top>=r->fbh) return 0;
   if((xs<0.0 && (left<0.0 || left+scaled_width>r->fbw)) ||
      (ys<0.0 && (top<0.0 || top+scaled_height>r->fbh))) return 0;
