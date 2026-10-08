@@ -15,7 +15,8 @@
 /* Opaque flat coverage has the same half-open pixel region for point-sized and filled
  * rectangles. Typed entries already receive raster coordinates, so the current world
  * scale must not reject or remap them. Keep unqualified shapes in their CPU raster body. */
-static int resident_flat_eligible_rule(GmlRender *render,int classic_rectangle,int partial_alpha){
+static int resident_flat_eligible_rule(GmlRender *render,int classic_rectangle,int partial_alpha,
+                                        int blendmode){
   return render && render->resident_application_pass && gml_render_device(render) &&
     gml_render_scene_target_matches(render) &&
     !render->gui_pass_active &&
@@ -27,7 +28,7 @@ static int resident_flat_eligible_rule(GmlRender *render,int classic_rectangle,i
     !render->classic_interp_phase[1] && !render->classic_interp_phase[2] &&
     render->active_shader<0 &&
     (partial_alpha ? isfinite(render->alpha) && render->alpha>0.0 && render->alpha<1.0
-                   : render->alpha==1.0) && !render->blendmode &&
+                   : render->alpha==1.0) && render->blendmode==blendmode &&
     render->blend_equation==1 && render->blend_equation_alpha==1 &&
     render->color_write_mask==15u && !render->alpha_test_enable &&
     !render->pending_presentation && !render->rotated_batch_count &&
@@ -35,7 +36,7 @@ static int resident_flat_eligible_rule(GmlRender *render,int classic_rectangle,i
 }
 
 static int resident_flat_eligible(GmlRender *render){
-  return resident_flat_eligible_rule(render,0,0);
+  return resident_flat_eligible_rule(render,0,0,0);
 }
 
 int gml_render_try_particle_line(GmlRender *r,double x,double y,
@@ -96,7 +97,7 @@ static int resident_opaque_rect(GmlRender *render,int x1,int y1,int x2,int y2,
   GmlRenderResourceExecution result;
   /* This entry receives the existing CPU rectangle's inclusive raster bounds. Early
    * classic filled rectangles share that exact coverage; other shapes keep their gate. */
-  if(!resident_flat_eligible_rule(render,classic_rectangle,0)) return 0;
+  if(!resident_flat_eligible_rule(render,classic_rectangle,0,0)) return 0;
   if(x1>x2){int swap=x1;x1=x2;x2=swap;}
   if(y1>y2){int swap=y1;y1=y2;y2=swap;}
   if(x2<0 || y2<0 || x1>=render->fbw || y1>=render->fbh) return 0;
@@ -139,11 +140,12 @@ static int resident_classic_alpha_rect(GmlRender *render,int x1,int y1,int x2,in
                                        uint32_t color){
   GmlRenderDrawOp operation={0};
   const GmlRenderDeviceServices *device=gml_render_device(render);
+  int inverse=render && render->blendmode==2;
   /* Only the borrowed opaque classic raster has qualified target-alpha semantics.
    * The CPU receives these same inclusive, already transformed integer bounds. */
   if(!render || !render->classic || !render->alphablend ||
      render->target_id>=0 || render->target_sp ||
-     !resident_flat_eligible_rule(render,1,1) ||
+     !resident_flat_eligible_rule(render,1,!inverse,inverse?2:0) ||
      !render->fb_opaque_known || !render->fb_all_opaque ||
      !device || !device->observe_on_demand ||
      !device->observe_on_demand(device->context)) return 0;
@@ -172,7 +174,9 @@ static int resident_classic_alpha_rect(GmlRender *render,int x1,int y1,int x2,in
   operation.payload.primitive=(GmlRenderPrimitiveRect){
     .region={x1,y1,(uint32_t)(x2-x1+1),(uint32_t)(y2-y1+1)},
     .colour=gml_render_cpu_backend_color_to_xrgb(color),
-    .kind=GML_RENDER_PRIMITIVE_CLASSIC_ALPHA_RECT,.alpha=render->alpha,.alpha_blend=1u};
+    .kind=inverse?GML_RENDER_PRIMITIVE_CLASSIC_INVERSE_RECT:
+                  GML_RENDER_PRIMITIVE_CLASSIC_ALPHA_RECT,
+    .alpha=render->alpha,.alpha_blend=1u};
   return gml_render_application_scene_enqueue_primitive(render,&operation);
 }
 

@@ -255,14 +255,14 @@ void gml_render_dispatch_batch_record(GmlRender *render,const GmlRenderDrawBatch
   }
 }
 
-int gml_render_classic_alpha_rect_valid(const GmlRenderDrawOp *operation){
+static int classic_blended_rect_valid(const GmlRenderDrawOp *operation,unsigned kind){
   if(!operation || operation->opcode!=GML_RENDER_OP_COLOURED_PRIMITIVE ||
      operation->reconstruction_mode!=GML_RENDER_DEVICE_CHECKPOINT ||
      operation->scene_family!=GML_RENDER_SCENE_PRIMITIVE ||
      operation->source_count || operation->sources) return 0;
   const GmlRenderPrimitiveRect *p=&operation->payload.primitive;
   const GmlRenderTargetRef *t=&operation->target;
-  return p->kind==GML_RENDER_PRIMITIVE_CLASSIC_ALPHA_RECT &&
+  return p->kind==kind &&
     t->image.resource_class==GML_RENDER_RESOURCE_SCREEN &&
     t->pixel_format==GML_RENDER_PIXEL_ARGB8888 && t->width && t->height &&
     t->width<=16384u && t->height<=16384u && !t->region.x && !t->region.y &&
@@ -271,7 +271,16 @@ int gml_render_classic_alpha_rect_valid(const GmlRenderDrawOp *operation){
     (uint64_t)(uint32_t)p->region.x+p->region.width<=t->width &&
     (uint64_t)(uint32_t)p->region.y+p->region.height<=t->height &&
     (p->colour>>24)==255u && p->alpha_blend==1u && !p->interpolate &&
-    isfinite(p->alpha) && p->alpha>0.0 && p->alpha<1.0;
+    isfinite(p->alpha) && p->alpha>0.0 &&
+    (kind==GML_RENDER_PRIMITIVE_CLASSIC_INVERSE_RECT?p->alpha==1.0:p->alpha<1.0);
+}
+
+int gml_render_classic_alpha_rect_valid(const GmlRenderDrawOp *operation){
+  return classic_blended_rect_valid(operation,GML_RENDER_PRIMITIVE_CLASSIC_ALPHA_RECT);
+}
+
+int gml_render_classic_inverse_rect_valid(const GmlRenderDrawOp *operation){
+  return classic_blended_rect_valid(operation,GML_RENDER_PRIMITIVE_CLASSIC_INVERSE_RECT);
 }
 
 int gml_render_particle_line_valid(const GmlRenderDrawOp *operation){

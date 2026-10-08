@@ -72,6 +72,7 @@ REQUIRED_RULES = {
     "R03-PRIM-LINES", "R03-PRIM-OUTLINES",
     "R03-PRIM-PARTICLE-BRIDGE", "R03-PRIM-TRI-OUTLINE",
     "R03-PRIM-PARTICLE-LINE",
+    "R03-PRIM-CLASSIC-INVERSE-RECT",
     "R03-P5-FAULT-LIMIT",
     "R03-P5-QUEUE-RETRY",
     "R03-P8-RUNTIME-SPRITE-BASE", "R03-P8-STATE-RETIRE",
@@ -712,6 +713,8 @@ def self_test() -> None:
         "\n".join(line for line in document.splitlines()
                   if not line.startswith("| R03-SPR-FIRSTGEN-NEAREST-MAG |")),
         document.replace("device comparison R03-P3-JOURNAL", "comparison missing", 1),
+        "\n".join(line for line in document.splitlines()
+                  if not line.startswith("| R03-PRIM-CLASSIC-INVERSE-RECT |")),
         document.replace("`supported` | Only the bounded", "`planned` | Only the bounded", 1),
         document.replace(
             "`common/gml_render_sprites.c::gml_render_sprite_pos_geometry`; "

@@ -11,7 +11,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-enum { GL_SCENE_MAX_EXACT_REPETITIONS=64 };
+enum { GL_SCENE_MAX_EXACT_REPETITIONS=64, GL_SCENE_BLEND_INVERSE_RECT=12 };
 
 static int same_logical(GmlRenderImageRef a,GmlRenderImageRef b){
   return a.resource_class==b.resource_class && a.identity==b.identity &&
@@ -533,8 +533,10 @@ static int scene_preflight(GmlGpuBackend *backend,const GmlRenderDrawBatch *batc
     }
     if(op->opcode==GML_RENDER_OP_COLOURED_PRIMITIVE){
       if(op->payload.primitive.kind==GML_RENDER_PRIMITIVE_PARTICLE_LINE ||
-         op->payload.primitive.kind==GML_RENDER_PRIMITIVE_CLASSIC_ALPHA_RECT){
-        if((!gml_render_particle_line_valid(op) && !gml_render_classic_alpha_rect_valid(op)) ||
+         op->payload.primitive.kind==GML_RENDER_PRIMITIVE_CLASSIC_ALPHA_RECT ||
+         op->payload.primitive.kind==GML_RENDER_PRIMITIVE_CLASSIC_INVERSE_RECT){
+        if((!gml_render_particle_line_valid(op) && !gml_render_classic_alpha_rect_valid(op) &&
+            !gml_render_classic_inverse_rect_valid(op)) ||
            (op->payload.primitive.alpha_blend &&
             (!backend->gl.BlendFuncSeparate || !backend->gl.BlendEquationSeparate)) ||
            (!existing_target(backend,target) &&
@@ -1044,7 +1046,9 @@ static int flush_quads(GmlGpuBackend *backend,GlSceneImage *target,GlSceneImage 
     backend->gl.TexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAG_FILTER,(GLint)texture_filter);
   }
   if(blend && blend!=8 && filter!=15u && filter!=17u){
-    backend->gl.BlendFuncSeparate(blend==9 || blend==10?GL_ONE:GL_SRC_ALPHA,
+    if(blend==GL_SCENE_BLEND_INVERSE_RECT)
+      backend->gl.BlendFuncSeparate(GL_ZERO,GL_ONE_MINUS_SRC_COLOR,GL_ONE,GL_ZERO);
+    else backend->gl.BlendFuncSeparate(blend==9 || blend==10?GL_ONE:GL_SRC_ALPHA,
                                   blend==9?GL_ONE:GL_ONE_MINUS_SRC_ALPHA,
                                   blend==3 || blend==9 || blend==10?GL_SRC_ALPHA:GL_ONE,
                                   GL_ONE_MINUS_SRC_ALPHA);
@@ -1496,13 +1500,17 @@ GmlRenderExecutionResult gml_gpu_opengl_scene_submit(GmlGpuBackend *backend,
     GlSceneImage *target;
     int particle=op->opcode==GML_RENDER_OP_COLOURED_PRIMITIVE &&
       op->payload.primitive.kind==GML_RENDER_PRIMITIVE_PARTICLE_LINE;
-    int alpha_rect=op->opcode==GML_RENDER_OP_COLOURED_PRIMITIVE &&
-      op->payload.primitive.kind==GML_RENDER_PRIMITIVE_CLASSIC_ALPHA_RECT;
+    int inverse_rect=op->opcode==GML_RENDER_OP_COLOURED_PRIMITIVE &&
+      op->payload.primitive.kind==GML_RENDER_PRIMITIVE_CLASSIC_INVERSE_RECT;
+    int alpha_rect=inverse_rect || (op->opcode==GML_RENDER_OP_COLOURED_PRIMITIVE &&
+      op->payload.primitive.kind==GML_RENDER_PRIMITIVE_CLASSIC_ALPHA_RECT);
     uint32_t primitive_filter=particle?28u:31u;
+    int primitive_blend=inverse_rect?GL_SCENE_BLEND_INVERSE_RECT:
+      (particle || alpha_rect?(int)op->payload.primitive.alpha_blend:0);
     if(pending_count && (particle || alpha_rect
        ? !active_target || !same_logical(active_target->ref,op->target.image) ||
          pending_count==GL_SCENE_MAX_QUADS || pending_filter!=primitive_filter ||
-         pending_blend!=(int)op->payload.primitive.alpha_blend
+         pending_blend!=primitive_blend
        : (op->opcode!=GML_RENDER_OP_TEXTURED_QUAD ||
        !active_target || !same_logical(active_target->ref,op->target.image) ||
        pending_count==GL_SCENE_MAX_QUADS ||
@@ -1572,7 +1580,7 @@ GmlRenderExecutionResult gml_gpu_opengl_scene_submit(GmlGpuBackend *backend,
           v[16]=(float)p->scale_x; v[17]=(float)p->scale_y;
           v[21]=(float)p->interpolate; v[22]=(float)p->alpha_blend;
         }
-        pending_source=NULL; pending_filter=primitive_filter; pending_blend=(int)p->alpha_blend;
+        pending_source=NULL; pending_filter=primitive_filter; pending_blend=primitive_blend;
         if(alpha_rect) pending_write_mask=15u;
         pending_count++;
         target->valid=1; target->rendered_origin=1;
