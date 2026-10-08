@@ -119,6 +119,69 @@ static uint32_t completed_context_is_current(void *userdata){
   return *(const uint32_t*)userdata;
 }
 
+static int scene_preparation_case(void){
+  for(unsigned api=GML_GPU_API_OPENGL_CORE;api<=GML_GPU_API_OPENGLES3;api++){
+    GmlGpuContext context=fake_context(api);
+    GmlGpuCounters counters={0};
+    uint32_t current=1u;
+    unsigned texture,compiles,queries;
+    context.userdata=&current;
+    context.is_current=completed_context_is_current;
+    anygm_test_graphics_reset();
+    GmlGpu *gpu=gml_gpu_create();
+    REQUIRE(gpu && !gml_gpu_prepare_scene(gpu,16u,12u),"no preparation before adoption");
+    REQUIRE(gml_gpu_context_reset(gpu,&context),"preparation context adopted");
+    compiles=anygm_test_graphics_compile_calls();
+    REQUIRE(!gml_gpu_prepare_scene(gpu,0u,12u) &&
+            !gml_gpu_prepare_scene(gpu,UINT32_MAX,12u),"invalid preparation extents refused");
+    REQUIRE(anygm_test_graphics_compile_calls()==compiles,"invalid extents compile nothing");
+    REQUIRE(gml_gpu_prepare_scene(gpu,16u,12u),"common scene resources prepared");
+    REQUIRE(anygm_test_graphics_compile_calls()==compiles+4u,
+            "only common scene and automatic-composition programs compile");
+    texture=anygm_test_graphics_texture_with_format(GL_RGBA8);
+    REQUIRE(texture && anygm_test_graphics_texture_width(texture)==16 &&
+            anygm_test_graphics_texture_height(texture)==12 &&
+            anygm_test_graphics_texture_uploads(texture)==1u &&
+            anygm_test_graphics_texture_data_uploads(texture)==0u,
+            "destination-copy capacity allocated without pixel upload");
+    REQUIRE(gml_gpu_prepare_scene(gpu,16u,12u) && gml_gpu_prepare_scene(gpu,8u,6u),
+            "repeated and smaller preparation reuse resources");
+    REQUIRE(anygm_test_graphics_compile_calls()==compiles+4u &&
+            anygm_test_graphics_texture_uploads(texture)==1u,"no repeated compile or storage");
+    REQUIRE(gml_gpu_prepare_scene(gpu,20u,6u) &&
+            anygm_test_graphics_texture_width(texture)==20 &&
+            anygm_test_graphics_texture_height(texture)==12 &&
+            anygm_test_graphics_texture_uploads(texture)==2u,
+            "growth retains the other axis capacity");
+    REQUIRE(anygm_test_graphics_draw_calls()==0 && anygm_test_graphics_scene_draw_calls()==0 &&
+            anygm_test_graphics_read_pixels()==0 && anygm_test_graphics_scene_copies()==0u &&
+            anygm_test_graphics_framebuffer_queries()==0u,
+            "preparation neither draws nor observes or queries the frontend target");
+    gml_gpu_counters(gpu,&counters);
+    REQUIRE(!counters.scene_batches_offered && !counters.scene_uploads &&
+            !counters.scene_readbacks && !counters.completed_frame_copies,
+            "resource preparation does not claim draw or transport credit");
+    current=0u;
+    queries=anygm_test_graphics_framebuffer_queries();
+    anygm_test_graphics_forbid_calls();
+    REQUIRE(!gml_gpu_prepare_scene(gpu,24u,12u) &&
+            anygm_test_graphics_calls_after_forget()==0 &&
+            anygm_test_graphics_framebuffer_queries()==queries,
+            "revoked access refuses preparation before any driver call");
+    gml_gpu_context_lost(gpu);
+    REQUIRE(!gml_gpu_prepare_scene(gpu,16u,12u) &&
+            anygm_test_graphics_calls_after_forget()==0,"lost context cannot prepare");
+    anygm_test_graphics_allow_calls();
+    current=1u;
+    int deletes=anygm_test_graphics_deletes();
+    REQUIRE(gml_gpu_context_reset(gpu,&context) && gml_gpu_prepare_scene(gpu,16u,12u),
+            "replacement context rebuilds preparation");
+    REQUIRE(anygm_test_graphics_deletes()==deletes,"old namespace never deleted into replacement");
+    gml_gpu_destroy(gpu,1);
+  }
+  return 1;
+}
+
 static int unbound_context_access_case(void){
   for(unsigned api=GML_GPU_API_OPENGL_CORE;api<=GML_GPU_API_OPENGLES3;api++){
     uint32_t current=1u,pixels[4]={0xFF102030u,0xFF405060u,0xFF708090u,0xFFA0B0C0u};
@@ -503,6 +566,19 @@ static int scene_optional_entry_refusal_case(void){
   gml_gpu_device_services(gpu,&services);
   REQUIRE(!services.capabilities(services.context,&caps),
           "the scene executor does not advertise unqueryable limits");
+  REQUIRE(!gml_gpu_prepare_scene(gpu,16u,12u),
+          "optional preparation does not require missing scene entry points");
+  gml_gpu_destroy(gpu,1);
+  anygm_test_graphics_reset();
+  gpu=gml_gpu_create();
+  context=fake_context(GML_GPU_API_OPENGLES3);
+  REQUIRE(gpu && gml_gpu_context_reset(gpu,&context),"preparation retry context adopted");
+  anygm_test_graphics_fail_compile(1);
+  REQUIRE(!gml_gpu_prepare_scene(gpu,16u,12u),"preparation compile failure is nonfatal");
+  anygm_test_graphics_fail_compile(0);
+  REQUIRE(gml_gpu_prepare_scene(gpu,16u,12u),"ordinary preparation can retry after failure");
+  REQUIRE(anygm_test_graphics_scene_draw_calls()==0 && anygm_test_graphics_read_pixels()==0,
+          "failed and retried preparation never publishes pixels");
   gml_gpu_destroy(gpu,1);
   return 1;
 }
@@ -3515,6 +3591,7 @@ int main(int argc,char **argv){
   static const AnygmTestCase lifecycle_cases[]={
     {"reset",lifecycle_reset_case},
     {"context_loss",lifecycle_loss_case},
+    {"scene_preparation",scene_preparation_case},
     {"unbound_context_access",unbound_context_access_case},
     {"completed_frame_snapshot",completed_frame_snapshot_case},
     {"destroy_without_context",lifecycle_destroy_without_context_case},

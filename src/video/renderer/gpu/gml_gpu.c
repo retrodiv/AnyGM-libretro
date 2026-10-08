@@ -82,6 +82,11 @@ int gml_gpu_context_is_current(const GmlGpu *gpu){
          gpu->context.is_current(gpu->context.userdata);
 }
 
+int gml_gpu_prepare_scene(GmlGpu *gpu,uint32_t width,uint32_t height){
+  return context_accessible(gpu) &&
+    gml_gpu_opengl_scene_prepare(gpu->backend,width,height,gpu->error,sizeof gpu->error);
+}
+
 int gml_gpu_capture_completed_frame(GmlGpu *gpu,uint32_t width,uint32_t height,
                                    uint64_t generation){
   if(!gml_gpu_context_is_current(gpu) ||

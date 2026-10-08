@@ -17,6 +17,15 @@ snapshot; the live ledger and rule table here describe current support.
 
 ## Experimental scene fidelity contract
 
+GPU scene binding at load, Reset and context recreation prepares the common scene and
+automatic-composition programs, geometry handles and destination-copy capacity at the current
+engine extent through `gml_gpu_prepare_scene`. CPU scene selection does not call it.
+Preparation requires accessible owning-context dispatch, issues no draw, pixel transfer or
+frontend-framebuffer query, and gives no scene-execution credit. Repeated bindings reuse
+capacity; context loss forgets it. Specialised content/font programs and larger future extents
+retain their existing demand-driven paths. Preparation failure is nonfatal and retains ordinary
+lazy retry. Raster rules, EXACT/TOLERANCE classifications and state bytes are unchanged.
+
 R03-P9-AUTOMATIC-UNDERLAY also prepares an already queued underlay before an
 otherwise qualified public stretched application-surface GUI draw with zero camera offset.
 Changing automatic-draw enablement does not cancel that queued intent. The

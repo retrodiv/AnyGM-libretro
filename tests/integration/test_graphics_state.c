@@ -883,6 +883,13 @@ static int resident_world_selection_case(void){
           "scene-only fixture keeps hybrid presentation disabled");
   REQUIRE(graphics_adopt(selected.engine,ANYGM_GRAPHICS_OPENGLES3)==ANYGM_OK,
           "resident world fixture adopts a context");
+  unsigned prepared_compiles=anygm_test_graphics_compile_calls();
+  unsigned prepared_texture=anygm_test_graphics_texture_with_format(0x8058); /* RGBA8 storage. */
+  REQUIRE(prepared_texture &&
+          anygm_test_graphics_texture_width(prepared_texture)==(int)selected.engine->width &&
+          anygm_test_graphics_texture_height(prepared_texture)==(int)selected.engine->height &&
+          anygm_test_graphics_scene_draw_calls()==0 && anygm_test_graphics_read_pixels()==0,
+          "GPU binding prepares extent capacity before the first frame without publishing pixels");
   REQUIRE(advance(plain.engine,1,NULL) && advance(selected.engine,1,NULL),
           "both world policies complete one frame");
   gml_gpu_counters(selected.engine->gpu,&counters);
@@ -890,6 +897,8 @@ static int resident_world_selection_case(void){
           "selected world submits a resident clear");
   REQUIRE(selected.engine->screen_pass_frames==1u && counters.cpu_upload_frames==0u,
           "scene-only presentation uses the resident image without a complete-frame upload");
+  REQUIRE(anygm_test_graphics_compile_calls()==prepared_compiles,
+          "the first resident frame reuses prepared common programs");
   AnygmConfigDelta changed={0};
   changed.struct_size=sizeof changed;
   changed.values.struct_size=sizeof changed.values;

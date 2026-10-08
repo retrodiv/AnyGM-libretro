@@ -7,6 +7,12 @@ This map is optimized for quick navigation by maintainers.
 Start with the responsibility row, inspect the named public header, and keep a
 change inside that owner unless an architectural seam genuinely changes.
 
+GPU scene load-boundary preparation crosses from `src/core/engine_graphics.c::engine_graphics_bind_renderer`
+through the neutral `gpu/gml_gpu.c::gml_gpu_prepare_scene` into
+`gpu/opengl/gml_gpu_opengl_batch.c::gml_gpu_opengl_scene_prepare`.
+It reuses existing program builders and snapshot storage without publishing pixels;
+the lifecycle/reuse/access contract is covered by `make check TEST=gpu`.
+
 | Path | Responsibility | Public or internal entry points | Mutable owner | Allowed dependencies | Forbidden dependencies | Compatibility policies | Tests | Focused command |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | `src/content/container/content_pipeline.c` | Explicit bounded native buffer operations for ordered input pipelines | `content_pipeline.h`; `docs/CONTENT_TRANSFORMS.md` | One caller-owned result per step | Standard C and the shared policy-free buffer inflater | Source probing, host callbacks, files, network, native modules or bundled recovery programs | None | Wrapper/inflate/edit composition, endian, capacity, integrity and transactional rejection | `make check TEST=content_transform` |

@@ -1001,28 +1001,52 @@ static int scene_prepare_geometry(GmlGpuBackend *backend,char *error,size_t erro
   return backend->gl.GetError()==GL_NO_ERROR;
 }
 
-/* An ordered device-local copy is shared by exact draw rules. No target write
- * occurs until this succeeds; the existing snapshot allocation is reused. */
-static int scene_snapshot_region(GmlGpuBackend *backend,GlSceneImage *target,
-                                  GLint left,GLint bottom,GLsizei width,GLsizei height){
+static int scene_snapshot_storage(GmlGpuBackend *backend,GLsizei width,GLsizei height){
   GlScene *scene=&backend->scene;
   if(!scene->snapshot_texture){
     backend->gl.GenTextures(1,&scene->snapshot_texture);
     if(!scene->snapshot_texture) return 0;
   }
-  backend->gl.BindFramebuffer(GL_FRAMEBUFFER,target->framebuffer);
   backend->gl.ActiveTexture(GL_TEXTURE1);
   backend->gl.BindTexture(GL_TEXTURE_2D,scene->snapshot_texture);
   if(scene->snapshot_width<(uint32_t)width || scene->snapshot_height<(uint32_t)height){
+    if(scene->snapshot_width>(uint32_t)width) width=(GLsizei)scene->snapshot_width;
+    if(scene->snapshot_height>(uint32_t)height) height=(GLsizei)scene->snapshot_height;
     backend->gl.TexImage2D(GL_TEXTURE_2D,0,GL_RGBA8,width,height,0,
                            GL_RGBA,GL_UNSIGNED_BYTE,NULL);
     backend->gl.TexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,GL_NEAREST);
     backend->gl.TexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAG_FILTER,GL_NEAREST);
     backend->gl.TexParameteri(GL_TEXTURE_2D,GL_TEXTURE_WRAP_S,GL_CLAMP_TO_EDGE);
     backend->gl.TexParameteri(GL_TEXTURE_2D,GL_TEXTURE_WRAP_T,GL_CLAMP_TO_EDGE);
+    if(backend->gl.GetError()!=GL_NO_ERROR) return 0;
     scene->snapshot_width=(uint32_t)width;
     scene->snapshot_height=(uint32_t)height;
   }
+  return backend->gl.GetError()==GL_NO_ERROR;
+}
+
+int gml_gpu_opengl_scene_prepare(GmlGpuBackend *backend,uint32_t width,uint32_t height,
+                                 char *error,size_t error_capacity){
+  if(!backend || !backend->loaded || !backend->scene.available || !width || !height ||
+     width>(uint32_t)INT_MAX || height>(uint32_t)INT_MAX ||
+     width>(uint32_t)backend->scene.max_texture_size ||
+     height>(uint32_t)backend->scene.max_texture_size) return 0;
+  if(!scene_prepare_geometry(backend,error,error_capacity) ||
+     !gml_gpu_opengl_scene_exact_program(backend,0,error,error_capacity)) return 0;
+  /* Storage alone has no image identity or pixel authority. Specialised content/font programs
+   * remain demand-driven; the common automatic-composition program is shared across scenes. */
+  int prepared=scene_snapshot_storage(backend,(GLsizei)width,(GLsizei)height);
+  backend->gl.BindTexture(GL_TEXTURE_2D,0);
+  backend->gl.ActiveTexture(GL_TEXTURE0);
+  return prepared;
+}
+
+/* An ordered device-local copy is shared by exact draw rules. No target write
+ * occurs until this succeeds; the existing snapshot allocation is reused. */
+static int scene_snapshot_region(GmlGpuBackend *backend,GlSceneImage *target,
+                                  GLint left,GLint bottom,GLsizei width,GLsizei height){
+  backend->gl.BindFramebuffer(GL_FRAMEBUFFER,target->framebuffer);
+  if(!scene_snapshot_storage(backend,width,height)) return 0;
   backend->gl.CopyTexSubImage2D(GL_TEXTURE_2D,0,0,0,left,bottom,width,height);
   if(backend->gl.GetError()!=GL_NO_ERROR) return 0;
   return 1;

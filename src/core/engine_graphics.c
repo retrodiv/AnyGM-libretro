@@ -81,6 +81,11 @@ void engine_graphics_bind_renderer(AnygmEngine *engine){
   gml_gpu_device_services(engine->gpu,&services);
   if(engine->scene_renderer_session!=ANYGM_SCENE_RENDERER_OPENGL)
     services.observe_on_demand=NULL;
+  else {
+    /* Binding occurs at content preparation, Reset and context recreation, not per frame.
+     * Keep first-use program/storage work out of a later automatic-composition draw. */
+    (void)gml_gpu_prepare_scene(engine->gpu,engine->width,engine->height);
+  }
   gml_render_bind_device(&engine->render,&services);
   /* Hybrid presentation and content GLSL share this context but are independent policies. */
   gml_render_set_shader_device(&engine->render,engine_content_shaders_active(engine));
