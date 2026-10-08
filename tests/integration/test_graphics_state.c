@@ -2585,6 +2585,12 @@ static int scene_canvas_restored_nearest_case(void){
           selected.engine->frame_authority==ENGINE_FRAME_CPU_MATERIALIZED &&
           !gml_render_completed_screen_image(&selected.engine->render,selected.engine->screen,
           128,96,&image),"restored canvas has authoritative CPU pixels, not a stale device source");
+  REQUIRE(gml_render_begin_resident_base(&selected.engine->render,selected.engine->screen,
+          128,96,0.0,0.0),"restored CPU picture can retain a logical SCREEN resource");
+  gml_render_resident_application_cpu_barrier(&selected.engine->render);
+  REQUIRE(selected.engine->render.base_scene_resource &&
+          !gml_render_completed_screen_image(&selected.engine->render,selected.engine->screen,
+          128,96,&image),"CPU-current SCREEN resource has no device image");
   uint32_t logical[128u*96u];
   memcpy(logical,selected.engine->screen,sizeof logical);
   gml_render_dispatch_diagnostics_enable(&selected.engine->render,1);
@@ -2611,18 +2617,23 @@ static int scene_canvas_restored_nearest_case(void){
           dispatch.gpu[GML_RENDER_SCENE_SURFACE]==1u,
           "restored host clear and nearest blit are counted as GPU work");
   /* The existing cold box and CRT/shift/crop exclusions are not widened by this variant. */
-  for(unsigned exclusion=0;exclusion<4u;exclusion++){
+  for(unsigned exclusion=0;exclusion<5u;exclusion++){
+    GmlRenderResourceMetrics resources_before={0},resources_after={0};
     selected.engine->host_crt_active=exclusion==0u;
     selected.engine->present_shift_x=exclusion==1u;
     selected.engine->present_crop_left=exclusion==2u;
+    selected.engine->host_canvas_active=exclusion!=4u;
     selected.engine->frame_authority=exclusion==3u?ENGINE_FRAME_NONE:ENGINE_FRAME_CPU_MATERIALIZED;
     gml_gpu_counters(selected.engine->gpu,&before);
+    gml_render_resource_metrics(&selected.engine->render,&resources_before);
     REQUIRE(!engine_present_hardware_canvas(selected.engine,NULL,NULL),
             "unqualified CPU canvas variants retain their established fallback");
     gml_gpu_counters(selected.engine->gpu,&after);
+    gml_render_resource_metrics(&selected.engine->render,&resources_after);
     REQUIRE(after.frames_offered==before.frames_offered &&
-            after.full_uploads==before.full_uploads,
-            "unqualified CPU canvas is refused before a device submission");
+            after.full_uploads==before.full_uploads &&
+            resources_after.completed_screen_cpu_reads==resources_before.completed_screen_cpu_reads,
+            "unqualified CPU canvas is refused before any pixel observation or device submission");
   }
   selected.engine->frame_authority=ENGINE_FRAME_CPU_MATERIALIZED;
   session_close(&selected);
