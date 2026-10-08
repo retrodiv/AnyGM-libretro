@@ -73,6 +73,8 @@ REQUIRED_RULES = {
     "R03-SPR-GUI-REPLACE",
     "R03-SPR-FIRSTGEN-NEAREST-REDUCE", "R03-SPR-FIRSTGEN-NEAREST-MAG",
     "R03-SPR-MODERN-NEAREST",
+    "R03-SPR-MODERN-SCREEN-POINT",
+    "R03-SPR-FIRSTGEN-SIGNED-POINT",
     "R03-SPR-NUMBERED-NEAREST",
     "R03-SPR-FILTER-TRIM", "R03-SPR-ROTATE-GENERAL",
     "R03-SPR-CORNER-COLOUR", "R03-SPR-POSITIONED-AXIS",
@@ -106,6 +108,7 @@ EXECUTOR_ROW = re.compile(
 # GPU-capable merely because the resource owner also implements device submission.
 DISPATCH_PORTS = {
     "gml_render_application_scene_enqueue",
+    "gml_render_application_scene_enqueue_quads",
     "gml_render_application_scene_enqueue_primitive",
     "gml_render_application_scene_submit",
     "gml_render_surface_scene_submit",

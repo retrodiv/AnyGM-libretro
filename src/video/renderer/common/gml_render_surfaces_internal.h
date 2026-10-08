@@ -42,6 +42,11 @@ GmlRenderImageRef gml_render_application_scene_next_image_ref(GmlRender *render,
 int gml_render_application_scene_enqueue(GmlRender *render,const GmlRenderDrawOp *operation,
                                           const GmlRenderDrawStateSnapshot *state,
                                           const GmlRenderResourceSource *source);
+/* One immutable draw may resolve to several disjoint quads. Reserve and append the whole
+ * group before accepting it, so a refusal cannot leave a partially blended draw queued. */
+int gml_render_application_scene_enqueue_quads(GmlRender *render,
+  const GmlRenderDrawOp *operations,uint32_t count,
+  const GmlRenderDrawStateSnapshot *state,const GmlRenderResourceSource *source);
 int gml_render_application_scene_flush(GmlRender *render);
 int gml_render_application_scene_enqueue_primitive(GmlRender *render,
                                                    const GmlRenderDrawOp *operation);

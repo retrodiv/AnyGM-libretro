@@ -255,6 +255,12 @@ int gml_render_application_scene_enqueue_primitive(GmlRender *r,
 int gml_render_application_scene_enqueue(GmlRender *r,const GmlRenderDrawOp *operation,
                                           const GmlRenderDrawStateSnapshot *state,
                                           const GmlRenderResourceSource *source){
+  return gml_render_application_scene_enqueue_quads(r,operation,1u,state,source);
+}
+
+int gml_render_application_scene_enqueue_quads(GmlRender *r,
+  const GmlRenderDrawOp *operation,uint32_t count,
+  const GmlRenderDrawStateSnapshot *state,const GmlRenderResourceSource *source){
   GmlRenderPendingSceneBatch *pending;
   GmlRenderImageRef next;
   uint32_t state_index=0,source_index=0;
@@ -281,6 +287,8 @@ int gml_render_application_scene_enqueue(GmlRender *r,const GmlRenderDrawOp *ope
         state->alpha_equation<=GML_RENDER_BLEND_EXACT_DESTINATION_MIN))));
   if(!r || !r->resident_application_pass || !gml_render_device(r) ||
      !gml_render_scene_target_resource_ensure(r) || !operation || !state || !source ||
+     !count || count>GML_SCENE_BATCH_LIMIT ||
+     (count>1u && !source->borrowed_immutable) ||
      (!source->borrowed_immutable && !versioned_surface &&
       (source->image.resource_class!=GML_RENDER_RESOURCE_ATLAS ||
        source->resident_resource)) || !operation->sources ||
@@ -288,6 +296,25 @@ int gml_render_application_scene_enqueue(GmlRender *r,const GmlRenderDrawOp *ope
      (operation->reconstruction_mode!=GML_RENDER_REPLAY_EXACT &&
       operation->reconstruction_mode!=GML_RENDER_DEVICE_CHECKPOINT) ||
      !same_scene_source(operation->sources[0],source->image)) return 0;
+  /* Validate the homogeneous group before a capacity flush or any append. Payload geometry
+   * remains the caller's typed preparation; ownership and versions cannot vary within it. */
+  if(operation->target.image.content_version>UINT64_MAX-(count-1u)) return 0;
+  for(uint32_t index=1u;index<count;index++){
+    const GmlRenderDrawOp *part=&operation[index];
+    if(part->opcode!=operation->opcode || part->reconstruction_mode!=operation->reconstruction_mode ||
+       part->scene_family!=operation->scene_family || part->source_count!=1u || !part->sources ||
+       !same_scene_source(part->sources[0],source->image) ||
+       part->target.image.resource_class!=operation->target.image.resource_class ||
+       part->target.image.identity!=operation->target.image.identity ||
+       part->target.image.incarnation!=operation->target.image.incarnation ||
+       part->target.image.content_version!=operation->target.image.content_version+index ||
+       part->target.storage_version!=operation->target.storage_version ||
+       part->target.width!=operation->target.width || part->target.height!=operation->target.height ||
+       part->target.pixel_format!=operation->target.pixel_format ||
+       memcmp(&part->target.region,&operation->target.region,sizeof part->target.region) ||
+       memcmp(&part->payload.quad.sampling,&operation->payload.quad.sampling,
+              sizeof part->payload.quad.sampling)) return 0;
+  }
   exact_filtered_font=operation->reconstruction_mode==GML_RENDER_REPLAY_EXACT &&
     operation->scene_family==GML_RENDER_SCENE_TEXT &&
     state->rgb_equation==GML_RENDER_BLEND_EXACT_FILTERED_FONT &&
@@ -306,7 +333,7 @@ int gml_render_application_scene_enqueue(GmlRender *r,const GmlRenderDrawOp *ope
       operation->payload.quad.sampling.filter==GML_RENDER_FILTER_NEAREST));
   pending=r->pending_scene_batch;
   if(pending && pending->count){
-    int flush=!pending->source_count || pending->count==GML_SCENE_BATCH_LIMIT ||
+    int flush=!pending->source_count || pending->count>GML_SCENE_BATCH_LIMIT-count ||
       pending->coalesce_immutable!=coalescible;
     if(!flush && coalescible){
       source_index=pending->source_count;
@@ -364,10 +391,12 @@ int gml_render_application_scene_enqueue(GmlRender *r,const GmlRenderDrawOp *ope
       pending->source_refs[pending->source_count++]=source->image;
     }
   }
-  pending->operations[pending->count]=*operation;
-  pending->operations[pending->count].sources=&pending->source_refs[source_index];
-  pending->operations[pending->count].state_index=state_index;
-  pending->count++;
+  for(uint32_t index=0;index<count;index++){
+    pending->operations[pending->count]=operation[index];
+    pending->operations[pending->count].sources=&pending->source_refs[source_index];
+    pending->operations[pending->count].state_index=state_index;
+    pending->count++;
+  }
   if(r->fb==r->app_surface_owned){
     r->app_surface_opaque=0;
     r->app_presentation_coverage_active=0;
