@@ -6892,9 +6892,9 @@ static int resident_mapped_gui_stretch_on_demand(void){
 }
 
 static int resident_modern_screen_filtered_sprite(void){
-  for(unsigned variant=0;variant<16u;variant++){
+  for(unsigned variant=0;variant<20u;variant++){
     GmlRender *render=(GmlRender*)calloc(1,sizeof *render);
-    GmlWin content={.bytecode=17};
+    GmlWin content={.bytecode=variant==18u?15:17};
     FakeDevice fake={.on_demand=variant!=1u};
     GmlRenderDeviceServices device=service(&fake);
     GmlRenderJournalMetrics metrics={0};
@@ -6937,17 +6937,22 @@ static int resident_modern_screen_filtered_sprite(void){
     if(variant==9u) render->active_shader=0;
     if(variant==14u) render->blendmode=6;
     if(variant==15u) render->active_shader=0;
+    if(variant>=16u){
+      render->tpag[0].tw=1;
+      render->tpag[0].th=variant==17u?3:1;
+    }
+    if(variant==19u) render->tpag[0].project_authored_edges=1;
     uint64_t version=gml_render_resource_image_ref(render->base_scene_resource).content_version;
     if(variant==10u)
       gml_draw_sprite_ext(render,0,0,8.0,12.0,2.001,4.002,0.0,0xFFFFFFu,1.0);
     else gml_draw_sprite_ext(render,0,0,8.5,13.0,1.2,1.5,0.0,0x93B5D7u,
-      variant>=13u?0.0:1.0/90.0);
+      variant>=13u && variant<=15u?0.0:1.0/90.0);
     CHECK(gml_render_scene_submit_pending(render));
     if(variant==13u){
       CHECK(render->resident_application_pass && fake.submits==submits &&
             !memcmp(screen,sentinel,sizeof screen) && !fake.readbacks && !fake.rgb_queries &&
             gml_render_resource_image_ref(render->base_scene_resource).content_version==version);
-    }else if(!variant || variant==6u || variant==11u){
+    }else if(!variant || variant==6u || variant==11u || variant==16u || variant==17u){
       CHECK(render->resident_application_pass && !memcmp(screen,sentinel,sizeof screen) &&
             fake.submits==submits+1 && fake.last_opcode==GML_RENDER_OP_TEXTURED_QUAD &&
             fake.last_filter==GML_RENDER_FILTER_HARDWARE_BILINEAR && !fake.last_quantisation &&

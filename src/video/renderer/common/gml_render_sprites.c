@@ -1054,11 +1054,13 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
   if((modern_numbered_sprite || modern_screen_sprite) && page->project_authored_edges) return 0;
   if(modern_screen_sprite && alpha<1.0/255.0) return 0;
   if(firstgen_signed_point && (alpha<1.0/255.0 || page->project_authored_edges)) return 0;
-  /* The unrotated nearest CPU leaf samples physical sw/sh, not a texture-page item's
-   * logical tw/th. A scaled stored rectangle is therefore valid for these exact rules. */
+  /* Ordinary axis CPU sampling uses physical sw/sh, not stored tw/th. Keep
+   * the qualified nearest rules and modern SCREEN hardware filtering on that
+   * physical crop; other filtered families retain their layout guard. */
   if(page->sw<=0 || page->sh<=0 || page->sx<0 || page->sy<0 ||
      ((page->tw!=page->sw || page->th!=page->sh) &&
-      nearest_mode!=1 && nearest_mode!=3 && nearest_mode!=4 && nearest_mode!=6) ||
+      nearest_mode!=1 && nearest_mode!=3 && nearest_mode!=4 && nearest_mode!=6 &&
+      !modern_screen_filtered) ||
      page->atlas<0 || page->atlas>=r->n_atlas) return 0;
   if(modern_screen_filtered && page->project_authored_edges) return 0;
   /* blit_one can select its near-unit white exact-copy leaf instead of
