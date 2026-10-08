@@ -943,8 +943,8 @@ static int scene_resident_batch_case(void){
 static int scene_hardware_filtered_batch_case(unsigned kind){
   enum { QUADS=2049 };
   int additive=kind==1u,combined=kind==2u,surface=kind>=3u && kind<=5u;
-  int nearest=kind==4u || kind==5u,screen_stretch=kind==6u || kind==7u;
-  int screen_sprite=kind==7u;
+  int nearest=kind==4u || kind==5u,screen_stretch=kind>=6u && kind<=8u;
+  int screen_sprite=kind==7u || kind==8u;
   const uint8_t pixels[16]={11,22,33,255,44,55,66,100,77,88,99,0,111,122,133,200};
   for(unsigned api=0;api<2u;api++)
   for(unsigned excluded=0;excluded<(nearest || screen_stretch?8u:(combined || surface)?7u:4u);excluded++){
@@ -997,7 +997,7 @@ static int scene_hardware_filtered_batch_case(unsigned kind){
       op->opcode=index?GML_RENDER_OP_TEXTURED_QUAD:GML_RENDER_OP_CLEAR;
       if(!index){op->payload.clear_colour=0x40123456u;continue;}
       op->reconstruction_mode=GML_RENDER_DEVICE_CHECKPOINT;
-      op->scene_family=surface?GML_RENDER_SCENE_SURFACE:
+      op->scene_family=kind==8u?GML_RENDER_SCENE_TEXT:surface?GML_RENDER_SCENE_SURFACE:
         additive || screen_stretch?GML_RENDER_SCENE_SPRITE:GML_RENDER_SCENE_BACKGROUND;
       op->sources=&source;op->source_count=1u;
       GmlRenderQuad *quad=&op->payload.quad;
@@ -1144,6 +1144,9 @@ static int scene_hardware_screen_stretch_batch_case(void){
 }
 static int scene_hardware_screen_sprite_batch_case(void){
   return scene_hardware_filtered_batch_case(7);
+}
+static int scene_hardware_screen_font_batch_case(void){
+  return scene_hardware_filtered_batch_case(8);
 }
 
 /* Driver/state evidence only; pixel-centre point indices need real GL controls. */
@@ -3503,6 +3506,7 @@ int main(int argc,char **argv){
     {"scene_nearest_application_batch",scene_nearest_application_batch_case},
     {"scene_hardware_screen_stretch_batch",scene_hardware_screen_stretch_batch_case},
     {"scene_hardware_screen_sprite_batch",scene_hardware_screen_sprite_batch_case},
+    {"scene_hardware_screen_font_batch",scene_hardware_screen_font_batch_case},
     {"scene_application_point_batch",scene_application_point_batch_case},
     {"scene_destination_surface",scene_destination_surface_case},
     {"scene_readback_formats",scene_readback_formats_case},

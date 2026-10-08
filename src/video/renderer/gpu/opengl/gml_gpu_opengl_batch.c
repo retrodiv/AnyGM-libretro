@@ -386,7 +386,7 @@ static int hardware_screen_sprite_valid(const GmlRenderDrawOp *op,
   double left=quad->inverse_anchor[0],top=quad->inverse_anchor[1];
   if(!source || source->rendered_origin || source->pixel_format!=GML_RENDER_PIXEL_RGBA8888 ||
      op->sources[0].resource_class!=GML_RENDER_RESOURCE_ATLAS ||
-     op->scene_family!=GML_RENDER_SCENE_SPRITE ||
+     (op->scene_family!=GML_RENDER_SCENE_SPRITE && op->scene_family!=GML_RENDER_SCENE_TEXT) ||
      op->target.image.resource_class!=GML_RENDER_RESOURCE_SCREEN ||
      op->target.pixel_format!=GML_RENDER_PIXEL_ARGB8888 ||
      op->reconstruction_mode!=GML_RENDER_DEVICE_CHECKPOINT ||
@@ -398,6 +398,8 @@ static int hardware_screen_sprite_valid(const GmlRenderDrawOp *op,
      !isfinite(quad->filtered_draw_alpha) || quad->filtered_draw_alpha<=0.0 ||
      quad->filtered_draw_alpha>1.0 ||
      !isfinite(xs) || !isfinite(ys) || xs<=0.0 || ys<=0.0 ||
+     (op->scene_family==GML_RENDER_SCENE_TEXT &&
+      (xs>1.0 || ys>1.0 || region.width>256u || region.height>256u)) ||
      !isfinite(left) || !isfinite(top) ||
      !valid_region(region,source->width,source->height) ||
      !exact_rect(op,NULL,NULL,NULL,NULL,1)) return 0;

@@ -6562,6 +6562,68 @@ static int resident_modern_screen_filtered_sprite(void){
   return 1;
 }
 
+static int resident_maximised_filtered_real_font(void){
+  for(unsigned variant=0;variant<13u;variant++){
+    GmlRender *render=(GmlRender*)calloc(1,sizeof *render);
+    GmlWin content={.bytecode=variant==9u?15:17};
+    FakeDevice fake={.on_demand=variant!=1u};
+    GmlRenderDeviceServices device=service(&fake);
+    GmlRenderJournalMetrics metrics={0};
+    uint32_t screen[24u*16u],sentinel[24u*16u];
+    CHECK(render);
+    render->atlas=calloc(1,sizeof *render->atlas);
+    CHECK(render->atlas);
+    render->n_atlas=render->n_fonts=1;
+    render->atlas[0].px=malloc(16u*16u*4u);
+    CHECK(render->atlas[0].px);
+    memset(render->atlas[0].px,127,16u*16u*4u);
+    render->atlas[0].w=render->atlas[0].h=16;
+    GmlFont *font=&render->fonts[0];
+    font->real=1;font->sprite=-1;font->atlas=0;
+    font->line_height=font->align_height=5;
+    font->n_glyphs=1;font->glyphs=calloc(1,sizeof *font->glyphs);
+    CHECK(font->glyphs);
+    for(unsigned index=0;index<256u;index++) font->glyph_by_char[index]=-1;
+    font->glyph_by_char['A']=0;
+    font->glyphs[0]=(GmlGlyph){.sx=5,.sy=5,.w=5,.h=5,.shift=6,.ch='A'};
+    render->font=0;render->win=&content;render->color_write_mask=15u;render->interp=1;
+    for(unsigned index=0;index<24u*16u;index++) screen[index]=sentinel[index]=0xA5123456u;
+    device.observe_on_demand=fake_observe_on_demand;
+    gml_render_bind_device(render,&device);
+    CHECK(gml_render_begin_resident_base(render,screen,24,16,0.0,0.0));
+    gml_render_gui_begin(render,24,16);
+    gml_render_gui_set_maximise(render,1,1.0,1.0,variant==2u?1.0:0.0,0.0,24,16);
+    gml_render_set_pending_fill(render,0xA5714A24u);
+    gml_render_flush_pending_fill(render);
+    CHECK(gml_render_scene_submit_pending(render));
+    int submits=fake.submits;
+    if(variant==3u) render->color_write_mask=7u;
+    if(variant==4u) render->blendmode=1;
+    if(variant==5u) render->alpha_test_enable=1;
+    if(variant==6u) font->runtime_owned=1;
+    if(variant==7u) font->sdf_spread=1;
+    if(variant==8u) render->fog_flat=1;
+    if(variant==10u) render->active_shader=0;
+    if(variant==11u){render->world_transform_active=1;render->world_scale_x=2.0;}
+    gml_draw_text_transformed(render,8.5,4.25,"A",variant==12u?1.5:.6,.75,0.0,0x93B5D7u,1.0/60.0);
+    CHECK(gml_render_scene_submit_pending(render));
+    if(!variant){
+      CHECK(render->resident_application_pass && !memcmp(screen,sentinel,sizeof screen) &&
+            fake.submits==submits+1 && fake.last_filter==GML_RENDER_FILTER_HARDWARE_BILINEAR &&
+            !fake.last_quantisation && fake.last_filtered_draw_alpha==1.0/60.0 &&
+            fake.last_quad_state.coverage_policy==GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA &&
+            fake.last_quad_state.rgb_equation==GML_RENDER_BLEND_ADD &&
+            !fake.readbacks && !fake.rgb_queries);
+      gml_render_resource_journal_metrics(render->base_scene_resource,&metrics);
+      CHECK(metrics.authority==GML_RENDER_RESOURCE_GPU_RESIDENT &&
+            metrics.cpu_version<metrics.logical_version && !metrics.journal_operations &&
+            !metrics.cpu_replays && !metrics.device_checkpoints);
+    }else CHECK(!render->resident_application_pass && fake.submits==submits);
+    gml_render_free(render);free(render);
+  }
+  return 1;
+}
+
 static int resident_numbered_sprite_channel_masks(void){
   const uint8_t rgba[16]={208,32,16,128,16,208,32,255,32,16,208,64,192,176,160,0};
   for(unsigned mask=0;mask<16u;mask++){
@@ -9733,6 +9795,7 @@ int main(void){
   passed+=resident_gui_coarse_veil_on_demand();
   passed+=resident_mapped_gui_stretch_on_demand();
   passed+=resident_modern_screen_filtered_sprite();
+  passed+=resident_maximised_filtered_real_font();
   passed+=resident_packaged_sprite_font_glyph();
   passed+=resident_filtered_gui_real_font();
   passed+=surface_pending_source_lifetime(0,0);
@@ -9782,6 +9845,6 @@ int main(void){
   passed+=source_free_primitive_rect_replay();
   passed+=stretched_float_exact_replay();
   passed+=filtered_font_exact_recovery();
-  printf("render resource cases: passed=%d failed=%d\n",passed,137-passed);
-  return passed==137?EXIT_SUCCESS:EXIT_FAILURE;
+  printf("render resource cases: passed=%d failed=%d\n",passed,138-passed);
+  return passed==138?EXIT_SUCCESS:EXIT_FAILURE;
 }

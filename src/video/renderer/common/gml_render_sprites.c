@@ -918,7 +918,7 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
     r->device.observe_on_demand(r->device.context);
   /* A maximised GUI can still resolve to the same identity mapping. Admit
    * that flag-only variant, not arbitrary maximised scales or offsets. */
-  int modern_filtered_identity_maximise=modern_screen_filtered && r->gui_pass_active &&
+  int modern_filtered_identity_maximise=r && r->gui_pass_active &&
     r->gui_maximise_active && !r->world_transform_active && r->base_scene_resource &&
     r->fb==r->base_scene_resource_pixels &&
     r->fbw==r->base_scene_resource_width && r->fbh==r->base_scene_resource_height &&
@@ -927,6 +927,16 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
     r->gui_scale_x==1.0 && r->gui_scale_y==1.0 &&
     r->gui_maximise_xoffset==0.0 && r->gui_maximise_yoffset==0.0 &&
     r->cam_x==0.0 && r->cam_y==0.0;
+  /* R03-TEXT-MODERN-MAXIMISED-FILTERED: this previously excluded identity
+   * GUI glyph slice shares hardware filtering and batched alpha coverage.
+   * Existing world and non-maximised GUI exact font recipes stay unchanged. */
+  int modern_screen_filtered_text=filtered_real_text && modern_filtered_identity_maximise &&
+    r->target_id<0 && r->target_sp==0 && !r->fog_flat && alpha>0.0 &&
+    anygm_policy_has_modern_layer_semantics(r->win) &&
+    !gml_render_target_preserves_alpha(r) && r->device.context &&
+    r->device.observe_on_demand && r->device.observe_on_demand(r->device.context);
+  int hardware_screen_filtered=modern_screen_filtered || modern_screen_filtered_text;
+  modern_filtered_identity_maximise=modern_filtered_identity_maximise && hardware_screen_filtered;
   /* R03-SPR-FIRSTGEN-SIGNED-POINT: retain first-generation alpha and edge coverage.
    * Contiguous-white specialisations keep their separate established recipes. */
   int firstgen_signed_point=r && nearest_mode==4 &&
@@ -1052,7 +1062,7 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
   if(!gml_render_atlas_scene_source_view(r,page->atlas,&source) ||
      (uint64_t)(uint32_t)page->sx+(uint32_t)page->sw>source.width ||
      (uint64_t)(uint32_t)page->sy+(uint32_t)page->sh>source.height) return 0;
-  if(modern_screen_filtered && !source.borrowed_immutable) return 0;
+  if(hardware_screen_filtered && !source.borrowed_immutable) return 0;
   /* The full logical quad can extend beyond the visible page, but its prepared UVs must remain
    * inside the atlas even though transparent taps themselves never fetch those neighbours. */
   if(transparent_stretched_trim && !box_stretched && !stretched_magnification &&
@@ -1207,7 +1217,7 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
     if(xs<0.0) x0-=width;
     if(ys<0.0) y0-=height;
   }
-  if((modern_screen_sprite || modern_screen_filtered || firstgen_signed_point) &&
+  if((modern_screen_sprite || hardware_screen_filtered || firstgen_signed_point) &&
      isfinite(width) && isfinite(height) && (width==0.0 || height==0.0)) return 1;
   if(!isfinite(width) || !isfinite(height) || width<1.0 || height<1.0 ||
      x0+width>10000000.0 || y0+height>10000000.0) return 0;
@@ -1220,7 +1230,7 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
      * Unit-sign parts retain their qualified coverage on other targets too. */
     /* The qualified numbered point leaf cannot expand this rounded coverage.
      * A wholly clipped sprite is a no-op before its later sample-edge pruning. */
-    if(modern_numbered_sprite || modern_screen_sprite || modern_screen_filtered || firstgen_signed_point ||
+    if(modern_numbered_sprite || modern_screen_sprite || hardware_screen_filtered || firstgen_signed_point ||
        (nearest_mode==4 && !rotated_sprite && xs==1.0 && ys==1.0) ||
        additive_background ||
        (family==GML_RENDER_SCENE_BACKGROUND && part_view && !rotated_sprite &&
@@ -1318,7 +1328,7 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
     ?(fabs(rotation-nearbyint(rotation/90.0)*90.0)<1e-10
       ?GML_RENDER_QUAD_CARDINAL:GML_RENDER_QUAD_GENERAL)
     :GML_RENDER_QUAD_AXIS_ALIGNED;
-  operation.payload.quad.sampling.filter=hardware_background || modern_screen_filtered?GML_RENDER_FILTER_HARDWARE_BILINEAR:
+  operation.payload.quad.sampling.filter=hardware_background || hardware_screen_filtered?GML_RENDER_FILTER_HARDWARE_BILINEAR:
     box_stretched?GML_RENDER_FILTER_BOX:
     nearest_mode==5?(additive_background?GML_RENDER_FILTER_NEAREST:
                      GML_RENDER_FILTER_NEAREST_PHASED_COPY):
@@ -1455,7 +1465,7 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
          operation.payload.quad.u[corner]>1.0 ||
          operation.payload.quad.v[corner]<0.0 ||
          operation.payload.quad.v[corner]>1.0) return 0;
-  if(filtered_real_text){
+  if(filtered_real_text && !modern_screen_filtered_text){
     GmlRenderQuad *quad=&operation.payload.quad;
     quad->sampling.quantisation=anygm_policy_has_modern_layer_semantics(r->win)
       ?GML_RENDER_QUANTISE_FONT_MODERN
@@ -1511,11 +1521,11 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
   state.colour=0xFFFFFFFFu;
   state.alpha=255u;
   if((identity_gui_atlas || (mapped_gui_sprite && !opaque_target_alpha) ||
-     mapped_gui_rotation || modern_screen_filtered) && !exact_filtered_sprite){
+     mapped_gui_rotation || hardware_screen_filtered) && !exact_filtered_sprite){
     state.coverage_policy=GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA;
     operation.payload.quad.filtered_draw_alpha=alpha;
   }
-  if(modern_screen_filtered){
+  if(hardware_screen_filtered){
     /* RGB and alpha coverage are independent batched passes: a positive
      * filtered source stamps SCREEN alpha, including on a partial target. */
     operation.payload.quad.inverse_anchor[0]=left;
