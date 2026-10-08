@@ -657,6 +657,12 @@ void gml_render_prefetch_bg(GmlRender *r, int bg);
 /* synchronously decode directly referenced pages; used at room boundaries to avoid first-draw hitches */
 void gml_render_warm_sprite(GmlRender *r, int sprite);
 void gml_render_warm_bg(GmlRender *r, int bg);
+/* Best-effort device uploads at room boundaries, separate from unchanged CPU warming.
+ * Only a witnessed on-demand device participates. Fonts prepare at most 64 MiB per boundary;
+ * runtime/mutable pages, oversized pages and failures retain their ordinary lazy paths. */
+void gml_render_prepare_scene_sprite(GmlRender *r,int sprite);
+void gml_render_prepare_scene_bg(GmlRender *r,int bg);
+void gml_render_prepare_scene_fonts(GmlRender *r);
 int gml_render_content_composited_screen(GmlRender *r);
 void gml_render_clear_content_composited_screen(GmlRender *r);
 void gml_render_begin(GmlRender *r, uint32_t *fb, int w, int h, double camx, double camy);

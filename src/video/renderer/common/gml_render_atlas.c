@@ -377,6 +377,134 @@ void gml_render_warm_bg(GmlRender *r, int bg){
   warm_atlas_direct(r,r->tpag[ti].atlas);
 }
 
+/* Preparation is optional and never grants drawing or CPU-shadow authority. The bound device
+ * must explicitly witness on-demand operation; CPU selection and inaccessible contexts skip it. */
+static const GmlRenderDeviceServices *scene_preparation_device(GmlRender *r,
+                                                              GmlRenderDeviceCaps *caps){
+  const GmlRenderDeviceServices *device=gml_render_device(r);
+  if(!device || !device->observe_on_demand || !device->observe_on_demand(device->context) ||
+     !device->capabilities(device->context,caps) || !caps->max_texture_extent) return NULL;
+  return device;
+}
+
+static int scene_atlas_dimensions(GmlRender *r,GmlAtlas *atlas,int *width,int *height){
+  if(__atomic_load_n(&atlas->px,__ATOMIC_ACQUIRE)){
+    *width=atlas->w;*height=atlas->h;
+    return *width>0 && *height>0;
+  }
+  /* A worker may be publishing decoded dimensions. Read the immutable encoded header until
+   * its release-published pixels exist, using the same dimension reader as TXTR loading. */
+  if(atlas->external_blob && atlas->external_size)
+    return texture_blob_dims(atlas->external_blob,atlas->external_size,width,height);
+  if(r->win && r->win->data && atlas->blob && atlas->blob<r->win->size){
+    size_t available=r->win->size-atlas->blob;
+    if(available>atlas->avail) available=atlas->avail;
+    return texture_blob_dims(r->win->data+atlas->blob,available,width,height);
+  }
+  return 0;
+}
+
+static void prepare_scene_atlas(GmlRender *r,int index,const GmlRenderDeviceServices *device,
+                                const GmlRenderDeviceCaps *caps){
+  GmlRenderResourceSource source;
+  GmlRenderImageUpload transfer={0};
+  GmlAtlas *atlas;
+  int width=0,height=0;
+  if(!r->atlas || index<0 || index>=r->n_atlas) return;
+  atlas=&r->atlas[index];
+  if(atlas->runtime_font_page || !scene_atlas_dimensions(r,atlas,&width,&height) ||
+     (uint32_t)width>caps->max_texture_extent ||
+     (uint32_t)height>caps->max_texture_extent) return;
+  if(!gml_render_atlas_scene_source_view(r,index,&source) || !source.borrowed_immutable ||
+     source.width>caps->max_texture_extent || source.height>caps->max_texture_extent) return;
+  transfer.image=source.image;
+  transfer.storage_width=source.width;
+  transfer.storage_height=source.height;
+  transfer.region=(GmlRenderRect){0,0,source.width,source.height};
+  transfer.pixel_format=source.pixel_format;
+  transfer.stride_bytes=source.stride_bytes;
+  transfer.byte_capacity=source.byte_capacity;
+  transfer.bytes=source.bytes;
+  /* The existing device upload reuses immutable identity/version. Failure keeps lazy retry. */
+  (void)device->upload(device->context,&transfer);
+}
+
+void gml_render_prepare_scene_sprite(GmlRender *r,int sprite){
+  GmlRenderDeviceCaps caps={0};
+  const GmlRenderDeviceServices *device;
+  if(!r || sprite<0 || sprite>=r->n_spr || !r->spr ||
+     r->spr[sprite].runtime_rgba || !r->spr[sprite].frame) return;
+  device=scene_preparation_device(r,&caps);
+  if(!device) return;
+  for(int frame=0;frame<r->spr[sprite].n_frames;frame++){
+    int tpag=r->spr[sprite].frame[frame];
+    if(tpag<0 || tpag>=r->n_tpag || !r->tpag) continue;
+    int atlas=r->tpag[tpag].atlas;
+    /* Room warming already owns decoding these pages. Do not decode more sprite frames here. */
+    if(atlas>=0 && atlas<r->n_atlas && r->atlas &&
+       __atomic_load_n(&r->atlas[atlas].px,__ATOMIC_ACQUIRE))
+      prepare_scene_atlas(r,atlas,device,&caps);
+  }
+}
+
+void gml_render_prepare_scene_bg(GmlRender *r,int bg){
+  GmlRenderDeviceCaps caps={0};
+  const GmlRenderDeviceServices *device;
+  if(!r || bg<0 || bg>=r->n_bg || !r->bg || !r->tpag) return;
+  int tpag=r->bg[bg].tpag;
+  if(tpag<0 || tpag>=r->n_tpag) return;
+  int atlas=r->tpag[tpag].atlas;
+  if(atlas<0 || atlas>=r->n_atlas || !r->atlas ||
+     !__atomic_load_n(&r->atlas[atlas].px,__ATOMIC_ACQUIRE)) return;
+  device=scene_preparation_device(r,&caps);
+  if(device) prepare_scene_atlas(r,atlas,device,&caps);
+}
+
+static void prepare_scene_font_atlas(GmlRender *r,int index,
+                                     const GmlRenderDeviceServices *device,
+                                     const GmlRenderDeviceCaps *caps,
+                                     uint8_t *visited,size_t *remaining){
+  if(index<0 || index>=r->n_atlas || visited[index]) return;
+  visited[index]=1;
+  GmlAtlas *atlas=&r->atlas[index];
+  int width=0,height=0;
+  if(atlas->runtime_font_page || !scene_atlas_dimensions(r,atlas,&width,&height) ||
+     (uint32_t)width>caps->max_texture_extent ||
+     (uint32_t)height>caps->max_texture_extent) return;
+  uint64_t bytes=(uint64_t)(uint32_t)width*(uint32_t)height*4u;
+  if(bytes>*remaining) return;
+  *remaining-=(size_t)bytes;
+  prepare_scene_atlas(r,index,device,caps);
+}
+
+void gml_render_prepare_scene_fonts(GmlRender *r){
+  GmlRenderDeviceCaps caps={0};
+  const GmlRenderDeviceServices *device;
+  uint8_t *visited;
+  size_t remaining=64u*1024u*1024u;
+  if(!r || !r->atlas || r->n_atlas<=0) return;
+  device=scene_preparation_device(r,&caps);
+  if(!device) return;
+  visited=(uint8_t*)calloc((size_t)r->n_atlas,1);
+  if(!visited) return;
+  for(int font=0;font<r->n_fonts && font<GML_MAX_FONTS;font++){
+    GmlFont *entry=&r->fonts[font];
+    if(entry->real){
+      if(!entry->runtime_owned)
+        prepare_scene_font_atlas(r,entry->atlas,device,&caps,visited,&remaining);
+    } else if(r->spr && r->tpag && entry->sprite>=0 && entry->sprite<r->n_spr){
+      GmlSprite *sprite=&r->spr[entry->sprite];
+      if(sprite->runtime_rgba || !sprite->frame) continue;
+      for(int frame=0;frame<sprite->n_frames;frame++){
+        int tpag=sprite->frame[frame];
+        if(tpag>=0 && tpag<r->n_tpag)
+          prepare_scene_font_atlas(r,r->tpag[tpag].atlas,device,&caps,visited,&remaining);
+      }
+    }
+  }
+  free(visited);
+}
+
 static int chunk_has_absolute(const GmlWin *win,const GmlChunk *chunk,
                               size_t offset,size_t length){
   size_t chunk_start=chunk?chunk->off:0;

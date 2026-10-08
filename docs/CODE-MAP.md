@@ -13,6 +13,13 @@ through the neutral `gpu/gml_gpu.c::gml_gpu_prepare_scene` into
 It reuses existing program builders and snapshot storage without publishing pixels;
 the lifecycle/reuse/access contract is covered by `make check TEST=gpu`.
 
+Room entry/Reset in `src/runtime/vm/gml_vm_rooms.c::gml_vm_prefetch_room_assets`
+also invokes `common/gml_render_atlas.c::gml_render_prepare_scene_sprite`,
+`::gml_render_prepare_scene_bg` and `::gml_render_prepare_scene_fonts` after CPU warming.
+These reuse immutable source views and device uploads, require on-demand context access,
+and bound speculative packaged real/sprite-font work independently of unchanged CPU warming.
+`tests/unit/video/renderer/test_render_resources.c` covers identity, refusal and retry.
+
 | Path | Responsibility | Public or internal entry points | Mutable owner | Allowed dependencies | Forbidden dependencies | Compatibility policies | Tests | Focused command |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | `src/content/container/content_pipeline.c` | Explicit bounded native buffer operations for ordered input pipelines | `content_pipeline.h`; `docs/CONTENT_TRANSFORMS.md` | One caller-owned result per step | Standard C and the shared policy-free buffer inflater | Source probing, host callbacks, files, network, native modules or bundled recovery programs | None | Wrapper/inflate/edit composition, endian, capacity, integrity and transactional rejection | `make check TEST=content_transform` |

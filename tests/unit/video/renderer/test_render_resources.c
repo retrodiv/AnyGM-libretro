@@ -42,6 +42,7 @@ typedef struct FakeDevice {
   uint32_t readback_colour;
   uint32_t max_texture_extent;
   uint64_t supported_operations;
+  GmlRenderImageUpload last_upload;
   double recovery_rect[4];
   uint32_t last_opcode,last_source_count,last_shader_identity;
   uint32_t last_write_mask,last_filter,last_quantisation;
@@ -67,6 +68,7 @@ static int fake_upload(void *context,const GmlRenderImageUpload *upload){
   FakeDevice *fake=(FakeDevice*)context;
   if(fake_call_forbidden(fake)) return 0;
   fake->uploads++;
+  if(upload) fake->last_upload=*upload;
   return !fake->fail_upload && fake->uploads!=fake->fail_upload_at &&
     upload && upload->bytes && upload->byte_capacity;
 }
@@ -5901,6 +5903,156 @@ static int atlas_scene_identity_and_retirement(void){
   return 1;
 }
 
+static int immutable_font_scene_preparation(void){
+  GmlRender *render=(GmlRender*)calloc(1,sizeof *render);
+  FakeDevice fake={0};
+  GmlRenderDeviceServices device=service(&fake);
+  GmlRenderResourceSource source={0};
+  const uint8_t encoded[]={ 'f','i','o','q',1,0,1,0,0,0,0,0,0xFF,17,39,61,255 };
+  CHECK(render);
+  render->n_atlas=4;render->n_fonts=5;
+  render->atlas=(GmlAtlas*)calloc(4,sizeof *render->atlas);
+  CHECK(render->atlas);
+  for(int index=0;index<4;index++){
+    render->atlas[index].external_blob=(uint8_t*)malloc(sizeof encoded);
+    CHECK(render->atlas[index].external_blob);
+    memcpy(render->atlas[index].external_blob,encoded,sizeof encoded);
+    render->atlas[index].external_size=sizeof encoded;
+    render->atlas[index].w=render->atlas[index].h=1;
+  }
+  for(int font=0;font<5;font++){
+    render->fonts[font].real=1;
+    render->fonts[font].atlas=font?font-1:0;
+  }
+  render->fonts[2].runtime_owned=1;
+  render->atlas[2].runtime_font_page=1;
+  /* Metadata alone refuses excessive speculative work before invoking the decoder. */
+  render->atlas[3].w=4096;render->atlas[3].h=4097;
+  render->atlas[3].external_blob[4]=0;render->atlas[3].external_blob[5]=16;
+  render->atlas[3].external_blob[6]=1;render->atlas[3].external_blob[7]=16;
+  fake.max_texture_extent=8192;
+  gml_render_prepare_scene_fonts(render);
+  CHECK(!render->atlas[0].px && !fake.uploads);
+  gml_render_bind_device(render,&device);
+  gml_render_prepare_scene_fonts(render);
+  CHECK(!render->atlas[0].px && !fake.uploads);
+  device.observe_on_demand=fake_observe_on_demand;
+  gml_render_bind_device(render,&device);
+  fake.forbid_calls=1;
+  gml_render_prepare_scene_fonts(render);
+  CHECK(!render->atlas[0].px && !fake.uploads && !fake.forbidden_calls);
+  fake.forbid_calls=0;fake.on_demand=1;
+  gml_render_prepare_scene_fonts(render);
+  CHECK(fake.uploads==1 && !fake.submits && !fake.readbacks && !fake.retires);
+  CHECK(render->atlas[0].px && render->atlas[0].decode_attempted &&
+        !memcmp(render->atlas[0].px,encoded+13,4));
+  for(int index=1;index<4;index++)
+    CHECK(!render->atlas[index].px && !render->atlas[index].decode_attempted);
+  CHECK(gml_render_atlas_scene_source_view(render,0,&source));
+  CHECK(fake.last_upload.image.resource_class==source.image.resource_class &&
+        fake.last_upload.image.identity==source.image.identity &&
+        fake.last_upload.image.incarnation==source.image.incarnation &&
+        fake.last_upload.image.content_version==source.image.content_version &&
+        fake.last_upload.bytes==source.bytes && fake.last_upload.byte_capacity==4 &&
+        fake.last_upload.storage_width==1 && fake.last_upload.storage_height==1 &&
+        fake.last_upload.stride_bytes==4 && fake.last_upload.region.x==0 &&
+        fake.last_upload.region.y==0 && fake.last_upload.region.width==1 &&
+        fake.last_upload.region.height==1 &&
+        fake.last_upload.pixel_format==GML_RENDER_PIXEL_RGBA8888);
+  fake.fail_upload=1;
+  gml_render_prepare_scene_fonts(render);
+  fake.fail_upload=0;
+  gml_render_prepare_scene_fonts(render);
+  CHECK(fake.uploads==3 && fake.last_upload.image.incarnation==source.image.incarnation);
+  fake.on_demand=0;fake.forbid_calls=1;
+  gml_render_prepare_scene_fonts(render);
+  CHECK(fake.uploads==3 && !fake.forbidden_calls);
+  fake.forbid_calls=0;
+  gml_render_free(render);free(render);
+  CHECK(fake.retires==1);
+  return 1;
+}
+
+static int immutable_sprite_font_scene_preparation(void){
+  GmlRender *render=(GmlRender*)calloc(1,sizeof *render);
+  FakeDevice fake={.on_demand=1};
+  GmlRenderDeviceServices device=service(&fake);
+  const uint8_t encoded[]={ 'f','i','o','q',1,0,1,0,0,0,0,0,0xFF,17,39,61,255 };
+  CHECK(render);
+  render->n_atlas=2;render->n_fonts=3;render->n_spr=1;render->n_tpag=2;
+  render->atlas=(GmlAtlas*)calloc(2,sizeof *render->atlas);
+  render->spr=(GmlSprite*)calloc(1,sizeof *render->spr);
+  render->tpag=(GmlTpag*)calloc(2,sizeof *render->tpag);
+  CHECK(render->atlas && render->spr && render->tpag);
+  for(int index=0;index<2;index++){
+    render->atlas[index].external_blob=(uint8_t*)malloc(sizeof encoded);
+    CHECK(render->atlas[index].external_blob);
+    memcpy(render->atlas[index].external_blob,encoded,sizeof encoded);
+    render->atlas[index].external_size=sizeof encoded;
+    render->atlas[index].w=render->atlas[index].h=1;
+    render->tpag[index].atlas=index;
+  }
+  render->atlas[1].runtime_font_page=1;
+  render->spr[0].n_frames=3;
+  render->spr[0].frame=(int*)malloc(3*sizeof(int));
+  CHECK(render->spr[0].frame);
+  render->spr[0].frame[0]=0;render->spr[0].frame[1]=1;render->spr[0].frame[2]=-1;
+  render->fonts[0].sprite=render->fonts[1].sprite=0;
+  render->fonts[2].sprite=-1;
+  device.observe_on_demand=fake_observe_on_demand;
+  gml_render_bind_device(render,&device);
+  gml_render_prepare_scene_fonts(render);
+  CHECK(fake.uploads==1 && render->atlas[0].decode_attempted &&
+        !render->atlas[1].decode_attempted && !fake.submits && !fake.readbacks);
+  gml_render_free(render);free(render);
+  CHECK(fake.retires==1);
+  return 1;
+}
+
+static int immutable_room_scene_preparation(void){
+  GmlRender *render=(GmlRender*)calloc(1,sizeof *render);
+  FakeDevice fake={0};
+  GmlRenderDeviceServices device=service(&fake);
+  CHECK(render);
+  render->n_atlas=2;render->n_spr=1;render->n_bg=1;render->n_tpag=3;
+  render->atlas=(GmlAtlas*)calloc(2,sizeof *render->atlas);
+  render->spr=(GmlSprite*)calloc(1,sizeof *render->spr);
+  render->bg=(GmlBg*)calloc(1,sizeof *render->bg);
+  render->tpag=(GmlTpag*)calloc(3,sizeof *render->tpag);
+  CHECK(render->atlas && render->spr && render->bg && render->tpag);
+  render->atlas[0].px=(uint8_t*)calloc(16,1);
+  CHECK(render->atlas[0].px);
+  render->atlas[0].w=render->atlas[0].h=2;
+  render->spr[0].n_frames=3;
+  render->spr[0].frame=(int*)calloc(3,sizeof(int));
+  CHECK(render->spr[0].frame);
+  for(int frame=0;frame<3;frame++) render->spr[0].frame[frame]=frame;
+  render->tpag[0].atlas=0;render->tpag[1].atlas=1;render->tpag[2].atlas=-1;
+  render->bg[0].tpag=0;
+  device.observe_on_demand=fake_observe_on_demand;
+  gml_render_bind_device(render,&device);
+  gml_render_prepare_scene_sprite(render,0);gml_render_prepare_scene_bg(render,0);
+  CHECK(!fake.uploads);
+  fake.on_demand=1;
+  fake.max_texture_extent=1;
+  gml_render_prepare_scene_sprite(render,0);gml_render_prepare_scene_bg(render,0);
+  CHECK(!fake.uploads && !render->atlas[1].decode_attempted);
+  fake.max_texture_extent=2;
+  gml_render_prepare_scene_sprite(render,0);gml_render_prepare_scene_bg(render,0);
+  CHECK(fake.uploads==2 && fake.last_upload.image.identity==0 &&
+        !fake.submits && !fake.readbacks && !render->atlas[1].decode_attempted);
+  render->atlas[0].runtime_font_page=1;
+  gml_render_prepare_scene_sprite(render,0);gml_render_prepare_scene_bg(render,0);
+  CHECK(fake.uploads==2);
+  render->atlas[0].runtime_font_page=0;
+  gml_render_prepare_scene_sprite(render,-1);gml_render_prepare_scene_sprite(render,1);
+  gml_render_prepare_scene_bg(render,-1);gml_render_prepare_scene_bg(render,1);
+  CHECK(fake.uploads==2);
+  gml_render_free(render);free(render);
+  CHECK(fake.retires==1);
+  return 1;
+}
+
 static int runtime_font_page_scene_retirement(void){
   GmlRender *render=(GmlRender*)calloc(1,sizeof *render);
   GmlRenderResourceSource first={0},second={0};
@@ -10048,6 +10200,9 @@ int main(void){
   passed+=resident_clipped_filtered_background_part_noop();
   passed+=resident_background_and_tile_cpu_barriers();
   passed+=atlas_scene_identity_and_retirement();
+  passed+=immutable_font_scene_preparation();
+  passed+=immutable_sprite_font_scene_preparation();
+  passed+=immutable_room_scene_preparation();
   passed+=runtime_font_page_scene_retirement();
   passed+=mutable_scene_identity_across_renderers();
   passed+=surface_observer_materializes_suspended_fill();
@@ -10116,6 +10271,6 @@ int main(void){
   passed+=source_free_primitive_rect_replay();
   passed+=stretched_float_exact_replay();
   passed+=filtered_font_exact_recovery();
-  printf("render resource cases: passed=%d failed=%d\n",passed,142-passed);
-  return passed==142?EXIT_SUCCESS:EXIT_FAILURE;
+  printf("render resource cases: passed=%d failed=%d\n",passed,145-passed);
+  return passed==145?EXIT_SUCCESS:EXIT_FAILURE;
 }

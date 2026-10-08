@@ -1921,23 +1921,34 @@ void gml_vm_prefetch_room_assets(GmlVM *vm){
     if(warm){
       gml_render_warm_sprite(R,(int)in->sprite_index);
       if((int)in->mask_index>=0) gml_render_warm_sprite(R,(int)in->mask_index);
+      gml_render_prepare_scene_sprite(R,(int)in->sprite_index);
     }
   }
   for(int i=0;i<vm->n_tilemaps;i++){ GmlTileMap *tm=&vm->tilemaps[i];
     if(tm->used){
       gml_render_prefetch_bg(R,tm->tileset);
-      if(warm) gml_render_warm_bg(R,tm->tileset);
+      if(warm){
+        gml_render_warm_bg(R,tm->tileset);
+        gml_render_prepare_scene_bg(R,tm->tileset);
+      }
     } }
   for(int j=0;j<vm->n_rte;j++){ GmlRtElem *e=&vm->rte[j];
     if(!e->used) continue;
     if(e->type==7){
       gml_render_prefetch_bg(R,e->sprite);
-      if(warm) gml_render_warm_bg(R,e->sprite);
+      if(warm){
+        gml_render_warm_bg(R,e->sprite);
+        gml_render_prepare_scene_bg(R,e->sprite);
+      }
     } else {
       gml_render_prefetch_sprite(R,e->sprite);
-      if(warm) gml_render_warm_sprite(R,e->sprite);
+      if(warm){
+        gml_render_warm_sprite(R,e->sprite);
+        gml_render_prepare_scene_sprite(R,e->sprite);
+      }
     }
   }
+  if(warm) gml_render_prepare_scene_fonts(R);
 }
 static int vm_audio_room_warm_disabled(GmlVM *vm){
   if(vm->diagnostics.audio_room_warm_disabled<0){

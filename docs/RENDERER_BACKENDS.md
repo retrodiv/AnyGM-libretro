@@ -26,6 +26,14 @@ capacity; context loss forgets it. Specialised content/font programs and larger 
 retain their existing demand-driven paths. Preparation failure is nonfatal and retains ordinary
 lazy retry. Raster rules, EXACT/TOLERANCE classifications and state bytes are unchanged.
 
+Room warming at initial start, Reset and room entry additionally prepares GPU copies of its
+already decoded sprite/background pages. Packaged real/sprite-font pages are decoded/uploaded once
+per distinct page at each boundary, within a 64 MiB aggregate speculative budget; the device
+reuses existing immutable identity/version uploads. Mutable/runtime-rasterized pages, unsupported extents,
+missing current-context proof and failures keep ordinary lazy paths. CPU warming is unchanged;
+mask-only pages are not uploaded solely for collision use. This is resource preparation, not
+new draw admission, fallback exemption or zero first-use cost for every future content resource.
+
 R03-P9-AUTOMATIC-UNDERLAY also prepares an already queued underlay before an
 otherwise qualified public stretched application-surface GUI draw with zero camera offset.
 Changing automatic-draw enablement does not cancel that queued intent. The
