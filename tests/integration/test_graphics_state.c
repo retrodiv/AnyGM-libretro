@@ -2554,6 +2554,81 @@ static int scene_canvas_cpu_source_case(void){
   return 1;
 }
 
+/* Restored pixels are already authoritative on the CPU. Upload that small logical image once;
+ * the device, not a CPU host buffer, should clear the margins and perform a nearest enlargement. */
+static int scene_canvas_restored_nearest_case(void){
+  Session selected={0};
+  AnygmConfigDelta presentation={0};
+  GmlGpuCounters before={0},after={0};
+  GmlRenderDispatchMetrics dispatch={0};
+  GmlRenderImageRef image={0};
+  unsigned width=7u,height=9u;
+  size_t saved_size=0;
+  uint8_t *saved=NULL;
+  anygm_test_graphics_reset();
+  REQUIRE(session_open_fixture_with_scene(&selected,ANYGM_SCENE_RENDERER_OPENGL,
+          anygm_synthetic_host_box_content_create),"restored nearest canvas fixture loads");
+  presentation.struct_size=sizeof presentation;
+  presentation.values.struct_size=sizeof presentation.values;
+  presentation.fields=ANYGM_CONFIG_HYBRID_GPU_PRESENTATION|
+    ANYGM_CONFIG_PRESENT_LOGICAL_RASTER|ANYGM_CONFIG_MONITOR_WIDTH|ANYGM_CONFIG_MONITOR_HEIGHT;
+  presentation.values.monitor_width=192u;
+  presentation.values.monitor_height=144u;
+  REQUIRE(anygm_set_config(selected.engine,&presentation)==ANYGM_OK &&
+          advance(selected.engine,1,NULL),"nearest canvas completes its logical CPU source");
+  saved=serialize(selected.engine,&saved_size);
+  REQUIRE(saved && graphics_adopt(selected.engine,ANYGM_GRAPHICS_OPENGLES3)==ANYGM_OK,
+          "nearest canvas saves before adopting a scene-only context");
+  int loaded=anygm_state_load(selected.engine,saved,saved_size)==ANYGM_OK;
+  free(saved);
+  REQUIRE(loaded && selected.engine->host_canvas_active &&
+          selected.engine->frame_authority==ENGINE_FRAME_CPU_MATERIALIZED &&
+          !gml_render_completed_screen_image(&selected.engine->render,selected.engine->screen,
+          128,96,&image),"restored canvas has authoritative CPU pixels, not a stale device source");
+  uint32_t logical[128u*96u];
+  memcpy(logical,selected.engine->screen,sizeof logical);
+  gml_render_dispatch_diagnostics_enable(&selected.engine->render,1);
+  gml_gpu_counters(selected.engine->gpu,&before);
+  REQUIRE(engine_present_hardware_canvas(selected.engine,&width,&height),
+          "restored scene canvas performs nearest host fitting on the device");
+  gml_gpu_counters(selected.engine->gpu,&after);
+  REQUIRE(width==192u && height==144u && selected.engine->host_plan_valid &&
+          selected.engine->frame_authority==ENGINE_FRAME_CPU_MATERIALIZED &&
+          !memcmp(logical,selected.engine->screen,sizeof logical) &&
+          selected.engine->host_plan.images[0].cpu_pixels==selected.engine->screen &&
+          !selected.engine->host_plan.images[0].resident_image.resource_class &&
+          after.passes_accepted==before.passes_accepted+1u &&
+          after.full_uploads==before.full_uploads+1u &&
+          after.cpu_upload_frames==before.cpu_upload_frames &&
+          after.scene_readbacks==before.scene_readbacks &&
+          gml_render_dispatch_metrics(&selected.engine->render,&dispatch) &&
+          !dispatch.failed && !dispatch.unclassified,
+          "restored fitting uploads only the logical image and preserves its state authority");
+  for(unsigned family=0;family<GML_RENDER_SCENE_FAMILY_COUNT;family++)
+    for(unsigned reason=0;reason<GML_RENDER_DISPATCH_REASON_COUNT;reason++)
+      REQUIRE(!dispatch.cpu[family][reason],"restored host fit executes no CPU raster operation");
+  REQUIRE(dispatch.gpu[GML_RENDER_SCENE_PRIMITIVE]==1u &&
+          dispatch.gpu[GML_RENDER_SCENE_SURFACE]==1u,
+          "restored host clear and nearest blit are counted as GPU work");
+  /* The existing cold box and CRT/shift/crop exclusions are not widened by this variant. */
+  for(unsigned exclusion=0;exclusion<4u;exclusion++){
+    selected.engine->host_crt_active=exclusion==0u;
+    selected.engine->present_shift_x=exclusion==1u;
+    selected.engine->present_crop_left=exclusion==2u;
+    selected.engine->frame_authority=exclusion==3u?ENGINE_FRAME_NONE:ENGINE_FRAME_CPU_MATERIALIZED;
+    gml_gpu_counters(selected.engine->gpu,&before);
+    REQUIRE(!engine_present_hardware_canvas(selected.engine,NULL,NULL),
+            "unqualified CPU canvas variants retain their established fallback");
+    gml_gpu_counters(selected.engine->gpu,&after);
+    REQUIRE(after.frames_offered==before.frames_offered &&
+            after.full_uploads==before.full_uploads,
+            "unqualified CPU canvas is refused before a device submission");
+  }
+  selected.engine->frame_authority=ENGINE_FRAME_CPU_MATERIALIZED;
+  session_close(&selected);
+  return 1;
+}
+
 static uint8_t *serialize(AnygmEngine *engine,size_t *size){
   size_t capacity=anygm_state_size(engine);
   uint8_t *data=(uint8_t*)malloc(capacity?capacity:1);
@@ -4230,6 +4305,8 @@ int main(void){
      presentation_filter_case},
     {"scene-only cold canvas retains CPU presentation without failed device work",
      scene_canvas_cpu_source_case},
+    {"restored scene canvas fits a CPU-current image with GPU nearest",
+     scene_canvas_restored_nearest_case},
     {"primary and auxiliary scratch uploads stay independent",content_sampler_upload_lifetime_case},
     {"surface shader vertices retain authored positions",content_surface_authored_position_case},
     {"terminal shader retains clipped authored positions",content_terminal_authored_position_case},
