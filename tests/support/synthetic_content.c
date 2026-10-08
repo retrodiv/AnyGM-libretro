@@ -1726,7 +1726,8 @@ static int synthetic_framebuffer_content_create(
   int classic_transition=gpu_sprite==15;
   int cursor_frame=gpu_sprite==16;
   int moving_sound=gpu_sprite==17 || gpu_sprite==18 || gpu_sprite==20;
-  int single_classic_view=gpu_sprite>=21 && gpu_sprite<=37;
+  int borrowed_resize=gpu_sprite==40;
+  int single_classic_view=(gpu_sprite>=21 && gpu_sprite<=37) || borrowed_resize;
   char create[192],step[192],draw[192],draw_begin[192],draw_gui[192];
   snprintf(create,sizeof create,"%s/retain-create.gml",fixture->directory);
   snprintf(step,sizeof step,"%s/retain-step.gml",fixture->directory);
@@ -1734,7 +1735,12 @@ static int synthetic_framebuffer_content_create(
   snprintf(draw_begin,sizeof draw_begin,"%s/retain-draw-begin.gml",fixture->directory);
   snprintf(draw_gui,sizeof draw_gui,"%s/retain-draw-gui.gml",fixture->directory);
   snprintf(fixture->path,sizeof fixture->path,"%s/data.win",fixture->directory);
-  if(!write_text(create,gpu_sprite==22?
+  if(!write_text(create,borrowed_resize?
+       "global.fixture_frame = 0;\n"
+       "view_wview[0] = 128; view_hview[0] = 96;\n"
+       "view_wport[0] = 128; view_hport[0] = 96;\n"
+       "window_set_size(128,96);\n":
+       gpu_sprite==22?
        "global.fixture_frame = 0;\n"
        "texture_set_interpolation(true);\n":
        gpu_sprite==20?
@@ -1779,7 +1785,19 @@ static int synthetic_framebuffer_content_create(
        "global.fixture_frame = 0;\n"
        "view_xview[0] = 0.5; view_xview[1] = 32.25;\n":
        "global.fixture_frame = 0;\n") ||
-     !write_text(step,gpu_sprite==29?
+     !write_text(step,borrowed_resize?
+                 "global.fixture_frame += 1;\n"
+                 "if (global.fixture_frame == 4) {\n"
+                 "  view_wview[0] = 80; view_hview[0] = 60;\n"
+                 "  view_wport[0] = 80; view_hport[0] = 60;\n"
+                 "  window_set_size(80,60);\n"
+                 "}\n"
+                 "if (global.fixture_frame == 7) {\n"
+                 "  view_wview[0] = 64; view_hview[0] = 48;\n"
+                 "  view_wport[0] = 64; view_hport[0] = 48;\n"
+                 "  window_set_size(64,48);\n"
+                 "}\n":
+                 gpu_sprite==29?
                  "global.fixture_frame += 1;\n"
                  "if (global.fixture_frame == 4) texture_set_interpolation(true);\n":
                  gpu_sprite==26?
@@ -2084,8 +2102,10 @@ static int synthetic_framebuffer_content_create(
       rooms[room].views[0].visible=1;
       rooms[room].views[0].wview=rooms[room].width;
       rooms[room].views[0].hview=rooms[room].height;
-      rooms[room].views[0].wport=gpu_sprite==23?96:rooms[room].width*2;
-      rooms[room].views[0].hport=gpu_sprite==23?72:rooms[room].height*2;
+      rooms[room].views[0].wport=borrowed_resize?rooms[room].width:
+                               gpu_sprite==23?96:rooms[room].width*2;
+      rooms[room].views[0].hport=borrowed_resize?rooms[room].height:
+                               gpu_sprite==23?72:rooms[room].height*2;
       rooms[room].views[0].xport=gpu_sprite==25?4:0;
       rooms[room].views[0].hspeed=rooms[room].views[0].vspeed=-1;
       rooms[room].views[0].object_id=-1;
@@ -2207,6 +2227,9 @@ int anygm_synthetic_classic_single_view_offset_content_create(AnygmSyntheticCont
 }
 int anygm_synthetic_classic_single_view_geometry_content_create(AnygmSyntheticContent *fixture){
   return synthetic_framebuffer_content_create(fixture,0,0,1,26);
+}
+int anygm_synthetic_classic_borrowed_resize_content_create(AnygmSyntheticContent *fixture){
+  return synthetic_framebuffer_content_create(fixture,0,0,1,40);
 }
 int anygm_synthetic_classic_single_view_read_content_create(AnygmSyntheticContent *fixture){
   return synthetic_framebuffer_content_create(fixture,0,0,1,27);

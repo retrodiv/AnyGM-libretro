@@ -957,8 +957,8 @@ static int classic_single_view_application_scene_case(void){
              cpu.pixels!=NULL,selected.engine->screen!=NULL);
     gml_gpu_counters(selected.engine->gpu,&counters);
     gml_render_presentation_metrics(&selected.engine->render,&metrics);
-    /* The first Draw still exposes the display-size borrowed surface. Only subsequent
-     * same-logical-size frames qualify, including the retained room transition. */
+    /* The first Draw still exposes the display-size borrowed surface. Its metadata
+     * does not change the world resource's stride or prevent resident drawing. */
     GmlVal *cpu_width=gml_varmap_get(&plain.engine->vm.globals,"fixture_application_width");
     GmlVal *gpu_width=gml_varmap_get(&selected.engine->vm.globals,"fixture_application_width");
     GmlVal *cpu_height=gml_varmap_get(&plain.engine->vm.globals,"fixture_application_height");
@@ -967,14 +967,14 @@ static int classic_single_view_application_scene_case(void){
       cpu_width->d==gpu_width->d && cpu_height->d==gpu_height->d &&
       cpu_width->d==(frame==0?128.0:64.0) && cpu_height->d==(frame==0?96.0:48.0) &&
       !metrics.application_owned &&
-      counters.scene_families[GML_RENDER_SCENE_SPRITE]==(uint64_t)frame &&
-      counters.scene_families[GML_RENDER_SCENE_TEXT]==(uint64_t)frame*3u;
+      counters.scene_families[GML_RENDER_SCENE_SPRITE]==(uint64_t)frame+1u &&
+      counters.scene_families[GML_RENDER_SCENE_TEXT]==((uint64_t)frame+1u)*3u;
   }
   gml_render_presentation_metrics(&selected.engine->render,&metrics);
   gml_gpu_counters(selected.engine->gpu,&counters);
   if(!matching || metrics.application_owned ||
      metrics.application_width!=64 || metrics.application_height!=48 ||
-     counters.scene_families[GML_RENDER_SCENE_SPRITE]!=2u ||
+     counters.scene_families[GML_RENDER_SCENE_SPRITE]!=3u ||
      counters.scene_families[GML_RENDER_SCENE_TEXT]==0u ||
      counters.scene_batches_refused!=0u)
     fprintf(stderr,"single-view classic: matching=%d owned=%d app=%dx%d "
@@ -986,7 +986,7 @@ static int classic_single_view_application_scene_case(void){
             (unsigned long long)counters.scene_batches_refused);
   matching=matching && !metrics.application_owned &&
            metrics.application_width==64 && metrics.application_height==48 &&
-           counters.scene_families[GML_RENDER_SCENE_SPRITE]==2u &&
+           counters.scene_families[GML_RENDER_SCENE_SPRITE]==3u &&
            counters.scene_families[GML_RENDER_SCENE_TEXT]>0u &&
            counters.scene_batches_refused==0u;
   session_close(&selected); session_close(&plain);
@@ -1031,6 +1031,60 @@ static int classic_single_view_geometry_transition_case(void){
   }
   session_close(&selected); session_close(&plain);
   REQUIRE(matching,"classic GPU admission preserves a later logical geometry transition");
+  return 1;
+}
+
+static int classic_borrowed_resize_scene_case(void){
+  Session plain={0},selected={0};
+  AnygmInputFrame input={.struct_size=sizeof input,.pointer_x=-1,.pointer_y=-1};
+  AnygmFrameOutput cpu={0},gpu={0};
+  int matching=1;
+  anygm_test_graphics_reset();
+  REQUIRE(session_open_fixture_with_scene(&plain,ANYGM_SCENE_RENDERER_CPU,
+            anygm_synthetic_classic_borrowed_resize_content_create) &&
+          session_open_fixture_with_scene(&selected,ANYGM_SCENE_RENDERER_OPENGL,
+            anygm_synthetic_classic_borrowed_resize_content_create),
+          "borrowed resize fixtures load");
+  REQUIRE(graphics_adopt(selected.engine,ANYGM_GRAPHICS_OPENGLES3)==ANYGM_OK,
+          "borrowed resize context adopts");
+  for(unsigned frame=0;frame<9u && matching;frame++){
+    unsigned width=frame<3u?128u:frame<6u?80u:64u;
+    unsigned height=frame<3u?96u:frame<6u?60u:48u;
+    unsigned old_width=frame==0u?64u:frame==3u?128u:frame==6u?80u:width;
+    unsigned old_height=frame==0u?48u:frame==3u?96u:frame==6u?60u:height;
+    cpu.struct_size=gpu.struct_size=sizeof cpu;
+    matching=anygm_run_frame(plain.engine,&input,&cpu)==ANYGM_OK &&
+             anygm_run_frame(selected.engine,&input,&gpu)==ANYGM_OK &&
+             engine_materialize_completed_frame(selected.engine) &&
+             cpu.pixels && selected.engine->screen &&
+             cpu.width==width && cpu.height==height &&
+             gpu.width==width && gpu.height==height &&
+             selected.engine->width==width && selected.engine->height==height &&
+             !memcmp(cpu.pixels,selected.engine->screen,(size_t)width*height*4u);
+    GmlRenderPresentationMetrics metrics={0};
+    GmlGpuCounters counters={0};
+    gml_render_presentation_metrics(&selected.engine->render,&metrics);
+    gml_gpu_counters(selected.engine->gpu,&counters);
+    GmlVal *cw=gml_varmap_get(&plain.engine->vm.globals,"fixture_application_width");
+    GmlVal *gw=gml_varmap_get(&selected.engine->vm.globals,"fixture_application_width");
+    GmlVal *ch=gml_varmap_get(&plain.engine->vm.globals,"fixture_application_height");
+    GmlVal *gh=gml_varmap_get(&selected.engine->vm.globals,"fixture_application_height");
+    matching=matching && cw && gw && ch && gh &&
+      cw->d==old_width && gw->d==cw->d && ch->d==old_height && gh->d==ch->d &&
+      !metrics.application_owned && metrics.application_width==(int)width &&
+      metrics.application_height==(int)height &&
+      counters.scene_families[GML_RENDER_SCENE_SPRITE]==frame+1u &&
+      counters.scene_families[GML_RENDER_SCENE_TEXT]==(frame+1u)*3u &&
+      !counters.scene_batches_refused;
+    if(!matching) fprintf(stderr,"borrowed resize frame=%u output=%ux%u/%ux%u "
+      "application=%.0fx%.0f/%.0fx%.0f sprite=%llu text=%llu\n",frame,
+      cpu.width,cpu.height,gpu.width,gpu.height,cw?cw->d:-1.0,ch?ch->d:-1.0,
+      gw?gw->d:-1.0,gh?gh->d:-1.0,
+      (unsigned long long)counters.scene_families[GML_RENDER_SCENE_SPRITE],
+      (unsigned long long)counters.scene_families[GML_RENDER_SCENE_TEXT]);
+  }
+  session_close(&selected); session_close(&plain);
+  REQUIRE(matching,"borrowed resize preserves CPU pixels and old Draw metadata with resident work");
   return 1;
 }
 
@@ -1119,10 +1173,10 @@ static int classic_single_view_draw_contracts_case(void){
     gml_gpu_counters(selected.engine->gpu,&counters);
     /* This fake context deliberately has no owning-context witness. Exact replay draws
      * qualify here; tolerant pixels require the separate real-driver controls. */
-    matching=matching && counters.scene_families[GML_RENDER_SCENE_SPRITE]==(variant<2u?5u:0u) &&
+    matching=matching && counters.scene_families[GML_RENDER_SCENE_SPRITE]==(variant<2u?6u:0u) &&
              counters.scene_batches_refused==0u;
     if(variant==0u) matching=matching &&
-      counters.scene_families[GML_RENDER_SCENE_PRIMITIVE]==20u;
+      counters.scene_families[GML_RENDER_SCENE_PRIMITIVE]==24u;
     fprintf(stderr,"classic draw variant=%u max_bytes=%u,%u,%u,%u sprite=%llu primitive=%llu matching=%d\n",
       variant,maximum[0],maximum[1],maximum[2],maximum[3],
       (unsigned long long)counters.scene_families[GML_RENDER_SCENE_SPRITE],
@@ -1238,13 +1292,13 @@ static int classic_single_view_cpu_observers_case(void){
     GmlGpuCounters counters={0};
     gml_gpu_counters(selected.engine->gpu,&counters);
     if(variant==3u)
-      matching=matching && counters.scene_families[GML_RENDER_SCENE_SPRITE]==5u &&
-               counters.scene_families[GML_RENDER_SCENE_TEXT]==15u;
+      matching=matching && counters.scene_families[GML_RENDER_SCENE_SPRITE]==6u &&
+               counters.scene_families[GML_RENDER_SCENE_TEXT]==18u;
     if(variant==4u)
-      matching=matching && counters.scene_families[GML_RENDER_SCENE_SPRITE]==10u &&
-               counters.scene_families[GML_RENDER_SCENE_TEXT]==15u;
+      matching=matching && counters.scene_families[GML_RENDER_SCENE_SPRITE]==12u &&
+               counters.scene_families[GML_RENDER_SCENE_TEXT]==18u;
     if(variant==5u)
-      matching=matching && counters.scene_families[GML_RENDER_SCENE_SPRITE]==5u &&
+      matching=matching && counters.scene_families[GML_RENDER_SCENE_SPRITE]==6u &&
                counters.scene_families[GML_RENDER_SCENE_TEXT]==0u;
     if(!matching || !counters.scene_families[GML_RENDER_SCENE_SPRITE])
       fprintf(stderr,"classic observer variant=%u sprite=%llu text=%llu refused=%llu matching=%d\n",
@@ -4150,6 +4204,7 @@ int main(void){
      classic_single_view_application_scene_case},
     {"excluded single classic views retain CPU presentation",classic_single_view_exclusions_case},
     {"classic single view preserves later geometry transitions",classic_single_view_geometry_transition_case},
+    {"borrowed resize keeps Draw metadata and resident pixels",classic_borrowed_resize_scene_case},
     {"classic single view preserves CPU observers",classic_single_view_cpu_observers_case},
     {"classic single view executes nearest draw contracts",classic_single_view_draw_contracts_case},
     {"classic Step target survives GPU Draw and GUI",classic_retained_target_scene_case},

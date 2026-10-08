@@ -55,6 +55,7 @@ int main(int argc,char **argv){
   int classic_viewless=argc==2 && !strcmp(argv[1],"--keep-classic-viewless");
   int classic_single_view=argc==2 && !strcmp(argv[1],"--keep-classic-single-view");
   int classic_geometry=argc==2 && !strcmp(argv[1],"--keep-classic-single-view-geometry");
+  int classic_borrowed_resize=argc==2 && !strcmp(argv[1],"--keep-classic-borrowed-resize");
   int classic_read=argc==2 && !strcmp(argv[1],"--keep-classic-single-view-read");
   int classic_cpu_gui=argc==2 && !strcmp(argv[1],"--keep-classic-single-view-cpu-gui");
   int classic_filter_transition=argc==2 && !strcmp(argv[1],"--keep-classic-single-view-filter-transition");
@@ -83,6 +84,7 @@ int main(int argc,char **argv){
        classic_viewless?anygm_synthetic_classic_viewless_draw_content_create(&fixture):
        classic_single_view?anygm_synthetic_classic_single_view_draw_content_create(&fixture):
        classic_geometry?anygm_synthetic_classic_single_view_geometry_content_create(&fixture):
+       classic_borrowed_resize?anygm_synthetic_classic_borrowed_resize_content_create(&fixture):
        classic_read?anygm_synthetic_classic_single_view_read_content_create(&fixture):
        classic_cpu_gui?anygm_synthetic_classic_single_view_cpu_gui_content_create(&fixture):
        classic_filter_transition?anygm_synthetic_classic_single_view_filter_transition_content_create(&fixture):
@@ -114,7 +116,7 @@ int main(int argc,char **argv){
      multiview_fractional || multiview_step || multiview_nested || multiview_assigned ||
      canvas_geometry || window_raster || centered_gui ||
      crt_native || crt_scaled || host_box || ended_frame || cursor_frame ||
-     classic_redraw || classic_viewless || classic_single_view || classic_geometry ||
+     classic_redraw || classic_viewless || classic_single_view || classic_geometry || classic_borrowed_resize ||
      classic_read || classic_cpu_gui || classic_filter_transition || classic_partial_alpha ||
      classic_rectangle || classic_alpha_rectangle || classic_binary || classic_source_alpha || classic_zero_alpha_part ||
      classic_software3d ||
@@ -140,6 +142,7 @@ int main(int argc,char **argv){
           "--keep-cursor-frame|"
           "--keep-classic-redraw|--keep-classic-viewless|--keep-classic-single-view|"
           "--keep-classic-single-view-geometry|"
+          "--keep-classic-borrowed-resize|"
           "--keep-classic-single-view-read|--keep-classic-single-view-cpu-gui|"
           "--keep-classic-single-view-filter-transition|--keep-classic-single-view-partial-alpha|"
           "--keep-classic-single-view-rectangle|--keep-classic-single-view-binary|"

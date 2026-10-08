@@ -1579,7 +1579,9 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
        &engine->render,(int)engine->width,(int)engine->height))
     gml_render_presentation_metrics(&engine->render,&render_presentation);
   /* A sole early-classic integer viewport draws at the borrowed logical raster.
-   * GPU residency must not turn that borrow into a persistent explicit surface resize. */
+   * GPU residency must not turn that borrow into a persistent explicit surface resize.
+   * Draw may still expose the preceding borrow's extent after a view change. The base
+   * resource uses the actual world stride; publish the new surface extent only below. */
   int early_classic_full_view=engine->scene_renderer_session==ANYGM_SCENE_RENDERER_OPENGL &&
     frame_view_count==1 &&
     frame_views[0].px==0 && frame_views[0].py==0 &&
@@ -1595,9 +1597,7 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
     !render_presentation.application_owned &&
     render_presentation.application_draw_enabled && app_surface_is_draw_target &&
     anygm_policy_uses_classic_runtime(&engine->win) &&
-    !anygm_policy_classic_modern_presentation(&engine->win) &&
-    render_presentation.application_width==(int)engine->width &&
-    render_presentation.application_height==(int)engine->height;
+    !anygm_policy_classic_modern_presentation(&engine->win);
   /* An early-classic, viewless, exact-size application target can keep Draw on the same resident
    * resource as a sole full view. Later classic temporal presentation retains its CPU policy. */
   if(!render_presentation.application_owned && frame_view_count==0 &&
