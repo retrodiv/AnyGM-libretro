@@ -5028,6 +5028,79 @@ static int resident_empty_sprite_preserves_queued_draws(void){
   return 1;
 }
 
+static int resident_black_additive_sprite_noop(void){
+  enum {WIDTH=16,HEIGHT=12};
+  for(unsigned variant=0;variant<12u;variant++){
+    GmlRender *r=calloc(1,sizeof *r);
+    GmlWin content={.bytecode=17};
+    FakeDevice fake={.on_demand=1};
+    GmlRenderDeviceServices device=service(&fake);
+    GmlRenderJournalMetrics before={0},after={0};
+    uint32_t cpu[WIDTH*HEIGHT],gpu[WIDTH*HEIGHT];
+    uint32_t fill=variant==6u?0x40102030u:0xFF102030u;
+    CHECK(r && gml_render_init(r,NULL)==0);
+    r->win=&content;
+    free(r->atlas[0].px);memset(&r->atlas[0],0,sizeof r->atlas[0]);
+    r->atlas[0].w=r->atlas[0].h=4;
+    r->atlas[0].px=malloc(4u*4u*4u);
+    r->tpag=calloc(1,sizeof *r->tpag);
+    r->spr=calloc(1,sizeof *r->spr);
+    CHECK(r->atlas[0].px && r->tpag && r->spr);
+    r->n_tpag=r->n_spr=1;
+    for(unsigned pixel=0;pixel<16u;pixel++){
+      uint8_t *rgba=r->atlas[0].px+pixel*4u;
+      rgba[0]=230;rgba[1]=173;rgba[2]=91;
+      rgba[3]=pixel%3u==0u?0u:pixel%3u==1u?128u:255u;
+    }
+    r->tpag[0]=(GmlTpag){.sx=1,.sy=1,.sw=2,.sh=2,.tw=2,.th=2,.bw=3,.bh=3,.tx=1,.ty=1};
+    r->spr[0].w=r->spr[0].h=3;r->spr[0].n_frames=1;
+    r->spr[0].originx=r->spr[0].originy=1;
+    r->spr[0].frame=calloc(1,sizeof(int));CHECK(r->spr[0].frame);
+    device.observe_on_demand=fake_observe_on_demand;
+    for(unsigned accelerated=0;accelerated<2u;accelerated++){
+      gml_render_bind_device(r,accelerated?&device:NULL);
+      if(accelerated) CHECK(gml_render_begin_resident_base(r,gpu,WIDTH,HEIGHT,0.25,0.25));
+      else gml_render_begin(r,cpu,WIDTH,HEIGHT,0.25,0.25);
+      r->interp=variant%2u;
+      r->alphablend=1;r->blendmode=1;
+      r->active_shader=variant==10u?0:-1;
+      r->alpha_test_enable=variant==9u;
+      r->blend_equation=variant==11u?2:1;
+      gml_render_set_pending_fill(r,fill);
+      gml_render_flush_pending_fill(r);
+      r->fb_opaque_known=variant!=7u;
+      r->fb_all_opaque=variant!=6u;
+      if(accelerated) gml_render_resource_journal_metrics(r->base_scene_resource,&before);
+      int submits=fake.submits,reads=fake.readbacks;
+      fake.readback_colour=fill;
+      gml_draw_sprite_ext(r,0,0,2.25,2.75,2.3,1.7,0.0,
+                          variant==8u?0xFFFFFFu:0u,
+                          variant<6u?(variant/2u+1u)/3.0:1.0);
+      if(!accelerated){
+        if(variant<6u) for(unsigned pixel=0;pixel<WIDTH*HEIGHT;pixel++) CHECK(cpu[pixel]==fill);
+        if(variant==6u){
+          unsigned changed=0;
+          for(unsigned pixel=0;pixel<WIDTH*HEIGHT;pixel++) changed+=cpu[pixel]!=fill;
+          CHECK(changed>0u);
+        }
+        continue;
+      }
+      if(variant<6u){
+        gml_render_resource_journal_metrics(r->base_scene_resource,&after);
+        CHECK(r->resident_application_pass && fake.submits==submits &&
+              fake.readbacks==reads && after.logical_version==before.logical_version &&
+              after.cpu_replays==before.cpu_replays &&
+              after.device_checkpoints==before.device_checkpoints);
+        /* Explicit observation after the no-op is separate from ordinary drawing. */
+        CHECK(gml_render_resident_application_cpu_barrier(r));
+        CHECK(!memcmp(cpu,gpu,sizeof cpu));
+      } else CHECK(!r->resident_application_pass);
+    }
+    gml_render_free(r);free(r);
+  }
+  return 1;
+}
+
 static int resident_application_sprite_cpu_fallback(void){
   GmlRender *render=(GmlRender*)calloc(1,sizeof *render);
   GmlRenderDeviceServices device;
@@ -9571,6 +9644,7 @@ int main(void){
   passed+=resident_atlas_uv_refusal_preserves_queued_prefix();
   passed+=resident_application_sprite_cpu_fallback();
   passed+=resident_empty_sprite_preserves_queued_draws();
+  passed+=resident_black_additive_sprite_noop();
   passed+=resident_zero_alpha_sprite_part_noop();
   passed+=resident_clipped_filtered_background_part_noop();
   passed+=resident_background_and_tile_cpu_barriers();
@@ -9641,6 +9715,6 @@ int main(void){
   passed+=source_free_primitive_rect_replay();
   passed+=stretched_float_exact_replay();
   passed+=filtered_font_exact_recovery();
-  printf("render resource cases: passed=%d failed=%d\n",passed,135-passed);
-  return passed==135?EXIT_SUCCESS:EXIT_FAILURE;
+  printf("render resource cases: passed=%d failed=%d\n",passed,136-passed);
+  return passed==136?EXIT_SUCCESS:EXIT_FAILURE;
 }

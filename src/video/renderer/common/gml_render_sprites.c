@@ -1827,6 +1827,29 @@ void gml_render_sprite_ext_unmasked(GmlRender *r, int sprite, int subimg, double
        isfinite(xs) && isfinite(ys) && (xs==0.0 || ys==0.0) &&
        !r->spr[sprite].spine && !r->spr[sprite].ns_enabled &&
        r->active_shader<0 && !gml_d3_is_active(r)) return;
+    /* R03-SPR-BLACK-ADDITIVE-NOOP: black tint contributes zero RGB. The
+     * unchanged modern SCREEN CPU leaf stamps written alpha opaque, so a
+     * certified opaque destination is unchanged with either sampler. Keep
+     * unknown/nonopaque targets and special preparation on their old paths. */
+    if(sprite>=0 && sprite<r->n_spr && r->win && !r->classic &&
+       anygm_policy_has_modern_layer_semantics(r->win) &&
+       !r->gui_pass_active && r->target_id==-1 && !r->target_sp &&
+       r->fb_opaque_known && r->fb_all_opaque &&
+       !gml_render_target_preserves_alpha(r) &&
+       r->alphablend && r->blendmode==1 &&
+       r->blend_equation==1 && r->blend_equation_alpha==1 &&
+       r->color_write_mask==15u && !r->fog_flat && !r->alpha_test_enable &&
+       r->active_shader<0 && !r->classic_phase_y &&
+       !r->classic_interp_phase[0] && !r->classic_interp_phase[1] &&
+       !r->classic_interp_phase[2] && !r->app_interp_phase[0] &&
+       !r->app_interp_phase[1] && !r->app_interp_phase[2] &&
+       !r->pending_underlay && !r->pending_presentation &&
+       !r->rotated_batch_count && !r->rotated_batch_building &&
+       rot==0.0 && isfinite(x) && isfinite(y) &&
+       isfinite(xs) && isfinite(ys) && isfinite(alpha) && alpha>0.0 &&
+       (blend&0xFFFFFFu)==0u && !r->spr[sprite].runtime_rgba &&
+       !r->spr[sprite].spine && !r->spr[sprite].ns_enabled &&
+       !gml_d3_is_active(r) && gml_render_scene_target_matches(r)) return;
     /* R03-P9-SPRITE-ALPHA-BOUNDARY: ordinary finite alpha is clamped by the
      * existing CPU leaves. Normalize only the GPU argument; CPU fallback and
      * specialised preparation retain the original caller value and order. */
