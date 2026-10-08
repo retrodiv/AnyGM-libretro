@@ -943,7 +943,8 @@ static int scene_resident_batch_case(void){
 static int scene_hardware_filtered_batch_case(unsigned kind){
   enum { QUADS=2049 };
   int additive=kind==1u,combined=kind==2u,surface=kind>=3u && kind<=5u;
-  int nearest=kind==4u || kind==5u,screen_stretch=kind==6u;
+  int nearest=kind==4u || kind==5u,screen_stretch=kind==6u || kind==7u;
+  int screen_sprite=kind==7u;
   const uint8_t pixels[16]={11,22,33,255,44,55,66,100,77,88,99,0,111,122,133,200};
   for(unsigned api=0;api<2u;api++)
   for(unsigned excluded=0;excluded<(nearest || screen_stretch?8u:(combined || surface)?7u:4u);excluded++){
@@ -1007,6 +1008,13 @@ static int scene_hardware_filtered_batch_case(unsigned kind){
       quad->x[1]=quad->x[2]=combined || nearest?2.0:8.0;
       quad->y[2]=quad->y[3]=combined || nearest?2.0:8.0;
       quad->u[1]=quad->u[2]=quad->v[2]=quad->v[3]=1.0;
+      if(screen_sprite){
+        quad->filtered_draw_alpha=.7;
+        quad->inverse_x[0]=quad->inverse_y[1]=.6;
+        quad->x[1]=quad->x[2]=quad->y[2]=quad->y[3]=1.0;
+        quad->u[1]=quad->u[2]=quad->v[2]=quad->v[3]=1.0/1.2;
+        for(unsigned corner=0;corner<4u;corner++) quad->corner_colour[corner]=0xB3123456u;
+      }
     }
     if(excluded==3u) ops[QUADS].payload.quad.filtered_draw_alpha=NAN;
     if(excluded==4u){
@@ -1133,6 +1141,9 @@ static int scene_nearest_application_batch_case(void){
 }
 static int scene_hardware_screen_stretch_batch_case(void){
   return scene_hardware_filtered_batch_case(6);
+}
+static int scene_hardware_screen_sprite_batch_case(void){
+  return scene_hardware_filtered_batch_case(7);
 }
 
 /* Driver/state evidence only; pixel-centre point indices need real GL controls. */
@@ -3491,6 +3502,7 @@ int main(int argc,char **argv){
     {"scene_nearest_surface_batch",scene_nearest_surface_batch_case},
     {"scene_nearest_application_batch",scene_nearest_application_batch_case},
     {"scene_hardware_screen_stretch_batch",scene_hardware_screen_stretch_batch_case},
+    {"scene_hardware_screen_sprite_batch",scene_hardware_screen_sprite_batch_case},
     {"scene_application_point_batch",scene_application_point_batch_case},
     {"scene_destination_surface",scene_destination_surface_case},
     {"scene_readback_formats",scene_readback_formats_case},

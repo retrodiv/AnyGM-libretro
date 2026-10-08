@@ -904,6 +904,29 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
     !gml_render_target_preserves_alpha(r) &&
     r->device.context && r->device.observe_on_demand &&
     r->device.observe_on_demand(r->device.context);
+  /* R03-SPR-MODERN-SCREEN-FILTERED: ordinary modern axis sprites keep
+   * floating source colour through hardware filtering and fixed source-over.
+   * Packed trim and reflected sampling remain separate qualification slices. */
+  int modern_screen_filtered=r && r->target_id<0 && r->target_sp==0 &&
+    family==GML_RENDER_SCENE_SPRITE && r->interp &&
+    !rotated_sprite && !corner_colours && !part_view && !opaque_target_alpha &&
+    !transparent_stretched_trim && !box_stretched && !positioned_axis && !nearest_mode &&
+    !r->fog_flat && xs>0.0 && ys>0.0 && alpha>0.0 &&
+    anygm_policy_has_modern_layer_semantics(r->win) &&
+    !gml_render_target_preserves_alpha(r) &&
+    r->device.context && r->device.observe_on_demand &&
+    r->device.observe_on_demand(r->device.context);
+  /* A maximised GUI can still resolve to the same identity mapping. Admit
+   * that flag-only variant, not arbitrary maximised scales or offsets. */
+  int modern_filtered_identity_maximise=modern_screen_filtered && r->gui_pass_active &&
+    r->gui_maximise_active && !r->world_transform_active && r->base_scene_resource &&
+    r->fb==r->base_scene_resource_pixels &&
+    r->fbw==r->base_scene_resource_width && r->fbh==r->base_scene_resource_height &&
+    r->gui_base_logical_w==r->fbw && r->gui_base_logical_h==r->fbh &&
+    r->gui_logical_w==r->fbw && r->gui_logical_h==r->fbh &&
+    r->gui_scale_x==1.0 && r->gui_scale_y==1.0 &&
+    r->gui_maximise_xoffset==0.0 && r->gui_maximise_yoffset==0.0 &&
+    r->cam_x==0.0 && r->cam_y==0.0;
   /* R03-SPR-FIRSTGEN-SIGNED-POINT: retain first-generation alpha and edge coverage.
    * Contiguous-white specialisations keep their separate established recipes. */
   int firstgen_signed_point=r && nearest_mode==4 &&
@@ -929,11 +952,11 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
        (filtered_real_text && anygm_policy_has_modern_layer_semantics(r->win)) ||
        ((nearest_mode==3 || nearest_mode==6) &&
         anygm_policy_has_modern_layer_semantics(r->win)) ||
-       ((rotated_sprite || opaque_target_alpha) &&
+       ((rotated_sprite || opaque_target_alpha || modern_screen_filtered) &&
         anygm_policy_has_modern_layer_semantics(r->win))) ||
      (!filtered_real_text && (page_index<0 || page_index>=r->n_tpag)) || r->classic ||
      (r->gui_pass_active && !identity_gui_atlas && !mapped_gui_font &&
-      !mapped_gui_sprite && !mapped_gui_rotation) ||
+      !mapped_gui_sprite && !mapped_gui_rotation && !modern_filtered_identity_maximise) ||
      r->active_shader>=0 || r->alpha_test_enable ||
      !r->alphablend || (r->blendmode && !additive_background) ||
      r->blend_equation!=1 ||
@@ -1006,6 +1029,12 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
      ((page->tw!=page->sw || page->th!=page->sh) &&
       nearest_mode!=1 && nearest_mode!=3 && nearest_mode!=4 && nearest_mode!=6) ||
      page->atlas<0 || page->atlas>=r->n_atlas) return 0;
+  if(modern_screen_filtered && (page->tx || page->ty ||
+     page->bw!=page->sw || page->bh!=page->sh || page->project_authored_edges)) return 0;
+  /* blit_one can select its near-unit white exact-copy leaf instead of
+   * filtering. Do not approximate that separate sampling specialisation. */
+  if(modern_screen_filtered && alpha==1.0 && (colour&0xFFFFFFu)==0xFFFFFFu &&
+     fabs(xs-1.0)<0.001 && fabs(ys-1.0)<0.001 && (xs!=1.0 || ys!=1.0)) return 0;
   if(family==GML_RENDER_SCENE_SPRITE ||
      ((family==GML_RENDER_SCENE_BACKGROUND || family==GML_RENDER_SCENE_TILE) &&
       part_view)){
@@ -1023,6 +1052,7 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
   if(!gml_render_atlas_scene_source_view(r,page->atlas,&source) ||
      (uint64_t)(uint32_t)page->sx+(uint32_t)page->sw>source.width ||
      (uint64_t)(uint32_t)page->sy+(uint32_t)page->sh>source.height) return 0;
+  if(modern_screen_filtered && !source.borrowed_immutable) return 0;
   /* The full logical quad can extend beyond the visible page, but its prepared UVs must remain
    * inside the atlas even though transparent taps themselves never fetch those neighbours. */
   if(transparent_stretched_trim && !box_stretched && !stretched_magnification &&
@@ -1131,7 +1161,7 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
   } else {
     /* The positioned axis CPU leaf delegates to blit_one. Its modern world-target half-camera
      * ties select the preceding pixel; other filtered quads keep their established rounding. */
-    if(positioned_axis && anygm_policy_has_modern_layer_semantics(r->win) &&
+    if((positioned_axis || modern_screen_filtered) && anygm_policy_has_modern_layer_semantics(r->win) &&
        !r->gui_pass_active && r->target_sp==0 && r->target_id<0){
       if(fabs(fabs(r->cam_x-nearbyint(r->cam_x))-0.5)<1e-9)
         positioned_x_tie=-1e-9;
@@ -1142,7 +1172,7 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
     y0=floor(top+0.5+positioned_y_tie);
     /* blit_one rounds screen extents independently unless the authored tile
      * requests edge projection; application-surface coverage keeps its old rule. */
-    width=(identity_gui_atlas || mapped_gui_sprite ||
+    width=(identity_gui_atlas || mapped_gui_sprite || modern_screen_filtered ||
       (hardware_background && !gml_render_target_is_first_generation_application_surface(r))) &&
       !page->project_authored_edges
       ?floor((double)page->sw*fabs(xs)+0.5)
@@ -1158,7 +1188,7 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
       : fabs(xs-nearbyint(xs))>1e-9
         ? floor(left+(double)page->sw*xs+0.5)-x0
         : floor((double)page->sw*xs+0.5);
-    height=(identity_gui_atlas || mapped_gui_sprite ||
+    height=(identity_gui_atlas || mapped_gui_sprite || modern_screen_filtered ||
       (hardware_background && !gml_render_target_is_first_generation_application_surface(r))) &&
       !page->project_authored_edges
       ?floor((double)page->sh*fabs(ys)+0.5)
@@ -1177,7 +1207,7 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
     if(xs<0.0) x0-=width;
     if(ys<0.0) y0-=height;
   }
-  if((modern_screen_sprite || firstgen_signed_point) &&
+  if((modern_screen_sprite || modern_screen_filtered || firstgen_signed_point) &&
      isfinite(width) && isfinite(height) && (width==0.0 || height==0.0)) return 1;
   if(!isfinite(width) || !isfinite(height) || width<1.0 || height<1.0 ||
      x0+width>10000000.0 || y0+height>10000000.0) return 0;
@@ -1190,7 +1220,7 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
      * Unit-sign parts retain their qualified coverage on other targets too. */
     /* The qualified numbered point leaf cannot expand this rounded coverage.
      * A wholly clipped sprite is a no-op before its later sample-edge pruning. */
-    if(modern_numbered_sprite || modern_screen_sprite || firstgen_signed_point ||
+    if(modern_numbered_sprite || modern_screen_sprite || modern_screen_filtered || firstgen_signed_point ||
        (nearest_mode==4 && !rotated_sprite && xs==1.0 && ys==1.0) ||
        additive_background ||
        (family==GML_RENDER_SCENE_BACKGROUND && part_view && !rotated_sprite &&
@@ -1288,7 +1318,7 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
     ?(fabs(rotation-nearbyint(rotation/90.0)*90.0)<1e-10
       ?GML_RENDER_QUAD_CARDINAL:GML_RENDER_QUAD_GENERAL)
     :GML_RENDER_QUAD_AXIS_ALIGNED;
-  operation.payload.quad.sampling.filter=hardware_background?GML_RENDER_FILTER_HARDWARE_BILINEAR:
+  operation.payload.quad.sampling.filter=hardware_background || modern_screen_filtered?GML_RENDER_FILTER_HARDWARE_BILINEAR:
     box_stretched?GML_RENDER_FILTER_BOX:
     nearest_mode==5?(additive_background?GML_RENDER_FILTER_NEAREST:
                      GML_RENDER_FILTER_NEAREST_PHASED_COPY):
@@ -1460,7 +1490,7 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
   int ordinary_white_copy=xs>0.0 && ys>0.0 && fabs(xs-1.0)<0.001 &&
     fabs(ys-1.0)<0.001 && fabs(left-nearbyint(left))<1e-9 &&
     fabs(top-nearbyint(top))<1e-9 && alpha==1.0 && (colour&0xFFFFFFu)==0xFFFFFFu;
-  if(mapped_gui_sprite && !opaque_target_alpha && !transparent_stretched_trim &&
+  if(mapped_gui_sprite && !modern_screen_filtered && !opaque_target_alpha && !transparent_stretched_trim &&
      !box_stretched && !page->project_authored_edges && source.borrowed_immutable &&
      !ordinary_white_copy){
     GmlRenderQuad *quad=&operation.payload.quad;
@@ -1481,11 +1511,23 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
   state.colour=0xFFFFFFFFu;
   state.alpha=255u;
   if((identity_gui_atlas || (mapped_gui_sprite && !opaque_target_alpha) ||
-     mapped_gui_rotation) && !exact_filtered_sprite){
+     mapped_gui_rotation || modern_screen_filtered) && !exact_filtered_sprite){
     state.coverage_policy=GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA;
     operation.payload.quad.filtered_draw_alpha=alpha;
   }
-  if(hardware_background){
+  if(modern_screen_filtered){
+    /* RGB and alpha coverage are independent batched passes: a positive
+     * filtered source stamps SCREEN alpha, including on a partial target. */
+    operation.payload.quad.inverse_anchor[0]=left;
+    operation.payload.quad.inverse_anchor[1]=top;
+    operation.payload.quad.inverse_x[0]=xs;
+    operation.payload.quad.inverse_y[1]=ys;
+    state.rgb_source_factor=GML_RENDER_BLEND_SOURCE_ALPHA;
+    state.rgb_destination_factor=GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA;
+    state.alpha_source_factor=GML_RENDER_BLEND_ONE;
+    state.alpha_destination_factor=GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA;
+    state.rgb_equation=state.alpha_equation=GML_RENDER_BLEND_ADD;
+  } else if(hardware_background){
     operation.payload.quad.filtered_draw_alpha=alpha;
     /* The unit-white application leaf rounds the combined sum; ordinary
      * filtered coverage first rounds its source term. Both use fixed blending. */

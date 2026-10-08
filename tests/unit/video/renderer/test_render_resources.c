@@ -6496,6 +6496,72 @@ static int resident_mapped_gui_stretch_on_demand(void){
   return 1;
 }
 
+static int resident_modern_screen_filtered_sprite(void){
+  for(unsigned variant=0;variant<13u;variant++){
+    GmlRender *render=(GmlRender*)calloc(1,sizeof *render);
+    GmlWin content={.bytecode=17};
+    FakeDevice fake={.on_demand=variant!=1u};
+    GmlRenderDeviceServices device=service(&fake);
+    GmlRenderJournalMetrics metrics={0};
+    uint32_t screen[24u*16u],sentinel[24u*16u];
+    CHECK(render);
+    render->atlas=calloc(1,sizeof *render->atlas);
+    render->tpag=calloc(1,sizeof *render->tpag);
+    render->spr=calloc(1,sizeof *render->spr);
+    CHECK(render->atlas && render->tpag && render->spr);
+    render->n_atlas=render->n_tpag=render->n_spr=1;
+    render->atlas[0].px=malloc(10u*10u*4u);
+    render->spr[0].frame=calloc(1,sizeof(int));
+    CHECK(render->atlas[0].px && render->spr[0].frame);
+    memset(render->atlas[0].px,127,10u*10u*4u);
+    render->atlas[0].w=render->atlas[0].h=10;
+    render->tpag[0]=(GmlTpag){.sx=1,.sy=1,.sw=8,.sh=8,.tw=8,.th=8,.bw=8,.bh=8};
+    render->spr[0].w=render->spr[0].h=8;render->spr[0].n_frames=1;
+    render->win=&content;render->color_write_mask=15u;render->interp=1;
+    for(unsigned index=0;index<24u*16u;index++) screen[index]=sentinel[index]=0xA5123456u;
+    device.observe_on_demand=fake_observe_on_demand;
+    gml_render_bind_device(render,&device);
+    CHECK(gml_render_begin_resident_base(render,screen,24,16,0.0,0.0));
+    gml_render_gui_begin(render,24,16);
+    gml_render_gui_set_size(render,48,64);
+    if(variant>=11u){
+      gml_render_gui_set_size(render,24,16);
+      gml_render_gui_set_maximise(render,1,1.0,1.0,variant==12u?1.0:0.0,0.0,24,16);
+    }
+    gml_render_set_pending_fill(render,0xA5714A24u);
+    gml_render_flush_pending_fill(render);
+    CHECK(gml_render_scene_submit_pending(render));
+    int submits=fake.submits;
+    if(variant==2u) render->gui_maximise_active=1;
+    if(variant==3u) render->color_write_mask=7u;
+    if(variant==4u) render->blendmode=1;
+    if(variant==5u) render->alpha_test_enable=1;
+    if(variant==6u){render->tpag[0].tx=1;render->tpag[0].sw=7;render->tpag[0].tw=7;}
+    if(variant==7u) render->tpag[0].project_authored_edges=1;
+    if(variant==8u) render->fog_flat=1;
+    if(variant==9u) render->active_shader=0;
+    if(variant==10u)
+      gml_draw_sprite_ext(render,0,0,8.0,12.0,2.001,4.002,0.0,0xFFFFFFu,1.0);
+    else gml_draw_sprite_ext(render,0,0,8.5,13.0,1.2,1.5,0.0,0x93B5D7u,1.0/90.0);
+    CHECK(gml_render_scene_submit_pending(render));
+    if(!variant || variant==11u){
+      CHECK(render->resident_application_pass && !memcmp(screen,sentinel,sizeof screen) &&
+            fake.submits==submits+1 && fake.last_opcode==GML_RENDER_OP_TEXTURED_QUAD &&
+            fake.last_filter==GML_RENDER_FILTER_HARDWARE_BILINEAR && !fake.last_quantisation &&
+            fake.last_filtered_draw_alpha==1.0/90.0 &&
+            fake.last_quad_state.coverage_policy==GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA &&
+            fake.last_quad_state.rgb_equation==GML_RENDER_BLEND_ADD &&
+            !fake.readbacks && !fake.rgb_queries);
+      gml_render_resource_journal_metrics(render->base_scene_resource,&metrics);
+      CHECK(metrics.authority==GML_RENDER_RESOURCE_GPU_RESIDENT &&
+            metrics.cpu_version<metrics.logical_version && !metrics.journal_operations &&
+            !metrics.cpu_replays && !metrics.device_checkpoints);
+    }else CHECK(!render->resident_application_pass && fake.submits==submits);
+    gml_render_free(render);free(render);
+  }
+  return 1;
+}
+
 static int resident_numbered_sprite_channel_masks(void){
   const uint8_t rgba[16]={208,32,16,128,16,208,32,255,32,16,208,64,192,176,160,0};
   for(unsigned mask=0;mask<16u;mask++){
@@ -9666,6 +9732,7 @@ int main(void){
   passed+=resident_coarse_veil_exact_recovery();
   passed+=resident_gui_coarse_veil_on_demand();
   passed+=resident_mapped_gui_stretch_on_demand();
+  passed+=resident_modern_screen_filtered_sprite();
   passed+=resident_packaged_sprite_font_glyph();
   passed+=resident_filtered_gui_real_font();
   passed+=surface_pending_source_lifetime(0,0);
@@ -9715,6 +9782,6 @@ int main(void){
   passed+=source_free_primitive_rect_replay();
   passed+=stretched_float_exact_replay();
   passed+=filtered_font_exact_recovery();
-  printf("render resource cases: passed=%d failed=%d\n",passed,136-passed);
-  return passed==136?EXIT_SUCCESS:EXIT_FAILURE;
+  printf("render resource cases: passed=%d failed=%d\n",passed,137-passed);
+  return passed==137?EXIT_SUCCESS:EXIT_FAILURE;
 }
