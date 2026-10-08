@@ -142,6 +142,9 @@ int gml_software3d_matrix_prepend(struct GmlRender *render,
  * Failure leaves the output untouched. This only prepares geometry, never pixels. */
 int gml_software3d_project_sprite_axis(struct GmlRender *render,int sprite,int subimg,
                                        double x,double y,double rectangle[4]);
+/* The same bounded projection using the CPU atlas-part corner producer. */
+int gml_software3d_project_atlas_part_axis(struct GmlRender *render,int width,int height,
+                                           double x,double y,double rectangle[4]);
 /* Preserve the existing sprite's derived depth/shade preparation without a CPU draw. */
 int gml_software3d_prepare_resident_sprite(struct GmlRender *render);
 int gml_software3d_transform_stack(struct GmlRender *render,int action);

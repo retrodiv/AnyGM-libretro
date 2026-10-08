@@ -247,7 +247,7 @@ static int resident_atlas_crop_from_page(GmlRender *r,GmlTpag *page,
   GmlRenderRect region;
   double scaled_width,scaled_height,source_left,source_right,source_top,source_bottom;
   int checkpoint_alpha_background,checkpoint_alpha_text,checkpoint_alpha_sprite;
-  /* Mode 2 is only the separately proved, opaque depth-free orthographic crop. */
+  /* Mode 2 is only a separately proved depth-free orthographic crop. */
   int orthographic=physical_sprite_page==2;
   int replace=physical_sprite_page && family==GML_RENDER_SCENE_SPRITE &&
     resident_identity_gui_replacement(r,xs,ys,colour,draw_alpha);
@@ -260,7 +260,7 @@ static int resident_atlas_crop_from_page(GmlRender *r,GmlTpag *page,
      (r->classic && ((family!=GML_RENDER_SCENE_SPRITE &&
                       family!=GML_RENDER_SCENE_BACKGROUND &&
                       family!=GML_RENDER_SCENE_TEXT) ||
-                     (family==GML_RENDER_SCENE_TEXT &&
+                     (family==GML_RENDER_SCENE_TEXT && !orthographic &&
                       anygm_policy_classic_modern_presentation(r->win)) ||
                      r->interp || (!orthographic && (xs!=1.0 || ys!=1.0)))) ||
      (r->world_transform_active &&
@@ -529,6 +529,23 @@ int gml_render_resident_atlas_crop(GmlRender *r,int page_index,
   if(!r || page_index<0 || page_index>=r->n_tpag) return 0;
   return resident_atlas_crop_from_page(r,&r->tpag[page_index],
     crop_x,crop_y,crop_width,crop_height,left,top,xs,ys,family,0xFFFFFFu,1.0,0);
+}
+
+/* R03-TEXT-CLASSIC-ORTHO: font layout stays with the text owner; the existing
+ * CPU atlas-part vertices and camera produce the final whole-texel rectangle. */
+int gml_render_resident_ortho_font_glyph(GmlRender *r,int atlas,int source_x,int source_y,
+                                         int width,int height,double x,double y){
+  if(!r || !r->classic || !gml_d3_is_active(r) || r->gui_pass_active ||
+     r->world_transform_active || atlas<0 || atlas>=r->n_atlas ||
+     r->atlas[atlas].runtime_font_page || width<=0 || height<=0) return 0;
+  double rectangle[4];
+  if(!gml_software3d_project_atlas_part_axis(r,width,height,x,y,rectangle) ||
+     !gml_software3d_prepare_resident_sprite(r)) return 0;
+  GmlTpag page={.atlas=atlas,.sx=source_x,.sy=source_y,.sw=width,.sh=height,
+                .tw=width,.th=height,.bw=width,.bh=height};
+  return resident_atlas_crop_from_page(r,&page,0,0,width,height,
+    rectangle[0],rectangle[1],rectangle[2],rectangle[3],
+    GML_RENDER_SCENE_TEXT,0xFFFFFFu,1,2);
 }
 
 int gml_render_resident_font_glyph(GmlRender *r,int atlas,int source_x,int source_y,

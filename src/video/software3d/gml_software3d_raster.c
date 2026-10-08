@@ -825,28 +825,21 @@ static void d3_sprite_vertices(GmlRender *R,const GmlRenderCpuBackendTextureView
     vertex[i].r=blend&255; vertex[i].g=(blend>>8)&255; vertex[i].b=(blend>>16)&255; vertex[i].alpha=alpha;
   }
 }
-int gml_software3d_project_sprite_axis(GmlRender *R,int sprite_id,int subimg,
-                                       double x,double y,double rectangle[4]){
+static int d3_project_axis_vertices(GmlRender *R,const GmlD3Vertex vertex[4],
+                                     int width,int height,double rectangle[4]){
   GmlRenderCpuBackendDrawView draw;
-  GmlRenderCpuBackendTextureView view;
-  if(!R || !rectangle || sprite_id<0 || sprite_id>0xFFFF || subimg<0 || subimg>0x3FF ||
+  if(!R || !rectangle || width<=0 || height<=0 ||
      !GML_GRAPHICS || !g_d3.active || !g_d3.classic ||
      !g_d3.ortho || g_d3.perspective || g_d3.hidden || g_d3.fog || g_d3.lighting ||
      g_d3.ortho_angle!=0.0 || !isfinite(g_d3.draw_depth) ||
-     !isfinite(x) || !isfinite(y) ||
      !gml_render_cpu_backend_draw_view(R,&draw) || draw.interpolate ||
      draw.width<=0 || draw.height<=0) return 0;
   for(int i=0;i<16;i++) if(g_d3.transform[i]!=(i%5==0?1.0:0.0)) return 0;
-  int handle=(int)(GML_TEX_SPR_TAG|((sprite_id&0xFFFF)<<10)|(subimg&0x3FF));
-  if(!gml_render_cpu_backend_texture_view(R,handle,0,&view) || view.runtime ||
-     view.width<=0 || view.height<=0) return 0;
   double ow=g_d3.ortho_w,oh=g_d3.ortho_h;
   double xs=draw.width/ow,ys=draw.height/oh;
   if(!isfinite(xs) || !isfinite(ys) || xs<1 || xs>4 || ys<1 || ys>4 ||
      floor(xs)!=xs || floor(ys)!=ys ||
-     (double)view.width*xs>=65535.0 || (double)view.height*ys>=256.0) return 0;
-  GmlD3Vertex vertex[4];
-  d3_sprite_vertices(R,&view,x,y,1,1,0,0xFFFFFFu,1,vertex);
+     (double)width*xs>=65535.0 || (double)height*ys>=256.0) return 0;
   double px[4],py[4];
   for(int i=0;i<4;i++){
     GmlD3Vertex camera=d3_vertex_camera(R,vertex[i]);
@@ -855,12 +848,23 @@ int gml_software3d_project_sprite_axis(GmlRender *R,int sprite_id,int subimg,
        floor(py[i])!=py[i] || fabs(px[i])>=1000000 || fabs(py[i])>=1000000) return 0;
   }
   if(px[0]!=px[3] || px[1]!=px[2] || py[0]!=py[1] || py[2]!=py[3] ||
-     px[1]-px[0]!=view.width*xs || py[2]-py[0]!=view.height*ys) return 0;
+     px[1]-px[0]!=width*xs || py[2]-py[0]!=height*ys) return 0;
   /* For these integer rectangles the classic half-pixel anchor yields half-open
    * coverage. The source-size bounds keep both existing point-sample phases
    * inside the same texel, including the first row; no phase emulation is needed. */
   rectangle[0]=px[0];rectangle[1]=py[0];rectangle[2]=xs;rectangle[3]=ys;
   return 1;
+}
+int gml_software3d_project_sprite_axis(GmlRender *R,int sprite_id,int subimg,
+                                       double x,double y,double rectangle[4]){
+  GmlRenderCpuBackendTextureView view;
+  if(!R || !GML_GRAPHICS || sprite_id<0 || sprite_id>0xFFFF || subimg<0 || subimg>0x3FF ||
+     !isfinite(x) || !isfinite(y)) return 0;
+  int handle=(int)(GML_TEX_SPR_TAG|((sprite_id&0xFFFF)<<10)|(subimg&0x3FF));
+  if(!gml_render_cpu_backend_texture_view(R,handle,0,&view) || view.runtime) return 0;
+  GmlD3Vertex vertex[4];
+  d3_sprite_vertices(R,&view,x,y,1,1,0,0xFFFFFFu,1,vertex);
+  return d3_project_axis_vertices(R,vertex,view.width,view.height,rectangle);
 }
 int gml_software3d_prepare_resident_sprite(GmlRender *R){
   if(!R || !GML_GRAPHICS || !d3_depth_prepare(R)) return 0;
@@ -987,6 +991,26 @@ int gml_d3_draw_background_part_2d(GmlRender *R,int background,
   return d3_draw_texture_part_2d(R,handle,view.trim_x,view.trim_y,view.width,view.height,
     sx,sy,sw,sh,x,y,xs,ys,blend,alpha);
 }
+static void d3_atlas_part_vertices(GmlRender *R,int width,int height,
+                                    double x,double y,double xs,double ys,
+                                    uint32_t blend,double alpha,GmlD3Vertex vertex[4]){
+  double right=x+width*xs,bottom=y+height*ys;
+  const double point[4][2]={{x,y},{right,y},{right,bottom},{x,bottom}};
+  const double uv[4][2]={{0,0},{1,0},{1,1},{0,1}};
+  for(int i=0;i<4;i++){
+    memset(&vertex[i],0,sizeof(vertex[i]));
+    vertex[i].x=point[i][0]; vertex[i].y=point[i][1]; vertex[i].z=g_d3.draw_depth;
+    vertex[i].u=uv[i][0]; vertex[i].v=uv[i][1];
+    vertex[i].r=blend&255; vertex[i].g=(blend>>8)&255; vertex[i].b=(blend>>16)&255; vertex[i].alpha=alpha;
+  }
+}
+int gml_software3d_project_atlas_part_axis(GmlRender *R,int width,int height,
+                                           double x,double y,double rectangle[4]){
+  if(!R || !GML_GRAPHICS || !isfinite(x) || !isfinite(y)) return 0;
+  GmlD3Vertex vertex[4];
+  d3_atlas_part_vertices(R,width,height,x,y,1,1,0xFFFFFFu,1,vertex);
+  return d3_project_axis_vertices(R,vertex,width,height,rectangle);
+}
 int gml_d3_draw_atlas_part_2d(GmlRender *R,int atlas_id,int sx,int sy,int width,int height,
                               double x,double y,double xs,double ys,uint32_t blend,double alpha){
   if(!GML_GRAPHICS || !g_d3.active) return 0;
@@ -996,16 +1020,8 @@ int gml_d3_draw_atlas_part_2d(GmlRender *R,int atlas_id,int sx,int sy,int width,
      sx<0 || sy<0 || sx+width>view.full_width || sy+height>view.full_height) return 1;
   GmlD3Texture texture={.kind=1,.w=width,.h=height,.stride=view.stride,
     .offset_x=sx,.offset_y=sy,.rgba=view.rgba};
-  double right=x+width*xs,bottom=y+height*ys;
-  const double point[4][2]={{x,y},{right,y},{right,bottom},{x,bottom}};
-  const double uv[4][2]={{0,0},{1,0},{1,1},{0,1}};
   GmlD3Vertex vertex[4];
-  for(int i=0;i<4;i++){
-    memset(&vertex[i],0,sizeof(vertex[i]));
-    vertex[i].x=point[i][0]; vertex[i].y=point[i][1]; vertex[i].z=g_d3.draw_depth;
-    vertex[i].u=uv[i][0]; vertex[i].v=uv[i][1];
-    vertex[i].r=blend&255; vertex[i].g=(blend>>8)&255; vertex[i].b=(blend>>16)&255; vertex[i].alpha=alpha;
-  }
+  d3_atlas_part_vertices(R,width,height,x,y,xs,ys,blend,alpha,vertex);
   g_d3.shade_r=g_d3.shade_g=g_d3.shade_b=1;
   gml_render_cpu_backend_prepare_draw(R);
   GmlD3Vertex first[3]={vertex[0],vertex[1],vertex[2]};

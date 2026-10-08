@@ -206,6 +206,12 @@ static void draw_text_real_plain(GmlRender *r, GmlFont *f, double x, double y, c
         }
         uint32_t glyph_blend=f->subpixel?0xFFFFFFu:blend;
         int resident_glyph=0;
+        if(r->resident_application_pass && !use_rot && !f->runtime_owned &&
+           !f->subpixel && f->sdf_spread<=0 && !r->software_overlay &&
+           xs==1.0 && ys==1.0 && glyph_blend==0xFFFFFFu && alpha==1.0 &&
+           gml_d3_is_active(r))
+          resident_glyph=gml_render_resident_ortho_font_glyph(r,f->atlas,
+            g->sx,g->sy,g->w,g->h,glyph_x,glyph_y);
         if(r->resident_application_pass && !use_rot &&
            !f->subpixel && f->sdf_spread<=0 &&
            !r->software_overlay && !gml_d3_is_active(r) &&

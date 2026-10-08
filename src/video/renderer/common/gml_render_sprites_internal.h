@@ -45,6 +45,9 @@ int gml_render_resident_atlas_crop(GmlRender *render, int page_index,
                                   int crop_x, int crop_y, int crop_width, int crop_height,
                                   double left, double top, double xscale, double yscale,
                                   GmlRenderSceneFamily family);
+int gml_render_resident_ortho_font_glyph(GmlRender *render, int atlas,
+                                         int source_x, int source_y, int width, int height,
+                                         double x, double y);
 int gml_render_resident_font_glyph(GmlRender *render, int atlas,
                                    int source_x, int source_y, int width, int height,
                                    double left, double top, double xscale, double yscale,
