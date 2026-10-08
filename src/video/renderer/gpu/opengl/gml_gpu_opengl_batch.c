@@ -384,6 +384,7 @@ static int hardware_screen_sprite_valid(const GmlRenderDrawOp *op,
   GmlRenderRect region=quad->sampling.source_region;
   double xs=quad->inverse_x[0],ys=quad->inverse_y[1];
   double left=quad->inverse_anchor[0],top=quad->inverse_anchor[1];
+  uint32_t margin=quad->sampling.logical_margin_mask;
   if(!source || source->rendered_origin || source->pixel_format!=GML_RENDER_PIXEL_RGBA8888 ||
      op->sources[0].resource_class!=GML_RENDER_RESOURCE_ATLAS ||
      (op->scene_family!=GML_RENDER_SCENE_SPRITE && op->scene_family!=GML_RENDER_SCENE_TEXT) ||
@@ -393,8 +394,15 @@ static int hardware_screen_sprite_valid(const GmlRenderDrawOp *op,
      qualified_blend(state)!=1 || state->coverage_policy!=GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA ||
      quad->shape!=GML_RENDER_QUAD_AXIS_ALIGNED ||
      quad->sampling.filter!=GML_RENDER_FILTER_HARDWARE_BILINEAR ||
-     quad->sampling.edge_rule!=GML_RENDER_EDGE_CLAMP_SUBIMAGE ||
-     quad->sampling.quantisation || quad->sampling.logical_margin_mask || quad->span_active ||
+     (margin
+       ? op->scene_family!=GML_RENDER_SCENE_SPRITE || margin>15u ||
+         quad->sampling.edge_rule!=GML_RENDER_EDGE_LOGICAL_TPAG ||
+         ((margin&GML_RENDER_MARGIN_LEFT) && region.x<=0) ||
+         ((margin&GML_RENDER_MARGIN_TOP) && region.y<=0) ||
+         ((margin&GML_RENDER_MARGIN_RIGHT) && (uint64_t)(uint32_t)region.x+region.width>=source->width) ||
+         ((margin&GML_RENDER_MARGIN_BOTTOM) && (uint64_t)(uint32_t)region.y+region.height>=source->height)
+       : quad->sampling.edge_rule!=GML_RENDER_EDGE_CLAMP_SUBIMAGE) ||
+     quad->sampling.quantisation || quad->span_active ||
      !isfinite(quad->filtered_draw_alpha) || quad->filtered_draw_alpha<=0.0 ||
      quad->filtered_draw_alpha>1.0 ||
      !isfinite(xs) || !isfinite(ys) || xs<=0.0 || ys<=0.0 ||
@@ -910,7 +918,7 @@ static int scene_preflight(GmlGpuBackend *backend,const GmlRenderDrawBatch *batc
            : (sampling->edge_rule==GML_RENDER_EDGE_LOGICAL_TPAG ||
               sampling->edge_rule==GML_RENDER_EDGE_TRANSPARENT
                 ? (sampling->filter!=GML_RENDER_FILTER_BILINEAR &&
-                   !((blend==10 || blend==3) &&
+                   !((blend==10 || blend==3 || hardware_sprite) &&
                      sampling->filter==GML_RENDER_FILTER_HARDWARE_BILINEAR)) ||
                   !sampling->logical_margin_mask ||
                   (sampling->logical_margin_mask>15u &&

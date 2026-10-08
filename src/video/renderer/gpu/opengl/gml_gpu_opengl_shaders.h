@@ -365,7 +365,9 @@
   "    vec2 extent=vec2(textureSize(u_image,0));\n" \
   "    vec2 uv=clamp(v_texcoord,(v_clamp.xy+vec2(0.5))/extent,\n" \
   "                            (v_clamp.zw+vec2(0.5))/extent);\n" \
-  "    vec4 sampled=texture(u_image,uv);\n" \
+  "    int margin=int(floor(v_margin+0.5));\n" \
+  "    vec4 sampled=margin!=0?hardware_background_sample(v_texcoord,\n" \
+  "      ivec2(v_clamp.xy),ivec2(v_clamp.zw),margin):texture(u_image,uv);\n" \
   "    float alpha=sampled.a*v_colour.a;\n" \
   "    if(alpha<=0.0) discard;\n" \
   "    if(u_filter==25){\n" \

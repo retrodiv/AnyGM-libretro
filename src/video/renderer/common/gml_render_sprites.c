@@ -931,7 +931,7 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
    * GUI glyph slice shares hardware filtering and batched alpha coverage.
    * Existing world and non-maximised GUI exact font recipes stay unchanged. */
   int modern_screen_filtered_text=filtered_real_text && modern_filtered_identity_maximise &&
-    r->target_id<0 && r->target_sp==0 && !r->fog_flat && alpha>0.0 &&
+    r->target_id<0 && r->target_sp==0 && !r->fog_flat && alpha>=0.0 &&
     anygm_policy_has_modern_layer_semantics(r->win) &&
     !gml_render_target_preserves_alpha(r) && r->device.context &&
     r->device.observe_on_demand && r->device.observe_on_demand(r->device.context);
@@ -1039,8 +1039,7 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
      ((page->tw!=page->sw || page->th!=page->sh) &&
       nearest_mode!=1 && nearest_mode!=3 && nearest_mode!=4 && nearest_mode!=6) ||
      page->atlas<0 || page->atlas>=r->n_atlas) return 0;
-  if(modern_screen_filtered && (page->tx || page->ty ||
-     page->bw!=page->sw || page->bh!=page->sh || page->project_authored_edges)) return 0;
+  if(modern_screen_filtered && page->project_authored_edges) return 0;
   /* blit_one can select its near-unit white exact-copy leaf instead of
    * filtering. Do not approximate that separate sampling specialisation. */
   if(modern_screen_filtered && alpha==1.0 && (colour&0xFFFFFFu)==0xFFFFFFu &&
@@ -1341,7 +1340,7 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
   operation.payload.quad.sampling.edge_rule=transparent_stretched_trim || box_stretched
     ?GML_RENDER_EDGE_TRANSPARENT
     :(margin_mask && (operation.payload.quad.sampling.filter==GML_RENDER_FILTER_BILINEAR ||
-                     hardware_background)
+                     hardware_background || modern_screen_filtered)
       ?GML_RENDER_EDGE_LOGICAL_TPAG:GML_RENDER_EDGE_CLAMP_SUBIMAGE);
   operation.payload.quad.sampling.source_region=region;
   operation.payload.quad.sampling.quantisation=stretched_float
@@ -1350,7 +1349,8 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
     modern_numbered_sprite?GML_RENDER_QUANTISE_SPRITE_MODERN_NEAREST:0u;
   if(modern_numbered_sprite) operation.payload.quad.filtered_draw_alpha=alpha;
   operation.payload.quad.sampling.logical_margin_mask=box_stretched?0u:
-    (operation.payload.quad.sampling.filter==GML_RENDER_FILTER_BILINEAR || hardware_background)
+    (operation.payload.quad.sampling.filter==GML_RENDER_FILTER_BILINEAR ||
+     hardware_background || modern_screen_filtered)
       ?(corner_colours && part_view && margin_mask
           ?GML_RENDER_MARGIN_VISIBLE_CENTRE:margin_mask):0u;
   uint32_t draw_alpha=additive_background?255u:(uint32_t)lround(alpha*255.0);
@@ -1910,7 +1910,6 @@ void gml_render_sprite_ext_unmasked(GmlRender *r, int sprite, int subimg, double
        !(r->alphablend && (r->blendmode==6 ||
                           gml_render_blend_uses_destination_colour(r->blendmode))) &&
        sprite>=0 && sprite<r->n_spr &&
-       (!r->gui_pass_active || resident_mapped_screen_gui_font(r)) &&
        r->active_shader<0 &&
        !r->spr[sprite].spine && !r->spr[sprite].ns_enabled &&
        !gml_d3_is_active(r) && gml_render_scene_target_matches(r))

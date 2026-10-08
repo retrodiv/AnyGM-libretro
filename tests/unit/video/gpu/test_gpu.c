@@ -943,11 +943,11 @@ static int scene_resident_batch_case(void){
 static int scene_hardware_filtered_batch_case(unsigned kind){
   enum { QUADS=2049 };
   int additive=kind==1u,combined=kind==2u,surface=kind>=3u && kind<=5u;
-  int nearest=kind==4u || kind==5u,screen_stretch=kind>=6u && kind<=8u;
-  int screen_sprite=kind==7u || kind==8u;
-  const uint8_t pixels[16]={11,22,33,255,44,55,66,100,77,88,99,0,111,122,133,200};
+  int nearest=kind==4u || kind==5u,screen_stretch=kind>=6u && kind<=9u;
+  int screen_sprite=kind==7u || kind==8u || kind==9u;
+  const uint8_t pixels[64]={11,22,33,255,44,55,66,100,77,88,99,0,111,122,133,200};
   for(unsigned api=0;api<2u;api++)
-  for(unsigned excluded=0;excluded<(nearest || screen_stretch?8u:(combined || surface)?7u:4u);excluded++){
+  for(unsigned excluded=0;excluded<(kind==9u?11u:nearest || screen_stretch?8u:(combined || surface)?7u:4u);excluded++){
     GmlGpuContext context=fake_context(api?GML_GPU_API_OPENGLES3:GML_GPU_API_OPENGL_CORE);
     GmlRenderImageRef source={kind==5u?GML_RENDER_RESOURCE_APPLICATION:surface?GML_RENDER_RESOURCE_SURFACE:
       GML_RENDER_RESOURCE_ATLAS,91u,1u,1u};
@@ -965,15 +965,20 @@ static int scene_hardware_filtered_batch_case(unsigned kind){
     gpu=gml_gpu_create();
     REQUIRE(gpu && gml_gpu_context_reset(gpu,&context),"hardware batch context adopted");
     gml_gpu_device_services(gpu,&device);
-    upload.image=source;upload.storage_width=upload.storage_height=2u;
-    upload.region=(GmlRenderRect){0,0,2u,2u};upload.pixel_format=surface?
+    upload.image=source;upload.storage_width=upload.storage_height=kind==9u?4u:2u;
+    upload.region=(GmlRenderRect){0,0,upload.storage_width,upload.storage_height};upload.pixel_format=surface?
       GML_RENDER_PIXEL_ARGB8888:GML_RENDER_PIXEL_RGBA8888;
-    upload.bytes=pixels;upload.byte_capacity=sizeof pixels;upload.stride_bytes=8u;
+    upload.bytes=pixels;upload.byte_capacity=sizeof pixels;upload.stride_bytes=upload.storage_width*4u;
     REQUIRE(device.upload(device.context,&upload),"hardware batch atlas uploaded");
     state.write_mask=15u;state.alpha=255u;state.colour=0xFFFFFFFFu;state.sampler_count=1u;
     state.samplers[0].filter=nearest?GML_RENDER_FILTER_NEAREST:GML_RENDER_FILTER_HARDWARE_BILINEAR;
     state.samplers[0].edge_rule=GML_RENDER_EDGE_CLAMP_SUBIMAGE;
     state.samplers[0].source_region=upload.region;
+    if(kind==9u){
+      state.samplers[0].source_region=(GmlRenderRect){1,1,2u,2u};
+      state.samplers[0].edge_rule=GML_RENDER_EDGE_LOGICAL_TPAG;
+      state.samplers[0].logical_margin_mask=15u;
+    }
     if(combined) state.samplers[0].quantisation=GML_RENDER_QUANTISE_HARDWARE_COMBINED;
     state.rgb_source_factor=state.rgb_destination_factor=GML_RENDER_BLEND_ONE;
     if(combined) state.rgb_source_factor=GML_RENDER_BLEND_SOURCE_ALPHA;
@@ -1015,6 +1020,10 @@ static int scene_hardware_filtered_batch_case(unsigned kind){
         quad->u[1]=quad->u[2]=quad->v[2]=quad->v[3]=1.0/1.2;
         for(unsigned corner=0;corner<4u;corner++) quad->corner_colour[corner]=0xB3123456u;
       }
+      if(kind==9u){
+        quad->u[0]=quad->u[3]=quad->v[0]=quad->v[1]=.25;
+        quad->u[1]=quad->u[2]=quad->v[2]=quad->v[3]=(1.0+1.0/.6)/4.0;
+      }
     }
     if(excluded==3u) ops[QUADS].payload.quad.filtered_draw_alpha=NAN;
     if(excluded==4u){
@@ -1025,6 +1034,9 @@ static int scene_hardware_filtered_batch_case(unsigned kind){
     if(excluded==5u) ops[QUADS].payload.quad.corner_colour[0]=0xFFFEFFFFu;
     if(excluded==6u) ops[QUADS].payload.quad.u[1]=.9;
     if(excluded==7u) ops[QUADS].payload.quad.x[1]=ops[QUADS].payload.quad.x[2]=screen_stretch?2.0:3.0;
+    if(excluded==8u) ops[QUADS].payload.quad.sampling.logical_margin_mask=16u;
+    if(excluded==9u) ops[QUADS].payload.quad.sampling.source_region.x=0;
+    if(excluded==10u) ops[QUADS].scene_family=GML_RENDER_SCENE_TEXT;
     GmlRenderDrawBatch batch={ops,QUADS+1u,&state,1u};
     result=device.submit(device.context,&batch);
     if(excluded){
@@ -1147,6 +1159,9 @@ static int scene_hardware_screen_sprite_batch_case(void){
 }
 static int scene_hardware_screen_font_batch_case(void){
   return scene_hardware_filtered_batch_case(8);
+}
+static int scene_hardware_screen_trim_batch_case(void){
+  return scene_hardware_filtered_batch_case(9);
 }
 
 /* Driver/state evidence only; pixel-centre point indices need real GL controls. */
@@ -3507,6 +3522,7 @@ int main(int argc,char **argv){
     {"scene_hardware_screen_stretch_batch",scene_hardware_screen_stretch_batch_case},
     {"scene_hardware_screen_sprite_batch",scene_hardware_screen_sprite_batch_case},
     {"scene_hardware_screen_font_batch",scene_hardware_screen_font_batch_case},
+    {"scene_hardware_screen_trim_batch",scene_hardware_screen_trim_batch_case},
     {"scene_application_point_batch",scene_application_point_batch_case},
     {"scene_destination_surface",scene_destination_surface_case},
     {"scene_readback_formats",scene_readback_formats_case},

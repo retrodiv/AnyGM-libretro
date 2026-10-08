@@ -6497,7 +6497,7 @@ static int resident_mapped_gui_stretch_on_demand(void){
 }
 
 static int resident_modern_screen_filtered_sprite(void){
-  for(unsigned variant=0;variant<13u;variant++){
+  for(unsigned variant=0;variant<16u;variant++){
     GmlRender *render=(GmlRender*)calloc(1,sizeof *render);
     GmlWin content={.bytecode=17};
     FakeDevice fake={.on_demand=variant!=1u};
@@ -6540,11 +6540,19 @@ static int resident_modern_screen_filtered_sprite(void){
     if(variant==7u) render->tpag[0].project_authored_edges=1;
     if(variant==8u) render->fog_flat=1;
     if(variant==9u) render->active_shader=0;
+    if(variant==14u) render->blendmode=6;
+    if(variant==15u) render->active_shader=0;
+    uint64_t version=gml_render_resource_image_ref(render->base_scene_resource).content_version;
     if(variant==10u)
       gml_draw_sprite_ext(render,0,0,8.0,12.0,2.001,4.002,0.0,0xFFFFFFu,1.0);
-    else gml_draw_sprite_ext(render,0,0,8.5,13.0,1.2,1.5,0.0,0x93B5D7u,1.0/90.0);
+    else gml_draw_sprite_ext(render,0,0,8.5,13.0,1.2,1.5,0.0,0x93B5D7u,
+      variant>=13u?0.0:1.0/90.0);
     CHECK(gml_render_scene_submit_pending(render));
-    if(!variant || variant==11u){
+    if(variant==13u){
+      CHECK(render->resident_application_pass && fake.submits==submits &&
+            !memcmp(screen,sentinel,sizeof screen) && !fake.readbacks && !fake.rgb_queries &&
+            gml_render_resource_image_ref(render->base_scene_resource).content_version==version);
+    }else if(!variant || variant==6u || variant==11u){
       CHECK(render->resident_application_pass && !memcmp(screen,sentinel,sizeof screen) &&
             fake.submits==submits+1 && fake.last_opcode==GML_RENDER_OP_TEXTURED_QUAD &&
             fake.last_filter==GML_RENDER_FILTER_HARDWARE_BILINEAR && !fake.last_quantisation &&
@@ -6563,7 +6571,7 @@ static int resident_modern_screen_filtered_sprite(void){
 }
 
 static int resident_maximised_filtered_real_font(void){
-  for(unsigned variant=0;variant<13u;variant++){
+  for(unsigned variant=0;variant<14u;variant++){
     GmlRender *render=(GmlRender*)calloc(1,sizeof *render);
     GmlWin content={.bytecode=variant==9u?15:17};
     FakeDevice fake={.on_demand=variant!=1u};
@@ -6605,9 +6613,15 @@ static int resident_maximised_filtered_real_font(void){
     if(variant==8u) render->fog_flat=1;
     if(variant==10u) render->active_shader=0;
     if(variant==11u){render->world_transform_active=1;render->world_scale_x=2.0;}
-    gml_draw_text_transformed(render,8.5,4.25,"A",variant==12u?1.5:.6,.75,0.0,0x93B5D7u,1.0/60.0);
+    uint64_t version=gml_render_resource_image_ref(render->base_scene_resource).content_version;
+    gml_draw_text_transformed(render,8.5,4.25,"A",variant==12u?1.5:.6,.75,0.0,0x93B5D7u,
+      variant==13u?0.0:1.0/60.0);
     CHECK(gml_render_scene_submit_pending(render));
-    if(!variant){
+    if(variant==13u){
+      CHECK(render->resident_application_pass && fake.submits==submits &&
+            !memcmp(screen,sentinel,sizeof screen) && !fake.readbacks && !fake.rgb_queries &&
+            gml_render_resource_image_ref(render->base_scene_resource).content_version==version);
+    }else if(!variant){
       CHECK(render->resident_application_pass && !memcmp(screen,sentinel,sizeof screen) &&
             fake.submits==submits+1 && fake.last_filter==GML_RENDER_FILTER_HARDWARE_BILINEAR &&
             !fake.last_quantisation && fake.last_filtered_draw_alpha==1.0/60.0 &&

@@ -215,7 +215,7 @@ static void draw_text_real_plain(GmlRender *r, GmlFont *f, double x, double y, c
         if(r->resident_application_pass && !use_rot &&
            !f->subpixel && f->sdf_spread<=0 &&
            !r->software_overlay && !gml_d3_is_active(r) &&
-           isfinite(alpha) && alpha>0.0 && alpha<=1.0){
+           isfinite(alpha) && alpha>=0.0 && alpha<=1.0){
           if(r->interp && !f->runtime_owned &&
              isfinite(xs) && isfinite(ys) &&
              xs>0.0 && ys>0.0 && xs<=1.0 && ys<=1.0)
