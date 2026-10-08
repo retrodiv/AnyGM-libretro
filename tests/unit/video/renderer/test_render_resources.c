@@ -7079,10 +7079,13 @@ static int resident_fullwidth_gui_application(void){
     if(variant<4u || variant==8u || variant==10u){
       CHECK(render->resident_application_pass && fake.submits==submits &&
             fake.readbacks==reads && !render->pending_presentation);
+      const int opaque=variant==0u || variant==3u || variant==8u;
+      CHECK(render->fb_opaque_known==opaque && render->fb_all_opaque==opaque);
       CHECK(gml_render_scene_submit_pending(render) && fake.submits==submits+1 &&
             fake.readbacks==reads && fake.last_batch_operations==1u &&
             fake.last_filter==(variant>=8u?GML_RENDER_FILTER_NEAREST:
                                          GML_RENDER_FILTER_HARDWARE_PIXEL_CENTRE_POINT));
+      CHECK(render->fb_opaque_known==opaque && render->fb_all_opaque==opaque);
       const double x=variant==2u?6:0,y=variant==10u?1:variant==1u || variant==2u?4:0;
       const double width=variant==2u?36:48,height=variant==1u || variant==2u?24:32;
       CHECK(fake.last_quad.x[0]==x && fake.last_quad.y[0]==y &&

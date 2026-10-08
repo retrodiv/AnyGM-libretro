@@ -1072,7 +1072,13 @@ static int resident_surface_filtered(GmlRender *r,int surf,double dx,double dy,d
   state.write_mask=15u;state.alpha=255u;state.colour=0xFFFFFFFFu;
   state.sampler_count=1u;state.samplers[0]=quad->sampling;
   if(!gml_render_application_scene_enqueue(r,&operation,&state,&source)) return 0;
-  r->fb_opaque_known=r->fb_all_opaque=r->fb_all_transparent=0;
+  /* R03-P5-GUI-OPAQUE-SUFFIX: these known-opaque GUI sources write opaque
+   * SCREEN alpha at every covered pixel, including partial draw alpha in the
+   * unit leaf. Full coverage proves the destination without observing it. */
+  int opaque_gui=(point_presentation || (unit_gui_blend && unit)) &&
+    left<=0.0 && top<=0.0 && left+width>=r->fbw && top+height>=r->fbh;
+  r->fb_opaque_known=r->fb_all_opaque=opaque_gui;
+  r->fb_all_transparent=0;
   return 1;
 }
 
