@@ -133,7 +133,9 @@ static uint32_t scene_filter(const GmlRenderQuad *quad,
   if(quad->sampling.quantisation==GML_RENDER_QUANTISE_SPRITE_MODERN_NEAREST) return 27u;
   if(quad->sampling.quantisation==GML_RENDER_QUANTISE_SPRITE_MODERN_ROTATED_NEAREST) return 29u;
   if(quad->sampling.filter==GML_RENDER_FILTER_HARDWARE_PIXEL_CENTRE_POINT) return 30u;
-  if(family==GML_RENDER_SCENE_SURFACE &&
+  if((family==GML_RENDER_SCENE_SURFACE ||
+      ((family==GML_RENDER_SCENE_SPRITE || family==GML_RENDER_SCENE_TEXT) &&
+       quad->shape==GML_RENDER_QUAD_AXIS_ALIGNED)) &&
      quad->sampling.filter==GML_RENDER_FILTER_NEAREST &&
      state->coverage_policy==GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA) return 25u;
   if(quad->sampling.filter==GML_RENDER_FILTER_HARDWARE_BILINEAR)
@@ -184,20 +186,25 @@ static int exact_rect(const GmlRenderDrawOp *op,GLint *left,GLint *bottom,
 
 /* R03-SPR-INTEGER-SOURCEOVER: the shared crop supplies integral physical
  * coverage and exact nearest UV endpoints. Admit white-RGB draw alpha only;
- * SCREEN needs an explicit opaque-target certificate; unrelated tint, filtering and
- * fractional geometry remain fenced. */
+ * SCREEN needs an opaque-target certificate or the separately qualified
+ * unit GUI covered-alpha stamp. Other tint, filtering and geometry stay fenced. */
 static int integer_sourceover_sprite_valid(const GmlRenderDrawOp *op,
                                            const GmlRenderDrawStateSnapshot *state,
                                            const GlSceneImage *source){
   const GmlRenderQuad *quad=&op->payload.quad;
   GmlRenderRect region=quad->sampling.source_region;
-  if(!source || op->scene_family!=GML_RENDER_SCENE_SPRITE ||
+  int gui_coverage=op->target.image.resource_class==GML_RENDER_RESOURCE_SCREEN &&
+    state->coverage_policy==GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA &&
+    (op->scene_family==GML_RENDER_SCENE_SPRITE || op->scene_family==GML_RENDER_SCENE_TEXT) &&
+    qualified_blend(state)==1 && quad->filtered_draw_alpha==1.0 &&
+    quad->corner_colour[0]==0xFFFFFFFFu;
+  if(!source || (op->scene_family!=GML_RENDER_SCENE_SPRITE && !gui_coverage) ||
      !(((op->target.image.resource_class==GML_RENDER_RESOURCE_APPLICATION ||
          op->target.image.resource_class==GML_RENDER_RESOURCE_SURFACE) &&
         !state->coverage_policy) ||
        (op->target.image.resource_class==GML_RENDER_RESOURCE_SCREEN &&
         state->coverage_policy==GML_RENDER_COVERAGE_OPAQUE_TARGET &&
-        qualified_blend(state)==1)) ||
+        qualified_blend(state)==1) || gui_coverage) ||
      op->target.pixel_format!=GML_RENDER_PIXEL_ARGB8888 ||
      op->sources[0].resource_class!=GML_RENDER_RESOURCE_ATLAS ||
      source->pixel_format!=GML_RENDER_PIXEL_RGBA8888 || source->rendered_origin ||
@@ -211,6 +218,7 @@ static int integer_sourceover_sprite_valid(const GmlRenderDrawOp *op,
   double xs=(quad->x[1]-quad->x[0])/region.width;
   double ys=(quad->y[2]-quad->y[0])/region.height;
   if(xs<1.0 || ys<1.0 || floor(xs)!=xs || floor(ys)!=ys) return 0;
+  if(gui_coverage && (xs!=1.0 || ys!=1.0)) return 0;
   double u0=(double)region.x/source->width,u1=((double)region.x+region.width)/source->width;
   double v0=(double)region.y/source->height,v1=((double)region.y+region.height)/source->height;
   int flip_x=fabs(quad->u[0]-u1)<1e-12,flip_y=fabs(quad->v[0]-v1)<1e-12;

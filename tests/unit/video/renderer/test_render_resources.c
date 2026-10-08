@@ -9416,6 +9416,66 @@ static int resident_integer_world_sourceover_pages(int packed_pages){
   return 1;
 }
 
+static int resident_identity_gui_unit_sourceover(void){
+  for(unsigned modern=0;modern<2u;modern++)
+  for(unsigned text=0;text<2u;text++)
+  for(unsigned opacity=0;opacity<3u;opacity++){
+    GmlRender *r=calloc(1,sizeof *r);
+    GmlWin content={.bytecode=modern?17:15};
+    FakeDevice fake={.on_demand=1,.readback_colour=0xFFABCDEFu};
+    GmlRenderDeviceServices device=service(&fake);
+    GmlRenderJournalMetrics metrics={0};
+    uint32_t screen[64]={0};
+    CHECK(r && gml_render_init(r,NULL)==0);
+    r->win=&content;r->interp=0;
+    free(r->atlas[0].px);
+    r->atlas[0].w=r->atlas[0].h=2;
+    r->atlas[0].px=malloc(16);
+    CHECK(r->atlas[0].px);
+    const uint8_t rgba[16]={208,32,16,0,16,208,32,1,
+                            32,16,208,128,192,176,160,255};
+    memcpy(r->atlas[0].px,rgba,sizeof rgba);
+    r->tpag=calloc(1,sizeof *r->tpag);
+    r->spr=calloc(1,sizeof *r->spr);
+    CHECK(r->tpag && r->spr);
+    r->n_tpag=r->n_spr=1;
+    r->tpag[0]=(GmlTpag){.atlas=0,.sw=2,.sh=2,.tw=2,.th=2,.bw=2,.bh=2};
+    r->spr[0].w=r->spr[0].h=2;r->spr[0].n_frames=1;
+    r->spr[0].frame=calloc(1,sizeof(int));CHECK(r->spr[0].frame);
+    device.observe_on_demand=fake_observe_on_demand;
+    gml_render_bind_device(r,&device);
+    CHECK(gml_render_begin_resident_base(r,screen,8,8,0,0));
+    gml_render_gui_begin(r,8,8);
+    gml_render_set_pending_fill(r,(opacity==0u?0u:opacity==1u?0x40000000u:0xFF000000u)|0x123456u);
+    gml_render_flush_pending_fill(r);
+    r->fb_opaque_known=r->fb_all_opaque=0;
+    for(unsigned draw=0;draw<8u;draw++){
+      if(text) CHECK(gml_render_resident_font_glyph(r,0,0,0,2,2,2,2,1,1,0xFFFFFFu,1));
+      else gml_draw_sprite(r,0,0,2,2);
+      CHECK(r->resident_application_pass && fake.readbacks==0);
+    }
+    CHECK(gml_render_scene_submit_pending(r) && fake.last_batch_operations==8u &&
+          fake.last_filter==GML_RENDER_FILTER_NEAREST &&
+          fake.last_quad_state.coverage_policy==GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA &&
+          fake.last_filtered_draw_alpha==1.0 && fake.readbacks==0);
+    gml_render_resource_journal_metrics(r->base_scene_resource,&metrics);
+    CHECK(metrics.authority==GML_RENDER_RESOURCE_GPU_RESIDENT && !metrics.cpu_replays &&
+          !metrics.journal_bytes && !metrics.retained_mutable_bytes);
+    /* New TEXT admission stays narrow; rejected probes leave the prefix queued. */
+    CHECK(!gml_render_resident_font_glyph(r,0,0,0,2,2,2,2,1,1,0x123456u,1));
+    CHECK(!gml_render_resident_font_glyph(r,0,0,0,2,2,2,2,1,1,0xFFFFFFu,0.5));
+    CHECK(!gml_render_resident_font_glyph(r,0,0,0,2,2,2,2,2,1,0xFFFFFFu,1));
+    r->gui_maximise_active=1;
+    CHECK(!gml_render_resident_font_glyph(r,0,0,0,2,2,2,2,1,1,0xFFFFFFu,1));
+    r->gui_maximise_active=0;
+    CHECK(r->resident_application_pass && fake.readbacks==0);
+    CHECK(gml_render_completed_screen_read(r,screen,8,8) && fake.readbacks==1 &&
+          screen[0]==fake.readback_colour && screen[63]==fake.readback_colour);
+    gml_render_free(r);free(r);
+  }
+  return 1;
+}
+
 static int resident_integer_world_sourceover_sprite(void){
   return resident_integer_world_sourceover_pages(0);
 }
@@ -10255,6 +10315,7 @@ int main(void){
   passed+=resident_modern_screen_point_sprite();
   passed+=resident_opaque_sprite_complete_application();
   passed+=resident_integer_world_sourceover_sprite();
+  passed+=resident_identity_gui_unit_sourceover();
   passed+=resident_integer_world_packed_sprite();
   passed+=resident_integer_sourceover_exclusions();
   passed+=state_without_context();
@@ -10271,6 +10332,6 @@ int main(void){
   passed+=source_free_primitive_rect_replay();
   passed+=stretched_float_exact_replay();
   passed+=filtered_font_exact_recovery();
-  printf("render resource cases: passed=%d failed=%d\n",passed,145-passed);
-  return passed==145?EXIT_SUCCESS:EXIT_FAILURE;
+  printf("render resource cases: passed=%d failed=%d\n",passed,146-passed);
+  return passed==146?EXIT_SUCCESS:EXIT_FAILURE;
 }
