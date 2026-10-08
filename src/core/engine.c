@@ -1485,11 +1485,29 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
   gml_render_application_surface_publish(&engine->render);
   if(gml_vm_draw_pass_active(&engine->vm,"Draw_76")){
     if(!engine->output_width || !engine->output_height) compute_present(engine);
-    gml_render_begin(&engine->render,engine->screen,
-                     (int)engine->output_width,(int)engine->output_height,0.0,0.0);
+    int resident_pre_draw=0;
+    /* Pre-Draw owns a screen-stage target before world admission. Keep its
+     * implicit clear and qualified draws on that resource, without changing
+     * the event's position before view selection or its screen coordinates. */
+    if(!engine->composed_frame && !engine->aspect_force_active &&
+       !gml_render_is_classic(&engine->render) && engine_graphics_active(engine) &&
+       engine->scene_renderer_session==ANYGM_SCENE_RENDERER_OPENGL){
+      resident_pre_draw=gml_render_begin_resident_base(
+        &engine->render,engine->screen,
+        (int)engine->output_width,(int)engine->output_height,0.0,0.0);
+      if(!resident_pre_draw && !gml_render_completed_screen_write(
+           &engine->render,engine->screen,
+           (int)engine->output_width,(int)engine->output_height))
+        return ANYGM_ERROR_INTERNAL;
+    }
+    if(!resident_pre_draw)
+      gml_render_begin(&engine->render,engine->screen,
+                       (int)engine->output_width,(int)engine->output_height,0.0,0.0);
     gml_render_set_pending_fill(&engine->render,0);
     gml_vm_draw_pass(&engine->vm,"Draw_76");
     gml_render_flush_pending_fill(&engine->render);
+    if(resident_pre_draw && !gml_render_scene_submit_pending(&engine->render))
+      return ANYGM_ERROR_INTERNAL;
     sync_room_fps(engine,1);
   }
   GmlPresentView frame_views[8];

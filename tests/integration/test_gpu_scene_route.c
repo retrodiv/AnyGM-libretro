@@ -28,6 +28,7 @@ static uint64_t frame_digest(const AnygmFrameOutput *output){
 int main(int argc,char **argv){
   AnygmSyntheticContent fixture={0};
   int dense=argc==2 && (!strcmp(argv[1],"--keep-dense") || !strcmp(argv[1],"--dense"));
+  int pre_draw=argc==2 && !strcmp(argv[1],"--keep-pre-draw");
   int gui_up=argc==2 && !strcmp(argv[1],"--keep-gui-upscale");
   int gui_resident_up=argc==2 && !strcmp(argv[1],"--keep-gui-resident-upscale");
   int forced_owned=argc==2 && !strcmp(argv[1],"--keep-forced-owned");
@@ -68,7 +69,8 @@ int main(int argc,char **argv){
   int classic_software3d=argc==2 && !strcmp(argv[1],"--keep-classic-single-view-software3d");
   int classic_transition=argc==2 && !strcmp(argv[1],"--keep-classic-transition");
   int large_moving_sound=argc==2 && !strcmp(argv[1],"--keep-large-moving-sound");
-  if(!(large_moving_sound?anygm_synthetic_large_moving_sound_content_create(&fixture):
+  if(!(pre_draw?anygm_synthetic_draw_content_create(&fixture):
+       large_moving_sound?anygm_synthetic_large_moving_sound_content_create(&fixture):
        forced_owned?anygm_synthetic_forced_owned_content_create(&fixture):
        forced_narrow?anygm_synthetic_forced_narrow_content_create(&fixture):
        gui_up?anygm_synthetic_indirect_gui_upscale_content_create(&fixture):
@@ -110,7 +112,7 @@ int main(int argc,char **argv){
        multiview?anygm_synthetic_multiview_gpu_content_create(&fixture):
        dense?anygm_synthetic_gpu_dense_scene_route_content_create(&fixture):
              anygm_synthetic_gpu_scene_route_content_create(&fixture))) return 1;
-  if(forced_owned || forced_narrow || gui_up || gui_resident_up || gui_reduce || gui_automatic || gui_automatic_alpha ||
+  if(pre_draw || forced_owned || forced_narrow || gui_up || gui_resident_up || gui_reduce || gui_automatic || gui_automatic_alpha ||
      gui_automatic_viewless || gui_automatic_viewless_alpha ||
      multiview || multiview_offset ||
      multiview_fractional || multiview_step || multiview_nested || multiview_assigned ||
@@ -129,7 +131,7 @@ int main(int argc,char **argv){
     return 0;
   }
   if(argc!=1 && !(argc==2 && dense)){
-    fputs("usage: test_gpu_scene_route [--dense|--keep|--keep-dense|"
+    fputs("usage: test_gpu_scene_route [--dense|--keep|--keep-dense|--keep-pre-draw|"
           "--keep-gui-upscale|--keep-gui-resident-upscale|--keep-forced-owned|--keep-forced-narrow|"
           "--keep-gui-reduce|--keep-multiview|"
           "--keep-gui-automatic|--keep-gui-automatic-alpha|"

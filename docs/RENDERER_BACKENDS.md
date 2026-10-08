@@ -783,6 +783,20 @@ nonclassic owned application with automatic drawing enabled. Its pending underla
 and first qualified stretched draw consume the existing surface and sprite rules,
 not an application-image substitute. Classic and multiview direct admission remain
 unchanged; covered-alpha canonical checkpoints and excluded writers remain explicit.
+R03-P9-PRE-DRAW-SCREEN admits the existing SCREEN resource for nonclassic,
+noncomposed, unforced OpenGL Pre-Draw. The implicit clear remains EXACT; draws
+retain their existing per-family EXACT or TOLERANCE limits and checked barriers.
+The event still precedes view selection and its queue flushes before geometry
+updates. Pending state, stacked targets and unavailable resources retain checked
+CPU fallback. `test_graphics_state.c::resident_pre_draw_screen_case` pairs the
+CPU and selected paths, including the event's view mutation, zero ordinary CPU
+work and exact canonical state. `test_gpu_scene_route --keep-pre-draw` exports
+the same neutral route for real-device comparison. It does not qualify previously excluded sprites
+or establish complete real-device image coverage.
+CPU materialization of a deferred presentation publishes its completed target,
+retiring any earlier SCREEN resource. A later canonical observer must not replay
+that resource's preceding clear over the newly materialized image. This ownership
+transition adds no per-frame readback and does not alter numbered-surface alpha.
 The historical R03-BG-DIRECT-NEAREST-COPY row's additive exclusion is superseded for the
 qualified additive subset by R03-BG-ADDITIVE. Other additive variants still take its stated
 ordered CPU fallback.

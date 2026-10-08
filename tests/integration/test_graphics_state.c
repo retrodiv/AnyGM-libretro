@@ -807,6 +807,64 @@ done:
   return ok;
 }
 
+/* Pre-Draw has its own screen raster before world admission. Its implicit clear
+ * must not force an otherwise admitted frame through the processor. The fixture
+ * also changes the visible view here, so moving the event into Draw would fail. */
+static int resident_pre_draw_screen_case(void){
+  Session plain={0},selected={0};
+  GmlRenderDispatchMetrics dispatch={0};
+  GmlGpuCounters counters={0};
+  uint8_t *cpu_state=NULL,*gpu_state=NULL;
+  size_t cpu_size=0,gpu_size=0;
+  int matching;
+  anygm_test_graphics_reset();
+  REQUIRE(session_open_fixture_with_scene(&plain,ANYGM_SCENE_RENDERER_CPU,
+          anygm_synthetic_draw_content_create) &&
+          session_open_fixture_with_scene(&selected,ANYGM_SCENE_RENDERER_OPENGL,
+          anygm_synthetic_draw_content_create),"Pre-Draw paired fixtures load");
+  REQUIRE(graphics_adopt(selected.engine,ANYGM_GRAPHICS_OPENGLES3)==ANYGM_OK,
+          "Pre-Draw selected fixture adopts a context");
+  gml_render_dispatch_diagnostics_enable(&selected.engine->render,1);
+  selected.engine->diagnostics.dispatch_frames.enabled=1;
+  gml_render_dispatch_frame_bind(&selected.engine->render,
+                                &selected.engine->diagnostics.dispatch_frames);
+  REQUIRE(advance(plain.engine,2,NULL) && advance(selected.engine,2,NULL),
+          "Pre-Draw paired fixtures complete two frames");
+  REQUIRE(gml_render_dispatch_metrics(&selected.engine->render,&dispatch) &&
+          dispatch.enabled && !dispatch.overflow && !dispatch.failed && !dispatch.unclassified,
+          "Pre-Draw interval has enabled and classified dispatch accounting");
+  for(unsigned family=0;family<GML_RENDER_SCENE_FAMILY_COUNT;family++)
+    for(unsigned reason=0;reason<GML_RENDER_DISPATCH_REASON_COUNT;reason++)
+      if(dispatch.cpu[family][reason]){
+        fprintf(stderr,"Pre-Draw ordinary CPU work: family=%u reason=%u count=%llu\n",
+                family,reason,(unsigned long long)dispatch.cpu[family][reason]);
+        session_close(&selected); session_close(&plain);
+        return 0;
+      }
+  REQUIRE(selected.engine->diagnostics.dispatch_frames.frames==2u &&
+          !selected.engine->diagnostics.dispatch_frames.cpu_frames &&
+          !selected.engine->diagnostics.dispatch_frames.no_scene_frames,
+          "Pre-Draw clear does not create a no-scene frame");
+  REQUIRE(gml_global_num(&selected.engine->vm,"fixture_pre_draw")==2 &&
+          gml_global_num(&selected.engine->vm,"fixture_draw")==2 &&
+          gml_global_num(&selected.engine->vm,"fixture_post_draw")==2 &&
+          gml_global_num(&selected.engine->vm,"fixture_view_sum")==4,
+          "resident Pre-Draw preserves event ordering and its view mutation");
+  gml_gpu_counters(selected.engine->gpu,&counters);
+  /* Two Pre-Draw and two world clears; the presented content needs no extra GUI clear. */
+  REQUIRE(counters.scene_operations[GML_RENDER_OP_CLEAR]>=4u &&
+          !counters.scene_batches_refused && !counters.cpu_upload_frames,
+          "Pre-Draw, world and screen clears execute on the selected device");
+  cpu_state=serialize(plain.engine,&cpu_size);
+  gpu_state=serialize(selected.engine,&gpu_size);
+  matching=cpu_state && gpu_state && cpu_size==gpu_size &&
+           !memcmp(cpu_state,gpu_state,cpu_size);
+  free(cpu_state); free(gpu_state);
+  session_close(&selected); session_close(&plain);
+  REQUIRE(matching,"resident Pre-Draw preserves exact CPU pixels and canonical state");
+  return 1;
+}
+
 static int resident_world_selection_case(void){
   Session plain,selected;
   GmlGpuCounters counters={0};
@@ -4283,6 +4341,7 @@ int main(void){
      scene_state_preserves_completed_device_case},
     {"scene state size queries do not observe pixels",scene_size_query_is_metadata_only_case},
     {"final scene seal is included in frame profiling",final_scene_seal_profile_case},
+    {"resident Pre-Draw screen retains CPU state",resident_pre_draw_screen_case},
     {"resident world selection retains CPU state",resident_world_selection_case},
     {"viewless classic application accepts Draw scene work",
      classic_viewless_application_scene_case},

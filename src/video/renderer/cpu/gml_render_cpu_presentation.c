@@ -112,10 +112,11 @@ void gml_render_cpu_present_image(GmlRender *r){
         gml_render_dispatch_cpu_record(r,GML_RENDER_SCENE_PRIMITIVE,
                                          gml_render_dispatch_cpu_reason(r),1u);
     }
-    if(!src || span<=0 || y1<=y0 || sw<=0 || sh<=0 || dw<=0.0 || dh<=0.0) return;
+    if(!src || span<=0 || y1<=y0 || sw<=0 || sh<=0 || dw<=0.0 || dh<=0.0)
+      goto materialized;
     if(record.shader>=0){
       present_content_shader(r,&record,src);
-      return;
+      goto materialized;
     }
     /* Both allocation outcomes below execute a complete copy, with no callback
      * or early rejection. This is a separate draw even when a later primitive
@@ -133,7 +134,7 @@ void gml_render_cpu_present_image(GmlRender *r){
           *destination=(src[(size_t)sy*record.source_pitch+
                            presentation_source_index(&record,0,x-x0,x)]&source_mask)|output_alpha;
       }
-      return;
+      goto materialized;
     }
     for(int x=x0;x<x1;x++) column[x-x0]=presentation_source_index(&record,0,x-x0,x);
     {
@@ -155,5 +156,10 @@ void gml_render_cpu_present_image(GmlRender *r){
       }
     }
     if(column!=column_stack) free(column);
+materialized:
+    /* This kernel replaced the deferred target on the processor. Retiring its
+     * previous SCREEN residence prevents a later observer from restoring an
+     * older device clear over the newly completed pixels. */
+    gml_render_completed_screen_publish(r,target,target_width,record.target_height);
   }
 }
