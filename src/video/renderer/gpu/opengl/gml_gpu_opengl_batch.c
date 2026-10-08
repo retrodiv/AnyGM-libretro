@@ -344,6 +344,37 @@ static int hardware_screen_veil_valid(const GmlRenderDrawOp *op,
   return 1;
 }
 
+/* R03-SPR-GUI-MAPPED-STRETCH: crop-clamped atlas magnification shares the
+ * hardware surface sampler and its batched alpha-coverage pass. */
+static int hardware_screen_stretch_valid(const GmlRenderDrawOp *op,
+                                        const GmlRenderDrawStateSnapshot *state,
+                                        const GlSceneImage *source){
+  const GmlRenderQuad *quad=&op->payload.quad;
+  GmlRenderRect region=quad->sampling.source_region;
+  if(!source || source->rendered_origin || source->pixel_format!=GML_RENDER_PIXEL_RGBA8888 ||
+     op->sources[0].resource_class!=GML_RENDER_RESOURCE_ATLAS ||
+     op->scene_family!=GML_RENDER_SCENE_SPRITE ||
+     op->target.image.resource_class!=GML_RENDER_RESOURCE_SCREEN ||
+     op->target.pixel_format!=GML_RENDER_PIXEL_ARGB8888 ||
+     op->reconstruction_mode!=GML_RENDER_DEVICE_CHECKPOINT ||
+     qualified_blend(state)!=1 || state->coverage_policy!=GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA ||
+     quad->shape!=GML_RENDER_QUAD_AXIS_ALIGNED ||
+     quad->sampling.filter!=GML_RENDER_FILTER_HARDWARE_BILINEAR ||
+     quad->sampling.edge_rule!=GML_RENDER_EDGE_CLAMP_SUBIMAGE ||
+     quad->sampling.quantisation || quad->sampling.logical_margin_mask || quad->span_active ||
+     quad->filtered_draw_alpha!=1.0 || !valid_region(region,source->width,source->height) ||
+     !exact_rect(op,NULL,NULL,NULL,NULL,1) ||
+     quad->x[1]-quad->x[0]<=(double)region.width ||
+     quad->y[2]-quad->y[0]<=(double)region.height) return 0;
+  for(unsigned corner=0;corner<4u;corner++){
+    double u=((double)region.x+((corner==1u || corner==2u)?region.width:0u))/source->width;
+    double v=((double)region.y+(corner>=2u?region.height:0u))/source->height;
+    if(quad->corner_colour[corner]!=0xFFFFFFFFu ||
+       fabs(quad->u[corner]-u)>1e-12 || fabs(quad->v[corner]-v)>1e-12) return 0;
+  }
+  return 1;
+}
+
 static int recovery_quad_valid(GmlGpuBackend *backend,const GmlRenderDrawOp *op,
                                 const GmlRenderDrawStateSnapshot *state){
   GlSceneImage *source=gml_gpu_opengl_scene_image(backend,op->sources[0]);
@@ -581,6 +612,7 @@ static int scene_preflight(GmlGpuBackend *backend,const GmlRenderDrawBatch *batc
       int blend=qualified_blend(state);
       int hardware_surface=hardware_surface_quad_valid(op,state,source);
       int hardware_veil=hardware_screen_veil_valid(op,state,source);
+      int hardware_stretch=hardware_screen_stretch_valid(op,state,source);
       int integer_sourceover=integer_sourceover_sprite_valid(op,state,source) &&
         (blend==1 || blend==3);
       int modern_numbered_sprite=
@@ -710,7 +742,7 @@ static int scene_preflight(GmlGpuBackend *backend,const GmlRenderDrawBatch *batc
                         source->rendered_origin || source->pixel_format!=GML_RENDER_PIXEL_RGBA8888 ||
                         op->reconstruction_mode!=GML_RENDER_DEVICE_CHECKPOINT ||
                         op->payload.quad.filtered_draw_alpha!=1.0)) ||
-         (sampling->filter==GML_RENDER_FILTER_HARDWARE_BILINEAR && !hardware_surface && !hardware_veil &&
+         (sampling->filter==GML_RENDER_FILTER_HARDWARE_BILINEAR && !hardware_surface && !hardware_veil && !hardware_stretch &&
           blend!=9 && blend!=10 &&
           !(blend==3 && sampling->quantisation==GML_RENDER_QUANTISE_HARDWARE_COMBINED)) ||
          (blend==8 && (!backend->gl.CopyTexSubImage2D ||
@@ -746,7 +778,7 @@ static int scene_preflight(GmlGpuBackend *backend,const GmlRenderDrawBatch *batc
                        op->payload.quad.y[2]!=(double)target->height ||
                        !exact_rect(op,NULL,NULL,NULL,NULL,0))) ||
          state->sampler_count!=1u || state->material_identity || state->material_version ||
-         (state->coverage_policy && !hardware_surface && !hardware_veil && !integer_sourceover &&
+         (state->coverage_policy && !hardware_surface && !hardware_veil && !hardware_stretch && !integer_sourceover &&
           ((state->coverage_policy!=GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA &&
             state->coverage_policy!=GML_RENDER_COVERAGE_ROTATED_VECTOR_ALPHA) ||
            target->image.resource_class!=GML_RENDER_RESOURCE_SCREEN ||

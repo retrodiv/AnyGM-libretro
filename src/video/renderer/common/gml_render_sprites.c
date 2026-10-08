@@ -2027,6 +2027,106 @@ static int resident_coarse_mip_veil(GmlRender *r,int sprite,int frame,
   return result!=GML_RENDER_RESOURCE_EXEC_FAILED;
 }
 
+/* R03-SPR-GUI-MAPPED-STRETCH: the public entry owns GUI mapping and camera
+ * subtraction. Newly admitted centred/mapped magnification uses hardware
+ * filtering/source-over, not the existing identity GUI's exact float recipe. */
+static int resident_mapped_gui_stretch(GmlRender *r,int sprite,int frame,
+                                      double dx,double dy,double dw,double dh,
+                                      uint32_t blend,double alpha){
+  const GmlRenderDeviceServices *device;
+  GmlSprite *record;
+  GmlTpag *page;
+  GmlRenderResourceSource source={0};
+  GmlRenderResource *target;
+  GmlRenderDrawOp operation={0};
+  GmlRenderDrawStateSnapshot state={0};
+  GmlRenderImageRef image,source_ref;
+  double left,top;
+  int width,height,page_index;
+  if(!r || !r->resident_application_pass || !r->gui_pass_active ||
+     resident_mapped_screen_gui_font(r) || r->classic || !r->win ||
+     r->target_id!=-1 || r->target_sp || r->world_transform_active ||
+     r->gui_maximise_active || r->gui_maximise_xoffset!=0.0 ||
+     r->gui_maximise_yoffset!=0.0 ||
+     r->gui_base_logical_w<=0 || r->gui_base_logical_h<=0 ||
+     r->gui_logical_w<=0 || r->gui_logical_h<=0 ||
+     !isfinite(r->gui_scale_x) || r->gui_scale_x<=0.0 ||
+     !isfinite(r->gui_scale_y) || r->gui_scale_y<=0.0 ||
+     !r->interp || r->active_shader>=0 || r->fog_flat || r->alpha_test_enable ||
+     !r->alphablend || r->blendmode || r->blend_equation!=1 ||
+     r->blend_equation_alpha!=1 || r->color_write_mask!=15u ||
+     r->classic_phase_y || r->rotated_batch_count || r->rotated_batch_building ||
+     r->pending_underlay || r->pending_presentation ||
+     !gml_render_scene_target_matches(r) || !r->base_scene_resource ||
+     r->fb!=r->base_scene_resource_pixels ||
+     !(device=gml_render_device(r)) || !device->context || !device->observe_on_demand ||
+     !device->observe_on_demand(device->context) || gml_d3_is_active(r) ||
+     sprite<0 || sprite>=r->n_spr || blend!=0xFFFFFFu || alpha!=1.0) return 0;
+  for(int index=0;index<3;index++)
+    if(r->classic_interp_phase[index] || r->app_interp_phase[index]) return 0;
+  record=&r->spr[sprite];
+  if(record->runtime_rgba || record->spine || record->ns_enabled ||
+     record->w<=0 || record->h<=0 || record->n_frames<=0 || !record->frame) return 0;
+  page_index=record->frame[gml_render_runtime_frame_index(record,frame)];
+  if(page_index<0 || page_index>=r->n_tpag) return 0;
+  page=&r->tpag[page_index];
+  if(page->tx || page->ty || page->sw!=record->w || page->sh!=record->h ||
+     page->tw!=page->sw || page->th!=page->sh ||
+     page->bw!=page->sw || page->bh!=page->sh || page->sx<0 || page->sy<0 ||
+     page->atlas<0 || page->atlas>=r->n_atlas) return 0;
+  gml_render_draw_map_point(r,&dx,&dy);
+  gml_render_draw_map_scale(r,&dw,&dh);
+  dx-=r->cam_x;dy-=r->cam_y;
+  if(!isfinite(dx) || !isfinite(dy) || fabs(dx)>16384.0 || fabs(dy)>16384.0 ||
+     !isfinite(dw) || !isfinite(dh) || dw<=0.0 || dh<=0.0 ||
+     dw>16384.0 || dh>16384.0) return 0;
+  left=floor(dx);top=floor(dy);
+  width=(int)lround(dw);height=(int)lround(dh);
+  if(width<=record->w || height<=record->h ||
+     !gml_render_atlas_scene_source_view(r,page->atlas,&source) ||
+     (uint64_t)(uint32_t)page->sx+(uint32_t)page->sw>source.width ||
+     (uint64_t)(uint32_t)page->sy+(uint32_t)page->sh>source.height) return 0;
+  if(left>=r->fbw || top>=r->fbh || left+width<=0.0 || top+height<=0.0) return 1;
+  gml_render_flush_pending_fill(r);
+  if(r->pending_fill || !(target=gml_render_scene_target_resource_ensure(r))) return 0;
+  image=gml_render_application_scene_next_image_ref(r,target);
+  if(image.content_version==UINT64_MAX) return 0;
+  source_ref=source.image;
+  operation.opcode=GML_RENDER_OP_TEXTURED_QUAD;
+  operation.scene_family=GML_RENDER_SCENE_SPRITE;
+  operation.reconstruction_mode=GML_RENDER_DEVICE_CHECKPOINT;
+  operation.source_count=1u;operation.sources=&source_ref;
+  operation.target.image=image;operation.target.image.content_version++;
+  operation.target.storage_version=1u;
+  operation.target.width=(uint32_t)r->fbw;operation.target.height=(uint32_t)r->fbh;
+  operation.target.pixel_format=GML_RENDER_PIXEL_ARGB8888;
+  operation.target.region=(GmlRenderRect){0,0,(uint32_t)r->fbw,(uint32_t)r->fbh};
+  GmlRenderQuad *quad=&operation.payload.quad;
+  quad->shape=GML_RENDER_QUAD_AXIS_ALIGNED;
+  quad->sampling.filter=GML_RENDER_FILTER_HARDWARE_BILINEAR;
+  quad->sampling.edge_rule=GML_RENDER_EDGE_CLAMP_SUBIMAGE;
+  quad->sampling.source_region=(GmlRenderRect){page->sx,page->sy,(uint32_t)page->sw,(uint32_t)page->sh};
+  quad->filtered_draw_alpha=1.0;
+  for(unsigned corner=0;corner<4u;corner++){
+    quad->x[corner]=left+((corner==1u || corner==2u)?width:0);
+    quad->y[corner]=top+(corner>=2u?height:0);
+    quad->u[corner]=((double)page->sx+((corner==1u || corner==2u)?page->sw:0))/source.width;
+    quad->v[corner]=((double)page->sy+(corner>=2u?page->sh:0))/source.height;
+    quad->corner_colour[corner]=0xFFFFFFFFu;
+  }
+  state.write_mask=15u;state.colour=0xFFFFFFFFu;state.alpha=255u;
+  state.coverage_policy=GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA;
+  state.rgb_source_factor=GML_RENDER_BLEND_SOURCE_ALPHA;
+  state.rgb_destination_factor=GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA;
+  state.alpha_source_factor=GML_RENDER_BLEND_ONE;
+  state.alpha_destination_factor=GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA;
+  state.rgb_equation=state.alpha_equation=GML_RENDER_BLEND_ADD;
+  state.sampler_count=1u;state.samplers[0]=quad->sampling;
+  if(!gml_render_application_scene_enqueue(r,&operation,&state,&source)) return 0;
+  r->fb_all_transparent=0;
+  return 1;
+}
+
 void gml_draw_sprite_stretched(GmlRender *r, int sprite, int frame, double dx, double dy, double dw, double dh, uint32_t blend, double alpha){
   /* The ordinary stretched CPU blit contributes no pixels at zero alpha. Do not materialise
    * preceding device work for that no-op; special draw states retain their existing barrier. */
@@ -2043,6 +2143,7 @@ void gml_draw_sprite_stretched(GmlRender *r, int sprite, int frame, double dx, d
      !gml_d3_is_active(r) && gml_render_scene_target_matches(r))
     return;
   if(resident_coarse_mip_veil(r,sprite,frame,dx,dy,dw,dh,blend,alpha)) return;
+  if(resident_mapped_gui_stretch(r,sprite,frame,dx,dy,dw,dh,blend,alpha)) return;
   if(r && r->resident_application_pass && !r->interp &&
      blend==0xFFFFFFu && alpha==1.0 &&
      sprite>=0 && sprite<r->n_spr && !gml_d3_is_active(r)){

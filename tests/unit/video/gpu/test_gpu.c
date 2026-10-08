@@ -942,10 +942,11 @@ static int scene_resident_batch_case(void){
 /* Call/state proof only. Composed pixel qualification needs a real device. */
 static int scene_hardware_filtered_batch_case(unsigned kind){
   enum { QUADS=2049 };
-  int additive=kind==1u,combined=kind==2u,surface=kind>=3u,nearest=kind>=4u;
+  int additive=kind==1u,combined=kind==2u,surface=kind>=3u && kind<=5u;
+  int nearest=kind==4u || kind==5u,screen_stretch=kind==6u;
   const uint8_t pixels[16]={11,22,33,255,44,55,66,100,77,88,99,0,111,122,133,200};
   for(unsigned api=0;api<2u;api++)
-  for(unsigned excluded=0;excluded<(nearest?8u:(combined || surface)?7u:4u);excluded++){
+  for(unsigned excluded=0;excluded<(nearest || screen_stretch?8u:(combined || surface)?7u:4u);excluded++){
     GmlGpuContext context=fake_context(api?GML_GPU_API_OPENGLES3:GML_GPU_API_OPENGL_CORE);
     GmlRenderImageRef source={kind==5u?GML_RENDER_RESOURCE_APPLICATION:surface?GML_RENDER_RESOURCE_SURFACE:
       GML_RENDER_RESOURCE_ATLAS,91u,1u,1u};
@@ -977,7 +978,7 @@ static int scene_hardware_filtered_batch_case(unsigned kind){
     if(combined) state.rgb_source_factor=GML_RENDER_BLEND_SOURCE_ALPHA;
     if(!additive) state.rgb_destination_factor=GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA;
     state.alpha_source_factor=GML_RENDER_BLEND_SOURCE_ALPHA;
-    if(surface){
+    if(surface || screen_stretch){
       state.rgb_source_factor=GML_RENDER_BLEND_SOURCE_ALPHA;
       state.alpha_source_factor=GML_RENDER_BLEND_ONE;
       state.coverage_policy=GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA;
@@ -987,7 +988,7 @@ static int scene_hardware_filtered_batch_case(unsigned kind){
     for(unsigned index=0;index<QUADS+1u;index++){
       GmlRenderDrawOp *op=&ops[index];
       op->sequence=index+1u;
-      op->target.image=(GmlRenderImageRef){combined?GML_RENDER_RESOURCE_APPLICATION:
+      op->target.image=(GmlRenderImageRef){screen_stretch?GML_RENDER_RESOURCE_SCREEN:combined?GML_RENDER_RESOURCE_APPLICATION:
         GML_RENDER_RESOURCE_SURFACE,92u,1u,index+1u};
       op->target.storage_version=1u;op->target.width=op->target.height=64u;
       op->target.pixel_format=GML_RENDER_PIXEL_ARGB8888;
@@ -996,26 +997,26 @@ static int scene_hardware_filtered_batch_case(unsigned kind){
       if(!index){op->payload.clear_colour=0x40123456u;continue;}
       op->reconstruction_mode=GML_RENDER_DEVICE_CHECKPOINT;
       op->scene_family=surface?GML_RENDER_SCENE_SURFACE:
-        additive?GML_RENDER_SCENE_SPRITE:GML_RENDER_SCENE_BACKGROUND;
+        additive || screen_stretch?GML_RENDER_SCENE_SPRITE:GML_RENDER_SCENE_BACKGROUND;
       op->sources=&source;op->source_count=1u;
       GmlRenderQuad *quad=&op->payload.quad;
       quad->shape=GML_RENDER_QUAD_AXIS_ALIGNED;quad->sampling=state.samplers[0];
       quad->filtered_draw_alpha=additive || surface?.7:1.0;
       for(unsigned corner=0;corner<4u;corner++)
-        quad->corner_colour[corner]=combined?0xFFFFFFFFu:0xB3123456u;
+        quad->corner_colour[corner]=combined || screen_stretch?0xFFFFFFFFu:0xB3123456u;
       quad->x[1]=quad->x[2]=combined || nearest?2.0:8.0;
       quad->y[2]=quad->y[3]=combined || nearest?2.0:8.0;
       quad->u[1]=quad->u[2]=quad->v[2]=quad->v[3]=1.0;
     }
     if(excluded==3u) ops[QUADS].payload.quad.filtered_draw_alpha=NAN;
     if(excluded==4u){
-      if(surface) ops[QUADS].scene_family=GML_RENDER_SCENE_BACKGROUND;
+      if(surface || screen_stretch) ops[QUADS].scene_family=GML_RENDER_SCENE_BACKGROUND;
       else for(unsigned index=0;index<QUADS+1u;index++)
         ops[index].target.image.resource_class=GML_RENDER_RESOURCE_SURFACE;
     }
     if(excluded==5u) ops[QUADS].payload.quad.corner_colour[0]=0xFFFEFFFFu;
     if(excluded==6u) ops[QUADS].payload.quad.u[1]=.9;
-    if(excluded==7u) ops[QUADS].payload.quad.x[1]=ops[QUADS].payload.quad.x[2]=3.0;
+    if(excluded==7u) ops[QUADS].payload.quad.x[1]=ops[QUADS].payload.quad.x[2]=screen_stretch?2.0:3.0;
     GmlRenderDrawBatch batch={ops,QUADS+1u,&state,1u};
     result=device.submit(device.context,&batch);
     if(excluded){
@@ -1026,13 +1027,13 @@ static int scene_hardware_filtered_batch_case(unsigned kind){
       anygm_test_graphics_blend_factors(factors);
       REQUIRE(result.status==GML_RENDER_EXEC_ACCEPTED && result.accepted_prefix==QUADS+1u,
               "ordered overlapping filtered quads accepted");
-      REQUIRE(anygm_test_graphics_scene_draw_calls()==(surface?4:2) &&
-              anygm_test_graphics_scene_vertices()==QUADS*(surface?12:6),
+      REQUIRE(anygm_test_graphics_scene_draw_calls()==(surface || screen_stretch?4:2) &&
+              anygm_test_graphics_scene_vertices()==QUADS*(surface || screen_stretch?12:6),
               "only the declared quad capacity cuts compatible overlaps");
       REQUIRE(anygm_test_graphics_scene_filter()==(nearest?GL_NEAREST:GL_LINEAR) &&
-              factors[0]==(combined || surface?GL_SRC_ALPHA:GL_ONE) &&
+              factors[0]==(combined || surface || screen_stretch?GL_SRC_ALPHA:GL_ONE) &&
               factors[1]==(additive?GL_ONE:GL_ONE_MINUS_SRC_ALPHA) &&
-              factors[2]==(surface?GL_ONE:GL_SRC_ALPHA) &&
+              factors[2]==(surface || screen_stretch?GL_ONE:GL_SRC_ALPHA) &&
               factors[3]==GL_ONE_MINUS_SRC_ALPHA,
               "hardware filtering and independent alpha factors are configured");
       REQUIRE(!anygm_test_graphics_scene_copies() && !anygm_test_graphics_read_pixels(),
@@ -1129,6 +1130,9 @@ static int scene_nearest_surface_batch_case(void){
 }
 static int scene_nearest_application_batch_case(void){
   return scene_hardware_filtered_batch_case(5);
+}
+static int scene_hardware_screen_stretch_batch_case(void){
+  return scene_hardware_filtered_batch_case(6);
 }
 
 /* Driver/state evidence only; pixel-centre point indices need real GL controls. */
@@ -3486,6 +3490,7 @@ int main(int argc,char **argv){
     {"scene_hardware_surface_batch",scene_hardware_surface_batch_case},
     {"scene_nearest_surface_batch",scene_nearest_surface_batch_case},
     {"scene_nearest_application_batch",scene_nearest_application_batch_case},
+    {"scene_hardware_screen_stretch_batch",scene_hardware_screen_stretch_batch_case},
     {"scene_application_point_batch",scene_application_point_batch_case},
     {"scene_destination_surface",scene_destination_surface_case},
     {"scene_readback_formats",scene_readback_formats_case},
