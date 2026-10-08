@@ -7273,6 +7273,61 @@ static int resident_unregistered_cpu_application_underlay(void){
   return 1;
 }
 
+static int resident_surface_after_pending_underlay(void){
+  enum { WIDTH=8,HEIGHT=8 };
+  for(unsigned modern=0;modern<2u;modern++) for(unsigned gpu_source=0;gpu_source<2u;gpu_source++)
+  for(unsigned excluded=0;excluded<3u;excluded++){
+    GmlWin content={.bytecode=modern?17:15};
+    GmlRender *render=calloc(1,sizeof *render);
+    FakeDevice fake={.on_demand=1};
+    GmlRenderDeviceServices device=service(&fake);
+    GmlRenderJournalMetrics target={0};
+    uint32_t screen[WIDTH*HEIGHT],sentinel[WIDTH*HEIGHT];
+    CHECK(render);
+    device.observe_on_demand=fake_observe_on_demand;
+    render->win=&content;render->color_write_mask=15u;
+    CHECK(gml_render_application_surface_ensure_owned(render,WIDTH,HEIGHT));
+    if(gpu_source){
+      gml_render_bind_device(render,&device);
+      CHECK(gml_render_begin_resident_owned_application(render,0,0,0));
+    } else CHECK(gml_render_begin_owned_application(render,0,0,0));
+    gml_render_set_pending_fill(render,0xFF25C080u);
+    gml_render_flush_pending_fill(render);
+    CHECK(!gpu_source || gml_render_scene_submit_pending(render));
+    render->app_surface_opaque=1;
+    gml_render_application_surface_set_draw_enabled(render,0);
+    gml_render_application_surface_publish(render);
+    gml_render_bind_device(render,&device);
+    for(unsigned pixel=0;pixel<WIDTH*HEIGHT;pixel++) screen[pixel]=sentinel[pixel]=0xA5123456u;
+    CHECK(gml_render_begin_resident_base(render,screen,WIDTH,HEIGHT,0,0));
+    gml_render_gui_begin(render,WIDTH,HEIGHT);
+    gml_render_set_pending_fill(render,0x40123456u);
+    gml_render_set_pending_underlay(render,0,0,WIDTH,HEIGHT);
+    if(excluded==1u) render->cam_x=1.0;
+    if(excluded==2u) gml_render_gui_end(render);
+    int reads=fake.readbacks;
+    gml_draw_surface_stretched(render,0,2,1,WIDTH,HEIGHT,0xFFFFFFu,1.0);
+    if(excluded){
+      CHECK(!render->resident_application_pass && fake.readbacks>reads);
+      gml_render_free(render);free(render);
+      continue;
+    }
+    CHECK(!render->pending_underlay && render->resident_application_pass && fake.readbacks==reads &&
+          gml_render_scene_submit_pending(render) && !memcmp(screen,sentinel,sizeof screen));
+    gml_render_resource_journal_metrics(render->base_scene_resource,&target);
+    CHECK(target.authority==GML_RENDER_RESOURCE_GPU_RESIDENT &&
+          target.gpu_version==target.logical_version && target.cpu_version<target.logical_version &&
+          !target.journal_operations && !target.cpu_replays && !target.device_checkpoints &&
+          !target.retained_mutable_bytes && fake.last_opcode==GML_RENDER_OP_TEXTURED_QUAD &&
+          fake.last_quad_state.rgb_equation==GML_RENDER_BLEND_ADD);
+    fake.forbid_calls=1;
+    gml_render_abandon_device(render);
+    CHECK(!fake.forbidden_calls);
+    gml_render_free(render);free(render);
+  }
+  return 1;
+}
+
 static int resident_automatic_underlay_exclusions(void){
   enum { WIDTH=4,HEIGHT=4 };
   uint32_t reference[WIDTH*HEIGHT],screen[WIDTH*HEIGHT];
@@ -9483,6 +9538,7 @@ int main(void){
   passed+=current_cpu_source_view_is_not_observer();
   passed+=resident_current_cpu_application_underlay();
   passed+=resident_unregistered_cpu_application_underlay();
+  passed+=resident_surface_after_pending_underlay();
   passed+=resident_automatic_underlay_exclusions();
   passed+=resident_packaged_real_font_glyph(0);
   passed+=resident_packaged_real_font_glyph(1);
@@ -9517,6 +9573,6 @@ int main(void){
   passed+=source_free_primitive_rect_replay();
   passed+=stretched_float_exact_replay();
   passed+=filtered_font_exact_recovery();
-  printf("render resource cases: passed=%d failed=%d\n",passed,133-passed);
-  return passed==133?EXIT_SUCCESS:EXIT_FAILURE;
+  printf("render resource cases: passed=%d failed=%d\n",passed,134-passed);
+  return passed==134?EXIT_SUCCESS:EXIT_FAILURE;
 }

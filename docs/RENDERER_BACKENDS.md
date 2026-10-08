@@ -17,6 +17,18 @@ snapshot; the live ledger and rule table here describe current support.
 
 ## Experimental scene fidelity contract
 
+R03-P9-AUTOMATIC-UNDERLAY also prepares an already queued underlay before an
+otherwise qualified public stretched application-surface GUI draw with zero camera offset.
+Changing automatic-draw enablement does not cancel that queued intent. The
+existing compositor and its one device-local destination snapshot are unchanged;
+the following surface uses its existing hardware sampling and fixed blend path.
+No CPU leaf, shader arithmetic, observer or replay policy is added. Non-GUI,
+nonzero-camera, numbered-source and the compositor's existing source/state exclusions retain CPU.
+The paired `surface-underlay-order` control exercises both Studio policies,
+CPU/device-current sources, GUI mapping, clipping and opaque/partial suffixes:
+16 EXACT RGBA0 and16 TOLERANCE±2 controls,32 reversed-order negative controls,
+zero ordinary reads/masks/queries/replay and exact sealed no-current pixels.
+
 R03-P5-GUI-FULLWIDTH extends first-generation GUI point presentation and corrected
 1:1 partial-alpha composition with interpolation off/on.
 It is EXACT for qualified integer opaque point geometry and TOLERANCE±2 for
@@ -870,7 +882,7 @@ be enforced by this inventory alone.
 | `src/video/renderer/common/gml_render_surfaces.c::gml_render_compose_resident_underlay` | `gml_render_application_scene_submit` | PARTIAL | `a7016c065033ac9ac3a6aeb448f34b0be2794d8203ea4b1f38bbef38299a0dfd` | Bounded surface/recovery admission only; source, alias, geometry and state exclusions remain in the R03 surface rules. |
 | `src/video/renderer/common/gml_render_surfaces.c::gml_render_recover_empty_screen` | `gml_render_application_scene_submit` | PARTIAL | `9e45efc908d84be54c49bf5f4e3023a1b1cf460fc048ad0ac724a7d5b26b6ee9` | Bounded surface/recovery admission only; source, alias, geometry and state exclusions remain in the R03 surface rules. |
 | `src/video/renderer/common/gml_render_surfaces.c::gml_draw_surface_stretched` | `gml_render_application_scene_enqueue` | PARTIAL | `1df2fce0215e8103fe4b1647afe95c65dcd9647dab120b0d79c7b9d5d86c1c15` | Bounded surface/recovery admission only; source, alias, geometry and state exclusions remain in the R03 surface rules. |
-| `src/video/renderer/common/gml_render_surfaces.c::resident_surface_filtered` | `gml_render_application_scene_enqueue` | PARTIAL | `591cc1323b4ce6404f9ebe8c7f7eee2b16d3d68cb25abcaaca2569969b09fbef` | Bounded surface/recovery admission, including R03-P5-GUI-FULLWIDTH and the full-coverage R03-P5-GUI-OPAQUE-SUFFIX metadata proof; source, alias and special-state exclusions remain in the R03 surface rules. |
+| `src/video/renderer/common/gml_render_surfaces.c::resident_surface_filtered` | `gml_render_application_scene_enqueue` | PARTIAL | `92bbe92d31ce4e0d5796a266d3e5b5abb703f6fbd8aa494c1a1d66534d1ac295` | Bounded surface/recovery admission, including R03-P5-GUI-FULLWIDTH, R03-P5-GUI-OPAQUE-SUFFIX metadata and ordered zero-camera GUI application pending-underlay preparation; source, alias and special-state exclusions remain in the R03 surface rules. |
 | `src/video/renderer/common/gml_render_surfaces.c::resident_surface_shader` | `gml_render_application_scene_submit` | PARTIAL | `607acfcae8746235dad556836aaa308b30a1e1b18b18c331838bf19658a171f8` | Bounded surface/recovery admission only; source, alias, geometry and state exclusions remain in the R03 surface rules. |
 | `src/video/renderer/common/gml_render_surfaces.c::resident_surface_part` | `gml_render_application_scene_submit` | PARTIAL | `8cc678f568aa4c8c3033e1ee829cb2444f7bea3efcd2550db3d29ff9a8a15c1a` | Bounded surface/recovery admission only; source, alias, geometry and state exclusions remain in the R03 surface rules. |
 | `src/video/renderer/common/gml_render_surfaces.c::gml_draw_surface_part_ext` | `gml_render_application_scene_submit` | PARTIAL | `fb075350f3a931bf548d921961cb51c4309e464a3625553c1b6eb3b667a35a96` | Bounded surface/recovery admission only; source, alias, geometry and state exclusions remain in the R03 surface rules. |

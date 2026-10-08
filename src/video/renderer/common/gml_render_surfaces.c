@@ -917,7 +917,7 @@ static int resident_surface_filtered(GmlRender *r,int surf,double dx,double dy,d
      !device->observe_on_demand(device->context) ||
      (surf==0?r->app_surface:r->surface[slot].px)==r->fb ||
      (r->surface_canvas>0 && (surf==r->surface_canvas || r->target_id==r->surface_canvas)) ||
-     r->pending_underlay || r->pending_presentation ||
+     r->pending_presentation ||
      r->active_shader>=0 || !r->alphablend || (r->blendmode && !destination_blend) ||
      r->alpha_test_enable || r->color_write_mask!=15u ||
      (destination_blend?(r->blend_equation<1 || r->blend_equation>5 ||
@@ -1006,6 +1006,12 @@ static int resident_surface_filtered(GmlRender *r,int surf,double dx,double dy,d
   for(int index=0;index<r->target_sp;index++)
     if(r->target_stack[index].fb==(surf==0?r->app_surface:r->surface[slot].px) &&
        r->target_stack[index].pending_fill) return 0;
+  /* A queued automatic presentation precedes this public GUI draw even when
+   * content has disabled future automatic draws. Reuse its established compositor;
+   * non-GUI and nonzero-camera variants retain their prior ordered CPU owner. */
+  if(r->pending_underlay &&
+     (surf!=0 || !gml_render_gui_transform_active(r) || r->cam_x!=0.0 || r->cam_y!=0.0 ||
+      !gml_render_compose_resident_underlay(r) || !r->resident_application_pass)) return 0;
   resource=surf==0?gml_render_application_resource_ensure(r):
                    gml_render_surface_resource_ensure(r,surf);
   if(!resource ||
