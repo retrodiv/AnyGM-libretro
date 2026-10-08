@@ -431,17 +431,17 @@ void gml_render_primitive_point(GmlRender *render,int x,int y,uint32_t color){
   gml_render_cpu_point(render,x,y,color);
 }
 
-static int resident_line_alpha_noop(GmlRender *render){
-  /* Every CPU line box uses the filled-rectangle leaf, which rejects this alpha
-   * before preparing a draw. Keep pending work and stale CPU pixels untouched;
-   * enabled destination-colour blends may still write at alpha zero. */
+static int resident_primitive_alpha_noop(GmlRender *render){
+  /* CPU line boxes and circle pixels reject this alpha before preparing a draw.
+   * Keep pending work and stale CPU pixels untouched; enabled destination-colour
+   * blends may still write at alpha zero. Only the qualified ports use this rule. */
   return render && render->resident_application_pass && render->alpha<=0.0 &&
     !(render->alphablend && gml_render_blend_uses_destination_colour(render->blendmode));
 }
 
 void gml_render_primitive_line(GmlRender *render,int x1,int y1,int x2,int y2,
                                uint32_t color,int width){
-  if(resident_line_alpha_noop(render)) return;
+  if(resident_primitive_alpha_noop(render)) return;
   if(resident_axis_line(render,x1,y1,x2,y2,color,width)) return;
   if(resident_line_integer(render,x1,y1,x2,y2,color,color,width)) return;
   gml_render_cpu_line(render,x1,y1,x2,y2,color,width);
@@ -449,7 +449,7 @@ void gml_render_primitive_line(GmlRender *render,int x1,int y1,int x2,int y2,
 
 void gml_render_primitive_line_color(GmlRender *render,int x1,int y1,int x2,int y2,
                                      uint32_t color1,uint32_t color2,int width){
-  if(resident_line_alpha_noop(render)) return;
+  if(resident_primitive_alpha_noop(render)) return;
   if(color1==color2 && resident_axis_line(render,x1,y1,x2,y2,color1,width)) return;
   if(resident_line_integer(render,x1,y1,x2,y2,color1,color2,width)) return;
   gml_render_cpu_line_color(render,x1,y1,x2,y2,color1,color2,width);
@@ -460,7 +460,7 @@ void gml_render_primitive_line_color_subpixel(GmlRender *render,
                                               double x2,double y2,
                                               uint32_t color1,uint32_t color2,
                                               int width){
-  if(resident_line_alpha_noop(render)) return;
+  if(resident_primitive_alpha_noop(render)) return;
   if(resident_line_subpixel(render,x1,y1,x2,y2,color1,color2,width)) return;
   gml_render_cpu_line_color_subpixel(render,x1,y1,x2,y2,color1,color2,width);
 }
@@ -494,6 +494,7 @@ void gml_render_primitive_rectangle_color(GmlRender *render,
 void gml_render_primitive_circle(GmlRender *render,
                                  int center_x,int center_y,int radius_x,int radius_y,
                                  uint32_t color,int outline){
+  if(resident_primitive_alpha_noop(render)) return;
   if(outline && resident_outline_circle(render,(double)center_x,(double)center_y,
                                         (double)radius_x,(double)radius_y,color,0)) return;
   if(!outline && resident_filled_circle(render,(double)center_x,(double)center_y,
@@ -506,6 +507,7 @@ void gml_render_primitive_circle_subpixel(GmlRender *render,
                                           double center_x,double center_y,
                                           double radius_x,double radius_y,
                                           uint32_t color,int outline){
+  if(resident_primitive_alpha_noop(render)) return;
   if(outline && resident_outline_circle(render,center_x,center_y,
                                         radius_x,radius_y,color,0)) return;
   if(!outline && resident_filled_circle(render,center_x,center_y,radius_x,radius_y,color)) return;
@@ -515,6 +517,7 @@ void gml_render_primitive_circle_subpixel(GmlRender *render,
 void gml_render_primitive_circle_color(GmlRender *render,
                                        int center_x,int center_y,int radius_x,int radius_y,
                                        uint32_t inner,uint32_t outer,int outline){
+  if(resident_primitive_alpha_noop(render)) return;
   if(outline && resident_outline_circle(render,(double)center_x,(double)center_y,
                                         (double)radius_x,(double)radius_y,
                                         inner==outer?inner:outer,inner!=outer)) return;
@@ -529,6 +532,7 @@ void gml_render_primitive_circle_color_subpixel(GmlRender *render,
                                                 double center_x,double center_y,
                                                 double radius_x,double radius_y,
                                                 uint32_t inner,uint32_t outer,int outline){
+  if(resident_primitive_alpha_noop(render)) return;
   if(outline && resident_outline_circle(render,center_x,center_y,radius_x,radius_y,
                                         inner==outer?inner:outer,inner!=outer)) return;
   if(!outline && inner==outer &&

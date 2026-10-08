@@ -145,7 +145,7 @@ DISPATCH_ADDITIONAL = {
 }
 DISPATCH_HELPERS = {
     "resident_flat_eligible_rule", "resident_flat_eligible", "resident_line_bounds",
-    "resident_line_alpha_noop",
+    "resident_primitive_alpha_noop",
     "resident_classify_page", "resident_identity_screen_gui",
     "resident_mapped_screen_gui_font", "resident_integer_text_scale",
     "resident_identity_gui_replacement",

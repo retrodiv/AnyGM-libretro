@@ -4481,7 +4481,19 @@ static int resident_rectangle_fill_noop(void){
   return 1;
 }
 
-static int resident_line_alpha_noop(void){
+static void circle_alpha_test_port(GmlRender *render,unsigned port,int outline,int degenerate){
+  double radius=degenerate?0.0:2.25;
+  if(port==0u) gml_render_primitive_circle(render,2,2,degenerate?0:2,degenerate?0:2,
+                                          0xabcdefu,outline);
+  else if(port==1u) gml_render_primitive_circle_subpixel(render,1.5,1.5,radius,radius,
+                                                        0xabcdefu,outline);
+  else if(port==2u) gml_render_primitive_circle_color(render,2,2,degenerate?0:2,
+                                                      degenerate?0:2,0xabcdefu,0x123456u,outline);
+  else gml_render_primitive_circle_color_subpixel(render,1.5,1.5,radius,radius,
+                                                  0xabcdefu,0x123456u,outline);
+}
+
+static int resident_primitive_alpha_noop_case(unsigned circles){
   for(unsigned screen=0;screen<2u;screen++) for(unsigned variant=0;variant<8u;variant++){
     GmlRender *cpu=calloc(1,sizeof *cpu),*gpu=calloc(1,sizeof *gpu);
     GmlWin content={.bytecode=15};
@@ -4492,6 +4504,12 @@ static int resident_line_alpha_noop(void){
     CHECK(cpu && gpu && !gml_render_init(cpu,NULL) && !gml_render_init(gpu,NULL));
     cpu->win=gpu->win=&content;
     gml_render_begin(cpu,cpu_pixels,4,4,0.0,0.0);
+    /* Circle pixels preserve alpha on the owned target but not on SCREEN.
+     * Compare like targets; the historical line reference stays unchanged. */
+    if(circles && !screen){
+      CHECK(gml_render_application_surface_ensure_owned(cpu,4,4));
+      CHECK(gml_render_begin_owned_application(cpu,0.0,0.0,0));
+    }
     CHECK(gml_render_application_surface_ensure_owned(gpu,4,4));
     gml_render_bind_device(gpu,&device);
     if(screen) CHECK(gml_render_begin_resident_base(gpu,screen_pixels,4,4,0.0,0.0));
@@ -4515,14 +4533,22 @@ static int resident_line_alpha_noop(void){
     int pending_fill=gpu->pending_fill;
     memcpy(shadow,gpu->fb,sizeof shadow);
     gml_render_resource_journal_metrics(resource,&before);
-    gml_render_primitive_line(cpu,-2,1,7,1,0xffffffu,2);
-    gml_render_primitive_line(gpu,-2,1,7,1,0xffffffu,2);
-    gml_render_primitive_line_color(cpu,0,3,3,0,0xffffffu,0x123456u,1);
-    gml_render_primitive_line_color(gpu,0,3,3,0,0xffffffu,0x123456u,1);
-    gml_render_primitive_line_color_subpixel(cpu,-0.5,2.75,4.5,1.25,
-                                            0xabcdefu,0x345678u,2);
-    gml_render_primitive_line_color_subpixel(gpu,-0.5,2.75,4.5,1.25,
-                                            0xabcdefu,0x345678u,2);
+    if(circles){
+      for(unsigned port=0;port<4u;port++) for(int outline=0;outline<2;outline++)
+      for(int degenerate=0;degenerate<2;degenerate++){
+        circle_alpha_test_port(cpu,port,outline,degenerate);
+        circle_alpha_test_port(gpu,port,outline,degenerate);
+      }
+    } else {
+      gml_render_primitive_line(cpu,-2,1,7,1,0xffffffu,2);
+      gml_render_primitive_line(gpu,-2,1,7,1,0xffffffu,2);
+      gml_render_primitive_line_color(cpu,0,3,3,0,0xffffffu,0x123456u,1);
+      gml_render_primitive_line_color(gpu,0,3,3,0,0xffffffu,0x123456u,1);
+      gml_render_primitive_line_color_subpixel(cpu,-0.5,2.75,4.5,1.25,
+                                              0xabcdefu,0x345678u,2);
+      gml_render_primitive_line_color_subpixel(gpu,-0.5,2.75,4.5,1.25,
+                                              0xabcdefu,0x345678u,2);
+    }
     gml_render_resource_journal_metrics(resource,&after);
     CHECK(gpu->resident_application_pass && gpu->pending_fill==pending_fill &&
           fake.submits==submits && fake.readbacks==reads && fake.uploads==uploads &&
@@ -4534,20 +4560,32 @@ static int resident_line_alpha_noop(void){
     /* Positive alpha still reaches the established CPU boundary in GUI/partial state. */
     cpu->alpha=gpu->alpha=0.5;cpu->blendmode=gpu->blendmode=0;
     cpu->alphablend=gpu->alphablend=1;cpu->color_write_mask=gpu->color_write_mask=15u;
-    gml_render_primitive_line_color_subpixel(cpu,0,1,3,1,0xffffffu,0xffffffu,2);
-    gml_render_primitive_line_color_subpixel(gpu,0,1,3,1,0xffffffu,0xffffffu,2);
+    if(circles){
+      gml_render_primitive_circle_color_subpixel(cpu,1.5,1.5,2.0,2.0,0xffffffu,0xffffffu,0);
+      gml_render_primitive_circle_color_subpixel(gpu,1.5,1.5,2.0,2.0,0xffffffu,0xffffffu,0);
+    } else {
+      gml_render_primitive_line_color_subpixel(cpu,0,1,3,1,0xffffffu,0xffffffu,2);
+      gml_render_primitive_line_color_subpixel(gpu,0,1,3,1,0xffffffu,0xffffffu,2);
+    }
     gml_render_flush_pending_fill(cpu);
+    if(circles && cpu->fb!=cpu_pixels) memcpy(cpu_pixels,cpu->fb,sizeof cpu_pixels);
     CHECK(!gpu->resident_application_pass && !memcmp(cpu_pixels,gpu->fb,sizeof cpu_pixels));
-    CHECK(cpu_pixels[4]!=0xff102030u);
+    CHECK(cpu_pixels[circles?5:4]!=0xff102030u);
     gml_render_free(cpu);gml_render_free(gpu);free(cpu);free(gpu);
   }
   for(int mode=GML_RENDER_BLEND_DEST_SOURCE_COLOUR;
-      mode<=GML_RENDER_BLEND_DEST_ALPHA_DEST_COLOUR;mode++) for(unsigned port=0;port<3u;port++){
+      mode<=GML_RENDER_BLEND_DEST_ALPHA_DEST_COLOUR;mode++)
+  for(unsigned port=0;port<(circles?4u:3u);port++)
+  for(unsigned shape=0;shape<(circles?4u:1u);shape++){
     GmlRender *cpu=calloc(1,sizeof *cpu),*gpu=calloc(1,sizeof *gpu);
     uint32_t pixels[16]={0};
     FakeDevice fake={0};GmlRenderDeviceServices device=service(&fake);
     CHECK(cpu && gpu && !gml_render_init(cpu,NULL) && !gml_render_init(gpu,NULL));
     gml_render_begin(cpu,pixels,4,4,0.0,0.0);
+    if(circles){
+      CHECK(gml_render_application_surface_ensure_owned(cpu,4,4));
+      CHECK(gml_render_begin_owned_application(cpu,0.0,0.0,0));
+    }
     CHECK(gml_render_application_surface_ensure_owned(gpu,4,4));
     gml_render_bind_device(gpu,&device);
     CHECK(gml_render_begin_resident_owned_application(gpu,0.0,0.0,0));
@@ -4555,15 +4593,29 @@ static int resident_line_alpha_noop(void){
     cpu->alpha=gpu->alpha=0.0;cpu->blendmode=gpu->blendmode=mode;
     for(unsigned side=0;side<2u;side++){
       GmlRender *r=side?gpu:cpu;
-      if(port==0u) gml_render_primitive_line(r,0,1,3,1,0xabcdefu,1);
+      if(circles) circle_alpha_test_port(r,port,(int)(shape&1u),(int)(shape>>1));
+      else if(port==0u) gml_render_primitive_line(r,0,1,3,1,0xabcdefu,1);
       else if(port==1u) gml_render_primitive_line_color(r,0,1,3,1,0xabcdefu,0x123456u,1);
       else gml_render_primitive_line_color_subpixel(r,0.0,1.0,3.0,1.0,0xabcdefu,0x123456u,1);
     }
+    if(circles) memcpy(pixels,cpu->fb,sizeof pixels);
     CHECK(!gpu->resident_application_pass && !memcmp(pixels,gpu->fb,sizeof pixels));
-    CHECK(pixels[4]!=0x80102030u);
+    if(circles){
+      int changed=0;
+      for(unsigned pixel=0;pixel<16u;pixel++) changed|=pixels[pixel]!=0x80102030u;
+      CHECK(changed);
+    } else CHECK(pixels[4]!=0x80102030u);
     gml_render_free(cpu);gml_render_free(gpu);free(cpu);free(gpu);
   }
   return 1;
+}
+
+static int resident_line_alpha_noop(void){
+  return resident_primitive_alpha_noop_case(0u);
+}
+
+static int resident_circle_alpha_noop(void){
+  return resident_primitive_alpha_noop_case(1u);
 }
 
 static int resident_unit_world_primitive_order(void){
@@ -9978,6 +10030,7 @@ int main(void){
   passed+=resident_zero_alpha_layer_fill_noop();
   passed+=resident_rectangle_fill_noop();
   passed+=resident_line_alpha_noop();
+  passed+=resident_circle_alpha_noop();
   passed+=resident_unit_world_primitive_order();
   passed+=resident_gradient_primitive_cpu_boundary();
   passed+=resident_particle_square_public_order();
@@ -10063,6 +10116,6 @@ int main(void){
   passed+=source_free_primitive_rect_replay();
   passed+=stretched_float_exact_replay();
   passed+=filtered_font_exact_recovery();
-  printf("render resource cases: passed=%d failed=%d\n",passed,141-passed);
-  return passed==141?EXIT_SUCCESS:EXIT_FAILURE;
+  printf("render resource cases: passed=%d failed=%d\n",passed,142-passed);
+  return passed==142?EXIT_SUCCESS:EXIT_FAILURE;
 }
