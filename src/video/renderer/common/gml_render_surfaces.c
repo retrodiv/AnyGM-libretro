@@ -900,7 +900,7 @@ void gml_draw_surface_stretched(GmlRender *r,int surf,double dx,double dy,
 static int resident_surface_filtered(GmlRender *r,int surf,double dx,double dy,double dw,double dh,
                                      uint32_t blend,double alpha){
   int slot=surface_slot(surf);
-  int source_width,source_height,unit,point_presentation;
+  int source_width,source_height,unit,point_presentation,unit_gui_blend;
   double left,top,width,height;
   GmlRenderResource *resource,*target;
   GmlRenderResourceSource source={0};
@@ -942,11 +942,36 @@ static int resident_surface_filtered(GmlRender *r,int surf,double dx,double dy,d
      (fabs(dw-(double)source_width*r->gui_scale_x)<=.001 &&
       fabs(dh-(double)source_height*r->gui_scale_y)<=.001 &&
       (fabs(dw-lround(dw))>=.001 || fabs(dh-lround(dh))>=.001)));
-  /* A full-width correction still belongs to its existing CPU geometry owner. */
+  /* Partial-alpha composition uses the ordinary leading-edge unit kernel,
+   * not the opaque GUI leaf's pixel-centre geometry. Admit only its corrected
+   * 1:1 extent; all nonunit point blends retain their existing owner. */
+  unit_gui_blend=surf==0 && r->win &&
+    anygm_policy_uses_first_generation_studio(r->win) &&
+    gml_render_gui_transform_active(r) && !r->target_sp && r->target_id<0 &&
+    !destination_blend && alpha<1.0 && !r->app_draw_enable &&
+    (blend&0xFFFFFFu)==0xFFFFFFu && surface_known_opaque(r,0);
+  /* Preserve the CPU compositor's source-aspect correction before preparing
+   * either GUI rectangle. A corrected unit draw needs no filtering even when
+   * interpolation is enabled. Other states retain their existing owner. */
   if(surf==0 && r->aspect_fullwidth && !r->target_sp &&
      source_width==r->aspect_wide_w && source_height==r->aspect_wide_h &&
-     dh>=(double)r->fbh*.75 && dw/dh+.01<(double)source_width/source_height)
-    return 0;
+     dh>=(double)r->fbh*.75 && dw/dh+.01<(double)source_width/source_height){
+    if((!point_presentation && !unit_gui_blend) || source_width<=0 || source_height<=0 ||
+       r->fbw<=0 || r->fbh<=0) return 0;
+    double scale=dh/(double)source_height;
+    double want_w=(double)source_width*scale;
+    if(want_w<=(double)r->fbw+.5){
+      dw=want_w;
+      dx=((double)r->fbw-dw)*.5+r->cam_x;
+    } else {
+      scale=(double)r->fbw/(double)source_width;
+      dw=(double)r->fbw;dh=(double)source_height*scale;
+      dx=r->cam_x;dy=((double)r->fbh-dh)*.5+r->cam_y;
+    }
+    left=floor(dx-r->cam_x);top=floor(dy-r->cam_y);
+    width=(double)lround(dw);height=(double)lround(dh);
+    if(!point_presentation && (width!=source_width || height!=source_height)) return 0;
+  }
   if(point_presentation){
     if(dw>16384.0 || dh>16384.0 || fabs(dx-r->cam_x)>16384.0 ||
        fabs(dy-r->cam_y)>16384.0) return 0;

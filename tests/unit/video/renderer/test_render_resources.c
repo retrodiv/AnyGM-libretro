@@ -47,6 +47,7 @@ typedef struct FakeDevice {
   uint32_t last_write_mask,last_filter,last_quantisation;
   double last_filtered_draw_alpha;
   GmlRenderDrawStateSnapshot last_quad_state;
+  GmlRenderQuad last_quad;
   GmlRenderImageRef last_target_image;
   GmlRenderRect last_target_region;
   GmlRenderDrawOp last_primitive;
@@ -97,6 +98,7 @@ static GmlRenderExecutionResult fake_submit(void *context,const GmlRenderDrawBat
       fake->last_quantisation=last->payload.quad.sampling.quantisation;
       fake->last_filtered_draw_alpha=last->payload.quad.filtered_draw_alpha;
       fake->last_quad_state=batch->states[last->state_index];
+      fake->last_quad=last->payload.quad;
     }
     if(last->opcode==GML_RENDER_OP_RECOVER_EMPTY_SCREEN){
       const GmlRenderQuad *q=&last->payload.quad;
@@ -7036,6 +7038,67 @@ static int resident_gui_application_composition(void){
   return 1;
 }
 
+static int resident_fullwidth_gui_application(void){
+  for(unsigned variant=0;variant<11u;variant++)
+  for(unsigned gui=0;gui<2u;gui++) for(unsigned camera=0;camera<2u;camera++){
+    GmlRender *render=calloc(1,sizeof *render);
+    GmlWin content={.bytecode=15};
+    FakeDevice fake={.on_demand=1};
+    GmlRenderDeviceServices device=service(&fake);
+    uint32_t screen[48*32]={0};
+    const int source_width=variant>=8u?48:variant==1u?8:6;
+    const int source_height=variant>=8u?32:4;
+    device.observe_on_demand=fake_observe_on_demand;
+    CHECK(render && gml_render_init(render,NULL)==0);
+    render->win=&content;
+    CHECK(gml_render_application_surface_ensure_owned(render,source_width,source_height));
+    gml_render_application_surface_publish(render);
+    gml_render_application_surface_set_draw_enabled(render,0);
+    render->app_surface_opaque=1;
+    render->aspect_fullwidth=1;
+    render->aspect_wide_w=source_width;render->aspect_wide_h=source_height;
+    for(int pixel=0;pixel<source_width*source_height;pixel++)
+      render->app_surface_owned[pixel]=0xFF1267B9u;
+    gml_render_bind_device(render,&device);
+    CHECK(gml_render_begin_resident_base(render,screen,48,32,0,0));
+    gml_render_gui_begin(render,48,32);
+    if(gui) gml_render_gui_set_size(render,24,16);
+    render->cam_x=camera?1.25:0.0;render->cam_y=camera?-.75:0.0;
+    gml_render_set_pending_fill(render,0x40123456u);
+    gml_render_flush_pending_fill(render);
+    CHECK(gml_render_scene_submit_pending(render));
+    render->interp=variant==5u || variant==8u;render->alphablend=1;
+    if(variant==7u) render->color_write_mask=7u;
+    const double dw=variant==2u || variant==9u?27:variant==3u?45:36;
+    const double dh=variant==2u || variant==9u?24:variant==3u?40:32;
+    const double dy=variant==10u?1.75:variant==2u?4:0;
+    const int submits=fake.submits,reads=fake.readbacks;
+    gml_draw_surface_stretched(render,0,(5.0+render->cam_x)/render->gui_scale_x,
+      (dy+render->cam_y)/render->gui_scale_y,dw/render->gui_scale_x,dh/render->gui_scale_y,
+      variant==6u?0x123456u:0xFFFFFFu,variant==10u?.002:variant==4u || variant>=8u?.7:1.0);
+    if(variant<4u || variant==8u || variant==10u){
+      CHECK(render->resident_application_pass && fake.submits==submits &&
+            fake.readbacks==reads && !render->pending_presentation);
+      CHECK(gml_render_scene_submit_pending(render) && fake.submits==submits+1 &&
+            fake.readbacks==reads && fake.last_batch_operations==1u &&
+            fake.last_filter==(variant>=8u?GML_RENDER_FILTER_NEAREST:
+                                         GML_RENDER_FILTER_HARDWARE_PIXEL_CENTRE_POINT));
+      const double x=variant==2u?6:0,y=variant==10u?1:variant==1u || variant==2u?4:0;
+      const double width=variant==2u?36:48,height=variant==1u || variant==2u?24:32;
+      CHECK(fake.last_quad.x[0]==x && fake.last_quad.y[0]==y &&
+            fake.last_quad.x[1]-fake.last_quad.x[0]==width &&
+            fake.last_quad.y[2]-fake.last_quad.y[0]==height);
+      if(variant<4u)
+        CHECK(fake.last_quad.inverse_anchor[0]==x &&
+              fake.last_quad.inverse_anchor[1]==y &&
+              fake.last_quad.inverse_x[0]==width && fake.last_quad.inverse_y[1]==height);
+    } else CHECK(!render->resident_application_pass && fake.readbacks>reads);
+    gml_render_gui_end(render);
+    gml_render_free(render);free(render);
+  }
+  return 1;
+}
+
 static int current_cpu_source_view_is_not_observer(void){
   uint32_t pixels[16],*writable=NULL;
   const uint32_t *observed=NULL;
@@ -9131,6 +9194,7 @@ int main(void){
   passed+=clipped_destination_surface_after_cpu_suffix();
   passed+=application_surface_pending_source_lifetime();
   passed+=resident_gui_application_composition();
+  passed+=resident_fullwidth_gui_application();
   passed+=current_cpu_source_view_is_not_observer();
   passed+=resident_current_cpu_application_underlay();
   passed+=resident_unregistered_cpu_application_underlay();
@@ -9165,6 +9229,6 @@ int main(void){
   passed+=source_free_primitive_rect_replay();
   passed+=stretched_float_exact_replay();
   passed+=filtered_font_exact_recovery();
-  printf("render resource cases: passed=%d failed=%d\n",passed,129-passed);
-  return passed==129?EXIT_SUCCESS:EXIT_FAILURE;
+  printf("render resource cases: passed=%d failed=%d\n",passed,130-passed);
+  return passed==130?EXIT_SUCCESS:EXIT_FAILURE;
 }
