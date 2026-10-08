@@ -888,7 +888,7 @@ static int resident_world_selection_case(void){
   REQUIRE(prepared_texture &&
           anygm_test_graphics_texture_width(prepared_texture)==(int)selected.engine->width &&
           anygm_test_graphics_texture_height(prepared_texture)==(int)selected.engine->height &&
-          anygm_test_graphics_scene_draw_calls()==0 && anygm_test_graphics_read_pixels()==0,
+          anygm_test_graphics_scene_draw_calls()==1 && anygm_test_graphics_read_pixels()==0,
           "GPU binding prepares extent capacity before the first frame without publishing pixels");
   REQUIRE(advance(plain.engine,1,NULL) && advance(selected.engine,1,NULL),
           "both world policies complete one frame");

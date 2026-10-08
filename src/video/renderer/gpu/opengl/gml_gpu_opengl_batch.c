@@ -1472,6 +1472,38 @@ cleanup:
   return outcome;
 }
 
+int gml_gpu_opengl_prepare_automatic_draw(GmlGpuBackend *backend,GLuint source_texture,
+                                          char *error,size_t error_capacity){
+  GmlRenderDrawOp operation={0};
+  GmlRenderDrawStateSnapshot state={0};
+  GlSceneImage target={.texture=backend->readback_texture,
+    .framebuffer=backend->readback_framebuffer,.width=1u,.height=1u,
+    .pixel_format=GML_RENDER_PIXEL_ARGB8888};
+  GlSceneImage source={.texture=source_texture,.width=1u,.height=1u,
+    .pixel_format=GML_RENDER_PIXEL_ARGB8888,.rendered_origin=1};
+  if(!source_texture || !target.texture || !target.framebuffer) return 0;
+  operation.opcode=GML_RENDER_OP_TEXTURED_QUAD;
+  operation.target.width=operation.target.height=1u;
+  GmlRenderQuad *quad=&operation.payload.quad;
+  quad->shape=GML_RENDER_QUAD_AXIS_ALIGNED;
+  quad->x[1]=quad->x[2]=quad->y[2]=quad->y[3]=1.0;
+  quad->u[1]=quad->u[2]=quad->v[2]=quad->v[3]=1.0;
+  quad->sampling=(GmlRenderSamplingPolicy){GML_RENDER_FILTER_NEAREST,
+    GML_RENDER_EDGE_CLAMP_SUBIMAGE,{0,0,1u,1u},GML_RENDER_QUANTISE_AUTOMATIC_SURFACE_MODERN,0u};
+  quad->source_opaque=1u;
+  for(unsigned corner=0;corner<4u;corner++) quad->corner_colour[corner]=0xFFFFFFFFu;
+  state.write_mask=15u;state.colour=0xFFFFFFFFu;state.alpha=255u;
+  state.rgb_source_factor=GML_RENDER_BLEND_SOURCE_ALPHA;
+  state.rgb_destination_factor=GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA;
+  state.alpha_source_factor=GML_RENDER_BLEND_ONE;
+  state.alpha_destination_factor=GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA;
+  state.rgb_equation=state.alpha_equation=GML_RENDER_BLEND_EXACT_AUTOMATIC_SURFACE;
+  /* Reuse the actual composition writer, including its private predecessor copy. Neither
+   * image is entered in the scene registry or given a content identity or authority. */
+  return draw_exact_quad(backend,&operation,&state,&target,&source,1u,NULL,
+                         error,error_capacity)>0;
+}
+
 int gml_render_gpu_opengl_apply_effect(GmlGpuBackend *backend,
                                        const GmlRenderDrawOp *operation,
                                        const GmlRenderDrawStateSnapshot *state,

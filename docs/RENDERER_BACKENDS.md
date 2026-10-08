@@ -21,9 +21,10 @@ GPU scene binding at load, Reset and context recreation prepares the common scen
 automatic-composition and fixed font programs, geometry handles and destination-copy capacity at the current
 engine extent through `gml_gpu_prepare_scene`. CPU scene selection does not call it.
 Preparation requires accessible owning-context dispatch. Once per context, it executes the existing
-terminal pipeline into a private 1x1 target and waits during preparation, not gameplay: linking alone
+terminal and automatic-composition pipelines into a private 1x1 target and waits during preparation, not gameplay: linking alone
 need not finish driver compilation. The real frontend target is restored, never written or read;
-the tiny upload and draw are counted, without scene-execution credit or published image authority.
+the tiny upload and both draws are counted, without scene-execution credit or published image authority.
+The composition writer reuses its ordered device-local predecessor copy, never a CPU observation.
 Repeated bindings reuse capacity; context loss forgets it. Content programs and larger future extents
 retain their existing demand-driven paths. Preparation failure is nonfatal and retains ordinary
 lazy retry. Raster rules, EXACT/TOLERANCE classifications and state bytes are unchanged.

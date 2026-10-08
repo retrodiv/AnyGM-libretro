@@ -170,6 +170,7 @@ int gml_gpu_opengl_prepare_presentation(GmlGpuBackend *backend,const GmlGpuConte
   GmlRenderPlan plan={0};
   uintptr_t frontend,private_target;
   GmlGpuContext private_context;
+  GLuint source_texture=0;
   int prepared;
   if(!backend || !backend->loaded || !context || !context->get_current_framebuffer) return 0;
   if(backend->presentation_prepared) return 1;
@@ -192,10 +193,16 @@ int gml_gpu_opengl_prepare_presentation(GmlGpuBackend *backend,const GmlGpuConte
   plan.operations[0]=(GmlPlanOp){.opcode=GML_PLAN_OP_PRESENT_CPU_FRAME,
     .destination={0,0,1u,1u},.alpha_write=255u};
   /* Linking alone may leave expensive driver compilation until the first draw. Execute the
-   * preserved terminal pipeline privately, and retire its work during preparation, never per frame.
+   * preserved terminal and automatic-composition writers privately, and retire their work during
+   * preparation, never per frame.
    * HOST_FRAMEBUFFER selects execution without the READBACK target's CPU observation. */
   prepared=gml_gpu_opengl_execute(backend,&private_context,&plan,counters,error,error_capacity) &&
-           gml_gpu_opengl_scene_wait(backend);
+           gml_gpu_opengl_upload_source(backend,&plan.images[0],counters,&source_texture,0) &&
+           gml_gpu_opengl_prepare_automatic_draw(backend,source_texture,error,error_capacity);
+  if(prepared){
+    if(counters) counters->draw_calls++;
+    prepared=gml_gpu_opengl_scene_wait(backend);
+  }
   /* The ordinary bounded mirror cache owns the tiny source until eviction or context loss.
    * It retains only identity/generation, never the borrowed CPU pointer. */
   backend->gl.BindFramebuffer(GL_FRAMEBUFFER,(GLuint)frontend);

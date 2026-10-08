@@ -11,6 +11,6 @@
 #include <stdint.h>
 
 /* Derived from 250 first-party sources. */
-#define ANYGM_PRODUCER_FINGERPRINT UINT64_C(0x56d60db32b265fa2)
+#define ANYGM_PRODUCER_FINGERPRINT UINT64_C(0x1802828879d29824)
 
 #endif

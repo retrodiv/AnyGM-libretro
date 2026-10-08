@@ -87,7 +87,7 @@ int gml_gpu_context_has_access_proof(const GmlGpu *gpu);
 int gml_gpu_context_is_current(const GmlGpu *gpu);
 
 /* Prepare fixed scene programs, geometry and destination-copy storage at a load boundary.
- * Requires current context access; one private terminal draw/wait warms the driver without reading
+ * Requires current context access; private terminal/composition draws warm the driver without reading
  * pixels or publishing an image. Repeated calls reuse resources; failure retains lazy retry. */
 int gml_gpu_prepare_scene(GmlGpu *gpu,uint32_t width,uint32_t height);
 
