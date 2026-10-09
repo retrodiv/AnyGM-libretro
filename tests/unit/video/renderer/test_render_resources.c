@@ -43,6 +43,8 @@ typedef struct FakeDevice {
   uint32_t max_texture_extent;
   uint64_t supported_operations;
   GmlRenderImageUpload last_upload;
+  uint8_t last_upload_rgba[4];
+  GmlRenderImageRef last_retired_image;
   double recovery_rect[4];
   uint32_t last_opcode,last_source_count,last_shader_identity;
   uint32_t last_write_mask,last_filter,last_quantisation;
@@ -69,6 +71,9 @@ static int fake_upload(void *context,const GmlRenderImageUpload *upload){
   if(fake_call_forbidden(fake)) return 0;
   fake->uploads++;
   if(upload) fake->last_upload=*upload;
+  if(upload && upload->bytes && upload->byte_capacity>=4u &&
+     upload->pixel_format==GML_RENDER_PIXEL_RGBA8888)
+    memcpy(fake->last_upload_rgba,upload->bytes,4u);
   return !fake->fail_upload && fake->uploads!=fake->fail_upload_at &&
     upload && upload->bytes && upload->byte_capacity;
 }
@@ -154,8 +159,8 @@ static int fake_readback(void *context,const GmlRenderImageReadback *readback){
 
 static void fake_retire(void *context,GmlRenderImageRef image){
   FakeDevice *fake=(FakeDevice*)context;
-  (void)image;
   if(fake_call_forbidden(fake)) return;
+  fake->last_retired_image=image;
   fake->retires++;
 }
 
@@ -8658,6 +8663,183 @@ static int resident_classic_nonphase_sprite_targets(void){
   return 1;
 }
 
+static uint8_t *runtime_unit_test_rgba(int width,int height,int frames,int binary){
+  size_t count=(size_t)width*height*frames;
+  uint8_t *bytes=malloc(count*4u);
+  if(!bytes) return NULL;
+  for(size_t index=0;index<count;index++){
+    bytes[index*4u]=(uint8_t)(31u+index*17u);
+    bytes[index*4u+1u]=(uint8_t)(43u+index*23u);
+    bytes[index*4u+2u]=(uint8_t)(59u+index*29u);
+    bytes[index*4u+3u]=binary && index%3u==1u?0u:255u;
+  }
+  return bytes;
+}
+
+static int resident_runtime_binary_unit_sprites(void){
+  const double positions[4][2]={{2,3},{-1,2},{7,7},{8,2}};
+  for(unsigned generation=0;generation<2u;generation++)
+  for(unsigned numbered=0;numbered<2u;numbered++)
+  for(unsigned binary=0;binary<2u;binary++)
+  for(unsigned placement=0;placement<4u;placement++){
+    GmlRender *render=calloc(1,sizeof *render);
+    GmlWin content={.classic_version=generation?810:600};
+    FakeDevice fake={.on_demand=1};
+    GmlRenderDeviceServices device=service(&fake);
+    GmlRenderJournalMetrics metrics={0};
+    uint32_t base[64],shadow[64];
+    CHECK(render && gml_render_init(render,NULL)==0);
+    render->classic=1;render->win=&content;
+    int sprite=gml_sprite_append_from_rgba_frames(render,
+      runtime_unit_test_rgba(3,2,2,(int)binary),3,2,2,1,1,NULL);
+    CHECK(sprite>=0 && render->spr[sprite].runtime_scene_binary);
+    for(unsigned index=0;index<64u;index++) base[index]=0xFF123456u;
+    gml_render_begin(render,base,8,8,0.25,-0.25);
+    int id=numbered?gml_surface_create(render,8,8):0;
+    if(numbered) CHECK(id>0);
+    device.observe_on_demand=fake_observe_on_demand;
+    gml_render_application_surface_bind(render,base,8,8,1);
+    gml_render_bind_device(render,&device);
+    CHECK(gml_render_begin_resident_base(render,base,8,8,0.25,-0.25));
+    if(numbered) CHECK(gml_surface_set_target(render,id));
+    memcpy(shadow,render->fb,sizeof shadow);
+    double camx=render->cam_x,camy=render->cam_y;
+    gml_draw_sprite_ext(render,sprite,0,3+camx,3+camy,1,1,0,0xFFFFFFu,1);
+    gml_draw_sprite_ext(render,sprite,-1,positions[placement][0]+1+camx,
+      positions[placement][1]+1+camy,1,1,0,0xFFFFFFu,1);
+    CHECK(render->resident_application_pass && !fake.submits && !fake.readbacks &&
+          !memcmp(shadow,render->fb,sizeof shadow));
+    CHECK(gml_render_scene_submit_pending(render) && fake.submits==1 &&
+          fake.last_batch_operations==(placement==3u?1u:2u) && !fake.readbacks);
+    CHECK(fake.last_batch_source_ids[0]==UINT32_C(0x80000000));
+    if(placement!=3u) CHECK(fake.last_batch_source_ids[1]==UINT32_C(0x80000001));
+    GmlRenderResource *resource=gml_render_scene_target_resource_ensure(render);
+    CHECK(resource);
+    gml_render_resource_journal_metrics(resource,&metrics);
+    CHECK(metrics.authority==GML_RENDER_RESOURCE_GPU_RESIDENT &&
+          metrics.cpu_version<metrics.logical_version && !metrics.cpu_replays &&
+          !metrics.journal_operations && !metrics.retained_mutable_bytes);
+    gml_render_abandon_device(render);gml_render_free(render);free(render);
+  }
+  for(unsigned exclusion=0;exclusion<9u;exclusion++){
+    GmlRender *render=calloc(1,sizeof *render);
+    GmlWin content={.classic_version=600};
+    FakeDevice fake={.on_demand=exclusion!=0u};
+    GmlRenderDeviceServices device=service(&fake);
+    uint32_t base[64]={0};
+    CHECK(render && gml_render_init(render,NULL)==0);
+    render->classic=1;render->win=&content;
+    uint8_t *rgba=runtime_unit_test_rgba(3,2,1,0);
+    CHECK(rgba);
+    if(exclusion==1u) rgba[3]=128;
+    int sprite=gml_sprite_append_from_rgba(render,rgba,3,2,0,0,NULL);
+    CHECK(sprite>=0);
+    if(exclusion==2u) render->spr[sprite].runtime_scene_binary=0;
+    device.observe_on_demand=fake_observe_on_demand;
+    gml_render_application_surface_bind(render,base,8,8,1);
+    gml_render_bind_device(render,&device);
+    CHECK(gml_render_begin_resident_base(render,base,8,8,0,0));
+    if(exclusion==3u) render->interp=1;
+    if(exclusion==4u) render->color_write_mask=7u;
+    gml_draw_sprite_ext(render,sprite,0,exclusion==5u?2.5:2.0,2.0,
+      exclusion==6u?2.0:1.0,1.0,exclusion==7u?17.0:0.0,
+      exclusion==8u?0xABCDEFu:0xFFFFFFu,1.0);
+    CHECK(!render->resident_application_pass && !render->spr[sprite].runtime_scene_used);
+    gml_render_free(render);free(render);
+  }
+  return 1;
+}
+
+static int runtime_sprite_scene_lifetimes(void){
+  GmlRender *render=calloc(1,sizeof *render);
+  FakeDevice fake={.on_demand=1};
+  GmlRenderDeviceServices device=service(&fake);
+  GmlWin content={.classic_version=600};
+  GmlRenderResourceSource one={0},same={0},other={0},renewed={0};
+  uint32_t base[64]={0};
+  CHECK(render && gml_render_init(render,NULL)==0);
+  render->classic=1;render->win=&content;
+  int sprite=gml_sprite_append_from_rgba_frames(render,
+    runtime_unit_test_rgba(3,2,2,1),3,2,2,0,0,NULL);
+  int second=gml_sprite_append_from_rgba(render,
+    runtime_unit_test_rgba(2,3,1,0),2,3,0,0,NULL);
+  CHECK(sprite>=0 && second>=0);
+  /* Replacement targets a base asset; extra assets exercise delete/reuse below. */
+  render->base_n_spr=1;
+  render->spr[sprite].runtime_extra=0;
+  gml_render_bind_device(render,&device);
+  size_t size=gml_render_state_size(render,0),written=0,again_written=0;
+  uint8_t *state=malloc(size),*again=malloc(size);
+  CHECK(state && again && gml_render_state_save(render,0,state,size,&written) && written==size);
+  CHECK(gml_render_runtime_sprite_scene_source_view(render,&render->spr[sprite],0,&one) &&
+        gml_render_runtime_sprite_scene_source_view(render,&render->spr[sprite],-2,&same) &&
+        gml_render_runtime_sprite_scene_source_view(render,&render->spr[second],0,&other));
+  CHECK(one.bytes==render->spr[sprite].runtime_rgba && one.borrowed_immutable &&
+        one.width==3u && one.height==2u && one.stride_bytes==12u && one.byte_capacity==24u &&
+        one.image.identity==UINT32_C(0x80000000) && one.image.incarnation &&
+        one.image.incarnation==same.image.incarnation &&
+        one.image.incarnation!=other.image.incarnation);
+  CHECK(gml_render_state_size(render,0)==size &&
+        gml_render_state_save(render,0,again,size,&again_written) && again_written==size &&
+        !memcmp(state,again,size));
+  device.observe_on_demand=fake_observe_on_demand;
+  gml_render_bind_device(render,&device);
+  gml_render_application_surface_bind(render,base,8,8,1);
+  CHECK(gml_render_begin_resident_base(render,base,8,8,0,0));
+  gml_draw_sprite_ext(render,sprite,1,2,2,1,1,0,0xFFFFFFu,1);
+  CHECK(render->resident_application_pass && !fake.submits);
+  uint8_t *old=render->spr[sprite].runtime_rgba;
+  uint8_t *replacement=runtime_unit_test_rgba(4,1,1,0);
+  CHECK(replacement);
+  fake.fail_upload=1;
+  CHECK(!gml_sprite_replace_from_rgba(render,sprite,replacement,4,1,0,0) &&
+        render->spr[sprite].runtime_rgba==old && !fake.retires &&
+        render->spr[sprite].runtime_scene_incarnation==one.image.incarnation);
+  fake.fail_upload=0;
+  CHECK(gml_sprite_replace_from_rgba(render,sprite,replacement,4,1,0,0) &&
+        fake.submits==1 && fake.retires==2 && !fake.readbacks &&
+        fake.last_upload_rgba[0]==(uint8_t)(31u+6u*17u) &&
+        fake.last_retired_image.incarnation==one.image.incarnation &&
+        !render->spr[sprite].runtime_scene_used);
+  CHECK(gml_render_runtime_sprite_scene_source_view(render,&render->spr[sprite],0,&renewed) &&
+        renewed.image.incarnation!=one.image.incarnation && renewed.width==4u && renewed.height==1u);
+  gml_draw_sprite_ext(render,sprite,0,2,2,1,1,0,0xFFFFFFu,1);
+  CHECK(gml_sprite_assign(render,sprite,second) && fake.submits==2 && fake.retires==3 &&
+        render->spr[sprite].w==2 && render->spr[sprite].h==3);
+  gml_draw_sprite_ext(render,sprite,0,2,2,1,1,0,0xFFFFFFu,1);
+  CHECK(gml_sprite_set_alpha_from_sprite(render,sprite,second) && fake.submits==3 &&
+        fake.retires==4 && !render->spr[sprite].runtime_scene_binary && !fake.readbacks);
+  CHECK(gml_sprite_assign(render,sprite,second));
+  gml_draw_sprite_ext(render,sprite,0,2,2,1,1,0,0xFFFFFFu,1);
+  size_t used=0;
+  CHECK(gml_render_state_load(render,state,size,&used) && used==size && fake.submits==4 &&
+        render->spr[sprite].w==3 && render->spr[sprite].h==2 &&
+        render->spr[sprite].n_frames==2 && render->spr[sprite].runtime_scene_binary &&
+        !render->spr[sprite].runtime_scene_used && !fake.readbacks);
+  CHECK(!render->resident_application_pass &&
+        gml_render_begin_resident_base(render,base,8,8,0,0));
+  gml_draw_sprite_ext(render,sprite,0,2,2,1,1,0,0xFFFFFFu,1);
+  CHECK(render->resident_application_pass);
+  gml_render_clear_runtime_sprites(render);
+  CHECK(render->n_spr==1 && !render->spr[sprite].runtime_rgba &&
+        fake.submits==5 && !fake.readbacks);
+  int reused=gml_sprite_append_from_rgba(render,runtime_unit_test_rgba(2,2,1,0),2,2,0,0,NULL);
+  CHECK(reused==second &&
+        gml_render_runtime_sprite_scene_source_view(render,&render->spr[reused],0,&renewed) &&
+        renewed.image.incarnation!=one.image.incarnation);
+  gml_draw_sprite_ext(render,reused,0,2,2,1,1,0,0xFFFFFFu,1);
+  gml_sprite_delete(render,reused);
+  CHECK(fake.submits==6 && !render->spr[reused].runtime_rgba);
+  int reused_again=gml_sprite_append_from_rgba(render,runtime_unit_test_rgba(2,2,1,0),2,2,0,0,NULL);
+  CHECK(reused_again==reused);
+  gml_draw_sprite_ext(render,reused_again,0,2,2,1,1,0,0xFFFFFFu,1);
+  int before=fake.submits;
+  gml_render_free(render);
+  CHECK(fake.submits==before+1 && !fake.readbacks);
+  free(render);free(state);free(again);
+  return 1;
+}
+
 static int resident_classic_clipped_sprite_noops(void){
   const double anchors[12][2]={{8.0,1.0},{1.0,8.0},{-2.0,1.0},{1.0,-2.0},
     {7.5,1.0},{1.0,7.5},{-2.5,1.0},{1.0,-2.5},
@@ -10626,6 +10808,8 @@ int main(void){
   passed+=resident_binary_atlas_sprite_gpu();
   passed+=resident_integer_scaled_atlas_sprite_gpu();
   passed+=resident_classic_nonphase_sprite_targets();
+  passed+=resident_runtime_binary_unit_sprites();
+  passed+=runtime_sprite_scene_lifetimes();
   passed+=resident_classic_clipped_sprite_noops();
   passed+=resident_classic_rotated_sprite_noops();
   passed+=resident_studio_unit_background_noops();
@@ -10657,6 +10841,6 @@ int main(void){
   passed+=source_free_primitive_rect_replay();
   passed+=stretched_float_exact_replay();
   passed+=filtered_font_exact_recovery();
-  printf("render resource cases: passed=%d failed=%d\n",passed,151-passed);
-  return passed==151?EXIT_SUCCESS:EXIT_FAILURE;
+  printf("render resource cases: passed=%d failed=%d\n",passed,153-passed);
+  return passed==153?EXIT_SUCCESS:EXIT_FAILURE;
 }

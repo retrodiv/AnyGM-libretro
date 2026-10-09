@@ -3,6 +3,7 @@
  */
 /* Existing runtime sprite/background image and collision-mask lifecycle. */
 #include "gml_render_internal.h"
+#include "gml_render_surfaces_internal.h"
 #include "gml_image_codec.h"
 #include "anygm_host.h"
 #include "anygm_vfs.h"
@@ -30,7 +31,51 @@ static void sprite_restore_base(GmlSprite *s){
   s->collision_kind=s->base_collision_kind; s->collision_tolerance=s->base_collision_tolerance;
   s->base_valid=0;
 }
-static void sprite_set_runtime_rgba(GmlSprite *s, uint8_t *rgba, int w, int h, int frames, int xorig, int yorig, int extra){
+int gml_render_runtime_sprite_scene_source_view(GmlRender *r,GmlSprite *sprite,int frame,
+                                                GmlRenderResourceSource *source){
+  if(source) memset(source,0,sizeof *source);
+  if(!r || !sprite || !source || !sprite->runtime_rgba ||
+     !sprite->runtime_scene_binary || sprite->w<=0 || sprite->h<=0 ||
+     sprite->w>4096 || sprite->h>4096 ||
+     sprite->n_frames<=0 || sprite->n_frames>4096) return 0;
+  uint64_t bytes=(uint64_t)(uint32_t)sprite->w*(uint32_t)sprite->h*4u;
+  if(bytes*(uint32_t)sprite->n_frames>SIZE_MAX) return 0;
+  int sub=gml_render_runtime_frame_index(sprite,frame);
+  if(!sprite->runtime_scene_incarnation){
+    sprite->runtime_scene_incarnation=gml_render_scene_incarnation_allocate();
+    if(!sprite->runtime_scene_incarnation) return 0;
+  }
+  /* A CPU-owned frame is immutable between the fenced mutations below. Keep
+   * each subframe distinct from packaged pages and from every replaced buffer. */
+  source->image=(GmlRenderImageRef){GML_RENDER_RESOURCE_ATLAS,
+    UINT32_C(0x80000000)|(uint32_t)sub,sprite->runtime_scene_incarnation,1u};
+  source->width=(uint32_t)sprite->w;source->height=(uint32_t)sprite->h;
+  source->pixel_format=GML_RENDER_PIXEL_RGBA8888;
+  source->stride_bytes=(uint32_t)sprite->w*4u;
+  source->byte_capacity=(size_t)bytes;source->bytes=runtime_frame_rgba(sprite,sub);
+  source->borrowed_immutable=1;
+  sprite->runtime_scene_used=1;
+  return 1;
+}
+
+int gml_render_runtime_sprite_scene_retire(GmlRender *r,GmlSprite *sprite){
+  if(!r || !sprite) return 0;
+  if(!sprite->runtime_scene_used) return 1;
+  /* Flush borrowed views before freeing bytes. A refused prefix leaves the
+   * old allocation alive; this is submission, not a synchronous CPU read. */
+  if(!gml_render_application_scene_flush(r)) return 0;
+  const GmlRenderDeviceServices *device=gml_render_device(r);
+  if(device && device->retire)
+    for(int sub=0;sub<sprite->n_frames;sub++)
+      device->retire(device->context,(GmlRenderImageRef){GML_RENDER_RESOURCE_ATLAS,
+        UINT32_C(0x80000000)|(uint32_t)sub,sprite->runtime_scene_incarnation,1u});
+  sprite->runtime_scene_used=0;
+  sprite->runtime_scene_incarnation=0;
+  return 1;
+}
+
+static int sprite_set_runtime_rgba(GmlRender *r,GmlSprite *s, uint8_t *rgba, int w, int h, int frames, int xorig, int yorig, int extra){
+  if(!gml_render_runtime_sprite_scene_retire(r,s)) return 0;
   if(frames<1) frames=1;
   if(!extra) sprite_backup(s);
   gml_render_sprite_cache_free(s);
@@ -50,6 +95,7 @@ static void sprite_set_runtime_rgba(GmlSprite *s, uint8_t *rgba, int w, int h, i
   s->runtime_owned=1;
   s->runtime_extra=extra;
   s->runtime_opaque=1;
+  s->runtime_scene_binary=0;
   s->w=w; s->h=h; s->originx=xorig; s->originy=yorig;
   s->n_frames=frames;
   s->ml=0; s->mt=0; s->mr=w>0?w-1:0; s->mb=h>0?h-1:0;
@@ -59,11 +105,13 @@ static void sprite_set_runtime_rgba(GmlSprite *s, uint8_t *rgba, int w, int h, i
   s->runtime_row_min=malloc(rows*sizeof(int));
   s->runtime_row_max=malloc(rows*sizeof(int));
   if(s->runtime_row_min && s->runtime_row_max){
+    s->runtime_scene_binary=1;
     for(int f=0; f<frames; f++) for(int yy=0; yy<h; yy++){
       int mn=w, mx=-1;
       const uint8_t *sp=rgba+((size_t)f*(size_t)w*(size_t)h+(size_t)yy*(size_t)w)*4;
       for(int xx=0; xx<w; xx++, sp+=4){
         if(sp[3]!=255) s->runtime_opaque=0;
+        if(sp[3]!=0 && sp[3]!=255) s->runtime_scene_binary=0;
         if(sp[3]){
           if(xx<mn) mn=xx;
           if(xx>mx) mx=xx;
@@ -76,6 +124,7 @@ static void sprite_set_runtime_rgba(GmlSprite *s, uint8_t *rgba, int w, int h, i
     free(s->runtime_row_min); free(s->runtime_row_max);
     s->runtime_row_min=NULL; s->runtime_row_max=NULL;
   }
+  return 1;
 }
 static void sprite_set_runtime_source(GmlSprite *s, const char *path, int imgnum, int removeback){
   if(!s) return;
@@ -133,7 +182,9 @@ int gml_sprite_append_from_rgba_frames(GmlRender *r, uint8_t *rgba, int w, int h
   }
   s->name=s->owned_name?s->owned_name:"<runtime-sprite>";
   r->spr_name_gen++;
-  sprite_set_runtime_rgba(s,rgba,w,h,frames,xorig,yorig,1);
+  if(!sprite_set_runtime_rgba(r,s,rgba,w,h,frames,xorig,yorig,1)){
+    free(rgba); return -1;
+  }
   return id;
 }
 int gml_sprite_append_from_rgba(GmlRender *r, uint8_t *rgba, int w, int h, int xorig, int yorig, const char *name){
@@ -227,7 +278,9 @@ int gml_sprite_assign(GmlRender *r,int destination,int source){
   uint8_t *mask=sprite_copy_collision_mask(src);
   if(src->mask && !mask){ free(rgba); return 0; }
   int extra=dst->runtime_extra;
-  sprite_set_runtime_rgba(dst,rgba,width,height,frames,src->originx,src->originy,extra);
+  if(!sprite_set_runtime_rgba(r,dst,rgba,width,height,frames,src->originx,src->originy,extra)){
+    free(mask);free(rgba);return 0;
+  }
   dst->ml=src->ml; dst->mt=src->mt; dst->mr=src->mr; dst->mb=src->mb;
   /* sprite_assign replaces the whole sprite asset.  Its independently authored collision plane
    * follows the visible frames; falling back to copied-frame alpha changes precise collisions. */
@@ -272,7 +325,9 @@ int gml_sprite_set_alpha_from_sprite(GmlRender *r, int sprite, int alpha_sprite)
     p[0]=dc[0];p[1]=dc[1];p[2]=dc[2];p[3]=(uint8_t)(((int)sc[0]+sc[1]+sc[2])/3);
   }
   int w=dst->w,h=dst->h,frames=dst->n_frames,xorig=dst->originx,yorig=dst->originy,extra=dst->runtime_extra;
-  sprite_set_runtime_rgba(dst,rgba,w,h,frames,xorig,yorig,extra);
+  if(!sprite_set_runtime_rgba(r,dst,rgba,w,h,frames,xorig,yorig,extra)){
+    free(rgba);return 0;
+  }
   return 1;
 }
 void gml_sprite_set_offset(GmlRender *r, int sprite, int xorig, int yorig){
@@ -454,8 +509,7 @@ int gml_sprite_add_file(GmlRender *r, const char *path, int imgnum, int removeba
 }
 int gml_sprite_replace_from_rgba_frames(GmlRender *r, int sprite, uint8_t *rgba, int w, int h, int frames, int xorig, int yorig){
   if(sprite<0 || sprite>=r->n_spr || !rgba || w<=0 || h<=0 || frames<=0) return 0;
-  sprite_set_runtime_rgba(&r->spr[sprite],rgba,w,h,frames,xorig,yorig,0);
-  return 1;
+  return sprite_set_runtime_rgba(r,&r->spr[sprite],rgba,w,h,frames,xorig,yorig,0);
 }
 int gml_sprite_replace_from_rgba(GmlRender *r, int sprite, uint8_t *rgba, int w, int h, int xorig, int yorig){
   return gml_sprite_replace_from_rgba_frames(r,sprite,rgba,w,h,1,xorig,yorig);
@@ -466,6 +520,7 @@ void gml_sprite_delete(GmlRender *r, int sprite){
   if(sprite<base) return;
   GmlSprite *s=&r->spr[sprite];
   if(!s->runtime_extra) return;
+  if(!gml_render_runtime_sprite_scene_retire(r,s)) return;
   gml_render_sprite_cache_free(s);
   gml_render_sprite_state_cache_clear(s);
   free(s->runtime_rgba);
@@ -529,6 +584,8 @@ int gml_sprite_collision_mask(GmlRender *r, int sprite, int sepmasks, int bboxmo
   return 1;
 }
 void gml_render_clear_runtime_sprites(GmlRender *r){
+  for(int i=0;i<r->n_spr;i++)
+    if(!gml_render_runtime_sprite_scene_retire(r,&r->spr[i])) return;
   int base=r->base_n_spr>0?r->base_n_spr:0;
   if(base>r->n_spr) base=r->n_spr;
   for(int i=0;i<base;i++){
@@ -538,6 +595,7 @@ void gml_render_clear_runtime_sprites(GmlRender *r){
     free(s->runtime_rgba); free(s->runtime_mask); free(s->runtime_row_min); free(s->runtime_row_max); free(s->runtime_source_path);
     s->runtime_rgba=NULL; s->runtime_mask=NULL; s->runtime_row_min=NULL; s->runtime_row_max=NULL; s->runtime_source_path=NULL; s->runtime_owned=0; s->runtime_extra=0;
     s->runtime_opaque=0;
+    s->runtime_scene_binary=0;
     s->runtime_source_imgnum=0; s->runtime_source_removeback=0;
     sprite_restore_base(s);
   }
@@ -639,6 +697,7 @@ void gml_render_materialize_scaled_pages(GmlRender *r){
       }
     }
     if(!ok){ free(rgba); continue; }
-    sprite_set_runtime_rgba(s,rgba,s->w,s->h,s->n_frames,s->originx,s->originy,0);
+    if(!sprite_set_runtime_rgba(r,s,rgba,s->w,s->h,s->n_frames,s->originx,s->originy,0))
+      free(rgba);
   }
 }

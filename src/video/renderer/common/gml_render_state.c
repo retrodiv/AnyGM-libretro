@@ -558,7 +558,12 @@ static int render_state_read(GmlRender *render,CoreR *s){
       }
       if(got<0){
         if(extra || id>=render->base_n_spr){
-          if(id>=0 && id<render->n_spr && render->spr[id].runtime_extra) gml_sprite_delete(render,id);
+          if(id>=0 && id<render->n_spr && render->spr[id].runtime_extra){
+            if(!gml_render_runtime_sprite_scene_retire(render,&render->spr[id])){
+              free(path);free(seen_runtime);s->ok=0;return 0;
+            }
+            gml_sprite_delete(render,id);
+          }
           got=gml_sprite_add_file(render,path,imgnum,removeback,ox,oy);
         } else {
           got=gml_sprite_replace_from_file(render,id,path,imgnum,removeback,0,ox,oy) ? id : -1;
@@ -607,7 +612,12 @@ static int render_state_read(GmlRender *render,CoreR *s){
              decoded!=bytes){ free(rgba);free(seen_runtime);s->ok=0;return 0; }
         }else cr_raw(s,rgba,bytes);
         if(extra || id>=render->base_n_spr){
-          if(id>=0 && id<render->n_spr && render->spr[id].runtime_extra) gml_sprite_delete(render,id);
+          if(id>=0 && id<render->n_spr && render->spr[id].runtime_extra){
+            if(!gml_render_runtime_sprite_scene_retire(render,&render->spr[id])){
+              free(rgba);free(seen_runtime);s->ok=0;return 0;
+            }
+            gml_sprite_delete(render,id);
+          }
           int got=gml_sprite_append_from_rgba_frames(render,rgba,w,h,frames,ox,oy,NULL);
           if(got!=id){ free(seen_runtime); s->ok=0; return 0; }
         } else if(!gml_sprite_replace_from_rgba_frames(render,id,rgba,w,h,frames,ox,oy)){
@@ -681,14 +691,22 @@ static int render_state_read(GmlRender *render,CoreR *s){
   int base=render->base_n_spr>0?render->base_n_spr:0;
   if(base>render->n_spr) base=render->n_spr;
   for(int i=render->n_spr-1;i>=base;i--)
-    if(render->spr[i].runtime_extra && (i>=seen_cap || !seen_runtime[i]))
+    if(render->spr[i].runtime_extra && (i>=seen_cap || !seen_runtime[i])){
+      if(!gml_render_runtime_sprite_scene_retire(render,&render->spr[i])){
+        free(seen_runtime);s->ok=0;return 0;
+      }
       gml_sprite_delete(render,i);
+    }
   for(int i=0;i<base;i++) if(render->spr[i].runtime_rgba && (i>=seen_cap || !seen_runtime[i])){
     GmlSprite *sp=&render->spr[i];
+    if(!gml_render_runtime_sprite_scene_retire(render,sp)){
+      free(seen_runtime);s->ok=0;return 0;
+    }
     gml_render_sprite_state_cache_clear(sp);
     free(sp->runtime_rgba); free(sp->runtime_mask); free(sp->runtime_row_min); free(sp->runtime_row_max); free(sp->runtime_source_path);
     sp->runtime_rgba=NULL; sp->runtime_mask=NULL; sp->runtime_row_min=NULL; sp->runtime_row_max=NULL; sp->runtime_source_path=NULL; sp->runtime_owned=0; sp->runtime_extra=0;
     sp->runtime_source_imgnum=0; sp->runtime_source_removeback=0;
+    sp->runtime_scene_binary=0;
   }
   free(seen_runtime);
   render->interp=cr_i32(s);

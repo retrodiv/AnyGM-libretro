@@ -917,6 +917,7 @@ void gml_render_free(GmlRender *r){
   }
   free(r->default_font.map); free(r->default_font.glyphs);
   for(int i=0;i<r->n_spr;i++){
+    (void)gml_render_runtime_sprite_scene_retire(r,&r->spr[i]);
     gml_render_sprite_cache_free(&r->spr[i]);
     gml_render_sprite_state_cache_clear(&r->spr[i]);
     gml_render_free_spine(r->spr[i].spine);

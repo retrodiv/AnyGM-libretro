@@ -108,6 +108,8 @@ typedef struct GmlSprite { const char *name; int originx, originy, w, h, n_frame
                  int collision_kind, collision_tolerance;
                  float playback_speed; int playback_speed_type, playback_speed_valid;
                  uint8_t *runtime_rgba; int runtime_owned, runtime_extra, runtime_opaque; char *owned_name;
+                 int runtime_scene_binary, runtime_scene_used;
+                 uint64_t runtime_scene_incarnation;
                  uint8_t *runtime_state_data; size_t runtime_state_size;
                  int runtime_state_cached; /* derived encoding, invalidated with pixel replacement */
                  int *runtime_row_min, *runtime_row_max;
@@ -772,6 +774,9 @@ void render_modern_cardinal_anchor(const GmlRender *r,double degrees,
                                    double xs,double ys,double cosine,double sine,
                                    double *x,double *y);
 const uint8_t *runtime_frame_rgba(GmlSprite *sprite,int frame);
+int gml_render_runtime_sprite_scene_source_view(GmlRender *r,GmlSprite *sprite,int frame,
+                                                GmlRenderResourceSource *source);
+int gml_render_runtime_sprite_scene_retire(GmlRender *r,GmlSprite *sprite);
 int gml_render_runtime_frame_index(GmlSprite *sprite,int frame);
 void gml_render_sprite_cache_free(GmlSprite *sprite);
 void gml_render_sprite_state_cache_clear(GmlSprite *sprite);

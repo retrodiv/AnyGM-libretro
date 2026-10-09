@@ -109,7 +109,8 @@ static int resident_atlas_crop_from_page(GmlRender *r,GmlTpag *page,
                                          int crop_x,int crop_y,int crop_width,int crop_height,
                                          double left,double top,double xs,double ys,
                                          GmlRenderSceneFamily family,uint32_t colour,
-                                         double draw_alpha,int physical_sprite_page);
+                                         double draw_alpha,int physical_sprite_page,
+                                         const GmlRenderResourceSource *source_override);
 static void modern_point_axis_prune(double leading,double scale,double phase_offset,
                                     int source_extent,double *start,double *extent);
 static int resident_modern_point_regions(GmlRender *r,GmlTpag *page,
@@ -290,15 +291,17 @@ static int resident_integer_sprite(GmlRender *r,GmlSprite *sprite,int subimg,
   return resident_atlas_crop_from_page(r,page,0,0,page->sw,page->sh,
                                        left,top,xs,ys,GML_RENDER_SCENE_SPRITE,blend,alpha,
                                        r->classic && (xs!=1.0 || ys!=1.0)?3:
-                                       !r->classic && !r->interp);
+                                       (!r->classic && !r->interp),NULL);
 }
 
 static int resident_atlas_crop_from_page(GmlRender *r,GmlTpag *page,
                                          int crop_x,int crop_y,int crop_width,int crop_height,
                                          double left,double top,double xs,double ys,
                                          GmlRenderSceneFamily family,uint32_t colour,
-                                         double draw_alpha,int physical_sprite_page){
+                                         double draw_alpha,int physical_sprite_page,
+                                         const GmlRenderResourceSource *source_override){
   GmlAtlas *atlas;
+  GmlAtlas runtime_atlas;
   GmlRenderResourceSource source={0};
   GmlRenderResource *target;
   GmlRenderDrawOp operation={0};
@@ -308,6 +311,21 @@ static int resident_atlas_crop_from_page(GmlRender *r,GmlTpag *page,
   double scaled_width,scaled_height,source_left,source_right,source_top,source_bottom;
   int checkpoint_alpha_background,checkpoint_alpha_text,checkpoint_alpha_sprite;
   int checkpoint_alpha_gui,checkpoint_integer_tile;
+  if(source_override && (!r || !page || !r->classic || r->interp ||
+     family!=GML_RENDER_SCENE_SPRITE || physical_sprite_page!=4 ||
+     xs!=1.0 || ys!=1.0 || colour!=0xFFFFFFu || draw_alpha!=1.0 ||
+     !page->scene_opaque_checked || !page->scene_binary_alpha ||
+     !source_override->borrowed_immutable || !source_override->bytes ||
+     source_override->image.resource_class!=GML_RENDER_RESOURCE_ATLAS ||
+     !(source_override->image.identity&UINT32_C(0x80000000)) ||
+     !source_override->image.incarnation || source_override->image.content_version!=1u ||
+     source_override->pixel_format!=GML_RENDER_PIXEL_RGBA8888 ||
+     source_override->width!=(uint32_t)page->sw ||
+     source_override->height!=(uint32_t)page->sh ||
+     source_override->width>4096u || source_override->height>4096u ||
+     source_override->stride_bytes!=source_override->width*4u ||
+     source_override->byte_capacity<(uint64_t)source_override->width*source_override->height*4u))
+    return 0;
   /* Mode 2 is only a separately proved depth-free orthographic crop. */
   int orthographic=physical_sprite_page==2;
   /* R03-SPR-CLASSIC-SCALED-NEAREST: preserve the CPU point phase and rounded
@@ -385,7 +403,7 @@ static int resident_atlas_crop_from_page(GmlRender *r,GmlTpag *page,
                       !r->device.context || !r->device.observe_on_demand ||
                       !r->device.observe_on_demand(r->device.context))) return 0;
   if(page->sw<=0 || page->sh<=0 || page->sx<0 || page->sy<0 ||
-     page->atlas<0 || page->atlas>=r->n_atlas ||
+     (!source_override && (page->atlas<0 || page->atlas>=r->n_atlas)) ||
      ((!physical_sprite_page || family!=GML_RENDER_SCENE_SPRITE ||
        r->classic || r->interp) &&
       (page->tw!=page->sw || page->th!=page->sh)) ||
@@ -399,9 +417,16 @@ static int resident_atlas_crop_from_page(GmlRender *r,GmlTpag *page,
      isfinite(left) && isfinite(top) && floor(left)==left && floor(top)==top &&
      (left>=r->fbw || top>=r->fbh ||
       left+(double)crop_width<=0.0 || top+(double)crop_height<=0.0)) return 1;
-  atlas=&r->atlas[page->atlas];
-  if(!gml_render_atlas_scene_source_view(r,page->atlas,&source) ||
-     ((integer_tile || integer_text) && (source.width>16384u || source.height>16384u)) ||
+  if(source_override){
+    source=*source_override;
+    runtime_atlas=(GmlAtlas){.px=(uint8_t*)source.bytes,
+      .w=(int)source.width,.h=(int)source.height};
+    atlas=&runtime_atlas;
+  } else {
+    atlas=&r->atlas[page->atlas];
+    if(!gml_render_atlas_scene_source_view(r,page->atlas,&source)) return 0;
+  }
+  if(((integer_tile || integer_text) && (source.width>16384u || source.height>16384u)) ||
      (uint64_t)(uint32_t)page->sx+(uint32_t)page->sw>source.width ||
      (uint64_t)(uint32_t)page->sy+(uint32_t)page->sh>source.height) return 0;
   resident_classify_page(page,atlas);
@@ -548,7 +573,7 @@ static int resident_atlas_crop_from_page(GmlRender *r,GmlTpag *page,
                          (uint32_t)crop_width,(uint32_t)crop_height};
   source_ref=source.image;
   operation.opcode=GML_RENDER_OP_TEXTURED_QUAD;
-  operation.reconstruction_mode=integer_text || checkpoint_integer_tile || classic_point || replace || checkpoint_alpha_background || checkpoint_alpha_text ||
+  operation.reconstruction_mode=source_override || integer_text || checkpoint_integer_tile || classic_point || replace || checkpoint_alpha_background || checkpoint_alpha_text ||
     checkpoint_alpha_sprite || checkpoint_alpha_gui ||
     colour!=0xFFFFFFu || draw_alpha<1.0
     ?GML_RENDER_DEVICE_CHECKPOINT:GML_RENDER_REPLAY_EXACT;
@@ -627,6 +652,44 @@ static int resident_atlas_crop_from_page(GmlRender *r,GmlTpag *page,
   return 1;
 }
 
+/* R03-SPR-RUNTIME-BINARY-UNIT: the existing crop packet consumes the actual
+ * immutable-between-mutations frame, never its stale packaged texture page. */
+static int resident_runtime_unit_sprite(GmlRender *r,GmlSprite *sprite,int subimg,
+                                        double x,double y,double xs,double ys,double rotation,
+                                        uint32_t colour,double alpha){
+  if(!r || !r->classic || !r->resident_application_pass || !sprite ||
+     !sprite->runtime_rgba || !sprite->runtime_scene_binary ||
+     sprite->spine || sprite->ns_enabled || r->interp || r->gui_pass_active ||
+     r->fog_flat || gml_d3_is_active(r) || r->active_shader>=0 ||
+     r->alpha_test_enable || !r->alphablend || r->blendmode ||
+     r->blend_equation!=1 || r->blend_equation_alpha!=1 || r->color_write_mask!=15u ||
+     r->classic_phase_y || r->rotated_batch_count || r->rotated_batch_building ||
+     r->pending_underlay || r->pending_presentation ||
+     (r->world_transform_active && (r->world_scale_x!=1.0 || r->world_scale_y!=1.0)) ||
+     !gml_render_scene_target_matches(r) || xs!=1.0 || ys!=1.0 || rotation!=0.0 ||
+     (colour&0xFFFFFFu)!=0xFFFFFFu || alpha!=1.0 ||
+     !isfinite(x) || !isfinite(y) || fabs(x)>65536.0 || fabs(y)>65536.0 ||
+     !isfinite(r->cam_x) || !isfinite(r->cam_y) ||
+     !r->device.context || !r->device.observe_on_demand ||
+     !r->device.observe_on_demand(r->device.context) ||
+     sprite->w<=0 || sprite->h<=0 || sprite->w>4096 || sprite->h>4096 ||
+     sprite->n_frames<=0 || sprite->n_frames>4096) return 0;
+  for(unsigned index=0;index<3u;index++)
+    if(r->classic_interp_phase[index] || r->app_interp_phase[index]) return 0;
+  double left=(x-r->cam_x)-sprite->originx,top=(y-r->cam_y)-sprite->originy;
+  if(!isfinite(left) || !isfinite(top) || fabs(left)>65536.0 || fabs(top)>65536.0 ||
+     floor(left)!=left || floor(top)!=top) return 0;
+  if(left>=r->fbw || top>=r->fbh || left+sprite->w<=0.0 || top+sprite->h<=0.0)
+    return 1;
+  GmlRenderResourceSource source={0};
+  if(!gml_render_runtime_sprite_scene_source_view(r,sprite,subimg,&source)) return 0;
+  GmlTpag page={.atlas=-1,.sw=sprite->w,.sh=sprite->h,.tw=sprite->w,.th=sprite->h,
+    .bw=sprite->w,.bh=sprite->h,.scene_opaque_checked=1,.scene_binary_alpha=1,
+    .scene_fully_opaque=sprite->runtime_opaque};
+  return resident_atlas_crop_from_page(r,&page,0,0,page.sw,page.sh,left,top,1.0,1.0,
+    GML_RENDER_SCENE_SPRITE,0xFFFFFFu,1.0,4,&source);
+}
+
 /* R03-SPR-CLASSIC-ORTHO: active fixed-function state need not imply depth work.
  * Keep the existing camera/trim producer and the ordinary opaque nearest batch. */
 static int resident_depth_free_ortho_sprite(GmlRender *r,int sprite,int subimg,
@@ -657,7 +720,7 @@ static int resident_depth_free_ortho_sprite(GmlRender *r,int sprite,int subimg,
      !gml_software3d_prepare_resident_sprite(r)) return 0;
   return resident_atlas_crop_from_page(r,page,0,0,page->sw,page->sh,
     rectangle[0],rectangle[1],rectangle[2],rectangle[3],
-    GML_RENDER_SCENE_SPRITE,colour,alpha,2);
+    GML_RENDER_SCENE_SPRITE,colour,alpha,2,NULL);
 }
 
 int gml_render_resident_atlas_crop(GmlRender *r,int page_index,
@@ -666,7 +729,7 @@ int gml_render_resident_atlas_crop(GmlRender *r,int page_index,
                                   GmlRenderSceneFamily family){
   if(!r || page_index<0 || page_index>=r->n_tpag) return 0;
   return resident_atlas_crop_from_page(r,&r->tpag[page_index],
-    crop_x,crop_y,crop_width,crop_height,left,top,xs,ys,family,0xFFFFFFu,1.0,0);
+    crop_x,crop_y,crop_width,crop_height,left,top,xs,ys,family,0xFFFFFFu,1.0,0,NULL);
 }
 
 /* R03-TEXT-CLASSIC-ORTHO: font layout stays with the text owner; the existing
@@ -683,7 +746,7 @@ int gml_render_resident_ortho_font_glyph(GmlRender *r,int atlas,int source_x,int
                 .tw=width,.th=height,.bw=width,.bh=height};
   return resident_atlas_crop_from_page(r,&page,0,0,width,height,
     rectangle[0],rectangle[1],rectangle[2],rectangle[3],
-    GML_RENDER_SCENE_TEXT,0xFFFFFFu,1,2);
+    GML_RENDER_SCENE_TEXT,0xFFFFFFu,1,2,NULL);
 }
 
 int gml_render_resident_font_glyph(GmlRender *r,int atlas,int source_x,int source_y,
@@ -692,7 +755,7 @@ int gml_render_resident_font_glyph(GmlRender *r,int atlas,int source_x,int sourc
   GmlTpag page={.atlas=atlas,.sx=source_x,.sy=source_y,.sw=width,.sh=height,
                 .tw=width,.th=height,.bw=width,.bh=height};
   return resident_atlas_crop_from_page(r,&page,0,0,width,height,left,top,xs,ys,
-                                       GML_RENDER_SCENE_TEXT,colour,alpha,0);
+                                       GML_RENDER_SCENE_TEXT,colour,alpha,0,NULL);
 }
 
 int gml_render_resident_atlas_page(GmlRender *r,int page_index,
@@ -2063,6 +2126,8 @@ void gml_render_sprite_ext_unmasked(GmlRender *r, int sprite, int subimg, double
       return;
     if(sprite>=0 && sprite<r->n_spr &&
        resident_depth_free_ortho_sprite(r,sprite,subimg,x,y,xs,ys,rot,blend,resident_alpha)) return;
+    if(r->classic && sprite>=0 && sprite<r->n_spr && r->spr[sprite].runtime_rgba &&
+       resident_runtime_unit_sprite(r,&r->spr[sprite],subimg,x,y,xs,ys,rot,blend,resident_alpha)) return;
     if(r->classic && rot!=0.0 && sprite>=0 && sprite<r->n_spr &&
        isfinite(alpha) && alpha>0.0 &&
        resident_classic_rotated_sprite_noop(r,&r->spr[sprite],subimg,x,y,xs,ys,rot)) return;
