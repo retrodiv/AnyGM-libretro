@@ -223,7 +223,11 @@ static void draw_text_real_plain(GmlRender *r, GmlFont *f, double x, double y, c
               r,f->atlas,g->sx,g->sy,g->w,g->h,
               glyph_x-r->cam_x,glyph_y-r->cam_y,xs,ys,glyph_blend,alpha);
           else if(!r->interp && (!f->runtime_owned || alpha==1.0) &&
-                  resident_integer_text_scale(xs,ys))
+                  (resident_integer_text_scale(xs,ys) ||
+                   (!f->runtime_owned && anygm_policy_has_modern_layer_semantics(r->win) &&
+                    r->target_id<0 && r->target_sp==0 &&
+                    isfinite(xs) && isfinite(ys) &&
+                    xs>=1.0 && xs<=4.0 && ys>=1.0 && ys<=4.0)))
             resident_glyph=gml_render_resident_font_glyph(r,f->atlas,g->sx,g->sy,
               g->w,g->h,glyph_x-r->cam_x,glyph_y-r->cam_y,xs,ys,glyph_blend,alpha);
         }

@@ -5582,6 +5582,82 @@ static int resident_integer_tile_clipping(int text){
   return 1;
 }
 
+static int resident_fractional_screen_font(void){
+  for(int excluded=0;excluded<16;excluded++) for(int world=0;world<2;world++){
+    GmlRender *render=calloc(1,sizeof *render);
+    GmlWin content={.bytecode=17};
+    FakeDevice fake={.on_demand=1};
+    GmlRenderDeviceServices device=service(&fake);
+    uint32_t screen[16*12],shadow[16*12];
+    const uint8_t rgba[16]={208,32,16,255,16,208,32,255,
+                           32,16,208,0,192,176,160,255};
+    CHECK(render && !gml_render_init(render,NULL));
+    render->win=&content;
+    free(render->atlas[0].px);
+    render->atlas[0].px=malloc(sizeof rgba);CHECK(render->atlas[0].px);
+    memcpy(render->atlas[0].px,rgba,sizeof rgba);
+    render->atlas[0].w=render->atlas[0].h=2;
+    GmlFont *font=&render->fonts[0];
+    render->font=0;render->n_fonts=1;
+    font->real=1;font->sprite=-1;font->atlas=0;
+    font->line_height=font->align_height=2;
+    free(font->glyphs);
+    font->glyphs=calloc(1,sizeof *font->glyphs);CHECK(font->glyphs);
+    font->n_glyphs=1;font->glyphs_sorted=1;
+    for(int index=0;index<256;index++) font->glyph_by_char[index]=-1;
+    font->glyph_by_char['A']=0;
+    font->glyphs[0]=(GmlGlyph){.w=2,.h=2,.shift=2,.ch='A'};
+    for(unsigned index=0;index<16*12;index++) screen[index]=0xA5ABCDEFu;
+    gml_render_application_surface_bind(render,screen,16,12,1);
+    device.observe_on_demand=fake_observe_on_demand;
+    gml_render_bind_device(render,&device);
+    CHECK(gml_render_begin_resident_base(render,screen,16,12,0,0));
+    memcpy(shadow,render->fb,sizeof shadow);
+    gml_render_set_pending_fill(render,0xFF123456u);
+    gml_draw_text(render,2,2,"A");
+    CHECK(render->resident_application_pass && !fake.readbacks);
+    int submits=fake.submits;
+    double xs=1.5,ys=1.25,alpha=1.0;
+    uint32_t colour=0xFFFFFFu;
+    if(excluded==1) fake.on_demand=0;
+    if(excluded==2) font->subpixel=1;
+    if(excluded==3){font->runtime_owned=1;render->atlas[0].runtime_font_page=1;}
+    if(excluded==4) render->atlas[0].px[3]=128;
+    if(excluded==5) alpha=0.5;
+    if(excluded==6) colour=0x112233u;
+    if(excluded==7) render->interp=1;
+    if(excluded==8) render->gui_pass_active=1;
+    if(excluded==9){int id=gml_surface_create(render,16,12);CHECK(id>0 && gml_surface_set_target(render,id));}
+    if(excluded==10) content.bytecode=15;
+    if(excluded==11) xs=4.25;
+    if(excluded==12) ys=0.5;
+    if(excluded==13) render->cam_x=0.25;
+    if(excluded==14) render->active_shader=0;
+    if(excluded==15) font->sdf_spread=1;
+    render->world_transform_active=world;
+    render->world_scale_x=4;render->world_scale_y=2;
+    double wx=world && excluded!=9?4.0:1.0,wy=world && excluded!=9?2.0:1.0;
+    gml_draw_text_transformed(render,-1.0/wx,-1.0/wy,"A",xs/wx,ys/wy,0,colour,alpha);
+    if(!excluded){
+      GmlRenderJournalMetrics metrics={0};
+      if(!render->resident_application_pass || fake.submits!=submits || fake.readbacks)
+        fprintf(stderr,"fractional font admission: world=%d resident=%d submits=%d/%d reads=%d\n",
+          world,render->resident_application_pass,fake.submits,submits,fake.readbacks);
+      CHECK(render->resident_application_pass && fake.submits==submits && !fake.readbacks);
+      CHECK(gml_render_scene_submit_pending(render));
+      gml_render_resource_journal_metrics(gml_render_scene_target_resource_ensure(render),&metrics);
+      CHECK(fake.last_batch_operations>=2u && !fake.readbacks &&
+            fake.last_filter==GML_RENDER_FILTER_NEAREST &&
+            metrics.authority==GML_RENDER_RESOURCE_GPU_RESIDENT && !metrics.cpu_replays &&
+            !metrics.journal_bytes && !metrics.retained_mutable_bytes &&
+            !memcmp(shadow,render->fb,sizeof shadow));
+    }else CHECK(!render->resident_application_pass);
+    render->world_transform_active=0;
+    gml_render_free(render);free(render);
+  }
+  return 1;
+}
+
 static int resident_integer_sprite_rounded_noop(void){
   for(int axis=0;axis<4;axis++) for(int inside=0;inside<2;inside++)
   for(int world=0;world<2;world++) for(int scale=2;scale<=4;scale+=2){
@@ -10854,6 +10930,7 @@ int main(void){
   passed+=resident_background_and_tile_cpu_barriers();
   passed+=resident_integer_tile_clipping(0);
   passed+=resident_integer_tile_clipping(1);
+  passed+=resident_fractional_screen_font();
   passed+=resident_integer_sprite_rounded_noop();
   passed+=atlas_scene_identity_and_retirement();
   passed+=immutable_font_scene_preparation();
@@ -10933,6 +11010,6 @@ int main(void){
   passed+=source_free_primitive_rect_replay();
   passed+=stretched_float_exact_replay();
   passed+=filtered_font_exact_recovery();
-  printf("render resource cases: passed=%d failed=%d\n",passed,154-passed);
-  return passed==154?EXIT_SUCCESS:EXIT_FAILURE;
+  printf("render resource cases: passed=%d failed=%d\n",passed,155-passed);
+  return passed==155?EXIT_SUCCESS:EXIT_FAILURE;
 }
