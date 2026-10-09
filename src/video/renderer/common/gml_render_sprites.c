@@ -2973,6 +2973,24 @@ void gml_draw_sprite_part_ext(GmlRender *r, int sprite, int subimg, double sx, d
           view.scene_fully_opaque=0;
           double left=mapped_x+(anchor_x-sx)*draw_xscale-r->cam_x;
           double top=mapped_y+(anchor_y-sy)*draw_yscale-r->cam_y;
+          /* R03-SPR-PART-OFFSCREEN-NOOP: the shared physical selection also
+           * bounds single-column/row crops. A whole-pixel separation from the
+           * target cannot write through the unchanged positive-unit CPU leaf. */
+          if(!r->classic && !r->interp && !r->gui_pass_active && !r->fog_flat &&
+             r->target_id<=0 && r->target_sp==0 &&
+             anygm_policy_uses_first_generation_studio(r->win) &&
+             r->active_shader<0 && !r->alpha_test_enable && r->alphablend &&
+             !r->blendmode && r->blend_equation==1 && r->blend_equation_alpha==1 &&
+             r->color_write_mask==15u && gml_render_scene_target_matches(r) &&
+             blend==0xFFFFFFu && alpha==1.0 &&
+             floor(sx)==sx && floor(sy)==sy && floor(sw)==sw && floor(sh)==sh &&
+             mapped_xs==1.0 && mapped_ys==1.0 &&
+             r->cam_x==floor(r->cam_x) && r->cam_y==floor(r->cam_y) &&
+             isfinite(left) && isfinite(top) &&
+             fabs(left)<=65536.0 && fabs(top)<=65536.0 &&
+             view.sw<=65536 && view.sh<=65536 &&
+             (left+(double)view.sw<=-1.0 || left>=(double)r->fbw+1.0 ||
+              top+(double)view.sh<=-1.0 || top>=(double)r->fbh+1.0)) return;
           if(r->interp){
             if(gml_render_resident_filtered_atlas_page(
                  r,page_index,left,top,mapped_xs,mapped_ys,
