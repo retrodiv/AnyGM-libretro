@@ -1875,6 +1875,84 @@ int gml_render_resident_filtered_font_glyph(GmlRender *r,int atlas,
                                       opaque_target_alpha,0,0,0,0);
 }
 
+/* Shared source-index regions retain the CPU's rotated coverage. Constant
+ * texel centres need only hardware nearest; no destination or float replay. */
+static int resident_modern_screen_binary_rotation(GmlRender *r,GmlSprite *sprite,GmlTpag *page,
+                                                  double x,double y,double xs,double ys,double rotation,
+                                                  uint32_t colour,double alpha){
+  enum { REGION_LIMIT=2048 };
+  GmlRenderResourceSource source={0};
+  GmlRenderRotatedCoverageRegion *regions=NULL;
+  GmlRenderDrawOp *operations=NULL;
+  GmlRenderDrawStateSnapshot state={0};
+  GmlRenderResource *target;
+  uint32_t count=0;
+  int accepted=0;
+  const GmlRenderDeviceServices *device=gml_render_device(r);
+  if(!device || !device->observe_on_demand || !device->observe_on_demand(device->context) ||
+     !r->resident_application_pass || r->target_id>=0 || r->target_sp || r->classic || r->interp ||
+     !anygm_policy_has_modern_layer_semantics(r->win) || gml_render_target_preserves_alpha(r) ||
+     alpha!=1.0 || (colour&0xFFFFFFu)!=0xFFFFFFu ||
+     r->fog_flat || r->gui_pass_active || r->active_shader>=0 || r->alpha_test_enable ||
+     !r->alphablend || r->blendmode || r->blend_equation!=1 || r->blend_equation_alpha!=1 ||
+     r->color_write_mask!=15u || r->classic_phase_y || r->rotated_batch_count ||
+     r->rotated_batch_building || r->pending_underlay || r->pending_presentation ||
+     !gml_render_scene_target_matches(r) || !isfinite(rotation) || fabs(rotation)>1000000.0 ||
+     page->project_authored_edges || page->sw<=0 || page->sh<=0 || page->sw>4096 || page->sh>4096 ||
+     page->sx<0 || page->sy<0 || page->tx<0 || page->ty<0 ||
+     (int64_t)page->tx+page->sw>page->bw || (int64_t)page->ty+page->sh>page->bh ||
+     !gml_render_atlas_scene_source_view(r,page->atlas,&source) || !source.borrowed_immutable ||
+     source.width>16384u || source.height>16384u ||
+     (uint64_t)(uint32_t)page->sx+(uint32_t)page->sw>source.width ||
+     (uint64_t)(uint32_t)page->sy+(uint32_t)page->sh>source.height) return 0;
+  for(int index=0;index<3;index++)
+    if(r->classic_interp_phase[index] || r->app_interp_phase[index]) return 0;
+  resident_classify_page(page,&r->atlas[page->atlas]);
+  if(!page->scene_binary_alpha) return 0;
+  regions=malloc(REGION_LIMIT*sizeof *regions);
+  if(!regions || !gml_render_rotated_nearest_texel_regions(r,sprite,page,x,y,xs,ys,rotation,
+       colour,regions,REGION_LIMIT,&count)) goto done;
+  if(!count){ accepted=1;goto done; }
+  operations=calloc(count,sizeof *operations);
+  if(!operations) goto done;
+  gml_render_flush_pending_fill(r);
+  if(r->pending_fill || !(target=gml_render_scene_target_resource_ensure(r))) goto done;
+  GmlRenderImageRef image=gml_render_application_scene_next_image_ref(r,target);
+  if(image.content_version>UINT64_MAX-count) goto done;
+  state.write_mask=15u;state.colour=0xFFFFFFFFu;state.alpha=255u;
+  /* The shared regions omit alpha-zero texels; the binary certificate makes
+   * every remaining texel fully opaque. Endpoint source-over is replacement. */
+  state.sampler_count=1u;
+  uint32_t tint=((colour&255u)<<16)|(colour&0xFF00u)|((colour>>16)&255u);
+  for(uint32_t index=0;index<count;index++){
+    const GmlRenderRect *rect=&regions[index].region;
+    GmlRenderDrawOp *op=&operations[index];
+    op->opcode=GML_RENDER_OP_TEXTURED_QUAD;op->reconstruction_mode=GML_RENDER_DEVICE_CHECKPOINT;
+    op->scene_family=GML_RENDER_SCENE_SPRITE;op->source_count=1u;op->sources=&source.image;
+    op->target.image=image;op->target.image.content_version+=index+1u;
+    op->target.storage_version=1u;op->target.width=(uint32_t)r->fbw;op->target.height=(uint32_t)r->fbh;
+    op->target.pixel_format=GML_RENDER_PIXEL_ARGB8888;
+    op->target.region=(GmlRenderRect){0,0,(uint32_t)r->fbw,(uint32_t)r->fbh};
+    GmlRenderQuad *quad=&op->payload.quad;
+    quad->shape=GML_RENDER_QUAD_AXIS_ALIGNED;
+    quad->sampling.filter=GML_RENDER_FILTER_NEAREST;
+    quad->sampling.edge_rule=GML_RENDER_EDGE_CLAMP_SUBIMAGE;
+    quad->sampling.source_region=(GmlRenderRect){page->sx,page->sy,(uint32_t)page->sw,(uint32_t)page->sh};
+    quad->x[0]=quad->x[3]=rect->x;quad->x[1]=quad->x[2]=(double)rect->x+rect->width;
+    quad->y[0]=quad->y[1]=rect->y;quad->y[2]=quad->y[3]=(double)rect->y+rect->height;
+    for(unsigned corner=0;corner<4u;corner++){
+      quad->corner_colour[corner]=0xFF000000u|tint;
+      quad->u[corner]=((double)page->sx+regions[index].source_x+0.5)/source.width;
+      quad->v[corner]=((double)page->sy+regions[index].source_y+0.5)/source.height;
+    }
+  }
+  state.samplers[0]=operations[0].payload.quad.sampling;
+  accepted=gml_render_application_scene_enqueue_quads(r,operations,count,&state,&source);
+  if(accepted){ r->fb_all_transparent=0;r->fb_opaque_known=0; }
+done:
+  free(operations);free(regions);return accepted;
+}
+
 static int resident_modern_nearest_rotation(GmlRender *r,GmlSprite *sprite,GmlTpag *page,
                                             double x,double y,double xs,double ys,double rotation,
                                             uint32_t colour,double alpha){
@@ -2026,8 +2104,11 @@ static int resident_filtered_sprite(GmlRender *r,GmlSprite *sprite,int subimg,
        r->target_id<0 && r->target_sp==0 && !gml_render_target_preserves_alpha(r) &&
        fabs((double)page->sw*xs*(double)page->sh*ys)>=131072.0)
       return resident_modern_nearest_rotation(r,sprite,page,x,y,xs,ys,0.0,blend,alpha);
-    if(rotation!=0.0 && anygm_policy_has_modern_layer_semantics(r->win))
+    if(rotation!=0.0 && anygm_policy_has_modern_layer_semantics(r->win)){
+      if(r->target_id<0 && r->target_sp==0)
+        return resident_modern_screen_binary_rotation(r,sprite,page,x,y,xs,ys,rotation,blend,alpha);
       return resident_modern_nearest_rotation(r,sprite,page,x,y,xs,ys,rotation,blend,alpha);
+    }
     /* R03-SPR-FIRSTGEN-NEAREST-REDUCE / R03-SPR-FIRSTGEN-NEAREST-MAG:
      * retain independent authored far-edge coverage and fractional point phase.
      * Enlarged device results additionally require witnessed on-demand observation. */
