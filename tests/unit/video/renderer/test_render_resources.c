@@ -5497,8 +5497,16 @@ static int resident_clipped_filtered_background_part_noop(void){
   return 1;
 }
 
-static int resident_integer_tile_clipping(void){
-  for(int scale=2;scale<=8;scale++) for(int world=0;world<2;world++)
+static void integer_clip_subject(GmlRender *render,int text,int world,int scale){
+  if(text) gml_draw_text_transformed(render,world?-0.25:-1.0,world?-0.25:-1.0,"A",
+    world?scale/4.0:scale,world?scale/4.0:scale,0.0,0u,1.0);
+  else gml_draw_background_tile(render,0,0,0,2,2,world?-0.25:-1.0,
+    world?-0.25:-1.0,world?scale/4.0:scale,world?scale/4.0:scale,
+    0,0,0,0xFFFFFFu,1);
+}
+
+static int resident_integer_tile_clipping(int text){
+  for(int scale=2;scale<=(text?4:8);scale++) for(int world=0;world<2;world++)
   for(int observed=0;observed<2;observed++){
     GmlRender *render=calloc(1,sizeof *render);
     FakeDevice fake={.on_demand=observed};
@@ -5517,15 +5525,23 @@ static int resident_integer_tile_clipping(void){
     memcpy(render->atlas[0].px,rgba,sizeof rgba);
     render->atlas[0].w=render->atlas[0].h=2;
     render->tpag[0]=(GmlTpag){.sw=2,.sh=2,.tw=2,.th=2,.bw=2,.bh=2};
+    if(text){
+      GmlFont *font=&render->fonts[0];render->font=0;render->n_fonts=1;
+      font->real=1;font->sprite=-1;font->atlas=0;
+      font->line_height=font->align_height=2;
+      font->glyphs=calloc(1,sizeof *font->glyphs);CHECK(font->glyphs);
+      font->n_glyphs=1;font->glyphs_sorted=1;
+      for(int index=0;index<256;index++) font->glyph_by_char[index]=-1;
+      font->glyph_by_char['A']=0;
+      font->glyphs[0]=(GmlGlyph){.w=2,.h=2,.shift=2,.ch='A'};
+    }
     render->color_write_mask=15u;render->alpha=1;
     CHECK(gml_render_begin_owned_application(render,0,0,0));
     gml_render_set_pending_fill(render,0xFF123456u);
     gml_draw_background(render,0,2,2);
     render->world_transform_active=world;
     render->world_scale_x=render->world_scale_y=4;
-    gml_draw_background_tile(render,0,0,0,2,2,world?-0.25:-1.0,
-      world?-0.25:-1.0,world?scale/4.0:scale,world?scale/4.0:scale,
-      0,0,0,0xFFFFFFu,1);
+    integer_clip_subject(render,text,world,scale);
     render->world_transform_active=0;
     memcpy(expected,render->app_surface_owned,sizeof expected);
     for(int pixel=0;pixel<16;pixel++) render->app_surface_owned[pixel]=0xA5ABCDEFu;
@@ -5538,9 +5554,7 @@ static int resident_integer_tile_clipping(void){
     int submits=fake.submits;
     render->world_transform_active=world;
     render->world_scale_x=render->world_scale_y=4;
-    gml_draw_background_tile(render,0,0,0,2,2,world?-0.25:-1.0,
-      world?-0.25:-1.0,world?scale/4.0:scale,world?scale/4.0:scale,
-      0,0,0,0xFFFFFFu,1);
+    integer_clip_subject(render,text,world,scale);
     render->world_transform_active=0;
     if(fake.readbacks) fprintf(stderr,"integer tile authority: scale=%d world=%d observed=%d resident=%d reads=%d interp=%d classic=%d\n",
       scale,world,observed,render->resident_application_pass,fake.readbacks,render->interp,render->classic);
@@ -5558,6 +5572,59 @@ static int resident_integer_tile_clipping(void){
             !memcmp(shadow,render->app_surface_owned,sizeof shadow));
     }else CHECK(!render->resident_application_pass &&
                !memcmp(expected,render->app_surface_owned,sizeof expected));
+    gml_render_free(render);free(render);
+  }
+  return 1;
+}
+
+static int resident_integer_sprite_rounded_noop(void){
+  for(int axis=0;axis<4;axis++) for(int inside=0;inside<2;inside++)
+  for(int world=0;world<2;world++) for(int scale=2;scale<=4;scale+=2){
+    GmlRender *render=calloc(1,sizeof *render);
+    FakeDevice fake={.on_demand=1};
+    GmlRenderDeviceServices device=service(&fake);
+    uint32_t prior[256];
+    CHECK(render && !gml_render_init(render,NULL));
+    CHECK(gml_render_application_surface_ensure_owned(render,16,16));
+    render->tpag=calloc(1,sizeof *render->tpag);
+    render->spr=calloc(1,sizeof *render->spr);
+    render->bg=calloc(1,sizeof *render->bg);
+    CHECK(render->tpag && render->spr && render->bg);
+    render->n_tpag=render->n_spr=render->n_bg=1;
+    free(render->atlas[0].px);
+    render->atlas[0].px=malloc(16);CHECK(render->atlas[0].px);
+    memset(render->atlas[0].px,255,16);
+    render->atlas[0].w=render->atlas[0].h=2;
+    render->tpag[0]=(GmlTpag){.sw=2,.sh=2,.tw=2,.th=2,.bw=2,.bh=2};
+    render->spr[0]=(GmlSprite){.w=2,.h=2,.originx=1,.originy=1,.n_frames=1};
+    render->spr[0].frame=calloc(1,sizeof(int));CHECK(render->spr[0].frame);
+    double left=2,top=2,edge=inside?0.51:0.49;
+    if(axis==0) left=16-edge;
+    if(axis==1) left=-2*scale+edge;
+    if(axis==2) top=16-edge;
+    if(axis==3) top=-2*scale+edge;
+    CHECK(gml_render_begin_owned_application(render,0,0,0));
+    gml_render_set_pending_fill(render,0xFF123456u);
+    gml_draw_background(render,0,7,7);
+    memcpy(prior,render->fb,sizeof prior);
+    render->world_transform_active=world;
+    render->world_scale_x=render->world_scale_y=4;
+    gml_draw_sprite_ext(render,0,0,(left+scale)/(world?4:1),
+      (top+scale)/(world?4:1),scale/(world?4.0:1),scale/(world?4.0:1),0,0xFFFFFFu,1);
+    CHECK((memcmp(prior,render->fb,sizeof prior)!=0)==inside);
+    render->world_transform_active=0;
+    device.observe_on_demand=fake_observe_on_demand;
+    gml_render_bind_device(render,&device);
+    CHECK(gml_render_begin_resident_owned_application(render,0,0,0));
+    gml_render_set_pending_fill(render,0xFF123456u);
+    gml_draw_background(render,0,7,7);
+    int submits=fake.submits;
+    render->world_transform_active=world;
+    render->world_scale_x=render->world_scale_y=4;
+    gml_draw_sprite_ext(render,0,0,(left+scale)/(world?4:1),
+      (top+scale)/(world?4:1),scale/(world?4.0:1),scale/(world?4.0:1),0,0xFFFFFFu,1);
+    if(inside) CHECK(!render->resident_application_pass);
+    else CHECK(render->resident_application_pass && fake.submits==submits && !fake.readbacks);
     gml_render_free(render);free(render);
   }
   return 1;
@@ -10422,7 +10489,9 @@ int main(void){
   passed+=resident_zero_alpha_sprite_part_noop();
   passed+=resident_clipped_filtered_background_part_noop();
   passed+=resident_background_and_tile_cpu_barriers();
-  passed+=resident_integer_tile_clipping();
+  passed+=resident_integer_tile_clipping(0);
+  passed+=resident_integer_tile_clipping(1);
+  passed+=resident_integer_sprite_rounded_noop();
   passed+=atlas_scene_identity_and_retirement();
   passed+=immutable_font_scene_preparation();
   passed+=immutable_sprite_font_scene_preparation();
@@ -10497,6 +10566,6 @@ int main(void){
   passed+=source_free_primitive_rect_replay();
   passed+=stretched_float_exact_replay();
   passed+=filtered_font_exact_recovery();
-  printf("render resource cases: passed=%d failed=%d\n",passed,148-passed);
-  return passed==148?EXIT_SUCCESS:EXIT_FAILURE;
+  printf("render resource cases: passed=%d failed=%d\n",passed,150-passed);
+  return passed==150?EXIT_SUCCESS:EXIT_FAILURE;
 }
