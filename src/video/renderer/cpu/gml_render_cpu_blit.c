@@ -5209,6 +5209,21 @@ static int rotated_geometry_prepare(GmlRender *r,GmlSprite *spr,GmlTpag *t,
   return 1;
 }
 
+int gml_render_rotated_sprite_is_clipped(GmlRender *r,GmlSprite *spr,GmlTpag *t,
+                                        double x,double y,double xs,double ys,double rot){
+  GmlRotatedGeometry geometry;
+  if(!r || !spr || !t || !isfinite(x) || !isfinite(y) ||
+     !isfinite(xs) || !isfinite(ys) || !isfinite(rot) || xs==0.0 || ys==0.0 ||
+     !isfinite(1.0/xs) || !isfinite(1.0/ys) ||
+     fabs(1.0/xs)>16384.0 || fabs(1.0/ys)>16384.0 ||
+     t->atlas<0 || t->atlas>=r->n_atlas || !atlas_pixels(r,t->atlas)) return 0;
+  GmlAtlas *atlas=&r->atlas[t->atlas];
+  if(t->sx<0 || t->sy<0 || t->sw<=0 || t->sh<=0 ||
+     (uint64_t)(uint32_t)t->sx+(uint32_t)t->sw>(uint32_t)atlas->w ||
+     (uint64_t)(uint32_t)t->sy+(uint32_t)t->sh>(uint32_t)atlas->h) return 0;
+  return rotated_geometry_prepare(r,spr,t,atlas,x,y,xs,ys,rot,0,1,&geometry)==0;
+}
+
 static int rotated_nearest_regions(GmlRender *r,GmlSprite *spr,GmlTpag *t,
                                        double x,double y,double xs,double ys,double rot,
                                        GmlRenderRotatedCoverageRegion *regions,

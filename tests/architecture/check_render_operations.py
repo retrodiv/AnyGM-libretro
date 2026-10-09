@@ -84,6 +84,7 @@ REQUIRED_RULES = {
     "R03-GUI-UNIT-SOURCEOVER",
     "R03-SPR-CLASSIC-SIGNED-NOOP",
     "R03-SPR-CLASSIC-SCALED-NEAREST",
+    "R03-SPR-CLASSIC-ROTATED-NOOP",
     "R03-SPR-FIRSTGEN-NEAREST-REDUCE", "R03-SPR-FIRSTGEN-NEAREST-MAG",
     "R03-SPR-MODERN-NEAREST",
     "R03-SPR-MODERN-SCREEN-POINT",
@@ -154,6 +155,7 @@ DISPATCH_HELPERS = {
     "resident_classify_page", "resident_identity_screen_gui",
     "resident_mapped_screen_gui_font", "resident_integer_text_scale",
     "resident_identity_gui_replacement",
+    "resident_classic_rotated_sprite_noop",
     "gml_render_resident_application_cpu_barrier",
 }
 DISPATCH_DEFERRED = {"render_present_first_generation", "render_present_content_shader"}

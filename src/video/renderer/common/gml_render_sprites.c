@@ -156,6 +156,37 @@ static int resident_identity_gui_replacement(const GmlRender *r,double xs,double
          r->device.context && r->device.observe_on_demand &&
          r->device.observe_on_demand(r->device.context);
 }
+static int resident_classic_rotated_sprite_noop(GmlRender *r,GmlSprite *sprite,int subimg,
+                                               double x,double y,double xs,double ys,double rotation){
+  if(!r || !r->classic || !r->resident_application_pass || !sprite ||
+     sprite->runtime_rgba || sprite->spine || sprite->ns_enabled ||
+     sprite->n_frames<=0 || !sprite->frame || sprite->w<=0 || sprite->h<=0 ||
+     r->interp || r->gui_pass_active || r->fog_flat || gml_d3_is_active(r) ||
+     r->active_shader>=0 || r->alpha_test_enable || !r->alphablend || r->blendmode ||
+     r->blend_equation!=1 || r->blend_equation_alpha!=1 || r->color_write_mask!=15u ||
+     r->classic_phase_y || r->rotated_batch_count || r->rotated_batch_building ||
+     r->pending_underlay || r->pending_presentation ||
+     (r->world_transform_active && (r->world_scale_x!=1.0 || r->world_scale_y!=1.0)) ||
+     !gml_render_scene_target_matches(r) ||
+     !isfinite(x) || !isfinite(y) || fabs(x)>65536.0 || fabs(y)>65536.0 ||
+     !isfinite(xs) || !isfinite(ys) || xs<=0.0 || ys<=0.0 || xs>4.0 || ys>4.0 ||
+     !isfinite(rotation) || rotation==0.0) return 0;
+  for(unsigned index=0;index<3u;index++)
+    if(r->classic_interp_phase[index] || r->app_interp_phase[index]) return 0;
+  int sub=gml_render_runtime_frame_index(sprite,subimg),page_index=sprite->frame[sub];
+  if(page_index<0 || page_index>=r->n_tpag) return 0;
+  GmlTpag *page=&r->tpag[page_index];
+  if(page->tx<0 || page->ty<0 || page->sw<=0 || page->sh<=0 ||
+     page->sw>4096 || page->sh>4096 ||
+     (uint64_t)(uint32_t)page->tx+(uint32_t)page->sw>(uint32_t)sprite->w ||
+     (uint64_t)(uint32_t)page->ty+(uint32_t)page->sh>(uint32_t)sprite->h) return 0;
+  /* R03-SPR-CLASSIC-ROTATED-NOOP: the unchanged CPU rotation owns the
+   * conservative bounds, including trim, origin, camera and its safety rim.
+   * An empty result preserves the queued prefix without sampling a target,
+   * executing a shader or claiming a visible GPU rotation. */
+  return gml_render_rotated_sprite_is_clipped(r,sprite,page,x,y,xs,ys,rotation);
+}
+
 static int resident_integer_sprite(GmlRender *r,GmlSprite *sprite,int subimg,
                                   double x,double y,double xs,double ys,double rotation,
                                   uint32_t blend,double alpha){
@@ -2032,6 +2063,9 @@ void gml_render_sprite_ext_unmasked(GmlRender *r, int sprite, int subimg, double
       return;
     if(sprite>=0 && sprite<r->n_spr &&
        resident_depth_free_ortho_sprite(r,sprite,subimg,x,y,xs,ys,rot,blend,resident_alpha)) return;
+    if(r->classic && rot!=0.0 && sprite>=0 && sprite<r->n_spr &&
+       isfinite(alpha) && alpha>0.0 &&
+       resident_classic_rotated_sprite_noop(r,&r->spr[sprite],subimg,x,y,xs,ys,rot)) return;
     if(sprite>=0 && sprite<r->n_spr &&
        resident_integer_sprite(r,&r->spr[sprite],subimg,x,y,xs,ys,rot,blend,resident_alpha)) return;
     if(sprite>=0 && sprite<r->n_spr &&
