@@ -3368,6 +3368,107 @@ void gml_render_sprite_tiled_ext_unmasked(GmlRender *r, int sprite, int subimg,
 	      gml_render_cpu_blit_with_phase(r,t,xx+t->tx*xs,yy+t->ty*ys,xs,ys,blend,alpha,0,0);
 }
 
+/* R03-LAYER-TRIMMED-UNIT: prepare the entire immutable cell run before enqueue.
+ * Logical repeat periods and physical trim are independent; clipped cells do
+ * not force a prefix flush or acquire destination pixels. */
+static int resident_modern_trimmed_unit_layer(GmlRender *r,GmlSprite *sprite,int subimg,
+  double x,double y,double xs,double ys,uint32_t colour,double alpha,int htiled,int vtiled){
+  enum { CELL_LIMIT=256 };
+  GmlRenderResourceSource source={0};
+  GmlRenderDrawStateSnapshot state={0};
+  GmlRenderDrawOp *operations=NULL;
+  GmlRenderResource *target;
+  const GmlRenderDeviceServices *device=gml_render_device(r);
+  int accepted=0;
+  uint32_t count=0;
+  if(!r || !sprite || !device || !device->observe_on_demand ||
+     !device->observe_on_demand(device->context) || !r->resident_application_pass ||
+     r->classic || r->interp || !anygm_policy_has_modern_layer_semantics(r->win) ||
+     r->gui_pass_active || r->fog_flat || gml_d3_is_active(r) || r->active_shader>=0 ||
+     r->alpha_test_enable || !r->alphablend || r->blendmode || r->blend_equation!=1 ||
+     r->blend_equation_alpha!=1 || r->color_write_mask!=15u || r->classic_phase_y ||
+     r->rotated_batch_count || r->rotated_batch_building || r->pending_underlay ||
+     r->pending_presentation || !gml_render_scene_target_matches(r) ||
+     xs!=1.0 || ys!=1.0 || colour!=0xFFFFFFu || alpha!=1.0 ||
+     !isfinite(x) || !isfinite(y) || !isfinite(r->cam_x) || !isfinite(r->cam_y) ||
+     sprite->runtime_rgba || sprite->spine || sprite->ns_enabled || !sprite->frame ||
+     sprite->n_frames<=0 || sprite->w<=0 || sprite->h<=0 ||
+     sprite->w>4096 || sprite->h>4096 || r->fbw<=0 || r->fbh<=0 ||
+     r->fbw>16384 || r->fbh>16384) return 0;
+  for(int index=0;index<3;index++)
+    if(r->classic_interp_phase[index] || r->app_interp_phase[index]) return 0;
+  int page_index=sprite->frame[gml_render_runtime_frame_index(sprite,subimg)];
+  if(page_index<0 || page_index>=r->n_tpag) return 0;
+  GmlTpag *page=&r->tpag[page_index];
+  if((!page->tx && !page->ty) || page->tx<0 || page->ty<0 || page->project_authored_edges ||
+     page->bw!=sprite->w || page->bh!=sprite->h || page->sw<=0 || page->sh<=0 ||
+     page->tw!=page->sw || page->th!=page->sh || page->sx<0 || page->sy<0 ||
+     (int64_t)page->tx+page->sw>sprite->w || (int64_t)page->ty+page->sh>sprite->h ||
+     (uint64_t)(uint32_t)page->sw*(uint32_t)page->sh>65536u ||
+     !gml_render_atlas_scene_source_view(r,page->atlas,&source) || !source.borrowed_immutable ||
+     source.width>16384u || source.height>16384u || r->atlas[page->atlas].runtime_font_page ||
+     (uint64_t)(uint32_t)page->sx+(uint32_t)page->sw>source.width ||
+     (uint64_t)(uint32_t)page->sy+(uint32_t)page->sh>source.height) return 0;
+  double ax=round(x-r->cam_x),ay=round(y-r->cam_y),x0=ax,y0=ay;
+  if(!isfinite(ax) || !isfinite(ay) || fabs(ax)>65536.0 || fabs(ay)>65536.0) return 0;
+  if(htiled){x0=fmod(ax,sprite->w);if(x0>0.0) x0-=sprite->w;}
+  if(vtiled){y0=fmod(ay,sprite->h);if(y0>0.0) y0-=sprite->h;}
+  double xe=htiled?r->fbw:x0+sprite->w,ye=vtiled?r->fbh:y0+sprite->h;
+  double nx=htiled?ceil((xe-x0)/sprite->w):1.0;
+  double ny=vtiled?ceil((ye-y0)/sprite->h):1.0;
+  if(nx<1.0 || ny<1.0 || nx>CELL_LIMIT || ny>CELL_LIMIT || nx*ny>CELL_LIMIT) return 0;
+  resident_classify_page(page,&r->atlas[page->atlas]);
+  if(!page->scene_binary_alpha) return 0;
+  operations=calloc((size_t)(nx*ny),sizeof *operations);
+  if(!operations) return 0;
+  for(double yy=y0;yy<ye;yy+=sprite->h) for(double xx=x0;xx<xe;xx+=sprite->w){
+    double left=xx+page->tx,top=yy+page->ty;
+    double right=left+page->sw,bottom=top+page->sh;
+    if(left>=r->fbw || top>=r->fbh || right<=0.0 || bottom<=0.0) continue;
+    double clipped_left=fmax(left,0.0),clipped_top=fmax(top,0.0);
+    double clipped_right=fmin(right,r->fbw),clipped_bottom=fmin(bottom,r->fbh);
+    GmlRenderDrawOp *op=&operations[count++];
+    op->opcode=GML_RENDER_OP_TEXTURED_QUAD;op->reconstruction_mode=GML_RENDER_DEVICE_CHECKPOINT;
+    op->scene_family=GML_RENDER_SCENE_SPRITE;op->source_count=1u;op->sources=&source.image;
+    op->target.storage_version=1u;op->target.width=(uint32_t)r->fbw;op->target.height=(uint32_t)r->fbh;
+    op->target.pixel_format=GML_RENDER_PIXEL_ARGB8888;
+    op->target.region=(GmlRenderRect){0,0,(uint32_t)r->fbw,(uint32_t)r->fbh};
+    GmlRenderQuad *quad=&op->payload.quad;
+    quad->shape=GML_RENDER_QUAD_AXIS_ALIGNED;quad->sampling.filter=GML_RENDER_FILTER_NEAREST;
+    quad->sampling.edge_rule=GML_RENDER_EDGE_CLAMP_SUBIMAGE;
+    quad->sampling.source_region=(GmlRenderRect){page->sx,page->sy,(uint32_t)page->sw,(uint32_t)page->sh};
+    quad->x[0]=quad->x[3]=clipped_left;quad->x[1]=quad->x[2]=clipped_right;
+    quad->y[0]=quad->y[1]=clipped_top;quad->y[2]=quad->y[3]=clipped_bottom;
+    for(unsigned corner=0;corner<4u;corner++){
+      quad->corner_colour[corner]=0xFFFFFFFFu;
+      quad->u[corner]=((double)page->sx+((corner==1u || corner==2u)?clipped_right:clipped_left)-left)/source.width;
+      quad->v[corner]=((double)page->sy+(corner>=2u?clipped_bottom:clipped_top)-top)/source.height;
+    }
+  }
+  if(!count){accepted=1;goto done;}
+  gml_render_flush_pending_fill(r);
+  if(r->pending_fill || !(target=gml_render_scene_target_resource_ensure(r))) goto done;
+  GmlRenderImageRef image=gml_render_application_scene_next_image_ref(r,target);
+  if(image.content_version>UINT64_MAX-count) goto done;
+  for(uint32_t index=0;index<count;index++){
+    operations[index].target.image=image;
+    operations[index].target.image.content_version+=index+1u;
+  }
+  state.write_mask=15u;state.colour=0xFFFFFFFFu;state.alpha=255u;state.sampler_count=1u;
+  state.samplers[0]=operations[0].payload.quad.sampling;
+  if(!page->scene_fully_opaque){
+    state.rgb_source_factor=GML_RENDER_BLEND_SOURCE_ALPHA;
+    state.rgb_destination_factor=GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA;
+    state.alpha_source_factor=GML_RENDER_BLEND_ONE;
+    state.alpha_destination_factor=GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA;
+    state.rgb_equation=state.alpha_equation=GML_RENDER_BLEND_ADD;
+  }
+  accepted=gml_render_application_scene_enqueue_quads(r,operations,count,&state,&source);
+  if(accepted){r->fb_all_transparent=0;r->fb_opaque_known=0;}
+done:
+  free(operations);return accepted;
+}
+
 /* Background layers are not sprite instances.  Their x/y is the top-left of the logical sprite
  * cell, irrespective of the sprite's authored origin, and horizontal/vertical tiling are separate
  * switches.  Routing them through draw_sprite_tiled_ext used the instance origin and repeated on
@@ -3382,6 +3483,7 @@ void gml_draw_layer_background_sprite(GmlRender *r, int sprite, int subimg, doub
        gml_render_blend_uses_destination_colour(r->blendmode)))) return;
   GmlSprite *s=&r->spr[sprite]; if(s->n_frames<=0) return;
   double bw=s->w*fabs(xs), bh=s->h*fabs(ys); if(bw<=0 || bh<=0) return;
+  if(resident_modern_trimmed_unit_layer(r,s,subimg,x,y,xs,ys,blend,alpha,htiled,vtiled)) return;
   if(r->resident_application_pass && !r->interp &&
      ((!htiled && !vtiled) || (xs==1.0 && ys==1.0)) &&
      xs>0.0 && ys>0.0 && blend==0xFFFFFFu && alpha==1.0 &&
