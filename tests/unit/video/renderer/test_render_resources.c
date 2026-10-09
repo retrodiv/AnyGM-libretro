@@ -8676,6 +8676,97 @@ static uint8_t *runtime_unit_test_rgba(int width,int height,int frames,int binar
   return bytes;
 }
 
+static int resident_classic_unit_tiles(void){
+  const double positions[5][2]={{2,3},{-1,2},{7,7},{8,2},{2,-2}};
+  for(unsigned generation=0;generation<2u;generation++)
+  for(unsigned numbered=0;numbered<2u;numbered++)
+  for(unsigned binary=0;binary<2u;binary++)
+  for(unsigned placement=0;placement<5u;placement++)
+  for(unsigned port=0;port<2u;port++){
+    GmlRender *render=calloc(1,sizeof *render);
+    GmlWin content={.classic_version=generation?810:600};
+    FakeDevice fake={.on_demand=1};
+    GmlRenderDeviceServices device=service(&fake);
+    GmlRenderJournalMetrics metrics={0};
+    uint32_t base[64],shadow[64];
+    const uint8_t rgba[16]={208,32,16,255,16,208,32,255,
+                            32,16,208,255,192,176,160,255};
+    CHECK(render && gml_render_init(render,NULL)==0);
+    render->classic=1;render->win=&content;
+    free(render->atlas[0].px);
+    render->atlas[0].px=malloc(sizeof rgba);
+    CHECK(render->atlas[0].px);
+    memcpy(render->atlas[0].px,rgba,sizeof rgba);
+    if(binary) render->atlas[0].px[7]=0;
+    render->atlas[0].w=render->atlas[0].h=2;
+    render->tpag=calloc(1,sizeof *render->tpag);
+    render->bg=calloc(1,sizeof *render->bg);
+    CHECK(render->tpag && render->bg);
+    render->n_tpag=render->n_bg=1;
+    render->tpag[0]=(GmlTpag){.sw=2,.sh=2,.tw=2,.th=2,.bw=2,.bh=2};
+    for(unsigned index=0;index<64u;index++) base[index]=0xFF123456u;
+    gml_render_begin(render,base,8,8,0.25,-0.25);
+    int id=numbered?gml_surface_create(render,8,8):0;
+    if(numbered) CHECK(id>0);
+    device.observe_on_demand=fake_observe_on_demand;
+    gml_render_application_surface_bind(render,base,8,8,1);
+    gml_render_bind_device(render,&device);
+    CHECK(gml_render_begin_resident_base(render,base,8,8,0.25,-0.25));
+    if(numbered) CHECK(gml_surface_set_target(render,id));
+    memcpy(shadow,render->fb,sizeof shadow);
+    double camx=render->cam_x,camy=render->cam_y;
+    gml_draw_background_tile(render,0,0,0,2,2,3+camx,3+camy,1,1,0,0,0,0xFFFFFFu,1);
+    double x=positions[placement][0]+camx,y=positions[placement][1]+camy;
+    if(port) gml_draw_tile(render,0,0,0,2,2,x,y);
+    else gml_draw_background_tile(render,0,0,0,2,2,x,y,1,1,0,0,0,0xFFFFFFu,1);
+    /* Only the selected-source port may clip an overrun to an empty source. */
+    if(!port) gml_draw_background_tile(render,0,2,0,2,2,1+camx,1+camy,1,1,0,0,0,0xFFFFFFu,1);
+    CHECK(render->resident_application_pass && !fake.submits && !fake.readbacks &&
+          !memcmp(shadow,render->fb,sizeof shadow));
+    CHECK(gml_render_scene_submit_pending(render) && fake.submits==1 &&
+          fake.last_batch_operations==(placement>=3u?1u:2u) && !fake.readbacks);
+    GmlRenderResource *resource=gml_render_scene_target_resource_ensure(render);
+    CHECK(resource);
+    gml_render_resource_journal_metrics(resource,&metrics);
+    CHECK(metrics.authority==GML_RENDER_RESOURCE_GPU_RESIDENT &&
+          metrics.cpu_version<metrics.logical_version && !metrics.cpu_replays &&
+          !metrics.journal_operations && !metrics.retained_mutable_bytes);
+    gml_render_abandon_device(render);gml_render_free(render);free(render);
+  }
+  for(unsigned exclusion=0;exclusion<10u;exclusion++){
+    GmlRender *render=calloc(1,sizeof *render);
+    GmlWin content={.classic_version=600};
+    FakeDevice fake={.on_demand=exclusion!=0u};
+    GmlRenderDeviceServices device=service(&fake);
+    uint32_t base[64]={0};
+    CHECK(render && gml_render_init(render,NULL)==0);
+    render->classic=1;render->win=&content;
+    free(render->atlas[0].px);
+    render->atlas[0].px=malloc(16u);
+    render->tpag=calloc(1,sizeof *render->tpag);
+    render->bg=calloc(1,sizeof *render->bg);
+    CHECK(render->atlas[0].px && render->tpag && render->bg);
+    memset(render->atlas[0].px,255,16u);
+    if(exclusion==1u) render->atlas[0].px[3]=128;
+    render->atlas[0].w=render->atlas[0].h=2;
+    render->n_tpag=render->n_bg=1;
+    render->tpag[0]=(GmlTpag){.sw=2,.sh=2,.tw=2,.th=2,.bw=2,.bh=2};
+    device.observe_on_demand=fake_observe_on_demand;
+    gml_render_application_surface_bind(render,base,8,8,1);
+    gml_render_bind_device(render,&device);
+    CHECK(gml_render_begin_resident_base(render,base,8,8,0,0));
+    if(exclusion==2u) render->interp=1;
+    if(exclusion==3u) render->color_write_mask=7u;
+    if(exclusion==9u){render->world_transform_active=1;render->world_scale_x=2;}
+    gml_draw_background_tile(render,0,0,0,2,2,exclusion==4u?2.5:2.0,2.0,
+      exclusion==5u?2.0:1.0,1.0,exclusion==6u,0,0,
+      exclusion==7u?0xABCDEFu:0xFFFFFFu,exclusion==8u?0.5:1.0);
+    CHECK(!render->resident_application_pass);
+    gml_render_free(render);free(render);
+  }
+  return 1;
+}
+
 static int resident_runtime_binary_unit_sprites(void){
   const double positions[4][2]={{2,3},{-1,2},{7,7},{8,2}};
   for(unsigned generation=0;generation<2u;generation++)
@@ -10809,6 +10900,7 @@ int main(void){
   passed+=resident_integer_scaled_atlas_sprite_gpu();
   passed+=resident_classic_nonphase_sprite_targets();
   passed+=resident_runtime_binary_unit_sprites();
+  passed+=resident_classic_unit_tiles();
   passed+=runtime_sprite_scene_lifetimes();
   passed+=resident_classic_clipped_sprite_noops();
   passed+=resident_classic_rotated_sprite_noops();
@@ -10841,6 +10933,6 @@ int main(void){
   passed+=source_free_primitive_rect_replay();
   passed+=stretched_float_exact_replay();
   passed+=filtered_font_exact_recovery();
-  printf("render resource cases: passed=%d failed=%d\n",passed,153-passed);
-  return passed==153?EXIT_SUCCESS:EXIT_FAILURE;
+  printf("render resource cases: passed=%d failed=%d\n",passed,154-passed);
+  return passed==154?EXIT_SUCCESS:EXIT_FAILURE;
 }

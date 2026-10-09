@@ -341,6 +341,17 @@ static int resident_atlas_crop_from_page(GmlRender *r,GmlTpag *page,
     xs==floor(xs) && ys==floor(ys) && isfinite(left) && isfinite(top) &&
     floor(left)==left && floor(top)==top && fabs(left)<=65536.0 && fabs(top)<=65536.0 &&
     (double)crop_width*xs<=65536.0 && (double)crop_height*ys<=65536.0;
+  /* R03-TILE-CLASSIC-UNIT: the three public tile owners already resolved
+   * their distinct source selection. Qualify only contained positive-unit
+   * packed crops and integral coverage; keep phase/filter/transform debt. */
+  int classic_tile=r && page && r->classic && !r->interp &&
+    family==GML_RENDER_SCENE_TILE && xs==1.0 && ys==1.0 &&
+    isfinite(left) && isfinite(top) && floor(left)==left && floor(top)==top &&
+    fabs(left)<=65536.0 && fabs(top)<=65536.0 && crop_width<=65536 && crop_height<=65536 &&
+    !page->tx && !page->ty && page->bw==page->sw && page->bh==page->sh &&
+    !r->gui_pass_active && !r->fog_flat && !gml_d3_is_active(r) &&
+    r->device.context && r->device.observe_on_demand &&
+    r->device.observe_on_demand(r->device.context);
   /* R03-TEXT-MAPPED-INTEGER: the text owner has already mapped and snapped
    * the glyph. Binary source coverage remains exact at whole magnification,
    * including target clipping; no second world transform belongs here. */
@@ -372,7 +383,7 @@ static int resident_atlas_crop_from_page(GmlRender *r,GmlTpag *page,
   if(!r || !page || !r->resident_application_pass ||
      (r->classic && ((family!=GML_RENDER_SCENE_SPRITE &&
                       family!=GML_RENDER_SCENE_BACKGROUND &&
-                      family!=GML_RENDER_SCENE_TEXT) ||
+                      family!=GML_RENDER_SCENE_TEXT && !classic_tile) ||
                      (family==GML_RENDER_SCENE_TEXT && !orthographic &&
                       anygm_policy_classic_modern_presentation(r->win)) ||
                      r->interp || (!orthographic && !classic_point &&
@@ -426,7 +437,7 @@ static int resident_atlas_crop_from_page(GmlRender *r,GmlTpag *page,
     atlas=&r->atlas[page->atlas];
     if(!gml_render_atlas_scene_source_view(r,page->atlas,&source)) return 0;
   }
-  if(((integer_tile || integer_text) && (source.width>16384u || source.height>16384u)) ||
+  if(((integer_tile || classic_tile || integer_text) && (source.width>16384u || source.height>16384u)) ||
      (uint64_t)(uint32_t)page->sx+(uint32_t)page->sw>source.width ||
      (uint64_t)(uint32_t)page->sy+(uint32_t)page->sh>source.height) return 0;
   resident_classify_page(page,atlas);
@@ -523,7 +534,7 @@ static int resident_atlas_crop_from_page(GmlRender *r,GmlTpag *page,
    * coverage even while its logical cell intersects the target. Keep the
    * qualified unit-nearest prefix queued instead of handing an empty draw
    * to the CPU. The source, state and whole-texel guards above still apply. */
-  if(((family==GML_RENDER_SCENE_BACKGROUND && xs==1.0 && ys==1.0) || integer_tile || integer_text) &&
+  if(((family==GML_RENDER_SCENE_BACKGROUND && xs==1.0 && ys==1.0) || integer_tile || classic_tile || integer_text) &&
      page->scene_binary_alpha &&
      (left>=r->fbw || top>=r->fbh ||
       left+scaled_width<=0.0 || top+scaled_height<=0.0)) return 1;
@@ -573,7 +584,7 @@ static int resident_atlas_crop_from_page(GmlRender *r,GmlTpag *page,
                          (uint32_t)crop_width,(uint32_t)crop_height};
   source_ref=source.image;
   operation.opcode=GML_RENDER_OP_TEXTURED_QUAD;
-  operation.reconstruction_mode=source_override || integer_text || checkpoint_integer_tile || classic_point || replace || checkpoint_alpha_background || checkpoint_alpha_text ||
+  operation.reconstruction_mode=source_override || classic_tile || integer_text || checkpoint_integer_tile || classic_point || replace || checkpoint_alpha_background || checkpoint_alpha_text ||
     checkpoint_alpha_sprite || checkpoint_alpha_gui ||
     colour!=0xFFFFFFu || draw_alpha<1.0
     ?GML_RENDER_DEVICE_CHECKPOINT:GML_RENDER_REPLAY_EXACT;

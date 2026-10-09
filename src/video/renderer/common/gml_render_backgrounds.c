@@ -78,11 +78,25 @@ static int resident_integer_background_part(GmlRender *r,int page_index,
     return 0;
   /* Do not erase auxiliary CPU phase-plane work or special draw-state effects.
    * The ordinary resident crop performs its fuller validation below. */
-  if(r->classic || r->classic_phase_y || r->gui_pass_active ||
+  if(r->classic_phase_y || r->gui_pass_active ||
      r->active_shader>=0 || r->alpha_test_enable ||
      r->pending_underlay || r->pending_presentation ||
      !gml_render_scene_target_matches(r))
     return 0;
+  /* R03-TILE-CLASSIC-UNIT: ordinary unit tile parts use the same source
+   * intersection and integral target coverage as the unchanged CPU port.
+   * In particular, an off-target cell must not close a queued resident pass. */
+  if(r->classic && (family!=GML_RENDER_SCENE_TILE || xs!=1.0 || ys!=1.0 ||
+     page->tw!=page->sw || page->th!=page->sh ||
+     !isfinite(x-r->cam_x) || !isfinite(y-r->cam_y) ||
+     floor(x-r->cam_x)!=x-r->cam_x || floor(y-r->cam_y)!=y-r->cam_y ||
+     fabs(x-r->cam_x)>65536.0 || fabs(y-r->cam_y)>65536.0 ||
+     r->fog_flat || !r->alphablend || r->blendmode ||
+     r->blend_equation!=1 || r->blend_equation_alpha!=1 ||
+     r->color_write_mask!=15u || r->rotated_batch_count || r->rotated_batch_building ||
+     (r->world_transform_active && (r->world_scale_x!=1.0 || r->world_scale_y!=1.0)) ||
+     !r->device.context || !r->device.observe_on_demand ||
+     !r->device.observe_on_demand(r->device.context))) return 0;
   for(int index=0;index<3;index++)
     if(r->classic_interp_phase[index] || r->app_interp_phase[index]) return 0;
   /* Unit tile selections use the CPU's shared source intersection, not atlas
