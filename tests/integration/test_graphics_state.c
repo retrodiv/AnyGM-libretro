@@ -2782,6 +2782,123 @@ static int scene_canvas_restored_nearest_case(void){
   return 1;
 }
 
+/* A restored contained crop borrows the same pitched logical pixels as the CPU host plan.
+ * Its fitting pass must not change either the completed picture or canonical state bytes. */
+static int scene_canvas_restored_identity_crop_case(void){
+  Session selected={0};
+  AnygmConfigDelta presentation={0};
+  GmlGpuCounters before={0},after={0};
+  GmlRenderResourceMetrics resources_before={0},resources_after={0};
+  GmlRenderDispatchMetrics dispatch={0};
+  GmlRenderImageRef image={0};
+  unsigned width=7u,height=9u;
+  size_t saved_size=0,before_size=0,after_size=0;
+  uint8_t *saved=NULL,*state_before=NULL,*state_after=NULL;
+  anygm_test_graphics_reset();
+  REQUIRE(session_open_fixture_with_scene(&selected,ANYGM_SCENE_RENDERER_OPENGL,
+          anygm_synthetic_host_box_content_create),"restored identity crop fixture loads");
+  presentation.struct_size=sizeof presentation;
+  presentation.values.struct_size=sizeof presentation.values;
+  presentation.fields=ANYGM_CONFIG_HYBRID_GPU_PRESENTATION|
+    ANYGM_CONFIG_PRESENT_LOGICAL_RASTER|ANYGM_CONFIG_MONITOR_WIDTH|ANYGM_CONFIG_MONITOR_HEIGHT;
+  presentation.values.monitor_width=192u;presentation.values.monitor_height=144u;
+  REQUIRE(anygm_set_config(selected.engine,&presentation)==ANYGM_OK &&
+          advance(selected.engine,1,NULL),"identity crop saves a completed logical CPU source");
+  saved=serialize(selected.engine,&saved_size);
+  REQUIRE(saved && graphics_adopt(selected.engine,ANYGM_GRAPHICS_OPENGLES3)==ANYGM_OK,
+          "identity crop adopts a scene-only context after saving");
+  int loaded=anygm_state_load(selected.engine,saved,saved_size)==ANYGM_OK;
+  free(saved);
+  REQUIRE(loaded && selected.engine->output_width==128u &&
+          selected.engine->output_height==96u &&
+          selected.engine->frame_authority==ENGINE_FRAME_CPU_MATERIALIZED &&
+          !gml_render_completed_screen_image(&selected.engine->render,selected.engine->screen,
+          128,96,&image),"restored identity crop starts with authoritative CPU pixels");
+  REQUIRE(gml_render_begin_resident_base(&selected.engine->render,selected.engine->screen,
+          128,96,0,0),"identity crop retains the restored logical resource");
+  gml_render_resident_application_cpu_barrier(&selected.engine->render);
+  selected.engine->present_crop_left=13;selected.engine->present_crop_right=7;
+  selected.engine->present_crop_top=11;selected.engine->present_crop_bottom=5;
+  selected.engine->host_output_width=136u;selected.engine->host_output_height=104u;
+  selected.engine->host_canvas_active=1;
+  selected.engine->host_canvas_x=4;selected.engine->host_canvas_y=6;
+  selected.engine->host_canvas_width=108;selected.engine->host_canvas_height=80;
+  uint32_t logical[128u*96u];
+  memcpy(logical,selected.engine->screen,sizeof logical);
+  state_before=serialize(selected.engine,&before_size);
+  REQUIRE(state_before,"identity crop records canonical state before host fitting");
+  gml_render_dispatch_diagnostics_enable(&selected.engine->render,1);
+  gml_gpu_counters(selected.engine->gpu,&before);
+  gml_render_resource_metrics(&selected.engine->render,&resources_before);
+  REQUIRE(engine_present_hardware_canvas(selected.engine,&width,&height),
+          "restored identity crop clears and fits on the device");
+  gml_gpu_counters(selected.engine->gpu,&after);
+  gml_render_resource_metrics(&selected.engine->render,&resources_after);
+  GmlRenderPlan *plan=&selected.engine->host_plan;
+  REQUIRE(width==136u && height==104u && selected.engine->host_plan_valid &&
+          selected.engine->frame_authority==ENGINE_FRAME_CPU_MATERIALIZED &&
+          !memcmp(logical,selected.engine->screen,sizeof logical) &&
+          plan->image_count==1u && plan->operation_count==2u &&
+          plan->images[0].cpu_pixels==selected.engine->screen+11u*128u+13u &&
+          plan->images[0].width==108u && plan->images[0].height==80u &&
+          plan->images[0].pitch_pixels==128u &&
+          !plan->images[0].resident_image.resource_class &&
+          plan->operations[1].axis_x.rule==GML_PLAN_AXIS_ACCUMULATOR &&
+          plan->operations[1].axis_x.source_extent==108u &&
+          plan->operations[1].axis_x.destination_extent==108u &&
+          plan->operations[1].axis_y.source_extent==80u &&
+          plan->operations[1].axis_y.destination_extent==80u &&
+          after.passes_accepted==before.passes_accepted+1u &&
+          after.full_uploads==before.full_uploads+1u &&
+          after.cpu_upload_frames==before.cpu_upload_frames &&
+          after.scene_readbacks==before.scene_readbacks &&
+          after.scene_readback_masks==before.scene_readback_masks &&
+          after.completed_frame_reads==before.completed_frame_reads &&
+          resources_after.completed_screen_cpu_materializations==
+            resources_before.completed_screen_cpu_materializations &&
+          gml_render_dispatch_metrics(&selected.engine->render,&dispatch) &&
+          !dispatch.failed && !dispatch.unclassified,
+          "identity crop uploads only the pitched source without replacing logical authority");
+  for(unsigned family=0;family<GML_RENDER_SCENE_FAMILY_COUNT;family++)
+    for(unsigned reason=0;reason<GML_RENDER_DISPATCH_REASON_COUNT;reason++)
+      REQUIRE(!dispatch.cpu[family][reason],"CPU-current identity crop runs no CPU raster work");
+  REQUIRE(dispatch.gpu[GML_RENDER_SCENE_PRIMITIVE]==1u &&
+          dispatch.gpu[GML_RENDER_SCENE_SURFACE]==1u,
+          "restored identity crop counts the real device clear and blit");
+  state_after=serialize(selected.engine,&after_size);
+  int identical=state_after && before_size==after_size &&
+    !memcmp(state_before,state_after,before_size);
+  free(state_before);free(state_after);
+  REQUIRE(identical,"restored identity crop preserves canonical save bytes");
+  /* Each excluded variant is refused before materializing or submitting its CPU source. */
+  for(unsigned exclusion=0;exclusion<8u;exclusion++){
+    selected.engine->host_canvas_width=exclusion==0u?109:108;
+    selected.engine->host_canvas_height=80;
+    selected.engine->host_crt_active=exclusion==1u;
+    selected.engine->present_shift_y=exclusion==2u;
+    selected.engine->present_crop_left=exclusion==3u?128:13;
+    selected.engine->present_crop_top=exclusion==7u?-1:11;
+    selected.engine->host_canvas_active=exclusion!=4u;
+    selected.engine->frame_authority=exclusion==5u?ENGINE_FRAME_NONE:ENGINE_FRAME_CPU_MATERIALIZED;
+    /* A synthetic pending marker tests only the pre-observation exclusion, never its executor. */
+    selected.engine->render.pending_presentation=exclusion==6u;
+    gml_gpu_counters(selected.engine->gpu,&before);
+    gml_render_resource_metrics(&selected.engine->render,&resources_before);
+    REQUIRE(!engine_present_hardware_canvas(selected.engine,NULL,NULL),
+            "unqualified CPU-current crops retain their separate presentation owner");
+    gml_gpu_counters(selected.engine->gpu,&after);
+    gml_render_resource_metrics(&selected.engine->render,&resources_after);
+    REQUIRE(after.frames_offered==before.frames_offered &&
+            after.full_uploads==before.full_uploads &&
+            resources_after.completed_screen_cpu_reads==resources_before.completed_screen_cpu_reads,
+            "CPU crop exclusions precede pixel observation and device submission");
+  }
+  gml_render_discard_deferred_presentation(&selected.engine->render);
+  selected.engine->frame_authority=ENGINE_FRAME_CPU_MATERIALIZED;
+  session_close(&selected);
+  return 1;
+}
+
 static uint8_t *serialize(AnygmEngine *engine,size_t *size){
   size_t capacity=anygm_state_size(engine);
   uint8_t *data=(uint8_t*)malloc(capacity?capacity:1);
@@ -4463,6 +4580,8 @@ int main(void){
      scene_canvas_restored_nearest_case},
     {"resident SCREEN identity crop keeps presentation on device",
      scene_canvas_resident_identity_crop_case},
+    {"restored CPU-current identity crop preserves logical state on device",
+     scene_canvas_restored_identity_crop_case},
     {"primary and auxiliary scratch uploads stay independent",content_sampler_upload_lifetime_case},
     {"surface shader vertices retain authored positions",content_surface_authored_position_case},
     {"terminal shader retains clipped authored positions",content_terminal_authored_position_case},

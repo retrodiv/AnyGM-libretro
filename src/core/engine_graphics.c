@@ -713,14 +713,14 @@ int engine_present_hardware_canvas(AnygmEngine *engine,unsigned *width,unsigned 
                 (int)engine->output_width,(int)engine->output_height,&completed);
   /* A restored CPU-current picture needs only a logical upload and the already qualified nearest
    * host plan. Do not repeat its clear/scale on the CPU or promote the fitted host image to state
-   * authority. Borrowed box/CRT/crop/shift variants still retain their established fallback. */
+   * authority. A contained identity crop borrows the same pitched CPU source as the CPU plan.
+   * Borrowed box/CRT/nonidentity crop/shift variants retain their established fallback. */
   int cpu_nearest=scene && engine->host_canvas_active &&
     engine->frame_authority==ENGINE_FRAME_CPU_MATERIALIZED &&
     !engine->host_crt_active && !engine->present_shift_x && !engine->present_shift_y &&
-    !engine->present_crop_left && !engine->present_crop_top &&
-    !engine->present_crop_right && !engine->present_crop_bottom &&
-    engine->host_canvas_width>=(int)engine->output_width &&
-    engine->host_canvas_height>=(int)engine->output_height;
+    (identity_crop || (!crop_requested &&
+      engine->host_canvas_width>=(int)engine->output_width &&
+      engine->host_canvas_height>=(int)engine->output_height));
   if(!resident && !hybrid && !cpu_nearest) return 0;
   if(!resident && !engine_materialize_completed_frame(engine)) return 0;
   engine_host_extent(engine,&host_width,&host_height);
