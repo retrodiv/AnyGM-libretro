@@ -217,7 +217,6 @@ static int integer_sourceover_sprite_valid(const GmlRenderDrawOp *op,
      !exact_rect(op,NULL,NULL,NULL,NULL,0)) return 0;
   double xs=(quad->x[1]-quad->x[0])/region.width;
   double ys=(quad->y[2]-quad->y[0])/region.height;
-  if(xs<1.0 || ys<1.0 || floor(xs)!=xs || floor(ys)!=ys) return 0;
   if(gui_coverage && (xs!=1.0 || ys!=1.0)) return 0;
   double u0=(double)region.x/source->width,u1=((double)region.x+region.width)/source->width;
   double v0=(double)region.y/source->height,v1=((double)region.y+region.height)/source->height;
@@ -226,8 +225,21 @@ static int integer_sourceover_sprite_valid(const GmlRenderDrawOp *op,
     double u=((corner==1u || corner==2u)^flip_x)?u1:u0;
     double v=((corner>=2u)^flip_y)?v1:v0;
     if((quad->corner_colour[corner]&0xFFFFFFu)!=0xFFFFFFu ||
-       quad->corner_colour[corner]!=quad->corner_colour[0] ||
-       fabs(quad->u[corner]-u)>1e-12 || fabs(quad->v[corner]-v)>1e-12) return 0;
+       quad->corner_colour[corner]!=quad->corner_colour[0]) return 0;
+    if(gui_coverage && (fabs(quad->u[corner]-u)>1e-12 ||
+                        fabs(quad->v[corner]-v)>1e-12)) return 0;
+  }
+  if(!gui_coverage){
+    /* Rounded point geometry can retain an independent texture phase, including
+     * constant texel-centre strips. Fixed source-over does not depend on that
+     * phase; keep the existing typed nearest/atlas/authority guards above.
+     * The numbered phased/exact samplers are deliberately not admitted here. */
+    if(quad->span_active || quad->u[0]!=quad->u[3] || quad->u[1]!=quad->u[2] ||
+       quad->v[0]!=quad->v[1] || quad->v[2]!=quad->v[3]) return 0;
+    for(unsigned corner=0;corner<4u;corner++)
+      if(!isfinite(quad->u[corner]) || !isfinite(quad->v[corner]) ||
+         quad->u[corner]<0.0 || quad->u[corner]>1.0 ||
+         quad->v[corner]<0.0 || quad->v[corner]>1.0) return 0;
   }
   return 1;
 }

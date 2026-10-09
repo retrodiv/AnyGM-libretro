@@ -2254,7 +2254,7 @@ static int scene_screen_filtered_alpha_stamp_case(void){
   return 1;
 }
 
-static int scene_opaque_target_sourceover_api(GmlGpuApi api,int numbered){
+static int scene_opaque_target_sourceover_api(GmlGpuApi api,int numbered,unsigned phase){
   const uint8_t pixels[16]={208,32,16,128,16,208,32,255,32,16,208,0,192,176,160,64};
   GmlRenderImageRef source={GML_RENDER_RESOURCE_ATLAS,31u,1u,1u};
   GmlRenderImageRef target={GML_RENDER_RESOURCE_SCREEN,32u,1u,1u};
@@ -2308,6 +2308,13 @@ static int scene_opaque_target_sourceover_api(GmlGpuApi api,int numbered){
     op->payload.quad.y[2]=op->payload.quad.y[3]=3.0;
     op->payload.quad.u[1]=op->payload.quad.u[2]=1.0;
     op->payload.quad.v[2]=op->payload.quad.v[3]=1.0;
+    if(phase){
+      for(unsigned corner=0;corner<4u;corner++){
+        op->payload.quad.u[corner]=phase==1u?
+          ((corner==1u || corner==2u)?0.875:0.125):0.25;
+        op->payload.quad.v[corner]=corner>=2u?0.875:0.125;
+      }
+    }
   }
   GmlRenderExecutionResult result=device.submit(device.context,&batch);
   unsigned factors[4]={0};
@@ -2320,7 +2327,7 @@ static int scene_opaque_target_sourceover_api(GmlGpuApi api,int numbered){
           factors[0]==GL_SRC_ALPHA && factors[1]==GL_ONE_MINUS_SRC_ALPHA &&
           factors[2]==(numbered?GL_SRC_ALPHA:GL_ONE) && factors[3]==GL_ONE_MINUS_SRC_ALPHA,
           "two resident alpha sprites use one fixed-function batch without destination copies or reads");
-  for(unsigned variant=0;!numbered && variant<6u;variant++){
+  for(unsigned variant=0;!numbered && variant<8u;variant++){
     GmlRenderDrawStateSnapshot prior=state;
     GmlRenderQuad prior_quad=operations[1].payload.quad;
     if(variant==0u) state.coverage_policy=0u;
@@ -2332,6 +2339,8 @@ static int scene_opaque_target_sourceover_api(GmlGpuApi api,int numbered){
       operations[1].payload.quad.x[0]=operations[1].payload.quad.x[3]=1.25;
       operations[1].payload.quad.x[1]=operations[1].payload.quad.x[2]=3.25;
     }
+    if(variant==6u) operations[1].payload.quad.u[0]=-0.01;
+    if(variant==7u) operations[1].payload.quad.v[2]=1.01;
     int clears=anygm_test_graphics_clear_calls();
     int draws=anygm_test_graphics_scene_draw_calls();
     result=device.submit(device.context,&batch);
@@ -2346,13 +2355,17 @@ static int scene_opaque_target_sourceover_api(GmlGpuApi api,int numbered){
 }
 
 static int scene_opaque_target_sourceover_case(void){
-  return scene_opaque_target_sourceover_api(GML_GPU_API_OPENGLES3,0) &&
-         scene_opaque_target_sourceover_api(GML_GPU_API_OPENGL_CORE,0);
+  for(unsigned phase=0;phase<3u;phase++)
+    if(!scene_opaque_target_sourceover_api(GML_GPU_API_OPENGLES3,0,phase) ||
+       !scene_opaque_target_sourceover_api(GML_GPU_API_OPENGL_CORE,0,phase)) return 0;
+  return 1;
 }
 
 static int scene_numbered_integer_sourceover_case(void){
-  return scene_opaque_target_sourceover_api(GML_GPU_API_OPENGLES3,1) &&
-         scene_opaque_target_sourceover_api(GML_GPU_API_OPENGL_CORE,1);
+  for(unsigned phase=0;phase<3u;phase++)
+    if(!scene_opaque_target_sourceover_api(GML_GPU_API_OPENGLES3,1,phase) ||
+       !scene_opaque_target_sourceover_api(GML_GPU_API_OPENGL_CORE,1,phase)) return 0;
+  return 1;
 }
 
 static int scene_alpha_composition_api(GmlGpuApi api,const char *renderer,int font_flush){

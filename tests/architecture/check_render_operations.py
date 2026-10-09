@@ -83,6 +83,7 @@ REQUIRED_RULES = {
     "R03-SPR-GUI-REPLACE",
     "R03-GUI-UNIT-SOURCEOVER",
     "R03-SPR-CLASSIC-SIGNED-NOOP",
+    "R03-SPR-CLASSIC-SCALED-NEAREST",
     "R03-SPR-FIRSTGEN-NEAREST-REDUCE", "R03-SPR-FIRSTGEN-NEAREST-MAG",
     "R03-SPR-MODERN-NEAREST",
     "R03-SPR-MODERN-SCREEN-POINT",
@@ -719,6 +720,8 @@ def self_test() -> None:
         "\n".join(line for line in document.splitlines()
                   if not line.startswith("| R03-SPR-FIRSTGEN-NEAREST-MAG |")),
         document.replace("device comparison R03-P3-JOURNAL", "comparison missing", 1),
+        "\n".join(line for line in document.splitlines()
+                  if not line.startswith("| R03-SPR-CLASSIC-SCALED-NEAREST |")),
         "\n".join(line for line in document.splitlines()
                   if not line.startswith("| R03-PRIM-CLASSIC-INVERSE-RECT |")),
         "\n".join(line for line in document.splitlines()

@@ -110,6 +110,12 @@ static int resident_atlas_crop_from_page(GmlRender *r,GmlTpag *page,
                                          double left,double top,double xs,double ys,
                                          GmlRenderSceneFamily family,uint32_t colour,
                                          double draw_alpha,int physical_sprite_page);
+static void modern_point_axis_prune(double leading,double scale,double phase_offset,
+                                    int source_extent,double *start,double *extent);
+static int resident_modern_point_regions(GmlRender *r,GmlTpag *page,
+  double left,double top,double xs,double ys,double phase_x,double phase_y,
+  const GmlRenderDrawOp *operation,const GmlRenderDrawStateSnapshot *state,
+  const GmlRenderResourceSource *source,const GmlRenderRotatedCoverageRegion *maps,uint32_t map_count);
 static int resident_identity_screen_gui(const GmlRender *r){
   return r && r->gui_pass_active && r->base_scene_resource &&
          r->fb==r->base_scene_resource_pixels &&
@@ -161,7 +167,9 @@ static int resident_integer_sprite(GmlRender *r,GmlSprite *sprite,int subimg,
      sprite->spine || sprite->ns_enabled || sprite->n_frames<=0 ||
      sprite->w<=0 || sprite->h<=0 ||
      (r->classic && (gml_d3_is_active(r) ||
-                     r->interp || fabs(xs)!=1.0 || fabs(ys)!=1.0 ||
+                     r->interp ||
+                     ((fabs(xs)!=1.0 || fabs(ys)!=1.0) &&
+                      (xs<=0.0 || ys<=0.0 || xs>4.0 || ys>4.0)) ||
                      (r->world_transform_active &&
                       (r->world_scale_x!=1.0 || r->world_scale_y!=1.0)))) ||
      (r->gui_pass_active && !resident_identity_screen_gui(r)) ||
@@ -203,7 +211,8 @@ static int resident_integer_sprite(GmlRender *r,GmlSprite *sprite,int subimg,
      page->atlas<0 || page->atlas>=r->n_atlas) return 0;
   left=x-(double)sprite->originx*xs+(double)page->tx*xs-r->cam_x;
   top=y-(double)sprite->originy*ys+(double)page->ty*ys-r->cam_y;
-  if(r->classic && isfinite(left) && isfinite(top) &&
+  if(r->classic && fabs(xs)==1.0 && fabs(ys)==1.0 &&
+     isfinite(left) && isfinite(top) &&
      fabs(left)<1000000.0 && fabs(top)<1000000.0){
     /* The established early-classic unit blit rounds the physical crop origin half up.
      * Keep texelFetch sampling exact after projecting that same coverage. */
@@ -234,6 +243,7 @@ static int resident_integer_sprite(GmlRender *r,GmlSprite *sprite,int subimg,
   }
   return resident_atlas_crop_from_page(r,page,0,0,page->sw,page->sh,
                                        left,top,xs,ys,GML_RENDER_SCENE_SPRITE,blend,alpha,
+                                       r->classic && (xs!=1.0 || ys!=1.0)?3:
                                        !r->classic && !r->interp);
 }
 
@@ -254,6 +264,12 @@ static int resident_atlas_crop_from_page(GmlRender *r,GmlTpag *page,
   int checkpoint_alpha_gui;
   /* Mode 2 is only a separately proved depth-free orthographic crop. */
   int orthographic=physical_sprite_page==2;
+  /* R03-SPR-CLASSIC-SCALED-NEAREST: preserve the CPU point phase and rounded
+   * coverage through the existing bounded UV-region producer and hardware
+   * nearest sampler. This is not a new float shader or a CPU pixel writer. */
+  int classic_point=physical_sprite_page==3 && r && r->classic &&
+    family==GML_RENDER_SCENE_SPRITE && xs>0.0 && ys>0.0 && xs<=4.0 && ys<=4.0;
+  double point_left=left,point_top=top;
   int replace=physical_sprite_page && family==GML_RENDER_SCENE_SPRITE &&
     resident_identity_gui_replacement(r,xs,ys,colour,draw_alpha);
   /* R03-GUI-UNIT-SOURCEOVER: SCREEN stamps covered alpha rather than
@@ -274,7 +290,8 @@ static int resident_atlas_crop_from_page(GmlRender *r,GmlTpag *page,
                       family!=GML_RENDER_SCENE_TEXT) ||
                      (family==GML_RENDER_SCENE_TEXT && !orthographic &&
                       anygm_policy_classic_modern_presentation(r->win)) ||
-                     r->interp || (!orthographic && (xs!=1.0 || ys!=1.0)))) ||
+                     r->interp || (!orthographic && !classic_point &&
+                                   (xs!=1.0 || ys!=1.0)))) ||
      (r->world_transform_active &&
       (r->world_scale_x!=1.0 || r->world_scale_y!=1.0) &&
       (r->classic || family!=GML_RENDER_SCENE_SPRITE || r->interp)) ||
@@ -297,6 +314,9 @@ static int resident_atlas_crop_from_page(GmlRender *r,GmlTpag *page,
      (r->interp && (xs!=1.0 || ys!=1.0))) return 0;
   for(int index=0;index<3;index++)
     if(r->classic_interp_phase[index] || r->app_interp_phase[index]) return 0;
+  if(classic_point && (r->fog_flat || r->gui_pass_active ||
+                      !r->device.context || !r->device.observe_on_demand ||
+                      !r->device.observe_on_demand(r->device.context))) return 0;
   if(page->sw<=0 || page->sh<=0 || page->sx<0 || page->sy<0 ||
      page->atlas<0 || page->atlas>=r->n_atlas ||
      ((!physical_sprite_page || family!=GML_RENDER_SCENE_SPRITE ||
@@ -381,13 +401,27 @@ static int resident_atlas_crop_from_page(GmlRender *r,GmlTpag *page,
      !checkpoint_alpha_text && !checkpoint_alpha_sprite && !checkpoint_alpha_gui) return 0;
   scaled_width=(double)crop_width*fabs(xs);
   scaled_height=(double)crop_height*fabs(ys);
+  if(classic_point){
+    if(!isfinite(left) || !isfinite(top) || fabs(left)>=1000000.0 ||
+       fabs(top)>=1000000.0 || crop_width>4096 || crop_height>4096 ||
+       scaled_width>4096.0 || scaled_height>4096.0 ||
+       source.width>16384u || source.height>16384u) return 0;
+    left=floor(left+0.5);top=floor(top+0.5);
+    scaled_width=floor(scaled_width+0.5);scaled_height=floor(scaled_height+0.5);
+    if(fabs(1.0/xs-nearbyint(1.0/xs))<1e-9) point_left=left;
+    if(fabs(1.0/ys-nearbyint(1.0/ys))<1e-9) point_top=top;
+    modern_point_axis_prune(point_left,xs,0.0,crop_width,&left,&scaled_width);
+    modern_point_axis_prune(point_top,ys,0.0,crop_height,&top,&scaled_height);
+    if(scaled_width<=0.0 || scaled_height<=0.0 || left>=r->fbw || top>=r->fbh ||
+       left+scaled_width<=0.0 || top+scaled_height<=0.0) return 1;
+  }
   if(xs<0.0) left-=scaled_width;
   if(ys<0.0) top-=scaled_height;
   if(!isfinite(left) || !isfinite(top) ||
      !isfinite(scaled_width) || !isfinite(scaled_height) ||
      floor(left)!=left || floor(top)!=top ||
      fabs(xs)>INT_MAX || fabs(ys)>INT_MAX ||
-     xs!=(double)(int)xs || ys!=(double)(int)ys) return 0;
+     (!classic_point && (xs!=(double)(int)xs || ys!=(double)(int)ys))) return 0;
   /* R03-BG-UNIT-CLIPPED-NOOP: a trimmed repeat cell can have no physical
    * coverage even while its logical cell intersects the target. Keep the
    * qualified unit-nearest prefix queued instead of handing an empty draw
@@ -401,7 +435,7 @@ static int resident_atlas_crop_from_page(GmlRender *r,GmlTpag *page,
      (ys<0.0 && (top<0.0 || top+scaled_height>r->fbh))) return 0;
   /* Unit texels clipped at the application edge remain exact nearest samples. Larger
    * scales can expose part of one texel there and retain the CPU fallback. */
-  if(xs==1.0){
+  if(!classic_point && xs==1.0){
     if(left<0.0){
       if(left<=-scaled_width) return 0;
       int shift=(int)-left;
@@ -412,7 +446,7 @@ static int resident_atlas_crop_from_page(GmlRender *r,GmlTpag *page,
     if(left+crop_width>r->fbw) crop_width=(int)(r->fbw-left);
     scaled_width=(double)crop_width;
   }
-  if(ys==1.0){
+  if(!classic_point && ys==1.0){
     if(top<0.0){
       if(top<=-scaled_height) return 0;
       int shift=(int)-top;
@@ -423,8 +457,9 @@ static int resident_atlas_crop_from_page(GmlRender *r,GmlTpag *page,
     if(top+crop_height>r->fbh) crop_height=(int)(r->fbh-top);
     scaled_height=(double)crop_height;
   }
-  if(crop_width<=0 || crop_height<=0 || left<0.0 || top<0.0 ||
-     left+scaled_width>r->fbw || top+scaled_height>r->fbh ||
+  if(crop_width<=0 || crop_height<=0 ||
+     (!classic_point && (left<0.0 || top<0.0 ||
+                        left+scaled_width>r->fbw || top+scaled_height>r->fbh)) ||
      !isfinite(scaled_width) || !isfinite(scaled_height)) return 0;
   gml_render_flush_pending_fill(r);
   if(r->pending_fill || !(target=gml_render_scene_target_resource_ensure(r))) return 0;
@@ -434,7 +469,7 @@ static int resident_atlas_crop_from_page(GmlRender *r,GmlTpag *page,
                          (uint32_t)crop_width,(uint32_t)crop_height};
   source_ref=source.image;
   operation.opcode=GML_RENDER_OP_TEXTURED_QUAD;
-  operation.reconstruction_mode=replace || checkpoint_alpha_background || checkpoint_alpha_text ||
+  operation.reconstruction_mode=classic_point || replace || checkpoint_alpha_background || checkpoint_alpha_text ||
     checkpoint_alpha_sprite || checkpoint_alpha_gui ||
     colour!=0xFFFFFFu || draw_alpha<1.0
     ?GML_RENDER_DEVICE_CHECKPOINT:GML_RENDER_REPLAY_EXACT;
@@ -492,7 +527,10 @@ static int resident_atlas_crop_from_page(GmlRender *r,GmlTpag *page,
   if(checkpoint_alpha_gui)
     state.coverage_policy=GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA;
   state.samplers[0]=operation.payload.quad.sampling;
-  if(!gml_render_application_scene_enqueue(r,&operation,&state,&source)) return 0;
+  if(classic_point){
+    if(!resident_modern_point_regions(r,page,point_left,point_top,xs,ys,0.0,0.0,
+                                     &operation,&state,&source,NULL,0u)) return 0;
+  } else if(!gml_render_application_scene_enqueue(r,&operation,&state,&source)) return 0;
   r->fb_all_transparent=0;
   if(((family==GML_RENDER_SCENE_TEXT && draw_alpha<1.0) || checkpoint_alpha_sprite) &&
      gml_render_target_preserves_alpha(r)){
@@ -746,6 +784,13 @@ static int resident_modern_point_regions(GmlRender *r,GmlTpag *page,
     double v0=page->sy+(y0-anchor_y)/ys-bias_y,v1=page->sy+(y1-anchor_y)/ys-bias_y;
     int constant_x=fmin(u0,u1)<0.0 || fmax(u0,u1)>source->width;
     int constant_y=fmin(v0,v1)<0.0 || fmax(v0,v1)>source->height;
+    /* Direct hardware nearest must keep every vertex inside its physical
+     * crop. Constant-centre regions fence a phase correction at that edge;
+     * the existing phased shader policies keep their original atlas bounds. */
+    if(original->sampling.filter==GML_RENDER_FILTER_NEAREST){
+      constant_x|=fmin(u0,u1)<page->sx || fmax(u0,u1)>page->sx+page->sw;
+      constant_y|=fmin(v0,v1)<page->sy || fmax(v0,v1)>page->sy+page->sh;
+    }
     if(stable_x && !constant_x){
       nx=1u;columns[0]=(ModernPointRegion){x0,x1,-1};
     } else nx=modern_point_axis_regions(left,xs,phase_x,page->sw,x0,x1,constant_x,columns);

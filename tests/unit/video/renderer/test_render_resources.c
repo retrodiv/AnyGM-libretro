@@ -8415,12 +8415,13 @@ static int resident_integer_scaled_atlas_sprite_gpu(void){
 }
 
 static int resident_classic_nonphase_sprite_targets(void){
+  for(unsigned scaled=0;scaled<2u;scaled++)
   for(unsigned generation=0;generation<2u;generation++)
   for(unsigned numbered=0;numbered<2u;numbered++)
   for(unsigned source_kind=0;source_kind<3u;source_kind++){
     GmlRender *render=calloc(1,sizeof *render);
     GmlWin content={.classic_version=generation?810:800};
-    FakeDevice fake={.on_demand=source_kind==2u};
+    FakeDevice fake={.on_demand=scaled || source_kind==2u};
     GmlRenderDeviceServices device=service(&fake);
     uint32_t pixels[64],reference[64];
     GmlRenderJournalMetrics metrics={0};
@@ -8453,7 +8454,8 @@ static int resident_classic_nonphase_sprite_targets(void){
       CHECK(id>0 && gml_surface_set_target(render,id));
       memcpy(render->surface[id-1].px,reference,sizeof reference);
     }
-    gml_draw_sprite_ext(render,0,-1,3.25,2.75,1.0,1.0,0.0,0xFFFFFFu,1.0);
+    double xs=scaled?0.7:1.0,ys=scaled?1.3:1.0;
+    gml_draw_sprite_ext(render,0,-1,3.25,2.75,xs,ys,0.0,0xFFFFFFu,1.0);
     if(numbered){
       memcpy(reference,render->surface[id-1].px,sizeof reference);
       gml_surface_reset_target(render);
@@ -8468,13 +8470,13 @@ static int resident_classic_nonphase_sprite_targets(void){
     }
     CHECK(render->resident_application_pass);
     render->fb_opaque_known=render->fb_all_opaque=1;
-    gml_draw_sprite_ext(render,0,-1,3.25,2.75,1.0,1.0,0.0,0xFFFFFFu,1.0);
+    gml_draw_sprite_ext(render,0,-1,3.25,2.75,xs,ys,0.0,0xFFFFFFu,1.0);
     CHECK(render->resident_application_pass && !fake.submits && !fake.readbacks);
     CHECK(gml_render_scene_submit_pending(render) && fake.submits==1 && !fake.readbacks);
     GmlRenderResource *resource=gml_render_scene_target_resource_ensure(render);
     CHECK(resource);
     gml_render_resource_journal_metrics(resource,&metrics);
-    if(source_kind<2u){
+    if(source_kind<2u && !scaled){
       CHECK(gml_render_resource_acquire_cpu_read(resource,&observed) &&
             !memcmp(observed,reference,sizeof reference) && !fake.readbacks);
     } else {
