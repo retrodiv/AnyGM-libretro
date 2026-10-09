@@ -261,7 +261,7 @@ static int resident_atlas_crop_from_page(GmlRender *r,GmlTpag *page,
   GmlRenderRect region;
   double scaled_width,scaled_height,source_left,source_right,source_top,source_bottom;
   int checkpoint_alpha_background,checkpoint_alpha_text,checkpoint_alpha_sprite;
-  int checkpoint_alpha_gui;
+  int checkpoint_alpha_gui,checkpoint_integer_tile;
   /* Mode 2 is only a separately proved depth-free orthographic crop. */
   int orthographic=physical_sprite_page==2;
   /* R03-SPR-CLASSIC-SCALED-NEAREST: preserve the CPU point phase and rounded
@@ -269,6 +269,14 @@ static int resident_atlas_crop_from_page(GmlRender *r,GmlTpag *page,
    * nearest sampler. This is not a new float shader or a CPU pixel writer. */
   int classic_point=physical_sprite_page==3 && r && r->classic &&
     family==GML_RENDER_SCENE_SPRITE && xs>0.0 && ys>0.0 && xs<=4.0 && ys<=4.0;
+  /* R03-TILE-INTEGER-CLIP: the public tile port already resolves world mapping.
+   * Integral magnification keeps each destination centre inside one nearest
+   * texel; the target viewport clips even a partly visible enlarged texel. */
+  int integer_tile=r && !r->classic && !r->interp &&
+    family==GML_RENDER_SCENE_TILE && xs>=1.0 && xs<=8.0 && ys>=1.0 && ys<=8.0 &&
+    xs==floor(xs) && ys==floor(ys) && isfinite(left) && isfinite(top) &&
+    floor(left)==left && floor(top)==top && fabs(left)<=65536.0 && fabs(top)<=65536.0 &&
+    (double)crop_width*xs<=65536.0 && (double)crop_height*ys<=65536.0;
   double point_left=left,point_top=top;
   int replace=physical_sprite_page && family==GML_RENDER_SCENE_SPRITE &&
     resident_identity_gui_replacement(r,xs,ys,colour,draw_alpha);
@@ -294,7 +302,7 @@ static int resident_atlas_crop_from_page(GmlRender *r,GmlTpag *page,
                                    (xs!=1.0 || ys!=1.0)))) ||
      (r->world_transform_active &&
       (r->world_scale_x!=1.0 || r->world_scale_y!=1.0) &&
-      (r->classic || family!=GML_RENDER_SCENE_SPRITE || r->interp)) ||
+      (r->classic || (family!=GML_RENDER_SCENE_SPRITE && !integer_tile) || r->interp)) ||
      (r->gui_pass_active &&
       ((family!=GML_RENDER_SCENE_SPRITE && !gui_crop) ||
        !resident_identity_screen_gui(r))) ||
@@ -334,6 +342,7 @@ static int resident_atlas_crop_from_page(GmlRender *r,GmlTpag *page,
       left+(double)crop_width<=0.0 || top+(double)crop_height<=0.0)) return 1;
   atlas=&r->atlas[page->atlas];
   if(!gml_render_atlas_scene_source_view(r,page->atlas,&source) ||
+     (integer_tile && (source.width>16384u || source.height>16384u)) ||
      (uint64_t)(uint32_t)page->sx+(uint32_t)page->sw>source.width ||
      (uint64_t)(uint32_t)page->sy+(uint32_t)page->sh>source.height) return 0;
   resident_classify_page(page,atlas);
@@ -426,15 +435,15 @@ static int resident_atlas_crop_from_page(GmlRender *r,GmlTpag *page,
    * coverage even while its logical cell intersects the target. Keep the
    * qualified unit-nearest prefix queued instead of handing an empty draw
    * to the CPU. The source, state and whole-texel guards above still apply. */
-  if(family==GML_RENDER_SCENE_BACKGROUND && page->scene_binary_alpha &&
-     xs==1.0 && ys==1.0 &&
+  if(((family==GML_RENDER_SCENE_BACKGROUND && xs==1.0 && ys==1.0) || integer_tile) &&
+     page->scene_binary_alpha &&
      (left>=r->fbw || top>=r->fbh ||
       left+scaled_width<=0.0 || top+scaled_height<=0.0)) return 1;
   if(left>=r->fbw || top>=r->fbh) return 0;
   if((xs<0.0 && (left<0.0 || left+scaled_width>r->fbw)) ||
      (ys<0.0 && (top<0.0 || top+scaled_height>r->fbh))) return 0;
-  /* Unit texels clipped at the application edge remain exact nearest samples. Larger
-   * scales can expose part of one texel there and retain the CPU fallback. */
+  /* Unit crops may shorten the source. Qualified positive integer TILE quads
+   * instead keep their original UV phase and let the target clip their coverage. */
   if(!classic_point && xs==1.0){
     if(left<0.0){
       if(left<=-scaled_width) return 0;
@@ -458,9 +467,16 @@ static int resident_atlas_crop_from_page(GmlRender *r,GmlTpag *page,
     scaled_height=(double)crop_height;
   }
   if(crop_width<=0 || crop_height<=0 ||
-     (!classic_point && (left<0.0 || top<0.0 ||
+     (!classic_point && !integer_tile && (left<0.0 || top<0.0 ||
                         left+scaled_width>r->fbw || top+scaled_height>r->fbh)) ||
      !isfinite(scaled_width) || !isfinite(scaled_height)) return 0;
+  /* Clipped enlarged texels are exact on device, but are not an eligible CPU
+   * replay packet. Retain their actual pixels through the existing on-demand
+   * observation contract, without an ordinary-frame read or new replay leaf. */
+  checkpoint_integer_tile=integer_tile && (left<0.0 || top<0.0 ||
+    left+scaled_width>r->fbw || top+scaled_height>r->fbh);
+  if(checkpoint_integer_tile && (!r->device.context || !r->device.observe_on_demand ||
+     !r->device.observe_on_demand(r->device.context))) return 0;
   gml_render_flush_pending_fill(r);
   if(r->pending_fill || !(target=gml_render_scene_target_resource_ensure(r))) return 0;
   image=gml_render_application_scene_next_image_ref(r,target);
@@ -469,7 +485,7 @@ static int resident_atlas_crop_from_page(GmlRender *r,GmlTpag *page,
                          (uint32_t)crop_width,(uint32_t)crop_height};
   source_ref=source.image;
   operation.opcode=GML_RENDER_OP_TEXTURED_QUAD;
-  operation.reconstruction_mode=classic_point || replace || checkpoint_alpha_background || checkpoint_alpha_text ||
+  operation.reconstruction_mode=checkpoint_integer_tile || classic_point || replace || checkpoint_alpha_background || checkpoint_alpha_text ||
     checkpoint_alpha_sprite || checkpoint_alpha_gui ||
     colour!=0xFFFFFFu || draw_alpha<1.0
     ?GML_RENDER_DEVICE_CHECKPOINT:GML_RENDER_REPLAY_EXACT;

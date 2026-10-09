@@ -5497,6 +5497,72 @@ static int resident_clipped_filtered_background_part_noop(void){
   return 1;
 }
 
+static int resident_integer_tile_clipping(void){
+  for(int scale=2;scale<=8;scale++) for(int world=0;world<2;world++)
+  for(int observed=0;observed<2;observed++){
+    GmlRender *render=calloc(1,sizeof *render);
+    FakeDevice fake={.on_demand=observed};
+    GmlRenderDeviceServices device=service(&fake);
+    uint32_t expected[16],shadow[16];
+    const uint8_t rgba[16]={208,32,16,255,16,208,32,255,
+                           32,16,208,255,192,176,160,255};
+    CHECK(render && gml_render_application_surface_ensure_owned(render,4,4));
+    render->atlas=calloc(1,sizeof *render->atlas);
+    render->tpag=calloc(1,sizeof *render->tpag);
+    render->bg=calloc(1,sizeof *render->bg);
+    CHECK(render->atlas && render->tpag && render->bg);
+    render->n_atlas=render->n_tpag=render->n_bg=1;
+    render->atlas[0].px=malloc(sizeof rgba);
+    CHECK(render->atlas[0].px);
+    memcpy(render->atlas[0].px,rgba,sizeof rgba);
+    render->atlas[0].w=render->atlas[0].h=2;
+    render->tpag[0]=(GmlTpag){.sw=2,.sh=2,.tw=2,.th=2,.bw=2,.bh=2};
+    render->color_write_mask=15u;render->alpha=1;
+    CHECK(gml_render_begin_owned_application(render,0,0,0));
+    gml_render_set_pending_fill(render,0xFF123456u);
+    gml_draw_background(render,0,2,2);
+    render->world_transform_active=world;
+    render->world_scale_x=render->world_scale_y=4;
+    gml_draw_background_tile(render,0,0,0,2,2,world?-0.25:-1.0,
+      world?-0.25:-1.0,world?scale/4.0:scale,world?scale/4.0:scale,
+      0,0,0,0xFFFFFFu,1);
+    render->world_transform_active=0;
+    memcpy(expected,render->app_surface_owned,sizeof expected);
+    for(int pixel=0;pixel<16;pixel++) render->app_surface_owned[pixel]=0xA5ABCDEFu;
+    memcpy(shadow,render->app_surface_owned,sizeof shadow);
+    device.observe_on_demand=fake_observe_on_demand;
+    gml_render_bind_device(render,&device);
+    CHECK(gml_render_begin_resident_owned_application(render,0,0,0));
+    gml_render_set_pending_fill(render,0xFF123456u);
+    gml_draw_background(render,0,2,2);
+    int submits=fake.submits;
+    render->world_transform_active=world;
+    render->world_scale_x=render->world_scale_y=4;
+    gml_draw_background_tile(render,0,0,0,2,2,world?-0.25:-1.0,
+      world?-0.25:-1.0,world?scale/4.0:scale,world?scale/4.0:scale,
+      0,0,0,0xFFFFFFu,1);
+    render->world_transform_active=0;
+    if(fake.readbacks) fprintf(stderr,"integer tile authority: scale=%d world=%d observed=%d resident=%d reads=%d interp=%d classic=%d\n",
+      scale,world,observed,render->resident_application_pass,fake.readbacks,render->interp,render->classic);
+    CHECK(fake.readbacks==0);
+    if(observed){
+      GmlRenderJournalMetrics metrics={0};
+      CHECK(render->resident_application_pass && fake.submits==submits);
+      CHECK(gml_render_scene_submit_pending(render));
+      gml_render_resource_journal_metrics(gml_render_application_resource_ensure(render),&metrics);
+      CHECK(fake.last_batch_operations==2u && fake.readbacks==0 &&
+            fake.last_quad.x[0]==-1 && fake.last_quad.y[0]==-1 &&
+            fake.last_quad.x[1]==2*scale-1 && fake.last_quad.y[2]==2*scale-1 &&
+            metrics.authority==GML_RENDER_RESOURCE_GPU_RESIDENT && !metrics.cpu_replays &&
+            !metrics.journal_bytes && !metrics.retained_mutable_bytes &&
+            !memcmp(shadow,render->app_surface_owned,sizeof shadow));
+    }else CHECK(!render->resident_application_pass &&
+               !memcmp(expected,render->app_surface_owned,sizeof expected));
+    gml_render_free(render);free(render);
+  }
+  return 1;
+}
+
 static int resident_background_and_tile_cpu_barriers(void){
   GmlRender *render=(GmlRender*)calloc(1,sizeof *render);
   FakeDevice fake={0};
@@ -10356,6 +10422,7 @@ int main(void){
   passed+=resident_zero_alpha_sprite_part_noop();
   passed+=resident_clipped_filtered_background_part_noop();
   passed+=resident_background_and_tile_cpu_barriers();
+  passed+=resident_integer_tile_clipping();
   passed+=atlas_scene_identity_and_retirement();
   passed+=immutable_font_scene_preparation();
   passed+=immutable_sprite_font_scene_preparation();
@@ -10430,6 +10497,6 @@ int main(void){
   passed+=source_free_primitive_rect_replay();
   passed+=stretched_float_exact_replay();
   passed+=filtered_font_exact_recovery();
-  printf("render resource cases: passed=%d failed=%d\n",passed,147-passed);
-  return passed==147?EXIT_SUCCESS:EXIT_FAILURE;
+  printf("render resource cases: passed=%d failed=%d\n",passed,148-passed);
+  return passed==148?EXIT_SUCCESS:EXIT_FAILURE;
 }

@@ -331,7 +331,9 @@ int gml_render_application_scene_enqueue_quads(GmlRender *r,
      operation->payload.quad.sampling.filter==GML_RENDER_FILTER_NEAREST)) ||
      ((operation->scene_family==GML_RENDER_SCENE_BACKGROUND ||
        operation->scene_family==GML_RENDER_SCENE_TILE) &&
-      operation->reconstruction_mode==GML_RENDER_REPLAY_EXACT &&
+      (operation->reconstruction_mode==GML_RENDER_REPLAY_EXACT ||
+       (operation->scene_family==GML_RENDER_SCENE_TILE &&
+        operation->reconstruction_mode==GML_RENDER_DEVICE_CHECKPOINT)) &&
       operation->payload.quad.sampling.filter==GML_RENDER_FILTER_NEAREST));
   pending=r->pending_scene_batch;
   if(pending && pending->count){
