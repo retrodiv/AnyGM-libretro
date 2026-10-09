@@ -85,6 +85,19 @@ static int resident_integer_background_part(GmlRender *r,int page_index,
     return 0;
   for(int index=0;index<3;index++)
     if(r->classic_interp_phase[index] || r->app_interp_phase[index]) return 0;
+  /* Unit tile selections use the CPU's shared source intersection, not atlas
+   * neighbours beyond the packed page. Keep other projections on their existing
+   * admission paths; ordinary contained crops need no extra preparation. */
+  if(family==GML_RENDER_SCENE_TILE && xs==1.0 && ys==1.0 &&
+     (sx+sw>(double)page->sw || sy+sh>(double)page->sh)){
+    GmlTpag view;
+    int source_x,source_y;
+    if(!gml_render_tpag_part_view(page,sx,sy,sw,sh,&view,&source_x,&source_y,
+                                 NULL,NULL,NULL,NULL)) return 1;
+    x+=(double)source_x-sx;
+    y+=(double)source_y-sy;
+    sx=source_x;sy=source_y;sw=view.sw;sh=view.sh;
+  }
   /* Integer source crops cannot cover pixels beyond their projected full rectangle.
    * At integral unit scale/position the CPU writer's rounded edge is exact, including
    * mirrored tiles; other projections retain a one-pixel rounding guard. An
