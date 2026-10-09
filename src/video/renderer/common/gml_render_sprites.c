@@ -2969,6 +2969,89 @@ void gml_render_sprite_nineslice(GmlRender *r, GmlSprite *s, GmlTpag *t,
   ns_band(r,t,s->ns_tile[4], l,tp,cw,chh,    dx0+l,      dy0+tp,     tw,th, blend,alpha);
 }
 
+/* R03-SPR-MODERN-UNIT-PART: consume the shared selection and mapping once.
+ * Integral clipped texels use natural nearest sampling and endpoint blending. */
+static int resident_modern_unit_sprite_part(GmlRender *r,GmlTpag *page,const GmlTpag *view,
+  double sx,double sy,double sw,double sh,double left,double top,double xs,double ys,
+  uint32_t colour,double alpha){
+  GmlRenderResourceSource source={0};
+  GmlRenderDrawStateSnapshot state={0};
+  GmlRenderDrawOp operation={0};
+  const GmlRenderDeviceServices *device=gml_render_device(r);
+  if(!r || !page || !view || !device || !device->observe_on_demand ||
+     !device->observe_on_demand(device->context) || !r->resident_application_pass ||
+     r->classic || r->interp || !anygm_policy_has_modern_layer_semantics(r->win) ||
+     r->target_id>0 || r->target_sp || r->gui_pass_active || r->fog_flat ||
+     gml_d3_is_active(r) || r->active_shader>=0 || r->alpha_test_enable ||
+     !r->alphablend || r->blendmode || r->blend_equation!=1 ||
+     r->blend_equation_alpha!=1 || r->color_write_mask!=15u || r->classic_phase_y ||
+     r->rotated_batch_count || r->rotated_batch_building || r->pending_underlay ||
+     r->pending_presentation || !gml_render_scene_target_matches(r) ||
+     xs!=1.0 || ys!=1.0 || colour!=0xFFFFFFu || alpha!=1.0 ||
+     floor(sx)!=sx || floor(sy)!=sy || floor(sw)!=sw || floor(sh)!=sh ||
+     !isfinite(left) || !isfinite(top) || fabs(left)>65536.0 || fabs(top)>65536.0 ||
+     floor(left)!=left || floor(top)!=top ||
+     !isfinite(r->cam_x) || !isfinite(r->cam_y) ||
+     floor(r->cam_x)!=r->cam_x || floor(r->cam_y)!=r->cam_y ||
+     r->fbw<=0 || r->fbh<=0 || r->fbw>16384 || r->fbh>16384 ||
+     page->project_authored_edges || page->sw<=0 || page->sh<=0 ||
+     page->bw>4096 || page->bh>4096 || page->sx<0 || page->sy<0 ||
+     (uint64_t)(uint32_t)page->sw*(uint32_t)page->sh>65536u ||
+     view->sw<=0 || view->sh<=0 || view->atlas!=page->atlas ||
+     view->sx<page->sx || view->sy<page->sy ||
+     (int64_t)view->sx+view->sw>(int64_t)page->sx+page->sw ||
+     (int64_t)view->sy+view->sh>(int64_t)page->sy+page->sh ||
+     !gml_render_atlas_scene_source_view(r,page->atlas,&source) || !source.borrowed_immutable ||
+     source.width>16384u || source.height>16384u || r->atlas[page->atlas].runtime_font_page ||
+     (uint64_t)(uint32_t)page->sx+(uint32_t)page->sw>source.width ||
+     (uint64_t)(uint32_t)page->sy+(uint32_t)page->sh>source.height) return 0;
+  for(unsigned index=0;index<3u;index++)
+    if(r->classic_interp_phase[index] || r->app_interp_phase[index]) return 0;
+  resident_classify_page(page,&r->atlas[page->atlas]);
+  if(!page->scene_binary_alpha) return 0;
+  double right=left+view->sw,bottom=top+view->sh;
+  if(left>=r->fbw || top>=r->fbh || right<=0.0 || bottom<=0.0) return 1;
+  double clipped_left=fmax(left,0.0),clipped_top=fmax(top,0.0);
+  double clipped_right=fmin(right,r->fbw),clipped_bottom=fmin(bottom,r->fbh);
+  gml_render_flush_pending_fill(r);
+  GmlRenderResource *target=gml_render_scene_target_resource_ensure(r);
+  if(r->pending_fill || !target) return 0;
+  GmlRenderImageRef image=gml_render_application_scene_next_image_ref(r,target);
+  if(image.content_version==UINT64_MAX) return 0;
+  operation.opcode=GML_RENDER_OP_TEXTURED_QUAD;
+  operation.reconstruction_mode=GML_RENDER_DEVICE_CHECKPOINT;
+  operation.scene_family=GML_RENDER_SCENE_SPRITE;
+  operation.source_count=1u;operation.sources=&source.image;
+  operation.target.image=image;operation.target.image.content_version++;
+  operation.target.storage_version=1u;
+  operation.target.width=(uint32_t)r->fbw;operation.target.height=(uint32_t)r->fbh;
+  operation.target.pixel_format=GML_RENDER_PIXEL_ARGB8888;
+  operation.target.region=(GmlRenderRect){0,0,(uint32_t)r->fbw,(uint32_t)r->fbh};
+  GmlRenderQuad *quad=&operation.payload.quad;
+  quad->shape=GML_RENDER_QUAD_AXIS_ALIGNED;quad->sampling.filter=GML_RENDER_FILTER_NEAREST;
+  quad->sampling.edge_rule=GML_RENDER_EDGE_CLAMP_SUBIMAGE;
+  quad->sampling.source_region=(GmlRenderRect){view->sx,view->sy,(uint32_t)view->sw,(uint32_t)view->sh};
+  quad->x[0]=quad->x[3]=clipped_left;quad->x[1]=quad->x[2]=clipped_right;
+  quad->y[0]=quad->y[1]=clipped_top;quad->y[2]=quad->y[3]=clipped_bottom;
+  for(unsigned corner=0;corner<4u;corner++){
+    quad->corner_colour[corner]=0xFFFFFFFFu;
+    quad->u[corner]=((double)view->sx+((corner==1u || corner==2u)?clipped_right:clipped_left)-left)/source.width;
+    quad->v[corner]=((double)view->sy+(corner>=2u?clipped_bottom:clipped_top)-top)/source.height;
+  }
+  state.write_mask=15u;state.colour=0xFFFFFFFFu;state.alpha=255u;state.sampler_count=1u;
+  state.samplers[0]=quad->sampling;
+  if(!page->scene_fully_opaque){
+    state.rgb_source_factor=GML_RENDER_BLEND_SOURCE_ALPHA;
+    state.rgb_destination_factor=GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA;
+    state.alpha_source_factor=GML_RENDER_BLEND_ONE;
+    state.alpha_destination_factor=GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA;
+    state.rgb_equation=state.alpha_equation=GML_RENDER_BLEND_ADD;
+  }
+  if(!gml_render_application_scene_enqueue(r,&operation,&state,&source)) return 0;
+  r->fb_all_transparent=0;r->fb_opaque_known=0;
+  return 1;
+}
+
 void gml_draw_sprite_part_ext(GmlRender *r, int sprite, int subimg, double sx, double sy,
                               double sw, double sh, double x, double y,
                               double xs, double ys, uint32_t blend, double alpha){
@@ -3028,6 +3111,8 @@ void gml_draw_sprite_part_ext(GmlRender *r, int sprite, int subimg, double sx, d
           view.scene_fully_opaque=0;
           double left=mapped_x+(anchor_x-sx)*draw_xscale-r->cam_x;
           double top=mapped_y+(anchor_y-sy)*draw_yscale-r->cam_y;
+          if(resident_modern_unit_sprite_part(r,page,&view,sx,sy,sw,sh,left,top,
+               mapped_xs,mapped_ys,blend,alpha)) return;
           if(!r->interp && anygm_policy_has_modern_layer_semantics(r->win) &&
              r->target_id>0 && r->target_sp>0 &&
              floor(sx)==sx && floor(sy)==sy && floor(sw)==sw && floor(sh)==sh &&
