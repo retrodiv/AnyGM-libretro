@@ -85,6 +85,21 @@ static void resident_classify_page(GmlTpag *page,const GmlAtlas *atlas){
   page->scene_opaque_checked=1;
 }
 
+static uint32_t resident_page_endpoint_rgb_mask(GmlTpag *page,const GmlAtlas *atlas){
+  if(page->scene_endpoint_rgb_checked) return page->scene_endpoint_rgb_mask;
+  uint32_t mask=7u;
+  for(int row=0;row<page->sh && mask;row++)
+    for(int column=0;column<page->sw && mask;column++){
+      const uint8_t *pixel=atlas->px+((size_t)(page->sy+row)*atlas->w+page->sx+column)*4u;
+      if(!pixel[3]) continue;
+      for(unsigned channel=0;channel<3u;channel++)
+        if(pixel[channel]!=0u && pixel[channel]!=255u) mask&=~(1u<<channel);
+    }
+  page->scene_endpoint_rgb_mask=mask;
+  page->scene_endpoint_rgb_checked=1;
+  return mask;
+}
+
 int gml_render_sprite_log_enabled(const GmlRender *render){
   return render_setting(render,"GML_LOG_SPRITE")!=NULL;
 }
@@ -377,9 +392,6 @@ static int resident_atlas_crop_from_page(GmlRender *r,GmlTpag *page,
       xs!=floor(xs) || ys!=floor(ys) || !isfinite(left) || !isfinite(top) ||
       left!=floor(left) || top!=floor(top) || fabs(left)>65536.0 || fabs(top)>65536.0 ||
       (double)crop_width*xs>65536.0 || (double)crop_height*ys>65536.0 ||
-      ((colour&0xFFu)!=0u && (colour&0xFFu)!=0xFFu) ||
-      ((colour&0xFF00u)!=0u && (colour&0xFF00u)!=0xFF00u) ||
-      ((colour&0xFF0000u)!=0u && (colour&0xFF0000u)!=0xFF0000u) ||
       !r->device.context || !r->device.observe_on_demand ||
       !r->device.observe_on_demand(r->device.context))) return 0;
   /* Packaged point glyphs on modern SCREEN already have resolved, snapped
@@ -471,9 +483,27 @@ static int resident_atlas_crop_from_page(GmlRender *r,GmlTpag *page,
   if(((integer_tile || classic_tile || integer_text) && (source.width>16384u || source.height>16384u)) ||
      (uint64_t)(uint32_t)page->sx+(uint32_t)page->sw>source.width ||
      (uint64_t)(uint32_t)page->sy+(uint32_t)page->sh>source.height) return 0;
+  uint32_t required_endpoint_rgb=0u;
+  if(integer_sprite_part){
+    for(unsigned channel=0;channel<3u;channel++){
+      unsigned factor=(colour>>(channel*8u))&255u;
+      if(factor!=0u && factor!=255u) required_endpoint_rgb|=1u<<channel;
+    }
+    /* Reject the newly admitted work before either cached page scan. */
+    if(required_endpoint_rgb &&
+       (uint64_t)(uint32_t)page->sw*(uint32_t)page->sh>65536u) return 0;
+  }
   resident_classify_page(page,atlas);
   if(integer_sprite_part && (!page->scene_binary_alpha || atlas->runtime_font_page ||
      !source.borrowed_immutable || source.width>16384u || source.height>16384u)) return 0;
+  /* R03-SPR-PART-ENDPOINT-SOURCE-TINT: tint truncation is exact when either
+   * factor is an endpoint. Prove only the required visible source channels,
+   * once per immutable small page, leaving the endpoint-tint packet unchanged. */
+  if(required_endpoint_rgb){
+    uint32_t proven=resident_page_endpoint_rgb_mask(page,atlas);
+    if((proven&required_endpoint_rgb)!=required_endpoint_rgb) return 0;
+    operation.payload.quad.source_endpoint_rgb_mask=proven;
+  }
   /* Do not extend the partial-source-alpha contract with this exact variant. */
   if(integer_text && (!page->scene_binary_alpha || atlas->runtime_font_page) && r->world_transform_active &&
      (r->world_scale_x!=1.0 || r->world_scale_y!=1.0)) return 0;

@@ -246,7 +246,9 @@ static int integer_sourceover_sprite_valid(const GmlRenderDrawOp *op,
 
 /* R03-SPR-PART-INTEGER-ENDPOINT: only the separately paired positive whole
  * endpoint-colour crop extends the ordinary nearest tint fence. The renderer
- * certifies binary source alpha before producing this checkpoint packet. */
+ * certifies binary source alpha before producing this checkpoint packet.
+ * R03-SPR-PART-ENDPOINT-SOURCE-TINT additionally carries its small immutable
+ * page's visible endpoint channels; no channel product needs float emulation. */
 static int integer_endpoint_sprite_valid(const GmlRenderDrawOp *op,
                                          const GmlRenderDrawStateSnapshot *state,
                                          const GlSceneImage *source){
@@ -258,6 +260,8 @@ static int integer_endpoint_sprite_valid(const GmlRenderDrawOp *op,
      op->sources[0].resource_class!=GML_RENDER_RESOURCE_ATLAS ||
      source->pixel_format!=GML_RENDER_PIXEL_RGBA8888 || source->rendered_origin ||
      source->width>16384u || source->height>16384u ||
+     quad->source_endpoint_rgb_mask>7u ||
+     (quad->source_endpoint_rgb_mask && (uint64_t)region.width*region.height>65536u) ||
      op->reconstruction_mode!=GML_RENDER_DEVICE_CHECKPOINT ||
      quad->shape!=GML_RENDER_QUAD_AXIS_ALIGNED || quad->span_active ||
      quad->sampling.filter!=GML_RENDER_FILTER_NEAREST ||
@@ -275,9 +279,9 @@ static int integer_endpoint_sprite_valid(const GmlRenderDrawOp *op,
     double u=((double)region.x+((corner==1u || corner==2u)?region.width:0u))/source->width;
     double v=((double)region.y+(corner>=2u?region.height:0u))/source->height;
     if(colour!=quad->corner_colour[0] || (colour>>24)!=255u ||
-       ((colour&0xFFu)!=0u && (colour&0xFFu)!=0xFFu) ||
-       ((colour&0xFF00u)!=0u && (colour&0xFF00u)!=0xFF00u) ||
-       ((colour&0xFF0000u)!=0u && (colour&0xFF0000u)!=0xFF0000u) ||
+       ((colour&0xFFu)!=0u && (colour&0xFFu)!=0xFFu && !(quad->source_endpoint_rgb_mask&4u)) ||
+       ((colour&0xFF00u)!=0u && (colour&0xFF00u)!=0xFF00u && !(quad->source_endpoint_rgb_mask&2u)) ||
+       ((colour&0xFF0000u)!=0u && (colour&0xFF0000u)!=0xFF0000u && !(quad->source_endpoint_rgb_mask&1u)) ||
        quad->u[corner]!=u || quad->v[corner]!=v) return 0;
   }
   return 1;

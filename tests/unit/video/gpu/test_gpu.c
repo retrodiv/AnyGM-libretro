@@ -2256,8 +2256,12 @@ static int scene_screen_filtered_alpha_stamp_case(void){
 
 static int scene_opaque_target_sourceover_api(GmlGpuApi api,int numbered,unsigned phase){
   uint8_t pixels[16]={208,32,16,128,16,208,32,255,32,16,208,0,192,176,160,64};
-  int endpoint=numbered==2;
+  int source_endpoint=numbered==3;
+  int endpoint=numbered==2 || source_endpoint;
   if(endpoint){pixels[3]=255;pixels[15]=255;}
+  if(source_endpoint) for(unsigned pixel=0;pixel<4u;pixel++)
+    if(pixels[pixel*4u+3u]) for(unsigned channel=0;channel<3u;channel++)
+      pixels[pixel*4u+channel]=((pixel+channel)&1u)?255u:0u;
   GmlRenderImageRef source={GML_RENDER_RESOURCE_ATLAS,31u,1u,1u};
   GmlRenderImageRef target={GML_RENDER_RESOURCE_SCREEN,32u,1u,1u};
   if(numbered) target.resource_class=GML_RENDER_RESOURCE_SURFACE;
@@ -2318,8 +2322,10 @@ static int scene_opaque_target_sourceover_api(GmlGpuApi api,int numbered,unsigne
       }
     }
     if(endpoint){
+      op->payload.quad.source_endpoint_rgb_mask=source_endpoint?7u:0u;
       for(unsigned corner=0;corner<4u;corner++){
         op->payload.quad.corner_colour[corner]=index==1u?0xFFFF00FFu:0xFF00FFFFu;
+        if(source_endpoint) op->payload.quad.corner_colour[corner]=index==1u?0xFF123456u:0xFFFE8001u;
         op->payload.quad.x[corner]=(corner==1u || corner==2u)?(phase?3.0:5.0):(phase?-1.0:1.0);
         op->payload.quad.y[corner]=corner>=2u?(phase==2u?3.0:5.0):(phase==2u?-1.0:1.0);
         op->payload.quad.u[corner]=(corner==1u || corner==2u)?1.0:0.0;
@@ -2361,7 +2367,7 @@ static int scene_opaque_target_sourceover_api(GmlGpuApi api,int numbered,unsigne
             "uncertified, malformed, squared-alpha, masked, tinted or fractional screen packets refuse before writes");
     state=prior;operations[1].payload.quad=prior_quad;
   }
-  for(unsigned variant=0;endpoint && variant<7u;variant++){
+  for(unsigned variant=0;endpoint && variant<(source_endpoint?11u:7u);variant++){
     GmlRenderDrawOp prior=operations[1];
     if(variant==0u) operations[1].payload.quad.corner_colour[0]=0xFFFF00FEu;
     if(variant==1u) for(unsigned corner=0;corner<4u;corner++) operations[1].payload.quad.corner_colour[corner]=0x80FF00FFu;
@@ -2370,6 +2376,10 @@ static int scene_opaque_target_sourceover_api(GmlGpuApi api,int numbered,unsigne
     if(variant==4u) operations[1].target.image.resource_class=GML_RENDER_RESOURCE_SCREEN;
     if(variant==5u) operations[1].payload.quad.x[1]=operations[1].payload.quad.x[2]=operations[1].payload.quad.x[0]+10;
     if(variant==6u) operations[1].reconstruction_mode=GML_RENDER_REPLAY_EXACT;
+    if(variant==7u) operations[1].payload.quad.source_endpoint_rgb_mask=0u;
+    if(variant==8u) operations[1].payload.quad.source_endpoint_rgb_mask=6u;
+    if(variant==9u) operations[1].payload.quad.source_endpoint_rgb_mask=8u;
+    if(variant==10u) operations[1].payload.quad.source_endpoint_rgb_mask=UINT32_MAX;
     int clears=anygm_test_graphics_clear_calls(),draws=anygm_test_graphics_scene_draw_calls();
     result=device.submit(device.context,&batch);
     REQUIRE(result.status==GML_RENDER_EXEC_UNSUPPORTED && !result.accepted_prefix &&
@@ -2399,6 +2409,13 @@ static int scene_integer_endpoint_sprite_case(void){
   for(unsigned phase=0;phase<3u;phase++)
     if(!scene_opaque_target_sourceover_api(GML_GPU_API_OPENGLES3,2,phase) ||
        !scene_opaque_target_sourceover_api(GML_GPU_API_OPENGL_CORE,2,phase)) return 0;
+  return 1;
+}
+
+static int scene_endpoint_source_sprite_case(void){
+  for(unsigned phase=0;phase<3u;phase++)
+    if(!scene_opaque_target_sourceover_api(GML_GPU_API_OPENGLES3,3,phase) ||
+       !scene_opaque_target_sourceover_api(GML_GPU_API_OPENGL_CORE,3,phase)) return 0;
   return 1;
 }
 
@@ -3711,6 +3728,7 @@ int main(int argc,char **argv){
     {"scene_opaque_target_sourceover",scene_opaque_target_sourceover_case},
     {"scene_numbered_integer_sourceover",scene_numbered_integer_sourceover_case},
     {"scene_integer_endpoint_sprite",scene_integer_endpoint_sprite_case},
+    {"scene_endpoint_source_sprite",scene_endpoint_source_sprite_case},
     {"scene_gles_font_programs",scene_gles_font_programs_case},
     {"scene_screen_filtered_alpha_stamp",scene_screen_filtered_alpha_stamp_case},
     {"scene_numbered_sprite_channel_masks",scene_numbered_sprite_channel_masks_case},

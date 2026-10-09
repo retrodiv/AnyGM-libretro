@@ -270,6 +270,10 @@ typedef struct GmlRenderQuad {
   GmlRenderSamplingPolicy sampling;
   /* Automatic surface presentation's existing opacity certificate; never a pixel scan. */
   uint32_t source_opaque;
+  /* Resolved immutable binary-source certificate: bits 0/1/2 prove that
+   * visible red/green/blue samples are endpoints. Used only by whole-texel
+   * numbered sprite parts; never a shader instruction or canonical state. */
+  uint32_t source_endpoint_rgb_mask;
 } GmlRenderQuad;
 
 enum { GML_RENDER_SPAN_FIXED20_ROW=2u };
