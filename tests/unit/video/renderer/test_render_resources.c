@@ -5270,6 +5270,81 @@ static int resident_offscreen_sprite_part_preserves_queued_draws(void){
   return 1;
 }
 
+static int resident_filtered_gui_offscreen_sprite_noop(void){
+  enum {WIDTH=24,HEIGHT=20};
+  for(unsigned mapped=0;mapped<2u;mapped++) for(unsigned trim=0;trim<2u;trim++)
+  for(unsigned signs=0;signs<4u;signs++) for(unsigned scale=0;scale<2u;scale++)
+  for(unsigned edge=0;edge<4u;edge++) for(unsigned phase=0;phase<3u;phase++){
+    GmlRender *r=calloc(1,sizeof *r);
+    GmlWin content={.bytecode=14};
+    FakeDevice fake={0};GmlRenderDeviceServices device=service(&fake);
+    GmlRenderJournalMetrics before={0},after={0};
+    GmlRenderDispatchMetrics dispatch={0};
+    uint32_t expected[WIDTH*HEIGHT],cpu[WIDTH*HEIGHT],screen[WIDTH*HEIGHT];
+    const double factor=scale?0.75:1.0;
+    const double xs=(signs&1u)?-factor:factor,ys=(signs&2u)?-factor:factor;
+    const int pw=(int)floor(6.0*factor+0.5),ph=(int)floor(4.0*factor+0.5);
+    const double offset=phase==0u?-0.5:phase==1u?0.0:0.5-0x1p-20;
+    double left=edge==0u?-pw:edge==1u?WIDTH:8.0;
+    double top=edge==2u?-ph:edge==3u?HEIGHT:8.0;
+    if(edge<2u) left+=offset;else top+=offset;
+    const double anchor_x=left+((signs&1u)?pw:0)+2.0*xs-trim*xs;
+    const double anchor_y=top+((signs&2u)?ph:0)+ys-trim*ys;
+    CHECK(r && !gml_render_init(r,NULL));r->win=&content;
+    free(r->atlas[0].px);
+    r->atlas[0]=(GmlAtlas){.w=10,.h=8,.px=malloc(10u*8u*4u)};
+    r->tpag=calloc(1,sizeof *r->tpag);r->spr=calloc(1,sizeof *r->spr);
+    CHECK(r->atlas[0].px && r->tpag && r->spr);
+    r->n_tpag=r->n_spr=1;
+    for(unsigned pixel=0;pixel<80u;pixel++){
+      uint8_t *rgba=r->atlas[0].px+pixel*4u;
+      rgba[0]=230u;rgba[1]=173u;rgba[2]=91u;rgba[3]=pixel%3u?255u:128u;
+    }
+    r->tpag[0]=(GmlTpag){.sx=2,.sy=2,.sw=6,.sh=4,.tw=6,.th=4,
+                         .tx=(int)trim,.ty=(int)trim,.bw=6+(int)trim*2,.bh=4+(int)trim*2};
+    r->spr[0].w=r->tpag[0].bw;r->spr[0].h=r->tpag[0].bh;r->spr[0].n_frames=1;
+    r->spr[0].originx=2;r->spr[0].originy=1;
+    r->spr[0].frame=calloc(1,sizeof(int));CHECK(r->spr[0].frame);
+    for(unsigned accelerated=0;accelerated<2u;accelerated++){
+      gml_render_bind_device(r,accelerated?&device:NULL);
+      if(accelerated) CHECK(gml_render_begin_resident_base(r,screen,WIDTH,HEIGHT,0,0));
+      else gml_render_begin(r,cpu,WIDTH,HEIGHT,0,0);
+      r->interp=1;r->active_shader=-1;r->alphablend=1;r->blendmode=0;
+      r->blend_equation=r->blend_equation_alpha=1;r->color_write_mask=15u;
+      if(accelerated) gml_render_dispatch_diagnostics_enable(r,1);
+      gml_render_set_pending_fill(r,0xFF102030u);
+      gml_render_primitive_rectangle(r,4,5,8,9,0x2468ACu,0);
+      if(!accelerated){gml_render_flush_pending_fill(r);memcpy(expected,cpu,sizeof expected);}
+      gml_render_gui_begin(r,WIDTH,HEIGHT);
+      if(mapped) gml_render_gui_set_size(r,12,8);
+      gml_render_resource_journal_metrics(r->base_scene_resource,&before);
+      int submits=fake.submits,reads=fake.readbacks;
+      gml_draw_sprite_ext(r,0,0,anchor_x/r->gui_scale_x,anchor_y/r->gui_scale_y,
+                         xs/r->gui_scale_x,ys/r->gui_scale_y,0,0xFFFFFFu,0.05);
+      if(accelerated){
+        gml_render_resource_journal_metrics(r->base_scene_resource,&after);
+        CHECK(r->resident_application_pass && fake.submits==submits && fake.readbacks==reads &&
+              after.logical_version==before.logical_version && after.cpu_replays==before.cpu_replays);
+      } else CHECK(!memcmp(expected,cpu,sizeof expected));
+      gml_render_gui_end(r);
+      gml_render_primitive_rectangle(r,6,7,10,11,0x13579Bu,0);
+      if(accelerated){
+        CHECK(gml_render_scene_submit_pending(r) && gml_render_dispatch_metrics(r,&dispatch) &&
+              !dispatch.failed && !dispatch.unclassified && !dispatch.overflow);
+        for(unsigned family=0;family<GML_RENDER_SCENE_FAMILY_COUNT;family++)
+          for(unsigned reason=0;reason<GML_RENDER_DISPATCH_REASON_COUNT;reason++)
+            CHECK(!dispatch.cpu[family][reason]);
+        /* Explicit fake-device observation is separate from ordinary draw accounting. */
+        const uint32_t *sealed=NULL;
+        CHECK(gml_render_resource_acquire_cpu_read(r->base_scene_resource,&sealed) &&
+              !memcmp(expected,sealed,sizeof expected));
+      } else {gml_render_flush_pending_fill(r);memcpy(expected,cpu,sizeof expected);}
+    }
+    gml_render_free(r);free(r);
+  }
+  return 1;
+}
+
 static int resident_empty_sprite_preserves_queued_draws(void){
   const uint8_t rgba[16]={
     0xD0u,0x20u,0x10u,0xFFu, 0x10u,0xD0u,0x20u,0xFFu,
@@ -11073,6 +11148,7 @@ int main(void){
   passed+=resident_black_additive_sprite_noop();
   passed+=resident_zero_alpha_sprite_part_noop();
   passed+=resident_offscreen_sprite_part_preserves_queued_draws();
+  passed+=resident_filtered_gui_offscreen_sprite_noop();
   passed+=resident_clipped_filtered_background_part_noop();
   passed+=resident_background_and_tile_cpu_barriers();
   passed+=resident_integer_tile_clipping(0);
@@ -11158,6 +11234,6 @@ int main(void){
   passed+=source_free_primitive_rect_replay();
   passed+=stretched_float_exact_replay();
   passed+=filtered_font_exact_recovery();
-  printf("render resource cases: passed=%d failed=%d\n",passed,157-passed);
-  return passed==157?EXIT_SUCCESS:EXIT_FAILURE;
+  printf("render resource cases: passed=%d failed=%d\n",passed,158-passed);
+  return passed==158?EXIT_SUCCESS:EXIT_FAILURE;
 }

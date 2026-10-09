@@ -1466,7 +1466,13 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
      * Unit-sign parts retain their qualified coverage on other targets too. */
     /* The qualified numbered point leaf cannot expand this rounded coverage.
      * A wholly clipped sprite is a no-op before its later sample-edge pruning. */
-    if(modern_numbered_sprite || modern_screen_sprite || hardware_screen_filtered || firstgen_signed_point ||
+    /* R03-SPR-GUI-FILTERED-OFFSCREEN-NOOP: these axis GUI slices already use
+     * blit_one's independently rounded half-open SCREEN rectangle above.
+     * A fully clipped sprite writes nothing, even with partial source alpha. */
+    if((family==GML_RENDER_SCENE_SPRITE && (identity_gui_atlas || mapped_gui_sprite) &&
+        !part_view && !opaque_target_alpha && !transparent_stretched_trim && !box_stretched &&
+        anygm_policy_uses_first_generation_studio(r->win)) ||
+       modern_numbered_sprite || modern_screen_sprite || hardware_screen_filtered || firstgen_signed_point ||
        (nearest_mode==4 && !rotated_sprite && xs==1.0 && ys==1.0) ||
        additive_background ||
        (family==GML_RENDER_SCENE_BACKGROUND && part_view && !rotated_sprite &&
