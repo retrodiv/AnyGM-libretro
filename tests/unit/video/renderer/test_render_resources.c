@@ -5728,6 +5728,75 @@ static int resident_integer_tile_clipping(int text){
   return 1;
 }
 
+static int resident_integer_endpoint_sprite_part(void){
+  for(int excluded=0;excluded<18;excluded++) for(int world=0;world<2;world++){
+    GmlRender *r=calloc(1,sizeof *r);
+    GmlWin content={.bytecode=17};
+    FakeDevice fake={.on_demand=1};
+    GmlRenderDeviceServices device=service(&fake);
+    const uint8_t rgba[16]={208,32,16,255,16,208,32,255,
+                           32,16,208,0,192,176,160,255};
+    uint32_t base[16],shadow[16];
+    CHECK(r && !gml_render_init(r,NULL));
+    r->win=&content;
+    free(r->atlas[0].px);
+    r->atlas[0].px=malloc(sizeof rgba);CHECK(r->atlas[0].px);
+    memcpy(r->atlas[0].px,rgba,sizeof rgba);r->atlas[0].w=r->atlas[0].h=2;
+    r->tpag=calloc(1,sizeof *r->tpag);r->spr=calloc(1,sizeof *r->spr);
+    CHECK(r->tpag && r->spr);r->n_tpag=r->n_spr=1;
+    r->tpag[0]=(GmlTpag){.sw=2,.sh=2,.tw=2,.th=2,.bw=4,.bh=4,.tx=1,.ty=1};
+    r->spr[0]=(GmlSprite){.w=4,.h=4,.originx=3,.originy=2,.n_frames=1};
+    r->spr[0].frame=calloc(1,sizeof(int));CHECK(r->spr[0].frame);
+    if(excluded==2) r->atlas[0].px[3]=128;
+    if(excluded==17) r->atlas[0].runtime_font_page=1;
+    gml_render_application_surface_bind(r,base,4,4,1);
+    device.observe_on_demand=fake_observe_on_demand;gml_render_bind_device(r,&device);
+    CHECK(gml_render_begin_resident_base(r,base,4,4,0,0));
+    int target=gml_surface_create(r,4,4);CHECK(target>0 && gml_surface_set_target(r,target));
+    for(int pixel=0;pixel<16;pixel++) r->fb[pixel]=0xA5ABCDEFu;
+    memcpy(shadow,r->fb,sizeof shadow);
+    gml_render_set_pending_fill(r,0xFF123456u);
+    gml_render_flush_pending_fill(r);
+    int submits=fake.submits;
+    double alpha=1.0,xs=2.0,ys=2.0,x=-1.0;uint32_t tint=0xFF00FFu;
+    if(excluded==1) fake.on_demand=0;
+    if(excluded==3) alpha=0.5;
+    if(excluded==4) tint=0x112233u;
+    if(excluded==5) r->active_shader=0;
+    if(excluded==6) r->color_write_mask=7;
+    if(excluded==7) r->fog_flat=1;
+    if(excluded==8) r->alpha_test_enable=1;
+    if(excluded==9) r->classic=1;
+    if(excluded==10) content.bytecode=15;
+    if(excluded==11) r->gui_pass_active=1;
+    if(excluded==12){r->app_interp_phase[0]=calloc(16,sizeof(uint32_t));CHECK(r->app_interp_phase[0]);}
+    if(excluded==13) xs=2.5;
+    if(excluded==14) xs=-2.0;
+    if(excluded==15) x=-1.25;
+    if(excluded==16) xs=5.0;
+    r->world_transform_active=world;r->world_scale_x=4;r->world_scale_y=2;
+    gml_draw_sprite_part_ext(r,0,0,1,1,2,2,x,-1,xs,ys,tint,alpha);
+    if(!excluded){
+      GmlRenderJournalMetrics metrics={0};
+      CHECK(r->resident_application_pass && fake.submits==submits && !fake.readbacks);
+      CHECK(gml_render_scene_submit_pending(r));
+      gml_render_resource_journal_metrics(gml_render_scene_target_resource_ensure(r),&metrics);
+      CHECK(fake.last_batch_operations==1u && fake.last_filter==GML_RENDER_FILTER_NEAREST &&
+            fake.last_quad.x[0]==-1 && fake.last_quad.y[0]==-1 &&
+            fake.last_quad.x[1]==3 && fake.last_quad.y[2]==3 &&
+            fake.last_quad.corner_colour[0]==0xFFFF00FFu && !fake.readbacks &&
+            metrics.authority==GML_RENDER_RESOURCE_GPU_RESIDENT && !metrics.cpu_replays &&
+            !metrics.journal_bytes && !metrics.retained_mutable_bytes &&
+            !memcmp(shadow,r->fb,sizeof shadow));
+    }else{
+      if(r->resident_application_pass) fprintf(stderr,"integer selected-part exclusion: case=%d world=%d\n",excluded,world);
+      CHECK(!r->resident_application_pass);
+    }
+    r->world_transform_active=0;gml_render_free(r);free(r);
+  }
+  return 1;
+}
+
 static int resident_screen_binary_rotation(void){
   for(int excluded=0;excluded<16;excluded++) for(int world=0;world<2;world++){
     GmlRender *r=calloc(1,sizeof *r);
@@ -11153,6 +11222,7 @@ int main(void){
   passed+=resident_background_and_tile_cpu_barriers();
   passed+=resident_integer_tile_clipping(0);
   passed+=resident_integer_tile_clipping(1);
+  passed+=resident_integer_endpoint_sprite_part();
   passed+=resident_fractional_screen_font();
   passed+=resident_screen_binary_rotation();
   passed+=resident_integer_sprite_rounded_noop();
@@ -11234,6 +11304,6 @@ int main(void){
   passed+=source_free_primitive_rect_replay();
   passed+=stretched_float_exact_replay();
   passed+=filtered_font_exact_recovery();
-  printf("render resource cases: passed=%d failed=%d\n",passed,158-passed);
-  return passed==158?EXIT_SUCCESS:EXIT_FAILURE;
+  printf("render resource cases: passed=%d failed=%d\n",passed,159-passed);
+  return passed==159?EXIT_SUCCESS:EXIT_FAILURE;
 }

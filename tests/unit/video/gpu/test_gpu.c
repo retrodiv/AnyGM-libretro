@@ -2255,7 +2255,9 @@ static int scene_screen_filtered_alpha_stamp_case(void){
 }
 
 static int scene_opaque_target_sourceover_api(GmlGpuApi api,int numbered,unsigned phase){
-  const uint8_t pixels[16]={208,32,16,128,16,208,32,255,32,16,208,0,192,176,160,64};
+  uint8_t pixels[16]={208,32,16,128,16,208,32,255,32,16,208,0,192,176,160,64};
+  int endpoint=numbered==2;
+  if(endpoint){pixels[3]=255;pixels[15]=255;}
   GmlRenderImageRef source={GML_RENDER_RESOURCE_ATLAS,31u,1u,1u};
   GmlRenderImageRef target={GML_RENDER_RESOURCE_SCREEN,32u,1u,1u};
   if(numbered) target.resource_class=GML_RENDER_RESOURCE_SURFACE;
@@ -2277,7 +2279,7 @@ static int scene_opaque_target_sourceover_api(GmlGpuApi api,int numbered,unsigne
   state.write_mask=15u;state.alpha=255u;state.colour=0xFFFFFFFFu;
   state.rgb_source_factor=GML_RENDER_BLEND_SOURCE_ALPHA;
   state.rgb_destination_factor=GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA;
-  state.alpha_source_factor=numbered?GML_RENDER_BLEND_SOURCE_ALPHA:GML_RENDER_BLEND_ONE;
+  state.alpha_source_factor=numbered && !endpoint?GML_RENDER_BLEND_SOURCE_ALPHA:GML_RENDER_BLEND_ONE;
   state.alpha_destination_factor=GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA;
   state.rgb_equation=state.alpha_equation=GML_RENDER_BLEND_ADD;
   state.coverage_policy=numbered?0u:GML_RENDER_COVERAGE_OPAQUE_TARGET;
@@ -2315,6 +2317,15 @@ static int scene_opaque_target_sourceover_api(GmlGpuApi api,int numbered,unsigne
         op->payload.quad.v[corner]=corner>=2u?0.875:0.125;
       }
     }
+    if(endpoint){
+      for(unsigned corner=0;corner<4u;corner++){
+        op->payload.quad.corner_colour[corner]=index==1u?0xFFFF00FFu:0xFF00FFFFu;
+        op->payload.quad.x[corner]=(corner==1u || corner==2u)?(phase?3.0:5.0):(phase?-1.0:1.0);
+        op->payload.quad.y[corner]=corner>=2u?(phase==2u?3.0:5.0):(phase==2u?-1.0:1.0);
+        op->payload.quad.u[corner]=(corner==1u || corner==2u)?1.0:0.0;
+        op->payload.quad.v[corner]=corner>=2u?1.0:0.0;
+      }
+    }
   }
   GmlRenderExecutionResult result=device.submit(device.context,&batch);
   unsigned factors[4]={0};
@@ -2323,9 +2334,9 @@ static int scene_opaque_target_sourceover_api(GmlGpuApi api,int numbered,unsigne
           anygm_test_graphics_scene_draw_calls()==1u &&
           anygm_test_graphics_scene_vertices()==12u &&
           anygm_test_graphics_scene_copies()==0u && anygm_test_graphics_read_pixels()==0u &&
-          anygm_test_graphics_blend_configurations()==(numbered?0u:1u) &&
+          anygm_test_graphics_blend_configurations()==(numbered && !endpoint?0u:1u) &&
           factors[0]==GL_SRC_ALPHA && factors[1]==GL_ONE_MINUS_SRC_ALPHA &&
-          factors[2]==(numbered?GL_SRC_ALPHA:GL_ONE) && factors[3]==GL_ONE_MINUS_SRC_ALPHA,
+          factors[2]==(numbered && !endpoint?GL_SRC_ALPHA:GL_ONE) && factors[3]==GL_ONE_MINUS_SRC_ALPHA,
           "two resident alpha sprites use one fixed-function batch without destination copies or reads");
   for(unsigned variant=0;!numbered && variant<8u;variant++){
     GmlRenderDrawStateSnapshot prior=state;
@@ -2350,6 +2361,22 @@ static int scene_opaque_target_sourceover_api(GmlGpuApi api,int numbered,unsigne
             "uncertified, malformed, squared-alpha, masked, tinted or fractional screen packets refuse before writes");
     state=prior;operations[1].payload.quad=prior_quad;
   }
+  for(unsigned variant=0;endpoint && variant<7u;variant++){
+    GmlRenderDrawOp prior=operations[1];
+    if(variant==0u) operations[1].payload.quad.corner_colour[0]=0xFFFF00FEu;
+    if(variant==1u) for(unsigned corner=0;corner<4u;corner++) operations[1].payload.quad.corner_colour[corner]=0x80FF00FFu;
+    if(variant==2u) operations[1].payload.quad.u[0]=0.01;
+    if(variant==3u) operations[1].payload.quad.x[0]=operations[1].payload.quad.x[3]=-1.25;
+    if(variant==4u) operations[1].target.image.resource_class=GML_RENDER_RESOURCE_SCREEN;
+    if(variant==5u) operations[1].payload.quad.x[1]=operations[1].payload.quad.x[2]=operations[1].payload.quad.x[0]+10;
+    if(variant==6u) operations[1].reconstruction_mode=GML_RENDER_REPLAY_EXACT;
+    int clears=anygm_test_graphics_clear_calls(),draws=anygm_test_graphics_scene_draw_calls();
+    result=device.submit(device.context,&batch);
+    REQUIRE(result.status==GML_RENDER_EXEC_UNSUPPORTED && !result.accepted_prefix &&
+            anygm_test_graphics_clear_calls()==clears && anygm_test_graphics_scene_draw_calls()==draws,
+            "unqualified endpoint tint, alpha, phase, extent, target or replay refuses before writes");
+    operations[1]=prior;
+  }
   gml_gpu_destroy(gpu,1);
   return 1;
 }
@@ -2365,6 +2392,13 @@ static int scene_numbered_integer_sourceover_case(void){
   for(unsigned phase=0;phase<3u;phase++)
     if(!scene_opaque_target_sourceover_api(GML_GPU_API_OPENGLES3,1,phase) ||
        !scene_opaque_target_sourceover_api(GML_GPU_API_OPENGL_CORE,1,phase)) return 0;
+  return 1;
+}
+
+static int scene_integer_endpoint_sprite_case(void){
+  for(unsigned phase=0;phase<3u;phase++)
+    if(!scene_opaque_target_sourceover_api(GML_GPU_API_OPENGLES3,2,phase) ||
+       !scene_opaque_target_sourceover_api(GML_GPU_API_OPENGL_CORE,2,phase)) return 0;
   return 1;
 }
 
@@ -3676,6 +3710,7 @@ int main(int argc,char **argv){
     {"scene_alpha_composition",scene_alpha_composition_case},
     {"scene_opaque_target_sourceover",scene_opaque_target_sourceover_case},
     {"scene_numbered_integer_sourceover",scene_numbered_integer_sourceover_case},
+    {"scene_integer_endpoint_sprite",scene_integer_endpoint_sprite_case},
     {"scene_gles_font_programs",scene_gles_font_programs_case},
     {"scene_screen_filtered_alpha_stamp",scene_screen_filtered_alpha_stamp_case},
     {"scene_numbered_sprite_channel_masks",scene_numbered_sprite_channel_masks_case},

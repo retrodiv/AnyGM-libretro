@@ -244,6 +244,45 @@ static int integer_sourceover_sprite_valid(const GmlRenderDrawOp *op,
   return 1;
 }
 
+/* R03-SPR-PART-INTEGER-ENDPOINT: only the separately paired positive whole
+ * endpoint-colour crop extends the ordinary nearest tint fence. The renderer
+ * certifies binary source alpha before producing this checkpoint packet. */
+static int integer_endpoint_sprite_valid(const GmlRenderDrawOp *op,
+                                         const GmlRenderDrawStateSnapshot *state,
+                                         const GlSceneImage *source){
+  const GmlRenderQuad *quad=&op->payload.quad;
+  GmlRenderRect region=quad->sampling.source_region;
+  if(!source || op->scene_family!=GML_RENDER_SCENE_SPRITE ||
+     op->target.image.resource_class!=GML_RENDER_RESOURCE_SURFACE ||
+     op->target.pixel_format!=GML_RENDER_PIXEL_ARGB8888 || state->coverage_policy ||
+     op->sources[0].resource_class!=GML_RENDER_RESOURCE_ATLAS ||
+     source->pixel_format!=GML_RENDER_PIXEL_RGBA8888 || source->rendered_origin ||
+     source->width>16384u || source->height>16384u ||
+     op->reconstruction_mode!=GML_RENDER_DEVICE_CHECKPOINT ||
+     quad->shape!=GML_RENDER_QUAD_AXIS_ALIGNED || quad->span_active ||
+     quad->sampling.filter!=GML_RENDER_FILTER_NEAREST ||
+     quad->sampling.edge_rule!=GML_RENDER_EDGE_CLAMP_SUBIMAGE ||
+     quad->sampling.quantisation || quad->sampling.logical_margin_mask ||
+     !valid_region(region,source->width,source->height) ||
+     !exact_rect(op,NULL,NULL,NULL,NULL,1) ||
+     fabs(quad->x[0])>65536.0 || fabs(quad->y[0])>65536.0) return 0;
+  double width=quad->x[1]-quad->x[0],height=quad->y[2]-quad->y[0];
+  double xs=width/region.width,ys=height/region.height;
+  if(width>65536.0 || height>65536.0 || xs<1.0 || xs>4.0 || ys<1.0 || ys>4.0 ||
+     xs!=floor(xs) || ys!=floor(ys)) return 0;
+  for(unsigned corner=0;corner<4u;corner++){
+    uint32_t colour=quad->corner_colour[corner];
+    double u=((double)region.x+((corner==1u || corner==2u)?region.width:0u))/source->width;
+    double v=((double)region.y+(corner>=2u?region.height:0u))/source->height;
+    if(colour!=quad->corner_colour[0] || (colour>>24)!=255u ||
+       ((colour&0xFFu)!=0u && (colour&0xFFu)!=0xFFu) ||
+       ((colour&0xFF00u)!=0u && (colour&0xFF00u)!=0xFF00u) ||
+       ((colour&0xFF0000u)!=0u && (colour&0xFF0000u)!=0xFF0000u) ||
+       quad->u[corner]!=u || quad->v[corner]!=v) return 0;
+  }
+  return 1;
+}
+
 static int hardware_combined_quad_valid(const GmlRenderDrawOp *op,
                                         const GlSceneImage *source){
   const GmlRenderQuad *quad=&op->payload.quad;
@@ -684,6 +723,9 @@ static int scene_preflight(GmlGpuBackend *backend,const GmlRenderDrawBatch *batc
       int hardware_sprite=hardware_screen_sprite_valid(op,state,source);
       int integer_sourceover=integer_sourceover_sprite_valid(op,state,source) &&
         (blend==1 || blend==3);
+      int integer_endpoint=op->payload.quad.corner_colour[0]!=0xFFFFFFFFu &&
+        integer_endpoint_sprite_valid(op,state,source) &&
+        (blend==0 || blend==1);
       int modern_numbered_sprite=
         (sampling->quantisation==GML_RENDER_QUANTISE_SPRITE_MODERN_NEAREST ||
          sampling->quantisation==GML_RENDER_QUANTISE_SPRITE_MODERN_ROTATED_NEAREST) &&
@@ -974,7 +1016,7 @@ static int scene_preflight(GmlGpuBackend *backend,const GmlRenderDrawBatch *batc
              sampling->filter!=GML_RENDER_FILTER_NEAREST_PHASED_OPAQUE_ALPHA &&
              sampling->filter!=GML_RENDER_FILTER_HARDWARE_BILINEAR &&
              op->payload.quad.shape==GML_RENDER_QUAD_AXIS_ALIGNED &&
-             !hardware_surface && !integer_sourceover &&
+             !hardware_surface && !integer_sourceover && !integer_endpoint &&
              !(op->scene_family==GML_RENDER_SCENE_TEXT &&
                sampling->filter==GML_RENDER_FILTER_NEAREST)))) return 0;
         if((colour>>24)!=255u && blend!=1 && blend!=3 && blend!=9 && blend!=10 && blend!=11) return 0;
