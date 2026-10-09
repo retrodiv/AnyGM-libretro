@@ -693,12 +693,22 @@ int engine_present_hardware_canvas(AnygmEngine *engine,unsigned *width,unsigned 
   int hybrid=engine_hybrid_presentation_active(engine);
   if(!scene && !hybrid) return 0;
   if(!engine->screen || !engine->output_width || !engine->output_height) return 0;
+  unsigned crop_x=0,crop_y=0,crop_width=0,crop_height=0;
+  int crop_requested=engine->present_crop_left || engine->present_crop_top ||
+                     engine->present_crop_right || engine->present_crop_bottom;
+  /* A contained 1:1 crop changes only the source indices, not sampling or
+   * logical frame ownership. Deferred pictures and scaled crops retain their owner. */
+  int identity_crop=scene && engine->host_canvas_active &&
+    !gml_render_deferred_presentation(&engine->render,NULL) &&
+    engine_present_crop_rect(engine,engine->output_width,engine->output_height,
+                              &crop_x,&crop_y,&crop_width,&crop_height) &&
+    engine->host_canvas_width==(int)crop_width &&
+    engine->host_canvas_height==(int)crop_height;
   /* A current logical SCREEN is already complete. Host fitting must not observe its CPU shadow
-   * or replace the saved logical raster with the host-sized filtered picture. CRT, shifted and
-   * cropped paths retain their separate, established presentation boundaries. */
+   * or replace the saved logical raster with the host-sized filtered picture. CRT, shift and
+   * nonidentity crops retain their separate, established presentation boundaries. */
   if(scene && !engine->host_crt_active && !engine->present_shift_x && !engine->present_shift_y &&
-     !engine->present_crop_left && !engine->present_crop_top &&
-     !engine->present_crop_right && !engine->present_crop_bottom)
+     (!crop_requested || identity_crop))
     resident=gml_render_completed_screen_image(&engine->render,engine->screen,
                 (int)engine->output_width,(int)engine->output_height,&completed);
   /* A restored CPU-current picture needs only a logical upload and the already qualified nearest
@@ -729,6 +739,20 @@ int engine_present_hardware_canvas(AnygmEngine *engine,unsigned *width,unsigned 
     GmlPlanImage *source=&engine->host_plan.images[0];
     source->cpu_pixels=NULL;
     source->resident_image=completed;
+    if(identity_crop){
+      /* Keep the actual texture extent. Identity pixel-centre axes select
+       * crop_offset + local_index exactly; no subimage upload or copy is needed. */
+      GmlPlanOp *blit=&engine->host_plan.operations[1];
+      source->width=source->pitch_pixels=engine->output_width;
+      source->height=engine->output_height;
+      blit->axis_x=(GmlPlanAxis){.rule=GML_PLAN_AXIS_PIXEL_CENTRE,
+        .source_extent=source->width,.destination_extent=source->width,
+        .destination_first=(int32_t)crop_x,.extent=source->width};
+      blit->axis_y=(GmlPlanAxis){.rule=GML_PLAN_AXIS_PIXEL_CENTRE,
+        .source_extent=source->height,.destination_extent=source->height,
+        .destination_first=(int32_t)crop_y,.extent=source->height};
+      if(!gml_render_plan_validate(&engine->host_plan)) return 0;
+    }
   }
   if(!engine_execute_graphics_plan(engine,&engine->host_plan)) return 0;
   if(resident) engine->frame_authority=ENGINE_FRAME_GPU_PRESENTED_CPU_RECONSTRUCTIBLE;

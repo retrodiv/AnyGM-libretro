@@ -2621,6 +2621,81 @@ static int scene_canvas_cpu_source_case(void){
   return 1;
 }
 
+/* Cropping a complete current SCREEN at 1:1 changes no sampling or logical state. */
+static int scene_canvas_resident_identity_crop_case(void){
+  Session selected={0};
+  GmlRenderImageRef image={0};
+  GmlGpuCounters before={0},after={0};
+  GmlRenderResourceMetrics resources_before={0},resources_after={0};
+  GmlRenderDispatchMetrics dispatch={0};
+  unsigned width=7u,height=9u;
+  anygm_test_graphics_reset();
+  REQUIRE(session_open_fixture_with_scene(&selected,ANYGM_SCENE_RENDERER_OPENGL,
+          anygm_synthetic_resident_direct_gui_content_create),"resident crop fixture loads");
+  selected.engine->config.hybrid_gpu_presentation=0u;
+  REQUIRE(graphics_adopt(selected.engine,ANYGM_GRAPHICS_OPENGLES3)==ANYGM_OK &&
+          advance(selected.engine,1,NULL),"resident crop completes a direct GUI SCREEN");
+  REQUIRE(selected.engine->output_width==64u && selected.engine->output_height==48u &&
+          gml_render_completed_screen_image(&selected.engine->render,selected.engine->screen,
+          64,48,&image),"resident crop borrows the complete versioned SCREEN");
+  selected.engine->present_crop_left=3;selected.engine->present_crop_right=5;
+  selected.engine->present_crop_top=4;selected.engine->present_crop_bottom=6;
+  selected.engine->host_output_width=64u;selected.engine->host_output_height=48u;
+  selected.engine->host_canvas_active=1;
+  selected.engine->host_canvas_x=3;selected.engine->host_canvas_y=4;
+  selected.engine->host_canvas_width=56;selected.engine->host_canvas_height=38;
+  gml_render_dispatch_diagnostics_enable(&selected.engine->render,1);
+  gml_gpu_counters(selected.engine->gpu,&before);
+  gml_render_resource_metrics(&selected.engine->render,&resources_before);
+  REQUIRE(engine_present_hardware_canvas(selected.engine,&width,&height),
+          "identity crop presents the current SCREEN without CPU fitting");
+  gml_gpu_counters(selected.engine->gpu,&after);
+  gml_render_resource_metrics(&selected.engine->render,&resources_after);
+  GmlRenderPlan *plan=&selected.engine->host_plan;
+  REQUIRE(width==64u && height==48u && selected.engine->host_plan_valid &&
+          plan->image_count==1u && plan->operation_count==2u &&
+          !plan->images[0].cpu_pixels && plan->images[0].width==64u &&
+          plan->images[0].height==48u &&
+          plan->images[0].resident_image.content_version==image.content_version &&
+          plan->operations[1].axis_x.rule==GML_PLAN_AXIS_PIXEL_CENTRE &&
+          plan->operations[1].axis_y.rule==GML_PLAN_AXIS_PIXEL_CENTRE &&
+          plan->operations[1].axis_x.destination_first==3 &&
+          plan->operations[1].axis_y.destination_first==4 &&
+          after.passes_accepted==before.passes_accepted+1u &&
+          after.cpu_upload_frames==before.cpu_upload_frames &&
+          after.full_uploads==before.full_uploads &&
+          after.scene_readbacks==before.scene_readbacks &&
+          after.completed_frame_reads==before.completed_frame_reads &&
+          resources_after.completed_screen_cpu_reads==resources_before.completed_screen_cpu_reads &&
+          gml_render_dispatch_metrics(&selected.engine->render,&dispatch) &&
+          !dispatch.failed && !dispatch.unclassified,
+          "identity crop retains full source dimensions, offsets and zero ordinary observation");
+  for(unsigned family=0;family<GML_RENDER_SCENE_FAMILY_COUNT;family++)
+    for(unsigned reason=0;reason<GML_RENDER_DISPATCH_REASON_COUNT;reason++)
+      REQUIRE(!dispatch.cpu[family][reason],"resident crop runs no CPU raster operation");
+  /* Scaling, CRT, shift and an invalid crop remain pre-submission refusals. */
+  for(unsigned exclusion=0;exclusion<5u;exclusion++){
+    selected.engine->host_canvas_width=exclusion==0u?55:56;
+    selected.engine->host_canvas_height=exclusion==1u?37:38;
+    selected.engine->host_crt_active=exclusion==2u;
+    selected.engine->present_shift_x=exclusion==3u;
+    selected.engine->present_crop_left=exclusion==4u?64:3;
+    gml_gpu_counters(selected.engine->gpu,&before);
+    gml_render_resource_metrics(&selected.engine->render,&resources_before);
+    REQUIRE(!engine_present_hardware_canvas(selected.engine,NULL,NULL),
+            "unqualified resident crop is refused before reading or submitting pixels");
+    gml_gpu_counters(selected.engine->gpu,&after);
+    gml_render_resource_metrics(&selected.engine->render,&resources_after);
+    REQUIRE(after.frames_offered==before.frames_offered &&
+            after.full_uploads==before.full_uploads &&
+            resources_after.completed_screen_cpu_reads==resources_before.completed_screen_cpu_reads,
+            "crop exclusions preserve ordinary counters and source authority");
+  }
+  selected.engine->present_shift_x=0;selected.engine->present_crop_left=3;
+  session_close(&selected);
+  return 1;
+}
+
 /* Restored pixels are already authoritative on the CPU. Upload that small logical image once;
  * the device, not a CPU host buffer, should clear the margins and perform a nearest enlargement. */
 static int scene_canvas_restored_nearest_case(void){
@@ -4386,6 +4461,8 @@ int main(void){
      scene_canvas_cpu_source_case},
     {"restored scene canvas fits a CPU-current image with GPU nearest",
      scene_canvas_restored_nearest_case},
+    {"resident SCREEN identity crop keeps presentation on device",
+     scene_canvas_resident_identity_crop_case},
     {"primary and auxiliary scratch uploads stay independent",content_sampler_upload_lifetime_case},
     {"surface shader vertices retain authored positions",content_surface_authored_position_case},
     {"terminal shader retains clipped authored positions",content_terminal_authored_position_case},
