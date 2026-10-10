@@ -302,6 +302,7 @@ int gml_render_cpu_replay_one(uint32_t *target,uint32_t width,uint32_t height,
      (operation->source_count && (!source || !source->bytes)) ||
      (!gml_render_particle_line_valid(operation) &&
       !gml_render_classic_alpha_rect_valid(operation) &&
+      !gml_render_studio_alpha_rect_valid(operation) &&
       !gml_render_classic_inverse_rect_valid(operation) &&
       !gml_render_cpu_replay_eligible(operation,state,source))) return 0;
   if(operation->opcode==GML_RENDER_OP_CLEAR){
@@ -312,13 +313,15 @@ int gml_render_cpu_replay_one(uint32_t *target,uint32_t width,uint32_t height,
   }
   if(operation->opcode==GML_RENDER_OP_COLOURED_PRIMITIVE){
     if(operation->payload.primitive.kind==GML_RENDER_PRIMITIVE_CLASSIC_ALPHA_RECT ||
+       operation->payload.primitive.kind==GML_RENDER_PRIMITIVE_STUDIO_ALPHA_RECT ||
        operation->payload.primitive.kind==GML_RENDER_PRIMITIVE_CLASSIC_INVERSE_RECT){
       const GmlRenderPrimitiveRect *p=&operation->payload.primitive;
       GmlRender *render=(GmlRender*)calloc(1,sizeof *render);
       if(!render) return 0;
       render->fb=render->base_fb=target;
       render->fbw=(int)width; render->fbh=(int)height;
-      render->classic=1; render->alphablend=1; render->active_shader=-1;
+      render->classic=p->kind!=GML_RENDER_PRIMITIVE_STUDIO_ALPHA_RECT;
+      render->alphablend=1; render->active_shader=-1;
       render->blendmode=p->kind==GML_RENDER_PRIMITIVE_CLASSIC_INVERSE_RECT?2:0;
       render->blend_equation=render->blend_equation_alpha=1;
       render->alpha=p->alpha; render->color_write_mask=15u;

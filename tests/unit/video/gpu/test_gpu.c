@@ -1182,8 +1182,9 @@ static int scene_hardware_filtered_batch_case(unsigned kind){
 
 static int scene_source_free_alpha_batch_case(unsigned kind){
   int inverse=kind==GML_RENDER_PRIMITIVE_CLASSIC_INVERSE_RECT;
-  int rectangle=kind==GML_RENDER_PRIMITIVE_CLASSIC_ALPHA_RECT || inverse;
-  for(unsigned variant=0;variant<(inverse?9u:8u);variant++){
+  int studio=kind==GML_RENDER_PRIMITIVE_STUDIO_ALPHA_RECT;
+  int rectangle=kind==GML_RENDER_PRIMITIVE_CLASSIC_ALPHA_RECT || inverse || studio;
+  for(unsigned variant=0;variant<(studio?10u:inverse?9u:8u);variant++){
     enum { LINES=2049 };
     GmlRenderDrawOp *ops=(GmlRenderDrawOp*)calloc(LINES+1u,sizeof *ops);
     GmlGpuContext context=fake_context(GML_GPU_API_OPENGLES3);
@@ -1220,14 +1221,18 @@ static int scene_source_free_alpha_batch_case(unsigned kind){
     if(variant==4u) ops[LINES].reconstruction_mode=GML_RENDER_REPLAY_EXACT;
     if(variant==5u) ops[LINES].payload.primitive.region.width=97u;
     if(variant==6u) ops[LINES].payload.primitive.alpha_blend=0u;
-    if(variant==8u){
+    if(studio && variant==8u) ops[LINES].payload.primitive.alpha=1.0/512.0;
+    if(studio && variant==9u)
+      for(unsigned index=0;index<LINES+1u;index++)
+        ops[index].target.image.resource_class=GML_RENDER_RESOURCE_SURFACE;
+    if(inverse && variant==8u){
       ops[2].payload.primitive.kind=GML_RENDER_PRIMITIVE_CLASSIC_ALPHA_RECT;
       ops[2].payload.primitive.alpha=0.375;
     }
-    unsigned count=variant==8u?4u:LINES+1u;
+    unsigned count=inverse && variant==8u?4u:LINES+1u;
     GmlRenderDrawBatch batch={ops,count,NULL,0u};
     GmlRenderExecutionResult result=device.submit(device.context,&batch);
-    if(variant && variant!=8u && (variant!=6u || rectangle)){
+    if(variant && !(inverse && variant==8u) && (variant!=6u || rectangle)){
       REQUIRE(result.status==GML_RENDER_EXEC_UNSUPPORTED && !result.accepted_prefix &&
               !anygm_test_graphics_clear_calls() && !anygm_test_graphics_scene_draw_calls(),
               "particle refusal is transactional before its clear prefix");
@@ -1235,8 +1240,8 @@ static int scene_source_free_alpha_batch_case(unsigned kind){
       anygm_test_graphics_blend_factors(factors);
       REQUIRE(result.status==GML_RENDER_EXEC_ACCEPTED && result.accepted_prefix==count,
               "source-free particle batch accepted");
-      REQUIRE(anygm_test_graphics_scene_draw_calls()==(variant==8u?3:2) &&
-              anygm_test_graphics_scene_vertices()==(int)(count-1u)*6,
+      REQUIRE(anygm_test_graphics_scene_draw_calls()==(studio?4:variant==8u?3:2) &&
+              anygm_test_graphics_scene_vertices()==(int)(count-1u)*6*(studio?2:1),
               "compatible primitives batch to capacity and split at a changed blend rule");
       REQUIRE(factors[0]==(inverse?GL_ZERO:GL_SRC_ALPHA) &&
               factors[1]==(inverse?GL_ONE_MINUS_SRC_COLOR:GL_ONE_MINUS_SRC_ALPHA) &&
@@ -1256,6 +1261,10 @@ static int scene_particle_line_batch_case(void){
 
 static int scene_classic_alpha_rect_batch_case(void){
   return scene_source_free_alpha_batch_case(GML_RENDER_PRIMITIVE_CLASSIC_ALPHA_RECT);
+}
+
+static int scene_studio_alpha_rect_batch_case(void){
+  return scene_source_free_alpha_batch_case(GML_RENDER_PRIMITIVE_STUDIO_ALPHA_RECT);
 }
 
 static int scene_classic_inverse_rect_batch_case(void){
@@ -3707,6 +3716,7 @@ int main(int argc,char **argv){
     {"scene_resident_batch",scene_resident_batch_case},
     {"scene_particle_line_batch",scene_particle_line_batch_case},
     {"scene_classic_alpha_rect_batch",scene_classic_alpha_rect_batch_case},
+    {"scene_studio_alpha_rect_batch",scene_studio_alpha_rect_batch_case},
     {"scene_classic_inverse_rect_batch",scene_classic_inverse_rect_batch_case},
     {"scene_hardware_additive_batch",scene_hardware_additive_batch_case},
     {"scene_hardware_background_batch",scene_hardware_background_batch_case},

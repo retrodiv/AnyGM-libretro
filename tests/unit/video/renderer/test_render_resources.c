@@ -3641,6 +3641,104 @@ static int resident_classic_alpha_rectangle_scope(void){
   return 1;
 }
 
+static int resident_studio_alpha_rectangle_scope(void){
+  static const double alphas[]={1.0/256.0,1.0/255.0,1.0/13.0,0.2,
+                               0.6000000000000001,0.8,0.995,0.9975};
+  for(unsigned generation=13u;generation<=16u;generation++)
+  for(unsigned owned=0;owned<2u;owned++)
+  for(unsigned port=0;port<2u;port++)
+  for(unsigned variant=0;variant<sizeof alphas/sizeof alphas[0];variant++){
+    GmlRender *cpu=calloc(1,sizeof *cpu),*gpu=calloc(1,sizeof *gpu);
+    GmlWin content={.bytecode=generation};
+    AnygmCompatibilityProfile profile={0};
+    AnygmContentFacts facts={.schema_version=ANYGM_COMPATIBILITY_SCHEMA,
+                            .bytecode_revision=generation};
+    FakeDevice fake={.on_demand=1};
+    GmlRenderDeviceServices device=service(&fake);
+    uint32_t reference[64],screen[64],replayed[64];
+    device.observe_on_demand=fake_observe_on_demand;
+    CHECK(cpu && gpu && !gml_render_init(cpu,NULL) && !gml_render_init(gpu,NULL));
+    CHECK(anygm_compatibility_resolve(&facts,&profile,NULL,0));
+    content.compatibility=&profile;
+    cpu->win=gpu->win=&content;
+    for(unsigned i=0;i<64u;i++) reference[i]=screen[i]=replayed[i]=
+      (variant%2u?(i%3u)*127u<<24:0xFF000000u)|((i*9317u)&0xFFFFFFu);
+    gml_render_begin(cpu,reference,8,8,0.0,0.0);
+    gml_render_bind_device(gpu,&device);
+    if(owned){
+      CHECK(gml_render_application_surface_ensure_owned(gpu,8,8));
+      memcpy(gpu->app_surface_owned,screen,sizeof screen);
+      CHECK(gml_render_begin_resident_owned_application(gpu,0.0,0.0,0));
+    }else{
+      gml_render_application_surface_bind(gpu,screen,8,8,1);
+      CHECK(gml_render_begin_resident_base(gpu,screen,8,8,0.0,0.0));
+    }
+    cpu->alpha=gpu->alpha=alphas[variant];
+    gpu->fb_opaque_known=gpu->fb_all_opaque=variant%2u==0u;
+    gpu->world_transform_active=1;
+    gpu->world_scale_x=gpu->world_scale_y=2.0;
+    for(unsigned side=0;side<2u;side++){
+      GmlRender *render=side?gpu:cpu;
+      if(port) gml_render_primitive_rectangle_color(render,6,5,-2,1,
+        0x345678u,0x345678u,0x345678u,0x345678u,0);
+      else gml_render_primitive_rectangle(render,6,5,-2,1,0x345678u,0);
+    }
+    CHECK(gpu->resident_application_pass && !fake.submits && !fake.readbacks);
+    CHECK(gml_render_application_scene_flush(gpu) && fake.submits==1 && !fake.readbacks);
+    CHECK(gml_render_studio_alpha_rect_valid(&fake.last_primitive) &&
+          !gml_render_classic_alpha_rect_valid(&fake.last_primitive));
+    CHECK(!gpu->fb_all_transparent &&
+          (variant%2u || (gpu->fb_opaque_known && gpu->fb_all_opaque)));
+    CHECK(gml_render_cpu_replay_one(replayed,8u,8u,&fake.last_primitive,NULL,NULL) &&
+          !memcmp(reference,replayed,sizeof reference));
+    for(unsigned rectangle=0;rectangle<8u;rectangle++)
+      gml_render_primitive_rectangle(gpu,rectangle,0,rectangle,2,0x56789au,0);
+    CHECK(gpu->resident_application_pass && fake.submits==1 && !fake.readbacks);
+    CHECK(gml_render_application_scene_flush(gpu) && fake.submits==2 &&
+          fake.last_batch_operations==8u && !fake.readbacks);
+    GmlRenderDrawOp malformed=fake.last_primitive;
+    malformed.payload.primitive.alpha=NAN;
+    CHECK(!gml_render_studio_alpha_rect_valid(&malformed) &&
+          !gml_render_cpu_replay_one(replayed,8u,8u,&malformed,NULL,NULL));
+    malformed=fake.last_primitive;
+    malformed.payload.primitive.alpha=1.0/512.0;
+    CHECK(!gml_render_studio_alpha_rect_valid(&malformed));
+    malformed=fake.last_primitive;
+    malformed.target.image.resource_class=GML_RENDER_RESOURCE_SURFACE;
+    CHECK(!gml_render_studio_alpha_rect_valid(&malformed));
+    gml_render_free(cpu);gml_render_free(gpu);free(cpu);free(gpu);
+  }
+  /* Modern layers, GUI, gradients, non-normal blend and pending composition stay CPU-owned. */
+  for(unsigned variant=0;variant<5u;variant++){
+    GmlRender *gpu=calloc(1,sizeof *gpu);
+    GmlWin content={.bytecode=15,.has_room_layers=variant==0u};
+    AnygmCompatibilityProfile profile={0};
+    AnygmContentFacts facts={.schema_version=ANYGM_COMPATIBILITY_SCHEMA,
+      .bytecode_revision=15,.has_room_layers=variant==0u};
+    FakeDevice fake={.on_demand=1};
+    GmlRenderDeviceServices device=service(&fake);
+    uint32_t screen[64]={0};
+    device.observe_on_demand=fake_observe_on_demand;
+    CHECK(gpu && !gml_render_init(gpu,NULL));
+    CHECK(anygm_compatibility_resolve(&facts,&profile,NULL,0));
+    content.compatibility=&profile;
+    gpu->win=&content;
+    gml_render_bind_device(gpu,&device);
+    gml_render_application_surface_bind(gpu,screen,8,8,1);
+    CHECK(gml_render_begin_resident_base(gpu,screen,8,8,0.0,0.0));
+    gpu->alpha=0.5;
+    gpu->gui_pass_active=variant==1u;
+    gpu->blendmode=variant==3u;
+    gpu->pending_underlay=variant==4u;
+    if(variant==2u) gml_render_primitive_rectangle_color(gpu,0,0,2,2,
+                          0u,1u,2u,3u,0);
+    else gml_render_primitive_rectangle(gpu,0,0,2,2,0x345678u,0);
+    CHECK(!gpu->resident_application_pass);
+    gml_render_free(gpu);free(gpu);
+  }
+  return 1;
+}
+
 static int resident_classic_inverse_rectangle_scope(void){
   static const uint32_t colours[]={0u,0xFFFFFFu,0x345678u,0xFE017Fu};
   for(unsigned generation=0;generation<2u;generation++)
@@ -11644,6 +11742,7 @@ int main(void){
   passed+=resident_rectangle_outline_coalesced();
   passed+=resident_studio_gui_rectangle_scope();
   passed+=resident_classic_alpha_rectangle_scope();
+  passed+=resident_studio_alpha_rectangle_scope();
   passed+=resident_classic_inverse_rectangle_scope();
   passed+=resident_viewless_base_canvas_order();
   passed+=completed_screen_reader_and_writer();
@@ -11764,6 +11863,6 @@ int main(void){
   passed+=source_free_primitive_rect_replay();
   passed+=stretched_float_exact_replay();
   passed+=filtered_font_exact_recovery();
-  printf("render resource cases: passed=%d failed=%d\n",passed,165-passed);
-  return passed==165?EXIT_SUCCESS:EXIT_FAILURE;
+  printf("render resource cases: passed=%d failed=%d\n",passed,166-passed);
+  return passed==166?EXIT_SUCCESS:EXIT_FAILURE;
 }

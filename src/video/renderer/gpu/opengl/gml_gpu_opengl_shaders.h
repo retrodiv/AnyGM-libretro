@@ -266,7 +266,9 @@
   "  return x*y;\n" \
   "}\n" \
   "void main(){\n" \
-  "  if(u_filter==31){ o_color=v_colour; return; }\n" \
+  "  if(u_filter==31 || u_filter==32){ o_color=v_colour; return; }\n" \
+  "  // R03_SHADER_STUDIO_ALPHA_RECT: a coverage-only pass stamps written alpha.\n" \
+  "  if(u_filter==33){ o_color=vec4(0.0,0.0,0.0,1.0); return; }\n" \
   "  if(u_filter==28){\n" \
   "    // R03_SHADER_PARTICLE_LINE: procedural soft coverage, separate fixed source-over.\n" \
   "    vec2 pixel=vec2(floor(gl_FragCoord.x),u_extent.y-1.0-floor(gl_FragCoord.y));\n" \

@@ -303,7 +303,8 @@ typedef struct GmlRenderPrimitiveRect {
 
 enum { GML_RENDER_PRIMITIVE_FLAT=0, GML_RENDER_PRIMITIVE_PARTICLE_LINE=1,
        GML_RENDER_PRIMITIVE_CLASSIC_ALPHA_RECT=2,
-       GML_RENDER_PRIMITIVE_CLASSIC_INVERSE_RECT=3 };
+       GML_RENDER_PRIMITIVE_CLASSIC_INVERSE_RECT=3,
+       GML_RENDER_PRIMITIVE_STUDIO_ALPHA_RECT=4 };
 
 typedef enum GmlRenderLayerEffectKind {
   GML_RENDER_LAYER_EFFECT_TINT=1,
@@ -362,6 +363,7 @@ typedef struct GmlRenderDrawOp {
 
 int gml_render_particle_line_valid(const GmlRenderDrawOp *operation);
 int gml_render_classic_alpha_rect_valid(const GmlRenderDrawOp *operation);
+int gml_render_studio_alpha_rect_valid(const GmlRenderDrawOp *operation);
 int gml_render_classic_inverse_rect_valid(const GmlRenderDrawOp *operation);
 
 /* Snapshots and per-operation source arrays are immutable for this submission. The caller owns

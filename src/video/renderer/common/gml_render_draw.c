@@ -263,7 +263,9 @@ static int classic_blended_rect_valid(const GmlRenderDrawOp *operation,unsigned 
   const GmlRenderPrimitiveRect *p=&operation->payload.primitive;
   const GmlRenderTargetRef *t=&operation->target;
   return p->kind==kind &&
-    t->image.resource_class==GML_RENDER_RESOURCE_SCREEN &&
+    (t->image.resource_class==GML_RENDER_RESOURCE_SCREEN ||
+     (kind==GML_RENDER_PRIMITIVE_STUDIO_ALPHA_RECT &&
+      t->image.resource_class==GML_RENDER_RESOURCE_APPLICATION)) &&
     t->pixel_format==GML_RENDER_PIXEL_ARGB8888 && t->width && t->height &&
     t->width<=16384u && t->height<=16384u && !t->region.x && !t->region.y &&
     t->region.width==t->width && t->region.height==t->height &&
@@ -277,6 +279,11 @@ static int classic_blended_rect_valid(const GmlRenderDrawOp *operation,unsigned 
 
 int gml_render_classic_alpha_rect_valid(const GmlRenderDrawOp *operation){
   return classic_blended_rect_valid(operation,GML_RENDER_PRIMITIVE_CLASSIC_ALPHA_RECT);
+}
+
+int gml_render_studio_alpha_rect_valid(const GmlRenderDrawOp *operation){
+  return classic_blended_rect_valid(operation,GML_RENDER_PRIMITIVE_STUDIO_ALPHA_RECT) &&
+    operation->payload.primitive.alpha>=1.0/256.0;
 }
 
 int gml_render_classic_inverse_rect_valid(const GmlRenderDrawOp *operation){

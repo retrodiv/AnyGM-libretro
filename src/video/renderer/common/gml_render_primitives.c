@@ -189,6 +189,56 @@ typedef struct {
   uint32_t colour;
 } GmlFlatRegion;
 
+/* R03-PRIM-STUDIO-ALPHA-RECT: the existing CPU filled rectangle uses a constant
+ * source and inclusive raster bounds. Device checkpoints retain its opaque
+ * written alpha; RGB uses fixed source-over within the tolerance contract. */
+static int resident_studio_alpha_rect(GmlRender *render,int x1,int y1,int x2,int y2,
+                                      uint32_t colour){
+  const GmlRenderDeviceServices *device=gml_render_device(render);
+  if(!render || render->classic || !render->win ||
+     !anygm_policy_uses_first_generation_studio(render->win) ||
+     anygm_policy_has_modern_layer_semantics(render->win) ||
+     render->gui_pass_active || render->target_id>=0 || render->target_sp ||
+     render->pending_underlay || !render->alphablend ||
+     render->alpha<1.0/256.0 ||
+     !resident_flat_eligible_rule(render,1,1,0) ||
+     !device || !device->observe_on_demand ||
+     !device->observe_on_demand(device->context)) return 0;
+  if(x1>x2){int swap=x1;x1=x2;x2=swap;}
+  if(y1>y2){int swap=y1;y1=y2;y2=swap;}
+  if(x2<0 || y2<0 || x1>=render->fbw || y1>=render->fbh) return 0;
+  if(x1<0) x1=0;
+  if(y1<0) y1=0;
+  if(x2>=render->fbw) x2=render->fbw-1;
+  if(y2>=render->fbh) y2=render->fbh-1;
+  gml_render_flush_pending_fill(render);
+  GmlRenderResource *resource=gml_render_scene_target_resource_ensure(render);
+  if(render->pending_fill || !resource) return 0;
+  GmlRenderImageRef image=gml_render_application_scene_next_image_ref(render,resource);
+  if(image.content_version==UINT64_MAX) return 0;
+  GmlRenderDrawOp operation={0};
+  operation.opcode=GML_RENDER_OP_COLOURED_PRIMITIVE;
+  operation.scene_family=GML_RENDER_SCENE_PRIMITIVE;
+  operation.reconstruction_mode=GML_RENDER_DEVICE_CHECKPOINT;
+  operation.target=(GmlRenderTargetRef){.image=image,.storage_version=1u,
+    .width=(uint32_t)render->fbw,.height=(uint32_t)render->fbh,
+    .pixel_format=GML_RENDER_PIXEL_ARGB8888,
+    .region={0,0,(uint32_t)render->fbw,(uint32_t)render->fbh}};
+  operation.target.image.content_version++;
+  operation.payload.primitive=(GmlRenderPrimitiveRect){
+    .region={x1,y1,(uint32_t)(x2-x1+1),(uint32_t)(y2-y1+1)},
+    .colour=gml_render_cpu_backend_color_to_xrgb(colour),
+    .kind=GML_RENDER_PRIMITIVE_STUDIO_ALPHA_RECT,
+    .alpha=render->alpha,.alpha_blend=1u};
+  if(!gml_render_application_scene_enqueue_primitive(render,&operation)) return 0;
+  render->fb_all_transparent=0;
+  int opaque=(render->fb_opaque_known && render->fb_all_opaque) ||
+    (x1==0 && y1==0 && x2==render->fbw-1 && y2==render->fbh-1);
+  render->fb_opaque_known=render->fb_all_opaque=
+    opaque;
+  return 1;
+}
+
 typedef struct {
   GmlRender *render;
   GmlFlatRegion *regions;
@@ -514,6 +564,7 @@ void gml_render_primitive_rectangle(GmlRender *render,
     return;
   if(!outline && resident_opaque_rect(render,x1,y1,x2,y2,color,1)) return;
   if(!outline && resident_classic_alpha_rect(render,x1,y1,x2,y2,color)) return;
+  if(!outline && resident_studio_alpha_rect(render,x1,y1,x2,y2,color)) return;
   gml_render_cpu_rectangle(render,x1,y1,x2,y2,color,outline);
 }
 
@@ -529,6 +580,8 @@ void gml_render_primitive_rectangle_color(GmlRender *render,
      resident_opaque_rect(render,x1,y1,x2,y2,color1,1)) return;
   if(!outline && color1==color2 && color2==color3 && color3==color4 &&
      resident_classic_alpha_rect(render,x1,y1,x2,y2,color1)) return;
+  if(!outline && color1==color2 && color2==color3 && color3==color4 &&
+     resident_studio_alpha_rect(render,x1,y1,x2,y2,color1)) return;
   gml_render_cpu_rectangle_color(render,x1,y1,x2,y2,color1,color2,color3,color4,outline);
 }
 
