@@ -3450,6 +3450,96 @@ static int resident_classic_owned_rectangle_scope(void){
   return 1;
 }
 
+static int resident_rectangle_outline_coalesced(void){
+  static const int generations[]={530,600,700,15,17};
+  static const int bounds[][4]={
+    {1,1,6,6},{6,6,1,1},{3,1,3,6},{1,3,6,3},{3,3,3,3},
+    {-2,1,6,6},{1,-2,6,6},{1,1,10,6},{1,1,6,10},
+    {-2,-2,6,6},{-2,-2,10,10},{-4,1,-2,6},{1,1,6,2},
+    {1,1,2,6},{-2,3,10,3}
+  };
+  static const uint32_t backgrounds[]={0x00102030u,0x7F102030u,0xFF102030u};
+  for(unsigned generation=0;generation<5u;generation++)
+  for(unsigned owned=0;owned<2u;owned++)
+  for(unsigned alpha=0;alpha<3u;alpha++)
+  for(unsigned port=0;port<2u;port++)
+  for(unsigned shape=0;shape<sizeof bounds/sizeof bounds[0];shape++){
+    GmlRender *cpu=calloc(1,sizeof *cpu),*gpu=calloc(1,sizeof *gpu);
+    GmlWin content={0};
+    FakeDevice fake={0};
+    GmlRenderDeviceServices device=service(&fake);
+    uint32_t reference[64]={0},screen[64]={0};
+    const uint32_t *sealed=NULL;
+    CHECK(cpu && gpu && !gml_render_init(cpu,NULL) && !gml_render_init(gpu,NULL));
+    cpu->classic=gpu->classic=generation<3u;
+    if(generation<3u) content.classic_version=generations[generation];
+    else content.bytecode=generations[generation];
+    cpu->win=gpu->win=&content;
+    gml_render_begin(cpu,reference,8,8,0.0,0.0);
+    gml_render_bind_device(gpu,&device);
+    if(owned) CHECK(gml_render_application_surface_ensure_owned(gpu,8,8) &&
+                   gml_render_begin_resident_owned_application(gpu,0.0,0.0,0));
+    else {
+      gml_render_application_surface_bind(gpu,screen,8,8,1);
+      CHECK(gml_render_begin_resident_base(gpu,screen,8,8,0.0,0.0));
+    }
+    gml_render_set_pending_fill(cpu,backgrounds[alpha]);
+    gml_render_set_pending_fill(gpu,backgrounds[alpha]);
+    gml_render_primitive_rectangle(cpu,0,0,4,4,0x876543u,0);
+    gml_render_primitive_rectangle(gpu,0,0,4,4,0x876543u,0);
+    int previous=fake.submits;
+    for(unsigned side=0;side<2u;side++){
+      GmlRender *r=side?gpu:cpu;
+      const int *b=bounds[shape];
+      if(port) gml_render_primitive_rectangle_color(r,b[0],b[1],b[2],b[3],
+                      0x345678u,0xFF0000u,0x00FF00u,0x0000FFu,1);
+      else gml_render_primitive_rectangle(r,b[0],b[1],b[2],b[3],0x345678u,1);
+    }
+    if(!gpu->resident_application_pass || fake.readbacks ||
+       (fake.submits!=previous && fake.last_batch_operations>4u))
+      fprintf(stderr,"rectangle coalescing: generation=%u owned=%u alpha=%u port=%u shape=%u resident=%d submits=%d/%d operations=%u reads=%d\n",
+          generation,owned,alpha,port,shape,gpu->resident_application_pass,
+          fake.submits,previous,fake.last_batch_operations,fake.readbacks);
+    CHECK(gpu->resident_application_pass && !fake.readbacks &&
+          (fake.submits==previous || fake.last_batch_operations<=4u));
+    gml_render_primitive_rectangle(cpu,2,2,4,3,0xABCDEFu,0);
+    gml_render_primitive_rectangle(gpu,2,2,4,3,0xABCDEFu,0);
+    gml_render_flush_pending_fill(cpu);
+    gml_render_bind_device(gpu,NULL);
+    GmlRenderResource *target=gml_render_scene_target_resource_ensure(gpu);
+    CHECK(target && gml_render_resource_acquire_cpu_read(target,&sealed) &&
+          !memcmp(reference,sealed,sizeof reference) && !fake.readbacks);
+    gml_render_free(cpu);gml_render_free(gpu);free(cpu);free(gpu);
+  }
+  /* Retain the former emitted-pixel budget, not merely a four-region budget. */
+  for(unsigned over=0;over<2u;over++){
+    unsigned width=4096u,height=2u+over;
+    GmlRender *cpu=calloc(1,sizeof *cpu),*gpu=calloc(1,sizeof *gpu);
+    FakeDevice fake={0};
+    GmlRenderDeviceServices device=service(&fake);
+    uint32_t *reference=calloc(width*height,sizeof *reference);
+    const uint32_t *sealed=NULL;
+    CHECK(cpu && gpu && reference && !gml_render_init(cpu,NULL) && !gml_render_init(gpu,NULL));
+    gml_render_begin(cpu,reference,(int)width,(int)height,0.0,0.0);
+    gml_render_bind_device(gpu,&device);
+    CHECK(gml_render_application_surface_ensure_owned(gpu,(int)width,(int)height) &&
+          gml_render_begin_resident_owned_application(gpu,0.0,0.0,0));
+    gml_render_set_pending_fill(cpu,0x7F102030u);
+    gml_render_set_pending_fill(gpu,0x7F102030u);
+    gml_render_primitive_rectangle(cpu,-(int)over,0,(int)width-1,(int)height-1,0x345678u,1);
+    gml_render_primitive_rectangle(gpu,-(int)over,0,(int)width-1,(int)height-1,0x345678u,1);
+    CHECK(gpu->resident_application_pass==!over && !fake.readbacks);
+    if(!over) CHECK(fake.last_batch_operations==2u);
+    gml_render_flush_pending_fill(cpu);
+    gml_render_bind_device(gpu,NULL);
+    GmlRenderResource *target=gml_render_scene_target_resource_ensure(gpu);
+    CHECK(target && gml_render_resource_acquire_cpu_read(target,&sealed) &&
+          !memcmp(reference,sealed,width*height*sizeof *reference) && !fake.readbacks);
+    gml_render_free(cpu);gml_render_free(gpu);free(cpu);free(gpu);free(reference);
+  }
+  return 1;
+}
+
 static int resident_studio_gui_rectangle_scope(void){
   for(unsigned generation=0;generation<2u;generation++)
   for(unsigned variant=0;variant<9u;variant++){
@@ -11551,6 +11641,7 @@ int main(void){
   passed+=resident_flat_primitive_public_order();
   passed+=resident_classic_rectangle_scope();
   passed+=resident_classic_owned_rectangle_scope();
+  passed+=resident_rectangle_outline_coalesced();
   passed+=resident_studio_gui_rectangle_scope();
   passed+=resident_classic_alpha_rectangle_scope();
   passed+=resident_classic_inverse_rectangle_scope();
@@ -11673,6 +11764,6 @@ int main(void){
   passed+=source_free_primitive_rect_replay();
   passed+=stretched_float_exact_replay();
   passed+=filtered_font_exact_recovery();
-  printf("render resource cases: passed=%d failed=%d\n",passed,164-passed);
-  return passed==164?EXIT_SUCCESS:EXIT_FAILURE;
+  printf("render resource cases: passed=%d failed=%d\n",passed,165-passed);
+  return passed==165?EXIT_SUCCESS:EXIT_FAILURE;
 }

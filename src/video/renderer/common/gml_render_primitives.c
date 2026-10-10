@@ -328,21 +328,57 @@ static int resident_line_bounds(GmlRender *render,double x1,double y1,
     y1>=-8192.0 && y1<bottom && y2>=-8192.0 && y2<bottom;
 }
 
+typedef struct {
+  GmlFlatSpans spans;
+  uint32_t pixels;
+  int top,bottom;
+} GmlRectangleOutlineSpans;
+
+static void collect_rectangle_outline_pixel(void *context,int x1,int y1,int x2,int y2,
+                                             uint32_t colour){
+  GmlRectangleOutlineSpans *outline=(GmlRectangleOutlineSpans*)context;
+  GmlFlatSpans *spans=&outline->spans;
+  /* Keep the original pixel-work limit even when storage needs only four regions.
+   * The unchanged collector visits each geometric edge pixel once in raster order. */
+  if(spans->overflow) return;
+  if(x1!=x2 || y1!=y2 || outline->pixels>=8192u){spans->overflow=1;return;}
+  outline->pixels++;
+  for(uint32_t i=0;i<spans->count;i++){
+    GmlFlatRegion *run=&spans->regions[i];
+    if(run->colour!=colour) continue;
+    /* Adjacent left/right pixels in a two-column middle row are separate edges,
+     * not a new horizontal run on every row. */
+    if((y1==outline->top || y1==outline->bottom) &&
+       run->region.height==1u && run->region.y==y1 &&
+       (int64_t)run->region.x+run->region.width==x1){
+      run->region.width++;
+      return;
+    }
+    if(run->region.width==1u && run->region.x==x1 &&
+       (int64_t)run->region.y+run->region.height==y1){
+      run->region.height++;
+      return;
+    }
+  }
+  collect_line_box(spans,x1,y1,x2,y2,colour);
+}
+
 static int resident_outline_rectangle(GmlRender *render,int x1,int y1,int x2,int y2,
                                       uint32_t color){
-  GmlFlatSpans spans={0};
+  GmlFlatRegion regions[4];
+  GmlRectangleOutlineSpans outline={0};
   int covered,result;
   /* The shared CPU collector preserves the geometric edges after clipping.
    * Only this rectangle outline may reuse the early-Classic raster gate. */
   if(!resident_flat_eligible_rule(render,render && render->classic,0,0)) return 0;
-  spans.render=render;
-  spans.capacity=8192u;
-  spans.regions=(GmlFlatRegion*)malloc(spans.capacity*sizeof *spans.regions);
-  if(!spans.regions) return 0;
+  outline.spans.render=render;
+  outline.spans.capacity=4u;
+  outline.spans.regions=regions;
+  outline.top=y1<y2?y1:y2;
+  outline.bottom=y1>y2?y1:y2;
   covered=gml_render_rectangle_outline_pixels(render,x1,y1,x2,y2,color,
-                                               collect_line_box,&spans);
-  result=covered && resident_flat_spans(render,&spans);
-  free(spans.regions);
+                                               collect_rectangle_outline_pixel,&outline);
+  result=covered && resident_flat_spans(render,&outline.spans);
   return result;
 }
 
