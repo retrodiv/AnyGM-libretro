@@ -24,7 +24,10 @@ static int resident_flat_eligible_rule(GmlRender *render,int filled_rectangle,in
     (!render->classic || (filled_rectangle &&
       !anygm_policy_classic_modern_presentation(render->win) &&
       render->fb==render->app_surface &&
-      render->fb==render->base_scene_resource_pixels)) &&
+      (render->fb==render->base_scene_resource_pixels ||
+       /* Opaque flat writes also have exact alpha on the owned application.
+        * Partial/inverse rectangles retain their borrowed opaque SCREEN scope. */
+       (render->fb==render->app_surface_owned && render->alpha==1.0 && !blendmode)))) &&
     !render->classic_phase_y && !render->classic_interp_phase[0] &&
     !render->classic_interp_phase[1] && !render->classic_interp_phase[2] &&
     render->active_shader<0 &&
@@ -329,7 +332,9 @@ static int resident_outline_rectangle(GmlRender *render,int x1,int y1,int x2,int
                                       uint32_t color){
   GmlFlatSpans spans={0};
   int covered,result;
-  if(!resident_flat_eligible(render)) return 0;
+  /* The shared CPU collector preserves the geometric edges after clipping.
+   * Only this rectangle outline may reuse the early-Classic raster gate. */
+  if(!resident_flat_eligible_rule(render,render && render->classic,0,0)) return 0;
   spans.render=render;
   spans.capacity=8192u;
   spans.regions=(GmlFlatRegion*)malloc(spans.capacity*sizeof *spans.regions);

@@ -3384,6 +3384,72 @@ static int resident_classic_rectangle_scope(void){
   return 1;
 }
 
+static int resident_classic_owned_rectangle_scope(void){
+  static const int generations[]={530,600,700};
+  for(unsigned owned=0;owned<2u;owned++)
+  for(unsigned generation=0;generation<3u;generation++)
+  for(unsigned variant=0;variant<14u;variant++){
+    GmlRender *cpu=calloc(1,sizeof *cpu),*gpu=calloc(1,sizeof *gpu);
+    GmlWin content={.classic_version=generations[generation]};
+    FakeDevice fake={0};
+    GmlRenderDeviceServices device=service(&fake);
+    uint32_t reference[64]={0},screen[64]={0};
+    const uint32_t *sealed=NULL;
+    CHECK(cpu && gpu && !gml_render_init(cpu,NULL) && !gml_render_init(gpu,NULL));
+    cpu->classic=gpu->classic=1;cpu->win=gpu->win=&content;
+    gml_render_begin(cpu,reference,8,8,-3.0,2.0);
+    gml_render_bind_device(gpu,&device);
+    if(owned){
+      CHECK(gml_render_application_surface_ensure_owned(gpu,8,8) &&
+            gml_render_begin_resident_owned_application(gpu,-3.0,2.0,0));
+    } else {
+      gml_render_application_surface_bind(gpu,screen,8,8,1);
+      CHECK(gml_render_begin_resident_base(gpu,screen,8,8,-3.0,2.0));
+    }
+    if(variant==6u) cpu->alpha=gpu->alpha=0.5;
+    if(variant==7u) cpu->blendmode=gpu->blendmode=2;
+    if(variant==8u) cpu->color_write_mask=gpu->color_write_mask=7u;
+    if(variant==9u){gml_render_gui_begin(cpu,8,8);gml_render_gui_begin(gpu,8,8);}
+    if(variant==10u) content.classic_version=800;
+    if(variant==11u){
+      int a=gml_surface_create(cpu,8,8),b=gml_surface_create(gpu,8,8);
+      CHECK(a>0 && b>0 && gml_surface_set_target(cpu,a) && gml_surface_set_target(gpu,b));
+    }
+    if(variant==5u){
+      cpu->world_transform_active=gpu->world_transform_active=1;
+      cpu->world_scale_x=gpu->world_scale_x=-2.0;
+      cpu->world_scale_y=gpu->world_scale_y=0.5;
+    }
+    gml_render_set_pending_fill(cpu,0xFF102030u);gml_render_set_pending_fill(gpu,0xFF102030u);
+    for(unsigned side=0;side<2u;side++){
+      GmlRender *r=side?gpu:cpu;
+      if(variant==13u) gml_render_primitive_point(r,2,2,0x345678u);
+      else if(variant==12u)
+        gml_render_primitive_rectangle_color(r,1,1,5,4,0u,0xFFFFFFu,0u,0xFFFFFFu,0);
+      else if(variant==1u || variant==3u)
+        gml_render_primitive_rectangle_color(r,1,1,5,4,0x345678u,
+          variant==3u?0u:0x345678u,variant==3u?0xFFFFFFu:0x345678u,
+          variant==3u?0x0000FFu:0x345678u,variant==3u);
+      else
+        gml_render_primitive_rectangle(r,variant==4u?5:-2,variant==4u?4:1,
+          variant==4u?-2:5,variant==4u?1:4,0x345678u,variant==2u || variant==5u);
+    }
+    CHECK(gpu->resident_application_pass==(variant<6u));
+    gml_render_flush_pending_fill(cpu);
+    if(variant<6u){
+      GmlRenderResource *target=gml_render_scene_target_resource_ensure(gpu);
+      CHECK(target && fake.submits && !fake.readbacks &&
+            fake.last_opcode==GML_RENDER_OP_COLOURED_PRIMITIVE &&
+            fake.last_target_image.resource_class==
+              (owned?GML_RENDER_RESOURCE_APPLICATION:GML_RENDER_RESOURCE_SCREEN) &&
+            gml_render_resource_acquire_cpu_read(target,&sealed) &&
+            !memcmp(cpu->fb,sealed,sizeof reference) && !fake.readbacks);
+    } else CHECK(!memcmp(cpu->fb,gpu->fb,sizeof reference));
+    gml_render_free(cpu);gml_render_free(gpu);free(cpu);free(gpu);
+  }
+  return 1;
+}
+
 static int resident_studio_gui_rectangle_scope(void){
   for(unsigned generation=0;generation<2u;generation++)
   for(unsigned variant=0;variant<9u;variant++){
@@ -11423,6 +11489,7 @@ int main(void){
   passed+=resident_numbered_layer_effect_target();
   passed+=resident_flat_primitive_public_order();
   passed+=resident_classic_rectangle_scope();
+  passed+=resident_classic_owned_rectangle_scope();
   passed+=resident_studio_gui_rectangle_scope();
   passed+=resident_classic_alpha_rectangle_scope();
   passed+=resident_classic_inverse_rectangle_scope();
@@ -11544,6 +11611,6 @@ int main(void){
   passed+=source_free_primitive_rect_replay();
   passed+=stretched_float_exact_replay();
   passed+=filtered_font_exact_recovery();
-  printf("render resource cases: passed=%d failed=%d\n",passed,162-passed);
-  return passed==162?EXIT_SUCCESS:EXIT_FAILURE;
+  printf("render resource cases: passed=%d failed=%d\n",passed,163-passed);
+  return passed==163?EXIT_SUCCESS:EXIT_FAILURE;
 }

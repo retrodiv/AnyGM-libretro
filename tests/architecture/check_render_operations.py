@@ -83,6 +83,7 @@ REQUIRED_RULES = {
     "R03-PRIM-PARTICLE-LINE",
     "R03-PRIM-CLASSIC-INVERSE-RECT",
     "R03-PRIM-STUDIO-GUI-OPAQUE",
+    "R03-PRIM-CLASSIC-OWNED",
     "R03-P5-FAULT-LIMIT",
     "R03-P5-QUEUE-RETRY",
     "R03-P8-RUNTIME-SPRITE-BASE", "R03-P8-STATE-RETIRE",
@@ -740,6 +741,8 @@ def self_test() -> None:
                   if not line.startswith("| R03-PRIM-CLASSIC-INVERSE-RECT |")),
         "\n".join(line for line in document.splitlines()
                   if not line.startswith("| R03-PRIM-STUDIO-GUI-OPAQUE |")),
+        "\n".join(line for line in document.splitlines()
+                  if not line.startswith("| R03-PRIM-CLASSIC-OWNED |")),
         document.replace("`supported` | Only the bounded", "`planned` | Only the bounded", 1),
         document.replace(
             "`common/gml_render_sprites.c::gml_render_sprite_pos_geometry`; "

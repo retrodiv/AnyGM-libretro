@@ -942,7 +942,10 @@ static int classic_viewless_application_scene_case(void){
     matching=anygm_run_frame(plain.engine,&input,&cpu)==ANYGM_OK &&
              anygm_run_frame(selected.engine,&input,&gpu)==ANYGM_OK &&
              cpu.pixels && gpu.width==cpu.width && gpu.height==cpu.height &&
-             selected.engine->screen;
+             selected.engine->screen &&
+             /* The exact rectangle suffix no longer forces a CPU barrier. Observe
+              * the completed frame before comparing its canonical CPU bytes. */
+             engine_materialize_completed_frame(selected.engine);
     if(matching)
       matching=!memcmp(cpu.pixels,selected.engine->screen,
                        (size_t)cpu.width*cpu.height*sizeof(uint32_t));
@@ -966,7 +969,8 @@ static int classic_viewless_application_scene_case(void){
   matching=matching && metrics.application_owned && metrics.application_draw_enabled &&
            counters.scene_families[GML_RENDER_SCENE_SPRITE]>0u &&
            counters.scene_families[GML_RENDER_SCENE_TEXT]>0u &&
-           counters.scene_families[GML_RENDER_SCENE_PRIMITIVE]==0u &&
+           counters.scene_families[GML_RENDER_SCENE_PRIMITIVE]==2u &&
+           counters.scene_readbacks==0u &&
            counters.scene_batches_accepted>0u && counters.scene_batches_refused==0u;
   session_close(&selected); session_close(&plain);
   REQUIRE(matching,"viewless classic application target accepts Draw scene work with CPU pixels");
