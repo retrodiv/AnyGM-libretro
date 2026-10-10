@@ -354,6 +354,16 @@
   "    alpha=(alpha*alpha+prior.a*(255-alpha)+127)/255;\n" \
   "    o_color=vec4(rgb,alpha)/255.0; return;\n" \
   "  }\n" \
+  "  // R03_SHADER_INTEGER_SPRITE: whole nearest texels, integer tint and fixed blending.\n" \
+  "  if(u_filter>=37 && u_filter<=43){\n" \
+  "    uvec4 sampled=uvec4(floor(texture(u_image,v_texcoord)*255.0+0.5));\n" \
+  "    if(sampled.a==0u || v_colour.a<=0.0) discard;\n" \
+  "    if(u_filter==41){ o_color=vec4(0.0,0.0,0.0,1.0); return; }\n" \
+  "    uvec3 tint=uvec3(floor(v_colour.rgb*255.0+0.5));\n" \
+  "    uint bias=(u_filter==38 || u_filter==40 || u_filter==43)?127u:0u;\n" \
+  "    uvec3 rgb=(sampled.rgb*tint+uvec3(bias))/255u;\n" \
+  "    o_color=vec4(vec3(rgb)/255.0,u_filter>=42?1.0:float(sampled.a)*v_colour.a/255.0); return;\n" \
+  "  }\n" \
   "  if(u_filter==0){ o_color=texture(u_image,v_texcoord)*v_colour; return; }\n" \
   "  // R03_SHADER_APPLICATION_PIXEL_CENTRE: opaque presentation copies RGB and stamps alpha.\n" \
   "  if(u_filter==30){\n" \

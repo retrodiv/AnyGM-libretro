@@ -160,7 +160,10 @@ enum {
   /* Modern numbered point sprites round tint and the complete source-over sum. */
   GML_RENDER_QUANTISE_SPRITE_MODERN_NEAREST=9u,
   /* Modern numbered rotation: CPU fixed-point texel spans and truncating exact16 blend. */
-  GML_RENDER_QUANTISE_SPRITE_MODERN_ROTATED_NEAREST=10u
+  GML_RENDER_QUANTISE_SPRITE_MODERN_ROTATED_NEAREST=10u,
+  /* Whole nearest sprite texels use an integer RGB product, then fixed source-over. */
+  GML_RENDER_QUANTISE_INTEGER_TINT_TRUNC=11u,
+  GML_RENDER_QUANTISE_INTEGER_TINT_ROUND=12u
 };
 
 /* Resolved blend semantics, independent of any device API's enumerant values. Zeroed factors

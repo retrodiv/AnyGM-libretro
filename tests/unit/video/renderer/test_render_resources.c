@@ -9619,7 +9619,11 @@ static int resident_classic_owned_binary_unit_sprite(void){
     gml_draw_sprite_ext(render,0,0,2.25,3.75,exclusion==10u?2.0:exclusion==15u?-1.0:1.0,1.0,
       exclusion==11u?0.5:0.0,exclusion==12u?0xABCDEFu:0xFFFFFFu,
       exclusion==14u?0.5:1.0);
-    if(!exclusion){
+    /* The old owned-binary rule is still preferred. Newly paired integer
+     * variants strengthen these old scope exclusions into transport guards. */
+    int integer_extension=exclusion==2u || exclusion==5u || exclusion==12u ||
+      exclusion==13u || exclusion==14u || exclusion==15u;
+    if(!exclusion || integer_extension){
       CHECK(render->resident_application_pass && !fake.submits && !fake.readbacks &&
             !memcmp(shadow,render->fb,sizeof shadow));
       CHECK(gml_render_scene_submit_pending(render) && fake.submits==1 &&
@@ -9630,6 +9634,7 @@ static int resident_classic_owned_binary_unit_sprite(void){
       CHECK(metrics.authority==GML_RENDER_RESOURCE_GPU_RESIDENT &&
             metrics.cpu_version<metrics.logical_version && !metrics.cpu_replays &&
             !metrics.journal_operations && !metrics.retained_mutable_bytes);
+      if(integer_extension) CHECK(fake.last_quantisation==GML_RENDER_QUANTISE_INTEGER_TINT_TRUNC);
     } else CHECK(!render->resident_application_pass);
     gml_render_abandon_device(render);gml_render_free(render);free(render);
   }
@@ -11053,6 +11058,76 @@ static int resident_opaque_sprite_complete_application(void){
   return 1;
 }
 
+/* Admission/authority only. The owning real-context control supplies D2 pixels. */
+static int resident_integer_sprite_function(void){
+  enum { W=24,H=20 };
+  const int generations[]={700,800,15,17};const double alphas[]={1.0,0.0,0.4};
+  for(unsigned generation=0;generation<4u;generation++)
+  for(unsigned target_kind=0;target_kind<4u;target_kind++)
+  for(unsigned gui=0;gui<2u;gui++) for(unsigned signs=0;signs<4u;signs++)
+  for(unsigned disabled=0;disabled<2u;disabled++) for(unsigned tint=0;tint<2u;tint++)
+  for(unsigned a=0;a<3u;a++){
+    GmlRender *render=calloc(1,sizeof *render);GmlWin content={0};
+    FakeDevice fake={.on_demand=1,.readback_colour=0x7F25C080u};
+    GmlRenderDeviceServices device=service(&fake);GmlRenderJournalMetrics metrics={0};
+    uint32_t screen[W*H],shadow[W*H];const uint32_t *pixels=NULL;
+    CHECK(render && !gml_render_init(render,NULL));
+    content.classic_version=generations[generation]>100?generations[generation]:0;
+    content.bytecode=content.classic_version?0:generations[generation];
+    render->win=&content;render->classic=content.classic_version!=0;
+    uint8_t rgba[16]={208,32,16,255,16,208,32,0,32,16,208,128,192,176,160,64};
+    free(render->atlas[0].px);render->atlas[0].px=malloc(sizeof rgba);
+    render->atlas[0].w=render->atlas[0].h=2;
+    render->tpag=calloc(1,sizeof *render->tpag);render->spr=calloc(1,sizeof *render->spr);
+    CHECK(render->atlas[0].px && render->tpag && render->spr);
+    memcpy(render->atlas[0].px,rgba,sizeof rgba);render->n_tpag=render->n_spr=1;
+    render->tpag[0]=(GmlTpag){.sw=2,.sh=2,.tw=2,.th=2,.bw=4,.bh=4,.tx=1,.ty=1};
+    render->spr[0]=(GmlSprite){.w=4,.h=4,.originx=2,.originy=2,.n_frames=1};
+    render->spr[0].frame=calloc(1,sizeof(int));CHECK(render->spr[0].frame);
+    device.observe_on_demand=fake_observe_on_demand;gml_render_bind_device(render,&device);
+    for(unsigned p=0;p<W*H;p++) screen[p]=0xA5ABCDEFu;
+    if(target_kind==1u || target_kind==2u){
+      CHECK(gml_render_application_surface_ensure_owned(render,W,H));
+      CHECK(gml_render_begin_resident_owned_application(render,0,0,0));
+    }else{
+      gml_render_application_surface_bind(render,screen,W,H,1);
+      CHECK(gml_render_begin_resident_base(render,screen,W,H,0,0));
+    }
+    if(target_kind==2u) CHECK(gml_surface_set_target(render,0));
+    if(target_kind==3u){int id=gml_surface_create(render,W,H);CHECK(id>0 && gml_surface_set_target(render,id));}
+    if(gui){gml_render_gui_begin(render,W,H);gml_render_gui_set_size(render,W/2,H/2);}
+    render->alphablend=!disabled;gml_render_set_pending_fill(render,0x40273859u);
+    gml_render_flush_pending_fill(render);CHECK(gml_render_scene_submit_pending(render));
+    memcpy(shadow,render->fb,sizeof shadow);int submitted=fake.submits;
+    double xs=signs&1u?-2.0:2.0,ys=signs&2u?-1.0:1.0;
+    double mapping=gml_render_gui_transform_active(render)?2.0:1.0;
+    double dx=xs*mapping,dy=ys*mapping;
+    double x=(6.0+(dx<0.0?-2.0*dx:0.0)+dx)/mapping;
+    double y=(5.0+(dy<0.0?-2.0*dy:0.0)+dy)/mapping;
+    for(unsigned draw=0;draw<8u;draw++)
+      gml_draw_sprite_ext(render,0,0,x,y,xs,ys,0,tint?0x70B0D0u:0xFFFFFFu,alphas[a]);
+    CHECK(render->resident_application_pass && gml_render_scene_submit_pending(render));
+    CHECK(fake.submits==submitted+(a==1u?0:1) && !fake.readbacks && !fake.rgb_queries &&
+          !memcmp(shadow,render->fb,sizeof shadow));
+    GmlRenderResource *resource=gml_render_scene_target_resource_ensure(render);CHECK(resource);
+    gml_render_resource_journal_metrics(resource,&metrics);
+    CHECK(metrics.authority==GML_RENDER_RESOURCE_GPU_RESIDENT && !metrics.cpu_replays && !metrics.journal_bytes);
+    if(a!=1u){
+      CHECK(fake.last_batch_operations>=8u && fake.last_filter==GML_RENDER_FILTER_NEAREST);
+      if(fake.last_quantisation) CHECK(
+        fake.last_quantisation==(generation==3u?GML_RENDER_QUANTISE_INTEGER_TINT_ROUND:GML_RENDER_QUANTISE_INTEGER_TINT_TRUNC) &&
+        fake.last_filtered_draw_alpha==alphas[a]);
+    }
+    CHECK(gml_render_resource_acquire_cpu_read(resource,&pixels) && fake.readbacks==1 &&
+      pixels[0]==fake.readback_colour && pixels[W*H-1u]==fake.readback_colour);
+    fake.forbid_calls=1;
+    CHECK(gml_render_resource_acquire_cpu_read(resource,&pixels) && !fake.forbidden_calls &&
+      pixels[0]==fake.readback_colour && pixels[W*H-1u]==fake.readback_colour);
+    fake.forbid_calls=0;gml_render_free(render);free(render);
+  }
+  return 1;
+}
+
 static int resident_integer_world_sourceover_pages(int packed_pages){
   enum { WIDTH=24,HEIGHT=24 };
   const double world[5][2]={{2,2},{4,4},{2,3},{0.5,0.5},{-2,-3}};
@@ -11340,14 +11415,26 @@ static int resident_integer_sourceover_exclusions(void){
     if(variant==2u) render->color_write_mask=7u;
     double x=variant==3u?3.125:variant==4u?-0.5:3.0;
     gml_draw_sprite_ext(render,0,0,x,3.0,1,1,0,0xFFFFFFu,0.75);
-    if(variant==5u){
-      /* Modern SCREEN is still excluded from the integer-preserved-alpha
-       * rule, but now qualifies the separate fixed point-sampling rule. */
+    if(variant==4u){
+      /* The clipped integral source-over variant now has its own paired rule. */
       CHECK(render->resident_application_pass && render->pending_scene_batch &&
             gml_render_scene_submit_pending(render) && fake.submits==2 &&
             fake.last_batch_operations==1u && !fake.readbacks && !fake.rgb_queries &&
-            fake.last_filter==GML_RENDER_FILTER_NEAREST_PHASED_OPAQUE_ALPHA &&
-            !fake.last_quantisation && fake.last_quad_state.rgb_equation==GML_RENDER_BLEND_ADD);
+            fake.last_filter==GML_RENDER_FILTER_NEAREST &&
+            fake.last_quantisation==GML_RENDER_QUANTISE_INTEGER_TINT_TRUNC);
+      gml_render_free(render);free(render);
+      continue;
+    }
+    if(variant==5u){
+      /* The preferred crop may reject unknown-alpha modern SCREEN. Its new
+       * whole-texel extension precedes the separately qualified point rule. */
+      CHECK(render->resident_application_pass && render->pending_scene_batch &&
+            gml_render_scene_submit_pending(render) && fake.submits==2 &&
+            fake.last_batch_operations==1u && !fake.readbacks && !fake.rgb_queries &&
+            fake.last_filter==GML_RENDER_FILTER_NEAREST &&
+            fake.last_quantisation==GML_RENDER_QUANTISE_INTEGER_TINT_ROUND &&
+            fake.last_quad_state.rgb_equation==GML_RENDER_BLEND_ADD &&
+            fake.last_quad_state.coverage_policy==GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA);
       gml_render_free(render);free(render);
       continue;
     }
@@ -12140,6 +12227,7 @@ int main(void){
   passed+=resident_binary_atlas_sprite_gpu();
   passed+=resident_integer_scaled_atlas_sprite_gpu();
   passed+=resident_classic_nonphase_sprite_targets();
+  passed+=resident_integer_sprite_function();
   passed+=resident_classic_owned_binary_unit_sprite();
   passed+=resident_runtime_binary_unit_sprites();
   passed+=resident_classic_unit_tiles();
@@ -12177,6 +12265,6 @@ int main(void){
   passed+=source_free_primitive_rect_replay();
   passed+=stretched_float_exact_replay();
   passed+=filtered_font_exact_recovery();
-  printf("render resource cases: passed=%d failed=%d\n",passed,170-passed);
-  return passed==170?EXIT_SUCCESS:EXIT_FAILURE;
+  printf("render resource cases: passed=%d failed=%d\n",passed,171-passed);
+  return passed==171?EXIT_SUCCESS:EXIT_FAILURE;
 }

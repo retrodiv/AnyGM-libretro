@@ -210,31 +210,40 @@ static int resident_integer_sprite(GmlRender *r,GmlSprite *sprite,int subimg,
   double left,top;
   int sub,page_index;
   int replace=resident_identity_gui_replacement(r,xs,ys,blend,alpha);
+  /* R03-SPR-INTEGER-FUNCTION: public point/scale mapping has already happened.
+   * Whole physical texels need no phase emulation, including both reflections,
+   * trim, mapped GUI and uniform tint on any ordinary target. */
+  int normal_integer=r && !r->interp && !r->fog_flat && !gml_d3_is_active(r) &&
+    isfinite(xs) && isfinite(ys) && fabs(xs)>=1.0 && fabs(xs)<=8.0 &&
+    fabs(ys)>=1.0 && fabs(ys)<=8.0 && xs==floor(xs) && ys==floor(ys) &&
+    rotation==0.0 && !r->blendmode && r->device.context && r->device.observe_on_demand &&
+    r->device.observe_on_demand(r->device.context);
   if(!r || !r->resident_application_pass || !sprite || sprite->runtime_rgba ||
      sprite->spine || sprite->ns_enabled || sprite->n_frames<=0 ||
      sprite->w<=0 || sprite->h<=0 ||
-     (r->classic && (gml_d3_is_active(r) ||
+     (r->classic && !normal_integer && (gml_d3_is_active(r) ||
                      r->interp ||
                      ((fabs(xs)!=1.0 || fabs(ys)!=1.0) &&
                       (xs<=0.0 || ys<=0.0 || xs>4.0 || ys>4.0)) ||
                      (r->world_transform_active &&
                       (r->world_scale_x!=1.0 || r->world_scale_y!=1.0)))) ||
-     (r->gui_pass_active && !resident_identity_screen_gui(r)) ||
-     r->active_shader>=0 || r->alpha_test_enable || !r->alphablend ||
+     (r->gui_pass_active && !normal_integer && !resident_identity_screen_gui(r)) ||
+     r->active_shader>=0 || r->alpha_test_enable || (!r->alphablend && !normal_integer) ||
      (r->blendmode && !replace) || r->blend_equation!=1 || r->blend_equation_alpha!=1 ||
      r->color_write_mask!=0x0Fu || r->classic_phase_y ||
      r->rotated_batch_count || r->rotated_batch_building ||
      r->pending_underlay || r->pending_presentation ||
      !gml_render_scene_target_matches(r) ||
      !isfinite(xs) || !isfinite(ys) || xs==0.0 || ys==0.0 ||
-     rotation!=0.0 || blend!=0xFFFFFFu ||
-     !isfinite(alpha) || alpha<=0.0 || alpha>1.0 ||
+     rotation!=0.0 || (blend!=0xFFFFFFu && !normal_integer) ||
+     !isfinite(alpha) || alpha<0.0 || alpha>1.0 || (alpha==0.0 && !normal_integer) ||
      (r->interp && (xs!=1.0 || ys!=1.0)))
     return 0;
   /* A plain sprite reads only the base image; the other texture-stage filter flags do not
    * participate in the CPU blit, and the integer-aligned unit-scale base sample is exact. */
   for(int index=0;index<3;index++)
     if(r->classic_interp_phase[index] || r->app_interp_phase[index]) return 0;
+  if(normal_integer && alpha==0.0) return 1;
   sub=gml_render_runtime_frame_index(sprite,subimg);
   if(!sprite->frame) return 0;
   page_index=sprite->frame[sub];
@@ -267,14 +276,14 @@ static int resident_integer_sprite(GmlRender *r,GmlSprite *sprite,int subimg,
     top=floor(top+0.5);
     /* R03-SPR-CLASSIC-SIGNED-NOOP: both unit signs have exact half-open
      * coverage. A clipped reflected crop must not drain a queued GPU prefix.
-     * Visible reflected sprites retain their existing CPU path below. */
+     * Visible reflected sprites need the paired integer-function rule below. */
     double right=left+(double)page->sw*xs;
     double bottom=top+(double)page->sh*ys;
     if(fmin(left,right)>=(double)r->fbw || fmin(top,bottom)>=(double)r->fbh ||
        fmax(left,right)<=0.0 || fmax(top,bottom)<=0.0)
       return 1;
   }
-  if(r->classic && (xs<0.0 || ys<0.0)) return 0;
+  if(r->classic && !normal_integer && (xs<0.0 || ys<0.0)) return 0;
   /* R03-SPR-INTEGER-ROUNDED-NOOP: positive whole nearest crops use the
    * unchanged CPU writer's half-up anchor and exact integral extent. A
    * subpixel sliver outside that rounded rectangle cannot touch the target.
@@ -303,10 +312,17 @@ static int resident_integer_sprite(GmlRender *r,GmlSprite *sprite,int subimg,
         fmax(top,bottom)<=-1.0 || fmin(top,bottom)>=(double)r->fbh+1.0))
       return 1;
   }
-  return resident_atlas_crop_from_page(r,page,0,0,page->sw,page->sh,
+  /* Retain already qualified, cheaper recipes before extending admission.
+   * Integral Classic magnification does not need the fractional point-region
+   * partitioner; the plain whole-texel quad preserves compatible batching. */
+  if(!(normal_integer && r->classic && (fabs(xs)!=1.0 || fabs(ys)!=1.0) &&
+       left==floor(left) && top==floor(top)) &&
+     resident_atlas_crop_from_page(r,page,0,0,page->sw,page->sh,
                                        left,top,xs,ys,GML_RENDER_SCENE_SPRITE,blend,alpha,
                                        r->classic && (xs!=1.0 || ys!=1.0)?3:
-                                       (!r->classic && !r->interp),NULL);
+                                       (!r->classic && !r->interp),NULL)) return 1;
+  return normal_integer && resident_atlas_crop_from_page(r,page,0,0,page->sw,page->sh,
+       left,top,xs,ys,GML_RENDER_SCENE_SPRITE,blend,alpha,7,NULL);
 }
 
 static int resident_atlas_crop_from_page(GmlRender *r,GmlTpag *page,
@@ -385,6 +401,18 @@ static int resident_atlas_crop_from_page(GmlRender *r,GmlTpag *page,
    * trim and mapping once. Whole positive nearest texels and endpoint RGB
    * multiplication stay exact without a predecessor image or float emulation. */
   int integer_sprite_part=physical_sprite_page==5;
+  int integer_sprite=physical_sprite_page==7;
+  if(integer_sprite &&
+     (!r || !page || r->interp || r->fog_flat || gml_d3_is_active(r) ||
+      family!=GML_RENDER_SCENE_SPRITE || xs!=floor(xs) || ys!=floor(ys) ||
+      fabs(xs)<1.0 || fabs(xs)>8.0 || fabs(ys)<1.0 || fabs(ys)>8.0 ||
+      !isfinite(left) || !isfinite(top) || left!=floor(left) || top!=floor(top) ||
+      fabs(left)>65536.0 || fabs(top)>65536.0 || page->sw>4096 || page->sh>4096 ||
+      (double)crop_width*fabs(xs)>16384.0 || (double)crop_height*fabs(ys)>16384.0 ||
+      (!gml_render_target_preserves_alpha(r) &&
+       (double)crop_width*fabs(xs)*(double)crop_height*fabs(ys)>=131072.0) ||
+      !r->device.context || !r->device.observe_on_demand ||
+      !r->device.observe_on_demand(r->device.context))) return 0;
   if(integer_sprite_part &&
      (!r || r->classic || r->interp || r->gui_pass_active || r->fog_flat ||
       gml_d3_is_active(r) || !anygm_policy_has_modern_layer_semantics(r->win) ||
@@ -460,16 +488,16 @@ static int resident_atlas_crop_from_page(GmlRender *r,GmlTpag *page,
                       family!=GML_RENDER_SCENE_TEXT && !classic_tile) ||
                      (family==GML_RENDER_SCENE_TEXT && !orthographic &&
                       anygm_policy_classic_modern_presentation(r->win)) ||
-                     r->interp || (!orthographic && !classic_point &&
+                     r->interp || (!orthographic && !classic_point && !integer_sprite &&
                                    (xs!=1.0 || ys!=1.0)))) ||
      (r->world_transform_active &&
       (r->world_scale_x!=1.0 || r->world_scale_y!=1.0) &&
-      (r->classic || (family!=GML_RENDER_SCENE_SPRITE && !integer_tile && !integer_text && !fractional_text) || r->interp)) ||
-     (r->gui_pass_active &&
+      (!integer_sprite && (r->classic || (family!=GML_RENDER_SCENE_SPRITE && !integer_tile && !integer_text && !fractional_text) || r->interp))) ||
+     (r->gui_pass_active && !integer_sprite &&
       ((family!=GML_RENDER_SCENE_SPRITE && !gui_crop) ||
        !resident_identity_screen_gui(r))) ||
      r->active_shader>=0 || r->alpha_test_enable ||
-     !r->alphablend || (r->blendmode && !replace) || r->blend_equation!=1 ||
+     (!r->alphablend && !integer_sprite) || (r->blendmode && !replace) || r->blend_equation!=1 ||
      r->blend_equation_alpha!=1 || r->color_write_mask!=0x0Fu ||
      r->classic_phase_y || r->rotated_batch_count || r->rotated_batch_building ||
      r->pending_underlay || r->pending_presentation ||
@@ -525,6 +553,8 @@ static int resident_atlas_crop_from_page(GmlRender *r,GmlTpag *page,
        (uint64_t)(uint32_t)page->sw*(uint32_t)page->sh>65536u) return 0;
   }
   resident_classify_page(page,atlas);
+  if(integer_sprite && (atlas->runtime_font_page || !source.borrowed_immutable ||
+     source.width>16384u || source.height>16384u)) return 0;
   if(integer_sprite_part && (!page->scene_binary_alpha || atlas->runtime_font_page ||
      !source.borrowed_immutable || source.width>16384u || source.height>16384u)) return 0;
   /* R03-SPR-PART-ENDPOINT-SOURCE-TINT: tint truncation is exact when either
@@ -563,7 +593,7 @@ static int resident_atlas_crop_from_page(GmlRender *r,GmlTpag *page,
     r->target_id<0 && !r->target_sp && r->fb==r->app_surface &&
     r->fb==r->app_surface_owned && r->device.context && r->device.observe_on_demand &&
     r->device.observe_on_demand(r->device.context);
-  if(r->classic &&
+  if(r->classic && !integer_sprite &&
      ((family==GML_RENDER_SCENE_TEXT && !page->scene_binary_alpha) ||
       (family==GML_RENDER_SCENE_SPRITE && !page->scene_fully_opaque &&
        !(r->target_id>0 && r->target_sp>0) &&
@@ -571,7 +601,7 @@ static int resident_atlas_crop_from_page(GmlRender *r,GmlTpag *page,
         (r->fb!=r->base_scene_resource_pixels && !classic_owned_binary))))) return 0;
   colour&=0xFFFFFFu;
   if(colour!=0xFFFFFFu &&
-     !integer_sprite_part && !gui_tinted_text &&
+     !integer_sprite && !integer_sprite_part && !gui_tinted_text &&
      (family!=GML_RENDER_SCENE_TEXT || !page->scene_binary_alpha)) return 0;
   checkpoint_alpha_gui=gui_crop &&
     (family==GML_RENDER_SCENE_TEXT || !page->scene_binary_alpha || gui_half);
@@ -594,7 +624,7 @@ static int resident_atlas_crop_from_page(GmlRender *r,GmlTpag *page,
   /* R03-SPR-INTEGER-SOURCEOVER: integral nearest coverage needs no float
    * emulation or destination snapshot. A witnessed device owns partial-alpha
    * results until a genuine pixel/state observation requests canonical bytes. */
-  checkpoint_alpha_sprite=!replace && family==GML_RENDER_SCENE_SPRITE &&
+  checkpoint_alpha_sprite=!integer_sprite && !replace && family==GML_RENDER_SCENE_SPRITE &&
     !r->interp &&
     ((!r->classic && r->target_sp==0 && r->fb==r->app_surface_owned) ||
      (r->classic && r->target_id>0 && r->target_sp>0) ||
@@ -614,9 +644,9 @@ static int resident_atlas_crop_from_page(GmlRender *r,GmlTpag *page,
      xs==1.0 && ys==1.0 && crop_width==r->fbw && crop_height==r->fbh)
     return 0;
   if(family==GML_RENDER_SCENE_SPRITE && draw_alpha<1.0 &&
-     !checkpoint_alpha_sprite && !gui_half) return 0;
+     !integer_sprite && !checkpoint_alpha_sprite && !gui_half) return 0;
   if(!replace && !page->scene_binary_alpha && !checkpoint_alpha_background &&
-     !checkpoint_alpha_text && !checkpoint_alpha_sprite && !checkpoint_alpha_gui) return 0;
+     !integer_sprite && !checkpoint_alpha_text && !checkpoint_alpha_sprite && !checkpoint_alpha_gui) return 0;
   scaled_width=(double)crop_width*fabs(xs);
   scaled_height=(double)crop_height*fabs(ys);
   if(gui_half){
@@ -650,6 +680,8 @@ static int resident_atlas_crop_from_page(GmlRender *r,GmlTpag *page,
      fabs(xs)>INT_MAX || fabs(ys)>INT_MAX ||
      (!classic_point && !fractional_text && !gui_half &&
       (xs!=(double)(int)xs || ys!=(double)(int)ys))) return 0;
+  if(integer_sprite && (left>=r->fbw || top>=r->fbh ||
+     left+scaled_width<=0.0 || top+scaled_height<=0.0)) return 1;
   /* R03-BG-UNIT-CLIPPED-NOOP: a trimmed repeat cell can have no physical
    * coverage even while its logical cell intersects the target. Keep the
    * qualified unit-nearest prefix queued instead of handing an empty draw
@@ -659,11 +691,11 @@ static int resident_atlas_crop_from_page(GmlRender *r,GmlTpag *page,
      (left>=r->fbw || top>=r->fbh ||
       left+scaled_width<=0.0 || top+scaled_height<=0.0)) return 1;
   if(left>=r->fbw || top>=r->fbh) return 0;
-  if((xs<0.0 && (left<0.0 || left+scaled_width>r->fbw)) ||
-     (ys<0.0 && (top<0.0 || top+scaled_height>r->fbh))) return 0;
+  if(!integer_sprite && ((xs<0.0 && (left<0.0 || left+scaled_width>r->fbw)) ||
+     (ys<0.0 && (top<0.0 || top+scaled_height>r->fbh)))) return 0;
   /* Unit crops may shorten the source. Qualified positive integer TILE quads
    * instead keep their original UV phase and let the target clip their coverage. */
-  if(!classic_point && !fractional_text && xs==1.0){
+  if(!integer_sprite && !classic_point && !fractional_text && xs==1.0){
     if(left<0.0){
       if(left<=-scaled_width) return 0;
       int shift=(int)-left;
@@ -674,7 +706,7 @@ static int resident_atlas_crop_from_page(GmlRender *r,GmlTpag *page,
     if(left+crop_width>r->fbw) crop_width=(int)(r->fbw-left);
     scaled_width=(double)crop_width;
   }
-  if(!classic_point && !fractional_text && ys==1.0){
+  if(!integer_sprite && !classic_point && !fractional_text && ys==1.0){
     if(top<0.0){
       if(top<=-scaled_height) return 0;
       int shift=(int)-top;
@@ -686,7 +718,7 @@ static int resident_atlas_crop_from_page(GmlRender *r,GmlTpag *page,
     scaled_height=(double)crop_height;
   }
   if(crop_width<=0 || crop_height<=0 ||
-     (!classic_point && !fractional_text && !gui_half && !integer_tile && !integer_text && !integer_sprite_part && (left<0.0 || top<0.0 ||
+     (!integer_sprite && !classic_point && !fractional_text && !gui_half && !integer_tile && !integer_text && !integer_sprite_part && (left<0.0 || top<0.0 ||
                         left+scaled_width>r->fbw || top+scaled_height>r->fbh)) ||
      !isfinite(scaled_width) || !isfinite(scaled_height)) return 0;
   /* Clipped enlarged texels are exact on device, but are not an eligible CPU
@@ -704,7 +736,7 @@ static int resident_atlas_crop_from_page(GmlRender *r,GmlTpag *page,
                          (uint32_t)crop_width,(uint32_t)crop_height};
   source_ref=source.image;
   operation.opcode=GML_RENDER_OP_TEXTURED_QUAD;
-  operation.reconstruction_mode=source_override || classic_tile || integer_text || integer_sprite_part || fractional_text || checkpoint_integer_tile || classic_point || replace || checkpoint_alpha_background || checkpoint_alpha_text ||
+  operation.reconstruction_mode=integer_sprite || source_override || classic_tile || integer_text || integer_sprite_part || fractional_text || checkpoint_integer_tile || classic_point || replace || checkpoint_alpha_background || checkpoint_alpha_text ||
     checkpoint_alpha_sprite || checkpoint_alpha_gui ||
     colour!=0xFFFFFFu || draw_alpha<1.0
     ?GML_RENDER_DEVICE_CHECKPOINT:GML_RENDER_REPLAY_EXACT;
@@ -723,6 +755,11 @@ static int resident_atlas_crop_from_page(GmlRender *r,GmlTpag *page,
     ?GML_RENDER_FILTER_NEAREST_PHASED_COPY:GML_RENDER_FILTER_NEAREST;
   operation.payload.quad.sampling.edge_rule=GML_RENDER_EDGE_CLAMP_SUBIMAGE;
   operation.payload.quad.sampling.source_region=region;
+  if(integer_sprite){
+    operation.payload.quad.sampling.quantisation=anygm_policy_has_modern_layer_semantics(r->win)
+      ?GML_RENDER_QUANTISE_INTEGER_TINT_ROUND:GML_RENDER_QUANTISE_INTEGER_TINT_TRUNC;
+    operation.payload.quad.filtered_draw_alpha=draw_alpha;
+  }
   if(checkpoint_alpha_gui) operation.payload.quad.filtered_draw_alpha=draw_alpha;
   /* GML colours are BBGGRR; neutral quad colours are AARRGGBB. */
   uint32_t rgba=((colour&0xFFu)<<16)|(colour&0xFF00u)|
@@ -748,10 +785,11 @@ static int resident_atlas_crop_from_page(GmlRender *r,GmlTpag *page,
   state.write_mask=15u;
   state.colour=0xFFFFFFFFu;
   state.alpha=255u;
-  if(!replace && (!page->scene_fully_opaque || draw_alpha<1.0 || checkpoint_alpha_gui)){
+  if(!replace && (!integer_sprite || r->alphablend) &&
+     (!page->scene_fully_opaque || draw_alpha<1.0 || checkpoint_alpha_gui)){
     state.rgb_source_factor=GML_RENDER_BLEND_SOURCE_ALPHA;
     state.rgb_destination_factor=GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA;
-    state.alpha_source_factor=checkpoint_alpha_background ||
+    state.alpha_source_factor=(integer_sprite && gml_render_target_preserves_alpha(r)) || checkpoint_alpha_background ||
       (checkpoint_alpha_sprite && gml_render_target_preserves_alpha(r)) ||
       (family==GML_RENDER_SCENE_TEXT && draw_alpha<1.0 &&
        gml_render_target_preserves_alpha(r))
@@ -765,13 +803,17 @@ static int resident_atlas_crop_from_page(GmlRender *r,GmlTpag *page,
     state.coverage_policy=GML_RENDER_COVERAGE_OPAQUE_TARGET;
   if(checkpoint_alpha_gui)
     state.coverage_policy=GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA;
+  if(integer_sprite && r->alphablend && !gml_render_target_preserves_alpha(r) &&
+     (draw_alpha<1.0 || !page->scene_binary_alpha))
+    state.coverage_policy=GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA;
   state.samplers[0]=operation.payload.quad.sampling;
   if(classic_point || fractional_text){
     if(!resident_modern_point_regions(r,page,point_left,point_top,xs,ys,0.0,0.0,
                                      &operation,&state,&source,NULL,0u)) return 0;
   } else if(!gml_render_application_scene_enqueue(r,&operation,&state,&source)) return 0;
   r->fb_all_transparent=0;
-  if(((family==GML_RENDER_SCENE_TEXT && draw_alpha<1.0) || checkpoint_alpha_sprite) &&
+  if(((family==GML_RENDER_SCENE_TEXT && draw_alpha<1.0) || checkpoint_alpha_sprite ||
+      (integer_sprite && r->alphablend && (draw_alpha<1.0 || !page->scene_binary_alpha))) &&
      gml_render_target_preserves_alpha(r)){
     r->fb_opaque_known=0;
     r->fb_all_opaque=0;
