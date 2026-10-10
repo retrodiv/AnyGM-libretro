@@ -9257,6 +9257,67 @@ static int resident_integer_scaled_atlas_sprite_gpu(void){
   return 1;
 }
 
+static int resident_classic_owned_binary_unit_sprite(void){
+  const int generations[]={530,600,700};
+  for(unsigned generation=0;generation<3u;generation++)
+  for(unsigned exclusion=0;exclusion<16u;exclusion++){
+    GmlRender *render=calloc(1,sizeof *render);
+    GmlWin content={.classic_version=exclusion==13u?810:generations[generation]};
+    FakeDevice fake={.on_demand=exclusion!=1u};
+    GmlRenderDeviceServices device=service(&fake);
+    uint32_t base[64]={0},shadow[64],phase[8]={0};
+    GmlRenderJournalMetrics metrics={0};
+    const uint8_t rgba[16]={208,32,16,255,16,208,32,0,
+                           32,16,208,255,192,176,160,255};
+    CHECK(render && gml_render_init(render,NULL)==0);
+    render->classic=1;render->win=&content;
+    free(render->atlas[0].px);
+    render->atlas[0].px=malloc(sizeof rgba);
+    render->atlas[0].w=render->atlas[0].h=2;
+    render->tpag=calloc(1,sizeof *render->tpag);
+    render->spr=calloc(1,sizeof *render->spr);
+    CHECK(render->atlas[0].px && render->tpag && render->spr);
+    memcpy(render->atlas[0].px,rgba,sizeof rgba);
+    if(exclusion==2u) render->atlas[0].px[7]=128;
+    render->n_tpag=render->n_spr=1;
+    render->tpag[0]=(GmlTpag){.sw=2,.sh=2,.tw=2,.th=2,.bw=4,.bh=4,.tx=1,.ty=1};
+    render->spr[0].w=render->spr[0].h=4;
+    render->spr[0].originx=render->spr[0].originy=1;
+    render->spr[0].n_frames=1;render->spr[0].frame=calloc(1,sizeof(int));
+    CHECK(render->spr[0].frame);
+    device.observe_on_demand=fake_observe_on_demand;
+    gml_render_begin(render,base,8,8,0,0);
+    CHECK(gml_render_application_surface_ensure_owned(render,8,8));
+    gml_render_bind_device(render,&device);
+    CHECK(gml_render_begin_resident_owned_application(render,0,0,0));
+    memcpy(shadow,render->fb,sizeof shadow);
+    if(exclusion==3u) render->interp=1;
+    if(exclusion==4u) render->color_write_mask=7u;
+    if(exclusion==5u) render->gui_pass_active=1;
+    if(exclusion==6u) render->alpha_test_enable=1;
+    if(exclusion==7u) render->fog_flat=1;
+    if(exclusion==8u) render->classic_phase_y=phase;
+    if(exclusion==9u){render->world_transform_active=1;render->world_scale_x=2;}
+    gml_draw_sprite_ext(render,0,0,2.25,3.75,exclusion==10u?2.0:exclusion==15u?-1.0:1.0,1.0,
+      exclusion==11u?0.5:0.0,exclusion==12u?0xABCDEFu:0xFFFFFFu,
+      exclusion==14u?0.5:1.0);
+    if(!exclusion){
+      CHECK(render->resident_application_pass && !fake.submits && !fake.readbacks &&
+            !memcmp(shadow,render->fb,sizeof shadow));
+      CHECK(gml_render_scene_submit_pending(render) && fake.submits==1 &&
+            fake.last_batch_operations==1u && !fake.readbacks);
+      GmlRenderResource *resource=gml_render_scene_target_resource_ensure(render);
+      CHECK(resource);
+      gml_render_resource_journal_metrics(resource,&metrics);
+      CHECK(metrics.authority==GML_RENDER_RESOURCE_GPU_RESIDENT &&
+            metrics.cpu_version<metrics.logical_version && !metrics.cpu_replays &&
+            !metrics.journal_operations && !metrics.retained_mutable_bytes);
+    } else CHECK(!render->resident_application_pass);
+    gml_render_abandon_device(render);gml_render_free(render);free(render);
+  }
+  return 1;
+}
+
 static int resident_classic_nonphase_sprite_targets(void){
   for(unsigned scaled=0;scaled<2u;scaled++)
   for(unsigned generation=0;generation<2u;generation++)
@@ -11577,6 +11638,7 @@ int main(void){
   passed+=resident_binary_atlas_sprite_gpu();
   passed+=resident_integer_scaled_atlas_sprite_gpu();
   passed+=resident_classic_nonphase_sprite_targets();
+  passed+=resident_classic_owned_binary_unit_sprite();
   passed+=resident_runtime_binary_unit_sprites();
   passed+=resident_classic_unit_tiles();
   passed+=runtime_sprite_scene_lifetimes();
@@ -11611,6 +11673,6 @@ int main(void){
   passed+=source_free_primitive_rect_replay();
   passed+=stretched_float_exact_replay();
   passed+=filtered_font_exact_recovery();
-  printf("render resource cases: passed=%d failed=%d\n",passed,163-passed);
-  return passed==163?EXIT_SUCCESS:EXIT_FAILURE;
+  printf("render resource cases: passed=%d failed=%d\n",passed,164-passed);
+  return passed==164?EXIT_SUCCESS:EXIT_FAILURE;
 }

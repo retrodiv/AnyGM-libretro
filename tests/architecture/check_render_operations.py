@@ -95,6 +95,7 @@ REQUIRED_RULES = {
     "R03-SPR-CLASSIC-SCALED-NEAREST",
     "R03-SPR-CLASSIC-ROTATED-NOOP",
     "R03-SPR-RUNTIME-BINARY-UNIT",
+    "R03-SPR-CLASSIC-OWNED-BINARY",
     "R03-SPR-FIRSTGEN-NEAREST-REDUCE", "R03-SPR-FIRSTGEN-NEAREST-MAG",
     "R03-SPR-MODERN-NEAREST",
     "R03-SPR-MODERN-SCREEN-POINT",
@@ -743,6 +744,8 @@ def self_test() -> None:
                   if not line.startswith("| R03-PRIM-STUDIO-GUI-OPAQUE |")),
         "\n".join(line for line in document.splitlines()
                   if not line.startswith("| R03-PRIM-CLASSIC-OWNED |")),
+        "\n".join(line for line in document.splitlines()
+                  if not line.startswith("| R03-SPR-CLASSIC-OWNED-BINARY |")),
         document.replace("`supported` | Only the bounded", "`planned` | Only the bounded", 1),
         document.replace(
             "`common/gml_render_sprites.c::gml_render_sprite_pos_geometry`; "

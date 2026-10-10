@@ -520,11 +520,24 @@ static int resident_atlas_crop_from_page(GmlRender *r,GmlTpag *page,
     if(left>=r->fbw || top>=r->fbh ||
        left+(double)crop_width<=0.0 || top+(double)crop_height<=0.0) return 1;
   }
+  /* R03-SPR-CLASSIC-OWNED-BINARY: endpoint alpha has exact source-over on
+   * the owned application too. Keep this extension to packaged positive-unit
+   * point samples; partial alpha and special states retain their old scope. */
+  int classic_owned_binary=r->classic &&
+    !anygm_policy_classic_modern_presentation(r->win) &&
+    family==GML_RENDER_SCENE_SPRITE && !physical_sprite_page && !source_override &&
+    source.borrowed_immutable && !atlas->runtime_font_page && page->scene_binary_alpha &&
+    xs==1.0 && ys==1.0 && colour==0xFFFFFFu && draw_alpha==1.0 &&
+    !r->gui_pass_active && !r->fog_flat && !gml_d3_is_active(r) &&
+    r->target_id<0 && !r->target_sp && r->fb==r->app_surface &&
+    r->fb==r->app_surface_owned && r->device.context && r->device.observe_on_demand &&
+    r->device.observe_on_demand(r->device.context);
   if(r->classic &&
      ((family==GML_RENDER_SCENE_TEXT && !page->scene_binary_alpha) ||
       (family==GML_RENDER_SCENE_SPRITE && !page->scene_fully_opaque &&
        !(r->target_id>0 && r->target_sp>0) &&
-       (r->fb!=r->app_surface || r->fb!=r->base_scene_resource_pixels)))) return 0;
+       (r->fb!=r->app_surface ||
+        (r->fb!=r->base_scene_resource_pixels && !classic_owned_binary))))) return 0;
   colour&=0xFFFFFFu;
   if(colour!=0xFFFFFFu &&
      !integer_sprite_part && (family!=GML_RENDER_SCENE_TEXT || !page->scene_binary_alpha)) return 0;
