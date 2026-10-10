@@ -900,12 +900,12 @@ void gml_draw_surface_stretched(GmlRender *r,int surf,double dx,double dy,
   gml_render_cpu_draw_surface_stretched_impl(r,surf,dx,dy,dw,dh,blend,alpha,1);
 }
 
-/* Full-source 1:1 and filtered magnified surfaces use the CPU rectangle's coverage,
+/* Full-source 1:1, bounded Classic integer and filtered magnified surfaces use CPU coverage,
  * hardware sampling and fixed RGB blending. An alpha-only batch preserves written alpha. */
 static int resident_surface_filtered(GmlRender *r,int surf,double dx,double dy,double dw,double dh,
                                      uint32_t blend,double alpha){
   int slot=surface_slot(surf);
-  int source_width,source_height,unit,point_presentation,unit_gui_blend;
+  int source_width,source_height,unit,point_presentation,unit_gui_blend,classic_point=0;
   double left,top,width,height;
   GmlRenderResource *resource,*target;
   GmlRenderResourceSource source={0};
@@ -914,7 +914,7 @@ static int resident_surface_filtered(GmlRender *r,int surf,double dx,double dy,d
   GmlRenderImageRef source_ref,image;
   const GmlRenderDeviceServices *device;
   int destination_blend=r && gml_render_blend_uses_destination_colour(r->blendmode);
-  if(!r || (surf!=0 && (slot<0 || !r->surface[slot].live)) || r->classic ||
+  if(!r || (surf!=0 && (slot<0 || !r->surface[slot].live)) ||
      (surf==0 && (!r->app_surface_published || !r->app_surface ||
                   r->app_surface!=r->app_surface_owned)) ||
      !r->resident_scene_pass || !gml_render_scene_target_matches(r) ||
@@ -935,6 +935,21 @@ static int resident_surface_filtered(GmlRender *r,int surf,double dx,double dy,d
   width=(double)lround(dw);height=(double)lround(dh);
   source_width=surf==0?r->app_w:r->surface[slot].w;
   source_height=surf==0?r->app_h:r->surface[slot].h;
+  /* Named Classic surfaces have ordinary source coverage, not automatic
+   * application phase planes. Integer magnification agrees with both leading
+   * and centre point sampling. Reuse the device view without scanning alpha. */
+  if(r->classic){
+    if(surf<=0 || r->interp || r->target_sp || r->target_id>=0 ||
+       r->aspect_fullwidth || gml_render_gui_transform_active(r) ||
+       r->world_transform_active || r->pending_underlay || destination_blend ||
+       r->fog_flat || alpha<1.0 || (blend&0xFFFFFFu)!=0xFFFFFFu ||
+       source_width<=0 || source_height<=0 ||
+       dw!=width || dh!=height || dx-r->cam_x!=left || dy-r->cam_y!=top ||
+       width<source_width || height<source_height || width>16384.0 || height>16384.0 ||
+       fmod(width,(double)source_width)!=0.0 || fmod(height,(double)source_height)!=0.0 ||
+       left<0.0 || top<0.0 || left+width>r->fbw || top+height>r->fbh) return 0;
+    classic_point=1;
+  }
   /* The preserved first-generation GUI leaf selects pixel-centre point samples
    * for opaque, white content-owned application presentation. Other ordinary
    * surface requests keep their floor/lround geometry and filter selection. */
@@ -997,7 +1012,7 @@ static int resident_surface_filtered(GmlRender *r,int surf,double dx,double dy,d
   if(!isfinite(left) || !isfinite(top) || left<(double)INT_MIN/2 ||
      top<(double)INT_MIN/2 || left>(double)INT_MAX/2 || top>(double)INT_MAX/2 ||
      source_width<=0 || source_height<=0 ||
-     (!point_presentation && !destination_blend && !unit &&
+     (!point_presentation && !destination_blend && !classic_point && !unit &&
       (!r->interp || width<=source_width || height<=source_height ||
        (surf==0 && alpha>=1.0 && (blend&0xFFFFFFu)==0xFFFFFFu)))) return 0;
   /* The CPU rectangle is half-open after these same origin/extent roundings.
@@ -1043,7 +1058,7 @@ static int resident_surface_filtered(GmlRender *r,int surf,double dx,double dy,d
   quad->shape=GML_RENDER_QUAD_AXIS_ALIGNED;
   quad->sampling.filter=point_presentation?GML_RENDER_FILTER_HARDWARE_PIXEL_CENTRE_POINT:destination_blend
     ?(!unit && r->interp?GML_RENDER_FILTER_BOX:GML_RENDER_FILTER_NEAREST)
-    :unit?GML_RENDER_FILTER_NEAREST:GML_RENDER_FILTER_HARDWARE_BILINEAR;
+    :(unit || classic_point)?GML_RENDER_FILTER_NEAREST:GML_RENDER_FILTER_HARDWARE_BILINEAR;
   quad->sampling.edge_rule=GML_RENDER_EDGE_CLAMP_SUBIMAGE;
   quad->sampling.source_region=(GmlRenderRect){0,0,source.width,source.height};
   quad->filtered_draw_alpha=alpha;

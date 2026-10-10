@@ -1058,12 +1058,13 @@ static int scene_resident_batch_case(void){
 /* Call/state proof only. Composed pixel qualification needs a real device. */
 static int scene_hardware_filtered_batch_case(unsigned kind){
   enum { QUADS=2049 };
-  int additive=kind==1u,combined=kind==2u,surface=kind>=3u && kind<=5u;
-  int nearest=kind==4u || kind==5u,screen_stretch=kind>=6u && kind<=9u;
+  int integer_surface=kind==10u;
+  int additive=kind==1u,combined=kind==2u,surface=(kind>=3u && kind<=5u) || integer_surface;
+  int nearest=kind==4u || kind==5u || integer_surface,screen_stretch=kind>=6u && kind<=9u;
   int screen_sprite=kind==7u || kind==8u || kind==9u;
   const uint8_t pixels[64]={11,22,33,255,44,55,66,100,77,88,99,0,111,122,133,200};
   for(unsigned api=0;api<2u;api++)
-  for(unsigned excluded=0;excluded<(kind==9u?11u:nearest || screen_stretch?8u:(combined || surface)?7u:4u);excluded++){
+  for(unsigned excluded=0;excluded<(integer_surface?9u:kind==9u?11u:nearest || screen_stretch?8u:(combined || surface)?7u:4u);excluded++){
     GmlGpuContext context=fake_context(api?GML_GPU_API_OPENGLES3:GML_GPU_API_OPENGL_CORE);
     GmlRenderImageRef source={kind==5u?GML_RENDER_RESOURCE_APPLICATION:surface?GML_RENDER_RESOURCE_SURFACE:
       GML_RENDER_RESOURCE_ATLAS,91u,1u,1u};
@@ -1110,7 +1111,7 @@ static int scene_hardware_filtered_batch_case(unsigned kind){
     for(unsigned index=0;index<QUADS+1u;index++){
       GmlRenderDrawOp *op=&ops[index];
       op->sequence=index+1u;
-      op->target.image=(GmlRenderImageRef){screen_stretch?GML_RENDER_RESOURCE_SCREEN:combined?GML_RENDER_RESOURCE_APPLICATION:
+      op->target.image=(GmlRenderImageRef){screen_stretch || integer_surface?GML_RENDER_RESOURCE_SCREEN:combined?GML_RENDER_RESOURCE_APPLICATION:
         GML_RENDER_RESOURCE_SURFACE,92u,1u,index+1u};
       op->target.storage_version=1u;op->target.width=op->target.height=64u;
       op->target.pixel_format=GML_RENDER_PIXEL_ARGB8888;
@@ -1129,6 +1130,11 @@ static int scene_hardware_filtered_batch_case(unsigned kind){
       quad->x[1]=quad->x[2]=combined || nearest?2.0:8.0;
       quad->y[2]=quad->y[3]=combined || nearest?2.0:8.0;
       quad->u[1]=quad->u[2]=quad->v[2]=quad->v[3]=1.0;
+      if(integer_surface){
+        quad->filtered_draw_alpha=1.0;
+        quad->x[1]=quad->x[2]=8.0;quad->y[2]=quad->y[3]=6.0;
+        for(unsigned corner=0;corner<4u;corner++) quad->corner_colour[corner]=0xFFFFFFFFu;
+      }
       if(screen_sprite){
         quad->filtered_draw_alpha=.7;
         quad->inverse_x[0]=quad->inverse_y[1]=.6;
@@ -1150,7 +1156,10 @@ static int scene_hardware_filtered_batch_case(unsigned kind){
     if(excluded==5u) ops[QUADS].payload.quad.corner_colour[0]=0xFFFEFFFFu;
     if(excluded==6u) ops[QUADS].payload.quad.u[1]=.9;
     if(excluded==7u) ops[QUADS].payload.quad.x[1]=ops[QUADS].payload.quad.x[2]=screen_stretch?2.0:3.0;
-    if(excluded==8u) ops[QUADS].payload.quad.sampling.logical_margin_mask=16u;
+    if(integer_surface && excluded==8u)
+      for(unsigned index=0;index<QUADS+1u;index++)
+        ops[index].target.image.resource_class=GML_RENDER_RESOURCE_APPLICATION;
+    if(excluded==8u && !integer_surface) ops[QUADS].payload.quad.sampling.logical_margin_mask=16u;
     if(excluded==9u) ops[QUADS].payload.quad.sampling.source_region.x=0;
     if(excluded==10u) ops[QUADS].scene_family=GML_RENDER_SCENE_TEXT;
     GmlRenderDrawBatch batch={ops,QUADS+1u,&state,1u};
@@ -1288,6 +1297,9 @@ static int scene_nearest_surface_batch_case(void){
 }
 static int scene_nearest_application_batch_case(void){
   return scene_hardware_filtered_batch_case(5);
+}
+static int scene_integer_screen_surface_batch_case(void){
+  return scene_hardware_filtered_batch_case(10);
 }
 static int scene_hardware_screen_stretch_batch_case(void){
   return scene_hardware_filtered_batch_case(6);
@@ -3868,6 +3880,7 @@ int main(int argc,char **argv){
     {"scene_hardware_surface_batch",scene_hardware_surface_batch_case},
     {"scene_nearest_surface_batch",scene_nearest_surface_batch_case},
     {"scene_nearest_application_batch",scene_nearest_application_batch_case},
+    {"scene_integer_screen_surface_batch",scene_integer_screen_surface_batch_case},
     {"scene_hardware_screen_stretch_batch",scene_hardware_screen_stretch_batch_case},
     {"scene_hardware_screen_sprite_batch",scene_hardware_screen_sprite_batch_case},
     {"scene_hardware_screen_font_batch",scene_hardware_screen_font_batch_case},

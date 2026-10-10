@@ -1384,6 +1384,48 @@ static int classic_step_composition_scene_case(void){
   return 1;
 }
 
+/* Call-order proof; actual pixels are covered by the real-device paired control. */
+static int classic_integer_surface_calls_case(void){
+  Session selected={0};
+  CurrentContextWitness witness={1u,0u};
+  AnygmGraphicsContext context=graphics_context(ANYGM_GRAPHICS_OPENGLES3);
+  GmlGpuCounters before={0},after={0};
+  anygm_test_graphics_reset();
+  REQUIRE(session_open_fixture_with_scene(&selected,ANYGM_SCENE_RENDERER_OPENGL,
+          anygm_synthetic_classic_step_composition_content_create),
+          "Classic integer surface fixture loads");
+  context.userdata=&witness;context.is_current=graphics_context_is_current;
+  REQUIRE(anygm_graphics_context_reset(selected.engine,&context)==ANYGM_OK &&
+          advance(selected.engine,1,NULL),"Classic integer surface scene and current witness activate");
+  GmlRender *r=&selected.engine->render;
+  gml_surface_reset_target(r);
+  int source=gml_surface_create(r,16,12);
+  REQUIRE(source>0 && gml_render_begin_resident_base(r,selected.engine->screen,64,48,0,0) &&
+          gml_surface_set_target(r,source),"Classic numbered source becomes resident");
+  gml_render_set_pending_fill(r,0x80403020u);gml_render_flush_pending_fill(r);
+  REQUIRE(gml_render_scene_submit_pending(r),"partial-alpha source clear submits");
+  gml_surface_reset_target(r);
+  gml_render_set_pending_fill(r,0xFF112233u);
+  anygm_test_graphics_readback_alpha(128u);
+  gml_gpu_counters(selected.engine->gpu,&before);
+  gml_draw_surface_stretched(r,source,0,0,64,48,0xFFFFFFu,1.0);
+  int submitted=gml_render_scene_submit_pending(r);
+  gml_gpu_counters(selected.engine->gpu,&after);
+  int ok=submitted && r->resident_application_pass &&
+    after.scene_families[GML_RENDER_SCENE_SURFACE]==before.scene_families[GML_RENDER_SCENE_SURFACE]+1u &&
+    after.scene_readbacks==before.scene_readbacks &&
+    after.scene_readback_masks==before.scene_readback_masks &&
+    after.scene_rgb_queries==before.scene_rgb_queries;
+  if(!ok) fprintf(stderr,"Classic integer surface calls: submitted=%d resident=%d surfaces=%llu/%llu reads=%llu/%llu\n",
+    submitted,r->resident_application_pass,
+    (unsigned long long)before.scene_families[GML_RENDER_SCENE_SURFACE],
+    (unsigned long long)after.scene_families[GML_RENDER_SCENE_SURFACE],
+    (unsigned long long)before.scene_readbacks,(unsigned long long)after.scene_readbacks);
+  session_close(&selected);
+  REQUIRE(ok,"integer Classic composition keeps partial source alpha on device without observation");
+  return 1;
+}
+
 static int classic_single_view_cpu_observers_case(void){
   int (*factories[])(AnygmSyntheticContent *)={
     anygm_synthetic_classic_single_view_read_content_create,
@@ -4620,6 +4662,7 @@ int main(void){
     {"classic single view executes nearest draw contracts",classic_single_view_draw_contracts_case},
     {"classic Step target survives GPU Draw and GUI",classic_retained_target_scene_case},
     {"classic Step SCREEN and numbered Draw stay independently current",classic_step_composition_scene_case},
+    {"classic integer surface keeps partial source alpha resident",classic_integer_surface_calls_case},
     {"ended resident frame remains visible and canonical",ended_frame_retention_case},
     {"authored cursor preserves a resident completed frame",resident_cursor_frame_case},
     {"transition snapshot reads a resident completed frame",resident_transition_snapshot_case},
