@@ -84,6 +84,7 @@ REQUIRED_RULES = {
     "R03-PRIM-CLASSIC-INVERSE-RECT",
     "R03-PRIM-STUDIO-GUI-OPAQUE",
     "R03-PRIM-STUDIO-ALPHA-RECT",
+    "R03-PRIM-FIRSTGEN-GUI-ALPHA-RECT",
     "R03-PRIM-CLASSIC-OWNED",
     "R03-PRIM-RECT-COALESCED",
     "R03-P5-FAULT-LIMIT",
@@ -746,6 +747,8 @@ def self_test() -> None:
                   if not line.startswith("| R03-PRIM-CLASSIC-INVERSE-RECT |")),
         "\n".join(line for line in document.splitlines()
                   if not line.startswith("| R03-PRIM-STUDIO-GUI-OPAQUE |")),
+        "\n".join(line for line in document.splitlines()
+                  if not line.startswith("| R03-PRIM-FIRSTGEN-GUI-ALPHA-RECT |")),
         "\n".join(line for line in document.splitlines()
                   if not line.startswith("| R03-PRIM-CLASSIC-OWNED |")),
         "\n".join(line for line in document.splitlines()

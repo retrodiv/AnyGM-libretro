@@ -3641,7 +3641,7 @@ static int resident_classic_alpha_rectangle_scope(void){
   return 1;
 }
 
-static int resident_studio_alpha_rectangle_scope(void){
+static int resident_studio_alpha_rectangle_scope_variant(int identity_gui){
   static const double alphas[]={1.0/256.0,1.0/255.0,1.0/13.0,0.2,
                                0.6000000000000001,0.8,0.995,0.9975};
   for(unsigned generation=13u;generation<=16u;generation++)
@@ -3673,7 +3673,8 @@ static int resident_studio_alpha_rectangle_scope(void){
       gml_render_application_surface_bind(gpu,screen,8,8,1);
       CHECK(gml_render_begin_resident_base(gpu,screen,8,8,0.0,0.0));
     }
-    cpu->alpha=gpu->alpha=alphas[variant];
+    if(identity_gui){gml_render_gui_begin(cpu,8,8);gml_render_gui_begin(gpu,8,8);}
+    cpu->alpha=gpu->alpha=identity_gui && variant==7u?0.88:alphas[variant];
     gpu->fb_opaque_known=gpu->fb_all_opaque=variant%2u==0u;
     gpu->world_transform_active=1;
     gpu->world_scale_x=gpu->world_scale_y=2.0;
@@ -3708,7 +3709,7 @@ static int resident_studio_alpha_rectangle_scope(void){
     CHECK(!gml_render_studio_alpha_rect_valid(&malformed));
     gml_render_free(cpu);gml_render_free(gpu);free(cpu);free(gpu);
   }
-  /* Modern layers, GUI, gradients, non-normal blend and pending composition stay CPU-owned. */
+  /* Modern layers, uninitialized GUI, gradients, non-normal blend and pending composition stay CPU-owned. */
   for(unsigned variant=0;variant<5u;variant++){
     GmlRender *gpu=calloc(1,sizeof *gpu);
     GmlWin content={.bytecode=15,.has_room_layers=variant==0u};
@@ -3735,6 +3736,42 @@ static int resident_studio_alpha_rectangle_scope(void){
     else gml_render_primitive_rectangle(gpu,0,0,2,2,0x345678u,0);
     CHECK(!gpu->resident_application_pass);
     gml_render_free(gpu);free(gpu);
+  }
+  return 1;
+}
+
+static int resident_studio_alpha_rectangle_scope(void){
+  return resident_studio_alpha_rectangle_scope_variant(0);
+}
+
+static int resident_firstgen_gui_alpha_rectangle_scope(void){
+  CHECK(resident_studio_alpha_rectangle_scope_variant(1));
+  for(unsigned variant=0;variant<10u;variant++){
+    GmlRender *render=calloc(1,sizeof *render);
+    GmlWin content={.bytecode=15};
+    FakeDevice fake={.on_demand=1};
+    GmlRenderDeviceServices device=service(&fake);
+    uint32_t screen[64]={0};
+    device.observe_on_demand=fake_observe_on_demand;
+    CHECK(render && !gml_render_init(render,NULL));
+    render->win=&content;
+    gml_render_bind_device(render,&device);
+    gml_render_application_surface_bind(render,screen,8,8,1);
+    CHECK(gml_render_begin_resident_base(render,screen,8,8,0.0,0.0));
+    gml_render_gui_begin(render,8,8);render->alpha=0.88;
+    if(variant==0u) render->gui_base_logical_w=16;
+    if(variant==1u) render->gui_logical_h=16;
+    if(variant==2u) render->gui_scale_x=2.0;
+    if(variant==3u) render->gui_scale_y=0.5;
+    if(variant==4u) render->gui_maximise_active=1;
+    if(variant==5u) render->gui_maximise_xoffset=1.0;
+    if(variant==6u) render->gui_maximise_yoffset=1.0;
+    if(variant==7u) render->cam_x=1.0;
+    if(variant==8u) render->cam_y=1.0;
+    if(variant==9u) fake.on_demand=0;
+    gml_render_primitive_rectangle(render,-2,-2,10,10,0u,0);
+    CHECK(!render->resident_application_pass);
+    gml_render_free(render);free(render);
   }
   return 1;
 }
@@ -11832,6 +11869,7 @@ int main(void){
   passed+=resident_studio_gui_rectangle_scope();
   passed+=resident_classic_alpha_rectangle_scope();
   passed+=resident_studio_alpha_rectangle_scope();
+  passed+=resident_firstgen_gui_alpha_rectangle_scope();
   passed+=resident_classic_inverse_rectangle_scope();
   passed+=resident_viewless_base_canvas_order();
   passed+=completed_screen_reader_and_writer();
@@ -11953,6 +11991,6 @@ int main(void){
   passed+=source_free_primitive_rect_replay();
   passed+=stretched_float_exact_replay();
   passed+=filtered_font_exact_recovery();
-  printf("render resource cases: passed=%d failed=%d\n",passed,167-passed);
-  return passed==167?EXIT_SUCCESS:EXIT_FAILURE;
+  printf("render resource cases: passed=%d failed=%d\n",passed,168-passed);
+  return passed==168?EXIT_SUCCESS:EXIT_FAILURE;
 }

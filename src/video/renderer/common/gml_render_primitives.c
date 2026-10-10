@@ -198,7 +198,14 @@ static int resident_studio_alpha_rect(GmlRender *render,int x1,int y1,int x2,int
   if(!render || render->classic || !render->win ||
      !anygm_policy_uses_first_generation_studio(render->win) ||
      anygm_policy_has_modern_layer_semantics(render->win) ||
-     render->gui_pass_active || render->target_id>=0 || render->target_sp ||
+     /* Only initialized identity GUI joins the existing resolved-raster path. */
+     (render->gui_pass_active &&
+      (render->gui_base_logical_w!=render->fbw || render->gui_base_logical_h!=render->fbh ||
+       render->gui_logical_w!=render->fbw || render->gui_logical_h!=render->fbh ||
+       render->gui_scale_x!=1.0 || render->gui_scale_y!=1.0 ||
+       render->gui_maximise_active || render->gui_maximise_xoffset!=0.0 ||
+       render->gui_maximise_yoffset!=0.0 || render->cam_x!=0.0 || render->cam_y!=0.0)) ||
+     render->target_id>=0 || render->target_sp ||
      render->pending_underlay || !render->alphablend ||
      render->alpha<1.0/256.0 ||
      !resident_flat_eligible_rule(render,1,1,0) ||
