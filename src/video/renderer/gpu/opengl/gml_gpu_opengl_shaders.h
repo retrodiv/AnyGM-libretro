@@ -357,7 +357,7 @@
   "  // R03_SHADER_INTEGER_SPRITE: whole nearest texels, integer tint and fixed blending.\n" \
   "  if(u_filter>=37 && u_filter<=43){\n" \
   "    uvec4 sampled=uvec4(floor(texture(u_image,v_texcoord)*255.0+0.5));\n" \
-  "    if(sampled.a==0u || v_colour.a<=0.0) discard;\n" \
+  "    if(sampled.a==0u || (u_filter<41 && v_colour.a<=0.0)) discard;\n" \
   "    if(u_filter==41){ o_color=vec4(0.0,0.0,0.0,1.0); return; }\n" \
   "    uvec3 tint=uvec3(floor(v_colour.rgb*255.0+0.5));\n" \
   "    uint bias=(u_filter==38 || u_filter==40 || u_filter==43)?127u:0u;\n" \

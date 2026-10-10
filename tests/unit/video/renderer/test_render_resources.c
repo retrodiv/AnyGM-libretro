@@ -11114,7 +11114,11 @@ static int resident_integer_sprite_function(void){
     CHECK(metrics.authority==GML_RENDER_RESOURCE_GPU_RESIDENT && !metrics.cpu_replays && !metrics.journal_bytes);
     if(a!=1u){
       CHECK(fake.last_batch_operations>=8u && fake.last_filter==GML_RENDER_FILTER_NEAREST);
-      if(fake.last_quantisation) CHECK(
+      if(fake.last_quantisation==GML_RENDER_QUANTISE_SPRITE_MODERN_NEAREST){
+        /* The inherited predecessor path is not replaced by this extension. */
+        CHECK(generation==3u && target_kind==3u && !gui && !disabled &&
+              fake.last_filtered_draw_alpha==alphas[a]);
+      }else if(fake.last_quantisation) CHECK(
         fake.last_quantisation==(generation==3u?GML_RENDER_QUANTISE_INTEGER_TINT_ROUND:GML_RENDER_QUANTISE_INTEGER_TINT_TRUNC) &&
         fake.last_filtered_draw_alpha==alphas[a]);
     }

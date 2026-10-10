@@ -15,6 +15,10 @@
 #include <stddef.h>
 #include <stdlib.h>
 
+static int resident_filtered_sprite(GmlRender *r,GmlSprite *sprite,int subimg,
+                                    double x,double y,double xs,double ys,double rotation,
+                                    uint32_t blend,double alpha);
+
 /* Coarse-mip (flat area-average) texel of a straight-RGBA atlas sub-region, built by successive
  * 2x2 box reduction to 1x1 — i.e. the top mip level of the texture page.
  *
@@ -321,6 +325,12 @@ static int resident_integer_sprite(GmlRender *r,GmlSprite *sprite,int subimg,
                                        left,top,xs,ys,GML_RENDER_SCENE_SPRITE,blend,alpha,
                                        r->classic && (xs!=1.0 || ys!=1.0)?3:
                                        (!r->classic && !r->interp),NULL)) return 1;
+  /* Preserve the established numbered nearest predecessor recipe. Its
+   * separately qualified replacement must not be selected merely because
+   * this ordinary integer extension precedes the filtered entry. */
+  if(normal_integer && !r->classic && r->target_id>0 && !r->gui_pass_active &&
+     r->alphablend && anygm_policy_has_modern_layer_semantics(r->win) &&
+     resident_filtered_sprite(r,sprite,subimg,x,y,xs,ys,rotation,blend,alpha)) return 1;
   return normal_integer && resident_atlas_crop_from_page(r,page,0,0,page->sw,page->sh,
        left,top,xs,ys,GML_RENDER_SCENE_SPRITE,blend,alpha,7,NULL);
 }
