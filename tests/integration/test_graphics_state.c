@@ -134,7 +134,13 @@ static int session_open_fixture_with_scene(Session *session,uint32_t scene_rende
   graphics.values.hybrid_gpu_presentation=1u;
   graphics.values.scene_renderer=scene_renderer;
   if(anygm_set_config(session->engine,&graphics)!=ANYGM_OK) return 0;
-  return anygm_load(session->engine,&source,NULL)==ANYGM_OK;
+  AnygmResult result=anygm_load(session->engine,&source,NULL);
+  if(result!=ANYGM_OK){
+    char message[256]={0};
+    anygm_get_last_error(session->engine,message,sizeof message);
+    fprintf(stderr,"graphics fixture load result=%d: %s\n",(int)result,message);
+  }
+  return result==ANYGM_OK;
 }
 
 static int session_open_with_scene(Session *session,uint32_t scene_renderer){
@@ -1319,6 +1325,61 @@ static int classic_retained_target_scene_case(void){
       (unsigned long long)counters.scene_batches_refused);
     session_close(&selected);session_close(&plain);
     REQUIRE(matching,"classic Step target survives GPU Draw and GUI before exact composition");
+  }
+  return 1;
+}
+
+static int classic_step_composition_scene_case(void){
+  int (*factories[])(AnygmSyntheticContent *)={
+    anygm_synthetic_classic_step_composition_content_create,
+    anygm_synthetic_classic_step_base_writer_content_create,
+    anygm_synthetic_classic_late_step_composition_content_create
+  };
+  for(unsigned variant=0;variant<3u;variant++){
+    Session plain={0},selected={0};
+    AnygmInputFrame input={.struct_size=sizeof input,.pointer_x=-1,.pointer_y=-1};
+    AnygmFrameOutput cpu={0},gpu={0};
+    int matching=1;
+    anygm_test_graphics_reset();
+    REQUIRE(session_open_fixture_with_scene(&plain,ANYGM_SCENE_RENDERER_CPU,factories[variant]) &&
+            session_open_fixture_with_scene(&selected,ANYGM_SCENE_RENDERER_OPENGL,factories[variant]),
+            "classic Step-composition fixtures load");
+    REQUIRE(graphics_adopt(selected.engine,ANYGM_GRAPHICS_OPENGLES3)==ANYGM_OK,
+            "classic Step-composition device adopts");
+    for(unsigned frame=0;frame<4u && matching;frame++){
+      GmlGpuCounters before={0},after={0};
+      gml_gpu_counters(selected.engine->gpu,&before);
+      cpu.struct_size=gpu.struct_size=sizeof cpu;
+      matching=anygm_run_frame(plain.engine,&input,&cpu)==ANYGM_OK &&
+               anygm_run_frame(selected.engine,&input,&gpu)==ANYGM_OK;
+      gml_gpu_counters(selected.engine->gpu,&after);
+      /* Explicit comparisons below are observers, not ordinary frame costs. */
+      if(variant==0 && frame>0)
+        matching=matching && after.scene_readbacks==before.scene_readbacks &&
+          after.scene_families[GML_RENDER_SCENE_SURFACE]>before.scene_families[GML_RENDER_SCENE_SURFACE];
+      if(variant==2 && frame>0)
+        matching=matching && after.scene_families[GML_RENDER_SCENE_SURFACE]==
+          before.scene_families[GML_RENDER_SCENE_SURFACE];
+      matching=matching && engine_materialize_completed_frame(selected.engine) && cpu.pixels &&
+        cpu.width==gpu.width && cpu.height==gpu.height &&
+        !memcmp(cpu.pixels,selected.engine->screen,(size_t)cpu.width*cpu.height*4u);
+      int cpu_id=(int)gml_varmap_get(&plain.engine->vm.globals,"fixture_surface")->d;
+      int gpu_id=(int)gml_varmap_get(&selected.engine->vm.globals,"fixture_surface")->d;
+      const uint32_t *cpu_surface=gml_surface_pixels_read(&plain.engine->render,cpu_id,NULL,NULL);
+      const uint32_t *gpu_surface=gml_surface_pixels_read(&selected.engine->render,gpu_id,NULL,NULL);
+      matching=matching && cpu_surface && gpu_surface &&
+        !memcmp(cpu_surface,gpu_surface,16u*12u*4u) &&
+        gml_surface_get_target(&selected.engine->render)==gpu_id;
+      if(variant==1)
+        matching=matching && plain.engine->fb[0]==0xFFFFFFFFu &&
+          !memcmp(plain.engine->fb,selected.engine->fb,64u*48u*4u);
+      if(!matching) fprintf(stderr,"classic Step-composition variant=%u frame=%u reads=%llu/%llu surfaces=%llu/%llu\n",
+        variant,frame,(unsigned long long)before.scene_readbacks,(unsigned long long)after.scene_readbacks,
+        (unsigned long long)before.scene_families[GML_RENDER_SCENE_SURFACE],
+        (unsigned long long)after.scene_families[GML_RENDER_SCENE_SURFACE]);
+    }
+    session_close(&selected);session_close(&plain);
+    REQUIRE(matching,"classic Step SCREEN survives independent numbered Draw and real base writers");
   }
   return 1;
 }
@@ -4558,6 +4619,7 @@ int main(void){
     {"classic single view preserves CPU observers",classic_single_view_cpu_observers_case},
     {"classic single view executes nearest draw contracts",classic_single_view_draw_contracts_case},
     {"classic Step target survives GPU Draw and GUI",classic_retained_target_scene_case},
+    {"classic Step SCREEN and numbered Draw stay independently current",classic_step_composition_scene_case},
     {"ended resident frame remains visible and canonical",ended_frame_retention_case},
     {"authored cursor preserves a resident completed frame",resident_cursor_frame_case},
     {"transition snapshot reads a resident completed frame",resident_transition_snapshot_case},

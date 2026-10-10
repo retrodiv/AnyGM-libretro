@@ -1272,10 +1272,30 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
     /* For a classic frame with a retained target, bind the new presented base before Step. The active target remains bound until the program resets it. */
     if(anygm_policy_uses_classic_runtime(&engine->win) &&
        gml_surface_get_target(&engine->render)>=0 && engine->screen &&
-       engine->output_width>0 && engine->output_height>0)
-      gml_render_begin_retaining_target(&engine->render,engine->screen,
-                                        (int)engine->output_width,(int)engine->output_height,
-                                        0.0,0.0);
+       engine->output_width>0 && engine->output_height>0){
+      GmlRenderPresentationMetrics step_presentation={0};
+      gml_render_presentation_metrics(&engine->render,&step_presentation);
+      int resident_step=0;
+      if(gml_surface_get_target(&engine->render)>0 &&
+         !anygm_policy_classic_modern_presentation(&engine->win) &&
+         !step_presentation.interpolation && !engine->aspect_force_active &&
+         !engine->canvas_mode && engine_graphics_active(engine) &&
+         engine->scene_renderer_session==ANYGM_SCENE_RENDERER_OPENGL)
+        resident_step=gml_render_begin_resident_base_retaining_target(
+          &engine->render,engine->screen,(int)engine->output_width,
+          (int)engine->output_height,0.0,0.0);
+      if(!resident_step){
+        /* A rejected Step can really write SCREEN after resetting the target. */
+        if(engine->scene_renderer_session==ANYGM_SCENE_RENDERER_OPENGL &&
+           !gml_render_completed_screen_write(&engine->render,engine->screen,
+                                              (int)engine->output_width,
+                                              (int)engine->output_height))
+          return ANYGM_ERROR_INTERNAL;
+        gml_render_begin_retaining_target(&engine->render,engine->screen,
+                                          (int)engine->output_width,(int)engine->output_height,
+                                          0.0,0.0);
+      }
+    }
     gml_vm_step(&engine->vm);
     if(anygm_policy_uses_classic_runtime(&engine->win) && room_before_step>=0 && engine->vm.room_index!=room_before_step){
       int kind=(int)lround(gml_global_num(&engine->vm,"transition_kind"));
@@ -1654,6 +1674,8 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
     engine->scene_renderer_session==ANYGM_SCENE_RENDERER_OPENGL &&
     engine_graphics_active(engine) &&
     gml_surface_get_target(&engine->render)>0;
+  int classic_numbered_scene=classic_retained_scene &&
+    !anygm_policy_classic_modern_presentation(&engine->win);
   int view_surface = (int)gml_global_arr(&engine->vm, "view_surface_id", frame_view_index);
   int multiview_rendered = engine->aspect_force_active?0:render_multiview_application(engine);
   if(multiview_rendered<0) return ANYGM_ERROR_INTERNAL;
@@ -1752,7 +1774,10 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
     world_pixels=engine->fb;
     world_width=(int)engine->width;
     world_height=(int)engine->height;
-    if(classic_retained_scene)
+    if(classic_numbered_scene)
+      base_world_began=gml_render_begin_resident_numbered_target(
+        &engine->render,world_pixels,world_width,world_height,cam_x,cam_y);
+    else if(classic_retained_scene)
       base_world_began=gml_render_begin_resident_base_retaining_target(
         &engine->render,world_pixels,world_width,world_height,cam_x,cam_y);
     if(!engine->composed_frame && !engine->aspect_force_active &&
@@ -1821,9 +1846,13 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
   /* Only a drawn base needs immediate CPU composition. Assigned target pixels remain
    * resource-owned until a real surface, state or fallback consumer observes them; a
    * certified borrowed classic world is already the logical application raster. */
-  if(base_world_began && !direct_view_surface && !early_classic_borrowed_world &&
-     !gml_render_resident_application_cpu_barrier(&engine->render))
-    return ANYGM_ERROR_INTERNAL;
+  if(base_world_began && !direct_view_surface && !early_classic_borrowed_world){
+    if(classic_numbered_scene){
+      if(!gml_render_completed_screen_read(&engine->render,world_pixels,world_width,world_height))
+        return ANYGM_ERROR_INTERNAL;
+    } else if(!gml_render_resident_application_cpu_barrier(&engine->render))
+      return ANYGM_ERROR_INTERNAL;
+  }
   if(direct_owned_world)
     (void)gml_render_application_surface_owned_extent(
       &engine->render,&world_width,&world_height);

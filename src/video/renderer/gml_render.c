@@ -471,12 +471,14 @@ int gml_render_begin_resident_owned_application(GmlRender *r,double camx,double 
   return 1;
 }
 static int begin_resident_base(GmlRender *r,uint32_t *pixels,int width,int height,
-                               double camx,double camy,int retain_target){
+                               double camx,double camy,int retain_target,int numbered_only){
   if(!r) return 0;
   if(!pixels || width<=0 || height<=0)
     return gml_render_dispatch_resident_reject(r,GML_RENDER_RESIDENT_INVALID_TARGET);
   if(!gml_render_device(r))
     return gml_render_dispatch_resident_reject(r,GML_RENDER_RESIDENT_NO_DEVICE);
+  if(numbered_only && (r->target_id<=0 || r->target_sp<=0))
+    return gml_render_dispatch_resident_reject(r,GML_RENDER_RESIDENT_TARGET_RESOURCE);
   if(r->rotated_batch_count || r->rotated_batch_building)
     return gml_render_dispatch_resident_reject(r,GML_RENDER_RESIDENT_ROTATED_BATCH);
   if(!retain_target && r->pending_fill)
@@ -493,7 +495,7 @@ static int begin_resident_base(GmlRender *r,uint32_t *pixels,int width,int heigh
      (r->target_id<=0 || r->target_id>GML_MAX_SURFACES ||
       !gml_render_surface_resource_ensure(r,r->target_id)))
     return gml_render_dispatch_resident_reject(r,GML_RENDER_RESIDENT_TARGET_RESOURCE);
-  if(r->base_scene_resource &&
+  if(!numbered_only && r->base_scene_resource &&
      (r->base_scene_resource_pixels!=pixels ||
       r->base_scene_resource_width!=width ||
       r->base_scene_resource_height!=height)){
@@ -508,9 +510,15 @@ static int begin_resident_base(GmlRender *r,uint32_t *pixels,int width,int heigh
     gml_render_begin_retaining_resident_target(r,pixels,width,height,camx,camy);
   else
     gml_render_begin(r,pixels,width,height,camx,camy);
-  r->base_scene_resource_pixels=pixels;
-  r->base_scene_resource_width=width;
-  r->base_scene_resource_height=height;
+  if(numbered_only){
+    /* Draw metadata is not a new SCREEN owner. Keep the independent composition
+     * alive; an authored reset to this CPU base must not borrow its device image. */
+    r->target_stack[0].resident_pass=0;
+  } else {
+    r->base_scene_resource_pixels=pixels;
+    r->base_scene_resource_width=width;
+    r->base_scene_resource_height=height;
+  }
   if(!gml_render_scene_target_resource_ensure(r))
     return gml_render_dispatch_resident_reject(r,GML_RENDER_RESIDENT_RESOURCE);
   r->resident_application_pass=1;
@@ -520,11 +528,15 @@ static int begin_resident_base(GmlRender *r,uint32_t *pixels,int width,int heigh
 }
 int gml_render_begin_resident_base(GmlRender *r,uint32_t *pixels,int width,int height,
                                    double camx,double camy){
-  return begin_resident_base(r,pixels,width,height,camx,camy,0);
+  return begin_resident_base(r,pixels,width,height,camx,camy,0,0);
 }
 int gml_render_begin_resident_base_retaining_target(GmlRender *r,uint32_t *pixels,
                                                    int width,int height,double camx,double camy){
-  return begin_resident_base(r,pixels,width,height,camx,camy,1);
+  return begin_resident_base(r,pixels,width,height,camx,camy,1,0);
+}
+int gml_render_begin_resident_numbered_target(GmlRender *r,uint32_t *cpu_base,
+                                             int width,int height,double camx,double camy){
+  return begin_resident_base(r,cpu_base,width,height,camx,camy,1,1);
 }
 int gml_render_application_surface_owned_clear(
   GmlRender *r,uint32_t color,GmlRenderApplicationWriteView *view){

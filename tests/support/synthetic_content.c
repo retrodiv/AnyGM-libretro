@@ -1714,7 +1714,8 @@ static int synthetic_framebuffer_content_create(
   memset(fixture,0,sizeof *fixture);
   if(!create_fixture_directory(fixture->directory,sizeof fixture->directory)) return 0;
 
-  int classic_retained_target=gpu_sprite==38 || gpu_sprite==39;
+  int classic_step_composition=gpu_sprite>=41 && gpu_sprite<=43;
+  int classic_retained_target=gpu_sprite==38 || gpu_sprite==39 || classic_step_composition;
   int retained_step_target=gpu_sprite==5 || gpu_sprite==6 || classic_retained_target;
   int nested_step_target=gpu_sprite==6;
   int assigned_view_surface=gpu_sprite==7;
@@ -1778,6 +1779,9 @@ static int synthetic_framebuffer_content_create(
        classic_redraw?
        "global.fixture_frame = 0;\n"
        "global.fixture_seen = 0;\n":
+       classic_step_composition?
+       "global.fixture_frame = 0;\n"
+       "global.fixture_surface = surface_create(16,12);\n":
        retained_step_target?
        "global.fixture_frame = 0;\n"
        "global.fixture_surface = surface_create(8,8);\n":
@@ -1822,11 +1826,23 @@ static int synthetic_framebuffer_content_create(
                  "global.fixture_frame += 1;\n":
                  assigned_view_surface || canvas_geometry || window_geometry || presentation_filter?
                  "global.fixture_frame += 1;\n":
+                 classic_step_composition?
+                 "global.fixture_frame += 1;\n"
+                 "if (surface_get_target() != -1) surface_reset_target();\n"
+                 "draw_clear(c_green);\n"
+                 "draw_surface_stretched(global.fixture_surface,0,0,64,48);\n"
+                 "surface_set_target(global.fixture_surface);\n":
                  retained_step_target?
                  "surface_set_target(global.fixture_surface);\n":
                  "if (global.fixture_frame >= 1) room_goto(1);\n"
                  "global.fixture_frame += 1;\n") ||
-     (gpu_sprite && !write_text(draw,classic_retained_target?
+     (gpu_sprite && !write_text(draw,gpu_sprite==42?
+       "surface_reset_target();\n"
+       "draw_clear(c_red);\n"
+       "draw_set_color(c_white); draw_rectangle(0,0,2,2,false);\n"
+       "surface_set_target(global.fixture_surface);\n"
+       "draw_sprite(spr_fixture,0,1.375,1.5);\n":
+       classic_retained_target?
        "draw_sprite(spr_fixture,0,1.375,1.5);\n":
        moving_sound?
        "draw_sprite(spr_fixture,0,8+global.fixture_frame,12);\n":
@@ -1892,7 +1908,10 @@ static int synthetic_framebuffer_content_create(
        "if (view_current == 0) draw_sprite(spr_fixture,0,8,12);\n"
        "else draw_sprite(spr_fixture,0,48,16);\n")) ||
      ((retained_step_target || assigned_view_surface) &&
-      !write_text(draw_begin,classic_retained_target?
+      !write_text(draw_begin,classic_step_composition?
+         "if (global.fixture_frame mod 2 == 0) draw_clear(c_blue);\n"
+         "else draw_clear(c_lime);\n":
+         classic_retained_target?
          "draw_clear(c_blue);\n":
          assigned_view_surface?
          "global.fixture_seen += 1;\n"
@@ -1909,7 +1928,9 @@ static int synthetic_framebuffer_content_create(
          "}\n")) ||
      ((retained_step_target || assigned_view_surface || canvas_geometry || window_geometry ||
        gpu_sprite==28) &&
-      !write_text(draw_gui,classic_retained_target?
+      !write_text(draw_gui,classic_step_composition?
+         "global.fixture_seen = surface_get_target();\n":
+         classic_retained_target?
          "surface_reset_target();\n"
          "draw_surface(global.fixture_surface,0,0);\n":
          gpu_sprite==28?
@@ -2013,7 +2034,8 @@ static int synthetic_framebuffer_content_create(
   if(classic){
     project.classic_version=gpu_sprite==19 ||
                             (single_classic_view && gpu_sprite!=24)?530:800;
-    if(gpu_sprite==39) project.classic_version=810;
+    if(gpu_sprite==39 || gpu_sprite==43) project.classic_version=810;
+    if(gpu_sprite==41 || gpu_sprite==42) project.classic_version=701;
     /* Distinct from both room colors so a cleared classic frame cannot be mistaken for a
      * retained one or for the room the fixture painted first. */
     project.classic_outside_color=0x00204060u;
@@ -2271,6 +2293,15 @@ int anygm_synthetic_classic_retained_target_content_create(AnygmSyntheticContent
 }
 int anygm_synthetic_classic_late_retained_target_content_create(AnygmSyntheticContent *fixture){
   return synthetic_framebuffer_content_create(fixture,0,0,1,39);
+}
+int anygm_synthetic_classic_step_composition_content_create(AnygmSyntheticContent *fixture){
+  return synthetic_framebuffer_content_create(fixture,0,0,1,41);
+}
+int anygm_synthetic_classic_step_base_writer_content_create(AnygmSyntheticContent *fixture){
+  return synthetic_framebuffer_content_create(fixture,0,0,1,42);
+}
+int anygm_synthetic_classic_late_step_composition_content_create(AnygmSyntheticContent *fixture){
+  return synthetic_framebuffer_content_create(fixture,0,0,1,43);
 }
 
 int anygm_synthetic_classic_transition_content_create(AnygmSyntheticContent *fixture){

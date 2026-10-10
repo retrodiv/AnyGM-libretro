@@ -533,6 +533,10 @@ int gml_render_begin_resident_base(GmlRender *r,uint32_t *pixels,int width,int h
 /* Replace the base of a resident pass without discarding a numbered content target held by Step. */
 int gml_render_begin_resident_base_retaining_target(GmlRender *r,uint32_t *pixels,
                                                    int width,int height,double camx,double camy);
+/* Keep a positive numbered target on device without replacing the independent SCREEN.
+ * An authored target reset returns to the supplied CPU-owned base, not the SCREEN image. */
+int gml_render_begin_resident_numbered_target(GmlRender *r,uint32_t *cpu_base,
+                                             int width,int height,double camx,double camy);
 /* Materialise an opt-in scene target before host code observes its CPU pixels. */
 int gml_render_resident_application_cpu_barrier(GmlRender *r);
 int gml_render_application_surface_owned_clear(
