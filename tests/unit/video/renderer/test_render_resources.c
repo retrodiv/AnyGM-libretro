@@ -2582,6 +2582,110 @@ static int resident_numbered_target_rebind_retention_and_reuse(void){
   return 1;
 }
 
+static int resident_empty_reset_preserves_base_owner(void){
+  for(unsigned classic=0;classic<2u;classic++)
+  for(unsigned target=0;target<3u;target++)
+  for(unsigned gui=0;gui<2u;gui++)
+  for(unsigned pending=0;pending<3u;pending++){
+    GmlRender *render=calloc(1,sizeof *render);
+    GmlWin content={.classic_version=classic?700:0,.bytecode=classic?0:15};
+    uint32_t base[16]={0};
+    FakeDevice fake={.on_demand=1};
+    GmlRenderDeviceServices device=service(&fake);
+    GmlRenderJournalMetrics before={0},after={0};
+    GmlRenderDispatchMetrics dispatch={0};
+    device.observe_on_demand=fake_observe_on_demand;
+    CHECK(render && gml_render_init(render,NULL)==0);
+    render->win=&content;render->classic=classic;
+    gml_render_dispatch_diagnostics_enable(render,1);
+    gml_render_bind_device(render,&device);
+    if(target==2u){
+      CHECK(gml_render_application_surface_ensure_owned(render,4,4) &&
+            gml_render_begin_resident_owned_application(render,2.0,3.0,0));
+    }else{
+      if(target==1u) gml_render_application_surface_bind(render,base,4,4,0);
+      CHECK(gml_render_begin_resident_base(render,base,4,4,2.0,3.0));
+    }
+    if(gui) gml_render_gui_begin(render,4,4);
+    double camera_x=render->cam_x,camera_y=render->cam_y;
+    gml_render_set_pending_fill(render,0x8037597Bu);
+    gml_render_flush_pending_fill(render);
+    GmlRenderResource *resource=gml_render_scene_target_resource_ensure(render);
+    CHECK(resource && fake.submits==1 && !fake.readbacks);
+    gml_render_resource_journal_metrics(resource,&before);
+    if(pending==1u) gml_render_set_pending_fill(render,0xFF112233u);
+    if(pending==2u){
+      render->pending_underlay=1;
+      render->underlay_x=1;render->underlay_y=1;
+      render->underlay_w=2;render->underlay_h=2;
+    }
+    gml_surface_reset_target(render);
+    CHECK(render->target_id==-1 && !render->target_sp &&
+          render->fb==render->base_fb && render->fbw==4 && render->fbh==4 &&
+          render->resident_scene_pass && render->resident_application_pass &&
+          render->cam_x==camera_x && render->cam_y==camera_y &&
+          !render->pending_fill && !render->pending_fill_color &&
+          !render->pending_underlay && !render->underlay_x && !render->underlay_y &&
+          !render->underlay_w && !render->underlay_h &&
+          !render->fb_opaque_known && !render->fb_all_opaque && !render->fb_all_transparent);
+    gml_render_resource_journal_metrics(resource,&after);
+    CHECK(after.authority==GML_RENDER_RESOURCE_GPU_RESIDENT &&
+          after.logical_version==before.logical_version &&
+          after.cpu_version==before.cpu_version && after.gpu_version==before.gpu_version &&
+          !after.cpu_replays && !after.journal_bytes && !fake.readbacks && fake.submits==1);
+    /* A repeated reset stays a no-op for authority, not a new admission. */
+    gml_surface_reset_target(render);
+    CHECK(render->resident_application_pass && !fake.readbacks && fake.submits==1);
+    gml_render_set_pending_fill(render,0xFF26486Au);
+    gml_render_flush_pending_fill(render);
+    CHECK(gml_render_dispatch_metrics(render,&dispatch));
+    uint64_t cpu_draws=0;
+    for(unsigned reason=0;reason<GML_RENDER_DISPATCH_REASON_COUNT;reason++)
+      cpu_draws+=dispatch.cpu[GML_RENDER_SCENE_PRIMITIVE][reason];
+    if(dispatch.gpu[GML_RENDER_SCENE_PRIMITIVE]!=2u ||
+       cpu_draws || fake.submits!=2 || fake.readbacks)
+      fprintf(stderr,"empty reset authority: classic=%u target=%u gui=%u pending=%u GPU=%llu CPU=%llu submits=%d reads=%d\n",
+        classic,target,gui,pending,(unsigned long long)dispatch.gpu[GML_RENDER_SCENE_PRIMITIVE],
+        (unsigned long long)cpu_draws,fake.submits,fake.readbacks);
+    CHECK(gml_render_dispatch_metrics(render,&dispatch) &&
+          dispatch.gpu[GML_RENDER_SCENE_PRIMITIVE]==2u &&
+          !cpu_draws && !dispatch.failed &&
+          !dispatch.unclassified && fake.submits==2 && !fake.readbacks);
+    fake.readback_colour=0xFF26486Au;
+    const uint32_t *pixels=NULL;
+    CHECK(gml_render_resource_acquire_cpu_read(resource,&pixels) &&
+          pixels==render->fb && fake.readbacks==1);
+    for(unsigned pixel=0;pixel<16u;pixel++) CHECK(pixels[pixel]==0xFF26486Au);
+    gml_render_free(render);free(render);
+  }
+  return 1;
+}
+
+static int resident_empty_reset_does_not_admit_a_different_owner(void){
+  for(unsigned variant=0;variant<6u;variant++){
+    GmlRender *render=calloc(1,sizeof *render);
+    uint32_t base[16]={0},other[16]={0};
+    FakeDevice fake={.on_demand=1};
+    GmlRenderDeviceServices device=service(&fake);
+    device.observe_on_demand=fake_observe_on_demand;
+    CHECK(render && gml_render_init(render,NULL)==0);
+    gml_render_bind_device(render,&device);
+    CHECK(gml_render_begin_resident_base(render,base,4,4,2.0,3.0));
+    if(variant==0u) CHECK(gml_render_resident_application_cpu_barrier(render));
+    if(variant==1u) render->resident_scene_pass=0;
+    if(variant==2u) render->base_fb=other;
+    if(variant==3u) render->base_fbw=2;
+    if(variant==4u) render->base_scene_resource_width=2;
+    if(variant==5u) render->target_id=0;
+    gml_surface_reset_target(render);
+    CHECK(!render->resident_application_pass && render->target_id==-1 &&
+          !render->target_sp && render->fb==render->base_fb && !fake.submits &&
+          !fake.readbacks && render->cam_x==2.0 && render->cam_y==3.0);
+    gml_render_free(render);free(render);
+  }
+  return 1;
+}
+
 static int resident_target_alias_resumes_cpu_parent(void){
   GmlRender *render=(GmlRender*)calloc(1,sizeof *render);
   FakeDevice fake={0};
@@ -12126,6 +12230,8 @@ int main(void){
   passed+=volatile_loss_discards_queued_nested_target();
   passed+=volatile_loss_recreates_only_unobserved_application();
   passed+=resident_numbered_target_rebind_retention_and_reuse();
+  passed+=resident_empty_reset_preserves_base_owner();
+  passed+=resident_empty_reset_does_not_admit_a_different_owner();
   passed+=resident_target_alias_resumes_cpu_parent();
   passed+=numbered_surface_resize_replays_and_retires();
   passed+=numbered_surface_free_bound_resource();
@@ -12269,6 +12375,6 @@ int main(void){
   passed+=source_free_primitive_rect_replay();
   passed+=stretched_float_exact_replay();
   passed+=filtered_font_exact_recovery();
-  printf("render resource cases: passed=%d failed=%d\n",passed,171-passed);
-  return passed==171?EXIT_SUCCESS:EXIT_FAILURE;
+  printf("render resource cases: passed=%d failed=%d\n",passed,173-passed);
+  return passed==173?EXIT_SUCCESS:EXIT_FAILURE;
 }

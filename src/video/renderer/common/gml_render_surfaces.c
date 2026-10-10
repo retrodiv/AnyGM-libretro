@@ -1744,11 +1744,17 @@ void gml_surface_reset_target(GmlRender *r){
     r->pending_fill_color=t.fill_color;
     r->resident_application_pass=t.resident_pass;
   } else if(r->base_fb){
+    /* An empty reset on the already admitted base changes no image binding.
+     * Do not admit another owner or revive a parent that already crossed to CPU. */
+    int retain_resident=r->resident_scene_pass && r->resident_application_pass &&
+      gml_render_device(r) && r->target_id==-1 && r->fb==r->base_fb &&
+      r->fbw==r->base_fbw && r->fbh==r->base_fbh &&
+      gml_render_scene_target_matches(r);
     r->fb=r->base_fb; r->fbw=r->base_fbw; r->fbh=r->base_fbh;
     r->target_id=-1;
-    if(r->resident_application_pass)
+    if(r->resident_application_pass && !retain_resident)
       gml_render_dispatch_resident_lost(r,GML_RENDER_RESIDENT_PASS_RESTART);
-    r->resident_application_pass=0;
+    r->resident_application_pass=retain_resident;
     r->fb_opaque_known=0;
     r->fb_all_opaque=0;
     r->fb_all_transparent=0;
