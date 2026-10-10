@@ -256,6 +256,9 @@ int gml_render_gpu_opengl_draw_textured_quad(const GmlRenderDrawOp *op,
                                              uint32_t source_width,uint32_t source_height,
                                              int rendered_source_origin,
                                              float *vertices);
+int gml_gpu_opengl_half_gui_point_valid(const GmlRenderDrawOp *op,
+                                        const GmlRenderDrawStateSnapshot *state,
+                                        uint32_t source_width,uint32_t source_height);
 int gml_render_gpu_opengl_apply_effect(GmlGpuBackend *backend,
                                        const GmlRenderDrawOp *operation,
                                        const GmlRenderDrawStateSnapshot *state,

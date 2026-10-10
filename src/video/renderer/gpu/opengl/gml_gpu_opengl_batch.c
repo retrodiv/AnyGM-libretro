@@ -193,6 +193,10 @@ static int integer_sourceover_sprite_valid(const GmlRenderDrawOp *op,
                                            const GlSceneImage *source){
   const GmlRenderQuad *quad=&op->payload.quad;
   GmlRenderRect region=quad->sampling.source_region;
+  if(source && !source->rendered_origin &&
+     source->pixel_format==GML_RENDER_PIXEL_RGBA8888 &&
+     gml_gpu_opengl_half_gui_point_valid(op,state,source->width,source->height))
+    return exact_rect(op,NULL,NULL,NULL,NULL,1);
   int gui_coverage=op->target.image.resource_class==GML_RENDER_RESOURCE_SCREEN &&
     state->coverage_policy==GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA &&
     (op->scene_family==GML_RENDER_SCENE_SPRITE || op->scene_family==GML_RENDER_SCENE_TEXT) &&
@@ -1035,6 +1039,7 @@ static int scene_preflight(GmlGpuBackend *backend,const GmlRenderDrawBatch *batc
       }
       if(op->payload.quad.shape==GML_RENDER_QUAD_AXIS_ALIGNED &&
          sampling->filter==GML_RENDER_FILTER_NEAREST &&
+         !gml_gpu_opengl_half_gui_point_valid(op,state,source->width,source->height) &&
          !full_region(sampling->source_region,source->width,source->height)){
         double u0=(double)sampling->source_region.x/source->width;
         double u1=(double)((uint32_t)sampling->source_region.x+

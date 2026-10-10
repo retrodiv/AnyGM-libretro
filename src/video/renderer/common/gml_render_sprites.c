@@ -429,7 +429,25 @@ static int resident_atlas_crop_from_page(GmlRender *r,GmlTpag *page,
     family==GML_RENDER_SCENE_TEXT && xs==1.0 && ys==1.0 && draw_alpha==1.0 &&
     (colour&0xFFFFFFu)!=0xFFFFFFu && r->device.context &&
     r->device.observe_on_demand && r->device.observe_on_demand(r->device.context);
-  gui_crop=gui_crop || gui_tinted_text;
+  /* R03-SPR-FIRSTGEN-GUI-HALF-POINT: the unchanged SCREEN point leaf
+   * selects source texels 2j+1 after snapping coverage. Odd trailing extents
+   * sample outside and do not write. Keep this exact reciprocal phase narrow. */
+  int gui_half=physical_sprite_page==6 && r && page && !r->classic &&
+    !r->interp && !r->fog_flat && !gml_d3_is_active(r) &&
+    r->target_id<0 && !r->target_sp && resident_identity_screen_gui(r) &&
+    anygm_policy_uses_first_generation_studio(r->win) &&
+    !anygm_policy_has_modern_layer_semantics(r->win) &&
+    family==GML_RENDER_SCENE_SPRITE && xs==0.5 && ys==0.5 &&
+    !r->world_transform_active && draw_alpha>=0x1p-64 &&
+    !gml_render_target_is_first_generation_application_surface(r) &&
+    (colour&0xFFFFFFu)==0xFFFFFFu && !page->project_authored_edges &&
+    page->tw==page->sw && page->th==page->sh &&
+    page->sw<=4096 && page->sh<=4096 && isfinite(left) && isfinite(top) &&
+    fabs(left)<=65536.0 && fabs(top)<=65536.0 &&
+    r->device.context && r->device.observe_on_demand &&
+    r->device.observe_on_demand(r->device.context);
+  if(physical_sprite_page==6 && !gui_half) return 0;
+  gui_crop=gui_crop || gui_tinted_text || gui_half;
   if(replace && page && (page->tx || page->ty || page->bw!=page->sw ||
                          page->bh!=page->sh || page->tw!=page->sw || page->th!=page->sh))
     return 0;
@@ -555,7 +573,7 @@ static int resident_atlas_crop_from_page(GmlRender *r,GmlTpag *page,
      !integer_sprite_part && !gui_tinted_text &&
      (family!=GML_RENDER_SCENE_TEXT || !page->scene_binary_alpha)) return 0;
   checkpoint_alpha_gui=gui_crop &&
-    (family==GML_RENDER_SCENE_TEXT || !page->scene_binary_alpha);
+    (family==GML_RENDER_SCENE_TEXT || !page->scene_binary_alpha || gui_half);
   if(checkpoint_alpha_gui &&
      (!r->device.context || !r->device.observe_on_demand ||
       !r->device.observe_on_demand(r->device.context))) return 0;
@@ -595,11 +613,20 @@ static int resident_atlas_crop_from_page(GmlRender *r,GmlTpag *page,
      xs==1.0 && ys==1.0 && crop_width==r->fbw && crop_height==r->fbh)
     return 0;
   if(family==GML_RENDER_SCENE_SPRITE && draw_alpha<1.0 &&
-     !checkpoint_alpha_sprite) return 0;
+     !checkpoint_alpha_sprite && !gui_half) return 0;
   if(!replace && !page->scene_binary_alpha && !checkpoint_alpha_background &&
      !checkpoint_alpha_text && !checkpoint_alpha_sprite && !checkpoint_alpha_gui) return 0;
   scaled_width=(double)crop_width*fabs(xs);
   scaled_height=(double)crop_height*fabs(ys);
+  if(gui_half){
+    if(source.width>16384u || source.height>16384u || atlas->runtime_font_page ||
+       !source.borrowed_immutable) return 0;
+    crop_width=(crop_width/2)*2;crop_height=(crop_height/2)*2;
+    scaled_width=crop_width*0.5;scaled_height=crop_height*0.5;
+    left=floor(left+0.5);top=floor(top+0.5);
+    if(!crop_width || !crop_height || left>=r->fbw || top>=r->fbh ||
+       left+scaled_width<=0.0 || top+scaled_height<=0.0) return 1;
+  }
   if(classic_point || fractional_text){
     if(!isfinite(left) || !isfinite(top) || fabs(left)>=1000000.0 ||
        fabs(top)>=1000000.0 || crop_width>4096 || crop_height>4096 ||
@@ -620,7 +647,8 @@ static int resident_atlas_crop_from_page(GmlRender *r,GmlTpag *page,
      !isfinite(scaled_width) || !isfinite(scaled_height) ||
      floor(left)!=left || floor(top)!=top ||
      fabs(xs)>INT_MAX || fabs(ys)>INT_MAX ||
-     (!classic_point && !fractional_text && (xs!=(double)(int)xs || ys!=(double)(int)ys))) return 0;
+     (!classic_point && !fractional_text && !gui_half &&
+      (xs!=(double)(int)xs || ys!=(double)(int)ys))) return 0;
   /* R03-BG-UNIT-CLIPPED-NOOP: a trimmed repeat cell can have no physical
    * coverage even while its logical cell intersects the target. Keep the
    * qualified unit-nearest prefix queued instead of handing an empty draw
@@ -657,7 +685,7 @@ static int resident_atlas_crop_from_page(GmlRender *r,GmlTpag *page,
     scaled_height=(double)crop_height;
   }
   if(crop_width<=0 || crop_height<=0 ||
-     (!classic_point && !fractional_text && !integer_tile && !integer_text && !integer_sprite_part && (left<0.0 || top<0.0 ||
+     (!classic_point && !fractional_text && !gui_half && !integer_tile && !integer_text && !integer_sprite_part && (left<0.0 || top<0.0 ||
                         left+scaled_width>r->fbw || top+scaled_height>r->fbh)) ||
      !isfinite(scaled_width) || !isfinite(scaled_height)) return 0;
   /* Clipped enlarged texels are exact on device, but are not an eligible CPU
@@ -708,6 +736,10 @@ static int resident_atlas_crop_from_page(GmlRender *r,GmlTpag *page,
   source_right=((double)region.x+region.width)/source.width;
   source_top=(double)region.y/source.height;
   source_bottom=((double)region.y+region.height)/source.height;
+  if(gui_half){
+    source_left+=0.5/source.width;source_right+=0.5/source.width;
+    source_top+=0.5/source.height;source_bottom+=0.5/source.height;
+  }
   operation.payload.quad.u[0]=operation.payload.quad.u[3]=xs<0.0?source_right:source_left;
   operation.payload.quad.u[1]=operation.payload.quad.u[2]=xs<0.0?source_left:source_right;
   operation.payload.quad.v[0]=operation.payload.quad.v[1]=ys<0.0?source_bottom:source_top;
@@ -2180,6 +2212,14 @@ static int resident_filtered_sprite(GmlRender *r,GmlSprite *sprite,int subimg,
   double left=x-(double)sprite->originx*xs+(double)page->tx*xs-r->cam_x;
   double top=y-(double)sprite->originy*ys+(double)page->ty*ys-r->cam_y;
   if(!r->interp){
+    if(rotation==0.0 && xs==0.5 && ys==0.5 &&
+       resident_identity_screen_gui(r) &&
+       anygm_policy_uses_first_generation_studio(r->win) &&
+       !anygm_policy_has_modern_layer_semantics(r->win)){
+      if(r->pending_underlay && !gml_render_compose_resident_underlay(r)) return 0;
+      return resident_atlas_crop_from_page(r,page,0,0,page->sw,page->sh,
+        left,top,xs,ys,GML_RENDER_SCENE_SPRITE,blend,alpha,6,NULL);
+    }
     /* Match the CPU entry's large-axis kernel selection before the small point leaf. */
     if(rotation==0.0 && anygm_policy_has_modern_layer_semantics(r->win) &&
        r->target_id<0 && r->target_sp==0 && !gml_render_target_preserves_alpha(r) &&

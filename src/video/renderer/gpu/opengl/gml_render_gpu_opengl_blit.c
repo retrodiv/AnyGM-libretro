@@ -7,6 +7,61 @@
 
 #include <math.h>
 
+/* R03-SPR-FIRSTGEN-GUI-HALF-POINT: only this independently certified
+ * reciprocal map can extrapolate a vertex by half a texel at an atlas edge.
+ * Fragment centres still sample contained odd texels, never that vertex. */
+int gml_gpu_opengl_half_gui_point_valid(const GmlRenderDrawOp *op,
+                                        const GmlRenderDrawStateSnapshot *state,
+                                        uint32_t source_width,uint32_t source_height){
+  if(!op || !state || !source_width || !source_height ||
+     source_width>16384u || source_height>16384u) return 0;
+  const GmlRenderQuad *q=&op->payload.quad;
+  GmlRenderRect region=q->sampling.source_region;
+  if(op->opcode!=GML_RENDER_OP_TEXTURED_QUAD ||
+     op->scene_family!=GML_RENDER_SCENE_SPRITE ||
+     op->target.image.resource_class!=GML_RENDER_RESOURCE_SCREEN ||
+     op->target.pixel_format!=GML_RENDER_PIXEL_ARGB8888 ||
+     op->reconstruction_mode!=GML_RENDER_DEVICE_CHECKPOINT ||
+     op->source_count!=1u || !op->sources ||
+     op->sources[0].resource_class!=GML_RENDER_RESOURCE_ATLAS ||
+     q->shape!=GML_RENDER_QUAD_AXIS_ALIGNED || q->span_active ||
+     q->sampling.filter!=GML_RENDER_FILTER_NEAREST ||
+     q->sampling.edge_rule!=GML_RENDER_EDGE_CLAMP_SUBIMAGE ||
+     q->sampling.quantisation || q->sampling.logical_margin_mask ||
+     region.x<0 || region.y<0 || !region.width || !region.height ||
+     (region.width&1u) || (region.height&1u) ||
+     region.width>4096u || region.height>4096u ||
+     (uint64_t)(uint32_t)region.x+region.width>source_width ||
+     (uint64_t)(uint32_t)region.y+region.height>source_height ||
+     state->coverage_policy!=GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA ||
+     state->write_mask!=15u || state->alpha!=255u || state->colour!=0xFFFFFFFFu ||
+     state->rgb_source_factor!=GML_RENDER_BLEND_SOURCE_ALPHA ||
+     state->rgb_destination_factor!=GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA ||
+     state->alpha_source_factor!=GML_RENDER_BLEND_ONE ||
+     state->alpha_destination_factor!=GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA ||
+     state->rgb_equation!=GML_RENDER_BLEND_ADD ||
+     state->alpha_equation!=GML_RENDER_BLEND_ADD ||
+     !isfinite(q->filtered_draw_alpha) || q->filtered_draw_alpha<0x1p-64 ||
+     q->filtered_draw_alpha>1.0 ||
+     q->x[1]-q->x[0]!=region.width*0.5 ||
+     q->y[2]-q->y[0]!=region.height*0.5) return 0;
+  for(unsigned c=0;c<4u;c++){
+    double x=q->x[0]+((c==1u || c==2u)?region.width*0.5:0.0);
+    double y=q->y[0]+(c>=2u?region.height*0.5:0.0);
+    double u=((double)region.x+0.5+((c==1u || c==2u)?region.width:0u))/source_width;
+    double v=((double)region.y+0.5+(c>=2u?region.height:0u))/source_height;
+    if(!isfinite(q->x[c]) || !isfinite(q->y[c]) ||
+       q->x[c]!=x || q->y[c]!=y || x!=floor(x) || y!=floor(y) ||
+       fabs(x)>65536.0 || fabs(y)>65536.0 ||
+       !isfinite(q->u[c]) || !isfinite(q->v[c]) ||
+       fabs(q->u[c]-u)>1e-12 || fabs(q->v[c]-v)>1e-12 ||
+       (q->corner_colour[c]&0xFFFFFFu)!=0xFFFFFFu ||
+       q->corner_colour[c]!=q->corner_colour[0] ||
+       (q->corner_colour[c]>>24)!=(uint32_t)lround(q->filtered_draw_alpha*255.0)) return 0;
+  }
+  return 1;
+}
+
 int gml_render_gpu_opengl_draw_textured_quad(const GmlRenderDrawOp *op,
                                              const GmlRenderDrawStateSnapshot *state,
                                              uint32_t source_width,uint32_t source_height,
@@ -16,9 +71,11 @@ int gml_render_gpu_opengl_draw_textured_quad(const GmlRenderDrawOp *op,
   const GmlRenderQuad *quad;
   GmlRenderRect region;
   uint32_t region_storage_y;
-  int rotated,warped,stretched_float,stretched_blend,automatic_surface,destination_surface;
+  int rotated,warped,stretched_float,stretched_blend,automatic_surface,destination_surface,half_gui;
   if(!op || !state || !vertices || !source_width || !source_height) return 0;
   quad=&op->payload.quad;
+  half_gui=!rendered_source_origin &&
+    gml_gpu_opengl_half_gui_point_valid(op,state,source_width,source_height);
   rotated=quad->shape==GML_RENDER_QUAD_CARDINAL || quad->shape==GML_RENDER_QUAD_GENERAL;
   warped=quad->shape==GML_RENDER_QUAD_WARPED;
   stretched_float=quad->sampling.quantisation==GML_RENDER_QUANTISE_STRETCHED_FLOAT;
@@ -107,7 +164,7 @@ int gml_render_gpu_opengl_draw_textured_quad(const GmlRenderDrawOp *op,
        (!rotated && (!isfinite(quad->u[corner]) || !isfinite(quad->v[corner]))) ||
        quad->x[corner]<-10000000.0 || quad->x[corner]>10000000.0 ||
        quad->y[corner]<-10000000.0 || quad->y[corner]>10000000.0 ||
-       (!rotated && !warped &&
+       (!rotated && !warped && !half_gui &&
         quad->sampling.filter!=GML_RENDER_FILTER_HARDWARE_PIXEL_CENTRE_POINT &&
         (quad->u[corner]<0.0 || quad->u[corner]>1.0 ||
                                quad->v[corner]<0.0 || quad->v[corner]>1.0)) ||
@@ -124,7 +181,7 @@ int gml_render_gpu_opengl_draw_textured_quad(const GmlRenderDrawOp *op,
     vertex[5]=(float)((colour>>8)&255u)/255.0f;
     vertex[6]=(float)(colour&255u)/255.0f;
     vertex[7]=(float)((colour>>24)&255u)/255.0f*(float)state->alpha/255.0f;
-    if(stretched_blend || (rotated && state->coverage_policy) ||
+    if(half_gui || stretched_blend || (rotated && state->coverage_policy) ||
        (op->scene_family==GML_RENDER_SCENE_SURFACE &&
         state->coverage_policy==GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA) ||
        quad->sampling.filter==GML_RENDER_FILTER_HARDWARE_BILINEAR)

@@ -11007,6 +11007,79 @@ static int resident_integer_world_sourceover_sprite(void){
   return resident_integer_world_sourceover_pages(0);
 }
 
+static int resident_firstgen_gui_half_point(void){
+  const int extents[4][2]={{4,4},{5,3},{2,2},{1,1}};
+  const double alpha[4]={0x1p-16,0.0137,0.75,1.0};
+  for(unsigned excluded=0;excluded<10u;excluded++)
+  for(unsigned size=0;size<4u;size++)
+  for(unsigned opacity=0;opacity<4u;opacity++)
+  for(unsigned placement=0;placement<3u;placement++){
+    if(excluded && (size || opacity || placement)) continue;
+    GmlRender *r=calloc(1,sizeof *r);
+    GmlWin content={.bytecode=15};
+    FakeDevice fake={.on_demand=1,.readback_colour=0xFFABCDEFu};
+    GmlRenderDeviceServices device=service(&fake);
+    GmlRenderJournalMetrics metrics={0};
+    uint32_t screen[64]={0};
+    int sw=extents[size][0],sh=extents[size][1];
+    double left=placement==0u?2.49:placement==1u?-0.51:6.49;
+    CHECK(r && gml_render_init(r,NULL)==0);
+    r->win=&content;r->interp=0;
+    free(r->atlas[0].px);
+    r->atlas[0].px=malloc(8*6*4);CHECK(r->atlas[0].px);
+    r->atlas[0].w=8;r->atlas[0].h=6;
+    for(unsigned i=0;i<8*6u;i++){
+      uint8_t *p=r->atlas[0].px+i*4;
+      p[0]=208;p[1]=32;p[2]=16;p[3]=(i%3u)?128:0;
+    }
+    r->tpag=calloc(1,sizeof *r->tpag);r->spr=calloc(1,sizeof *r->spr);
+    CHECK(r->tpag && r->spr);r->n_tpag=r->n_spr=1;
+    r->tpag[0]=(GmlTpag){.atlas=0,.sx=8-sw,.sy=6-sh,.sw=sw,.sh=sh,
+      .tw=sw,.th=sh,.tx=1,.ty=1,.bw=sw+2,.bh=sh+2};
+    r->spr[0].w=sw+2;r->spr[0].h=sh+2;r->spr[0].n_frames=1;
+    r->spr[0].originx=r->spr[0].originy=2;
+    r->spr[0].frame=calloc(1,sizeof(int));CHECK(r->spr[0].frame);
+    device.observe_on_demand=fake_observe_on_demand;
+    gml_render_bind_device(r,&device);
+    CHECK(gml_render_begin_resident_base(r,screen,8,8,0,0));
+    gml_render_gui_begin(r,8,8);gml_render_set_pending_fill(r,0x40123456u);
+    gml_render_flush_pending_fill(r);r->fb_opaque_known=r->fb_all_opaque=0;
+    if(excluded==1u) fake.on_demand=0;
+    if(excluded==2u) r->fog_flat=1;
+    if(excluded==3u) r->tpag[0].project_authored_edges=1;
+    if(excluded==4u) r->tpag[0].tw++;
+    if(excluded==5u) r->world_transform_active=1;
+    if(excluded==9u) r->active_shader=0;
+    for(unsigned draw=0;draw<8u;draw++){
+      gml_draw_sprite_ext(r,0,0,left+0.5,2.49+0.5,0.5,excluded==7u?0.6:0.5,0,
+          excluded==8u?0x123456u:0xFFFFFFu,excluded==6u?0x1p-65:alpha[opacity]);
+      if(!excluded) CHECK(r->resident_application_pass && !fake.readbacks);
+    }
+    if(excluded){
+      CHECK(!r->resident_application_pass && fake.submits==1 &&
+        fake.last_opcode==GML_RENDER_OP_CLEAR && !r->pending_scene_batch);
+      gml_render_free(r);free(r);continue;
+    }
+    CHECK(gml_render_scene_submit_pending(r) && !fake.readbacks);
+    if(size<3u && floor(left+0.5)+sw/2>0.0){
+      CHECK(fake.last_batch_operations==8u &&
+        fake.last_quad_state.coverage_policy==GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA &&
+        fake.last_filter==GML_RENDER_FILTER_NEAREST && !fake.last_quantisation &&
+        fake.last_filtered_draw_alpha==alpha[opacity] &&
+        fake.last_quad.x[0]==floor(left+0.5) && fake.last_quad.y[0]==2.0 &&
+        fake.last_quad.x[1]-fake.last_quad.x[0]==sw/2 &&
+        fake.last_quad.y[2]-fake.last_quad.y[0]==sh/2 &&
+        fake.last_quad.sampling.source_region.width==(unsigned)(sw/2)*2u &&
+        fake.last_quad.sampling.source_region.height==(unsigned)(sh/2)*2u);
+      gml_render_resource_journal_metrics(r->base_scene_resource,&metrics);
+      CHECK(metrics.authority==GML_RENDER_RESOURCE_GPU_RESIDENT && !metrics.cpu_replays &&
+        !metrics.journal_bytes && !metrics.retained_mutable_bytes);
+    } else CHECK(fake.submits==1 && !r->pending_scene_batch);
+    gml_render_free(r);free(r);
+  }
+  return 1;
+}
+
 static int resident_integer_world_packed_sprite(void){
   return resident_integer_world_sourceover_pages(1);
 }
@@ -11863,6 +11936,7 @@ int main(void){
   passed+=resident_opaque_sprite_complete_application();
   passed+=resident_integer_world_sourceover_sprite();
   passed+=resident_identity_gui_unit_sourceover();
+  passed+=resident_firstgen_gui_half_point();
   passed+=resident_integer_world_packed_sprite();
   passed+=resident_integer_sourceover_exclusions();
   passed+=state_without_context();
@@ -11879,6 +11953,6 @@ int main(void){
   passed+=source_free_primitive_rect_replay();
   passed+=stretched_float_exact_replay();
   passed+=filtered_font_exact_recovery();
-  printf("render resource cases: passed=%d failed=%d\n",passed,166-passed);
-  return passed==166?EXIT_SUCCESS:EXIT_FAILURE;
+  printf("render resource cases: passed=%d failed=%d\n",passed,167-passed);
+  return passed==167?EXIT_SUCCESS:EXIT_FAILURE;
 }

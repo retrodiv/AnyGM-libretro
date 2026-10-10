@@ -2476,6 +2476,81 @@ static int scene_opaque_target_sourceover_case(void){
   return 1;
 }
 
+static int scene_gui_half_point_case(void){
+  for(unsigned api=0;api<2u;api++)
+  for(unsigned cropped=0;cropped<2u;cropped++){
+    uint8_t pixels[8u*6u*4u];memset(pixels,128,sizeof pixels);
+    unsigned width=cropped?8u:4u,height=cropped?6u:4u;
+    GmlRenderImageRef source={GML_RENDER_RESOURCE_ATLAS,35u,1u,1u};
+    GmlRenderImageRef target={GML_RENDER_RESOURCE_SCREEN,36u,1u,1u};
+    GmlRenderImageUpload upload={.image=source,.storage_width=width,.storage_height=height,
+      .region={0,0,width,height},.pixel_format=GML_RENDER_PIXEL_RGBA8888,
+      .stride_bytes=width*4u,.byte_capacity=width*height*4u,.bytes=pixels};
+    GmlRenderDrawStateSnapshot state={0};
+    GmlRenderDrawOp ops[3]={0};
+    GmlRenderDrawBatch batch={ops,3u,&state,1u};
+    GmlRenderDeviceServices device;
+    GmlGpuContext context=fake_context(api?GML_GPU_API_OPENGLES3:GML_GPU_API_OPENGL_CORE);
+    anygm_test_graphics_reset();GmlGpu *gpu=gml_gpu_create();
+    REQUIRE(gpu && gml_gpu_context_reset(gpu,&context),"half GUI point adopts context");
+    gml_gpu_device_services(gpu,&device);
+    REQUIRE(device.upload(device.context,&upload),
+      "half GUI immutable source uploads");
+    state.write_mask=15u;state.alpha=255u;state.colour=0xFFFFFFFFu;
+    state.rgb_source_factor=GML_RENDER_BLEND_SOURCE_ALPHA;
+    state.alpha_source_factor=GML_RENDER_BLEND_ONE;
+    state.rgb_destination_factor=state.alpha_destination_factor=GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA;
+    state.rgb_equation=state.alpha_equation=GML_RENDER_BLEND_ADD;
+    state.coverage_policy=GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA;
+    state.sampler_count=1u;
+    state.samplers[0]=(GmlRenderSamplingPolicy){.filter=GML_RENDER_FILTER_NEAREST,
+      .edge_rule=GML_RENDER_EDGE_CLAMP_SUBIMAGE,
+      .source_region={cropped?2:0,cropped?1:0,4,4}};
+    for(unsigned index=0;index<3u;index++){
+      GmlRenderDrawOp *op=&ops[index];op->sequence=index+1u;
+      op->target=(GmlRenderTargetRef){.image=target,.storage_version=1u,
+        .width=8u,.height=8u,.pixel_format=GML_RENDER_PIXEL_ARGB8888,.region={0,0,8,8}};
+      op->target.image.content_version=index+1u;
+      if(!index){op->opcode=GML_RENDER_OP_CLEAR;op->payload.clear_colour=0x40123456u;continue;}
+      op->opcode=GML_RENDER_OP_TEXTURED_QUAD;op->scene_family=GML_RENDER_SCENE_SPRITE;
+      op->reconstruction_mode=GML_RENDER_DEVICE_CHECKPOINT;op->sources=&source;op->source_count=1u;
+      GmlRenderQuad *q=&op->payload.quad;q->shape=GML_RENDER_QUAD_AXIS_ALIGNED;
+      q->sampling=state.samplers[0];q->filtered_draw_alpha=index==1u?0x1p-16:0.75;
+      q->x[0]=q->x[3]=index;q->x[1]=q->x[2]=index+2.0;
+      q->y[0]=q->y[1]=1.0;q->y[2]=q->y[3]=3.0;
+      for(unsigned c=0;c<4u;c++){
+        q->u[c]=(q->sampling.source_region.x+0.5+((c==1u || c==2u)?4.0:0.0))/width;
+        q->v[c]=(q->sampling.source_region.y+0.5+(c>=2u?4.0:0.0))/height;
+        q->corner_colour[c]=((uint32_t)lround(q->filtered_draw_alpha*255.0)<<24)|0xFFFFFFu;
+      }
+    }
+    GmlRenderExecutionResult result=device.submit(device.context,&batch);
+    REQUIRE(result.status==GML_RENDER_EXEC_ACCEPTED && result.accepted_prefix==3u &&
+      anygm_test_graphics_scene_draw_calls()==2u && anygm_test_graphics_scene_vertices()==24u &&
+      !anygm_test_graphics_scene_copies() && !anygm_test_graphics_read_pixels(),
+      "half GUI point extrapolated atlas vertices batch without destination copies");
+    for(unsigned variant=0;variant<8u;variant++){
+      GmlRenderDrawOp prior=ops[1];
+      if(variant==0u) ops[1].payload.quad.corner_colour[0]^=1u;
+      if(variant==1u) ops[1].payload.quad.u[0]+=0.001;
+      if(variant==2u) ops[1].payload.quad.sampling.source_region.width=3u;
+      if(variant==3u) ops[1].payload.quad.filtered_draw_alpha=0;
+      if(variant==4u) ops[1].payload.quad.x[1]=ops[1].payload.quad.x[2]=4.0;
+      if(variant==5u) ops[1].reconstruction_mode=GML_RENDER_REPLAY_EXACT;
+      if(variant==6u) ops[1].scene_family=GML_RENDER_SCENE_TEXT;
+      if(variant==7u) ops[1].payload.quad.span_active=1u;
+      int clears=anygm_test_graphics_clear_calls(),draws=anygm_test_graphics_scene_draw_calls();
+      result=device.submit(device.context,&batch);
+      REQUIRE(result.status==GML_RENDER_EXEC_UNSUPPORTED && !result.accepted_prefix &&
+        anygm_test_graphics_clear_calls()==clears && anygm_test_graphics_scene_draw_calls()==draws,
+        "unqualified half GUI tint, phase, extent, alpha, replay or family rejects transactionally");
+      ops[1]=prior;
+    }
+    gml_gpu_destroy(gpu,1);
+  }
+  return 1;
+}
+
 static int scene_numbered_integer_sourceover_case(void){
   for(unsigned phase=0;phase<3u;phase++)
     if(!scene_opaque_target_sourceover_api(GML_GPU_API_OPENGLES3,1,phase) ||
@@ -3806,6 +3881,7 @@ int main(int argc,char **argv){
     {"scene_alpha_composition",scene_alpha_composition_case},
     {"scene_opaque_target_sourceover",scene_opaque_target_sourceover_case},
     {"scene_gui_tinted_text",scene_gui_tinted_text_case},
+    {"scene_gui_half_point",scene_gui_half_point_case},
     {"scene_numbered_integer_sourceover",scene_numbered_integer_sourceover_case},
     {"scene_integer_endpoint_sprite",scene_integer_endpoint_sprite_case},
     {"scene_endpoint_source_sprite",scene_endpoint_source_sprite_case},
