@@ -1280,6 +1280,65 @@ static int scene_classic_inverse_rect_batch_case(void){
   return scene_source_free_alpha_batch_case(GML_RENDER_PRIMITIVE_CLASSIC_INVERSE_RECT);
 }
 
+static int scene_rectangle_function_batch_case(void){
+  enum { QUADS=2049 };
+  for(unsigned api=GML_GPU_API_OPENGL_CORE;api<=GML_GPU_API_OPENGLES3;api++)
+  for(unsigned preserve_alpha=0;preserve_alpha<2u;preserve_alpha++)
+  for(unsigned blend=0;blend<3u;blend++){
+    GmlRenderDrawOp *ops=calloc(QUADS+1u,sizeof *ops);
+    GmlGpuContext context=fake_context(api);
+    GmlRenderDeviceServices device={0};
+    unsigned factors[4]={0};
+    anygm_test_graphics_reset();
+    GmlGpu *gpu=gml_gpu_create();
+    REQUIRE(ops && gpu && gml_gpu_context_reset(gpu,&context),"rectangle context adopted");
+    gml_gpu_device_services(gpu,&device);
+    ops[0].opcode=GML_RENDER_OP_CLEAR;
+    ops[0].target=(GmlRenderTargetRef){
+      .image={preserve_alpha?GML_RENDER_RESOURCE_SURFACE:GML_RENDER_RESOURCE_SCREEN,141u,1u,2u},
+      .storage_version=1u,.width=96u,.height=48u,
+      .pixel_format=GML_RENDER_PIXEL_ARGB8888,.region={0,0,96u,48u}};
+    ops[0].payload.clear_colour=0x40273859u;
+    for(unsigned q=0;q<QUADS;q++){
+      ops[q+1u]=ops[0];ops[q+1u].opcode=GML_RENDER_OP_COLOURED_PRIMITIVE;
+      ops[q+1u].scene_family=GML_RENDER_SCENE_PRIMITIVE;
+      ops[q+1u].reconstruction_mode=GML_RENDER_DEVICE_CHECKPOINT;
+      ops[q+1u].target.image.content_version=3u+q;
+      ops[q+1u].payload.primitive=(GmlRenderPrimitiveRect){
+        .kind=GML_RENDER_PRIMITIVE_RECTANGLE,.region={0,0,96u,48u},
+        .authored_region={-2,-1,100u,50u},.colour=0xFF7193B5u,
+        .corner_colour={0xFF7193B5u,0xFF1375B9u,0xFFFCEB05u,0xFF17E305u},
+        .alpha=blend==2u?1.0:0.375,.alpha_blend=blend!=0u,
+        .rectangle_flags=GML_RENDER_RECTANGLE_GRADIENT|
+          (preserve_alpha?GML_RENDER_RECTANGLE_TARGET_ALPHA:0u)};
+    }
+    GmlRenderDrawBatch batch={ops,QUADS+1u,NULL,0u};
+    GmlRenderExecutionResult result=device.submit(device.context,&batch);
+    int passes=blend==1u && !preserve_alpha?2:1;
+    REQUIRE(result.status==GML_RENDER_EXEC_ACCEPTED && result.accepted_prefix==QUADS+1u,
+            "rectangle matrix packets accepted");
+    REQUIRE(anygm_test_graphics_scene_draw_calls()==2*passes &&
+            anygm_test_graphics_scene_vertices()==QUADS*6*passes,
+            "only quad capacity splits compatible source-free rectangles");
+    if(blend==1u){
+      anygm_test_graphics_blend_factors(factors);
+      REQUIRE(factors[0]==GL_SRC_ALPHA && factors[1]==GL_ONE_MINUS_SRC_ALPHA &&
+              factors[2]==GL_SRC_ALPHA && factors[3]==GL_ONE_MINUS_SRC_ALPHA,
+              "numbered rectangle alpha uses its separate source-alpha factor");
+    }
+    REQUIRE(!anygm_test_graphics_scene_copies() && !anygm_test_graphics_read_pixels(),
+            "rectangle overlaps need no snapshots or ordinary reads");
+    ops[QUADS].payload.primitive.authored_region.width=65537u;
+    anygm_test_graphics_reset();
+    result=device.submit(device.context,&batch);
+    REQUIRE(result.status==GML_RENDER_EXEC_UNSUPPORTED && !result.accepted_prefix &&
+            !anygm_test_graphics_clear_calls() && !anygm_test_graphics_scene_draw_calls(),
+            "malformed rectangle refuses before the clear prefix");
+    gml_gpu_destroy(gpu,1);free(ops);
+  }
+  return 1;
+}
+
 static int scene_hardware_additive_batch_case(void){
   return scene_hardware_filtered_batch_case(1);
 }
@@ -3873,6 +3932,7 @@ int main(int argc,char **argv){
     {"scene_particle_line_batch",scene_particle_line_batch_case},
     {"scene_classic_alpha_rect_batch",scene_classic_alpha_rect_batch_case},
     {"scene_studio_alpha_rect_batch",scene_studio_alpha_rect_batch_case},
+    {"scene_rectangle_function_batch",scene_rectangle_function_batch_case},
     {"scene_classic_inverse_rect_batch",scene_classic_inverse_rect_batch_case},
     {"scene_hardware_additive_batch",scene_hardware_additive_batch_case},
     {"scene_hardware_background_batch",scene_hardware_background_batch_case},

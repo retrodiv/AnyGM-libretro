@@ -3450,6 +3450,90 @@ static int resident_classic_owned_rectangle_scope(void){
   return 1;
 }
 
+static int resident_rectangle_function_matrix(void){
+  static const int generations[]={530,700,800,13,15,17};
+  static const double alphas[]={0.0,1.0,0.5,0.4,1.0/256.0,1.0/1024.0};
+  for(unsigned generation=0;generation<6u;generation++)
+  for(unsigned target_kind=0;target_kind<4u;target_kind++)
+  for(unsigned gui=0;gui<2u;gui++)
+  for(unsigned alpha=0;alpha<6u;alpha++)
+  for(unsigned port=0;port<3u;port++)
+  for(unsigned outline=0;outline<2u;outline++){
+    GmlRender *cpu=calloc(1,sizeof *cpu),*gpu=calloc(1,sizeof *gpu);
+    GmlWin content={0};
+    AnygmCompatibilityProfile profile={0};
+    AnygmContentFacts facts={.schema_version=ANYGM_COMPATIBILITY_SCHEMA};
+    if(generations[generation]>100) facts.classic_revision=generations[generation];
+    else facts.bytecode_revision=generations[generation];
+    CHECK(anygm_compatibility_resolve(&facts,&profile,NULL,0));
+    content.compatibility=&profile;content.classic_version=facts.classic_revision;
+    content.bytecode=facts.bytecode_revision;
+    FakeDevice fake={.on_demand=1};
+    GmlRenderDeviceServices device=service(&fake);
+    device.observe_on_demand=fake_observe_on_demand;
+    uint32_t reference[64]={0},screen[64]={0},replayed[64];
+    CHECK(cpu && gpu && !gml_render_init(cpu,NULL) && !gml_render_init(gpu,NULL));
+    cpu->classic=gpu->classic=facts.classic_revision!=0;cpu->win=gpu->win=&content;
+    gml_render_begin(cpu,reference,8,8,-3.0,2.0);
+    gml_render_bind_device(gpu,&device);
+    if(target_kind==1u || target_kind==2u){
+      CHECK(gml_render_application_surface_ensure_owned(cpu,8,8) &&
+            gml_render_begin_owned_application(cpu,-3.0,2.0,0));
+      CHECK(gml_render_application_surface_ensure_owned(gpu,8,8) &&
+            gml_render_begin_resident_owned_application(gpu,-3.0,2.0,0));
+    } else {
+      gml_render_application_surface_bind(cpu,reference,8,8,1);
+      gml_render_application_surface_bind(gpu,screen,8,8,1);
+      CHECK(gml_render_begin_resident_base(gpu,screen,8,8,-3.0,2.0));
+    }
+    if(target_kind==2u)
+      CHECK(gml_surface_set_target(cpu,0) && gml_surface_set_target(gpu,0));
+    if(target_kind==3u){
+      int a=gml_surface_create(cpu,8,8),b=gml_surface_create(gpu,8,8);
+      CHECK(a>0 && b>0 && gml_surface_set_target(cpu,a) && gml_surface_set_target(gpu,b));
+    }
+    if(gui){gml_render_gui_begin(cpu,4,4);gml_render_gui_begin(gpu,4,4);}
+    cpu->world_transform_active=gpu->world_transform_active=1;
+    cpu->world_scale_x=gpu->world_scale_x=-2.0;
+    cpu->world_scale_y=gpu->world_scale_y=2.0;
+    cpu->alpha=gpu->alpha=alphas[alpha];
+    const uint32_t background=0x40102030u;
+    gml_render_set_pending_fill(cpu,background);gml_render_set_pending_fill(gpu,background);
+    gml_render_flush_pending_fill(cpu);gml_render_flush_pending_fill(gpu);
+    CHECK(gml_render_application_scene_flush(gpu));
+    for(unsigned p=0;p<64u;p++) replayed[p]=background;
+    int before=fake.submits;
+    for(unsigned side=0;side<2u;side++){
+      GmlRender *r=side?gpu:cpu;
+      if(port) gml_render_primitive_rectangle_color(r,6,5,-2,1,0x345678u,
+        port==2u?0xFFB305u:0x345678u,port==2u?0x00FCADu:0x345678u,
+        port==2u?0xFF0000u:0x345678u,(int)outline);
+      else gml_render_primitive_rectangle(r,6,5,-2,1,0x345678u,(int)outline);
+    }
+    int resident=gpu->resident_application_pass,flushed=gml_render_application_scene_flush(gpu);
+    if(!resident || fake.readbacks || !flushed)
+      fprintf(stderr,"rectangle matrix admission: generation=%d target=%u gui=%u alpha=%u port=%u outline=%u resident=%d reads=%d flush=%d\n",
+        generations[generation],target_kind,gui,alpha,port,outline,resident,fake.readbacks,flushed);
+    CHECK(resident && !fake.readbacks && flushed);
+    gml_render_flush_pending_fill(cpu);
+    if(fake.submits>before && fake.last_primitive.payload.primitive.kind==GML_RENDER_PRIMITIVE_RECTANGLE){
+      CHECK(gml_render_rectangle_valid(&fake.last_primitive) &&
+            gml_render_cpu_replay_one(replayed,8u,8u,&fake.last_primitive,NULL,NULL) &&
+            !memcmp(cpu->fb,replayed,sizeof replayed));
+      GmlRenderDrawOp malformed=fake.last_primitive;
+      malformed.payload.primitive.authored_region.width=65537u;
+      CHECK(!gml_render_rectangle_valid(&malformed));
+      malformed=fake.last_primitive;malformed.payload.primitive.alpha=NAN;
+      CHECK(!gml_render_rectangle_valid(&malformed));
+      malformed=fake.last_primitive;
+      malformed.payload.primitive.rectangle_flags^=GML_RENDER_RECTANGLE_GRADIENT;
+      CHECK(!gml_render_rectangle_valid(&malformed));
+    }
+    gml_render_free(cpu);gml_render_free(gpu);free(cpu);free(gpu);
+  }
+  return 1;
+}
+
 static int resident_rectangle_outline_coalesced(void){
   static const int generations[]={530,600,700,15,17};
   static const int bounds[][4]={
@@ -3709,7 +3793,8 @@ static int resident_studio_alpha_rectangle_scope_variant(int identity_gui){
     CHECK(!gml_render_studio_alpha_rect_valid(&malformed));
     gml_render_free(cpu);gml_render_free(gpu);free(cpu);free(gpu);
   }
-  /* Modern layers, uninitialized GUI, gradients, non-normal blend and pending composition stay CPU-owned. */
+  /* The function matrix supersedes the old normal-state generation, GUI and
+   * gradient exclusions. Non-normal blend and pending composition keep their gate. */
   for(unsigned variant=0;variant<5u;variant++){
     GmlRender *gpu=calloc(1,sizeof *gpu);
     GmlWin content={.bytecode=15,.has_room_layers=variant==0u};
@@ -3734,7 +3819,10 @@ static int resident_studio_alpha_rectangle_scope_variant(int identity_gui){
     if(variant==2u) gml_render_primitive_rectangle_color(gpu,0,0,2,2,
                           0u,1u,2u,3u,0);
     else gml_render_primitive_rectangle(gpu,0,0,2,2,0x345678u,0);
-    CHECK(!gpu->resident_application_pass);
+    CHECK(gpu->resident_application_pass==(variant<3u));
+    if(variant<3u)
+      CHECK(gml_render_application_scene_flush(gpu) && !fake.readbacks &&
+            gml_render_rectangle_valid(&fake.last_primitive));
     gml_render_free(gpu);free(gpu);
   }
   return 1;
@@ -3770,7 +3858,12 @@ static int resident_firstgen_gui_alpha_rectangle_scope(void){
     if(variant==8u) render->cam_y=1.0;
     if(variant==9u) fake.on_demand=0;
     gml_render_primitive_rectangle(render,-2,-2,10,10,0u,0);
-    CHECK(!render->resident_application_pass);
+    /* Typed ports receive resolved raster coordinates even with mapped GUI
+     * metadata. A missing on-demand owner still refuses the new combination. */
+    CHECK(render->resident_application_pass==(variant<9u));
+    if(variant<9u)
+      CHECK(gml_render_application_scene_flush(render) && !fake.readbacks &&
+            gml_render_rectangle_valid(&fake.last_primitive));
     gml_render_free(render);free(render);
   }
   return 1;
@@ -11955,6 +12048,7 @@ int main(void){
   passed+=resident_numbered_layer_effect_target();
   passed+=resident_flat_primitive_public_order();
   passed+=resident_classic_rectangle_scope();
+  passed+=resident_rectangle_function_matrix();
   passed+=resident_classic_owned_rectangle_scope();
   passed+=resident_rectangle_outline_coalesced();
   passed+=resident_studio_gui_rectangle_scope();
@@ -12083,6 +12177,6 @@ int main(void){
   passed+=source_free_primitive_rect_replay();
   passed+=stretched_float_exact_replay();
   passed+=filtered_font_exact_recovery();
-  printf("render resource cases: passed=%d failed=%d\n",passed,169-passed);
-  return passed==169?EXIT_SUCCESS:EXIT_FAILURE;
+  printf("render resource cases: passed=%d failed=%d\n",passed,170-passed);
+  return passed==170?EXIT_SUCCESS:EXIT_FAILURE;
 }

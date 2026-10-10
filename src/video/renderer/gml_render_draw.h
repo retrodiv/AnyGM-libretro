@@ -299,12 +299,20 @@ typedef struct GmlRenderPrimitiveRect {
   uint32_t kind;
   double centre_x,centre_y,scale_x,scale_y,angle,alpha;
   uint32_t interpolate,alpha_blend;
+  /* Rectangle colours stay in authored space after clipping. These resolved
+   * submission fields are transient; canonical state stores the actual image. */
+  GmlRenderRect authored_region;
+  uint32_t corner_colour[4],rectangle_flags;
 } GmlRenderPrimitiveRect;
 
 enum { GML_RENDER_PRIMITIVE_FLAT=0, GML_RENDER_PRIMITIVE_PARTICLE_LINE=1,
        GML_RENDER_PRIMITIVE_CLASSIC_ALPHA_RECT=2,
        GML_RENDER_PRIMITIVE_CLASSIC_INVERSE_RECT=3,
-       GML_RENDER_PRIMITIVE_STUDIO_ALPHA_RECT=4 };
+       GML_RENDER_PRIMITIVE_STUDIO_ALPHA_RECT=4,
+       GML_RENDER_PRIMITIVE_RECTANGLE=5 };
+
+enum { GML_RENDER_RECTANGLE_OUTLINE=1u, GML_RENDER_RECTANGLE_CLASSIC=2u,
+       GML_RENDER_RECTANGLE_TARGET_ALPHA=4u, GML_RENDER_RECTANGLE_GRADIENT=8u };
 
 typedef enum GmlRenderLayerEffectKind {
   GML_RENDER_LAYER_EFFECT_TINT=1,
@@ -365,6 +373,7 @@ int gml_render_particle_line_valid(const GmlRenderDrawOp *operation);
 int gml_render_classic_alpha_rect_valid(const GmlRenderDrawOp *operation);
 int gml_render_studio_alpha_rect_valid(const GmlRenderDrawOp *operation);
 int gml_render_classic_inverse_rect_valid(const GmlRenderDrawOp *operation);
+int gml_render_rectangle_valid(const GmlRenderDrawOp *operation);
 
 /* Snapshots and per-operation source arrays are immutable for this submission. The caller owns
  * every referenced array until submit returns; a reconstruction record must copy or pin anything

@@ -89,6 +89,7 @@ REQUIRED_RULES = {
     "R03-PRIM-FIRSTGEN-GUI-ALPHA-RECT",
     "R03-PRIM-CLASSIC-OWNED",
     "R03-PRIM-RECT-COALESCED",
+    "R03-PRIM-RECTANGLE-MATRIX",
     "R03-P5-FAULT-LIMIT",
     "R03-P5-QUEUE-RETRY",
     "R03-P8-RUNTIME-SPRITE-BASE", "R03-P8-STATE-RETIRE",
@@ -718,6 +719,7 @@ def self_test() -> None:
     check_repair_map(document, ledger, ROOT)
     for broken in (
         document.replace("::resident_filtered_sprite", "::obsolete_filtered_sprite", 1),
+        document.replace("::R03_SHADER_RECTANGLE", "::OBSOLETE_RECTANGLE", 1),
         document.replace("::rotated_nearest_packet", "::obsolete_rotated_packet", 1),
         document.replace("::R03_SHADER_GUI_ROTATED_NEAREST_COVERAGE",
                          "::OBSOLETE_GUI_ROTATED_NEAREST_COVERAGE", 1),

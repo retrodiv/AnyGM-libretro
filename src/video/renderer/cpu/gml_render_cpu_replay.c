@@ -304,6 +304,7 @@ int gml_render_cpu_replay_one(uint32_t *target,uint32_t width,uint32_t height,
       !gml_render_classic_alpha_rect_valid(operation) &&
       !gml_render_studio_alpha_rect_valid(operation) &&
       !gml_render_classic_inverse_rect_valid(operation) &&
+      !gml_render_rectangle_valid(operation) &&
       !gml_render_cpu_replay_eligible(operation,state,source))) return 0;
   if(operation->opcode==GML_RENDER_OP_CLEAR){
     gml_render_cpu_backend_fill_xrgb(target,(int)((size_t)width*height),
@@ -312,6 +313,31 @@ int gml_render_cpu_replay_one(uint32_t *target,uint32_t width,uint32_t height,
     return 1;
   }
   if(operation->opcode==GML_RENDER_OP_COLOURED_PRIMITIVE){
+    if(operation->payload.primitive.kind==GML_RENDER_PRIMITIVE_RECTANGLE){
+      const GmlRenderPrimitiveRect *p=&operation->payload.primitive;
+      GmlRender *render=(GmlRender*)calloc(1,sizeof *render);
+      if(!render) return 0;
+      render->fb=render->base_fb=target;
+      render->fbw=(int)width; render->fbh=(int)height;
+      render->classic=(p->rectangle_flags&GML_RENDER_RECTANGLE_CLASSIC)!=0u;
+      render->target_sp=(p->rectangle_flags&GML_RENDER_RECTANGLE_TARGET_ALPHA)?1:0;
+      render->alphablend=(int)p->alpha_blend; render->active_shader=-1;
+      render->blend_equation=render->blend_equation_alpha=1;
+      render->alpha=p->alpha; render->color_write_mask=15u;
+      uint32_t colours[4];
+      for(unsigned c=0;c<4u;c++){
+        uint32_t xrgb=p->corner_colour[c];
+        colours[c]=((xrgb&255u)<<16)|(xrgb&0xFF00u)|((xrgb>>16)&255u);
+      }
+      gml_render_cpu_rectangle_color(render,p->authored_region.x,p->authored_region.y,
+        p->authored_region.x+(int)p->authored_region.width-1,
+        p->authored_region.y+(int)p->authored_region.height-1,
+        colours[0],colours[1],colours[2],colours[3],
+        (p->rectangle_flags&GML_RENDER_RECTANGLE_OUTLINE)!=0u);
+      gml_render_flush_pending_fill(render);
+      free(render);
+      return 1;
+    }
     if(operation->payload.primitive.kind==GML_RENDER_PRIMITIVE_CLASSIC_ALPHA_RECT ||
        operation->payload.primitive.kind==GML_RENDER_PRIMITIVE_STUDIO_ALPHA_RECT ||
        operation->payload.primitive.kind==GML_RENDER_PRIMITIVE_CLASSIC_INVERSE_RECT){

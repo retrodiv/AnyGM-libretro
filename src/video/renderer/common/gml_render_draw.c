@@ -290,6 +290,45 @@ int gml_render_classic_inverse_rect_valid(const GmlRenderDrawOp *operation){
   return classic_blended_rect_valid(operation,GML_RENDER_PRIMITIVE_CLASSIC_INVERSE_RECT);
 }
 
+int gml_render_rectangle_valid(const GmlRenderDrawOp *operation){
+  if(!operation || operation->opcode!=GML_RENDER_OP_COLOURED_PRIMITIVE ||
+     operation->reconstruction_mode!=GML_RENDER_DEVICE_CHECKPOINT ||
+     operation->scene_family!=GML_RENDER_SCENE_PRIMITIVE ||
+     operation->source_count || operation->sources) return 0;
+  const GmlRenderPrimitiveRect *p=&operation->payload.primitive;
+  const GmlRenderTargetRef *t=&operation->target;
+  if(p->kind!=GML_RENDER_PRIMITIVE_RECTANGLE ||
+     (t->image.resource_class!=GML_RENDER_RESOURCE_SCREEN &&
+      t->image.resource_class!=GML_RENDER_RESOURCE_APPLICATION &&
+      t->image.resource_class!=GML_RENDER_RESOURCE_SURFACE) ||
+     t->pixel_format!=GML_RENDER_PIXEL_ARGB8888 || !t->width || !t->height ||
+     t->width>16384u || t->height>16384u || t->region.x || t->region.y ||
+     t->region.width!=t->width || t->region.height!=t->height ||
+     p->region.x<0 || p->region.y<0 || !p->region.width || !p->region.height ||
+     (uint64_t)(uint32_t)p->region.x+p->region.width>t->width ||
+     (uint64_t)(uint32_t)p->region.y+p->region.height>t->height ||
+     p->authored_region.x < -32768 || p->authored_region.y < -32768 ||
+     p->authored_region.x>32767 || p->authored_region.y>32767 ||
+     !p->authored_region.width || !p->authored_region.height ||
+     p->authored_region.width>65536u || p->authored_region.height>65536u ||
+     (int64_t)p->authored_region.x+p->authored_region.width-1>32767 ||
+     (int64_t)p->authored_region.y+p->authored_region.height-1>32767 ||
+     p->region.x<p->authored_region.x || p->region.y<p->authored_region.y ||
+     (int64_t)p->region.x+p->region.width>
+       (int64_t)p->authored_region.x+p->authored_region.width ||
+     (int64_t)p->region.y+p->region.height>
+       (int64_t)p->authored_region.y+p->authored_region.height ||
+     (p->rectangle_flags&~15u) || p->alpha_blend>1u || p->interpolate ||
+     !isfinite(p->alpha) || p->alpha<=0.0 || p->alpha>1.0) return 0;
+  for(unsigned corner=0;corner<4u;corner++)
+    if((p->corner_colour[corner]>>24)!=255u) return 0;
+  int gradient=!(p->rectangle_flags&GML_RENDER_RECTANGLE_OUTLINE) &&
+    (p->corner_colour[0]!=p->corner_colour[1] || p->corner_colour[0]!=p->corner_colour[2] ||
+     p->corner_colour[0]!=p->corner_colour[3]);
+  return p->colour==p->corner_colour[0] &&
+    ((p->rectangle_flags&GML_RENDER_RECTANGLE_GRADIENT)!=0u)==gradient;
+}
+
 int gml_render_particle_line_valid(const GmlRenderDrawOp *operation){
   if(!operation || operation->opcode!=GML_RENDER_OP_COLOURED_PRIMITIVE ||
      operation->reconstruction_mode!=GML_RENDER_DEVICE_CHECKPOINT ||

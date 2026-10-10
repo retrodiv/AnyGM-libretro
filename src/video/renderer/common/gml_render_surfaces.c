@@ -224,7 +224,8 @@ int gml_render_application_scene_enqueue_primitive(GmlRender *r,
      (!gml_render_particle_line_valid(operation) &&
       !gml_render_classic_alpha_rect_valid(operation) &&
       !gml_render_studio_alpha_rect_valid(operation) &&
-      !gml_render_classic_inverse_rect_valid(operation))) return 0;
+      !gml_render_classic_inverse_rect_valid(operation) &&
+      !gml_render_rectangle_valid(operation))) return 0;
   GmlRenderResource *target=gml_render_scene_target_resource_ensure(r);
   if(!target) return 0;
   GmlRenderPendingSceneBatch *pending=r->pending_scene_batch;
@@ -1618,7 +1619,8 @@ int gml_surface_set_target(GmlRender *r, int id){
   if(!gml_render_application_scene_flush(r)) return 0;
   int w=0,h=0,si=surface_slot(id);
   uint32_t *px=NULL;
-  int resident=r->resident_scene_pass && gml_render_device(r) && (!r->classic || id>0);
+  int resident=r->resident_scene_pass && gml_render_device(r) &&
+    (!r->classic || id>0 || (id==0 && r->app_surface==r->app_surface_owned));
   if(resident){
     /* Resolve pending parent writes before another binding can alias its allocation.
      * Binding itself borrows storage metadata, not CPU-current raster bytes. */
@@ -1646,6 +1648,8 @@ int gml_surface_set_target(GmlRender *r, int id){
     gml_surface_reset_target(r);
     if(resident && si>=0 && r->surface[si].live){
       px=r->surface[si].px;w=r->surface[si].w;h=r->surface[si].h;
+    } else if(resident && id==0 && r->app_surface==r->app_surface_owned){
+      px=r->app_surface_owned;w=r->app_w;h=r->app_h;
     } else px=surface_pixels(r,id,&w,&h);
     if(!px || r->target_sp>=GML_SURFACE_STACK) return 0;
   }

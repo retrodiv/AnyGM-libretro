@@ -265,7 +265,38 @@
   "  float y=clamp(min((p.y+5.75)/2.5,(4.75-p.y)/2.5),0.0,1.0);\n" \
   "  return x*y;\n" \
   "}\n" \
+  "ivec3 rectangle_rgb(float encoded_rgb){\n" \
+  "  uint c=uint(encoded_rgb); return ivec3((c>>16u)&255u,(c>>8u)&255u,c&255u);\n" \
+  "}\n" \
+  "ivec3 rectangle_lerp(ivec3 first,ivec3 last,int n,int d){\n" \
+  "  if(d<=0 || n<=0) return first; if(n>=d) return last;\n" \
+  "  return first+(last-first)*n/d;\n" \
+  "}\n" \
   "void main(){\n" \
+  "  if(u_filter>=34 && u_filter<=36){\n" \
+  "    // R03_SHADER_RECTANGLE: integer authored colours and exact clipped coverage.\n" \
+  "    ivec2 pixel=ivec2(int(gl_FragCoord.x),int(u_extent.y)-1-int(gl_FragCoord.y));\n" \
+  "    ivec2 p=pixel-ivec2(v_map.xy),den=ivec2(v_map.zw);\n" \
+  "    uint flags=uint(v_margin); bool outline=(flags&1u)!=0u,gradient=(flags&8u)!=0u;\n" \
+  "    if(outline && p.x!=0 && p.x!=den.x && p.y!=0 && p.y!=den.y) discard;\n" \
+  "    if(u_filter==36){ o_color=vec4(0.0,0.0,0.0,1.0); return; }\n" \
+  "    ivec3 rgb=rectangle_rgb(v_span_x.x);\n" \
+  "    if(gradient){\n" \
+  "      ivec3 left=rectangle_lerp(rgb,rectangle_rgb(v_span_x.w),p.y,den.y);\n" \
+  "      ivec3 right=rectangle_lerp(rectangle_rgb(v_span_x.y),rectangle_rgb(v_span_x.z),p.y,den.y);\n" \
+  "      if(v_colour.a>=1.0){\n" \
+  "        int offset=int(v_span_y.x)-int(v_map.x),visible=int(v_span_y.y);\n" \
+  "        ivec3 clipped_left=rectangle_lerp(left,right,offset,den.x);\n" \
+  "        right=rectangle_lerp(left,right,offset+visible,den.x);\n" \
+  "        rgb=rectangle_lerp(clipped_left,right,pixel.x-int(v_span_y.x),visible);\n" \
+  "      } else rgb=rectangle_lerp(left,right,p.x,den.x);\n" \
+  "    }\n" \
+  "    float alpha=v_colour.a;\n" \
+  "    if(v_span_active==0.0 || alpha>=1.0){\n" \
+  "      alpha=(!outline && !gradient) || (flags&4u)==0u?1.0:floor(alpha*255.0+0.5)/255.0;\n" \
+  "    }\n" \
+  "    o_color=vec4(vec3(rgb)/255.0,alpha); return;\n" \
+  "  }\n" \
   "  if(u_filter==31 || u_filter==32){ o_color=v_colour; return; }\n" \
   "  // R03_SHADER_STUDIO_ALPHA_RECT: a coverage-only pass stamps written alpha.\n" \
   "  if(u_filter==33){ o_color=vec4(0.0,0.0,0.0,1.0); return; }\n" \

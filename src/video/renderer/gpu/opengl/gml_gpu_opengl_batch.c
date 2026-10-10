@@ -616,9 +616,11 @@ static int scene_preflight(GmlGpuBackend *backend,const GmlRenderDrawBatch *batc
       if(op->payload.primitive.kind==GML_RENDER_PRIMITIVE_PARTICLE_LINE ||
          op->payload.primitive.kind==GML_RENDER_PRIMITIVE_CLASSIC_ALPHA_RECT ||
          op->payload.primitive.kind==GML_RENDER_PRIMITIVE_STUDIO_ALPHA_RECT ||
+         op->payload.primitive.kind==GML_RENDER_PRIMITIVE_RECTANGLE ||
          op->payload.primitive.kind==GML_RENDER_PRIMITIVE_CLASSIC_INVERSE_RECT){
         if((!gml_render_particle_line_valid(op) && !gml_render_classic_alpha_rect_valid(op) &&
             !gml_render_studio_alpha_rect_valid(op) &&
+            !gml_render_rectangle_valid(op) &&
             !gml_render_classic_inverse_rect_valid(op)) ||
            (op->payload.primitive.alpha_blend &&
             (!backend->gl.BlendFuncSeparate || !backend->gl.BlendEquationSeparate)) ||
@@ -1168,7 +1170,8 @@ static int flush_quads(GmlGpuBackend *backend,GlSceneImage *target,GlSceneImage 
     backend->gl.BlendEquationSeparate(GL_FUNC_ADD,GL_FUNC_ADD);
     backend->gl.Enable(GL_BLEND);
   } else backend->gl.Disable(GL_BLEND);
-  int stamp_alpha=filter==9u || filter==12u || filter==21u || filter==23u || filter==25u || filter==32u;
+  int stamp_alpha=filter==9u || filter==12u || filter==21u || filter==23u ||
+                  filter==25u || filter==32u || filter==35u;
   backend->gl.ColorMask((write_mask&1u)!=0u,(write_mask&2u)!=0u,(write_mask&4u)!=0u,
                         !stamp_alpha && (write_mask&8u)!=0u);
   backend->gl.UseProgram(scene->program);
@@ -1221,7 +1224,8 @@ static int flush_quads(GmlGpuBackend *backend,GlSceneImage *target,GlSceneImage 
      * the same sampler in an alpha-only pass; source-zero texels stay untouched. */
     backend->gl.ColorMask(GL_FALSE,GL_FALSE,GL_FALSE,GL_TRUE);
     backend->gl.Disable(GL_BLEND);
-    backend->gl.Uniform1i(scene->u_filter,filter==32u?33:filter==25u?26:filter==23u?24:filter==21u?22:filter==9u?10:13);
+    backend->gl.Uniform1i(scene->u_filter,filter==35u?36:filter==32u?33:filter==25u?26:
+                         filter==23u?24:filter==21u?22:filter==9u?10:13);
     backend->gl.DrawArrays(GL_TRIANGLES,0,(GLsizei)(count*6u));
   }
   backend->gl.ColorMask(GL_TRUE,GL_TRUE,GL_TRUE,GL_TRUE);
@@ -1649,12 +1653,19 @@ GmlRenderExecutionResult gml_gpu_opengl_scene_submit(GmlGpuBackend *backend,
       op->payload.primitive.kind==GML_RENDER_PRIMITIVE_CLASSIC_INVERSE_RECT;
     int studio_alpha_rect=op->opcode==GML_RENDER_OP_COLOURED_PRIMITIVE &&
       op->payload.primitive.kind==GML_RENDER_PRIMITIVE_STUDIO_ALPHA_RECT;
+    int rectangle=op->opcode==GML_RENDER_OP_COLOURED_PRIMITIVE &&
+      op->payload.primitive.kind==GML_RENDER_PRIMITIVE_RECTANGLE;
     int alpha_rect=inverse_rect || studio_alpha_rect || (op->opcode==GML_RENDER_OP_COLOURED_PRIMITIVE &&
       op->payload.primitive.kind==GML_RENDER_PRIMITIVE_CLASSIC_ALPHA_RECT);
-    uint32_t primitive_filter=particle?28u:studio_alpha_rect?32u:31u;
-    int primitive_blend=inverse_rect?GL_SCENE_BLEND_INVERSE_RECT:
+    uint32_t primitive_filter=rectangle?
+      (op->payload.primitive.alpha_blend && op->payload.primitive.alpha<1.0 &&
+       !(op->payload.primitive.rectangle_flags&GML_RENDER_RECTANGLE_TARGET_ALPHA)?35u:34u):
+      particle?28u:studio_alpha_rect?32u:31u;
+    int primitive_blend=rectangle?
+      (op->payload.primitive.alpha_blend && op->payload.primitive.alpha<1.0?3:0):
+      inverse_rect?GL_SCENE_BLEND_INVERSE_RECT:
       (particle || alpha_rect?(int)op->payload.primitive.alpha_blend:0);
-    if(pending_count && (particle || alpha_rect
+    if(pending_count && (particle || alpha_rect || rectangle
        ? !active_target || !same_logical(active_target->ref,op->target.image) ||
          pending_count==GL_SCENE_MAX_QUADS || pending_filter!=primitive_filter ||
          pending_blend!=primitive_blend
@@ -1706,7 +1717,7 @@ GmlRenderExecutionResult gml_gpu_opengl_scene_submit(GmlGpuBackend *backend,
       continue;
     }
     if(op->opcode==GML_RENDER_OP_COLOURED_PRIMITIVE){
-      if(particle || alpha_rect){
+      if(particle || alpha_rect || rectangle){
         const GmlRenderPrimitiveRect *p=&op->payload.primitive;
         static const unsigned corners[6]={0,1,2,0,2,3};
         double rad=p->angle*3.14159265358979323846/180.0;
@@ -1726,9 +1737,18 @@ GmlRenderExecutionResult gml_gpu_opengl_scene_submit(GmlGpuBackend *backend,
           v[14]=(float)co; v[15]=(float)si;
           v[16]=(float)p->scale_x; v[17]=(float)p->scale_y;
           v[21]=(float)p->interpolate; v[22]=(float)p->alpha_blend;
+          if(rectangle){
+            v[12]=(float)p->authored_region.x; v[13]=(float)p->authored_region.y;
+            v[14]=(float)(p->authored_region.width-1u);
+            v[15]=(float)(p->authored_region.height-1u);
+            v[18]=(float)p->rectangle_flags;
+            for(unsigned c=0;c<4u;c++) v[19u+c]=(float)(p->corner_colour[c]&0xFFFFFFu);
+            v[23]=(float)p->region.x; v[24]=(float)(p->region.width-1u);
+            v[27]=(float)p->alpha_blend;
+          }
         }
         pending_source=NULL; pending_filter=primitive_filter; pending_blend=primitive_blend;
-        if(alpha_rect) pending_write_mask=15u;
+        if(alpha_rect || rectangle) pending_write_mask=15u;
         pending_count++;
         target->valid=1; target->rendered_origin=1;
         continue;

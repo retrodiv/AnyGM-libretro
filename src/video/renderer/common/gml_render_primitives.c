@@ -246,6 +246,72 @@ static int resident_studio_alpha_rect(GmlRender *render,int x1,int y1,int x2,int
   return 1;
 }
 
+/* R03-PRIM-RECTANGLE-MATRIX: all rectangle ports already carry CPU raster bounds.
+ * Keep the cheaper qualified flat paths, and batch the remaining normal-state
+ * rectangle combinations without a predecessor snapshot or CPU pixel transfer. */
+static int resident_rectangle_function(GmlRender *r,int x1,int y1,int x2,int y2,
+                                       uint32_t c1,uint32_t c2,uint32_t c3,uint32_t c4,
+                                       int outline){
+  const GmlRenderDeviceServices *device=gml_render_device(r);
+  if(!r || !r->resident_application_pass || !device || !device->observe_on_demand ||
+     !device->observe_on_demand(device->context) || !gml_render_scene_target_matches(r) ||
+     r->active_shader>=0 || r->blendmode || r->blend_equation!=1 ||
+     r->blend_equation_alpha!=1 || r->color_write_mask!=15u || r->alpha_test_enable ||
+     r->pending_presentation || r->rotated_batch_count || r->rotated_batch_building ||
+     r->classic_phase_y || r->classic_interp_phase[0] ||
+     r->classic_interp_phase[1] || r->classic_interp_phase[2] || !isfinite(r->alpha)) return 0;
+  double alpha=fmax(0.0,fmin(1.0,r->alpha));
+  if(alpha<=0.0) return 1;
+  if(x1>x2){int swap=x1;x1=x2;x2=swap;}
+  if(y1>y2){int swap=y1;y1=y2;y2=swap;}
+  if(x2<0 || y2<0 || x1>=r->fbw || y1>=r->fbh) return 1;
+  if(x1 < -32768 || y1 < -32768 || x2>32767 || y2>32767) return 0;
+  int gradient=!outline && (c1!=c2 || c1!=c3 || c1!=c4);
+  /* The existing filled scalar writer returns at an alpha below its first
+   * eight-bit factor. Classic uniform floats and outlines do not use that gate. */
+  if(r->alphablend && alpha<1.0/256.0 && !outline && (!r->classic || gradient)) return 1;
+  GmlRenderRect authored={x1,y1,(uint32_t)(x2-x1+1),(uint32_t)(y2-y1+1)};
+  int left=x1<0?0:x1,top=y1<0?0:y1;
+  int right=x2>=r->fbw?r->fbw-1:x2,bottom=y2>=r->fbh?r->fbh-1:y2;
+  if(outline && x1<left && x2>right && y1<top && y2>bottom) return 1;
+  if(r->pending_underlay && !gml_render_compose_resident_underlay(r)) return 0;
+  gml_render_flush_pending_fill(r);
+  GmlRenderResource *target=gml_render_scene_target_resource_ensure(r);
+  if(r->pending_fill || !target) return 0;
+  GmlRenderImageRef next=gml_render_application_scene_next_image_ref(r,target);
+  if(next.content_version==UINT64_MAX) return 0;
+  GmlRenderDrawOp operation={0};
+  operation.opcode=GML_RENDER_OP_COLOURED_PRIMITIVE;
+  operation.scene_family=GML_RENDER_SCENE_PRIMITIVE;
+  operation.reconstruction_mode=GML_RENDER_DEVICE_CHECKPOINT;
+  operation.target=(GmlRenderTargetRef){.image=next,.storage_version=1u,
+    .width=(uint32_t)r->fbw,.height=(uint32_t)r->fbh,
+    .pixel_format=GML_RENDER_PIXEL_ARGB8888,
+    .region={0,0,(uint32_t)r->fbw,(uint32_t)r->fbh}};
+  operation.target.image.content_version++;
+  GmlRenderPrimitiveRect *p=&operation.payload.primitive;
+  p->region=(GmlRenderRect){left,top,(uint32_t)(right-left+1),(uint32_t)(bottom-top+1)};
+  p->authored_region=authored;p->kind=GML_RENDER_PRIMITIVE_RECTANGLE;
+  p->alpha=alpha;p->alpha_blend=r->alphablend?1u:0u;
+  p->rectangle_flags=(outline?GML_RENDER_RECTANGLE_OUTLINE:0u)|
+    (r->classic?GML_RENDER_RECTANGLE_CLASSIC:0u)|
+    ((outline?gml_render_target_preserves_alpha(r):r->target_sp>0)
+      ?GML_RENDER_RECTANGLE_TARGET_ALPHA:0u)|
+    (gradient?GML_RENDER_RECTANGLE_GRADIENT:0u);
+  uint32_t colours[4]={c1,c2,c3,c4};
+  for(unsigned c=0;c<4u;c++)
+    p->corner_colour[c]=gml_render_cpu_backend_color_to_xrgb(colours[c]);
+  p->colour=p->corner_colour[0];
+  if(!gml_render_application_scene_enqueue_primitive(r,&operation)) return 0;
+  r->fb_all_transparent=0;
+  int opaque_write=alpha>=1.0 || (!r->alphablend && !outline && !gradient) ||
+    !(p->rectangle_flags&GML_RENDER_RECTANGLE_TARGET_ALPHA);
+  int full_cover=!outline && left==0 && top==0 && right==r->fbw-1 && bottom==r->fbh-1;
+  int opaque=opaque_write && (full_cover || (r->fb_opaque_known && r->fb_all_opaque));
+  r->fb_opaque_known=r->fb_all_opaque=opaque;
+  return 1;
+}
+
 typedef struct {
   GmlRender *render;
   GmlFlatRegion *regions;
@@ -572,6 +638,7 @@ void gml_render_primitive_rectangle(GmlRender *render,
   if(!outline && resident_opaque_rect(render,x1,y1,x2,y2,color,1)) return;
   if(!outline && resident_classic_alpha_rect(render,x1,y1,x2,y2,color)) return;
   if(!outline && resident_studio_alpha_rect(render,x1,y1,x2,y2,color)) return;
+  if(resident_rectangle_function(render,x1,y1,x2,y2,color,color,color,color,outline)) return;
   gml_render_cpu_rectangle(render,x1,y1,x2,y2,color,outline);
 }
 
@@ -589,6 +656,7 @@ void gml_render_primitive_rectangle_color(GmlRender *render,
      resident_classic_alpha_rect(render,x1,y1,x2,y2,color1)) return;
   if(!outline && color1==color2 && color2==color3 && color3==color4 &&
      resident_studio_alpha_rect(render,x1,y1,x2,y2,color1)) return;
+  if(resident_rectangle_function(render,x1,y1,x2,y2,color1,color2,color3,color4,outline)) return;
   gml_render_cpu_rectangle_color(render,x1,y1,x2,y2,color1,color2,color3,color4,outline);
 }
 
