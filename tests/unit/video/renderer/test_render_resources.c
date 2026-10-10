@@ -10972,8 +10972,24 @@ static int resident_identity_gui_unit_sourceover(void){
     gml_render_resource_journal_metrics(r->base_scene_resource,&metrics);
     CHECK(metrics.authority==GML_RENDER_RESOURCE_GPU_RESIDENT && !metrics.cpu_replays &&
           !metrics.journal_bytes && !metrics.retained_mutable_bytes);
-    /* New TEXT admission stays narrow; rejected probes leave the prefix queued. */
-    CHECK(!gml_render_resident_font_glyph(r,0,0,0,2,2,2,2,1,1,0x123456u,1));
+    /* The earlier white-only tint rejection was an admission fence, not a
+     * measured pixel expectation. First-generation integer tint now shares
+     * the separately paired point/covered-alpha rule; modern tint stays out. */
+    if(modern) CHECK(!gml_render_resident_font_glyph(r,0,0,0,2,2,2,2,1,1,0x123456u,1));
+    else {
+      const uint32_t tints[4]={0x123456u,0x53A2EDu,0xFE0107u,0x314F89u};
+      for(unsigned tint=0;tint<4u;tint++)
+        CHECK(gml_render_resident_font_glyph(r,0,0,0,2,2,2,2,1,1,tints[tint],1));
+      CHECK(gml_render_scene_submit_pending(r) && fake.last_batch_operations==4u &&
+            fake.last_quad_state.coverage_policy==GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA &&
+            fake.last_filter==GML_RENDER_FILTER_NEAREST && fake.readbacks==0);
+      fake.on_demand=0;
+      CHECK(!gml_render_resident_font_glyph(r,0,0,0,2,2,2,2,1,1,0x123456u,1));
+      fake.on_demand=1;
+      r->fog_flat=1;
+      CHECK(!gml_render_resident_font_glyph(r,0,0,0,2,2,2,2,1,1,0x123456u,1));
+      r->fog_flat=0;
+    }
     CHECK(!gml_render_resident_font_glyph(r,0,0,0,2,2,2,2,1,1,0xFFFFFFu,0.5));
     CHECK(!gml_render_resident_font_glyph(r,0,0,0,2,2,2,2,2,1,0xFFFFFFu,1));
     r->gui_maximise_active=1;

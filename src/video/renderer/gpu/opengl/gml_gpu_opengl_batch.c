@@ -197,7 +197,9 @@ static int integer_sourceover_sprite_valid(const GmlRenderDrawOp *op,
     state->coverage_policy==GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA &&
     (op->scene_family==GML_RENDER_SCENE_SPRITE || op->scene_family==GML_RENDER_SCENE_TEXT) &&
     qualified_blend(state)==1 && quad->filtered_draw_alpha==1.0 &&
-    quad->corner_colour[0]==0xFFFFFFFFu;
+    (quad->corner_colour[0]>>24)==255u &&
+    (op->scene_family==GML_RENDER_SCENE_TEXT ||
+     quad->corner_colour[0]==0xFFFFFFFFu);
   if(!source || (op->scene_family!=GML_RENDER_SCENE_SPRITE && !gui_coverage) ||
      !(((op->target.image.resource_class==GML_RENDER_RESOURCE_APPLICATION ||
          op->target.image.resource_class==GML_RENDER_RESOURCE_SURFACE) &&
@@ -224,7 +226,8 @@ static int integer_sourceover_sprite_valid(const GmlRenderDrawOp *op,
   for(unsigned corner=0;corner<4u;corner++){
     double u=((corner==1u || corner==2u)^flip_x)?u1:u0;
     double v=((corner>=2u)^flip_y)?v1:v0;
-    if((quad->corner_colour[corner]&0xFFFFFFu)!=0xFFFFFFu ||
+    if(((!gui_coverage || op->scene_family!=GML_RENDER_SCENE_TEXT) &&
+        (quad->corner_colour[corner]&0xFFFFFFu)!=0xFFFFFFu) ||
        quad->corner_colour[corner]!=quad->corner_colour[0]) return 0;
     if(gui_coverage && (fabs(quad->u[corner]-u)>1e-12 ||
                         fabs(quad->v[corner]-v)>1e-12)) return 0;

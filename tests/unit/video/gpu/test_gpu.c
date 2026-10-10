@@ -2400,6 +2400,75 @@ static int scene_opaque_target_sourceover_api(GmlGpuApi api,int numbered,unsigne
   return 1;
 }
 
+static int scene_gui_tinted_text_case(void){
+  for(unsigned api=0;api<2u;api++){
+    const uint8_t pixels[16]={208,32,16,128,16,208,32,255,32,16,208,0,192,176,160,64};
+    GmlRenderImageRef source={GML_RENDER_RESOURCE_ATLAS,31u,1u,1u};
+    GmlRenderImageRef target={GML_RENDER_RESOURCE_SCREEN,32u,1u,1u};
+    GmlRenderImageUpload upload={.image=source,.storage_width=2u,.storage_height=2u,
+      .region={0,0,2u,2u},.pixel_format=GML_RENDER_PIXEL_RGBA8888,
+      .stride_bytes=8u,.byte_capacity=sizeof pixels,.bytes=pixels};
+    GmlRenderDrawStateSnapshot state={0};
+    GmlRenderDrawOp ops[3]={0};
+    GmlRenderDrawBatch batch={ops,3u,&state,1u};
+    GmlRenderDeviceServices device;
+    GmlGpuContext context=fake_context(api?GML_GPU_API_OPENGLES3:GML_GPU_API_OPENGL_CORE);
+    anygm_test_graphics_reset();
+    GmlGpu *gpu=gml_gpu_create();
+    REQUIRE(gpu && gml_gpu_context_reset(gpu,&context),"tinted GUI text adopts context");
+    gml_gpu_device_services(gpu,&device);
+    REQUIRE(device.upload(device.context,&upload),"tinted GUI text uploads authored atlas");
+    state.write_mask=15u;state.alpha=255u;state.colour=0xFFFFFFFFu;
+    state.rgb_source_factor=GML_RENDER_BLEND_SOURCE_ALPHA;
+    state.alpha_source_factor=GML_RENDER_BLEND_ONE;
+    state.rgb_destination_factor=state.alpha_destination_factor=GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA;
+    state.rgb_equation=state.alpha_equation=GML_RENDER_BLEND_ADD;
+    state.coverage_policy=GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA;
+    state.sampler_count=1u;
+    state.samplers[0]=(GmlRenderSamplingPolicy){.filter=GML_RENDER_FILTER_NEAREST,
+      .edge_rule=GML_RENDER_EDGE_CLAMP_SUBIMAGE,.source_region={0,0,2u,2u}};
+    for(unsigned index=0;index<3u;index++){
+      GmlRenderDrawOp *op=&ops[index];
+      op->sequence=index+1u;
+      op->target=(GmlRenderTargetRef){.image=target,.storage_version=1u,
+        .width=8u,.height=8u,.pixel_format=GML_RENDER_PIXEL_ARGB8888,.region={0,0,8u,8u}};
+      op->target.image.content_version=index+1u;
+      if(!index){op->opcode=GML_RENDER_OP_CLEAR;op->payload.clear_colour=0x40123456u;continue;}
+      op->opcode=GML_RENDER_OP_TEXTURED_QUAD;op->scene_family=GML_RENDER_SCENE_TEXT;
+      op->reconstruction_mode=GML_RENDER_DEVICE_CHECKPOINT;op->sources=&source;op->source_count=1u;
+      GmlRenderQuad *quad=&op->payload.quad;
+      quad->shape=GML_RENDER_QUAD_AXIS_ALIGNED;quad->sampling=state.samplers[0];
+      quad->filtered_draw_alpha=1.0;
+      quad->x[0]=quad->x[3]=index;quad->x[1]=quad->x[2]=index+2.0;
+      quad->y[0]=quad->y[1]=1.0;quad->y[2]=quad->y[3]=3.0;
+      quad->u[1]=quad->u[2]=quad->v[2]=quad->v[3]=1.0;
+      for(unsigned corner=0;corner<4u;corner++)
+        quad->corner_colour[corner]=index==1u?0xFF563412u:0xFFEDA253u;
+    }
+    GmlRenderExecutionResult result=device.submit(device.context,&batch);
+    REQUIRE(result.status==GML_RENDER_EXEC_ACCEPTED && result.accepted_prefix==3u &&
+            anygm_test_graphics_scene_draw_calls()==2u &&
+            anygm_test_graphics_scene_vertices()==24u &&
+            !anygm_test_graphics_scene_copies() && !anygm_test_graphics_read_pixels(),
+            "different uniform text tints batch RGB and alpha without predecessor reads");
+    for(unsigned variant=0;variant<4u;variant++){
+      GmlRenderDrawOp prior=ops[1];
+      if(variant==0u) ops[1].scene_family=GML_RENDER_SCENE_SPRITE;
+      if(variant==1u) ops[1].payload.quad.corner_colour[0]^=1u;
+      if(variant==2u) ops[1].payload.quad.filtered_draw_alpha=0.5;
+      if(variant==3u) ops[1].payload.quad.x[1]=ops[1].payload.quad.x[2]=4.0;
+      int clears=anygm_test_graphics_clear_calls(),draws=anygm_test_graphics_scene_draw_calls();
+      result=device.submit(device.context,&batch);
+      REQUIRE(result.status==GML_RENDER_EXEC_UNSUPPORTED && !result.accepted_prefix &&
+              anygm_test_graphics_clear_calls()==clears && anygm_test_graphics_scene_draw_calls()==draws,
+              "tinted sprite, gradient, partial alpha or scaled GUI packet rejects before clear");
+      ops[1]=prior;
+    }
+    gml_gpu_destroy(gpu,1);
+  }
+  return 1;
+}
+
 static int scene_opaque_target_sourceover_case(void){
   for(unsigned phase=0;phase<3u;phase++)
     if(!scene_opaque_target_sourceover_api(GML_GPU_API_OPENGLES3,0,phase) ||
@@ -3736,6 +3805,7 @@ int main(int argc,char **argv){
     {"scene_atlas_retire_advanced_version",scene_atlas_retire_advanced_version_case},
     {"scene_alpha_composition",scene_alpha_composition_case},
     {"scene_opaque_target_sourceover",scene_opaque_target_sourceover_case},
+    {"scene_gui_tinted_text",scene_gui_tinted_text_case},
     {"scene_numbered_integer_sourceover",scene_numbered_integer_sourceover_case},
     {"scene_integer_endpoint_sprite",scene_integer_endpoint_sprite_case},
     {"scene_endpoint_source_sprite",scene_endpoint_source_sprite_case},

@@ -418,6 +418,18 @@ static int resident_atlas_crop_from_page(GmlRender *r,GmlTpag *page,
     r->target_id<0 && r->target_sp==0 && resident_identity_screen_gui(r) &&
     (family==GML_RENDER_SCENE_SPRITE || family==GML_RENDER_SCENE_TEXT) &&
     xs==1.0 && ys==1.0 && (colour&0xFFFFFFu)==0xFFFFFFu && draw_alpha==1.0;
+  /* R03-TEXT-FIRSTGEN-GUI-TINTED-POINT: the existing CPU glyph truncates
+   * integer RGB tint before source-over. The point/covered-alpha executor
+   * already uses that same source quantisation; only admission is new. */
+  int gui_tinted_text=r && !r->classic && !r->interp && !r->fog_flat &&
+    !gml_d3_is_active(r) && r->target_id<0 && r->target_sp==0 &&
+    resident_identity_screen_gui(r) &&
+    anygm_policy_uses_first_generation_studio(r->win) &&
+    !anygm_policy_has_modern_layer_semantics(r->win) &&
+    family==GML_RENDER_SCENE_TEXT && xs==1.0 && ys==1.0 && draw_alpha==1.0 &&
+    (colour&0xFFFFFFu)!=0xFFFFFFu && r->device.context &&
+    r->device.observe_on_demand && r->device.observe_on_demand(r->device.context);
+  gui_crop=gui_crop || gui_tinted_text;
   if(replace && page && (page->tx || page->ty || page->bw!=page->sw ||
                          page->bh!=page->sh || page->tw!=page->sw || page->th!=page->sh))
     return 0;
@@ -540,7 +552,8 @@ static int resident_atlas_crop_from_page(GmlRender *r,GmlTpag *page,
         (r->fb!=r->base_scene_resource_pixels && !classic_owned_binary))))) return 0;
   colour&=0xFFFFFFu;
   if(colour!=0xFFFFFFu &&
-     !integer_sprite_part && (family!=GML_RENDER_SCENE_TEXT || !page->scene_binary_alpha)) return 0;
+     !integer_sprite_part && !gui_tinted_text &&
+     (family!=GML_RENDER_SCENE_TEXT || !page->scene_binary_alpha)) return 0;
   checkpoint_alpha_gui=gui_crop &&
     (family==GML_RENDER_SCENE_TEXT || !page->scene_binary_alpha);
   if(checkpoint_alpha_gui &&
