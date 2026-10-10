@@ -347,7 +347,8 @@ static int resident_atlas_crop_from_page(GmlRender *r,GmlTpag *page,
    * coverage through the existing bounded UV-region producer and hardware
    * nearest sampler. This is not a new float shader or a CPU pixel writer. */
   int classic_point=physical_sprite_page==3 && r && r->classic &&
-    family==GML_RENDER_SCENE_SPRITE && xs>0.0 && ys>0.0 && xs<=4.0 && ys<=4.0;
+    (family==GML_RENDER_SCENE_SPRITE || family==GML_RENDER_SCENE_BACKGROUND) &&
+    xs>0.0 && ys>0.0 && xs<=4.0 && ys<=4.0;
   /* R03-TILE-INTEGER-CLIP: the public tile port already resolves world mapping.
    * Integral magnification keeps each destination centre inside one nearest
    * texel; the target viewport clips even a partly visible enlarged texel. */
@@ -548,7 +549,7 @@ static int resident_atlas_crop_from_page(GmlRender *r,GmlTpag *page,
     left=floor(left+0.5);
     top=floor(top+0.5);
     if(left>=r->fbw || top>=r->fbh ||
-       left+(double)crop_width<=0.0 || top+(double)crop_height<=0.0) return 1;
+       left+(double)crop_width*xs<=0.0 || top+(double)crop_height*ys<=0.0) return 1;
   }
   /* R03-SPR-CLASSIC-OWNED-BINARY: endpoint alpha has exact source-over on
    * the owned application too. Keep this extension to packaged positive-unit
@@ -862,8 +863,16 @@ int gml_render_resident_atlas_crop(GmlRender *r,int page_index,
                                   double left,double top,double xs,double ys,
                                   GmlRenderSceneFamily family){
   if(!r || page_index<0 || page_index>=r->n_tpag) return 0;
+  GmlTpag *page=&r->tpag[page_index];
+  /* R03-BG-CLASSIC-SCALED-NEAREST: full untrimmed point backgrounds share
+   * the existing sprite phase/coverage producer, not the filtered shader. */
+  int classic_scaled=r->classic && family==GML_RENDER_SCENE_BACKGROUND &&
+    !page->tx && !page->ty && page->bw==page->sw && page->bh==page->sh &&
+    crop_x==0 && crop_y==0 && crop_width==page->sw && crop_height==page->sh &&
+    xs>0.0 && xs<=4.0 && ys>0.0 && ys<=4.0 && (xs!=1.0 || ys!=1.0);
   return resident_atlas_crop_from_page(r,&r->tpag[page_index],
-    crop_x,crop_y,crop_width,crop_height,left,top,xs,ys,family,0xFFFFFFu,1.0,0,NULL);
+    crop_x,crop_y,crop_width,crop_height,left,top,xs,ys,family,0xFFFFFFu,1.0,
+    classic_scaled?3:0,NULL);
 }
 
 /* R03-TEXT-CLASSIC-ORTHO: font layout stays with the text owner; the existing

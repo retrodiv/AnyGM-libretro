@@ -86,10 +86,15 @@ static int resident_integer_background_part(GmlRender *r,int page_index,
   /* R03-TILE-CLASSIC-UNIT: ordinary unit tile parts use the same source
    * intersection and integral target coverage as the unchanged CPU port.
    * In particular, an off-target cell must not close a queued resident pass. */
-  if(r->classic && (family!=GML_RENDER_SCENE_TILE || xs!=1.0 || ys!=1.0 ||
+  int classic_scaled_background=r->classic && family==GML_RENDER_SCENE_BACKGROUND &&
+    sx==0.0 && sy==0.0 && sw==page->sw && sh==page->sh &&
+    xs>0.0 && xs<=4.0 && ys>0.0 && ys<=4.0 && (xs!=1.0 || ys!=1.0);
+  if(r->classic && ((!classic_scaled_background &&
+     (family!=GML_RENDER_SCENE_TILE || xs!=1.0 || ys!=1.0)) ||
      page->tw!=page->sw || page->th!=page->sh ||
      !isfinite(x-r->cam_x) || !isfinite(y-r->cam_y) ||
-     floor(x-r->cam_x)!=x-r->cam_x || floor(y-r->cam_y)!=y-r->cam_y ||
+     (!classic_scaled_background &&
+      (floor(x-r->cam_x)!=x-r->cam_x || floor(y-r->cam_y)!=y-r->cam_y)) ||
      fabs(x-r->cam_x)>65536.0 || fabs(y-r->cam_y)>65536.0 ||
      r->fog_flat || !r->alphablend || r->blendmode ||
      r->blend_equation!=1 || r->blend_equation_alpha!=1 ||
