@@ -1232,7 +1232,11 @@ int gml_render_resident_nearest_quarter_tile_page(GmlRender *r,GmlTpag *page,
     if(!gml_render_rotated_nearest_texel_regions(r,&sprite,page,x,y,xs,ys,-90.0,
           0xFFFFFFu,regions,REGION_LIMIT,&count)) goto done;
   }
-  GmlTpag selected=*page;resident_tile_source_metadata(&selected);
+  GmlTpag selected=*page;
+  /* Coverage used the authored view. The detached packet instead names only
+   * its selected texels, as the nonrotated part-view owner already does. */
+  selected.tw=selected.sw;selected.th=selected.sh;
+  resident_tile_source_metadata(&selected);
   accepted=!count || resident_atlas_crop_from_page_impl(r,&selected,0,0,page->sw,page->sh,
     0.0,0.0,1.0,1.0,GML_RENDER_SCENE_TILE,colour,alpha,12,NULL,regions,count);
 done:
