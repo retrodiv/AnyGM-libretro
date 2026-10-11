@@ -928,7 +928,10 @@ static int resident_atlas_crop_from_page_impl(GmlRender *r,GmlTpag *page,
   operation.payload.quad.sampling.edge_rule=GML_RENDER_EDGE_CLAMP_SUBIMAGE;
   operation.payload.quad.sampling.source_region=region;
   if(integer_atlas){
-    operation.payload.quad.sampling.quantisation=anygm_policy_has_modern_layer_semantics(r->win)
+    /* The bounded cardinal CPU leaf truncates tint in every policy. Ordinary
+     * axis-aligned packets keep their generation-specific tint owner. */
+    operation.payload.quad.sampling.quantisation=physical_sprite_page!=12 &&
+      anygm_policy_has_modern_layer_semantics(r->win)
       ?GML_RENDER_QUANTISE_INTEGER_TINT_ROUND:GML_RENDER_QUANTISE_INTEGER_TINT_TRUNC;
     operation.payload.quad.filtered_draw_alpha=draw_alpha;
   }
@@ -958,8 +961,11 @@ static int resident_atlas_crop_from_page_impl(GmlRender *r,GmlTpag *page,
   state.colour=0xFFFFFFFFu;
   state.alpha=255u;
   if(integer_atlas){
-    state.alpha_test_enabled=!!r->alpha_test_enable;
-    state.alpha_test_reference=r->alpha_test_enable?r->alpha_test_ref:0u;
+    /* Both preserved cardinal writers ignore raw cutout in this bounded
+     * scalar envelope. Preserve readable public state, not an effect the CPU
+     * does not apply; other atlas packets retain their existing cutout. */
+    state.alpha_test_enabled=physical_sprite_page!=12 && !!r->alpha_test_enable;
+    state.alpha_test_reference=state.alpha_test_enabled?r->alpha_test_ref:0u;
     if(integer_background && r->blendmode==0 && draw_alpha<1.0 &&
        (selected_background || !(xs==1.0 && ys==1.0 && colour==0xFFFFFFu)) &&
        anygm_policy_uses_early_background_compositing(r->win) &&

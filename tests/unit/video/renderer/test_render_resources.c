@@ -11390,14 +11390,15 @@ static int resident_background_function(int fractional){
     if(!noop){
       CHECK(fake.last_batch_operations>=8u && fake.last_filter==GML_RENDER_FILTER_NEAREST);
       if(fake.last_quantisation){
-        CHECK(fake.last_quantisation==(generation==5u?GML_RENDER_QUANTISE_INTEGER_TINT_ROUND:
+        int cardinal=fractional==2 && repeat>=4u;
+        CHECK(fake.last_quantisation==((generation==5u && !cardinal)?GML_RENDER_QUANTISE_INTEGER_TINT_ROUND:
                                                    GML_RENDER_QUANTISE_INTEGER_TINT_TRUNC));
         double expected=fractional!=2 && generations[generation]==13 && a==2u
           ?floor(alphas[a]*255.0)/255.0:alphas[a];
         int packed_empty_cutoff=fractional!=2 && generations[generation]==13 && a==2u && !draw_state;
         CHECK(fake.last_filtered_draw_alpha==expected &&
-              fake.last_quad_state.alpha_test_enabled==((draw_state&1u) || packed_empty_cutoff) &&
-              fake.last_quad_state.alpha_test_reference==((draw_state&1u)?127u:packed_empty_cutoff?1u:0u) &&
+              fake.last_quad_state.alpha_test_enabled==(!cardinal && ((draw_state&1u) || packed_empty_cutoff)) &&
+              fake.last_quad_state.alpha_test_reference==(cardinal?0u:(draw_state&1u)?127u:packed_empty_cutoff?1u:0u) &&
               render->alpha_test_enable==(int)(draw_state&1u) && render->alpha_test_ref==127u);
       }else CHECK(!a && !tint && !draw_state && !disabled);
     }
