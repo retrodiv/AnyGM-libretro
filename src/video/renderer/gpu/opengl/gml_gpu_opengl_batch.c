@@ -218,17 +218,32 @@ static int integer_function_sprite_valid(const GmlRenderDrawOp *op,
        blend!=1 || (op->target.image.resource_class!=GML_RENDER_RESOURCE_SCREEN &&
          op->target.image.resource_class!=GML_RENDER_RESOURCE_APPLICATION)))) return 0;
   double width=q->x[1]-q->x[0],height=q->y[2]-q->y[0];
-  double xs=width/region.width,ys=height/region.height;
-  if(width>16384.0 || height>16384.0 || xs<1.0 || xs>8.0 || ys<1.0 || ys>8.0 ||
-     xs!=floor(xs) || ys!=floor(ys)) return 0;
+  if(width>16384.0 || height>16384.0) return 0;
   double u0=(double)region.x/source->width,u1=((double)region.x+region.width)/source->width;
   double v0=(double)region.y/source->height,v1=((double)region.y+region.height)/source->height;
-  int flip_x=fabs(q->u[0]-u1)<1e-12,flip_y=fabs(q->v[0]-v1)<1e-12;
+  /* The shared point producer can clip a phased whole-scale interval or
+   * fence a boundary with a constant texel-centre strip. Its geometry stays
+   * integral and separable; hardware still samples nearest at whole scales. */
+  for(unsigned axis=0;axis<2u;axis++){
+    const double *uv=axis?q->v:q->u;
+    double begin=uv[0],end=uv[axis?2u:1u],extent=axis?height:width;
+    double storage=axis?source->height:source->width;
+    double span=fabs(end-begin)*storage;
+    if(span<1e-12){
+      double texel=begin*storage-0.5;
+      if(fabs(texel-nearbyint(texel))>1e-9) return 0;
+    }else{
+      double scale=extent/span;
+      if(!isfinite(scale) || scale<1.0-1e-9 || scale>8.0+1e-9 ||
+         fabs(scale-nearbyint(scale))>1e-9) return 0;
+    }
+  }
   for(unsigned c=0;c<4u;c++){
-    double u=((c==1u || c==2u)^flip_x)?u1:u0,v=((c>=2u)^flip_y)?v1:v0;
+    double u=(c==1u || c==2u)?q->u[1]:q->u[0],v=c>=2u?q->v[2]:q->v[0];
     if(q->corner_colour[c]!=q->corner_colour[0] ||
        (q->corner_colour[c]>>24)!=(uint32_t)lround(q->filtered_draw_alpha*255.0) ||
        !isfinite(q->u[c]) || !isfinite(q->v[c]) ||
+       q->u[c]<u0-1e-12 || q->u[c]>u1+1e-12 || q->v[c]<v0-1e-12 || q->v[c]>v1+1e-12 ||
        fabs(q->u[c]-u)>1e-12 || fabs(q->v[c]-v)>1e-12) return 0;
   }
   return 1;

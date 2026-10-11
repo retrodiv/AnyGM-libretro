@@ -328,8 +328,18 @@ static int resident_integer_sprite(GmlRender *r,GmlSprite *sprite,int subimg,
   /* Preserve the established numbered nearest predecessor recipe. Its
    * separately qualified replacement must not be selected merely because
    * this ordinary integer extension precedes the filtered entry. */
+  int snapped_unit=fabs(xs)==1.0 && fabs(ys)==1.0 &&
+    ((blend==0xFFFFFFu && (alpha>=1.0 || (xs>0.0 && ys>0.0))) ||
+     (xs>0.0 && ys>0.0 && anygm_policy_uses_first_generation_studio(r->win))) &&
+    (left!=floor(left) || top!=floor(top));
   if(normal_integer && !r->classic && r->target_id>0 && !r->gui_pass_active &&
      r->alphablend && anygm_policy_has_modern_layer_semantics(r->win) &&
+     resident_filtered_sprite(r,sprite,subimg,x,y,xs,ys,rotation,blend,alpha)) return 1;
+  /* Retain cheaper partial-draw-alpha point recipes where their phases fit.
+   * Full-alpha endpoints need the exact integer tint packet, not float tint.
+   * The inherited numbered predecessor above keeps its separate owner. */
+  if(normal_integer && !snapped_unit && !r->classic && (left!=floor(left) || top!=floor(top)) &&
+     r->alphablend && alpha<1.0 &&
      resident_filtered_sprite(r,sprite,subimg,x,y,xs,ys,rotation,blend,alpha)) return 1;
   return normal_integer && resident_atlas_crop_from_page(r,page,0,0,page->sw,page->sh,
        left,top,xs,ys,GML_RENDER_SCENE_SPRITE,blend,alpha,7,NULL);
@@ -416,7 +426,7 @@ static int resident_atlas_crop_from_page(GmlRender *r,GmlTpag *page,
      (!r || !page || r->interp || r->fog_flat || gml_d3_is_active(r) ||
       family!=GML_RENDER_SCENE_SPRITE || xs!=floor(xs) || ys!=floor(ys) ||
       fabs(xs)<1.0 || fabs(xs)>8.0 || fabs(ys)<1.0 || fabs(ys)>8.0 ||
-      !isfinite(left) || !isfinite(top) || left!=floor(left) || top!=floor(top) ||
+      !isfinite(left) || !isfinite(top) ||
       fabs(left)>65536.0 || fabs(top)>65536.0 || page->sw>4096 || page->sh>4096 ||
       (double)crop_width*fabs(xs)>16384.0 || (double)crop_height*fabs(ys)>16384.0 ||
       (!gml_render_target_preserves_alpha(r) &&
@@ -447,7 +457,9 @@ static int resident_atlas_crop_from_page(GmlRender *r,GmlTpag *page,
     (double)crop_width*xs<=4096.0 && (double)crop_height*ys<=4096.0 &&
     r->device.context && r->device.observe_on_demand &&
     r->device.observe_on_demand(r->device.context);
-  double point_left=left,point_top=top;
+  double point_left=left,point_top=top,integer_phase_x=0.0,integer_phase_y=0.0;
+  int integer_point=integer_sprite && (left!=floor(left) || top!=floor(top));
+  GmlTpag integer_point_page={0};
   int replace=physical_sprite_page && family==GML_RENDER_SCENE_SPRITE &&
     resident_identity_gui_replacement(r,xs,ys,colour,draw_alpha);
   /* R03-GUI-UNIT-SOURCEOVER: SCREEN stamps covered alpha rather than
@@ -659,6 +671,41 @@ static int resident_atlas_crop_from_page(GmlRender *r,GmlTpag *page,
      !integer_sprite && !checkpoint_alpha_text && !checkpoint_alpha_sprite && !checkpoint_alpha_gui) return 0;
   scaled_width=(double)crop_width*fabs(xs);
   scaled_height=(double)crop_height*fabs(ys);
+  if(integer_point){
+    /* Reuse the point writer's coverage and bounded geometry producer. A
+     * first-generation numbered target snaps both sampling and coverage;
+     * Classic magnification and modern targets retain their authored phase.
+     * No pixel writer, float shader emulation or destination image is needed. */
+    if(scaled_width>4096.0 || scaled_height>4096.0) return 0;
+    int modern=anygm_policy_has_modern_layer_semantics(r->win);
+    int firstgen=gml_render_target_is_first_generation_application_surface(r);
+    int world=modern && !r->gui_pass_active && !r->target_sp && r->target_id<0;
+    double tie_x=world && fabs(fabs(r->cam_x-nearbyint(r->cam_x))-0.5)<1e-9?-1e-9:0.0;
+    double tie_y=world && fabs(fabs(r->cam_y-nearbyint(r->cam_y))-0.5)<1e-9?-1e-9:0.0;
+    double snapped_x=floor(left+0.5+tie_x),snapped_y=floor(top+0.5+tie_y);
+    int unit_white=fabs(xs)==1.0 && fabs(ys)==1.0 && colour==0xFFFFFFu &&
+      (draw_alpha==1.0 || (xs>0.0 && ys>0.0));
+    point_left=(unit_white || (!modern && !(r->classic && xs>1.0) &&
+      !(firstgen && xs>1.0)))?snapped_x:left+tie_x;
+    point_top=(unit_white || (!modern && !(r->classic && ys>1.0) &&
+      !(firstgen && ys>1.0)))?snapped_y:top+tie_y;
+    integer_phase_x=point_left==snapped_x?0.0:-tie_x+(firstgen && xs>1.0?0.5-1e-9:0.0);
+    integer_phase_y=point_top==snapped_y?0.0:-tie_y+(firstgen && ys>1.0?0.5-1e-9:0.0);
+    integer_point_page=*page;
+    /* The unchanged white/full-alpha application leaf can read one adjacent
+     * atlas texel at a trailing tie. Keep its physical bounds without claiming
+     * that the original crop's cached alpha classification covers that texel. */
+    int contiguous=firstgen && r->alphablend && colour==0xFFFFFFu && draw_alpha==1.0;
+    if(contiguous && xs>1.0 && (uint64_t)page->sx+page->sw<source.width)
+      integer_point_page.sw++;
+    if(contiguous && ys>1.0 && (uint64_t)page->sy+page->sh<source.height)
+      integer_point_page.sh++;
+    left=snapped_x;top=snapped_y;
+    /* Phase-free axes use the already qualified single whole-texel quad.
+     * Do not scan output coordinates or partition an ordinary snapped copy. */
+    if(point_left==left && point_top==top && integer_phase_x==0.0 && integer_phase_y==0.0 &&
+       integer_point_page.sw==page->sw && integer_point_page.sh==page->sh) integer_point=0;
+  }
   if(gui_half){
     if(source.width>16384u || source.height>16384u || atlas->runtime_font_page ||
        !source.borrowed_immutable) return 0;
@@ -684,6 +731,11 @@ static int resident_atlas_crop_from_page(GmlRender *r,GmlTpag *page,
   }
   if(xs<0.0) left-=scaled_width;
   if(ys<0.0) top-=scaled_height;
+  if(integer_point){
+    modern_point_axis_prune(point_left,xs,integer_phase_x,integer_point_page.sw,&left,&scaled_width);
+    modern_point_axis_prune(point_top,ys,integer_phase_y,integer_point_page.sh,&top,&scaled_height);
+    if(scaled_width<=0.0 || scaled_height<=0.0) return 1;
+  }
   if(!isfinite(left) || !isfinite(top) ||
      !isfinite(scaled_width) || !isfinite(scaled_height) ||
      floor(left)!=left || floor(top)!=top ||
@@ -744,6 +796,10 @@ static int resident_atlas_crop_from_page(GmlRender *r,GmlTpag *page,
   if(image.content_version==UINT64_MAX) return 0;
   region=(GmlRenderRect){page->sx+crop_x,page->sy+crop_y,
                          (uint32_t)crop_width,(uint32_t)crop_height};
+  if(integer_point){
+    region.width=(uint32_t)integer_point_page.sw;
+    region.height=(uint32_t)integer_point_page.sh;
+  }
   source_ref=source.image;
   operation.opcode=GML_RENDER_OP_TEXTURED_QUAD;
   operation.reconstruction_mode=integer_sprite || source_override || classic_tile || integer_text || integer_sprite_part || fractional_text || checkpoint_integer_tile || classic_point || replace || checkpoint_alpha_background || checkpoint_alpha_text ||
@@ -795,8 +851,9 @@ static int resident_atlas_crop_from_page(GmlRender *r,GmlTpag *page,
   state.write_mask=15u;
   state.colour=0xFFFFFFFFu;
   state.alpha=255u;
+  int adjacent_alpha=integer_point && (integer_point_page.sw!=page->sw || integer_point_page.sh!=page->sh);
   if(!replace && (!integer_sprite || r->alphablend) &&
-     (!page->scene_fully_opaque || draw_alpha<1.0 || checkpoint_alpha_gui)){
+     (!page->scene_fully_opaque || adjacent_alpha || draw_alpha<1.0 || checkpoint_alpha_gui)){
     state.rgb_source_factor=GML_RENDER_BLEND_SOURCE_ALPHA;
     state.rgb_destination_factor=GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA;
     state.alpha_source_factor=(integer_sprite && gml_render_target_preserves_alpha(r)) || checkpoint_alpha_background ||
@@ -814,16 +871,19 @@ static int resident_atlas_crop_from_page(GmlRender *r,GmlTpag *page,
   if(checkpoint_alpha_gui)
     state.coverage_policy=GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA;
   if(integer_sprite && r->alphablend && !gml_render_target_preserves_alpha(r) &&
-     (draw_alpha<1.0 || !page->scene_binary_alpha))
+     (draw_alpha<1.0 || !page->scene_binary_alpha || adjacent_alpha))
     state.coverage_policy=GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA;
   state.samplers[0]=operation.payload.quad.sampling;
-  if(classic_point || fractional_text){
+  if(integer_point){
+    if(!resident_modern_point_regions(r,&integer_point_page,point_left,point_top,xs,ys,
+      integer_phase_x,integer_phase_y,&operation,&state,&source,NULL,0u)) return 0;
+  }else if(classic_point || fractional_text){
     if(!resident_modern_point_regions(r,page,point_left,point_top,xs,ys,0.0,0.0,
                                      &operation,&state,&source,NULL,0u)) return 0;
   } else if(!gml_render_application_scene_enqueue(r,&operation,&state,&source)) return 0;
   r->fb_all_transparent=0;
   if(((family==GML_RENDER_SCENE_TEXT && draw_alpha<1.0) || checkpoint_alpha_sprite ||
-      (integer_sprite && r->alphablend && (draw_alpha<1.0 || !page->scene_binary_alpha))) &&
+      (integer_sprite && r->alphablend && (draw_alpha<1.0 || !page->scene_binary_alpha || adjacent_alpha))) &&
      gml_render_target_preserves_alpha(r)){
     r->fb_opaque_known=0;
     r->fb_all_opaque=0;
@@ -831,7 +891,7 @@ static int resident_atlas_crop_from_page(GmlRender *r,GmlTpag *page,
   }
   /* Enqueue conservatively invalidates application opacity. A complete nearest
    * replacement from an opaque page proves every target alpha without reading it. */
-  if((replace || page->scene_fully_opaque) && draw_alpha==1.0 && left==0.0 && top==0.0 &&
+  if((replace || (page->scene_fully_opaque && !adjacent_alpha)) && draw_alpha==1.0 && left==0.0 && top==0.0 &&
      scaled_width==r->fbw && scaled_height==r->fbh){
     r->fb_opaque_known=r->fb_all_opaque=1;
     if(r->app_surface && r->fb==r->app_surface) r->app_surface_opaque=1;

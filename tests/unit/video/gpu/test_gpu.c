@@ -2401,6 +2401,33 @@ static int scene_integer_function_sprite_case(void){
         anygm_test_graphics_scene_draw_calls()==draws && anygm_test_graphics_scene_copies()==0u &&
         anygm_test_graphics_read_pixels()==0u,"invalid integer sprite refuses before the clear prefix");
     }
+    for(unsigned interval=0;interval<2u;interval++){
+      for(unsigned i=0;i<3u;i++) ops[i].target.image.content_version=4u+interval*3u+i;
+      for(unsigned i=1u;i<3u;i++){
+        ops[i].payload.quad=pristine;GmlRenderQuad *q=&ops[i].payload.quad;
+        if(interval){for(unsigned c=0;c<4u;c++) q->u[c]=0.25;}
+        else{
+          q->x[1]=q->x[2]=1.0;q->u[1]=q->u[2]=0.5;
+        }
+      }
+      result=device.submit(device.context,&batch);
+      REQUIRE(result.status==GML_RENDER_EXEC_ACCEPTED && result.accepted_prefix==3u &&
+        anygm_test_graphics_scene_draw_calls()==draws*(int)(interval+2u) &&
+        anygm_test_graphics_scene_copies()==0u && anygm_test_graphics_read_pixels()==0u,
+        "phased integer interval and constant-centre strips remain snapshot-free and grouped");
+    }
+    for(unsigned invalid=0;invalid<2u;invalid++){
+      for(unsigned i=0;i<3u;i++) ops[i].target.image.content_version=10u+i;
+      for(unsigned i=1u;i<3u;i++){
+        ops[i].payload.quad=pristine;GmlRenderQuad *q=&ops[i].payload.quad;
+        if(invalid){q->u[1]=q->u[2]=0.2;}
+        else{for(unsigned c=0;c<4u;c++) q->u[c]=0.125;}
+      }
+      result=device.submit(device.context,&batch);
+      REQUIRE(result.status==GML_RENDER_EXEC_UNSUPPORTED && !result.accepted_prefix &&
+        anygm_test_graphics_scene_draw_calls()==draws*3 && !anygm_test_graphics_scene_copies() &&
+        !anygm_test_graphics_read_pixels(),"non-centre constants and nonwhole inverse scales refuse transactionally");
+    }
     gml_gpu_destroy(gpu,1);
   }
   return 1;
