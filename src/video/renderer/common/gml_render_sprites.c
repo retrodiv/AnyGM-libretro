@@ -480,13 +480,19 @@ static int resident_atlas_crop_from_page_impl(GmlRender *r,GmlTpag *page,
   int selected_background=physical_sprite_page==9;
   int fractional_background=physical_sprite_page==10;
   int tile_function=physical_sprite_page==11 || physical_sprite_page==12;
+  /* R03-TEXT-NEAREST-FUNCTION: layout has already selected the actual cell.
+   * Real detached cells and copied sprite cells keep separate cache phases. */
+  int text_function=physical_sprite_page==13 || physical_sprite_page==14;
+  if(text_function) integer_text=0;
   int scaled_background=selected_background || fractional_background;
-  int scaled_atlas=scaled_background || tile_function;
+  int scaled_atlas=scaled_background || tile_function || text_function;
   int integer_background=physical_sprite_page==8 || scaled_background;
-  int integer_atlas=integer_sprite || integer_background || tile_function;
+  int integer_atlas=integer_sprite || integer_background || tile_function || text_function;
   if(integer_atlas &&
      (!r || !page || r->interp || r->fog_flat || gml_d3_is_active(r) ||
-      family!=(tile_function?GML_RENDER_SCENE_TILE:
+      (text_function && r->gui_pass_active &&
+       (r->gui_maximise_active || r->gui_maximise_xoffset!=0.0 || r->gui_maximise_yoffset!=0.0)) ||
+      family!=(text_function?GML_RENDER_SCENE_TEXT:tile_function?GML_RENDER_SCENE_TILE:
                integer_background?GML_RENDER_SCENE_BACKGROUND:GML_RENDER_SCENE_SPRITE) ||
       (!scaled_atlas && (xs!=floor(xs) || ys!=floor(ys))) ||
       fabs(xs)<(scaled_atlas?0.0625:1.0) || fabs(xs)>(scaled_atlas?64.0:8.0) ||
@@ -510,7 +516,7 @@ static int resident_atlas_crop_from_page_impl(GmlRender *r,GmlTpag *page,
       !r->device.observe_on_demand(r->device.context))) return 0;
   /* Packaged point glyphs on modern SCREEN already have resolved, snapped
    * anchors. Fractional enlargement changes sampling, not the text layout. */
-  int fractional_text=r && !r->classic && !r->interp && !r->gui_pass_active &&
+  int fractional_text=!text_function && r && !r->classic && !r->interp && !r->gui_pass_active &&
     !r->fog_flat && !gml_d3_is_active(r) && r->target_id<0 && r->target_sp==0 &&
     anygm_policy_has_modern_layer_semantics(r->win) &&
     family==GML_RENDER_SCENE_TEXT && draw_alpha==1.0 &&
@@ -573,7 +579,7 @@ static int resident_atlas_crop_from_page_impl(GmlRender *r,GmlTpag *page,
      (r->classic && ((family!=GML_RENDER_SCENE_SPRITE &&
                       family!=GML_RENDER_SCENE_BACKGROUND &&
                       family!=GML_RENDER_SCENE_TEXT && !classic_tile && !tile_function) ||
-                     (family==GML_RENDER_SCENE_TEXT && !orthographic &&
+                     (family==GML_RENDER_SCENE_TEXT && !orthographic && !text_function &&
                       anygm_policy_classic_modern_presentation(r->win)) ||
                      r->interp || (!orthographic && !classic_point && !integer_atlas &&
                                    (xs!=1.0 || ys!=1.0)))) ||
@@ -594,7 +600,7 @@ static int resident_atlas_crop_from_page_impl(GmlRender *r,GmlTpag *page,
      !isfinite(draw_alpha) || draw_alpha<=0.0 || draw_alpha>1.0 ||
      (family!=GML_RENDER_SCENE_TEXT && family!=GML_RENDER_SCENE_SPRITE && !integer_background && !tile_function &&
       draw_alpha!=1.0) ||
-     (family==GML_RENDER_SCENE_TEXT && draw_alpha<1.0 &&
+     (family==GML_RENDER_SCENE_TEXT && !text_function && draw_alpha<1.0 &&
       !gml_render_target_preserves_alpha(r) &&
       (!r->fb_opaque_known || !r->fb_all_opaque)) ||
      (r->interp && (xs!=1.0 || ys!=1.0))) return 0;
@@ -758,12 +764,16 @@ static int resident_atlas_crop_from_page_impl(GmlRender *r,GmlTpag *page,
           scaled_height=fabs(floor(top+crop_height*ys+0.5)-snapped_y);
       }
     }
+    int copied_font_cache=text_function && physical_sprite_page==14 &&
+      page->argb_cache && page->alpha_runs_built && page->alpha_row_min && page->alpha_row_max;
     int unit_white=!r->blendmode && (!r->alpha_test_enable || !r->alpha_test_ref) &&
       fabs(xs)==1.0 && fabs(ys)==1.0 && colour==0xFFFFFFu &&
       /* Detached TILE views cannot enter cached partial-opacity or reflected
        * white copies. Only the forward full-opacity copy has a snapped fallback. */
-      ((draw_alpha==1.0 && (!tile_function || (xs>0.0 && ys>0.0))) ||
-       (!selected_background && !tile_function && xs>0.0 && ys>0.0));
+      ((draw_alpha==1.0 && (!tile_function || (xs>0.0 && ys>0.0)) &&
+        (!text_function || (xs>0.0 && ys>0.0) || copied_font_cache)) ||
+       (!selected_background && !tile_function && (!text_function || copied_font_cache) &&
+        xs>0.0 && ys>0.0));
     point_left=(unit_white || (!modern && !(r->classic && xs>1.0) &&
       !(firstgen && xs>1.0)))?snapped_x:left+tie_x;
     point_top=(unit_white || (!modern && !(r->classic && ys>1.0) &&
@@ -799,11 +809,11 @@ static int resident_atlas_crop_from_page_impl(GmlRender *r,GmlTpag *page,
     int contiguous=firstgen && !tile_function && !r->blendmode &&
       (!r->alpha_test_enable || !r->alpha_test_ref) &&
       r->alphablend && colour==0xFFFFFFu && draw_alpha==1.0;
-    if(contiguous && (xs>1.0 || (scaled_background && xs>0.0 &&
+    if(contiguous && (xs>1.0 || ((scaled_background || text_function) && xs>0.0 &&
        fabs(1.0/xs-nearbyint(1.0/xs))>=1e-9)) &&
        (uint64_t)page->sx+page->sw<source.width)
       integer_point_page.sw++;
-    if(contiguous && (ys>1.0 || (scaled_background && ys>0.0 &&
+    if(contiguous && (ys>1.0 || ((scaled_background || text_function) && ys>0.0 &&
        fabs(1.0/ys-nearbyint(1.0/ys))>=1e-9)) &&
        (uint64_t)page->sy+page->sh<source.height)
       integer_point_page.sh++;
@@ -1319,8 +1329,40 @@ int gml_render_resident_font_glyph(GmlRender *r,int atlas,int source_x,int sourc
                                    double xs,double ys,uint32_t colour,double alpha){
   GmlTpag page={.atlas=atlas,.sx=source_x,.sy=source_y,.sw=width,.sh=height,
                 .tw=width,.th=height,.bw=width,.bh=height};
-  return resident_atlas_crop_from_page(r,&page,0,0,width,height,left,top,xs,ys,
-                                       GML_RENDER_SCENE_TEXT,colour,alpha,0,NULL);
+  /* Preserve cheap endpoint/runtime packets and the qualified checkpoint owner
+   * when on-demand authority is unavailable. Resident packaged tint uses the
+   * integer quantisation owner so opaque endpoints do not lose a channel. */
+  if(r && ((colour&0xFFFFFFu)==0xFFFFFFu || (colour&0xFFFFFFu)==0u ||
+           (atlas>=0 && atlas<r->n_atlas && r->atlas[atlas].runtime_font_page) ||
+           !r->device.context || !r->device.observe_on_demand ||
+           !r->device.observe_on_demand(r->device.context)) &&
+     resident_atlas_crop_from_page(r,&page,0,0,width,height,left,top,xs,ys,
+                                  GML_RENDER_SCENE_TEXT,colour,alpha,0,NULL)) return 1;
+  if(r && atlas>=0 && atlas<r->n_atlas && !r->atlas[atlas].runtime_font_page){
+    /* Fresh real-font cells have no CPU cache. Conservatively blending an
+     * opaque/binary texel is still exact and avoids scanning a glyph per draw. */
+    page.scene_opaque_checked=1;page.scene_fully_opaque=page.scene_binary_alpha=0;
+    page.scene_ax1=width-1;page.scene_ay1=height-1;
+    if(resident_atlas_crop_from_page(r,&page,0,0,width,height,left,top,xs,ys,
+                                    GML_RENDER_SCENE_TEXT,colour,alpha,13,NULL)) return 1;
+  }
+  return 0;
+}
+
+int gml_render_resident_sprite_font_glyph(GmlRender *r,int page_index,
+  double left,double top,double xs,double ys,uint32_t colour,double alpha){
+  if(!r || page_index<0 || page_index>=r->n_tpag) return 0;
+  GmlTpag *page=&r->tpag[page_index];
+  if((colour&0xFFFFFFu)==0xFFFFFFu && alpha==1.0){
+    if(gml_render_resident_atlas_page(r,page_index,left,top,xs,ys,GML_RENDER_SCENE_TEXT)) return 1;
+  }
+  if(!r->device.context || !r->device.observe_on_demand ||
+     !r->device.observe_on_demand(r->device.context))
+    return gml_render_resident_font_glyph(r,page->atlas,page->sx,page->sy,
+      page->sw,page->sh,left,top,xs,ys,colour,alpha);
+  if(resident_atlas_crop_from_page(r,page,0,0,page->sw,page->sh,left,top,xs,ys,
+                                 GML_RENDER_SCENE_TEXT,colour,alpha,14,NULL)) return 1;
+  return 0;
 }
 
 int gml_render_resident_atlas_page(GmlRender *r,int page_index,

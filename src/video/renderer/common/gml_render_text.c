@@ -17,11 +17,12 @@
 #include <stdlib.h>
 #include <string.h>
 
-/* Both packaged font layouts share the nearest, whole-texel enlargement rule. */
-static int resident_integer_text_scale(double xs,double ys){
+/* Layout resolves mapping before admission. The bounded nearest glyph owner
+ * accepts signed scales without changing either font's placement policy. */
+static int resident_nearest_text_scale(double xs,double ys){
   return isfinite(xs) && isfinite(ys) &&
-         xs>=1.0 && xs<=4.0 && ys>=1.0 && ys<=4.0 &&
-         floor(xs)==xs && floor(ys)==ys;
+         fabs(xs)>=0.0625 && fabs(xs)<=64.0 &&
+         fabs(ys)>=0.0625 && fabs(ys)<=64.0;
 }
 
 
@@ -222,12 +223,11 @@ static void draw_text_real_plain(GmlRender *r, GmlFont *f, double x, double y, c
             resident_glyph=gml_render_resident_filtered_font_glyph(
               r,f->atlas,g->sx,g->sy,g->w,g->h,
               glyph_x-r->cam_x,glyph_y-r->cam_y,xs,ys,glyph_blend,alpha);
-          else if(!r->interp && (!f->runtime_owned || alpha==1.0) &&
-                  (resident_integer_text_scale(xs,ys) ||
-                   (!f->runtime_owned && anygm_policy_has_modern_layer_semantics(r->win) &&
-                    r->target_id<0 && r->target_sp==0 &&
-                    isfinite(xs) && isfinite(ys) &&
-                    xs>=1.0 && xs<=4.0 && ys>=1.0 && ys<=4.0)))
+          else if(!r->interp &&
+                  ((!f->runtime_owned && resident_nearest_text_scale(xs,ys)) ||
+                   (f->runtime_owned && alpha==1.0 && isfinite(xs) && isfinite(ys) &&
+                    xs>=1.0 && xs<=4.0 && ys>=1.0 && ys<=4.0 &&
+                    floor(xs)==xs && floor(ys)==ys)))
             resident_glyph=gml_render_resident_font_glyph(r,f->atlas,g->sx,g->sy,
               g->w,g->h,glyph_x-r->cam_x,glyph_y-r->cam_y,xs,ys,glyph_blend,alpha);
         }
@@ -399,17 +399,14 @@ static void draw_text_transformed_font(GmlRender *r, GmlFont *f,
         if(r->resident_application_pass && !use_rot && !s->runtime_rgba &&
            !gml_d3_is_active(r) && s->frame &&
            isfinite(alpha) && alpha>0.0 && alpha<=1.0 &&
-           resident_integer_text_scale(xs,ys) && !r->interp){
+           resident_nearest_text_scale(xs,ys) && !r->interp){
           int page_index=s->frame[fr];
           if(page_index>=0 && page_index<r->n_tpag){
             GmlTpag *page=&r->tpag[page_index];
             double left=x+(cx-s->originx+(f->prop?0:page->tx))*xs-r->cam_x;
             double top=y+(base_y-s->originy+page->ty)*ys-r->cam_y;
-            resident_glyph=(blend&0xFFFFFFu)==0xFFFFFFu && alpha==1.0
-              ?gml_render_resident_atlas_page(
-                 r,page_index,left,top,xs,ys,GML_RENDER_SCENE_TEXT)
-              :gml_render_resident_font_glyph(r,page->atlas,page->sx,page->sy,
-                 page->sw,page->sh,left,top,xs,ys,blend,alpha);
+            resident_glyph=gml_render_resident_sprite_font_glyph(
+              r,page_index,left,top,xs,ys,blend,alpha);
           }
         }
         if(!resident_glyph){

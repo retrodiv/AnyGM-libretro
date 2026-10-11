@@ -209,7 +209,8 @@ static int integer_function_sprite_valid(const GmlRenderDrawOp *op,
   int blend=qualified_blend(state);
   if(!source || (op->scene_family!=GML_RENDER_SCENE_SPRITE &&
                 op->scene_family!=GML_RENDER_SCENE_BACKGROUND &&
-                op->scene_family!=GML_RENDER_SCENE_TILE) ||
+                op->scene_family!=GML_RENDER_SCENE_TILE &&
+                op->scene_family!=GML_RENDER_SCENE_TEXT) ||
      (op->target.image.resource_class!=GML_RENDER_RESOURCE_SCREEN &&
       op->target.image.resource_class!=GML_RENDER_RESOURCE_APPLICATION &&
       op->target.image.resource_class!=GML_RENDER_RESOURCE_SURFACE) ||
@@ -248,7 +249,8 @@ static int integer_function_sprite_valid(const GmlRenderDrawOp *op,
     }else{
       double scale=extent/span;
       int background=op->scene_family==GML_RENDER_SCENE_BACKGROUND ||
-                     op->scene_family==GML_RENDER_SCENE_TILE;
+                     op->scene_family==GML_RENDER_SCENE_TILE ||
+                     op->scene_family==GML_RENDER_SCENE_TEXT;
       if(!isfinite(scale) || scale<(background?0.0625:1.0)-1e-9 ||
          scale>(background?64.0:8.0)+1e-9 ||
          (!background && fabs(scale-nearbyint(scale))>1e-9)) return 0;

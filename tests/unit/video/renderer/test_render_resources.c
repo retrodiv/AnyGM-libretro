@@ -6611,6 +6611,8 @@ static int resident_fractional_screen_font(void){
     free(render->atlas[0].px);
     render->atlas[0].px=malloc(sizeof rgba);CHECK(render->atlas[0].px);
     memcpy(render->atlas[0].px,rgba,sizeof rgba);
+    /* Author partial alpha before the immutable source is first submitted. */
+    if(excluded==4) render->atlas[0].px[3]=128;
     render->atlas[0].w=render->atlas[0].h=2;
     GmlFont *font=&render->fonts[0];
     render->font=0;render->n_fonts=1;
@@ -6637,12 +6639,16 @@ static int resident_fractional_screen_font(void){
     if(excluded==1) fake.on_demand=0;
     if(excluded==2) font->subpixel=1;
     if(excluded==3){font->runtime_owned=1;render->atlas[0].runtime_font_page=1;}
-    if(excluded==4) render->atlas[0].px[3]=128;
     if(excluded==5) alpha=0.5;
     if(excluded==6) colour=0x112233u;
     if(excluded==7) render->interp=1;
-    if(excluded==8) render->gui_pass_active=1;
-    if(excluded==9){int id=gml_surface_create(render,16,12);CHECK(id>0 && gml_surface_set_target(render,id));}
+    if(excluded==8) gml_render_gui_begin(render,16,12);
+    if(excluded==9){
+      int id=gml_surface_create(render,16,12);CHECK(id>0 && gml_surface_set_target(render,id));
+      gml_render_set_pending_fill(render,0xFF123456u);gml_render_flush_pending_fill(render);
+      CHECK(gml_render_scene_submit_pending(render));
+      memcpy(shadow,render->fb,sizeof shadow);submits=fake.submits;
+    }
     if(excluded==10) content.bytecode=15;
     if(excluded==11) xs=4.25;
     if(excluded==12) ys=0.5;
@@ -6651,9 +6657,18 @@ static int resident_fractional_screen_font(void){
     if(excluded==15) font->sdf_spread=1;
     render->world_transform_active=world;
     render->world_scale_x=4;render->world_scale_y=2;
-    double wx=world && excluded!=9?4.0:1.0,wy=world && excluded!=9?2.0:1.0;
+    /* GUI and numbered targets do not apply the retained room-world map. */
+    int mapped_world=world && excluded!=8 && excluded!=9;
+    double wx=mapped_world?4.0:1.0,wy=mapped_world?2.0:1.0;
     gml_draw_text_transformed(render,-1.0/wx,-1.0/wy,"A",xs/wx,ys/wy,0,colour,alpha);
-    if(!excluded){
+    /* R03-TEXT-NEAREST-FUNCTION's paired matrix supersedes these former
+     * admission fences. Original positive and out-of-domain controls remain. */
+    int admitted=!excluded || (excluded>=4 && excluded<=13 && excluded!=7);
+    /* Keep the original clipped attempt and add a visible witness for each
+     * newly admitted variant: a minified glyph can otherwise be a no-op. */
+    if(admitted && excluded)
+      gml_draw_text_transformed(render,4.0/wx,4.0/wy,"A",xs/wx,ys/wy,0,colour,alpha);
+    if(admitted){
       GmlRenderJournalMetrics metrics={0};
       if(!render->resident_application_pass || fake.submits!=submits || fake.readbacks)
         fprintf(stderr,"fractional font admission: world=%d resident=%d submits=%d/%d reads=%d\n",
@@ -6661,7 +6676,17 @@ static int resident_fractional_screen_font(void){
       CHECK(render->resident_application_pass && fake.submits==submits && !fake.readbacks);
       CHECK(gml_render_scene_submit_pending(render));
       gml_render_resource_journal_metrics(gml_render_scene_target_resource_ensure(render),&metrics);
-      CHECK(fake.last_batch_operations>=2u && !fake.readbacks &&
+      if(fake.last_batch_operations<(excluded==9?1u:2u) || fake.readbacks ||
+         fake.last_filter!=GML_RENDER_FILTER_NEAREST ||
+         metrics.authority!=GML_RENDER_RESOURCE_GPU_RESIDENT || metrics.cpu_replays ||
+         metrics.journal_bytes || metrics.retained_mutable_bytes ||
+         memcmp(shadow,render->fb,sizeof shadow))
+        fprintf(stderr,"fractional font tuple: excluded=%d world=%d operations=%u reads=%d filter=%d authority=%d replays=%llu journal=%llu retained=%llu shadow=%d\n",
+          excluded,world,fake.last_batch_operations,fake.readbacks,(int)fake.last_filter,
+          (int)metrics.authority,(unsigned long long)metrics.cpu_replays,
+          (unsigned long long)metrics.journal_bytes,(unsigned long long)metrics.retained_mutable_bytes,
+          !memcmp(shadow,render->fb,sizeof shadow));
+      CHECK(fake.last_batch_operations>=(excluded==9?1u:2u) && !fake.readbacks &&
             fake.last_filter==GML_RENDER_FILTER_NEAREST &&
             metrics.authority==GML_RENDER_RESOURCE_GPU_RESIDENT && !metrics.cpu_replays &&
             !metrics.journal_bytes && !metrics.retained_mutable_bytes &&
@@ -11441,6 +11466,84 @@ static int resident_background_function(int fractional){
   return 1;
 }
 
+/* Admission/authority proof only. Real-context public-string controls own D2. */
+static int resident_nearest_text_function(void){
+  enum {W=24,H=20};
+  const int generations[]={530,700,800,13,15,17};
+  const double alphas[]={1,0,.37};
+  const double scales[][2]={{1,1},{2,3},{-2,-3},{.75,1.5}};
+  for(unsigned generation=0;generation<6u;generation++)
+  for(unsigned target_kind=0;target_kind<4u;target_kind++)
+  for(unsigned gui=0;gui<2u;gui++) for(unsigned font_kind=0;font_kind<2u;font_kind++)
+  for(unsigned draw_state=0;draw_state<4u;draw_state++)
+  for(unsigned disabled=0;disabled<2u;disabled++) for(unsigned a=0;a<3u;a++)
+  for(unsigned scale=0;scale<4u;scale++){
+    GmlRender *r=calloc(1,sizeof *r);GmlWin content={0};
+    FakeDevice fake={.on_demand=1,.readback_colour=0x7F25C080u};
+    GmlRenderDeviceServices device=service(&fake);GmlRenderJournalMetrics metrics={0};
+    uint32_t screen[W*H],shadow[W*H];const uint32_t *pixels=NULL;
+    CHECK(r && !gml_render_init(r,NULL));
+    content.classic_version=generations[generation]>100?generations[generation]:0;
+    content.bytecode=content.classic_version?0:generations[generation];
+    content.has_room_layers=content.bytecode==17;
+    r->win=&content;r->classic=content.classic_version!=0;
+    const uint8_t rgba[16]={208,32,16,255,16,208,32,0,32,16,208,128,192,176,160,64};
+    free(r->atlas[0].px);r->atlas[0].px=malloc(sizeof rgba);r->atlas[0].w=r->atlas[0].h=2;
+    r->tpag=calloc(1,sizeof *r->tpag);r->spr=calloc(1,sizeof *r->spr);
+    CHECK(r->atlas[0].px && r->tpag && r->spr);
+    memcpy(r->atlas[0].px,rgba,sizeof rgba);r->n_tpag=r->n_spr=r->n_fonts=1;
+    r->tpag[0]=(GmlTpag){.sw=2,.sh=2,.tw=2,.th=2,.bw=4,.bh=4,.tx=1,.ty=1};
+    r->spr[0]=(GmlSprite){.w=4,.h=4,.n_frames=1,.frame=calloc(1,sizeof(int))};
+    CHECK(r->spr[0].frame);
+    GmlFont *font=&r->fonts[0];font->sprite=0;font->first='A';
+    if(!font_kind){
+      font->real=1;font->sprite=-1;font->atlas=0;font->line_height=font->align_height=2;
+      font->glyphs=calloc(1,sizeof *font->glyphs);CHECK(font->glyphs);font->n_glyphs=1;
+      font->glyphs[0]=(GmlGlyph){.w=2,.h=2,.shift=3,.ch='A'};
+      for(unsigned cp=0;cp<256u;cp++) font->glyph_by_char[cp]=-1;
+      font->glyph_by_char['A']=0;
+    }
+    r->font=0;device.observe_on_demand=fake_observe_on_demand;gml_render_bind_device(r,&device);
+    for(unsigned p=0;p<W*H;p++) screen[p]=0xA5ABCDEFu;
+    if(target_kind==1u || target_kind==2u){
+      CHECK(gml_render_application_surface_ensure_owned(r,W,H));
+      CHECK(gml_render_begin_resident_owned_application(r,0,0,0));
+    }else{
+      gml_render_application_surface_bind(r,screen,W,H,1);
+      CHECK(gml_render_begin_resident_base(r,screen,W,H,0,0));
+    }
+    if(target_kind==2u) CHECK(gml_surface_set_target(r,0));
+    if(target_kind==3u){int id=gml_surface_create(r,W,H);CHECK(id>0 && gml_surface_set_target(r,id));}
+    if(gui){gml_render_gui_begin(r,W,H);gml_render_gui_set_size(r,W/2,H/2);}
+    r->alphablend=!disabled;r->blendmode=draw_state>=2u?2:0;
+    r->alpha_test_enable=(int)(draw_state&1u);r->alpha_test_ref=127;
+    gml_render_set_pending_fill(r,0x40273859u);gml_render_flush_pending_fill(r);
+    CHECK(gml_render_scene_submit_pending(r));memcpy(shadow,r->fb,sizeof shadow);
+    int submitted=fake.submits;
+    double mx=1,my=1;gml_render_draw_map_scale(r,&mx,&my);
+    for(unsigned draw=0;draw<8u;draw++)
+      gml_draw_text_transformed(r,12.125/mx,10.25/my,"A",scales[scale][0]/mx,
+        scales[scale][1]/my,0,0x70B0D0u,alphas[a]);
+    CHECK(r->resident_application_pass && gml_render_scene_submit_pending(r));
+    CHECK(fake.submits==submitted+(a==1u?0:1) && !fake.readbacks && !fake.rgb_queries &&
+          !memcmp(shadow,r->fb,sizeof shadow));
+    GmlRenderResource *resource=gml_render_scene_target_resource_ensure(r);CHECK(resource);
+    gml_render_resource_journal_metrics(resource,&metrics);
+    CHECK(metrics.authority==GML_RENDER_RESOURCE_GPU_RESIDENT && !metrics.cpu_replays && !metrics.journal_bytes);
+    if(a!=1u){
+      CHECK(fake.last_batch_operations>=8u && fake.last_filter==GML_RENDER_FILTER_NEAREST &&
+            r->alpha_test_enable==(int)(draw_state&1u) && r->alpha_test_ref==127);
+    }
+    CHECK(gml_render_resource_acquire_cpu_read(resource,&pixels) && fake.readbacks==1 &&
+          pixels[0]==fake.readback_colour && pixels[W*H-1u]==fake.readback_colour);
+    fake.forbid_calls=1;
+    CHECK(gml_render_resource_acquire_cpu_read(resource,&pixels) && !fake.forbidden_calls &&
+          pixels[0]==fake.readback_colour && pixels[W*H-1u]==fake.readback_colour);
+    fake.forbid_calls=0;gml_render_free(r);free(r);
+  }
+  return 1;
+}
+
 static int resident_integer_background_function(void){
   return resident_background_function(0);
 }
@@ -11658,11 +11761,9 @@ static int resident_identity_gui_unit_sourceover(void){
     gml_render_resource_journal_metrics(r->base_scene_resource,&metrics);
     CHECK(metrics.authority==GML_RENDER_RESOURCE_GPU_RESIDENT && !metrics.cpu_replays &&
           !metrics.journal_bytes && !metrics.retained_mutable_bytes);
-    /* The earlier white-only tint rejection was an admission fence, not a
-     * measured pixel expectation. First-generation integer tint now shares
-     * the separately paired point/covered-alpha rule; modern tint stays out. */
-    if(modern) CHECK(!gml_render_resident_font_glyph(r,0,0,0,2,2,2,2,1,1,0x123456u,1));
-    else {
+    /* R03-TEXT-NEAREST-FUNCTION pairs the former modern tint, partial-alpha
+     * and enlarged GUI admission fences without changing any pixel limit. */
+    {
       const uint32_t tints[4]={0x123456u,0x53A2EDu,0xFE0107u,0x314F89u};
       for(unsigned tint=0;tint<4u;tint++)
         CHECK(gml_render_resident_font_glyph(r,0,0,0,2,2,2,2,1,1,tints[tint],1));
@@ -11676,8 +11777,10 @@ static int resident_identity_gui_unit_sourceover(void){
       CHECK(!gml_render_resident_font_glyph(r,0,0,0,2,2,2,2,1,1,0x123456u,1));
       r->fog_flat=0;
     }
-    CHECK(!gml_render_resident_font_glyph(r,0,0,0,2,2,2,2,1,1,0xFFFFFFu,0.5));
-    CHECK(!gml_render_resident_font_glyph(r,0,0,0,2,2,2,2,2,1,0xFFFFFFu,1));
+    CHECK(gml_render_resident_font_glyph(r,0,0,0,2,2,2,2,1,1,0xFFFFFFu,0.5));
+    CHECK(gml_render_resident_font_glyph(r,0,0,0,2,2,2,2,2,1,0xFFFFFFu,1));
+    CHECK(gml_render_scene_submit_pending(r) && fake.last_batch_operations>=2u &&
+          fake.last_filter==GML_RENDER_FILTER_NEAREST && !fake.readbacks && !fake.rgb_queries);
     r->gui_maximise_active=1;
     CHECK(!gml_render_resident_font_glyph(r,0,0,0,2,2,2,2,1,1,0xFFFFFFu,1));
     r->gui_maximise_active=0;
@@ -12626,6 +12729,7 @@ int main(void){
   passed+=resident_integer_background_function();
   passed+=resident_fractional_background_function();
   passed+=resident_nearest_tile_function();
+  passed+=resident_nearest_text_function();
   passed+=resident_selected_background_function();
   passed+=resident_classic_owned_binary_unit_sprite();
   passed+=resident_runtime_binary_unit_sprites();
@@ -12664,6 +12768,6 @@ int main(void){
   passed+=source_free_primitive_rect_replay();
   passed+=stretched_float_exact_replay();
   passed+=filtered_font_exact_recovery();
-  printf("render resource cases: passed=%d failed=%d\n",passed,177-passed);
-  return passed==177?EXIT_SUCCESS:EXIT_FAILURE;
+  printf("render resource cases: passed=%d failed=%d\n",passed,178-passed);
+  return passed==178?EXIT_SUCCESS:EXIT_FAILURE;
 }
