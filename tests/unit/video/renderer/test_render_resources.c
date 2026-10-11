@@ -9919,10 +9919,21 @@ static int resident_classic_unit_tiles(void){
     if(exclusion==2u) render->interp=1;
     if(exclusion==3u) render->color_write_mask=7u;
     if(exclusion==9u){render->world_transform_active=1;render->world_scale_x=2;}
+    uint32_t shadow[64];memcpy(shadow,render->fb,sizeof shadow);
     gml_draw_background_tile(render,0,0,0,2,2,exclusion==4u?2.5:2.0,2.0,
       exclusion==5u?2.0:1.0,1.0,exclusion==6u,0,0,
       exclusion==7u?0xABCDEFu:0xFFFFFFu,exclusion==8u?0.5:1.0);
-    CHECK(!render->resident_application_pass);
+    /* The complete nearest TILE owner supersedes the old unit-only scope.
+     * Preserve every input and the exclusions outside its paired domain. */
+    if(exclusion==0u || exclusion==2u || exclusion==3u)
+      CHECK(!render->resident_application_pass);
+    else{
+      CHECK(render->resident_application_pass && !fake.submits && !fake.readbacks &&
+            !memcmp(shadow,render->fb,sizeof shadow));
+      CHECK(gml_render_scene_submit_pending(render) && fake.submits==1 &&
+            !fake.readbacks && fake.last_quantisation==GML_RENDER_QUANTISE_INTEGER_TINT_TRUNC &&
+            fake.last_filter==GML_RENDER_FILTER_NEAREST);
+    }
     gml_render_free(render);free(render);
   }
   return 1;
@@ -11286,7 +11297,7 @@ static int resident_background_function(int fractional){
   const double alphas[]={1.0,0.0,0.37};
   for(unsigned generation=0;generation<6u;generation++)
   for(unsigned target_kind=0;target_kind<4u;target_kind++)
-  for(unsigned gui=0;gui<2u;gui++) for(unsigned repeat=0;repeat<4u;repeat++)
+  for(unsigned gui=0;gui<2u;gui++) for(unsigned repeat=0;repeat<(fractional==2?8u:4u);repeat++)
   for(unsigned draw_state=0;draw_state<4u;draw_state++)
   for(unsigned disabled=0;disabled<2u;disabled++) for(unsigned tint=0;tint<2u;tint++)
   for(unsigned a=0;a<3u;a++){
@@ -11326,8 +11337,11 @@ static int resident_background_function(int fractional){
     memcpy(shadow,render->fb,sizeof shadow);int submitted=fake.submits;
     if(!a && tint && !draw_state && !disabled && !repeat){
       /* An excluded state must refuse before submission or observation. */
+      GmlTpag tile_view=render->tpag[0];tile_view.project_authored_edges=1;
 #define BG_REJECT(set,restore) do { set; \
-      CHECK(!gml_render_resident_integer_background_page(render,0,6,5,2,1,0x70B0D0u,.37)); \
+      CHECK(!(fractional==2 \
+        ?gml_render_resident_nearest_tile_page(render,&tile_view,6,5,2,1,0x70B0D0u,.37) \
+        :gml_render_resident_integer_background_page(render,0,6,5,2,1,0x70B0D0u,.37))); \
       restore; CHECK(fake.submits==submitted && !fake.readbacks); \
       } while(0)
       BG_REJECT(render->interp=1,render->interp=0);
@@ -11342,6 +11356,11 @@ static int resident_background_function(int fractional){
       BG_REJECT(render->app_interp_phase[0]=screen,render->app_interp_phase[0]=NULL);
       BG_REJECT(render->atlas[0].runtime_font_page=1,render->atlas[0].runtime_font_page=0);
 #undef BG_REJECT
+      if(fractional==2){
+        CHECK(!gml_render_resident_nearest_tile_page(render,&tile_view,NAN,5,2,1,0xFFFFFFu,0.0));
+        CHECK(!gml_render_resident_nearest_tile_page(render,&tile_view,6,5,NAN,1,0xFFFFFFu,0.0));
+        CHECK(fake.submits==submitted && !fake.readbacks);
+      }
       CHECK(!gml_render_resident_integer_background_page(render,0,6,5,.5,1,0x70B0D0u,.37));
       CHECK(!gml_render_resident_integer_background_page(render,0,6,5,9,1,0x70B0D0u,.37));
       CHECK(!gml_render_resident_integer_background_page(render,0,6,5,1.5,1,0x70B0D0u,.37));
@@ -11352,9 +11371,15 @@ static int resident_background_function(int fractional){
       CHECK(fake.submits==submitted && !fake.readbacks && render->resident_application_pass &&
             !memcmp(shadow,render->fb,sizeof shadow));
     }
-    for(unsigned draw=0;draw<8u;draw++)
-      gml_draw_background_tiled_ext(render,0,6.018,5.07,fractional?1.25:2.0,fractional?.75:1.0,
-        tint?0x70B0D0u:0xFFFFFFu,alphas[a],(int)(repeat&1u),(int)(repeat>>1u));
+    for(unsigned draw=0;draw<8u;draw++){
+      if(fractional==2)
+        gml_draw_background_tile(render,0,1,1,2,2,6.018,5.07,1.25,.75,
+          (int)(repeat&1u),(int)((repeat>>1u)&1u),(int)(repeat>>2u),
+          tint?0x70B0D0u:0xFFFFFFu,alphas[a]);
+      else
+        gml_draw_background_tiled_ext(render,0,6.018,5.07,fractional?1.25:2.0,fractional?.75:1.0,
+          tint?0x70B0D0u:0xFFFFFFu,alphas[a],(int)(repeat&1u),(int)(repeat>>1u));
+    }
     CHECK(render->resident_application_pass && gml_render_scene_submit_pending(render));
     int noop=a==1u;
     CHECK(fake.submits==submitted+(noop?0:1) && !fake.readbacks && !fake.rgb_queries &&
@@ -11367,8 +11392,9 @@ static int resident_background_function(int fractional){
       if(fake.last_quantisation){
         CHECK(fake.last_quantisation==(generation==5u?GML_RENDER_QUANTISE_INTEGER_TINT_ROUND:
                                                    GML_RENDER_QUANTISE_INTEGER_TINT_TRUNC));
-        double expected=generations[generation]==13 && a==2u?floor(alphas[a]*255.0)/255.0:alphas[a];
-        int packed_empty_cutoff=generations[generation]==13 && a==2u && !draw_state;
+        double expected=fractional!=2 && generations[generation]==13 && a==2u
+          ?floor(alphas[a]*255.0)/255.0:alphas[a];
+        int packed_empty_cutoff=fractional!=2 && generations[generation]==13 && a==2u && !draw_state;
         CHECK(fake.last_filtered_draw_alpha==expected &&
               fake.last_quad_state.alpha_test_enabled==((draw_state&1u) || packed_empty_cutoff) &&
               fake.last_quad_state.alpha_test_reference==((draw_state&1u)?127u:packed_empty_cutoff?1u:0u) &&
@@ -11391,6 +11417,10 @@ static int resident_integer_background_function(void){
 
 static int resident_fractional_background_function(void){
   return resident_background_function(1);
+}
+
+static int resident_nearest_tile_function(void){
+  return resident_background_function(2);
 }
 
 static int resident_selected_background_function(void){
@@ -12565,6 +12595,7 @@ int main(void){
   passed+=resident_integer_sprite_function();
   passed+=resident_integer_background_function();
   passed+=resident_fractional_background_function();
+  passed+=resident_nearest_tile_function();
   passed+=resident_selected_background_function();
   passed+=resident_classic_owned_binary_unit_sprite();
   passed+=resident_runtime_binary_unit_sprites();
@@ -12603,6 +12634,6 @@ int main(void){
   passed+=source_free_primitive_rect_replay();
   passed+=stretched_float_exact_replay();
   passed+=filtered_font_exact_recovery();
-  printf("render resource cases: passed=%d failed=%d\n",passed,176-passed);
-  return passed==176?EXIT_SUCCESS:EXIT_FAILURE;
+  printf("render resource cases: passed=%d failed=%d\n",passed,177-passed);
+  return passed==177?EXIT_SUCCESS:EXIT_FAILURE;
 }

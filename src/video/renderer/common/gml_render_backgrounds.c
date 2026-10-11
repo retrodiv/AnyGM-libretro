@@ -151,7 +151,8 @@ int gml_render_resident_filtered_atlas_part(GmlRender *r,int page_index,
      !isfinite(alpha) || sx<0.0 || sy<0.0 || sw<=0.0 || sh<=0.0 ||
      sx>INT_MAX || sy>INT_MAX || sw>INT_MAX || sh>INT_MAX) return 0;
   int nearest_scaled=!r->interp;
-  if(nearest_scaled && (family!=GML_RENDER_SCENE_BACKGROUND ||
+  int nearest_tile=nearest_scaled && family==GML_RENDER_SCENE_TILE;
+  if(nearest_scaled && !nearest_tile && (family!=GML_RENDER_SCENE_BACKGROUND ||
      sx!=floor(sx) || sy!=floor(sy) || sw!=floor(sw) || sh!=floor(sh))) return 0;
   page=&r->tpag[page_index];
   /* The CPU part view already clips logical trim. Admit a background selection
@@ -161,16 +162,16 @@ int gml_render_resident_filtered_atlas_part(GmlRender *r,int page_index,
   if(page->tx<0 || page->ty<0 || page->bw<=0 || page->bh<=0 ||
      (int64_t)page->tx+page->sw>page->bw ||
      (int64_t)page->ty+page->sh>page->bh ||
-     (trimmed && family!=GML_RENDER_SCENE_BACKGROUND) ||
-     sx<(double)page->tx || sy<(double)page->ty ||
-     sx+sw>(double)page->tx+page->sw || sy+sh>(double)page->ty+page->sh ||
+     (!nearest_tile && ((trimmed && family!=GML_RENDER_SCENE_BACKGROUND) ||
+      sx<(double)page->tx || sy<(double)page->ty ||
+      sx+sw>(double)page->tx+page->sw || sy+sh>(double)page->ty+page->sh)) ||
      !gml_render_tpag_part_view(page,sx,sy,sw,sh,&view,&source_x,&source_y,
                                 &overlap_x0,&overlap_y0,&overlap_x1,&overlap_y1)) return 0;
   /* Reuse the CPU part writer's one-cell extent and anchor normalization.
-   * Multi-cell selections retain outward-snapped source geometry. Tile source
-   * fractions have a distinct authored-edge policy and remain on CPU. */
+   * Multi-cell selections retain outward-snapped source geometry. Nearest
+   * tile selections retain their separate authored-edge/clamp owner. */
   if((sx!=floor(sx) || sy!=floor(sy) || sw!=floor(sw) || sh!=floor(sh)) &&
-     family!=GML_RENDER_SCENE_BACKGROUND) return 0;
+     family!=GML_RENDER_SCENE_BACKGROUND && !nearest_tile) return 0;
   anchor_x=view.sw==1?overlap_x0:(double)source_x;
   anchor_y=view.sh==1?overlap_y0:(double)source_y;
   cell_xs=view.sw==1?(overlap_x1-overlap_x0)*xs:xs;
@@ -183,6 +184,10 @@ int gml_render_resident_filtered_atlas_part(GmlRender *r,int page_index,
   /* Match the existing selected CPU writer: tile cells project authored edges,
    * while ordinary background parts round their screen extent independently. */
   view.project_authored_edges=family==GML_RENDER_SCENE_TILE;
+  if(nearest_tile)
+    return gml_render_resident_nearest_tile_page(r,&view,
+      x+(anchor_x-sx)*xs-r->cam_x,y+(anchor_y-sy)*ys-r->cam_y,
+      cell_xs,cell_ys,color,alpha);
   return gml_render_resident_filtered_atlas_page(
     r,page_index,x+(anchor_x-sx)*xs-r->cam_x,
     y+(anchor_y-sy)*ys-r->cam_y,cell_xs,cell_ys,
@@ -285,6 +290,50 @@ void gml_draw_background_part_ext(GmlRender *r, int bg, double sx, double sy, do
   gml_render_cpu_blit_tpag_part_background(r,&r->tpag[ti],sx,sy,sw,sh,x-r->cam_x,y-r->cam_y,xs,ys,color,alpha);
 }
 
+static int resident_quarter_background_tile(GmlRender *r,int page_index,
+  double sx,double sy,double sw,double sh,double x,double y,double xs,double ys,
+  int mirror,int flip,uint32_t colour,double alpha){
+  if(!r || !r->resident_application_pass || r->interp || gml_d3_is_active(r) ||
+     !isfinite(sx) || !isfinite(sy) || !isfinite(sw) || !isfinite(sh) ||
+     !isfinite(x) || !isfinite(y) || !isfinite(xs) || !isfinite(ys) ||
+     !isfinite(alpha) || sx<0.0 || sy<0.0 || sx>INT_MAX || sy>INT_MAX ||
+     sw<=0.0 || sh<=0.0 || sw>4096.0 || sh>4096.0 || xs==0.0 || ys==0.0)
+    return 0;
+  GmlTpag *page=&r->tpag[page_index],view;
+  int source_x=0,source_y=0;
+  if(!gml_render_tpag_part_view(page,sx,sy,sw,sh,&view,&source_x,&source_y,
+                               NULL,NULL,NULL,NULL)) return 0;
+  view.tx=(int)lround(source_x-sx);view.ty=(int)lround(source_y-sy);
+  view.bw=(int)ceil(sw);view.bh=(int)ceil(sh);view.project_authored_edges=1;
+  int exact_unit=sw==sh && fabs(xs-1.0)<0.001 && fabs(ys-1.0)<0.001 &&
+    sx==floor(sx) && sy==floor(sy) && sw==floor(sw) && sh==floor(sh) &&
+    source_x==sx && source_y==sy && view.sw==sw && view.sh==sh &&
+    alpha>=1.0 && (colour&0xFFFFFFu)==0xFFFFFFu && !r->blendmode;
+  if(exact_unit)
+    return gml_render_resident_nearest_quarter_tile_page(r,&view,x,y,xs,ys,
+                                                        1,mirror,flip,colour,alpha);
+  /* Match the public CPU tile's cardinal origin and nonuniform axis
+   * permutation; the existing coverage helper then owns its sample rows. */
+  double tile_xscale=(sh/sw)*ys,tile_yscale=(sw/sh)*xs;
+  if(mirror) tile_xscale=-tile_xscale;
+  if(flip) tile_yscale=-tile_yscale;
+  double cosine=0.0,sine=0.0;
+  render_rotation_sincos(-90.0,&cosine,&sine);
+  double min_x=1e30,min_y=1e30;
+  const double corner_x[4]={0.0,sw,sw,0.0};
+  const double corner_y[4]={0.0,0.0,sh,sh};
+  for(int corner=0;corner<4;corner++){
+    double local_x=corner_x[corner]*tile_xscale,local_y=corner_y[corner]*tile_yscale;
+    min_x=fmin(min_x,local_x*cosine+local_y*sine);
+    min_y=fmin(min_y,-local_x*sine+local_y*cosine);
+  }
+  double draw_x=x-min_x,draw_y=y-min_y;
+  if(tile_xscale*cosine < -1e-12 || tile_yscale*sine < -1e-12) draw_x+=1.0;
+  if(-tile_xscale*sine < -1e-12 || tile_yscale*cosine < -1e-12) draw_y+=1.0;
+  return gml_render_resident_nearest_quarter_tile_page(r,&view,draw_x,draw_y,
+    tile_xscale,tile_yscale,0,mirror,flip,colour,alpha);
+}
+
 void gml_draw_background_tile(GmlRender *r,int bg,
                               double sx,double sy,double sw,double sh,
                               double x,double y,double xs,double ys,
@@ -311,6 +360,8 @@ void gml_draw_background_tile(GmlRender *r,int bg,
   gml_render_draw_map_scale(r,&xs,&ys);
   if(!r || bg<0 || bg>=r->n_bg || sw<=0 || sh<=0 || xs==0 || ys==0) return;
   int ti=r->bg[bg].tpag; if(ti<0 || ti>=r->n_tpag) return;
+  if(resident_quarter_background_tile(r,ti,sx,sy,sw,sh,x,y,xs,ys,
+                                      mirror,flip,color,alpha)) return;
   if(!gml_render_resident_application_cpu_barrier(r)) return;
   GmlTpag *page=&r->tpag[ti];
   if(gml_render_cpu_try_exact_rotated_background_tile(

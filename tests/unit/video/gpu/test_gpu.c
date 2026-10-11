@@ -2335,7 +2335,7 @@ static int scene_screen_filtered_alpha_stamp_case(void){
 }
 
 static int scene_integer_function_sprite_case(void){
-  for(unsigned background=0;background<2u;background++)
+  for(unsigned background=0;background<3u;background++)
   for(unsigned alpha_test=0;alpha_test<2u;alpha_test++)
   for(unsigned api=0;api<2u;api++) for(unsigned rounded=0;rounded<2u;rounded++)
   for(unsigned target_kind=0;target_kind<3u;target_kind++) for(unsigned blend=0;blend<5u;blend++){
@@ -2379,7 +2379,8 @@ static int scene_integer_function_sprite_case(void){
       op->target.image.content_version=index+1u;
       if(!index){op->opcode=GML_RENDER_OP_CLEAR;op->payload.clear_colour=0x40273859u;continue;}
       op->opcode=GML_RENDER_OP_TEXTURED_QUAD;
-      op->scene_family=background?GML_RENDER_SCENE_BACKGROUND:GML_RENDER_SCENE_SPRITE;
+      op->scene_family=background==2u?GML_RENDER_SCENE_TILE:
+        background?GML_RENDER_SCENE_BACKGROUND:GML_RENDER_SCENE_SPRITE;
       op->reconstruction_mode=GML_RENDER_DEVICE_CHECKPOINT;op->sources=&source;op->source_count=1u;
       GmlRenderQuad *q=&op->payload.quad;q->shape=GML_RENDER_QUAD_AXIS_ALIGNED;
       q->sampling=state.samplers[0];q->filtered_draw_alpha=0.4;
@@ -2411,11 +2412,13 @@ static int scene_integer_function_sprite_case(void){
         anygm_test_graphics_scene_draw_calls()==draws && anygm_test_graphics_scene_copies()==0u &&
         anygm_test_graphics_read_pixels()==0u,"invalid integer sprite refuses before the clear prefix");
     }
-    for(unsigned interval=0;interval<(background?3u:2u);interval++){
+    unsigned intervals=background==2u?4u:background?3u:2u;
+    for(unsigned interval=0;interval<intervals;interval++){
       for(unsigned i=0;i<3u;i++) ops[i].target.image.content_version=4u+interval*3u+i;
       for(unsigned i=1u;i<3u;i++){
         ops[i].payload.quad=pristine;GmlRenderQuad *q=&ops[i].payload.quad;
-        if(interval==1u){for(unsigned c=0;c<4u;c++) q->u[c]=0.25;}
+        if(interval==3u){for(unsigned c=0;c<4u;c++){q->u[c]=0.25;q->v[c]=0.75;}}
+        else if(interval==1u){for(unsigned c=0;c<4u;c++) q->u[c]=0.25;}
         else if(interval==2u){q->u[1]=q->u[2]=0.2;}
         else{
           q->x[1]=q->x[2]=1.0;q->u[1]=q->u[2]=0.5;
@@ -2436,7 +2439,7 @@ static int scene_integer_function_sprite_case(void){
       }
       result=device.submit(device.context,&batch);
       REQUIRE(result.status==GML_RENDER_EXEC_UNSUPPORTED && !result.accepted_prefix &&
-        anygm_test_graphics_scene_draw_calls()==draws*(background?4:3) && !anygm_test_graphics_scene_copies() &&
+        anygm_test_graphics_scene_draw_calls()==draws*(int)(intervals+1u) && !anygm_test_graphics_scene_copies() &&
         !anygm_test_graphics_read_pixels(),"non-centre constants and out-of-contract inverse scales refuse transactionally");
     }
     GmlRenderDrawStateSnapshot changed_states[2]={state,state};
