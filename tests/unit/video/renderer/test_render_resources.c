@@ -11372,7 +11372,7 @@ static int resident_background_function(int fractional){
             !memcmp(shadow,render->fb,sizeof shadow));
     }
     if(fractional==2 && repeat==4u && !a && !tint && draw_state==1u){
-      double physical_unit=gui?0.5:1.0;
+      double physical_unit=gml_render_gui_transform_active(render)?0.5:1.0;
       gml_draw_background_tile(render,0,1,1,2,2,6.018,5.07,physical_unit,physical_unit,
                                0,0,1,0xFFFFFFu,1.0);
       CHECK(render->resident_application_pass && gml_render_scene_submit_pending(render));
