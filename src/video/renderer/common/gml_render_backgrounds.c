@@ -452,6 +452,8 @@ static void do_bg_tiled_ext(GmlRender *r, int bg, double x, double y, double xs,
         if((color&0xFFFFFFu)==0xFFFFFFu && alpha==1.0 && !r->interp &&
            gml_render_resident_atlas_page(r,ti,xx+t->tx*xs,yy+t->ty*ys,xs,ys,
                                           GML_RENDER_SCENE_BACKGROUND)) continue;
+        if(gml_render_resident_integer_background_page(r,ti,xx+t->tx*xs,yy+t->ty*ys,
+                                                       xs,ys,color,alpha)) continue;
         if(!gml_render_resident_application_cpu_barrier(r)) return;
         if(vtiled && logical_h<r->fbh){
           GmlRenderCpuBackendDispatchScope cell_scope;
@@ -489,6 +491,8 @@ static void do_bg_tiled_ext(GmlRender *r, int bg, double x, double y, double xs,
          gml_render_resident_filtered_atlas_page(r,ti,xx+t->tx*xs,yy+t->ty*ys,xs,ys,
                                                  GML_RENDER_SCENE_BACKGROUND,color,alpha,t,0))
         continue;
+      if(gml_render_resident_integer_background_page(r,ti,xx+t->tx*xs,yy+t->ty*ys,
+                                                     xs,ys,color,alpha)) continue;
       if(!gml_render_resident_application_cpu_barrier(r)) return;
       gml_render_cpu_blit_background_phase(r,t,xx+t->tx*xs,yy+t->ty*ys,xs,ys,color,alpha);
     }

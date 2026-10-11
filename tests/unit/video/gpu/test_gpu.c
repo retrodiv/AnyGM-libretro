@@ -2335,6 +2335,7 @@ static int scene_screen_filtered_alpha_stamp_case(void){
 }
 
 static int scene_integer_function_sprite_case(void){
+  for(unsigned background=0;background<2u;background++)
   for(unsigned alpha_test=0;alpha_test<2u;alpha_test++)
   for(unsigned api=0;api<2u;api++) for(unsigned rounded=0;rounded<2u;rounded++)
   for(unsigned target_kind=0;target_kind<3u;target_kind++) for(unsigned blend=0;blend<5u;blend++){
@@ -2377,7 +2378,8 @@ static int scene_integer_function_sprite_case(void){
         .width=8u,.height=8u,.pixel_format=GML_RENDER_PIXEL_ARGB8888,.region={0,0,8u,8u}};
       op->target.image.content_version=index+1u;
       if(!index){op->opcode=GML_RENDER_OP_CLEAR;op->payload.clear_colour=0x40273859u;continue;}
-      op->opcode=GML_RENDER_OP_TEXTURED_QUAD;op->scene_family=GML_RENDER_SCENE_SPRITE;
+      op->opcode=GML_RENDER_OP_TEXTURED_QUAD;
+      op->scene_family=background?GML_RENDER_SCENE_BACKGROUND:GML_RENDER_SCENE_SPRITE;
       op->reconstruction_mode=GML_RENDER_DEVICE_CHECKPOINT;op->sources=&source;op->source_count=1u;
       GmlRenderQuad *q=&op->payload.quad;q->shape=GML_RENDER_QUAD_AXIS_ALIGNED;
       q->sampling=state.samplers[0];q->filtered_draw_alpha=0.4;

@@ -207,7 +207,8 @@ static int integer_function_sprite_valid(const GmlRenderDrawOp *op,
   const GmlRenderQuad *q=&op->payload.quad;
   GmlRenderRect region=q->sampling.source_region;
   int blend=qualified_blend(state);
-  if(!source || op->scene_family!=GML_RENDER_SCENE_SPRITE ||
+  if(!source || (op->scene_family!=GML_RENDER_SCENE_SPRITE &&
+                op->scene_family!=GML_RENDER_SCENE_BACKGROUND) ||
      (op->target.image.resource_class!=GML_RENDER_RESOURCE_SCREEN &&
       op->target.image.resource_class!=GML_RENDER_RESOURCE_APPLICATION &&
       op->target.image.resource_class!=GML_RENDER_RESOURCE_SURFACE) ||
