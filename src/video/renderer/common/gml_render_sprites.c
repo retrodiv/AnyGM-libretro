@@ -785,9 +785,9 @@ static int resident_atlas_crop_from_page_impl(GmlRender *r,GmlTpag *page,
       /* Reflected authored-edge tiles retain their inverse sample at the
        * unsnapped origin. Reciprocal axes keep the ordinary half-texel leaf. */
       if(xs<0.0) integer_phase_x=fabs(1.0/fabs(xs)-nearbyint(1.0/fabs(xs)))<1e-9
-        ?0.0:left-snapped_x-1.0;
+        ?0.0:left-snapped_x;
       if(ys<0.0) integer_phase_y=fabs(1.0/fabs(ys)-nearbyint(1.0/fabs(ys)))<1e-9
-        ?0.0:top-snapped_y-1.0;
+        ?0.0:top-snapped_y;
     }
     integer_point_page=*page;
     /* The unchanged white/full-alpha application leaf can read one adjacent
