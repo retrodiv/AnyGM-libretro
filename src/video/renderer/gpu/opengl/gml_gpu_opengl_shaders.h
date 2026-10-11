@@ -172,6 +172,7 @@
   "uniform ivec2 u_region_origin;\n" \
   "uniform ivec4 u_rotated_alpha16[64];\n" \
   "uniform int u_filter;\n" \
+  "uniform int u_alpha_test;\n" \
   "uniform usampler2D u_point_map_x,u_point_map_y;\n" \
   "uniform ivec2 u_point_origin;\n" \
   "uniform sampler2D u_recovery_screen,u_recovery_application;\n" \
@@ -355,14 +356,15 @@
   "    o_color=vec4(rgb,alpha)/255.0; return;\n" \
   "  }\n" \
   "  // R03_SHADER_INTEGER_SPRITE: whole nearest texels, integer tint and fixed blending.\n" \
-  "  if(u_filter>=37 && u_filter<=43){\n" \
+  "  if(u_filter>=37 && u_filter<=50){\n" \
   "    uvec4 sampled=uvec4(floor(texture(u_image,v_texcoord)*255.0+0.5));\n" \
-  "    if(sampled.a==0u || (u_filter<41 && v_colour.a<=0.0)) discard;\n" \
-  "    if(u_filter==41){ o_color=vec4(0.0,0.0,0.0,1.0); return; }\n" \
+  "    if(u_alpha_test>=0 && sampled.a<=uint(u_alpha_test)) discard;\n" \
+  "    if(u_filter<44 && (sampled.a==0u || (u_filter<41 && v_colour.a<=0.0))) discard;\n" \
+  "    if(u_filter==41 || u_filter==48){ o_color=vec4(0.0,0.0,0.0,1.0); return; }\n" \
   "    uvec3 tint=uvec3(floor(v_colour.rgb*255.0+0.5));\n" \
-  "    uint bias=(u_filter==38 || u_filter==40 || u_filter==43)?127u:0u;\n" \
+  "    uint bias=(u_filter==38 || u_filter==40 || u_filter==43 || u_filter==45 || u_filter==47 || u_filter==50)?127u:0u;\n" \
   "    uvec3 rgb=(sampled.rgb*tint+uvec3(bias))/255u;\n" \
-  "    o_color=vec4(vec3(rgb)/255.0,u_filter>=42?1.0:float(sampled.a)*v_colour.a/255.0); return;\n" \
+  "    o_color=vec4(vec3(rgb)/255.0,(u_filter==42 || u_filter==43 || u_filter>=49)?1.0:float(sampled.a)*v_colour.a/255.0); return;\n" \
   "  }\n" \
   "  if(u_filter==0){ o_color=texture(u_image,v_texcoord)*v_colour; return; }\n" \
   "  // R03_SHADER_APPLICATION_PIXEL_CENTRE: opaque presentation copies RGB and stamps alpha.\n" \

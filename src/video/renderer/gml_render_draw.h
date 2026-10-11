@@ -175,7 +175,8 @@ typedef enum GmlRenderBlendFactor {
   GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA=4,
   GML_RENDER_BLEND_SOURCE_COLOUR=5,
   GML_RENDER_BLEND_DESTINATION_COLOUR=6,
-  GML_RENDER_BLEND_DESTINATION_ALPHA=7
+  GML_RENDER_BLEND_DESTINATION_ALPHA=7,
+  GML_RENDER_BLEND_ONE_MINUS_SOURCE_COLOUR=8
 } GmlRenderBlendFactor;
 
 /* Software selectors for destination-dependent fixed-function factor pairs. */
@@ -222,7 +223,9 @@ enum {
    * toward opaque, unlike the scalar tail's unconditional opaque coverage. */
   GML_RENDER_COVERAGE_ROTATED_VECTOR_ALPHA=2u,
   /* Fixed source-over preserves an already opaque target without a destination copy. */
-  GML_RENDER_COVERAGE_OPAQUE_TARGET=3u
+  GML_RENDER_COVERAGE_OPAQUE_TARGET=3u,
+  /* Disabled inverse-source drawing still writes raw zero-alpha texels opaque. */
+  GML_RENDER_COVERAGE_REPLACE_ZERO_ALPHA=4u
 };
 
 typedef struct GmlRenderDrawStateSnapshot {

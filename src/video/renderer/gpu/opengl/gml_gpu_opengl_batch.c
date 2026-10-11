@@ -56,6 +56,12 @@ static int cleared_earlier(const GmlRenderImageRef *cleared,uint32_t count,
 }
 
 static int qualified_blend(const GmlRenderDrawStateSnapshot *state){
+  if(state->rgb_source_factor==GML_RENDER_BLEND_ZERO &&
+     state->rgb_destination_factor==GML_RENDER_BLEND_ONE_MINUS_SOURCE_COLOUR &&
+     state->alpha_source_factor==GML_RENDER_BLEND_ZERO &&
+     state->alpha_destination_factor==GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA &&
+     state->rgb_equation==GML_RENDER_BLEND_ADD &&
+     state->alpha_equation==GML_RENDER_BLEND_ADD) return 13;
   if((state->rgb_source_factor==GML_RENDER_BLEND_DESTINATION_COLOUR ||
       state->rgb_source_factor==GML_RENDER_BLEND_DESTINATION_ALPHA) &&
      (state->rgb_destination_factor==GML_RENDER_BLEND_SOURCE_COLOUR ||
@@ -133,6 +139,9 @@ static uint32_t scene_filter(const GmlRenderQuad *quad,
   if(quad->sampling.quantisation==GML_RENDER_QUANTISE_INTEGER_TINT_TRUNC ||
      quad->sampling.quantisation==GML_RENDER_QUANTISE_INTEGER_TINT_ROUND){
     uint32_t base=quad->sampling.quantisation==GML_RENDER_QUANTISE_INTEGER_TINT_ROUND?38u:37u;
+    if(state->coverage_policy==GML_RENDER_COVERAGE_REPLACE_ZERO_ALPHA) return base+12u;
+    if(qualified_blend(state)==13) return base+7u+
+      (state->coverage_policy==GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA?2u:0u);
     return !qualified_blend(state)?base+5u:
       state->coverage_policy==GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA?base+2u:base;
   }
@@ -213,9 +222,11 @@ static int integer_function_sprite_valid(const GmlRenderDrawOp *op,
      !valid_region(region,source->width,source->height) || region.width>4096u || region.height>4096u ||
      !exact_rect(op,NULL,NULL,NULL,NULL,1) || fabs(q->x[0])>65536.0 || fabs(q->y[0])>65536.0 ||
      !isfinite(q->filtered_draw_alpha) || q->filtered_draw_alpha<=0.0 || q->filtered_draw_alpha>1.0 ||
-     (blend!=0 && blend!=1 && blend!=3) ||
-     (state->coverage_policy && (state->coverage_policy!=GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA ||
-       blend!=1 || (op->target.image.resource_class!=GML_RENDER_RESOURCE_SCREEN &&
+     state->alpha_test_enabled>1u || state->alpha_test_reference>255u ||
+     (blend!=0 && blend!=1 && blend!=3 && blend!=13) ||
+     (state->coverage_policy==GML_RENDER_COVERAGE_REPLACE_ZERO_ALPHA?blend!=0:
+      state->coverage_policy && (state->coverage_policy!=GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA ||
+       (blend!=1 && blend!=13) || (op->target.image.resource_class!=GML_RENDER_RESOURCE_SCREEN &&
          op->target.image.resource_class!=GML_RENDER_RESOURCE_APPLICATION)))) return 0;
   double width=q->x[1]-q->x[0],height=q->y[2]-q->y[0];
   if(width>16384.0 || height>16384.0) return 0;
@@ -917,8 +928,9 @@ static int scene_preflight(GmlGpuBackend *backend,const GmlRenderDrawBatch *batc
           !modern_numbered_sprite) || state->alpha!=255u ||
          ((sampling->quantisation==GML_RENDER_QUANTISE_INTEGER_TINT_TRUNC ||
            sampling->quantisation==GML_RENDER_QUANTISE_INTEGER_TINT_ROUND) && !integer_function) ||
-         state->colour!=0xFFFFFFFFu || state->alpha_test_enabled ||
-         blend<0 || (blend==11 && (!hardware_surface || !backend->gl.CopyTexSubImage2D)) ||
+         state->colour!=0xFFFFFFFFu || (state->alpha_test_enabled && !integer_function) ||
+         blend<0 || (blend==13 && !integer_function) ||
+         (blend==11 && (!hardware_surface || !backend->gl.CopyTexSubImage2D)) ||
          ((integer_function || integer_sourceover || blend==1 || blend==9 || blend==10 ||
                        (blend==3 && sampling->filter==GML_RENDER_FILTER_HARDWARE_BILINEAR)) &&
                       (!backend->gl.BlendFuncSeparate ||
@@ -1213,7 +1225,7 @@ static int scene_snapshot_region(GmlGpuBackend *backend,GlSceneImage *target,
 }
 
 static int flush_quads(GmlGpuBackend *backend,GlSceneImage *target,GlSceneImage *source,
-                       uint32_t filter,int blend,uint32_t count,uint32_t write_mask){
+                       uint32_t filter,int blend,uint32_t count,uint32_t write_mask,int alpha_test){
   GlScene *scene=&backend->scene;
   GLfloat extent[2]={(GLfloat)target->width,(GLfloat)target->height};
   GLenum texture_filter=filter==18u || filter==19u || filter==20u || filter==21u
@@ -1230,7 +1242,9 @@ static int flush_quads(GmlGpuBackend *backend,GlSceneImage *target,GlSceneImage 
     backend->gl.TexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAG_FILTER,(GLint)texture_filter);
   }
   if(blend && blend!=8 && filter!=15u && filter!=17u){
-    if(blend==GL_SCENE_BLEND_INVERSE_RECT)
+    if(blend==13)
+      backend->gl.BlendFuncSeparate(GL_ZERO,GL_ONE_MINUS_SRC_COLOR,GL_ZERO,GL_ONE_MINUS_SRC_ALPHA);
+    else if(blend==GL_SCENE_BLEND_INVERSE_RECT)
       backend->gl.BlendFuncSeparate(GL_ZERO,GL_ONE_MINUS_SRC_COLOR,GL_ONE,GL_ZERO);
     else backend->gl.BlendFuncSeparate(blend==9 || blend==10?GL_ONE:GL_SRC_ALPHA,
                                   blend==9?GL_ONE:GL_ONE_MINUS_SRC_ALPHA,
@@ -1240,13 +1254,15 @@ static int flush_quads(GmlGpuBackend *backend,GlSceneImage *target,GlSceneImage 
     backend->gl.Enable(GL_BLEND);
   } else backend->gl.Disable(GL_BLEND);
   int stamp_alpha=filter==9u || filter==12u || filter==21u || filter==23u ||
-                  filter==25u || filter==32u || filter==35u || filter==39u || filter==40u;
+                  filter==25u || filter==32u || filter==35u || filter==39u || filter==40u ||
+                  filter==46u || filter==47u;
   backend->gl.ColorMask((write_mask&1u)!=0u,(write_mask&2u)!=0u,(write_mask&4u)!=0u,
                         !stamp_alpha && (write_mask&8u)!=0u);
   backend->gl.UseProgram(scene->program);
   backend->gl.Uniform2fv(scene->u_extent,1,extent);
   backend->gl.Uniform1i(scene->u_image,0);
   backend->gl.Uniform1i(scene->u_filter,(GLint)filter);
+  backend->gl.Uniform1i(scene->u_alpha_test,alpha_test);
   backend->gl.Uniform1i(scene->u_previous,1);
   /* Integer map samplers must never alias the floating image samplers, even
    * for a draw whose dynamic branch does not fetch either point map. */
@@ -1290,10 +1306,10 @@ static int flush_quads(GmlGpuBackend *backend,GlSceneImage *target,GlSceneImage 
   if(stamp_alpha && (write_mask&8u)){
     /* The CPU screen writer keeps alpha opaque at every covered texel,
      * even when its prior alpha is unknown. Reuse the sampled vertices and
-     * the same sampler in an alpha-only pass; source-zero texels stay untouched. */
+     * the same sampler and cutout in an alpha-only pass, preserving that recipe's coverage. */
     backend->gl.ColorMask(GL_FALSE,GL_FALSE,GL_FALSE,GL_TRUE);
     backend->gl.Disable(GL_BLEND);
-    backend->gl.Uniform1i(scene->u_filter,(filter==39u || filter==40u)?41:filter==35u?36:filter==32u?33:filter==25u?26:
+    backend->gl.Uniform1i(scene->u_filter,(filter==46u || filter==47u)?48:(filter==39u || filter==40u)?41:filter==35u?36:filter==32u?33:filter==25u?26:
                          filter==23u?24:filter==21u?22:filter==9u?10:13);
     backend->gl.DrawArrays(GL_TRIANGLES,0,(GLsizei)(count*6u));
   }
@@ -1430,7 +1446,7 @@ static int draw_rotated_regions(GmlGpuBackend *backend,const GmlRenderDrawBatch 
   GLint origin[2]={left,bottom};
   backend->gl.Uniform2iv(scene->u_region_origin,1,origin);
   if(backend->gl.GetError()!=GL_NO_ERROR) return 0;
-  if(!flush_quads(backend,target,source,texel?29u:modern?27u:15u,0,count,base_state->write_mask)) return -1;
+  if(!flush_quads(backend,target,source,texel?29u:modern?27u:15u,0,count,base_state->write_mask,-1)) return -1;
   *consumed=count;
   return 1;
 }
@@ -1699,7 +1715,7 @@ GmlRenderExecutionResult gml_gpu_opengl_scene_submit(GmlGpuBackend *backend,
   GmlRenderExecutionResult result={0};
   GlSceneImage *active_target=NULL,*pending_source=NULL;
   uint32_t pending_filter=0,pending_count=0,pending_write_mask=15u;
-  int pending_blend=0;
+  int pending_blend=0,pending_alpha_test=-1;
   result.status=GML_RENDER_EXEC_UNSUPPORTED;
   if(!scene_preflight(backend,batch)) return result;
   result.status=GML_RENDER_EXEC_RESOURCE_ERROR;
@@ -1737,7 +1753,7 @@ GmlRenderExecutionResult gml_gpu_opengl_scene_submit(GmlGpuBackend *backend,
     if(pending_count && (particle || alpha_rect || rectangle
        ? !active_target || !same_logical(active_target->ref,op->target.image) ||
          pending_count==GL_SCENE_MAX_QUADS || pending_filter!=primitive_filter ||
-         pending_blend!=primitive_blend
+         pending_blend!=primitive_blend || pending_alpha_test!=-1
        : (op->opcode!=GML_RENDER_OP_TEXTURED_QUAD ||
        !active_target || !same_logical(active_target->ref,op->target.image) ||
        pending_count==GL_SCENE_MAX_QUADS ||
@@ -1745,6 +1761,8 @@ GmlRenderExecutionResult gml_gpu_opengl_scene_submit(GmlGpuBackend *backend,
        pending_filter!=scene_filter(&op->payload.quad,&batch->states[op->state_index],op->scene_family) ||
        pending_blend!=qualified_blend(&batch->states[op->state_index]) ||
        pending_write_mask!=batch->states[op->state_index].write_mask ||
+       pending_alpha_test!=(batch->states[op->state_index].alpha_test_enabled
+         ?(int)batch->states[op->state_index].alpha_test_reference:-1) ||
        qualified_blend(&batch->states[op->state_index])==2 ||
        qualified_blend(&batch->states[op->state_index])==4 ||
        qualified_blend(&batch->states[op->state_index])==5 ||
@@ -1755,7 +1773,7 @@ GmlRenderExecutionResult gml_gpu_opengl_scene_submit(GmlGpuBackend *backend,
        scene_filter(&op->payload.quad,&batch->states[op->state_index],op->scene_family)==29u ||
        scene_filter(&op->payload.quad,&batch->states[op->state_index],op->scene_family)==27u))){
       if(!flush_quads(backend,active_target,pending_source,pending_filter,
-                      pending_blend,pending_count,pending_write_mask)){
+                      pending_blend,pending_count,pending_write_mask,pending_alpha_test)){
         mark_uncertain(&result,active_target);
         break;
       }
@@ -1817,6 +1835,7 @@ GmlRenderExecutionResult gml_gpu_opengl_scene_submit(GmlGpuBackend *backend,
           }
         }
         pending_source=NULL; pending_filter=primitive_filter; pending_blend=primitive_blend;
+        pending_alpha_test=-1;
         if(alpha_rect || rectangle) pending_write_mask=15u;
         pending_count++;
         target->valid=1; target->rendered_origin=1;
@@ -1885,7 +1904,7 @@ GmlRenderExecutionResult gml_gpu_opengl_scene_submit(GmlGpuBackend *backend,
       backend->gl.BindTexture(GL_TEXTURE_2D,backend->scene.rgb_reduce_texture[2]);
       backend->gl.ActiveTexture(GL_TEXTURE3);
       backend->gl.BindTexture(GL_TEXTURE_2D,backend->scene.rgb_reduce_texture[3]);
-      if(!flush_quads(backend,target,pending_source,23u,1,1u,15u)){
+      if(!flush_quads(backend,target,pending_source,23u,1,1u,15u,-1)){
         mark_uncertain(&result,target);
         break;
       }
@@ -1896,6 +1915,8 @@ GmlRenderExecutionResult gml_gpu_opengl_scene_submit(GmlGpuBackend *backend,
     pending_filter=scene_filter(&op->payload.quad,&batch->states[op->state_index],op->scene_family);
     pending_blend=qualified_blend(&batch->states[op->state_index]);
     pending_write_mask=batch->states[op->state_index].write_mask;
+    pending_alpha_test=batch->states[op->state_index].alpha_test_enabled
+      ?(int)batch->states[op->state_index].alpha_test_reference:-1;
     if(pending_filter==15u || pending_filter==17u || pending_filter==27u || pending_filter==29u){
       uint32_t consumed=0;
       int drawn=draw_rotated_regions(backend,batch,index,target,pending_source,&consumed);
@@ -1924,7 +1945,7 @@ GmlRenderExecutionResult gml_gpu_opengl_scene_submit(GmlGpuBackend *backend,
       backend->gl.Uniform2iv(backend->scene.u_region_origin,1,origin);
       /* Each overlapping float blend snapshots its own ordered predecessor;
        * never merge these quads against one stale destination image. */
-      if(!flush_quads(backend,target,pending_source,pending_filter,pending_blend,1u,pending_write_mask)){
+      if(!flush_quads(backend,target,pending_source,pending_filter,pending_blend,1u,pending_write_mask,pending_alpha_test)){
         mark_uncertain(&result,target);
         break;
       }
@@ -1957,7 +1978,7 @@ GmlRenderExecutionResult gml_gpu_opengl_scene_submit(GmlGpuBackend *backend,
   if(result.status==GML_RENDER_EXEC_RESOURCE_ERROR &&
      result.accepted_prefix+pending_count==batch->operation_count){
     if(!flush_quads(backend,active_target,pending_source,pending_filter,
-                    pending_blend,pending_count,pending_write_mask))
+                    pending_blend,pending_count,pending_write_mask,pending_alpha_test))
       mark_uncertain(&result,active_target);
     else {
       result.status=GML_RENDER_EXEC_ACCEPTED;

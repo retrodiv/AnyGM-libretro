@@ -160,6 +160,7 @@ int gml_gpu_opengl_scene_program(GmlGpuBackend *backend,char *error,size_t error
   scene->u_extent=backend->gl.GetUniformLocation(scene->program,"u_extent");
   scene->u_image=backend->gl.GetUniformLocation(scene->program,"u_image");
   scene->u_filter=backend->gl.GetUniformLocation(scene->program,"u_filter");
+  scene->u_alpha_test=backend->gl.GetUniformLocation(scene->program,"u_alpha_test");
   scene->u_previous=backend->gl.GetUniformLocation(scene->program,"u_previous");
   scene->u_region_origin=backend->gl.GetUniformLocation(scene->program,"u_region_origin");
   scene->u_rotated_alpha16=backend->gl.GetUniformLocation(scene->program,"u_rotated_alpha16[0]");
@@ -173,7 +174,7 @@ int gml_gpu_opengl_scene_program(GmlGpuBackend *backend,char *error,size_t error
   if(scene->a_position<0 || scene->a_texcoord<0 || scene->a_colour<0 ||
      scene->a_clamp<0 || scene->a_map<0 || scene->a_step<0 || scene->a_margin<0 ||
      scene->a_span_x<0 || scene->a_span_y<0 || scene->a_span_active<0 ||
-     scene->u_extent<0 || scene->u_image<0 || scene->u_filter<0 ||
+     scene->u_extent<0 || scene->u_image<0 || scene->u_filter<0 || scene->u_alpha_test<0 ||
      scene->u_previous<0 || scene->u_region_origin<0 || scene->u_rotated_alpha16<0 ||
      scene->u_point_map_x<0 || scene->u_point_map_y<0 || scene->u_point_origin<0 ||
      scene->u_recovery_screen<0 || scene->u_recovery_application<0 || scene->u_recovery_rect<0){

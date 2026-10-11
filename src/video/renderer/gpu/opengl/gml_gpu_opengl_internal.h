@@ -134,7 +134,7 @@ typedef struct GlScene {
   GLuint program,vertex_buffer,vertex_array;
   GLint a_position,a_texcoord,a_colour,a_clamp,a_map,a_step,a_margin;
   GLint a_span_x,a_span_y,a_span_active;
-  GLint u_extent,u_image,u_filter,u_previous,u_region_origin;
+  GLint u_extent,u_image,u_filter,u_alpha_test,u_previous,u_region_origin;
   GLint u_rotated_alpha16;
   GLint u_point_map_x,u_point_map_y,u_point_origin;
   double rotated_alpha16_value;

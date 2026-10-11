@@ -2335,8 +2335,9 @@ static int scene_screen_filtered_alpha_stamp_case(void){
 }
 
 static int scene_integer_function_sprite_case(void){
+  for(unsigned alpha_test=0;alpha_test<2u;alpha_test++)
   for(unsigned api=0;api<2u;api++) for(unsigned rounded=0;rounded<2u;rounded++)
-  for(unsigned target_kind=0;target_kind<3u;target_kind++) for(unsigned blend=0;blend<3u;blend++){
+  for(unsigned target_kind=0;target_kind<3u;target_kind++) for(unsigned blend=0;blend<5u;blend++){
     uint8_t pixels[16]={208,32,16,128,16,208,32,255,32,16,208,0,192,176,160,64};
     GmlRenderImageRef source={GML_RENDER_RESOURCE_ATLAS,31u,1u,1u};
     GmlRenderImageRef target={target_kind==0u?GML_RENDER_RESOURCE_SCREEN:
@@ -2352,12 +2353,19 @@ static int scene_integer_function_sprite_case(void){
     gml_gpu_device_services(gpu,&device);
     REQUIRE(device.upload(device.context,&upload),"integer sprite uploads atlas");
     state.write_mask=15u;state.alpha=255u;state.colour=0xFFFFFFFFu;
-    if(blend){
+    state.alpha_test_enabled=alpha_test;state.alpha_test_reference=127u;
+    if(blend==4u) state.coverage_policy=GML_RENDER_COVERAGE_REPLACE_ZERO_ALPHA;
+    else if(blend){
       state.rgb_source_factor=GML_RENDER_BLEND_SOURCE_ALPHA;
       state.rgb_destination_factor=state.alpha_destination_factor=GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA;
       state.alpha_source_factor=blend==2u?GML_RENDER_BLEND_SOURCE_ALPHA:GML_RENDER_BLEND_ONE;
       state.rgb_equation=state.alpha_equation=GML_RENDER_BLEND_ADD;
-      if(blend==1u && target_kind<2u) state.coverage_policy=GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA;
+      if(blend==3u){
+        state.rgb_source_factor=state.alpha_source_factor=GML_RENDER_BLEND_ZERO;
+        state.rgb_destination_factor=GML_RENDER_BLEND_ONE_MINUS_SOURCE_COLOUR;
+      }
+      if((blend==1u || blend==3u) && target_kind<2u)
+        state.coverage_policy=GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA;
     }
     state.sampler_count=1u;
     state.samplers[0]=(GmlRenderSamplingPolicy){.filter=GML_RENDER_FILTER_NEAREST,
@@ -2379,7 +2387,7 @@ static int scene_integer_function_sprite_case(void){
       for(unsigned corner=0;corner<4u;corner++) q->corner_colour[corner]=0x663470D0u;
     }
     GmlRenderExecutionResult result=device.submit(device.context,&batch);
-    int draws=blend==1u && target_kind<2u?2:1;
+    int draws=(blend==1u || blend==3u) && target_kind<2u?2:1;
     REQUIRE(result.status==GML_RENDER_EXEC_ACCEPTED && result.accepted_prefix==3u &&
       anygm_test_graphics_scene_draw_calls()==draws && anygm_test_graphics_scene_copies()==0u &&
       anygm_test_graphics_read_pixels()==0u,
@@ -2427,6 +2435,32 @@ static int scene_integer_function_sprite_case(void){
       REQUIRE(result.status==GML_RENDER_EXEC_UNSUPPORTED && !result.accepted_prefix &&
         anygm_test_graphics_scene_draw_calls()==draws*3 && !anygm_test_graphics_scene_copies() &&
         !anygm_test_graphics_read_pixels(),"non-centre constants and nonwhole inverse scales refuse transactionally");
+    }
+    GmlRenderDrawStateSnapshot changed_states[2]={state,state};
+    batch.states=changed_states;batch.state_count=2u;ops[2].state_index=1u;
+    for(unsigned i=1u;i<3u;i++) ops[i].payload.quad=pristine;
+    for(unsigned transition=0;transition<2u;transition++){
+      for(unsigned i=0;i<3u;i++) ops[i].target.image.content_version=13u+transition*3u+i;
+      changed_states[0]=changed_states[1]=state;
+      changed_states[0].alpha_test_enabled=1u;
+      changed_states[1].alpha_test_enabled=transition?1u:0u;
+      changed_states[1].alpha_test_reference=128u;
+      int calls=anygm_test_graphics_scene_draw_calls();
+      result=device.submit(device.context,&batch);
+      REQUIRE(result.status==GML_RENDER_EXEC_ACCEPTED && result.accepted_prefix==3u &&
+        anygm_test_graphics_scene_draw_calls()==calls+2*draws &&
+        !anygm_test_graphics_scene_copies() && !anygm_test_graphics_read_pixels(),
+        "cutout enable or cutoff changes split a compatible batch without reading the target");
+    }
+    for(unsigned invalid=0;invalid<2u;invalid++){
+      changed_states[0]=changed_states[1]=state;
+      changed_states[1].alpha_test_enabled=invalid?1u:2u;
+      changed_states[1].alpha_test_reference=invalid?256u:127u;
+      int calls=anygm_test_graphics_scene_draw_calls();
+      result=device.submit(device.context,&batch);
+      REQUIRE(result.status==GML_RENDER_EXEC_UNSUPPORTED && !result.accepted_prefix &&
+        anygm_test_graphics_scene_draw_calls()==calls && !anygm_test_graphics_scene_copies() &&
+        !anygm_test_graphics_read_pixels(),"invalid cutout state rejects the whole batch before its clear");
     }
     gml_gpu_destroy(gpu,1);
   }

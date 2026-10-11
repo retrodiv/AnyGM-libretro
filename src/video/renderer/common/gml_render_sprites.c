@@ -220,7 +220,8 @@ static int resident_integer_sprite(GmlRender *r,GmlSprite *sprite,int subimg,
   int normal_integer=r && !r->interp && !r->fog_flat && !gml_d3_is_active(r) &&
     isfinite(xs) && isfinite(ys) && fabs(xs)>=1.0 && fabs(xs)<=8.0 &&
     fabs(ys)>=1.0 && fabs(ys)<=8.0 && xs==floor(xs) && ys==floor(ys) &&
-    rotation==0.0 && !r->blendmode && r->device.context && r->device.observe_on_demand &&
+    rotation==0.0 && (!r->blendmode || r->blendmode==2) &&
+    r->device.context && r->device.observe_on_demand &&
     r->device.observe_on_demand(r->device.context);
   if(!r || !r->resident_application_pass || !sprite || sprite->runtime_rgba ||
      sprite->spine || sprite->ns_enabled || sprite->n_frames<=0 ||
@@ -232,8 +233,9 @@ static int resident_integer_sprite(GmlRender *r,GmlSprite *sprite,int subimg,
                      (r->world_transform_active &&
                       (r->world_scale_x!=1.0 || r->world_scale_y!=1.0)))) ||
      (r->gui_pass_active && !normal_integer && !resident_identity_screen_gui(r)) ||
-     r->active_shader>=0 || r->alpha_test_enable || (!r->alphablend && !normal_integer) ||
-     (r->blendmode && !replace) || r->blend_equation!=1 || r->blend_equation_alpha!=1 ||
+     r->active_shader>=0 || (r->alpha_test_enable && !normal_integer) ||
+     (!r->alphablend && !normal_integer) ||
+     (r->blendmode && !replace && !normal_integer) || r->blend_equation!=1 || r->blend_equation_alpha!=1 ||
      r->color_write_mask!=0x0Fu || r->classic_phase_y ||
      r->rotated_batch_count || r->rotated_batch_building ||
      r->pending_underlay || r->pending_presentation ||
@@ -518,8 +520,9 @@ static int resident_atlas_crop_from_page(GmlRender *r,GmlTpag *page,
      (r->gui_pass_active && !integer_sprite &&
       ((family!=GML_RENDER_SCENE_SPRITE && !gui_crop) ||
        !resident_identity_screen_gui(r))) ||
-     r->active_shader>=0 || r->alpha_test_enable ||
-     (!r->alphablend && !integer_sprite) || (r->blendmode && !replace) || r->blend_equation!=1 ||
+     r->active_shader>=0 || (r->alpha_test_enable && !integer_sprite) ||
+     (!r->alphablend && !integer_sprite) ||
+     (r->blendmode && !replace && !(integer_sprite && r->blendmode==2)) || r->blend_equation!=1 ||
      r->blend_equation_alpha!=1 || r->color_write_mask!=0x0Fu ||
      r->classic_phase_y || r->rotated_batch_count || r->rotated_batch_building ||
      r->pending_underlay || r->pending_presentation ||
@@ -683,7 +686,8 @@ static int resident_atlas_crop_from_page(GmlRender *r,GmlTpag *page,
     double tie_x=world && fabs(fabs(r->cam_x-nearbyint(r->cam_x))-0.5)<1e-9?-1e-9:0.0;
     double tie_y=world && fabs(fabs(r->cam_y-nearbyint(r->cam_y))-0.5)<1e-9?-1e-9:0.0;
     double snapped_x=floor(left+0.5+tie_x),snapped_y=floor(top+0.5+tie_y);
-    int unit_white=fabs(xs)==1.0 && fabs(ys)==1.0 && colour==0xFFFFFFu &&
+    int unit_white=!r->blendmode && (!r->alpha_test_enable || !r->alpha_test_ref) &&
+      fabs(xs)==1.0 && fabs(ys)==1.0 && colour==0xFFFFFFu &&
       (draw_alpha==1.0 || (xs>0.0 && ys>0.0));
     point_left=(unit_white || (!modern && !(r->classic && xs>1.0) &&
       !(firstgen && xs>1.0)))?snapped_x:left+tie_x;
@@ -695,7 +699,9 @@ static int resident_atlas_crop_from_page(GmlRender *r,GmlTpag *page,
     /* The unchanged white/full-alpha application leaf can read one adjacent
      * atlas texel at a trailing tie. Keep its physical bounds without claiming
      * that the original crop's cached alpha classification covers that texel. */
-    int contiguous=firstgen && r->alphablend && colour==0xFFFFFFu && draw_alpha==1.0;
+    int contiguous=firstgen && !r->blendmode &&
+      (!r->alpha_test_enable || !r->alpha_test_ref) &&
+      r->alphablend && colour==0xFFFFFFu && draw_alpha==1.0;
     if(contiguous && xs>1.0 && (uint64_t)page->sx+page->sw<source.width)
       integer_point_page.sw++;
     if(contiguous && ys>1.0 && (uint64_t)page->sy+page->sh<source.height)
@@ -851,6 +857,11 @@ static int resident_atlas_crop_from_page(GmlRender *r,GmlTpag *page,
   state.write_mask=15u;
   state.colour=0xFFFFFFFFu;
   state.alpha=255u;
+  if(integer_sprite){
+    state.alpha_test_enabled=!!r->alpha_test_enable;
+    state.alpha_test_reference=r->alpha_test_ref;
+  }
+  int inverse_sprite=integer_sprite && r->alphablend && r->blendmode==2;
   int adjacent_alpha=integer_point && (integer_point_page.sw!=page->sw || integer_point_page.sh!=page->sh);
   if(!replace && (!integer_sprite || r->alphablend) &&
      (!page->scene_fully_opaque || adjacent_alpha || draw_alpha<1.0 || checkpoint_alpha_gui)){
@@ -865,14 +876,23 @@ static int resident_atlas_crop_from_page(GmlRender *r,GmlTpag *page,
     state.rgb_equation=GML_RENDER_BLEND_ADD;
     state.alpha_equation=GML_RENDER_BLEND_ADD;
   }
+  if(inverse_sprite){
+    state.rgb_source_factor=GML_RENDER_BLEND_ZERO;
+    state.rgb_destination_factor=GML_RENDER_BLEND_ONE_MINUS_SOURCE_COLOUR;
+    state.alpha_source_factor=GML_RENDER_BLEND_ZERO;
+    state.alpha_destination_factor=GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA;
+    state.rgb_equation=state.alpha_equation=GML_RENDER_BLEND_ADD;
+  }
   state.sampler_count=1u;
   if(checkpoint_alpha_sprite && r->classic && !gml_render_target_preserves_alpha(r))
     state.coverage_policy=GML_RENDER_COVERAGE_OPAQUE_TARGET;
   if(checkpoint_alpha_gui)
     state.coverage_policy=GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA;
   if(integer_sprite && r->alphablend && !gml_render_target_preserves_alpha(r) &&
-     (draw_alpha<1.0 || !page->scene_binary_alpha || adjacent_alpha))
+     (inverse_sprite || draw_alpha<1.0 || !page->scene_binary_alpha || adjacent_alpha))
     state.coverage_policy=GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA;
+  if(integer_sprite && !r->alphablend && r->blendmode==2)
+    state.coverage_policy=GML_RENDER_COVERAGE_REPLACE_ZERO_ALPHA;
   state.samplers[0]=operation.payload.quad.sampling;
   if(integer_point){
     if(!resident_modern_point_regions(r,&integer_point_page,point_left,point_top,xs,ys,
@@ -883,7 +903,7 @@ static int resident_atlas_crop_from_page(GmlRender *r,GmlTpag *page,
   } else if(!gml_render_application_scene_enqueue(r,&operation,&state,&source)) return 0;
   r->fb_all_transparent=0;
   if(((family==GML_RENDER_SCENE_TEXT && draw_alpha<1.0) || checkpoint_alpha_sprite ||
-      (integer_sprite && r->alphablend && (draw_alpha<1.0 || !page->scene_binary_alpha || adjacent_alpha))) &&
+      (integer_sprite && r->alphablend && (inverse_sprite || draw_alpha<1.0 || !page->scene_binary_alpha || adjacent_alpha))) &&
      gml_render_target_preserves_alpha(r)){
     r->fb_opaque_known=0;
     r->fb_all_opaque=0;
@@ -891,7 +911,8 @@ static int resident_atlas_crop_from_page(GmlRender *r,GmlTpag *page,
   }
   /* Enqueue conservatively invalidates application opacity. A complete nearest
    * replacement from an opaque page proves every target alpha without reading it. */
-  if((replace || (page->scene_fully_opaque && !adjacent_alpha)) && draw_alpha==1.0 && left==0.0 && top==0.0 &&
+  if(!inverse_sprite && (!r->alpha_test_enable || r->alpha_test_ref<255u) &&
+     (replace || (page->scene_fully_opaque && !adjacent_alpha)) && draw_alpha==1.0 && left==0.0 && top==0.0 &&
      scaled_width==r->fbw && scaled_height==r->fbh){
     r->fb_opaque_known=r->fb_all_opaque=1;
     if(r->app_surface && r->fb==r->app_surface) r->app_surface_opaque=1;

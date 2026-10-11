@@ -9727,7 +9727,7 @@ static int resident_classic_owned_binary_unit_sprite(void){
       exclusion==14u?0.5:1.0);
     /* The old owned-binary rule is still preferred. Newly paired integer
      * variants strengthen these old scope exclusions into transport guards. */
-    int integer_extension=exclusion==2u || exclusion==5u || exclusion==9u || exclusion==10u || exclusion==12u ||
+    int integer_extension=exclusion==2u || exclusion==5u || exclusion==6u || exclusion==9u || exclusion==10u || exclusion==12u ||
       exclusion==13u || exclusion==14u || exclusion==15u;
     if(!exclusion || integer_extension){
       CHECK(render->resident_application_pass && !fake.submits && !fake.readbacks &&
@@ -9741,6 +9741,8 @@ static int resident_classic_owned_binary_unit_sprite(void){
             metrics.cpu_version<metrics.logical_version && !metrics.cpu_replays &&
             !metrics.journal_operations && !metrics.retained_mutable_bytes);
       if(integer_extension) CHECK(fake.last_quantisation==GML_RENDER_QUANTISE_INTEGER_TINT_TRUNC);
+      if(exclusion==6u) CHECK(fake.last_quad_state.alpha_test_enabled==1u &&
+                             fake.last_quad_state.alpha_test_reference==0u);
     } else CHECK(!render->resident_application_pass);
     gml_render_abandon_device(render);gml_render_free(render);free(render);
   }
@@ -11186,6 +11188,7 @@ static int resident_opaque_sprite_complete_application(void){
 static int resident_integer_sprite_function(void){
   enum { W=24,H=20 };
   const int generations[]={700,800,15,17};const double alphas[]={1.0,0.0,0.4};
+  for(unsigned draw_state=0;draw_state<4u;draw_state++)
   for(unsigned fractional=0;fractional<2u;fractional++)
   for(unsigned generation=0;generation<4u;generation++)
   for(unsigned target_kind=0;target_kind<4u;target_kind++)
@@ -11221,7 +11224,11 @@ static int resident_integer_sprite_function(void){
     if(target_kind==2u) CHECK(gml_surface_set_target(render,0));
     if(target_kind==3u){int id=gml_surface_create(render,W,H);CHECK(id>0 && gml_surface_set_target(render,id));}
     if(gui){gml_render_gui_begin(render,W,H);gml_render_gui_set_size(render,W/2,H/2);}
-    render->alphablend=!disabled;gml_render_set_pending_fill(render,0x40273859u);
+    render->alphablend=!disabled;
+    render->blendmode=draw_state>=2u?2:0;
+    render->alpha_test_enable=(int)(draw_state&1u);
+    render->alpha_test_ref=(uint8_t)(generation*67u+signs*41u+a*17u);
+    gml_render_set_pending_fill(render,0x40273859u);
     gml_render_flush_pending_fill(render);CHECK(gml_render_scene_submit_pending(render));
     memcpy(shadow,render->fb,sizeof shadow);int submitted=fake.submits;
     double xs=(fractional?4.0:2.0)*(signs&1u?-1.0:1.0);
@@ -11242,7 +11249,7 @@ static int resident_integer_sprite_function(void){
       CHECK(fake.last_batch_operations>=8u && fake.last_filter==GML_RENDER_FILTER_NEAREST);
       if(fake.last_quantisation==GML_RENDER_QUANTISE_SPRITE_MODERN_NEAREST){
         /* The inherited predecessor path is not replaced by this extension. */
-        CHECK(generation==3u && target_kind==3u && !gui && !disabled &&
+        CHECK(!draw_state && generation==3u && target_kind==3u && !gui && !disabled &&
               fake.last_filtered_draw_alpha==alphas[a]);
       }else if(fake.last_quantisation) CHECK(
         fake.last_quantisation==(generation==3u?GML_RENDER_QUANTISE_INTEGER_TINT_ROUND:GML_RENDER_QUANTISE_INTEGER_TINT_TRUNC) &&
@@ -11545,7 +11552,7 @@ static int resident_integer_sourceover_exclusions(void){
     if(variant==2u) render->color_write_mask=7u;
     double x=variant==3u?3.125:variant==4u?-0.5:3.0;
     gml_draw_sprite_ext(render,0,0,x,3.0,1,1,0,0xFFFFFFu,0.75);
-    if(variant==3u || variant==4u){
+    if(variant==1u || variant==3u || variant==4u){
       /* Clipped and fractional whole-scale source-over share the paired rule. */
       CHECK(render->resident_application_pass && render->pending_scene_batch &&
             gml_render_scene_submit_pending(render) && fake.submits==2 &&
@@ -11553,6 +11560,8 @@ static int resident_integer_sourceover_exclusions(void){
       CHECK(
             fake.last_filter==GML_RENDER_FILTER_NEAREST &&
             fake.last_quantisation==GML_RENDER_QUANTISE_INTEGER_TINT_TRUNC);
+      if(variant==1u) CHECK(fake.last_quad_state.alpha_test_enabled==1u &&
+                           fake.last_quad_state.alpha_test_reference==0u);
       gml_render_free(render);free(render);
       continue;
     }
