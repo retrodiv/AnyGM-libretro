@@ -11372,11 +11372,11 @@ static int resident_background_function(int fractional){
             !memcmp(shadow,render->fb,sizeof shadow));
     }
     if(fractional==2 && generation==5u && !target_kind && !gui && !repeat &&
-       a==2u && !tint && !draw_state){
-      /* A detached white unit crop with partial opacity cannot use the
-       * complete-page ARGB-cache copy. Sample row one at the authored half tie. */
+       (a==2u || a==0u) && !tint && !draw_state){
+      /* Detached partial-opacity and reflected full-opacity white unit crops
+       * miss the cached copy. Both sample row one at the authored half tie. */
       gml_draw_background_tile(render,0,1,1,2,2,W-0.75,H-1.5,1,1,
-                               0,0,0,0xFFFFFFu,alphas[a]);
+                               a==0u,0,0,0xFFFFFFu,alphas[a]);
       CHECK(render->resident_application_pass && gml_render_scene_submit_pending(render));
       const GmlRenderQuad *q=&fake.last_quad;
       CHECK(q->y[2]>q->y[0] && q->y[0]<=H-0.5 && q->y[2]>H-0.5);

@@ -760,9 +760,10 @@ static int resident_atlas_crop_from_page_impl(GmlRender *r,GmlTpag *page,
     }
     int unit_white=!r->blendmode && (!r->alpha_test_enable || !r->alpha_test_ref) &&
       fabs(xs)==1.0 && fabs(ys)==1.0 && colour==0xFFFFFFu &&
-      /* Detached TILE views cannot enter the CPU's cached partial-opacity
-       * white copy. Their general point writer retains the authored phase. */
-      (draw_alpha==1.0 || (!selected_background && !tile_function && xs>0.0 && ys>0.0));
+      /* Detached TILE views cannot enter cached partial-opacity or reflected
+       * white copies. Only the forward full-opacity copy has a snapped fallback. */
+      ((draw_alpha==1.0 && (!tile_function || (xs>0.0 && ys>0.0))) ||
+       (!selected_background && !tile_function && xs>0.0 && ys>0.0));
     point_left=(unit_white || (!modern && !(r->classic && xs>1.0) &&
       !(firstgen && xs>1.0)))?snapped_x:left+tie_x;
     point_top=(unit_white || (!modern && !(r->classic && ys>1.0) &&
