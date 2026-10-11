@@ -10623,17 +10623,20 @@ static int resident_classic_scaled_background_scope(void){
   for(unsigned policy=0;policy<4u;policy++)
   for(unsigned numbered=0;numbered<2u;numbered++)
   for(unsigned port=0;port<2u;port++)
-  for(unsigned excluded=0;excluded<11u;excluded++){
+  for(unsigned variant=0;variant<11u;variant++){
     GmlRender *render=calloc(1,sizeof *render);
     GmlWin content={.classic_version=revisions[policy]};
     uint32_t clear=numbered?0x40123456u:0xFF123456u;
-    FakeDevice fake={.on_demand=excluded!=10u,.readback_colour=clear};
+    /* The selected-background function supersedes the old cheap-owner scope.
+     * Missing on-demand authority still rejects before the unchanged CPU writer. */
+    int rejected=variant==10u;
+    FakeDevice fake={.on_demand=!rejected,.readback_colour=clear};
     GmlRenderDeviceServices device=service(&fake);
     uint32_t base[64]={0},reference[64];
     uint8_t rgba[16]={208,32,16,255,16,208,32,255,32,16,208,255,192,176,160,255};
-    double xs=excluded==6u?-1.5:excluded==7u?4.25:1.5;
-    double alpha=excluded==4u?0.5:1.0;
-    uint32_t colour=excluded==5u?0x80C0E0u:0xFFFFFFu;
+    double xs=variant==6u?-1.5:variant==7u?4.25:1.5;
+    double alpha=variant==4u?0.5:1.0;
+    uint32_t colour=variant==5u?0x80C0E0u:0xFFFFFFu;
     CHECK(render && gml_render_init(render,NULL)==0);
     render->win=&content;render->classic=1;
     free(render->atlas[0].px);
@@ -10643,11 +10646,11 @@ static int resident_classic_scaled_background_scope(void){
     render->tpag=calloc(1,sizeof *render->tpag);
     render->bg=calloc(1,sizeof *render->bg);
     CHECK(render->atlas[0].px && render->tpag && render->bg);
-    if(excluded==3u) rgba[7]=128u;
+    if(variant==3u) rgba[7]=128u;
     memcpy(render->atlas[0].px,rgba,sizeof rgba);
     render->n_tpag=render->n_bg=1;
     render->tpag[0]=(GmlTpag){.sw=2,.sh=2,.tw=2,.th=2,
-      .bw=excluded==2u?4:2,.bh=2,.tx=excluded==2u?1:0};
+      .bw=variant==2u?4:2,.bh=2,.tx=variant==2u?1:0};
     device.observe_on_demand=fake_observe_on_demand;
     int id=0;
     for(unsigned gpu=0;gpu<2u;gpu++){
@@ -10664,12 +10667,12 @@ static int resident_classic_scaled_background_scope(void){
           CHECK(id>0 && gml_surface_set_target(render,id));
         }
       }
-      render->gui_pass_active=excluded==8u;
-      render->world_transform_active=excluded==9u;
-      render->world_scale_x=excluded==9u?2.0:1.0;render->world_scale_y=1.0;
+      render->gui_pass_active=variant==8u;
+      render->world_transform_active=variant==9u;
+      render->world_scale_x=variant==9u?2.0:1.0;render->world_scale_y=1.0;
       gml_render_set_pending_fill(render,clear);
-      double width=excluded==1u?1.0:2.0;
-      if(port && excluded!=1u)
+      double width=variant==1u?1.0:2.0;
+      if(port && variant!=1u)
         gml_draw_background_stretched(render,0,2.5,2.5,
           render->tpag[0].bw*xs,1.5,colour,alpha);
       else
@@ -10679,16 +10682,16 @@ static int resident_classic_scaled_background_scope(void){
         memcpy(reference,render->fb,sizeof reference);
       }else{
         /* Rejected variants may observe the pending GPU clear before CPU drawing. */
-        if(render->resident_application_pass!=!excluded || (!excluded && fake.readbacks))
-          fprintf(stderr,"Classic scaled background scope: policy=%u numbered=%u port=%u excluded=%u resident=%d reads=%d\n",
-                  policy,numbered,port,excluded,render->resident_application_pass,fake.readbacks);
-        CHECK(render->resident_application_pass==!excluded && (excluded || !fake.readbacks));
-        if(excluded){
+        if(render->resident_application_pass!=!rejected || (!rejected && fake.readbacks))
+          fprintf(stderr,"Classic scaled background scope: policy=%u numbered=%u port=%u variant=%u resident=%d reads=%d\n",
+                  policy,numbered,port,variant,render->resident_application_pass,fake.readbacks);
+        CHECK(render->resident_application_pass==!rejected && (rejected || !fake.readbacks));
+        if(rejected){
           if(memcmp(reference,render->fb,sizeof reference))
             for(unsigned pixel=0;pixel<64u;pixel++)
               if(reference[pixel]!=render->fb[pixel]){
-                fprintf(stderr,"Classic scaled background fallback: policy=%u numbered=%u port=%u excluded=%u pixel=%u CPU=%08x fallback=%08x\n",
-                        policy,numbered,port,excluded,pixel,reference[pixel],render->fb[pixel]);
+                fprintf(stderr,"Classic scaled background fallback: policy=%u numbered=%u port=%u variant=%u pixel=%u CPU=%08x fallback=%08x\n",
+                        policy,numbered,port,variant,pixel,reference[pixel],render->fb[pixel]);
                 break;
               }
           CHECK(!memcmp(reference,render->fb,sizeof reference));
@@ -11372,6 +11375,71 @@ static int resident_integer_background_function(void){
               render->alpha_test_enable==(int)(draw_state&1u) && render->alpha_test_ref==127u);
       }else CHECK(!a && !tint && !draw_state && !disabled);
     }
+    CHECK(gml_render_resource_acquire_cpu_read(resource,&pixels) && fake.readbacks==1 &&
+      pixels[0]==fake.readback_colour && pixels[W*H-1u]==fake.readback_colour);
+    fake.forbid_calls=1;
+    CHECK(gml_render_resource_acquire_cpu_read(resource,&pixels) && !fake.forbidden_calls &&
+      pixels[0]==fake.readback_colour && pixels[W*H-1u]==fake.readback_colour);
+    fake.forbid_calls=0;gml_render_free(render);free(render);
+  }
+  return 1;
+}
+
+static int resident_selected_background_function(void){
+  enum { W=48,H=40 };
+  static const int generations[]={530,700,800,13,15,17};
+  static const double alphas[]={1.0,0.0,.37};
+  static const uint8_t rgba[]={208,32,16,128,16,208,32,255,32,16,208,0,192,176,160,64};
+  for(unsigned generation=0;generation<6u;generation++)
+  for(unsigned target_kind=0;target_kind<4u;target_kind++)
+  for(unsigned gui=0;gui<2u;gui++) for(unsigned draw_state=0;draw_state<4u;draw_state++)
+  for(unsigned a=0;a<3u;a++) for(unsigned tint=0;tint<2u;tint++){
+    AnygmContentFacts facts={.schema_version=ANYGM_COMPATIBILITY_SCHEMA};
+    AnygmCompatibilityProfile profile={0};GmlWin content={0};
+    if(generations[generation]>100) facts.classic_revision=generations[generation];
+    else{facts.bytecode_revision=generations[generation];facts.has_room_layers=generations[generation]==17;}
+    CHECK(anygm_compatibility_resolve(&facts,&profile,NULL,0));
+    content.compatibility=&profile;content.classic_version=facts.classic_revision;
+    content.bytecode=facts.bytecode_revision;content.has_room_layers=facts.has_room_layers;
+    GmlRender *render=calloc(1,sizeof *render);
+    FakeDevice fake={.on_demand=1,.readback_colour=0x80446688u};
+    GmlRenderDeviceServices device=service(&fake);uint32_t screen[W*H],shadow[W*H];
+    CHECK(render && gml_render_init(render,NULL)==0);render->win=&content;
+    render->classic=facts.classic_revision!=0;
+    render->atlas=calloc(1,sizeof *render->atlas);render->tpag=calloc(1,sizeof *render->tpag);
+    render->bg=calloc(1,sizeof *render->bg);CHECK(render->atlas && render->tpag && render->bg);
+    render->atlas[0].px=malloc(sizeof rgba);CHECK(render->atlas[0].px);
+    memcpy(render->atlas[0].px,rgba,sizeof rgba);render->atlas[0].w=render->atlas[0].h=2;
+    render->atlas[0].blob=1u;render->n_atlas=render->n_tpag=render->n_bg=1;
+    render->tpag[0]=(GmlTpag){.sw=2,.sh=2,.tw=2,.th=2,.bw=4,.bh=4,.tx=1,.ty=1};
+    device.observe_on_demand=fake_observe_on_demand;gml_render_bind_device(render,&device);
+    for(unsigned p=0;p<W*H;p++) screen[p]=0xA5ABCDEFu;
+    if(target_kind==1u || target_kind==2u){
+      CHECK(gml_render_application_surface_ensure_owned(render,W,H));
+      CHECK(gml_render_begin_resident_owned_application(render,0,0,0));
+    }else{
+      gml_render_application_surface_bind(render,screen,W,H,1);
+      CHECK(gml_render_begin_resident_base(render,screen,W,H,0,0));
+    }
+    if(target_kind==2u) CHECK(gml_surface_set_target(render,0));
+    if(target_kind==3u){int id=gml_surface_create(render,W,H);CHECK(id>0 && gml_surface_set_target(render,id));}
+    if(gui){gml_render_gui_begin(render,W,H);gml_render_gui_set_size(render,W/2,H/2);}
+    render->blendmode=draw_state>=2u?2:0;
+    render->alpha_test_enable=(int)(draw_state&1u);render->alpha_test_ref=127u;
+    gml_render_set_pending_fill(render,0x40273859u);gml_render_flush_pending_fill(render);
+    CHECK(gml_render_scene_submit_pending(render));memcpy(shadow,render->fb,sizeof shadow);
+    int submitted=fake.submits;double mapping=gui?2.0:1.0;
+    for(unsigned draw=0;draw<8u;draw++)
+      gml_draw_background_stretched(render,0,-3.0/mapping,1.0/mapping,
+        60.0/mapping,33.75/mapping,tint?0x70B0D0u:0xFFFFFFu,alphas[a]);
+    CHECK(render->resident_application_pass && gml_render_scene_submit_pending(render));
+    CHECK(!fake.readbacks && !fake.rgb_queries && !memcmp(shadow,render->fb,sizeof shadow));
+    CHECK(a==1u?fake.submits==submitted:fake.submits>submitted);
+    GmlRenderResource *resource=gml_render_scene_target_resource_ensure(render);
+    GmlRenderJournalMetrics metrics={0};const uint32_t *pixels=NULL;CHECK(resource);
+    gml_render_resource_journal_metrics(resource,&metrics);
+    CHECK(metrics.authority==GML_RENDER_RESOURCE_GPU_RESIDENT && !metrics.cpu_replays && !metrics.journal_bytes);
+    CHECK(render->alpha_test_enable==(int)(draw_state&1u) && render->alpha_test_ref==127u);
     CHECK(gml_render_resource_acquire_cpu_read(resource,&pixels) && fake.readbacks==1 &&
       pixels[0]==fake.readback_colour && pixels[W*H-1u]==fake.readback_colour);
     fake.forbid_calls=1;
@@ -12488,6 +12556,7 @@ int main(void){
   passed+=resident_classic_nonphase_sprite_targets();
   passed+=resident_integer_sprite_function();
   passed+=resident_integer_background_function();
+  passed+=resident_selected_background_function();
   passed+=resident_classic_owned_binary_unit_sprite();
   passed+=resident_runtime_binary_unit_sprites();
   passed+=resident_classic_unit_tiles();
@@ -12525,6 +12594,6 @@ int main(void){
   passed+=source_free_primitive_rect_replay();
   passed+=stretched_float_exact_replay();
   passed+=filtered_font_exact_recovery();
-  printf("render resource cases: passed=%d failed=%d\n",passed,174-passed);
-  return passed==174?EXIT_SUCCESS:EXIT_FAILURE;
+  printf("render resource cases: passed=%d failed=%d\n",passed,175-passed);
+  return passed==175?EXIT_SUCCESS:EXIT_FAILURE;
 }

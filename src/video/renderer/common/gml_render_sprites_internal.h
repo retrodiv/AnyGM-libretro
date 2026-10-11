@@ -26,6 +26,9 @@ int gml_render_resident_atlas_page(GmlRender *render, int page_index,
 int gml_render_resident_integer_background_page(GmlRender *render,int page_index,
                                                 double left,double top,double xscale,double yscale,
                                                 uint32_t colour,double alpha);
+int gml_render_resident_selected_background_page(GmlRender *render,GmlTpag *page,
+                                                 double left,double top,double xscale,double yscale,
+                                                 uint32_t colour,double alpha);
 enum {
   GML_RENDER_FILTERED_ATLAS_RULE=0,
   GML_RENDER_NEAREST_PART_PHASE_RULE=1,

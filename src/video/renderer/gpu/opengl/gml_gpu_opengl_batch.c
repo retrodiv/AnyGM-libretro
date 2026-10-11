@@ -246,8 +246,10 @@ static int integer_function_sprite_valid(const GmlRenderDrawOp *op,
       if(fabs(texel-nearbyint(texel))>1e-9) return 0;
     }else{
       double scale=extent/span;
-      if(!isfinite(scale) || scale<1.0-1e-9 || scale>8.0+1e-9 ||
-         fabs(scale-nearbyint(scale))>1e-9) return 0;
+      int background=op->scene_family==GML_RENDER_SCENE_BACKGROUND;
+      if(!isfinite(scale) || scale<(background?0.0625:1.0)-1e-9 ||
+         scale>(background?64.0:8.0)+1e-9 ||
+         (!background && fabs(scale-nearbyint(scale))>1e-9)) return 0;
     }
   }
   for(unsigned c=0;c<4u;c++){

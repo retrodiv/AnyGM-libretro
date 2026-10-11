@@ -259,6 +259,25 @@ void gml_draw_background_part_ext(GmlRender *r, int bg, double sx, double sy, do
   int ti=r->bg[bg].tpag; if(ti<0||ti>=r->n_tpag) return;
   if(resident_integer_background_part(r,ti,sx,sy,sw,sh,x,y,xs,ys,color,alpha,
                                       GML_RENDER_SCENE_BACKGROUND)) return;
+  if(!r->interp && !gml_d3_is_active(r) &&
+     isfinite(sx) && isfinite(sy) && isfinite(sw) && isfinite(sh) &&
+     isfinite(x) && isfinite(y) && isfinite(xs) && isfinite(ys) &&
+     sx>=0.0 && sy>=0.0 && sw>0.0 && sh>0.0 &&
+     sx<=INT_MAX && sy<=INT_MAX && sw<=INT_MAX && sh<=INT_MAX){
+    GmlTpag view;int source_x,source_y;
+    double overlap_x0,overlap_y0,overlap_x1,overlap_y1;
+    if(gml_render_tpag_part_view(&r->tpag[ti],sx,sy,sw,sh,&view,&source_x,&source_y,
+                                &overlap_x0,&overlap_y0,&overlap_x1,&overlap_y1)){
+      double anchor_x=view.sw==1?overlap_x0:source_x;
+      double anchor_y=view.sh==1?overlap_y0:source_y;
+      double cell_xs=view.sw==1?(overlap_x1-overlap_x0)*xs:xs;
+      double cell_ys=view.sh==1?(overlap_y1-overlap_y0)*ys:ys;
+      view.tw=view.sw;view.th=view.sh;
+      if(gml_render_resident_selected_background_page(r,&view,
+        x+(anchor_x-sx)*xs-r->cam_x,y+(anchor_y-sy)*ys-r->cam_y,
+        cell_xs,cell_ys,color,alpha)) return;
+    }
+  }
   if(gml_render_resident_filtered_atlas_part(r,ti,sx,sy,sw,sh,x,y,xs,ys,color,alpha,
                                       GML_RENDER_SCENE_BACKGROUND)) return;
   if(!gml_render_resident_application_cpu_barrier(r)) return;

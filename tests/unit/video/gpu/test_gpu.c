@@ -2411,11 +2411,12 @@ static int scene_integer_function_sprite_case(void){
         anygm_test_graphics_scene_draw_calls()==draws && anygm_test_graphics_scene_copies()==0u &&
         anygm_test_graphics_read_pixels()==0u,"invalid integer sprite refuses before the clear prefix");
     }
-    for(unsigned interval=0;interval<2u;interval++){
+    for(unsigned interval=0;interval<(background?3u:2u);interval++){
       for(unsigned i=0;i<3u;i++) ops[i].target.image.content_version=4u+interval*3u+i;
       for(unsigned i=1u;i<3u;i++){
         ops[i].payload.quad=pristine;GmlRenderQuad *q=&ops[i].payload.quad;
-        if(interval){for(unsigned c=0;c<4u;c++) q->u[c]=0.25;}
+        if(interval==1u){for(unsigned c=0;c<4u;c++) q->u[c]=0.25;}
+        else if(interval==2u){q->u[1]=q->u[2]=0.2;}
         else{
           q->x[1]=q->x[2]=1.0;q->u[1]=q->u[2]=0.5;
         }
@@ -2430,13 +2431,13 @@ static int scene_integer_function_sprite_case(void){
       for(unsigned i=0;i<3u;i++) ops[i].target.image.content_version=10u+i;
       for(unsigned i=1u;i<3u;i++){
         ops[i].payload.quad=pristine;GmlRenderQuad *q=&ops[i].payload.quad;
-        if(invalid){q->u[1]=q->u[2]=0.2;}
+        if(invalid){q->u[1]=q->u[2]=background?0.99:0.2;}
         else{for(unsigned c=0;c<4u;c++) q->u[c]=0.125;}
       }
       result=device.submit(device.context,&batch);
       REQUIRE(result.status==GML_RENDER_EXEC_UNSUPPORTED && !result.accepted_prefix &&
-        anygm_test_graphics_scene_draw_calls()==draws*3 && !anygm_test_graphics_scene_copies() &&
-        !anygm_test_graphics_read_pixels(),"non-centre constants and nonwhole inverse scales refuse transactionally");
+        anygm_test_graphics_scene_draw_calls()==draws*(background?4:3) && !anygm_test_graphics_scene_copies() &&
+        !anygm_test_graphics_read_pixels(),"non-centre constants and out-of-contract inverse scales refuse transactionally");
     }
     GmlRenderDrawStateSnapshot changed_states[2]={state,state};
     batch.states=changed_states;batch.state_count=2u;ops[2].state_index=1u;
