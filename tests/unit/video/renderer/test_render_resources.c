@@ -11371,6 +11371,17 @@ static int resident_background_function(int fractional){
       CHECK(fake.submits==submitted && !fake.readbacks && render->resident_application_pass &&
             !memcmp(shadow,render->fb,sizeof shadow));
     }
+    if(fractional==2 && repeat==4u && !a && !tint && draw_state==1u){
+      double physical_unit=gui?0.5:1.0;
+      gml_draw_background_tile(render,0,1,1,2,2,6.018,5.07,physical_unit,physical_unit,
+                               0,0,1,0xFFFFFFu,1.0);
+      CHECK(render->resident_application_pass && gml_render_scene_submit_pending(render));
+      CHECK(!fake.last_quad_state.alpha_test_enabled &&
+            !fake.last_quad_state.alpha_test_reference &&
+            render->alpha_test_enable==1 && render->alpha_test_ref==127u &&
+            !fake.readbacks && !memcmp(shadow,render->fb,sizeof shadow));
+      submitted=fake.submits;
+    }
     for(unsigned draw=0;draw<8u;draw++){
       if(fractional==2)
         gml_draw_background_tile(render,0,1,1,repeat>=4u?1:2,2,6.018,5.07,1.25,.75,
@@ -11396,9 +11407,13 @@ static int resident_background_function(int fractional){
         double expected=fractional!=2 && generations[generation]==13 && a==2u
           ?floor(alphas[a]*255.0)/255.0:alphas[a];
         int packed_empty_cutoff=fractional!=2 && generations[generation]==13 && a==2u && !draw_state;
+        int effective_cutout=!cardinal || !disabled;
+        int enabled=(effective_cutout && (draw_state&1u)) || packed_empty_cutoff ||
+          (cardinal && (draw_state&2u));
+        unsigned reference=effective_cutout && (draw_state&1u)?127u:packed_empty_cutoff?1u:0u;
         CHECK(fake.last_filtered_draw_alpha==expected &&
-              fake.last_quad_state.alpha_test_enabled==(!cardinal && ((draw_state&1u) || packed_empty_cutoff)) &&
-              fake.last_quad_state.alpha_test_reference==(cardinal?0u:(draw_state&1u)?127u:packed_empty_cutoff?1u:0u) &&
+              fake.last_quad_state.alpha_test_enabled==!!enabled &&
+              fake.last_quad_state.alpha_test_reference==reference &&
               render->alpha_test_enable==(int)(draw_state&1u) && render->alpha_test_ref==127u);
       }else CHECK(!a && !tint && !draw_state && !disabled);
     }

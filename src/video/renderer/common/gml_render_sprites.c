@@ -137,7 +137,7 @@ static int resident_atlas_crop_from_page_impl(GmlRender *r,GmlTpag *page,
                                          double draw_alpha,int physical_sprite_page,
                                          const GmlRenderResourceSource *source_override,
                                          const GmlRenderRotatedCoverageRegion *tile_regions,
-                                         uint32_t tile_region_count);
+                                         uint32_t tile_region_count,int tile_exact_unit);
 static void modern_point_axis_prune(double leading,double scale,double phase_offset,
                                     int source_extent,double *start,double *extent);
 static int resident_modern_point_regions(GmlRender *r,GmlTpag *page,
@@ -362,7 +362,7 @@ static int resident_atlas_crop_from_page(GmlRender *r,GmlTpag *page,
                                          double draw_alpha,int physical_sprite_page,
                                          const GmlRenderResourceSource *source_override){
   return resident_atlas_crop_from_page_impl(r,page,crop_x,crop_y,crop_width,crop_height,
-    left,top,xs,ys,family,colour,draw_alpha,physical_sprite_page,source_override,NULL,0u);
+    left,top,xs,ys,family,colour,draw_alpha,physical_sprite_page,source_override,NULL,0u,0);
 }
 
 /* Cardinal tiles share the point packet's source/state owner. Geometry is
@@ -405,7 +405,7 @@ static int resident_atlas_crop_from_page_impl(GmlRender *r,GmlTpag *page,
                                          double draw_alpha,int physical_sprite_page,
                                          const GmlRenderResourceSource *source_override,
                                          const GmlRenderRotatedCoverageRegion *tile_regions,
-                                         uint32_t tile_region_count){
+                                         uint32_t tile_region_count,int tile_exact_unit){
   GmlAtlas *atlas;
   GmlAtlas runtime_atlas;
   GmlRenderResourceSource source={0};
@@ -961,11 +961,14 @@ static int resident_atlas_crop_from_page_impl(GmlRender *r,GmlTpag *page,
   state.colour=0xFFFFFFFFu;
   state.alpha=255u;
   if(integer_atlas){
-    /* Both preserved cardinal writers ignore raw cutout in this bounded
-     * scalar envelope. Preserve readable public state, not an effect the CPU
-     * does not apply; other atlas packets retain their existing cutout. */
-    state.alpha_test_enabled=physical_sprite_page!=12 && !!r->alpha_test_enable;
-    state.alpha_test_reference=state.alpha_test_enabled?r->alpha_test_ref:0u;
+    /* The unit-white cardinal copy and disabled scalar writer ignore raw
+     * cutout. Other cardinal blends apply it through their CPU alpha table.
+     * Inverse cardinal blending also skips raw alpha zero, unlike the plain
+     * inverse point port. Keep public state unchanged in every case. */
+    int effective_cutout=physical_sprite_page!=12 || (!tile_exact_unit && r->alphablend);
+    state.alpha_test_enabled=(effective_cutout && !!r->alpha_test_enable) ||
+      (physical_sprite_page==12 && r->blendmode==2);
+    state.alpha_test_reference=effective_cutout && r->alpha_test_enable?r->alpha_test_ref:0u;
     if(integer_background && r->blendmode==0 && draw_alpha<1.0 &&
        (selected_background || !(xs==1.0 && ys==1.0 && colour==0xFFFFFFu)) &&
        anygm_policy_uses_early_background_compositing(r->win) &&
@@ -1244,7 +1247,7 @@ int gml_render_resident_nearest_quarter_tile_page(GmlRender *r,GmlTpag *page,
   selected.tw=selected.sw;selected.th=selected.sh;
   resident_tile_source_metadata(&selected);
   accepted=!count || resident_atlas_crop_from_page_impl(r,&selected,0,0,page->sw,page->sh,
-    0.0,0.0,1.0,1.0,GML_RENDER_SCENE_TILE,colour,alpha,12,NULL,regions,count);
+    0.0,0.0,1.0,1.0,GML_RENDER_SCENE_TILE,colour,alpha,12,NULL,regions,count,exact_unit);
 done:
   free(regions);
   return accepted;
