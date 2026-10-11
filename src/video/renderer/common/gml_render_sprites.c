@@ -425,14 +425,16 @@ static int resident_atlas_crop_from_page(GmlRender *r,GmlTpag *page,
   int integer_sprite_part=physical_sprite_page==5;
   int integer_sprite=physical_sprite_page==7;
   int selected_background=physical_sprite_page==9;
-  int integer_background=physical_sprite_page==8 || selected_background;
+  int fractional_background=physical_sprite_page==10;
+  int scaled_background=selected_background || fractional_background;
+  int integer_background=physical_sprite_page==8 || scaled_background;
   int integer_atlas=integer_sprite || integer_background;
   if(integer_atlas &&
      (!r || !page || r->interp || r->fog_flat || gml_d3_is_active(r) ||
       family!=(integer_background?GML_RENDER_SCENE_BACKGROUND:GML_RENDER_SCENE_SPRITE) ||
-      (!selected_background && (xs!=floor(xs) || ys!=floor(ys))) ||
-      fabs(xs)<(selected_background?0.0625:1.0) || fabs(xs)>(selected_background?64.0:8.0) ||
-      fabs(ys)<(selected_background?0.0625:1.0) || fabs(ys)>(selected_background?64.0:8.0) ||
+      (!scaled_background && (xs!=floor(xs) || ys!=floor(ys))) ||
+      fabs(xs)<(scaled_background?0.0625:1.0) || fabs(xs)>(scaled_background?64.0:8.0) ||
+      fabs(ys)<(scaled_background?0.0625:1.0) || fabs(ys)>(scaled_background?64.0:8.0) ||
       !isfinite(left) || !isfinite(top) ||
       fabs(left)>65536.0 || fabs(top)>65536.0 || page->sw>4096 || page->sh>4096 ||
       (double)crop_width*fabs(xs)>16384.0 || (double)crop_height*fabs(ys)>16384.0 ||
@@ -465,7 +467,7 @@ static int resident_atlas_crop_from_page(GmlRender *r,GmlTpag *page,
     r->device.context && r->device.observe_on_demand &&
     r->device.observe_on_demand(r->device.context);
   double point_left=left,point_top=top,integer_phase_x=0.0,integer_phase_y=0.0;
-  int integer_point=selected_background || (integer_atlas && (left!=floor(left) || top!=floor(top)));
+  int integer_point=scaled_background || (integer_atlas && (left!=floor(left) || top!=floor(top)));
   GmlTpag integer_point_page={0};
   int replace=physical_sprite_page && family==GML_RENDER_SCENE_SPRITE &&
     resident_identity_gui_replacement(r,xs,ys,colour,draw_alpha);
@@ -691,7 +693,7 @@ static int resident_atlas_crop_from_page(GmlRender *r,GmlTpag *page,
     double tie_x=world && fabs(fabs(r->cam_x-nearbyint(r->cam_x))-0.5)<1e-9?-1e-9:0.0;
     double tie_y=world && fabs(fabs(r->cam_y-nearbyint(r->cam_y))-0.5)<1e-9?-1e-9:0.0;
     double snapped_x=floor(left+0.5+tie_x),snapped_y=floor(top+0.5+tie_y);
-    if(selected_background){
+    if(scaled_background){
       scaled_width=floor(scaled_width+0.5);scaled_height=floor(scaled_height+0.5);
       if(firstgen){
         if(fabs(fabs(xs)-nearbyint(fabs(xs)))>1e-9)
@@ -709,7 +711,7 @@ static int resident_atlas_crop_from_page(GmlRender *r,GmlTpag *page,
       !(firstgen && ys>1.0)))?snapped_y:top+tie_y;
     integer_phase_x=point_left==snapped_x?0.0:-tie_x+(firstgen && xs>1.0?0.5-1e-9:0.0);
     integer_phase_y=point_top==snapped_y?0.0:-tie_y+(firstgen && ys>1.0?0.5-1e-9:0.0);
-    if(selected_background && !unit_white){
+    if(scaled_background && !unit_white){
       int reciprocal_x=fabs(1.0/fabs(xs)-nearbyint(1.0/fabs(xs)))<1e-9;
       int reciprocal_y=fabs(1.0/fabs(ys)-nearbyint(1.0/fabs(ys)))<1e-9;
       point_left=xs>0.0 && (modern || (r->classic && !reciprocal_x) ||
@@ -730,11 +732,11 @@ static int resident_atlas_crop_from_page(GmlRender *r,GmlTpag *page,
     int contiguous=firstgen && !r->blendmode &&
       (!r->alpha_test_enable || !r->alpha_test_ref) &&
       r->alphablend && colour==0xFFFFFFu && draw_alpha==1.0;
-    if(contiguous && (xs>1.0 || (selected_background && xs>0.0 &&
+    if(contiguous && (xs>1.0 || (scaled_background && xs>0.0 &&
        fabs(1.0/xs-nearbyint(1.0/xs))>=1e-9)) &&
        (uint64_t)page->sx+page->sw<source.width)
       integer_point_page.sw++;
-    if(contiguous && (ys>1.0 || (selected_background && ys>0.0 &&
+    if(contiguous && (ys>1.0 || (scaled_background && ys>0.0 &&
        fabs(1.0/ys-nearbyint(1.0/ys))>=1e-9)) &&
        (uint64_t)page->sy+page->sh<source.height)
       integer_point_page.sh++;
@@ -743,7 +745,7 @@ static int resident_atlas_crop_from_page(GmlRender *r,GmlTpag *page,
      * Do not scan output coordinates or partition an ordinary snapped copy. */
     if(point_left==left && point_top==top && integer_phase_x==0.0 && integer_phase_y==0.0 &&
        integer_point_page.sw==page->sw && integer_point_page.sh==page->sh &&
-       (!selected_background || (xs==floor(xs) && ys==floor(ys)))) integer_point=0;
+       (!scaled_background || (xs==floor(xs) && ys==floor(ys)))) integer_point=0;
   }
   if(gui_half){
     if(source.width>16384u || source.height>16384u || atlas->runtime_font_page ||
@@ -779,7 +781,7 @@ static int resident_atlas_crop_from_page(GmlRender *r,GmlTpag *page,
      !isfinite(scaled_width) || !isfinite(scaled_height) ||
      floor(left)!=left || floor(top)!=top ||
      fabs(xs)>INT_MAX || fabs(ys)>INT_MAX ||
-     (!classic_point && !fractional_text && !gui_half && !selected_background &&
+     (!classic_point && !fractional_text && !gui_half && !scaled_background &&
       (xs!=(double)(int)xs || ys!=(double)(int)ys))) return 0;
   if(integer_atlas && (left>=r->fbw || top>=r->fbh ||
      left+scaled_width<=0.0 || top+scaled_height<=0.0)) return 1;
@@ -1043,9 +1045,9 @@ static int resident_depth_free_ortho_sprite(GmlRender *r,int sprite,int subimg,
     GML_RENDER_SCENE_SPRITE,colour,alpha,2,NULL);
 }
 
-int gml_render_resident_integer_background_page(GmlRender *r,int page_index,
+static int resident_background_page(GmlRender *r,int page_index,
                                                 double left,double top,double xs,double ys,
-                                                uint32_t colour,double alpha){
+                                                uint32_t colour,double alpha,int mode){
   if(!r || !r->resident_application_pass || r->interp || r->fog_flat ||
      gml_d3_is_active(r) || page_index<0 || page_index>=r->n_tpag ||
      r->active_shader>=0 || r->color_write_mask!=15u ||
@@ -1065,7 +1067,23 @@ int gml_render_resident_integer_background_page(GmlRender *r,int page_index,
     alpha=floor(alpha*255.0)/255.0;
   if(alpha==0.0) return 1;
   return resident_atlas_crop_from_page(r,page,0,0,page->sw,page->sh,
-    left,top,xs,ys,GML_RENDER_SCENE_BACKGROUND,colour,alpha,8,NULL);
+    left,top,xs,ys,GML_RENDER_SCENE_BACKGROUND,colour,alpha,mode,NULL);
+}
+
+int gml_render_resident_integer_background_page(GmlRender *r,int page_index,
+                                                double left,double top,double xs,double ys,
+                                                uint32_t colour,double alpha){
+  return resident_background_page(r,page_index,left,top,xs,ys,colour,alpha,8);
+}
+
+int gml_render_resident_nearest_background_page(GmlRender *r,int page_index,
+                                                double left,double top,double xs,double ys,
+                                                uint32_t colour,double alpha){
+  if(gml_render_resident_integer_background_page(r,page_index,left,top,xs,ys,colour,alpha))
+    return 1;
+  /* Full pages retain their caches and packed-opacity policy. A selected
+   * temporary page has a separate white-unit fast-leaf boundary. */
+  return resident_background_page(r,page_index,left,top,xs,ys,colour,alpha,10);
 }
 
 /* The source owner has already clipped logical trim and mapped the anchor.
@@ -1228,6 +1246,34 @@ static uint32_t modern_point_axis_regions(double leading,double scale,double pha
   return count;
 }
 
+/* A stable point phase needs constant texel centres only at vertices outside
+ * its crop. Keep the interior affine rather than expanding an entire large
+ * background into a Cartesian product of per-texel strips. */
+static uint32_t modern_bounded_point_axis_regions(double leading,double scale,
+  double phase_offset,int source_extent,double start,double end,double bias,
+  ModernPointRegion regions[POINT_AXIS_REGION_LIMIT]){
+  int anchor=(int)floor(leading+0.5);
+  double phase=scale<0.0?0.5:anchor+0.5-leading+phase_offset;
+  double sampling_anchor=scale<0.0?(double)anchor:leading-phase_offset;
+  uint32_t count=0;
+  for(int coordinate=(int)start;coordinate<(int)end;coordinate++){
+    double first=((double)coordinate-sampling_anchor)/scale-bias;
+    double last=((double)coordinate+1.0-sampling_anchor)/scale-bias;
+    int texel=-1;
+    if(fmin(first,last)<0.0 || fmax(first,last)>source_extent){
+      int pixel=scale<0.0?anchor-1-coordinate:coordinate-anchor;
+      texel=gml_render_point_axis_index(pixel,phase,fabs(scale));
+      if(texel<0 || texel>=source_extent) return 0;
+    }
+    if(count && regions[count-1u].texel==texel) regions[count-1u].end=coordinate+1.0;
+    else{
+      if(count==POINT_AXIS_REGION_LIMIT) return 0;
+      regions[count++]=(ModernPointRegion){coordinate,coordinate+1.0,texel};
+    }
+  }
+  return count;
+}
+
 /* The existing large-axis CPU kernel selects a fixed-point inverse map, not the small
  * point writer's fractional leading edge. Reuse its prepared rows as geometry only. */
 static uint32_t modern_mapped_axis_regions(const GmlRenderRotatedCoverageRegion *maps,
@@ -1312,9 +1358,13 @@ static int resident_modern_point_regions(GmlRender *r,GmlTpag *page,
     }
     if(stable_x && !constant_x){
       nx=1u;columns[0]=(ModernPointRegion){x0,x1,-1};
+    } else if(stable_x && operation->scene_family==GML_RENDER_SCENE_BACKGROUND){
+      nx=modern_bounded_point_axis_regions(left,xs,phase_x,page->sw,x0,x1,bias_x,columns);
     } else nx=modern_point_axis_regions(left,xs,phase_x,page->sw,x0,x1,constant_x,columns);
     if(stable_y && !constant_y){
       ny=1u;rows[0]=(ModernPointRegion){y0,y1,-1};
+    } else if(stable_y && operation->scene_family==GML_RENDER_SCENE_BACKGROUND){
+      ny=modern_bounded_point_axis_regions(top,ys,phase_y,page->sh,y0,y1,bias_y,rows);
     } else ny=modern_point_axis_regions(top,ys,phase_y,page->sh,y0,y1,constant_y,rows);
   }
   uint32_t count=nx*ny;

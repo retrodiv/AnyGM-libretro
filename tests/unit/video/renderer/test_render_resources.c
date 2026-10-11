@@ -11280,7 +11280,7 @@ static int resident_integer_sprite_function(void){
   return 1;
 }
 
-static int resident_integer_background_function(void){
+static int resident_background_function(int fractional){
   enum { W=24,H=20 };
   const int generations[]={530,700,800,13,15,17};
   const double alphas[]={1.0,0.0,0.37};
@@ -11353,7 +11353,7 @@ static int resident_integer_background_function(void){
             !memcmp(shadow,render->fb,sizeof shadow));
     }
     for(unsigned draw=0;draw<8u;draw++)
-      gml_draw_background_tiled_ext(render,0,6.018,5.07,2.0,1.0,
+      gml_draw_background_tiled_ext(render,0,6.018,5.07,fractional?1.25:2.0,fractional?.75:1.0,
         tint?0x70B0D0u:0xFFFFFFu,alphas[a],(int)(repeat&1u),(int)(repeat>>1u));
     CHECK(render->resident_application_pass && gml_render_scene_submit_pending(render));
     int noop=a==1u;
@@ -11383,6 +11383,14 @@ static int resident_integer_background_function(void){
     fake.forbid_calls=0;gml_render_free(render);free(render);
   }
   return 1;
+}
+
+static int resident_integer_background_function(void){
+  return resident_background_function(0);
+}
+
+static int resident_fractional_background_function(void){
+  return resident_background_function(1);
 }
 
 static int resident_selected_background_function(void){
@@ -12556,6 +12564,7 @@ int main(void){
   passed+=resident_classic_nonphase_sprite_targets();
   passed+=resident_integer_sprite_function();
   passed+=resident_integer_background_function();
+  passed+=resident_fractional_background_function();
   passed+=resident_selected_background_function();
   passed+=resident_classic_owned_binary_unit_sprite();
   passed+=resident_runtime_binary_unit_sprites();
@@ -12594,6 +12603,6 @@ int main(void){
   passed+=source_free_primitive_rect_replay();
   passed+=stretched_float_exact_replay();
   passed+=filtered_font_exact_recovery();
-  printf("render resource cases: passed=%d failed=%d\n",passed,175-passed);
-  return passed==175?EXIT_SUCCESS:EXIT_FAILURE;
+  printf("render resource cases: passed=%d failed=%d\n",passed,176-passed);
+  return passed==176?EXIT_SUCCESS:EXIT_FAILURE;
 }
