@@ -859,7 +859,7 @@ static int resident_atlas_crop_from_page(GmlRender *r,GmlTpag *page,
   state.alpha=255u;
   if(integer_sprite){
     state.alpha_test_enabled=!!r->alpha_test_enable;
-    state.alpha_test_reference=r->alpha_test_ref;
+    state.alpha_test_reference=r->alpha_test_enable?r->alpha_test_ref:0u;
   }
   int inverse_sprite=integer_sprite && r->alphablend && r->blendmode==2;
   int adjacent_alpha=integer_point && (integer_point_page.sw!=page->sw || integer_point_page.sh!=page->sh);

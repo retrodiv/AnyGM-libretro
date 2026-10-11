@@ -11255,6 +11255,18 @@ static int resident_integer_sprite_function(void){
         fake.last_quantisation==(generation==3u?GML_RENDER_QUANTISE_INTEGER_TINT_ROUND:GML_RENDER_QUANTISE_INTEGER_TINT_TRUNC) &&
         fake.last_filtered_draw_alpha==alphas[a]);
     }
+    if(draw_state==2u && !fractional && generation==2u && target_kind==3u &&
+       !gui && !signs && disabled && tint && !a){
+      int calls=fake.submits;
+      for(unsigned reference=0;reference<256u;reference++){
+        render->alpha_test_ref=(uint8_t)reference;
+        gml_draw_sprite_ext(render,0,0,x,y,xs,ys,0,0x70B0D0u,1.0);
+      }
+      CHECK(fake.submits==calls && render->alpha_test_ref==255u &&
+            gml_render_scene_submit_pending(render) && fake.submits==calls+1 &&
+            fake.last_batch_operations==256u && !fake.last_quad_state.alpha_test_enabled &&
+            !fake.last_quad_state.alpha_test_reference && !fake.readbacks && !fake.rgb_queries);
+    }
     CHECK(gml_render_resource_acquire_cpu_read(resource,&pixels) && fake.readbacks==1 &&
       pixels[0]==fake.readback_colour && pixels[W*H-1u]==fake.readback_colour);
     fake.forbid_calls=1;
