@@ -11371,6 +11371,20 @@ static int resident_background_function(int fractional){
       CHECK(fake.submits==submitted && !fake.readbacks && render->resident_application_pass &&
             !memcmp(shadow,render->fb,sizeof shadow));
     }
+    if(fractional==2 && generation==5u && !target_kind && !gui && !repeat &&
+       a==2u && !tint && !draw_state){
+      /* A detached white unit crop with partial opacity cannot use the
+       * complete-page ARGB-cache copy. Sample row one at the authored half tie. */
+      gml_draw_background_tile(render,0,1,1,2,2,W-0.75,H-1.5,1,1,
+                               0,0,0,0xFFFFFFu,alphas[a]);
+      CHECK(render->resident_application_pass && gml_render_scene_submit_pending(render));
+      const GmlRenderQuad *q=&fake.last_quad;
+      CHECK(q->y[2]>q->y[0] && q->y[0]<=H-0.5 && q->y[2]>H-0.5);
+      double sample_y=q->v[0]+(q->v[2]-q->v[0])*(H-0.5-q->y[0])/(q->y[2]-q->y[0]);
+      CHECK(floor(sample_y*render->atlas[0].h)==1.0 &&
+            !fake.readbacks && !memcmp(shadow,render->fb,sizeof shadow));
+      submitted=fake.submits;
+    }
     if(fractional==2 && repeat==4u && !a && !tint && draw_state==1u){
       double physical_unit=gml_render_gui_transform_active(render)?0.5:1.0;
       gml_draw_background_tile(render,0,1,1,2,2,6.018,5.07,physical_unit,physical_unit,
