@@ -1448,7 +1448,8 @@ enum { POINT_AXIS_REGION_LIMIT=512 };
  * hardware point interpolation. This is bounded geometry preparation, not float emulation
  * in the shader or a destination-dependent draw. Clip before collecting visible strips. */
 static uint32_t modern_point_axis_regions(double leading,double scale,double phase_offset,int source_extent,
-  double start,double end,int constant_texels,int clamp,ModernPointRegion regions[POINT_AXIS_REGION_LIMIT]){
+  double start,double end,int constant_texels,int clamp,int local_edges,
+  ModernPointRegion regions[POINT_AXIS_REGION_LIMIT]){
   int anchor=(int)floor(leading+0.5);
   double phase=scale<0.0?0.5+(clamp?phase_offset:0.0):anchor+0.5-leading+phase_offset;
   double sampling_anchor=scale<0.0?anchor+(clamp?phase_offset:0.0):leading-phase_offset;
@@ -1462,8 +1463,8 @@ static uint32_t modern_point_axis_regions(double leading,double scale,double pha
       sample=sample<0.0?0.0:source_extent-1.0;
     }
     int constant=constant_texels;
-    if(constant && clamp){
-      /* An authored tile edge outside its crop fences only that pixel's
+    if(constant && local_edges){
+      /* A direct nearest edge outside its crop fences only that pixel's
        * vertices. Keep ordinary interior intervals affine, even when their
        * nearest ties need independent constant-centre strips. */
       double first=((double)coordinate-sampling_anchor)/scale;
@@ -1543,6 +1544,8 @@ static int resident_modern_point_regions(GmlRender *r,GmlTpag *page,
   uint32_t nx,ny;
   double bias_x=0.0,bias_y=0.0;
   int clamp=operation->scene_family==GML_RENDER_SCENE_TILE && page->project_authored_edges;
+  int local_edges=clamp || (operation->scene_family==GML_RENDER_SCENE_BACKGROUND &&
+    original->sampling.filter==GML_RENDER_FILTER_NEAREST);
   if(maps){
     if(!map_count) return 0;
     for(uint32_t row=0;row<map_count;row++)
@@ -1598,12 +1601,12 @@ static int resident_modern_point_regions(GmlRender *r,GmlTpag *page,
       nx=1u;columns[0]=(ModernPointRegion){x0,x1,-1};
     } else if(stable_x && (operation->scene_family==GML_RENDER_SCENE_BACKGROUND || clamp)){
       nx=modern_bounded_point_axis_regions(left,xs,phase_x,page->sw,x0,x1,bias_x,clamp,columns);
-    } else nx=modern_point_axis_regions(left,xs,phase_x,page->sw,x0,x1,constant_x,clamp,columns);
+    } else nx=modern_point_axis_regions(left,xs,phase_x,page->sw,x0,x1,constant_x,clamp,local_edges,columns);
     if(stable_y && !constant_y){
       ny=1u;rows[0]=(ModernPointRegion){y0,y1,-1};
     } else if(stable_y && (operation->scene_family==GML_RENDER_SCENE_BACKGROUND || clamp)){
       ny=modern_bounded_point_axis_regions(top,ys,phase_y,page->sh,y0,y1,bias_y,clamp,rows);
-    } else ny=modern_point_axis_regions(top,ys,phase_y,page->sh,y0,y1,constant_y,clamp,rows);
+    } else ny=modern_point_axis_regions(top,ys,phase_y,page->sh,y0,y1,constant_y,clamp,local_edges,rows);
   }
   uint32_t count=nx*ny;
   if(!count || count>2048u || !source->borrowed_immutable ||

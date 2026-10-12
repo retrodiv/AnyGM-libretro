@@ -11595,7 +11595,7 @@ static int resident_nearest_tile_function(void){
 }
 
 /* Admission and authority only; the public paired generator owns RGBA. */
-static int resident_nearest_tile_crop_edges(void){
+static int resident_nearest_crop_edges(unsigned port){
   enum { W=160,H=180,AW=264,AH=328 };
   const int generations[]={530,700,800,13,15,17};
   const double alphas[]={1,0,.37};
@@ -11641,10 +11641,20 @@ static int resident_nearest_tile_crop_edges(void){
     gml_render_set_pending_fill(r,0xFF273859u);gml_render_flush_pending_fill(r);
     CHECK(gml_render_scene_submit_pending(r));memcpy(shadow,r->fb,sizeof shadow);
     int submitted=fake.submits;double mapping=gml_render_gui_transform_active(r)?2.0:1.0;
-    for(unsigned draw=0;draw<8u;draw++)
-      gml_draw_background_tile(r,0,0,0,256,320,12.115987/mapping,8.3568773/mapping,
-        .533926585/mapping,.533596838/mapping,(int)(signs&1u),(int)(signs>>1u),0,
-        0x70B0D0u,alphas[a]);
+    for(unsigned draw=0;draw<8u;draw++){
+      if(port==1u)
+        gml_draw_background_tile(r,0,0,0,256,320,12.115987/mapping,8.3568773/mapping,
+          .533926585/mapping,.533596838/mapping,(int)(signs&1u),(int)(signs>>1u),0,
+          0x70B0D0u,alphas[a]);
+      else if(port==2u)
+        gml_draw_background_part_ext(r,0,0,0,256,320,12.115987/mapping,8.3568773/mapping,
+          (signs&1u?-.533926585:.533926585)/mapping,
+          (signs&2u?-.533596838:.533596838)/mapping,0x70B0D0u,alphas[a]);
+      else
+        gml_draw_background_tiled_ext(r,0,12.115987/mapping,8.3568773/mapping,
+          .533926585/mapping,.533596838/mapping,0x70B0D0u,alphas[a],
+          (int)(signs&1u),(int)(signs>>1u));
+    }
     CHECK(r->resident_application_pass && gml_render_scene_submit_pending(r));
     CHECK(a==1u?fake.submits==submitted:fake.submits>submitted);
     CHECK(!fake.readbacks && !fake.rgb_queries && !memcmp(shadow,r->fb,sizeof shadow));
@@ -11658,6 +11668,18 @@ static int resident_nearest_tile_crop_edges(void){
     fake.forbid_calls=0;gml_render_free(r);free(r);
   }
   return 1;
+}
+
+static int resident_nearest_tile_crop_edges(void){
+  return resident_nearest_crop_edges(1u);
+}
+
+static int resident_nearest_background_crop_edges(void){
+  return resident_nearest_crop_edges(0u);
+}
+
+static int resident_selected_background_crop_edges(void){
+  return resident_nearest_crop_edges(2u);
 }
 
 static int resident_selected_background_function(void){
@@ -12834,6 +12856,8 @@ int main(void){
   passed+=resident_fractional_background_function();
   passed+=resident_nearest_tile_function();
   passed+=resident_nearest_tile_crop_edges();
+  passed+=resident_nearest_background_crop_edges();
+  passed+=resident_selected_background_crop_edges();
   passed+=resident_nearest_text_function();
   passed+=resident_selected_background_function();
   passed+=resident_classic_owned_binary_unit_sprite();
@@ -12873,6 +12897,6 @@ int main(void){
   passed+=source_free_primitive_rect_replay();
   passed+=stretched_float_exact_replay();
   passed+=filtered_font_exact_recovery();
-  printf("render resource cases: passed=%d failed=%d\n",passed,179-passed);
-  return passed==179?EXIT_SUCCESS:EXIT_FAILURE;
+  printf("render resource cases: passed=%d failed=%d\n",passed,181-passed);
+  return passed==181?EXIT_SUCCESS:EXIT_FAILURE;
 }
