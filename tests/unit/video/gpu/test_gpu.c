@@ -2422,6 +2422,27 @@ static int scene_integer_function_sprite_case(void){
       anygm_test_graphics_scene_draw_calls()==draws && anygm_test_graphics_scene_copies()==0u &&
       anygm_test_graphics_read_pixels()==0u,
       "integer tint and fixed blend group two reflected sprites without a snapshot");
+    if(background){
+      GmlRenderDrawStateSnapshot original=state;
+      for(unsigned extension=0;extension<2u;extension++){
+        state=original;
+        for(unsigned i=0;i<3u;i++) ops[i].target.image.content_version=i+4u;
+        if(!extension) state.write_mask=7u;
+        else{
+          state.rgb_source_factor=GML_RENDER_BLEND_SOURCE_ALPHA;
+          state.rgb_destination_factor=state.alpha_source_factor=
+            state.alpha_destination_factor=GML_RENDER_BLEND_ONE;
+          state.rgb_equation=state.alpha_equation=GML_RENDER_BLEND_ADD;
+          state.coverage_policy=0u;
+        }
+        result=device.submit(device.context,&batch);
+        REQUIRE(result.status==GML_RENDER_EXEC_UNSUPPORTED && !result.accepted_prefix &&
+          anygm_test_graphics_scene_draw_calls()==draws && !anygm_test_graphics_scene_copies() &&
+          !anygm_test_graphics_read_pixels(),
+          "sprite-only mask and additive extensions do not admit other families");
+      }
+      state=original;
+    }
     GmlRenderQuad pristine=ops[1].payload.quad;
     for(unsigned invalid=0;invalid<8u;invalid++){
       ops[1].payload.quad=pristine;GmlRenderQuad *q=&ops[1].payload.quad;
@@ -2439,7 +2460,9 @@ static int scene_integer_function_sprite_case(void){
         anygm_test_graphics_scene_draw_calls()==draws && anygm_test_graphics_scene_copies()==0u &&
         anygm_test_graphics_read_pixels()==0u,"invalid integer sprite refuses before the clear prefix");
     }
-    unsigned intervals=background==2u?4u:background?3u:2u;
+    /* Prepared nearest sprite intervals also admit fractional scales. Keep
+     * their explicit grouped 2.5-scale witness and independent bound refusal. */
+    unsigned intervals=background==2u?4u:3u;
     for(unsigned interval=0;interval<intervals;interval++){
       for(unsigned i=0;i<3u;i++) ops[i].target.image.content_version=4u+interval*3u+i;
       for(unsigned i=1u;i<3u;i++){
@@ -2455,13 +2478,13 @@ static int scene_integer_function_sprite_case(void){
       REQUIRE(result.status==GML_RENDER_EXEC_ACCEPTED && result.accepted_prefix==3u &&
         anygm_test_graphics_scene_draw_calls()==draws*(int)(interval+2u) &&
         anygm_test_graphics_scene_copies()==0u && anygm_test_graphics_read_pixels()==0u,
-        "phased integer interval and constant-centre strips remain snapshot-free and grouped");
+        "phased nearest interval and constant-centre strips remain snapshot-free and grouped");
     }
     for(unsigned invalid=0;invalid<2u;invalid++){
       for(unsigned i=0;i<3u;i++) ops[i].target.image.content_version=10u+i;
       for(unsigned i=1u;i<3u;i++){
         ops[i].payload.quad=pristine;GmlRenderQuad *q=&ops[i].payload.quad;
-        if(invalid){q->u[1]=q->u[2]=background?0.99:0.2;}
+        if(invalid){q->u[1]=q->u[2]=background?0.99:0.95;}
         else{for(unsigned c=0;c<4u;c++) q->u[c]=0.125;}
       }
       result=device.submit(device.context,&batch);

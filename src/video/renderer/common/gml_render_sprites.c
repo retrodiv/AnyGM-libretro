@@ -505,7 +505,9 @@ static int resident_atlas_crop_from_page_impl(GmlRender *r,GmlTpag *page,
    * trim and mapping once. Whole positive nearest texels and endpoint RGB
    * multiplication stay exact without a predecessor image or float emulation. */
   int integer_sprite_part=physical_sprite_page==5;
-  int integer_sprite=physical_sprite_page==7;
+  int rotated_sprite_function=physical_sprite_page==16;
+  int scaled_sprite=physical_sprite_page==15 || rotated_sprite_function;
+  int integer_sprite=physical_sprite_page==7 || scaled_sprite;
   int selected_background=physical_sprite_page==9;
   int fractional_background=physical_sprite_page==10;
   int tile_function=physical_sprite_page==11 || physical_sprite_page==12;
@@ -514,7 +516,7 @@ static int resident_atlas_crop_from_page_impl(GmlRender *r,GmlTpag *page,
   int text_function=physical_sprite_page==13 || physical_sprite_page==14;
   if(text_function) integer_text=0;
   int scaled_background=selected_background || fractional_background;
-  int scaled_atlas=scaled_background || tile_function || text_function;
+  int scaled_atlas=scaled_background || tile_function || text_function || scaled_sprite;
   int integer_background=physical_sprite_page==8 || scaled_background;
   int integer_atlas=integer_sprite || integer_background || tile_function || text_function;
   if(integer_atlas &&
@@ -558,7 +560,8 @@ static int resident_atlas_crop_from_page_impl(GmlRender *r,GmlTpag *page,
     r->device.context && r->device.observe_on_demand &&
     r->device.observe_on_demand(r->device.context);
   double point_left=left,point_top=top,integer_phase_x=0.0,integer_phase_y=0.0;
-  int integer_point=scaled_atlas || (integer_atlas && (left!=floor(left) || top!=floor(top)));
+  int integer_point=!rotated_sprite_function &&
+    (scaled_atlas || (integer_atlas && (left!=floor(left) || top!=floor(top))));
   GmlTpag integer_point_page={0};
   int replace=physical_sprite_page && family==GML_RENDER_SCENE_SPRITE &&
     resident_identity_gui_replacement(r,xs,ys,colour,draw_alpha);
@@ -620,8 +623,9 @@ static int resident_atlas_crop_from_page_impl(GmlRender *r,GmlTpag *page,
        !resident_identity_screen_gui(r))) ||
      r->active_shader>=0 || (r->alpha_test_enable && !integer_atlas) ||
      (!r->alphablend && !integer_atlas) ||
-     (r->blendmode && !replace && !(integer_atlas && r->blendmode==2)) || r->blend_equation!=1 ||
-     r->blend_equation_alpha!=1 || r->color_write_mask!=0x0Fu ||
+     (r->blendmode && !replace && !(integer_atlas && r->blendmode==2) &&
+      !(scaled_sprite && r->blendmode==1)) || r->blend_equation!=1 ||
+     r->blend_equation_alpha!=1 || (r->color_write_mask!=0x0Fu && !scaled_sprite) ||
      r->classic_phase_y || r->rotated_batch_count || r->rotated_batch_building ||
      r->pending_underlay || r->pending_presentation ||
      !gml_render_scene_target_matches(r) ||
@@ -972,7 +976,7 @@ static int resident_atlas_crop_from_page_impl(GmlRender *r,GmlTpag *page,
   if(integer_atlas){
     /* The bounded cardinal CPU leaf truncates tint in every policy. Ordinary
      * axis-aligned packets keep their generation-specific tint owner. */
-    operation.payload.quad.sampling.quantisation=physical_sprite_page!=12 &&
+    operation.payload.quad.sampling.quantisation=physical_sprite_page!=12 && !rotated_sprite_function &&
       anygm_policy_has_modern_layer_semantics(r->win)
       ?GML_RENDER_QUANTISE_INTEGER_TINT_ROUND:GML_RENDER_QUANTISE_INTEGER_TINT_TRUNC;
     operation.payload.quad.filtered_draw_alpha=draw_alpha;
@@ -999,7 +1003,7 @@ static int resident_atlas_crop_from_page_impl(GmlRender *r,GmlTpag *page,
   operation.payload.quad.u[1]=operation.payload.quad.u[2]=xs<0.0?source_left:source_right;
   operation.payload.quad.v[0]=operation.payload.quad.v[1]=ys<0.0?source_bottom:source_top;
   operation.payload.quad.v[2]=operation.payload.quad.v[3]=ys<0.0?source_top:source_bottom;
-  state.write_mask=15u;
+  state.write_mask=scaled_sprite?r->color_write_mask:15u;
   state.colour=0xFFFFFFFFu;
   state.alpha=255u;
   if(integer_atlas){
@@ -1007,7 +1011,8 @@ static int resident_atlas_crop_from_page_impl(GmlRender *r,GmlTpag *page,
      * cutout. Other cardinal blends apply it through their CPU alpha table.
      * Inverse cardinal blending also skips raw alpha zero, unlike the plain
      * inverse point port. Keep public state unchanged in every case. */
-    int effective_cutout=physical_sprite_page!=12 || (!tile_exact_unit && r->alphablend);
+    int effective_cutout=rotated_sprite_function?r->alphablend:
+      physical_sprite_page!=12 || (!tile_exact_unit && r->alphablend);
     state.alpha_test_enabled=(effective_cutout && !!r->alpha_test_enable) ||
       (physical_sprite_page==12 && r->blendmode==2);
     state.alpha_test_reference=effective_cutout && r->alpha_test_enable?r->alpha_test_ref:0u;
@@ -1053,6 +1058,16 @@ static int resident_atlas_crop_from_page_impl(GmlRender *r,GmlTpag *page,
     state.alpha_destination_factor=GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA;
     state.rgb_equation=state.alpha_equation=GML_RENDER_BLEND_ADD;
   }
+  if(scaled_sprite && r->alphablend && r->blendmode==1){
+    state.rgb_source_factor=GML_RENDER_BLEND_SOURCE_ALPHA;
+    state.rgb_destination_factor=GML_RENDER_BLEND_ONE;
+    /* Both preserved nearest sprite additive leaves stamp opaque coverage,
+     * including alpha-preserving targets and alpha-only channel masks. */
+    state.alpha_source_factor=GML_RENDER_BLEND_ONE;
+    state.alpha_destination_factor=GML_RENDER_BLEND_ONE;
+    state.rgb_equation=state.alpha_equation=GML_RENDER_BLEND_ADD;
+    state.coverage_policy=GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA;
+  }
   state.sampler_count=1u;
   if(checkpoint_alpha_sprite && r->classic && !gml_render_target_preserves_alpha(r))
     state.coverage_policy=GML_RENDER_COVERAGE_OPAQUE_TARGET;
@@ -1076,7 +1091,8 @@ static int resident_atlas_crop_from_page_impl(GmlRender *r,GmlTpag *page,
   } else if(!gml_render_application_scene_enqueue(r,&operation,&state,&source)) return 0;
   r->fb_all_transparent=0;
   if(((family==GML_RENDER_SCENE_TEXT && draw_alpha<1.0) || checkpoint_alpha_sprite ||
-      (integer_atlas && r->alphablend && (inverse_sprite || draw_alpha<1.0 || !page->scene_binary_alpha || adjacent_alpha))) &&
+     (integer_atlas && r->alphablend && (inverse_sprite || draw_alpha<1.0 || !page->scene_binary_alpha || adjacent_alpha))) &&
+     (state.write_mask&8u) &&
      gml_render_target_preserves_alpha(r)){
     r->fb_opaque_known=0;
     r->fb_all_opaque=0;
@@ -1084,7 +1100,7 @@ static int resident_atlas_crop_from_page_impl(GmlRender *r,GmlTpag *page,
   }
   /* Enqueue conservatively invalidates application opacity. A complete nearest
    * replacement from an opaque page proves every target alpha without reading it. */
-  if(!tile_regions && !inverse_sprite && (!r->alpha_test_enable || r->alpha_test_ref<255u) &&
+  if((state.write_mask&8u) && !tile_regions && !inverse_sprite && (!r->alpha_test_enable || r->alpha_test_ref<255u) &&
      (replace || (page->scene_fully_opaque && !adjacent_alpha)) && draw_alpha==1.0 && left==0.0 && top==0.0 &&
      scaled_width==r->fbw && scaled_height==r->fbh){
     r->fb_opaque_known=r->fb_all_opaque=1;
@@ -2744,6 +2760,64 @@ done:
   free(operations);free(regions);return accepted;
 }
 
+static int resident_nearest_sprite_function(GmlRender *r,GmlSprite *sprite,int subimg,
+                                            double x,double y,double xs,double ys,double rotation,
+                                            uint32_t colour,double alpha){
+  if(!r || !sprite || !r->resident_application_pass || r->interp ||
+     r->active_shader>=0 || r->fog_flat || gml_d3_is_active(r) ||
+     r->color_write_mask>15u || r->blendmode<0 || r->blendmode>2 ||
+     r->blend_equation!=1 || r->blend_equation_alpha!=1 ||
+     r->classic_phase_y || r->rotated_batch_count || r->rotated_batch_building ||
+     r->pending_underlay || r->pending_presentation || !gml_render_scene_target_matches(r) ||
+     sprite->runtime_rgba || sprite->spine || sprite->ns_enabled ||
+     sprite->n_frames<=0 || !sprite->frame ||
+     !isfinite(rotation) || !isfinite(alpha) || alpha<=0.0 || alpha>1.0 ||
+     (r->alphablend && alpha<0x1p-64) ||
+     !isfinite(xs) || !isfinite(ys) || fabs(xs)<0.125 || fabs(xs)>8.0 ||
+     fabs(ys)<0.125 || fabs(ys)>8.0) return 0;
+  for(unsigned i=0;i<3u;i++)
+    if(r->classic_interp_phase[i] || r->app_interp_phase[i]) return 0;
+  if(!r->color_write_mask) return 1;
+  double phase=fmod(rotation,360.0);if(phase<0.0) phase+=360.0;
+  int frame=gml_render_runtime_frame_index(sprite,subimg);
+  int index=sprite->frame[frame];
+  if(index<0 || index>=r->n_tpag) return 0;
+  GmlTpag *page=&r->tpag[index];
+  if(page->project_authored_edges || page->bw!=sprite->w || page->bh!=sprite->h ||
+     page->tx<0 || page->ty<0 ||
+     (int64_t)page->tx+page->sw>sprite->w ||
+     (int64_t)page->ty+page->sh>sprite->h) return 0;
+  if(phase>=0.001 && fabs(phase-360.0)>=0.001){
+    enum { CAPACITY=2048 };
+    GmlRenderRotatedCoverageRegion *regions=malloc(CAPACITY*sizeof *regions);
+    uint32_t count=0;
+    int accepted=0;
+    if(!regions) return 0;
+    if(!gml_render_rotated_nearest_texel_regions(r,sprite,page,x,y,xs,ys,phase,
+                                                colour,regions,CAPACITY,&count)) goto rotated_done;
+    /* The normal CPU rotation writes nothing for a zero alpha16 factor.
+     * Reuse only that coverage predicate; nonzero colours still use hardware
+     * blending, without a factor table or destination image. */
+    if(r->alphablend && r->blendmode==0 && !gml_render_rotated_alpha16_factor(1u,alpha)){
+      uint32_t covered=0;
+      for(uint32_t i=0;i<count;i++)
+        if(gml_render_rotated_alpha16_factor(regions[i].sample_key>>24,alpha))
+          regions[covered++]=regions[i];
+      count=covered;
+    }
+    if(!count){accepted=1;goto rotated_done;}
+    accepted=resident_atlas_crop_from_page_impl(r,page,0,0,page->sw,page->sh,
+      0.0,0.0,1.0,1.0,GML_RENDER_SCENE_SPRITE,colour,alpha,16,NULL,regions,count,0);
+rotated_done:
+    free(regions);
+    return accepted;
+  }
+  double left=x-(double)sprite->originx*xs+(double)page->tx*xs-r->cam_x;
+  double top=y-(double)sprite->originy*ys+(double)page->ty*ys-r->cam_y;
+  return resident_atlas_crop_from_page(r,page,0,0,page->sw,page->sh,
+    left,top,xs,ys,GML_RENDER_SCENE_SPRITE,colour,alpha,15,NULL);
+}
+
 static int resident_filtered_sprite(GmlRender *r,GmlSprite *sprite,int subimg,
                                     double x,double y,double xs,double ys,double rotation,
                                     uint32_t blend,double alpha){
@@ -2847,17 +2921,24 @@ void gml_draw_sprite(GmlRender *r, int sprite, int subimg, double x, double y){
 int gml_render_resident_masked_sprite(GmlRender *r,int sprite,int subimg,
                                       double x,double y,double xs,double ys,double rotation,
                                       uint32_t colour,double alpha){
-  /* Try only the established modern point sampler on numbered targets. The CPU wrapper
-   * keeps its snapshot/merge path for fog, filtering, rotation and every excluded state. */
-  if(!r || !r->resident_application_pass || r->target_id<=0 || r->fog_flat ||
-     r->color_write_mask>=15u || r->interp || r->gui_pass_active ||
-     !anygm_policy_has_modern_layer_semantics(r->win) || sprite<0 || sprite>=r->n_spr)
+  if(!r || !r->resident_application_pass || r->fog_flat ||
+     r->color_write_mask>=15u || r->interp || sprite<0 || sprite>=r->n_spr)
     return 0;
+  /* Match the unmasked public no-write boundary before the CPU wrapper would
+   * prepare a masked destination. No sampling or source demand is needed. */
+  if(isfinite(alpha) && alpha<=0.0 && r->active_shader<0 &&
+     !r->spr[sprite].spine && !r->spr[sprite].ns_enabled && !gml_d3_is_active(r) &&
+     !(r->alphablend && (r->blendmode==6 || gml_render_blend_uses_destination_colour(r->blendmode))) &&
+     gml_render_scene_target_matches(r)) return 1;
   gml_render_draw_map_point(r,&x,&y);
   gml_render_draw_map_scale(r,&xs,&ys);
   double resident_alpha=isfinite(alpha) && alpha>1.0?1.0:alpha;
-  return resident_filtered_sprite(r,&r->spr[sprite],subimg,x,y,xs,ys,rotation,
-                                  colour,resident_alpha);
+  /* Preserve the inherited masked numbered owner before extending ordinary
+   * nearest admission. The CPU wrapper retains every rejected special state. */
+  if(r->target_id>0 && !r->gui_pass_active && anygm_policy_has_modern_layer_semantics(r->win) &&
+     resident_filtered_sprite(r,&r->spr[sprite],subimg,x,y,xs,ys,rotation,colour,resident_alpha)) return 1;
+  return resident_nearest_sprite_function(r,&r->spr[sprite],subimg,x,y,xs,ys,rotation,
+                                          colour,resident_alpha);
 }
 
 void gml_render_sprite_ext_unmasked(GmlRender *r, int sprite, int subimg, double x, double y,
@@ -2923,8 +3004,16 @@ void gml_render_sprite_ext_unmasked(GmlRender *r, int sprite, int subimg, double
        resident_classic_rotated_sprite_noop(r,&r->spr[sprite],subimg,x,y,xs,ys,rot)) return;
     if(sprite>=0 && sprite<r->n_spr &&
        resident_integer_sprite(r,&r->spr[sprite],subimg,x,y,xs,ys,rot,blend,resident_alpha)) return;
+    /* Full-opacity nearest tint uses the integer packet, not the older float
+     * tint preference. Keep the inherited numbered modern owner untouched. */
+    if(sprite>=0 && sprite<r->n_spr && !r->interp && resident_alpha==1.0 &&
+       (blend&0xFFFFFFu)!=0xFFFFFFu &&
+       !(r->target_id>0 && !r->gui_pass_active && anygm_policy_has_modern_layer_semantics(r->win)) &&
+       resident_nearest_sprite_function(r,&r->spr[sprite],subimg,x,y,xs,ys,rot,blend,resident_alpha)) return;
     if(sprite>=0 && sprite<r->n_spr &&
        resident_filtered_sprite(r,&r->spr[sprite],subimg,x,y,xs,ys,rot,blend,resident_alpha)) return;
+    if(sprite>=0 && sprite<r->n_spr &&
+       resident_nearest_sprite_function(r,&r->spr[sprite],subimg,x,y,xs,ys,rot,blend,resident_alpha)) return;
     if(!gml_render_resident_application_cpu_barrier(r)) return;
   }
   if(r && sprite>=0 && sprite<r->n_spr &&

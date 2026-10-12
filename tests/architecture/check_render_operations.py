@@ -98,6 +98,7 @@ REQUIRED_RULES = {
     "R03-SPR-NEAREST", "R03-SPR-NEAREST-SOURCEOVER", "R03-SPR-INTEGER-SOURCEOVER",
     "R03-SPR-GUI-REPLACE",
     "R03-SPR-INTEGER-FUNCTION",
+    "R03-SPR-NEAREST-FUNCTION",
     "R03-EMPTY-BASE-RESET",
     "R03-GUI-UNIT-SOURCEOVER",
     "R03-TEXT-FIRSTGEN-GUI-TINTED-POINT",
@@ -174,6 +175,7 @@ DISPATCH_CPU_BOUNDARIES = {
 }
 DISPATCH_ADDITIONAL = {
     "gml_render_layer_rgb_noise", "gml_render_layer_filter_end",
+    "gml_render_sprite_ext_unmasked",
     "gml_render_compose_resident_underlay", "gml_render_recover_empty_screen",
     "render_present_first_generation", "render_present_content_shader",
     "gml_software3d_vertex_submit_buffer", "gml_software3d_model_draw",

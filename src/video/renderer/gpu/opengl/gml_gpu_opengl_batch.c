@@ -57,6 +57,12 @@ static int cleared_earlier(const GmlRenderImageRef *cleared,uint32_t count,
 }
 
 static int qualified_blend(const GmlRenderDrawStateSnapshot *state){
+  if(state->rgb_source_factor==GML_RENDER_BLEND_SOURCE_ALPHA &&
+     state->rgb_destination_factor==GML_RENDER_BLEND_ONE &&
+     state->rgb_equation==GML_RENDER_BLEND_ADD && state->alpha_equation==GML_RENDER_BLEND_ADD){
+    if(state->alpha_source_factor==GML_RENDER_BLEND_ONE &&
+       state->alpha_destination_factor==GML_RENDER_BLEND_ONE) return 14;
+  }
   if(state->rgb_source_factor==GML_RENDER_BLEND_ZERO &&
      state->rgb_destination_factor==GML_RENDER_BLEND_ONE_MINUS_SOURCE_COLOUR &&
      state->alpha_source_factor==GML_RENDER_BLEND_ZERO &&
@@ -227,18 +233,20 @@ static int integer_function_sprite_valid(const GmlRenderDrawOp *op,
      !exact_rect(op,NULL,NULL,NULL,NULL,1) || fabs(q->x[0])>65536.0 || fabs(q->y[0])>65536.0 ||
      !isfinite(q->filtered_draw_alpha) || q->filtered_draw_alpha<=0.0 || q->filtered_draw_alpha>1.0 ||
      state->alpha_test_enabled>1u || state->alpha_test_reference>255u ||
-     (blend!=0 && blend!=1 && blend!=3 && blend!=13) ||
+     (op->scene_family!=GML_RENDER_SCENE_SPRITE && (state->write_mask!=15u || blend==14)) ||
+     (blend!=0 && blend!=1 && blend!=3 && blend!=13 && blend!=14) ||
      (state->coverage_policy==GML_RENDER_COVERAGE_REPLACE_ZERO_ALPHA?blend!=0:
       state->coverage_policy && (state->coverage_policy!=GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA ||
-       (blend!=1 && blend!=13) || (op->target.image.resource_class!=GML_RENDER_RESOURCE_SCREEN &&
-         op->target.image.resource_class!=GML_RENDER_RESOURCE_APPLICATION)))) return 0;
+       (blend!=1 && blend!=13 && blend!=14) || (blend!=14 &&
+        op->target.image.resource_class!=GML_RENDER_RESOURCE_SCREEN &&
+        op->target.image.resource_class!=GML_RENDER_RESOURCE_APPLICATION)))) return 0;
   double width=q->x[1]-q->x[0],height=q->y[2]-q->y[0];
   if(width>16384.0 || height>16384.0) return 0;
   double u0=(double)region.x/source->width,u1=((double)region.x+region.width)/source->width;
   double v0=(double)region.y/source->height,v1=((double)region.y+region.height)/source->height;
-  /* The shared point producer can clip a phased whole-scale interval or
+  /* The shared point producer can clip a phased nearest interval or
    * fence a boundary with a constant texel-centre strip. Its geometry stays
-   * integral and separable; hardware still samples nearest at whole scales. */
+   * integral and separable; hardware samples nearest at the prepared phase. */
   for(unsigned axis=0;axis<2u;axis++){
     const double *uv=axis?q->v:q->u;
     double begin=uv[0],end=uv[axis?2u:1u],extent=axis?height:width;
@@ -252,9 +260,8 @@ static int integer_function_sprite_valid(const GmlRenderDrawOp *op,
       int background=op->scene_family==GML_RENDER_SCENE_BACKGROUND ||
                      op->scene_family==GML_RENDER_SCENE_TILE ||
                      op->scene_family==GML_RENDER_SCENE_TEXT;
-      if(!isfinite(scale) || scale<(background?0.0625:1.0)-1e-9 ||
-         scale>(background?64.0:8.0)+1e-9 ||
-         (!background && fabs(scale-nearbyint(scale))>1e-9)) return 0;
+      if(!isfinite(scale) || scale<(background?0.0625:0.125)-1e-9 ||
+         scale>(background?64.0:8.0)+1e-9) return 0;
     }
   }
   for(unsigned c=0;c<4u;c++){
@@ -931,13 +938,13 @@ static int scene_preflight(GmlGpuBackend *backend,const GmlRenderDrawBatch *batc
                      source->pixel_format!=GML_RENDER_PIXEL_ARGB8888 &&
                      source->pixel_format!=GML_RENDER_PIXEL_RGBA8888) ||
          same_logical(op->sources[0],target->image) ||
-         (state->write_mask!=15u && !masked_numbered_sprite && !modern_numbered_sprite) ||
+         (state->write_mask!=15u && !masked_numbered_sprite && !modern_numbered_sprite && !integer_function) ||
          (sampling->quantisation==GML_RENDER_QUANTISE_SPRITE_MODERN_NEAREST &&
           !modern_numbered_sprite) || state->alpha!=255u ||
          ((sampling->quantisation==GML_RENDER_QUANTISE_INTEGER_TINT_TRUNC ||
            sampling->quantisation==GML_RENDER_QUANTISE_INTEGER_TINT_ROUND) && !integer_function) ||
          state->colour!=0xFFFFFFFFu || (state->alpha_test_enabled && !integer_function) ||
-         blend<0 || (blend==13 && !integer_function) ||
+         blend<0 || ((blend==13 || blend==14) && !integer_function) ||
          (blend==11 && (!hardware_surface || !backend->gl.CopyTexSubImage2D)) ||
          ((integer_function || integer_sourceover || blend==1 || blend==9 || blend==10 ||
                        (blend==3 && sampling->filter==GML_RENDER_FILTER_HARDWARE_BILINEAR)) &&
@@ -1269,6 +1276,8 @@ static int flush_quads(GmlGpuBackend *backend,GlSceneImage *target,GlSceneImage 
       backend->gl.BlendFuncSeparate(src,dst,alpha_src,alpha_dst);
     } else if(blend==13)
       backend->gl.BlendFuncSeparate(GL_ZERO,GL_ONE_MINUS_SRC_COLOR,GL_ZERO,GL_ONE_MINUS_SRC_ALPHA);
+    else if(blend==14)
+      backend->gl.BlendFuncSeparate(GL_SRC_ALPHA,GL_ONE,GL_ONE,GL_ONE);
     else if(blend==GL_SCENE_BLEND_INVERSE_RECT)
       backend->gl.BlendFuncSeparate(GL_ZERO,GL_ONE_MINUS_SRC_COLOR,GL_ONE,GL_ZERO);
     else backend->gl.BlendFuncSeparate(blend==9 || blend==10?GL_ONE:GL_SRC_ALPHA,
