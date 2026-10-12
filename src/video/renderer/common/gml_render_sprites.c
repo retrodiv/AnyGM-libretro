@@ -349,6 +349,10 @@ static int resident_integer_sprite(GmlRender *r,GmlSprite *sprite,int subimg,
    * Full-alpha endpoints need the exact integer tint packet, not float tint.
    * The inherited numbered predecessor above keeps its separate owner. */
   if(normal_integer && !snapped_unit && !r->classic && (left!=floor(left) || top!=floor(top)) &&
+     /* Magnified application texel ties need the integer geometry below:
+      * the retained float-phase recipe can lose them on larger cells. */
+     !(gml_render_target_is_first_generation_application_surface(r) &&
+       (fabs(xs)>1.0 || fabs(ys)>1.0)) &&
      r->alphablend && alpha<1.0 &&
      resident_filtered_sprite(r,sprite,subimg,x,y,xs,ys,rotation,blend,alpha)) return 1;
   return normal_integer && resident_atlas_crop_from_page(r,page,0,0,page->sw,page->sh,

@@ -10949,9 +10949,11 @@ static int resident_modern_screen_point_sprite(void){
             !metrics.cpu_replays && !metrics.device_checkpoints && !metrics.journal_bytes);
     } else if(variant<5u || variant==14u || variant==16u){
       CHECK(gml_render_scene_submit_pending(r) && !fake.readbacks && !fake.rgb_queries &&
-            fake.last_filter==(variant>=14u?GML_RENDER_FILTER_NEAREST_PHASED:
+            fake.last_filter==(variant==16u?GML_RENDER_FILTER_NEAREST:
+                             variant>=14u?GML_RENDER_FILTER_NEAREST_PHASED:
                                             GML_RENDER_FILTER_NEAREST_PHASED_OPAQUE_ALPHA) &&
-            !fake.last_quantisation && fake.last_quad_state.rgb_equation==GML_RENDER_BLEND_ADD &&
+            fake.last_quantisation==(variant==16u?GML_RENDER_QUANTISE_INTEGER_TINT_TRUNC:0u) &&
+            fake.last_quad_state.rgb_equation==GML_RENDER_BLEND_ADD &&
             fake.last_quad_state.alpha_equation==GML_RENDER_BLEND_ADD);
       if(variant>=14u) CHECK(fake.last_quad_state.alpha_source_factor==GML_RENDER_BLEND_SOURCE_ALPHA);
       gml_render_resource_journal_metrics(r->app_surface_resource,&metrics);
