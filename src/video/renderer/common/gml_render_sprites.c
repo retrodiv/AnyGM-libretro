@@ -1451,6 +1451,7 @@ static uint32_t modern_point_axis_regions(double leading,double scale,double pha
   double start,double end,int constant_texels,int clamp,ModernPointRegion regions[POINT_AXIS_REGION_LIMIT]){
   int anchor=(int)floor(leading+0.5);
   double phase=scale<0.0?0.5+(clamp?phase_offset:0.0):anchor+0.5-leading+phase_offset;
+  double sampling_anchor=scale<0.0?anchor+(clamp?phase_offset:0.0):leading-phase_offset;
   uint32_t count=0;
   for(int coordinate=(int)start;coordinate<(int)end;coordinate++){
     int pixel=scale<0.0?anchor-1-coordinate:coordinate-anchor;
@@ -1460,7 +1461,16 @@ static uint32_t modern_point_axis_regions(double leading,double scale,double pha
       if(!clamp) return 0;
       sample=sample<0.0?0.0:source_extent-1.0;
     }
-    int texel=constant_texels || fabs(sample-nearbyint(sample))<0.01?(int)floor(sample):-1;
+    int constant=constant_texels;
+    if(constant && clamp){
+      /* An authored tile edge outside its crop fences only that pixel's
+       * vertices. Keep ordinary interior intervals affine, even when their
+       * nearest ties need independent constant-centre strips. */
+      double first=((double)coordinate-sampling_anchor)/scale;
+      double last=((double)coordinate+1.0-sampling_anchor)/scale;
+      constant=fmin(first,last)<0.0 || fmax(first,last)>source_extent;
+    }
+    int texel=constant || fabs(sample-nearbyint(sample))<0.01?(int)floor(sample):-1;
     if(count && regions[count-1u].texel==texel) regions[count-1u].end=coordinate+1.0;
     else {
       if(count==POINT_AXIS_REGION_LIMIT) return 0;

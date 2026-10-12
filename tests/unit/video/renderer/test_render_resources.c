@@ -11594,6 +11594,72 @@ static int resident_nearest_tile_function(void){
   return resident_background_function(2);
 }
 
+/* Admission and authority only; the public paired generator owns RGBA. */
+static int resident_nearest_tile_crop_edges(void){
+  enum { W=160,H=180,AW=264,AH=328 };
+  const int generations[]={530,700,800,13,15,17};
+  const double alphas[]={1,0,.37};
+  for(unsigned generation=0;generation<6u;generation++)
+  for(unsigned target_kind=0;target_kind<4u;target_kind++)
+  for(unsigned gui=0;gui<2u;gui++) for(unsigned signs=0;signs<4u;signs++)
+  for(unsigned state=0;state<4u;state++) for(unsigned disabled=0;disabled<2u;disabled++)
+  for(unsigned a=0;a<3u;a++){
+    GmlRender *r=calloc(1,sizeof *r);GmlWin content={0};
+    FakeDevice fake={.on_demand=1,.readback_colour=0x7F25C080u};
+    GmlRenderDeviceServices device=service(&fake);GmlRenderJournalMetrics metrics={0};
+    uint32_t screen[W*H],shadow[W*H];const uint32_t *pixels=NULL;
+    CHECK(r && !gml_render_init(r,NULL));
+    content.classic_version=generations[generation]>100?generations[generation]:0;
+    content.bytecode=content.classic_version?0:generations[generation];
+    content.has_room_layers=content.bytecode==17;
+    r->win=&content;r->classic=content.classic_version!=0;
+    free(r->atlas[0].px);r->atlas[0].px=malloc(AW*AH*4u);
+    r->tpag=calloc(1,sizeof *r->tpag);r->bg=calloc(1,sizeof *r->bg);
+    CHECK(r->atlas[0].px && r->tpag && r->bg);
+    r->atlas[0].w=AW;r->atlas[0].h=AH;r->n_tpag=r->n_bg=1;
+    for(unsigned p=0;p<AW*AH;p++){
+      r->atlas[0].px[p*4u]=(uint8_t)(p*31u+19u);
+      r->atlas[0].px[p*4u+1u]=(uint8_t)(p*17u+53u);
+      r->atlas[0].px[p*4u+2u]=(uint8_t)(p*13u+101u);
+      r->atlas[0].px[p*4u+3u]=(uint8_t)((p*41u+7u)%255u);
+    }
+    r->tpag[0]=(GmlTpag){.sx=4,.sy=4,.sw=256,.sh=320,.tw=256,.th=320,.bw=256,.bh=320};
+    device.observe_on_demand=fake_observe_on_demand;gml_render_bind_device(r,&device);
+    for(unsigned p=0;p<W*H;p++) screen[p]=0xA5ABCDEFu;
+    if(target_kind==1u || target_kind==2u){
+      CHECK(gml_render_application_surface_ensure_owned(r,W,H));
+      CHECK(gml_render_begin_resident_owned_application(r,0,0,0));
+    }else{
+      gml_render_application_surface_bind(r,screen,W,H,1);
+      CHECK(gml_render_begin_resident_base(r,screen,W,H,0,0));
+    }
+    if(target_kind==2u) CHECK(gml_surface_set_target(r,0));
+    if(target_kind==3u){int id=gml_surface_create(r,W,H);CHECK(id>0 && gml_surface_set_target(r,id));}
+    if(gui){gml_render_gui_begin(r,W,H);gml_render_gui_set_size(r,W/2,H/2);}
+    r->alphablend=!disabled;r->blendmode=state>=2u?2:0;
+    r->alpha_test_enable=(int)(state&1u);r->alpha_test_ref=2u;
+    gml_render_set_pending_fill(r,0xFF273859u);gml_render_flush_pending_fill(r);
+    CHECK(gml_render_scene_submit_pending(r));memcpy(shadow,r->fb,sizeof shadow);
+    int submitted=fake.submits;double mapping=gml_render_gui_transform_active(r)?2.0:1.0;
+    for(unsigned draw=0;draw<8u;draw++)
+      gml_draw_background_tile(r,0,0,0,256,320,12.115987/mapping,8.3568773/mapping,
+        .533926585/mapping,.533596838/mapping,(int)(signs&1u),(int)(signs>>1u),0,
+        0x70B0D0u,alphas[a]);
+    CHECK(r->resident_application_pass && gml_render_scene_submit_pending(r));
+    CHECK(a==1u?fake.submits==submitted:fake.submits>submitted);
+    CHECK(!fake.readbacks && !fake.rgb_queries && !memcmp(shadow,r->fb,sizeof shadow));
+    GmlRenderResource *resource=gml_render_scene_target_resource_ensure(r);CHECK(resource);
+    gml_render_resource_journal_metrics(resource,&metrics);
+    CHECK(metrics.authority==GML_RENDER_RESOURCE_GPU_RESIDENT && !metrics.cpu_replays && !metrics.journal_bytes);
+    CHECK(gml_render_resource_acquire_cpu_read(resource,&pixels) && fake.readbacks==1 &&
+          pixels[0]==fake.readback_colour && pixels[W*H-1u]==fake.readback_colour);
+    fake.forbid_calls=1;
+    CHECK(gml_render_resource_acquire_cpu_read(resource,&pixels) && !fake.forbidden_calls);
+    fake.forbid_calls=0;gml_render_free(r);free(r);
+  }
+  return 1;
+}
+
 static int resident_selected_background_function(void){
   enum { W=48,H=40 };
   static const int generations[]={530,700,800,13,15,17};
@@ -12767,6 +12833,7 @@ int main(void){
   passed+=resident_integer_background_function();
   passed+=resident_fractional_background_function();
   passed+=resident_nearest_tile_function();
+  passed+=resident_nearest_tile_crop_edges();
   passed+=resident_nearest_text_function();
   passed+=resident_selected_background_function();
   passed+=resident_classic_owned_binary_unit_sprite();
@@ -12806,6 +12873,6 @@ int main(void){
   passed+=source_free_primitive_rect_replay();
   passed+=stretched_float_exact_replay();
   passed+=filtered_font_exact_recovery();
-  printf("render resource cases: passed=%d failed=%d\n",passed,178-passed);
-  return passed==178?EXIT_SUCCESS:EXIT_FAILURE;
+  printf("render resource cases: passed=%d failed=%d\n",passed,179-passed);
+  return passed==179?EXIT_SUCCESS:EXIT_FAILURE;
 }
