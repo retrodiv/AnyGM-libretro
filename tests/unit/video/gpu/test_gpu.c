@@ -1384,6 +1384,80 @@ static int scene_nearest_surface_batch_case(void){
 static int scene_nearest_application_batch_case(void){
   return scene_hardware_filtered_batch_case(5);
 }
+/* Typed admission and capacity, not shader pixels; the public paired generator
+ * owns sampling, cutoff, masks and complete RGBA comparisons. */
+static int scene_nearest_surface_function_case(void){
+  enum { QUADS=2049 };
+  const uint32_t pixels[4]={0x001267B9u,0x552679B3u,0xAAC39526u,0xFF7193C5u};
+  for(unsigned api=0;api<2u;api++) for(unsigned target_kind=0;target_kind<3u;target_kind++)
+  for(unsigned source_kind=0;source_kind<2u;source_kind++) for(unsigned invalid=0;invalid<12u;invalid++){
+    anygm_test_graphics_reset();
+    GmlGpuContext context=fake_context(api?GML_GPU_API_OPENGLES3:GML_GPU_API_OPENGL_CORE);
+    GmlGpu *gpu=gml_gpu_create();GmlRenderDeviceServices device={0};
+    GmlRenderDrawOp *ops=calloc(QUADS+1u,sizeof *ops);
+    GmlRenderImageRef source={source_kind?GML_RENDER_RESOURCE_APPLICATION:GML_RENDER_RESOURCE_SURFACE,161u,1u,1u};
+    GmlRenderImageUpload upload={.image=source,.storage_width=2u,.storage_height=2u,
+      .region={0,0,2u,2u},.pixel_format=GML_RENDER_PIXEL_ARGB8888,
+      .stride_bytes=8u,.byte_capacity=sizeof pixels,.bytes=pixels};
+    GmlRenderDrawStateSnapshot state={0};
+    REQUIRE(gpu && ops && gml_gpu_context_reset(gpu,&context),"nearest surface function adopts context");
+    gml_gpu_device_services(gpu,&device);
+    REQUIRE(device.upload(device.context,&upload),"nearest surface function uploads source");
+    state.write_mask=7u;state.alpha=255u;state.colour=0xFFFFFFFFu;state.sampler_count=1u;
+    state.alpha_test_enabled=1u;state.alpha_test_reference=127u;
+    state.rgb_source_factor=GML_RENDER_BLEND_SOURCE_ALPHA;
+    state.rgb_destination_factor=state.alpha_destination_factor=GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA;
+    state.alpha_source_factor=GML_RENDER_BLEND_ONE;
+    state.rgb_equation=state.alpha_equation=GML_RENDER_BLEND_ADD;
+    state.samplers[0]=(GmlRenderSamplingPolicy){GML_RENDER_FILTER_NEAREST,
+      GML_RENDER_EDGE_CLAMP_SUBIMAGE,{0,0,2u,2u},GML_RENDER_QUANTISE_SURFACE_NEAREST_FUNCTION,0u};
+    for(unsigned index=0;index<QUADS+1u;index++){
+      GmlRenderDrawOp *op=&ops[index];
+      op->sequence=index+1u;
+      op->target=(GmlRenderTargetRef){.image={target_kind==0u?GML_RENDER_RESOURCE_SCREEN:
+        target_kind==1u?GML_RENDER_RESOURCE_APPLICATION:GML_RENDER_RESOURCE_SURFACE,162u,1u,index+1u},
+        .storage_version=1u,.width=8u,.height=8u,.pixel_format=GML_RENDER_PIXEL_ARGB8888,
+        .region={0,0,8u,8u}};
+      if(!index){op->opcode=GML_RENDER_OP_CLEAR;op->payload.clear_colour=0x78273859u;continue;}
+      op->opcode=GML_RENDER_OP_TEXTURED_QUAD;op->scene_family=GML_RENDER_SCENE_SURFACE;
+      op->reconstruction_mode=GML_RENDER_DEVICE_CHECKPOINT;op->sources=&source;op->source_count=1u;
+      GmlRenderQuad *q=&op->payload.quad;
+      q->shape=GML_RENDER_QUAD_AXIS_ALIGNED;q->sampling=state.samplers[0];q->filtered_draw_alpha=.4;
+      q->x[0]=q->x[3]=-1;q->x[1]=q->x[2]=2;q->y[0]=q->y[1]=1;q->y[2]=q->y[3]=4;
+      q->inverse_anchor[0]=-1;q->inverse_anchor[1]=1;q->inverse_x[0]=-3;q->inverse_y[1]=3;
+      for(unsigned corner=0;corner<4u;corner++){
+        q->u[corner]=corner==0u || corner==3u?0.0:1.0;q->v[corner]=corner<2u?0.0:1.0;
+        q->corner_colour[corner]=0x663470D0u;
+      }
+    }
+    GmlRenderQuad *last=&ops[QUADS].payload.quad;
+    if(invalid==1u) last->inverse_x[0]=NAN;
+    if(invalid==2u) last->inverse_anchor[0]=-.5;
+    if(invalid==3u) last->inverse_y[1]=4;
+    if(invalid==4u) last->span_x[0]=4;
+    if(invalid==5u) last->span_y[0]=3;
+    if(invalid==6u) last->filtered_draw_alpha=.5;
+    if(invalid==7u) last->corner_colour[1]^=1u;
+    if(invalid==8u) last->u[1]=.9;
+    if(invalid==9u) ops[QUADS].scene_family=GML_RENDER_SCENE_SPRITE;
+    if(invalid==10u) ops[QUADS].reconstruction_mode=GML_RENDER_REPLAY_EXACT;
+    if(invalid==11u) last->span_active=1u;
+    GmlRenderDrawBatch batch={ops,QUADS+1u,&state,1u};
+    GmlRenderExecutionResult result=device.submit(device.context,&batch);
+    if(invalid){
+      REQUIRE(result.status==GML_RENDER_EXEC_UNSUPPORTED && !result.accepted_prefix &&
+        !anygm_test_graphics_clear_calls() && !anygm_test_graphics_scene_draw_calls() &&
+        !anygm_test_graphics_scene_copies(),"invalid nearest surface suffix refuses before clear and draws");
+    }else{
+      REQUIRE(result.status==GML_RENDER_EXEC_ACCEPTED && result.accepted_prefix==QUADS+1u &&
+        anygm_test_graphics_scene_draw_calls()==2 && anygm_test_graphics_scene_vertices()==QUADS*6 &&
+        !anygm_test_graphics_scene_copies() && !anygm_test_graphics_read_pixels(),
+        "nearest surface groups at capacity without destination copies or observations");
+    }
+    gml_gpu_destroy(gpu,1);free(ops);
+  }
+  return 1;
+}
 static int scene_integer_screen_surface_batch_case(void){
   return scene_hardware_filtered_batch_case(10);
 }
@@ -4143,6 +4217,7 @@ int main(int argc,char **argv){
     {"scene_alpha_composition",scene_alpha_composition_case},
     {"scene_opaque_target_sourceover",scene_opaque_target_sourceover_case},
     {"scene_integer_function_sprite",scene_integer_function_sprite_case},
+    {"scene_nearest_surface_function",scene_nearest_surface_function_case},
     {"scene_gui_tinted_text",scene_gui_tinted_text_case},
     {"scene_gui_half_point",scene_gui_half_point_case},
     {"scene_numbered_integer_sourceover",scene_numbered_integer_sourceover_case},

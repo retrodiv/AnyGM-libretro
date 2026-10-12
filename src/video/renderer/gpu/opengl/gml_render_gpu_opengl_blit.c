@@ -183,6 +183,7 @@ int gml_render_gpu_opengl_draw_textured_quad(const GmlRenderDrawOp *op,
     vertex[7]=(float)((colour>>24)&255u)/255.0f*(float)state->alpha/255.0f;
     if(quad->sampling.quantisation==GML_RENDER_QUANTISE_INTEGER_TINT_TRUNC ||
        quad->sampling.quantisation==GML_RENDER_QUANTISE_INTEGER_TINT_ROUND ||
+       quad->sampling.quantisation==GML_RENDER_QUANTISE_SURFACE_NEAREST_FUNCTION ||
        half_gui || stretched_blend || (rotated && state->coverage_policy) ||
        (op->scene_family==GML_RENDER_SCENE_SURFACE &&
         state->coverage_policy==GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA) ||
@@ -206,7 +207,8 @@ int gml_render_gpu_opengl_draw_textured_quad(const GmlRenderDrawOp *op,
                       :(float)((rendered_source_origin?quad->v[0]-quad->v[2]
                                 :quad->v[2]-quad->v[0])*source_height/
                                (quad->y[2]-quad->y[0])-1.0);
-    if(quad->sampling.filter==GML_RENDER_FILTER_HARDWARE_PIXEL_CENTRE_POINT){
+    if(quad->sampling.filter==GML_RENDER_FILTER_HARDWARE_PIXEL_CENTRE_POINT ||
+       quad->sampling.quantisation==GML_RENDER_QUANTISE_SURFACE_NEAREST_FUNCTION){
       /* Preserve the authored rectangle, not interpolated UVs at its clipped edge. */
       vertex[12]=(float)quad->inverse_anchor[0];
       vertex[13]=(float)quad->inverse_anchor[1];
@@ -225,6 +227,7 @@ int gml_render_gpu_opengl_draw_textured_quad(const GmlRenderDrawOp *op,
       vertex[23+span]=(float)quad->span_y[span];
     }
     if(!rotated && state->coverage_policy==GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA &&
+       quad->sampling.quantisation!=GML_RENDER_QUANTISE_SURFACE_NEAREST_FUNCTION &&
        quad->sampling.filter!=GML_RENDER_FILTER_HARDWARE_BILINEAR &&
        quad->sampling.filter!=GML_RENDER_FILTER_HARDWARE_PIXEL_CENTRE_POINT){
       /* The axis screen rule has no rotated/box span. Retain low residuals of

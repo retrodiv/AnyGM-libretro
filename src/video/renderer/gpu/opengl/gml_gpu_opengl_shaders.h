@@ -361,15 +361,36 @@
   "    o_color=vec4(rgb,alpha)/255.0; return;\n" \
   "  }\n" \
   "  // R03_SHADER_INTEGER_SPRITE: whole nearest texels, integer tint and fixed blending.\n" \
-  "  if(u_filter>=37 && u_filter<=50){\n" \
-  "    uvec4 sampled=uvec4(floor(texture(u_image,v_texcoord)*255.0+0.5));\n" \
+  "  if(u_filter>=37 && u_filter<=64){\n" \
+  "    int rule=u_filter>50?u_filter-14:u_filter;\n" \
+  "    uvec4 sampled;\n" \
+  "    if(u_filter>50){\n" \
+  "      ivec2 dest=ivec2(abs(v_map.zw)),size=textureSize(u_image,0);\n" \
+  "      ivec2 p=ivec2(int(gl_FragCoord.x),int(v_step.y)-1-int(gl_FragCoord.y))-ivec2(v_map.xy);\n" \
+  "      if(v_map.z<0.0) p.x=dest.x-1-p.x;\n" \
+  "      if(v_map.w<0.0) p.y=dest.y-1-p.y;\n" \
+  "      ivec2 at=p*size/dest;\n" \
+  "      if(v_span_x.x==1.0) at.x=(2*p.x*size.x+dest.x)/(2*dest.x);\n" \
+  "      if(v_span_x.x==2.0) at.x=(2*p.x+1)*size.x/(2*dest.x);\n" \
+  "      if(v_span_x.y==1.0) at.y=(2*p.y*size.y+dest.y)/(2*dest.y);\n" \
+  "      if(v_span_x.y==2.0) at.y=(2*p.y+1)*size.y/(2*dest.y);\n" \
+  "      if(v_span_x.x==3.0) at.x=((2*p.x+1)*size.x-1)/(2*dest.x);\n" \
+  "      if(v_span_x.y==3.0) at.y=((2*p.y+1)*size.y-1)/(2*dest.y);\n" \
+  "      at=clamp(at,ivec2(0),size-ivec2(1));\n" \
+  "      if(v_step.x!=0.0) at.y=size.y-1-at.y;\n" \
+  "      sampled=uvec4(floor(texelFetch(u_image,at,0)*255.0+0.5));\n" \
+  "    }else sampled=uvec4(floor(texture(u_image,v_texcoord)*255.0+0.5));\n" \
   "    if(u_alpha_test>=0 && sampled.a<=uint(u_alpha_test)) discard;\n" \
-  "    if(u_filter<44 && (sampled.a==0u || (u_filter<41 && v_colour.a<=0.0))) discard;\n" \
-  "    if(u_filter==41 || u_filter==48){ o_color=vec4(0.0,0.0,0.0,1.0); return; }\n" \
+  "    if(u_filter>50 && sampled.a==0u && v_span_y.x!=1.0) discard;\n" \
+  "    if(rule<44 && (sampled.a==0u || (rule<41 && v_colour.a<=0.0 && u_filter<=50)) && !(u_filter>50 && v_span_y.x==1.0)) discard;\n" \
+  "    if(rule==41 || rule==48){ o_color=vec4(0.0,0.0,0.0,1.0); return; }\n" \
   "    uvec3 tint=uvec3(floor(v_colour.rgb*255.0+0.5));\n" \
-  "    uint bias=(u_filter==38 || u_filter==40 || u_filter==43 || u_filter==45 || u_filter==47 || u_filter==50)?127u:0u;\n" \
+  "    uint bias=(rule==38 || rule==40 || rule==43 || rule==45 || rule==47 || rule==50)?127u:0u;\n" \
   "    uvec3 rgb=(sampled.rgb*tint+uvec3(bias))/255u;\n" \
-  "    o_color=vec4(vec3(rgb)/255.0,(u_filter==42 || u_filter==43 || u_filter>=49)?1.0:float(sampled.a)*v_colour.a/255.0); return;\n" \
+  "    float alpha=(rule==42 || rule==43 || rule>=49)?1.0:float(sampled.a)*v_colour.a/255.0;\n" \
+  "    if(u_filter>50 && v_span_y.x>0.0 && v_span_y.x<3.0) alpha=float(sampled.a)/255.0;\n" \
+  "    if(u_filter>50 && v_span_y.x==3.0 && sampled.a==255u) alpha=1.0;\n" \
+  "    o_color=vec4(vec3(rgb)/255.0,alpha); return;\n" \
   "  }\n" \
   "  if(u_filter==0){ o_color=texture(u_image,v_texcoord)*v_colour; return; }\n" \
   "  // R03_SHADER_APPLICATION_PIXEL_CENTRE: opaque presentation copies RGB and stamps alpha.\n" \

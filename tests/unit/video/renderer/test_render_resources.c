@@ -9197,6 +9197,61 @@ static int current_cpu_source_view_is_not_observer(void){
   return 1;
 }
 
+static int resident_nearest_surface_cutout_targets(void){
+  enum { WIDTH=24,HEIGHT=18,SOURCE_WIDTH=8,SOURCE_HEIGHT=6 };
+  for(unsigned modern=0;modern<2u;modern++) for(unsigned destination=0;destination<4u;destination++){
+    GmlRender *render=(GmlRender*)calloc(1,sizeof *render);
+    GmlWin content={.bytecode=modern?17:15};
+    uint32_t screen[WIDTH*HEIGHT];
+    FakeDevice fake={.on_demand=1};
+    GmlRenderDeviceServices device=service(&fake);
+    GmlRenderJournalMetrics metrics={0};
+    CHECK(render && gml_render_init(render,NULL)==0);
+    render->win=&content;
+    for(unsigned pixel=0;pixel<WIDTH*HEIGHT;pixel++) screen[pixel]=0xA5123456u;
+    gml_render_begin(render,screen,WIDTH,HEIGHT,0.0,0.0);
+    int source=gml_surface_create(render,SOURCE_WIDTH,SOURCE_HEIGHT);
+    CHECK(source>0);
+    GmlSurface *surface=&render->surface[surface_slot(source)];
+    for(unsigned pixel=0;pixel<SOURCE_WIDTH*SOURCE_HEIGHT;pixel++)
+      surface->px[pixel]=((pixel%3u==0u?0u:pixel%3u==1u?127u:255u)<<24)|
+        ((pixel*31u+17u)&0xFFFFFFu);
+    surface->opaque_known=surface->all_opaque=surface->all_transparent=0;
+    device.observe_on_demand=fake_observe_on_demand;
+    gml_render_bind_device(render,&device);
+    CHECK(gml_render_begin_resident_base(render,screen,WIDTH,HEIGHT,0.0,0.0));
+    if(destination==1u) gml_render_gui_begin(render,WIDTH,HEIGHT);
+    if(destination==2u){
+      CHECK(gml_render_application_surface_ensure_owned(render,WIDTH,HEIGHT) &&
+        gml_render_begin_resident_owned_application(render,0.0,0.0,0));
+    }
+    if(destination==3u){
+      int target=gml_surface_create(render,WIDTH,HEIGHT);
+      CHECK(target>0 && target!=source && gml_surface_set_target(render,target));
+    }
+    CHECK(render->resident_application_pass);
+    gml_render_set_pending_fill(render,0xA5714A24u);
+    render->interp=0;
+    gml_draw_surface_stretched(render,source,-2.25,1.4,8.0,6.0,0xFFFFFFu,1.0);
+    CHECK(render->resident_application_pass && gml_render_scene_submit_pending(render));
+    render->alpha_test_enable=1;render->alpha_test_ref=2u;
+    int reads=fake.readbacks,submits=fake.submits;
+    gml_draw_surface_stretched(render,source,-2.25,1.4,8.0,6.0,0xFFFFFFu,1.0);
+    if(!render->resident_application_pass)
+      fprintf(stderr,"nearest surface cutout: modern=%u destination=%u ordinary path lost residence\n",
+        modern,destination);
+    CHECK(render->resident_application_pass && gml_render_scene_submit_pending(render));
+    GmlRenderResource *target=gml_render_scene_target_resource_ensure(render);
+    CHECK(target);
+    gml_render_resource_journal_metrics(target,&metrics);
+    CHECK(fake.submits>submits && fake.readbacks==reads &&
+      metrics.authority==GML_RENDER_RESOURCE_GPU_RESIDENT && !metrics.cpu_replays &&
+      !metrics.journal_operations && metrics.cpu_version<metrics.logical_version);
+    gml_render_abandon_device(render);gml_render_free(render);free(render);
+  }
+  return 1;
+}
+
 static int resident_current_cpu_application_underlay(void){
   enum { WIDTH=4,HEIGHT=4 };
   for(unsigned modern=0;modern<2u;modern++) for(unsigned variant=0;variant<6u;variant++){
@@ -13028,6 +13083,7 @@ int main(void){
   passed+=resident_gui_application_composition();
   passed+=resident_fullwidth_gui_application();
   passed+=current_cpu_source_view_is_not_observer();
+  passed+=resident_nearest_surface_cutout_targets();
   passed+=resident_current_cpu_application_underlay();
   passed+=resident_unregistered_cpu_application_underlay();
   passed+=resident_surface_after_pending_underlay();
@@ -13086,6 +13142,6 @@ int main(void){
   passed+=source_free_primitive_rect_replay();
   passed+=stretched_float_exact_replay();
   passed+=filtered_font_exact_recovery();
-  printf("render resource cases: passed=%d failed=%d\n",passed,184-passed);
-  return passed==184?EXIT_SUCCESS:EXIT_FAILURE;
+  printf("render resource cases: passed=%d failed=%d\n",passed,185-passed);
+  return passed==185?EXIT_SUCCESS:EXIT_FAILURE;
 }
