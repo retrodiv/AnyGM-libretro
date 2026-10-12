@@ -5209,6 +5209,43 @@ static int rotated_geometry_prepare(GmlRender *r,GmlSprite *spr,GmlTpag *t,
   return 1;
 }
 
+int gml_render_sprite_source_is_outside(GmlRender *r,const GmlSprite *sprite,const GmlTpag *page,
+                                      double x,double y,double xs,double ys,double rotation){
+  if(!r || !sprite || !page || sprite->w<=0 || sprite->h<=0 ||
+     sprite->w>4096 || sprite->h>4096 ||
+     page->sw<=0 || page->sh<=0 || page->sw>4096 || page->sh>4096 ||
+     page->tw<0 || page->th<0 || page->tw>4096 || page->th>4096 ||
+     page->tx < -4096 || page->ty < -4096 || page->tx>4096 || page->ty>4096 ||
+     !isfinite(x) || !isfinite(y) || fabs(x)>65536.0 || fabs(y)>65536.0 ||
+     !isfinite(xs) || !isfinite(ys) || fabs(xs)<0.0625 || fabs(xs)>64.0 ||
+     fabs(ys)<0.0625 || fabs(ys)>64.0 ||
+     !isfinite(rotation) || fabs(rotation)>1000000.0) return 0;
+  /* Bound both logical and stored crop extents, including one source texel
+   * of filtering margin. Reuse CPU geometry without source or alpha reads. */
+  int left=page->tx<0?page->tx:0,top=page->ty<0?page->ty:0;
+  int right=page->tx+(page->sw>page->tw?page->sw:page->tw);
+  int bottom=page->ty+(page->sh>page->th?page->sh:page->th);
+  if(right<sprite->w) right=sprite->w;
+  if(bottom<sprite->h) bottom=sprite->h;
+  /* An in-target anchor inside this source envelope cannot prove a no-op.
+   * Keep ordinary visible draws out of the trigonometric bounds preparation. */
+  if(sprite->originx>=left && sprite->originx<=right &&
+     sprite->originy>=top && sprite->originy<=bottom &&
+     x-r->cam_x>=0 && x-r->cam_x<r->fbw &&
+     y-r->cam_y>=0 && y-r->cam_y<r->fbh) return 0;
+  GmlTpag bounds={.tx=left-1,.ty=top-1,.sw=right-left+2,.sh=bottom-top+2};
+  GmlSprite metadata=*sprite;GmlRotatedGeometry geometry;
+  if(rotated_geometry_prepare(r,&metadata,&bounds,NULL,x,y,xs,ys,rotation,1,1,&geometry)!=0)
+    return 0;
+  /* The public CPU entry snaps a near-zero full turn to its axis writer.
+   * Require both envelopes empty; the one-source-texel rim alone cannot
+   * bound an extremely anisotropic near-zero rotation. */
+  double phase=fmod(rotation,360.0);if(phase<0.0) phase+=360.0;
+  if(rotation!=0.0 && (phase<0.001 || fabs(phase-360.0)<0.001))
+    return rotated_geometry_prepare(r,&metadata,&bounds,NULL,x,y,xs,ys,0.0,1,1,&geometry)==0;
+  return 1;
+}
+
 int gml_render_rotated_sprite_is_clipped(GmlRender *r,GmlSprite *spr,GmlTpag *t,
                                         double x,double y,double xs,double ys,double rot){
   GmlRotatedGeometry geometry;
@@ -6603,6 +6640,10 @@ void gml_render_cpu_blit_sprite_ext_resolved(GmlRender *r, GmlSprite *s,
 
 void gml_draw_sprite_ext(GmlRender *r, int sprite, int subimg, double x, double y,
                          double xs, double ys, double rot, uint32_t blend, double alpha){
+  /* A wholly clipped ordinary source needs neither the fog silhouette nor
+   * the masked destination preparation; preserve the queued resident prefix. */
+  if(r && (r->fog_flat || r->color_write_mask!=0x0Fu) &&
+     gml_render_resident_sprite_outside(r,sprite,subimg,x,y,xs,ys,rot)) return;
   if(r && r->color_write_mask!=0x0Fu &&
      gml_render_resident_masked_sprite(r,sprite,subimg,x,y,xs,ys,rot,blend,alpha)) return;
   /* The resident quad format has no fixed-function fog. Materialize the

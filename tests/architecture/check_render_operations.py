@@ -38,6 +38,7 @@ REQUIRED_RULES = {
     "R03-LAYER-TRIMMED-UNIT",
     "R03-SPR-MODERN-UNIT-PART",
     "R03-SPR-GUI-FILTERED-OFFSCREEN-NOOP",
+    "R03-SPR-OUTSIDE-FUNCTION",
     "R03-P9-GUI-MAPPED-SPRITE", "R03-P9-STRETCHED-COVERED-ALPHA",
     "R03-SPR-GUI-MAPPED-STRETCH",
     "R03-SPR-BLACK-ADDITIVE-NOOP",
@@ -178,6 +179,7 @@ DISPATCH_ADDITIONAL = {
     "gml_software3d_vertex_submit_buffer", "gml_software3d_model_draw",
 }
 DISPATCH_HELPERS = {
+    "resident_outside_sprite_noop", "gml_render_resident_sprite_outside",
     "resident_flat_eligible_rule", "resident_flat_eligible", "resident_line_bounds",
     "resident_primitive_alpha_noop",
     "resident_classify_page", "resident_identity_screen_gui",

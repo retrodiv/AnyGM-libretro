@@ -811,6 +811,10 @@ typedef struct GmlRenderRotatedCoverageRegion {
   int64_t fixed_x,fixed_y,delta_x,delta_y;
 } GmlRenderRotatedCoverageRegion;
 /* Reuse the CPU rotation's conservative clipped bounds without walking pixels. */
+int gml_render_sprite_source_is_outside(GmlRender *r,const GmlSprite *sprite,const GmlTpag *page,
+                                      double x,double y,double xs,double ys,double rotation);
+int gml_render_resident_sprite_outside(GmlRender *r,int sprite,int subimg,
+                                      double x,double y,double xs,double ys,double rotation);
 int gml_render_rotated_sprite_is_clipped(GmlRender *r,GmlSprite *sprite,GmlTpag *tpag,
                                         double x,double y,double xscale,double yscale,
                                         double rotation);

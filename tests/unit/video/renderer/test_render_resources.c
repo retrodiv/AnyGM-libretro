@@ -10345,6 +10345,101 @@ static int resident_classic_rotated_sprite_noops(void){
   return 1;
 }
 
+static int resident_outside_sprite_geometry(void){
+  const int generations[]={530,700,800,13,15,17};
+  const double angles[]={0,.0005,84,91.5,359.9995,360,720.0005};
+  const double scales[][2]={{1,1},{2,3},{.1875,.234375},{64,.0625}};
+  GmlRender *r=calloc(1,sizeof *r);GmlWin content={0};
+  GmlSprite sprite={.w=13,.h=19,.originx=6,.originy=9};
+  GmlTpag page={.sw=8,.sh=15,.tw=8,.th=15,.tx=3,.ty=2};
+  CHECK(r);r->win=&content;r->fbw=48;r->fbh=40;r->cam_x=-3;r->cam_y=2;
+  /* No framebuffer, atlas, frame bytes or device exist in this geometry check. */
+  for(unsigned generation=0;generation<6u;generation++)
+  for(unsigned sign=0;sign<4u;sign++)
+  for(unsigned scale=0;scale<4u;scale++)
+  for(unsigned angle=0;angle<7u;angle++){
+    content.classic_version=generations[generation]>100?generations[generation]:0;
+    content.bytecode=content.classic_version?0:generations[generation];
+    r->classic=content.classic_version!=0;
+    double xs=scales[scale][0]*(sign&1u?-1:1),ys=scales[scale][1]*(sign&2u?-1:1);
+    double radius=8+4*(sprite.w+sprite.h+32)*fmax(fabs(xs),fabs(ys));
+    for(unsigned side=0;side<4u;side++){
+      double x=r->cam_x+(side==0u?-radius:side==1u?r->fbw+radius:r->fbw*.5);
+      double y=r->cam_y+(side==2u?-radius:side==3u?r->fbh+radius:r->fbh*.5);
+      CHECK(gml_render_sprite_source_is_outside(r,&sprite,&page,x,y,xs,ys,angles[angle]));
+    }
+    CHECK(!gml_render_sprite_source_is_outside(r,&sprite,&page,
+      r->cam_x+24,r->cam_y+20,xs,ys,angles[angle]));
+  }
+  GmlTpag expanded={.tx=-80,.ty=-70,.sw=160,.sh=140,.tw=180,.th=150};
+  CHECK(!gml_render_sprite_source_is_outside(r,&sprite,&expanded,80,20,1,1,0));
+  CHECK(!gml_render_sprite_source_is_outside(r,&sprite,&page,NAN,200,1,1,0));
+  CHECK(!gml_render_sprite_source_is_outside(r,&sprite,&page,200,200,0,1,0));
+  CHECK(!gml_render_sprite_source_is_outside(r,&sprite,&page,200,200,1,1,INFINITY));
+  CHECK(!gml_render_sprite_source_is_outside(r,&sprite,&page,-11,20,1,1,0));
+  /* The conservative rim deliberately keeps a crop touching the edge visible. */
+  CHECK(!gml_render_sprite_source_is_outside(r,&sprite,&page,-8,20,1,1,.0005));
+  free(r);return 1;
+}
+
+static int resident_outside_sprite_preserves_queued_prefix(void){
+  const int generations[]={530,700,800,13,15,17};
+  enum { W=24,H=20 };
+  for(unsigned generation=0;generation<6u;generation++)
+  for(unsigned target=0;target<4u;target++)
+  for(unsigned mapping=0;mapping<3u;mapping++){
+    GmlRender *r=calloc(1,sizeof *r);GmlWin content={0};
+    FakeDevice fake={.on_demand=1};GmlRenderDeviceServices device=service(&fake);
+    uint32_t base[W*H]={0};GmlRenderJournalMetrics before={0},after={0};
+    CHECK(r && !gml_render_init(r,NULL));
+    content.classic_version=generations[generation]>100?generations[generation]:0;
+    content.bytecode=content.classic_version?0:generations[generation];
+    r->win=&content;r->classic=content.classic_version!=0;
+    r->tpag=calloc(1,sizeof *r->tpag);r->spr=calloc(1,sizeof *r->spr);
+    CHECK(r->tpag && r->spr);r->n_tpag=r->n_spr=1;
+    r->tpag[0]=(GmlTpag){.sw=2,.sh=2,.tw=2,.th=2,.bw=4,.bh=4,.tx=1,.ty=1};
+    r->spr[0]=(GmlSprite){.w=4,.h=4,.originx=2,.originy=2,.n_frames=1};
+    r->spr[0].frame=calloc(1,sizeof(int));CHECK(r->spr[0].frame);
+    device.observe_on_demand=fake_observe_on_demand;gml_render_bind_device(r,&device);
+    if(target==1u || target==2u){
+      CHECK(gml_render_application_surface_ensure_owned(r,W,H));
+      CHECK(gml_render_begin_resident_owned_application(r,-3,2,0));
+    }else{
+      gml_render_application_surface_bind(r,base,W,H,1);
+      CHECK(gml_render_begin_resident_base(r,base,W,H,-3,2));
+    }
+    if(target==2u) CHECK(gml_surface_set_target(r,0));
+    if(target==3u){int id=gml_surface_create(r,W,H);CHECK(id>0 && gml_surface_set_target(r,id));}
+    if(mapping==1u){gml_render_gui_begin(r,W,H);gml_render_gui_set_size(r,W/2,H/2);}
+    if(mapping==2u){r->world_transform_active=1;r->world_scale_x=2;r->world_scale_y=3;}
+    gml_render_set_pending_fill(r,0xD3273859u);
+    GmlRenderResource *resource=gml_render_scene_target_resource_ensure(r);CHECK(resource);
+    gml_render_resource_journal_metrics(resource,&before);
+    int submits=fake.submits,reads=fake.readbacks;double xs=.1875,ys=.234375;
+    double x=r->cam_x+W*.5,y=r->cam_y+200;
+    double mx=1,my=1;gml_render_draw_map_scale(r,&mx,&my);
+    CHECK(mx>0 && my>0);
+    for(unsigned state=0;state<4u;state++){
+      r->interp=state&1u;r->fog_flat=state==3u;r->color_write_mask=state>=2u?5:15;
+      r->blendmode=2;r->alpha_test_enable=1;r->alpha_test_ref=128;
+      gml_draw_sprite_ext(r,0,0,x/mx,y/my,xs/mx,ys/my,91.5,0x70B0D0u,.37);
+      CHECK(r->resident_application_pass && fake.submits==submits && fake.readbacks==reads);
+      gml_render_resource_journal_metrics(resource,&after);
+      CHECK(after.logical_version==before.logical_version && !after.cpu_replays);
+    }
+    r->fog_flat=0;r->color_write_mask=15;
+    CHECK(gml_render_resident_sprite_outside(r,0,0,x/mx,y/my,xs/mx,ys/my,91.5));
+    r->active_shader=0;
+    CHECK(!gml_render_resident_sprite_outside(r,0,0,x/mx,y/my,xs/mx,ys/my,91.5));
+    r->active_shader=-1;r->spr[0].ns_enabled=1;
+    CHECK(!gml_render_resident_sprite_outside(r,0,0,x/mx,y/my,xs/mx,ys/my,91.5));
+    uint32_t phase=0;r->spr[0].ns_enabled=0;r->classic_phase_y=&phase;
+    CHECK(!gml_render_resident_sprite_outside(r,0,0,x/mx,y/my,xs/mx,ys/my,91.5));
+    r->classic_phase_y=NULL;gml_render_free(r);free(r);
+  }
+  return 1;
+}
+
 static int resident_classic_depth_free_sprites(void){
   enum { WIDTH=64,HEIGHT=48 };
   for(unsigned target=0;target<3;target++)
@@ -12866,6 +12961,8 @@ int main(void){
   passed+=runtime_sprite_scene_lifetimes();
   passed+=resident_classic_clipped_sprite_noops();
   passed+=resident_classic_rotated_sprite_noops();
+  passed+=resident_outside_sprite_geometry();
+  passed+=resident_outside_sprite_preserves_queued_prefix();
   passed+=resident_studio_unit_background_noops();
   passed+=resident_classic_depth_free_sprites();
   passed+=resident_classic_depth_free_glyphs();
@@ -12897,6 +12994,6 @@ int main(void){
   passed+=source_free_primitive_rect_replay();
   passed+=stretched_float_exact_replay();
   passed+=filtered_font_exact_recovery();
-  printf("render resource cases: passed=%d failed=%d\n",passed,181-passed);
-  return passed==181?EXIT_SUCCESS:EXIT_FAILURE;
+  printf("render resource cases: passed=%d failed=%d\n",passed,183-passed);
+  return passed==183?EXIT_SUCCESS:EXIT_FAILURE;
 }

@@ -13,6 +13,12 @@ through the neutral `gpu/gml_gpu.c::gml_gpu_prepare_scene` into
 It reuses existing program builders and snapshot storage without publishing pixels;
 the lifecycle/reuse/access contract is covered by `make check TEST=gpu`.
 
+Ordinary fully-clipped sprite preparation stays in `common/gml_render_sprites.c`.
+Its private mapped predicate reuses `cpu/gml_render_cpu_blit.c::rotated_geometry_prepare`
+through a metadata-only logical/stored-crop envelope, before masked/fog barriers.
+No atlas, alpha or target bytes are read; visible and special-state executors stay unchanged.
+`tests/unit/video/renderer/test_render_resources.c` covers geometry and queued-prefix authority.
+
 Room entry/Reset in `src/runtime/vm/gml_vm_rooms.c::gml_vm_prefetch_room_assets`
 also invokes `common/gml_render_atlas.c::gml_render_prepare_scene_sprite`,
 `::gml_render_prepare_scene_bg` and `::gml_render_prepare_scene_fonts` after CPU warming.

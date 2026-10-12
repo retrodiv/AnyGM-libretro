@@ -184,6 +184,31 @@ static int resident_identity_gui_replacement(const GmlRender *r,double xs,double
          r->device.context && r->device.observe_on_demand &&
          r->device.observe_on_demand(r->device.context);
 }
+/* R03-SPR-OUTSIDE-FUNCTION: metadata-only empty coverage preserves the prefix. */
+static int resident_outside_sprite_noop(GmlRender *r,GmlSprite *sprite,int subimg,
+                                       double x,double y,double xs,double ys,double rotation){
+  if(!r || !r->resident_application_pass || !sprite || sprite->runtime_rgba ||
+     sprite->spine || sprite->ns_enabled || sprite->n_frames<=0 || !sprite->frame ||
+     r->active_shader>=0 || gml_d3_is_active(r) || r->classic_phase_y ||
+     r->rotated_batch_count || r->rotated_batch_building ||
+     r->pending_underlay || r->pending_presentation ||
+     !gml_render_scene_target_matches(r)) return 0;
+  for(unsigned index=0;index<3u;index++)
+    if(r->classic_interp_phase[index] || r->app_interp_phase[index]) return 0;
+  int frame=((subimg%sprite->n_frames)+sprite->n_frames)%sprite->n_frames;
+  int page=sprite->frame[frame];
+  if(page<0 || page>=r->n_tpag || !r->tpag) return 0;
+  return gml_render_sprite_source_is_outside(r,sprite,&r->tpag[page],x,y,xs,ys,rotation);
+}
+
+int gml_render_resident_sprite_outside(GmlRender *r,int sprite,int subimg,
+                                      double x,double y,double xs,double ys,double rotation){
+  if(!r || !r->resident_application_pass || sprite<0 || sprite>=r->n_spr) return 0;
+  gml_render_draw_map_point(r,&x,&y);
+  gml_render_draw_map_scale(r,&xs,&ys);
+  return resident_outside_sprite_noop(r,&r->spr[sprite],subimg,x,y,xs,ys,rotation);
+}
+
 static int resident_classic_rotated_sprite_noop(GmlRender *r,GmlSprite *sprite,int subimg,
                                                double x,double y,double xs,double ys,double rotation){
   if(!r || !r->classic || !r->resident_application_pass || !sprite ||
@@ -2879,6 +2904,8 @@ void gml_render_sprite_ext_unmasked(GmlRender *r, int sprite, int subimg, double
      * existing CPU leaves. Normalize only the GPU argument; CPU fallback and
      * specialised preparation retain the original caller value and order. */
     double resident_alpha=isfinite(alpha) && alpha>1.0?1.0:alpha;
+    if(sprite>=0 && sprite<r->n_spr &&
+       resident_outside_sprite_noop(r,&r->spr[sprite],subimg,x,y,xs,ys,rot)) return;
     if(isfinite(alpha) && alpha<=0.0 &&
        !(r->alphablend && (r->blendmode==6 ||
                           gml_render_blend_uses_destination_colour(r->blendmode))) &&
