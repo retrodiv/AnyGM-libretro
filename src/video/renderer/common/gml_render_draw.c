@@ -318,13 +318,18 @@ int gml_render_rectangle_valid(const GmlRenderDrawOp *operation){
        (int64_t)p->authored_region.x+p->authored_region.width ||
      (int64_t)p->region.y+p->region.height>
        (int64_t)p->authored_region.y+p->authored_region.height ||
-     (p->rectangle_flags&~15u) || p->alpha_blend>1u || p->interpolate ||
-     !isfinite(p->alpha) || p->alpha<=0.0 || p->alpha>1.0) return 0;
+     (p->rectangle_flags&~255u) || p->alpha_blend>1u || p->interpolate ||
+     !isfinite(p->alpha) || p->alpha<0.0 || p->alpha>1.0) return 0;
+  unsigned blend=(p->rectangle_flags&GML_RENDER_RECTANGLE_BLEND_MASK)>>
+                 GML_RENDER_RECTANGLE_BLEND_SHIFT;
+  if(blend>GML_RENDER_BLEND_DEST_ALPHA_DEST_COLOUR || blend==3u || blend==6u ||
+     (p->alpha==0.0 && (!p->alpha_blend || !gml_render_blend_uses_destination_colour((int)blend)))) return 0;
   for(unsigned corner=0;corner<4u;corner++)
     if((p->corner_colour[corner]>>24)!=255u) return 0;
   int gradient=!(p->rectangle_flags&GML_RENDER_RECTANGLE_OUTLINE) &&
     (p->corner_colour[0]!=p->corner_colour[1] || p->corner_colour[0]!=p->corner_colour[2] ||
      p->corner_colour[0]!=p->corner_colour[3]);
+  if(gradient && blend && (!p->alpha_blend || !gml_render_blend_uses_destination_colour((int)blend))) return 0;
   return p->colour==p->corner_colour[0] &&
     ((p->rectangle_flags&GML_RENDER_RECTANGLE_GRADIENT)!=0u)==gradient;
 }

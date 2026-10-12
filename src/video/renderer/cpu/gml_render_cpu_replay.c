@@ -322,6 +322,8 @@ int gml_render_cpu_replay_one(uint32_t *target,uint32_t width,uint32_t height,
       render->classic=(p->rectangle_flags&GML_RENDER_RECTANGLE_CLASSIC)!=0u;
       render->target_sp=(p->rectangle_flags&GML_RENDER_RECTANGLE_TARGET_ALPHA)?1:0;
       render->alphablend=(int)p->alpha_blend; render->active_shader=-1;
+      render->blendmode=(int)((p->rectangle_flags&GML_RENDER_RECTANGLE_BLEND_MASK)>>
+                              GML_RENDER_RECTANGLE_BLEND_SHIFT);
       render->blend_equation=render->blend_equation_alpha=1;
       render->alpha=p->alpha; render->color_write_mask=15u;
       uint32_t colours[4];

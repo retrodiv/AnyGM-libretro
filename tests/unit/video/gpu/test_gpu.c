@@ -1282,9 +1282,22 @@ static int scene_classic_inverse_rect_batch_case(void){
 
 static int scene_rectangle_function_batch_case(void){
   enum { QUADS=2049 };
+  static const unsigned expected_factors[12][4]={
+    {0,0,0,0},{GL_SRC_ALPHA,GL_ONE,GL_ONE,GL_ONE},
+    {GL_ZERO,GL_ONE_MINUS_SRC_COLOR,GL_ZERO,GL_ONE_MINUS_SRC_ALPHA},{0,0,0,0},
+    {GL_SRC_ALPHA,GL_ONE_MINUS_SRC_COLOR,GL_SRC_ALPHA,GL_ONE_MINUS_SRC_ALPHA},
+    {GL_SRC_COLOR,GL_ONE,GL_SRC_ALPHA,GL_ONE},{0,0,0,0},
+    {GL_ONE_MINUS_DST_ALPHA,GL_DST_ALPHA,GL_ONE_MINUS_DST_ALPHA,GL_DST_ALPHA},
+    {GL_ONE_MINUS_DST_COLOR,GL_ZERO,GL_ONE_MINUS_DST_ALPHA,GL_ZERO},
+    {GL_DST_COLOR,GL_SRC_COLOR,GL_DST_ALPHA,GL_SRC_ALPHA},
+    {GL_DST_COLOR,GL_DST_COLOR,GL_DST_ALPHA,GL_DST_ALPHA},
+    {GL_DST_ALPHA,GL_DST_COLOR,GL_DST_ALPHA,GL_DST_ALPHA}
+  };
   for(unsigned api=GML_GPU_API_OPENGL_CORE;api<=GML_GPU_API_OPENGLES3;api++)
+  for(unsigned preset=0;preset<12u;preset++)
   for(unsigned preserve_alpha=0;preserve_alpha<2u;preserve_alpha++)
   for(unsigned blend=0;blend<3u;blend++){
+    if(preset==3u || preset==6u) continue;
     GmlRenderDrawOp *ops=calloc(QUADS+1u,sizeof *ops);
     GmlGpuContext context=fake_context(api);
     GmlRenderDeviceServices device={0};
@@ -1311,20 +1324,34 @@ static int scene_rectangle_function_batch_case(void){
         .alpha=blend==2u?1.0:0.375,.alpha_blend=blend!=0u,
         .rectangle_flags=GML_RENDER_RECTANGLE_GRADIENT|
           (preserve_alpha?GML_RENDER_RECTANGLE_TARGET_ALPHA:0u)};
+      if(preset){
+        for(unsigned c=0;c<4u;c++) ops[q+1u].payload.primitive.corner_colour[c]=0xFF7193B5u;
+        ops[q+1u].payload.primitive.rectangle_flags=
+          (preserve_alpha?GML_RENDER_RECTANGLE_TARGET_ALPHA:0u)|
+          (preset<<GML_RENDER_RECTANGLE_BLEND_SHIFT);
+      }
     }
     GmlRenderDrawBatch batch={ops,QUADS+1u,NULL,0u};
     GmlRenderExecutionResult result=device.submit(device.context,&batch);
-    int passes=blend==1u && !preserve_alpha?2:1;
+    int passes=blend==1u && !preserve_alpha &&
+      (!preset || preset==1u || preset==4u)?2:1;
     REQUIRE(result.status==GML_RENDER_EXEC_ACCEPTED && result.accepted_prefix==QUADS+1u,
             "rectangle matrix packets accepted");
     REQUIRE(anygm_test_graphics_scene_draw_calls()==2*passes &&
             anygm_test_graphics_scene_vertices()==QUADS*6*passes,
             "only quad capacity splits compatible source-free rectangles");
-    if(blend==1u){
+    if(blend==1u && !preset){
       anygm_test_graphics_blend_factors(factors);
       REQUIRE(factors[0]==GL_SRC_ALPHA && factors[1]==GL_ONE_MINUS_SRC_ALPHA &&
               factors[2]==GL_SRC_ALPHA && factors[3]==GL_ONE_MINUS_SRC_ALPHA,
               "numbered rectangle alpha uses its separate source-alpha factor");
+    }
+    if(preset && blend){
+      anygm_test_graphics_blend_factors(factors);
+      REQUIRE(factors[0]==expected_factors[preset][0] && factors[1]==expected_factors[preset][1] &&
+              factors[2]==(preserve_alpha?expected_factors[preset][2]:GL_ONE) &&
+              factors[3]==(preserve_alpha?expected_factors[preset][3]:GL_ZERO),
+              "rectangle presets set every separate factor rather than inherit host state");
     }
     REQUIRE(!anygm_test_graphics_scene_copies() && !anygm_test_graphics_read_pixels(),
             "rectangle overlaps need no snapshots or ordinary reads");

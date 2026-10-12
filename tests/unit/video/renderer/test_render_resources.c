@@ -3558,6 +3558,9 @@ static int resident_rectangle_function_matrix(void){
   static const int generations[]={530,700,800,13,15,17};
   static const double alphas[]={0.0,1.0,0.5,0.4,1.0/256.0,1.0/1024.0};
   for(unsigned generation=0;generation<6u;generation++)
+  for(unsigned preset=0;preset<12u;preset++)
+  for(unsigned cutout=0;cutout<2u;cutout++)
+  for(unsigned enabled=0;enabled<2u;enabled++)
   for(unsigned target_kind=0;target_kind<4u;target_kind++)
   for(unsigned gui=0;gui<2u;gui++)
   for(unsigned alpha=0;alpha<6u;alpha++)
@@ -3601,6 +3604,10 @@ static int resident_rectangle_function_matrix(void){
     cpu->world_scale_x=gpu->world_scale_x=-2.0;
     cpu->world_scale_y=gpu->world_scale_y=2.0;
     cpu->alpha=gpu->alpha=alphas[alpha];
+    cpu->blendmode=gpu->blendmode=(int)preset;
+    cpu->alphablend=gpu->alphablend=(int)enabled;
+    cpu->alpha_test_enable=gpu->alpha_test_enable=(int)cutout;
+    cpu->alpha_test_ref=gpu->alpha_test_ref=255u;
     const uint32_t background=0x40102030u;
     gml_render_set_pending_fill(cpu,background);gml_render_set_pending_fill(gpu,background);
     gml_render_flush_pending_fill(cpu);gml_render_flush_pending_fill(gpu);
@@ -3619,11 +3626,23 @@ static int resident_rectangle_function_matrix(void){
       fprintf(stderr,"rectangle matrix admission: generation=%d target=%u gui=%u alpha=%u port=%u outline=%u resident=%d reads=%d flush=%d\n",
         generations[generation],target_kind,gui,alpha,port,outline,resident,fake.readbacks,flushed);
     CHECK(resident && !fake.readbacks && flushed);
+    CHECK(cpu->blendmode==(int)preset && gpu->blendmode==(int)preset &&
+          cpu->alpha_test_enable==(int)cutout && gpu->alpha_test_enable==(int)cutout &&
+          cpu->alpha_test_ref==255u && gpu->alpha_test_ref==255u);
     gml_render_flush_pending_fill(cpu);
     if(fake.submits>before && fake.last_primitive.payload.primitive.kind==GML_RENDER_PRIMITIVE_RECTANGLE){
-      CHECK(gml_render_rectangle_valid(&fake.last_primitive) &&
-            gml_render_cpu_replay_one(replayed,8u,8u,&fake.last_primitive,NULL,NULL) &&
-            !memcmp(cpu->fb,replayed,sizeof replayed));
+      int valid=gml_render_rectangle_valid(&fake.last_primitive);
+      int decoded=valid && gml_render_cpu_replay_one(replayed,8u,8u,&fake.last_primitive,NULL,NULL);
+      int equal=decoded && !memcmp(cpu->fb,replayed,sizeof replayed);
+      if(!equal){
+        fprintf(stderr,"rectangle replay: generation=%d preset=%u cutout=%u enabled=%u target=%u gui=%u alpha=%u port=%u outline=%u flags=%u valid=%d decoded=%d\n",
+          generations[generation],preset,cutout,enabled,target_kind,gui,alpha,port,outline,
+          fake.last_primitive.payload.primitive.rectangle_flags,valid,decoded);
+        for(unsigned p=0;decoded && p<64u;p++) if(cpu->fb[p]!=replayed[p]){
+          fprintf(stderr,"rectangle replay: pixel=%u CPU=%08x replay=%08x\n",p,cpu->fb[p],replayed[p]);break;
+        }
+      }
+      CHECK(valid && decoded && equal);
       GmlRenderDrawOp malformed=fake.last_primitive;
       malformed.payload.primitive.authored_region.width=65537u;
       CHECK(!gml_render_rectangle_valid(&malformed));
@@ -3631,6 +3650,14 @@ static int resident_rectangle_function_matrix(void){
       CHECK(!gml_render_rectangle_valid(&malformed));
       malformed=fake.last_primitive;
       malformed.payload.primitive.rectangle_flags^=GML_RENDER_RECTANGLE_GRADIENT;
+      CHECK(!gml_render_rectangle_valid(&malformed));
+      malformed=fake.last_primitive;
+      malformed.payload.primitive.rectangle_flags|=256u;
+      CHECK(!gml_render_rectangle_valid(&malformed));
+      malformed=fake.last_primitive;
+      malformed.payload.primitive.rectangle_flags=
+        (malformed.payload.primitive.rectangle_flags&~GML_RENDER_RECTANGLE_BLEND_MASK)|
+        (12u<<GML_RENDER_RECTANGLE_BLEND_SHIFT);
       CHECK(!gml_render_rectangle_valid(&malformed));
     }
     gml_render_free(cpu);gml_render_free(gpu);free(cpu);free(gpu);
@@ -3897,8 +3924,8 @@ static int resident_studio_alpha_rectangle_scope_variant(int identity_gui){
     CHECK(!gml_render_studio_alpha_rect_valid(&malformed));
     gml_render_free(cpu);gml_render_free(gpu);free(cpu);free(gpu);
   }
-  /* The function matrix supersedes the old normal-state generation, GUI and
-   * gradient exclusions. Non-normal blend and pending composition keep their gate. */
+  /* Paired function controls supersede ordinary preset exclusions as well as
+   * generation, GUI and gradient fences. Pending composition keeps its gate. */
   for(unsigned variant=0;variant<5u;variant++){
     GmlRender *gpu=calloc(1,sizeof *gpu);
     GmlWin content={.bytecode=15,.has_room_layers=variant==0u};
@@ -3923,8 +3950,8 @@ static int resident_studio_alpha_rectangle_scope_variant(int identity_gui){
     if(variant==2u) gml_render_primitive_rectangle_color(gpu,0,0,2,2,
                           0u,1u,2u,3u,0);
     else gml_render_primitive_rectangle(gpu,0,0,2,2,0x345678u,0);
-    CHECK(gpu->resident_application_pass==(variant<3u));
-    if(variant<3u)
+    CHECK(gpu->resident_application_pass==(variant<4u));
+    if(variant<4u)
       CHECK(gml_render_application_scene_flush(gpu) && !fake.readbacks &&
             gml_render_rectangle_valid(&fake.last_primitive));
     gml_render_free(gpu);free(gpu);
@@ -4003,8 +4030,10 @@ static int resident_classic_inverse_rectangle_scope(void){
           !gml_render_classic_alpha_rect_valid(&fake.last_primitive));
     CHECK(gml_render_cpu_replay_one(replayed,8u,8u,&fake.last_primitive,NULL,NULL) &&
           !memcmp(cpu_pixels,replayed,sizeof replayed));
-    for(unsigned rectangle=0;rectangle<8u;rectangle++)
+    for(unsigned rectangle=0;rectangle<8u;rectangle++){
+      gml_render_primitive_rectangle(cpu,rectangle,0,rectangle,2,colours[colour],0);
       gml_render_primitive_rectangle(gpu,rectangle,0,rectangle,2,colours[colour],0);
+    }
     CHECK(gpu->resident_application_pass && fake.submits==1 && !fake.readbacks);
     CHECK(gml_render_application_scene_flush(gpu) && fake.submits==2 &&
           fake.last_batch_operations==8u && !fake.readbacks);
@@ -4015,10 +4044,17 @@ static int resident_classic_inverse_rectangle_scope(void){
     malformed=fake.last_primitive;
     malformed.target.image.resource_class=GML_RENDER_RESOURCE_SURFACE;
     CHECK(!gml_render_classic_inverse_rect_valid(&malformed));
-    /* The new preset does not widen partial-alpha admission. */
+    /* The paired function matrix now admits partial inverse rectangles through
+     * the generic packet; the older narrow packet above still rejects them. */
     cpu->alpha=gpu->alpha=0.5;
+    memcpy(replayed,cpu_pixels,sizeof replayed);
+    gml_render_primitive_rectangle(cpu,0,0,1,1,colours[colour],0);
     gml_render_primitive_rectangle(gpu,0,0,1,1,colours[colour],0);
-    CHECK(!gpu->resident_application_pass);
+    CHECK(gpu->resident_application_pass && !fake.readbacks &&
+          gml_render_application_scene_flush(gpu) && fake.submits==3 &&
+          gml_render_rectangle_valid(&fake.last_primitive));
+    CHECK(gml_render_cpu_replay_one(replayed,8u,8u,&fake.last_primitive,NULL,NULL) &&
+          !memcmp(cpu_pixels,replayed,sizeof replayed));
     gml_render_free(cpu); gml_render_free(gpu); free(cpu); free(gpu);
   }
   return 1;

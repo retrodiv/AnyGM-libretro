@@ -11,7 +11,8 @@
 #include <stdlib.h>
 #include <string.h>
 
-enum { GL_SCENE_MAX_EXACT_REPETITIONS=64, GL_SCENE_BLEND_INVERSE_RECT=12 };
+enum { GL_SCENE_MAX_EXACT_REPETITIONS=64, GL_SCENE_BLEND_INVERSE_RECT=12,
+       GL_SCENE_BLEND_RECTANGLE_BASE=32, GL_SCENE_BLEND_RECTANGLE_LIMIT=55 };
 
 static int same_logical(GmlRenderImageRef a,GmlRenderImageRef b){
   return a.resource_class==b.resource_class && a.identity==b.identity &&
@@ -1249,7 +1250,24 @@ static int flush_quads(GmlGpuBackend *backend,GlSceneImage *target,GlSceneImage 
     backend->gl.TexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAG_FILTER,(GLint)texture_filter);
   }
   if(blend && blend!=8 && filter!=15u && filter!=17u){
-    if(blend==13)
+    if(blend>=GL_SCENE_BLEND_RECTANGLE_BASE && blend<=GL_SCENE_BLEND_RECTANGLE_LIMIT){
+      unsigned mode=(unsigned)(blend-GL_SCENE_BLEND_RECTANGLE_BASE)/2u;
+      int preserve=(blend&1)!=0;
+      GLenum src=GL_SRC_ALPHA,dst=GL_ONE_MINUS_SRC_ALPHA;
+      GLenum alpha_src=GL_SRC_ALPHA,alpha_dst=GL_ONE_MINUS_SRC_ALPHA;
+      if(mode==1u){dst=GL_ONE;alpha_src=alpha_dst=GL_ONE;}
+      else if(mode==2u){src=GL_ZERO;dst=GL_ONE_MINUS_SRC_COLOR;
+        alpha_src=GL_ZERO;alpha_dst=GL_ONE_MINUS_SRC_ALPHA;}
+      else if(mode==4u) dst=GL_ONE_MINUS_SRC_COLOR;
+      else if(mode==5u){src=GL_SRC_COLOR;dst=GL_ONE;alpha_dst=GL_ONE;}
+      else if(mode==7u){src=alpha_src=GL_ONE_MINUS_DST_ALPHA;dst=alpha_dst=GL_DST_ALPHA;}
+      else if(mode==8u){src=GL_ONE_MINUS_DST_COLOR;dst=alpha_dst=GL_ZERO;alpha_src=GL_ONE_MINUS_DST_ALPHA;}
+      else if(mode>=9u){src=mode==11u?GL_DST_ALPHA:GL_DST_COLOR;
+        dst=mode==9u?GL_SRC_COLOR:GL_DST_COLOR;
+        alpha_src=GL_DST_ALPHA;alpha_dst=mode==9u?GL_SRC_ALPHA:GL_DST_ALPHA;}
+      if(!preserve){alpha_src=GL_ONE;alpha_dst=GL_ZERO;}
+      backend->gl.BlendFuncSeparate(src,dst,alpha_src,alpha_dst);
+    } else if(blend==13)
       backend->gl.BlendFuncSeparate(GL_ZERO,GL_ONE_MINUS_SRC_COLOR,GL_ZERO,GL_ONE_MINUS_SRC_ALPHA);
     else if(blend==GL_SCENE_BLEND_INVERSE_RECT)
       backend->gl.BlendFuncSeparate(GL_ZERO,GL_ONE_MINUS_SRC_COLOR,GL_ONE,GL_ZERO);
@@ -1747,14 +1765,21 @@ GmlRenderExecutionResult gml_gpu_opengl_scene_submit(GmlGpuBackend *backend,
       op->payload.primitive.kind==GML_RENDER_PRIMITIVE_STUDIO_ALPHA_RECT;
     int rectangle=op->opcode==GML_RENDER_OP_COLOURED_PRIMITIVE &&
       op->payload.primitive.kind==GML_RENDER_PRIMITIVE_RECTANGLE;
+    unsigned rectangle_blend=rectangle?
+      (op->payload.primitive.rectangle_flags&GML_RENDER_RECTANGLE_BLEND_MASK)>>
+       GML_RENDER_RECTANGLE_BLEND_SHIFT:0u;
     int alpha_rect=inverse_rect || studio_alpha_rect || (op->opcode==GML_RENDER_OP_COLOURED_PRIMITIVE &&
       op->payload.primitive.kind==GML_RENDER_PRIMITIVE_CLASSIC_ALPHA_RECT);
     uint32_t primitive_filter=rectangle?
       (op->payload.primitive.alpha_blend && op->payload.primitive.alpha<1.0 &&
+       (rectangle_blend==0u || rectangle_blend==1u || rectangle_blend==4u) &&
        !(op->payload.primitive.rectangle_flags&GML_RENDER_RECTANGLE_TARGET_ALPHA)?35u:34u):
       particle?28u:studio_alpha_rect?32u:31u;
     int primitive_blend=rectangle?
-      (op->payload.primitive.alpha_blend && op->payload.primitive.alpha<1.0?3:0):
+      (op->payload.primitive.alpha_blend?
+        (rectangle_blend?(int)(GL_SCENE_BLEND_RECTANGLE_BASE+2u*rectangle_blend+
+           ((op->payload.primitive.rectangle_flags&GML_RENDER_RECTANGLE_TARGET_ALPHA)!=0u)):
+         op->payload.primitive.alpha<1.0?3:0):0):
       inverse_rect?GL_SCENE_BLEND_INVERSE_RECT:
       (particle || alpha_rect?(int)op->payload.primitive.alpha_blend:0);
     if(pending_count && (particle || alpha_rect || rectangle

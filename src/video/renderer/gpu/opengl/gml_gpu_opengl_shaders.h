@@ -279,13 +279,14 @@
   "    ivec2 pixel=ivec2(int(gl_FragCoord.x),int(u_extent.y)-1-int(gl_FragCoord.y));\n" \
   "    ivec2 p=pixel-ivec2(v_map.xy),den=ivec2(v_map.zw);\n" \
   "    uint flags=uint(v_margin); bool outline=(flags&1u)!=0u,gradient=(flags&8u)!=0u;\n" \
+  "    uint blend=(flags>>4u)&15u;\n" \
   "    if(outline && p.x!=0 && p.x!=den.x && p.y!=0 && p.y!=den.y) discard;\n" \
   "    if(u_filter==36){ o_color=vec4(0.0,0.0,0.0,1.0); return; }\n" \
   "    ivec3 rgb=rectangle_rgb(v_span_x.x);\n" \
   "    if(gradient){\n" \
   "      ivec3 left=rectangle_lerp(rgb,rectangle_rgb(v_span_x.w),p.y,den.y);\n" \
   "      ivec3 right=rectangle_lerp(rectangle_rgb(v_span_x.y),rectangle_rgb(v_span_x.z),p.y,den.y);\n" \
-  "      if(v_colour.a>=1.0){\n" \
+  "      if(v_colour.a>=1.0 && blend<9u){\n" \
   "        int offset=int(v_span_y.x)-int(v_map.x),visible=int(v_span_y.y);\n" \
   "        ivec3 clipped_left=rectangle_lerp(left,right,offset,den.x);\n" \
   "        right=rectangle_lerp(left,right,offset+visible,den.x);\n" \
@@ -294,7 +295,11 @@
   "    }\n" \
   "    float alpha=v_colour.a;\n" \
   "    if(v_span_active==0.0 || alpha>=1.0){\n" \
-  "      alpha=(!outline && !gradient) || (flags&4u)==0u?1.0:floor(alpha*255.0+0.5)/255.0;\n" \
+  "      alpha=(!outline && !gradient && blend==0u) || (flags&4u)==0u?1.0:floor(alpha*255.0+0.5)/255.0;\n" \
+  "    }\n" \
+  "    if(blend>=2u){\n" \
+  "      alpha=floor(alpha*255.0+0.5)/255.0;\n" \
+  "      if(blend!=4u && (flags&4u)==0u) alpha=1.0;\n" \
   "    }\n" \
   "    o_color=vec4(vec3(rgb)/255.0,alpha); return;\n" \
   "  }\n" \

@@ -247,29 +247,37 @@ static int resident_studio_alpha_rect(GmlRender *render,int x1,int y1,int x2,int
 }
 
 /* R03-PRIM-RECTANGLE-MATRIX: all rectangle ports already carry CPU raster bounds.
- * Keep the cheaper qualified flat paths, and batch the remaining normal-state
- * rectangle combinations without a predecessor snapshot or CPU pixel transfer. */
+ * Keep the cheaper qualified flat paths, and batch ordinary rectangle presets
+ * without a predecessor snapshot or CPU pixel transfer. Raw cutout does not
+ * participate in these unchanged CPU rectangle writers. */
 static int resident_rectangle_function(GmlRender *r,int x1,int y1,int x2,int y2,
                                        uint32_t c1,uint32_t c2,uint32_t c3,uint32_t c4,
                                        int outline){
   const GmlRenderDeviceServices *device=gml_render_device(r);
   if(!r || !r->resident_application_pass || !device || !device->observe_on_demand ||
      !device->observe_on_demand(device->context) || !gml_render_scene_target_matches(r) ||
-     r->active_shader>=0 || r->blendmode || r->blend_equation!=1 ||
-     r->blend_equation_alpha!=1 || r->color_write_mask!=15u || r->alpha_test_enable ||
+     r->active_shader>=0 || r->blendmode<0 ||
+     r->blendmode>GML_RENDER_BLEND_DEST_ALPHA_DEST_COLOUR || r->blend_equation!=1 ||
+     r->blend_equation_alpha!=1 || r->color_write_mask!=15u ||
      r->pending_presentation || r->rotated_batch_count || r->rotated_batch_building ||
      r->classic_phase_y || r->classic_interp_phase[0] ||
      r->classic_interp_phase[1] || r->classic_interp_phase[2] || !isfinite(r->alpha)) return 0;
   double alpha=fmax(0.0,fmin(1.0,r->alpha));
-  if(alpha<=0.0) return 1;
+  int destination=r->alphablend && gml_render_blend_uses_destination_colour(r->blendmode);
+  if(alpha<=0.0 && !destination) return 1;
   if(x1>x2){int swap=x1;x1=x2;x2=swap;}
   if(y1>y2){int swap=y1;y1=y2;y2=swap;}
   if(x2<0 || y2<0 || x1>=r->fbw || y1>=r->fbh) return 1;
   if(x1 < -32768 || y1 < -32768 || x2>32767 || y2>32767) return 0;
   int gradient=!outline && (c1!=c2 || c1!=c3 || c1!=c4);
+  /* Filled gradients use the scalar row writer: ordinary presets are ignored,
+   * while destination-colour pairs keep their distinct CPU executor. */
+  unsigned blend=gradient && !destination?0u:(unsigned)r->blendmode;
+  /* The primitive pixel writer's remaining internal codes share inverse colour. */
+  if(blend==3u || blend==6u) blend=2u;
   /* The existing filled scalar writer returns at an alpha below its first
    * eight-bit factor. Classic uniform floats and outlines do not use that gate. */
-  if(r->alphablend && alpha<1.0/256.0 && !outline && (!r->classic || gradient)) return 1;
+  if(r->alphablend && !blend && alpha<1.0/256.0 && !outline && (!r->classic || gradient)) return 1;
   GmlRenderRect authored={x1,y1,(uint32_t)(x2-x1+1),(uint32_t)(y2-y1+1)};
   int left=x1<0?0:x1,top=y1<0?0:y1;
   int right=x2>=r->fbw?r->fbw-1:x2,bottom=y2>=r->fbh?r->fbh-1:y2;
@@ -293,19 +301,24 @@ static int resident_rectangle_function(GmlRender *r,int x1,int y1,int x2,int y2,
   p->region=(GmlRenderRect){left,top,(uint32_t)(right-left+1),(uint32_t)(bottom-top+1)};
   p->authored_region=authored;p->kind=GML_RENDER_PRIMITIVE_RECTANGLE;
   p->alpha=alpha;p->alpha_blend=r->alphablend?1u:0u;
+  int pixel_alpha=outline || (!gradient && r->blendmode!=0) || destination;
+  /* Optimised additive filled spans and the maximum preset keep target-stack
+   * coverage; other pixel-at-a-time presets use the existing target policy. */
+  int target_alpha=(r->alphablend && (blend==4u || (blend==1u && !outline)))?
+    r->target_sp>0:pixel_alpha?gml_render_target_preserves_alpha(r):r->target_sp>0;
   p->rectangle_flags=(outline?GML_RENDER_RECTANGLE_OUTLINE:0u)|
     (r->classic?GML_RENDER_RECTANGLE_CLASSIC:0u)|
-    ((outline?gml_render_target_preserves_alpha(r):r->target_sp>0)
-      ?GML_RENDER_RECTANGLE_TARGET_ALPHA:0u)|
-    (gradient?GML_RENDER_RECTANGLE_GRADIENT:0u);
+    (target_alpha?GML_RENDER_RECTANGLE_TARGET_ALPHA:0u)|
+    (gradient?GML_RENDER_RECTANGLE_GRADIENT:0u)|
+    (blend<<GML_RENDER_RECTANGLE_BLEND_SHIFT);
   uint32_t colours[4]={c1,c2,c3,c4};
   for(unsigned c=0;c<4u;c++)
     p->corner_colour[c]=gml_render_cpu_backend_color_to_xrgb(colours[c]);
   p->colour=p->corner_colour[0];
   if(!gml_render_application_scene_enqueue_primitive(r,&operation)) return 0;
   r->fb_all_transparent=0;
-  int opaque_write=alpha>=1.0 || (!r->alphablend && !outline && !gradient) ||
-    !(p->rectangle_flags&GML_RENDER_RECTANGLE_TARGET_ALPHA);
+  int opaque_write=!target_alpha || (!blend &&
+    (alpha>=1.0 || (!r->alphablend && !outline && !gradient)));
   int full_cover=!outline && left==0 && top==0 && right==r->fbw-1 && bottom==r->fbh-1;
   int opaque=opaque_write && (full_cover || (r->fb_opaque_known && r->fb_all_opaque));
   r->fb_opaque_known=r->fb_all_opaque=opaque;
