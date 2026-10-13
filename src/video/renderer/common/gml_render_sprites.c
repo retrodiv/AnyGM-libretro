@@ -525,14 +525,17 @@ static int resident_atlas_crop_from_page_impl(GmlRender *r,GmlTpag *page,
   int scaled_atlas=scaled_background || tile_function || text_function || scaled_sprite;
   int integer_background=physical_sprite_page==8 || scaled_background;
   int integer_atlas=integer_sprite || integer_background || tile_function || text_function;
-  /* Classic's logical background and sprite writers remain point-sampled with the
+  /* Classic's logical background, sprite and text writers remain point-sampled with the
    * presentation interpolation flag enabled. Auxiliary phase planes retain
    * their separate rejection below; the CPU flag itself is never changed. */
   int classic_background_point=integer_background && r && r->classic &&
     family==GML_RENDER_SCENE_BACKGROUND;
   int classic_sprite_point=integer_sprite && r && r->classic &&
     family==GML_RENDER_SCENE_SPRITE;
-  int sampling_interp=r && r->interp && !classic_background_point && !classic_sprite_point;
+  int classic_text_point=text_function && r && r->classic &&
+    family==GML_RENDER_SCENE_TEXT;
+  int sampling_interp=r && r->interp && !classic_background_point &&
+    !classic_sprite_point && !classic_text_point;
   if(integer_atlas &&
      (!r || !page || sampling_interp || r->fog_flat || gml_d3_is_active(r) ||
       (text_function && r->gui_pass_active &&

@@ -12142,6 +12142,7 @@ static int resident_nearest_text_function(void){
   const double alphas[]={1,0,.37};
   const double scales[][2]={{1,1},{2,3},{-2,-3},{.75,1.5}};
   for(unsigned generation=0;generation<6u;generation++)
+  for(unsigned interpolation=0;interpolation<(generations[generation]>100?2u:1u);interpolation++)
   for(unsigned target_kind=0;target_kind<4u;target_kind++)
   for(unsigned gui=0;gui<2u;gui++) for(unsigned font_kind=0;font_kind<2u;font_kind++)
   for(unsigned draw_state=0;draw_state<4u;draw_state++)
@@ -12184,6 +12185,7 @@ static int resident_nearest_text_function(void){
     if(target_kind==2u) CHECK(gml_surface_set_target(r,0));
     if(target_kind==3u){int id=gml_surface_create(r,W,H);CHECK(id>0 && gml_surface_set_target(r,id));}
     if(gui){gml_render_gui_begin(r,W,H);gml_render_gui_set_size(r,W/2,H/2);}
+    r->interp=(int)interpolation;
     r->alphablend=!disabled;r->blendmode=draw_state>=2u?2:0;
     r->alpha_test_enable=(int)(draw_state&1u);r->alpha_test_ref=127;
     gml_render_set_pending_fill(r,0x40273859u);gml_render_flush_pending_fill(r);
@@ -12201,7 +12203,8 @@ static int resident_nearest_text_function(void){
     CHECK(metrics.authority==GML_RENDER_RESOURCE_GPU_RESIDENT && !metrics.cpu_replays && !metrics.journal_bytes);
     if(a!=1u){
       CHECK(fake.last_batch_operations>=8u && fake.last_filter==GML_RENDER_FILTER_NEAREST &&
-            r->alpha_test_enable==(int)(draw_state&1u) && r->alpha_test_ref==127);
+            r->alpha_test_enable==(int)(draw_state&1u) && r->alpha_test_ref==127 &&
+            r->interp==(int)interpolation);
     }
     CHECK(gml_render_resource_acquire_cpu_read(resource,&pixels) && fake.readbacks==1 &&
           pixels[0]==fake.readback_colour && pixels[W*H-1u]==fake.readback_colour);
