@@ -1673,6 +1673,67 @@ void gml_surface_free(GmlRender *r, int id){
   gml_render_surface_resource_dispose(r,id);
   free(r->surface[i].px); free(r->surface[i].rle); memset(&r->surface[i],0,sizeof(r->surface[i]));
 }
+/* Stage a new incarnation before replacing any borrowed allocation. Resize is a raw RGBA
+ * copy, not a draw with the caller's blend, colour, alpha test or camera state. The old
+ * resource remains authoritative if staging fails; the established CPU copy can then retry. */
+static GmlRenderResource *surface_resize_resident(
+  GmlRender *r,GmlRenderResource *old,int oldw,int oldh,uint32_t *pixels,int w,int h,
+  uint32_t resource_class,uint32_t identity){
+  const GmlRenderDeviceServices *device=gml_render_device(r);
+  GmlRenderResourceSource source={0};
+  GmlRenderDrawStateSnapshot state={0};
+  GmlRenderDrawOp operations[2]={{0}};
+  GmlRenderDrawBatch batch={operations,2u,&state,1u};
+  GmlRenderResource *replacement;
+  uint64_t incarnation;
+  int cw=oldw<w?oldw:w,ch=oldh<h?oldh:h;
+  if(!old || !device || !device->context || !device->observe_on_demand ||
+     !device->observe_on_demand(device->context) || cw<=0 || ch<=0 ||
+     /* Already-current host pixels need neither an upload nor a device observation. */
+     gml_render_resource_current_cpu_source_view(old,&source) ||
+     !gml_render_resource_device_source_view(old,device,&source) ||
+     source.width!=(uint32_t)oldw || source.height!=(uint32_t)oldh ||
+     !(incarnation=gml_render_scene_incarnation_allocate())) return NULL;
+  GmlRenderImageRef image={resource_class,identity,incarnation,1u};
+  replacement=gml_render_resource_create(image,(uint32_t)w,(uint32_t)h,
+    GML_RENDER_PIXEL_ARGB8888,pixels,(GmlRenderResourceLimits){0});
+  if(!replacement) return NULL;
+  operations[0].opcode=GML_RENDER_OP_CLEAR;
+  operations[0].reconstruction_mode=GML_RENDER_DEVICE_CHECKPOINT;
+  operations[0].target=(GmlRenderTargetRef){image,1u,(uint32_t)w,(uint32_t)h,
+    GML_RENDER_PIXEL_ARGB8888,{0,0,(uint32_t)w,(uint32_t)h}};
+  operations[0].target.image.content_version=2u;
+  operations[1]=operations[0];
+  operations[1].opcode=GML_RENDER_OP_TEXTURED_QUAD;
+  operations[1].target.image.content_version=3u;
+  operations[1].sources=&source.image;
+  operations[1].source_count=1u;
+  GmlRenderQuad *quad=&operations[1].payload.quad;
+  quad->shape=GML_RENDER_QUAD_AXIS_ALIGNED;
+  quad->sampling=(GmlRenderSamplingPolicy){GML_RENDER_FILTER_NEAREST,
+    GML_RENDER_EDGE_CLAMP_SUBIMAGE,{0,0,(uint32_t)cw,(uint32_t)ch},0u,0u};
+  quad->x[1]=quad->x[2]=(double)cw;
+  quad->y[2]=quad->y[3]=(double)ch;
+  quad->u[1]=quad->u[2]=(double)cw/oldw;
+  quad->v[2]=quad->v[3]=(double)ch/oldh;
+  for(int corner=0;corner<4;corner++) quad->corner_colour[corner]=0xFFFFFFFFu;
+  state.write_mask=15u;
+  state.colour=0xFFFFFFFFu;
+  state.alpha=255u;
+  /* Zero blend fields are the existing unconditional replacement contract. */
+  state.sampler_count=1u;
+  state.samplers[0]=quad->sampling;
+  if(gml_render_resource_submit_deferred(replacement,device,&batch,&source,1u)!=
+     GML_RENDER_RESOURCE_EXEC_DEVICE){
+    if(device->retire)
+      device->retire(device->context,gml_render_resource_image_ref(replacement));
+    gml_render_resource_destroy(replacement);
+    return NULL;
+  }
+  gml_render_resource_bind_dispatch(replacement,r);
+  return replacement;
+}
+
 static int application_surface_resize(GmlRender *r,int w,int h){
   if(!r || w<=0 || h<=0 || w>4096 || h>4096 ||
      (size_t)w>SIZE_MAX/(size_t)h || (size_t)w*(size_t)h>SIZE_MAX/sizeof(uint32_t))
@@ -1683,17 +1744,22 @@ static int application_surface_resize(GmlRender *r,int w,int h){
       (r->app_surface_resource_width==w && r->app_surface_resource_height==h))) return 1;
   uint32_t *old=r->app_surface;
   int oldw=r->app_w, oldh=r->app_h;
+  GmlRenderResource *old_resource=NULL,*replacement=NULL;
   if(old==r->app_surface_owned && r->app_surface_resource){
     oldw=r->app_surface_resource_width;
     oldh=r->app_surface_resource_height;
-    if(!gml_render_resource_acquire_cpu_read(r->app_surface_resource,NULL)) return 0;
+    old_resource=r->app_surface_resource;
   } else if(old==r->base_scene_resource_pixels && r->base_scene_resource){
-    if(!gml_render_resource_acquire_cpu_read(r->base_scene_resource,NULL)) return 0;
+    old_resource=r->base_scene_resource;
   }
   uint32_t *px=calloc((size_t)w*(size_t)h,sizeof(uint32_t));
   if(!px) return 0;
+  replacement=surface_resize_resident(r,old_resource,oldw,oldh,px,w,h,
+    GML_RENDER_RESOURCE_APPLICATION,0u);
+  if(!replacement && old_resource &&
+     !gml_render_resource_acquire_cpu_read(old_resource,NULL)){ free(px); return 0; }
   int cw=oldw<w?oldw:w, ch=oldh<h?oldh:h;
-  if(old && cw>0 && ch>0)
+  if(!replacement && old && cw>0 && ch>0)
     for(int y=0;y<ch;y++) memcpy(px+(size_t)y*w,old+(size_t)y*oldw,(size_t)cw*sizeof(uint32_t));
   uint32_t *owned=r->app_surface_owned;
   /* A game can resize surface 0 while it is the current/nested target. Keep every borrowed
@@ -1708,6 +1774,11 @@ static int application_surface_resize(GmlRender *r,int w,int h){
   r->app_surface_opaque=0;
   r->app_presentation_coverage_active=0;
   gml_render_application_resource_dispose(r);
+  r->app_surface_resource=replacement;
+  if(replacement){
+    r->app_surface_resource_width=w;
+    r->app_surface_resource_height=h;
+  }
   free(owned);
   return 1;
 }
@@ -1740,14 +1811,18 @@ void gml_surface_resize(GmlRender *r, int id, int w, int h){
     if(surface_pixels(r,id,NULL,NULL)!=r->surface[i].px){ free(px); return; }
     gml_render_flush_pending_fill(r);
   }
-  const uint32_t *old=surface_pixels_observe(r,id,NULL,NULL);
+  GmlRenderResource *replacement=had_pending_fill?NULL:
+    surface_resize_resident(r,r->surface[i].resource,r->surface[i].w,
+      r->surface[i].h,px,w,h,GML_RENDER_RESOURCE_SURFACE,(uint32_t)id);
+  const uint32_t *old=replacement?r->surface[i].px:surface_pixels_observe(r,id,NULL,NULL);
   if((r->target_id==id && r->pending_fill) || old!=r->surface[i].px){
     free(px);
     return;
   }
   int was_transparent=had_pending_fill?0:r->surface[i].all_transparent;
   int cw=w<r->surface[i].w?w:r->surface[i].w, ch=h<r->surface[i].h?h:r->surface[i].h;
-  for(int y=0;y<ch;y++) memcpy(px+(size_t)y*w,old+(size_t)y*r->surface[i].w,(size_t)cw*sizeof(uint32_t));
+  if(!replacement)
+    for(int y=0;y<ch;y++) memcpy(px+(size_t)y*w,old+(size_t)y*r->surface[i].w,(size_t)cw*sizeof(uint32_t));
   /* The target stack borrows the numbered allocation just as it borrows surface zero. */
   if(r->fb==old){ r->fb=px; r->fbw=w; r->fbh=h; }
   if(r->base_fb==old){ r->base_fb=px; r->base_fbw=w; r->base_fbh=h; }
@@ -1758,6 +1833,7 @@ void gml_surface_resize(GmlRender *r, int id, int w, int h){
   }
   gml_render_surface_resource_dispose(r,id);
   free(r->surface[i].px); r->surface[i].px=px; r->surface[i].w=w; r->surface[i].h=h;
+  r->surface[i].resource=replacement;
   r->surface[i].dirty=1;
   r->surface[i].opaque_known=0;
   r->surface[i].all_opaque=0;
