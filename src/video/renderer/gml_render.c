@@ -3,6 +3,7 @@
  */
 /* Renderer lifecycle, frame coordination, draw state, and software draw facade. */
 #include "gml_render.h"
+#include "gml_render_plan.h"
 #include "gml_render_cpu_presentation.h"
 #include "gml_render_internal.h"
 #include "gml_render_surfaces_internal.h"
@@ -1257,15 +1258,17 @@ int gml_render_defer_resident_screen_upscale(GmlRender *r,const uint32_t *source
   GmlRenderDeferredPresentation record={0};
   GmlRenderImageRef image={0};
   if(!r || !source || !target || source==target ||
-     source_width<=0 || source_height<=0 ||
-     target_width<source_width || target_height<source_height ||
+     source_width<=0 || source_height<=0 || target_width<=0 || target_height<=0 ||
+     source_width>(int)GML_PLAN_MAX_EXTENT || source_height>(int)GML_PLAN_MAX_EXTENT ||
+     target_width>(int)GML_PLAN_MAX_EXTENT || target_height>(int)GML_PLAN_MAX_EXTENT ||
      !r->presentation_deferral_enabled || r->pending_fill || r->pending_underlay ||
      r->pending_presentation || r->target_sp || r->target_id>=0 ||
      r->fb!=source || r->base_fb!=source ||
      !gml_render_completed_screen_image(r,source,source_width,source_height,&image)) return 0;
   /* R03_INDIRECT_GUI_PRESENT: the complete GUI raster is the source, not an
    * application substitute or a borrowed CPU plane uploaded for presentation. */
-  record.sampling_rule=GML_RENDER_PRESENTATION_PIXEL_CENTRE;
+  record.sampling_rule=target_width<source_width || target_height<source_height
+    ?GML_RENDER_PRESENTATION_BOX:GML_RENDER_PRESENTATION_PIXEL_CENTRE;
   record.target_pixels=target;
   record.target_width=record.destination_width=target_width;
   record.target_height=record.destination_height=target_height;

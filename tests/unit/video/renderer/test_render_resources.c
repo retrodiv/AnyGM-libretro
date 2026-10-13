@@ -4479,12 +4479,13 @@ static int conditional_screen_recovery_fullwidth_authority(void){
 }
 
 static int completed_screen_deferred_upscale(void){
-  const int widths[]={7,9,14,19},heights[]={5,7,10,13};
-  for(unsigned variant=0;variant<16u;variant++){
+  const int widths[]={7,9,14,19,6,3},heights[]={5,7,10,13,4,2};
+  for(unsigned variant=0;variant<36u;variant++){
     GmlRender *cpu=(GmlRender*)calloc(1,sizeof *cpu);
     GmlRender *gpu=(GmlRender*)calloc(1,sizeof *gpu);
     uint32_t cpu_pixels[35]={0},gpu_pixels[35],target[19*13];
-    int width=widths[variant%4u],height=heights[variant/4u];
+    int width=widths[variant%6u],height=heights[variant/6u];
+    int box=width<7 || height<5;
     FakeDevice fake={0};
     GmlRenderDeviceServices device=service(&fake);
     GmlRenderJournalMetrics before={0},after={0};
@@ -4511,10 +4512,14 @@ static int completed_screen_deferred_upscale(void){
     CHECK(!gml_render_defer_resident_screen_upscale(gpu,gpu_pixels,7,5,gpu_pixels,7,5));
     CHECK(!gml_render_defer_resident_screen_upscale(gpu,cpu_pixels,7,5,target,width,height));
     CHECK(!gml_render_defer_resident_screen_upscale(gpu,gpu_pixels,6,5,target,width,height));
-    CHECK(!gml_render_defer_resident_screen_upscale(gpu,gpu_pixels,7,5,target,6,height));
-    CHECK(!gml_render_defer_resident_screen_upscale(gpu,gpu_pixels,7,5,target,width,4));
+    CHECK(!gml_render_defer_resident_screen_upscale(gpu,gpu_pixels,7,5,target,0,height));
+    CHECK(!gml_render_defer_resident_screen_upscale(gpu,gpu_pixels,7,5,target,width,0));
+    CHECK(!gml_render_defer_resident_screen_upscale(gpu,gpu_pixels,7,5,target,16385,height));
+    CHECK(!gml_render_defer_resident_screen_upscale(gpu,gpu_pixels,7,5,target,width,16385));
     CHECK(gml_render_defer_resident_screen_upscale(gpu,gpu_pixels,7,5,target,width,height));
     CHECK(gml_render_deferred_presentation(gpu,&record) && record.cpu_rgb_only &&
+          record.sampling_rule==(box?GML_RENDER_PRESENTATION_BOX:
+                                     GML_RENDER_PRESENTATION_PIXEL_CENTRE) &&
           record.resident_image.resource_class==GML_RENDER_RESOURCE_SCREEN &&
           record.target_pixels==target && gpu_pixels[0]==0x12345678u &&
           target[0]==0x89ABCDEFu && !fake.readbacks);
@@ -4533,8 +4538,23 @@ static int completed_screen_deferred_upscale(void){
     CHECK(!gml_render_deferred_presentation(gpu,NULL) &&
           !fake.readbacks && !fake.forbidden_calls);
     for(int y=0;y<height;y++) for(int x=0;x<width;x++){
-      int sx=((2*x+1)*7)/(2*width),sy=((2*y+1)*5)/(2*height);
-      CHECK(target[y*width+x]==(cpu_pixels[sy*7+sx]&0x00FFFFFFu));
+      unsigned wanted=0u;
+      if(box){
+        int sx0=x*7/width,sx1=(x+1)*7/width;
+        int sy0=y*5/height,sy1=(y+1)*5/height;
+        if(sx1<=sx0) sx1=sx0+1;
+        if(sy1<=sy0) sy1=sy0+1;
+        unsigned red=0,green=0,blue=0,count=0;
+        for(int sy=sy0;sy<sy1;sy++) for(int sx=sx0;sx<sx1;sx++){
+          unsigned pixel=cpu_pixels[sy*7+sx];
+          red+=(pixel>>16)&255u;green+=(pixel>>8)&255u;blue+=pixel&255u;count++;
+        }
+        wanted=((red/count)<<16)|((green/count)<<8)|(blue/count);
+      } else {
+        int sx=((2*x+1)*7)/(2*width),sy=((2*y+1)*5)/(2*height);
+        wanted=cpu_pixels[sy*7+sx]&0x00FFFFFFu;
+      }
+      CHECK(target[y*width+x]==wanted);
     }
     for(unsigned at=(unsigned)(width*height);at<19u*13u;at++)
       CHECK(target[at]==0x89ABCDEFu);

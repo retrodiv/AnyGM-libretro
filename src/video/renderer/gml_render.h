@@ -322,7 +322,9 @@ enum {
   /* Destination pixel centres over a fractional rectangle: a content-owned presentation. */
   GML_RENDER_PRESENTATION_PIXEL_CENTRE=0,
   /* Leading output edge in integer arithmetic: the automatic application-surface presentation. */
-  GML_RENDER_PRESENTATION_LEADING_EDGE=1
+  GML_RENDER_PRESENTATION_LEADING_EDGE=1,
+  /* Integer source footprints on both axes when either indirect GUI axis reduces. */
+  GML_RENDER_PRESENTATION_BOX=2
 };
 
 typedef struct {
@@ -713,7 +715,8 @@ int gml_render_completed_screen_write(GmlRender *r,uint32_t *pixels,int width,in
 void gml_render_completed_screen_publish(GmlRender *r,uint32_t *pixels,int width,int height);
 int gml_render_completed_screen_image(GmlRender *r,const uint32_t *pixels,int width,int height,
                                       GmlRenderImageRef *image);
-/* Retain a complete current SCREEN for pixel-centre nearest enlargement without a CPU shadow. */
+/* Retain a complete current SCREEN without a CPU shadow. Enlargement uses pixel centres;
+ * a reduction on either axis selects integer box footprints on both axes. */
 int gml_render_defer_resident_screen_upscale(GmlRender *r,const uint32_t *source,
                                             int source_width,int source_height,
                                             uint32_t *target,int target_width,int target_height);

@@ -7,6 +7,7 @@
 #include "gml_render_cpu_backend.h"
 #include "gml_render_resources.h"
 #include "gml_render_cpu_shader_pass.h"
+#include "gml_render_cpu_plan.h"
 
 #include <limits.h>
 #include <stdint.h>
@@ -77,6 +78,7 @@ void gml_render_cpu_present_image(GmlRender *r){
     int span=x1-x0;
     int column_stack[1024];
     int *column;
+    GmlRenderPlan box_plan;
     /* Resolve a resident source before consuming the record. A failed no-context replay must not
      * silently turn a pending presentation into an empty completed frame. */
     if(record.resident_image.resource_class){
@@ -88,6 +90,19 @@ void gml_render_cpu_present_image(GmlRender *r){
          current.incarnation!=record.resident_image.incarnation ||
          current.content_version!=record.resident_image.content_version ||
          !gml_render_resource_acquire_cpu_read(resource,&src)) return;
+    }
+    if(record.sampling_rule==GML_RENDER_PRESENTATION_BOX){
+      GmlPlanImage image={.image_class=GML_PLAN_IMAGE_COMPLETED_FRAME,
+        .width=(uint32_t)sw,.height=(uint32_t)sh,
+        .pitch_pixels=(uint32_t)record.source_pitch,
+        .pixel_format=GML_PLAN_PIXEL_XRGB8888,.opaque=1u,.cpu_pixels=src};
+      gml_render_plan_reset(&box_plan,GML_PLAN_TARGET_CPU_FRAME,
+        (uint32_t)target_width,(uint32_t)record.target_height);
+      uint32_t source=gml_render_plan_add_image(&box_plan,&image);
+      if(source==GML_PLAN_NO_IMAGE || record.shader>=0 || !record.cpu_rgb_only ||
+         !gml_render_plan_add_blit_box(&box_plan,source,
+           (GmlPlanRect){x0,y0,(uint32_t)span,(uint32_t)(y1-y0)},0u) ||
+         !gml_render_plan_validate(&box_plan)) return;
     }
     /* Cleared before writes: the kernel calls nothing that could re-enter, but a flush during a
      * flush would write the same pixels twice for no reason. */
@@ -124,6 +139,12 @@ void gml_render_cpu_present_image(GmlRender *r){
     if(r->dispatch_metrics.enabled)
       gml_render_dispatch_cpu_record(r,GML_RENDER_SCENE_SURFACE,
                                        gml_render_dispatch_cpu_reason(r),1u);
+    if(record.sampling_rule==GML_RENDER_PRESENTATION_BOX){
+      /* Reuse the existing integer channel sums and floor division, including repeated
+       * zero-width footprints on an enlarged axis. No separate CPU sampling algorithm. */
+      (void)gml_render_cpu_plan_execute(&box_plan,target,(uint32_t)target_width);
+      goto materialized;
+    }
     column=span<=(int)(sizeof column_stack/sizeof *column_stack)?column_stack:
            (int*)malloc((size_t)span*sizeof(*column));
     if(!column){

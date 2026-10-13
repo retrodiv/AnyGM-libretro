@@ -665,7 +665,9 @@ int engine_present_hardware_screen(AnygmEngine *engine,unsigned *width,unsigned 
    * With only content GLSL enabled, an ineligible program still returns to software. */
   if(!hybrid && !scene) return 0;
   /* The presentation writes an opaque frame: the top byte is set, not carried. */
-  if(!gml_render_plan_add_blit_nearest(plan,image,destination,axis_x,axis_y,0xFFu)) return 0;
+  if(record.sampling_rule==GML_RENDER_PRESENTATION_BOX){
+    if(!gml_render_plan_add_blit_box(plan,image,destination,0xFFu)) return 0;
+  } else if(!gml_render_plan_add_blit_nearest(plan,image,destination,axis_x,axis_y,0xFFu)) return 0;
   if(!engine_execute_graphics_plan(engine,plan)) return 0;
 presented:
   if(scene && engine_graphics_is_current(engine)){
