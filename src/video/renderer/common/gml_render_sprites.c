@@ -250,7 +250,7 @@ static int resident_integer_sprite(GmlRender *r,GmlSprite *sprite,int subimg,
   /* R03-SPR-INTEGER-FUNCTION: public point/scale mapping has already happened.
    * Whole physical texels need no phase emulation, including both reflections,
    * trim, mapped GUI and uniform tint on any ordinary target. */
-  int normal_integer=r && !r->interp && !r->fog_flat && !gml_d3_is_active(r) &&
+  int normal_integer=r && (!r->interp || r->classic) && !r->fog_flat && !gml_d3_is_active(r) &&
     isfinite(xs) && isfinite(ys) && fabs(xs)>=1.0 && fabs(xs)<=8.0 &&
     fabs(ys)>=1.0 && fabs(ys)<=8.0 && xs==floor(xs) && ys==floor(ys) &&
     rotation==0.0 && (!r->blendmode || r->blendmode==2) &&
@@ -276,7 +276,7 @@ static int resident_integer_sprite(GmlRender *r,GmlSprite *sprite,int subimg,
      !isfinite(xs) || !isfinite(ys) || xs==0.0 || ys==0.0 ||
      rotation!=0.0 || (blend!=0xFFFFFFu && !normal_integer) ||
      !isfinite(alpha) || alpha<0.0 || alpha>1.0 || (alpha==0.0 && !normal_integer) ||
-     (r->interp && (xs!=1.0 || ys!=1.0)))
+     (r->interp && !r->classic && (xs!=1.0 || ys!=1.0)))
     return 0;
   /* A plain sprite reads only the base image; the other texture-stage filter flags do not
    * participate in the CPU blit, and the integer-aligned unit-scale base sample is exact. */
@@ -525,12 +525,14 @@ static int resident_atlas_crop_from_page_impl(GmlRender *r,GmlTpag *page,
   int scaled_atlas=scaled_background || tile_function || text_function || scaled_sprite;
   int integer_background=physical_sprite_page==8 || scaled_background;
   int integer_atlas=integer_sprite || integer_background || tile_function || text_function;
-  /* Classic's logical background writer remains point-sampled with the
+  /* Classic's logical background and sprite writers remain point-sampled with the
    * presentation interpolation flag enabled. Auxiliary phase planes retain
    * their separate rejection below; the CPU flag itself is never changed. */
   int classic_background_point=integer_background && r && r->classic &&
     family==GML_RENDER_SCENE_BACKGROUND;
-  int sampling_interp=r && r->interp && !classic_background_point;
+  int classic_sprite_point=integer_sprite && r && r->classic &&
+    family==GML_RENDER_SCENE_SPRITE;
+  int sampling_interp=r && r->interp && !classic_background_point && !classic_sprite_point;
   if(integer_atlas &&
      (!r || !page || sampling_interp || r->fog_flat || gml_d3_is_active(r) ||
       (text_function && r->gui_pass_active &&
@@ -2777,7 +2779,7 @@ done:
 static int resident_nearest_sprite_function(GmlRender *r,GmlSprite *sprite,int subimg,
                                             double x,double y,double xs,double ys,double rotation,
                                             uint32_t colour,double alpha){
-  if(!r || !sprite || !r->resident_application_pass || r->interp ||
+  if(!r || !sprite || !r->resident_application_pass || (r->interp && !r->classic) ||
      r->active_shader>=0 || r->fog_flat || gml_d3_is_active(r) ||
      r->color_write_mask>15u || r->blendmode<0 || r->blendmode>2 ||
      r->blend_equation!=1 || r->blend_equation_alpha!=1 ||
@@ -2936,7 +2938,7 @@ int gml_render_resident_masked_sprite(GmlRender *r,int sprite,int subimg,
                                       double x,double y,double xs,double ys,double rotation,
                                       uint32_t colour,double alpha){
   if(!r || !r->resident_application_pass || r->fog_flat ||
-     r->color_write_mask>=15u || r->interp || sprite<0 || sprite>=r->n_spr)
+     r->color_write_mask>=15u || (r->interp && !r->classic) || sprite<0 || sprite>=r->n_spr)
     return 0;
   /* Match the unmasked public no-write boundary before the CPU wrapper would
    * prepare a masked destination. No sampling or source demand is needed. */
@@ -3020,7 +3022,7 @@ void gml_render_sprite_ext_unmasked(GmlRender *r, int sprite, int subimg, double
        resident_integer_sprite(r,&r->spr[sprite],subimg,x,y,xs,ys,rot,blend,resident_alpha)) return;
     /* Full-opacity nearest tint uses the integer packet, not the older float
      * tint preference. Keep the inherited numbered modern owner untouched. */
-    if(sprite>=0 && sprite<r->n_spr && !r->interp && resident_alpha==1.0 &&
+    if(sprite>=0 && sprite<r->n_spr && (!r->interp || r->classic) && resident_alpha==1.0 &&
        (blend&0xFFFFFFu)!=0xFFFFFFu &&
        !(r->target_id>0 && !r->gui_pass_active && anygm_policy_has_modern_layer_semantics(r->win)) &&
        resident_nearest_sprite_function(r,&r->spr[sprite],subimg,x,y,xs,ys,rot,blend,resident_alpha)) return;

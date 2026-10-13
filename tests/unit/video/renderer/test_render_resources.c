@@ -10265,8 +10265,9 @@ static int resident_classic_owned_binary_unit_sprite(void){
       exclusion==11u?0.5:0.0,exclusion==12u?0xABCDEFu:0xFFFFFFu,
       exclusion==14u?0.5:1.0);
     /* The old owned-binary rule is still preferred. Newly paired integer
-     * variants strengthen these old scope exclusions into transport guards. */
-    int integer_extension=exclusion==2u || exclusion==5u || exclusion==6u || exclusion==9u || exclusion==10u || exclusion==12u ||
+     * variants strengthen these old scope exclusions into transport guards,
+     * including Classic's logical nearest writer with presentation filtering. */
+    int integer_extension=exclusion==2u || exclusion==3u || exclusion==5u || exclusion==6u || exclusion==9u || exclusion==10u || exclusion==12u ||
       exclusion==13u || exclusion==14u || exclusion==15u;
     int nearest_extension=exclusion==4u || exclusion==11u;
     if(!exclusion || integer_extension || nearest_extension){
@@ -11863,9 +11864,11 @@ static int resident_sprite_function(int geometry){
   for(unsigned scale=0;scale<(geometry?3u:1u);scale++)
   for(unsigned fractional=geometry?1u:0u;fractional<2u;fractional++)
   for(unsigned generation=0;generation<(geometry?6u:4u);generation++)
+  for(unsigned interpolation=0;interpolation<(generations[generation]>100?2u:1u);interpolation++)
   for(unsigned target_kind=0;target_kind<4u;target_kind++)
   for(unsigned gui=0;gui<2u;gui++) for(unsigned signs=0;signs<4u;signs++)
   for(unsigned disabled=0;disabled<2u;disabled++) for(unsigned tint=0;tint<2u;tint++)
+  for(unsigned mask=0;mask<(interpolation?4u:1u);mask++)
   for(unsigned a=0;a<3u;a++){
     GmlRender *render=calloc(1,sizeof *render);GmlWin content={0};
     FakeDevice fake={.on_demand=1,.readback_colour=0x7F25C080u};
@@ -11896,12 +11899,15 @@ static int resident_sprite_function(int geometry){
     if(target_kind==2u) CHECK(gml_surface_set_target(render,0));
     if(target_kind==3u){int id=gml_surface_create(render,W,H);CHECK(id>0 && gml_surface_set_target(render,id));}
     if(gui){gml_render_gui_begin(render,W,H);gml_render_gui_set_size(render,W/2,H/2);}
+    render->interp=(int)interpolation;
     render->alphablend=!disabled;
     render->blendmode=draw_state>=2u?2:0;
     render->alpha_test_enable=(int)(draw_state&1u);
     render->alpha_test_ref=(uint8_t)(generation*67u+signs*41u+a*17u);
     gml_render_set_pending_fill(render,0x40273859u);
     gml_render_flush_pending_fill(render);CHECK(gml_render_scene_submit_pending(render));
+    const uint8_t write_masks[]={15,0,5,10};
+    render->color_write_mask=write_masks[mask];
     memcpy(shadow,render->fb,sizeof shadow);int submitted=fake.submits;
     double xs=(fractional?4.0:2.0)*(signs&1u?-1.0:1.0);
     double ys=(fractional?4.0:1.0)*(signs&2u?-1.0:1.0);
@@ -11917,17 +11923,17 @@ static int resident_sprite_function(int geometry){
       gml_draw_sprite_ext(render,0,0,x,y,xs,ys,geometry?angles[angle]:0,tint?0x70B0D0u:0xFFFFFFu,alphas[a]);
     CHECK(render->resident_application_pass && gml_render_scene_submit_pending(render));
     int retained_rotation=geometry && fake.last_quantisation==GML_RENDER_QUANTISE_SPRITE_MODERN_ROTATED_NEAREST;
-    int expected_submits=a==1u?0:retained_rotation?8:1;
+    int expected_submits=a==1u || !write_masks[mask]?0:retained_rotation?8:1;
     if(geometry && fake.submits!=submitted+expected_submits)
-      fprintf(stderr,"nearest sprite metadata: generation=%d target=%u gui=%u state=%u angle=%g scale=%u signs=%u disabled=%u tint=%u alpha=%g submits=%d/%d packets=%u\n",
-        generations[generation],target_kind,gui,draw_state,angles[angle],scale,signs,disabled,tint,
+      fprintf(stderr,"nearest sprite metadata: generation=%d interp=%u target=%u gui=%u state=%u angle=%g scale=%u signs=%u disabled=%u tint=%u alpha=%g submits=%d/%d packets=%u\n",
+        generations[generation],interpolation,target_kind,gui,draw_state,angles[angle],scale,signs,disabled,tint,
         alphas[a],fake.submits,submitted,fake.last_batch_operations);
     CHECK(fake.submits==submitted+expected_submits && !fake.readbacks && !fake.rgb_queries &&
           !memcmp(shadow,render->fb,sizeof shadow));
     GmlRenderResource *resource=gml_render_scene_target_resource_ensure(render);CHECK(resource);
     gml_render_resource_journal_metrics(resource,&metrics);
     CHECK(metrics.authority==GML_RENDER_RESOURCE_GPU_RESIDENT && !metrics.cpu_replays && !metrics.journal_bytes);
-    if(a!=1u){
+    if(a!=1u && write_masks[mask]){
       CHECK((retained_rotation?fake.last_batch_operations>=1u:fake.last_batch_operations>=8u) &&
         fake.last_filter==(retained_rotation?GML_RENDER_FILTER_NEAREST_PHASED:GML_RENDER_FILTER_NEAREST));
       if(fake.last_quantisation==GML_RENDER_QUANTISE_SPRITE_MODERN_NEAREST ||
