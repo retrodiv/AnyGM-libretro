@@ -211,6 +211,8 @@ int engine_materialize_completed_frame(AnygmEngine *engine){
   if(!engine) return 0;
 #if ANYGM_HARDWARE_RENDER
   if(engine->frame_authority==ENGINE_FRAME_GPU_PRESENTED_DEVICE_RESIDENT){
+    if(!gml_render_completed_screen_prepare_publish(&engine->render,engine->screen,
+          (int)engine->output_width,(int)engine->output_height)) return 0;
     if(!gml_gpu_read_completed_frame(engine->gpu,engine->screen,engine->output_width,
                                      engine->output_width,engine->output_height,
                                      engine->host_frame_generation)) return 0;

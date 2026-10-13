@@ -77,6 +77,9 @@ struct GmlRender;
 /* Borrow the renderer only for transient replay-completion accounting. Rebind
  * after moving that owner; retained source recipes never capture this pointer. */
 void gml_render_resource_bind_dispatch(GmlRenderResource *resource,struct GmlRender *render);
+/* Commit staging storage only for a byte-free, current resident device image. The new host
+ * shadow is deliberately stale; invalidate incremental checkpoint baselines on rebinding. */
+int gml_render_resource_rebind_resident_pixels(GmlRenderResource *resource,uint32_t *pixels);
 GmlRenderImageRef gml_render_resource_image_ref(const GmlRenderResource *resource);
 int gml_render_resource_source_view(GmlRenderResource *resource,
                                     GmlRenderResourceSource *out_source);

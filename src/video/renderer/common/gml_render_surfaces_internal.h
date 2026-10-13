@@ -32,6 +32,8 @@ int gml_render_scene_target_matches(const GmlRender *render);
 /* Attempt the host-owned pending application composite before a SCREEN scene draw. */
 int gml_render_compose_resident_underlay(GmlRender *render);
 void gml_render_base_resource_dispose(GmlRender *render);
+int gml_render_base_resource_resize(GmlRender *render,int width,int height);
+int gml_render_base_history_observe(GmlRender *render);
 GmlRenderResourceExecution gml_render_application_scene_submit(
   GmlRender *render,const GmlRenderDrawBatch *batch,
   const GmlRenderResourceSource *sources,uint32_t source_count);

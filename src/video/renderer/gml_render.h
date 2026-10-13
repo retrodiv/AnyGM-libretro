@@ -713,6 +713,10 @@ int gml_render_completed_screen_write(GmlRender *r,uint32_t *pixels,int width,in
 /* After a successful full terminal-image observation, retire the pre-presentation SCREEN
  * recipe instead of replaying it over the published pixels. No CPU pixel reconstruction. */
 void gml_render_completed_screen_publish(GmlRender *r,uint32_t *pixels,int width,int height);
+/* Preserve an inactive raw-linear suffix before an explicit completed-frame read overwrites
+ * its active CPU prefix and publishes that image. This is not an ordinary frame checkpoint. */
+int gml_render_completed_screen_prepare_publish(GmlRender *r,uint32_t *pixels,
+                                                int width,int height);
 int gml_render_completed_screen_image(GmlRender *r,const uint32_t *pixels,int width,int height,
                                       GmlRenderImageRef *image);
 /* Retain a complete current SCREEN without a CPU shadow. Enlargement uses pixel centres;

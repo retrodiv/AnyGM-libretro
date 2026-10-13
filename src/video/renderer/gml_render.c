@@ -500,12 +500,15 @@ static int begin_resident_base(GmlRender *r,uint32_t *pixels,int width,int heigh
      (r->base_scene_resource_pixels!=pixels ||
       r->base_scene_resource_width!=width ||
       r->base_scene_resource_height!=height)){
-    /* A borrowed allocation keeps its bytes when a view changes stride. Observe only
-     * this real geometry transition before replacing the device resource. */
-    if(r->base_scene_resource_pixels==pixels &&
-       !gml_render_resource_acquire_cpu_read(r->base_scene_resource,NULL))
-      return gml_render_dispatch_resident_reject(r,GML_RENDER_RESIDENT_CPU_OBSERVE);
-    gml_render_base_resource_dispose(r);
+    /* Same allocation means raw-linear reinterpretation, including the inactive tail. */
+    if(r->base_scene_resource_pixels!=pixels ||
+       !gml_render_base_resource_resize(r,width,height)){
+      if(r->base_scene_resource_pixels==pixels &&
+         (!gml_render_base_history_observe(r) ||
+          !gml_render_resource_acquire_cpu_read(r->base_scene_resource,NULL)))
+        return gml_render_dispatch_resident_reject(r,GML_RENDER_RESIDENT_CPU_OBSERVE);
+      gml_render_base_resource_dispose(r);
+    }
   }
   if(retain_target)
     gml_render_begin_retaining_resident_target(r,pixels,width,height,camx,camy);
@@ -1205,6 +1208,8 @@ int gml_render_completed_screen_read(GmlRender *r,uint32_t *pixels,int width,int
      !gml_render_application_scene_flush(r)) return 0;
   resource=completed_screen_resource(r,pixels,width,height);
   if(!resource) return 1;
+  /* A logical application borrow may expose more raw pixels than the active SCREEN extent. */
+  if(!gml_render_base_history_observe(r)) return 0;
   gml_render_resource_journal_metrics(resource,&metrics);
   if(!gml_render_resource_acquire_cpu_read(resource,&current) || current!=pixels) return 0;
   r->completed_screen_cpu_reads++;
@@ -1216,6 +1221,7 @@ int gml_render_completed_screen_write(GmlRender *r,uint32_t *pixels,int width,in
   GmlRenderResource *resource;
   if(!r || !pixels || width<=0 || height<=0 ||
      !gml_render_application_scene_flush(r)) return 0;
+  if(r->base_scene_resource_pixels==pixels && !gml_render_base_history_observe(r)) return 0;
   if(r->base_scene_resource && r->base_scene_resource_pixels==pixels &&
      (r->base_scene_resource_width!=width || r->base_scene_resource_height!=height)){
     if(!gml_render_resource_acquire_cpu_read(r->base_scene_resource,NULL)) return 0;
@@ -1230,6 +1236,12 @@ int gml_render_completed_screen_write(GmlRender *r,uint32_t *pixels,int width,in
     r->resident_application_pass=0;
   }
   return 1;
+}
+int gml_render_completed_screen_prepare_publish(GmlRender *r,uint32_t *pixels,
+                                                int width,int height){
+  if(!r || !pixels || width<=0 || height<=0 ||
+     !gml_render_application_scene_flush(r)) return 0;
+  return !completed_screen_resource(r,pixels,width,height) || gml_render_base_history_observe(r);
 }
 void gml_render_completed_screen_publish(GmlRender *r,uint32_t *pixels,int width,int height){
   if(!r || !pixels || width<=0 || height<=0) return;

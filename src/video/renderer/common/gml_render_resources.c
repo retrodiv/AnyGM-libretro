@@ -345,6 +345,17 @@ GmlRenderImageRef gml_render_resource_image_ref(const GmlRenderResource *resourc
   return resource?resource->image:image;
 }
 
+int gml_render_resource_rebind_resident_pixels(GmlRenderResource *resource,uint32_t *pixels){
+  if(!resource || !pixels || resource->cpu_write_acquired ||
+     resource->authority!=GML_RENDER_RESOURCE_GPU_RESIDENT ||
+     resource->gpu_version!=resource->image.content_version || resource->entry_count) return 0;
+  resource->pixels=pixels;
+  resource->cpu_version=0u;
+  resource->checkpoint_staging_version=0u;
+  resource->checkpoint_staging_device=NULL;
+  return 1;
+}
+
 static int replay_history(const GmlRenderResource *resource,uint32_t *destination){
   return replay_entries(resource->entries,resource->entry_count,resource->sources,
                          resource->width,resource->height,destination,resource->dispatch_owner);

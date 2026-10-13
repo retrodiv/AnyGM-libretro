@@ -35,6 +35,7 @@ typedef struct FakeDevice {
   int forbid_calls,forbidden_calls;
   int fail_upload,fail_upload_at,fail_readback,shader_failure,prewrite_refusal;
   int fail_partial_readback;
+  int fail_submit_at;
   int incremental_readback;
   uint32_t last_checkpoint;
   uint64_t last_checkpoint_baseline;
@@ -121,6 +122,7 @@ static GmlRenderExecutionResult fake_submit(void *context,const GmlRenderDrawBat
     }
   }
   result.status=fake->status?fake->status:GML_RENDER_EXEC_ACCEPTED;
+  if(fake->submits==fake->fail_submit_at) result.status=GML_RENDER_EXEC_UNSUPPORTED;
   result.accepted_prefix=fake->accepted_prefix?fake->accepted_prefix:
     (result.status==GML_RENDER_EXEC_ACCEPTED?batch->operation_count:0u);
   result.all_destinations_uncertain=result.status!=GML_RENDER_EXEC_ACCEPTED &&
@@ -2926,6 +2928,81 @@ static int owned_application_resize_and_context_loss(void){
   free(state_bytes);
   gml_render_free(render);
   free(render);
+  return 1;
+}
+
+static int resident_base_linear_history(void){
+  GmlRender *r=calloc(1,sizeof *r);
+  FakeDevice fake={.on_demand=1,.readback_colour=0x40123456u};
+  GmlRenderDeviceServices device=service(&fake);
+  uint32_t pixels[120]={0};
+  CHECK(r);
+  device.observe_on_demand=fake_observe_on_demand;
+  gml_render_bind_device(r,&device);
+  CHECK(gml_render_begin_resident_base(r,pixels,8,6,0,0));
+  gml_render_set_pending_fill(r,0x40123456u);
+  gml_render_flush_pending_fill(r);
+  CHECK(gml_render_scene_submit_pending(r) && !fake.readbacks);
+  /* Same allocation, changed pitch, then shrink/grow: no canonical observation. */
+  const int extents[][2]={{7,5},{3,2},{12,10},{5,4},{8,6}};
+  for(unsigned i=0;i<sizeof extents/sizeof extents[0];i++){
+    CHECK(gml_render_begin_resident_base(r,pixels,extents[i][0],extents[i][1],0,0));
+    CHECK(!fake.readbacks && r->resident_application_pass);
+    GmlRenderJournalMetrics metrics={0};
+    gml_render_resource_journal_metrics(r->base_scene_resource,&metrics);
+    CHECK(metrics.authority==GML_RENDER_RESOURCE_GPU_RESIDENT && !metrics.cpu_replays &&
+          !metrics.journal_bytes && !metrics.retained_mutable_bytes);
+  }
+  /* A failed explicit publication preparation cannot leak partial history into the live tail. */
+  fake.fail_partial_readback=1;
+  CHECK(!gml_render_completed_screen_prepare_publish(r,pixels,8,6));
+  CHECK(pixels[0]==0u && pixels[119]==0u);
+  fake.fail_partial_readback=0;
+  CHECK(gml_render_completed_screen_prepare_publish(r,pixels,8,6));
+  CHECK(pixels[0]==0u && pixels[119]==fake.readback_colour);
+  CHECK(gml_render_observe_device_resources(r));
+  CHECK(pixels[0]==fake.readback_colour && pixels[119]==fake.readback_colour);
+  gml_render_bind_device(r,NULL);
+  CHECK(gml_render_completed_screen_read(r,pixels,8,6));
+  gml_render_free(r);free(r);
+  return 1;
+}
+
+static int resident_base_history_failures(void){
+  for(unsigned failure=0;failure<5u;failure++){
+    GmlRender *r=calloc(1,sizeof *r);
+    FakeDevice fake={.on_demand=1,.readback_colour=0x40123456u};
+    GmlRenderDeviceServices device=service(&fake);
+    uint32_t pixels[120],before[120];
+    for(unsigned i=0;i<120u;i++) pixels[i]=0xA5000000u+i;
+    memcpy(before,pixels,sizeof before);
+    CHECK(r);device.observe_on_demand=fake_observe_on_demand;
+    gml_render_bind_device(r,&device);
+    CHECK(gml_render_begin_resident_base(r,pixels,8,6,0,0));
+    CHECK(!gml_render_resource_rebind_resident_pixels(r->base_scene_resource,pixels));
+    gml_render_set_pending_fill(r,0x40123456u);gml_render_flush_pending_fill(r);
+    CHECK(gml_render_scene_submit_pending(r));
+    GmlRenderResource *old=r->base_scene_resource;
+    GmlRenderImageRef ref=gml_render_resource_image_ref(old);
+    fake.fail_submit_at=fake.submits+(int)failure+1;
+    fake.prewrite_refusal=1;
+    CHECK(!gml_render_base_resource_resize(r,12,10));
+    CHECK(r->base_scene_resource==old && !r->base_history_resource &&
+          gml_render_resource_image_ref(old).incarnation==ref.incarnation &&
+          !memcmp(pixels,before,sizeof pixels));
+    GmlRenderJournalMetrics metrics={0};
+    gml_render_resource_journal_metrics(old,&metrics);
+    CHECK(metrics.authority==GML_RENDER_RESOURCE_GPU_RESIDENT);
+    fake.fail_submit_at=0;
+    CHECK(gml_render_base_resource_resize(r,12,10));
+    CHECK(!gml_render_base_resource_resize(r,0,10) &&
+          !gml_render_base_resource_resize(r,4097,10));
+    fake.forbid_calls=1;
+    gml_render_lose_volatile_device(r);
+    CHECK(!r->base_scene_resource && !r->base_history_resource && !r->base_history_pixels);
+    CHECK(!fake.forbidden_calls);
+    gml_render_free(r);free(r);
+  }
   return 1;
 }
 
@@ -13315,6 +13392,8 @@ int main(void){
   passed+=numbered_surface_resize_replays_and_retires();
   passed+=numbered_surface_free_bound_resource();
   passed+=owned_application_resize_and_context_loss();
+  passed+=resident_base_linear_history();
+  passed+=resident_base_history_failures();
   passed+=resident_surface_resize_storage();
   passed+=resident_surface_resize_refusal();
   passed+=resident_surface_resize_state();
@@ -13471,6 +13550,6 @@ int main(void){
   passed+=source_free_primitive_rect_replay();
   passed+=stretched_float_exact_replay();
   passed+=filtered_font_exact_recovery();
-  printf("render resource cases: passed=%d failed=%d\n",passed,190-passed);
-  return passed==190?EXIT_SUCCESS:EXIT_FAILURE;
+  printf("render resource cases: passed=%d failed=%d\n",passed,192-passed);
+  return passed==192?EXIT_SUCCESS:EXIT_FAILURE;
 }

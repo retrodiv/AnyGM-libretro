@@ -317,6 +317,11 @@ typedef struct GmlRender {
   GmlRenderResource *base_scene_resource;
   uint32_t *base_scene_resource_pixels;
   int base_scene_resource_width,base_scene_resource_height;
+  /* Raw-linear high-water image across borrowed base pitch changes. Its canonical staging
+   * is separate so observing an old tail cannot overwrite the current active prefix. */
+  GmlRenderResource *base_history_resource;
+  uint32_t *base_history_pixels;
+  size_t base_history_count;
   /* Only the explicit resident begin opts into scene dispatch for this pass. */
   int resident_application_pass;
   /* Explicit device-pass selection survives a CPU fallback on a different target. */
