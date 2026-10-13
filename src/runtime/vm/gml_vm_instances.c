@@ -1071,11 +1071,12 @@ static int vm_room_has_physics(GmlVM *vm){
          gml_vm_read_u32_le(vm->win->data,record+56u)==1;
 }
 static int vm_fixture_active(GmlVM *vm,GmlInstance *in){
-  if(!vm || !in || in->obj<0 || in->obj>=vm->n_objects || !vm_room_has_physics(vm))
+  if(!vm || !vm->win || vm->room_index<0 || !in || in->obj<0 || in->obj>=vm->n_objects)
     return 0;
   GmlObject *object=&vm->objects[in->obj];
+  /* Ordinary collision candidates need no room lookup when their object cannot be a fixture. */
   return object->physics_enabled && object->physics_shape>=1 &&
-         object->physics_shape<=2 && object->physics_point_count>=3;
+         object->physics_shape<=2 && object->physics_point_count>=3 && vm_room_has_physics(vm);
 }
 static void vm_fixture_vertex(const GmlObject *object,const GmlInstance *in,int index,
                               double *x,double *y){

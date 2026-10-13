@@ -4980,6 +4980,30 @@ static int expect_persistent_lifecycle_exit_code(void){
     fprintf(stderr,"negative physics collision group was not suppressed\n");
     free(saved_active); return 1;
   }
+  vm.objects[1].physics_group=vm.objects[2].physics_group=0;
+  for(int invalid_object=0;invalid_object<2;invalid_object++){
+    GmlObject *object=physics_objects[invalid_object];
+    GmlObject valid=*object;
+    for(int invalid_kind=0;invalid_kind<4;invalid_kind++){
+      *object=valid;
+      if(invalid_kind==0) object->physics_enabled=0;
+      else if(invalid_kind==1) object->physics_shape=0;
+      else if(invalid_kind==2) object->physics_shape=3;
+      else object->physics_point_count=2;
+      studio_contact->x=studio_contact->xprevious=120;
+      studio_contact->y=studio_contact->yprevious=120;
+      studio_actor->x=studio_actor->xprevious=127;
+      studio_actor->y=studio_actor->yprevious=120;
+      studio_solid_hits->d=0;
+      gml_vm_instances_run_collisions(&vm);
+      if(studio_actor->x!=127 || studio_actor->y!=120 || studio_solid_hits->d!=0){
+        fprintf(stderr,"ineligible fixture did not retain ordinary collision bounds: object=%d kind=%d\n",
+                invalid_object,invalid_kind);
+        free(saved_active); return 1;
+      }
+    }
+    *object=valid;
+  }
   vm.objects[1]=saved_contact_object;
   vm.objects[2]=saved_actor_object;
   for(int index=0;index<vm.inst_count;index++) vm.inst[index].active=saved_active[index];
