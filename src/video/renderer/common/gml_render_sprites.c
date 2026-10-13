@@ -446,6 +446,12 @@ static int resident_atlas_crop_from_page_impl(GmlRender *r,GmlTpag *page,
   double scaled_width,scaled_height,source_left,source_right,source_top,source_bottom;
   int checkpoint_alpha_background,checkpoint_alpha_text,checkpoint_alpha_sprite;
   int checkpoint_alpha_gui,checkpoint_integer_tile;
+  /* Plain and sprite-font layout has already resolved physical coordinates.
+   * Settle the same ordered application prefix used by filtered glyphs before
+   * the nearest admission gate; never discard a rejected composition intent. */
+  if(r && family==GML_RENDER_SCENE_TEXT && r->pending_underlay &&
+     (!resident_mapped_screen_gui_font(r) ||
+      !gml_render_compose_resident_underlay(r))) return 0;
   if(source_override && (!r || !page || !r->classic || r->interp ||
      family!=GML_RENDER_SCENE_SPRITE || physical_sprite_page!=4 ||
      xs!=1.0 || ys!=1.0 || colour!=0xFFFFFFu || draw_alpha!=1.0 ||

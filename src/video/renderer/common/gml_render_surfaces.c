@@ -582,6 +582,14 @@ int gml_render_compose_resident_underlay(GmlRender *r){
   GmlRenderDrawStateSnapshot state={0};
   GmlRenderResource *target;
   GmlRenderImageRef image,source_ref;
+  /* Automatic first-generation presentation forces opaque coverage, and a
+   * modern opaque certificate already guarantees alpha 255. An active cutout
+   * below that endpoint cannot change this composition. Keep legacy recipes
+   * and uncertified partial sources behind their established state fence. */
+  int opaque_cutout=r && r->win && r->alpha_test_ref<255u &&
+    (anygm_policy_uses_first_generation_studio(r->win) || r->app_surface_opaque) &&
+    r->device.context && r->device.observe_on_demand &&
+    r->device.observe_on_demand(r->device.context);
   if(!r || !r->pending_underlay || !r->resident_application_pass || !r->win ||
      r->classic || r->fb!=r->base_fb || r->fb==r->app_surface_owned ||
      !gml_render_scene_target_matches(r) || !gml_render_device(r) ||
@@ -590,7 +598,7 @@ int gml_render_compose_resident_underlay(GmlRender *r){
      r->rotated_batch_count || r->rotated_batch_building ||
      r->target_sp || r->target_id>=0 || r->active_shader>=0 || r->blendmode ||
      !r->alphablend || r->blend_equation!=1 || r->blend_equation_alpha!=1 ||
-     r->alpha_test_enable || r->color_write_mask!=15u ||
+     (r->alpha_test_enable && !opaque_cutout) || r->color_write_mask!=15u ||
      r->classic_phase_y || !isfinite(r->cam_x) || !isfinite(r->cam_y) ||
      !(anygm_policy_uses_first_generation_studio(r->win) ||
        anygm_policy_has_modern_layer_semantics(r->win))) return 0;

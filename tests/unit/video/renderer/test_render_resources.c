@@ -9530,6 +9530,75 @@ static int resident_automatic_underlay_exclusions(void){
   return 1;
 }
 
+static int resident_nearest_font_pending_underlay(void){
+  static const int policies[]={13,15,17};
+  static const unsigned cutoffs[]={0u,1u,2u,127u,254u,255u};
+  enum { WIDTH=12,HEIGHT=12 };
+  for(unsigned policy=0;policy<3u;policy++) for(unsigned scale=1u;scale<=2u;scale++)
+  for(unsigned cutoff=0;cutoff<6u;cutoff++){
+    GmlWin content={.bytecode=policies[policy]};
+    GmlRender *r=calloc(1,sizeof *r);
+    FakeDevice fake={.on_demand=1};
+    GmlRenderDeviceServices device=service(&fake);
+    uint32_t screen[WIDTH*HEIGHT];
+    CHECK(r && gml_render_init(r,NULL)==0);
+    device.observe_on_demand=fake_observe_on_demand;
+    r->win=&content;r->color_write_mask=15u;
+    r->atlas=calloc(1,sizeof *r->atlas);CHECK(r->atlas);
+    r->n_atlas=1;r->atlas[0].w=r->atlas[0].h=2;
+    r->atlas[0].px=malloc(16u);CHECK(r->atlas[0].px);
+    const uint8_t glyph[]={40u,90u,160u,0u,90u,160u,40u,255u,
+                           160u,40u,90u,128u,40u,160u,90u,2u};
+    memcpy(r->atlas[0].px,glyph,sizeof glyph);
+    r->n_fonts=1;r->font=0;
+    GmlFont *font=&r->fonts[0];
+    font->real=1;font->sprite=-1;font->atlas=0;
+    font->line_height=font->align_height=2;
+    font->glyphs=calloc(1,sizeof *font->glyphs);CHECK(font->glyphs);
+    for(unsigned cp=0;cp<256u;cp++) font->glyph_by_char[cp]=-1;
+    font->glyph_by_char['A']=0;font->n_glyphs=1;
+    font->glyphs[0]=(GmlGlyph){.w=2,.h=2,.shift=2,.ch='A'};
+    CHECK(gml_render_application_surface_ensure_owned(r,4,4));
+    gml_render_bind_device(r,&device);
+    CHECK(gml_render_begin_resident_owned_application(r,0,0,0));
+    gml_render_set_pending_fill(r,0xFF25C080u);
+    gml_render_flush_pending_fill(r);CHECK(gml_render_scene_submit_pending(r));
+    r->app_surface_opaque=1;
+    for(unsigned pixel=0;pixel<WIDTH*HEIGHT;pixel++) screen[pixel]=0xA5123456u;
+    CHECK(gml_render_begin_resident_base(r,screen,WIDTH,HEIGHT,0,0));
+    gml_render_gui_begin(r,WIDTH,HEIGHT);
+    gml_render_set_pending_fill(r,0x40123456u);
+    gml_render_set_pending_underlay(r,0,0,WIDTH,HEIGHT);
+    r->interp=0;r->alpha_test_enable=1;r->alpha_test_ref=cutoffs[cutoff];
+    int submits=fake.submits;
+    r->cam_x=1;
+    CHECK(!gml_render_resident_font_glyph(r,0,0,0,2,2,2,2,scale,scale,0xFFFFFFu,1));
+    CHECK(r->pending_underlay && r->pending_fill && fake.submits==submits && !fake.readbacks);
+    r->cam_x=0;r->world_transform_active=1;
+    CHECK(!gml_render_resident_font_glyph(r,0,0,0,2,2,2,2,scale,scale,0xFFFFFFu,1));
+    CHECK(r->pending_underlay && r->pending_fill && fake.submits==submits && !fake.readbacks);
+    r->world_transform_active=0;
+    if(cutoffs[cutoff]==255u){
+      CHECK(!gml_render_resident_font_glyph(r,0,0,0,2,2,2,2,scale,scale,0xFFFFFFu,1));
+      CHECK(r->pending_underlay && r->resident_application_pass && !fake.readbacks);
+    }else{
+      gml_draw_text_transformed(r,2,2,"AA",scale,scale,0,0xFFFFFFu,1);
+      CHECK(!r->pending_underlay && r->resident_application_pass && !fake.readbacks &&
+            gml_render_scene_submit_pending(r));
+      GmlRenderJournalMetrics metrics={0};
+      gml_render_resource_journal_metrics(r->base_scene_resource,&metrics);
+      CHECK(metrics.authority==GML_RENDER_RESOURCE_GPU_RESIDENT &&
+            metrics.gpu_version==metrics.logical_version && metrics.cpu_version<metrics.logical_version &&
+            !metrics.cpu_replays && !metrics.journal_operations);
+      for(unsigned pixel=0;pixel<WIDTH*HEIGHT;pixel++) CHECK(screen[pixel]==0xA5123456u);
+      CHECK(gml_render_completed_screen_read(r,screen,WIDTH,HEIGHT));
+    }
+    fake.forbid_calls=1;gml_render_abandon_device(r);CHECK(!fake.forbidden_calls);
+    gml_render_free(r);free(r);
+  }
+  return 1;
+}
+
 static int resident_packaged_real_font_glyph(int runtime_page){
   GmlRender *render=(GmlRender*)calloc(1,sizeof *render);
   GmlRenderApplicationWriteView view={0};
@@ -13088,6 +13157,7 @@ int main(void){
   passed+=resident_unregistered_cpu_application_underlay();
   passed+=resident_surface_after_pending_underlay();
   passed+=resident_automatic_underlay_exclusions();
+  passed+=resident_nearest_font_pending_underlay();
   passed+=resident_packaged_real_font_glyph(0);
   passed+=resident_packaged_real_font_glyph(1);
   passed+=resident_binary_atlas_sprite_gpu();
@@ -13142,6 +13212,6 @@ int main(void){
   passed+=source_free_primitive_rect_replay();
   passed+=stretched_float_exact_replay();
   passed+=filtered_font_exact_recovery();
-  printf("render resource cases: passed=%d failed=%d\n",passed,185-passed);
-  return passed==185?EXIT_SUCCESS:EXIT_FAILURE;
+  printf("render resource cases: passed=%d failed=%d\n",passed,186-passed);
+  return passed==186?EXIT_SUCCESS:EXIT_FAILURE;
 }
