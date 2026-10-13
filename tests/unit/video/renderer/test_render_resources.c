@@ -11916,6 +11916,11 @@ static int resident_nearest_crop_edges(unsigned port){
       r->atlas[0].px[p*4u+3u]=(uint8_t)((p*41u+7u)%255u);
     }
     r->tpag[0]=(GmlTpag){.sx=4,.sy=4,.sw=256,.sh=320,.tw=256,.th=320,.bw=256,.bh=320};
+    if(port==3u){
+      r->spr=calloc(1,sizeof *r->spr);CHECK(r->spr);
+      r->n_spr=1;r->spr[0]=(GmlSprite){.w=256,.h=320,.n_frames=1};
+      r->spr[0].frame=calloc(1,sizeof *r->spr[0].frame);CHECK(r->spr[0].frame);
+    }
     device.observe_on_demand=fake_observe_on_demand;gml_render_bind_device(r,&device);
     for(unsigned p=0;p<W*H;p++) screen[p]=0xA5ABCDEFu;
     if(target_kind==1u || target_kind==2u){
@@ -11934,7 +11939,11 @@ static int resident_nearest_crop_edges(unsigned port){
     CHECK(gml_render_scene_submit_pending(r));memcpy(shadow,r->fb,sizeof shadow);
     int submitted=fake.submits;double mapping=gml_render_gui_transform_active(r)?2.0:1.0;
     for(unsigned draw=0;draw<8u;draw++){
-      if(port==1u)
+      if(port==3u)
+        gml_draw_sprite_ext(r,0,0,12.115987/mapping,8.3568773/mapping,
+          (signs&1u?-.533926585:.533926585)/mapping,
+          (signs&2u?-.533596838:.533596838)/mapping,0,0x70B0D0u,alphas[a]);
+      else if(port==1u)
         gml_draw_background_tile(r,0,0,0,256,320,12.115987/mapping,8.3568773/mapping,
           .533926585/mapping,.533596838/mapping,(int)(signs&1u),(int)(signs>>1u),0,
           0x70B0D0u,alphas[a]);
@@ -11972,6 +11981,10 @@ static int resident_nearest_background_crop_edges(void){
 
 static int resident_selected_background_crop_edges(void){
   return resident_nearest_crop_edges(2u);
+}
+
+static int resident_nearest_sprite_crop_edges(void){
+  return resident_nearest_crop_edges(3u);
 }
 
 static int resident_selected_background_function(void){
@@ -13170,6 +13183,7 @@ int main(void){
   passed+=resident_nearest_tile_function();
   passed+=resident_nearest_tile_crop_edges();
   passed+=resident_nearest_background_crop_edges();
+  passed+=resident_nearest_sprite_crop_edges();
   passed+=resident_selected_background_crop_edges();
   passed+=resident_nearest_text_function();
   passed+=resident_selected_background_function();
@@ -13212,6 +13226,6 @@ int main(void){
   passed+=source_free_primitive_rect_replay();
   passed+=stretched_float_exact_replay();
   passed+=filtered_font_exact_recovery();
-  printf("render resource cases: passed=%d failed=%d\n",passed,186-passed);
-  return passed==186?EXIT_SUCCESS:EXIT_FAILURE;
+  printf("render resource cases: passed=%d failed=%d\n",passed,187-passed);
+  return passed==187?EXIT_SUCCESS:EXIT_FAILURE;
 }
