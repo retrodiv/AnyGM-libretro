@@ -11969,12 +11969,14 @@ static int resident_background_function(int fractional){
   enum { W=24,H=20 };
   const int generations[]={530,700,800,13,15,17};
   const double alphas[]={1.0,0.0,0.37};
+  for(unsigned interpolation=0;interpolation<2u;interpolation++)
   for(unsigned generation=0;generation<6u;generation++)
   for(unsigned target_kind=0;target_kind<4u;target_kind++)
   for(unsigned gui=0;gui<2u;gui++) for(unsigned repeat=0;repeat<(fractional==2?8u:4u);repeat++)
   for(unsigned draw_state=0;draw_state<4u;draw_state++)
   for(unsigned disabled=0;disabled<2u;disabled++) for(unsigned tint=0;tint<2u;tint++)
   for(unsigned a=0;a<3u;a++){
+    if(interpolation && (fractional || generations[generation]<100)) continue;
     GmlRender *render=calloc(1,sizeof *render);GmlWin content={0};
     FakeDevice fake={.on_demand=1,.readback_colour=0x7F25C080u};
     GmlRenderDeviceServices device=service(&fake);GmlRenderJournalMetrics metrics={0};
@@ -11983,6 +11985,7 @@ static int resident_background_function(int fractional){
     content.classic_version=generations[generation]>100?generations[generation]:0;
     content.bytecode=content.classic_version?0:generations[generation];
     render->win=&content;render->classic=content.classic_version!=0;
+    render->interp=(int)interpolation;
     uint8_t rgba[16]={208,32,16,255,16,208,32,0,32,16,208,128,192,176,160,64};
     free(render->atlas[0].px);render->atlas[0].px=malloc(sizeof rgba);
     render->atlas[0].w=render->atlas[0].h=2;
@@ -12018,7 +12021,18 @@ static int resident_background_function(int fractional){
         :gml_render_resident_integer_background_page(render,0,6,5,2,1,0x70B0D0u,.37))); \
       restore; CHECK(fake.submits==submitted && !fake.readbacks); \
       } while(0)
-      BG_REJECT(render->interp=1,render->interp=0);
+      if(!render->classic || fractional==2){
+        BG_REJECT(render->interp=1,render->interp=(int)interpolation);
+      }else{
+        /* The Classic logical writer stays nearest even when presentation
+         * requests interpolation. Keep a positive packet/shadow discriminator,
+         * not the obsolete unsupported-sampler assertion. */
+        render->interp=1;
+        CHECK(gml_render_resident_integer_background_page(render,0,6,5,2,1,0x70B0D0u,.37));
+        CHECK(render->interp==1 && fake.submits==submitted && !fake.readbacks &&
+              !memcmp(shadow,render->fb,sizeof shadow));
+        render->interp=(int)interpolation;
+      }
       BG_REJECT(render->fog_flat=1,render->fog_flat=0);
       BG_REJECT(render->active_shader=0,render->active_shader=-1);
       BG_REJECT(render->color_write_mask=7u,render->color_write_mask=15u);

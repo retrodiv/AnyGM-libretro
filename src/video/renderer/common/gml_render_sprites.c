@@ -525,8 +525,14 @@ static int resident_atlas_crop_from_page_impl(GmlRender *r,GmlTpag *page,
   int scaled_atlas=scaled_background || tile_function || text_function || scaled_sprite;
   int integer_background=physical_sprite_page==8 || scaled_background;
   int integer_atlas=integer_sprite || integer_background || tile_function || text_function;
+  /* Classic's logical background writer remains point-sampled with the
+   * presentation interpolation flag enabled. Auxiliary phase planes retain
+   * their separate rejection below; the CPU flag itself is never changed. */
+  int classic_background_point=integer_background && r && r->classic &&
+    family==GML_RENDER_SCENE_BACKGROUND;
+  int sampling_interp=r && r->interp && !classic_background_point;
   if(integer_atlas &&
-     (!r || !page || r->interp || r->fog_flat || gml_d3_is_active(r) ||
+     (!r || !page || sampling_interp || r->fog_flat || gml_d3_is_active(r) ||
       (text_function && r->gui_pass_active &&
        (r->gui_maximise_active || r->gui_maximise_xoffset!=0.0 || r->gui_maximise_yoffset!=0.0)) ||
       family!=(text_function?GML_RENDER_SCENE_TEXT:tile_function?GML_RENDER_SCENE_TILE:
@@ -537,7 +543,7 @@ static int resident_atlas_crop_from_page_impl(GmlRender *r,GmlTpag *page,
       !isfinite(left) || !isfinite(top) ||
       fabs(left)>65536.0 || fabs(top)>65536.0 || page->sw>4096 || page->sh>4096 ||
       (double)crop_width*fabs(xs)>16384.0 || (double)crop_height*fabs(ys)>16384.0 ||
-      (!selected_background && !gml_render_target_preserves_alpha(r) &&
+      (!classic_background_point && !selected_background && !gml_render_target_preserves_alpha(r) &&
        (double)crop_width*fabs(xs)*(double)crop_height*fabs(ys)>=131072.0) ||
       !r->device.context || !r->device.observe_on_demand ||
       !r->device.observe_on_demand(r->device.context))) return 0;
@@ -619,7 +625,7 @@ static int resident_atlas_crop_from_page_impl(GmlRender *r,GmlTpag *page,
                       family!=GML_RENDER_SCENE_TEXT && !classic_tile && !tile_function) ||
                      (family==GML_RENDER_SCENE_TEXT && !orthographic && !text_function &&
                       anygm_policy_classic_modern_presentation(r->win)) ||
-                     r->interp || (!orthographic && !classic_point && !integer_atlas &&
+                     sampling_interp || (!orthographic && !classic_point && !integer_atlas &&
                                    (xs!=1.0 || ys!=1.0)))) ||
      (r->world_transform_active &&
       (r->world_scale_x!=1.0 || r->world_scale_y!=1.0) &&
@@ -642,7 +648,7 @@ static int resident_atlas_crop_from_page_impl(GmlRender *r,GmlTpag *page,
      (family==GML_RENDER_SCENE_TEXT && !text_function && draw_alpha<1.0 &&
       !gml_render_target_preserves_alpha(r) &&
       (!r->fb_opaque_known || !r->fb_all_opaque)) ||
-     (r->interp && (xs!=1.0 || ys!=1.0))) return 0;
+     (sampling_interp && (xs!=1.0 || ys!=1.0))) return 0;
   for(int index=0;index<3;index++)
     if(r->classic_interp_phase[index] || r->app_interp_phase[index]) return 0;
   if(classic_point && (r->fog_flat || r->gui_pass_active ||
@@ -1022,7 +1028,7 @@ static int resident_atlas_crop_from_page_impl(GmlRender *r,GmlTpag *page,
     state.alpha_test_enabled=(effective_cutout && !!r->alpha_test_enable) ||
       (physical_sprite_page==12 && r->blendmode==2);
     state.alpha_test_reference=effective_cutout && r->alpha_test_enable?r->alpha_test_ref:0u;
-    if(integer_background && r->blendmode==0 && draw_alpha<1.0 &&
+    if(integer_background && !r->interp && r->blendmode==0 && draw_alpha<1.0 &&
        (selected_background || !(xs==1.0 && ys==1.0 && colour==0xFFFFFFu)) &&
        anygm_policy_uses_early_background_compositing(r->win) &&
        (atlas->blob || atlas->external_blob)){
@@ -1189,7 +1195,7 @@ static int resident_depth_free_ortho_sprite(GmlRender *r,int sprite,int subimg,
 static int resident_background_page(GmlRender *r,int page_index,
                                                 double left,double top,double xs,double ys,
                                                 uint32_t colour,double alpha,int mode){
-  if(!r || !r->resident_application_pass || r->interp || r->fog_flat ||
+  if(!r || !r->resident_application_pass || (r->interp && !r->classic) || r->fog_flat ||
      gml_d3_is_active(r) || page_index<0 || page_index>=r->n_tpag ||
      r->active_shader>=0 || r->color_write_mask!=15u ||
      r->blend_equation!=1 || r->blend_equation_alpha!=1 ||
@@ -1203,7 +1209,7 @@ static int resident_background_page(GmlRender *r,int page_index,
   if(alpha<0.0) alpha=0.0;
   /* The unchanged packed-background port truncates vertex opacity before
    * sampling. Keep that source policy here, without emulating blend products. */
-  if(anygm_policy_uses_early_background_compositing(r->win) &&
+  if(!r->interp && anygm_policy_uses_early_background_compositing(r->win) &&
      (atlas->blob || atlas->external_blob) && alpha>0.0 && alpha<1.0)
     alpha=floor(alpha*255.0)/255.0;
   if(alpha==0.0) return 1;
