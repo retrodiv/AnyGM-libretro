@@ -2198,9 +2198,19 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
     /* R03-SPR-GUI-FILTERED-OFFSCREEN-NOOP: these axis GUI slices already use
      * blit_one's independently rounded half-open SCREEN rectangle above.
      * A fully clipped sprite writes nothing, even with partial source alpha. */
+    /* R03-SPR-FILTERED-EDGE-NOOP: ordinary first-generation application
+     * sprites share blit_one's independently projected far edges. Other
+     * targets agree here only for authored-edge pages or integral scales;
+     * retain their fractional coverage debt instead of inferring a no-op. */
     if((family==GML_RENDER_SCENE_SPRITE && (identity_gui_atlas || mapped_gui_sprite) &&
         !part_view && !opaque_target_alpha && !transparent_stretched_trim && !box_stretched &&
         anygm_policy_uses_first_generation_studio(r->win)) ||
+       (family==GML_RENDER_SCENE_SPRITE && !rotated_sprite && !part_view &&
+        !corner_colours && !opaque_target_alpha && !transparent_stretched_trim &&
+        !box_stretched && !positioned_axis && !nearest_mode &&
+        anygm_policy_uses_first_generation_studio(r->win) &&
+        (gml_render_target_is_first_generation_application_surface(r) || page->project_authored_edges ||
+         (fabs(xs-nearbyint(xs))<=1e-9 && fabs(ys-nearbyint(ys))<=1e-9))) ||
        modern_numbered_sprite || modern_screen_sprite || hardware_screen_filtered || firstgen_signed_point ||
        (nearest_mode==4 && !rotated_sprite && xs==1.0 && ys==1.0) ||
        additive_background ||
