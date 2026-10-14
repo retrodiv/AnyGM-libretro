@@ -1973,6 +1973,69 @@ static int resident_indirect_gui_case(void){
            anygm_synthetic_automatic_viewless_gui_content_create,-2);
 }
 
+/* The GUI and host nearest stages must not turn into a single direct scale. */
+static int resident_indirect_gui_host_case(void){
+  Session plain={0},selected={0};
+  AnygmConfigDelta presentation={0};
+  GmlGpuCounters counters={0};
+  anygm_test_graphics_reset();
+  REQUIRE(session_open_fixture_with_scene(&plain,ANYGM_SCENE_RENDERER_CPU,
+          anygm_synthetic_resident_indirect_gui_upscale_content_create),
+          "indirect host GUI CPU fixture loads");
+  REQUIRE(session_open_fixture_with_scene(&selected,ANYGM_SCENE_RENDERER_OPENGL,
+          anygm_synthetic_resident_indirect_gui_upscale_content_create),
+          "indirect host GUI fixture loads");
+  presentation.struct_size=sizeof presentation;
+  presentation.values.struct_size=sizeof presentation.values;
+  presentation.fields=ANYGM_CONFIG_HYBRID_GPU_PRESENTATION|
+    ANYGM_CONFIG_PRESENT_LOGICAL_RASTER|ANYGM_CONFIG_MONITOR_WIDTH|ANYGM_CONFIG_MONITOR_HEIGHT;
+  presentation.values.monitor_width=257u;
+  presentation.values.monitor_height=193u;
+  REQUIRE(anygm_set_config(plain.engine,&presentation)==ANYGM_OK &&
+          anygm_set_config(selected.engine,&presentation)==ANYGM_OK &&
+          graphics_adopt(selected.engine,ANYGM_GRAPHICS_OPENGLES3)==ANYGM_OK &&
+          advance(plain.engine,1,NULL) &&
+          advance(selected.engine,1,NULL),"indirect GUI completes a host-sized scene frame");
+  gml_gpu_counters(selected.engine->gpu,&counters);
+  REQUIRE(selected.engine->host_canvas_active && selected.engine->gui_buffer &&
+          selected.engine->gui_space_width<(int)selected.engine->output_width &&
+          selected.engine->host_canvas_width>=(int)selected.engine->output_width,
+          "fixture reaches both independent nearest stages");
+  if(counters.cpu_upload_frames || selected.engine->canvas_pass_frames!=1u)
+    fprintf(stderr,"indirect host GUI: transport=%u canvas=%u source=%dx%d logical=%ux%u "
+      "host=%dx%d\n",counters.cpu_upload_frames,selected.engine->canvas_pass_frames,
+      selected.engine->gui_space_width,selected.engine->gui_space_height,
+      selected.engine->output_width,selected.engine->output_height,
+      selected.engine->host_canvas_width,selected.engine->host_canvas_height);
+  REQUIRE(!counters.cpu_upload_frames && selected.engine->canvas_pass_frames==1u &&
+          !selected.engine->frame_materializations &&
+          gml_render_deferred_presentation(&selected.engine->render,NULL),
+          "both nearest stages stay on device with a retained logical recovery recipe");
+  REQUIRE(engine_materialize_completed_frame(selected.engine),
+          "the logical GUI picture remains explicitly observable");
+  size_t cpu_size=0,gpu_size=0;
+  uint8_t *cpu_state=serialize(plain.engine,&cpu_size);
+  uint8_t *gpu_state=serialize(selected.engine,&gpu_size);
+  int same_state=cpu_state && gpu_state && cpu_size==gpu_size &&
+                 !memcmp(cpu_state,gpu_state,cpu_size);
+  free(cpu_state);free(gpu_state);
+  REQUIRE(same_state,"two-stage host presentation preserves exact logical and simulation state");
+  int saved_crt=selected.engine->host_crt_active;
+  selected.engine->host_crt_active=1;
+  REQUIRE(!engine_indirect_gui_host_nearest(selected.engine,64,48),"CRT keeps its established owner");
+  selected.engine->host_crt_active=saved_crt;
+  REQUIRE(!engine_indirect_gui_host_nearest(selected.engine,129,97) &&
+          !engine_indirect_gui_host_nearest(selected.engine,0,48),"inner reduction and empty GUI refuse");
+  selected.engine->present_shift_x=1;
+  REQUIRE(!engine_indirect_gui_host_nearest(selected.engine,64,48),"shift keeps its established owner");
+  selected.engine->present_shift_x=0;selected.engine->present_crop_left=1;
+  REQUIRE(!engine_indirect_gui_host_nearest(selected.engine,64,48),"crop keeps its established owner");
+  selected.engine->present_crop_left=0;
+  session_close(&selected);
+  session_close(&plain);
+  return 1;
+}
+
 static int resident_indirect_gui_alpha_fallback_case(void){
   Session plain={0},selected={0};
   AnygmInputFrame input={0};
@@ -4736,6 +4799,7 @@ int main(void){
     {"classic redraw and transition retain exact selected fallback",
      classic_temporal_fallback_case},
     {"resident GUI preserves direct and scaled CPU output",resident_indirect_gui_case},
+    {"resident indirect GUI retains both nearest host stages",resident_indirect_gui_host_case},
     {"partial-alpha indirect GUI keeps ordered CPU fallback",
      resident_indirect_gui_alpha_fallback_case},
     {"two-view retained CPU seed stays current",resident_multiview_cpu_seed_case},

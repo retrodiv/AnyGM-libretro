@@ -64,7 +64,10 @@ typedef enum GmlPlanAxisRule {
    * automatic application-surface presentation anchors at the leading output edge rather than at
    * the pixel centre; the two disagree by one source texel at most fractional boundaries, which is
    * exactly why the rules are named separately instead of one standing in for the other. */
-  GML_PLAN_AXIS_LEADING_EDGE=2
+  GML_PLAN_AXIS_LEADING_EDGE=2,
+  /* Two successive nearest enlargements: source to logical raster, then logical raster to host.
+   * Keep both texel selections rather than replacing them with a direct source-to-host scale. */
+  GML_PLAN_AXIS_COMPOSED_NEAREST=3
 } GmlPlanAxisRule;
 
 typedef struct GmlPlanAxis {
@@ -77,6 +80,7 @@ typedef struct GmlPlanAxis {
   int32_t destination_first;
   double origin;
   double extent;
+  uint32_t intermediate_extent;
 } GmlPlanAxis;
 
 typedef enum GmlPlanOpcode {

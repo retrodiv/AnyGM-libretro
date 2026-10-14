@@ -2346,7 +2346,8 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
 	    }
 	  }
 			  int resident_gui_present=gui_indirect && resident_screen_began &&
-        !engine->host_canvas_active && !engine->present_shift_x && !engine->present_shift_y &&
+        (!engine->host_canvas_active || engine_indirect_gui_host_nearest(engine,gtw,gth)) &&
+        !engine->present_shift_x && !engine->present_shift_y &&
         !engine->present_crop_left && !engine->present_crop_top &&
         !engine->present_crop_right && !engine->present_crop_bottom &&
         gml_render_defer_resident_screen_upscale(&engine->render,gtarget,gtw,gth,

@@ -505,6 +505,47 @@ int engine_execute_content_shader(void *context,const GmlRenderShaderRequest *re
   return 1;
 }
 
+static int engine_present_indirect_gui_host(AnygmEngine *engine,
+                                            unsigned *width,unsigned *height){
+  GmlRenderDeferredPresentation record={0};
+  unsigned host_width=0,host_height=0;
+  if(!gml_render_deferred_presentation(&engine->render,&record) ||
+     !engine_indirect_gui_host_nearest(engine,record.source_width,record.source_height) ||
+     !record.cpu_rgb_only || record.shader>=0 ||
+     record.resident_image.resource_class!=GML_RENDER_RESOURCE_SCREEN ||
+     record.sampling_rule!=GML_RENDER_PRESENTATION_PIXEL_CENTRE ||
+     record.target_pixels!=engine->screen ||
+     record.target_width!=(int)engine->output_width ||
+     record.target_height!=(int)engine->output_height ||
+     record.destination_x || record.destination_y || record.origin_x!=0.0 || record.origin_y!=0.0 ||
+     record.destination_width!=record.target_width || record.destination_height!=record.target_height ||
+     record.extent_x!=record.target_width || record.extent_y!=record.target_height) return 0;
+  engine_host_extent(engine,&host_width,&host_height);
+  if(!engine_build_host_plan(engine,&engine->host_plan,GML_PLAN_TARGET_HOST_FRAMEBUFFER,
+                             host_width,host_height,1)) return 0;
+  GmlPlanImage *source=&engine->host_plan.images[0];
+  GmlPlanOp *blit=&engine->host_plan.operations[1];
+  source->width=source->pitch_pixels=(uint32_t)record.source_width;
+  source->height=(uint32_t)record.source_height;
+  source->cpu_pixels=NULL;
+  source->resident_image=record.resident_image;
+  blit->axis_x.rule=blit->axis_y.rule=GML_PLAN_AXIS_COMPOSED_NEAREST;
+  blit->axis_x.source_extent=source->width;
+  blit->axis_y.source_extent=source->height;
+  blit->axis_x.intermediate_extent=engine->output_width;
+  blit->axis_y.intermediate_extent=engine->output_height;
+  if(!engine_execute_graphics_plan(engine,&engine->host_plan)) return 0;
+  /* Retain the logical GUI recipe for explicit observation. The host-sized attachment is never
+   * state authority, and no CPU shadow or extra persistent texture is produced in ordinary play. */
+  engine->frame_authority=ENGINE_FRAME_GPU_PRESENTED_CPU_RECONSTRUCTIBLE;
+  engine->host_plan_valid=1;
+  engine->host_clear_valid=0;
+  engine->canvas_pass_frames++;
+  if(width) *width=host_width;
+  if(height) *height=host_height;
+  return 1;
+}
+
 int engine_present_hardware_screen(AnygmEngine *engine,unsigned *width,unsigned *height){
   GmlRenderDeferredPresentation record;
   GmlRenderPlan *plan;
@@ -519,7 +560,8 @@ int engine_present_hardware_screen(AnygmEngine *engine,unsigned *width,unsigned 
             engine_graphics_active(engine);
   if(!hybrid && !shaders && !scene) return 0;
   int crt_readback=engine->host_crt_active && engine->host_canvas_active;
-  if(engine->host_canvas_active && !crt_readback) return 0;
+  if(engine->host_canvas_active && !crt_readback)
+    return scene && engine_present_indirect_gui_host(engine,width,height);
   if(!gml_render_deferred_presentation(&engine->render,&record)){
     GmlRenderImageRef completed={0};
     /* R03_COMPLETED_SCREEN_PRESENT: the scene already owns the final raster. The

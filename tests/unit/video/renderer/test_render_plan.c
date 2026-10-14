@@ -1170,6 +1170,23 @@ static int axis_map_case(void){
     REQUIRE(gml_render_plan_compose_maps(outer,inner,composed,OUTER,MIDDLE),"maps composed");
     for(uint32_t index=0;index<OUTER;index++)
       REQUIRE(composed[index]==inner[outer[index]],"composed map is the sequence");
+    GmlPlanAxis joined=accumulator_axis(SOURCE,OUTER);
+    joined.rule=GML_PLAN_AXIS_COMPOSED_NEAREST;
+    joined.intermediate_extent=MIDDLE;
+    uint16_t actual[OUTER],direct[OUTER];
+    REQUIRE(gml_render_plan_axis_map(&joined,actual,OUTER) &&
+            !memcmp(actual,composed,sizeof actual),"typed composition preserves both stages");
+    GmlPlanAxis flat=accumulator_axis(SOURCE,OUTER);
+    REQUIRE(gml_render_plan_axis_map(&flat,direct,OUTER) && memcmp(actual,direct,sizeof actual),
+            "a direct source-to-host scale is a decisive non-equivalent control");
+    joined.destination_first=13;
+    REQUIRE(gml_render_plan_axis_map(&joined,actual,OUTER-13u) &&
+            !memcmp(actual,composed+13,(OUTER-13u)*sizeof *actual),
+            "clipping retains the two original phases");
+    joined.intermediate_extent=SOURCE-1u;
+    REQUIRE(!gml_render_plan_axis_map(&joined,actual,OUTER-13u),"inner reduction refuses");
+    joined.intermediate_extent=OUTER+1u;
+    REQUIRE(!gml_render_plan_axis_map(&joined,actual,OUTER-13u),"outer reduction refuses");
   }
   return 1;
 }

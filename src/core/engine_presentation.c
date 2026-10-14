@@ -61,6 +61,18 @@ int engine_present_crop_rect(const AnygmEngine *engine,unsigned source_width,
   return 1;
 }
 
+/* Both independent GUI/host stages must be nearest; other presentation policies keep their owner. */
+int engine_indirect_gui_host_nearest(const AnygmEngine *engine,int gui_width,int gui_height){
+  return engine && engine->host_canvas_active && !engine->host_crt_active &&
+    !engine->present_shift_x && !engine->present_shift_y &&
+    !engine->present_crop_left && !engine->present_crop_top &&
+    !engine->present_crop_right && !engine->present_crop_bottom &&
+    gui_width>0 && gui_height>0 &&
+    engine->output_width>=(unsigned)gui_width && engine->output_height>=(unsigned)gui_height &&
+    engine->host_canvas_width>=(int)engine->output_width &&
+    engine->host_canvas_height>=(int)engine->output_height;
+}
+
 /* Describe the final host presentation as a neutral plan. The selected rectangle of the completed
  * frame is the source, the host canvas rectangle is the destination, and the margins around it are
  * a clear. Whether the canvas magnifies or reduces selects the operation, because the reduction is

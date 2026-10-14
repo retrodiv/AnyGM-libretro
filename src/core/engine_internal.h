@@ -490,6 +490,8 @@ int engine_present_crop_rect(const AnygmEngine *engine,unsigned source_width,
 /* Describe the final host presentation as a neutral plan against the given target class. */
 int engine_build_host_plan(AnygmEngine *engine,GmlRenderPlan *plan,uint32_t target,
                            unsigned host_width,unsigned host_height,int include_clear);
+/* The bounded two-nearest-stage indirect GUI/host variant; no geometry is changed. */
+int engine_indirect_gui_host_nearest(const AnygmEngine *engine,int gui_width,int gui_height);
 /* Where completed-frame pixels are. A qualified device snapshot preserves the actual terminal
  * RGBA; the context-free path retains its CPU recipe. Neither permits reading stale pixels. */
 enum {

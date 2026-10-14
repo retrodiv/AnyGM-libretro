@@ -6,6 +6,7 @@
 #include "gml_render_plan.h"
 
 #include <math.h>
+#include <stdlib.h>
 #include <string.h>
 
 static int extent_ok(uint32_t value){
@@ -39,6 +40,10 @@ static int axis_ok(const GmlPlanAxis *axis,uint32_t written){
       return axis->extent>0.0 && isfinite(axis->origin) && isfinite(axis->extent);
     case GML_PLAN_AXIS_LEADING_EDGE:
       return 1;
+    case GML_PLAN_AXIS_COMPOSED_NEAREST:
+      return extent_ok(axis->intermediate_extent) &&
+             axis->intermediate_extent>=axis->source_extent &&
+             axis->destination_extent>=axis->intermediate_extent;
     default:
       return 0;
   }
@@ -285,6 +290,21 @@ int gml_render_plan_axis_map(const GmlPlanAxis *axis,uint16_t *map,uint32_t coun
   if(!map || !axis_ok(axis,count)) return 0;
   if(axis->source_extent>0xFFFFu) return 0;
   uint32_t first=(uint32_t)axis->destination_first;
+  if(axis->rule==GML_PLAN_AXIS_COMPOSED_NEAREST){
+    uint32_t middle=axis->intermediate_extent;
+    uint16_t *scratch=malloc(((size_t)middle+count)*sizeof *scratch);
+    if(!scratch) return 0;
+    GmlPlanAxis inner={.rule=GML_PLAN_AXIS_ACCUMULATOR,
+      .source_extent=axis->source_extent,.destination_extent=middle};
+    GmlPlanAxis outer={.rule=GML_PLAN_AXIS_ACCUMULATOR,
+      .source_extent=middle,.destination_extent=axis->destination_extent,
+      .destination_first=axis->destination_first};
+    int produced=gml_render_plan_axis_map(&inner,scratch,middle) &&
+      gml_render_plan_axis_map(&outer,scratch+middle,count) &&
+      gml_render_plan_compose_maps(scratch+middle,scratch,map,count,middle);
+    free(scratch);
+    return produced;
+  }
   if(axis->rule==GML_PLAN_AXIS_ACCUMULATOR){
     /* Walk the recurrence from its own origin rather than seeking into it: the accumulator is the
      * definition, and a closed form that agrees for the values tested is not the same statement. */

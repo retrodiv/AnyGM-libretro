@@ -364,7 +364,22 @@ int gml_render_cpu_plan_execute_pooled(const GmlRenderPlan *plan,uint32_t *targe
         execute_clear(op,target,target_pitch_pixels);
         break;
       case GML_PLAN_OP_BLIT_OPAQUE_NEAREST:
-        if(op->axis_x.rule==GML_PLAN_AXIS_ACCUMULATOR)
+        if(op->axis_x.rule==GML_PLAN_AXIS_COMPOSED_NEAREST ||
+           op->axis_y.rule==GML_PLAN_AXIS_COMPOSED_NEAREST){
+          uint32_t w=op->destination.width,h=op->destination.height;
+          uint16_t *map=malloc(((size_t)w+h)*sizeof *map);
+          if(!map) return 0;
+          int mapped=gml_render_plan_axis_map(&op->axis_x,map,w) &&
+                     gml_render_plan_axis_map(&op->axis_y,map+w,h);
+          if(mapped) for(uint32_t y=0;y<h;y++){
+            uint32_t *row=target+(size_t)((uint32_t)op->destination.y+y)*target_pitch_pixels+
+                          (uint32_t)op->destination.x;
+            const uint32_t *source=image->cpu_pixels+(size_t)map[w+y]*image->pitch_pixels;
+            for(uint32_t x=0;x<w;x++) row[x]=plan_pixel(source[map[x]],op->alpha_write);
+          }
+          free(map);
+          if(!mapped) return 0;
+        } else if(op->axis_x.rule==GML_PLAN_AXIS_ACCUMULATOR)
           execute_nearest_accumulator(op,image,target,target_pitch_pixels,pool_owner);
         else
           execute_nearest_pixel_centre(op,image,target,target_pitch_pixels);

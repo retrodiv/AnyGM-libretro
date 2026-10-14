@@ -88,6 +88,7 @@ static int axis_matches(const GlAxisMap *slot,const GmlPlanAxis *axis,uint32_t c
          slot->source_extent==axis->source_extent &&
          slot->destination_extent==axis->destination_extent &&
          slot->destination_first==axis->destination_first &&
+         slot->intermediate_extent==axis->intermediate_extent &&
          slot->origin==axis->origin && slot->extent==axis->extent;
 }
 
@@ -141,6 +142,7 @@ static int upload_axis_map(GmlGpuBackend *backend,GlAxisMap *slot,const GmlPlanA
   slot->source_extent=axis->source_extent;
   slot->destination_extent=axis->destination_extent;
   slot->destination_first=axis->destination_first;
+  slot->intermediate_extent=axis->intermediate_extent;
   slot->origin=axis->origin;
   slot->extent=axis->extent;
   slot->valid=1;

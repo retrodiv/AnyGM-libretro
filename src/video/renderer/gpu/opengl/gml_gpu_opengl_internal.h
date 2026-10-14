@@ -86,6 +86,7 @@ typedef struct GlAxisMap {
   int32_t destination_first;
   double origin;
   double extent;
+  uint32_t intermediate_extent;
   int valid;
 } GlAxisMap;
 
