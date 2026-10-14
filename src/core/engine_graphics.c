@@ -510,16 +510,36 @@ static int engine_present_indirect_gui_host(AnygmEngine *engine,
   GmlRenderDeferredPresentation record={0};
   unsigned host_width=0,host_height=0;
   if(!gml_render_deferred_presentation(&engine->render,&record) ||
-     !engine_indirect_gui_host_nearest(engine,record.source_width,record.source_height) ||
-     !record.cpu_rgb_only || record.shader>=0 ||
-     record.resident_image.resource_class!=GML_RENDER_RESOURCE_SCREEN ||
-     record.sampling_rule!=GML_RENDER_PRESENTATION_PIXEL_CENTRE ||
+     record.shader>=0 ||
      record.target_pixels!=engine->screen ||
      record.target_width!=(int)engine->output_width ||
      record.target_height!=(int)engine->output_height ||
      record.destination_x || record.destination_y || record.origin_x!=0.0 || record.origin_y!=0.0 ||
      record.destination_width!=record.target_width || record.destination_height!=record.target_height ||
      record.extent_x!=record.target_width || record.extent_y!=record.target_height) return 0;
+  int application=(record.resident_image.resource_class==GML_RENDER_RESOURCE_APPLICATION ||
+                   record.resident_image.resource_class==GML_RENDER_RESOURCE_SCREEN) &&
+    record.sampling_rule==GML_RENDER_PRESENTATION_LEADING_EDGE && !record.cpu_rgb_only;
+  if(application){
+    /* A complete automatic application recipe has its own inner sampling rule.
+     * It must not inherit the GUI magnifier's inner-enlargement restriction. */
+    if(!record.source_pixels || record.source_width<=0 || record.source_height<=0 ||
+       (unsigned)record.source_width>GML_PLAN_MAX_EXTENT ||
+       (unsigned)record.source_height>GML_PLAN_MAX_EXTENT ||
+       record.source_pitch!=record.source_width || record.local_offset_x || record.local_offset_y ||
+       record.linear ||
+       !engine_indirect_gui_host_nearest(engine,(int)engine->output_width,
+                                        (int)engine->output_height)) return 0;
+    uintptr_t source_address=(uintptr_t)record.source_pixels;
+    uintptr_t target_address=(uintptr_t)record.target_pixels;
+    uint64_t source_bytes=(uint64_t)(unsigned)record.source_width*(unsigned)record.source_height*4u;
+    uint64_t target_bytes=(uint64_t)engine->output_width*engine->output_height*4u;
+    if(source_address>=target_address?source_address-target_address<target_bytes:
+       target_address-source_address<source_bytes) return 0;
+  } else if(!record.cpu_rgb_only ||
+            record.resident_image.resource_class!=GML_RENDER_RESOURCE_SCREEN ||
+            record.sampling_rule!=GML_RENDER_PRESENTATION_PIXEL_CENTRE ||
+            !engine_indirect_gui_host_nearest(engine,record.source_width,record.source_height)) return 0;
   engine_host_extent(engine,&host_width,&host_height);
   if(!engine_build_host_plan(engine,&engine->host_plan,GML_PLAN_TARGET_HOST_FRAMEBUFFER,
                              host_width,host_height,1)) return 0;
@@ -529,14 +549,21 @@ static int engine_present_indirect_gui_host(AnygmEngine *engine,
   source->height=(uint32_t)record.source_height;
   source->cpu_pixels=NULL;
   source->resident_image=record.resident_image;
-  blit->axis_x.rule=blit->axis_y.rule=GML_PLAN_AXIS_COMPOSED_NEAREST;
+  if(application){
+    source->image_class=record.resident_image.resource_class==GML_RENDER_RESOURCE_APPLICATION
+      ?GML_PLAN_IMAGE_APPLICATION_SURFACE:GML_PLAN_IMAGE_COMPLETED_FRAME;
+    source->identity=record.identity;
+    source->content_generation=source->pixel_generation=record.generation;
+  }
+  blit->axis_x.rule=blit->axis_y.rule=application
+    ?GML_PLAN_AXIS_COMPOSED_LEADING_NEAREST:GML_PLAN_AXIS_COMPOSED_NEAREST;
   blit->axis_x.source_extent=source->width;
   blit->axis_y.source_extent=source->height;
   blit->axis_x.intermediate_extent=engine->output_width;
   blit->axis_y.intermediate_extent=engine->output_height;
   if(!engine_execute_graphics_plan(engine,&engine->host_plan)) return 0;
-  /* Retain the logical GUI recipe for explicit observation. The host-sized attachment is never
-   * state authority, and no CPU shadow or extra persistent texture is produced in ordinary play. */
+  /* Retain the logical presentation recipe for explicit observation. The host-sized attachment
+   * is never state authority; ordinary play produces no CPU shadow or extra persistent texture. */
   engine->frame_authority=ENGINE_FRAME_GPU_PRESENTED_CPU_RECONSTRUCTIBLE;
   engine->host_plan_valid=1;
   engine->host_clear_valid=0;

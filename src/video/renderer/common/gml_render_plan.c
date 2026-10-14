@@ -44,6 +44,9 @@ static int axis_ok(const GmlPlanAxis *axis,uint32_t written){
       return extent_ok(axis->intermediate_extent) &&
              axis->intermediate_extent>=axis->source_extent &&
              axis->destination_extent>=axis->intermediate_extent;
+    case GML_PLAN_AXIS_COMPOSED_LEADING_NEAREST:
+      return extent_ok(axis->intermediate_extent) &&
+             axis->destination_extent>=axis->intermediate_extent;
     default:
       return 0;
   }
@@ -290,11 +293,13 @@ int gml_render_plan_axis_map(const GmlPlanAxis *axis,uint16_t *map,uint32_t coun
   if(!map || !axis_ok(axis,count)) return 0;
   if(axis->source_extent>0xFFFFu) return 0;
   uint32_t first=(uint32_t)axis->destination_first;
-  if(axis->rule==GML_PLAN_AXIS_COMPOSED_NEAREST){
+  if(axis->rule==GML_PLAN_AXIS_COMPOSED_NEAREST ||
+     axis->rule==GML_PLAN_AXIS_COMPOSED_LEADING_NEAREST){
     uint32_t middle=axis->intermediate_extent;
     uint16_t *scratch=malloc(((size_t)middle+count)*sizeof *scratch);
     if(!scratch) return 0;
-    GmlPlanAxis inner={.rule=GML_PLAN_AXIS_ACCUMULATOR,
+    GmlPlanAxis inner={.rule=axis->rule==GML_PLAN_AXIS_COMPOSED_LEADING_NEAREST
+        ?GML_PLAN_AXIS_LEADING_EDGE:GML_PLAN_AXIS_ACCUMULATOR,
       .source_extent=axis->source_extent,.destination_extent=middle};
     GmlPlanAxis outer={.rule=GML_PLAN_AXIS_ACCUMULATOR,
       .source_extent=middle,.destination_extent=axis->destination_extent,

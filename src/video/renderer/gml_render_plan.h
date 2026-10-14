@@ -67,7 +67,10 @@ typedef enum GmlPlanAxisRule {
   GML_PLAN_AXIS_LEADING_EDGE=2,
   /* Two successive nearest enlargements: source to logical raster, then logical raster to host.
    * Keep both texel selections rather than replacing them with a direct source-to-host scale. */
-  GML_PLAN_AXIS_COMPOSED_NEAREST=3
+  GML_PLAN_AXIS_COMPOSED_NEAREST=3,
+  /* Automatic leading-edge point presentation to a logical raster, followed by the
+   * completed-frame nearest magnifier. The inner stage may also reduce. */
+  GML_PLAN_AXIS_COMPOSED_LEADING_NEAREST=4
 } GmlPlanAxisRule;
 
 typedef struct GmlPlanAxis {

@@ -365,7 +365,9 @@ int gml_render_cpu_plan_execute_pooled(const GmlRenderPlan *plan,uint32_t *targe
         break;
       case GML_PLAN_OP_BLIT_OPAQUE_NEAREST:
         if(op->axis_x.rule==GML_PLAN_AXIS_COMPOSED_NEAREST ||
-           op->axis_y.rule==GML_PLAN_AXIS_COMPOSED_NEAREST){
+           op->axis_y.rule==GML_PLAN_AXIS_COMPOSED_NEAREST ||
+           op->axis_x.rule==GML_PLAN_AXIS_COMPOSED_LEADING_NEAREST ||
+           op->axis_y.rule==GML_PLAN_AXIS_COMPOSED_LEADING_NEAREST){
           uint32_t w=op->destination.width,h=op->destination.height;
           uint16_t *map=malloc(((size_t)w+h)*sizeof *map);
           if(!map) return 0;

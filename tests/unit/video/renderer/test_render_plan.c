@@ -1191,6 +1191,60 @@ static int axis_map_case(void){
   return 1;
 }
 
+static int composed_leading_nearest_case(void){
+  static const uint32_t sources[]={1u,2u,3u,7u,8u,13u,16u,31u};
+  static const uint32_t middles[]={1u,2u,3u,5u,9u,17u,24u,31u};
+  for(size_t s=0;s<sizeof sources/sizeof *sources;s++){
+    for(size_t m=0;m<sizeof middles/sizeof *middles;m++){
+      uint32_t source=sources[s],middle=middles[m];
+      uint32_t destinations[]={middle,middle+1u,2u*middle,2u*middle+3u};
+      for(size_t d=0;d<sizeof destinations/sizeof *destinations;d++){
+        uint32_t destination=destinations[d];
+        for(uint32_t first=0;first<destination;first++){
+          uint16_t actual[65],expected[65];
+          uint32_t count=destination-first;
+          GmlPlanAxis axis={.rule=GML_PLAN_AXIS_COMPOSED_LEADING_NEAREST,.source_extent=source,
+            .destination_extent=destination,.destination_first=(int32_t)first,
+            .intermediate_extent=middle};
+          /* Independently walk the existing outer CPU magnifier, then the
+           * unchanged leading-edge inner selection. Include point reduction. */
+          uint32_t logical=0,accumulator=middle;
+          for(uint32_t x=0;x<destination;x++){
+            if(x>=first) expected[x-first]=(uint16_t)((uint64_t)logical*source/middle);
+            accumulator+=2u*middle;
+            if(accumulator>=2u*destination){
+              accumulator-=2u*destination;
+              logical++;
+            }
+          }
+          REQUIRE(gml_render_plan_axis_map(&axis,actual,count) &&
+                  !memcmp(actual,expected,(size_t)count*sizeof *actual),
+                  "leading composition preserves both CPU stages and clipping");
+        }
+      }
+    }
+  }
+  {
+    GmlPlanAxis axis={.rule=GML_PLAN_AXIS_COMPOSED_LEADING_NEAREST,.source_extent=7u,
+      .destination_extent=13u,.intermediate_extent=9u};
+    uint16_t map[13];
+    REQUIRE(gml_render_plan_axis_map(&axis,map,13u),"valid leading composition produces a map");
+    axis.intermediate_extent=0u;
+    REQUIRE(!gml_render_plan_axis_map(&axis,map,13u),"empty logical stage rejects");
+    axis.intermediate_extent=14u;
+    REQUIRE(!gml_render_plan_axis_map(&axis,map,13u),"host box reduction keeps its existing owner");
+    axis.intermediate_extent=9u;
+    axis.destination_first=-1;
+    REQUIRE(!gml_render_plan_axis_map(&axis,map,13u),"negative composed clip rejects");
+    axis.destination_first=1;
+    REQUIRE(!gml_render_plan_axis_map(&axis,map,13u),"composed clip overflow rejects");
+    axis.destination_first=0;
+    axis.source_extent=0u;
+    REQUIRE(!gml_render_plan_axis_map(&axis,map,13u),"empty source rejects");
+  }
+  return 1;
+}
+
 static int plan_validation_case(void){
   uint32_t source[8*8];
   GmlRenderPlan plan;
@@ -1551,6 +1605,7 @@ int main(int argc,char **argv){
     {"sharp_bilinear",sharp_bilinear_case},
     {"pooled_box_identity",pooled_box_identity_case},
     {"axis_map",axis_map_case},
+    {"composed_leading_nearest",composed_leading_nearest_case},
     {"validation",plan_validation_case},
     {"resident_host_box",resident_host_box_case},
     {"shader_draw_validation",shader_draw_validation_case},

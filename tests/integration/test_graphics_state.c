@@ -2036,6 +2036,104 @@ static int resident_indirect_gui_host_case(void){
   return 1;
 }
 
+static int resident_identity_application_host_case(void){
+  Session plain={0},selected={0};
+  AnygmConfigDelta presentation={0};
+  GmlGpuCounters counters={0};
+  GmlRenderDeferredPresentation record={0};
+  anygm_test_graphics_reset();
+  REQUIRE(session_open_fixture_with_scene(&plain,ANYGM_SCENE_RENDERER_CPU,
+          anygm_synthetic_gpu_scene_route_content_create),
+          "identity application host CPU fixture loads");
+  REQUIRE(session_open_fixture_with_scene(&selected,ANYGM_SCENE_RENDERER_OPENGL,
+          anygm_synthetic_gpu_scene_route_content_create),
+          "identity application host scene fixture loads");
+  presentation.struct_size=sizeof presentation;
+  presentation.values.struct_size=sizeof presentation.values;
+  presentation.fields=ANYGM_CONFIG_HYBRID_GPU_PRESENTATION|
+    ANYGM_CONFIG_PRESENT_LOGICAL_RASTER|ANYGM_CONFIG_MONITOR_WIDTH|ANYGM_CONFIG_MONITOR_HEIGHT;
+  presentation.values.monitor_width=257u;
+  presentation.values.monitor_height=193u;
+  REQUIRE(anygm_set_config(plain.engine,&presentation)==ANYGM_OK &&
+          anygm_set_config(selected.engine,&presentation)==ANYGM_OK &&
+          graphics_adopt(selected.engine,ANYGM_GRAPHICS_OPENGLES3)==ANYGM_OK &&
+          advance(plain.engine,1,NULL) && advance(selected.engine,1,NULL),
+          "identity application host completes both fixture frames");
+  /* The recipe remains inspectable after the old CPU fallback has consumed it.
+   * Prove the structural precondition before the mechanism discriminator. */
+  record=selected.engine->render.presentation;
+  REQUIRE(selected.engine->host_canvas_active && !selected.engine->gui_buffer &&
+          record.resident_image.resource_class==GML_RENDER_RESOURCE_APPLICATION &&
+          record.sampling_rule==GML_RENDER_PRESENTATION_LEADING_EDGE &&
+          !record.cpu_rgb_only && record.source_pixels!=record.target_pixels &&
+          record.source_width==record.target_width &&
+          record.source_height==record.target_height &&
+          record.target_width==(int)selected.engine->output_width &&
+          record.target_height==(int)selected.engine->output_height &&
+          selected.engine->host_canvas_width>=record.target_width &&
+          selected.engine->host_canvas_height>=record.target_height,
+          "fixture selects a distinct owned identity application and nearest host enlargement");
+  gml_gpu_counters(selected.engine->gpu,&counters);
+  fprintf(stderr,"identity application host: transport=%u reads=%llu materializations=%u canvas=%u "
+    "pending=%d source=%u plan=%u cpu_borrow=%d middle=%ux%u logical=%ux%u\n",
+    counters.cpu_upload_frames,(unsigned long long)counters.scene_readbacks,selected.engine->frame_materializations,
+    selected.engine->canvas_pass_frames,gml_render_deferred_presentation(&selected.engine->render,NULL),
+    record.resident_image.resource_class,selected.engine->host_plan.images[0].image_class,
+    selected.engine->host_plan.images[0].cpu_pixels!=NULL,
+    selected.engine->host_plan.operations[1].axis_x.intermediate_extent,
+    selected.engine->host_plan.operations[1].axis_y.intermediate_extent,
+    selected.engine->output_width,selected.engine->output_height);
+  REQUIRE(!counters.cpu_upload_frames && !counters.scene_readbacks &&
+          !selected.engine->frame_materializations && selected.engine->canvas_pass_frames==1u &&
+          gml_render_deferred_presentation(&selected.engine->render,NULL) &&
+          selected.engine->host_plan_valid &&
+          selected.engine->host_plan.images[0].image_class==GML_PLAN_IMAGE_APPLICATION_SURFACE &&
+          selected.engine->host_plan.images[0].resident_image.resource_class==GML_RENDER_RESOURCE_APPLICATION &&
+          !selected.engine->host_plan.images[0].cpu_pixels &&
+          selected.engine->host_plan.operations[1].axis_x.intermediate_extent==selected.engine->output_width &&
+          selected.engine->host_plan.operations[1].axis_y.intermediate_extent==selected.engine->output_height,
+          "identity application fits on device without an ordinary CPU completion");
+  GmlRenderPlan retained_plan=selected.engine->host_plan;
+  for(unsigned exclusion=0;exclusion<9u;exclusion++){
+    GmlGpuCounters before={0},after={0};
+    GmlRenderResourceMetrics resources_before={0},resources_after={0};
+    selected.engine->render.presentation=record;
+    if(exclusion==0u) selected.engine->render.presentation.source_pitch++;
+    if(exclusion==1u) selected.engine->render.presentation.local_offset_x=1;
+    if(exclusion==2u) selected.engine->render.presentation.source_pixels=record.target_pixels;
+    if(exclusion==3u) selected.engine->render.presentation.shader=0;
+    if(exclusion==4u) selected.engine->render.presentation.destination_width--;
+    if(exclusion==8u) selected.engine->render.presentation.source_pixels=record.target_pixels+1;
+    selected.engine->host_crt_active=exclusion==5u;
+    selected.engine->present_shift_x=exclusion==6u;
+    selected.engine->present_crop_left=exclusion==7u;
+    gml_gpu_counters(selected.engine->gpu,&before);
+    gml_render_resource_metrics(&selected.engine->render,&resources_before);
+    REQUIRE(!engine_present_hardware_screen(selected.engine,NULL,NULL),
+            "unqualified application host metadata retains its existing owner");
+    gml_gpu_counters(selected.engine->gpu,&after);
+    gml_render_resource_metrics(&selected.engine->render,&resources_after);
+    REQUIRE(after.frames_offered==before.frames_offered &&
+            after.full_uploads==before.full_uploads &&
+            after.scene_readbacks==before.scene_readbacks &&
+            resources_after.completed_screen_cpu_reads==resources_before.completed_screen_cpu_reads,
+            "application host rejection precedes pixel observation and submission");
+    selected.engine->host_plan=retained_plan;
+  }
+  selected.engine->render.presentation=record;
+  selected.engine->host_crt_active=selected.engine->present_shift_x=selected.engine->present_crop_left=0;
+  REQUIRE(engine_materialize_completed_frame(selected.engine),
+          "identity application retains the original logical recovery recipe");
+  size_t cpu_size=0,gpu_size=0;
+  uint8_t *cpu_state=serialize(plain.engine,&cpu_size);
+  uint8_t *gpu_state=serialize(selected.engine,&gpu_size);
+  int same=cpu_state && gpu_state && cpu_size==gpu_size && !memcmp(cpu_state,gpu_state,cpu_size);
+  free(cpu_state);free(gpu_state);
+  REQUIRE(same,"identity host fitting preserves exact logical and simulation state");
+  session_close(&selected);session_close(&plain);
+  return 1;
+}
+
 static int resident_indirect_gui_alpha_fallback_case(void){
   Session plain={0},selected={0};
   AnygmInputFrame input={0};
@@ -4800,6 +4898,7 @@ int main(void){
      classic_temporal_fallback_case},
     {"resident GUI preserves direct and scaled CPU output",resident_indirect_gui_case},
     {"resident indirect GUI retains both nearest host stages",resident_indirect_gui_host_case},
+    {"resident application retains both nearest host stages",resident_identity_application_host_case},
     {"partial-alpha indirect GUI keeps ordered CPU fallback",
      resident_indirect_gui_alpha_fallback_case},
     {"two-view retained CPU seed stays current",resident_multiview_cpu_seed_case},
