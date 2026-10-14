@@ -1058,13 +1058,14 @@ static int scene_resident_batch_case(void){
 /* Call/state proof only. Composed pixel qualification needs a real device. */
 static int scene_hardware_filtered_batch_case(unsigned kind){
   enum { QUADS=2049 };
+  int application_sprite=kind==11u;
   int integer_surface=kind==10u;
   int additive=kind==1u,combined=kind==2u,surface=(kind>=3u && kind<=5u) || integer_surface;
-  int nearest=kind==4u || kind==5u || integer_surface,screen_stretch=kind>=6u && kind<=9u;
-  int screen_sprite=kind==7u || kind==8u || kind==9u;
+  int nearest=kind==4u || kind==5u || integer_surface,screen_stretch=(kind>=6u && kind<=9u) || application_sprite;
+  int screen_sprite=kind==7u || kind==8u || kind==9u || application_sprite;
   const uint8_t pixels[64]={11,22,33,255,44,55,66,100,77,88,99,0,111,122,133,200};
   for(unsigned api=0;api<2u;api++)
-  for(unsigned excluded=0;excluded<(integer_surface?9u:kind==9u?11u:nearest || screen_stretch?8u:(combined || surface)?7u:4u);excluded++){
+  for(unsigned excluded=0;excluded<(application_sprite?12u:integer_surface?9u:kind==9u?11u:nearest || screen_stretch?8u:(combined || surface)?7u:4u);excluded++){
     GmlGpuContext context=fake_context(api?GML_GPU_API_OPENGLES3:GML_GPU_API_OPENGL_CORE);
     GmlRenderImageRef source={kind==5u?GML_RENDER_RESOURCE_APPLICATION:surface?GML_RENDER_RESOURCE_SURFACE:
       GML_RENDER_RESOURCE_ATLAS,91u,1u,1u};
@@ -1111,7 +1112,7 @@ static int scene_hardware_filtered_batch_case(unsigned kind){
     for(unsigned index=0;index<QUADS+1u;index++){
       GmlRenderDrawOp *op=&ops[index];
       op->sequence=index+1u;
-      op->target.image=(GmlRenderImageRef){screen_stretch || integer_surface?GML_RENDER_RESOURCE_SCREEN:combined?GML_RENDER_RESOURCE_APPLICATION:
+      op->target.image=(GmlRenderImageRef){application_sprite?GML_RENDER_RESOURCE_APPLICATION:screen_stretch || integer_surface?GML_RENDER_RESOURCE_SCREEN:combined?GML_RENDER_RESOURCE_APPLICATION:
         GML_RENDER_RESOURCE_SURFACE,92u,1u,index+1u};
       op->target.storage_version=1u;op->target.width=op->target.height=64u;
       op->target.pixel_format=GML_RENDER_PIXEL_ARGB8888;
@@ -1159,9 +1160,17 @@ static int scene_hardware_filtered_batch_case(unsigned kind){
     if(integer_surface && excluded==8u)
       for(unsigned index=0;index<QUADS+1u;index++)
         ops[index].target.image.resource_class=GML_RENDER_RESOURCE_APPLICATION;
-    if(excluded==8u && !integer_surface) ops[QUADS].payload.quad.sampling.logical_margin_mask=16u;
-    if(excluded==9u) ops[QUADS].payload.quad.sampling.source_region.x=0;
-    if(excluded==10u) ops[QUADS].scene_family=GML_RENDER_SCENE_TEXT;
+    if(application_sprite){
+      if(excluded==8u) for(unsigned index=0;index<QUADS+1u;index++)
+        ops[index].target.image.resource_class=GML_RENDER_RESOURCE_SURFACE;
+      if(excluded==9u) ops[QUADS].scene_family=GML_RENDER_SCENE_TEXT;
+      if(excluded==10u) state.coverage_policy=0u;
+      if(excluded==11u) state.write_mask=7u;
+    }else{
+      if(excluded==8u && !integer_surface) ops[QUADS].payload.quad.sampling.logical_margin_mask=16u;
+      if(excluded==9u) ops[QUADS].payload.quad.sampling.source_region.x=0;
+      if(excluded==10u) ops[QUADS].scene_family=GML_RENDER_SCENE_TEXT;
+    }
     GmlRenderDrawBatch batch={ops,QUADS+1u,&state,1u};
     result=device.submit(device.context,&batch);
     if(excluded){
@@ -1465,7 +1474,7 @@ static int scene_hardware_screen_stretch_batch_case(void){
   return scene_hardware_filtered_batch_case(6);
 }
 static int scene_hardware_screen_sprite_batch_case(void){
-  return scene_hardware_filtered_batch_case(7);
+  return scene_hardware_filtered_batch_case(7) && scene_hardware_filtered_batch_case(11);
 }
 static int scene_hardware_screen_font_batch_case(void){
   return scene_hardware_filtered_batch_case(8);

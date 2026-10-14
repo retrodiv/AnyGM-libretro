@@ -8662,6 +8662,8 @@ static int resident_mapped_gui_stretch_on_demand(void){
 }
 
 static int resident_modern_screen_filtered_sprite(void){
+  static const double rotations[]={0,360,-360,720,-720,.0005,-.0005,359.9995,-359.9995};
+  for(unsigned angle=0;angle<sizeof rotations/sizeof rotations[0];angle++)
   for(unsigned variant=0;variant<20u;variant++){
     GmlRender *render=(GmlRender*)calloc(1,sizeof *render);
     GmlWin content={.bytecode=variant==18u?15:17};
@@ -8714,8 +8716,8 @@ static int resident_modern_screen_filtered_sprite(void){
     if(variant==19u) render->tpag[0].project_authored_edges=1;
     uint64_t version=gml_render_resource_image_ref(render->base_scene_resource).content_version;
     if(variant==10u)
-      gml_draw_sprite_ext(render,0,0,8.0,12.0,2.001,4.002,0.0,0xFFFFFFu,1.0);
-    else gml_draw_sprite_ext(render,0,0,8.5,13.0,1.2,1.5,0.0,0x93B5D7u,
+      gml_draw_sprite_ext(render,0,0,8.0,12.0,2.001,4.002,rotations[angle],0xFFFFFFu,1.0);
+    else gml_draw_sprite_ext(render,0,0,8.5,13.0,1.2,1.5,rotations[angle],0x93B5D7u,
       variant>=13u && variant<=15u?0.0:1.0/90.0);
     CHECK(gml_render_scene_submit_pending(render));
     if(variant==13u){

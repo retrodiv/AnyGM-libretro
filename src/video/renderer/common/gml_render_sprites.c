@@ -3031,6 +3031,7 @@ void gml_render_sprite_ext_unmasked(GmlRender *r, int sprite, int subimg, double
   gml_render_draw_map_point(r,&x,&y);
   gml_render_draw_map_scale(r,&xs,&ys);
   if(r && r->resident_application_pass){
+    double resident_rotation=rot;
     /* Invalid and frameless ordinary sprites have no raster work to order
      * after the queued prefix. Spine and active 3D retain their earlier CPU
      * preparation, which does not share the ordinary frame-count rule. */
@@ -3078,25 +3079,42 @@ void gml_render_sprite_ext_unmasked(GmlRender *r, int sprite, int subimg, double
        !r->spr[sprite].spine && !r->spr[sprite].ns_enabled &&
        !gml_d3_is_active(r) && gml_render_scene_target_matches(r))
       return;
+    /* R03-SPR-AXIS-TURN: filtered Studio preferences share the CPU entry's
+     * axis classification. Existing nearest owners already resolve this
+     * phase and retain their qualified packet/batching preference.
+     * Keep the authored rotation for CPU fallback and special sources. */
+    if(r->interp && !r->classic && sprite>=0 && sprite<r->n_spr && rot!=0.0 && isfinite(rot) &&
+       r->active_shader<0 && !r->spr[sprite].runtime_rgba &&
+       !r->spr[sprite].spine && !r->spr[sprite].ns_enabled && !gml_d3_is_active(r)){
+      double phase=fmod(rot,360.0);if(phase<0.0) phase+=360.0;
+      if(phase<0.001 || fabs(phase-360.0)<0.001){
+        /* Do not extend the inherited filtered numbered owner's uncovered
+         * partial-alpha D2 debt. Existing zero-angle calls stay unchanged. */
+        if(r->interp && r->target_id>0 &&
+           anygm_policy_uses_first_generation_studio(r->win)) goto resident_cpu;
+        resident_rotation=0.0;
+      }
+    }
     if(sprite>=0 && sprite<r->n_spr &&
-       resident_depth_free_ortho_sprite(r,sprite,subimg,x,y,xs,ys,rot,blend,resident_alpha)) return;
+       resident_depth_free_ortho_sprite(r,sprite,subimg,x,y,xs,ys,resident_rotation,blend,resident_alpha)) return;
     if(r->classic && sprite>=0 && sprite<r->n_spr && r->spr[sprite].runtime_rgba &&
        resident_runtime_unit_sprite(r,&r->spr[sprite],subimg,x,y,xs,ys,rot,blend,resident_alpha)) return;
-    if(r->classic && rot!=0.0 && sprite>=0 && sprite<r->n_spr &&
+    if(r->classic && resident_rotation!=0.0 && sprite>=0 && sprite<r->n_spr &&
        isfinite(alpha) && alpha>0.0 &&
-       resident_classic_rotated_sprite_noop(r,&r->spr[sprite],subimg,x,y,xs,ys,rot)) return;
+       resident_classic_rotated_sprite_noop(r,&r->spr[sprite],subimg,x,y,xs,ys,resident_rotation)) return;
     if(sprite>=0 && sprite<r->n_spr &&
-       resident_integer_sprite(r,&r->spr[sprite],subimg,x,y,xs,ys,rot,blend,resident_alpha)) return;
+       resident_integer_sprite(r,&r->spr[sprite],subimg,x,y,xs,ys,resident_rotation,blend,resident_alpha)) return;
     /* Full-opacity nearest tint uses the integer packet, not the older float
      * tint preference. Keep the inherited numbered modern owner untouched. */
     if(sprite>=0 && sprite<r->n_spr && (!r->interp || r->classic) && resident_alpha==1.0 &&
        (blend&0xFFFFFFu)!=0xFFFFFFu &&
        !(r->target_id>0 && !r->gui_pass_active && anygm_policy_has_modern_layer_semantics(r->win)) &&
-       resident_nearest_sprite_function(r,&r->spr[sprite],subimg,x,y,xs,ys,rot,blend,resident_alpha)) return;
+       resident_nearest_sprite_function(r,&r->spr[sprite],subimg,x,y,xs,ys,resident_rotation,blend,resident_alpha)) return;
     if(sprite>=0 && sprite<r->n_spr &&
-       resident_filtered_sprite(r,&r->spr[sprite],subimg,x,y,xs,ys,rot,blend,resident_alpha)) return;
+       resident_filtered_sprite(r,&r->spr[sprite],subimg,x,y,xs,ys,resident_rotation,blend,resident_alpha)) return;
     if(sprite>=0 && sprite<r->n_spr &&
-       resident_nearest_sprite_function(r,&r->spr[sprite],subimg,x,y,xs,ys,rot,blend,resident_alpha)) return;
+       resident_nearest_sprite_function(r,&r->spr[sprite],subimg,x,y,xs,ys,resident_rotation,blend,resident_alpha)) return;
+resident_cpu:
     if(!gml_render_resident_application_cpu_barrier(r)) return;
   }
   if(r && sprite>=0 && sprite<r->n_spr &&

@@ -599,7 +599,7 @@ static int hardware_screen_stretch_valid(const GmlRenderDrawOp *op,
   return 1;
 }
 
-/* Ordinary filtered SCREEN packets retain authored fractional phase in UVs.
+/* Ordinary filtered opaque-stage packets retain authored fractional phase in UVs.
  * This bounded rule does not admit trim, source mutations or exact recipes. */
 static int hardware_screen_sprite_valid(const GmlRenderDrawOp *op,
                                        const GmlRenderDrawStateSnapshot *state,
@@ -612,7 +612,9 @@ static int hardware_screen_sprite_valid(const GmlRenderDrawOp *op,
   if(!source || source->rendered_origin || source->pixel_format!=GML_RENDER_PIXEL_RGBA8888 ||
      op->sources[0].resource_class!=GML_RENDER_RESOURCE_ATLAS ||
      (op->scene_family!=GML_RENDER_SCENE_SPRITE && op->scene_family!=GML_RENDER_SCENE_TEXT) ||
-     op->target.image.resource_class!=GML_RENDER_RESOURCE_SCREEN ||
+     (op->target.image.resource_class!=GML_RENDER_RESOURCE_SCREEN &&
+      (op->target.image.resource_class!=GML_RENDER_RESOURCE_APPLICATION ||
+       op->scene_family!=GML_RENDER_SCENE_SPRITE)) ||
      op->target.pixel_format!=GML_RENDER_PIXEL_ARGB8888 ||
      op->reconstruction_mode!=GML_RENDER_DEVICE_CHECKPOINT ||
      qualified_blend(state)!=1 || state->coverage_policy!=GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA ||
