@@ -207,6 +207,12 @@ static void draw_text_real_plain(GmlRender *r, GmlFont *f, double x, double y, c
         }
         uint32_t glyph_blend=f->subpixel?0xFFFFFFu:blend;
         int resident_glyph=0;
+        if(r->resident_application_pass && use_rot && !f->runtime_owned &&
+           !f->subpixel && f->sdf_spread<=0){
+          GmlSprite glyph_sprite={.w=g->w,.h=g->h};
+          resident_glyph=gml_render_resident_rotated_font_glyph(r,&glyph_sprite,&gt,
+            glyph_x-r->cam_x,glyph_y-r->cam_y,xs,ys,rotation,glyph_blend,alpha);
+        }
         if(r->resident_application_pass && !use_rot && !f->runtime_owned &&
            !f->subpixel && f->sdf_spread<=0 && !r->software_overlay &&
            xs==1.0 && ys==1.0 && glyph_blend==0xFFFFFFu && alpha==1.0 &&
@@ -396,6 +402,17 @@ static void draw_text_transformed_font(GmlRender *r, GmlFont *f,
         double glyph_x=use_rot?x+glyph_ox*ca+glyph_oy*sa:x+glyph_ox;
         double glyph_y=use_rot?y-glyph_ox*sa+glyph_oy*ca:y+glyph_oy;
         int resident_glyph=0;
+        if(r->resident_application_pass && use_rot && !s->runtime_rgba && s->frame){
+          int page_index=s->frame[fr];
+          if(page_index>=0 && page_index<r->n_tpag){
+            GmlTpag page=r->tpag[page_index];
+            page.interp_draw_cache=NULL;page.interp_draw_runs=NULL;
+            page.interp_draw_cache_bytes=0;page.interp_draw_run_count=0;
+            page.interp_draw_cache_valid=0;page.interp_draw_pending_count=0;
+            resident_glyph=gml_render_resident_rotated_font_glyph(r,s,&page,
+              glyph_x,glyph_y,xs,ys,rr,blend,alpha);
+          }
+        }
         if(r->resident_application_pass && !use_rot && !s->runtime_rgba &&
            !gml_d3_is_active(r) && s->frame &&
            isfinite(alpha) && alpha>0.0 && alpha<=1.0 &&

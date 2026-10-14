@@ -69,6 +69,8 @@ int gml_render_resident_font_glyph(GmlRender *render, int atlas,
                                    uint32_t colour, double alpha);
 int gml_render_resident_sprite_font_glyph(GmlRender *render,int page_index,
   double left,double top,double xscale,double yscale,uint32_t colour,double alpha);
+int gml_render_resident_rotated_font_glyph(GmlRender *render,GmlSprite *sprite,GmlTpag *page,
+  double x,double y,double xscale,double yscale,double rotation,uint32_t colour,double alpha);
 int gml_render_resident_filtered_font_glyph(GmlRender *render, int atlas,
                                             int source_x, int source_y,
                                             int width, int height,

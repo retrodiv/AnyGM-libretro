@@ -12363,6 +12363,80 @@ static int resident_nearest_text_function(void){
   return 1;
 }
 
+static int resident_rotated_text_function(void){
+  enum { W=24,H=20 };
+  const int generations[]={530,700,800,13,15,17};
+  const double rotations[]={-1,45,90};
+  const double alphas[]={1,0,.37};
+  const double scales[][2]={{1,1},{2,3},{-2,-3},{.75,1.5}};
+  for(unsigned generation=0;generation<6u;generation++)
+  for(unsigned interpolation=0;interpolation<(generations[generation]>100?2u:1u);interpolation++)
+  for(unsigned target_kind=0;target_kind<4u;target_kind++)
+  for(unsigned gui=0;gui<2u;gui++) for(unsigned font_kind=0;font_kind<2u;font_kind++)
+  for(unsigned state=0;state<6u;state++) for(unsigned angle=0;angle<3u;angle++){
+    GmlRender *r=calloc(1,sizeof *r);GmlWin content={0};
+    FakeDevice fake={.on_demand=1};GmlRenderDeviceServices device=service(&fake);
+    GmlRenderJournalMetrics metrics={0};uint32_t screen[W*H],shadow[W*H];
+    CHECK(r && !gml_render_init(r,NULL));
+    content.classic_version=generations[generation]>100?generations[generation]:0;
+    content.bytecode=content.classic_version?0:generations[generation];
+    content.has_room_layers=content.bytecode==17;r->win=&content;r->classic=content.classic_version!=0;
+    const uint8_t rgba[16]={208,32,16,255,16,208,32,0,32,16,208,128,192,176,160,64};
+    free(r->atlas[0].px);r->atlas[0].px=malloc(sizeof rgba);r->atlas[0].w=r->atlas[0].h=2;
+    r->tpag=calloc(1,sizeof *r->tpag);r->spr=calloc(1,sizeof *r->spr);
+    CHECK(r->atlas[0].px && r->tpag && r->spr);
+    memcpy(r->atlas[0].px,rgba,sizeof rgba);r->n_tpag=r->n_spr=r->n_fonts=1;
+    r->tpag[0]=(GmlTpag){.sw=2,.sh=2,.tw=2,.th=2,.bw=4,.bh=4,.tx=1,.ty=1};
+    r->spr[0]=(GmlSprite){.w=4,.h=4,.n_frames=1,.frame=calloc(1,sizeof(int))};CHECK(r->spr[0].frame);
+    GmlFont *font=&r->fonts[0];font->sprite=0;font->first='A';
+    if(!font_kind){
+      font->real=1;font->sprite=-1;font->atlas=0;font->line_height=font->align_height=2;
+      font->glyphs=calloc(1,sizeof *font->glyphs);CHECK(font->glyphs);font->n_glyphs=1;
+      font->glyphs[0]=(GmlGlyph){.w=2,.h=2,.shift=3,.ch='A'};
+      for(unsigned cp=0;cp<256u;cp++) font->glyph_by_char[cp]=-1;
+      font->glyph_by_char['A']=0;
+    }
+    r->font=0;device.observe_on_demand=fake_observe_on_demand;gml_render_bind_device(r,&device);
+    if(target_kind==1u || target_kind==2u){
+      CHECK(gml_render_application_surface_ensure_owned(r,W,H));
+      CHECK(gml_render_begin_resident_owned_application(r,0,0,0));
+    }else{
+      gml_render_application_surface_bind(r,screen,W,H,1);
+      CHECK(gml_render_begin_resident_base(r,screen,W,H,0,0));
+    }
+    if(target_kind==2u) CHECK(gml_surface_set_target(r,0));
+    if(target_kind==3u){int id=gml_surface_create(r,W,H);CHECK(id>0 && gml_surface_set_target(r,id));}
+    if(gui){gml_render_gui_begin(r,W,H);gml_render_gui_set_size(r,W/2,H/2);}
+    r->interp=(int)interpolation;r->alphablend=!(state&1u);r->blendmode=(int)(state/2u);
+    r->color_write_mask=(uint8_t)((state*3u+angle+target_kind)&15u);
+    r->alpha_test_enable=(state+angle)&1u;r->alpha_test_ref=(uint8_t)(state*31u+angle*17u);
+    gml_render_set_pending_fill(r,0x40273859u);gml_render_flush_pending_fill(r);
+    CHECK(gml_render_scene_submit_pending(r));memcpy(shadow,r->fb,sizeof shadow);
+    double mx=1,my=1;gml_render_draw_map_scale(r,&mx,&my);
+    unsigned scale=(state+angle)%4u,a=(state+angle)%3u;
+    if(anygm_policy_has_modern_layer_semantics(r->win) && r->alphablend &&
+       r->blendmode==0 && !gml_render_target_preserves_alpha(r)){
+      CHECK(!gml_render_resident_rotated_font_glyph(r,&r->spr[0],&r->tpag[0],
+        12.125,10.25,scales[scale][0],scales[scale][1],rotations[angle],0x70B0D0u,alphas[a]));
+      CHECK(r->resident_application_pass && !fake.readbacks && !fake.rgb_queries &&
+            !memcmp(shadow,r->fb,sizeof shadow));
+      gml_render_free(r);free(r);continue;
+    }
+    for(unsigned draw=0;draw<8u;draw++)
+      gml_draw_text_transformed(r,12.125/mx,10.25/my,"A",scales[scale][0]/mx,
+        scales[scale][1]/my,rotations[angle],0x70B0D0u,alphas[a]);
+    if(!r->resident_application_pass) fprintf(stderr,"rotated text admission: generation=%d interp=%u target=%u gui=%u font=%u state=%u angle=%u\n",
+      generations[generation],interpolation,target_kind,gui,font_kind,state,angle);
+    CHECK(r->resident_application_pass && gml_render_scene_submit_pending(r) && !fake.readbacks && !fake.rgb_queries);
+    GmlRenderResource *target=gml_render_scene_target_resource_ensure(r);CHECK(target);
+    gml_render_resource_journal_metrics(target,&metrics);
+    CHECK(metrics.authority==GML_RENDER_RESOURCE_GPU_RESIDENT && !metrics.cpu_replays &&
+          !metrics.journal_bytes && !memcmp(shadow,r->fb,sizeof shadow));
+    gml_render_free(r);free(r);
+  }
+  return 1;
+}
+
 static int resident_integer_background_function(void){
   return resident_background_function(0);
 }
@@ -13682,6 +13756,7 @@ int main(void){
   passed+=resident_nearest_sprite_crop_edges();
   passed+=resident_selected_background_crop_edges();
   passed+=resident_nearest_text_function();
+  passed+=resident_rotated_text_function();
   passed+=resident_selected_background_function();
   passed+=resident_classic_owned_binary_unit_sprite();
   passed+=resident_runtime_binary_unit_sprites();
@@ -13722,6 +13797,6 @@ int main(void){
   passed+=source_free_primitive_rect_replay();
   passed+=stretched_float_exact_replay();
   passed+=filtered_font_exact_recovery();
-  printf("render resource cases: passed=%d failed=%d\n",passed,194-passed);
-  return passed==194?EXIT_SUCCESS:EXIT_FAILURE;
+  printf("render resource cases: passed=%d failed=%d\n",passed,195-passed);
+  return passed==195?EXIT_SUCCESS:EXIT_FAILURE;
 }

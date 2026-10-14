@@ -519,7 +519,8 @@ static int resident_atlas_crop_from_page_impl(GmlRender *r,GmlTpag *page,
   int tile_function=physical_sprite_page==11 || physical_sprite_page==12;
   /* R03-TEXT-NEAREST-FUNCTION: layout has already selected the actual cell.
    * Real detached cells and copied sprite cells keep separate cache phases. */
-  int text_function=physical_sprite_page==13 || physical_sprite_page==14;
+  int text_function=physical_sprite_page==13 || physical_sprite_page==14 ||
+    (rotated_sprite_function && family==GML_RENDER_SCENE_TEXT);
   if(text_function) integer_text=0;
   int scaled_background=selected_background || fractional_background;
   int scaled_atlas=scaled_background || tile_function || text_function || scaled_sprite;
@@ -1022,7 +1023,9 @@ static int resident_atlas_crop_from_page_impl(GmlRender *r,GmlTpag *page,
   operation.payload.quad.u[1]=operation.payload.quad.u[2]=xs<0.0?source_left:source_right;
   operation.payload.quad.v[0]=operation.payload.quad.v[1]=ys<0.0?source_bottom:source_top;
   operation.payload.quad.v[2]=operation.payload.quad.v[3]=ys<0.0?source_top:source_bottom;
-  state.write_mask=scaled_sprite?r->color_write_mask:15u;
+  /* Public rotated text calls the unwrapped CPU glyph writer: its ordinary
+   * normal/add/inverse ports do not apply the sprite API's channel wrapper. */
+  state.write_mask=scaled_sprite && family!=GML_RENDER_SCENE_TEXT?r->color_write_mask:15u;
   state.colour=0xFFFFFFFFu;
   state.alpha=255u;
   if(integer_atlas){
@@ -2781,29 +2784,26 @@ done:
   free(operations);free(regions);return accepted;
 }
 
-static int resident_nearest_sprite_function(GmlRender *r,GmlSprite *sprite,int subimg,
+static int resident_nearest_texture_function(GmlRender *r,GmlSprite *sprite,GmlTpag *page,
                                             double x,double y,double xs,double ys,double rotation,
-                                            uint32_t colour,double alpha){
-  if(!r || !sprite || !r->resident_application_pass || (r->interp && !r->classic) ||
+                                            uint32_t colour,double alpha,GmlRenderSceneFamily family){
+  double minimum_scale=family==GML_RENDER_SCENE_TEXT?0.0625:0.125;
+  double maximum_scale=family==GML_RENDER_SCENE_TEXT?64.0:8.0;
+  if(!r || !sprite || !page || !r->resident_application_pass || (r->interp && !r->classic) ||
      r->active_shader>=0 || r->fog_flat || gml_d3_is_active(r) ||
      r->color_write_mask>15u || r->blendmode<0 || r->blendmode>2 ||
      r->blend_equation!=1 || r->blend_equation_alpha!=1 ||
      r->classic_phase_y || r->rotated_batch_count || r->rotated_batch_building ||
      r->pending_underlay || r->pending_presentation || !gml_render_scene_target_matches(r) ||
      sprite->runtime_rgba || sprite->spine || sprite->ns_enabled ||
-     sprite->n_frames<=0 || !sprite->frame ||
      !isfinite(rotation) || !isfinite(alpha) || alpha<=0.0 || alpha>1.0 ||
      (r->alphablend && alpha<0x1p-64) ||
-     !isfinite(xs) || !isfinite(ys) || fabs(xs)<0.125 || fabs(xs)>8.0 ||
-     fabs(ys)<0.125 || fabs(ys)>8.0) return 0;
+     !isfinite(xs) || !isfinite(ys) || fabs(xs)<minimum_scale || fabs(xs)>maximum_scale ||
+     fabs(ys)<minimum_scale || fabs(ys)>maximum_scale) return 0;
   for(unsigned i=0;i<3u;i++)
     if(r->classic_interp_phase[i] || r->app_interp_phase[i]) return 0;
-  if(!r->color_write_mask) return 1;
+  if(!r->color_write_mask && family==GML_RENDER_SCENE_SPRITE) return 1;
   double phase=fmod(rotation,360.0);if(phase<0.0) phase+=360.0;
-  int frame=gml_render_runtime_frame_index(sprite,subimg);
-  int index=sprite->frame[frame];
-  if(index<0 || index>=r->n_tpag) return 0;
-  GmlTpag *page=&r->tpag[index];
   if(page->project_authored_edges || page->bw!=sprite->w || page->bh!=sprite->h ||
      page->tx<0 || page->ty<0 ||
      (int64_t)page->tx+page->sw>sprite->w ||
@@ -2827,8 +2827,12 @@ static int resident_nearest_sprite_function(GmlRender *r,GmlSprite *sprite,int s
       count=covered;
     }
     if(!count){accepted=1;goto rotated_done;}
-    accepted=resident_atlas_crop_from_page_impl(r,page,0,0,page->sw,page->sh,
-      0.0,0.0,1.0,1.0,GML_RENDER_SCENE_SPRITE,colour,alpha,16,NULL,regions,count,0);
+    GmlTpag selected=*page;
+    /* Real glyph views leave logical TPAG extents unset. Coverage above used
+     * those actual CPU inputs; the detached packet names the physical crop. */
+    if(family==GML_RENDER_SCENE_TEXT){selected.tw=selected.sw;selected.th=selected.sh;}
+    accepted=resident_atlas_crop_from_page_impl(r,&selected,0,0,page->sw,page->sh,
+      0.0,0.0,1.0,1.0,family,colour,alpha,16,NULL,regions,count,0);
 rotated_done:
     free(regions);
     return accepted;
@@ -2836,7 +2840,34 @@ rotated_done:
   double left=x-(double)sprite->originx*xs+(double)page->tx*xs-r->cam_x;
   double top=y-(double)sprite->originy*ys+(double)page->ty*ys-r->cam_y;
   return resident_atlas_crop_from_page(r,page,0,0,page->sw,page->sh,
-    left,top,xs,ys,GML_RENDER_SCENE_SPRITE,colour,alpha,15,NULL);
+    left,top,xs,ys,family,colour,alpha,15,NULL);
+}
+
+static int resident_nearest_sprite_function(GmlRender *r,GmlSprite *sprite,int subimg,
+                                            double x,double y,double xs,double ys,double rotation,
+                                            uint32_t colour,double alpha){
+  if(!r || !sprite || sprite->n_frames<=0 || !sprite->frame) return 0;
+  int frame=gml_render_runtime_frame_index(sprite,subimg);
+  int index=sprite->frame[frame];
+  if(index<0 || index>=r->n_tpag) return 0;
+  return resident_nearest_texture_function(r,sprite,&r->tpag[index],x,y,xs,ys,rotation,
+                                           colour,alpha,GML_RENDER_SCENE_SPRITE);
+}
+
+/* Layout has already mapped the pen and rotated the glyph offset. Preserve
+ * the CPU's actual sprite/cell geometry, using the existing nearest packets. */
+int gml_render_resident_rotated_font_glyph(GmlRender *r,GmlSprite *sprite,GmlTpag *page,
+                                           double x,double y,double xs,double ys,double rotation,
+                                           uint32_t colour,double alpha){
+  if(!r || !page || page->atlas<0 || page->atlas>=r->n_atlas ||
+     r->atlas[page->atlas].runtime_font_page) return 0;
+  /* The unwrapped modern normal glyph writer can queue cell views. Its
+   * opaque-target coverage is not qualified by the detached texel packets;
+   * retain the existing CPU path instead of broadening the pixel contract. */
+  if(anygm_policy_has_modern_layer_semantics(r->win) && r->alphablend &&
+     r->blendmode==0 && !gml_render_target_preserves_alpha(r)) return 0;
+  return resident_nearest_texture_function(r,sprite,page,x,y,xs,ys,rotation,
+                                           colour,alpha,GML_RENDER_SCENE_TEXT);
 }
 
 static int resident_filtered_sprite(GmlRender *r,GmlSprite *sprite,int subimg,
