@@ -194,6 +194,7 @@ DISPATCH_HELPERS = {
     "resident_mapped_screen_gui_font", "resident_nearest_text_scale",
     "resident_identity_gui_replacement",
     "resident_classic_rotated_sprite_noop",
+    "resident_first_generation_rotated_point",
     "gml_render_resident_application_cpu_barrier",
 }
 DISPATCH_DEFERRED = {"render_present_first_generation", "render_present_content_shader"}

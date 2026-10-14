@@ -19,6 +19,14 @@ static int resident_filtered_sprite(GmlRender *r,GmlSprite *sprite,int subimg,
                                     double x,double y,double xs,double ys,double rotation,
                                     uint32_t blend,double alpha);
 
+static int resident_first_generation_rotated_point(GmlRender *r,double rotation){
+  if(!r || r->classic || !isfinite(rotation) ||
+     !anygm_policy_uses_first_generation_studio(r->win) ||
+     anygm_policy_has_modern_layer_semantics(r->win)) return 0;
+  double phase=fmod(rotation,360.0);if(phase<0.0) phase+=360.0;
+  return phase>=0.001 && fabs(phase-360.0)>=0.001;
+}
+
 /* Coarse-mip (flat area-average) texel of a straight-RGBA atlas sub-region, built by successive
  * 2x2 box reduction to 1x1 — i.e. the top mip level of the texture page.
  *
@@ -535,8 +543,13 @@ static int resident_atlas_crop_from_page_impl(GmlRender *r,GmlTpag *page,
     family==GML_RENDER_SCENE_SPRITE;
   int classic_text_point=text_function && r && r->classic &&
     family==GML_RENDER_SCENE_TEXT;
+  /* First-generation Studio's non-axis sprite writer remains point sampled;
+   * the public interpolation flag still belongs to the unchanged CPU state. */
+  int studio_rotated_point=rotated_sprite_function && family==GML_RENDER_SCENE_SPRITE &&
+    r && !r->classic && anygm_policy_uses_first_generation_studio(r->win) &&
+    !anygm_policy_has_modern_layer_semantics(r->win);
   int sampling_interp=r && r->interp && !classic_background_point &&
-    !classic_sprite_point && !classic_text_point;
+    !classic_sprite_point && !classic_text_point && !studio_rotated_point;
   if(integer_atlas &&
      (!r || !page || sampling_interp || r->fog_flat || gml_d3_is_active(r) ||
       (text_function && r->gui_pass_active &&
@@ -2789,7 +2802,10 @@ static int resident_nearest_texture_function(GmlRender *r,GmlSprite *sprite,GmlT
                                             uint32_t colour,double alpha,GmlRenderSceneFamily family){
   double minimum_scale=family==GML_RENDER_SCENE_TEXT?0.0625:0.125;
   double maximum_scale=family==GML_RENDER_SCENE_TEXT?64.0:8.0;
-  if(!r || !sprite || !page || !r->resident_application_pass || (r->interp && !r->classic) ||
+  int studio_rotated_point=family==GML_RENDER_SCENE_SPRITE &&
+    resident_first_generation_rotated_point(r,rotation);
+  if(!r || !sprite || !page || !r->resident_application_pass ||
+     (r->interp && !r->classic && !studio_rotated_point) ||
      r->active_shader>=0 || r->fog_flat || gml_d3_is_active(r) ||
      r->color_write_mask>15u || r->blendmode<0 || r->blendmode>2 ||
      r->blend_equation!=1 || r->blend_equation_alpha!=1 ||
@@ -2974,7 +2990,9 @@ int gml_render_resident_masked_sprite(GmlRender *r,int sprite,int subimg,
                                       double x,double y,double xs,double ys,double rotation,
                                       uint32_t colour,double alpha){
   if(!r || !r->resident_application_pass || r->fog_flat ||
-     r->color_write_mask>=15u || (r->interp && !r->classic) || sprite<0 || sprite>=r->n_spr)
+     r->color_write_mask>=15u ||
+     (r->interp && !r->classic && !resident_first_generation_rotated_point(r,rotation)) ||
+     sprite<0 || sprite>=r->n_spr)
     return 0;
   /* Match the unmasked public no-write boundary before the CPU wrapper would
    * prepare a masked destination. No sampling or source demand is needed. */

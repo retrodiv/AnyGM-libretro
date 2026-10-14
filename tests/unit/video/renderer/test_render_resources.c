@@ -11947,12 +11947,14 @@ static int resident_sprite_function(int geometry){
   for(unsigned scale=0;scale<(geometry?3u:1u);scale++)
   for(unsigned fractional=geometry?1u:0u;fractional<2u;fractional++)
   for(unsigned generation=0;generation<(geometry?6u:4u);generation++)
-  for(unsigned interpolation=0;interpolation<(generations[generation]>100?2u:1u);interpolation++)
+  for(unsigned interpolation=0;interpolation<(geometry==2 || generations[generation]>100?2u:1u);interpolation++)
   for(unsigned target_kind=0;target_kind<4u;target_kind++)
   for(unsigned gui=0;gui<2u;gui++) for(unsigned signs=0;signs<4u;signs++)
   for(unsigned disabled=0;disabled<2u;disabled++) for(unsigned tint=0;tint<2u;tint++)
   for(unsigned mask=0;mask<(interpolation?4u:1u);mask++)
   for(unsigned a=0;a<3u;a++){
+    if(geometry==2 && ((generation!=3u && generation!=4u) ||
+                      !interpolation || !angle || angle==4u)) continue;
     GmlRender *render=calloc(1,sizeof *render);GmlWin content={0};
     FakeDevice fake={.on_demand=1,.readback_colour=0x7F25C080u};
     GmlRenderDeviceServices device=service(&fake);GmlRenderJournalMetrics metrics={0};
@@ -12053,6 +12055,7 @@ static int resident_sprite_function(int geometry){
 
 static int resident_integer_sprite_function(void){return resident_sprite_function(0);}
 static int resident_nearest_sprite_function(void){return resident_sprite_function(1);}
+static int resident_first_generation_rotated_point_sprite_function(void){return resident_sprite_function(2);}
 
 static int resident_classic_large_point_sprite_function(void){
   enum { W=24,H=20,SOURCE=400 };
@@ -13747,6 +13750,7 @@ int main(void){
   passed+=resident_classic_nonphase_sprite_targets();
   passed+=resident_integer_sprite_function();
   passed+=resident_nearest_sprite_function();
+  passed+=resident_first_generation_rotated_point_sprite_function();
   passed+=resident_classic_large_point_sprite_function();
   passed+=resident_integer_background_function();
   passed+=resident_fractional_background_function();
@@ -13797,6 +13801,6 @@ int main(void){
   passed+=source_free_primitive_rect_replay();
   passed+=stretched_float_exact_replay();
   passed+=filtered_font_exact_recovery();
-  printf("render resource cases: passed=%d failed=%d\n",passed,195-passed);
-  return passed==195?EXIT_SUCCESS:EXIT_FAILURE;
+  printf("render resource cases: passed=%d failed=%d\n",passed,196-passed);
+  return passed==196?EXIT_SUCCESS:EXIT_FAILURE;
 }
