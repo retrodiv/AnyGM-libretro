@@ -3748,6 +3748,89 @@ static int resident_flat_primitive_public_order(void){
   return 1;
 }
 
+static int resident_classic_identity_filtered_underlay(void){
+  static const int generations[]={530,600,700,800,810};
+  for(unsigned generation=0;generation<5u;generation++)
+  for(unsigned owned=0;owned<2u;owned++)
+  for(unsigned interpolate=0;interpolate<2u;interpolate++)
+  for(unsigned enlarged=0;enlarged<2u;enlarged++)
+  for(unsigned replace=0;replace<2u;replace++)
+  for(unsigned cutoff=0;cutoff<3u;cutoff++){
+    GmlRender *render=calloc(1,sizeof *render);
+    GmlWin content={.classic_version=generations[generation]};
+    uint32_t source[16]={0},screen[64]={0};
+    FakeDevice fake={0};
+    GmlRenderDeviceServices device=service(&fake);
+    CHECK(render && !gml_render_init(render,NULL));
+    render->classic=1;render->win=&content;render->interp=(int)interpolate;
+    render->presentation_deferral_enabled=1;
+    gml_render_bind_device(render,&device);
+    if(owned){
+      CHECK(gml_render_application_surface_ensure_owned(render,4,4) &&
+            gml_render_begin_resident_owned_application(render,0.0,0.0,0));
+    } else {
+      gml_render_application_surface_bind(render,source,4,4,1);
+      CHECK(gml_render_begin_resident_base(render,source,4,4,0.0,0.0));
+    }
+    gml_render_set_pending_fill(render,0xFF315779u);
+    gml_render_flush_pending_fill(render);
+    if(owned) CHECK(gml_render_application_surface_select_owned(render,1));
+    CHECK(fake.submits==1 && !fake.readbacks);
+    int extent=enlarged?8:4;
+    gml_render_begin(render,screen,extent,extent,0.0,0.0);
+    render->blendmode=replace?6:0;
+    render->alpha_test_enable=cutoff!=0u;
+    render->alpha_test_ref=cutoff==2u?254u:0u;
+    gml_render_set_pending_fill(render,0xFF203040u);
+    gml_render_set_pending_underlay(render,0,0,extent,extent);
+    int accepted=gml_render_defer_resident_underlay(render);
+    int expected=generation<3u && (!interpolate || !enlarged);
+    if(accepted!=expected)
+      fprintf(stderr,"classic underlay generation=%d owned=%u interpolate=%u enlarged=%u accepted=%d expected=%d\n",
+        generations[generation],owned,interpolate,enlarged,accepted,expected);
+    CHECK(accepted==expected && !fake.readbacks);
+    if(accepted){
+      CHECK(!render->pending_underlay && render->pending_presentation &&
+            render->presentation.resident_image.incarnation &&
+            render->presentation.source_width==4 && render->presentation.source_height==4 &&
+            render->presentation.linear==0 && fake.submits==1);
+      gml_render_flush_deferred_presentation(render);
+      CHECK(!render->pending_presentation && screen[0]==0xFF315779u &&
+            screen[extent*extent-1]==0xFF315779u && !fake.readbacks);
+    } else CHECK(render->pending_underlay && !render->pending_presentation);
+    if(generation<3u && interpolate && !enlarged){
+      for(unsigned rejected=0;rejected<10u;rejected++){
+        int shader=render->active_shader,mode=render->blendmode;
+        int rgb_equation=render->blend_equation,alpha_equation=render->blend_equation_alpha;
+        int test=render->alpha_test_enable;
+        uint8_t reference=render->alpha_test_ref,mask=render->color_write_mask;
+        gml_render_set_pending_fill(render,0xFF203040u);
+        gml_render_set_pending_underlay(render,0,0,4,4);
+        if(rejected==0u) render->active_shader=0;
+        else if(rejected<6u) render->blendmode=(int)rejected;
+        else if(rejected==6u) render->blend_equation=2;
+        else if(rejected==7u) render->blend_equation_alpha=2;
+        else if(rejected==8u){render->alpha_test_enable=1;render->alpha_test_ref=255u;}
+        else render->color_write_mask=7u;
+        int refused=!gml_render_defer_resident_underlay(render);
+        if(!refused || !render->pending_underlay || !render->pending_fill ||
+           render->pending_presentation || fake.readbacks)
+          fprintf(stderr,"identity underlay refusal: generation=%d owned=%u state=%u refused=%d "
+            "underlay=%d fill=%d presentation=%d reads=%d\n",generations[generation],owned,
+            rejected,refused,render->pending_underlay,render->pending_fill,
+            render->pending_presentation,fake.readbacks);
+        CHECK(refused && render->pending_underlay &&
+              render->pending_fill && !render->pending_presentation && !fake.readbacks);
+        render->active_shader=shader;render->blendmode=mode;
+        render->blend_equation=rgb_equation;render->blend_equation_alpha=alpha_equation;
+        render->alpha_test_enable=test;render->alpha_test_ref=reference;render->color_write_mask=mask;
+      }
+    }
+    gml_render_free(render);free(render);
+  }
+  return 1;
+}
+
 static int resident_classic_rectangle_scope(void){
   for(unsigned variant=0;variant<3u;variant++){
     GmlRender *cpu=(GmlRender*)calloc(1,sizeof *cpu);
@@ -13428,6 +13511,7 @@ int main(void){
   passed+=resident_layer_effect_continuation_authority();
   passed+=resident_numbered_layer_effect_target();
   passed+=resident_flat_primitive_public_order();
+  passed+=resident_classic_identity_filtered_underlay();
   passed+=resident_classic_rectangle_scope();
   passed+=resident_rectangle_function_matrix();
   passed+=resident_classic_owned_rectangle_scope();
@@ -13573,6 +13657,6 @@ int main(void){
   passed+=source_free_primitive_rect_replay();
   passed+=stretched_float_exact_replay();
   passed+=filtered_font_exact_recovery();
-  printf("render resource cases: passed=%d failed=%d\n",passed,192-passed);
-  return passed==192?EXIT_SUCCESS:EXIT_FAILURE;
+  printf("render resource cases: passed=%d failed=%d\n",passed,193-passed);
+  return passed==193?EXIT_SUCCESS:EXIT_FAILURE;
 }

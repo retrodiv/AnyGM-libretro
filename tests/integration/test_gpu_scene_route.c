@@ -55,6 +55,7 @@ int main(int argc,char **argv){
   int classic_redraw=argc==2 && !strcmp(argv[1],"--keep-classic-redraw");
   int classic_viewless=argc==2 && !strcmp(argv[1],"--keep-classic-viewless");
   int classic_single_view=argc==2 && !strcmp(argv[1],"--keep-classic-single-view");
+  int classic_identity_present=argc==2 && !strcmp(argv[1],"--keep-classic-identity-present");
   int classic_geometry=argc==2 && !strcmp(argv[1],"--keep-classic-single-view-geometry");
   int classic_borrowed_resize=argc==2 && !strcmp(argv[1],"--keep-classic-borrowed-resize");
   int classic_step_composition=argc==2 && !strcmp(argv[1],"--keep-classic-step-composition");
@@ -88,6 +89,7 @@ int main(int argc,char **argv){
        classic_redraw?anygm_synthetic_classic_redraw_content_create(&fixture):
        classic_viewless?anygm_synthetic_classic_viewless_draw_content_create(&fixture):
        classic_single_view?anygm_synthetic_classic_single_view_draw_content_create(&fixture):
+       classic_identity_present?anygm_synthetic_classic_identity_present_content_create(&fixture):
        classic_geometry?anygm_synthetic_classic_single_view_geometry_content_create(&fixture):
        classic_borrowed_resize?anygm_synthetic_classic_borrowed_resize_content_create(&fixture):
        classic_step_composition?anygm_synthetic_classic_step_composition_content_create(&fixture):
@@ -124,7 +126,8 @@ int main(int argc,char **argv){
      multiview_fractional || multiview_step || multiview_nested || multiview_assigned ||
      canvas_geometry || window_raster || centered_gui ||
      crt_native || crt_scaled || host_box || ended_frame || cursor_frame ||
-     classic_redraw || classic_viewless || classic_single_view || classic_geometry || classic_borrowed_resize ||
+     classic_redraw || classic_viewless || classic_single_view || classic_identity_present ||
+     classic_geometry || classic_borrowed_resize ||
      classic_step_composition || classic_step_base_writer || classic_late_step_composition ||
      classic_read || classic_cpu_gui || classic_filter_transition || classic_partial_alpha ||
      classic_rectangle || classic_alpha_rectangle || classic_binary || classic_source_alpha || classic_zero_alpha_part ||
@@ -150,6 +153,7 @@ int main(int argc,char **argv){
           "--keep-crt-scaled|--keep-host-box|--keep-ended-frame|"
           "--keep-cursor-frame|"
           "--keep-classic-redraw|--keep-classic-viewless|--keep-classic-single-view|"
+          "--keep-classic-identity-present|"
           "--keep-classic-single-view-geometry|"
           "--keep-classic-borrowed-resize|"
           "--keep-classic-step-composition|--keep-classic-step-base-writer|"

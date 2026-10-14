@@ -1728,6 +1728,7 @@ static int synthetic_framebuffer_content_create(
   int cursor_frame=gpu_sprite==16;
   int moving_sound=gpu_sprite==17 || gpu_sprite==18 || gpu_sprite==20;
   int borrowed_resize=gpu_sprite==40;
+  int classic_identity_present=gpu_sprite==44;
   int single_classic_view=(gpu_sprite>=21 && gpu_sprite<=37) || borrowed_resize;
   char create[192],step[192],draw[192],draw_begin[192],draw_gui[192];
   snprintf(create,sizeof create,"%s/retain-create.gml",fixture->directory);
@@ -1741,7 +1742,7 @@ static int synthetic_framebuffer_content_create(
        "view_wview[0] = 128; view_hview[0] = 96;\n"
        "view_wport[0] = 128; view_hport[0] = 96;\n"
        "window_set_size(128,96);\n":
-       gpu_sprite==22?
+       gpu_sprite==22 || classic_identity_present?
        "global.fixture_frame = 0;\n"
        "texture_set_interpolation(true);\n":
        gpu_sprite==20?
@@ -1893,6 +1894,10 @@ static int synthetic_framebuffer_content_create(
        "draw_set_color(c_white); draw_text(8,30,\"GPU\");\n":
        gpu_sprite==30?
        "draw_sprite_ext(spr_fixture,0,48,16,1,1,0,c_white,0.5);\n":
+       classic_identity_present?
+       "draw_clear(c_black);\n"
+       "draw_set_color(c_red); draw_rectangle(1,2,10,8,false);\n"
+       "draw_set_color(c_lime); draw_rectangle(31,17,45,29,false);\n":
        single_classic_view?
        "global.fixture_application_width = surface_get_width(application_surface);\n"
        "global.fixture_application_height = surface_get_height(application_surface);\n"
@@ -2036,6 +2041,7 @@ static int synthetic_framebuffer_content_create(
                             (single_classic_view && gpu_sprite!=24)?530:800;
     if(gpu_sprite==39 || gpu_sprite==43) project.classic_version=810;
     if(gpu_sprite==41 || gpu_sprite==42) project.classic_version=701;
+    if(classic_identity_present) project.classic_version=701;
     /* Distinct from both room colors so a cleared classic frame cannot be mistaken for a
      * retained one or for the room the fixture painted first. */
     project.classic_outside_color=0x00204060u;
@@ -2234,6 +2240,9 @@ int anygm_synthetic_classic_viewless_draw_content_create(AnygmSyntheticContent *
 
 int anygm_synthetic_classic_single_view_draw_content_create(AnygmSyntheticContent *fixture){
   return synthetic_framebuffer_content_create(fixture,0,0,1,21);
+}
+int anygm_synthetic_classic_identity_present_content_create(AnygmSyntheticContent *fixture){
+  return synthetic_framebuffer_content_create(fixture,0,0,1,44);
 }
 int anygm_synthetic_classic_single_view_filtered_content_create(AnygmSyntheticContent *fixture){
   return synthetic_framebuffer_content_create(fixture,0,0,1,22);

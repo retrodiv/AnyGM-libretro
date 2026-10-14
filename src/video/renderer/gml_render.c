@@ -1399,10 +1399,15 @@ int gml_render_defer_resident_underlay(GmlRender *r){
           r->app_w==r->base_scene_resource_width &&
           r->app_h==r->base_scene_resource_height) resource=r->base_scene_resource;
   if(!resource) return 0;
-  /* Early classic nearest integer presentation uses the same leading-edge samples.
-   * Temporal phase planes and filtered or fractional ports retain their checked CPU path. */
+  /* Early classic integer presentation uses the same leading-edge samples. Interpolation at
+   * 1:1 still selects that single texel. Temporal phase planes, filtered enlargement and
+   * fractional ports retain their checked CPU path. */
   if(r->classic && (!r->win || anygm_policy_classic_modern_presentation(r->win) ||
-     r->interp || r->app_w<=0 || r->app_h<=0 || r->underlay_w<=0 || r->underlay_h<=0 ||
+     (r->interp && (r->underlay_w!=r->app_w || r->underlay_h!=r->app_h ||
+       r->active_shader>=0 || (r->blendmode!=0 && r->blendmode!=6) ||
+       r->blend_equation!=1 || r->blend_equation_alpha!=1 ||
+       (r->alpha_test_enable && r->alpha_test_ref==255u))) ||
+     r->app_w<=0 || r->app_h<=0 || r->underlay_w<=0 || r->underlay_h<=0 ||
      r->underlay_w%r->app_w || r->underlay_h%r->app_h ||
      r->classic_phase_y || r->app_phase_y)) return 0;
   if(r->classic)

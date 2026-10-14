@@ -983,6 +983,71 @@ static int classic_viewless_application_scene_case(void){
   return 1;
 }
 
+static int classic_identity_filtered_presentation_case(void){
+  Session plain={0},selected={0};
+  AnygmInputFrame input={.struct_size=sizeof input,.pointer_x=-1,.pointer_y=-1};
+  int matching=1;
+  anygm_test_graphics_reset();
+  REQUIRE(session_open_fixture_with_scene(&plain,ANYGM_SCENE_RENDERER_CPU,
+            anygm_synthetic_classic_identity_present_content_create) &&
+          session_open_fixture_with_scene(&selected,ANYGM_SCENE_RENDERER_OPENGL,
+            anygm_synthetic_classic_identity_present_content_create),
+          "interpolated identity Classic fixtures load");
+  REQUIRE(graphics_adopt(selected.engine,ANYGM_GRAPHICS_OPENGLES3)==ANYGM_OK,
+          "identity Classic selected fixture adopts a context");
+  for(unsigned frame=0;frame<5u && matching;frame++){
+    AnygmFrameOutput cpu={.struct_size=sizeof cpu},gpu={.struct_size=sizeof gpu};
+    GmlGpuCounters before={0},counters={0};
+    GmlRenderDeferredPresentation presentation={0};
+    if(frame==3u){
+      anygm_graphics_context_destroy(selected.engine,1u);
+      matching=graphics_adopt(selected.engine,ANYGM_GRAPHICS_OPENGLES3)==ANYGM_OK;
+    } else if(frame==4u)
+      matching=anygm_reset(plain.engine)==ANYGM_OK && anygm_reset(selected.engine)==ANYGM_OK;
+    gml_gpu_counters(selected.engine->gpu,&before);
+    matching=matching && anygm_run_frame(plain.engine,&input,&cpu)==ANYGM_OK &&
+      anygm_run_frame(selected.engine,&input,&gpu)==ANYGM_OK && cpu.pixels &&
+      cpu.width==64u && cpu.height==48u && gpu.width==cpu.width && gpu.height==cpu.height &&
+      !gpu.pixels && (gpu.flags&ANYGM_FRAME_HARDWARE_TARGET) && selected.engine->render.interp==1;
+    gml_gpu_counters(selected.engine->gpu,&counters);
+    /* The first call after restore republishes the saved completed frame without drawing.
+     * Its explicit state transport is not an ordinary composition fallback. */
+    if(frame==2u)
+      matching=matching && counters.cpu_upload_frames==before.cpu_upload_frames+1u &&
+        counters.scene_families[GML_RENDER_SCENE_PRIMITIVE]==before.scene_families[GML_RENDER_SCENE_PRIMITIVE];
+    else
+      matching=matching && gml_render_deferred_presentation(&selected.engine->render,&presentation) &&
+        presentation.source_width==64 && presentation.source_height==48 &&
+        presentation.resident_image.resource_class==GML_RENDER_RESOURCE_APPLICATION &&
+        counters.cpu_upload_frames==before.cpu_upload_frames &&
+        counters.scene_families[GML_RENDER_SCENE_PRIMITIVE]>before.scene_families[GML_RENDER_SCENE_PRIMITIVE] &&
+        counters.scene_batches_refused==before.scene_batches_refused;
+    if(matching){
+      size_t cpu_size=0,gpu_size=0;
+      uint8_t *cpu_state=serialize(plain.engine,&cpu_size);
+      uint8_t *gpu_state=serialize(selected.engine,&gpu_size);
+      matching=cpu_state && gpu_state && cpu_size==gpu_size &&
+        !memcmp(cpu_state,gpu_state,cpu_size) &&
+        engine_materialize_completed_frame(selected.engine) && selected.engine->screen &&
+        !memcmp(cpu.pixels,selected.engine->screen,(size_t)cpu.pitch*cpu.height);
+      if(matching && frame==1u)
+        matching=anygm_state_load(plain.engine,cpu_state,cpu_size)==ANYGM_OK &&
+          anygm_state_load(selected.engine,gpu_state,gpu_size)==ANYGM_OK;
+      free(cpu_state);free(gpu_state);
+    }
+    if(!matching)
+      fprintf(stderr,"identity Classic frame=%u extent=%ux%u/%ux%u interp=%d source=%dx%d "
+        "kind=%u transport=%u primitive=%llu refused=%llu\n",frame,cpu.width,cpu.height,
+        gpu.width,gpu.height,selected.engine->render.interp,presentation.source_width,
+        presentation.source_height,presentation.resident_image.resource_class,
+        counters.cpu_upload_frames,(unsigned long long)counters.scene_families[GML_RENDER_SCENE_PRIMITIVE],
+        (unsigned long long)counters.scene_batches_refused);
+  }
+  session_close(&selected);session_close(&plain);
+  REQUIRE(matching,"interpolated identity Classic presentation stays resident with exact state, restore and Reset");
+  return 1;
+}
+
 /* A sole enlarged classic port keeps the logical Draw raster, not a larger per-sprite target. */
 static int classic_single_view_application_scene_case(void){
   Session plain={0},selected={0};
@@ -4655,6 +4720,8 @@ int main(void){
      classic_viewless_application_scene_case},
     {"single classic view admits logical Draw without changing presentation",
      classic_single_view_application_scene_case},
+    {"interpolated Classic identity presentation keeps exact state and residency",
+     classic_identity_filtered_presentation_case},
     {"excluded single classic views retain CPU presentation",classic_single_view_exclusions_case},
     {"classic single view preserves later geometry transitions",classic_single_view_geometry_transition_case},
     {"borrowed resize keeps Draw metadata and resident pixels",classic_borrowed_resize_scene_case},
