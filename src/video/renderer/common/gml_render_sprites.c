@@ -548,7 +548,9 @@ static int resident_atlas_crop_from_page_impl(GmlRender *r,GmlTpag *page,
       !isfinite(left) || !isfinite(top) ||
       fabs(left)>65536.0 || fabs(top)>65536.0 || page->sw>4096 || page->sh>4096 ||
       (double)crop_width*fabs(xs)>16384.0 || (double)crop_height*fabs(ys)>16384.0 ||
-      (!classic_background_point && !selected_background && !gml_render_target_preserves_alpha(r) &&
+      /* Classic sprites keep the ordinary point writer at every projected area.
+       * Only Studio can switch an opaque target to the separate large-axis kernel. */
+      (!classic_background_point && !classic_sprite_point && !selected_background && !gml_render_target_preserves_alpha(r) &&
        (double)crop_width*fabs(xs)*(double)crop_height*fabs(ys)>=131072.0) ||
       !r->device.context || !r->device.observe_on_demand ||
       !r->device.observe_on_demand(r->device.context))) return 0;

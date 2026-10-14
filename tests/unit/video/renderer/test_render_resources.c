@@ -12054,6 +12054,70 @@ static int resident_sprite_function(int geometry){
 static int resident_integer_sprite_function(void){return resident_sprite_function(0);}
 static int resident_nearest_sprite_function(void){return resident_sprite_function(1);}
 
+static int resident_classic_large_point_sprite_function(void){
+  enum { W=24,H=20,SOURCE=400 };
+  const int generations[]={530,700,800};
+  const uint8_t masks[]={15,0,5,10};
+  for(unsigned generation=0;generation<3u;generation++)
+  for(unsigned interpolation=0;interpolation<2u;interpolation++)
+  for(unsigned target_kind=0;target_kind<4u;target_kind++)
+  for(unsigned gui=0;gui<2u;gui++)
+  for(unsigned variant=0;variant<12u;variant++){
+    GmlRender *render=calloc(1,sizeof *render);GmlWin content={.classic_version=generations[generation]};
+    FakeDevice fake={.on_demand=1};GmlRenderDeviceServices device=service(&fake);
+    GmlRenderJournalMetrics metrics={0};uint32_t screen[W*H],shadow[W*H];
+    CHECK(render && !gml_render_init(render,NULL));
+    CHECK(gml_render_application_surface_ensure_owned(render,W,H));
+    render->win=&content;render->classic=1;
+    free(render->atlas[0].px);render->atlas[0].px=malloc(SOURCE*SOURCE*4u);
+    render->atlas[0].w=render->atlas[0].h=SOURCE;
+    render->tpag=calloc(1,sizeof *render->tpag);render->spr=calloc(1,sizeof *render->spr);
+    CHECK(render->atlas[0].px && render->tpag && render->spr);
+    render->n_tpag=render->n_spr=1;
+    render->tpag[0]=(GmlTpag){.sw=SOURCE,.sh=SOURCE,.tw=SOURCE,.th=SOURCE,.bw=SOURCE,.bh=SOURCE};
+    render->spr[0]=(GmlSprite){.w=SOURCE,.h=SOURCE,.originx=SOURCE/2,.originy=SOURCE/2,.n_frames=1};
+    render->spr[0].frame=calloc(1,sizeof(int));CHECK(render->spr[0].frame);
+    for(unsigned p=0;p<SOURCE*SOURCE;p++){
+      uint8_t *pixel=render->atlas[0].px+4u*p;
+      pixel[0]=(uint8_t)(p*3u);pixel[1]=(uint8_t)(p*5u);pixel[2]=(uint8_t)(p*7u);
+      pixel[3]=(uint8_t)(variant%3u==0u?255u:variant%3u==1u?(p&1u?255u:0u):(p%254u+1u));
+    }
+    device.observe_on_demand=fake_observe_on_demand;
+    gml_render_bind_device(render,&device);
+    if(target_kind==1u || target_kind==2u)
+      CHECK(gml_render_begin_resident_owned_application(render,0,0,0));
+    else{
+      gml_render_application_surface_bind(render,screen,W,H,1);
+      CHECK(gml_render_begin_resident_base(render,screen,W,H,0,0));
+    }
+    if(target_kind==2u) CHECK(gml_surface_set_target(render,0));
+    if(target_kind==3u){int id=gml_surface_create(render,W,H);CHECK(id>0 && gml_surface_set_target(render,id));}
+    if(gui){gml_render_gui_begin(render,W,H);gml_render_gui_set_size(render,W/2,H/2);}
+    gml_render_set_pending_fill(render,0x40273859u);gml_render_flush_pending_fill(render);
+    CHECK(gml_render_scene_submit_pending(render));memcpy(shadow,render->fb,sizeof shadow);
+    render->interp=(int)interpolation;render->alphablend=variant<6u;
+    render->blendmode=(int)(variant%3u);render->color_write_mask=masks[variant%4u];
+    render->alpha_test_enable=variant&1u;render->alpha_test_ref=(uint8_t)(variant*23u);
+    double mapping=gml_render_gui_transform_active(render)?2.0:1.0;
+    double xs=(variant&2u?-1.0:1.0)/mapping,ys=(variant&4u?-1.0:1.0)/mapping;
+    double alpha=variant%4u==0u?1.0:variant%4u==1u?0.0:variant%4u==2u?.4:1e-5;
+    for(unsigned draw=0;draw<8u;draw++)
+      gml_draw_sprite_ext(render,0,0,(W/2.0)/mapping,(H/2.0)/mapping,xs,ys,
+        variant&8u?45.0:0.0,variant&1u?0x70B0D0u:0xFFFFFFu,alpha);
+    if(!render->resident_application_pass || fake.readbacks)
+      fprintf(stderr,"Classic large sprite: generation=%d interpolation=%u target=%u gui=%u "
+        "variant=%u resident=%d reads=%d\n",generations[generation],interpolation,target_kind,gui,
+        variant,render->resident_application_pass,fake.readbacks);
+    CHECK(render->resident_application_pass && gml_render_scene_submit_pending(render) && !fake.readbacks);
+    GmlRenderResource *target=gml_render_scene_target_resource_ensure(render);CHECK(target);
+    gml_render_resource_journal_metrics(target,&metrics);
+    CHECK(metrics.gpu_version==metrics.logical_version && metrics.cpu_version<metrics.logical_version &&
+          !metrics.cpu_replays && !metrics.device_checkpoints && !memcmp(shadow,render->fb,sizeof shadow));
+    gml_render_free(render);free(render);
+  }
+  return 1;
+}
+
 static int resident_background_function(int fractional){
   enum { W=24,H=20 };
   const int generations[]={530,700,800,13,15,17};
@@ -13609,6 +13673,7 @@ int main(void){
   passed+=resident_classic_nonphase_sprite_targets();
   passed+=resident_integer_sprite_function();
   passed+=resident_nearest_sprite_function();
+  passed+=resident_classic_large_point_sprite_function();
   passed+=resident_integer_background_function();
   passed+=resident_fractional_background_function();
   passed+=resident_nearest_tile_function();
@@ -13657,6 +13722,6 @@ int main(void){
   passed+=source_free_primitive_rect_replay();
   passed+=stretched_float_exact_replay();
   passed+=filtered_font_exact_recovery();
-  printf("render resource cases: passed=%d failed=%d\n",passed,193-passed);
-  return passed==193?EXIT_SUCCESS:EXIT_FAILURE;
+  printf("render resource cases: passed=%d failed=%d\n",passed,194-passed);
+  return passed==194?EXIT_SUCCESS:EXIT_FAILURE;
 }
