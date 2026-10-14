@@ -108,6 +108,7 @@ typedef struct FakeDriver {
   GLint uniforms[8];
   int uniform_count;
   int compile_fails;
+  const char *compile_fail_contains;
   int link_fails;
   int texture_unit_limit;
   int active_uniform_override;
@@ -332,8 +333,12 @@ static void fake_ShaderSource(GLuint s,GLsizei n,const GLchar *const *source,con
 }
 static void fake_CompileShader(GLuint s){ (void)s; note_call(); g_fake.compile_calls++; }
 static void fake_GetShaderiv(GLuint s,GLenum name,GLint *out){
-  (void)s; note_call();
-  if(name==GL_COMPILE_STATUS) *out=g_fake.compile_fails?GL_FALSE:GL_TRUE;
+  int fragment=s<256 && g_fake.shader_stage[s]==GL_FRAGMENT_SHADER;
+  note_call();
+  if(name==GL_COMPILE_STATUS)
+    *out=g_fake.compile_fails ||
+      (fragment && g_fake.compile_fail_contains &&
+       strstr(g_fake.shader_source[1],g_fake.compile_fail_contains))?GL_FALSE:GL_TRUE;
   else *out=0;
 }
 static void fake_GetShaderInfoLog(GLuint s,GLsizei size,GLsizei *written,GLchar *log){
@@ -714,6 +719,9 @@ uintptr_t anygm_test_graphics_framebuffer(void *userdata){
 
 void anygm_test_graphics_withhold(const char *name){ g_fake.withhold=name; }
 void anygm_test_graphics_fail_compile(int failing){ g_fake.compile_fails=failing; }
+void anygm_test_graphics_fail_compile_containing(const char *text){
+  g_fake.compile_fail_contains=text;
+}
 void anygm_test_graphics_fail_link(int failing){ g_fake.link_fails=failing; }
 void anygm_test_graphics_texture_unit_limit(int units){ g_fake.texture_unit_limit=units; }
 void anygm_test_graphics_active_uniform_limit(int count){ g_fake.active_uniform_override=count; }

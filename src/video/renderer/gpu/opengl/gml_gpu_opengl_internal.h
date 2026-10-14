@@ -107,8 +107,8 @@ typedef struct GlSceneCheckpoint {
   uint32_t width,height,pixel_format;
 } GlSceneCheckpoint;
 
-/* Ordinary exact composition and the two GLES font generation policies have distinct
- * programs. Uniform locations belong to their program, not to the current draw. */
+/* Uniform locations belong to their program, not to the current draw. GLES normally shares
+ * one combined exact-font program and retains the split generation programs as a compile fallback. */
 typedef struct GlSceneExactProgram {
   GLuint exact_program;
   GLint exact_a_position,exact_a_texcoord,exact_a_colour;
@@ -156,6 +156,7 @@ typedef struct GlScene {
   uint64_t use_clock,context_epoch;
   GLint max_texture_size;
   int supports_sample_mask;
+  int exact_font_split;
   int font_write_flush;
   int available;
 } GlScene;

@@ -228,6 +228,7 @@ void gml_gpu_opengl_scene_forget(GmlGpuBackend *backend){
   scene->snapshot_width=scene->snapshot_height=0;
   scene->max_texture_size=0;
   scene->supports_sample_mask=0;
+  scene->exact_font_split=0;
   scene->font_write_flush=1;
   scene->available=0;
 }

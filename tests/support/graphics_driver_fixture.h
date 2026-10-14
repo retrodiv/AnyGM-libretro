@@ -31,6 +31,8 @@ int anygm_test_graphics_reuse_name(unsigned name);
 void anygm_test_graphics_withhold(const char *name);
 /* Fail shader compilation or program linking, to exercise the refusal paths. */
 void anygm_test_graphics_fail_compile(int failing);
+/* Fail only a shader whose submitted source contains this text; NULL disables the selector. */
+void anygm_test_graphics_fail_compile_containing(const char *text);
 void anygm_test_graphics_fail_link(int failing);
 void anygm_test_graphics_texture_unit_limit(int units);
 void anygm_test_graphics_active_uniform_limit(int count);

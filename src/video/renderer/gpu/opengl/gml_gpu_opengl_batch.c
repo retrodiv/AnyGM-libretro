@@ -1563,10 +1563,6 @@ static int draw_exact_quad(GmlGpuBackend *backend,const GmlRenderDrawOp *op,
   int outcome,font_mode=0;
   if(qualified_blend(state)==6)
     font_mode=op->payload.quad.sampling.quantisation==GML_RENDER_QUANTISE_FONT_MODERN?3:2;
-  if(font_mode && backend->api==GML_GPU_API_OPENGLES3 && !backend->gl.Flush){
-    gml_gpu_opengl_record_error(error,error_capacity,"exact font submission is unavailable");
-    return 0;
-  }
   if(!exact_rect(op,&left,&bottom,&width,&height,
                  qualified_blend(state)==4 || qualified_blend(state)==6 ||
                  qualified_blend(state)==7 || qualified_blend(state)==11) ||
@@ -1574,6 +1570,11 @@ static int draw_exact_quad(GmlGpuBackend *backend,const GmlRenderDrawOp *op,
      !gml_render_gpu_opengl_draw_textured_quad(op,state,source->width,source->height,
                                                source->rendered_origin,
                                                scene->vertices)) return 0;
+  if(font_mode && backend->api==GML_GPU_API_OPENGLES3 &&
+     exact->exact_u_font_channel>=0 && !backend->gl.Flush){
+    gml_gpu_opengl_record_error(error,error_capacity,"exact font submission is unavailable");
+    return 0;
+  }
   if(!scene_snapshot_region(backend,target,left,bottom,width,height)) return 0;
   backend->gl.Disable(GL_BLEND);
   backend->gl.Viewport(0,0,(GLsizei)target->width,(GLsizei)target->height);
@@ -1689,7 +1690,7 @@ static int draw_exact_quad(GmlGpuBackend *backend,const GmlRenderDrawOp *op,
     backend->gl.VertexAttribPointer((GLuint)exact->exact_a_colour,4,GL_FLOAT,GL_FALSE,stride,
                                     (const void*)(4*sizeof(float)));
   if(backend->gl.GetError()!=GL_NO_ERROR){ outcome=0; goto cleanup; }
-  if(font_mode && backend->api==GML_GPU_API_OPENGLES3){
+  if(font_mode && backend->api==GML_GPU_API_OPENGLES3 && exact->exact_u_font_channel>=0){
     /* All three writes sample the same immutable pre-glyph rectangle. Alpha is written
      * once, with the final colour, so overlaps retain the original ordered source-over. */
     outcome=-1;

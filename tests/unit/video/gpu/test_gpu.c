@@ -125,7 +125,7 @@ static int scene_preparation_case(void){
     GmlGpuCounters counters={0};
     uint32_t current=1u;
     unsigned texture,compiles,queries;
-    unsigned preparation_compiles=api==GML_GPU_API_OPENGLES3?8u:4u;
+    unsigned preparation_compiles=api==GML_GPU_API_OPENGLES3?6u:4u;
     context.userdata=&current;
     context.is_current=completed_context_is_current;
     anygm_test_graphics_reset();
@@ -138,7 +138,7 @@ static int scene_preparation_case(void){
     REQUIRE(anygm_test_graphics_compile_calls()==compiles,"invalid extents compile nothing");
     REQUIRE(gml_gpu_prepare_scene(gpu,16u,12u),"common scene resources prepared");
     REQUIRE(anygm_test_graphics_compile_calls()==compiles+preparation_compiles,
-            "common scene, composition and fixed font policies compile once");
+            "common scene, composition and the fixed font program compile once");
     texture=anygm_test_graphics_first_texture_with_format(GL_RGBA8);
     REQUIRE(texture && anygm_test_graphics_texture_width(texture)==16 &&
             anygm_test_graphics_texture_height(texture)==12 &&
@@ -2906,7 +2906,8 @@ static int scene_endpoint_source_sprite_case(void){
   return 1;
 }
 
-static int scene_alpha_composition_api(GmlGpuApi api,const char *renderer,int font_flush){
+static int scene_alpha_composition_api(GmlGpuApi api,const char *renderer,int font_flush,
+                                       int split_font){
   uint32_t source_pixels[4]={0x80FF0000u,0x0000FF00u,0xFF0000FFu,0x40FFFFFFu};
   GmlRenderImageRef source={GML_RENDER_RESOURCE_ATLAS,8u,1u,1u};
   GmlRenderImageRef target={GML_RENDER_RESOURCE_SURFACE,9u,1u,1u};
@@ -2920,6 +2921,8 @@ static int scene_alpha_composition_api(GmlGpuApi api,const char *renderer,int fo
   GmlGpuContext context;
   anygm_test_graphics_reset();
   anygm_test_graphics_renderer(renderer);
+  if(split_font)
+    anygm_test_graphics_fail_compile_containing("#define GML_EXACT_FONT_MODE -1");
   gpu=gml_gpu_create();
   REQUIRE(gpu!=NULL,"device metadata allocated");
   context=fake_context(api);
@@ -3304,13 +3307,14 @@ static int scene_alpha_composition_api(GmlGpuApi api,const char *renderer,int fo
             anygm_test_graphics_scene_copied_pixels()==copied+2u &&
             !anygm_test_graphics_read_pixels(),
             "each filtered glyph snapshots only its pixel, without folding order or CPU reads");
-    REQUIRE(anygm_test_graphics_scene_draw_calls()==draws+(api==GML_GPU_API_OPENGLES3?6:2) &&
+    REQUIRE(anygm_test_graphics_scene_draw_calls()==draws+
+              (api==GML_GPU_API_OPENGLES3 && split_font?6:2) &&
             anygm_test_graphics_flush_calls()==flushes+
-              (api==GML_GPU_API_OPENGLES3 && font_flush?2u:0u) &&
+              (api==GML_GPU_API_OPENGLES3 && split_font && font_flush?2u:0u) &&
             anygm_test_graphics_color_mask_all() &&
             !anygm_test_graphics_font_channel_errors(),
             "font writes use the API-qualified pass count and restore the complete colour mask");
-    if(api==GML_GPU_API_OPENGLES3)
+    if(api==GML_GPU_API_OPENGLES3 && split_font)
       for(unsigned channel=0;channel<3u;channel++)
         REQUIRE(anygm_test_graphics_font_channel_draws(channel)==channels[channel]+2u,
                 "each GLES glyph writes each selected RGB component and alpha only on the last");
@@ -3347,7 +3351,7 @@ static int scene_alpha_composition_api(GmlGpuApi api,const char *renderer,int fo
               "a later invalid glyph refuses before the valid clear and glyph prefix writes");
     }
   }
-  if(api==GML_GPU_API_OPENGLES3){
+  if(api==GML_GPU_API_OPENGLES3 && split_font){
     unsigned compiled=anygm_test_graphics_compile_calls();
     int draws=anygm_test_graphics_scene_draw_calls();
     anygm_test_graphics_fail_scene_draw_at((unsigned)draws+2u);
@@ -3388,7 +3392,8 @@ static int scene_alpha_composition_api(GmlGpuApi api,const char *renderer,int fo
   REQUIRE(result.status==GML_RENDER_EXEC_ACCEPTED && result.accepted_prefix==3u &&
           anygm_test_graphics_scene_copies()==copies+2u &&
           anygm_test_graphics_scene_copied_pixels()==copied+2u &&
-          anygm_test_graphics_scene_draw_calls()==draws+(api==GML_GPU_API_OPENGLES3?6:2) &&
+          anygm_test_graphics_scene_draw_calls()==draws+
+            (api==GML_GPU_API_OPENGLES3 && split_font?6:2) &&
           anygm_test_graphics_compile_calls()==compiled &&
           anygm_test_graphics_color_mask_all() && !anygm_test_graphics_read_pixels(),
           "ordinary filtered sprites reuse the exact legacy program and bounded GPU snapshots");
@@ -3422,7 +3427,7 @@ static int scene_alpha_composition_api(GmlGpuApi api,const char *renderer,int fo
             "invalid ordinary filtered metadata rejects the complete batch before any write");
   }
   draws=anygm_test_graphics_scene_draw_calls();
-  unsigned passes=api==GML_GPU_API_OPENGLES3?3u:1u;
+  unsigned passes=api==GML_GPU_API_OPENGLES3 && split_font?3u:1u;
   anygm_test_graphics_fail_scene_draw_at((unsigned)draws+passes+1u);
   result=service.submit(service.context,&batch);
   REQUIRE(result.status==GML_RENDER_EXEC_RECOVERABLE_ERROR && result.accepted_prefix==2u &&
@@ -3434,7 +3439,7 @@ static int scene_alpha_composition_api(GmlGpuApi api,const char *renderer,int fo
 }
 
 static int scene_alpha_composition_case(void){
-  return scene_alpha_composition_api(GML_GPU_API_OPENGL_CORE,"V3D synthetic",0);
+  return scene_alpha_composition_api(GML_GPU_API_OPENGL_CORE,"V3D synthetic",0,0);
 }
 
 static int scene_gles_font_programs_case(void){
@@ -3448,7 +3453,12 @@ static int scene_gles_font_programs_case(void){
   };
   for(size_t index=0;index<sizeof drivers/sizeof drivers[0];index++)
     if(!scene_alpha_composition_api(GML_GPU_API_OPENGLES3,
-          drivers[index].renderer,drivers[index].font_flush)) return 0;
+          drivers[index].renderer,drivers[index].font_flush,0)) return 0;
+  /* A compiler that refuses the combined exact program retains both established generation
+   * programs, including the renderer-qualified masked-write submission workaround. */
+  if(!scene_alpha_composition_api(GML_GPU_API_OPENGLES3,
+       "D3D12 (NVIDIA synthetic)",0,1) ||
+     !scene_alpha_composition_api(GML_GPU_API_OPENGLES3,"V3D synthetic",1,1)) return 0;
   return 1;
 }
 

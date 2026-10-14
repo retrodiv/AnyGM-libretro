@@ -982,21 +982,22 @@ an on-demand device owner. Their already-qualified execution bodies and controls
 remain intact. Non-normal/custom draw state, phase planes and authored bounds
 outside signed16 coordinates remain explicit CPU debt, not GPU execution credit.
 
-The R03-P9-FILTERED-REAL-TEXT arithmetic has separate cached GLES programs for
-first-generation and modern text. Each writes three GPU passes, one RGB channel
-at a time; alpha is written only with blue. All passes sample the same bounded
-pre-glyph device snapshot, preserving source-over order and alpha. Each complete
-GLES glyph on a reported V3D renderer, or when the renderer identity is unavailable,
-is submitted with `glFlush` before another pass can sample its target. This prevents
-the measured lost RGB writes on translucent V3D sources without a completion wait or
-CPU pixel read. Other identified renderers retain the ordered same-context command
-stream without that per-glyph submission. The decision is cached per context and
-recomputed at reset; arithmetic, snapshots and channel/alpha ordering are unchanged.
-`scene_gles_font_programs_case` checks both submission policies, missing/empty identity
-and V3D wrapped renderer strings with the same whole-batch/failure/channel controls.
-The general
-exact GLES program excludes font arithmetic; desktop GL retains its combined
-single-pass program. Integer-limb shifts avoid undefined native shift counts,
+The R03-P9-FILTERED-REAL-TEXT arithmetic first uses one cached combined GLES
+program for first-generation and modern text, matching the desktop program's
+single pass per glyph. A compiler, link or interface failure selects the established
+split fallback for the lifetime of that context: separate cached generation programs
+write three GPU passes, one RGB channel at a time, with alpha written only with blue.
+All fallback passes sample the same bounded pre-glyph device snapshot, preserving
+source-over order and alpha. Each complete fallback glyph on a reported V3D renderer,
+or when the renderer identity is unavailable, is submitted with `glFlush` before
+another pass can sample its target. This prevents the measured lost RGB writes on
+translucent V3D sources without a completion wait or CPU pixel read. Other identified
+renderers retain the ordered same-context command stream without that per-glyph
+submission. The decision is cached per context and recomputed at reset; arithmetic,
+snapshots and channel/alpha ordering are unchanged. The general exact GLES program
+continues to exclude font arithmetic. `scene_gles_font_programs_case` checks combined
+selection across renderer identities and forced split fallback with the same
+whole-batch/failure/channel controls. Integer-limb shifts avoid undefined native shift counts,
 and a bounded highest-bit search replaces repeated normalisation shifts without
 changing rounding. This limits compiler inlining rather than moving text to the
 CPU. `tests/unit/video/gpu/test_gpu.c::scene_gles_font_programs_case` covers channel
