@@ -2821,7 +2821,9 @@ static int resident_nearest_texture_function(GmlRender *r,GmlSprite *sprite,GmlT
                                             double x,double y,double xs,double ys,double rotation,
                                             uint32_t colour,double alpha,GmlRenderSceneFamily family){
   double minimum_scale=family==GML_RENDER_SCENE_TEXT?0.0625:0.125;
-  double maximum_scale=family==GML_RENDER_SCENE_TEXT?64.0:8.0;
+  /* Both callers share the packet's finite scale bound. Source extent,
+   * projected-area, coverage and region-capacity guards remain downstream. */
+  double maximum_scale=64.0;
   int studio_rotated_point=family==GML_RENDER_SCENE_SPRITE &&
     resident_first_generation_rotated_point(r,rotation);
   if(!r || !sprite || !page || !r->resident_application_pass ||
