@@ -192,6 +192,15 @@ static int resident_identity_gui_replacement(const GmlRender *r,double xs,double
          r->device.context && r->device.observe_on_demand &&
          r->device.observe_on_demand(r->device.context);
 }
+static int resident_zero_scale_sprite_noop(GmlRender *r,const GmlSprite *sprite,
+                                           double xs,double ys,double rotation){
+  /* Both ordinary CPU writers return before sampling an empty scaled sprite.
+   * Special source/program preparation keeps its existing ordered owner. */
+  return r && sprite && isfinite(xs) && isfinite(ys) && isfinite(rotation) &&
+    (xs==0.0 || ys==0.0) && !sprite->spine && !sprite->ns_enabled &&
+    r->active_shader<0 && !gml_d3_is_active(r);
+}
+
 /* R03-SPR-OUTSIDE-FUNCTION: metadata-only empty coverage preserves the prefix. */
 static int resident_outside_sprite_noop(GmlRender *r,GmlSprite *sprite,int subimg,
                                        double x,double y,double xs,double ys,double rotation){
@@ -214,7 +223,8 @@ int gml_render_resident_sprite_outside(GmlRender *r,int sprite,int subimg,
   if(!r || !r->resident_application_pass || sprite<0 || sprite>=r->n_spr) return 0;
   gml_render_draw_map_point(r,&x,&y);
   gml_render_draw_map_scale(r,&xs,&ys);
-  return resident_outside_sprite_noop(r,&r->spr[sprite],subimg,x,y,xs,ys,rotation);
+  return resident_zero_scale_sprite_noop(r,&r->spr[sprite],xs,ys,rotation) ||
+    resident_outside_sprite_noop(r,&r->spr[sprite],subimg,x,y,xs,ys,rotation);
 }
 
 static int resident_classic_rotated_sprite_noop(GmlRender *r,GmlSprite *sprite,int subimg,
@@ -2989,10 +2999,15 @@ void gml_draw_sprite(GmlRender *r, int sprite, int subimg, double x, double y){
 int gml_render_resident_masked_sprite(GmlRender *r,int sprite,int subimg,
                                       double x,double y,double xs,double ys,double rotation,
                                       uint32_t colour,double alpha){
-  if(!r || !r->resident_application_pass || r->fog_flat ||
-     r->color_write_mask>=15u ||
-     (r->interp && !r->classic && !resident_first_generation_rotated_point(r,rotation)) ||
+  if(!r || !r->resident_application_pass || r->color_write_mask>=15u ||
      sprite<0 || sprite>=r->n_spr)
+    return 0;
+  double mapped_xs=xs,mapped_ys=ys;
+  gml_render_draw_map_scale(r,&mapped_xs,&mapped_ys);
+  if(resident_zero_scale_sprite_noop(r,&r->spr[sprite],mapped_xs,mapped_ys,rotation))
+    return 1;
+  if(r->fog_flat ||
+     (r->interp && !r->classic && !resident_first_generation_rotated_point(r,rotation)))
     return 0;
   /* Match the unmasked public no-write boundary before the CPU wrapper would
    * prepare a masked destination. No sampling or source demand is needed. */
@@ -3022,12 +3037,10 @@ void gml_render_sprite_ext_unmasked(GmlRender *r, int sprite, int subimg, double
     if(!gml_d3_is_active(r) &&
        (sprite<0 || sprite>=r->n_spr ||
         (!r->spr[sprite].spine && r->spr[sprite].n_frames<=0))) return;
-    /* The ordinary CPU axis writer returns before sampling a zero scale.
+    /* The ordinary CPU writers return before sampling a zero scale.
      * Do not materialise a queued prefix just to execute that same no-op. */
-    if(sprite>=0 && sprite<r->n_spr && rot==0.0 &&
-       isfinite(xs) && isfinite(ys) && (xs==0.0 || ys==0.0) &&
-       !r->spr[sprite].spine && !r->spr[sprite].ns_enabled &&
-       r->active_shader<0 && !gml_d3_is_active(r)) return;
+    if(sprite>=0 && sprite<r->n_spr &&
+       resident_zero_scale_sprite_noop(r,&r->spr[sprite],xs,ys,rot)) return;
     /* R03-SPR-BLACK-ADDITIVE-NOOP: black tint contributes zero RGB. The
      * unchanged modern SCREEN CPU leaf stamps written alpha opaque, so a
      * certified opaque destination is unchanged with either sampler. Keep
