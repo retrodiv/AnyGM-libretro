@@ -313,7 +313,7 @@ static int integer_function_sprite_valid(const GmlRenderDrawOp *op,
                      op->scene_family==GML_RENDER_SCENE_TILE ||
                      op->scene_family==GML_RENDER_SCENE_TEXT;
       if(!isfinite(scale) || scale<(background?0.0625:0.125)-1e-9 ||
-         scale>(background?64.0:8.0)+1e-9) return 0;
+         scale>64.0+1e-9) return 0;
     }
   }
   for(unsigned c=0;c<4u;c++){

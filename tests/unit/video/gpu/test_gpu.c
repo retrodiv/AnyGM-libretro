@@ -2567,7 +2567,7 @@ static int scene_integer_function_sprite_case(void){
       for(unsigned i=0;i<3u;i++) ops[i].target.image.content_version=10u+i;
       for(unsigned i=1u;i<3u;i++){
         ops[i].payload.quad=pristine;GmlRenderQuad *q=&ops[i].payload.quad;
-        if(invalid){q->u[1]=q->u[2]=background?0.99:0.95;}
+        if(invalid){q->u[1]=q->u[2]=0.99;}
         else{for(unsigned c=0;c<4u;c++) q->u[c]=0.125;}
       }
       result=device.submit(device.context,&batch);
@@ -2600,6 +2600,21 @@ static int scene_integer_function_sprite_case(void){
       REQUIRE(result.status==GML_RENDER_EXEC_UNSUPPORTED && !result.accepted_prefix &&
         anygm_test_graphics_scene_draw_calls()==calls && !anygm_test_graphics_scene_copies() &&
         !anygm_test_graphics_read_pixels(),"invalid cutout state rejects the whole batch before its clear");
+    }
+    batch.states=&state;batch.state_count=1u;ops[2].state_index=0u;
+    const double wide_scales[]={8.0,12.0,31.5,64.0};
+    for(unsigned wide=0;wide<sizeof wide_scales/sizeof wide_scales[0];wide++){
+      for(unsigned i=0;i<3u;i++) ops[i].target.image.content_version=20u+wide*3u+i;
+      for(unsigned i=1u;i<3u;i++){
+        ops[i].payload.quad=pristine;
+        ops[i].payload.quad.x[1]=ops[i].payload.quad.x[2]=-1.0+2.0*wide_scales[wide];
+      }
+      int calls=anygm_test_graphics_scene_draw_calls();
+      result=device.submit(device.context,&batch);
+      REQUIRE(result.status==GML_RENDER_EXEC_ACCEPTED && result.accepted_prefix==3u &&
+        anygm_test_graphics_scene_draw_calls()==calls+draws &&
+        !anygm_test_graphics_scene_copies() && !anygm_test_graphics_read_pixels(),
+        "wide nearest intervals through the upper bound retain grouped device execution");
     }
     gml_gpu_destroy(gpu,1);
   }

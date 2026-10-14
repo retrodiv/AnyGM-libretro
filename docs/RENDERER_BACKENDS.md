@@ -1020,6 +1020,17 @@ owned partial/inverse rectangles and all Classic GUI draws remain excluded.
 | R03-SPR-AXIS-TURN | EXACT RGBA0 at unchanged cheap nearest endpoints and no-write states; TOLERANCE±2 filtered or partial-alpha draws; outside coverage and disabled channels EXACT0 | `common/gml_render_sprites.c::gml_render_sprite_ext_unmasked` normalises only the resident argument before interpolation-enabled Studio preferences when the existing CPU axis predicate holds; qualified nearest preferences remain unchanged | Unchanged `cpu/gml_render_cpu_blit.c::gml_render_cpu_blit_sprite_ext_resolved` selects its original axis writer for the same phase interval | `common/gml_render_sprites.c::resident_atlas_crop_from_page` and the existing zero-angle SPRITE executors retain batching. `gpu/opengl/gml_gpu_opengl_batch.c::hardware_screen_sprite_valid` also validates the already-prepared immutable full-mask normal bilinear SPRITE packet on opaque-written-alpha APPLICATION, not only SCREEN; no executor body replaced | Existing `gpu/opengl/gml_gpu_opengl_shaders.h::R03_SHADER_DIRECT_TEXTURE` and zero-angle shader recipes only; no new shader or arithmetic emulation | Ordinary finite sprite source/transform and the existing axis owner's bounds. First-generation filtered numbered turns explicitly reject uncovered legacy zero-angle D2 debt. The APPLICATION extension rejects TEXT, SURFACE targets, alpha-preserving coverage and partial masks before consuming a clear. Runtime/Spine/nine-slice/program/depth/fog and other unsupported states retain their rejection or separately qualified owner. No whole-game/speed claim | `tests/unit/video/renderer/test_render_resources.c::resident_modern_screen_filtered_sprite` checks zero/full/near-zero turns; `tests/unit/video/gpu/test_gpu.c::scene_hardware_screen_sprite_batch_case` checks APPLICATION capacity2048 and rejection-before-clear on GL/GLES. The device comparison R03-SPR-AXIS-TURN (`axis-turn`) requires1728 representative admission/CPU/device pairs, explicit rejection counts, admitted D2 RGBA, independent coverage, unchanged ordinary transports, no increased predecessor snapshots and exact detached actual bytes; alpha/outside/tolerance negatives must fail |
 <!-- R03-RULES:END -->
 
+The R03-SPR-NEAREST-FUNCTION physical-axis range is extended from1/8..8 to
+1/8..64 by the shared producer and device validator together. Qualification
+requires the sprite-function-matrix wide-scales profile:3456 correlated
+complete RGBA pairs spanning all six policies, four ordinary owners, world/GUI,
+normal/replacement/inverse/additive states, masks, trim, tint, source/draw alpha,
+axis/rotation and both synthetic layouts. Each physical axis covers every integer
+scale1..64 plus representative fractional wide scales. Existing projected-area,
+geometry, region-count and source fences remain unchanged, including Studio's
+separate large-axis CPU kernel. Rejecting comparator negatives and affected
+partials remain mandatory; an admission witness alone is not pixel qualification.
+
 The rectangle function matrix supersedes the older rectangle rules' target,
 generation, GUI, gradient and outline exclusions for normal full-write state with
 an on-demand device owner. Their already-qualified execution bodies and controls
