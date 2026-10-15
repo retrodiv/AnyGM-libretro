@@ -111,7 +111,8 @@ int gml_render_gpu_opengl_draw_textured_quad(const GmlRenderDrawOp *op,
     !quad->sampling.quantisation && !quad->sampling.logical_margin_mask &&
     region.x==0 && region.y==0 && region.width==source_width && region.height==source_height;
   if(!automatic_surface && !destination_surface &&
-     (quad->sampling.filter==GML_RENDER_FILTER_BOX || stretched_float)){
+     (quad->sampling.filter==GML_RENDER_FILTER_BOX || stretched_float ||
+      quad->sampling.quantisation==GML_RENDER_QUANTISE_FIXED_STRETCHED)){
     if(rotated || rendered_source_origin || quad->span_active ||
        (!stretched_float && op->reconstruction_mode!=GML_RENDER_DEVICE_CHECKPOINT)) return 0;
     for(uint32_t axis=0;axis<2;axis++){
@@ -186,6 +187,8 @@ int gml_render_gpu_opengl_draw_textured_quad(const GmlRenderDrawOp *op,
        quad->sampling.quantisation==GML_RENDER_QUANTISE_INTEGER_TINT_ROUND ||
        quad->sampling.quantisation==GML_RENDER_QUANTISE_SURFACE_NEAREST_FUNCTION ||
        half_gui || stretched_blend || (rotated && state->coverage_policy) ||
+       (quad->sampling.filter==GML_RENDER_FILTER_BOX &&
+        state->coverage_policy==GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA) ||
        (op->scene_family==GML_RENDER_SCENE_SURFACE &&
         state->coverage_policy==GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA) ||
        quad->sampling.filter==GML_RENDER_FILTER_HARDWARE_BILINEAR)
@@ -229,6 +232,7 @@ int gml_render_gpu_opengl_draw_textured_quad(const GmlRenderDrawOp *op,
     }
     if(!rotated && state->coverage_policy==GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA &&
        quad->sampling.quantisation!=GML_RENDER_QUANTISE_SURFACE_NEAREST_FUNCTION &&
+       quad->sampling.filter!=GML_RENDER_FILTER_BOX &&
        quad->sampling.filter!=GML_RENDER_FILTER_HARDWARE_BILINEAR &&
        quad->sampling.filter!=GML_RENDER_FILTER_HARDWARE_PIXEL_CENTRE_POINT){
       /* The axis screen rule has no rotated/box span. Retain low residuals of

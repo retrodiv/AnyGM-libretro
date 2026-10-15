@@ -336,8 +336,11 @@ int gml_render_application_scene_enqueue_quads(GmlRender *r,
     (operation->reconstruction_mode==GML_RENDER_DEVICE_CHECKPOINT || exact_filtered_font) &&
     (operation->payload.quad.sampling.filter==GML_RENDER_FILTER_BILINEAR ||
      (operation->payload.quad.sampling.filter==GML_RENDER_FILTER_HARDWARE_BILINEAR &&
-      operation->payload.quad.sampling.quantisation==GML_RENDER_QUANTISE_HARDWARE_SPRITE_FIRSTGEN) ||
+      (operation->payload.quad.sampling.quantisation==GML_RENDER_QUANTISE_HARDWARE_SPRITE_FIRSTGEN ||
+       operation->payload.quad.sampling.quantisation==GML_RENDER_QUANTISE_FIXED_STRETCHED)) ||
      operation->payload.quad.sampling.filter==GML_RENDER_FILTER_NEAREST_PHASED ||
+     (operation->payload.quad.sampling.filter==GML_RENDER_FILTER_BOX &&
+      state->coverage_policy==GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA) ||
      operation->payload.quad.sampling.filter==GML_RENDER_FILTER_NEAREST)) ||
      ((operation->scene_family==GML_RENDER_SCENE_BACKGROUND ||
        operation->scene_family==GML_RENDER_SCENE_TILE) &&

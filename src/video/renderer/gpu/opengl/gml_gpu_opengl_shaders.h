@@ -532,7 +532,29 @@
   "  }\n" \
   "  vec2 centre=vec2(gl_FragCoord.x,u_extent.y-gl_FragCoord.y);\n" \
   "  // R03_SHADER_BOX_REDUCTION: stretched integer source-box average.\n" \
-  "  if(u_filter==4){\n" \
+  "  if(u_filter==77 || u_filter==78){\n" \
+  "    ivec2 logical=ivec2(v_span_x.x,v_span_y.x),dest=ivec2(v_span_x.y,v_span_y.y);\n" \
+  "    ivec2 trim=ivec2(v_span_x.z,v_span_y.z),visible=ivec2(v_span_x.w,v_span_y.w);\n" \
+  "    ivec2 p=ivec2(floor(centre-v_map.xy)),den=2*dest;\n" \
+  "    ivec2 numerator=clamp((2*p+ivec2(1))*logical-dest,ivec2(0),(logical-ivec2(1))*den);\n" \
+  "    ivec2 low=numerator/den;vec2 phase=vec2(numerator%den)/vec2(den);\n" \
+  "    vec2 local=vec2(low-trim)+phase;\n" \
+  "    vec2 at=clamp(local,vec2(0.0),vec2(visible-ivec2(1)));\n" \
+  "    vec4 sampled=texture(u_image,(v_clamp.xy+at+vec2(0.5))/vec2(textureSize(u_image,0)));\n" \
+  "    vec2 coverage=clamp(local+vec2(1.0),0.0,1.0)*clamp(vec2(visible)-local,0.0,1.0);\n" \
+  "    sampled*=coverage.x*coverage.y;\n" \
+  "    // Coverage uses logical taps even when the hardware's tiny alpha rounds away.\n" \
+  "    float witness=0.0;\n" \
+  "    for(int y=0;y<2;y++) for(int x=0;x<2;x++){\n" \
+  "      ivec2 tap=min(low+ivec2(x,y),logical-ivec2(1))-trim;\n" \
+  "      if(any(lessThan(tap,ivec2(0))) || any(greaterThanEqual(tap,visible))) continue;\n" \
+  "      float weight=(x==0?1.0-phase.x:phase.x)*(y==0?1.0-phase.y:phase.y);\n" \
+  "      witness+=texelFetch(u_image,ivec2(v_clamp.xy)+tap,0).a*weight;\n" \
+  "    }\n" \
+  "    if(witness<=0.0 || (u_alpha_test>=0 && sampled.a*255.0<=float(u_alpha_test))) discard;\n" \
+  "    o_color=u_filter==78?vec4(0.0,0.0,0.0,1.0):vec4(sampled.rgb*v_colour.rgb,sampled.a*v_colour.a); return;\n" \
+  "  }\n" \
+  "  if(u_filter==4 || u_filter==75 || u_filter==76){\n" \
   "    ivec2 logical=ivec2(v_span_x.x,v_span_y.x),dest=ivec2(v_span_x.y,v_span_y.y);\n" \
   "    ivec2 trim=ivec2(v_span_x.z,v_span_y.z),visible=ivec2(v_span_x.w,v_span_y.w);\n" \
   "    ivec2 p=ivec2(floor(centre-v_map.xy));\n" \
@@ -546,6 +568,15 @@
   "    }\n" \
   "    if(count==0) discard;\n" \
   "    vec4 sampled=floor(total/float(count)+vec4(0.5));\n" \
+  "    // R03_SHADER_STRETCHED_BOX: raw cutoff, float tint and fixed blending.\n" \
+  "    if(u_filter==75 || u_filter==76){\n" \
+  "      if((u_alpha_test>=0 && int(total.a)<=u_alpha_test*count) || sampled.a<=0.0) discard;\n" \
+  "      if(u_filter==76){o_color=vec4(0.0,0.0,0.0,1.0); return;}\n" \
+  "      uvec3 tint=uvec3(floor(v_colour.rgb*255.0+0.5));\n" \
+  "      uvec3 rounding=all(equal(logical,dest))?uvec3(0u):uvec3(127u);\n" \
+  "      vec3 rgb=vec3((uvec3(sampled.rgb)*tint+rounding)/uvec3(255u))/255.0;\n" \
+  "      o_color=vec4(rgb,sampled.a*v_colour.a/255.0); return;\n" \
+  "    }\n" \
   "    uvec3 tint=uvec3(floor(v_colour.rgb*255.0+vec3(0.5)));\n" \
   "    uvec3 rgb=uvec3(sampled.rgb)*tint/uvec3(255u);\n" \
   "    o_color=vec4(vec3(rgb)/255.0,sampled.a*v_colour.a/255.0); return;\n" \

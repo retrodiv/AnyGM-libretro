@@ -3750,6 +3750,108 @@ static int resident_mapped_gui_stretch(GmlRender *r,int sprite,int frame,
   return 1;
 }
 
+/* The public stretch's integer boxes are not the ordinary sprite's centre
+ * samples. Keep their logical trim and rounded extent with the existing BOX
+ * descriptor; fixed blending and a coverage pass replace no CPU arithmetic. */
+static int resident_stretched_sprite_function(GmlRender *r,int sprite,int frame,
+  double x,double y,double width,double height,uint32_t colour,double alpha){
+  GmlRenderResourceSource source={0};
+  GmlRenderDrawOp op={0};GmlRenderDrawStateSnapshot state={0};
+  if(!r || !r->resident_application_pass || !r->win ||
+     sprite<0 || sprite>=r->n_spr || !isfinite(alpha) || alpha>1.0 ||
+     r->active_shader>=0 || r->fog_flat || gml_d3_is_active(r) ||
+     r->classic_phase_y || r->rotated_batch_count || r->rotated_batch_building ||
+     r->pending_presentation || !gml_render_scene_target_matches(r)) return 0;
+  for(unsigned index=0;index<3u;index++)
+    if(r->classic_interp_phase[index] || r->app_interp_phase[index]) return 0;
+  const GmlRenderDeviceServices *device=gml_render_device(r);
+  if(!device || !device->observe_on_demand || !device->observe_on_demand(device->context))
+    return 0;
+  GmlSprite *s=&r->spr[sprite];
+  if(s->runtime_rgba || s->spine || s->ns_enabled || s->w<=0 || s->h<=0 ||
+     s->w>4096 || s->h>4096 || !s->frame || s->n_frames<=0) return 0;
+  int page_index=s->frame[((frame%s->n_frames)+s->n_frames)%s->n_frames];
+  if(page_index<0 || page_index>=r->n_tpag) return 0;
+  GmlTpag *page=&r->tpag[page_index];
+  if(page->tx<0 || page->ty<0 || page->sw<=0 || page->sh<=0 ||
+     (int64_t)page->tx+page->sw>s->w || (int64_t)page->ty+page->sh>s->h ||
+     page->sx<0 || page->sy<0 || page->atlas<0 || page->atlas>=r->n_atlas) return 0;
+  gml_render_draw_map_point(r,&x,&y);gml_render_draw_map_scale(r,&width,&height);
+  if(!isfinite(x) || !isfinite(y) || !isfinite(width) || !isfinite(height) ||
+     fabs(x)>1000000.0 || fabs(y)>1000000.0 ||
+     fabs(width)>4096.0 || fabs(height)>4096.0) return 0;
+  int w=(int)lround(width),h=(int)lround(height);
+  double left=floor(x-r->cam_x),top=floor(y-r->cam_y);
+  if(!isfinite(left) || !isfinite(top) || fabs(left)>1000000.0 || fabs(top)>1000000.0)
+    return 0;
+  if(w<=0 || h<=0 || alpha<=0.0 || left+w<=0.0 || top+h<=0.0 ||
+     left>=r->fbw || top>=r->fbh) return 1;
+  int linear=r->interp && w>s->w && h>s->h;
+  /* Full-target minification has a distinct coarse-veil CPU leaf. */
+  if(((w<s->w || h<s->h) && left<=0 && top<=0 &&
+      left+w>=r->fbw && top+h>=r->fbh) ||
+     (s->w+w-1)/w>8 || (s->h+h-1)/h>8) return 0;
+  if(!gml_render_atlas_scene_source_view(r,page->atlas,&source) ||
+     !source.borrowed_immutable ||
+     (uint64_t)(uint32_t)page->sx+page->sw>source.width ||
+     (uint64_t)(uint32_t)page->sy+page->sh>source.height) return 0;
+  if(linear){
+    if((float)alpha==0.0f) return 1;
+    if(alpha<0x1p-64) return 0;
+    /* A raw cutoff at an interpolated alpha boundary cannot tolerate a
+     * changed coverage pixel. Keep that measured hardware-filter exception. */
+    if(r->alpha_test_enable){
+      resident_classify_page(page,&r->atlas[page->atlas]);
+      if(!page->scene_fully_opaque || page->tx || page->ty ||
+         page->sw!=s->w || page->sh!=s->h) return 0;
+    }
+  }
+  if(r->pending_underlay && !gml_render_compose_resident_underlay(r)) return 0;
+  gml_render_flush_pending_fill(r);
+  GmlRenderResource *target=gml_render_scene_target_resource_ensure(r);
+  if(r->pending_fill || !target) return 0;
+  op.target=(GmlRenderTargetRef){gml_render_application_scene_next_image_ref(r,target),
+    1u,(uint32_t)r->fbw,(uint32_t)r->fbh,GML_RENDER_PIXEL_ARGB8888,
+    {0,0,(uint32_t)r->fbw,(uint32_t)r->fbh}};
+  if(op.target.image.content_version==UINT64_MAX) return 0;
+  op.target.image.content_version++;
+  op.opcode=GML_RENDER_OP_TEXTURED_QUAD;op.reconstruction_mode=GML_RENDER_DEVICE_CHECKPOINT;
+  op.scene_family=GML_RENDER_SCENE_SPRITE;op.source_count=1u;op.sources=&source.image;
+  GmlRenderQuad *q=&op.payload.quad;
+  q->shape=GML_RENDER_QUAD_AXIS_ALIGNED;
+  q->sampling=(GmlRenderSamplingPolicy){linear?GML_RENDER_FILTER_HARDWARE_BILINEAR:GML_RENDER_FILTER_BOX,
+    GML_RENDER_EDGE_TRANSPARENT,{page->sx,page->sy,(uint32_t)page->sw,(uint32_t)page->sh},
+    GML_RENDER_QUANTISE_FIXED_STRETCHED,0u};
+  q->filtered_draw_alpha=alpha;
+  q->span_x[0]=s->w;q->span_x[1]=w;q->span_x[2]=page->tx;q->span_x[3]=page->sw;
+  q->span_y[0]=s->h;q->span_y[1]=h;q->span_y[2]=page->ty;q->span_y[3]=page->sh;
+  uint32_t tint=((colour&255u)<<16)|(colour&0xFF00u)|((colour>>16)&255u);
+  for(unsigned corner=0;corner<4u;corner++){
+    q->x[corner]=left+((corner==1u || corner==2u)?w:0);
+    q->y[corner]=top+(corner>=2u?h:0);
+    q->u[corner]=((double)page->sx+((corner==1u || corner==2u)?page->sw:0))/source.width;
+    q->v[corner]=((double)page->sy+(corner>=2u?page->sh:0))/source.height;
+    q->corner_colour[corner]=((uint32_t)lround(alpha*255.0)<<24)|tint;
+  }
+  /* This CPU leaf ignores ordinary blend presets and channel masks. The
+   * alpha-blending switch and raw source cutoff still select real semantics. */
+  state.write_mask=15u;state.colour=0xFFFFFFFFu;state.alpha=255u;
+  state.coverage_policy=GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA;
+  state.sampler_count=1u;state.samplers[0]=q->sampling;
+  state.alpha_test_enabled=!!r->alpha_test_enable;
+  state.alpha_test_reference=r->alpha_test_enable?r->alpha_test_ref:0u;
+  if(r->alphablend){
+    state.rgb_source_factor=GML_RENDER_BLEND_SOURCE_ALPHA;
+    state.rgb_destination_factor=GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA;
+    state.alpha_source_factor=GML_RENDER_BLEND_ONE;
+    state.alpha_destination_factor=GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA;
+    state.rgb_equation=state.alpha_equation=GML_RENDER_BLEND_ADD;
+  }
+  if(!gml_render_application_scene_enqueue(r,&op,&state,&source)) return 0;
+  r->fb_all_transparent=0;r->fb_opaque_known=0;
+  return 1;
+}
+
 void gml_draw_sprite_stretched(GmlRender *r, int sprite, int frame, double dx, double dy, double dw, double dh, uint32_t blend, double alpha){
   /* The ordinary stretched CPU blit contributes no pixels at zero alpha. Do not materialise
    * preceding device work for that no-op; special draw states retain their existing barrier. */
@@ -3785,7 +3887,19 @@ void gml_draw_sprite_stretched(GmlRender *r, int sprite, int frame, double dx, d
           double mapped_x=dx,mapped_y=dy,mapped_w=dw,mapped_h=dh;
           gml_render_draw_map_point(r,&mapped_x,&mapped_y);
           gml_render_draw_map_scale(r,&mapped_w,&mapped_h);
-          if(mapped_w>=resident_sprite->w && mapped_h>=resident_sprite->h &&
+          int copy_alpha=!gml_render_target_preserves_alpha(r);
+          if(!copy_alpha && page->atlas>=0 && page->atlas<r->n_atlas){
+            GmlRenderResourceSource view={0};
+            if(page->scene_opaque_checked ||
+               gml_render_atlas_scene_source_view(r,page->atlas,&view)){
+              resident_classify_page(page,&r->atlas[page->atlas]);
+              copy_alpha=page->scene_fully_opaque || page->scene_binary_alpha;
+            }
+          }
+          /* Ordinary point sprites preserve partial target alpha; this CPU
+           * stretch instead stamps covered alpha. Keep the cheap endpoint
+           * copy only where the two policies agree. */
+          if(copy_alpha && mapped_w>=resident_sprite->w && mapped_h>=resident_sprite->h &&
              gml_render_resident_atlas_page(r,page_index,
                mapped_x-r->cam_x,mapped_y-r->cam_y,
                mapped_w/resident_sprite->w,mapped_h/resident_sprite->h,
@@ -3794,6 +3908,7 @@ void gml_draw_sprite_stretched(GmlRender *r, int sprite, int frame, double dx, d
       }
     }
   }
+  if(resident_stretched_sprite_function(r,sprite,frame,dx,dy,dw,dh,blend,alpha)) return;
   /* Ordinary magnification and bounded box stretches use the CPU leaf's floored destination
    * origin and rounded extent. The full-target coarse-mip effect and nine-slice stay separate. */
   if(r && r->resident_application_pass &&
