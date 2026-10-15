@@ -2135,6 +2135,13 @@ void gml_surface_reset_target(GmlRender *r){
       released_,(const void *)r->fb,before_,after_,before_cov_,after_cov_,r->fbw*r->fbh);
   }
   if(r->target_sp>0){
+    /* An independent clear can update a CPU parent's borrowed allocation.
+     * Restore that parent only after its pixels are current, without admitting
+     * its SCREEN pass or losing the child's exact resource version. */
+    typeof(r->target_stack[0]) *parent=&r->target_stack[r->target_sp-1];
+    if(r->scene_device_enabled && !r->resident_scene_pass &&
+       !parent->resident_pass && parent->fb==r->fb &&
+       !gml_render_resident_application_cpu_barrier(r)) return;
     typeof(r->target_stack[0]) t=r->target_stack[--r->target_sp];
     if(t.fb==r->fb && r->resident_scene_pass){
       t.opaque_known=r->fb_opaque_known;

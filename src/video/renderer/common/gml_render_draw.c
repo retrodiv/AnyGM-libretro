@@ -476,6 +476,7 @@ static void render_unbind_device(GmlRender *render,int context_current){
   /* A queued exact batch can replay through the CPU after the device binding is removed. A
    * non-reconstructible pending result instead becomes invalid when its context is already lost. */
   render->device_bound=0;
+  render->scene_device_enabled=0;
   (void)gml_render_application_scene_flush(render);
   for(int index=0;index<GML_MAX_SURFACES;index++)
     gml_render_resource_context_lost(render->surface[index].resource);
@@ -505,4 +506,7 @@ void gml_render_bind_device(GmlRender *render,const GmlRenderDeviceServices *ser
 
 const GmlRenderDeviceServices *gml_render_device(const GmlRender *render){
   return render && render->device_bound?&render->device:NULL;
+}
+void gml_render_set_scene_device(GmlRender *render,int enabled){
+  if(render) render->scene_device_enabled=enabled && gml_render_device(render);
 }

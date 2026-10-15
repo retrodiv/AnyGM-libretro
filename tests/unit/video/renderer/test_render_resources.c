@@ -3281,6 +3281,95 @@ static int resident_application_pending_clear(void){
   return 1;
 }
 
+static int independent_persistent_target_clear(void){
+  static const uint32_t colours[]={0x00315779u,0x7F315779u,0xFF315779u};
+  for(unsigned application=0;application<2u;application++)
+  for(unsigned enabled=0;enabled<2u;enabled++) for(unsigned alpha=0;alpha<3u;alpha++){
+    GmlRender *render=calloc(1,sizeof *render);
+    uint32_t base[16]={0};
+    FakeDevice fake={0};GmlRenderDeviceServices device=service(&fake);
+    GmlRenderJournalMetrics metrics={0};
+    CHECK(render && gml_render_init(render,NULL)==0);
+    gml_render_set_scene_device(render,1);
+    CHECK(!render->scene_device_enabled);
+    gml_render_bind_device(render,&device);
+    gml_render_set_scene_device(render,(int)enabled);
+    gml_render_begin(render,base,4,4,2.0,3.0);
+    int id=application?0:gml_surface_create(render,4,4);
+    CHECK((application?gml_render_application_surface_ensure_owned(render,4,4):id>0) &&
+          gml_surface_set_target(render,id));
+    CHECK(!render->resident_scene_pass && !render->resident_application_pass);
+    gml_render_set_pending_fill(render,colours[alpha]);
+    gml_render_flush_pending_fill(render);
+    CHECK(!render->pending_fill && !render->resident_scene_pass &&
+          !render->resident_application_pass && fake.submits==(int)enabled && !fake.readbacks);
+    if(enabled){
+      GmlRenderResource *resource=gml_render_scene_target_resource_ensure(render);
+      CHECK(resource && render->fb[0]==0u && fake.last_opcode==GML_RENDER_OP_CLEAR &&
+            fake.last_target_image.resource_class==(application?GML_RENDER_RESOURCE_APPLICATION:
+                                                              GML_RENDER_RESOURCE_SURFACE));
+      CHECK(gml_render_resident_application_cpu_barrier(render));
+      gml_render_resource_journal_metrics(resource,&metrics);
+      CHECK(metrics.authority==GML_RENDER_RESOURCE_CPU_CURRENT &&
+            metrics.cpu_version==metrics.logical_version && metrics.cpu_replays==1u);
+    }
+    CHECK(render->fb[0]==colours[alpha] && render->fb[15]==colours[alpha]);
+    /* No manual flush: the CPU suffix's barrier must publish a later clear
+     * before borrowing pixels, not replay it over the suffix afterwards. */
+    if(enabled){
+      gml_render_set_pending_fill(render,0xFF426486u);
+      gml_render_primitive_point(render,0,0,0x75A4C3u);
+      CHECK(render->fb[0]==0xFFC3A475u && render->fb[1]==0xFF426486u &&
+            gml_surface_pixels_read(render,id,NULL,NULL)[0]==0xFFC3A475u && fake.submits==1);
+    }
+    gml_surface_reset_target(render);
+    CHECK(render->fb==base && !render->resident_application_pass &&
+          !render->resident_scene_pass && !base[0]);
+    gml_render_bind_device(render,NULL);
+    CHECK(!render->scene_device_enabled);
+    gml_render_free(render);free(render);
+  }
+  /* A numbered child can alias an unadmitted CPU base. Restoring it may
+   * observe the child, but must not silently admit that SCREEN or lose pixels. */
+  for(unsigned failure=0;failure<2u;failure++){
+    GmlRender *render=calloc(1,sizeof *render);
+    FakeDevice fake={0};GmlRenderDeviceServices device=service(&fake);
+    CHECK(render && gml_render_init(render,NULL)==0);
+    int id=gml_surface_create(render,4,4);CHECK(id>0);
+    uint32_t *base=render->surface[id-1].px;
+    gml_render_begin(render,base,4,4,0,0);
+    gml_render_application_surface_bind(render,base,4,4,0);
+    gml_render_bind_device(render,&device);gml_render_set_scene_device(render,1);
+    CHECK(gml_surface_set_target(render,id));
+    fake.status=failure?GML_RENDER_EXEC_UNSUPPORTED:0;
+    gml_render_set_pending_fill(render,0x7F315779u);
+    gml_surface_reset_target(render);
+    CHECK(render->target_sp==0 && render->target_id==-1 && render->fb==base &&
+          !render->resident_application_pass && !render->resident_scene_pass &&
+          base[0]==0x7F315779u && base[15]==0x7F315779u && !fake.readbacks);
+    gml_render_primitive_point(render,0,0,0x75A4C3u);
+    CHECK(base[0]!=0x7F315779u && base[1]==0x7F315779u);
+    gml_render_free(render);free(render);
+  }
+  /* A fresh pending clear followed by a CPU-only suffix has no GPU prefix to
+   * observe. The new admission must not invent a submit/readback round trip. */
+  {
+    GmlRender *render=calloc(1,sizeof *render);uint32_t base[16]={0};
+    FakeDevice fake={.on_demand=1};GmlRenderDeviceServices device=service(&fake);
+    device.observe_on_demand=fake_observe_on_demand;
+    CHECK(render && gml_render_init(render,NULL)==0);
+    gml_render_bind_device(render,&device);gml_render_set_scene_device(render,1);
+    gml_render_begin(render,base,4,4,0,0);
+    int id=gml_surface_create(render,4,4);CHECK(id>0 && gml_surface_set_target(render,id));
+    gml_render_set_pending_fill(render,0xFF426486u);
+    gml_render_primitive_point(render,0,0,0x75A4C3u);
+    CHECK(!render->pending_fill && render->fb[0]==0xFFC3A475u &&
+          render->fb[1]==0xFF426486u && !fake.submits && !fake.uploads && !fake.readbacks);
+    gml_render_free(render);free(render);
+  }
+  return 1;
+}
+
 static int resident_pending_clear_after_queued_draw(void){
   for(int on_demand=0;on_demand<2;on_demand++)
     for(int target=0;target<3;target++){
@@ -13939,6 +14028,7 @@ int main(void){
   passed+=resident_surface_resize_refusal();
   passed+=resident_surface_resize_state();
   passed+=resident_application_pending_clear();
+  passed+=independent_persistent_target_clear();
   passed+=resident_pending_clear_after_queued_draw();
   passed+=first_generation_underlay_resource_borrow();
   passed+=resident_layer_filter_capture_barrier();
@@ -14101,6 +14191,6 @@ int main(void){
   passed+=source_free_primitive_rect_replay();
   passed+=stretched_float_exact_replay();
   passed+=filtered_font_exact_recovery();
-  printf("render resource cases: passed=%d failed=%d\n",passed,202-passed);
-  return passed==202?EXIT_SUCCESS:EXIT_FAILURE;
+  printf("render resource cases: passed=%d failed=%d\n",passed,203-passed);
+  return passed==203?EXIT_SUCCESS:EXIT_FAILURE;
 }

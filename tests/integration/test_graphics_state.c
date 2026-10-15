@@ -871,6 +871,91 @@ static int resident_pre_draw_screen_case(void){
   return 1;
 }
 
+/* A numbered clear in Step precedes world/GUI admission. A graphics context
+ * alone must not accelerate it in a software scene session. */
+static int independent_step_clear_case(void){
+  Session plain={0},selected={0};
+  GmlRenderDispatchMetrics dispatch={0};
+  uint8_t *cpu_state=NULL,*gpu_state=NULL;
+  size_t cpu_size=0,gpu_size=0;
+  int matching=1;
+  anygm_test_graphics_reset();
+  REQUIRE(session_open_fixture_with_scene(&plain,ANYGM_SCENE_RENDERER_CPU,
+            anygm_synthetic_step_clear_content_create) &&
+          session_open_fixture_with_scene(&selected,ANYGM_SCENE_RENDERER_OPENGL,
+            anygm_synthetic_step_clear_content_create),"Step-clear paired fixtures load");
+  REQUIRE(graphics_adopt(plain.engine,ANYGM_GRAPHICS_OPENGLES3)==ANYGM_OK &&
+          graphics_adopt(selected.engine,ANYGM_GRAPHICS_OPENGLES3)==ANYGM_OK,
+          "both Step-clear sessions have the same transport capability");
+  gml_render_dispatch_diagnostics_enable(&selected.engine->render,1);
+  selected.engine->diagnostics.dispatch_frames.enabled=1;
+  gml_render_dispatch_frame_bind(&selected.engine->render,
+                                &selected.engine->diagnostics.dispatch_frames);
+  REQUIRE(advance(plain.engine,3,NULL) && advance(selected.engine,3,NULL),
+          "Step-clear paired fixtures complete three frames");
+  REQUIRE(gml_render_dispatch_metrics(&selected.engine->render,&dispatch) &&
+          dispatch.enabled && !dispatch.overflow && !dispatch.failed && !dispatch.unclassified,
+          "Step-clear interval has classified dispatch accounting");
+  for(unsigned family=0;family<GML_RENDER_SCENE_FAMILY_COUNT;family++)
+    for(unsigned reason=0;reason<GML_RENDER_DISPATCH_REASON_COUNT;reason++)
+      if(dispatch.cpu[family][reason] && reason!=GML_RENDER_DISPATCH_REPLAY){
+        fprintf(stderr,"Step-clear ordinary CPU work: family=%u reason=%u count=%llu\n",
+                family,reason,(unsigned long long)dispatch.cpu[family][reason]);
+        matching=0;
+      }
+  /* Without an access witness this fake uses exact CPU recipes, not its
+   * deliberately patterned glReadPixels. Real-device RGBA has a paired probe. */
+  GmlGpuCounters counters={0};gml_gpu_counters(selected.engine->gpu,&counters);
+  REQUIRE(matching && !selected.engine->diagnostics.dispatch_frames.no_scene_frames &&
+          dispatch.cpu[GML_RENDER_SCENE_PRIMITIVE][GML_RENDER_DISPATCH_REPLAY]==3u &&
+          counters.scene_operations[GML_RENDER_OP_CLEAR]>=6u && !counters.scene_batches_refused,
+          "Step numbered clears submit on GPU before exact fake-device reconstruction");
+  cpu_state=serialize(plain.engine,&cpu_size);
+  gpu_state=serialize(selected.engine,&gpu_size);
+  matching=cpu_state && gpu_state && cpu_size==gpu_size &&
+           !memcmp(cpu_state,gpu_state,cpu_size);
+  REQUIRE(matching,"Step-clear pixels and canonical state remain CPU-exact");
+  REQUIRE(advance(selected.engine,2,NULL) &&
+          anygm_state_load(selected.engine,gpu_state,gpu_size)==ANYGM_OK &&
+          anygm_state_load(plain.engine,cpu_state,cpu_size)==ANYGM_OK &&
+          advance(plain.engine,2,NULL) && advance(selected.engine,2,NULL),
+          "Step-clear same-run rewind resumes the selected scene");
+  free(cpu_state);free(gpu_state);
+  cpu_state=serialize(plain.engine,&cpu_size);
+  gpu_state=serialize(selected.engine,&gpu_size);
+  matching=cpu_state && gpu_state && cpu_size==gpu_size &&
+           !memcmp(cpu_state,gpu_state,cpu_size);
+  free(cpu_state);free(gpu_state);
+  session_close(&selected);session_close(&plain);
+  REQUIRE(matching,"Step-clear restored timeline remains CPU-exact");
+  /* The witnessed path must not execute those CPU recipes at all. Its fake
+   * readback pattern is not a CPU pixel oracle, so do not compare it as one. */
+  anygm_test_graphics_reset();
+  CurrentContextWitness witness={.current=1u};
+  AnygmGraphicsContext context=graphics_context(ANYGM_GRAPHICS_OPENGLES3);
+  context.userdata=&witness;context.is_current=graphics_context_is_current;
+  REQUIRE(session_open_fixture_with_scene(&selected,ANYGM_SCENE_RENDERER_OPENGL,
+            anygm_synthetic_step_clear_content_create) &&
+          anygm_graphics_context_reset(selected.engine,&context)==ANYGM_OK,
+          "witnessed Step-clear fixture loads");
+  gml_render_dispatch_diagnostics_enable(&selected.engine->render,1);
+  selected.engine->diagnostics.dispatch_frames.enabled=1;
+  gml_render_dispatch_frame_bind(&selected.engine->render,
+                                &selected.engine->diagnostics.dispatch_frames);
+  REQUIRE(advance(selected.engine,3,NULL) &&
+          gml_render_dispatch_metrics(&selected.engine->render,&dispatch),
+          "witnessed Step-clear interval completes");
+  for(unsigned family=0;family<GML_RENDER_SCENE_FAMILY_COUNT;family++)
+    for(unsigned reason=0;reason<GML_RENDER_DISPATCH_REASON_COUNT;reason++)
+      matching=matching && !dispatch.cpu[family][reason];
+  matching=matching && !dispatch.failed && !dispatch.unclassified &&
+    !selected.engine->diagnostics.dispatch_frames.cpu_frames &&
+    !selected.engine->diagnostics.dispatch_frames.no_scene_frames;
+  session_close(&selected);
+  REQUIRE(matching,"witnessed Step clear has zero ordinary CPU executions and replay");
+  return 1;
+}
+
 static int resident_world_selection_case(void){
   Session plain,selected;
   GmlGpuCounters counters={0};
@@ -4941,6 +5026,7 @@ int main(void){
     {"scene state size queries do not observe pixels",scene_size_query_is_metadata_only_case},
     {"final scene seal is included in frame profiling",final_scene_seal_profile_case},
     {"resident Pre-Draw screen retains CPU state",resident_pre_draw_screen_case},
+    {"independent Step numbered clear preserves CPU state",independent_step_clear_case},
     {"resident world selection retains CPU state",resident_world_selection_case},
     {"viewless classic application accepts Draw scene work",
      classic_viewless_application_scene_case},

@@ -87,6 +87,8 @@ void engine_graphics_bind_renderer(AnygmEngine *engine){
     (void)gml_gpu_prepare_scene(engine->gpu,engine->width,engine->height);
   }
   gml_render_bind_device(&engine->render,&services);
+  gml_render_set_scene_device(&engine->render,
+    engine->scene_renderer_session==ANYGM_SCENE_RENDERER_OPENGL);
   /* Hybrid presentation and content GLSL share this context but are independent policies. */
   gml_render_set_shader_device(&engine->render,engine_content_shaders_active(engine));
 }

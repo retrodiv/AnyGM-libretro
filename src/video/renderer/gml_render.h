@@ -97,6 +97,9 @@ void gml_render_dispatch_gpu_plan_completion(GmlRender *render,
 /* A borrowed device service bound only by the engine graphics owner. Binding copies callbacks,
  * never a device-owned handle. An absent service keeps the established immediate CPU path. */
 void gml_render_bind_device(GmlRender *render,const GmlRenderDeviceServices *services);
+/* Explicit scene policy permits source-free clears of bound persistent targets
+ * before Draw. A context used only for transport or content GLSL never opts in. */
+void gml_render_set_scene_device(GmlRender *render,int enabled);
 /* The host has already lost the old context: invalidate uncheckpointed device-only pixels
  * without invoking any callback on the former GL context. */
 void gml_render_abandon_device(GmlRender *render);

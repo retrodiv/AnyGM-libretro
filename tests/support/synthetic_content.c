@@ -1718,6 +1718,7 @@ static int synthetic_framebuffer_content_create(
   int classic_retained_target=gpu_sprite==38 || gpu_sprite==39 || classic_step_composition;
   int retained_step_target=gpu_sprite==5 || gpu_sprite==6 || classic_retained_target;
   int nested_step_target=gpu_sprite==6;
+  int step_clear=gpu_sprite==46;
   int assigned_view_surface=gpu_sprite==7;
   int canvas_geometry=gpu_sprite==8;
   int window_cursor=gpu_sprite==45;
@@ -1759,6 +1760,9 @@ static int synthetic_framebuffer_content_create(
        "global.fixture_frame = 0;\n"
        "global.fixture_surface = surface_create(8,8);\n"
        "global.fixture_inner = surface_create(8,8);\n":
+       step_clear?
+       "global.fixture_frame = 0;\n"
+       "global.fixture_surface = surface_create(8,8);\n":
        assigned_view_surface?
        "global.fixture_frame = 0;\n"
        "global.fixture_seen = 0;\n"
@@ -1820,6 +1824,11 @@ static int synthetic_framebuffer_content_create(
                  "surface_set_target(global.fixture_surface);\n"
                  "draw_clear(c_green);\n"
                  "surface_set_target(global.fixture_inner);\n":
+                 step_clear?
+                 "global.fixture_frame += 1;\n"
+                 "surface_set_target(global.fixture_surface);\n"
+                 "draw_clear(c_green);\n"
+                 "surface_reset_target();\n":
                  ended_frame?
                  "global.fixture_frame += 1;\n"
                  "if (global.fixture_frame == 2) game_end();\n":
@@ -1843,7 +1852,10 @@ static int synthetic_framebuffer_content_create(
                  "surface_set_target(global.fixture_surface);\n":
                  "if (global.fixture_frame >= 1) room_goto(1);\n"
                  "global.fixture_frame += 1;\n") ||
-     (gpu_sprite && !write_text(draw,gpu_sprite==42?
+     (gpu_sprite && !write_text(draw,step_clear?
+       "draw_surface(global.fixture_surface,8,8);\n"
+       "draw_sprite(spr_fixture,0,32,16);\n":
+       gpu_sprite==42?
        "surface_reset_target();\n"
        "draw_clear(c_red);\n"
        "draw_set_color(c_white); draw_rectangle(0,0,2,2,false);\n"
@@ -2321,6 +2333,9 @@ int anygm_synthetic_classic_step_base_writer_content_create(AnygmSyntheticConten
 }
 int anygm_synthetic_classic_late_step_composition_content_create(AnygmSyntheticContent *fixture){
   return synthetic_framebuffer_content_create(fixture,0,0,1,43);
+}
+int anygm_synthetic_step_clear_content_create(AnygmSyntheticContent *fixture){
+  return synthetic_framebuffer_content_create(fixture,0,0,0,46);
 }
 
 int anygm_synthetic_classic_transition_content_create(AnygmSyntheticContent *fixture){

@@ -1099,12 +1099,17 @@ void gml_render_set_pending_fill(GmlRender *r, uint32_t color){
     gml_render_dispatch_cpu_record(r,GML_RENDER_SCENE_PRIMITIVE,
                                      gml_render_dispatch_cpu_reason(r),1u);
 }
-void gml_render_flush_pending_fill(GmlRender *r){
+static void render_flush_pending_fill(GmlRender *r,int independent_allowed){
   gml_render_flush_rotated_batch(r);
   if(!r || !r->pending_fill || !r->fb || r->fbw<=0 || r->fbh<=0) return;
   unsigned reason=r->dispatch_metrics.enabled
     ?gml_render_dispatch_cpu_reason(r):GML_RENDER_DISPATCH_UNQUALIFIED;
-  if(r->resident_application_pass && gml_render_scene_target_matches(r)){
+  /* A bound persistent image has an identity before world admission. A clear
+   * needs neither its predecessor pixels nor a different SCREEN/GUI owner. */
+  int independent=independent_allowed && !r->resident_application_pass && r->scene_device_enabled &&
+    gml_render_device(r) && r->target_id>=0 &&
+    (r->target_id>0 || r->app_surface==r->app_surface_owned);
+  if((r->resident_application_pass || independent) && gml_render_scene_target_matches(r)){
     GmlRenderResource *resource=gml_render_scene_target_resource_ensure(r);
     if(!resource) return;
     if(resource){
@@ -1123,8 +1128,15 @@ void gml_render_flush_pending_fill(GmlRender *r){
         operation.target.region=(GmlRenderRect){0,0,(uint32_t)r->fbw,(uint32_t)r->fbh};
         operation.payload.clear_colour=r->pending_fill_color;
         GmlRenderDrawBatch batch={&operation,1u,NULL,0u};
-        GmlRenderResourceExecution result=gml_render_application_scene_submit(
-          r,&batch,NULL,0u);
+        GmlRenderResourceExecution result;
+        if(independent){
+          if(!gml_render_application_scene_flush(r)) return;
+          result=gml_render_resource_submit_deferred(resource,gml_render_device(r),
+                                                     &batch,NULL,0u);
+          gml_render_dispatch_batch_record(r,&batch,result);
+          if(result!=GML_RENDER_RESOURCE_EXEC_FAILED && r->fb==r->app_surface_owned)
+            r->app_surface_opaque=r->app_presentation_coverage_active=0;
+        }else result=gml_render_application_scene_submit(r,&batch,NULL,0u);
         if(result!=GML_RENDER_RESOURCE_EXEC_FAILED){
           r->pending_fill=0;
           return;
@@ -1161,6 +1173,14 @@ void gml_render_flush_pending_fill(GmlRender *r){
   if(r->dispatch_metrics.enabled)
     gml_render_dispatch_cpu_record(r,GML_RENDER_SCENE_PRIMITIVE,reason,1u);
 }
+void gml_render_flush_pending_fill(GmlRender *r){
+  render_flush_pending_fill(r,1);
+}
+/* This entry only resolves a clear for an already selected software suffix;
+ * it cannot admit or submit a GPU clear through either target policy. */
+static void render_cpu_flush_pending_fill(GmlRender *r){
+  if(r && !r->resident_application_pass) render_flush_pending_fill(r,0);
+}
 int gml_render_resident_application_cpu_barrier(GmlRender *r){
   uint32_t *pixels=NULL;
   GmlRenderResource *resource;
@@ -1169,7 +1189,15 @@ int gml_render_resident_application_cpu_barrier(GmlRender *r){
     /* A child binding may have written the same allocation on GPU after this
      * CPU parent was suspended, or sampled it and made its GPU copy current. */
     GmlRenderJournalMetrics metrics={0};
-    if(!r->resident_scene_pass || !gml_render_scene_target_matches(r)) return 1;
+    if((!r->resident_scene_pass && !(r->scene_device_enabled && r->target_id>=0)) ||
+       !gml_render_scene_target_matches(r)) return 1;
+    /* The suffix has already selected CPU. Resolve its pending clear with the
+     * existing CPU writer, rather than submitting it only to read it straight
+     * back. A later replay must not overwrite this CPU suffix either. */
+    if(r->scene_device_enabled && r->target_id>=0 && r->pending_fill){
+      render_cpu_flush_pending_fill(r);
+      if(r->pending_fill) return 0;
+    }
     resource=gml_render_scene_target_resource_ensure(r);
     if(!resource) return 0;
     gml_render_resource_journal_metrics(resource,&metrics);
