@@ -290,6 +290,9 @@ static int integer_function_sprite_valid(const GmlRenderDrawOp *op,
      (state->coverage_policy==GML_RENDER_COVERAGE_REPLACE_ZERO_ALPHA?blend!=0:
       state->coverage_policy && (state->coverage_policy!=GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA ||
        (blend!=1 && blend!=13 && blend!=14) || (blend!=14 &&
+        !(blend==13 && op->scene_family==GML_RENDER_SCENE_SPRITE &&
+          (source->ref.identity&UINT32_C(0x80000000)) &&
+          q->sampling.quantisation==GML_RENDER_QUANTISE_INTEGER_TINT_TRUNC) &&
         op->target.image.resource_class!=GML_RENDER_RESOURCE_SCREEN &&
         op->target.image.resource_class!=GML_RENDER_RESOURCE_APPLICATION)))) return 0;
   double width=q->x[1]-q->x[0],height=q->y[2]-q->y[0];

@@ -10683,13 +10683,20 @@ static int resident_runtime_binary_unit_sprites(void){
     gml_draw_sprite_ext(render,sprite,0,exclusion==5u?2.5:2.0,2.0,
       exclusion==6u?2.0:1.0,1.0,exclusion==7u?17.0:0.0,
       exclusion==8u?0xABCDEFu:0xFFFFFFu,1.0);
-    CHECK(!render->resident_application_pass && !render->spr[sprite].runtime_scene_used);
+    /* The runtime function now qualifies partial alpha, Classic point filter
+     * state, masks, fractional anchors, scale, rotation and tint. Missing
+     * on-demand authority and contradictory classification still reject. */
+    int admitted=exclusion!=0u && exclusion!=2u;
+    CHECK(!!render->resident_application_pass==admitted &&
+          !!render->spr[sprite].runtime_scene_used==admitted);
+    if(admitted) CHECK(!fake.submits && !fake.readbacks &&
+      gml_render_scene_submit_pending(render) && fake.submits==1 && !fake.readbacks);
     gml_render_free(render);free(render);
   }
   return 1;
 }
 
-static int runtime_sprite_scene_lifetimes(void){
+static int runtime_sprite_scene_lifetimes_variant(int partial){
   GmlRender *render=calloc(1,sizeof *render);
   FakeDevice fake={.on_demand=1};
   GmlRenderDeviceServices device=service(&fake);
@@ -10698,8 +10705,10 @@ static int runtime_sprite_scene_lifetimes(void){
   uint32_t base[64]={0};
   CHECK(render && gml_render_init(render,NULL)==0);
   render->classic=1;render->win=&content;
-  int sprite=gml_sprite_append_from_rgba_frames(render,
-    runtime_unit_test_rgba(3,2,2,1),3,2,2,0,0,NULL);
+  uint8_t *initial=runtime_unit_test_rgba(3,2,2,1);
+  CHECK(initial);
+  if(partial) initial[3]=127u;
+  int sprite=gml_sprite_append_from_rgba_frames(render,initial,3,2,2,0,0,NULL);
   int second=gml_sprite_append_from_rgba(render,
     runtime_unit_test_rgba(2,3,1,0),2,3,0,0,NULL);
   CHECK(sprite>=0 && second>=0);
@@ -10753,7 +10762,8 @@ static int runtime_sprite_scene_lifetimes(void){
   size_t used=0;
   CHECK(gml_render_state_load(render,state,size,&used) && used==size && fake.submits==4 &&
         render->spr[sprite].w==3 && render->spr[sprite].h==2 &&
-        render->spr[sprite].n_frames==2 && render->spr[sprite].runtime_scene_binary &&
+        render->spr[sprite].n_frames==2 &&
+        !!render->spr[sprite].runtime_scene_binary==!partial &&
         !render->spr[sprite].runtime_scene_used && !fake.readbacks);
   CHECK(!render->resident_application_pass &&
         gml_render_begin_resident_base(render,base,8,8,0,0));
@@ -10777,6 +10787,11 @@ static int runtime_sprite_scene_lifetimes(void){
   CHECK(fake.submits==before+1 && !fake.readbacks);
   free(render);free(state);free(again);
   return 1;
+}
+
+static int runtime_sprite_scene_lifetimes(void){
+  return runtime_sprite_scene_lifetimes_variant(0) &&
+    runtime_sprite_scene_lifetimes_variant(1);
 }
 
 static int resident_classic_clipped_sprite_noops(void){

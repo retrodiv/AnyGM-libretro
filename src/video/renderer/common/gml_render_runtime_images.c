@@ -35,7 +35,7 @@ int gml_render_runtime_sprite_scene_source_view(GmlRender *r,GmlSprite *sprite,i
                                                 GmlRenderResourceSource *source){
   if(source) memset(source,0,sizeof *source);
   if(!r || !sprite || !source || !sprite->runtime_rgba ||
-     !sprite->runtime_scene_binary || sprite->w<=0 || sprite->h<=0 ||
+     sprite->w<=0 || sprite->h<=0 ||
      sprite->w>4096 || sprite->h>4096 ||
      sprite->n_frames<=0 || sprite->n_frames>4096) return 0;
   uint64_t bytes=(uint64_t)(uint32_t)sprite->w*(uint32_t)sprite->h*4u;
