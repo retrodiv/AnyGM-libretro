@@ -708,7 +708,7 @@ static int fixed_stretched_quad_valid(const GmlRenderDrawOp *op,
      q->sampling.edge_rule!=GML_RENDER_EDGE_TRANSPARENT ||
      q->sampling.quantisation!=GML_RENDER_QUANTISE_FIXED_STRETCHED ||
      q->sampling.logical_margin_mask || q->span_active ||
-     !isfinite(q->filtered_draw_alpha) || q->filtered_draw_alpha<=0 || q->filtered_draw_alpha>1 ||
+     !isfinite(q->filtered_draw_alpha) || q->filtered_draw_alpha<=0 || q->filtered_draw_alpha>255 ||
      !valid_region(q->sampling.source_region,source->width,source->height) ||
      !exact_rect(op,NULL,NULL,NULL,NULL,1)) return 0;
   for(unsigned corner=1;corner<4u;corner++)
@@ -1256,7 +1256,9 @@ static int scene_preflight(GmlGpuBackend *backend,const GmlRenderDrawBatch *batc
            (colour>>24)!=(uint32_t)lround(op->payload.quad.filtered_draw_alpha*255.0))) return 0;
         if(blend==8 && colour!=op->payload.quad.corner_colour[0]) return 0;
         if(state->coverage_policy && !integer_sourceover &&
-           (colour>>24)!=(uint32_t)lround(op->payload.quad.filtered_draw_alpha*255.0))
+           (colour>>24)!=(uint32_t)lround((stretched_box
+             ? fmin(op->payload.quad.filtered_draw_alpha,1.0)
+             : op->payload.quad.filtered_draw_alpha)*255.0))
           return 0;
         if(colour!=0xFFFFFFFFu && blend!=6 && !integer_function &&
            (op->reconstruction_mode!=GML_RENDER_DEVICE_CHECKPOINT ||

@@ -3761,7 +3761,7 @@ static int resident_stretched_sprite_function(GmlRender *r,int sprite,int frame,
   GmlRenderResourceSource source={0};
   GmlRenderDrawOp op={0};GmlRenderDrawStateSnapshot state={0};
   if(!r || !r->resident_application_pass || !r->win ||
-     sprite<0 || sprite>=r->n_spr || !isfinite(alpha) || alpha>1.0 ||
+     sprite<0 || sprite>=r->n_spr || !isfinite(alpha) ||
      r->active_shader>=0 || r->fog_flat || gml_d3_is_active(r) ||
      r->classic_phase_y || r->rotated_batch_count || r->rotated_batch_building ||
      r->pending_presentation || !gml_render_scene_target_matches(r)) return 0;
@@ -3789,7 +3789,14 @@ static int resident_stretched_sprite_function(GmlRender *r,int sprite,int frame,
     return 0;
   if(w<=0 || h<=0 || alpha<=0.0 || left+w<=0.0 || top+h<=0.0 ||
      left>=r->fbw || top>=r->fbh) return 1;
+  /* The unit CPU leaf extrapolates instead of saturating source-over.
+   * Only a native-float endpoint overshoot stays within its paired bound. */
+  if(w==s->w && h==s->h && r->alphablend && alpha>1.0+0x1p-24) return 0;
   int linear=r->interp && w>s->w && h>s->h;
+  /* BOX rounds sampled alpha to a byte before blending. Every nonzero
+   * sample saturates at raw opacity 255; fully opaque bilinear samples do
+   * too. Bound only this packet, not the CPU or the readable draw state. */
+  if(alpha>255.0) alpha=255.0;
   /* Full-target minification has a distinct coarse-veil CPU leaf. */
   if(((w<s->w || h<s->h) && left<=0 && top<=0 &&
       left+w>=r->fbw && top+h>=r->fbh) ||
@@ -3801,9 +3808,9 @@ static int resident_stretched_sprite_function(GmlRender *r,int sprite,int frame,
   if(linear){
     if((float)alpha==0.0f) return 1;
     if(alpha<0x1p-64) return 0;
-    /* A raw cutoff at an interpolated alpha boundary cannot tolerate a
-     * changed coverage pixel. Keep that measured hardware-filter exception. */
-    if(r->alpha_test_enable){
+    /* Source pixels and bounds are now validated. Raw cutoffs need constant
+     * alpha; larger raw opacity also magnifies unqualified filtering error. */
+    if(r->alpha_test_enable || alpha>2.0){
       resident_classify_page(page,&r->atlas[page->atlas]);
       if(!page->scene_fully_opaque || page->tx || page->ty ||
          page->sw!=s->w || page->sh!=s->h) return 0;
@@ -3834,7 +3841,7 @@ static int resident_stretched_sprite_function(GmlRender *r,int sprite,int frame,
     q->y[corner]=top+(corner>=2u?h:0);
     q->u[corner]=((double)page->sx+((corner==1u || corner==2u)?page->sw:0))/source.width;
     q->v[corner]=((double)page->sy+(corner>=2u?page->sh:0))/source.height;
-    q->corner_colour[corner]=((uint32_t)lround(alpha*255.0)<<24)|tint;
+    q->corner_colour[corner]=((uint32_t)lround(fmin(alpha,1.0)*255.0)<<24)|tint;
   }
   /* This CPU leaf ignores ordinary blend presets and channel masks. The
    * alpha-blending switch and raw source cutoff still select real semantics. */
