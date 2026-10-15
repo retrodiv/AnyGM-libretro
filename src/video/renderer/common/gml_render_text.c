@@ -37,6 +37,19 @@ static int resident_text_glyph_outside(GmlRender *r,const GmlSprite *sprite,
      !gml_render_scene_target_matches(r)) return 0;
   for(unsigned axis=0;axis<3u;axis++)
     if(r->classic_interp_phase[axis] || r->app_interp_phase[axis]) return 0;
+  /* An untrimmed positive axis cell starts at floor(anchor) or later under
+   * the CPU's snapping policies. An anchor on the integer right/bottom edge
+   * is therefore empty, regardless of filtering. Other cells retain the
+   * general rotated/source envelope and its conservative filter rim. */
+  if(sprite && page && rotation==0.0 && !sprite->originx && !sprite->originy &&
+     !page->tx && !page->ty && page->sw==sprite->w && page->sh==sprite->h &&
+     page->sw>0 && page->sh>0 && page->sw<=4096 && page->sh<=4096 &&
+     page->bw==page->sw && page->bh==page->sh &&
+     page->tw>=0 && page->tw<=page->sw && page->th>=0 && page->th<=page->sh &&
+     isfinite(x) && isfinite(y) && fabs(x)<=65536.0 && fabs(y)<=65536.0 &&
+     xs>=0.0625 && xs<=64.0 && ys>=0.0625 && ys<=64.0 &&
+     fabs(x-r->cam_x)<=65536.0 && fabs(y-r->cam_y)<=65536.0 &&
+     (x-r->cam_x>=r->fbw || y-r->cam_y>=r->fbh)) return 1;
   /* An in-target anchor needs its established visible owner. */
   if(x-r->cam_x>=0.0 && x-r->cam_x<r->fbw &&
      y-r->cam_y>=0.0 && y-r->cam_y<r->fbh) return 0;
