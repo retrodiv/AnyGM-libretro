@@ -3245,8 +3245,18 @@ static int resident_filtered_sprite(GmlRender *r,GmlSprite *sprite,int subimg,
     return resident_filtered_atlas_page(r,page_index,x-r->cam_x,y-r->cam_y,xs,ys,
                                        GML_RENDER_SCENE_SPRITE,blend,alpha,NULL,sprite,
                                        normalized_rotation,NULL,0,0,0,0,0);
+  /* A normal SCREEN suffix stamps alpha for every covered pixel. Its physical
+   * sampler already carries that coverage policy, including when stored and
+   * physical page sizes happen to match. Application/numbered alpha and the
+   * other established state owners remain separate. */
+  int physical_screen=r->target_id==-1 && !r->target_sp && !r->gui_pass_active &&
+    !gml_render_target_preserves_alpha(r) && !r->fog_flat &&
+    r->alphablend && !r->blendmode && !r->alpha_test_enable &&
+    r->color_write_mask==15u && xs>=0.125 && xs<=64.0 && ys>=0.125 && ys<=64.0 &&
+    !page->project_authored_edges && r->device.context &&
+    r->device.observe_on_demand && r->device.observe_on_demand(r->device.context);
   if(anygm_policy_uses_first_generation_studio(r->win) &&
-     (page->tw!=page->sw || page->th!=page->sh))
+     (page->tw!=page->sw || page->th!=page->sh || physical_screen))
     return resident_filtered_atlas_page(r,page_index,left,top,xs,ys,
       GML_RENDER_SCENE_SPRITE,blend,alpha,NULL,NULL,0.0,NULL,0,0,0,0,7);
   return gml_render_resident_filtered_atlas_page(

@@ -394,12 +394,18 @@ void draw_game_cursor(AnygmEngine *engine,unsigned width,unsigned height){
     scale_x=(double)engine->present_mouse_width/engine->present_mouse_source_width;
     scale_y=(double)engine->present_mouse_height/engine->present_mouse_source_height;
   }
-  /* This CPU cursor is an ordered suffix of the completed frame. Beginning its
-   * screen target first would discard a deferred resident presentation. */
-  if(!engine_materialize_completed_frame(engine)) return;
-  if(!gml_render_completed_screen_write(
-       &engine->render,engine->screen,(int)width,(int)height)) return;
-  gml_render_begin(&engine->render,engine->screen,(int)width,(int)height,0.0,0.0);
+  int resident_cursor=engine->scene_renderer_session==ANYGM_SCENE_RENDERER_OPENGL &&
+    engine_graphics_active(engine) &&
+    gml_render_begin_completed_screen_suffix(
+      &engine->render,engine->screen,(int)width,(int)height);
+  if(!resident_cursor){
+    /* A deferred presentation has its own ordered writer. Observe it before
+     * binding a CPU cursor, never discard it by starting a different pass. */
+    if(!engine_materialize_completed_frame(engine)) return;
+    if(!gml_render_completed_screen_write(
+         &engine->render,engine->screen,(int)width,(int)height)) return;
+    gml_render_begin(&engine->render,engine->screen,(int)width,(int)height,0.0,0.0);
+  }
   GmlRenderDrawState draw_state={
     .alpha_blend=1,
     .alpha_test_enable=0,

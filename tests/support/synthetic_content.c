@@ -1720,7 +1720,8 @@ static int synthetic_framebuffer_content_create(
   int nested_step_target=gpu_sprite==6;
   int assigned_view_surface=gpu_sprite==7;
   int canvas_geometry=gpu_sprite==8;
-  int window_geometry=gpu_sprite==9;
+  int window_cursor=gpu_sprite==45;
+  int window_geometry=gpu_sprite==9 || window_cursor;
   int presentation_filter=gpu_sprite>=10 && gpu_sprite<=12;
   int ended_frame=gpu_sprite==13;
   int classic_redraw=gpu_sprite==14;
@@ -1770,6 +1771,11 @@ static int synthetic_framebuffer_content_create(
        "window_set_size(128,96);\n"
        "display_set_gui_size(64,32);\n"
        "application_surface_draw_enable(false);\n":
+       window_cursor?
+       "global.fixture_frame = 0;\n"
+       "window_set_size(128,96);\n"
+       "application_surface_draw_enable(false);\n"
+       "cursor_sprite = spr_fixture;\n":
        window_geometry?
        "global.fixture_frame = 0;\n"
        "window_set_size(128,96);\n"
@@ -2228,6 +2234,10 @@ int anygm_synthetic_ended_frame_content_create(AnygmSyntheticContent *fixture){
 
 int anygm_synthetic_cursor_frame_content_create(AnygmSyntheticContent *fixture){
   return synthetic_framebuffer_content_create(fixture,0,0,0,16);
+}
+
+int anygm_synthetic_window_cursor_content_create(AnygmSyntheticContent *fixture){
+  return synthetic_framebuffer_content_create(fixture,0,0,0,45);
 }
 
 int anygm_synthetic_classic_redraw_content_create(AnygmSyntheticContent *fixture){

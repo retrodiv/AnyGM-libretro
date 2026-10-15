@@ -1655,6 +1655,71 @@ static int resident_cursor_frame_case(void){
   return 1;
 }
 
+/* The direct completed SCREEN is already current on the device. A cursor is
+ * its ordered suffix, not a reason to observe the whole prefix on the CPU. */
+static int resident_direct_cursor_suffix_case(void){
+  Session plain={0},selected={0};
+  AnygmInputFrame input={0};
+  AnygmFrameOutput cpu={0},gpu={0};
+  CurrentContextWitness witness={1u,0u};
+  AnygmGraphicsContext context=graphics_context(ANYGM_GRAPHICS_OPENGLES3);
+  GmlGpuCounters before={0},after={0};
+  uint8_t *cpu_state=NULL,*gpu_state=NULL;
+  size_t cpu_size=0,gpu_size=0;
+  int matching=1;
+  anygm_test_graphics_reset();
+  REQUIRE(session_open_fixture_with_scene(&plain,ANYGM_SCENE_RENDERER_CPU,
+            anygm_synthetic_window_cursor_content_create) &&
+          session_open_fixture_with_scene(&selected,ANYGM_SCENE_RENDERER_OPENGL,
+            anygm_synthetic_window_cursor_content_create),
+          "direct cursor sessions load");
+  context.userdata=&witness;context.is_current=graphics_context_is_current;
+  REQUIRE(anygm_graphics_context_reset(selected.engine,&context)==ANYGM_OK,
+          "direct cursor adopts witnessed device access");
+  input.struct_size=sizeof input;input.pointer_x=32;input.pointer_y=24;
+  cpu.struct_size=gpu.struct_size=sizeof cpu;
+  gml_gpu_counters(selected.engine->gpu,&before);
+  matching=anygm_run_frame(plain.engine,&input,&cpu)==ANYGM_OK &&
+           anygm_run_frame(selected.engine,&input,&gpu)==ANYGM_OK;
+  gml_gpu_counters(selected.engine->gpu,&after);
+  if(matching && (selected.engine->frame_materializations ||
+     after.scene_readbacks!=before.scene_readbacks)){
+    fprintf(stderr,"direct cursor: materializations=%llu ordinary_scene_reads=%llu\n",
+      (unsigned long long)selected.engine->frame_materializations,
+      (unsigned long long)(after.scene_readbacks-before.scene_readbacks));
+    matching=0;
+  }
+  if(matching){
+    matching=cpu.pixels && cpu.width==128u && cpu.height==96u &&
+      gpu.width==cpu.width && gpu.height==cpu.height &&
+      selected.engine->render.resident_application_pass &&
+      after.scene_families[GML_RENDER_SCENE_SPRITE]>
+        before.scene_families[GML_RENDER_SCENE_SPRITE] &&
+      after.scene_readback_masks==before.scene_readback_masks &&
+      after.scene_rgb_queries==before.scene_rgb_queries &&
+      engine_materialize_completed_frame(selected.engine);
+    /* This driver deliberately returns coordinates, not rasterized sprite
+     * pixels. Real-device paired controls own CPU/GPU image equivalence. */
+    for(unsigned row=0;row<gpu.height && matching;row++)
+      for(unsigned column=0;column<gpu.width && matching;column++)
+        matching=selected.engine->screen[(size_t)row*gpu.width+column]==
+          (0xFF000033u|((gpu.height-1u-row)<<16)|(column<<8));
+    if(matching){
+      gpu_state=serialize(selected.engine,&gpu_size);
+      matching=gpu_state && anygm_state_load(plain.engine,gpu_state,gpu_size)==ANYGM_OK;
+      if(matching){
+        cpu_state=serialize(plain.engine,&cpu_size);
+        matching=cpu_state && cpu_size==gpu_size && !memcmp(cpu_state,gpu_state,cpu_size);
+      }
+      if(!matching) fprintf(stderr,"direct cursor state roundtrip differs cpu=%zu gpu=%zu\n",cpu_size,gpu_size);
+    }
+  }
+  free(gpu_state);free(cpu_state);
+  session_close(&selected);session_close(&plain);
+  REQUIRE(matching,"direct cursor retains the completed prefix without ordinary CPU observation");
+  return 1;
+}
+
 static int resident_transition_snapshot_case(void){
   Session plain={0},selected={0};
   uint32_t flags=0;
@@ -4893,6 +4958,7 @@ int main(void){
     {"classic integer surface keeps partial source alpha resident",classic_integer_surface_calls_case},
     {"ended resident frame remains visible and canonical",ended_frame_retention_case},
     {"authored cursor preserves a resident completed frame",resident_cursor_frame_case},
+    {"direct completed cursor keeps its prefix on device",resident_direct_cursor_suffix_case},
     {"transition snapshot reads a resident completed frame",resident_transition_snapshot_case},
     {"classic redraw and transition retain exact selected fallback",
      classic_temporal_fallback_case},

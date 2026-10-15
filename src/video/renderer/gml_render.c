@@ -1216,6 +1216,22 @@ int gml_render_completed_screen_read(GmlRender *r,uint32_t *pixels,int width,int
   if(metrics.cpu_version!=metrics.logical_version) r->completed_screen_cpu_materializations++;
   return 1;
 }
+int gml_render_begin_completed_screen_suffix(GmlRender *r,uint32_t *pixels,
+                                             int width,int height){
+  GmlRenderImageRef image={0};
+  const GmlRenderDeviceServices *device=gml_render_device(r);
+  if(!r || !device || !device->context || !device->observe_on_demand ||
+     !device->observe_on_demand(device->context) ||
+     r->target_id!=-1 || r->target_sp || r->fb!=pixels ||
+     r->fbw!=width || r->fbh!=height || r->pending_fill ||
+     r->pending_underlay || r->pending_presentation ||
+     gml_render_deferred_presentation(r,NULL) ||
+     !gml_render_completed_screen_image(r,pixels,width,height,&image)) return 0;
+  /* Beginning a pass changes mapping and draw metadata, not the resource's
+   * current device bytes. The ordinary sprite owner may still refuse its suffix
+   * and acquire those exact bytes through its established CPU barrier. */
+  return gml_render_begin_resident_base(r,pixels,width,height,0.0,0.0);
+}
 int gml_render_completed_screen_write(GmlRender *r,uint32_t *pixels,int width,int height){
   uint32_t *current=NULL;
   GmlRenderResource *resource;
