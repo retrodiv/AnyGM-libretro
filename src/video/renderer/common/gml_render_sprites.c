@@ -550,6 +550,11 @@ static int resident_atlas_crop_from_page_impl(GmlRender *r,GmlTpag *page,
   int single_texel_sprite=family==GML_RENDER_SCENE_SPRITE &&
     (physical_sprite_page==15 || physical_sprite_page==16) &&
     page && page->sw==1 && page->sh==1;
+  /* Signed unit samples at whole physical anchors select the same texel
+   * in the ordinary point writer and Studio's large-axis cache. */
+  int integral_unit_sprite=family==GML_RENDER_SCENE_SPRITE && physical_sprite_page==15 &&
+    fabs(xs)==1.0 && fabs(ys)==1.0 && isfinite(left) && isfinite(top) &&
+    left==floor(left) && top==floor(top);
   int selected_background=physical_sprite_page==9;
   int fractional_background=physical_sprite_page==10;
   int tile_function=physical_sprite_page==11 || physical_sprite_page==12;
@@ -594,7 +599,7 @@ static int resident_atlas_crop_from_page_impl(GmlRender *r,GmlTpag *page,
        * writer at every area too. Studio's large-axis switch belongs to
        * sprites, not the public background blit leaf. */
       (!classic_background_point && !classic_sprite_point && !selected_background &&
-       physical_sprite_page!=8 && !gml_render_target_preserves_alpha(r) &&
+       physical_sprite_page!=8 && !integral_unit_sprite && !gml_render_target_preserves_alpha(r) &&
        (double)crop_width*fabs(xs)*(double)crop_height*fabs(ys)>=131072.0) ||
       !r->device.context || !r->device.observe_on_demand ||
       !r->device.observe_on_demand(r->device.context))) return 0;
@@ -743,6 +748,42 @@ static int resident_atlas_crop_from_page_impl(GmlRender *r,GmlTpag *page,
        (uint64_t)(uint32_t)page->sw*(uint32_t)page->sh>65536u) return 0;
   }
   resident_classify_page(page,atlas);
+  unsigned large_unit_cutoff=0u;
+  /* Large normal SCREEN sprites use a different CPU alpha writer. Whole
+   * samples do not require its float arithmetic, but zero-factor coverage
+   * and the first-generation vector/tail alpha split must stay explicit debt.
+   * Cached nonzero bounds certify the existing large visible-area leaf without
+   * reading a destination or generating one packet per source texel. */
+  if(integral_unit_sprite && !r->classic && r->alphablend && !r->blendmode &&
+     !gml_render_target_preserves_alpha(r) &&
+     (double)page->sw*(double)page->sh>=131072.0){
+    if((r->color_write_mask&8u) && !page->scene_binary_alpha && draw_alpha<1.0/256.0)
+      return 0;
+    if(anygm_policy_uses_first_generation_studio(r->win) &&
+       !anygm_policy_has_modern_layer_semantics(r->win)){
+      double xa=left+(double)page->scene_ax0*xs;
+      double xb=left+(double)(page->scene_ax1+1)*xs;
+      double ya=top+(double)page->scene_ay0*ys;
+      double yb=top+(double)(page->scene_ay1+1)*ys;
+      double x0=fmax(0.0,floor(fmin(xa,xb))-1.0);
+      double x1=fmin(r->fbw,ceil(fmax(xa,xb))+1.0);
+      double y0=fmax(0.0,floor(fmin(ya,yb))-1.0);
+      double y1=fmin(r->fbh,ceil(fmax(ya,yb))+1.0);
+      int fast8=x1>x0 && y1>y0 && (x1-x0)*(y1-y0)>=262144.0;
+      if(fast8 && r->fast_alpha_cull){
+        if(draw_alpha!=1.0) return 0;
+        /* At full draw alpha, raw1..254 map to their own alpha8 factor,
+         * while raw255 maps to256. Keep that coverage in the existing raw
+         * cutout state; readable caller state and RGB blending are unchanged. */
+        if(r->fast_alpha_cull<0 || r->fast_alpha_cull>=256) return 1;
+        large_unit_cutoff=(unsigned)(r->fast_alpha_cull<255?r->fast_alpha_cull:254);
+      }
+      if((r->color_write_mask&8u) &&
+         (draw_alpha<1.0/256.0 ||
+          (fast8 && !page->scene_binary_alpha && draw_alpha<255.0/256.0) ||
+          (!fast8 && (!page->scene_binary_alpha || draw_alpha<1.0)))) return 0;
+    }
+  }
   if(integer_atlas && (atlas->runtime_font_page || !source.borrowed_immutable ||
      source.width>16384u || source.height>16384u)) return 0;
   if(integer_sprite_part && (!page->scene_binary_alpha || atlas->runtime_font_page ||
@@ -1081,6 +1122,11 @@ static int resident_atlas_crop_from_page_impl(GmlRender *r,GmlTpag *page,
     state.alpha_test_enabled=(effective_cutout && !!r->alpha_test_enable) ||
       (physical_sprite_page==12 && r->blendmode==2);
     state.alpha_test_reference=effective_cutout && r->alpha_test_enable?r->alpha_test_ref:0u;
+    if(large_unit_cutoff && (!state.alpha_test_enabled ||
+                            large_unit_cutoff>state.alpha_test_reference)){
+      state.alpha_test_enabled=1u;
+      state.alpha_test_reference=large_unit_cutoff;
+    }
     if(integer_background && !r->interp && r->blendmode==0 && draw_alpha<1.0 &&
        (selected_background || !(xs==1.0 && ys==1.0 && colour==0xFFFFFFu)) &&
        anygm_policy_uses_early_background_compositing(r->win) &&
@@ -2961,6 +3007,18 @@ rotated_done:
   }
   double left=x-(double)sprite->originx*xs+(double)page->tx*xs-r->cam_x;
   double top=y-(double)sprite->originy*ys+(double)page->ty*ys-r->cam_y;
+  /* The large normal SCREEN writer goes through its cardinal rotation
+   * geometry even at zero degrees. Reuse that half-open reflected anchor
+   * for whole unit samples, including the public masked sprite entry. */
+  if(family==GML_RENDER_SCENE_SPRITE && !r->classic && !r->interp &&
+     r->alphablend && !r->blendmode && !gml_render_target_preserves_alpha(r) &&
+     fabs(xs)==1.0 && fabs(ys)==1.0 && left==floor(left) && top==floor(top) &&
+     (double)page->sw*(double)page->sh>=131072.0){
+    /* The cached point leaf writes nothing when even full source alpha has
+     * a zero factor. Preserve that no-write boundary, not a colour recipe. */
+    if(!gml_render_rotated_alpha16_factor(255u,alpha)) return 1;
+    render_modern_cardinal_anchor(r,0.0,xs,ys,1.0,0.0,&left,&top);
+  }
   return resident_atlas_crop_from_page(r,page,0,0,page->sw,page->sh,
     left,top,xs,ys,family,colour,alpha,15,NULL);
 }
