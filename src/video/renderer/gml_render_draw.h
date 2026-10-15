@@ -165,7 +165,10 @@ enum {
   GML_RENDER_QUANTISE_INTEGER_TINT_TRUNC=11u,
   GML_RENDER_QUANTISE_INTEGER_TINT_ROUND=12u,
   /* Full-source surface point samples use integral destination loop indices. */
-  GML_RENDER_QUANTISE_SURFACE_NEAREST_FUNCTION=13u
+  GML_RENDER_QUANTISE_SURFACE_NEAREST_FUNCTION=13u,
+  /* Hardware-filtered first-generation sprites round source bytes and
+   * truncate uniform tint before fixed-function blending. */
+  GML_RENDER_QUANTISE_HARDWARE_SPRITE_FIRSTGEN=14u
 };
 
 /* Resolved blend semantics, independent of any device API's enumerant values. Zeroed factors

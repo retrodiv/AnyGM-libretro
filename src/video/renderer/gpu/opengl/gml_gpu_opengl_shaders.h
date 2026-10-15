@@ -270,6 +270,28 @@
   "  }\n" \
   "  return clamp(result,vec4(0.0),vec4(1.0));\n" \
   "}\n" \
+  "vec4 hardware_physical_sprite_sample(vec2 uv,ivec2 first,ivec2 last,int mask){\n" \
+  "  ivec2 extent=textureSize(u_image,0); vec2 p=uv*vec2(extent)-vec2(0.5);\n" \
+  "  ivec2 low=first-ivec2((mask&1)!=0?1:0,(mask&2)!=0?1:0);\n" \
+  "  ivec2 high=last+ivec2((mask&4)!=0?1:0,(mask&8)!=0?1:0);\n" \
+  "  if(all(greaterThanEqual(low,ivec2(0))) && all(lessThan(high,extent)) &&\n" \
+  "     all(greaterThanEqual(p,vec2(low))) && all(lessThanEqual(p,vec2(high))))\n" \
+  "    return hardware_background_sample(uv,first,last,mask);\n" \
+  "  // Rounded minified coverage may reach beyond one padding texel.\n" \
+  "  // Keep hardware filtering; repair only crop-clamped or absent atlas taps.\n" \
+  "  vec4 result=texture(u_image,uv); ivec2 base=ivec2(floor(p)); vec2 f=fract(p);\n" \
+  "  for(int y=0;y<2;y++) for(int x=0;x<2;x++){\n" \
+  "    ivec2 at=base+ivec2(x,y);\n" \
+  "    bool escape=(at.x<first.x&&(mask&1)!=0)||(at.x>last.x&&(mask&4)!=0)||\n" \
+  "                (at.y<first.y&&(mask&2)!=0)||(at.y>last.y&&(mask&8)!=0);\n" \
+  "    ivec2 authored=escape?at:clamp(at,first,last);\n" \
+  "    ivec2 hardware=clamp(at,ivec2(0),extent-ivec2(1));\n" \
+  "    if(any(notEqual(authored,hardware))) result+=\n" \
+  "      (hardware_background_tap(authored)-hardware_background_tap(hardware))*\n" \
+  "      (x==0?1.0-f.x:f.x)*(y==0?1.0-f.y:f.y);\n" \
+  "  }\n" \
+  "  return clamp(result,vec4(0.0),vec4(1.0));\n" \
+  "}\n" \
   "float stretched_float_phase(int remainder,int denominator){\n" \
   "  if(remainder==0) return 0.0;\n" \
   "  uint scaled=uint(remainder),divisor=uint(denominator); int exponent=127;\n" \
@@ -475,6 +497,22 @@
   "    o_color=vec4(vec3(rgb)/255.0,float(sampled.a)/255.0); return;\n" \
   "  }\n" \
   "  // R03_SHADER_HARDWARE_FILTERED_SURFACE: hardware sampling and batched coverage.\n" \
+  "  if(u_filter>=65 && u_filter<=74){\n" \
+  "    vec2 extent=vec2(textureSize(u_image,0));\n" \
+  "    vec2 uv=clamp(v_texcoord,(v_clamp.xy+vec2(0.5))/extent,\n" \
+  "                            (v_clamp.zw+vec2(0.5))/extent);\n" \
+  "    int margin=int(floor(v_margin+0.5));\n" \
+  "    vec4 sampled=margin!=0?hardware_physical_sprite_sample(v_texcoord,\n" \
+  "      ivec2(v_clamp.xy),ivec2(v_clamp.zw),margin):texture(u_image,uv);\n" \
+  "    if(u_alpha_test>=0 && sampled.a*255.0<=float(u_alpha_test)) discard;\n" \
+  "    uvec4 bytes=uvec4(floor(clamp(sampled,0.0,1.0)*255.0+vec4(0.5)));\n" \
+  "    if(bytes.a==0u && u_filter!=68 && u_filter!=69 && u_filter!=73 && u_filter!=74) discard;\n" \
+  "    uvec3 tint=uvec3(v_colour.rgb*255.0+0.5);\n" \
+  "    vec3 rgb=vec3((bytes.rgb*tint)/255u)/255.0;\n" \
+  "    float alpha=float(bytes.a)*v_colour.a/255.0;\n" \
+  "    o_color=(u_filter==72 || u_filter==74)?vec4(0.0,0.0,0.0,1.0):\n" \
+  "      vec4(rgb,(u_filter==67 || u_filter==73)?1.0:alpha); return;\n" \
+  "  }\n" \
   "  if(u_filter==21 || u_filter==22 || u_filter==25 || u_filter==26){\n" \
   "    vec2 extent=vec2(textureSize(u_image,0));\n" \
   "    vec2 uv=clamp(v_texcoord,(v_clamp.xy+vec2(0.5))/extent,\n" \
