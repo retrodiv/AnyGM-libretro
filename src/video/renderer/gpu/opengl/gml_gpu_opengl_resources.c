@@ -220,6 +220,7 @@ void gml_gpu_opengl_scene_forget(GmlGpuBackend *backend){
   scene->checkpoint_program_failed=0;
   scene->program=scene->vertex_buffer=scene->vertex_array=0;
   scene->instance_buffer=scene->instance_array=0;
+  scene->upload_buffer=0;
   scene->instance_bytes_used=0;
   scene->instance_storage_ready=0;
   memset(scene->exact_programs,0,sizeof scene->exact_programs);
@@ -265,6 +266,7 @@ void gml_gpu_opengl_scene_destroy(GmlGpuBackend *backend,int context_is_current)
     if(scene->vertex_buffer) backend->gl.DeleteBuffers(1,&scene->vertex_buffer);
     if(scene->instance_array) backend->gl.DeleteVertexArrays(1,&scene->instance_array);
     if(scene->instance_buffer) backend->gl.DeleteBuffers(1,&scene->instance_buffer);
+    if(scene->upload_buffer) backend->gl.DeleteBuffers(1,&scene->upload_buffer);
   }
   free(scene->vertices);
   free(scene->instances);
@@ -536,13 +538,43 @@ static int scene_scratch_ready(GlScene *scene,size_t bytes){
   return 1;
 }
 
+/* Keep one bounded staging name. Orphan its store before each write so an unsynchronized map
+ * never overwrites an earlier texture transfer. Tiny and larger transfers retain the direct path.
+ * No buffer or pointer survives context loss; mapping uses the established context entry points. */
+static int scene_stage_upload(GmlGpuBackend *backend,size_t bytes,int *staged){
+  void *mapped;
+  GlScene *scene=&backend->scene;
+  *staged=0;
+  backend->gl.BindBuffer(GL_PIXEL_UNPACK_BUFFER,0);
+  if(bytes<64u*1024u || bytes>16u*1024u*1024u) return 1;
+  if(!scene->upload_buffer){
+    backend->gl.GenBuffers(1,&scene->upload_buffer);
+    if(!scene->upload_buffer) return 0;
+  }
+  backend->gl.BindBuffer(GL_PIXEL_UNPACK_BUFFER,scene->upload_buffer);
+  backend->gl.BufferData(GL_PIXEL_UNPACK_BUFFER,(GLsizeiptr)bytes,NULL,GL_STREAM_DRAW);
+  if(backend->gl.GetError()!=GL_NO_ERROR) goto refused;
+  mapped=backend->gl.MapBufferRange(GL_PIXEL_UNPACK_BUFFER,0,(GLsizeiptr)bytes,
+                                    GL_MAP_WRITE_BIT|GL_MAP_UNSYNCHRONIZED_BIT);
+  if(!mapped) goto refused;
+  memcpy(mapped,scene->scratch,bytes);
+  if(!backend->gl.UnmapBuffer(GL_PIXEL_UNPACK_BUFFER)) goto refused;
+  if(backend->gl.GetError()!=GL_NO_ERROR) goto refused;
+  *staged=1;
+  return 1;
+refused:
+  backend->gl.BindBuffer(GL_PIXEL_UNPACK_BUFFER,0);
+  (void)backend->gl.GetError();
+  return 0;
+}
+
 int gml_gpu_opengl_scene_upload(GmlGpuBackend *backend,const GmlRenderImageUpload *transfer,
                                 int *did_upload){
   GlScene *scene;
   GlSceneImage *slot;
   size_t row_bytes,bytes;
   const uint8_t *source;
-  int first,resize,rendered_origin;
+  int first,resize,rendered_origin,staged;
   if(did_upload) *did_upload=0;
   if(!backend || !transfer || !transfer->bytes || !backend->loaded) return 0;
   scene=&backend->scene;
@@ -616,6 +648,7 @@ int gml_gpu_opengl_scene_upload(GmlGpuBackend *backend,const GmlRenderImageUploa
   backend->gl.BindTexture(GL_TEXTURE_2D,slot->texture);
   backend->gl.PixelStorei(GL_UNPACK_ALIGNMENT,1);
   backend->gl.PixelStorei(GL_UNPACK_ROW_LENGTH,0);
+  backend->gl.BindBuffer(GL_PIXEL_UNPACK_BUFFER,0);
   if(first || resize){
     backend->gl.TexImage2D(GL_TEXTURE_2D,0,GL_RGBA8,(GLsizei)transfer->storage_width,
                            (GLsizei)transfer->storage_height,0,GL_RGBA,GL_UNSIGNED_BYTE,NULL);
@@ -624,12 +657,19 @@ int gml_gpu_opengl_scene_upload(GmlGpuBackend *backend,const GmlRenderImageUploa
     backend->gl.TexParameteri(GL_TEXTURE_2D,GL_TEXTURE_WRAP_S,GL_CLAMP_TO_EDGE);
     backend->gl.TexParameteri(GL_TEXTURE_2D,GL_TEXTURE_WRAP_T,GL_CLAMP_TO_EDGE);
   }
+  if(!scene_stage_upload(backend,bytes,&staged)){
+    backend->gl.PixelStorei(GL_UNPACK_ALIGNMENT,4);
+    backend->gl.BindTexture(GL_TEXTURE_2D,0);
+    slot->valid=0;
+    return 0;
+  }
   backend->gl.TexSubImage2D(GL_TEXTURE_2D,0,transfer->region.x,
                             rendered_origin?(GLint)(transfer->storage_height-
                               (uint32_t)transfer->region.y-transfer->region.height)
                                            :transfer->region.y,
                             (GLsizei)transfer->region.width,(GLsizei)transfer->region.height,
-                            GL_RGBA,GL_UNSIGNED_BYTE,scene->scratch);
+                            GL_RGBA,GL_UNSIGNED_BYTE,staged?NULL:scene->scratch);
+  backend->gl.BindBuffer(GL_PIXEL_UNPACK_BUFFER,0);
   backend->gl.PixelStorei(GL_UNPACK_ALIGNMENT,4);
   backend->gl.BindTexture(GL_TEXTURE_2D,0);
   if(backend->gl.GetError()!=GL_NO_ERROR){ slot->valid=0; return 0; }

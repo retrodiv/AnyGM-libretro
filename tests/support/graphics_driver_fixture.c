@@ -106,6 +106,10 @@ typedef struct FakeDriver {
   unsigned readback_error_at,pending_error;
   unsigned async_read_pixels;
   GLuint bound_pack_buffer;
+  AnygmTestGraphicsUnpack unpack;
+  unsigned char *unpack_store;
+  unsigned unpack_failure;
+  int unpack_mapped;
   unsigned char pack_store[2][64*64*4];
   unsigned pack_slot_for[8];
   unsigned pack_fill;
@@ -125,6 +129,7 @@ typedef struct FakeDriver {
 static FakeDriver g_fake;
 
 void anygm_test_graphics_reset(void){
+  free(g_fake.unpack_store);
   memset(&g_fake,0,sizeof g_fake);
   g_fake.next_name=1;
   g_fake.allow_calls=1;
@@ -136,6 +141,8 @@ void anygm_test_graphics_reset(void){
   g_fake.checkpoint_mask=-1;
   g_fake.renderer="fake";
 }
+void anygm_test_graphics_fail_unpack(unsigned phase){ g_fake.unpack_failure=phase; }
+AnygmTestGraphicsUnpack anygm_test_graphics_unpack(void){ return g_fake.unpack; }
 void anygm_test_graphics_renderer(const char *renderer){ g_fake.renderer=renderer; }
 void anygm_test_graphics_readback_alpha(unsigned alpha){ g_fake.readback_alpha=(uint8_t)alpha; }
 void anygm_test_graphics_checkpoint_mask(unsigned bits){ g_fake.checkpoint_mask=(int)(bits&63u); }
@@ -304,6 +311,18 @@ static void fake_TexSubImage2D(GLenum target,GLint level,GLint x,GLint y,GLsizei
   GLuint name=g_fake.active_unit<FAKE_TEXTURE_UNITS?g_fake.bound_texture[g_fake.active_unit]:0;
   (void)target; (void)level; (void)x; (void)y; (void)format;
   note_call();
+  if(g_fake.unpack.bound){
+    size_t bytes=(size_t)width*(size_t)height*(type==GL_UNSIGNED_SHORT?2u:4u);
+    size_t offset=(size_t)pixels;
+    if(g_fake.unpack_mapped || offset>g_fake.unpack.capacity ||
+       bytes>g_fake.unpack.capacity-offset){
+      g_fake.unpack.errors++;
+      g_fake.pending_error=0x0502u;
+      return;
+    }
+    pixels=g_fake.unpack_store+offset;
+    g_fake.unpack.uploads++;
+  }
   if(pixels && name && name==g_fake.upload_error_texture){
     g_fake.pending_error=0x0505u;
     return;
@@ -430,9 +449,31 @@ static GLenum fake_CheckFramebufferStatus(GLenum target){ (void)target; note_cal
  * see that a pass took the previous pass's answer. */
 static void *fake_MapBufferRange(GLenum target,GLintptr offset,GLsizeiptr length,GLbitfield access){
   (void)target;(void)offset;(void)length;(void)access; note_call();
+  if(target==GL_PIXEL_UNPACK_BUFFER){
+    g_fake.unpack.maps++;
+    g_fake.unpack.access=access;
+    if(g_fake.unpack_failure==2u){ g_fake.pending_error=0x0505u;return NULL; }
+    if(!g_fake.unpack.bound || offset!=0 || length<=0 ||
+       (size_t)length>g_fake.unpack.capacity || g_fake.unpack_mapped ||
+       access!=(GL_MAP_WRITE_BIT|GL_MAP_UNSYNCHRONIZED_BIT)){
+      g_fake.unpack.errors++;
+      return NULL;
+    }
+    g_fake.unpack_mapped=1;
+    return g_fake.unpack_store;
+  }
   return g_fake.pack_store[g_fake.bound_pack_buffer&1u];
 }
-static GLboolean fake_UnmapBuffer(GLenum target){ (void)target; note_call(); return GL_TRUE; }
+static GLboolean fake_UnmapBuffer(GLenum target){
+  note_call();
+  if(target==GL_PIXEL_UNPACK_BUFFER){
+    g_fake.unpack.unmaps++;
+    if(!g_fake.unpack_mapped) g_fake.unpack.errors++;
+    g_fake.unpack_mapped=0;
+    if(g_fake.unpack_failure==3u) return GL_FALSE;
+  }
+  return GL_TRUE;
+}
 static void fake_ReadPixels(GLint x,GLint y,GLsizei width,GLsizei height,GLenum format,GLenum type,void *pixels){
   uint8_t *out=(uint8_t*)pixels;
   (void)x;(void)y;(void)format;(void)type; note_call();
@@ -611,11 +652,29 @@ static void fake_GenBuffers(GLsizei n,GLuint *names){
 static void fake_BindBuffer(GLenum target,GLuint name){
   note_call();
   if(target==GL_PIXEL_PACK_BUFFER){ g_fake.bound_pack_buffer=name; return; }
+  if(target==GL_PIXEL_UNPACK_BUFFER){ g_fake.unpack.bound=name; return; }
   g_fake.bound_buffer=name;
 }
 static void fake_BufferData(GLenum target,GLsizeiptr size,const void *data,GLenum usage){
   size_t floats=(size_t)size/sizeof(float);
   (void)target;(void)usage; note_call();
+  if(target==GL_PIXEL_UNPACK_BUFFER){
+    g_fake.unpack.allocations++;
+    if(g_fake.unpack_failure==1u){ g_fake.pending_error=0x0505u;return; }
+    if(!g_fake.unpack.bound || data || size<=0 || (size_t)size>16u*1024u*1024u ||
+       usage!=GL_STREAM_DRAW || g_fake.unpack_mapped){
+      g_fake.unpack.errors++;
+      g_fake.pending_error=0x0502u;
+      return;
+    }
+    unsigned char *grown=(unsigned char*)realloc(g_fake.unpack_store,(size_t)size);
+    if(!grown){ g_fake.pending_error=0x0505u;return; }
+    g_fake.unpack_store=grown;
+    g_fake.unpack.capacity=(size_t)size;
+    g_fake.unpack.buffer=g_fake.unpack.bound;
+    memset(grown,0xCD,(size_t)size);
+    return;
+  }
   g_fake.buffer_bytes=(size_t)size;
   if(target==GL_ARRAY_BUFFER && g_fake.bound_buffer<FAKE_MAX_CALLS){
     g_fake.buffer_capacity[g_fake.bound_buffer]=(size_t)size;
@@ -649,7 +708,16 @@ static void fake_BufferSubData(GLenum target,GLintptr offset,GLsizeiptr size,con
   if(floats>64u) floats=64u;
   memcpy(g_fake.buffer_data,data,floats*sizeof(float));
 }
-static void fake_DeleteBuffers(GLsizei n,const GLuint *names){ (void)names; note_call(); g_fake.deletes_issued+=n; }
+static void fake_DeleteBuffers(GLsizei n,const GLuint *names){
+  note_call(); g_fake.deletes_issued+=n;
+  for(GLsizei index=0;index<n;index++) if(names[index]==g_fake.unpack.buffer){
+    g_fake.unpack.deletes++;
+    free(g_fake.unpack_store);
+    g_fake.unpack_store=NULL;
+    g_fake.unpack.capacity=0;
+    g_fake.unpack.buffer=0;
+  }
+}
 static void fake_GenQueries(GLsizei count,GLuint *names){
   note_call();
   for(GLsizei index=0;index<count;index++) names[index]=g_fake.next_name++;

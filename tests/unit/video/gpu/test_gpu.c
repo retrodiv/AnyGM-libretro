@@ -455,6 +455,117 @@ static int program_failure_case(void){
   return 1;
 }
 
+static int scene_staged_upload_case(void){
+  uint8_t pixels[128u*129u*4u],expected[128u*128u*4u];
+  const char *missing[]={NULL,"glMapBufferRange","glUnmapBuffer"};
+  for(unsigned api=GML_GPU_API_OPENGL_CORE;api<=GML_GPU_API_OPENGLES3;api++)
+  for(unsigned omitted=0;omitted<3u;omitted++)
+  for(unsigned format=GML_RENDER_PIXEL_XRGB8888;format<=GML_RENDER_PIXEL_RGBA8888;format++)
+  for(unsigned rendered=0;rendered<2u;rendered++){
+    GmlGpuContext context=fake_context(api);
+    GmlRenderDeviceServices services;
+    GmlRenderImageUpload upload={0};
+    anygm_test_graphics_reset();
+    anygm_test_graphics_withhold(missing[omitted]);
+    GmlGpu *gpu=gml_gpu_create();
+    if(omitted){
+      REQUIRE(gpu && !gml_gpu_context_reset(gpu,&context) &&
+              strstr(gml_gpu_last_error(gpu),missing[omitted]),
+              "missing established mapping entry point still rejects context adoption");
+      gml_gpu_destroy(gpu,0);
+      continue;
+    }
+    REQUIRE(gpu && gml_gpu_context_reset(gpu,&context),"staging context adopted");
+    gml_gpu_device_services(gpu,&services);
+    upload.image=(GmlRenderImageRef){rendered?GML_RENDER_RESOURCE_SURFACE:
+      GML_RENDER_RESOURCE_ATLAS,3u,1u,1u};
+    upload.storage_width=upload.storage_height=128u;
+    upload.region=(GmlRenderRect){0,0,128u,128u};upload.pixel_format=format;
+    upload.stride_bytes=129u*4u;upload.byte_capacity=sizeof pixels;upload.bytes=pixels;
+    memset(pixels,0xAC,sizeof pixels);
+    for(unsigned row=0;row<128u;row++) for(unsigned column=0;column<128u;column++){
+      uint8_t r=(uint8_t)(row*7u+column),g=(uint8_t)(row+column*11u);
+      uint8_t b=(uint8_t)(row^column),a=(uint8_t)(row*13u+column*17u);
+      uint32_t word=((uint32_t)a<<24)|((uint32_t)r<<16)|((uint32_t)g<<8)|b;
+      uint8_t rgba[4]={r,g,b,a};
+      memcpy(pixels+(size_t)row*upload.stride_bytes+column*4u,
+             format==GML_RENDER_PIXEL_RGBA8888?(const void*)rgba:(const void*)&word,4u);
+      size_t index=((size_t)(rendered?127u-row:row)*128u+column)*4u;
+      memcpy(expected+index,rgba,4u);
+      if(format==GML_RENDER_PIXEL_XRGB8888) expected[index+3u]=255u;
+    }
+    REQUIRE(services.upload(services.context,&upload),"strided converted upload succeeds");
+    unsigned texture=anygm_test_graphics_first_texture_with_format(GL_RGBA8);
+    size_t count=0;const unsigned char *bytes=anygm_test_graphics_texture_bytes(texture,&count);
+    REQUIRE(bytes && count==sizeof expected && !memcmp(bytes,expected,count),
+            "all RGBA bytes, padding exclusion and target row order are exact");
+    AnygmTestGraphicsUnpack unpack=anygm_test_graphics_unpack();
+    REQUIRE(!unpack.errors && !unpack.bound &&
+            unpack.allocations==(omitted?0u:1u) && unpack.maps==(omitted?0u:1u) &&
+            unpack.unmaps==(omitted?0u:1u) && unpack.uploads==(omitted?0u:1u),
+            "staging is balanced and leaves no unpack binding");
+    if(!rendered){
+      REQUIRE(services.upload(services.context,&upload),"same immutable version remains resident");
+      REQUIRE(anygm_test_graphics_texture_data_uploads(texture)==1u &&
+              anygm_test_graphics_unpack().allocations==unpack.allocations,
+              "a cached page neither stages nor resubmits its bytes");
+    }
+    upload.image.content_version++;
+    REQUIRE(services.upload(services.context,&upload),"changed version uploads again");
+    REQUIRE(anygm_test_graphics_texture_data_uploads(texture)==2u &&
+            (omitted || (anygm_test_graphics_unpack().buffer==unpack.buffer &&
+                         anygm_test_graphics_unpack().allocations==2u)),
+            "the staging name is reused with a freshly orphaned store");
+    if(!omitted) for(unsigned phase=1u;phase<=3u;phase++){
+      GmlGpuCounters before={0},after={0};
+      upload.image.content_version++;
+      gml_gpu_counters(gpu,&before);
+      anygm_test_graphics_fail_unpack(phase);
+      REQUIRE(!services.upload(services.context,&upload),"failed staging is refused");
+      gml_gpu_counters(gpu,&after);
+      REQUIRE(after.scene_uploads==before.scene_uploads &&
+              !anygm_test_graphics_unpack().bound,
+              "failed staging publishes no uploaded version or unpack binding");
+      anygm_test_graphics_fail_unpack(0u);
+      REQUIRE(services.upload(services.context,&upload),"same version retries after failure");
+    }
+    unsigned deletes=(unsigned)anygm_test_graphics_deletes();
+    REQUIRE(gml_gpu_context_reset(gpu,&context),"replacement namespace adopted");
+    REQUIRE((unsigned)anygm_test_graphics_deletes()==deletes,
+            "lost staging storage is forgotten without deleting into its successor");
+    gml_gpu_device_services(gpu,&services);
+    REQUIRE(services.upload(services.context,&upload),"replacement context reuploads immutable bytes");
+    REQUIRE(!anygm_test_graphics_unpack().errors,"all staging stores preceded their maps");
+    gml_gpu_destroy(gpu,1);
+    REQUIRE(anygm_test_graphics_unpack().deletes==(omitted?0u:1u),
+            "only the current namespace's staging buffer is destroyed");
+  }
+  for(unsigned large=0;large<2u;large++){
+    uint32_t width=large?2048u:64u,height=large?2049u:64u;
+    size_t count=(size_t)width*height*4u;
+    uint8_t *bytes=(uint8_t*)malloc(count);
+    GmlGpuContext context=fake_context(GML_GPU_API_OPENGLES3);
+    GmlRenderDeviceServices service;
+    GmlRenderImageUpload upload={.image={GML_RENDER_RESOURCE_ATLAS,1u,1u,1u},
+      .storage_width=width,.storage_height=height,.region={0,0,width,height},
+      .pixel_format=GML_RENDER_PIXEL_RGBA8888,.stride_bytes=(size_t)width*4u,
+      .byte_capacity=count,.bytes=bytes};
+    REQUIRE(bytes!=NULL,"direct-path boundary pixels allocated");
+    memset(bytes,0x73,count);
+    anygm_test_graphics_reset();
+    GmlGpu *gpu=gml_gpu_create();
+    REQUIRE(gpu && gml_gpu_context_reset(gpu,&context),"direct boundary context adopted");
+    gml_gpu_device_services(gpu,&service);
+    REQUIRE(service.upload(service.context,&upload) &&
+            !anygm_test_graphics_unpack().allocations &&
+            !anygm_test_graphics_unpack().bound,
+            "tiny and over-budget transfers retain direct uploads without staging allocation");
+    gml_gpu_destroy(gpu,1);
+    free(bytes);
+  }
+  return 1;
+}
+
 static int scene_service_contract_case(void){
   static const GmlRenderOperationCode unselected[]={
     GML_RENDER_OP_TEXTURED_TRIANGLES,GML_RENDER_OP_COPY_IMAGE,
@@ -4259,6 +4370,7 @@ int main(int argc,char **argv){
     {"missing_entry_point",missing_entry_point_case},
     {"program_failure",program_failure_case},
     {"scene_service_contract",scene_service_contract_case},
+    {"scene_staged_upload",scene_staged_upload_case},
     {"scene_optional_entry_refusal",scene_optional_entry_refusal_case},
     {"scene_content_source_orientation",scene_content_source_orientation_case},
     {"scene_resident_batch",scene_resident_batch_case},

@@ -21,6 +21,13 @@
  * fakes of one driver drift and the one that drifts is always the one nobody is reading. */
 
 void anygm_test_graphics_reset(void);
+/* Staging failures: zero disables; one allocation, two mapping, three unmapping. */
+void anygm_test_graphics_fail_unpack(unsigned phase);
+typedef struct AnygmTestGraphicsUnpack {
+  unsigned allocations,maps,unmaps,uploads,deletes,errors,bound,buffer,access;
+  size_t capacity;
+} AnygmTestGraphicsUnpack;
+AnygmTestGraphicsUnpack anygm_test_graphics_unpack(void);
 /* A renderer identity belongs to the current synthetic context; NULL tests an unavailable query. */
 void anygm_test_graphics_renderer(const char *renderer);
 /* A replacement GL namespace may recycle a numeric name from a lost context. Arrange that the

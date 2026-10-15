@@ -29,6 +29,18 @@ retain their separately qualified expanded layout and upload path. The neutral
 `scene_resident_batch` driver control covers cross-submit offsets, wrap and context
 loss; existing real-device paired scene controls retain responsibility for pixels.
 
+Scene image transfers remain EXACT RGBA0. Uploads from64 KiB through16 MiB use
+one context-local pixel-unpack buffer, orphaned before each mapped write and
+unmapped before texture submission. This avoids a slow direct-driver copy without
+changing conversion, row origin, stride, image versions or immutable-page reuse.
+Smaller and over-budget transfers retain the direct path. Failed allocation,
+mapping, unmapping or submission publishes no valid uploaded version; context
+loss forgets the buffer without deleting into its successor. The existing
+mapping entry-point adoption contract is unchanged. No gameplay readback,
+completion barrier, new shader cache or drawing variant is introduced.
+`scene_staged_upload` covers conversion, reuse, refusal and lifecycle; real-device
+full-byte controls and the existing paired scenes establish pixels, not the fake driver.
+
 R03-SPR-FILTERED-EDGE-NOOP retains fully clipped ordinary first-generation
 filtered axis sprites on application targets without draining their GPU prefix.
 It reuses the existing projected rectangle: authored-edge pages and integral
