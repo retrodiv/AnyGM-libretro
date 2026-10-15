@@ -25,6 +25,24 @@ static int resident_nearest_text_scale(double xs,double ys){
          fabs(ys)>=0.0625 && fabs(ys)<=64.0;
 }
 
+/* Empty glyph coverage needs no source pixels, device command or CPU barrier.
+ * Reuse the ordinary CPU geometry envelope after layout and glyph demand. */
+static int resident_text_glyph_outside(GmlRender *r,const GmlSprite *sprite,
+                                      const GmlTpag *page,double x,double y,
+                                      double xs,double ys,double rotation){
+  if(!r || !r->resident_application_pass || r->active_shader>=0 ||
+     gml_d3_is_active(r) || r->software_overlay || r->classic_phase_y ||
+     r->rotated_batch_count || r->rotated_batch_building ||
+     r->pending_underlay || r->pending_presentation ||
+     !gml_render_scene_target_matches(r)) return 0;
+  for(unsigned axis=0;axis<3u;axis++)
+    if(r->classic_interp_phase[axis] || r->app_interp_phase[axis]) return 0;
+  /* An in-target anchor needs its established visible owner. */
+  if(x-r->cam_x>=0.0 && x-r->cam_x<r->fbw &&
+     y-r->cam_y>=0.0 && y-r->cam_y<r->fbh) return 0;
+  return gml_render_sprite_source_is_outside(r,sprite,page,x,y,xs,ys,rotation);
+}
+
 
 
 static unsigned text_next_cp(const char **pp){
@@ -207,19 +225,24 @@ static void draw_text_real_plain(GmlRender *r, GmlFont *f, double x, double y, c
         }
         uint32_t glyph_blend=f->subpixel?0xFFFFFFu:blend;
         int resident_glyph=0;
-        if(r->resident_application_pass && use_rot && !f->runtime_owned &&
+        if(r->resident_application_pass && !f->subpixel && f->sdf_spread<=0){
+          GmlSprite cell={.w=g->w,.h=g->h};
+          resident_glyph=resident_text_glyph_outside(r,&cell,&gt,glyph_x,glyph_y,
+                                                   xs,ys,use_rot?rotation:0.0);
+        }
+        if(!resident_glyph && r->resident_application_pass && use_rot && !f->runtime_owned &&
            !f->subpixel && f->sdf_spread<=0){
           GmlSprite glyph_sprite={.w=g->w,.h=g->h};
           resident_glyph=gml_render_resident_rotated_font_glyph(r,&glyph_sprite,&gt,
             glyph_x-r->cam_x,glyph_y-r->cam_y,xs,ys,rotation,glyph_blend,alpha);
         }
-        if(r->resident_application_pass && !use_rot && !f->runtime_owned &&
+        if(!resident_glyph && r->resident_application_pass && !use_rot && !f->runtime_owned &&
            !f->subpixel && f->sdf_spread<=0 && !r->software_overlay &&
            xs==1.0 && ys==1.0 && glyph_blend==0xFFFFFFu && alpha==1.0 &&
            gml_d3_is_active(r))
           resident_glyph=gml_render_resident_ortho_font_glyph(r,f->atlas,
             g->sx,g->sy,g->w,g->h,glyph_x,glyph_y);
-        if(r->resident_application_pass && !use_rot &&
+        if(!resident_glyph && r->resident_application_pass && !use_rot &&
            !f->subpixel && f->sdf_spread<=0 &&
            !r->software_overlay && !gml_d3_is_active(r) &&
            isfinite(alpha) && alpha>=0.0 && alpha<=1.0){
@@ -424,6 +447,23 @@ static void draw_text_transformed_font(GmlRender *r, GmlFont *f,
             double top=y+(base_y-s->originy+page->ty)*ys-r->cam_y;
             resident_glyph=gml_render_resident_sprite_font_glyph(
               r,page_index,left,top,xs,ys,blend,alpha);
+          }
+        }
+        if(!resident_glyph && r->resident_application_pass && !s->runtime_rgba && s->frame){
+          int page_index=s->frame[fr];
+          if(page_index>=0 && page_index<r->n_tpag){
+            const GmlTpag *page=&r->tpag[page_index];
+            if(use_rot)
+              resident_glyph=resident_text_glyph_outside(r,s,page,glyph_x,glyph_y,xs,ys,rr);
+            else{
+              /* Proportional axis glyphs omit the logical horizontal trim.
+               * Bound that same physical crop, not the sprite's full cell. */
+              GmlSprite cell={.w=page->sw,.h=page->sh};
+              GmlTpag crop={.sw=page->sw,.sh=page->sh,.tw=page->sw,.th=page->sh};
+              double left=x+(cx-s->originx+(f->prop?0:page->tx))*xs;
+              double top=y+(base_y-s->originy+page->ty)*ys;
+              resident_glyph=resident_text_glyph_outside(r,&cell,&crop,left,top,xs,ys,0.0);
+            }
           }
         }
         if(!resident_glyph){

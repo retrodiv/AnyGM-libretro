@@ -12464,7 +12464,7 @@ static int resident_background_function(int fractional){
 }
 
 /* Admission/authority proof only. Real-context public-string controls own D2. */
-static int resident_nearest_text_function(void){
+static int resident_nearest_text_function(int outside){
   enum {W=24,H=20};
   const int generations[]={530,700,800,13,15,17};
   const double alphas[]={1,0,.37};
@@ -12513,23 +12513,26 @@ static int resident_nearest_text_function(void){
     if(target_kind==2u) CHECK(gml_surface_set_target(r,0));
     if(target_kind==3u){int id=gml_surface_create(r,W,H);CHECK(id>0 && gml_surface_set_target(r,id));}
     if(gui){gml_render_gui_begin(r,W,H);gml_render_gui_set_size(r,W/2,H/2);}
-    r->interp=(int)interpolation;
+    r->interp=outside?1:(int)interpolation;
     r->alphablend=!disabled;r->blendmode=draw_state>=2u?2:0;
     r->alpha_test_enable=(int)(draw_state&1u);r->alpha_test_ref=127;
     gml_render_set_pending_fill(r,0x40273859u);gml_render_flush_pending_fill(r);
     CHECK(gml_render_scene_submit_pending(r));memcpy(shadow,r->fb,sizeof shadow);
     int submitted=fake.submits;
+    uint64_t target_version=gml_render_resource_image_ref(gml_render_scene_target_resource_ensure(r)).content_version;
     double mx=1,my=1;gml_render_draw_map_scale(r,&mx,&my);
     for(unsigned draw=0;draw<8u;draw++)
-      gml_draw_text_transformed(r,12.125/mx,10.25/my,"A",scales[scale][0]/mx,
-        scales[scale][1]/my,0,0x70B0D0u,alphas[a]);
+      gml_draw_text_transformed(r,(outside?200.0:12.125)/mx,(outside?200.0:10.25)/my,
+        "A",scales[scale][0]/mx,scales[scale][1]/my,0,0x70B0D0u,alphas[a]);
     CHECK(r->resident_application_pass && gml_render_scene_submit_pending(r));
-    CHECK(fake.submits==submitted+(a==1u?0:1) && !fake.readbacks && !fake.rgb_queries &&
+    CHECK(fake.submits==submitted+(outside || a==1u?0:1) && !fake.readbacks && !fake.rgb_queries &&
           !memcmp(shadow,r->fb,sizeof shadow));
     GmlRenderResource *resource=gml_render_scene_target_resource_ensure(r);CHECK(resource);
+    if(outside) CHECK(gml_render_resource_image_ref(resource).content_version==target_version &&
+      r->interp==1 && r->alpha_test_enable==(int)(draw_state&1u) && r->alpha_test_ref==127);
     gml_render_resource_journal_metrics(resource,&metrics);
     CHECK(metrics.authority==GML_RENDER_RESOURCE_GPU_RESIDENT && !metrics.cpu_replays && !metrics.journal_bytes);
-    if(a!=1u){
+    if(a!=1u && !outside){
       CHECK(fake.last_batch_operations>=8u && fake.last_filter==GML_RENDER_FILTER_NEAREST &&
             r->alpha_test_enable==(int)(draw_state&1u) && r->alpha_test_ref==127 &&
             r->interp==(int)interpolation);
@@ -13939,7 +13942,8 @@ int main(void){
   passed+=resident_nearest_background_crop_edges();
   passed+=resident_nearest_sprite_crop_edges();
   passed+=resident_selected_background_crop_edges();
-  passed+=resident_nearest_text_function();
+  passed+=resident_nearest_text_function(0);
+  passed+=resident_nearest_text_function(1);
   passed+=resident_rotated_text_function();
   passed+=resident_selected_background_function();
   passed+=resident_classic_owned_binary_unit_sprite();
@@ -13982,6 +13986,6 @@ int main(void){
   passed+=source_free_primitive_rect_replay();
   passed+=stretched_float_exact_replay();
   passed+=filtered_font_exact_recovery();
-  printf("render resource cases: passed=%d failed=%d\n",passed,199-passed);
-  return passed==199?EXIT_SUCCESS:EXIT_FAILURE;
+  printf("render resource cases: passed=%d failed=%d\n",passed,200-passed);
+  return passed==200?EXIT_SUCCESS:EXIT_FAILURE;
 }
