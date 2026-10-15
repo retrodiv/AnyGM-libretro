@@ -712,7 +712,10 @@ static int resident_atlas_crop_from_page_impl(GmlRender *r,GmlTpag *page,
                       !r->device.observe_on_demand(r->device.context))) return 0;
   if(page->sw<=0 || page->sh<=0 || page->sx<0 || page->sy<0 ||
      (!source_override && (page->atlas<0 || page->atlas>=r->n_atlas)) ||
-     ((!physical_sprite_page || family!=GML_RENDER_SCENE_SPRITE ||
+     /* The logical point-background writer uses sw/sh, not the optional
+      * stored sprite dimensions. Runtime replacements may leave them zero
+      * or retain older values; the actual atlas crop is still bounded below. */
+     (!integer_background && (!physical_sprite_page || family!=GML_RENDER_SCENE_SPRITE ||
        ((r->classic || r->interp) && physical_sprite_page!=15 && physical_sprite_page!=16)) &&
       (page->tw!=page->sw || page->th!=page->sh)) ||
      crop_x<0 || crop_y<0 || crop_width<=0 || crop_height<=0 ||

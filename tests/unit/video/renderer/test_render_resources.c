@@ -12575,6 +12575,8 @@ static int resident_background_function(int fractional){
   enum { W=24,H=20 };
   const int generations[]={530,700,800,13,15,17};
   const double alphas[]={1.0,0.0,0.37};
+  int stored_extents=fractional==3;
+  if(stored_extents) fractional=0;
   for(unsigned interpolation=0;interpolation<2u;interpolation++)
   for(unsigned generation=0;generation<6u;generation++)
   for(unsigned target_kind=0;target_kind<4u;target_kind++)
@@ -12583,6 +12585,8 @@ static int resident_background_function(int fractional){
   for(unsigned disabled=0;disabled<2u;disabled++) for(unsigned tint=0;tint<2u;tint++)
   for(unsigned a=0;a<3u;a++){
     if(interpolation && (fractional || generations[generation]<100)) continue;
+    if(stored_extents && (tint!=(generation+target_kind+gui+repeat+draw_state+disabled)%2u ||
+       a!=(target_kind+gui+repeat+draw_state+disabled)%3u)) continue;
     GmlRender *render=calloc(1,sizeof *render);GmlWin content={0};
     FakeDevice fake={.on_demand=1,.readback_colour=0x7F25C080u};
     GmlRenderDeviceServices device=service(&fake);GmlRenderJournalMetrics metrics={0};
@@ -12600,6 +12604,13 @@ static int resident_background_function(int fractional){
     CHECK(render->atlas[0].px && render->tpag && render->bg);
     memcpy(render->atlas[0].px,rgba,sizeof rgba);render->n_tpag=render->n_bg=1;
     render->tpag[0]=(GmlTpag){.sw=2,.sh=2,.tw=2,.th=2,.bw=4,.bh=4,.tx=1,.ty=1};
+    if(stored_extents){
+      unsigned variation=(generation+target_kind+gui+repeat+draw_state+disabled)%5u;
+      render->tpag[0].tw=variation==0u || variation==2u?0:variation==3u?5:variation==4u?1:2;
+      render->tpag[0].th=variation==1u || variation==2u?0:variation>=3u?4:2;
+      render->atlas[0].blob=(generation+target_kind+gui+repeat+draw_state+disabled)&1u;
+    }
+    int original_stored_width=render->tpag[0].tw,original_stored_height=render->tpag[0].th;
     render->bg[0].tpag=0;
     device.observe_on_demand=fake_observe_on_demand;gml_render_bind_device(render,&device);
     for(unsigned p=0;p<W*H;p++) screen[p]=0xA5ABCDEFu;
@@ -12712,9 +12723,10 @@ static int resident_background_function(int fractional){
         int cardinal=fractional==2 && repeat>=4u;
         CHECK(fake.last_quantisation==((generation==5u && !cardinal)?GML_RENDER_QUANTISE_INTEGER_TINT_ROUND:
                                                    GML_RENDER_QUANTISE_INTEGER_TINT_TRUNC));
-        double expected=fractional!=2 && generations[generation]==13 && a==2u
+        double expected=fractional!=2 && render->atlas[0].blob && generations[generation]==13 && a==2u
           ?floor(alphas[a]*255.0)/255.0:alphas[a];
-        int packed_empty_cutoff=fractional!=2 && generations[generation]==13 && a==2u && !draw_state;
+        int packed_empty_cutoff=fractional!=2 && render->atlas[0].blob &&
+          generations[generation]==13 && a==2u && !draw_state;
         int effective_cutout=!cardinal || !disabled;
         int enabled=(effective_cutout && (draw_state&1u)) || packed_empty_cutoff ||
           (cardinal && (draw_state&2u));
@@ -12730,6 +12742,7 @@ static int resident_background_function(int fractional){
     fake.forbid_calls=1;
     CHECK(gml_render_resource_acquire_cpu_read(resource,&pixels) && !fake.forbidden_calls &&
       pixels[0]==fake.readback_colour && pixels[W*H-1u]==fake.readback_colour);
+    CHECK(render->tpag[0].tw==original_stored_width && render->tpag[0].th==original_stored_height);
     fake.forbid_calls=0;gml_render_free(render);free(render);
   }
   return 1;
@@ -12899,6 +12912,10 @@ static int resident_integer_background_function(void){
 
 static int resident_fractional_background_function(void){
   return resident_background_function(1);
+}
+
+static int resident_background_stored_extents(void){
+  return resident_background_function(3);
 }
 
 static int resident_nearest_tile_function(void){
@@ -14211,6 +14228,7 @@ int main(void){
   passed+=resident_classic_large_point_sprite_function();
   passed+=resident_integer_background_function();
   passed+=resident_fractional_background_function();
+  passed+=resident_background_stored_extents();
   passed+=resident_nearest_tile_function();
   passed+=resident_nearest_tile_crop_edges();
   passed+=resident_nearest_background_crop_edges();
@@ -14262,6 +14280,6 @@ int main(void){
   passed+=source_free_primitive_rect_replay();
   passed+=stretched_float_exact_replay();
   passed+=filtered_font_exact_recovery();
-  printf("render resource cases: passed=%d failed=%d\n",passed,204-passed);
-  return passed==204?EXIT_SUCCESS:EXIT_FAILURE;
+  printf("render resource cases: passed=%d failed=%d\n",passed,205-passed);
+  return passed==205?EXIT_SUCCESS:EXIT_FAILURE;
 }
