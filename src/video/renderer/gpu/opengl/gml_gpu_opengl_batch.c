@@ -331,8 +331,16 @@ static int integer_function_sprite_valid(const GmlRenderDrawOp *op,
       int background=op->scene_family==GML_RENDER_SCENE_BACKGROUND ||
                      op->scene_family==GML_RENDER_SCENE_TILE ||
                      op->scene_family==GML_RENDER_SCENE_TEXT;
+      /* A first-generation trailing tie can retain an adjacent physical
+       * texel. A clipped interior still has no nearest boundary when both
+       * UV endpoints lie strictly inside the same physical cell. */
+      int single_cell=op->scene_family==GML_RENDER_SCENE_SPRITE &&
+        ((region.width==1u && region.height==1u) ||
+         (region.width<=2u && region.height<=2u &&
+          floor(begin*storage)==floor(end*storage)));
+      double maximum=single_cell?4096.0:64.0;
       if(!isfinite(scale) || scale<(background?0.0625:0.125)-1e-9 ||
-         scale>64.0+1e-9) return 0;
+         scale>maximum+1e-9) return 0;
     }
   }
   for(unsigned c=0;c<4u;c++){

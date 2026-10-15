@@ -11777,6 +11777,54 @@ static int resident_modern_screen_point_sprite(void){
   return 1;
 }
 
+static int resident_cached_rotation_trim_tie_metadata(void){
+  enum { W=64,H=48 };
+  GmlRender *r=calloc(1,sizeof *r);
+  GmlWin content={.bytecode=13};
+  uint32_t screen[W*H];
+  GmlRenderRotatedCoverageRegion regions[2048];
+  uint32_t count=0,matched=0;
+  CHECK(r && gml_render_init(r,NULL)==0);
+  r->win=&content;
+  free(r->atlas[0].px);
+  r->atlas[0].px=malloc(20u*20u*4u);
+  CHECK(r->atlas[0].px);
+  r->atlas[0].w=r->atlas[0].h=20;
+  for(unsigned pixel=0;pixel<400u;pixel++){
+    uint8_t *rgba=r->atlas[0].px+4u*pixel;
+    rgba[0]=(uint8_t)(pixel*31u+19u);rgba[1]=(uint8_t)(pixel*17u+53u);
+    rgba[2]=(uint8_t)(pixel*13u+101u);rgba[3]=255u;
+  }
+  r->spr=calloc(1,sizeof *r->spr);r->tpag=calloc(1,sizeof *r->tpag);
+  CHECK(r->spr && r->tpag);
+  r->n_spr=r->n_tpag=1;
+  r->spr[0]=(GmlSprite){.w=13,.h=19,.originx=6,.originy=9,.n_frames=1};
+  r->spr[0].frame=calloc(1,sizeof *r->spr[0].frame);
+  CHECK(r->spr[0].frame);
+  r->tpag[0]=(GmlTpag){.sx=4,.sy=4,.sw=8,.sh=15,.tw=8,.th=15,
+                      .tx=3,.ty=2,.bw=13,.bh=19};
+  gml_render_begin(r,screen,W,H,0,0);gml_render_gui_begin(r,W,H);
+  r->interp=0;
+  gml_render_set_pending_fill(r,0xFF25C080u);
+  gml_draw_sprite_ext(r,0,0,6,13,2,2,45,0xFFFFFFu,1);
+  gml_render_flush_pending_fill(r);
+  CHECK(screen[7u*W]==0xFFC1E7CFu);
+  CHECK(gml_render_rotated_nearest_texel_regions(r,&r->spr[0],&r->tpag[0],
+          6,13,2,2,45,0xFFFFFFu,regions,2048u,&count));
+  for(uint32_t index=0;index<count;index++){
+    const GmlRenderRotatedCoverageRegion *region=&regions[index];
+    if(region->region.x<=0 && (int64_t)region->region.x+region->region.width>0 &&
+       region->region.y<=7 && (int64_t)region->region.y+region->region.height>7){
+      CHECK(region->source_x==2 && region->source_y==3 &&
+            region->sample_key==screen[7u*W]);
+      matched++;
+    }
+  }
+  CHECK(matched==1u);
+  gml_render_free(r);free(r);
+  return 1;
+}
+
 static int resident_large_screen_axis_row_metadata(void){
   for(unsigned variant=0;variant<11u;variant++){
     GmlRender *r=calloc(1,sizeof *r);
@@ -13971,6 +14019,7 @@ int main(void){
   passed+=resident_gui_replacement_sprite();
   passed+=resident_modern_screen_point_sprite();
   passed+=resident_large_screen_axis_row_metadata();
+  passed+=resident_cached_rotation_trim_tie_metadata();
   passed+=resident_opaque_sprite_complete_application();
   passed+=resident_integer_world_sourceover_sprite();
   passed+=resident_identity_gui_unit_sourceover();
@@ -13991,6 +14040,6 @@ int main(void){
   passed+=source_free_primitive_rect_replay();
   passed+=stretched_float_exact_replay();
   passed+=filtered_font_exact_recovery();
-  printf("render resource cases: passed=%d failed=%d\n",passed,200-passed);
-  return passed==200?EXIT_SUCCESS:EXIT_FAILURE;
+  printf("render resource cases: passed=%d failed=%d\n",passed,201-passed);
+  return passed==201?EXIT_SUCCESS:EXIT_FAILURE;
 }

@@ -478,7 +478,9 @@ static int resident_atlas_crop_from_page_impl(GmlRender *r,GmlTpag *page,
   /* Plain and sprite-font layout has already resolved physical coordinates.
    * Settle the same ordered application prefix used by filtered glyphs before
    * the nearest admission gate; never discard a rejected composition intent. */
-  if(r && family==GML_RENDER_SCENE_TEXT && r->pending_underlay &&
+  int nearest_sprite_underlay=family==GML_RENDER_SCENE_SPRITE &&
+    (physical_sprite_page==15 || physical_sprite_page==16);
+  if(r && (family==GML_RENDER_SCENE_TEXT || nearest_sprite_underlay) && r->pending_underlay &&
      (!resident_mapped_screen_gui_font(r) ||
       !gml_render_compose_resident_underlay(r))) return 0;
   int runtime_function=source_override && physical_sprite_page==17;
@@ -545,6 +547,9 @@ static int resident_atlas_crop_from_page_impl(GmlRender *r,GmlTpag *page,
   int rotated_sprite_function=physical_sprite_page==16;
   int scaled_sprite=physical_sprite_page==15 || rotated_sprite_function || runtime_function;
   int integer_sprite=physical_sprite_page==7 || scaled_sprite;
+  int single_texel_sprite=family==GML_RENDER_SCENE_SPRITE &&
+    (physical_sprite_page==15 || physical_sprite_page==16) &&
+    page && page->sw==1 && page->sh==1;
   int selected_background=physical_sprite_page==9;
   int fractional_background=physical_sprite_page==10;
   int tile_function=physical_sprite_page==11 || physical_sprite_page==12;
@@ -580,14 +585,16 @@ static int resident_atlas_crop_from_page_impl(GmlRender *r,GmlTpag *page,
       family!=(text_function?GML_RENDER_SCENE_TEXT:tile_function?GML_RENDER_SCENE_TILE:
                integer_background?GML_RENDER_SCENE_BACKGROUND:GML_RENDER_SCENE_SPRITE) ||
       (!scaled_atlas && (xs!=floor(xs) || ys!=floor(ys))) ||
-      fabs(xs)<(scaled_atlas?0.0625:1.0) || fabs(xs)>(scaled_atlas?64.0:8.0) ||
-      fabs(ys)<(scaled_atlas?0.0625:1.0) || fabs(ys)>(scaled_atlas?64.0:8.0) ||
+      fabs(xs)<(scaled_atlas?0.0625:1.0) || fabs(xs)>(single_texel_sprite?4096.0:scaled_atlas?64.0:8.0) ||
+      fabs(ys)<(scaled_atlas?0.0625:1.0) || fabs(ys)>(single_texel_sprite?4096.0:scaled_atlas?64.0:8.0) ||
       !isfinite(left) || !isfinite(top) ||
       fabs(left)>65536.0 || fabs(top)>65536.0 || page->sw>4096 || page->sh>4096 ||
       (double)crop_width*fabs(xs)>16384.0 || (double)crop_height*fabs(ys)>16384.0 ||
-      /* Classic sprites keep the ordinary point writer at every projected area.
-       * Only Studio can switch an opaque target to the separate large-axis kernel. */
-      (!classic_background_point && !classic_sprite_point && !selected_background && !gml_render_target_preserves_alpha(r) &&
+      /* Full integer backgrounds and selected backgrounds keep the point
+       * writer at every area too. Studio's large-axis switch belongs to
+       * sprites, not the public background blit leaf. */
+      (!classic_background_point && !classic_sprite_point && !selected_background &&
+       physical_sprite_page!=8 && !gml_render_target_preserves_alpha(r) &&
        (double)crop_width*fabs(xs)*(double)crop_height*fabs(ys)>=131072.0) ||
       !r->device.context || !r->device.observe_on_demand ||
       !r->device.observe_on_demand(r->device.context))) return 0;
@@ -2896,7 +2903,10 @@ static int resident_nearest_texture_function(GmlRender *r,GmlSprite *sprite,GmlT
   double minimum_scale=family==GML_RENDER_SCENE_TEXT?0.0625:0.125;
   /* Both callers share the packet's finite scale bound. Source extent,
    * projected-area, coverage and region-capacity guards remain downstream. */
-  double maximum_scale=64.0;
+  /* A single source texel has no interior nearest boundaries to magnify.
+   * Keep the existing coverage/area limits and all larger sources unchanged. */
+  double maximum_scale=family==GML_RENDER_SCENE_SPRITE && page &&
+    page->sw==1 && page->sh==1?4096.0:64.0;
   int studio_rotated_point=family==GML_RENDER_SCENE_SPRITE &&
     resident_first_generation_rotated_point(r,rotation);
   if(!r || !sprite || !page || !r->resident_application_pass ||
@@ -2905,7 +2915,8 @@ static int resident_nearest_texture_function(GmlRender *r,GmlSprite *sprite,GmlT
      r->color_write_mask>15u || r->blendmode<0 || r->blendmode>2 ||
      r->blend_equation!=1 || r->blend_equation_alpha!=1 ||
      r->classic_phase_y || r->rotated_batch_count || r->rotated_batch_building ||
-     r->pending_underlay || r->pending_presentation || !gml_render_scene_target_matches(r) ||
+     (r->pending_underlay && family!=GML_RENDER_SCENE_SPRITE) ||
+     r->pending_presentation || !gml_render_scene_target_matches(r) ||
      sprite->runtime_rgba || sprite->spine || sprite->ns_enabled ||
      !isfinite(rotation) || !isfinite(alpha) || alpha<=0.0 || alpha>1.0 ||
      (r->alphablend && alpha<0x1p-64) ||

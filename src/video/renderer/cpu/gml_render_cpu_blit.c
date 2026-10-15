@@ -5299,6 +5299,12 @@ static int rotated_nearest_regions(GmlRender *r,GmlSprite *spr,GmlTpag *t,
   int vector_pixels=fabs(dlx)>=0.125 || fabs(dly)>=0.125;
   const double local_x_offset=(double)((int64_t)spr->originx-t->tx);
   const double local_y_offset=(double)((int64_t)spr->originy-t->ty);
+  /* The ordinary cached SCREEN rotation combines the integer trim offset
+   * before its binary64 addition. Metadata must select that same texel at
+   * an exact nearest tie; other point owners keep their ordered additions. */
+  int cached_point=texel_regions==1 && rot!=0.0 && !r->classic &&
+    !gml_render_target_preserves_alpha(r) && r->alphablend && r->blendmode==0 &&
+    r->active_shader<0 && !r->fog_flat;
   int64_t delta_x=(int64_t)llround(dlx*(double)RFP_ONE);
   int64_t delta_y=(int64_t)llround(dly*(double)RFP_ONE);
   for(int py=g->y0;py<g->y1;py++){
@@ -5308,7 +5314,7 @@ static int rotated_nearest_regions(GmlRender *r,GmlSprite *spr,GmlTpag *t,
     double ry=py+0.5-g->ay,rx=rx0+0.5-g->ax;
     double local_x=(rx*g->c-ry*g->sn)*g->invxs+local_x_offset;
     double local_y=(rx*g->sn+ry*g->c)*g->invys+local_y_offset;
-    if(texel_regions){
+    if(texel_regions && !cached_point){
       /* Preserve the scalar point leaf's ordered additions, including cancellation. */
       local_x=(rx*g->c-ry*g->sn)*g->invxs+spr->originx-t->tx;
       local_y=(rx*g->sn+ry*g->c)*g->invys+spr->originy-t->ty;
