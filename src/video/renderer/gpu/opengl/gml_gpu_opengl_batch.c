@@ -1233,6 +1233,11 @@ static int scene_prepare_geometry(GmlGpuBackend *backend,char *error,size_t erro
                                    sizeof(float));
     if(!scene->vertices) return 0;
   }
+  if(!scene->instances){
+    scene->instances=(float*)malloc((size_t)GL_SCENE_MAX_QUADS*GL_SCENE_INSTANCE_FLOATS*
+                                    sizeof(float));
+    if(!scene->instances) return 0;
+  }
   if(!scene->vertex_array){
     backend->gl.GenVertexArrays(1,&scene->vertex_array);
     if(!scene->vertex_array) return 0;
@@ -1240,6 +1245,22 @@ static int scene_prepare_geometry(GmlGpuBackend *backend,char *error,size_t erro
   if(!scene->vertex_buffer){
     backend->gl.GenBuffers(1,&scene->vertex_buffer);
     if(!scene->vertex_buffer) return 0;
+  }
+  if(!scene->instance_array){
+    backend->gl.GenVertexArrays(1,&scene->instance_array);
+    if(!scene->instance_array) return 0;
+  }
+  if(!scene->instance_buffer){
+    backend->gl.GenBuffers(1,&scene->instance_buffer);
+    if(!scene->instance_buffer) return 0;
+  }
+  if(!scene->instance_storage_ready){
+    backend->gl.BindBuffer(GL_ARRAY_BUFFER,scene->instance_buffer);
+    backend->gl.BufferData(GL_ARRAY_BUFFER,GL_SCENE_STREAM_BYTES,NULL,GL_STREAM_DRAW);
+    backend->gl.BindBuffer(GL_ARRAY_BUFFER,0);
+    if(backend->gl.GetError()!=GL_NO_ERROR) return 0;
+    scene->instance_bytes_used=0;
+    scene->instance_storage_ready=1;
   }
   return backend->gl.GetError()==GL_NO_ERROR;
 }
@@ -1297,14 +1318,43 @@ static int scene_snapshot_region(GmlGpuBackend *backend,GlSceneImage *target,
   return 1;
 }
 
+static void compact_quad_instances(GlScene *scene,uint32_t count){
+  static const unsigned corner_vertex[4]={0u,1u,2u,5u};
+  for(uint32_t quad=0;quad<count;quad++){
+    const float *expanded=scene->vertices+(size_t)quad*6u*GL_SCENE_VERTEX_FLOATS;
+    float *instance=scene->instances+(size_t)quad*GL_SCENE_INSTANCE_FLOATS;
+    for(unsigned corner=0;corner<4u;corner++){
+      const float *vertex=expanded+(size_t)corner_vertex[corner]*GL_SCENE_VERTEX_FLOATS;
+      instance[corner*2u]=vertex[0];
+      instance[corner*2u+1u]=vertex[1];
+      instance[8u+corner*2u]=vertex[2];
+      instance[8u+corner*2u+1u]=vertex[3];
+      for(unsigned component=0;component<4u;component++)
+        instance[16u+corner*4u+component]=vertex[4u+component];
+    }
+    for(unsigned component=0;component<8u;component++) instance[32u+component]=expanded[8u+component];
+    instance[40]=expanded[16];
+    instance[41]=expanded[17];
+    instance[42]=expanded[18];
+    instance[43]=expanded[27];
+    for(unsigned component=0;component<4u;component++){
+      instance[44u+component]=expanded[19u+component];
+      instance[48u+component]=expanded[23u+component];
+    }
+  }
+}
+
 static int flush_quads(GmlGpuBackend *backend,GlSceneImage *target,GlSceneImage *source,
                        uint32_t filter,int blend,uint32_t count,uint32_t write_mask,int alpha_test){
   GlScene *scene=&backend->scene;
   GLfloat extent[2]={(GLfloat)target->width,(GLfloat)target->height};
   GLenum texture_filter=filter==18u || filter==19u || filter==20u || filter==21u
     ?GL_LINEAR:GL_NEAREST;
-  GLsizei stride=GL_SCENE_VERTEX_FLOATS*(GLsizei)sizeof(float);
+  GLsizei stride=GL_SCENE_INSTANCE_FLOATS*(GLsizei)sizeof(float);
+  size_t bytes=(size_t)count*GL_SCENE_INSTANCE_FLOATS*sizeof(float),offset;
+  GLint attributes[13];
   if(!count) return 1;
+  if(count>GL_SCENE_MAX_QUADS) return 0;
   backend->gl.BindFramebuffer(GL_FRAMEBUFFER,target->framebuffer);
   backend->gl.Viewport(0,0,(GLsizei)target->width,(GLsizei)target->height);
   backend->gl.Scissor(0,0,(GLsizei)target->width,(GLsizei)target->height);
@@ -1360,41 +1410,35 @@ static int flush_quads(GmlGpuBackend *backend,GlSceneImage *target,GlSceneImage 
    * for a draw whose dynamic branch does not fetch either point map. */
   backend->gl.Uniform1i(scene->u_point_map_x,2);
   backend->gl.Uniform1i(scene->u_point_map_y,3);
-  backend->gl.BindVertexArray(scene->vertex_array);
-  backend->gl.BindBuffer(GL_ARRAY_BUFFER,scene->vertex_buffer);
-  backend->gl.BufferData(GL_ARRAY_BUFFER,
-    (GLsizeiptr)((size_t)count*6u*GL_SCENE_VERTEX_FLOATS*sizeof(float)),
-    scene->vertices,GL_STREAM_DRAW);
-  backend->gl.EnableVertexAttribArray((GLuint)scene->a_position);
-  backend->gl.EnableVertexAttribArray((GLuint)scene->a_texcoord);
-  backend->gl.EnableVertexAttribArray((GLuint)scene->a_colour);
-  backend->gl.EnableVertexAttribArray((GLuint)scene->a_clamp);
-  backend->gl.EnableVertexAttribArray((GLuint)scene->a_map);
-  backend->gl.EnableVertexAttribArray((GLuint)scene->a_step);
-  backend->gl.EnableVertexAttribArray((GLuint)scene->a_margin);
-  backend->gl.EnableVertexAttribArray((GLuint)scene->a_span_x);
-  backend->gl.EnableVertexAttribArray((GLuint)scene->a_span_y);
-  backend->gl.EnableVertexAttribArray((GLuint)scene->a_span_active);
-  backend->gl.VertexAttribPointer((GLuint)scene->a_position,2,GL_FLOAT,GL_FALSE,stride,(const void*)0);
-  backend->gl.VertexAttribPointer((GLuint)scene->a_texcoord,2,GL_FLOAT,GL_FALSE,stride,
-                                  (const void*)(2*sizeof(float)));
-  backend->gl.VertexAttribPointer((GLuint)scene->a_colour,4,GL_FLOAT,GL_FALSE,stride,
-                                  (const void*)(4*sizeof(float)));
-  backend->gl.VertexAttribPointer((GLuint)scene->a_clamp,4,GL_FLOAT,GL_FALSE,stride,
-                                  (const void*)(8*sizeof(float)));
-  backend->gl.VertexAttribPointer((GLuint)scene->a_map,4,GL_FLOAT,GL_FALSE,stride,
-                                  (const void*)(12*sizeof(float)));
-  backend->gl.VertexAttribPointer((GLuint)scene->a_step,2,GL_FLOAT,GL_FALSE,stride,
-                                  (const void*)(16*sizeof(float)));
-  backend->gl.VertexAttribPointer((GLuint)scene->a_margin,1,GL_FLOAT,GL_FALSE,stride,
-                                  (const void*)(18*sizeof(float)));
-  backend->gl.VertexAttribPointer((GLuint)scene->a_span_x,4,GL_FLOAT,GL_FALSE,stride,
-                                  (const void*)(19*sizeof(float)));
-  backend->gl.VertexAttribPointer((GLuint)scene->a_span_y,4,GL_FLOAT,GL_FALSE,stride,
-                                  (const void*)(23*sizeof(float)));
-  backend->gl.VertexAttribPointer((GLuint)scene->a_span_active,1,GL_FLOAT,GL_FALSE,stride,
-                                  (const void*)(27*sizeof(float)));
-  backend->gl.DrawArrays(GL_TRIANGLES,0,(GLsizei)(count*6u));
+  compact_quad_instances(scene,count);
+  backend->gl.BindVertexArray(scene->instance_array);
+  backend->gl.BindBuffer(GL_ARRAY_BUFFER,scene->instance_buffer);
+  /* Regions are append-only until wrap. Orphaning preserves the old store for
+   * in-flight draws; neither an unsynchronized overwrite nor a fence is needed. */
+  if(bytes>GL_SCENE_STREAM_BYTES-scene->instance_bytes_used){
+    backend->gl.BufferData(GL_ARRAY_BUFFER,GL_SCENE_STREAM_BYTES,NULL,GL_STREAM_DRAW);
+    scene->instance_bytes_used=0;
+  }
+  offset=scene->instance_bytes_used;
+  backend->gl.BufferSubData(GL_ARRAY_BUFFER,(GLintptr)offset,(GLsizeiptr)bytes,scene->instances);
+  scene->instance_bytes_used+=bytes;
+  attributes[0]=scene->a_position01;
+  attributes[1]=scene->a_position23;
+  attributes[2]=scene->a_texcoord01;
+  attributes[3]=scene->a_texcoord23;
+  for(unsigned index=0;index<4u;index++) attributes[4u+index]=scene->a_colour[index];
+  attributes[8]=scene->a_clamp;
+  attributes[9]=scene->a_map;
+  attributes[10]=scene->a_step_margin_active;
+  attributes[11]=scene->a_span_x;
+  attributes[12]=scene->a_span_y;
+  for(unsigned index=0;index<13u;index++){
+    backend->gl.EnableVertexAttribArray((GLuint)attributes[index]);
+    backend->gl.VertexAttribPointer((GLuint)attributes[index],4,GL_FLOAT,GL_FALSE,stride,
+                                    (const void*)(offset+(size_t)index*4u*sizeof(float)));
+    backend->gl.VertexAttribDivisor((GLuint)attributes[index],1u);
+  }
+  backend->gl.DrawArraysInstanced(GL_TRIANGLES,0,6,(GLsizei)count);
   if(stamp_alpha && (write_mask&8u)){
     /* The CPU screen writer keeps alpha opaque at every covered texel,
      * even when its prior alpha is unknown. Reuse the sampled vertices and
@@ -1403,19 +1447,11 @@ static int flush_quads(GmlGpuBackend *backend,GlSceneImage *target,GlSceneImage 
     backend->gl.Disable(GL_BLEND);
     backend->gl.Uniform1i(scene->u_filter,filter==60u?62:filter==53u?55:(filter==46u || filter==47u)?48:(filter==39u || filter==40u)?41:filter==35u?36:filter==32u?33:filter==25u?26:
                          filter==23u?24:filter==21u?22:filter==9u?10:13);
-    backend->gl.DrawArrays(GL_TRIANGLES,0,(GLsizei)(count*6u));
+    backend->gl.DrawArraysInstanced(GL_TRIANGLES,0,6,(GLsizei)count);
   }
   backend->gl.ColorMask(GL_TRUE,GL_TRUE,GL_TRUE,GL_TRUE);
-  backend->gl.DisableVertexAttribArray((GLuint)scene->a_position);
-  backend->gl.DisableVertexAttribArray((GLuint)scene->a_texcoord);
-  backend->gl.DisableVertexAttribArray((GLuint)scene->a_colour);
-  backend->gl.DisableVertexAttribArray((GLuint)scene->a_clamp);
-  backend->gl.DisableVertexAttribArray((GLuint)scene->a_map);
-  backend->gl.DisableVertexAttribArray((GLuint)scene->a_step);
-  backend->gl.DisableVertexAttribArray((GLuint)scene->a_margin);
-  backend->gl.DisableVertexAttribArray((GLuint)scene->a_span_x);
-  backend->gl.DisableVertexAttribArray((GLuint)scene->a_span_y);
-  backend->gl.DisableVertexAttribArray((GLuint)scene->a_span_active);
+  for(unsigned index=0;index<13u;index++)
+    backend->gl.DisableVertexAttribArray((GLuint)attributes[index]);
   backend->gl.BindBuffer(GL_ARRAY_BUFFER,0);
   backend->gl.BindVertexArray(0);
   backend->gl.UseProgram(0);

@@ -16,7 +16,9 @@ enum {
   GL_READBACK_SLOTS=8,
   GL_SCENE_MAX_IMAGES=64,
   GL_SCENE_MAX_QUADS=2048,
-  GL_SCENE_VERTEX_FLOATS=28
+  GL_SCENE_VERTEX_FLOATS=28,
+  GL_SCENE_INSTANCE_FLOATS=52,
+  GL_SCENE_STREAM_BYTES=4*GL_SCENE_MAX_QUADS*GL_SCENE_INSTANCE_FLOATS*sizeof(float)
 };
 
 /* One uniform the content's program declares, as the context reports it after linking. A value
@@ -132,9 +134,11 @@ typedef struct GlScene {
   GLint checkpoint_u_image,checkpoint_u_previous,checkpoint_u_alpha;
   uint32_t checkpoint_mask_width,checkpoint_mask_height;
   int checkpoint_program_failed;
-  GLuint program,vertex_buffer,vertex_array;
-  GLint a_position,a_texcoord,a_colour,a_clamp,a_map,a_step,a_margin;
-  GLint a_span_x,a_span_y,a_span_active;
+  GLuint program,vertex_buffer,vertex_array,instance_buffer,instance_array;
+  size_t instance_bytes_used;
+  int instance_storage_ready;
+  GLint a_position01,a_position23,a_texcoord01,a_texcoord23;
+  GLint a_colour[4],a_clamp,a_map,a_step_margin_active,a_span_x,a_span_y;
   GLint u_extent,u_image,u_filter,u_alpha_test,u_previous,u_region_origin;
   GLint u_rotated_alpha16;
   GLint u_point_map_x,u_point_map_y,u_point_origin;
@@ -150,7 +154,7 @@ typedef struct GlScene {
   GLint u_recovery_screen,u_recovery_application,u_recovery_rect;
   uint32_t snapshot_width,snapshot_height;
   GLint max_texture_units;
-  float *vertices;
+  float *vertices,*instances;
   uint8_t *scratch;
   size_t scratch_capacity;
   uint64_t use_clock,context_epoch;

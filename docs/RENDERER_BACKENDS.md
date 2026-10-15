@@ -17,6 +17,18 @@ snapshot; the live ledger and rule table here describe current support.
 
 ## Experimental scene fidelity contract
 
+Ordinary scene submission packs each quad's existing four corner positions,
+UVs, colours and shared sampling operands into52 floats rather than six expanded
+28-float vertices. An instanced vertex shader reconstructs the identical triangle
+order; fragment programs, CPU writers and the EXACT/TOLERANCE classification do
+not change. The compact stream appends to a fixed four-batch-capacity buffer;
+only exhaustion or context recreation allocates/orphans storage. Attribute byte
+offsets include the current region, and an alpha-stamp pass reuses that region.
+There are no new fences, waits, readbacks or admissions. Exact-program submissions
+retain their separately qualified expanded layout and upload path. The neutral
+`scene_resident_batch` driver control covers cross-submit offsets, wrap and context
+loss; existing real-device paired scene controls retain responsibility for pixels.
+
 R03-SPR-FILTERED-EDGE-NOOP retains fully clipped ordinary first-generation
 filtered axis sprites on application targets without draining their GPU prefix.
 It reuses the existing projected rectangle: authored-edge pages and integral

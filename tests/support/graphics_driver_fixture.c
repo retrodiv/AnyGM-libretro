@@ -88,6 +88,12 @@ typedef struct FakeDriver {
   int attributes_enabled;
   GLuint bound_buffer;
   size_t buffer_bytes;
+  size_t buffer_capacity[FAKE_MAX_CALLS],buffer_high_water[FAKE_MAX_CALLS];
+  size_t attribute_offset[16];
+  GLsizei attribute_stride[16];
+  GLuint attribute_buffer[16],attribute_divisor[16];
+  GLint attribute_components[16];
+  AnygmTestGraphicsStream stream;
   float buffer_data[64];
   unsigned float_uniforms;
   unsigned matrix_uniforms;
@@ -540,6 +546,22 @@ static void fake_DrawArrays(GLenum mode,GLint first,GLsizei count){
     }
   }
 }
+static void fake_DrawArraysInstanced(GLenum mode,GLint first,GLsizei count,
+                                     GLsizei instance_count){
+  if(mode==GL_TRIANGLES && first==0 && count==6 && instance_count>0){
+    for(unsigned index=0;index<13u;index++){
+      if(g_fake.attribute_offset[index]!=g_fake.stream.offset+index*4u*sizeof(float) ||
+         g_fake.attribute_stride[index]!=52*(GLsizei)sizeof(float) ||
+         g_fake.attribute_components[index]!=4 || g_fake.attribute_divisor[index]!=1u ||
+         g_fake.attribute_buffer[index]!=g_fake.bound_buffer) g_fake.stream.errors++;
+    }
+    if((size_t)instance_count*52u*sizeof(float)!=g_fake.stream.size)
+      g_fake.stream.errors++;
+    fake_DrawArrays(mode,first,count*instance_count);
+    return;
+  }
+  note_call();
+}
 /* The entry points only a content program uses. The fixture records what a test can ask about:
  * how many quads were drawn, and which attribute names were resolved. */
 static GLint fake_GetAttribLocation(GLuint p,const GLchar *name){
@@ -548,21 +570,40 @@ static GLint fake_GetAttribLocation(GLuint p,const GLchar *name){
   if(!strcmp(name,"in_Position")) return 0;
   if(!strcmp(name,"in_Colour")) return 1;
   if(!strcmp(name,"in_TextureCoord")) return 2;
-  if(!strcmp(name,"in_Clamp")) return 3;
-  if(!strcmp(name,"in_Map")) return 4;
-  if(!strcmp(name,"in_Step")) return 5;
-  if(!strcmp(name,"in_Margin")) return 6;
-  if(!strcmp(name,"in_SpanX")) return 7;
-  if(!strcmp(name,"in_SpanY")) return 8;
-  if(!strcmp(name,"in_SpanActive")) return 9;
+  if(!strcmp(name,"in_Position01")) return 0;
+  if(!strcmp(name,"in_Position23")) return 1;
+  if(!strcmp(name,"in_TextureCoord01")) return 2;
+  if(!strcmp(name,"in_TextureCoord23")) return 3;
+  if(!strcmp(name,"in_Colour0")) return 4;
+  if(!strcmp(name,"in_Colour1")) return 5;
+  if(!strcmp(name,"in_Colour2")) return 6;
+  if(!strcmp(name,"in_Colour3")) return 7;
+  if(!strcmp(name,"in_Clamp")) return 8;
+  if(!strcmp(name,"in_Map")) return 9;
+  if(!strcmp(name,"in_StepMarginActive")) return 10;
+  if(!strcmp(name,"in_Step")) return 3;
+  if(!strcmp(name,"in_Margin")) return 4;
+  if(!strcmp(name,"in_SpanActive")) return 5;
+  if(!strcmp(name,"in_SpanX")) return 11;
+  if(!strcmp(name,"in_SpanY")) return 12;
   return -1;
 }
 static void fake_VertexAttribPointer(GLuint index,GLint size,GLenum type,GLboolean normalized,
                                      GLsizei stride,const void *pointer){
-  (void)index;(void)size;(void)type;(void)normalized;(void)stride;(void)pointer; note_call();
+  (void)type;(void)normalized; note_call();
+  if(index<16u){
+    g_fake.attribute_offset[index]=(size_t)pointer;
+    g_fake.attribute_stride[index]=stride;
+    g_fake.attribute_components[index]=size;
+    g_fake.attribute_buffer[index]=g_fake.bound_buffer;
+  }
 }
 static void fake_EnableVertexAttribArray(GLuint index){ (void)index; note_call(); g_fake.attributes_enabled++; }
 static void fake_DisableVertexAttribArray(GLuint index){ (void)index; note_call(); g_fake.attributes_enabled--; }
+static void fake_VertexAttribDivisor(GLuint index,GLuint divisor){
+  note_call();
+  if(index<16u) g_fake.attribute_divisor[index]=divisor;
+}
 static void fake_GenBuffers(GLsizei n,GLuint *names){
   note_call();
   for(GLsizei index=0;index<n;index++) names[index]=g_fake.next_name++;
@@ -576,8 +617,37 @@ static void fake_BufferData(GLenum target,GLsizeiptr size,const void *data,GLenu
   size_t floats=(size_t)size/sizeof(float);
   (void)target;(void)usage; note_call();
   g_fake.buffer_bytes=(size_t)size;
+  if(target==GL_ARRAY_BUFFER && g_fake.bound_buffer<FAKE_MAX_CALLS){
+    g_fake.buffer_capacity[g_fake.bound_buffer]=(size_t)size;
+    g_fake.buffer_high_water[g_fake.bound_buffer]=0;
+    if(!data){
+      g_fake.stream.allocations++;
+      g_fake.stream.capacity=(size_t)size;
+    }
+  }
   if(floats>64) floats=64;
   if(data) memcpy(g_fake.buffer_data,data,floats*sizeof(float));
+}
+static void fake_BufferSubData(GLenum target,GLintptr offset,GLsizeiptr size,const void *data){
+  size_t floats=size>0?(size_t)size/sizeof(float):0;
+  GLuint buffer=g_fake.bound_buffer;
+  note_call();
+  if(target!=GL_ARRAY_BUFFER || !buffer || buffer>=FAKE_MAX_CALLS ||
+     offset<0 || size<0 || !data ||
+     (size_t)offset<g_fake.buffer_high_water[buffer] ||
+     (size_t)offset>g_fake.buffer_capacity[buffer] ||
+     (size_t)size>g_fake.buffer_capacity[buffer]-(size_t)offset){
+    g_fake.stream.errors++;
+    return;
+  }
+  g_fake.buffer_high_water[buffer]=(size_t)offset+(size_t)size;
+  g_fake.stream.updates++;
+  g_fake.stream.uploaded_bytes+=(size_t)size;
+  g_fake.stream.offset=(size_t)offset;
+  g_fake.stream.size=(size_t)size;
+  g_fake.buffer_bytes=(size_t)size;
+  if(floats>64u) floats=64u;
+  memcpy(g_fake.buffer_data,data,floats*sizeof(float));
 }
 static void fake_DeleteBuffers(GLsizei n,const GLuint *names){ (void)names; note_call(); g_fake.deletes_issued+=n; }
 static void fake_GenQueries(GLsizei count,GLuint *names){
@@ -670,13 +740,16 @@ void (*anygm_test_graphics_proc(void *userdata,const char *name))(void){
     {"glBindVertexArray",(void*)fake_BindVertexArray},
     {"glDeleteVertexArrays",(void*)fake_DeleteVertexArrays},
     {"glDrawArrays",(void*)fake_DrawArrays},
+    {"glDrawArraysInstanced",(void*)fake_DrawArraysInstanced},
     {"glGetAttribLocation",(void*)fake_GetAttribLocation},
     {"glVertexAttribPointer",(void*)fake_VertexAttribPointer},
     {"glEnableVertexAttribArray",(void*)fake_EnableVertexAttribArray},
     {"glDisableVertexAttribArray",(void*)fake_DisableVertexAttribArray},
+    {"glVertexAttribDivisor",(void*)fake_VertexAttribDivisor},
     {"glGenBuffers",(void*)fake_GenBuffers},
     {"glBindBuffer",(void*)fake_BindBuffer},
     {"glBufferData",(void*)fake_BufferData},
+    {"glBufferSubData",(void*)fake_BufferSubData},
     {"glDeleteBuffers",(void*)fake_DeleteBuffers},
     {"glUniform1fv",(void*)fake_Uniform1fv},
     {"glUniform2fv",(void*)fake_Uniform2fv},
@@ -749,6 +822,8 @@ const char *anygm_test_graphics_shader_source(int fragment){ return g_fake.shade
 void anygm_test_graphics_withhold_attributes(int withhold){ g_fake.no_attributes=withhold; }
 int anygm_test_graphics_attributes_enabled(void){ return g_fake.attributes_enabled; }
 unsigned anygm_test_graphics_bound_buffer(void){ return g_fake.bound_buffer; }
+size_t anygm_test_graphics_buffer_bytes(void){ return g_fake.buffer_bytes; }
+AnygmTestGraphicsStream anygm_test_graphics_stream(void){ return g_fake.stream; }
 unsigned anygm_test_graphics_float_uniforms(void){ return g_fake.float_uniforms; }
 unsigned anygm_test_graphics_matrix_uniforms(void){ return g_fake.matrix_uniforms; }
 unsigned anygm_test_graphics_read_pixels(void){ return g_fake.read_pixels; }

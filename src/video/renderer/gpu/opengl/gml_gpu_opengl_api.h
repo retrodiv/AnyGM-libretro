@@ -200,6 +200,7 @@ typedef struct GmlGlApi {
   void     (*BindVertexArray)(GLuint array);
   void     (*DeleteVertexArrays)(GLsizei n,const GLuint *arrays);
   void     (*DrawArrays)(GLenum mode,GLint first,GLsizei count);
+  void     (*DrawArraysInstanced)(GLenum mode,GLint first,GLsizei count,GLsizei instance_count);
   void     (*BlendFuncSeparate)(GLenum source_rgb,GLenum destination_rgb,
                                 GLenum source_alpha,GLenum destination_alpha);
   void     (*BlendEquationSeparate)(GLenum rgb,GLenum alpha);
@@ -217,9 +218,11 @@ typedef struct GmlGlApi {
                                   GLsizei stride,const void *pointer);
   void     (*EnableVertexAttribArray)(GLuint index);
   void     (*DisableVertexAttribArray)(GLuint index);
+  void     (*VertexAttribDivisor)(GLuint index,GLuint divisor);
   void     (*GenBuffers)(GLsizei n,GLuint *buffers);
   void     (*BindBuffer)(GLenum target,GLuint buffer);
   void     (*BufferData)(GLenum target,GLsizeiptr size,const void *data,GLenum usage);
+  void     (*BufferSubData)(GLenum target,GLintptr offset,GLsizeiptr size,const void *data);
   void     (*DeleteBuffers)(GLsizei n,const GLuint *buffers);
   void     (*Uniform1fv)(GLint location,GLsizei count,const GLfloat *value);
   void     (*Uniform2fv)(GLint location,GLsizei count,const GLfloat *value);

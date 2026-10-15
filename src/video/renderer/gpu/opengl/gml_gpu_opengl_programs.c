@@ -104,14 +104,15 @@ int gml_gpu_opengl_scene_program(GmlGpuBackend *backend,char *error,size_t error
   const char *prefix=backend->api==GML_GPU_API_OPENGLES3
     ?GML_GPU_OPENGL_PREFIX_ES:GML_GPU_OPENGL_PREFIX_DESKTOP;
   char vertex_source[sizeof(GML_GPU_OPENGL_PREFIX_ES)+
-                     sizeof(GML_GPU_OPENGL_PREFIX_DESKTOP)+sizeof(GML_GPU_OPENGL_SCENE_VERTEX_BODY)];
+                     sizeof(GML_GPU_OPENGL_PREFIX_DESKTOP)+
+                     sizeof(GML_GPU_OPENGL_SCENE_INSTANCED_VERTEX_BODY)];
   char fragment_source[sizeof(GML_GPU_OPENGL_PREFIX_ES)+
                        sizeof(GML_GPU_OPENGL_PREFIX_DESKTOP)+sizeof(GML_GPU_OPENGL_SCENE_FRAGMENT_BODY)];
   GLuint vertex,fragment;
   GLint status=GL_FALSE;
   if(scene->program) return 1;
   int vertex_length=snprintf(vertex_source,sizeof vertex_source,"%s%s",prefix,
-                             GML_GPU_OPENGL_SCENE_VERTEX_BODY);
+                             GML_GPU_OPENGL_SCENE_INSTANCED_VERTEX_BODY);
   int fragment_length=snprintf(fragment_source,sizeof fragment_source,"%s%s",prefix,
                                GML_GPU_OPENGL_SCENE_FRAGMENT_BODY);
   if(vertex_length<0 || (size_t)vertex_length>=sizeof vertex_source ||
@@ -147,16 +148,19 @@ int gml_gpu_opengl_scene_program(GmlGpuBackend *backend,char *error,size_t error
     scene->program=0;
     return 0;
   }
-  scene->a_position=backend->gl.GetAttribLocation(scene->program,"in_Position");
-  scene->a_texcoord=backend->gl.GetAttribLocation(scene->program,"in_TextureCoord");
-  scene->a_colour=backend->gl.GetAttribLocation(scene->program,"in_Colour");
+  scene->a_position01=backend->gl.GetAttribLocation(scene->program,"in_Position01");
+  scene->a_position23=backend->gl.GetAttribLocation(scene->program,"in_Position23");
+  scene->a_texcoord01=backend->gl.GetAttribLocation(scene->program,"in_TextureCoord01");
+  scene->a_texcoord23=backend->gl.GetAttribLocation(scene->program,"in_TextureCoord23");
+  scene->a_colour[0]=backend->gl.GetAttribLocation(scene->program,"in_Colour0");
+  scene->a_colour[1]=backend->gl.GetAttribLocation(scene->program,"in_Colour1");
+  scene->a_colour[2]=backend->gl.GetAttribLocation(scene->program,"in_Colour2");
+  scene->a_colour[3]=backend->gl.GetAttribLocation(scene->program,"in_Colour3");
   scene->a_clamp=backend->gl.GetAttribLocation(scene->program,"in_Clamp");
   scene->a_map=backend->gl.GetAttribLocation(scene->program,"in_Map");
-  scene->a_step=backend->gl.GetAttribLocation(scene->program,"in_Step");
-  scene->a_margin=backend->gl.GetAttribLocation(scene->program,"in_Margin");
+  scene->a_step_margin_active=backend->gl.GetAttribLocation(scene->program,"in_StepMarginActive");
   scene->a_span_x=backend->gl.GetAttribLocation(scene->program,"in_SpanX");
   scene->a_span_y=backend->gl.GetAttribLocation(scene->program,"in_SpanY");
-  scene->a_span_active=backend->gl.GetAttribLocation(scene->program,"in_SpanActive");
   scene->u_extent=backend->gl.GetUniformLocation(scene->program,"u_extent");
   scene->u_image=backend->gl.GetUniformLocation(scene->program,"u_image");
   scene->u_filter=backend->gl.GetUniformLocation(scene->program,"u_filter");
@@ -171,9 +175,12 @@ int gml_gpu_opengl_scene_program(GmlGpuBackend *backend,char *error,size_t error
   scene->u_recovery_application=backend->gl.GetUniformLocation(scene->program,"u_recovery_application");
   scene->u_recovery_rect=backend->gl.GetUniformLocation(scene->program,"u_recovery_rect");
   scene->rotated_alpha16_valid=0;
-  if(scene->a_position<0 || scene->a_texcoord<0 || scene->a_colour<0 ||
-     scene->a_clamp<0 || scene->a_map<0 || scene->a_step<0 || scene->a_margin<0 ||
-     scene->a_span_x<0 || scene->a_span_y<0 || scene->a_span_active<0 ||
+  if(scene->a_position01<0 || scene->a_position23<0 ||
+     scene->a_texcoord01<0 || scene->a_texcoord23<0 ||
+     scene->a_colour[0]<0 || scene->a_colour[1]<0 ||
+     scene->a_colour[2]<0 || scene->a_colour[3]<0 ||
+     scene->a_clamp<0 || scene->a_map<0 || scene->a_step_margin_active<0 ||
+     scene->a_span_x<0 || scene->a_span_y<0 ||
      scene->u_extent<0 || scene->u_image<0 || scene->u_filter<0 || scene->u_alpha_test<0 ||
      scene->u_previous<0 || scene->u_region_origin<0 || scene->u_rotated_alpha16<0 ||
      scene->u_point_map_x<0 || scene->u_point_map_y<0 || scene->u_point_origin<0 ||

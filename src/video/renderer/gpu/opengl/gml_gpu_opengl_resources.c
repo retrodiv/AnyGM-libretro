@@ -219,6 +219,9 @@ void gml_gpu_opengl_scene_forget(GmlGpuBackend *backend){
   scene->checkpoint_mask_width=scene->checkpoint_mask_height=0;
   scene->checkpoint_program_failed=0;
   scene->program=scene->vertex_buffer=scene->vertex_array=0;
+  scene->instance_buffer=scene->instance_array=0;
+  scene->instance_bytes_used=0;
+  scene->instance_storage_ready=0;
   memset(scene->exact_programs,0,sizeof scene->exact_programs);
   scene->snapshot_texture=scene->rgb_query=0;
   scene->rgb_reduce_program=scene->rgb_reduce_framebuffer=0;
@@ -260,10 +263,14 @@ void gml_gpu_opengl_scene_destroy(GmlGpuBackend *backend,int context_is_current)
         backend->gl.DeleteTextures(1,&scene->rgb_reduce_texture[index]);
     if(scene->vertex_array) backend->gl.DeleteVertexArrays(1,&scene->vertex_array);
     if(scene->vertex_buffer) backend->gl.DeleteBuffers(1,&scene->vertex_buffer);
+    if(scene->instance_array) backend->gl.DeleteVertexArrays(1,&scene->instance_array);
+    if(scene->instance_buffer) backend->gl.DeleteBuffers(1,&scene->instance_buffer);
   }
   free(scene->vertices);
+  free(scene->instances);
   free(scene->scratch);
   scene->vertices=NULL;
+  scene->instances=NULL;
   scene->scratch=NULL;
   scene->scratch_capacity=0;
   gml_gpu_opengl_scene_forget(backend);

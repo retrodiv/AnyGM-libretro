@@ -148,13 +148,16 @@ void gml_gpu_opengl_destroy(GmlGpuBackend *backend,int context_is_current){
   X(BindVertexArray,"glBindVertexArray") \
   X(DeleteVertexArrays,"glDeleteVertexArrays") \
   X(DrawArrays,"glDrawArrays") \
+  X(DrawArraysInstanced,"glDrawArraysInstanced") \
   X(GetAttribLocation,"glGetAttribLocation") \
   X(VertexAttribPointer,"glVertexAttribPointer") \
   X(EnableVertexAttribArray,"glEnableVertexAttribArray") \
   X(DisableVertexAttribArray,"glDisableVertexAttribArray") \
+  X(VertexAttribDivisor,"glVertexAttribDivisor") \
   X(GenBuffers,"glGenBuffers") \
   X(BindBuffer,"glBindBuffer") \
   X(BufferData,"glBufferData") \
+  X(BufferSubData,"glBufferSubData") \
   X(DeleteBuffers,"glDeleteBuffers") \
   X(Uniform1fv,"glUniform1fv") \
   X(Uniform2fv,"glUniform2fv") \

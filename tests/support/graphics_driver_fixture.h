@@ -84,6 +84,12 @@ void anygm_test_graphics_withhold_attributes(int withhold);
 /* Attribute arrays left enabled: a content draw must leave none behind. */
 int anygm_test_graphics_attributes_enabled(void);
 unsigned anygm_test_graphics_bound_buffer(void);
+size_t anygm_test_graphics_buffer_bytes(void);
+typedef struct AnygmTestGraphicsStream {
+  size_t allocations,updates,uploaded_bytes,capacity,offset,size;
+  unsigned errors;
+} AnygmTestGraphicsStream;
+AnygmTestGraphicsStream anygm_test_graphics_stream(void);
 unsigned anygm_test_graphics_float_uniforms(void);
 unsigned anygm_test_graphics_matrix_uniforms(void);
 /* Read-backs performed, and the texture attached to the off-screen target (0 for none). */

@@ -127,6 +127,49 @@
   "  v_span_active=in_SpanActive;\n" \
   "}\n"
 
+/* The ordinary scene path sends one compact record per quad. gl_VertexID selects the same
+ * 0,1,2,0,2,3 corners as the expanded stream; exact programs keep the expanded body above. */
+#define GML_GPU_OPENGL_SCENE_INSTANCED_VERTEX_BODY \
+  "in vec4 in_Position01;\n" \
+  "in vec4 in_Position23;\n" \
+  "in vec4 in_TextureCoord01;\n" \
+  "in vec4 in_TextureCoord23;\n" \
+  "in vec4 in_Colour0;\n" \
+  "in vec4 in_Colour1;\n" \
+  "in vec4 in_Colour2;\n" \
+  "in vec4 in_Colour3;\n" \
+  "in vec4 in_Clamp;\n" \
+  "in vec4 in_Map;\n" \
+  "in vec4 in_StepMarginActive;\n" \
+  "in vec4 in_SpanX;\n" \
+  "in vec4 in_SpanY;\n" \
+  "uniform vec2 u_extent;\n" \
+  "out vec2 v_texcoord;\n" \
+  "out vec4 v_colour;\n" \
+  "out vec4 v_clamp;\n" \
+  "flat out vec4 v_map;\n" \
+  "flat out vec2 v_step;\n" \
+  "flat out float v_margin;\n" \
+  "flat out vec4 v_span_x;\n" \
+  "flat out vec4 v_span_y;\n" \
+  "flat out float v_span_active;\n" \
+  "void main(){\n" \
+  "  int corner=(gl_VertexID==0 || gl_VertexID==3)?0:(gl_VertexID==1?1:((gl_VertexID==2 || gl_VertexID==4)?2:3));\n" \
+  "  vec2 position=corner==0?in_Position01.xy:(corner==1?in_Position01.zw:(corner==2?in_Position23.xy:in_Position23.zw));\n" \
+  "  vec2 texcoord=corner==0?in_TextureCoord01.xy:(corner==1?in_TextureCoord01.zw:(corner==2?in_TextureCoord23.xy:in_TextureCoord23.zw));\n" \
+  "  vec4 colour=corner==0?in_Colour0:(corner==1?in_Colour1:(corner==2?in_Colour2:in_Colour3));\n" \
+  "  gl_Position=vec4(2.0*position.x/u_extent.x-1.0,1.0-2.0*position.y/u_extent.y,0.0,1.0);\n" \
+  "  v_texcoord=texcoord;\n" \
+  "  v_colour=colour;\n" \
+  "  v_clamp=in_Clamp;\n" \
+  "  v_map=in_Map;\n" \
+  "  v_step=in_StepMarginActive.xy;\n" \
+  "  v_margin=in_StepMarginActive.z;\n" \
+  "  v_span_active=in_StepMarginActive.w;\n" \
+  "  v_span_x=in_SpanX;\n" \
+  "  v_span_y=in_SpanY;\n" \
+  "}\n"
+
 /* R03_SHADER_CHECKPOINT_TILE: exact comparison of two RGBA8 device images, with no filtering,
  * hashes, temporal lag or lossy colour arithmetic. XRGB canonical state deliberately ignores
  * source alpha; every other format compares it. Edge tiles fetch only existing texels. */

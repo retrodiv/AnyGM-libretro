@@ -1009,6 +1009,8 @@ static int scene_resident_batch_case(void){
   REQUIRE(anygm_test_graphics_scene_draw_calls()==1 &&
           anygm_test_graphics_scene_vertices()==QUADS*6,
           "500 quads issue one scene draw call");
+  REQUIRE(anygm_test_graphics_buffer_bytes()==QUADS*52u*sizeof(float),
+          "ordinary scene upload carries one compact record per quad");
   REQUIRE(anygm_test_graphics_clear_calls()==1 &&
           anygm_test_graphics_scene_texture()==atlas_name,
           "the batch uses the resident atlas and target clear");
@@ -1050,6 +1052,40 @@ static int scene_resident_batch_case(void){
             "the explicit subregion readback is counted by byte area");
   }
   services.retire(services.context,target_ref);
+  {
+    AnygmTestGraphicsStream stream=anygm_test_graphics_stream();
+    const size_t bytes=QUADS*52u*sizeof(float);
+    REQUIRE(stream.allocations==1u && stream.updates==1u && stream.offset==0u &&
+            stream.capacity==4u*2048u*52u*sizeof(float) && stream.errors==0u,
+            "compact stream allocates once and uses correct instance attributes");
+    /* Sixteen 500-quad batches fit; the seventeenth must orphan, never overwrite
+     * an in-flight region. A new target version also proves the cursor survives submit. */
+    for(unsigned repeat=1;repeat<18u;repeat++){
+      for(unsigned index=0;index<QUADS+1u;index++){
+        operations[index].target.image.content_version+=QUADS+1u;
+        operations[index].target.storage_version+=QUADS+1u;
+      }
+      result=services.submit(services.context,&batch);
+      stream=anygm_test_graphics_stream();
+      REQUIRE(result.status==GML_RENDER_EXEC_ACCEPTED &&
+              stream.updates==repeat+1u && stream.allocations==(repeat<16u?1u:2u) &&
+              stream.offset==(repeat%16u)*bytes && stream.errors==0u &&
+              stream.uploaded_bytes==(repeat+1u)*bytes,
+              "stream appends across submits and orphans only when full");
+    }
+    REQUIRE(anygm_test_graphics_scene_draw_calls()==18 &&
+            anygm_test_graphics_read_pixels()==1,
+            "ring wrap adds no draw, fence or target readback");
+    gml_gpu_context_lost(gpu);
+    REQUIRE(gml_gpu_context_reset(gpu,&context),"stream context recreated after loss");
+    gml_gpu_device_services(gpu,&services);
+    REQUIRE(services.upload(services.context,&upload),"immutable source recreated after loss");
+    result=services.submit(services.context,&batch);
+    stream=anygm_test_graphics_stream();
+    REQUIRE(result.status==GML_RENDER_EXEC_ACCEPTED && stream.allocations==3u &&
+            stream.updates==19u && stream.offset==0u && stream.errors==0u,
+            "replacement context has fresh storage and no stale stream cursor");
+  }
   free(operations);
   gml_gpu_destroy(gpu,1);
   return 1;
