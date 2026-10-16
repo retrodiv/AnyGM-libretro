@@ -52,6 +52,9 @@ int gml_render_application_scene_enqueue_quads(GmlRender *render,
 int gml_render_application_scene_flush(GmlRender *render);
 int gml_render_application_scene_enqueue_primitive(GmlRender *render,
                                                    const GmlRenderDrawOp *operation);
+/* Validate a complete ordered source-free draw before appending any of its regions. */
+int gml_render_application_scene_enqueue_primitives(GmlRender *render,
+  const GmlRenderDrawOp *operations,uint32_t count);
 int gml_render_checkpoint_pending_resources(GmlRender *render);
 void gml_render_application_scene_queue_dispose(GmlRender *render);
 /* Call before a CPU leaf writes an explicitly resident application pass. The pending GPU clear

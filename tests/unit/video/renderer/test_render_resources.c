@@ -6007,6 +6007,61 @@ static int resident_filled_span_public_order(void){
   return 1;
 }
 
+static int resident_line_function_transaction(void){
+  GmlRender *r=calloc(1,sizeof *r);
+  GmlWin content={.classic_version=530};
+  FakeDevice fake={.on_demand=1};GmlRenderDeviceServices device=service(&fake);
+  uint32_t screen[16*12]={0},shadow[16*12];
+  device.observe_on_demand=fake_observe_on_demand;
+  CHECK(r && !gml_render_init(r,NULL));r->win=&content;r->classic=1;
+  gml_render_bind_device(r,&device);
+  gml_render_application_surface_bind(r,screen,16,12,1);
+  CHECK(gml_render_begin_resident_base(r,screen,16,12,0,0));
+  gml_render_set_pending_fill(r,0x40123456u);gml_render_flush_pending_fill(r);
+  CHECK(gml_render_scene_submit_pending(r));memcpy(shadow,screen,sizeof shadow);
+  int before=fake.submits;
+  gml_render_primitive_line_color(r,7,10,7,2,0x345678u,0x345678u,1);
+  CHECK(r->resident_application_pass && !fake.readbacks && fake.submits==before);
+  CHECK(gml_render_scene_submit_pending(r) && fake.submits==before+1);
+  CHECK(fake.last_batch_operations==1u && gml_render_rectangle_valid(&fake.last_primitive));
+  GmlRenderDrawOp prototype=fake.last_primitive;
+  CHECK(prototype.payload.primitive.region.x==7 && prototype.payload.primitive.region.y==2 &&
+        prototype.payload.primitive.region.width==1u && prototype.payload.primitive.region.height==9u);
+  /* A malformed suffix cannot accept its valid prefix or discard a prior line. */
+  gml_render_primitive_line(r,2,1,2,8,0xabcdefu,1);
+  GmlRenderResource *target=gml_render_scene_target_resource_ensure(r);
+  GmlRenderImageRef next=gml_render_application_scene_next_image_ref(r,target);
+  GmlRenderDrawOp pair[2]={prototype,prototype};
+  for(unsigned i=0;i<2u;i++){
+    pair[i].target.image=next;pair[i].target.image.content_version+=i+1u;
+  }
+  pair[1].payload.primitive.region.width=0;
+  before=fake.submits;
+  CHECK(!gml_render_application_scene_enqueue_primitives(r,pair,2u));
+  CHECK(fake.submits==before &&
+        gml_render_application_scene_next_image_ref(r,target).content_version==next.content_version);
+  CHECK(gml_render_scene_submit_pending(r) && fake.last_batch_operations==1u);
+  /* A complete draw larger than the pending queue uses one direct batch. */
+  enum { LARGE_GROUP=2051 };
+  GmlRenderDrawOp *large=calloc(LARGE_GROUP,sizeof *large);CHECK(large);
+  next=gml_render_application_scene_next_image_ref(r,target);
+  for(unsigned i=0;i<LARGE_GROUP;i++){
+    large[i]=prototype;large[i].target.image=next;
+    large[i].target.image.content_version+=i+1u;
+  }
+  CHECK(gml_render_application_scene_enqueue_primitives(r,large,LARGE_GROUP));
+  CHECK(fake.last_batch_operations==LARGE_GROUP &&
+        gml_render_application_scene_next_image_ref(r,target).content_version==next.content_version+LARGE_GROUP);
+  free(large);
+  r->alpha=.5;r->alpha_test_enable=1;r->alpha_test_ref=255u;
+  gml_render_primitive_line_color_subpixel(r,1.25,2.75,13.25,9.25,0x345678u,0xabcdefu,3);
+  CHECK(r->resident_application_pass && gml_render_scene_submit_pending(r));
+  CHECK(fake.last_batch_operations>1u && fake.last_primitive.payload.primitive.alpha==.5);
+  CHECK(r->alpha_test_enable==1 && r->alpha_test_ref==255u && !fake.readbacks &&
+        !memcmp(shadow,screen,sizeof shadow));
+  gml_render_free(r);free(r);return 1;
+}
+
 static int resident_line_coverage_public_order(void){
   GmlRender *cpu=(GmlRender*)calloc(1,sizeof *cpu);
   GmlRender *gpu=(GmlRender*)calloc(1,sizeof *gpu);
@@ -14278,6 +14333,7 @@ int main(void){
   passed+=resident_software3d_primitive_cpu_bridge();
   passed+=resident_filled_span_public_order();
   passed+=resident_line_coverage_public_order();
+  passed+=resident_line_function_transaction();
   passed+=resident_outline_coverage_public_order();
   passed+=resident_atlas_uv_refusal_preserves_queued_prefix();
   passed+=resident_application_sprite_cpu_fallback();
@@ -14407,6 +14463,6 @@ int main(void){
   passed+=source_free_primitive_rect_replay();
   passed+=stretched_float_exact_replay();
   passed+=filtered_font_exact_recovery();
-  printf("render resource cases: passed=%d failed=%d\n",passed,208-passed);
-  return passed==208?EXIT_SUCCESS:EXIT_FAILURE;
+  printf("render resource cases: passed=%d failed=%d\n",passed,209-passed);
+  return passed==209?EXIT_SUCCESS:EXIT_FAILURE;
 }

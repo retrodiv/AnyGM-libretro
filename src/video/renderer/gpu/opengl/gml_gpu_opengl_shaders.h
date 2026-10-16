@@ -347,6 +347,9 @@
   "    uint blend=(flags>>4u)&15u;\n" \
   "    if(outline && p.x!=0 && p.x!=den.x && p.y!=0 && p.y!=den.y) discard;\n" \
   "    if(u_filter==36){ o_color=vec4(0.0,0.0,0.0,1.0); return; }\n" \
+  "    if(blend==1u && !outline && !gradient && v_span_active!=0.0){\n" \
+  "      o_color=vec4(vec3(rectangle_rgb(v_span_y.z))/255.0,v_span_y.w/255.0); return;\n" \
+  "    }\n" \
   "    ivec3 rgb=rectangle_rgb(v_span_x.x);\n" \
   "    if(gradient){\n" \
   "      ivec3 left=rectangle_lerp(rgb,rectangle_rgb(v_span_x.w),p.y,den.y);\n" \

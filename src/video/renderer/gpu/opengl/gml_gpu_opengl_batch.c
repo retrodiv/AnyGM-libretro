@@ -12,7 +12,8 @@
 #include <string.h>
 
 enum { GL_SCENE_MAX_EXACT_REPETITIONS=64, GL_SCENE_BLEND_INVERSE_RECT=12,
-       GL_SCENE_BLEND_RECTANGLE_BASE=32, GL_SCENE_BLEND_RECTANGLE_LIMIT=55 };
+       GL_SCENE_BLEND_RECTANGLE_BASE=32, GL_SCENE_BLEND_RECTANGLE_LIMIT=55,
+       GL_SCENE_BLEND_RECTANGLE_ADD_BYTES=56 };
 
 static int same_logical(GmlRenderImageRef a,GmlRenderImageRef b){
   return a.resource_class==b.resource_class && a.identity==b.identity &&
@@ -1440,7 +1441,11 @@ static int flush_quads(GmlGpuBackend *backend,GlSceneImage *target,GlSceneImage 
     backend->gl.TexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAG_FILTER,(GLint)texture_filter);
   }
   if(blend && blend!=8 && filter!=15u && filter!=17u){
-    if(blend>=GL_SCENE_BLEND_RECTANGLE_BASE && blend<=GL_SCENE_BLEND_RECTANGLE_LIMIT){
+    if(blend==GL_SCENE_BLEND_RECTANGLE_ADD_BYTES ||
+       blend==GL_SCENE_BLEND_RECTANGLE_ADD_BYTES+1){
+      backend->gl.BlendFuncSeparate(GL_ONE,GL_ONE,GL_ONE,
+        blend==GL_SCENE_BLEND_RECTANGLE_ADD_BYTES+1?GL_ONE:GL_ZERO);
+    } else if(blend>=GL_SCENE_BLEND_RECTANGLE_BASE && blend<=GL_SCENE_BLEND_RECTANGLE_LIMIT){
       unsigned mode=(unsigned)(blend-GL_SCENE_BLEND_RECTANGLE_BASE)/2u;
       int preserve=(blend&1)!=0;
       GLenum src=GL_SRC_ALPHA,dst=GL_ONE_MINUS_SRC_ALPHA;
@@ -1952,6 +1957,10 @@ GmlRenderExecutionResult gml_gpu_opengl_scene_submit(GmlGpuBackend *backend,
     unsigned rectangle_blend=rectangle?
       (op->payload.primitive.rectangle_flags&GML_RENDER_RECTANGLE_BLEND_MASK)>>
        GML_RENDER_RECTANGLE_BLEND_SHIFT:0u;
+    int additive_bytes=rectangle && rectangle_blend==1u &&
+      op->payload.primitive.alpha_blend &&
+      !(op->payload.primitive.rectangle_flags&
+        (GML_RENDER_RECTANGLE_OUTLINE|GML_RENDER_RECTANGLE_GRADIENT));
     int alpha_rect=inverse_rect || studio_alpha_rect || (op->opcode==GML_RENDER_OP_COLOURED_PRIMITIVE &&
       op->payload.primitive.kind==GML_RENDER_PRIMITIVE_CLASSIC_ALPHA_RECT);
     uint32_t primitive_filter=rectangle?
@@ -1959,7 +1968,9 @@ GmlRenderExecutionResult gml_gpu_opengl_scene_submit(GmlGpuBackend *backend,
        (rectangle_blend==0u || rectangle_blend==1u || rectangle_blend==4u) &&
        !(op->payload.primitive.rectangle_flags&GML_RENDER_RECTANGLE_TARGET_ALPHA)?35u:34u):
       particle?28u:studio_alpha_rect?32u:31u;
-    int primitive_blend=rectangle?
+    int primitive_blend=additive_bytes?
+      (int)(GL_SCENE_BLEND_RECTANGLE_ADD_BYTES+
+        ((op->payload.primitive.rectangle_flags&GML_RENDER_RECTANGLE_TARGET_ALPHA)!=0u)):rectangle?
       (op->payload.primitive.alpha_blend?
         (rectangle_blend?(int)(GL_SCENE_BLEND_RECTANGLE_BASE+2u*rectangle_blend+
            ((op->payload.primitive.rectangle_flags&GML_RENDER_RECTANGLE_TARGET_ALPHA)!=0u)):
@@ -2022,6 +2033,16 @@ GmlRenderExecutionResult gml_gpu_opengl_scene_submit(GmlGpuBackend *backend,
     if(op->opcode==GML_RENDER_OP_COLOURED_PRIMITIVE){
       if(particle || alpha_rect || rectangle){
         const GmlRenderPrimitiveRect *p=&op->payload.primitive;
+        uint32_t additive_rgb=0u;
+        unsigned additive_alpha=0u;
+        if(additive_bytes){
+          /* The unchanged CPU filled span truncates constant source increments.
+           * Quantise those four known bytes once, not destination pixels. */
+          additive_rgb=((uint32_t)(((p->colour>>16)&255u)*p->alpha)<<16)|
+            ((uint32_t)(((p->colour>>8)&255u)*p->alpha)<<8)|
+            (uint32_t)((p->colour&255u)*p->alpha);
+          additive_alpha=(unsigned)(255.0*p->alpha);
+        }
         static const unsigned corners[6]={0,1,2,0,2,3};
         double rad=p->angle*3.14159265358979323846/180.0;
         double co=cos(rad),si=sin(rad);
@@ -2047,6 +2068,7 @@ GmlRenderExecutionResult gml_gpu_opengl_scene_submit(GmlGpuBackend *backend,
             v[18]=(float)p->rectangle_flags;
             for(unsigned c=0;c<4u;c++) v[19u+c]=(float)(p->corner_colour[c]&0xFFFFFFu);
             v[23]=(float)p->region.x; v[24]=(float)(p->region.width-1u);
+            v[25]=(float)additive_rgb;v[26]=(float)additive_alpha;
             v[27]=(float)p->alpha_blend;
           }
         }

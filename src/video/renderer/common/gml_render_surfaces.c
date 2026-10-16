@@ -259,6 +259,45 @@ int gml_render_application_scene_enqueue_primitive(GmlRender *r,
   return 1;
 }
 
+int gml_render_application_scene_enqueue_primitives(GmlRender *r,
+  const GmlRenderDrawOp *operations,uint32_t count){
+  if(!r || !r->resident_application_pass || !gml_render_device(r) ||
+     !operations || !count || count>8192u || !gml_render_scene_target_matches(r)) return 0;
+  GmlRenderResource *target=gml_render_scene_target_resource_ensure(r);
+  if(!target) return 0;
+  GmlRenderImageRef next=gml_render_application_scene_next_image_ref(r,target);
+  if(next.content_version>UINT64_MAX-count) return 0;
+  for(uint32_t i=0;i<count;i++){
+    const GmlRenderDrawOp *op=&operations[i];
+    if(!gml_render_rectangle_valid(op) ||
+       op->target.image.resource_class!=next.resource_class ||
+       op->target.image.identity!=next.identity || op->target.image.incarnation!=next.incarnation ||
+       op->target.image.content_version!=next.content_version+i+1u) return 0;
+  }
+  if(count>GML_SCENE_BATCH_LIMIT){
+    GmlRenderDrawBatch batch={operations,count,NULL,0u};
+    GmlRenderResourceExecution result=gml_render_application_scene_submit(r,&batch,NULL,0u);
+    if(result==GML_RENDER_RESOURCE_EXEC_CPU) r->resident_application_pass=0;
+    return result!=GML_RENDER_RESOURCE_EXEC_FAILED;
+  }
+  GmlRenderPendingSceneBatch *pending=r->pending_scene_batch;
+  if(pending && pending->count &&
+     (pending->source_count || pending->count>GML_SCENE_BATCH_LIMIT-count ||
+      pending->operations[0].target.image.resource_class!=next.resource_class ||
+      pending->operations[0].target.image.identity!=next.identity ||
+      pending->operations[0].target.image.incarnation!=next.incarnation) &&
+     !gml_render_application_scene_flush(r)) return 0;
+  if(!pending){
+    pending=(GmlRenderPendingSceneBatch*)calloc(1,sizeof *pending);
+    if(!pending) return 0;
+    r->pending_scene_batch=pending;
+  }
+  memcpy(&pending->operations[pending->count],operations,(size_t)count*sizeof *operations);
+  pending->count+=count;
+  if(r->fb==r->app_surface_owned){r->app_surface_opaque=0;r->app_presentation_coverage_active=0;}
+  return 1;
+}
+
 int gml_render_application_scene_enqueue(GmlRender *r,const GmlRenderDrawOp *operation,
                                           const GmlRenderDrawStateSnapshot *state,
                                           const GmlRenderResourceSource *source){

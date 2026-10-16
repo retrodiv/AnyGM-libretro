@@ -1452,7 +1452,8 @@ static int scene_rectangle_function_batch_case(void){
   for(unsigned api=GML_GPU_API_OPENGL_CORE;api<=GML_GPU_API_OPENGLES3;api++)
   for(unsigned preset=0;preset<12u;preset++)
   for(unsigned preserve_alpha=0;preserve_alpha<2u;preserve_alpha++)
-  for(unsigned blend=0;blend<3u;blend++){
+  for(unsigned blend=0;blend<3u;blend++)
+  for(unsigned outline=0;outline<(preset==1u?2u:1u);outline++){
     if(preset==3u || preset==6u) continue;
     GmlRenderDrawOp *ops=calloc(QUADS+1u,sizeof *ops);
     GmlGpuContext context=fake_context(api);
@@ -1484,6 +1485,7 @@ static int scene_rectangle_function_batch_case(void){
         for(unsigned c=0;c<4u;c++) ops[q+1u].payload.primitive.corner_colour[c]=0xFF7193B5u;
         ops[q+1u].payload.primitive.rectangle_flags=
           (preserve_alpha?GML_RENDER_RECTANGLE_TARGET_ALPHA:0u)|
+          (outline?GML_RENDER_RECTANGLE_OUTLINE:0u)|
           (preset<<GML_RENDER_RECTANGLE_BLEND_SHIFT);
       }
     }
@@ -1504,7 +1506,8 @@ static int scene_rectangle_function_batch_case(void){
     }
     if(preset && blend){
       anygm_test_graphics_blend_factors(factors);
-      REQUIRE(factors[0]==expected_factors[preset][0] && factors[1]==expected_factors[preset][1] &&
+      unsigned source=preset==1u && !outline?GL_ONE:expected_factors[preset][0];
+      REQUIRE(factors[0]==source && factors[1]==expected_factors[preset][1] &&
               factors[2]==(preserve_alpha?expected_factors[preset][2]:GL_ONE) &&
               factors[3]==(preserve_alpha?expected_factors[preset][3]:GL_ZERO),
               "rectangle presets set every separate factor rather than inherit host state");
