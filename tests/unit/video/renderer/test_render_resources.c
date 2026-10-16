@@ -13179,8 +13179,23 @@ static int resident_background_function(int fractional){
         CHECK(fake.submits==submitted && !fake.readbacks);
       }
       CHECK(!gml_render_resident_integer_background_page(render,0,6,5,.5,1,0x70B0D0u,.37));
-      CHECK(!gml_render_resident_integer_background_page(render,0,6,5,9,1,0x70B0D0u,.37));
+      CHECK(!gml_render_resident_integer_background_page(render,0,6,5,16385,1,0x70B0D0u,.37));
+      CHECK(!gml_render_resident_integer_background_page(render,0,6,5,8193,1,0x70B0D0u,.37));
       CHECK(!gml_render_resident_integer_background_page(render,0,6,5,1.5,1,0x70B0D0u,.37));
+      if(!fractional && !stored_extents){
+        /* Keep every former scale boundary and the projected-extent limit,
+         * independently in either axis of this two-texel source. */
+        const unsigned wider[]={65,207,256,4096,8192};
+        for(unsigned index=0;index<56u+sizeof wider/sizeof wider[0];index++)
+        for(unsigned axis=0;axis<2u;axis++){
+          unsigned scale=index<56u?index+9u:wider[index-56u];
+          CHECK(gml_render_resident_integer_background_page(render,0,6,5,
+            axis?1.0:scale,axis?scale:1.0,0x70B0D0u,.37));
+          CHECK(gml_render_scene_submit_pending(render));
+          CHECK(!fake.readbacks && !memcmp(shadow,render->fb,sizeof shadow));
+        }
+        submitted=fake.submits;
+      }
       /* The public tiled CPU owner treats zero/negative periods as no-ops. */
       for(unsigned axis=0;axis<4u;axis++)
         gml_draw_background_tiled_ext(render,0,6,5,axis<2u?(axis?-1:0):1,

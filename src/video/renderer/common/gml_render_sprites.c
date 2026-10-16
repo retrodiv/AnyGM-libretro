@@ -576,6 +576,10 @@ static int resident_atlas_crop_from_page_impl(GmlRender *r,GmlTpag *page,
     ?0x1p-14:scaled_atlas?0.0625:1.0;
   int integer_background=physical_sprite_page==8 || scaled_background;
   int integer_atlas=integer_sprite || integer_background || tile_function || text_function;
+  /* Whole background magnification is bounded by projected extent below,
+   * not by the older atlas-scale envelope. Other modes keep their domains. */
+  double maximum_atlas_scale=single_texel_sprite?4096.0:
+    physical_sprite_page==8?16384.0:scaled_atlas?64.0:8.0;
   /* Classic's logical background, sprite and text writers remain point-sampled with the
    * presentation interpolation flag enabled. Auxiliary phase planes retain
    * their separate rejection below; the CPU flag itself is never changed. */
@@ -599,8 +603,8 @@ static int resident_atlas_crop_from_page_impl(GmlRender *r,GmlTpag *page,
       family!=(text_function?GML_RENDER_SCENE_TEXT:tile_function?GML_RENDER_SCENE_TILE:
                integer_background?GML_RENDER_SCENE_BACKGROUND:GML_RENDER_SCENE_SPRITE) ||
       (!scaled_atlas && (xs!=floor(xs) || ys!=floor(ys))) ||
-      fabs(xs)<minimum_atlas_scale || fabs(xs)>(single_texel_sprite?4096.0:scaled_atlas?64.0:8.0) ||
-      fabs(ys)<minimum_atlas_scale || fabs(ys)>(single_texel_sprite?4096.0:scaled_atlas?64.0:8.0) ||
+      fabs(xs)<minimum_atlas_scale || fabs(xs)>maximum_atlas_scale ||
+      fabs(ys)<minimum_atlas_scale || fabs(ys)>maximum_atlas_scale ||
       !isfinite(left) || !isfinite(top) ||
       fabs(left)>65536.0 || fabs(top)>65536.0 || page->sw>4096 || page->sh>4096 ||
       (double)crop_width*fabs(xs)>16384.0 || (double)crop_height*fabs(ys)>16384.0 ||
@@ -900,7 +904,8 @@ static int resident_atlas_crop_from_page_impl(GmlRender *r,GmlTpag *page,
      * first-generation numbered target snaps both sampling and coverage;
      * Classic magnification and modern targets retain their authored phase.
      * No pixel writer, float shader emulation or destination image is needed. */
-    if(scaled_width>4096.0 || scaled_height>4096.0) return 0;
+    double point_extent_limit=physical_sprite_page==8?16384.0:4096.0;
+    if(scaled_width>point_extent_limit || scaled_height>point_extent_limit) return 0;
     int modern=anygm_policy_has_modern_layer_semantics(r->win);
     int firstgen=gml_render_target_is_first_generation_application_surface(r);
     int world=modern && !r->gui_pass_active && !r->target_sp && r->target_id<0;
