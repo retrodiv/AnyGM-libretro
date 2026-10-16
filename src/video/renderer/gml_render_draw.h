@@ -173,7 +173,9 @@ enum {
    * fixed blending and an independent opaque-written-alpha coverage pass. */
   GML_RENDER_QUANTISE_FIXED_STRETCHED=15u,
   /* Modern normal filtered sprites retain continuous sampled colour/alpha. */
-  GML_RENDER_QUANTISE_HARDWARE_SPRITE_MODERN=16u
+  GML_RENDER_QUANTISE_HARDWARE_SPRITE_MODERN=16u,
+  /* Full-source Classic application filtering uses leading-edge coordinates. */
+  GML_RENDER_QUANTISE_HARDWARE_SURFACE_LEADING=17u
 };
 
 /* Resolved blend semantics, independent of any device API's enumerant values. Zeroed factors

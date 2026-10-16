@@ -1206,15 +1206,16 @@ static int scene_resident_batch_case(void){
 static int scene_hardware_filtered_batch_case(unsigned kind){
   enum { QUADS=2049 };
   int application_sprite=kind==11u;
+  int leading_surface=kind==12u;
   int integer_surface=kind==10u;
-  int additive=kind==1u,combined=kind==2u,surface=(kind>=3u && kind<=5u) || integer_surface;
+  int additive=kind==1u,combined=kind==2u,surface=(kind>=3u && kind<=5u) || integer_surface || leading_surface;
   int nearest=kind==4u || kind==5u || integer_surface,screen_stretch=(kind>=6u && kind<=9u) || application_sprite;
   int screen_sprite=kind==7u || kind==8u || kind==9u || application_sprite;
   const uint8_t pixels[64]={11,22,33,255,44,55,66,100,77,88,99,0,111,122,133,200};
   for(unsigned api=0;api<2u;api++)
-  for(unsigned excluded=0;excluded<(application_sprite?12u:integer_surface?9u:kind==9u?11u:nearest || screen_stretch?8u:(combined || surface)?7u:4u);excluded++){
+  for(unsigned excluded=0;excluded<(application_sprite?12u:leading_surface?9u:integer_surface?9u:kind==9u?11u:nearest || screen_stretch?8u:(combined || surface)?7u:4u);excluded++){
     GmlGpuContext context=fake_context(api?GML_GPU_API_OPENGLES3:GML_GPU_API_OPENGL_CORE);
-    GmlRenderImageRef source={kind==5u?GML_RENDER_RESOURCE_APPLICATION:surface?GML_RENDER_RESOURCE_SURFACE:
+    GmlRenderImageRef source={kind==5u || leading_surface?GML_RENDER_RESOURCE_APPLICATION:surface?GML_RENDER_RESOURCE_SURFACE:
       GML_RENDER_RESOURCE_ATLAS,91u,1u,1u};
     GmlRenderDrawOp *ops=(GmlRenderDrawOp*)calloc(QUADS+1u,sizeof *ops);
     GmlRenderDrawStateSnapshot state={0};
@@ -1245,6 +1246,7 @@ static int scene_hardware_filtered_batch_case(unsigned kind){
       state.samplers[0].logical_margin_mask=15u;
     }
     if(combined) state.samplers[0].quantisation=GML_RENDER_QUANTISE_HARDWARE_COMBINED;
+    if(leading_surface) state.samplers[0].quantisation=GML_RENDER_QUANTISE_HARDWARE_SURFACE_LEADING;
     state.rgb_source_factor=state.rgb_destination_factor=GML_RENDER_BLEND_ONE;
     if(combined) state.rgb_source_factor=GML_RENDER_BLEND_SOURCE_ALPHA;
     if(!additive) state.rgb_destination_factor=GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA;
@@ -1278,6 +1280,14 @@ static int scene_hardware_filtered_batch_case(unsigned kind){
       quad->x[1]=quad->x[2]=combined || nearest?2.0:8.0;
       quad->y[2]=quad->y[3]=combined || nearest?2.0:8.0;
       quad->u[1]=quad->u[2]=quad->v[2]=quad->v[3]=1.0;
+      if(leading_surface){
+        quad->filtered_draw_alpha=1.0;
+        for(unsigned corner=0;corner<4u;corner++){
+          quad->corner_colour[corner]=0xFFFFFFFFu;
+          quad->u[corner]+=.5/upload.storage_width-.5/8.0;
+          quad->v[corner]+=.5/upload.storage_height-.5/8.0;
+        }
+      }
       if(integer_surface){
         quad->filtered_draw_alpha=1.0;
         quad->x[1]=quad->x[2]=8.0;quad->y[2]=quad->y[3]=6.0;
@@ -1541,7 +1551,7 @@ static int scene_nearest_surface_batch_case(void){
   return scene_hardware_filtered_batch_case(4);
 }
 static int scene_nearest_application_batch_case(void){
-  return scene_hardware_filtered_batch_case(5);
+  return scene_hardware_filtered_batch_case(5) && scene_hardware_filtered_batch_case(12);
 }
 /* Typed admission and capacity, not shader pixels; the public paired generator
  * owns sampling, cutoff, masks and complete RGBA comparisons. */
@@ -1549,7 +1559,9 @@ static int scene_nearest_surface_function_case(void){
   enum { QUADS=2049 };
   const uint32_t pixels[4]={0x001267B9u,0x552679B3u,0xAAC39526u,0xFF7193C5u};
   for(unsigned api=0;api<2u;api++) for(unsigned target_kind=0;target_kind<3u;target_kind++)
-  for(unsigned source_kind=0;source_kind<3u;source_kind++) for(unsigned invalid=0;invalid<12u;invalid++){
+  for(unsigned source_kind=0;source_kind<3u;source_kind++)
+  for(unsigned selection=0;selection<3u;selection++)
+  for(unsigned invalid=0;invalid<(selection?20u:12u);invalid++){
     anygm_test_graphics_reset();
     GmlGpuContext context=fake_context(api?GML_GPU_API_OPENGLES3:GML_GPU_API_OPENGL_CORE);
     GmlGpu *gpu=gml_gpu_create();GmlRenderDeviceServices device={0};
@@ -1587,6 +1599,11 @@ static int scene_nearest_surface_function_case(void){
       q->shape=GML_RENDER_QUAD_AXIS_ALIGNED;q->sampling=state.samplers[0];q->filtered_draw_alpha=.4;
       q->x[0]=q->x[3]=-1;q->x[1]=q->x[2]=2;q->y[0]=q->y[1]=1;q->y[2]=q->y[3]=4;
       q->inverse_anchor[0]=-1;q->inverse_anchor[1]=1;q->inverse_x[0]=-3;q->inverse_y[1]=3;
+      if(selection){
+        q->span_x[2]=selection==1u?-1.0:.25;q->span_x[3]=0.0;
+        q->span_y[1]=selection==1u?4.0:1.5;q->span_y[2]=2.0;
+        q->span_y[3]=selection==1u?2.0:1.0;
+      }
       for(unsigned corner=0;corner<4u;corner++){
         q->u[corner]=corner==0u || corner==3u?0.0:1.0;q->v[corner]=corner<2u?0.0:1.0;
         q->corner_colour[corner]=0x663470D0u;
@@ -1604,6 +1621,14 @@ static int scene_nearest_surface_function_case(void){
     if(invalid==9u) ops[QUADS].scene_family=GML_RENDER_SCENE_SPRITE;
     if(invalid==10u) ops[QUADS].reconstruction_mode=GML_RENDER_REPLAY_EXACT;
     if(invalid==11u) last->span_active=1u;
+    if(invalid==12u) last->span_y[3]=0.0;
+    if(invalid==13u) last->span_y[3]=4.0;
+    if(invalid==14u) last->span_x[2]=NAN;
+    if(invalid==15u) last->span_y[1]=0.0;
+    if(invalid==16u){last->span_y[3]=2.0;last->span_x[2]=.5;}
+    if(invalid==17u) last->span_y[2]=16385.0;
+    if(invalid==18u) last->span_y[3]=3.0;
+    if(invalid==19u) last->span_x[0]=1.0;
     GmlRenderDrawBatch batch={ops,QUADS+1u,&state,1u};
     GmlRenderExecutionResult result=device.submit(device.context,&batch);
     if(invalid){

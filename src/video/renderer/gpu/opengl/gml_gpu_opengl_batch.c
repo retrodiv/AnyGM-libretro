@@ -274,6 +274,20 @@ static int nearest_surface_function_valid(const GmlRenderDrawOp *op,
      (blend!=0 && blend!=1 && blend!=3 && blend!=13 && blend!=14) ||
      !isfinite(q->filtered_draw_alpha) || q->filtered_draw_alpha<=0.0 || q->filtered_draw_alpha>1.0)
     return 0;
+  if(q->span_y[3]!=0.0 && q->span_y[3]!=1.0 && q->span_y[3]!=2.0) return 0;
+  if(q->span_y[3]==0.0){
+    if(q->span_x[2]!=0.0 || q->span_x[3]!=0.0 || q->span_y[1]!=0.0 || q->span_y[2]!=0.0) return 0;
+  }else{
+    if(q->span_x[0]!=0.0 || q->span_x[1]!=0.0 ||
+       !isfinite(q->span_x[2]) || !isfinite(q->span_x[3]) ||
+       fabs(q->span_x[2])>16384.0 || fabs(q->span_x[3])>16384.0 ||
+       !isfinite(q->span_y[1]) || !isfinite(q->span_y[2]) ||
+       q->span_y[1]<=0.0 || q->span_y[2]<=0.0 ||
+       q->span_y[1]>16384.0 || q->span_y[2]>16384.0) return 0;
+    if(q->span_y[3]==2.0 && (q->span_x[2]!=floor(q->span_x[2]) ||
+       q->span_x[3]!=floor(q->span_x[3]) || q->span_y[1]!=floor(q->span_y[1]) ||
+       q->span_y[2]!=floor(q->span_y[2]))) return 0;
+  }
   for(unsigned corner=0;corner<4u;corner++)
     if(q->corner_colour[corner]!=q->corner_colour[0] ||
        q->u[corner]!=(corner==0u || corner==3u?0.0:1.0) ||
@@ -496,6 +510,7 @@ static int hardware_surface_quad_valid(const GmlRenderDrawOp *op,
   const GmlRenderQuad *quad=&op->payload.quad;
   int destination_blend=qualified_blend(state)==11;
   int point=quad->sampling.filter==GML_RENDER_FILTER_HARDWARE_PIXEL_CENTRE_POINT;
+  int leading=quad->sampling.quantisation==GML_RENDER_QUANTISE_HARDWARE_SURFACE_LEADING;
   int integer_screen=source && source->width && source->height &&
     op->sources[0].resource_class==GML_RENDER_RESOURCE_SURFACE &&
     op->target.image.resource_class==GML_RENDER_RESOURCE_SCREEN &&
@@ -521,7 +536,7 @@ static int hardware_surface_quad_valid(const GmlRenderDrawOp *op,
       quad->sampling.filter!=GML_RENDER_FILTER_NEAREST &&
       !point &&
       !(destination_blend && quad->sampling.filter==GML_RENDER_FILTER_BOX)) ||
-     quad->sampling.quantisation || quad->sampling.logical_margin_mask || quad->span_active ||
+     (quad->sampling.quantisation && !leading) || quad->sampling.logical_margin_mask || quad->span_active ||
      quad->sampling.edge_rule!=GML_RENDER_EDGE_CLAMP_SUBIMAGE ||
      !full_region(quad->sampling.source_region,source->width,source->height) ||
      (destination_blend?state->coverage_policy>GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA ||
@@ -561,12 +576,18 @@ static int hardware_surface_quad_valid(const GmlRenderDrawOp *op,
          last!=fmin(target_extent,ceil(origin+extent-.5))) return 0;
     }
   }
+  if(leading && (point || destination_blend ||
+     op->sources[0].resource_class!=GML_RENDER_RESOURCE_APPLICATION ||
+     quad->sampling.filter!=GML_RENDER_FILTER_HARDWARE_BILINEAR ||
+     quad->filtered_draw_alpha!=1.0 || quad->corner_colour[0]!=0xFFFFFFFFu)) return 0;
   for(unsigned corner=0;corner<4u;corner++)
     if(quad->corner_colour[corner]!=quad->corner_colour[0] ||
        quad->u[corner]!=(point?(quad->x[corner]-quad->inverse_anchor[0])/quad->inverse_x[0]:
-                               ((corner==1u || corner==2u)?1.0:0.0)) ||
+                               ((corner==1u || corner==2u)?1.0:0.0)+
+                               (leading?.5/source->width-.5/(quad->x[1]-quad->x[0]):0.0)) ||
        quad->v[corner]!=(point?(quad->y[corner]-quad->inverse_anchor[1])/quad->inverse_y[1]:
-                               (corner>=2u?1.0:0.0))) return 0;
+                               (corner>=2u?1.0:0.0)+
+                               (leading?.5/source->height-.5/(quad->y[2]-quad->y[0]):0.0))) return 0;
   if(destination_blend && (quad->corner_colour[0]>>24)!=
      (uint32_t)lround(quad->filtered_draw_alpha*255.0)) return 0;
   return 1;
@@ -1231,7 +1252,7 @@ static int scene_preflight(GmlGpuBackend *backend,const GmlRenderDrawBatch *batc
                        !gml_render_automatic_surface_quad_valid(&op->payload.quad,
                                                                  target->width,target->height) ||
                        !exact_rect(op,NULL,NULL,NULL,NULL,1))) ||
-         (sampling->quantisation && !stretched_box && !integer_function && !physical_sprite && blend!=6 && blend!=7 && !modern_numbered_sprite &&
+         (sampling->quantisation && !hardware_surface && !stretched_box && !integer_function && !physical_sprite && blend!=6 && blend!=7 && !modern_numbered_sprite &&
           !(blend==3 && sampling->filter==GML_RENDER_FILTER_HARDWARE_BILINEAR &&
             sampling->quantisation==GML_RENDER_QUANTISE_HARDWARE_COMBINED) &&
           (sampling->quantisation!=GML_RENDER_QUANTISE_STRETCHED_FLOAT ||

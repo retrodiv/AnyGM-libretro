@@ -76,6 +76,7 @@ REQUIRED_RULES = {
     "R03-P5-SURFACE-RESIZE", "R03-P5-SURFACE-FREE",
     "R03-P5-SURFACE-PART", "R03-P5-SURFACE-STRETCHED",
     "R03-SURFACE-NEAREST-FUNCTION",
+    "R03-SURFACE-CANVAS-FUNCTION",
     "R03-SURFACE-CLASSIC-INTEGER-SCREEN",
     "R03-P5-SURFACE-ROTATED",
     "R03-P5-GUI-FULLWIDTH", "R03-P5-GUI-OPAQUE-SUFFIX",
@@ -758,6 +759,8 @@ def self_test() -> None:
                          "::OBSOLETE_GUI_ROTATED_NEAREST_COVERAGE", 1),
         "\n".join(line for line in document.splitlines()
                   if not line.startswith("| R03-P9-GUI-ROTATED-SPRITE |")),
+        "\n".join(line for line in document.splitlines()
+                  if not line.startswith("| R03-SURFACE-CANVAS-FUNCTION |")),
         "\n".join(line for line in document.splitlines()
                   if not line.startswith("| R03-P9-SPRITE-ALPHA-BOUNDARY |")),
         "\n".join(line for line in document.splitlines()
