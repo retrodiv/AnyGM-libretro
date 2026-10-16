@@ -3,6 +3,19 @@
 
 # Renderer backend correspondence
 
+Explicit positive numbered targets may open an independent resident child before
+the first world pass, but only with scene mode enabled and a successful owning
+context witness. `common/gml_render_surfaces.c::gml_surface_set_target` leaves the
+global scene closed, saves a CPU parent's deferred writes and restores its exact
+pass/camera/extent; nested Studio and replacing Classic rules are unchanged.
+SCREEN, GUI and application zero are not implicitly admitted. Each drawing family
+retains its existing EXACT RGBA0 or individual TOLERANCE±2 contract and refusals.
+`test_render_resources.c::independent_numbered_target_admission` covers missing,
+false and disabled witnesses, packaged/runtime sources, grouping, nesting and CPU
+aliases. The `surface-function-matrix` independent profile supplies144 real RGBA
+pairs, stale-shadow/ordinary-transport checks and exact sealed detached bytes.
+This lifecycle scope is not whole-game, timing or whole-drawing-API qualification.
+
 The neutral operation IDs and families live only in
 `src/video/renderer/gml_render_operations.def`. Private CPU and GPU ledgers are
 `cpu/gml_render_cpu_operations.def` and `gpu/gml_render_gpu_operations.def`.

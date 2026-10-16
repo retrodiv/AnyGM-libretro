@@ -2388,14 +2388,24 @@ int gml_surface_set_target(GmlRender *r, int id){
   if(!gml_render_application_scene_flush(r)) return 0;
   int w=0,h=0,si=surface_slot(id);
   uint32_t *px=NULL;
-  int resident=r->resident_scene_pass && gml_render_device(r) &&
+  const GmlRenderDeviceServices *device=gml_render_device(r);
+  /* Initialization may author numbered targets before any world pass exists.
+   * A usable owning context admits only that explicit child, never its CPU
+   * SCREEN/application parent or the global scene. The saved parent pass still
+   * owns restoration, including nested Studio and replacing Classic targets. */
+  int independent=!r->resident_scene_pass && r->scene_device_enabled &&
+    si>=0 && r->surface[si].live && device && device->observe_on_demand &&
+    device->observe_on_demand(device->context);
+  int resident=(r->resident_scene_pass || independent) && device &&
     (!r->classic || id>0 || (id==0 && r->app_surface==r->app_surface_owned));
   if(resident){
     /* Resolve pending parent writes before another binding can alias its allocation.
      * Binding itself borrows storage metadata, not CPU-current raster bytes. */
-    gml_render_flush_pending_underlay(r);
-    gml_render_flush_pending_fill(r);
-    if(r->pending_underlay || r->pending_fill) return 0;
+    if(!independent || r->resident_application_pass){
+      gml_render_flush_pending_underlay(r);
+      gml_render_flush_pending_fill(r);
+      if(r->pending_underlay || r->pending_fill) return 0;
+    }
     if(si>=0 && r->surface[si].live &&
        gml_render_surface_resource_ensure(r,id)){
       px=r->surface[si].px; w=r->surface[si].w; h=r->surface[si].h;

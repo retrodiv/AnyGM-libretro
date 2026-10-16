@@ -3282,6 +3282,100 @@ static int resident_application_pending_clear(void){
   return 1;
 }
 
+static int independent_numbered_target_admission(void){
+  static const int generations[]={530,700,800,13,15,17};
+  for(unsigned policy=0;policy<6u;policy++)
+  for(unsigned parent=0;parent<2u;parent++)
+  for(unsigned witness=0;witness<4u;witness++)
+  for(unsigned runtime=0;runtime<2u;runtime++){
+    GmlRender *r=calloc(1,sizeof *r);
+    GmlWin content={0};uint32_t base[64]={0};
+    FakeDevice fake={.on_demand=witness==1u,.readback_colour=0xFF315779u};
+    GmlRenderDeviceServices device=service(&fake);
+    const uint8_t rgba[16]={213,29,47,255,37,191,59,0,61,83,227,255,197,151,73,255};
+    int admitted=witness==1u;
+    if(generations[policy]>100) content.classic_version=generations[policy];
+    else content.bytecode=generations[policy];
+    CHECK(r && gml_render_init(r,NULL)==0);
+    r->win=&content;r->classic=content.classic_version!=0;
+    free(r->atlas[0].px);r->atlas[0].px=malloc(sizeof rgba);
+    r->atlas[0].w=r->atlas[0].h=2;
+    r->tpag=calloc(1,sizeof *r->tpag);r->spr=calloc(1,sizeof *r->spr);
+    CHECK(r->atlas[0].px && r->tpag && r->spr);
+    memcpy(r->atlas[0].px,rgba,sizeof rgba);
+    r->n_tpag=r->n_spr=1;
+    r->tpag[0]=(GmlTpag){.sw=2,.sh=2,.tw=2,.th=2,.bw=2,.bh=2};
+    r->spr[0].frame=calloc(1,sizeof(int));CHECK(r->spr[0].frame);
+    r->spr[0].n_frames=1;r->spr[0].w=r->spr[0].h=2;
+    if(runtime){
+      uint8_t *pixels=malloc(sizeof rgba);CHECK(pixels);memcpy(pixels,rgba,sizeof rgba);
+      CHECK(gml_sprite_replace_from_rgba(r,0,pixels,2,2,0,0));
+    }
+    device.observe_on_demand=witness==2u?NULL:fake_observe_on_demand;
+    gml_render_bind_device(r,&device);gml_render_set_scene_device(r,witness!=3u);
+    if(parent){
+      gml_render_begin(r,base,8,8,2.0,3.0);
+      gml_render_set_pending_fill(r,0xFF123456u);
+    }
+    uint32_t *parent_fb=r->fb;int parent_w=r->fbw,parent_h=r->fbh;
+    double parent_cx=r->cam_x,parent_cy=r->cam_y;
+    int id=gml_surface_create(r,8,8);CHECK(id>0 && gml_surface_set_target(r,id));
+    CHECK(!r->resident_scene_pass && r->resident_application_pass==admitted &&
+          r->cam_x==0 && r->cam_y==0 && !r->pending_fill);
+    for(unsigned draw=0;draw<3u;draw++)
+      gml_draw_sprite_ext(r,0,0,draw*2,1,1,1,0,0xFFFFFFu,1);
+    CHECK(gml_render_application_scene_flush(r));
+    CHECK(!r->resident_scene_pass && r->resident_application_pass==admitted && !fake.readbacks);
+    if(admitted){
+      GmlRenderJournalMetrics metrics={0};
+      gml_render_resource_journal_metrics(r->surface[id-1].resource,&metrics);
+      if(fake.submits!=1 || fake.last_batch_operations<3u || fake.last_batch_operations>6u ||
+         metrics.authority!=GML_RENDER_RESOURCE_GPU_RESIDENT || metrics.cpu_replays ||
+         metrics.journal_bytes || r->fb[8])
+        fprintf(stderr,"independent admission: policy=%d parent=%u runtime=%u submits=%d operations=%u authority=%u replay=%llu journal=%llu shadow=%08x\n",
+          generations[policy],parent,runtime,fake.submits,fake.last_batch_operations,(unsigned)metrics.authority,
+          (unsigned long long)metrics.cpu_replays,(unsigned long long)metrics.journal_bytes,r->fb[8]);
+      /* Runtime binary coverage can produce two row packets per sprite;
+       * all three public calls must still share one compatible submission. */
+      CHECK(fake.submits==1 && fake.last_batch_operations>=3u && fake.last_batch_operations<=6u &&
+            metrics.authority==GML_RENDER_RESOURCE_GPU_RESIDENT &&
+            !metrics.cpu_replays && !metrics.journal_bytes && !r->fb[8]);
+    }else CHECK(!fake.submits && r->fb[8]==0xFFD51D2Fu);
+    gml_surface_reset_target(r);
+    CHECK(!r->resident_scene_pass && !r->resident_application_pass && !r->target_sp &&
+          r->fb==parent_fb && r->fbw==parent_w && r->fbh==parent_h &&
+          r->cam_x==parent_cx && r->cam_y==parent_cy && !fake.readbacks &&
+          r->pending_fill==(int)parent && (!parent || r->pending_fill_color==0xFF123456u));
+    gml_render_free(r);free(r);
+  }
+  for(unsigned classic=0;classic<2u;classic++) for(unsigned alias=0;alias<2u;alias++){
+    GmlRender *r=calloc(1,sizeof *r);uint32_t base[16]={0};
+    FakeDevice fake={.on_demand=1,.readback_colour=0xFF315779u};
+    GmlRenderDeviceServices device=service(&fake);
+    CHECK(r && gml_render_init(r,NULL)==0);r->classic=(int)classic;
+    int outer=gml_surface_create(r,4,4),inner=gml_surface_create(r,4,4);
+    CHECK(outer>0 && inner>0);
+    device.observe_on_demand=fake_observe_on_demand;
+    gml_render_bind_device(r,&device);gml_render_set_scene_device(r,1);
+    uint32_t *parent=alias?r->surface[outer-1].px:base;
+    gml_render_begin(r,parent,4,4,2,3);
+    CHECK(gml_surface_set_target(r,outer) && r->resident_application_pass && !r->resident_scene_pass);
+    gml_render_set_pending_fill(r,0x7F315779u);
+    gml_render_flush_pending_fill(r);
+    CHECK(gml_surface_set_target(r,inner) && r->resident_application_pass &&
+          !r->resident_scene_pass && r->target_sp==(classic?1:2));
+    gml_render_set_pending_fill(r,0x7F123456u);
+    gml_render_flush_pending_fill(r);
+    gml_surface_reset_target(r);
+    CHECK(r->target_id==(classic?-1:outer) && r->resident_application_pass==!classic);
+    if(!classic) gml_surface_reset_target(r);
+    CHECK(!r->resident_application_pass && !r->resident_scene_pass && !r->target_sp &&
+          r->fb==parent && r->cam_x==2 && r->cam_y==3 && fake.readbacks==(int)alias);
+    gml_render_free(r);free(r);
+  }
+  return 1;
+}
+
 static int independent_persistent_target_clear(void){
   static const uint32_t colours[]={0x00315779u,0x7F315779u,0xFF315779u};
   for(unsigned application=0;application<2u;application++)
@@ -3362,6 +3456,9 @@ static int independent_persistent_target_clear(void){
     gml_render_bind_device(render,&device);gml_render_set_scene_device(render,1);
     gml_render_begin(render,base,4,4,0,0);
     int id=gml_surface_create(render,4,4);CHECK(id>0 && gml_surface_set_target(render,id));
+    /* Preserve this control's already-selected CPU suffix before queuing
+     * its clear; target selection can now independently admit a GPU child. */
+    CHECK(gml_render_resident_application_cpu_barrier(render));
     gml_render_set_pending_fill(render,0xFF426486u);
     gml_render_primitive_point(render,0,0,0x75A4C3u);
     CHECK(!render->pending_fill && render->fb[0]==0xFFC3A475u &&
@@ -14654,6 +14751,7 @@ int main(void){
   passed+=resident_surface_resize_state();
   passed+=resident_application_pending_clear();
   passed+=independent_persistent_target_clear();
+  passed+=independent_numbered_target_admission();
   passed+=resident_pending_clear_after_queued_draw();
   passed+=first_generation_underlay_resource_borrow();
   passed+=resident_layer_filter_capture_barrier();
@@ -14830,6 +14928,6 @@ int main(void){
   passed+=source_free_primitive_rect_replay();
   passed+=stretched_float_exact_replay();
   passed+=filtered_font_exact_recovery();
-  printf("render resource cases: passed=%d failed=%d\n",passed,217-passed);
-  return passed==217?EXIT_SUCCESS:EXIT_FAILURE;
+  printf("render resource cases: passed=%d failed=%d\n",passed,218-passed);
+  return passed==218?EXIT_SUCCESS:EXIT_FAILURE;
 }
