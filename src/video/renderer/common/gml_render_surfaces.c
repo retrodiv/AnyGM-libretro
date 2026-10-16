@@ -1395,7 +1395,9 @@ static int resident_surface_nearest_selection(GmlRender *r,int surf,double dx,do
   /* The unchanged full-source normal owner point-magnifies even with texture
    * interpolation enabled. Classic application presentation is its separate
    * leading-edge bilinear exception, not an ordinary point surface. */
-  int point_magnification=(selection || resolved_canvas) && whole &&
+  int ordinary_filtered_point=surf>0 && r->interp && r->alphablend &&
+    !r->blendmode && r->color_write_mask==15u;
+  int point_magnification=(selection || resolved_canvas || ordinary_filtered_point) && whole &&
     signed_width>=sw && signed_height>=sh &&
     (!r->blendmode || (r->blendmode==6 && opaque)) && alpha>=1.0 &&
     (colour&0xFFFFFFu)==0xFFFFFFu && (!requires_filter || (opaque && r->alpha_test_ref<255u)) &&
@@ -1414,8 +1416,10 @@ static int resident_surface_nearest_selection(GmlRender *r,int surf,double dx,do
      !r->interp && !r->blendmode && r->color_write_mask==15u &&
      surface_known_opaque(r,0) && alpha>=1.0 &&
      (colour&0xFFFFFFu)==0xFFFFFFu && !r->app_draw_enable) return 0;
+  /* The queued application prefix precedes any ordinary surface suffix,
+   * regardless of which independent source that suffix samples. */
   if(r->pending_underlay &&
-     (surf!=0 || !gml_render_gui_transform_active(r) || r->cam_x!=0.0 || r->cam_y!=0.0 ||
+     (!gml_render_gui_transform_active(r) || r->cam_x!=0.0 || r->cam_y!=0.0 ||
       !gml_render_compose_resident_underlay(r) || !r->resident_application_pass)) return 0;
   resource=surf==0?(borrowed?borrowed:gml_render_application_resource_ensure(r)):
                    gml_render_surface_resource_ensure(r,surf);
@@ -1646,6 +1650,13 @@ static int resident_surface_filtered_resolved(GmlRender *r,int surf,double dx,do
     if(width<=0.0 || height<=0.0) return 1;
   }
   unit=width==source_width && height==source_height;
+  /* A whole numbered source in the CPU's white/full-alpha normal leaf uses
+   * leading-edge point magnification even with interpolation enabled. Keep
+   * unit packets and true filtered partial/tinted draws on their old owners. */
+  if(!resolved_canvas && surf>0 && !unit && r->interp && !r->blendmode &&
+     alpha>=1.0 && (blend&0xFFFFFFu)==0xFFFFFFu &&
+     width>=source_width && height>=source_height)
+    return resident_surface_nearest_selection(r,surf,dx,dy,dw,dh,blend,alpha,0,NULL,0);
   /* Bound exact integer phase products and filtered tap accumulation. The CPU
    * destination-factor leaf uses left-edge point/box sampling, even when enlarged. */
   if(destination_blend && (alpha<0x1p-32 || width<1.0 || height<1.0 ||
@@ -1673,7 +1684,7 @@ static int resident_surface_filtered_resolved(GmlRender *r,int surf,double dx,do
    * content has disabled future automatic draws. Reuse its established compositor;
    * non-GUI and nonzero-camera variants retain their prior ordered CPU owner. */
   if(r->pending_underlay &&
-     (surf!=0 || !gml_render_gui_transform_active(r) || r->cam_x!=0.0 || r->cam_y!=0.0 ||
+     (!gml_render_gui_transform_active(r) || r->cam_x!=0.0 || r->cam_y!=0.0 ||
       !gml_render_compose_resident_underlay(r) || !r->resident_application_pass)) return 0;
   resource=surf==0?gml_render_application_resource_ensure(r):
                    gml_render_surface_resource_ensure(r,surf);

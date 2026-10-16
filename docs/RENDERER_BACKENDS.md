@@ -273,7 +273,7 @@ the sprite/background helpers do not upload mask-only pages solely for collision
 new draw admission, fallback exemption or zero first-use cost for every future content resource.
 
 R03-P9-AUTOMATIC-UNDERLAY also prepares an already queued underlay before an
-otherwise qualified public stretched application-surface GUI draw with zero camera offset.
+otherwise qualified public stretched application- or numbered-surface GUI draw with zero camera offset.
 Qualified mapped SCREEN/GUI nearest real/sprite TEXT crops prepare that ordered prefix before
 their unchanged atlas admission, as filtered glyphs already do. A witnessed
 on-demand device also admits active cutout below255 for automatic first-generation
@@ -298,11 +298,27 @@ Changing automatic-draw enablement does not cancel that queued intent. The
 existing compositor and its one device-local destination snapshot are unchanged;
 the following surface uses its existing hardware sampling and fixed blend path.
 No CPU leaf, shader arithmetic, observer or replay policy is added. Non-GUI,
-nonzero-camera, numbered-source and the compositor's existing source/state exclusions retain CPU.
+nonzero-camera and the compositor's existing source/state exclusions retain CPU.
 The paired `surface-underlay-order` control exercises both Studio policies,
 CPU/device-current sources, GUI mapping, clipping and opaque/partial suffixes:
 16 EXACT RGBA0 and16 TOLERANCE±2 controls,32 reversed-order negative controls,
 zero ordinary reads/masks/queries/replay and exact sealed no-current pixels.
+Its `numbered` profile adds576 correlated policy/source/GUI/alpha/clip/public-port/scale
+controls:480 execute both operations on GPU, with160 EXACT RGBA0 and320 individual
+TOLERANCE±2 cases (measured maximum1). The96 modern-Classic automatic-presentation
+cases retain their existing CPU boundary and require exact reference pixels; they
+are not GPU coverage. The `numbered-sampling` companion checks the same576 suffixes
+without a pending prefix:192 EXACT0 and384 TOLERANCE±2, maximum1. The unchanged
+CPU whole-source white/full-alpha normal magnification leaf selects leading-edge
+point sampling even with interpolation enabled; numbered surfaces reuse the
+existing nearest packet rather than the filtered owner for that leaf. Unit and
+true partial/tinted filtered draws retain their previous owners. The existing
+early-Classic compositor needs no destination snapshot; Studio still needs one,
+and the suffix adds none. Independently authored solid CPU coverage, reversed
+ordering, alpha/outside/tolerance/order negatives, unchanged surface-function
+neighbours and exact actual-device sealing remain required. Camera/world,
+special source/state and modern-Classic prefix policy remain explicit debt;
+this does not qualify every public surface variant or a complete game.
 
 R03-P5-GUI-FULLWIDTH extends first-generation GUI point presentation and corrected
 1:1 partial-alpha composition with interpolation off/on.
@@ -1457,8 +1473,8 @@ does not claim execution of the selected content program.
 | `src/video/renderer/common/gml_render_surfaces.c::resident_surface_nearest_function` | `gml_render_application_scene_enqueue` | PARTIAL | `0e3d5171c1928ce7574431b4d0ae2a65a5b80c7de1c9dfc1fd18b32877bd57c0` | R03-SURFACE-NEAREST-FUNCTION requires paired public RGBA, cutoff, batching, order, coverage and current-source controls; nonqualified presentation/filter/rotation/state variants remain ordered debt. The internal early-Classic automatic caller alone admits a retained borrowed SCREEN source and the unchanged CPU zero-cutoff/mask and normal-scaled blend branches; public source-zero ownership gates stay unchanged. |
 | `src/video/renderer/common/gml_render_surfaces.c::resident_surface_filtered` | `gml_render_application_scene_enqueue` | PARTIAL | `0e171e840c20b7541783242072b06bbf42dc6282dc5ad09b7498298a57baa5bd` | Existing opaque first-generation GUI presentation ignores raw alpha cutoff exactly as its CPU leaf; R03-SURFACE-NEAREST-FUNCTION pairs that boundary including reference255. Other old filtered owners retain their cutoff fence and existing geometry/presentation exclusions. |
 | `src/video/renderer/common/gml_render_surfaces.c::resident_surface_canvas` | `gml_render_application_scene_enqueue` | PARTIAL | `937a538e89d4f14cf28c62e872d729d3ff8787239aa9a1199d85f8f6cbef2026` | R03-SURFACE-CANVAS-FUNCTION preserves CPU declared-canvas geometry before nearest selection or full-source hardware filtering; cropped filtering, phases, aliases and special state retain ordered debt. |
-| `src/video/renderer/common/gml_render_surfaces.c::resident_surface_nearest_selection` | `gml_render_application_scene_enqueue` | PARTIAL | `a313086375bfa590e3244f486ee1212ee1daf5cef7d0150d19fb5d360888ddab` | R03-SURFACE-CANVAS-FUNCTION requires selected/canvas paired RGBA, exact outside coverage, source authority, compatible batching and numbered state. Filtering, rotation, source alias and special-state exclusions remain explicit debt. |
-| `src/video/renderer/common/gml_render_surfaces.c::resident_surface_filtered_resolved` | `gml_render_application_scene_enqueue` | PARTIAL | `3a7680913a645dc93b003bf423dacd2912017d621866596aafdbd0a7a65cc98a` | R03-SURFACE-CANVAS-FUNCTION pairs Classic full-source leading-edge filtering and Studio point magnification. Existing filtered wrappers retain their bounds; selected filtering, phase planes and special state remain explicit debt. |
+| `src/video/renderer/common/gml_render_surfaces.c::resident_surface_nearest_selection` | `gml_render_application_scene_enqueue` | PARTIAL | `784c6c015d98af3bf987e6a88310827d506defad5c425cd7699d9862840a8dd2` | R03-SURFACE-CANVAS-FUNCTION requires selected/canvas paired RGBA, exact outside coverage, source authority, compatible batching and numbered state. Filtering, rotation, source alias and special-state exclusions remain explicit debt. |
+| `src/video/renderer/common/gml_render_surfaces.c::resident_surface_filtered_resolved` | `gml_render_application_scene_enqueue` | PARTIAL | `cb9a00ff3c7e8d606ef87f43ae38f461a5fa954be6cda8c5248e2c62034c4eff` | R03-SURFACE-CANVAS-FUNCTION pairs Classic full-source leading-edge filtering and Studio point magnification. Existing filtered wrappers retain their bounds; selected filtering, phase planes and special state remain explicit debt. |
 | `src/video/renderer/common/gml_render_surfaces.c::resident_surface_shader` | `gml_render_application_scene_submit` | PARTIAL | `c0e7c1ab881827f805f08411057334c008fc286cf17c053b2ea0539efaa97841` | Bounded surface/recovery admission only; source, alias, geometry and state exclusions remain in the R03 surface rules. R03-SURFACE-THRESHOLD-PALETTE pairs opaque integer palette metadata, GUI copy selection and source authority; unchanged content-surface neighbours preserve arbitrary-program behaviour. Partial/binary/unknown opacity and remaining variants retain explicit CPU debt. |
 | `src/video/renderer/common/gml_render_surfaces.c::resident_surface_part` | `gml_render_application_scene_submit` | PARTIAL | `8cc678f568aa4c8c3033e1ee829cb2444f7bea3efcd2550db3d29ff9a8a15c1a` | Bounded surface/recovery admission only; source, alias, geometry and state exclusions remain in the R03 surface rules. |
 | `src/video/renderer/common/gml_render_surfaces.c::gml_draw_surface_part_ext` | `gml_render_application_scene_enqueue` | PARTIAL | `4fed1306044879f6e56c02c464617ac37877f3f55a7c9e5f3183668d1ec8b954` | Bounded surface/recovery admission only; source, alias, geometry and state exclusions remain in the R03 surface rules. R03-SURFACE-THRESHOLD-PALETTE pairs opaque integer palette metadata, GUI copy selection and source authority; unchanged content-surface neighbours preserve arbitrary-program behaviour. Partial/binary/unknown opacity and remaining variants retain explicit CPU debt. R03-SURFACE-CANVAS-FUNCTION separately pairs selected/canvas geometry and typed leading-filter UV transport; other debt remains. |

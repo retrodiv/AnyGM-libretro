@@ -10347,6 +10347,7 @@ static int resident_unregistered_cpu_application_underlay(void){
 static int resident_surface_after_pending_underlay(void){
   enum { WIDTH=8,HEIGHT=8 };
   for(unsigned modern=0;modern<2u;modern++) for(unsigned gpu_source=0;gpu_source<2u;gpu_source++)
+  for(unsigned numbered=0;numbered<2u;numbered++) for(unsigned filtered=0;filtered<2u;filtered++)
   for(unsigned excluded=0;excluded<3u;excluded++){
     GmlWin content={.bytecode=modern?17:15};
     GmlRender *render=calloc(1,sizeof *render);
@@ -10354,7 +10355,7 @@ static int resident_surface_after_pending_underlay(void){
     GmlRenderDeviceServices device=service(&fake);
     GmlRenderJournalMetrics target={0};
     uint32_t screen[WIDTH*HEIGHT],sentinel[WIDTH*HEIGHT];
-    CHECK(render);
+    CHECK(render && !gml_render_init(render,NULL));
     device.observe_on_demand=fake_observe_on_demand;
     render->win=&content;render->color_write_mask=15u;
     CHECK(gml_render_application_surface_ensure_owned(render,WIDTH,HEIGHT));
@@ -10368,6 +10369,13 @@ static int resident_surface_after_pending_underlay(void){
     render->app_surface_opaque=1;
     gml_render_application_surface_set_draw_enabled(render,0);
     gml_render_application_surface_publish(render);
+    int surface=0;
+    if(numbered){
+      surface=gml_surface_create(render,WIDTH,HEIGHT);CHECK(surface>0);
+      GmlSurface *source=&render->surface[surface_slot(surface)];
+      for(unsigned pixel=0;pixel<WIDTH*HEIGHT;pixel++) source->px[pixel]=0xFF1267B9u;
+      source->opaque_known=source->all_opaque=1;source->all_transparent=0;
+    }
     gml_render_bind_device(render,&device);
     for(unsigned pixel=0;pixel<WIDTH*HEIGHT;pixel++) screen[pixel]=sentinel[pixel]=0xA5123456u;
     CHECK(gml_render_begin_resident_base(render,screen,WIDTH,HEIGHT,0,0));
@@ -10376,8 +10384,9 @@ static int resident_surface_after_pending_underlay(void){
     gml_render_set_pending_underlay(render,0,0,WIDTH,HEIGHT);
     if(excluded==1u) render->cam_x=1.0;
     if(excluded==2u) gml_render_gui_end(render);
+    render->interp=(int)filtered;
     int reads=fake.readbacks;
-    gml_draw_surface_stretched(render,0,2,1,WIDTH,HEIGHT,0xFFFFFFu,1.0);
+    gml_draw_surface_stretched(render,surface,2,1,WIDTH,HEIGHT,0xFFFFFFu,1.0);
     if(excluded){
       CHECK(!render->resident_application_pass && fake.readbacks>reads);
       gml_render_free(render);free(render);
