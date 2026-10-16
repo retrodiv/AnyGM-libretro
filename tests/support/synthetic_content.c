@@ -1714,7 +1714,8 @@ static int synthetic_framebuffer_content_create(
   memset(fixture,0,sizeof *fixture);
   if(!create_fixture_directory(fixture->directory,sizeof fixture->directory)) return 0;
 
-  int classic_step_composition=gpu_sprite>=41 && gpu_sprite<=43;
+  int classic_native_step=gpu_sprite>=51 && gpu_sprite<=54;
+  int classic_step_composition=(gpu_sprite>=41 && gpu_sprite<=43) || classic_native_step;
   int classic_retained_target=gpu_sprite==38 || gpu_sprite==39 || classic_step_composition;
   int retained_step_target=gpu_sprite==5 || gpu_sprite==6 || classic_retained_target;
   int nested_step_target=gpu_sprite==6;
@@ -1797,6 +1798,11 @@ static int synthetic_framebuffer_content_create(
        classic_redraw?
        "global.fixture_frame = 0;\n"
        "global.fixture_seen = 0;\n":
+       classic_native_step?
+       "global.fixture_frame = 0;\n"
+       "global.fixture_surface = surface_create(16,12);\n"
+       "surface_set_target(global.fixture_surface);\n"
+       "draw_clear(c_blue);\n":
        classic_step_composition?
        "global.fixture_frame = 0;\n"
        "global.fixture_surface = surface_create(16,12);\n":
@@ -2089,6 +2095,11 @@ static int synthetic_framebuffer_content_create(
                             (single_classic_view && gpu_sprite!=24)?530:800;
     if(gpu_sprite==39 || gpu_sprite==43) project.classic_version=810;
     if(gpu_sprite==41 || gpu_sprite==42) project.classic_version=701;
+    if(classic_native_step){
+      project.classic_version=gpu_sprite==51?800:810;
+      project.classic_scaling=gpu_sprite==53?200:100;
+      project.classic_interpolate=gpu_sprite==54;
+    }
     if(classic_manual_application) project.classic_version=gpu_sprite==50?810:701;
     if(classic_identity_present) project.classic_version=701;
     /* Distinct from both room colors so a cleared classic frame cannot be mistaken for a
@@ -2377,6 +2388,18 @@ int anygm_synthetic_classic_step_base_writer_content_create(AnygmSyntheticConten
 }
 int anygm_synthetic_classic_late_step_composition_content_create(AnygmSyntheticContent *fixture){
   return synthetic_framebuffer_content_create(fixture,0,0,1,43);
+}
+int anygm_synthetic_classic_native_step_content_create(AnygmSyntheticContent *fixture){
+  return synthetic_framebuffer_content_create(fixture,0,0,1,51);
+}
+int anygm_synthetic_classic_late_native_step_content_create(AnygmSyntheticContent *fixture){
+  return synthetic_framebuffer_content_create(fixture,0,0,1,52);
+}
+int anygm_synthetic_classic_scaled_step_content_create(AnygmSyntheticContent *fixture){
+  return synthetic_framebuffer_content_create(fixture,0,0,1,53);
+}
+int anygm_synthetic_classic_filtered_step_content_create(AnygmSyntheticContent *fixture){
+  return synthetic_framebuffer_content_create(fixture,0,0,1,54);
 }
 int anygm_synthetic_step_clear_content_create(AnygmSyntheticContent *fixture){
   return synthetic_framebuffer_content_create(fixture,0,0,0,46);

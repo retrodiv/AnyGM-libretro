@@ -1270,7 +1270,7 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
     AspectViewOverlay step_ov;
     aspect_view_overlay_begin(engine,&step_ov, 0, ASPECT_VIEW_TRACKING);
     /* Step inherits the preceding SCREEN's draw state. A current device image may resume
-     * that exact binding, but a fresh begin would reset alpha, colour and transforms. */
+     * that exact binding, but a fresh begin would reset binding and transform state. */
     if(engine->scene_renderer_session==ANYGM_SCENE_RENDERER_OPENGL &&
        anygm_policy_uses_classic_runtime(&engine->win) &&
        !anygm_policy_classic_modern_presentation(&engine->win) &&
@@ -1289,8 +1289,11 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
       GmlRenderPresentationMetrics step_presentation={0};
       gml_render_presentation_metrics(&engine->render,&step_presentation);
       int resident_step=0;
+      /* Later native SCREEN retains the initial CPU-owned presentation clear. */
       if(gml_surface_get_target(&engine->render)>0 &&
-         !anygm_policy_classic_modern_presentation(&engine->win) &&
+         (!anygm_policy_classic_modern_presentation(&engine->win) ||
+          (engine->vm.frame>0 && engine->output_width==engine->width &&
+           engine->output_height==engine->height)) &&
          !step_presentation.interpolation && !engine->aspect_force_active &&
          !engine->canvas_mode && engine_graphics_active(engine) &&
          engine->scene_renderer_session==ANYGM_SCENE_RENDERER_OPENGL)
@@ -1688,7 +1691,8 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
     engine_graphics_active(engine) &&
     gml_surface_get_target(&engine->render)>0;
   int classic_numbered_scene=classic_retained_scene &&
-    !anygm_policy_classic_modern_presentation(&engine->win);
+    (!anygm_policy_classic_modern_presentation(&engine->win) ||
+     (engine->output_width==engine->width && engine->output_height==engine->height));
   int view_surface = (int)gml_global_arr(&engine->vm, "view_surface_id", frame_view_index);
   int multiview_rendered = engine->aspect_force_active?0:render_multiview_application(engine);
   if(multiview_rendered<0) return ANYGM_ERROR_INTERNAL;

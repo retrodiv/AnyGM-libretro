@@ -65,6 +65,10 @@ int main(int argc,char **argv){
   int classic_step_composition=argc==2 && !strcmp(argv[1],"--keep-classic-step-composition");
   int classic_step_base_writer=argc==2 && !strcmp(argv[1],"--keep-classic-step-base-writer");
   int classic_late_step_composition=argc==2 && !strcmp(argv[1],"--keep-classic-late-step-composition");
+  int classic_native_step=argc==2 && !strcmp(argv[1],"--keep-classic-native-step");
+  int classic_late_native_step=argc==2 && !strcmp(argv[1],"--keep-classic-late-native-step");
+  int classic_scaled_step=argc==2 && !strcmp(argv[1],"--keep-classic-scaled-step");
+  int classic_filtered_step=argc==2 && !strcmp(argv[1],"--keep-classic-filtered-step");
   int classic_read=argc==2 && !strcmp(argv[1],"--keep-classic-single-view-read");
   int classic_cpu_gui=argc==2 && !strcmp(argv[1],"--keep-classic-single-view-cpu-gui");
   int classic_filter_transition=argc==2 && !strcmp(argv[1],"--keep-classic-single-view-filter-transition");
@@ -103,6 +107,10 @@ int main(int argc,char **argv){
        classic_step_composition?anygm_synthetic_classic_step_composition_content_create(&fixture):
        classic_step_base_writer?anygm_synthetic_classic_step_base_writer_content_create(&fixture):
        classic_late_step_composition?anygm_synthetic_classic_late_step_composition_content_create(&fixture):
+       classic_native_step?anygm_synthetic_classic_native_step_content_create(&fixture):
+       classic_late_native_step?anygm_synthetic_classic_late_native_step_content_create(&fixture):
+       classic_scaled_step?anygm_synthetic_classic_scaled_step_content_create(&fixture):
+       classic_filtered_step?anygm_synthetic_classic_filtered_step_content_create(&fixture):
        classic_read?anygm_synthetic_classic_single_view_read_content_create(&fixture):
        classic_cpu_gui?anygm_synthetic_classic_single_view_cpu_gui_content_create(&fixture):
        classic_filter_transition?anygm_synthetic_classic_single_view_filter_transition_content_create(&fixture):
@@ -138,6 +146,7 @@ int main(int argc,char **argv){
      classic_late_manual || classic_single_view || classic_identity_present ||
      classic_geometry || classic_borrowed_resize ||
      classic_step_composition || classic_step_base_writer || classic_late_step_composition ||
+     classic_native_step || classic_late_native_step || classic_scaled_step || classic_filtered_step ||
      classic_read || classic_cpu_gui || classic_filter_transition || classic_partial_alpha ||
      classic_rectangle || classic_alpha_rectangle || classic_binary || classic_source_alpha || classic_zero_alpha_part ||
      classic_software3d ||

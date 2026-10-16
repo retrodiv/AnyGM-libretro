@@ -1594,6 +1594,70 @@ static int classic_retained_target_scene_case(void){
   return 1;
 }
 
+/* Current-context dispatch proof; real-device pairs own the pixel assertions. */
+static int classic_native_step_scene_case(void){
+  int (*factories[])(AnygmSyntheticContent *)={
+    anygm_synthetic_classic_native_step_content_create,
+    anygm_synthetic_classic_late_native_step_content_create,
+    anygm_synthetic_classic_scaled_step_content_create,
+    anygm_synthetic_classic_filtered_step_content_create
+  };
+  for(unsigned api=0;api<2u;api++) for(unsigned variant=0;variant<4u;variant++){
+    Session plain={0},selected={0};
+    CurrentContextWitness witness={1u,0u};
+    AnygmGraphicsContext context=graphics_context(api?ANYGM_GRAPHICS_OPENGL_CORE:ANYGM_GRAPHICS_OPENGLES3);
+    AnygmInputFrame input={.struct_size=sizeof input,.pointer_x=-1,.pointer_y=-1};
+    int matching=1;
+    anygm_test_graphics_reset();
+    REQUIRE(session_open_fixture_with_scene(&plain,ANYGM_SCENE_RENDERER_CPU,factories[variant]) &&
+            session_open_fixture_with_scene(&selected,ANYGM_SCENE_RENDERER_OPENGL,factories[variant]),
+            "native Classic retained Step fixtures load");
+    context.userdata=&witness;context.is_current=graphics_context_is_current;
+    REQUIRE(anygm_graphics_context_reset(selected.engine,&context)==ANYGM_OK,
+            "native Classic retained Step adopts a current owning context");
+    gml_render_dispatch_diagnostics_enable(&selected.engine->render,1);
+    for(unsigned frame=0;frame<4u && matching;frame++){
+      AnygmFrameOutput cpu={.struct_size=sizeof cpu},gpu={.struct_size=sizeof gpu};
+      matching=anygm_run_frame(plain.engine,&input,&cpu)==ANYGM_OK &&
+               anygm_run_frame(selected.engine,&input,&gpu)==ANYGM_OK &&
+               cpu.width==gpu.width && cpu.height==gpu.height &&
+               plain.engine->vm.room_index==selected.engine->vm.room_index &&
+               plain.engine->vm.frame==selected.engine->vm.frame;
+      const char *names[]={"fixture_frame","fixture_seen","fixture_surface"};
+      for(unsigned index=0;index<3u;index++){
+        GmlVal *left=gml_varmap_get(&plain.engine->vm.globals,names[index]);
+        GmlVal *right=gml_varmap_get(&selected.engine->vm.globals,names[index]);
+        matching=matching && left && right && left->d==right->d;
+      }
+      GmlVal *surface=gml_varmap_get(&selected.engine->vm.globals,"fixture_surface");
+      matching=matching && surface &&
+        gml_surface_get_target(&selected.engine->render)==(int)surface->d &&
+        cpu.width==(variant==2u?128u:64u) && cpu.height==(variant==2u?96u:48u);
+    }
+    GmlRenderDispatchMetrics dispatch={0};
+    GmlGpuCounters counters={0};
+    uint64_t ordinary_cpu=0;
+    matching=matching && gml_render_dispatch_metrics(&selected.engine->render,&dispatch);
+    for(unsigned family=0;family<GML_RENDER_SCENE_FAMILY_COUNT;family++)
+      for(unsigned reason=0;reason<GML_RENDER_DISPATCH_REASON_COUNT;reason++)
+        ordinary_cpu+=dispatch.cpu[family][reason];
+    gml_gpu_counters(selected.engine->gpu,&counters);
+    matching=matching && !dispatch.failed && !dispatch.unclassified && !dispatch.overflow;
+    /* Initial late-Classic SCREEN presentation remains CPU-owned; the three subsequent
+     * native Step compositions must not fall back. */
+    if(variant<2u) matching=matching && ordinary_cpu==1u &&
+      counters.scene_families[GML_RENDER_SCENE_SURFACE]>=3u;
+    else matching=matching && ordinary_cpu>0u;
+    if(!matching) fprintf(stderr,"native Classic Step api=%u variant=%u CPU=%llu surfaces=%llu extent=%ux%u\n",
+      api,variant,(unsigned long long)ordinary_cpu,
+      (unsigned long long)counters.scene_families[GML_RENDER_SCENE_SURFACE],
+      selected.engine->output_width,selected.engine->output_height);
+    session_close(&selected);session_close(&plain);
+    REQUIRE(matching,"native retained Step stays resident; doubled and filtered policies retain CPU ownership");
+  }
+  return 1;
+}
+
 static int classic_step_composition_scene_case(void){
   int (*factories[])(AnygmSyntheticContent *)={
     anygm_synthetic_classic_step_composition_content_create,
@@ -1618,13 +1682,11 @@ static int classic_step_composition_scene_case(void){
       matching=anygm_run_frame(plain.engine,&input,&cpu)==ANYGM_OK &&
                anygm_run_frame(selected.engine,&input,&gpu)==ANYGM_OK;
       gml_gpu_counters(selected.engine->gpu,&after);
-      /* Explicit comparisons below are observers, not ordinary frame costs. */
-      if(variant==0 && frame>0)
+      /* Explicit comparisons are observers, not ordinary frame costs. The legacy late
+       * fixture is also native 1:1; the native control separately rejects phase policies. */
+      if((variant==0 || variant==2) && frame>0)
         matching=matching && after.scene_readbacks==before.scene_readbacks &&
           after.scene_families[GML_RENDER_SCENE_SURFACE]>before.scene_families[GML_RENDER_SCENE_SURFACE];
-      if(variant==2 && frame>0)
-        matching=matching && after.scene_families[GML_RENDER_SCENE_SURFACE]==
-          before.scene_families[GML_RENDER_SCENE_SURFACE];
       matching=matching && engine_materialize_completed_frame(selected.engine) && cpu.pixels &&
         cpu.width==gpu.width && cpu.height==gpu.height &&
         !memcmp(cpu.pixels,selected.engine->screen,(size_t)cpu.width*cpu.height*4u);
@@ -5158,6 +5220,7 @@ int main(void){
     {"classic single view executes nearest draw contracts",classic_single_view_draw_contracts_case},
     {"classic Step target survives GPU Draw and GUI",classic_retained_target_scene_case},
     {"classic Step SCREEN and numbered Draw stay independently current",classic_step_composition_scene_case},
+    {"native Classic retained Step and phase exclusions",classic_native_step_scene_case},
     {"manual Classic application retains Draw GUI and root Step",classic_manual_application_scene_case},
     {"classic integer surface keeps partial source alpha resident",classic_integer_surface_calls_case},
     {"ended resident frame remains visible and canonical",ended_frame_retention_case},
