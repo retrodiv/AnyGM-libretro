@@ -89,6 +89,10 @@ static void dispatch_frame_cpu(GmlRender *render,unsigned family,unsigned reason
     cause=frames->pending_cause;
   if(reason==GML_RENDER_DISPATCH_NO_DEVICE) cause=GML_RENDER_RESIDENT_NO_DEVICE;
   if(reason==GML_RENDER_DISPATCH_COMPOSITION) cause=GML_RENDER_RESIDENT_COMPOSITION;
+  /* A direct executor is known even without a pass-loss annotation. Do not publish
+   * this local attribution as a loss: a later no-scene draw needs its own cause. */
+  if(cause==GML_RENDER_RESIDENT_UNKNOWN && reason==GML_RENDER_DISPATCH_UNQUALIFIED)
+    cause=GML_RENDER_RESIDENT_EXEC_CPU;
   if(cause>=GML_RENDER_RESIDENT_CAUSE_COUNT) cause=GML_RENDER_RESIDENT_UNKNOWN;
   if(!cause) dispatch_frame_unknown(frames);
   if(!frames->cpu_seen){

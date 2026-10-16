@@ -944,6 +944,58 @@ static int dispatch_frame_causes_case(void){
   return 1;
 }
 
+static int dispatch_frame_direct_cpu_case(void){
+  GmlRender owner={0};
+  GmlRenderDispatchFrames frames={0};
+  frames.enabled=1;
+  gml_render_dispatch_diagnostics_enable(&owner,1);
+  gml_render_dispatch_frame_bind(&owner,&frames);
+  gml_render_dispatch_frame_open(&frames);
+  gml_render_dispatch_resident_admitted(&owner);
+  gml_render_dispatch_cpu_record(&owner,GML_RENDER_SCENE_PRIMITIVE,
+                                  GML_RENDER_DISPATCH_UNQUALIFIED,2u);
+  REQUIRE(frames.cpu_causes[GML_RENDER_RESIDENT_EXEC_CPU]==1u && !frames.unknown_frames,
+          "an explicitly unqualified direct CPU draw has a known executor cause");
+  REQUIRE(frames.pending_cause==GML_RENDER_RESIDENT_UNKNOWN &&
+          frames.loss_cause==GML_RENDER_RESIDENT_UNKNOWN,
+          "a direct CPU execution does not fabricate a resident pass loss");
+  gml_render_dispatch_resident_lost(&owner,GML_RENDER_RESIDENT_CPU_BARRIER);
+  gml_render_dispatch_cpu_record(&owner,GML_RENDER_SCENE_TEXT,
+                                  GML_RENDER_DISPATCH_NO_SCENE,7u);
+  gml_render_dispatch_frame_close(&frames,1);
+  REQUIRE(frames.frames==1u && frames.cpu_frames==1u && frames.no_scene_frames==1u &&
+          frames.no_scene_causes[GML_RENDER_RESIDENT_CPU_BARRIER]==1u &&
+          !frames.no_scene_causes[GML_RENDER_RESIDENT_EXEC_CPU] && !frames.unknown_frames &&
+          frames.first_cpu_family[GML_RENDER_SCENE_PRIMITIVE]==1u &&
+          owner.dispatch_metrics.cpu[GML_RENDER_SCENE_PRIMITIVE][GML_RENDER_DISPATCH_UNQUALIFIED]==2u &&
+          owner.dispatch_metrics.cpu[GML_RENDER_SCENE_TEXT][GML_RENDER_DISPATCH_NO_SCENE]==7u,
+          "the later real loss and all ordinary draw counts remain independently attributed");
+  static const unsigned causes[]={GML_RENDER_RESIDENT_OWNED_EXTENT,GML_RENDER_RESIDENT_CPU_BARRIER};
+  for(unsigned index=0;index<sizeof causes/sizeof causes[0];index++){
+    gml_render_dispatch_frame_open(&frames);
+    gml_render_dispatch_resident_admitted(&owner);
+    if(index==0u) gml_render_dispatch_resident_reject(&owner,causes[index]);
+    else gml_render_dispatch_resident_lost(&owner,causes[index]);
+    gml_render_dispatch_cpu_record(&owner,GML_RENDER_SCENE_SURFACE,
+                                    GML_RENDER_DISPATCH_UNQUALIFIED,1u);
+    gml_render_dispatch_frame_close(&frames,1);
+    REQUIRE(frames.cpu_causes[causes[index]]==1u && !frames.unknown_frames &&
+            frames.cpu_causes[GML_RENDER_RESIDENT_EXEC_CPU]==1u,
+            "a recorded admission or loss cause takes precedence over the direct executor");
+  }
+  gml_render_dispatch_frame_open(&frames);
+  gml_render_dispatch_resident_admitted(&owner);
+  gml_render_dispatch_cpu_record(&owner,GML_RENDER_SCENE_SURFACE,
+                                  GML_RENDER_DISPATCH_UNQUALIFIED,1u);
+  gml_render_dispatch_cpu_record(&owner,GML_RENDER_SCENE_SPRITE,
+                                  GML_RENDER_DISPATCH_NO_SCENE,1u);
+  gml_render_dispatch_frame_close(&frames,1);
+  REQUIRE(frames.cpu_causes[GML_RENDER_RESIDENT_EXEC_CPU]==2u &&
+          frames.no_scene_causes[GML_RENDER_RESIDENT_UNKNOWN]==1u && frames.unknown_frames==1u,
+          "a later unattributed pass loss still disqualifies the frame census");
+  return 1;
+}
+
 static int dispatch_frame_rejections_case(void){
   static const unsigned expected[]={GML_RENDER_RESIDENT_INVALID_TARGET,GML_RENDER_RESIDENT_NO_DEVICE,
     GML_RENDER_RESIDENT_ROTATED_BATCH,GML_RENDER_RESIDENT_PENDING_FILL,
@@ -1613,6 +1665,7 @@ int main(int argc,char **argv){
     {"dispatch_device_plan",dispatch_device_plan_case},
     {"dispatch_epoch_accumulation",dispatch_epoch_accumulation_case},
     {"dispatch_frame_causes",dispatch_frame_causes_case},
+    {"dispatch_frame_direct_cpu",dispatch_frame_direct_cpu_case},
     {"dispatch_frame_rejections",dispatch_frame_rejections_case},
   };
   const AnygmTestGroup groups[]={

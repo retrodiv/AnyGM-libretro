@@ -35,6 +35,11 @@ rejection without charging a CPU frame. The first `EXEC_CPU` submission that dro
 resident pass, a CPU barrier or an explicit pass restart remains the loss cause for
 the subsequent CPU suffix. A later rejected begin can supply the more immediate
 cause. Composition and a missing device have their own dispatch causes.
+An explicitly unqualified direct CPU draw with no recorded admission/loss cause
+uses `exec_cpu` for the first-CPU histogram only. This does not mark the pass lost:
+a subsequent `no_scene` draw still needs its own observed cause, and a missing
+annotation there remains `unknown`. Known admission/loss causes retain precedence;
+ordinary draw counts and disabled diagnostics are unchanged.
 `frame_start` means ordinary CPU work preceded any instrumented admission attempt;
 it does not prove that a later world/GUI pass was rejected. `unknown` means an
 unobserved loss, not permission to classify the frame as accelerated.
