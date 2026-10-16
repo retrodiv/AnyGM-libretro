@@ -12850,7 +12850,7 @@ static int resident_nearest_sprite_function(void){return resident_sprite_functio
 static int resident_first_generation_rotated_point_sprite_function(void){return resident_sprite_function(2);}
 
 /* Authority and transport only; the paired device generator owns D2 pixels. */
-static int resident_physical_filtered_sprite_function(void){
+static int resident_physical_filtered_sprite_function_impl(int matched){
   enum { W=24,H=20,A=6 };
   const int generations[]={13,15};
   for(unsigned generation=0;generation<2u;generation++)
@@ -12872,7 +12872,7 @@ static int resident_physical_filtered_sprite_function(void){
       pixel[0]=(uint8_t)(p*7u);pixel[1]=(uint8_t)(p*11u);pixel[2]=(uint8_t)(p*17u);
       pixel[3]=(uint8_t)(source==0u?255u:source==1u?(p%2u?255u:0u):32u+p*5u);
     }
-    render->tpag[0]=(GmlTpag){.sx=1,.sy=1,.sw=2,.sh=2,.tw=1,.th=1,
+    render->tpag[0]=(GmlTpag){.sx=1,.sy=1,.sw=2,.sh=2,.tw=matched?2:1,.th=matched?2:1,
       .bw=layout?4:2,.bh=layout?4:2,.tx=layout?1:0,.ty=layout?1:0};
     render->spr[0]=(GmlSprite){.w=layout?4:2,.h=layout?4:2,
       .originx=1,.originy=1,.n_frames=1};
@@ -12928,6 +12928,14 @@ static int resident_physical_filtered_sprite_function(void){
     fake.forbid_calls=0;gml_render_free(render);free(render);
   }
   return 1;
+}
+
+static int resident_physical_filtered_sprite_function(void){
+  return resident_physical_filtered_sprite_function_impl(0);
+}
+
+static int resident_matched_filtered_sprite_function(void){
+  return resident_physical_filtered_sprite_function_impl(1);
 }
 
 static int resident_classic_large_point_sprite_function(void){
@@ -14664,6 +14672,7 @@ int main(void){
   passed+=resident_nearest_sprite_function();
   passed+=resident_first_generation_rotated_point_sprite_function();
   passed+=resident_physical_filtered_sprite_function();
+  passed+=resident_matched_filtered_sprite_function();
   passed+=resident_classic_large_point_sprite_function();
   passed+=resident_integer_background_function();
   passed+=resident_fractional_background_function();
@@ -14721,6 +14730,6 @@ int main(void){
   passed+=source_free_primitive_rect_replay();
   passed+=stretched_float_exact_replay();
   passed+=filtered_font_exact_recovery();
-  printf("render resource cases: passed=%d failed=%d\n",passed,215-passed);
-  return passed==215?EXIT_SUCCESS:EXIT_FAILURE;
+  printf("render resource cases: passed=%d failed=%d\n",passed,216-passed);
+  return passed==216?EXIT_SUCCESS:EXIT_FAILURE;
 }

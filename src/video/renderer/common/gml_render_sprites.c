@@ -3354,6 +3354,12 @@ static int resident_filtered_sprite(GmlRender *r,GmlSprite *sprite,int subimg,
      (page->tw!=page->sw || page->th!=page->sh || physical_screen))
     return resident_filtered_atlas_page(r,page_index,left,top,xs,ys,
       GML_RENDER_SCENE_SPRITE,blend,alpha,NULL,NULL,0.0,NULL,0,0,0,0,7);
+  /* Stored dimensions do not change this CPU physical-axis writer. Try its
+   * qualified hardware packet for matching pages too; retain the established
+   * owner whenever numerical, cutout or special-state bounds refuse it. */
+  if(anygm_policy_uses_first_generation_studio(r->win) &&
+     resident_filtered_atlas_page(r,page_index,left,top,xs,ys,
+       GML_RENDER_SCENE_SPRITE,blend,alpha,NULL,NULL,0.0,NULL,0,0,0,0,7)) return 1;
   return gml_render_resident_filtered_atlas_page(
       r,page_index,left,top,
       xs,ys,GML_RENDER_SCENE_SPRITE,blend,alpha,NULL,0);
@@ -3380,8 +3386,9 @@ int gml_render_resident_masked_sprite(GmlRender *r,int sprite,int subimg,
      !asset->runtime_rgba && asset->n_frames>0 && asset->frame){
     int frame=gml_render_runtime_frame_index(asset,subimg);
     int page=asset->frame[frame];
-    physical_filtered=page>=0 && page<r->n_tpag &&
-      (r->tpag[page].tw!=r->tpag[page].sw || r->tpag[page].th!=r->tpag[page].sh);
+    /* Matching stored dimensions retain the same physical CPU sampler.
+     * The shared filtered owner still qualifies all source/state bounds. */
+    physical_filtered=page>=0 && page<r->n_tpag;
   }
   if(r->fog_flat ||
      (r->interp && !r->classic && !resident_first_generation_rotated_point(r,rotation) &&
