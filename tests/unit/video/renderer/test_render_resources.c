@@ -13229,6 +13229,9 @@ static int resident_background_function(int fractional){
       submitted=fake.submits;
     }
     for(unsigned draw=0;draw<8u;draw++){
+      if(fractional==1 && !repeat)
+        gml_draw_background_ext(render,0,6.018,5.07,1.25,.75,
+          tint?0x70B0D0u:0xFFFFFFu,alphas[a]);
       if(fractional==2)
         gml_draw_background_tile(render,0,1,1,repeat>=4u?1:2,2,6.018,5.07,1.25,.75,
           (int)(repeat&1u),(int)((repeat>>1u)&1u),(int)(repeat>>2u),

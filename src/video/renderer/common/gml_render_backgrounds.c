@@ -421,7 +421,7 @@ void gml_draw_background_ext(GmlRender *r, int bg, double x, double y, double xs
                                       GML_RENDER_SCENE_BACKGROUND)) return;
   /* Full backgrounds use the same point leaf as tiled cells. Prefer its
    * source/trim phase to the older unit filtered packet for ordinary state. */
-  if(gml_render_resident_integer_background_page(r,ti,x-r->cam_x+t->tx*xs,
+  if(gml_render_resident_nearest_background_page(r,ti,x-r->cam_x+t->tx*xs,
        y-r->cam_y+t->ty*ys,xs,ys,color,alpha)) return;
   if(!r->interp && fabs(xs)==1.0 && fabs(ys)==1.0 &&
      ((color&0xFFFFFFu)!=0xFFFFFFu || alpha!=1.0) &&
