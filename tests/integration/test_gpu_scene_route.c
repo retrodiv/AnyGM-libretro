@@ -38,6 +38,7 @@ int main(int argc,char **argv){
   int gui_automatic_alpha=argc==2 && !strcmp(argv[1],"--keep-gui-automatic-alpha");
   int gui_automatic_viewless=argc==2 && !strcmp(argv[1],"--keep-gui-automatic-viewless");
   int gui_automatic_viewless_alpha=argc==2 && !strcmp(argv[1],"--keep-gui-automatic-viewless-alpha");
+  int gui_automatic_empty=argc==2 && !strcmp(argv[1],"--keep-gui-automatic-empty");
   int multiview=argc==2 && !strcmp(argv[1],"--keep-multiview");
   int multiview_offset=argc==2 && !strcmp(argv[1],"--keep-multiview-offset");
   int multiview_fractional=argc==2 && !strcmp(argv[1],"--keep-multiview-fractional");
@@ -92,6 +93,7 @@ int main(int argc,char **argv){
        gui_automatic_alpha?anygm_synthetic_automatic_alpha_gui_content_create(&fixture):
        gui_automatic_viewless?anygm_synthetic_automatic_viewless_gui_content_create(&fixture):
        gui_automatic_viewless_alpha?anygm_synthetic_automatic_viewless_alpha_gui_content_create(&fixture):
+       gui_automatic_empty?anygm_synthetic_automatic_empty_indirect_gui_content_create(&fixture):
        ended_frame?anygm_synthetic_ended_frame_content_create(&fixture):
        cursor_frame?anygm_synthetic_cursor_frame_content_create(&fixture):
        classic_redraw?anygm_synthetic_classic_redraw_content_create(&fixture):
@@ -137,7 +139,7 @@ int main(int argc,char **argv){
        dense?anygm_synthetic_gpu_dense_scene_route_content_create(&fixture):
              anygm_synthetic_gpu_scene_route_content_create(&fixture))) return 1;
   if(pre_draw || forced_owned || forced_narrow || gui_up || gui_resident_up || gui_reduce || gui_automatic || gui_automatic_alpha ||
-     gui_automatic_viewless || gui_automatic_viewless_alpha ||
+     gui_automatic_viewless || gui_automatic_viewless_alpha || gui_automatic_empty ||
      multiview || multiview_offset ||
      multiview_fractional || multiview_step || multiview_nested || multiview_assigned ||
      canvas_geometry || window_raster || centered_gui ||
@@ -163,6 +165,7 @@ int main(int argc,char **argv){
           "--keep-gui-upscale|--keep-gui-resident-upscale|--keep-forced-owned|--keep-forced-narrow|"
           "--keep-gui-reduce|--keep-multiview|"
           "--keep-gui-automatic|--keep-gui-automatic-alpha|"
+          "--keep-gui-automatic-empty|"
           "--keep-gui-automatic-viewless|--keep-gui-automatic-viewless-alpha|"
           "--keep-multiview-offset|--keep-multiview-fractional|"
           "--keep-multiview-step-target|--keep-multiview-nested-target|"

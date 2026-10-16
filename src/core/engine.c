@@ -2315,7 +2315,10 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
   gml_render_gui_end(&engine->render);
   if((engine->scene_renderer_session!=ANYGM_SCENE_RENDERER_OPENGL &&
       !anygm_host_development_setting(&engine->host,"GML_SCENE_GPU_PROTOTYPE")) ||
-     !gml_render_defer_resident_underlay(&engine->render))
+     /* An indirect GUI still needs its complete SCREEN as the next scale's source.
+      * Compose through the existing resident owner instead of recording a second
+      * terminal presentation that would force both stages back onto the CPU. */
+     gui_indirect || !gml_render_defer_resident_underlay(&engine->render))
     gml_render_flush_pending_underlay(&engine->render);
   gml_render_flush_pending_fill(&engine->render);
   if(resident_screen_began && !engine_graphics_finish_scene(engine))

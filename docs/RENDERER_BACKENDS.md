@@ -86,6 +86,19 @@ Both GUI-to-logical and logical-to-host axes must enlarge or remain identical.
 Reduction/mixed axes, CRT, crops, shifts, centered/excluded GUI and CPU-written sources
 retain their existing owners. These controls do not establish game or speed qualification.
 
+R03-P7-INDIRECT-GUI completes a pending automatic application underlay in the
+existing resident SCREEN before its terminal scale, even when GUI code wrote
+nothing. Recording another terminal application presentation at that point would
+force both stages through CPU materialization. The compositor, scale conventions,
+CPU branch and unsupported-state recovery are unchanged; this adds no shader,
+destination snapshot or source sampling variant. The neutral automatic-empty
+indirect fixture must preserve the existing strict SCREEN authority, transport,
+transactional observation and exact state assertions, with real-device paired
+RGBA, Reset and same-load state/rewind controls. Existing visible/direct GUI,
+reduction and host-magnification neighbours remain required. Real-device controls
+own raster proof; the graphics fake deliberately returns a diagnostic readback
+pattern and cannot establish pixels for hardware-only source draws.
+
 R03-P7-APPLICATION-HOST-NEAREST retains the automatic application's leading-edge
 point selection before the existing host nearest magnifier. Its distinct composed
 axis permits identity, enlargement, reduction and mixed inner axes; the host stage

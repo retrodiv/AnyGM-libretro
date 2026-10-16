@@ -2213,6 +2213,20 @@ static int resident_indirect_gui_variant(
     int same_state=cpu_state && gpu_state && cpu_size==gpu_size &&
                    !memcmp(cpu_state,gpu_state,cpu_size) &&
                    selected.engine->frame_materializations==1u;
+    if(!same_state){
+      size_t first=0,limit=cpu_size<gpu_size?cpu_size:gpu_size;
+      while(cpu_state && gpu_state && first<limit && cpu_state[first]==gpu_state[first]) first++;
+      fprintf(stderr,"indirect GUI state cpu=%zu gpu=%zu first=%zu bytes=%u/%u materializations=%u "
+              "screen=%d app=%d gui=%d alpha=%08x/%08x\n",cpu_size,gpu_size,first,
+              cpu_state && first<cpu_size?cpu_state[first]:0u,
+              gpu_state && first<gpu_size?gpu_state[first]:0u,selected.engine->frame_materializations,
+              memcmp(plain.engine->screen,selected.engine->screen,(size_t)cpu.width*cpu.height*4u),
+              memcmp(plain.engine->render.app_surface,selected.engine->render.app_surface,
+                     (size_t)selected.engine->render.app_w*selected.engine->render.app_h*4u),
+              memcmp(plain.engine->gui_buffer,selected.engine->gui_buffer,
+                     (size_t)selected.engine->gui_space_width*selected.engine->gui_space_height*4u),
+              plain.engine->gui_buffer[0],selected.engine->gui_buffer[0]);
+    }
     free(cpu_state); free(gpu_state);
     REQUIRE(same_state,"serialization observes exact upscaled GUI bytes and simulation state");
   }
@@ -2285,6 +2299,8 @@ static int resident_indirect_gui_variant(
 
 static int resident_indirect_gui_case(void){
   return resident_indirect_gui_variant(
+           anygm_synthetic_automatic_empty_indirect_gui_content_create,2) &&
+         resident_indirect_gui_variant(
            anygm_synthetic_resident_indirect_gui_upscale_content_create,2) &&
          resident_indirect_gui_variant(
            anygm_synthetic_indirect_gui_upscale_content_create,1) &&

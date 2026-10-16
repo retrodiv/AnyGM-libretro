@@ -54,6 +54,8 @@ int anygm_synthetic_automatic_direct_gui_content_create(AnygmSyntheticContent *f
 int anygm_synthetic_automatic_alpha_gui_content_create(AnygmSyntheticContent *fixture);
 int anygm_synthetic_automatic_viewless_gui_content_create(AnygmSyntheticContent *fixture);
 int anygm_synthetic_automatic_viewless_alpha_gui_content_create(AnygmSyntheticContent *fixture);
+/* An empty indirect GUI still needs the automatic application image before its final scale. */
+int anygm_synthetic_automatic_empty_indirect_gui_content_create(AnygmSyntheticContent *fixture);
 int anygm_synthetic_surface_canvas_content_create(AnygmSyntheticContent *fixture);
 int anygm_synthetic_background_color_content_create(AnygmSyntheticContent *fixture);
 int anygm_synthetic_framebuffer_content_create(AnygmSyntheticContent *fixture);
