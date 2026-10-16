@@ -12,6 +12,7 @@
 
 #include "gml_render_internal.h"
 #include "gml_render_cpu_plan.h"
+#include "gml_render_shaders.h"
 #include "anygm.h"
 
 #include <math.h>
@@ -846,6 +847,52 @@ static int dispatch_epoch_accumulation_case(void){
   return 1;
 }
 
+static int threshold_palette_plan_case(void){
+  GmlRender owner={0};
+  struct GmlShaderPal palette={0};
+  GmlPlanShader snapshot={0},invalid={0};
+  owner.shader_pal=&palette;owner.n_shader_pal=1;
+  palette.threshold_palette=1;palette.threshold_palette_set=0x3ffu;
+  palette.threshold_palette_red=.25f;
+  static const float green[2][4]={{.8f,.6f,.4f,.2f},{.875f,.625f,.375f,.125f}};
+  memcpy(palette.threshold_palette_green,green,sizeof green);
+  for(unsigned index=0;index<10u;index++) for(unsigned channel=0;channel<3u;channel++)
+    palette.threshold_palette_colour[index][channel]=(uint8_t)(index*23u+channel*71u);
+  REQUIRE(gml_render_shader_threshold_palette_snapshot(&owner,0,&snapshot) &&
+          gml_render_plan_shader_has_program(&snapshot) && !snapshot.vertex_es && !snapshot.fragment_es &&
+          snapshot.builtin_kind==GML_PLAN_BUILTIN_SHADER_THRESHOLD_PALETTE &&
+          !owner.shader_device_present && !owner.shader_device_expected,
+          "recognized fixed intent needs no arbitrary content program or policy change");
+  for(unsigned value=0;value<256u;value++){
+    float normalized=(float)value*(1.0f/255.0f);
+    REQUIRE((normalized<palette.threshold_palette_red)==
+            (value<(unsigned)snapshot.uniforms[10].value[0]),"red byte partition is exact");
+    for(unsigned branch=0;branch<2u;branch++) for(unsigned band=0;band<4u;band++)
+      REQUIRE((normalized>green[branch][band])==
+              (value>=(unsigned)snapshot.uniforms[11u+branch].value[band]),
+              "every green byte retains the software evaluator's strict threshold");
+  }
+  for(unsigned defect=0;defect<11u;defect++){
+    invalid=snapshot;
+    if(defect==0u) invalid.builtin_kind=99u;
+    if(defect==1u) invalid.uniform_count--;
+    if(defect==2u) invalid.uniforms[0].name[0]='x';
+    if(defect==3u) invalid.uniforms[0].count=4u;
+    if(defect==4u) invalid.uniforms[0].value[0]=NAN;
+    if(defect==5u) invalid.uniforms[0].value[0]=.5f;
+    if(defect==6u) invalid.uniforms[10].value[0]=3.5f;
+    if(defect==7u) invalid.uniforms[11].value[1]=257.0f;
+    if(defect==8u) invalid.vertex_colour[3]=.5f;
+    if(defect==9u) invalid.sampler_count=1u;
+    if(defect==10u) invalid.uniforms[13].value[0]=2.0f;
+    REQUIRE(!gml_render_plan_shader_has_program(&invalid),"malformed fixed intent rejects before execution");
+  }
+  palette.threshold_palette_set=0;
+  REQUIRE(!gml_render_shader_threshold_palette_snapshot(&owner,0,&invalid),
+          "an inactive recognized palette cannot change the CPU fallback's unshaded pixels");
+  return 1;
+}
+
 static int dispatch_frame_causes_case(void){
   GmlRender first={0},replacement={0};
   GmlRenderDispatchFrames frames={0};
@@ -1665,6 +1712,7 @@ int main(int argc,char **argv){
     {"dispatch_device_plan",dispatch_device_plan_case},
     {"dispatch_epoch_accumulation",dispatch_epoch_accumulation_case},
     {"dispatch_frame_causes",dispatch_frame_causes_case},
+    {"threshold_palette_plan",threshold_palette_plan_case},
     {"dispatch_frame_direct_cpu",dispatch_frame_direct_cpu_case},
     {"dispatch_frame_rejections",dispatch_frame_rejections_case},
   };

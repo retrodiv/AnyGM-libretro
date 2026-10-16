@@ -155,7 +155,12 @@ typedef struct GmlPlanSampler {
   uint32_t linear;
 } GmlPlanSampler;
 
-/* The content's shader program as the plan carries it. The four sources are lent from the content
+typedef enum GmlPlanBuiltinShader {
+  GML_PLAN_BUILTIN_SHADER_NONE=0,
+  GML_PLAN_BUILTIN_SHADER_THRESHOLD_PALETTE=1
+} GmlPlanBuiltinShader;
+
+/* An immutable programmable draw. For a content program the four sources are lent from the content
  * image, NUL-terminated: the OpenGL ES 1.00 pair every Studio payload ships and the desktop GLSL
  * pair beside it. The backend picks the pair its context accepts and translates when neither is
  * accepted as written. The identity keys the compiled program's cache. */
@@ -175,7 +180,12 @@ typedef struct GmlPlanShader {
   float vertex_colour[4];
   GmlRenderShaderGeometry geometry;
   GmlPlanSampler samplers[GML_PLAN_MAX_SAMPLERS];
+  /* A recognized fixed evaluator carries data, never content source. The backend supplies
+   * its own program; this ephemeral intent does not enter canonical state. */
+  uint32_t builtin_kind;
 } GmlPlanShader;
+
+int gml_render_plan_shader_has_program(const GmlPlanShader *shader);
 
 typedef enum GmlPlanTarget {
   GML_PLAN_TARGET_CPU_FRAME=0,

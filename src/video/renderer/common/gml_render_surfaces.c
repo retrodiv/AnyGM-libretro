@@ -1111,7 +1111,7 @@ static int resident_surface_part(GmlRender *r,int surf,double sx,double sy,doubl
                                  uint32_t blend,double alpha);
 static int resident_surface_shader(GmlRender *r,int surf,double dx,double dy,double dw,double dh,
                                    uint32_t blend,double alpha,
-                                   const GmlRenderShaderGeometry *geometry);
+                                   const GmlRenderShaderGeometry *geometry,int stretched);
 static int resident_surface_filtered(GmlRender *r,int surf,double dx,double dy,double dw,double dh,
                                      uint32_t blend,double alpha);
 
@@ -1258,7 +1258,7 @@ void gml_draw_surface_stretched(GmlRender *r,int surf,double dx,double dy,
       GmlRenderShaderGeometry geometry=gml_render_shader_geometry(r,mapped_x,mapped_y,
         mapped_width,mapped_height,mapped);
       resident_success=resident_surface_shader(r,surf,mapped_x,mapped_y,
-        mapped_width,mapped_height,blend,alpha,&geometry);
+        mapped_width,mapped_height,blend,alpha,&geometry,1);
       if(!resident_success)
         resident_success=resident_surface_filtered(r,surf,mapped_x,mapped_y,
           mapped_width,mapped_height,blend,alpha);
@@ -1649,7 +1649,7 @@ static int resident_surface_filtered(GmlRender *r,int surf,double dx,double dy,d
  * a later distinct surface draw can consume that result on the same device. */
 static int resident_surface_shader(GmlRender *r,int surf,double dx,double dy,double dw,double dh,
                                    uint32_t blend,double alpha,
-                                   const GmlRenderShaderGeometry *geometry){
+                                   const GmlRenderShaderGeometry *geometry,int stretched){
   enum { MAX_AUXILIARY_SNAPSHOT_BYTES=64u*1024u*1024u };
   int slot=surface_slot(surf),target_id,target_slot,application_target,transient_source=0;
   double left,top;
@@ -1667,17 +1667,22 @@ static int resident_surface_shader(GmlRender *r,int surf,double dx,double dy,dou
   const GmlRenderDeviceServices *device;
   uint32_t prepared=0;
   size_t snapshot_bytes=0;
+  int palette=r && r->scene_device_enabled && surface_known_opaque(r,surf) &&
+    gml_render_shader_threshold_palette_snapshot(r,r->active_shader,&shader);
   static const float white[4]={1.0f,1.0f,1.0f,1.0f};
   if(!r || (surf!=0 && (slot<0 || !r->surface[slot].live)) ||
      (surf==0 && (!r->app_surface_published || !r->app_surface ||
                   r->app_surface==r->fb)) ||
      !r->resident_application_pass ||
-     !gml_render_device(r) || !r->shader_device_present || r->active_shader<0 ||
-     !gml_render_shader_content_candidate(r,r->active_shader) ||
+     !gml_render_device(r) || r->active_shader<0 ||
+     (!palette && (!r->shader_device_present ||
+                   !gml_render_shader_content_candidate(r,r->active_shader))) ||
      r->pending_underlay || r->pending_presentation ||
-     r->blendmode || r->alpha_test_enable || r->color_write_mask!=0x0Fu ||
+     (r->blendmode && !(palette && r->blendmode==6)) ||
+     (r->alpha_test_enable && (!palette || r->alpha_test_ref==255u)) ||
+     (!palette && r->color_write_mask!=0x0Fu) ||
      r->blend_equation!=1 || r->blend_equation_alpha!=1 || gml_d3_is_active(r) ||
-     (blend&0xFFFFFFu)!=0xFFFFFFu || !isfinite(alpha) || alpha<1.0 ||
+     (!palette && (blend&0xFFFFFFu)!=0xFFFFFFu) || !isfinite(alpha) || alpha<1.0 ||
      !isfinite(dx) || !isfinite(dy) || !isfinite(dw) || !isfinite(dh) ||
      (surf!=0 && r->surface[slot].px==r->fb)) return 0;
   left=dx-r->cam_x;
@@ -1696,13 +1701,36 @@ static int resident_surface_shader(GmlRender *r,int surf,double dx,double dy,dou
             r->fb!=r->surface[target_slot].px ||
             r->fbw!=r->surface[target_slot].w ||
             r->fbh!=r->surface[target_slot].h) return 0;
-  if(!gml_render_shader_plan_snapshot(r,r->active_shader,0u,white,&shader)) return 0;
+  if(!palette && !gml_render_shader_plan_snapshot(r,r->active_shader,0u,white,&shader)) return 0;
+  if(palette){
+    int source_width=surf==0?r->app_w:r->surface[slot].w;
+    int source_height=surf==0?r->app_h:r->surface[slot].h;
+    if(source_width<=0 || source_height<=0 ||
+       fmod(dw,(double)source_width)!=0.0 || fmod(dh,(double)source_height)!=0.0 ||
+       dw<source_width || dh<source_height || r->app_phase_y ||
+       r->classic_interp_phase[0] || r->classic_interp_phase[1] || r->classic_interp_phase[2]) return 0;
+    shader.vertex_colour[0]=(float)(blend&255u)/255.0f;
+    shader.vertex_colour[1]=(float)((blend>>8)&255u)/255.0f;
+    shader.vertex_colour[2]=(float)((blend>>16)&255u)/255.0f;
+    /* The existing first-generation GUI terminal-copy policy bypasses recognized shaders.
+     * In this integral domain its transformed fractional-extent branch cannot apply; the
+     * content-owned presentation branch still must copy the source, not recolour it. Part
+     * calls do not select that software leaf. Preserve the policy without changing it. */
+    shader.uniforms[13].value[0]=stretched && surf==0 && r->win &&
+      anygm_policy_uses_first_generation_studio(r->win) &&
+      gml_render_gui_transform_active(r) && !r->target_sp && r->target_id<0 &&
+      !r->interp && !r->blendmode && r->color_write_mask==15u &&
+      (blend&0xFFFFFFu)==0xFFFFFFu && !r->app_draw_enable;
+  }
   if(!geometry || !geometry->valid) return 0;
-  shader.geometry=*geometry;
+  shader.geometry=palette?(GmlRenderShaderGeometry){left,top,dw,dh,1u}:*geometry;
   source_resource=surf==0?gml_render_application_resource_ensure(r):
     gml_render_surface_resource_ensure(r,surf);
   if(source_resource && gml_render_resource_device_source_view(
        source_resource,gml_render_device(r),&sources[0])){
+    if(sources[0].pixel_format!=GML_RENDER_PIXEL_ARGB8888) return 0;
+  } else if(palette && source_resource &&
+            gml_render_resource_source_view(source_resource,&sources[0])){
     if(sources[0].pixel_format!=GML_RENDER_PIXEL_ARGB8888) return 0;
   } else if(surf==0){
     const uint32_t *pixels;
@@ -1730,6 +1758,8 @@ static int resident_surface_shader(GmlRender *r,int surf,double dx,double dy,dou
        sources[0].pixel_format!=GML_RENDER_PIXEL_ARGB8888) return 0;
   }
   device=gml_render_device(r);
+  if(palette && (sources[0].width!=(uint32_t)(surf==0?r->app_w:r->surface[slot].w) ||
+                 sources[0].height!=(uint32_t)(surf==0?r->app_h:r->surface[slot].h))) return 0;
   source_refs[0]=sources[0].image;
   if(shader.sampler_count){
     if(!device->capabilities || !device->capabilities(device->context,&caps) ||
@@ -1814,7 +1844,7 @@ static int resident_surface_shader(GmlRender *r,int surf,double dx,double dy,dou
   state.colour=0xFFFFFFFFu;
   state.alpha=255u;
   state.sampler_count=1u;
-  state.samplers[0].filter=r->interp?GML_RENDER_FILTER_BILINEAR:GML_RENDER_FILTER_NEAREST;
+  state.samplers[0].filter=!palette && r->interp?GML_RENDER_FILTER_BILINEAR:GML_RENDER_FILTER_NEAREST;
   state.samplers[0].edge_rule=GML_RENDER_EDGE_CLAMP_SUBIMAGE;
   state.samplers[0].source_region=(GmlRenderRect){0,0,sources[0].width,sources[0].height};
   batch=(GmlRenderDrawBatch){&operation,1u,&state,1u};
@@ -1828,14 +1858,15 @@ static int resident_surface_shader(GmlRender *r,int surf,double dx,double dy,dou
   for(uint32_t index=0;index<shader.sampler_count;index++) free(owned_sampler_pixels[index]);
   if(result!=GML_RENDER_RESOURCE_EXEC_DEVICE){
     const GmlRenderDeviceServices *device=gml_render_device(r);
-    if(device && device->content_program_failed &&
+    if(!palette && device && device->content_program_failed &&
        device->content_program_failed(device->context,&shader))
       gml_render_shader_mark_failed(r,r->active_shader);
     return 0;
   }
-  r->fb_opaque_known=0;
-  r->fb_all_opaque=0;
+  r->fb_opaque_known=r->fb_all_opaque=palette && left==0.0 && top==0.0 &&
+    dw==(double)r->fbw && dh==(double)r->fbh;
   r->fb_all_transparent=0;
+  if(r->fb_all_opaque && r->fb==r->app_surface_owned) r->app_surface_opaque=1;
   r->shaded_draws++;
   return 1;
 sampler_fallback:
@@ -1971,7 +2002,7 @@ void gml_draw_surface_part_ext(GmlRender *r,int surf,double sx,double sy,double 
       slot>=0 && r->surface[slot].live?r->surface[slot].h:0;
     if(sx==0.0 && sy==0.0 && sw==(double)source_width &&
        sh==(double)source_height && source_width>0 && source_height>0 &&
-       resident_surface_shader(r,surf,dx,dy,sw*xs,sh*ys,blend,alpha,&geometry)) return;
+       resident_surface_shader(r,surf,dx,dy,sw*xs,sh*ys,blend,alpha,&geometry,0)) return;
   }
   if(resident_surface_part(r,surf,sx,sy,sw,sh,dx,dy,xs,ys,blend,alpha)) return;
   if(!gml_render_resident_application_cpu_barrier(r)) return;

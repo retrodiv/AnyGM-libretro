@@ -9,6 +9,42 @@
 #include <stdlib.h>
 #include <string.h>
 
+int gml_render_plan_shader_has_program(const GmlPlanShader *shader){
+  if(!shader) return 0;
+  if(shader->builtin_kind==GML_PLAN_BUILTIN_SHADER_NONE)
+    return shader->vertex_es && shader->fragment_es;
+  if(shader->builtin_kind!=GML_PLAN_BUILTIN_SHADER_THRESHOLD_PALETTE ||
+     shader->uniform_count!=14u || shader->sampler_count) return 0;
+  for(unsigned channel=0;channel<4u;channel++)
+    if(!isfinite(shader->vertex_colour[channel]) || shader->vertex_colour[channel]<0.0f ||
+       shader->vertex_colour[channel]>1.0f ||
+       (channel==3u && shader->vertex_colour[channel]!=1.0f)) return 0;
+  for(unsigned index=0;index<14u;index++){
+    const GmlPlanUniform *uniform=&shader->uniforms[index];
+    if(index<10u){
+      if(strncmp(uniform->name,"u_palette",9u) || uniform->name[9]!=(char)('0'+index) ||
+         uniform->name[10] || uniform->count!=3u || uniform->integer) return 0;
+      for(unsigned channel=0;channel<3u;channel++){
+        float value=uniform->value[channel];
+        if(!isfinite(value) || value<0.0f || value>1.0f ||
+           roundf(value*255.0f)/255.0f!=value) return 0;
+      }
+    } else {
+      const char *name=index==10u?"u_threshold_red":index==13u?"u_palette_bypass":
+        index==11u?"u_threshold_green0":"u_threshold_green1";
+      unsigned count=index==10u || index==13u?1u:4u;
+      if(strncmp(uniform->name,name,sizeof uniform->name) ||
+         uniform->count!=count || uniform->integer!=1u) return 0;
+      for(unsigned channel=0;channel<count;channel++){
+        float value=uniform->value[channel];
+        if(!isfinite(value) || value<0.0f || value>(index==13u?1.0f:256.0f) || floorf(value)!=value ||
+           (channel && value>uniform->value[channel-1u])) return 0;
+      }
+    }
+  }
+  return 1;
+}
+
 static int extent_ok(uint32_t value){
   return value>0u && value<=GML_PLAN_MAX_EXTENT;
 }
@@ -145,8 +181,8 @@ int gml_render_plan_add_shader_draw_part(GmlRenderPlan *plan,uint32_t source,Gml
                                     const GmlPlanShader *shader,uint32_t linear){
   GmlPlanOp *op;
   if(!plan || !shader) return 0;
-  /* A program without both stages has nothing to compile: refused here, not at validation. */
-  if(!shader->vertex_es || !shader->fragment_es) return 0;
+  /* Content needs both stages; a fixed intent instead selects an engine-owned evaluator. */
+  if(!gml_render_plan_shader_has_program(shader)) return 0;
   if(plan->has_shader){
     /* One program per plan: a second would need its own record. */
     plan->overflowed=1;
@@ -259,7 +295,7 @@ int gml_render_plan_validate(const GmlRenderPlan *plan){
         break;
       case GML_PLAN_OP_SHADER_DRAW:
         if(!plan->has_shader) return 0;
-        if(!plan->shader.vertex_es || !plan->shader.fragment_es) return 0;
+        if(!gml_render_plan_shader_has_program(&plan->shader)) return 0;
         if(plan->shader.uniform_count>GML_PLAN_MAX_UNIFORMS ||
            plan->shader.sampler_count>GML_PLAN_MAX_SAMPLERS) return 0;
         {

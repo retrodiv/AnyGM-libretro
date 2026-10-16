@@ -729,9 +729,22 @@ static char *glsl_rewrite(const char *source,int vertex,int desktop,int little_e
   return glsl_relocate_global_initializers(out);
 }
 
+static int content_sources(const GmlPlanShader *shader,const char **vertex,const char **fragment){
+  if(!gml_render_plan_shader_has_program(shader)) return 0;
+  if(shader->builtin_kind==GML_PLAN_BUILTIN_SHADER_THRESHOLD_PALETTE){
+    *vertex=GML_GPU_OPENGL_THRESHOLD_PALETTE_VERTEX;
+    *fragment=GML_GPU_OPENGL_THRESHOLD_PALETTE_FRAGMENT;
+  } else {
+    *vertex=shader->vertex_es;
+    *fragment=shader->fragment_es;
+  }
+  return 1;
+}
+
 static uint64_t content_source_key(const GmlPlanShader *shader){
   uint64_t hash=UINT64_C(1469598103934665603);
-  const char *sources[2]={shader->vertex_es,shader->fragment_es};
+  const char *sources[2];
+  if(!content_sources(shader,&sources[0],&sources[1])) return 0;
   for(size_t stage=0;stage<2;stage++){
     const unsigned char *cursor=(const unsigned char*)sources[stage];
     while(*cursor){ hash^=*cursor++; hash*=UINT64_C(1099511628211); }
@@ -744,7 +757,7 @@ static uint64_t content_source_key(const GmlPlanShader *shader){
 int gml_gpu_opengl_content_program_failed(const GmlGpuBackend *backend,
                                            const GmlPlanShader *shader){
   uint64_t key;
-  if(!backend || !shader || !shader->vertex_es || !shader->fragment_es) return 0;
+  if(!backend || !gml_render_plan_shader_has_program(shader)) return 0;
   key=content_source_key(shader);
   for(size_t index=0;index<GL_CONTENT_PROGRAMS;index++){
     const GlContentProgram *slot=&backend->content[index];
@@ -824,12 +837,13 @@ static GlContentProgram *content_program(GmlGpuBackend *backend,const GmlPlanSha
   GlContentProgram *slot=content_slot(backend,shader,scene_rgba);
   int desktop=backend->api!=GML_GPU_API_OPENGLES3;
   char *vertex=NULL,*fragment=NULL;
-  if(!slot) return NULL;
+  const char *vertex_text=NULL,*fragment_text=NULL;
+  if(!slot || !content_sources(shader,&vertex_text,&fragment_text)) return NULL;
   slot->last_used=++backend->use_clock;
   if(slot->program) return slot;
   if(slot->failed) return NULL;
-  vertex=glsl_rewrite(shader->vertex_es,1,desktop,backend->little_endian,scene_rgba);
-  fragment=glsl_rewrite(shader->fragment_es,0,desktop,backend->little_endian,scene_rgba);
+  vertex=glsl_rewrite(vertex_text,1,desktop,backend->little_endian,scene_rgba);
+  fragment=glsl_rewrite(fragment_text,0,desktop,backend->little_endian,scene_rgba);
   if(vertex && fragment) slot->program=link_content(backend,vertex,fragment,error,error_capacity);
   free(vertex);
   free(fragment);
@@ -1145,7 +1159,7 @@ int gml_gpu_opengl_scene_shader_draw(GmlGpuBackend *backend,const GmlPlanShader 
      sampler_count!=shader->sampler_count || sampler_count>GML_PLAN_MAX_SAMPLERS) return 0;
   source_name=source->texture;
   source_origin=source->rendered_origin;
-  if(source_origin){
+  if(source_origin && shader->builtin_kind!=GML_PLAN_BUILTIN_SHADER_THRESHOLD_PALETTE){
     source_name=gml_gpu_opengl_scene_content_source(backend,source);
     if(!source_name) return 0;
     source_origin=0;

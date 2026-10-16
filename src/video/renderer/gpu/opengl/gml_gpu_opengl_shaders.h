@@ -21,6 +21,34 @@
   "precision highp usampler2D;\n" \
   "precision highp sampler2D;\n"
 
+/* Fixed recognized-palette executor. Only parsed thresholds and byte colours cross the
+ * neutral boundary; arbitrary content GLSL remains a separate frontend policy. */
+#define GML_GPU_OPENGL_THRESHOLD_PALETTE_VERTEX \
+  "attribute vec3 in_Position; attribute vec2 in_TextureCoord; attribute vec4 in_Colour;\n" \
+  "uniform mat4 gm_Matrices[5]; varying vec2 palette_uv; varying vec4 palette_tint;\n" \
+  "void main(){ gl_Position=gm_Matrices[4]*vec4(in_Position,1.0);\n" \
+  "  palette_uv=in_TextureCoord; palette_tint=in_Colour; }\n"
+
+#define GML_GPU_OPENGL_THRESHOLD_PALETTE_FRAGMENT \
+  "uniform sampler2D gm_BaseTexture; varying vec2 palette_uv; varying vec4 palette_tint;\n" \
+  "uniform vec3 u_palette0,u_palette1,u_palette2,u_palette3,u_palette4;\n" \
+  "uniform vec3 u_palette5,u_palette6,u_palette7,u_palette8,u_palette9;\n" \
+  "uniform int u_threshold_red,u_palette_bypass; uniform ivec4 u_threshold_green0,u_threshold_green1;\n" \
+  "void main(){\n" \
+  "  vec4 source=texture2D(gm_BaseTexture,palette_uv);\n" \
+  "  if(u_palette_bypass!=0){ gl_FragColor=source; return; }\n" \
+  "  ivec3 sample_bytes=ivec3(floor(source.rgb*255.0+0.5));\n" \
+  "  bool upper=sample_bytes.r>=u_threshold_red;\n" \
+  "  ivec4 edge=upper?u_threshold_green1:u_threshold_green0;\n" \
+  "  int band=sample_bytes.g>=edge.x?0:sample_bytes.g>=edge.y?1:sample_bytes.g>=edge.z?2:sample_bytes.g>=edge.w?3:4;\n" \
+  "  vec3 colour;\n" \
+  "  if(upper) colour=band==0?u_palette5:band==1?u_palette6:band==2?u_palette7:band==3?u_palette8:u_palette9;\n" \
+  "  else colour=band==0?u_palette0:band==1?u_palette1:band==2?u_palette2:band==3?u_palette3:u_palette4;\n" \
+  "  ivec3 bytes=ivec3(floor(colour*255.0+0.5));\n" \
+  "  ivec3 tint=ivec3(floor(palette_tint.rgb*255.0+0.5));\n" \
+  "  gl_FragColor=vec4(vec3(bytes*tint/255)/255.0,1.0);\n" \
+  "}\n"
+
 /* A single triangle larger than the viewport. It needs no vertex buffer and no attributes, which
  * removes an upload and a piece of state to restore; the viewport and the scissor bound what it
  * covers. */

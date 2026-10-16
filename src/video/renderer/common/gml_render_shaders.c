@@ -444,6 +444,62 @@ int gml_render_shader_sources(const GmlRender *r,int shader,GmlRenderShaderSourc
   return out->vertex_es && out->fragment_es;
 }
 
+/* Resolve the finite source-byte partition as metadata. The device compares byte indices;
+ * it does not emulate the software evaluator's floating-point normalization per fragment. */
+static unsigned threshold_palette_byte_start(float threshold,int upper){
+  unsigned value=0;
+  for(;value<256u;value++){
+    float normalized=(float)value*(1.0f/255.0f);
+    if(upper?normalized>=threshold:normalized>threshold) break;
+  }
+  return value;
+}
+
+int gml_render_shader_threshold_palette_snapshot(const GmlRender *r,int shader_id,
+                                                GmlPlanShader *out){
+  const struct GmlShaderPal *p;
+  if(!r || !out || !r->shader_pal || shader_id<0 || shader_id>=r->n_shader_pal) return 0;
+  p=&r->shader_pal[shader_id];
+  if(!p->threshold_palette || p->threshold_palette_set!=0x3ffu ||
+     p->vertex_colour_blend || p->generic_sampler_count || p->generic_uniform_count) return 0;
+  if(!isfinite(p->threshold_palette_red) || p->threshold_palette_red<0.0f ||
+     p->threshold_palette_red>1.0f) return 0;
+  for(unsigned branch=0;branch<2u;branch++) for(unsigned band=0;band<4u;band++){
+    float value=p->threshold_palette_green[branch][band];
+    if(!isfinite(value) || value<0.0f || value>1.0f ||
+       (band && value>=p->threshold_palette_green[branch][band-1u])) return 0;
+  }
+  memset(out,0,sizeof *out);
+  out->identity=(uint32_t)shader_id;
+  out->builtin_kind=GML_PLAN_BUILTIN_SHADER_THRESHOLD_PALETTE;
+  for(unsigned channel=0;channel<4u;channel++) out->vertex_colour[channel]=1.0f;
+  for(unsigned index=0;index<10u;index++){
+    GmlPlanUniform *uniform=&out->uniforms[out->uniform_count++];
+    snprintf(uniform->name,sizeof uniform->name,"u_palette%u",index);
+    uniform->count=3u;
+    for(unsigned channel=0;channel<3u;channel++)
+      uniform->value[channel]=(float)p->threshold_palette_colour[index][channel]/255.0f;
+  }
+  GmlPlanUniform *red=&out->uniforms[out->uniform_count++];
+  snprintf(red->name,sizeof red->name,"u_threshold_red");
+  red->count=1u;
+  red->integer=1u;
+  red->value[0]=(float)threshold_palette_byte_start(p->threshold_palette_red,1);
+  for(unsigned branch=0;branch<2u;branch++){
+    GmlPlanUniform *green=&out->uniforms[out->uniform_count++];
+    snprintf(green->name,sizeof green->name,"u_threshold_green%u",branch);
+    green->count=4u;
+    green->integer=1u;
+    for(unsigned band=0;band<4u;band++)
+      green->value[band]=(float)threshold_palette_byte_start(p->threshold_palette_green[branch][band],0);
+  }
+  GmlPlanUniform *bypass=&out->uniforms[out->uniform_count++];
+  snprintf(bypass->name,sizeof bypass->name,"u_palette_bypass");
+  bypass->count=1u;
+  bypass->integer=1u;
+  return 1;
+}
+
 int gml_render_shader_plan_snapshot(const GmlRender *r,int shader_id,
                                     uint32_t content_generation,const float colour[4],
                                     GmlPlanShader *out){

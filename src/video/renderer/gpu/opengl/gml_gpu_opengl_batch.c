@@ -910,7 +910,7 @@ static int scene_preflight(GmlGpuBackend *backend,const GmlRenderDrawBatch *batc
       if(op->reconstruction_mode!=GML_RENDER_DEVICE_CHECKPOINT ||
          !batch->states || op->state_index>=batch->state_count ||
          !op->sources || !shader ||
-         !shader->vertex_es || !shader->fragment_es ||
+         !gml_render_plan_shader_has_program(shader) ||
          shader->sampler_count>GML_PLAN_MAX_SAMPLERS ||
          op->source_count!=1u+shader->sampler_count ||
          shader->uniform_count>GML_PLAN_MAX_UNIFORMS ||
