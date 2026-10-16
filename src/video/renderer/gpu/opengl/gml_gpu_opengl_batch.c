@@ -341,7 +341,7 @@ static int integer_function_sprite_valid(const GmlRenderDrawOp *op,
          (region.width<=2u && region.height<=2u &&
           floor(begin*storage)==floor(end*storage)));
       double maximum=single_cell?4096.0:64.0;
-      if(!isfinite(scale) || scale<(background?0.0625:0.125)-1e-9 ||
+      if(!isfinite(scale) || scale<(background?0.0625:0x1p-14)-1e-9 ||
          scale>maximum+1e-9) return 0;
     }
   }

@@ -565,6 +565,8 @@ static int resident_atlas_crop_from_page_impl(GmlRender *r,GmlTpag *page,
   if(text_function) integer_text=0;
   int scaled_background=selected_background || fractional_background;
   int scaled_atlas=scaled_background || tile_function || text_function || scaled_sprite;
+  double minimum_atlas_scale=scaled_sprite && family==GML_RENDER_SCENE_SPRITE
+    ?0x1p-14:scaled_atlas?0.0625:1.0;
   int integer_background=physical_sprite_page==8 || scaled_background;
   int integer_atlas=integer_sprite || integer_background || tile_function || text_function;
   /* Classic's logical background, sprite and text writers remain point-sampled with the
@@ -590,16 +592,18 @@ static int resident_atlas_crop_from_page_impl(GmlRender *r,GmlTpag *page,
       family!=(text_function?GML_RENDER_SCENE_TEXT:tile_function?GML_RENDER_SCENE_TILE:
                integer_background?GML_RENDER_SCENE_BACKGROUND:GML_RENDER_SCENE_SPRITE) ||
       (!scaled_atlas && (xs!=floor(xs) || ys!=floor(ys))) ||
-      fabs(xs)<(scaled_atlas?0.0625:1.0) || fabs(xs)>(single_texel_sprite?4096.0:scaled_atlas?64.0:8.0) ||
-      fabs(ys)<(scaled_atlas?0.0625:1.0) || fabs(ys)>(single_texel_sprite?4096.0:scaled_atlas?64.0:8.0) ||
+      fabs(xs)<minimum_atlas_scale || fabs(xs)>(single_texel_sprite?4096.0:scaled_atlas?64.0:8.0) ||
+      fabs(ys)<minimum_atlas_scale || fabs(ys)>(single_texel_sprite?4096.0:scaled_atlas?64.0:8.0) ||
       !isfinite(left) || !isfinite(top) ||
       fabs(left)>65536.0 || fabs(top)>65536.0 || page->sw>4096 || page->sh>4096 ||
       (double)crop_width*fabs(xs)>16384.0 || (double)crop_height*fabs(ys)>16384.0 ||
-      /* Full integer backgrounds and selected backgrounds keep the point
-       * writer at every area too. Studio's large-axis switch belongs to
-       * sprites, not the public background blit leaf. */
+      /* Preclassified rotated/runtime regions own their actual CPU footprint;
+       * the staged unit crop is not authored unit magnification. Backgrounds
+       * likewise never select the packaged sprite's large-axis CPU leaf. */
       (!classic_background_point && !classic_sprite_point && !selected_background &&
-       physical_sprite_page!=8 && !integral_unit_sprite && !gml_render_target_preserves_alpha(r) &&
+       !(rotated_sprite_function && family==GML_RENDER_SCENE_SPRITE) &&
+       !runtime_function && physical_sprite_page!=8 &&
+       !integral_unit_sprite && !gml_render_target_preserves_alpha(r) &&
        (double)crop_width*fabs(xs)*(double)crop_height*fabs(ys)>=131072.0) ||
       !r->device.context || !r->device.observe_on_demand ||
       !r->device.observe_on_demand(r->device.context))) return 0;
@@ -2949,9 +2953,10 @@ done:
 static int resident_nearest_texture_function(GmlRender *r,GmlSprite *sprite,GmlTpag *page,
                                             double x,double y,double xs,double ys,double rotation,
                                             uint32_t colour,double alpha,GmlRenderSceneFamily family){
-  double minimum_scale=family==GML_RENDER_SCENE_TEXT?0.0625:0.125;
-  /* Both callers share the packet's finite scale bound. Source extent,
-   * projected-area, coverage and region-capacity guards remain downstream. */
+  /* Sprite reduction shares the existing inverse-map bound, not a visible-
+   * pixel cutoff. Text retains its separately qualified scale range. Source
+   * extent, projected area, coverage and region capacity still bound work. */
+  double minimum_scale=family==GML_RENDER_SCENE_TEXT?0.0625:0x1p-14;
   /* A single source texel has no interior nearest boundaries to magnify.
    * Keep the existing coverage/area limits and all larger sources unchanged. */
   double maximum_scale=family==GML_RENDER_SCENE_SPRITE && page &&
@@ -3184,8 +3189,8 @@ static int resident_nearest_sprite_function(GmlRender *r,GmlSprite *sprite,int s
        r->pending_underlay || r->pending_presentation || !gml_render_scene_target_matches(r) ||
        !isfinite(x) || !isfinite(y) || !isfinite(rotation) ||
        fabs(x-r->cam_x)>65536.0 || fabs(y-r->cam_y)>65536.0 ||
-       !isfinite(xs) || !isfinite(ys) || fabs(xs)<0.125 || fabs(xs)>64.0 ||
-       fabs(ys)<0.125 || fabs(ys)>64.0 || !isfinite(alpha) || alpha<=0.0 || alpha>1.0 ||
+       !isfinite(xs) || !isfinite(ys) || fabs(xs)<0x1p-14 || fabs(xs)>64.0 ||
+       fabs(ys)<0x1p-14 || fabs(ys)>64.0 || !isfinite(alpha) || alpha<=0.0 || alpha>1.0 ||
        (r->alphablend && alpha<0x1p-64) || r->color_write_mask>15u ||
        !r->device.context || !r->device.observe_on_demand ||
        !r->device.observe_on_demand(r->device.context)) return 0;
