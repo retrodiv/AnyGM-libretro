@@ -1269,6 +1269,19 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
     engine->input.text_event_count=0;
     AspectViewOverlay step_ov;
     aspect_view_overlay_begin(engine,&step_ov, 0, ASPECT_VIEW_TRACKING);
+    /* Step inherits the preceding SCREEN's draw state. A current device image may resume
+     * that exact binding, but a fresh begin would reset alpha, colour and transforms. */
+    if(engine->scene_renderer_session==ANYGM_SCENE_RENDERER_OPENGL &&
+       anygm_policy_uses_classic_runtime(&engine->win) &&
+       !anygm_policy_classic_modern_presentation(&engine->win) &&
+       !engine->composed_frame && !engine->aspect_force_active && !engine->canvas_mode &&
+       engine->screen && engine_graphics_active(engine)){
+      GmlRenderPresentationMetrics step_presentation={0};
+      gml_render_presentation_metrics(&engine->render,&step_presentation);
+      if(!step_presentation.interpolation)
+        (void)gml_render_resume_completed_screen_suffix(
+          &engine->render,engine->screen,(int)engine->output_width,(int)engine->output_height);
+    }
     /* For a classic frame with a retained target, bind the new presented base before Step. The active target remains bound until the program resets it. */
     if(anygm_policy_uses_classic_runtime(&engine->win) &&
        gml_surface_get_target(&engine->render)>=0 && engine->screen &&
@@ -1633,7 +1646,7 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
     !render_presentation.interpolation;
   int early_classic_borrowed_world=early_classic_full_view &&
     !render_presentation.application_owned &&
-    render_presentation.application_draw_enabled && app_surface_is_draw_target &&
+    app_surface_is_draw_target &&
     anygm_policy_uses_classic_runtime(&engine->win) &&
     !anygm_policy_classic_modern_presentation(&engine->win);
   /* An early-classic, viewless, exact-size application target can keep Draw on the same resident

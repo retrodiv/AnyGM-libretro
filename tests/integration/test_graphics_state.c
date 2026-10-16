@@ -1107,6 +1107,82 @@ static int classic_owned_screen_admission_case(void){
   return 1;
 }
 
+/* Call/metadata/state proof only; real-context pairs own pixels and saved GPU bytes. */
+static int classic_manual_application_scene_case(void){
+  int (*factories[])(AnygmSyntheticContent *)={
+    anygm_synthetic_classic_manual_application_content_create,
+    anygm_synthetic_classic_manual_application_scaled_content_create,
+    anygm_synthetic_classic_late_manual_application_content_create
+  };
+  for(unsigned api=0;api<2u;api++) for(unsigned variant=0;variant<3u;variant++){
+    Session plain={0},selected={0};
+    CurrentContextWitness witness={1u,0u};
+    AnygmGraphicsContext context=graphics_context(api?ANYGM_GRAPHICS_OPENGL_CORE:ANYGM_GRAPHICS_OPENGLES3);
+    AnygmInputFrame input={.struct_size=sizeof input,.pointer_x=-1,.pointer_y=-1};
+    int matching=1;
+    anygm_test_graphics_reset();
+    REQUIRE(session_open_fixture_with_scene(&plain,ANYGM_SCENE_RENDERER_CPU,factories[variant]) &&
+            session_open_fixture_with_scene(&selected,ANYGM_SCENE_RENDERER_OPENGL,factories[variant]),
+            "manual Classic application fixtures load");
+    context.userdata=&witness;context.is_current=graphics_context_is_current;
+    REQUIRE(anygm_graphics_context_reset(selected.engine,&context)==ANYGM_OK,
+            "manual Classic application adopts the owning current context");
+    gml_render_dispatch_diagnostics_enable(&selected.engine->render,1);
+    selected.engine->diagnostics.dispatch_frames.enabled=1;
+    gml_render_dispatch_frame_bind(&selected.engine->render,&selected.engine->diagnostics.dispatch_frames);
+    for(unsigned frame=0;frame<4u && matching;frame++){
+      AnygmFrameOutput cpu={.struct_size=sizeof cpu},gpu={.struct_size=sizeof gpu};
+      matching=anygm_run_frame(plain.engine,&input,&cpu)==ANYGM_OK &&
+               anygm_run_frame(selected.engine,&input,&gpu)==ANYGM_OK &&
+               cpu.width==gpu.width && cpu.height==gpu.height &&
+               plain.engine->vm.room_index==selected.engine->vm.room_index &&
+               plain.engine->vm.frame==selected.engine->vm.frame;
+      const char *names[]={"fixture_application_width","fixture_application_height",
+                           "fixture_step_alpha","fixture_step_colour"};
+      for(unsigned index=0;index<(frame?4u:2u);index++){
+        GmlVal *left=gml_varmap_get(&plain.engine->vm.globals,names[index]);
+        GmlVal *right=gml_varmap_get(&selected.engine->vm.globals,names[index]);
+        matching=matching && left && right && left->d==right->d;
+        if(!matching) fprintf(stderr,"manual Classic api=%u variant=%u frame=%u field=%s values=%g/%g\n",
+                              api,variant,frame,names[index],left?left->d:-1.0,right?right->d:-1.0);
+      }
+      if(frame){
+        GmlVal *alpha=gml_varmap_get(&selected.engine->vm.globals,"fixture_step_alpha");
+        GmlVal *colour=gml_varmap_get(&selected.engine->vm.globals,"fixture_step_colour");
+        matching=matching && alpha && colour && alpha->d==0.375 && colour->d==16711935.0;
+      }
+    }
+    GmlRenderPresentationMetrics metrics={0};
+    GmlGpuCounters counters={0};
+    GmlRenderDispatchMetrics dispatch={0};
+    gml_render_presentation_metrics(&selected.engine->render,&metrics);
+    gml_gpu_counters(selected.engine->gpu,&counters);
+    uint64_t ordinary_cpu=0;
+    (void)gml_render_dispatch_metrics(&selected.engine->render,&dispatch);
+    for(unsigned family=0;family<GML_RENDER_SCENE_FAMILY_COUNT;family++)
+      for(unsigned reason=0;reason<GML_RENDER_DISPATCH_REASON_COUNT;reason++)
+        ordinary_cpu+=dispatch.cpu[family][reason];
+    matching=matching && gml_render_dispatch_metrics(&selected.engine->render,&dispatch) &&
+      !metrics.application_owned && !metrics.application_draw_enabled &&
+      !dispatch.failed && !dispatch.unclassified && !dispatch.overflow;
+    if(variant<2u) matching=matching && !ordinary_cpu &&
+      counters.scene_families[GML_RENDER_SCENE_SPRITE]==4u &&
+      counters.scene_families[GML_RENDER_SCENE_TEXT]==12u &&
+      counters.scene_families[GML_RENDER_SCENE_SURFACE]>=(variant?7u:6u);
+    else matching=matching && ordinary_cpu>0u &&
+      !counters.scene_families[GML_RENDER_SCENE_SPRITE] && !counters.scene_families[GML_RENDER_SCENE_TEXT];
+    if(!matching) fprintf(stderr,"manual Classic api=%u variant=%u CPU=%llu sprite=%llu text=%llu surface=%llu owned=%d auto=%d\n",
+      api,variant,(unsigned long long)ordinary_cpu,
+      (unsigned long long)counters.scene_families[GML_RENDER_SCENE_SPRITE],
+      (unsigned long long)counters.scene_families[GML_RENDER_SCENE_TEXT],
+      (unsigned long long)counters.scene_families[GML_RENDER_SCENE_SURFACE],
+      metrics.application_owned,metrics.application_draw_enabled);
+    session_close(&selected);session_close(&plain);
+    REQUIRE(matching,"manual Classic Draw and root Step retain resources and draw state; late policy stays excluded");
+  }
+  return 1;
+}
+
 static int classic_identity_filtered_presentation_case(void){
   Session plain={0},selected={0};
   AnygmInputFrame input={.struct_size=sizeof input,.pointer_x=-1,.pointer_y=-1};
@@ -5082,6 +5158,7 @@ int main(void){
     {"classic single view executes nearest draw contracts",classic_single_view_draw_contracts_case},
     {"classic Step target survives GPU Draw and GUI",classic_retained_target_scene_case},
     {"classic Step SCREEN and numbered Draw stay independently current",classic_step_composition_scene_case},
+    {"manual Classic application retains Draw GUI and root Step",classic_manual_application_scene_case},
     {"classic integer surface keeps partial source alpha resident",classic_integer_surface_calls_case},
     {"ended resident frame remains visible and canonical",ended_frame_retention_case},
     {"authored cursor preserves a resident completed frame",resident_cursor_frame_case},

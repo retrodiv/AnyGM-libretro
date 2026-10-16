@@ -870,6 +870,30 @@ detachment controls remain required. Step redraw entry is separate debt; later
 Classic, other extents and filtered paths retain their boundaries. No whole-game
 or speed qualification is inferred.
 
+The same early-Classic full-view borrowed world may remain resident when content
+disables automatic application presentation: that flag selects composition, not
+the Draw target. Independent world/SCREEN images retain their existing owners.
+At the next Step, `gml_render.c::gml_render_resume_completed_screen_suffix` may
+resume only the exact already-current root SCREEN, with matching allocation and
+extent, an owning-current witness and no pending fill/underlay/presentation.
+It preserves alpha, colour, blend and mapping metadata rather than beginning a
+new pass. Later-Classic phases, filtered/aspect/canvas/composed frames, CPU-current
+or changed targets and missing witnesses retain ordered fallback. Public borrowed
+surface-0 sampling is not expanded by this phase admission. Existing executors
+keep EXACT RGBA0 nearest opaque/binary copies and individual TOLERANCE+/-2 blends;
+CPU bodies, shaders and state schemas are unchanged.
+`tests/integration/test_graphics_state.c::classic_manual_application_scene_case`
+pairs early native/integer-view metadata and inherited Step state on both APIs,
+while retaining the later-policy negative. Its three exported scene packages
+provide real-context Draw/numbered-GUI/Step, Reset and same-load state/rewind pairs.
+This bounded lifetime control does not qualify new surface arithmetic or speed.
+Its native package also leaves every third GUI empty. The engine's early-Classic
+borrowed unit recovery retains the existing SCREEN RGB query and empty-source
+observation, then shares the already-qualified white automatic compositor instead
+of entering an unrelated public surface-zero CPU leaf. Default unfiltered,
+unmasked, zero-camera/world-transform state only; later phases, nonunit extents
+and special states retain their old recovery. This is not a zero-read claim.
+
 <!-- R03-RULES:START -->
 | Rule | Scope | Shared preparation | CPU executor | GPU executor | Device arithmetic | Limits | Paired control |
 |---|---|---|---|---|---|---|---|
@@ -1393,7 +1417,7 @@ ordered CPU debt, not an assertion that those variants cannot meet D2.
 | `src/video/renderer/common/gml_render_sprites.c::resident_modern_trimmed_unit_layer` | `gml_render_application_scene_enqueue_quads` | PARTIAL | `41c564cef6322cc818cabd98aaa61f78fab37e5a95867b3e83eeecf982d4cc35` | R03-LAYER-TRIMMED-UNIT requires modern-trimmed-unit-layer paired controls; logical cell periods, physical trim and independent axes. Other generations, alpha, scaling and special state remain debt. |
 | `src/video/renderer/common/gml_render_sprites.c::gml_draw_layer_background_sprite` | `gml_render_application_scene_enqueue_quads` | PARTIAL | `814d26788906d88e226904d3230d632ee81570dac2570e79e92efbc05f24f587` | R03-LAYER-TRIMMED-UNIT adds bounded modern binary-alpha unit cells. Existing untrimmed admission and CPU body remain; other source, geometry, target and state exclusions are debt. |
 | `src/video/renderer/common/gml_render_surfaces.c::gml_render_compose_resident_underlay` | `gml_render_application_scene_submit` | PARTIAL | `4dcdc44877751359cce8dc0025bd06ed44f5dada67969f21a2409d2c77cd9a7d` | Bounded surface/recovery admission only; source, alias, geometry and state exclusions remain in the R03 surface rules. Witnessed opaque automatic cutout below255 additionally requires nearest-text-underlay RGBA/order pairs; uncertified modern alpha, endpoint255, masks and legacy owners remain excluded. R03-CLASSIC-BORROWED-VIEW now pairs witnessed early-Classic automatic resident composition on the independent SCREEN; later-classic phases and filtered enlargement remain explicit debt. |
-| `src/video/renderer/common/gml_render_surfaces.c::gml_render_recover_empty_screen` | `gml_render_application_scene_submit` | PARTIAL | `9e45efc908d84be54c49bf5f4e3023a1b1cf460fc048ad0ac724a7d5b26b6ee9` | Bounded surface/recovery admission only; source, alias, geometry and state exclusions remain in the R03 surface rules. |
+| `src/video/renderer/common/gml_render_surfaces.c::gml_render_recover_empty_screen` | `gml_render_application_scene_submit` | PARTIAL | `4fb89f3efa34cd9290b9c6d3ef994a66d8812c773e55309b47acc1872e93a8fc` | Bounded surface/recovery admission only; the manual Classic engine fixture pairs the early borrowed unit empty-GUI recovery with the unchanged automatic compositor and preserved observations. Source, alias, nonunit geometry and special states remain excluded debt in the R03 surface rules. |
 | `src/video/renderer/common/gml_render_surfaces.c::gml_draw_surface_stretched` | `gml_render_application_scene_enqueue` | PARTIAL | `1d4fbdccb7e52b5056d7f2ee0a4dcecf8ba57f38dd745b44cad3fa69e2fee69f` | R03-SURFACE-NEAREST-FUNCTION adds bounded ordinary nearest composition after existing shader/filtered owners. Source, alias, geometry and special-state debt remains explicit. |
 | `src/video/renderer/common/gml_render_surfaces.c::resident_surface_nearest_function` | `gml_render_application_scene_enqueue` | PARTIAL | `513d0402e6e7eeb1059b0a41d874b30dc0cebbc23e9b59b4032b0638ec76d09c` | R03-SURFACE-NEAREST-FUNCTION requires paired public RGBA, cutoff, batching, order, coverage and current-source controls; nonqualified presentation/filter/rotation/state variants remain ordered debt. The internal early-Classic automatic caller alone admits a retained borrowed SCREEN source and the unchanged CPU zero-cutoff/mask and normal-scaled blend branches; public source-zero ownership gates stay unchanged. |
 | `src/video/renderer/common/gml_render_surfaces.c::resident_surface_filtered` | `gml_render_application_scene_enqueue` | PARTIAL | `5dc1c37e63a3d302fe83de59229e9650340b8dd2d6c83348345a30740a5eef36` | Existing opaque first-generation GUI presentation ignores raw alpha cutoff exactly as its CPU leaf; R03-SURFACE-NEAREST-FUNCTION pairs that boundary including reference255. Other old filtered owners retain their cutoff fence and existing geometry/presentation exclusions. |

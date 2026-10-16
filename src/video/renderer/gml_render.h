@@ -542,6 +542,9 @@ int gml_render_can_begin_borrowed_screen(const GmlRender *r,const uint32_t *pixe
  * Deferred presentations and CPU-current or differently bound targets keep their owner. */
 int gml_render_begin_completed_screen_suffix(GmlRender *r,uint32_t *pixels,
                                              int width,int height);
+/* Reopen that exact current SCREEN binding for a continuing event without resetting draw state. */
+int gml_render_resume_completed_screen_suffix(GmlRender *r,uint32_t *pixels,
+                                              int width,int height);
 /* Replace the base of a resident pass without discarding a numbered content target held by Step. */
 int gml_render_begin_resident_base_retaining_target(GmlRender *r,uint32_t *pixels,
                                                    int width,int height,double camx,double camy);

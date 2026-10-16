@@ -1115,8 +1115,46 @@ static int resident_surface_shader(GmlRender *r,int surf,double dx,double dy,dou
 static int resident_surface_filtered(GmlRender *r,int surf,double dx,double dy,double dw,double dh,
                                      uint32_t blend,double alpha);
 
+static int recover_classic_empty_screen(GmlRender *r,uint32_t *pixels,int width,int height,
+                                        double x,double y,double w,double h,int zero_camera){
+  const GmlRenderDeviceServices *device=gml_render_device(r);
+  if(!r || !r->win || anygm_policy_classic_modern_presentation(r->win) ||
+     !r->resident_application_pass || !gml_render_scene_target_matches(r) ||
+     r->fb!=pixels || r->fbw!=width || r->fbh!=height || r->target_sp || r->target_id!=-1 ||
+     !r->app_surface_published || !r->app_surface || r->app_surface==pixels ||
+     r->app_w<=0 || r->app_h<=0 || r->app_w>4096 || r->app_h>4096 ||
+     r->app_surface==r->app_surface_owned || w!=r->app_w || h!=r->app_h ||
+     r->interp || r->aspect_fullwidth || r->world_transform_active ||
+     gml_render_gui_transform_active(r) || r->cam_x!=0.0 || r->cam_y!=0.0 ||
+     zero_camera || r->pending_fill || r->pending_underlay || r->pending_presentation ||
+     r->active_shader>=0 || !r->alphablend || r->blendmode || r->alpha_test_enable ||
+     r->color_write_mask!=15u || r->blend_equation!=1 || r->blend_equation_alpha!=1 ||
+     gml_d3_is_active(r) || !isfinite(x) || !isfinite(y) ||
+     fabs(x)>16384.0 || fabs(y)>16384.0 ||
+     !device || !device->observe_on_demand || !device->observe_on_demand(device->context) ||
+     !device->has_rgb) return 0;
+  int has_rgb=0;
+  if(!gml_render_completed_screen_has_rgb(r,pixels,width,height,&has_rgb)) return 0;
+  if(has_rgb) return 1;
+  int sw=0,sh=0;
+  const uint32_t *source=gml_surface_pixels_read(r,0,&sw,&sh);
+  if(!source || sw!=r->app_w || sh!=r->app_h) return 0;
+  size_t count=(size_t)sw*(size_t)sh;
+  for(size_t index=0;index<count;index++) if(source[index]&0xFFFFFFu){
+    /* This is the engine's white unit recovery, not a new public surface-zero
+     * variant. Keep its existing empty/source observations and exact compositor. */
+    gml_render_set_pending_underlay(r,(int)floor(x),(int)floor(y),(int)w,(int)h);
+    if(gml_render_compose_resident_underlay(r)) return 1;
+    r->pending_underlay=0;
+    return 0;
+  }
+  return 1;
+}
+
 int gml_render_recover_empty_screen(GmlRender *r,uint32_t *pixels,int width,int height,
                                      double x,double y,double w,double h,int zero_camera){
+  if(r && r->classic)
+    return recover_classic_empty_screen(r,pixels,width,height,x,y,w,h,zero_camera);
   const GmlRenderDeviceServices *device;
   GmlRenderDeviceCaps caps={0};
   GmlRenderResource *application,*target;

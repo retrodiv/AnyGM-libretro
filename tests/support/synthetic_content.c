@@ -1732,7 +1732,8 @@ static int synthetic_framebuffer_content_create(
   int borrowed_resize=gpu_sprite==40;
   int classic_identity_present=gpu_sprite==44;
   int classic_owned_gui=gpu_sprite==47;
-  int single_classic_view=(gpu_sprite>=21 && gpu_sprite<=37) || borrowed_resize;
+  int classic_manual_application=gpu_sprite>=48 && gpu_sprite<=50;
+  int single_classic_view=(gpu_sprite>=21 && gpu_sprite<=37) || borrowed_resize || classic_manual_application;
   char create[192],step[192],draw[192],draw_begin[192],draw_gui[192];
   snprintf(create,sizeof create,"%s/retain-create.gml",fixture->directory);
   snprintf(step,sizeof step,"%s/retain-step.gml",fixture->directory);
@@ -1740,7 +1741,12 @@ static int synthetic_framebuffer_content_create(
   snprintf(draw_begin,sizeof draw_begin,"%s/retain-draw-begin.gml",fixture->directory);
   snprintf(draw_gui,sizeof draw_gui,"%s/retain-draw-gui.gml",fixture->directory);
   snprintf(fixture->path,sizeof fixture->path,"%s/data.win",fixture->directory);
-  if(!write_text(create,borrowed_resize?
+  if(!write_text(create,classic_manual_application?
+       "global.fixture_frame = 0;\n"
+       "application_surface_draw_enable(false);\n"
+       "global.fixture_recovery = view_wport[0] == view_wview[0];\n"
+       "global.fixture_surface = surface_create(16,12);\n":
+       borrowed_resize?
        "global.fixture_frame = 0;\n"
        "view_wview[0] = 128; view_hview[0] = 96;\n"
        "view_wport[0] = 128; view_hport[0] = 96;\n"
@@ -1801,7 +1807,14 @@ static int synthetic_framebuffer_content_create(
        "global.fixture_frame = 0;\n"
        "view_xview[0] = 0.5; view_xview[1] = 32.25;\n":
        "global.fixture_frame = 0;\n") ||
-     !write_text(step,borrowed_resize?
+     !write_text(step,classic_manual_application?
+                 "global.fixture_frame += 1;\n"
+                 "if (global.fixture_frame > 1) {\n"
+                 "  global.fixture_step_alpha = draw_get_alpha();\n"
+                 "  global.fixture_step_colour = draw_get_color();\n"
+                 "  draw_surface_stretched(global.fixture_surface,4,6,16,12);\n"
+                 "}\n":
+                 borrowed_resize?
                  "global.fixture_frame += 1;\n"
                  "if (global.fixture_frame == 4) {\n"
                  "  view_wview[0] = 80; view_hview[0] = 60;\n"
@@ -1853,7 +1866,17 @@ static int synthetic_framebuffer_content_create(
                  "surface_set_target(global.fixture_surface);\n":
                  "if (global.fixture_frame >= 1) room_goto(1);\n"
                  "global.fixture_frame += 1;\n") ||
-     (gpu_sprite && !write_text(draw,step_clear?
+     (gpu_sprite && !write_text(draw,classic_manual_application?
+       "global.fixture_application_width = surface_get_width(application_surface);\n"
+       "global.fixture_application_height = surface_get_height(application_surface);\n"
+       "draw_sprite(spr_fixture,0,48,16);\n"
+       "draw_set_color(c_white); draw_text(8,30,\"GPU\");\n"
+       "draw_set_color(c_red); draw_rectangle(8,12,20,24,false);\n"
+       "surface_set_target(global.fixture_surface);\n"
+       "if (global.fixture_frame mod 2 == 0) draw_clear(c_blue);\n"
+       "else draw_clear(c_lime);\n"
+       "surface_reset_target();\n":
+       step_clear?
        "draw_surface(global.fixture_surface,8,8);\n"
        "draw_sprite(spr_fixture,0,32,16);\n":
        gpu_sprite==42?
@@ -1951,8 +1974,12 @@ static int synthetic_framebuffer_content_create(
          "  draw_clear(c_blue); surface_reset_target();\n"
          "}\n")) ||
      ((retained_step_target || assigned_view_surface || canvas_geometry || window_geometry ||
-       gpu_sprite==28 || classic_owned_gui) &&
-      !write_text(draw_gui,classic_step_composition?
+       gpu_sprite==28 || classic_owned_gui || classic_manual_application) &&
+      !write_text(draw_gui,classic_manual_application?
+         "if (!global.fixture_recovery || global.fixture_frame mod 3 != 0) draw_surface(global.fixture_surface,20,8);\n"
+         "draw_set_color(c_fuchsia); draw_set_alpha(0.375);\n"
+         "if (!global.fixture_recovery || global.fixture_frame mod 3 != 0) draw_set_blend_mode_ext(bm_one,bm_zero);\n":
+         classic_step_composition?
          "global.fixture_seen = surface_get_target();\n":
          classic_retained_target?
          "surface_reset_target();\n"
@@ -2062,6 +2089,7 @@ static int synthetic_framebuffer_content_create(
                             (single_classic_view && gpu_sprite!=24)?530:800;
     if(gpu_sprite==39 || gpu_sprite==43) project.classic_version=810;
     if(gpu_sprite==41 || gpu_sprite==42) project.classic_version=701;
+    if(classic_manual_application) project.classic_version=gpu_sprite==50?810:701;
     if(classic_identity_present) project.classic_version=701;
     /* Distinct from both room colors so a cleared classic frame cannot be mistaken for a
      * retained one or for the room the fixture painted first. */
@@ -2073,7 +2101,7 @@ static int synthetic_framebuffer_content_create(
   object.visible=gpu_sprite;
   object.events=events;
   object.n_events=object.cap_events=retained_step_target || assigned_view_surface?5:
-                                     canvas_geometry || window_geometry || gpu_sprite==28 || classic_owned_gui?4:gpu_sprite?3:2;
+                                     canvas_geometry || window_geometry || gpu_sprite==28 || classic_owned_gui || classic_manual_application?4:gpu_sprite?3:2;
   events[0].event_type=0;
   events[0].event_number=0;
   events[0].source_path=create;
@@ -2091,7 +2119,7 @@ static int synthetic_framebuffer_content_create(
     events[4].event_type=8;
     events[4].event_number=64;
     events[4].source_path=draw_gui;
-  } else if(canvas_geometry || window_geometry || gpu_sprite==28 || classic_owned_gui){
+  } else if(canvas_geometry || window_geometry || gpu_sprite==28 || classic_owned_gui || classic_manual_application){
     events[3].event_type=8;
     events[3].event_number=64;
     events[3].source_path=draw_gui;
@@ -2151,9 +2179,9 @@ static int synthetic_framebuffer_content_create(
       rooms[room].views[0].visible=1;
       rooms[room].views[0].wview=rooms[room].width;
       rooms[room].views[0].hview=rooms[room].height;
-      rooms[room].views[0].wport=borrowed_resize?rooms[room].width:
+      rooms[room].views[0].wport=borrowed_resize || gpu_sprite==48?rooms[room].width:
                                gpu_sprite==23?96:rooms[room].width*2;
-      rooms[room].views[0].hport=borrowed_resize?rooms[room].height:
+      rooms[room].views[0].hport=borrowed_resize || gpu_sprite==48?rooms[room].height:
                                gpu_sprite==23?72:rooms[room].height*2;
       rooms[room].views[0].xport=gpu_sprite==25?4:0;
       rooms[room].views[0].hspeed=rooms[room].views[0].vspeed=-1;
@@ -2265,6 +2293,15 @@ int anygm_synthetic_classic_viewless_draw_content_create(AnygmSyntheticContent *
 
 int anygm_synthetic_classic_owned_gui_content_create(AnygmSyntheticContent *fixture){
   return synthetic_framebuffer_content_create(fixture,0,0,1,47);
+}
+int anygm_synthetic_classic_manual_application_content_create(AnygmSyntheticContent *fixture){
+  return synthetic_framebuffer_content_create(fixture,0,0,1,48);
+}
+int anygm_synthetic_classic_manual_application_scaled_content_create(AnygmSyntheticContent *fixture){
+  return synthetic_framebuffer_content_create(fixture,0,0,1,49);
+}
+int anygm_synthetic_classic_late_manual_application_content_create(AnygmSyntheticContent *fixture){
+  return synthetic_framebuffer_content_create(fixture,0,0,1,50);
 }
 
 int anygm_synthetic_classic_single_view_draw_content_create(AnygmSyntheticContent *fixture){
