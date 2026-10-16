@@ -389,6 +389,7 @@ int gml_render_application_scene_enqueue_quads(GmlRender *r,
     (operation->payload.quad.sampling.filter==GML_RENDER_FILTER_BILINEAR ||
      (operation->payload.quad.sampling.filter==GML_RENDER_FILTER_HARDWARE_BILINEAR &&
       (operation->payload.quad.sampling.quantisation==GML_RENDER_QUANTISE_HARDWARE_SPRITE_FIRSTGEN ||
+       operation->payload.quad.sampling.quantisation==GML_RENDER_QUANTISE_HARDWARE_SPRITE_MODERN ||
        operation->payload.quad.sampling.quantisation==GML_RENDER_QUANTISE_FIXED_STRETCHED)) ||
      operation->payload.quad.sampling.filter==GML_RENDER_FILTER_NEAREST_PHASED ||
      (operation->payload.quad.sampling.filter==GML_RENDER_FILTER_BOX &&

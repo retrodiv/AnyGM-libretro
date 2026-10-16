@@ -167,6 +167,7 @@ int gml_render_gpu_opengl_draw_textured_quad(const GmlRenderDrawOp *op,
        quad->y[corner]<-10000000.0 || quad->y[corner]>10000000.0 ||
        (!rotated && !warped && !half_gui &&
         quad->sampling.quantisation!=GML_RENDER_QUANTISE_HARDWARE_SPRITE_FIRSTGEN &&
+        quad->sampling.quantisation!=GML_RENDER_QUANTISE_HARDWARE_SPRITE_MODERN &&
         quad->sampling.filter!=GML_RENDER_FILTER_HARDWARE_PIXEL_CENTRE_POINT &&
         (quad->u[corner]<0.0 || quad->u[corner]>1.0 ||
                                quad->v[corner]<0.0 || quad->v[corner]>1.0)) ||

@@ -7134,6 +7134,19 @@ static int resident_integer_endpoint_sprite_part(void){
             metrics.authority==GML_RENDER_RESOURCE_GPU_RESIDENT && !metrics.cpu_replays &&
             !metrics.journal_bytes && !metrics.retained_mutable_bytes &&
             !memcmp(shadow,r->fb,sizeof shadow));
+    }else if(excluded==2 || excluded==3 || excluded==4 || excluded==6 ||
+             excluded==8 || excluded==9 || excluded==10 || excluded==11 ||
+             (excluded>=13 && excluded<=16)){
+      /* The function-wide part path supersedes these old admission limits;
+       * it still must preserve the ordered image without CPU transport. */
+      GmlRenderJournalMetrics metrics={0};
+      CHECK(r->resident_application_pass && !fake.readbacks);
+      CHECK(gml_render_scene_submit_pending(r));
+      gml_render_resource_journal_metrics(gml_render_scene_target_resource_ensure(r),&metrics);
+      if(fake.last_source_count!=1u) fprintf(stderr,"part new no-source: case=%d world=%d opcode=%u\n",excluded,world,fake.last_opcode);
+      CHECK((fake.last_source_count==1u || (excluded==14 && fake.last_opcode==GML_RENDER_OP_CLEAR)) &&
+        metrics.authority==GML_RENDER_RESOURCE_GPU_RESIDENT &&
+        !metrics.cpu_replays && !metrics.journal_bytes && !memcmp(shadow,r->fb,sizeof shadow));
     }else{
       if(r->resident_application_pass) fprintf(stderr,"integer selected-part exclusion: case=%d world=%d\n",excluded,world);
       CHECK(!r->resident_application_pass);
@@ -7200,10 +7213,15 @@ static int resident_endpoint_source_sprite_part(void){
       CHECK(gml_render_scene_submit_pending(r));
       gml_render_texture_page_cache_clear(r,&r->tpag[0]);
       CHECK(!r->tpag[0].scene_endpoint_rgb_checked && !r->tpag[0].scene_endpoint_rgb_mask);
+    }else if(variant!=5u){
+      GmlRenderJournalMetrics metrics={0};
+      CHECK(r->resident_application_pass && !fake.readbacks);
+      CHECK(gml_render_scene_submit_pending(r));
+      gml_render_resource_journal_metrics(gml_render_scene_target_resource_ensure(r),&metrics);
+      CHECK(fake.last_source_count==1u && metrics.authority==GML_RENDER_RESOURCE_GPU_RESIDENT &&
+        !metrics.cpu_replays && !metrics.journal_bytes && !memcmp(shadow,r->fb,sizeof shadow));
     }else{
       CHECK(!r->resident_application_pass);
-      if(variant==6u) CHECK(!r->tpag[0].scene_endpoint_rgb_checked &&
-                            !r->tpag[0].scene_opaque_checked);
     }
     gml_render_free(r);free(r);
   }
@@ -7289,6 +7307,14 @@ static int resident_modern_unit_sprite_part(void){
         !fake.readbacks && !fake.rgb_queries && metrics.authority==GML_RENDER_RESOURCE_GPU_RESIDENT &&
         !metrics.cpu_replays && !metrics.journal_bytes && !metrics.retained_mutable_bytes &&
         !memcmp(shadow,r->fb,sizeof shadow));
+    }else if((excluded>=2u && excluded<=10u) || excluded==12u || excluded==15u ||
+             excluded==17u || excluded==18u || excluded==19u || excluded==20u || excluded==23u){
+      GmlRenderJournalMetrics metrics={0};
+      CHECK(r->resident_application_pass && !fake.readbacks);
+      CHECK(gml_render_scene_submit_pending(r));
+      gml_render_resource_journal_metrics(gml_render_scene_target_resource_ensure(r),&metrics);
+      CHECK(fake.last_source_count==1u && metrics.authority==GML_RENDER_RESOURCE_GPU_RESIDENT &&
+        !metrics.cpu_replays && !metrics.journal_bytes && !memcmp(shadow,r->fb,sizeof shadow));
     }else{
       if(r->resident_application_pass) fprintf(stderr,"modern unit part exclusion: case=%u world=%u\n",excluded,world);
       CHECK(!r->resident_application_pass);

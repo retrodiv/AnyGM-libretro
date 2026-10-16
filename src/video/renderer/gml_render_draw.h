@@ -171,7 +171,9 @@ enum {
   GML_RENDER_QUANTISE_HARDWARE_SPRITE_FIRSTGEN=14u,
   /* Public stretched-sprite logical boxes or hardware magnification, with
    * fixed blending and an independent opaque-written-alpha coverage pass. */
-  GML_RENDER_QUANTISE_FIXED_STRETCHED=15u
+  GML_RENDER_QUANTISE_FIXED_STRETCHED=15u,
+  /* Modern normal filtered sprites retain continuous sampled colour/alpha. */
+  GML_RENDER_QUANTISE_HARDWARE_SPRITE_MODERN=16u
 };
 
 /* Resolved blend semantics, independent of any device API's enumerant values. Zeroed factors

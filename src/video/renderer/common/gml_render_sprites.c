@@ -479,7 +479,7 @@ static int resident_atlas_crop_from_page_impl(GmlRender *r,GmlTpag *page,
    * Settle the same ordered application prefix used by filtered glyphs before
    * the nearest admission gate; never discard a rejected composition intent. */
   int nearest_sprite_underlay=family==GML_RENDER_SCENE_SPRITE &&
-    (physical_sprite_page==15 || physical_sprite_page==16);
+    (physical_sprite_page==15 || physical_sprite_page==16 || physical_sprite_page==18);
   if(r && (family==GML_RENDER_SCENE_TEXT || nearest_sprite_underlay) && r->pending_underlay &&
      (!resident_mapped_screen_gui_font(r) ||
       !gml_render_compose_resident_underlay(r))) return 0;
@@ -544,15 +544,17 @@ static int resident_atlas_crop_from_page_impl(GmlRender *r,GmlTpag *page,
    * trim and mapping once. Whole positive nearest texels and endpoint RGB
    * multiplication stay exact without a predecessor image or float emulation. */
   int integer_sprite_part=physical_sprite_page==5;
+  int sprite_part_function=physical_sprite_page==18;
   int rotated_sprite_function=physical_sprite_page==16;
-  int scaled_sprite=physical_sprite_page==15 || rotated_sprite_function || runtime_function;
+  int scaled_sprite=physical_sprite_page==15 || rotated_sprite_function || runtime_function || sprite_part_function;
   int integer_sprite=physical_sprite_page==7 || scaled_sprite;
   int single_texel_sprite=family==GML_RENDER_SCENE_SPRITE &&
-    (physical_sprite_page==15 || physical_sprite_page==16) &&
+    (physical_sprite_page==15 || physical_sprite_page==16 || sprite_part_function) &&
     page && page->sw==1 && page->sh==1;
   /* Signed unit samples at whole physical anchors select the same texel
    * in the ordinary point writer and Studio's large-axis cache. */
-  int integral_unit_sprite=family==GML_RENDER_SCENE_SPRITE && physical_sprite_page==15 &&
+  int integral_unit_sprite=family==GML_RENDER_SCENE_SPRITE &&
+    (physical_sprite_page==15 || sprite_part_function) &&
     fabs(xs)==1.0 && fabs(ys)==1.0 && isfinite(left) && isfinite(top) &&
     left==floor(left) && top==floor(top);
   int selected_background=physical_sprite_page==9;
@@ -720,7 +722,7 @@ static int resident_atlas_crop_from_page_impl(GmlRender *r,GmlTpag *page,
       * stored sprite dimensions. Runtime replacements may leave them zero
       * or retain older values; the actual atlas crop is still bounded below. */
      (!integer_background && (!physical_sprite_page || family!=GML_RENDER_SCENE_SPRITE ||
-       ((r->classic || r->interp) && physical_sprite_page!=15 && physical_sprite_page!=16)) &&
+       ((r->classic || r->interp) && physical_sprite_page!=15 && physical_sprite_page!=16 && !sprite_part_function)) &&
       (page->tw!=page->sw || page->th!=page->sh)) ||
      crop_x<0 || crop_y<0 || crop_width<=0 || crop_height<=0 ||
      (uint64_t)(uint32_t)crop_x+(uint32_t)crop_width>(uint32_t)page->sw ||
@@ -1116,7 +1118,7 @@ static int resident_atlas_crop_from_page_impl(GmlRender *r,GmlTpag *page,
   operation.payload.quad.v[2]=operation.payload.quad.v[3]=ys<0.0?source_top:source_bottom;
   /* Public rotated text calls the unwrapped CPU glyph writer: its ordinary
    * normal/add/inverse ports do not apply the sprite API's channel wrapper. */
-  state.write_mask=scaled_sprite && family!=GML_RENDER_SCENE_TEXT?r->color_write_mask:15u;
+  state.write_mask=scaled_sprite && family!=GML_RENDER_SCENE_TEXT && !sprite_part_function?r->color_write_mask:15u;
   state.colour=0xFFFFFFFFu;
   state.alpha=255u;
   if(integer_atlas){
@@ -1979,15 +1981,17 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
   int hardware_screen_filtered=modern_screen_filtered || modern_screen_filtered_text;
   /* Ordinary physical-page sprites keep the CPU axis geometry while hardware
    * filtering and fixed blending retain sampled application/surface alpha. */
-  int hardware_physical_sprite=r && nearest_mode==7 && r->interp &&
+  int hardware_physical_part=nearest_mode==8 && part_view;
+  int hardware_physical_sprite=r && (nearest_mode==7 || hardware_physical_part) && r->interp &&
     family==GML_RENDER_SCENE_SPRITE && !rotated_sprite && !corner_colours &&
-    !part_view && !opaque_target_alpha && !transparent_stretched_trim &&
+    (!part_view || hardware_physical_part) && !opaque_target_alpha && !transparent_stretched_trim &&
     !box_stretched && !positioned_axis && !r->fog_flat && xs!=0.0 && ys!=0.0 &&
     fabs(xs)>=0.125 && fabs(xs)<=64.0 && fabs(ys)>=0.125 && fabs(ys)<=64.0 &&
-    anygm_policy_uses_first_generation_studio(r->win) &&
+    (anygm_policy_uses_first_generation_studio(r->win) ||
+     (hardware_physical_part && anygm_policy_has_modern_layer_semantics(r->win))) &&
     r->device.context && r->device.observe_on_demand &&
     r->device.observe_on_demand(r->device.context);
-  if(nearest_mode==7 && !hardware_physical_sprite) return 0;
+  if((nearest_mode==7 || nearest_mode==8) && !hardware_physical_sprite) return 0;
   modern_filtered_identity_maximise=modern_filtered_identity_maximise && hardware_screen_filtered;
   /* R03-SPR-FIRSTGEN-SIGNED-POINT: retain first-generation alpha and edge coverage.
    * Contiguous-white specialisations keep their separate established recipes. */
@@ -2014,7 +2018,7 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
        (filtered_real_text && anygm_policy_has_modern_layer_semantics(r->win)) ||
        ((nearest_mode==3 || nearest_mode==6) &&
         anygm_policy_has_modern_layer_semantics(r->win)) ||
-       ((rotated_sprite || opaque_target_alpha || modern_screen_filtered) &&
+       ((rotated_sprite || opaque_target_alpha || modern_screen_filtered || hardware_physical_sprite) &&
         anygm_policy_has_modern_layer_semantics(r->win))) ||
      (!filtered_real_text && (page_index<0 || page_index>=r->n_tpag)) || r->classic ||
      (r->gui_pass_active && !identity_gui_atlas && !mapped_gui_font &&
@@ -2079,7 +2083,8 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
                           fabs(ys-nearbyint(ys))<1e-9))))) return 0;
   for(int index=0;index<3;index++)
     if(r->classic_interp_phase[index] || r->app_interp_phase[index]) return 0;
-  if((masked_numbered_sprite || hardware_physical_sprite) && !r->color_write_mask) return 1;
+  if((masked_numbered_sprite || (hardware_physical_sprite && !hardware_physical_part)) &&
+     !r->color_write_mask) return 1;
   /* blit_one skips every destination at zero draw alpha. Preserve the queued
    * prefix without a write, shader call or source snapshot in this ordinary state. */
   if(alpha==0.0) return 1;
@@ -2145,7 +2150,7 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
   /* A hardware-interpolated alpha can cross a raw cutout threshold even
    * when its value differs by less than one byte. Only constant endpoint
    * alpha without logical neighbours has a driver-independent decision. */
-  if(hardware_physical_sprite && r->alpha_test_enable &&
+  if(hardware_physical_sprite && !hardware_physical_part && r->alpha_test_enable &&
      (margin_mask || (!page->scene_fully_opaque && page->scene_ax1>=0))) return 0;
   /* The established shader truncates tint; modern opaque CPU pixels round it.
    * Do not admit new exact integer variants with non-endpoint tint channels
@@ -2427,7 +2432,8 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
       ?GML_RENDER_EDGE_LOGICAL_TPAG:GML_RENDER_EDGE_CLAMP_SUBIMAGE);
   operation.payload.quad.sampling.source_region=region;
   operation.payload.quad.sampling.quantisation=hardware_physical_sprite
-    ?GML_RENDER_QUANTISE_HARDWARE_SPRITE_FIRSTGEN:stretched_float
+    ?(hardware_physical_part && !r->blendmode && anygm_policy_has_modern_layer_semantics(r->win)
+      ?GML_RENDER_QUANTISE_HARDWARE_SPRITE_MODERN:GML_RENDER_QUANTISE_HARDWARE_SPRITE_FIRSTGEN):stretched_float
     ?GML_RENDER_QUANTISE_STRETCHED_FLOAT:
     hardware_combined?GML_RENDER_QUANTISE_HARDWARE_COMBINED:
     modern_numbered_sprite?GML_RENDER_QUANTISE_SPRITE_MODERN_NEAREST:0u;
@@ -2601,7 +2607,7 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
         quad->corner_colour[corner]=(draw_alpha<<24)|(quad->corner_colour[corner]&0xFFFFFFu);
     }
   }
-  state.write_mask=masked_numbered_sprite || hardware_physical_sprite?r->color_write_mask:15u;
+  state.write_mask=masked_numbered_sprite || (hardware_physical_sprite && !hardware_physical_part)?r->color_write_mask:15u;
   state.colour=0xFFFFFFFFu;
   state.alpha=255u;
   if((identity_gui_atlas || (mapped_gui_sprite && !opaque_target_alpha) ||
@@ -2631,6 +2637,18 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
       state.rgb_equation=state.alpha_equation=0u;
       state.coverage_policy=r->blendmode==2?GML_RENDER_COVERAGE_REPLACE_ZERO_ALPHA:
         GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA;
+      /* The modern normal filtered CPU leaf replaces RGB but retains its
+       * source-over alpha calculation even when blending is disabled. */
+      if(hardware_physical_part && !r->blendmode &&
+         anygm_policy_has_modern_layer_semantics(r->win) &&
+         gml_render_target_preserves_alpha(r)){
+        state.coverage_policy=0u;
+        state.rgb_source_factor=GML_RENDER_BLEND_ONE;
+        state.rgb_destination_factor=GML_RENDER_BLEND_ZERO;
+        state.alpha_source_factor=GML_RENDER_BLEND_SOURCE_ALPHA;
+        state.alpha_destination_factor=GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA;
+        state.rgb_equation=state.alpha_equation=GML_RENDER_BLEND_ADD;
+      }
     }else if(r->blendmode==2){
       state.rgb_source_factor=GML_RENDER_BLEND_ZERO;
       state.rgb_destination_factor=GML_RENDER_BLEND_ONE_MINUS_SOURCE_COLOUR;
@@ -4272,6 +4290,43 @@ void gml_render_sprite_nineslice(GmlRender *r, GmlSprite *s, GmlTpag *t,
 
 /* R03-SPR-MODERN-UNIT-PART: consume the shared selection and mapping once.
  * Integral clipped texels use natural nearest sampling and endpoint blending. */
+/* R03-SPR-PART-FUNCTION: the public crop already selected the CPU physical
+ * view and mapped anchor. Reuse point/filter executors without pretending
+ * the part is a full authored sprite or rescanning every temporary view. */
+static int resident_sprite_part_function(GmlRender *r,int page_index,const GmlTpag *view,
+  double left,double top,double xs,double ys,uint32_t colour,double alpha){
+  const GmlRenderDeviceServices *device=gml_render_device(r);
+  if(!r || !view || !device || !device->observe_on_demand ||
+     !device->observe_on_demand(device->context) || !r->resident_application_pass ||
+     page_index<0 || page_index>=r->n_tpag || r->active_shader>=0 ||
+     r->fog_flat || gml_d3_is_active(r) || r->blendmode<0 || r->blendmode>2 ||
+     r->blend_equation!=1 || r->blend_equation_alpha!=1 ||
+     !gml_render_scene_target_matches(r)) return 0;
+  /* A filtered CPU alpha can cross even the maximum raw cutoff through
+   * rounding. Preserve that ordered CPU exception, not a float emulator. */
+  if(r->interp && !r->classic && r->alpha_test_enable && r->alpha_test_ref>0) return 0;
+  if(isfinite(alpha) && alpha<=0.0) return 1;
+  GmlTpag *page=&r->tpag[page_index];
+  GmlRenderResourceSource source={0};
+  if(!gml_render_atlas_scene_source_view(r,page->atlas,&source) ||
+     !source.borrowed_immutable || !source.bytes) return 0;
+  resident_classify_page(page,&r->atlas[page->atlas]);
+  GmlTpag selected=*view;
+  selected.project_authored_edges=0;
+  selected.scene_opaque_checked=1;
+  selected.scene_fully_opaque=page->scene_fully_opaque;
+  selected.scene_binary_alpha=page->scene_binary_alpha;
+  /* The CPU part deliberately detaches the parent's pixel-span caches.
+   * Conservative local bounds likewise must describe the crop, not parent. */
+  selected.scene_ax0=selected.scene_ay0=0;
+  selected.scene_ax1=selected.sw-1;selected.scene_ay1=selected.sh-1;
+  if(!r->interp || r->classic)
+    return resident_atlas_crop_from_page(r,&selected,0,0,selected.sw,selected.sh,
+      left,top,xs,ys,GML_RENDER_SCENE_SPRITE,colour,alpha,18,NULL);
+  return resident_filtered_atlas_page(r,page_index,left,top,xs,ys,
+    GML_RENDER_SCENE_SPRITE,colour,alpha,&selected,NULL,0.0,NULL,0,0,0,0,8);
+}
+
 static int resident_modern_unit_sprite_part(GmlRender *r,GmlTpag *page,const GmlTpag *view,
   double sx,double sy,double sw,double sh,double left,double top,double xs,double ys,
   uint32_t colour,double alpha){
@@ -4368,7 +4423,7 @@ void gml_draw_sprite_part_ext(GmlRender *r, int sprite, int subimg, double sx, d
   if(r && r->resident_application_pass &&
      isfinite(alpha) && alpha>0.0 && alpha<=1.0 && sprite>=0 && sprite<r->n_spr &&
      isfinite(sx) && isfinite(sy) && isfinite(sw) && isfinite(sh) &&
-     sx>=0.0 && sy>=0.0 && sw>0.0 && sh>0.0 &&
+     sx>=-(double)INT_MAX && sy>=-(double)INT_MAX && sw>0.0 && sh>0.0 &&
      sx<=(double)INT_MAX && sy<=(double)INT_MAX &&
      sw<=(double)INT_MAX && sh<=(double)INT_MAX &&
      !gml_d3_is_active(r)){
@@ -4382,8 +4437,12 @@ void gml_draw_sprite_part_ext(GmlRender *r, int sprite, int subimg, double sx, d
         GmlTpag *page=&r->tpag[page_index],view;
         int source_x=0,source_y=0;
         double overlap_x0=0.0,overlap_y0=0.0,overlap_x1=0.0,overlap_y1=0.0;
+        /* The CPU part selector returns before sampling for a disjoint source.
+         * Preserve the resident prefix rather than entering its CPU barrier. */
+        if(r->active_shader<0 && page->sw>0 && page->sh>0 && page->tx>=0 && page->ty>=0 &&
+           (sx>=(double)page->tx+page->sw || sy>=(double)page->ty+page->sh ||
+            sx+sw<=(double)page->tx || sy+sh<=(double)page->ty)) return;
         if(page->sw>0 && page->sh>0 && page->tx>=0 && page->ty>=0 &&
-           page->tw==page->sw && page->th==page->sh &&
            page->bw==resident_sprite->w && page->bh==resident_sprite->h &&
            page->bw>0 && page->bh>0 &&
            (uint64_t)(uint32_t)page->tx+(uint32_t)page->sw<=(uint32_t)page->bw &&
@@ -4420,6 +4479,8 @@ void gml_draw_sprite_part_ext(GmlRender *r, int sprite, int subimg, double sx, d
              resident_atlas_crop_from_page(r,page,view.sx-page->sx,view.sy-page->sy,
                view.sw,view.sh,left,top,draw_xscale,draw_yscale,
                GML_RENDER_SCENE_SPRITE,blend,alpha,5,NULL)) return;
+          if(resident_sprite_part_function(r,page_index,&view,left,top,
+               mapped_xs,mapped_ys,blend,alpha)) return;
           /* R03-SPR-PART-OFFSCREEN-NOOP: the shared physical selection also
            * bounds single-column/row crops. A whole-pixel separation from the
            * target cannot write through the unchanged positive-unit CPU leaf. */
