@@ -6,6 +6,7 @@
 #include "gml_render_internal.h"
 #include "gml_render_sprites_internal.h"
 #include "gml_render_surfaces_internal.h"
+#include "gml_render_shaders.h"
 #include "gml_render_cpu_blit.h"
 #include "gml_software3d.h"
 #include "anygm_host.h"
@@ -19,6 +20,10 @@
 static int resident_filtered_sprite(GmlRender *r,GmlSprite *sprite,int subimg,
                                     double x,double y,double xs,double ys,double rotation,
                                     uint32_t blend,double alpha);
+
+static int resident_sprite_program_blocks(const GmlRender *r){
+  return !r || (r->active_shader>=0 && !gml_render_shader_cpu_passthrough(r));
+}
 
 static int resident_first_generation_rotated_point(GmlRender *r,double rotation){
   if(!r || r->classic || !isfinite(rotation) ||
@@ -208,7 +213,7 @@ static int resident_zero_scale_sprite_noop(GmlRender *r,const GmlSprite *sprite,
    * Special source/program preparation keeps its existing ordered owner. */
   return r && sprite && isfinite(xs) && isfinite(ys) && isfinite(rotation) &&
     (xs==0.0 || ys==0.0) && !sprite->spine && !sprite->ns_enabled &&
-    r->active_shader<0 && !gml_d3_is_active(r);
+    !resident_sprite_program_blocks(r) && !gml_d3_is_active(r);
 }
 
 /* R03-SPR-OUTSIDE-FUNCTION: metadata-only empty coverage preserves the prefix. */
@@ -216,7 +221,7 @@ static int resident_outside_sprite_noop(GmlRender *r,GmlSprite *sprite,int subim
                                        double x,double y,double xs,double ys,double rotation){
   if(!r || !r->resident_application_pass || !sprite || sprite->runtime_rgba ||
      sprite->spine || sprite->ns_enabled || sprite->n_frames<=0 || !sprite->frame ||
-     r->active_shader>=0 || gml_d3_is_active(r) || r->classic_phase_y ||
+     resident_sprite_program_blocks(r) || gml_d3_is_active(r) || r->classic_phase_y ||
      r->rotated_batch_count || r->rotated_batch_building ||
      r->pending_underlay || r->pending_presentation ||
      !gml_render_scene_target_matches(r)) return 0;
@@ -243,7 +248,7 @@ static int resident_classic_rotated_sprite_noop(GmlRender *r,GmlSprite *sprite,i
      sprite->runtime_rgba || sprite->spine || sprite->ns_enabled ||
      sprite->n_frames<=0 || !sprite->frame || sprite->w<=0 || sprite->h<=0 ||
      r->interp || r->gui_pass_active || r->fog_flat || gml_d3_is_active(r) ||
-     r->active_shader>=0 || r->alpha_test_enable || !r->alphablend || r->blendmode ||
+     resident_sprite_program_blocks(r) || r->alpha_test_enable || !r->alphablend || r->blendmode ||
      r->blend_equation!=1 || r->blend_equation_alpha!=1 || r->color_write_mask!=15u ||
      r->classic_phase_y || r->rotated_batch_count || r->rotated_batch_building ||
      r->pending_underlay || r->pending_presentation ||
@@ -294,7 +299,7 @@ static int resident_integer_sprite(GmlRender *r,GmlSprite *sprite,int subimg,
                      (r->world_transform_active &&
                       (r->world_scale_x!=1.0 || r->world_scale_y!=1.0)))) ||
      (r->gui_pass_active && !normal_integer && !resident_identity_screen_gui(r)) ||
-     r->active_shader>=0 || (r->alpha_test_enable && !normal_integer) ||
+     resident_sprite_program_blocks(r) || (r->alpha_test_enable && !normal_integer) ||
      (!r->alphablend && !normal_integer) ||
      (r->blendmode && !replace && !normal_integer) || r->blend_equation!=1 || r->blend_equation_alpha!=1 ||
      r->color_write_mask!=0x0Fu || r->classic_phase_y ||
@@ -695,7 +700,8 @@ static int resident_atlas_crop_from_page_impl(GmlRender *r,GmlTpag *page,
      (r->gui_pass_active && !integer_atlas &&
       ((family!=GML_RENDER_SCENE_SPRITE && !gui_crop) ||
        !resident_identity_screen_gui(r))) ||
-     r->active_shader>=0 || (r->alpha_test_enable && !integer_atlas) ||
+     (family==GML_RENDER_SCENE_SPRITE?resident_sprite_program_blocks(r):r->active_shader>=0) ||
+     (r->alpha_test_enable && !integer_atlas) ||
      (!r->alphablend && !integer_atlas) ||
      (r->blendmode && !replace && !(integer_atlas && r->blendmode==2) &&
       !(scaled_sprite && r->blendmode==1)) || r->blend_equation!=1 ||
@@ -1241,7 +1247,7 @@ static int resident_runtime_unit_sprite(GmlRender *r,GmlSprite *sprite,int subim
   if(!r || !r->classic || !r->resident_application_pass || !sprite ||
      !sprite->runtime_rgba || !sprite->runtime_scene_binary ||
      sprite->spine || sprite->ns_enabled || r->interp || r->gui_pass_active ||
-     r->fog_flat || gml_d3_is_active(r) || r->active_shader>=0 ||
+     r->fog_flat || gml_d3_is_active(r) || resident_sprite_program_blocks(r) ||
      r->alpha_test_enable || !r->alphablend || r->blendmode ||
      r->blend_equation!=1 || r->blend_equation_alpha!=1 || r->color_write_mask!=15u ||
      r->classic_phase_y || r->rotated_batch_count || r->rotated_batch_building ||
@@ -2024,7 +2030,10 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
      (r->gui_pass_active && !identity_gui_atlas && !mapped_gui_font &&
       !mapped_gui_sprite && !mapped_gui_rotation && !modern_filtered_identity_maximise &&
       !hardware_physical_sprite) ||
-     r->active_shader>=0 || (r->alpha_test_enable && !hardware_physical_sprite) ||
+     (r->active_shader>=0 &&
+      (family!=GML_RENDER_SCENE_SPRITE || resident_sprite_program_blocks(r) ||
+       (!hardware_physical_sprite && !nearest_mode))) ||
+     (r->alpha_test_enable && !hardware_physical_sprite) ||
      (!r->alphablend && !hardware_physical_sprite) ||
      (r->blendmode && !additive_background &&
       !(hardware_physical_sprite && r->blendmode>=0 && r->blendmode<=2)) ||
@@ -2789,7 +2798,7 @@ static int resident_modern_screen_binary_rotation(GmlRender *r,GmlSprite *sprite
      !r->resident_application_pass || r->target_id>=0 || r->target_sp || r->classic || r->interp ||
      !anygm_policy_has_modern_layer_semantics(r->win) || gml_render_target_preserves_alpha(r) ||
      alpha!=1.0 || (colour&0xFFFFFFu)!=0xFFFFFFu ||
-     r->fog_flat || r->gui_pass_active || r->active_shader>=0 || r->alpha_test_enable ||
+     r->fog_flat || r->gui_pass_active || resident_sprite_program_blocks(r) || r->alpha_test_enable ||
      !r->alphablend || r->blendmode || r->blend_equation!=1 || r->blend_equation_alpha!=1 ||
      r->color_write_mask!=15u || r->classic_phase_y || r->rotated_batch_count ||
      r->rotated_batch_building || r->pending_underlay || r->pending_presentation ||
@@ -2870,7 +2879,7 @@ static int resident_modern_nearest_rotation(GmlRender *r,GmlSprite *sprite,GmlTp
      (screen_axis && (r->classic || alpha<1.0/255.0 || page->sw>4096 || page->sh>4096)) ||
      !anygm_policy_has_modern_layer_semantics(r->win) ||
      (!screen_axis && !gml_render_target_preserves_alpha(r)) ||
-     r->fog_flat || r->gui_pass_active || r->active_shader>=0 || r->alpha_test_enable ||
+     r->fog_flat || r->gui_pass_active || resident_sprite_program_blocks(r) || r->alpha_test_enable ||
      !r->alphablend || r->blendmode || r->blend_equation!=1 || r->blend_equation_alpha!=1 ||
      fabs(rotation)>1000000.0 ||
      r->color_write_mask!=15u || r->classic_phase_y || r->rotated_batch_count ||
@@ -2983,7 +2992,8 @@ static int resident_nearest_texture_function(GmlRender *r,GmlSprite *sprite,GmlT
     resident_first_generation_rotated_point(r,rotation);
   if(!r || !sprite || !page || !r->resident_application_pass ||
      (r->interp && !r->classic && !studio_rotated_point) ||
-     r->active_shader>=0 || r->fog_flat || gml_d3_is_active(r) ||
+     (family==GML_RENDER_SCENE_SPRITE?resident_sprite_program_blocks(r):r->active_shader>=0) ||
+     r->fog_flat || gml_d3_is_active(r) ||
      r->color_write_mask>15u || r->blendmode<0 || r->blendmode>2 ||
      r->blend_equation!=1 || r->blend_equation_alpha!=1 ||
      r->classic_phase_y || r->rotated_batch_count || r->rotated_batch_building ||
@@ -3200,7 +3210,7 @@ static int resident_nearest_sprite_function(GmlRender *r,GmlSprite *sprite,int s
     if(!r->resident_application_pass || sprite->spine || sprite->ns_enabled ||
        (sprite->runtime_opaque && !sprite->runtime_scene_binary) ||
        (r->interp && anygm_policy_has_modern_layer_semantics(r->win)) ||
-       r->active_shader>=0 || r->fog_flat ||
+       resident_sprite_program_blocks(r) || r->fog_flat ||
        gml_d3_is_active(r) || r->blendmode<0 || r->blendmode>2 ||
        r->blend_equation!=1 || r->blend_equation_alpha!=1 ||
        r->classic_phase_y || r->rotated_batch_count || r->rotated_batch_building ||
@@ -3397,7 +3407,7 @@ int gml_render_resident_masked_sprite(GmlRender *r,int sprite,int subimg,
     return 0;
   /* Match the unmasked public no-write boundary before the CPU wrapper would
    * prepare a masked destination. No sampling or source demand is needed. */
-  if(isfinite(alpha) && alpha<=0.0 && r->active_shader<0 &&
+  if(isfinite(alpha) && alpha<=0.0 && !resident_sprite_program_blocks(r) &&
      !r->spr[sprite].spine && !r->spr[sprite].ns_enabled && !gml_d3_is_active(r) &&
      !(r->alphablend && (r->blendmode==6 || gml_render_blend_uses_destination_colour(r->blendmode))) &&
      gml_render_scene_target_matches(r)) return 1;
@@ -3441,7 +3451,7 @@ void gml_render_sprite_ext_unmasked(GmlRender *r, int sprite, int subimg, double
        r->alphablend && r->blendmode==1 &&
        r->blend_equation==1 && r->blend_equation_alpha==1 &&
        r->color_write_mask==15u && !r->fog_flat && !r->alpha_test_enable &&
-       r->active_shader<0 && !r->classic_phase_y &&
+       !resident_sprite_program_blocks(r) && !r->classic_phase_y &&
        !r->classic_interp_phase[0] && !r->classic_interp_phase[1] &&
        !r->classic_interp_phase[2] && !r->app_interp_phase[0] &&
        !r->app_interp_phase[1] && !r->app_interp_phase[2] &&
@@ -3462,7 +3472,7 @@ void gml_render_sprite_ext_unmasked(GmlRender *r, int sprite, int subimg, double
        !(r->alphablend && (r->blendmode==6 ||
                           gml_render_blend_uses_destination_colour(r->blendmode))) &&
        sprite>=0 && sprite<r->n_spr &&
-       r->active_shader<0 &&
+       !resident_sprite_program_blocks(r) &&
        !r->spr[sprite].spine && !r->spr[sprite].ns_enabled &&
        !gml_d3_is_active(r) && gml_render_scene_target_matches(r))
       return;
@@ -3471,7 +3481,7 @@ void gml_render_sprite_ext_unmasked(GmlRender *r, int sprite, int subimg, double
      * phase and retain their qualified packet/batching preference.
      * Keep the authored rotation for CPU fallback and special sources. */
     if(r->interp && !r->classic && sprite>=0 && sprite<r->n_spr && rot!=0.0 && isfinite(rot) &&
-       r->active_shader<0 && !r->spr[sprite].runtime_rgba &&
+       !resident_sprite_program_blocks(r) && !r->spr[sprite].runtime_rgba &&
        !r->spr[sprite].spine && !r->spr[sprite].ns_enabled && !gml_d3_is_active(r)){
       double phase=fmod(rot,360.0);if(phase<0.0) phase+=360.0;
       if(phase<0.001 || fabs(phase-360.0)<0.001){

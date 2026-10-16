@@ -46,6 +46,7 @@ REQUIRED_RULES = {
     "R03-SPR-AXIS-TURN",
     "R03-SPR-FILTERED-EDGE-NOOP",
     "R03-SPR-PHYSICAL-FILTERED",
+    "R03-SPR-CPU-PASSTHROUGH",
     "R03-P9-GUI-MAPPED-SPRITE", "R03-P9-STRETCHED-COVERED-ALPHA",
     "R03-SPR-GUI-MAPPED-STRETCH",
     "R03-SPR-BLACK-ADDITIVE-NOOP",
@@ -199,6 +200,7 @@ DISPATCH_ADDITIONAL = {
     "gml_software3d_vertex_submit_buffer", "gml_software3d_model_draw",
 }
 DISPATCH_HELPERS = {
+    "resident_sprite_program_blocks",
     "resident_zero_scale_sprite_noop",
     "resident_outside_sprite_noop", "gml_render_resident_sprite_outside",
     "resident_flat_eligible_rule", "resident_flat_eligible", "resident_line_bounds",

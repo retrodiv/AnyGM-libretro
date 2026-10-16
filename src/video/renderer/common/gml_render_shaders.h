@@ -17,6 +17,10 @@ int gml_render_shader_plan_snapshot(const GmlRender *render,int shader_id,
 int gml_render_shader_threshold_palette_snapshot(const GmlRender *render,int shader_id,
                                                 GmlPlanShader *out);
 
+/* Whether the selected program reaches the CPU's unchanged ordinary draw.
+ * This is not evidence that the authored program itself has no effect. */
+int gml_render_shader_cpu_passthrough(const GmlRender *render);
+
 /* Emit the existing optional per-shader accounting during renderer teardown. */
 void gml_render_shader_account_report(GmlRender *render);
 

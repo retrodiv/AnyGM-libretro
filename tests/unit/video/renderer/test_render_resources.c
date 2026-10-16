@@ -12849,6 +12849,78 @@ static int resident_integer_sprite_function(void){return resident_sprite_functio
 static int resident_nearest_sprite_function(void){return resident_sprite_function(1);}
 static int resident_first_generation_rotated_point_sprite_function(void){return resident_sprite_function(2);}
 
+static int passthrough_scope_executor(void *context,const GmlRenderShaderRequest *request){
+  (void)context;(void)request;return 0;
+}
+
+/* Admission/authority only; real paired controls own pixels and shader policy. */
+static int resident_cpu_passthrough_sprite_scope(void){
+  enum { W=24,H=20 };
+  const int generations[]={530,700,800,13,15,17};
+  for(unsigned generation=0;generation<6u;generation++)
+  for(unsigned kind=0;kind<4u;kind++) for(unsigned interpolation=0;interpolation<2u;interpolation++)
+  for(unsigned mask=0;mask<2u;mask++) for(unsigned program=0;program<21u;program++){
+    if(program && !mask) continue;
+    GmlRender *r=calloc(1,sizeof *r);GmlWin content={0};
+    FakeDevice fake={.on_demand=1};GmlRenderDeviceServices device=service(&fake);
+    uint32_t screen[W*H]={0},shadow[W*H];
+    CHECK(r && !gml_render_init(r,NULL));
+    content.classic_version=generations[generation]>100?generations[generation]:0;
+    content.bytecode=content.classic_version?0:generations[generation];
+    r->win=&content;r->classic=content.classic_version!=0;
+    const uint8_t rgba[]={208,32,16,255,16,208,32,0,32,16,208,128,192,176,160,64};
+    free(r->atlas[0].px);r->atlas[0].px=malloc(sizeof rgba);
+    r->tpag=calloc(1,sizeof *r->tpag);r->spr=calloc(1,sizeof *r->spr);
+    r->shader_pal=calloc(1,sizeof *r->shader_pal);
+    CHECK(r->atlas[0].px && r->tpag && r->spr && r->shader_pal);
+    memcpy(r->atlas[0].px,rgba,sizeof rgba);r->atlas[0].w=r->atlas[0].h=2;
+    r->n_spr=r->n_tpag=r->n_shader_pal=1;
+    r->tpag[0]=(GmlTpag){.sw=2,.sh=2,.tw=2,.th=2,.bw=4,.bh=4,.tx=1,.ty=1};
+    r->spr[0]=(GmlSprite){.w=4,.h=4,.originx=2,.originy=2,.n_frames=1};
+    r->spr[0].frame=calloc(1,sizeof(int));CHECK(r->spr[0].frame);
+    device.observe_on_demand=fake_observe_on_demand;gml_render_bind_device(r,&device);
+    if(kind==1u || kind==2u){
+      CHECK(gml_render_application_surface_ensure_owned(r,W,H));
+      CHECK(gml_render_begin_resident_owned_application(r,0,0,0));
+    }else{
+      gml_render_application_surface_bind(r,screen,W,H,1);
+      CHECK(gml_render_begin_resident_base(r,screen,W,H,0,0));
+    }
+    if(kind==2u) CHECK(gml_surface_set_target(r,0));
+    if(kind==3u){int id=gml_surface_create(r,W,H);CHECK(id>0 && gml_surface_set_target(r,id));}
+    gml_render_set_pending_fill(r,0x40273859u);gml_render_flush_pending_fill(r);
+    CHECK(gml_render_scene_submit_pending(r));
+    r->active_shader=program==20u?1:0;r->interp=(int)interpolation;r->color_write_mask=mask?5u:15u;
+    struct GmlShaderPal *p=&r->shader_pal[0];
+    int *effects[]={&p->threshold_palette,&p->indexed_brightness,&p->channel_mask,&p->channel_alpha_key,
+      &p->alpha_discard,&p->ordered_dither,&p->quantise4,&p->solid_alpha_mask,&p->solid_blur_alpha,
+      &p->lut,&p->lut_indexed,&p->grid,&p->dual_sample,&p->radial_wave,&p->uv_wave_mode,
+      &p->grayscale,&p->vertex_colour_blend,&p->vertex_colour_blend_alpha_only};
+    if(program>0u && program<=18u) *effects[program-1u]=1;
+    if(program==19u){
+      p->source_vertex_es="attribute vec3 in_Position;void main(){gl_Position=vec4(in_Position,1.0);}";
+      p->source_fragment_es="precision mediump float;void main(){gl_FragColor=vec4(1.0);}";
+      gml_render_set_shader_executor(r,passthrough_scope_executor,NULL);
+    }
+    memcpy(shadow,r->fb,sizeof shadow);int submitted=fake.submits;
+    int refused=program || (interpolation && generation==5u);
+    if(refused){
+      /* Test the actual masked entry,not its full-mask early refusal. */
+      r->color_write_mask=5u;
+      CHECK(!gml_render_resident_masked_sprite(r,0,0,12,10,1,1,0,0xFFFFFFu,0.4));
+      CHECK(r->resident_application_pass && fake.submits==submitted);
+    }else{
+      for(unsigned draw=0;draw<8u;draw++) gml_draw_sprite_ext(r,0,0,12,10,1,1,0,0xFFFFFFu,0.4);
+      CHECK(r->resident_application_pass && gml_render_scene_submit_pending(r));
+      CHECK(fake.submits==submitted+1 && fake.last_batch_operations>=8u);
+    }
+    CHECK(r->active_shader==(program==20u?1:0) && r->interp==(int)interpolation &&
+      !fake.readbacks && !fake.rgb_queries && !memcmp(shadow,r->fb,sizeof shadow));
+    gml_render_abandon_device(r);gml_render_free(r);free(r);
+  }
+  return 1;
+}
+
 /* Authority and transport only; the paired device generator owns D2 pixels. */
 static int resident_physical_filtered_sprite_function_impl(int matched){
   enum { W=24,H=20,A=6 };
@@ -14673,6 +14745,7 @@ int main(void){
   passed+=resident_first_generation_rotated_point_sprite_function();
   passed+=resident_physical_filtered_sprite_function();
   passed+=resident_matched_filtered_sprite_function();
+  passed+=resident_cpu_passthrough_sprite_scope();
   passed+=resident_classic_large_point_sprite_function();
   passed+=resident_integer_background_function();
   passed+=resident_fractional_background_function();
@@ -14730,6 +14803,6 @@ int main(void){
   passed+=source_free_primitive_rect_replay();
   passed+=stretched_float_exact_replay();
   passed+=filtered_font_exact_recovery();
-  printf("render resource cases: passed=%d failed=%d\n",passed,216-passed);
-  return passed==216?EXIT_SUCCESS:EXIT_FAILURE;
+  printf("render resource cases: passed=%d failed=%d\n",passed,217-passed);
+  return passed==217?EXIT_SUCCESS:EXIT_FAILURE;
 }

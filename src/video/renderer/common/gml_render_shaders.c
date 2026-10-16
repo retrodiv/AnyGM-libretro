@@ -52,6 +52,18 @@ static int shader_pal_recognized(const struct GmlShaderPal *p){
          p->dual_sample || p->radial_wave || p->uv_wave_mode || p->grayscale;
 }
 
+int gml_render_shader_cpu_passthrough(const GmlRender *r){
+  if(!r || r->active_shader<0 || r->active_shader>=r->n_shader_pal || !r->shader_pal)
+    return 0;
+  const struct GmlShaderPal *p=&r->shader_pal[r->active_shader];
+  if(shader_pal_recognized(p) || p->vertex_colour_blend || p->vertex_colour_blend_alpha_only)
+    return 0;
+  /* Ordinary CPU draws use the source unchanged when no software family or
+   * applicable external executor owns the program. Preserve that policy,
+   * without compiling the content or changing its readable selection. */
+  return !r->shader_executor || !gml_render_shader_content_candidate(r,r->active_shader);
+}
+
 int gml_render_shader_is_compiled(const GmlRender *r,int shader){
   if(!r || shader<0 || shader>=r->n_shader_pal || !r->shader_pal) return 0;
   if(r->shader_pal[shader].gpu_failed) return 0;
