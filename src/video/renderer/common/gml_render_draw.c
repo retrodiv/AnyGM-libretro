@@ -322,12 +322,24 @@ int gml_render_rectangle_valid(const GmlRenderDrawOp *operation){
        (int64_t)p->authored_region.x+p->authored_region.width ||
      (int64_t)p->region.y+p->region.height>
        (int64_t)p->authored_region.y+p->authored_region.height ||
-     (p->rectangle_flags&~255u) || p->alpha_blend>1u || p->interpolate ||
+     (p->rectangle_flags&~511u) || p->alpha_blend>1u || p->interpolate ||
      !isfinite(p->alpha) || p->alpha<0.0 || p->alpha>1.0) return 0;
+  if(p->rectangle_flags&GML_RENDER_RECTANGLE_PIXEL_SPAN){
+    if(p->pixel_write_mask>15u || !(p->rectangle_flags&GML_RENDER_RECTANGLE_OUTLINE) ||
+       (p->rectangle_flags&GML_RENDER_RECTANGLE_GRADIENT) ||
+       (p->region.width!=1u && p->region.height!=1u) ||
+       p->region.x!=p->authored_region.x || p->region.y!=p->authored_region.y ||
+       p->region.width!=p->authored_region.width || p->region.height!=p->authored_region.height ||
+       p->corner_colour[0]!=p->corner_colour[1] || p->corner_colour[0]!=p->corner_colour[2] ||
+       p->corner_colour[0]!=p->corner_colour[3]) return 0;
+  }else if(p->pixel_write_mask) return 0;
   unsigned blend=(p->rectangle_flags&GML_RENDER_RECTANGLE_BLEND_MASK)>>
                  GML_RENDER_RECTANGLE_BLEND_SHIFT;
   if(blend>GML_RENDER_BLEND_DEST_ALPHA_DEST_COLOUR || blend==3u || blend==6u ||
      (p->alpha==0.0 && (!p->alpha_blend || !gml_render_blend_uses_destination_colour((int)blend)))) return 0;
+  if((p->rectangle_flags&GML_RENDER_RECTANGLE_PIXEL_SPAN) && p->pixel_write_mask!=15u &&
+     (!p->alpha_blend || (blend!=4u && blend!=7u && blend!=8u &&
+                         !gml_render_blend_uses_destination_colour((int)blend)))) return 0;
   for(unsigned corner=0;corner<4u;corner++)
     if((p->corner_colour[corner]>>24)!=255u) return 0;
   int gradient=!(p->rectangle_flags&GML_RENDER_RECTANGLE_OUTLINE) &&

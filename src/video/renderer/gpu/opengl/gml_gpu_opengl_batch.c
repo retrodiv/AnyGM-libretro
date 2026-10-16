@@ -1960,8 +1960,12 @@ GmlRenderExecutionResult gml_gpu_opengl_scene_submit(GmlGpuBackend *backend,
        GML_RENDER_RECTANGLE_BLEND_SHIFT:0u;
     int additive_bytes=rectangle && rectangle_blend==1u &&
       op->payload.primitive.alpha_blend &&
-      !(op->payload.primitive.rectangle_flags&
-        (GML_RENDER_RECTANGLE_OUTLINE|GML_RENDER_RECTANGLE_GRADIENT));
+      (!(op->payload.primitive.rectangle_flags&
+         (GML_RENDER_RECTANGLE_OUTLINE|GML_RENDER_RECTANGLE_GRADIENT)) ||
+       (op->payload.primitive.rectangle_flags&GML_RENDER_RECTANGLE_PIXEL_SPAN));
+    uint32_t primitive_write_mask=rectangle &&
+      (op->payload.primitive.rectangle_flags&GML_RENDER_RECTANGLE_PIXEL_SPAN)?
+      op->payload.primitive.pixel_write_mask:15u;
     int alpha_rect=inverse_rect || studio_alpha_rect || (op->opcode==GML_RENDER_OP_COLOURED_PRIMITIVE &&
       op->payload.primitive.kind==GML_RENDER_PRIMITIVE_CLASSIC_ALPHA_RECT);
     uint32_t primitive_filter=rectangle?
@@ -1981,7 +1985,8 @@ GmlRenderExecutionResult gml_gpu_opengl_scene_submit(GmlGpuBackend *backend,
     if(pending_count && (particle || alpha_rect || rectangle
        ? !active_target || !same_logical(active_target->ref,op->target.image) ||
          pending_count==GL_SCENE_MAX_QUADS || pending_filter!=primitive_filter ||
-         pending_blend!=primitive_blend || pending_alpha_test!=-1
+         pending_blend!=primitive_blend || pending_alpha_test!=-1 ||
+         pending_write_mask!=primitive_write_mask
        : (op->opcode!=GML_RENDER_OP_TEXTURED_QUAD ||
        !active_target || !same_logical(active_target->ref,op->target.image) ||
        pending_count==GL_SCENE_MAX_QUADS ||
@@ -2075,7 +2080,7 @@ GmlRenderExecutionResult gml_gpu_opengl_scene_submit(GmlGpuBackend *backend,
         }
         pending_source=NULL; pending_filter=primitive_filter; pending_blend=primitive_blend;
         pending_alpha_test=-1;
-        if(alpha_rect || rectangle) pending_write_mask=15u;
+        if(alpha_rect || rectangle) pending_write_mask=primitive_write_mask;
         pending_count++;
         target->valid=1; target->rendered_origin=1;
         continue;

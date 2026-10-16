@@ -316,7 +316,7 @@ typedef struct GmlRenderPrimitiveRect {
   /* Rectangle colours stay in authored space after clipping. These resolved
    * submission fields are transient; canonical state stores the actual image. */
   GmlRenderRect authored_region;
-  uint32_t corner_colour[4],rectangle_flags;
+  uint32_t corner_colour[4],rectangle_flags,pixel_write_mask;
 } GmlRenderPrimitiveRect;
 
 enum { GML_RENDER_PRIMITIVE_FLAT=0, GML_RENDER_PRIMITIVE_PARTICLE_LINE=1,
@@ -327,7 +327,8 @@ enum { GML_RENDER_PRIMITIVE_FLAT=0, GML_RENDER_PRIMITIVE_PARTICLE_LINE=1,
 
 enum { GML_RENDER_RECTANGLE_OUTLINE=1u, GML_RENDER_RECTANGLE_CLASSIC=2u,
        GML_RENDER_RECTANGLE_TARGET_ALPHA=4u, GML_RENDER_RECTANGLE_GRADIENT=8u,
-       GML_RENDER_RECTANGLE_BLEND_SHIFT=4u, GML_RENDER_RECTANGLE_BLEND_MASK=240u };
+       GML_RENDER_RECTANGLE_BLEND_SHIFT=4u, GML_RENDER_RECTANGLE_BLEND_MASK=240u,
+       GML_RENDER_RECTANGLE_PIXEL_SPAN=256u };
 
 typedef enum GmlRenderLayerEffectKind {
   GML_RENDER_LAYER_EFFECT_TINT=1,

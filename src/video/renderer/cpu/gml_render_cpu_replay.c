@@ -325,13 +325,18 @@ int gml_render_cpu_replay_one(uint32_t *target,uint32_t width,uint32_t height,
       render->blendmode=(int)((p->rectangle_flags&GML_RENDER_RECTANGLE_BLEND_MASK)>>
                               GML_RENDER_RECTANGLE_BLEND_SHIFT);
       render->blend_equation=render->blend_equation_alpha=1;
-      render->alpha=p->alpha; render->color_write_mask=15u;
+      render->alpha=p->alpha;
+      render->color_write_mask=(p->rectangle_flags&GML_RENDER_RECTANGLE_PIXEL_SPAN)?
+        p->pixel_write_mask:15u;
       uint32_t colours[4];
       for(unsigned c=0;c<4u;c++){
         uint32_t xrgb=p->corner_colour[c];
         colours[c]=((xrgb&255u)<<16)|(xrgb&0xFF00u)|((xrgb>>16)&255u);
       }
-      gml_render_cpu_rectangle_color(render,p->authored_region.x,p->authored_region.y,
+      if(p->rectangle_flags&GML_RENDER_RECTANGLE_PIXEL_SPAN){
+        for(uint32_t y=0;y<p->region.height;y++) for(uint32_t x=0;x<p->region.width;x++)
+          gml_render_cpu_backend_draw_pixel(render,p->region.x+(int)x,p->region.y+(int)y,colours[0]);
+      }else gml_render_cpu_rectangle_color(render,p->authored_region.x,p->authored_region.y,
         p->authored_region.x+(int)p->authored_region.width-1,
         p->authored_region.y+(int)p->authored_region.height-1,
         colours[0],colours[1],colours[2],colours[3],

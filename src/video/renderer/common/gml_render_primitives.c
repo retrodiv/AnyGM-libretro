@@ -250,17 +250,21 @@ static int resident_studio_alpha_rect(GmlRender *render,int x1,int y1,int x2,int
  * Keep the cheaper qualified flat paths, and batch ordinary rectangle presets
  * without a predecessor snapshot or CPU pixel transfer. Raw cutout does not
  * participate in these unchanged CPU rectangle writers. */
-static int resident_rectangle_state_eligible(GmlRender *r){
+static int resident_primitive_state_eligible(GmlRender *r){
   const GmlRenderDeviceServices *device=gml_render_device(r);
   if(!r || !r->resident_application_pass || !device || !device->observe_on_demand ||
      !device->observe_on_demand(device->context) || !gml_render_scene_target_matches(r) ||
      r->active_shader>=0 || r->blendmode<0 ||
      r->blendmode>GML_RENDER_BLEND_DEST_ALPHA_DEST_COLOUR || r->blend_equation!=1 ||
-     r->blend_equation_alpha!=1 || r->color_write_mask!=15u ||
+     r->blend_equation_alpha!=1 || r->color_write_mask>15u ||
      r->pending_presentation || r->rotated_batch_count || r->rotated_batch_building ||
      r->classic_phase_y || r->classic_interp_phase[0] ||
      r->classic_interp_phase[1] || r->classic_interp_phase[2] || !isfinite(r->alpha)) return 0;
   return 1;
+}
+
+static int resident_rectangle_state_eligible(GmlRender *r){
+  return resident_primitive_state_eligible(r) && r->color_write_mask==15u;
 }
 
 /* Filled line boxes use this same CPU rectangle policy, including target alpha. */
@@ -702,6 +706,123 @@ line_done:
   return result;
 }
 
+static int compare_circle_pixel(const void *left,const void *right){
+  uint32_t a=*(const uint32_t*)left,b=*(const uint32_t*)right;
+  return (a>b)-(a<b);
+}
+
+/* R03-PRIM-CIRCLE-FUNCTION: share the CPU polygon and segment coverage, not its
+ * framebuffer. Thin rectangles select the pixel writer's alpha policy. Keep
+ * repeated outline pixels in order, including coincident polygon vertices. */
+static int resident_circle_function(GmlRender *r,double cx,double cy,double rx,double ry,
+                                    uint32_t inner,uint32_t outer,int outline){
+  if(!resident_primitive_state_eligible(r) ||
+     !isfinite(cx) || !isfinite(cy) || !isfinite(rx) || !isfinite(ry) ||
+     cx-fabs(rx)<-32766.0 || cy-fabs(ry)<-32766.0 ||
+     cx+fabs(rx)>32766.0 || cy+fabs(ry)>32766.0 ||
+     r->app_interp_phase[0] || r->app_interp_phase[1] || r->app_interp_phase[2]) return 0;
+  if(rx<0.0 || ry<0.0) return 1;
+  double alpha=fmax(0.0,fmin(1.0,r->alpha));
+  int destination=r->alphablend && gml_render_blend_uses_destination_colour(r->blendmode);
+  if(alpha<=0.0 && !destination) return 1;
+  int point=rx==0.0 || ry==0.0;
+  /* Outlines call the existing one-pixel filled-rectangle line walker. Its
+   * ordinary/additive alpha differs from the filled circle's pixel writer. */
+  int flat_outline=outline && !point &&
+    (!r->blendmode || (r->alphablend && r->blendmode==1));
+  if(flat_outline && r->alphablend && !r->blendmode && !r->classic && alpha<1.0/256.0) return 1;
+  /* The nonuniform filled fan retains its separate CPU rounding debt. */
+  if(!outline && !point && inner!=outer) return 0;
+  unsigned blend=(unsigned)r->blendmode;
+  if(blend==3u || blend==6u) blend=2u;
+  GmlFlatSpans spans={.render=r,.capacity=8192u,
+    .uniform_colour=outline && !point && inner!=outer?outer:inner};
+  spans.regions=(GmlFlatRegion*)malloc(spans.capacity*sizeof *spans.regions);
+  if(!spans.regions) return 0;
+  int result=0,covered;
+  GmlRenderDrawOp *operations=NULL;
+  if(outline && !point)
+    covered=gml_render_circle_outline_segments(r,cx,cy,rx,ry,spans.uniform_colour,
+      inner!=outer,collect_outline_segment,&spans);
+  else covered=gml_render_circle_filled_spans(r,cx,cy,rx,ry,collect_flat_span,&spans);
+  if(!covered || spans.overflow) goto circle_done;
+  if(!spans.count){result=1;goto circle_done;}
+  if(outline && !point && r->alphablend && !blend && alpha<0.5){
+    uint32_t *pixels=(uint32_t*)malloc(spans.count*sizeof *pixels);
+    if(!pixels) goto circle_done;
+    for(uint32_t i=0;i<spans.count;i++)
+      pixels[i]=(uint32_t)spans.regions[i].region.y*(uint32_t)r->fbw+
+        (uint32_t)spans.regions[i].region.x;
+    qsort(pixels,spans.count,sizeof *pixels,compare_circle_pixel);
+    unsigned repeats=1u,maximum=1u;
+    for(uint32_t i=1;i<spans.count;i++){
+      repeats=pixels[i]==pixels[i-1u]?repeats+1u:1u;
+      if(repeats>maximum) maximum=repeats;
+    }
+    free(pixels);
+    if(maximum>2u) goto circle_done;
+  }
+  uint32_t count=0;
+  for(uint32_t i=0;i<spans.count;i++){
+    GmlFlatRegion current=spans.regions[i];
+    if(count && current.colour==spans.regions[count-1u].colour){
+      GmlRenderRect *previous=&spans.regions[count-1u].region;
+      if(previous->height==1u && current.region.height==1u && previous->y==current.region.y &&
+         ((int64_t)previous->x+previous->width==current.region.x ||
+          (int64_t)current.region.x+current.region.width==previous->x)){
+        if(current.region.x<previous->x) previous->x=current.region.x;
+        previous->width+=current.region.width;continue;
+      }
+      if(previous->width==1u && current.region.width==1u && previous->x==current.region.x &&
+         ((int64_t)previous->y+previous->height==current.region.y ||
+          (int64_t)current.region.y+current.region.height==previous->y)){
+        if(current.region.y<previous->y) previous->y=current.region.y;
+        previous->height+=current.region.height;continue;
+      }
+    }
+    spans.regions[count++]=current;
+  }
+  operations=(GmlRenderDrawOp*)calloc(count,sizeof *operations);
+  if(!operations) goto circle_done;
+  if(r->pending_underlay && !gml_render_compose_resident_underlay(r)) goto circle_done;
+  gml_render_flush_pending_fill(r);
+  GmlRenderResource *target=gml_render_scene_target_resource_ensure(r);
+  if(r->pending_fill || !target) goto circle_done;
+  GmlRenderImageRef next=gml_render_application_scene_next_image_ref(r,target);
+  if(next.content_version>UINT64_MAX-count) goto circle_done;
+  /* Ordinary pixel presets ignore the raw mask. Destination-dependent presets
+   * use the same four-channel mask as their existing CPU pixel executor. */
+  unsigned mask=r->alphablend && (destination || blend==4u || blend==7u || blend==8u)?
+    r->color_write_mask:15u;
+  for(uint32_t i=0;i<count;i++){
+    GmlRenderDrawOp *op=&operations[i];
+    op->opcode=GML_RENDER_OP_COLOURED_PRIMITIVE;op->scene_family=GML_RENDER_SCENE_PRIMITIVE;
+    op->reconstruction_mode=GML_RENDER_DEVICE_CHECKPOINT;
+    op->target=(GmlRenderTargetRef){next,1u,(uint32_t)r->fbw,(uint32_t)r->fbh,
+      GML_RENDER_PIXEL_ARGB8888,{0,0,(uint32_t)r->fbw,(uint32_t)r->fbh}};
+    op->target.image.content_version+=i+1u;
+    uint32_t colour=spans.regions[i].colour,colours[4]={colour,colour,colour,colour};
+    resident_rectangle_payload(r,&op->payload.primitive,spans.regions[i].region,
+      spans.regions[i].region,colours,!flat_outline,0,blend,alpha);
+    if(!flat_outline){
+      op->payload.primitive.rectangle_flags|=GML_RENDER_RECTANGLE_PIXEL_SPAN;
+      op->payload.primitive.pixel_write_mask=mask;
+    }
+  }
+  result=gml_render_application_scene_enqueue_primitives(r,operations,count);
+  if(result){
+    unsigned flags=operations[0].payload.primitive.rectangle_flags;
+    int opaque_write=!(flags&GML_RENDER_RECTANGLE_TARGET_ALPHA) ||
+      (r->alphablend && (blend==1u || blend==5u)) ||
+      ((!blend || !r->alphablend || blend==4u) && alpha>=1.0) || !(mask&8u);
+    int opaque=opaque_write && r->fb_opaque_known && r->fb_all_opaque;
+    r->fb_all_transparent=0;r->fb_opaque_known=r->fb_all_opaque=opaque;
+  }
+circle_done:
+  free(operations);free(spans.regions);
+  return result;
+}
+
 void gml_render_primitive_point(GmlRender *render,int x,int y,uint32_t color){
   if(gml_render_try_opaque_primitive_rect(render,x,y,x,y,color)) return;
   gml_render_cpu_point(render,x,y,color);
@@ -783,6 +904,7 @@ void gml_render_primitive_circle(GmlRender *render,
                                         (double)radius_x,(double)radius_y,color,0)) return;
   if(!outline && resident_filled_circle(render,(double)center_x,(double)center_y,
                                          (double)radius_x,(double)radius_y,color)) return;
+  if(resident_circle_function(render,center_x,center_y,radius_x,radius_y,color,color,outline)) return;
   gml_render_cpu_circle(render,(double)center_x,(double)center_y,
                         (double)radius_x,(double)radius_y,color,outline);
 }
@@ -795,6 +917,7 @@ void gml_render_primitive_circle_subpixel(GmlRender *render,
   if(outline && resident_outline_circle(render,center_x,center_y,
                                         radius_x,radius_y,color,0)) return;
   if(!outline && resident_filled_circle(render,center_x,center_y,radius_x,radius_y,color)) return;
+  if(resident_circle_function(render,center_x,center_y,radius_x,radius_y,color,color,outline)) return;
   gml_render_cpu_circle(render,center_x,center_y,radius_x,radius_y,color,outline);
 }
 
@@ -808,6 +931,7 @@ void gml_render_primitive_circle_color(GmlRender *render,
   if(!outline && inner==outer &&
      resident_filled_circle(render,(double)center_x,(double)center_y,
                             (double)radius_x,(double)radius_y,inner)) return;
+  if(resident_circle_function(render,center_x,center_y,radius_x,radius_y,inner,outer,outline)) return;
   gml_render_cpu_circle_color(render,(double)center_x,(double)center_y,
                               (double)radius_x,(double)radius_y,inner,outer,outline);
 }
@@ -821,6 +945,7 @@ void gml_render_primitive_circle_color_subpixel(GmlRender *render,
                                         inner==outer?inner:outer,inner!=outer)) return;
   if(!outline && inner==outer &&
      resident_filled_circle(render,center_x,center_y,radius_x,radius_y,inner)) return;
+  if(resident_circle_function(render,center_x,center_y,radius_x,radius_y,inner,outer,outline)) return;
   gml_render_cpu_circle_color(render,center_x,center_y,radius_x,radius_y,
                               inner,outer,outline);
 }

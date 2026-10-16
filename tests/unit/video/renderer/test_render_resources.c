@@ -13,6 +13,7 @@
 #include "gml_render_texture.h"
 #include "gml_render_primitives.h"
 #include "gml_render_cpu_replay.h"
+#include "gml_render_cpu_backend.h"
 #include "gml_builtin.h"
 #include "gml_particle.h"
 #include "gml_software3d.h"
@@ -4123,7 +4124,7 @@ static int resident_rectangle_function_matrix(void){
       malformed.payload.primitive.rectangle_flags^=GML_RENDER_RECTANGLE_GRADIENT;
       CHECK(!gml_render_rectangle_valid(&malformed));
       malformed=fake.last_primitive;
-      malformed.payload.primitive.rectangle_flags|=256u;
+      malformed.payload.primitive.rectangle_flags|=512u;
       CHECK(!gml_render_rectangle_valid(&malformed));
       malformed=fake.last_primitive;
       malformed.payload.primitive.rectangle_flags=
@@ -4132,6 +4133,50 @@ static int resident_rectangle_function_matrix(void){
       CHECK(!gml_render_rectangle_valid(&malformed));
     }
     gml_render_free(cpu);gml_render_free(gpu);free(cpu);free(gpu);
+  }
+  return 1;
+}
+
+static int resident_circle_pixel_packets(void){
+  static const double alphas[]={1.0,0.61,1.0/1024.0};
+  for(unsigned blend=0;blend<12u;blend++) for(unsigned mask=0;mask<16u;mask++)
+  for(unsigned alpha=0;alpha<3u;alpha++) for(unsigned offscreen=0;offscreen<2u;offscreen++){
+    uint32_t expected[12],actual[12];
+    for(unsigned i=0;i<12u;i++) expected[i]=actual[i]=0x78273859u;
+    GmlRender *cpu=calloc(1,sizeof *cpu);CHECK(cpu);
+    cpu->fb=cpu->base_fb=expected;cpu->fbw=4;cpu->fbh=3;
+    cpu->target_sp=(int)offscreen;cpu->alpha=alphas[alpha];cpu->alphablend=1;
+    cpu->blendmode=(int)blend;cpu->color_write_mask=mask;
+    cpu->blend_equation=cpu->blend_equation_alpha=1;cpu->active_shader=-1;
+    GmlRenderDrawOp op={0};
+    op.opcode=GML_RENDER_OP_COLOURED_PRIMITIVE;op.scene_family=GML_RENDER_SCENE_PRIMITIVE;
+    op.reconstruction_mode=GML_RENDER_DEVICE_CHECKPOINT;
+    op.target.width=4u;op.target.height=3u;op.target.region=(GmlRenderRect){0,0,4,3};
+    op.target.pixel_format=GML_RENDER_PIXEL_ARGB8888;
+    op.target.image.resource_class=offscreen?GML_RENDER_RESOURCE_SURFACE:GML_RENDER_RESOURCE_SCREEN;
+    GmlRenderPrimitiveRect *p=&op.payload.primitive;
+    p->kind=GML_RENDER_PRIMITIVE_RECTANGLE;p->region=p->authored_region=(GmlRenderRect){1,1,2,1};
+    p->alpha=alphas[alpha];p->alpha_blend=1u;
+    p->pixel_write_mask=blend==4u || blend==7u || blend==8u || blend>=9u?mask:15u;
+    unsigned canonical_blend=blend==3u || blend==6u?2u:blend;
+    p->rectangle_flags=GML_RENDER_RECTANGLE_OUTLINE|GML_RENDER_RECTANGLE_PIXEL_SPAN|
+      (offscreen?GML_RENDER_RECTANGLE_TARGET_ALPHA:0u)|(canonical_blend<<GML_RENDER_RECTANGLE_BLEND_SHIFT);
+    for(unsigned c=0;c<4u;c++) p->corner_colour[c]=0xFF274DB9u;
+    p->colour=p->corner_colour[0];
+    CHECK(gml_render_rectangle_valid(&op));
+    for(int x=1;x<=2;x++) gml_render_cpu_backend_draw_pixel_alpha(cpu,x,1,0xB94D27u,alphas[alpha]);
+    CHECK(gml_render_cpu_replay_one(actual,4u,3u,&op,NULL,NULL) && !memcmp(expected,actual,sizeof actual));
+    GmlRenderDrawOp bad=op;bad.payload.primitive.pixel_write_mask=16u;
+    CHECK(!gml_render_rectangle_valid(&bad));
+    bad=op;bad.payload.primitive.region.height=bad.payload.primitive.authored_region.height=2u;
+    CHECK(!gml_render_rectangle_valid(&bad));
+    bad=op;bad.payload.primitive.rectangle_flags&=~GML_RENDER_RECTANGLE_OUTLINE;
+    CHECK(!gml_render_rectangle_valid(&bad));
+    bad=op;bad.payload.primitive.corner_colour[1]^=1u;
+    CHECK(!gml_render_rectangle_valid(&bad));
+    bad=op;bad.payload.primitive.rectangle_flags&=~GML_RENDER_RECTANGLE_PIXEL_SPAN;
+    if(p->pixel_write_mask) CHECK(!gml_render_rectangle_valid(&bad));
+    free(cpu);
   }
   return 1;
 }
@@ -14454,6 +14499,7 @@ int main(void){
   passed+=resident_classic_identity_filtered_underlay();
   passed+=resident_classic_rectangle_scope();
   passed+=resident_rectangle_function_matrix();
+  passed+=resident_circle_pixel_packets();
   passed+=resident_classic_owned_rectangle_scope();
   passed+=resident_rectangle_outline_coalesced();
   passed+=resident_studio_gui_rectangle_scope();
@@ -14614,6 +14660,6 @@ int main(void){
   passed+=source_free_primitive_rect_replay();
   passed+=stretched_float_exact_replay();
   passed+=filtered_font_exact_recovery();
-  printf("render resource cases: passed=%d failed=%d\n",passed,211-passed);
-  return passed==211?EXIT_SUCCESS:EXIT_FAILURE;
+  printf("render resource cases: passed=%d failed=%d\n",passed,212-passed);
+  return passed==212?EXIT_SUCCESS:EXIT_FAILURE;
 }
