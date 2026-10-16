@@ -33,8 +33,10 @@ static int resident_text_glyph_outside(GmlRender *r,const GmlSprite *sprite,
   if(!r || !r->resident_application_pass || r->active_shader>=0 ||
      gml_d3_is_active(r) || r->software_overlay || r->classic_phase_y ||
      r->rotated_batch_count || r->rotated_batch_building ||
-     r->pending_underlay || r->pending_presentation ||
+     r->pending_presentation ||
      !gml_render_scene_target_matches(r)) return 0;
+  /* A proven empty glyph cannot consume or reorder the automatic underlay.
+   * Leave its intent and clear untouched for the next real writer/observer. */
   for(unsigned axis=0;axis<3u;axis++)
     if(r->classic_interp_phase[axis] || r->app_interp_phase[axis]) return 0;
   /* An untrimmed positive axis cell starts at floor(anchor) or later under
@@ -438,31 +440,8 @@ static void draw_text_transformed_font(GmlRender *r, GmlFont *f,
         double glyph_x=use_rot?x+glyph_ox*ca+glyph_oy*sa:x+glyph_ox;
         double glyph_y=use_rot?y-glyph_ox*sa+glyph_oy*ca:y+glyph_oy;
         int resident_glyph=0;
-        if(r->resident_application_pass && use_rot && !s->runtime_rgba && s->frame){
-          int page_index=s->frame[fr];
-          if(page_index>=0 && page_index<r->n_tpag){
-            GmlTpag page=r->tpag[page_index];
-            page.interp_draw_cache=NULL;page.interp_draw_runs=NULL;
-            page.interp_draw_cache_bytes=0;page.interp_draw_run_count=0;
-            page.interp_draw_cache_valid=0;page.interp_draw_pending_count=0;
-            resident_glyph=gml_render_resident_rotated_font_glyph(r,s,&page,
-              glyph_x,glyph_y,xs,ys,rr,blend,alpha);
-          }
-        }
-        if(r->resident_application_pass && !use_rot && !s->runtime_rgba &&
-           !gml_d3_is_active(r) && s->frame &&
-           isfinite(alpha) && alpha>0.0 && alpha<=1.0 &&
-           resident_nearest_text_scale(xs,ys) && (!r->interp || r->classic)){
-          int page_index=s->frame[fr];
-          if(page_index>=0 && page_index<r->n_tpag){
-            GmlTpag *page=&r->tpag[page_index];
-            double left=x+(cx-s->originx+(f->prop?0:page->tx))*xs-r->cam_x;
-            double top=y+(base_y-s->originy+page->ty)*ys-r->cam_y;
-            resident_glyph=gml_render_resident_sprite_font_glyph(
-              r,page_index,left,top,xs,ys,blend,alpha);
-          }
-        }
-        if(!resident_glyph && r->resident_application_pass && !s->runtime_rgba && s->frame){
+        /* Prove an empty cell before a visible owner can compose its underlay. */
+        if(r->resident_application_pass && !s->runtime_rgba && s->frame){
           int page_index=s->frame[fr];
           if(page_index>=0 && page_index<r->n_tpag){
             const GmlTpag *page=&r->tpag[page_index];
@@ -477,6 +456,30 @@ static void draw_text_transformed_font(GmlRender *r, GmlFont *f,
               double top=y+(base_y-s->originy+page->ty)*ys;
               resident_glyph=resident_text_glyph_outside(r,&cell,&crop,left,top,xs,ys,0.0);
             }
+          }
+        }
+        if(!resident_glyph && r->resident_application_pass && use_rot && !s->runtime_rgba && s->frame){
+          int page_index=s->frame[fr];
+          if(page_index>=0 && page_index<r->n_tpag){
+            GmlTpag page=r->tpag[page_index];
+            page.interp_draw_cache=NULL;page.interp_draw_runs=NULL;
+            page.interp_draw_cache_bytes=0;page.interp_draw_run_count=0;
+            page.interp_draw_cache_valid=0;page.interp_draw_pending_count=0;
+            resident_glyph=gml_render_resident_rotated_font_glyph(r,s,&page,
+              glyph_x,glyph_y,xs,ys,rr,blend,alpha);
+          }
+        }
+        if(!resident_glyph && r->resident_application_pass && !use_rot && !s->runtime_rgba &&
+           !gml_d3_is_active(r) && s->frame &&
+           isfinite(alpha) && alpha>0.0 && alpha<=1.0 &&
+           resident_nearest_text_scale(xs,ys) && (!r->interp || r->classic)){
+          int page_index=s->frame[fr];
+          if(page_index>=0 && page_index<r->n_tpag){
+            GmlTpag *page=&r->tpag[page_index];
+            double left=x+(cx-s->originx+(f->prop?0:page->tx))*xs-r->cam_x;
+            double top=y+(base_y-s->originy+page->ty)*ys-r->cam_y;
+            resident_glyph=gml_render_resident_sprite_font_glyph(
+              r,page_index,left,top,xs,ys,blend,alpha);
           }
         }
         if(!resident_glyph){

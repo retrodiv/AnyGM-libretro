@@ -13202,6 +13202,12 @@ static int resident_nearest_text_function(int outside){
     r->alpha_test_enable=(int)(draw_state&1u);r->alpha_test_ref=127;
     gml_render_set_pending_fill(r,0x40273859u);gml_render_flush_pending_fill(r);
     CHECK(gml_render_scene_submit_pending(r));memcpy(shadow,r->fb,sizeof shadow);
+    if(outside==2){
+      /* An empty glyph must not consume an automatic composition's intent.
+       * Real pixel/order qualification belongs to the device underlay control. */
+      gml_render_set_pending_fill(r,0x60123456u);
+      gml_render_set_pending_underlay(r,0,0,W,H);
+    }
     int submitted=fake.submits;
     uint64_t target_version=gml_render_resource_image_ref(gml_render_scene_target_resource_ensure(r)).content_version;
     double mx=1,my=1;gml_render_draw_map_scale(r,&mx,&my);
@@ -13209,6 +13215,8 @@ static int resident_nearest_text_function(int outside){
       gml_draw_text_transformed(r,(outside?200.0:12.125)/mx,(outside?200.0:10.25)/my,
         "A",scales[scale][0]/mx,scales[scale][1]/my,0,0x70B0D0u,alphas[a]);
     CHECK(r->resident_application_pass && gml_render_scene_submit_pending(r));
+    if(outside==2) CHECK(r->pending_fill && r->pending_fill_color==0x60123456u &&
+                        r->pending_underlay);
     CHECK(fake.submits==submitted+(outside || a==1u?0:1) && !fake.readbacks && !fake.rgb_queries &&
           !memcmp(shadow,r->fb,sizeof shadow));
     GmlRenderResource *resource=gml_render_scene_target_resource_ensure(r);CHECK(resource);
@@ -14641,6 +14649,7 @@ int main(void){
   passed+=resident_selected_background_crop_edges();
   passed+=resident_nearest_text_function(0);
   passed+=resident_nearest_text_function(1);
+  passed+=resident_nearest_text_function(2);
   passed+=resident_rotated_text_function();
   passed+=resident_selected_background_function();
   passed+=resident_classic_owned_binary_unit_sprite();
@@ -14686,6 +14695,6 @@ int main(void){
   passed+=source_free_primitive_rect_replay();
   passed+=stretched_float_exact_replay();
   passed+=filtered_font_exact_recovery();
-  printf("render resource cases: passed=%d failed=%d\n",passed,212-passed);
-  return passed==212?EXIT_SUCCESS:EXIT_FAILURE;
+  printf("render resource cases: passed=%d failed=%d\n",passed,213-passed);
+  return passed==213?EXIT_SUCCESS:EXIT_FAILURE;
 }
