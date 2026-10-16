@@ -1731,6 +1731,7 @@ static int synthetic_framebuffer_content_create(
   int moving_sound=gpu_sprite==17 || gpu_sprite==18 || gpu_sprite==20;
   int borrowed_resize=gpu_sprite==40;
   int classic_identity_present=gpu_sprite==44;
+  int classic_owned_gui=gpu_sprite==47;
   int single_classic_view=(gpu_sprite>=21 && gpu_sprite<=37) || borrowed_resize;
   char create[192],step[192],draw[192],draw_begin[192],draw_gui[192];
   snprintf(create,sizeof create,"%s/retain-create.gml",fixture->directory);
@@ -1921,7 +1922,7 @@ static int synthetic_framebuffer_content_create(
        "global.fixture_application_height = surface_get_height(application_surface);\n"
        "draw_sprite(spr_fixture,0,48,16);\n"
        "draw_set_color(c_white); draw_text(8,30,\"GPU\");\n":
-       gpu_sprite==19?
+       gpu_sprite==19 || classic_owned_gui?
        "draw_sprite(spr_fixture,0,48,16);\n"
        "draw_set_color(c_white); draw_text(8,30,\"GPU\");\n"
        "draw_set_color(c_red); draw_rectangle(8,12,20,24,false);\n":
@@ -1950,7 +1951,7 @@ static int synthetic_framebuffer_content_create(
          "  draw_clear(c_blue); surface_reset_target();\n"
          "}\n")) ||
      ((retained_step_target || assigned_view_surface || canvas_geometry || window_geometry ||
-       gpu_sprite==28) &&
+       gpu_sprite==28 || classic_owned_gui) &&
       !write_text(draw_gui,classic_step_composition?
          "global.fixture_seen = surface_get_target();\n":
          classic_retained_target?
@@ -1958,6 +1959,8 @@ static int synthetic_framebuffer_content_create(
          "draw_surface(global.fixture_surface,0,0);\n":
          gpu_sprite==28?
          "draw_set_color(c_red); draw_rectangle(4,4,12,12,false);\n":
+         classic_owned_gui?
+         "draw_sprite(spr_fixture,0,12,8);\n":
          canvas_geometry?
          "draw_surface_stretched(application_surface,0,0,64,32);\n"
          "draw_sprite(spr_fixture,0,12,12);\n"
@@ -2055,7 +2058,7 @@ static int synthetic_framebuffer_content_create(
     project.n_sounds=project.cap_sounds=1;
   }
   if(classic){
-    project.classic_version=gpu_sprite==19 ||
+    project.classic_version=gpu_sprite==19 || classic_owned_gui ||
                             (single_classic_view && gpu_sprite!=24)?530:800;
     if(gpu_sprite==39 || gpu_sprite==43) project.classic_version=810;
     if(gpu_sprite==41 || gpu_sprite==42) project.classic_version=701;
@@ -2070,7 +2073,7 @@ static int synthetic_framebuffer_content_create(
   object.visible=gpu_sprite;
   object.events=events;
   object.n_events=object.cap_events=retained_step_target || assigned_view_surface?5:
-                                     canvas_geometry || window_geometry || gpu_sprite==28?4:gpu_sprite?3:2;
+                                     canvas_geometry || window_geometry || gpu_sprite==28 || classic_owned_gui?4:gpu_sprite?3:2;
   events[0].event_type=0;
   events[0].event_number=0;
   events[0].source_path=create;
@@ -2088,7 +2091,7 @@ static int synthetic_framebuffer_content_create(
     events[4].event_type=8;
     events[4].event_number=64;
     events[4].source_path=draw_gui;
-  } else if(canvas_geometry || window_geometry || gpu_sprite==28){
+  } else if(canvas_geometry || window_geometry || gpu_sprite==28 || classic_owned_gui){
     events[3].event_type=8;
     events[3].event_number=64;
     events[3].source_path=draw_gui;
@@ -2258,6 +2261,10 @@ int anygm_synthetic_classic_redraw_content_create(AnygmSyntheticContent *fixture
 
 int anygm_synthetic_classic_viewless_draw_content_create(AnygmSyntheticContent *fixture){
   return synthetic_framebuffer_content_create(fixture,0,0,1,19);
+}
+
+int anygm_synthetic_classic_owned_gui_content_create(AnygmSyntheticContent *fixture){
+  return synthetic_framebuffer_content_create(fixture,0,0,1,47);
 }
 
 int anygm_synthetic_classic_single_view_draw_content_create(AnygmSyntheticContent *fixture){

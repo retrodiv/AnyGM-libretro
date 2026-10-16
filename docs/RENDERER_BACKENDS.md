@@ -856,6 +856,20 @@ for already qualified opaque rectangles. Consecutive equal-colour edge pixels
 form at most four disjoint regions, with the original8192 emitted-pixel limit.
 The circle, triangle, partial-alpha and special-state paths are unchanged.
 
+R03-CLASSIC-BORROWED-VIEW also qualifies the independent SCREEN admission for an
+early-Classic owned application matching the logical extent, at most one view,
+interpolation off and an owning-current context witness. The existing composed,
+centred and aspect-policy boundaries remain unchanged. Its automatic compositor
+retains EXACT RGBA0 opaque nearest copies and the existing individual partial-alpha
+TOLERANCE±2 bounds; no shader, snapshot, arithmetic or CPU executor changes.
+`tests/integration/test_graphics_state.c::classic_owned_screen_admission_case`
+requires two resident underlays without ordinary reads and preserves unwitnessed
+fallback. `test_gpu_scene_route --keep-classic-owned-gui` exports the neutral
+Draw/GUI reproducer. The existing physical owned-source/order/coverage/seal and
+detachment controls remain required. Step redraw entry is separate debt; later
+Classic, other extents and filtered paths retain their boundaries. No whole-game
+or speed qualification is inferred.
+
 <!-- R03-RULES:START -->
 | Rule | Scope | Shared preparation | CPU executor | GPU executor | Device arithmetic | Limits | Paired control |
 |---|---|---|---|---|---|---|---|

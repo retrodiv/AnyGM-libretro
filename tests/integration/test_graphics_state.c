@@ -1068,6 +1068,45 @@ static int classic_viewless_application_scene_case(void){
   return 1;
 }
 
+/* Admission/call-order proof only; physical compositor pixels have paired controls. */
+static int classic_owned_screen_admission_case(void){
+  for(unsigned witnessed=0;witnessed<2u;witnessed++){
+    Session selected={0};
+    CurrentContextWitness witness={1u,0u};
+    AnygmGraphicsContext context=graphics_context(ANYGM_GRAPHICS_OPENGLES3);
+    GmlGpuCounters counters={0};
+    GmlRenderPresentationMetrics metrics={0};
+    anygm_test_graphics_reset();
+    REQUIRE(session_open_fixture_with_scene(&selected,ANYGM_SCENE_RENDERER_OPENGL,
+              anygm_synthetic_classic_owned_gui_content_create),
+            "owned Classic SCREEN fixture loads");
+    context.userdata=&witness;
+    context.is_current=witnessed?graphics_context_is_current:NULL;
+    REQUIRE(anygm_graphics_context_reset(selected.engine,&context)==ANYGM_OK &&
+            advance(selected.engine,2,NULL),"owned Classic SCREEN interval completes");
+    gml_render_presentation_metrics(&selected.engine->render,&metrics);
+    gml_gpu_counters(selected.engine->gpu,&counters);
+    int matching=metrics.application_owned && metrics.application_draw_enabled &&
+      counters.scene_families[GML_RENDER_SCENE_SPRITE]>0u &&
+      counters.scene_families[GML_RENDER_SCENE_TEXT]>0u &&
+      counters.scene_batches_refused==0u && !counters.scene_readbacks;
+    if(witnessed)
+      matching=matching && witness.queries &&
+        counters.scene_families[GML_RENDER_SCENE_SURFACE]==2u;
+    else
+      matching=matching && !witness.queries &&
+        !counters.scene_families[GML_RENDER_SCENE_SURFACE];
+    if(!matching) fprintf(stderr,"owned Classic SCREEN witness=%u owned=%d surface=%llu "
+      "reads=%llu refused=%llu queries=%u\n",witnessed,metrics.application_owned,
+      (unsigned long long)counters.scene_families[GML_RENDER_SCENE_SURFACE],
+      (unsigned long long)counters.scene_readbacks,
+      (unsigned long long)counters.scene_batches_refused,witness.queries);
+    session_close(&selected);
+    REQUIRE(matching,"owned Classic SCREEN requires owning-current context proof");
+  }
+  return 1;
+}
+
 static int classic_identity_filtered_presentation_case(void){
   Session plain={0},selected={0};
   AnygmInputFrame input={.struct_size=sizeof input,.pointer_x=-1,.pointer_y=-1};
@@ -5030,6 +5069,8 @@ int main(void){
     {"resident world selection retains CPU state",resident_world_selection_case},
     {"viewless classic application accepts Draw scene work",
      classic_viewless_application_scene_case},
+    {"owned Classic SCREEN admission requires a current-context witness",
+     classic_owned_screen_admission_case},
     {"single classic view admits logical Draw without changing presentation",
      classic_single_view_application_scene_case},
     {"interpolated Classic identity presentation keeps exact state and residency",

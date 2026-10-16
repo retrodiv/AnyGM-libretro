@@ -2059,8 +2059,13 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
 			       (gui_indirect || !render_presentation.application_draw_enabled ||
 			        (early_classic_borrowed_world &&
 			         gml_render_can_begin_borrowed_screen(&engine->render,gtarget)) ||
-			        (frame_view_count<=1 && !gml_render_is_classic(&engine->render) &&
-			         render_presentation.application_owned)) &&
+			        (frame_view_count<=1 && render_presentation.application_owned &&
+			         (!gml_render_is_classic(&engine->render) ||
+			          (!anygm_policy_classic_modern_presentation(&engine->win) &&
+			           !render_presentation.interpolation &&
+			           render_presentation.application_width==(int)engine->width &&
+			           render_presentation.application_height==(int)engine->height &&
+			           engine_graphics_is_current(engine))))) &&
 			       engine_graphics_active(engine) &&
 			       (engine->scene_renderer_session==ANYGM_SCENE_RENDERER_OPENGL ||
 			        anygm_host_development_setting(&engine->host,"GML_SCENE_GPU_PROTOTYPE")))
