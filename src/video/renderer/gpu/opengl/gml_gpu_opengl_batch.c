@@ -748,7 +748,7 @@ static int fixed_stretched_quad_valid(const GmlRenderDrawOp *op,
   for(unsigned corner=1;corner<4u;corner++)
     if(q->corner_colour[corner]!=q->corner_colour[0]) return 0;
   /* The shared vertex validator owns integral logical/destination/trim spans
-   * and the bounded eight-by-eight source footprint before any target write. */
+   * and the bounded64-by64 fixed-stretch footprint before any target write. */
   return 1;
 }
 

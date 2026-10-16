@@ -123,10 +123,11 @@ int gml_render_gpu_opengl_draw_textured_quad(const GmlRenderDrawOp *op,
         if(!isfinite(span[field]) || span[field]!=floor(span[field])) return 0;
       double maximum=stretched_float?16384.0:4096.0;
       double destination_maximum=stretched_blend?1000000.0:maximum;
+      uint32_t box_edge=quad->sampling.quantisation==GML_RENDER_QUANTISE_FIXED_STRETCHED?64u:8u;
       if(span[0]<1.0 || span[0]>maximum || span[1]<1.0 || span[1]>destination_maximum ||
          span[2]<0.0 || span[3]!=physical ||
          span[2]+span[3]>span[0] || extent!=span[1] ||
-         ((uint32_t)span[0]+(uint32_t)span[1]-1u)/(uint32_t)span[1]>8u)
+         ((uint32_t)span[0]+(uint32_t)span[1]-1u)/(uint32_t)span[1]>box_edge)
         return 0;
       if(stretched_float){
         double first=axis?quad->y[0]:quad->x[0];

@@ -3823,7 +3823,9 @@ static int resident_stretched_sprite_function(GmlRender *r,int sprite,int frame,
   /* Full-target minification has a distinct coarse-veil CPU leaf. */
   if(((w<s->w || h<s->h) && left<=0 && top<=0 &&
       left+w>=r->fbw && top+h>=r->fbh) ||
-     (s->w+w-1)/w>8 || (s->h+h-1)/h>8) return 0;
+     (s->w+w-1)/w>64 || (s->h+h-1)/h>64) return 0;
+  /* Up to4096 byte samples retain exact integer sums in the existing BOX shader.
+   * Its dynamic footprint needs no new sampler or CPU-float arithmetic recipe. */
   if(!gml_render_atlas_scene_source_view(r,page->atlas,&source) ||
      !source.borrowed_immutable ||
      (uint64_t)(uint32_t)page->sx+page->sw>source.width ||

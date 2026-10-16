@@ -9005,12 +9005,18 @@ static int resident_gui_coarse_veil_on_demand(void){
   return 1;
 }
 
-static int resident_stretched_function_on_demand_impl(int raw_opacity){
+static int resident_stretched_function_on_demand_impl(int profile){
+  int raw_opacity=profile==1,coarse_box=profile>=2,over_limit=profile==3;
+  const int widths[]={6,7,3,2,1},heights[]={16,3,4,1,1};
   const double opacities[]={1.0+0x1p-52,1.0+0x1p-51,1.0+0x1p-25,1.0+0x1p-24,
     nextafter(1.0+0x1p-24,2.0),1.25,2.0,16.0,255.0,256.0,1e100};
   for(unsigned classic=0;classic<2u;classic++) for(unsigned kind=0;kind<3u;kind++)
-  for(unsigned opacity=0;opacity<(raw_opacity?11u:1u);opacity++){
+  for(unsigned opacity=0;opacity<(raw_opacity?11u:1u);opacity++)
+  for(unsigned reduction=0;reduction<(coarse_box && !over_limit?5u:1u);reduction++){
     double alpha=raw_opacity?opacities[opacity]:.975;
+    int physical=coarse_box?64:4,logical=over_limit?65:physical;
+    int width=coarse_box?(over_limit?1:widths[reduction]):12;
+    int height=coarse_box?(over_limit?1:heights[reduction]):10;
     GmlRender *r=calloc(1,sizeof *r);
     GmlWin content={.bytecode=classic?0:15,.classic_version=classic?701:0};
     FakeDevice fake={.on_demand=1,.readback_colour=0xFF315779u};
@@ -9019,16 +9025,20 @@ static int resident_stretched_function_on_demand_impl(int raw_opacity){
     GmlRenderJournalMetrics metrics={0};const uint32_t *pixels=NULL;
     CHECK(r && gml_render_init(r,NULL)==0);
     r->win=&content;r->classic=(int)classic;
+    /* This fixture replaces the initial default-font atlas, not its glyphs. */
+    CHECK(r->n_atlas==1 && r->atlas && r->atlas[0].px);
+    free(r->atlas[0].px);free(r->atlas);
     r->atlas=calloc(1,sizeof *r->atlas);r->tpag=calloc(1,sizeof *r->tpag);
     r->spr=calloc(1,sizeof *r->spr);
     CHECK(r->atlas && r->tpag && r->spr);
     r->n_atlas=r->n_tpag=r->n_spr=1;
-    r->atlas[0].px=malloc(4u*4u*4u);r->spr[0].frame=calloc(1,sizeof(int));
+    r->atlas[0].px=malloc((size_t)physical*physical*4u);r->spr[0].frame=calloc(1,sizeof(int));
     CHECK(r->atlas[0].px && r->spr[0].frame);
-    r->atlas[0].w=r->atlas[0].h=4;
-    memset(r->atlas[0].px,191,4u*4u*4u);
-    r->tpag[0]=(GmlTpag){.sw=4,.sh=4,.tw=4,.th=4,.bw=4,.bh=4};
-    r->spr[0].w=r->spr[0].h=4;r->spr[0].n_frames=1;
+    r->atlas[0].w=r->atlas[0].h=physical;
+    memset(r->atlas[0].px,191,(size_t)physical*physical*4u);
+    r->tpag[0]=(GmlTpag){.sw=physical,.sh=physical,.tw=physical,.th=physical,
+      .bw=logical,.bh=logical};
+    r->spr[0].w=r->spr[0].h=logical;r->spr[0].n_frames=1;
     for(unsigned p=0;p<16u*12u;p++) screen[p]=0xA5010203u;
     device.observe_on_demand=fake_observe_on_demand;
     gml_render_bind_device(r,&device);
@@ -9048,8 +9058,14 @@ static int resident_stretched_function_on_demand_impl(int raw_opacity){
     r->alpha_test_enable=1;r->alpha_test_ref=127u;
     if(raw_opacity) r->alpha=.37;
     for(unsigned draw=0;draw<4u;draw++)
-      gml_draw_sprite_stretched(r,0,0,-.3,.3,12,10,0x93B5D7u,alpha);
+      gml_draw_sprite_stretched(r,0,0,coarse_box?3.25:-.3,coarse_box?2.25:.3,
+        width,height,0x93B5D7u,alpha);
     CHECK(fake.submits==submits && gml_render_scene_submit_pending(r));
+    if(over_limit){
+      CHECK(!r->resident_application_pass && fake.submits==submits &&
+            fake.readbacks==reads+1);
+      gml_render_free(r);free(r);continue;
+    }
     if(raw_opacity){
       CHECK(r->alpha==.37);
     }
@@ -9059,7 +9075,7 @@ static int resident_stretched_function_on_demand_impl(int raw_opacity){
       fake.last_quad_state.coverage_policy==GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA &&
       fake.last_quad_state.write_mask==15u && fake.last_quad_state.alpha_test_enabled &&
       fake.last_quad_state.alpha_test_reference==127u &&
-      fake.last_quad.span_x[0]==4 && fake.last_quad.span_x[1]==12 &&
+      fake.last_quad.span_x[0]==logical && fake.last_quad.span_x[1]==width &&
       fake.last_filtered_draw_alpha==fmin(alpha,255.0) && !memcmp(shadow,r->fb,sizeof shadow));
     gml_render_resource_journal_metrics(resource,&metrics);
     CHECK(metrics.authority==GML_RENDER_RESOURCE_GPU_RESIDENT && !metrics.cpu_replays &&
@@ -9080,6 +9096,14 @@ static int resident_stretched_function_on_demand(void){
 
 static int resident_stretched_raw_opacity_on_demand(void){
   return resident_stretched_function_on_demand_impl(1);
+}
+
+static int resident_stretched_coarse_box_on_demand(void){
+  return resident_stretched_function_on_demand_impl(2);
+}
+
+static int resident_stretched_coarse_box_limit(void){
+  return resident_stretched_function_on_demand_impl(3);
 }
 
 static int resident_stretched_unavailable_source(void){
@@ -14606,6 +14630,8 @@ int main(void){
   passed+=resident_coarse_veil_exact_recovery();
   passed+=resident_gui_coarse_veil_on_demand();
   passed+=resident_stretched_function_on_demand();
+  passed+=resident_stretched_coarse_box_on_demand();
+  passed+=resident_stretched_coarse_box_limit();
   passed+=resident_stretched_raw_opacity_on_demand();
   passed+=resident_stretched_unavailable_source();
   passed+=resident_mapped_gui_stretch_on_demand();
@@ -14695,6 +14721,6 @@ int main(void){
   passed+=source_free_primitive_rect_replay();
   passed+=stretched_float_exact_replay();
   passed+=filtered_font_exact_recovery();
-  printf("render resource cases: passed=%d failed=%d\n",passed,213-passed);
-  return passed==213?EXIT_SUCCESS:EXIT_FAILURE;
+  printf("render resource cases: passed=%d failed=%d\n",passed,215-passed);
+  return passed==215?EXIT_SUCCESS:EXIT_FAILURE;
 }
