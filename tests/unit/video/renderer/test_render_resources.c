@@ -6007,6 +6007,76 @@ static int resident_filled_span_public_order(void){
   return 1;
 }
 
+static int resident_borrowed_application_screen_handoff(void){
+  for(unsigned policy=0;policy<3u;policy++) for(unsigned lifecycle=0;lifecycle<4u;lifecycle++){
+    GmlRender *r=calloc(1,sizeof *r);
+    GmlWin content={.classic_version=policy==0u?530:policy==1u?600:700};
+    FakeDevice fake={.on_demand=1,.readback_colour=0xFF315779u};
+    GmlRenderDeviceServices device=service(&fake);
+    uint32_t world[16*12]={0},screen[16*12]={0},third[16*12]={0};
+    GmlRenderImageRef world_image={0},screen_image={0},image={0};
+    CHECK(r && !gml_render_init(r,NULL));r->win=&content;r->classic=1;
+    device.observe_on_demand=fake_observe_on_demand;
+    gml_render_bind_device(r,&device);gml_render_set_scene_device(r,1);
+    gml_render_application_surface_bind(r,world,16,12,1);
+    CHECK(gml_render_begin_resident_base(r,world,16,12,0,0));
+    gml_render_set_pending_fill(r,0xFF315779u);gml_render_flush_pending_fill(r);
+    CHECK(gml_render_completed_screen_image(r,world,16,12,&world_image));
+    int retired=fake.retires;
+    CHECK(gml_render_begin_resident_base(r,screen,16,12,0,0));
+    CHECK(fake.retires==retired && !fake.readbacks &&
+          gml_render_completed_screen_image(r,world,16,12,&image) &&
+          image.incarnation==world_image.incarnation &&
+          image.content_version==world_image.content_version);
+    CHECK(r->app_surface==world && !r->app_surface_owned && r->app_w==16 && r->app_h==12);
+    gml_render_set_pending_fill(r,0xFF112233u);gml_render_flush_pending_fill(r);
+    gml_render_set_pending_underlay(r,0,0,16,12);
+    CHECK(gml_render_compose_resident_underlay(r) && gml_render_scene_submit_pending(r) &&
+          !r->pending_underlay && r->resident_application_pass && !fake.readbacks &&
+          fake.last_opcode==GML_RENDER_OP_TEXTURED_QUAD);
+    CHECK(gml_render_completed_screen_image(r,screen,16,12,&screen_image));
+    /* The next Draw must recover the same image, not upload a stale CPU mirror. */
+    CHECK(gml_render_begin_resident_base(r,world,16,12,0,0) &&
+          gml_render_completed_screen_image(r,world,16,12,&image) &&
+          image.incarnation==world_image.incarnation &&
+          gml_render_completed_screen_image(r,screen,16,12,&image) &&
+          image.incarnation==screen_image.incarnation && !fake.readbacks &&
+          fake.retires==retired && !world[0] && !screen[0]);
+    /* A third allocation cannot evict either still-live image without observation. */
+    CHECK(!gml_render_begin_resident_base(r,third,16,12,0,0) &&
+          !fake.readbacks && fake.retires==retired &&
+          gml_render_completed_screen_image(r,world,16,12,&image) &&
+          image.incarnation==world_image.incarnation);
+    CHECK(gml_render_begin_resident_base(r,screen,16,12,0,0) &&
+          gml_render_checkpoint_pending_resources(r));
+    CHECK(fake.readbacks==2 && world[0]==fake.readback_colour && screen[0]==fake.readback_colour);
+    if(lifecycle==1u){
+      size_t capacity=gml_render_state_size(r,-1),written=0,used=0;
+      void *bytes=malloc(capacity);CHECK(bytes && capacity);
+      CHECK(gml_render_state_save(r,-1,bytes,capacity,&written) && written==capacity &&
+            gml_render_state_load(r,bytes,written,&used) && used==written);
+      CHECK(!r->base_scene_resource && !r->retained_base_resource && fake.readbacks==2);
+      free(bytes);
+    } else if(lifecycle>=2u){
+      CHECK(gml_render_begin_resident_base(r,world,16,12,0,0));
+      gml_render_set_pending_fill(r,0xFF556677u);gml_render_flush_pending_fill(r);
+      if(lifecycle==2u) CHECK(gml_render_begin_resident_base(r,screen,16,12,0,0));
+      CHECK(gml_render_device_observation_pending(r));
+      fake.forbid_calls=1;
+      gml_render_lose_volatile_device(r);
+      CHECK(!fake.forbidden_calls && !r->base_scene_resource && !r->retained_base_resource &&
+            !gml_render_device(r) && !r->app_surface_opaque && fake.readbacks==2);
+      fake.forbid_calls=0;
+    }
+    gml_render_bind_device(r,NULL);
+    int width=0,height=0;
+    CHECK(gml_surface_pixels_read(r,0,&width,&height)==world && width==16 && height==12 &&
+          !r->app_surface_owned && fake.readbacks==2);
+    gml_render_free(r);free(r);
+  }
+  return 1;
+}
+
 static int resident_line_function_transaction(void){
   GmlRender *r=calloc(1,sizeof *r);
   GmlWin content={.classic_version=530};
@@ -14334,6 +14404,7 @@ int main(void){
   passed+=resident_filled_span_public_order();
   passed+=resident_line_coverage_public_order();
   passed+=resident_line_function_transaction();
+  passed+=resident_borrowed_application_screen_handoff();
   passed+=resident_outline_coverage_public_order();
   passed+=resident_atlas_uv_refusal_preserves_queued_prefix();
   passed+=resident_application_sprite_cpu_fallback();
@@ -14463,6 +14534,6 @@ int main(void){
   passed+=source_free_primitive_rect_replay();
   passed+=stretched_float_exact_replay();
   passed+=filtered_font_exact_recovery();
-  printf("render resource cases: passed=%d failed=%d\n",passed,209-passed);
-  return passed==209?EXIT_SUCCESS:EXIT_FAILURE;
+  printf("render resource cases: passed=%d failed=%d\n",passed,210-passed);
+  return passed==210?EXIT_SUCCESS:EXIT_FAILURE;
 }

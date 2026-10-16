@@ -241,7 +241,8 @@ static int nearest_surface_function_valid(const GmlRenderDrawOp *op,
   double width=q->x[1]-q->x[0],height=q->y[2]-q->y[0];
   if(!source || op->scene_family!=GML_RENDER_SCENE_SURFACE ||
      op->reconstruction_mode!=GML_RENDER_DEVICE_CHECKPOINT ||
-     (op->sources[0].resource_class!=GML_RENDER_RESOURCE_SURFACE &&
+     (op->sources[0].resource_class!=GML_RENDER_RESOURCE_SCREEN &&
+      op->sources[0].resource_class!=GML_RENDER_RESOURCE_SURFACE &&
       op->sources[0].resource_class!=GML_RENDER_RESOURCE_APPLICATION) ||
      source->pixel_format!=GML_RENDER_PIXEL_ARGB8888 ||
      source->width>4096u || source->height>4096u ||

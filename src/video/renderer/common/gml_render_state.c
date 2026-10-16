@@ -738,6 +738,7 @@ static int render_state_read(GmlRender *render,CoreR *s){
   if(s->ok){
     gml_render_application_resource_dispose(render);
     gml_render_base_resource_dispose(render);
+    gml_render_retained_base_dispose(render);
     render->resident_application_pass=0;
     render->resident_scene_pass=0;
     for(int index=0;index<render->target_sp;index++)

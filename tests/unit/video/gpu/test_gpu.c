@@ -1549,12 +1549,14 @@ static int scene_nearest_surface_function_case(void){
   enum { QUADS=2049 };
   const uint32_t pixels[4]={0x001267B9u,0x552679B3u,0xAAC39526u,0xFF7193C5u};
   for(unsigned api=0;api<2u;api++) for(unsigned target_kind=0;target_kind<3u;target_kind++)
-  for(unsigned source_kind=0;source_kind<2u;source_kind++) for(unsigned invalid=0;invalid<12u;invalid++){
+  for(unsigned source_kind=0;source_kind<3u;source_kind++) for(unsigned invalid=0;invalid<12u;invalid++){
     anygm_test_graphics_reset();
     GmlGpuContext context=fake_context(api?GML_GPU_API_OPENGLES3:GML_GPU_API_OPENGL_CORE);
     GmlGpu *gpu=gml_gpu_create();GmlRenderDeviceServices device={0};
     GmlRenderDrawOp *ops=calloc(QUADS+1u,sizeof *ops);
-    GmlRenderImageRef source={source_kind?GML_RENDER_RESOURCE_APPLICATION:GML_RENDER_RESOURCE_SURFACE,161u,1u,1u};
+    GmlRenderImageRef source={source_kind==2u?GML_RENDER_RESOURCE_SCREEN:
+      source_kind?GML_RENDER_RESOURCE_APPLICATION:GML_RENDER_RESOURCE_SURFACE,
+      source_kind==2u?162u:161u,1u,1u};
     GmlRenderImageUpload upload={.image=source,.storage_width=2u,.storage_height=2u,
       .region={0,0,2u,2u},.pixel_format=GML_RENDER_PIXEL_ARGB8888,
       .stride_bytes=8u,.byte_capacity=sizeof pixels,.bytes=pixels};
@@ -1574,7 +1576,8 @@ static int scene_nearest_surface_function_case(void){
       GmlRenderDrawOp *op=&ops[index];
       op->sequence=index+1u;
       op->target=(GmlRenderTargetRef){.image={target_kind==0u?GML_RENDER_RESOURCE_SCREEN:
-        target_kind==1u?GML_RENDER_RESOURCE_APPLICATION:GML_RENDER_RESOURCE_SURFACE,162u,1u,index+1u},
+        target_kind==1u?GML_RENDER_RESOURCE_APPLICATION:GML_RENDER_RESOURCE_SURFACE,
+        162u,source_kind==2u && target_kind==0u?2u:1u,index+1u},
         .storage_version=1u,.width=8u,.height=8u,.pixel_format=GML_RENDER_PIXEL_ARGB8888,
         .region={0,0,8u,8u}};
       if(!index){op->opcode=GML_RENDER_OP_CLEAR;op->payload.clear_colour=0x78273859u;continue;}

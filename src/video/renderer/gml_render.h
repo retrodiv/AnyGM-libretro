@@ -535,6 +535,9 @@ int gml_render_begin_resident_owned_application(GmlRender *r,double camx,double 
                                                 int retain_target);
 int gml_render_begin_resident_base(GmlRender *r,uint32_t *pixels,int width,int height,
                                    double camx,double camy);
+/* Pure admission query for a separate SCREEN while the application remains borrowed. */
+/* Pure owning-context admission query; never observes or promotes a borrowed image. */
+int gml_render_can_begin_borrowed_screen(const GmlRender *r,const uint32_t *pixels);
 /* Rebind an already current completed SCREEN for an ordered ordinary draw suffix.
  * Deferred presentations and CPU-current or differently bound targets keep their owner. */
 int gml_render_begin_completed_screen_suffix(GmlRender *r,uint32_t *pixels,

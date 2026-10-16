@@ -32,6 +32,11 @@ int gml_render_scene_target_matches(const GmlRender *render);
 /* Attempt the host-owned pending application composite before a SCREEN scene draw. */
 int gml_render_compose_resident_underlay(GmlRender *render);
 void gml_render_base_resource_dispose(GmlRender *render);
+void gml_render_retained_base_dispose(GmlRender *render);
+GmlRenderResource *gml_render_base_resource_lookup(const GmlRender *render,
+  const uint32_t *pixels,int *width,int *height);
+/* Return -1 rather than evicting an unobserved third physical canvas. */
+int gml_render_base_resource_select(GmlRender *render,uint32_t *pixels);
 int gml_render_base_resource_resize(GmlRender *render,int width,int height);
 int gml_render_base_history_observe(GmlRender *render);
 GmlRenderResourceExecution gml_render_application_scene_submit(

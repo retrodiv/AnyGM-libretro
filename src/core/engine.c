@@ -2057,6 +2057,8 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
 			       (!engine->aspect_force_active || forced_owned_scene_began) &&
 			       !aspect_gui_center &&
 			       (gui_indirect || !render_presentation.application_draw_enabled ||
+			        (early_classic_borrowed_world &&
+			         gml_render_can_begin_borrowed_screen(&engine->render,gtarget)) ||
 			        (frame_view_count<=1 && !gml_render_is_classic(&engine->render) &&
 			         render_presentation.application_owned)) &&
 			       engine_graphics_active(engine) &&

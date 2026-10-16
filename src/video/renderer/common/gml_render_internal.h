@@ -317,6 +317,13 @@ typedef struct GmlRender {
   GmlRenderResource *base_scene_resource;
   uint32_t *base_scene_resource_pixels;
   int base_scene_resource_width,base_scene_resource_height;
+  /* One separate early-classic world/SCREEN image, without owning its CPU allocation. */
+  GmlRenderResource *retained_base_resource;
+  uint32_t *retained_base_pixels;
+  int retained_base_width,retained_base_height;
+  GmlRenderResource *retained_base_history_resource;
+  uint32_t *retained_base_history_pixels;
+  size_t retained_base_history_count;
   /* Raw-linear high-water image across borrowed base pitch changes. Its canonical staging
    * is separate so observing an old tail cannot overwrite the current active prefix. */
   GmlRenderResource *base_history_resource;

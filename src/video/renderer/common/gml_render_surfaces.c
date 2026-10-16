@@ -128,6 +128,8 @@ int gml_render_checkpoint_pending_resources(GmlRender *r){
        !gml_render_resource_checkpoint(r->surface[index].resource,device)) return 0;
   if(r->app_surface_resource &&
      !gml_render_resource_checkpoint(r->app_surface_resource,device)) return 0;
+  if(r->retained_base_resource &&
+     !gml_render_resource_checkpoint(r->retained_base_resource,device)) return 0;
   return !r->base_scene_resource ||
     gml_render_resource_checkpoint(r->base_scene_resource,device);
 }
@@ -141,6 +143,8 @@ int gml_render_observe_device_resources(GmlRender *r){
        !gml_render_resource_observe_device(r->surface[index].resource,device)) return 0;
   if(r->app_surface_resource &&
      !gml_render_resource_observe_device(r->app_surface_resource,device)) return 0;
+  if(r->retained_base_resource &&
+     !gml_render_resource_observe_device(r->retained_base_resource,device)) return 0;
   return !r->base_scene_resource ||
     gml_render_resource_observe_device(r->base_scene_resource,device);
 }
@@ -165,7 +169,10 @@ int gml_render_device_observation_pending(const GmlRender *r){
   for(int index=0;index<GML_MAX_SURFACES;index++)
     if(resource_loses_device_pixels(r->surface[index].resource)) return 1;
   return resource_loses_device_pixels(r->app_surface_resource) ||
+         resource_loses_device_pixels(r->retained_base_resource) ||
          resource_loses_device_pixels(r->base_scene_resource) ||
+         (r->retained_base_history_count>(size_t)r->retained_base_width*r->retained_base_height &&
+          resource_loses_device_pixels(r->retained_base_history_resource)) ||
          (r->base_history_count>(size_t)r->base_scene_resource_width*r->base_scene_resource_height &&
           resource_loses_device_pixels(r->base_history_resource));
 }
@@ -177,7 +184,11 @@ void gml_render_lose_volatile_device(GmlRender *r){
   for(int index=0;index<GML_MAX_SURFACES;index++)
     if(resource_loses_device_pixels(r->surface[index].resource))
       lost_surfaces|=UINT64_C(1)<<index;
-  lost_application=resource_loses_device_pixels(r->app_surface_resource);
+  lost_application=resource_loses_device_pixels(r->app_surface_resource) ||
+    (r->app_surface==r->base_scene_resource_pixels &&
+     resource_loses_device_pixels(r->base_scene_resource)) ||
+    (r->app_surface==r->retained_base_pixels &&
+     resource_loses_device_pixels(r->retained_base_resource));
   owned_width=r->app_surface_resource?r->app_surface_resource_width:
     r->app_surface==r->app_surface_owned?r->app_w:0;
   owned_height=r->app_surface_resource?r->app_surface_resource_height:
@@ -216,6 +227,7 @@ void gml_render_lose_volatile_device(GmlRender *r){
   if(!r->app_surface && r->app_surface_owned && owned_width>0 && owned_height>0)
     gml_render_application_surface_bind(r,r->app_surface_owned,owned_width,owned_height,0);
   gml_render_base_resource_dispose(r);
+  gml_render_retained_base_dispose(r);
   if(r->resident_application_pass)
     gml_render_dispatch_resident_lost(r,GML_RENDER_RESIDENT_NO_DEVICE);
   r->resident_application_pass=r->resident_scene_pass=0;
@@ -312,7 +324,8 @@ int gml_render_application_scene_enqueue_quads(GmlRender *r,
   uint32_t state_index=0,source_index=0;
   int coalescible,exact_filtered_font,versioned_surface;
   versioned_surface=operation && source && source->resident_resource &&
-    (source->image.resource_class==GML_RENDER_RESOURCE_SURFACE ||
+    (source->image.resource_class==GML_RENDER_RESOURCE_SCREEN ||
+     source->image.resource_class==GML_RENDER_RESOURCE_SURFACE ||
      source->image.resource_class==GML_RENDER_RESOURCE_APPLICATION) &&
     operation->scene_family==GML_RENDER_SCENE_SURFACE &&
     operation->reconstruction_mode==GML_RENDER_DEVICE_CHECKPOINT &&
@@ -584,19 +597,93 @@ void gml_render_base_resource_dispose(GmlRender *r){
   r->base_scene_resource_width=r->base_scene_resource_height=0;
 }
 
+GmlRenderResource *gml_render_base_resource_lookup(const GmlRender *r,
+  const uint32_t *pixels,int *width,int *height){
+  if(!r || !pixels) return NULL;
+  if(r->base_scene_resource && pixels==r->base_scene_resource_pixels){
+    if(width) *width=r->base_scene_resource_width;
+    if(height) *height=r->base_scene_resource_height;
+    return r->base_scene_resource;
+  }
+  if(r->retained_base_resource && pixels==r->retained_base_pixels){
+    if(width) *width=r->retained_base_width;
+    if(height) *height=r->retained_base_height;
+    return r->retained_base_resource;
+  }
+  return NULL;
+}
+
+void gml_render_retained_base_dispose(GmlRender *r){
+  if(!r || !r->retained_base_resource) return;
+  (void)gml_render_application_scene_flush(r);
+  const GmlRenderDeviceServices *device=gml_render_device(r);
+  if(device && device->retire)
+    device->retire(device->context,gml_render_resource_image_ref(r->retained_base_resource));
+  gml_render_resource_destroy(r->retained_base_resource);
+  if(r->retained_base_history_resource){
+    if(device && device->retire)
+      device->retire(device->context,gml_render_resource_image_ref(r->retained_base_history_resource));
+    gml_render_resource_destroy(r->retained_base_history_resource);
+  }
+  free(r->retained_base_history_pixels);
+  r->retained_base_history_resource=NULL;r->retained_base_history_pixels=NULL;
+  r->retained_base_history_count=0;
+  r->retained_base_resource=NULL;r->retained_base_pixels=NULL;
+  r->retained_base_width=r->retained_base_height=0;
+}
+
+int gml_render_can_begin_borrowed_screen(const GmlRender *r,const uint32_t *pixels){
+  const GmlRenderDeviceServices *device=gml_render_device(r);
+  return r && pixels && r->base_scene_resource && r->classic && r->win &&
+    !anygm_policy_classic_modern_presentation(r->win) && r->scene_device_enabled &&
+    device && device->observe_on_demand && device->observe_on_demand(device->context) &&
+    r->app_surface==r->base_scene_resource_pixels && r->app_surface!=r->app_surface_owned &&
+    pixels!=r->app_surface && r->app_w==r->base_scene_resource_width &&
+    r->app_h==r->base_scene_resource_height &&
+    (!r->retained_base_resource || r->retained_base_pixels==pixels);
+}
+
+int gml_render_base_resource_select(GmlRender *r,uint32_t *pixels){
+  if(!r || pixels==r->base_scene_resource_pixels) return 0;
+  if(r->retained_base_resource){
+    if(pixels!=r->retained_base_pixels) return r->base_scene_resource?-1:0;
+  } else if(!gml_render_can_begin_borrowed_screen(r,pixels)) return 0;
+  GmlRenderResource *resource=r->base_scene_resource;
+  uint32_t *previous=r->base_scene_resource_pixels;
+  int width=r->base_scene_resource_width,height=r->base_scene_resource_height;
+  GmlRenderResource *history=r->base_history_resource;
+  uint32_t *history_pixels=r->base_history_pixels;
+  size_t history_count=r->base_history_count;
+  r->base_scene_resource=r->retained_base_resource;
+  r->base_scene_resource_pixels=r->retained_base_pixels;
+  r->base_scene_resource_width=r->retained_base_width;
+  r->base_scene_resource_height=r->retained_base_height;
+  r->retained_base_resource=resource;r->retained_base_pixels=previous;
+  r->retained_base_width=width;r->retained_base_height=height;
+  r->base_history_resource=r->retained_base_history_resource;
+  r->base_history_pixels=r->retained_base_history_pixels;
+  r->base_history_count=r->retained_base_history_count;
+  r->retained_base_history_resource=history;r->retained_base_history_pixels=history_pixels;
+  r->retained_base_history_count=history_count;
+  return 1;
+}
+
 /* Only the inactive suffix needs this observation. Active CPU writes never overwrite that
  * suffix; conversely a history checkpoint must not overwrite a more recent active prefix. */
-int gml_render_base_history_observe(GmlRender *r){
+static int base_history_observe(GmlRenderResource *history,uint32_t *target,
+                                 size_t active,size_t count){
   const uint32_t *pixels=NULL;
-  size_t active;
-  if(!r) return 0;
-  if(!r->base_history_resource) return 1;
-  active=(size_t)r->base_scene_resource_width*r->base_scene_resource_height;
-  if(r->base_history_count<=active) return 1;
-  if(!gml_render_resource_acquire_cpu_read(r->base_history_resource,&pixels)) return 0;
-  memcpy(r->base_scene_resource_pixels+active,pixels+active,
-         (r->base_history_count-active)*sizeof(uint32_t));
+  if(!history || count<=active) return 1;
+  if(!gml_render_resource_acquire_cpu_read(history,&pixels)) return 0;
+  memcpy(target+active,pixels+active,(count-active)*sizeof(uint32_t));
   return 1;
+}
+
+int gml_render_base_history_observe(GmlRender *r){
+  return r && base_history_observe(r->base_history_resource,r->base_scene_resource_pixels,
+    (size_t)r->base_scene_resource_width*r->base_scene_resource_height,r->base_history_count) &&
+    base_history_observe(r->retained_base_history_resource,r->retained_base_pixels,
+    (size_t)r->retained_base_width*r->retained_base_height,r->retained_base_history_count);
 }
 
 static void base_stage_dispose(const GmlRenderDeviceServices *device,
@@ -803,7 +890,27 @@ GmlRenderResourceExecution gml_render_application_scene_submit(
   }
   return result;
 }
+static int resident_surface_nearest_function(GmlRender *r,int surf,double dx,double dy,
+  double dw,double dh,uint32_t colour,double alpha,int automatic);
+
 int gml_render_compose_resident_underlay(GmlRender *r){
+  if(r && r->classic){
+    if(!r->resident_application_pass || !r->win ||
+       anygm_policy_classic_modern_presentation(r->win) ||
+       !r->pending_underlay || r->fb!=r->base_fb || r->target_sp || r->target_id>=0 ||
+       r->app_phase_y || r->classic_phase_y ||
+       (r->interp && (r->underlay_w!=r->app_w || r->underlay_h!=r->app_h))) return 0;
+    for(unsigned i=0;i<3u;i++)
+      if(r->classic_interp_phase[i] || r->app_interp_phase[i]) return 0;
+    /* The internal presentation rectangle is already in raster coordinates.
+     * Share the existing surface-zero point writer without requiring publication
+     * as a GML resource or applying GUI/world mapping a second time. */
+    r->pending_underlay=0;
+    int accepted=resident_surface_nearest_function(r,0,r->underlay_x+r->cam_x,
+      r->underlay_y+r->cam_y,r->underlay_w,r->underlay_h,0xFFFFFFu,1.0,1);
+    if(!accepted) r->pending_underlay=1;
+    return accepted;
+  }
   GmlRenderResourceSource source={0};
   GmlRenderDrawOp operation={0};
   GmlRenderDrawStateSnapshot state={0};
@@ -953,9 +1060,7 @@ static int surface_dimensions(const GmlRender *r,int id,int *width,int *height){
       if(r->app_surface_resource_width!=r->app_w ||
          r->app_surface_resource_height!=r->app_h) return 0;
       resource=r->app_surface_resource;
-    } else if(r->app_surface==r->base_scene_resource_pixels){
-      resource=r->base_scene_resource;
-    }
+    } else resource=gml_render_base_resource_lookup(r,r->app_surface,NULL,NULL);
     w=r->app_w?r->app_w:(r->base_fbw?r->base_fbw:r->fbw);
     h=r->app_h?r->app_h:(r->base_fbh?r->base_fbh:r->fbh);
   } else {
@@ -1009,8 +1114,6 @@ static int resident_surface_shader(GmlRender *r,int surf,double dx,double dy,dou
                                    const GmlRenderShaderGeometry *geometry);
 static int resident_surface_filtered(GmlRender *r,int surf,double dx,double dy,double dw,double dh,
                                      uint32_t blend,double alpha);
-static int resident_surface_nearest_function(GmlRender *r,int surf,double dx,double dy,
-                                              double dw,double dh,uint32_t colour,double alpha);
 
 int gml_render_recover_empty_screen(GmlRender *r,uint32_t *pixels,int width,int height,
                                      double x,double y,double w,double h,int zero_camera){
@@ -1123,7 +1226,7 @@ void gml_draw_surface_stretched(GmlRender *r,int surf,double dx,double dy,
           mapped_width,mapped_height,blend,alpha);
       if(!resident_success)
         resident_success=resident_surface_nearest_function(r,surf,mapped_x,mapped_y,
-          mapped_width,mapped_height,blend,alpha);
+                                                          mapped_width,mapped_height,blend,alpha,0);
       if(!resident_success && surf>0)
         resident_success=resident_surface_part(r,surf,0.0,0.0,
           (double)source_width,(double)source_height,mapped_x,mapped_y,
@@ -1147,7 +1250,7 @@ void gml_draw_surface_stretched(GmlRender *r,int surf,double dx,double dy,
  * The device evaluates those integral loop ratios, rather than interpolating a
  * float phase or expanding the image into a Cartesian set of texel quads. */
 static int resident_surface_nearest_function(GmlRender *r,int surf,double dx,double dy,
-                                              double dw,double dh,uint32_t colour,double alpha){
+  double dw,double dh,uint32_t colour,double alpha,int automatic){
   int slot=surface_slot(surf);
   const GmlRenderDeviceServices *device=gml_render_device(r);
   GmlRenderResourceSource source={0};
@@ -1155,10 +1258,16 @@ static int resident_surface_nearest_function(GmlRender *r,int surf,double dx,dou
   GmlRenderDrawStateSnapshot state={0};
   GmlRenderResource *resource,*target;
   GmlRenderImageRef image,source_ref;
+  GmlRenderResource *borrowed=NULL;
+  int borrowed_width=0,borrowed_height=0;
+  if(automatic && r && r->classic && r->win && !anygm_policy_classic_modern_presentation(r->win) &&
+     surf==0 && r->app_surface!=r->app_surface_owned &&
+     (borrowed=gml_render_base_resource_lookup(r,r->app_surface,&borrowed_width,&borrowed_height)) &&
+     (borrowed_width!=r->app_w || borrowed_height!=r->app_h)) borrowed=NULL;
   if(!r || !r->win || !device || !device->observe_on_demand ||
      !device->observe_on_demand(device->context) ||
-     (surf==0? !r->app_surface_published || !r->app_surface ||
-               r->app_surface!=r->app_surface_owned:
+     (surf==0? (!automatic && !r->app_surface_published) || !r->app_surface ||
+               (r->app_surface!=r->app_surface_owned && !borrowed):
                 slot<0 || !r->surface[slot].live) ||
      r->active_shader>=0 || gml_d3_is_active(r) || r->fog_flat ||
      r->blendmode<0 || (r->blendmode>2 && r->blendmode!=6) ||
@@ -1190,13 +1299,15 @@ static int resident_surface_nearest_function(GmlRender *r,int surf,double dx,dou
   if(r->pending_underlay &&
      (surf!=0 || !gml_render_gui_transform_active(r) || r->cam_x!=0.0 || r->cam_y!=0.0 ||
       !gml_render_compose_resident_underlay(r) || !r->resident_application_pass)) return 0;
-  resource=surf==0?gml_render_application_resource_ensure(r):gml_render_surface_resource_ensure(r,surf);
+  resource=surf==0?(borrowed?borrowed:gml_render_application_resource_ensure(r)):
+                   gml_render_surface_resource_ensure(r,surf);
   if(!resource || (!gml_render_resource_device_source_view(resource,device,&source) &&
                   !gml_render_resource_current_cpu_source_view(resource,&source)) ||
      source.pixel_format!=GML_RENDER_PIXEL_ARGB8888) return 0;
   if(alpha>1.0) alpha=1.0;
   int opaque=surface_known_opaque(r,surf);
-  int fast_unit=unit && (!r->alpha_test_enable || (opaque && r->alpha_test_ref<255u));
+  int requires_filter=r->alpha_test_enable && (!automatic || r->alpha_test_ref>0u);
+  int fast_unit=unit && (!requires_filter || (opaque && r->alpha_test_ref<255u));
   int masked_unit=fast_unit && r->color_write_mask!=15u &&
     (r->blendmode==0 || r->blendmode==6) && alpha>=1.0 && (colour&0xFFFFFFu)==0xFFFFFFu;
   /* The unit white copy merges independent channels. The retained generic
@@ -1206,6 +1317,11 @@ static int resident_surface_nearest_function(GmlRender *r,int surf,double dx,dou
   int replace=masked_unit?!r->alphablend:r->blendmode==6 || (r->classic && surf==0);
   int additive=fast_unit && r->blendmode==1;
   int inverse=fast_unit && r->blendmode==2;
+  if(automatic && fast_unit && (additive || inverse)) replace=0;
+  /* The early-classic normal nonunit leaf uses the unchanged scaled mapper,
+   * which blends partial source coverage rather than copying its RGB. */
+  if(automatic && !unit && !r->blendmode &&
+     (!requires_filter || (opaque && r->alpha_test_ref<255u))) replace=0;
   int fast_white=fast_unit && !masked_unit && !r->blendmode && (colour&0xFFFFFFu)==0xFFFFFFu &&
     (alpha>=1.0 || !r->alphablend);
   gml_render_flush_pending_fill(r);
@@ -1232,6 +1348,7 @@ static int resident_surface_nearest_function(GmlRender *r,int surf,double dx,dou
   q->inverse_anchor[0]=left;q->inverse_anchor[1]=top;
   q->inverse_x[0]=signed_width;q->inverse_y[1]=signed_height;
   q->span_y[0]=replace && !(r->classic && surf==0 && !masked_unit)?2.0:0.0;
+  if(automatic && r->blendmode==6 && !masked_unit) q->span_y[0]=2.0;
   if(!fast_unit && !replace && !r->alphablend) q->span_y[0]=3.0;
   /* The white full-source normal leaf centre-samples reductions, assigning an
    * exact source boundary to the preceding texel. Tinted/cutout generic draws
@@ -1976,9 +2093,7 @@ static int application_surface_resize(GmlRender *r,int w,int h){
     oldw=r->app_surface_resource_width;
     oldh=r->app_surface_resource_height;
     old_resource=r->app_surface_resource;
-  } else if(old==r->base_scene_resource_pixels && r->base_scene_resource){
-    old_resource=r->base_scene_resource;
-  }
+  } else old_resource=gml_render_base_resource_lookup(r,old,NULL,NULL);
   uint32_t *px=calloc((size_t)w*(size_t)h,sizeof(uint32_t));
   if(!px) return 0;
   replacement=surface_resize_resident(r,old_resource,oldw,oldh,px,w,h,

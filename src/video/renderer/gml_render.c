@@ -211,6 +211,9 @@ void gml_render_rebind_content(GmlRender *r,GmlWin *win){
     r->win=win;
     gml_render_resource_bind_dispatch(r->app_surface_resource,r);
     gml_render_resource_bind_dispatch(r->base_scene_resource,r);
+    gml_render_resource_bind_dispatch(r->retained_base_resource,r);
+    gml_render_resource_bind_dispatch(r->base_history_resource,r);
+    gml_render_resource_bind_dispatch(r->retained_base_history_resource,r);
     for(int index=0;index<GML_MAX_SURFACES;index++)
       gml_render_resource_bind_dispatch(r->surface[index].resource,r);
   }
@@ -492,6 +495,8 @@ static int begin_resident_base(GmlRender *r,uint32_t *pixels,int width,int heigh
     return gml_render_dispatch_resident_reject(r,GML_RENDER_RESIDENT_PENDING_PRESENTATION);
   if(!gml_render_application_scene_flush(r))
     return gml_render_dispatch_resident_reject(r,GML_RENDER_RESIDENT_SCENE_FLUSH);
+  if(!numbered_only && gml_render_base_resource_select(r,pixels)<0)
+    return gml_render_dispatch_resident_reject(r,GML_RENDER_RESIDENT_TARGET_POLICY);
   if(retain_target && r->target_sp>0 &&
      (r->target_id<=0 || r->target_id>GML_MAX_SURFACES ||
       !gml_render_surface_resource_ensure(r,r->target_id)))
@@ -975,6 +980,7 @@ void gml_render_free(GmlRender *r){
   r->layer_filter_capacity=0; r->layer_filter_active=0;
   gml_render_application_resource_dispose(r);
   gml_render_base_resource_dispose(r);
+  gml_render_retained_base_dispose(r);
   /* The shared batch queue can belong to a SCREEN-only pass with no owned
    * application resource to retire it. Both resources are flushed above. */
   gml_render_application_scene_queue_dispose(r);
@@ -1224,9 +1230,9 @@ int gml_render_scene_submit_pending(GmlRender *r){
 static GmlRenderResource *completed_screen_resource(const GmlRender *r,
                                                     const uint32_t *pixels,
                                                     int width,int height){
-  return r && pixels && width>0 && height>0 &&
-    r->base_scene_resource_pixels==pixels && r->base_scene_resource_width==width &&
-    r->base_scene_resource_height==height ? r->base_scene_resource:NULL;
+  int actual_width=0,actual_height=0;
+  GmlRenderResource *resource=gml_render_base_resource_lookup(r,pixels,&actual_width,&actual_height);
+  return width>0 && height>0 && actual_width==width && actual_height==height?resource:NULL;
 }
 int gml_render_completed_screen_read(GmlRender *r,uint32_t *pixels,int width,int height){
   const uint32_t *current=NULL;
@@ -1265,11 +1271,17 @@ int gml_render_completed_screen_write(GmlRender *r,uint32_t *pixels,int width,in
   GmlRenderResource *resource;
   if(!r || !pixels || width<=0 || height<=0 ||
      !gml_render_application_scene_flush(r)) return 0;
-  if(r->base_scene_resource_pixels==pixels && !gml_render_base_history_observe(r)) return 0;
+  if((r->base_scene_resource_pixels==pixels || r->retained_base_pixels==pixels) &&
+     !gml_render_base_history_observe(r)) return 0;
   if(r->base_scene_resource && r->base_scene_resource_pixels==pixels &&
      (r->base_scene_resource_width!=width || r->base_scene_resource_height!=height)){
     if(!gml_render_resource_acquire_cpu_read(r->base_scene_resource,NULL)) return 0;
     gml_render_base_resource_dispose(r);
+  }
+  if(r->retained_base_resource && r->retained_base_pixels==pixels &&
+     (r->retained_base_width!=width || r->retained_base_height!=height)){
+    if(!gml_render_resource_acquire_cpu_read(r->retained_base_resource,NULL)) return 0;
+    gml_render_retained_base_dispose(r);
   }
   resource=completed_screen_resource(r,pixels,width,height);
   if(resource && (!gml_render_resource_acquire_cpu_write(resource,&current) ||
@@ -1289,7 +1301,9 @@ int gml_render_completed_screen_prepare_publish(GmlRender *r,uint32_t *pixels,
 }
 void gml_render_completed_screen_publish(GmlRender *r,uint32_t *pixels,int width,int height){
   if(!r || !pixels || width<=0 || height<=0) return;
-  if(completed_screen_resource(r,pixels,width,height)) gml_render_base_resource_dispose(r);
+  GmlRenderResource *resource=completed_screen_resource(r,pixels,width,height);
+  if(resource==r->retained_base_resource && resource) gml_render_retained_base_dispose(r);
+  else if(resource) gml_render_base_resource_dispose(r);
   gml_render_discard_deferred_presentation(r);
   if(r->fb==pixels){
     if(r->resident_application_pass)
