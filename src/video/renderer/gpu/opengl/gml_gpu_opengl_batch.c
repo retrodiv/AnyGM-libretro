@@ -1027,7 +1027,12 @@ static int scene_preflight(GmlGpuBackend *backend,const GmlRenderDrawBatch *batc
            (sampler->rendered_origin && !backend->gl.BlitFramebuffer) ||
            same_logical(sampler->ref,target->image) ||
            (sampler->pixel_format!=GML_RENDER_PIXEL_XRGB8888 &&
-            sampler->pixel_format!=GML_RENDER_PIXEL_ARGB8888)) return 0;
+            sampler->pixel_format!=GML_RENDER_PIXEL_ARGB8888 &&
+            !(shader->builtin_kind==GML_PLAN_BUILTIN_SHADER_LUT &&
+              sampler->pixel_format==GML_RENDER_PIXEL_RGBA8888))) return 0;
+        if(shader->builtin_kind==GML_PLAN_BUILTIN_SHADER_LUT &&
+           (shader->uniforms[0].value[0]+shader->uniforms[1].value[2]>(float)sampler->width ||
+            shader->uniforms[0].value[1]+shader->uniforms[1].value[3]>(float)sampler->height)) return 0;
       }
       continue;
     }

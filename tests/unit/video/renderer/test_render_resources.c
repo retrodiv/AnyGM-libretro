@@ -6072,6 +6072,66 @@ static int resident_threshold_palette_surface(void){
   return 1;
 }
 
+static int resident_lut_surface(void){
+  for(unsigned target_kind=0;target_kind<3u;target_kind++)
+    for(unsigned port=0;port<3u;port++){
+      GmlRender *render=calloc(1,sizeof *render);
+      uint32_t screen[64]={0};
+      FakeDevice fake={.on_demand=1};
+      GmlRenderDeviceServices device=service(&fake);
+      CHECK(render && gml_render_init(render,NULL)==0);
+      CHECK(gml_render_application_surface_ensure_owned(render,4,4));
+      for(unsigned i=0;i<16u;i++) render->app_surface_owned[i]=0xFF315779u;
+      render->app_surface_opaque=1;
+      gml_render_application_surface_set_draw_enabled(render,0);
+      gml_render_application_surface_publish(render);
+      render->spr=calloc(1,sizeof *render->spr);
+      render->shader_pal=calloc(1,sizeof *render->shader_pal);
+      CHECK(render->spr && render->shader_pal);
+      render->n_spr=render->n_shader_pal=1;
+      render->spr[0].w=render->spr[0].h=4;
+      render->spr[0].n_frames=1;
+      render->spr[0].frame=calloc(1,sizeof(int));
+      render->spr[0].runtime_rgba=malloc(64u);
+      CHECK(render->spr[0].frame && render->spr[0].runtime_rgba);
+      memset(render->spr[0].runtime_rgba,127,64u);
+      render->lut_pal_sprite=render->lut_pal_frame=0;
+      render->shader_pal[0].lut=1;
+      render->shader_pal[0].lut_row=.375f;
+      gml_render_bind_device(render,&device);
+      gml_render_set_scene_device(render,1);
+      CHECK(gml_render_begin_resident_base(render,screen,8,8,0,0));
+      if(target_kind==1u){
+        int target=gml_surface_create(render,8,8);
+        CHECK(target>0 && gml_surface_set_target(render,target));
+      } else if(target_kind==2u) gml_render_gui_begin(render,8,8);
+      render->active_shader=0;
+      gml_render_set_pending_fill(render,0xFF010203u);
+      if(port==0u) gml_draw_surface_stretched(render,0,1,1,4,4,0xFFFFFFu,1);
+      else if(port==1u) gml_draw_surface_part_ext(render,0,0,0,4,4,1,1,1,1,0xFFFFFFu,1);
+      else gml_draw_surface_ext(render,0,1,1,1,1,0,0xFFFFFFu,1);
+      CHECK(render->resident_application_pass && fake.shader_submits==1 &&
+            fake.readbacks==0 && fake.last_opcode==GML_RENDER_OP_CONTENT_SHADER_DRAW &&
+            !render->shader_device_present && !render->shader_device_expected);
+      if(target_kind==0u && port==0u){
+        render->active_shader=-1;
+        CHECK(gml_render_resident_application_cpu_barrier(render));
+        CHECK(gml_render_begin_resident_base(render,screen,4,4,0,0));
+        render->app_surface_opaque=0;
+        render->app_surface_owned[0]=0u;
+        render->active_shader=0;
+        gml_render_set_pending_fill(render,0x7F010203u);
+        gml_draw_surface_stretched(render,0,0,0,4,4,0xFFFFFFu,1);
+        CHECK(render->resident_application_pass && !render->fb_all_opaque &&
+              !render->fb_opaque_known);
+      }
+      render->active_shader=-1;
+      gml_render_free(render);
+      free(render);
+    }
+  return 1;
+}
+
 static int resident_centered_full_source_shader(void){
   for(unsigned source_kind=0;source_kind<3u;source_kind++)
     for(unsigned part=0;part<2u;part++)
@@ -16093,6 +16153,7 @@ int main(void){
   passed+=surface_metadata_preserves_device_authority();
   passed+=resident_centered_full_source_shader();
   passed+=resident_threshold_palette_surface();
+  passed+=resident_lut_surface();
   passed+=resident_identity_gui_filtered_atlas();
   passed+=resident_zero_alpha_layer_fill_noop();
   passed+=resident_rectangle_fill_noop();
@@ -16250,6 +16311,6 @@ int main(void){
   passed+=source_free_primitive_rect_replay();
   passed+=stretched_float_exact_replay();
   passed+=filtered_font_exact_recovery();
-  printf("render resource cases: passed=%d failed=%d\n",passed,250-passed);
-  return passed==250?EXIT_SUCCESS:EXIT_FAILURE;
+  printf("render resource cases: passed=%d failed=%d\n",passed,251-passed);
+  return passed==251?EXIT_SUCCESS:EXIT_FAILURE;
 }

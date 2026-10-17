@@ -13,6 +13,37 @@ int gml_render_plan_shader_has_program(const GmlPlanShader *shader){
   if(!shader) return 0;
   if(shader->builtin_kind==GML_PLAN_BUILTIN_SHADER_NONE)
     return shader->vertex_es && shader->fragment_es;
+  if(shader->builtin_kind==GML_PLAN_BUILTIN_SHADER_LUT){
+    static const char *names[]={"u_lut_origin","u_lut_extent","u_lut_row",
+                               "u_lut_v","u_lut_linear","u_palette_bypass"};
+    if(shader->uniform_count!=6u || shader->sampler_count!=1u ||
+       strncmp(shader->samplers[0].name,"u_lut_texture",sizeof shader->samplers[0].name) ||
+       shader->samplers[0].linear>1u) return 0;
+    for(unsigned channel=0;channel<4u;channel++)
+      if(!isfinite(shader->vertex_colour[channel]) || shader->vertex_colour[channel]<0.0f ||
+         shader->vertex_colour[channel]>1.0f ||
+         (channel==3u && shader->vertex_colour[channel]!=1.0f)) return 0;
+    for(unsigned index=0;index<6u;index++){
+      const GmlPlanUniform *uniform=&shader->uniforms[index];
+      if(strncmp(uniform->name,names[index],sizeof uniform->name) ||
+         uniform->count!=(index<2u?4u:1u) || uniform->integer!=(index!=3u)) return 0;
+      for(unsigned channel=0;channel<uniform->count;channel++){
+        float value=uniform->value[channel];
+        float maximum=index==3u || index>=4u?1.0f:65535.0f;
+        if(!isfinite(value) || value<0.0f || value>maximum ||
+           (index!=3u && floorf(value)!=value) || (index==1u && value<1.0f)) return 0;
+      }
+    }
+    for(unsigned axis=0;axis<2u;axis++){
+      float trim=shader->uniforms[0].value[axis+2u];
+      float logical=shader->uniforms[1].value[axis];
+      float stored=shader->uniforms[1].value[axis+2u];
+      if(trim>=logical || stored>logical-trim ||
+         (shader->samplers[0].linear && (trim || stored!=logical))) return 0;
+    }
+    return shader->uniforms[2].value[0]<shader->uniforms[1].value[1] &&
+      shader->uniforms[4].value[0]==(float)shader->samplers[0].linear;
+  }
   if(shader->builtin_kind!=GML_PLAN_BUILTIN_SHADER_THRESHOLD_PALETTE ||
      shader->uniform_count!=14u || shader->sampler_count) return 0;
   for(unsigned channel=0;channel<4u;channel++)

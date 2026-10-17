@@ -6,6 +6,7 @@
 
 #include "gml_render.h"
 #include "gml_render_plan.h"
+#include "gml_render_resources.h"
 
 /* Snapshot draw-time content-program inputs; sampler image references are resolved by the caller
  * against its own resource owner before submission. */
@@ -16,6 +17,9 @@ int gml_render_shader_plan_snapshot(const GmlRender *render,int shader_id,
 /* The existing recognized byte-colour evaluator, without executing content GLSL. */
 int gml_render_shader_threshold_palette_snapshot(const GmlRender *render,int shader_id,
                                                 GmlPlanShader *out);
+/* Resolve the recognized red-index palette against its existing immutable texture owner. */
+int gml_render_shader_lut_snapshot(GmlRender *render,int shader_id,GmlPlanShader *out,
+                                    GmlRenderResourceSource *palette);
 
 /* Whether the selected program reaches the CPU's unchanged ordinary draw.
  * This is not evidence that the authored program itself has no effect. */

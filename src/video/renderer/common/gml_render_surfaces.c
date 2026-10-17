@@ -2382,8 +2382,11 @@ static int resident_surface_shader(GmlRender *r,int surf,double dx,double dy,dou
   const GmlRenderDeviceServices *device;
   uint32_t prepared=0;
   size_t snapshot_bytes=0;
-  int palette=r && r->scene_device_enabled && surface_known_opaque(r,surf) &&
+  int threshold=r && r->scene_device_enabled && surface_known_opaque(r,surf) &&
     gml_render_shader_threshold_palette_snapshot(r,r->active_shader,&shader);
+  int lut=!threshold && r && r->scene_device_enabled &&
+    gml_render_shader_lut_snapshot(r,r->active_shader,&shader,&sources[1]);
+  int palette=threshold || lut;
   static const float white[4]={1.0f,1.0f,1.0f,1.0f};
   if(!r || (surf!=0 && (slot<0 || !r->surface[slot].live)) ||
      (surf==0 && (!r->app_surface_published || !r->app_surface ||
@@ -2424,6 +2427,12 @@ static int resident_surface_shader(GmlRender *r,int surf,double dx,double dy,dou
        fmod(dw,(double)source_width)!=0.0 || fmod(dh,(double)source_height)!=0.0 ||
        dw<source_width || dh<source_height || r->app_phase_y ||
        r->classic_interp_phase[0] || r->classic_interp_phase[1] || r->classic_interp_phase[2]) return 0;
+    /* The white unit CPU leaf replaces every nonzero source-alpha sample with
+     * an opaque palette colour. Other geometries/tints retain source coverage:
+     * without an opaque source they cannot share this fixed replacement packet. */
+    if(lut && !surface_known_opaque(r,surf) &&
+         (dw!=source_width || dh!=source_height || (blend&0xFFFFFFu)!=0xFFFFFFu ||
+          r->alpha_test_enable)) return 0;
     shader.vertex_colour[0]=(float)(blend&255u)/255.0f;
     shader.vertex_colour[1]=(float)((blend>>8)&255u)/255.0f;
     shader.vertex_colour[2]=(float)((blend>>16)&255u)/255.0f;
@@ -2431,7 +2440,8 @@ static int resident_surface_shader(GmlRender *r,int surf,double dx,double dy,dou
      * In this integral domain its transformed fractional-extent branch cannot apply; the
      * content-owned presentation branch still must copy the source, not recolour it. Part
      * calls do not select that software leaf. Preserve the policy without changing it. */
-    shader.uniforms[13].value[0]=stretched && surf==0 && r->win &&
+    shader.uniforms[threshold?13u:5u].value[0]=stretched && surf==0 && r->win &&
+      surface_known_opaque(r,surf) &&
       anygm_policy_uses_first_generation_studio(r->win) &&
       gml_render_gui_transform_active(r) && !r->target_sp && r->target_id<0 &&
       !r->interp && !r->blendmode && r->color_write_mask==15u &&
@@ -2476,7 +2486,9 @@ static int resident_surface_shader(GmlRender *r,int surf,double dx,double dy,dou
   if(palette && (sources[0].width!=(uint32_t)(surf==0?r->app_w:r->surface[slot].w) ||
                  sources[0].height!=(uint32_t)(surf==0?r->app_h:r->surface[slot].h))) return 0;
   source_refs[0]=sources[0].image;
-  if(shader.sampler_count){
+  if(lut){
+    source_refs[1]=sources[1].image;
+  } else if(shader.sampler_count){
     if(!device->capabilities || !device->capabilities(device->context,&caps) ||
        !caps.max_texture_extent) return 0;
     if(gml_render_shader_samplers(r,r->active_shader,bindings,GML_PLAN_MAX_SAMPLERS)!=
@@ -2578,7 +2590,8 @@ static int resident_surface_shader(GmlRender *r,int surf,double dx,double dy,dou
       gml_render_shader_mark_failed(r,r->active_shader);
     return 0;
   }
-  r->fb_opaque_known=r->fb_all_opaque=palette && left==0.0 && top==0.0 &&
+  r->fb_opaque_known=r->fb_all_opaque=palette && surface_known_opaque(r,surf) &&
+    left==0.0 && top==0.0 &&
     dw==(double)r->fbw && dh==(double)r->fbh;
   r->fb_all_transparent=0;
   if(r->fb_all_opaque && r->fb==r->app_surface_owned) r->app_surface_opaque=1;

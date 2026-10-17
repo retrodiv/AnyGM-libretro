@@ -512,6 +512,78 @@ int gml_render_shader_threshold_palette_snapshot(const GmlRender *r,int shader_i
   return 1;
 }
 
+int gml_render_shader_lut_snapshot(GmlRender *r,int shader_id,GmlPlanShader *out,
+                                    GmlRenderResourceSource *palette){
+  if(!r || !out || !palette || !r->shader_pal || shader_id<0 ||
+     shader_id>=r->n_shader_pal || !r->spr || r->lut_pal_sprite<0 ||
+     r->lut_pal_sprite>=r->n_spr) return 0;
+  const struct GmlShaderPal *p=&r->shader_pal[shader_id];
+  if(!p->lut || p->lut_indexed || p->vertex_colour_blend ||
+     p->vertex_colour_blend_alpha_only || !isfinite(p->lut_row) || p->lut_row<0.0f ||
+     p->generic_sampler_count<0 || p->generic_sampler_count>GML_PLAN_MAX_SAMPLERS) return 0;
+  if(p->threshold_palette || p->indexed_brightness || p->channel_mask ||
+     p->channel_alpha_key || p->alpha_discard || p->ordered_dither || p->quantise4 ||
+     p->solid_alpha_mask || p->solid_blur_alpha || p->grid || p->dual_sample ||
+     p->radial_wave || p->uv_wave_mode || p->grayscale) return 0;
+  GmlSprite *sprite=&r->spr[r->lut_pal_sprite];
+  if(sprite->w<=0 || sprite->h<=0 || sprite->w>4096 || sprite->h>4096 ||
+     sprite->n_frames<=0) return 0;
+  int linear=r->texture_filter[0];
+  for(int index=0;index<p->generic_sampler_count;index++)
+    if(!strcmp(p->generic_sampler[index].name,p->lut_sampler)){
+      linear=r->texture_filter[index];break;
+    }
+  int layout[4]={0,0,0,0},extent[4]={sprite->w,sprite->h,sprite->w,sprite->h};
+  if(sprite->runtime_rgba){
+    if(!gml_render_runtime_sprite_scene_source_view(r,sprite,r->lut_pal_frame,palette)) return 0;
+  } else {
+    if(!sprite->frame) return 0;
+    int frame=((r->lut_pal_frame%sprite->n_frames)+sprite->n_frames)%sprite->n_frames;
+    int page=sprite->frame[frame];
+    if(page<0 || page>=r->n_tpag) return 0;
+    const GmlTpag *t=&r->tpag[page];
+    if(!gml_render_atlas_scene_source_view(r,t->atlas,palette) || t->sx<0 || t->sy<0 ||
+       t->tx<0 || t->ty<0 || t->sw<=0 || t->sh<=0 ||
+       t->sw>sprite->w-t->tx || t->sh>sprite->h-t->ty ||
+       (uint32_t)t->sx>palette->width || (uint32_t)t->sy>palette->height ||
+       (uint32_t)t->sw>palette->width-(uint32_t)t->sx ||
+       (uint32_t)t->sh>palette->height-(uint32_t)t->sy) return 0;
+    layout[0]=t->sx;layout[1]=t->sy;layout[2]=t->tx;layout[3]=t->ty;
+    extent[2]=t->sw;extent[3]=t->sh;
+  }
+  /* Missing trim texels use each source fragment as the CPU fallback. Hardware
+   * filtering cannot interpolate that varying fallback at a stored trim edge. */
+  if(linear && (layout[2] || layout[3] || extent[0]!=extent[2] || extent[1]!=extent[3])) return 0;
+  memset(out,0,sizeof *out);
+  out->identity=(uint32_t)shader_id;
+  out->builtin_kind=GML_PLAN_BUILTIN_SHADER_LUT;
+  for(unsigned channel=0;channel<4u;channel++) out->vertex_colour[channel]=1.0f;
+  static const char *names[]={"u_lut_origin","u_lut_extent","u_lut_row",
+                             "u_lut_v","u_lut_linear","u_palette_bypass"};
+  out->uniform_count=6u;
+  for(unsigned index=0;index<6u;index++){
+    GmlPlanUniform *uniform=&out->uniforms[index];
+    snprintf(uniform->name,sizeof uniform->name,"%s",names[index]);
+    uniform->count=index<2u?4u:1u;
+    uniform->integer=index!=3u;
+  }
+  for(unsigned channel=0;channel<4u;channel++){
+    out->uniforms[0].value[channel]=(float)layout[channel];
+    out->uniforms[1].value[channel]=(float)extent[channel];
+  }
+  /* Clamp before converting: a finite row need not fit in an integer. Keep the
+   * CPU float product for nearest-row selection, not a fragment float emulation. */
+  float row=p->lut_row*(float)sprite->h;
+  out->uniforms[2].value[0]=row>=(float)sprite->h?(float)(sprite->h-1):(float)(int)row;
+  out->uniforms[3].value[0]=fminf(p->lut_row,1.0f);
+  out->uniforms[4].value[0]=linear?1.0f:0.0f;
+  out->sampler_count=1u;
+  snprintf(out->samplers[0].name,sizeof out->samplers[0].name,"u_lut_texture");
+  out->samplers[0].image=1u;
+  out->samplers[0].linear=linear?1u:0u;
+  return 1;
+}
+
 int gml_render_shader_plan_snapshot(const GmlRender *r,int shader_id,
                                     uint32_t content_generation,const float colour[4],
                                     GmlPlanShader *out){

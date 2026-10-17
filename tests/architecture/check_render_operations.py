@@ -26,6 +26,7 @@ REQUIRED_RULES = {
     "R03-P3-RESIDENT-COPY", "R03-P3-SHADER-CHECKPOINT", "R03-P7-CONTENT-SURFACE",
     "R03-P7-CONTENT-GLOBAL-INIT",
     "R03-SURFACE-THRESHOLD-PALETTE",
+    "R03-SURFACE-LUT",
     "R03-P7-LAYER-TINT-COLOURISE", "R03-P7-LAYER-ZOOM-BLUR",
     "R03-P7-LAYER-INLINE-CPU", "R03-P7-LAYER-RGB-NOISE",
     "R03-P7-LAYER-CONTINUATION",
@@ -765,6 +766,8 @@ def self_test() -> None:
     ledger = rows(GPU_TABLE, EXECUTOR_ROW)
     check_repair_map(document, ledger, ROOT)
     for broken in (
+        "\n".join(line for line in document.splitlines()
+                  if not line.startswith("| R03-SURFACE-LUT |")),
         document.replace("::resident_filtered_sprite", "::obsolete_filtered_sprite", 1),
         document.replace("::R03_SHADER_RECTANGLE", "::OBSOLETE_RECTANGLE", 1),
         document.replace("::rotated_nearest_packet", "::obsolete_rotated_packet", 1),

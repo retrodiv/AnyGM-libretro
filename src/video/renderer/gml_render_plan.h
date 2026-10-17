@@ -157,7 +157,8 @@ typedef struct GmlPlanSampler {
 
 typedef enum GmlPlanBuiltinShader {
   GML_PLAN_BUILTIN_SHADER_NONE=0,
-  GML_PLAN_BUILTIN_SHADER_THRESHOLD_PALETTE=1
+  GML_PLAN_BUILTIN_SHADER_THRESHOLD_PALETTE=1,
+  GML_PLAN_BUILTIN_SHADER_LUT=2
 } GmlPlanBuiltinShader;
 
 /* An immutable programmable draw. For a content program the four sources are lent from the content

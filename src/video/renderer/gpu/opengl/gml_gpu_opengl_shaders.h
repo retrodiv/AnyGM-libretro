@@ -49,6 +49,32 @@
   "  gl_FragColor=vec4(vec3(bytes*tint/255)/255.0,1.0);\n" \
   "}\n"
 
+/* Red byte indices follow the recognized CPU palette contract. Palette alpha is
+ * deliberately ignored; missing stored trim texels retain the source RGB. */
+#define GML_GPU_OPENGL_LUT_FRAGMENT \
+  "uniform sampler2D gm_BaseTexture,u_lut_texture; varying vec2 palette_uv; varying vec4 palette_tint;\n" \
+  "uniform ivec4 u_lut_origin,u_lut_extent; uniform int u_lut_row,u_lut_linear,u_palette_bypass;\n" \
+  "uniform float u_lut_v;\n" \
+  "void main(){\n" \
+  " vec4 source=texture2D(gm_BaseTexture,palette_uv);\n" \
+  " if(u_palette_bypass!=0){gl_FragColor=source;return;}\n" \
+  " if(source.a==0.0) discard;\n" \
+  " ivec3 bytes=ivec3(floor(source.rgb*255.0+0.5)); vec3 mapped=source.rgb;\n" \
+  " if(u_lut_linear==0){\n" \
+  "  ivec2 pos=ivec2(bytes.r*u_lut_extent.x/256,u_lut_row)-u_lut_origin.zw;\n" \
+  "  if(all(greaterThanEqual(pos,ivec2(0))) && all(lessThan(pos,u_lut_extent.zw)))\n" \
+  "   mapped=texelFetch(u_lut_texture,u_lut_origin.xy+pos,0).rgb;\n" \
+  " } else {\n" \
+  "  vec2 size=vec2(textureSize(u_lut_texture,0));\n" \
+  "  vec2 local=clamp(vec2(float(bytes.r)/255.0,u_lut_v)*vec2(u_lut_extent.xy),\n" \
+  "                   vec2(0.5),vec2(u_lut_extent.xy)-vec2(0.5));\n" \
+  "  mapped=texture2D(u_lut_texture,(vec2(u_lut_origin.xy)+local)/size).rgb;\n" \
+  " }\n" \
+  " bytes=ivec3(floor(mapped*255.0+0.5));\n" \
+  " ivec3 tint=ivec3(floor(palette_tint.rgb*255.0+0.5));\n" \
+  " gl_FragColor=vec4(vec3(bytes*tint/255)/255.0,1.0);\n" \
+  "}\n"
+
 /* A single triangle larger than the viewport. It needs no vertex buffer and no attributes, which
  * removes an upload and a piece of state to restore; the viewport and the scissor bound what it
  * covers. */

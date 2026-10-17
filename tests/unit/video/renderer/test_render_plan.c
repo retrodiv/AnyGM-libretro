@@ -893,6 +893,64 @@ static int threshold_palette_plan_case(void){
   return 1;
 }
 
+static int lut_plan_case(void){
+  GmlRender owner={0};
+  struct GmlShaderPal palette={.lut=1,.lut_row=.625f};
+  uint8_t pixels[9u*4u*2u*4u]={0};
+  GmlSprite sprite={.w=9,.h=4,.n_frames=2,.runtime_rgba=pixels};
+  GmlPlanShader snapshot={0},invalid={0};
+  GmlRenderResourceSource source={0};
+  owner.shader_pal=&palette;owner.n_shader_pal=1;
+  owner.spr=&sprite;owner.n_spr=1;owner.lut_pal_sprite=0;owner.lut_pal_frame=1;
+  REQUIRE(gml_render_shader_lut_snapshot(&owner,0,&snapshot,&source) &&
+          gml_render_plan_shader_has_program(&snapshot) && !snapshot.vertex_es && !snapshot.fragment_es &&
+          snapshot.builtin_kind==GML_PLAN_BUILTIN_SHADER_LUT && snapshot.sampler_count==1u &&
+          source.borrowed_immutable && source.bytes==pixels+9u*4u*4u &&
+          snapshot.uniforms[2].value[0]==2.0f &&
+          !owner.shader_device_present && !owner.shader_device_expected,
+          "recognized LUT intent borrows the exact palette subframe without content GLSL");
+  for(unsigned defect=0;defect<21u;defect++){
+    invalid=snapshot;
+    if(defect==0u) invalid.builtin_kind=99u;
+    if(defect==1u) invalid.uniform_count--;
+    if(defect==2u) invalid.sampler_count=0u;
+    if(defect==3u) invalid.samplers[0].linear=2u;
+    if(defect==4u) invalid.samplers[0].name[0]='x';
+    if(defect==5u) invalid.uniforms[0].value[0]=NAN;
+    if(defect==6u) invalid.uniforms[0].value[1]=INFINITY;
+    if(defect==7u) invalid.uniforms[0].value[0]=.5f;
+    if(defect==8u) invalid.uniforms[0].integer=0u;
+    if(defect==9u) invalid.uniforms[0].name[0]='x';
+    if(defect==10u) invalid.uniforms[0].count=3u;
+    if(defect==11u) invalid.uniforms[1].value[0]=0.0f;
+    if(defect==12u) invalid.uniforms[2].value[0]=4.0f;
+    if(defect==13u) invalid.uniforms[2].value[0]=-1.0f;
+    if(defect==14u) invalid.uniforms[4].value[0]=1.0f;
+    if(defect==15u) invalid.uniforms[3].value[0]=1.1f;
+    if(defect==16u) invalid.vertex_colour[3]=.5f;
+    if(defect==17u) invalid.uniforms[0].value[2]=9.0f;
+    if(defect==18u) invalid.uniforms[5].value[0]=2.0f;
+    if(defect==19u) invalid.uniforms[0].value[1]=-1.0f;
+    if(defect==20u) invalid.uniforms[1].value[2]=10.0f;
+    REQUIRE(!gml_render_plan_shader_has_program(&invalid),"malformed LUT intent rejects before execution");
+  }
+  owner.texture_filter[0]=1;
+  REQUIRE(gml_render_shader_lut_snapshot(&owner,0,&snapshot,&source) &&
+          gml_render_plan_shader_has_program(&snapshot) && snapshot.samplers[0].linear==1u,
+          "palette hardware filtering retains its own sampler policy");
+  palette.lut_row=INFINITY;
+  REQUIRE(!gml_render_shader_lut_snapshot(&owner,0,&snapshot,&source),"nonfinite palette rows reject");
+  palette.lut_row=-1.0f;
+  REQUIRE(!gml_render_shader_lut_snapshot(&owner,0,&snapshot,&source),"inactive palette rows reject");
+  palette.lut_row=1e30f;
+  REQUIRE(gml_render_shader_lut_snapshot(&owner,0,&snapshot,&source) &&
+          snapshot.uniforms[2].value[0]==3.0f && snapshot.uniforms[3].value[0]==1.0f,
+          "large finite rows clamp before integer conversion");
+  palette.lut_indexed=1;
+  REQUIRE(!gml_render_shader_lut_snapshot(&owner,0,&snapshot,&source),"indexed LUT is a distinct CPU family");
+  return 1;
+}
+
 static int dispatch_frame_causes_case(void){
   GmlRender first={0},replacement={0};
   GmlRenderDispatchFrames frames={0};
@@ -1713,6 +1771,7 @@ int main(int argc,char **argv){
     {"dispatch_epoch_accumulation",dispatch_epoch_accumulation_case},
     {"dispatch_frame_causes",dispatch_frame_causes_case},
     {"threshold_palette_plan",threshold_palette_plan_case},
+    {"lut_plan",lut_plan_case},
     {"dispatch_frame_direct_cpu",dispatch_frame_direct_cpu_case},
     {"dispatch_frame_rejections",dispatch_frame_rejections_case},
   };

@@ -734,6 +734,9 @@ static int content_sources(const GmlPlanShader *shader,const char **vertex,const
   if(shader->builtin_kind==GML_PLAN_BUILTIN_SHADER_THRESHOLD_PALETTE){
     *vertex=GML_GPU_OPENGL_THRESHOLD_PALETTE_VERTEX;
     *fragment=GML_GPU_OPENGL_THRESHOLD_PALETTE_FRAGMENT;
+  } else if(shader->builtin_kind==GML_PLAN_BUILTIN_SHADER_LUT){
+    *vertex=GML_GPU_OPENGL_THRESHOLD_PALETTE_VERTEX;
+    *fragment=GML_GPU_OPENGL_LUT_FRAGMENT;
   } else {
     *vertex=shader->vertex_es;
     *fragment=shader->fragment_es;
@@ -1159,7 +1162,7 @@ int gml_gpu_opengl_scene_shader_draw(GmlGpuBackend *backend,const GmlPlanShader 
      sampler_count!=shader->sampler_count || sampler_count>GML_PLAN_MAX_SAMPLERS) return 0;
   source_name=source->texture;
   source_origin=source->rendered_origin;
-  if(source_origin && shader->builtin_kind!=GML_PLAN_BUILTIN_SHADER_THRESHOLD_PALETTE){
+  if(source_origin && shader->builtin_kind==GML_PLAN_BUILTIN_SHADER_NONE){
     source_name=gml_gpu_opengl_scene_content_source(backend,source);
     if(!source_name) return 0;
     source_origin=0;
