@@ -552,15 +552,16 @@ static int resident_atlas_crop_from_page_impl(GmlRender *r,GmlTpag *page,
   int sprite_part_function=physical_sprite_page==18;
   int tiled_sprite_function=physical_sprite_page==19;
   int rotated_sprite_function=physical_sprite_page==16;
-  int scaled_sprite=physical_sprite_page==15 || rotated_sprite_function || runtime_function || sprite_part_function || tiled_sprite_function;
+  int replacement_sprite=physical_sprite_page==20;
+  int scaled_sprite=physical_sprite_page==15 || rotated_sprite_function || runtime_function || sprite_part_function || tiled_sprite_function || replacement_sprite;
   int integer_sprite=physical_sprite_page==7 || scaled_sprite;
   int single_texel_sprite=family==GML_RENDER_SCENE_SPRITE &&
-    (physical_sprite_page==15 || physical_sprite_page==16 || sprite_part_function) &&
+    (physical_sprite_page==15 || physical_sprite_page==16 || sprite_part_function || replacement_sprite) &&
     page && page->sw==1 && page->sh==1;
   /* Signed unit samples at whole physical anchors select the same texel
    * in the ordinary point writer and Studio's large-axis cache. */
   int integral_unit_sprite=family==GML_RENDER_SCENE_SPRITE &&
-    (physical_sprite_page==15 || sprite_part_function || tiled_sprite_function) &&
+    (physical_sprite_page==15 || sprite_part_function || tiled_sprite_function || replacement_sprite) &&
     fabs(xs)==1.0 && fabs(ys)==1.0 && isfinite(left) && isfinite(top) &&
     left==floor(left) && top==floor(top);
   int selected_background=physical_sprite_page==9;
@@ -647,8 +648,8 @@ static int resident_atlas_crop_from_page_impl(GmlRender *r,GmlTpag *page,
   int integer_point=!rotated_sprite_function &&
     (scaled_atlas || (integer_atlas && (left!=floor(left) || top!=floor(top))));
   GmlTpag integer_point_page={0};
-  int replace=!runtime_function && physical_sprite_page && family==GML_RENDER_SCENE_SPRITE &&
-    resident_identity_gui_replacement(r,xs,ys,colour,draw_alpha);
+  int replace=replacement_sprite || (!runtime_function && physical_sprite_page &&
+    family==GML_RENDER_SCENE_SPRITE && resident_identity_gui_replacement(r,xs,ys,colour,draw_alpha));
   /* R03-GUI-UNIT-SOURCEOVER: SCREEN stamps covered alpha rather than
    * preserving destination alpha. Keep this leaf to identity point samples,
    * white RGB and full draw alpha; zero source texels still write nothing. */
@@ -686,7 +687,7 @@ static int resident_atlas_crop_from_page_impl(GmlRender *r,GmlTpag *page,
     r->device.observe_on_demand(r->device.context);
   if(physical_sprite_page==6 && !gui_half) return 0;
   gui_crop=gui_crop || gui_tinted_text || gui_half;
-  if(replace && page && (page->tx || page->ty || page->bw!=page->sw ||
+  if(replace && !replacement_sprite && page && (page->tx || page->ty || page->bw!=page->sw ||
                          page->bh!=page->sh || page->tw!=page->sw || page->th!=page->sh))
     return 0;
   /* R03-TEXT-PACKAGED-PARTIAL-ALPHA: the shared glyph crop keeps the CPU
@@ -715,7 +716,7 @@ static int resident_atlas_crop_from_page_impl(GmlRender *r,GmlTpag *page,
      r->pending_underlay || r->pending_presentation ||
      !gml_render_scene_target_matches(r) ||
      !isfinite(xs) || !isfinite(ys) || xs==0.0 || ys==0.0 ||
-     !isfinite(draw_alpha) || draw_alpha<=0.0 || draw_alpha>1.0 ||
+     !isfinite(draw_alpha) || draw_alpha<0.0 || (!replacement_sprite && draw_alpha==0.0) || draw_alpha>1.0 ||
      (family!=GML_RENDER_SCENE_TEXT && family!=GML_RENDER_SCENE_SPRITE && !integer_background && !tile_function &&
       draw_alpha!=1.0) ||
      (family==GML_RENDER_SCENE_TEXT && !text_function && draw_alpha<1.0 &&
@@ -1102,14 +1103,14 @@ static int resident_atlas_crop_from_page_impl(GmlRender *r,GmlTpag *page,
   operation.target.pixel_format=GML_RENDER_PIXEL_ARGB8888;
   operation.target.region=(GmlRenderRect){0,0,(uint32_t)r->fbw,(uint32_t)r->fbh};
   operation.payload.quad.shape=GML_RENDER_QUAD_AXIS_ALIGNED;
-  operation.payload.quad.sampling.filter=replace
+  operation.payload.quad.sampling.filter=replace && !replacement_sprite
     ?GML_RENDER_FILTER_NEAREST_PHASED_COPY:GML_RENDER_FILTER_NEAREST;
   operation.payload.quad.sampling.edge_rule=GML_RENDER_EDGE_CLAMP_SUBIMAGE;
   operation.payload.quad.sampling.source_region=region;
   if(integer_atlas){
     /* The bounded cardinal CPU leaf truncates tint in every policy. Ordinary
      * axis-aligned packets keep their generation-specific tint owner. */
-    operation.payload.quad.sampling.quantisation=!runtime_function && physical_sprite_page!=12 && !rotated_sprite_function &&
+    operation.payload.quad.sampling.quantisation=!replacement_sprite && !runtime_function && physical_sprite_page!=12 && !rotated_sprite_function &&
       anygm_policy_has_modern_layer_semantics(r->win)
       ?GML_RENDER_QUANTISE_INTEGER_TINT_ROUND:GML_RENDER_QUANTISE_INTEGER_TINT_TRUNC;
     operation.payload.quad.filtered_draw_alpha=draw_alpha;
@@ -1220,6 +1221,9 @@ static int resident_atlas_crop_from_page_impl(GmlRender *r,GmlTpag *page,
     state.coverage_policy=GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA;
   if(integer_atlas && !r->alphablend && r->blendmode==2)
     state.coverage_policy=GML_RENDER_COVERAGE_REPLACE_ZERO_ALPHA;
+  if(replacement_sprite)
+    state.coverage_policy=gml_render_target_preserves_alpha(r)
+      ?GML_RENDER_COVERAGE_REPLACE_SOURCE_ALPHA:GML_RENDER_COVERAGE_REPLACE_ZERO_ALPHA;
   state.samplers[0]=operation.payload.quad.sampling;
   if(runtime_geometry){
     if(!resident_runtime_nearest_packets(r,page,&operation,&state,&source,runtime_geometry)) return 0;
@@ -1245,7 +1249,7 @@ static int resident_atlas_crop_from_page_impl(GmlRender *r,GmlTpag *page,
   /* Enqueue conservatively invalidates application opacity. A complete nearest
    * replacement from an opaque page proves every target alpha without reading it. */
   if((state.write_mask&8u) && !tile_regions && !runtime_geometry && !inverse_sprite && (!r->alpha_test_enable || r->alpha_test_ref<255u) &&
-     (replace || (page->scene_fully_opaque && !adjacent_alpha)) && draw_alpha==1.0 && left==0.0 && top==0.0 &&
+     ((replace && !replacement_sprite) || (page->scene_fully_opaque && !adjacent_alpha)) && draw_alpha==1.0 && left==0.0 && top==0.0 &&
      scaled_width==r->fbw && scaled_height==r->fbh){
     r->fb_opaque_known=r->fb_all_opaque=1;
     if(r->app_surface && r->fb==r->app_surface) r->app_surface_opaque=1;
@@ -3241,10 +3245,107 @@ done:
   return accepted;
 }
 
+/* Use one constant, zero-tinted source cell for the authored empty box. The
+ * existing immutable queue makes the box and physical crop one transaction;
+ * raw cutout applies to the crop, not to these missing source texels. */
+static int resident_replacement_empty_box(GmlRender *r,const GmlTpag *page,
+                                          double left,double top,double width,double height){
+  double right=fmin(r->fbw,left+width),bottom=fmin(r->fbh,top+height);
+  left=fmax(0.0,left);top=fmax(0.0,top);
+  if(right<=left || bottom<=top) return 1;
+  GmlRenderResourceSource source={0};
+  GmlRenderResource *target=gml_render_scene_target_resource_ensure(r);
+  if(!target || !gml_render_atlas_scene_source_view(r,page->atlas,&source)) return 0;
+  GmlRenderImageRef image=gml_render_application_scene_next_image_ref(r,target);
+  if(image.content_version==UINT64_MAX) return 0;
+  GmlRenderDrawOp operation={0};GmlRenderDrawStateSnapshot state={0};
+  operation.opcode=GML_RENDER_OP_TEXTURED_QUAD;
+  operation.scene_family=GML_RENDER_SCENE_SPRITE;
+  operation.reconstruction_mode=GML_RENDER_DEVICE_CHECKPOINT;
+  operation.source_count=1u;operation.sources=&source.image;
+  operation.target=(GmlRenderTargetRef){image,1u,(uint32_t)r->fbw,(uint32_t)r->fbh,
+    GML_RENDER_PIXEL_ARGB8888,{0,0,(uint32_t)r->fbw,(uint32_t)r->fbh}};
+  operation.target.image.content_version++;
+  GmlRenderQuad *q=&operation.payload.quad;
+  q->shape=GML_RENDER_QUAD_AXIS_ALIGNED;
+  q->sampling=(GmlRenderSamplingPolicy){.filter=GML_RENDER_FILTER_NEAREST,
+    .edge_rule=GML_RENDER_EDGE_CLAMP_SUBIMAGE,.source_region={page->sx,page->sy,1u,1u},
+    .quantisation=GML_RENDER_QUANTISE_INTEGER_TINT_TRUNC};
+  q->x[0]=q->x[3]=left;q->x[1]=q->x[2]=right;
+  q->y[0]=q->y[1]=top;q->y[2]=q->y[3]=bottom;
+  for(unsigned c=0;c<4u;c++){
+    q->u[c]=(page->sx+.5)/source.width;q->v[c]=(page->sy+.5)/source.height;
+  }
+  state.write_mask=r->color_write_mask;state.colour=0xFFFFFFFFu;state.alpha=255u;
+  state.sampler_count=1u;state.samplers[0]=q->sampling;
+  state.coverage_policy=gml_render_target_preserves_alpha(r)
+    ?GML_RENDER_COVERAGE_REPLACE_SOURCE_ALPHA:GML_RENDER_COVERAGE_REPLACE_ZERO_ALPHA;
+  return gml_render_application_scene_enqueue(r,&operation,&state,&source);
+}
+
+static int resident_replacement_sprite(GmlRender *r,GmlSprite *sprite,int subimg,
+                                        double x,double y,double xs,double ys,double rotation,
+                                        uint32_t colour,double alpha){
+  if(!r || !sprite || r->blendmode!=6 || !r->resident_application_pass ||
+     (r->interp && !r->classic) || resident_sprite_program_blocks(r) || r->fog_flat ||
+     gml_d3_is_active(r) || r->blend_equation!=1 || r->blend_equation_alpha!=1 ||
+     r->color_write_mask>15u || gml_render_classic_vertical_phase_blocks_scene(r) ||
+     r->rotated_batch_count || r->rotated_batch_building ||
+     r->pending_underlay || r->pending_presentation || !gml_render_scene_target_matches(r) ||
+     sprite->runtime_rgba || sprite->spine || sprite->ns_enabled ||
+     !sprite->frame || sprite->n_frames<=0 || rotation!=0.0 ||
+     !isfinite(alpha) || !isfinite(x) || !isfinite(y) ||
+     !isfinite(xs) || !isfinite(ys) || xs!=floor(xs) || ys!=floor(ys) ||
+     fabs(xs)<1.0 || fabs(xs)>64.0 || fabs(ys)<1.0 || fabs(ys)>64.0 ||
+     !r->device.context || !r->device.observe_on_demand ||
+     !r->device.observe_on_demand(r->device.context)) return 0;
+  for(unsigned i=0;i<3u;i++) if(r->classic_interp_phase[i] || r->app_interp_phase[i]) return 0;
+  int index=sprite->frame[gml_render_runtime_frame_index(sprite,subimg)];
+  if(index<0 || index>=r->n_tpag) return 0;
+  GmlTpag *page=&r->tpag[index];
+  if(page->project_authored_edges || page->sw<=0 || page->sh<=0 ||
+     page->bw!=sprite->w || page->bh!=sprite->h ||
+     page->tx<0 || page->ty<0 ||
+     (int64_t)page->tx+page->sw>page->bw || (int64_t)page->ty+page->sh>page->bh) return 0;
+  if(!r->color_write_mask || (!r->alphablend && alpha<=0.0)) return 1;
+  double left=x-sprite->originx*xs+page->tx*xs-r->cam_x;
+  double top=y-sprite->originy*ys+page->ty*ys-r->cam_y;
+  double width=page->sw*fabs(xs),height=page->sh*fabs(ys);
+  double bx=floor(left+.5)-(xs<0.0?width:0.0);
+  double by=floor(top+.5)-(ys<0.0?height:0.0);
+  if(!isfinite(left) || !isfinite(top) || fabs(left)>65536.0 || fabs(top)>65536.0 ||
+     page->bw*fabs(xs)>16384.0 || page->bh*fabs(ys)>16384.0) return 0;
+  /* The CPU returns before its authored-margin operation when the physical
+   * crop misses the target. An offscreen empty crop must not erase a box. */
+  if(bx>=r->fbw || by>=r->fbh || bx+width<=0.0 || by+height<=0.0) return 1;
+  int margin=r->alphablend &&
+    (page->tx || page->ty || page->sw<page->bw || page->sh<page->bh);
+  alpha=fmax(0.0,fmin(1.0,alpha));
+  gml_render_flush_pending_fill(r);
+  if(r->pending_fill) return 0;
+  for(unsigned attempt=0;attempt<2u;attempt++){
+    if(!gml_render_application_scene_prepare_begin(r)) return 0;
+    int accepted=!margin || resident_replacement_empty_box(r,page,
+      floor(left-page->tx*fabs(xs)+.5),floor(top-page->ty*fabs(ys)+.5),
+      page->bw*fabs(xs),page->bh*fabs(ys));
+    if(accepted) accepted=resident_atlas_crop_from_page(r,page,0,0,page->sw,page->sh,
+      left,top,xs,ys,GML_RENDER_SCENE_SPRITE,colour,alpha,20,NULL);
+    if(gml_render_application_scene_prepare_finish(r,accepted)){
+      r->fb_opaque_known=r->fb_all_opaque=r->fb_all_transparent=0;
+      if(r->app_surface && r->fb==r->app_surface) r->app_surface_opaque=0;
+      return 1;
+    }
+    if(attempt || !gml_render_application_scene_flush(r)) return 0;
+  }
+  return 0;
+}
+
 static int resident_nearest_sprite_function(GmlRender *r,GmlSprite *sprite,int subimg,
                                             double x,double y,double xs,double ys,double rotation,
                                             uint32_t colour,double alpha){
   if(!r || !sprite || sprite->n_frames<=0) return 0;
+  if(r->blendmode==6)
+    return resident_replacement_sprite(r,sprite,subimg,x,y,xs,ys,rotation,colour,alpha);
   if(sprite->runtime_rgba){
     /* Runtime pixels have a separate CPU geometry owner and no valid packaged
      * crop. Preserve their fenced source view and ordinary point packet. */

@@ -2831,6 +2831,40 @@ static int scene_integer_function_sprite_case(void){
       anygm_test_graphics_scene_draw_calls()==calls && anygm_test_graphics_clear_calls()==clears &&
       !anygm_test_graphics_scene_copies() && !anygm_test_graphics_read_pixels(),
       "projected extent overflow refuses the whole batch before its clear");
+    if(!background && !rounded && blend==4u){
+      state.coverage_policy=GML_RENDER_COVERAGE_REPLACE_SOURCE_ALPHA;
+      for(unsigned opacity=0;opacity<2u;opacity++){
+        for(unsigned i=0;i<3u;i++) ops[i].target.image.content_version=300u+opacity*3u+i;
+        for(unsigned i=1u;i<3u;i++){
+          ops[i].payload.quad=pristine;
+          ops[i].payload.quad.filtered_draw_alpha=opacity?.4:0.0;
+          for(unsigned c=0;c<4u;c++)
+            ops[i].payload.quad.corner_colour[c]=opacity?0x663470D0u:0x003470D0u;
+        }
+        int prior=anygm_test_graphics_scene_draw_calls();
+        result=device.submit(device.context,&batch);
+        REQUIRE(result.status==GML_RENDER_EXEC_ACCEPTED && result.accepted_prefix==3u &&
+          anygm_test_graphics_scene_draw_calls()==prior+1 &&
+          !anygm_test_graphics_scene_copies() && !anygm_test_graphics_read_pixels(),
+          "straight replacement groups zero/full raw coverage without a destination snapshot");
+      }
+      for(unsigned invalid=0;invalid<4u;invalid++){
+        for(unsigned i=0;i<3u;i++) ops[i].target.image.content_version=306u+i;
+        for(unsigned i=1u;i<3u;i++){
+          ops[i].payload.quad=pristine;ops[i].scene_family=GML_RENDER_SCENE_SPRITE;
+          if(invalid==0u) ops[i].scene_family=GML_RENDER_SCENE_BACKGROUND;
+          if(invalid==1u) ops[i].payload.quad.sampling.quantisation=GML_RENDER_QUANTISE_INTEGER_TINT_ROUND;
+          if(invalid==2u) ops[i].payload.quad.filtered_draw_alpha=-.1;
+        }
+        state.coverage_policy=invalid==3u?6u:GML_RENDER_COVERAGE_REPLACE_SOURCE_ALPHA;
+        int prior=anygm_test_graphics_scene_draw_calls(),clear_count=anygm_test_graphics_clear_calls();
+        result=device.submit(device.context,&batch);
+        REQUIRE(result.status==GML_RENDER_EXEC_UNSUPPORTED && !result.accepted_prefix &&
+          anygm_test_graphics_scene_draw_calls()==prior && anygm_test_graphics_clear_calls()==clear_count &&
+          !anygm_test_graphics_scene_copies() && !anygm_test_graphics_read_pixels(),
+          "unqualified replacement family, tint, alpha or coverage refuses before its clear");
+      }
+    }
     gml_gpu_destroy(gpu,1);
   }
   return 1;

@@ -12815,11 +12815,15 @@ static int resident_gui_replacement_sprite(void){
       gml_draw_sprite_part_ext(render,0,0,0,0,2,2,x,1.0,xs,1.0,colour,alpha);
     else
       gml_draw_sprite_ext(render,0,0,x,1.0,xs,1.0,0.0,colour,alpha);
-    CHECK(render->resident_application_pass==(variant<2u));
-    if(variant<2u){
+    int admitted=variant!=2u && variant!=9u && variant!=11u && variant!=13u;
+    CHECK(render->resident_application_pass==admitted);
+    if(admitted){
       CHECK(gml_render_scene_submit_pending(render) && !fake.readbacks);
-      CHECK(fake.last_filter==GML_RENDER_FILTER_NEAREST_PHASED_COPY &&
-            !fake.last_quad_state.rgb_source_factor &&
+      if(variant<2u) CHECK(fake.last_filter==GML_RENDER_FILTER_NEAREST_PHASED_COPY);
+      else CHECK(fake.last_filter==GML_RENDER_FILTER_NEAREST &&
+                 fake.last_quantisation==GML_RENDER_QUANTISE_INTEGER_TINT_TRUNC &&
+                 fake.last_quad_state.coverage_policy==GML_RENDER_COVERAGE_REPLACE_ZERO_ALPHA);
+      CHECK(!fake.last_quad_state.rgb_source_factor &&
             !fake.last_quad_state.alpha_source_factor);
       gml_render_resource_journal_metrics(render->base_scene_resource,&metrics);
       CHECK(metrics.authority==GML_RENDER_RESOURCE_GPU_RESIDENT &&

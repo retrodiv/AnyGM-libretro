@@ -176,6 +176,7 @@ static uint32_t scene_filter(const GmlRenderQuad *quad,
   if(quad->sampling.quantisation==GML_RENDER_QUANTISE_INTEGER_TINT_TRUNC ||
      quad->sampling.quantisation==GML_RENDER_QUANTISE_INTEGER_TINT_ROUND){
     uint32_t base=quad->sampling.quantisation==GML_RENDER_QUANTISE_INTEGER_TINT_ROUND?38u:37u;
+    if(state->coverage_policy==GML_RENDER_COVERAGE_REPLACE_SOURCE_ALPHA) return 83u;
     if(state->coverage_policy==GML_RENDER_COVERAGE_REPLACE_ZERO_ALPHA) return base+12u;
     if(qualified_blend(state)==13) return base+7u+
       (state->coverage_policy==GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA?2u:0u);
@@ -321,12 +322,19 @@ static int integer_function_sprite_valid(const GmlRenderDrawOp *op,
      q->sampling.edge_rule!=GML_RENDER_EDGE_CLAMP_SUBIMAGE || q->sampling.logical_margin_mask ||
      !valid_region(region,source->width,source->height) || region.width>4096u || region.height>4096u ||
      !exact_rect(op,NULL,NULL,NULL,NULL,1) || fabs(q->x[0])>65536.0 || fabs(q->y[0])>65536.0 ||
-     !isfinite(q->filtered_draw_alpha) || q->filtered_draw_alpha<=0.0 || q->filtered_draw_alpha>1.0 ||
+     !isfinite(q->filtered_draw_alpha) || q->filtered_draw_alpha<0.0 || q->filtered_draw_alpha>1.0 ||
+     (q->filtered_draw_alpha==0.0 && (op->scene_family!=GML_RENDER_SCENE_SPRITE ||
+      (state->coverage_policy!=GML_RENDER_COVERAGE_REPLACE_ZERO_ALPHA &&
+       state->coverage_policy!=GML_RENDER_COVERAGE_REPLACE_SOURCE_ALPHA))) ||
      state->alpha_test_enabled>1u || state->alpha_test_reference>255u ||
      (op->scene_family!=GML_RENDER_SCENE_SPRITE && state->write_mask!=15u) ||
      (blend==14 && op->scene_family!=GML_RENDER_SCENE_SPRITE && op->scene_family!=GML_RENDER_SCENE_TEXT) ||
      (blend!=0 && blend!=1 && blend!=3 && blend!=13 && blend!=14) ||
-     (state->coverage_policy==GML_RENDER_COVERAGE_REPLACE_ZERO_ALPHA?blend!=0:
+     ((state->coverage_policy==GML_RENDER_COVERAGE_REPLACE_ZERO_ALPHA ||
+       state->coverage_policy==GML_RENDER_COVERAGE_REPLACE_SOURCE_ALPHA)?
+       (blend!=0 || (state->coverage_policy==GML_RENDER_COVERAGE_REPLACE_SOURCE_ALPHA &&
+        (op->scene_family!=GML_RENDER_SCENE_SPRITE ||
+         q->sampling.quantisation!=GML_RENDER_QUANTISE_INTEGER_TINT_TRUNC))):
       state->coverage_policy && (state->coverage_policy!=GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA ||
        (blend!=1 && blend!=13 && blend!=14) || (blend!=14 &&
         !(blend==13 && op->scene_family==GML_RENDER_SCENE_SPRITE &&

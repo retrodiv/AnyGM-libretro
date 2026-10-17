@@ -237,7 +237,10 @@ enum {
   /* Fixed source-over preserves an already opaque target without a destination copy. */
   GML_RENDER_COVERAGE_OPAQUE_TARGET=3u,
   /* Disabled inverse-source drawing still writes raw zero-alpha texels opaque. */
-  GML_RENDER_COVERAGE_REPLACE_ZERO_ALPHA=4u
+  GML_RENDER_COVERAGE_REPLACE_ZERO_ALPHA=4u,
+  /* Straight replacement also writes transparent source texels with their
+   * own coverage, rather than stamping opaque display alpha. */
+  GML_RENDER_COVERAGE_REPLACE_SOURCE_ALPHA=5u
 };
 
 typedef struct GmlRenderDrawStateSnapshot {
