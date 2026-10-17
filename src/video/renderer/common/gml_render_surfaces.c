@@ -920,17 +920,43 @@ static GmlRenderResource *base_stage_create(uint32_t *pixels,int width,int heigh
     GML_RENDER_PIXEL_ARGB8888,pixels,(GmlRenderResourceLimits){0});
 }
 
-static int base_stage_clear(GmlRenderResource *resource,const GmlRenderDeviceServices *device,
-                             unsigned width,unsigned height){
+static int resource_clear(GmlRenderResource *resource,const GmlRenderDeviceServices *device,
+                            unsigned width,unsigned height,uint32_t colour,GmlRender *owner){
   GmlRenderDrawOp operation={0};
   operation.opcode=GML_RENDER_OP_CLEAR;
   operation.reconstruction_mode=GML_RENDER_DEVICE_CHECKPOINT;
   operation.target=(GmlRenderTargetRef){gml_render_resource_image_ref(resource),1u,
     width,height,GML_RENDER_PIXEL_ARGB8888,{0,0,width,height}};
+  if(operation.target.image.content_version==UINT64_MAX) return 0;
   operation.target.image.content_version++;
+  operation.payload.clear_colour=colour;
   GmlRenderDrawBatch batch={&operation,1u,NULL,0u};
-  return gml_render_resource_submit_deferred(resource,device,&batch,NULL,0u)==
-    GML_RENDER_RESOURCE_EXEC_DEVICE;
+  GmlRenderResourceExecution result=gml_render_resource_submit_deferred(
+    resource,device,&batch,NULL,0u);
+  if(owner) gml_render_dispatch_batch_record(owner,&batch,result);
+  return result==GML_RENDER_RESOURCE_EXEC_DEVICE;
+}
+
+static int base_stage_clear(GmlRenderResource *resource,const GmlRenderDeviceServices *device,
+                             unsigned width,unsigned height){
+  return resource_clear(resource,device,width,height,0u,NULL);
+}
+
+int gml_render_resident_owned_application_clear(GmlRender *r,uint32_t colour){
+  const GmlRenderDeviceServices *device=gml_render_device(r);
+  GmlRenderResource *resource;
+  if(!r || !r->scene_device_enabled || !device || !device->observe_on_demand ||
+     !device->observe_on_demand(device->context) ||
+     (r->pending_scene_batch && r->pending_scene_batch->preparing) ||
+     !(resource=gml_render_application_resource_ensure(r))) return 0;
+  if(!gml_render_application_scene_flush(r) ||
+     !resource_clear(resource,device,(unsigned)r->app_w,(unsigned)r->app_h,colour,r)) return 0;
+  r->app_surface_opaque=(colour>>24)==255u;
+  if(r->fb==r->app_surface_owned){
+    r->fb_opaque_known=1;r->fb_all_opaque=(colour>>24)==255u;
+    r->fb_all_transparent=(colour>>24)==0u;
+  }
+  return 1;
 }
 
 /* Split at both pitches: every copied band maps identical linear indices and samples texels

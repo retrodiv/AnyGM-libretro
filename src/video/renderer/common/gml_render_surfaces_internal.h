@@ -40,6 +40,9 @@ int gml_render_classic_phase_scene_select(GmlRender *render,int vertical);
 /* Replace both explicitly owned root planes without reading their old pixels.
  * Preparation of a partial draw must not use this whole-target boundary. */
 int gml_render_resident_classic_phase_clear(GmlRender *render,uint32_t colour);
+/* Replace the separately owned application image, preserving the active draw target.
+ * Only an on-demand scene device may leave its canonical CPU allocation stale. */
+int gml_render_resident_owned_application_clear(GmlRender *render,uint32_t colour);
 /* Compose the already owned nearest root pair without observing its pixels. */
 int gml_render_resident_classic_phase_present(GmlRender *render,
   double x,double y,double width,double height,uint32_t colour,double alpha);

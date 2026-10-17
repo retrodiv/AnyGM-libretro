@@ -2932,7 +2932,7 @@ static int resident_multiview_assigned_surface_restore_case(void){
   return 1;
 }
 
-static int resident_native_assigned_view_variant(int draw_enabled,int native_surface){
+static int resident_native_assigned_view_variant(int draw_enabled,int native_surface,int app_resize){
   Session plain={0},selected={0};
   AnygmInputFrame input={0};
   uint8_t *saved=NULL,*selected_saved=NULL;
@@ -2952,6 +2952,9 @@ static int resident_native_assigned_view_variant(int draw_enabled,int native_sur
     AnygmEngine *engine=sessions[index]->engine;
     int surface=(int)gml_global_num(&engine->vm,"fixture_surface");
     gml_surface_resize(&engine->render,surface,native_surface?64:32,native_surface?48:24);
+    if(app_resize)
+      REQUIRE(gml_render_application_surface_ensure_owned(&engine->render,47,29),
+              "independent application allocation resizes");
     gml_render_application_surface_set_draw_enabled(&engine->render,draw_enabled);
     gml_set_global_arr(&engine->vm,"view_visible",1,0);
     gml_set_global_arr(&engine->vm,"view_wview",0,64);
@@ -2995,6 +2998,13 @@ static int resident_native_assigned_view_variant(int draw_enabled,int native_sur
              height==(native_surface?48:24) && selected_width==width && selected_height==height &&
              !memcmp(pixels,scene_pixels,(size_t)width*height*sizeof(uint32_t)) &&
              gml_global_num(&plain.engine->vm,"fixture_seen")==frame+1;
+    if(matching && app_resize){
+      GmlRenderApplicationReadView reference={0},actual={0};
+      matching=gml_render_application_surface_owned_read(&plain.engine->render,&reference) &&
+               gml_render_application_surface_owned_read(&selected.engine->render,&actual) &&
+               reference.width==47 && reference.height==29 && actual.width==47 && actual.height==29 &&
+               !memcmp(reference.pixels,actual.pixels,47u*29u*sizeof(uint32_t));
+    }
     if(matching && native_surface)
       matching=pixels[0]==0xFF0000FFu && pixels[9u*64u+6u]==0xFF2030C0u;
     if(matching && frame==0){
@@ -3030,9 +3040,10 @@ static int resident_native_assigned_view_variant(int draw_enabled,int native_sur
 }
 
 static int resident_native_assigned_view_case(void){
-  return resident_native_assigned_view_variant(1,1) &&
-         resident_native_assigned_view_variant(0,1) &&
-         resident_native_assigned_view_variant(1,0);
+  return resident_native_assigned_view_variant(1,1,0) &&
+         resident_native_assigned_view_variant(0,1,0) &&
+         resident_native_assigned_view_variant(1,0,0) &&
+         resident_native_assigned_view_variant(0,1,1);
 }
 
 static int presentation_geometry_variant(

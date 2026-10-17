@@ -552,6 +552,10 @@ int gml_render_application_surface_owned_clear(
   if(view) memset(view,0,sizeof(*view));
   if(!gml_render_application_surface_owned_extent(r,NULL,NULL)) return 0;
   if(!gml_render_application_scene_flush(r)) return 0;
+  if(!view && gml_render_resident_owned_application_clear(r,color)){
+    r->app_presentation_coverage_active=0;
+    return 1;
+  }
   if(r->app_surface_resource){
     uint32_t *pixels=NULL;
     if(!gml_render_resource_acquire_cpu_write(r->app_surface_resource,&pixels) ||

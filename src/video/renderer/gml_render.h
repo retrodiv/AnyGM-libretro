@@ -565,6 +565,8 @@ int gml_render_begin_resident_numbered_target(GmlRender *r,uint32_t *cpu_base,
                                              int width,int height,double camx,double camy);
 /* Materialise an opt-in scene target before host code observes its CPU pixels. */
 int gml_render_resident_application_cpu_barrier(GmlRender *r);
+/* A requested write view is CPU-current. Without one, an opted-in scene device may
+ * retain the exact clear on device until an explicit pixel/state observer needs it. */
 int gml_render_application_surface_owned_clear(
   GmlRender *r,uint32_t color,GmlRenderApplicationWriteView *view);
 int gml_render_application_surface_owned_view(

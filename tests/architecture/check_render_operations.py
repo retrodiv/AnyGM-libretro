@@ -21,6 +21,7 @@ GPU_TABLE = RENDERER / "gpu/gml_render_gpu_operations.def"
 BACKEND_MAP = ROOT / "docs/RENDERER_BACKENDS.md"
 FAMILIES = {"TEXTURE", "PRIMITIVE", "SURFACE", "EFFECT", "PRESENTATION", "SHADER", "SOFTWARE3D"}
 REQUIRED_RULES = {
+    "R03-OWNED-APPLICATION-CLEAR",
     "R03-P3-JOURNAL", "R03-P3-CLEAR", "R03-P3-EXACT-OVERLAP",
     "R03-P3-RESIDENT-COPY", "R03-P3-SHADER-CHECKPOINT", "R03-P7-CONTENT-SURFACE",
     "R03-P7-CONTENT-GLOBAL-INIT",
@@ -188,6 +189,7 @@ DISPATCH_PORTS = {
     "gml_render_application_scene_submit",
     "gml_render_surface_scene_submit",
     "gml_render_resource_submit",
+    "gml_render_resource_submit_deferred",
 }
 DISPATCH_PREFIXES = (
     "gml_draw_", "gml_render_primitive_", "gml_software3d_draw_",
@@ -200,6 +202,7 @@ DISPATCH_CPU_BOUNDARIES = {
     "surface_pixels", "surface_pixels_observe", "surface_pixels_access",
 }
 DISPATCH_ADDITIONAL = {
+    "gml_render_application_surface_owned_clear",
     "gml_render_completed_screen_mask",
     "gml_render_layer_rgb_noise", "gml_render_layer_filter_end",
     "gml_render_sprite_ext_unmasked",
@@ -856,6 +859,8 @@ gml_draw_multiline(void){
         prefix + "gml_draw_probe": "void gml_draw_probe(void){ cpu_paint(); }",
         prefix + "gml_draw_gpu_probe":
             "void gml_draw_gpu_probe(void){ gml_render_application_scene_enqueue(); }",
+        prefix + "gml_draw_deferred_probe":
+            "void gml_draw_deferred_probe(void){ gml_render_resource_submit_deferred(); }",
         prefix + "cpu_paint": "void cpu_paint(void){ gml_render_maybe_prepare_draw(); }",
         prefix + "gml_render_maybe_prepare_draw":
             "void gml_render_maybe_prepare_draw(void){ gml_render_application_scene_enqueue(); }",
@@ -863,6 +868,8 @@ gml_draw_multiline(void){
     inventory = dispatch_inventory(functions)
     if inventory[prefix + "gml_draw_probe"][0] != "CPU":
         raise ValueError("D8 CPU preparation falsely credited an earlier GPU prefix")
+    if inventory[prefix + "gml_draw_deferred_probe"][0] != "gml_render_resource_submit_deferred":
+        raise ValueError("D8 deferred resource submission lost its typed device boundary")
     def document_for(entries: dict[str, tuple[str, str]]) -> str:
         result = ["<!-- D8-DISPATCH:START -->"]
         for key, (route, revision) in entries.items():

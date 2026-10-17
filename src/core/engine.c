@@ -1956,13 +1956,18 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
    * presentation object can composite the frame and overlays. If nothing draws the surface,
    * auto-blit it. */
   GmlRenderApplicationWriteView app_view={0};
+  /* An assigned view already owns the world image. Its independent application clear
+   * needs no host write view; all CPU composition branches keep their existing storage. */
+  int device_only_app_clear=engine->scene_renderer_session==ANYGM_SCENE_RENDERER_OPENGL &&
+    !multiview_rendered && view_surface>0 && gml_surface_exists(&engine->render,view_surface);
   if(engine->content_presented){
   } else if(direct_owned_world){
     GmlRenderTargetCoverage render_coverage={0};
     gml_render_target_coverage(&engine->render,&render_coverage);
     gml_render_application_surface_select_owned(
       &engine->render,render_coverage.opaque_known && render_coverage.all_opaque);
-  } else if(gml_render_application_surface_owned_clear(&engine->render,engine->background,&app_view)){
+  } else if(gml_render_application_surface_owned_clear(&engine->render,engine->background,
+                                                       device_only_app_clear?NULL:&app_view)){
     int aw=app_view.width, ah=app_view.height;
     if(multiview_rendered)
       compose_view_rect(&engine->render,engine->fb,(int)engine->width,(int)engine->height,
