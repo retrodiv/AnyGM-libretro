@@ -267,11 +267,12 @@ static void draw_text_real_plain(GmlRender *r, GmlFont *f, double x, double y, c
             resident_glyph=gml_render_resident_filtered_font_glyph(
               r,f->atlas,g->sx,g->sy,g->w,g->h,
               glyph_x-r->cam_x,glyph_y-r->cam_y,xs,ys,glyph_blend,alpha);
-          else if((!r->interp || r->classic) &&
-                  ((!f->runtime_owned && resident_nearest_text_scale(xs,ys)) ||
-                   (f->runtime_owned && alpha==1.0 && isfinite(xs) && isfinite(ys) &&
-                    xs>=1.0 && xs<=4.0 && ys>=1.0 && ys<=4.0 &&
-                    floor(xs)==xs && floor(ys)==ys)))
+          else if((!r->interp || r->classic) && resident_nearest_text_scale(xs,ys) &&
+                  (!f->runtime_owned ||
+                   (alpha==1.0 && xs>=1.0 && xs<=4.0 && ys>=1.0 && ys<=4.0 &&
+                    floor(xs)==xs && floor(ys)==ys) ||
+                   (r->device.context && r->device.observe_on_demand &&
+                    r->device.observe_on_demand(r->device.context))))
             resident_glyph=gml_render_resident_font_glyph(r,f->atlas,g->sx,g->sy,
               g->w,g->h,glyph_x-r->cam_x,glyph_y-r->cam_y,xs,ys,glyph_blend,alpha);
         }

@@ -7644,7 +7644,7 @@ static int resident_fractional_screen_font(void){
     gml_draw_text_transformed(render,-1.0/wx,-1.0/wy,"A",xs/wx,ys/wy,0,colour,alpha);
     /* R03-TEXT-NEAREST-FUNCTION's paired matrix supersedes these former
      * admission fences. Original positive and out-of-domain controls remain. */
-    int admitted=!excluded || (excluded>=4 && excluded<=13 && excluded!=7);
+    int admitted=!excluded || (excluded>=3 && excluded<=13 && excluded!=7);
     /* Keep the original clipped attempt and add a visible witness for each
      * newly admitted variant: a minified glyph can otherwise be a no-op. */
     if(admitted && excluded)
@@ -13381,10 +13381,12 @@ static int resident_nearest_text_function(int outside){
   const int generations[]={530,700,800,13,15,17};
   const double alphas[]={1,0,.37};
   const double scales[][2]={{1,1},{2,3},{-2,-3},{.75,1.5}};
+  int runtime=outside==3;
+  if(runtime) outside=0;
   for(unsigned generation=0;generation<6u;generation++)
   for(unsigned interpolation=0;interpolation<(generations[generation]>100?2u:1u);interpolation++)
   for(unsigned target_kind=0;target_kind<4u;target_kind++)
-  for(unsigned gui=0;gui<2u;gui++) for(unsigned font_kind=0;font_kind<2u;font_kind++)
+  for(unsigned gui=0;gui<2u;gui++) for(unsigned font_kind=0;font_kind<(runtime?1u:2u);font_kind++)
   for(unsigned draw_state=0;draw_state<4u;draw_state++)
   for(unsigned disabled=0;disabled<2u;disabled++) for(unsigned a=0;a<3u;a++)
   for(unsigned scale=0;scale<4u;scale++){
@@ -13412,6 +13414,7 @@ static int resident_nearest_text_function(int outside){
       font->glyphs[0]=(GmlGlyph){.w=2,.h=2,.shift=3,.ch='A'};
       for(unsigned cp=0;cp<256u;cp++) font->glyph_by_char[cp]=-1;
       font->glyph_by_char['A']=0;
+      if(runtime){font->runtime_owned=1;r->atlas[0].runtime_font_page=1;}
     }
     r->font=0;device.observe_on_demand=fake_observe_on_demand;gml_render_bind_device(r,&device);
     for(unsigned p=0;p<W*H;p++) screen[p]=0xA5ABCDEFu;
@@ -13439,13 +13442,24 @@ static int resident_nearest_text_function(int outside){
     int submitted=fake.submits;
     uint64_t target_version=gml_render_resource_image_ref(gml_render_scene_target_resource_ensure(r)).content_version;
     double mx=1,my=1;gml_render_draw_map_scale(r,&mx,&my);
-    for(unsigned draw=0;draw<8u;draw++)
+    for(unsigned draw=0;draw<8u;draw++){
+      if(runtime && draw==1u){
+        /* A completed glyph must not retain the old pointer across growth.
+         * Model the existing font rasterizer's mutation/version boundary. */
+        GmlAtlas *atlas=&r->atlas[0];
+        CHECK(gml_render_application_scene_flush(r));
+        uint8_t *grown=calloc(1,32u);CHECK(grown);
+        memcpy(grown,atlas->px,16u);grown[3]=96u;
+        free(atlas->px);atlas->px=grown;atlas->h=4;
+        if(atlas->scene_source_version) atlas->scene_source_version++;
+      }
       gml_draw_text_transformed(r,(outside?200.0:12.125)/mx,(outside?200.0:10.25)/my,
         "A",scales[scale][0]/mx,scales[scale][1]/my,0,0x70B0D0u,alphas[a]);
+    }
     CHECK(r->resident_application_pass && gml_render_scene_submit_pending(r));
     if(outside==2) CHECK(r->pending_fill && r->pending_fill_color==0x60123456u &&
                         r->pending_underlay);
-    CHECK(fake.submits==submitted+(outside || a==1u?0:1) && !fake.readbacks && !fake.rgb_queries &&
+    CHECK(fake.submits==submitted+(outside || a==1u?0:runtime?2:1) && !fake.readbacks && !fake.rgb_queries &&
           !memcmp(shadow,r->fb,sizeof shadow));
     GmlRenderResource *resource=gml_render_scene_target_resource_ensure(r);CHECK(resource);
     if(outside) CHECK(gml_render_resource_image_ref(resource).content_version==target_version &&
@@ -13453,9 +13467,20 @@ static int resident_nearest_text_function(int outside){
     gml_render_resource_journal_metrics(resource,&metrics);
     CHECK(metrics.authority==GML_RENDER_RESOURCE_GPU_RESIDENT && !metrics.cpu_replays && !metrics.journal_bytes);
     if(a!=1u && !outside){
-      CHECK(fake.last_batch_operations>=8u && fake.last_filter==GML_RENDER_FILTER_NEAREST &&
+      CHECK(fake.last_batch_operations>=(runtime?7u:8u) && fake.last_filter==GML_RENDER_FILTER_NEAREST &&
             r->alpha_test_enable==(int)(draw_state&1u) && r->alpha_test_ref==127 &&
             r->interp==(int)interpolation);
+    }
+    if(runtime && a!=1u){
+      uint64_t incarnation=r->atlas[0].scene_source_incarnation;
+      int submitted_before_delete=fake.submits;
+      gml_draw_text_transformed(r,12.125/mx,10.25/my,"A",
+        scales[scale][0]/mx,scales[scale][1]/my,0,0x70B0D0u,alphas[a]);
+      CHECK(r->resident_application_pass && fake.submits==submitted_before_delete);
+      gml_font_delete(r,0);
+      CHECK(!gml_render_font_exists(r,0) && !r->atlas[0].px &&
+            fake.submits==submitted_before_delete+1 && !fake.readbacks &&
+            fake.last_retired_image.incarnation==incarnation);
     }
     CHECK(gml_render_resource_acquire_cpu_read(resource,&pixels) && fake.readbacks==1 &&
           pixels[0]==fake.readback_colour && pixels[W*H-1u]==fake.readback_colour);
@@ -14883,6 +14908,7 @@ int main(void){
   passed+=resident_nearest_text_function(0);
   passed+=resident_nearest_text_function(1);
   passed+=resident_nearest_text_function(2);
+  passed+=resident_nearest_text_function(3);
   passed+=resident_rotated_text_function();
   passed+=resident_selected_background_function();
   passed+=resident_classic_owned_binary_unit_sprite();
@@ -14928,6 +14954,6 @@ int main(void){
   passed+=source_free_primitive_rect_replay();
   passed+=stretched_float_exact_replay();
   passed+=filtered_font_exact_recovery();
-  printf("render resource cases: passed=%d failed=%d\n",passed,218-passed);
-  return passed==218?EXIT_SUCCESS:EXIT_FAILURE;
+  printf("render resource cases: passed=%d failed=%d\n",passed,219-passed);
+  return passed==219?EXIT_SUCCESS:EXIT_FAILURE;
 }

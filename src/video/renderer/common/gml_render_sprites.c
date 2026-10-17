@@ -803,7 +803,13 @@ static int resident_atlas_crop_from_page_impl(GmlRender *r,GmlTpag *page,
           (!fast8 && (!page->scene_binary_alpha || draw_alpha<1.0)))) return 0;
     }
   }
-  if(integer_atlas && (atlas->runtime_font_page || !source.borrowed_immutable ||
+  /* Runtime real-font pages use the same glyph geometry and tint owner.
+   * Their version remains mutable: the font owner flushes pending work before
+   * a later glyph lookup can grow or replace its bytes. */
+  int mutable_text_page=text_function && atlas->runtime_font_page &&
+    source.image.resource_class==GML_RENDER_RESOURCE_ATLAS && !source.resident_resource;
+  if(integer_atlas && ((!mutable_text_page &&
+     (atlas->runtime_font_page || !source.borrowed_immutable)) ||
      source.width>16384u || source.height>16384u)) return 0;
   if(integer_sprite_part && (!page->scene_binary_alpha || atlas->runtime_font_page ||
      !source.borrowed_immutable || source.width>16384u || source.height>16384u)) return 0;
@@ -1509,16 +1515,15 @@ int gml_render_resident_font_glyph(GmlRender *r,int atlas,int source_x,int sourc
                                    double xs,double ys,uint32_t colour,double alpha){
   GmlTpag page={.atlas=atlas,.sx=source_x,.sy=source_y,.sw=width,.sh=height,
                 .tw=width,.th=height,.bw=width,.bh=height};
-  /* Preserve cheap endpoint/runtime packets and the qualified checkpoint owner
-   * when on-demand authority is unavailable. Resident packaged tint uses the
-   * integer quantisation owner so opaque endpoints do not lose a channel. */
+  /* Preserve cheap endpoint packets and the qualified checkpoint owner when
+   * on-demand authority is unavailable. Both packaged and runtime tint use
+   * integer quantisation so opaque endpoints do not lose a channel. */
   if(r && ((colour&0xFFFFFFu)==0xFFFFFFu || (colour&0xFFFFFFu)==0u ||
-           (atlas>=0 && atlas<r->n_atlas && r->atlas[atlas].runtime_font_page) ||
            !r->device.context || !r->device.observe_on_demand ||
            !r->device.observe_on_demand(r->device.context)) &&
      resident_atlas_crop_from_page(r,&page,0,0,width,height,left,top,xs,ys,
                                   GML_RENDER_SCENE_TEXT,colour,alpha,0,NULL)) return 1;
-  if(r && atlas>=0 && atlas<r->n_atlas && !r->atlas[atlas].runtime_font_page){
+  if(r && atlas>=0 && atlas<r->n_atlas){
     /* Fresh real-font cells have no CPU cache. Conservatively blending an
      * opaque/binary texel is still exact and avoids scanning a glyph per draw. */
     page.scene_opaque_checked=1;page.scene_fully_opaque=page.scene_binary_alpha=0;
@@ -1787,7 +1792,10 @@ static int resident_modern_point_regions(GmlRender *r,GmlTpag *page,
     } else ny=modern_point_axis_regions(top,ys,phase_y,page->sh,y0,y1,constant_y,clamp,local_edges,rows);
   }
   uint32_t count=nx*ny;
-  if(!count || count>2048u || !source->borrowed_immutable ||
+  int mutable_text=operation->scene_family==GML_RENDER_SCENE_TEXT &&
+    source->image.resource_class==GML_RENDER_RESOURCE_ATLAS && !source->resident_resource &&
+    page->atlas>=0 && page->atlas<r->n_atlas && r->atlas[page->atlas].runtime_font_page;
+  if(!count || count>2048u || (!source->borrowed_immutable && !mutable_text) ||
      operation->target.image.content_version>UINT64_MAX-(count-1u)) return 0;
   GmlRenderDrawOp *operations=malloc((size_t)count*sizeof *operations);
   if(!operations) return 0;

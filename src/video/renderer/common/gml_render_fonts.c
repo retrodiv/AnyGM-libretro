@@ -3,6 +3,7 @@
  */
 /* Existing FONT parsing, font lifecycle, glyph lookup and runtime raster atlas. */
 #include "gml_render_internal.h"
+#include "gml_render_surfaces_internal.h"
 #include "gml_render_text_internal.h"
 #include "gml_font_raster.h"
 #include "gml_hash.h"
@@ -567,6 +568,7 @@ void gml_font_delete(GmlRender *r, int font){
   if(f->real && !f->runtime_owned) return;
   if(f->runtime_owned && f->atlas>=0 && f->atlas<r->n_atlas){
     GmlAtlas *atlas=&r->atlas[f->atlas];
+    if(atlas->scene_source_used && !gml_render_application_scene_flush(r)) return;
     gml_render_atlas_scene_retire_one(r,f->atlas);
     free(atlas->px);
     memset(atlas,0,sizeof(*atlas));
@@ -677,6 +679,7 @@ static GmlGlyph *font_runtime_rasterize(GmlRender *r, GmlFont *f, unsigned cp){
   if(!gml_font_raster_glyph_metrics(f->runtime_face,(int)cp,f->runtime_scale,&metrics)) return NULL;
   GmlAtlas *A=&r->atlas[f->atlas];
   if(!A->px || A->w<=0 || A->scene_source_version==UINT64_MAX) return NULL;
+  if(A->scene_source_used && !gml_render_application_scene_flush(r)) return NULL;
   int page_grew=0;
   int w=(int)ceilf(metrics.advance*f->runtime_scale);
   if(metrics.x1>w) w=metrics.x1;

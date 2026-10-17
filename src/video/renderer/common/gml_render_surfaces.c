@@ -50,7 +50,7 @@ struct GmlRenderPendingSceneBatch {
   GmlRenderResourceSource sources[GML_SCENE_SOURCE_LIMIT];
   GmlRenderImageRef source_refs[GML_SCENE_SOURCE_LIMIT];
   uint32_t count,state_count,source_count;
-  int coalesce_immutable;
+  int coalesce_sources;
 };
 
 static int same_scene_source(GmlRenderImageRef a,GmlRenderImageRef b){
@@ -104,9 +104,11 @@ int gml_render_application_scene_flush(GmlRender *r){
     /* Immutable bytes permit a pre-submit retry. A mutable runtime atlas may relocate at the
      * next glyph demand, so its failed submission must not leave a borrowed pointer queued;
      * the caller will cross the CPU barrier and draw the glyph there instead. */
-    if(metrics.authority==GML_RENDER_RESOURCE_INVALID ||
-       (pending->source_count && !pending->sources[0].borrowed_immutable &&
-        !pending->sources[0].resident_resource)){
+    int mutable_atlas=0;
+    for(uint32_t index=0;index<pending->source_count;index++)
+      mutable_atlas|=!pending->sources[index].borrowed_immutable &&
+                     !pending->sources[index].resident_resource;
+    if(metrics.authority==GML_RENDER_RESOURCE_INVALID || mutable_atlas){
       pending->count=0;
       pending->state_count=0;
       pending->source_count=0;
@@ -323,6 +325,13 @@ int gml_render_application_scene_enqueue_quads(GmlRender *r,
   GmlRenderImageRef next;
   uint32_t state_index=0,source_index=0;
   int coalescible,exact_filtered_font,versioned_surface;
+  int mutable_text=operation && source &&
+    operation->scene_family==GML_RENDER_SCENE_TEXT &&
+    operation->reconstruction_mode==GML_RENDER_DEVICE_CHECKPOINT &&
+    source->image.resource_class==GML_RENDER_RESOURCE_ATLAS && !source->resident_resource &&
+    r && source->image.identity<(uint32_t)r->n_atlas &&
+    r->atlas[source->image.identity].runtime_font_page && r->device.context &&
+    r->device.observe_on_demand && r->device.observe_on_demand(r->device.context);
   versioned_surface=operation && source && source->resident_resource &&
     (source->image.resource_class==GML_RENDER_RESOURCE_SCREEN ||
      source->image.resource_class==GML_RENDER_RESOURCE_SURFACE ||
@@ -349,7 +358,7 @@ int gml_render_application_scene_enqueue_quads(GmlRender *r,
   if(!r || !r->resident_application_pass || !gml_render_device(r) ||
      !gml_render_scene_target_resource_ensure(r) || !operation || !state || !source ||
      !count || count>GML_SCENE_BATCH_LIMIT ||
-     (count>1u && !source->borrowed_immutable) ||
+     (count>1u && !source->borrowed_immutable && !mutable_text) ||
      (!source->borrowed_immutable && !versioned_surface &&
       (source->image.resource_class!=GML_RENDER_RESOURCE_ATLAS ||
        source->resident_resource)) || !operation->sources ||
@@ -382,7 +391,7 @@ int gml_render_application_scene_enqueue_quads(GmlRender *r,
     state->alpha_equation==GML_RENDER_BLEND_EXACT_FILTERED_FONT &&
     gml_render_filtered_font_quad_valid(&operation->payload.quad,
                                         operation->target.width,operation->target.height);
-  coalescible=source->borrowed_immutable &&
+  coalescible=(source->borrowed_immutable || mutable_text) &&
     (((operation->scene_family==GML_RENDER_SCENE_TEXT ||
      operation->scene_family==GML_RENDER_SCENE_SPRITE) &&
     (operation->reconstruction_mode==GML_RENDER_DEVICE_CHECKPOINT || exact_filtered_font) &&
@@ -404,7 +413,7 @@ int gml_render_application_scene_enqueue_quads(GmlRender *r,
   pending=r->pending_scene_batch;
   if(pending && pending->count){
     int flush=!pending->source_count || pending->count>GML_SCENE_BATCH_LIMIT-count ||
-      pending->coalesce_immutable!=coalescible;
+      pending->coalesce_sources!=coalescible;
     if(!flush && coalescible){
       source_index=pending->source_count;
       for(uint32_t index=0;index<pending->source_count;index++)
@@ -438,7 +447,8 @@ int gml_render_application_scene_enqueue_quads(GmlRender *r,
   /* R03-P9-IMMUTABLE-CHECKPOINT-SPAN: sampler/colour changes and distinct immutable
    * pages stay ordered, including exact filtered glyphs next to checkpoint quads.
    * A mixed span checkpoints once; an exact-only font span retains its journal.
-   * CPU readers, mutable sources and capacities retain their existing boundaries. */
+   * CPU readers and capacities retain their existing boundaries. Runtime-font
+   * pages keep mutable views; their writer flushes before a version mutation. */
   next=gml_render_application_scene_next_image_ref(
     r,gml_render_scene_target_resource_ensure(r));
   if(next.content_version==UINT64_MAX ||
@@ -452,7 +462,7 @@ int gml_render_application_scene_enqueue_quads(GmlRender *r,
     pending->sources[0]=*source;
     pending->source_refs[0]=source->image;
     pending->source_count=1u;
-    pending->coalesce_immutable=coalescible;
+    pending->coalesce_sources=coalescible;
   } else if(coalescible){
     if(state_index==pending->state_count)
       pending->states[pending->state_count++]=*state;
@@ -471,10 +481,11 @@ int gml_render_application_scene_enqueue_quads(GmlRender *r,
     r->app_surface_opaque=0;
     r->app_presentation_coverage_active=0;
   }
-  /* A runtime font may grow or relocate its atlas on the next glyph lookup.
-   * Pin/upload this mutable version before the caller can mutate those bytes. */
+  /* Checkpoint-only runtime glyphs may share a stable page version. Font
+   * growth/deletion flushes it before mutating bytes; it never becomes an
+   * immutable replay source. Legacy mutable packets retain immediate delivery. */
   /* Surface writes, target changes, resize and free flush this version before mutation. */
-  return source->borrowed_immutable || versioned_surface ||
+  return source->borrowed_immutable || versioned_surface || mutable_text ||
     gml_render_application_scene_flush(r);
 }
 
