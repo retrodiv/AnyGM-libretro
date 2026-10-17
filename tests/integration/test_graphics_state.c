@@ -1691,8 +1691,8 @@ static int classic_native_step_scene_case(void){
     gml_gpu_counters(selected.engine->gpu,&counters);
     matching=matching && !dispatch.failed && !dispatch.unclassified && !dispatch.overflow;
     /* Initial late-Classic SCREEN presentation remains CPU-owned; the three subsequent
-     * native Step compositions must not fall back. */
-    if(variant<2u) matching=matching && ordinary_cpu==1u &&
+     * native or doubled-nearest Step compositions must not fall back. */
+    if(variant<3u) matching=matching && ordinary_cpu==1u &&
       counters.scene_families[GML_RENDER_SCENE_SURFACE]>=3u;
     else matching=matching && ordinary_cpu>0u;
     if(!matching) fprintf(stderr,"native Classic Step api=%u variant=%u CPU=%llu surfaces=%llu extent=%ux%u\n",
@@ -1700,8 +1700,63 @@ static int classic_native_step_scene_case(void){
       (unsigned long long)counters.scene_families[GML_RENDER_SCENE_SURFACE],
       selected.engine->output_width,selected.engine->output_height);
     session_close(&selected);session_close(&plain);
-    REQUIRE(matching,"native retained Step stays resident; doubled and filtered policies retain CPU ownership");
+    REQUIRE(matching,"native and doubled-nearest retained Step stay resident; filtered policy retains CPU ownership");
   }
+  return 1;
+}
+
+/* Current-context dispatch/binding proof, not shader emulation. Actual-device
+ * paired controls own the unchanged CPU pixels of this doubled fixture. */
+static int classic_doubled_numbered_step_scene_case(void){
+  Session plain={0},selected={0};
+  CurrentContextWitness witness={1u,0u};
+  AnygmGraphicsContext context=graphics_context(ANYGM_GRAPHICS_OPENGLES3);
+  AnygmInputFrame input={.struct_size=sizeof input,.pointer_x=-1,.pointer_y=-1};
+  int matching=1;
+  anygm_test_graphics_reset();
+  REQUIRE(session_open_fixture_with_scene(&plain,ANYGM_SCENE_RENDERER_CPU,
+            anygm_synthetic_classic_scaled_step_content_create) &&
+          session_open_fixture_with_scene(&selected,ANYGM_SCENE_RENDERER_OPENGL,
+            anygm_synthetic_classic_scaled_step_content_create),
+          "doubled Classic numbered Step fixtures load");
+  context.userdata=&witness;context.is_current=graphics_context_is_current;
+  REQUIRE(anygm_graphics_context_reset(selected.engine,&context)==ANYGM_OK,
+          "doubled Classic numbered Step adopts an owning current context");
+  gml_render_dispatch_diagnostics_enable(&selected.engine->render,1);
+  for(unsigned frame=0;frame<4u;frame++){
+    AnygmFrameOutput cpu={.struct_size=sizeof cpu},gpu={.struct_size=sizeof gpu};
+    int ran=anygm_run_frame(plain.engine,&input,&cpu)==ANYGM_OK &&
+      anygm_run_frame(selected.engine,&input,&gpu)==ANYGM_OK;
+    GmlVal *left=gml_varmap_get(&plain.engine->vm.globals,"fixture_surface");
+    GmlVal *right=gml_varmap_get(&selected.engine->vm.globals,"fixture_surface");
+    int binding=left && right && left->d==right->d &&
+      gml_surface_get_target(&selected.engine->render)==(int)right->d &&
+      selected.engine->classic_phase_cap>0u;
+    matching=matching && ran && binding && cpu.width==128u && cpu.height==96u &&
+      cpu.width==gpu.width && cpu.height==gpu.height &&
+      plain.engine->vm.frame==selected.engine->vm.frame &&
+      plain.engine->vm.room_index==selected.engine->vm.room_index;
+    if(!ran) break;
+  }
+  GmlRenderDispatchMetrics dispatch={0};
+  GmlGpuCounters counters={0};
+  uint64_t ordinary_cpu=0;
+  int counted=gml_render_dispatch_metrics(&selected.engine->render,&dispatch);
+  matching=matching && counted;
+  for(unsigned family=0;family<GML_RENDER_SCENE_FAMILY_COUNT;family++)
+    for(unsigned reason=0;reason<GML_RENDER_DISPATCH_REASON_COUNT;reason++)
+      ordinary_cpu+=dispatch.cpu[family][reason];
+  gml_gpu_counters(selected.engine->gpu,&counters);
+  matching=matching && !dispatch.failed && !dispatch.unclassified && !dispatch.overflow;
+  if(!matching || ordinary_cpu>1u || counters.scene_families[GML_RENDER_SCENE_SURFACE]<3u)
+    fprintf(stderr,"doubled numbered Step metadata=%d CPU=%llu GPU-surfaces=%llu phase-cap=%zu\n",
+      matching,(unsigned long long)ordinary_cpu,
+      (unsigned long long)counters.scene_families[GML_RENDER_SCENE_SURFACE],
+      selected.engine->classic_phase_cap);
+  matching=matching && ordinary_cpu<=1u &&
+    counters.scene_families[GML_RENDER_SCENE_SURFACE]>=3u;
+  session_close(&selected);session_close(&plain);
+  REQUIRE(matching,"doubled numbered Step preserves binding and resident composition");
   return 1;
 }
 
@@ -5285,6 +5340,7 @@ int main(void){
     {"classic Step target survives GPU Draw and GUI",classic_retained_target_scene_case},
     {"classic Step SCREEN and numbered Draw stay independently current",classic_step_composition_scene_case},
     {"native Classic retained Step and phase exclusions",classic_native_step_scene_case},
+    {"doubled Classic numbered Step keeps independent phase ownership",classic_doubled_numbered_step_scene_case},
     {"manual Classic application retains Draw GUI and root Step",classic_manual_application_scene_case},
     {"classic integer surface keeps partial source alpha resident",classic_integer_surface_calls_case},
     {"ended resident frame remains visible and canonical",ended_frame_retention_case},

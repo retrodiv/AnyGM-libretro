@@ -78,7 +78,7 @@ static int resident_integer_background_part(GmlRender *r,int page_index,
     return 0;
   /* Do not erase auxiliary CPU phase-plane work or special draw-state effects.
    * The ordinary resident crop performs its fuller validation below. */
-  if(r->classic_phase_y || r->gui_pass_active ||
+  if(gml_render_classic_vertical_phase_blocks_scene(r) || r->gui_pass_active ||
      r->active_shader>=0 || r->alpha_test_enable ||
      r->pending_underlay || r->pending_presentation ||
      !gml_render_scene_target_matches(r))

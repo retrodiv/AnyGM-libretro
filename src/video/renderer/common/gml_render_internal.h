@@ -845,4 +845,11 @@ int gml_render_rotated_nearest_row_regions(GmlRender *r,GmlSprite *sprite,GmlTpa
                                            double rotation,GmlRenderRotatedCoverageRegion *regions,
                                            uint32_t capacity,uint32_t *count);
 
+/* CPU vertical samples belong to the logical root, never to an explicitly
+ * numbered allocation. Keep every other binding behind the established fence. */
+static inline int gml_render_classic_vertical_phase_blocks_scene(const GmlRender *r){
+  return r && r->classic_phase_y &&
+    !(r->target_sp>0 && r->target_id>0 && r->fb!=r->base_fb);
+}
+
 #endif

@@ -11780,7 +11780,13 @@ static int resident_empty_sprite_preserves_queued_prefix(int zero_scale){
     r->active_shader=-1;r->spr[0].ns_enabled=1;
     CHECK(!gml_render_resident_sprite_outside(r,0,0,x/mx,y/my,xs/mx,ys/my,91.5));
     uint32_t phase=0;r->spr[0].ns_enabled=0;r->classic_phase_y=&phase;
-    CHECK(!gml_render_resident_sprite_outside(r,0,0,x/mx,y/my,xs/mx,ys/my,91.5));
+    /* The borrowed root plane cannot receive pixels from a distinct positive
+     * numbered target, even when an outside no-op preserves its prefix. */
+    int phase_noop=gml_render_resident_sprite_outside(r,0,0,x/mx,y/my,xs/mx,ys/my,91.5);
+    CHECK(phase_noop==(target==3u));
+    gml_render_resource_journal_metrics(resource,&after);
+    CHECK(after.logical_version==before.logical_version && !after.cpu_replays &&
+          fake.submits==submits && fake.readbacks==reads && phase==0u);
     r->classic_phase_y=NULL;gml_render_free(r);free(r);
   }
   return 1;
@@ -11788,6 +11794,26 @@ static int resident_empty_sprite_preserves_queued_prefix(int zero_scale){
 
 static int resident_outside_sprite_preserves_queued_prefix(void){
   return resident_empty_sprite_preserves_queued_prefix(0);
+}
+
+static int resident_vertical_phase_binding_scope(void){
+  GmlRender *r=calloc(1,sizeof *r);
+  uint32_t root=0,numbered=0,phase=0;
+  CHECK(r && !gml_render_classic_vertical_phase_blocks_scene(NULL));
+  r->fb=r->base_fb=&root;r->target_id=-1;
+  CHECK(!gml_render_classic_vertical_phase_blocks_scene(r));
+  r->classic_phase_y=&phase;
+  CHECK(gml_render_classic_vertical_phase_blocks_scene(r));
+  r->target_id=0;r->target_sp=1;r->fb=&numbered;
+  CHECK(gml_render_classic_vertical_phase_blocks_scene(r));
+  r->target_id=1;r->target_sp=0;
+  CHECK(gml_render_classic_vertical_phase_blocks_scene(r));
+  r->target_sp=1;r->fb=&root;
+  CHECK(gml_render_classic_vertical_phase_blocks_scene(r));
+  r->fb=&numbered;
+  CHECK(!gml_render_classic_vertical_phase_blocks_scene(r));
+  CHECK(!root && !numbered && !phase);
+  free(r);return 1;
 }
 
 static int resident_zero_scale_sprite_preserves_queued_prefix(void){
@@ -13461,7 +13487,22 @@ static int resident_background_function(int fractional){
       BG_REJECT(render->blendmode=1,render->blendmode=0);
       BG_REJECT(render->blend_equation=2,render->blend_equation=1);
       BG_REJECT(render->blend_equation_alpha=2,render->blend_equation_alpha=1);
-      BG_REJECT(render->classic_phase_y=screen,render->classic_phase_y=NULL);
+      if(target_kind==3u){
+        /* An allocated root plane is inert on the numbered allocation. Keep
+         * the active-root/application and interpolation-plane fences below. */
+        render->classic_phase_y=screen;
+        CHECK(fractional==2
+          ?gml_render_resident_nearest_tile_page(render,&tile_view,6,5,2,1,0x70B0D0u,.37)
+          :gml_render_resident_integer_background_page(render,0,6,5,2,1,0x70B0D0u,.37));
+        render->classic_phase_y=NULL;
+        CHECK(fake.submits==submitted && !fake.readbacks && !memcmp(shadow,render->fb,sizeof shadow));
+        /* This positive setup queues a real draw, unlike the rejection cases.
+         * Submit it separately so the later eight-call batching proof starts
+         * with exactly its original empty queue and unchanged strict counts. */
+        CHECK(gml_render_scene_submit_pending(render) && fake.submits==submitted+1 &&
+              !fake.readbacks && !fake.rgb_queries && !memcmp(shadow,render->fb,sizeof shadow));
+        submitted=fake.submits;
+      }else BG_REJECT(render->classic_phase_y=screen,render->classic_phase_y=NULL);
       BG_REJECT(render->classic_interp_phase[0]=screen,render->classic_interp_phase[0]=NULL);
       BG_REJECT(render->app_interp_phase[0]=screen,render->app_interp_phase[0]=NULL);
       BG_REJECT(render->atlas[0].runtime_font_page=1,render->atlas[0].runtime_font_page=0);
@@ -15117,6 +15158,7 @@ int main(void){
   passed+=resident_classic_clipped_sprite_noops();
   passed+=resident_classic_rotated_sprite_noops();
   passed+=resident_outside_sprite_geometry();
+  passed+=resident_vertical_phase_binding_scope();
   passed+=resident_outside_sprite_preserves_queued_prefix();
   passed+=resident_zero_scale_sprite_preserves_queued_prefix();
   passed+=resident_studio_unit_background_noops();
@@ -15154,6 +15196,6 @@ int main(void){
   passed+=source_free_primitive_rect_replay();
   passed+=stretched_float_exact_replay();
   passed+=filtered_font_exact_recovery();
-  printf("render resource cases: passed=%d failed=%d\n",passed,223-passed);
-  return passed==223?EXIT_SUCCESS:EXIT_FAILURE;
+  printf("render resource cases: passed=%d failed=%d\n",passed,224-passed);
+  return passed==224?EXIT_SUCCESS:EXIT_FAILURE;
 }

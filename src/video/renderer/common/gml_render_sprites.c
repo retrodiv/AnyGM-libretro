@@ -221,7 +221,7 @@ static int resident_outside_sprite_noop(GmlRender *r,GmlSprite *sprite,int subim
                                        double x,double y,double xs,double ys,double rotation){
   if(!r || !r->resident_application_pass || !sprite || sprite->runtime_rgba ||
      sprite->spine || sprite->ns_enabled || sprite->n_frames<=0 || !sprite->frame ||
-     resident_sprite_program_blocks(r) || gml_d3_is_active(r) || r->classic_phase_y ||
+     resident_sprite_program_blocks(r) || gml_d3_is_active(r) || gml_render_classic_vertical_phase_blocks_scene(r) ||
      r->rotated_batch_count || r->rotated_batch_building ||
      r->pending_underlay || r->pending_presentation ||
      !gml_render_scene_target_matches(r)) return 0;
@@ -250,7 +250,7 @@ static int resident_classic_rotated_sprite_noop(GmlRender *r,GmlSprite *sprite,i
      r->interp || r->gui_pass_active || r->fog_flat || gml_d3_is_active(r) ||
      resident_sprite_program_blocks(r) || r->alpha_test_enable || !r->alphablend || r->blendmode ||
      r->blend_equation!=1 || r->blend_equation_alpha!=1 || r->color_write_mask!=15u ||
-     r->classic_phase_y || r->rotated_batch_count || r->rotated_batch_building ||
+     gml_render_classic_vertical_phase_blocks_scene(r) || r->rotated_batch_count || r->rotated_batch_building ||
      r->pending_underlay || r->pending_presentation ||
      (r->world_transform_active && (r->world_scale_x!=1.0 || r->world_scale_y!=1.0)) ||
      !gml_render_scene_target_matches(r) ||
@@ -302,7 +302,7 @@ static int resident_integer_sprite(GmlRender *r,GmlSprite *sprite,int subimg,
      resident_sprite_program_blocks(r) || (r->alpha_test_enable && !normal_integer) ||
      (!r->alphablend && !normal_integer) ||
      (r->blendmode && !replace && !normal_integer) || r->blend_equation!=1 || r->blend_equation_alpha!=1 ||
-     r->color_write_mask!=0x0Fu || r->classic_phase_y ||
+     r->color_write_mask!=0x0Fu || gml_render_classic_vertical_phase_blocks_scene(r) ||
      r->rotated_batch_count || r->rotated_batch_building ||
      r->pending_underlay || r->pending_presentation ||
      !gml_render_scene_target_matches(r) ||
@@ -711,7 +711,7 @@ static int resident_atlas_crop_from_page_impl(GmlRender *r,GmlTpag *page,
      (r->blendmode && !replace && !(integer_atlas && r->blendmode==2) &&
       !(scaled_sprite && r->blendmode==1)) || r->blend_equation!=1 ||
      r->blend_equation_alpha!=1 || (r->color_write_mask!=0x0Fu && !scaled_sprite) ||
-     r->classic_phase_y || r->rotated_batch_count || r->rotated_batch_building ||
+     gml_render_classic_vertical_phase_blocks_scene(r) || r->rotated_batch_count || r->rotated_batch_building ||
      r->pending_underlay || r->pending_presentation ||
      !gml_render_scene_target_matches(r) ||
      !isfinite(xs) || !isfinite(ys) || xs==0.0 || ys==0.0 ||
@@ -1264,7 +1264,7 @@ static int resident_runtime_unit_sprite(GmlRender *r,GmlSprite *sprite,int subim
      r->fog_flat || gml_d3_is_active(r) || resident_sprite_program_blocks(r) ||
      r->alpha_test_enable || !r->alphablend || r->blendmode ||
      r->blend_equation!=1 || r->blend_equation_alpha!=1 || r->color_write_mask!=15u ||
-     r->classic_phase_y || r->rotated_batch_count || r->rotated_batch_building ||
+     gml_render_classic_vertical_phase_blocks_scene(r) || r->rotated_batch_count || r->rotated_batch_building ||
      r->pending_underlay || r->pending_presentation ||
      (r->world_transform_active && (r->world_scale_x!=1.0 || r->world_scale_y!=1.0)) ||
      !gml_render_scene_target_matches(r) || xs!=1.0 || ys!=1.0 || rotation!=0.0 ||
@@ -1331,7 +1331,7 @@ static int resident_background_page(GmlRender *r,int page_index,
      gml_d3_is_active(r) || page_index<0 || page_index>=r->n_tpag ||
      r->active_shader>=0 || r->color_write_mask!=15u ||
      r->blend_equation!=1 || r->blend_equation_alpha!=1 ||
-     r->classic_phase_y || r->pending_underlay || r->pending_presentation ||
+     gml_render_classic_vertical_phase_blocks_scene(r) || r->pending_underlay || r->pending_presentation ||
      !gml_render_scene_target_matches(r) || !isfinite(alpha) ||
      (r->blendmode!=0 && r->blendmode!=2)) return 0;
   GmlTpag *page=&r->tpag[page_index];
@@ -1385,7 +1385,7 @@ int gml_render_resident_nearest_tile_page(GmlRender *r,GmlTpag *page,
   if(!r || !page || !page->project_authored_edges || !r->resident_application_pass ||
      r->interp || r->fog_flat || gml_d3_is_active(r) || r->active_shader>=0 ||
      r->color_write_mask!=15u || r->blend_equation!=1 || r->blend_equation_alpha!=1 ||
-     r->classic_phase_y || r->pending_underlay || r->pending_presentation ||
+     gml_render_classic_vertical_phase_blocks_scene(r) || r->pending_underlay || r->pending_presentation ||
      !gml_render_scene_target_matches(r) || !isfinite(left) || !isfinite(top) ||
      !isfinite(xs) || !isfinite(ys) || !isfinite(alpha) ||
      xs==0.0 || ys==0.0 || (r->blendmode!=0 && r->blendmode!=2)) return 0;
@@ -1402,7 +1402,7 @@ int gml_render_resident_nearest_quarter_tile_page(GmlRender *r,GmlTpag *page,
   if(!r || !page || !page->project_authored_edges || !r->resident_application_pass ||
      r->interp || r->fog_flat || gml_d3_is_active(r) || r->active_shader>=0 ||
      r->color_write_mask!=15u || r->blend_equation!=1 || r->blend_equation_alpha!=1 ||
-     r->classic_phase_y || r->pending_underlay || r->pending_presentation ||
+     gml_render_classic_vertical_phase_blocks_scene(r) || r->pending_underlay || r->pending_presentation ||
      !gml_render_scene_target_matches(r) || !isfinite(x) || !isfinite(y) ||
      !isfinite(x-r->cam_x) || !isfinite(y-r->cam_y) ||
      fabs(x-r->cam_x)>65536.0 || fabs(y-r->cam_y)>65536.0 ||
@@ -1465,7 +1465,7 @@ int gml_render_resident_selected_background_page(GmlRender *r,GmlTpag *page,
      gml_d3_is_active(r) || page->atlas<0 || page->atlas>=r->n_atlas ||
      r->active_shader>=0 || r->color_write_mask!=15u ||
      r->blend_equation!=1 || r->blend_equation_alpha!=1 ||
-     r->classic_phase_y || r->pending_underlay || r->pending_presentation ||
+     gml_render_classic_vertical_phase_blocks_scene(r) || r->pending_underlay || r->pending_presentation ||
      !gml_render_scene_target_matches(r) || !isfinite(alpha) ||
      (r->blendmode!=0 && r->blendmode!=2)) return 0;
   GmlAtlas *atlas=&r->atlas[page->atlas];
@@ -2084,7 +2084,7 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
       !(hardware_physical_sprite && r->color_write_mask<=15u)) ||
      (rotated_sprite && anygm_policy_has_modern_layer_semantics(r->win) &&
       (!r->fb_opaque_known || !r->fb_all_opaque)) ||
-     r->classic_phase_y || r->rotated_batch_count || r->rotated_batch_building ||
+     gml_render_classic_vertical_phase_blocks_scene(r) || r->rotated_batch_count || r->rotated_batch_building ||
      r->pending_underlay || r->pending_presentation ||
      !gml_render_scene_target_matches(r) ||
      !isfinite(left) || !isfinite(top) || !isfinite(xs) || !isfinite(ys) ||
@@ -2841,7 +2841,7 @@ static int resident_modern_screen_binary_rotation(GmlRender *r,GmlSprite *sprite
      alpha!=1.0 || (colour&0xFFFFFFu)!=0xFFFFFFu ||
      r->fog_flat || r->gui_pass_active || resident_sprite_program_blocks(r) || r->alpha_test_enable ||
      !r->alphablend || r->blendmode || r->blend_equation!=1 || r->blend_equation_alpha!=1 ||
-     r->color_write_mask!=15u || r->classic_phase_y || r->rotated_batch_count ||
+     r->color_write_mask!=15u || gml_render_classic_vertical_phase_blocks_scene(r) || r->rotated_batch_count ||
      r->rotated_batch_building || r->pending_underlay || r->pending_presentation ||
      !gml_render_scene_target_matches(r) || !isfinite(rotation) || fabs(rotation)>1000000.0 ||
      page->project_authored_edges || page->sw<=0 || page->sh<=0 || page->sw>4096 || page->sh>4096 ||
@@ -2923,7 +2923,7 @@ static int resident_modern_nearest_rotation(GmlRender *r,GmlSprite *sprite,GmlTp
      r->fog_flat || r->gui_pass_active || resident_sprite_program_blocks(r) || r->alpha_test_enable ||
      !r->alphablend || r->blendmode || r->blend_equation!=1 || r->blend_equation_alpha!=1 ||
      fabs(rotation)>1000000.0 ||
-     r->color_write_mask!=15u || r->classic_phase_y || r->rotated_batch_count ||
+     r->color_write_mask!=15u || gml_render_classic_vertical_phase_blocks_scene(r) || r->rotated_batch_count ||
      r->rotated_batch_building || r->pending_underlay || r->pending_presentation ||
      !gml_render_scene_target_matches(r) || page->project_authored_edges ||
      page->sw<=0 || page->sh<=0 || page->sx<0 || page->sy<0 ||
@@ -3037,7 +3037,7 @@ static int resident_nearest_texture_function(GmlRender *r,GmlSprite *sprite,GmlT
      r->fog_flat || gml_d3_is_active(r) ||
      r->color_write_mask>15u || r->blendmode<0 || r->blendmode>2 ||
      r->blend_equation!=1 || r->blend_equation_alpha!=1 ||
-     r->classic_phase_y || r->rotated_batch_count || r->rotated_batch_building ||
+     gml_render_classic_vertical_phase_blocks_scene(r) || r->rotated_batch_count || r->rotated_batch_building ||
      (r->pending_underlay && family!=GML_RENDER_SCENE_SPRITE) ||
      r->pending_presentation || !gml_render_scene_target_matches(r) ||
      sprite->runtime_rgba || sprite->spine || sprite->ns_enabled ||
@@ -3254,7 +3254,7 @@ static int resident_nearest_sprite_function(GmlRender *r,GmlSprite *sprite,int s
        resident_sprite_program_blocks(r) || r->fog_flat ||
        gml_d3_is_active(r) || r->blendmode<0 || r->blendmode>2 ||
        r->blend_equation!=1 || r->blend_equation_alpha!=1 ||
-       r->classic_phase_y || r->rotated_batch_count || r->rotated_batch_building ||
+       gml_render_classic_vertical_phase_blocks_scene(r) || r->rotated_batch_count || r->rotated_batch_building ||
        r->pending_underlay || r->pending_presentation || !gml_render_scene_target_matches(r) ||
        !isfinite(x) || !isfinite(y) || !isfinite(rotation) ||
        fabs(x-r->cam_x)>65536.0 || fabs(y-r->cam_y)>65536.0 ||
@@ -3620,7 +3620,7 @@ static int resident_coarse_mip_veil(GmlRender *r,int sprite,int frame,
        !device->observe_on_demand(device->context))) ||
      r->active_shader>=0 || r->alpha_test_enable || !r->alphablend ||
      r->blendmode || r->blend_equation!=1 || r->blend_equation_alpha!=1 ||
-     r->color_write_mask!=0x0Fu || r->classic_phase_y ||
+     r->color_write_mask!=0x0Fu || gml_render_classic_vertical_phase_blocks_scene(r) ||
      r->rotated_batch_count || r->rotated_batch_building ||
      r->pending_underlay || r->pending_presentation ||
      r->target_sp || r->target_id!=-1 ||
@@ -3762,7 +3762,7 @@ static int resident_mapped_gui_stretch(GmlRender *r,int sprite,int frame,
      !r->interp || r->active_shader>=0 || r->fog_flat || r->alpha_test_enable ||
      !r->alphablend || r->blendmode || r->blend_equation!=1 ||
      r->blend_equation_alpha!=1 || r->color_write_mask!=15u ||
-     r->classic_phase_y || r->rotated_batch_count || r->rotated_batch_building ||
+     gml_render_classic_vertical_phase_blocks_scene(r) || r->rotated_batch_count || r->rotated_batch_building ||
      r->pending_underlay || r->pending_presentation ||
      !gml_render_scene_target_matches(r) || !r->base_scene_resource ||
      r->fb!=r->base_scene_resource_pixels ||
@@ -3844,7 +3844,7 @@ static int resident_stretched_sprite_function(GmlRender *r,int sprite,int frame,
   if(!r || !r->resident_application_pass || !r->win ||
      sprite<0 || sprite>=r->n_spr || !isfinite(alpha) ||
      r->active_shader>=0 || r->fog_flat || gml_d3_is_active(r) ||
-     r->classic_phase_y || r->rotated_batch_count || r->rotated_batch_building ||
+     gml_render_classic_vertical_phase_blocks_scene(r) || r->rotated_batch_count || r->rotated_batch_building ||
      r->pending_presentation || !gml_render_scene_target_matches(r)) return 0;
   for(unsigned index=0;index<3u;index++)
     if(r->classic_interp_phase[index] || r->app_interp_phase[index]) return 0;
@@ -4130,7 +4130,7 @@ static int resident_positioned_quad_sprite(GmlRender *r,int sprite,int subimg,
      !r->alphablend || r->blendmode || r->blend_equation!=1 ||
      r->blend_equation_alpha!=1 || r->color_write_mask!=0x0fu ||
      r->gui_pass_active || r->active_shader>=0 || r->alpha_test_enable ||
-     r->classic_phase_y || r->rotated_batch_count || r->rotated_batch_building ||
+     gml_render_classic_vertical_phase_blocks_scene(r) || r->rotated_batch_count || r->rotated_batch_building ||
      r->pending_underlay || r->pending_presentation || gml_d3_is_active(r) ||
      !gml_render_scene_target_matches(r) ||
      !isfinite(alpha) || alpha<=0.0 || alpha>1.0 ||
@@ -4400,7 +4400,7 @@ static int resident_modern_unit_sprite_part(GmlRender *r,GmlTpag *page,const Gml
      r->target_id>0 || r->target_sp || r->gui_pass_active || r->fog_flat ||
      gml_d3_is_active(r) || r->active_shader>=0 || r->alpha_test_enable ||
      !r->alphablend || r->blendmode || r->blend_equation!=1 ||
-     r->blend_equation_alpha!=1 || r->color_write_mask!=15u || r->classic_phase_y ||
+     r->blend_equation_alpha!=1 || r->color_write_mask!=15u || gml_render_classic_vertical_phase_blocks_scene(r) ||
      r->rotated_batch_count || r->rotated_batch_building || r->pending_underlay ||
      r->pending_presentation || !gml_render_scene_target_matches(r) ||
      xs!=1.0 || ys!=1.0 || colour!=0xFFFFFFu || alpha!=1.0 ||
@@ -4818,7 +4818,7 @@ int gml_render_resident_tiled_sprite(GmlRender *r,int sprite,int subimg,
   GmlSprite *s=&r->spr[sprite];
   if(!isfinite(x) || !isfinite(y) || !isfinite(xs) || !isfinite(ys) || !isfinite(alpha) ||
      gml_d3_is_active(r) || r->fog_flat || resident_sprite_program_blocks(r) ||
-     r->classic_phase_y || r->pending_presentation ||
+     gml_render_classic_vertical_phase_blocks_scene(r) || r->pending_presentation ||
      r->rotated_batch_count || r->rotated_batch_building ||
      !gml_render_scene_target_matches(r)) return 0;
   for(unsigned index=0;index<3u;index++)
@@ -4967,7 +4967,7 @@ static int resident_modern_trimmed_unit_layer(GmlRender *r,GmlSprite *sprite,int
      r->classic || r->interp || !anygm_policy_has_modern_layer_semantics(r->win) ||
      r->gui_pass_active || r->fog_flat || gml_d3_is_active(r) || r->active_shader>=0 ||
      r->alpha_test_enable || !r->alphablend || r->blendmode || r->blend_equation!=1 ||
-     r->blend_equation_alpha!=1 || r->color_write_mask!=15u || r->classic_phase_y ||
+     r->blend_equation_alpha!=1 || r->color_write_mask!=15u || gml_render_classic_vertical_phase_blocks_scene(r) ||
      r->rotated_batch_count || r->rotated_batch_building || r->pending_underlay ||
      r->pending_presentation || !gml_render_scene_target_matches(r) ||
      xs!=1.0 || ys!=1.0 || colour!=0xFFFFFFu || alpha!=1.0 ||

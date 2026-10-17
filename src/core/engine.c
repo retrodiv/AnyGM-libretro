@@ -1292,8 +1292,9 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
       /* Later native SCREEN retains the initial CPU-owned presentation clear. */
       if(gml_surface_get_target(&engine->render)>0 &&
          (!anygm_policy_classic_modern_presentation(&engine->win) ||
-          (engine->vm.frame>0 && engine->output_width==engine->width &&
-           engine->output_height==engine->height)) &&
+          (engine->vm.frame>0 &&
+           ((engine->output_width==engine->width && engine->output_height==engine->height) ||
+            (engine->output_width==engine->width*2 && engine->output_height==engine->height*2)))) &&
          !step_presentation.interpolation && !engine->aspect_force_active &&
          !engine->canvas_mode && engine_graphics_active(engine) &&
          engine->scene_renderer_session==ANYGM_SCENE_RENDERER_OPENGL)
@@ -1690,6 +1691,13 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
   int classic_numbered_scene=classic_retained_scene &&
     (!anygm_policy_classic_modern_presentation(&engine->win) ||
      (engine->output_width==engine->width && engine->output_height==engine->height));
+  /* A numbered Draw image is not the logical root which owns the vertical
+   * sample plane. Keep that root CPU-owned, independently of the physical
+   * SCREEN composed by Step and of the explicitly bound numbered image. */
+  if(classic_phase && !engine->aspect_force_active && !engine->canvas_mode &&
+     engine->scene_renderer_session==ANYGM_SCENE_RENDERER_OPENGL &&
+     engine_graphics_active(engine) && gml_surface_get_target(&engine->render)>0)
+    classic_numbered_scene=1;
   int view_surface = (int)gml_global_arr(&engine->vm, "view_surface_id", frame_view_index);
   int multiview_rendered = engine->aspect_force_active?0:render_multiview_application(engine);
   if(multiview_rendered<0) return ANYGM_ERROR_INTERNAL;

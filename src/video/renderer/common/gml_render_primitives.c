@@ -258,7 +258,7 @@ static int resident_primitive_state_eligible(GmlRender *r){
      r->blendmode>GML_RENDER_BLEND_DEST_ALPHA_DEST_COLOUR || r->blend_equation!=1 ||
      r->blend_equation_alpha!=1 || r->color_write_mask>15u ||
      r->pending_presentation || r->rotated_batch_count || r->rotated_batch_building ||
-     r->classic_phase_y || r->classic_interp_phase[0] ||
+     gml_render_classic_vertical_phase_blocks_scene(r) || r->classic_interp_phase[0] ||
      r->classic_interp_phase[1] || r->classic_interp_phase[2] || !isfinite(r->alpha)) return 0;
   return 1;
 }

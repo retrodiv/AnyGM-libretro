@@ -31,7 +31,7 @@ static int resident_text_glyph_outside(GmlRender *r,const GmlSprite *sprite,
                                       const GmlTpag *page,double x,double y,
                                       double xs,double ys,double rotation){
   if(!r || !r->resident_application_pass || r->active_shader>=0 ||
-     gml_d3_is_active(r) || r->software_overlay || r->classic_phase_y ||
+     gml_d3_is_active(r) || r->software_overlay || gml_render_classic_vertical_phase_blocks_scene(r) ||
      r->rotated_batch_count || r->rotated_batch_building ||
      r->pending_presentation ||
      !gml_render_scene_target_matches(r)) return 0;
