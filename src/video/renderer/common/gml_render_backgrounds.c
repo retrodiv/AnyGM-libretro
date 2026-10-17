@@ -230,6 +230,9 @@ void gml_draw_background(GmlRender *r, int bg, double x, double y){
   if(bg<0||bg>=r->n_bg) return;
   int ti=r->bg[bg].tpag; if(ti<0||ti>=r->n_tpag) return;
   GmlTpag *t=&r->tpag[ti];
+  if(r->classic_phase_resource &&
+     gml_render_resident_classic_phase_atlas(r,t,x-r->cam_x+t->tx,y-r->cam_y+t->ty,
+       1,1,0xFFFFFFu,r->alpha,GML_RENDER_PHASE_BACKGROUND)) return;
   if(r->alpha==1.0 && !r->interp && !gml_d3_is_active(r) &&
      gml_render_resident_atlas_page(r,ti,x-r->cam_x+t->tx,y-r->cam_y+t->ty,1,1,
                                     GML_RENDER_SCENE_BACKGROUND)) return;
@@ -415,6 +418,9 @@ void gml_draw_background_ext(GmlRender *r, int bg, double x, double y, double xs
   if(bg<0||bg>=r->n_bg) return;
   int ti=r->bg[bg].tpag; if(ti<0||ti>=r->n_tpag) return;
   GmlTpag *t=&r->tpag[ti];
+  if(r->classic_phase_resource &&
+     gml_render_resident_classic_phase_atlas(r,t,x-r->cam_x+t->tx*xs,
+       y-r->cam_y+t->ty*ys,xs,ys,color,alpha,GML_RENDER_PHASE_BACKGROUND)) return;
   if((color&0xFFFFFFu)==0xFFFFFFu && alpha==1.0 && !r->interp && !gml_d3_is_active(r) &&
      gml_render_resident_atlas_page(r,ti,x-r->cam_x+t->tx*xs,
                                       y-r->cam_y+t->ty*ys,xs,ys,
@@ -472,6 +478,9 @@ void gml_draw_room_backgrounds(GmlRender *r, uint32_t bg_ptr, int want_fg){
     if(tiley){ y0 = y % bh; if(y0>0) y0-=bh; }
     for(int yy=y0; yy < (tiley? r->fbh : y0+1); yy+=bh){
       for(int xx=x0; xx < (tilex? r->fbw : x0+1); xx+=bw){
+        if(r->classic_phase_resource &&
+           gml_render_resident_classic_phase_atlas(r,t,xx,yy,1,1,0xFFFFFFu,1,
+             GML_RENDER_PHASE_BACKGROUND)) continue;
         if(!gml_d3_is_active(r) &&
            gml_render_resident_atlas_page(r,ti,xx+t->tx,yy+t->ty,1,1,
                                           GML_RENDER_SCENE_BACKGROUND)) continue;
@@ -525,6 +534,10 @@ static void do_bg_tiled_ext(GmlRender *r, int bg, double x, double y, double xs,
     }
     for(double yy=y0; yy<yend; yy+=logical_h)
       for(double xx=x0; xx<xend; xx+=logical_w){
+        if(r->classic_phase_resource &&
+           gml_render_resident_classic_phase_atlas(r,t,xx+t->tx*xs,yy+t->ty*ys,
+             xs,ys,color,alpha,vtiled && logical_h<r->fbh
+               ?GML_RENDER_PHASE_BACKGROUND_TILED:GML_RENDER_PHASE_BACKGROUND)) continue;
         if((color&0xFFFFFFu)==0xFFFFFFu && alpha==1.0 && !r->interp &&
            gml_render_resident_atlas_page(r,ti,xx+t->tx*xs,yy+t->ty*ys,xs,ys,
                                           GML_RENDER_SCENE_BACKGROUND)) continue;

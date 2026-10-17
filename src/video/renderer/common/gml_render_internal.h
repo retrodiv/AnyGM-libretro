@@ -351,6 +351,8 @@ typedef struct GmlRender {
   int classic_phase_scene_target;
   int classic_phase_scene_preparing;
   int classic_phase_scene_background_normalised;
+  GmlRenderDrawOp *classic_phase_composition;
+  uint32_t classic_phase_composition_capacity;
   int classic_phase_opaque_known,classic_phase_all_opaque,classic_phase_all_transparent;
   /* Optional exact-2x interpolation samples.  Each logical-size plane stores the result of
    * composing textured draws at the horizontal, vertical or diagonal half-pixel sample.  This

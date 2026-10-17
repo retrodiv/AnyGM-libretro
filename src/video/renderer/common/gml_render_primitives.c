@@ -258,7 +258,9 @@ static int resident_primitive_state_eligible(GmlRender *r){
      r->blendmode>GML_RENDER_BLEND_DEST_ALPHA_DEST_COLOUR || r->blend_equation!=1 ||
      r->blend_equation_alpha!=1 || r->color_write_mask>15u ||
      r->pending_presentation || r->rotated_batch_count || r->rotated_batch_building ||
-     gml_render_classic_vertical_phase_blocks_scene(r) || r->classic_interp_phase[0] ||
+     (gml_render_classic_vertical_phase_blocks_scene(r) &&
+       (!r->classic_phase_resource || !gml_render_classic_phase_resource_bind(r))) ||
+     r->classic_interp_phase[0] ||
      r->classic_interp_phase[1] || r->classic_interp_phase[2] || !isfinite(r->alpha)) return 0;
   return 1;
 }
@@ -311,6 +313,15 @@ static int resident_rectangle_function(GmlRender *r,int x1,int y1,int x2,int y2,
   int left=x1<0?0:x1,top=y1<0?0:y1;
   int right=x2>=r->fbw?r->fbw-1:x2,bottom=y2>=r->fbh?r->fbh-1:y2;
   if(outline && x1<left && x2>right && y1<top && y2>bottom) return 1;
+  /* The CPU uniform full-target leaf calls set_pending_fill, which also
+   * replaces its vertical samples. Partial rectangles and gradients do not. */
+  if(r->classic_phase_y && !r->target_sp && r->fb==r->base_fb &&
+     !outline && !gradient && !r->blendmode &&
+     (alpha>=1.0 || !r->alphablend) &&
+     left==0 && top==0 && right==r->fbw-1 && bottom==r->fbh-1){
+    gml_render_set_pending_fill(r,gml_render_cpu_backend_color_to_xrgb(c1));
+    return 1;
+  }
   if(r->pending_underlay && !gml_render_compose_resident_underlay(r)) return 0;
   gml_render_flush_pending_fill(r);
   GmlRenderResource *target=gml_render_scene_target_resource_ensure(r);

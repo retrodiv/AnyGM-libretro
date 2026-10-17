@@ -506,6 +506,15 @@ void gml_render_presentation_effective_set(GmlRender *r,int width,int height);
 void gml_render_sample_planes_update(GmlRender *r,
                                      const GmlRenderSamplePlanes *planes,
                                      unsigned fields);
+/* Preserve an existing vertical borrow when storage and its base incarnation
+ * still match. Otherwise observe and retire it before its owner reallocates
+ * or changes geometry. A failure leaves the borrow owned and must stop reuse.
+ * Passing NULL retires any vertical borrow; it never frees host storage. */
+int gml_render_sample_storage_prepare(GmlRender *r,uint32_t *vertical,
+                                      int width,int height);
+/* Bind the attached nearest vertical samples to the already resident base.
+ * Does not change framebuffer/camera or create a second engine draw pass. */
+int gml_render_sample_planes_resident_bind(GmlRender *r);
 /* Allow the renderer to defer a terminal application-surface presentation instead of writing it.
  * Off by default: with nothing able to take the deferred operation, deferring it only moves the
  * same work later. */

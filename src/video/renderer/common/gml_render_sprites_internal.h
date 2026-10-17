@@ -31,7 +31,8 @@ typedef enum {
   GML_RENDER_PHASE_BACKGROUND_TILED,
   GML_RENDER_PHASE_BACKGROUND_PART,
   GML_RENDER_PHASE_TILE,
-  GML_RENDER_PHASE_ROOM_TILE
+  GML_RENDER_PHASE_ROOM_TILE,
+  GML_RENDER_PHASE_SPRITE_TEXT
 } GmlRenderClassicPhaseTexturePort;
 int gml_render_resident_classic_phase_atlas(GmlRender *render,GmlTpag *page,
   double left,double top,double xscale,double yscale,uint32_t colour,double alpha,

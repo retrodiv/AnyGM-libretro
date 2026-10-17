@@ -244,6 +244,32 @@ static int exact_rect(const GmlRenderDrawOp *op,GLint *left,GLint *bottom,
 
 /* Full-source surface packets carry integral destination-loop sampling and
  * versioned mutable sources through the existing fixed-blend executor. */
+/* A one-pixel edge strip retains the CPU compositor's missing quarter-colour
+ * contribution. Ordinary nearest copies stay untinted and preserve raw alpha. */
+static int nearest_surface_fringe_valid(const GmlRenderDrawOp *op,
+  const GmlRenderDrawStateSnapshot *state,const GlSceneImage *source){
+  const GmlRenderQuad *q=&op->payload.quad;
+  if(!source || !source->rendered_origin || source->pixel_format!=GML_RENDER_PIXEL_ARGB8888 ||
+     (op->sources[0].resource_class!=GML_RENDER_RESOURCE_SCREEN &&
+      op->sources[0].resource_class!=GML_RENDER_RESOURCE_SCRATCH) ||
+     op->scene_family!=GML_RENDER_SCENE_SURFACE ||
+     op->reconstruction_mode!=GML_RENDER_DEVICE_CHECKPOINT ||
+     q->shape!=GML_RENDER_QUAD_AXIS_ALIGNED || q->span_active ||
+     q->x[1]-q->x[0]!=1.0 || q->y[2]-q->y[0]!=1.0 ||
+     q->sampling.filter!=GML_RENDER_FILTER_NEAREST || q->sampling.quantisation ||
+     q->sampling.logical_margin_mask || q->sampling.edge_rule!=GML_RENDER_EDGE_CLAMP_SUBIMAGE ||
+     !full_region(q->sampling.source_region,source->width,source->height) ||
+     q->filtered_draw_alpha!=1.0 || qualified_blend(state) || state->coverage_policy ||
+     state->alpha_test_enabled || state->write_mask!=15u) return 0;
+  double row=q->v[0]*source->height-.5;
+  if(!isfinite(row) || row<0.0 || row>source->height-1.0 || fabs(row-nearbyint(row))>1e-9) return 0;
+  for(unsigned corner=0;corner<4u;corner++)
+    if(q->corner_colour[corner]!=0xFFBFBFBFu ||
+       q->u[corner]!=((double)source->width-.5)/source->width ||
+       q->v[corner]!=q->v[0]) return 0;
+  return 1;
+}
+
 static int nearest_surface_function_valid(const GmlRenderDrawOp *op,
                                            const GmlRenderDrawStateSnapshot *state,
                                            const GlSceneImage *source){
@@ -1324,6 +1350,7 @@ static int scene_preflight(GmlGpuBackend *backend,const GmlRenderDrawBatch *batc
              : op->payload.quad.filtered_draw_alpha)*255.0))
           return 0;
         if(colour!=0xFFFFFFFFu && blend!=6 && !integer_function &&
+           !nearest_surface_fringe_valid(op,state,source) &&
            (op->reconstruction_mode!=GML_RENDER_DEVICE_CHECKPOINT ||
             (sampling->filter!=GML_RENDER_FILTER_BILINEAR &&
              sampling->filter!=GML_RENDER_FILTER_BOX &&

@@ -73,6 +73,9 @@ int main(int argc,char **argv){
   int classic_late_native_step=argc==2 && !strcmp(argv[1],"--keep-classic-late-native-step");
   int classic_scaled_step=argc==2 && !strcmp(argv[1],"--keep-classic-scaled-step");
   int classic_filtered_step=argc==2 && !strcmp(argv[1],"--keep-classic-filtered-step");
+  int classic_sample_root=argc==2 && !strcmp(argv[1],"--keep-classic-sample-root");
+  int classic_sample_resize=argc==2 && !strcmp(argv[1],"--keep-classic-sample-resize");
+  int classic_sample_filtered=argc==2 && !strcmp(argv[1],"--keep-classic-sample-filtered");
   int classic_read=argc==2 && !strcmp(argv[1],"--keep-classic-single-view-read");
   int classic_cpu_gui=argc==2 && !strcmp(argv[1],"--keep-classic-single-view-cpu-gui");
   int classic_filter_transition=argc==2 && !strcmp(argv[1],"--keep-classic-single-view-filter-transition");
@@ -99,6 +102,9 @@ int main(int argc,char **argv){
        gui_automatic_empty?anygm_synthetic_automatic_empty_indirect_gui_content_create(&fixture):
        ended_frame?anygm_synthetic_ended_frame_content_create(&fixture):
        cursor_frame?anygm_synthetic_cursor_frame_content_create(&fixture):
+       classic_sample_root?anygm_synthetic_classic_sample_root_content_create(&fixture):
+       classic_sample_resize?anygm_synthetic_classic_sample_resize_content_create(&fixture):
+       classic_sample_filtered?anygm_synthetic_classic_sample_filtered_content_create(&fixture):
        classic_redraw?anygm_synthetic_classic_redraw_content_create(&fixture):
        classic_viewless?anygm_synthetic_classic_viewless_draw_content_create(&fixture):
        classic_viewless_resize?anygm_synthetic_classic_viewless_resize_content_create(&fixture):
@@ -156,6 +162,7 @@ int main(int argc,char **argv){
      classic_geometry || classic_borrowed_resize ||
      classic_step_composition || classic_step_base_writer || classic_late_step_composition ||
      classic_native_step || classic_late_native_step || classic_scaled_step || classic_filtered_step ||
+     classic_sample_root || classic_sample_resize || classic_sample_filtered ||
      classic_read || classic_cpu_gui || classic_filter_transition || classic_partial_alpha ||
      classic_rectangle || classic_alpha_rectangle || classic_binary || classic_source_alpha || classic_zero_alpha_part ||
      classic_software3d ||
@@ -189,6 +196,7 @@ int main(int argc,char **argv){
           "--keep-classic-borrowed-resize|"
           "--keep-classic-step-composition|--keep-classic-step-base-writer|"
           "--keep-classic-late-step-composition|"
+          "--keep-classic-sample-root|--keep-classic-sample-resize|--keep-classic-sample-filtered|"
           "--keep-classic-single-view-read|--keep-classic-single-view-cpu-gui|"
           "--keep-classic-single-view-filter-transition|--keep-classic-single-view-partial-alpha|"
           "--keep-classic-single-view-rectangle|--keep-classic-single-view-binary|"

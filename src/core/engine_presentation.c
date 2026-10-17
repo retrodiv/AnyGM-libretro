@@ -15,6 +15,8 @@
 int ensure_classic_phase(AnygmEngine *engine,size_t pixels){
   if(pixels==0 || pixels>SIZE_MAX/sizeof(uint32_t)) return 0;
   if(engine->classic_phase_cap>=pixels && engine->classic_phase_mem) return 1;
+  if(engine->scene_renderer_session==ANYGM_SCENE_RENDERER_OPENGL &&
+     !gml_render_sample_storage_prepare(&engine->render,NULL,0,0)) return 0;
   uint32_t *next=realloc(engine->classic_phase_mem,pixels*sizeof(uint32_t));
   if(!next) return 0;
   engine->classic_phase_mem=next;

@@ -1755,6 +1755,7 @@ static int synthetic_framebuffer_content_create(
   int classic_identity_present=gpu_sprite==44;
   int classic_owned_gui=gpu_sprite==47;
   int classic_manual_application=gpu_sprite>=48 && gpu_sprite<=50;
+  int classic_sample_root=gpu_sprite>=58 && gpu_sprite<=60;
   int single_classic_view=(gpu_sprite>=21 && gpu_sprite<=37) || borrowed_resize || classic_manual_application || reduced_view_resize;
   char create[192],step[192],draw[192],draw_begin[192],draw_gui[192];
   snprintf(create,sizeof create,"%s/retain-create.gml",fixture->directory);
@@ -1837,7 +1838,16 @@ static int synthetic_framebuffer_content_create(
        "global.fixture_frame = 0;\n"
        "view_xview[0] = 0.5; view_xview[1] = 32.25;\n":
        "global.fixture_frame = 0;\n") ||
-     !write_text(step,classic_manual_application?
+     !write_text(step,gpu_sprite==59?
+                 "global.fixture_frame += 1;\n"
+                 "global.fixture_rng = irandom(65535);\n"
+                 "if (room == 0 && global.fixture_frame == 4) {\n"
+                 "  window_set_size(160,120); room_goto(1);\n"
+                 "}\n":classic_sample_root?
+                 "global.fixture_frame += 1;\n"
+                 "global.fixture_rng = irandom(65535);\n"
+                 "if (room == 0 && global.fixture_frame == 4) room_goto(1);\n":
+                 classic_manual_application?
                  "global.fixture_frame += 1;\n"
                  "if (global.fixture_frame > 1) {\n"
                  "  global.fixture_step_alpha = draw_get_alpha();\n"
@@ -1896,7 +1906,13 @@ static int synthetic_framebuffer_content_create(
                  "surface_set_target(global.fixture_surface);\n":
                  "if (global.fixture_frame >= 1) room_goto(1);\n"
                  "global.fixture_frame += 1;\n") ||
-     (gpu_sprite && !write_text(draw,viewless_resize?
+     (gpu_sprite && !write_text(draw,classic_sample_root?
+       "global.fixture_application_width = surface_get_width(application_surface);\n"
+       "global.fixture_application_height = surface_get_height(application_surface);\n"
+       "draw_sprite_ext(spr_fixture,0,8.25,12.75,1.5,1,0,c_white,0.61);\n"
+       "draw_set_color(c_white); draw_text(8,30,\"GPU\");\n"
+       "draw_set_alpha(0.61); draw_rectangle(3,4,7,9,false); draw_set_alpha(1);\n":
+       viewless_resize?
        "d3d_start();\n"
        "d3d_set_projection_ortho(0,0,64,48,0);\n"
        "d3d_set_hidden(true);\n"
@@ -2130,6 +2146,10 @@ static int synthetic_framebuffer_content_create(
       project.classic_scaling=gpu_sprite==53?200:100;
       project.classic_interpolate=gpu_sprite==54;
     }
+    if(classic_sample_root){
+      project.classic_version=810;project.classic_scaling=200;
+      project.classic_interpolate=gpu_sprite==60;
+    }
     if(classic_manual_application) project.classic_version=gpu_sprite==50?810:701;
     if(classic_identity_present) project.classic_version=701;
     if(viewless_resize) project.classic_version=gpu_sprite==55?530:701;
@@ -2187,9 +2207,11 @@ static int synthetic_framebuffer_content_create(
   rooms[1].width=rooms[0].width;
   rooms[1].height=rooms[0].height;
   if(viewless_resize){rooms[1].width=128;rooms[1].height=96;}
+  if(gpu_sprite==59){rooms[1].width=80;rooms[1].height=60;}
   rooms[1].speed=60;
   rooms[1].background_color=classic_transition?0xFF000080u:0xFF000000u;
   rooms[1].draw_background_color=classic_transition?1:0;
+  if(classic_sample_root) rooms[1].draw_background_color=1;
   rooms[1].clear_view_background=clear_view_background;
   if(gpu_sprite && !classic_transition){
     rooms[1].instances=&instance;
@@ -2448,6 +2470,15 @@ int anygm_synthetic_classic_scaled_step_content_create(AnygmSyntheticContent *fi
 }
 int anygm_synthetic_classic_filtered_step_content_create(AnygmSyntheticContent *fixture){
   return synthetic_framebuffer_content_create(fixture,0,0,1,54);
+}
+int anygm_synthetic_classic_sample_root_content_create(AnygmSyntheticContent *fixture){
+  return synthetic_framebuffer_content_create(fixture,0,0,1,58);
+}
+int anygm_synthetic_classic_sample_resize_content_create(AnygmSyntheticContent *fixture){
+  return synthetic_framebuffer_content_create(fixture,0,0,1,59);
+}
+int anygm_synthetic_classic_sample_filtered_content_create(AnygmSyntheticContent *fixture){
+  return synthetic_framebuffer_content_create(fixture,0,0,1,60);
 }
 int anygm_synthetic_step_clear_content_create(AnygmSyntheticContent *fixture){
   return synthetic_framebuffer_content_create(fixture,0,0,0,46);

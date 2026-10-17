@@ -5355,6 +5355,106 @@ static int texture_filter_state_case(void){
   return 1;
 }
 
+/* This driver verifies ownership/transport,not actual shader pixels. The
+ * exported fixtures also feed the real-device complete-frame comparison. */
+static int classic_sample_root_state_case(void){
+  int (*factories[])(AnygmSyntheticContent *)={
+    anygm_synthetic_classic_sample_root_content_create,
+    anygm_synthetic_classic_sample_resize_content_create,
+    anygm_synthetic_classic_sample_filtered_content_create
+  };
+  for(unsigned variant=0;variant<3u;variant++){
+    Session plain={0},selected={0};CurrentContextWitness witness={1u,0u};
+    AnygmGraphicsContext context=graphics_context(ANYGM_GRAPHICS_OPENGLES3);
+    int matching=1;
+    anygm_test_graphics_reset();
+    REQUIRE(session_open_fixture_with_scene(&plain,ANYGM_SCENE_RENDERER_CPU,factories[variant]) &&
+      session_open_fixture_with_scene(&selected,ANYGM_SCENE_RENDERER_OPENGL,factories[variant]),
+      "paired Classic sample fixtures load from authored content");
+    context.userdata=&witness;context.is_current=graphics_context_is_current;
+    REQUIRE(anygm_graphics_context_reset(selected.engine,&context)==ANYGM_OK,
+      "Classic sample fixture adopts an owning current context");
+    gml_rng_seed(&plain.engine->vm,0x13579u);gml_rng_seed(&selected.engine->vm,0x13579u);
+    gml_render_dispatch_diagnostics_enable(&selected.engine->render,1);
+    size_t first_capacity=anygm_state_size(selected.engine);
+    REQUIRE(first_capacity,"Classic sample state capacity is queried before the first frame");
+    for(unsigned frame=0;frame<7u && matching;frame++){
+      matching=advance(plain.engine,1,NULL) && advance(selected.engine,1,NULL) &&
+        plain.engine->vm.frame==selected.engine->vm.frame &&
+        plain.engine->vm.room_index==selected.engine->vm.room_index &&
+        plain.engine->width==selected.engine->width && plain.engine->height==selected.engine->height &&
+        plain.engine->output_width==selected.engine->output_width &&
+        plain.engine->output_height==selected.engine->output_height &&
+        !memcmp(plain.engine->vm.rng_well,selected.engine->vm.rng_well,sizeof plain.engine->vm.rng_well) &&
+        plain.engine->vm.rng_index==selected.engine->vm.rng_index &&
+        plain.engine->vm.rng_classic_state==selected.engine->vm.rng_classic_state;
+      const char *names[]={"fixture_frame","fixture_rng","fixture_application_width","fixture_application_height"};
+      for(unsigned name=0;name<4u;name++)
+        matching=matching && gml_global_num(&plain.engine->vm,names[name])==
+          gml_global_num(&selected.engine->vm,names[name]);
+      if(matching){
+        size_t cpu_bytes=gml_vm_state_size(&plain.engine->vm),gpu_bytes=gml_vm_state_size(&selected.engine->vm);
+        size_t cpu_written=0,gpu_written=0;
+        uint8_t *cpu_vm=malloc(cpu_bytes?cpu_bytes:1u),*gpu_vm=malloc(gpu_bytes?gpu_bytes:1u);
+        matching=cpu_bytes && cpu_bytes==gpu_bytes && cpu_vm && gpu_vm &&
+          gml_vm_state_save(&plain.engine->vm,cpu_vm,cpu_bytes,&cpu_written) &&
+          gml_vm_state_save(&selected.engine->vm,gpu_vm,gpu_bytes,&gpu_written) &&
+          cpu_written==cpu_bytes && gpu_written==gpu_bytes && !memcmp(cpu_vm,gpu_vm,cpu_bytes);
+        free(cpu_vm);free(gpu_vm);
+      }
+      if(variant<2u) matching=matching && selected.engine->render.classic_phase_resource &&
+        selected.engine->render.classic_phase_resource_pixels==selected.engine->classic_phase_mem &&
+        !selected.engine->render.app_surface_owned &&
+        selected.engine->render.classic_phase_resource_width==(int)selected.engine->width &&
+        selected.engine->render.classic_phase_resource_height==(int)selected.engine->height;
+      else matching=matching && !selected.engine->render.classic_phase_resource;
+      if(!matching) fprintf(stderr,"Classic sample fixture variant=%u frame=%u room=%d/%d extent=%ux%u/%ux%u output=%ux%u/%ux%u peer=%d phase=%p binding=%p cap=%zu\n",
+        variant,frame,plain.engine->vm.room_index,selected.engine->vm.room_index,
+        plain.engine->width,plain.engine->height,selected.engine->width,selected.engine->height,
+        plain.engine->output_width,plain.engine->output_height,
+        selected.engine->output_width,selected.engine->output_height,
+        selected.engine->render.classic_phase_resource!=NULL,
+        (void *)selected.engine->classic_phase_mem,
+        (void *)selected.engine->render.classic_phase_y,selected.engine->classic_phase_cap);
+    }
+    GmlRenderDispatchMetrics dispatch={0};uint64_t ordinary_cpu=0;
+    matching=matching && gml_render_dispatch_metrics(&selected.engine->render,&dispatch);
+    for(unsigned family=0;family<GML_RENDER_SCENE_FAMILY_COUNT;family++)
+      for(unsigned reason=0;reason<GML_RENDER_DISPATCH_REASON_COUNT;reason++){
+        ordinary_cpu+=dispatch.cpu[family][reason];
+        if(variant==0u && dispatch.cpu[family][reason])
+          fprintf(stderr,"Classic sample CPU variant=%u family=%u reason=%u count=%llu\n",
+            variant,family,reason,(unsigned long long)dispatch.cpu[family][reason]);
+      }
+    matching=matching && !dispatch.failed && !dispatch.unclassified && !dispatch.overflow &&
+      (variant==0u?ordinary_cpu==0u:ordinary_cpu>0u);
+    /* An explicit Classic window keeps its unscaled authored port. The
+     * resized borrow remains valid,but its 1:1 composition is not the 2x
+     * sample compositor;retain that ordered CPU boundary. */
+    if(variant==1u) matching=matching && selected.engine->width==80u && selected.engine->height==60u &&
+      selected.engine->output_width==160u && selected.engine->output_height==120u &&
+      ordinary_cpu==4u && dispatch.cpu[GML_RENDER_SCENE_SURFACE][GML_RENDER_DISPATCH_NO_SCENE]==4u;
+    GmlGpuCounters before={0},after={0};gml_gpu_counters(selected.engine->gpu,&before);
+    size_t capacity=anygm_state_size(selected.engine);gml_gpu_counters(selected.engine->gpu,&after);
+    matching=matching && capacity && before.scene_readbacks==after.scene_readbacks;
+    size_t saved_size=0,again_size=0;
+    uint8_t *saved=matching?serialize(selected.engine,&saved_size):NULL;
+    matching=matching && saved && anygm_state_load(selected.engine,saved,saved_size)==ANYGM_OK;
+    uint8_t *again=matching?serialize(selected.engine,&again_size):NULL;
+    matching=matching && again && saved_size==again_size && !memcmp(saved,again,saved_size);
+    free(again);free(saved);
+    matching=matching && advance(selected.engine,1,NULL) &&
+      plain.engine->vm.frame==selected.engine->vm.frame &&
+      advance(plain.engine,1,NULL) && advance(selected.engine,1,NULL) &&
+      gml_global_num(&plain.engine->vm,"fixture_rng")==gml_global_num(&selected.engine->vm,"fixture_rng");
+    if(!matching) fprintf(stderr,"Classic sample state variant=%u CPU=%llu sizes=%zu/%zu capacity=%zu first=%zu\n",
+      variant,(unsigned long long)ordinary_cpu,saved_size,again_size,capacity,first_capacity);
+    session_close(&selected);session_close(&plain);
+    REQUIRE(matching,"Classic samples preserve runtime,borrowed geometry,canonical state and filter refusal");
+  }
+  return 1;
+}
+
 static uint64_t profile_test_clock(void *userdata){
   uint64_t *ticks=userdata;
   return ++*ticks*1000000u;
@@ -5401,6 +5501,7 @@ int main(void){
      scene_state_preserves_completed_device_case},
     {"scene state size queries do not observe pixels",scene_size_query_is_metadata_only_case},
     {"final scene seal is included in frame profiling",final_scene_seal_profile_case},
+    {"Classic samples preserve borrowed storage and same-run state",classic_sample_root_state_case},
     {"resident Pre-Draw screen retains CPU state",resident_pre_draw_screen_case},
     {"independent Step numbered clear preserves CPU state",independent_step_clear_case},
     {"resident world selection retains CPU state",resident_world_selection_case},

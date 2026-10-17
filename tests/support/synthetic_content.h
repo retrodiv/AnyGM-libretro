@@ -117,6 +117,10 @@ int anygm_synthetic_classic_native_step_content_create(AnygmSyntheticContent *fi
 int anygm_synthetic_classic_late_native_step_content_create(AnygmSyntheticContent *fixture);
 int anygm_synthetic_classic_scaled_step_content_create(AnygmSyntheticContent *fixture);
 int anygm_synthetic_classic_filtered_step_content_create(AnygmSyntheticContent *fixture);
+/* Independent nearest base/vertical samples and a physical doubled SCREEN. */
+int anygm_synthetic_classic_sample_root_content_create(AnygmSyntheticContent *fixture);
+int anygm_synthetic_classic_sample_resize_content_create(AnygmSyntheticContent *fixture);
+int anygm_synthetic_classic_sample_filtered_content_create(AnygmSyntheticContent *fixture);
 int anygm_synthetic_step_clear_content_create(AnygmSyntheticContent *fixture);
 int anygm_synthetic_classic_transition_content_create(AnygmSyntheticContent *fixture);
 int anygm_synthetic_clear_view_content_create(AnygmSyntheticContent *fixture);

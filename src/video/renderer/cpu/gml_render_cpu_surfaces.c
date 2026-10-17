@@ -63,6 +63,8 @@ static uint32_t *surface_pixels_access(GmlRender *r, int id, int *w, int *h,
   if(id==0){
     if(!r->app_surface) return NULL;
     if(!gml_render_application_scene_flush(r)) return NULL;
+    if(r->classic_phase_resource && r->app_phase_y==r->classic_phase_resource_pixels &&
+       !gml_render_classic_phase_resource_observe(r)) return NULL;
     if(r->app_surface==r->app_surface_owned && r->app_surface_resource &&
        (r->app_surface_resource_width!=r->app_w ||
         r->app_surface_resource_height!=r->app_h)) return NULL;

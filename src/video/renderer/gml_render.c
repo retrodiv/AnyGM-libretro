@@ -982,6 +982,8 @@ void gml_render_free(GmlRender *r){
   gml_render_classic_phase_resource_dispose(r);
   gml_render_base_resource_dispose(r);
   gml_render_retained_base_dispose(r);
+  free(r->classic_phase_composition);r->classic_phase_composition=NULL;
+  r->classic_phase_composition_capacity=0u;
   /* The shared batch queue can belong to a SCREEN-only pass with no owned
    * application resource to retire it. Both resources are flushed above. */
   gml_render_application_scene_queue_dispose(r);
@@ -1071,7 +1073,8 @@ void gml_render_set_pending_fill(GmlRender *r, uint32_t color){
   gml_render_cancel_pending_underlay(r);
   /* An explicitly owned sample pair clears together. Rejected preparation
    * must observe both images before the established CPU suffix writes them. */
-  if(r->classic_phase_resource && r->target_sp==0 && r->fb==r->base_fb){
+  if(r->classic_phase_resource && r->classic_phase_y &&
+     r->target_sp==0 && r->fb==r->base_fb){
     if(gml_render_resident_classic_phase_clear(r,color)) return;
     if(!gml_render_resident_application_cpu_barrier(r)) return;
   }

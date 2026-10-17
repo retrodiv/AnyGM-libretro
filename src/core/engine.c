@@ -1679,6 +1679,23 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
                              !engine->canvas_mode && !engine->aspect_force_active &&
                              classic_pixels<=SIZE_MAX/3 &&
                              ensure_classic_phase(engine,classic_pixels*3);
+  /* A freshly cleared logical raster owns derived vertical samples. Keep
+   * persistent/no-clear roots, owned applications and other presentation
+   * policies with their established CPU/state owner until separately paired. */
+  int classic_sample_world=classic_phase && !engine->composed_frame &&
+    !render_presentation.application_owned && render_presentation.application_draw_enabled &&
+    app_surface_is_draw_target && frame_view_count<=1 &&
+    gml_surface_get_target(&engine->render)==-1 &&
+    engine->scene_renderer_session==ANYGM_SCENE_RENDERER_OPENGL && engine_graphics_active(engine);
+  if(classic_sample_world){
+    GmlRoom sample_room;
+    classic_sample_world=gml_vm_room_get(&engine->vm,engine->vm.room_index,&sample_room)!=0 ||
+      room_clears_application_surface(&engine->win,&sample_room);
+  }
+  if(engine->scene_renderer_session==ANYGM_SCENE_RENDERER_OPENGL &&
+     !gml_render_sample_storage_prepare(&engine->render,
+       classic_phase?engine->classic_phase_mem:NULL,(int)engine->width,(int)engine->height))
+    return ANYGM_ERROR_INTERNAL;
   /* A content-held classic target is an independent numbered raster, not an application
    * redraw. Retain its binding and metadata across Draw; phase presentation stays with CPU. */
   int classic_retained_scene=engine->composed_frame &&
@@ -1806,7 +1823,7 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
     if(!engine->composed_frame && !engine->aspect_force_active &&
        ((!render_presentation.application_draw_enabled && frame_view_count==0) ||
         (native_assigned_view && !gml_render_is_classic(&engine->render)) ||
-        (early_classic_borrowed_world &&
+        ((early_classic_borrowed_world || classic_sample_world) &&
          !(view_surface>0 && gml_surface_exists(&engine->render,view_surface)))) &&
        engine_graphics_active(engine) &&
        (engine->scene_renderer_session==ANYGM_SCENE_RENDERER_OPENGL ||
@@ -1841,6 +1858,12 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
   }
   gml_render_sample_planes_update(
     &engine->render,&sample_planes,GML_RENDER_SAMPLE_PLANES_CLASSIC);
+  if(classic_sample_world && base_world_began &&
+     !gml_render_sample_planes_resident_bind(&engine->render)){
+    if(!gml_render_resident_application_cpu_barrier(&engine->render))
+      return ANYGM_ERROR_INTERNAL;
+    classic_sample_world=base_world_began=0;
+  }
   GmlRoom rm;
   int have_room = (gml_vm_room_get(&engine->vm, engine->vm.room_index, &rm) == 0);
   /* The legacy background-color field and the distinct room flag can each request an
@@ -1869,7 +1892,8 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
   /* Only a drawn base needs immediate CPU composition. Assigned target pixels remain
    * resource-owned until a real surface, state or fallback consumer observes them; a
    * certified borrowed classic world is already the logical application raster. */
-  if(base_world_began && !direct_view_surface && !early_classic_borrowed_world){
+  if(base_world_began && !direct_view_surface && !early_classic_borrowed_world &&
+     !classic_sample_world){
     if(classic_numbered_scene){
       if(!gml_render_completed_screen_read(&engine->render,world_pixels,world_width,world_height))
         return ANYGM_ERROR_INTERNAL;
@@ -1885,7 +1909,7 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
   if(prof){ t1 = profile_now_ms(engine); engine->profile.draw_ms += t1 - t0; t0 = t1; }
   gml_render_presentation_metrics(&engine->render,&render_presentation);
   int log_draw=anygm_host_development_setting(&engine->host,"GML_LOG_DRAW")!=NULL;
-  if(log_draw && early_classic_borrowed_world &&
+  if(log_draw && (early_classic_borrowed_world || classic_sample_world) &&
      !gml_render_completed_screen_read(
        &engine->render,world_pixels,world_width,world_height))
     return ANYGM_ERROR_INTERNAL;
@@ -2083,7 +2107,7 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
 			       (!engine->aspect_force_active || forced_owned_scene_began) &&
 			       !aspect_gui_center &&
 			       (gui_indirect || !render_presentation.application_draw_enabled ||
-			        (early_classic_borrowed_world &&
+			        ((early_classic_borrowed_world || classic_sample_world) &&
 			         gml_render_can_begin_borrowed_screen(&engine->render,gtarget)) ||
 			        (frame_view_count<=1 && render_presentation.application_owned &&
 			         (!gml_render_is_classic(&engine->render) ||

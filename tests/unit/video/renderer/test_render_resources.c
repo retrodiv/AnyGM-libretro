@@ -2185,7 +2185,7 @@ static int paired_root_clear_scope_is_explicit(void){
     if(excluded==0u) r->pending_fill=1;
     if(excluded==1u) r->pending_underlay=1;
     if(excluded==2u) r->pending_presentation=1;
-    if(excluded==3u) r->gui_pass_active=1;
+    if(excluded==3u) r->classic_phase_y=NULL;
     if(excluded==4u) r->classic_phase_scene_preparing=1;
     if(excluded==5u) r->target_sp=1;
     if(excluded==6u) r->interp=1;
@@ -2243,7 +2243,8 @@ static int paired_root_public_clear_keeps_device_authority(void){
     CHECK(!r->pending_fill && r->resident_application_pass && !fake.readbacks &&
       gml_render_application_scene_flush(r) && fake.submits==2 && !fake.readbacks);
     for(unsigned p=0;p<16u;p++) CHECK(base[p]==0xFF315779u && vertical[p]==0x8037597Bu);
-    r->gui_pass_active=(int)fallback;
+    gml_render_gui_begin(r,4,4);gml_render_gui_set_size(r,2,2);
+    r->interp=(int)fallback;
     gml_render_set_pending_fill(r,0x00315779u);
     if(fallback){
       CHECK(!r->resident_application_pass && r->pending_fill && fake.readbacks==2);
@@ -2255,7 +2256,7 @@ static int paired_root_public_clear_keeps_device_authority(void){
         gml_render_application_scene_flush(r) && fake.submits==4);
       for(unsigned p=0;p<16u;p++) CHECK(base[p]==0xFF315779u && vertical[p]==0x8037597Bu);
     }
-    r->gui_pass_active=0;
+    r->gui_pass_active=r->interp=0;
     gml_render_abandon_device(r);gml_render_free(r);free(r);
   }
   return 1;
@@ -2289,7 +2290,7 @@ static int paired_root_public_sprite_and_base_only_glyph(void){
 }
 
 static int paired_root_atlas_ports_are_atomic(void){
-  for(int port=GML_RENDER_PHASE_TEXT;port<=GML_RENDER_PHASE_ROOM_TILE;port++)
+  for(int port=GML_RENDER_PHASE_TEXT;port<=GML_RENDER_PHASE_SPRITE_TEXT;port++)
   for(unsigned inverse=0;inverse<2u;inverse++) for(unsigned shape=0;shape<2u;shape++){
     uint32_t base[4*48],vertical[4*48];
     for(unsigned p=0;p<4u*48u;p++) base[p]=vertical[p]=0xFF315779u;
@@ -2297,7 +2298,7 @@ static int paired_root_atlas_ports_are_atomic(void){
     GmlRender *r=paired_root_atlas_fixture(&fake,&content,base,vertical,shape?48:4);
     CHECK(r);
     GmlTpag page={.sw=2,.sh=2,.tw=2,.th=2,.bw=2,.bh=2,
-      .project_authored_edges=port>=GML_RENDER_PHASE_TILE};
+      .project_authored_edges=port==GML_RENDER_PHASE_TILE};
     r->blendmode=inverse?2:0;
     CHECK(gml_render_resident_classic_phase_atlas(r,&page,1,1,1,1,0x73A5D9u,
       port==GML_RENDER_PHASE_ROOM_TILE?1.0:.61,(GmlRenderClassicPhaseTexturePort)port));
@@ -2321,13 +2322,14 @@ static int paired_root_atlas_ports_are_atomic(void){
 }
 
 static int paired_root_atlas_refuses_unqualified_ports(void){
-  for(unsigned excluded=0;excluded<9u;excluded++){
+  for(unsigned excluded=0;excluded<12u;excluded++){
     uint32_t base[16]={0},vertical[16]={0};
     FakeDevice fake={.on_demand=1};GmlWin content={.classic_version=810};
     GmlRender *r=paired_root_atlas_fixture(&fake,&content,base,vertical,4);
     GmlRender *saved=malloc(sizeof *saved);CHECK(r && saved);
     GmlTpag page={.sw=2,.sh=2,.tw=2,.th=2,.bw=2,.bh=2};
-    double alpha=1.0;GmlRenderClassicPhaseTexturePort port=GML_RENDER_PHASE_TEXT;
+    double alpha=1.0,xscale=1.0,yscale=1.0;
+    GmlRenderClassicPhaseTexturePort port=GML_RENDER_PHASE_TEXT;
     if(excluded==0u) port=(GmlRenderClassicPhaseTexturePort)99;
     if(excluded==1u) r->atlas[0].runtime_font_page=1;
     if(excluded==2u) r->pending_fill=1;
@@ -2336,15 +2338,208 @@ static int paired_root_atlas_refuses_unqualified_ports(void){
     if(excluded==5u) alpha=NAN;
     if(excluded==6u) page.project_authored_edges=1;
     if(excluded==7u) port=GML_RENDER_PHASE_TILE;
-    if(excluded==8u){port=GML_RENDER_PHASE_ROOM_TILE;page.project_authored_edges=1;alpha=.61;}
+    if(excluded==8u){port=GML_RENDER_PHASE_ROOM_TILE;alpha=.61;}
+    if(excluded==9u){port=GML_RENDER_PHASE_ROOM_TILE;xscale=2.0;}
+    if(excluded==10u){port=GML_RENDER_PHASE_ROOM_TILE;yscale=-1.0;}
+    if(excluded==11u){port=GML_RENDER_PHASE_ROOM_TILE;page.project_authored_edges=1;}
     memcpy(saved,r,sizeof *r);
-    CHECK(!gml_render_resident_classic_phase_atlas(r,&page,1,1,1,1,0xFFFFFFu,alpha,port) &&
+    CHECK(!gml_render_resident_classic_phase_atlas(r,&page,1,1,xscale,yscale,0xFFFFFFu,alpha,port) &&
       !memcmp(r,saved,sizeof *r) && !fake.uploads && !fake.submits && !fake.readbacks);
     free(saved);r->atlas[0].runtime_font_page=r->pending_fill=r->gui_pass_active=0;
     r->color_write_mask=15u;
     gml_render_abandon_device(r);gml_render_free(r);free(r);
   }
   return 1;
+}
+
+static int paired_root_public_axis_atlas_ports(void){
+  for(unsigned port=0;port<10u;port++){
+    uint32_t base[16],vertical[16];uint8_t data[64]={0};
+    for(unsigned p=0;p<16u;p++) base[p]=vertical[p]=0xFF315779u;
+    FakeDevice fake={.on_demand=1};GmlWin content={.classic_version=810};
+    GmlRender *r=paired_root_atlas_fixture(&fake,&content,base,vertical,4);CHECK(r);
+    r->bg=calloc(1,sizeof *r->bg);r->tpag=calloc(1,sizeof *r->tpag);
+    CHECK(r->bg && r->tpag);r->n_bg=r->n_tpag=1;
+    r->tpag[0]=(GmlTpag){.sw=2,.sh=2,.tw=2,.th=2,.bw=2,.bh=2};
+    if(port==0u) CHECK(gml_render_resident_font_glyph(r,0,0,0,2,2,1,1,1,1,0x73A5D9u,.61));
+    if(port==1u) CHECK(gml_render_resident_sprite_font_glyph(r,0,1,1,1,1,0x73A5D9u,.61));
+    if(port==2u) gml_draw_background_ext(r,0,1,1,1,1,0x73A5D9u,.61);
+    if(port==3u) gml_draw_background_part_ext(r,0,0,0,2,2,1,1,1,1,0x73A5D9u,.61);
+    if(port==4u) gml_draw_background_tile(r,0,0,0,2,2,1,1,1,1,0,0,0,0x73A5D9u,.61);
+    if(port==5u) gml_draw_tile(r,0,0,0,2,2,1,1);
+    if(port==6u){
+      data[4]=1;data[8]=16;data[16]=data[20]=1;data[36]=data[40]=2;
+      content.data=data;content.size=sizeof data;gml_draw_room_tiles(r,4);
+    }
+    if(port==7u) gml_draw_background_tiled_ext(r,0,1,1,1,1,0x73A5D9u,.61,1,1);
+    if(port==8u){
+      data[4]=1;data[8]=16;data[16]=data[28]=data[32]=1;
+      content.data=data;content.size=sizeof data;gml_draw_room_backgrounds(r,4,0);
+    }
+    if(port==9u) gml_draw_background(r,0,1,1);
+    CHECK(r->resident_application_pass && !r->classic_phase_scene_preparing &&
+      !r->classic_phase_scene_target && !fake.readbacks &&
+      gml_render_application_scene_flush(r) && fake.submits==2 && !fake.readbacks &&
+      gml_render_resource_image_ref(r->base_scene_resource).content_version>1u &&
+      gml_render_resource_image_ref(r->classic_phase_resource).content_version>1u);
+    for(unsigned p=0;p<16u;p++) CHECK(base[p]==0xFF315779u && vertical[p]==0xFF315779u);
+    gml_render_abandon_device(r);gml_render_free(r);free(r);
+  }
+  return 1;
+}
+
+static int paired_root_composition_keeps_both_sources_resident(void){
+  uint32_t base[16]={0},vertical[16]={0},screen[64]={0};
+  FakeDevice fake={.on_demand=1};GmlWin content={.classic_version=810};
+  GmlRender *r=paired_root_atlas_fixture(&fake,&content,base,vertical,4);CHECK(r);
+  gml_render_set_pending_fill(r,0x7F315779u);
+  CHECK(gml_render_application_scene_flush(r) && fake.submits==2);
+  GmlRenderResource *root=r->base_scene_resource,*peer=r->classic_phase_resource;
+  GmlRenderImageRef root_image=gml_render_resource_image_ref(root),peer_image=gml_render_resource_image_ref(peer);
+  r->scene_device_enabled=1;gml_render_application_surface_bind(r,base,4,4,0);
+  CHECK(gml_render_begin_resident_base(r,screen,8,8,0,0) &&
+    r->retained_base_resource==root && r->classic_phase_resource==peer && !fake.readbacks);
+  CHECK(gml_render_sample_storage_prepare(r,vertical,4,4) &&
+    r->classic_phase_resource==peer && !fake.readbacks);
+  GmlRenderSamplePlanes planes={.application_vertical=vertical};
+  gml_render_sample_planes_update(r,&planes,GML_RENDER_SAMPLE_PLANES_APPLICATION);
+  r->app_surface_published=1;r->blendmode=6;r->color_write_mask=0;
+  gml_draw_surface_stretched(r,0,0,0,8,8,0xFFFFFFu,1);
+  CHECK(r->resident_application_pass && fake.submits==3 && fake.last_batch_operations==16u &&
+    fake.last_write_mask==15u && !fake.readbacks && r->color_write_mask==0u && r->blendmode==6 &&
+    gml_render_resource_image_ref(root).content_version==root_image.content_version &&
+    gml_render_resource_image_ref(peer).content_version==peer_image.content_version);
+  for(unsigned p=0;p<16u;p++) CHECK(!base[p] && !vertical[p]);
+  for(unsigned p=0;p<64u;p++) CHECK(!screen[p]);
+  CHECK(gml_surface_pixels_read(r,0,NULL,NULL)==base && fake.readbacks==2);
+  CHECK(gml_render_begin_resident_base(r,base,4,4,0,0) && r->base_scene_resource==root &&
+    r->retained_base_pixels==screen && !r->classic_phase_y);
+  r->classic_phase_y=vertical;
+  CHECK(gml_render_classic_phase_resource_bind(r) && r->classic_phase_resource==peer);
+  gml_render_abandon_device(r);gml_render_free(r);free(r);return 1;
+}
+
+static int paired_root_composition_refuses_unsupported_state(void){
+  for(unsigned excluded=0;excluded<10u;excluded++){
+    uint32_t base[16]={0},vertical[16]={0},screen[64]={0};
+    FakeDevice fake={.on_demand=1};GmlWin content={.classic_version=810};
+    GmlRender *r=paired_root_atlas_fixture(&fake,&content,base,vertical,4);CHECK(r);
+    r->scene_device_enabled=1;gml_render_application_surface_bind(r,base,4,4,0);
+    CHECK(gml_render_begin_resident_base(r,screen,8,8,0,0));
+    r->app_phase_y=vertical;
+    double x=0.0,width=8.0,alpha=1.0;uint32_t colour=0xFFFFFFu;
+    if(excluded==0u) r->interp=1;
+    if(excluded==1u) r->app_phase_y=NULL;
+    if(excluded==2u) alpha=.5;
+    if(excluded==3u) width=7.0;
+    if(excluded==4u) r->active_shader=0;
+    if(excluded==5u) r->pending_underlay=1;
+    if(excluded==6u) r->alpha_test_enable=1;
+    if(excluded==7u) colour=0x73A5D9u;
+    if(excluded==8u) x=NAN;
+    if(excluded==9u) r->blendmode=1;
+    CHECK(!gml_render_resident_classic_phase_present(r,x,0,width,8,colour,alpha) &&
+      !fake.submits && !fake.uploads && !fake.readbacks && !r->classic_phase_composition);
+    r->active_shader=-1;r->pending_underlay=0;
+    gml_render_abandon_device(r);gml_render_free(r);free(r);
+  }
+  return 1;
+}
+
+static int paired_root_primitives_change_only_the_base(void){
+  for(unsigned colour=0;colour<2u;colour++) for(unsigned outline=0;outline<2u;outline++){
+    uint32_t base[16]={0},vertical[16]={0};
+    FakeDevice fake={.on_demand=1};GmlWin content={.classic_version=810};
+    GmlRender *r=paired_root_atlas_fixture(&fake,&content,base,vertical,4);CHECK(r);
+    r->alpha=.61;
+    if(colour) gml_render_primitive_rectangle_color(r,1,1,3,3,
+      0x73A5D9u,0x359B17u,0xA17359u,0x193B57u,(int)outline);
+    else gml_render_primitive_rectangle(r,1,1,3,3,0x73A5D9u,(int)outline);
+    CHECK(r->resident_application_pass && gml_render_application_scene_flush(r) &&
+      fake.submits==1 && !fake.readbacks &&
+      gml_render_resource_image_ref(r->base_scene_resource).content_version>1u &&
+      gml_render_resource_image_ref(r->classic_phase_resource).content_version==1u);
+    for(unsigned p=0;p<16u;p++) CHECK(!base[p] && !vertical[p]);
+    gml_render_abandon_device(r);gml_render_free(r);free(r);
+  }
+  return 1;
+}
+
+static int paired_root_full_rectangle_clears_both_samples(void){
+  for(unsigned gui=0;gui<2u;gui++)
+  for(unsigned disabled=0;disabled<2u;disabled++) for(unsigned port=0;port<2u;port++){
+    uint32_t base[16]={0},vertical[16]={0};
+    FakeDevice fake={.on_demand=1};GmlWin content={.classic_version=810};
+    GmlRender *r=paired_root_atlas_fixture(&fake,&content,base,vertical,4);CHECK(r);
+    if(gui){gml_render_gui_begin(r,4,4);gml_render_gui_set_size(r,2,2);}
+    r->alpha=disabled?.61:1.0;r->alphablend=!disabled;
+    if(port) gml_render_primitive_rectangle_color(r,5,5,-1,-1,
+      0x73A5D9u,0x73A5D9u,0x73A5D9u,0x73A5D9u,0);
+    else gml_render_primitive_rectangle(r,-1,-1,5,5,0x73A5D9u,0);
+    CHECK(r->resident_application_pass && gml_render_application_scene_flush(r) &&
+      fake.submits==2 && !fake.readbacks &&
+      gml_render_resource_image_ref(r->base_scene_resource).content_version==2u &&
+      gml_render_resource_image_ref(r->classic_phase_resource).content_version==2u);
+    for(unsigned p=0;p<16u;p++) CHECK(!base[p] && !vertical[p]);
+    gml_render_abandon_device(r);gml_render_free(r);free(r);
+  }
+  return 1;
+}
+
+static int paired_root_physical_clear_keeps_sources_independent(void){
+  for(unsigned alpha=0;alpha<3u;alpha++){
+    uint32_t base[16]={0},vertical[16]={0},screen[64]={0};
+    FakeDevice fake={.on_demand=1};GmlWin content={.classic_version=810};
+    GmlRender *r=paired_root_atlas_fixture(&fake,&content,base,vertical,4);CHECK(r);
+    gml_render_set_pending_fill(r,0x7F315779u);
+    CHECK(gml_render_application_scene_flush(r) && fake.submits==2);
+    GmlRenderResource *root=r->base_scene_resource,*peer=r->classic_phase_resource;
+    uint64_t root_version=gml_render_resource_image_ref(root).content_version;
+    uint64_t peer_version=gml_render_resource_image_ref(peer).content_version;
+    r->scene_device_enabled=1;gml_render_application_surface_bind(r,base,4,4,0);
+    CHECK(gml_render_begin_resident_base(r,screen,8,8,0,0) && !r->classic_phase_y);
+    GmlRenderSamplePlanes planes={.application_vertical=vertical};
+    gml_render_sample_planes_update(r,&planes,GML_RENDER_SAMPLE_PLANES_APPLICATION);
+    gml_render_clear(r,0x73A5D9u,alpha*.5);
+    gml_render_flush_pending_fill(r);
+    CHECK(r->resident_application_pass && gml_render_application_scene_flush(r) &&
+      fake.submits==3 && !fake.readbacks && r->classic_phase_resource==peer &&
+      gml_render_resource_image_ref(root).content_version==root_version &&
+      gml_render_resource_image_ref(peer).content_version==peer_version);
+    for(unsigned p=0;p<16u;p++) CHECK(!base[p] && !vertical[p]);
+    for(unsigned p=0;p<64u;p++) CHECK(!screen[p]);
+    gml_render_abandon_device(r);gml_render_free(r);free(r);
+  }
+  return 1;
+}
+
+static int paired_root_storage_retirement_is_transactional(void){
+  uint32_t base[16]={0},vertical[16]={0},replacement[16]={0};
+  FakeDevice fake={.on_demand=1,.readback_colour=0x7F315779u};
+  GmlWin content={.classic_version=810};
+  GmlRender *r=paired_root_atlas_fixture(&fake,&content,base,vertical,4);CHECK(r);
+  GmlRenderResource *peer=r->classic_phase_resource;
+  gml_render_set_pending_fill(r,0x7F315779u);
+  CHECK(gml_render_sample_storage_prepare(r,vertical,4,4) &&
+    r->classic_phase_resource==peer && !fake.submits && !fake.readbacks && !fake.retires);
+  r->app_phase_y=vertical;fake.fail_readback=1;
+  CHECK(!gml_render_sample_storage_prepare(r,replacement,4,4) &&
+    r->classic_phase_resource==peer && r->classic_phase_y==vertical &&
+    r->app_phase_y==vertical && fake.submits==2 && fake.readbacks==1 && !fake.retires);
+  for(unsigned p=0;p<16u;p++) CHECK(!vertical[p]);
+  fake.fail_readback=0;
+  CHECK(gml_render_sample_storage_prepare(r,replacement,4,4) &&
+    !r->classic_phase_resource && !r->classic_phase_y && !r->app_phase_y &&
+    fake.readbacks==2 && fake.retires==1);
+  for(unsigned p=0;p<16u;p++) CHECK(vertical[p]==0x7F315779u && !replacement[p]);
+  CHECK(gml_render_sample_storage_prepare(r,NULL,0,0) && fake.readbacks==2 && fake.retires==1);
+  GmlRenderSamplePlanes planes={.classic_vertical=replacement};
+  gml_render_sample_planes_update(r,&planes,GML_RENDER_SAMPLE_PLANES_CLASSIC);
+  CHECK(gml_render_sample_planes_resident_bind(r) && r->classic_phase_resource &&
+    r->classic_phase_resource_pixels==replacement && fake.readbacks==2);
+  CHECK(gml_render_sample_storage_prepare(r,replacement,4,3) &&
+    !r->classic_phase_resource && fake.readbacks==2 && fake.retires==2);
+  gml_render_abandon_device(r);gml_render_free(r);free(r);return 1;
 }
 
 static int paired_root_second_plane_refusal_keeps_only_undelivered_work(void){
@@ -15738,6 +15933,13 @@ int main(void){
   passed+=paired_root_public_sprite_and_base_only_glyph();
   passed+=paired_root_atlas_ports_are_atomic();
   passed+=paired_root_atlas_refuses_unqualified_ports();
+  passed+=paired_root_public_axis_atlas_ports();
+  passed+=paired_root_composition_keeps_both_sources_resident();
+  passed+=paired_root_composition_refuses_unsupported_state();
+  passed+=paired_root_primitives_change_only_the_base();
+  passed+=paired_root_full_rectangle_clears_both_samples();
+  passed+=paired_root_storage_retirement_is_transactional();
+  passed+=paired_root_physical_clear_keeps_sources_independent();
   passed+=paired_root_second_plane_refusal_keeps_only_undelivered_work();
   passed+=paired_root_binding_and_loss_boundaries();
   passed+=paired_root_cpu_boundary_and_unfinished_teardown();
@@ -15951,6 +16153,6 @@ int main(void){
   passed+=source_free_primitive_rect_replay();
   passed+=stretched_float_exact_replay();
   passed+=filtered_font_exact_recovery();
-  printf("render resource cases: passed=%d failed=%d\n",passed,241-passed);
-  return passed==241?EXIT_SUCCESS:EXIT_FAILURE;
+  printf("render resource cases: passed=%d failed=%d\n",passed,248-passed);
+  return passed==248?EXIT_SUCCESS:EXIT_FAILURE;
 }

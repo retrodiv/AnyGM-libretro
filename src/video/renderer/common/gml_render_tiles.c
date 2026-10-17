@@ -37,6 +37,13 @@ void gml_draw_tile(GmlRender *r, int def, int sx, int sy, int w, int h, double x
   if(def<0||def>=r->n_bg) return;
   int ti=r->bg[def].tpag; if(ti<0||ti>=r->n_tpag) return;
   GmlTpag *bt=&r->tpag[ti];
+  if(r->classic_phase_resource){
+    /* This port selects a physical atlas cell, not a logical trim overlap. */
+    GmlTpag view=*bt;
+    view.sx+=sx;view.sy+=sy;view.sw=w;view.sh=h;view.project_authored_edges=1;
+    if(gml_render_resident_classic_phase_atlas(r,&view,x-r->cam_x,y-r->cam_y,
+      draw_xscale,draw_yscale,0xFFFFFFu,1,GML_RENDER_PHASE_TILE)) return;
+  }
   if(!r->interp && !gml_d3_is_active(r) &&
      bt->tx==0 && bt->ty==0 &&
      bt->bw==bt->sw && bt->bh==bt->sh &&
@@ -101,6 +108,12 @@ void gml_draw_room_tiles(GmlRender *r, uint32_t tile_ptr){
     if(t->def<0 || t->def>=r->n_bg) continue;
     int ti=r->bg[t->def].tpag; if(ti<0 || ti>=r->n_tpag) continue;
     GmlTpag *bt=&r->tpag[ti];
+    if(r->classic_phase_resource){
+      GmlTpag view=*bt;
+      view.sx+=t->sx;view.sy+=t->sy;view.sw=t->w;view.sh=t->h;
+      if(gml_render_resident_classic_phase_atlas(r,&view,t->x-r->cam_x,t->y-r->cam_y,
+        1,1,0xFFFFFFu,1,GML_RENDER_PHASE_ROOM_TILE)) continue;
+    }
     if(!r->interp && !gml_d3_is_active(r) && bt->tx==0 && bt->ty==0 &&
        bt->bw==bt->sw && bt->bh==bt->sh &&
        gml_render_resident_atlas_crop(r,ti,t->sx,t->sy,t->w,t->h,
