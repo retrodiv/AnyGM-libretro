@@ -190,6 +190,14 @@ void gml_render_dispatch_cpu_composition(GmlRender *render,unsigned family){
   gml_render_dispatch_cpu_record(render,family,GML_RENDER_DISPATCH_COMPOSITION,1u);
 }
 
+void gml_render_dispatch_gpu_composition(GmlRender *render,unsigned family){
+  if(!render || !render->dispatch_metrics.enabled) return;
+  GmlRenderDispatchMetrics *metrics=&render->dispatch_metrics;
+  if(!family || family>=GML_RENDER_SCENE_FAMILY_COUNT)
+    dispatch_add(metrics,&metrics->unclassified,1u);
+  else dispatch_add(metrics,&metrics->gpu[family],1u);
+}
+
 void gml_render_dispatch_cpu_replay_completion(GmlRender *render,
                                                const GmlRenderDrawOp *operation,int succeeded){
   GmlRenderDrawBatch completed={operation,operation?1u:0u,NULL,0u};

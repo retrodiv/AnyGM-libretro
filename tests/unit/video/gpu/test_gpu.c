@@ -119,6 +119,53 @@ static uint32_t completed_context_is_current(void *userdata){
   return *(const uint32_t*)userdata;
 }
 
+static int integer_presentation_shift_case(void){
+  for(unsigned api=GML_GPU_API_OPENGL_CORE;api<=GML_GPU_API_OPENGLES3;api++){
+    uint32_t current=1u,pixels[8u*4u]={0};GmlGpuCounters before={0},after={0};
+    GmlGpuContext context=fake_context(api);GmlRenderPlan plan={0};
+    context.userdata=&current;context.is_current=completed_context_is_current;
+    anygm_test_graphics_reset();GmlGpu *gpu=gml_gpu_create();
+    REQUIRE(gpu && gml_gpu_context_reset(gpu,&context) &&
+            gml_gpu_capture_completed_frame(gpu,8u,4u,11u),"shift adopts canonical storage");
+    gml_gpu_counters(gpu,&before);
+    REQUIRE(!gml_gpu_present_shifted_frame(gpu,8u,4u,12u,1,-1,0) &&
+            !gml_gpu_present_shifted_frame(gpu,7u,4u,11u,1,-1,0) &&
+            !gml_gpu_present_shifted_frame(gpu,8u,4u,11u,1,-1,1) &&
+            !gml_gpu_present_shifted_frame(gpu,8u,4u,11u,1,-1,2) &&
+            !gml_gpu_present_shifted_frame(gpu,0u,4u,11u,1,-1,0),
+            "shift refuses wrong versions,dimensions and absent sources before drawing");
+    gml_gpu_counters(gpu,&after);
+    REQUIRE(after.draw_calls==before.draw_calls,"shift source refusal submits nothing");
+    current=0u;anygm_test_graphics_forbid_calls();
+    REQUIRE(!gml_gpu_present_shifted_frame(gpu,8u,4u,11u,1,-1,0) &&
+            !anygm_test_graphics_calls_after_forget(),"revoked shift access calls no GL entry");
+    anygm_test_graphics_allow_calls();current=1u;
+    REQUIRE(gml_gpu_present_shifted_frame(gpu,8u,4u,11u,1,-1,0),
+            "canonical shift resumes when the owning context returns");
+    gml_gpu_counters(gpu,&after);
+    REQUIRE(after.draw_calls==before.draw_calls+1u &&
+            after.completed_frame_copies==before.completed_frame_copies &&
+            after.completed_frame_reads==before.completed_frame_reads &&
+            after.scene_readbacks==before.scene_readbacks &&
+            after.full_uploads==before.full_uploads,"shift adds one draw and no pixel transport");
+    REQUIRE(build_canvas_plan(&plan,pixels,8,4,8,4,0,0,8,4),"scratch host plan builds");
+    plan.target=GML_PLAN_TARGET_DEVICE_PRESENTATION;
+    REQUIRE(gml_gpu_execute_plan(gpu,&plan) &&
+            gml_gpu_present_shifted_frame(gpu,8u,4u,12u,-1,1,1) &&
+            !gml_gpu_present_shifted_frame(gpu,8u,4u,12u,-1,1,1),
+            "device-only host scratch is consumed exactly once");
+    REQUIRE(gml_gpu_execute_plan(gpu,&plan) && gml_gpu_context_reset(gpu,&context) &&
+            !gml_gpu_present_shifted_frame(gpu,8u,4u,11u,1,-1,0) &&
+            !gml_gpu_present_shifted_frame(gpu,8u,4u,12u,-1,1,1),
+            "unexpected context reset invalidates both delivery sources");
+    gml_gpu_context_lost(gpu);anygm_test_graphics_forbid_calls();
+    REQUIRE(!gml_gpu_present_shifted_frame(gpu,8u,4u,11u,1,-1,0) &&
+            !anygm_test_graphics_calls_after_forget(),"lost shift context is not accessed");
+    anygm_test_graphics_allow_calls();gml_gpu_destroy(gpu,0);
+  }
+  return 1;
+}
+
 static int scene_preparation_case(void){
   for(unsigned api=GML_GPU_API_OPENGL_CORE;api<=GML_GPU_API_OPENGLES3;api++){
     GmlGpuContext context=fake_context(api);
@@ -4558,6 +4605,7 @@ int main(int argc,char **argv){
     {"scene_preparation",scene_preparation_case},
     {"unbound_context_access",unbound_context_access_case},
     {"completed_frame_snapshot",completed_frame_snapshot_case},
+    {"integer_presentation_shift",integer_presentation_shift_case},
     {"destroy_without_context",lifecycle_destroy_without_context_case},
     {"missing_entry_point",missing_entry_point_case},
     {"program_failure",program_failure_case},

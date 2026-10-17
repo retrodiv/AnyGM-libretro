@@ -84,6 +84,8 @@ void gml_render_dispatch_metrics_accumulate(GmlRenderDispatchMetrics *total,
 /* Metadata-only completion for existing engine-owned software composition.
  * Call after an actual nonempty target write, never at preparation or observation. */
 void gml_render_dispatch_cpu_composition(GmlRender *render,unsigned family);
+/* The corresponding device-only completion, called only after the actual write. */
+void gml_render_dispatch_gpu_composition(GmlRender *render,unsigned family);
 /* Executed retained history/source recipes, not new operations already credited
  * by CPU fallback submission. Failed replay remains a separate disqualifier. */
 void gml_render_dispatch_cpu_replay_completion(GmlRender *render,

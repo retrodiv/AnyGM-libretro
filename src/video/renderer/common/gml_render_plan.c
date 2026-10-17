@@ -238,7 +238,8 @@ int gml_render_plan_validate(const GmlRenderPlan *plan){
   if(plan->image_count>GML_PLAN_MAX_IMAGES) return 0;
   if(plan->target!=GML_PLAN_TARGET_CPU_FRAME &&
      plan->target!=GML_PLAN_TARGET_HOST_FRAMEBUFFER &&
-     plan->target!=GML_PLAN_TARGET_READBACK) return 0;
+     plan->target!=GML_PLAN_TARGET_READBACK &&
+     plan->target!=GML_PLAN_TARGET_DEVICE_PRESENTATION) return 0;
   if(plan->target==GML_PLAN_TARGET_READBACK){
     uint32_t width=plan->readback_rect.width?plan->readback_rect.width:plan->target_width;
     if(!plan->readback_pixels || plan->readback_pitch_pixels<width) return 0;

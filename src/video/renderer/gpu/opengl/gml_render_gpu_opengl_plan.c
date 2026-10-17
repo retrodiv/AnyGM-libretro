@@ -18,21 +18,7 @@ static GmlPlanAxis identity_axis(uint32_t extent){
   return axis;
 }
 
-int gml_gpu_opengl_execute(GmlGpuBackend *backend,const GmlGpuContext *context,
-                       GmlRenderPlan *plan,GmlGpuCounters *counters,
-                       char *error,size_t error_capacity){
-  uintptr_t framebuffer;
-  int failed=0;
-  if(!backend || !backend->loaded || !context || !plan) return 0;
-  framebuffer=context->get_current_framebuffer(context->userdata);
-  if(plan->target==GML_PLAN_TARGET_READBACK){
-    if(!gml_gpu_opengl_bind_readback_target(backend,plan->target_width,plan->target_height,error,error_capacity))
-      return 0;
-  } else {
-    /* Handle zero is a valid target: some frontends hand over the default framebuffer. */
-    backend->gl.BindFramebuffer(GL_FRAMEBUFFER,(GLuint)framebuffer);
-  }
-
+static void begin_plan_state(GmlGpuBackend *backend,uint32_t target_height){
   /* The frontend and this core share one context, so every piece of state a pass depends on is set
    * rather than assumed, and nothing is left enabled that the frontend did not enable itself. */
   backend->gl.Disable(GL_BLEND);
@@ -52,7 +38,25 @@ int gml_gpu_opengl_execute(GmlGpuBackend *backend,const GmlGpuContext *context,
   backend->gl.Uniform1i(backend->u_rgb_query,0);
   backend->gl.Uniform1i(backend->u_map_x,1);
   backend->gl.Uniform1i(backend->u_map_y,2);
-  backend->gl.Uniform1i(backend->u_target_height,(GLint)plan->target_height);
+  backend->gl.Uniform1i(backend->u_target_height,(GLint)target_height);
+}
+
+int gml_gpu_opengl_execute(GmlGpuBackend *backend,const GmlGpuContext *context,
+                       GmlRenderPlan *plan,GmlGpuCounters *counters,
+                       char *error,size_t error_capacity){
+  uintptr_t framebuffer;
+  int failed=0;
+  if(!backend || !backend->loaded || !context || !plan) return 0;
+  backend->readback_present_valid=0;
+  framebuffer=context->get_current_framebuffer(context->userdata);
+  if(plan->target==GML_PLAN_TARGET_READBACK || plan->target==GML_PLAN_TARGET_DEVICE_PRESENTATION){
+    if(!gml_gpu_opengl_bind_readback_target(backend,plan->target_width,plan->target_height,error,error_capacity))
+      return 0;
+  } else {
+    /* Handle zero is a valid target: some frontends hand over the default framebuffer. */
+    backend->gl.BindFramebuffer(GL_FRAMEBUFFER,(GLuint)framebuffer);
+  }
+  begin_plan_state(backend,plan->target_height);
 
   for(uint32_t index=0;index<plan->operation_count;index++){
     const GmlPlanOp *op=&plan->operations[index];
@@ -157,7 +161,72 @@ int gml_gpu_opengl_execute(GmlGpuBackend *backend,const GmlGpuContext *context,
     /* The frontend's own framebuffer is what a pass leaves bound. */
     backend->gl.BindFramebuffer(GL_FRAMEBUFFER,(GLuint)framebuffer);
   }
+  if(plan->target==GML_PLAN_TARGET_DEVICE_PRESENTATION){
+    backend->readback_present_valid=!failed;
+    backend->gl.BindFramebuffer(GL_FRAMEBUFFER,(GLuint)framebuffer);
+  }
   return failed?0:1;
+}
+
+/* R03-PRESENT-INTEGER-SHIFT: an immutable complete picture is sampled at integer
+ * indices. The canonical cache is never a target of this delivery-only pass. */
+int gml_render_gpu_opengl_present_shift(GmlGpuBackend *backend,uintptr_t framebuffer,
+  uint32_t width,uint32_t height,uint64_t generation,int dx,int dy,int scratch,
+  GmlGpuCounters *counters,char *error,size_t error_capacity){
+  if(!backend || !backend->loaded || !backend->program || !width || !height ||
+     width>GML_PLAN_MAX_EXTENT || height>GML_PLAN_MAX_EXTENT ||
+     (scratch!=0 && scratch!=1)) return 0;
+  GLuint source=0,map_x=0,map_y=0;
+  if(scratch){
+    if(!backend->readback_present_valid || backend->readback_width!=width ||
+       backend->readback_height!=height) return 0;
+    source=backend->readback_texture;
+  }else{
+    if(!backend->completed_valid || backend->completed_width!=width ||
+       backend->completed_height!=height || backend->completed_generation!=generation) return 0;
+    source=backend->completed_texture;
+  }
+  if(!source) return 0;
+  /* The CPU owner leaves the picture unshifted when either axis is outside it. */
+  if((int64_t)dx>=width || (int64_t)dx<=-(int64_t)width ||
+     (int64_t)dy>=height || (int64_t)dy<=-(int64_t)height) dx=dy=0;
+  uint32_t ax=(uint32_t)(dx<0?-dx:dx),ay=(uint32_t)(dy<0?-dy:dy);
+  GmlPlanRect whole={0,0,width,height};
+  GmlPlanRect written={dx>0?dx:0,dy>0?dy:0,width-ax,height-ay};
+  GmlPlanAxis x=identity_axis(width),y=identity_axis(height);
+  x.destination_first=dx<0?-dx:0;y.destination_first=dy<0?-dy:0;
+  if(!gml_gpu_opengl_upload_axis(backend,0u,&x,written.width,counters,&map_x) ||
+     !gml_gpu_opengl_upload_axis(backend,1u,&y,written.height,counters,&map_y)) return 0;
+  backend->gl.BindFramebuffer(GL_FRAMEBUFFER,(GLuint)framebuffer);
+  begin_plan_state(backend,height);
+  gml_gpu_opengl_set_rect(backend,&whole,height);
+  backend->gl.ClearColor(0.0f,0.0f,0.0f,1.0f);
+  backend->gl.Clear(GL_COLOR_BUFFER_BIT);
+  gml_gpu_opengl_set_rect(backend,&written,height);
+  backend->gl.Uniform1i(backend->u_dest_x,written.x);
+  backend->gl.Uniform1i(backend->u_dest_y,written.y);
+  backend->gl.Uniform1i(backend->u_source_height,(GLint)height);
+  backend->gl.Uniform1i(backend->u_resident_source,1);
+  const GLint no_box[2]={0,0};
+  backend->gl.Uniform2iv(backend->u_box_destination,1,no_box);
+  backend->gl.ActiveTexture(GL_TEXTURE0);backend->gl.BindTexture(GL_TEXTURE_2D,source);
+  backend->gl.ActiveTexture(GL_TEXTURE1);backend->gl.BindTexture(GL_TEXTURE_2D,map_x);
+  backend->gl.ActiveTexture(GL_TEXTURE2);backend->gl.BindTexture(GL_TEXTURE_2D,map_y);
+  backend->gl.DrawArrays(GL_TRIANGLES,0,3);
+  if(counters)counters->draw_calls++;
+  backend->gl.BindTexture(GL_TEXTURE_2D,0);
+  backend->gl.ActiveTexture(GL_TEXTURE1);backend->gl.BindTexture(GL_TEXTURE_2D,0);
+  backend->gl.ActiveTexture(GL_TEXTURE0);backend->gl.BindTexture(GL_TEXTURE_2D,0);
+  backend->gl.UseProgram(0);backend->gl.BindVertexArray(0);
+  backend->gl.Disable(GL_SCISSOR_TEST);
+  if(scratch)backend->readback_present_valid=0;
+  GLenum status=backend->gl.GetError();
+  if(status!=GL_NO_ERROR){
+    gml_gpu_opengl_record_error(error,error_capacity,"integer presentation failed 0x%04X",(unsigned)status);
+    while(backend->gl.GetError()!=GL_NO_ERROR){}
+    return 0;
+  }
+  return 1;
 }
 
 static uintptr_t preparation_framebuffer(void *userdata){

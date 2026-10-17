@@ -64,7 +64,6 @@ int engine_present_crop_rect(const AnygmEngine *engine,unsigned source_width,
 /* Both independent GUI/host stages must be nearest; other presentation policies keep their owner. */
 int engine_indirect_gui_host_nearest(const AnygmEngine *engine,int gui_width,int gui_height){
   return engine && engine->host_canvas_active && !engine->host_crt_active &&
-    !engine->present_shift_x && !engine->present_shift_y &&
     !engine->present_crop_left && !engine->present_crop_top &&
     !engine->present_crop_right && !engine->present_crop_bottom &&
     gui_width>0 && gui_height>0 &&

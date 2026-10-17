@@ -507,6 +507,23 @@ int engine_execute_content_shader(void *context,const GmlRenderShaderRequest *re
   return 1;
 }
 
+/* A host-sized intermediate is transient, unlike the logical image saved in state.
+ * The final integer translation samples it without a copy or CPU observation. */
+static int engine_execute_host_plan(AnygmEngine *engine,GmlRenderPlan *plan,
+                                     unsigned width,unsigned height){
+  int shifted=engine->scene_renderer_session==ANYGM_SCENE_RENDERER_OPENGL &&
+    (engine->present_shift_x || engine->present_shift_y);
+  if(shifted && !engine_graphics_is_current(engine)) return 0;
+  if(shifted) plan->target=GML_PLAN_TARGET_DEVICE_PRESENTATION;
+  if(!engine_execute_graphics_plan(engine,plan)) return 0;
+  if(shifted){
+    if(!gml_gpu_present_shifted_frame(engine->gpu,width,height,engine->host_frame_generation,
+         engine->present_shift_x,engine->present_shift_y,1)) return 0;
+    gml_render_dispatch_gpu_composition(&engine->render,GML_RENDER_SCENE_SURFACE);
+  }
+  return 1;
+}
+
 static int engine_present_indirect_gui_host(AnygmEngine *engine,
                                             unsigned *width,unsigned *height){
   GmlRenderDeferredPresentation record={0};
@@ -563,7 +580,7 @@ static int engine_present_indirect_gui_host(AnygmEngine *engine,
   blit->axis_y.source_extent=source->height;
   blit->axis_x.intermediate_extent=engine->output_width;
   blit->axis_y.intermediate_extent=engine->output_height;
-  if(!engine_execute_graphics_plan(engine,&engine->host_plan)) return 0;
+  if(!engine_execute_host_plan(engine,&engine->host_plan,host_width,host_height)) return 0;
   /* Retain the logical presentation recipe for explicit observation. The host-sized attachment
    * is never state authority; ordinary play produces no CPU shadow or extra persistent texture. */
   engine->frame_authority=ENGINE_FRAME_GPU_PRESENTED_CPU_RECONSTRUCTIBLE;
@@ -588,6 +605,8 @@ int engine_present_hardware_screen(AnygmEngine *engine,unsigned *width,unsigned 
   int scene=engine->scene_renderer_session==ANYGM_SCENE_RENDERER_OPENGL &&
             engine_graphics_active(engine);
   if(!hybrid && !shaders && !scene) return 0;
+  if(scene && (engine->present_shift_x || engine->present_shift_y) &&
+     !engine_graphics_is_current(engine)) return 0;
   int crt_readback=engine->host_crt_active && engine->host_canvas_active;
   if(engine->host_canvas_active && !crt_readback)
     return scene && engine_present_indirect_gui_host(engine,width,height);
@@ -596,7 +615,6 @@ int engine_present_hardware_screen(AnygmEngine *engine,unsigned *width,unsigned 
     /* R03_COMPLETED_SCREEN_PRESENT: the scene already owns the final raster. The
      * application surface is not its substitute, and CPU pixels are not an upload source. */
     if(!scene || engine->host_canvas_active ||
-       engine->present_shift_x || engine->present_shift_y ||
        engine->present_crop_left || engine->present_crop_top ||
        engine->present_crop_right || engine->present_crop_bottom ||
        !gml_render_completed_screen_image(&engine->render,engine->screen,
@@ -746,6 +764,11 @@ presented:
                                         engine->host_frame_generation)) return 0;
     engine->frame_authority=ENGINE_FRAME_GPU_PRESENTED_DEVICE_RESIDENT;
   } else engine->frame_authority=ENGINE_FRAME_GPU_PRESENTED_CPU_RECONSTRUCTIBLE;
+  if(scene && (engine->present_shift_x || engine->present_shift_y)){
+    if(!gml_gpu_present_shifted_frame(engine->gpu,engine->output_width,engine->output_height,
+         engine->host_frame_generation,engine->present_shift_x,engine->present_shift_y,0)) return 0;
+    gml_render_dispatch_gpu_composition(&engine->render,GML_RENDER_SCENE_SURFACE);
+  }
   engine->host_plan_valid=1;
   engine->screen_pass_frames++;
   /* The processor's copy of the frame was not written. Saying so is what keeps anything that needs
@@ -765,6 +788,8 @@ int engine_present_hardware_canvas(AnygmEngine *engine,unsigned *width,unsigned 
             engine_graphics_active(engine);
   int hybrid=engine_hybrid_presentation_active(engine);
   if(!scene && !hybrid) return 0;
+  if(scene && (engine->present_shift_x || engine->present_shift_y) &&
+     !engine_graphics_is_current(engine)) return 0;
   if(!engine->screen || !engine->output_width || !engine->output_height) return 0;
   unsigned crop_x=0,crop_y=0,crop_width=0,crop_height=0;
   int crop_requested=engine->present_crop_left || engine->present_crop_top ||
@@ -778,19 +803,19 @@ int engine_present_hardware_canvas(AnygmEngine *engine,unsigned *width,unsigned 
     engine->host_canvas_width==(int)crop_width &&
     engine->host_canvas_height==(int)crop_height;
   /* A current logical SCREEN is already complete. Host fitting must not observe its CPU shadow
-   * or replace the saved logical raster with the host-sized filtered picture. CRT, shift and
+   * or replace the saved logical raster with the host-sized filtered picture. CRT and
    * nonidentity crops retain their separate, established presentation boundaries. */
-  if(scene && !engine->host_crt_active && !engine->present_shift_x && !engine->present_shift_y &&
+  if(scene && !engine->host_crt_active &&
      (!crop_requested || identity_crop))
     resident=gml_render_completed_screen_image(&engine->render,engine->screen,
                 (int)engine->output_width,(int)engine->output_height,&completed);
   /* A restored CPU-current picture needs only a logical upload and the already qualified nearest
    * host plan. Do not repeat its clear/scale on the CPU or promote the fitted host image to state
    * authority. A contained identity crop borrows the same pitched CPU source as the CPU plan.
-   * Borrowed box/CRT/nonidentity crop/shift variants retain their established fallback. */
+   * Borrowed box/CRT/nonidentity crop variants retain their established fallback. */
   int cpu_nearest=scene && engine->host_canvas_active &&
     engine->frame_authority==ENGINE_FRAME_CPU_MATERIALIZED &&
-    !engine->host_crt_active && !engine->present_shift_x && !engine->present_shift_y &&
+    !engine->host_crt_active &&
     (identity_crop || (!crop_requested &&
       engine->host_canvas_width>=(int)engine->output_width &&
       engine->host_canvas_height>=(int)engine->output_height));
@@ -827,7 +852,7 @@ int engine_present_hardware_canvas(AnygmEngine *engine,unsigned *width,unsigned 
       if(!gml_render_plan_validate(&engine->host_plan)) return 0;
     }
   }
-  if(!engine_execute_graphics_plan(engine,&engine->host_plan)) return 0;
+  if(!engine_execute_host_plan(engine,&engine->host_plan,host_width,host_height)) return 0;
   if(resident) engine->frame_authority=ENGINE_FRAME_GPU_PRESENTED_CPU_RECONSTRUCTIBLE;
   engine->host_plan_valid=1;
   engine->canvas_pass_frames++;

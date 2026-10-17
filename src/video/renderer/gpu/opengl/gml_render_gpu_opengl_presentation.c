@@ -19,6 +19,7 @@ void gml_gpu_opengl_set_rect(GmlGpuBackend *backend,const GmlPlanRect *rect,uint
 /* Bind an off-screen target of the plan's extent, creating or resizing it as needed. */
 int gml_gpu_opengl_bind_readback_target(GmlGpuBackend *backend,uint32_t width,uint32_t height,
                                 char *error,size_t error_capacity){
+  backend->readback_present_valid=0;
   if(!backend->readback_framebuffer){
     backend->gl.GenFramebuffers(1,&backend->readback_framebuffer);
     if(!backend->readback_framebuffer){

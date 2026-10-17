@@ -108,6 +108,14 @@ int gml_gpu_read_completed_frame(GmlGpu *gpu,uint32_t *pixels,uint32_t pitch_pix
       width,height,generation,&gpu->counters);
 }
 
+int gml_gpu_present_shifted_frame(GmlGpu *gpu,uint32_t width,uint32_t height,
+                                  uint64_t generation,int dx,int dy,int scratch){
+  return gml_gpu_context_is_current(gpu) &&
+    gml_render_gpu_opengl_present_shift(gpu->backend,
+      gpu->context.get_current_framebuffer(gpu->context.userdata),width,height,generation,
+      dx,dy,scratch,&gpu->counters,gpu->error,sizeof gpu->error);
+}
+
 static int scene_capabilities(void *context,GmlRenderDeviceCaps *out_caps){
   GmlGpu *gpu=(GmlGpu*)context;
   if(!gpu || !out_caps || !gpu->context_active) return 0;

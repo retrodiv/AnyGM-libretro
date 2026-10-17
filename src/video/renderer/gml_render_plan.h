@@ -193,7 +193,10 @@ typedef enum GmlPlanTarget {
   /* An off-screen target of the plan's extent whose pixels are read back into the caller's plane
    * once the plan has executed: a content program run in the middle of a frame, whose result the
    * software renderer composes like any other picture. */
-  GML_PLAN_TARGET_READBACK=2
+  GML_PLAN_TARGET_READBACK=2,
+  /* Ephemeral complete presentation raster, kept on device for a final host transform.
+   * It is not canonical state and never requests a CPU read. */
+  GML_PLAN_TARGET_DEVICE_PRESENTATION=3
 } GmlPlanTarget;
 
 /* Why a pass was not executed on a GPU. A stable internal enum; the strings exist only for

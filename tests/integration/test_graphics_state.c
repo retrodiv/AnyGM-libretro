@@ -2472,7 +2472,8 @@ static int resident_indirect_gui_host_case(void){
   REQUIRE(!engine_indirect_gui_host_nearest(selected.engine,129,97) &&
           !engine_indirect_gui_host_nearest(selected.engine,0,48),"inner reduction and empty GUI refuse");
   selected.engine->present_shift_x=1;
-  REQUIRE(!engine_indirect_gui_host_nearest(selected.engine,64,48),"shift keeps its established owner");
+  REQUIRE(engine_indirect_gui_host_nearest(selected.engine,64,48),
+          "integer delivery shift preserves both nearest host stages");
   selected.engine->present_shift_x=0;selected.engine->present_crop_left=1;
   REQUIRE(!engine_indirect_gui_host_nearest(selected.engine,64,48),"crop keeps its established owner");
   selected.engine->present_crop_left=0;
@@ -3397,6 +3398,85 @@ static int scene_canvas_cpu_source_case(void){
           after.full_uploads==before.full_uploads && width==7u && height==9u,
           "cold scene canvas does not submit an unqualified borrowed-source plan");
   session_close(&selected);
+  return 1;
+}
+
+/* Presentation-only translation must not move the canonical completed image. */
+static int scene_terminal_integer_shift_case(void){
+  for(unsigned mode=0;mode<4u;mode++){
+  Session selected={0};GmlGpuCounters before={0},after={0};
+  CurrentContextWitness witness={1u,0u};
+  AnygmGraphicsContext context=graphics_context(ANYGM_GRAPHICS_OPENGLES3);
+  GmlRenderImageRef original={0},current={0};unsigned width=0,height=0;
+  anygm_test_graphics_reset();
+  REQUIRE(session_open_fixture_with_scene(&selected,ANYGM_SCENE_RENDERER_OPENGL,
+          anygm_synthetic_resident_direct_gui_content_create),"shift fixture loads");
+  selected.engine->config.hybrid_gpu_presentation=0u;
+  context.userdata=&witness;context.is_current=graphics_context_is_current;
+  REQUIRE(anygm_graphics_context_reset(selected.engine,&context)==ANYGM_OK &&
+          advance(selected.engine,1,NULL),"shift fixture completes a resident SCREEN");
+  REQUIRE(gml_render_completed_screen_image(&selected.engine->render,selected.engine->screen,
+          64,48,&original),"shift fixture retains its canonical SCREEN");
+  if(mode){
+    if(mode==2u){
+      REQUIRE(engine_materialize_completed_frame(selected.engine),"shift restores CPU-current authority");
+    }
+    selected.engine->host_canvas_active=1;
+    selected.engine->host_output_width=128u;selected.engine->host_output_height=96u;
+    selected.engine->host_canvas_x=3;selected.engine->host_canvas_y=4;
+    selected.engine->host_canvas_width=mode==3u?56:120;
+    selected.engine->host_canvas_height=mode==3u?38:88;
+    if(mode==3u){
+      selected.engine->present_crop_left=3;selected.engine->present_crop_right=5;
+      selected.engine->present_crop_top=4;selected.engine->present_crop_bottom=6;
+    }
+  }
+  selected.engine->present_shift_x=1;selected.engine->present_shift_y=-1;
+  gml_gpu_counters(selected.engine->gpu,&before);
+  REQUIRE(mode?engine_present_hardware_canvas(selected.engine,&width,&height):
+               engine_present_hardware_screen(selected.engine,&width,&height),
+          "integer terminal shift stays on the device");
+  gml_gpu_counters(selected.engine->gpu,&after);
+  REQUIRE(width==(mode?128u:64u) && height==(mode?96u:48u) && selected.engine->present_shift_x==1 &&
+          selected.engine->present_shift_y==-1 &&
+          after.completed_frame_reads==before.completed_frame_reads &&
+          after.scene_readbacks==before.scene_readbacks &&
+          after.full_uploads==before.full_uploads+(mode==2u) &&
+          (mode==2u || (gml_render_completed_screen_image(&selected.engine->render,selected.engine->screen,
+            64,48,&current) && current.content_version==original.content_version)),
+          "delivery shift preserves canonical identity and performs no CPU transfer");
+  session_close(&selected);
+  }
+  {
+    Session selected={0};CurrentContextWitness witness={1u,0u};
+    AnygmGraphicsContext context=graphics_context(ANYGM_GRAPHICS_OPENGLES3);
+    AnygmConfigDelta presentation={0};GmlGpuCounters before={0},after={0};
+    unsigned width=0,height=0;
+    anygm_test_graphics_reset();
+    REQUIRE(session_open_fixture_with_scene(&selected,ANYGM_SCENE_RENDERER_OPENGL,
+            anygm_synthetic_resident_indirect_gui_upscale_content_create),"shifted indirect GUI loads");
+    presentation.struct_size=sizeof presentation;presentation.values.struct_size=sizeof presentation.values;
+    presentation.fields=ANYGM_CONFIG_HYBRID_GPU_PRESENTATION|ANYGM_CONFIG_PRESENT_LOGICAL_RASTER|
+      ANYGM_CONFIG_MONITOR_WIDTH|ANYGM_CONFIG_MONITOR_HEIGHT;
+    presentation.values.monitor_width=257u;presentation.values.monitor_height=193u;
+    context.userdata=&witness;context.is_current=graphics_context_is_current;
+    REQUIRE(anygm_set_config(selected.engine,&presentation)==ANYGM_OK &&
+            anygm_graphics_context_reset(selected.engine,&context)==ANYGM_OK && advance(selected.engine,1,NULL),
+            "shifted indirect GUI retains its logical recovery recipe");
+    selected.engine->present_shift_x=-1;selected.engine->present_shift_y=1;
+    gml_gpu_counters(selected.engine->gpu,&before);
+    REQUIRE(engine_present_hardware_screen(selected.engine,&width,&height),
+            "integer shift follows both indirect GUI and host stages");
+    gml_gpu_counters(selected.engine->gpu,&after);
+    REQUIRE(width==257u && height==193u && after.draw_calls==before.draw_calls+2u &&
+            after.scene_readbacks==before.scene_readbacks &&
+            after.completed_frame_reads==before.completed_frame_reads &&
+            after.completed_frame_copies==before.completed_frame_copies &&
+            after.full_uploads==before.full_uploads &&
+            gml_render_deferred_presentation(&selected.engine->render,NULL),
+            "two-stage shift adds no observation and keeps canonical reconstruction");
+    session_close(&selected);
+  }
   return 1;
 }
 
@@ -5373,6 +5453,8 @@ int main(void){
      scene_canvas_restored_nearest_case},
     {"resident SCREEN identity crop keeps presentation on device",
      scene_canvas_resident_identity_crop_case},
+    {"terminal integer translation preserves canonical pixels on device",
+     scene_terminal_integer_shift_case},
     {"restored CPU-current identity crop preserves logical state on device",
      scene_canvas_restored_identity_crop_case},
     {"primary and auxiliary scratch uploads stay independent",content_sampler_upload_lifetime_case},

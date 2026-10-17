@@ -193,6 +193,7 @@ struct GmlGpuBackend {
   /* The off-screen target a read-back plan executes into, kept at the last size asked for. */
   GLuint readback_framebuffer,readback_texture,readback_attached;
   uint32_t readback_width,readback_height;
+  int readback_present_valid;
   uint8_t *readback_scratch;
   size_t readback_scratch_capacity;
   GlReadbackSlot readback_slots[GL_READBACK_SLOTS];
@@ -240,6 +241,9 @@ int gml_gpu_opengl_scene_shader_draw(GmlGpuBackend *backend,const GmlPlanShader 
                                       char *error,size_t error_capacity);
 int gml_gpu_opengl_bind_readback_target(GmlGpuBackend *backend,uint32_t width,uint32_t height,
                                          char *error,size_t error_capacity);
+int gml_render_gpu_opengl_present_shift(GmlGpuBackend *backend,uintptr_t framebuffer,
+  uint32_t width,uint32_t height,uint64_t generation,int dx,int dy,int scratch,
+  GmlGpuCounters *counters,char *error,size_t error_capacity);
 int gml_gpu_opengl_read_back_target(GmlGpuBackend *backend,GmlRenderPlan *plan,
                                      char *error,size_t error_capacity);
 int gml_gpu_opengl_read_back_target_pipelined(GmlGpuBackend *backend,GmlRenderPlan *plan,

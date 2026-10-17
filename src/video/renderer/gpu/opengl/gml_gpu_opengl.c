@@ -64,6 +64,7 @@ void gml_gpu_opengl_forget(GmlGpuBackend *backend){
   backend->readback_texture=0;
   backend->readback_attached=0;
   backend->readback_width=backend->readback_height=0;
+  backend->readback_present_valid=0;
   backend->completed_framebuffer=backend->completed_texture=0;
   backend->completed_width=backend->completed_height=0;
   backend->completed_generation=0;

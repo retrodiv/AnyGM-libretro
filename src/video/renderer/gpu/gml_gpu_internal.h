@@ -43,6 +43,9 @@ int gml_gpu_opengl_read_completed_frame(GmlGpuBackend *backend,uintptr_t framebu
                                          uint32_t *pixels,uint32_t pitch_pixels,
                                          uint32_t width,uint32_t height,uint64_t generation,
                                          GmlGpuCounters *counters);
+int gml_render_gpu_opengl_present_shift(GmlGpuBackend *backend,uintptr_t framebuffer,
+  uint32_t width,uint32_t height,uint64_t generation,int dx,int dy,int scratch,
+  GmlGpuCounters *counters,char *error,size_t error_capacity);
 int gml_gpu_opengl_scene_capabilities(const GmlGpuBackend *backend,GmlRenderDeviceCaps *caps);
 int gml_gpu_opengl_scene_prepare(GmlGpuBackend *backend,uint32_t width,uint32_t height,
                                  char *error,size_t error_capacity);
