@@ -6657,11 +6657,11 @@ void gml_draw_sprite_ext(GmlRender *r, int sprite, int subimg, double x, double 
    * the masked destination preparation; preserve the queued resident prefix. */
   if(r && (r->fog_flat || r->color_write_mask!=0x0Fu) &&
      gml_render_resident_sprite_outside(r,sprite,subimg,x,y,xs,ys,rot)) return;
+  if(r && r->resident_application_pass && r->fog_flat &&
+     gml_render_resident_flat_fog_sprite(r,sprite,subimg,x,y,xs,ys,rot,blend,alpha)) return;
   if(r && r->color_write_mask!=0x0Fu &&
      gml_render_resident_masked_sprite(r,sprite,subimg,x,y,xs,ys,rot,blend,alpha)) return;
-  /* The resident quad format has no fixed-function fog. Materialize the
-   * ordered prefix before the existing silhouette raster rather than silently
-   * recording an unfogged quad. */
+  /* Unqualified fog/mask combinations retain the existing ordered CPU writer. */
   if(r && r->resident_application_pass && (r->fog_flat || r->color_write_mask!=0x0Fu) &&
      !gml_render_resident_application_cpu_barrier(r)) return;
   GmlMaskedSpriteDraw masked=masked_sprite_draw_begin(r);

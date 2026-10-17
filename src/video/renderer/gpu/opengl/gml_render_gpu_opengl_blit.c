@@ -189,6 +189,7 @@ int gml_render_gpu_opengl_draw_textured_quad(const GmlRenderDrawOp *op,
     if(quad->sampling.quantisation==GML_RENDER_QUANTISE_INTEGER_TINT_TRUNC ||
        quad->sampling.quantisation==GML_RENDER_QUANTISE_INTEGER_TINT_ROUND ||
        quad->sampling.quantisation==GML_RENDER_QUANTISE_INTEGER_ROW_TINT_TRUNC ||
+       quad->sampling.quantisation==GML_RENDER_QUANTISE_INTEGER_FLAT_RGB ||
        quad->sampling.quantisation==GML_RENDER_QUANTISE_SURFACE_NEAREST_FUNCTION ||
        half_gui || stretched_blend || (rotated && state->coverage_policy) ||
        (quad->sampling.filter==GML_RENDER_FILTER_BOX &&

@@ -16,6 +16,8 @@ typedef struct {
 } GmlRenderSpritePosGeometry;
 
 int gml_render_sprite_log_enabled(const GmlRender *render);
+int gml_render_resident_flat_fog_sprite(GmlRender *render,int sprite,int subimage,
+  double x,double y,double xscale,double yscale,double rotation,uint32_t colour,double alpha);
 int gml_render_resident_masked_sprite(GmlRender *render, int sprite, int subimage,
                                       double x, double y, double xscale, double yscale,
                                       double rotation, uint32_t colour, double alpha);

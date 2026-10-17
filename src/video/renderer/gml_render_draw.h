@@ -178,7 +178,10 @@ enum {
   GML_RENDER_QUANTISE_HARDWARE_SURFACE_LEADING=17u,
   /* Height-one nearest atlas runs may vary both source axes along the row.
    * They reuse integer tint and fixed blending, not an inverse-map shader. */
-  GML_RENDER_QUANTISE_INTEGER_ROW_TINT_TRUNC=18u
+  GML_RENDER_QUANTISE_INTEGER_ROW_TINT_TRUNC=18u,
+  /* Point-sampled sprite silhouettes replace RGB after sampling; source alpha
+   * and the existing fixed-function blend/coverage policy remain independent. */
+  GML_RENDER_QUANTISE_INTEGER_FLAT_RGB=19u
 };
 
 /* Resolved blend semantics, independent of any device API's enumerant values. Zeroed factors
