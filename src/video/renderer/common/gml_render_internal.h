@@ -844,6 +844,11 @@ int gml_render_rotated_nearest_row_regions(GmlRender *r,GmlSprite *sprite,GmlTpa
                                            double x,double y,double xscale,double yscale,
                                            double rotation,GmlRenderRotatedCoverageRegion *regions,
                                            uint32_t capacity,uint32_t *count);
+/* Sample rows retain the scalar/cached point owner's ordered trim addition. */
+int gml_render_rotated_nearest_sample_rows(GmlRender *r,GmlSprite *sprite,GmlTpag *tpag,
+                                           double x,double y,double xscale,double yscale,
+                                           double rotation,GmlRenderRotatedCoverageRegion *regions,
+                                           uint32_t capacity,uint32_t *count);
 
 /* CPU vertical samples belong to the logical root, never to an explicitly
  * numbered allocation. Keep every other binding behind the established fence. */

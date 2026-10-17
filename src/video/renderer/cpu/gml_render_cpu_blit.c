@@ -5302,7 +5302,7 @@ static int rotated_nearest_regions(GmlRender *r,GmlSprite *spr,GmlTpag *t,
   /* The ordinary cached SCREEN rotation combines the integer trim offset
    * before its binary64 addition. Metadata must select that same texel at
    * an exact nearest tie; other point owners keep their ordered additions. */
-  int cached_point=texel_regions==1 && rot!=0.0 && !r->classic &&
+  int cached_point=(texel_regions==1 || texel_regions==3) && rot!=0.0 && !r->classic &&
     !gml_render_target_preserves_alpha(r) && r->alphablend && r->blendmode==0 &&
     r->active_shader<0 && !r->fog_flat;
   int64_t delta_x=(int64_t)llround(dlx*(double)RFP_ONE);
@@ -5326,7 +5326,7 @@ static int rotated_nearest_regions(GmlRender *r,GmlSprite *spr,GmlTpag *t,
        fabs(local_y)+fabs(dly)*(rx1-rx0)>(double)INT_MAX-4.0) return 0;
     int64_t lx_fp=(int64_t)floor(local_x*(double)RFP_ONE);
     int64_t ly_fp=(int64_t)floor(local_y*(double)RFP_ONE);
-    if(texel_regions==2){
+    if(texel_regions==2 || texel_regions==3){
       int64_t last=(int64_t)rx1-rx0-1;
       /* Every shader multiply and sum must fit independently, not merely their final sum. */
       if(last<0 || lx_fp<INT32_MIN || lx_fp>INT32_MAX || ly_fp<INT32_MIN || ly_fp>INT32_MAX ||
@@ -5406,6 +5406,13 @@ int gml_render_rotated_nearest_row_regions(GmlRender *r,GmlSprite *spr,GmlTpag *
                                            GmlRenderRotatedCoverageRegion *regions,
                                            uint32_t capacity,uint32_t *count){
   return rotated_nearest_regions(r,spr,t,x,y,xs,ys,rot,regions,capacity,count,2,0u);
+}
+
+int gml_render_rotated_nearest_sample_rows(GmlRender *r,GmlSprite *spr,GmlTpag *t,
+                                           double x,double y,double xs,double ys,double rot,
+                                           GmlRenderRotatedCoverageRegion *regions,
+                                           uint32_t capacity,uint32_t *count){
+  return rotated_nearest_regions(r,spr,t,x,y,xs,ys,rot,regions,capacity,count,3,0u);
 }
 
 static void GML_HOT_RENDER blit_rotated_impl(GmlRender *r, GmlSprite *spr, GmlTpag *t, double x, double y,

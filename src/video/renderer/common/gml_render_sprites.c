@@ -152,6 +152,90 @@ typedef struct ResidentRuntimeNearest {
 static int resident_runtime_nearest_packets(GmlRender *r,GmlTpag *page,
   const GmlRenderDrawOp *operation,const GmlRenderDrawStateSnapshot *state,
   const GmlRenderResourceSource *source,const ResidentRuntimeNearest *geometry);
+/* A large rotated source need not produce one quad per selected texel.
+ * Intersect legal nearest intervals along each prepared CPU row, then let
+ * hardware interpolate both source axes. Conflicting phases and crop edges
+ * start another disjoint run; no destination bytes or colour recipe enter it. */
+static int resident_nearest_sample_rows(GmlRender *r,const GmlTpag *page,
+  const GmlRenderDrawOp *operation,const GmlRenderDrawStateSnapshot *state,
+  const GmlRenderResourceSource *source,const GmlRenderRotatedCoverageRegion *rows,uint32_t row_count){
+  enum { LIMIT=2048 };
+  if(!rows || !row_count || row_count>LIMIT || !source->borrowed_immutable) return 0;
+  GmlRenderDrawOp *operations=malloc(LIMIT*sizeof *operations);
+  if(!operations) return 0;
+  uint32_t count=0;int accepted=0;
+  for(uint32_t row=0;row<row_count;row++){
+    const GmlRenderRotatedCoverageRegion *map=&rows[row];
+    uint32_t first=0,last=map->region.width;
+    if(map->region.height!=1u || last>4096u) goto done;
+    while(first<last){
+      int64_t x=map->fixed_x+map->delta_x*(int64_t)first;
+      int64_t y=map->fixed_y+map->delta_y*(int64_t)first;
+      if(x>=0 && x<(int64_t)page->sw*1048576 && y>=0 && y<(int64_t)page->sh*1048576) break;
+      first++;
+    }
+    while(last>first){
+      int64_t x=map->fixed_x+map->delta_x*(int64_t)(last-1u);
+      int64_t y=map->fixed_y+map->delta_y*(int64_t)(last-1u);
+      if(x>=0 && x<(int64_t)page->sw*1048576 && y>=0 && y<(int64_t)page->sh*1048576) break;
+      last--;
+    }
+    for(uint32_t begin=first;begin<last;){
+      double origin[2]={(double)(map->fixed_x+map->delta_x*(int64_t)begin)/1048576.0,
+                        (double)(map->fixed_y+map->delta_y*(int64_t)begin)/1048576.0};
+      double step[2]={(double)map->delta_x/1048576.0,(double)map->delta_y/1048576.0};
+      const int extent[2]={page->sw,page->sh};
+      double lower[2]={-.25,-.25},upper[2]={.25,.25},bias[2]={0,0};
+      uint32_t end=begin;
+      for(uint32_t pixel=begin;pixel<last;pixel++){
+        double next_lower[2],next_upper[2];int compatible=1;
+        for(unsigned axis=0;axis<2u;axis++){
+          double sample=origin[axis]+step[axis]*(pixel-begin);
+          double first_vertex=origin[axis]-.5*step[axis];
+          double last_vertex=origin[axis]+((double)(pixel-begin)+.5)*step[axis];
+          if(sample<0.0 || sample>=extent[axis]) goto done;
+          next_lower[axis]=fmax(lower[axis],floor(sample)+.01-sample);
+          next_upper[axis]=fmin(upper[axis],floor(sample)+.99-sample);
+          next_lower[axis]=fmax(next_lower[axis],-fmin(first_vertex,last_vertex));
+          next_upper[axis]=fmin(next_upper[axis],extent[axis]-fmax(first_vertex,last_vertex));
+          if(next_lower[axis]>next_upper[axis]) compatible=0;
+        }
+        if(!compatible) break;
+        for(unsigned axis=0;axis<2u;axis++){
+          lower[axis]=next_lower[axis];upper[axis]=next_upper[axis];
+        }
+        end=pixel+1u;
+      }
+      /* A padded crop-edge pixel can have legal centres but vertices outside
+       * the source. Its constant-centre packet needs no atlas extrapolation. */
+      int constant=end==begin;
+      if(constant) end=begin+1u;
+      if(count==LIMIT || operation->target.image.content_version>UINT64_MAX-count) goto done;
+      operations[count]=*operation;
+      operations[count].target.image.content_version+=count;
+      GmlRenderQuad *quad=&operations[count++].payload.quad;
+      quad->x[0]=quad->x[3]=(double)map->region.x+begin;
+      quad->x[1]=quad->x[2]=(double)map->region.x+end;
+      quad->y[0]=quad->y[1]=map->region.y;quad->y[2]=quad->y[3]=map->region.y+1.0;
+      for(unsigned axis=0;axis<2u;axis++){
+        bias[axis]=fmin(fmax(0.0,lower[axis]),upper[axis]);
+        double final=origin[axis]+step[axis]*(end-begin-1u);
+        int one_texel=constant || floor(origin[axis])==floor(final);
+        double a=one_texel?floor(origin[axis])+.5:origin[axis]-.5*step[axis]+bias[axis];
+        double b=one_texel?a:origin[axis]+((double)(end-begin)-.5)*step[axis]+bias[axis];
+        double *uv=axis?quad->v:quad->u;
+        int offset=axis?page->sy:page->sx;
+        uint32_t storage=axis?source->height:source->width;
+        uv[0]=uv[3]=(offset+a)/storage;uv[1]=uv[2]=(offset+b)/storage;
+      }
+      begin=end;
+    }
+  }
+  accepted=!count || gml_render_application_scene_enqueue_quads(r,operations,count,state,source);
+done:
+  free(operations);return accepted;
+}
+
 static int resident_atlas_crop_from_page_impl(GmlRender *r,GmlTpag *page,
                                          int crop_x,int crop_y,int crop_width,int crop_height,
                                          double left,double top,double xs,double ys,
@@ -484,7 +568,7 @@ static int resident_atlas_crop_from_page_impl(GmlRender *r,GmlTpag *page,
    * Settle the same ordered application prefix used by filtered glyphs before
    * the nearest admission gate; never discard a rejected composition intent. */
   int nearest_sprite_underlay=family==GML_RENDER_SCENE_SPRITE &&
-    (physical_sprite_page==15 || physical_sprite_page==16 || physical_sprite_page==18);
+    (physical_sprite_page==15 || physical_sprite_page==16 || physical_sprite_page==18 || physical_sprite_page==21);
   if(r && (family==GML_RENDER_SCENE_TEXT || nearest_sprite_underlay) && r->pending_underlay &&
      (!resident_mapped_screen_gui_font(r) ||
       !gml_render_compose_resident_underlay(r))) return 0;
@@ -551,7 +635,8 @@ static int resident_atlas_crop_from_page_impl(GmlRender *r,GmlTpag *page,
   int integer_sprite_part=physical_sprite_page==5;
   int sprite_part_function=physical_sprite_page==18;
   int tiled_sprite_function=physical_sprite_page==19;
-  int rotated_sprite_function=physical_sprite_page==16;
+  int rotated_sample_rows=physical_sprite_page==21;
+  int rotated_sprite_function=physical_sprite_page==16 || rotated_sample_rows;
   int replacement_sprite=physical_sprite_page==20;
   int scaled_sprite=physical_sprite_page==15 || rotated_sprite_function || runtime_function || sprite_part_function || tiled_sprite_function || replacement_sprite;
   int integer_sprite=physical_sprite_page==7 || scaled_sprite;
@@ -1113,6 +1198,8 @@ static int resident_atlas_crop_from_page_impl(GmlRender *r,GmlTpag *page,
     operation.payload.quad.sampling.quantisation=!replacement_sprite && !runtime_function && physical_sprite_page!=12 && !rotated_sprite_function &&
       anygm_policy_has_modern_layer_semantics(r->win)
       ?GML_RENDER_QUANTISE_INTEGER_TINT_ROUND:GML_RENDER_QUANTISE_INTEGER_TINT_TRUNC;
+    if(rotated_sample_rows)
+      operation.payload.quad.sampling.quantisation=GML_RENDER_QUANTISE_INTEGER_ROW_TINT_TRUNC;
     operation.payload.quad.filtered_draw_alpha=draw_alpha;
   }
   if(checkpoint_alpha_gui) operation.payload.quad.filtered_draw_alpha=draw_alpha;
@@ -1152,6 +1239,16 @@ static int resident_atlas_crop_from_page_impl(GmlRender *r,GmlTpag *page,
     state.alpha_test_enabled=(effective_cutout && !!r->alpha_test_enable) ||
       (physical_sprite_page==12 && r->blendmode==2);
     state.alpha_test_reference=effective_cutout && r->alpha_test_enable?r->alpha_test_ref:0u;
+    if(rotated_sample_rows){
+      /* The selected CPU rotation never writes a raw-alpha-zero texel.
+       * Its tiny normal factor also defines coverage, not a colour formula. */
+      state.alpha_test_enabled=1u;
+      if(r->alphablend && r->blendmode==0){
+        unsigned empty=0u;
+        while(empty<255u && !gml_render_rotated_alpha16_factor(empty+1u,draw_alpha)) empty++;
+        if(empty>state.alpha_test_reference) state.alpha_test_reference=empty;
+      }
+    }
     if(large_unit_cutoff && (!state.alpha_test_enabled ||
                             large_unit_cutoff>state.alpha_test_reference)){
       state.alpha_test_enabled=1u;
@@ -1227,6 +1324,8 @@ static int resident_atlas_crop_from_page_impl(GmlRender *r,GmlTpag *page,
   state.samplers[0]=operation.payload.quad.sampling;
   if(runtime_geometry){
     if(!resident_runtime_nearest_packets(r,page,&operation,&state,&source,runtime_geometry)) return 0;
+  }else if(rotated_sample_rows){
+    if(!resident_nearest_sample_rows(r,page,&operation,&state,&source,tile_regions,tile_region_count)) return 0;
   }else if(tile_regions){
     if(!resident_tile_quarter_regions(r,page,&operation,&state,&source,
                                      tile_regions,tile_region_count)) return 0;
@@ -1744,11 +1843,56 @@ static uint32_t modern_mapped_axis_regions(const GmlRenderRotatedCoverageRegion 
   return count;
 }
 
+/* Split only when two samples demand incompatible nearest phases. A coherent
+ * run keeps affine UVs; the older per-boundary strips remain the preferred
+ * representation whenever their complete Cartesian group already fits. */
+static uint32_t modern_coherent_axis_regions(double leading,double scale,double phase_offset,
+  int source_extent,double start,double end,ModernPointRegion regions[POINT_AXIS_REGION_LIMIT],
+  double biases[POINT_AXIS_REGION_LIMIT]){
+  if(start!=floor(start) || end!=floor(end) || end-start>4096.0) return 0;
+  int anchor=(int)floor(leading+.5);
+  double phase=scale<0.0?.5:anchor+.5-leading+phase_offset;
+  double sampling_anchor=scale<0.0?anchor:leading-phase_offset;
+  uint32_t count=0;
+  for(int begin=(int)start;begin<(int)end;){
+    double lower=-.25,upper=.25;
+    int finish=begin;
+    for(int pixel=begin;pixel<(int)end;pixel++){
+      int loop=scale<0.0?anchor-1-pixel:pixel-anchor;
+      double sample=((double)loop+phase)/fabs(scale);
+      double projected=((double)pixel+.5-sampling_anchor)/scale;
+      if(!isfinite(sample) || sample<0.0 || sample>=source_extent) return 0;
+      double a=((double)begin-sampling_anchor)/scale;
+      double b=((double)pixel+1.0-sampling_anchor)/scale;
+      double next_lower=fmax(lower,floor(sample)+.01-projected);
+      double next_upper=fmin(upper,floor(sample)+.99-projected);
+      next_lower=fmax(next_lower,-fmin(a,b));
+      next_upper=fmin(next_upper,source_extent-fmax(a,b));
+      if(next_lower>next_upper) break;
+      lower=next_lower;upper=next_upper;finish=pixel+1;
+    }
+    if(count==POINT_AXIS_REGION_LIMIT) return 0;
+    if(finish==begin){
+      int loop=scale<0.0?anchor-1-begin:begin-anchor;
+      int texel=(int)floor(((double)loop+phase)/fabs(scale));
+      if(texel<0 || texel>=source_extent) return 0;
+      regions[count]=(ModernPointRegion){begin,begin+1.0,texel};biases[count]=0.0;finish=begin+1;
+    }else{
+      regions[count]=(ModernPointRegion){begin,finish,-1};
+      /* The ordinary packet convention subtracts its phase correction. */
+      biases[count]=-fmin(fmax(0.0,lower),upper);
+    }
+    count++;begin=finish;
+  }
+  return count;
+}
+
 static int resident_modern_point_regions(GmlRender *r,GmlTpag *page,
   double left,double top,double xs,double ys,double phase_x,double phase_y,const GmlRenderDrawOp *operation,
   const GmlRenderDrawStateSnapshot *state,const GmlRenderResourceSource *source,
   const GmlRenderRotatedCoverageRegion *maps,uint32_t map_count){
   ModernPointRegion columns[POINT_AXIS_REGION_LIMIT],rows[POINT_AXIS_REGION_LIMIT];
+  double column_biases[POINT_AXIS_REGION_LIMIT],row_biases[POINT_AXIS_REGION_LIMIT];
   GmlRenderRotatedCoverageRegion basis={0};
   const GmlRenderQuad *original=&operation->payload.quad;
   uint32_t nx,ny;
@@ -1758,6 +1902,7 @@ static int resident_modern_point_regions(GmlRender *r,GmlTpag *page,
     original->sampling.filter==GML_RENDER_FILTER_NEAREST;
   int local_edges=clamp || ((operation->scene_family==GML_RENDER_SCENE_BACKGROUND || nearest_sprite) &&
     original->sampling.filter==GML_RENDER_FILTER_NEAREST);
+  int coherent=0;
   if(maps){
     if(!map_count) return 0;
     for(uint32_t row=0;row<map_count;row++)
@@ -1823,6 +1968,13 @@ static int resident_modern_point_regions(GmlRender *r,GmlTpag *page,
     } else ny=modern_point_axis_regions(top,ys,phase_y,page->sh,y0,y1,constant_y,clamp,local_edges,rows);
   }
   uint32_t count=nx*ny;
+  if((!count || count>2048u) && !maps && nearest_sprite && !clamp){
+    nx=modern_coherent_axis_regions(left,xs,phase_x,page->sw,fmax(0.0,original->x[0]),
+      fmin(r->fbw,original->x[1]),columns,column_biases);
+    ny=modern_coherent_axis_regions(top,ys,phase_y,page->sh,fmax(0.0,original->y[0]),
+      fmin(r->fbh,original->y[2]),rows,row_biases);
+    count=nx*ny;coherent=1;bias_x=bias_y=0.0;
+  }
   int mutable_text=operation->scene_family==GML_RENDER_SCENE_TEXT &&
     source->image.resource_class==GML_RENDER_RESOURCE_ATLAS && !source->resident_resource &&
     page->atlas>=0 && page->atlas<r->n_atlas && r->atlas[page->atlas].runtime_font_page;
@@ -1840,8 +1992,10 @@ static int resident_modern_point_regions(GmlRender *r,GmlTpag *page,
     quad->x[0]=quad->x[3]=columns[x].start;quad->x[1]=quad->x[2]=columns[x].end;
     quad->y[0]=quad->y[1]=rows[y].start;quad->y[2]=quad->y[3]=rows[y].end;
     for(unsigned corner=0;corner<4u;corner++){
-      double sx=columns[x].texel<0?(quad->x[corner]-anchor_x)/xs-bias_x:columns[x].texel+0.5;
-      double sy=rows[y].texel<0?(quad->y[corner]-anchor_y)/ys-bias_y:rows[y].texel+0.5;
+      double sx=columns[x].texel<0?(quad->x[corner]-anchor_x)/xs-
+        (coherent?column_biases[x]:bias_x):columns[x].texel+0.5;
+      double sy=rows[y].texel<0?(quad->y[corner]-anchor_y)/ys-
+        (coherent?row_biases[y]:bias_y):rows[y].texel+0.5;
       if(maps){
         if(columns[x].texel<0) sx=(double)basis.fixed_x/1048576.0+
           (quad->x[corner]-basis.region.x-0.5)*(double)basis.delta_x/1048576.0+bias_x;
@@ -3061,14 +3215,19 @@ static int resident_nearest_texture_function(GmlRender *r,GmlSprite *sprite,GmlT
     enum { CAPACITY=2048 };
     GmlRenderRotatedCoverageRegion *regions=malloc(CAPACITY*sizeof *regions);
     uint32_t count=0;
-    int accepted=0;
+    int accepted=0,row_geometry=0;
     if(!regions) return 0;
     if(!gml_render_rotated_nearest_texel_regions(r,sprite,page,x,y,xs,ys,phase,
-                                                colour,regions,CAPACITY,&count)) goto rotated_done;
+                                                colour,regions,CAPACITY,&count)){
+      if(count!=CAPACITY || family!=GML_RENDER_SCENE_SPRITE ||
+         !gml_render_rotated_nearest_sample_rows(r,sprite,page,x,y,xs,ys,phase,
+                                                regions,CAPACITY,&count)) goto rotated_done;
+      row_geometry=1;
+    }
     /* The normal CPU rotation writes nothing for a zero alpha16 factor.
      * Reuse only that coverage predicate; nonzero colours still use hardware
      * blending, without a factor table or destination image. */
-    if(r->alphablend && r->blendmode==0 && !gml_render_rotated_alpha16_factor(1u,alpha)){
+    if(!row_geometry && r->alphablend && r->blendmode==0 && !gml_render_rotated_alpha16_factor(1u,alpha)){
       uint32_t covered=0;
       for(uint32_t i=0;i<count;i++)
         if(gml_render_rotated_alpha16_factor(regions[i].sample_key>>24,alpha))
@@ -3081,7 +3240,7 @@ static int resident_nearest_texture_function(GmlRender *r,GmlSprite *sprite,GmlT
      * those actual CPU inputs; the detached packet names the physical crop. */
     if(family==GML_RENDER_SCENE_TEXT){selected.tw=selected.sw;selected.th=selected.sh;}
     accepted=resident_atlas_crop_from_page_impl(r,&selected,0,0,page->sw,page->sh,
-      0.0,0.0,1.0,1.0,family,colour,alpha,16,NULL,regions,count,0,NULL);
+      0.0,0.0,1.0,1.0,family,colour,alpha,row_geometry?21:16,NULL,regions,count,0,NULL);
 rotated_done:
     free(regions);
     return accepted;
@@ -3648,6 +3807,20 @@ void gml_render_sprite_ext_unmasked(GmlRender *r, int sprite, int subimg, double
     if(sprite>=0 && sprite<r->n_spr && (!r->interp || r->classic) && resident_alpha==1.0 &&
        (blend&0xFFFFFFu)!=0xFFFFFFu &&
        !(r->target_id>0 && !r->gui_pass_active && anygm_policy_has_modern_layer_semantics(r->win)) &&
+       resident_nearest_sprite_function(r,&r->spr[sprite],subimg,x,y,xs,ys,resident_rotation,blend,resident_alpha)) return;
+    /* Non-reciprocal first-generation point reductions retain binary64 nearest
+     * ties in the CPU writer. Prefer the bounded point geometry over the
+     * older float-phase sampler, just as the masked port already does.
+     * Qualified reciprocal copies, large-axis cache, filtering and special
+     * state keep their existing preference. */
+    if(sprite>=0 && sprite<r->n_spr && !r->classic && !r->interp &&
+       anygm_policy_uses_first_generation_studio(r->win) &&
+       !anygm_policy_has_modern_layer_semantics(r->win) &&
+       xs>0.0 && ys>0.0 &&
+       ((xs<1.0 && fabs(1.0/xs-nearbyint(1.0/xs))>1e-9) ||
+        (ys<1.0 && fabs(1.0/ys-nearbyint(1.0/ys))>1e-9)) && isfinite(resident_rotation) &&
+       (fabs(fmod(resident_rotation,360.0))<.001 ||
+        fabs(fabs(fmod(resident_rotation,360.0))-360.0)<.001) &&
        resident_nearest_sprite_function(r,&r->spr[sprite],subimg,x,y,xs,ys,resident_rotation,blend,resident_alpha)) return;
     if(sprite>=0 && sprite<r->n_spr &&
        resident_filtered_sprite(r,&r->spr[sprite],subimg,x,y,xs,ys,resident_rotation,blend,resident_alpha)) return;

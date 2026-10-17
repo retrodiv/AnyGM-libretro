@@ -174,7 +174,8 @@ static uint32_t scene_filter(const GmlRenderQuad *quad,
       state->coverage_policy==GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA?53u:51u;
   }
   if(quad->sampling.quantisation==GML_RENDER_QUANTISE_INTEGER_TINT_TRUNC ||
-     quad->sampling.quantisation==GML_RENDER_QUANTISE_INTEGER_TINT_ROUND){
+     quad->sampling.quantisation==GML_RENDER_QUANTISE_INTEGER_TINT_ROUND ||
+     quad->sampling.quantisation==GML_RENDER_QUANTISE_INTEGER_ROW_TINT_TRUNC){
     uint32_t base=quad->sampling.quantisation==GML_RENDER_QUANTISE_INTEGER_TINT_ROUND?38u:37u;
     if(state->coverage_policy==GML_RENDER_COVERAGE_REPLACE_SOURCE_ALPHA) return 83u;
     if(state->coverage_policy==GML_RENDER_COVERAGE_REPLACE_ZERO_ALPHA) return base+12u;
@@ -305,6 +306,7 @@ static int integer_function_sprite_valid(const GmlRenderDrawOp *op,
   const GmlRenderQuad *q=&op->payload.quad;
   GmlRenderRect region=q->sampling.source_region;
   int blend=qualified_blend(state);
+  int row=q->sampling.quantisation==GML_RENDER_QUANTISE_INTEGER_ROW_TINT_TRUNC;
   if(!source || (op->scene_family!=GML_RENDER_SCENE_SPRITE &&
                 op->scene_family!=GML_RENDER_SCENE_BACKGROUND &&
                 op->scene_family!=GML_RENDER_SCENE_TILE &&
@@ -318,7 +320,10 @@ static int integer_function_sprite_valid(const GmlRenderDrawOp *op,
      op->reconstruction_mode!=GML_RENDER_DEVICE_CHECKPOINT || q->shape!=GML_RENDER_QUAD_AXIS_ALIGNED ||
      q->span_active || q->source_endpoint_rgb_mask || q->sampling.filter!=GML_RENDER_FILTER_NEAREST ||
      (q->sampling.quantisation!=GML_RENDER_QUANTISE_INTEGER_TINT_TRUNC &&
-      q->sampling.quantisation!=GML_RENDER_QUANTISE_INTEGER_TINT_ROUND) ||
+      q->sampling.quantisation!=GML_RENDER_QUANTISE_INTEGER_TINT_ROUND && !row) ||
+     (row && (op->scene_family!=GML_RENDER_SCENE_SPRITE ||
+       q->y[2]-q->y[0]!=1.0 || q->x[1]-q->x[0]>4096.0 ||
+       !state->alpha_test_enabled || state->coverage_policy==GML_RENDER_COVERAGE_REPLACE_SOURCE_ALPHA)) ||
      q->sampling.edge_rule!=GML_RENDER_EDGE_CLAMP_SUBIMAGE || q->sampling.logical_margin_mask ||
      !valid_region(region,source->width,source->height) || region.width>4096u || region.height>4096u ||
      !exact_rect(op,NULL,NULL,NULL,NULL,1) || fabs(q->x[0])>65536.0 || fabs(q->y[0])>65536.0 ||
@@ -339,7 +344,7 @@ static int integer_function_sprite_valid(const GmlRenderDrawOp *op,
        (blend!=1 && blend!=13 && blend!=14) || (blend!=14 &&
         !(blend==13 && op->scene_family==GML_RENDER_SCENE_SPRITE &&
           (source->ref.identity&UINT32_C(0x80000000)) &&
-          q->sampling.quantisation==GML_RENDER_QUANTISE_INTEGER_TINT_TRUNC) &&
+          (q->sampling.quantisation==GML_RENDER_QUANTISE_INTEGER_TINT_TRUNC || row)) &&
         op->target.image.resource_class!=GML_RENDER_RESOURCE_SCREEN &&
         op->target.image.resource_class!=GML_RENDER_RESOURCE_APPLICATION)))) return 0;
   double width=q->x[1]-q->x[0],height=q->y[2]-q->y[0];
@@ -351,7 +356,7 @@ static int integer_function_sprite_valid(const GmlRenderDrawOp *op,
    * integral and separable; hardware samples nearest at the prepared phase. */
   for(unsigned axis=0;axis<2u;axis++){
     const double *uv=axis?q->v:q->u;
-    double begin=uv[0],end=uv[axis?2u:1u],extent=axis?height:width;
+    double begin=uv[0],end=uv[row?1u:axis?2u:1u],extent=row?width:axis?height:width;
     double storage=axis?source->height:source->width;
     double span=fabs(end-begin)*storage;
     if(span<1e-12){
@@ -375,11 +380,12 @@ static int integer_function_sprite_valid(const GmlRenderDrawOp *op,
       /* Clipped UV subtraction loses relative precision on highly magnified
        * backgrounds. Compare the upper bound in destination units instead. */
       if(!isfinite(scale) || scale<(background?0.0625:0x1p-14)-1e-9 ||
-         (whole_background?extent>maximum*span+1e-9:scale>maximum+1e-9)) return 0;
+         (!row && (whole_background?extent>maximum*span+1e-9:scale>maximum+1e-9))) return 0;
     }
   }
   for(unsigned c=0;c<4u;c++){
-    double u=(c==1u || c==2u)?q->u[1]:q->u[0],v=c>=2u?q->v[2]:q->v[0];
+    double u=(c==1u || c==2u)?q->u[1]:q->u[0];
+    double v=row?((c==1u || c==2u)?q->v[1]:q->v[0]):c>=2u?q->v[2]:q->v[0];
     if(q->corner_colour[c]!=q->corner_colour[0] ||
        (q->corner_colour[c]>>24)!=(uint32_t)lround(q->filtered_draw_alpha*255.0) ||
        !isfinite(q->u[c]) || !isfinite(q->v[c]) ||
@@ -1118,7 +1124,8 @@ static int scene_preflight(GmlGpuBackend *backend,const GmlRenderDrawBatch *batc
          (sampling->quantisation==GML_RENDER_QUANTISE_SPRITE_MODERN_NEAREST &&
           !modern_numbered_sprite) || state->alpha!=255u ||
          ((sampling->quantisation==GML_RENDER_QUANTISE_INTEGER_TINT_TRUNC ||
-           sampling->quantisation==GML_RENDER_QUANTISE_INTEGER_TINT_ROUND) && !integer_function) ||
+           sampling->quantisation==GML_RENDER_QUANTISE_INTEGER_TINT_ROUND ||
+           sampling->quantisation==GML_RENDER_QUANTISE_INTEGER_ROW_TINT_TRUNC) && !integer_function) ||
          state->colour!=0xFFFFFFFFu || (state->alpha_test_enabled && !integer_function && !physical_sprite && !stretched_box) ||
          blend<0 || ((blend==13 || blend==14) && !integer_function) ||
          ((blend==15 || blend==16 || blend==17) && !physical_sprite) ||
