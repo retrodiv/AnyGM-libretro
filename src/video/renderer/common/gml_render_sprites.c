@@ -5127,13 +5127,21 @@ static int resident_legacy_tiled_sprite(GmlRender *r,int sprite,int subimg,
   return 1;
 }
 
-int gml_render_resident_tiled_sprite(GmlRender *r,int sprite,int subimg,
-                                     double x,double y,double xs,double ys,
-                                     uint32_t blend,double alpha){
+/* Public tiled sprites and authored background layers use the same CPU cell
+ * writer, but not the same anchor or repeat axes. Layer coordinates arrive
+ * already mapped and round after the camera subtraction; instance repeats
+ * retain their established floor and first-generation fractional-camera rule. */
+static int resident_sprite_cell_function(GmlRender *r,int sprite,int subimg,
+  double x,double y,double xs,double ys,uint32_t blend,double alpha,
+  int layer,int htiled,int vtiled){
   enum { CELL_LIMIT=2048 };
   if(!r || !r->resident_application_pass) return 0;
   if(sprite<0 || sprite>=r->n_spr || r->spr[sprite].n_frames<=0) return 1;
   GmlSprite *s=&r->spr[sprite];
+  /* Unlike the public tiled wrapper, the layer CPU entry has no enclosing
+   * mask merge: individual fast/scalar leaves have different write policies.
+   * Preserve that ordered CPU boundary rather than apply a uniform GPU mask. */
+  if(layer && (s->spine || s->ns_enabled || r->color_write_mask!=15u)) return 0;
   if(!isfinite(x) || !isfinite(y) || !isfinite(xs) || !isfinite(ys) || !isfinite(alpha) ||
      gml_d3_is_active(r) || r->fog_flat || resident_sprite_program_blocks(r) ||
      gml_render_classic_vertical_phase_blocks_scene(r) || r->pending_presentation ||
@@ -5148,7 +5156,7 @@ int gml_render_resident_tiled_sprite(GmlRender *r,int sprite,int subimg,
      !r->color_write_mask || xs==0.0 || ys==0.0) return 1;
   if(!r->device.context || !r->device.observe_on_demand ||
      !r->device.observe_on_demand(r->device.context))
-    return resident_legacy_tiled_sprite(r,sprite,subimg,x,y,xs,ys,blend,alpha);
+    return layer?0:resident_legacy_tiled_sprite(r,sprite,subimg,x,y,xs,ys,blend,alpha);
   if(s->runtime_rgba || !s->frame || s->w<=0 || s->h<=0 || s->w>4096 || s->h>4096 ||
      r->fbw<=0 || r->fbh<=0 || r->fbw>16384 || r->fbh>16384 ||
      r->blendmode<0 || r->blendmode>2 || r->color_write_mask>15u ||
@@ -5159,19 +5167,21 @@ int gml_render_resident_tiled_sprite(GmlRender *r,int sprite,int subimg,
   if(page->bw!=s->w || page->bh!=s->h || page->tx<0 || page->ty<0 ||
      page->sw<=0 || page->sh<=0 || page->project_authored_edges ||
      (int64_t)page->tx+page->sw>s->w || (int64_t)page->ty+page->sh>s->h) return 0;
-  gml_render_draw_map_point(r,&x,&y);gml_render_draw_map_scale(r,&xs,&ys);
+  if(!layer){gml_render_draw_map_point(r,&x,&y);gml_render_draw_map_scale(r,&xs,&ys);}
   if(!isfinite(x) || !isfinite(y) || !isfinite(xs) || !isfinite(ys) ||
      fabs(xs)<0.125 || fabs(ys)<0.125 || fabs(xs)>64.0 || fabs(ys)>64.0 ||
      !isfinite(r->cam_x) || !isfinite(r->cam_y)) return 0;
   double bw=s->w*fabs(xs),bh=s->h*fabs(ys);
-  double ax=floor(x-r->cam_x),ay=floor(y-r->cam_y);
-  if(anygm_policy_uses_first_generation_studio(r->win) &&
+  double ax=layer?round(x-r->cam_x):floor(x-r->cam_x);
+  double ay=layer?round(y-r->cam_y):floor(y-r->cam_y);
+  if(!layer && anygm_policy_uses_first_generation_studio(r->win) &&
      fabs(r->cam_x-nearbyint(r->cam_x))>1e-9) ax+=1.0;
   if(!isfinite(ax) || !isfinite(ay)) return 0;
-  double x0=fmod(ax,bw),y0=fmod(ay,bh);
-  if(x0>0.0) x0-=bw;
-  if(y0>0.0) y0-=bh;
-  double nx=ceil((r->fbw-x0)/bw),ny=ceil((r->fbh-y0)/bh);
+  double x0=htiled?fmod(ax,bw):ax,y0=vtiled?fmod(ay,bh):ay;
+  if(htiled && x0>0.0) x0-=bw;
+  if(vtiled && y0>0.0) y0-=bh;
+  double xe=htiled?r->fbw:x0+bw,ye=vtiled?r->fbh:y0+bh;
+  double nx=htiled?ceil((xe-x0)/bw):1.0,ny=vtiled?ceil((ye-y0)/bh):1.0;
   if(nx<1.0 || ny<1.0 || nx>CELL_LIMIT || ny>CELL_LIMIT || nx*ny>CELL_LIMIT) return 0;
   double opacity=alpha>1.0?1.0:alpha;
   /* Empty calls above preserve presentation intent. A visible GUI run must
@@ -5183,8 +5193,8 @@ int gml_render_resident_tiled_sprite(GmlRender *r,int sprite,int subimg,
   for(unsigned attempt=0;attempt<2u;attempt++){
     if(!gml_render_application_scene_prepare_begin(r)) return 0;
     int accepted=1;
-    for(double yy=y0;yy<r->fbh && accepted;yy+=bh)
-      for(double xx=x0;xx<r->fbw;xx+=bw){
+    for(double yy=y0;yy<ye && accepted;yy+=bh)
+      for(double xx=x0;xx<xe;xx+=bw){
         double left=xx+page->tx*xs,top=yy+page->ty*ys;
         accepted=r->interp && !r->classic
           ?resident_filtered_atlas_page(r,page_index,left,top,xs,ys,GML_RENDER_SCENE_SPRITE,
@@ -5199,6 +5209,12 @@ int gml_render_resident_tiled_sprite(GmlRender *r,int sprite,int subimg,
     if(attempt || !gml_render_application_scene_flush(r)) return 0;
   }
   return 0;
+}
+
+int gml_render_resident_tiled_sprite(GmlRender *r,int sprite,int subimg,
+                                     double x,double y,double xs,double ys,
+                                     uint32_t blend,double alpha){
+  return resident_sprite_cell_function(r,sprite,subimg,x,y,xs,ys,blend,alpha,0,1,1);
 }
 
 /* draw_sprite_tiled_ext: repeat a sprite frame to fill the screen (both axes),
@@ -5383,6 +5399,8 @@ void gml_draw_layer_background_sprite(GmlRender *r, int sprite, int subimg, doub
   GmlSprite *s=&r->spr[sprite]; if(s->n_frames<=0) return;
   double bw=s->w*fabs(xs), bh=s->h*fabs(ys); if(bw<=0 || bh<=0) return;
   if(resident_modern_trimmed_unit_layer(r,s,subimg,x,y,xs,ys,blend,alpha,htiled,vtiled)) return;
+  if(resident_sprite_cell_function(r,sprite,subimg,x,y,xs,ys,blend,alpha,
+                                  1,htiled,vtiled)) return;
   if(r->resident_application_pass && !r->interp &&
      ((!htiled && !vtiled) || (xs==1.0 && ys==1.0)) &&
      xs>0.0 && ys>0.0 && blend==0xFFFFFFu && alpha==1.0 &&

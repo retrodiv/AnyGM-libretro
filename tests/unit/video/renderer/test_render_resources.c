@@ -7493,7 +7493,7 @@ static int resident_modern_unit_sprite_part(void){
 }
 
 static int resident_trimmed_unit_layer(void){
-  for(unsigned excluded=0;excluded<19u;excluded++){
+  for(unsigned excluded=0;excluded<21u;excluded++){
     GmlRender *r=calloc(1,sizeof *r);
     GmlWin content={.bytecode=17};
     FakeDevice fake={.on_demand=1};
@@ -7511,7 +7511,7 @@ static int resident_trimmed_unit_layer(void){
       r->atlas[0].px[pixel*4u+1u]=37u;r->atlas[0].px[pixel*4u+2u]=93u;
       r->atlas[0].px[pixel*4u+3u]=255u;
     }
-    if(excluded==3u) r->atlas[0].px[(1u*8u+4u)*4u+3u]=128u;
+    if(excluded==3u || excluded==20u) r->atlas[0].px[(1u*8u+4u)*4u+3u]=128u;
     r->tpag[0]=(GmlTpag){.sw=2,.sh=2,.tw=2,.th=2,.bw=2,.bh=2};
     r->tpag[1]=(GmlTpag){.sx=4,.sy=1,.sw=3,.sh=2,.tw=3,.th=2,.bw=6,.bh=5,.tx=1,.ty=2};
     r->spr[0]=(GmlSprite){.w=6,.h=5,.n_frames=1,.originx=31,.originy=-7};
@@ -7542,6 +7542,8 @@ static int resident_trimmed_unit_layer(void){
     if(excluded==16u) r->atlas[0].runtime_font_page=1;
     if(excluded==17u) r->classic=1;
     if(excluded==18u) r->tpag[1].project_authored_edges=1;
+    if(excluded==19u || excluded==20u) r->interp=1;
+    if(excluded==20u){r->alpha_test_enable=1;r->alpha_test_ref=1;}
     gml_draw_layer_background_sprite(r,0,0,0.25,-0.25,xs,1,colour,alpha,1,1);
     if(!excluded){
       GmlRenderJournalMetrics metrics={0},before_empty={0},after_empty={0};
@@ -7562,6 +7564,20 @@ static int resident_trimmed_unit_layer(void){
       CHECK(fake.last_batch_operations==7u && !fake.readbacks && !fake.rgb_queries &&
         metrics.authority==GML_RENDER_RESOURCE_GPU_RESIDENT && !metrics.cpu_replays &&
         !metrics.journal_bytes && !metrics.retained_mutable_bytes && !memcmp(shadow,r->fb,sizeof shadow));
+    }else if(excluded==2u || excluded==3u || excluded==4u || excluded==5u ||
+             excluded==6u || excluded==7u || excluded==9u || excluded==10u ||
+             excluded==12u || excluded==15u || excluded==17u || excluded==19u){
+      /* The complete layer-cell matrix supersedes these old admission-only
+       * frontiers. Retain authority and stale-shadow checks here; real paired
+       * device controls own their unchanged CPU pixels and D2 contract. */
+      GmlRenderJournalMetrics metrics={0};
+      if(!r->resident_application_pass)
+        fprintf(stderr,"extended layer admission case=%u\n",excluded);
+      CHECK(r->resident_application_pass && !fake.readbacks &&
+            !memcmp(shadow,r->fb,sizeof shadow) && gml_render_scene_submit_pending(r));
+      gml_render_resource_journal_metrics(gml_render_scene_target_resource_ensure(r),&metrics);
+      CHECK(metrics.authority==GML_RENDER_RESOURCE_GPU_RESIDENT && !metrics.cpu_replays &&
+            !metrics.journal_bytes && !fake.readbacks);
     }else CHECK(!r->resident_application_pass);
     gml_render_free(r);free(r);
   }
