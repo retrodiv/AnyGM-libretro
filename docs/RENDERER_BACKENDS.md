@@ -765,6 +765,17 @@ samples derived for the next Draw,not an additional persistent state payload.
 `test_graphics_state::classic_sample_root_state_case` own lifetime,geometry,
 metadata-only sizing,full serialized VM equality and same-run state checks.
 Physical SCREEN clears must not replace the independent logical pair.
+Atomic paired texture preparation may stage up to2048 quads for each image,
+without changing the ordinary2048-quad delivery limit. An independently owned
+operation array grows only when both budgets are needed. Rejecting either
+image,cloning an expanded prefix or disposing an unfinished transaction must
+not deliver half a public draw or alias another queue's storage.
+`paired_root_preparation_keeps_each_image_budget` covers cancellation,commit,
+per-image overflow and parent/child disposal;the unchanged ordinary capacity
+control remains a separate boundary. The108 `large-writer` pairs cover large
+authored crops across trim,signed mixed scales,clipping,source alpha,tint and
+normal/add/inverse blending,with independent predecessor colours in both planes.
+They retain EXACT endpoints or individual tolerance2,not a larger error budget.
 The neutral root/resize/filter
 fixtures exported by `test_gpu_scene_route --keep-classic-sample-root`,
 `--keep-classic-sample-resize` and `--keep-classic-sample-filtered` still
@@ -772,8 +783,8 @@ require actual-driver complete-frame,Reset and fixed-capacity frontend
 state/rewind evidence. The explicit-window resize preserves its authored
 unscaled port and therefore keeps that composition on CPU;filtered presentation
 also refuses this two-plane admission. Other positive draws remain within D2.
-The paired component selector is `classic-root-samples` with five explicit
-writer/clear/glyph/axis/compose profiles. Existing rectangle,line and circle
+The paired component selector is `classic-root-samples` with six explicit
+writer/clear/glyph/axis/compose/large-writer profiles. Existing rectangle,line and circle
 generators additionally pair active samples without changing their old profiles.
 No CPU raster,default,shader or state-format change follows from admission.
 
@@ -1495,7 +1506,7 @@ does not claim execution of the selected content program.
 | Dispatch point | Possible admission port | Status | Source revision | Remaining scope / debt reason |
 |---|---|---|---|---|
 | `src/video/renderer/common/gml_render_sprites.c::gml_render_resident_classic_phase_atlas` | `gml_render_application_scene_enqueue` | PARTIAL | `e072a5e4bd3b8cf510f54d0cc887f320cb2bf043c74886ef9c0235fd57d87ada` | Explicit owned nearest two-plane axis component for immutable glyph/background/tile cells. Port-specific CPU opacity and vertical-span policies remain distinct; paired controls retain EXACT endpoints or individual TOLERANCE2, correct family tags and independent coverage without ordinary observation/copies/replay. Engine/public axis admission,other states,whole-function qualification,composition/lifetime/state and permanent registration remain debt in a subsequent admission lot; this closed foundation does not qualify an engine route. Actual public-axis ports are under qualification: room tiles retain their forward-unit nonprojected CPU view and copied sprite glyphs retain a distinct cache mode. |
-| `src/video/renderer/common/gml_render_surfaces.c::gml_render_resident_classic_phase_clear` | `CPU` | DEBT | `a5f3aa3513f3d7fb3b7ec8cfbcff5c953387bfc55fc81ce6bff9fbc1a67c7d00` | Explicit paired-root clear preparation, reachable through public clear only after an internal owner explicitly binds the resource; engine admission remains closed. Clear ignores GUI transforms, as the CPU fill does; mapped-GUI raw RGBA and whole-target rectangle controls are required alongside prior clear/refusal/version ordering. The two source-free checkpoint packets are delivered later by the existing queue flush, outside the static admission-port graph. State/lifetime and permanent paired registration remain admission-lot debt. This conservative graph label is not a claim that a measured device clear ran on CPU. |
+| `src/video/renderer/common/gml_render_surfaces.c::gml_render_resident_classic_phase_clear` | `CPU` | DEBT | `20a15db5c981dab16b0aaed924703d7f5969e9179b98562fc09c5d218cef3248` | Explicit paired-root clear preparation reserves independently owned operation storage before writing both packets. Unchanged84 public clear/order pairs cover raw RGBA, GUI-independent fills, refusal/version ordering and EXACT endpoints; resource controls cover rollback, expanded-prefix cloning and unfinished disposal. Engine admission and state controls are documented in R03-CLASSIC-ROOT-SAMPLES. Delivery still occurs later through shared queue flush, outside the static admission-port graph; this conservative label is not a measured CPU fallback. Complete API/variant binding remains D8 debt. |
 | `src/video/renderer/common/gml_render_sprites.c::gml_render_resident_classic_phase_sprite` | `gml_render_application_scene_enqueue` | PARTIAL | `63af78551100e5ada4553563bf2f72a3f2e583c05d09d30157115d8fad339a65` | Explicit owned nearest root sprite component: EXACT opaque/binary integer endpoints and TOLERANCE±2 normal/add/inverse sprite samples in both independently composed planes,using the existing CPU vertical spans and rotation geometry. Public sprite dispatch requires an already-bound resource; engine scene admission stays closed. Composition/state integration,other texture families,replacement,masks,fog,GUI/runtime/program variants and permanent paired-control registration remain debt before engine admission,not before integrating this closed foundation. |
 | `src/video/renderer/common/gml_render_sprites.c::resident_classic_phase_span` | `gml_render_application_scene_enqueue` | PARTIAL | `3696b9dabc8da324acdbfd26f1039ff5c41b469dd64ef7a1d9692b4b2521b1ee` | Paired immutable texture components stage CPU-authored vertical spans with their original family and opacity policy. Detached text/tile rows name their actual physical stored extents rather than the full parent crop; CPU geometry and source bytes remain unchanged. EXACT endpoints/TOLERANCE2 pairs and atomic metadata/queue tests are required;engine admission,other public variants,composition/lifetime/state and permanent control registration remain open. |
 | `src/video/renderer/common/gml_render_surfaces.c::gml_render_completed_screen_mask` | `gml_render_completed_screen_mask` | PARTIAL | `4c152001ca5c7743967ffc8732b9d2163e4d7b3b96f5719100278a9053033f78` | R03-EXTERNAL-ROOT-MASK: witnessed admitted external logical-root opaque bands; owned/numbered aliases, third allocation, unavailable context/pass and failed authority retain checked CPU refusal. |

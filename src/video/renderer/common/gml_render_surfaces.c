@@ -42,10 +42,12 @@ static void surface_coverage_counts(const uint32_t *px,int w,int h,int *colour,i
 }
 int surface_slot(int id){ return id>0 && id<=GML_MAX_SURFACES ? id-1 : -1; }
 
-enum { GML_SCENE_BATCH_LIMIT=2048, GML_SCENE_STATE_LIMIT=128,
+enum { GML_SCENE_BATCH_LIMIT=2048, GML_SCENE_PAIRED_LIMIT=2*GML_SCENE_BATCH_LIMIT,
+       GML_SCENE_STATE_LIMIT=128,
        GML_SCENE_SOURCE_LIMIT=64 };
 struct GmlRenderPendingSceneBatch {
-  GmlRenderDrawOp operations[GML_SCENE_BATCH_LIMIT];
+  GmlRenderDrawOp *operations;
+  uint32_t operation_capacity;
   GmlRenderDrawStateSnapshot states[GML_SCENE_STATE_LIMIT];
   GmlRenderResourceSource sources[GML_SCENE_SOURCE_LIMIT];
   GmlRenderImageRef source_refs[GML_SCENE_SOURCE_LIMIT];
@@ -57,6 +59,27 @@ struct GmlRenderPendingSceneBatch {
   int saved_application_opaque,saved_presentation_coverage;
   int saved_phase_opaque_known,saved_phase_all_opaque,saved_phase_all_transparent;
 };
+
+/* Each image keeps the ordinary delivery budget. Only an atomic paired-root
+ * preparation may stage both budgets; neither image is submitted halfway. */
+static int scene_pending_reserve(GmlRenderPendingSceneBatch *pending,uint32_t count){
+  if(count<=pending->operation_capacity) return 1;
+  if(count>GML_SCENE_PAIRED_LIMIT) return 0;
+  uint32_t capacity=count>GML_SCENE_BATCH_LIMIT?GML_SCENE_PAIRED_LIMIT:GML_SCENE_BATCH_LIMIT;
+  GmlRenderDrawOp *operations=pending->operations?
+    realloc(pending->operations,(size_t)capacity*sizeof *operations):calloc(capacity,sizeof *operations);
+  if(!operations) return 0;
+  if(pending->operation_capacity)
+    memset(operations+pending->operation_capacity,0,
+      (size_t)(capacity-pending->operation_capacity)*sizeof *operations);
+  pending->operations=operations;pending->operation_capacity=capacity;
+  return 1;
+}
+
+static void scene_pending_free(GmlRenderPendingSceneBatch *pending){
+  if(!pending) return;
+  free(pending->operations);free(pending);
+}
 
 static int same_scene_source(GmlRenderImageRef a,GmlRenderImageRef b){
   return a.resource_class==b.resource_class && a.identity==b.identity &&
@@ -93,12 +116,17 @@ int gml_render_application_scene_prepare_begin(GmlRender *r){
   if(!prepared) return 0;
   if(parent){
     *prepared=*parent;
+    prepared->operations=NULL;prepared->operation_capacity=0u;
+    if(parent->count){
+      if(!scene_pending_reserve(prepared,parent->count)){scene_pending_free(prepared);return 0;}
+      memcpy(prepared->operations,parent->operations,(size_t)parent->count*sizeof *prepared->operations);
+    }
     for(uint32_t index=0;index<prepared->count;index++){
       GmlRenderDrawOp *operation=&prepared->operations[index];
       if(!operation->source_count) continue;
       uint32_t source=0u;
       while(source<parent->source_count && operation->sources!=&parent->source_refs[source]) source++;
-      if(source==parent->source_count){free(prepared);return 0;}
+      if(source==parent->source_count){scene_pending_free(prepared);return 0;}
       operation->sources=&prepared->source_refs[source];
     }
   }
@@ -124,7 +152,7 @@ int gml_render_application_scene_prepare_finish(GmlRender *r,int accepted){
   GmlRenderPendingSceneBatch *parent=prepared->prepared_parent;
   if(accepted){
     prepared->preparing=0;prepared->prepared_parent=NULL;
-    free(parent);
+    scene_pending_free(parent);
   }else{
     r->pending_scene_batch=parent;
     r->fb_opaque_known=prepared->saved_opaque_known;
@@ -135,7 +163,7 @@ int gml_render_application_scene_prepare_finish(GmlRender *r,int accepted){
     r->classic_phase_opaque_known=prepared->saved_phase_opaque_known;
     r->classic_phase_all_opaque=prepared->saved_phase_all_opaque;
     r->classic_phase_all_transparent=prepared->saved_phase_all_transparent;
-    free(prepared);
+    scene_pending_free(prepared);
   }
   return accepted!=0;
 }
@@ -293,8 +321,8 @@ void gml_render_application_scene_queue_dispose(GmlRender *r){
   r->classic_phase_scene_background_normalised=0;
   if(r->classic_phase_scene_target) (void)gml_render_classic_phase_scene_select(r,0);
   if(r->pending_scene_batch && r->pending_scene_batch->preparing)
-    free(r->pending_scene_batch->prepared_parent);
-  free(r->pending_scene_batch);
+    scene_pending_free(r->pending_scene_batch->prepared_parent);
+  scene_pending_free(r->pending_scene_batch);
   r->pending_scene_batch=NULL;
 }
 
@@ -407,6 +435,7 @@ int gml_render_application_scene_enqueue_primitive(GmlRender *r,
     if(!pending) return 0;
     r->pending_scene_batch=pending;
   }
+  if(!scene_pending_reserve(pending,pending->count+1u)) return 0;
   pending->operations[pending->count]=*operation;
   pending->operations[pending->count++].sources=NULL;
   if(r->fb==r->app_surface_owned){
@@ -449,6 +478,7 @@ int gml_render_application_scene_enqueue_primitives(GmlRender *r,
     if(!pending) return 0;
     r->pending_scene_batch=pending;
   }
+  if(!scene_pending_reserve(pending,pending->count+count)) return 0;
   memcpy(&pending->operations[pending->count],operations,(size_t)count*sizeof *operations);
   pending->count+=count;
   if(r->fb==r->app_surface_owned){r->app_surface_opaque=0;r->app_presentation_coverage_active=0;}
@@ -557,7 +587,12 @@ int gml_render_application_scene_enqueue_quads(GmlRender *r,
   pending=r->pending_scene_batch;
   if(pending && pending->preparing && !source->borrowed_immutable) return 0;
   if(pending && pending->count){
-    int flush=!pending->source_count || pending->count>GML_SCENE_BATCH_LIMIT-count ||
+    int paired_preparation=pending->preparing && r->classic_phase_scene_preparing;
+    uint32_t limit=paired_preparation?GML_SCENE_PAIRED_LIMIT:GML_SCENE_BATCH_LIMIT;
+    uint32_t target_count=paired_preparation?
+      (r->classic_phase_scene_target?pending->phase_count:pending->count-pending->phase_count):pending->count;
+    int flush=!pending->source_count || target_count>GML_SCENE_BATCH_LIMIT-count ||
+      pending->count>limit-count ||
       pending->coalesce_sources!=coalescible;
     GmlRenderImageRef previous=pending->operations[0].target.image;
     if(!same_scene_image(previous,operation->target.image)){
@@ -609,6 +644,7 @@ int gml_render_application_scene_enqueue_quads(GmlRender *r,
      operation->target.image.resource_class!=next.resource_class ||
      operation->target.image.identity!=next.identity ||
      operation->target.image.incarnation!=next.incarnation) return 0;
+  if(!scene_pending_reserve(pending,pending->count+count)) return 0;
   if(!pending->count){
     pending->states[0]=*state;
     pending->state_count=1u;
@@ -1270,6 +1306,7 @@ int gml_render_resident_classic_phase_clear(GmlRender *r,uint32_t colour){
     if(!pending) return 0;
     r->pending_scene_batch=pending;
   }
+  if(!scene_pending_reserve(pending,2u)) return 0;
   for(unsigned plane=0;plane<2u;plane++){
     GmlRenderDrawOp operation={0};
     operation.opcode=GML_RENDER_OP_CLEAR;

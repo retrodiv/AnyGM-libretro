@@ -2712,6 +2712,44 @@ static int paired_root_capacity_does_not_deliver_half_a_draw(void){
   gml_render_abandon_device(r);gml_render_free(r);free(r);return 1;
 }
 
+static int paired_root_preparation_keeps_each_image_budget(void){
+  for(unsigned disposition=0;disposition<3u;disposition++){
+    uint32_t base[16]={0},vertical[16]={0},pixels[4]={0xFF315779u};
+    FakeDevice fake={.on_demand=1};GmlRender *r=paired_root_fixture(&fake,base,vertical);
+    GmlRenderResourceSource source=source_view(pixels,1);
+    CHECK(r);
+    if(disposition==2u) CHECK(paired_root_append(r,&source));
+    CHECK(gml_render_application_scene_prepare_begin(r));
+    r->classic_phase_scene_preparing=1;
+    for(unsigned i=disposition==2u?1u:0u;i<2048u;i++) CHECK(paired_root_append(r,&source));
+    CHECK(!paired_root_append(r,&source) && gml_render_classic_phase_scene_select(r,1));
+    for(unsigned i=0;i<2048u;i++) CHECK(paired_root_append(r,&source));
+    CHECK(!paired_root_append(r,&source) && !fake.uploads && !fake.submits && !fake.readbacks);
+    if(disposition==2u){
+      /* Dispose an expanded open transaction and its independently owned prefix. */
+      gml_render_application_scene_queue_dispose(r);
+      CHECK(!r->pending_scene_batch && !fake.submits && !fake.readbacks);
+    }else if(!disposition){
+      CHECK(!gml_render_application_scene_prepare_finish(r,0) && !r->pending_scene_batch);
+      CHECK(gml_render_application_scene_next_image_ref(r,r->base_scene_resource).content_version==1u &&
+        gml_render_application_scene_next_image_ref(r,r->classic_phase_resource).content_version==1u);
+    }else{
+      CHECK(gml_render_application_scene_prepare_finish(r,1));
+      CHECK(gml_render_application_scene_prepare_begin(r));
+      r->classic_phase_scene_preparing=1;
+      CHECK(!paired_root_append(r,&source) && !gml_render_application_scene_prepare_finish(r,0));
+      CHECK(gml_render_application_scene_next_image_ref(r,r->base_scene_resource).content_version==2049u &&
+        gml_render_application_scene_next_image_ref(r,r->classic_phase_resource).content_version==2049u);
+      CHECK(gml_render_application_scene_flush(r) && fake.submits==2 &&
+        fake.last_batch_operations==2048u && !fake.readbacks &&
+        gml_render_resource_image_ref(r->base_scene_resource).content_version==2049u &&
+        gml_render_resource_image_ref(r->classic_phase_resource).content_version==2049u);
+    }
+    gml_render_abandon_device(r);gml_render_free(r);free(r);
+  }
+  return 1;
+}
+
 static int queued_immutable_checkpoint_spans_sources_and_states(void){
   GmlRender *render=(GmlRender*)calloc(1,sizeof *render);
   uint32_t first_pixels[4]={0xFF315779u,0xFF315779u,0xFF315779u,0xFF315779u};
@@ -15944,6 +15982,7 @@ int main(void){
   passed+=paired_root_binding_and_loss_boundaries();
   passed+=paired_root_cpu_boundary_and_unfinished_teardown();
   passed+=paired_root_capacity_does_not_deliver_half_a_draw();
+  passed+=paired_root_preparation_keeps_each_image_budget();
   passed+=classic_phase_geometry_is_pure_and_refusable();
   passed+=queued_immutable_checkpoint_spans_sources_and_states();
   passed+=queued_filtered_font_spans();
@@ -16153,6 +16192,6 @@ int main(void){
   passed+=source_free_primitive_rect_replay();
   passed+=stretched_float_exact_replay();
   passed+=filtered_font_exact_recovery();
-  printf("render resource cases: passed=%d failed=%d\n",passed,248-passed);
-  return passed==248?EXIT_SUCCESS:EXIT_FAILURE;
+  printf("render resource cases: passed=%d failed=%d\n",passed,249-passed);
+  return passed==249?EXIT_SUCCESS:EXIT_FAILURE;
 }
