@@ -1752,16 +1752,17 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
         render_presentation.application_width,render_presentation.application_height)))) &&
       gml_render_application_surface_owned_extent(&engine->render,NULL,NULL);
   }
-  /* A forced canvas already supplies its logical camera and owned target. Keep
-   * narrow-room CPU masks and translated view composition on their owner. A
-   * full-origin forced view already fills a same-sized application below. */
+  /* A forced canvas already supplies its logical camera and owned target. A
+   * full-width compositor may retain an independent raw-root mask on device;
+   * centered GUI and translated view composition keep their existing owner. */
   forced_owned_scene=engine->aspect_force_active &&
     !engine->composed_frame && !gml_render_is_classic(&engine->render) &&
     render_presentation.application_owned && frame_view_count==1 &&
     !(view_surface>0 && gml_surface_exists(&engine->render,view_surface)) &&
     engine->scene_renderer_session==ANYGM_SCENE_RENDERER_OPENGL &&
     engine_graphics_active(engine) &&
-    !aspect_visible_room_rect(engine,cam_x,cam_y,NULL,NULL,NULL,NULL) &&
+    (!aspect_visible_room_rect(engine,cam_x,cam_y,NULL,NULL,NULL,NULL) ||
+     aspect_compositor_fullwidth_gen(engine)) &&
     (direct_owned_world ||
      (frame_views[0].px==0 && frame_views[0].py==0 &&
       render_presentation.application_width==(int)engine->width &&
@@ -1880,7 +1881,7 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
       &engine->render,&world_width,&world_height);
   if(direct_view_surface)
     gml_surface_reset_target(&engine->render);
-  aspect_mask_outside_room(engine,cam_x, cam_y);
+  if(!aspect_mask_outside_room(engine,cam_x,cam_y)) return ANYGM_ERROR_INTERNAL;
   if(prof){ t1 = profile_now_ms(engine); engine->profile.draw_ms += t1 - t0; t0 = t1; }
   gml_render_presentation_metrics(&engine->render,&render_presentation);
   int log_draw=anygm_host_development_setting(&engine->host,"GML_LOG_DRAW")!=NULL;
@@ -2023,6 +2024,9 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
 		    aspect_gui_center = aspect_gui_w > 0 && aspect_gui_h > 0;
 		  }
 		  if (aspect_gui_center) {
+		    if(engine->scene_renderer_session==ANYGM_SCENE_RENDERER_OPENGL &&
+		       !gml_render_completed_screen_read(&engine->render,engine->fb,
+		         (int)engine->width,(int)engine->height)) return ANYGM_ERROR_INTERNAL;
 		    if (!ensure_scratch_buffer(engine,&engine->app_crop)) {
 		      engine_errorf(engine,ANYGM_ERROR_OUT_OF_MEMORY,"Could not allocate the application crop buffer");
 		      return ANYGM_ERROR_OUT_OF_MEMORY;
@@ -2395,6 +2399,11 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
 			     * transform the un-forced window-raster path performs. */
 			    uint32_t *logical = ow == engine->width && oh == engine->height
 			                      ? engine->screen : engine->fb;
+			    if(engine->scene_renderer_session==ANYGM_SCENE_RENDERER_OPENGL &&
+			       (!gml_render_completed_screen_read(&engine->render,engine->fb,
+			         (int)engine->width,(int)engine->height) ||
+			        !gml_render_completed_screen_write(&engine->render,logical,
+			         (int)engine->width,(int)engine->height))) return ANYGM_ERROR_INTERNAL;
 			    if (logical == engine->screen){
 			      memcpy(engine->screen, engine->fb, (size_t)ow * oh * sizeof(uint32_t));
                   if(ow && oh) gml_render_dispatch_cpu_composition(&engine->render,GML_RENDER_SCENE_SURFACE);

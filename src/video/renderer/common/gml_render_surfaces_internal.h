@@ -39,6 +39,8 @@ GmlRenderResource *gml_render_base_resource_lookup(const GmlRender *render,
 int gml_render_base_resource_select(GmlRender *render,uint32_t *pixels);
 int gml_render_base_resource_resize(GmlRender *render,int width,int height);
 int gml_render_base_history_observe(GmlRender *render);
+/* Raw mask destinations are caller-owned even when renderer state is replaced. */
+int gml_render_masked_bases_observe(GmlRender *render);
 GmlRenderResourceExecution gml_render_application_scene_submit(
   GmlRender *render,const GmlRenderDrawBatch *batch,
   const GmlRenderResourceSource *sources,uint32_t source_count);

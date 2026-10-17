@@ -736,6 +736,9 @@ static int render_state_read(GmlRender *render,CoreR *s){
   /* The application target is presentation storage, not a serialized surface record. A
    * successful load must not retain a device/journal version from the pre-load timeline. */
   if(s->ok){
+    /* A raw mask target is external storage, not one of the state payload's
+     * surfaces. Preserve its current bytes before retiring the old device owner. */
+    if(!gml_render_masked_bases_observe(render)){s->ok=0;return 0;}
     gml_render_application_resource_dispose(render);
     gml_render_base_resource_dispose(render);
     gml_render_retained_base_dispose(render);

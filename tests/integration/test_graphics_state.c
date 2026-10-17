@@ -3209,7 +3209,7 @@ static int forced_owned_scene_variant(int narrow_room){
   REQUIRE(anygm_set_config(plain.engine,&presentation)==ANYGM_OK &&
           anygm_set_config(selected.engine,&presentation)==ANYGM_OK,
           "forced owned geometry selected");
-  const char *overrides[]={"?aspect @compositor_fullwidth=1",
+  const char *overrides[]={narrow_room==2?"?aspect @compositor_fullwidth=0":"?aspect @compositor_fullwidth=1",
                           "?aspect @wide_gameplay_view=1"};
   for(unsigned slot=0;slot<2u;slot++)
     REQUIRE(anygm_set_runtime_override(plain.engine,slot,1u,overrides[slot])==ANYGM_OK &&
@@ -3231,7 +3231,7 @@ static int forced_owned_scene_variant(int narrow_room){
              selected.engine->width>selected.engine->base_width &&
              cpu.width==gpu.width && cpu.height==gpu.height;
     gml_gpu_counters(selected.engine->gpu,&counters);
-    matching=matching && (narrow_room?counters.scene_batches_offered==0u:
+    matching=matching && (narrow_room==2?counters.scene_batches_offered==0u:
                                     counters.scene_batches_accepted>0u);
     matching=matching && resolve_host_frame(selected.engine,&pixels,&width,&height) &&
              pixels && cpu.pixels && width==cpu.width && height==cpu.height &&
@@ -3243,12 +3243,13 @@ static int forced_owned_scene_variant(int narrow_room){
               cpu.width,cpu.height,gpu.width,gpu.height);
   }
   session_close(&selected); session_close(&plain);
-  REQUIRE(matching,"forced owned scene matches CPU and preserves narrow-room fallback");
+  REQUIRE(matching,"forced owned scene matches CPU and preserves centered narrow-room fallback");
   return 1;
 }
 
 static int forced_owned_scene_case(void){
-  return forced_owned_scene_variant(0) && forced_owned_scene_variant(1);
+  return forced_owned_scene_variant(0) && forced_owned_scene_variant(1) &&
+         forced_owned_scene_variant(2);
 }
 
 static int presentation_filter_variant(

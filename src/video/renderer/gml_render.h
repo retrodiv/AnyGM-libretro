@@ -723,6 +723,10 @@ int gml_render_scene_submit_pending(GmlRender *r);
  * its device version; an actual CPU writer invalidates that version before modifying pixels. */
 int gml_render_completed_screen_read(GmlRender *r,uint32_t *pixels,int width,int height);
 int gml_render_completed_screen_write(GmlRender *r,uint32_t *pixels,int width,int height);
+/* Opaque outside bands belong to this borrowed allocation, not necessarily to the
+ * current application/numbered target. A successful device write leaves its CPU shadow stale. */
+int gml_render_completed_screen_mask(GmlRender *r,uint32_t *pixels,int width,int height,
+                                     int x,int y,int inside_width,int inside_height);
 /* After a successful full terminal-image observation, retire the pre-presentation SCREEN
  * recipe instead of replaying it over the published pixels. No CPU pixel reconstruction. */
 void gml_render_completed_screen_publish(GmlRender *r,uint32_t *pixels,int width,int height);

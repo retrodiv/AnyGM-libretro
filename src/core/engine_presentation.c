@@ -1557,9 +1557,22 @@ int aspect_visible_room_rect(AnygmEngine *engine,double cam_x, double cam_y,
   if (out_h) *out_h = y1 - y0;
   return 1;
 }
-void aspect_mask_outside_room(AnygmEngine *engine,double cam_x, double cam_y) {
+int aspect_mask_outside_room(AnygmEngine *engine,double cam_x, double cam_y) {
   int x0, y0, rw, rh;
-  if (!aspect_visible_room_rect(engine,cam_x, cam_y, &x0, &y0, &rw, &rh)) return;
+  if (!aspect_visible_room_rect(engine,cam_x, cam_y, &x0, &y0, &rw, &rh)) return 1;
+  int device_mask=engine->scene_renderer_session==ANYGM_SCENE_RENDERER_OPENGL &&
+    aspect_compositor_fullwidth_gen(engine) &&
+    gml_render_completed_screen_mask(&engine->render,engine->fb,(int)engine->width,
+      (int)engine->height,x0,y0,rw,rh);
+  if(device_mask){
+    GmlRenderTargetCoverage coverage={.all_transparent=0};
+    gml_render_target_coverage_update(&engine->render,&coverage,
+                                      GML_RENDER_COVERAGE_ALL_TRANSPARENT);
+    return 1;
+  }
+  if(engine->scene_renderer_session==ANYGM_SCENE_RENDERER_OPENGL &&
+     !gml_render_completed_screen_write(&engine->render,engine->fb,
+                                        (int)engine->width,(int)engine->height)) return 0;
   int x1 = x0 + rw, y1 = y0 + rh;
 
   const uint32_t black = 0xFF000000u;
@@ -1579,6 +1592,7 @@ void aspect_mask_outside_room(AnygmEngine *engine,double cam_x, double cam_y) {
   GmlRenderTargetCoverage coverage={.all_transparent=0};
   gml_render_target_coverage_update(&engine->render,&coverage,
                                     GML_RENDER_COVERAGE_ALL_TRANSPARENT);
+  return 1;
 }
 
 void setup_display(AnygmEngine *engine) {
@@ -1657,6 +1671,9 @@ int render_multiview_application(AnygmEngine *engine) {
   GmlPresentView views[8]; int canvas_w = 0, canvas_h = 0;
   int count = present_view_count(engine,views, &canvas_w, &canvas_h);
   if (count <= 1 || canvas_w != (int)engine->width || canvas_h != (int)engine->height) return 0;
+  if(engine->scene_renderer_session==ANYGM_SCENE_RENDERER_OPENGL &&
+     !gml_render_completed_screen_write(&engine->render,engine->fb,
+                                        (int)engine->width,(int)engine->height)) return -1;
   if(!ensure_scratch_buffer(engine,&engine->app_crop)) return 0;
   uint32_t *view_buffer=engine->app_crop;
 

@@ -581,7 +581,7 @@ void aspect_view_overlay_end(AnygmEngine *engine,AspectViewOverlay *overlay,
 uint32_t cur_room_bg(AnygmEngine *engine);
 int room_clears_application_surface(const GmlWin *content, const GmlRoom *room);
 void draw_runtime_backgrounds(AnygmEngine *engine,int foreground);
-void aspect_mask_outside_room(AnygmEngine *engine,double camera_x,double camera_y);
+int aspect_mask_outside_room(AnygmEngine *engine,double camera_x,double camera_y);
 void setup_display(AnygmEngine *engine);
 void compose_view_rect(GmlRender *render,const uint32_t *source,int source_width,int source_height,
                        uint32_t *destination,int destination_width,int destination_height,

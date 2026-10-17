@@ -72,6 +72,7 @@ REQUIRED_RULES = {
     "R03-RESIDENT-SCREEN-IDENTITY-CROP",
     "R03-P7-SCREEN-CPU-BORROW", "R03-P7-UNDERLAY-ALPHA-BORROW",
     "R03-RAW-LINEAR-BASE",
+    "R03-EXTERNAL-ROOT-MASK",
     "R03-P3-ATLAS-CACHE", "R03-P3-CONTEXT-RESET",
     "R03-P5-MUTABLE-IDENTITY", "R03-P5-RUNTIME-FONT-ATLAS", "R03-P5-SURFACE-OBSERVER",
     "R03-P5-SURFACE-COPY", "R03-P5-SURFACE-CPU-SOURCE",
@@ -176,6 +177,7 @@ EXECUTOR_ROW = re.compile(
 # Stop traversal here: following resource replay would make CPU kernels appear
 # GPU-capable merely because the resource owner also implements device submission.
 DISPATCH_PORTS = {
+    "gml_render_completed_screen_mask",
     "gml_render_application_scene_enqueue",
     "gml_render_application_scene_enqueue_quads",
     "gml_render_application_scene_enqueue_primitive",
@@ -195,6 +197,7 @@ DISPATCH_CPU_BOUNDARIES = {
     "surface_pixels", "surface_pixels_observe", "surface_pixels_access",
 }
 DISPATCH_ADDITIONAL = {
+    "gml_render_completed_screen_mask",
     "gml_render_layer_rgb_noise", "gml_render_layer_filter_end",
     "gml_render_sprite_ext_unmasked",
     "gml_render_compose_resident_underlay", "gml_render_recover_empty_screen",

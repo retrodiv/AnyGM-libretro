@@ -661,6 +661,7 @@ void gml_render_base_resource_dispose(GmlRender *r){
   r->base_scene_resource=NULL;
   r->base_scene_resource_pixels=NULL;
   r->base_scene_resource_width=r->base_scene_resource_height=0;
+  r->base_scene_resource_masked=0;
 }
 
 GmlRenderResource *gml_render_base_resource_lookup(const GmlRender *r,
@@ -696,6 +697,7 @@ void gml_render_retained_base_dispose(GmlRender *r){
   r->retained_base_history_count=0;
   r->retained_base_resource=NULL;r->retained_base_pixels=NULL;
   r->retained_base_width=r->retained_base_height=0;
+  r->retained_base_masked=0;
 }
 
 int gml_render_can_begin_borrowed_screen(const GmlRender *r,const uint32_t *pixels){
@@ -713,10 +715,18 @@ int gml_render_base_resource_select(GmlRender *r,uint32_t *pixels){
   if(!r || pixels==r->base_scene_resource_pixels) return 0;
   if(r->retained_base_resource){
     if(pixels!=r->retained_base_pixels) return r->base_scene_resource?-1:0;
-  } else if(!gml_render_can_begin_borrowed_screen(r,pixels)) return 0;
+  } else if(!gml_render_can_begin_borrowed_screen(r,pixels)){
+    /* A raw outside-mask allocation can precede the first actual SCREEN.
+     * Reserve its existing second slot rather than discarding device-only bytes.
+     * Other third bindings retain the established two-image refusal. */
+    const GmlRenderDeviceServices *device=gml_render_device(r);
+    if(!r->scene_device_enabled || !r->base_scene_resource_masked || !device ||
+       !device->observe_on_demand || !device->observe_on_demand(device->context)) return 0;
+  }
   GmlRenderResource *resource=r->base_scene_resource;
   uint32_t *previous=r->base_scene_resource_pixels;
   int width=r->base_scene_resource_width,height=r->base_scene_resource_height;
+  int masked=r->base_scene_resource_masked;
   GmlRenderResource *history=r->base_history_resource;
   uint32_t *history_pixels=r->base_history_pixels;
   size_t history_count=r->base_history_count;
@@ -724,8 +734,10 @@ int gml_render_base_resource_select(GmlRender *r,uint32_t *pixels){
   r->base_scene_resource_pixels=r->retained_base_pixels;
   r->base_scene_resource_width=r->retained_base_width;
   r->base_scene_resource_height=r->retained_base_height;
+  r->base_scene_resource_masked=r->retained_base_masked;
   r->retained_base_resource=resource;r->retained_base_pixels=previous;
   r->retained_base_width=width;r->retained_base_height=height;
+  r->retained_base_masked=masked;
   r->base_history_resource=r->retained_base_history_resource;
   r->base_history_pixels=r->retained_base_history_pixels;
   r->base_history_count=r->retained_base_history_count;
@@ -904,6 +916,91 @@ failed:
   if(fresh.image.incarnation && device->retire) device->retire(device->context,fresh.image);
   base_stage_dispose(device,next);base_stage_dispose(device,next_history);
   free(history_pixels);
+  return 0;
+}
+
+int gml_render_masked_bases_observe(GmlRender *r){
+  if(!r) return 0;
+  GmlRenderResource *resources[]={r->base_scene_resource,r->retained_base_resource};
+  int masked[]={r->base_scene_resource_masked,r->retained_base_masked};
+  for(unsigned i=0;i<2u;i++){
+    if(!resources[i] || !masked[i]) continue;
+    if(!gml_render_base_history_observe(r) ||
+       !gml_render_resource_acquire_cpu_read(resources[i],NULL)) return 0;
+  }
+  return 1;
+}
+
+int gml_render_completed_screen_mask(GmlRender *r,uint32_t *pixels,int width,int height,
+                                     int x,int y,int inside_width,int inside_height){
+  const GmlRenderDeviceServices *device=gml_render_device(r);
+  GmlRenderResource *resource;
+  GmlRenderRect regions[4];GmlRenderDrawOp operations[4]={0};
+  unsigned count=0;int previous_width=0,previous_height=0,created=0;
+  if(!r || !pixels || width<=0 || height<=0 || width>4096 || height>4096 ||
+     !r->scene_device_enabled || !r->resident_application_pass ||
+     !device || !device->observe_on_demand ||
+     !device->observe_on_demand(device->context) ||
+     !gml_render_application_scene_flush(r)) return 0;
+  if(pixels==r->app_surface_owned) return 0;
+  for(int i=0;i<GML_MAX_SURFACES;i++)
+    if(r->surface[i].live && pixels==r->surface[i].px) return 0;
+  int64_t left=x,top=y,right=(int64_t)x+inside_width,bottom=(int64_t)y+inside_height;
+  if(left<0) left=0;
+  if(top<0) top=0;
+  if(right>width) right=width;
+  if(bottom>height) bottom=height;
+  if(inside_width<=0 || inside_height<=0 || right<=left || bottom<=top){
+    regions[count++]=(GmlRenderRect){0,0,(uint32_t)width,(uint32_t)height};
+  }else{
+    if(top>0) regions[count++]=(GmlRenderRect){0,0,(uint32_t)width,(uint32_t)top};
+    if(bottom<height) regions[count++]=(GmlRenderRect){0,(int)bottom,(uint32_t)width,(uint32_t)(height-bottom)};
+    if(left>0) regions[count++]=(GmlRenderRect){0,(int)top,(uint32_t)left,(uint32_t)(bottom-top)};
+    if(right<width) regions[count++]=(GmlRenderRect){(int)right,(int)top,(uint32_t)(width-right),(uint32_t)(bottom-top)};
+  }
+  if(!count) return 1;
+  resource=gml_render_base_resource_lookup(r,pixels,&previous_width,&previous_height);
+  if(resource && (previous_width!=width || previous_height!=height)){
+    int swapped=resource==r->retained_base_resource;
+    uint32_t *previous=r->base_scene_resource_pixels;
+    if(swapped && gml_render_base_resource_select(r,pixels)!=1) return 0;
+    int resized=gml_render_base_resource_resize(r,width,height);
+    if(swapped && gml_render_base_resource_select(r,previous)!=1) return 0;
+    if(!resized) return 0;
+    resource=gml_render_base_resource_lookup(r,pixels,NULL,NULL);
+  }
+  if(!resource){
+    /* A third borrowed allocation is not an alias of either existing image. */
+    if(r->retained_base_resource) return 0;
+    resource=base_stage_create(pixels,width,height,0u);
+    if(!resource) return 0;
+    gml_render_resource_bind_dispatch(resource,r);created=1;
+  }
+  GmlRenderImageRef image=gml_render_resource_image_ref(resource);
+  if(image.content_version>UINT64_MAX-count) goto rejected;
+  for(unsigned i=0;i<count;i++){
+    operations[i].opcode=GML_RENDER_OP_CLEAR;
+    operations[i].scene_family=GML_RENDER_SCENE_PRIMITIVE;
+    operations[i].reconstruction_mode=GML_RENDER_DEVICE_CHECKPOINT;
+    operations[i].target=(GmlRenderTargetRef){image,1u,(uint32_t)width,(uint32_t)height,
+      GML_RENDER_PIXEL_ARGB8888,regions[i]};
+    operations[i].target.image.content_version+=i+1u;
+    operations[i].payload.clear_colour=0xFF000000u;
+  }
+  GmlRenderDrawBatch batch={operations,count,NULL,0u};
+  GmlRenderResourceExecution result=gml_render_resource_submit_deferred(resource,device,&batch,NULL,0u);
+  if(result!=GML_RENDER_RESOURCE_EXEC_DEVICE) goto rejected;
+  if(created){
+    r->retained_base_resource=resource;r->retained_base_pixels=pixels;
+    r->retained_base_width=width;r->retained_base_height=height;
+    r->retained_base_masked=1;
+  }
+  if(resource==r->base_scene_resource) r->base_scene_resource_masked=1;
+  if(resource==r->retained_base_resource) r->retained_base_masked=1;
+  gml_render_dispatch_batch_record(r,&batch,result);
+  return 1;
+rejected:
+  if(created) base_stage_dispose(device,resource);
   return 0;
 }
 GmlRenderResource *gml_render_scene_target_resource_ensure(GmlRender *r){
