@@ -1750,10 +1750,12 @@ static int synthetic_framebuffer_content_create(
   int cursor_frame=gpu_sprite==16;
   int moving_sound=gpu_sprite==17 || gpu_sprite==18 || gpu_sprite==20;
   int borrowed_resize=gpu_sprite==40;
+  int reduced_view_resize=gpu_sprite==57;
+  int viewless_resize=gpu_sprite==55 || gpu_sprite==56 || reduced_view_resize;
   int classic_identity_present=gpu_sprite==44;
   int classic_owned_gui=gpu_sprite==47;
   int classic_manual_application=gpu_sprite>=48 && gpu_sprite<=50;
-  int single_classic_view=(gpu_sprite>=21 && gpu_sprite<=37) || borrowed_resize || classic_manual_application;
+  int single_classic_view=(gpu_sprite>=21 && gpu_sprite<=37) || borrowed_resize || classic_manual_application || reduced_view_resize;
   char create[192],step[192],draw[192],draw_begin[192],draw_gui[192];
   snprintf(create,sizeof create,"%s/retain-create.gml",fixture->directory);
   snprintf(step,sizeof step,"%s/retain-step.gml",fixture->directory);
@@ -1761,7 +1763,10 @@ static int synthetic_framebuffer_content_create(
   snprintf(draw_begin,sizeof draw_begin,"%s/retain-draw-begin.gml",fixture->directory);
   snprintf(draw_gui,sizeof draw_gui,"%s/retain-draw-gui.gml",fixture->directory);
   snprintf(fixture->path,sizeof fixture->path,"%s/data.win",fixture->directory);
-  if(!write_text(create,classic_manual_application?
+  if(!write_text(create,classic_owned_gui?
+       "global.fixture_frame = 0;\n"
+       "surface_resize(application_surface,64,48);\n":
+       classic_manual_application?
        "global.fixture_frame = 0;\n"
        "application_surface_draw_enable(false);\n"
        "global.fixture_recovery = view_wport[0] == view_wview[0];\n"
@@ -1891,7 +1896,13 @@ static int synthetic_framebuffer_content_create(
                  "surface_set_target(global.fixture_surface);\n":
                  "if (global.fixture_frame >= 1) room_goto(1);\n"
                  "global.fixture_frame += 1;\n") ||
-     (gpu_sprite && !write_text(draw,classic_manual_application?
+     (gpu_sprite && !write_text(draw,viewless_resize?
+       "d3d_start();\n"
+       "d3d_set_projection_ortho(0,0,64,48,0);\n"
+       "d3d_set_hidden(true);\n"
+       "draw_sprite(spr_fixture,0,24,16);\n"
+       "draw_set_color(c_white); draw_text(8,30,\"GPU\");\n":
+       classic_manual_application?
        "global.fixture_application_width = surface_get_width(application_surface);\n"
        "global.fixture_application_height = surface_get_height(application_surface);\n"
        "draw_sprite(spr_fixture,0,48,16);\n"
@@ -2121,6 +2132,7 @@ static int synthetic_framebuffer_content_create(
     }
     if(classic_manual_application) project.classic_version=gpu_sprite==50?810:701;
     if(classic_identity_present) project.classic_version=701;
+    if(viewless_resize) project.classic_version=gpu_sprite==55?530:701;
     /* Distinct from both room colors so a cleared classic frame cannot be mistaken for a
      * retained one or for the room the fixture painted first. */
     project.classic_outside_color=0x00204060u;
@@ -2174,6 +2186,7 @@ static int synthetic_framebuffer_content_create(
   rooms[1].id=rooms[1].name=(char *)"room_retained";
   rooms[1].width=rooms[0].width;
   rooms[1].height=rooms[0].height;
+  if(viewless_resize){rooms[1].width=128;rooms[1].height=96;}
   rooms[1].speed=60;
   rooms[1].background_color=classic_transition?0xFF000080u:0xFF000000u;
   rooms[1].draw_background_color=classic_transition?1:0;
@@ -2213,6 +2226,10 @@ static int synthetic_framebuffer_content_create(
                                gpu_sprite==23?96:rooms[room].width*2;
       rooms[room].views[0].hport=borrowed_resize || gpu_sprite==48?rooms[room].height:
                                gpu_sprite==23?72:rooms[room].height*2;
+      if(reduced_view_resize){
+        rooms[room].views[0].wport=rooms[room].width/2;
+        rooms[room].views[0].hport=rooms[room].height/2;
+      }
       rooms[room].views[0].xport=gpu_sprite==25?4:0;
       rooms[room].views[0].hspeed=rooms[room].views[0].vspeed=-1;
       rooms[room].views[0].object_id=-1;
@@ -2319,6 +2336,18 @@ int anygm_synthetic_classic_redraw_content_create(AnygmSyntheticContent *fixture
 
 int anygm_synthetic_classic_viewless_draw_content_create(AnygmSyntheticContent *fixture){
   return synthetic_framebuffer_content_create(fixture,0,0,1,19);
+}
+
+int anygm_synthetic_classic_viewless_resize_content_create(AnygmSyntheticContent *fixture){
+  return synthetic_framebuffer_content_create(fixture,0,0,1,55);
+}
+
+int anygm_synthetic_classic_viewless_ortho_resize_content_create(AnygmSyntheticContent *fixture){
+  return synthetic_framebuffer_content_create(fixture,0,0,1,56);
+}
+
+int anygm_synthetic_classic_reduced_view_resize_content_create(AnygmSyntheticContent *fixture){
+  return synthetic_framebuffer_content_create(fixture,0,0,1,57);
 }
 
 int anygm_synthetic_classic_owned_gui_content_create(AnygmSyntheticContent *fixture){

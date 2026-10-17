@@ -1057,7 +1057,8 @@ static int classic_viewless_application_scene_case(void){
             selected.engine->render.n_tpag,selected.engine->render.n_spr,
             selected.engine->render.n_spr?selected.engine->render.spr[0].runtime_rgba!=NULL:0,
             cpu.pixels?((const uint32_t*)cpu.pixels)[17u*cpu.width+49u]:0u);
-  matching=matching && metrics.application_owned && metrics.application_draw_enabled &&
+  matching=matching && !metrics.application_owned && metrics.application_draw_enabled &&
+           metrics.application_width==(int)cpu.width && metrics.application_height==(int)cpu.height &&
            counters.scene_families[GML_RENDER_SCENE_SPRITE]>0u &&
            counters.scene_families[GML_RENDER_SCENE_TEXT]>0u &&
            counters.scene_families[GML_RENDER_SCENE_PRIMITIVE]==2u &&
@@ -1218,7 +1219,8 @@ static int classic_identity_filtered_presentation_case(void){
     else
       matching=matching && gml_render_deferred_presentation(&selected.engine->render,&presentation) &&
         presentation.source_width==64 && presentation.source_height==48 &&
-        presentation.resident_image.resource_class==GML_RENDER_RESOURCE_APPLICATION &&
+        presentation.resident_image.resource_class==GML_RENDER_RESOURCE_SCREEN &&
+        !selected.engine->render.app_surface_owned &&
         counters.cpu_upload_frames==before.cpu_upload_frames &&
         counters.scene_families[GML_RENDER_SCENE_PRIMITIVE]>before.scene_families[GML_RENDER_SCENE_PRIMITIVE] &&
         counters.scene_batches_refused==before.scene_batches_refused;
@@ -1373,6 +1375,51 @@ static int classic_single_view_geometry_transition_case(void){
   }
   session_close(&selected); session_close(&plain);
   REQUIRE(matching,"classic GPU admission preserves a later logical geometry transition");
+  return 1;
+}
+
+/* Metadata/call-order proof. Actual-device paired captures own projection pixels. */
+static int classic_viewless_resize_scene_case(void){
+  int (*factories[])(AnygmSyntheticContent *)={
+    anygm_synthetic_classic_viewless_resize_content_create,
+    anygm_synthetic_classic_viewless_ortho_resize_content_create,
+    anygm_synthetic_classic_reduced_view_resize_content_create
+  };
+  for(unsigned variant=0;variant<sizeof factories/sizeof factories[0];variant++){
+    Session plain={0},selected={0};
+    AnygmInputFrame input={.struct_size=sizeof input,.pointer_x=-1,.pointer_y=-1};
+    AnygmFrameOutput cpu={0},gpu={0};
+    int matching=1;
+    anygm_test_graphics_reset();
+    REQUIRE(session_open_fixture_with_scene(&plain,ANYGM_SCENE_RENDERER_CPU,factories[variant]) &&
+            session_open_fixture_with_scene(&selected,ANYGM_SCENE_RENDERER_OPENGL,factories[variant]),
+            "viewless projection resize fixtures load");
+    REQUIRE(graphics_adopt(selected.engine,ANYGM_GRAPHICS_OPENGLES3)==ANYGM_OK,
+            "viewless projection resize context adopts");
+    for(unsigned frame=0;frame<3u && matching;frame++){
+      GmlRenderPresentationMetrics reference={0},actual={0};
+      unsigned width=frame?128u:64u,height=frame?96u:48u;
+      cpu.struct_size=gpu.struct_size=sizeof cpu;
+      matching=anygm_run_frame(plain.engine,&input,&cpu)==ANYGM_OK &&
+               anygm_run_frame(selected.engine,&input,&gpu)==ANYGM_OK;
+      gml_render_presentation_metrics(&plain.engine->render,&reference);
+      gml_render_presentation_metrics(&selected.engine->render,&actual);
+      matching=matching && plain.engine->width==width && plain.engine->height==height &&
+        selected.engine->width==width && selected.engine->height==height &&
+        reference.application_width==(int)width && reference.application_height==(int)height &&
+        actual.application_width==reference.application_width &&
+        actual.application_height==reference.application_height &&
+        cpu.width==gpu.width && cpu.height==gpu.height &&
+        gml_d3_is_active(&plain.engine->render) && gml_d3_is_active(&selected.engine->render);
+      if(!matching) fprintf(stderr,"viewless projection resize variant=%u frame=%u world=%ux%u/%ux%u "
+        "application=%dx%d/%dx%d output=%ux%u/%ux%u owned=%d/%d\n",variant,frame,
+        plain.engine->width,plain.engine->height,selected.engine->width,selected.engine->height,
+        reference.application_width,reference.application_height,actual.application_width,actual.application_height,
+        cpu.width,cpu.height,gpu.width,gpu.height,reference.application_owned,actual.application_owned);
+    }
+    session_close(&selected);session_close(&plain);
+    REQUIRE(matching,"viewless room growth preserves the CPU application raster with active projection");
+  }
   return 1;
 }
 
@@ -5232,6 +5279,7 @@ int main(void){
     {"excluded single classic views retain CPU presentation",classic_single_view_exclusions_case},
     {"classic single view preserves later geometry transitions",classic_single_view_geometry_transition_case},
     {"borrowed resize keeps Draw metadata and resident pixels",classic_borrowed_resize_scene_case},
+    {"viewless room growth preserves active projection raster",classic_viewless_resize_scene_case},
     {"classic single view preserves CPU observers",classic_single_view_cpu_observers_case},
     {"classic single view executes nearest draw contracts",classic_single_view_draw_contracts_case},
     {"classic Step target survives GPU Draw and GUI",classic_retained_target_scene_case},

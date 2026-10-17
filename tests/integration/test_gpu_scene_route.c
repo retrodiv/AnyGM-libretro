@@ -55,6 +55,9 @@ int main(int argc,char **argv){
   int cursor_frame=argc==2 && !strcmp(argv[1],"--keep-cursor-frame");
   int classic_redraw=argc==2 && !strcmp(argv[1],"--keep-classic-redraw");
   int classic_viewless=argc==2 && !strcmp(argv[1],"--keep-classic-viewless");
+  int classic_viewless_resize=argc==2 && !strcmp(argv[1],"--keep-classic-viewless-resize");
+  int classic_viewless_ortho_resize=argc==2 && !strcmp(argv[1],"--keep-classic-viewless-ortho-resize");
+  int classic_reduced_view_resize=argc==2 && !strcmp(argv[1],"--keep-classic-reduced-view-resize");
   int classic_owned_gui=argc==2 && !strcmp(argv[1],"--keep-classic-owned-gui");
   int classic_manual=argc==2 && !strcmp(argv[1],"--keep-classic-manual-application");
   int classic_manual_scaled=argc==2 && !strcmp(argv[1],"--keep-classic-manual-application-scaled");
@@ -98,6 +101,9 @@ int main(int argc,char **argv){
        cursor_frame?anygm_synthetic_cursor_frame_content_create(&fixture):
        classic_redraw?anygm_synthetic_classic_redraw_content_create(&fixture):
        classic_viewless?anygm_synthetic_classic_viewless_draw_content_create(&fixture):
+       classic_viewless_resize?anygm_synthetic_classic_viewless_resize_content_create(&fixture):
+       classic_viewless_ortho_resize?anygm_synthetic_classic_viewless_ortho_resize_content_create(&fixture):
+       classic_reduced_view_resize?anygm_synthetic_classic_reduced_view_resize_content_create(&fixture):
        classic_owned_gui?anygm_synthetic_classic_owned_gui_content_create(&fixture):
        classic_manual?anygm_synthetic_classic_manual_application_content_create(&fixture):
        classic_manual_scaled?anygm_synthetic_classic_manual_application_scaled_content_create(&fixture):
@@ -144,7 +150,8 @@ int main(int argc,char **argv){
      multiview_fractional || multiview_step || multiview_nested || multiview_assigned ||
      canvas_geometry || window_raster || centered_gui ||
      crt_native || crt_scaled || host_box || ended_frame || cursor_frame ||
-     classic_redraw || classic_viewless || classic_owned_gui || classic_manual || classic_manual_scaled ||
+     classic_redraw || classic_viewless || classic_viewless_resize || classic_viewless_ortho_resize || classic_reduced_view_resize ||
+     classic_owned_gui || classic_manual || classic_manual_scaled ||
      classic_late_manual || classic_single_view || classic_identity_present ||
      classic_geometry || classic_borrowed_resize ||
      classic_step_composition || classic_step_base_writer || classic_late_step_composition ||

@@ -1632,7 +1632,7 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
      gml_render_application_surface_ensure_owned(
        &engine->render,(int)engine->width,(int)engine->height))
     gml_render_presentation_metrics(&engine->render,&render_presentation);
-  /* A sole early-classic integer viewport draws at the borrowed logical raster.
+  /* A sole early-classic integer or reciprocal-integer viewport draws at the borrowed logical raster.
    * GPU residency must not turn that borrow into a persistent explicit surface resize.
    * Draw may still expose the preceding borrow's extent after a view change. The base
    * resource uses the actual world stride; publish the new surface extent only below. */
@@ -1643,29 +1643,26 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
     frame_views[0].h==(double)engine->height &&
     frame_views[0].pw>0 && frame_views[0].ph>0 &&
     engine->width>0 && engine->height>0 &&
-    frame_views[0].pw%(int)engine->width==0 &&
-    frame_views[0].ph%(int)engine->height==0 &&
-    frame_views[0].pw/(int)engine->width==frame_views[0].ph/(int)engine->height &&
+    ((frame_views[0].pw%(int)engine->width==0 &&
+      frame_views[0].ph%(int)engine->height==0 &&
+      frame_views[0].pw/(int)engine->width==frame_views[0].ph/(int)engine->height) ||
+     ((int)engine->width%frame_views[0].pw==0 &&
+      (int)engine->height%frame_views[0].ph==0 &&
+      (int)engine->width/frame_views[0].pw==(int)engine->height/frame_views[0].ph)) &&
     !render_presentation.interpolation;
-  int early_classic_borrowed_world=early_classic_full_view &&
+  /* Viewless rooms lend the current world raster too. Owning the first raster
+   * just for GPU admission would freeze its extent across later room changes
+   * and apply an extra scale before an authored fixed-function projection. */
+  int early_classic_viewless=frame_view_count==0 &&
+    render_presentation.application_draw_enabled &&
+    !engine->composed_frame && !engine->aspect_force_active &&
+    engine_graphics_active(engine) &&
+    engine->scene_renderer_session==ANYGM_SCENE_RENDERER_OPENGL;
+  int early_classic_borrowed_world=(early_classic_full_view || early_classic_viewless) &&
     !render_presentation.application_owned &&
     app_surface_is_draw_target &&
     anygm_policy_uses_classic_runtime(&engine->win) &&
     !anygm_policy_classic_modern_presentation(&engine->win);
-  /* An early-classic, viewless, exact-size application target can keep Draw on the same resident
-   * resource as a sole full view. Later classic temporal presentation retains its CPU policy. */
-  if(!render_presentation.application_owned && frame_view_count==0 &&
-     render_presentation.application_draw_enabled && app_surface_is_draw_target &&
-     anygm_policy_uses_classic_runtime(&engine->win) &&
-     !anygm_policy_classic_modern_presentation(&engine->win) &&
-     render_presentation.application_width==(int)engine->width &&
-     render_presentation.application_height==(int)engine->height &&
-     !engine->composed_frame && !engine->aspect_force_active &&
-     engine_graphics_active(engine) &&
-     engine->scene_renderer_session==ANYGM_SCENE_RENDERER_OPENGL &&
-     gml_render_application_surface_ensure_owned(
-       &engine->render,(int)engine->width,(int)engine->height))
-    gml_render_presentation_metrics(&engine->render,&render_presentation);
   GmlRenderSamplePlanes sample_planes={0};
   gml_render_sample_planes_update(
     &engine->render,&sample_planes,GML_RENDER_SAMPLE_PLANES_APPLICATION);
