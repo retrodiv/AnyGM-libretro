@@ -29,6 +29,17 @@ GmlRenderResource *gml_render_application_resource_ensure(GmlRender *render);
 void gml_render_application_resource_dispose(GmlRender *render);
 GmlRenderResource *gml_render_scene_target_resource_ensure(GmlRender *render);
 int gml_render_scene_target_matches(const GmlRender *render);
+/* Bind only an explicit nearest root plane. The caller must observe and retire it
+ * before moving its borrowed allocation. No engine admission is implied. */
+int gml_render_classic_phase_resource_bind(GmlRender *render);
+int gml_render_classic_phase_resource_observe(GmlRender *render);
+int gml_render_classic_phase_cpu_barrier(GmlRender *render);
+void gml_render_classic_phase_resource_dispose(GmlRender *render);
+/* A second target is available only inside atomic whole-draw preparation. */
+int gml_render_classic_phase_scene_select(GmlRender *render,int vertical);
+/* Replace both explicitly owned root planes without reading their old pixels.
+ * Preparation of a partial draw must not use this whole-target boundary. */
+int gml_render_resident_classic_phase_clear(GmlRender *render,uint32_t colour);
 /* Attempt the host-owned pending application composite before a SCREEN scene draw. */
 int gml_render_compose_resident_underlay(GmlRender *render);
 void gml_render_base_resource_dispose(GmlRender *render);

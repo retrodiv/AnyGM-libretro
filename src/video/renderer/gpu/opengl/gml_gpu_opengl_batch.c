@@ -318,7 +318,8 @@ static int integer_function_sprite_valid(const GmlRenderDrawOp *op,
                 op->scene_family!=GML_RENDER_SCENE_TEXT) ||
      (op->target.image.resource_class!=GML_RENDER_RESOURCE_SCREEN &&
       op->target.image.resource_class!=GML_RENDER_RESOURCE_APPLICATION &&
-      op->target.image.resource_class!=GML_RENDER_RESOURCE_SURFACE) ||
+      op->target.image.resource_class!=GML_RENDER_RESOURCE_SURFACE &&
+      op->target.image.resource_class!=GML_RENDER_RESOURCE_SCRATCH) ||
      op->target.pixel_format!=GML_RENDER_PIXEL_ARGB8888 ||
      op->sources[0].resource_class!=GML_RENDER_RESOURCE_ATLAS || source->rendered_origin ||
      source->pixel_format!=GML_RENDER_PIXEL_RGBA8888 || source->width>16384u || source->height>16384u ||
@@ -352,7 +353,8 @@ static int integer_function_sprite_valid(const GmlRenderDrawOp *op,
           (source->ref.identity&UINT32_C(0x80000000)) &&
           (q->sampling.quantisation==GML_RENDER_QUANTISE_INTEGER_TINT_TRUNC || row)) &&
         op->target.image.resource_class!=GML_RENDER_RESOURCE_SCREEN &&
-        op->target.image.resource_class!=GML_RENDER_RESOURCE_APPLICATION)))) return 0;
+        op->target.image.resource_class!=GML_RENDER_RESOURCE_APPLICATION &&
+        op->target.image.resource_class!=GML_RENDER_RESOURCE_SCRATCH)))) return 0;
   double width=q->x[1]-q->x[0],height=q->y[2]-q->y[0];
   if(width>16384.0 || height>16384.0) return 0;
   double u0=(double)region.x/source->width,u1=((double)region.x+region.width)/source->width;

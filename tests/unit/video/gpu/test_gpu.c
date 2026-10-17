@@ -2673,11 +2673,12 @@ static int scene_integer_function_sprite_case(void){
   for(unsigned background=0;background<3u;background++)
   for(unsigned alpha_test=0;alpha_test<2u;alpha_test++)
   for(unsigned api=0;api<2u;api++) for(unsigned rounded=0;rounded<3u;rounded++)
-  for(unsigned target_kind=0;target_kind<3u;target_kind++) for(unsigned blend=0;blend<5u;blend++){
+  for(unsigned target_kind=0;target_kind<4u;target_kind++) for(unsigned blend=0;blend<5u;blend++){
     uint8_t pixels[16]={208,32,16,128,16,208,32,255,32,16,208,0,192,176,160,64};
     GmlRenderImageRef source={GML_RENDER_RESOURCE_ATLAS,31u,1u,1u};
     GmlRenderImageRef target={target_kind==0u?GML_RENDER_RESOURCE_SCREEN:
-      target_kind==1u?GML_RENDER_RESOURCE_APPLICATION:GML_RENDER_RESOURCE_SURFACE,32u,1u,1u};
+      target_kind==1u?GML_RENDER_RESOURCE_APPLICATION:
+      target_kind==2u?GML_RENDER_RESOURCE_SURFACE:GML_RENDER_RESOURCE_SCRATCH,32u,1u,1u};
     GmlRenderImageUpload upload={.image=source,.storage_width=2u,.storage_height=2u,
       .region={0,0,2u,2u},.pixel_format=GML_RENDER_PIXEL_RGBA8888,
       .stride_bytes=8u,.byte_capacity=sizeof pixels,.bytes=pixels};
@@ -2700,7 +2701,7 @@ static int scene_integer_function_sprite_case(void){
         state.rgb_source_factor=state.alpha_source_factor=GML_RENDER_BLEND_ZERO;
         state.rgb_destination_factor=GML_RENDER_BLEND_ONE_MINUS_SOURCE_COLOUR;
       }
-      if((blend==1u || blend==3u) && target_kind<2u)
+      if((blend==1u || blend==3u) && target_kind!=2u)
         state.coverage_policy=GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA;
     }
     state.sampler_count=1u;
@@ -2733,7 +2734,7 @@ static int scene_integer_function_sprite_case(void){
         "flat sprite RGB cannot reach another family or consume a clear prefix");
       gml_gpu_destroy(gpu,1);continue;
     }
-    int draws=(blend==1u || blend==3u) && target_kind<2u?2:1;
+    int draws=(blend==1u || blend==3u) && target_kind!=2u?2:1;
     REQUIRE(result.status==GML_RENDER_EXEC_ACCEPTED && result.accepted_prefix==3u &&
       anygm_test_graphics_scene_draw_calls()==draws && anygm_test_graphics_scene_copies()==0u &&
       anygm_test_graphics_read_pixels()==0u,

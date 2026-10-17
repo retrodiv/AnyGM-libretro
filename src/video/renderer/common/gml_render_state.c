@@ -740,6 +740,7 @@ static int render_state_read(GmlRender *render,CoreR *s){
      * surfaces. Preserve its current bytes before retiring the old device owner. */
     if(!gml_render_masked_bases_observe(render)){s->ok=0;return 0;}
     gml_render_application_resource_dispose(render);
+    gml_render_classic_phase_resource_dispose(render);
     gml_render_base_resource_dispose(render);
     gml_render_retained_base_dispose(render);
     render->resident_application_pass=0;

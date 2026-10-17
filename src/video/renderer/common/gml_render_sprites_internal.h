@@ -18,6 +18,24 @@ typedef struct {
 int gml_render_sprite_log_enabled(const GmlRender *render);
 int gml_render_resident_flat_fog_sprite(GmlRender *render,int sprite,int subimage,
   double x,double y,double xscale,double yscale,double rotation,uint32_t colour,double alpha);
+/* Explicit paired-root writer. It never enables the engine's phase policy or
+ * admits unowned sample planes; callers keep clear/composition/state ownership. */
+int gml_render_resident_classic_phase_sprite(GmlRender *render,int sprite,int subimage,
+  double x,double y,double xscale,double yscale,double rotation,uint32_t colour,double alpha);
+/* Each port names the existing CPU caller's opacity and vertical-span policy.
+ * These axis cells borrow immutable atlas bytes; layout and source selection
+ * remain with the text/background/tile owner. */
+typedef enum {
+  GML_RENDER_PHASE_TEXT,
+  GML_RENDER_PHASE_BACKGROUND,
+  GML_RENDER_PHASE_BACKGROUND_TILED,
+  GML_RENDER_PHASE_BACKGROUND_PART,
+  GML_RENDER_PHASE_TILE,
+  GML_RENDER_PHASE_ROOM_TILE
+} GmlRenderClassicPhaseTexturePort;
+int gml_render_resident_classic_phase_atlas(GmlRender *render,GmlTpag *page,
+  double left,double top,double xscale,double yscale,uint32_t colour,double alpha,
+  GmlRenderClassicPhaseTexturePort port);
 int gml_render_resident_masked_sprite(GmlRender *render, int sprite, int subimage,
                                       double x, double y, double xscale, double yscale,
                                       double rotation, uint32_t colour, double alpha);

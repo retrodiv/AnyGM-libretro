@@ -4456,18 +4456,17 @@ static int classic_phase_ordinary_mode(const GmlRender *r){
   double neutral_edge=((double)neutral_corrected+1.0)*(double)r->fbh;
   return (actual_edge<-0.5)!=(neutral_edge<-0.5)?3:1;
 }
-static void blit_phase_plane_classic_y(GmlRender *r, uint32_t *plane, GmlTpag *t,
-                                       double dx, double dy, double xs, double ys,
-                                       uint32_t blend, double alpha,
-                                       int sequential, int reverse_tie){
+static int classic_phase_y_spans(GmlRender *r,GmlTpag *t,
+                                  double dx,double dy,double xs,double ys,
+                                  int sequential,int reverse_tie,
+                                  GmlRenderClassicPhaseSpanFn visitor,void *context){
   int full_h=t&&t->bh>0?t->bh:(t?t->sh:0);
   int trim_y=t?t->ty:0;
   double full_top=dy-(double)trim_y;
   int top=(int)floor(full_top+0.5);
   if(!t || t->sh<=0 || full_h<=0 || trim_y<0 || trim_y+t->sh>full_h ||
      fabs(ys-1.0)>0.001 || fabs(full_top-(double)top)>0.001){
-    blit_phase_plane_previous(r,plane,t,dx,dy,xs,ys,blend,alpha);
-    return;
+    return !t || t->sh<=0?1:visitor(context,t,dx,dy,xs,ys);
   }
   double world_top=full_top+r->cam_y+(sequential?0.0:(double)r->fbh*0.5);
   double edge0=sequential?classic_phase_edge_y_sequential(r,world_top):
@@ -4476,8 +4475,7 @@ static void blit_phase_plane_classic_y(GmlRender *r, uint32_t *plane, GmlTpag *t
                           classic_phase_edge_y(r,world_top+(double)full_h);
   double span=edge1-edge0;
   if(fabs(span)<0.001){
-    blit_phase_plane_previous(r,plane,t,dx,dy,xs,ys,blend,alpha);
-    return;
+    return visitor(context,t,dx,dy,xs,ys);
   }
   int run_q=-1, run_dest=0, run_count=0, previous_q=-2, previous_dest=0;
   for(int k=0;k<full_h;k++){
@@ -4494,7 +4492,7 @@ static void blit_phase_plane_classic_y(GmlRender *r, uint32_t *plane, GmlTpag *t
     if(!visible || (run_count>0 && (q!=previous_q+1 || dest!=previous_dest+1))){
       if(run_count>0){
         GmlTpag rows=phase_tpag_rows(t,run_q-trim_y,run_count);
-        blit_phase_plane(r,plane,&rows,dx,(double)run_dest,xs,ys,blend,alpha);
+        if(!visitor(context,&rows,dx,(double)run_dest,xs,ys)) return 0;
         run_count=0;
       }
     }
@@ -4506,8 +4504,42 @@ static void blit_phase_plane_classic_y(GmlRender *r, uint32_t *plane, GmlTpag *t
   }
   if(run_count>0){
     GmlTpag rows=phase_tpag_rows(t,run_q-trim_y,run_count);
-    blit_phase_plane(r,plane,&rows,dx,(double)run_dest,xs,ys,blend,alpha);
+    if(!visitor(context,&rows,dx,(double)run_dest,xs,ys)) return 0;
   }
+  return 1;
+}
+
+typedef struct ClassicPhaseCpuSpan {
+  GmlRender *render;
+  uint32_t *plane;
+  uint32_t blend;
+  double alpha;
+} ClassicPhaseCpuSpan;
+
+static int classic_phase_cpu_span(void *context,GmlTpag *page,
+                                  double left,double top,double xs,double ys){
+  ClassicPhaseCpuSpan *span=context;
+  blit_phase_plane(span->render,span->plane,page,left,top,xs,ys,span->blend,span->alpha);
+  return 1;
+}
+
+static void blit_phase_plane_classic_y(GmlRender *r,uint32_t *plane,GmlTpag *t,
+  double dx,double dy,double xs,double ys,uint32_t blend,double alpha,
+  int sequential,int reverse_tie){
+  ClassicPhaseCpuSpan span={r,plane,blend,alpha};
+  (void)classic_phase_y_spans(r,t,dx,dy,xs,ys,sequential,reverse_tie,
+                            classic_phase_cpu_span,&span);
+}
+
+int gml_render_classic_phase_spans(GmlRender *r,GmlTpag *page,
+  double left,double top,double xs,double ys,int mode,
+  GmlRenderClassicPhaseSpanFn visitor,void *context){
+  if(!r || !visitor || r->fbh<=0 || mode<0 || mode>4) return 0;
+  if(!page || page->sh<=0) return 1;
+  if(mode==4) mode=classic_phase_ordinary_mode(r);
+  if(mode==2 || mode==3)
+    return classic_phase_y_spans(r,page,left,top,xs,ys,mode==3,mode==3,visitor,context);
+  return visitor(context,page,left,top-(mode==1?1.0:0.0),xs,ys);
 }
 /* Every odd output sample of this transform lands exactly on a texel boundary, and coverage there
  * belongs to the preceding texel: output row 2k+1 samples the edge of logical row k+1 and takes

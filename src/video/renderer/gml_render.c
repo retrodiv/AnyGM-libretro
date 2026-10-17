@@ -979,6 +979,7 @@ void gml_render_free(GmlRender *r){
   r->layer_filter_src=r->layer_filter_work=r->layer_filter_aux=NULL;
   r->layer_filter_capacity=0; r->layer_filter_active=0;
   gml_render_application_resource_dispose(r);
+  gml_render_classic_phase_resource_dispose(r);
   gml_render_base_resource_dispose(r);
   gml_render_retained_base_dispose(r);
   /* The shared batch queue can belong to a SCREEN-only pass with no owned
@@ -1068,6 +1069,12 @@ void gml_render_set_pending_fill(GmlRender *r, uint32_t color){
   if(!r || !r->fb || r->fbw<=0 || r->fbh<=0) return;
   gml_render_flush_rotated_batch(r);
   gml_render_cancel_pending_underlay(r);
+  /* An explicitly owned sample pair clears together. Rejected preparation
+   * must observe both images before the established CPU suffix writes them. */
+  if(r->classic_phase_resource && r->target_sp==0 && r->fb==r->base_fb){
+    if(gml_render_resident_classic_phase_clear(r,color)) return;
+    if(!gml_render_resident_application_cpu_barrier(r)) return;
+  }
   /* Preserve the fact that content authored the bound surface before replacing it with a deferred
    * transparent clear. The surface compositor consumes this frame-local signal after the target
    * closes; coverage alone correctly describes the final transparent pixels but loses that intent. */
@@ -1191,6 +1198,7 @@ int gml_render_resident_application_cpu_barrier(GmlRender *r){
   uint32_t *pixels=NULL;
   GmlRenderResource *resource;
   if(!r) return 0;
+  if(!gml_render_classic_phase_cpu_barrier(r)) return 0;
   if(!r->resident_application_pass){
     /* A child binding may have written the same allocation on GPU after this
      * CPU parent was suspended, or sampled it and made its GPU copy current. */

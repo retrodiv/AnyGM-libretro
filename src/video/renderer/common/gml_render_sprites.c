@@ -1265,7 +1265,9 @@ static int resident_atlas_crop_from_page_impl(GmlRender *r,GmlTpag *page,
       state.alpha_test_enabled=1u;
       state.alpha_test_reference=large_unit_cutoff;
     }
-    if(integer_background && !r->interp && r->blendmode==0 && draw_alpha<1.0 &&
+    if(integer_background &&
+       (!r->classic_phase_scene_preparing || r->classic_phase_scene_background_normalised) &&
+       !r->interp && r->blendmode==0 && draw_alpha<1.0 &&
        (selected_background || !(xs==1.0 && ys==1.0 && colour==0xFFFFFFu)) &&
        anygm_policy_uses_early_background_compositing(r->win) &&
        (atlas->blob || atlas->external_blob)){
@@ -3283,6 +3285,117 @@ rotated_done:
     left,top,xs,ys,family,colour,alpha,fog_axis?22:15,NULL);
 }
 
+typedef struct ResidentClassicPhaseSpan {
+  GmlRender *render;
+  uint32_t colour;
+  double alpha;
+  GmlRenderSceneFamily family;
+  int atlas_mode;
+} ResidentClassicPhaseSpan;
+
+static int resident_classic_phase_span(void *context,GmlTpag *page,
+                                       double left,double top,double xs,double ys){
+  ResidentClassicPhaseSpan *span=context;
+  GmlTpag selected=*page;
+  /* The CPU row view deliberately detaches pixel caches. Its device bounds
+   * must also describe these rows rather than the complete source item. */
+  selected.scene_opaque_checked=selected.scene_endpoint_rgb_checked=0;
+  if(span->family==GML_RENDER_SCENE_TEXT || span->family==GML_RENDER_SCENE_TILE){
+    selected.tw=selected.sw;selected.th=selected.sh;
+  }
+  return resident_atlas_crop_from_page(span->render,&selected,0,0,selected.sw,selected.sh,
+    left,top,xs,ys,span->family,span->colour,span->alpha,span->atlas_mode,NULL);
+}
+
+int gml_render_resident_classic_phase_sprite(GmlRender *r,int sprite_id,int subimg,
+  double x,double y,double xs,double ys,double rotation,uint32_t colour,double alpha){
+  if(!r || !r->classic || r->interp || !r->classic_phase_resource ||
+     r->classic_phase_scene_target || r->classic_phase_scene_preparing ||
+     r->target_sp || r->target_id!=-1 || r->fb!=r->base_fb ||
+     r->pending_fill || r->pending_underlay || r->pending_presentation ||
+     r->gui_pass_active || r->fog_flat || r->blendmode<0 || r->blendmode>2 ||
+     r->color_write_mask!=15u ||
+     sprite_id<0 || sprite_id>=r->n_spr || !isfinite(rotation) ||
+     !gml_render_classic_phase_resource_bind(r)) return 0;
+  GmlSprite *sprite=&r->spr[sprite_id];
+  if(sprite->runtime_rgba || sprite->spine || sprite->ns_enabled ||
+     !sprite->frame || sprite->n_frames<=0) return 0;
+  int index=sprite->frame[gml_render_runtime_frame_index(sprite,subimg)];
+  if(index<0 || index>=r->n_tpag) return 0;
+  GmlTpag *page=&r->tpag[index];
+  if(page->atlas<0 || page->atlas>=r->n_atlas || r->atlas[page->atlas].runtime_font_page) return 0;
+  double phase=fmod(rotation,360.0);if(phase<0.0) phase+=360.0;
+  int axis=phase<0.001 || fabs(phase-360.0)<0.001;
+  double left=x-(double)sprite->originx*xs+(double)page->tx*xs-r->cam_x;
+  double top=y-(double)sprite->originy*ys+(double)page->ty*ys-r->cam_y;
+  int mode=fabs((double)sprite->w*xs)>(double)r->fbw+0.001 &&
+    fabs((double)sprite->h*ys)>(double)r->fbh+0.001?0:4;
+  ResidentClassicPhaseSpan span={r,colour,alpha,GML_RENDER_SCENE_SPRITE,15};
+  for(unsigned attempt=0;attempt<2u;attempt++){
+    if(!gml_render_application_scene_prepare_begin(r)) return 0;
+    r->classic_phase_scene_preparing=1;
+    int accepted=resident_nearest_texture_function(r,sprite,page,x,y,xs,ys,rotation,
+                                                  colour,alpha,GML_RENDER_SCENE_SPRITE);
+    int application_opaque=r->app_surface_opaque,coverage=r->app_presentation_coverage_active;
+    if(accepted) accepted=gml_render_classic_phase_scene_select(r,1);
+    if(accepted) accepted=axis?
+      gml_render_classic_phase_spans(r,page,left,top,xs,ys,mode,resident_classic_phase_span,&span):
+      resident_nearest_texture_function(r,sprite,page,x,y,xs,ys,rotation,
+                                         colour,alpha,GML_RENDER_SCENE_SPRITE);
+    /* A CPU phase writer never aliases application-surface metadata. Keep
+     * only the base preparation's changes, even for a full-target peer. */
+    r->app_surface_opaque=application_opaque;r->app_presentation_coverage_active=coverage;
+    if(gml_render_application_scene_prepare_finish(r,accepted)) return 1;
+    if(attempt || !gml_render_application_scene_flush(r)) return 0;
+  }
+  return 0;
+}
+
+int gml_render_resident_classic_phase_atlas(GmlRender *r,GmlTpag *page,
+  double left,double top,double xs,double ys,uint32_t colour,double alpha,
+  GmlRenderClassicPhaseTexturePort port){
+  if(!r || !page || !r->classic || r->interp || !r->classic_phase_resource ||
+     r->classic_phase_scene_target || r->classic_phase_scene_preparing ||
+     r->target_sp || r->target_id!=-1 || r->fb!=r->base_fb ||
+     r->pending_fill || r->pending_underlay || r->pending_presentation ||
+     r->gui_pass_active || r->fog_flat || r->blendmode<0 || r->blendmode>2 ||
+     r->color_write_mask!=15u || port<GML_RENDER_PHASE_TEXT || port>GML_RENDER_PHASE_ROOM_TILE ||
+     page->atlas<0 || page->atlas>=r->n_atlas || r->atlas[page->atlas].runtime_font_page ||
+     !isfinite(alpha) || alpha<=0.0 || alpha>1.0 ||
+     !gml_render_classic_phase_resource_bind(r)) return 0;
+  GmlRenderSceneFamily family=port==GML_RENDER_PHASE_TEXT?GML_RENDER_SCENE_TEXT:
+    port>=GML_RENDER_PHASE_TILE?GML_RENDER_SCENE_TILE:GML_RENDER_SCENE_BACKGROUND;
+  if((family==GML_RENDER_SCENE_TILE && !page->project_authored_edges) ||
+     (family!=GML_RENDER_SCENE_TILE && page->project_authored_edges) ||
+     (port==GML_RENDER_PHASE_ROOM_TILE && alpha!=1.0)) return 0;
+  int normalised=(port==GML_RENDER_PHASE_BACKGROUND || port==GML_RENDER_PHASE_BACKGROUND_PART) &&
+    anygm_policy_uses_early_background_compositing(r->win) &&
+    (r->atlas[page->atlas].blob || r->atlas[page->atlas].external_blob);
+  if(normalised && alpha<1.0) alpha=floor(alpha*255.0)/255.0;
+  if(alpha==0.0) return 1;
+  int atlas_mode=family==GML_RENDER_SCENE_TEXT?13:family==GML_RENDER_SCENE_TILE?11:
+    port==GML_RENDER_PHASE_BACKGROUND_PART?9:10;
+  int phase_mode=port==GML_RENDER_PHASE_BACKGROUND_TILED?2:4;
+  ResidentClassicPhaseSpan span={r,colour,alpha,family,atlas_mode};
+  for(unsigned attempt=0;attempt<2u;attempt++){
+    if(!gml_render_application_scene_prepare_begin(r)) return 0;
+    r->classic_phase_scene_preparing=1;
+    r->classic_phase_scene_background_normalised=normalised;
+    int accepted=resident_classic_phase_span(&span,page,left,top,xs,ys);
+    int application_opaque=r->app_surface_opaque,coverage=r->app_presentation_coverage_active;
+    if(accepted) accepted=gml_render_classic_phase_scene_select(r,1);
+    /* The CPU auxiliary writer uses the same input opacity but its plain
+     * source coverage, never the packed background's rounded alpha product. */
+    r->classic_phase_scene_background_normalised=0;
+    if(accepted) accepted=gml_render_classic_phase_spans(r,page,left,top,xs,ys,phase_mode,
+                                                       resident_classic_phase_span,&span);
+    r->app_surface_opaque=application_opaque;r->app_presentation_coverage_active=coverage;
+    if(gml_render_application_scene_prepare_finish(r,accepted)) return 1;
+    if(attempt || !gml_render_application_scene_flush(r)) return 0;
+  }
+  return 0;
+}
+
 /* Runtime RGBA has its own unsnapped inverse map. Prepare geometry only:
  * ordinary axis interiors keep hardware interpolation, while nearest ties and
  * rotated cells use constant texel centres. Never read the destination or the
@@ -3579,6 +3692,20 @@ int gml_render_resident_rotated_font_glyph(GmlRender *r,GmlSprite *sprite,GmlTpa
    * retain the existing CPU path instead of broadening the pixel contract. */
   if(anygm_policy_has_modern_layer_semantics(r->win) && r->alphablend &&
      r->blendmode==0 && !gml_render_target_preserves_alpha(r)) return 0;
+  /* Rotated CPU glyphs write only the base image. Retain the phase bytes and
+   * their independent coverage while staging the same existing text owner. */
+  if(r->classic_phase_resource && !r->classic_phase_scene_preparing){
+    if(!gml_render_classic_phase_resource_bind(r)) return 0;
+    for(unsigned attempt=0;attempt<2u;attempt++){
+      if(!gml_render_application_scene_prepare_begin(r)) return 0;
+      r->classic_phase_scene_preparing=1;
+      int accepted=resident_nearest_texture_function(r,sprite,page,x,y,xs,ys,rotation,
+                                                     colour,alpha,GML_RENDER_SCENE_TEXT);
+      if(gml_render_application_scene_prepare_finish(r,accepted)) return 1;
+      if(attempt || !gml_render_application_scene_flush(r)) return 0;
+    }
+    return 0;
+  }
   return resident_nearest_texture_function(r,sprite,page,x,y,xs,ys,rotation,
                                            colour,alpha,GML_RENDER_SCENE_TEXT);
 }
@@ -3811,6 +3938,9 @@ void gml_render_sprite_ext_unmasked(GmlRender *r, int sprite, int subimg, double
      * existing CPU leaves. Normalize only the GPU argument; CPU fallback and
      * specialised preparation retain the original caller value and order. */
     double resident_alpha=isfinite(alpha) && alpha>1.0?1.0:alpha;
+    if(r->classic_phase_resource &&
+       gml_render_resident_classic_phase_sprite(r,sprite,subimg,x,y,xs,ys,rot,blend,
+                                               resident_alpha)) return;
     if(sprite>=0 && sprite<r->n_spr &&
        resident_outside_sprite_noop(r,&r->spr[sprite],subimg,x,y,xs,ys,rot)) return;
     if(isfinite(alpha) && alpha<=0.0 &&

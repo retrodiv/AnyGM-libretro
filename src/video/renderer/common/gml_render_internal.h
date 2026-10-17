@@ -342,6 +342,16 @@ typedef struct GmlRender {
    * them without a GPU.  This is a borrowed scratch buffer owned by the host. */
   uint32_t *classic_phase_y;
   uint32_t *app_phase_y;
+  /* Explicitly paired nearest root sample. The resource borrows the host plane;
+   * selecting it changes typed packet ownership, never framebuffer geometry. */
+  GmlRenderResource *classic_phase_resource;
+  GmlRenderImageRef classic_phase_base_image;
+  uint32_t *classic_phase_resource_pixels;
+  int classic_phase_resource_width,classic_phase_resource_height;
+  int classic_phase_scene_target;
+  int classic_phase_scene_preparing;
+  int classic_phase_scene_background_normalised;
+  int classic_phase_opaque_known,classic_phase_all_opaque,classic_phase_all_transparent;
   /* Optional exact-2x interpolation samples.  Each logical-size plane stores the result of
    * composing textured draws at the horizontal, vertical or diagonal half-pixel sample.  This
    * reproduces a scaled classic viewport without requiring a GPU-sized render target. */
@@ -661,11 +671,13 @@ typedef struct GmlRender {
 static inline int gml_render_target_is_first_generation_application_surface(
     const GmlRender *render){
   return render && render->win &&
+    !render->classic_phase_scene_target &&
     anygm_policy_uses_first_generation_studio(render->win) &&
     render->app_surface && render->fb==render->app_surface;
 }
 static inline int gml_render_target_preserves_alpha(const GmlRender *render){
   if(!render) return 0;
+  if(render->classic_phase_scene_target) return 0;
   if(render->target_sp>0) return 1;
   return render->app_surface && render->fb==render->app_surface &&
          anygm_policy_uses_first_generation_studio(render->win);
@@ -856,7 +868,16 @@ int gml_render_rotated_nearest_sample_rows(GmlRender *r,GmlSprite *sprite,GmlTpa
  * numbered allocation. Keep every other binding behind the established fence. */
 static inline int gml_render_classic_vertical_phase_blocks_scene(const GmlRender *r){
   return r && r->classic_phase_y &&
+    !r->classic_phase_scene_preparing &&
     !(r->target_sp>0 && r->target_id>0 && r->fb!=r->base_fb);
 }
+
+/* Visit the preserved CPU vertical coverage geometry without invoking a pixel
+ * writer. A refusal stops before another span; callers stage the complete draw. */
+typedef int (*GmlRenderClassicPhaseSpanFn)(void *context,GmlTpag *page,
+  double left,double top,double xscale,double yscale);
+int gml_render_classic_phase_spans(GmlRender *render,GmlTpag *page,
+  double left,double top,double xscale,double yscale,int phase_mode,
+  GmlRenderClassicPhaseSpanFn visitor,void *context);
 
 #endif
