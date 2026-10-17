@@ -7447,6 +7447,53 @@ static int resident_atlas_uv_refusal_preserves_queued_prefix(void){
   return 1;
 }
 
+static int resident_empty_sprite_part_preserves_pending_work(void){
+  static const double selections[][2]={{0,3},{3,0},{-1,3},{3,-1},{0,0},{-2,-3},{0,3},{3,0}};
+  for(unsigned classic=0;classic<2u;classic++) for(unsigned runtime=0;runtime<2u;runtime++)
+  for(unsigned variant=0;variant<8u;variant++){
+    GmlRender *r=calloc(1,sizeof *r);
+    FakeDevice fake={0};GmlRenderDeviceServices device=service(&fake);
+    GmlRenderJournalMetrics before={0},after={0};
+    GmlRenderDrawState state_before={0},state_after={0};
+    CHECK(r && !gml_render_init(r,NULL) && gml_render_application_surface_ensure_owned(r,4,4));
+    r->spr=calloc(1,sizeof *r->spr);r->tpag=calloc(1,sizeof *r->tpag);
+    CHECK(r->spr && r->tpag);r->n_spr=r->n_tpag=1;
+    r->spr[0].w=r->spr[0].h=1;r->spr[0].n_frames=1;
+    r->spr[0].frame=calloc(1,sizeof(int));CHECK(r->spr[0].frame);
+    r->tpag[0]=(GmlTpag){.sw=1,.sh=1,.tw=1,.th=1,.bw=1,.bh=1};
+    if(runtime){r->spr[0].runtime_rgba=malloc(4u);CHECK(r->spr[0].runtime_rgba);
+      memset(r->spr[0].runtime_rgba,255,4u);}
+    r->classic=(int)classic;
+    gml_render_bind_device(r,&device);
+    CHECK(gml_render_begin_resident_owned_application(r,0,0,0));
+    r->gui_pass_active=(int)(variant&1u);r->interp=(int)(variant&1u);
+    r->alphablend=(int)(variant%3u!=0u);r->blendmode=(int)variant;
+    r->color_write_mask=variant;r->alpha_test_enable=1;r->alpha_test_ref=255;
+    r->active_shader=variant==6u?0:-1;r->spr[0].ns_enabled=variant==7u;
+    gml_render_set_pending_fill(r,0x7B274961u);
+    gml_render_resource_journal_metrics(r->app_surface_resource,&before);
+    CHECK(gml_render_draw_state_get(r,&state_before));
+    int submits=fake.submits,reads=fake.readbacks,uploads=fake.uploads;
+    gml_draw_sprite_part_ext(r,0,0,0,0,selections[variant][0],selections[variant][1],
+                             1,1,2,-3,0xB94D27u,.37);
+    if(variant<6u){
+      gml_render_resource_journal_metrics(r->app_surface_resource,&after);
+      CHECK(gml_render_draw_state_get(r,&state_after) &&
+            !memcmp(&state_before,&state_after,sizeof state_before));
+      CHECK(r->resident_application_pass && r->pending_fill &&
+            fake.submits==submits && fake.readbacks==reads && fake.uploads==uploads &&
+            before.logical_version==after.logical_version && before.cpu_version==after.cpu_version &&
+            before.gpu_version==after.gpu_version && before.authority==after.authority &&
+            before.journal_operations==after.journal_operations && before.cpu_replays==after.cpu_replays);
+    }else CHECK(!r->resident_application_pass);
+    r->active_shader=-1;r->spr[0].ns_enabled=0;
+    CHECK(gml_render_resident_application_cpu_barrier(r));
+    CHECK(r->app_surface_owned[0]==0x7B274961u);
+    gml_render_free(r);free(r);
+  }
+  return 1;
+}
+
 static int resident_zero_alpha_sprite_part_noop(void){
   GmlRender *render=(GmlRender*)calloc(1,sizeof *render);
   FakeDevice fake={0};
@@ -16174,6 +16221,7 @@ int main(void){
   passed+=resident_application_sprite_cpu_fallback();
   passed+=resident_empty_sprite_preserves_queued_draws();
   passed+=resident_black_additive_sprite_noop();
+  passed+=resident_empty_sprite_part_preserves_pending_work();
   passed+=resident_zero_alpha_sprite_part_noop();
   passed+=resident_offscreen_sprite_part_preserves_queued_draws();
   passed+=resident_filtered_gui_offscreen_sprite_noop();
@@ -16311,6 +16359,6 @@ int main(void){
   passed+=source_free_primitive_rect_replay();
   passed+=stretched_float_exact_replay();
   passed+=filtered_font_exact_recovery();
-  printf("render resource cases: passed=%d failed=%d\n",passed,251-passed);
-  return passed==251?EXIT_SUCCESS:EXIT_FAILURE;
+  printf("render resource cases: passed=%d failed=%d\n",passed,252-passed);
+  return passed==252?EXIT_SUCCESS:EXIT_FAILURE;
 }

@@ -4933,6 +4933,16 @@ static int resident_modern_unit_sprite_part(GmlRender *r,GmlTpag *page,const Gml
 void gml_draw_sprite_part_ext(GmlRender *r, int sprite, int subimg, double sx, double sy,
                               double sw, double sh, double x, double y,
                               double xs, double ys, uint32_t blend, double alpha){
+  /* R03-SPR-PART-EMPTY: both ordinary CPU source owners return without
+   * sampling a nonpositive selection. Keep queued work and pending clears
+   * resident across every ordinary target/state; specialised preparation
+   * still reaches its established ordered boundary. */
+  if(r && r->resident_application_pass && sprite>=0 && sprite<r->n_spr &&
+     r->spr[sprite].n_frames>0 && !r->spr[sprite].spine && !r->spr[sprite].ns_enabled &&
+     r->active_shader<0 && !gml_d3_is_active(r) &&
+     isfinite(sx) && isfinite(sy) && isfinite(sw) && isfinite(sh) &&
+     isfinite(x) && isfinite(y) && isfinite(xs) && isfinite(ys) && isfinite(alpha) &&
+     (sw<=0.0 || sh<=0.0) && gml_render_scene_target_matches(r)) return;
   /* The ordinary CPU part leaf writes nothing at finite nonpositive alpha. Keep a
    * queued prefix resident, but do not bypass specialised shader or blend semantics. */
   if(r && r->resident_application_pass && isfinite(alpha) && alpha<=0.0 &&
