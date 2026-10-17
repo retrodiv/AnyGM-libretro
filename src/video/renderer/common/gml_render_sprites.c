@@ -4794,7 +4794,7 @@ int gml_render_resident_tiled_sprite(GmlRender *r,int sprite,int subimg,
   GmlSprite *s=&r->spr[sprite];
   if(!isfinite(x) || !isfinite(y) || !isfinite(xs) || !isfinite(ys) || !isfinite(alpha) ||
      gml_d3_is_active(r) || r->fog_flat || resident_sprite_program_blocks(r) ||
-     r->classic_phase_y || r->pending_underlay || r->pending_presentation ||
+     r->classic_phase_y || r->pending_presentation ||
      r->rotated_batch_count || r->rotated_batch_building ||
      !gml_render_scene_target_matches(r)) return 0;
   for(unsigned index=0;index<3u;index++)
@@ -4832,6 +4832,10 @@ int gml_render_resident_tiled_sprite(GmlRender *r,int sprite,int subimg,
   double nx=ceil((r->fbw-x0)/bw),ny=ceil((r->fbh-y0)/bh);
   if(nx<1.0 || ny<1.0 || nx>CELL_LIMIT || ny>CELL_LIMIT || nx*ny>CELL_LIMIT) return 0;
   double opacity=alpha>1.0?1.0:alpha;
+  /* Empty calls above preserve presentation intent. A visible GUI run must
+   * order the existing automatic prefix before staging any immutable cell. */
+  if(r->pending_underlay && (r->classic || !resident_mapped_screen_gui_font(r) ||
+     !gml_render_compose_resident_underlay(r))) return 0;
   gml_render_flush_pending_fill(r);
   if(r->pending_fill) return 0;
   for(unsigned attempt=0;attempt<2u;attempt++){

@@ -13027,13 +13027,14 @@ static int resident_nearest_sprite_function(void){return resident_sprite_functio
 static int resident_first_generation_rotated_point_sprite_function(void){return resident_sprite_function(2);}
 
 /* Authority and ownership only; the paired device matrix owns tiled pixels. */
-static int resident_tiled_sprite_function(void){
+static int resident_tiled_sprite_function_impl(int underlay){
   enum { W=24,H=20 };
   const int generations[]={530,700,800,13,15,17};
   for(unsigned generation=0;generation<6u;generation++)
   for(unsigned kind=0;kind<4u;kind++) for(unsigned gui=0;gui<2u;gui++)
   for(unsigned interpolation=0;interpolation<2u;interpolation++)
   for(unsigned state=0;state<4u;state++){
+    if(underlay && (kind || !gui || state!=3u)) continue;
     GmlRender *r=calloc(1,sizeof *r);GmlWin content={0};
     FakeDevice fake={.on_demand=1,.readback_colour=0x7F25C080u};
     GmlRenderDeviceServices device=service(&fake);GmlRenderJournalMetrics metrics={0};
@@ -13071,11 +13072,24 @@ static int resident_tiled_sprite_function(void){
     uint64_t version=gml_render_resource_image_ref(target).content_version;
     memcpy(shadow,r->fb,sizeof shadow);int submitted=fake.submits;
     double mapping=gml_render_gui_transform_active(r)?2.0:1.0;
+    double opacity=state==3u?0.0:state?0.4:1.0;
+    if(underlay){
+      gml_render_set_pending_fill(r,0x7F315779u);
+      gml_render_set_pending_underlay(r,0,0,W,H);
+      if(underlay>=2) opacity=0.4;
+      if(underlay==2) r->color_write_mask=0u;
+    }
     for(unsigned draw=0;draw<8u;draw++)
-      gml_draw_sprite_tiled_ext(r,0,0,-3.25,.5,-2.0/mapping,3.0/mapping,
-        state?0x70B0D0u:0xFFFFFFu,state==3u?0.0:state?0.4:1.0);
+      gml_draw_sprite_tiled_ext(r,0,0,-3.25,.5,underlay==3?0.0:-2.0/mapping,3.0/mapping,
+        state?0x70B0D0u:0xFFFFFFu,opacity);
     CHECK(r->resident_application_pass && fake.submits==submitted &&
       gml_render_resource_image_ref(target).content_version==version);
+    if(underlay){
+      CHECK(r->pending_fill && r->pending_fill_color==0x7F315779u &&
+        r->pending_underlay && r->underlay_w==W && r->underlay_h==H &&
+        !fake.readbacks && !fake.rgb_queries && !memcmp(shadow,r->fb,sizeof shadow));
+      gml_render_abandon_device(r);gml_render_free(r);free(r);continue;
+    }
     CHECK(gml_render_scene_submit_pending(r) && fake.submits==submitted+(state!=3u) &&
       !fake.readbacks && !fake.rgb_queries && !memcmp(shadow,r->fb,sizeof shadow));
     gml_render_resource_journal_metrics(target,&metrics);
@@ -13087,6 +13101,12 @@ static int resident_tiled_sprite_function(void){
     CHECK(gml_render_resource_acquire_cpu_read(target,&pixels) && !fake.forbidden_calls);
     fake.forbid_calls=0;gml_render_free(r);free(r);
   }
+  return 1;
+}
+
+static int resident_tiled_sprite_function(void){return resident_tiled_sprite_function_impl(0);}
+static int resident_tiled_sprite_underlay_noops(void){
+  for(int variant=1;variant<=3;variant++) if(!resident_tiled_sprite_function_impl(variant)) return 0;
   return 1;
 }
 
@@ -15030,6 +15050,7 @@ int main(void){
   passed+=resident_nearest_sprite_function();
   passed+=resident_first_generation_rotated_point_sprite_function();
   passed+=resident_tiled_sprite_function();
+  passed+=resident_tiled_sprite_underlay_noops();
   passed+=resident_physical_filtered_sprite_function();
   passed+=resident_matched_filtered_sprite_function();
   passed+=resident_cpu_passthrough_sprite_scope();
@@ -15091,6 +15112,6 @@ int main(void){
   passed+=source_free_primitive_rect_replay();
   passed+=stretched_float_exact_replay();
   passed+=filtered_font_exact_recovery();
-  printf("render resource cases: passed=%d failed=%d\n",passed,221-passed);
-  return passed==221?EXIT_SUCCESS:EXIT_FAILURE;
+  printf("render resource cases: passed=%d failed=%d\n",passed,222-passed);
+  return passed==222?EXIT_SUCCESS:EXIT_FAILURE;
 }
