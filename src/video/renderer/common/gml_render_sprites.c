@@ -1699,10 +1699,32 @@ static uint32_t modern_bounded_point_axis_regions(double leading,double scale,
 /* The existing large-axis CPU kernel selects a fixed-point inverse map, not the small
  * point writer's fractional leading edge. Reuse its prepared rows as geometry only. */
 static uint32_t modern_mapped_axis_regions(const GmlRenderRotatedCoverageRegion *maps,
-  uint32_t rows,int horizontal,int source_extent,ModernPointRegion regions[POINT_AXIS_REGION_LIMIT]){
+  uint32_t rows,int horizontal,int source_extent,double step,int source_offset,int atlas_extent,
+  double *bias,ModernPointRegion regions[POINT_AXIS_REGION_LIMIT]){
   uint32_t count=0,length=horizontal?maps[0].region.width:rows;
   int start=horizontal?maps[0].region.x:maps[0].region.y;
   if(length>4096u) return 0;
+  *bias=0.0;
+  double first=(double)(horizontal?maps[0].fixed_x:maps[0].fixed_y)/1048576.0;
+  /* The existing runtime nearest owner intersects legal texel intervals before
+   * choosing one UV phase. Reuse that geometry rule for the prepared row map:
+   * coherent ties need one affine span, not one constant strip per pixel.
+   * Keep an interior margin and the original atlas-vertex bounds. A conflicting
+   * map retains the unchanged bounded constant-centre partition below. */
+  double lower=fmax(-0.25,-source_offset-first+0.5*step);
+  double upper=fmin(0.25,atlas_extent-source_offset-first-((double)length-0.5)*step);
+  for(uint32_t pixel=0;pixel<length && lower<=upper;pixel++){
+    int64_t fixed=horizontal?maps[0].fixed_x+maps[0].delta_x*(int64_t)pixel:maps[pixel].fixed_y;
+    double sample=(double)fixed/1048576.0,projected=first+(double)pixel*step;
+    if(!isfinite(sample) || !isfinite(projected) || sample<0.0 || sample>=source_extent) return 0;
+    lower=fmax(lower,floor(sample)+0.125-projected);
+    upper=fmin(upper,floor(sample)+0.875-projected);
+  }
+  if(length && lower<=upper){
+    *bias=fmin(fmax(0.0,lower),upper);
+    regions[0]=(ModernPointRegion){start,(double)start+length,-1};
+    return 1u;
+  }
   for(uint32_t pixel=0;pixel<length;pixel++){
     int64_t fixed=horizontal?maps[0].fixed_x+maps[0].delta_x*(int64_t)pixel:maps[pixel].fixed_y;
     double sample=(double)fixed/1048576.0;
@@ -1761,8 +1783,10 @@ static int resident_modern_point_regions(GmlRender *r,GmlTpag *page,
     if(first==last) return 1;
     basis.region.x+=(int)first;basis.region.width=last-first;
     basis.fixed_x+=basis.delta_x*(int64_t)first;
-    nx=modern_mapped_axis_regions(&basis,1u,1,page->sw,columns);
-    ny=modern_mapped_axis_regions(maps,map_count,0,page->sh,rows);
+    nx=modern_mapped_axis_regions(&basis,1u,1,page->sw,(double)basis.delta_x/1048576.0,
+      page->sx,(int)source->width,&bias_x,columns);
+    ny=modern_mapped_axis_regions(maps,map_count,0,page->sh,1.0/ys,
+      page->sy,(int)source->height,&bias_y,rows);
   } else {
     double x0=fmax(0.0,original->x[0]),x1=fmin(r->fbw,original->x[1]);
     double y0=fmax(0.0,original->y[0]),y1=fmin(r->fbh,original->y[2]);
@@ -1816,9 +1840,9 @@ static int resident_modern_point_regions(GmlRender *r,GmlTpag *page,
       double sy=rows[y].texel<0?(quad->y[corner]-anchor_y)/ys-bias_y:rows[y].texel+0.5;
       if(maps){
         if(columns[x].texel<0) sx=(double)basis.fixed_x/1048576.0+
-          (quad->x[corner]-basis.region.x-0.5)*(double)basis.delta_x/1048576.0;
+          (quad->x[corner]-basis.region.x-0.5)*(double)basis.delta_x/1048576.0+bias_x;
         if(rows[y].texel<0) sy=(double)maps[0].fixed_y/1048576.0+
-          (quad->y[corner]-maps[0].region.y-0.5)/ys;
+          (quad->y[corner]-maps[0].region.y-0.5)/ys+bias_y;
       }
       quad->u[corner]=(page->sx+sx)/source->width;
       quad->v[corner]=(page->sy+sy)/source->height;
