@@ -550,8 +550,9 @@ static int resident_atlas_crop_from_page_impl(GmlRender *r,GmlTpag *page,
    * multiplication stay exact without a predecessor image or float emulation. */
   int integer_sprite_part=physical_sprite_page==5;
   int sprite_part_function=physical_sprite_page==18;
+  int tiled_sprite_function=physical_sprite_page==19;
   int rotated_sprite_function=physical_sprite_page==16;
-  int scaled_sprite=physical_sprite_page==15 || rotated_sprite_function || runtime_function || sprite_part_function;
+  int scaled_sprite=physical_sprite_page==15 || rotated_sprite_function || runtime_function || sprite_part_function || tiled_sprite_function;
   int integer_sprite=physical_sprite_page==7 || scaled_sprite;
   int single_texel_sprite=family==GML_RENDER_SCENE_SPRITE &&
     (physical_sprite_page==15 || physical_sprite_page==16 || sprite_part_function) &&
@@ -559,7 +560,7 @@ static int resident_atlas_crop_from_page_impl(GmlRender *r,GmlTpag *page,
   /* Signed unit samples at whole physical anchors select the same texel
    * in the ordinary point writer and Studio's large-axis cache. */
   int integral_unit_sprite=family==GML_RENDER_SCENE_SPRITE &&
-    (physical_sprite_page==15 || sprite_part_function) &&
+    (physical_sprite_page==15 || sprite_part_function || tiled_sprite_function) &&
     fabs(xs)==1.0 && fabs(ys)==1.0 && isfinite(left) && isfinite(top) &&
     left==floor(left) && top==floor(top);
   int selected_background=physical_sprite_page==9;
@@ -613,7 +614,7 @@ static int resident_atlas_crop_from_page_impl(GmlRender *r,GmlTpag *page,
        * likewise never select the packaged sprite's large-axis CPU leaf. */
       (!classic_background_point && !classic_sprite_point && !selected_background &&
        !(rotated_sprite_function && family==GML_RENDER_SCENE_SPRITE) &&
-       !runtime_function && physical_sprite_page!=8 &&
+       !runtime_function && !tiled_sprite_function && physical_sprite_page!=8 &&
        !integral_unit_sprite && !gml_render_target_preserves_alpha(r) &&
        (double)crop_width*fabs(xs)*(double)crop_height*fabs(ys)>=131072.0) ||
       !r->device.context || !r->device.observe_on_demand ||
@@ -732,7 +733,7 @@ static int resident_atlas_crop_from_page_impl(GmlRender *r,GmlTpag *page,
       * stored sprite dimensions. Runtime replacements may leave them zero
       * or retain older values; the actual atlas crop is still bounded below. */
      (!integer_background && (!physical_sprite_page || family!=GML_RENDER_SCENE_SPRITE ||
-       ((r->classic || r->interp) && physical_sprite_page!=15 && physical_sprite_page!=16 && !sprite_part_function)) &&
+       ((r->classic || r->interp) && physical_sprite_page!=15 && physical_sprite_page!=16 && !sprite_part_function && !tiled_sprite_function)) &&
       (page->tw!=page->sw || page->th!=page->sh)) ||
      crop_x<0 || crop_y<0 || crop_width<=0 || crop_height<=0 ||
      (uint64_t)(uint32_t)crop_x+(uint32_t)crop_width>(uint32_t)page->sw ||
@@ -972,11 +973,11 @@ static int resident_atlas_crop_from_page_impl(GmlRender *r,GmlTpag *page,
     int contiguous=firstgen && !tile_function && !r->blendmode &&
       (!r->alpha_test_enable || !r->alpha_test_ref) &&
       r->alphablend && colour==0xFFFFFFu && draw_alpha==1.0;
-    if(contiguous && (xs>1.0 || ((scaled_background || text_function) && xs>0.0 &&
+    if(contiguous && (xs>1.0 || ((scaled_background || text_function || tiled_sprite_function) && xs>0.0 &&
        fabs(1.0/xs-nearbyint(1.0/xs))>=1e-9)) &&
        (uint64_t)page->sx+page->sw<source.width)
       integer_point_page.sw++;
-    if(contiguous && (ys>1.0 || ((scaled_background || text_function) && ys>0.0 &&
+    if(contiguous && (ys>1.0 || ((scaled_background || text_function || tiled_sprite_function) && ys>0.0 &&
        fabs(1.0/ys-nearbyint(1.0/ys))>=1e-9)) &&
        (uint64_t)page->sy+page->sh<source.height)
       integer_point_page.sh++;
@@ -1034,6 +1035,8 @@ static int resident_atlas_crop_from_page_impl(GmlRender *r,GmlTpag *page,
      page->scene_binary_alpha &&
      (left>=r->fbw || top>=r->fbh ||
       left+scaled_width<=0.0 || top+scaled_height<=0.0)) return 1;
+  if(tiled_sprite_function && (left>=r->fbw || top>=r->fbh ||
+     left+scaled_width<=0.0 || top+scaled_height<=0.0)) return 1;
   if(left>=r->fbw || top>=r->fbh) return 0;
   if(!integer_atlas && ((xs<0.0 && (left<0.0 || left+scaled_width>r->fbw)) ||
      (ys<0.0 && (top<0.0 || top+scaled_height>r->fbh)))) return 0;
@@ -2001,16 +2004,17 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
   /* Ordinary physical-page sprites keep the CPU axis geometry while hardware
    * filtering and fixed blending retain sampled application/surface alpha. */
   int hardware_physical_part=nearest_mode==8 && part_view;
-  int hardware_physical_sprite=r && (nearest_mode==7 || hardware_physical_part) && r->interp &&
+  int hardware_physical_tiled=nearest_mode==9;
+  int hardware_physical_sprite=r && (nearest_mode==7 || hardware_physical_part || hardware_physical_tiled) && r->interp &&
     family==GML_RENDER_SCENE_SPRITE && !rotated_sprite && !corner_colours &&
     (!part_view || hardware_physical_part) && !opaque_target_alpha && !transparent_stretched_trim &&
     !box_stretched && !positioned_axis && !r->fog_flat && xs!=0.0 && ys!=0.0 &&
     fabs(xs)>=0.125 && fabs(xs)<=64.0 && fabs(ys)>=0.125 && fabs(ys)<=64.0 &&
     (anygm_policy_uses_first_generation_studio(r->win) ||
-     (hardware_physical_part && anygm_policy_has_modern_layer_semantics(r->win))) &&
+     ((hardware_physical_part || hardware_physical_tiled) && anygm_policy_has_modern_layer_semantics(r->win))) &&
     r->device.context && r->device.observe_on_demand &&
     r->device.observe_on_demand(r->device.context);
-  if((nearest_mode==7 || nearest_mode==8) && !hardware_physical_sprite) return 0;
+  if((nearest_mode==7 || nearest_mode==8 || nearest_mode==9) && !hardware_physical_sprite) return 0;
   modern_filtered_identity_maximise=modern_filtered_identity_maximise && hardware_screen_filtered;
   /* R03-SPR-FIRSTGEN-SIGNED-POINT: retain first-generation alpha and edge coverage.
    * Contiguous-white specialisations keep their separate established recipes. */
@@ -2262,7 +2266,7 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
   } else {
     /* The positioned axis CPU leaf delegates to blit_one. Its modern world-target half-camera
      * ties select the preceding pixel; other filtered quads keep their established rounding. */
-    if((positioned_axis || modern_screen_filtered) && anygm_policy_has_modern_layer_semantics(r->win) &&
+    if((positioned_axis || modern_screen_filtered || hardware_physical_tiled) && anygm_policy_has_modern_layer_semantics(r->win) &&
        !r->gui_pass_active && r->target_sp==0 && r->target_id<0){
       if(fabs(fabs(r->cam_x-nearbyint(r->cam_x))-0.5)<1e-9)
         positioned_x_tie=-1e-9;
@@ -2661,7 +2665,7 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
         GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA;
       /* The modern normal filtered CPU leaf replaces RGB but retains its
        * source-over alpha calculation even when blending is disabled. */
-      if(hardware_physical_part && !r->blendmode &&
+      if((hardware_physical_part || hardware_physical_tiled) && !r->blendmode &&
          anygm_policy_has_modern_layer_semantics(r->win) &&
          gml_render_target_preserves_alpha(r)){
         state.coverage_policy=0u;
@@ -4742,7 +4746,7 @@ general_cpu:
 /* A complete, untrimmed nearest atlas cell can repeat with the CPU tile phase.
  * Unit-scale cells clipped by the application edge select the same physical texels;
  * trimmed, filtered and very dense repetitions retain the original CPU loop. */
-int gml_render_resident_tiled_sprite(GmlRender *r,int sprite,int subimg,
+static int resident_legacy_tiled_sprite(GmlRender *r,int sprite,int subimg,
                                      double x,double y,double xs,double ys,
                                      uint32_t blend,double alpha){
   if(!r || !r->resident_application_pass || r->interp ||
@@ -4779,6 +4783,76 @@ int gml_render_resident_tiled_sprite(GmlRender *r,int sprite,int subimg,
       if(!gml_render_resident_atlas_page(r,page_index,xx,yy,1.0,1.0,
                                          GML_RENDER_SCENE_SPRITE)) return 0;
   return 1;
+}
+
+int gml_render_resident_tiled_sprite(GmlRender *r,int sprite,int subimg,
+                                     double x,double y,double xs,double ys,
+                                     uint32_t blend,double alpha){
+  enum { CELL_LIMIT=2048 };
+  if(!r || !r->resident_application_pass) return 0;
+  if(sprite<0 || sprite>=r->n_spr || r->spr[sprite].n_frames<=0) return 1;
+  GmlSprite *s=&r->spr[sprite];
+  if(!isfinite(x) || !isfinite(y) || !isfinite(xs) || !isfinite(ys) || !isfinite(alpha) ||
+     gml_d3_is_active(r) || r->fog_flat || resident_sprite_program_blocks(r) ||
+     r->classic_phase_y || r->pending_underlay || r->pending_presentation ||
+     r->rotated_batch_count || r->rotated_batch_building ||
+     !gml_render_scene_target_matches(r)) return 0;
+  for(unsigned index=0;index<3u;index++)
+    if(r->classic_interp_phase[index] || r->app_interp_phase[index]) return 0;
+  /* blit_one and the runtime leaf return before reading source pixels at
+   * nonpositive opacity. Destination-colour equations have a distinct owner. */
+  if((alpha<=0.0 && !(r->alphablend && (r->blendmode==6 ||
+       gml_render_blend_uses_destination_colour(r->blendmode)))) ||
+     !r->color_write_mask || xs==0.0 || ys==0.0) return 1;
+  if(!r->device.context || !r->device.observe_on_demand ||
+     !r->device.observe_on_demand(r->device.context))
+    return resident_legacy_tiled_sprite(r,sprite,subimg,x,y,xs,ys,blend,alpha);
+  if(s->runtime_rgba || !s->frame || s->w<=0 || s->h<=0 || s->w>4096 || s->h>4096 ||
+     r->fbw<=0 || r->fbh<=0 || r->fbw>16384 || r->fbh>16384 ||
+     r->blendmode<0 || r->blendmode>2 || r->color_write_mask>15u ||
+     r->blend_equation!=1 || r->blend_equation_alpha!=1) return 0;
+  int page_index=s->frame[gml_render_runtime_frame_index(s,subimg)];
+  if(page_index<0 || page_index>=r->n_tpag) return 0;
+  GmlTpag *page=&r->tpag[page_index];
+  if(page->bw!=s->w || page->bh!=s->h || page->tx<0 || page->ty<0 ||
+     page->sw<=0 || page->sh<=0 || page->project_authored_edges ||
+     (int64_t)page->tx+page->sw>s->w || (int64_t)page->ty+page->sh>s->h) return 0;
+  gml_render_draw_map_point(r,&x,&y);gml_render_draw_map_scale(r,&xs,&ys);
+  if(!isfinite(x) || !isfinite(y) || !isfinite(xs) || !isfinite(ys) ||
+     fabs(xs)<0.125 || fabs(ys)<0.125 || fabs(xs)>64.0 || fabs(ys)>64.0 ||
+     !isfinite(r->cam_x) || !isfinite(r->cam_y)) return 0;
+  double bw=s->w*fabs(xs),bh=s->h*fabs(ys);
+  double ax=floor(x-r->cam_x),ay=floor(y-r->cam_y);
+  if(anygm_policy_uses_first_generation_studio(r->win) &&
+     fabs(r->cam_x-nearbyint(r->cam_x))>1e-9) ax+=1.0;
+  if(!isfinite(ax) || !isfinite(ay)) return 0;
+  double x0=fmod(ax,bw),y0=fmod(ay,bh);
+  if(x0>0.0) x0-=bw;
+  if(y0>0.0) y0-=bh;
+  double nx=ceil((r->fbw-x0)/bw),ny=ceil((r->fbh-y0)/bh);
+  if(nx<1.0 || ny<1.0 || nx>CELL_LIMIT || ny>CELL_LIMIT || nx*ny>CELL_LIMIT) return 0;
+  double opacity=alpha>1.0?1.0:alpha;
+  gml_render_flush_pending_fill(r);
+  if(r->pending_fill) return 0;
+  for(unsigned attempt=0;attempt<2u;attempt++){
+    if(!gml_render_application_scene_prepare_begin(r)) return 0;
+    int accepted=1;
+    for(double yy=y0;yy<r->fbh && accepted;yy+=bh)
+      for(double xx=x0;xx<r->fbw;xx+=bw){
+        double left=xx+page->tx*xs,top=yy+page->ty*ys;
+        accepted=r->interp && !r->classic
+          ?resident_filtered_atlas_page(r,page_index,left,top,xs,ys,GML_RENDER_SCENE_SPRITE,
+             blend,opacity,NULL,NULL,0.0,NULL,0,0,0,0,9)
+          :resident_atlas_crop_from_page(r,page,0,0,page->sw,page->sh,left,top,xs,ys,
+             GML_RENDER_SCENE_SPRITE,blend,opacity,19,NULL);
+        if(!accepted) break;
+      }
+    if(gml_render_application_scene_prepare_finish(r,accepted)) return 1;
+    /* Retry once on an empty queue. Capacity may have interrupted preparation,
+     * but no cell from that attempt reached the device or advanced its image. */
+    if(attempt || !gml_render_application_scene_flush(r)) return 0;
+  }
+  return 0;
 }
 
 /* draw_sprite_tiled_ext: repeat a sprite frame to fill the screen (both axes),

@@ -51,6 +51,10 @@ struct GmlRenderPendingSceneBatch {
   GmlRenderImageRef source_refs[GML_SCENE_SOURCE_LIMIT];
   uint32_t count,state_count,source_count;
   int coalesce_sources;
+  int preparing;
+  struct GmlRenderPendingSceneBatch *prepared_parent;
+  int saved_opaque_known,saved_all_opaque,saved_all_transparent;
+  int saved_application_opaque,saved_presentation_coverage;
 };
 
 static int same_scene_source(GmlRenderImageRef a,GmlRenderImageRef b){
@@ -65,6 +69,52 @@ static int same_scene_source_view(const GmlRenderResourceSource *a,
          a->pixel_format==b->pixel_format && a->stride_bytes==b->stride_bytes &&
          a->borrowed_immutable==b->borrowed_immutable &&
          a->resident_resource==b->resident_resource;
+}
+
+int gml_render_application_scene_prepare_begin(GmlRender *r){
+  GmlRenderPendingSceneBatch *parent=r?r->pending_scene_batch:NULL;
+  if(!r || !r->resident_application_pass || r->pending_fill || r->pending_underlay ||
+     r->pending_presentation || (parent && parent->preparing)) return 0;
+  GmlRenderPendingSceneBatch *prepared=calloc(1,sizeof *prepared);
+  if(!prepared) return 0;
+  if(parent){
+    *prepared=*parent;
+    for(uint32_t index=0;index<prepared->count;index++){
+      GmlRenderDrawOp *operation=&prepared->operations[index];
+      if(!operation->source_count) continue;
+      uint32_t source=0u;
+      while(source<parent->source_count && operation->sources!=&parent->source_refs[source]) source++;
+      if(source==parent->source_count){free(prepared);return 0;}
+      operation->sources=&prepared->source_refs[source];
+    }
+  }
+  prepared->preparing=1;prepared->prepared_parent=parent;
+  prepared->saved_opaque_known=r->fb_opaque_known;
+  prepared->saved_all_opaque=r->fb_all_opaque;
+  prepared->saved_all_transparent=r->fb_all_transparent;
+  prepared->saved_application_opaque=r->app_surface_opaque;
+  prepared->saved_presentation_coverage=r->app_presentation_coverage_active;
+  r->pending_scene_batch=prepared;
+  return 1;
+}
+
+int gml_render_application_scene_prepare_finish(GmlRender *r,int accepted){
+  GmlRenderPendingSceneBatch *prepared=r?r->pending_scene_batch:NULL;
+  if(!prepared || !prepared->preparing) return 0;
+  GmlRenderPendingSceneBatch *parent=prepared->prepared_parent;
+  if(accepted){
+    prepared->preparing=0;prepared->prepared_parent=NULL;
+    free(parent);
+  }else{
+    r->pending_scene_batch=parent;
+    r->fb_opaque_known=prepared->saved_opaque_known;
+    r->fb_all_opaque=prepared->saved_all_opaque;
+    r->fb_all_transparent=prepared->saved_all_transparent;
+    r->app_surface_opaque=prepared->saved_application_opaque;
+    r->app_presentation_coverage_active=prepared->saved_presentation_coverage;
+    free(prepared);
+  }
+  return accepted!=0;
 }
 
 GmlRenderImageRef gml_render_application_scene_next_image_ref(
@@ -82,6 +132,7 @@ int gml_render_application_scene_flush(GmlRender *r){
   GmlRenderDrawBatch batch;
   GmlRenderResourceExecution result;
   if(!pending || !pending->count) return 1;
+  if(pending->preparing) return 0;
   GmlRenderImageRef image=pending->operations[0].target.image;
   if(image.resource_class==GML_RENDER_RESOURCE_SCREEN) target=r->base_scene_resource;
   else if(image.resource_class==GML_RENDER_RESOURCE_APPLICATION) target=r->app_surface_resource;
@@ -153,6 +204,8 @@ int gml_render_observe_device_resources(GmlRender *r){
 
 void gml_render_application_scene_queue_dispose(GmlRender *r){
   if(!r) return;
+  if(r->pending_scene_batch && r->pending_scene_batch->preparing)
+    free(r->pending_scene_batch->prepared_parent);
   free(r->pending_scene_batch);
   r->pending_scene_batch=NULL;
 }
@@ -411,6 +464,7 @@ int gml_render_application_scene_enqueue_quads(GmlRender *r,
         operation->reconstruction_mode==GML_RENDER_DEVICE_CHECKPOINT)) &&
       operation->payload.quad.sampling.filter==GML_RENDER_FILTER_NEAREST));
   pending=r->pending_scene_batch;
+  if(pending && pending->preparing && !source->borrowed_immutable) return 0;
   if(pending && pending->count){
     int flush=!pending->source_count || pending->count>GML_SCENE_BATCH_LIMIT-count ||
       pending->coalesce_sources!=coalescible;

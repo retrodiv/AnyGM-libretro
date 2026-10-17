@@ -54,6 +54,10 @@ int gml_render_application_scene_enqueue(GmlRender *render,const GmlRenderDrawOp
 int gml_render_application_scene_enqueue_quads(GmlRender *render,
   const GmlRenderDrawOp *operations,uint32_t count,
   const GmlRenderDrawStateSnapshot *state,const GmlRenderResourceSource *source);
+/* Stage a complete immutable multi-cell draw without delivering any prefix.
+ * A capacity/state refusal leaves the original queue and coverage unchanged. */
+int gml_render_application_scene_prepare_begin(GmlRender *render);
+int gml_render_application_scene_prepare_finish(GmlRender *render,int accepted);
 int gml_render_application_scene_flush(GmlRender *render);
 int gml_render_application_scene_enqueue_primitive(GmlRender *render,
                                                    const GmlRenderDrawOp *operation);

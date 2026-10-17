@@ -1931,6 +1931,77 @@ static int queued_quad_groups_are_atomic(void){
   return 1;
 }
 
+static int queued_multicell_preparation_is_transactional(void){
+  for(unsigned variant=0;variant<5u;variant++){
+    GmlRender *r=calloc(1,sizeof *r);
+    uint32_t pixels[4]={0xFF315779u,0xFF315779u,0xFF315779u,0xFF315779u};
+    GmlRenderResourceSource source=source_view(pixels,1),second=source;
+    GmlRenderDrawStateSnapshot state=quad_state(0),changed=state;
+    FakeDevice fake={.on_demand=1};GmlRenderDeviceServices device=service(&fake);
+    GmlRenderJournalMetrics metrics={0};
+    CHECK(r && gml_render_application_surface_ensure_owned(r,4,4));
+    device.observe_on_demand=fake_observe_on_demand;
+    gml_render_bind_device(r,&device);
+    CHECK(gml_render_begin_resident_owned_application(r,0,0,0));
+    GmlRenderResource *target=gml_render_application_resource_ensure(r);
+    CHECK(target);
+    GmlRenderImageRef image=gml_render_resource_image_ref(target);
+    unsigned prefix_count=variant==2u?2047u:2u;
+    for(unsigned index=0;index<prefix_count;index++){
+      GmlRenderDrawOp op=quad_op(image.content_version+index+1u,&source.image);
+      op.reconstruction_mode=GML_RENDER_DEVICE_CHECKPOINT;
+      op.scene_family=GML_RENDER_SCENE_SPRITE;
+      op.target.image=image;op.target.image.content_version+=index+1u;
+      op.target.pixel_format=GML_RENDER_PIXEL_ARGB8888;
+      CHECK(gml_render_application_scene_enqueue(r,&op,&state,&source));
+    }
+    r->fb_opaque_known=1;r->fb_all_opaque=0;r->fb_all_transparent=1;
+    r->app_surface_opaque=1;r->app_presentation_coverage_active=1;
+    CHECK(gml_render_application_scene_prepare_begin(r));
+    CHECK(!gml_render_application_scene_prepare_begin(r));
+    CHECK(!gml_render_application_scene_flush(r) && !fake.submits && !fake.uploads);
+    second.image.identity++;changed.write_mask=7u;
+    if(variant==3u) second.borrowed_immutable=0;
+    for(unsigned index=0;index<2u;index++){
+      GmlRenderDrawOp op=quad_op(image.content_version+prefix_count+index+1u,&second.image);
+      op.reconstruction_mode=GML_RENDER_DEVICE_CHECKPOINT;
+      op.scene_family=GML_RENDER_SCENE_SPRITE;
+      op.target.image=image;op.target.image.content_version+=prefix_count+index+1u;
+      op.target.pixel_format=GML_RENDER_PIXEL_ARGB8888;
+      int accepted=gml_render_application_scene_enqueue(r,&op,&changed,&second);
+      CHECK(accepted!=(int)(variant==3u || (variant==2u && index==1u)));
+      if(!accepted) break;
+    }
+    CHECK(!fake.submits && !fake.uploads && !fake.readbacks);
+    r->fb_opaque_known=0;r->fb_all_opaque=1;r->fb_all_transparent=0;
+    r->app_surface_opaque=0;r->app_presentation_coverage_active=0;
+    if(variant==4u){
+      /* Teardown also owns an unfinished preparation's retained parent. */
+      gml_render_abandon_device(r);gml_render_free(r);free(r);continue;
+    }
+    CHECK(gml_render_application_scene_prepare_finish(r,variant==1u)==(int)(variant==1u));
+    if(variant!=1u) CHECK(r->fb_opaque_known==1 && !r->fb_all_opaque && r->fb_all_transparent==1 &&
+      r->app_surface_opaque==1 && r->app_presentation_coverage_active==1);
+    CHECK(!fake.submits && !fake.uploads && !fake.readbacks);
+    CHECK(gml_render_application_scene_next_image_ref(r,target).content_version==
+      image.content_version+prefix_count+(variant==1u?2u:0u));
+    CHECK(gml_render_resource_image_ref(target).content_version==image.content_version);
+    CHECK(gml_render_application_scene_flush(r) && fake.submits==1 && !fake.readbacks);
+    CHECK(fake.last_batch_operations==prefix_count+(variant==1u?2u:0u));
+    if(variant==1u) CHECK(fake.last_batch_states==2u &&
+      fake.last_batch_source_ids[0]==source.image.identity &&
+      fake.last_batch_source_ids[1]==source.image.identity &&
+      fake.last_batch_source_ids[2]==second.image.identity &&
+      fake.last_batch_state_indices[0]==fake.last_batch_state_indices[1] &&
+      fake.last_batch_state_indices[2]!=fake.last_batch_state_indices[0]);
+    gml_render_resource_journal_metrics(target,&metrics);
+    CHECK(metrics.authority==GML_RENDER_RESOURCE_GPU_RESIDENT && !metrics.cpu_replays &&
+      !metrics.journal_operations && metrics.logical_version==image.content_version+prefix_count+(variant==1u?2u:0u));
+    gml_render_abandon_device(r);gml_render_free(r);free(r);
+  }
+  return 1;
+}
+
 static int queued_immutable_checkpoint_spans_sources_and_states(void){
   GmlRender *render=(GmlRender*)calloc(1,sizeof *render);
   uint32_t first_pixels[4]={0xFF315779u,0xFF315779u,0xFF315779u,0xFF315779u};
@@ -12955,6 +13026,70 @@ static int resident_integer_sprite_function(void){return resident_sprite_functio
 static int resident_nearest_sprite_function(void){return resident_sprite_function(1);}
 static int resident_first_generation_rotated_point_sprite_function(void){return resident_sprite_function(2);}
 
+/* Authority and ownership only; the paired device matrix owns tiled pixels. */
+static int resident_tiled_sprite_function(void){
+  enum { W=24,H=20 };
+  const int generations[]={530,700,800,13,15,17};
+  for(unsigned generation=0;generation<6u;generation++)
+  for(unsigned kind=0;kind<4u;kind++) for(unsigned gui=0;gui<2u;gui++)
+  for(unsigned interpolation=0;interpolation<2u;interpolation++)
+  for(unsigned state=0;state<4u;state++){
+    GmlRender *r=calloc(1,sizeof *r);GmlWin content={0};
+    FakeDevice fake={.on_demand=1,.readback_colour=0x7F25C080u};
+    GmlRenderDeviceServices device=service(&fake);GmlRenderJournalMetrics metrics={0};
+    uint32_t screen[W*H],shadow[W*H];const uint32_t *pixels=NULL;
+    CHECK(r && !gml_render_init(r,NULL));
+    content.classic_version=generations[generation]>100?generations[generation]:0;
+    content.bytecode=content.classic_version?0:generations[generation];
+    r->win=&content;r->classic=content.classic_version!=0;
+    const uint8_t rgba[]={208,32,16,255,16,208,32,255,32,16,208,255,192,176,160,255};
+    free(r->atlas[0].px);r->atlas[0].px=malloc(sizeof rgba);
+    r->tpag=calloc(1,sizeof *r->tpag);r->spr=calloc(1,sizeof *r->spr);
+    CHECK(r->atlas[0].px && r->tpag && r->spr);
+    memcpy(r->atlas[0].px,rgba,sizeof rgba);r->atlas[0].w=r->atlas[0].h=2;
+    r->n_tpag=r->n_spr=1;
+    r->tpag[0]=(GmlTpag){.sw=2,.sh=2,.tw=2,.th=2,.bw=4,.bh=4,.tx=1,.ty=1};
+    r->spr[0]=(GmlSprite){.w=4,.h=4,.originx=7,.originy=-3,.n_frames=1};
+    r->spr[0].frame=calloc(1,sizeof(int));CHECK(r->spr[0].frame);
+    device.observe_on_demand=fake_observe_on_demand;gml_render_bind_device(r,&device);
+    for(unsigned p=0;p<W*H;p++) screen[p]=0xA5ABCDEFu;
+    if(kind==1u || kind==2u){
+      CHECK(gml_render_application_surface_ensure_owned(r,W,H));
+      CHECK(gml_render_begin_resident_owned_application(r,-3.5,2.25,0));
+    }else{
+      gml_render_application_surface_bind(r,screen,W,H,1);
+      CHECK(gml_render_begin_resident_base(r,screen,W,H,-3.5,2.25));
+    }
+    if(kind==2u) CHECK(gml_surface_set_target(r,0));
+    if(kind==3u){int id=gml_surface_create(r,W,H);CHECK(id>0 && gml_surface_set_target(r,id));}
+    if(gui){gml_render_gui_begin(r,W,H);gml_render_gui_set_size(r,W/2,H/2);}
+    r->interp=(int)interpolation;r->alphablend=state!=2u;
+    r->blendmode=state<3u?(int)state:0;r->color_write_mask=state==1u?5u:15u;
+    gml_render_set_pending_fill(r,0x40273859u);gml_render_flush_pending_fill(r);
+    CHECK(gml_render_scene_submit_pending(r));
+    GmlRenderResource *target=gml_render_scene_target_resource_ensure(r);CHECK(target);
+    uint64_t version=gml_render_resource_image_ref(target).content_version;
+    memcpy(shadow,r->fb,sizeof shadow);int submitted=fake.submits;
+    double mapping=gml_render_gui_transform_active(r)?2.0:1.0;
+    for(unsigned draw=0;draw<8u;draw++)
+      gml_draw_sprite_tiled_ext(r,0,0,-3.25,.5,-2.0/mapping,3.0/mapping,
+        state?0x70B0D0u:0xFFFFFFu,state==3u?0.0:state?0.4:1.0);
+    CHECK(r->resident_application_pass && fake.submits==submitted &&
+      gml_render_resource_image_ref(target).content_version==version);
+    CHECK(gml_render_scene_submit_pending(r) && fake.submits==submitted+(state!=3u) &&
+      !fake.readbacks && !fake.rgb_queries && !memcmp(shadow,r->fb,sizeof shadow));
+    gml_render_resource_journal_metrics(target,&metrics);
+    CHECK(metrics.authority==GML_RENDER_RESOURCE_GPU_RESIDENT && !metrics.cpu_replays &&
+      !metrics.journal_bytes && (state==3u || fake.last_batch_operations>=8u));
+    CHECK(gml_render_resource_acquire_cpu_read(target,&pixels) && fake.readbacks==1 &&
+      pixels[0]==fake.readback_colour && pixels[W*H-1u]==fake.readback_colour);
+    fake.forbid_calls=1;
+    CHECK(gml_render_resource_acquire_cpu_read(target,&pixels) && !fake.forbidden_calls);
+    fake.forbid_calls=0;gml_render_free(r);free(r);
+  }
+  return 1;
+}
+
 static int passthrough_scope_executor(void *context,const GmlRenderShaderRequest *request){
   (void)context;(void)request;return 0;
 }
@@ -14753,6 +14888,7 @@ int main(void){
   passed+=public_checkpoint_readback_refusal();
   passed+=queued_checkpoint_flush_refusal_preserves_target();
   passed+=queued_quad_groups_are_atomic();
+  passed+=queued_multicell_preparation_is_transactional();
   passed+=queued_immutable_checkpoint_spans_sources_and_states();
   passed+=queued_filtered_font_spans();
   passed+=rejection_and_isolation();
@@ -14893,6 +15029,7 @@ int main(void){
   passed+=resident_integer_sprite_function();
   passed+=resident_nearest_sprite_function();
   passed+=resident_first_generation_rotated_point_sprite_function();
+  passed+=resident_tiled_sprite_function();
   passed+=resident_physical_filtered_sprite_function();
   passed+=resident_matched_filtered_sprite_function();
   passed+=resident_cpu_passthrough_sprite_scope();
@@ -14954,6 +15091,6 @@ int main(void){
   passed+=source_free_primitive_rect_replay();
   passed+=stretched_float_exact_replay();
   passed+=filtered_font_exact_recovery();
-  printf("render resource cases: passed=%d failed=%d\n",passed,219-passed);
-  return passed==219?EXIT_SUCCESS:EXIT_FAILURE;
+  printf("render resource cases: passed=%d failed=%d\n",passed,221-passed);
+  return passed==221?EXIT_SUCCESS:EXIT_FAILURE;
 }
