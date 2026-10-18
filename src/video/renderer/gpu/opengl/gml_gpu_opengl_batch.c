@@ -58,6 +58,19 @@ static int cleared_earlier(const GmlRenderImageRef *cleared,uint32_t count,
 }
 
 static int qualified_blend(const GmlRenderDrawStateSnapshot *state){
+  if(state->rgb_equation==GML_RENDER_BLEND_ADD && state->alpha_equation==GML_RENDER_BLEND_ADD &&
+     (state->rgb_source_factor==GML_RENDER_BLEND_ONE_MINUS_DESTINATION_ALPHA ||
+      state->rgb_source_factor==GML_RENDER_BLEND_ONE_MINUS_DESTINATION_COLOUR)){
+    int colour=state->rgb_source_factor==GML_RENDER_BLEND_ONE_MINUS_DESTINATION_COLOUR;
+    unsigned destination=colour?GML_RENDER_BLEND_ZERO:GML_RENDER_BLEND_DESTINATION_ALPHA;
+    if(state->rgb_destination_factor!=destination) return -1;
+    if(state->alpha_source_factor==GML_RENDER_BLEND_ONE_MINUS_DESTINATION_ALPHA &&
+       state->alpha_destination_factor==destination && !state->coverage_policy) return 18+colour;
+    if(state->alpha_source_factor==GML_RENDER_BLEND_ONE &&
+       state->alpha_destination_factor==GML_RENDER_BLEND_ZERO &&
+       state->coverage_policy==GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA) return 20+colour;
+    return -1;
+  }
   if(state->alpha_source_factor==GML_RENDER_BLEND_SOURCE_ALPHA &&
      state->alpha_destination_factor==GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA &&
      state->rgb_equation==GML_RENDER_BLEND_ADD && state->alpha_equation==GML_RENDER_BLEND_ADD){
@@ -181,6 +194,10 @@ static uint32_t scene_filter(const GmlRenderQuad *quad,
     uint32_t filter;
     if(state->coverage_policy==GML_RENDER_COVERAGE_REPLACE_SOURCE_ALPHA) filter=83u;
     else if(state->coverage_policy==GML_RENDER_COVERAGE_REPLACE_ZERO_ALPHA) filter=base+12u;
+    /* Destination-alpha RGB observes each preceding fragment's coverage.
+     * Opaque-target variants must therefore write alpha in this same draw,
+     * not defer the ordinary source-over alpha stamp until a batch ends. */
+    else if(qualified_blend(state)==20 || qualified_blend(state)==21) filter=base+5u;
     else if(qualified_blend(state)==13) filter=base+7u+
       (state->coverage_policy==GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA?2u:0u);
     else filter=!qualified_blend(state)?base+5u:
@@ -369,14 +386,15 @@ static int integer_function_sprite_valid(const GmlRenderDrawOp *op,
      state->alpha_test_enabled>1u || state->alpha_test_reference>255u ||
      (op->scene_family!=GML_RENDER_SCENE_SPRITE && state->write_mask!=15u) ||
      (blend==14 && op->scene_family!=GML_RENDER_SCENE_SPRITE && op->scene_family!=GML_RENDER_SCENE_TEXT) ||
-     (blend!=0 && blend!=1 && blend!=3 && blend!=13 && blend!=14) ||
+     (blend>=18 && blend<=21 && (op->scene_family!=GML_RENDER_SCENE_SPRITE || flat)) ||
+     (blend!=0 && blend!=1 && blend!=3 && blend!=13 && blend!=14 && (blend<18 || blend>21)) ||
      ((state->coverage_policy==GML_RENDER_COVERAGE_REPLACE_ZERO_ALPHA ||
        state->coverage_policy==GML_RENDER_COVERAGE_REPLACE_SOURCE_ALPHA)?
        (blend!=0 || (state->coverage_policy==GML_RENDER_COVERAGE_REPLACE_SOURCE_ALPHA &&
         (op->scene_family!=GML_RENDER_SCENE_SPRITE ||
          (q->sampling.quantisation!=GML_RENDER_QUANTISE_INTEGER_TINT_TRUNC && !flat)))):
       state->coverage_policy && (state->coverage_policy!=GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA ||
-       (blend!=1 && blend!=13 && blend!=14) || (blend!=14 &&
+       (blend!=1 && blend!=13 && blend!=14 && blend!=20 && blend!=21) || (blend!=14 &&
         !(blend==13 && op->scene_family==GML_RENDER_SCENE_SPRITE &&
           (source->ref.identity&UINT32_C(0x80000000)) &&
           (q->sampling.quantisation==GML_RENDER_QUANTISE_INTEGER_TINT_TRUNC || row)) &&
@@ -1285,7 +1303,7 @@ static int scene_preflight(GmlGpuBackend *backend,const GmlRenderDrawBatch *batc
            sampling->quantisation==GML_RENDER_QUANTISE_INTEGER_ROW_TINT_TRUNC ||
            sampling->quantisation==GML_RENDER_QUANTISE_INTEGER_FLAT_RGB) && !integer_function) ||
          state->colour!=0xFFFFFFFFu || (state->alpha_test_enabled && !integer_function && !physical_sprite && !stretched_box) ||
-         blend<0 || ((blend==13 || blend==14) && !integer_function) ||
+         blend<0 || ((blend==13 || blend==14 || (blend>=18 && blend<=21)) && !integer_function) ||
          ((blend==15 || blend==16 || blend==17) && !physical_sprite) ||
          (blend==11 && (!hardware_surface || !backend->gl.CopyTexSubImage2D)) ||
          ((integer_function || integer_sourceover || physical_sprite || blend==1 || blend==9 || blend==10 ||
@@ -1682,6 +1700,11 @@ static int flush_quads(GmlGpuBackend *backend,GlSceneImage *target,GlSceneImage 
         alpha_src=GL_DST_ALPHA;alpha_dst=mode==9u?GL_SRC_ALPHA:GL_DST_ALPHA;}
       if(!preserve){alpha_src=GL_ONE;alpha_dst=GL_ZERO;}
       backend->gl.BlendFuncSeparate(src,dst,alpha_src,alpha_dst);
+    } else if(blend>=18 && blend<=21){
+      int colour=(blend&1)!=0,preserve=blend<20;
+      backend->gl.BlendFuncSeparate(colour?GL_ONE_MINUS_DST_COLOR:GL_ONE_MINUS_DST_ALPHA,
+        colour?GL_ZERO:GL_DST_ALPHA,preserve?GL_ONE_MINUS_DST_ALPHA:GL_ONE,
+        preserve && !colour?GL_DST_ALPHA:GL_ZERO);
     } else if(blend==15)
       backend->gl.BlendFuncSeparate(GL_ZERO,GL_ONE_MINUS_SRC_COLOR,GL_SRC_ALPHA,GL_ONE_MINUS_SRC_ALPHA);
     else if(blend==16)

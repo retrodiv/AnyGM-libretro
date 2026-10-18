@@ -2891,7 +2891,7 @@ static int scene_integer_function_sprite_case(void){
   for(unsigned background=0;background<3u;background++)
   for(unsigned alpha_test=0;alpha_test<2u;alpha_test++)
   for(unsigned api=0;api<2u;api++) for(unsigned rounded=0;rounded<3u;rounded++)
-  for(unsigned target_kind=0;target_kind<4u;target_kind++) for(unsigned blend=0;blend<5u;blend++){
+  for(unsigned target_kind=0;target_kind<4u;target_kind++) for(unsigned blend=0;blend<7u;blend++){
     uint8_t pixels[16]={208,32,16,128,16,208,32,255,32,16,208,0,192,176,160,64};
     GmlRenderImageRef source={GML_RENDER_RESOURCE_ATLAS,31u,1u,1u};
     GmlRenderImageRef target={target_kind==0u?GML_RENDER_RESOURCE_SCREEN:
@@ -2921,6 +2921,15 @@ static int scene_integer_function_sprite_case(void){
       }
       if((blend==1u || blend==3u) && target_kind!=2u)
         state.coverage_policy=GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA;
+      if(blend>=5u){
+        int preserve=target_kind==2u,colour=blend==6u;
+        state.rgb_source_factor=colour?GML_RENDER_BLEND_ONE_MINUS_DESTINATION_COLOUR:
+          GML_RENDER_BLEND_ONE_MINUS_DESTINATION_ALPHA;
+        state.rgb_destination_factor=colour?GML_RENDER_BLEND_ZERO:GML_RENDER_BLEND_DESTINATION_ALPHA;
+        state.alpha_source_factor=preserve?GML_RENDER_BLEND_ONE_MINUS_DESTINATION_ALPHA:GML_RENDER_BLEND_ONE;
+        state.alpha_destination_factor=preserve && !colour?GML_RENDER_BLEND_DESTINATION_ALPHA:GML_RENDER_BLEND_ZERO;
+        state.coverage_policy=preserve?0u:GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA;
+      }
     }
     state.sampler_count=1u;
     state.samplers[0]=(GmlRenderSamplingPolicy){.filter=GML_RENDER_FILTER_NEAREST,
@@ -2945,11 +2954,11 @@ static int scene_integer_function_sprite_case(void){
       for(unsigned corner=0;corner<4u;corner++) q->corner_colour[corner]=0x663470D0u;
     }
     GmlRenderExecutionResult result=device.submit(device.context,&batch);
-    if(rounded==2u && background){
+    if((rounded==2u && background) || (blend>=5u && (rounded==2u || background))){
       REQUIRE(result.status==GML_RENDER_EXEC_UNSUPPORTED && !result.accepted_prefix &&
         !anygm_test_graphics_clear_calls() && !anygm_test_graphics_scene_draw_calls() &&
         !anygm_test_graphics_scene_copies() && !anygm_test_graphics_read_pixels(),
-        "flat sprite RGB cannot reach another family or consume a clear prefix");
+        "flat RGB and destination-factor sprite extensions refuse outside their typed scope before a clear prefix");
       gml_gpu_destroy(gpu,1);continue;
     }
     int draws=(blend==1u || blend==3u) && target_kind!=2u?2:1;

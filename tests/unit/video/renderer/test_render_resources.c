@@ -8489,6 +8489,21 @@ static int resident_modern_unit_sprite_part(void){
       gml_render_resource_journal_metrics(resource,&after_empty);
       CHECK(before_empty.logical_version==after_empty.logical_version &&
         before_empty.authority==after_empty.authority && fake.submits==submits);
+      /* Both public part aliases must preserve the queued prefix at a zero
+       * axis independently of the ordinary blend/filter/mask state. */
+      for(unsigned preset=0;preset<12u;preset++) for(unsigned axis=0;axis<3u;axis++){
+        r->blendmode=(int)preset;r->interp=(int)(preset&1u);
+        r->alpha_test_enable=1;r->alpha_test_ref=127;r->color_write_mask=preset;
+        double empty_x=axis==1u?1.0:0.0,empty_y=axis==0u?1.0:-0.0;
+        const uint32_t colours[4]={0x123456u,0x123456u,0x123456u,0x123456u};
+        gml_draw_sprite_part_ext(r,0,0,1,2,2,1,1,1,empty_x,empty_y,0x123456u,.4);
+        gml_draw_sprite_general(r,0,0,1,2,2,1,1,1,empty_x,empty_y,0,colours,.4);
+        gml_render_resource_journal_metrics(resource,&after_empty);
+        CHECK(r->resident_application_pass && !fake.readbacks && fake.submits==submits &&
+          before_empty.logical_version==after_empty.logical_version &&
+          before_empty.authority==after_empty.authority && !memcmp(shadow,r->fb,sizeof shadow));
+      }
+      r->blendmode=0;r->interp=0;r->alpha_test_enable=0;r->alpha_test_ref=0;r->color_write_mask=15u;
       CHECK(gml_render_scene_submit_pending(r));
       gml_render_resource_journal_metrics(resource,&metrics);
       CHECK(fake.last_batch_operations==2u && fake.last_filter==GML_RENDER_FILTER_NEAREST &&
