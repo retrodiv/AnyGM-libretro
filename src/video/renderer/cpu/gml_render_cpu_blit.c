@@ -5447,6 +5447,69 @@ int gml_render_rotated_nearest_sample_rows(GmlRender *r,GmlSprite *spr,GmlTpag *
   return rotated_nearest_regions(r,spr,t,x,y,xs,ys,rot,regions,capacity,count,3,0u);
 }
 
+/* Use the unchanged filtered kernel's ordered geometry expression only.
+ * Monotone row clipping needs logarithmic boundary probes, not pixel sampling. */
+static double filtered_rotation_coordinate(const GmlRotatedGeometry *geometry,
+  const GmlSprite *sprite,const GmlTpag *page,int px,int py,unsigned axis){
+  double rx=px+0.5-geometry->ax,ry=py+0.5-geometry->ay;
+  return axis
+    ?(rx*geometry->sn+ry*geometry->c)*geometry->invys+sprite->originy-page->ty-0.5
+    :(rx*geometry->c-ry*geometry->sn)*geometry->invxs+sprite->originx-page->tx-0.5;
+}
+
+static int filtered_rotation_bound(const GmlRotatedGeometry *geometry,
+  const GmlSprite *sprite,const GmlTpag *page,int py,unsigned axis,
+  int first,int last,double boundary,int increasing){
+  while(first<last){
+    int middle=first+(last-first)/2;
+    double coordinate=filtered_rotation_coordinate(geometry,sprite,page,middle,py,axis);
+    if(increasing?coordinate>=boundary:coordinate<boundary) last=middle;
+    else first=middle+1;
+  }
+  return first;
+}
+
+int gml_render_rotated_filtered_rows(GmlRender *r,GmlSprite *sprite,GmlTpag *page,
+  double x,double y,double xs,double ys,double rotation,GmlRenderFilteredRotationRow *rows,
+  uint32_t capacity,uint32_t *count){
+  if(!r || !sprite || !page || !rows || !capacity || !count ||
+     !isfinite(x) || !isfinite(y) || !isfinite(xs) || !isfinite(ys) || !isfinite(rotation) ||
+     fabs(x)>65536.0 || fabs(y)>65536.0 || fabs(xs)<0.125 || fabs(xs)>64.0 ||
+     fabs(ys)<0.125 || fabs(ys)>64.0 || page->atlas<0 || page->atlas>=r->n_atlas ||
+     page->sx<0 || page->sy<0 || page->sw<=0 || page->sh<=0 ||
+     page->sw>4096 || page->sh>4096 || !atlas_pixels(r,page->atlas)) return 0;
+  GmlAtlas *atlas=&r->atlas[page->atlas];
+  if((uint64_t)(uint32_t)page->sx+(uint32_t)page->sw>(uint32_t)atlas->w ||
+     (uint64_t)(uint32_t)page->sy+(uint32_t)page->sh>(uint32_t)atlas->h) return 0;
+  GmlRotatedGeometry geometry;*count=0u;
+  int prepared=rotated_geometry_prepare(r,sprite,page,atlas,x,y,xs,ys,rotation,0,1,&geometry);
+  if(prepared<=0) return prepared==0;
+  const GmlRotatedGeometry *g=&geometry;
+  double area=fabs(g->qx[0]*g->qy[1]-g->qx[1]*g->qy[0]+g->qx[1]*g->qy[2]-g->qx[2]*g->qy[1]+
+    g->qx[2]*g->qy[3]-g->qx[3]*g->qy[2]+g->qx[3]*g->qy[0]-g->qx[0]*g->qy[3])*0.5;
+  double rectangle=(double)(g->x1-g->x0)*(g->y1-g->y0);
+  int span=area>0.0 && area<rectangle*0.85;
+  double delta[2]={g->c*g->invxs,g->sn*g->invys};
+  for(int py=g->y0;py<g->y1;py++){
+    int first=g->x0,last=g->x1;
+    if(span && !rotated_quad_row_span(g->qx,g->qy,py+0.5,g->x0,g->x1,&first,&last)) continue;
+    for(unsigned axis=0;axis<2u && first<last;axis++){
+      double extent=axis?page->sh:page->sw;
+      int increasing=delta[axis]>=0.0;
+      first=filtered_rotation_bound(g,sprite,page,py,axis,first,last,increasing?-1.0:extent,increasing);
+      last=filtered_rotation_bound(g,sprite,page,py,axis,first,last,increasing?extent:-1.0,increasing);
+    }
+    if(first>=last) continue;
+    if(*count==capacity) return 0;
+    rows[(*count)++]=(GmlRenderFilteredRotationRow){
+      .region={first,py,(uint32_t)(last-first),1u},
+      .source_x=filtered_rotation_coordinate(g,sprite,page,first,py,0u),
+      .source_y=filtered_rotation_coordinate(g,sprite,page,first,py,1u),
+      .delta_x=delta[0],.delta_y=delta[1]};
+  }
+  return 1;
+}
+
 static void GML_HOT_RENDER blit_rotated_impl(GmlRender *r, GmlSprite *spr, GmlTpag *t, double x, double y,
                          double xs, double ys, double rot, uint32_t blend, double alpha){
   if(t->atlas<0 || t->atlas>=r->n_atlas) return;

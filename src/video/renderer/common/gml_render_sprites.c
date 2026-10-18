@@ -2084,6 +2084,48 @@ done:
   return accepted;
 }
 
+/* One hardware-filtered quad per clipped CPU geometry row, not per texel.
+ * Fixed blending and the existing physical atlas sampler own all pixel work. */
+static int resident_filtered_rotation_rows(GmlRender *r,GmlSprite *sprite,GmlTpag *page,
+  double x,double y,double xs,double ys,double rotation,const GmlRenderDrawOp *operation,
+  const GmlRenderDrawStateSnapshot *state,const GmlRenderResourceSource *source){
+  enum { LIMIT=2048 };
+  if(!source->borrowed_immutable || r->fbw>16384 || r->fbh>16384) return 0;
+  GmlRenderFilteredRotationRow *rows=malloc(LIMIT*sizeof *rows);
+  GmlRenderDrawOp *operations=NULL;
+  uint32_t count=0u;int accepted=0;
+  if(!rows || !gml_render_rotated_filtered_rows(r,sprite,page,x,y,
+       xs,ys,rotation,rows,LIMIT,&count)) goto done;
+  if(!count){accepted=2;goto done;}
+  if(operation->target.image.content_version>UINT64_MAX-(count-1u)) goto done;
+  operations=malloc((size_t)count*sizeof *operations);if(!operations) goto done;
+  for(uint32_t index=0;index<count;index++){
+    const GmlRenderFilteredRotationRow *row=&rows[index];
+    operations[index]=*operation;operations[index].state_index=0u;
+    operations[index].target.image.content_version+=index;
+    GmlRenderQuad *quad=&operations[index].payload.quad;
+    quad->shape=GML_RENDER_QUAD_AXIS_ALIGNED;
+    quad->span_active=GML_RENDER_SPAN_FILTERED_AFFINE_ROW;
+    memset(quad->span_x,0,sizeof quad->span_x);memset(quad->span_y,0,sizeof quad->span_y);
+    memset(quad->inverse_x,0,sizeof quad->inverse_x);memset(quad->inverse_y,0,sizeof quad->inverse_y);
+    memset(quad->inverse_offset,0,sizeof quad->inverse_offset);
+    quad->inverse_anchor[0]=row->source_x;quad->inverse_anchor[1]=row->source_y;
+    quad->inverse_x[0]=row->delta_x;quad->inverse_x[1]=row->delta_y;
+    quad->x[0]=quad->x[3]=row->region.x;
+    quad->x[1]=quad->x[2]=(double)row->region.x+row->region.width;
+    quad->y[0]=quad->y[1]=row->region.y;
+    quad->y[2]=quad->y[3]=(double)row->region.y+1.0;
+    for(unsigned corner=0;corner<4u;corner++){
+      double offset=corner==1u || corner==2u?(double)row->region.width-0.5:-0.5;
+      quad->u[corner]=((double)page->sx+row->source_x+0.5+offset*row->delta_x)/source->width;
+      quad->v[corner]=((double)page->sy+row->source_y+0.5+offset*row->delta_y)/source->height;
+    }
+  }
+  accepted=gml_render_application_scene_enqueue_quads(r,operations,count,state,source);
+done:
+  free(operations);free(rows);return accepted;
+}
+
 static int resident_filtered_atlas_page(GmlRender *r,int page_index,
                                       double left,double top,double xs,double ys,
                                       GmlRenderSceneFamily family,uint32_t colour,double alpha,
@@ -2097,6 +2139,8 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
   if(r && r->pending_underlay && !gml_render_compose_resident_underlay(r)) return 0;
   GmlTpag *page;
   GmlAtlas *atlas;
+  double physical_rotation_x=left,physical_rotation_y=top;
+  if(r && nearest_mode==10){left-=r->cam_x;top-=r->cam_y;}
   GmlRenderResourceSource source={0};
   GmlRenderResource *target;
   GmlRenderDrawOp operation={0};
@@ -2214,8 +2258,10 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
    * filtering and fixed blending retain sampled application/surface alpha. */
   int hardware_physical_part=nearest_mode==8 && part_view;
   int hardware_physical_tiled=nearest_mode==9;
-  int hardware_physical_sprite=r && (nearest_mode==7 || hardware_physical_part || hardware_physical_tiled) && r->interp &&
-    family==GML_RENDER_SCENE_SPRITE && !rotated_sprite && !corner_colours &&
+  int hardware_physical_rotation=nearest_mode==10 && rotated_sprite && r &&
+    anygm_policy_has_modern_layer_semantics(r->win);
+  int hardware_physical_sprite=r && (nearest_mode==7 || hardware_physical_part || hardware_physical_tiled || hardware_physical_rotation) && r->interp &&
+    family==GML_RENDER_SCENE_SPRITE && (!rotated_sprite || hardware_physical_rotation) && !corner_colours &&
     (!part_view || hardware_physical_part) && !opaque_target_alpha && !transparent_stretched_trim &&
     !box_stretched && !positioned_axis && !r->fog_flat && xs!=0.0 && ys!=0.0 &&
     fabs(xs)>=0.125 && fabs(xs)<=64.0 && fabs(ys)>=0.125 && fabs(ys)<=64.0 &&
@@ -2223,7 +2269,7 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
      anygm_policy_has_modern_layer_semantics(r->win)) &&
     r->device.context && r->device.observe_on_demand &&
     r->device.observe_on_demand(r->device.context);
-  if((nearest_mode==7 || nearest_mode==8 || nearest_mode==9) && !hardware_physical_sprite) return 0;
+  if((nearest_mode==7 || nearest_mode==8 || nearest_mode==9 || nearest_mode==10) && !hardware_physical_sprite) return 0;
   modern_filtered_identity_maximise=modern_filtered_identity_maximise && hardware_screen_filtered;
   /* R03-SPR-FIRSTGEN-SIGNED-POINT: retain first-generation alpha and edge coverage.
    * Contiguous-white specialisations keep their separate established recipes. */
@@ -2267,7 +2313,7 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
      r->blend_equation_alpha!=1 ||
      (r->color_write_mask!=0x0fu && !masked_numbered_sprite &&
       !(hardware_physical_sprite && r->color_write_mask<=15u)) ||
-     (rotated_sprite && anygm_policy_has_modern_layer_semantics(r->win) &&
+     (rotated_sprite && !hardware_physical_rotation && anygm_policy_has_modern_layer_semantics(r->win) &&
       (!r->fb_opaque_known || !r->fb_all_opaque)) ||
      gml_render_classic_vertical_phase_blocks_scene(r) || r->rotated_batch_count || r->rotated_batch_building ||
      r->pending_underlay || r->pending_presentation ||
@@ -2323,12 +2369,13 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
   /* blit_one skips every destination at zero draw alpha. Preserve the queued
    * prefix without a write, shader call or source snapshot in this ordinary state. */
   if(alpha==0.0) return 1;
+  if(hardware_physical_rotation && alpha<0x1p-32) return 0;
   if(part_view && !filtered_real_text &&
      part_view->atlas!=r->tpag[page_index].atlas) return 0;
   page=part_view?part_view:&r->tpag[page_index];
   /* Authored-edge projection retains its established owner. GUI points and
    * scales are already mapped by the public entry, including maximisation. */
-  if(nearest_mode==7 && anygm_policy_has_modern_layer_semantics(r->win) &&
+  if((nearest_mode==7 || hardware_physical_rotation) && anygm_policy_has_modern_layer_semantics(r->win) &&
      page->project_authored_edges) return 0;
   if((modern_numbered_sprite || modern_screen_sprite) && page->project_authored_edges) return 0;
   if(modern_screen_sprite && alpha<1.0/255.0) return 0;
@@ -2344,7 +2391,7 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
   if(modern_screen_filtered && page->project_authored_edges) return 0;
   /* blit_one can select its near-unit white exact-copy leaf instead of
    * filtering. Do not approximate that separate sampling specialisation. */
-  if((modern_screen_filtered || hardware_physical_sprite) &&
+  if((modern_screen_filtered || hardware_physical_sprite) && !hardware_physical_rotation &&
      alpha==1.0 && (colour&0xFFFFFFu)==0xFFFFFFu &&
      fabs(xs-1.0)<0.001 && fabs(ys-1.0)<0.001 && (xs!=1.0 || ys!=1.0)) return 0;
   if(family==GML_RENDER_SCENE_SPRITE ||
@@ -2386,6 +2433,23 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
   if(margin_right) margin_mask|=GML_RENDER_MARGIN_RIGHT;
   if(margin_bottom) margin_mask|=GML_RENDER_MARGIN_BOTTOM;
   resident_classify_page(page,atlas);
+  /* Disabled blending replaces full RGB after the CPU's positive-alpha
+   * decision. A hardware filter can cross that decision at a transparent
+   * edge or with sub-byte draw opacity. Non-preserving alpha stamps have
+   * the same discontinuity on a nonopaque target. */
+  if(hardware_physical_rotation &&
+     ((!r->alphablend && r->blendmode!=2 &&
+       (margin_mask || !page->scene_fully_opaque || alpha<1.0/255.0)) ||
+      ((margin_mask || !page->scene_fully_opaque) && r->alphablend &&
+       r->blendmode!=2 && (r->color_write_mask&8u) &&
+       !gml_render_target_preserves_alpha(r) && (!r->fb_opaque_known || !r->fb_all_opaque))))
+    return 0;
+  /* Hardware filter error can exceed the individual alpha budget after
+   * inverse blending squares variable source coverage on a preserved target.
+   * Keep that unqualified alpha writer ordered on the original CPU path. */
+  if(hardware_physical_rotation && r->alphablend && r->blendmode==2 &&
+     (r->color_write_mask&8u) && gml_render_target_preserves_alpha(r) &&
+     (margin_mask || !page->scene_fully_opaque)) return 0;
   /* A hardware-interpolated alpha can cross a raw cutout threshold even
    * when its value differs by less than one byte. Only constant endpoint
    * alpha without logical neighbours has a driver-independent decision. */
@@ -2393,7 +2457,7 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
      (margin_mask || (!page->scene_fully_opaque && page->scene_ax1>=0))) return 0;
   /* The continuous modern normal packet does not qualify raw positive
    * cutout: a sub-byte interpolation difference can change whole coverage. */
-  if(hardware_physical_sprite && (hardware_physical_part || nearest_mode==7) &&
+  if(hardware_physical_sprite && (hardware_physical_part || nearest_mode==7 || hardware_physical_rotation) &&
      !r->blendmode && r->alpha_test_enable &&
      r->alpha_test_ref && anygm_policy_has_modern_layer_semantics(r->win)) return 0;
   /* The established shader truncates tint; modern opaque CPU pixels round it.
@@ -2424,7 +2488,11 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
   stretched_float=stretched_magnification;
   stretched_replay_exact=stretched_float && !transparent_stretched_trim &&
     page->scene_fully_opaque && (colour&0xFFFFFFu)==0xFFFFFFu && alpha==1.0;
-  if(rotated_sprite){
+  if(hardware_physical_rotation){
+    /* The shared row preparator owns exact clipped/empty geometry. This
+     * placeholder never reaches an executor or repeats its cardinal snap. */
+    x0=y0=0.0;width=r->fbw;height=r->fbh;
+  }else if(rotated_sprite){
     double minx=1e30,miny=1e30,maxx=-1e30,maxy=-1e30;
     int source_x0=corner_colours && part_view?-page->tx:
       modern_rotation && !corner_colours?page->scene_ax0:0;
@@ -2677,7 +2745,7 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
       ?GML_RENDER_EDGE_LOGICAL_TPAG:GML_RENDER_EDGE_CLAMP_SUBIMAGE);
   operation.payload.quad.sampling.source_region=region;
   operation.payload.quad.sampling.quantisation=hardware_physical_sprite
-    ?((hardware_physical_part || nearest_mode==7) && !r->blendmode &&
+    ?((hardware_physical_part || nearest_mode==7 || hardware_physical_rotation) && !r->blendmode &&
       anygm_policy_has_modern_layer_semantics(r->win)
       ?GML_RENDER_QUANTISE_HARDWARE_SPRITE_MODERN:GML_RENDER_QUANTISE_HARDWARE_SPRITE_FIRSTGEN):stretched_float
     ?GML_RENDER_QUANTISE_STRETCHED_FLOAT:
@@ -2969,6 +3037,13 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
   /* A reduced axis can have valid centre samples while its extrapolated vertices
    * lie outside the atlas. Resolve just that bounded axis to constant texel strips. */
   const GmlRenderQuad *quad=&operation.payload.quad;
+  if(hardware_physical_rotation){
+    int accepted=resident_filtered_rotation_rows(r,rotated_sprite,page,physical_rotation_x,physical_rotation_y,xs,ys,rotation,
+                                                &operation,&state,&source);
+    if(!accepted) return 0;
+    if(accepted==1) r->fb_all_transparent=0;
+    return 1;
+  }
   if(quad->shape==GML_RENDER_QUAD_AXIS_ALIGNED) for(unsigned corner=0;corner<4u;corner++){
     if(!isfinite(quad->u[corner]) || !isfinite(quad->v[corner])) return 0;
     if(!hardware_physical_sprite &&
@@ -3823,6 +3898,9 @@ static int resident_filtered_sprite(GmlRender *r,GmlSprite *sprite,int subimg,
       floor(left+0.5),floor(top+0.5),xs,ys,
       GML_RENDER_SCENE_SPRITE,blend,alpha,NULL,NULL,0.0,NULL,0,0,0,0,1);
   }
+  if(rotation!=0.0 && anygm_policy_has_modern_layer_semantics(r->win) &&
+     resident_filtered_atlas_page(r,page_index,x,y,xs,ys,
+       GML_RENDER_SCENE_SPRITE,blend,alpha,NULL,sprite,normalized_rotation,NULL,0,0,0,0,10)) return 1;
   if(rotation!=0.0)
     return resident_filtered_atlas_page(r,page_index,x-r->cam_x,y-r->cam_y,xs,ys,
                                        GML_RENDER_SCENE_SPRITE,blend,alpha,NULL,sprite,

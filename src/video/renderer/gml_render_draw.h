@@ -289,7 +289,10 @@ typedef struct GmlRenderQuad {
    * box-filtered or float-band stretches carry [logical size, destination size, trim, visible size]
    * in these four components per axis, with span_active left clear. Modern nearest rotation
    * may instead carry signed fixed20 [base high16, base low16, step high16, step low16],
-   * relative to the crop and the row's left edge, under GML_RENDER_SPAN_FIXED20_ROW. */
+   * relative to the crop and the row's left edge, under GML_RENDER_SPAN_FIXED20_ROW.
+   * FILTERED_AFFINE_ROW uses normalized UVs on one physical row; inverse_anchor
+   * carries its first centre's local sample and inverse_x its two source slopes.
+   * Other inverse/span fields remain zero. It introduces no shader arithmetic. */
   double span_x[4],span_y[4];
   uint32_t span_active;
   uint32_t corner_colour[4];
@@ -303,7 +306,7 @@ typedef struct GmlRenderQuad {
   uint32_t source_endpoint_rgb_mask;
 } GmlRenderQuad;
 
-enum { GML_RENDER_SPAN_FIXED20_ROW=2u };
+enum { GML_RENDER_SPAN_FIXED20_ROW=2u, GML_RENDER_SPAN_FILTERED_AFFINE_ROW=3u };
 
 /* Shared admission for the bounded double-expression font rule, before target writes. */
 int gml_render_filtered_font_quad_valid(const GmlRenderQuad *quad,

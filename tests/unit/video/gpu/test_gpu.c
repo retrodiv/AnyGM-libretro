@@ -1698,8 +1698,84 @@ static int scene_integer_screen_surface_batch_case(void){
 static int scene_hardware_screen_stretch_batch_case(void){
   return scene_hardware_filtered_batch_case(6);
 }
+/* Typed row admission/atomic refusal only; real paired controls own RGBA. */
+static int scene_filtered_affine_row_batch_case(void){
+  enum { QUADS=2049 };
+  const uint8_t pixels[16]={11,22,33,255,44,55,66,255,77,88,99,255,111,122,133,255};
+  for(unsigned api=0;api<2u;api++) for(unsigned owner=0;owner<3u;owner++)
+  for(unsigned invalid=0;invalid<14u;invalid++){
+    anygm_test_graphics_reset();
+    GmlGpu *gpu=gml_gpu_create();GmlRenderDeviceServices device={0};
+    GmlGpuContext context=fake_context(api?GML_GPU_API_OPENGLES3:GML_GPU_API_OPENGL_CORE);
+    GmlRenderImageRef source={GML_RENDER_RESOURCE_ATLAS,181u,1u,1u};
+    GmlRenderImageUpload upload={.image=source,.storage_width=2u,.storage_height=2u,
+      .region={0,0,2u,2u},.pixel_format=GML_RENDER_PIXEL_RGBA8888,
+      .stride_bytes=8u,.byte_capacity=sizeof pixels,.bytes=pixels};
+    GmlRenderDrawOp *ops=calloc(QUADS+1u,sizeof *ops);
+    GmlRenderDrawStateSnapshot state={0};
+    REQUIRE(gpu && ops && gml_gpu_context_reset(gpu,&context),"affine row context adopted");
+    gml_gpu_device_services(gpu,&device);
+    REQUIRE(device.upload(device.context,&upload),"affine row atlas uploaded");
+    state.write_mask=15u;state.alpha=255u;state.colour=0xFFFFFFFFu;state.sampler_count=1u;
+    state.samplers[0]=(GmlRenderSamplingPolicy){GML_RENDER_FILTER_HARDWARE_BILINEAR,
+      GML_RENDER_EDGE_CLAMP_SUBIMAGE,{0,0,2u,2u},GML_RENDER_QUANTISE_HARDWARE_SPRITE_MODERN,0u};
+    state.rgb_source_factor=GML_RENDER_BLEND_SOURCE_ALPHA;
+    state.rgb_destination_factor=state.alpha_destination_factor=GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA;
+    state.alpha_source_factor=GML_RENDER_BLEND_ONE;
+    state.rgb_equation=state.alpha_equation=GML_RENDER_BLEND_ADD;
+    for(unsigned index=0;index<QUADS+1u;index++){
+      GmlRenderDrawOp *op=&ops[index];op->sequence=index+1u;
+      op->target=(GmlRenderTargetRef){.image={owner==0u?GML_RENDER_RESOURCE_SCREEN:
+        owner==1u?GML_RENDER_RESOURCE_APPLICATION:GML_RENDER_RESOURCE_SURFACE,182u,1u,index+1u},
+        .storage_version=1u,.width=8u,.height=8u,.pixel_format=GML_RENDER_PIXEL_ARGB8888,
+        .region={0,0,8u,8u}};
+      if(!index){op->opcode=GML_RENDER_OP_CLEAR;op->payload.clear_colour=0x40273859u;continue;}
+      op->opcode=GML_RENDER_OP_TEXTURED_QUAD;op->scene_family=GML_RENDER_SCENE_SPRITE;
+      op->sources=&source;op->source_count=1u;op->reconstruction_mode=GML_RENDER_DEVICE_CHECKPOINT;
+      GmlRenderQuad *q=&op->payload.quad;q->shape=GML_RENDER_QUAD_AXIS_ALIGNED;
+      q->sampling=state.samplers[0];q->filtered_draw_alpha=.7;
+      q->span_active=GML_RENDER_SPAN_FILTERED_AFFINE_ROW;
+      q->inverse_x[0]=1.0;q->inverse_x[1]=.5;
+      q->x[1]=q->x[2]=2.0;q->y[2]=q->y[3]=1.0;
+      for(unsigned corner=0;corner<4u;corner++){
+        int right=corner==1u || corner==2u;
+        q->corner_colour[corner]=0xB3123456u;q->u[corner]=right?1.0:0.0;
+        q->v[corner]=right?.625:.125;
+      }
+    }
+    GmlRenderQuad *last=&ops[QUADS].payload.quad;
+    if(invalid==1u) last->y[2]=last->y[3]=2.0;
+    if(invalid==2u) last->inverse_x[1]=NAN;
+    if(invalid==3u) last->inverse_offset[0]=1.0;
+    if(invalid==4u) last->span_x[0]=1.0;
+    if(invalid==5u) last->inverse_anchor[0]=2.0;
+    if(invalid==6u) last->inverse_y[1]=1.0;
+    if(invalid==7u) last->u[1]=.9;
+    if(invalid==8u) ops[QUADS].scene_family=GML_RENDER_SCENE_TEXT;
+    if(invalid==9u) ops[QUADS].reconstruction_mode=GML_RENDER_REPLAY_EXACT;
+    if(invalid==10u) last->sampling.quantisation=0u;
+    if(invalid==11u) last->span_active=4u;
+    if(invalid==12u) last->inverse_x[0]=last->inverse_x[1]=0.0;
+    if(invalid==13u){state.alpha_test_enabled=1u;state.alpha_test_reference=1u;}
+    GmlRenderDrawBatch batch={ops,QUADS+1u,&state,1u};
+    GmlRenderExecutionResult result=device.submit(device.context,&batch);
+    if(invalid){
+      REQUIRE(result.status==GML_RENDER_EXEC_UNSUPPORTED && !result.accepted_prefix &&
+        !anygm_test_graphics_clear_calls() && !anygm_test_graphics_scene_draw_calls() &&
+        !anygm_test_graphics_scene_copies(),"invalid row suffix refuses before the clear prefix");
+    }else{
+      REQUIRE(result.status==GML_RENDER_EXEC_ACCEPTED && result.accepted_prefix==QUADS+1u &&
+        anygm_test_graphics_scene_draw_calls()==2 && anygm_test_graphics_scene_vertices()==QUADS*6 &&
+        anygm_test_graphics_scene_filter()==GL_LINEAR && !anygm_test_graphics_scene_copies() &&
+        !anygm_test_graphics_read_pixels(),"continuous row quads batch only at capacity without observation");
+    }
+    gml_gpu_destroy(gpu,1);free(ops);
+  }
+  return 1;
+}
 static int scene_hardware_screen_sprite_batch_case(void){
-  return scene_hardware_filtered_batch_case(7) && scene_hardware_filtered_batch_case(11);
+  return scene_hardware_filtered_batch_case(7) && scene_hardware_filtered_batch_case(11) &&
+    scene_filtered_affine_row_batch_case();
 }
 static int scene_hardware_screen_font_batch_case(void){
   return scene_hardware_filtered_batch_case(8);

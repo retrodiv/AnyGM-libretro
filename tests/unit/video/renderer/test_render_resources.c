@@ -14319,21 +14319,27 @@ static int resident_physical_filtered_sprite_function_impl(int matched,int moder
     double mapping=gml_render_gui_transform_active(render)?2.0:1.0;
     unsigned signs=(state+source+kind+gui+layout)%4u;
     double xs=(signs&1u?-1.5:.75)/mapping,ys=(signs&2u?-.75:1.5)/mapping;
+    int precision_refused=modern==2 && (layout || source) &&
+      ((!render->alphablend && render->blendmode!=2) ||
+       (render->alphablend && (mask&8u) &&
+        (render->blendmode==2?gml_render_target_preserves_alpha(render):
+          !gml_render_target_preserves_alpha(render) && (!render->fb_opaque_known || !render->fb_all_opaque))));
     unsigned before=(unsigned)fake.submits;
     for(unsigned draw=0;draw<8u;draw++)
-      gml_draw_sprite_ext(render,0,0,10.25/mapping,9.75/mapping,xs,ys,0,0x70B0D0u,.4);
-    if(mask && (state&1u) && (layout || source ||
-       (modern && state/2u==0u && render->alpha_test_ref))){
+      gml_draw_sprite_ext(render,0,0,10.25/mapping,9.75/mapping,xs,ys,modern==2?31.0:0.0,0x70B0D0u,.4);
+    if(mask && (precision_refused || ((state&1u) && (layout || source ||
+       (modern && state/2u==0u && render->alpha_test_ref))))){
       CHECK(!render->resident_application_pass && fake.readbacks==1 &&
         (unsigned)fake.submits==before && render->interp==1 &&
-        render->alpha_test_enable==1);
+        render->alpha_test_enable==(int)(state&1u));
       gml_render_free(render);free(render);continue;
     }
     CHECK(render->resident_application_pass && gml_render_scene_submit_pending(render));
     CHECK((unsigned)fake.submits==before+(mask?1u:0u) && !fake.readbacks && !fake.rgb_queries &&
       !memcmp(shadow,render->fb,sizeof shadow) && render->interp==1 &&
       render->alpha_test_enable==(int)(state&1u));
-    if(mask) CHECK(fake.last_batch_operations==8u && fake.last_filter==GML_RENDER_FILTER_HARDWARE_BILINEAR &&
+    if(mask) CHECK((modern==2?fake.last_batch_operations>=8u && fake.last_batch_operations%8u==0u:
+                            fake.last_batch_operations==8u) && fake.last_filter==GML_RENDER_FILTER_HARDWARE_BILINEAR &&
       fake.last_quantisation==(modern && state/2u==0u
         ?GML_RENDER_QUANTISE_HARDWARE_SPRITE_MODERN:GML_RENDER_QUANTISE_HARDWARE_SPRITE_FIRSTGEN) &&
       fake.last_quad_state.write_mask==mask &&
@@ -14362,6 +14368,10 @@ static int resident_matched_filtered_sprite_function(void){
 
 static int resident_modern_physical_filtered_sprite_function(void){
   return resident_physical_filtered_sprite_function_impl(1,1);
+}
+
+static int resident_modern_rotated_filtered_sprite_function(void){
+  return resident_physical_filtered_sprite_function_impl(1,2);
 }
 
 static int resident_classic_large_point_sprite_function(void){
@@ -16326,6 +16336,7 @@ int main(void){
   passed+=resident_physical_filtered_sprite_function();
   passed+=resident_matched_filtered_sprite_function();
   passed+=resident_modern_physical_filtered_sprite_function();
+  passed+=resident_modern_rotated_filtered_sprite_function();
   passed+=resident_cpu_passthrough_sprite_scope();
   passed+=resident_classic_large_point_sprite_function();
   passed+=resident_nearest_geometry_capacity();
@@ -16389,6 +16400,6 @@ int main(void){
   passed+=source_free_primitive_rect_replay();
   passed+=stretched_float_exact_replay();
   passed+=filtered_font_exact_recovery();
-  printf("render resource cases: passed=%d failed=%d\n",passed,253-passed);
-  return passed==253?EXIT_SUCCESS:EXIT_FAILURE;
+  printf("render resource cases: passed=%d failed=%d\n",passed,254-passed);
+  return passed==254?EXIT_SUCCESS:EXIT_FAILURE;
 }

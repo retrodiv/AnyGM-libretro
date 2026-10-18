@@ -718,6 +718,7 @@ static int hardware_screen_sprite_valid(const GmlRenderDrawOp *op,
   double xs=quad->inverse_x[0],ys=quad->inverse_y[1];
   double left=quad->inverse_anchor[0],top=quad->inverse_anchor[1];
   uint32_t margin=quad->sampling.logical_margin_mask;
+  int affine_row=quad->span_active==GML_RENDER_SPAN_FILTERED_AFFINE_ROW;
   int physical=(quad->sampling.quantisation==GML_RENDER_QUANTISE_HARDWARE_SPRITE_FIRSTGEN ||
                 quad->sampling.quantisation==GML_RENDER_QUANTISE_HARDWARE_SPRITE_MODERN) &&
     op->scene_family==GML_RENDER_SCENE_SPRITE && state->write_mask<=15u &&
@@ -754,20 +755,40 @@ static int hardware_screen_sprite_valid(const GmlRenderDrawOp *op,
           ((margin&GML_RENDER_MARGIN_RIGHT) && (uint64_t)(uint32_t)region.x+region.width>=source->width) ||
           ((margin&GML_RENDER_MARGIN_BOTTOM) && (uint64_t)(uint32_t)region.y+region.height>=source->height)))
        : quad->sampling.edge_rule!=GML_RENDER_EDGE_CLAMP_SUBIMAGE) ||
-     (quad->sampling.quantisation && !physical) || quad->span_active ||
+     (quad->sampling.quantisation && !physical) || (quad->span_active && !affine_row) ||
      !isfinite(quad->filtered_draw_alpha) || quad->filtered_draw_alpha<=0.0 ||
      quad->filtered_draw_alpha>1.0 ||
      !isfinite(xs) || !isfinite(ys) ||
-     (physical?fabs(xs)<0.125 || fabs(xs)>64.0 || fabs(ys)<0.125 || fabs(ys)>64.0:
-               xs<=0.0 || ys<=0.0) ||
+     (!affine_row && (physical?fabs(xs)<0.125 || fabs(xs)>64.0 || fabs(ys)<0.125 || fabs(ys)>64.0:
+               xs<=0.0 || ys<=0.0)) ||
      (op->scene_family==GML_RENDER_SCENE_TEXT &&
       (xs>1.0 || ys>1.0 || region.width>256u || region.height>256u)) ||
      !isfinite(left) || !isfinite(top) ||
      !valid_region(region,source->width,source->height) ||
      !exact_rect(op,NULL,NULL,NULL,NULL,1)) return 0;
+  if(affine_row){
+    if(!physical || quad->y[2]-quad->y[0]!=1.0 ||
+       region.width>4096u || region.height>4096u ||
+       quad->x[1]-quad->x[0]>16384.0 || fabs(left)>4097.0 || fabs(top)>4097.0 ||
+       fabs(quad->inverse_x[0])>8.0 || fabs(quad->inverse_x[1])>8.0 ||
+       (quad->inverse_x[0]==0.0 && quad->inverse_x[1]==0.0) ||
+       !isfinite(quad->inverse_x[1]) || quad->inverse_y[0]!=0.0 || quad->inverse_y[1]!=0.0 ||
+       quad->inverse_offset[0]!=0.0 || quad->inverse_offset[1]!=0.0) return 0;
+    for(unsigned axis=0;axis<2u;axis++){
+      double start=quad->inverse_anchor[axis];
+      double end=start+(quad->x[1]-quad->x[0]-1.0)*quad->inverse_x[axis];
+      double extent=axis?region.height:region.width;
+      if(start<-1.0 || start>=extent || end<-1.0-1e-8 || end>=extent+1e-8) return 0;
+      for(unsigned component=0;component<4u;component++)
+        if(quad->span_x[component]!=0.0 || quad->span_y[component]!=0.0) return 0;
+    }
+  }
   for(unsigned corner=0;corner<4u;corner++){
-    double u=((double)region.x+(quad->x[corner]-left)/xs)/source->width;
-    double v=((double)region.y+(quad->y[corner]-top)/ys)/source->height;
+    double offset=quad->x[corner]-quad->x[0]-0.5;
+    double u=affine_row?((double)region.x+left+0.5+offset*quad->inverse_x[0])/source->width:
+      ((double)region.x+(quad->x[corner]-left)/xs)/source->width;
+    double v=affine_row?((double)region.y+top+0.5+offset*quad->inverse_x[1])/source->height:
+      ((double)region.y+(quad->y[corner]-top)/ys)/source->height;
     if(quad->corner_colour[corner]!=quad->corner_colour[0] ||
        (quad->corner_colour[corner]>>24)!=(uint32_t)lround(quad->filtered_draw_alpha*255.0) ||
        fabs(quad->u[corner]-u)>1e-12 || fabs(quad->v[corner]-v)>1e-12) return 0;

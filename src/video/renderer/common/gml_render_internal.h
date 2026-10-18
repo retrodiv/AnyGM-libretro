@@ -866,6 +866,17 @@ int gml_render_rotated_nearest_sample_rows(GmlRender *r,GmlSprite *sprite,GmlTpa
                                            double rotation,GmlRenderRotatedCoverageRegion *regions,
                                            uint32_t capacity,uint32_t *count);
 
+/* Geometry only: one clipped physical row with continuous source coordinates.
+ * Filtering, tint and destination arithmetic remain with their executors. */
+typedef struct GmlRenderFilteredRotationRow {
+  GmlRenderRect region;
+  double source_x,source_y,delta_x,delta_y;
+} GmlRenderFilteredRotationRow;
+int gml_render_rotated_filtered_rows(GmlRender *r,GmlSprite *sprite,GmlTpag *tpag,
+                                      double x,double y,double xscale,double yscale,
+                                      double rotation,GmlRenderFilteredRotationRow *rows,
+                                      uint32_t capacity,uint32_t *count);
+
 /* CPU vertical samples belong to the logical root, never to an explicitly
  * numbered allocation. Keep every other binding behind the established fence. */
 static inline int gml_render_classic_vertical_phase_blocks_scene(const GmlRender *r){
