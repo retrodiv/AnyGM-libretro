@@ -2218,7 +2218,7 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
     !box_stretched && !positioned_axis && !r->fog_flat && xs!=0.0 && ys!=0.0 &&
     fabs(xs)>=0.125 && fabs(xs)<=64.0 && fabs(ys)>=0.125 && fabs(ys)<=64.0 &&
     (anygm_policy_uses_first_generation_studio(r->win) ||
-     ((hardware_physical_part || hardware_physical_tiled) && anygm_policy_has_modern_layer_semantics(r->win))) &&
+     anygm_policy_has_modern_layer_semantics(r->win)) &&
     r->device.context && r->device.observe_on_demand &&
     r->device.observe_on_demand(r->device.context);
   if((nearest_mode==7 || nearest_mode==8 || nearest_mode==9) && !hardware_physical_sprite) return 0;
@@ -2324,6 +2324,10 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
   if(part_view && !filtered_real_text &&
      part_view->atlas!=r->tpag[page_index].atlas) return 0;
   page=part_view?part_view:&r->tpag[page_index];
+  /* Authored-edge projection retains its established owner. GUI points and
+   * scales are already mapped by the public entry, including maximisation. */
+  if(nearest_mode==7 && anygm_policy_has_modern_layer_semantics(r->win) &&
+     page->project_authored_edges) return 0;
   if((modern_numbered_sprite || modern_screen_sprite) && page->project_authored_edges) return 0;
   if(modern_screen_sprite && alpha<1.0/255.0) return 0;
   if(firstgen_signed_point && (alpha<1.0/255.0 || page->project_authored_edges)) return 0;
@@ -2385,6 +2389,11 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
    * alpha without logical neighbours has a driver-independent decision. */
   if(hardware_physical_sprite && !hardware_physical_part && r->alpha_test_enable &&
      (margin_mask || (!page->scene_fully_opaque && page->scene_ax1>=0))) return 0;
+  /* The continuous modern normal packet does not qualify raw positive
+   * cutout: a sub-byte interpolation difference can change whole coverage. */
+  if(hardware_physical_sprite && (hardware_physical_part || nearest_mode==7) &&
+     !r->blendmode && r->alpha_test_enable &&
+     r->alpha_test_ref && anygm_policy_has_modern_layer_semantics(r->win)) return 0;
   /* The established shader truncates tint; modern opaque CPU pixels round it.
    * Do not admit new exact integer variants with non-endpoint tint channels
    * through a tolerance rule. Existing positive unit/reduction paths remain. */
@@ -2473,7 +2482,8 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
   } else {
     /* The positioned axis CPU leaf delegates to blit_one. Its modern world-target half-camera
      * ties select the preceding pixel; other filtered quads keep their established rounding. */
-    if((positioned_axis || modern_screen_filtered || hardware_physical_tiled) && anygm_policy_has_modern_layer_semantics(r->win) &&
+    if((positioned_axis || modern_screen_filtered || hardware_physical_tiled ||
+        (hardware_physical_sprite && nearest_mode==7)) && anygm_policy_has_modern_layer_semantics(r->win) &&
        !r->gui_pass_active && r->target_sp==0 && r->target_id<0){
       if(fabs(fabs(r->cam_x-nearbyint(r->cam_x))-0.5)<1e-9)
         positioned_x_tie=-1e-9;
@@ -2665,7 +2675,8 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
       ?GML_RENDER_EDGE_LOGICAL_TPAG:GML_RENDER_EDGE_CLAMP_SUBIMAGE);
   operation.payload.quad.sampling.source_region=region;
   operation.payload.quad.sampling.quantisation=hardware_physical_sprite
-    ?(hardware_physical_part && !r->blendmode && anygm_policy_has_modern_layer_semantics(r->win)
+    ?((hardware_physical_part || nearest_mode==7) && !r->blendmode &&
+      anygm_policy_has_modern_layer_semantics(r->win)
       ?GML_RENDER_QUANTISE_HARDWARE_SPRITE_MODERN:GML_RENDER_QUANTISE_HARDWARE_SPRITE_FIRSTGEN):stretched_float
     ?GML_RENDER_QUANTISE_STRETCHED_FLOAT:
     hardware_combined?GML_RENDER_QUANTISE_HARDWARE_COMBINED:
@@ -2872,7 +2883,7 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
         GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA;
       /* The modern normal filtered CPU leaf replaces RGB but retains its
        * source-over alpha calculation even when blending is disabled. */
-      if((hardware_physical_part || hardware_physical_tiled) && !r->blendmode &&
+      if(!r->blendmode &&
          anygm_policy_has_modern_layer_semantics(r->win) &&
          gml_render_target_preserves_alpha(r)){
         state.coverage_policy=0u;
@@ -3834,9 +3845,16 @@ static int resident_filtered_sprite(GmlRender *r,GmlSprite *sprite,int subimg,
   if(anygm_policy_uses_first_generation_studio(r->win) &&
      resident_filtered_atlas_page(r,page_index,left,top,xs,ys,
        GML_RENDER_SCENE_SPRITE,blend,alpha,NULL,NULL,0.0,NULL,0,0,0,0,7)) return 1;
-  return gml_render_resident_filtered_atlas_page(
+  if(gml_render_resident_filtered_atlas_page(
       r,page_index,left,top,
-      xs,ys,GML_RENDER_SCENE_SPRITE,blend,alpha,NULL,0);
+      xs,ys,GML_RENDER_SCENE_SPRITE,blend,alpha,NULL,0)) return 1;
+  /* R03-SPR-MODERN-PHYSICAL-FILTERED: retain every established owner first.
+   * Other ordinary modern axis states share the physical filtered CPU leaf,
+   * including fixed add/inverse and masked application/numbered destinations.
+   * The existing physical packet owns bounds, cutout and source lifetime. */
+  return anygm_policy_has_modern_layer_semantics(r->win) &&
+    resident_filtered_atlas_page(r,page_index,left,top,xs,ys,
+      GML_RENDER_SCENE_SPRITE,blend,alpha,NULL,NULL,0.0,NULL,0,0,0,0,7);
 }
 
 void gml_draw_sprite(GmlRender *r, int sprite, int subimg, double x, double y){
@@ -3878,7 +3896,8 @@ int gml_render_resident_masked_sprite(GmlRender *r,int sprite,int subimg,
     return 1;
   int physical_filtered=0;
   GmlSprite *asset=&r->spr[sprite];
-  if(r->interp && anygm_policy_uses_first_generation_studio(r->win) &&
+  if(r->interp && (anygm_policy_uses_first_generation_studio(r->win) ||
+                  anygm_policy_has_modern_layer_semantics(r->win)) &&
      !asset->runtime_rgba && asset->n_frames>0 && asset->frame){
     int frame=gml_render_runtime_frame_index(asset,subimg);
     int page=asset->frame[frame];
@@ -3900,6 +3919,13 @@ int gml_render_resident_masked_sprite(GmlRender *r,int sprite,int subimg,
   gml_render_draw_map_point(r,&x,&y);
   gml_render_draw_map_scale(r,&xs,&ys);
   double resident_alpha=isfinite(alpha) && alpha>1.0?1.0:alpha;
+  /* Match the unmasked entry's existing near-turn CPU axis classification
+   * only for this newly paired modern physical filtered companion. */
+  if(physical_filtered && anygm_policy_has_modern_layer_semantics(r->win) &&
+     isfinite(rotation)){
+    double phase=fmod(rotation,360.0);if(phase<0.0) phase+=360.0;
+    if(phase<0.001 || fabs(phase-360.0)<0.001) rotation=0.0;
+  }
   /* Preserve the inherited masked numbered owner before extending ordinary
    * nearest admission. The CPU wrapper retains every rejected special state. */
   if((physical_filtered ||

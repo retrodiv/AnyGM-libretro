@@ -7912,6 +7912,16 @@ static int resident_black_additive_sprite_noop(void){
               fake.last_quad_state.alpha_destination_factor==GML_RENDER_BLEND_ONE &&
               fake.last_quad_state.coverage_policy==GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA);
         CHECK(!memcmp(shadow,gpu,sizeof shadow));
+      } else if(variant==7u){
+        /* Unknown opacity is not a no-op certificate. The separately paired
+         * physical writer executes and stamps coverage instead. */
+        CHECK(r->resident_application_pass && gml_render_scene_submit_pending(r) &&
+          fake.submits==submits+1 && fake.readbacks==reads &&
+          fake.last_filter==GML_RENDER_FILTER_HARDWARE_BILINEAR &&
+          fake.last_quantisation==GML_RENDER_QUANTISE_HARDWARE_SPRITE_FIRSTGEN &&
+          fake.last_quad_state.rgb_destination_factor==GML_RENDER_BLEND_ONE &&
+          fake.last_quad_state.coverage_policy==GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA &&
+          !memcmp(shadow,gpu,sizeof shadow));
       } else CHECK(!r->resident_application_pass);
     }
     gml_render_free(r);free(r);
@@ -10389,6 +10399,16 @@ static int resident_modern_screen_filtered_sprite(void){
       CHECK(metrics.authority==GML_RENDER_RESOURCE_GPU_RESIDENT &&
             metrics.cpu_version<metrics.logical_version && !metrics.journal_operations &&
             !metrics.cpu_replays && !metrics.device_checkpoints);
+    }else if(variant==2u || variant==3u || variant==4u || variant==12u){
+      /* Separately paired physical filtering supersedes only these former
+       * mask/add admission exclusions, not the old SCREEN recipe. */
+      CHECK(render->resident_application_pass && !memcmp(screen,sentinel,sizeof screen) &&
+        fake.submits==submits+1 && !fake.readbacks && !fake.rgb_queries &&
+        fake.last_filter==GML_RENDER_FILTER_HARDWARE_BILINEAR &&
+        fake.last_quantisation==(variant==4u?GML_RENDER_QUANTISE_HARDWARE_SPRITE_FIRSTGEN:
+                                            GML_RENDER_QUANTISE_HARDWARE_SPRITE_MODERN) &&
+        fake.last_quad_state.write_mask==(variant==3u?7u:15u) &&
+        fake.last_filtered_draw_alpha==1.0/90.0);
     }else if(variant==8u){
       /* Flat fog selects the CPU point owner even with filtering requested. */
       CHECK(render->resident_application_pass && !memcmp(screen,sentinel,sizeof screen) &&
@@ -14228,7 +14248,7 @@ static int resident_cpu_passthrough_sprite_scope(void){
       gml_render_set_shader_executor(r,passthrough_scope_executor,NULL);
     }
     memcpy(shadow,r->fb,sizeof shadow);int submitted=fake.submits;
-    int refused=program || (interpolation && generation==5u);
+    int refused=program;
     if(refused){
       /* Test the actual masked entry,not its full-mask early refusal. */
       r->color_write_mask=5u;
@@ -14247,10 +14267,10 @@ static int resident_cpu_passthrough_sprite_scope(void){
 }
 
 /* Authority and transport only; the paired device generator owns D2 pixels. */
-static int resident_physical_filtered_sprite_function_impl(int matched){
+static int resident_physical_filtered_sprite_function_impl(int matched,int modern){
   enum { W=24,H=20,A=6 };
-  const int generations[]={13,15};
-  for(unsigned generation=0;generation<2u;generation++)
+  const int generations[]={13,15,17};
+  for(unsigned generation=modern?2u:0u;generation<(modern?3u:2u);generation++)
   for(unsigned state=0;state<6u;state++)
   for(unsigned kind=0;kind<4u;kind++) for(unsigned gui=0;gui<2u;gui++)
   for(unsigned layout=0;layout<2u;layout++) for(unsigned source=0;source<3u;source++){
@@ -14286,12 +14306,14 @@ static int resident_physical_filtered_sprite_function_impl(int matched){
     if(kind==2u) CHECK(gml_surface_set_target(render,0));
     if(kind==3u){int id=gml_surface_create(render,W,H);CHECK(id>0 && gml_surface_set_target(render,id));}
     if(gui){gml_render_gui_begin(render,W,H);gml_render_gui_set_size(render,W/2,H/2);}
+    if(modern && gui) gml_render_gui_set_maximise(render,1,2,2,.25,-.5,W,H);
     render->interp=1;render->alphablend=(state+source)%2u==0u;
     render->blendmode=state/2u;render->alpha_test_enable=(int)(state&1u);
     render->alpha_test_ref=(uint8_t)(source*73u+kind*41u);
     gml_render_set_pending_fill(render,0x40273859u);
     gml_render_flush_pending_fill(render);CHECK(gml_render_scene_submit_pending(render));
     unsigned mask=(generation+state*3u+source*5u+kind*7u+gui*11u+layout*13u)%16u;
+    if(modern) mask=1u+mask%14u;
     render->color_write_mask=(uint8_t)mask;memcpy(shadow,render->fb,sizeof shadow);
     double mapping=gml_render_gui_transform_active(render)?2.0:1.0;
     unsigned signs=(state+source+kind+gui+layout)%4u;
@@ -14299,7 +14321,8 @@ static int resident_physical_filtered_sprite_function_impl(int matched){
     unsigned before=(unsigned)fake.submits;
     for(unsigned draw=0;draw<8u;draw++)
       gml_draw_sprite_ext(render,0,0,10.25/mapping,9.75/mapping,xs,ys,0,0x70B0D0u,.4);
-    if(mask && (state&1u) && (layout || source)){
+    if(mask && (state&1u) && (layout || source ||
+       (modern && state/2u==0u && render->alpha_test_ref))){
       CHECK(!render->resident_application_pass && fake.readbacks==1 &&
         (unsigned)fake.submits==before && render->interp==1 &&
         render->alpha_test_enable==1);
@@ -14310,7 +14333,8 @@ static int resident_physical_filtered_sprite_function_impl(int matched){
       !memcmp(shadow,render->fb,sizeof shadow) && render->interp==1 &&
       render->alpha_test_enable==(int)(state&1u));
     if(mask) CHECK(fake.last_batch_operations==8u && fake.last_filter==GML_RENDER_FILTER_HARDWARE_BILINEAR &&
-      fake.last_quantisation==GML_RENDER_QUANTISE_HARDWARE_SPRITE_FIRSTGEN &&
+      fake.last_quantisation==(modern && state/2u==0u
+        ?GML_RENDER_QUANTISE_HARDWARE_SPRITE_MODERN:GML_RENDER_QUANTISE_HARDWARE_SPRITE_FIRSTGEN) &&
       fake.last_quad_state.write_mask==mask &&
       fake.last_quad_state.alpha_test_enabled==(state&1u));
     GmlRenderResource *target=gml_render_scene_target_resource_ensure(render);CHECK(target);
@@ -14328,11 +14352,15 @@ static int resident_physical_filtered_sprite_function_impl(int matched){
 }
 
 static int resident_physical_filtered_sprite_function(void){
-  return resident_physical_filtered_sprite_function_impl(0);
+  return resident_physical_filtered_sprite_function_impl(0,0);
 }
 
 static int resident_matched_filtered_sprite_function(void){
-  return resident_physical_filtered_sprite_function_impl(1);
+  return resident_physical_filtered_sprite_function_impl(1,0);
+}
+
+static int resident_modern_physical_filtered_sprite_function(void){
+  return resident_physical_filtered_sprite_function_impl(1,1);
 }
 
 static int resident_classic_large_point_sprite_function(void){
@@ -16296,6 +16324,7 @@ int main(void){
   passed+=resident_tiled_sprite_underlay_noops();
   passed+=resident_physical_filtered_sprite_function();
   passed+=resident_matched_filtered_sprite_function();
+  passed+=resident_modern_physical_filtered_sprite_function();
   passed+=resident_cpu_passthrough_sprite_scope();
   passed+=resident_classic_large_point_sprite_function();
   passed+=resident_nearest_geometry_capacity();
@@ -16359,6 +16388,6 @@ int main(void){
   passed+=source_free_primitive_rect_replay();
   passed+=stretched_float_exact_replay();
   passed+=filtered_font_exact_recovery();
-  printf("render resource cases: passed=%d failed=%d\n",passed,252-passed);
-  return passed==252?EXIT_SUCCESS:EXIT_FAILURE;
+  printf("render resource cases: passed=%d failed=%d\n",passed,253-passed);
+  return passed==253?EXIT_SUCCESS:EXIT_FAILURE;
 }
