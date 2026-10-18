@@ -2188,14 +2188,16 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
     !gml_render_target_preserves_alpha(r) &&
     r->device.context && r->device.observe_on_demand &&
     r->device.observe_on_demand(r->device.context);
-  /* A maximised GUI can still resolve to the same identity mapping. Admit
-   * that flag-only variant, not arbitrary maximised scales or offsets. */
+  /* A maximised GUI can still resolve to the same identity mapping. Glyph
+   * coordinates are already physical even with a distinct logical hint;
+   * sprite owners retain their separately qualified logical-size scope. */
   int modern_filtered_identity_maximise=r && r->gui_pass_active &&
     r->gui_maximise_active && !r->world_transform_active && r->base_scene_resource &&
     r->fb==r->base_scene_resource_pixels &&
     r->fbw==r->base_scene_resource_width && r->fbh==r->base_scene_resource_height &&
     r->gui_base_logical_w==r->fbw && r->gui_base_logical_h==r->fbh &&
-    r->gui_logical_w==r->fbw && r->gui_logical_h==r->fbh &&
+    ((r->gui_logical_w==r->fbw && r->gui_logical_h==r->fbh) ||
+     (filtered_real_text && r->gui_logical_w>0 && r->gui_logical_h>0)) &&
     r->gui_scale_x==1.0 && r->gui_scale_y==1.0 &&
     r->gui_maximise_xoffset==0.0 && r->gui_maximise_yoffset==0.0 &&
     r->cam_x==0.0 && r->cam_y==0.0;

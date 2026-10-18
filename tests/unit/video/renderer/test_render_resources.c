@@ -10427,7 +10427,7 @@ static int resident_modern_screen_filtered_sprite(void){
 }
 
 static int resident_maximised_filtered_real_font(void){
-  for(unsigned variant=0;variant<16u;variant++){
+  for(unsigned variant=0;variant<17u;variant++){
     GmlRender *render=(GmlRender*)calloc(1,sizeof *render);
     GmlWin content={.bytecode=variant==9u || variant==14u?15:17};
     FakeDevice fake={.on_demand=variant!=1u};
@@ -10455,8 +10455,9 @@ static int resident_maximised_filtered_real_font(void){
     device.observe_on_demand=fake_observe_on_demand;
     gml_render_bind_device(render,&device);
     CHECK(gml_render_begin_resident_base(render,screen,24,16,0.0,0.0));
-    if(variant<14u){
+    if(variant<14u || variant==16u){
       gml_render_gui_begin(render,24,16);
+      if(variant==16u) gml_render_gui_set_size(render,12,8);
       gml_render_gui_set_maximise(render,1,1.0,1.0,variant==2u?1.0:0.0,0.0,24,16);
     }
     gml_render_set_pending_fill(render,0xA5714A24u);
@@ -10472,17 +10473,17 @@ static int resident_maximised_filtered_real_font(void){
     if(variant==10u) render->active_shader=0;
     if(variant==11u){render->world_transform_active=1;render->world_scale_x=2.0;}
     uint64_t version=gml_render_resource_image_ref(render->base_scene_resource).content_version;
-    if(variant>=14u)
+    if(variant>=14u && variant<16u)
       gml_draw_text_transformed(render,8.5,16.0,"A",1.0,1.0,0.0,0u,.3);
     else
       gml_draw_text_transformed(render,8.5,4.25,"A",variant==12u?1.5:.6,.75,0.0,0x93B5D7u,
         variant==13u?0.0:1.0/60.0);
     CHECK(gml_render_scene_submit_pending(render));
-    if(variant>=13u){
+    if(variant>=13u && variant<16u){
       CHECK(render->resident_application_pass && fake.submits==submits &&
             !memcmp(screen,sentinel,sizeof screen) && !fake.readbacks && !fake.rgb_queries &&
             gml_render_resource_image_ref(render->base_scene_resource).content_version==version);
-    }else if(!variant){
+    }else if(!variant || variant==16u){
       CHECK(render->resident_application_pass && !memcmp(screen,sentinel,sizeof screen) &&
             fake.submits==submits+1 && fake.last_filter==GML_RENDER_FILTER_HARDWARE_BILINEAR &&
             !fake.last_quantisation && fake.last_filtered_draw_alpha==1.0/60.0 &&
