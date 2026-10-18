@@ -314,7 +314,8 @@ static int resident_outside_sprite_noop(GmlRender *r,GmlSprite *sprite,int subim
   int frame=((subimg%sprite->n_frames)+sprite->n_frames)%sprite->n_frames;
   int page=sprite->frame[frame];
   if(page<0 || page>=r->n_tpag || !r->tpag) return 0;
-  return gml_render_sprite_source_is_outside(r,sprite,&r->tpag[page],x,y,xs,ys,rotation);
+  return gml_render_sprite_axis_is_empty(r,sprite,&r->tpag[page],x,y,xs,ys,rotation) ||
+    gml_render_sprite_source_is_outside(r,sprite,&r->tpag[page],x,y,xs,ys,rotation);
 }
 
 int gml_render_resident_sprite_outside(GmlRender *r,int sprite,int subimg,

@@ -3051,6 +3051,51 @@ void gml_render_cpu_filtered_tpag_band(
     free(fraction_x);
     return;
 }
+/* Preserve the axis writer's dimension expression and projected-edge policy.
+ * No source samples or target bytes are read, and no renderer state changes. */
+int gml_render_sprite_axis_is_empty(const GmlRender *r,const GmlSprite *sprite,
+                                    const GmlTpag *page,double x,double y,
+                                    double xs,double ys,double rotation){
+  if(!r || !sprite || !page || r->fbw<=0 || r->fbh<=0 ||
+     sprite->runtime_rgba || sprite->spine || sprite->ns_enabled ||
+     page->sw<=0 || page->sh<=0 || page->sw>4096 || page->sh>4096 ||
+     !isfinite(x) || !isfinite(y) || fabs(x)>65536.0 || fabs(y)>65536.0 ||
+     !isfinite(xs) || !isfinite(ys) || xs==0.0 || ys==0.0 ||
+     fabs(xs)>64.0 || fabs(ys)>64.0 || !isfinite(rotation)) return 0;
+  double phase=fmod(rotation,360.0);if(phase<0.0) phase+=360.0;
+  if(!(fabs(phase)<0.001 || fabs(phase-360.0)<0.001)) return 0;
+  double dx=x-sprite->originx*xs+page->tx*xs-r->cam_x;
+  double dy=y-sprite->originy*ys+page->ty*ys-r->cam_y;
+  if(!isfinite(dx) || !isfinite(dy) || fabs(dx)>10000000.0 || fabs(dy)>10000000.0) return 0;
+  double axs=fabs(xs),ays=fabs(ys);
+  int modern_world_target=r->win && anygm_policy_has_modern_layer_semantics(r->win) &&
+    !r->gui_pass_active && r->target_sp==0 && r->target_id<0;
+  double x_camera_half=fabs(r->cam_x-nearbyint(r->cam_x));
+  double y_camera_half=fabs(r->cam_y-nearbyint(r->cam_y));
+  double x_tie=modern_world_target && fabs(x_camera_half-0.5)<1e-9?-1e-9:0.0;
+  double y_tie=modern_world_target && fabs(y_camera_half-0.5)<1e-9?-1e-9:0.0;
+  int x0=(int)floor(dx+0.5+x_tie),y0=(int)floor(dy+0.5+y_tie);
+  int width=(int)lround(page->sw*axs),height=(int)lround(page->sh*ays);
+  if(gml_render_target_is_first_generation_application_surface(r) || page->project_authored_edges){
+    if(fabs(axs-nearbyint(axs))>1e-9){
+      int far_x=(int)floor(dx+page->sw*xs+0.5);
+      width=xs>0.0?far_x-x0:x0-far_x;
+    }
+    if(fabs(ays-nearbyint(ays))>1e-9){
+      int far_y=(int)floor(dy+page->sh*ys+0.5);
+      height=ys>0.0?far_y-y0:y0-far_y;
+    }
+  }
+  if(width>0 && height>0) return 0;
+  /* The public CPU entry may choose its separate rotated-batch owner before
+   * blit_one for a large raw area. That owner's coverage is not this rule. */
+  if(!gml_render_target_preserves_alpha(r) && !r->classic && !r->interp &&
+     r->alphablend && !r->blendmode && !r->classic_phase_y &&
+     !r->classic_interp_phase[0] && !r->classic_interp_phase[1] && !r->classic_interp_phase[2] &&
+     fabs((double)page->sw*xs*(double)page->sh*ys)>=131072.0) return 0;
+  return 1;
+}
+
 static void blit_one(GmlRender *r, GmlTpag *t, double dx, double dy, double xs, double ys,
                      uint32_t blend, double alpha,int quantize_alpha){
   if(!r || !t || !r->fb || r->fbw<=0 || r->fbh<=0) return;
