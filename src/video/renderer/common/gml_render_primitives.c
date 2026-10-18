@@ -11,6 +11,7 @@
 #include <math.h>
 #include <limits.h>
 #include <stdlib.h>
+#include <string.h>
 
 /* Opaque flat coverage has the same half-open pixel region for point-sized and filled
  * rectangles. Typed entries already receive raster coordinates, so the current world
@@ -267,6 +268,68 @@ static int resident_primitive_state_eligible(GmlRender *r){
 
 static int resident_rectangle_state_eligible(GmlRender *r){
   return resident_primitive_state_eligible(r) && r->color_write_mask==15u;
+}
+
+int gml_render_cpu_backend_vertex_spans(GmlRender *r,
+  const GmlRenderCpuBackendVertexSpan *spans,uint32_t count){
+  if(!resident_primitive_state_eligible(r) || r->classic_phase_scene_target ||
+     r->app_interp_phase[0] || r->app_interp_phase[1] || r->app_interp_phase[2] ||
+     count>8192u || (count && !spans)) return 0;
+  if(!count) return spans==NULL;
+  unsigned blend=(unsigned)r->blendmode;
+  if(blend==3u || blend==6u) blend=2u;
+  int destination=r->alphablend && gml_render_blend_uses_destination_colour((int)blend);
+  unsigned mask=r->alphablend && (destination || blend==4u || blend==7u || blend==8u)?
+    r->color_write_mask:15u;
+  /* The CPU maximum preset preserves only explicitly bound surface alpha;
+   * ordinary pixel presets also preserve the first-generation application. */
+  int preserve=r->alphablend && blend==4u?r->target_sp>0:gml_render_target_preserves_alpha(r);
+  GmlRenderDrawOp *operations=calloc(count,sizeof *operations);
+  if(!operations) return 0;
+  int result=0;
+  for(uint32_t i=0;i<count;i++){
+    const GmlRenderCpuBackendVertexSpan *span=&spans[i];
+    if(span->x<0 || span->y<0 || !span->count || span->y>=r->fbh ||
+       (uint64_t)(unsigned)span->x+span->count>(unsigned)r->fbw) goto vertex_done;
+    GmlRenderPrimitiveRect *p=&operations[i].payload.primitive;
+    p->region=p->authored_region=(GmlRenderRect){span->x,span->y,span->count,1u};
+    p->kind=GML_RENDER_PRIMITIVE_RECTANGLE;
+    p->colour=0xFFFFFFFFu;
+    for(unsigned c=0;c<4u;c++) p->corner_colour[c]=p->colour;
+    p->alpha=1.0;p->alpha_blend=r->alphablend?1u:0u;p->pixel_write_mask=mask;
+    p->rectangle_flags=GML_RENDER_RECTANGLE_OUTLINE|GML_RENDER_RECTANGLE_PIXEL_SPAN|
+      GML_RENDER_RECTANGLE_VERTEX_SPAN|(r->classic?GML_RENDER_RECTANGLE_CLASSIC:0u)|
+      (preserve?GML_RENDER_RECTANGLE_TARGET_ALPHA:0u)|
+      (blend<<GML_RENDER_RECTANGLE_BLEND_SHIFT);
+    memcpy(p->vertex_first,span->first,sizeof p->vertex_first);
+    memcpy(p->vertex_step,span->step,sizeof p->vertex_step);
+    for(unsigned c=0;c<4u;c++){
+      double last=span->first[c]+(span->count-1u)*span->step[c];
+      double maximum=c==3u?1.0:255.0;
+      if(!isfinite(span->first[c]) || !isfinite(span->step[c]) || !isfinite(last) ||
+         span->first[c]<-1e-5 || span->first[c]>maximum+1e-5 ||
+         last<-1e-5 || last>maximum+1e-5) goto vertex_done;
+    }
+  }
+  if(r->pending_underlay && !gml_render_compose_resident_underlay(r)) goto vertex_done;
+  gml_render_flush_pending_fill(r);
+  GmlRenderResource *target=gml_render_scene_target_resource_ensure(r);
+  if(r->pending_fill || !target) goto vertex_done;
+  GmlRenderImageRef next=gml_render_application_scene_next_image_ref(r,target);
+  if(next.content_version>UINT64_MAX-count) goto vertex_done;
+  for(uint32_t i=0;i<count;i++){
+    GmlRenderDrawOp *op=&operations[i];
+    op->opcode=GML_RENDER_OP_COLOURED_PRIMITIVE;op->scene_family=GML_RENDER_SCENE_PRIMITIVE;
+    op->reconstruction_mode=GML_RENDER_DEVICE_CHECKPOINT;
+    op->target=(GmlRenderTargetRef){next,1u,(uint32_t)r->fbw,(uint32_t)r->fbh,
+      GML_RENDER_PIXEL_ARGB8888,{0,0,(uint32_t)r->fbw,(uint32_t)r->fbh}};
+    op->target.image.content_version+=i+1u;
+  }
+  result=gml_render_application_scene_enqueue_primitives(r,operations,count);
+  if(result){r->fb_all_transparent=0;r->fb_opaque_known=r->fb_all_opaque=0;}
+vertex_done:
+  free(operations);
+  return result;
 }
 
 /* Filled line boxes use this same CPU rectangle policy, including target alpha. */

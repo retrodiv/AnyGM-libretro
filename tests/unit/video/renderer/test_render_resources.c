@@ -13024,6 +13024,43 @@ static int resident_rounded_empty_axis_geometry(void){
   return 1;
 }
 
+static int vertex_span_packet_boundaries(void){
+  uint32_t pixels[64*48],before[64*48];
+  for(unsigned i=0;i<64u*48u;i++) pixels[i]=0x83456789u;
+  memcpy(before,pixels,sizeof before);
+  GmlRenderDrawOp operation={0};
+  operation.opcode=GML_RENDER_OP_COLOURED_PRIMITIVE;
+  operation.scene_family=GML_RENDER_SCENE_PRIMITIVE;
+  operation.reconstruction_mode=GML_RENDER_DEVICE_CHECKPOINT;
+  operation.target=(GmlRenderTargetRef){.image={GML_RENDER_RESOURCE_SCREEN,1u,1u,2u},
+    .storage_version=1u,.width=64u,.height=48u,.pixel_format=GML_RENDER_PIXEL_ARGB8888,
+    .region={0,0,64u,48u}};
+  GmlRenderPrimitiveRect *p=&operation.payload.primitive;
+  p->region=p->authored_region=(GmlRenderRect){3,5,4u,1u};
+  p->kind=GML_RENDER_PRIMITIVE_RECTANGLE;p->colour=0xFFFFFFFFu;
+  for(unsigned c=0;c<4u;c++) p->corner_colour[c]=p->colour;
+  p->alpha=1.0;p->alpha_blend=1u;p->pixel_write_mask=15u;
+  p->rectangle_flags=GML_RENDER_RECTANGLE_OUTLINE|GML_RENDER_RECTANGLE_PIXEL_SPAN|
+    GML_RENDER_RECTANGLE_VERTEX_SPAN;
+  p->vertex_first[0]=31;p->vertex_first[1]=62;p->vertex_first[2]=91;p->vertex_first[3]=0.5;
+  p->vertex_step[0]=1;p->vertex_step[1]=2;p->vertex_step[2]=3;p->vertex_step[3]=0.01;
+  CHECK(gml_render_rectangle_valid(&operation));
+  CHECK(!gml_render_cpu_replay_eligible(&operation,NULL,NULL));
+  CHECK(!gml_render_cpu_replay_one(pixels,64u,48u,&operation,NULL,NULL) &&
+    !memcmp(before,pixels,sizeof pixels));
+  GmlRenderDrawOp malformed=operation;
+  malformed.payload.primitive.vertex_step[3]=NAN;CHECK(!gml_render_rectangle_valid(&malformed));
+  malformed=operation;malformed.payload.primitive.vertex_step[3]=1;CHECK(!gml_render_rectangle_valid(&malformed));
+  malformed=operation;malformed.payload.primitive.region.height=2u;CHECK(!gml_render_rectangle_valid(&malformed));
+  malformed=operation;malformed.payload.primitive.rectangle_flags&=~GML_RENDER_RECTANGLE_PIXEL_SPAN;
+  CHECK(!gml_render_rectangle_valid(&malformed));
+  malformed=operation;malformed.payload.primitive.pixel_write_mask=5u;CHECK(!gml_render_rectangle_valid(&malformed));
+  malformed=operation;malformed.reconstruction_mode=GML_RENDER_REPLAY_EXACT;
+  CHECK(!gml_render_rectangle_valid(&malformed));
+  CHECK(!memcmp(before,pixels,sizeof pixels));
+  return 1;
+}
+
 static int resident_empty_vertex_batches(void){
   enum { WIDTH=64,HEIGHT=48 };
   for(unsigned classic=0;classic<2;classic++)
@@ -16774,6 +16811,7 @@ int main(void){
   passed+=resident_rounded_empty_axis_preserves_queued_prefix();
   passed+=resident_rounded_empty_axis_geometry();
   passed+=resident_empty_vertex_batches();
+  passed+=vertex_span_packet_boundaries();
   passed+=resident_studio_unit_background_noops();
   passed+=resident_classic_depth_free_sprites();
   passed+=resident_classic_depth_free_glyphs();
@@ -16809,6 +16847,6 @@ int main(void){
   passed+=source_free_primitive_rect_replay();
   passed+=stretched_float_exact_replay();
   passed+=filtered_font_exact_recovery();
-  printf("render resource cases: passed=%d failed=%d\n",passed,262-passed);
-  return passed==262?EXIT_SUCCESS:EXIT_FAILURE;
+  printf("render resource cases: passed=%d failed=%d\n",passed,263-passed);
+  return passed==263?EXIT_SUCCESS:EXIT_FAILURE;
 }

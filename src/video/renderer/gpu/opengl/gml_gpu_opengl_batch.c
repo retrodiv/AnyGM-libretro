@@ -2211,6 +2211,8 @@ GmlRenderExecutionResult gml_gpu_opengl_scene_submit(GmlGpuBackend *backend,
     unsigned rectangle_blend=rectangle?
       (op->payload.primitive.rectangle_flags&GML_RENDER_RECTANGLE_BLEND_MASK)>>
        GML_RENDER_RECTANGLE_BLEND_SHIFT:0u;
+    int vertex_span=rectangle &&
+      (op->payload.primitive.rectangle_flags&GML_RENDER_RECTANGLE_VERTEX_SPAN);
     int additive_bytes=rectangle && rectangle_blend==1u &&
       op->payload.primitive.alpha_blend &&
       (!(op->payload.primitive.rectangle_flags&
@@ -2222,7 +2224,7 @@ GmlRenderExecutionResult gml_gpu_opengl_scene_submit(GmlGpuBackend *backend,
     int alpha_rect=inverse_rect || studio_alpha_rect || (op->opcode==GML_RENDER_OP_COLOURED_PRIMITIVE &&
       op->payload.primitive.kind==GML_RENDER_PRIMITIVE_CLASSIC_ALPHA_RECT);
     uint32_t primitive_filter=rectangle?
-      (op->payload.primitive.alpha_blend && op->payload.primitive.alpha<1.0 &&
+      (op->payload.primitive.alpha_blend && (op->payload.primitive.alpha<1.0 || vertex_span) &&
        (rectangle_blend==0u || rectangle_blend==1u || rectangle_blend==4u) &&
        !(op->payload.primitive.rectangle_flags&GML_RENDER_RECTANGLE_TARGET_ALPHA)?35u:34u):
       particle?28u:studio_alpha_rect?32u:31u;
@@ -2232,7 +2234,7 @@ GmlRenderExecutionResult gml_gpu_opengl_scene_submit(GmlGpuBackend *backend,
       (op->payload.primitive.alpha_blend?
         (rectangle_blend?(int)(GL_SCENE_BLEND_RECTANGLE_BASE+2u*rectangle_blend+
            ((op->payload.primitive.rectangle_flags&GML_RENDER_RECTANGLE_TARGET_ALPHA)!=0u)):
-         op->payload.primitive.alpha<1.0?3:0):0):
+         (op->payload.primitive.alpha<1.0 || vertex_span)?3:0):0):
       inverse_rect?GL_SCENE_BLEND_INVERSE_RECT:
       (particle || alpha_rect?(int)op->payload.primitive.alpha_blend:0);
     if(pending_count && (particle || alpha_rect || rectangle
@@ -2294,7 +2296,7 @@ GmlRenderExecutionResult gml_gpu_opengl_scene_submit(GmlGpuBackend *backend,
         const GmlRenderPrimitiveRect *p=&op->payload.primitive;
         uint32_t additive_rgb=0u;
         unsigned additive_alpha=0u;
-        if(additive_bytes){
+        if(additive_bytes && !vertex_span){
           /* The unchanged CPU filled span truncates constant source increments.
            * Quantise those four known bytes once, not destination pixels. */
           additive_rgb=((uint32_t)(((p->colour>>16)&255u)*p->alpha)<<16)|
@@ -2329,6 +2331,12 @@ GmlRenderExecutionResult gml_gpu_opengl_scene_submit(GmlGpuBackend *backend,
             v[23]=(float)p->region.x; v[24]=(float)(p->region.width-1u);
             v[25]=(float)additive_rgb;v[26]=(float)additive_alpha;
             v[27]=(float)p->alpha_blend;
+            if(vertex_span){
+              for(unsigned c=0;c<4u;c++){
+                v[12u+c]=(float)p->vertex_first[c];
+                v[19u+c]=(float)p->vertex_step[c];
+              }
+            }
           }
         }
         pending_source=NULL; pending_filter=primitive_filter; pending_blend=primitive_blend;

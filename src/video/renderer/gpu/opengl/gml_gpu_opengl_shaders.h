@@ -399,6 +399,19 @@
   "    ivec2 p=pixel-ivec2(v_map.xy),den=ivec2(v_map.zw);\n" \
   "    uint flags=uint(v_margin); bool outline=(flags&1u)!=0u,gradient=(flags&8u)!=0u;\n" \
   "    uint blend=(flags>>4u)&15u;\n" \
+  "    if((flags&512u)!=0u){\n" \
+  "      vec4 source=v_map+float(pixel.x-int(v_span_y.x))*v_span_x;\n" \
+  "      vec3 rgb=floor(clamp(source.rgb,vec3(0.0),vec3(255.0))+0.5);\n" \
+  "      float alpha=clamp(source.a,0.0,1.0);\n" \
+  "      if(alpha<=0.0 && (blend<9u || v_span_active==0.0)) discard;\n" \
+  "      if(u_filter==36){ o_color=vec4(0.0,0.0,0.0,1.0); return; }\n" \
+  "      if(blend==1u && v_span_active!=0.0){\n" \
+  "        o_color=vec4(floor(rgb*alpha)/255.0,floor(alpha*255.0)/255.0); return;\n" \
+  "      }\n" \
+  "      if(v_span_active==0.0 || blend>=2u) alpha=floor(alpha*255.0+0.5)/255.0;\n" \
+  "      if((flags&4u)==0u && (v_span_active==0.0 || (blend>=2u && blend!=4u))) alpha=1.0;\n" \
+  "      o_color=vec4(rgb/255.0,alpha); return;\n" \
+  "    }\n" \
   "    if(outline && p.x!=0 && p.x!=den.x && p.y!=0 && p.y!=den.y) discard;\n" \
   "    if(u_filter==36){ o_color=vec4(0.0,0.0,0.0,1.0); return; }\n" \
   "    if(blend==1u && ((!outline && !gradient) || (flags&256u)!=0u) && v_span_active!=0.0){\n" \

@@ -21,6 +21,7 @@ GPU_TABLE = RENDERER / "gpu/gml_render_gpu_operations.def"
 BACKEND_MAP = ROOT / "docs/RENDERER_BACKENDS.md"
 FAMILIES = {"TEXTURE", "PRIMITIVE", "SURFACE", "EFFECT", "PRESENTATION", "SHADER", "SOFTWARE3D"}
 REQUIRED_RULES = {
+    "R03-VERTEX-SPANS",
     "R03-VERTEX-EMPTY",
     "R03-MULTIVIEW-COMPOSITION",
     "R03-OWNED-APPLICATION-CLEAR",
@@ -195,6 +196,7 @@ EXECUTOR_ROW = re.compile(
 # Stop traversal here: following resource replay would make CPU kernels appear
 # GPU-capable merely because the resource owner also implements device submission.
 DISPATCH_PORTS = {
+    "gml_render_cpu_backend_vertex_spans",
     "gml_render_application_surface_owned_stage_base",
     "gml_render_application_surface_owned_mask",
     "gml_render_completed_screen_mask",
@@ -218,6 +220,7 @@ DISPATCH_CPU_BOUNDARIES = {
     "surface_pixels", "surface_pixels_observe", "surface_pixels_access",
 }
 DISPATCH_ADDITIONAL = {
+    "gml_render_cpu_backend_vertex_spans",
     "gml_render_multiview_prepare", "gml_render_multiview_clear", "gml_render_multiview_copy",
     "gml_render_application_surface_owned_stage_base",
     "gml_render_application_surface_owned_mask",
@@ -318,8 +321,11 @@ def dispatch_inventory(functions: dict[str, str]) -> dict[str, tuple[str, str]]:
         symbol = key.split("::")[1]
         code = C_NONCODE.sub(" ", body)
         destinations = set(re.findall(r"\b([A-Za-z_]\w*)\s*\(", code))
-        destinations = {name for name in destinations if name not in DISPATCH_CPU_BOUNDARIES
-                        and "_cpu_" not in name and not name.startswith("gml_render_completed_screen_")}
+        # A named typed admission port may live on the software backend seam;
+        # ordinary CPU pixel/resource helpers must still terminate traversal.
+        destinations = {name for name in destinations if name in DISPATCH_PORTS or
+                        (name not in DISPATCH_CPU_BOUNDARIES and "_cpu_" not in name
+                         and not name.startswith("gml_render_completed_screen_"))}
         calls.setdefault(symbol, set()).update(destinations)
     routes = {symbol: symbol for symbol in DISPATCH_PORTS}
     while True:
@@ -884,6 +890,10 @@ gml_draw_multiline(void){
             "void gml_draw_gpu_probe(void){ gml_render_application_scene_enqueue(); }",
         prefix + "gml_draw_deferred_probe":
             "void gml_draw_deferred_probe(void){ gml_render_resource_submit_deferred(); }",
+        prefix + "gml_draw_vertex_probe":
+            "void gml_draw_vertex_probe(void){ gml_render_cpu_backend_vertex_spans(); }",
+        prefix + "gml_draw_cpu_vertex_probe":
+            "void gml_draw_cpu_vertex_probe(void){ gml_render_cpu_backend_prepare_draw(); }",
         prefix + "cpu_paint": "void cpu_paint(void){ gml_render_maybe_prepare_draw(); }",
         prefix + "gml_render_maybe_prepare_draw":
             "void gml_render_maybe_prepare_draw(void){ gml_render_application_scene_enqueue(); }",
@@ -893,6 +903,9 @@ gml_draw_multiline(void){
         raise ValueError("D8 CPU preparation falsely credited an earlier GPU prefix")
     if inventory[prefix + "gml_draw_deferred_probe"][0] != "gml_render_resource_submit_deferred":
         raise ValueError("D8 deferred resource submission lost its typed device boundary")
+    if inventory[prefix + "gml_draw_vertex_probe"][0] != "gml_render_cpu_backend_vertex_spans" or \
+            inventory[prefix + "gml_draw_cpu_vertex_probe"][0] != "CPU":
+        raise ValueError("D8 typed vertex admission confused CPU pixel preparation")
     def document_for(entries: dict[str, tuple[str, str]]) -> str:
         result = ["<!-- D8-DISPATCH:START -->"]
         for key, (route, revision) in entries.items():

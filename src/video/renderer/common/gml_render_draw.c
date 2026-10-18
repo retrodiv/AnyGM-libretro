@@ -330,7 +330,7 @@ int gml_render_rectangle_valid(const GmlRenderDrawOp *operation){
        (int64_t)p->authored_region.x+p->authored_region.width ||
      (int64_t)p->region.y+p->region.height>
        (int64_t)p->authored_region.y+p->authored_region.height ||
-     (p->rectangle_flags&~511u) || p->alpha_blend>1u || p->interpolate ||
+     (p->rectangle_flags&~1023u) || p->alpha_blend>1u || p->interpolate ||
      !isfinite(p->alpha) || p->alpha<0.0 || p->alpha>1.0) return 0;
   if(p->rectangle_flags&GML_RENDER_RECTANGLE_PIXEL_SPAN){
     if(p->pixel_write_mask>15u || !(p->rectangle_flags&GML_RENDER_RECTANGLE_OUTLINE) ||
@@ -341,6 +341,17 @@ int gml_render_rectangle_valid(const GmlRenderDrawOp *operation){
        p->corner_colour[0]!=p->corner_colour[1] || p->corner_colour[0]!=p->corner_colour[2] ||
        p->corner_colour[0]!=p->corner_colour[3]) return 0;
   }else if(p->pixel_write_mask) return 0;
+  if(p->rectangle_flags&GML_RENDER_RECTANGLE_VERTEX_SPAN){
+    if(!(p->rectangle_flags&GML_RENDER_RECTANGLE_PIXEL_SPAN) || p->region.height!=1u ||
+       p->alpha!=1.0 || p->colour!=0xFFFFFFFFu) return 0;
+    for(unsigned c=0;c<4u;c++){
+      double last=p->vertex_first[c]+(p->region.width-1u)*p->vertex_step[c];
+      double maximum=c==3u?1.0:255.0;
+      if(!isfinite(p->vertex_first[c]) || !isfinite(p->vertex_step[c]) || !isfinite(last) ||
+         p->vertex_first[c]<-1e-5 || p->vertex_first[c]>maximum+1e-5 ||
+         last<-1e-5 || last>maximum+1e-5) return 0;
+    }
+  }
   unsigned blend=(p->rectangle_flags&GML_RENDER_RECTANGLE_BLEND_MASK)>>
                  GML_RENDER_RECTANGLE_BLEND_SHIFT;
   if(blend>GML_RENDER_BLEND_DEST_ALPHA_DEST_COLOUR || blend==3u || blend==6u ||

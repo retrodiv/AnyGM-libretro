@@ -95,6 +95,16 @@ int gml_render_cpu_backend_draw_view(GmlRender *render,GmlRenderCpuBackendDrawVi
  * queued software batch or observing target/source pixels. No writable planes. */
 int gml_render_cpu_backend_scene_draw_view(GmlRender *render,
                                           GmlRenderCpuBackendDrawView *view);
+/* Resolved inclusive-coverage rows from the temporary 2D vertex pipeline.
+ * Colours are continuous RGB bytes and alpha in 0..1. No pixel plane is lent.
+ * A NULL/zero query checks admission without changing the target. */
+typedef struct {
+  int x,y;
+  uint32_t count;
+  double first[4],step[4];
+} GmlRenderCpuBackendVertexSpan;
+int gml_render_cpu_backend_vertex_spans(GmlRender *render,
+  const GmlRenderCpuBackendVertexSpan *spans,uint32_t count);
 void gml_render_cpu_backend_prepare_draw(GmlRender *render);
 int gml_render_cpu_backend_prepare_draw_view(GmlRender *render,
                                          GmlRenderCpuBackendDrawView *view);

@@ -1282,6 +1282,227 @@ static int vertex_batch_outside_scene(GmlRender *R,const GmlD3Vertex *vertex,
    * Preserve that side effect; points/lines never prepare depth in this path. */
   return outside && (primitive<4 || d3_depth_prepare(R));
 }
+typedef struct {
+  GmlRenderCpuBackendVertexSpan *span;
+  uint32_t count;
+  uint64_t candidates;
+  int width,height;
+} GmlVertexSceneCoverage;
+
+typedef struct {uint64_t position;int delta;} GmlVertexSceneEdge;
+static int vertex_scene_edge_compare(const void *left,const void *right){
+  const GmlVertexSceneEdge *a=left,*b=right;
+  if(a->position!=b->position) return a->position>b->position?1:-1;
+  return (a->delta>b->delta)-(a->delta<b->delta);
+}
+static int vertex_scene_disjoint(const GmlVertexSceneCoverage *coverage){
+  if(coverage->count<2u) return 1;
+  GmlVertexSceneEdge *edge=malloc((size_t)coverage->count*2u*sizeof *edge);
+  if(!edge) return 0;
+  for(uint32_t i=0;i<coverage->count;i++){
+    const GmlRenderCpuBackendVertexSpan *span=&coverage->span[i];
+    uint64_t start=((uint64_t)(unsigned)span->y<<32)+(unsigned)span->x;
+    edge[2u*i]=(GmlVertexSceneEdge){start,1};
+    edge[2u*i+1u]=(GmlVertexSceneEdge){start+span->count,-1};
+  }
+  qsort(edge,(size_t)coverage->count*2u,sizeof *edge,vertex_scene_edge_compare);
+  int live=0,disjoint=1;
+  for(uint32_t i=0;i<coverage->count*2u;i++){
+    live+=edge[i].delta;
+    if(live>1){disjoint=0;break;}
+  }
+  free(edge);
+  return disjoint;
+}
+
+static int vertex_scene_point(GmlVertexSceneCoverage *coverage,int x,int y,
+                               const double attribute[4]){
+  if(x<0 || y<0 || x>=coverage->width || y>=coverage->height || attribute[3]<=0.0) return 1;
+  if(coverage->count==8192u) return 0;
+  GmlRenderCpuBackendVertexSpan *span=&coverage->span[coverage->count++];
+  *span=(GmlRenderCpuBackendVertexSpan){.x=x,.y=y,.count=1u};
+  memcpy(span->first,attribute,sizeof span->first);
+  return 1;
+}
+
+static int vertex_scene_line(GmlVertexSceneCoverage *coverage,
+                              GmlD3Vertex a,GmlD3Vertex b,int classic){
+  double phase=classic?0.5:0.0;
+  double ax=a.x+phase,ay=a.y+phase,bx=b.x+phase,by=b.y+phase;
+  int steps=(int)fmax(1,ceil(fmax(fabs(bx-ax),fabs(by-ay))));
+  double first=0,last=steps;
+  /* Same visited sample indices as d3_emit_line_impl; clipping never rebases
+   * the authored line's rounding or attribute phase. */
+  for(int axis=0;axis<2;axis++){
+    double start=axis?ay:ax,delta=((axis?by:bx)-start)/steps;
+    double limit=axis?coverage->height:coverage->width;
+    if(delta==0){if(start<-.5 || start>limit-.5) return 1;}
+    else{
+      double enter=(-.5-start)/delta,leave=(limit-.5-start)/delta;
+      if(enter>leave){double swap=enter;enter=leave;leave=swap;}
+      first=fmax(first,ceil(enter));last=fmin(last,floor(leave));
+    }
+  }
+  if(first>last) return 1;
+  for(int64_t i=(int64_t)first;i<=(int64_t)last;i++){
+    double amount=(double)i/steps;
+    double attribute[4]={a.r+(b.r-a.r)*amount,a.g+(b.g-a.g)*amount,
+      a.b+(b.b-a.b)*amount,a.alpha+(b.alpha-a.alpha)*amount};
+    if(!vertex_scene_point(coverage,(int)lround(ax+(bx-ax)*amount),
+      (int)lround(ay+(by-ay)*amount),attribute)) return 0;
+  }
+  return 1;
+}
+
+static int vertex_scene_triangle(GmlVertexSceneCoverage *coverage,
+                                  const GmlD3Vertex in[3],int classic){
+  double sx[3],sy[3];
+  double phase=classic?0.5-1.0/2048.0:0.0;
+  for(unsigned i=0;i<3u;i++){sx[i]=in[i].x+phase;sy[i]=in[i].y+phase;}
+  double area=d3_edge(sx[0],sy[0],sx[1],sy[1],sx[2],sy[2]);
+  if(!isfinite(area) || fabs(area)<1e-9) return 1;
+  double left=fmax(0,floor(fmin(sx[0],fmin(sx[1],sx[2]))));
+  double right=fmin(coverage->width-1,ceil(fmax(sx[0],fmax(sx[1],sx[2]))));
+  double top=fmax(0,floor(fmin(sy[0],fmin(sy[1],sy[2]))));
+  double bottom=fmin(coverage->height-1,ceil(fmax(sy[0],fmax(sy[1],sy[2]))));
+  if(left>right || top>bottom) return 1;
+  coverage->candidates+=(uint64_t)(right-left+1)*(uint64_t)(bottom-top+1);
+  if(coverage->candidates>16777216u) return 0;
+  int minx=(int)left,maxx=(int)right,miny=(int)top,maxy=(int)bottom;
+  double inverse=1.0/area,step0=sy[2]-sy[1],step1=sy[0]-sy[2];
+  int falls0=area>0?step0<=0:step0>=0;
+  int falls1=area>0?step1<=0:step1>=0;
+  int falls2=area>0?(step0>=0&&step1>=0):(step0<=0&&step1<=0);
+  for(int y=miny;y<=maxy;y++){
+    double py=y+0.5,px=minx+0.5;
+    double edge0=d3_edge(sx[1],sy[1],sx[2],sy[2],px,py);
+    double edge1=d3_edge(sx[2],sy[2],sx[0],sy[0],px,py);
+    int first=-1,last=-1,ended=0;
+    double weights[2][3]={{0}};
+    /* Only coverage is walked. Keep the CPU edge additions and inclusive
+     * independent edges; no colour, alpha blend or target pixel is computed. */
+    for(int x=minx;x<=maxx;x++,edge0+=step0,edge1+=step1){
+      double b0=edge0*inverse,b1=edge1*inverse,b2=1.0-b0-b1;
+      if(b0<-1e-9){if(falls0) break;if(first>=0) ended=1;continue;}
+      if(b1<-1e-9){if(falls1) break;if(first>=0) ended=1;continue;}
+      if(b2<-1e-9){if(falls2) break;if(first>=0) ended=1;continue;}
+      if(ended) return 0;
+      if(first<0){first=x;weights[0][0]=b0;weights[0][1]=b1;weights[0][2]=b2;}
+      last=x;weights[1][0]=b0;weights[1][1]=b1;weights[1][2]=b2;
+    }
+    if(first<0) continue;
+    if(coverage->count==8192u) return 0;
+    GmlRenderCpuBackendVertexSpan *span=&coverage->span[coverage->count++];
+    *span=(GmlRenderCpuBackendVertexSpan){.x=first,.y=y,.count=(uint32_t)(last-first+1)};
+    for(unsigned c=0;c<4u;c++){
+      double a=c==0?in[0].r:c==1?in[0].g:c==2?in[0].b:in[0].alpha;
+      double b=c==0?in[1].r:c==1?in[1].g:c==2?in[1].b:in[1].alpha;
+      double d=c==0?in[2].r:c==1?in[2].g:c==2?in[2].b:in[2].alpha;
+      if(a==b && a==d){span->first[c]=a;span->step[c]=0.0;}
+      else{
+        span->first[c]=weights[0][0]*a+weights[0][1]*b+weights[0][2]*d;
+        double end=weights[1][0]*a+weights[1][1]*b+weights[1][2]*d;
+        span->step[c]=last==first?0.0:(end-span->first[c])/(last-first);
+      }
+    }
+  }
+  return 1;
+}
+
+static int vertex_batch_scene(GmlRender *R,const GmlD3Vertex *vertex,int count,
+                               int primitive,int texture){
+  GmlRenderCpuBackendDrawView draw;
+  if(g_d3.active || texture!=-1 || primitive<1 || primitive>6 || count>65536 ||
+     count<(primitive==1?1:primitive<=3?2:3) ||
+     !gml_render_cpu_backend_scene_draw_view(R,&draw) ||
+     !gml_render_cpu_backend_vertex_spans(R,NULL,0u) || draw.width<=0 || draw.height<=0 ||
+     draw.width>16384 || draw.height>16384) return 0;
+  for(unsigned i=0;i<16u;i++) if(!isfinite(g_d3.transform[i])) return 0;
+  if(!isfinite(draw.camera_x) || !isfinite(draw.camera_y) ||
+     !isfinite(draw.coordinate_scale_x) || !isfinite(draw.coordinate_scale_y)) return 0;
+  double scale_x=draw.coordinate_scale_x>0?draw.coordinate_scale_x:1.0;
+  double scale_y=draw.coordinate_scale_y>0?draw.coordinate_scale_y:1.0;
+  double ox=draw.camera_x/scale_x,oy=draw.camera_y/scale_y;
+  double ow=draw.width/scale_x,oh=draw.height/scale_y;
+  if(!isfinite(ox) || !isfinite(oy) || !isfinite(ow) || !isfinite(oh)) return 0;
+  if(fabs(ow)<=1e-9) ow=1;
+  if(fabs(oh)<=1e-9) oh=1;
+  int translation=fabs(g_d3.transform[0]-1)<1e-10 && fabs(g_d3.transform[5]-1)<1e-10 &&
+    fabs(g_d3.transform[10]-1)<1e-10 && fabs(g_d3.transform[15]-1)<1e-10;
+  for(unsigned i=0;i<12u && translation;i++)
+    if(i!=0u && i!=5u && i!=10u && fabs(g_d3.transform[i])>=1e-10) translation=0;
+  if(translation){ox+=g_d3.transform[12];oy+=g_d3.transform[13];}
+  GmlD3Vertex *projected=malloc((size_t)count*sizeof *projected);
+  GmlVertexSceneCoverage coverage={.width=draw.width,.height=draw.height};
+  coverage.span=malloc(8192u*sizeof *coverage.span);
+  int result=0,opaque=1,rgb_gradient=0;double minimum_alpha=1.0,maximum_alpha=0.0;
+  if(!projected || !coverage.span) goto vertex_scene_done;
+  for(int i=0;i<count;i++){
+    const GmlD3Vertex *v=&vertex[i];
+    if(!isfinite(v->x) || !isfinite(v->y) || !isfinite(v->z) ||
+       !isfinite(v->r) || !isfinite(v->g) || !isfinite(v->b) || !isfinite(v->alpha) ||
+       v->r<0 || v->r>255 || v->g<0 || v->g>255 || v->b<0 || v->b>255 ||
+       v->alpha<0 || v->alpha>1) goto vertex_scene_done;
+    projected[i]=*v;
+    d3_transform_point(R,&projected[i].x,&projected[i].y,&projected[i].z);
+    projected[i].x=(projected[i].x-ox)*draw.width/ow;
+    projected[i].y=(projected[i].y-oy)*draw.height/oh;
+    if(!isfinite(projected[i].x) || !isfinite(projected[i].y) || !isfinite(projected[i].z) ||
+       fabs(projected[i].x)>32766 || fabs(projected[i].y)>32766) goto vertex_scene_done;
+    if(v->alpha<1.0) opaque=0;
+    if(v->alpha<minimum_alpha) minimum_alpha=v->alpha;
+    if(v->alpha>maximum_alpha) maximum_alpha=v->alpha;
+    if(v->r!=vertex[0].r || v->g!=vertex[0].g || v->b!=vertex[0].b) rgb_gradient=1;
+  }
+  /* Opaque varying RGB stays EXACT debt, not a new tolerant classification.
+   * Bound low-alpha repeated fragments before making any GPU queue visible. */
+  if(primitive!=1 && opaque && rgb_gradient) goto vertex_scene_done;
+  /* A hardware float must not turn a CPU zero-alpha edge into visible
+   * SCREEN coverage. Mixed zero crossings remain an explicit boundary. */
+  if(minimum_alpha==0.0 && maximum_alpha>0.0) goto vertex_scene_done;
+  /* Preserve a positive CPU fragment's coverage when device attributes would
+   * underflow or approach a zero crossing. This is admission, not float emulation. */
+  if(minimum_alpha>0.0 && minimum_alpha<1.0/65536.0) goto vertex_scene_done;
+  if(maximum_alpha==0.0 && (primitive<4 || !draw.zero_alpha_writes)){
+    result=primitive<4 || d3_depth_prepare(R);
+    goto vertex_scene_done;
+  }
+  if(primitive==1){
+    double phase=g_d3.classic?0.5:0.0;
+    for(int i=0;i<count;i++){
+      double attribute[4]={projected[i].r,projected[i].g,projected[i].b,projected[i].alpha};
+      if(!vertex_scene_point(&coverage,(int)lround(projected[i].x+phase),
+        (int)lround(projected[i].y+phase),attribute)) goto vertex_scene_done;
+    }
+  }else if(primitive==2 || primitive==3){
+    for(int i=0;i+1<count;i+=primitive==2?2:1)
+      if(!vertex_scene_line(&coverage,projected[i],projected[i+1],g_d3.classic)) goto vertex_scene_done;
+  }else if(primitive==4){
+    for(int i=0;i+2<count;i+=3)
+      if(!vertex_scene_triangle(&coverage,projected+i,g_d3.classic)) goto vertex_scene_done;
+  }else if(primitive==5){
+    for(int i=2;i<count;i++){
+      GmlD3Vertex triangle[3]={projected[i&1?i-1:i-2],projected[i&1?i-2:i-1],projected[i]};
+      if(!vertex_scene_triangle(&coverage,triangle,g_d3.classic)) goto vertex_scene_done;
+    }
+  }else{
+    for(int i=1;i+1<count;i++){
+      GmlD3Vertex triangle[3]={projected[0],projected[i],projected[i+1]};
+      if(!vertex_scene_triangle(&coverage,triangle,g_d3.classic)) goto vertex_scene_done;
+    }
+  }
+  /* Repeated low-alpha/gradient/preset quantisation is not a bounded single
+   * draw merely because its component fragments each satisfy D2. Use disjoint
+   * geometry there; normal uniform RGB with alpha>=0.5 contracts prior error. */
+  if(draw.alpha_blend && (draw.blend_mode || rgb_gradient || minimum_alpha<0.5) &&
+     !vertex_scene_disjoint(&coverage)) goto vertex_scene_done;
+  if(primitive>=4 && !d3_depth_prepare(R)) goto vertex_scene_done;
+  result=!coverage.count || gml_render_cpu_backend_vertex_spans(R,coverage.span,coverage.count);
+vertex_scene_done:
+  free(projected);free(coverage.span);
+  return result;
+}
+
 static void vertex_submit_buffer(GmlRender *R,int id,int primitive,int texture_handle,
                                  int first,int number){
   if(!R || id<0 || id>=GML_VERTEX_BUFFER_MAX || !g_vertex_buffer[id].used) return;
@@ -1292,6 +1513,7 @@ static void vertex_submit_buffer(GmlRender *R,int id,int primitive,int texture_h
   if(number<=0) return;
   const GmlD3Vertex *vertex=buffer->vertex+first;
   if(vertex_batch_outside_scene(R,vertex,number,primitive)) return;
+  if(vertex_batch_scene(R,vertex,number,primitive,texture_handle)) return;
   /* A vertex program may modulate the colour it passes on by a uniform, which is how text
    * libraries carry a string's tint and fade. Apply it here, to a copy, so the rasterizer keeps
    * receiving plain vertex colours and every other submission path is untouched. */
