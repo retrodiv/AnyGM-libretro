@@ -1294,6 +1294,7 @@ static int scene_resident_batch_case(void){
 /* Call/state proof only. Composed pixel qualification needs a real device. */
 static int scene_hardware_filtered_batch_case(unsigned kind){
   enum { QUADS=2049 };
+  int gui_background=kind==13u;
   int application_sprite=kind==11u;
   int leading_surface=kind==12u;
   int integer_surface=kind==10u;
@@ -1302,7 +1303,7 @@ static int scene_hardware_filtered_batch_case(unsigned kind){
   int screen_sprite=kind==7u || kind==8u || kind==9u || application_sprite;
   const uint8_t pixels[64]={11,22,33,255,44,55,66,100,77,88,99,0,111,122,133,200};
   for(unsigned api=0;api<2u;api++)
-  for(unsigned excluded=0;excluded<(application_sprite?12u:leading_surface?9u:integer_surface?9u:kind==9u?11u:nearest || screen_stretch?8u:(combined || surface)?7u:4u);excluded++){
+  for(unsigned excluded=0;excluded<(gui_background?9u:application_sprite?12u:leading_surface?9u:integer_surface?9u:kind==9u?11u:nearest || screen_stretch?8u:(combined || surface)?7u:4u);excluded++){
     GmlGpuContext context=fake_context(api?GML_GPU_API_OPENGLES3:GML_GPU_API_OPENGL_CORE);
     GmlRenderImageRef source={kind==5u || leading_surface?GML_RENDER_RESOURCE_APPLICATION:surface?GML_RENDER_RESOURCE_SURFACE:
       GML_RENDER_RESOURCE_ATLAS,91u,1u,1u};
@@ -1340,9 +1341,9 @@ static int scene_hardware_filtered_batch_case(unsigned kind){
     if(combined) state.rgb_source_factor=GML_RENDER_BLEND_SOURCE_ALPHA;
     if(!additive) state.rgb_destination_factor=GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA;
     state.alpha_source_factor=GML_RENDER_BLEND_SOURCE_ALPHA;
-    if(surface || screen_stretch){
+    if(surface || screen_stretch || gui_background){
       state.rgb_source_factor=GML_RENDER_BLEND_SOURCE_ALPHA;
-      state.alpha_source_factor=GML_RENDER_BLEND_ONE;
+      state.alpha_source_factor=gui_background?GML_RENDER_BLEND_SOURCE_ALPHA:GML_RENDER_BLEND_ONE;
       state.coverage_policy=GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA;
     }
     state.alpha_destination_factor=GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA;
@@ -1350,7 +1351,7 @@ static int scene_hardware_filtered_batch_case(unsigned kind){
     for(unsigned index=0;index<QUADS+1u;index++){
       GmlRenderDrawOp *op=&ops[index];
       op->sequence=index+1u;
-      op->target.image=(GmlRenderImageRef){application_sprite?GML_RENDER_RESOURCE_APPLICATION:screen_stretch || integer_surface?GML_RENDER_RESOURCE_SCREEN:combined?GML_RENDER_RESOURCE_APPLICATION:
+      op->target.image=(GmlRenderImageRef){application_sprite?GML_RENDER_RESOURCE_APPLICATION:gui_background || screen_stretch || integer_surface?GML_RENDER_RESOURCE_SCREEN:combined?GML_RENDER_RESOURCE_APPLICATION:
         GML_RENDER_RESOURCE_SURFACE,92u,1u,index+1u};
       op->target.storage_version=1u;op->target.width=op->target.height=64u;
       op->target.pixel_format=GML_RENDER_PIXEL_ARGB8888;
@@ -1369,6 +1370,12 @@ static int scene_hardware_filtered_batch_case(unsigned kind){
       quad->x[1]=quad->x[2]=combined || nearest?2.0:8.0;
       quad->y[2]=quad->y[3]=combined || nearest?2.0:8.0;
       quad->u[1]=quad->u[2]=quad->v[2]=quad->v[3]=1.0;
+      if(gui_background){
+        quad->filtered_draw_alpha=.7;
+        quad->x[0]=quad->x[3]=-2.0;
+        quad->u[0]=quad->u[3]=-.25;
+        quad->u[1]=quad->u[2]=1.25;
+      }
       if(leading_surface){
         quad->filtered_draw_alpha=1.0;
         for(unsigned corner=0;corner<4u;corner++){
@@ -1403,6 +1410,8 @@ static int scene_hardware_filtered_batch_case(unsigned kind){
     if(excluded==5u) ops[QUADS].payload.quad.corner_colour[0]=0xFFFEFFFFu;
     if(excluded==6u) ops[QUADS].payload.quad.u[1]=.9;
     if(excluded==7u) ops[QUADS].payload.quad.x[1]=ops[QUADS].payload.quad.x[2]=screen_stretch?2.0:3.0;
+    if(gui_background && excluded==7u)
+      ops[QUADS].payload.quad.x[1]=ops[QUADS].payload.quad.x[2]=-2.0;
     if(integer_surface && excluded==8u)
       for(unsigned index=0;index<QUADS+1u;index++)
         ops[index].target.image.resource_class=GML_RENDER_RESOURCE_APPLICATION;
@@ -1427,11 +1436,11 @@ static int scene_hardware_filtered_batch_case(unsigned kind){
       anygm_test_graphics_blend_factors(factors);
       REQUIRE(result.status==GML_RENDER_EXEC_ACCEPTED && result.accepted_prefix==QUADS+1u,
               "ordered overlapping filtered quads accepted");
-      REQUIRE(anygm_test_graphics_scene_draw_calls()==(surface || screen_stretch?4:2) &&
-              anygm_test_graphics_scene_vertices()==QUADS*(surface || screen_stretch?12:6),
+      REQUIRE(anygm_test_graphics_scene_draw_calls()==(surface || screen_stretch || gui_background?4:2) &&
+              anygm_test_graphics_scene_vertices()==QUADS*(surface || screen_stretch || gui_background?12:6),
               "only the declared quad capacity cuts compatible overlaps");
       REQUIRE(anygm_test_graphics_scene_filter()==(nearest?GL_NEAREST:GL_LINEAR) &&
-              factors[0]==(combined || surface || screen_stretch?GL_SRC_ALPHA:GL_ONE) &&
+              factors[0]==(combined || surface || screen_stretch || gui_background?GL_SRC_ALPHA:GL_ONE) &&
               factors[1]==(additive?GL_ONE:GL_ONE_MINUS_SRC_ALPHA) &&
               factors[2]==(surface || screen_stretch?GL_ONE:GL_SRC_ALPHA) &&
               factors[3]==GL_ONE_MINUS_SRC_ALPHA,
@@ -1736,6 +1745,9 @@ static int scene_nearest_surface_function_case(void){
 }
 static int scene_integer_screen_surface_batch_case(void){
   return scene_hardware_filtered_batch_case(10);
+}
+static int scene_gui_filtered_background_batch_case(void){
+  return scene_hardware_filtered_batch_case(13);
 }
 static int scene_hardware_screen_stretch_batch_case(void){
   return scene_hardware_filtered_batch_case(6);
@@ -4761,6 +4773,7 @@ int main(int argc,char **argv){
     {"scene_nearest_rows",scene_nearest_rows_case},
     {"scene_nearest_surface_function",scene_nearest_surface_function_case},
     {"scene_gui_tinted_text",scene_gui_tinted_text_case},
+    {"scene_gui_filtered_background_batch",scene_gui_filtered_background_batch_case},
     {"scene_gui_half_point",scene_gui_half_point_case},
     {"scene_numbered_integer_sourceover",scene_numbered_integer_sourceover_case},
     {"scene_integer_endpoint_sprite",scene_integer_endpoint_sprite_case},

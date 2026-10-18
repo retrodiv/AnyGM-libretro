@@ -544,6 +544,16 @@
   "    return;\n" \
   "  }\n" \
   "  // R03_SHADER_HARDWARE_FILTERED_BACKGROUND: hardware sampling and fixed source-over.\n" \
+  "  if(u_filter==99 || u_filter==100){\n" \
+  "    int mask=int(floor(v_margin+0.5));\n" \
+  "    uvec4 sampled=uvec4(floor(hardware_background_sample(v_texcoord,\n" \
+  "                          ivec2(v_clamp.xy),ivec2(v_clamp.zw),mask)*255.0+0.5));\n" \
+  "    if(sampled.a==0u) discard;\n" \
+  "    if(u_filter==100){ o_color=vec4(0.0,0.0,0.0,1.0); return; }\n" \
+  "    uvec3 tint=uvec3(floor(v_colour.rgb*255.0+0.5));\n" \
+  "    uvec3 rgb=sampled.rgb*tint/uvec3(255u);\n" \
+  "    o_color=vec4(vec3(rgb)/255.0,float(sampled.a)*v_colour.a/255.0); return;\n" \
+  "  }\n" \
   "  if(u_filter==19 || u_filter==20){\n" \
   "    int mask=int(floor(v_margin+0.5));\n" \
   "    uvec4 sampled=uvec4(floor(hardware_background_sample(v_texcoord,\n" \

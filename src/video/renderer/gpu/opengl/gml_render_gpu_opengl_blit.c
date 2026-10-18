@@ -171,6 +171,9 @@ int gml_render_gpu_opengl_draw_textured_quad(const GmlRenderDrawOp *op,
         quad->sampling.quantisation!=GML_RENDER_QUANTISE_HARDWARE_SPRITE_MODERN &&
         quad->sampling.quantisation!=GML_RENDER_QUANTISE_HARDWARE_SURFACE_LEADING &&
         quad->sampling.filter!=GML_RENDER_FILTER_HARDWARE_PIXEL_CENTRE_POINT &&
+        !(op->scene_family==GML_RENDER_SCENE_BACKGROUND &&
+          quad->sampling.filter==GML_RENDER_FILTER_HARDWARE_BILINEAR &&
+          state->coverage_policy==GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA) &&
         (quad->u[corner]<0.0 || quad->u[corner]>1.0 ||
                                quad->v[corner]<0.0 || quad->v[corner]>1.0)) ||
        (warped && (!isfinite(quad->u[corner]) || !isfinite(quad->v[corner]) ||

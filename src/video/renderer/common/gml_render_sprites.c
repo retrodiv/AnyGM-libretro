@@ -2188,6 +2188,12 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
     !rotated_sprite && !corner_colours && !opaque_target_alpha &&
     !transparent_stretched_trim && !box_stretched && !positioned_axis &&
     !filtered_real_text && !nearest_mode;
+  int hardware_gui_background=identity_gui_atlas &&
+    family==GML_RENDER_SCENE_BACKGROUND && part_view &&
+    part_view->sw>0 && part_view->sw<=4096 && part_view->sh>0 && part_view->sh<=4096 &&
+    r->fbw<=16384 && r->fbh<=16384 &&
+    fabs(xs)>=0.125 && fabs(xs)<=64.0 && fabs(ys)>=0.125 && fabs(ys)<=64.0 &&
+    fabs(left)<=65536.0 && fabs(top)<=65536.0;
   /* R03-P9-GUI-MAPPED-SPRITE: shared sprite entries already map their point/scale or stretched extent.
    * Reuse the owned mapped-screen predicate; sampling and trim keep their
    * existing CPU-rule branches below rather than mapping the quad twice. */
@@ -2709,6 +2715,17 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
                       span_x[3]*span_y[0]-span_x[0]*span_y[3])*0.5;
     span_active=qarea>0.0 && qarea<width*height*0.85;
   }
+  if(hardware_gui_background){
+    /* Keep the established contained-UV recipe, including its qualified
+     * large phase controls. Only extrapolated vertices need the hardware
+     * edge-clamp path; the visible CPU rectangle and phase stay unchanged. */
+    double u0=(double)page->sx+(x0-left)/xs;
+    double u1=(double)page->sx+(x0+width-left)/xs;
+    double v0=(double)page->sy+(y0-top)/ys;
+    double v1=(double)page->sy+(y0+height-top)/ys;
+    hardware_gui_background=u0<0.0 || u0>source.width || u1<0.0 || u1>source.width ||
+                            v0<0.0 || v0>source.height || v1<0.0 || v1>source.height;
+  }
   gml_render_flush_pending_fill(r);
   if(r->pending_fill || !(target=gml_render_scene_target_resource_ensure(r))) return 0;
   image=gml_render_application_scene_next_image_ref(r,target);
@@ -2733,7 +2750,7 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
     ?(fabs(rotation-nearbyint(rotation/90.0)*90.0)<1e-10
       ?GML_RENDER_QUAD_CARDINAL:GML_RENDER_QUAD_GENERAL)
     :GML_RENDER_QUAD_AXIS_ALIGNED;
-  operation.payload.quad.sampling.filter=hardware_background || hardware_screen_filtered || hardware_physical_sprite?GML_RENDER_FILTER_HARDWARE_BILINEAR:
+  operation.payload.quad.sampling.filter=hardware_background || hardware_gui_background || hardware_screen_filtered || hardware_physical_sprite?GML_RENDER_FILTER_HARDWARE_BILINEAR:
     box_stretched?GML_RENDER_FILTER_BOX:
     nearest_mode==5?(additive_background?GML_RENDER_FILTER_NEAREST:
                      GML_RENDER_FILTER_NEAREST_PHASED_COPY):
@@ -2746,7 +2763,7 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
   operation.payload.quad.sampling.edge_rule=transparent_stretched_trim || box_stretched
     ?GML_RENDER_EDGE_TRANSPARENT
     :(margin_mask && (operation.payload.quad.sampling.filter==GML_RENDER_FILTER_BILINEAR ||
-                     hardware_background || modern_screen_filtered || hardware_physical_sprite)
+                     hardware_background || hardware_gui_background || modern_screen_filtered || hardware_physical_sprite)
       ?GML_RENDER_EDGE_LOGICAL_TPAG:GML_RENDER_EDGE_CLAMP_SUBIMAGE);
   operation.payload.quad.sampling.source_region=region;
   operation.payload.quad.sampling.quantisation=hardware_physical_sprite
@@ -2759,7 +2776,7 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
   if(modern_numbered_sprite) operation.payload.quad.filtered_draw_alpha=alpha;
   operation.payload.quad.sampling.logical_margin_mask=box_stretched?0u:
     (operation.payload.quad.sampling.filter==GML_RENDER_FILTER_BILINEAR ||
-     hardware_background || modern_screen_filtered || hardware_physical_sprite)
+     hardware_background || hardware_gui_background || modern_screen_filtered || hardware_physical_sprite)
       ?(corner_colours && part_view && margin_mask
           ?GML_RENDER_MARGIN_VISIBLE_CENTRE:margin_mask):0u;
   uint32_t draw_alpha=additive_background?255u:(uint32_t)lround(alpha*255.0);
@@ -3051,7 +3068,7 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
   }
   if(quad->shape==GML_RENDER_QUAD_AXIS_ALIGNED) for(unsigned corner=0;corner<4u;corner++){
     if(!isfinite(quad->u[corner]) || !isfinite(quad->v[corner])) return 0;
-    if(!hardware_physical_sprite &&
+    if(!hardware_physical_sprite && !hardware_gui_background &&
        (quad->u[corner]<0.0 || quad->u[corner]>1.0 ||
         quad->v[corner]<0.0 || quad->v[corner]>1.0)){
       if(!modern_screen_sprite && !firstgen_signed_point) return 0;
