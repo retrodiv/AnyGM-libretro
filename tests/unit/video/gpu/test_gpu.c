@@ -688,10 +688,11 @@ static int scene_staged_upload_case(void){
 
 static int scene_service_contract_case(void){
   static const GmlRenderOperationCode unselected[]={
-    GML_RENDER_OP_TEXTURED_TRIANGLES,GML_RENDER_OP_COPY_IMAGE,
+    GML_RENDER_OP_TEXTURED_TRIANGLES,
     GML_RENDER_OP_COMPOSE_SURFACE,GML_RENDER_OP_PRESENT_IMAGE
   };
   const uint64_t supported_operations=(UINT64_C(1)<<GML_RENDER_OP_CLEAR)|
+    (UINT64_C(1)<<GML_RENDER_OP_COPY_IMAGE)|
     (UINT64_C(1)<<GML_RENDER_OP_TEXTURED_QUAD)|
     (UINT64_C(1)<<GML_RENDER_OP_COLOURED_PRIMITIVE)|
     (UINT64_C(1)<<GML_RENDER_OP_LAYER_EFFECT)|
@@ -776,9 +777,10 @@ static int scene_service_contract_case(void){
               "neither an unselected opcode nor its refused prefix is counted as GPU work");
     }
     gml_gpu_counters(gpu,&counters);
-    REQUIRE(counters.scene_batches_offered==5u && counters.scene_batches_refused==5u &&
+    REQUIRE(counters.scene_batches_offered==1u+sizeof unselected/sizeof *unselected &&
+            counters.scene_batches_refused==1u+sizeof unselected/sizeof *unselected &&
             counters.scene_batches_accepted==0u && counters.scene_partial_prefix==0u,
-            "all four unselected opcode refusals retain exact batch accounting");
+            "all unselected opcode refusals retain exact batch accounting");
     refused.operation_count=1u;
     result=services.submit(services.context,&refused);
     REQUIRE(result.status==GML_RENDER_EXEC_ACCEPTED && result.accepted_prefix==1u &&
@@ -3153,6 +3155,68 @@ static int scene_integer_function_sprite_case(void){
   return 1;
 }
 
+static int scene_raw_copy_case(void){
+  const uint32_t classes[]={GML_RENDER_RESOURCE_SCREEN,GML_RENDER_RESOURCE_APPLICATION,
+    GML_RENDER_RESOURCE_SURFACE,GML_RENDER_RESOURCE_SCRATCH};
+  for(unsigned api=0;api<2u;api++) for(unsigned owner=0;owner<4u;owner++)
+  for(unsigned pitched=0;pitched<2u;pitched++) for(unsigned alias=0;alias<2u;alias++){
+    uint32_t pixels[64];for(unsigned index=0;index<64u;index++)pixels[index]=0x01345768u+index*0x01010101u;
+    GmlGpuContext context=fake_context(api?GML_GPU_API_OPENGLES3:GML_GPU_API_OPENGL_CORE);
+    GmlRenderDeviceServices device={0};
+    GmlRenderImageRef source={classes[owner],61u,1u,1u};
+    GmlRenderImageUpload upload={.image=source,.storage_width=8u,.storage_height=8u,
+      .region={0,0,8u,8u},.pixel_format=GML_RENDER_PIXEL_ARGB8888,.stride_bytes=32u,
+      .byte_capacity=sizeof pixels,.bytes=pixels};
+    GmlRenderDrawOp ops[2]={{0}};GmlRenderDrawStateSnapshot state={0};
+    GmlRenderTargetRef target={.image={classes[owner],alias?61u:62u,1u,1u},
+      .storage_version=1u,.width=8u,.height=8u,.pixel_format=GML_RENDER_PIXEL_ARGB8888,
+      .region={0,0,8u,8u}};
+    anygm_test_graphics_reset();GmlGpu *gpu=gml_gpu_create();
+    REQUIRE(gpu && gml_gpu_context_reset(gpu,&context),"raw-copy context created");
+    gml_gpu_device_services(gpu,&device);
+    REQUIRE(device.upload(device.context,&upload),"raw-copy source uploaded");
+    ops[0].opcode=GML_RENDER_OP_CLEAR;ops[0].target=target;
+    GmlRenderDrawBatch initial={ops,1u,NULL,0u};
+    if(!alias)REQUIRE(device.submit(device.context,&initial).status==GML_RENDER_EXEC_ACCEPTED,
+      "raw-copy target cleared");
+    ops[1]=ops[0];ops[1].opcode=GML_RENDER_OP_COPY_IMAGE;
+    ops[1].scene_family=GML_RENDER_SCENE_SURFACE;
+    ops[1].reconstruction_mode=GML_RENDER_DEVICE_CHECKPOINT;
+    ops[1].source_count=1u;ops[1].sources=&source;ops[1].target.image.content_version=2u;
+    ops[1].payload.copy=(GmlRenderCopyRegion){{1,1,5u,3u},{2,1,5u,3u},alias,
+      pitched?10u:0u,pitched?9u:0u};
+    /* Raw transport must not accidentally apply a sampled draw's colour mask,
+     * alpha or cutout. The public caller retains these readable values. */
+    state.write_mask=1u;state.alpha_test_enabled=1u;state.alpha_test_reference=255u;
+    GmlRenderDrawBatch batch={&ops[1],1u,&state,1u};
+    unsigned before=anygm_test_graphics_scene_copies();
+    GmlRenderExecutionResult result=device.submit(device.context,&batch);
+    unsigned copies=anygm_test_graphics_scene_copies();
+    REQUIRE(result.status==GML_RENDER_EXEC_ACCEPTED && result.accepted_prefix==1u &&
+      (pitched?copies-before>=2u+alias:copies-before==1u+alias) && !anygm_test_graphics_read_pixels() &&
+      !anygm_test_graphics_scene_draw_calls(),"raw-copy blits and one alias snapshot need no draw or CPU read");
+    if(alias)source.content_version=2u;
+    GmlRenderDrawOp pristine=ops[1];
+    for(unsigned invalid=0;invalid<7u;invalid++){
+      ops[1]=pristine;ops[1].target.image.content_version=4u;
+      ops[0].target.image.content_version=3u;batch.operations=ops;batch.operation_count=2u;
+      if(invalid==0u)ops[1].payload.copy.source.width=UINT32_MAX;
+      if(invalid==1u)ops[1].payload.copy.destination.height++;
+      if(invalid==2u)ops[1].payload.copy.source.x=-1;
+      if(invalid==3u)ops[1].payload.copy.source_pitch=1u;
+      if(invalid==4u)ops[1].payload.copy.needs_source_snapshot=!alias;
+      if(invalid==5u)ops[1].source_count=0u;
+      if(invalid==6u)ops[1].scene_family=GML_RENDER_SCENE_SPRITE;
+      result=device.submit(device.context,&batch);
+      REQUIRE(result.status==GML_RENDER_EXEC_UNSUPPORTED && !result.accepted_prefix &&
+        anygm_test_graphics_scene_copies()==copies && !anygm_test_graphics_read_pixels() &&
+        !anygm_test_graphics_scene_draw_calls(),"raw-copy invalid suffix refuses before its clear prefix");
+    }
+    gml_gpu_destroy(gpu,1);
+  }
+  return 1;
+}
+
 static int scene_source_alpha_key_case(void){
   for(unsigned api=0;api<2u;api++) for(unsigned owner=0;owner<4u;owner++)
   for(unsigned family=0;family<2u;family++) for(unsigned rounded=0;rounded<2u;rounded++){
@@ -4940,6 +5004,7 @@ int main(int argc,char **argv){
     {"scene_opaque_target_sourceover",scene_opaque_target_sourceover_case},
     {"scene_integer_function_sprite",scene_integer_function_sprite_case},
     {"scene_source_alpha_key",scene_source_alpha_key_case},
+    {"scene_raw_copy",scene_raw_copy_case},
     {"scene_nearest_rows",scene_nearest_rows_case},
     {"scene_nearest_surface_function",scene_nearest_surface_function_case},
     {"scene_gui_tinted_text",scene_gui_tinted_text_case},

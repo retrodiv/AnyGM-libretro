@@ -1008,6 +1008,44 @@ static int scene_preflight(GmlGpuBackend *backend,const GmlRenderDrawBatch *batc
        !valid_region(target->region,target->width,target->height) ||
        (target->pixel_format!=GML_RENDER_PIXEL_XRGB8888 &&
         target->pixel_format!=GML_RENDER_PIXEL_ARGB8888)) return 0;
+    if(op->opcode==GML_RENDER_OP_COPY_IMAGE){
+      if(!backend->gl.BlitFramebuffer || !backend->gl.CopyTexSubImage2D ||
+         !batch->states || op->state_index>=batch->state_count ||
+         op->source_count!=1u || !op->sources ||
+         op->scene_family!=GML_RENDER_SCENE_SURFACE ||
+         op->reconstruction_mode!=GML_RENDER_DEVICE_CHECKPOINT ||
+         target->pixel_format!=GML_RENDER_PIXEL_ARGB8888 ||
+         !existing_target(backend,target)) return 0;
+      GlSceneImage *source=gml_gpu_opengl_scene_image(backend,op->sources[0]);
+      const GmlRenderCopyRegion *copy=&op->payload.copy;
+      if(!source || !source->rendered_origin ||
+         source->pixel_format!=GML_RENDER_PIXEL_ARGB8888 ||
+         (source->ref.resource_class!=GML_RENDER_RESOURCE_SCREEN &&
+          source->ref.resource_class!=GML_RENDER_RESOURCE_APPLICATION &&
+          source->ref.resource_class!=GML_RENDER_RESOURCE_SURFACE &&
+          source->ref.resource_class!=GML_RENDER_RESOURCE_SCRATCH) ||
+         (target->image.resource_class!=GML_RENDER_RESOURCE_SCREEN &&
+          target->image.resource_class!=GML_RENDER_RESOURCE_APPLICATION &&
+          target->image.resource_class!=GML_RENDER_RESOURCE_SURFACE &&
+          target->image.resource_class!=GML_RENDER_RESOURCE_SCRATCH) ||
+         copy->source.width!=copy->destination.width ||
+         copy->source.height!=copy->destination.height ||
+         copy->needs_source_snapshot!=(uint32_t)same_logical(source->ref,target->image)) return 0;
+      GmlRenderRect regions[2]={copy->source,copy->destination};
+      uint32_t pitches[2]={copy->source_pitch?copy->source_pitch:source->width,
+                          copy->destination_pitch?copy->destination_pitch:target->width};
+      uint64_t capacities[2]={(uint64_t)source->width*source->height,
+                            (uint64_t)target->width*target->height};
+      for(unsigned side=0;side<2u;side++){
+        GmlRenderRect region=regions[side];
+        uint64_t end=(uint64_t)(uint32_t)region.x+region.width;
+        if(!pitches[side] || region.x<0 || region.y<0 || !region.width || !region.height ||
+           end>pitches[side] || end>capacities[side] ||
+           (uint64_t)(uint32_t)region.y+region.height-1u>
+             (capacities[side]-end)/pitches[side]) return 0;
+      }
+      continue;
+    }
     if(op->opcode==GML_RENDER_OP_CLEAR){
       if(!full_region(target->region,target->width,target->height) &&
          !existing_target(backend,target) &&
@@ -1638,6 +1676,58 @@ static int scene_snapshot_region(GmlGpuBackend *backend,GlSceneImage *target,
   backend->gl.CopyTexSubImage2D(GL_TEXTURE_2D,0,0,0,left,bottom,width,height);
   if(backend->gl.GetError()!=GL_NO_ERROR) return 0;
   return 1;
+}
+
+/* Raw copies ignore all GML drawing state. Alias input is captured once before
+ * the first write,including when logical rows wrap the physical image pitch. */
+int gml_render_gpu_opengl_copy_image(GmlGpuBackend *backend,const GmlRenderDrawOp *op,
+                                      GlSceneImage *target,GlSceneImage *source){
+  if(!backend || !op || !target || !source || !backend->gl.BlitFramebuffer ||
+     op->opcode!=GML_RENDER_OP_COPY_IMAGE) return 0;
+  const GmlRenderCopyRegion *copy=&op->payload.copy;
+  uint32_t sp=copy->source_pitch?copy->source_pitch:source->width;
+  uint32_t dp=copy->destination_pitch?copy->destination_pitch:target->width;
+  GmlRenderTargetRef source_target={source->ref,1u,source->width,source->height,
+    source->pixel_format,{0,0,source->width,source->height}};
+  if(!gml_gpu_opengl_scene_target(backend,&source_target)) return 0;
+  GLuint read_framebuffer=source->framebuffer;
+  if(copy->needs_source_snapshot){
+    if(!scene_snapshot_region(backend,source,0,0,(GLsizei)source->width,(GLsizei)source->height)) return 0;
+    if(!backend->scene.copy_framebuffer)
+      backend->gl.GenFramebuffers(1,&backend->scene.copy_framebuffer);
+    if(!backend->scene.copy_framebuffer) return 0;
+    read_framebuffer=backend->scene.copy_framebuffer;
+    backend->gl.BindFramebuffer(GL_READ_FRAMEBUFFER,read_framebuffer);
+    backend->gl.FramebufferTexture2D(GL_READ_FRAMEBUFFER,GL_COLOR_ATTACHMENT0,GL_TEXTURE_2D,
+      backend->scene.snapshot_texture,0);
+    if(backend->gl.CheckFramebufferStatus(GL_READ_FRAMEBUFFER)!=GL_FRAMEBUFFER_COMPLETE ||
+       backend->gl.GetError()!=GL_NO_ERROR) return 0;
+  }
+  backend->gl.BindFramebuffer(GL_READ_FRAMEBUFFER,read_framebuffer);
+  backend->gl.BindFramebuffer(GL_DRAW_FRAMEBUFFER,target->framebuffer);
+  backend->gl.Scissor(0,0,(GLsizei)target->width,(GLsizei)target->height);
+  if(sp==source->width && dp==target->width){
+    GLint sx=copy->source.x,sy=(GLint)(source->height-(uint32_t)copy->source.y-copy->source.height);
+    GLint dx=copy->destination.x,dy=(GLint)(target->height-(uint32_t)copy->destination.y-copy->destination.height);
+    backend->gl.BlitFramebuffer(sx,sy,sx+(GLint)copy->source.width,sy+(GLint)copy->source.height,
+      dx,dy,dx+(GLint)copy->destination.width,dy+(GLint)copy->destination.height,
+      GL_COLOR_BUFFER_BIT,GL_NEAREST);
+  }else for(uint32_t row=0;row<copy->source.height;row++){
+    uint64_t from=((uint64_t)(uint32_t)copy->source.y+row)*sp+(uint32_t)copy->source.x;
+    uint64_t to=((uint64_t)(uint32_t)copy->destination.y+row)*dp+(uint32_t)copy->destination.x;
+    uint32_t remaining=copy->source.width;
+    while(remaining){
+      uint32_t sx=(uint32_t)(from%source->width),sy=source->height-1u-(uint32_t)(from/source->width);
+      uint32_t dx=(uint32_t)(to%target->width),dy=target->height-1u-(uint32_t)(to/target->width);
+      uint32_t count=source->width-sx;
+      if(count>target->width-dx) count=target->width-dx;
+      if(count>remaining) count=remaining;
+      backend->gl.BlitFramebuffer((GLint)sx,(GLint)sy,(GLint)(sx+count),(GLint)(sy+1u),
+        (GLint)dx,(GLint)dy,(GLint)(dx+count),(GLint)(dy+1u),GL_COLOR_BUFFER_BIT,GL_NEAREST);
+      from+=count;to+=count;remaining-=count;
+    }
+  }
+  return backend->gl.GetError()==GL_NO_ERROR;
 }
 
 static void compact_quad_instances(GlScene *scene,uint32_t count){
@@ -2316,6 +2406,8 @@ GmlRenderExecutionResult gml_gpu_opengl_scene_submit(GmlGpuBackend *backend,
       pending_count=0;
       result.accepted_prefix=index;
     }
+    GlSceneImage *copy_source=op->opcode==GML_RENDER_OP_COPY_IMAGE
+      ?gml_gpu_opengl_scene_image(backend,op->sources[0]):NULL;
     if(active_target && same_logical(active_target->ref,op->target.image) &&
        active_target->width==op->target.width && active_target->height==op->target.height &&
        active_target->pixel_format==op->target.pixel_format){
@@ -2329,6 +2421,13 @@ GmlRenderExecutionResult gml_gpu_opengl_scene_submit(GmlGpuBackend *backend,
       break;
     }
     active_target=target;
+    if(op->opcode==GML_RENDER_OP_COPY_IMAGE){
+      if(!copy_source || !gml_render_gpu_opengl_copy_image(backend,op,target,copy_source)){
+        mark_uncertain(&result,target);break;
+      }
+      target->ref=op->target.image;target->valid=1;target->rendered_origin=1;
+      result.accepted_prefix=index+1u;continue;
+    }
     if(op->opcode==GML_RENDER_OP_CLEAR){
       if(!gml_render_gpu_opengl_clear(backend,op,target)){
         mark_uncertain(&result,target);

@@ -628,15 +628,9 @@ static int upload_sources(const GmlRenderDeviceServices *device,
   return 1;
 }
 
-static int ensure_target_current(GmlRenderResource *resource,
-                                  const GmlRenderDeviceServices *device,
-                                  const GmlRenderDrawBatch *batch){
+static int ensure_device_current(GmlRenderResource *resource,
+                                  const GmlRenderDeviceServices *device){
   GmlRenderImageUpload transfer={0};
-  if(batch->operations[0].opcode==GML_RENDER_OP_CLEAR &&
-     batch->operations[0].target.region.x==0 &&
-     batch->operations[0].target.region.y==0 &&
-     batch->operations[0].target.region.width==resource->width &&
-     batch->operations[0].target.region.height==resource->height) return 1;
   if(resource->gpu_version==resource->image.content_version &&
      resource->device_identity==device->context) return 1;
   if(!gml_render_resource_acquire_cpu_read(resource,NULL)) return 0;
@@ -653,6 +647,29 @@ static int ensure_target_current(GmlRenderResource *resource,
   resource->device_identity=device->context;
   resource->authority=GML_RENDER_RESOURCE_BOTH_CURRENT;
   return 1;
+}
+
+static int ensure_target_current(GmlRenderResource *resource,
+                                  const GmlRenderDeviceServices *device,
+                                  const GmlRenderDrawBatch *batch){
+  if(batch->operations[0].opcode==GML_RENDER_OP_CLEAR &&
+     batch->operations[0].target.region.x==0 &&
+     batch->operations[0].target.region.y==0 &&
+     batch->operations[0].target.region.width==resource->width &&
+     batch->operations[0].target.region.height==resource->height) return 1;
+  return ensure_device_current(resource,device);
+}
+
+int gml_render_resource_prepare_device_source(
+  GmlRenderResource *resource,const GmlRenderDeviceServices *device,
+  GmlRenderResourceSource *out_source){
+  GmlRenderResourceSource current={0};
+  if(!out_source) return 0;
+  if(gml_render_resource_device_source_view(resource,device,out_source)) return 1;
+  if(!device || !device->context || !device->upload ||
+     !gml_render_resource_current_cpu_source_view(resource,&current) ||
+     !ensure_device_current(resource,device)) return 0;
+  return gml_render_resource_device_source_view(resource,device,out_source);
 }
 
 static int append_history(GmlRenderResource *resource,const GmlRenderDrawBatch *batch,

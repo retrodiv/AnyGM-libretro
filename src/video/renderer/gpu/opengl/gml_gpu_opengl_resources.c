@@ -224,7 +224,7 @@ void gml_gpu_opengl_scene_forget(GmlGpuBackend *backend){
   scene->instance_bytes_used=0;
   scene->instance_storage_ready=0;
   memset(scene->exact_programs,0,sizeof scene->exact_programs);
-  scene->snapshot_texture=scene->rgb_query=0;
+  scene->snapshot_texture=scene->copy_framebuffer=scene->rgb_query=0;
   scene->rgb_reduce_program=scene->rgb_reduce_framebuffer=0;
   memset(scene->rgb_reduce_texture,0,sizeof scene->rgb_reduce_texture);
   memset(scene->rgb_reduce_width,0,sizeof scene->rgb_reduce_width);
@@ -254,6 +254,7 @@ void gml_gpu_opengl_scene_destroy(GmlGpuBackend *backend,int context_is_current)
       if(scene->exact_programs[index].exact_program)
         backend->gl.DeleteProgram(scene->exact_programs[index].exact_program);
     if(scene->snapshot_texture) backend->gl.DeleteTextures(1,&scene->snapshot_texture);
+    if(scene->copy_framebuffer) backend->gl.DeleteFramebuffers(1,&scene->copy_framebuffer);
     if(scene->rgb_query && backend->gl.DeleteQueries)
       backend->gl.DeleteQueries(1,&scene->rgb_query);
     if(scene->rgb_reduce_program) backend->gl.DeleteProgram(scene->rgb_reduce_program);
@@ -335,6 +336,8 @@ int gml_gpu_opengl_scene_capabilities(const GmlGpuBackend *backend,GmlRenderDevi
                              (UINT64_C(1)<<GML_RENDER_OP_LAYER_EFFECT)|
                              (UINT64_C(1)<<GML_RENDER_OP_CONTENT_SHADER_DRAW)|
                              (UINT64_C(1)<<GML_RENDER_OP_RECOVER_EMPTY_SCREEN);
+  if(backend->gl.BlitFramebuffer)
+    caps->supported_operations|=UINT64_C(1)<<GML_RENDER_OP_COPY_IMAGE;
   caps->supported_families=GML_RENDER_FAMILY_TEXTURE|GML_RENDER_FAMILY_PRIMITIVE|
                            GML_RENDER_FAMILY_EFFECT|GML_RENDER_FAMILY_SHADER|
                            GML_RENDER_FAMILY_SURFACE;

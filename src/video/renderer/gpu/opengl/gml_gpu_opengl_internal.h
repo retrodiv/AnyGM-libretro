@@ -147,7 +147,7 @@ typedef struct GlScene {
   int rotated_alpha16_valid;
   int rotated_alpha16_modern_nearest;
   GlSceneExactProgram exact_programs[3];
-  GLuint snapshot_texture,rgb_query;
+  GLuint snapshot_texture,copy_framebuffer,rgb_query;
   /* Two reusable reduction planes and two independent final predicates. No host observation. */
   GLuint rgb_reduce_program,rgb_reduce_framebuffer,rgb_reduce_texture[4];
   uint32_t rgb_reduce_width[4],rgb_reduce_height[4];
@@ -282,6 +282,8 @@ int gml_render_gpu_opengl_apply_effect(GmlGpuBackend *backend,
 GlSceneImage *gml_gpu_opengl_scene_image(GmlGpuBackend *backend,GmlRenderImageRef image);
 GlSceneImage *gml_gpu_opengl_scene_target(GmlGpuBackend *backend,const GmlRenderTargetRef *target);
 GLuint gml_gpu_opengl_scene_content_source(GmlGpuBackend *backend,GlSceneImage *source);
+int gml_render_gpu_opengl_copy_image(GmlGpuBackend *backend,const GmlRenderDrawOp *operation,
+                                      GlSceneImage *target,GlSceneImage *source);
 GmlRenderExecutionResult gml_gpu_opengl_scene_submit(GmlGpuBackend *backend,
                                                        const GmlRenderDrawBatch *batch,
                                                        uintptr_t frontend_framebuffer,

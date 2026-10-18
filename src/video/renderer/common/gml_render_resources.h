@@ -93,6 +93,11 @@ int gml_render_resource_current_cpu_source_view(
 int gml_render_resource_device_source_view(
   GmlRenderResource *resource,const GmlRenderDeviceServices *device,
   GmlRenderResourceSource *out_source);
+/* Make a committed CPU source resident once,without observing device pixels or
+ * advancing its version. Later reads of that version use the byte-free view. */
+int gml_render_resource_prepare_device_source(
+  GmlRenderResource *resource,const GmlRenderDeviceServices *device,
+  GmlRenderResourceSource *out_source);
 
 /* Legacy submission reserves replay storage before issuing device work. Reconstructible rejected or
  * partially failed batches replay once on CPU. A non-reconstructible DEVICE_CHECKPOINT result is

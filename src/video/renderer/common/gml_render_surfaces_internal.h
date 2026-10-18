@@ -43,6 +43,10 @@ int gml_render_resident_classic_phase_clear(GmlRender *render,uint32_t colour);
 /* Replace the separately owned application image, preserving the active draw target.
  * Only an on-demand scene device may leave its canonical CPU allocation stale. */
 int gml_render_resident_owned_application_clear(GmlRender *render,uint32_t colour);
+/* Raw public copies preserve all four channels and ignore drawing state.
+ * A full source uses full_source rather than caller-supplied region extents. */
+int gml_render_resident_surface_copy(GmlRender *render,int destination,int x,int y,
+  int source,int source_x,int source_y,int width,int height,int full_source);
 /* Compose the already owned nearest root pair without observing its pixels. */
 int gml_render_resident_classic_phase_present(GmlRender *render,
   double x,double y,double width,double height,uint32_t colour,double alpha);

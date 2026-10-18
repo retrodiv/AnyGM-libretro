@@ -158,6 +158,7 @@ const uint32_t *screen_pixels_observe(GmlRender *r,int *w,int *h){
 
 void gml_surface_copy(GmlRender *r, int dst, int x, int y, int src){
   if(!r) return;
+  if(gml_render_resident_surface_copy(r,dst,x,y,src,0,0,0,0,1)) return;
   unsigned reason=r->dispatch_metrics.enabled
     ?gml_render_dispatch_cpu_reason(r):GML_RENDER_DISPATCH_UNQUALIFIED;
   int sw=0, sh=0, dw=0, dh=0;
@@ -210,6 +211,7 @@ void gml_surface_copy(GmlRender *r, int dst, int x, int y, int src){
 void gml_surface_copy_part(GmlRender *r, int dst, int x, int y, int src,
                            int source_x, int source_y, int width, int height){
   if(!r || width<=0 || height<=0) return;
+  if(gml_render_resident_surface_copy(r,dst,x,y,src,source_x,source_y,width,height,0)) return;
   unsigned reason=r->dispatch_metrics.enabled
     ?gml_render_dispatch_cpu_reason(r):GML_RENDER_DISPATCH_UNQUALIFIED;
   int sw=0,sh=0,dw=0,dh=0;

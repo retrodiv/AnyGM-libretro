@@ -1108,6 +1108,124 @@ int gml_render_multiview_copy_to_owned_application(GmlRender *r,
       dw,dh,0,0,dw,dh,0);
 }
 
+typedef struct RawSurfaceCopyView {
+  uint32_t *pixels;
+  int width,height;
+  GmlRenderResource *resource;
+  GmlRenderResourceSource physical;
+} RawSurfaceCopyView;
+
+static int raw_surface_copy_view(GmlRender *r,int id,RawSurfaceCopyView *view){
+  memset(view,0,sizeof *view);
+  if(id==0){
+    view->pixels=r->app_surface;
+    view->width=r->app_w?r->app_w:(r->base_fbw?r->base_fbw:r->fbw);
+    view->height=r->app_h?r->app_h:(r->base_fbh?r->base_fbh:r->fbh);
+    if(!view->pixels || view->width<=0 || view->height<=0) return 0;
+    if(view->pixels==r->app_surface_owned)
+      view->resource=gml_render_application_resource_ensure(r);
+    else{
+      view->resource=gml_render_base_resource_lookup(r,view->pixels,NULL,NULL);
+      for(int slot=0;!view->resource && slot<GML_MAX_SURFACES;slot++)
+        if(r->surface[slot].live && r->surface[slot].px==view->pixels)
+          view->resource=gml_render_surface_resource_ensure(r,slot+1);
+      if(!view->resource)
+        view->resource=multiview_base_ensure(r,view->pixels,view->width,view->height);
+    }
+  }else{
+    int slot=surface_slot(id);
+    if(slot<0 || !r->surface[slot].live || !r->surface[slot].px) return 0;
+    view->pixels=r->surface[slot].px;view->width=r->surface[slot].w;view->height=r->surface[slot].h;
+    view->resource=gml_render_surface_resource_ensure(r,id);
+  }
+  return view->resource && view->width>0 && view->height>0 &&
+    (gml_render_resource_device_source_view(view->resource,gml_render_device(r),&view->physical) ||
+     gml_render_resource_current_cpu_source_view(view->resource,&view->physical));
+}
+
+static int raw_surface_copy_suspended_fills(GmlRender *r,RawSurfaceCopyView *view){
+  for(int index=0;index<r->target_sp;index++){
+    if(r->target_stack[index].fb!=view->pixels || !r->target_stack[index].pending_fill) continue;
+    int width=r->target_stack[index].w,height=r->target_stack[index].h;
+    if(width<=0 || height<=0) continue;
+    /* A differently pitched pending fill needs its own qualified raw clear.
+     * Never write a complete physical image for a logical prefix fill. */
+    if((uint32_t)width!=view->physical.width || (uint32_t)height!=view->physical.height ||
+       !resource_clear(view->resource,gml_render_device(r),(unsigned)width,(unsigned)height,
+         r->target_stack[index].fill_color,r)) return 0;
+    r->target_stack[index].pending_fill=0;
+  }
+  return 1;
+}
+
+int gml_render_resident_surface_copy(GmlRender *r,int dst,int x,int y,int src,
+  int source_x,int source_y,int width,int height,int full_source){
+  const GmlRenderDeviceServices *device=gml_render_device(r);
+  GmlRenderDeviceCaps caps={0};
+  RawSurfaceCopyView origin,destination;
+  if(!r || !r->scene_device_enabled || !device || !device->capabilities ||
+     !device->observe_on_demand || !device->observe_on_demand(device->context) ||
+     (r->pending_scene_batch && r->pending_scene_batch->preparing) ||
+     !device->capabilities(device->context,&caps) ||
+     !(caps.supported_operations&(UINT64_C(1)<<GML_RENDER_OP_COPY_IMAGE)) ||
+     !raw_surface_copy_view(r,src,&origin) || !raw_surface_copy_view(r,dst,&destination)) return 0;
+  if(origin.pixels==r->fb || destination.pixels==r->fb || src==r->target_id ||
+     dst==r->target_id || (r->pending_presentation && r->presentation.shader>=0))
+    gml_render_maybe_prepare_draw(r);
+  if(!gml_render_application_scene_flush(r) ||
+     !raw_surface_copy_view(r,src,&origin) || !raw_surface_copy_view(r,dst,&destination) ||
+     !raw_surface_copy_suspended_fills(r,&origin) ||
+     !raw_surface_copy_suspended_fills(r,&destination) ||
+     !raw_surface_copy_view(r,src,&origin) || !raw_surface_copy_view(r,dst,&destination)) return 0;
+  int64_t sx=full_source?0:source_x,sy=full_source?0:source_y,dx=x,dy=y;
+  int64_t cw=full_source?origin.width:width,ch=full_source?origin.height:height;
+  if(sx<0){int64_t skip=-sx;sx=0;dx+=skip;cw-=skip;}
+  if(sy<0){int64_t skip=-sy;sy=0;dy+=skip;ch-=skip;}
+  if(dx<0){int64_t skip=-dx;dx=0;sx+=skip;cw-=skip;}
+  if(dy<0){int64_t skip=-dy;dy=0;sy+=skip;ch-=skip;}
+  if(cw<=0 || ch<=0 || sx>=origin.width || sy>=origin.height ||
+     dx>=destination.width || dy>=destination.height) return 1;
+  if(cw>(int64_t)origin.width-sx)cw=(int64_t)origin.width-sx;
+  if(ch>(int64_t)origin.height-sy)ch=(int64_t)origin.height-sy;
+  if(cw>(int64_t)destination.width-dx)cw=(int64_t)destination.width-dx;
+  if(ch>(int64_t)destination.height-dy)ch=(int64_t)destination.height-dy;
+  if(cw<=0 || ch<=0) return 1;
+  /* Reject unavailable high-water bytes before issuing a prefix. Physical
+   * row wrapping itself is supported by the typed raw device copy. */
+  uint64_t source_end=(uint64_t)(sy+ch-1)*origin.width+(uint64_t)(sx+cw);
+  uint64_t destination_end=(uint64_t)(dy+ch-1)*destination.width+(uint64_t)(dx+cw);
+  if(source_end>(uint64_t)origin.physical.width*origin.physical.height ||
+     destination_end>(uint64_t)destination.physical.width*destination.physical.height) return 0;
+  if(!gml_render_resource_prepare_device_source(origin.resource,device,&origin.physical)) return 0;
+  GmlRenderDrawOp op={0};GmlRenderDrawStateSnapshot state={0};
+  op.opcode=GML_RENDER_OP_COPY_IMAGE;op.scene_family=GML_RENDER_SCENE_SURFACE;
+  op.reconstruction_mode=GML_RENDER_DEVICE_CHECKPOINT;
+  op.target=(GmlRenderTargetRef){gml_render_resource_image_ref(destination.resource),1u,
+    destination.physical.width,destination.physical.height,GML_RENDER_PIXEL_ARGB8888,
+    {0,0,destination.physical.width,destination.physical.height}};
+  if(op.target.image.content_version==UINT64_MAX) return 0;
+  op.target.image.content_version++;
+  op.source_count=1u;op.sources=&origin.physical.image;
+  op.payload.copy=(GmlRenderCopyRegion){
+    {(int32_t)sx,(int32_t)sy,(uint32_t)cw,(uint32_t)ch},
+    {(int32_t)dx,(int32_t)dy,(uint32_t)cw,(uint32_t)ch},
+    origin.resource==destination.resource,(uint32_t)origin.width,(uint32_t)destination.width};
+  GmlRenderDrawBatch batch={&op,1u,&state,1u};
+  GmlRenderResourceExecution result=gml_render_resource_submit_deferred(
+    destination.resource,device,&batch,&origin.physical,1u);
+  if(result!=GML_RENDER_RESOURCE_EXEC_DEVICE) return 0;
+  gml_render_dispatch_batch_record(r,&batch,result);
+  int slot=surface_slot(dst);
+  if(slot>=0){
+    r->surface[slot].dirty=1;r->surface[slot].opaque_known=0;
+    r->surface[slot].all_opaque=r->surface[slot].all_transparent=0;
+  }
+  if(dst==0) r->app_surface_opaque=0;
+  if(dst==r->target_id)
+    r->fb_opaque_known=r->fb_all_opaque=r->fb_all_transparent=0;
+  return 1;
+}
+
 int gml_render_resident_owned_application_clear(GmlRender *r,uint32_t colour){
   const GmlRenderDeviceServices *device=gml_render_device(r);
   GmlRenderResource *resource;

@@ -329,6 +329,9 @@ int gml_render_automatic_surface_quad_valid(const GmlRenderQuad *quad,
 typedef struct GmlRenderCopyRegion {
   GmlRenderRect source,destination;
   uint32_t needs_source_snapshot;
+  /* Zero uses the physical image width. Borrowed logical views can have a
+   * different row pitch over the same allocation; offsets remain raw words. */
+  uint32_t source_pitch,destination_pitch;
 } GmlRenderCopyRegion;
 
 /* Fully resolved flat-colour coverage. The rectangle is a half-open pixel region in target
