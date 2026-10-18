@@ -263,7 +263,8 @@ static void draw_text_real_plain(GmlRender *r, GmlFont *f, double x, double y, c
            isfinite(alpha) && alpha>=0.0 && alpha<=1.0){
           if(r->interp && !r->classic && !f->runtime_owned &&
              isfinite(xs) && isfinite(ys) &&
-             xs>0.0 && ys>0.0 && xs<=1.0 && ys<=1.0)
+             ((xs>0.0 && ys>0.0 && xs<=1.0 && ys<=1.0) ||
+              resident_nearest_text_scale(xs,ys)))
             resident_glyph=gml_render_resident_filtered_font_glyph(
               r,f->atlas,g->sx,g->sy,g->w,g->h,
               glyph_x-r->cam_x,glyph_y-r->cam_y,xs,ys,glyph_blend,alpha);
@@ -473,7 +474,7 @@ static void draw_text_transformed_font(GmlRender *r, GmlFont *f,
         if(!resident_glyph && r->resident_application_pass && !use_rot && !s->runtime_rgba &&
            !gml_d3_is_active(r) && s->frame &&
            isfinite(alpha) && alpha>0.0 && alpha<=1.0 &&
-           resident_nearest_text_scale(xs,ys) && (!r->interp || r->classic)){
+           resident_nearest_text_scale(xs,ys)){
           int page_index=s->frame[fr];
           if(page_index>=0 && page_index<r->n_tpag){
             GmlTpag *page=&r->tpag[page_index];

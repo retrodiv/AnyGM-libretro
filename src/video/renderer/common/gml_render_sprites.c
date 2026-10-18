@@ -20,6 +20,9 @@
 static int resident_filtered_sprite(GmlRender *r,GmlSprite *sprite,int subimg,
                                     double x,double y,double xs,double ys,double rotation,
                                     uint32_t blend,double alpha);
+static int resident_filtered_font_crop(GmlRender *r,GmlTpag *page,
+                                       double left,double top,double xs,double ys,
+                                       uint32_t colour,double alpha);
 
 static int resident_sprite_program_blocks(const GmlRender *r){
   return !r || (r->active_shader>=0 && !gml_render_shader_cpu_passthrough(r));
@@ -1670,6 +1673,8 @@ int gml_render_resident_sprite_font_glyph(GmlRender *r,int page_index,
   double left,double top,double xs,double ys,uint32_t colour,double alpha){
   if(!r || page_index<0 || page_index>=r->n_tpag) return 0;
   GmlTpag *page=&r->tpag[page_index];
+  if(r->interp && !r->classic)
+    return resident_filtered_font_crop(r,page,left,top,xs,ys,colour,alpha);
   if(r->classic_phase_resource && !r->classic_phase_scene_preparing &&
      (!r->classic_phase_y || gml_render_classic_vertical_phase_blocks_scene(r)))
     return gml_render_resident_classic_phase_atlas(r,page,left,top,xs,ys,colour,alpha,
@@ -2271,16 +2276,18 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
   int hardware_physical_tiled=nearest_mode==9;
   int hardware_physical_rotation=nearest_mode==10 && rotated_sprite && r &&
     anygm_policy_has_modern_layer_semantics(r->win);
-  int hardware_physical_sprite=r && (nearest_mode==7 || hardware_physical_part || hardware_physical_tiled || hardware_physical_rotation) && r->interp &&
-    family==GML_RENDER_SCENE_SPRITE && (!rotated_sprite || hardware_physical_rotation) && !corner_colours &&
-    (!part_view || hardware_physical_part) && !opaque_target_alpha && !transparent_stretched_trim &&
+  int hardware_physical_font=nearest_mode==11 && family==GML_RENDER_SCENE_TEXT &&
+    page_index==-1 && part_view && part_view->sw<=256 && part_view->sh<=256;
+  int hardware_physical_sprite=r && (nearest_mode==7 || hardware_physical_part || hardware_physical_tiled || hardware_physical_rotation || hardware_physical_font) && r->interp &&
+    (family==GML_RENDER_SCENE_SPRITE || hardware_physical_font) && (!rotated_sprite || hardware_physical_rotation) && !corner_colours &&
+    (!part_view || hardware_physical_part || hardware_physical_font) && !opaque_target_alpha && !transparent_stretched_trim &&
     !box_stretched && !positioned_axis && !r->fog_flat && xs!=0.0 && ys!=0.0 &&
     fabs(xs)>=0.125 && fabs(xs)<=64.0 && fabs(ys)>=0.125 && fabs(ys)<=64.0 &&
     (anygm_policy_uses_first_generation_studio(r->win) ||
      anygm_policy_has_modern_layer_semantics(r->win)) &&
     r->device.context && r->device.observe_on_demand &&
     r->device.observe_on_demand(r->device.context);
-  if((nearest_mode==7 || nearest_mode==8 || nearest_mode==9 || nearest_mode==10) && !hardware_physical_sprite) return 0;
+  if((nearest_mode==7 || nearest_mode==8 || nearest_mode==9 || nearest_mode==10 || nearest_mode==11) && !hardware_physical_sprite) return 0;
   modern_filtered_identity_maximise=modern_filtered_identity_maximise && hardware_screen_filtered;
   /* R03-SPR-FIRSTGEN-SIGNED-POINT: retain first-generation alpha and edge coverage.
    * Contiguous-white specialisations keep their separate established recipes. */
@@ -2309,7 +2316,7 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
         anygm_policy_has_modern_layer_semantics(r->win)) ||
        ((rotated_sprite || opaque_target_alpha || modern_screen_filtered || hardware_physical_sprite) &&
         anygm_policy_has_modern_layer_semantics(r->win))) ||
-     (!filtered_real_text && (page_index<0 || page_index>=r->n_tpag)) || r->classic ||
+     (!filtered_real_text && !hardware_physical_font && (page_index<0 || page_index>=r->n_tpag)) || r->classic ||
      (r->gui_pass_active && !identity_gui_atlas && !mapped_gui_font &&
       !mapped_gui_sprite && !mapped_gui_rotation && !modern_filtered_identity_maximise &&
       !hardware_physical_sprite) ||
@@ -2375,13 +2382,13 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
                           fabs(ys-nearbyint(ys))<1e-9))))) return 0;
   for(int index=0;index<3;index++)
     if(r->classic_interp_phase[index] || r->app_interp_phase[index]) return 0;
-  if((masked_numbered_sprite || (hardware_physical_sprite && !hardware_physical_part)) &&
+  if((masked_numbered_sprite || (hardware_physical_sprite && !hardware_physical_part && !hardware_physical_font)) &&
      !r->color_write_mask) return 1;
   /* blit_one skips every destination at zero draw alpha. Preserve the queued
    * prefix without a write, shader call or source snapshot in this ordinary state. */
   if(alpha==0.0) return 1;
   if(hardware_physical_rotation && alpha<0x1p-32) return 0;
-  if(part_view && !filtered_real_text &&
+  if(part_view && !filtered_real_text && !hardware_physical_font &&
      part_view->atlas!=r->tpag[page_index].atlas) return 0;
   page=part_view?part_view:&r->tpag[page_index];
   /* Authored-edge projection retains its established owner. GUI points and
@@ -2405,7 +2412,7 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
   if((modern_screen_filtered || hardware_physical_sprite) && !hardware_physical_rotation &&
      alpha==1.0 && (colour&0xFFFFFFu)==0xFFFFFFu &&
      fabs(xs-1.0)<0.001 && fabs(ys-1.0)<0.001 && (xs!=1.0 || ys!=1.0)) return 0;
-  if(family==GML_RENDER_SCENE_SPRITE ||
+  if(family==GML_RENDER_SCENE_SPRITE || hardware_physical_font ||
      ((family==GML_RENDER_SCENE_BACKGROUND || family==GML_RENDER_SCENE_TILE) &&
       part_view)){
     if((page->tx<0 || page->ty<0) && !(corner_colours && part_view)) return 0;
@@ -2455,6 +2462,15 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
        r->blendmode!=2 && (r->color_write_mask&8u) &&
        !gml_render_target_preserves_alpha(r) && (!r->fb_opaque_known || !r->fb_all_opaque))))
     return 0;
+  /* A filtered glyph's disabled-blend writer replaces whole channels once
+   * coverage becomes positive. Variable/border alpha cannot inherit a small
+   * hardware-filter tolerance across that discontinuous decision. */
+  if(hardware_physical_font && !r->alphablend &&
+     (margin_mask || !page->scene_fully_opaque || alpha<1.0/255.0)) return 0;
+  /* Variable filtered coverage plus additive source quantisation exceeds
+   * the paired individual channel budget. Keep this writer explicit CPU debt. */
+  if(hardware_physical_font && r->alphablend && r->blendmode==1 &&
+     (margin_mask || !page->scene_fully_opaque)) return 0;
   /* Hardware filter error can exceed the individual alpha budget after
    * inverse blending squares variable source coverage on a preserved target.
    * Keep that unqualified alpha writer ordered on the original CPU path. */
@@ -2468,7 +2484,7 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
      (margin_mask || (!page->scene_fully_opaque && page->scene_ax1>=0))) return 0;
   /* The continuous modern normal packet does not qualify raw positive
    * cutout: a sub-byte interpolation difference can change whole coverage. */
-  if(hardware_physical_sprite && (hardware_physical_part || nearest_mode==7 || hardware_physical_rotation) &&
+  if(hardware_physical_sprite && (hardware_physical_part || nearest_mode==7 || hardware_physical_rotation || hardware_physical_font) &&
      !r->blendmode && r->alpha_test_enable &&
      r->alpha_test_ref && anygm_policy_has_modern_layer_semantics(r->win)) return 0;
   /* The established shader truncates tint; modern opaque CPU pixels round it.
@@ -2564,7 +2580,7 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
     /* The positioned axis CPU leaf delegates to blit_one. Its modern world-target half-camera
      * ties select the preceding pixel; other filtered quads keep their established rounding. */
     if((positioned_axis || modern_screen_filtered || hardware_physical_tiled ||
-        (hardware_physical_sprite && nearest_mode==7)) && anygm_policy_has_modern_layer_semantics(r->win) &&
+        (hardware_physical_sprite && (nearest_mode==7 || hardware_physical_font))) && anygm_policy_has_modern_layer_semantics(r->win) &&
        !r->gui_pass_active && r->target_sp==0 && r->target_id<0){
       if(fabs(fabs(r->cam_x-nearbyint(r->cam_x))-0.5)<1e-9)
         positioned_x_tie=-1e-9;
@@ -2650,7 +2666,7 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
     return 0;
   }
   if(!page->scene_fully_opaque && !hardware_background && family!=GML_RENDER_SCENE_SPRITE &&
-     !filtered_real_text && !identity_gui_atlas &&
+     !filtered_real_text && !hardware_physical_font && !identity_gui_atlas &&
      nearest_mode!=2 && nearest_mode!=5) return 0;
   if(stretched_float){
     if(width>1000000.0 || height>1000000.0 || page->bw>16384 || page->bh>16384 ||
@@ -2767,7 +2783,7 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
       ?GML_RENDER_EDGE_LOGICAL_TPAG:GML_RENDER_EDGE_CLAMP_SUBIMAGE);
   operation.payload.quad.sampling.source_region=region;
   operation.payload.quad.sampling.quantisation=hardware_physical_sprite
-    ?((hardware_physical_part || nearest_mode==7 || hardware_physical_rotation) && !r->blendmode &&
+    ?((hardware_physical_part || nearest_mode==7 || hardware_physical_rotation || hardware_physical_font) && !r->blendmode &&
       anygm_policy_has_modern_layer_semantics(r->win)
       ?GML_RENDER_QUANTISE_HARDWARE_SPRITE_MODERN:GML_RENDER_QUANTISE_HARDWARE_SPRITE_FIRSTGEN):stretched_float
     ?GML_RENDER_QUANTISE_STRETCHED_FLOAT:
@@ -2943,7 +2959,7 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
         quad->corner_colour[corner]=(draw_alpha<<24)|(quad->corner_colour[corner]&0xFFFFFFu);
     }
   }
-  state.write_mask=masked_numbered_sprite || (hardware_physical_sprite && !hardware_physical_part)?r->color_write_mask:15u;
+  state.write_mask=masked_numbered_sprite || (hardware_physical_sprite && !hardware_physical_part && !hardware_physical_font)?r->color_write_mask:15u;
   state.colour=0xFFFFFFFFu;
   state.alpha=255u;
   if((identity_gui_atlas || (mapped_gui_sprite && !opaque_target_alpha) ||
@@ -3111,12 +3127,25 @@ int gml_render_resident_filtered_atlas_page(GmlRender *r,int page_index,
                                      part_view,NULL,0.0,NULL,0,0,0,0,mode);
 }
 
+/* New magnification/reflection shares the qualified physical sampler. Existing
+ * positive unit/reduction font owners retain their exact recipes unchanged. */
+static int resident_filtered_font_crop(GmlRender *r,GmlTpag *page,
+                                       double left,double top,double xs,double ys,
+                                       uint32_t colour,double alpha){
+  if(!r || !page || !r->interp || r->classic ||
+     !(xs<0.0 || ys<0.0 || xs>1.0 || ys>1.0)) return 0;
+  return resident_filtered_atlas_page(r,-1,left,top,xs,ys,GML_RENDER_SCENE_TEXT,
+    colour,alpha,page,NULL,0.0,NULL,0,0,0,0,11);
+}
+
 int gml_render_resident_filtered_font_glyph(GmlRender *r,int atlas,
                                             int source_x,int source_y,int width,int height,
                                             double left,double top,double xs,double ys,
                                             uint32_t colour,double alpha){
   GmlTpag glyph={.atlas=atlas,.sx=source_x,.sy=source_y,.sw=width,.sh=height,
                  .tw=width,.th=height,.bw=width,.bh=height};
+  if(xs<0.0 || ys<0.0 || xs>1.0 || ys>1.0)
+    return resident_filtered_font_crop(r,&glyph,left,top,xs,ys,colour,alpha);
   int opaque_target_alpha=!gml_render_target_preserves_alpha(r);
   return resident_filtered_atlas_page(r,-1,left,top,xs,ys,GML_RENDER_SCENE_TEXT,
                                       colour,alpha,&glyph,NULL,0.0,NULL,

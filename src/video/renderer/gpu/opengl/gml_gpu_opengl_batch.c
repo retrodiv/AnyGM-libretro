@@ -721,7 +721,8 @@ static int hardware_screen_sprite_valid(const GmlRenderDrawOp *op,
   int affine_row=quad->span_active==GML_RENDER_SPAN_FILTERED_AFFINE_ROW;
   int physical=(quad->sampling.quantisation==GML_RENDER_QUANTISE_HARDWARE_SPRITE_FIRSTGEN ||
                 quad->sampling.quantisation==GML_RENDER_QUANTISE_HARDWARE_SPRITE_MODERN) &&
-    op->scene_family==GML_RENDER_SCENE_SPRITE && state->write_mask<=15u &&
+    (op->scene_family==GML_RENDER_SCENE_SPRITE ||
+     (op->scene_family==GML_RENDER_SCENE_TEXT && state->write_mask==15u)) && state->write_mask<=15u &&
     (op->target.image.resource_class==GML_RENDER_RESOURCE_SCREEN ||
      op->target.image.resource_class==GML_RENDER_RESOURCE_APPLICATION ||
      op->target.image.resource_class==GML_RENDER_RESOURCE_SURFACE) &&
@@ -748,7 +749,7 @@ static int hardware_screen_sprite_valid(const GmlRenderDrawOp *op,
      quad->shape!=GML_RENDER_QUAD_AXIS_ALIGNED ||
      quad->sampling.filter!=GML_RENDER_FILTER_HARDWARE_BILINEAR ||
      (margin
-       ? op->scene_family!=GML_RENDER_SCENE_SPRITE || margin>15u ||
+       ? (!physical && op->scene_family!=GML_RENDER_SCENE_SPRITE) || margin>15u ||
          quad->sampling.edge_rule!=GML_RENDER_EDGE_LOGICAL_TPAG ||
          (!physical && (((margin&GML_RENDER_MARGIN_LEFT) && region.x<=0) ||
           ((margin&GML_RENDER_MARGIN_TOP) && region.y<=0) ||
@@ -762,12 +763,12 @@ static int hardware_screen_sprite_valid(const GmlRenderDrawOp *op,
      (!affine_row && (physical?fabs(xs)<0.125 || fabs(xs)>64.0 || fabs(ys)<0.125 || fabs(ys)>64.0:
                xs<=0.0 || ys<=0.0)) ||
      (op->scene_family==GML_RENDER_SCENE_TEXT &&
-      (xs>1.0 || ys>1.0 || region.width>256u || region.height>256u)) ||
+      ((!physical && (xs>1.0 || ys>1.0)) || region.width>256u || region.height>256u)) ||
      !isfinite(left) || !isfinite(top) ||
      !valid_region(region,source->width,source->height) ||
      !exact_rect(op,NULL,NULL,NULL,NULL,1)) return 0;
   if(affine_row){
-    if(!physical || quad->y[2]-quad->y[0]!=1.0 ||
+    if(!physical || op->scene_family!=GML_RENDER_SCENE_SPRITE || quad->y[2]-quad->y[0]!=1.0 ||
        region.width>4096u || region.height>4096u ||
        quad->x[1]-quad->x[0]>16384.0 || fabs(left)>4097.0 || fabs(top)>4097.0 ||
        fabs(quad->inverse_x[0])>8.0 || fabs(quad->inverse_x[1])>8.0 ||
