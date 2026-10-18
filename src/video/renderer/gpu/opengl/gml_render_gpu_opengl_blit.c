@@ -16,13 +16,16 @@ int gml_gpu_opengl_clamped_atlas_valid(const GmlRenderDrawOp *op,
      source_width>16384u || source_height>16384u ||
      op->opcode!=GML_RENDER_OP_TEXTURED_QUAD ||
      (op->scene_family!=GML_RENDER_SCENE_SPRITE &&
-      op->scene_family!=GML_RENDER_SCENE_BACKGROUND) ||
+      op->scene_family!=GML_RENDER_SCENE_BACKGROUND &&
+      op->scene_family!=GML_RENDER_SCENE_TEXT) ||
      op->reconstruction_mode!=GML_RENDER_DEVICE_CHECKPOINT ||
      op->source_count!=1u || !op->sources ||
      op->sources[0].resource_class!=GML_RENDER_RESOURCE_ATLAS) return 0;
   const GmlRenderQuad *q=&op->payload.quad;
   GmlRenderRect region=q->sampling.source_region;
-  return q->shape==GML_RENDER_QUAD_AXIS_ALIGNED && !q->span_active &&
+  return (op->scene_family!=GML_RENDER_SCENE_TEXT ||
+          (region.width<=256u && region.height<=256u)) &&
+    q->shape==GML_RENDER_QUAD_AXIS_ALIGNED && !q->span_active &&
     q->sampling.filter==GML_RENDER_FILTER_HARDWARE_BILINEAR &&
     (q->sampling.quantisation==GML_RENDER_QUANTISE_HARDWARE_SPRITE_FIRSTGEN ||
      q->sampling.quantisation==GML_RENDER_QUANTISE_HARDWARE_SPRITE_MODERN) &&

@@ -2461,7 +2461,7 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
   int clamped_window=(uint64_t)(uint32_t)page->sx+(uint32_t)page->sw>source.width ||
     (uint64_t)(uint32_t)page->sy+(uint32_t)page->sh>source.height;
   if(clamped_window && (!hardware_physical_sprite || hardware_physical_rotation ||
-     hardware_physical_font || page->sx>65536 || page->sy>65536 ||
+     page->sx>65536 || page->sy>65536 ||
      page->sw>4096 || page->sh>4096)) return 0;
   /* This companion must not replace a contained background's established
    * recipe. Its only new source policy is physical atlas-edge clamping. */
@@ -2475,8 +2475,15 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
     /* The canonical unit-white cache zero-extends absent texels instead of
      * clamping them. A detached part has no such cache and retains its old
      * CPU boundary; never reinterpret its unchecked copy specialization. */
-    if(part_view && part_view!=&r->tpag[page_index]) return 0;
+    if(part_view && !hardware_physical_font &&
+       (page_index<0 || part_view!=&r->tpag[page_index])) return 0;
     if((uint32_t)page->sx>=source.width || (uint32_t)page->sy>=source.height) return 1;
+    /* A real glyph uses a detached raw copy; sprite text also copies its
+     * page view. Only an already populated canonical cache makes a crossing
+     * unit copy a bounded zero-extended reference. Wholly absent cells above
+     * are exact CPU no-writes even without that cache. */
+    if(hardware_physical_font &&
+       (!page->argb_cache || !page->alpha_row_min || !page->alpha_row_max)) return 0;
     contained_copy=*page;
     if((uint32_t)contained_copy.sw>source.width-(uint32_t)page->sx)
       contained_copy.sw=(int)(source.width-(uint32_t)page->sx);
@@ -2529,7 +2536,7 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
      ((!r->alphablend && r->blendmode!=2 &&
        (margin_mask || !page->scene_fully_opaque || alpha<1.0/255.0)) ||
       ((margin_mask || !page->scene_fully_opaque) && r->alphablend &&
-       r->blendmode!=2 && (r->color_write_mask&8u) &&
+       r->blendmode!=2 && (hardware_physical_font || (r->color_write_mask&8u)) &&
        !gml_render_target_preserves_alpha(r) && (!r->fb_opaque_known || !r->fb_all_opaque))))
     return 0;
   /* A filtered glyph's disabled-blend writer replaces whole channels once
@@ -2865,7 +2872,7 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
      hardware_background || hardware_gui_background || modern_screen_filtered || hardware_physical_sprite)
       ?(corner_colours && part_view && margin_mask
           ?GML_RENDER_MARGIN_VISIBLE_CENTRE:margin_mask):0u;
-  if(mutable_filtered_font && !margin_mask && xs==1.0 && ys==1.0 &&
+  if(mutable_filtered_font && !clamped_window && !margin_mask && xs==1.0 && ys==1.0 &&
      left==floor(left) && top==floor(top))
     operation.payload.quad.sampling.logical_margin_mask=GML_RENDER_MARGIN_UNIT_TEXEL;
   if(clamped_unit_copy){
@@ -3207,15 +3214,22 @@ int gml_render_resident_filtered_atlas_page(GmlRender *r,int page_index,
                                 part_view,NULL,0.0,NULL,0,0,0,0,12);
 }
 
-/* Mutable font pages share the physical sampler at every bounded axis scale.
- * Packaged positive unit/reduction fonts retain their exact owner unchanged. */
+/* Mutable and clamped font pages share the bounded physical axis sampler.
+ * Contained packaged unit/reduction fonts retain their exact owner first. */
 static int resident_filtered_font_crop(GmlRender *r,GmlTpag *page,
                                        double left,double top,double xs,double ys,
                                        uint32_t colour,double alpha){
   if(!r || !page || !r->interp || r->classic) return 0;
   int mutable_font=r->atlas && page->atlas>=0 && page->atlas<r->n_atlas &&
     r->atlas[page->atlas].runtime_font_page;
-  if(!mutable_font && !(xs<0.0 || ys<0.0 || xs>1.0 || ys>1.0)) return 0;
+  int clamped_font=0;
+  if(r->atlas && page->atlas>=0 && page->atlas<r->n_atlas && page->sx>=0 && page->sy>=0){
+    const GmlAtlas *atlas=&r->atlas[page->atlas];
+    clamped_font=atlas->w>0 && atlas->h>0 &&
+      ((uint64_t)(uint32_t)page->sx+(uint32_t)page->sw>(uint32_t)atlas->w ||
+       (uint64_t)(uint32_t)page->sy+(uint32_t)page->sh>(uint32_t)atlas->h);
+  }
+  if(!mutable_font && !clamped_font && !(xs<0.0 || ys<0.0 || xs>1.0 || ys>1.0)) return 0;
   return resident_filtered_atlas_page(r,-1,left,top,xs,ys,GML_RENDER_SCENE_TEXT,
     colour,alpha,page,NULL,0.0,NULL,0,0,0,0,11);
 }
@@ -3230,9 +3244,10 @@ int gml_render_resident_filtered_font_glyph(GmlRender *r,int atlas,
      xs<0.0 || ys<0.0 || xs>1.0 || ys>1.0)
     return resident_filtered_font_crop(r,&glyph,left,top,xs,ys,colour,alpha);
   int opaque_target_alpha=!gml_render_target_preserves_alpha(r);
-  return resident_filtered_atlas_page(r,-1,left,top,xs,ys,GML_RENDER_SCENE_TEXT,
-                                      colour,alpha,&glyph,NULL,0.0,NULL,
-                                      opaque_target_alpha,0,0,0,0);
+  if(resident_filtered_atlas_page(r,-1,left,top,xs,ys,GML_RENDER_SCENE_TEXT,
+                                 colour,alpha,&glyph,NULL,0.0,NULL,
+                                 opaque_target_alpha,0,0,0,0)) return 1;
+  return resident_filtered_font_crop(r,&glyph,left,top,xs,ys,colour,alpha);
 }
 
 /* Shared source-index regions retain the CPU's rotated coverage. Constant

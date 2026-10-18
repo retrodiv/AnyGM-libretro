@@ -72,6 +72,14 @@ static int scene_clamped_atlas_window_case(void){
   op.scene_family=GML_RENDER_SCENE_BACKGROUND;
   q->sampling.quantisation=GML_RENDER_QUANTISE_HARDWARE_SPRITE_MODERN;
   REQUIRE(gml_gpu_opengl_clamped_atlas_valid(&op,2u,1u),"background physical sampler shares bounded policy");
+  op.scene_family=GML_RENDER_SCENE_TEXT;
+  REQUIRE(gml_gpu_opengl_clamped_atlas_valid(&op,2u,1u),"bounded filtered glyph shares physical clamping");
+  GmlRenderDrawOp large_glyph=op;
+  large_glyph.payload.quad.sampling.source_region.width=257u;
+  REQUIRE(!gml_gpu_opengl_clamped_atlas_valid(&large_glyph,2u,1u),"oversized clamped glyph refused");
+  large_glyph=op;large_glyph.payload.quad.sampling.source_region.height=257u;
+  REQUIRE(!gml_gpu_opengl_clamped_atlas_valid(&large_glyph,2u,1u),"oversized clamped glyph row refused");
+  op.scene_family=GML_RENDER_SCENE_BACKGROUND;
   for(unsigned bad=0;bad<18u;bad++){
     GmlRenderDrawOp changed=op;GmlRenderImageRef other=source;
     GmlRenderQuad *quad=&changed.payload.quad;changed.sources=&other;
@@ -85,7 +93,7 @@ static int scene_clamped_atlas_window_case(void){
       case 6:quad->sampling.source_region.x=65537;break;
       case 7:quad->sampling.source_region.y=65537;break;
       case 8:other.resource_class=GML_RENDER_RESOURCE_SURFACE;break;
-      case 9:changed.scene_family=GML_RENDER_SCENE_TEXT;break;
+      case 9:changed.scene_family=GML_RENDER_SCENE_TILE;break;
       case 10:quad->sampling.filter=GML_RENDER_FILTER_NEAREST;break;
       case 11:quad->sampling.quantisation=0u;break;
       case 12:quad->span_active=1u;break;
