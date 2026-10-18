@@ -8297,7 +8297,10 @@ static int resident_integer_endpoint_sprite_part(void){
   return 1;
 }
 
-static int resident_endpoint_source_sprite_part(void){
+static int resident_endpoint_source_sprite_part(int finite_opacity){
+  static const double opacity[]={0x1.0000000000001p0,0x1.0000000000004p0,
+                                 1.25,0x1.fffffffffffffp1023,INFINITY};
+  for(unsigned input=0;input<(finite_opacity?5u:1u);input++)
   for(unsigned variant=0;variant<9u;variant++){
     GmlRender *r=calloc(1,sizeof *r);
     GmlWin content={.bytecode=17};
@@ -8334,8 +8337,16 @@ static int resident_endpoint_source_sprite_part(void){
     memcpy(shadow,r->fb,sizeof shadow);
     gml_render_set_pending_fill(r,0x40123456u);gml_render_flush_pending_fill(r);
     uint32_t tint=variant==7u?0x1234FFu:variant==8u?0x80FE01u:0x123456u;
-    gml_draw_sprite_part_ext(r,0,0,1,1,2,2,-1,-1,2,2,tint,1.0);
-    if(variant==0u || variant>=7u){
+    double alpha=finite_opacity?opacity[input]:1.0;
+    if(finite_opacity) r->alpha=.37;
+    if(finite_opacity && (input&1u)){
+      const uint32_t colours[4]={tint,tint,tint,tint};
+      gml_draw_sprite_general(r,0,0,1,1,2,2,-1,-1,2,2,0,colours,alpha);
+    }else gml_draw_sprite_part_ext(r,0,0,1,1,2,2,-1,-1,2,2,tint,alpha);
+    if(finite_opacity) CHECK(r->alpha==.37);
+    if(finite_opacity && !isfinite(alpha)){
+      CHECK(!r->resident_application_pass);
+    }else if(variant==0u || variant>=7u){
       GmlRenderJournalMetrics metrics={0};
       CHECK(r->resident_application_pass && !fake.readbacks);
       CHECK(gml_render_scene_submit_pending(r));
@@ -8347,7 +8358,7 @@ static int resident_endpoint_source_sprite_part(void){
             metrics.authority==GML_RENDER_RESOURCE_GPU_RESIDENT && !metrics.cpu_replays &&
             !metrics.journal_bytes && !memcmp(shadow,r->fb,sizeof shadow));
       /* Repeated resolved calls reuse this certificate, not a source snapshot. */
-      gml_draw_sprite_part_ext(r,0,0,1,1,2,2,-1,-1,2,2,tint,1.0);
+      gml_draw_sprite_part_ext(r,0,0,1,1,2,2,-1,-1,2,2,tint,alpha);
       CHECK(r->resident_application_pass && !fake.readbacks &&
             r->tpag[0].scene_endpoint_rgb_mask==mask);
       CHECK(gml_render_scene_submit_pending(r));
@@ -16577,7 +16588,8 @@ int main(void){
   passed+=resident_integer_tile_clipping(0);
   passed+=resident_integer_tile_clipping(1);
   passed+=resident_integer_endpoint_sprite_part();
-  passed+=resident_endpoint_source_sprite_part();
+  passed+=resident_endpoint_source_sprite_part(0);
+  passed+=resident_endpoint_source_sprite_part(1);
   passed+=resident_fractional_screen_font();
   passed+=resident_screen_binary_rotation();
   passed+=resident_trimmed_unit_layer();
@@ -16712,6 +16724,6 @@ int main(void){
   passed+=source_free_primitive_rect_replay();
   passed+=stretched_float_exact_replay();
   passed+=filtered_font_exact_recovery();
-  printf("render resource cases: passed=%d failed=%d\n",passed,260-passed);
-  return passed==260?EXIT_SUCCESS:EXIT_FAILURE;
+  printf("render resource cases: passed=%d failed=%d\n",passed,261-passed);
+  return passed==261?EXIT_SUCCESS:EXIT_FAILURE;
 }

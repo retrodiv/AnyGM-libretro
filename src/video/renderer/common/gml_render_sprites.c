@@ -5130,8 +5130,12 @@ void gml_draw_sprite_part_ext(GmlRender *r, int sprite, int subimg, double sx, d
      (!r->gui_pass_active || resident_mapped_screen_gui_font(r)) &&
      r->active_shader<0 && !r->spr[sprite].spine && !r->spr[sprite].ns_enabled &&
      !gml_d3_is_active(r) && gml_render_scene_target_matches(r)) return;
+  /* R03-SPR-PART-FINITE-OPACITY: the ordinary CPU leaf saturates positive
+   * finite opacity before sampling. Keep the original argument for CPU and
+   * specialised writers; normalize only the existing resident candidates. */
+  double resident_alpha=isfinite(alpha) && alpha>1.0?1.0:alpha;
   if(r && r->resident_application_pass &&
-     isfinite(alpha) && alpha>0.0 && alpha<=1.0 && sprite>=0 && sprite<r->n_spr &&
+     isfinite(resident_alpha) && resident_alpha>0.0 && resident_alpha<=1.0 && sprite>=0 && sprite<r->n_spr &&
      isfinite(sx) && isfinite(sy) && isfinite(sw) && isfinite(sh) &&
      sx>=-(double)INT_MAX && sy>=-(double)INT_MAX && sw>0.0 && sh>0.0 &&
      sx<=(double)INT_MAX && sy<=(double)INT_MAX &&
@@ -5182,15 +5186,15 @@ void gml_draw_sprite_part_ext(GmlRender *r, int sprite, int subimg, double sx, d
           double left=mapped_x+(anchor_x-sx)*draw_xscale-r->cam_x;
           double top=mapped_y+(anchor_y-sy)*draw_yscale-r->cam_y;
           if(resident_modern_unit_sprite_part(r,page,&view,sx,sy,sw,sh,left,top,
-               mapped_xs,mapped_ys,blend,alpha)) return;
+               mapped_xs,mapped_ys,blend,resident_alpha)) return;
           if(!r->interp && anygm_policy_has_modern_layer_semantics(r->win) &&
              r->target_id>0 && r->target_sp>0 &&
              floor(sx)==sx && floor(sy)==sy && floor(sw)==sw && floor(sh)==sh &&
              resident_atlas_crop_from_page(r,page,view.sx-page->sx,view.sy-page->sy,
                view.sw,view.sh,left,top,draw_xscale,draw_yscale,
-               GML_RENDER_SCENE_SPRITE,blend,alpha,5,NULL)) return;
+               GML_RENDER_SCENE_SPRITE,blend,resident_alpha,5,NULL)) return;
           if(resident_sprite_part_function(r,page_index,&view,left,top,
-               mapped_xs,mapped_ys,blend,alpha)) return;
+               mapped_xs,mapped_ys,blend,resident_alpha)) return;
           /* R03-SPR-PART-OFFSCREEN-NOOP: the shared physical selection also
            * bounds single-column/row crops. A whole-pixel separation from the
            * target cannot write through the unchanged positive-unit CPU leaf. */
@@ -5200,7 +5204,7 @@ void gml_draw_sprite_part_ext(GmlRender *r, int sprite, int subimg, double sx, d
              r->active_shader<0 && !r->alpha_test_enable && r->alphablend &&
              !r->blendmode && r->blend_equation==1 && r->blend_equation_alpha==1 &&
              r->color_write_mask==15u && gml_render_scene_target_matches(r) &&
-             blend==0xFFFFFFu && alpha==1.0 &&
+             blend==0xFFFFFFu && resident_alpha==1.0 &&
              floor(sx)==sx && floor(sy)==sy && floor(sw)==sw && floor(sh)==sh &&
              mapped_xs==1.0 && mapped_ys==1.0 &&
              r->cam_x==floor(r->cam_x) && r->cam_y==floor(r->cam_y) &&
@@ -5212,7 +5216,7 @@ void gml_draw_sprite_part_ext(GmlRender *r, int sprite, int subimg, double sx, d
           if(r->interp){
             if(gml_render_resident_filtered_atlas_page(
                  r,page_index,left,top,mapped_xs,mapped_ys,
-                 GML_RENDER_SCENE_SPRITE,blend,alpha,&view,0)) return;
+                 GML_RENDER_SCENE_SPRITE,blend,resident_alpha,&view,0)) return;
           } else if(floor(sx)==sx && floor(sy)==sy &&
                     floor(sw)==sw && floor(sh)==sh &&
                     fabs(mapped_xs)==1.0 && fabs(mapped_ys)==1.0 &&
@@ -5221,14 +5225,14 @@ void gml_draw_sprite_part_ext(GmlRender *r, int sprite, int subimg, double sx, d
                     fabs(left)<1000000.0 && fabs(top)<1000000.0 &&
                     resident_filtered_atlas_page(r,page_index,
                       floor(left+0.5),floor(top+0.5),mapped_xs,mapped_ys,
-                      GML_RENDER_SCENE_SPRITE,blend,alpha,
+                      GML_RENDER_SCENE_SPRITE,blend,resident_alpha,
                       &view,NULL,0.0,NULL,0,0,0,0,1)) return;
         }
       }
     }
   }
   if(r && r->resident_application_pass && !r->interp &&
-     blend==0xFFFFFFu && alpha==1.0 &&
+     blend==0xFFFFFFu && resident_alpha==1.0 &&
      sprite>=0 && sprite<r->n_spr &&
      isfinite(sx) && isfinite(sy) && isfinite(sw) && isfinite(sh) &&
      sx>=0.0 && sy>=0.0 && sw>0.0 && sh>0.0 &&
