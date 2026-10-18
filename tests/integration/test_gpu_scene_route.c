@@ -34,6 +34,7 @@ int main(int argc,char **argv){
   int forced_owned=argc==2 && !strcmp(argv[1],"--keep-forced-owned");
   int forced_narrow=argc==2 && !strcmp(argv[1],"--keep-forced-narrow");
   int forced_narrow_overdraw=argc==2 && !strcmp(argv[1],"--keep-forced-narrow-overdraw");
+  int translated_world=argc==2 && !strcmp(argv[1],"--keep-translated-world");
   int gui_reduce=argc==2 && !strcmp(argv[1],"--keep-gui-reduce");
   int gui_automatic=argc==2 && !strcmp(argv[1],"--keep-gui-automatic");
   int gui_automatic_alpha=argc==2 && !strcmp(argv[1],"--keep-gui-automatic-alpha");
@@ -94,6 +95,7 @@ int main(int argc,char **argv){
        forced_owned?anygm_synthetic_forced_owned_content_create(&fixture):
        forced_narrow?anygm_synthetic_forced_narrow_content_create(&fixture):
        forced_narrow_overdraw?anygm_synthetic_forced_narrow_overdraw_content_create(&fixture):
+       translated_world?anygm_synthetic_translated_world_content_create(&fixture):
        gui_up?anygm_synthetic_indirect_gui_upscale_content_create(&fixture):
        gui_resident_up?anygm_synthetic_resident_indirect_gui_upscale_content_create(&fixture):
        gui_reduce?anygm_synthetic_indirect_gui_reduce_content_create(&fixture):
@@ -152,7 +154,7 @@ int main(int argc,char **argv){
        multiview?anygm_synthetic_multiview_gpu_content_create(&fixture):
        dense?anygm_synthetic_gpu_dense_scene_route_content_create(&fixture):
              anygm_synthetic_gpu_scene_route_content_create(&fixture))) return 1;
-  if(pre_draw || forced_owned || forced_narrow || forced_narrow_overdraw || gui_up || gui_resident_up || gui_reduce || gui_automatic || gui_automatic_alpha ||
+  if(pre_draw || forced_owned || forced_narrow || forced_narrow_overdraw || translated_world || gui_up || gui_resident_up || gui_reduce || gui_automatic || gui_automatic_alpha ||
      gui_automatic_viewless || gui_automatic_viewless_alpha || gui_automatic_empty ||
      multiview || multiview_offset ||
      multiview_fractional || multiview_step || multiview_nested || multiview_assigned ||

@@ -540,6 +540,10 @@ int gml_render_application_surface_ensure_owned(GmlRender *r,int width,int heigh
 int gml_render_application_surface_owned_extent(const GmlRender *r,int *width,int *height);
 int gml_render_application_surface_owned_mask(GmlRender *r,int width,int height,
                                              int x,int y,int inside_width,int inside_height);
+/* Clear and translate an independent, equally sized resident base before GUI.
+ * Copies raw RGBA nearest1:1; a refusal leaves the CPU composition owner in charge. */
+int gml_render_application_surface_owned_stage_base(GmlRender *r,const uint32_t *base,
+  int width,int height,int x,int y,uint32_t background);
 int gml_render_begin_owned_application(GmlRender *r,double camx,double camy,
                                        int retain_target);
 /* Opt-in scene pass: retains GPU authority and refuses unresolved CPU/deferred work before

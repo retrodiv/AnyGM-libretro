@@ -1719,6 +1719,7 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
   int multiview_rendered = engine->aspect_force_active?0:render_multiview_application(engine);
   if(multiview_rendered<0) return ANYGM_ERROR_INTERNAL;
   int direct_owned_world=0;
+  int translated_world_pending=0;
   int direct_view_surface=0;
   int forced_owned_scene=0;
   int forced_owned_scene_began=0;
@@ -1743,6 +1744,13 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
     frame_views[0].pw==(int)engine->width && frame_views[0].ph==(int)engine->height &&
     render_presentation.application_width==(int)engine->width &&
     render_presentation.application_height==(int)engine->height;
+  int translated_base_world=translated_full_port &&
+    !engine->aspect_force_active && !engine->composed_frame &&
+    !gml_render_is_classic(&engine->render) &&
+    render_presentation.application_owned && app_surface_is_draw_target &&
+    !(view_surface>0 && gml_surface_exists(&engine->render,view_surface)) &&
+    engine->scene_renderer_session==ANYGM_SCENE_RENDERER_OPENGL &&
+    engine_graphics_active(engine);
   if(!engine->aspect_force_active && frame_view_count<=1 &&
      !translated_full_port &&
      render_presentation.application_owned &&
@@ -1826,6 +1834,7 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
         &engine->render,world_pixels,world_width,world_height,cam_x,cam_y);
     if(!engine->composed_frame && !engine->aspect_force_active &&
        ((!render_presentation.application_draw_enabled && frame_view_count==0) ||
+        translated_base_world ||
         (native_assigned_view && !gml_render_is_classic(&engine->render)) ||
         ((early_classic_borrowed_world || classic_sample_world) &&
          !(view_surface>0 && gml_surface_exists(&engine->render,view_surface)))) &&
@@ -1893,11 +1902,12 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
   engine->aspect_event_view_overflow = 0;
   gml_render_flush_pending_fill(&engine->render);
   if(!engine_graphics_finish_scene(engine)) return ANYGM_ERROR_INTERNAL;
+  translated_world_pending=translated_base_world && base_world_began;
   /* Only a drawn base needs immediate CPU composition. Assigned target pixels remain
    * resource-owned until a real surface, state or fallback consumer observes them; a
    * certified borrowed classic world is already the logical application raster. */
   if(base_world_began && !direct_view_surface && !early_classic_borrowed_world &&
-     !classic_sample_world){
+     !classic_sample_world && !translated_base_world){
     if(classic_numbered_scene){
       if(!gml_render_completed_screen_read(&engine->render,world_pixels,world_width,world_height))
         return ANYGM_ERROR_INTERNAL;
@@ -1923,7 +1933,8 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
   if(prof){ t1 = profile_now_ms(engine); engine->profile.draw_ms += t1 - t0; t0 = t1; }
   gml_render_presentation_metrics(&engine->render,&render_presentation);
   int log_draw=anygm_host_development_setting(&engine->host,"GML_LOG_DRAW")!=NULL;
-  if(log_draw && (early_classic_borrowed_world || classic_sample_world) &&
+  if(log_draw && (early_classic_borrowed_world || classic_sample_world ||
+                 (translated_base_world && base_world_began)) &&
      !gml_render_completed_screen_read(
        &engine->render,world_pixels,world_width,world_height))
     return ANYGM_ERROR_INTERNAL;
@@ -1974,7 +1985,19 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
    * needs no host write view; all CPU composition branches keep their existing storage. */
   int device_only_app_clear=engine->scene_renderer_session==ANYGM_SCENE_RENDERER_OPENGL &&
     !multiview_rendered && view_surface>0 && gml_surface_exists(&engine->render,view_surface);
+  int translated_world_staged=0;
+  if(translated_world_pending){
+    if(!engine->content_presented)
+      translated_world_staged=gml_render_application_surface_owned_stage_base(
+        &engine->render,engine->fb,(int)engine->width,(int)engine->height,
+        frame_views[0].px,frame_views[0].py,engine->background);
+    if(!translated_world_staged &&
+       !gml_render_resident_application_cpu_barrier(&engine->render))
+      return ANYGM_ERROR_INTERNAL;
+  }
   if(engine->content_presented){
+  } else if(translated_world_staged){
+    gml_render_application_surface_select_owned(&engine->render,1);
   } else if(direct_owned_world){
     GmlRenderTargetCoverage render_coverage={0};
     gml_render_target_coverage(&engine->render,&render_coverage);

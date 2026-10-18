@@ -3414,6 +3414,80 @@ static int scene_canvas_cpu_source_case(void){
 }
 
 /* Presentation-only translation must not move the canonical completed image. */
+static int native_translated_world_case(void){
+  static const int offsets[][2]={{1,2},{-3,-2},{64,48},{-64,-48},{0,0}};
+  for(unsigned observed=0;observed<2u;observed++){
+    Session plain={0},selected={0};
+    CurrentContextWitness witness={1u,0u};
+    AnygmGraphicsContext context=graphics_context(ANYGM_GRAPHICS_OPENGLES3);
+    AnygmConfigDelta presentation={0};
+    anygm_test_graphics_reset();
+    REQUIRE(session_open_fixture_with_scene(&plain,ANYGM_SCENE_RENDERER_CPU,
+              anygm_synthetic_translated_world_content_create) &&
+            session_open_fixture_with_scene(&selected,ANYGM_SCENE_RENDERER_OPENGL,
+              anygm_synthetic_translated_world_content_create),"translated native fixtures load");
+    presentation.struct_size=sizeof presentation;
+    presentation.values.struct_size=sizeof presentation.values;
+    presentation.fields=ANYGM_CONFIG_PRESENT_LOGICAL_RASTER;
+    presentation.values.present_logical_raster=1u;
+    REQUIRE(anygm_set_config(plain.engine,&presentation)==ANYGM_OK &&
+            anygm_set_config(selected.engine,&presentation)==ANYGM_OK,
+            "translated native logical raster selected");
+    if(observed){ context.userdata=&witness;context.is_current=graphics_context_is_current; }
+    REQUIRE(anygm_graphics_context_reset(selected.engine,&context)==ANYGM_OK,
+            "translated native context selected");
+    gml_render_dispatch_diagnostics_enable(&selected.engine->render,1);
+    for(unsigned offset=0;offset<sizeof offsets/sizeof offsets[0];offset++){
+      for(unsigned slot=0;slot<2u;slot++){
+        AnygmEngine *engine=slot?selected.engine:plain.engine;
+        gml_set_global_arr(&engine->vm,"view_xport",0,offsets[offset][0]);
+        gml_set_global_arr(&engine->vm,"view_yport",0,offsets[offset][1]);
+      }
+      REQUIRE(advance(plain.engine,1,NULL) && advance(selected.engine,1,NULL),
+              "translated native frame completes");
+      if(!observed){
+        const uint32_t *pixels=NULL;unsigned width=0,height=0;
+        REQUIRE(resolve_host_frame(selected.engine,&pixels,&width,&height) &&
+                width==64u && height==48u && pixels &&
+                !memcmp(plain.engine->screen,pixels,64u*48u*sizeof *pixels),
+                "translated native fake recovery preserves CPU output and stationary GUI");
+        size_t cpu_size=0,gpu_size=0,again_size=0;
+        uint8_t *cpu_state=serialize(plain.engine,&cpu_size);
+        uint8_t *gpu_state=serialize(selected.engine,&gpu_size);
+        int exact=cpu_state && gpu_state && cpu_size==gpu_size &&
+          !memcmp(cpu_state,gpu_state,cpu_size) &&
+          anygm_state_load(plain.engine,cpu_state,cpu_size)==ANYGM_OK &&
+          anygm_state_load(selected.engine,gpu_state,gpu_size)==ANYGM_OK;
+        uint8_t *again=exact?serialize(selected.engine,&again_size):NULL;
+        exact=exact && again && again_size==gpu_size && !memcmp(gpu_state,again,gpu_size);
+        free(again);free(gpu_state);free(cpu_state);
+        REQUIRE(exact,"translated native same-load engine state is CPU-exact and roundtrips");
+        /* Both policies first republish the saved completed frame, without a
+         * simulation step. Consume that pass before changing the next port. */
+        long frame=plain.engine->vm.frame;
+        REQUIRE(advance(plain.engine,1,NULL) && advance(selected.engine,1,NULL) &&
+                plain.engine->vm.frame==frame && selected.engine->vm.frame==frame &&
+                resolve_host_frame(selected.engine,&pixels,&width,&height) &&
+                width==64u && height==48u && pixels &&
+                !memcmp(plain.engine->screen,pixels,64u*48u*sizeof *pixels),
+                "translated native restored publication keeps the saved pixels and VM phase");
+      }
+    }
+    if(observed){
+      GmlRenderDispatchMetrics dispatch={0};
+      REQUIRE(gml_render_dispatch_metrics(&selected.engine->render,&dispatch) &&
+              !dispatch.failed && !dispatch.unclassified && !dispatch.overflow,
+              "translated native dispatch is completely classified");
+      for(unsigned family=0;family<GML_RENDER_SCENE_FAMILY_COUNT;family++)
+        for(unsigned reason=0;reason<GML_RENDER_DISPATCH_REASON_COUNT;reason++)
+          REQUIRE(!dispatch.cpu[family][reason],
+                  "translated native staging has no ordinary CPU draw or replay");
+    }
+    session_close(&selected);session_close(&plain);
+  }
+  return 1;
+}
+
 static int scene_terminal_integer_shift_case(void){
   for(unsigned mode=0;mode<4u;mode++){
   Session selected={0};GmlGpuCounters before={0},after={0};
@@ -5568,6 +5642,7 @@ int main(void){
      scene_canvas_resident_identity_crop_case},
     {"terminal integer translation preserves canonical pixels on device",
      scene_terminal_integer_shift_case},
+    {"native translated world stages before stationary GUI",native_translated_world_case},
     {"restored CPU-current identity crop preserves logical state on device",
      scene_canvas_restored_identity_crop_case},
     {"primary and auxiliary scratch uploads stay independent",content_sampler_upload_lifetime_case},

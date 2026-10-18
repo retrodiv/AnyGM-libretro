@@ -48,6 +48,7 @@ REQUIRED_RULES = {
     "R03-BG-GUI-HARDWARE-EDGES",
     "R03-BG-FINITE-OPACITY",
     "R03-PROMOTED-WORLD-MASK",
+    "R03-NATIVE-TRANSLATED-WORLD",
     "R03-SPR-OUTSIDE-FUNCTION",
     "R03-SPR-ZERO-SCALE-NOOP",
     "R03-SPR-ROUNDED-EMPTY-AXIS",
@@ -189,6 +190,7 @@ EXECUTOR_ROW = re.compile(
 # Stop traversal here: following resource replay would make CPU kernels appear
 # GPU-capable merely because the resource owner also implements device submission.
 DISPATCH_PORTS = {
+    "gml_render_application_surface_owned_stage_base",
     "gml_render_application_surface_owned_mask",
     "gml_render_completed_screen_mask",
     "gml_render_application_scene_enqueue",
@@ -211,6 +213,7 @@ DISPATCH_CPU_BOUNDARIES = {
     "surface_pixels", "surface_pixels_observe", "surface_pixels_access",
 }
 DISPATCH_ADDITIONAL = {
+    "gml_render_application_surface_owned_stage_base",
     "gml_render_application_surface_owned_mask",
     "gml_render_application_surface_owned_clear",
     "gml_render_completed_screen_mask",

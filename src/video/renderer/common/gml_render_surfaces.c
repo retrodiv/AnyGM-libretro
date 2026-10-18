@@ -963,6 +963,69 @@ int gml_render_resident_owned_application_clear(GmlRender *r,uint32_t colour){
   return 1;
 }
 
+int gml_render_application_surface_owned_stage_base(GmlRender *r,const uint32_t *base,
+  int width,int height,int x,int y,uint32_t background){
+  const GmlRenderDeviceServices *device=gml_render_device(r);
+  GmlRenderResourceSource source={0};
+  GmlRenderResource *origin,*target;
+  int source_width=0,source_height=0;
+  if(!r || !base || width<=0 || height<=0 || width>4096 || height>4096 ||
+     !r->scene_device_enabled || !device || !device->observe_on_demand ||
+     !device->observe_on_demand(device->context) ||
+     r->target_sp || r->target_id!=-1 || r->fb!=base ||
+     r->app_w!=width || r->app_h!=height || !r->app_surface_owned ||
+     base==r->app_surface_owned ||
+     (r->pending_scene_batch && r->pending_scene_batch->preparing) ||
+     !gml_render_application_scene_flush(r) ||
+     !(origin=gml_render_base_resource_lookup(r,base,&source_width,&source_height)) ||
+     source_width!=width || source_height!=height ||
+     !(target=gml_render_application_resource_ensure(r)) || origin==target ||
+     gml_render_resource_image_ref(target).content_version>UINT64_MAX-2u ||
+     (!gml_render_resource_device_source_view(origin,device,&source) &&
+      !gml_render_resource_current_cpu_source_view(origin,&source))) return 0;
+  /* Resolve clipping in wide integers, including INT_MIN/MAX ports. The packet
+   * remains an ordinary raw nearest quad, not a new sampling/blending shader. */
+  int64_t sx=x<0?-(int64_t)x:0,sy=y<0?-(int64_t)y:0;
+  int64_t dx=x>0?x:0,dy=y>0?y:0;
+  int64_t w=(int64_t)width-sx,h=(int64_t)height-sy;
+  if(w>(int64_t)width-dx) w=(int64_t)width-dx;
+  if(h>(int64_t)height-dy) h=(int64_t)height-dy;
+  if(!gml_render_resident_owned_application_clear(r,background)) return 0;
+  if(w>0 && h>0){
+    GmlRenderDrawStateSnapshot state={0};
+    state.write_mask=15u;state.colour=0xFFFFFFFFu;state.alpha=255u;
+    state.sampler_count=1u;
+    state.samplers[0]=(GmlRenderSamplingPolicy){GML_RENDER_FILTER_NEAREST,
+      GML_RENDER_EDGE_CLAMP_SUBIMAGE,{0,0,(uint32_t)width,(uint32_t)height},0u,0u};
+    GmlRenderDrawOp op={0};
+    op.opcode=GML_RENDER_OP_TEXTURED_QUAD;
+    op.scene_family=GML_RENDER_SCENE_SURFACE;
+    op.reconstruction_mode=GML_RENDER_DEVICE_CHECKPOINT;
+    op.target=(GmlRenderTargetRef){gml_render_resource_image_ref(target),1u,
+      (uint32_t)width,(uint32_t)height,GML_RENDER_PIXEL_ARGB8888,
+      {0,0,(uint32_t)width,(uint32_t)height}};
+    op.target.image.content_version++;
+    op.sources=&source.image;op.source_count=1u;
+    GmlRenderQuad *q=&op.payload.quad;
+    q->shape=GML_RENDER_QUAD_AXIS_ALIGNED;q->sampling=state.samplers[0];
+    for(unsigned corner=0;corner<4u;corner++){
+      unsigned right=corner==1u || corner==2u,bottom=corner>=2u;
+      q->x[corner]=(double)(dx+(right?w:0));q->y[corner]=(double)(dy+(bottom?h:0));
+      q->u[corner]=(double)(sx+(right?w:0))/width;
+      q->v[corner]=(double)(sy+(bottom?h:0))/height;
+      q->corner_colour[corner]=0xFFFFFFFFu;
+    }
+    GmlRenderDrawBatch batch={&op,1u,&state,1u};
+    GmlRenderResourceExecution result=gml_render_resource_submit_deferred(
+      target,device,&batch,&source,1u);
+    gml_render_dispatch_batch_record(r,&batch,result);
+    if(result!=GML_RENDER_RESOURCE_EXEC_DEVICE) return 0;
+  }
+  /* The coordinator keeps its established opaque presentation policy. No public
+   * draw state or active target is borrowed or changed by the staging packets. */
+  return 1;
+}
+
 /* Split at both pitches: every copied band maps identical linear indices and samples texels
  * nearest1:1. No scaling, blending, destination feedback, shader arithmetic or CPU replay. */
 static int base_stage_copy(GmlRenderResource *target,const GmlRenderDeviceServices *device,
