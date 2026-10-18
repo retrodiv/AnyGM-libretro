@@ -3096,6 +3096,15 @@ int gml_render_resident_filtered_atlas_page(GmlRender *r,int page_index,
                                            double left,double top,double xs,double ys,
                                            GmlRenderSceneFamily family,uint32_t colour,double alpha,
                                            GmlTpag *part_view,int nearest_rule){
+  /* The filtered background CPU writer clamps finite opacity before sampling.
+   * Keep this paired identity SCREEN GUI normalization local to the packet.
+   * Other owners, nonfinite input and other families keep their existing
+   * owners or rejection rather than widening an unqualified writer. */
+  if(family==GML_RENDER_SCENE_BACKGROUND && r && r->interp && isfinite(alpha) &&
+     resident_identity_screen_gui(r)){
+    if(alpha>1.0) alpha=1.0;
+    else if(alpha<0.0) alpha=0.0;
+  }
   int mode=nearest_rule==GML_RENDER_NEAREST_PART_PHASE_RULE?2:
     nearest_rule==GML_RENDER_NEAREST_DIRECT_SNAP_RULE?5:0;
   return resident_filtered_atlas_page(r,page_index,left,top,xs,ys,family,colour,alpha,
