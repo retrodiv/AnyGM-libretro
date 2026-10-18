@@ -4,6 +4,7 @@
 /* Shared shader and sampler policy, preserving the established hybrid/content-shader path. */
 #include "gml_render_shaders.h"
 #include "gml_render_internal.h"
+#include "gml_render_palette_internal.h"
 #include "gml_render_texture.h"
 #include "anygm_host.h"
 
@@ -472,14 +473,17 @@ int gml_render_shader_threshold_palette_snapshot(const GmlRender *r,int shader_i
   const struct GmlShaderPal *p;
   if(!r || !out || !r->shader_pal || shader_id<0 || shader_id>=r->n_shader_pal) return 0;
   p=&r->shader_pal[shader_id];
-  if(!p->threshold_palette || p->threshold_palette_set!=0x3ffu ||
+  int indexed=!p->threshold_palette && p->indexed_brightness && p->indexed_brightness_set;
+  if((!indexed && (!p->threshold_palette || p->threshold_palette_set!=0x3ffu)) ||
      p->vertex_colour_blend || p->generic_sampler_count || p->generic_uniform_count) return 0;
-  if(!isfinite(p->threshold_palette_red) || p->threshold_palette_red<0.0f ||
-     p->threshold_palette_red>1.0f) return 0;
+  if(indexed && (p->vertex_colour_blend_alpha_only || !isfinite(p->indexed_brightness_value))) return 0;
+  float red_threshold=indexed?p->indexed_brightness_red:p->threshold_palette_red;
+  const float (*green_threshold)[4]=indexed?p->indexed_brightness_green:p->threshold_palette_green;
+  if(!isfinite(red_threshold) || red_threshold<0.0f || red_threshold>1.0f) return 0;
   for(unsigned branch=0;branch<2u;branch++) for(unsigned band=0;band<4u;band++){
-    float value=p->threshold_palette_green[branch][band];
+    float value=green_threshold[branch][band];
     if(!isfinite(value) || value<0.0f || value>1.0f ||
-       (band && value>=p->threshold_palette_green[branch][band-1u])) return 0;
+       (band && value>=green_threshold[branch][band-1u])) return 0;
   }
   memset(out,0,sizeof *out);
   out->identity=(uint32_t)shader_id;
@@ -489,26 +493,42 @@ int gml_render_shader_threshold_palette_snapshot(const GmlRender *r,int shader_i
     GmlPlanUniform *uniform=&out->uniforms[out->uniform_count++];
     snprintf(uniform->name,sizeof uniform->name,"u_palette%u",index);
     uniform->count=3u;
-    for(unsigned channel=0;channel<3u;channel++)
+    if(indexed){
+      /* Each nonempty byte partition has one representative. Empty bands are
+       * unreachable by the same integer thresholds used by the device. Reuse
+       * the existing evaluator ten times, never once per source pixel. */
+      unsigned branch=index/5u,band=index%5u;
+      unsigned green=band<4u?threshold_palette_byte_start(green_threshold[branch][band],0):0u;
+      if(green>255u) green=255u;
+      uint32_t mapped=indexed_brightness_map_px(p,0xFF000000u|
+        (branch?0x00FF0000u:0u)|(green<<8));
+      for(unsigned channel=0;channel<3u;channel++)
+        uniform->value[channel]=(float)((mapped>>(16u-8u*channel))&255u)/255.0f;
+    }else for(unsigned channel=0;channel<3u;channel++)
       uniform->value[channel]=(float)p->threshold_palette_colour[index][channel]/255.0f;
   }
   GmlPlanUniform *red=&out->uniforms[out->uniform_count++];
   snprintf(red->name,sizeof red->name,"u_threshold_red");
   red->count=1u;
   red->integer=1u;
-  red->value[0]=(float)threshold_palette_byte_start(p->threshold_palette_red,1);
+  red->value[0]=(float)threshold_palette_byte_start(red_threshold,1);
   for(unsigned branch=0;branch<2u;branch++){
     GmlPlanUniform *green=&out->uniforms[out->uniform_count++];
     snprintf(green->name,sizeof green->name,"u_threshold_green%u",branch);
     green->count=4u;
     green->integer=1u;
     for(unsigned band=0;band<4u;band++)
-      green->value[band]=(float)threshold_palette_byte_start(p->threshold_palette_green[branch][band],0);
+      green->value[band]=(float)threshold_palette_byte_start(green_threshold[branch][band],0);
   }
   GmlPlanUniform *bypass=&out->uniforms[out->uniform_count++];
   snprintf(bypass->name,sizeof bypass->name,"u_palette_bypass");
   bypass->count=1u;
   bypass->integer=1u;
+  GmlPlanUniform *coverage=&out->uniforms[out->uniform_count++];
+  snprintf(coverage->name,sizeof coverage->name,"u_palette_alpha");
+  coverage->count=2u;
+  coverage->integer=1u;
+  coverage->value[1]=-1.0f;
   return 1;
 }
 

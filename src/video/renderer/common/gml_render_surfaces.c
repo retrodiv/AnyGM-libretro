@@ -2673,11 +2673,12 @@ static int resident_surface_shader(GmlRender *r,int surf,double dx,double dy,dou
   const GmlRenderDeviceServices *device;
   uint32_t prepared=0;
   size_t snapshot_bytes=0;
-  int threshold=r && r->scene_device_enabled && surface_known_opaque(r,surf) &&
+  int threshold=r && r->scene_device_enabled &&
     gml_render_shader_threshold_palette_snapshot(r,r->active_shader,&shader);
   int lut=!threshold && r && r->scene_device_enabled &&
     gml_render_shader_lut_snapshot(r,r->active_shader,&shader,&sources[1]);
   int palette=threshold || lut;
+  int palette_replace=0,palette_opaque_alpha=0;
   static const float white[4]={1.0f,1.0f,1.0f,1.0f};
   if(!r || (surf!=0 && (slot<0 || !r->surface[slot].live)) ||
      (surf==0 && (!r->app_surface_published || !r->app_surface ||
@@ -2736,6 +2737,26 @@ static int resident_surface_shader(GmlRender *r,int surf,double dx,double dy,dou
     if(lut && !surface_known_opaque(r,surf) &&
          (dw!=source_width || dh!=source_height || (blend&0xFFFFFFu)!=0xFFFFFFu ||
           r->alpha_test_enable)) return 0;
+    if(threshold && !surface_known_opaque(r,surf)){
+      const struct GmlShaderPal *p=&r->shader_pal[r->active_shader];
+      if(p->alpha_discard || p->ordered_dither) return 0;
+      int unit=dw==source_width && dh==source_height;
+      int unit_leaf=unit && !(r->alpha_test_enable && r->alpha_test_ref>0u);
+      int white=(blend&0xFFFFFFu)==0xFFFFFFu;
+      int source_alpha=1;
+      int cutoff=r->alpha_test_enable?(int)r->alpha_test_ref:0;
+      /* The unit white mapping leaf copies coverage rather than blending it,
+       * even for partial alpha. Its disabled-alpha branch also writes zero.
+       * Other normal leaves blend RGB and stamp opaque alpha only on coverage. */
+      palette_replace=r->blendmode==6 || (unit_leaf && (white || !r->alphablend)) ||
+        (!unit_leaf && r->classic && surf==0);
+      if(unit_leaf && white) cutoff=r->alphablend?0:-1;
+      else if((unit_leaf && !r->alphablend && r->blendmode!=6) ||
+              (!unit_leaf && r->classic && surf==0 && r->blendmode!=6)) source_alpha=0;
+      palette_opaque_alpha=!palette_replace;
+      shader.uniforms[14].value[0]=(float)source_alpha;
+      shader.uniforms[14].value[1]=(float)cutoff;
+    }
     shader.vertex_colour[0]=(float)(blend&255u)/255.0f;
     shader.vertex_colour[1]=(float)((blend>>8)&255u)/255.0f;
     shader.vertex_colour[2]=(float)((blend>>16)&255u)/255.0f;
@@ -2876,6 +2897,11 @@ static int resident_surface_shader(GmlRender *r,int surf,double dx,double dy,dou
   state.alpha_destination_factor=GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA;
   state.rgb_equation=GML_RENDER_BLEND_ADD;
   state.alpha_equation=GML_RENDER_BLEND_ADD;
+  if(palette_replace){
+    state.rgb_source_factor=state.rgb_destination_factor=0u;
+    state.alpha_source_factor=state.alpha_destination_factor=0u;
+    state.rgb_equation=state.alpha_equation=0u;
+  }
   state.write_mask=15u;
   state.colour=0xFFFFFFFFu;
   state.alpha=255u;
@@ -2883,7 +2909,8 @@ static int resident_surface_shader(GmlRender *r,int surf,double dx,double dy,dou
   state.samplers[0].filter=!palette && r->interp?GML_RENDER_FILTER_BILINEAR:GML_RENDER_FILTER_NEAREST;
   state.samplers[0].edge_rule=GML_RENDER_EDGE_CLAMP_SUBIMAGE;
   state.samplers[0].source_region=source_region;
-  if(cropped) state.coverage_policy=GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA;
+  if(cropped || palette_opaque_alpha)
+    state.coverage_policy=GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA;
   batch=(GmlRenderDrawBatch){&operation,1u,&state,1u};
   result=application_target?gml_render_application_scene_submit(r,&batch,sources,
       operation.source_count):

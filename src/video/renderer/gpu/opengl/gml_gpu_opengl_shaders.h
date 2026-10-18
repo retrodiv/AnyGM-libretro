@@ -34,9 +34,12 @@
   "uniform vec3 u_palette0,u_palette1,u_palette2,u_palette3,u_palette4;\n" \
   "uniform vec3 u_palette5,u_palette6,u_palette7,u_palette8,u_palette9;\n" \
   "uniform int u_threshold_red,u_palette_bypass; uniform ivec4 u_threshold_green0,u_threshold_green1;\n" \
+  "uniform ivec2 u_palette_alpha;\n" \
   "void main(){\n" \
   "  vec4 source=texture2D(gm_BaseTexture,palette_uv);\n" \
   "  if(u_palette_bypass!=0){ gl_FragColor=source; return; }\n" \
+  "  int coverage=int(floor(source.a*255.0+0.5));\n" \
+  "  if(coverage<=u_palette_alpha.y) discard;\n" \
   "  ivec3 sample_bytes=ivec3(floor(source.rgb*255.0+0.5));\n" \
   "  bool upper=sample_bytes.r>=u_threshold_red;\n" \
   "  ivec4 edge=upper?u_threshold_green1:u_threshold_green0;\n" \
@@ -46,7 +49,7 @@
   "  else colour=band==0?u_palette0:band==1?u_palette1:band==2?u_palette2:band==3?u_palette3:u_palette4;\n" \
   "  ivec3 bytes=ivec3(floor(colour*255.0+0.5));\n" \
   "  ivec3 tint=ivec3(floor(palette_tint.rgb*255.0+0.5));\n" \
-  "  gl_FragColor=vec4(vec3(bytes*tint/255)/255.0,1.0);\n" \
+  "  gl_FragColor=vec4(vec3(bytes*tint/255)/255.0,u_palette_alpha.x!=0?source.a:1.0);\n" \
   "}\n"
 
 /* Red byte indices follow the recognized CPU palette contract. Palette alpha is

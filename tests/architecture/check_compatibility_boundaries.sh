@@ -578,7 +578,7 @@ fi
 external_renderer_internal_includes=$(find src -type f \
   \( -name '*.c' -o -name '*.h' \) -exec grep -l -E \
   '^[[:space:]]*#include[[:space:]]+"gml_render_internal[.]h"' {} + 2>/dev/null | \
-  grep -v -E '^(src/core/engine_internal[.]h|src/video/renderer/cpu/gml_render_cpu_(pixel|sampling|dispatch)_internal[.]h|src/video/renderer/(common/|cpu/)?[^/]+[.]c)$' || true)
+  grep -v -E '^(src/core/engine_internal[.]h|src/video/renderer/common/gml_render_palette_internal[.]h|src/video/renderer/cpu/gml_render_cpu_(pixel|sampling|dispatch)_internal[.]h|src/video/renderer/(common/|cpu/)?[^/]+[.]c)$' || true)
 fail_matches "Only renderer implementation and the engine composition root may include renderer storage:" \
   "$external_renderer_internal_includes"
 
@@ -880,6 +880,22 @@ if [ "$renderer_sampling_definition_files" != "src/video/renderer/cpu/gml_render
   printf '%s\n' "$renderer_sampling_definition_files" >&2
   exit 1
 fi
+
+renderer_palette_definition_files=$(find src/video/renderer -type f \
+  \( -name '*.c' -o -name '*.h' \) -exec grep -l -E \
+  '^[[:space:]]*static[[:space:]]+inline[[:space:]]+uint32_t[[:space:]]+indexed_brightness_map_px[[:space:]]*\(' \
+  {} + 2>/dev/null || true)
+if [ "$renderer_palette_definition_files" != "src/video/renderer/common/gml_render_palette_internal.h" ]; then
+  printf '%s\n' "Shared indexed-palette evaluation belongs only to gml_render_palette_internal.h:" >&2
+  printf '%s\n' "$renderer_palette_definition_files" >&2
+  exit 1
+fi
+external_renderer_palette_includes=$(find src -type f \
+  \( -name '*.c' -o -name '*.h' \) -exec grep -l -E \
+  '^[[:space:]]*#include[[:space:]]+"gml_render_palette_internal[.]h"' {} + 2>/dev/null | \
+  grep -v -E '^src/video/renderer/(common/gml_render_shaders[.]c|cpu/gml_render_cpu_sampling_internal[.]h)$' || true)
+fail_matches "Only shader preparation and CPU sampling may include the shared palette evaluator:" \
+  "$external_renderer_palette_includes"
 
 renderer_blit_definition_files=$(find src/video/renderer -type f -not -path 'src/video/renderer/gpu/opengl/*' \
   \( -name '*.c' -o -name '*.h' \) -exec grep -l -E \

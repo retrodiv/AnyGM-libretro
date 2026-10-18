@@ -1061,6 +1061,11 @@ static int execute_shader_draw_with_source(GmlGpuBackend *backend,GmlRenderPlan 
   if(program->u_alpha_test>=0){ GLint off=0; backend->gl.Uniform1iv(program->u_alpha_test,1,&off); }
   if(program->u_fog_ps>=0){ GLint off=0; backend->gl.Uniform1iv(program->u_fog_ps,1,&off); }
   if(program->u_fog_vs>=0){ GLint off=0; backend->gl.Uniform1iv(program->u_fog_vs,1,&off); }
+  if(shader->builtin_kind==GML_PLAN_BUILTIN_SHADER_THRESHOLD_PALETTE){
+    const GlContentUniform *entry=content_uniform(program,"u_palette_alpha");
+    const float opaque[2]={0.0f,-1.0f};
+    if(entry) set_content_uniform(backend,entry,opaque,2u);
+  }
   for(uint32_t index=0;index<shader->uniform_count && index<GML_PLAN_MAX_UNIFORMS;index++){
     const GmlPlanUniform *value=&shader->uniforms[index];
     const GlContentUniform *entry=content_uniform(program,value->name);
@@ -1186,7 +1191,9 @@ int gml_gpu_opengl_scene_shader_draw(GmlGpuBackend *backend,const GmlPlanShader 
   operation.destination=(GmlPlanRect){region.x,region.y,region.width,region.height};
   GmlRenderRect selected=state->samplers[0].source_region;
   operation.source_rect=(GmlPlanRect){selected.x,selected.y,selected.width,selected.height};
-  if(state->coverage_policy==GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA){
+  int palette_alpha=state->coverage_policy==GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA &&
+    shader->builtin_kind==GML_PLAN_BUILTIN_SHADER_THRESHOLD_PALETTE;
+  if(state->coverage_policy==GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA && !palette_alpha){
     /* Preserve the CPU handoff's byte quantization before alpha blending.
      * Only the selected destination is cleared, including discarded fragments. */
     if(!gml_gpu_opengl_bind_readback_target(backend,target->width,target->height,error,error_capacity)) return 0;
@@ -1209,9 +1216,20 @@ int gml_gpu_opengl_scene_shader_draw(GmlGpuBackend *backend,const GmlPlanShader 
     backend->gl.BlendEquationSeparate(GL_FUNC_ADD,GL_FUNC_ADD);
     backend->gl.Enable(GL_BLEND);
   } else backend->gl.Disable(GL_BLEND);
+  if(palette_alpha) backend->gl.ColorMask(GL_TRUE,GL_TRUE,GL_TRUE,GL_FALSE);
   backend->gl.BindVertexArray(backend->scene.vertex_array);
   drawn=execute_shader_draw_with_source(backend,&plan,&operation,NULL,source_name,
                                         source_origin,sampler_names,error,error_capacity);
+  if(drawn && palette_alpha){
+    /* Reuse the same source/cutout coverage to stamp CPU surface alpha. RGB
+     * was blended with fixed function; neither pass samples the destination. */
+    plan.shader.uniforms[14].value[0]=0.0f;
+    backend->gl.ColorMask(GL_FALSE,GL_FALSE,GL_FALSE,GL_TRUE);
+    backend->gl.Disable(GL_BLEND);
+    drawn=execute_shader_draw_with_source(backend,&plan,&operation,NULL,source_name,
+                                          source_origin,sampler_names,error,error_capacity);
+  }
+  if(palette_alpha) backend->gl.ColorMask(GL_TRUE,GL_TRUE,GL_TRUE,GL_TRUE);
   backend->gl.BindVertexArray(0);
   backend->gl.Disable(GL_BLEND);
   gl_error=backend->gl.GetError();

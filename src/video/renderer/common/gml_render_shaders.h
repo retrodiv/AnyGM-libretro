@@ -14,7 +14,7 @@ int gml_render_shader_plan_snapshot(const GmlRender *render,int shader_id,
                                     uint32_t content_generation,const float colour[4],
                                     GmlPlanShader *out);
 
-/* The existing recognized byte-colour evaluator, without executing content GLSL. */
+/* Recognized threshold/indexed byte palettes, without executing content GLSL. */
 int gml_render_shader_threshold_palette_snapshot(const GmlRender *render,int shader_id,
                                                 GmlPlanShader *out);
 /* Resolve the recognized red-index palette against its existing immutable texture owner. */

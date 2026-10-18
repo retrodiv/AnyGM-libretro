@@ -7,6 +7,17 @@ This map is optimized for quick navigation by maintainers.
 Start with the responsibility row, inspect the named public header, and keep a
 change inside that owner unless an architectural seam genuinely changes.
 
+`common/gml_render_palette_internal.h` owns the unchanged indexed-brightness
+pixel evaluator shared by CPU sampling and ten-colour scene preparation.
+`common/gml_render_shaders.c::gml_render_shader_threshold_palette_snapshot`
+reuses the fixed palette packet without source-image access or per-fragment
+brightness emulation. `common/gml_render_surfaces.c::resident_surface_shader` retains
+the CPU unit-copy versus scaled/cutout coverage policies. Its fixed palette
+device path uses ordinary RGB blending and a matching alpha-only coverage pass,
+never a destination snapshot. The paired palette profiles and
+`make check TEST=render_resources` cover bounded admission and malformed controls;
+CPU machine-text retention is verified separately.
+
 GPU scene load-boundary preparation crosses from `src/core/engine_graphics.c::engine_graphics_bind_renderer`
 through the neutral `gpu/gml_gpu.c::gml_gpu_prepare_scene` into
 `gpu/opengl/gml_gpu_opengl_batch.c::gml_gpu_opengl_scene_prepare`.

@@ -1098,8 +1098,11 @@ static int scene_preflight(GmlGpuBackend *backend,const GmlRenderDrawBatch *batc
                                          !backend->gl.BlendEquationSeparate)) ||
          (state->coverage_policy &&
           (state->coverage_policy!=GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA ||
-           shader->builtin_kind!=GML_PLAN_BUILTIN_SHADER_NONE || qualified_blend(state)!=1 ||
-           target->width>4096u || target->height>4096u)) ||
+           (shader->builtin_kind!=GML_PLAN_BUILTIN_SHADER_NONE &&
+            shader->builtin_kind!=GML_PLAN_BUILTIN_SHADER_THRESHOLD_PALETTE) ||
+           qualified_blend(state)!=1 ||
+           (shader->builtin_kind==GML_PLAN_BUILTIN_SHADER_NONE &&
+            (target->width>4096u || target->height>4096u)))) ||
          state->sampler_count!=1u ||
          (state->samplers[0].filter!=GML_RENDER_FILTER_NEAREST &&
           state->samplers[0].filter!=GML_RENDER_FILTER_BILINEAR) ||

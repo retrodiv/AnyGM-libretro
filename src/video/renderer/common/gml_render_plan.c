@@ -45,7 +45,15 @@ int gml_render_plan_shader_has_program(const GmlPlanShader *shader){
       shader->uniforms[4].value[0]==(float)shader->samplers[0].linear;
   }
   if(shader->builtin_kind!=GML_PLAN_BUILTIN_SHADER_THRESHOLD_PALETTE ||
-     shader->uniform_count!=14u || shader->sampler_count) return 0;
+     shader->uniform_count!=15u || shader->sampler_count) return 0;
+  const GmlPlanUniform *coverage=&shader->uniforms[14];
+  if(strncmp(coverage->name,"u_palette_alpha",sizeof coverage->name) ||
+     coverage->count!=2u || coverage->integer!=1u ||
+     !isfinite(coverage->value[0]) || !isfinite(coverage->value[1]) ||
+     coverage->value[0]<0.0f || coverage->value[0]>1.0f ||
+     coverage->value[1]<-1.0f || coverage->value[1]>255.0f ||
+     floorf(coverage->value[0])!=coverage->value[0] ||
+     floorf(coverage->value[1])!=coverage->value[1]) return 0;
   for(unsigned channel=0;channel<4u;channel++)
     if(!isfinite(shader->vertex_colour[channel]) || shader->vertex_colour[channel]<0.0f ||
        shader->vertex_colour[channel]>1.0f ||

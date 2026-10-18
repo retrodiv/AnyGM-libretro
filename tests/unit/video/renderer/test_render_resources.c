@@ -6044,6 +6044,8 @@ static int surface_metadata_preserves_device_authority(void){
 }
 
 static int resident_threshold_palette_surface(void){
+  for(unsigned indexed=0;indexed<2u;indexed++)
+  for(unsigned unknown=0;unknown<2u;unknown++)
   for(unsigned target_kind=0;target_kind<3u;target_kind++)
     for(unsigned application_source=0;application_source<2u;application_source++)
       for(unsigned alpha_test=0;alpha_test<2u;alpha_test++)
@@ -6069,6 +6071,10 @@ static int resident_threshold_palette_surface(void){
             for(unsigned i=0;i<16u;i++) render->app_surface_owned[i]=0xFF315779u;
             render->app_surface_opaque=1;
           }
+          if(unknown){
+            if(application_source) render->app_surface_opaque=0;
+            else render->surface[source-1].opaque_known=render->surface[source-1].all_opaque=0;
+          }
           gml_render_application_surface_set_draw_enabled(render,0);
           gml_render_application_surface_publish(render);
           render->shader_pal=(struct GmlShaderPal*)calloc(1,sizeof *render->shader_pal);
@@ -6081,6 +6087,37 @@ static int resident_threshold_palette_surface(void){
             render->shader_pal[0].threshold_palette_green[branch][band]=(float)(7u-2u*band)/8.0f;
           for(unsigned colour=0;colour<10u;colour++) for(unsigned channel=0;channel<3u;channel++)
             render->shader_pal[0].threshold_palette_colour[colour][channel]=(uint8_t)(19u+colour*17u+channel*11u);
+          if(indexed){
+            struct GmlShaderPal *p=&render->shader_pal[0];
+            p->threshold_palette=0;p->indexed_brightness=p->indexed_brightness_set=1;
+            p->indexed_brightness_red=.25f;p->indexed_brightness_value=-.5f;
+            memcpy(p->indexed_brightness_green,p->threshold_palette_green,sizeof p->indexed_brightness_green);
+            p->indexed_brightness_family_cut=5.0f;
+            for(unsigned band=0;band<6u;band++) p->indexed_brightness_low_threshold[band]=(float)band;
+            for(unsigned band=0;band<7u;band++) p->indexed_brightness_high_threshold[band]=(float)band+3.0f;
+            for(unsigned band=0;band<8u;band++) for(unsigned channel=0;channel<3u;channel++){
+              p->indexed_brightness_high_colour[band][channel]=(uint8_t)(band*29u+channel*53u);
+              if(band<7u) p->indexed_brightness_low_colour[band][channel]=(uint8_t)(band*37u+channel*41u);
+            }
+            GmlPlanShader snapshot;
+            CHECK(gml_render_shader_threshold_palette_snapshot(render,0,&snapshot));
+            CHECK(gml_render_plan_shader_has_program(&snapshot));
+            snapshot.uniforms[14].count=1u;
+            CHECK(!gml_render_plan_shader_has_program(&snapshot));
+            snapshot.uniforms[14].count=2u;snapshot.uniforms[14].value[1]=256.0f;
+            CHECK(!gml_render_plan_shader_has_program(&snapshot));
+            snapshot.uniforms[14].value[1]=NAN;
+            CHECK(!gml_render_plan_shader_has_program(&snapshot));
+            p->indexed_brightness_set=0;
+            CHECK(!gml_render_shader_threshold_palette_snapshot(render,0,&snapshot));
+            p->indexed_brightness_set=1;p->indexed_brightness_value=NAN;
+            CHECK(!gml_render_shader_threshold_palette_snapshot(render,0,&snapshot));
+            p->indexed_brightness_value=-.5f;p->generic_sampler_count=1;
+            CHECK(!gml_render_shader_threshold_palette_snapshot(render,0,&snapshot));
+            p->generic_sampler_count=0;p->indexed_brightness_red=INFINITY;
+            CHECK(!gml_render_shader_threshold_palette_snapshot(render,0,&snapshot));
+            p->indexed_brightness_red=.25f;
+          }
           gml_render_bind_device(render,&device);
           gml_render_set_scene_device(render,1);
           if(target_kind==1u){
@@ -6108,9 +6145,11 @@ static int resident_threshold_palette_surface(void){
           else gml_draw_surface_ext(render,source,1.0,1.0,1.0,1.0,0.0,0xFFFFFFu,1.0);
           CHECK(render->resident_application_pass && fake.shader_submits==1 && fake.readbacks==0 &&
                 fake.last_opcode==GML_RENDER_OP_CONTENT_SHADER_DRAW &&
-                fake.last_shader_uniform_count==14u &&
+                fake.last_shader_uniform_count==15u &&
                 fake.last_target_region.x==1 && fake.last_target_region.y==1 &&
                 fake.last_target_region.width==4u && fake.last_target_region.height==4u &&
+                fake.last_shader_coverage==((unknown && alpha_test)?
+                  GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA:0u) &&
                 !render->shader_device_present && !render->shader_device_expected);
           gml_render_resource_journal_metrics(resource,&after);
           CHECK(after.logical_version>before.logical_version && after.cpu_version<after.logical_version &&
