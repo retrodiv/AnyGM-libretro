@@ -21,6 +21,7 @@ GPU_TABLE = RENDERER / "gpu/gml_render_gpu_operations.def"
 BACKEND_MAP = ROOT / "docs/RENDERER_BACKENDS.md"
 FAMILIES = {"TEXTURE", "PRIMITIVE", "SURFACE", "EFFECT", "PRESENTATION", "SHADER", "SOFTWARE3D"}
 REQUIRED_RULES = {
+    "R03-ATLAS-CLAMPED-WINDOW",
     "R03-VERTEX-SPANS",
     "R03-VERTEX-EMPTY",
     "R03-MULTIVIEW-COMPOSITION",
@@ -240,7 +241,7 @@ DISPATCH_HELPERS = {
     "resident_flat_eligible_rule", "resident_flat_eligible", "resident_line_bounds",
     "resident_rectangle_state_eligible", "resident_primitive_state_eligible", "resident_rectangle_payload",
     "resident_primitive_alpha_noop",
-    "resident_classify_page", "resident_identity_screen_gui",
+    "resident_classify_page", "resident_classify_clamped_page", "resident_identity_screen_gui",
     "resident_tile_source_metadata",
     "resident_page_endpoint_rgb_mask",
     "resident_mapped_screen_gui_font", "resident_nearest_text_scale",

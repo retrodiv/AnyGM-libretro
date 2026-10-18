@@ -15,6 +15,7 @@
 
 #include "gml_gpu.h"
 #include "gml_gpu_opengl_api.h"
+#include "gml_gpu_opengl_internal.h"
 #include "graphics_driver_fixture.h"
 
 #include <stdint.h>
@@ -39,6 +40,70 @@ static GmlGpuContext fake_context(GmlGpuApi api){
   context.get_proc_address=anygm_test_graphics_proc;
   context.get_current_framebuffer=anygm_test_graphics_framebuffer;
   return context;
+}
+
+/* Packet bounds and origin handling only. Real driver/CPU pairs own pixels. */
+static int scene_clamped_atlas_window_case(void){
+  GmlRenderImageRef source={GML_RENDER_RESOURCE_ATLAS,1u,1u,1u};
+  GmlRenderDrawOp op={0};GmlRenderDrawStateSnapshot state={0};
+  op.opcode=GML_RENDER_OP_TEXTURED_QUAD;op.scene_family=GML_RENDER_SCENE_SPRITE;
+  op.reconstruction_mode=GML_RENDER_DEVICE_CHECKPOINT;op.source_count=1u;op.sources=&source;
+  op.target.image=(GmlRenderImageRef){GML_RENDER_RESOURCE_SCREEN,2u,1u,1u};
+  op.target.width=op.target.height=8u;op.target.storage_version=1u;
+  op.target.pixel_format=GML_RENDER_PIXEL_ARGB8888;op.target.region=(GmlRenderRect){0,0,8u,8u};
+  GmlRenderQuad *q=&op.payload.quad;
+  q->shape=GML_RENDER_QUAD_AXIS_ALIGNED;
+  q->sampling.filter=GML_RENDER_FILTER_HARDWARE_BILINEAR;
+  q->sampling.edge_rule=GML_RENDER_EDGE_CLAMP_SUBIMAGE;
+  q->sampling.quantisation=GML_RENDER_QUANTISE_HARDWARE_SPRITE_FIRSTGEN;
+  q->sampling.source_region=(GmlRenderRect){512,1024,64u,32u};
+  q->filtered_draw_alpha=1.0;q->inverse_x[0]=q->inverse_y[1]=1.0;
+  for(unsigned c=0;c<4u;c++){
+    q->x[c]=(c==1u || c==2u)?8.0:0.0;q->y[c]=c>=2u?8.0:0.0;
+    q->u[c]=(512.0+q->x[c])/2.0;q->v[c]=1024.0+q->y[c];q->corner_colour[c]=0xffffffffu;
+  }
+  state.write_mask=15u;state.alpha=255u;state.colour=0xffffffffu;
+  float vertices[6u*GL_SCENE_VERTEX_FLOATS];
+  REQUIRE(gml_gpu_opengl_clamped_atlas_valid(&op,2u,1u),"bounded virtual atlas window admitted");
+  REQUIRE(gml_render_gpu_opengl_draw_textured_quad(&op,&state,2u,1u,0,vertices),
+          "virtual atlas vertices retain authored source coordinates");
+  REQUIRE(!gml_render_gpu_opengl_draw_textured_quad(&op,&state,2u,1u,1,vertices),
+          "rendered-origin windows cannot inherit atlas clamping");
+  op.scene_family=GML_RENDER_SCENE_BACKGROUND;
+  q->sampling.quantisation=GML_RENDER_QUANTISE_HARDWARE_SPRITE_MODERN;
+  REQUIRE(gml_gpu_opengl_clamped_atlas_valid(&op,2u,1u),"background physical sampler shares bounded policy");
+  for(unsigned bad=0;bad<18u;bad++){
+    GmlRenderDrawOp changed=op;GmlRenderImageRef other=source;
+    GmlRenderQuad *quad=&changed.payload.quad;changed.sources=&other;
+    switch(bad){
+      case 0:quad->sampling.source_region.x=-1;break;
+      case 1:quad->sampling.source_region.y=-1;break;
+      case 2:quad->sampling.source_region.width=0u;break;
+      case 3:quad->sampling.source_region.height=0u;break;
+      case 4:quad->sampling.source_region.width=4097u;break;
+      case 5:quad->sampling.source_region.height=4097u;break;
+      case 6:quad->sampling.source_region.x=65537;break;
+      case 7:quad->sampling.source_region.y=65537;break;
+      case 8:other.resource_class=GML_RENDER_RESOURCE_SURFACE;break;
+      case 9:changed.scene_family=GML_RENDER_SCENE_TEXT;break;
+      case 10:quad->sampling.filter=GML_RENDER_FILTER_NEAREST;break;
+      case 11:quad->sampling.quantisation=0u;break;
+      case 12:quad->span_active=1u;break;
+      case 13:quad->shape=GML_RENDER_QUAD_GENERAL;break;
+      case 14:quad->sampling.edge_rule=GML_RENDER_EDGE_LOGICAL_TPAG;break;
+      case 15:quad->sampling.logical_margin_mask=GML_RENDER_MARGIN_UNIT_TEXEL;break;
+      case 16:changed.reconstruction_mode=GML_RENDER_REPLAY_EXACT;break;
+      default:quad->sampling.source_region=(GmlRenderRect){0,0,2u,1u};break;
+    }
+    REQUIRE(!gml_gpu_opengl_clamped_atlas_valid(&changed,2u,1u),"unqualified virtual source policy refused");
+  }
+  REQUIRE(!gml_gpu_opengl_clamped_atlas_valid(&op,0u,1u) &&
+          !gml_gpu_opengl_clamped_atlas_valid(&op,2u,0u) &&
+          !gml_gpu_opengl_clamped_atlas_valid(&op,16385u,1u) &&
+          !gml_gpu_opengl_clamped_atlas_valid(&op,2u,16385u),"physical storage bounds checked");
+  q->sampling.source_region=(GmlRenderRect){65536,65536,4096u,4096u};
+  REQUIRE(gml_gpu_opengl_clamped_atlas_valid(&op,1u,1u),"finite largest virtual window remains bounded");
+  return 1;
 }
 
 /* A plan that magnifies a small opaque source into a larger target with black margins: the shape
@@ -4789,6 +4854,7 @@ int main(int argc,char **argv){
     {"scene_nearest_surface_function",scene_nearest_surface_function_case},
     {"scene_gui_tinted_text",scene_gui_tinted_text_case},
     {"scene_gui_filtered_background_batch",scene_gui_filtered_background_batch_case},
+    {"scene_clamped_atlas_window",scene_clamped_atlas_window_case},
     {"scene_gui_half_point",scene_gui_half_point_case},
     {"scene_numbered_integer_sourceover",scene_numbered_integer_sourceover_case},
     {"scene_integer_endpoint_sprite",scene_integer_endpoint_sprite_case},

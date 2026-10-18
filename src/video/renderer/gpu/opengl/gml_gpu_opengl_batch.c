@@ -772,6 +772,7 @@ static int hardware_screen_sprite_valid(const GmlRenderDrawOp *op,
   int physical=(quad->sampling.quantisation==GML_RENDER_QUANTISE_HARDWARE_SPRITE_FIRSTGEN ||
                 quad->sampling.quantisation==GML_RENDER_QUANTISE_HARDWARE_SPRITE_MODERN) &&
     (op->scene_family==GML_RENDER_SCENE_SPRITE ||
+     (op->scene_family==GML_RENDER_SCENE_BACKGROUND && state->write_mask==15u) ||
      (op->scene_family==GML_RENDER_SCENE_TEXT && state->write_mask==15u)) && state->write_mask<=15u &&
     (op->target.image.resource_class==GML_RENDER_RESOURCE_SCREEN ||
      op->target.image.resource_class==GML_RENDER_RESOURCE_APPLICATION ||
@@ -782,9 +783,12 @@ static int hardware_screen_sprite_valid(const GmlRenderDrawOp *op,
     (qualified_blend(state)==0 || qualified_blend(state)==1 || qualified_blend(state)==3 ||
      qualified_blend(state)==15 || qualified_blend(state)==16 || qualified_blend(state)==17);
   if(margin==GML_RENDER_MARGIN_UNIT_TEXEL){
-    if(!physical || op->scene_family!=GML_RENDER_SCENE_TEXT || affine_row ||
+    if(!physical || affine_row ||
        xs!=1.0 || ys!=1.0 || left!=floor(left) || top!=floor(top) ||
-       quad->sampling.edge_rule!=GML_RENDER_EDGE_CLAMP_SUBIMAGE) return 0;
+       quad->sampling.edge_rule!=GML_RENDER_EDGE_CLAMP_SUBIMAGE ||
+       (op->scene_family!=GML_RENDER_SCENE_TEXT &&
+        (quad->corner_colour[0]!=0xffffffffu || quad->filtered_draw_alpha!=1.0 ||
+         (state->alpha_test_enabled && state->alpha_test_reference)))) return 0;
     margin=0u;
   }
   if(quad->sampling.quantisation==GML_RENDER_QUANTISE_HARDWARE_SPRITE_MODERN &&
@@ -794,7 +798,8 @@ static int hardware_screen_sprite_valid(const GmlRenderDrawOp *op,
       state->coverage_policy==GML_RENDER_COVERAGE_REPLACE_ZERO_ALPHA)) return 0;
   if(!source || source->rendered_origin || source->pixel_format!=GML_RENDER_PIXEL_RGBA8888 ||
      op->sources[0].resource_class!=GML_RENDER_RESOURCE_ATLAS ||
-     (op->scene_family!=GML_RENDER_SCENE_SPRITE && op->scene_family!=GML_RENDER_SCENE_TEXT) ||
+     (op->scene_family!=GML_RENDER_SCENE_SPRITE && op->scene_family!=GML_RENDER_SCENE_TEXT &&
+      !(physical && op->scene_family==GML_RENDER_SCENE_BACKGROUND)) ||
      (!physical && op->target.image.resource_class!=GML_RENDER_RESOURCE_SCREEN &&
       (op->target.image.resource_class!=GML_RENDER_RESOURCE_APPLICATION ||
        op->scene_family!=GML_RENDER_SCENE_SPRITE)) ||
@@ -821,7 +826,8 @@ static int hardware_screen_sprite_valid(const GmlRenderDrawOp *op,
      (op->scene_family==GML_RENDER_SCENE_TEXT &&
       ((!physical && (xs>1.0 || ys>1.0)) || region.width>256u || region.height>256u)) ||
      !isfinite(left) || !isfinite(top) ||
-     !valid_region(region,source->width,source->height) ||
+     (!valid_region(region,source->width,source->height) &&
+      !(physical && gml_gpu_opengl_clamped_atlas_valid(op,source->width,source->height))) ||
      !exact_rect(op,NULL,NULL,NULL,NULL,1)) return 0;
   if(affine_row){
     if(!physical || op->scene_family!=GML_RENDER_SCENE_SPRITE || quad->y[2]-quad->y[0]!=1.0 ||
@@ -1373,7 +1379,9 @@ static int scene_preflight(GmlGpuBackend *backend,const GmlRenderDrawBatch *batc
          !((state->clip.width==0 && state->clip.height==0) ||
            full_region(state->clip,target->width,target->height)) ||
          !full_region(target->region,target->width,target->height) ||
-         !valid_region(sampling->source_region,source->width,source->height) ||
+         (!valid_region(sampling->source_region,source->width,source->height) &&
+          !(physical_sprite && !source->rendered_origin &&
+            gml_gpu_opengl_clamped_atlas_valid(op,source->width,source->height))) ||
          (sampling->filter!=GML_RENDER_FILTER_NEAREST &&
           sampling->filter!=GML_RENDER_FILTER_BILINEAR &&
           sampling->filter!=GML_RENDER_FILTER_BOX &&
@@ -1450,7 +1458,7 @@ static int scene_preflight(GmlGpuBackend *backend,const GmlRenderDrawBatch *batc
                     (op->payload.quad.shape!=GML_RENDER_QUAD_CARDINAL &&
                      op->payload.quad.shape!=GML_RENDER_QUAD_GENERAL)))
                 : sampling->logical_margin_mask!=0u &&
-                  !(hardware_sprite && op->scene_family==GML_RENDER_SCENE_TEXT &&
+                  !(hardware_sprite &&
                     sampling->logical_margin_mask==GML_RENDER_MARGIN_UNIT_TEXEL)))) ||
          state->samplers[0].filter!=sampling->filter ||
          state->samplers[0].edge_rule!=sampling->edge_rule ||

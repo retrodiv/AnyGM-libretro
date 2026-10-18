@@ -7,6 +7,34 @@
 
 #include <math.h>
 
+/* R03-ATLAS-CLAMPED-WINDOW: a logical crop may exceed its immutable physical
+ * image. Only the already typed hardware axis sampler clamps these taps;
+ * exact recipes, raw glyph fetches and rendered surfaces remain contained. */
+int gml_gpu_opengl_clamped_atlas_valid(const GmlRenderDrawOp *op,
+                                      uint32_t source_width,uint32_t source_height){
+  if(!op || !source_width || !source_height ||
+     source_width>16384u || source_height>16384u ||
+     op->opcode!=GML_RENDER_OP_TEXTURED_QUAD ||
+     (op->scene_family!=GML_RENDER_SCENE_SPRITE &&
+      op->scene_family!=GML_RENDER_SCENE_BACKGROUND) ||
+     op->reconstruction_mode!=GML_RENDER_DEVICE_CHECKPOINT ||
+     op->source_count!=1u || !op->sources ||
+     op->sources[0].resource_class!=GML_RENDER_RESOURCE_ATLAS) return 0;
+  const GmlRenderQuad *q=&op->payload.quad;
+  GmlRenderRect region=q->sampling.source_region;
+  return q->shape==GML_RENDER_QUAD_AXIS_ALIGNED && !q->span_active &&
+    q->sampling.filter==GML_RENDER_FILTER_HARDWARE_BILINEAR &&
+    (q->sampling.quantisation==GML_RENDER_QUANTISE_HARDWARE_SPRITE_FIRSTGEN ||
+     q->sampling.quantisation==GML_RENDER_QUANTISE_HARDWARE_SPRITE_MODERN) &&
+    q->sampling.logical_margin_mask<=15u &&
+    q->sampling.edge_rule==(q->sampling.logical_margin_mask
+      ?GML_RENDER_EDGE_LOGICAL_TPAG:GML_RENDER_EDGE_CLAMP_SUBIMAGE) &&
+    region.x>=0 && region.x<=65536 && region.y>=0 && region.y<=65536 &&
+    region.width>0u && region.width<=4096u && region.height>0u && region.height<=4096u &&
+    ((uint64_t)(uint32_t)region.x+region.width>source_width ||
+     (uint64_t)(uint32_t)region.y+region.height>source_height);
+}
+
 /* R03-SPR-FIRSTGEN-GUI-HALF-POINT: only this independently certified
  * reciprocal map can extrapolate a vertex by half a texel at an atlas edge.
  * Fragment centres still sample contained odd texels, never that vertex. */
@@ -95,9 +123,11 @@ int gml_render_gpu_opengl_draw_textured_quad(const GmlRenderDrawOp *op,
      (quad->sampling.filter!=GML_RENDER_FILTER_BILINEAR &&
       quad->sampling.filter!=GML_RENDER_FILTER_NEAREST))) return 0;
   region=quad->sampling.source_region;
-  if(region.x<0 || region.y<0 || !region.width || !region.height ||
+  if((region.x<0 || region.y<0 || !region.width || !region.height ||
      (uint64_t)(uint32_t)region.x+region.width>source_width ||
-     (uint64_t)(uint32_t)region.y+region.height>source_height) return 0;
+     (uint64_t)(uint32_t)region.y+region.height>source_height) &&
+     (rendered_source_origin ||
+      !gml_gpu_opengl_clamped_atlas_valid(op,source_width,source_height))) return 0;
   /* Exact full-surface destination-factor sampling is resolved by its integer
    * fragment rule, not the stretched sprite's logical-trim span metadata. */
   destination_surface=op->scene_family==GML_RENDER_SCENE_SURFACE &&

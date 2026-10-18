@@ -338,7 +338,8 @@
   "    ivec2 at=base+ivec2(x,y);\n" \
   "    bool escape=(at.x<first.x&&(mask&1)!=0)||(at.x>last.x&&(mask&4)!=0)||\n" \
   "                (at.y<first.y&&(mask&2)!=0)||(at.y>last.y&&(mask&8)!=0);\n" \
-  "    ivec2 authored=escape?at:clamp(at,first,last);\n" \
+  "    // Inner taps clamp to physical storage; raw logical padding stays transparent.\n" \
+  "    ivec2 authored=escape?at:clamp(clamp(at,first,last),ivec2(0),extent-ivec2(1));\n" \
   "    ivec2 hardware=clamp(at,ivec2(0),extent-ivec2(1));\n" \
   "    if(any(notEqual(authored,hardware))) result+=\n" \
   "      (hardware_background_tap(authored)-hardware_background_tap(hardware))*\n" \

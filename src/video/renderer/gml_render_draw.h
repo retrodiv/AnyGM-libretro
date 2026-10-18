@@ -129,8 +129,8 @@ enum {
   GML_RENDER_MARGIN_TOP=2u,
   GML_RENDER_MARGIN_RIGHT=4u,
   GML_RENDER_MARGIN_BOTTOM=8u,
-  /* A full-cell glyph at aligned unit scale has exact texel-centre samples.
-   * This sampling hint is not a logical margin or a different blend owner. */
+  /* Aligned unit glyphs and bounded white atlas copies have exact texel-centre
+   * samples. This is a sampling hint, not a margin or another blend owner. */
   GML_RENDER_MARGIN_UNIT_TEXEL=16u,
   /* General-sprite vertex colours cover the authored selection, while its CPU sampler skips
    * fragment centres outside the visible packed page before any bilinear edge taps. */
