@@ -1722,6 +1722,7 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
   int direct_view_surface=0;
   int forced_owned_scene=0;
   int forced_owned_scene_began=0;
+  int promoted_owned_world=0;
   uint32_t *world_pixels=engine->fb;
   int world_width=(int)engine->width;
   int world_height=(int)engine->height;
@@ -1784,7 +1785,10 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
      (frame_views[0].px==0 && frame_views[0].py==0 &&
       render_presentation.application_width==(int)engine->width &&
       render_presentation.application_height==(int)engine->height));
-  if(forced_owned_scene) direct_owned_world=1;
+  if(forced_owned_scene){
+    promoted_owned_world=!direct_owned_world;
+    direct_owned_world=1;
+  }
   if(engine->vm.frame<6 &&
      anygm_host_development_setting(&engine->host,"GML_LOG_APPTARGET"))
     engine_logf(engine,ANYGM_LOG_DEBUG,
@@ -1905,6 +1909,16 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
       &engine->render,&world_width,&world_height);
   if(direct_view_surface)
     gml_surface_reset_target(&engine->render);
+  if(promoted_owned_world && direct_owned_world){
+    int x,y,width,height;
+    /* CPU masks the logical root before copying this world to the owned
+     * application. Direct device drawing must preserve that order there too;
+     * the separate external-root mask below is not a mask of this image. */
+    if(aspect_visible_room_rect(engine,cam_x,cam_y,&x,&y,&width,&height) &&
+       !gml_render_application_surface_owned_mask(&engine->render,
+         (int)engine->width,(int)engine->height,x,y,width,height))
+      return ANYGM_ERROR_INTERNAL;
+  }
   if(!aspect_mask_outside_room(engine,cam_x,cam_y)) return ANYGM_ERROR_INTERNAL;
   if(prof){ t1 = profile_now_ms(engine); engine->profile.draw_ms += t1 - t0; t0 = t1; }
   gml_render_presentation_metrics(&engine->render,&render_presentation);

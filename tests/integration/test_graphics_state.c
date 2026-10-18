@@ -3205,7 +3205,8 @@ static int forced_owned_scene_variant(int narrow_room){
   AnygmInputFrame input={0};
   AnygmConfigDelta presentation={0};
   int matching=1;
-  int (*create_fixture)(AnygmSyntheticContent *)=narrow_room?
+  int (*create_fixture)(AnygmSyntheticContent *)=narrow_room==3?
+    anygm_synthetic_forced_narrow_overdraw_content_create:narrow_room?
     anygm_synthetic_forced_narrow_content_create:anygm_synthetic_forced_owned_content_create;
   anygm_test_graphics_reset();
   REQUIRE(session_open_fixture_with_scene(&plain,ANYGM_SCENE_RENDERER_CPU,
@@ -3261,7 +3262,7 @@ static int forced_owned_scene_variant(int narrow_room){
 
 static int forced_owned_scene_case(void){
   return forced_owned_scene_variant(0) && forced_owned_scene_variant(1) &&
-         forced_owned_scene_variant(2);
+         forced_owned_scene_variant(2) && forced_owned_scene_variant(3);
 }
 
 static int presentation_filter_variant(

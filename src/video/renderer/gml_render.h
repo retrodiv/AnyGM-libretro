@@ -538,6 +538,8 @@ int gml_render_application_surface_ensure_owned(GmlRender *r,int width,int heigh
 /* Selection and pass begin do not lend pixels to the engine. A CPU consumer explicitly asks for
  * the mutable view below; a resident target may otherwise remain unmaterialised. */
 int gml_render_application_surface_owned_extent(const GmlRender *r,int *width,int *height);
+int gml_render_application_surface_owned_mask(GmlRender *r,int width,int height,
+                                             int x,int y,int inside_width,int inside_height);
 int gml_render_begin_owned_application(GmlRender *r,double camx,double camy,
                                        int retain_target);
 /* Opt-in scene pass: retains GPU authority and refuses unresolved CPU/deferred work before

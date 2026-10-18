@@ -45,6 +45,7 @@ int anygm_synthetic_resident_indirect_gui_upscale_content_create(AnygmSyntheticC
 /* The same owned fixture in a full or narrow room, for forced-raster admission. */
 int anygm_synthetic_forced_owned_content_create(AnygmSyntheticContent *fixture);
 int anygm_synthetic_forced_narrow_content_create(AnygmSyntheticContent *fixture);
+int anygm_synthetic_forced_narrow_overdraw_content_create(AnygmSyntheticContent *fixture);
 int anygm_synthetic_indirect_gui_reduce_content_create(AnygmSyntheticContent *fixture);
 int anygm_synthetic_indirect_gui_alpha_content_create(AnygmSyntheticContent *fixture);
 int anygm_synthetic_direct_gui_sprite_content_create(AnygmSyntheticContent *fixture);

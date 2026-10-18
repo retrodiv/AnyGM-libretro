@@ -14645,6 +14645,60 @@ static int resident_external_base_mask(void){
   return 1;
 }
 
+static int resident_promoted_owned_mask(void){
+  enum { W=8,H=6 };
+  const int generations[]={530,700,800,13,15,17};
+  for(unsigned generation=0;generation<6u;generation++){
+    GmlRender *r=calloc(1,sizeof *r);GmlWin content={0};
+    FakeDevice fake={.on_demand=1,.readback_colour=0xFF182838u};
+    GmlRenderDeviceServices device=service(&fake);
+    CHECK(r && !gml_render_init(r,NULL));
+    content.classic_version=generations[generation]>100?generations[generation]:0;
+    content.bytecode=generations[generation]>100?0:generations[generation];
+    r->win=&content;r->classic=content.classic_version!=0;
+    device.observe_on_demand=fake_observe_on_demand;
+    gml_render_bind_device(r,&device);gml_render_set_scene_device(r,1);
+    CHECK(gml_render_application_surface_ensure_owned(r,W,H));
+    CHECK(gml_render_begin_resident_owned_application(r,-3,2,0));
+    gml_render_set_pending_fill(r,0xD3273859u);
+    CHECK(gml_render_scene_submit_pending(r));
+    uint32_t shadow[W*H];memcpy(shadow,r->app_surface_owned,sizeof shadow);
+    uint32_t *bound=r->fb;int target=r->target_id,depth=r->target_sp;
+    CHECK(gml_render_application_surface_owned_mask(r,W,H,2,1,4,3));
+    CHECK(!fake.readbacks && !fake.rgb_queries && !memcmp(shadow,bound,sizeof shadow) &&
+      r->fb==bound && r->target_id==target && r->target_sp==depth &&
+      r->cam_x==-3 && r->cam_y==2 && r->resident_application_pass &&
+      fake.last_batch_operations==4u && fake.last_target_region.x==6 &&
+      fake.last_target_region.y==1 && fake.last_target_region.width==2u &&
+      fake.last_target_region.height==3u);
+    int submits=fake.submits;
+    CHECK(gml_render_application_surface_owned_mask(r,W,H,0,0,W,H) && fake.submits==submits);
+    CHECK(!gml_render_application_surface_owned_mask(r,W+1,H,0,0,1,1));
+    r->gui_pass_active=1;
+    CHECK(!gml_render_application_surface_owned_mask(r,W,H,0,0,1,1));r->gui_pass_active=0;
+    r->target_sp=1;
+    CHECK(!gml_render_application_surface_owned_mask(r,W,H,0,0,1,1));r->target_sp=0;
+    r->target_id=1;
+    CHECK(!gml_render_application_surface_owned_mask(r,W,H,0,0,1,1));r->target_id=-1;
+    CHECK(fake.submits==submits);
+    CHECK(gml_render_application_surface_owned_mask(r,W,H,-10,-10,1,1));
+    CHECK(fake.last_batch_operations==1u && fake.last_target_region.width==W &&
+      fake.last_target_region.height==H);
+    GmlRenderJournalMetrics metrics={0};
+    gml_render_resource_journal_metrics(r->app_surface_resource,&metrics);
+    CHECK(metrics.gpu_version==metrics.logical_version && metrics.cpu_version<metrics.logical_version &&
+      !metrics.cpu_replays && !metrics.device_checkpoints && !metrics.journal_bytes);
+    r->device.observe_on_demand=NULL;submits=fake.submits;
+    CHECK(gml_render_application_surface_owned_mask(r,W,H,2,1,4,3));
+    CHECK(fake.submits==submits && r->app_surface_owned[0]==0xFF000000u &&
+      r->app_surface_owned[2u*W+3u]==fake.readback_colour);
+    gml_render_resource_journal_metrics(r->app_surface_resource,&metrics);
+    CHECK(metrics.cpu_version==metrics.logical_version && !metrics.gpu_version);
+    gml_render_free(r);free(r);
+  }
+  return 1;
+}
+
 static int resident_nearest_geometry_capacity(void){
   enum { W=320,H=192,AW=512,AH=416 };
   const int generations[]={530,700,800,13,15,17};
@@ -16483,6 +16537,7 @@ int main(void){
   passed+=resident_classic_large_point_sprite_function();
   passed+=resident_nearest_geometry_capacity();
   passed+=resident_external_base_mask();
+  passed+=resident_promoted_owned_mask();
   passed+=resident_integer_background_function();
   passed+=resident_fractional_background_function();
   passed+=resident_background_stored_extents();
@@ -16544,6 +16599,6 @@ int main(void){
   passed+=source_free_primitive_rect_replay();
   passed+=stretched_float_exact_replay();
   passed+=filtered_font_exact_recovery();
-  printf("render resource cases: passed=%d failed=%d\n",passed,257-passed);
-  return passed==257?EXIT_SUCCESS:EXIT_FAILURE;
+  printf("render resource cases: passed=%d failed=%d\n",passed,258-passed);
+  return passed==258?EXIT_SUCCESS:EXIT_FAILURE;
 }

@@ -1101,20 +1101,9 @@ int gml_render_masked_bases_observe(GmlRender *r){
   return 1;
 }
 
-int gml_render_completed_screen_mask(GmlRender *r,uint32_t *pixels,int width,int height,
+static unsigned outside_mask_regions(GmlRenderRect regions[4],int width,int height,
                                      int x,int y,int inside_width,int inside_height){
-  const GmlRenderDeviceServices *device=gml_render_device(r);
-  GmlRenderResource *resource;
-  GmlRenderRect regions[4];GmlRenderDrawOp operations[4]={0};
-  unsigned count=0;int previous_width=0,previous_height=0,created=0;
-  if(!r || !pixels || width<=0 || height<=0 || width>4096 || height>4096 ||
-     !r->scene_device_enabled || !r->resident_application_pass ||
-     !device || !device->observe_on_demand ||
-     !device->observe_on_demand(device->context) ||
-     !gml_render_application_scene_flush(r)) return 0;
-  if(pixels==r->app_surface_owned) return 0;
-  for(int i=0;i<GML_MAX_SURFACES;i++)
-    if(r->surface[i].live && pixels==r->surface[i].px) return 0;
+  unsigned count=0;
   int64_t left=x,top=y,right=(int64_t)x+inside_width,bottom=(int64_t)y+inside_height;
   if(left<0) left=0;
   if(top<0) top=0;
@@ -1128,6 +1117,80 @@ int gml_render_completed_screen_mask(GmlRender *r,uint32_t *pixels,int width,int
     if(left>0) regions[count++]=(GmlRenderRect){0,(int)top,(uint32_t)left,(uint32_t)(bottom-top)};
     if(right<width) regions[count++]=(GmlRenderRect){(int)right,(int)top,(uint32_t)(width-right),(uint32_t)(bottom-top)};
   }
+  return count;
+}
+
+static GmlRenderResourceExecution submit_outside_mask(GmlRender *r,
+  GmlRenderResource *resource,const GmlRenderDeviceServices *device,int width,int height,
+  const GmlRenderRect *regions,unsigned count,int cpu_only){
+  GmlRenderDrawOp operations[4]={0};
+  GmlRenderImageRef image=gml_render_resource_image_ref(resource);
+  if(!count || count>4u || image.content_version>UINT64_MAX-count)
+    return GML_RENDER_RESOURCE_EXEC_FAILED;
+  for(unsigned i=0;i<count;i++){
+    operations[i].opcode=cpu_only?GML_RENDER_OP_COLOURED_PRIMITIVE:GML_RENDER_OP_CLEAR;
+    operations[i].scene_family=GML_RENDER_SCENE_PRIMITIVE;
+    operations[i].reconstruction_mode=cpu_only?GML_RENDER_REPLAY_EXACT:GML_RENDER_DEVICE_CHECKPOINT;
+    operations[i].target=(GmlRenderTargetRef){image,1u,(uint32_t)width,(uint32_t)height,
+      GML_RENDER_PIXEL_ARGB8888,cpu_only?(GmlRenderRect){0,0,(uint32_t)width,(uint32_t)height}:regions[i]};
+    operations[i].target.image.content_version+=i+1u;
+    if(cpu_only){
+      operations[i].payload.primitive.kind=GML_RENDER_PRIMITIVE_FLAT;
+      operations[i].payload.primitive.region=regions[i];
+      operations[i].payload.primitive.colour=0xFF000000u;
+    }else operations[i].payload.clear_colour=0xFF000000u;
+  }
+  GmlRenderDrawBatch batch={operations,count,NULL,0u};
+  GmlRenderResourceExecution result=gml_render_resource_submit_deferred(resource,device,&batch,NULL,0u);
+  if(result==GML_RENDER_RESOURCE_EXEC_DEVICE || (cpu_only && result==GML_RENDER_RESOURCE_EXEC_CPU))
+    gml_render_dispatch_batch_record(r,&batch,result);
+  return result;
+}
+
+/* The coordinator uses this only when a GPU-owned world replaces a CPU root
+ * which would be masked before its existing full-raster application copy.
+ * Explicit application canvases retain their independent root-only mask. */
+int gml_render_application_surface_owned_mask(GmlRender *r,int width,int height,
+                                               int x,int y,int inside_width,int inside_height){
+  const GmlRenderDeviceServices *device=gml_render_device(r);
+  GmlRenderRect regions[4];
+  if(!r || width<=0 || height<=0 || width>4096 || height>4096 ||
+     !r->scene_device_enabled ||
+     r->target_id!=-1 || r->target_sp || r->gui_pass_active ||
+     !r->app_surface_owned || r->fb!=r->app_surface_owned ||
+     r->app_w!=width || r->app_h!=height || r->fbw!=width || r->fbh!=height ||
+     !device || !device->context ||
+     !gml_render_application_scene_flush(r)) return 0;
+  unsigned count=outside_mask_regions(regions,width,height,x,y,inside_width,inside_height);
+  if(!count) return 1;
+  int cpu_only=!device->observe_on_demand || !device->observe_on_demand(device->context);
+  /* Legacy recording services have exact replay, not a current-context
+   * witness. Observe their existing source and reuse the CPU flat rectangle;
+   * never turn an ordinary mask into an error or call an unowned context. */
+  if(cpu_only && !gml_render_application_surface_owned_view(r,NULL)) return 0;
+  GmlRenderResource *resource=gml_render_application_resource_ensure(r);
+  if(!resource || submit_outside_mask(r,resource,cpu_only?NULL:device,width,height,regions,count,cpu_only)!=
+                  (cpu_only?GML_RENDER_RESOURCE_EXEC_CPU:GML_RENDER_RESOURCE_EXEC_DEVICE)) return 0;
+  r->app_surface_opaque=0;r->app_presentation_coverage_active=0;
+  r->fb_opaque_known=0;r->fb_all_transparent=0;
+  return 1;
+}
+
+int gml_render_completed_screen_mask(GmlRender *r,uint32_t *pixels,int width,int height,
+                                     int x,int y,int inside_width,int inside_height){
+  const GmlRenderDeviceServices *device=gml_render_device(r);
+  GmlRenderResource *resource;
+  GmlRenderRect regions[4];
+  int previous_width=0,previous_height=0,created=0;
+  if(!r || !pixels || width<=0 || height<=0 || width>4096 || height>4096 ||
+     !r->scene_device_enabled || !r->resident_application_pass ||
+     !device || !device->observe_on_demand ||
+     !device->observe_on_demand(device->context) ||
+     !gml_render_application_scene_flush(r)) return 0;
+  if(pixels==r->app_surface_owned) return 0;
+  for(int i=0;i<GML_MAX_SURFACES;i++)
+    if(r->surface[i].live && pixels==r->surface[i].px) return 0;
+  unsigned count=outside_mask_regions(regions,width,height,x,y,inside_width,inside_height);
   if(!count) return 1;
   resource=gml_render_base_resource_lookup(r,pixels,&previous_width,&previous_height);
   if(resource && (previous_width!=width || previous_height!=height)){
@@ -1146,19 +1209,7 @@ int gml_render_completed_screen_mask(GmlRender *r,uint32_t *pixels,int width,int
     if(!resource) return 0;
     gml_render_resource_bind_dispatch(resource,r);created=1;
   }
-  GmlRenderImageRef image=gml_render_resource_image_ref(resource);
-  if(image.content_version>UINT64_MAX-count) goto rejected;
-  for(unsigned i=0;i<count;i++){
-    operations[i].opcode=GML_RENDER_OP_CLEAR;
-    operations[i].scene_family=GML_RENDER_SCENE_PRIMITIVE;
-    operations[i].reconstruction_mode=GML_RENDER_DEVICE_CHECKPOINT;
-    operations[i].target=(GmlRenderTargetRef){image,1u,(uint32_t)width,(uint32_t)height,
-      GML_RENDER_PIXEL_ARGB8888,regions[i]};
-    operations[i].target.image.content_version+=i+1u;
-    operations[i].payload.clear_colour=0xFF000000u;
-  }
-  GmlRenderDrawBatch batch={operations,count,NULL,0u};
-  GmlRenderResourceExecution result=gml_render_resource_submit_deferred(resource,device,&batch,NULL,0u);
+  GmlRenderResourceExecution result=submit_outside_mask(r,resource,device,width,height,regions,count,0);
   if(result!=GML_RENDER_RESOURCE_EXEC_DEVICE) goto rejected;
   if(created){
     r->retained_base_resource=resource;r->retained_base_pixels=pixels;
@@ -1167,7 +1218,6 @@ int gml_render_completed_screen_mask(GmlRender *r,uint32_t *pixels,int width,int
   }
   if(resource==r->base_scene_resource) r->base_scene_resource_masked=1;
   if(resource==r->retained_base_resource) r->retained_base_masked=1;
-  gml_render_dispatch_batch_record(r,&batch,result);
   return 1;
 rejected:
   if(created) base_stage_dispose(device,resource);
