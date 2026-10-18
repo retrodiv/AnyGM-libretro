@@ -1700,9 +1700,17 @@ static int resident_surface_part(GmlRender *r,int surf,double sx,double sy,doubl
                                  uint32_t blend,double alpha);
 static int resident_surface_shader(GmlRender *r,int surf,double dx,double dy,double dw,double dh,
                                    uint32_t blend,double alpha,
-                                   const GmlRenderShaderGeometry *geometry,int stretched);
+                                   const GmlRenderShaderGeometry *geometry,int stretched,
+                                   const GmlRenderRect *selected_region);
 static int resident_surface_filtered(GmlRender *r,int surf,double dx,double dy,double dw,double dh,
                                      uint32_t blend,double alpha);
+/* An explicitly disabled unknown program follows the CPU's plain draw policy.
+ * A requested or available content executor keeps its refusal/failure boundary. */
+static int resident_surface_shader_selected(const GmlRender *r){
+  return r && r->active_shader>=0 &&
+    (r->shader_device_present || r->shader_device_expected ||
+     !gml_render_shader_cpu_passthrough(r));
+}
 typedef struct {
   double x,y,width,height;
 } ResidentSurfaceSelection;
@@ -1901,7 +1909,7 @@ void gml_draw_surface_stretched(GmlRender *r,int surf,double dx,double dy,
       GmlRenderShaderGeometry geometry=gml_render_shader_geometry(r,mapped_x,mapped_y,
         mapped_width,mapped_height,mapped);
       resident_success=resident_surface_shader(r,surf,mapped_x,mapped_y,
-        mapped_width,mapped_height,blend,alpha,&geometry,1);
+        mapped_width,mapped_height,blend,alpha,&geometry,1,NULL);
       if(!resident_success)
         resident_success=resident_surface_filtered(r,surf,mapped_x,mapped_y,
           mapped_width,mapped_height,blend,alpha);
@@ -1958,7 +1966,8 @@ static int resident_surface_nearest_selection(GmlRender *r,int surf,double dx,do
      (surf==0? (!automatic && !r->app_surface_published) || !r->app_surface ||
                (r->app_surface!=r->app_surface_owned && !borrowed):
                 slot<0 || !r->surface[slot].live) ||
-     r->active_shader>=0 || gml_d3_is_active(r) || r->fog_flat ||
+     resident_surface_shader_selected(r) ||
+     gml_d3_is_active(r) || r->fog_flat ||
      r->blendmode<0 || (r->blendmode>2 && r->blendmode!=6) ||
      r->blend_equation!=1 || r->blend_equation_alpha!=1 || r->color_write_mask>15u ||
      !isfinite(dx) || !isfinite(dy) || !isfinite(dw) || !isfinite(dh) ||
@@ -2148,7 +2157,8 @@ static int resident_surface_filtered_resolved(GmlRender *r,int surf,double dx,do
      (!resolved_canvas && r->surface_canvas>0 &&
        (surf==r->surface_canvas || r->target_id==r->surface_canvas)) ||
      r->pending_presentation ||
-     r->active_shader>=0 || !r->alphablend || (r->blendmode && !destination_blend) ||
+     resident_surface_shader_selected(r) ||
+     !r->alphablend || (r->blendmode && !destination_blend) ||
      r->color_write_mask!=15u ||
      (destination_blend?(r->blend_equation<1 || r->blend_equation>5 ||
                          r->blend_equation_alpha<1 || r->blend_equation_alpha>5):
@@ -2364,7 +2374,8 @@ static int resident_surface_filtered_resolved(GmlRender *r,int surf,double dx,do
  * a later distinct surface draw can consume that result on the same device. */
 static int resident_surface_shader(GmlRender *r,int surf,double dx,double dy,double dw,double dh,
                                    uint32_t blend,double alpha,
-                                   const GmlRenderShaderGeometry *geometry,int stretched){
+                                   const GmlRenderShaderGeometry *geometry,int stretched,
+                                   const GmlRenderRect *selected_region){
   enum { MAX_AUXILIARY_SNAPSHOT_BYTES=64u*1024u*1024u };
   int slot=surface_slot(surf),target_id,target_slot,application_target,transient_source=0;
   double left,top;
@@ -2403,6 +2414,18 @@ static int resident_surface_shader(GmlRender *r,int surf,double dx,double dy,dou
      (!palette && (blend&0xFFFFFFu)!=0xFFFFFFu) || !isfinite(alpha) || alpha<1.0 ||
      !isfinite(dx) || !isfinite(dy) || !isfinite(dw) || !isfinite(dh) ||
      (surf!=0 && r->surface[slot].px==r->fb)) return 0;
+  /* Recognized fixed evaluators retain their separately qualified full-source
+   * contract. Arbitrary programs already consume a source rectangle in the
+   * terminal executor; preserve that same intent on a resident source. */
+  if(selected_region && palette &&
+     (selected_region->x || selected_region->y ||
+      selected_region->width!=(uint32_t)(surf==0?r->app_w:r->surface[slot].w) ||
+      selected_region->height!=(uint32_t)(surf==0?r->app_h:r->surface[slot].h))) return 0;
+  int cropped=selected_region &&
+    (selected_region->x || selected_region->y ||
+     selected_region->width!=(uint32_t)(surf==0?r->app_w:r->surface[slot].w) ||
+     selected_region->height!=(uint32_t)(surf==0?r->app_h:r->surface[slot].h));
+  if(cropped && (!r->alphablend || r->fbw>4096 || r->fbh>4096)) return 0;
   left=dx-r->cam_x;
   top=dy-r->cam_y;
   if(!isfinite(left) || !isfinite(top) || left<0.0 || top<0.0 ||
@@ -2483,6 +2506,12 @@ static int resident_surface_shader(GmlRender *r,int surf,double dx,double dy,dou
        sources[0].pixel_format!=GML_RENDER_PIXEL_ARGB8888) return 0;
   }
   device=gml_render_device(r);
+  GmlRenderRect source_region=selected_region?*selected_region:
+    (GmlRenderRect){0,0,sources[0].width,sources[0].height};
+  if(source_region.x<0 || source_region.y<0 || !source_region.width || !source_region.height ||
+     source_region.width>sources[0].width || source_region.height>sources[0].height ||
+     (uint32_t)source_region.x>sources[0].width-source_region.width ||
+     (uint32_t)source_region.y>sources[0].height-source_region.height) return 0;
   if(palette && (sources[0].width!=(uint32_t)(surf==0?r->app_w:r->surface[slot].w) ||
                  sources[0].height!=(uint32_t)(surf==0?r->app_h:r->surface[slot].h))) return 0;
   source_refs[0]=sources[0].image;
@@ -2573,7 +2602,8 @@ static int resident_surface_shader(GmlRender *r,int surf,double dx,double dy,dou
   state.sampler_count=1u;
   state.samplers[0].filter=!palette && r->interp?GML_RENDER_FILTER_BILINEAR:GML_RENDER_FILTER_NEAREST;
   state.samplers[0].edge_rule=GML_RENDER_EDGE_CLAMP_SUBIMAGE;
-  state.samplers[0].source_region=(GmlRenderRect){0,0,sources[0].width,sources[0].height};
+  state.samplers[0].source_region=source_region;
+  if(cropped) state.coverage_policy=GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA;
   batch=(GmlRenderDrawBatch){&operation,1u,&state,1u};
   result=application_target?gml_render_application_scene_submit(r,&batch,sources,
       operation.source_count):
@@ -2621,7 +2651,8 @@ static int resident_surface_part(GmlRender *r,int surf,double sx,double sy,doubl
   if(!r || slot<0 || !r->resident_application_pass || !gml_render_device(r) ||
      !gml_render_scene_target_matches(r) ||
      r->target_sp || r->target_id>=0 || r->pending_underlay || r->pending_presentation ||
-     r->active_shader>=0 || r->interp || r->blendmode || r->alpha_test_enable ||
+     resident_surface_shader_selected(r) ||
+     r->interp || r->blendmode || r->alpha_test_enable ||
      r->color_write_mask!=0x0Fu || r->blend_equation!=1 ||
      r->blend_equation_alpha!=1 || gml_d3_is_active(r) ||
      (blend&0xFFFFFFu)!=0xFFFFFFu || !isfinite(alpha) || alpha<1.0 ||
@@ -2718,19 +2749,23 @@ void gml_draw_surface_part_ext(GmlRender *r,int surf,double sx,double sy,double 
   }
   GmlRenderShaderGeometry geometry=gml_render_shader_geometry(r,dx,dy,sw*xs,sh*ys,
                                                                !explicit_target_raster);
-  /* R03-P7-CONTENT-SURFACE: a part call selecting the whole source and covering
-   * the whole destination is the same content-program operation as stretched.
-   * Preserve the part call's own coordinate mapping, then share its program
-   * snapshot, resource checkpoint and ordered fallback with that rule. */
+  /* Keep the part call's coordinate mapping and independently bounded source
+   * rectangle through the existing content-program handoff. Unqualified crop
+   * or destination geometry retains the original ordered CPU path below. */
   if(r){
     int slot=surface_slot(surf);
     int source_width=surf==0?r->app_w:
       slot>=0 && r->surface[slot].live?r->surface[slot].w:0;
     int source_height=surf==0?r->app_h:
       slot>=0 && r->surface[slot].live?r->surface[slot].h:0;
-    if(sx==0.0 && sy==0.0 && sw==(double)source_width &&
-       sh==(double)source_height && source_width>0 && source_height>0 &&
-       resident_surface_shader(r,surf,dx,dy,sw*xs,sh*ys,blend,alpha,&geometry,0)) return;
+    if(source_width>0 && source_height>0 &&
+       isfinite(sx) && isfinite(sy) && isfinite(sw) && isfinite(sh) &&
+       sx>=0.0 && sy>=0.0 && sw>0.0 && sh>0.0 &&
+       sx+sw<=source_width && sy+sh<=source_height &&
+       floor(sx)==sx && floor(sy)==sy && floor(sw)==sw && floor(sh)==sh){
+      GmlRenderRect region={(int32_t)sx,(int32_t)sy,(uint32_t)sw,(uint32_t)sh};
+      if(resident_surface_shader(r,surf,dx,dy,sw*xs,sh*ys,blend,alpha,&geometry,0,&region)) return;
+    }
   }
   ResidentSurfaceSelection selection={sx,sy,sw,sh};
   if(resident_surface_nearest_selection(r,surf,dx,dy,sw*xs,sh*ys,blend,alpha,0,&selection,1)) return;

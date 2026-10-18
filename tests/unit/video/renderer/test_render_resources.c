@@ -61,6 +61,8 @@ typedef struct FakeDevice {
   uint32_t last_batch_operations,last_batch_states;
   uint32_t last_batch_source_ids[3],last_batch_state_indices[3];
   uint32_t last_shader_uniform_count,last_shader_sampler_count;
+  GmlRenderRect last_shader_source_region;
+  uint32_t last_shader_coverage;
   float last_shader_value;
 } FakeDevice;
 
@@ -126,6 +128,10 @@ static GmlRenderExecutionResult fake_submit(void *context,const GmlRenderDrawBat
       fake->last_shader_uniform_count=last->payload.shader->uniform_count;
       fake->last_shader_sampler_count=last->payload.shader->sampler_count;
       fake->last_shader_value=last->payload.shader->uniforms[0].value[0];
+      if(batch->states && last->state_index<batch->state_count){
+        fake->last_shader_source_region=batch->states[last->state_index].samplers[0].source_region;
+        fake->last_shader_coverage=batch->states[last->state_index].coverage_policy;
+      }
     }
   }
   result.status=fake->status?fake->status:GML_RENDER_EXEC_ACCEPTED;
@@ -9636,6 +9642,8 @@ static int resident_content_surface_program_boundary(void){
   return 1;
 }
 
+static int passthrough_scope_executor(void *context,const GmlRenderShaderRequest *request);
+
 static int resident_content_surface_full_part_boundary(void){
   GmlRender *render=(GmlRender*)calloc(1,sizeof *render);
   FakeDevice fake={0};
@@ -9674,12 +9682,21 @@ static int resident_content_surface_full_part_boundary(void){
                             0.0,0.0,2.0,2.0,0xFFFFFFu,1.0);
   CHECK(render->resident_application_pass && fake.shader_submits==2 &&
         fake.last_opcode==GML_RENDER_OP_CONTENT_SHADER_DRAW);
+  /* These are active program boundaries, not the separate disabled-program
+   * policy whose CPU reference intentionally draws the source unchanged. */
+  gml_render_set_shader_executor(render,passthrough_scope_executor,NULL);
   CHECK(gml_render_begin_resident_base(render,screen,8,8,0.0,0.0));
   render->active_shader=0;
   shader_submits=fake.shader_submits;
   gml_draw_surface_part_ext(render,source,1.0,0.0,1.0,2.0,
                             0.0,0.0,8.0,4.0,0xFFFFFFu,1.0);
-  CHECK(!render->resident_application_pass && fake.shader_submits==shader_submits);
+  /* The former full-source fence was qualification scope, not a pixel oracle.
+   * Cropped content programs now carry the same region as the CPU handoff. */
+  CHECK(render->resident_application_pass && fake.shader_submits==shader_submits+1 &&
+        fake.last_shader_source_region.x==1 && fake.last_shader_source_region.y==0 &&
+        fake.last_shader_source_region.width==1u && fake.last_shader_source_region.height==2u &&
+        fake.last_shader_coverage==GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA);
+  shader_submits=fake.shader_submits;
   CHECK(gml_render_begin_resident_base(render,screen,8,8,0.0,0.0));
   render->active_shader=0;
   gml_draw_surface_part_ext(render,source,0.0,0.0,2.0,2.0,
@@ -9692,6 +9709,16 @@ static int resident_content_surface_full_part_boundary(void){
   gml_draw_surface_part_ext(render,source,0.0,0.0,2.0,2.0,
                             0.0,0.0,2.25,4.0,0xFFFFFFu,1.0);
   CHECK(!render->resident_application_pass && fake.shader_submits==shader_submits);
+  {
+    static const double invalid[][4]={{-1,0,1,2},{1,0,2,2},{0.5,0,1,2},{0,0,1.5,2}};
+    for(unsigned index=0;index<sizeof invalid/sizeof invalid[0];index++){
+      CHECK(gml_render_begin_resident_base(render,screen,8,8,0.0,0.0));
+      render->active_shader=0;shader_submits=fake.shader_submits;
+      gml_draw_surface_part_ext(render,source,invalid[index][0],invalid[index][1],
+        invalid[index][2],invalid[index][3],0.0,0.0,2.0,2.0,0xFFFFFFu,1.0);
+      CHECK(!render->resident_application_pass && fake.shader_submits==shader_submits);
+    }
+  }
   gml_render_free(render);
   free(render);
   return 1;
@@ -14353,6 +14380,29 @@ static int resident_cpu_passthrough_sprite_scope(void){
     }
     CHECK(r->active_shader==(program==20u?1:0) && r->interp==(int)interpolation &&
       !fake.readbacks && !fake.rgb_queries && !memcmp(shadow,r->fb,sizeof shadow));
+    /* This admission check covers nearest. Filtered selected-source scope is
+     * independently paired by the surface/canvas generators. */
+    if(!program && !interpolation){
+      int source=gml_surface_create(r,4,4);CHECK(source>0);
+      for(unsigned pixel=0;pixel<16u;pixel++) r->surface[source-1].px[pixel]=0xFF315273u;
+      r->surface[source-1].opaque_known=r->surface[source-1].all_opaque=1;
+      p->source_vertex_es="attribute vec3 in_Position;void main(){gl_Position=vec4(in_Position,1.0);}";
+      p->source_fragment_es="void main(){gl_FragColor=vec4(1.0);}";
+      submitted=fake.submits;
+      gml_draw_surface_stretched(r,source,0,0,8,8,0xFFFFFFu,1.0);
+      gml_draw_surface_part_ext(r,source,0,0,4,4,0,0,1,1,0xFFFFFFu,1.0);
+      gml_draw_surface_part_ext(r,source,1,0,2,4,0,0,2,2,0xFFFFFFu,1.0);
+      if(!r->resident_application_pass || fake.shader_submits || fake.readbacks || fake.rgb_queries ||
+         r->active_shader!=0 || memcmp(shadow,r->fb,sizeof shadow))
+        fprintf(stderr,"surface passthrough scope: generation=%d target=%u filter=%u mask=%u resident=%d shader=%d/%d reads=%d submits=%d opcode=%u shadow=%d\n",
+          generations[generation],kind,interpolation,mask,r->resident_application_pass,
+          r->shader_device_expected,r->shader_device_present,fake.readbacks,fake.submits,
+          fake.last_opcode,memcmp(shadow,r->fb,sizeof shadow));
+      CHECK(r->resident_application_pass && gml_render_scene_submit_pending(r) &&
+        fake.submits>submitted && fake.last_opcode==GML_RENDER_OP_TEXTURED_QUAD &&
+        !fake.shader_submits && !fake.readbacks && !fake.rgb_queries &&
+        r->active_shader==0 && !memcmp(shadow,r->fb,sizeof shadow));
+    }
     gml_render_abandon_device(r);gml_render_free(r);free(r);
   }
   return 1;

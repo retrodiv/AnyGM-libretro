@@ -1184,7 +1184,24 @@ int gml_gpu_opengl_scene_shader_draw(GmlGpuBackend *backend,const GmlPlanShader 
   operation.source=0u;
   operation.linear=state->samplers[0].filter==GML_RENDER_FILTER_BILINEAR;
   operation.destination=(GmlPlanRect){region.x,region.y,region.width,region.height};
-  operation.source_rect=(GmlPlanRect){0,0,source->width,source->height};
+  GmlRenderRect selected=state->samplers[0].source_region;
+  operation.source_rect=(GmlPlanRect){selected.x,selected.y,selected.width,selected.height};
+  if(state->coverage_policy==GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA){
+    /* Preserve the CPU handoff's byte quantization before alpha blending.
+     * Only the selected destination is cleared, including discarded fragments. */
+    if(!gml_gpu_opengl_bind_readback_target(backend,target->width,target->height,error,error_capacity)) return 0;
+    gml_gpu_opengl_set_rect(backend,&operation.destination,target->height);
+    backend->gl.ColorMask(GL_TRUE,GL_TRUE,GL_TRUE,GL_TRUE);
+    backend->gl.Disable(GL_BLEND);
+    backend->gl.ClearColor(0.0f,0.0f,0.0f,0.0f);
+    backend->gl.Clear(GL_COLOR_BUFFER_BIT);
+    backend->gl.BindVertexArray(backend->scene.vertex_array);
+    drawn=execute_shader_draw_with_source(backend,&plan,&operation,NULL,source_name,
+                                          source_origin,sampler_names,error,error_capacity);
+    if(drawn) drawn=gml_gpu_opengl_compose_shader_output(backend,target,region);
+    backend->gl.BindVertexArray(0);
+    return drawn && backend->gl.GetError()==GL_NO_ERROR;
+  }
   backend->gl.BindFramebuffer(GL_FRAMEBUFFER,target->framebuffer);
   if(source_over){
     backend->gl.BlendFuncSeparate(GL_SRC_ALPHA,GL_ONE_MINUS_SRC_ALPHA,

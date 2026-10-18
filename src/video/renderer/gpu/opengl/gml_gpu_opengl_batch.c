@@ -1033,13 +1033,20 @@ static int scene_preflight(GmlGpuBackend *backend,const GmlRenderDrawBatch *batc
          (qualified_blend(state)!=0 && qualified_blend(state)!=1) ||
          (qualified_blend(state)==1 && (!backend->gl.BlendFuncSeparate ||
                                          !backend->gl.BlendEquationSeparate)) ||
-         state->coverage_policy ||
+         (state->coverage_policy &&
+          (state->coverage_policy!=GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA ||
+           shader->builtin_kind!=GML_PLAN_BUILTIN_SHADER_NONE || qualified_blend(state)!=1 ||
+           target->width>4096u || target->height>4096u)) ||
          state->sampler_count!=1u ||
          (state->samplers[0].filter!=GML_RENDER_FILTER_NEAREST &&
           state->samplers[0].filter!=GML_RENDER_FILTER_BILINEAR) ||
          state->samplers[0].edge_rule!=GML_RENDER_EDGE_CLAMP_SUBIMAGE ||
          state->samplers[0].quantisation ||
-         !full_region(state->samplers[0].source_region,source->width,source->height) ||
+         !valid_region(state->samplers[0].source_region,source->width,source->height) ||
+         (!full_region(state->samplers[0].source_region,source->width,source->height) &&
+          state->coverage_policy!=GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA) ||
+         (shader->builtin_kind!=GML_PLAN_BUILTIN_SHADER_NONE &&
+          !full_region(state->samplers[0].source_region,source->width,source->height)) ||
          !((state->clip.width==0 && state->clip.height==0) ||
            full_region(state->clip,target->width,target->height))) return 0;
       for(uint32_t bound=0;bound<shader->sampler_count;bound++){
@@ -1664,6 +1671,48 @@ static int flush_quads(GmlGpuBackend *backend,GlSceneImage *target,GlSceneImage 
   target->valid=1;
   target->rendered_origin=1;
   return 1;
+}
+
+/* The CPU handoff shades an RGBA8 plane before its ordinary unit surface draw.
+ * Reuse that surface sampler, fixed RGB blend and opaque-covered-alpha pass;
+ * the private intermediate never crosses the device boundary. */
+int gml_gpu_opengl_compose_shader_output(GmlGpuBackend *backend,GlSceneImage *target,
+                                         GmlRenderRect region){
+  GlSceneImage source={0};
+  GmlRenderDrawOp operation={0};
+  GmlRenderDrawStateSnapshot state={0};
+  GmlRenderQuad *quad=&operation.payload.quad;
+  if(!backend || !target || !backend->readback_texture ||
+     backend->readback_width!=target->width || backend->readback_height!=target->height ||
+     !valid_region(region,target->width,target->height)) return 0;
+  source.texture=backend->readback_texture;
+  source.width=target->width;source.height=target->height;
+  source.pixel_format=GML_RENDER_PIXEL_ARGB8888;source.rendered_origin=1;
+  operation.opcode=GML_RENDER_OP_TEXTURED_QUAD;
+  operation.scene_family=GML_RENDER_SCENE_SURFACE;
+  operation.target.width=target->width;operation.target.height=target->height;
+  operation.target.region=region;
+  quad->shape=GML_RENDER_QUAD_AXIS_ALIGNED;
+  quad->sampling=(GmlRenderSamplingPolicy){GML_RENDER_FILTER_NEAREST,
+    GML_RENDER_EDGE_CLAMP_SUBIMAGE,{0,0,source.width,source.height},
+    GML_RENDER_QUANTISE_SURFACE_NEAREST_FUNCTION,0u};
+  quad->x[0]=quad->x[3]=region.x;quad->x[1]=quad->x[2]=(double)region.x+region.width;
+  quad->y[0]=quad->y[1]=region.y;quad->y[2]=quad->y[3]=(double)region.y+region.height;
+  quad->u[0]=quad->u[3]=(double)region.x/source.width;
+  quad->u[1]=quad->u[2]=(double)(region.x+(int32_t)region.width)/source.width;
+  quad->v[0]=quad->v[1]=(double)region.y/source.height;
+  quad->v[2]=quad->v[3]=(double)(region.y+(int32_t)region.height)/source.height;
+  quad->inverse_anchor[0]=region.x;quad->inverse_anchor[1]=region.y;
+  quad->inverse_x[0]=region.width;quad->inverse_y[1]=region.height;
+  quad->span_x[2]=region.x;quad->span_x[3]=region.y;
+  quad->span_y[1]=region.width;quad->span_y[2]=region.height;quad->span_y[3]=2.0;
+  quad->filtered_draw_alpha=1.0;
+  for(unsigned corner=0;corner<4u;corner++) quad->corner_colour[corner]=0xFFFFFFFFu;
+  state.colour=0xFFFFFFFFu;state.alpha=255u;state.write_mask=15u;
+  state.coverage_policy=GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA;
+  if(!gml_render_gpu_opengl_draw_textured_quad(&operation,&state,source.width,source.height,1,
+                                             backend->scene.vertices)) return 0;
+  return flush_quads(backend,target,&source,53u,1,1u,15u,-1);
 }
 
 /* Each pixel of an ordered, disjoint row run reads one immutable device-local

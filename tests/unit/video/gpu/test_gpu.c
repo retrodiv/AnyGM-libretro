@@ -900,6 +900,48 @@ static int scene_content_source_orientation_case(void){
       }
     }
     {
+      static const GmlRenderRect invalid_source[]={{-1,0,1u,2u},{0,0,0u,2u},
+        {2,0,1u,2u},{INT32_MAX,0,UINT32_MAX,2u}};
+      operations[1].target.region=(GmlRenderRect){1,1,2u,2u};
+      state.rgb_source_factor=GML_RENDER_BLEND_SOURCE_ALPHA;
+      state.rgb_destination_factor=GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA;
+      state.alpha_source_factor=GML_RENDER_BLEND_ONE;
+      state.alpha_destination_factor=GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA;
+      state.rgb_equation=state.alpha_equation=GML_RENDER_BLEND_ADD;
+      state.coverage_policy=GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA;
+      state.samplers[0].source_region=(GmlRenderRect){1,0,1u,2u};
+      for(unsigned op=0;op<2u;op++) operations[op].target.image.content_version+=2u;
+      unsigned alpha_draws=anygm_test_graphics_scene_mask_draws(8u);
+      result=services.submit(services.context,&batch);
+      REQUIRE(result.status==GML_RENDER_EXEC_ACCEPTED && result.accepted_prefix==2u &&
+              anygm_test_graphics_scene_copies()==2u &&
+              anygm_test_graphics_read_pixels()==0u &&
+              anygm_test_graphics_scene_filter()==GL_NEAREST &&
+              anygm_test_graphics_scene_mask_draws(8u)==alpha_draws+1u,
+              "a cropped program uses the device-only intermediate and covered-alpha pass");
+      int clears=anygm_test_graphics_clear_calls(),draws=anygm_test_graphics_quad_draw_calls();
+      for(unsigned index=0;index<sizeof invalid_source/sizeof invalid_source[0];index++){
+        state.samplers[0].source_region=invalid_source[index];
+        result=services.submit(services.context,&batch);
+        REQUIRE(result.status==GML_RENDER_EXEC_UNSUPPORTED && result.accepted_prefix==0u &&
+                anygm_test_graphics_clear_calls()==clears &&
+                anygm_test_graphics_quad_draw_calls()==draws &&
+                anygm_test_graphics_scene_copies()==2u,
+                "invalid source crops refuse before clears, draws or orientation copies");
+      }
+      state.samplers[0].source_region=(GmlRenderRect){1,0,1u,2u};
+      state.coverage_policy=0u;
+      result=services.submit(services.context,&batch);
+      REQUIRE(result.status==GML_RENDER_EXEC_UNSUPPORTED && result.accepted_prefix==0u &&
+              anygm_test_graphics_clear_calls()==clears &&
+              anygm_test_graphics_quad_draw_calls()==draws,
+              "a crop without the qualified covered-alpha policy refuses atomically");
+      state.samplers[0].source_region=(GmlRenderRect){0,0,2u,2u};
+      state.rgb_source_factor=state.rgb_destination_factor=0u;
+      state.alpha_source_factor=state.alpha_destination_factor=0u;
+      state.rgb_equation=state.alpha_equation=0u;
+    }
+    {
       int deletes=anygm_test_graphics_deletes();
       services.retire(services.context,source);
       REQUIRE(anygm_test_graphics_deletes()==deletes,

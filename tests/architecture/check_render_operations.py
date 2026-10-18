@@ -216,6 +216,7 @@ DISPATCH_ADDITIONAL = {
     "gml_software3d_vertex_submit_buffer", "gml_software3d_model_draw",
 }
 DISPATCH_HELPERS = {
+    "resident_surface_shader_selected",
     "resident_sprite_program_blocks",
     "resident_zero_scale_sprite_noop",
     "resident_outside_sprite_noop", "gml_render_resident_sprite_outside",
