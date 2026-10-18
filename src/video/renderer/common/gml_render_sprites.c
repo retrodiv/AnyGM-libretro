@@ -1499,7 +1499,8 @@ static void resident_tile_source_metadata(GmlTpag *page){
 int gml_render_resident_nearest_tile_page(GmlRender *r,GmlTpag *page,
                                          double left,double top,double xs,double ys,
                                          uint32_t colour,double alpha){
-  if(r && r->classic_phase_resource && !r->classic_phase_scene_preparing)
+  if(r && r->classic_phase_resource && !r->classic_phase_scene_preparing &&
+     (!r->classic_phase_y || gml_render_classic_vertical_phase_blocks_scene(r)))
     return gml_render_resident_classic_phase_atlas(r,page,left,top,xs,ys,colour,alpha,
                                                    GML_RENDER_PHASE_TILE);
   if(!r || !page || !page->project_authored_edges || !r->resident_application_pass ||
@@ -1581,7 +1582,8 @@ done:
 int gml_render_resident_selected_background_page(GmlRender *r,GmlTpag *page,
                                                  double left,double top,double xs,double ys,
                                                  uint32_t colour,double alpha){
-  if(r && r->classic_phase_resource && !r->classic_phase_scene_preparing)
+  if(r && r->classic_phase_resource && !r->classic_phase_scene_preparing &&
+     (!r->classic_phase_y || gml_render_classic_vertical_phase_blocks_scene(r)))
     return gml_render_resident_classic_phase_atlas(r,page,left,top,xs,ys,colour,alpha,
                                                    GML_RENDER_PHASE_BACKGROUND_PART);
   if(!r || !page || !r->resident_application_pass || r->interp || r->fog_flat ||
@@ -1641,7 +1643,8 @@ int gml_render_resident_font_glyph(GmlRender *r,int atlas,int source_x,int sourc
                                    double xs,double ys,uint32_t colour,double alpha){
   GmlTpag page={.atlas=atlas,.sx=source_x,.sy=source_y,.sw=width,.sh=height,
                 .tw=width,.th=height,.bw=width,.bh=height};
-  if(r && r->classic_phase_resource && !r->classic_phase_scene_preparing)
+  if(r && r->classic_phase_resource && !r->classic_phase_scene_preparing &&
+     (!r->classic_phase_y || gml_render_classic_vertical_phase_blocks_scene(r)))
     return gml_render_resident_classic_phase_atlas(r,&page,left,top,xs,ys,colour,alpha,
                                                    GML_RENDER_PHASE_TEXT);
   /* Preserve cheap endpoint packets and the qualified checkpoint owner when
@@ -1667,7 +1670,8 @@ int gml_render_resident_sprite_font_glyph(GmlRender *r,int page_index,
   double left,double top,double xs,double ys,uint32_t colour,double alpha){
   if(!r || page_index<0 || page_index>=r->n_tpag) return 0;
   GmlTpag *page=&r->tpag[page_index];
-  if(r->classic_phase_resource && !r->classic_phase_scene_preparing)
+  if(r->classic_phase_resource && !r->classic_phase_scene_preparing &&
+     (!r->classic_phase_y || gml_render_classic_vertical_phase_blocks_scene(r)))
     return gml_render_resident_classic_phase_atlas(r,page,left,top,xs,ys,colour,alpha,
                                                    GML_RENDER_PHASE_SPRITE_TEXT);
   if((colour&0xFFFFFFu)==0xFFFFFFu && alpha==1.0){
@@ -3797,7 +3801,8 @@ int gml_render_resident_rotated_font_glyph(GmlRender *r,GmlSprite *sprite,GmlTpa
      r->blendmode==0 && !gml_render_target_preserves_alpha(r)) return 0;
   /* Rotated CPU glyphs write only the base image. Retain the phase bytes and
    * their independent coverage while staging the same existing text owner. */
-  if(r->classic_phase_resource && !r->classic_phase_scene_preparing){
+  if(r->classic_phase_resource && !r->classic_phase_scene_preparing &&
+     (!r->classic_phase_y || gml_render_classic_vertical_phase_blocks_scene(r))){
     if(!gml_render_classic_phase_resource_bind(r)) return 0;
     for(unsigned attempt=0;attempt<2u;attempt++){
       if(!gml_render_application_scene_prepare_begin(r)) return 0;

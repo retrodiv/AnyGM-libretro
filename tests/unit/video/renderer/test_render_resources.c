@@ -2289,6 +2289,50 @@ static int paired_root_public_sprite_and_base_only_glyph(void){
   return 1;
 }
 
+/* A retained root peer does not own draws on an independent numbered image. */
+static int paired_root_numbered_ports_keep_peer_inert(void){
+  for(unsigned port=0;port<5u;port++){
+    uint32_t base[16],vertical[16],shadow[16];
+    for(unsigned p=0;p<16u;p++){base[p]=0xFF315779u;vertical[p]=0x7F27496Bu;}
+    FakeDevice fake={.on_demand=1};GmlWin content={.classic_version=810};
+    GmlRender *r=paired_root_atlas_fixture(&fake,&content,base,vertical,4);CHECK(r);
+    r->tpag=calloc(1,sizeof *r->tpag);CHECK(r->tpag);r->n_tpag=1;
+    r->tpag[0]=(GmlTpag){.sw=2,.sh=2,.tw=2,.th=2,.bw=2,.bh=2};
+    int id=gml_surface_create(r,4,4);
+    CHECK(id>0 && gml_surface_set_target(r,id) && r->classic_phase_resource &&
+      r->classic_phase_y==vertical && !gml_render_classic_vertical_phase_blocks_scene(r));
+    gml_render_set_pending_fill(r,0x7F315779u);gml_render_flush_pending_fill(r);
+    CHECK(gml_render_scene_submit_pending(r));
+    int submitted=fake.submits;memcpy(shadow,r->fb,sizeof shadow);
+    for(unsigned inactive=0;inactive<2u;inactive++){
+      if(inactive) r->classic_phase_y=NULL;
+      int accepted=0;
+      if(port==0u) accepted=gml_render_resident_font_glyph(r,0,0,0,2,2,1,1,1,1,0xFFFFFFu,1.0);
+      else if(port==1u) accepted=gml_render_resident_sprite_font_glyph(r,0,1,1,1,1,0xFFFFFFu,1.0);
+      else if(port==2u){
+        GmlSprite cell={.w=2,.h=2};
+        accepted=gml_render_resident_rotated_font_glyph(r,&cell,&r->tpag[0],1,1,1,1,17,0xFFFFFFu,1.0);
+      }else if(port==3u)
+        accepted=gml_render_resident_selected_background_page(r,&r->tpag[0],1,1,1,1,0xFFFFFFu,1.0);
+      else{
+        r->tpag[0].project_authored_edges=1;
+        accepted=gml_render_resident_nearest_tile_page(r,&r->tpag[0],1,1,1,1,0xFFFFFFu,1.0);
+      }
+      if(inactive) CHECK(!accepted && fake.submits==submitted+1);
+      else CHECK(accepted && r->resident_application_pass && gml_render_scene_submit_pending(r) &&
+        fake.submits==submitted+1);
+      CHECK(!fake.readbacks && !fake.rgb_queries && !memcmp(shadow,r->fb,sizeof shadow));
+    }
+    r->classic_phase_y=vertical;
+    GmlRenderJournalMetrics peer={0};
+    gml_render_resource_journal_metrics(r->classic_phase_resource,&peer);
+    CHECK(peer.logical_version==1u && !peer.cpu_replays && !peer.journal_operations);
+    for(unsigned p=0;p<16u;p++) CHECK(base[p]==0xFF315779u && vertical[p]==0x7F27496Bu);
+    gml_render_abandon_device(r);gml_render_free(r);free(r);
+  }
+  return 1;
+}
+
 static int paired_root_atlas_ports_are_atomic(void){
   for(int port=GML_RENDER_PHASE_TEXT;port<=GML_RENDER_PHASE_SPRITE_TEXT;port++)
   for(unsigned inverse=0;inverse<2u;inverse++) for(unsigned shape=0;shape<2u;shape++){
@@ -16219,6 +16263,7 @@ int main(void){
   passed+=paired_root_clear_scope_is_explicit();
   passed+=paired_root_public_clear_keeps_device_authority();
   passed+=paired_root_public_sprite_and_base_only_glyph();
+  passed+=paired_root_numbered_ports_keep_peer_inert();
   passed+=paired_root_atlas_ports_are_atomic();
   passed+=paired_root_atlas_refuses_unqualified_ports();
   passed+=paired_root_public_axis_atlas_ports();
@@ -16449,6 +16494,6 @@ int main(void){
   passed+=source_free_primitive_rect_replay();
   passed+=stretched_float_exact_replay();
   passed+=filtered_font_exact_recovery();
-  printf("render resource cases: passed=%d failed=%d\n",passed,256-passed);
-  return passed==256?EXIT_SUCCESS:EXIT_FAILURE;
+  printf("render resource cases: passed=%d failed=%d\n",passed,257-passed);
+  return passed==257?EXIT_SUCCESS:EXIT_FAILURE;
 }
