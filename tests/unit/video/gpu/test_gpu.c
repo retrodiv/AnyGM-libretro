@@ -1294,16 +1294,17 @@ static int scene_resident_batch_case(void){
 /* Call/state proof only. Composed pixel qualification needs a real device. */
 static int scene_hardware_filtered_batch_case(unsigned kind){
   enum { QUADS=2049 };
+  int unit_font=kind==14u;
   int gui_background=kind==13u;
   int application_sprite=kind==11u;
   int leading_surface=kind==12u;
   int integer_surface=kind==10u;
   int additive=kind==1u,combined=kind==2u,surface=(kind>=3u && kind<=5u) || integer_surface || leading_surface;
-  int nearest=kind==4u || kind==5u || integer_surface,screen_stretch=(kind>=6u && kind<=9u) || application_sprite;
-  int screen_sprite=kind==7u || kind==8u || kind==9u || application_sprite;
+  int nearest=kind==4u || kind==5u || integer_surface,screen_stretch=(kind>=6u && kind<=9u) || application_sprite || unit_font;
+  int screen_sprite=kind==7u || kind==8u || kind==9u || application_sprite || unit_font;
   const uint8_t pixels[64]={11,22,33,255,44,55,66,100,77,88,99,0,111,122,133,200};
   for(unsigned api=0;api<2u;api++)
-  for(unsigned excluded=0;excluded<(gui_background?9u:application_sprite?12u:leading_surface?9u:integer_surface?9u:kind==9u?11u:nearest || screen_stretch?8u:(combined || surface)?7u:4u);excluded++){
+  for(unsigned excluded=0;excluded<(unit_font?12u:gui_background?9u:application_sprite?12u:leading_surface?9u:integer_surface?9u:kind==9u?11u:nearest || screen_stretch?8u:(combined || surface)?7u:4u);excluded++){
     GmlGpuContext context=fake_context(api?GML_GPU_API_OPENGLES3:GML_GPU_API_OPENGL_CORE);
     GmlRenderImageRef source={kind==5u || leading_surface?GML_RENDER_RESOURCE_APPLICATION:surface?GML_RENDER_RESOURCE_SURFACE:
       GML_RENDER_RESOURCE_ATLAS,91u,1u,1u};
@@ -1330,6 +1331,10 @@ static int scene_hardware_filtered_batch_case(unsigned kind){
     state.samplers[0].filter=nearest?GML_RENDER_FILTER_NEAREST:GML_RENDER_FILTER_HARDWARE_BILINEAR;
     state.samplers[0].edge_rule=GML_RENDER_EDGE_CLAMP_SUBIMAGE;
     state.samplers[0].source_region=upload.region;
+    if(unit_font){
+      state.samplers[0].quantisation=GML_RENDER_QUANTISE_HARDWARE_SPRITE_FIRSTGEN;
+      state.samplers[0].logical_margin_mask=GML_RENDER_MARGIN_UNIT_TEXEL;
+    }
     if(kind==9u){
       state.samplers[0].source_region=(GmlRenderRect){1,1,2u,2u};
       state.samplers[0].edge_rule=GML_RENDER_EDGE_LOGICAL_TPAG;
@@ -1359,7 +1364,7 @@ static int scene_hardware_filtered_batch_case(unsigned kind){
       op->opcode=index?GML_RENDER_OP_TEXTURED_QUAD:GML_RENDER_OP_CLEAR;
       if(!index){op->payload.clear_colour=0x40123456u;continue;}
       op->reconstruction_mode=GML_RENDER_DEVICE_CHECKPOINT;
-      op->scene_family=kind==8u?GML_RENDER_SCENE_TEXT:surface?GML_RENDER_SCENE_SURFACE:
+      op->scene_family=kind==8u || unit_font?GML_RENDER_SCENE_TEXT:surface?GML_RENDER_SCENE_SURFACE:
         additive || screen_stretch?GML_RENDER_SCENE_SPRITE:GML_RENDER_SCENE_BACKGROUND;
       op->sources=&source;op->source_count=1u;
       GmlRenderQuad *quad=&op->payload.quad;
@@ -1396,6 +1401,11 @@ static int scene_hardware_filtered_batch_case(unsigned kind){
         quad->u[1]=quad->u[2]=quad->v[2]=quad->v[3]=1.0/1.2;
         for(unsigned corner=0;corner<4u;corner++) quad->corner_colour[corner]=0xB3123456u;
       }
+      if(unit_font){
+        quad->inverse_x[0]=quad->inverse_y[1]=1.0;
+        quad->x[1]=quad->x[2]=quad->y[2]=quad->y[3]=2.0;
+        quad->u[1]=quad->u[2]=quad->v[2]=quad->v[3]=1.0;
+      }
       if(kind==9u){
         quad->u[0]=quad->u[3]=quad->v[0]=quad->v[1]=.25;
         quad->u[1]=quad->u[2]=quad->v[2]=quad->v[3]=(1.0+1.0/.6)/4.0;
@@ -1409,7 +1419,7 @@ static int scene_hardware_filtered_batch_case(unsigned kind){
     }
     if(excluded==5u) ops[QUADS].payload.quad.corner_colour[0]=0xFFFEFFFFu;
     if(excluded==6u) ops[QUADS].payload.quad.u[1]=.9;
-    if(excluded==7u) ops[QUADS].payload.quad.x[1]=ops[QUADS].payload.quad.x[2]=screen_stretch?2.0:3.0;
+    if(excluded==7u) ops[QUADS].payload.quad.x[1]=ops[QUADS].payload.quad.x[2]=unit_font?3.0:screen_stretch?2.0:3.0;
     if(gui_background && excluded==7u)
       ops[QUADS].payload.quad.x[1]=ops[QUADS].payload.quad.x[2]=-2.0;
     if(integer_surface && excluded==8u)
@@ -1421,6 +1431,11 @@ static int scene_hardware_filtered_batch_case(unsigned kind){
       if(excluded==9u) ops[QUADS].scene_family=GML_RENDER_SCENE_TEXT;
       if(excluded==10u) state.coverage_policy=0u;
       if(excluded==11u) state.write_mask=7u;
+    }else if(unit_font){
+      if(excluded==8u) ops[QUADS].payload.quad.sampling.logical_margin_mask=17u;
+      if(excluded==9u) ops[QUADS].payload.quad.inverse_anchor[0]=.25;
+      if(excluded==10u) ops[QUADS].scene_family=GML_RENDER_SCENE_SPRITE;
+      if(excluded==11u) ops[QUADS].payload.quad.inverse_x[0]=.5;
     }else{
       if(excluded==8u && !integer_surface) ops[QUADS].payload.quad.sampling.logical_margin_mask=16u;
       if(excluded==9u) ops[QUADS].payload.quad.sampling.source_region.x=0;
@@ -1832,7 +1847,7 @@ static int scene_hardware_screen_sprite_batch_case(void){
     scene_filtered_affine_row_batch_case();
 }
 static int scene_hardware_screen_font_batch_case(void){
-  return scene_hardware_filtered_batch_case(8);
+  return scene_hardware_filtered_batch_case(8) && scene_hardware_filtered_batch_case(14);
 }
 static int scene_hardware_screen_trim_batch_case(void){
   return scene_hardware_filtered_batch_case(9);

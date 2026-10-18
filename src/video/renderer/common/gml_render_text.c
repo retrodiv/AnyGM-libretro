@@ -261,7 +261,9 @@ static void draw_text_real_plain(GmlRender *r, GmlFont *f, double x, double y, c
            !f->subpixel && f->sdf_spread<=0 &&
            !r->software_overlay && !gml_d3_is_active(r) &&
            isfinite(alpha) && alpha>=0.0 && alpha<=1.0){
-          if(r->interp && !r->classic && !f->runtime_owned &&
+          if(r->interp && !r->classic &&
+             (!f->runtime_owned || (r->atlas && f->atlas>=0 && f->atlas<r->n_atlas &&
+                                   r->atlas[f->atlas].runtime_font_page)) &&
              isfinite(xs) && isfinite(ys) &&
              ((xs>0.0 && ys>0.0 && xs<=1.0 && ys<=1.0) ||
               resident_nearest_text_scale(xs,ys)))

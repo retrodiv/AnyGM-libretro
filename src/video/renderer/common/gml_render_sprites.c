@@ -2182,7 +2182,7 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
   /* R03-P9-FILTERED-REAL-TEXT: a demanded real glyph is a physical atlas crop,
    * not a TPAG entry. It uses the same filtered source/phase preparation as a sprite. */
   int filtered_real_text=family==GML_RENDER_SCENE_TEXT && page_index==-1 &&
-    part_view && r && r->interp && !rotated_sprite && !corner_colours &&
+    part_view && r && r->interp && nearest_mode!=11 && !rotated_sprite && !corner_colours &&
     xs>0.0 && ys>0.0 && xs<=1.0 && ys<=1.0 &&
     part_view->sw<=256 && part_view->sh<=256;
   int mapped_gui_font=filtered_real_text && resident_mapped_screen_gui_font(r);
@@ -2430,7 +2430,12 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
      (uint64_t)(uint32_t)page->sx+(uint32_t)page->sw>source.width ||
      (uint64_t)(uint32_t)page->sy+(uint32_t)page->sh>source.height) return 0;
   if(hardware_screen_filtered && !source.borrowed_immutable) return 0;
-  if(hardware_physical_sprite && !source.borrowed_immutable) return 0;
+  /* Runtime font pages already publish incarnation/version and flush before
+   * mutation. Keep that mutable source honest rather than relabelling it as
+   * immutable or borrowing the packaged font's exact replay owner. */
+  int mutable_filtered_font=hardware_physical_font && atlas->runtime_font_page &&
+    source.image.resource_class==GML_RENDER_RESOURCE_ATLAS && !source.resident_resource;
+  if(hardware_physical_sprite && !source.borrowed_immutable && !mutable_filtered_font) return 0;
   /* The full logical quad can extend beyond the visible page, but its prepared UVs must remain
    * inside the atlas even though transparent taps themselves never fetch those neighbours. */
   if(transparent_stretched_trim && !box_stretched && !stretched_magnification &&
@@ -2795,6 +2800,9 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
      hardware_background || hardware_gui_background || modern_screen_filtered || hardware_physical_sprite)
       ?(corner_colours && part_view && margin_mask
           ?GML_RENDER_MARGIN_VISIBLE_CENTRE:margin_mask):0u;
+  if(mutable_filtered_font && !margin_mask && xs==1.0 && ys==1.0 &&
+     left==floor(left) && top==floor(top))
+    operation.payload.quad.sampling.logical_margin_mask=GML_RENDER_MARGIN_UNIT_TEXEL;
   uint32_t draw_alpha=additive_background?255u:(uint32_t)lround(alpha*255.0);
   /* GML's blend is BBGGRR; each neutral quad vertex carries AARRGGBB. */
   for(int corner=0;corner<4;corner++){
@@ -3127,13 +3135,15 @@ int gml_render_resident_filtered_atlas_page(GmlRender *r,int page_index,
                                      part_view,NULL,0.0,NULL,0,0,0,0,mode);
 }
 
-/* New magnification/reflection shares the qualified physical sampler. Existing
- * positive unit/reduction font owners retain their exact recipes unchanged. */
+/* Mutable font pages share the physical sampler at every bounded axis scale.
+ * Packaged positive unit/reduction fonts retain their exact owner unchanged. */
 static int resident_filtered_font_crop(GmlRender *r,GmlTpag *page,
                                        double left,double top,double xs,double ys,
                                        uint32_t colour,double alpha){
-  if(!r || !page || !r->interp || r->classic ||
-     !(xs<0.0 || ys<0.0 || xs>1.0 || ys>1.0)) return 0;
+  if(!r || !page || !r->interp || r->classic) return 0;
+  int mutable_font=r->atlas && page->atlas>=0 && page->atlas<r->n_atlas &&
+    r->atlas[page->atlas].runtime_font_page;
+  if(!mutable_font && !(xs<0.0 || ys<0.0 || xs>1.0 || ys>1.0)) return 0;
   return resident_filtered_atlas_page(r,-1,left,top,xs,ys,GML_RENDER_SCENE_TEXT,
     colour,alpha,page,NULL,0.0,NULL,0,0,0,0,11);
 }
@@ -3144,7 +3154,8 @@ int gml_render_resident_filtered_font_glyph(GmlRender *r,int atlas,
                                             uint32_t colour,double alpha){
   GmlTpag glyph={.atlas=atlas,.sx=source_x,.sy=source_y,.sw=width,.sh=height,
                  .tw=width,.th=height,.bw=width,.bh=height};
-  if(xs<0.0 || ys<0.0 || xs>1.0 || ys>1.0)
+  if((r && r->atlas && atlas>=0 && atlas<r->n_atlas && r->atlas[atlas].runtime_font_page) ||
+     xs<0.0 || ys<0.0 || xs>1.0 || ys>1.0)
     return resident_filtered_font_crop(r,&glyph,left,top,xs,ys,colour,alpha);
   int opaque_target_alpha=!gml_render_target_preserves_alpha(r);
   return resident_filtered_atlas_page(r,-1,left,top,xs,ys,GML_RENDER_SCENE_TEXT,

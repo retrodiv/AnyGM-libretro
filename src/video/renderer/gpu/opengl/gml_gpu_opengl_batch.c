@@ -781,6 +781,12 @@ static int hardware_screen_sprite_valid(const GmlRenderDrawOp *op,
      (!qualified_blend(state) && state->coverage_policy==GML_RENDER_COVERAGE_REPLACE_ZERO_ALPHA)) &&
     (qualified_blend(state)==0 || qualified_blend(state)==1 || qualified_blend(state)==3 ||
      qualified_blend(state)==15 || qualified_blend(state)==16 || qualified_blend(state)==17);
+  if(margin==GML_RENDER_MARGIN_UNIT_TEXEL){
+    if(!physical || op->scene_family!=GML_RENDER_SCENE_TEXT || affine_row ||
+       xs!=1.0 || ys!=1.0 || left!=floor(left) || top!=floor(top) ||
+       quad->sampling.edge_rule!=GML_RENDER_EDGE_CLAMP_SUBIMAGE) return 0;
+    margin=0u;
+  }
   if(quad->sampling.quantisation==GML_RENDER_QUANTISE_HARDWARE_SPRITE_MODERN &&
      ((state->alpha_test_enabled && state->alpha_test_reference) ||
       (qualified_blend(state)!=0 && qualified_blend(state)!=1 &&
@@ -1443,7 +1449,9 @@ static int scene_preflight(GmlGpuBackend *backend,const GmlRenderDrawBatch *batc
                    (sampling->edge_rule!=GML_RENDER_EDGE_LOGICAL_TPAG ||
                     (op->payload.quad.shape!=GML_RENDER_QUAD_CARDINAL &&
                      op->payload.quad.shape!=GML_RENDER_QUAD_GENERAL)))
-                : sampling->logical_margin_mask!=0u))) ||
+                : sampling->logical_margin_mask!=0u &&
+                  !(hardware_sprite && op->scene_family==GML_RENDER_SCENE_TEXT &&
+                    sampling->logical_margin_mask==GML_RENDER_MARGIN_UNIT_TEXEL)))) ||
          state->samplers[0].filter!=sampling->filter ||
          state->samplers[0].edge_rule!=sampling->edge_rule ||
          state->samplers[0].quantisation!=sampling->quantisation ||
