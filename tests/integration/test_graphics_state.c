@@ -3413,8 +3413,8 @@ static int scene_canvas_cpu_source_case(void){
   return 1;
 }
 
-/* Presentation-only translation must not move the canonical completed image. */
-static int native_translated_world_case(void){
+/* Translate the staged world, not the independent GUI or final delivery. */
+static int translated_world_variant(unsigned forced){
   static const int offsets[][2]={{1,2},{-3,-2},{64,48},{-64,-48},{0,0}};
   for(unsigned observed=0;observed<2u;observed++){
     Session plain={0},selected={0};
@@ -3430,9 +3430,21 @@ static int native_translated_world_case(void){
     presentation.values.struct_size=sizeof presentation.values;
     presentation.fields=ANYGM_CONFIG_PRESENT_LOGICAL_RASTER;
     presentation.values.present_logical_raster=1u;
+    if(forced){
+      presentation.fields|=ANYGM_CONFIG_ASPECT_MODE;
+      presentation.values.aspect_mode=GMC_ASPECT_FORCE_16_9;
+    }
     REQUIRE(anygm_set_config(plain.engine,&presentation)==ANYGM_OK &&
             anygm_set_config(selected.engine,&presentation)==ANYGM_OK,
             "translated native logical raster selected");
+    if(forced){
+      const char *overrides[]={"?aspect @compositor_fullwidth=1",
+                               "?aspect @wide_gameplay_view=1"};
+      for(unsigned slot=0;slot<2u;slot++)
+        REQUIRE(anygm_set_runtime_override(plain.engine,slot,1u,overrides[slot])==ANYGM_OK &&
+                anygm_set_runtime_override(selected.engine,slot,1u,overrides[slot])==ANYGM_OK,
+                "translated forced world uses the whole-window compositor");
+    }
     if(observed){ context.userdata=&witness;context.is_current=graphics_context_is_current; }
     REQUIRE(anygm_graphics_context_reset(selected.engine,&context)==ANYGM_OK,
             "translated native context selected");
@@ -3446,10 +3458,13 @@ static int native_translated_world_case(void){
       REQUIRE(advance(plain.engine,1,NULL) && advance(selected.engine,1,NULL),
               "translated native frame completes");
       if(!observed){
-        const uint32_t *pixels=NULL;unsigned width=0,height=0;
-        REQUIRE(resolve_host_frame(selected.engine,&pixels,&width,&height) &&
-                width==64u && height==48u && pixels &&
-                !memcmp(plain.engine->screen,pixels,64u*48u*sizeof *pixels),
+        const uint32_t *pixels=NULL,*reference=NULL;
+        unsigned width=0,height=0,reference_width=0,reference_height=0;
+        REQUIRE(resolve_host_frame(plain.engine,&reference,&reference_width,&reference_height) &&
+                resolve_host_frame(selected.engine,&pixels,&width,&height) &&
+                (forced?width>64u:width==64u) && height==48u && pixels && reference &&
+                width==reference_width && height==reference_height &&
+                !memcmp(reference,pixels,(size_t)width*height*sizeof *pixels),
                 "translated native fake recovery preserves CPU output and stationary GUI");
         size_t cpu_size=0,gpu_size=0,again_size=0;
         uint8_t *cpu_state=serialize(plain.engine,&cpu_size);
@@ -3467,9 +3482,11 @@ static int native_translated_world_case(void){
         long frame=plain.engine->vm.frame;
         REQUIRE(advance(plain.engine,1,NULL) && advance(selected.engine,1,NULL) &&
                 plain.engine->vm.frame==frame && selected.engine->vm.frame==frame &&
+                resolve_host_frame(plain.engine,&reference,&reference_width,&reference_height) &&
                 resolve_host_frame(selected.engine,&pixels,&width,&height) &&
-                width==64u && height==48u && pixels &&
-                !memcmp(plain.engine->screen,pixels,64u*48u*sizeof *pixels),
+                (forced?width>64u:width==64u) && height==48u && pixels && reference &&
+                width==reference_width && height==reference_height &&
+                !memcmp(reference,pixels,(size_t)width*height*sizeof *pixels),
                 "translated native restored publication keeps the saved pixels and VM phase");
       }
     }
@@ -3488,6 +3505,11 @@ static int native_translated_world_case(void){
   return 1;
 }
 
+static int native_translated_world_case(void){
+  return translated_world_variant(0u) && translated_world_variant(1u);
+}
+
+/* Presentation-only translation must not move the canonical completed image. */
 static int scene_terminal_integer_shift_case(void){
   for(unsigned mode=0;mode<4u;mode++){
   Session selected={0};GmlGpuCounters before={0},after={0};

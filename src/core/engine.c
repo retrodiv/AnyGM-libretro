@@ -1744,10 +1744,19 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
     frame_views[0].pw==(int)engine->width && frame_views[0].ph==(int)engine->height &&
     render_presentation.application_width==(int)engine->width &&
     render_presentation.application_height==(int)engine->height;
-  int translated_base_world=translated_full_port &&
-    !engine->aspect_force_active && !engine->composed_frame &&
+  /* The existing sole forced-window composition normalizes the port extent
+   * to the complete owned raster, but preserves its authored translation. */
+  int translated_wide_port=engine->scene_renderer_session==ANYGM_SCENE_RENDERER_OPENGL &&
+    engine->aspect_force_active && frame_view_count==1 &&
+    (frame_views[0].px!=0 || frame_views[0].py!=0) &&
+    render_presentation.application_width==(int)engine->width &&
+    render_presentation.application_height==(int)engine->height &&
+    aspect_compositor_fullwidth_gen(engine);
+  int translated_base_world=
+    ((translated_full_port && !engine->aspect_force_active && app_surface_is_draw_target) ||
+     translated_wide_port) && !engine->composed_frame &&
     !gml_render_is_classic(&engine->render) &&
-    render_presentation.application_owned && app_surface_is_draw_target &&
+    render_presentation.application_owned &&
     !(view_surface>0 && gml_surface_exists(&engine->render,view_surface)) &&
     engine->scene_renderer_session==ANYGM_SCENE_RENDERER_OPENGL &&
     engine_graphics_active(engine);
@@ -1805,7 +1814,7 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
       render_presentation.application_owned);
   int owned_world_began=0;
   int base_world_began=0;
-  engine_dispatch_admission_skip(engine,0,forced_owned_scene);
+  engine_dispatch_admission_skip(engine,0,forced_owned_scene || translated_base_world);
   /* Unsupported operations still take the checked CPU barrier. */
   if(direct_owned_world && !engine->composed_frame &&
      (!engine->aspect_force_active || forced_owned_scene) &&
@@ -1832,7 +1841,7 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
     else if(classic_retained_scene)
       base_world_began=gml_render_begin_resident_base_retaining_target(
         &engine->render,world_pixels,world_width,world_height,cam_x,cam_y);
-    if(!engine->composed_frame && !engine->aspect_force_active &&
+    if(!engine->composed_frame && (!engine->aspect_force_active || translated_base_world) &&
        ((!render_presentation.application_draw_enabled && frame_view_count==0) ||
         translated_base_world ||
         (native_assigned_view && !gml_render_is_classic(&engine->render)) ||
@@ -1991,6 +2000,8 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
       translated_world_staged=gml_render_application_surface_owned_stage_base(
         &engine->render,engine->fb,(int)engine->width,(int)engine->height,
         frame_views[0].px,frame_views[0].py,engine->background);
+    if(translated_world_staged && engine->aspect_force_active)
+      forced_owned_scene_began=1;
     if(!translated_world_staged &&
        !gml_render_resident_application_cpu_barrier(&engine->render))
       return ANYGM_ERROR_INTERNAL;
