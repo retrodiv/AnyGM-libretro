@@ -704,6 +704,10 @@ static int resident_atlas_crop_from_page_impl(GmlRender *r,GmlTpag *page,
     ?0x1p-14:scaled_atlas?0.0625:1.0;
   int integer_background=physical_sprite_page==8 || scaled_background;
   int integer_atlas=integer_sprite || integer_background || tile_function || text_function;
+  uint32_t source_alpha_key=0u;
+  int keyed_background=(integer_background || tile_function) &&
+    (family==GML_RENDER_SCENE_BACKGROUND || family==GML_RENDER_SCENE_TILE) &&
+    gml_render_shader_channel_alpha_key(r,&source_alpha_key);
   /* Whole background magnification is bounded by projected extent below,
    * not by the older atlas-scale envelope. Other modes keep their domains. */
   double maximum_atlas_scale=single_texel_sprite?4096.0:
@@ -834,7 +838,8 @@ static int resident_atlas_crop_from_page_impl(GmlRender *r,GmlTpag *page,
      (r->gui_pass_active && !integer_atlas &&
       ((family!=GML_RENDER_SCENE_SPRITE && !gui_crop) ||
        !resident_identity_screen_gui(r))) ||
-     (family==GML_RENDER_SCENE_SPRITE?resident_sprite_program_blocks(r):r->active_shader>=0) ||
+     (family==GML_RENDER_SCENE_SPRITE?resident_sprite_program_blocks(r):
+      r->active_shader>=0 && !keyed_background) ||
      (r->alpha_test_enable && !integer_atlas) ||
      (!r->alphablend && !integer_atlas) ||
      (r->blendmode && !replace && !fog_rotated_normal && !(integer_atlas && r->blendmode==2) &&
@@ -1059,7 +1064,7 @@ static int resident_atlas_crop_from_page_impl(GmlRender *r,GmlTpag *page,
     }
     int copied_font_cache=text_function && physical_sprite_page==14 &&
       page->argb_cache && page->alpha_runs_built && page->alpha_row_min && page->alpha_row_max;
-    int unit_white=!flat_fog_sprite && !r->blendmode && (!r->alpha_test_enable || !r->alpha_test_ref) &&
+    int unit_white=!source_alpha_key && !flat_fog_sprite && !r->blendmode && (!r->alpha_test_enable || !r->alpha_test_ref) &&
       fabs(xs)==1.0 && fabs(ys)==1.0 && colour==0xFFFFFFu &&
       /* Detached TILE views cannot enter cached partial-opacity or reflected
        * white copies. Only the forward full-opacity copy has a snapped fallback. */
@@ -1099,7 +1104,7 @@ static int resident_atlas_crop_from_page_impl(GmlRender *r,GmlTpag *page,
     /* The unchanged white/full-alpha application leaf can read one adjacent
      * atlas texel at a trailing tie. Keep its physical bounds without claiming
      * that the original crop's cached alpha classification covers that texel. */
-    int contiguous=!flat_fog_sprite && firstgen && !tile_function && !r->blendmode &&
+    int contiguous=!source_alpha_key && !flat_fog_sprite && firstgen && !tile_function && !r->blendmode &&
       (!r->alpha_test_enable || !r->alpha_test_ref) &&
       r->alphablend && colour==0xFFFFFFu && draw_alpha==1.0;
     if(contiguous && (xs>1.0 || ((scaled_background || text_function || tiled_sprite_function) && xs>0.0 &&
@@ -1276,6 +1281,7 @@ static int resident_atlas_crop_from_page_impl(GmlRender *r,GmlTpag *page,
     (!sprite_part_function || (destination_factor_sprite && r->alphablend))?r->color_write_mask:15u;
   state.colour=0xFFFFFFFFu;
   state.alpha=255u;
+  state.source_alpha_key=source_alpha_key;
   if(integer_atlas){
     /* The unit-white cardinal copy and disabled scalar writer ignore raw
      * cutout. Other cardinal blends apply it through their CPU alpha table.
@@ -1406,7 +1412,7 @@ static int resident_atlas_crop_from_page_impl(GmlRender *r,GmlTpag *page,
   }
   /* Enqueue conservatively invalidates application opacity. A complete nearest
    * replacement from an opaque page proves every target alpha without reading it. */
-  if((state.write_mask&8u) && !tile_regions && !runtime_geometry && !inverse_sprite &&
+  if(!source_alpha_key && (state.write_mask&8u) && !tile_regions && !runtime_geometry && !inverse_sprite &&
      !(destination_factor_sprite && r->alphablend && gml_render_target_preserves_alpha(r)) &&
      (!r->alpha_test_enable || r->alpha_test_ref<255u) &&
      ((replace && !replacement_sprite) || (page->scene_fully_opaque && !adjacent_alpha)) && draw_alpha==1.0 && left==0.0 && top==0.0 &&
@@ -1491,9 +1497,11 @@ static int resident_depth_free_ortho_sprite(GmlRender *r,int sprite,int subimg,
 static int resident_background_page(GmlRender *r,int page_index,
                                                 double left,double top,double xs,double ys,
                                                 uint32_t colour,double alpha,int mode){
+  uint32_t source_alpha_key=0u;
   if(!r || !r->resident_application_pass || (r->interp && !r->classic) || r->fog_flat ||
      gml_d3_is_active(r) || page_index<0 || page_index>=r->n_tpag ||
-     r->active_shader>=0 || r->color_write_mask!=15u ||
+     (r->active_shader>=0 && !gml_render_shader_channel_alpha_key(r,&source_alpha_key)) ||
+     r->color_write_mask!=15u ||
      r->blend_equation!=1 || r->blend_equation_alpha!=1 ||
      gml_render_classic_vertical_phase_blocks_scene(r) || r->pending_underlay || r->pending_presentation ||
      !gml_render_scene_target_matches(r) || !isfinite(alpha) ||
@@ -1550,8 +1558,10 @@ int gml_render_resident_nearest_tile_page(GmlRender *r,GmlTpag *page,
      (!r->classic_phase_y || gml_render_classic_vertical_phase_blocks_scene(r)))
     return gml_render_resident_classic_phase_atlas(r,page,left,top,xs,ys,colour,alpha,
                                                    GML_RENDER_PHASE_TILE);
+  uint32_t source_alpha_key=0u;
   if(!r || !page || !page->project_authored_edges || !r->resident_application_pass ||
-     r->interp || r->fog_flat || gml_d3_is_active(r) || r->active_shader>=0 ||
+     r->interp || r->fog_flat || gml_d3_is_active(r) ||
+     (r->active_shader>=0 && !gml_render_shader_channel_alpha_key(r,&source_alpha_key)) ||
      r->color_write_mask!=15u || r->blend_equation!=1 || r->blend_equation_alpha!=1 ||
      gml_render_classic_vertical_phase_blocks_scene(r) || r->pending_underlay || r->pending_presentation ||
      !gml_render_scene_target_matches(r) || !isfinite(left) || !isfinite(top) ||
@@ -1629,13 +1639,15 @@ done:
 int gml_render_resident_selected_background_page(GmlRender *r,GmlTpag *page,
                                                  double left,double top,double xs,double ys,
                                                  uint32_t colour,double alpha){
+  uint32_t source_alpha_key=0u;
   if(r && r->classic_phase_resource && !r->classic_phase_scene_preparing &&
      (!r->classic_phase_y || gml_render_classic_vertical_phase_blocks_scene(r)))
     return gml_render_resident_classic_phase_atlas(r,page,left,top,xs,ys,colour,alpha,
                                                    GML_RENDER_PHASE_BACKGROUND_PART);
   if(!r || !page || !r->resident_application_pass || r->interp || r->fog_flat ||
      gml_d3_is_active(r) || page->atlas<0 || page->atlas>=r->n_atlas ||
-     r->active_shader>=0 || r->color_write_mask!=15u ||
+     (r->active_shader>=0 && !gml_render_shader_channel_alpha_key(r,&source_alpha_key)) ||
+     r->color_write_mask!=15u ||
      r->blend_equation!=1 || r->blend_equation_alpha!=1 ||
      gml_render_classic_vertical_phase_blocks_scene(r) || r->pending_underlay || r->pending_presentation ||
      !gml_render_scene_target_matches(r) || !isfinite(alpha) ||

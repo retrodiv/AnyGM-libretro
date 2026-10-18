@@ -273,6 +273,7 @@
   "uniform ivec4 u_rotated_alpha16[64];\n" \
   "uniform int u_filter;\n" \
   "uniform int u_alpha_test;\n" \
+  "uniform int u_source_alpha_key;\n" \
   "uniform usampler2D u_point_map_x,u_point_map_y;\n" \
   "uniform ivec2 u_point_origin;\n" \
   "uniform sampler2D u_recovery_screen,u_recovery_application;\n" \
@@ -525,6 +526,10 @@
   "      sampled=uvec4(floor(texelFetch(u_image,at,0)*255.0+0.5));\n" \
   "    }else sampled=uvec4(floor(texture(u_image,v_texcoord)*255.0+0.5));\n" \
   "    if(u_alpha_test>=0 && sampled.a<=uint(u_alpha_test)) discard;\n" \
+  "    if(u_source_alpha_key!=0){\n" \
+  "      int channel=(u_source_alpha_key>>9)-1;\n" \
+  "      if(sampled[channel]<uint(u_source_alpha_key&511)) sampled.a=0u;\n" \
+  "    }\n" \
   "    if(sample_filter>50 && sample_filter<=64 && sampled.a==0u && v_span_y.x!=1.0) discard;\n" \
   "    if(rule<44 && (sampled.a==0u || (rule<41 && v_colour.a<=0.0 && sample_filter<=50)) && !(sample_filter>50 && v_span_y.x==1.0)) discard;\n" \
   "    if(rule==41 || rule==48){ o_color=vec4(0.0,0.0,0.0,1.0); return; }\n" \

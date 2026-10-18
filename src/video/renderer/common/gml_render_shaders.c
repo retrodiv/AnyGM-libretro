@@ -65,6 +65,30 @@ int gml_render_shader_cpu_passthrough(const GmlRender *r){
   return !r->shader_executor || !gml_render_shader_content_candidate(r,r->active_shader);
 }
 
+int gml_render_shader_channel_alpha_key(const GmlRender *r,uint32_t *key){
+  if(key) *key=0u;
+  if(!key || !r || !r->shader_pal || r->active_shader<0 ||
+     r->active_shader>=r->n_shader_pal) return 0;
+  const struct GmlShaderPal *p=&r->shader_pal[r->active_shader];
+  if(!p->channel_alpha_key || p->channel_alpha_key_channel<0 ||
+     p->channel_alpha_key_channel>2 || !isfinite(p->channel_alpha_key_cutoff) ||
+     p->threshold_palette || p->indexed_brightness || p->channel_mask ||
+     p->alpha_discard || p->ordered_dither || p->quantise4 ||
+     p->solid_alpha_mask || p->solid_blur_alpha || p->lut || p->lut_indexed ||
+     p->grid || p->dual_sample || p->radial_wave || p->uv_wave_mode || p->grayscale ||
+     p->vertex_colour_blend || p->vertex_colour_blend_alpha_only) return 0;
+  unsigned first=0u;
+  for(;first<256u;first++){
+    /* The unchanged CPU predicate multiplies by a float reciprocal. Resolve
+     * this finite byte partition once,not CPU float arithmetic per fragment. */
+    float channel=(float)first*(1.0f/255.0f);
+    if(p->channel_alpha_key_inclusive ? channel>p->channel_alpha_key_cutoff :
+                                       channel>=p->channel_alpha_key_cutoff) break;
+  }
+  *key=((uint32_t)(p->channel_alpha_key_channel+1)<<9)|first;
+  return 1;
+}
+
 int gml_render_shader_is_compiled(const GmlRender *r,int shader){
   if(!r || shader<0 || shader>=r->n_shader_pal || !r->shader_pal) return 0;
   if(r->shader_pal[shader].gpu_failed) return 0;

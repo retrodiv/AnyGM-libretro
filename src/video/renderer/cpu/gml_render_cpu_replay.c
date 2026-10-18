@@ -179,7 +179,7 @@ int gml_render_cpu_replay_eligible(const GmlRenderDrawOp *operation,
       operation->sources[0].identity==target->image.identity &&
       operation->sources[0].incarnation==target->image.incarnation) ||
      state->write_mask!=15u || state->colour!=0xFFFFFFFFu || state->alpha!=255u ||
-     state->alpha_test_enabled || state->coverage_policy ||
+     state->alpha_test_enabled || state->source_alpha_key || state->coverage_policy ||
      state->material_identity || state->material_version ||
      state->sampler_count!=1u || blend_rule(state)<0 ||
      (blend_rule(state)==1 && target->pixel_format!=GML_RENDER_PIXEL_XRGB8888) ||

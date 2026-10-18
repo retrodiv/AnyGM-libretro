@@ -15472,6 +15472,45 @@ static int resident_rotated_text_function(void){
   return 1;
 }
 
+static int channel_alpha_key_byte_partition(void){
+  GmlRender *r=calloc(1,sizeof *r);
+  CHECK(r);
+  r->shader_pal=calloc(1,sizeof *r->shader_pal);
+  CHECK(r->shader_pal);
+  r->n_shader_pal=1;r->active_shader=0;
+  struct GmlShaderPal *p=&r->shader_pal[0];p->channel_alpha_key=1;
+  for(unsigned channel=0;channel<3u;channel++) for(unsigned inclusive=0;inclusive<2u;inclusive++)
+  for(unsigned boundary=0;boundary<256u;boundary++) for(int neighbour=-1;neighbour<=1;neighbour++){
+    float edge=(float)boundary*(1.0f/255.0f);
+    p->channel_alpha_key_channel=(int)channel;p->channel_alpha_key_inclusive=(int)inclusive;
+    p->channel_alpha_key_cutoff=neighbour?nextafterf(edge,neighbour<0?-INFINITY:INFINITY):edge;
+    uint32_t key=0u;CHECK(gml_render_shader_channel_alpha_key(r,&key));
+    CHECK((key>>9)==channel+1u && (key&511u)<=256u);
+    for(unsigned byte=0;byte<256u;byte++){
+      float value=(float)byte*(1.0f/255.0f);
+      int clear=inclusive?value<=p->channel_alpha_key_cutoff:value<p->channel_alpha_key_cutoff;
+      CHECK(clear==(byte<(key&511u)));
+    }
+  }
+  uint32_t key=123u;
+  p->channel_alpha_key_cutoff=NAN;CHECK(!gml_render_shader_channel_alpha_key(r,&key) && !key);
+  p->channel_alpha_key_cutoff=.25f;p->channel_alpha_key_channel=3;
+  CHECK(!gml_render_shader_channel_alpha_key(r,&key) && !key);
+  p->channel_alpha_key_channel=0;
+  int *effects[]={&p->threshold_palette,&p->indexed_brightness,&p->channel_mask,
+    &p->alpha_discard,&p->ordered_dither,&p->quantise4,&p->solid_alpha_mask,
+    &p->solid_blur_alpha,&p->lut,&p->lut_indexed,&p->grid,&p->dual_sample,
+    &p->radial_wave,&p->uv_wave_mode,&p->grayscale,&p->vertex_colour_blend,
+    &p->vertex_colour_blend_alpha_only};
+  for(unsigned index=0;index<sizeof effects/sizeof effects[0];index++){
+    *effects[index]=1;CHECK(!gml_render_shader_channel_alpha_key(r,&key) && !key);*effects[index]=0;
+  }
+  CHECK(!gml_render_shader_channel_alpha_key(r,NULL));
+  r->active_shader=1;CHECK(!gml_render_shader_channel_alpha_key(r,&key) && !key);
+  free(r->shader_pal);free(r);
+  return 1;
+}
+
 static int resident_integer_background_function(void){
   return resident_background_function(0);
 }
@@ -16844,6 +16883,7 @@ int main(void){
   passed+=resident_external_base_mask();
   passed+=resident_promoted_owned_mask();
   passed+=resident_integer_background_function();
+  passed+=channel_alpha_key_byte_partition();
   passed+=resident_fractional_background_function();
   passed+=resident_background_stored_extents();
   passed+=resident_nearest_tile_function();
@@ -16906,6 +16946,6 @@ int main(void){
   passed+=source_free_primitive_rect_replay();
   passed+=stretched_float_exact_replay();
   passed+=filtered_font_exact_recovery();
-  printf("render resource cases: passed=%d failed=%d\n",passed,264-passed);
-  return passed==264?EXIT_SUCCESS:EXIT_FAILURE;
+  printf("render resource cases: passed=%d failed=%d\n",passed,265-passed);
+  return passed==265?EXIT_SUCCESS:EXIT_FAILURE;
 }

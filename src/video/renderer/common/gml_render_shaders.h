@@ -25,6 +25,10 @@ int gml_render_shader_lut_snapshot(GmlRender *render,int shader_id,GmlPlanShader
  * This is not evidence that the authored program itself has no effect. */
 int gml_render_shader_cpu_passthrough(const GmlRender *render);
 
+/* Snapshot the sole recognized per-source-channel alpha predicate as a byte
+ * partition. This does not evaluate pixels or change readable shader state. */
+int gml_render_shader_channel_alpha_key(const GmlRender *render,uint32_t *key);
+
 /* Emit the existing optional per-shader accounting during renderer teardown. */
 void gml_render_shader_account_report(GmlRender *render);
 

@@ -264,6 +264,9 @@ typedef struct GmlRenderDrawStateSnapshot {
   uint32_t rgb_equation,alpha_equation;
   uint32_t write_mask;
   uint32_t alpha_test_enabled,alpha_test_reference;
+  /* Zero disables source keying. Bits 9..10 select R/G/B (1..3), and bits
+   * 0..8 hold the first retained source byte (0..256), before tint/blending. */
+  uint32_t source_alpha_key;
   uint32_t colour;
   uint8_t alpha;
   uint8_t coverage_policy;
