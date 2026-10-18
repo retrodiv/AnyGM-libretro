@@ -91,6 +91,10 @@ GmlSoftware3D *gml_render_cpu_backend_software3d(GmlRender *render);
 /* Update the derived full-fog silhouette cache without entering draw preparation. */
 void gml_render_cpu_backend_set_flat_fog(GmlRender *render,int enabled,uint32_t colour);
 int gml_render_cpu_backend_draw_view(GmlRender *render,GmlRenderCpuBackendDrawView *view);
+/* Optional scene-only metadata for conservative clipping, without flushing a
+ * queued software batch or observing target/source pixels. No writable planes. */
+int gml_render_cpu_backend_scene_draw_view(GmlRender *render,
+                                          GmlRenderCpuBackendDrawView *view);
 void gml_render_cpu_backend_prepare_draw(GmlRender *render);
 int gml_render_cpu_backend_prepare_draw_view(GmlRender *render,
                                          GmlRenderCpuBackendDrawView *view);

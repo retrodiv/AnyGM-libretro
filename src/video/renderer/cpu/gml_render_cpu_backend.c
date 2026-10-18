@@ -187,6 +187,17 @@ int gml_render_cpu_backend_draw_view(GmlRender *r,GmlRenderCpuBackendDrawView *v
   if(r->dispatch_cpu_depth) view->dispatch_written=&r->dispatch_cpu_written;
   return 1;
 }
+int gml_render_cpu_backend_scene_draw_view(GmlRender *r,GmlRenderCpuBackendDrawView *view){
+  if(view) memset(view,0,sizeof(*view));
+  if(!r || !view || (!r->scene_device_enabled && !r->resident_application_pass) ||
+     r->rotated_batch_count || r->rotated_batch_building || r->classic_phase_scene_preparing)
+    return 0;
+  if(!gml_render_cpu_backend_draw_view(r,view)) return 0;
+  view->pixels=NULL;
+  memset(view->interpolation_pixels,0,sizeof(view->interpolation_pixels));
+  view->dispatch_written=NULL;
+  return 1;
+}
 void gml_render_cpu_backend_prepare_draw(GmlRender *r){
   gml_render_maybe_prepare_draw(r);
 }

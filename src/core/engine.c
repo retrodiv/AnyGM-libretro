@@ -2019,10 +2019,8 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
                                                        device_only_app_clear?NULL:&app_view)){
     int aw=app_view.width, ah=app_view.height;
     if(multiview_rendered==2){
-      if(!gml_render_application_surface_owned_extent(&engine->render,&aw,&ah) ||
-         !gml_render_multiview_copy(&engine->render,engine->fb,
-           (int)engine->width,(int)engine->height,engine->render.app_surface_owned,
-           aw,ah,0,0,aw,ah,0)) return ANYGM_ERROR_INTERNAL;
+      if(!gml_render_multiview_copy_to_owned_application(&engine->render,engine->fb,
+           (int)engine->width,(int)engine->height)) return ANYGM_ERROR_INTERNAL;
     }else if(multiview_rendered)
       compose_view_rect(&engine->render,engine->fb,(int)engine->width,(int)engine->height,
                         app_view.pixels,aw,ah,0,0,aw,ah);

@@ -1100,6 +1100,14 @@ int gml_render_multiview_copy(GmlRender *r,const uint32_t *pixels,int sw,int sh,
   return result==GML_RENDER_RESOURCE_EXEC_DEVICE;
 }
 
+int gml_render_multiview_copy_to_owned_application(GmlRender *r,
+  const uint32_t *source,int width,int height){
+  int dw=0,dh=0;
+  return gml_render_application_surface_owned_extent(r,&dw,&dh) &&
+    gml_render_multiview_copy(r,source,width,height,r->app_surface_owned,
+      dw,dh,0,0,dw,dh,0);
+}
+
 int gml_render_resident_owned_application_clear(GmlRender *r,uint32_t colour){
   const GmlRenderDeviceServices *device=gml_render_device(r);
   GmlRenderResource *resource;

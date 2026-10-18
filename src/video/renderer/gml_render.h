@@ -559,6 +559,10 @@ int gml_render_multiview_prepare(GmlRender *r,uint32_t *root,int width,int heigh
 int gml_render_multiview_clear(GmlRender *r,uint32_t *pixels,int width,int height,uint32_t colour);
 int gml_render_multiview_copy(GmlRender *r,const uint32_t *source,int sw,int sh,
   uint32_t *target,int dw,int dh,int x,int y,int width,int height,int seed);
+/* Full raw composition into the separately owned application, without exposing
+ * its storage to the frame coordinator or acquiring a CPU write view. */
+int gml_render_multiview_copy_to_owned_application(GmlRender *r,
+  const uint32_t *source,int width,int height);
 /* Pure admission query for a separate SCREEN while the application remains borrowed. */
 /* Pure owning-context admission query; never observes or promotes a borrowed image. */
 int gml_render_can_begin_borrowed_screen(const GmlRender *r,const uint32_t *pixels);

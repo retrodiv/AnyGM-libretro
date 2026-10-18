@@ -13024,6 +13024,90 @@ static int resident_rounded_empty_axis_geometry(void){
   return 1;
 }
 
+static int resident_empty_vertex_batches(void){
+  enum { WIDTH=64,HEIGHT=48 };
+  for(unsigned classic=0;classic<2;classic++)
+  for(unsigned target=0;target<4;target++)
+  for(int primitive=1;primitive<=6;primitive++)
+  for(unsigned side=0;side<4;side++){
+    GmlRender *r=calloc(1,sizeof *r);
+    GmlSoftware3D *graphics=gml_software3d_create();
+    FakeDevice fake={0};GmlRenderDeviceServices device=service(&fake);
+    uint32_t base[WIDTH*HEIGHT],reference[WIDTH*HEIGHT];
+    const uint32_t *pixels=NULL;
+    CHECK(r && graphics && !gml_render_init(r,NULL));
+    gml_software3d_reset(graphics);gml_software3d_set_classic(graphics,(int)classic);
+    gml_render_bind_software3d(r,graphics);r->classic=(int)classic;
+    GmlRenderCpuBackendDrawView metadata;
+    CHECK(!gml_render_cpu_backend_scene_draw_view(r,&metadata));
+    if(target==1) CHECK(gml_render_application_surface_ensure_owned(r,WIDTH,HEIGHT) &&
+                       gml_render_begin_owned_application(r,0,0,0));
+    else gml_render_begin(r,base,WIDTH,HEIGHT,0,0);
+    int id=target==2?gml_surface_create(r,WIDTH,HEIGHT):0;
+    if(target==2) CHECK(id>0 && gml_surface_set_target(r,id));
+    if(target==3) gml_render_gui_begin(r,WIDTH,HEIGHT);
+    gml_software3d_vertex_format_begin(graphics);
+    CHECK(gml_software3d_vertex_format_add(graphics,GML_SOFTWARE3D_VERTEX_POSITION3,0,0,3,12));
+    int format=gml_software3d_vertex_format_finish(graphics);
+    int buffer=gml_software3d_vertex_buffer_create(graphics,72);
+    CHECK(format>=0 && buffer>=0 && gml_software3d_vertex_buffer_begin(graphics,buffer,format));
+    for(unsigned i=0;i<6;i++){
+      double p[4]={8+(i%3)*4,8+(i%3==1?8:0),0,0};
+      if(side<2) p[0]=(side?WIDTH+20.0:-20.0)+(i%3);
+      else p[1]=(side==3?HEIGHT+20.0:-20.0)+(i%3);
+      CHECK(gml_software3d_vertex_buffer_attribute(graphics,buffer,
+        GML_SOFTWARE3D_VERTEX_POSITION3,p,3));
+    }
+    gml_software3d_vertex_buffer_end(graphics,buffer);
+    if(side&1u) CHECK(gml_software3d_vertex_buffer_freeze(graphics,buffer));
+    gml_render_set_pending_fill(r,0xA5123456u);
+    gml_software3d_vertex_submit_buffer(r,buffer,primitive,-1,0,-1);
+    gml_render_flush_pending_fill(r);memcpy(reference,r->fb,sizeof reference);
+    if(target==2) gml_surface_reset_target(r);
+    if(target==3) gml_render_gui_end(r);
+    gml_render_bind_device(r,&device);
+    if(target==1) CHECK(gml_render_begin_resident_owned_application(r,0,0,0));
+    else{
+      gml_render_application_surface_bind(r,base,WIDTH,HEIGHT,1);
+      CHECK(gml_render_begin_resident_base(r,base,WIDTH,HEIGHT,0,0));
+      if(target==2) CHECK(gml_surface_set_target(r,id));
+      if(target==3) gml_render_gui_begin(r,WIDTH,HEIGHT);
+    }
+    gml_render_set_scene_device(r,1);
+    gml_render_dispatch_diagnostics_enable(r,1);
+    gml_render_set_pending_fill(r,0xA5123456u);
+    fake.forbid_calls=1;
+    gml_software3d_vertex_submit_buffer(r,buffer,primitive,-1,0,-1);
+    CHECK(r->resident_application_pass && r->pending_fill && !fake.forbidden_calls);
+    fake.forbid_calls=0;
+    GmlRenderDispatchMetrics counts;
+    CHECK(gml_render_dispatch_metrics(r,&counts));
+    for(unsigned family=0;family<GML_RENDER_SCENE_FAMILY_COUNT;family++){
+      CHECK(!counts.gpu[family]);
+      for(unsigned reason=0;reason<GML_RENDER_DISPATCH_REASON_COUNT;reason++)
+        CHECK(!counts.cpu[family][reason]);
+    }
+    gml_render_flush_pending_fill(r);
+    CHECK(gml_render_scene_submit_pending(r));
+    GmlRenderResource *resource=gml_render_scene_target_resource_ensure(r);
+    CHECK(resource && gml_render_resource_acquire_cpu_read(resource,&pixels) &&
+      !memcmp(reference,pixels,sizeof reference) && !fake.readbacks);
+    CHECK(gml_render_cpu_backend_scene_draw_view(r,&metadata) && !metadata.pixels &&
+      !metadata.dispatch_written && !metadata.interpolation_pixels[0]);
+    r->rotated_batch_building=1;
+    CHECK(!gml_render_cpu_backend_scene_draw_view(r,&metadata));
+    r->rotated_batch_building=0;
+    r->rotated_batch_count=1;
+    CHECK(!gml_render_cpu_backend_scene_draw_view(r,&metadata));
+    r->rotated_batch_count=0;r->classic_phase_scene_preparing=1;
+    CHECK(!gml_render_cpu_backend_scene_draw_view(r,&metadata));
+    r->classic_phase_scene_preparing=0;
+    gml_render_abandon_device(r);gml_render_free(r);free(r);
+    gml_software3d_destroy(graphics);
+  }
+  return 1;
+}
+
 static int resident_classic_depth_free_sprites(void){
   enum { WIDTH=64,HEIGHT=48 };
   for(unsigned target=0;target<3;target++)
@@ -16689,6 +16773,7 @@ int main(void){
   passed+=resident_zero_scale_sprite_preserves_queued_prefix();
   passed+=resident_rounded_empty_axis_preserves_queued_prefix();
   passed+=resident_rounded_empty_axis_geometry();
+  passed+=resident_empty_vertex_batches();
   passed+=resident_studio_unit_background_noops();
   passed+=resident_classic_depth_free_sprites();
   passed+=resident_classic_depth_free_glyphs();
@@ -16724,6 +16809,6 @@ int main(void){
   passed+=source_free_primitive_rect_replay();
   passed+=stretched_float_exact_replay();
   passed+=filtered_font_exact_recovery();
-  printf("render resource cases: passed=%d failed=%d\n",passed,261-passed);
-  return passed==261?EXIT_SUCCESS:EXIT_FAILURE;
+  printf("render resource cases: passed=%d failed=%d\n",passed,262-passed);
+  return passed==262?EXIT_SUCCESS:EXIT_FAILURE;
 }

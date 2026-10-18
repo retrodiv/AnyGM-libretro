@@ -1235,6 +1235,53 @@ static GmlD3Vertex *vertex_blend_scratch_ensure(GmlRender *R,int count){
   }
   return graphics->vertex_blend_scratch;
 }
+/* A whole temporary-2D batch outside one common viewport plane cannot write
+ * pixels, regardless of texture, alpha, blend, shader colour or primitive port.
+ * Reject uncertainty before observing a GPU-owned texture or closing its pass.
+ * Visible/active-3D batches retain the established software executor. */
+static int vertex_batch_outside_scene(GmlRender *R,const GmlD3Vertex *vertex,
+                                       int count,int primitive){
+  GmlRenderCpuBackendDrawView draw;
+  if(g_d3.active || primitive<1 || primitive>6 ||
+     count<(primitive==1?1:primitive<=3?2:3) ||
+     !gml_render_cpu_backend_scene_draw_view(R,&draw) ||
+     draw.width<=0 || draw.height<=0 || draw.width>16384 || draw.height>16384)
+    return 0;
+  for(int i=0;i<16;i++) if(!isfinite(g_d3.transform[i])) return 0;
+  if(!isfinite(draw.camera_x) || !isfinite(draw.camera_y) ||
+     !isfinite(draw.coordinate_scale_x) || !isfinite(draw.coordinate_scale_y)) return 0;
+  double scale_x=draw.coordinate_scale_x>0?draw.coordinate_scale_x:1.0;
+  double scale_y=draw.coordinate_scale_y>0?draw.coordinate_scale_y:1.0;
+  double ox=draw.camera_x/scale_x,oy=draw.camera_y/scale_y;
+  double ow=draw.width/scale_x,oh=draw.height/scale_y;
+  if(!isfinite(ox) || !isfinite(oy) || !isfinite(ow) || !isfinite(oh)) return 0;
+  if(fabs(ow)<=1e-9) ow=1;
+  if(fabs(oh)<=1e-9) oh=1;
+  int translation=fabs(g_d3.transform[0]-1)<1e-10 &&
+    fabs(g_d3.transform[5]-1)<1e-10 && fabs(g_d3.transform[10]-1)<1e-10 &&
+    fabs(g_d3.transform[15]-1)<1e-10;
+  for(int i=0;i<12 && translation;i++)
+    if(i!=0 && i!=5 && i!=10 && fabs(g_d3.transform[i])>=1e-10) translation=0;
+  if(translation){ ox+=g_d3.transform[12]; oy+=g_d3.transform[13]; }
+  /* Both classic triangle and point/line anchors lie in [0,.5]. Two pixels
+   * also cover their floor/ceil/round envelope; bound arithmetic conservatively. */
+  unsigned outside=15;
+  for(int i=0;i<count;i++){
+    double x=vertex[i].x,y=vertex[i].y,z=vertex[i].z;
+    if(!isfinite(x) || !isfinite(y) || !isfinite(z)) return 0;
+    d3_transform_point(R,&x,&y,&z);
+    x=(x-ox)*draw.width/ow; y=(y-oy)*draw.height/oh;
+    if(!isfinite(x) || !isfinite(y) || !isfinite(z) || fabs(x)>0x1p30 || fabs(y)>0x1p30)
+      return 0;
+    unsigned planes=(x<-2?1u:0u)|(x>draw.width+2?2u:0u)|
+      (y<-2?4u:0u)|(y>draw.height+2?8u:0u);
+    outside&=planes;
+    if(!outside) return 0;
+  }
+  /* Triangles prepare the transient depth allocation before their old clip.
+   * Preserve that side effect; points/lines never prepare depth in this path. */
+  return outside && (primitive<4 || d3_depth_prepare(R));
+}
 static void vertex_submit_buffer(GmlRender *R,int id,int primitive,int texture_handle,
                                  int first,int number){
   if(!R || id<0 || id>=GML_VERTEX_BUFFER_MAX || !g_vertex_buffer[id].used) return;
@@ -1244,6 +1291,7 @@ static void vertex_submit_buffer(GmlRender *R,int id,int primitive,int texture_h
   if(number<0 || number>buffer->vertex_n-first) number=buffer->vertex_n-first;
   if(number<=0) return;
   const GmlD3Vertex *vertex=buffer->vertex+first;
+  if(vertex_batch_outside_scene(R,vertex,number,primitive)) return;
   /* A vertex program may modulate the colour it passes on by a uniform, which is how text
    * libraries carry a string's tint and fade. Apply it here, to a copy, so the rasterizer keeps
    * receiving plain vertex colours and every other submission path is untouched. */
