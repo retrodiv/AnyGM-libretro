@@ -586,7 +586,11 @@ void setup_display(AnygmEngine *engine);
 void compose_view_rect(GmlRender *render,const uint32_t *source,int source_width,int source_height,
                        uint32_t *destination,int destination_width,int destination_height,
                        int x,int y,int width,int height);
-/* Returns one when composed, zero when not applicable, and negative on a failed resident handoff. */
+void seed_view_rect(GmlRender *render,const uint32_t *source,int source_width,int source_height,
+                    uint32_t *destination,int destination_width,int destination_height,
+                    int x,int y,int width,int height);
+/* Returns two for device composition, one for CPU, zero when not applicable,
+ * and negative on a failed resident handoff. */
 int render_multiview_application(AnygmEngine *engine);
 void content_router_log(void *userdata,int level,const char *message);
 

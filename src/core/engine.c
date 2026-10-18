@@ -1993,7 +1993,8 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
   /* An assigned view already owns the world image. Its independent application clear
    * needs no host write view; all CPU composition branches keep their existing storage. */
   int device_only_app_clear=engine->scene_renderer_session==ANYGM_SCENE_RENDERER_OPENGL &&
-    !multiview_rendered && view_surface>0 && gml_surface_exists(&engine->render,view_surface);
+    (multiview_rendered==2 ||
+     (!multiview_rendered && view_surface>0 && gml_surface_exists(&engine->render,view_surface)));
   int translated_world_staged=0;
   if(translated_world_pending){
     if(!engine->content_presented)
@@ -2017,7 +2018,12 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
   } else if(gml_render_application_surface_owned_clear(&engine->render,engine->background,
                                                        device_only_app_clear?NULL:&app_view)){
     int aw=app_view.width, ah=app_view.height;
-    if(multiview_rendered)
+    if(multiview_rendered==2){
+      if(!gml_render_application_surface_owned_extent(&engine->render,&aw,&ah) ||
+         !gml_render_multiview_copy(&engine->render,engine->fb,
+           (int)engine->width,(int)engine->height,engine->render.app_surface_owned,
+           aw,ah,0,0,aw,ah,0)) return ANYGM_ERROR_INTERNAL;
+    }else if(multiview_rendered)
       compose_view_rect(&engine->render,engine->fb,(int)engine->width,(int)engine->height,
                         app_view.pixels,aw,ah,0,0,aw,ah);
     else if(!(view_surface>0 && gml_surface_exists(&engine->render,view_surface))){
@@ -2145,6 +2151,10 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
 			  int gtw = (aspect_gui_center || gui_indirect) ? gsw : (int)ow;
 			  int gth = (aspect_gui_center || gui_indirect) ? gsh : (int)oh;
 			  int resident_screen_began=0;
+			  if(multiview_rendered==2 &&
+			     !gml_render_multiview_prepare(&engine->render,engine->fb,
+			       (int)engine->width,(int)engine->height,gtarget,gtw,gth))
+			    return ANYGM_ERROR_INTERNAL;
 			  engine_dispatch_admission_skip(engine,aspect_gui_center,forced_owned_scene_began);
 			  {
 			    double screen_cam_x=(engine->aspect_force_active || aspect_gui_center)
@@ -2162,7 +2172,7 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
 			       (gui_indirect || !render_presentation.application_draw_enabled ||
 			        ((early_classic_borrowed_world || classic_sample_world) &&
 			         gml_render_can_begin_borrowed_screen(&engine->render,gtarget)) ||
-			        (frame_view_count<=1 && render_presentation.application_owned &&
+			        ((frame_view_count<=1 || multiview_rendered==2) && render_presentation.application_owned &&
 			         (!gml_render_is_classic(&engine->render) ||
 			          (!anygm_policy_classic_modern_presentation(&engine->win) &&
 			           !render_presentation.interpolation &&

@@ -2715,6 +2715,73 @@ static int resident_multiview_cpu_seed_variant(
   return 1;
 }
 
+/* Admission/state discriminator; real-device pairs own sampling and coverage. */
+static int resident_multiview_composition_case(void){
+  int (*factories[])(AnygmSyntheticContent *)={
+    anygm_synthetic_multiview_clear_view_content_create,
+    anygm_synthetic_multiview_framebuffer_content_create,
+    anygm_synthetic_multiview_offset_gpu_content_create
+  };
+  for(unsigned variant=0;variant<sizeof factories/sizeof *factories;variant++){
+    Session plain={0},selected={0};GmlRenderDispatchMetrics dispatch={0};
+    CurrentContextWitness witness={.current=1u};
+    AnygmGraphicsContext context=graphics_context(ANYGM_GRAPHICS_OPENGLES3);
+    context.userdata=&witness;context.is_current=graphics_context_is_current;
+    int matching=1;
+    anygm_test_graphics_reset();
+    REQUIRE(session_open_fixture_with_scene(&plain,ANYGM_SCENE_RENDERER_CPU,factories[variant]) &&
+            session_open_fixture_with_scene(&selected,ANYGM_SCENE_RENDERER_OPENGL,factories[variant]),
+            "multiview compositor paired fixtures load");
+    REQUIRE(anygm_graphics_context_reset(selected.engine,&context)==ANYGM_OK,
+            "multiview compositor adopts an owning context");
+    gml_render_dispatch_diagnostics_enable(&selected.engine->render,1);
+    selected.engine->diagnostics.dispatch_frames.enabled=1;
+    gml_render_dispatch_frame_bind(&selected.engine->render,&selected.engine->diagnostics.dispatch_frames);
+    matching=advance(plain.engine,2,NULL) && advance(selected.engine,2,NULL) &&
+      gml_render_dispatch_metrics(&selected.engine->render,&dispatch) &&
+      dispatch.enabled && !dispatch.overflow && !dispatch.failed && !dispatch.unclassified;
+    for(unsigned family=0;family<GML_RENDER_SCENE_FAMILY_COUNT;family++)
+      for(unsigned reason=0;reason<GML_RENDER_DISPATCH_REASON_COUNT;reason++)
+        if(dispatch.cpu[family][reason]){
+          fprintf(stderr,"multiview compositor ordinary CPU: variant=%u family=%u reason=%u count=%llu\n",
+            variant,family,reason,(unsigned long long)dispatch.cpu[family][reason]);
+          matching=0;
+        }
+    matching=matching && selected.engine->diagnostics.dispatch_frames.frames==2u &&
+      !selected.engine->diagnostics.dispatch_frames.cpu_frames &&
+      !selected.engine->diagnostics.dispatch_frames.no_scene_frames &&
+      !selected.engine->diagnostics.dispatch_frames.unknown_frames &&
+      !selected.engine->diagnostics.dispatch_frames.failed_frames &&
+      !selected.engine->diagnostics.dispatch_frames.outside_cpu &&
+      !selected.engine->diagnostics.dispatch_frames.overflow;
+    /* A standalone renderer snapshot deliberately has complete=0. The frame
+     * owner above proves this bounded interval, not a whole-load census. */
+    if(!matching) fprintf(stderr,
+      "multiview interval variant=%u frames=%llu CPU=%llu no_scene=%llu unknown=%llu failed=%llu outside=%llu\n",
+      variant,(unsigned long long)selected.engine->diagnostics.dispatch_frames.frames,
+      (unsigned long long)selected.engine->diagnostics.dispatch_frames.cpu_frames,
+      (unsigned long long)selected.engine->diagnostics.dispatch_frames.no_scene_frames,
+      (unsigned long long)selected.engine->diagnostics.dispatch_frames.unknown_frames,
+      (unsigned long long)selected.engine->diagnostics.dispatch_frames.failed_frames,
+      (unsigned long long)selected.engine->diagnostics.dispatch_frames.outside_cpu);
+    /* This driver's readback is patterned, not a pixel oracle. Real-device
+     * paired controls own full RGBA and detached-state comparisons. */
+    if(matching){
+      size_t cpu_bytes=gml_vm_state_size(&plain.engine->vm),gpu_bytes=gml_vm_state_size(&selected.engine->vm);
+      size_t cpu_written=0,gpu_written=0;
+      uint8_t *cpu_vm=malloc(cpu_bytes?cpu_bytes:1u),*gpu_vm=malloc(gpu_bytes?gpu_bytes:1u);
+      matching=cpu_bytes && cpu_bytes==gpu_bytes && cpu_vm && gpu_vm &&
+        gml_vm_state_save(&plain.engine->vm,cpu_vm,cpu_bytes,&cpu_written) &&
+        gml_vm_state_save(&selected.engine->vm,gpu_vm,gpu_bytes,&gpu_written) &&
+        cpu_written==cpu_bytes && gpu_written==gpu_bytes && !memcmp(cpu_vm,gpu_vm,cpu_bytes);
+      free(cpu_vm);free(gpu_vm);
+    }
+    session_close(&selected);session_close(&plain);
+    REQUIRE(matching,"witnessed multiview avoids CPU draws and preserves exact VM state");
+  }
+  return 1;
+}
+
 static int resident_multiview_cpu_seed_case(void){
   return resident_multiview_cpu_seed_variant(
            anygm_synthetic_multiview_gpu_content_create,0,1) &&
@@ -5644,6 +5711,7 @@ int main(void){
     {"resident application retains both nearest host stages",resident_identity_application_host_case},
     {"partial-alpha indirect GUI keeps ordered CPU fallback",
      resident_indirect_gui_alpha_fallback_case},
+    {"multiview clear, seed and copies stay resident",resident_multiview_composition_case},
     {"two-view retained CPU seed stays current",resident_multiview_cpu_seed_case},
     {"two-view Step target survives Draw Begin and GUI",resident_multiview_step_target_case},
     {"assigned views repopulate a derived surface before restored GUI",

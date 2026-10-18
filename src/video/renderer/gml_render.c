@@ -214,6 +214,8 @@ void gml_render_rebind_content(GmlRender *r,GmlWin *win){
     gml_render_resource_bind_dispatch(r->retained_base_resource,r);
     gml_render_resource_bind_dispatch(r->base_history_resource,r);
     gml_render_resource_bind_dispatch(r->retained_base_history_resource,r);
+    gml_render_resource_bind_dispatch(r->view_base_resource,r);
+    gml_render_resource_bind_dispatch(r->view_base_history_resource,r);
     for(int index=0;index<GML_MAX_SURFACES;index++)
       gml_render_resource_bind_dispatch(r->surface[index].resource,r);
   }
@@ -986,6 +988,7 @@ void gml_render_free(GmlRender *r){
   gml_render_classic_phase_resource_dispose(r);
   gml_render_base_resource_dispose(r);
   gml_render_retained_base_dispose(r);
+  gml_render_view_base_dispose(r);
   free(r->classic_phase_composition);r->classic_phase_composition=NULL;
   r->classic_phase_composition_capacity=0u;
   /* The shared batch queue can belong to a SCREEN-only pass with no owned
@@ -1299,7 +1302,8 @@ int gml_render_completed_screen_write(GmlRender *r,uint32_t *pixels,int width,in
   GmlRenderResource *resource;
   if(!r || !pixels || width<=0 || height<=0 ||
      !gml_render_application_scene_flush(r)) return 0;
-  if((r->base_scene_resource_pixels==pixels || r->retained_base_pixels==pixels) &&
+  if((r->base_scene_resource_pixels==pixels || r->retained_base_pixels==pixels ||
+      r->view_base_pixels==pixels) &&
      !gml_render_base_history_observe(r)) return 0;
   if(r->base_scene_resource && r->base_scene_resource_pixels==pixels &&
      (r->base_scene_resource_width!=width || r->base_scene_resource_height!=height)){
@@ -1310,6 +1314,11 @@ int gml_render_completed_screen_write(GmlRender *r,uint32_t *pixels,int width,in
      (r->retained_base_width!=width || r->retained_base_height!=height)){
     if(!gml_render_resource_acquire_cpu_read(r->retained_base_resource,NULL)) return 0;
     gml_render_retained_base_dispose(r);
+  }
+  if(r->view_base_resource && r->view_base_pixels==pixels &&
+     (r->view_base_width!=width || r->view_base_height!=height)){
+    if(!gml_render_resource_acquire_cpu_read(r->view_base_resource,NULL)) return 0;
+    gml_render_view_base_dispose(r);
   }
   resource=completed_screen_resource(r,pixels,width,height);
   if(resource && (!gml_render_resource_acquire_cpu_write(resource,&current) ||
@@ -1330,7 +1339,8 @@ int gml_render_completed_screen_prepare_publish(GmlRender *r,uint32_t *pixels,
 void gml_render_completed_screen_publish(GmlRender *r,uint32_t *pixels,int width,int height){
   if(!r || !pixels || width<=0 || height<=0) return;
   GmlRenderResource *resource=completed_screen_resource(r,pixels,width,height);
-  if(resource==r->retained_base_resource && resource) gml_render_retained_base_dispose(r);
+  if(resource==r->view_base_resource && resource) gml_render_view_base_dispose(r);
+  else if(resource==r->retained_base_resource && resource) gml_render_retained_base_dispose(r);
   else if(resource) gml_render_base_resource_dispose(r);
   gml_render_discard_deferred_presentation(r);
   if(r->fb==pixels){

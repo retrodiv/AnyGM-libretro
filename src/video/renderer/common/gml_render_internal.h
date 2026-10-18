@@ -326,6 +326,14 @@ typedef struct GmlRender {
   GmlRenderResource *retained_base_history_resource;
   uint32_t *retained_base_history_pixels;
   size_t retained_base_history_count;
+  /* Explicit multiview composition may retain world, view scratch and SCREEN.
+   * Ordinary base admission still cannot allocate an unobserved third image. */
+  GmlRenderResource *view_base_resource;
+  uint32_t *view_base_pixels;
+  int view_base_width,view_base_height,view_base_masked;
+  GmlRenderResource *view_base_history_resource;
+  uint32_t *view_base_history_pixels;
+  size_t view_base_history_count;
   /* Raw-linear high-water image across borrowed base pitch changes. Its canonical staging
    * is separate so observing an old tail cannot overwrite the current active prefix. */
   GmlRenderResource *base_history_resource;

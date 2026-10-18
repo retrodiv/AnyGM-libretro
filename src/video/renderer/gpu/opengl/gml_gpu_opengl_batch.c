@@ -191,6 +191,8 @@ static uint32_t scene_filter(const GmlRenderQuad *quad,
   if(quad->sampling.quantisation==GML_RENDER_QUANTISE_SPRITE_MODERN_NEAREST) return 27u;
   if(quad->sampling.quantisation==GML_RENDER_QUANTISE_SPRITE_MODERN_ROTATED_NEAREST) return 29u;
   if(quad->sampling.filter==GML_RENDER_FILTER_HARDWARE_PIXEL_CENTRE_POINT) return 30u;
+  if(quad->sampling.filter==GML_RENDER_FILTER_VIEW_PIXEL_CENTRE) return 101u;
+  if(quad->sampling.filter==GML_RENDER_FILTER_VIEW_SEED) return 102u;
   if((family==GML_RENDER_SCENE_SURFACE ||
       ((family==GML_RENDER_SCENE_SPRITE || family==GML_RENDER_SCENE_TEXT) &&
        quad->shape==GML_RENDER_QUAD_AXIS_ALIGNED)) &&
@@ -552,6 +554,54 @@ static int hardware_combined_quad_valid(const GmlRenderDrawOp *op,
     double v=((double)region.y+(corner>=2u?region.height:0u))/source->height;
     if(quad->corner_colour[corner]!=0xFFFFFFFFu ||
        fabs(quad->u[corner]-u)>1e-12 || fabs(quad->v[corner]-v)>1e-12) return 0;
+  }
+  return 1;
+}
+
+static int view_copy_quad_valid(const GmlRenderDrawOp *op,
+  const GmlRenderDrawStateSnapshot *state,const GlSceneImage *source){
+  const GmlRenderQuad *q=&op->payload.quad;
+  const GmlRenderSamplingPolicy *sampling=&q->sampling;
+  if(sampling->filter!=GML_RENDER_FILTER_VIEW_PIXEL_CENTRE &&
+     sampling->filter!=GML_RENDER_FILTER_VIEW_SEED) return 0;
+  if(!source || source->pixel_format!=GML_RENDER_PIXEL_ARGB8888 ||
+     source->width>4096u || source->height>4096u ||
+     op->sources[0].resource_class!=GML_RENDER_RESOURCE_SCREEN ||
+     (op->target.image.resource_class!=GML_RENDER_RESOURCE_SCREEN &&
+      op->target.image.resource_class!=GML_RENDER_RESOURCE_APPLICATION) ||
+     op->target.pixel_format!=GML_RENDER_PIXEL_ARGB8888 ||
+     op->target.width>4096u || op->target.height>4096u ||
+     op->opcode!=GML_RENDER_OP_TEXTURED_QUAD || op->scene_family!=GML_RENDER_SCENE_SURFACE ||
+     op->reconstruction_mode!=GML_RENDER_DEVICE_CHECKPOINT ||
+     q->shape!=GML_RENDER_QUAD_AXIS_ALIGNED || q->span_active ||
+     (sampling->filter!=GML_RENDER_FILTER_VIEW_PIXEL_CENTRE &&
+      sampling->filter!=GML_RENDER_FILTER_VIEW_SEED) ||
+     sampling->quantisation || sampling->logical_margin_mask ||
+     sampling->edge_rule!=GML_RENDER_EDGE_CLAMP_SUBIMAGE ||
+     !full_region(sampling->source_region,source->width,source->height) ||
+     qualified_blend(state)!=0 || state->coverage_policy || state->alpha_test_enabled ||
+     state->write_mask!=15u || q->span_x[0]!=op->target.width ||
+     q->span_x[1]!=op->target.height || !exact_rect(op,NULL,NULL,NULL,NULL,0)) return 0;
+  for(unsigned axis=0;axis<2u;axis++){
+    double origin=q->inverse_anchor[axis],extent=axis?q->inverse_y[1]:q->inverse_x[0];
+    if(!isfinite(origin) || origin!=floor(origin) || fabs(origin)>16384.0 ||
+       !isfinite(extent) || extent!=floor(extent) || extent<=0.0 || extent>16384.0) return 0;
+    double bound=sampling->filter==GML_RENDER_FILTER_VIEW_SEED
+      ?(axis?source->height:source->width):(axis?op->target.height:op->target.width);
+    double first=fmax(0.0,origin),last=fmin(bound,origin+extent);
+    if(last<=first) return 0;
+    if(sampling->filter==GML_RENDER_FILTER_VIEW_SEED){
+      first=0.0;last=axis?op->target.height:op->target.width;
+    }
+    for(unsigned corner=0;corner<4u;corner++){
+      unsigned far=axis?corner>=2u:corner==1u || corner==2u;
+      if((axis?q->y[corner]:q->x[corner])!=(far?last:first)) return 0;
+    }
+  }
+  for(unsigned corner=0;corner<4u;corner++){
+    unsigned right=corner==1u || corner==2u,bottom=corner>=2u;
+    if(q->u[corner]!=(double)right || q->v[corner]!=(double)bottom ||
+       q->corner_colour[corner]!=0xFFFFFFFFu) return 0;
   }
   return 1;
 }
@@ -1080,6 +1130,7 @@ static int scene_preflight(GmlGpuBackend *backend,const GmlRenderDrawBatch *batc
       const GmlRenderSamplingPolicy *sampling=&op->payload.quad.sampling;
       int blend=qualified_blend(state);
       int hardware_surface=hardware_surface_quad_valid(op,state,source);
+      int view_copy=view_copy_quad_valid(op,state,source);
       int hardware_veil=hardware_screen_veil_valid(op,state,source);
       int hardware_stretch=hardware_screen_stretch_valid(op,state,source);
       int hardware_sprite=hardware_screen_sprite_valid(op,state,source);
@@ -1324,8 +1375,12 @@ static int scene_preflight(GmlGpuBackend *backend,const GmlRenderDrawBatch *batc
           sampling->filter!=GML_RENDER_FILTER_NEAREST_PHASED_COPY &&
           sampling->filter!=GML_RENDER_FILTER_NEAREST_PHASED_OPAQUE_ALPHA &&
           sampling->filter!=GML_RENDER_FILTER_HARDWARE_PIXEL_CENTRE_POINT &&
+          sampling->filter!=GML_RENDER_FILTER_VIEW_PIXEL_CENTRE &&
+          sampling->filter!=GML_RENDER_FILTER_VIEW_SEED &&
           sampling->filter!=GML_RENDER_FILTER_HARDWARE_BILINEAR) ||
          (sampling->filter==GML_RENDER_FILTER_HARDWARE_PIXEL_CENTRE_POINT && !hardware_surface) ||
+         ((sampling->filter==GML_RENDER_FILTER_VIEW_PIXEL_CENTRE ||
+           sampling->filter==GML_RENDER_FILTER_VIEW_SEED) && !view_copy) ||
          ((sampling->filter==GML_RENDER_FILTER_NEAREST_PHASED ||
            sampling->filter==GML_RENDER_FILTER_NEAREST_PHASED_COPY ||
            sampling->filter==GML_RENDER_FILTER_NEAREST_PHASED_OPAQUE_ALPHA) &&

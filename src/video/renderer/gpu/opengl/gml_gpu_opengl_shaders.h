@@ -521,6 +521,23 @@
   "    o_color=vec4(vec3(rgb)/255.0,alpha); return;\n" \
   "  }\n" \
   "  if(u_filter==0){ o_color=texture(u_image,v_texcoord)*v_colour; return; }\n" \
+  "  // R03_SHADER_VIEW_COPY: raw integer-centre copy or last-writer retained seed.\n" \
+  "  if(u_filter==101 || u_filter==102){\n" \
+  "    ivec2 extent=textureSize(u_image,0);\n" \
+  "    ivec2 position=ivec2(floor(vec2(gl_FragCoord.x,v_step.y-gl_FragCoord.y)));\n" \
+  "    ivec2 origin=ivec2(v_map.xy),port=ivec2(v_map.zw),texel;\n" \
+  "    if(u_filter==101) texel=((2*(position-origin)+ivec2(1))*extent)/(2*port);\n" \
+  "    else {\n" \
+  "      ivec2 target=ivec2(v_span_x.xy);\n" \
+  "      ivec2 first=max(ivec2(0),origin)-origin;\n" \
+  "      ivec2 last=min(extent,origin+port)-origin-ivec2(1);\n" \
+  "      texel=clamp((2*port*(position+ivec2(1))-target-ivec2(1))/(2*target),first,last);\n" \
+  "      if(any(notEqual(((2*texel+ivec2(1))*target)/(2*port),position))) discard;\n" \
+  "      texel+=origin;\n" \
+  "    }\n" \
+  "    if(v_step.x!=0.0) texel.y=extent.y-1-texel.y;\n" \
+  "    o_color=texelFetch(u_image,texel,0); return;\n" \
+  "  }\n" \
   "  // R03_SHADER_APPLICATION_PIXEL_CENTRE: opaque presentation copies RGB and stamps alpha.\n" \
   "  if(u_filter==30){\n" \
   "    vec2 extent=vec2(textureSize(u_image,0));\n" \

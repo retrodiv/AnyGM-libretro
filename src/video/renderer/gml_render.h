@@ -552,6 +552,13 @@ int gml_render_begin_resident_owned_application(GmlRender *r,double camx,double 
                                                 int retain_target);
 int gml_render_begin_resident_base(GmlRender *r,uint32_t *pixels,int width,int height,
                                    double camx,double camy);
+/* Frame-coordinator raw multiview operations, independent of readable GML draw
+ * state. Preparation reserves only the declared root/view allocations. */
+int gml_render_multiview_prepare(GmlRender *r,uint32_t *root,int width,int height,
+                                 uint32_t *view,int view_width,int view_height);
+int gml_render_multiview_clear(GmlRender *r,uint32_t *pixels,int width,int height,uint32_t colour);
+int gml_render_multiview_copy(GmlRender *r,const uint32_t *source,int sw,int sh,
+  uint32_t *target,int dw,int dh,int x,int y,int width,int height,int seed);
 /* Pure admission query for a separate SCREEN while the application remains borrowed. */
 /* Pure owning-context admission query; never observes or promotes a borrowed image. */
 int gml_render_can_begin_borrowed_screen(const GmlRender *r,const uint32_t *pixels);

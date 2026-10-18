@@ -21,6 +21,7 @@ GPU_TABLE = RENDERER / "gpu/gml_render_gpu_operations.def"
 BACKEND_MAP = ROOT / "docs/RENDERER_BACKENDS.md"
 FAMILIES = {"TEXTURE", "PRIMITIVE", "SURFACE", "EFFECT", "PRESENTATION", "SHADER", "SOFTWARE3D"}
 REQUIRED_RULES = {
+    "R03-MULTIVIEW-COMPOSITION",
     "R03-OWNED-APPLICATION-CLEAR",
     "R03-P3-JOURNAL", "R03-P3-CLEAR", "R03-P3-EXACT-OVERLAP",
     "R03-P3-RESIDENT-COPY", "R03-P3-SHADER-CHECKPOINT", "R03-P7-CONTENT-SURFACE",
@@ -214,6 +215,7 @@ DISPATCH_CPU_BOUNDARIES = {
     "surface_pixels", "surface_pixels_observe", "surface_pixels_access",
 }
 DISPATCH_ADDITIONAL = {
+    "gml_render_multiview_prepare", "gml_render_multiview_clear", "gml_render_multiview_copy",
     "gml_render_application_surface_owned_stage_base",
     "gml_render_application_surface_owned_mask",
     "gml_render_application_surface_owned_clear",
@@ -244,6 +246,7 @@ DISPATCH_HELPERS = {
 }
 DISPATCH_DEFERRED = {"render_present_first_generation", "render_present_content_shader"}
 DISPATCH_DEVICE_EXTRA = {
+    "view_copy_quad_valid",
     "gml_gpu_opengl_scene_submit", "gml_gpu_opengl_execute_shader_draw",
     "gml_gpu_opengl_scene_shader_draw", "gml_gpu_opengl_execute",
 }

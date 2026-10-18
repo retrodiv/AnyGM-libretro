@@ -1642,7 +1642,7 @@ void compose_view_rect(GmlRender *render,const uint32_t *src, int sw, int sh,
   gml_render_dispatch_cpu_composition(render,GML_RENDER_SCENE_SURFACE);
 }
 
-static void seed_view_rect(GmlRender *render,const uint32_t *src,int sw,int sh,
+void seed_view_rect(GmlRender *render,const uint32_t *src,int sw,int sh,
                            uint32_t *dst,int dw,int dh,
                            int sx,int sy,int rw,int rh){
   if(!src || !dst || sw<=0 || sh<=0 || dw<=0 || dh<=0 || rw<=0 || rh<=0) return;
@@ -1672,16 +1672,34 @@ int render_multiview_application(AnygmEngine *engine) {
   GmlPresentView views[8]; int canvas_w = 0, canvas_h = 0;
   int count = present_view_count(engine,views, &canvas_w, &canvas_h);
   if (count <= 1 || canvas_w != (int)engine->width || canvas_h != (int)engine->height) return 0;
-  if(engine->scene_renderer_session==ANYGM_SCENE_RENDERER_OPENGL &&
-     !gml_render_completed_screen_write(&engine->render,engine->fb,
-                                        (int)engine->width,(int)engine->height)) return -1;
   if(!ensure_scratch_buffer(engine,&engine->app_crop)) return 0;
   uint32_t *view_buffer=engine->app_crop;
+  int resident_composition=0;
+  int bounded_ports=1;
+  for(int i=0;i<count;i++)
+    if(views[i].px < -16384 || views[i].px>16384 || views[i].py < -16384 || views[i].py>16384 ||
+       views[i].pw<=0 || views[i].ph<=0 || views[i].pw>16384 || views[i].ph>16384) bounded_ports=0;
+  if(bounded_ports && !engine->composed_frame && engine_graphics_active(engine) &&
+     engine->scene_renderer_session==ANYGM_SCENE_RENDERER_OPENGL){
+    for(int i=0;i<count;i++){
+      int vw=(int)lround(views[i].w),vh=(int)lround(views[i].h);
+      if(vw<=0 || vh<=0 || vw>FB_MAX_W || vh>FB_MAX_H) continue;
+      resident_composition=gml_render_multiview_prepare(&engine->render,engine->fb,
+        (int)engine->width,(int)engine->height,view_buffer,vw,vh);
+      break;
+    }
+  }
+  if(!resident_composition && engine->scene_renderer_session==ANYGM_SCENE_RENDERER_OPENGL &&
+     !gml_render_completed_screen_write(&engine->render,engine->fb,
+                                        (int)engine->width,(int)engine->height)) return -1;
 
   GmlRoom rm;
   int have_room = gml_vm_room_get(&engine->vm, engine->vm.room_index, &rm) == 0;
   int clear_background = !have_room || room_clears_application_surface(&engine->win, &rm);
-  if(clear_background){
+  if(clear_background && resident_composition){
+    if(!gml_render_multiview_clear(&engine->render,engine->fb,
+         (int)engine->width,(int)engine->height,0xFF000000u)) return -1;
+  }else if(clear_background){
     for(unsigned i=0;i<engine->width*engine->height;i++) engine->fb[i]=0xFF000000u;
     if(engine->width && engine->height)
       gml_render_dispatch_cpu_composition(&engine->render,GML_RENDER_SCENE_PRIMITIVE);
@@ -1698,7 +1716,23 @@ int render_multiview_application(AnygmEngine *engine) {
     GmlRenderSamplePlanes planes={0};
     gml_render_sample_planes_update(&engine->render,&planes,
                                     GML_RENDER_SAMPLE_PLANES_APPLICATION);
-    if(!clear_background)
+    if(resident_composition &&
+       !gml_render_multiview_prepare(&engine->render,engine->fb,
+         (int)engine->width,(int)engine->height,view_buffer,vw,vh)){
+      /* An authored target/presentation change can end residency between views.
+       * Observe both actual allocations before resuming the unchanged CPU suffix. */
+      if(!gml_render_completed_screen_write(&engine->render,engine->fb,
+           (int)engine->width,(int)engine->height) ||
+         !gml_render_completed_screen_write(&engine->render,view_buffer,vw,vh)) return -1;
+      resident_composition=0;
+    }
+    if(!resident_composition && engine->scene_renderer_session==ANYGM_SCENE_RENDERER_OPENGL &&
+       !gml_render_completed_screen_write(&engine->render,view_buffer,vw,vh)) return -1;
+    if(!clear_background && resident_composition){
+      if(!gml_render_multiview_copy(&engine->render,engine->fb,
+           (int)engine->width,(int)engine->height,view_buffer,vw,vh,
+           v->px,v->py,v->pw,v->ph,1)) return -1;
+    }else if(!clear_background)
       seed_view_rect(&engine->render,engine->fb,(int)engine->width,(int)engine->height,
                      view_buffer,vw,vh,v->px,v->py,v->pw,v->ph);
     int resident_view_began=0;
@@ -1711,6 +1745,12 @@ int render_multiview_application(AnygmEngine *engine) {
      * resident base rejects its stack, so keep that stack for the CPU pass. */
     if(!resident_view_began)
       gml_render_begin_retaining_target(&engine->render,view_buffer,vw,vh,v->x,v->y);
+    if(!resident_view_began && resident_composition){
+      if(!gml_render_completed_screen_write(&engine->render,engine->fb,
+           (int)engine->width,(int)engine->height) ||
+         !gml_render_completed_screen_write(&engine->render,view_buffer,vw,vh)) return -1;
+      resident_composition=0;
+    }
     if(clear_background)
       gml_render_set_pending_fill(&engine->render, engine->background);
     if (have_room && !gml_draws_bg) draw_runtime_backgrounds(engine,0);
@@ -1721,7 +1761,8 @@ int render_multiview_application(AnygmEngine *engine) {
     gml_render_flush_pending_fill(&engine->render);
     if(resident_view_began &&
        (!engine_graphics_finish_scene(engine) ||
-        !gml_render_resident_application_cpu_barrier(&engine->render))) return -1;
+        (!resident_composition &&
+         !gml_render_resident_application_cpu_barrier(&engine->render)))) return -1;
     int view_surface=(int)gml_global_arr(&engine->vm,"view_surface_id",v->index);
     if(view_surface>0 && gml_surface_exists(&engine->render,view_surface)){
       GmlRenderTargetCoverage coverage={0};
@@ -1730,8 +1771,12 @@ int render_multiview_application(AnygmEngine *engine) {
            &engine->render,view_surface,view_buffer,vw,vh,
            coverage.opaque_known && coverage.all_opaque)) return -1;
     }
-    compose_view_rect(&engine->render,view_buffer, vw, vh, engine->fb, (int)engine->width, (int)engine->height,
-                      v->px, v->py, v->pw, v->ph);
+    if(resident_composition){
+      if(!gml_render_multiview_copy(&engine->render,view_buffer,vw,vh,engine->fb,
+           (int)engine->width,(int)engine->height,v->px,v->py,v->pw,v->ph,0)) return -1;
+    }else
+      compose_view_rect(&engine->render,view_buffer, vw, vh, engine->fb, (int)engine->width, (int)engine->height,
+                        v->px, v->py, v->pw, v->ph);
   }
   *gml_varmap_put(&engine->vm.globals, "view_current") = vreal(0);
   GmlRenderTargetCoverage coverage={
@@ -1750,7 +1795,7 @@ int render_multiview_application(AnygmEngine *engine) {
       engine_logf(engine,ANYGM_LOG_DEBUG,"\n");
     }
   }
-  return 1;
+  return resident_composition?2:1;
 }
 
 void content_router_log(void *userdata,int level,const char *message){

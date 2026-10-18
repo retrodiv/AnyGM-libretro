@@ -50,6 +50,7 @@ int gml_render_resident_classic_phase_present(GmlRender *render,
 int gml_render_compose_resident_underlay(GmlRender *render);
 void gml_render_base_resource_dispose(GmlRender *render);
 void gml_render_retained_base_dispose(GmlRender *render);
+void gml_render_view_base_dispose(GmlRender *render);
 GmlRenderResource *gml_render_base_resource_lookup(const GmlRender *render,
   const uint32_t *pixels,int *width,int *height);
 /* Return -1 rather than evicting an unobserved third physical canvas. */
