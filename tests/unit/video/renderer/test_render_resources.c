@@ -2310,8 +2310,16 @@ static int paired_root_numbered_ports_keep_peer_inert(void){
     gml_render_set_pending_fill(r,0x7F315779u);gml_render_flush_pending_fill(r);
     CHECK(gml_render_scene_submit_pending(r));
     int submitted=fake.submits;memcpy(shadow,r->fb,sizeof shadow);
-    for(unsigned inactive=0;inactive<2u;inactive++){
+    /* A detached active pointer is also inert on this independent image.
+     * Root, application zero, aliased and unstacked bindings retain their fence. */
+    for(unsigned inactive=0;inactive<6u;inactive++){
       if(inactive) r->classic_phase_y=NULL;
+      int saved_id=r->target_id,saved_sp=r->target_sp;
+      uint32_t *saved_fb=r->fb;
+      if(inactive==2u){r->target_id=-1;r->target_sp=0;r->fb=r->base_fb;}
+      if(inactive==3u) r->target_id=0;
+      if(inactive==4u) r->fb=r->base_fb;
+      if(inactive==5u) r->target_sp=0;
       int accepted=0;
       if(port==0u) accepted=gml_render_resident_font_glyph(r,0,0,0,2,2,1,1,1,1,0xFFFFFFu,1.0);
       else if(port==1u) accepted=gml_render_resident_sprite_font_glyph(r,0,1,1,1,1,0xFFFFFFu,1.0);
@@ -2324,9 +2332,10 @@ static int paired_root_numbered_ports_keep_peer_inert(void){
         r->tpag[0].project_authored_edges=1;
         accepted=gml_render_resident_nearest_tile_page(r,&r->tpag[0],1,1,1,1,0xFFFFFFu,1.0);
       }
-      if(inactive) CHECK(!accepted && fake.submits==submitted+1);
+      if(inactive>=2u) CHECK(!accepted && fake.submits==submitted+2);
       else CHECK(accepted && r->resident_application_pass && gml_render_scene_submit_pending(r) &&
-        fake.submits==submitted+1);
+        fake.submits==submitted+(int)inactive+1);
+      r->target_id=saved_id;r->target_sp=saved_sp;r->fb=saved_fb;
       CHECK(!fake.readbacks && !fake.rgb_queries && !memcmp(shadow,r->fb,sizeof shadow));
     }
     r->classic_phase_y=vertical;

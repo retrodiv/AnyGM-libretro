@@ -1560,6 +1560,7 @@ int gml_render_resident_nearest_tile_page(GmlRender *r,GmlTpag *page,
                                          double left,double top,double xs,double ys,
                                          uint32_t colour,double alpha){
   if(r && r->classic_phase_resource && !r->classic_phase_scene_preparing &&
+     !(r->target_sp>0 && r->target_id>0 && r->fb!=r->base_fb) &&
      (!r->classic_phase_y || gml_render_classic_vertical_phase_blocks_scene(r)))
     return gml_render_resident_classic_phase_atlas(r,page,left,top,xs,ys,colour,alpha,
                                                    GML_RENDER_PHASE_TILE);
@@ -1646,6 +1647,7 @@ int gml_render_resident_selected_background_page(GmlRender *r,GmlTpag *page,
                                                  uint32_t colour,double alpha){
   uint32_t source_alpha_key=0u;
   if(r && r->classic_phase_resource && !r->classic_phase_scene_preparing &&
+     !(r->target_sp>0 && r->target_id>0 && r->fb!=r->base_fb) &&
      (!r->classic_phase_y || gml_render_classic_vertical_phase_blocks_scene(r)))
     return gml_render_resident_classic_phase_atlas(r,page,left,top,xs,ys,colour,alpha,
                                                    GML_RENDER_PHASE_BACKGROUND_PART);
@@ -1708,6 +1710,7 @@ int gml_render_resident_font_glyph(GmlRender *r,int atlas,int source_x,int sourc
   GmlTpag page={.atlas=atlas,.sx=source_x,.sy=source_y,.sw=width,.sh=height,
                 .tw=width,.th=height,.bw=width,.bh=height};
   if(r && r->classic_phase_resource && !r->classic_phase_scene_preparing &&
+     !(r->target_sp>0 && r->target_id>0 && r->fb!=r->base_fb) &&
      (!r->classic_phase_y || gml_render_classic_vertical_phase_blocks_scene(r)))
     return gml_render_resident_classic_phase_atlas(r,&page,left,top,xs,ys,colour,alpha,
                                                    GML_RENDER_PHASE_TEXT);
@@ -1737,6 +1740,7 @@ int gml_render_resident_sprite_font_glyph(GmlRender *r,int page_index,
   if(r->interp && !r->classic)
     return resident_filtered_font_crop(r,page,left,top,xs,ys,colour,alpha);
   if(r->classic_phase_resource && !r->classic_phase_scene_preparing &&
+     !(r->target_sp>0 && r->target_id>0 && r->fb!=r->base_fb) &&
      (!r->classic_phase_y || gml_render_classic_vertical_phase_blocks_scene(r)))
     return gml_render_resident_classic_phase_atlas(r,page,left,top,xs,ys,colour,alpha,
                                                    GML_RENDER_PHASE_SPRITE_TEXT);
@@ -4125,6 +4129,7 @@ int gml_render_resident_rotated_font_glyph(GmlRender *r,GmlSprite *sprite,GmlTpa
   /* Rotated CPU glyphs write only the base image. Retain the phase bytes and
    * their independent coverage while staging the same existing text owner. */
   if(r->classic_phase_resource && !r->classic_phase_scene_preparing &&
+     !(r->target_sp>0 && r->target_id>0 && r->fb!=r->base_fb) &&
      (!r->classic_phase_y || gml_render_classic_vertical_phase_blocks_scene(r))){
     if(!gml_render_classic_phase_resource_bind(r)) return 0;
     for(unsigned attempt=0;attempt<2u;attempt++){
