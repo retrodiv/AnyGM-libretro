@@ -4325,6 +4325,12 @@ int gml_render_resident_flat_fog_sprite(GmlRender *r,int sprite,int subimg,
 int gml_render_resident_masked_sprite(GmlRender *r,int sprite,int subimg,
                                       double x,double y,double xs,double ys,double rotation,
                                       uint32_t colour,double alpha){
+  /* The software mask wrapper snapshots its preserved channels before the
+   * unmasked suffix runs. An independently cleared persistent image must be
+   * CPU-current before that snapshot, without admitting the parent pass. */
+  if(r && !r->resident_application_pass && r->scene_device_enabled &&
+     r->target_id>=0 && r->color_write_mask<15u)
+    return !gml_render_resident_application_cpu_barrier(r);
   if(!r || !r->resident_application_pass || r->color_write_mask>=15u ||
      sprite<0 || sprite>=r->n_spr)
     return 0;
@@ -4377,7 +4383,8 @@ void gml_render_sprite_ext_unmasked(GmlRender *r, int sprite, int subimg, double
                                      double xs, double ys, double rot, uint32_t blend, double alpha){
   gml_render_draw_map_point(r,&x,&y);
   gml_render_draw_map_scale(r,&xs,&ys);
-  if(r && r->resident_application_pass){
+  if(r && (r->resident_application_pass ||
+           (r->scene_device_enabled && r->target_id>=0))){
     double resident_rotation=rot;
     /* Invalid and frameless ordinary sprites have no raster work to order
      * after the queued prefix. Spine and active 3D retain their earlier CPU
@@ -4429,6 +4436,10 @@ void gml_render_sprite_ext_unmasked(GmlRender *r, int sprite, int subimg, double
        !r->spr[sprite].spine && !r->spr[sprite].ns_enabled &&
        !gml_d3_is_active(r) && gml_render_scene_target_matches(r))
       return;
+    /* A persistent clear can own device pixels even when this pass selected
+     * software. Keep no-ops above, but acquire CPU authority before any real
+     * suffix write; never admit the unsupported parent merely to draw here. */
+    if(!r->resident_application_pass) goto resident_cpu;
     /* R03-SPR-AXIS-TURN: filtered Studio preferences share the CPU entry's
      * axis classification. Existing nearest owners already resolve this
      * phase and retain their qualified packet/batching preference.

@@ -4403,6 +4403,81 @@ static int independent_persistent_target_clear(void){
   return 1;
 }
 
+/* A software full-sprite suffix must retire an independent clear's device
+ * authority before writing, without admitting its unsupported parent pass. */
+static int independent_clear_full_sprite_suffix(void){
+  static const int generations[]={530,701,800,810,15,17};
+  const uint32_t clear=0xFF426486u;
+  unsigned controls=0;
+  for(unsigned policy=0;policy<6u;policy++) for(unsigned application=0;application<2u;application++)
+  for(unsigned published=0;published<2u;published++) for(unsigned on_demand=0;on_demand<2u;on_demand++)
+  for(unsigned mask=0;mask<16u;mask++) for(unsigned variant=0;variant<8u;variant++){
+    /* All channel masks cover real suffix writes. The three empty-draw
+     * controls isolate the unmasked entry's no-preparation contract. */
+    if(variant>=5u && mask!=15u) continue;
+    GmlRender *pair[2]={calloc(1,sizeof *pair[0]),calloc(1,sizeof *pair[1])};
+    GmlWin content={0};uint32_t base[2][64]={{0}};
+    FakeDevice fake={.on_demand=(int)on_demand,.readback_colour=clear};
+    GmlRenderDeviceServices device=service(&fake);
+    if(generations[policy]>100) content.classic_version=generations[policy];
+    else content.bytecode=generations[policy];
+    device.observe_on_demand=fake_observe_on_demand;
+    int ids[2]={0};
+    for(unsigned member=0;member<2u;member++){
+      GmlRender *r=pair[member];
+      CHECK(r && !gml_render_init(r,NULL));
+      r->win=&content;r->classic=content.classic_version!=0;
+      r->spr=calloc(1,sizeof *r->spr);CHECK(r->spr);r->n_spr=1;
+      GmlSprite *sprite=&r->spr[0];sprite->w=sprite->h=2;sprite->n_frames=1;
+      sprite->frame=calloc(1,sizeof(int));sprite->runtime_rgba=malloc(16u);
+      CHECK(sprite->frame && sprite->runtime_rgba);
+      static const uint8_t rgba[16]={208,32,16,255,16,208,32,128,32,16,208,0,192,176,160,255};
+      memcpy(sprite->runtime_rgba,rgba,sizeof rgba);
+      gml_render_begin(r,base[member],8,8,0,0);
+      ids[member]=application?0:gml_surface_create(r,8,8);
+      CHECK(application?gml_render_application_surface_ensure_owned(r,8,8):ids[member]>0);
+      if(member){gml_render_bind_device(r,&device);gml_render_set_scene_device(r,1);}
+      CHECK(gml_surface_set_target(r,ids[member]));
+      gml_render_begin_retaining_target(r,base[member],8,8,0,0);
+      CHECK(!r->resident_application_pass && !r->resident_scene_pass);
+      r->interp=(int)(variant&1u);r->color_write_mask=mask;
+      r->blendmode=variant==4u?1:0;
+      gml_render_set_pending_fill(r,clear);
+      if(published) gml_render_flush_pending_fill(r);
+    }
+    int reads=fake.readbacks,submits=fake.submits;
+    for(unsigned member=0;member<2u;member++)
+      gml_draw_sprite_ext(pair[member],variant==7u?-1:0,0,3,3,
+        variant==6u?0:variant==2u?(policy&1u?-2:2):1,1,variant==2u?27:0,
+        variant==3u?0x87C9A3u:0xFFFFFFu,
+        variant==5u?0:variant==1u || variant==2u || variant==3u?.375:1);
+    GmlRender *r=pair[1];GmlRenderJournalMetrics metrics={0};
+    GmlRenderResource *resource=gml_render_scene_target_resource_ensure(r);CHECK(resource);
+    gml_render_resource_journal_metrics(resource,&metrics);
+    int matching=!r->resident_application_pass && !r->resident_scene_pass;
+    if(variant>=5u)
+      matching=matching && fake.readbacks==reads && fake.submits==submits &&
+        r->pending_fill==(int)!published;
+    else
+      matching=matching && metrics.authority==GML_RENDER_RESOURCE_CPU_CURRENT &&
+        metrics.cpu_version==metrics.logical_version &&
+        fake.submits==submits && fake.readbacks==reads+(int)(published && on_demand) &&
+        !memcmp(pair[0]->fb,r->fb,64u*sizeof(uint32_t));
+    const uint32_t *cpu=gml_surface_pixels_read(pair[0],ids[0],NULL,NULL);
+    const uint32_t *selected=gml_surface_pixels_read(r,ids[1],NULL,NULL);
+    matching=matching && cpu && selected && !memcmp(cpu,selected,64u*sizeof(uint32_t));
+    if(!matching) fprintf(stderr,"independent full sprite: policy=%d application=%u published=%u "
+      "on_demand=%u mask=%u variant=%u authority=%u versions=%llu/%llu reads=%d submits=%d\n",
+      generations[policy],application,published,on_demand,mask,variant,metrics.authority,
+      (unsigned long long)metrics.cpu_version,(unsigned long long)metrics.logical_version,
+      fake.readbacks,fake.submits);
+    for(unsigned member=0;member<2u;member++){gml_render_free(pair[member]);free(pair[member]);}
+    CHECK(matching);controls++;
+  }
+  printf("independent full-sprite suffix controls: %u exact\n",controls);
+  return 1;
+}
+
 static int resident_pending_clear_after_queued_draw(void){
   for(int on_demand=0;on_demand<2;on_demand++)
     for(int target=0;target<3;target++){
@@ -17130,6 +17205,7 @@ int main(void){
   passed+=resident_application_pending_clear();
   passed+=owned_application_clear_without_cpu_view();
   passed+=independent_persistent_target_clear();
+  passed+=independent_clear_full_sprite_suffix();
   passed+=independent_numbered_target_admission();
   passed+=resident_pending_clear_after_queued_draw();
   passed+=first_generation_underlay_resource_borrow();
@@ -17335,6 +17411,6 @@ int main(void){
   passed+=source_free_primitive_rect_replay();
   passed+=stretched_float_exact_replay();
   passed+=filtered_font_exact_recovery();
-  printf("render resource cases: passed=%d failed=%d\n",passed,271-passed);
-  return passed==271?EXIT_SUCCESS:EXIT_FAILURE;
+  printf("render resource cases: passed=%d failed=%d\n",passed,272-passed);
+  return passed==272?EXIT_SUCCESS:EXIT_FAILURE;
 }

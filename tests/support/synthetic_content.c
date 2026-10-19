@@ -1759,7 +1759,7 @@ static int synthetic_framebuffer_content_create(
   memset(fixture,0,sizeof *fixture);
   if(!create_fixture_directory(fixture->directory,sizeof fixture->directory)) return 0;
 
-  int classic_native_step=gpu_sprite>=51 && gpu_sprite<=54;
+  int classic_native_step=(gpu_sprite>=51 && gpu_sprite<=54) || gpu_sprite==61;
   int classic_step_composition=(gpu_sprite>=41 && gpu_sprite<=43) || classic_native_step;
   int classic_retained_target=gpu_sprite==38 || gpu_sprite==39 || classic_step_composition;
   int retained_step_target=gpu_sprite==5 || gpu_sprite==6 || classic_retained_target;
@@ -2169,8 +2169,8 @@ static int synthetic_framebuffer_content_create(
     if(gpu_sprite==41 || gpu_sprite==42) project.classic_version=701;
     if(classic_native_step){
       project.classic_version=gpu_sprite==51?800:810;
-      project.classic_scaling=gpu_sprite==53?200:100;
-      project.classic_interpolate=gpu_sprite==54;
+      project.classic_scaling=gpu_sprite==53 || gpu_sprite==61?200:100;
+      project.classic_interpolate=gpu_sprite==54 || gpu_sprite==61;
     }
     if(classic_sample_root){
       project.classic_version=810;project.classic_scaling=200;
@@ -2496,6 +2496,9 @@ int anygm_synthetic_classic_scaled_step_content_create(AnygmSyntheticContent *fi
 }
 int anygm_synthetic_classic_filtered_step_content_create(AnygmSyntheticContent *fixture){
   return synthetic_framebuffer_content_create(fixture,0,0,1,54);
+}
+int anygm_synthetic_classic_scaled_filtered_step_content_create(AnygmSyntheticContent *fixture){
+  return synthetic_framebuffer_content_create(fixture,0,0,1,61);
 }
 int anygm_synthetic_classic_sample_root_content_create(AnygmSyntheticContent *fixture){
   return synthetic_framebuffer_content_create(fixture,0,0,1,58);
