@@ -341,8 +341,7 @@ static int resident_outside_sprite_noop(GmlRender *r,GmlSprite *sprite,int subim
      r->rotated_batch_count || r->rotated_batch_building ||
      r->pending_underlay || r->pending_presentation ||
      !gml_render_scene_target_matches(r)) return 0;
-  for(unsigned index=0;index<3u;index++)
-    if(r->classic_interp_phase[index] || r->app_interp_phase[index]) return 0;
+  if(gml_render_interpolated_phase_blocks_scene(r)) return 0;
   int frame=((subimg%sprite->n_frames)+sprite->n_frames)%sprite->n_frames;
   int page=sprite->frame[frame];
   if(page<0 || page>=r->n_tpag || !r->tpag) return 0;
@@ -374,8 +373,7 @@ static int resident_classic_rotated_sprite_noop(GmlRender *r,GmlSprite *sprite,i
      !isfinite(x) || !isfinite(y) || fabs(x)>65536.0 || fabs(y)>65536.0 ||
      !isfinite(xs) || !isfinite(ys) || xs<=0.0 || ys<=0.0 || xs>4.0 || ys>4.0 ||
      !isfinite(rotation) || rotation==0.0) return 0;
-  for(unsigned index=0;index<3u;index++)
-    if(r->classic_interp_phase[index] || r->app_interp_phase[index]) return 0;
+  if(gml_render_interpolated_phase_blocks_scene(r)) return 0;
   int sub=gml_render_runtime_frame_index(sprite,subimg),page_index=sprite->frame[sub];
   if(page_index<0 || page_index>=r->n_tpag) return 0;
   GmlTpag *page=&r->tpag[page_index];
@@ -430,8 +428,7 @@ static int resident_integer_sprite(GmlRender *r,GmlSprite *sprite,int subimg,
     return 0;
   /* A plain sprite reads only the base image; the other texture-stage filter flags do not
    * participate in the CPU blit, and the integer-aligned unit-scale base sample is exact. */
-  for(int index=0;index<3;index++)
-    if(r->classic_interp_phase[index] || r->app_interp_phase[index]) return 0;
+  if(gml_render_interpolated_phase_blocks_scene(r)) return 0;
   if(normal_integer && alpha==0.0) return 1;
   sub=gml_render_runtime_frame_index(sprite,subimg);
   if(!sprite->frame) return 0;
@@ -861,8 +858,7 @@ static int resident_atlas_crop_from_page_impl(GmlRender *r,GmlTpag *page,
       !gml_render_target_preserves_alpha(r) &&
       (!r->fb_opaque_known || !r->fb_all_opaque)) ||
      (sampling_interp && (xs!=1.0 || ys!=1.0))) return 0;
-  for(int index=0;index<3;index++)
-    if(r->classic_interp_phase[index] || r->app_interp_phase[index]) return 0;
+  if(gml_render_interpolated_phase_blocks_scene(r)) return 0;
   if(classic_point && (r->fog_flat || r->gui_pass_active ||
                       !r->device.context || !r->device.observe_on_demand ||
                       !r->device.observe_on_demand(r->device.context))) return 0;
@@ -1450,8 +1446,7 @@ static int resident_runtime_unit_sprite(GmlRender *r,GmlSprite *sprite,int subim
      !r->device.observe_on_demand(r->device.context) ||
      sprite->w<=0 || sprite->h<=0 || sprite->w>4096 || sprite->h>4096 ||
      sprite->n_frames<=0 || sprite->n_frames>4096) return 0;
-  for(unsigned index=0;index<3u;index++)
-    if(r->classic_interp_phase[index] || r->app_interp_phase[index]) return 0;
+  if(gml_render_interpolated_phase_blocks_scene(r)) return 0;
   double left=(x-r->cam_x)-sprite->originx,top=(y-r->cam_y)-sprite->originy;
   if(!isfinite(left) || !isfinite(top) || fabs(left)>65536.0 || fabs(top)>65536.0 ||
      floor(left)!=left || floor(top)!=top) return 0;
@@ -2497,8 +2492,7 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
                           fabs(xs-nearbyint(xs))<1e-9)) ||
        (fabs(ys)!=1.0 && (fabs(1.0/ys-nearbyint(1.0/ys))<1e-9 ||
                           fabs(ys-nearbyint(ys))<1e-9))))) return 0;
-  for(int index=0;index<3;index++)
-    if(r->classic_interp_phase[index] || r->app_interp_phase[index]) return 0;
+  if(gml_render_interpolated_phase_blocks_scene(r)) return 0;
   if((masked_numbered_sprite || (hardware_physical_sprite && !hardware_physical_part && !hardware_physical_font)) &&
      !r->color_write_mask) return 1;
   /* blit_one skips every destination at zero draw alpha. Preserve the queued
@@ -3373,8 +3367,7 @@ static int resident_modern_screen_binary_rotation(GmlRender *r,GmlSprite *sprite
      source.width>16384u || source.height>16384u ||
      (uint64_t)(uint32_t)page->sx+(uint32_t)page->sw>source.width ||
      (uint64_t)(uint32_t)page->sy+(uint32_t)page->sh>source.height) return 0;
-  for(int index=0;index<3;index++)
-    if(r->classic_interp_phase[index] || r->app_interp_phase[index]) return 0;
+  if(gml_render_interpolated_phase_blocks_scene(r)) return 0;
   resident_classify_page(page,&r->atlas[page->atlas]);
   if(!page->scene_binary_alpha) return 0;
   regions=malloc(REGION_LIMIT*sizeof *regions);
@@ -3464,8 +3457,7 @@ static int resident_modern_nearest_rotation(GmlRender *r,GmlSprite *sprite,GmlTp
      source.width>16384u || source.height>16384u ||
      (uint64_t)(uint32_t)page->sx+(uint32_t)page->sw>source.width ||
      (uint64_t)(uint32_t)page->sy+(uint32_t)page->sh>source.height) return 0;
-  for(int index=0;index<3;index++)
-    if(r->classic_interp_phase[index] || r->app_interp_phase[index]) return 0;
+  if(gml_render_interpolated_phase_blocks_scene(r)) return 0;
   unsigned empty_cutoff=0u;
   if(screen_axis){
     if(!r->color_write_mask || !gml_render_rotated_alpha16_factor(255u,alpha)) return 1;
@@ -3608,8 +3600,7 @@ static int resident_collapsed_additive_sprite_noop(GmlRender *r,GmlSprite *sprit
      page->atlas<0 || page->atlas>=r->n_atlas || !r->atlas ||
      !r->device.context || !r->device.observe_on_demand ||
      !r->device.observe_on_demand(r->device.context)) return 0;
-  for(unsigned index=0;index<3u;index++)
-    if(r->classic_interp_phase[index] || r->app_interp_phase[index]) return 0;
+  if(gml_render_interpolated_phase_blocks_scene(r)) return 0;
   double ax=x-r->cam_x,ay=y-r->cam_y;
   if(!isfinite(ax) || !isfinite(ay) || fabs(ax)>65536.0 || fabs(ay)>65536.0 ||
      ax!=nearbyint(ax) || ay!=nearbyint(ay)) return 0;
@@ -3667,8 +3658,7 @@ static int resident_nearest_texture_function(GmlRender *r,GmlSprite *sprite,GmlT
      (r->alphablend && alpha<0x1p-64) ||
      !isfinite(xs) || !isfinite(ys) || fabs(xs)<minimum_scale || fabs(xs)>maximum_scale ||
      fabs(ys)<minimum_scale || fabs(ys)>maximum_scale) return 0;
-  for(unsigned i=0;i<3u;i++)
-    if(r->classic_interp_phase[i] || r->app_interp_phase[i]) return 0;
+  if(gml_render_interpolated_phase_blocks_scene(r)) return 0;
   if(!r->color_write_mask && family==GML_RENDER_SCENE_SPRITE) return 1;
   double phase=fmod(rotation,360.0);if(phase<0.0) phase+=360.0;
   if(page->project_authored_edges || page->bw!=sprite->w || page->bh!=sprite->h ||
@@ -4050,7 +4040,7 @@ static int resident_replacement_sprite(GmlRender *r,GmlSprite *sprite,int subimg
      fabs(ys)<(r->fog_flat?0x1p-14:1.0) || fabs(ys)>64.0 ||
      !r->device.context || !r->device.observe_on_demand ||
      !r->device.observe_on_demand(r->device.context)) return 0;
-  for(unsigned i=0;i<3u;i++) if(r->classic_interp_phase[i] || r->app_interp_phase[i]) return 0;
+  if(gml_render_interpolated_phase_blocks_scene(r)) return 0;
   int index=sprite->frame[gml_render_runtime_frame_index(sprite,subimg)];
   if(index<0 || index>=r->n_tpag) return 0;
   GmlTpag *page=&r->tpag[index];
@@ -4115,8 +4105,7 @@ static int resident_nearest_sprite_function(GmlRender *r,GmlSprite *sprite,int s
        (r->alphablend && alpha<0x1p-64) || r->color_write_mask>15u ||
        !r->device.context || !r->device.observe_on_demand ||
        !r->device.observe_on_demand(r->device.context)) return 0;
-    for(unsigned index=0;index<3u;index++)
-      if(r->classic_interp_phase[index] || r->app_interp_phase[index]) return 0;
+    if(gml_render_interpolated_phase_blocks_scene(r)) return 0;
     if(!r->color_write_mask) return 1;
     GmlRenderResourceSource source={0};
     if(!gml_render_runtime_sprite_scene_source_view(r,sprite,subimg,&source)) return 0;
@@ -4568,8 +4557,7 @@ static int resident_coarse_mip_veil(GmlRender *r,int sprite,int frame,
        r->world_scale_x<=0.0 || r->world_scale_y<=0.0)) ||
      sprite<0 || sprite>=r->n_spr || blend!=0xFFFFFFu || alpha!=1.0 ||
      gml_d3_is_active(r)) return 0;
-  for(int index=0;index<3;index++)
-    if(r->classic_interp_phase[index] || r->app_interp_phase[index]) return 0;
+  if(gml_render_interpolated_phase_blocks_scene(r)) return 0;
   record=&r->spr[sprite];
   if(record->runtime_rgba || record->spine || record->ns_enabled ||
      record->n_frames<=0 || !record->frame || record->w<=0 || record->h<=0)
@@ -4706,8 +4694,7 @@ static int resident_mapped_gui_stretch(GmlRender *r,int sprite,int frame,
      !(device=gml_render_device(r)) || !device->context || !device->observe_on_demand ||
      !device->observe_on_demand(device->context) || gml_d3_is_active(r) ||
      sprite<0 || sprite>=r->n_spr || blend!=0xFFFFFFu || alpha!=1.0) return 0;
-  for(int index=0;index<3;index++)
-    if(r->classic_interp_phase[index] || r->app_interp_phase[index]) return 0;
+  if(gml_render_interpolated_phase_blocks_scene(r)) return 0;
   record=&r->spr[sprite];
   if(record->runtime_rgba || record->spine || record->ns_enabled ||
      record->w<=0 || record->h<=0 || record->n_frames<=0 || !record->frame) return 0;
@@ -4783,8 +4770,7 @@ static int resident_stretched_sprite_function(GmlRender *r,int sprite,int frame,
      r->active_shader>=0 || r->fog_flat || gml_d3_is_active(r) ||
      gml_render_classic_vertical_phase_blocks_scene(r) || r->rotated_batch_count || r->rotated_batch_building ||
      r->pending_presentation || !gml_render_scene_target_matches(r)) return 0;
-  for(unsigned index=0;index<3u;index++)
-    if(r->classic_interp_phase[index] || r->app_interp_phase[index]) return 0;
+  if(gml_render_interpolated_phase_blocks_scene(r)) return 0;
   const GmlRenderDeviceServices *device=gml_render_device(r);
   if(!device || !device->observe_on_demand || !device->observe_on_demand(device->context))
     return 0;
@@ -5072,8 +5058,7 @@ static int resident_positioned_quad_sprite(GmlRender *r,int sprite,int subimg,
      !gml_render_scene_target_matches(r) ||
      !isfinite(alpha) || alpha<=0.0 || alpha>1.0 ||
      sprite<0 || sprite>=r->n_spr) return 0;
-  for(int index=0;index<3;index++)
-    if(r->classic_interp_phase[index] || r->app_interp_phase[index]) return 0;
+  if(gml_render_interpolated_phase_blocks_scene(r)) return 0;
   GmlSprite *sprite_source=&r->spr[sprite];
   if(sprite_source->runtime_rgba || sprite_source->spine ||
      sprite_source->ns_enabled || sprite_source->n_frames<=0 ||
@@ -5359,8 +5344,7 @@ static int resident_modern_unit_sprite_part(GmlRender *r,GmlTpag *page,const Gml
      source.width>16384u || source.height>16384u || r->atlas[page->atlas].runtime_font_page ||
      (uint64_t)(uint32_t)page->sx+(uint32_t)page->sw>source.width ||
      (uint64_t)(uint32_t)page->sy+(uint32_t)page->sh>source.height) return 0;
-  for(unsigned index=0;index<3u;index++)
-    if(r->classic_interp_phase[index] || r->app_interp_phase[index]) return 0;
+  if(gml_render_interpolated_phase_blocks_scene(r)) return 0;
   resident_classify_page(page,&r->atlas[page->atlas]);
   if(!page->scene_binary_alpha) return 0;
   double right=left+view->sw,bottom=top+view->sh;
@@ -5781,8 +5765,7 @@ static int resident_sprite_cell_function(GmlRender *r,int sprite,int subimg,
      gml_render_classic_vertical_phase_blocks_scene(r) || r->pending_presentation ||
      r->rotated_batch_count || r->rotated_batch_building ||
      !gml_render_scene_target_matches(r)) return 0;
-  for(unsigned index=0;index<3u;index++)
-    if(r->classic_interp_phase[index] || r->app_interp_phase[index]) return 0;
+  if(gml_render_interpolated_phase_blocks_scene(r)) return 0;
   /* blit_one and the runtime leaf return before reading source pixels at
    * nonpositive opacity. Destination-colour equations have a distinct owner. */
   if((alpha<=0.0 && !(r->alphablend && (r->blendmode==6 ||
@@ -5944,8 +5927,7 @@ static int resident_modern_trimmed_unit_layer(GmlRender *r,GmlSprite *sprite,int
      sprite->n_frames<=0 || sprite->w<=0 || sprite->h<=0 ||
      sprite->w>4096 || sprite->h>4096 || r->fbw<=0 || r->fbh<=0 ||
      r->fbw>16384 || r->fbh>16384) return 0;
-  for(int index=0;index<3;index++)
-    if(r->classic_interp_phase[index] || r->app_interp_phase[index]) return 0;
+  if(gml_render_interpolated_phase_blocks_scene(r)) return 0;
   int page_index=sprite->frame[gml_render_runtime_frame_index(sprite,subimg)];
   if(page_index<0 || page_index>=r->n_tpag) return 0;
   GmlTpag *page=&r->tpag[page_index];

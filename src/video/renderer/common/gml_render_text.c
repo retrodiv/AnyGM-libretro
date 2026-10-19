@@ -37,8 +37,7 @@ static int resident_text_glyph_outside(GmlRender *r,const GmlSprite *sprite,
      !gml_render_scene_target_matches(r)) return 0;
   /* A proven empty glyph cannot consume or reorder the automatic underlay.
    * Leave its intent and clear untouched for the next real writer/observer. */
-  for(unsigned axis=0;axis<3u;axis++)
-    if(r->classic_interp_phase[axis] || r->app_interp_phase[axis]) return 0;
+  if(gml_render_interpolated_phase_blocks_scene(r)) return 0;
   /* An untrimmed positive axis cell starts at floor(anchor) or later under
    * the CPU's snapping policies. An anchor on the integer right/bottom edge
    * is therefore empty, regardless of filtering. Other cells retain the

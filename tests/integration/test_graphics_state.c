@@ -1647,9 +1647,10 @@ static int classic_native_step_scene_case(void){
     anygm_synthetic_classic_native_step_content_create,
     anygm_synthetic_classic_late_native_step_content_create,
     anygm_synthetic_classic_scaled_step_content_create,
-    anygm_synthetic_classic_filtered_step_content_create
+    anygm_synthetic_classic_filtered_step_content_create,
+    anygm_synthetic_classic_scaled_filtered_step_content_create
   };
-  for(unsigned api=0;api<2u;api++) for(unsigned variant=0;variant<4u;variant++){
+  for(unsigned api=0;api<2u;api++) for(unsigned variant=0;variant<5u;variant++){
     Session plain={0},selected={0};
     CurrentContextWitness witness={1u,0u};
     AnygmGraphicsContext context=graphics_context(api?ANYGM_GRAPHICS_OPENGL_CORE:ANYGM_GRAPHICS_OPENGLES3);
@@ -1696,7 +1697,8 @@ static int classic_native_step_scene_case(void){
       GmlVal *surface=gml_varmap_get(&selected.engine->vm.globals,"fixture_surface");
       matching=matching && surface &&
         gml_surface_get_target(&selected.engine->render)==(int)surface->d &&
-        cpu.width==(variant==2u?128u:64u) && cpu.height==(variant==2u?96u:48u);
+        cpu.width==(variant==2u || variant==4u?128u:64u) &&
+        cpu.height==(variant==2u || variant==4u?96u:48u);
     }
     GmlRenderDispatchMetrics dispatch={0};
     GmlGpuCounters counters={0};
@@ -1707,9 +1709,8 @@ static int classic_native_step_scene_case(void){
         ordinary_cpu+=dispatch.cpu[family][reason];
     gml_gpu_counters(selected.engine->gpu,&counters);
     matching=matching && !dispatch.failed && !dispatch.unclassified && !dispatch.overflow;
-    /* Initial late-Classic SCREEN presentation remains CPU-owned. A native
-     * interpolation preference has no auxiliary sample planes and keeps the
-     * same independent numbered Draw owner as nearest presentation. */
+    /* Initial late-Classic SCREEN presentation remains CPU-owned. Independent
+     * numbered Draw never paints the native or doubled root's sample planes. */
     matching=matching && ordinary_cpu==(variant==3u?2u:1u) &&
       counters.scene_families[GML_RENDER_SCENE_SURFACE]>=3u;
     if(!matching) fprintf(stderr,"native Classic Step api=%u variant=%u CPU=%llu surfaces=%llu extent=%ux%u\n",
@@ -1717,7 +1718,7 @@ static int classic_native_step_scene_case(void){
       (unsigned long long)counters.scene_families[GML_RENDER_SCENE_SURFACE],
       selected.engine->output_width,selected.engine->output_height);
     session_close(&selected);session_close(&plain);
-    REQUIRE(matching,"native and doubled-nearest retained Step preserve their numbered GPU owner");
+    REQUIRE(matching,"native and doubled retained Step preserve their numbered GPU owner");
   }
   return 1;
 }

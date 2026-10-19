@@ -900,6 +900,36 @@ static inline int gml_render_classic_vertical_phase_blocks_scene(const GmlRender
     !(r->target_sp>0 && r->target_id>0 && r->fb!=r->base_fb);
 }
 
+static inline int gml_render_sample_storage_overlaps(const uint32_t *target,
+    size_t target_bytes,const uint32_t *sample,int width,int height){
+  if(!sample) return 0;
+  if(width<=0 || height<=0 || width>16384 || height>16384) return 1;
+  uintptr_t a=(uintptr_t)target,b=(uintptr_t)sample;
+  size_t sample_bytes=(size_t)width*(size_t)height*sizeof(uint32_t);
+  return a>=b?a-b<sample_bytes:b-a<target_bytes;
+}
+
+/* Interpolated samples belong to the logical root, not a distinct explicitly
+ * numbered allocation. Source-zero sampling keeps its separate fences. */
+static inline int gml_render_interpolated_phase_blocks_scene(const GmlRender *r){
+  if(!r) return 0;
+  int present=0;
+  for(unsigned plane=0;plane<3u;plane++)
+    present|=r->classic_interp_phase[plane]!=NULL || r->app_interp_phase[plane]!=NULL;
+  if(!present) return 0;
+  if(!r->classic || r->target_sp<=0 || r->target_id<=0 || !r->fb ||
+     r->fbw<=0 || r->fbh<=0 || r->fbw>16384 || r->fbh>16384) return 1;
+  size_t bytes=(size_t)r->fbw*(size_t)r->fbh*sizeof(uint32_t);
+  if(gml_render_sample_storage_overlaps(r->fb,bytes,r->base_fb,r->base_fbw,r->base_fbh) ||
+     gml_render_sample_storage_overlaps(r->fb,bytes,r->app_surface,r->app_w,r->app_h)) return 1;
+  for(unsigned plane=0;plane<3u;plane++)
+    if(gml_render_sample_storage_overlaps(r->fb,bytes,r->classic_interp_phase[plane],
+                                         r->base_fbw,r->base_fbh) ||
+       gml_render_sample_storage_overlaps(r->fb,bytes,r->app_interp_phase[plane],
+                                         r->app_w,r->app_h)) return 1;
+  return 0;
+}
+
 /* Visit the preserved CPU vertical coverage geometry without invoking a pixel
  * writer. A refusal stops before another span; callers stage the complete draw. */
 typedef int (*GmlRenderClassicPhaseSpanFn)(void *context,GmlTpag *page,

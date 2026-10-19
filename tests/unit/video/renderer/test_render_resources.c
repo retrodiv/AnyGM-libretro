@@ -13392,6 +13392,35 @@ static int resident_vertical_phase_binding_scope(void){
   CHECK(gml_render_classic_vertical_phase_blocks_scene(r));
   r->fb=&numbered;
   CHECK(!gml_render_classic_vertical_phase_blocks_scene(r));
+  r->classic_phase_y=NULL;r->classic=1;
+  r->fbw=r->fbh=r->base_fbw=r->base_fbh=r->app_w=r->app_h=1;
+  CHECK(!gml_render_interpolated_phase_blocks_scene(NULL));
+  CHECK(!gml_render_interpolated_phase_blocks_scene(r));
+  for(unsigned owner=0;owner<2u;owner++) for(unsigned index=0;index<3u;index++){
+    uint32_t **planes=owner?r->app_interp_phase:r->classic_interp_phase;
+    planes[index]=&phase;
+    r->target_id=-1;r->target_sp=0;r->fb=&root;
+    CHECK(gml_render_interpolated_phase_blocks_scene(r));
+    r->target_id=0;r->target_sp=1;r->fb=&numbered;
+    CHECK(gml_render_interpolated_phase_blocks_scene(r));
+    r->target_id=1;r->target_sp=0;
+    CHECK(gml_render_interpolated_phase_blocks_scene(r));
+    r->target_sp=1;r->fb=r->base_fb;
+    CHECK(gml_render_interpolated_phase_blocks_scene(r));
+    r->fb=&phase;
+    CHECK(gml_render_interpolated_phase_blocks_scene(r));
+    r->fb=&numbered;r->app_surface=&numbered;
+    CHECK(gml_render_interpolated_phase_blocks_scene(r));
+    r->app_surface=NULL;r->classic=0;
+    CHECK(gml_render_interpolated_phase_blocks_scene(r));
+    r->classic=1;
+    CHECK(!gml_render_interpolated_phase_blocks_scene(r));
+    uint32_t overlap[4]={0};r->fb=overlap;r->fbw=4;
+    planes[index]=overlap+1;
+    CHECK(gml_render_interpolated_phase_blocks_scene(r));
+    r->fb=&numbered;r->fbw=1;
+    planes[index]=NULL;
+  }
   CHECK(!root && !numbered && !phase);
   free(r);return 1;
 }
@@ -15592,7 +15621,7 @@ static int resident_background_function(int fractional){
       BG_REJECT(render->blend_equation_alpha=2,render->blend_equation_alpha=1);
       if(target_kind==3u){
         /* An allocated root plane is inert on the numbered allocation. Keep
-         * the active-root/application and interpolation-plane fences below. */
+         * the active-root/application and aliased-plane fences below. */
         render->classic_phase_y=screen;
         CHECK(fractional==2
           ?gml_render_resident_nearest_tile_page(render,&tile_view,6,5,2,1,0x70B0D0u,.37)
@@ -15606,8 +15635,8 @@ static int resident_background_function(int fractional){
               !fake.readbacks && !fake.rgb_queries && !memcmp(shadow,render->fb,sizeof shadow));
         submitted=fake.submits;
       }else BG_REJECT(render->classic_phase_y=screen,render->classic_phase_y=NULL);
-      BG_REJECT(render->classic_interp_phase[0]=screen,render->classic_interp_phase[0]=NULL);
-      BG_REJECT(render->app_interp_phase[0]=screen,render->app_interp_phase[0]=NULL);
+      BG_REJECT(render->classic_interp_phase[0]=render->fb,render->classic_interp_phase[0]=NULL);
+      BG_REJECT(render->app_interp_phase[0]=render->fb,render->app_interp_phase[0]=NULL);
       BG_REJECT(render->atlas[0].runtime_font_page=1,render->atlas[0].runtime_font_page=0);
 #undef BG_REJECT
       if(fractional==2){

@@ -102,8 +102,7 @@ static int resident_integer_background_part(GmlRender *r,int page_index,
      (r->world_transform_active && (r->world_scale_x!=1.0 || r->world_scale_y!=1.0)) ||
      !r->device.context || !r->device.observe_on_demand ||
      !r->device.observe_on_demand(r->device.context))) return 0;
-  for(int index=0;index<3;index++)
-    if(r->classic_interp_phase[index] || r->app_interp_phase[index]) return 0;
+  if(gml_render_interpolated_phase_blocks_scene(r)) return 0;
   /* Unit tile selections use the CPU's shared source intersection, not atlas
    * neighbours beyond the packed page. Keep other projections on their existing
    * admission paths; ordinary contained crops need no extra preparation. */

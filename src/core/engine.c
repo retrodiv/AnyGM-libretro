@@ -1289,9 +1289,9 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
       GmlRenderPresentationMetrics step_presentation={0};
       gml_render_presentation_metrics(&engine->render,&step_presentation);
       int resident_step=0;
-      /* Later native SCREEN retains the initial CPU-owned presentation clear.
-       * Native interpolation has no auxiliary root planes: its independent
-       * numbered target and ordinary point surface copy share this owner. */
+      /* Later SCREEN retains the initial CPU-owned presentation clear. Its
+       * independent numbered target does not paint the logical root samples;
+       * an ordinary numbered source still uses its established point copy. */
       if(gml_surface_get_target(&engine->render)>0 &&
          (!anygm_policy_classic_modern_presentation(&engine->win) ||
           (engine->vm.frame>0 &&
@@ -1299,7 +1299,8 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
             (engine->output_width==engine->width*2 && engine->output_height==engine->height*2)))) &&
          (!step_presentation.interpolation ||
           (anygm_policy_classic_modern_presentation(&engine->win) &&
-           engine->output_width==engine->width && engine->output_height==engine->height)) &&
+           ((engine->output_width==engine->width && engine->output_height==engine->height) ||
+            (engine->output_width==engine->width*2 && engine->output_height==engine->height*2)))) &&
          !engine->aspect_force_active &&
          !engine->canvas_mode && engine_graphics_active(engine) &&
          engine->scene_renderer_session==ANYGM_SCENE_RENDERER_OPENGL)
@@ -1719,7 +1720,7 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
   /* A numbered Draw image is not the logical root which owns the vertical
    * sample plane. Keep that root CPU-owned, independently of the physical
    * SCREEN composed by Step and of the explicitly bound numbered image. */
-  if(classic_phase && !engine->aspect_force_active && !engine->canvas_mode &&
+  if((classic_phase || classic_interp_phase) && !engine->aspect_force_active && !engine->canvas_mode &&
      engine->scene_renderer_session==ANYGM_SCENE_RENDERER_OPENGL &&
      engine_graphics_active(engine) && gml_surface_get_target(&engine->render)>0)
     classic_numbered_scene=1;

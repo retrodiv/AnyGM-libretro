@@ -328,8 +328,8 @@ static int resident_primitive_state_eligible_rule(GmlRender *r,int vertex){
      r->pending_presentation || r->rotated_batch_count || r->rotated_batch_building ||
      (gml_render_classic_vertical_phase_blocks_scene(r) &&
        (!r->classic_phase_resource || !gml_render_classic_phase_resource_bind(r))) ||
-     r->classic_interp_phase[0] ||
-     r->classic_interp_phase[1] || r->classic_interp_phase[2] || !isfinite(r->alpha)) return 0;
+     ((r->classic_interp_phase[0] || r->classic_interp_phase[1] || r->classic_interp_phase[2]) &&
+      gml_render_interpolated_phase_blocks_scene(r)) || !isfinite(r->alpha)) return 0;
   return 1;
 }
 
