@@ -1289,13 +1289,18 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
       GmlRenderPresentationMetrics step_presentation={0};
       gml_render_presentation_metrics(&engine->render,&step_presentation);
       int resident_step=0;
-      /* Later native SCREEN retains the initial CPU-owned presentation clear. */
+      /* Later native SCREEN retains the initial CPU-owned presentation clear.
+       * Native interpolation has no auxiliary root planes: its independent
+       * numbered target and ordinary point surface copy share this owner. */
       if(gml_surface_get_target(&engine->render)>0 &&
          (!anygm_policy_classic_modern_presentation(&engine->win) ||
           (engine->vm.frame>0 &&
            ((engine->output_width==engine->width && engine->output_height==engine->height) ||
             (engine->output_width==engine->width*2 && engine->output_height==engine->height*2)))) &&
-         !step_presentation.interpolation && !engine->aspect_force_active &&
+         (!step_presentation.interpolation ||
+          (anygm_policy_classic_modern_presentation(&engine->win) &&
+           engine->output_width==engine->width && engine->output_height==engine->height)) &&
+         !engine->aspect_force_active &&
          !engine->canvas_mode && engine_graphics_active(engine) &&
          engine->scene_renderer_session==ANYGM_SCENE_RENDERER_OPENGL)
         resident_step=gml_render_begin_resident_base_retaining_target(
@@ -1700,7 +1705,10 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
    * redraw. Retain its binding and metadata across Draw; phase presentation stays with CPU. */
   int classic_retained_scene=engine->composed_frame &&
     anygm_policy_uses_classic_runtime(&engine->win) &&
-    !classic_phase && !classic_interp_phase && !render_presentation.interpolation &&
+    !classic_phase && !classic_interp_phase &&
+    (!render_presentation.interpolation ||
+     (anygm_policy_classic_modern_presentation(&engine->win) &&
+      engine->output_width==engine->width && engine->output_height==engine->height)) &&
     !engine->aspect_force_active && !engine->canvas_mode &&
     engine->scene_renderer_session==ANYGM_SCENE_RENDERER_OPENGL &&
     engine_graphics_active(engine) &&

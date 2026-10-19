@@ -1665,11 +1665,28 @@ static int classic_native_step_scene_case(void){
     gml_render_dispatch_diagnostics_enable(&selected.engine->render,1);
     for(unsigned frame=0;frame<4u && matching;frame++){
       AnygmFrameOutput cpu={.struct_size=sizeof cpu},gpu={.struct_size=sizeof gpu};
+      GmlGpuCounters before={0},after={0};
+      gml_gpu_counters(selected.engine->gpu,&before);
       matching=anygm_run_frame(plain.engine,&input,&cpu)==ANYGM_OK &&
                anygm_run_frame(selected.engine,&input,&gpu)==ANYGM_OK &&
                cpu.width==gpu.width && cpu.height==gpu.height &&
                plain.engine->vm.room_index==selected.engine->vm.room_index &&
                plain.engine->vm.frame==selected.engine->vm.frame;
+      gml_gpu_counters(selected.engine->gpu,&after);
+      if(frame>0u && after.scene_readbacks!=before.scene_readbacks){
+        fprintf(stderr,"native Classic Step api=%u variant=%u frame=%u reads=%llu\n",
+          api,variant,frame,(unsigned long long)(after.scene_readbacks-before.scene_readbacks));
+        matching=0;
+      }
+      GmlRenderDispatchMetrics frame_dispatch={0};
+      uint64_t frame_cpu=0;
+      matching=matching && gml_render_dispatch_metrics(&selected.engine->render,&frame_dispatch);
+      for(unsigned family=0;family<GML_RENDER_SCENE_FAMILY_COUNT;family++)
+        for(unsigned reason=0;reason<GML_RENDER_DISPATCH_REASON_COUNT;reason++)
+          frame_cpu+=frame_dispatch.cpu[family][reason];
+      /* The filtered cold Step also clears its CPU-owned SCREEN. Neither
+       * that clear nor its first surface copy may recur in later frames. */
+      matching=matching && frame_cpu==(variant==3u?2u:1u);
       const char *names[]={"fixture_frame","fixture_seen","fixture_surface"};
       for(unsigned index=0;index<3u;index++){
         GmlVal *left=gml_varmap_get(&plain.engine->vm.globals,names[index]);
@@ -1690,17 +1707,17 @@ static int classic_native_step_scene_case(void){
         ordinary_cpu+=dispatch.cpu[family][reason];
     gml_gpu_counters(selected.engine->gpu,&counters);
     matching=matching && !dispatch.failed && !dispatch.unclassified && !dispatch.overflow;
-    /* Initial late-Classic SCREEN presentation remains CPU-owned; the three subsequent
-     * native or doubled-nearest Step compositions must not fall back. */
-    if(variant<3u) matching=matching && ordinary_cpu==1u &&
+    /* Initial late-Classic SCREEN presentation remains CPU-owned. A native
+     * interpolation preference has no auxiliary sample planes and keeps the
+     * same independent numbered Draw owner as nearest presentation. */
+    matching=matching && ordinary_cpu==(variant==3u?2u:1u) &&
       counters.scene_families[GML_RENDER_SCENE_SURFACE]>=3u;
-    else matching=matching && ordinary_cpu>0u;
     if(!matching) fprintf(stderr,"native Classic Step api=%u variant=%u CPU=%llu surfaces=%llu extent=%ux%u\n",
       api,variant,(unsigned long long)ordinary_cpu,
       (unsigned long long)counters.scene_families[GML_RENDER_SCENE_SURFACE],
       selected.engine->output_width,selected.engine->output_height);
     session_close(&selected);session_close(&plain);
-    REQUIRE(matching,"native and doubled-nearest retained Step stay resident; filtered policy retains CPU ownership");
+    REQUIRE(matching,"native and doubled-nearest retained Step preserve their numbered GPU owner");
   }
   return 1;
 }
