@@ -998,7 +998,10 @@ static int scene_preflight(GmlGpuBackend *backend,const GmlRenderDrawBatch *batc
   for(uint32_t index=0;index<batch->operation_count;index++){
     const GmlRenderDrawOp *op=&batch->operations[index];
     const GmlRenderTargetRef *target=&op->target;
-    if(batch->operation_count>8192u &&
+    int vertex_span=op->opcode==GML_RENDER_OP_COLOURED_PRIMITIVE &&
+      op->payload.primitive.kind==GML_RENDER_PRIMITIVE_RECTANGLE &&
+      (op->payload.primitive.rectangle_flags&GML_RENDER_RECTANGLE_VERTEX_SPAN);
+    if(batch->operation_count>8192u && !vertex_span &&
        (op->opcode!=GML_RENDER_OP_COLOURED_PRIMITIVE ||
         op->payload.primitive.kind!=GML_RENDER_PRIMITIVE_TEXTURED_VERTEX_ROW)) return 0;
     if(batch->states && op->state_index<batch->state_count &&

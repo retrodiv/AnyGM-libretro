@@ -551,7 +551,11 @@ static int batch_valid(const GmlRenderResource *resource,const GmlRenderDrawBatc
       operation->payload.primitive.kind==GML_RENDER_PRIMITIVE_TEXTURED_VERTEX_ROW;
     int particle_disc=operation->opcode==GML_RENDER_OP_COLOURED_PRIMITIVE &&
       gml_render_particle_disc_valid(operation);
-    if(batch->operation_count>8192u && !textured_vertex && !particle_disc) return 0;
+    int vertex_span=operation->opcode==GML_RENDER_OP_COLOURED_PRIMITIVE &&
+      operation->payload.primitive.kind==GML_RENDER_PRIMITIVE_RECTANGLE &&
+      (operation->payload.primitive.rectangle_flags&GML_RENDER_RECTANGLE_VERTEX_SPAN);
+    if(batch->operation_count>8192u && !textured_vertex && !particle_disc &&
+       !(vertex_span && gml_render_rectangle_valid(operation))) return 0;
     if(version==UINT64_MAX || !same_logical(operation->target.image,resource->image) ||
        operation->target.image.content_version!=version+1u ||
        operation->target.width!=resource->width ||

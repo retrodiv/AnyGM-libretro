@@ -1316,6 +1316,19 @@ static int vertex_scene_overlap_bounded(const GmlVertexSceneCoverage *coverage,i
   return disjoint;
 }
 
+/* Dense source-free meshes share the typed row ceiling without increasing
+ * the common small-draw allocation. All rows are prepared before submission. */
+static int vertex_scene_reserve_row(GmlVertexSceneCoverage *coverage){
+  if(coverage->count<coverage->capacity) return 1;
+  if(coverage->capacity>=65536u) return 0;
+  uint32_t capacity=coverage->capacity*2u;
+  if(capacity>65536u) capacity=65536u;
+  GmlRenderCpuBackendVertexSpan *span=realloc(coverage->span,(size_t)capacity*sizeof *span);
+  if(!span) return 0;
+  coverage->span=span;coverage->capacity=capacity;
+  return 1;
+}
+
 static int vertex_scene_point(GmlVertexSceneCoverage *coverage,int x,int y,
                                const double attribute[6]){
   if(x<0 || y<0 || x>=coverage->width || y>=coverage->height || attribute[3]<=0.0) return 1;
@@ -1349,7 +1362,7 @@ static int vertex_scene_point(GmlVertexSceneCoverage *coverage,int x,int y,
       }
     }
   }
-  if(coverage->count==coverage->capacity) return 0;
+  if(!vertex_scene_reserve_row(coverage)) return 0;
   GmlRenderCpuBackendVertexSpan *span=&coverage->span[coverage->count++];
   *span=(GmlRenderCpuBackendVertexSpan){.x=x,.y=y,.count=1u};
   memcpy(span->first,attribute,sizeof span->first);
@@ -1463,7 +1476,7 @@ static int vertex_scene_triangle(GmlVertexSceneCoverage *coverage,
       last=x;weights[1][0]=b0;weights[1][1]=b1;weights[1][2]=b2;
     }
     if(first<0 || coverage->nearest || coverage->classic_filter) continue;
-    if(coverage->count==coverage->capacity) return 0;
+    if(!vertex_scene_reserve_row(coverage)) return 0;
     GmlRenderCpuBackendVertexSpan *span=&coverage->span[coverage->count++];
     *span=(GmlRenderCpuBackendVertexSpan){.x=first,.y=y,.count=(uint32_t)(last-first+1)};
     for(unsigned c=0;c<(coverage->textured?6u:4u);c++){

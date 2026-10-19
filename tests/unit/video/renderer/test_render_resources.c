@@ -13220,8 +13220,8 @@ static int vertex_span_packet_boundaries(void){
   CHECK(!gml_render_textured_vertex_row_valid(&malformed));
   malformed=textured;malformed.reconstruction_mode=GML_RENDER_REPLAY_EXACT;
   CHECK(!gml_render_textured_vertex_row_valid(&malformed));
-  /* The larger typed-row budget must neither read past an oversized input
-   * nor widen the existing source-free primitive budget. */
+  /* The typed-row budget must neither read past an oversized input nor
+   * widen the ordinary untyped primitive budget. */
   FakeDevice fake={.forbid_calls=1};GmlRenderDeviceServices device=service(&fake);
   GmlRenderImageRef initial=operation.target.image;initial.content_version--;
   GmlRenderResource *resource=gml_render_resource_create(initial,64u,48u,
@@ -13233,11 +13233,38 @@ static int vertex_span_packet_boundaries(void){
   GmlRenderDrawBatch oversized={&textured,65537u,NULL,0u};
   CHECK(resource && gml_render_resource_submit_deferred(resource,&device,&oversized,&source,1u)==
     GML_RENDER_RESOURCE_EXEC_FAILED);
-  oversized=(GmlRenderDrawBatch){&operation,8193u,NULL,0u};
+  oversized=(GmlRenderDrawBatch){&operation,65537u,NULL,0u};
+  CHECK(gml_render_resource_submit_deferred(resource,&device,&oversized,NULL,0u)==
+    GML_RENDER_RESOURCE_EXEC_FAILED);
+  GmlRenderDrawOp flat=operation;flat.payload.primitive.rectangle_flags&=~GML_RENDER_RECTANGLE_VERTEX_SPAN;
+  oversized=(GmlRenderDrawBatch){&flat,8193u,NULL,0u};
   CHECK(gml_render_resource_submit_deferred(resource,&device,&oversized,NULL,0u)==
     GML_RENDER_RESOURCE_EXEC_FAILED);
   CHECK(!fake.forbidden_calls && !fake.uploads && !fake.submits && !fake.readbacks &&
     gml_render_resource_image_ref(resource).content_version==initial.content_version);
+  GmlRenderDrawOp *dense=calloc(8193u,sizeof *dense);
+  CHECK(dense);
+  for(unsigned i=0;i<8193u;i++){
+    dense[i]=operation;dense[i].target.image.content_version+=i;
+  }
+  GmlRenderDrawBatch batch={dense,8193u,NULL,0u};
+  for(unsigned invalid=0;invalid<4u;invalid++){
+    GmlRenderDrawOp saved=dense[8192];
+    if(invalid==0u) dense[8192].payload.primitive.vertex_step[3]=NAN;
+    if(invalid==1u) dense[8192].payload.primitive.region.x=-1;
+    if(invalid==2u) dense[8192].target.image.content_version--;
+    if(invalid==3u) dense[8192].payload.primitive.kind=GML_RENDER_PRIMITIVE_FLAT;
+    CHECK(gml_render_resource_submit_deferred(resource,&device,&batch,NULL,0u)==
+      GML_RENDER_RESOURCE_EXEC_FAILED);
+    CHECK(!fake.forbidden_calls && !fake.uploads && !fake.submits && !fake.readbacks &&
+      gml_render_resource_image_ref(resource).content_version==initial.content_version);
+    dense[8192]=saved;
+  }
+  fake.forbid_calls=0;
+  CHECK(gml_render_resource_submit_deferred(resource,&device,&batch,NULL,0u)==GML_RENDER_RESOURCE_EXEC_DEVICE);
+  CHECK(fake.submits==1 && fake.last_batch_operations==8193u && !fake.readbacks &&
+    gml_render_resource_image_ref(resource).content_version==initial.content_version+8193u);
+  free(dense);
   gml_render_resource_destroy(resource);
   CHECK(!memcmp(before,pixels,sizeof pixels));
   return 1;
