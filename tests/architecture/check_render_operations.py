@@ -242,6 +242,7 @@ DISPATCH_ADDITIONAL = {
     "gml_render_compose_resident_underlay", "gml_render_recover_empty_screen",
     "render_present_first_generation", "render_present_content_shader",
     "gml_software3d_vertex_submit_buffer", "gml_software3d_model_draw",
+    "gml_software3d_primitive_2d_end",
 }
 DISPATCH_HELPERS = {
     "resident_surface_shader_selected",

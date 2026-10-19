@@ -1498,7 +1498,7 @@ static int vertex_scene_triangle(GmlVertexSceneCoverage *coverage,
 }
 
 static int vertex_batch_scene(GmlRender *R,const GmlD3Vertex *vertex,int count,
-                               int primitive,int texture){
+                               int primitive,int texture,int immediate){
   GmlRenderCpuBackendDrawView draw;
   int textured=texture!=-1;
   int texture_width=0,texture_height=0;
@@ -1513,8 +1513,10 @@ static int vertex_batch_scene(GmlRender *R,const GmlD3Vertex *vertex,int count,
   for(unsigned i=0;i<16u;i++) if(!isfinite(g_d3.transform[i])) return 0;
   if(!isfinite(draw.camera_x) || !isfinite(draw.camera_y) ||
      !isfinite(draw.coordinate_scale_x) || !isfinite(draw.coordinate_scale_y)) return 0;
-  double scale_x=draw.coordinate_scale_x>0?draw.coordinate_scale_x:1.0;
-  double scale_y=draw.coordinate_scale_y>0?draw.coordinate_scale_y:1.0;
+  /* Immediate vertices have already passed through the public 2D mapper.
+   * Their temporary CPU projection uses physical camera/extent directly. */
+  double scale_x=!immediate && draw.coordinate_scale_x>0?draw.coordinate_scale_x:1.0;
+  double scale_y=!immediate && draw.coordinate_scale_y>0?draw.coordinate_scale_y:1.0;
   double ox=draw.camera_x/scale_x,oy=draw.camera_y/scale_y;
   double ow=draw.width/scale_x,oh=draw.height/scale_y;
   if(!isfinite(ox) || !isfinite(oy) || !isfinite(ow) || !isfinite(oh)) return 0;
@@ -1524,7 +1526,7 @@ static int vertex_batch_scene(GmlRender *R,const GmlD3Vertex *vertex,int count,
     fabs(g_d3.transform[10]-1)<1e-10 && fabs(g_d3.transform[15]-1)<1e-10;
   for(unsigned i=0;i<12u && translation;i++)
     if(i!=0u && i!=5u && i!=10u && fabs(g_d3.transform[i])>=1e-10) translation=0;
-  if(translation){ox+=g_d3.transform[12];oy+=g_d3.transform[13];}
+  if(translation && !immediate){ox+=g_d3.transform[12];oy+=g_d3.transform[13];}
   GmlD3Vertex *projected=malloc((size_t)count*sizeof *projected);
   GmlVertexSceneCoverage coverage={.width=draw.width,.height=draw.height,.textured=textured,
     .nearest=textured && !draw.interpolate,.texture_width=texture_width,.texture_height=texture_height,
@@ -1620,7 +1622,7 @@ static void vertex_submit_buffer(GmlRender *R,int id,int primitive,int texture_h
   if(number<=0) return;
   const GmlD3Vertex *vertex=buffer->vertex+first;
   if(vertex_batch_outside_scene(R,vertex,number,primitive)) return;
-  if(vertex_batch_scene(R,vertex,number,primitive,texture_handle)) return;
+  if(vertex_batch_scene(R,vertex,number,primitive,texture_handle,0)) return;
   /* A vertex program may modulate the colour it passes on by a uniform, which is how text
    * libraries carry a string's tint and fade. Apply it here, to a copy, so the rasterizer keeps
    * receiving plain vertex colours and every other submission path is untouched. */
@@ -1883,9 +1885,24 @@ static void d3_end_2d_projection(GmlRender *R,const GmlD3State *saved,int tempor
     g_d3.depth_w=depth_w; g_d3.depth_h=depth_h; g_d3.depth_frame=depth_frame;
   }
 }
+static int immediate_batch_scene(GmlRender *R){
+  GmlRenderCpuBackendDrawView draw;
+  if(g_d3.active || !gml_render_cpu_backend_scene_draw_view(R,&draw)) return 0;
+  GmlD3Vertex vertex[GML_PRIM_MAX];
+  for(int i=0;i<g_prim_n;i++){
+    double x=g_prim_x[i],y=g_prim_y[i];
+    gml_render_cpu_backend_draw_map_point(R,&x,&y);
+    /* The unchanged temporary 2D CPU projection resets draw depth to zero. */
+    vertex[i]=(GmlD3Vertex){.x=x,.y=y,.z=0.0,.u=g_prim_u[i],.v=g_prim_v[i],
+      .r=g_prim_c[i]&255u,.g=(g_prim_c[i]>>8)&255u,
+      .b=(g_prim_c[i]>>16)&255u,.alpha=g_prim_a[i]};
+  }
+  return vertex_batch_scene(R,vertex,g_prim_n,g_prim_kind,g_prim_texture,1);
+}
 static void d3_flush_2d_primitive(GmlRender *R){
   if(!R || g_prim_n<=0) return;
   if(prim_try_fast_surface_quad(R)) return;
+  if(immediate_batch_scene(R)) return;
   GmlRenderCpuBackendDrawView draw;
   if(!gml_render_cpu_backend_draw_view(R,&draw)) return;
   GmlD3State saved;
