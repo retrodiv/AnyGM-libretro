@@ -975,8 +975,8 @@ static int resident_circle_function(GmlRender *r,double cx,double cy,double rx,d
   int flat_outline=outline && !point &&
     (!r->blendmode || (r->alphablend && r->blendmode==1));
   if(flat_outline && r->alphablend && !r->blendmode && !r->classic && alpha<1.0/256.0) return 1;
-  /* The nonuniform filled fan retains its separate CPU rounding debt. */
-  if(!outline && !point && inner!=outer) return 0;
+  /* The paired natural fan shares coverage and pixel-write blend policy. */
+  int fan=!outline && !point && inner!=outer;
   unsigned blend=(unsigned)r->blendmode;
   if(blend==3u || blend==6u) blend=2u;
   GmlFlatSpans spans={.render=r,.capacity=8192u,
@@ -1046,9 +1046,25 @@ static int resident_circle_function(GmlRender *r,double cx,double cy,double rx,d
       GML_RENDER_PIXEL_ARGB8888,{0,0,(uint32_t)r->fbw,(uint32_t)r->fbh}};
     op->target.image.content_version+=i+1u;
     uint32_t colour=spans.regions[i].colour,colours[4]={colour,colour,colour,colour};
+    if(fan){colours[2]=outer;colours[3]=outer;}
     resident_rectangle_payload(r,&op->payload.primitive,spans.regions[i].region,
       spans.regions[i].region,colours,!flat_outline,0,blend,alpha);
-    if(!flat_outline){
+    if(fan){
+      GmlRenderPrimitiveRect *p=&op->payload.primitive;
+      int precision=r->circle_precision;
+      if(precision<4) precision=4;
+      if(precision>64) precision=64;
+      precision=(precision/4)*4;
+      /* These are thin covered pixel spans, not rectangle-gradient alpha. */
+      p->rectangle_flags|=GML_RENDER_RECTANGLE_CIRCLE_FAN|GML_RENDER_RECTANGLE_GRADIENT|
+        GML_RENDER_RECTANGLE_PIXEL_SPAN;
+      /* The continuous inverse fan uses target-stack alpha, not the ordinary
+       * pixel writer's application-surface alpha policy. */
+      if(r->alphablend && r->blendmode==2 && r->target_sp<=0)
+        p->rectangle_flags&=~GML_RENDER_RECTANGLE_TARGET_ALPHA;
+      p->pixel_write_mask=mask;
+      p->centre_x=cx;p->centre_y=cy;p->scale_x=rx;p->scale_y=ry;p->angle=precision;
+    }else if(!flat_outline){
       op->payload.primitive.rectangle_flags|=GML_RENDER_RECTANGLE_PIXEL_SPAN;
       op->payload.primitive.pixel_write_mask=mask;
     }

@@ -457,13 +457,26 @@
   "      if((flags&4u)==0u && (v_span_active==0.0 || (blend>=2u && blend!=4u))) alpha=1.0;\n" \
   "      o_color=vec4(rgb/255.0,alpha); return;\n" \
   "    }\n" \
+  "    bool fan=(flags&1024u)!=0u; vec3 fan_rgb=vec3(0.0);\n" \
+  "    if(fan){\n" \
+  "      vec2 local=(vec2(pixel)+vec2(0.5)-v_texcoord)/v_step;\n" \
+  "      int count=int(v_span_y.z); float step=6.283185307179586/float(count);\n" \
+  "      float edge=0.0;\n" \
+  "      for(int i=0;i<64;i++){ if(i>=count) break; float a=(float(i)+0.5)*step;\n" \
+  "        edge=max(edge,dot(local,vec2(cos(a),-sin(a)))); }\n" \
+  "      float amount=clamp(edge/cos(0.5*step),0.0,1.0);\n" \
+  "      vec3 inner=vec3(rectangle_rgb(v_span_x.x)),outer=vec3(rectangle_rgb(v_span_x.z));\n" \
+  "      fan_rgb=inner+(outer-inner)*amount;\n" \
+  "    }\n" \
   "    if(outline && p.x!=0 && p.x!=den.x && p.y!=0 && p.y!=den.y) discard;\n" \
   "    if(u_filter==36){ o_color=vec4(0.0,0.0,0.0,1.0); return; }\n" \
   "    if(blend==1u && ((!outline && !gradient) || (flags&256u)!=0u) && v_span_active!=0.0){\n" \
+  "      if(fan){ o_color=vec4(floor(floor(fan_rgb)*v_colour.a)/255.0,floor(v_colour.a*255.0)/255.0); return; }\n" \
   "      o_color=vec4(vec3(rectangle_rgb(v_span_y.z))/255.0,v_span_y.w/255.0); return;\n" \
   "    }\n" \
   "    ivec3 rgb=rectangle_rgb(v_span_x.x);\n" \
-  "    if(gradient){\n" \
+  "    if(fan) rgb=ivec3(floor(fan_rgb));\n" \
+  "    else if(gradient){\n" \
   "      ivec3 left=rectangle_lerp(rgb,rectangle_rgb(v_span_x.w),p.y,den.y);\n" \
   "      ivec3 right=rectangle_lerp(rectangle_rgb(v_span_x.y),rectangle_rgb(v_span_x.z),p.y,den.y);\n" \
   "      if(v_colour.a>=1.0 && blend<9u){\n" \
@@ -481,7 +494,7 @@
   "      alpha=floor(alpha*255.0+0.5)/255.0;\n" \
   "      if(blend!=4u && (flags&4u)==0u) alpha=1.0;\n" \
   "    }\n" \
-  "    o_color=vec4(vec3(rgb)/255.0,alpha); return;\n" \
+  "    o_color=vec4((fan && blend==2u && v_span_active!=0.0?fan_rgb:vec3(rgb))/255.0,alpha); return;\n" \
   "  }\n" \
   "  if(u_filter==31 || u_filter==32){ o_color=v_colour; return; }\n" \
   "  // R03_SHADER_STUDIO_ALPHA_RECT: a coverage-only pass stamps written alpha.\n" \

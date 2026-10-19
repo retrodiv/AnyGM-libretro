@@ -5204,6 +5204,41 @@ static int resident_circle_pixel_packets(void){
   return 1;
 }
 
+static int resident_gradient_fan_packets(void){
+  for(unsigned precision=4u;precision<=64u;precision+=4u){
+    GmlRenderDrawOp op={0};
+    op.opcode=GML_RENDER_OP_COLOURED_PRIMITIVE;op.scene_family=GML_RENDER_SCENE_PRIMITIVE;
+    op.reconstruction_mode=GML_RENDER_DEVICE_CHECKPOINT;
+    op.target.image.resource_class=GML_RENDER_RESOURCE_SURFACE;
+    op.target.width=32u;op.target.height=24u;op.target.region=(GmlRenderRect){0,0,32,24};
+    op.target.pixel_format=GML_RENDER_PIXEL_ARGB8888;
+    GmlRenderPrimitiveRect *p=&op.payload.primitive;
+    p->kind=GML_RENDER_PRIMITIVE_RECTANGLE;p->region=p->authored_region=(GmlRenderRect){3,5,12,1};
+    p->colour=p->corner_colour[0]=p->corner_colour[1]=0xFFFFFFFFu;
+    p->corner_colour[2]=p->corner_colour[3]=0xFF000000u;
+    p->rectangle_flags=GML_RENDER_RECTANGLE_OUTLINE|GML_RENDER_RECTANGLE_PIXEL_SPAN|
+      GML_RENDER_RECTANGLE_GRADIENT|GML_RENDER_RECTANGLE_CIRCLE_FAN|
+      GML_RENDER_RECTANGLE_TARGET_ALPHA;
+    p->centre_x=12.25;p->centre_y=11.75;p->scale_x=10;p->scale_y=8;p->angle=precision;
+    p->alpha=1;p->alpha_blend=1u;p->pixel_write_mask=15u;
+    CHECK(gml_render_rectangle_valid(&op));
+    CHECK(!gml_render_cpu_replay_eligible(&op,NULL,NULL));
+    GmlRenderDrawOp bad=op;bad.payload.primitive.rectangle_flags|=GML_RENDER_RECTANGLE_VERTEX_SPAN;
+    CHECK(!gml_render_rectangle_valid(&bad));
+    bad=op;bad.payload.primitive.angle=precision+1u;CHECK(!gml_render_rectangle_valid(&bad));
+    bad=op;bad.payload.primitive.scale_x=0;CHECK(!gml_render_rectangle_valid(&bad));
+    bad=op;bad.payload.primitive.centre_y=NAN;CHECK(!gml_render_rectangle_valid(&bad));
+    bad=op;bad.payload.primitive.scale_x=32767;CHECK(!gml_render_rectangle_valid(&bad));
+    bad=op;bad.payload.primitive.corner_colour[1]^=1u;CHECK(!gml_render_rectangle_valid(&bad));
+    bad=op;bad.payload.primitive.corner_colour[3]^=1u;CHECK(!gml_render_rectangle_valid(&bad));
+    bad=op;bad.payload.primitive.rectangle_flags&=~GML_RENDER_RECTANGLE_PIXEL_SPAN;
+    CHECK(!gml_render_rectangle_valid(&bad));
+    bad=op;bad.payload.primitive.rectangle_flags&=~GML_RENDER_RECTANGLE_GRADIENT;
+    CHECK(!gml_render_rectangle_valid(&bad));
+  }
+  return 1;
+}
+
 static int resident_rectangle_outline_coalesced(void){
   static const int generations[]={530,600,700,15,17};
   static const int bounds[][4]={
@@ -16979,6 +17014,7 @@ int main(void){
   passed+=resident_classic_rectangle_scope();
   passed+=resident_rectangle_function_matrix();
   passed+=resident_circle_pixel_packets();
+  passed+=resident_gradient_fan_packets();
   passed+=resident_classic_owned_rectangle_scope();
   passed+=resident_rectangle_outline_coalesced();
   passed+=resident_studio_gui_rectangle_scope();
@@ -17170,6 +17206,6 @@ int main(void){
   passed+=source_free_primitive_rect_replay();
   passed+=stretched_float_exact_replay();
   passed+=filtered_font_exact_recovery();
-  printf("render resource cases: passed=%d failed=%d\n",passed,269-passed);
-  return passed==269?EXIT_SUCCESS:EXIT_FAILURE;
+  printf("render resource cases: passed=%d failed=%d\n",passed,270-passed);
+  return passed==270?EXIT_SUCCESS:EXIT_FAILURE;
 }

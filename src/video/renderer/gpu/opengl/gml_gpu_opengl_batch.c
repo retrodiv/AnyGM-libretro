@@ -2540,6 +2540,11 @@ GmlRenderExecutionResult gml_gpu_opengl_scene_submit(GmlGpuBackend *backend,
               v[23]=(float)p->region.x; v[24]=(float)(p->region.width-1u);
               v[25]=(float)additive_rgb;v[26]=(float)additive_alpha;
               v[27]=(float)p->alpha_blend;
+              if(p->rectangle_flags&GML_RENDER_RECTANGLE_CIRCLE_FAN){
+                v[2]=(float)p->centre_x;v[3]=(float)p->centre_y;
+                v[16]=(float)p->scale_x;v[17]=(float)p->scale_y;
+                v[25]=(float)p->angle;
+              }
               if(vertex_span){
                 for(unsigned c=0;c<4u;c++){
                   v[12u+c]=(float)p->vertex_first[c];
