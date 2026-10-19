@@ -1440,8 +1440,6 @@ static int vertex_scene_triangle(GmlVertexSceneCoverage *coverage,
   double top=fmax(0,floor(fmin(sy[0],fmin(sy[1],sy[2]))));
   double bottom=fmin(coverage->height-1,ceil(fmax(sy[0],fmax(sy[1],sy[2]))));
   if(left>right || top>bottom) return 1;
-  coverage->candidates+=(uint64_t)(right-left+1)*(uint64_t)(bottom-top+1);
-  if(coverage->candidates>16777216u) return 0;
   int minx=(int)left,maxx=(int)right,miny=(int)top,maxy=(int)bottom;
   double inverse=1.0/area,step0=sy[2]-sy[1],step1=sy[0]-sy[2];
   int falls0=area>0?step0<=0:step0>=0;
@@ -1455,7 +1453,8 @@ static int vertex_scene_triangle(GmlVertexSceneCoverage *coverage,
     double weights[2][3]={{0}};
     /* Only coverage is walked. Keep the CPU edge additions and inclusive
      * independent edges; no colour, alpha blend or target pixel is computed. */
-    for(int x=minx;x<=maxx;x++,edge0+=step0,edge1+=step1){
+    int x=minx;
+    for(;x<=maxx;x++,edge0+=step0,edge1+=step1){
       double b0=edge0*inverse,b1=edge1*inverse,b2=1.0-b0-b1;
       if(b0<-1e-9){if(falls0) break;if(first>=0) ended=1;continue;}
       if(b1<-1e-9){if(falls1) break;if(first>=0) ended=1;continue;}
@@ -1475,6 +1474,12 @@ static int vertex_scene_triangle(GmlVertexSceneCoverage *coverage,
       if(first<0){first=x;weights[0][0]=b0;weights[0][1]=b1;weights[0][2]=b2;}
       last=x;weights[1][0]=b0;weights[1][1]=b1;weights[1][2]=b2;
     }
+    /* An edge rejection can end a row before its bounding rectangle ends.
+     * Budget the samples actually tested, including that rejecting sample,
+     * rather than charging for the untouched remainder of every rectangle.
+     * At most one bounded target-width row precedes the budget check. */
+    coverage->candidates+=(uint64_t)(x-minx)+(x<=maxx?1u:0u);
+    if(coverage->candidates>16777216u) return 0;
     if(first<0 || coverage->nearest || coverage->classic_filter) continue;
     if(!vertex_scene_reserve_row(coverage)) return 0;
     GmlRenderCpuBackendVertexSpan *span=&coverage->span[coverage->count++];
@@ -1597,10 +1602,19 @@ static int vertex_batch_scene(GmlRender *R,const GmlD3Vertex *vertex,int count,
       if(!vertex_scene_triangle(&coverage,triangle,g_d3.classic)) goto vertex_scene_done;
     }
   }
-  /* Repeated low-alpha/gradient/preset quantisation is not a bounded single
-   * draw merely because its component fragments each satisfy D2. Use disjoint
-   * geometry there; normal uniform RGB with alpha>=0.5 contracts prior error. */
-  if(draw.alpha_blend && (draw.blend_mode || rgb_gradient || minimum_alpha<0.5) &&
+  /* Inverse-source endpoint RGB is an exact destination identity or zero.
+   * With alpha>=0.5 the remaining alpha error contracts at each fragment,
+   * just as normal uniform source-over does. Textures and other presets do
+   * not inherit that proof merely from their submitted vertex colours. */
+  int inverse_endpoints=!textured && !rgb_gradient && minimum_alpha>=0.5 &&
+    (draw.blend_mode==2 || draw.blend_mode==3 || draw.blend_mode==6) &&
+    (vertex[0].r==0.0 || vertex[0].r==255.0) &&
+    (vertex[0].g==0.0 || vertex[0].g==255.0) &&
+    (vertex[0].b==0.0 || vertex[0].b==255.0);
+  /* Other repeated low-alpha/gradient/preset quantisation is not a bounded
+   * single draw merely because individual fragments satisfy D2. */
+  if(draw.alpha_blend && !inverse_endpoints &&
+     (draw.blend_mode || rgb_gradient || minimum_alpha<0.5) &&
      !vertex_scene_overlap_bounded(&coverage,1)) goto vertex_scene_done;
   if(textured && !vertex_scene_overlap_bounded(&coverage,2)) goto vertex_scene_done;
   if(primitive>=4 && !d3_depth_prepare(R)) goto vertex_scene_done;
