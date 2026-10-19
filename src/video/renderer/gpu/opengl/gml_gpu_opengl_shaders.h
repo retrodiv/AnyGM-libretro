@@ -769,7 +769,7 @@
   "  }\n" \
   "  // R03_SHADER_ROW_SPAN: conditional rotated/warped CPU coverage.\n" \
   "  if(u_filter>=2 && u_filter!=7 && u_filter!=8 && u_filter!=9 && u_filter!=10 && u_filter!=27 &&\n" \
-  "     u_filter!=12 && u_filter!=13 && v_span_active>0.5){\n" \
+  "     u_filter!=12 && u_filter!=13 && u_filter!=110 && u_filter!=111 && v_span_active>0.5){\n" \
   "    float mn=1e30,mx=-1e30; int hits=0;\n" \
   "    for(int i=0;i<4;i++){\n" \
   "      int j=(i+1)&3; float a=v_span_y[i],b=v_span_y[j];\n" \
@@ -802,6 +802,7 @@
   "    f=vec2(stretched_float_phase(remainder.x,denominator.x),\n" \
   "           stretched_float_phase(remainder.y,denominator.y));\n" \
   "  } else if(u_filter>=2 && u_filter!=7 && u_filter!=8 && u_filter!=9 && u_filter!=10 && u_filter!=27 &&\n" \
+  "            u_filter!=110 && u_filter!=111 &&\n" \
   "            u_filter!=12 && u_filter!=13){\n" \
   "    vec2 local=u_filter>=5 && u_filter!=15 && u_filter!=17\n" \
   "      ?v_texcoord\n" \
@@ -845,7 +846,8 @@
   "  } else {\n" \
   "    vec2 whole=floor(delta);\n" \
   "    vec2 remainder=(delta-whole)+delta*v_step+v_map.zw+\n" \
-  "                   (u_filter==7 || u_filter==8 || u_filter==9 || u_filter==10 || u_filter==27?vec2(0.000001):vec2(-0.5));\n" \
+  "                   (u_filter==7 || u_filter==8 || u_filter==9 || u_filter==10 || u_filter==27 ||\n" \
+  "                    u_filter==110 || u_filter==111?vec2(0.000001):vec2(-0.5));\n" \
   "    // R03_SHADER_GUI_AXIS_PHASE: keep integral products out of the fractional\n" \
   "    // sum and restore the vertex preparator's low phase/reciprocal residuals.\n" \
   "    if(u_filter==12 || u_filter==13){\n" \
@@ -862,7 +864,8 @@
   "  }\n" \
   "  // R03_SHADER_NEAREST_PHASED: retain point phase. First-generation exact ties use the\n" \
   "  // positive tolerance; modern ordinary sprites prepare a bounded per-axis UV bias.\n" \
-  "  if(u_filter==7 || u_filter==8 || u_filter==9 || u_filter==10 || u_filter==27) f=vec2(0.0);\n" \
+  "  if(u_filter==7 || u_filter==8 || u_filter==9 || u_filter==10 || u_filter==27 ||\n" \
+  "     u_filter==110 || u_filter==111) f=vec2(0.0);\n" \
   "  ivec2 first=ivec2(v_clamp.xy),last=ivec2(v_clamp.zw-v_clamp.xy);\n" \
   "  vec4 p00,p01,p10,p11;\n" \
   "  // R03_SHADER_FILTERED_MARGIN: logical trim and physical atlas edge taps.\n" \
@@ -917,6 +920,9 @@
   "    o_color=vec4(rgb/255.0,1.0); return;\n" \
   "  }\n" \
   "  vec4 sampled=floor(weighted+vec4(0.5));\n" \
+  "  // R03_SHADER_SCREEN_AXIS_CUTOUT: raw texel cutoff before draw opacity.\n" \
+  "  if((u_filter==9 || u_filter==10 || u_filter==110 || u_filter==111) && u_alpha_test>=0 &&\n" \
+  "     sampled.a<=float(u_alpha_test)) discard;\n" \
   "  // R03_SHADER_MODERN_NUMBERED_NEAREST: ordered predecessor and binary64-prepared alpha LUT.\n" \
   "  if(u_filter==27){\n" \
   "    int source_alpha=int(sampled.a);\n" \
@@ -937,8 +943,9 @@
   "  // R03_SHADER_MODERN_NEAREST_ALPHA_STAMP / R03_SHADER_GUI_FILTERED_ALPHA_STAMP:\n" \
   "  // only source-covered texels replace screen alpha. Filtered GUI admission has\n" \
   "  // positive original draw alpha, even when its packed RGB factor rounds to zero.\n" \
-  "  if(u_filter==10 || u_filter==13){\n" \
-  "    if(sampled.a<=0.0 || (u_filter==10 && v_colour.a<=0.0)) discard;\n" \
+  "  if(u_filter==10 || u_filter==13 || u_filter==111){\n" \
+  "    if(u_filter==111 && v_span_active<0.5) discard;\n" \
+  "    if(sampled.a<=0.0 || ((u_filter==10 || u_filter==111) && v_colour.a<=0.0)) discard;\n" \
   "    o_color=vec4(0.0,0.0,0.0,1.0); return;\n" \
   "  }\n" \
   "  // R03_SHADER_DIRECT_NEAREST_COPY: the full-alpha CPU point writer replaces ARGB,\n" \

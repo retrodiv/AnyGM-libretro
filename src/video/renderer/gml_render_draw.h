@@ -112,7 +112,9 @@ typedef enum GmlRenderFilter {
   /* Raw coordinator copies preserve RGBA, including transparent RGB. Seed is
    * the inverse of the CPU's last-writer forward scatter, retaining holes. */
   GML_RENDER_FILTER_VIEW_PIXEL_CENTRE=9,
-  GML_RENDER_FILTER_VIEW_SEED=10
+  GML_RENDER_FILTER_VIEW_SEED=10,
+  /* Fixed source-over with independently marked opaque scalar tails. */
+  GML_RENDER_FILTER_NEAREST_PHASED_PACKET_ALPHA=11
 } GmlRenderFilter;
 
 typedef enum GmlRenderEdgeRule {
@@ -318,7 +320,11 @@ typedef struct GmlRenderQuad {
   uint32_t source_endpoint_rgb_mask;
 } GmlRenderQuad;
 
-enum { GML_RENDER_SPAN_FIXED20_ROW=2u, GML_RENDER_SPAN_FILTERED_AFFINE_ROW=3u };
+enum {
+  GML_RENDER_SPAN_FIXED20_ROW=2u,
+  GML_RENDER_SPAN_FILTERED_AFFINE_ROW=3u,
+  GML_RENDER_SPAN_OPAQUE_SCALAR_ALPHA=4u
+};
 
 /* Shared admission for the bounded double-expression font rule, before target writes. */
 int gml_render_filtered_font_quad_valid(const GmlRenderQuad *quad,

@@ -5361,10 +5361,10 @@ static int rotated_nearest_regions(GmlRender *r,GmlSprite *spr,GmlTpag *t,
   unsigned long long vispix=(unsigned long long)(g->x1-g->x0)*(g->y1-g->y0);
   /* Axis-only resident SCREEN metadata visits rows, not pixels. Its existing
    * capacity still bounds work; keep the pixel bound for every other path. */
-  int resident_axis_rows=texel_regions==2 && rot==0.0 && xs>0.0 && ys>0.0 &&
-    r->resident_application_pass && r->target_id<0 && r->target_sp==0 &&
-    !r->classic && !r->interp && !r->gui_pass_active &&
-    anygm_policy_has_modern_layer_semantics(r->win) &&
+  int resident_axis_rows=texel_regions==2 && rot==0.0 && xs!=0.0 && ys!=0.0 &&
+    r->resident_application_pass &&
+    ((r->target_id<0 && r->target_sp==0) || (r->target_id==0 && r->target_sp>0)) &&
+    !r->classic && !r->interp &&
     !gml_render_target_preserves_alpha(r);
   if(vispix>=262144ull && !resident_axis_rows) return 0;
   double qarea=fabs(g->qx[0]*g->qy[1]-g->qx[1]*g->qy[0] +

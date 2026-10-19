@@ -2530,11 +2530,13 @@ static int scene_numbered_rotated_texel_spans_case(void){
 static int scene_numbered_sprite_channel_masks_case(void){
   const uint8_t pixels[16]={255,0,0,128,0,255,0,0,0,0,255,255,255,255,255,64};
   for(unsigned api=0;api<2u;api++)
-  for(unsigned mode=0;mode<4u;mode++){
-    unsigned stamp=mode==1u;
+  for(unsigned mode=0;mode<5u;mode++){
+    unsigned packet_alpha=mode==4u;
+    unsigned stamp=mode==1u || packet_alpha;
     unsigned modern=mode==3u;
     GmlRenderImageRef source={GML_RENDER_RESOURCE_ATLAS,93u,1u,1u};
     GmlRenderImageRef target={GML_RENDER_RESOURCE_SURFACE,94u,1u,1u};
+    if(packet_alpha) target.resource_class=GML_RENDER_RESOURCE_SCREEN;
     GmlRenderImageUpload upload={0};
     GmlRenderDrawStateSnapshot states[16]={0};
     GmlRenderDrawOp operations[17]={0};
@@ -2562,12 +2564,14 @@ static int scene_numbered_sprite_channel_masks_case(void){
       state->write_mask=mask;state->alpha=255u;state->colour=0xffffffffu;
       state->sampler_count=1u;
       state->rgb_source_factor=GML_RENDER_BLEND_SOURCE_ALPHA;
-      state->alpha_source_factor=mode>=2u?GML_RENDER_BLEND_SOURCE_ALPHA:GML_RENDER_BLEND_ONE;
+      state->alpha_source_factor=mode>=2u && !packet_alpha?GML_RENDER_BLEND_SOURCE_ALPHA:GML_RENDER_BLEND_ONE;
       state->rgb_destination_factor=state->alpha_destination_factor=
         GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA;
       state->rgb_equation=state->alpha_equation=GML_RENDER_BLEND_ADD;
-      state->samplers[0].filter=stamp?GML_RENDER_FILTER_NEAREST_PHASED_OPAQUE_ALPHA:
+      state->samplers[0].filter=packet_alpha?GML_RENDER_FILTER_NEAREST_PHASED_PACKET_ALPHA:
+                                stamp?GML_RENDER_FILTER_NEAREST_PHASED_OPAQUE_ALPHA:
                                       GML_RENDER_FILTER_NEAREST_PHASED;
+      if(packet_alpha){state->alpha_test_enabled=1u;state->alpha_test_reference=17u*mask;}
       state->samplers[0].edge_rule=GML_RENDER_EDGE_CLAMP_SUBIMAGE;
       state->samplers[0].source_region=upload.region;
       if(modern) state->samplers[0].quantisation=GML_RENDER_QUANTISE_SPRITE_MODERN_NEAREST;
@@ -2576,6 +2580,7 @@ static int scene_numbered_sprite_channel_masks_case(void){
       op->state_index=mask;op->sources=&source;op->source_count=1u;
       GmlRenderQuad *quad=&op->payload.quad;
       quad->shape=GML_RENDER_QUAD_AXIS_ALIGNED;quad->sampling=state->samplers[0];
+      if(packet_alpha && (mask&1u)) quad->span_active=GML_RENDER_SPAN_OPAQUE_SCALAR_ALPHA;
       if(modern){
         quad->filtered_draw_alpha=0.5;
         quad->inverse_x[0]=quad->inverse_y[1]=2.0;
@@ -2591,7 +2596,8 @@ static int scene_numbered_sprite_channel_masks_case(void){
     REQUIRE(result.status==GML_RENDER_EXEC_ACCEPTED && result.accepted_prefix==17u,
             "all channel masks submit on a numbered sprite target");
     for(unsigned mask=0;mask<16u;mask++){
-      unsigned expected=stamp?(mask<8u?2u:mask==8u?8u:0u):1u;
+      unsigned expected=packet_alpha?(mask==8u?9u:1u):
+                        stamp?(mask<8u?2u:mask==8u?8u:0u):1u;
       REQUIRE(anygm_test_graphics_scene_mask_draws(mask)==expected,
               "mask changes split batches and alpha stamping respects its enabled bit");
     }
@@ -2630,7 +2636,7 @@ static int scene_numbered_sprite_channel_masks_case(void){
               anygm_test_graphics_texture_data_uploads(map_x)==uploaded+1u,
               "retry uploads the rejected point-axis key instead of reusing stale samples");
     }
-    for(unsigned variant=0;variant<(modern?28u:12u);variant++){
+    for(unsigned variant=0;variant<(modern?28u:packet_alpha?15u:stamp?14u:12u);variant++){
       GmlRenderDrawStateSnapshot invalid_states[16];
       GmlRenderDrawOp invalid_operations[17];
       memcpy(invalid_states,states,sizeof states);
@@ -2669,11 +2675,26 @@ static int scene_numbered_sprite_channel_masks_case(void){
       if(variant==25u) op->payload.quad.inverse_x[0]=-2.0;
       if(variant==26u) op->payload.quad.inverse_y[1]=2049.0;
       if(variant==27u) op->payload.quad.span_active=1u;
+      if(stamp && variant>=12u){
+        for(unsigned index=0;index<17u;index++)
+          invalid_operations[index].target.image.resource_class=GML_RENDER_RESOURCE_SCREEN;
+        if(variant==12u) state->alpha_test_reference=256u;
+        else if(variant==13u) state->alpha_test_enabled=2u;
+        else op->payload.quad.span_active=GML_RENDER_SPAN_FIXED20_ROW;
+      }
       op->payload.quad.sampling=state->samplers[0];
       int clears=anygm_test_graphics_clear_calls();
       int draws=anygm_test_graphics_scene_draw_calls();
       copies=anygm_test_graphics_scene_copies();
       result=service.submit(service.context,&invalid_batch);
+      if(stamp && (variant<=1u || (packet_alpha && variant==10u))){
+        REQUIRE(result.status==GML_RENDER_EXEC_ACCEPTED && result.accepted_prefix==17u &&
+                anygm_test_graphics_read_pixels()==0 &&
+                anygm_test_graphics_scene_copies()==copies &&
+                anygm_test_graphics_color_mask_all() && !anygm_test_graphics_blend_enabled(),
+                "nonpreserving axis stamp accepts every mask without a predecessor or read");
+        continue;
+      }
       REQUIRE(result.status==GML_RENDER_EXEC_UNSUPPORTED && !result.accepted_prefix &&
               !result.uncertain_target_count && !result.all_destinations_uncertain &&
               anygm_test_graphics_clear_calls()==clears &&

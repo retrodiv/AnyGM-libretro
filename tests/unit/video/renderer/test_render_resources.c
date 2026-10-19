@@ -14256,7 +14256,9 @@ static int resident_large_unit_sprite_scope(void){
     if(variant==6u) r->blend_equation=2;
     /* The paired nearest-region controls additionally qualify bounded
      * visible rotation; the old unit-only scope left it unqualified. */
-    int accepted=variant<2u || variant==7u || variant==8u;
+    /* The paired large-axis packet owner additionally qualifies fractional
+     * anchors and nonunit axes; device/program/equation refusals stay intact. */
+    int accepted=variant<4u || variant==7u || variant==8u;
     int actual=gml_render_resident_masked_sprite(r,0,0,x,y,xs,ys,variant==7u?45:0,
                                                 0x70B0D0u,variant==8u?0.00001:1.0);
     if(actual!=accepted) fprintf(stderr,"large unit admission: bytecode=%d variant=%u actual=%d expected=%d\n",
@@ -14264,7 +14266,7 @@ static int resident_large_unit_sprite_scope(void){
     CHECK(actual==accepted);
     CHECK(r->resident_application_pass && gml_render_scene_submit_pending(r) &&
           !fake.readbacks && !fake.rgb_queries && !memcmp(shadow,r->fb,sizeof shadow));
-    CHECK(fake.submits==submitted+(variant<2u || variant==7u?1:0));
+    CHECK(fake.submits==submitted+(variant<4u || variant==7u?1:0));
     if(variant<2u){
       if(fake.last_quad.x[0]!=(variant?1.0:2.0) || fake.last_quad.y[0]!=(variant?1.0:2.0))
         fprintf(stderr,"large unit metadata: bytecode=%d variant=%u quad=%.17g,%.17g..%.17g,%.17g filter=%u quantisation=%u\n",
@@ -14273,12 +14275,21 @@ static int resident_large_unit_sprite_scope(void){
       CHECK(fake.last_quad.x[0]==(variant?1.0:2.0) && fake.last_quad.y[0]==(variant?1.0:2.0));
     }
     gml_render_resource_journal_metrics(r->base_scene_resource,&metrics);
-    if(variant<2u || variant==7u) CHECK(metrics.authority==GML_RENDER_RESOURCE_GPU_RESIDENT &&
+    if(variant<4u || variant==7u) CHECK(metrics.authority==GML_RENDER_RESOURCE_GPU_RESIDENT &&
                         !metrics.cpu_replays && !metrics.journal_bytes);
     else CHECK(metrics.authority==before.authority &&
                metrics.logical_version==before.logical_version &&
                metrics.cpu_version==before.cpu_version && metrics.gpu_version==before.gpu_version &&
                metrics.cpu_replays==before.cpu_replays && metrics.journal_bytes==before.journal_bytes);
+    if(variant==3u){
+      /* The full-sprite area extension must not admit another family through
+       * its shared internal mode. Large TEXT keeps its previous refusal. */
+      int calls=fake.submits;r->alphablend=0;
+      CHECK(!gml_render_resident_rotated_font_glyph(r,&r->spr[0],&r->tpag[0],
+        x,y,xs,ys,0.0,0x70B0D0u,1.0));
+      CHECK(r->resident_application_pass && fake.submits==calls && !fake.readbacks &&
+        !fake.rgb_queries && !memcmp(shadow,r->fb,sizeof shadow));
+    }
     gml_render_abandon_device(r);gml_render_free(r);free(r);
   }
   return 1;
@@ -14318,8 +14329,12 @@ static int resident_large_screen_axis_row_metadata(void){
     else
       accepted=gml_render_rotated_nearest_row_regions(r,&sprite,&page,640,330,xs,3,rotation,
                                                       rows,720,&count);
-    CHECK(accepted==(variant==0u));
-    if(variant==0u){
+    /* Signed SCREEN rows and GUI share the bounded row visitor. The
+     * first-generation owned application still preserves alpha and remains
+     * outside this SCREEN-only metadata extension. */
+    int expected=variant==0u || variant==6u || variant==7u;
+    CHECK(accepted==expected);
+    if(expected){
       CHECK(count>300u && count<=720u);
       for(uint32_t row=0;row<count;row++){
         CHECK(rows[row].region.height==1u && rows[row].region.width<=1280u &&

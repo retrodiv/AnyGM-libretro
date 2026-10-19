@@ -281,7 +281,8 @@ static void modern_point_axis_prune(double leading,double scale,double phase_off
 static int resident_modern_point_regions(GmlRender *r,GmlTpag *page,
   double left,double top,double xs,double ys,double phase_x,double phase_y,
   const GmlRenderDrawOp *operation,const GmlRenderDrawStateSnapshot *state,
-  const GmlRenderResourceSource *source,const GmlRenderRotatedCoverageRegion *maps,uint32_t map_count);
+  const GmlRenderResourceSource *source,const GmlRenderRotatedCoverageRegion *maps,uint32_t map_count,
+  const GmlRenderRotatedCoverageRegion *alpha_regions,uint32_t alpha_count);
 static int resident_identity_screen_gui(const GmlRender *r){
   return r && r->gui_pass_active && r->base_scene_resource &&
          r->fb==r->base_scene_resource_pixels &&
@@ -746,6 +747,10 @@ static int resident_atlas_crop_from_page_impl(GmlRender *r,GmlTpag *page,
        * the staged unit crop is not authored unit magnification. Backgrounds
        * likewise never select the packaged sprite's large-axis CPU leaf. */
       (!classic_background_point && !classic_sprite_point && !selected_background &&
+       (family!=GML_RENDER_SCENE_SPRITE ||
+        (physical_sprite_page!=7 && physical_sprite_page!=15) || r->blendmode>2 ||
+        rotated_sprite_function ||
+        (!r->classic && r->alphablend && !r->blendmode)) &&
        !(rotated_sprite_function && family==GML_RENDER_SCENE_SPRITE) &&
        !runtime_function && !tiled_sprite_function && physical_sprite_page!=8 &&
        !integral_unit_sprite && !gml_render_target_preserves_alpha(r) &&
@@ -1396,10 +1401,10 @@ static int resident_atlas_crop_from_page_impl(GmlRender *r,GmlTpag *page,
                                      tile_regions,tile_region_count)) return 0;
   }else if(integer_point){
     if(!resident_modern_point_regions(r,&integer_point_page,point_left,point_top,xs,ys,
-      integer_phase_x,integer_phase_y,&operation,&state,&source,NULL,0u)) return 0;
+      integer_phase_x,integer_phase_y,&operation,&state,&source,NULL,0u,NULL,0u)) return 0;
   }else if(classic_point || fractional_text){
     if(!resident_modern_point_regions(r,page,point_left,point_top,xs,ys,0.0,0.0,
-                                     &operation,&state,&source,NULL,0u)) return 0;
+                                     &operation,&state,&source,NULL,0u,NULL,0u)) return 0;
   } else if(!gml_render_application_scene_enqueue(r,&operation,&state,&source)) return 0;
   r->fb_all_transparent=0;
   if(((family==GML_RENDER_SCENE_TEXT && draw_alpha<1.0) || checkpoint_alpha_sprite ||
@@ -1981,7 +1986,8 @@ static uint32_t modern_coherent_axis_regions(double leading,double scale,double 
 static int resident_modern_point_regions(GmlRender *r,GmlTpag *page,
   double left,double top,double xs,double ys,double phase_x,double phase_y,const GmlRenderDrawOp *operation,
   const GmlRenderDrawStateSnapshot *state,const GmlRenderResourceSource *source,
-  const GmlRenderRotatedCoverageRegion *maps,uint32_t map_count){
+  const GmlRenderRotatedCoverageRegion *maps,uint32_t map_count,
+  const GmlRenderRotatedCoverageRegion *alpha_regions,uint32_t alpha_count){
   ModernPointRegion columns[POINT_AXIS_REGION_LIMIT],rows[POINT_AXIS_REGION_LIMIT];
   double column_biases[POINT_AXIS_REGION_LIMIT],row_biases[POINT_AXIS_REGION_LIMIT];
   GmlRenderRotatedCoverageRegion basis={0};
@@ -2100,7 +2106,44 @@ static int resident_modern_point_regions(GmlRender *r,GmlTpag *page,
          quad->v[corner]<0.0 || quad->v[corner]>1.0) goto done;
     }
   }
-  accepted=gml_render_application_scene_enqueue_quads(r,operations,count,state,source);
+  if(alpha_regions){
+    /* The existing CPU packet visitor owns vector/scalar coverage. Intersect
+     * its disjoint footprint with prepared nearest sampler rectangles only. */
+    GmlRenderDrawOp *split=malloc(2048u*sizeof *split);
+    uint32_t used=0u;
+    if(!split) goto done;
+    for(uint32_t region=0;region<alpha_count;region++)
+    for(uint32_t index=0;index<count;index++){
+      const GmlRenderRect *coverage=&alpha_regions[region].region;
+      const GmlRenderQuad *basis_quad=&operations[index].payload.quad;
+      double x0=fmax(basis_quad->x[0],coverage->x);
+      double x1=fmin(basis_quad->x[1],(double)coverage->x+coverage->width);
+      double y0=fmax(basis_quad->y[0],coverage->y);
+      double y1=fmin(basis_quad->y[2],(double)coverage->y+coverage->height);
+      if(x0>=x1 || y0>=y1) continue;
+      if(used==2048u || operation->target.image.content_version>UINT64_MAX-used){
+        free(split);goto done;
+      }
+      split[used]=operations[index];
+      split[used].target.image.content_version=operation->target.image.content_version+used;
+      GmlRenderQuad *quad=&split[used++].payload.quad;
+      quad->sampling.filter=GML_RENDER_FILTER_NEAREST_PHASED_PACKET_ALPHA;
+      quad->span_active=alpha_regions[region].vector_alpha?0u:GML_RENDER_SPAN_OPAQUE_SCALAR_ALPHA;
+      quad->x[0]=quad->x[3]=x0;quad->x[1]=quad->x[2]=x1;
+      quad->y[0]=quad->y[1]=y0;quad->y[2]=quad->y[3]=y1;
+      for(unsigned corner=0;corner<4u;corner++){
+        quad->u[corner]=basis_quad->u[0]+(quad->x[corner]-basis_quad->x[0])*
+          (basis_quad->u[1]-basis_quad->u[0])/(basis_quad->x[1]-basis_quad->x[0]);
+        quad->v[corner]=basis_quad->v[0]+(quad->y[corner]-basis_quad->y[0])*
+          (basis_quad->v[2]-basis_quad->v[0])/(basis_quad->y[2]-basis_quad->y[0]);
+      }
+    }
+    if(!used){free(split);accepted=1;goto done;}
+    GmlRenderDrawStateSnapshot split_state=*state;
+    split_state.samplers[0]=split[0].payload.quad.sampling;
+    accepted=gml_render_application_scene_enqueue_quads(r,split,used,&split_state,source);
+    free(split);
+  }else accepted=gml_render_application_scene_enqueue_quads(r,operations,count,state,source);
 done:
   free(operations);
   return accepted;
@@ -3208,7 +3251,7 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
   }
   if(split_point){
     if(!resident_modern_point_regions(r,page,left,top,xs,ys,point_phase_x,point_phase_y,
-                                     &operation,&state,&source,NULL,0u)) return 0;
+                                     &operation,&state,&source,NULL,0u,NULL,0u)) return 0;
     r->fb_all_transparent=0;
     return 1;
   }
@@ -3357,25 +3400,34 @@ static int resident_modern_nearest_rotation(GmlRender *r,GmlSprite *sprite,GmlTp
   enum { REGION_LIMIT=8192 };
   GmlRenderResourceSource source={0};
   GmlRenderRotatedCoverageRegion *regions=NULL;
+  GmlRenderRotatedCoverageRegion *alpha_regions=NULL;
   GmlRenderDrawOp *operations=NULL;
   GmlRenderDrawStateSnapshot state={0};
   GmlRenderResource *target;
-  uint32_t count=0;
+  uint32_t count=0,alpha_count=0;
   int accepted=0,rows=0;
-  int screen_axis=r && rotation==0.0 && r->target_id<0 && r->target_sp==0 &&
+  int screen_axis=r && rotation==0.0 &&
+    ((r->target_id<0 && r->target_sp==0) || (r->target_id==0 && r->target_sp>0)) &&
     !gml_render_target_preserves_alpha(r);
+  int opaque_screen=r && r->fb_opaque_known && r->fb_all_opaque;
   uint32_t capacity=r->fbh>0 && r->fbh<REGION_LIMIT?(uint32_t)r->fbh:REGION_LIMIT;
   const GmlRenderDeviceServices *device=gml_render_device(r);
   if(!device || !device->observe_on_demand || !device->observe_on_demand(device->context))
     return 0;
+  /* The first-generation large-visible leaf has a separate alpha8/cull
+   * owner. Do not infer that coverage from this alpha16 packet visitor. */
+  if(screen_axis && !anygm_policy_has_modern_layer_semantics(r->win) &&
+     (uint64_t)(uint32_t)r->fbw*(uint32_t)r->fbh>=262144u) return 0;
   if(!r->resident_application_pass || r->interp || (!screen_axis && r->target_id<=0) ||
-     (screen_axis && (r->classic || alpha<1.0/255.0 || page->sw>4096 || page->sh>4096)) ||
-     !anygm_policy_has_modern_layer_semantics(r->win) ||
+     (screen_axis && (r->classic || page->sw>4096 || page->sh>4096)) ||
+     (!screen_axis && !anygm_policy_has_modern_layer_semantics(r->win)) ||
      (!screen_axis && !gml_render_target_preserves_alpha(r)) ||
-     r->fog_flat || r->gui_pass_active || resident_sprite_program_blocks(r) || r->alpha_test_enable ||
+     r->fog_flat || (!screen_axis && r->gui_pass_active) || resident_sprite_program_blocks(r) ||
+     (!screen_axis && r->alpha_test_enable) ||
      !r->alphablend || r->blendmode || r->blend_equation!=1 || r->blend_equation_alpha!=1 ||
      fabs(rotation)>1000000.0 ||
-     r->color_write_mask!=15u || gml_render_classic_vertical_phase_blocks_scene(r) || r->rotated_batch_count ||
+     (screen_axis?r->color_write_mask>15u:r->color_write_mask!=15u) ||
+     gml_render_classic_vertical_phase_blocks_scene(r) || r->rotated_batch_count ||
      r->rotated_batch_building || r->pending_underlay || r->pending_presentation ||
      !gml_render_scene_target_matches(r) || page->project_authored_edges ||
      page->sw<=0 || page->sh<=0 || page->sx<0 || page->sy<0 ||
@@ -3387,6 +3439,19 @@ static int resident_modern_nearest_rotation(GmlRender *r,GmlSprite *sprite,GmlTp
      (uint64_t)(uint32_t)page->sy+(uint32_t)page->sh>source.height) return 0;
   for(int index=0;index<3;index++)
     if(r->classic_interp_phase[index] || r->app_interp_phase[index]) return 0;
+  unsigned empty_cutoff=0u;
+  if(screen_axis){
+    if(!r->color_write_mask || !gml_render_rotated_alpha16_factor(255u,alpha)) return 1;
+    /* Resolve the unchanged CPU no-write predicate,not its destination
+     * arithmetic. The existing raw cutout carries this bounded byte key. */
+    unsigned first=0u,last=255u;
+    while(first+1u<last){
+      unsigned middle=(first+last)/2u;
+      if(gml_render_rotated_alpha16_factor(middle,alpha)) last=middle;
+      else first=middle;
+    }
+    empty_cutoff=first;
+  }
   regions=malloc(capacity*sizeof *regions);
   if(!regions) goto done;
   rows=r->fbw<=16384 && r->fbh<=16384 &&
@@ -3401,13 +3466,28 @@ static int resident_modern_nearest_rotation(GmlRender *r,GmlSprite *sprite,GmlTp
          rotation,colour,regions,REGION_LIMIT,&count)) goto done;
   }
   if(!count){accepted=1;goto done;}
+  if(screen_axis && (r->color_write_mask&8u) && !opaque_screen &&
+     anygm_policy_blend(r->win)!=ANYGM_BLEND_STUDIO_SECOND){
+    alpha_regions=malloc(REGION_LIMIT*sizeof *alpha_regions);
+    if(!alpha_regions || !gml_render_rotated_nearest_regions(r,sprite,page,x,y,xs,ys,0.0,
+         alpha_regions,REGION_LIMIT,&alpha_count)) goto done;
+    if(!alpha_count){accepted=1;goto done;}
+  }
   operations=calloc(count,sizeof *operations);
   if(!operations) goto done;
   gml_render_flush_pending_fill(r);
   if(r->pending_fill || !(target=gml_render_scene_target_resource_ensure(r))) goto done;
   GmlRenderImageRef image=gml_render_application_scene_next_image_ref(r,target);
   if(image.content_version>UINT64_MAX-count) goto done;
-  state.write_mask=15u;state.colour=0xFFFFFFFFu;state.alpha=255u;
+  state.write_mask=screen_axis?r->color_write_mask:15u;
+  state.colour=0xFFFFFFFFu;state.alpha=255u;
+  if(screen_axis){
+    state.alpha_test_enabled=(unsigned)!!r->alpha_test_enable;
+    state.alpha_test_reference=r->alpha_test_enable?r->alpha_test_ref:0u;
+    if(empty_cutoff && (!state.alpha_test_enabled || empty_cutoff>state.alpha_test_reference)){
+      state.alpha_test_enabled=1u;state.alpha_test_reference=empty_cutoff;
+    }
+  }
   state.rgb_source_factor=state.alpha_source_factor=GML_RENDER_BLEND_SOURCE_ALPHA;
   if(screen_axis) state.alpha_source_factor=GML_RENDER_BLEND_ONE;
   state.rgb_destination_factor=state.alpha_destination_factor=GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA;
@@ -3457,8 +3537,10 @@ static int resident_modern_nearest_rotation(GmlRender *r,GmlSprite *sprite,GmlTp
     operations[0].payload.quad.sampling.quantisation=0u;
     operations[0].payload.quad.sampling.filter=GML_RENDER_FILTER_NEAREST_PHASED_OPAQUE_ALPHA;
     state.samplers[0]=operations[0].payload.quad.sampling;
-    accepted=resident_modern_point_regions(r,page,0,0,xs,ys,0,0,operations,&state,&source,regions,count);
-    if(accepted){r->fb_all_transparent=0;r->fb_opaque_known=0;}
+    accepted=resident_modern_point_regions(r,page,0,0,xs,ys,0,0,operations,&state,&source,
+                                          regions,count,alpha_regions,alpha_count);
+    if(accepted){r->fb_all_transparent=0;r->fb_opaque_known=opaque_screen;
+      if(opaque_screen) r->fb_all_opaque=1;}
     goto done;
   }
   GmlRenderDrawBatch batch={operations,count,&state,1u};
@@ -3467,7 +3549,7 @@ static int resident_modern_nearest_rotation(GmlRender *r,GmlSprite *sprite,GmlTp
   accepted=result!=GML_RENDER_RESOURCE_EXEC_FAILED;
   if(accepted){r->fb_all_transparent=0;r->fb_opaque_known=0;}
 done:
-  free(operations);free(regions);return accepted;
+  free(operations);free(regions);free(alpha_regions);return accepted;
 }
 
 static int resident_nearest_texture_function(GmlRender *r,GmlSprite *sprite,GmlTpag *page,
@@ -3552,6 +3634,14 @@ rotated_done:
   if(fog_axis && !r->classic && !r->interp && r->alphablend && !r->blendmode &&
      !gml_render_target_preserves_alpha(r) &&
      fabs((double)page->sw*xs*(double)page->sh*ys)>=131072.0) return 0;
+  if(family==GML_RENDER_SCENE_SPRITE && !r->classic && !r->interp &&
+     !r->fog_flat && r->alphablend && !r->blendmode &&
+     ((r->target_id<0 && !r->target_sp) || (r->target_id==0 && r->target_sp>0)) &&
+     !gml_render_target_preserves_alpha(r) &&
+     fabs((double)page->sw*xs*(double)page->sh*ys)>=131072.0 &&
+     (anygm_policy_has_modern_layer_semantics(r->win) ||
+      (uint64_t)(uint32_t)r->fbw*(uint32_t)r->fbh<262144u))
+    return resident_modern_nearest_rotation(r,sprite,page,x,y,xs,ys,0.0,colour,alpha);
   /* The large normal SCREEN writer goes through its cardinal rotation
    * geometry even at zero degrees. Reuse that half-open reflected anchor
    * for whole unit samples, including the public masked sprite entry. */
@@ -4032,8 +4122,9 @@ static int resident_filtered_sprite(GmlRender *r,GmlSprite *sprite,int subimg,
         left,top,xs,ys,GML_RENDER_SCENE_SPRITE,blend,alpha,6,NULL);
     }
     /* Match the CPU entry's large-axis kernel selection before the small point leaf. */
-    if(rotation==0.0 && anygm_policy_has_modern_layer_semantics(r->win) &&
-       r->target_id<0 && r->target_sp==0 && !gml_render_target_preserves_alpha(r) &&
+    if(rotation==0.0 && !r->classic && r->alphablend && !r->blendmode &&
+       ((r->target_id<0 && !r->target_sp) || (r->target_id==0 && r->target_sp>0)) &&
+       !gml_render_target_preserves_alpha(r) &&
        fabs((double)page->sw*xs*(double)page->sh*ys)>=131072.0)
       return resident_modern_nearest_rotation(r,sprite,page,x,y,xs,ys,0.0,blend,alpha);
     if(rotation!=0.0 && anygm_policy_has_modern_layer_semantics(r->win)){
