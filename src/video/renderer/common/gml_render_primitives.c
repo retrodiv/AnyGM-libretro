@@ -278,7 +278,7 @@ static int resident_rectangle_state_eligible(GmlRender *r){
 
 int gml_render_cpu_backend_vertex_spans(GmlRender *r,
   const GmlRenderCpuBackendVertexSpan *spans,uint32_t count){
-  if(!resident_primitive_state_eligible(r) || r->classic_phase_scene_target ||
+  if(!resident_primitive_state_eligible_rule(r,1) || r->classic_phase_scene_target ||
      r->app_interp_phase[0] || r->app_interp_phase[1] || r->app_interp_phase[2] ||
      count>8192u || (count && !spans)) return 0;
   if(!count) return spans==NULL;
