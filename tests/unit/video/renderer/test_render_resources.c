@@ -7036,6 +7036,47 @@ static int resident_particle_square_public_order(void){
   return 1;
 }
 
+static int resident_particle_disc_public_order(void){
+  GmlRender *r=calloc(1,sizeof *r);
+  GmlParticleState *particles=gml_particle_state_create(NULL);
+  FakeDevice fake={.on_demand=1};GmlRenderDeviceServices device=service(&fake);
+  device.observe_on_demand=fake_observe_on_demand;
+  CHECK(r && particles && !gml_render_init(r,NULL));
+  int system=gml_part_system_create(particles),type=gml_part_type_create(particles);
+  CHECK(system && type && gml_render_application_surface_ensure_owned(r,16,12));
+  gml_render_bind_device(r,&device);
+  gml_part_type_shape(particles,type,1);gml_part_type_size(particles,type,.125,.125,0,0);
+  gml_part_type_alpha(particles,type,1,.61,.61,.61);
+  gml_part_particles_create_color(particles,system,7.25,5.75,type,0x123456u,1);
+  for(unsigned state=0;state<16u;state++){
+    CHECK(gml_render_begin_resident_owned_application(r,0,0,0));
+    gml_render_set_pending_fill(r,0x78273859u);gml_render_flush_pending_fill(r);
+    r->active_shader=state&1u?0:-1;r->alpha=.13;r->blendmode=state%12u;
+    r->color_write_mask=state;r->alpha_test_enable=1;r->alpha_test_ref=255;
+    r->blend_equation=state&2u?3:1;r->alphablend=state&1u;
+    int reads=fake.readbacks;
+    gml_part_system_drawit(particles,r,system);
+    CHECK(r->resident_application_pass && gml_render_scene_submit_pending(r));
+    CHECK(fake.readbacks==reads && gml_render_particle_disc_valid(&fake.last_primitive));
+    GmlRenderDrawOp invalid=fake.last_primitive;
+    uint32_t untouched[16*12]={0};
+    CHECK(!gml_render_cpu_replay_one(untouched,16,12,&invalid,NULL,NULL));
+    invalid.payload.primitive.region.height=2u;CHECK(!gml_render_particle_disc_valid(&invalid));
+    invalid=fake.last_primitive;invalid.payload.primitive.scale_x=NAN;
+    CHECK(!gml_render_particle_disc_valid(&invalid));
+    invalid=fake.last_primitive;invalid.payload.primitive.alpha=1.01;
+    CHECK(!gml_render_particle_disc_valid(&invalid));
+    CHECK(!gml_render_try_particle_disc(r,NAN,0,1,1,0,.5));
+    CHECK(!gml_render_try_particle_disc(r,0,0,1,1,0,1.01));
+    GmlRenderImageRef before=gml_render_resource_image_ref(r->app_surface_resource);
+    CHECK(gml_render_try_particle_disc(r,2,2,1.0/1024.0,1,0,1));
+    CHECK(gml_render_try_particle_disc(r,-400,-400,1,1,0,1));
+    GmlRenderImageRef after=gml_render_resource_image_ref(r->app_surface_resource);
+    CHECK(before.content_version==after.content_version && fake.readbacks==reads);
+  }
+  gml_particle_state_destroy(particles);gml_render_free(r);free(r);return 1;
+}
+
 static int resident_particle_line_public_order(void){
   GmlRender *gpu=(GmlRender*)calloc(1,sizeof *gpu);
   GmlParticleState *particles=gml_particle_state_create(NULL);
@@ -16847,6 +16888,7 @@ int main(void){
   passed+=resident_gradient_primitive_cpu_boundary();
   passed+=resident_particle_square_public_order();
   passed+=resident_particle_line_public_order();
+  passed+=resident_particle_disc_public_order();
   passed+=particle_line_recovery_uses_cpu_raster();
   passed+=resident_software3d_primitive_cpu_bridge();
   passed+=resident_filled_span_public_order();
@@ -17009,6 +17051,6 @@ int main(void){
   passed+=source_free_primitive_rect_replay();
   passed+=stretched_float_exact_replay();
   passed+=filtered_font_exact_recovery();
-  printf("render resource cases: passed=%d failed=%d\n",passed,266-passed);
-  return passed==266?EXIT_SUCCESS:EXIT_FAILURE;
+  printf("render resource cases: passed=%d failed=%d\n",passed,267-passed);
+  return passed==267?EXIT_SUCCESS:EXIT_FAILURE;
 }

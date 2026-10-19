@@ -549,7 +549,9 @@ static int batch_valid(const GmlRenderResource *resource,const GmlRenderDrawBatc
     const GmlRenderResourceSource *source=NULL;
     int textured_vertex=operation->opcode==GML_RENDER_OP_COLOURED_PRIMITIVE &&
       operation->payload.primitive.kind==GML_RENDER_PRIMITIVE_TEXTURED_VERTEX_ROW;
-    if(batch->operation_count>8192u && !textured_vertex) return 0;
+    int particle_disc=operation->opcode==GML_RENDER_OP_COLOURED_PRIMITIVE &&
+      gml_render_particle_disc_valid(operation);
+    if(batch->operation_count>8192u && !textured_vertex && !particle_disc) return 0;
     if(version==UINT64_MAX || !same_logical(operation->target.image,resource->image) ||
        operation->target.image.content_version!=version+1u ||
        operation->target.width!=resource->width ||

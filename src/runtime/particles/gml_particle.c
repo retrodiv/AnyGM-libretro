@@ -1049,6 +1049,11 @@ void gml_part_system_drawit(GmlParticleState *state,GmlRender *r,int id){
       double alpha=keyf(age,t->nalpha,t->alpha[0],t->alpha[1],t->alpha[2]);
       if(alpha<=0) continue;
       uint32_t col = p->has_col ? p->col_over : keyc(age,t);
+      if((t->shape==1 || t->shape==7) &&
+         gml_render_try_particle_disc(r,p->x*coordinate_scale_x-camera_x,
+           p->y*coordinate_scale_y-camera_y,
+           draw_size*t->xscale*coordinate_scale_x,
+           draw_size*t->yscale*coordinate_scale_y,col,alpha)) continue;
       int square_shape=t->shape!=1 && t->shape!=5 && t->shape!=6 && t->shape!=7 &&
         t->shape!=3 && t->shape!=4 && t->shape!=8 && t->shape!=9 &&
         t->shape!=10 && t->shape!=13;

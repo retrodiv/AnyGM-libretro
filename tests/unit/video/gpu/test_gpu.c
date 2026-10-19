@@ -1574,7 +1574,7 @@ static int scene_source_free_alpha_batch_case(unsigned kind){
       ops[line+1u].reconstruction_mode=GML_RENDER_DEVICE_CHECKPOINT;
       ops[line+1u].target.image.content_version=3u+line;
       ops[line+1u].payload.primitive=(GmlRenderPrimitiveRect){
-        .kind=kind,.region={0,0,96u,48u},
+        .kind=kind,.region={0,0,96u,kind==GML_RENDER_PRIMITIVE_PARTICLE_DISC?1u:48u},
         .colour=0xFF7193B5u,.centre_x=48.25,.centre_y=23.75,
         .scale_x=1.25,.scale_y=0.5,.angle=17,.alpha=inverse?1.0:0.375,
         .interpolate=kind==GML_RENDER_PRIMITIVE_PARTICLE_LINE?line%2u:0u,.alpha_blend=1u};
@@ -1620,6 +1620,10 @@ static int scene_source_free_alpha_batch_case(unsigned kind){
 
 static int scene_particle_line_batch_case(void){
   return scene_source_free_alpha_batch_case(GML_RENDER_PRIMITIVE_PARTICLE_LINE);
+}
+
+static int scene_particle_disc_batch_case(void){
+  return scene_source_free_alpha_batch_case(GML_RENDER_PRIMITIVE_PARTICLE_DISC);
 }
 
 static int scene_classic_alpha_rect_batch_case(void){
@@ -4979,6 +4983,7 @@ int main(int argc,char **argv){
     {"scene_content_source_orientation",scene_content_source_orientation_case},
     {"scene_resident_batch",scene_resident_batch_case},
     {"scene_particle_line_batch",scene_particle_line_batch_case},
+    {"scene_particle_disc_batch",scene_particle_disc_batch_case},
     {"scene_classic_alpha_rect_batch",scene_classic_alpha_rect_batch_case},
     {"scene_studio_alpha_rect_batch",scene_studio_alpha_rect_batch_case},
     {"scene_rectangle_function_batch",scene_rectangle_function_batch_case},

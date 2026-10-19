@@ -46,6 +46,71 @@ static int resident_flat_eligible(GmlRender *render){
   return resident_flat_eligible_rule(render,0,0,0);
 }
 
+/* Particle discs ignore content programs, colour masks, global alpha and blend
+ * presets in the existing CPU writer. Only its alpha-blend enable participates.
+ * Resolve the strictly positive ellipse footprint in shared geometry; the
+ * device evaluates soft coverage with ordinary arithmetic and fixed blending. */
+static int particle_disc_inside(double x,double y,double cx,double cy,double rx,double ry){
+  double nx=(x+.5-cx)/rx,ny=(y+.5-cy)/ry;
+  return sqrt(nx*nx+ny*ny)<1.0;
+}
+
+int gml_render_try_particle_disc(GmlRender *r,double x,double y,
+                                 double xs,double ys,uint32_t colour,double alpha){
+  const GmlRenderDeviceServices *device=gml_render_device(r);
+  if(!r || !r->resident_application_pass || !device || !device->observe_on_demand ||
+     !device->observe_on_demand(device->context) || !gml_render_scene_target_matches(r) ||
+     r->pending_presentation || r->rotated_batch_count || r->rotated_batch_building ||
+     r->classic_phase_scene_target || r->classic_phase_y ||
+     r->classic_interp_phase[0] || r->classic_interp_phase[1] || r->classic_interp_phase[2] ||
+     r->app_interp_phase[0] || r->app_interp_phase[1] || r->app_interp_phase[2] ||
+     r->fbw<=0 || r->fbh<=0 || r->fbw>16384 || r->fbh>16384 ||
+     !isfinite(x) || !isfinite(y) || !isfinite(xs) || !isfinite(ys) || !isfinite(alpha) ||
+     fabs(x)>16384.0 || fabs(y)>16384.0 || alpha>1.0) return 0;
+  double rx=32.0*fabs(xs),ry=32.0*fabs(ys);
+  if(rx>16384.0 || ry>16384.0) return 0;
+  if(rx<.25 || ry<.25 || alpha<=0.0) return 1;
+  int y0=(int)fmax(0.0,floor(y-ry)),y1=(int)fmin(r->fbh-1.0,ceil(y+ry));
+  if(y1<y0) return 1;
+  GmlRenderDrawOp *operations=calloc((size_t)(y1-y0+1),sizeof *operations);
+  if(!operations) return 0;
+  uint32_t count=0u;int result=0;
+  for(int row=y0;row<=y1;row++){
+    double ny=(row+.5-y)/ry;
+    if(fabs(ny)>=1.0) continue;
+    double extent=rx*sqrt(1.0-ny*ny);
+    int first=(int)fmax(0.0,floor(x-extent-.5)-1.0);
+    int last=(int)fmin(r->fbw-1.0,ceil(x+extent-.5)+1.0);
+    while(first<=last && !particle_disc_inside(first,row,x,y,rx,ry)) first++;
+    while(last>=first && !particle_disc_inside(last,row,x,y,rx,ry)) last--;
+    if(first>last) continue;
+    GmlRenderDrawOp *op=&operations[count++];
+    op->opcode=GML_RENDER_OP_COLOURED_PRIMITIVE;op->scene_family=GML_RENDER_SCENE_PRIMITIVE;
+    op->reconstruction_mode=GML_RENDER_DEVICE_CHECKPOINT;
+    op->payload.primitive=(GmlRenderPrimitiveRect){
+      .region={first,row,(uint32_t)(last-first+1),1u},
+      .colour=gml_render_cpu_backend_color_to_xrgb(colour),
+      .kind=GML_RENDER_PRIMITIVE_PARTICLE_DISC,.centre_x=x,.centre_y=y,
+      .scale_x=rx,.scale_y=ry,.alpha=alpha,.alpha_blend=r->alphablend?1u:0u};
+  }
+  if(!count){result=1;goto disc_done;}
+  if(r->pending_underlay && !gml_render_compose_resident_underlay(r)) goto disc_done;
+  gml_render_flush_pending_fill(r);
+  GmlRenderResource *target=gml_render_scene_target_resource_ensure(r);
+  if(r->pending_fill || !target) goto disc_done;
+  GmlRenderImageRef next=gml_render_application_scene_next_image_ref(r,target);
+  if(next.content_version>UINT64_MAX-count) goto disc_done;
+  for(uint32_t i=0;i<count;i++){
+    operations[i].target=(GmlRenderTargetRef){next,1u,(uint32_t)r->fbw,(uint32_t)r->fbh,
+      GML_RENDER_PIXEL_ARGB8888,{0,0,(uint32_t)r->fbw,(uint32_t)r->fbh}};
+    operations[i].target.image.content_version+=i+1u;
+  }
+  result=gml_render_application_scene_enqueue_primitives(r,operations,count);
+  if(result){r->fb_all_transparent=0;r->fb_opaque_known=r->fb_all_opaque=0;}
+disc_done:
+  free(operations);return result;
+}
+
 int gml_render_try_particle_line(GmlRender *r,double x,double y,
                                  double xs,double ys,double angle,
                                  uint32_t colour,double alpha){

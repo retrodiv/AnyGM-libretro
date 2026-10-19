@@ -389,6 +389,31 @@ int gml_render_rectangle_valid(const GmlRenderDrawOp *operation){
     ((p->rectangle_flags&GML_RENDER_RECTANGLE_GRADIENT)!=0u)==gradient;
 }
 
+int gml_render_particle_disc_valid(const GmlRenderDrawOp *operation){
+  if(!operation || operation->opcode!=GML_RENDER_OP_COLOURED_PRIMITIVE ||
+     operation->reconstruction_mode!=GML_RENDER_DEVICE_CHECKPOINT ||
+     operation->scene_family!=GML_RENDER_SCENE_PRIMITIVE ||
+     operation->source_count || operation->sources) return 0;
+  const GmlRenderPrimitiveRect *p=&operation->payload.primitive;
+  const GmlRenderTargetRef *t=&operation->target;
+  return p->kind==GML_RENDER_PRIMITIVE_PARTICLE_DISC &&
+    (t->image.resource_class==GML_RENDER_RESOURCE_SCREEN ||
+     t->image.resource_class==GML_RENDER_RESOURCE_APPLICATION ||
+     t->image.resource_class==GML_RENDER_RESOURCE_SURFACE) &&
+    t->pixel_format==GML_RENDER_PIXEL_ARGB8888 && t->width && t->height &&
+    t->width<=16384u && t->height<=16384u && !t->region.x && !t->region.y &&
+    t->region.width==t->width && t->region.height==t->height &&
+    p->region.x>=0 && p->region.y>=0 && p->region.width && p->region.height==1u &&
+    (uint64_t)(unsigned)p->region.x+p->region.width<=t->width &&
+    (unsigned)p->region.y<t->height && (p->colour>>24)==255u &&
+    p->alpha_blend<=1u && !p->interpolate &&
+    isfinite(p->centre_x) && isfinite(p->centre_y) &&
+    fabs(p->centre_x)<=16384.0 && fabs(p->centre_y)<=16384.0 &&
+    isfinite(p->scale_x) && isfinite(p->scale_y) &&
+    p->scale_x>=.25 && p->scale_y>=.25 && p->scale_x<=16384.0 && p->scale_y<=16384.0 &&
+    isfinite(p->alpha) && p->alpha>0.0 && p->alpha<=1.0;
+}
+
 int gml_render_particle_line_valid(const GmlRenderDrawOp *operation){
   if(!operation || operation->opcode!=GML_RENDER_OP_COLOURED_PRIMITIVE ||
      operation->reconstruction_mode!=GML_RENDER_DEVICE_CHECKPOINT ||

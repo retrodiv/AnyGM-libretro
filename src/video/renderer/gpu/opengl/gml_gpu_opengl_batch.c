@@ -1062,12 +1062,14 @@ static int scene_preflight(GmlGpuBackend *backend,const GmlRenderDrawBatch *batc
     }
     if(op->opcode==GML_RENDER_OP_COLOURED_PRIMITIVE){
       if(op->payload.primitive.kind==GML_RENDER_PRIMITIVE_PARTICLE_LINE ||
+         op->payload.primitive.kind==GML_RENDER_PRIMITIVE_PARTICLE_DISC ||
          op->payload.primitive.kind==GML_RENDER_PRIMITIVE_CLASSIC_ALPHA_RECT ||
          op->payload.primitive.kind==GML_RENDER_PRIMITIVE_STUDIO_ALPHA_RECT ||
          op->payload.primitive.kind==GML_RENDER_PRIMITIVE_RECTANGLE ||
          op->payload.primitive.kind==GML_RENDER_PRIMITIVE_TEXTURED_VERTEX_ROW ||
          op->payload.primitive.kind==GML_RENDER_PRIMITIVE_CLASSIC_INVERSE_RECT){
-        if((!gml_render_particle_line_valid(op) && !gml_render_classic_alpha_rect_valid(op) &&
+        if((!gml_render_particle_line_valid(op) && !gml_render_particle_disc_valid(op) &&
+            !gml_render_classic_alpha_rect_valid(op) &&
             !gml_render_studio_alpha_rect_valid(op) &&
             !gml_render_rectangle_valid(op) && !gml_render_textured_vertex_row_valid(op) &&
             !gml_render_classic_inverse_rect_valid(op)) ||
@@ -2357,8 +2359,10 @@ GmlRenderExecutionResult gml_gpu_opengl_scene_submit(GmlGpuBackend *backend,
   for(uint32_t index=0;index<batch->operation_count;index++){
     const GmlRenderDrawOp *op=&batch->operations[index];
     GlSceneImage *target;
-    int particle=op->opcode==GML_RENDER_OP_COLOURED_PRIMITIVE &&
-      op->payload.primitive.kind==GML_RENDER_PRIMITIVE_PARTICLE_LINE;
+    int disc=op->opcode==GML_RENDER_OP_COLOURED_PRIMITIVE &&
+      op->payload.primitive.kind==GML_RENDER_PRIMITIVE_PARTICLE_DISC;
+    int particle=disc || (op->opcode==GML_RENDER_OP_COLOURED_PRIMITIVE &&
+      op->payload.primitive.kind==GML_RENDER_PRIMITIVE_PARTICLE_LINE);
     int inverse_rect=op->opcode==GML_RENDER_OP_COLOURED_PRIMITIVE &&
       op->payload.primitive.kind==GML_RENDER_PRIMITIVE_CLASSIC_INVERSE_RECT;
     int studio_alpha_rect=op->opcode==GML_RENDER_OP_COLOURED_PRIMITIVE &&
@@ -2387,7 +2391,7 @@ GmlRenderExecutionResult gml_gpu_opengl_scene_submit(GmlGpuBackend *backend,
       (op->payload.primitive.alpha_blend && (op->payload.primitive.alpha<1.0 || vertex_span) &&
        (rectangle_blend==0u || rectangle_blend==1u || rectangle_blend==4u) &&
        !(op->payload.primitive.rectangle_flags&GML_RENDER_RECTANGLE_TARGET_ALPHA)?35u:34u):
-      particle?28u:studio_alpha_rect?32u:31u;
+      disc?109u:particle?28u:studio_alpha_rect?32u:31u;
     if(textured_vertex) primitive_filter=(op->payload.primitive.interpolate?106u:103u)+
       (primitive_filter==35u?1u:0u);
     int primitive_blend=additive_bytes?

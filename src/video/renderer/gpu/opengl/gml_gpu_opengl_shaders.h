@@ -486,6 +486,14 @@
   "  if(u_filter==31 || u_filter==32){ o_color=v_colour; return; }\n" \
   "  // R03_SHADER_STUDIO_ALPHA_RECT: a coverage-only pass stamps written alpha.\n" \
   "  if(u_filter==33){ o_color=vec4(0.0,0.0,0.0,1.0); return; }\n" \
+  "  if(u_filter==109){\n" \
+  "    // R03_SHADER_PARTICLE_DISC: exact shared footprint, ordinary soft coverage.\n" \
+  "    vec2 pixel=vec2(floor(gl_FragCoord.x)+0.5,u_extent.y-floor(gl_FragCoord.y)-0.5);\n" \
+  "    vec2 point=(pixel-v_map.xy)/v_step;\n" \
+  "    float coverage=clamp((1.0-length(point))*min(v_step.x,v_step.y),0.0,1.0);\n" \
+  "    float alpha=v_span_x.w==0.0?1.0:floor(coverage*v_colour.a*255.0+0.5)/255.0;\n" \
+  "    o_color=vec4(v_colour.rgb,alpha); return;\n" \
+  "  }\n" \
   "  if(u_filter==28){\n" \
   "    // R03_SHADER_PARTICLE_LINE: procedural soft coverage, separate fixed source-over.\n" \
   "    vec2 pixel=vec2(floor(gl_FragCoord.x),u_extent.y-1.0-floor(gl_FragCoord.y));\n" \

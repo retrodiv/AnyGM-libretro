@@ -458,7 +458,7 @@ int gml_render_application_scene_enqueue_primitive(GmlRender *r,
 static int enqueue_primitives(GmlRender *r,const GmlRenderDrawOp *operations,uint32_t count,
                               const GmlRenderResourceSource *source){
   if(!r || r->classic_phase_scene_target || !r->resident_application_pass || !gml_render_device(r) ||
-     !operations || !count || count>(source?65536u:8192u) || !gml_render_scene_target_matches(r)) return 0;
+     !operations || !count || count>65536u || !gml_render_scene_target_matches(r)) return 0;
   GmlRenderResource *target=gml_render_scene_target_resource_ensure(r);
   if(!target) return 0;
   GmlRenderImageRef next=gml_render_application_scene_next_image_ref(r,target);
@@ -466,7 +466,8 @@ static int enqueue_primitives(GmlRender *r,const GmlRenderDrawOp *operations,uin
   for(uint32_t i=0;i<count;i++){
     const GmlRenderDrawOp *op=&operations[i];
     if((source?!gml_render_textured_vertex_row_valid(op) ||
-                !same_scene_source(op->sources[0],source->image):!gml_render_rectangle_valid(op)) ||
+                !same_scene_source(op->sources[0],source->image):
+               (!gml_render_rectangle_valid(op) && !gml_render_particle_disc_valid(op))) ||
        op->target.image.resource_class!=next.resource_class ||
        op->target.image.identity!=next.identity || op->target.image.incarnation!=next.incarnation ||
        op->target.image.content_version!=next.content_version+i+1u) return 0;

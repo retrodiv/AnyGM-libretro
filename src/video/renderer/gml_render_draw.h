@@ -359,7 +359,8 @@ enum { GML_RENDER_PRIMITIVE_FLAT=0, GML_RENDER_PRIMITIVE_PARTICLE_LINE=1,
        GML_RENDER_PRIMITIVE_STUDIO_ALPHA_RECT=4,
        GML_RENDER_PRIMITIVE_RECTANGLE=5,
        /* Vertex row: centre_x/y are first-centre UVs; scale_x/y their x slopes. */
-       GML_RENDER_PRIMITIVE_TEXTURED_VERTEX_ROW=6 };
+       GML_RENDER_PRIMITIVE_TEXTURED_VERTEX_ROW=6,
+       GML_RENDER_PRIMITIVE_PARTICLE_DISC=7 };
 
 enum { GML_RENDER_RECTANGLE_OUTLINE=1u, GML_RENDER_RECTANGLE_CLASSIC=2u,
        GML_RENDER_RECTANGLE_TARGET_ALPHA=4u, GML_RENDER_RECTANGLE_GRADIENT=8u,
@@ -423,6 +424,7 @@ typedef struct GmlRenderDrawOp {
 } GmlRenderDrawOp;
 
 int gml_render_particle_line_valid(const GmlRenderDrawOp *operation);
+int gml_render_particle_disc_valid(const GmlRenderDrawOp *operation);
 int gml_render_classic_alpha_rect_valid(const GmlRenderDrawOp *operation);
 int gml_render_studio_alpha_rect_valid(const GmlRenderDrawOp *operation);
 int gml_render_classic_inverse_rect_valid(const GmlRenderDrawOp *operation);
