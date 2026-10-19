@@ -10720,12 +10720,15 @@ static int resident_maximised_filtered_real_font(void){
       CHECK(metrics.authority==GML_RENDER_RESOURCE_GPU_RESIDENT &&
             metrics.cpu_version<metrics.logical_version && !metrics.journal_operations &&
             !metrics.cpu_replays && !metrics.device_checkpoints);
-    }else if(variant==12u){
-      /* The separately paired physical font owner extends only magnification;
-       * the established positive unit/reduction recipe above stays unchanged. */
+    }else if(variant==2u || variant==3u || variant==9u || variant==11u || variant==12u){
+      /* The separately paired physical font owner also handles contained
+       * reduction with masks, GUI offsets and mapped first-generation text.
+       * The original cheap normal/full-write owner above stays unchanged. */
       CHECK(render->resident_application_pass && !memcmp(screen,sentinel,sizeof screen) &&
             fake.submits==submits+1 && fake.last_filter==GML_RENDER_FILTER_HARDWARE_BILINEAR &&
-            fake.last_quantisation==GML_RENDER_QUANTISE_HARDWARE_SPRITE_MODERN &&
+            fake.last_quantisation==(variant==9u?GML_RENDER_QUANTISE_HARDWARE_SPRITE_FIRSTGEN:
+                                                GML_RENDER_QUANTISE_HARDWARE_SPRITE_MODERN) &&
+            fake.last_write_mask==15u && render->color_write_mask==(variant==3u?7u:15u) &&
             fake.last_filtered_draw_alpha==1.0/60.0 &&
             fake.last_quad_state.coverage_policy==GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA &&
             fake.last_quad_state.rgb_equation==GML_RENDER_BLEND_ADD &&
@@ -10748,7 +10751,7 @@ static int resident_filtered_font_magnification(int runtime_page,int clamped_pag
   for(unsigned generation=0;generation<3u;generation++)
   for(unsigned font_kind=0;font_kind<2u;font_kind++)
   for(unsigned kind=0;kind<4u;kind++) for(unsigned gui=0;gui<2u;gui++)
-  for(unsigned state=0;state<6u;state++) for(unsigned scale=0;scale<(runtime_page || clamped_page?6u:4u);scale++){
+  for(unsigned state=0;state<6u;state++) for(unsigned scale=0;scale<6u;scale++){
     GmlRender *r=calloc(1,sizeof *r);GmlWin content={.bytecode=generations[generation]};
     FakeDevice fake={.on_demand=1};GmlRenderDeviceServices device=service(&fake);
     uint32_t screen[W*H],shadow[W*H];GmlRenderJournalMetrics metrics={0};
@@ -10788,7 +10791,8 @@ static int resident_filtered_font_magnification(int runtime_page,int clamped_pag
     gml_render_set_pending_fill(r,0x40273859u);gml_render_flush_pending_fill(r);
     CHECK(gml_render_scene_submit_pending(r));memcpy(shadow,r->fb,sizeof shadow);
     r->interp=1;r->font=(int)font_kind;r->alphablend=state<3u;r->blendmode=(int)(state%3u);
-    unsigned mask=clamped_page && !state?5u:state&1u?5u:15u;
+    unsigned mask=!runtime_page && !clamped_page && scale>=4u?7u:
+      clamped_page && !state?5u:state&1u?5u:15u;
     r->color_write_mask=(uint8_t)mask;
     double mx=1,my=1;gml_render_draw_map_scale(r,&mx,&my);
     int submits=fake.submits;
@@ -10812,7 +10816,10 @@ static int resident_filtered_font_magnification(int runtime_page,int clamped_pag
     CHECK(r->resident_application_pass && gml_render_scene_submit_pending(r));
     CHECK(r->interp==1 && r->color_write_mask==mask &&
       fake.submits==submits+1 && fake.last_filter==GML_RENDER_FILTER_HARDWARE_BILINEAR &&
+      fake.last_write_mask==15u &&
       !fake.readbacks && !fake.rgb_queries && !memcmp(shadow,r->fb,sizeof shadow));
+    if(scale==4u && !font_kind && !clamped_page)
+      CHECK(fake.last_quad.sampling.logical_margin_mask==GML_RENDER_MARGIN_UNIT_TEXEL);
     if(runtime_page){
       GmlRenderResourceSource source={0};
       CHECK(gml_render_atlas_scene_source_view(r,0,&source) && !source.borrowed_immutable &&

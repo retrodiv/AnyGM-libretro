@@ -2900,7 +2900,10 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
      hardware_background || hardware_gui_background || modern_screen_filtered || hardware_physical_sprite)
       ?(corner_colours && part_view && margin_mask
           ?GML_RENDER_MARGIN_VISIBLE_CENTRE:margin_mask):0u;
-  if(mutable_filtered_font && !clamped_window && !margin_mask && xs==1.0 && ys==1.0 &&
+  /* Aligned full unit cells sample texel centres regardless of whether the
+   * font page is mutable. Keep their byte endpoints on the same texelFetch
+   * packet without changing fractional sampling or colour arithmetic. */
+  if(hardware_physical_font && !clamped_window && !margin_mask && xs==1.0 && ys==1.0 &&
      left==floor(left) && top==floor(top))
     operation.payload.quad.sampling.logical_margin_mask=GML_RENDER_MARGIN_UNIT_TEXEL;
   if(clamped_unit_copy){
@@ -3242,22 +3245,14 @@ int gml_render_resident_filtered_atlas_page(GmlRender *r,int page_index,
                                 part_view,NULL,0.0,NULL,0,0,0,0,12);
 }
 
-/* Mutable and clamped font pages share the bounded physical axis sampler.
- * Contained packaged unit/reduction fonts retain their exact owner first. */
+/* Every filtered font cell can use the bounded physical axis sampler after
+ * its cheap exact owner declines. This includes contained packaged cells
+ * with a readable mask or blend state that the old owner cannot represent.
+ * The packet retains the CPU text writer's full-channel writes. */
 static int resident_filtered_font_crop(GmlRender *r,GmlTpag *page,
                                        double left,double top,double xs,double ys,
                                        uint32_t colour,double alpha){
   if(!r || !page || !r->interp || r->classic) return 0;
-  int mutable_font=r->atlas && page->atlas>=0 && page->atlas<r->n_atlas &&
-    r->atlas[page->atlas].runtime_font_page;
-  int clamped_font=0;
-  if(r->atlas && page->atlas>=0 && page->atlas<r->n_atlas && page->sx>=0 && page->sy>=0){
-    const GmlAtlas *atlas=&r->atlas[page->atlas];
-    clamped_font=atlas->w>0 && atlas->h>0 &&
-      ((uint64_t)(uint32_t)page->sx+(uint32_t)page->sw>(uint32_t)atlas->w ||
-       (uint64_t)(uint32_t)page->sy+(uint32_t)page->sh>(uint32_t)atlas->h);
-  }
-  if(!mutable_font && !clamped_font && !(xs<0.0 || ys<0.0 || xs>1.0 || ys>1.0)) return 0;
   return resident_filtered_atlas_page(r,-1,left,top,xs,ys,GML_RENDER_SCENE_TEXT,
     colour,alpha,page,NULL,0.0,NULL,0,0,0,0,11);
 }
