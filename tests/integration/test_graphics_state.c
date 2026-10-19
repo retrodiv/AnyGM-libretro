@@ -1725,8 +1725,11 @@ static int classic_doubled_numbered_step_scene_case(void){
   gml_render_dispatch_diagnostics_enable(&selected.engine->render,1);
   for(unsigned frame=0;frame<4u;frame++){
     AnygmFrameOutput cpu={.struct_size=sizeof cpu},gpu={.struct_size=sizeof gpu};
+    GmlGpuCounters before={0},after={0};
+    gml_gpu_counters(selected.engine->gpu,&before);
     int ran=anygm_run_frame(plain.engine,&input,&cpu)==ANYGM_OK &&
       anygm_run_frame(selected.engine,&input,&gpu)==ANYGM_OK;
+    gml_gpu_counters(selected.engine->gpu,&after);
     GmlVal *left=gml_varmap_get(&plain.engine->vm.globals,"fixture_surface");
     GmlVal *right=gml_varmap_get(&selected.engine->vm.globals,"fixture_surface");
     int binding=left && right && left->d==right->d &&
@@ -1736,6 +1739,11 @@ static int classic_doubled_numbered_step_scene_case(void){
       cpu.width==gpu.width && cpu.height==gpu.height &&
       plain.engine->vm.frame==selected.engine->vm.frame &&
       plain.engine->vm.room_index==selected.engine->vm.room_index;
+    if(frame>0u && after.scene_readbacks!=before.scene_readbacks){
+      fprintf(stderr,"doubled numbered Step frame=%u implicit reads=%llu\n",frame,
+        (unsigned long long)(after.scene_readbacks-before.scene_readbacks));
+      matching=0;
+    }
     if(!ran) break;
   }
   GmlRenderDispatchMetrics dispatch={0};

@@ -2182,7 +2182,9 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
 			        anygm_host_development_setting(&engine->host,"GML_SCENE_GPU_PROTOTYPE")))
 			      resident_screen_began=gml_render_begin_resident_base(
 			        &engine->render,gtarget,gtw,gth,screen_cam_x,screen_cam_y);
-			    if(!resident_screen_began && classic_retained_scene)
+			    /* GUI replaces the logical phase base with the physical SCREEN while
+			     * preserving its independent numbered target without observing pixels. */
+			    if(!resident_screen_began && (classic_retained_scene || classic_numbered_scene))
 			      resident_screen_began=gml_render_begin_resident_base_retaining_target(
 			        &engine->render,gtarget,gtw,gth,screen_cam_x,screen_cam_y);
 			    if(!resident_screen_began &&
