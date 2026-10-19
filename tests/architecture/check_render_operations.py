@@ -142,6 +142,7 @@ REQUIRED_RULES = {
     "R03-SPR-GUI-REPLACE",
     "R03-SPR-INTEGER-FUNCTION",
     "R03-SPR-NEAREST-FUNCTION",
+    "R03-SPR-COLLAPSED-ADDITIVE",
     "R03-SPR-FLAT-FOG-FUNCTION",
     "R03-EMPTY-BASE-RESET",
     "R03-GUI-UNIT-SOURCEOVER",
@@ -245,6 +246,7 @@ DISPATCH_ADDITIONAL = {
     "gml_software3d_primitive_2d_end",
 }
 DISPATCH_HELPERS = {
+    "resident_collapsed_additive_sprite_noop",
     "resident_surface_shader_selected",
     "resident_sprite_program_blocks",
     "resident_zero_scale_sprite_noop",

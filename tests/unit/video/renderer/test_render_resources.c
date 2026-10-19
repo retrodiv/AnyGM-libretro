@@ -8177,6 +8177,76 @@ static int resident_black_additive_sprite_noop(void){
   return 1;
 }
 
+/* Admission and unchanged authority; the shared paired generator owns RGBA. */
+static int resident_collapsed_additive_sprite_scope(void){
+  enum { W=16,H=12,A=8 };
+  const int generations[]={530,700,800,13,15,17};
+  for(unsigned generation=0;generation<6u;generation++)
+  for(unsigned variant=0;variant<21u;variant++){
+    GmlRender *r=calloc(1,sizeof *r);GmlWin content={0};
+    FakeDevice fake={.on_demand=1};GmlRenderDeviceServices device=service(&fake);
+    uint32_t screen[W*H]={0},shadow[W*H];GmlRenderJournalMetrics before={0},after={0};
+    CHECK(r && !gml_render_init(r,NULL));r->win=&content;
+    content.classic_version=generations[generation]>100?generations[generation]:0;
+    content.bytecode=generations[generation]<100?generations[generation]:0;
+    content.has_room_layers=generations[generation]==17;r->classic=content.classic_version!=0;
+    free(r->atlas[0].px);r->atlas[0].px=malloc(A*A*4u);
+    r->atlas[0].w=r->atlas[0].h=A;
+    r->spr=calloc(1,sizeof *r->spr);r->tpag=calloc(1,sizeof *r->tpag);
+    CHECK(r->atlas[0].px && r->spr && r->tpag);r->n_spr=r->n_tpag=1;
+    memset(r->atlas[0].px,255,A*A*4u);
+    for(unsigned y=0;y<A;y++)for(unsigned x=0;x<A;x++){
+      if(x && x+1<A && y && y+1<A) continue;
+      uint8_t *pixel=r->atlas[0].px+4u*(y*A+x);
+      pixel[0]=pixel[1]=pixel[2]=(uint8_t)(variant<3u?variant:0u);
+    }
+    r->spr[0]=(GmlSprite){.w=A,.h=A,.originx=A/2,.originy=A/2,.n_frames=1};
+    r->spr[0].frame=calloc(1,sizeof *r->spr[0].frame);CHECK(r->spr[0].frame);
+    r->tpag[0]=(GmlTpag){.sw=A,.sh=A,.tw=A,.th=A,.bw=A,.bh=A};
+    device.observe_on_demand=fake_observe_on_demand;gml_render_bind_device(r,&device);
+    CHECK(gml_render_begin_resident_base(r,screen,W,H,0,0));
+    gml_render_set_pending_fill(r,0xFF273859u);gml_render_flush_pending_fill(r);
+    CHECK(gml_render_scene_submit_pending(r));
+    r->alphablend=1;r->blendmode=1;r->color_write_mask=7u;
+    double x=8.0,xs=-0x1p-50,rotation=112.0,alpha=0.8;
+    if(variant==3u) r->atlas[0].px[4u*(A*A-1u)]=3u;
+    if(variant==4u) r->fb_opaque_known=0;
+    if(variant==5u) r->fb_all_opaque=0;
+    if(variant==6u) x+=0.5;
+    if(variant==7u) xs=-0x1p-40;
+    if(variant==8u) xs=-0x1p-54;
+    if(variant==9u) r->alpha_test_enable=1;
+    if(variant==10u) r->active_shader=0;
+    if(variant==11u) r->fog_flat=1;
+    if(variant==12u) r->alphablend=0;
+    if(variant==13u) r->blend_equation=2;
+    if(variant==14u) r->atlas[0].runtime_font_page=1;
+    if(variant==15u) r->tpag[0].sx=-1;
+    if(variant==16u) fake.on_demand=0;
+    if(variant==17u) alpha=INFINITY;
+    if(variant==18u) rotation=INFINITY;
+    if(variant==19u) r->classic_interp_phase[0]=screen;
+    memcpy(shadow,r->fb,sizeof shadow);
+    GmlRenderResource *target=gml_render_scene_target_resource_ensure(r);CHECK(target);
+    gml_render_resource_journal_metrics(target,&before);
+    int submits=fake.submits,reads=fake.readbacks,uploads=fake.uploads;
+    int accepted=variant==20u?gml_render_resident_rotated_font_glyph(r,&r->spr[0],&r->tpag[0],
+      x,6.0,xs,-0x1p-50,rotation,0xFFFFFFu,alpha):
+      gml_render_resident_masked_sprite(r,0,0,x,6.0,xs,-0x1p-50,rotation,0xFFFFFFu,alpha);
+    if(accepted!=(variant<3u)) fprintf(stderr,"collapsed sprite admission: generation=%d variant=%u accepted=%d\n",
+      generations[generation],variant,accepted);
+    CHECK(accepted==(variant<3u));
+    gml_render_resource_journal_metrics(target,&after);
+    CHECK(r->resident_application_pass && fake.submits==submits && fake.readbacks==reads &&
+      fake.uploads==uploads && !fake.rgb_queries && !memcmp(shadow,r->fb,sizeof shadow) &&
+      after.logical_version==before.logical_version && after.cpu_replays==before.cpu_replays &&
+      after.device_checkpoints==before.device_checkpoints && after.journal_bytes==before.journal_bytes);
+    r->classic_interp_phase[0]=NULL;
+    gml_render_abandon_device(r);gml_render_free(r);free(r);
+  }
+  return 1;
+}
+
 static int resident_application_sprite_cpu_fallback(void){
   GmlRender *render=(GmlRender*)calloc(1,sizeof *render);
   GmlRenderDeviceServices device;
@@ -17070,6 +17140,7 @@ int main(void){
   passed+=resident_application_sprite_cpu_fallback();
   passed+=resident_empty_sprite_preserves_queued_draws();
   passed+=resident_black_additive_sprite_noop();
+  passed+=resident_collapsed_additive_sprite_scope();
   passed+=resident_empty_sprite_part_preserves_pending_work();
   passed+=resident_zero_alpha_sprite_part_noop();
   passed+=resident_offscreen_sprite_part_preserves_queued_draws();
@@ -17221,6 +17292,6 @@ int main(void){
   passed+=source_free_primitive_rect_replay();
   passed+=stretched_float_exact_replay();
   passed+=filtered_font_exact_recovery();
-  printf("render resource cases: passed=%d failed=%d\n",passed,270-passed);
-  return passed==270?EXIT_SUCCESS:EXIT_FAILURE;
+  printf("render resource cases: passed=%d failed=%d\n",passed,271-passed);
+  return passed==271?EXIT_SUCCESS:EXIT_FAILURE;
 }

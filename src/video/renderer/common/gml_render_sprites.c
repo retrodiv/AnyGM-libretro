@@ -3552,9 +3552,64 @@ done:
   free(operations);free(regions);free(alpha_regions);return accepted;
 }
 
+/* R03-SPR-COLLAPSED-ADDITIVE: a subpixel primitive around an integer
+ * destination anchor has no hardware samples. Retain only the paired low
+ * border contribution over opaque pixels,not the CPU's out-of-domain inverse
+ * conversion or an unconditional tiny-sprite cull. */
+static int resident_collapsed_additive_sprite_noop(GmlRender *r,GmlSprite *sprite,
+  GmlTpag *page,double x,double y,double xs,double ys,double rotation,double alpha){
+  if(!r || !sprite || !page || !r->resident_application_pass ||
+     !r->fb_opaque_known || !r->fb_all_opaque || r->interp || !r->alphablend ||
+     r->blendmode!=1 || r->blend_equation!=1 || r->blend_equation_alpha!=1 ||
+     r->color_write_mask>15u || r->active_shader>=0 || r->fog_flat ||
+     r->alpha_test_enable || gml_d3_is_active(r) ||
+     gml_render_classic_vertical_phase_blocks_scene(r) ||
+     r->rotated_batch_count || r->rotated_batch_building || r->pending_fill ||
+     r->pending_underlay || r->pending_presentation || !gml_render_scene_target_matches(r) ||
+     sprite->runtime_rgba || sprite->spine || sprite->ns_enabled ||
+     sprite->w<=0 || sprite->h<=0 || sprite->w>4096 || sprite->h>4096 ||
+     sprite->originx < -4096 || sprite->originx>4096 ||
+     sprite->originy < -4096 || sprite->originy>4096 ||
+     !isfinite(xs) || !isfinite(ys) || fabs(xs)<0x1p-52 || fabs(xs)>0x1p-49 ||
+     fabs(ys)<0x1p-52 || fabs(ys)>0x1p-49 ||
+     !isfinite(rotation) || fabs(rotation)>1000000.0 ||
+     !isfinite(alpha) || alpha<=0.0 || alpha>1.0 ||
+     page->project_authored_edges || page->bw!=sprite->w || page->bh!=sprite->h ||
+     page->sw<=0 || page->sh<=0 || page->sw>4096 || page->sh>4096 ||
+     page->tx<0 || page->ty<0 ||
+     (int64_t)page->tx+page->sw>sprite->w || (int64_t)page->ty+page->sh>sprite->h ||
+     page->atlas<0 || page->atlas>=r->n_atlas || !r->atlas ||
+     !r->device.context || !r->device.observe_on_demand ||
+     !r->device.observe_on_demand(r->device.context)) return 0;
+  for(unsigned index=0;index<3u;index++)
+    if(r->classic_interp_phase[index] || r->app_interp_phase[index]) return 0;
+  double ax=x-r->cam_x,ay=y-r->cam_y;
+  if(!isfinite(ax) || !isfinite(ay) || fabs(ax)>65536.0 || fabs(ay)>65536.0 ||
+     ax!=nearbyint(ax) || ay!=nearbyint(ay)) return 0;
+  const GmlAtlas *atlas=&r->atlas[page->atlas];
+  if(!atlas->px || atlas->runtime_font_page || atlas->w<=0 || atlas->h<=0 ||
+     atlas->w>16384 || atlas->h>16384 || page->sx<0 || page->sy<0 ||
+     (int64_t)page->sx+page->sw>atlas->w ||
+     (int64_t)page->sy+page->sh>atlas->h) return 0;
+  /* Immutable source classification only. No destination read,CPU raster,
+   * colour evaluation,device upload or inverse-coordinate arithmetic. */
+  for(int row=0;row<page->sh;row++){
+    const uint8_t *line=atlas->px+4u*((size_t)(page->sy+row)*atlas->w+page->sx);
+    int full_row=!row || row+1==page->sh;
+    for(int entry=0;entry<(full_row?page->sw:2);entry++){
+      int column=full_row?entry:entry?page->sw-1:0;
+      const uint8_t *pixel=line+4u*(size_t)column;
+      if(pixel[0]>2u || pixel[1]>2u || pixel[2]>2u) return 0;
+    }
+  }
+  return 1;
+}
+
 static int resident_nearest_texture_function(GmlRender *r,GmlSprite *sprite,GmlTpag *page,
                                             double x,double y,double xs,double ys,double rotation,
                                             uint32_t colour,double alpha,GmlRenderSceneFamily family){
+  if(family==GML_RENDER_SCENE_SPRITE && fabs(xs)<0x1p-14 && fabs(ys)<0x1p-14 &&
+     resident_collapsed_additive_sprite_noop(r,sprite,page,x,y,xs,ys,rotation,alpha)) return 1;
   /* Sprite reduction shares the existing inverse-map bound, not a visible-
    * pixel cutoff. Text retains its separately qualified scale range. Source
    * extent, projected area, coverage and region capacity still bound work. */
