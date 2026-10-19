@@ -1544,10 +1544,11 @@ static int scene_hardware_filtered_batch_case(unsigned kind){
 }
 
 static int scene_source_free_alpha_batch_case(unsigned kind){
+  int procedural_line=kind==GML_RENDER_PRIMITIVE_PARTICLE_LINE;
   int inverse=kind==GML_RENDER_PRIMITIVE_CLASSIC_INVERSE_RECT;
   int studio=kind==GML_RENDER_PRIMITIVE_STUDIO_ALPHA_RECT;
   int rectangle=kind==GML_RENDER_PRIMITIVE_CLASSIC_ALPHA_RECT || inverse || studio;
-  for(unsigned variant=0;variant<(studio?10u:inverse?9u:8u);variant++){
+  for(unsigned variant=0;variant<(studio || procedural_line?10u:inverse?9u:8u);variant++){
     enum { LINES=2049 };
     GmlRenderDrawOp *ops=(GmlRenderDrawOp*)calloc(LINES+1u,sizeof *ops);
     GmlGpuContext context=fake_context(GML_GPU_API_OPENGLES3);
@@ -1593,9 +1594,33 @@ static int scene_source_free_alpha_batch_case(unsigned kind){
       ops[2].payload.primitive.alpha=0.375;
     }
     unsigned count=inverse && variant==8u?4u:LINES+1u;
+    if(procedural_line && variant>=8u){
+      count=2u;
+      if(variant==8u){
+        for(unsigned index=0;index<count;index++){
+          ops[index].target.width=ops[index].target.height=4096u;
+          ops[index].target.region=(GmlRenderRect){0,0,4096u,4096u};
+        }
+        ops[1].payload.primitive.region=(GmlRenderRect){0,0,4096u,4096u};
+        ops[1].payload.primitive.centre_x=ops[1].payload.primitive.centre_y=2048.0;
+        ops[1].payload.primitive.scale_x=ops[1].payload.primitive.scale_y=128.0;
+        ops[1].payload.primitive.angle=43.0;
+        anygm_test_graphics_fail_scene_draw_at(1u);
+      }else ops[1].payload.primitive.centre_x=ops[1].payload.primitive.centre_y=-1024.0;
+    }
     GmlRenderDrawBatch batch={ops,count,NULL,0u};
     GmlRenderExecutionResult result=device.submit(device.context,&batch);
-    if(variant && !(inverse && variant==8u) && (variant!=6u || rectangle)){
+    if(procedural_line && variant==8u){
+      REQUIRE(result.status==GML_RENDER_EXEC_RECOVERABLE_ERROR && result.accepted_prefix==1u &&
+              result.uncertain_target_count==1u && anygm_test_graphics_clear_calls()==1 &&
+              anygm_test_graphics_scene_draw_calls()==1,
+              "failed mid-line capacity flush fences partial rows without accepting the logical draw");
+      anygm_test_graphics_fail_scene_draw_at(0u);
+    }else if(procedural_line && variant==9u){
+      REQUIRE(result.status==GML_RENDER_EXEC_ACCEPTED && result.accepted_prefix==count &&
+              anygm_test_graphics_clear_calls()==1 && !anygm_test_graphics_scene_draw_calls(),
+              "empty line completes its logical operation without inventing device vertices");
+    }else if(variant && !(inverse && variant==8u) && (variant!=6u || rectangle)){
       REQUIRE(result.status==GML_RENDER_EXEC_UNSUPPORTED && !result.accepted_prefix &&
               !anygm_test_graphics_clear_calls() && !anygm_test_graphics_scene_draw_calls(),
               "particle refusal is transactional before its clear prefix");
@@ -1603,8 +1628,33 @@ static int scene_source_free_alpha_batch_case(unsigned kind){
       anygm_test_graphics_blend_factors(factors);
       REQUIRE(result.status==GML_RENDER_EXEC_ACCEPTED && result.accepted_prefix==count,
               "source-free particle batch accepted");
-      REQUIRE(anygm_test_graphics_scene_draw_calls()==(studio?4:variant==8u?3:2) &&
-              anygm_test_graphics_scene_vertices()==(int)(count-1u)*6*(studio?2:1),
+      unsigned expected_quads=count-1u,expected_draws=studio?4u:variant==8u?3u:2u;
+      if(procedural_line){
+        unsigned queued=0u,previous_blend=1u;
+        expected_quads=expected_draws=0u;
+        for(unsigned index=1;index<count;index++){
+          const GmlRenderPrimitiveRect *line=&ops[index].payload.primitive;
+          if(queued && previous_blend!=line->alpha_blend){expected_draws++;queued=0u;}
+          previous_blend=line->alpha_blend;
+          double radians=line->angle*3.14159265358979323846/180.0;
+          double cosine=cos(radians),sine=sin(radians);
+          for(unsigned row=0;row<line->region.height;row++){
+            GmlRenderRect region={0};
+            if(!gml_render_particle_line_row_region(line,cosine,sine,line->region.y+(int)row,&region)) continue;
+            while(row+1u<line->region.height){
+              GmlRenderRect next={0};
+              if(!gml_render_particle_line_row_region(line,cosine,sine,line->region.y+(int)row+1,&next) ||
+                 next.x!=region.x || next.width!=region.width) break;
+              row++;
+            }
+            if(queued==2048u){expected_draws++;queued=0u;}
+            queued++;expected_quads++;
+          }
+        }
+        if(queued) expected_draws++;
+      }
+      REQUIRE(anygm_test_graphics_scene_draw_calls()==(int)expected_draws &&
+              anygm_test_graphics_scene_vertices()==(int)expected_quads*6*(studio?2:1),
               "compatible primitives batch to capacity and split at a changed blend rule");
       REQUIRE(factors[0]==(inverse?GL_ZERO:GL_SRC_ALPHA) &&
               factors[1]==(inverse?GL_ONE_MINUS_SRC_COLOR:GL_ONE_MINUS_SRC_ALPHA) &&

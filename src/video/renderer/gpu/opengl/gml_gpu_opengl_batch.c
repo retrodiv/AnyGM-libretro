@@ -2342,6 +2342,7 @@ GmlRenderExecutionResult gml_gpu_opengl_scene_submit(GmlGpuBackend *backend,
   GlSceneImage *active_target=NULL,*pending_source=NULL;
   uint32_t pending_filter=0,pending_count=0,pending_write_mask=15u;
   uint32_t pending_source_alpha_key=0u;
+  uint32_t index=0u;
   int pending_blend=0,pending_alpha_test=-1;
   result.status=GML_RENDER_EXEC_UNSUPPORTED;
   if(!scene_preflight(backend,batch)) return result;
@@ -2356,7 +2357,7 @@ GmlRenderExecutionResult gml_gpu_opengl_scene_submit(GmlGpuBackend *backend,
   backend->gl.ColorMask(GL_TRUE,GL_TRUE,GL_TRUE,GL_TRUE);
   backend->gl.DepthMask(GL_FALSE);
   backend->gl.Enable(GL_SCISSOR_TEST);
-  for(uint32_t index=0;index<batch->operation_count;index++){
+  for(;index<batch->operation_count;index++){
     const GmlRenderDrawOp *op=&batch->operations[index];
     GlSceneImage *target;
     int disc=op->opcode==GML_RENDER_OP_COLOURED_PRIMITIVE &&
@@ -2490,49 +2491,72 @@ GmlRenderExecutionResult gml_gpu_opengl_scene_submit(GmlGpuBackend *backend,
          * common offset before conversion so it cannot consume texel phase. */
         double texture_u=textured_vertex?p->centre_x-floor(p->centre_x):0.0;
         double texture_v=textured_vertex?p->centre_y-floor(p->centre_y):0.0;
-        for(unsigned vertex=0;vertex<6u;vertex++){
-          unsigned corner=corners[vertex];
-          float *v=backend->scene.vertices+
-            ((size_t)pending_count*6u+vertex)*GL_SCENE_VERTEX_FLOATS;
-          memset(v,0,GL_SCENE_VERTEX_FLOATS*sizeof *v);
-          v[0]=(float)p->region.x+((corner==1u || corner==2u)?p->region.width:0u);
-          v[1]=(float)p->region.y+(corner>=2u?p->region.height:0u);
-          v[4]=(float)((p->colour>>16)&255u)/255.0f;
-          v[5]=(float)((p->colour>>8)&255u)/255.0f;
-          v[6]=(float)(p->colour&255u)/255.0f;
-          v[7]=(float)p->alpha;
-          v[12]=(float)p->centre_x; v[13]=(float)p->centre_y;
-          v[14]=(float)co; v[15]=(float)si;
-          v[16]=(float)p->scale_x; v[17]=(float)p->scale_y;
-          v[21]=(float)p->interpolate; v[22]=(float)p->alpha_blend;
-          if(rectangle){
-            v[12]=(float)p->authored_region.x; v[13]=(float)p->authored_region.y;
-            v[14]=(float)(p->authored_region.width-1u);
-            v[15]=(float)(p->authored_region.height-1u);
-            v[18]=(float)p->rectangle_flags;
-            for(unsigned c=0;c<4u;c++) v[19u+c]=(float)(p->corner_colour[c]&0xFFFFFFu);
-            v[23]=(float)p->region.x; v[24]=(float)(p->region.width-1u);
-            v[25]=(float)additive_rgb;v[26]=(float)additive_alpha;
-            v[27]=(float)p->alpha_blend;
-            if(vertex_span){
-              for(unsigned c=0;c<4u;c++){
-                v[12u+c]=(float)p->vertex_first[c];
-                v[19u+c]=(float)p->vertex_step[c];
-              }
-              if(textured_vertex){
-                double offset=corner==1u || corner==2u?p->region.width-0.5:-0.5;
-                v[2]=(float)(texture_u+offset*p->scale_x);
-                v[3]=(float)(texture_v+offset*p->scale_y);
-                v[8]=primitive_source->rendered_origin?1.0f:0.0f;
+        int line=particle && !disc;
+        uint32_t region_count=line?p->region.height:1u;
+        for(uint32_t row=0;row<region_count;row++){
+          GmlRenderRect region=p->region;
+          if(line && !gml_render_particle_line_row_region(p,co,si,p->region.y+(int)row,&region))
+            continue;
+          if(line) while(row+1u<region_count){
+            GmlRenderRect next={0};
+            if(!gml_render_particle_line_row_region(p,co,si,p->region.y+(int)row+1,&next) ||
+               next.x!=region.x || next.width!=region.width) break;
+            region.height++;row++;
+          }
+          if(pending_count==GL_SCENE_MAX_QUADS){
+            if(!flush_quads(backend,active_target,pending_source,pending_filter,
+                            pending_blend,pending_count,pending_write_mask,pending_alpha_test,
+                            pending_source_alpha_key)){
+              mark_uncertain(&result,active_target);goto scene_finish;
+            }
+            pending_count=0u;
+            /* A capacity flush can finish rows, not the current logical draw. */
+            result.accepted_prefix=index;
+          }
+          for(unsigned vertex=0;vertex<6u;vertex++){
+            unsigned corner=corners[vertex];
+            float *v=backend->scene.vertices+
+              ((size_t)pending_count*6u+vertex)*GL_SCENE_VERTEX_FLOATS;
+            memset(v,0,GL_SCENE_VERTEX_FLOATS*sizeof *v);
+            v[0]=(float)region.x+((corner==1u || corner==2u)?region.width:0u);
+            v[1]=(float)region.y+(corner>=2u?region.height:0u);
+            v[4]=(float)((p->colour>>16)&255u)/255.0f;
+            v[5]=(float)((p->colour>>8)&255u)/255.0f;
+            v[6]=(float)(p->colour&255u)/255.0f;
+            v[7]=(float)p->alpha;
+            v[12]=(float)p->centre_x; v[13]=(float)p->centre_y;
+            v[14]=(float)co; v[15]=(float)si;
+            v[16]=(float)p->scale_x; v[17]=(float)p->scale_y;
+            v[21]=(float)p->interpolate; v[22]=(float)p->alpha_blend;
+            if(rectangle){
+              v[12]=(float)p->authored_region.x; v[13]=(float)p->authored_region.y;
+              v[14]=(float)(p->authored_region.width-1u);
+              v[15]=(float)(p->authored_region.height-1u);
+              v[18]=(float)p->rectangle_flags;
+              for(unsigned c=0;c<4u;c++) v[19u+c]=(float)(p->corner_colour[c]&0xFFFFFFu);
+              v[23]=(float)p->region.x; v[24]=(float)(p->region.width-1u);
+              v[25]=(float)additive_rgb;v[26]=(float)additive_alpha;
+              v[27]=(float)p->alpha_blend;
+              if(vertex_span){
+                for(unsigned c=0;c<4u;c++){
+                  v[12u+c]=(float)p->vertex_first[c];
+                  v[19u+c]=(float)p->vertex_step[c];
+                }
+                if(textured_vertex){
+                  double offset=corner==1u || corner==2u?p->region.width-0.5:-0.5;
+                  v[2]=(float)(texture_u+offset*p->scale_x);
+                  v[3]=(float)(texture_v+offset*p->scale_y);
+                  v[8]=primitive_source->rendered_origin?1.0f:0.0f;
+                }
               }
             }
           }
+          pending_source=primitive_source; pending_filter=primitive_filter; pending_blend=primitive_blend;
+          pending_source_alpha_key=0u;
+          pending_alpha_test=-1;
+          if(alpha_rect || rectangle) pending_write_mask=primitive_write_mask;
+          pending_count++;
         }
-        pending_source=primitive_source; pending_filter=primitive_filter; pending_blend=primitive_blend;
-        pending_source_alpha_key=0u;
-        pending_alpha_test=-1;
-        if(alpha_rect || rectangle) pending_write_mask=primitive_write_mask;
-        pending_count++;
         target->valid=1; target->rendered_origin=1;
         continue;
       }
@@ -2671,8 +2695,8 @@ GmlRenderExecutionResult gml_gpu_opengl_scene_submit(GmlGpuBackend *backend,
     }
     pending_count++;
   }
-  if(result.status==GML_RENDER_EXEC_RESOURCE_ERROR &&
-     result.accepted_prefix+pending_count==batch->operation_count){
+scene_finish:
+  if(result.status==GML_RENDER_EXEC_RESOURCE_ERROR && index==batch->operation_count){
     if(!flush_quads(backend,active_target,pending_source,pending_filter,
                     pending_blend,pending_count,pending_write_mask,pending_alpha_test,
                     pending_source_alpha_key))

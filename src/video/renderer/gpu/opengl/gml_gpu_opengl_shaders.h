@@ -508,7 +508,7 @@
   "      float c=particle_line_cell(low+vec2(0.0,1.0)),d=particle_line_cell(low+vec2(1.0));\n" \
   "      coverage=mix(mix(a,b,phase.x),mix(c,d,phase.x),phase.y);\n" \
   "    }\n" \
-  "    if(coverage<=0.0) discard;\n" \
+  "    // Shared row geometry already resolved strict writing coverage.\n" \
   "    float alpha=v_span_x.w==0.0?1.0:floor(clamp(coverage*v_colour.a,0.0,1.0)*255.0+0.5)/255.0;\n" \
   "    if(alpha==0.0) discard;\n" \
   "    o_color=vec4(v_colour.rgb,alpha); return;\n" \

@@ -7077,6 +7077,44 @@ static int resident_particle_disc_public_order(void){
   gml_particle_state_destroy(particles);gml_render_free(r);free(r);return 1;
 }
 
+static int particle_line_row_coverage(void){
+  enum { W=96,H=48 };
+  const double angles[]={0,17,90,-43,180,270,90-1e-8,90+1e-8,180-1e-8,180+1e-8};
+  const double scales[]={1.0/128.0,.75,1.5,4,64,128};
+  const double centres[][2]={{48.25,23.75},{4.25,23.75},{48.5,24},{-.5,-.5}};
+  uint32_t pixels[W*H];
+  for(unsigned orientation=0;orientation<10u;orientation++)
+  for(unsigned size=0;size<6u;size++)
+  for(unsigned signs=0;signs<4u;signs++)
+  for(unsigned placement=0;placement<4u;placement++)
+  for(unsigned interpolate=0;interpolate<2u;interpolate++){
+    GmlRenderPrimitiveRect line={.kind=GML_RENDER_PRIMITIVE_PARTICLE_LINE,
+      .region={0,0,W,H},.centre_x=centres[placement][0],.centre_y=centres[placement][1],
+      .scale_x=(signs&1u?-1:1)*scales[size],
+      .scale_y=(signs&2u?-1:1)*scales[(size+1u)%6u],
+      .angle=angles[orientation],.interpolate=interpolate};
+    for(unsigned pixel=0;pixel<W*H;pixel++) pixels[pixel]=0x49273859u;
+    gml_particle_raster_line(pixels,W,H,line.centre_x,line.centre_y,line.scale_x,line.scale_y,
+      line.angle,0x7193B5u,.25,(int)interpolate,0);
+    double radians=line.angle*3.14159265358979323846/180.0;
+    double cosine=cos(radians),sine=sin(radians);
+    for(int row=0;row<H;row++){
+      GmlRenderRect region={0};
+      int covered=gml_render_particle_line_row_region(&line,cosine,sine,row,&region);
+      for(int x=0;x<W;x++){
+        int actual=covered && x>=region.x && (uint32_t)(x-region.x)<region.width;
+        int expected=pixels[row*W+x]!=0x49273859u;
+        if(actual!=expected){
+          fprintf(stderr,"particle line footprint: angle=%g scale=%g,%g centre=%g,%g filter=%u pixel=%d,%d\n",
+            line.angle,line.scale_x,line.scale_y,line.centre_x,line.centre_y,interpolate,x,row);
+          return 0;
+        }
+      }
+    }
+  }
+  return 1;
+}
+
 static int resident_particle_line_public_order(void){
   GmlRender *gpu=(GmlRender*)calloc(1,sizeof *gpu);
   GmlParticleState *particles=gml_particle_state_create(NULL);
@@ -16887,6 +16925,7 @@ int main(void){
   passed+=resident_unit_world_primitive_order();
   passed+=resident_gradient_primitive_cpu_boundary();
   passed+=resident_particle_square_public_order();
+  passed+=particle_line_row_coverage();
   passed+=resident_particle_line_public_order();
   passed+=resident_particle_disc_public_order();
   passed+=particle_line_recovery_uses_cpu_raster();
@@ -17051,6 +17090,6 @@ int main(void){
   passed+=source_free_primitive_rect_replay();
   passed+=stretched_float_exact_replay();
   passed+=filtered_font_exact_recovery();
-  printf("render resource cases: passed=%d failed=%d\n",passed,267-passed);
-  return passed==267?EXIT_SUCCESS:EXIT_FAILURE;
+  printf("render resource cases: passed=%d failed=%d\n",passed,268-passed);
+  return passed==268?EXIT_SUCCESS:EXIT_FAILURE;
 }

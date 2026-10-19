@@ -414,6 +414,47 @@ int gml_render_particle_disc_valid(const GmlRenderDrawOp *operation){
     isfinite(p->alpha) && p->alpha>0.0 && p->alpha<=1.0;
 }
 
+static int particle_line_contains(const GmlRenderPrimitiveRect *line,
+                                  double cosine,double sine,int x,int y){
+  double dx=x-line->centre_x,dy=y-line->centre_y;
+  double lx=cosine*dx-sine*dy,ly=sine*dx+cosine*dy;
+  double sx=(lx+.5)/line->scale_x-.5,sy=(ly+.5)/line->scale_y-.5;
+  if(line->interpolate) return sx>-29.0 && sx<28.0 && sy>-6.0 && sy<5.0;
+  sx=floor(sx+.5);sy=floor(sy+.5);
+  return sx>-29.0 && sx<28.0 && sy>-5.75 && sy<4.75;
+}
+
+int gml_render_particle_line_row_region(const GmlRenderPrimitiveRect *line,
+                                       double cosine,double sine,int row,GmlRenderRect *region){
+  if(!line || !region || row<line->region.y ||
+     (uint64_t)(row-line->region.y)>=line->region.height) return 0;
+  double first=line->region.x,last=(double)line->region.x+line->region.width-1.0;
+  const double lower[2]={line->interpolate?-29.0:-28.5,line->interpolate?-6.0:-5.5};
+  const double upper[2]={line->interpolate?28.0:27.5,line->interpolate?5.0:4.5};
+  const double scale[2]={line->scale_x,line->scale_y};
+  const double slope[2]={cosine,sine};
+  double dy=row-line->centre_y;
+  const double offset[2]={-cosine*line->centre_x-sine*dy,
+                         -sine*line->centre_x+cosine*dy};
+  /* Intersect the two support slabs before testing their final pixel edges.
+   * A small conservative fringe retains binary64 half-open nearest ties;
+   * only geometry is classified, never opacity or destination channels. */
+  for(unsigned axis=0;axis<2u;axis++){
+    if(fabs(slope[axis])<1e-8) continue;
+    double a=((lower[axis]+.5)*scale[axis]-.5-offset[axis])/slope[axis];
+    double b=((upper[axis]+.5)*scale[axis]-.5-offset[axis])/slope[axis];
+    first=fmax(first,floor(fmin(a,b))-2.0);
+    last=fmin(last,ceil(fmax(a,b))+2.0);
+  }
+  if(first>last) return 0;
+  int left=(int)first,right=(int)last;
+  while(left<=right && !particle_line_contains(line,cosine,sine,left,row)) left++;
+  while(right>=left && !particle_line_contains(line,cosine,sine,right,row)) right--;
+  if(left>right) return 0;
+  *region=(GmlRenderRect){left,row,(uint32_t)(right-left+1),1u};
+  return 1;
+}
+
 int gml_render_particle_line_valid(const GmlRenderDrawOp *operation){
   if(!operation || operation->opcode!=GML_RENDER_OP_COLOURED_PRIMITIVE ||
      operation->reconstruction_mode!=GML_RENDER_DEVICE_CHECKPOINT ||

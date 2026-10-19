@@ -424,6 +424,9 @@ typedef struct GmlRenderDrawOp {
 } GmlRenderDrawOp;
 
 int gml_render_particle_line_valid(const GmlRenderDrawOp *operation);
+/* Strict procedural support only; no source/destination colour evaluation. */
+int gml_render_particle_line_row_region(const GmlRenderPrimitiveRect *line,
+                                       double cosine,double sine,int row,GmlRenderRect *region);
 int gml_render_particle_disc_valid(const GmlRenderDrawOp *operation);
 int gml_render_classic_alpha_rect_valid(const GmlRenderDrawOp *operation);
 int gml_render_studio_alpha_rect_valid(const GmlRenderDrawOp *operation);
