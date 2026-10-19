@@ -8758,6 +8758,35 @@ static int resident_modern_unit_sprite_part(void){
       gml_render_resource_journal_metrics(gml_render_scene_target_resource_ensure(r),&metrics);
       CHECK(fake.last_source_count==1u && metrics.authority==GML_RENDER_RESOURCE_GPU_RESIDENT &&
         !metrics.cpu_replays && !metrics.journal_bytes && !memcmp(shadow,r->fb,sizeof shadow));
+      if(excluded==23u){
+        const double cameras[][2]={{.5,0},{0,.5},{.5,.5},{-.5,-.5},{0,0}};
+        for(unsigned phase=0;phase<5u;phase++){
+          r->cam_x=cameras[phase][0];r->cam_y=cameras[phase][1];
+          gml_draw_sprite_part_ext(r,0,0,1,2,2,1,1,1,1,1,0xFFFFFFu,0x1.0000000000004p0);
+          CHECK(r->resident_application_pass && gml_render_scene_submit_pending(r));
+          double px=floor(1.5-r->cam_x-(r->cam_x!=0.0?1e-9:0.0));
+          double py=floor(1.5-r->cam_y-(r->cam_y!=0.0?1e-9:0.0));
+          CHECK(fake.last_quad.x[0]==px && fake.last_quad.y[0]==py &&
+            fake.last_quad.x[1]==px+2.0 && fake.last_quad.y[2]==py+1.0 &&
+            fake.last_filter==GML_RENDER_FILTER_HARDWARE_BILINEAR &&
+            r->cam_x==cameras[phase][0] && r->cam_y==cameras[phase][1] &&
+            !fake.readbacks && !fake.rgb_queries && !memcmp(shadow,r->fb,sizeof shadow));
+        }
+        GmlRenderFilteredRotationRow rows[2];uint32_t count=0u;
+        int submits=fake.submits;
+        CHECK(gml_render_filtered_axis_positive_rows(r,&r->tpag[1],0,0,1,1,
+          (GmlRenderRect){0,0,2,1},rows,2u,&count) && count==1u &&
+          rows[0].region.x==0 && rows[0].region.y==0 && rows[0].region.width==2u);
+        CHECK(!gml_render_filtered_axis_positive_rows(r,&r->tpag[1],NAN,0,1,1,
+          (GmlRenderRect){0,0,2,1},rows,2u,&count));
+        CHECK(!gml_render_filtered_axis_positive_rows(r,&r->tpag[1],0,0,0,1,
+          (GmlRenderRect){0,0,2,1},rows,2u,&count));
+        CHECK(!gml_render_filtered_axis_positive_rows(r,&r->tpag[1],0,0,1,1,
+          (GmlRenderRect){-1,0,2,1},rows,2u,&count));
+        CHECK(!gml_render_filtered_axis_positive_rows(r,&r->tpag[1],0,0,1,1,
+          (GmlRenderRect){0,0,16,12},rows,1u,&count) && count<=1u);
+        CHECK(fake.submits==submits && !fake.readbacks && !memcmp(shadow,r->fb,sizeof shadow));
+      }
     }else{
       if(r->resident_application_pass) fprintf(stderr,"modern unit part exclusion: case=%u world=%u\n",excluded,world);
       CHECK(!r->resident_application_pass);
@@ -15086,7 +15115,11 @@ static int resident_physical_filtered_sprite_function_impl(int matched,int moder
     double mapping=gml_render_gui_transform_active(render)?2.0:1.0;
     unsigned signs=(state+source+kind+gui+layout)%4u;
     double xs=(signs&1u?-1.5:.75)/mapping,ys=(signs&2u?-.75:1.5)/mapping;
-    int precision_refused=modern==2 && (layout || source) &&
+    int positive_rotation=modern==2 && (layout || source) && render->alphablend &&
+      !render->blendmode && !render->alpha_test_enable && (mask&8u) &&
+      !gml_render_target_preserves_alpha(render) &&
+      (!render->fb_opaque_known || !render->fb_all_opaque);
+    int precision_refused=modern==2 && !positive_rotation && (layout || source) &&
       ((!render->alphablend && render->blendmode!=2) ||
        (render->alphablend && (mask&8u) &&
         (render->blendmode==2?gml_render_target_preserves_alpha(render):
@@ -15102,6 +15135,7 @@ static int resident_physical_filtered_sprite_function_impl(int matched,int moder
       gml_render_free(render);free(render);continue;
     }
     CHECK(render->resident_application_pass && gml_render_scene_submit_pending(render));
+    if(positive_rotation) CHECK(fake.last_quad.span_active==GML_RENDER_SPAN_FILTERED_POSITIVE_ROW);
     CHECK((unsigned)fake.submits==before+(mask?1u:0u) && !fake.readbacks && !fake.rgb_queries &&
       !memcmp(shadow,render->fb,sizeof shadow) && render->interp==1 &&
       render->alpha_test_enable==(int)(state&1u));

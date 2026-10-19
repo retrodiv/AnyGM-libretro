@@ -1901,7 +1901,8 @@ static int scene_filtered_affine_row_batch_case(void){
   enum { QUADS=2049 };
   const uint8_t pixels[16]={11,22,33,255,44,55,66,255,77,88,99,255,111,122,133,255};
   for(unsigned api=0;api<2u;api++) for(unsigned owner=0;owner<3u;owner++)
-  for(unsigned invalid=0;invalid<14u;invalid++){
+  for(unsigned positive=0;positive<4u;positive++)
+  for(unsigned invalid=0;invalid<(positive?16u:14u);invalid++){
     anygm_test_graphics_reset();
     GmlGpu *gpu=gml_gpu_create();GmlRenderDeviceServices device={0};
     GmlGpuContext context=fake_context(api?GML_GPU_API_OPENGLES3:GML_GPU_API_OPENGL_CORE);
@@ -1921,6 +1922,20 @@ static int scene_filtered_affine_row_batch_case(void){
     state.rgb_destination_factor=state.alpha_destination_factor=GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA;
     state.alpha_source_factor=GML_RENDER_BLEND_ONE;
     state.rgb_equation=state.alpha_equation=GML_RENDER_BLEND_ADD;
+    if(positive){
+      state.coverage_policy=GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA;
+      state.alpha_test_enabled=1u;state.alpha_test_reference=0u;
+      if(positive==2u){
+        state.rgb_source_factor=state.rgb_destination_factor=0u;
+        state.alpha_source_factor=state.alpha_destination_factor=0u;
+        state.rgb_equation=state.alpha_equation=0u;
+      }else if(positive==3u){
+        state.coverage_policy=0u;
+        state.rgb_source_factor=GML_RENDER_BLEND_ONE;
+        state.rgb_destination_factor=GML_RENDER_BLEND_ZERO;
+        state.alpha_source_factor=GML_RENDER_BLEND_SOURCE_ALPHA;
+      }
+    }
     for(unsigned index=0;index<QUADS+1u;index++){
       GmlRenderDrawOp *op=&ops[index];op->sequence=index+1u;
       op->target=(GmlRenderTargetRef){.image={owner==0u?GML_RENDER_RESOURCE_SCREEN:
@@ -1932,7 +1947,7 @@ static int scene_filtered_affine_row_batch_case(void){
       op->sources=&source;op->source_count=1u;op->reconstruction_mode=GML_RENDER_DEVICE_CHECKPOINT;
       GmlRenderQuad *q=&op->payload.quad;q->shape=GML_RENDER_QUAD_AXIS_ALIGNED;
       q->sampling=state.samplers[0];q->filtered_draw_alpha=.7;
-      q->span_active=GML_RENDER_SPAN_FILTERED_AFFINE_ROW;
+      q->span_active=positive?GML_RENDER_SPAN_FILTERED_POSITIVE_ROW:GML_RENDER_SPAN_FILTERED_AFFINE_ROW;
       q->inverse_x[0]=1.0;q->inverse_x[1]=.5;
       q->x[1]=q->x[2]=2.0;q->y[2]=q->y[3]=1.0;
       for(unsigned corner=0;corner<4u;corner++){
@@ -1955,6 +1970,8 @@ static int scene_filtered_affine_row_batch_case(void){
     if(invalid==11u) last->span_active=4u;
     if(invalid==12u) last->inverse_x[0]=last->inverse_x[1]=0.0;
     if(invalid==13u){state.alpha_test_enabled=1u;state.alpha_test_reference=1u;}
+    if(invalid==14u) last->filtered_draw_alpha=0x1p-33;
+    if(invalid==15u) state.coverage_policy=positive==3u?GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA:0u;
     GmlRenderDrawBatch batch={ops,QUADS+1u,&state,1u};
     GmlRenderExecutionResult result=device.submit(device.context,&batch);
     if(invalid){
@@ -1963,7 +1980,8 @@ static int scene_filtered_affine_row_batch_case(void){
         !anygm_test_graphics_scene_copies(),"invalid row suffix refuses before the clear prefix");
     }else{
       REQUIRE(result.status==GML_RENDER_EXEC_ACCEPTED && result.accepted_prefix==QUADS+1u &&
-        anygm_test_graphics_scene_draw_calls()==2 && anygm_test_graphics_scene_vertices()==QUADS*6 &&
+        anygm_test_graphics_scene_draw_calls()==(positive==1u?4:2) &&
+        anygm_test_graphics_scene_vertices()==QUADS*6*(positive==1u?2:1) &&
         anygm_test_graphics_scene_filter()==GL_LINEAR && !anygm_test_graphics_scene_copies() &&
         !anygm_test_graphics_read_pixels(),"continuous row quads batch only at capacity without observation");
     }

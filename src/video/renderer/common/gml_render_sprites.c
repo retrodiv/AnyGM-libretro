@@ -2201,14 +2201,24 @@ done:
  * Fixed blending and the existing physical atlas sampler own all pixel work. */
 static int resident_filtered_rotation_rows(GmlRender *r,GmlSprite *sprite,GmlTpag *page,
   double x,double y,double xs,double ys,double rotation,const GmlRenderDrawOp *operation,
-  const GmlRenderDrawStateSnapshot *state,const GmlRenderResourceSource *source){
+  const GmlRenderDrawStateSnapshot *state,const GmlRenderResourceSource *source,int positive_alpha){
   enum { LIMIT=2048 };
   if(!source->borrowed_immutable || r->fbw>16384 || r->fbh>16384) return 0;
   GmlRenderFilteredRotationRow *rows=malloc(LIMIT*sizeof *rows);
   GmlRenderDrawOp *operations=NULL;
   uint32_t count=0u;int accepted=0;
-  if(!rows || !gml_render_rotated_filtered_rows(r,sprite,page,x,y,
-       xs,ys,rotation,rows,LIMIT,&count)) goto done;
+  if(!rows) goto done;
+  if(sprite){
+    if(!gml_render_rotated_filtered_rows(r,sprite,page,x,y,
+         xs,ys,rotation,rows,LIMIT,&count,positive_alpha)) goto done;
+  }else{
+    const GmlRenderQuad *quad=&operation->payload.quad;
+    int x0=(int)fmax(quad->x[0],0.0),y0=(int)fmax(quad->y[0],0.0);
+    int x1=(int)fmin(quad->x[1],r->fbw),y1=(int)fmin(quad->y[2],r->fbh);
+    GmlRenderRect region={x0,y0,(uint32_t)(x1-x0),(uint32_t)(y1-y0)};
+    if(!positive_alpha || !gml_render_filtered_axis_positive_rows(r,page,x,y,xs,ys,
+         region,rows,LIMIT,&count)) goto done;
+  }
   if(!count){accepted=2;goto done;}
   if(operation->target.image.content_version>UINT64_MAX-(count-1u)) goto done;
   operations=malloc((size_t)count*sizeof *operations);if(!operations) goto done;
@@ -2218,7 +2228,8 @@ static int resident_filtered_rotation_rows(GmlRender *r,GmlSprite *sprite,GmlTpa
     operations[index].target.image.content_version+=index;
     GmlRenderQuad *quad=&operations[index].payload.quad;
     quad->shape=GML_RENDER_QUAD_AXIS_ALIGNED;
-    quad->span_active=GML_RENDER_SPAN_FILTERED_AFFINE_ROW;
+    quad->span_active=positive_alpha?GML_RENDER_SPAN_FILTERED_POSITIVE_ROW:
+      GML_RENDER_SPAN_FILTERED_AFFINE_ROW;
     memset(quad->span_x,0,sizeof quad->span_x);memset(quad->span_y,0,sizeof quad->span_y);
     memset(quad->inverse_x,0,sizeof quad->inverse_x);memset(quad->inverse_y,0,sizeof quad->inverse_y);
     memset(quad->inverse_offset,0,sizeof quad->inverse_offset);
@@ -2607,7 +2618,19 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
    * decision. A hardware filter can cross that decision at a transparent
    * edge or with sub-byte draw opacity. Non-preserving alpha stamps have
    * the same discontinuity on a nonopaque target. */
-  if((hardware_physical_rotation || clamped_window) &&
+  int positive_rotation=hardware_physical_rotation && r->alphablend && !r->blendmode &&
+    !r->alpha_test_enable && alpha>=1.0/255.0 && (r->color_write_mask&8u) &&
+    !gml_render_target_preserves_alpha(r) &&
+    (margin_mask || !page->scene_fully_opaque) &&
+    (!r->fb_opaque_known || !r->fb_all_opaque);
+  int positive_part=hardware_physical_part && !r->blendmode &&
+    (!r->alpha_test_enable || !r->alpha_test_ref) &&
+    anygm_policy_has_modern_layer_semantics(r->win) &&
+    (margin_mask || !page->scene_fully_opaque) &&
+    (!r->alphablend || (!gml_render_target_preserves_alpha(r) &&
+      (!r->fb_opaque_known || !r->fb_all_opaque)));
+  if(positive_part && alpha<0x1p-32) return 0;
+  if(!positive_rotation && (hardware_physical_rotation || clamped_window) &&
      ((!r->alphablend && r->blendmode!=2 &&
        (margin_mask || !page->scene_fully_opaque || alpha<1.0/255.0)) ||
       ((margin_mask || !page->scene_fully_opaque) && r->alphablend &&
@@ -2731,7 +2754,7 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
   } else {
     /* The positioned axis CPU leaf delegates to blit_one. Its modern world-target half-camera
      * ties select the preceding pixel; other filtered quads keep their established rounding. */
-    if((positioned_axis || modern_screen_filtered || hardware_physical_tiled ||
+    if((positioned_axis || modern_screen_filtered || hardware_physical_tiled || hardware_physical_part ||
         (hardware_physical_sprite && (nearest_mode==7 || hardware_physical_font || hardware_physical_background))) && anygm_policy_has_modern_layer_semantics(r->win) &&
        !r->gui_pass_active && r->target_sp==0 && r->target_id<0){
       if(fabs(fabs(r->cam_x-nearbyint(r->cam_x))-0.5)<1e-9)
@@ -3237,9 +3260,9 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
   /* A reduced axis can have valid centre samples while its extrapolated vertices
    * lie outside the atlas. Resolve just that bounded axis to constant texel strips. */
   const GmlRenderQuad *quad=&operation.payload.quad;
-  if(hardware_physical_rotation){
+  if(hardware_physical_rotation || positive_part){
     int accepted=resident_filtered_rotation_rows(r,rotated_sprite,page,physical_rotation_x,physical_rotation_y,xs,ys,rotation,
-                                                &operation,&state,&source);
+                                                &operation,&state,&source,positive_rotation || positive_part);
     if(!accepted) return 0;
     if(accepted==1) r->fb_all_transparent=0;
     return 1;

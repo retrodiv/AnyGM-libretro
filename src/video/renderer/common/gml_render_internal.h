@@ -878,8 +878,8 @@ int gml_render_rotated_nearest_sample_rows(GmlRender *r,GmlSprite *sprite,GmlTpa
                                            double rotation,GmlRenderRotatedCoverageRegion *regions,
                                            uint32_t capacity,uint32_t *count);
 
-/* Geometry only: one clipped physical row with continuous source coordinates.
- * Filtering, tint and destination arithmetic remain with their executors. */
+/* Clipped physical rows with continuous source coordinates. Optional immutable
+ * alpha support resolves coverage only; colour, tint and blending stay GPU-owned. */
 typedef struct GmlRenderFilteredRotationRow {
   GmlRenderRect region;
   double source_x,source_y,delta_x,delta_y;
@@ -887,7 +887,10 @@ typedef struct GmlRenderFilteredRotationRow {
 int gml_render_rotated_filtered_rows(GmlRender *r,GmlSprite *sprite,GmlTpag *tpag,
                                       double x,double y,double xscale,double yscale,
                                       double rotation,GmlRenderFilteredRotationRow *rows,
-                                      uint32_t capacity,uint32_t *count);
+                                      uint32_t capacity,uint32_t *count,int positive_alpha);
+int gml_render_filtered_axis_positive_rows(GmlRender *r,GmlTpag *tpag,
+    double left,double top,double xscale,double yscale,GmlRenderRect region,
+    GmlRenderFilteredRotationRow *rows,uint32_t capacity,uint32_t *count);
 
 /* CPU vertical samples belong to the logical root, never to an explicitly
  * numbered allocation. Keep every other binding behind the established fence. */

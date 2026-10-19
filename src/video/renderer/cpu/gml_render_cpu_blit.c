@@ -5514,9 +5514,56 @@ static int filtered_rotation_bound(const GmlRotatedGeometry *geometry,
   return first;
 }
 
+/* Input-alpha support only. CPU colour/filter/blend executors stay unchanged. */
+static int filtered_positive_support(const GmlAtlas *atlas,const GmlTpag *page,
+                                     double u,double v,int logical_margin){
+  int ua=(int)floor(u),va=(int)floor(v);
+  double fx=u-ua,fy=v-va;
+  return (fx<1.0 && fy<1.0 && interp_tpag_sample(atlas,page,ua,va,logical_margin)[3]) ||
+    (fx>0.0 && fy<1.0 && interp_tpag_sample(atlas,page,ua+1,va,logical_margin)[3]) ||
+    (fx<1.0 && fy>0.0 && interp_tpag_sample(atlas,page,ua,va+1,logical_margin)[3]) ||
+    (fx>0.0 && fy>0.0 && interp_tpag_sample(atlas,page,ua+1,va+1,logical_margin)[3]);
+}
+
+int gml_render_filtered_axis_positive_rows(GmlRender *r,GmlTpag *page,
+    double left,double top,double xs,double ys,GmlRenderRect region,
+    GmlRenderFilteredRotationRow *rows,uint32_t capacity,uint32_t *count){
+  if(!r || !page || !rows || !count || !capacity ||
+     r->fbw<=0 || r->fbh<=0 || r->fbw>16384 || r->fbh>16384 ||
+     page->sw<=0 || page->sh<=0 || page->sw>4096 || page->sh>4096 ||
+     page->atlas<0 || page->atlas>=r->n_atlas || !atlas_pixels(r,page->atlas) ||
+     !isfinite(left) || !isfinite(top) || !isfinite(xs) || !isfinite(ys) ||
+     fabs(left)>65536.0 || fabs(top)>65536.0 ||
+     fabs(xs)<.125 || fabs(xs)>64.0 || fabs(ys)<.125 || fabs(ys)>64.0 ||
+     region.x<0 || region.y<0 || (uint64_t)(uint32_t)region.x+region.width>(uint32_t)r->fbw ||
+     (uint64_t)(uint32_t)region.y+region.height>(uint32_t)r->fbh ||
+     (uint64_t)region.width*region.height>1048576u) return 0;
+  *count=0u;
+  int logical_margin=page->tx>0 || page->ty>0 ||
+    (int64_t)page->tx+page->sw<page->bw || (int64_t)page->ty+page->sh<page->bh;
+  const GmlAtlas *atlas=&r->atlas[page->atlas];
+  int right=region.x+(int)region.width,bottom=region.y+(int)region.height;
+  for(int py=region.y;py<bottom;py++){
+    double v=((double)py+.5-top)/ys-.5;
+    int start=region.x;
+    for(int px=region.x;px<=right;px++){
+      int covered=px<right && filtered_positive_support(atlas,page,
+        ((double)px+.5-left)/xs-.5,v,logical_margin);
+      if(!covered && start<px){
+        if(*count==capacity) return 0;
+        rows[(*count)++]=(GmlRenderFilteredRotationRow){
+          .region={start,py,(uint32_t)(px-start),1u},
+          .source_x=((double)start+.5-left)/xs-.5,.source_y=v,.delta_x=1.0/xs};
+      }
+      if(!covered) start=px+1;
+    }
+  }
+  return 1;
+}
+
 int gml_render_rotated_filtered_rows(GmlRender *r,GmlSprite *sprite,GmlTpag *page,
   double x,double y,double xs,double ys,double rotation,GmlRenderFilteredRotationRow *rows,
-  uint32_t capacity,uint32_t *count){
+  uint32_t capacity,uint32_t *count,int positive_alpha){
   if(!r || !sprite || !page || !rows || !capacity || !count ||
      !isfinite(x) || !isfinite(y) || !isfinite(xs) || !isfinite(ys) || !isfinite(rotation) ||
      fabs(x)>65536.0 || fabs(y)>65536.0 || fabs(xs)<0.125 || fabs(xs)>64.0 ||
@@ -5535,6 +5582,7 @@ int gml_render_rotated_filtered_rows(GmlRender *r,GmlSprite *sprite,GmlTpag *pag
   double rectangle=(double)(g->x1-g->x0)*(g->y1-g->y0);
   int span=area>0.0 && area<rectangle*0.85;
   double delta[2]={g->c*g->invxs,g->sn*g->invys};
+  uint32_t examined=0u;
   for(int py=g->y0;py<g->y1;py++){
     int first=g->x0,last=g->x1;
     if(span && !rotated_quad_row_span(g->qx,g->qy,py+0.5,g->x0,g->x1,&first,&last)) continue;
@@ -5545,12 +5593,37 @@ int gml_render_rotated_filtered_rows(GmlRender *r,GmlSprite *sprite,GmlTpag *pag
       last=filtered_rotation_bound(g,sprite,page,py,axis,first,last,increasing?extent:-1.0,increasing);
     }
     if(first>=last) continue;
-    if(*count==capacity) return 0;
-    rows[(*count)++]=(GmlRenderFilteredRotationRow){
-      .region={first,py,(uint32_t)(last-first),1u},
-      .source_x=filtered_rotation_coordinate(g,sprite,page,first,py,0u),
-      .source_y=filtered_rotation_coordinate(g,sprite,page,first,py,1u),
-      .delta_x=delta[0],.delta_y=delta[1]};
+    if(!positive_alpha){
+      if(*count==capacity) return 0;
+      rows[(*count)++]=(GmlRenderFilteredRotationRow){
+        .region={first,py,(uint32_t)(last-first),1u},
+        .source_x=filtered_rotation_coordinate(g,sprite,page,first,py,0u),
+        .source_y=filtered_rotation_coordinate(g,sprite,page,first,py,1u),
+        .delta_x=delta[0],.delta_y=delta[1]};
+      continue;
+    }
+    int start=first;
+    for(int px=first;px<=last;px++){
+      int covered=px<last;
+      if(covered){
+        if(++examined>1048576u) return 0;
+        double u=filtered_rotation_coordinate(g,sprite,page,px,py,0u);
+        double v=filtered_rotation_coordinate(g,sprite,page,px,py,1u);
+        /* All four CPU weights are nonnegative. Their sum is positive iff
+         * a positive input-alpha tap has positive support on both axes.
+         * No RGB, destination, filtered-alpha value or blend is evaluated. */
+        covered=filtered_positive_support(atlas,page,u,v,1);
+      }
+      if(!covered && start<px){
+        if(*count==capacity) return 0;
+        rows[(*count)++]=(GmlRenderFilteredRotationRow){
+          .region={start,py,(uint32_t)(px-start),1u},
+          .source_x=filtered_rotation_coordinate(g,sprite,page,start,py,0u),
+          .source_y=filtered_rotation_coordinate(g,sprite,page,start,py,1u),
+          .delta_x=delta[0],.delta_y=delta[1]};
+      }
+      if(!covered) start=px+1;
+    }
   }
   return 1;
 }

@@ -323,7 +323,9 @@ typedef struct GmlRenderQuad {
 enum {
   GML_RENDER_SPAN_FIXED20_ROW=2u,
   GML_RENDER_SPAN_FILTERED_AFFINE_ROW=3u,
-  GML_RENDER_SPAN_OPAQUE_SCALAR_ALPHA=4u
+  GML_RENDER_SPAN_OPAQUE_SCALAR_ALPHA=4u,
+  /* Immutable input-alpha support, resolved before hardware colour filtering. */
+  GML_RENDER_SPAN_FILTERED_POSITIVE_ROW=5u
 };
 
 /* Shared admission for the bounded double-expression font rule, before target writes. */
