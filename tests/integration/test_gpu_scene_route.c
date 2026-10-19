@@ -76,6 +76,10 @@ int main(int argc,char **argv){
   int classic_scaled_step=argc==2 && !strcmp(argv[1],"--keep-classic-scaled-step");
   int classic_filtered_step=argc==2 && !strcmp(argv[1],"--keep-classic-filtered-step");
   int classic_scaled_filtered_step=argc==2 && !strcmp(argv[1],"--keep-classic-scaled-filtered-step");
+  int classic_root_handoff=argc==2 && !strcmp(argv[1],"--keep-classic-root-handoff");
+  int classic_scaled_root_handoff=argc==2 && !strcmp(argv[1],"--keep-classic-scaled-root-handoff");
+  int classic_filtered_root_handoff=argc==2 && !strcmp(argv[1],"--keep-classic-filtered-root-handoff");
+  int classic_scaled_filtered_root_handoff=argc==2 && !strcmp(argv[1],"--keep-classic-scaled-filtered-root-handoff");
   int classic_sample_root=argc==2 && !strcmp(argv[1],"--keep-classic-sample-root");
   int classic_sample_resize=argc==2 && !strcmp(argv[1],"--keep-classic-sample-resize");
   int classic_sample_filtered=argc==2 && !strcmp(argv[1],"--keep-classic-sample-filtered");
@@ -131,6 +135,10 @@ int main(int argc,char **argv){
        classic_scaled_step?anygm_synthetic_classic_scaled_step_content_create(&fixture):
        classic_filtered_step?anygm_synthetic_classic_filtered_step_content_create(&fixture):
        classic_scaled_filtered_step?anygm_synthetic_classic_scaled_filtered_step_content_create(&fixture):
+       classic_root_handoff?anygm_synthetic_classic_root_handoff_content_create(&fixture):
+       classic_scaled_root_handoff?anygm_synthetic_classic_scaled_root_handoff_content_create(&fixture):
+       classic_filtered_root_handoff?anygm_synthetic_classic_filtered_root_handoff_content_create(&fixture):
+       classic_scaled_filtered_root_handoff?anygm_synthetic_classic_scaled_filtered_root_handoff_content_create(&fixture):
        classic_read?anygm_synthetic_classic_single_view_read_content_create(&fixture):
        classic_cpu_gui?anygm_synthetic_classic_single_view_cpu_gui_content_create(&fixture):
        classic_filter_transition?anygm_synthetic_classic_single_view_filter_transition_content_create(&fixture):
@@ -169,6 +177,8 @@ int main(int argc,char **argv){
      classic_step_composition || classic_step_base_writer || classic_late_step_composition ||
      classic_native_step || classic_late_native_step || classic_scaled_step || classic_filtered_step ||
      classic_scaled_filtered_step ||
+     classic_root_handoff || classic_scaled_root_handoff || classic_filtered_root_handoff ||
+     classic_scaled_filtered_root_handoff ||
      classic_sample_root || classic_sample_resize || classic_sample_filtered ||
      classic_read || classic_cpu_gui || classic_filter_transition || classic_partial_alpha ||
      classic_rectangle || classic_alpha_rectangle || classic_binary || classic_source_alpha || classic_zero_alpha_part ||
@@ -203,6 +213,8 @@ int main(int argc,char **argv){
           "--keep-classic-borrowed-resize|"
           "--keep-classic-step-composition|--keep-classic-step-base-writer|"
           "--keep-classic-late-step-composition|"
+          "--keep-classic-root-handoff|--keep-classic-scaled-root-handoff|"
+          "--keep-classic-filtered-root-handoff|--keep-classic-scaled-filtered-root-handoff|"
           "--keep-classic-sample-root|--keep-classic-sample-resize|--keep-classic-sample-filtered|"
           "--keep-classic-single-view-read|--keep-classic-single-view-cpu-gui|"
           "--keep-classic-single-view-filter-transition|--keep-classic-single-view-partial-alpha|"

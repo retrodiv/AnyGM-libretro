@@ -1921,15 +1921,12 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
   gml_render_flush_pending_fill(&engine->render);
   if(!engine_graphics_finish_scene(engine)) return ANYGM_ERROR_INTERNAL;
   translated_world_pending=translated_base_world && base_world_began;
-  /* Only a drawn base needs immediate CPU composition. Assigned target pixels remain
-   * resource-owned until a real surface, state or fallback consumer observes them; a
-   * certified borrowed classic world is already the logical application raster. */
+  /* Only a drawn base needs immediate CPU composition. A numbered Draw retains
+   * the separate, undrawn logical root on device until a real surface, state or
+   * fallback consumer observes it, just like an assigned target or borrowed world. */
   if(base_world_began && !direct_view_surface && !early_classic_borrowed_world &&
-     !classic_sample_world && !translated_base_world){
-    if(classic_numbered_scene){
-      if(!gml_render_completed_screen_read(&engine->render,world_pixels,world_width,world_height))
-        return ANYGM_ERROR_INTERNAL;
-    } else if(!gml_render_resident_application_cpu_barrier(&engine->render))
+     !classic_sample_world && !translated_base_world && !classic_numbered_scene){
+    if(!gml_render_resident_application_cpu_barrier(&engine->render))
       return ANYGM_ERROR_INTERNAL;
   }
   if(direct_owned_world)

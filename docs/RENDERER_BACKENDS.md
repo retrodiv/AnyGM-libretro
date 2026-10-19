@@ -982,6 +982,16 @@ Positive actual-host fixtures
 require EXACT RGBA0,Reset and same-run state/rewind;the fake driver owns only
 metadata and dispatch. No CPU raster,shader,default or state-format change.
 
+A numbered Draw does not itself consume the separate logical root. Its completed
+bytes remain resource-owned instead of being eagerly acquired for CPU composition
+after every root-to-numbered handoff. Real root writers, source-zero observers,
+state and controlled context destruction still acquire the current bytes through
+their existing checked resource consumers. The neutral root-handoff fixtures cover
+root/numbered/root/recreated-numbered transitions at native and doubled extents,
+nearest and filtered, with GLES/Core dispatch checks and actual-device EXACT0
+delivered pixels, runtime/RNG and same-load Reset/state/rewind controls. They do
+not admit a new draw variant, sampler, root phase policy or CPU algorithm.
+
 R03-CLASSIC-ROOT-SAMPLES qualifies bounded admission for a freshly cleared,
 borrowed logical root with nearest exact2x physical output and independently
 owned vertical samples. Individual textured/primitive draws retain their EXACT0

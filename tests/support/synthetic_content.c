@@ -1759,7 +1759,9 @@ static int synthetic_framebuffer_content_create(
   memset(fixture,0,sizeof *fixture);
   if(!create_fixture_directory(fixture->directory,sizeof fixture->directory)) return 0;
 
-  int classic_native_step=(gpu_sprite>=51 && gpu_sprite<=54) || gpu_sprite==61;
+  int classic_root_handoff=gpu_sprite>=62 && gpu_sprite<=65;
+  int classic_native_step=(gpu_sprite>=51 && gpu_sprite<=54) || gpu_sprite==61 ||
+                          classic_root_handoff;
   int classic_step_composition=(gpu_sprite>=41 && gpu_sprite<=43) || classic_native_step;
   int classic_retained_target=gpu_sprite==38 || gpu_sprite==39 || classic_step_composition;
   int retained_step_target=gpu_sprite==5 || gpu_sprite==6 || classic_retained_target;
@@ -1849,6 +1851,9 @@ static int synthetic_framebuffer_content_create(
        classic_redraw?
        "global.fixture_frame = 0;\n"
        "global.fixture_seen = 0;\n":
+       classic_root_handoff?
+       "global.fixture_frame = 0;\n"
+       "global.fixture_surface = -1;\n":
        classic_native_step?
        "global.fixture_frame = 0;\n"
        "global.fixture_surface = surface_create(16,12);\n"
@@ -1864,7 +1869,20 @@ static int synthetic_framebuffer_content_create(
        "global.fixture_frame = 0;\n"
        "view_xview[0] = 0.5; view_xview[1] = 32.25;\n":
        "global.fixture_frame = 0;\n") ||
-     !write_text(step,gpu_sprite==59?
+     !write_text(step,classic_root_handoff?
+                 "global.fixture_frame += 1;\n"
+                 "global.fixture_rng = irandom(65535);\n"
+                 "if (global.fixture_frame == 4 || global.fixture_frame == 10) {\n"
+                 "  global.fixture_surface = surface_create(16,12);\n"
+                 "  surface_set_target(global.fixture_surface); draw_clear(c_blue);\n"
+                 "} else if (global.fixture_frame == 8) {\n"
+                 "  surface_reset_target(); surface_free(global.fixture_surface);\n"
+                 "  global.fixture_surface = -1;\n"
+                 "} else if (surface_exists(global.fixture_surface)) {\n"
+                 "  surface_reset_target(); draw_clear(c_green);\n"
+                 "  draw_surface_stretched(global.fixture_surface,0,0,64,48);\n"
+                 "  surface_set_target(global.fixture_surface);\n"
+                 "}\n":gpu_sprite==59?
                  "global.fixture_frame += 1;\n"
                  "global.fixture_rng = irandom(65535);\n"
                  "if (room == 0 && global.fixture_frame == 4) {\n"
@@ -2169,8 +2187,10 @@ static int synthetic_framebuffer_content_create(
     if(gpu_sprite==41 || gpu_sprite==42) project.classic_version=701;
     if(classic_native_step){
       project.classic_version=gpu_sprite==51?800:810;
-      project.classic_scaling=gpu_sprite==53 || gpu_sprite==61?200:100;
-      project.classic_interpolate=gpu_sprite==54 || gpu_sprite==61;
+      project.classic_scaling=gpu_sprite==53 || gpu_sprite==61 ||
+                              gpu_sprite==63 || gpu_sprite==65?200:100;
+      project.classic_interpolate=gpu_sprite==54 || gpu_sprite==61 ||
+                                  (classic_root_handoff && gpu_sprite>=64);
     }
     if(classic_sample_root){
       project.classic_version=810;project.classic_scaling=200;
@@ -2499,6 +2519,18 @@ int anygm_synthetic_classic_filtered_step_content_create(AnygmSyntheticContent *
 }
 int anygm_synthetic_classic_scaled_filtered_step_content_create(AnygmSyntheticContent *fixture){
   return synthetic_framebuffer_content_create(fixture,0,0,1,61);
+}
+int anygm_synthetic_classic_root_handoff_content_create(AnygmSyntheticContent *fixture){
+  return synthetic_framebuffer_content_create(fixture,0,0,1,62);
+}
+int anygm_synthetic_classic_scaled_root_handoff_content_create(AnygmSyntheticContent *fixture){
+  return synthetic_framebuffer_content_create(fixture,0,0,1,63);
+}
+int anygm_synthetic_classic_filtered_root_handoff_content_create(AnygmSyntheticContent *fixture){
+  return synthetic_framebuffer_content_create(fixture,0,0,1,64);
+}
+int anygm_synthetic_classic_scaled_filtered_root_handoff_content_create(AnygmSyntheticContent *fixture){
+  return synthetic_framebuffer_content_create(fixture,0,0,1,65);
 }
 int anygm_synthetic_classic_sample_root_content_create(AnygmSyntheticContent *fixture){
   return synthetic_framebuffer_content_create(fixture,0,0,1,58);

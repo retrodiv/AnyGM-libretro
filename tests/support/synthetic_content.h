@@ -120,6 +120,11 @@ int anygm_synthetic_classic_late_native_step_content_create(AnygmSyntheticConten
 int anygm_synthetic_classic_scaled_step_content_create(AnygmSyntheticContent *fixture);
 int anygm_synthetic_classic_filtered_step_content_create(AnygmSyntheticContent *fixture);
 int anygm_synthetic_classic_scaled_filtered_step_content_create(AnygmSyntheticContent *fixture);
+/* Draw on the logical root before retaining, releasing and recreating a numbered target. */
+int anygm_synthetic_classic_root_handoff_content_create(AnygmSyntheticContent *fixture);
+int anygm_synthetic_classic_scaled_root_handoff_content_create(AnygmSyntheticContent *fixture);
+int anygm_synthetic_classic_filtered_root_handoff_content_create(AnygmSyntheticContent *fixture);
+int anygm_synthetic_classic_scaled_filtered_root_handoff_content_create(AnygmSyntheticContent *fixture);
 /* Independent nearest base/vertical samples and a physical doubled SCREEN. */
 int anygm_synthetic_classic_sample_root_content_create(AnygmSyntheticContent *fixture);
 int anygm_synthetic_classic_sample_resize_content_create(AnygmSyntheticContent *fixture);

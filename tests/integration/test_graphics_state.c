@@ -1642,6 +1642,70 @@ static int classic_retained_target_scene_case(void){
 }
 
 /* Current-context dispatch proof; real-device pairs own the pixel assertions. */
+static int classic_root_handoff_scene_case(void){
+  int (*factories[])(AnygmSyntheticContent *)={
+    anygm_synthetic_classic_root_handoff_content_create,
+    anygm_synthetic_classic_scaled_root_handoff_content_create,
+    anygm_synthetic_classic_filtered_root_handoff_content_create,
+    anygm_synthetic_classic_scaled_filtered_root_handoff_content_create
+  };
+  for(unsigned api=0;api<2u;api++) for(unsigned variant=0;variant<4u;variant++){
+    Session plain={0},selected={0};
+    CurrentContextWitness witness={1u,0u};
+    AnygmGraphicsContext context=graphics_context(api?ANYGM_GRAPHICS_OPENGL_CORE:ANYGM_GRAPHICS_OPENGLES3);
+    AnygmInputFrame input={.struct_size=sizeof input,.pointer_x=-1,.pointer_y=-1};
+    int matching=1;
+    anygm_test_graphics_reset();
+    REQUIRE(session_open_fixture_with_scene(&plain,ANYGM_SCENE_RENDERER_CPU,factories[variant]) &&
+            session_open_fixture_with_scene(&selected,ANYGM_SCENE_RENDERER_OPENGL,factories[variant]),
+            "Classic root handoff CPU/GPU fixtures load");
+    context.userdata=&witness;context.is_current=graphics_context_is_current;
+    REQUIRE(anygm_graphics_context_reset(selected.engine,&context)==ANYGM_OK,
+            "Classic root handoff adopts a current owning context");
+    for(unsigned frame=0;frame<12u;frame++){
+      AnygmFrameOutput cpu={.struct_size=sizeof cpu},gpu={.struct_size=sizeof gpu};
+      GmlGpuCounters before={0},after={0};
+      gml_gpu_counters(selected.engine->gpu,&before);
+      int ran=anygm_run_frame(plain.engine,&input,&cpu)==ANYGM_OK &&
+              anygm_run_frame(selected.engine,&input,&gpu)==ANYGM_OK;
+      gml_gpu_counters(selected.engine->gpu,&after);
+      matching=matching && ran && cpu.width==gpu.width && cpu.height==gpu.height &&
+        cpu.width==(variant%2u?128u:64u) && cpu.height==(variant%2u?96u:48u) &&
+        plain.engine->vm.room_index==selected.engine->vm.room_index &&
+        plain.engine->vm.frame==selected.engine->vm.frame;
+      const char *names[]={"fixture_frame","fixture_seen","fixture_surface","fixture_rng"};
+      for(unsigned index=0;index<4u;index++){
+        GmlVal *left=gml_varmap_get(&plain.engine->vm.globals,names[index]);
+        GmlVal *right=gml_varmap_get(&selected.engine->vm.globals,names[index]);
+        if(!left || !right || left->d!=right->d)
+          fprintf(stderr,"Classic root handoff api=%u variant=%u frame=%u global=%s values=%g/%g\n",
+            api,variant,frame,names[index],left?left->d:-999.,right?right->d:-999.);
+        matching=matching && left && right && left->d==right->d;
+      }
+      if(frame==3u || frame==9u){
+        int retained=gml_surface_get_target(&selected.engine->render)>0;
+        int deferred=after.scene_readbacks==before.scene_readbacks;
+        fprintf(stderr,"Classic root handoff api=%u variant=%u frame=%u retained=%d reads=%llu\n",
+          api,variant,frame,retained,
+          (unsigned long long)(after.scene_readbacks-before.scene_readbacks));
+        matching=matching && retained && deferred;
+      }
+      if(!ran) break;
+    }
+    GmlGpuCounters counters={0};
+    gml_gpu_counters(selected.engine->gpu,&counters);
+    fprintf(stderr,"Classic root handoff api=%u variant=%u matching=%d sprites=%llu surfaces=%llu refused=%llu\n",
+      api,variant,matching,(unsigned long long)counters.scene_families[GML_RENDER_SCENE_SPRITE],
+      (unsigned long long)counters.scene_families[GML_RENDER_SCENE_SURFACE],
+      (unsigned long long)counters.scene_batches_refused);
+    matching=matching && counters.scene_families[GML_RENDER_SCENE_SPRITE]>0u &&
+      counters.scene_families[GML_RENDER_SCENE_SURFACE]>0u && !counters.scene_batches_refused;
+    session_close(&selected);session_close(&plain);
+    REQUIRE(matching,"retaining a numbered target does not observe the undrawn logical root");
+  }
+  return 1;
+}
+
 static int classic_native_step_scene_case(void){
   int (*factories[])(AnygmSyntheticContent *)={
     anygm_synthetic_classic_native_step_content_create,
@@ -5723,6 +5787,7 @@ int main(void){
     {"classic Step target survives GPU Draw and GUI",classic_retained_target_scene_case},
     {"classic Step SCREEN and numbered Draw stay independently current",classic_step_composition_scene_case},
     {"native Classic retained Step and phase exclusions",classic_native_step_scene_case},
+    {"Classic numbered handoff defers observation of the undrawn root",classic_root_handoff_scene_case},
     {"doubled Classic numbered Step keeps independent phase ownership",classic_doubled_numbered_step_scene_case},
     {"manual Classic application retains Draw GUI and root Step",classic_manual_application_scene_case},
     {"classic integer surface keeps partial source alpha resident",classic_integer_surface_calls_case},
