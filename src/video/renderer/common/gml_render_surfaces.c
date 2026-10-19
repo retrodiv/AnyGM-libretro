@@ -455,30 +455,34 @@ int gml_render_application_scene_enqueue_primitive(GmlRender *r,
   return 1;
 }
 
-int gml_render_application_scene_enqueue_primitives(GmlRender *r,
-  const GmlRenderDrawOp *operations,uint32_t count){
+static int enqueue_primitives(GmlRender *r,const GmlRenderDrawOp *operations,uint32_t count,
+                              const GmlRenderResourceSource *source){
   if(!r || r->classic_phase_scene_target || !r->resident_application_pass || !gml_render_device(r) ||
-     !operations || !count || count>8192u || !gml_render_scene_target_matches(r)) return 0;
+     !operations || !count || count>(source?65536u:8192u) || !gml_render_scene_target_matches(r)) return 0;
   GmlRenderResource *target=gml_render_scene_target_resource_ensure(r);
   if(!target) return 0;
   GmlRenderImageRef next=gml_render_application_scene_next_image_ref(r,target);
   if(next.content_version>UINT64_MAX-count) return 0;
   for(uint32_t i=0;i<count;i++){
     const GmlRenderDrawOp *op=&operations[i];
-    if(!gml_render_rectangle_valid(op) ||
+    if((source?!gml_render_textured_vertex_row_valid(op) ||
+                !same_scene_source(op->sources[0],source->image):!gml_render_rectangle_valid(op)) ||
        op->target.image.resource_class!=next.resource_class ||
        op->target.image.identity!=next.identity || op->target.image.incarnation!=next.incarnation ||
        op->target.image.content_version!=next.content_version+i+1u) return 0;
   }
   if(count>GML_SCENE_BATCH_LIMIT){
     GmlRenderDrawBatch batch={operations,count,NULL,0u};
-    GmlRenderResourceExecution result=gml_render_application_scene_submit(r,&batch,NULL,0u);
+    GmlRenderResourceExecution result=gml_render_application_scene_submit(r,&batch,source,source?1u:0u);
     if(result==GML_RENDER_RESOURCE_EXEC_CPU) r->resident_application_pass=0;
     return result!=GML_RENDER_RESOURCE_EXEC_FAILED;
   }
   GmlRenderPendingSceneBatch *pending=r->pending_scene_batch;
   if(pending && pending->count &&
-     (pending->source_count || pending->count>GML_SCENE_BATCH_LIMIT-count ||
+     ((source?(pending->source_count!=1u ||
+                !same_scene_source(pending->source_refs[0],source->image) ||
+                !same_scene_source_view(&pending->sources[0],source)):pending->source_count!=0u) ||
+      pending->count>GML_SCENE_BATCH_LIMIT-count ||
       pending->operations[0].target.image.resource_class!=next.resource_class ||
       pending->operations[0].target.image.identity!=next.identity ||
       pending->operations[0].target.image.incarnation!=next.incarnation) &&
@@ -489,10 +493,26 @@ int gml_render_application_scene_enqueue_primitives(GmlRender *r,
     r->pending_scene_batch=pending;
   }
   if(!scene_pending_reserve(pending,pending->count+count)) return 0;
+  if(source){
+    pending->source_count=1u;pending->sources[0]=*source;
+    pending->source_refs[0]=source->image;pending->coalesce_sources=0;
+  }
   memcpy(&pending->operations[pending->count],operations,(size_t)count*sizeof *operations);
+  if(source) for(uint32_t i=0;i<count;i++)
+    pending->operations[pending->count+i].sources=&pending->source_refs[0];
   pending->count+=count;
   if(r->fb==r->app_surface_owned){r->app_surface_opaque=0;r->app_presentation_coverage_active=0;}
   return 1;
+}
+
+int gml_render_application_scene_enqueue_primitives(GmlRender *r,
+  const GmlRenderDrawOp *operations,uint32_t count){
+  return enqueue_primitives(r,operations,count,NULL);
+}
+
+int gml_render_application_scene_enqueue_textured_primitives(GmlRender *r,
+  const GmlRenderDrawOp *operations,uint32_t count,const GmlRenderResourceSource *source){
+  return source && enqueue_primitives(r,operations,count,source);
 }
 
 int gml_render_application_scene_enqueue(GmlRender *r,const GmlRenderDrawOp *operation,

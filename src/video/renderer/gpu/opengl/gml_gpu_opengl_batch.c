@@ -994,10 +994,13 @@ static int scene_preflight(GmlGpuBackend *backend,const GmlRenderDrawBatch *batc
   uint32_t clear_count=0;
   float probe[6*GL_SCENE_VERTEX_FLOATS];
   if(!backend || !batch || !batch->operations || batch->operation_count==0 ||
-     batch->operation_count>8192u || !backend->loaded || !backend->scene.available) return 0;
+     batch->operation_count>65536u || !backend->loaded || !backend->scene.available) return 0;
   for(uint32_t index=0;index<batch->operation_count;index++){
     const GmlRenderDrawOp *op=&batch->operations[index];
     const GmlRenderTargetRef *target=&op->target;
+    if(batch->operation_count>8192u &&
+       (op->opcode!=GML_RENDER_OP_COLOURED_PRIMITIVE ||
+        op->payload.primitive.kind!=GML_RENDER_PRIMITIVE_TEXTURED_VERTEX_ROW)) return 0;
     if(batch->states && op->state_index<batch->state_count &&
        batch->states[op->state_index].source_alpha_key &&
        op->opcode!=GML_RENDER_OP_TEXTURED_QUAD) return 0;
@@ -1062,15 +1065,24 @@ static int scene_preflight(GmlGpuBackend *backend,const GmlRenderDrawBatch *batc
          op->payload.primitive.kind==GML_RENDER_PRIMITIVE_CLASSIC_ALPHA_RECT ||
          op->payload.primitive.kind==GML_RENDER_PRIMITIVE_STUDIO_ALPHA_RECT ||
          op->payload.primitive.kind==GML_RENDER_PRIMITIVE_RECTANGLE ||
+         op->payload.primitive.kind==GML_RENDER_PRIMITIVE_TEXTURED_VERTEX_ROW ||
          op->payload.primitive.kind==GML_RENDER_PRIMITIVE_CLASSIC_INVERSE_RECT){
         if((!gml_render_particle_line_valid(op) && !gml_render_classic_alpha_rect_valid(op) &&
             !gml_render_studio_alpha_rect_valid(op) &&
-            !gml_render_rectangle_valid(op) &&
+            !gml_render_rectangle_valid(op) && !gml_render_textured_vertex_row_valid(op) &&
             !gml_render_classic_inverse_rect_valid(op)) ||
            (op->payload.primitive.alpha_blend &&
             (!backend->gl.BlendFuncSeparate || !backend->gl.BlendEquationSeparate)) ||
            (!existing_target(backend,target) &&
             !cleared_earlier(cleared,clear_count,target->image))) return 0;
+        if(op->payload.primitive.kind==GML_RENDER_PRIMITIVE_TEXTURED_VERTEX_ROW){
+          GlSceneImage *source=gml_gpu_opengl_scene_image(backend,op->sources[0]);
+          if(!source || !source->texture || same_logical(source->ref,target->image) ||
+             source->width>16384u || source->height>16384u ||
+             (source->pixel_format!=GML_RENDER_PIXEL_RGBA8888 &&
+              source->pixel_format!=GML_RENDER_PIXEL_ARGB8888 &&
+              source->pixel_format!=GML_RENDER_PIXEL_XRGB8888)) return 0;
+        }
         continue;
       }
       if(op->reconstruction_mode!=GML_RENDER_REPLAY_EXACT ||
@@ -1761,7 +1773,7 @@ static int flush_quads(GmlGpuBackend *backend,GlSceneImage *target,GlSceneImage 
                        uint32_t source_alpha_key){
   GlScene *scene=&backend->scene;
   GLfloat extent[2]={(GLfloat)target->width,(GLfloat)target->height};
-  GLenum texture_filter=filter==99u || filter==100u || filter==77u || filter==18u || filter==19u || filter==20u || filter==21u ||
+  GLenum texture_filter=(filter>=106u && filter<=108u) || filter==99u || filter==100u || filter==77u || filter==18u || filter==19u || filter==20u || filter==21u ||
     (filter>=65u && filter<=74u) || (filter>=79u && filter<=82u)
     ?GL_LINEAR:GL_NEAREST;
   GLsizei stride=GL_SCENE_INSTANCE_FLOATS*(GLsizei)sizeof(float);
@@ -1777,6 +1789,9 @@ static int flush_quads(GmlGpuBackend *backend,GlSceneImage *target,GlSceneImage 
   if(source){
     backend->gl.TexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,(GLint)texture_filter);
     backend->gl.TexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAG_FILTER,(GLint)texture_filter);
+    GLint wrap=filter>=103u && filter<=108u?GL_REPEAT:GL_CLAMP_TO_EDGE;
+    backend->gl.TexParameteri(GL_TEXTURE_2D,GL_TEXTURE_WRAP_S,wrap);
+    backend->gl.TexParameteri(GL_TEXTURE_2D,GL_TEXTURE_WRAP_T,wrap);
   }
   if(blend && blend!=8 && filter!=15u && filter!=17u){
     if(blend==GL_SCENE_BLEND_RECTANGLE_ADD_BYTES ||
@@ -1824,7 +1839,7 @@ static int flush_quads(GmlGpuBackend *backend,GlSceneImage *target,GlSceneImage 
     backend->gl.BlendEquationSeparate(GL_FUNC_ADD,GL_FUNC_ADD);
     backend->gl.Enable(GL_BLEND);
   } else backend->gl.Disable(GL_BLEND);
-  int stamp_alpha=filter==99u || filter==77u || filter==75u || filter==9u || filter==12u || filter==21u || filter==23u ||
+  int stamp_alpha=filter==104u || filter==107u || filter==99u || filter==77u || filter==75u || filter==9u || filter==12u || filter==21u || filter==23u ||
                   filter==25u || filter==32u || filter==35u || filter==39u || filter==40u ||
                   filter==46u || filter==47u || filter==53u || filter==60u ||
                   filter==66u || filter==69u || filter==71u || filter==80u ||
@@ -1877,9 +1892,15 @@ static int flush_quads(GmlGpuBackend *backend,GlSceneImage *target,GlSceneImage 
      * the same sampler and cutout in an alpha-only pass, preserving that recipe's coverage. */
     backend->gl.ColorMask(GL_FALSE,GL_FALSE,GL_FALSE,GL_TRUE);
     backend->gl.Disable(GL_BLEND);
-    backend->gl.Uniform1i(scene->u_filter,filter==99u?100:filter==93u?95:filter==86u?88:filter==80u?82:filter==77u?78:filter==75u?76:filter==69u?74:filter>=65u?72:filter==60u?62:filter==53u?55:(filter==46u || filter==47u)?48:(filter==39u || filter==40u)?41:filter==35u?36:filter==32u?33:filter==25u?26:
+    backend->gl.Uniform1i(scene->u_filter,filter==104u || filter==107u?(GLint)filter+1:filter==99u?100:filter==93u?95:filter==86u?88:filter==80u?82:filter==77u?78:filter==75u?76:filter==69u?74:filter>=65u?72:filter==60u?62:filter==53u?55:(filter==46u || filter==47u)?48:(filter==39u || filter==40u)?41:filter==35u?36:filter==32u?33:filter==25u?26:
                          filter==23u?24:filter==21u?22:filter==9u?10:13);
     backend->gl.DrawArraysInstanced(GL_TRIANGLES,0,6,(GLsizei)count);
+  }
+  if(source && filter>=103u && filter<=108u){
+    /* Repeat belongs to this row sampler, not to a later content-program or
+     * presentation consumer of the same versioned image. */
+    backend->gl.TexParameteri(GL_TEXTURE_2D,GL_TEXTURE_WRAP_S,GL_CLAMP_TO_EDGE);
+    backend->gl.TexParameteri(GL_TEXTURE_2D,GL_TEXTURE_WRAP_T,GL_CLAMP_TO_EDGE);
   }
   backend->gl.ColorMask(GL_TRUE,GL_TRUE,GL_TRUE,GL_TRUE);
   for(unsigned index=0;index<13u;index++)
@@ -2342,8 +2363,11 @@ GmlRenderExecutionResult gml_gpu_opengl_scene_submit(GmlGpuBackend *backend,
       op->payload.primitive.kind==GML_RENDER_PRIMITIVE_CLASSIC_INVERSE_RECT;
     int studio_alpha_rect=op->opcode==GML_RENDER_OP_COLOURED_PRIMITIVE &&
       op->payload.primitive.kind==GML_RENDER_PRIMITIVE_STUDIO_ALPHA_RECT;
+    int textured_vertex=op->opcode==GML_RENDER_OP_COLOURED_PRIMITIVE &&
+      op->payload.primitive.kind==GML_RENDER_PRIMITIVE_TEXTURED_VERTEX_ROW;
     int rectangle=op->opcode==GML_RENDER_OP_COLOURED_PRIMITIVE &&
-      op->payload.primitive.kind==GML_RENDER_PRIMITIVE_RECTANGLE;
+      (op->payload.primitive.kind==GML_RENDER_PRIMITIVE_RECTANGLE || textured_vertex);
+    GlSceneImage *primitive_source=textured_vertex?gml_gpu_opengl_scene_image(backend,op->sources[0]):NULL;
     unsigned rectangle_blend=rectangle?
       (op->payload.primitive.rectangle_flags&GML_RENDER_RECTANGLE_BLEND_MASK)>>
        GML_RENDER_RECTANGLE_BLEND_SHIFT:0u;
@@ -2364,6 +2388,8 @@ GmlRenderExecutionResult gml_gpu_opengl_scene_submit(GmlGpuBackend *backend,
        (rectangle_blend==0u || rectangle_blend==1u || rectangle_blend==4u) &&
        !(op->payload.primitive.rectangle_flags&GML_RENDER_RECTANGLE_TARGET_ALPHA)?35u:34u):
       particle?28u:studio_alpha_rect?32u:31u;
+    if(textured_vertex) primitive_filter=(op->payload.primitive.interpolate?106u:103u)+
+      (primitive_filter==35u?1u:0u);
     int primitive_blend=additive_bytes?
       (int)(GL_SCENE_BLEND_RECTANGLE_ADD_BYTES+
         ((op->payload.primitive.rectangle_flags&GML_RENDER_RECTANGLE_TARGET_ALPHA)!=0u)):rectangle?
@@ -2377,7 +2403,9 @@ GmlRenderExecutionResult gml_gpu_opengl_scene_submit(GmlGpuBackend *backend,
        ? !active_target || !same_logical(active_target->ref,op->target.image) ||
          pending_count==GL_SCENE_MAX_QUADS || pending_filter!=primitive_filter ||
          pending_blend!=primitive_blend || pending_alpha_test!=-1 ||
-         pending_write_mask!=primitive_write_mask
+         pending_write_mask!=primitive_write_mask ||
+         (textured_vertex?(!pending_source || !same_version(pending_source->ref,op->sources[0])):
+                          pending_source!=NULL)
        : (op->opcode!=GML_RENDER_OP_TEXTURED_QUAD ||
        !active_target || !same_logical(active_target->ref,op->target.image) ||
        pending_count==GL_SCENE_MAX_QUADS ||
@@ -2454,6 +2482,10 @@ GmlRenderExecutionResult gml_gpu_opengl_scene_submit(GmlGpuBackend *backend,
         static const unsigned corners[6]={0,1,2,0,2,3};
         double rad=p->angle*3.14159265358979323846/180.0;
         double co=cos(rad),si=sin(rad);
+        /* Repeat is invariant under integer periods. Remove the row's large
+         * common offset before conversion so it cannot consume texel phase. */
+        double texture_u=textured_vertex?p->centre_x-floor(p->centre_x):0.0;
+        double texture_v=textured_vertex?p->centre_y-floor(p->centre_y):0.0;
         for(unsigned vertex=0;vertex<6u;vertex++){
           unsigned corner=corners[vertex];
           float *v=backend->scene.vertices+
@@ -2483,10 +2515,16 @@ GmlRenderExecutionResult gml_gpu_opengl_scene_submit(GmlGpuBackend *backend,
                 v[12u+c]=(float)p->vertex_first[c];
                 v[19u+c]=(float)p->vertex_step[c];
               }
+              if(textured_vertex){
+                double offset=corner==1u || corner==2u?p->region.width-0.5:-0.5;
+                v[2]=(float)(texture_u+offset*p->scale_x);
+                v[3]=(float)(texture_v+offset*p->scale_y);
+                v[8]=primitive_source->rendered_origin?1.0f:0.0f;
+              }
             }
           }
         }
-        pending_source=NULL; pending_filter=primitive_filter; pending_blend=primitive_blend;
+        pending_source=primitive_source; pending_filter=primitive_filter; pending_blend=primitive_blend;
         pending_source_alpha_key=0u;
         pending_alpha_test=-1;
         if(alpha_rect || rectangle) pending_write_mask=primitive_write_mask;

@@ -302,6 +302,26 @@ int gml_render_classic_inverse_rect_valid(const GmlRenderDrawOp *operation){
   return classic_blended_rect_valid(operation,GML_RENDER_PRIMITIVE_CLASSIC_INVERSE_RECT);
 }
 
+int gml_render_textured_vertex_row_valid(const GmlRenderDrawOp *operation){
+  if(!operation || operation->source_count!=1u || !operation->sources ||
+     operation->payload.primitive.kind!=GML_RENDER_PRIMITIVE_TEXTURED_VERTEX_ROW ||
+     !(operation->payload.primitive.rectangle_flags&GML_RENDER_RECTANGLE_VERTEX_SPAN) ||
+     operation->payload.primitive.interpolate>1u) return 0;
+  GmlRenderDrawOp rectangle=*operation;
+  rectangle.source_count=0u;rectangle.sources=NULL;
+  rectangle.payload.primitive.kind=GML_RENDER_PRIMITIVE_RECTANGLE;
+  rectangle.payload.primitive.interpolate=0u;
+  if(!gml_render_rectangle_valid(&rectangle)) return 0;
+  const GmlRenderPrimitiveRect *p=&operation->payload.primitive;
+  const double first[2]={p->centre_x,p->centre_y},step[2]={p->scale_x,p->scale_y};
+  for(unsigned axis=0;axis<2u;axis++){
+    double end=first[axis]+(p->region.width-1u)*step[axis];
+    if(!isfinite(first[axis]) || !isfinite(step[axis]) || !isfinite(end) ||
+       fabs(first[axis])>4096.0 || fabs(end)>4096.0 || fabs(step[axis])>4096.0) return 0;
+  }
+  return 1;
+}
+
 int gml_render_rectangle_valid(const GmlRenderDrawOp *operation){
   if(!operation || operation->opcode!=GML_RENDER_OP_COLOURED_PRIMITIVE ||
      operation->reconstruction_mode!=GML_RENDER_DEVICE_CHECKPOINT ||

@@ -7,6 +7,8 @@
 #include "gml_render_cpu_primitives.h"
 #include "gml_render_cpu_backend.h"
 #include "gml_render_surfaces_internal.h"
+#include "gml_render_shaders.h"
+#include "gml_render_texture.h"
 
 #include <math.h>
 #include <limits.h>
@@ -251,11 +253,11 @@ static int resident_studio_alpha_rect(GmlRender *render,int x1,int y1,int x2,int
  * Keep the cheaper qualified flat paths, and batch ordinary rectangle presets
  * without a predecessor snapshot or CPU pixel transfer. Raw cutout does not
  * participate in these unchanged CPU rectangle writers. */
-static int resident_primitive_state_eligible(GmlRender *r){
+static int resident_primitive_state_eligible_rule(GmlRender *r,int vertex){
   const GmlRenderDeviceServices *device=gml_render_device(r);
   if(!r || !r->resident_application_pass || !device || !device->observe_on_demand ||
      !device->observe_on_demand(device->context) || !gml_render_scene_target_matches(r) ||
-     r->active_shader>=0 || r->blendmode<0 ||
+     (r->active_shader>=0 && (!vertex || !gml_render_shader_cpu_passthrough(r))) || r->blendmode<0 ||
      r->blendmode>GML_RENDER_BLEND_DEST_ALPHA_DEST_COLOUR || r->blend_equation!=1 ||
      r->blend_equation_alpha!=1 || r->color_write_mask>15u ||
      r->pending_presentation || r->rotated_batch_count || r->rotated_batch_building ||
@@ -264,6 +266,10 @@ static int resident_primitive_state_eligible(GmlRender *r){
      r->classic_interp_phase[0] ||
      r->classic_interp_phase[1] || r->classic_interp_phase[2] || !isfinite(r->alpha)) return 0;
   return 1;
+}
+
+static int resident_primitive_state_eligible(GmlRender *r){
+  return resident_primitive_state_eligible_rule(r,0);
 }
 
 static int resident_rectangle_state_eligible(GmlRender *r){
@@ -330,6 +336,105 @@ int gml_render_cpu_backend_vertex_spans(GmlRender *r,
 vertex_done:
   free(operations);
   return result;
+}
+
+static int vertex_texture_source(GmlRender *r,int texture,GmlRenderResourceSource *source,int query){
+  uint32_t encoded=(uint32_t)texture,kind=encoded&GML_TEX_KIND_MASK;
+  if(texture==-1) return 0;
+  if(kind==GML_TEX_SURF_TAG){
+    int id=(int)(encoded&65535u),slot=id?surface_slot(id):-1;
+    if(id && (slot<0 || !r->surface[slot].px)) return 0;
+    const uint32_t *pixels=id?r->surface[slot].px:r->app_surface;
+    if(!pixels || pixels==r->fb) return 0;
+    if(query){
+      source->width=(uint32_t)(id?r->surface[slot].w:r->app_w);
+      source->height=(uint32_t)(id?r->surface[slot].h:r->app_h);
+      return source->width && source->height;
+    }
+    if(!gml_render_application_scene_flush(r)) return 0;
+    GmlRenderResource *resource=gml_render_surface_resource_ensure(r,id);
+    /* Preserve the source owner's device/version receipt after its first
+     * upload; a borrowed CPU view would upload the same mutable image again. */
+    return resource && gml_render_resource_prepare_device_source(resource,gml_render_device(r),source);
+  }
+  /* The established resolver lends immutable atlas metadata without observing
+   * a device image. Runtime RGBA sprites retain their separate mutable owner. */
+  GmlRenderCpuBackendTextureView view;
+  if(!gml_render_cpu_backend_texture_view(r,texture,1,&view) || view.runtime ||
+     view.atlas_index<0 || view.pixel_kind!=GML_RENDER_CPU_BACKEND_PIXELS_RGBA) return 0;
+  if(query){source->width=(uint32_t)view.width;source->height=(uint32_t)view.height;return 1;}
+  return gml_render_atlas_scene_source_view(r,view.atlas_index,source);
+}
+
+int gml_render_cpu_backend_vertex_texture_extent(GmlRender *r,int texture,int *width,int *height){
+  GmlRenderResourceSource source={0};
+  if(width) *width=0;
+  if(height) *height=0;
+  if(!width || !height || !resident_primitive_state_eligible_rule(r,1) ||
+     !vertex_texture_source(r,texture,&source,1) || source.width>16384u ||
+     source.height>16384u) return 0;
+  *width=(int)source.width;*height=(int)source.height;return 1;
+}
+
+int gml_render_cpu_backend_textured_vertex_spans(GmlRender *r,int texture,
+  const GmlRenderCpuBackendVertexSpan *spans,uint32_t count){
+  if(!resident_primitive_state_eligible_rule(r,1) || r->classic_phase_scene_target ||
+     r->app_interp_phase[0] || r->app_interp_phase[1] || r->app_interp_phase[2] ||
+     count>65536u || (count && !spans)) return 0;
+  GmlRenderResourceSource source={0};
+  if(!vertex_texture_source(r,texture,&source,!count)) return 0;
+  if(!count) return spans==NULL;
+  unsigned blend=(unsigned)r->blendmode;
+  if(blend==3u || blend==6u) blend=2u;
+  int destination=r->alphablend && gml_render_blend_uses_destination_colour((int)blend);
+  unsigned mask=r->alphablend && (destination || blend==4u || blend==7u || blend==8u)?
+    r->color_write_mask:15u;
+  int preserve=r->alphablend && blend==4u?r->target_sp>0:gml_render_target_preserves_alpha(r);
+  GmlRenderDrawOp *operations=calloc(count,sizeof *operations);
+  if(!operations) return 0;
+  int result=0;
+  GmlRenderResource *target=gml_render_scene_target_resource_ensure(r);
+  if(!target) goto textured_done;
+  GmlRenderImageRef next=gml_render_application_scene_next_image_ref(r,target);
+  if(next.content_version>UINT64_MAX-count ||
+     (next.resource_class==source.image.resource_class && next.identity==source.image.identity &&
+      next.incarnation==source.image.incarnation)) goto textured_done;
+  for(uint32_t i=0;i<count;i++){
+    const GmlRenderCpuBackendVertexSpan *span=&spans[i];
+    GmlRenderDrawOp *op=&operations[i];
+    op->opcode=GML_RENDER_OP_COLOURED_PRIMITIVE;op->scene_family=GML_RENDER_SCENE_PRIMITIVE;
+    op->reconstruction_mode=GML_RENDER_DEVICE_CHECKPOINT;
+    op->source_count=1u;op->sources=&source.image;
+    op->target=(GmlRenderTargetRef){next,1u,(uint32_t)r->fbw,(uint32_t)r->fbh,
+      GML_RENDER_PIXEL_ARGB8888,{0,0,(uint32_t)r->fbw,(uint32_t)r->fbh}};
+    op->target.image.content_version+=i+1u;
+    GmlRenderPrimitiveRect *p=&op->payload.primitive;
+    p->region=p->authored_region=(GmlRenderRect){span->x,span->y,span->count,1u};
+    p->kind=GML_RENDER_PRIMITIVE_TEXTURED_VERTEX_ROW;p->colour=0xFFFFFFFFu;
+    for(unsigned c=0;c<4u;c++) p->corner_colour[c]=p->colour;
+    p->alpha=1.0;p->alpha_blend=r->alphablend?1u:0u;p->pixel_write_mask=mask;
+    p->interpolate=r->interp?1u:0u;
+    p->centre_x=span->texcoord_first[0];p->centre_y=span->texcoord_first[1];
+    p->scale_x=span->texcoord_step[0];p->scale_y=span->texcoord_step[1];
+    p->rectangle_flags=GML_RENDER_RECTANGLE_OUTLINE|GML_RENDER_RECTANGLE_PIXEL_SPAN|
+      GML_RENDER_RECTANGLE_VERTEX_SPAN|(r->classic?GML_RENDER_RECTANGLE_CLASSIC:0u)|
+      (preserve?GML_RENDER_RECTANGLE_TARGET_ALPHA:0u)|
+      (blend<<GML_RENDER_RECTANGLE_BLEND_SHIFT);
+    memcpy(p->vertex_first,span->first,sizeof p->vertex_first);
+    memcpy(p->vertex_step,span->step,sizeof p->vertex_step);
+    if(!gml_render_textured_vertex_row_valid(op)) goto textured_done;
+  }
+  if(r->pending_underlay && !gml_render_compose_resident_underlay(r)) goto textured_done;
+  gml_render_flush_pending_fill(r);
+  if(r->pending_fill) goto textured_done;
+  /* A seed clear may advance the target while rows are prepared. */
+  next=gml_render_application_scene_next_image_ref(r,target);
+  if(next.content_version>UINT64_MAX-count) goto textured_done;
+  for(uint32_t i=0;i<count;i++) operations[i].target.image.content_version=next.content_version+i+1u;
+  result=gml_render_application_scene_enqueue_textured_primitives(r,operations,count,&source);
+  if(result){r->fb_all_transparent=0;r->fb_opaque_known=r->fb_all_opaque=0;}
+textured_done:
+  free(operations);return result;
 }
 
 /* Filled line boxes use this same CPU rectangle policy, including target alpha. */

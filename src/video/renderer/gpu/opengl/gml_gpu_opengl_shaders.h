@@ -398,7 +398,7 @@
   "  return first+(last-first)*n/d;\n" \
   "}\n" \
   "void main(){\n" \
-  "  if(u_filter>=34 && u_filter<=36){\n" \
+  "  if((u_filter>=34 && u_filter<=36) || (u_filter>=103 && u_filter<=108)){\n" \
   "    // R03_SHADER_RECTANGLE: integer authored colours and exact clipped coverage.\n" \
   "    ivec2 pixel=ivec2(int(gl_FragCoord.x),int(u_extent.y)-1-int(gl_FragCoord.y));\n" \
   "    ivec2 p=pixel-ivec2(v_map.xy),den=ivec2(v_map.zw);\n" \
@@ -408,8 +408,48 @@
   "      vec4 source=v_map+float(pixel.x-int(v_span_y.x))*v_span_x;\n" \
   "      vec3 rgb=floor(clamp(source.rgb,vec3(0.0),vec3(255.0))+0.5);\n" \
   "      float alpha=clamp(source.a,0.0,1.0);\n" \
-  "      if(alpha<=0.0 && (blend<9u || v_span_active==0.0)) discard;\n" \
-  "      if(u_filter==36){ o_color=vec4(0.0,0.0,0.0,1.0); return; }\n" \
+  "      bool covered=alpha>0.0;\n" \
+  "      if(u_filter>=103){\n" \
+  "        // R03_SHADER_TEXTURED_VERTEX_ROW: hardware wrapping/filtering, CPU coverage only.\n" \
+  "        vec4 sampled;\n" \
+  "        if(u_filter<=105){\n" \
+  "          ivec2 size=textureSize(u_image,0);\n" \
+  "          ivec2 point=ivec2(floor(fract(v_texcoord)*vec2(size)));\n" \
+  "          if(v_clamp.x!=0.0) point.y=size.y-1-point.y;\n" \
+  "          sampled=floor(texelFetch(u_image,point,0)*255.0+0.5);\n" \
+  "        }else{\n" \
+  "          vec2 uv=v_texcoord;if(v_clamp.x!=0.0) uv.y=1.0-uv.y;\n" \
+  "          sampled=texture(u_image,uv)*255.0;\n" \
+  "          if(sampled.a==0.0 || (flags&2u)!=0u){\n" \
+  "            // Hardware and Classic filtering can disagree at alpha zero.\n" \
+  "            // Preserve coverage separately; RGB and blend factors remain hardware filtered.\n" \
+  "            ivec2 size=textureSize(u_image,0);\n" \
+  "            vec2 local=fract(v_texcoord)*vec2(size)-0.5,phase=fract(local);\n" \
+  "            ivec2 base=ivec2(floor(local));int taps[4];\n" \
+  "            for(int tap=0;tap<4;tap++){\n" \
+  "              ivec2 point=(base+size+ivec2(tap&1,tap/2))%size;\n" \
+  "              if(v_clamp.x!=0.0) point.y=size.y-1-point.y;\n" \
+  "              taps[tap]=int(floor(texelFetch(u_image,point,0).a*255.0+0.5));\n" \
+  "            }\n" \
+  "            bool footprint;\n" \
+  "            if((flags&2u)!=0u){\n" \
+  "              ivec2 weight=ivec2(floor(phase*256.0+0.5));\n" \
+  "              int top=(taps[0]*(256-weight.x)+taps[1]*weight.x+128)>>8;\n" \
+  "              int bottom=(taps[2]*(256-weight.x)+taps[3]*weight.x+128)>>8;\n" \
+  "              footprint=((top*(256-weight.y)+bottom*weight.y+128)>>8)>0;\n" \
+  "            }else footprint=taps[0]>0 || (phase.x>0.0 && taps[1]>0) ||\n" \
+  "              (phase.y>0.0 && taps[2]>0) || (phase.x>0.0 && phase.y>0.0 && taps[3]>0);\n" \
+  "            covered=covered && footprint;\n" \
+  "          }\n" \
+  "        }\n" \
+  "        if(u_filter<=105 || sampled.a>0.0) covered=covered && sampled.a>0.0;\n" \
+  "        rgb=floor(sampled.rgb*clamp(source.rgb,vec3(0.0),vec3(255.0))/255.0+0.5);\n" \
+  "        if(sampled.a>=255.0 && source.a>=1.0 && all(equal(source.rgb,vec3(255.0))) &&\n" \
+  "           (v_span_active==0.0 || blend==0u)) rgb=floor(sampled.rgb);\n" \
+  "        alpha*=sampled.a/255.0;\n" \
+  "      }\n" \
+  "      if(!covered && (blend<9u || v_span_active==0.0)) discard;\n" \
+  "      if(u_filter==36 || u_filter==105 || u_filter==108){ o_color=vec4(0.0,0.0,0.0,1.0); return; }\n" \
   "      if(blend==1u && v_span_active!=0.0){\n" \
   "        o_color=vec4(floor(rgb*alpha)/255.0,floor(alpha*255.0)/255.0); return;\n" \
   "      }\n" \

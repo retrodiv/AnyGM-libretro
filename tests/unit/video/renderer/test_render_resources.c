@@ -13115,6 +13115,44 @@ static int vertex_span_packet_boundaries(void){
   malformed=operation;malformed.payload.primitive.pixel_write_mask=5u;CHECK(!gml_render_rectangle_valid(&malformed));
   malformed=operation;malformed.reconstruction_mode=GML_RENDER_REPLAY_EXACT;
   CHECK(!gml_render_rectangle_valid(&malformed));
+  GmlRenderImageRef texture={GML_RENDER_RESOURCE_ATLAS,3u,1u,1u};
+  GmlRenderDrawOp textured=operation;
+  textured.payload.primitive.kind=GML_RENDER_PRIMITIVE_TEXTURED_VERTEX_ROW;
+  textured.payload.primitive.interpolate=1u;textured.source_count=1u;textured.sources=&texture;
+  textured.payload.primitive.centre_x=-1.25;textured.payload.primitive.centre_y=2.5;
+  textured.payload.primitive.scale_x=.125;textured.payload.primitive.scale_y=-.25;
+  CHECK(gml_render_textured_vertex_row_valid(&textured) && !gml_render_rectangle_valid(&textured));
+  CHECK(!gml_render_cpu_replay_eligible(&textured,NULL,NULL));
+  CHECK(!gml_render_cpu_replay_one(pixels,64u,48u,&textured,NULL,NULL));
+  malformed=textured;malformed.source_count=0u;CHECK(!gml_render_textured_vertex_row_valid(&malformed));
+  malformed=textured;malformed.sources=NULL;CHECK(!gml_render_textured_vertex_row_valid(&malformed));
+  malformed=textured;malformed.payload.primitive.scale_x=NAN;
+  CHECK(!gml_render_textured_vertex_row_valid(&malformed));
+  malformed=textured;malformed.payload.primitive.centre_y=4097;
+  CHECK(!gml_render_textured_vertex_row_valid(&malformed));
+  malformed=textured;malformed.payload.primitive.interpolate=2u;
+  CHECK(!gml_render_textured_vertex_row_valid(&malformed));
+  malformed=textured;malformed.reconstruction_mode=GML_RENDER_REPLAY_EXACT;
+  CHECK(!gml_render_textured_vertex_row_valid(&malformed));
+  /* The larger typed-row budget must neither read past an oversized input
+   * nor widen the existing source-free primitive budget. */
+  FakeDevice fake={.forbid_calls=1};GmlRenderDeviceServices device=service(&fake);
+  GmlRenderImageRef initial=operation.target.image;initial.content_version--;
+  GmlRenderResource *resource=gml_render_resource_create(initial,64u,48u,
+    GML_RENDER_PIXEL_ARGB8888,pixels,(GmlRenderResourceLimits){0});
+  uint32_t white=0xFFFFFFFFu;
+  GmlRenderResourceSource source={.image=texture,.width=1u,.height=1u,
+    .pixel_format=GML_RENDER_PIXEL_RGBA8888,.stride_bytes=4u,.byte_capacity=4u,
+    .bytes=&white,.borrowed_immutable=1};
+  GmlRenderDrawBatch oversized={&textured,65537u,NULL,0u};
+  CHECK(resource && gml_render_resource_submit_deferred(resource,&device,&oversized,&source,1u)==
+    GML_RENDER_RESOURCE_EXEC_FAILED);
+  oversized=(GmlRenderDrawBatch){&operation,8193u,NULL,0u};
+  CHECK(gml_render_resource_submit_deferred(resource,&device,&oversized,NULL,0u)==
+    GML_RENDER_RESOURCE_EXEC_FAILED);
+  CHECK(!fake.forbidden_calls && !fake.uploads && !fake.submits && !fake.readbacks &&
+    gml_render_resource_image_ref(resource).content_version==initial.content_version);
+  gml_render_resource_destroy(resource);
   CHECK(!memcmp(before,pixels,sizeof pixels));
   return 1;
 }

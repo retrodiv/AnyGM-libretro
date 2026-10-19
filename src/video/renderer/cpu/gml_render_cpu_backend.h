@@ -102,9 +102,16 @@ typedef struct {
   int x,y;
   uint32_t count;
   double first[4],step[4];
+  double texcoord_first[2],texcoord_step[2];
 } GmlRenderCpuBackendVertexSpan;
 int gml_render_cpu_backend_vertex_spans(GmlRender *render,
   const GmlRenderCpuBackendVertexSpan *spans,uint32_t count);
+/* Full texture-page UVs, not sprite-local coordinates. The optional scene
+ * executor observes neither source nor destination pixels while preparing rows. */
+int gml_render_cpu_backend_textured_vertex_spans(GmlRender *render,int texture,
+  const GmlRenderCpuBackendVertexSpan *spans,uint32_t count);
+int gml_render_cpu_backend_vertex_texture_extent(GmlRender *render,int texture,
+                                                int *width,int *height);
 void gml_render_cpu_backend_prepare_draw(GmlRender *render);
 int gml_render_cpu_backend_prepare_draw_view(GmlRender *render,
                                          GmlRenderCpuBackendDrawView *view);

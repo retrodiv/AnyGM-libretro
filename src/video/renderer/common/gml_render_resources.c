@@ -541,12 +541,15 @@ static int batch_valid(const GmlRenderResource *resource,const GmlRenderDrawBatc
                        int *checkpoint_required){
   uint64_t version=resource->image.content_version;
   if(!batch || !batch->operations || !batch->operation_count ||
-     batch->operation_count>8192u) return 0;
+     batch->operation_count>65536u) return 0;
   *checkpoint_required=0;
   for(uint32_t index=0;index<batch->operation_count;index++){
     const GmlRenderDrawOp *operation=&batch->operations[index];
     const GmlRenderDrawStateSnapshot *state=NULL;
     const GmlRenderResourceSource *source=NULL;
+    int textured_vertex=operation->opcode==GML_RENDER_OP_COLOURED_PRIMITIVE &&
+      operation->payload.primitive.kind==GML_RENDER_PRIMITIVE_TEXTURED_VERTEX_ROW;
+    if(batch->operation_count>8192u && !textured_vertex) return 0;
     if(version==UINT64_MAX || !same_logical(operation->target.image,resource->image) ||
        operation->target.image.content_version!=version+1u ||
        operation->target.width!=resource->width ||
@@ -554,7 +557,11 @@ static int batch_valid(const GmlRenderResource *resource,const GmlRenderDrawBatc
        operation->target.pixel_format!=resource->pixel_format ||
        operation->target.storage_version!=resource->storage_version) return 0;
     version++;
-    if(operation->opcode==GML_RENDER_OP_CLEAR ||
+    if(textured_vertex){
+      if(!gml_render_textured_vertex_row_valid(operation) ||
+         !(source=find_input(sources,source_count,operation->sources[0])) ||
+         same_logical(source->image,resource->image)) return 0;
+    }else if(operation->opcode==GML_RENDER_OP_CLEAR ||
        operation->opcode==GML_RENDER_OP_COLOURED_PRIMITIVE){
       if(operation->source_count || operation->sources) return 0;
     } else {

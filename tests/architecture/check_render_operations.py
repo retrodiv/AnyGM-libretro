@@ -24,6 +24,7 @@ REQUIRED_RULES = {
     "R03-TEXT-CLAMPED-WINDOW",
     "R03-ATLAS-CLAMPED-WINDOW",
     "R03-VERTEX-SPANS",
+    "R03-VERTEX-TEXTURED",
     "R03-VERTEX-EMPTY",
     "R03-MULTIVIEW-COMPOSITION",
     "R03-OWNED-APPLICATION-CLEAR",
@@ -202,6 +203,7 @@ EXECUTOR_ROW = re.compile(
 # GPU-capable merely because the resource owner also implements device submission.
 DISPATCH_PORTS = {
     "gml_render_cpu_backend_vertex_spans",
+    "gml_render_cpu_backend_textured_vertex_spans",
     "gml_render_application_surface_owned_stage_base",
     "gml_render_application_surface_owned_mask",
     "gml_render_completed_screen_mask",
@@ -209,6 +211,7 @@ DISPATCH_PORTS = {
     "gml_render_application_scene_enqueue_quads",
     "gml_render_application_scene_enqueue_primitive",
     "gml_render_application_scene_enqueue_primitives",
+    "gml_render_application_scene_enqueue_textured_primitives",
     "gml_render_application_scene_submit",
     "gml_render_surface_scene_submit",
     "gml_render_resource_submit",
@@ -226,6 +229,7 @@ DISPATCH_CPU_BOUNDARIES = {
 }
 DISPATCH_ADDITIONAL = {
     "gml_render_cpu_backend_vertex_spans",
+    "gml_render_cpu_backend_textured_vertex_spans",
     "gml_render_multiview_prepare", "gml_render_multiview_clear", "gml_render_multiview_copy",
     "gml_render_application_surface_owned_stage_base",
     "gml_render_application_surface_owned_mask",
@@ -244,6 +248,7 @@ DISPATCH_HELPERS = {
     "resident_outside_sprite_noop", "gml_render_resident_sprite_outside",
     "resident_flat_eligible_rule", "resident_flat_eligible", "resident_line_bounds",
     "resident_rectangle_state_eligible", "resident_primitive_state_eligible", "resident_rectangle_payload",
+    "resident_primitive_state_eligible_rule",
     "resident_primitive_alpha_noop",
     "resident_classify_page", "resident_classify_clamped_page", "resident_identity_screen_gui",
     "resident_tile_source_metadata",
@@ -897,6 +902,8 @@ gml_draw_multiline(void){
             "void gml_draw_deferred_probe(void){ gml_render_resource_submit_deferred(); }",
         prefix + "gml_draw_vertex_probe":
             "void gml_draw_vertex_probe(void){ gml_render_cpu_backend_vertex_spans(); }",
+        prefix + "gml_draw_textured_vertex_probe":
+            "void gml_draw_textured_vertex_probe(void){ gml_render_cpu_backend_textured_vertex_spans(); }",
         prefix + "gml_draw_cpu_vertex_probe":
             "void gml_draw_cpu_vertex_probe(void){ gml_render_cpu_backend_prepare_draw(); }",
         prefix + "cpu_paint": "void cpu_paint(void){ gml_render_maybe_prepare_draw(); }",
@@ -909,6 +916,7 @@ gml_draw_multiline(void){
     if inventory[prefix + "gml_draw_deferred_probe"][0] != "gml_render_resource_submit_deferred":
         raise ValueError("D8 deferred resource submission lost its typed device boundary")
     if inventory[prefix + "gml_draw_vertex_probe"][0] != "gml_render_cpu_backend_vertex_spans" or \
+            inventory[prefix + "gml_draw_textured_vertex_probe"][0] != "gml_render_cpu_backend_textured_vertex_spans" or \
             inventory[prefix + "gml_draw_cpu_vertex_probe"][0] != "CPU":
         raise ValueError("D8 typed vertex admission confused CPU pixel preparation")
     def document_for(entries: dict[str, tuple[str, str]]) -> str:

@@ -357,7 +357,9 @@ enum { GML_RENDER_PRIMITIVE_FLAT=0, GML_RENDER_PRIMITIVE_PARTICLE_LINE=1,
        GML_RENDER_PRIMITIVE_CLASSIC_ALPHA_RECT=2,
        GML_RENDER_PRIMITIVE_CLASSIC_INVERSE_RECT=3,
        GML_RENDER_PRIMITIVE_STUDIO_ALPHA_RECT=4,
-       GML_RENDER_PRIMITIVE_RECTANGLE=5 };
+       GML_RENDER_PRIMITIVE_RECTANGLE=5,
+       /* Vertex row: centre_x/y are first-centre UVs; scale_x/y their x slopes. */
+       GML_RENDER_PRIMITIVE_TEXTURED_VERTEX_ROW=6 };
 
 enum { GML_RENDER_RECTANGLE_OUTLINE=1u, GML_RENDER_RECTANGLE_CLASSIC=2u,
        GML_RENDER_RECTANGLE_TARGET_ALPHA=4u, GML_RENDER_RECTANGLE_GRADIENT=8u,
@@ -425,6 +427,7 @@ int gml_render_classic_alpha_rect_valid(const GmlRenderDrawOp *operation);
 int gml_render_studio_alpha_rect_valid(const GmlRenderDrawOp *operation);
 int gml_render_classic_inverse_rect_valid(const GmlRenderDrawOp *operation);
 int gml_render_rectangle_valid(const GmlRenderDrawOp *operation);
+int gml_render_textured_vertex_row_valid(const GmlRenderDrawOp *operation);
 
 /* Snapshots and per-operation source arrays are immutable for this submission. The caller owns
  * every referenced array until submit returns; a reconstruction record must copy or pin anything
