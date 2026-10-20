@@ -506,11 +506,11 @@ void gml_render_presentation_effective_set(GmlRender *r,int width,int height);
 void gml_render_sample_planes_update(GmlRender *r,
                                      const GmlRenderSamplePlanes *planes,
                                      unsigned fields);
-/* Preserve an existing vertical borrow when storage and its base incarnation
- * still match. Otherwise observe and retire it before its owner reallocates
+/* Preserve existing sample borrows when storage and base incarnation
+ * still match. Otherwise observe and retire them before their owner reallocates
  * or changes geometry. A failure leaves the borrow owned and must stop reuse.
- * Passing NULL retires any vertical borrow; it never frees host storage. */
-int gml_render_sample_storage_prepare(GmlRender *r,uint32_t *vertical,
+ * Passing NULL retires all sample borrows; it never frees host storage. */
+int gml_render_sample_storage_prepare(GmlRender *r,const GmlRenderSamplePlanes *planes,
                                       int width,int height);
 /* Bind the attached nearest vertical samples to the already resident base.
  * Does not change framebuffer/camera or create a second engine draw pass. */
@@ -552,6 +552,10 @@ int gml_render_begin_resident_owned_application(GmlRender *r,double camx,double 
                                                 int retain_target);
 int gml_render_begin_resident_base(GmlRender *r,uint32_t *pixels,int width,int height,
                                    double camx,double camy);
+/* Rebind an already device-current base without admitting ordinary draws.
+ * A real software suffix still crosses the checked CPU-write barrier. */
+int gml_render_begin_device_base(GmlRender *r,uint32_t *pixels,int width,int height,
+                                 double camx,double camy);
 /* Frame-coordinator raw multiview operations, independent of readable GML draw
  * state. Preparation reserves only the declared root/view allocations. */
 int gml_render_multiview_prepare(GmlRender *r,uint32_t *root,int width,int height,

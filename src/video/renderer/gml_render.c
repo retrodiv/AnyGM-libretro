@@ -216,6 +216,8 @@ void gml_render_rebind_content(GmlRender *r,GmlWin *win){
     gml_render_resource_bind_dispatch(r->retained_base_history_resource,r);
     gml_render_resource_bind_dispatch(r->view_base_resource,r);
     gml_render_resource_bind_dispatch(r->view_base_history_resource,r);
+    for(unsigned index=0;index<3u;index++)
+      gml_render_resource_bind_dispatch(r->classic_interp_resource[index].resource,r);
     for(int index=0;index<GML_MAX_SURFACES;index++)
       gml_render_resource_bind_dispatch(r->surface[index].resource,r);
   }
@@ -540,6 +542,20 @@ static int begin_resident_base(GmlRender *r,uint32_t *pixels,int width,int heigh
 int gml_render_begin_resident_base(GmlRender *r,uint32_t *pixels,int width,int height,
                                    double camx,double camy){
   return begin_resident_base(r,pixels,width,height,camx,camy,0,0);
+}
+int gml_render_begin_device_base(GmlRender *r,uint32_t *pixels,int width,int height,
+                                 double camx,double camy){
+  GmlRenderImageRef image={0};
+  const GmlRenderDeviceServices *device=gml_render_device(r);
+  if(!r || !r->scene_device_enabled || r->target_sp || r->target_id!=-1 ||
+     !device || !device->observe_on_demand || !device->observe_on_demand(device->context) ||
+     r->pending_fill || r->pending_underlay || r->pending_presentation ||
+     !gml_render_completed_screen_image(r,pixels,width,height,&image) ||
+     gml_render_base_resource_select(r,pixels)<0) return 0;
+  gml_render_begin(r,pixels,width,height,camx,camy);
+  if(!gml_render_scene_target_matches(r)) return 0;
+  r->resident_scene_pass=1;
+  return 1;
 }
 int gml_render_begin_resident_base_retaining_target(GmlRender *r,uint32_t *pixels,
                                                    int width,int height,double camx,double camy){
@@ -986,6 +1002,7 @@ void gml_render_free(GmlRender *r){
   r->layer_filter_capacity=0; r->layer_filter_active=0;
   gml_render_application_resource_dispose(r);
   gml_render_classic_phase_resource_dispose(r);
+  gml_render_interpolated_resources_dispose(r);
   gml_render_base_resource_dispose(r);
   gml_render_retained_base_dispose(r);
   gml_render_view_base_dispose(r);
@@ -1083,7 +1100,14 @@ void gml_render_set_pending_fill(GmlRender *r, uint32_t color){
   if(r->classic_phase_resource && r->classic_phase_y &&
      r->target_sp==0 && r->fb==r->base_fb){
     if(gml_render_resident_classic_phase_clear(r,color)) return;
+    if(gml_render_resident_sample_clear(r,color)) return;
     if(!gml_render_resident_application_cpu_barrier(r)) return;
+  }
+  if(r->target_sp==0 && r->fb==r->base_fb &&
+     (r->classic_phase_y || r->classic_interp_phase[0] ||
+      r->classic_interp_phase[1] || r->classic_interp_phase[2])){
+    if(gml_render_resident_sample_clear(r,color)) return;
+    if(!gml_render_classic_phase_cpu_barrier(r)) return;
   }
   /* Preserve the fact that content authored the bound surface before replacing it with a deferred
    * transparent clear. The surface compositor consumes this frame-local signal after the target
@@ -1130,8 +1154,9 @@ static void render_flush_pending_fill(GmlRender *r,int independent_allowed){
   /* A bound persistent image has an identity before world admission. A clear
    * needs neither its predecessor pixels nor a different SCREEN/GUI owner. */
   int independent=independent_allowed && !r->resident_application_pass && r->scene_device_enabled &&
-    gml_render_device(r) && r->target_id>=0 &&
-    (r->target_id>0 || r->app_surface==r->app_surface_owned);
+    gml_render_device(r) &&
+    ((r->target_id>=0 && (r->target_id>0 || r->app_surface==r->app_surface_owned)) ||
+     gml_render_clear_target_prepare(r));
   if((r->resident_application_pass || independent) && gml_render_scene_target_matches(r)){
     GmlRenderResource *resource=gml_render_scene_target_resource_ensure(r);
     if(!resource) return;
@@ -1202,7 +1227,17 @@ void gml_render_flush_pending_fill(GmlRender *r){
 /* This entry only resolves a clear for an already selected software suffix;
  * it cannot admit or submit a GPU clear through either target policy. */
 static void render_cpu_flush_pending_fill(GmlRender *r){
-  if(r && !r->resident_application_pass) render_flush_pending_fill(r,0);
+  if(!r || r->resident_application_pass) return;
+  /* A selected CPU suffix owns this replacement. Existing SCREEN storage may
+   * still name the preceding GPU version; make its write coherent before the
+   * software fill,not by replaying that predecessor over freshly filled bytes. */
+  if(r->target_id==-1 && r->scene_device_enabled && gml_render_scene_target_matches(r)){
+    GmlRenderResource *resource=gml_render_scene_target_resource_ensure(r);
+    uint32_t *pixels=NULL;
+    if(!resource || !gml_render_resource_acquire_cpu_write(resource,&pixels) || pixels!=r->fb ||
+       !gml_render_resource_commit_cpu_write(resource)) return;
+  }
+  render_flush_pending_fill(r,0);
 }
 int gml_render_resident_application_cpu_barrier(GmlRender *r){
   uint32_t *pixels=NULL;
@@ -1213,8 +1248,6 @@ int gml_render_resident_application_cpu_barrier(GmlRender *r){
     /* A child binding may have written the same allocation on GPU after this
      * CPU parent was suspended, or sampled it and made its GPU copy current. */
     GmlRenderJournalMetrics metrics={0};
-    if((!r->resident_scene_pass && !(r->scene_device_enabled && r->target_id>=0)) ||
-       !gml_render_scene_target_matches(r)) return 1;
     /* The suffix has already selected CPU. Resolve its pending clear with the
      * existing CPU writer, rather than submitting it only to read it straight
      * back. A later replay must not overwrite this CPU suffix either. */
@@ -1222,6 +1255,8 @@ int gml_render_resident_application_cpu_barrier(GmlRender *r){
       render_cpu_flush_pending_fill(r);
       if(r->pending_fill) return 0;
     }
+    if((!r->resident_scene_pass && !(r->scene_device_enabled && r->target_id>=0)) ||
+       !gml_render_scene_target_matches(r)) return 1;
     resource=gml_render_scene_target_resource_ensure(r);
     if(!resource) return 0;
     gml_render_resource_journal_metrics(resource,&metrics);
@@ -1553,7 +1588,9 @@ static int pending_underlay_covered(GmlRender *r, int x0, int y0, int x1, int y1
 }
 void gml_render_prepare_draw(GmlRender *r){
   gml_render_flush_pending_underlay(r);
-  gml_render_flush_pending_fill(r);
+  if(r && r->pending_fill && !r->resident_application_pass &&
+     r->scene_device_enabled && r->target_id==-1) render_cpu_flush_pending_fill(r);
+  else gml_render_flush_pending_fill(r);
   gml_render_cpu_present_image(r);
 }
 
@@ -1585,6 +1622,8 @@ void gml_render_prepare_opaque_rect(GmlRender *r, int x0, int y0, int x1, int y1
   }
   if(r->pending_fill){
     if(rect_covers_target(r,x0,y0,x1,y1)) gml_render_cancel_pending_fill(r);
+    else if(!r->resident_application_pass && r->scene_device_enabled && r->target_id==-1)
+      render_cpu_flush_pending_fill(r);
     else gml_render_flush_pending_fill(r);
   }
 }

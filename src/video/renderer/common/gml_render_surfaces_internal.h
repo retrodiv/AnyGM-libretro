@@ -29,6 +29,12 @@ GmlRenderResource *gml_render_application_resource_ensure(GmlRender *render);
 void gml_render_application_resource_dispose(GmlRender *render);
 GmlRenderResource *gml_render_scene_target_resource_ensure(GmlRender *render);
 int gml_render_scene_target_matches(const GmlRender *render);
+/* Register a current plain SCREEN for an independent full-target replacement.
+ * This does not admit later drawing or change language-visible draw state. */
+int gml_render_clear_target_prepare(GmlRender *render);
+int gml_render_resident_sample_clear(GmlRender *render,uint32_t colour);
+int gml_render_interpolated_resources_observe(GmlRender *render);
+void gml_render_interpolated_resources_dispose(GmlRender *render);
 /* Bind only an explicit nearest root plane. The caller must observe and retire it
  * before moving its borrowed allocation. No engine admission is implied. */
 int gml_render_classic_phase_resource_bind(GmlRender *render);

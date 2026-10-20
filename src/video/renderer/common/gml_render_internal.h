@@ -13,6 +13,11 @@
 
 typedef struct { uint16_t y, x, len; uint8_t alpha; } GmlTpagAlphaRun;
 typedef struct {
+  GmlRenderResource *resource;
+  uint32_t *pixels;
+  int width,height;
+} GmlRenderSampleResource;
+typedef struct {
   int framebuffer_width, framebuffer_height;
   int destination_x, destination_y, width, height;
   int source_x, source_y;
@@ -367,6 +372,9 @@ typedef struct GmlRender {
    * reproduces a scaled classic viewport without requiring a GPU-sized render target. */
   uint32_t *classic_interp_phase[3];
   uint32_t *app_interp_phase[3];
+  /* Host-owned interpolation samples gain device authority only when written.
+   * Their pixel allocation and save-state representation remain unchanged. */
+  GmlRenderSampleResource classic_interp_resource[3];
   int       interp;   /* Base-image sampler: 0 nearest, 1 bilinear. */
   int       texture_filter[GML_RENDER_TEXTURE_STAGES-1];
   int       font_sdf_active;

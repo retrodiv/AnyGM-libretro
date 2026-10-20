@@ -741,6 +741,7 @@ static int render_state_read(GmlRender *render,CoreR *s){
     if(!gml_render_masked_bases_observe(render)){s->ok=0;return 0;}
     gml_render_application_resource_dispose(render);
     gml_render_classic_phase_resource_dispose(render);
+    gml_render_interpolated_resources_dispose(render);
     gml_render_base_resource_dispose(render);
     gml_render_retained_base_dispose(render);
     gml_render_view_base_dispose(render);

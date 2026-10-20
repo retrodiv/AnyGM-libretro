@@ -2240,7 +2240,7 @@ static GmlRender *paired_root_atlas_fixture(FakeDevice *fake,GmlWin *content,
 }
 
 static int paired_root_public_clear_keeps_device_authority(void){
-  for(unsigned fallback=0;fallback<2u;fallback++){
+  for(unsigned filtered=0;filtered<2u;filtered++){
     uint32_t base[16],vertical[16];
     for(unsigned p=0;p<16u;p++){base[p]=0xFF315779u;vertical[p]=0x8037597Bu;}
     FakeDevice fake={.on_demand=1};GmlWin content={.classic_version=810};
@@ -2251,18 +2251,16 @@ static int paired_root_public_clear_keeps_device_authority(void){
       gml_render_application_scene_flush(r) && fake.submits==2 && !fake.readbacks);
     for(unsigned p=0;p<16u;p++) CHECK(base[p]==0xFF315779u && vertical[p]==0x8037597Bu);
     gml_render_gui_begin(r,4,4);gml_render_gui_set_size(r,2,2);
-    r->interp=(int)fallback;
+    r->interp=(int)filtered;
     gml_render_set_pending_fill(r,0x00315779u);
-    if(fallback){
-      CHECK(!r->resident_application_pass && r->pending_fill && fake.readbacks==2);
-      gml_render_flush_pending_fill(r);
-      CHECK(!r->pending_fill && fake.readbacks==2);
-      for(unsigned p=0;p<16u;p++) CHECK(base[p]==0x00315779u && vertical[p]==0x00315779u);
-    }else{
-      CHECK(!r->pending_fill && r->resident_application_pass && !fake.readbacks &&
-        gml_render_application_scene_flush(r) && fake.submits==4);
-      for(unsigned p=0;p<16u;p++) CHECK(base[p]==0xFF315779u && vertical[p]==0x8037597Bu);
-    }
+    /* Filtering was an explicit admission boundary,not a pixel oracle. A
+     * source-free clear now owns both images regardless of that draw state. */
+    CHECK(!r->pending_fill && r->resident_application_pass && !fake.readbacks &&
+      gml_render_application_scene_flush(r) && fake.submits==4);
+    for(unsigned p=0;p<16u;p++) CHECK(base[p]==0xFF315779u && vertical[p]==0x8037597Bu);
+    fake.readback_colour=0x00315779u;
+    CHECK(gml_render_observe_device_resources(r) && fake.readbacks==2);
+    for(unsigned p=0;p<16u;p++) CHECK(base[p]==0x00315779u && vertical[p]==0x00315779u);
     r->gui_pass_active=r->interp=0;
     gml_render_abandon_device(r);gml_render_free(r);free(r);
   }
@@ -2459,7 +2457,7 @@ static int paired_root_composition_keeps_both_sources_resident(void){
   r->scene_device_enabled=1;gml_render_application_surface_bind(r,base,4,4,0);
   CHECK(gml_render_begin_resident_base(r,screen,8,8,0,0) &&
     r->retained_base_resource==root && r->classic_phase_resource==peer && !fake.readbacks);
-  CHECK(gml_render_sample_storage_prepare(r,vertical,4,4) &&
+  CHECK(gml_render_sample_storage_prepare(r,&(GmlRenderSamplePlanes){.classic_vertical=vertical},4,4) &&
     r->classic_phase_resource==peer && !fake.readbacks);
   GmlRenderSamplePlanes planes={.application_vertical=vertical};
   gml_render_sample_planes_update(r,&planes,GML_RENDER_SAMPLE_PLANES_APPLICATION);
@@ -2589,15 +2587,15 @@ static int paired_root_storage_retirement_is_transactional(void){
   GmlRender *r=paired_root_atlas_fixture(&fake,&content,base,vertical,4);CHECK(r);
   GmlRenderResource *peer=r->classic_phase_resource;
   gml_render_set_pending_fill(r,0x7F315779u);
-  CHECK(gml_render_sample_storage_prepare(r,vertical,4,4) &&
+  CHECK(gml_render_sample_storage_prepare(r,&(GmlRenderSamplePlanes){.classic_vertical=vertical},4,4) &&
     r->classic_phase_resource==peer && !fake.submits && !fake.readbacks && !fake.retires);
   r->app_phase_y=vertical;fake.fail_readback=1;
-  CHECK(!gml_render_sample_storage_prepare(r,replacement,4,4) &&
+  CHECK(!gml_render_sample_storage_prepare(r,&(GmlRenderSamplePlanes){.classic_vertical=replacement},4,4) &&
     r->classic_phase_resource==peer && r->classic_phase_y==vertical &&
     r->app_phase_y==vertical && fake.submits==2 && fake.readbacks==1 && !fake.retires);
   for(unsigned p=0;p<16u;p++) CHECK(!vertical[p]);
   fake.fail_readback=0;
-  CHECK(gml_render_sample_storage_prepare(r,replacement,4,4) &&
+  CHECK(gml_render_sample_storage_prepare(r,&(GmlRenderSamplePlanes){.classic_vertical=replacement},4,4) &&
     !r->classic_phase_resource && !r->classic_phase_y && !r->app_phase_y &&
     fake.readbacks==2 && fake.retires==1);
   for(unsigned p=0;p<16u;p++) CHECK(vertical[p]==0x7F315779u && !replacement[p]);
@@ -2606,7 +2604,7 @@ static int paired_root_storage_retirement_is_transactional(void){
   gml_render_sample_planes_update(r,&planes,GML_RENDER_SAMPLE_PLANES_CLASSIC);
   CHECK(gml_render_sample_planes_resident_bind(r) && r->classic_phase_resource &&
     r->classic_phase_resource_pixels==replacement && fake.readbacks==2);
-  CHECK(gml_render_sample_storage_prepare(r,replacement,4,3) &&
+  CHECK(gml_render_sample_storage_prepare(r,&(GmlRenderSamplePlanes){.classic_vertical=replacement},4,3) &&
     !r->classic_phase_resource && fake.readbacks==2 && fake.retires==2);
   gml_render_abandon_device(r);gml_render_free(r);free(r);return 1;
 }
@@ -4411,6 +4409,173 @@ static int independent_persistent_target_clear(void){
     gml_render_free(render);free(render);
   }
   return 1;
+}
+
+/* Source-free SCREEN/GUI replacement retains state and lazy CPU authority. */
+static int independent_screen_clear_preserves_draw_state(void){
+  static const uint32_t colours[]={0x00315779u,0x7F315779u,0xFF315779u};
+  for(unsigned gui=0;gui<2u;gui++) for(unsigned alpha=0;alpha<3u;alpha++)
+  for(unsigned refused=0;refused<2u;refused++){
+    uint32_t base[48];for(unsigned i=0;i<48u;i++) base[i]=0xA5010203u;
+    GmlRender *r=calloc(1,sizeof *r);
+    FakeDevice fake={.on_demand=1,.prewrite_refusal=1,.readback_colour=colours[alpha]};
+    GmlRenderDeviceServices device=service(&fake);
+    device.observe_on_demand=fake_observe_on_demand;
+    CHECK(r && !gml_render_init(r,NULL));
+    gml_render_bind_device(r,&device);gml_render_set_scene_device(r,1);
+    gml_render_begin(r,base,8,6,.25,-.75);
+    if(gui){gml_render_gui_begin(r,8,6);gml_render_gui_set_size(r,4,3);}
+    r->color=0xC3B2A1u;r->alpha=.00001;r->alphablend=0;r->blendmode=7;
+    r->color_write_mask=0;r->alpha_test_enable=1;r->alpha_test_ref=255;
+    r->interp=1;r->world_transform_active=1;r->world_scale_x=2;r->world_scale_y=-3;
+    GmlRenderDrawState before={0},after={0};GmlRenderTargetMetrics target={0},next={0};
+    gml_render_draw_state_get(r,&before);gml_render_target_metrics(r,&target);
+    fake.status=refused?GML_RENDER_EXEC_UNSUPPORTED:0;
+    gml_render_clear(r,0x795731u,(double)(colours[alpha]>>24)/255.0);
+    gml_render_flush_pending_fill(r);
+    gml_render_draw_state_get(r,&after);gml_render_target_metrics(r,&next);
+    CHECK(!r->pending_fill && !memcmp(&before,&after,sizeof before) &&
+      !memcmp(&target,&next,sizeof target) && fake.submits==1 && !fake.readbacks && !fake.uploads);
+    GmlRenderResource *resource=gml_render_scene_target_resource_ensure(r);
+    CHECK(resource && r->resident_scene_pass && !r->resident_application_pass);
+    if(!refused) for(unsigned i=0;i<48u;i++) CHECK(base[i]==0xA5010203u);
+    if(!refused && !gui){
+      CHECK(!gml_render_begin_device_base(r,base,4,12,0,0));
+      fake.on_demand=0;
+      CHECK(!gml_render_begin_device_base(r,base,8,6,0,0));
+      fake.on_demand=1;
+      CHECK(gml_render_begin_device_base(r,base,8,6,.25,-.75) &&
+        r->resident_scene_pass && !r->resident_application_pass && !fake.readbacks);
+      for(unsigned i=0;i<48u;i++) CHECK(base[i]==0xA5010203u);
+    }
+    CHECK(gml_render_resident_application_cpu_barrier(r));
+    for(unsigned i=0;i<48u;i++) CHECK(base[i]==colours[alpha]);
+    CHECK(fake.readbacks==(int)!refused);
+    r->alphablend=1;r->blendmode=0;r->color_write_mask=15;r->alpha=1;
+    r->alpha_test_enable=0;r->world_transform_active=0;r->interp=0;
+    gml_render_set_pending_fill(r,0xFF426486u);
+    gml_render_primitive_point(r,0,0,0x75A4C3u);
+    CHECK(!r->pending_fill && base[0]==0xFFC3A475u && base[1]==0xFF426486u &&
+      fake.submits==1 && fake.readbacks==(int)!refused);
+    gml_render_free(r);free(r);
+  }
+  return 1;
+}
+
+static int independent_sample_clear_owns_all_planes(void){
+  static const unsigned layouts[]={1u,2u,4u,8u,14u,15u};
+  static const uint32_t colours[]={0x00315779u,0x7F315779u,0xFF315779u};
+  for(unsigned layout=0;layout<6u;layout++) for(unsigned alpha=0;alpha<3u;alpha++)
+  for(unsigned resident=0;resident<2u;resident++){
+    uint32_t base[2][16],samples[2][4][16];
+    GmlRender *r[2]={calloc(1,sizeof *r[0]),calloc(1,sizeof *r[1])};
+    GmlRenderSamplePlanes planes[2]={{0},{0}};GmlWin content={.classic_version=800};
+    FakeDevice fake={.on_demand=1,.readback_colour=colours[alpha]};
+    GmlRenderDeviceServices device=service(&fake);device.observe_on_demand=fake_observe_on_demand;
+    unsigned peers=0;for(unsigned bit=0;bit<4u;bit++) peers+=(layouts[layout]>>bit)&1u;
+    for(unsigned side=0;side<2u;side++){
+      CHECK(r[side] && !gml_render_init(r[side],NULL));r[side]->win=&content;r[side]->classic=1;
+      for(unsigned p=0;p<16u;p++){
+        base[side][p]=0xA5010203u;
+        for(unsigned plane=0;plane<4u;plane++) samples[side][plane][p]=0xA5040506u+plane;
+      }
+      if(side){gml_render_bind_device(r[side],&device);gml_render_set_scene_device(r[side],!resident);}
+      if(side && resident){CHECK(gml_render_begin_resident_base(r[side],base[side],4,4,.25,-.75));}
+      else gml_render_begin(r[side],base[side],4,4,.25,-.75);
+      r[side]->interp=layout!=0u;
+      if(layouts[layout]&1u) planes[side].classic_vertical=samples[side][0];
+      for(unsigned plane=0;plane<3u;plane++) if(layouts[layout]&(2u<<plane))
+        planes[side].classic_interpolated[plane]=samples[side][plane+1u];
+      gml_render_sample_planes_update(r[side],&planes[side],GML_RENDER_SAMPLE_PLANES_CLASSIC);
+      gml_render_clear(r[side],0x795731u,(double)(colours[alpha]>>24)/255.0);
+      gml_render_flush_pending_fill(r[side]);
+      if(side) CHECK(gml_render_scene_submit_pending(r[side]));
+    }
+    CHECK(fake.submits==(int)(peers+1u) && !fake.uploads && !fake.readbacks &&
+      gml_render_device_observation_pending(r[1]));
+    for(unsigned p=0;p<16u;p++){
+      CHECK(base[0][p]==colours[alpha] && base[1][p]==0xA5010203u);
+      for(unsigned plane=0;plane<4u;plane++){
+        CHECK(samples[1][plane][p]==0xA5040506u+plane);
+        CHECK(samples[0][plane][p]==((layouts[layout]&(1u<<plane))?colours[alpha]:0xA5040506u+plane));
+      }
+    }
+    /* Rebinding unchanged scratch must not seal device pixels every frame. */
+    CHECK(gml_render_sample_storage_prepare(r[1],&planes[1],4,4) && !fake.readbacks);
+    if(resident){CHECK(gml_render_begin_resident_base(r[1],base[1],4,4,.25,-.75));}
+    else gml_render_begin(r[1],base[1],4,4,.25,-.75);
+    gml_render_sample_planes_update(r[1],&planes[1],GML_RENDER_SAMPLE_PLANES_CLASSIC);
+    gml_render_clear(r[1],0x795731u,(double)(colours[alpha]>>24)/255.0);
+    gml_render_flush_pending_fill(r[1]);
+    CHECK(gml_render_scene_submit_pending(r[1]));
+    CHECK(fake.submits==2*(int)(peers+1u) && !fake.readbacks);
+    int failed_observation=layout==4u && alpha==1u && !resident;
+    if(failed_observation){
+      GmlRenderResource *first=r[1]->classic_interp_resource[0].resource;
+      fake.fail_readback=1;
+      CHECK(!gml_render_sample_storage_prepare(r[1],NULL,0,0) && fake.readbacks==1 &&
+        !fake.retires && r[1]->classic_interp_resource[0].resource==first &&
+        r[1]->classic_interp_phase[0]==samples[1][1]);
+      fake.fail_readback=0;
+      CHECK(gml_render_sample_storage_prepare(r[1],NULL,0,0) && fake.readbacks==4 &&
+        fake.retires==3 && !r[1]->classic_interp_resource[0].resource &&
+        !r[1]->classic_interp_phase[0]);
+    }
+    CHECK(gml_render_observe_device_resources(r[1]) && fake.readbacks==(int)(peers+1u)+failed_observation &&
+      !gml_render_device_observation_pending(r[1]) && !memcmp(base[0],base[1],sizeof base[0]) &&
+      !memcmp(samples[0],samples[1],sizeof samples[0]));
+    gml_render_bind_device(r[1],NULL);
+    CHECK(gml_render_classic_phase_cpu_barrier(r[1]) && fake.readbacks==(int)(peers+1u)+failed_observation);
+    if(alpha==1u){
+      size_t capacity=gml_render_state_size(r[0],-1),other=gml_render_state_size(r[1],-1),written=0;
+      uint8_t *state=malloc(capacity),*selected=malloc(other);
+      CHECK(capacity && capacity==other && state && selected &&
+        gml_render_state_save(r[0],-1,state,capacity,&written) && written==capacity &&
+        gml_render_state_save(r[1],-1,selected,other,&written) && written==capacity &&
+        !memcmp(state,selected,capacity));
+      free(state);free(selected);
+    }
+    for(unsigned side=0;side<2u;side++){gml_render_free(r[side]);free(r[side]);}
+  }
+  return 1;
+}
+
+static int owned_interpolation_underlay_keeps_device_sources(void){
+  uint32_t base[12],samples[3][12],screen[80];
+  for(unsigned p=0;p<12u;p++){
+    base[p]=0xA5010203u;
+    for(unsigned plane=0;plane<3u;plane++) samples[plane][p]=0xA5040506u;
+  }
+  for(unsigned p=0;p<80u;p++) screen[p]=0xA5070809u;
+  GmlWin content={.classic_version=800};
+  FakeDevice fake={.on_demand=1};GmlRenderDeviceServices device=service(&fake);
+  device.observe_on_demand=fake_observe_on_demand;
+  GmlRender *r=calloc(1,sizeof *r);CHECK(r && !gml_render_init(r,NULL));
+  r->win=&content;r->classic=1;r->interp=1;
+  gml_render_bind_device(r,&device);gml_render_set_scene_device(r,1);
+  gml_render_begin(r,base,4,3,0,0);
+  GmlRenderSamplePlanes planes={0};
+  for(unsigned plane=0;plane<3u;plane++){
+    planes.classic_interpolated[plane]=samples[plane];
+    planes.application_interpolated[plane]=samples[plane];
+  }
+  gml_render_sample_planes_update(r,&planes,GML_RENDER_SAMPLE_PLANES_CLASSIC);
+  gml_render_clear(r,0x795731u,.5);gml_render_flush_pending_fill(r);
+  CHECK(fake.submits==4 && !fake.readbacks && !fake.uploads);
+  GmlRenderResource *root=r->base_scene_resource;
+  gml_render_application_surface_bind(r,base,4,3,0);
+  gml_render_sample_planes_update(r,&planes,GML_RENDER_SAMPLE_PLANES_APPLICATION);
+  CHECK(gml_render_begin_resident_base(r,screen,10,8,0,0) &&
+    r->retained_base_resource==root && !fake.readbacks);
+  gml_render_clear(r,0x315779u,1);gml_render_flush_pending_fill(r);
+  gml_render_set_pending_underlay(r,1,1,8,6);
+  CHECK(gml_render_compose_resident_underlay(r) && !r->pending_underlay &&
+    fake.submits==6 && fake.last_batch_operations==4u && !fake.uploads && !fake.readbacks && !fake.retires);
+  for(unsigned p=0;p<12u;p++){
+    CHECK(base[p]==0xA5010203u);
+    for(unsigned plane=0;plane<3u;plane++) CHECK(samples[plane][p]==0xA5040506u);
+  }
+  gml_render_abandon_device(r);gml_render_free(r);free(r);return 1;
 }
 
 /* A software full-sprite suffix must retire an independent clear's device
@@ -17667,6 +17832,19 @@ static int resident_extended_roundrect_refusals(void){
 }
 
 int main(void){
+  const char *selected=getenv("GML_RENDER_RESOURCE_CASE");
+  if(selected){
+    int passed;
+    if(!strcmp(selected,"independent-screen-clear")) passed=independent_screen_clear_preserves_draw_state();
+    else if(!strcmp(selected,"paired-root-clear")) passed=paired_root_public_clear_keeps_device_authority();
+    else if(!strcmp(selected,"independent-sample-clear")) passed=independent_sample_clear_owns_all_planes();
+    else if(!strcmp(selected,"owned-interpolation-underlay")) passed=owned_interpolation_underlay_keeps_device_sources();
+    else{
+      fprintf(stderr,"unknown resource case: %s\n",selected);return EXIT_FAILURE;
+    }
+    printf("render resource case: %s passed=%d failed=%d\n",selected,passed,!passed);
+    return passed?EXIT_SUCCESS:EXIT_FAILURE;
+  }
   int passed=0;
   passed+=dispatch_retained_replay();
   passed+=dispatch_replay_owner_move();
@@ -17734,6 +17912,9 @@ int main(void){
   passed+=resident_application_pending_clear();
   passed+=owned_application_clear_without_cpu_view();
   passed+=independent_persistent_target_clear();
+  passed+=independent_screen_clear_preserves_draw_state();
+  passed+=independent_sample_clear_owns_all_planes();
+  passed+=owned_interpolation_underlay_keeps_device_sources();
   passed+=independent_clear_full_sprite_suffix();
   passed+=independent_numbered_target_admission();
   passed+=resident_pending_clear_after_queued_draw();
@@ -17949,6 +18130,6 @@ int main(void){
   passed+=resident_classic_raster_underlay_scope();
   passed+=resident_extended_roundrect_function();
   passed+=resident_extended_roundrect_refusals();
-  printf("render resource cases: passed=%d failed=%d\n",passed,281-passed);
-  return passed==281?EXIT_SUCCESS:EXIT_FAILURE;
+  printf("render resource cases: passed=%d failed=%d\n",passed,284-passed);
+  return passed==284?EXIT_SUCCESS:EXIT_FAILURE;
 }

@@ -626,6 +626,8 @@ static void render_unbind_device(GmlRender *render,int context_current){
   gml_render_resource_context_lost(render->view_base_history_resource);
   gml_render_resource_context_lost(render->base_history_resource);
   gml_render_resource_context_lost(render->classic_phase_resource);
+  for(unsigned index=0;index<3u;index++)
+    gml_render_resource_context_lost(render->classic_interp_resource[index].resource);
   memset(&render->device,0,sizeof render->device);
 }
 

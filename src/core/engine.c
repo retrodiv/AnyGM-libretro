@@ -1726,9 +1726,15 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
     classic_sample_world=gml_vm_room_get(&engine->vm,engine->vm.room_index,&sample_room)!=0 ||
       room_clears_application_surface(&engine->win,&sample_room);
   }
+  if(classic_phase) sample_planes.classic_vertical=engine->classic_phase_mem;
+  if(classic_interp_phase){
+    sample_planes.classic_interpolated[0]=engine->classic_phase_mem;
+    sample_planes.classic_interpolated[1]=engine->classic_phase_mem+classic_pixels;
+    sample_planes.classic_interpolated[2]=engine->classic_phase_mem+classic_pixels*2;
+  }
   if(engine->scene_renderer_session==ANYGM_SCENE_RENDERER_OPENGL &&
-     !gml_render_sample_storage_prepare(&engine->render,
-       classic_phase?engine->classic_phase_mem:NULL,(int)engine->width,(int)engine->height))
+     !gml_render_sample_storage_prepare(&engine->render,&sample_planes,
+                                       (int)engine->width,(int)engine->height))
     return ANYGM_ERROR_INTERNAL;
   /* A content-held classic target is an independent numbered raster, not an application
    * redraw. Retain its binding and metadata across Draw; phase presentation stays with CPU. */
@@ -1889,14 +1895,20 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
         anygm_host_development_setting(&engine->host,"GML_SCENE_GPU_PROTOTYPE")))
       base_world_began=gml_render_begin_resident_base(
         &engine->render,world_pixels,world_width,world_height,cam_x,cam_y);
-    if(!base_world_began &&
+    /* A source-free clear may already own the filtered logical raster.
+     * Binding the next world is not a CPU writer or ordinary-draw admission. */
+    int device_base_began=!base_world_began && classic_interp_phase &&
+      engine->scene_renderer_session==ANYGM_SCENE_RENDERER_OPENGL &&
+      gml_render_begin_device_base(&engine->render,world_pixels,world_width,
+                                   world_height,cam_x,cam_y);
+    if(!base_world_began && !device_base_began &&
        !gml_render_completed_screen_write(
          &engine->render,world_pixels,world_width,world_height))
       return ANYGM_ERROR_INTERNAL;
-    if(!base_world_began && engine->composed_frame)
+    if(!base_world_began && !device_base_began && engine->composed_frame)
       gml_render_begin_retaining_target(&engine->render,world_pixels,world_width,world_height,
                                         cam_x,cam_y);
-    else if(!base_world_began)
+    else if(!base_world_began && !device_base_began)
       gml_render_begin(&engine->render,world_pixels,world_width,world_height,cam_x,cam_y);
   }
   /* Native-sized assigned views are real render targets. Retain the established sampling
@@ -1909,12 +1921,6 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
   if(direct_owned_world)
     gml_render_world_set_logical_extent(
       &engine->render,(int)engine->width,(int)engine->height);
-  if(classic_phase) sample_planes.classic_vertical=engine->classic_phase_mem;
-  if(classic_interp_phase){
-    sample_planes.classic_interpolated[0]=engine->classic_phase_mem;
-    sample_planes.classic_interpolated[1]=engine->classic_phase_mem+classic_pixels;
-    sample_planes.classic_interpolated[2]=engine->classic_phase_mem+classic_pixels*2;
-  }
   gml_render_sample_planes_update(
     &engine->render,&sample_planes,GML_RENDER_SAMPLE_PLANES_CLASSIC);
   if(classic_sample_world && base_world_began &&
@@ -2212,7 +2218,7 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
 			       (!engine->aspect_force_active || forced_owned_scene_began) &&
 			       !aspect_gui_center &&
 			       (retained_gui_scene || gui_indirect || !render_presentation.application_draw_enabled ||
-			        ((early_classic_borrowed_world || classic_sample_world) &&
+			        ((early_classic_borrowed_world || classic_sample_world || classic_interp_phase) &&
 			         gml_render_can_begin_borrowed_screen(&engine->render,gtarget)) ||
 			        ((frame_view_count<=1 || multiview_rendered==2) && render_presentation.application_owned &&
 			         (!gml_render_is_classic(&engine->render) ||

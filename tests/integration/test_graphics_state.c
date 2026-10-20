@@ -1790,6 +1790,8 @@ static int classic_native_step_scene_case(void){
       for(unsigned family=0;family<GML_RENDER_SCENE_FAMILY_COUNT;family++)
         for(unsigned reason=0;reason<GML_RENDER_DISPATCH_REASON_COUNT;reason++)
           frame_cpu+=frame_dispatch.cpu[family][reason];
+      if(frame_cpu!=(variant==3u?2u:1u)) fprintf(stderr,"native Classic Step api=%u variant=%u frame=%u CPU=%llu\n",
+        api,variant,frame,(unsigned long long)frame_cpu);
       /* The filtered cold Step also clears its CPU-owned SCREEN. Neither
        * that clear nor its first surface copy may recur in later frames. */
       matching=matching && frame_cpu==(variant==3u?2u:1u);
@@ -1808,7 +1810,8 @@ static int classic_native_step_scene_case(void){
     GmlRenderDispatchMetrics dispatch={0};
     GmlGpuCounters counters={0};
     uint64_t ordinary_cpu=0;
-    matching=matching && gml_render_dispatch_metrics(&selected.engine->render,&dispatch);
+    int counted=gml_render_dispatch_metrics(&selected.engine->render,&dispatch);
+    matching=matching && counted;
     for(unsigned family=0;family<GML_RENDER_SCENE_FAMILY_COUNT;family++)
       for(unsigned reason=0;reason<GML_RENDER_DISPATCH_REASON_COUNT;reason++)
         ordinary_cpu+=dispatch.cpu[family][reason];
@@ -1912,15 +1915,28 @@ static int classic_step_composition_scene_case(void){
       GmlGpuCounters before={0},after={0};
       gml_gpu_counters(selected.engine->gpu,&before);
       cpu.struct_size=gpu.struct_size=sizeof cpu;
-      matching=anygm_run_frame(plain.engine,&input,&cpu)==ANYGM_OK &&
-               anygm_run_frame(selected.engine,&input,&gpu)==ANYGM_OK;
+      int cpu_status=anygm_run_frame(plain.engine,&input,&cpu);
+      int gpu_status=anygm_run_frame(selected.engine,&input,&gpu);
+      matching=cpu_status==ANYGM_OK && gpu_status==ANYGM_OK;
+      if(!matching) fprintf(stderr,"classic Step-composition run: variant=%u frame=%u status=%d/%d\n",
+                            variant,frame,cpu_status,gpu_status);
       gml_gpu_counters(selected.engine->gpu,&after);
       /* Explicit comparisons are observers, not ordinary frame costs. The legacy late
        * fixture is also native 1:1; the native control separately rejects phase policies. */
       if((variant==0 || variant==2) && frame>0)
         matching=matching && after.scene_readbacks==before.scene_readbacks &&
           after.scene_families[GML_RENDER_SCENE_SURFACE]>before.scene_families[GML_RENDER_SCENE_SURFACE];
-      matching=matching && engine_materialize_completed_frame(selected.engine) && cpu.pixels &&
+      int materialized=engine_materialize_completed_frame(selected.engine);
+      if(!materialized) fprintf(stderr,"classic Step-composition observer failed: variant=%u frame=%u\n",variant,frame);
+      if(materialized && cpu.pixels && cpu.width==gpu.width && cpu.height==gpu.height){
+        const uint32_t *expected_pixels=cpu.pixels;
+        for(unsigned pixel=0;pixel<cpu.width*cpu.height;pixel++) if(expected_pixels[pixel]!=selected.engine->screen[pixel]){
+          fprintf(stderr,"classic Step-composition pixel: variant=%u frame=%u pixel=%u RGBA=%08x/%08x target=%d\n",
+            variant,frame,pixel,expected_pixels[pixel],selected.engine->screen[pixel],
+            gml_surface_get_target(&selected.engine->render));break;
+        }
+      }
+      matching=matching && materialized && cpu.pixels &&
         cpu.width==gpu.width && cpu.height==gpu.height &&
         !memcmp(cpu.pixels,selected.engine->screen,(size_t)cpu.width*cpu.height*4u);
       int cpu_id=(int)gml_varmap_get(&plain.engine->vm.globals,"fixture_surface")->d;
@@ -5896,12 +5912,17 @@ int main(void){
     {"completed frame capacity retains exact fitting bytes",completed_frame_capacity_case},
     {"CRT preserves terminal content programs",crt_terminal_program_case},
   };
-  int failed=0;
-  for(size_t index=0;index<sizeof cases/sizeof cases[0];index++)
+  int failed=0;size_t executed=0;
+  const char *selected=getenv("ANYGM_GRAPHICS_STATE_CASE");
+  for(size_t index=0;index<sizeof cases/sizeof cases[0];index++){
+    if(selected && strcmp(selected,cases[index].name)) continue;
+    executed++;
     if(!cases[index].run()){
       fprintf(stderr,"graphics state case failed: %s\n",cases[index].name);
       failed=1;
     }
+  }
+  if(!executed){fprintf(stderr,"unknown graphics state case\n");return EXIT_FAILURE;}
   if(failed) return EXIT_FAILURE;
   printf("graphics state: ok\n");
   return EXIT_SUCCESS;

@@ -406,6 +406,7 @@ static int draw_scaled_full_surface_normal(GmlRender *r, const uint32_t *src, in
    * reconstruct those edge samples. */
   if(r->classic && r->interp && r->app_surface==src && W==sw*2 && H==sh*2 &&
      r->app_interp_phase[0] && r->app_interp_phase[1] && r->app_interp_phase[2]){
+    if(!gml_render_interpolated_resources_observe(r)) return 0;
     gml_render_dispatch_cpu_scope_write(r);
     for(int py=py0;py<py1;py++){
       int sy=py>>1, oddy=py&1;
