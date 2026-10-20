@@ -3157,6 +3157,110 @@ static int dispatch_session_monotonic(const GmlRenderDispatchMetrics *before,
   return 1;
 }
 
+typedef struct {
+  const char *setting;
+  unsigned begins,ends,families,causes,reads,footers;
+  int inside,invalid;
+  uint64_t last_cpu,outside_cpu;
+} RoomCensusControl;
+
+static const char *room_census_setting(void *userdata,const char *name){
+  RoomCensusControl *control=userdata;
+  if(!strcmp(name,"GML_DIAGNOSTIC_ROOM_CENSUS")) return control->setting;
+  if(!strcmp(name,"GML_ROW_THREADS")) return "1";
+  return NULL;
+}
+
+static void room_census_log(void *userdata,AnygmLogLevel level,const char *message){
+  RoomCensusControl *control=userdata;
+  (void)level;
+  unsigned long long sequence=0,gpu=0,cpu=0;
+  char phase[16]={0}; int result=0,room=0,pending=0,overflow=0,enabled=0,complete=0;
+  if(sscanf(message,"[room-census-begin] version=1 sequence=%llu phase=%15s result=%d room=%d pending=%d overflow=%d",
+      &sequence,phase,&result,&room,&pending,&overflow)==6){
+    if(control->inside || sequence!=control->begins || result || room || pending!=-1 || overflow ||
+       strcmp(phase,control->begins?"frame":"load")) control->invalid=1;
+    control->inside=1; control->begins++;
+    control->families=control->causes=control->reads=control->footers=0;
+  }else if(sscanf(message,"[room-census-end] sequence=%llu",&sequence)==1){
+    if(!control->inside || sequence!=control->ends || control->families!=7 ||
+       control->causes!=GML_RENDER_RESIDENT_CAUSE_COUNT || control->reads!=1 ||
+       control->footers!=1) control->invalid=1;
+    control->inside=0; control->ends++;
+  }else if(sscanf(message,"[graphics-dispatch] enabled=%d complete=%d epochs=%*u gpu=%llu cpu=%llu",
+                  &enabled,&complete,&gpu,&cpu)==4){
+    if(control->inside){
+      if(!enabled || !complete || cpu<control->last_cpu) control->invalid=1;
+      control->last_cpu=cpu; control->footers++;
+    }else control->outside_cpu=cpu;
+  }else if(control->inside){
+    if(strstr(message,"[graphics-dispatch-family] ")==message) control->families++;
+    if(strstr(message,"[graphics-resident-cause] ")==message) control->causes++;
+    if(strstr(message,"[room-census-reads] available=")==message) control->reads++;
+  }
+}
+
+static int room_census_policy(void){
+  AnygmSyntheticContent fixture;
+  if(!anygm_synthetic_draw_content_create(&fixture)) return 0;
+  const char *settings[]={NULL,"","0","1"};
+  uint8_t *reference=NULL; size_t reference_size=0;
+  uint32_t reference_pixels[64*48];
+  int ok=1;
+  for(unsigned mode=0;ok && mode<4;mode++){
+    RoomCensusControl control={.setting=settings[mode]};
+    AnygmHostServices services={0};
+    services.struct_size=sizeof services; services.abi_version=ANYGM_HOST_SERVICES_VERSION;
+    anygm_stdio_vfs_services_init(&services);
+    services.userdata=&control; services.log=room_census_log;
+    services.development_setting=room_census_setting;
+    AnygmEngine *engine=NULL; AnygmContentSource source={0};
+    source.struct_size=sizeof source; source.kind=ANYGM_CONTENT_PATH;
+    source.path=fixture.path; source.cache_directory=source.save_directory=fixture.directory;
+    ok=anygm_create(&services,&engine)==ANYGM_OK && anygm_load(engine,&source,NULL)==ANYGM_OK;
+    control.setting=mode==3?NULL:"1"; /* The enabled choice is pinned to this load. */
+    AnygmInputFrame input={0}; input.struct_size=sizeof input;
+    input.pointer_x=input.pointer_y=-1;
+    AnygmFrameOutput output={0}; output.struct_size=sizeof output;
+    for(int frame=0;ok && frame<3;frame++) ok=anygm_run_frame(engine,&input,&output)==ANYGM_OK;
+    ok=ok && !control.invalid && !control.inside &&
+       control.begins==(mode==3?4u:0u) && control.ends==control.begins &&
+       (mode!=3 || control.last_cpu>0);
+    uint8_t *state=NULL; size_t size=0;
+    ok=ok && output.width==64 && output.height==48 && save_state(engine,&state,&size);
+    if(ok){
+      for(unsigned row=0;ok && row<48;row++){
+        const void *pixels=(const uint8_t*)output.pixels+row*output.pitch;
+        if(mode==0) memcpy(reference_pixels+row*64,pixels,64*sizeof(uint32_t));
+        else ok=!memcmp(reference_pixels+row*64,pixels,64*sizeof(uint32_t));
+      }
+      if(mode==0){ reference=state; reference_size=size; state=NULL; }
+      else ok=ok && size==reference_size && !memcmp(reference,state,size);
+    }
+    free(state);
+    if(ok && mode==3){
+      ok=anygm_state_load(engine,reference,reference_size)==ANYGM_OK &&
+         engine->diagnostics.room_census_enabled &&
+         engine->diagnostics.room_census_sequence==4 && control.begins==4 &&
+         anygm_run_frame(engine,&input,&output)==ANYGM_OK &&
+         control.begins==5 && control.ends==5 && !control.invalid;
+      /* Later outside-frame writes must remain outside the final census block. */
+      uint32_t late_pixels[]={0xFF123456u,0xFFABCDEFu,0xFF2468ACu,0xFF13579Bu};
+      compose_view_rect(&engine->render,late_pixels,2,2,engine->screen,
+                        engine->width,engine->height,0,0,2,2);
+      anygm_unload(engine);
+      ok=ok && control.begins==5 && control.ends==5 && !control.invalid &&
+         control.outside_cpu>control.last_cpu;
+    }
+    if(!ok) fprintf(stderr,"room census mode=%u blocks=%u/%u cpu=%llu invalid=%d\n",
+                   mode,control.begins,control.ends,(unsigned long long)control.last_cpu,control.invalid);
+    anygm_destroy(engine);
+  }
+  free(reference); anygm_synthetic_content_destroy(&fixture);
+  if(ok) puts("room census: disabled and pinned blocks, CPU-positive accounting, exact image/state, outside-frame cutoff");
+  return ok;
+}
+
 static int dispatch_session_policy(void){
   typedef int (*CreateFixture)(AnygmSyntheticContent *);
   static const CreateFixture creators[]={anygm_synthetic_draw_content_create,
@@ -3414,6 +3518,8 @@ static int dispatch_presentation_policy(void){
 
 int main(int argc,char **argv){
   if(argc==3 && !strcmp(argv[1],"--case")){
+    if(!strcmp(argv[2],"room_census"))
+      return room_census_policy()?0:1;
     if(!strcmp(argv[2],"cold_room_entry"))
       return cold_room_entry_policy()?0:1;
     if(!strcmp(argv[2],"dispatch_session"))
@@ -3515,7 +3621,7 @@ int main(int argc,char **argv){
     return 1;
   }
   if(argc!=1){
-    fputs("usage: test_engine_instances [--case cold_room_entry|dispatch_session|dispatch_narrow_room|dispatch_presentation|screen_refresh_present_latch|"
+    fputs("usage: test_engine_instances [--case room_census|cold_room_entry|dispatch_session|dispatch_narrow_room|dispatch_presentation|screen_refresh_present_latch|"
           "virtual_monitor_geometry|native_raster_window_query|live_monitor_override|host_canvas_scale|"
           "application_surface_port_scale|"
           "first_generation_application_surface|"
@@ -3550,6 +3656,7 @@ int main(int argc,char **argv){
   if(!live_monitor_override_policy()) return 1;
   if(!host_canvas_scale_policy()) return 1;
   if(!room_order_redirect_policy()) return 1;
+  if(!room_census_policy()) return 1;
   if(!cold_room_entry_policy()) return 1;
   if(!screen_refresh_present_latch_policy()) return 1;
   if(!application_surface_port_scale_policy()) return 1;

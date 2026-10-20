@@ -296,6 +296,25 @@ void engine_graphics_report(AnygmEngine *engine){
     (unsigned long long)counters.scene_families[GML_RENDER_SCENE_UNCLASSIFIED]);
 }
 
+void engine_graphics_room_census_report(AnygmEngine *engine){
+  GmlGpuCounters counters={0};
+  GmlRenderResourceMetrics resources={0};
+  gml_gpu_counters(engine->gpu,&counters);
+  gml_render_resource_metrics(&engine->render,&resources);
+  engine_logf(engine,ANYGM_LOG_INFO,
+    "[room-census-reads] available=%d pixels=%llu masks=%llu rgb_queries=%llu "
+    "rgb_refusals=%llu completed_reads=%llu completed_copies=%llu "
+    "screen_cpu_reads=%llu screen_materializations=%llu\n",
+    engine->gpu!=NULL,(unsigned long long)counters.scene_readbacks,
+    (unsigned long long)counters.scene_readback_masks,
+    (unsigned long long)counters.scene_rgb_queries,
+    (unsigned long long)counters.scene_rgb_query_refusals,
+    (unsigned long long)counters.completed_frame_reads,
+    (unsigned long long)counters.completed_frame_copies,
+    (unsigned long long)resources.completed_screen_cpu_reads,
+    (unsigned long long)resources.completed_screen_cpu_materializations);
+}
+
 /* The frame's last operation, executed where it lands instead of on the processor.
  *
  * The eligible shape is deliberately narrow, and it is a structural fact about the pass rather than
@@ -946,6 +965,9 @@ int engine_readback_over_budget(uint64_t frame_total_ns,uint32_t frames){
 }
 
 void engine_graphics_report(AnygmEngine *engine){ (void)engine; }
+void engine_graphics_room_census_report(AnygmEngine *engine){
+  engine_logf(engine,ANYGM_LOG_INFO,"[room-census-reads] available=0\n");
+}
 
 int engine_graphics_active(const AnygmEngine *engine){
   (void)engine;

@@ -246,6 +246,23 @@ static void engine_dispatch_report(AnygmEngine *engine){
       families[family],(unsigned long long)frames->first_cpu_family[family]);
 }
 
+static void engine_room_census_report(AnygmEngine *engine,const char *phase,AnygmResult result){
+  EngineDiagnostics *diagnostics=&engine->diagnostics;
+  if(!diagnostics->room_census_enabled || diagnostics->dispatch_suppressed) return;
+  uint64_t sequence=diagnostics->room_census_sequence;
+  engine_logf(engine,ANYGM_LOG_INFO,
+    "[room-census-begin] version=1 sequence=%llu phase=%s result=%d room=%d pending=%d overflow=%d\n",
+    (unsigned long long)sequence,phase,(int)result,engine->vm.room_index,
+    engine->vm.pending_room,sequence==UINT64_MAX);
+  /* These existing reports inspect metadata only. A completed frame is observed before a
+   * frontend capture, state request or controlled context release can add its own work. */
+  engine_dispatch_report(engine);
+  engine_graphics_room_census_report(engine);
+  engine_logf(engine,ANYGM_LOG_INFO,"[room-census-end] sequence=%llu\n",
+              (unsigned long long)sequence);
+  if(sequence!=UINT64_MAX) diagnostics->room_census_sequence++;
+}
+
 static void engine_dispatch_admission_skip(AnygmEngine *engine,int centred_gui,int forced_allowed){
   if(!engine->diagnostics.dispatch_renderer_active) return;
   unsigned cause=GML_RENDER_RESIDENT_TARGET_POLICY;
@@ -2828,7 +2845,11 @@ AnygmResult anygm_load_prepare(AnygmEngine *engine,const AnygmContentSource *sou
   engine->diagnostics.dispatch_renderer_epochs=0;
   engine->diagnostics.dispatch_renderer_active=0;
   engine->diagnostics.dispatch_suppressed=0;
+  const char *room_census=anygm_host_development_setting(&engine->host,"GML_DIAGNOSTIC_ROOM_CENSUS");
+  engine->diagnostics.room_census_enabled=room_census && !strcmp(room_census,"1");
+  engine->diagnostics.room_census_sequence=0;
   engine->diagnostics.dispatch_enabled=
+    engine->diagnostics.room_census_enabled ||
     anygm_host_development_setting(&engine->host,"GML_RENDER_DISPATCH_STATS")!=NULL;
   memset(&engine->diagnostics.dispatch_frames,0,sizeof engine->diagnostics.dispatch_frames);
   engine->diagnostics.dispatch_frames.enabled=engine->diagnostics.dispatch_enabled;
@@ -2873,6 +2894,7 @@ AnygmResult anygm_load_start(AnygmEngine *engine){
                 render_resources.texture_page_count);
   }
   engine->lifecycle=ENGINE_LOADED;
+  engine_room_census_report(engine,"load",ANYGM_OK);
   return ANYGM_OK;
 }
 
@@ -3021,6 +3043,7 @@ AnygmResult anygm_run_frame(AnygmEngine *engine,const AnygmInputFrame *input,
    * deferred presentation: the host target itself cannot be assumed to survive another frame. */
   if(engine->runtime_ended && !engine_materialize_completed_frame(engine)){
     gml_render_dispatch_frame_close(&engine->diagnostics.dispatch_frames,0);
+    engine_room_census_report(engine,"frame",ANYGM_ERROR_INTERNAL);
     return ANYGM_ERROR_INTERNAL;
   }
   /* The previous frame's deferred presentation describes a target that is about to be rebuilt, and
@@ -3050,6 +3073,7 @@ AnygmResult anygm_run_frame(AnygmEngine *engine,const AnygmInputFrame *input,
   output->flags=engine->frame_flags;
   if(result!=ANYGM_OK){
     gml_render_dispatch_frame_close(&engine->diagnostics.dispatch_frames,0);
+    engine_room_census_report(engine,"frame",result);
     return result;
   }
   /* Submit the final queue. Witnessed GPU scenes retain their persistent pixels on device;
@@ -3065,10 +3089,12 @@ AnygmResult anygm_run_frame(AnygmEngine *engine,const AnygmInputFrame *input,
   }
   if(!sealed){
     gml_render_dispatch_frame_close(&engine->diagnostics.dispatch_frames,0);
+    engine_room_census_report(engine,"frame",ANYGM_ERROR_INTERNAL);
     return ANYGM_ERROR_INTERNAL;
   }
   result=engine_present_frame_output(engine,output);
   gml_render_dispatch_frame_close(&engine->diagnostics.dispatch_frames,result==ANYGM_OK);
+  engine_room_census_report(engine,"frame",result);
   return result;
 }
 

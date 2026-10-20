@@ -541,6 +541,38 @@ static void release_report_log(void *userdata,AnygmLogLevel level,const char *me
   }
 }
 
+static char room_census_read_line[768];
+static void room_census_read_log(void *userdata,AnygmLogLevel level,const char *message){
+  (void)userdata;(void)level;
+  snprintf(room_census_read_line,sizeof room_census_read_line,"%s",message);
+}
+
+static int room_census_read_metadata_matches(AnygmEngine *engine){
+  GmlGpuCounters before={0},after={0};
+  GmlRenderResourceMetrics resources={0};
+  unsigned long long pixels=0,masks=0,rgb=0,refused=0,completed=0,copies=0,screen=0,materialized=0;
+  int available=0;
+  AnygmLogFn saved_log=engine->host.log;
+  gml_gpu_counters(engine->gpu,&before);
+  gml_render_resource_metrics(&engine->render,&resources);
+  engine->host.log=room_census_read_log;
+  room_census_read_line[0]='\0';
+  engine_graphics_room_census_report(engine);
+  engine->host.log=saved_log;
+  gml_gpu_counters(engine->gpu,&after);
+  int fields=sscanf(room_census_read_line,
+    "[room-census-reads] available=%d pixels=%llu masks=%llu rgb_queries=%llu rgb_refusals=%llu "
+    "completed_reads=%llu completed_copies=%llu screen_cpu_reads=%llu screen_materializations=%llu",
+    &available,&pixels,&masks,&rgb,&refused,&completed,&copies,&screen,&materialized);
+  return fields==9 && available && before.completed_frame_reads>0 &&
+    !memcmp(&before,&after,sizeof before) &&
+    pixels==before.scene_readbacks && masks==before.scene_readback_masks &&
+    rgb==before.scene_rgb_queries && refused==before.scene_rgb_query_refusals &&
+    completed==before.completed_frame_reads && copies==before.completed_frame_copies &&
+    screen==resources.completed_screen_cpu_reads &&
+    materialized==resources.completed_screen_cpu_materializations;
+}
+
 static int scene_state_preserves_completed_device_case(void){
   Session selected={0},restored={0};
   CurrentContextWitness witness={1u,0u};
@@ -599,6 +631,10 @@ static int scene_state_preserves_completed_device_case(void){
   witness.current=0u;
   reads=anygm_test_graphics_read_pixels();
   anygm_test_graphics_forbid_calls();
+  REQUIRE(room_census_read_metadata_matches(selected.engine) &&
+          anygm_test_graphics_read_pixels()==reads &&
+          !anygm_test_graphics_calls_after_forget(),
+          "room census reports positive completed reads without a current context or graphics calls");
   REQUIRE(anygm_state_save(selected.engine,again,capacity,&again_written)==ANYGM_OK &&
           again_written==written && !memcmp(saved,again,written) &&
           anygm_test_graphics_read_pixels()==reads &&

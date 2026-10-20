@@ -110,6 +110,8 @@ typedef struct {
   GmlRenderDispatchFrames dispatch_frames;
   uint64_t dispatch_renderer_epochs;
   int dispatch_enabled,dispatch_renderer_active,dispatch_suppressed;
+  int room_census_enabled;
+  uint64_t room_census_sequence;
 } EngineDiagnostics;
 typedef struct {
   int active;
@@ -537,6 +539,8 @@ enum {
 };
 /* Report the opt-in hardware counters once, as one bounded content-neutral line. */
 void engine_graphics_report(AnygmEngine *engine);
+/* Metadata-only physical observation categories; never flushes or reads pixels. */
+void engine_graphics_room_census_report(AnygmEngine *engine);
 /* Metadata-only totals for this loaded session, including retired renderers. */
 int engine_dispatch_metrics(const AnygmEngine *engine,GmlRenderDispatchMetrics *out);
 /* Whether a host graphics target is adopted right now. The one question core coordination asks

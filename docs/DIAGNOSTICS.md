@@ -32,6 +32,37 @@ successful load or from zero draws. The neutral control is
 
 ## Resolved draw dispatch accounting
 
+`GML_DIAGNOSTIC_ROOM_CENSUS=1` additionally pins bounded, metadata-only snapshots
+after fresh load and every validated public frame attempt. Other values disable
+the stream. It enables existing dispatch accounting before content initializes;
+changing the setting later cannot partially enable a load. Each version-1
+`[room-census-begin]` names a monotonic sequence, phase, result, current and pending
+room. Existing dispatch/family/resident-cause reports and one physical-observation
+report follow, closed by `[room-census-end]` with the same sequence. Sequence
+saturation, failed frames, incomplete accounting or missing blocks cannot qualify
+coverage. Dispatch counts are cumulative within the loaded session, device counts
+within the device lifetime, and screen-read metadata within the renderer epoch.
+They are not per-frame deltas; track epoch/context changes rather than subtracting
+across Reset, replacement or context loss.
+
+Snapshots precede frontend capture, serialization and controlled context release.
+Later footer counts must not be substituted into their blocks. Read categories
+are physical scene pixels and masks, logical RGB queries/refusals, completed-frame
+reads/copies and renderer screen-read/materialization counters. Some categories
+describe overlapping stages; do not sum them as independent physical reads.
+`available=0` means device counters are unavailable, not a zero-transfer proof;
+`available=1` alone proves neither an adopted context nor accepted GPU draws.
+The reporter neither flushes work nor invokes a graphics callback or pixel reader.
+
+This is a short-run diagnostic, not a timing mode or a fidelity oracle. Pair its
+post-frame room with `GML_STATE_DIGEST=all` at the existing pre-Draw boundary and
+`GML_LOG_ROOMGOTO=1` entry history. A room change, pending redirect, empty scene,
+prior-state dependency or failed call stays dependent rather than inheriting
+another room's GPU counts. Reuse the existing cold-entry selector; do not force
+missing state. `test_engine_instances --case room_census` checks disabled/pinned
+stream behavior, CPU-positive accounting, exact images/state and the cutoff for
+later outside-frame writes. This control does not measure real-device pixels.
+
 `gml_render_dispatch_diagnostics_enable` opts one renderer into transient, metadata-only
 accounting. `gml_render_dispatch_metrics` does not flush work, read pixels or invoke a
 device callback. Diagnostics are disabled by default and never enter canonical state.
