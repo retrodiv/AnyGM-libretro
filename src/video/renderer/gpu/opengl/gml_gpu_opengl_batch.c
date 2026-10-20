@@ -213,6 +213,7 @@ static uint32_t scene_filter(const GmlRenderQuad *quad,
   if(quad->sampling.filter==GML_RENDER_FILTER_HARDWARE_PIXEL_CENTRE_POINT) return 30u;
   if(quad->sampling.filter==GML_RENDER_FILTER_VIEW_PIXEL_CENTRE) return 101u;
   if(quad->sampling.filter==GML_RENDER_FILTER_VIEW_SEED) return 102u;
+  if(quad->sampling.filter==GML_RENDER_FILTER_SAMPLE_PLANE_COPY) return 128u;
   if((family==GML_RENDER_SCENE_SURFACE ||
       ((family==GML_RENDER_SCENE_SPRITE || family==GML_RENDER_SCENE_TEXT) &&
        quad->shape==GML_RENDER_QUAD_AXIS_ALIGNED)) &&
@@ -578,6 +579,45 @@ static int hardware_combined_quad_valid(const GmlRenderDrawOp *op,
        fabs(quad->u[corner]-u)>1e-12 || fabs(quad->v[corner]-v)>1e-12) return 0;
   }
   return 1;
+}
+
+static int sample_plane_copy_valid(const GmlRenderDrawOp *op,
+  const GmlRenderDrawStateSnapshot *state,const GlSceneImage *source){
+  const GmlRenderQuad *q=&op->payload.quad;
+  const GmlRenderSamplingPolicy *s=&q->sampling;
+  if(s->filter!=GML_RENDER_FILTER_SAMPLE_PLANE_COPY || !source ||
+     source->pixel_format!=GML_RENDER_PIXEL_ARGB8888 ||
+     !source->width || !source->height || source->width>4096u || source->height>4096u ||
+     (op->sources[0].resource_class!=GML_RENDER_RESOURCE_SCREEN &&
+      op->sources[0].resource_class!=GML_RENDER_RESOURCE_SCRATCH) ||
+     op->target.image.resource_class!=GML_RENDER_RESOURCE_SCREEN ||
+     op->target.pixel_format!=GML_RENDER_PIXEL_ARGB8888 ||
+     !op->target.width || !op->target.height || op->target.width>4096u || op->target.height>4096u ||
+     op->opcode!=GML_RENDER_OP_TEXTURED_QUAD || op->scene_family!=GML_RENDER_SCENE_SURFACE ||
+     op->reconstruction_mode!=GML_RENDER_DEVICE_CHECKPOINT ||
+     q->shape!=GML_RENDER_QUAD_AXIS_ALIGNED || q->span_active || s->quantisation ||
+     s->logical_margin_mask || s->edge_rule!=GML_RENDER_EDGE_CLAMP_SUBIMAGE ||
+     !full_region(s->source_region,source->width,source->height) ||
+     qualified_blend(state)!=0 || state->coverage_policy || state->alpha_test_enabled ||
+     state->write_mask!=15u || (q->span_x[0]!=0.0 && q->span_x[0]!=1.0)) return 0;
+  for(unsigned axis=0;axis<2u;axis++){
+    double origin=q->inverse_anchor[axis],step=axis?q->inverse_y[1]:q->inverse_x[0];
+    if(!isfinite(origin) || origin!=floor(origin) || fabs(origin)>16384.0 ||
+       (step!=1.0 && step!=2.0)) return 0;
+    double first=fmax(0.0,origin);
+    double last=fmin(axis?op->target.height:op->target.width,
+                    origin+step*(axis?source->height:source->width));
+    if(last<=first) return 0;
+    for(unsigned corner=0;corner<4u;corner++){
+      unsigned far=axis?corner>=2u:corner==1u || corner==2u;
+      if((axis?q->y[corner]:q->x[corner])!=(far?last:first)) return 0;
+    }
+  }
+  for(unsigned corner=0;corner<4u;corner++)
+    if(q->u[corner]!=(double)(corner==1u || corner==2u) ||
+       q->v[corner]!=(double)(corner>=2u) || q->corner_colour[corner]!=0xFFFFFFFFu ||
+       (corner && q->span_x[corner]!=0.0) || q->span_y[corner]!=0.0) return 0;
+  return exact_rect(op,NULL,NULL,NULL,NULL,0);
 }
 
 static int view_copy_quad_valid(const GmlRenderDrawOp *op,
@@ -1233,6 +1273,7 @@ static int scene_preflight(GmlGpuBackend *backend,const GmlRenderDrawBatch *batc
       int blend=qualified_blend(state);
       int hardware_surface=hardware_surface_quad_valid(op,state,source);
       int view_copy=view_copy_quad_valid(op,state,source);
+      int sample_plane=sample_plane_copy_valid(op,state,source);
       int hardware_veil=hardware_screen_veil_valid(op,state,source);
       int hardware_stretch=hardware_screen_stretch_valid(op,state,source);
       int hardware_sprite=hardware_screen_sprite_valid(op,state,source);
@@ -1506,8 +1547,10 @@ static int scene_preflight(GmlGpuBackend *backend,const GmlRenderDrawBatch *batc
           sampling->filter!=GML_RENDER_FILTER_HARDWARE_PIXEL_CENTRE_POINT &&
           sampling->filter!=GML_RENDER_FILTER_VIEW_PIXEL_CENTRE &&
           sampling->filter!=GML_RENDER_FILTER_VIEW_SEED &&
+          sampling->filter!=GML_RENDER_FILTER_SAMPLE_PLANE_COPY &&
           sampling->filter!=GML_RENDER_FILTER_HARDWARE_BILINEAR) ||
          (sampling->filter==GML_RENDER_FILTER_HARDWARE_PIXEL_CENTRE_POINT && !hardware_surface) ||
+         (sampling->filter==GML_RENDER_FILTER_SAMPLE_PLANE_COPY && !sample_plane) ||
          ((sampling->filter==GML_RENDER_FILTER_VIEW_PIXEL_CENTRE ||
            sampling->filter==GML_RENDER_FILTER_VIEW_SEED) && !view_copy) ||
          ((sampling->filter==GML_RENDER_FILTER_NEAREST_PHASED ||

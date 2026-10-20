@@ -255,6 +255,7 @@ int gml_render_gpu_opengl_draw_textured_quad(const GmlRenderDrawOp *op,
     if(quad->sampling.filter==GML_RENDER_FILTER_HARDWARE_PIXEL_CENTRE_POINT ||
        quad->sampling.filter==GML_RENDER_FILTER_VIEW_PIXEL_CENTRE ||
        quad->sampling.filter==GML_RENDER_FILTER_VIEW_SEED ||
+       quad->sampling.filter==GML_RENDER_FILTER_SAMPLE_PLANE_COPY ||
        quad->sampling.quantisation==GML_RENDER_QUANTISE_SURFACE_NEAREST_FUNCTION){
       /* Preserve the authored rectangle, not interpolated UVs at its clipped edge. */
       vertex[12]=(float)quad->inverse_anchor[0];

@@ -114,7 +114,10 @@ typedef enum GmlRenderFilter {
   GML_RENDER_FILTER_VIEW_PIXEL_CENTRE=9,
   GML_RENDER_FILTER_VIEW_SEED=10,
   /* Fixed source-over with independently marked opaque scalar tails. */
-  GML_RENDER_FILTER_NEAREST_PHASED_PACKET_ALPHA=11
+  GML_RENDER_FILTER_NEAREST_PHASED_PACKET_ALPHA=11,
+  /* Copy already-composited sample planes onto an integer output lattice.
+   * RGB is unchanged and written pixels receive opaque display alpha. */
+  GML_RENDER_FILTER_SAMPLE_PLANE_COPY=12
 } GmlRenderFilter;
 
 typedef enum GmlRenderEdgeRule {
@@ -306,7 +309,10 @@ typedef struct GmlRenderQuad {
    * relative to the crop and the row's left edge, under GML_RENDER_SPAN_FIXED20_ROW.
    * FILTERED_AFFINE_ROW uses normalized UVs on one physical row; inverse_anchor
    * carries its first centre's local sample and inverse_x its two source slopes.
-   * Other inverse/span fields remain zero. It introduces no shader arithmetic. */
+   * SAMPLE_PLANE_COPY carries its integer raster origin in inverse_anchor,
+   * unit/doubled lattice steps in inverse_x[0]/inverse_y[1], and a span_x[0]
+   * flag that also writes zero-alpha samples. Other fields remain zero.
+   * FILTERED_AFFINE_ROW introduces no shader arithmetic. */
   double span_x[4],span_y[4];
   uint32_t span_active;
   uint32_t corner_colour[4];

@@ -1669,6 +1669,11 @@ static int classic_root_handoff_scene_case(void){
       int ran=anygm_run_frame(plain.engine,&input,&cpu)==ANYGM_OK &&
               anygm_run_frame(selected.engine,&input,&gpu)==ANYGM_OK;
       gml_gpu_counters(selected.engine->gpu,&after);
+      if(after.scene_readbacks!=before.scene_readbacks){
+        fprintf(stderr,"Classic root handoff api=%u variant=%u frame=%u implicit GUI reads=%llu\n",
+          api,variant,frame,(unsigned long long)(after.scene_readbacks-before.scene_readbacks));
+        matching=0;
+      }
       matching=matching && ran && cpu.width==gpu.width && cpu.height==gpu.height &&
         cpu.width==(variant%2u?128u:64u) && cpu.height==(variant%2u?96u:48u) &&
         plain.engine->vm.room_index==selected.engine->vm.room_index &&

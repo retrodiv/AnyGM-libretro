@@ -2155,6 +2155,16 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
 			  int gtw = (aspect_gui_center || gui_indirect) ? gsw : (int)ow;
 			  int gth = (aspect_gui_center || gui_indirect) ? gsh : (int)oh;
 			  int resident_screen_began=0;
+			  GmlRenderImageRef retained_gui_image={0};
+			  /* Returning from a numbered target does not invalidate the physical SCREEN.
+			   * Keep a complete current device image until an actual GUI operation needs
+			   * CPU bytes; beginning a metadata-only GUI must not acquire a CPU writer. */
+			  int retained_gui_scene=!engine->composed_frame && !engine->aspect_force_active &&
+			    !engine->canvas_mode && !aspect_gui_center && !gui_indirect &&
+			    gtarget==engine->screen &&
+			    engine->scene_renderer_session==ANYGM_SCENE_RENDERER_OPENGL &&
+			    engine_graphics_is_current(engine) &&
+			    gml_render_completed_screen_image(&engine->render,gtarget,gtw,gth,&retained_gui_image);
 			  if(multiview_rendered==2 &&
 			     !gml_render_multiview_prepare(&engine->render,engine->fb,
 			       (int)engine->width,(int)engine->height,gtarget,gtw,gth))
@@ -2173,7 +2183,7 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
 			    if(!engine->composed_frame &&
 			       (!engine->aspect_force_active || forced_owned_scene_began) &&
 			       !aspect_gui_center &&
-			       (gui_indirect || !render_presentation.application_draw_enabled ||
+			       (retained_gui_scene || gui_indirect || !render_presentation.application_draw_enabled ||
 			        ((early_classic_borrowed_world || classic_sample_world) &&
 			         gml_render_can_begin_borrowed_screen(&engine->render,gtarget)) ||
 			        ((frame_view_count<=1 || multiview_rendered==2) && render_presentation.application_owned &&

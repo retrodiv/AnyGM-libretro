@@ -1894,6 +1894,117 @@ int gml_render_resident_classic_phase_present(GmlRender *r,
   return 1;
 }
 
+static int resident_classic_sample_underlay(GmlRender *r){
+  const GmlRenderDeviceServices *device=gml_render_device(r);
+  if(!r || !r->classic || !r->win ||
+     !anygm_policy_classic_modern_presentation(r->win) || !r->pending_underlay ||
+     !r->resident_application_pass || !gml_render_scene_target_matches(r) ||
+     !device || !device->context || !device->observe_on_demand ||
+     !device->observe_on_demand(device->context) ||
+     r->fb!=r->base_fb || r->target_sp || r->target_id>=0 ||
+     !r->app_surface || r->app_surface==r->fb || r->pending_presentation ||
+     r->rotated_batch_count || r->rotated_batch_building ||
+     r->active_shader>=0 || gml_d3_is_active(r) || r->fog_flat ||
+     r->blendmode || r->blend_equation!=1 || r->blend_equation_alpha!=1 || !r->alphablend ||
+     (r->alpha_test_enable && r->alpha_test_ref) ||
+     r->fbw<=0 || r->fbh<=0 || r->fbw>4096 || r->fbh>4096 ||
+     r->color_write_mask!=15u || r->app_w<=0 || r->app_h<=0 ||
+     r->app_w>4096 || r->app_h>4096 || r->underlay_x < -16384 || r->underlay_x>16384 ||
+     r->underlay_y < -16384 || r->underlay_y>16384) return 0;
+  unsigned planes=1u,step=1u;
+  if(r->underlay_w!=r->app_w || r->underlay_h!=r->app_h){
+    if(!r->interp || r->app_w>2048 || r->app_h>2048 ||
+       r->underlay_w!=r->app_w*2 || r->underlay_h!=r->app_h*2 ||
+       !r->app_interp_phase[0] || !r->app_interp_phase[1] || !r->app_interp_phase[2]) return 0;
+    planes=4u;step=2u;
+  }
+  GmlRenderResourceSource current={0};
+  int width=0,height=0;
+  GmlRenderResource *origin=r->app_surface==r->app_surface_owned
+    ?r->app_surface_resource:gml_render_base_resource_lookup(r,r->app_surface,&width,&height);
+  /* Never upload a stale CPU shadow of a device-owned logical root. The existing
+   * resident phase owner remains first choice; this branch borrows CPU-current planes. */
+  if(origin && (!gml_render_resource_current_cpu_source_view(origin,&current) ||
+                current.pixel_format!=GML_RENDER_PIXEL_ARGB8888 ||
+                current.width!=(uint32_t)r->app_w || current.height!=(uint32_t)r->app_h)) return 0;
+  const uint32_t *pixels[4]={r->app_surface,r->app_interp_phase[0],
+                           r->app_interp_phase[1],r->app_interp_phase[2]};
+  for(unsigned plane=0;plane<planes;plane++){
+    double x=r->underlay_x+(int)(plane&1u),y=r->underlay_y+(int)(plane>>1u);
+    if(x>=r->fbw || y>=r->fbh || x+(double)step*r->app_w<=0.0 ||
+       y+(double)step*r->app_h<=0.0) continue;
+    uintptr_t input=(uintptr_t)pixels[plane],output=(uintptr_t)r->fb;
+    size_t input_bytes=(size_t)r->app_w*r->app_h*4u;
+    size_t output_bytes=(size_t)r->fbw*r->fbh*4u;
+    if(input>UINTPTR_MAX-input_bytes || output>UINTPTR_MAX-output_bytes ||
+       (input<output+output_bytes && output<input+input_bytes)) return 0;
+  }
+  if(!gml_render_application_scene_flush(r)) return 0;
+  gml_render_flush_pending_fill(r);
+  if(r->pending_fill || !r->resident_application_pass) return 0;
+  GmlRenderResource *target=gml_render_scene_target_resource_ensure(r);
+  if(!target) return 0;
+  GmlRenderImageRef image=gml_render_resource_image_ref(target);
+  if(image.content_version>UINT64_MAX-planes) return 0;
+  GmlRenderResourceSource sources[4]={0};
+  GmlRenderDrawOp operations[4]={0};
+  GmlRenderDrawStateSnapshot state={0};
+  state.write_mask=15u;state.colour=0xFFFFFFFFu;state.alpha=255u;state.sampler_count=1u;
+  state.samplers[0]=(GmlRenderSamplingPolicy){GML_RENDER_FILTER_SAMPLE_PLANE_COPY,
+    GML_RENDER_EDGE_CLAMP_SUBIMAGE,{0,0,(uint32_t)r->app_w,(uint32_t)r->app_h},0u,0u};
+  unsigned prepared=0u;
+  int accepted=0;
+  for(unsigned plane=0;plane<planes;plane++){
+    double anchor_x=r->underlay_x+(int)(plane&1u),anchor_y=r->underlay_y+(int)(plane>>1u);
+    double left=fmax(0.0,anchor_x),top=fmax(0.0,anchor_y);
+    double right=fmin(r->fbw,anchor_x+(double)step*r->app_w);
+    double bottom=fmin(r->fbh,anchor_y+(double)step*r->app_h);
+    if(right<=left || bottom<=top) continue;
+    uint64_t incarnation=gml_render_scene_incarnation_allocate();
+    if(!incarnation) goto sample_done;
+    GmlRenderResourceSource *source=&sources[prepared];
+    *source=(GmlRenderResourceSource){.image={GML_RENDER_RESOURCE_SCREEN,plane,incarnation,1u},
+      .width=(uint32_t)r->app_w,.height=(uint32_t)r->app_h,
+      .pixel_format=GML_RENDER_PIXEL_ARGB8888,.stride_bytes=(uint32_t)r->app_w*4u,
+      .byte_capacity=(size_t)r->app_w*r->app_h*4u,.bytes=pixels[plane]};
+    GmlRenderDrawOp *op=&operations[prepared];
+    op->opcode=GML_RENDER_OP_TEXTURED_QUAD;op->scene_family=GML_RENDER_SCENE_SURFACE;
+    op->reconstruction_mode=GML_RENDER_DEVICE_CHECKPOINT;
+    op->target=(GmlRenderTargetRef){image,1u,(uint32_t)r->fbw,(uint32_t)r->fbh,
+      GML_RENDER_PIXEL_ARGB8888,{0,0,(uint32_t)r->fbw,(uint32_t)r->fbh}};
+    op->target.image.content_version+=prepared+1u;
+    op->sources=&source->image;op->source_count=1u;
+    GmlRenderQuad *q=&op->payload.quad;
+    q->shape=GML_RENDER_QUAD_AXIS_ALIGNED;q->sampling=state.samplers[0];
+    q->inverse_anchor[0]=anchor_x;q->inverse_anchor[1]=anchor_y;
+    q->inverse_x[0]=q->inverse_y[1]=step;
+    q->span_x[0]=planes==4u || r->app_surface_opaque;
+    for(unsigned corner=0;corner<4u;corner++){
+      unsigned far_x=corner==1u || corner==2u,far_y=corner>=2u;
+      q->x[corner]=far_x?right:left;q->y[corner]=far_y?bottom:top;
+      q->u[corner]=far_x;q->v[corner]=far_y;q->corner_colour[corner]=0xFFFFFFFFu;
+    }
+    prepared++;
+  }
+  if(prepared){
+    GmlRenderDrawBatch batch={operations,prepared,&state,1u};
+    GmlRenderResourceExecution result=gml_render_resource_submit_deferred(
+      target,device,&batch,sources,prepared);
+    gml_render_dispatch_batch_record(r,&batch,result);
+    accepted=result==GML_RENDER_RESOURCE_EXEC_DEVICE;
+  } else accepted=1;
+sample_done:
+  /* These CPU-authored sources are consumed by this immediate submission, not
+   * retained as a replay recipe or a cache whose next version could be stale. */
+  if(device->retire) for(unsigned plane=0;plane<prepared;plane++)
+    device->retire(device->context,sources[plane].image);
+  if(accepted){
+    r->pending_underlay=0;
+    if(prepared) r->fb_opaque_known=r->fb_all_opaque=r->fb_all_transparent=0;
+  }
+  return accepted;
+}
+
 int gml_render_compose_resident_underlay(GmlRender *r){
   if(r && r->classic){
     if(r->pending_underlay && r->classic_phase_resource && r->app_phase_y){
@@ -1904,6 +2015,7 @@ int gml_render_compose_resident_underlay(GmlRender *r){
       if(!accepted) r->pending_underlay=1;
       return accepted;
     }
+    if(resident_classic_sample_underlay(r)) return 1;
     if(!r->resident_application_pass || !r->win ||
        anygm_policy_classic_modern_presentation(r->win) ||
        !r->pending_underlay || r->fb!=r->base_fb || r->target_sp || r->target_id>=0 ||

@@ -605,6 +605,17 @@
   "  }\n" \
   "  if(u_filter==0){ o_color=texture(u_image,v_texcoord)*v_colour; return; }\n" \
   "  // R03_SHADER_VIEW_COPY: raw integer-centre copy or last-writer retained seed.\n" \
+  "  if(u_filter==128){\n" \
+  "    ivec2 position=ivec2(floor(vec2(gl_FragCoord.x,v_step.y-gl_FragCoord.y)));\n" \
+  "    ivec2 local=position-ivec2(v_map.xy),step=ivec2(v_map.zw);\n" \
+  "    if(any(lessThan(local,ivec2(0))) || any(notEqual(local%step,ivec2(0)))) discard;\n" \
+  "    ivec2 texel=local/step,extent=textureSize(u_image,0);\n" \
+  "    if(any(greaterThanEqual(texel,extent))) discard;\n" \
+  "    if(v_step.x!=0.0) texel.y=extent.y-1-texel.y;\n" \
+  "    vec4 sample_colour=texelFetch(u_image,texel,0);\n" \
+  "    if(v_span_x.x==0.0 && sample_colour.a==0.0) discard;\n" \
+  "    o_color=vec4(sample_colour.rgb,1.0); return;\n" \
+  "  }\n" \
   "  if(u_filter==101 || u_filter==102){\n" \
   "    ivec2 extent=textureSize(u_image,0);\n" \
   "    ivec2 position=ivec2(floor(vec2(gl_FragCoord.x,v_step.y-gl_FragCoord.y)));\n" \
