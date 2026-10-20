@@ -17252,6 +17252,92 @@ static int target_pixel_observes_resident_result(void){
   return 1;
 }
 
+static int resident_extended_roundrect_function(void){
+  static const int policies[]={530,700,800,13,15,17};
+  unsigned controls=0;
+  for(unsigned policy=0;policy<6u;policy++) for(unsigned owner=0;owner<4u;owner++)
+  for(unsigned outline=0;outline<2u;outline++) for(unsigned partial=0;partial<2u;partial++){
+    GmlRender *r=calloc(1,sizeof *r);GmlSoftware3D *graphics=gml_software3d_create();
+    GmlWin content={.classic_version=policy<3u?policies[policy]:0,
+                    .bytecode=policy<3u?0:policies[policy]};
+    FakeDevice fake={.on_demand=1};GmlRenderDeviceServices device=service(&fake);
+    uint32_t base[16*12],saved[16*12];
+    CHECK(r && graphics && !gml_render_init(r,NULL));r->win=&content;r->classic=policy<3u;
+    gml_software3d_reset(graphics);
+    gml_software3d_set_classic(graphics,r->classic);gml_render_bind_software3d(r,graphics);
+    for(unsigned p=0;p<16u*12u;p++) base[p]=saved[p]=0xA5123456u;
+    device.observe_on_demand=fake_observe_on_demand;
+    gml_render_bind_device(r,&device);gml_render_set_scene_device(r,1);
+    if(owner==1u || owner==2u) CHECK(gml_render_application_surface_ensure_owned(r,16,12));
+    if(owner==1u) CHECK(gml_render_begin_resident_owned_application(r,.25,.5,0));
+    else CHECK(gml_render_begin_resident_base(r,base,16,12,.25,.5));
+    if(owner==2u){gml_render_application_surface_bind(r,r->app_surface_owned,16,12,0);CHECK(gml_surface_set_target(r,0));}
+    if(owner==3u){int id=gml_surface_create(r,16,12);CHECK(id>0 && gml_surface_set_target(r,id));}
+    int gui=(policy+owner)&1u;
+    if(gui){gml_render_gui_begin(r,16,12);gml_render_gui_set_size(r,8,6);}
+    gml_render_set_pending_fill(r,0xB1234567u);gml_render_flush_pending_fill(r);
+    CHECK(gml_render_scene_submit_pending(r));memcpy(saved,r->fb,sizeof saved);
+    r->alpha=.03;r->color_write_mask=5u;r->alpha_test_enable=1;r->alpha_test_ref=255u;
+    int submits=fake.submits,reads=fake.readbacks;
+    double alpha=partial?.6:1.0;
+    gml_software3d_draw_roundrect_2d(r,2,2,13,10,3,2,0x235A97u,0x235A97u,alpha,(int)outline);
+    CHECK(r->resident_application_pass && !memcmp(r->fb,saved,sizeof saved) &&
+          fake.readbacks==reads && gml_render_scene_submit_pending(r));
+    GmlRenderResource *target=gml_render_scene_target_resource_ensure(r);CHECK(target);
+    GmlRenderJournalMetrics metrics={0};gml_render_resource_journal_metrics(target,&metrics);
+    if(fake.submits<=submits || fake.last_opcode!=GML_RENDER_OP_COLOURED_PRIMITIVE ||
+       metrics.authority!=GML_RENDER_RESOURCE_GPU_RESIDENT || metrics.cpu_replays ||
+       metrics.journal_bytes || metrics.retained_mutable_bytes)
+      fprintf(stderr,"roundrect resource: policy=%d owner=%u gui=%d outline=%u partial=%u submits=%d/%d opcode=%u count=%u reads=%d/%d authority=%u replay=%llu journal=%zu retained=%zu alpha=%.17g mask=%u cutoff=%u/%u\n",
+        policies[policy],owner,gui,outline,partial,fake.submits,submits,fake.last_opcode,
+        fake.last_batch_operations,fake.readbacks,reads,metrics.authority,
+        (unsigned long long)metrics.cpu_replays,metrics.journal_bytes,metrics.retained_mutable_bytes,
+        r->alpha,r->color_write_mask,r->alpha_test_enable,r->alpha_test_ref);
+    CHECK(fake.submits>submits && fake.last_opcode==GML_RENDER_OP_COLOURED_PRIMITIVE &&
+          fake.last_batch_operations>0u && fake.readbacks==reads &&
+          metrics.authority==GML_RENDER_RESOURCE_GPU_RESIDENT && !metrics.cpu_replays &&
+          !metrics.journal_bytes && !metrics.retained_mutable_bytes &&
+          r->alpha==.03 && r->color_write_mask==5u && r->alpha_test_enable && r->alpha_test_ref==255u);
+    gml_render_free(r);free(r);gml_software3d_destroy(graphics);controls++;
+  }
+  printf("extended roundrect resource controls: %u resident\n",controls);
+  return controls==96u;
+}
+
+static int resident_extended_roundrect_refusals(void){
+  static const int policies[]={530,700,800,13,15,17};
+  unsigned controls=0;
+  for(unsigned policy=0;policy<6u;policy++) for(unsigned owner=0;owner<4u;owner++)
+  for(unsigned variant=0;variant<3u;variant++){
+    GmlRender *r=calloc(1,sizeof *r);GmlSoftware3D *graphics=gml_software3d_create();
+    GmlWin content={.classic_version=policy<3u?policies[policy]:0,
+                    .bytecode=policy<3u?0:policies[policy]};
+    FakeDevice fake={.on_demand=1};GmlRenderDeviceServices device=service(&fake);
+    uint32_t base[16*12];
+    CHECK(r && graphics && !gml_render_init(r,NULL));r->win=&content;r->classic=policy<3u;
+    gml_software3d_reset(graphics);gml_software3d_set_classic(graphics,r->classic);
+    gml_render_bind_software3d(r,graphics);
+    for(unsigned p=0;p<16u*12u;p++) base[p]=0xA5123456u;
+    device.observe_on_demand=fake_observe_on_demand;
+    gml_render_bind_device(r,&device);gml_render_set_scene_device(r,1);
+    if(owner==1u || owner==2u) CHECK(gml_render_application_surface_ensure_owned(r,16,12));
+    if(owner==1u) CHECK(gml_render_begin_resident_owned_application(r,0,0,0));
+    else CHECK(gml_render_begin_resident_base(r,base,16,12,0,0));
+    if(owner==2u){gml_render_application_surface_bind(r,r->app_surface_owned,16,12,0);CHECK(gml_surface_set_target(r,0));}
+    if(owner==3u){int id=gml_surface_create(r,16,12);CHECK(id>0 && gml_surface_set_target(r,id));}
+    gml_render_set_pending_fill(r,0xB1234567u);gml_render_flush_pending_fill(r);
+    CHECK(gml_render_scene_submit_pending(r));int submits=fake.submits,reads=fake.readbacks;
+    if(variant==2u) gml_software3d_begin(r,0,0,16,12,0);
+    r->circle_precision=64;
+    gml_software3d_draw_roundrect_2d(r,2,2,13,10,variant==1u?0:3,variant==1u?0:2,
+      0x235A97u,variant==0u?0xE33A18u:0x235A97u,variant==1u?1.0/256.0:1.0,variant==1u);
+    CHECK(!r->resident_application_pass && fake.submits==submits && fake.readbacks==reads+1);
+    gml_render_free(r);free(r);gml_software3d_destroy(graphics);controls++;
+  }
+  printf("extended roundrect explicit CPU boundaries: %u\n",controls);
+  return controls==72u;
+}
+
 int main(void){
   int passed=0;
   passed+=dispatch_retained_replay();
@@ -17527,6 +17613,8 @@ int main(void){
   passed+=stretched_float_exact_replay();
   passed+=filtered_font_exact_recovery();
   passed+=resident_classic_cpu_sample_underlay_scope();
-  printf("render resource cases: passed=%d failed=%d\n",passed,273-passed);
-  return passed==273?EXIT_SUCCESS:EXIT_FAILURE;
+  passed+=resident_extended_roundrect_function();
+  passed+=resident_extended_roundrect_refusals();
+  printf("render resource cases: passed=%d failed=%d\n",passed,275-passed);
+  return passed==275?EXIT_SUCCESS:EXIT_FAILURE;
 }

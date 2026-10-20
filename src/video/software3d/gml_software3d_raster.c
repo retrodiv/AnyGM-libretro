@@ -1286,7 +1286,7 @@ typedef struct {
   GmlRenderCpuBackendVertexSpan *span;
   uint32_t count;
   uint64_t candidates;
-  int width,height,textured,nearest,classic_filter,texture_width,texture_height;
+  int width,height,textured,nearest,classic_filter,texture_width,texture_height,joined;
   uint32_t capacity;
 } GmlVertexSceneCoverage;
 
@@ -1445,20 +1445,33 @@ static int vertex_scene_triangle(GmlVertexSceneCoverage *coverage,
   int falls0=area>0?step0<=0:step0>=0;
   int falls1=area>0?step1<=0:step1>=0;
   int falls2=area>0?(step0>=0&&step1>=0):(step0<=0&&step1<=0);
+  int include_edge[3]={1,1,1};
+  if(coverage->joined) for(int i=0;i<3;i++){
+    int a=(i+1)%3,b=(i+2)%3;
+    double dx=sx[b]-sx[a],dy=sy[b]-sy[a];
+    if(area<0){dx=-dx;dy=-dy;}
+    include_edge[i]=dy>0 || (dy==0 && dx<0);
+  }
   for(int y=miny;y<=maxy;y++){
     double py=y+0.5,px=minx+0.5;
     double edge0=d3_edge(sx[1],sy[1],sx[2],sy[2],px,py);
     double edge1=d3_edge(sx[2],sy[2],sx[0],sy[0],px,py);
     int first=-1,last=-1,ended=0;
     double weights[2][3]={{0}};
-    /* Only coverage is walked. Keep the CPU edge additions and inclusive
-     * independent edges; no colour, alpha blend or target pixel is computed. */
+    /* Only coverage is walked. Keep the CPU edge additions and the selected
+     * edge ownership; no colour, alpha blend or target pixel is computed. */
     int x=minx;
     for(;x<=maxx;x++,edge0+=step0,edge1+=step1){
       double b0=edge0*inverse,b1=edge1*inverse,b2=1.0-b0-b1;
       if(b0<-1e-9){if(falls0) break;if(first>=0) ended=1;continue;}
       if(b1<-1e-9){if(falls1) break;if(first>=0) ended=1;continue;}
       if(b2<-1e-9){if(falls2) break;if(first>=0) ended=1;continue;}
+      if(coverage->joined && ((fabs(b0)<=1e-9&&!include_edge[0]) ||
+                             (fabs(b1)<=1e-9&&!include_edge[1]) ||
+                             (fabs(b2)<=1e-9&&!include_edge[2]))){
+        if(first>=0) ended=1;
+        continue;
+      }
       if(ended) return 0;
       if(coverage->nearest || coverage->classic_filter){
         double attribute[6],weight[3]={b0,b1,b2};
@@ -1503,7 +1516,7 @@ static int vertex_scene_triangle(GmlVertexSceneCoverage *coverage,
 }
 
 static int vertex_batch_scene(GmlRender *R,const GmlD3Vertex *vertex,int count,
-                               int primitive,int texture,int immediate){
+                               int primitive,int texture,int immediate,int joined){
   GmlRenderCpuBackendDrawView draw;
   int textured=texture!=-1;
   int texture_width=0,texture_height=0;
@@ -1534,6 +1547,7 @@ static int vertex_batch_scene(GmlRender *R,const GmlD3Vertex *vertex,int count,
   if(translation && !immediate){ox+=g_d3.transform[12];oy+=g_d3.transform[13];}
   GmlD3Vertex *projected=malloc((size_t)count*sizeof *projected);
   GmlVertexSceneCoverage coverage={.width=draw.width,.height=draw.height,.textured=textured,
+    .joined=joined==1,
     .nearest=textured && !draw.interpolate,.texture_width=texture_width,.texture_height=texture_height,
     .classic_filter=textured && draw.interpolate && g_d3.classic,
     .capacity=textured?65536u:8192u};
@@ -1566,7 +1580,8 @@ static int vertex_batch_scene(GmlRender *R,const GmlD3Vertex *vertex,int count,
   }
   /* Opaque varying RGB stays EXACT debt, not a new tolerant classification.
    * Bound low-alpha repeated fragments before making any GPU queue visible. */
-  if(primitive!=1 && opaque && rgb_gradient && (!textured || !draw.interpolate)) goto vertex_scene_done;
+  if(primitive!=1 && opaque && rgb_gradient && (!textured || !draw.interpolate))
+    goto vertex_scene_done;
   /* A hardware float must not turn a CPU zero-alpha edge into visible
    * SCREEN coverage. Mixed zero crossings remain an explicit boundary. */
   if(minimum_alpha==0.0 && maximum_alpha>0.0) goto vertex_scene_done;
@@ -1612,10 +1627,12 @@ static int vertex_batch_scene(GmlRender *R,const GmlD3Vertex *vertex,int count,
     (vertex[0].g==0.0 || vertex[0].g==255.0) &&
     (vertex[0].b==0.0 || vertex[0].b==255.0);
   /* Other repeated low-alpha/gradient/preset quantisation is not a bounded
-   * single draw merely because individual fragments satisfy D2. */
+   * single draw merely because individual fragments satisfy D2. A rounded
+   * outline's two-fragment allowance covers its independently rasterized
+   * adjacent endpoints,not arbitrarily many collapsed arc samples. */
   if(draw.alpha_blend && !inverse_endpoints &&
      (draw.blend_mode || rgb_gradient || minimum_alpha<0.5) &&
-     !vertex_scene_overlap_bounded(&coverage,1)) goto vertex_scene_done;
+     !vertex_scene_overlap_bounded(&coverage,joined==2?2u:1u)) goto vertex_scene_done;
   if(textured && !vertex_scene_overlap_bounded(&coverage,2)) goto vertex_scene_done;
   if(primitive>=4 && !d3_depth_prepare(R)) goto vertex_scene_done;
   result=!coverage.count || (textured?
@@ -1636,7 +1653,7 @@ static void vertex_submit_buffer(GmlRender *R,int id,int primitive,int texture_h
   if(number<=0) return;
   const GmlD3Vertex *vertex=buffer->vertex+first;
   if(vertex_batch_outside_scene(R,vertex,number,primitive)) return;
-  if(vertex_batch_scene(R,vertex,number,primitive,texture_handle,0)) return;
+  if(vertex_batch_scene(R,vertex,number,primitive,texture_handle,0,0)) return;
   /* A vertex program may modulate the colour it passes on by a uniform, which is how text
    * libraries carry a string's tint and fade. Apply it here, to a copy, so the rasterizer keeps
    * receiving plain vertex colours and every other submission path is untouched. */
@@ -1911,7 +1928,7 @@ static int immediate_batch_scene(GmlRender *R){
       .r=g_prim_c[i]&255u,.g=(g_prim_c[i]>>8)&255u,
       .b=(g_prim_c[i]>>16)&255u,.alpha=g_prim_a[i]};
   }
-  return vertex_batch_scene(R,vertex,g_prim_n,g_prim_kind,g_prim_texture,1);
+  return vertex_batch_scene(R,vertex,g_prim_n,g_prim_kind,g_prim_texture,1,0);
 }
 static void d3_flush_2d_primitive(GmlRender *R){
   if(!R || g_prim_n<=0) return;
@@ -1947,6 +1964,33 @@ static void d3_flush_2d_primitive(GmlRender *R){
   }
   d3_end_2d_projection(R,&saved,temporary);
 }
+static int resident_roundrect_function(GmlRender *R,const double points[][2],int count,
+                                       double cx,double cy,uint32_t inner,uint32_t outer,
+                                       double alpha,int outline){
+  GmlRenderCpuBackendDrawView draw;
+  if(g_d3.active || count<3 || count>68 ||
+     !gml_render_cpu_backend_scene_draw_view(R,&draw)) return 0;
+  GmlD3Vertex vertex[70];
+  int first=outline?0:1;
+  if(!outline){
+    gml_render_cpu_backend_draw_map_point(R,&cx,&cy);
+    vertex[0]=(GmlD3Vertex){.x=cx,.y=cy,.r=inner&255u,
+      .g=(inner>>8)&255u,.b=(inner>>16)&255u,.alpha=alpha};
+  }
+  for(int i=0;i<count;i++){
+    double x=points[i][0],y=points[i][1];
+    gml_render_cpu_backend_draw_map_point(R,&x,&y);
+    vertex[first+i]=(GmlD3Vertex){.x=x,.y=y,.r=outer&255u,
+      .g=(outer>>8)&255u,.b=(outer>>16)&255u,.alpha=alpha};
+  }
+  vertex[first+count]=vertex[first];
+  /* The CPU family prepares transient depth for outlines too. Joined fill
+   * ownership differs from independent immediate triangles; colour and blend
+   * still use the existing device row executor,never a CPU pixel writer. */
+  if(!d3_depth_prepare(R)) return 0;
+  return vertex_batch_scene(R,vertex,first+count+1,outline?3:6,-1,1,outline?2:1);
+}
+
 void gml_software3d_draw_roundrect_2d(GmlRender *R,double x1,double y1,double x2,double y2,
                                       double rx,double ry,uint32_t inner,uint32_t outer,
                                       double alpha,int outline){
@@ -1973,6 +2017,8 @@ void gml_software3d_draw_roundrect_2d(GmlRender *R,double x1,double y1,double x2
       points[number++][1]=cy+sin(angle)*ry;
     }
   }
+  if(resident_roundrect_function(R,points,number,x1+width*.5,y1+height*.5,
+                                inner,outer,alpha,outline)) return;
   GmlD3State saved;
   int temporary=d3_begin_2d_projection(R,&draw,&saved);
   GmlD3Vertex boundary[68];
