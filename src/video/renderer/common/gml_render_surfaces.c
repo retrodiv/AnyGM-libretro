@@ -2327,7 +2327,7 @@ int gml_render_recover_empty_screen(GmlRender *r,uint32_t *pixels,int width,int 
      r->app_surface==pixels || r->app_w<=0 || r->app_h<=0 ||
      r->pending_fill || r->pending_underlay || r->pending_presentation ||
      r->active_shader>=0 || gml_render_gui_transform_active(r) ||
-     !r->alphablend || r->blendmode || r->alpha_test_enable ||
+     !r->alphablend || r->blendmode ||
      r->color_write_mask!=15u || r->blend_equation!=1 || r->blend_equation_alpha!=1 ||
      gml_d3_is_active(r) || !isfinite(x) || !isfinite(y) ||
      !isfinite(w) || !isfinite(h) || w<r->app_w || h<r->app_h ||
@@ -2347,6 +2347,11 @@ int gml_render_recover_empty_screen(GmlRender *r,uint32_t *pixels,int width,int 
   left=floor(x-(zero_camera?0.0:r->cam_x));
   top=floor(y-(zero_camera?0.0:r->cam_y));
   w=(double)lround(w);h=(double)lround(h);
+  /* A positive cutout bypasses the CPU's point-copy cache for partial sources.
+   * Its filtered two-axis magnification therefore belongs to the centred
+   * bilinear owner, not this leading-edge point packet. */
+  if(r->alpha_test_enable && r->alpha_test_ref>0u && r->alpha_test_ref<255u &&
+     r->interp && w>r->app_w && h>r->app_h && !r->app_surface_opaque) return 0;
   if(!isfinite(left) || !isfinite(top) || left< -16384.0 || top< -16384.0 ||
      left>=width || top>=height || left+w<=0.0 || top+h<=0.0) return 0;
   application=gml_render_application_resource_ensure(r);
@@ -2384,6 +2389,8 @@ int gml_render_recover_empty_screen(GmlRender *r,uint32_t *pixels,int width,int 
   state.rgb_equation=state.alpha_equation=GML_RENDER_BLEND_ADD;
   state.coverage_policy=GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA;
   state.write_mask=15u;state.alpha=255u;state.colour=0xFFFFFFFFu;
+  state.alpha_test_enabled=r->alpha_test_enable!=0;
+  state.alpha_test_reference=r->alpha_test_ref;
   state.sampler_count=1u;state.samplers[0]=quad->sampling;
   GmlRenderDrawBatch batch={&op,1u,&state,1u};
   if(gml_render_application_scene_submit(r,&batch,&source,1u)!=

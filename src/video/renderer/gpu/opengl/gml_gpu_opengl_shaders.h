@@ -534,7 +534,8 @@
   "    ivec2 size=textureSize(u_image,0);\n" \
   "    ivec2 point=clamp(pixel*size/u_recovery_rect.zw,ivec2(0),size-ivec2(1));\n" \
   "    vec4 sampled=texelFetch(u_image,ivec2(point.x,size.y-1-point.y),0);\n" \
-  "    if(sampled.a==0.0) discard;\n" \
+  "    uint coverage=uint(floor(sampled.a*255.0+0.5));\n" \
+  "    if(coverage==0u || (u_alpha_test>=0 && coverage<=uint(u_alpha_test))) discard;\n" \
   "    o_color=u_filter==24?vec4(0.0,0.0,0.0,1.0):sampled; return;\n" \
   "  }\n" \
   "  // R03_SHADER_DIRECT_TEXTURE: nearest/atlas page sampling.\n" \

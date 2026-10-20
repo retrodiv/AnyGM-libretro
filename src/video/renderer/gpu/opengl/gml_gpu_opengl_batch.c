@@ -1098,7 +1098,8 @@ static int recovery_quad_valid(GmlGpuBackend *backend,const GmlRenderDrawOp *op,
      (backend->api==GML_GPU_API_OPENGL_CORE && !backend->gl.PolygonMode) ||
      !backend->gl.BlendFuncSeparate || !backend->gl.BlendEquationSeparate ||
      state->write_mask!=15u || state->alpha!=255u || state->colour!=0xFFFFFFFFu ||
-     state->alpha_test_enabled || state->material_identity || state->material_version ||
+     state->alpha_test_enabled>1u || state->alpha_test_reference>255u ||
+     state->material_identity || state->material_version ||
      qualified_blend(state)!=1 || state->coverage_policy!=GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA ||
      state->sampler_count!=1u ||
      !((!state->clip.width && !state->clip.height) ||
@@ -2858,7 +2859,9 @@ GmlRenderExecutionResult gml_gpu_opengl_scene_submit(GmlGpuBackend *backend,
       backend->gl.BindTexture(GL_TEXTURE_2D,backend->scene.rgb_reduce_texture[2]);
       backend->gl.ActiveTexture(GL_TEXTURE3);
       backend->gl.BindTexture(GL_TEXTURE_2D,backend->scene.rgb_reduce_texture[3]);
-      if(!flush_quads(backend,target,pending_source,23u,1,1u,15u,-1,0u)){
+      int cutoff=batch->states[op->state_index].alpha_test_enabled
+        ?(int)batch->states[op->state_index].alpha_test_reference:-1;
+      if(!flush_quads(backend,target,pending_source,23u,1,1u,15u,cutoff,0u)){
         mark_uncertain(&result,target);
         break;
       }

@@ -1096,7 +1096,16 @@ static int scene_empty_screen_recovery_case(void){
     REQUIRE(anygm_test_graphics_color_mask_all() && !anygm_test_graphics_attributes_enabled() &&
             !anygm_test_graphics_bound_program() && !anygm_test_graphics_bound_vertex_array(),
             "conditional draw restores shared write/array/program state");
-    for(unsigned variant=0;variant<10u;variant++){
+    for(unsigned cutoff=0;cutoff<256u;cutoff++){
+      state.alpha_test_enabled=1u;state.alpha_test_reference=cutoff;
+      result=device.submit(device.context,&batch);
+      REQUIRE(result.status==GML_RENDER_EXEC_ACCEPTED && result.accepted_prefix==2u &&
+              !anygm_test_graphics_rgb_queries() && !anygm_test_graphics_read_pixels() &&
+              !anygm_test_graphics_scene_copies(),
+              "every raw conditional cutoff remains device-only");
+    }
+    state.alpha_test_enabled=state.alpha_test_reference=0u;
+    for(unsigned variant=0;variant<12u;variant++){
       GmlRenderDrawOp invalid[2];GmlRenderDrawStateSnapshot bad_state=state;
       GmlRenderDrawBatch refused={invalid,2u,&bad_state,1u};
       memcpy(invalid,operations,sizeof invalid);
@@ -1110,6 +1119,8 @@ static int scene_empty_screen_recovery_case(void){
       if(variant==7u) bad_state.clip=(GmlRenderRect){1,1,2u,2u};
       if(variant==8u) invalid[1].payload.quad.corner_colour[2]=0x80FFFFFFu;
       if(variant==9u) invalid[1].payload.quad.u[1]=0.5;
+      if(variant==10u) bad_state.alpha_test_enabled=2u;
+      if(variant==11u) bad_state.alpha_test_reference=256u;
       int clears=anygm_test_graphics_clear_calls(),draws=anygm_test_graphics_draw_calls();
       result=device.submit(device.context,&refused);
       REQUIRE(result.status==GML_RENDER_EXEC_UNSUPPORTED && !result.accepted_prefix &&

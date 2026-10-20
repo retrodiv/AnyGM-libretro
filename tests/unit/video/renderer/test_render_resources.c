@@ -108,7 +108,8 @@ static GmlRenderExecutionResult fake_submit(void *context,const GmlRenderDrawBat
     fake->last_source_count=last->source_count;
     if(last->opcode==GML_RENDER_OP_COLOURED_PRIMITIVE)
       fake->last_primitive=*last;
-    if(last->opcode==GML_RENDER_OP_TEXTURED_QUAD && batch->states &&
+    if((last->opcode==GML_RENDER_OP_TEXTURED_QUAD ||
+        last->opcode==GML_RENDER_OP_RECOVER_EMPTY_SCREEN) && batch->states &&
        last->state_index<batch->state_count){
       fake->last_write_mask=batch->states[last->state_index].write_mask;
       fake->last_filter=last->payload.quad.sampling.filter;
@@ -6002,6 +6003,28 @@ static int conditional_screen_recovery_authority(void){
   CHECK(gml_render_recover_empty_screen(render,screen,14,9,3.0,4.0,10.0,7.0,0) &&
         fake.submits==submits+4 && !fake.readbacks && fake.recovery_rect[0]==4.0 &&
         fake.recovery_rect[1]==5.0 && fake.recovery_rect[2]==20.0 && fake.recovery_rect[3]==14.0);
+  render->interp=0;
+  for(unsigned variant=0;variant<512u;variant++){
+    unsigned enabled=variant<256u,reference=(variant+4u)&255u;
+    render->alpha_test_enable=(int)enabled;render->alpha_test_ref=(uint8_t)reference;
+    CHECK(gml_render_recover_empty_screen(render,screen,14,9,3.0,4.0,10.0,7.0,0) &&
+          fake.submits==submits+5+(int)variant && !fake.rgb_queries && !fake.readbacks &&
+          fake.last_quad_state.alpha_test_enabled==enabled &&
+          fake.last_quad_state.alpha_test_reference==reference &&
+          render->alpha_test_enable==(int)enabled && render->alpha_test_ref==reference &&
+          !memcmp(screen,sentinel,sizeof screen));
+  }
+  render->interp=1;render->alpha_test_enable=1;render->alpha_test_ref=4u;
+  int cutout_submits=fake.submits;
+  CHECK(!gml_render_recover_empty_screen(render,screen,14,9,3.0,4.0,10.0,7.0,0) &&
+        fake.submits==cutout_submits && !fake.rgb_queries && !fake.readbacks);
+  render->app_surface_opaque=1;
+  CHECK(gml_render_recover_empty_screen(render,screen,14,9,3.0,4.0,10.0,7.0,0) &&
+        fake.submits==cutout_submits+1 && !fake.rgb_queries && !fake.readbacks);
+  render->app_surface_opaque=0;render->alpha_test_ref=255u;
+  CHECK(gml_render_recover_empty_screen(render,screen,14,9,3.0,4.0,10.0,7.0,0) &&
+        fake.submits==cutout_submits+2 && !fake.rgb_queries && !fake.readbacks &&
+        !memcmp(screen,sentinel,sizeof screen));
   gml_render_abandon_device(render);fake.forbid_calls=1;
   CHECK(!gml_render_recover_empty_screen(render,screen,14,9,3.0,4.0,10.0,7.0,0) &&
         !fake.forbidden_calls);
