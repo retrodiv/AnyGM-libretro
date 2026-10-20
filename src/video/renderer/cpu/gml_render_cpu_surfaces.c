@@ -1585,6 +1585,7 @@ void gml_draw_surface_tiled_ext(GmlRender *r,int surf,double x,double y,
   if(!r || !r->fb || r->fbw<=0 || r->fbh<=0 ||
      !isfinite(x) || !isfinite(y) || !isfinite(xs) || !isfinite(ys) ||
      !isfinite(alpha) || alpha<=0) return;
+  if(gml_render_resident_surface_tiled(r,surf,x,y,xs,ys,blend,alpha)) return;
   if(!gml_render_resident_application_cpu_barrier(r)) return;
   int sw=0,sh=0;
   const uint32_t *source=surface_pixels_observe(r,surf,&sw,&sh);

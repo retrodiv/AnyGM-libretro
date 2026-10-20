@@ -193,7 +193,14 @@ enum {
   GML_RENDER_QUANTISE_INTEGER_ROW_TINT_TRUNC=18u,
   /* Point-sampled sprite silhouettes replace RGB after sampling; source alpha
    * and the existing fixed-function blend/coverage policy remain independent. */
-  GML_RENDER_QUANTISE_INTEGER_FLAT_RGB=19u
+  GML_RENDER_QUANTISE_INTEGER_FLAT_RGB=19u,
+  /* Full-source surface area taps retain signed integral destination loops. */
+  GML_RENDER_QUANTISE_SURFACE_BOX_FUNCTION=20u,
+  /* Complete repeated surface cells keep their fixed blend/coverage family
+   * distinct from the previously admitted ordinary point/filter packets. */
+  GML_RENDER_QUANTISE_SURFACE_TILED_POINT=21u,
+  GML_RENDER_QUANTISE_SURFACE_TILED_FILTERED=22u,
+  GML_RENDER_QUANTISE_SURFACE_TILED_LEADING=23u
 };
 
 /* Resolved blend semantics, independent of any device API's enumerant values. Zeroed factors
@@ -244,7 +251,12 @@ typedef enum GmlRenderBlendEquation {
   GML_RENDER_BLEND_EXACT_DESTINATION_MAX=9,
   GML_RENDER_BLEND_EXACT_DESTINATION_REVERSE_SUBTRACT=10,
   GML_RENDER_BLEND_EXACT_DESTINATION_SUBTRACT=11,
-  GML_RENDER_BLEND_EXACT_DESTINATION_MIN=12
+  GML_RENDER_BLEND_EXACT_DESTINATION_MIN=12,
+  /* Hardware destination-factor equations,without a destination snapshot. */
+  GML_RENDER_BLEND_FIXED_MAX=13,
+  GML_RENDER_BLEND_FIXED_REVERSE_SUBTRACT=14,
+  GML_RENDER_BLEND_FIXED_SUBTRACT=15,
+  GML_RENDER_BLEND_FIXED_MIN=16
 } GmlRenderBlendEquation;
 
 enum {

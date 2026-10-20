@@ -47,6 +47,9 @@ int gml_render_resident_owned_application_clear(GmlRender *render,uint32_t colou
  * A full source uses full_source rather than caller-supplied region extents. */
 int gml_render_resident_surface_copy(GmlRender *render,int destination,int x,int y,
   int source,int source_x,int source_y,int width,int height,int full_source);
+/* Map the public tiled surface once and stage its complete ordered cell run. */
+int gml_render_resident_surface_tiled(GmlRender *render,int surface,double x,double y,
+  double scale_x,double scale_y,uint32_t colour,double alpha);
 /* Compose the already owned nearest root pair without observing its pixels. */
 int gml_render_resident_classic_phase_present(GmlRender *render,
   double x,double y,double width,double height,uint32_t colour,double alpha);

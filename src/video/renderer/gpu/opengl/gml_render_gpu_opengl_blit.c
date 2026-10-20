@@ -144,6 +144,7 @@ int gml_render_gpu_opengl_draw_textured_quad(const GmlRenderDrawOp *op,
     !quad->sampling.quantisation && !quad->sampling.logical_margin_mask &&
     region.x==0 && region.y==0 && region.width==source_width && region.height==source_height;
   if(!automatic_surface && !destination_surface &&
+     quad->sampling.quantisation!=GML_RENDER_QUANTISE_SURFACE_BOX_FUNCTION &&
      (quad->sampling.filter==GML_RENDER_FILTER_BOX || stretched_float ||
       quad->sampling.quantisation==GML_RENDER_QUANTISE_FIXED_STRETCHED)){
     if(rotated || rendered_source_origin || quad->span_active ||
@@ -203,6 +204,7 @@ int gml_render_gpu_opengl_draw_textured_quad(const GmlRenderDrawOp *op,
         quad->sampling.quantisation!=GML_RENDER_QUANTISE_HARDWARE_SPRITE_FIRSTGEN &&
         quad->sampling.quantisation!=GML_RENDER_QUANTISE_HARDWARE_SPRITE_MODERN &&
         quad->sampling.quantisation!=GML_RENDER_QUANTISE_HARDWARE_SURFACE_LEADING &&
+        quad->sampling.quantisation!=GML_RENDER_QUANTISE_SURFACE_TILED_LEADING &&
         quad->sampling.filter!=GML_RENDER_FILTER_HARDWARE_PIXEL_CENTRE_POINT &&
         !(op->scene_family==GML_RENDER_SCENE_BACKGROUND &&
           quad->sampling.filter==GML_RENDER_FILTER_HARDWARE_BILINEAR &&
@@ -227,6 +229,8 @@ int gml_render_gpu_opengl_draw_textured_quad(const GmlRenderDrawOp *op,
        quad->sampling.quantisation==GML_RENDER_QUANTISE_INTEGER_ROW_TINT_TRUNC ||
        quad->sampling.quantisation==GML_RENDER_QUANTISE_INTEGER_FLAT_RGB ||
        quad->sampling.quantisation==GML_RENDER_QUANTISE_SURFACE_NEAREST_FUNCTION ||
+       quad->sampling.quantisation==GML_RENDER_QUANTISE_SURFACE_TILED_POINT ||
+       quad->sampling.quantisation==GML_RENDER_QUANTISE_SURFACE_BOX_FUNCTION ||
        half_gui || stretched_blend || (rotated && state->coverage_policy) ||
        (quad->sampling.filter==GML_RENDER_FILTER_BOX &&
         state->coverage_policy==GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA) ||
@@ -256,7 +260,9 @@ int gml_render_gpu_opengl_draw_textured_quad(const GmlRenderDrawOp *op,
        quad->sampling.filter==GML_RENDER_FILTER_VIEW_PIXEL_CENTRE ||
        quad->sampling.filter==GML_RENDER_FILTER_VIEW_SEED ||
        quad->sampling.filter==GML_RENDER_FILTER_SAMPLE_PLANE_COPY ||
-       quad->sampling.quantisation==GML_RENDER_QUANTISE_SURFACE_NEAREST_FUNCTION){
+       quad->sampling.quantisation==GML_RENDER_QUANTISE_SURFACE_NEAREST_FUNCTION ||
+       quad->sampling.quantisation==GML_RENDER_QUANTISE_SURFACE_TILED_POINT ||
+       quad->sampling.quantisation==GML_RENDER_QUANTISE_SURFACE_BOX_FUNCTION){
       /* Preserve the authored rectangle, not interpolated UVs at its clipped edge. */
       vertex[12]=(float)quad->inverse_anchor[0];
       vertex[13]=(float)quad->inverse_anchor[1];
@@ -276,6 +282,7 @@ int gml_render_gpu_opengl_draw_textured_quad(const GmlRenderDrawOp *op,
     }
     if(!rotated && state->coverage_policy==GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA &&
        quad->sampling.quantisation!=GML_RENDER_QUANTISE_SURFACE_NEAREST_FUNCTION &&
+       quad->sampling.quantisation!=GML_RENDER_QUANTISE_SURFACE_TILED_POINT &&
        quad->sampling.filter!=GML_RENDER_FILTER_BOX &&
        quad->sampling.filter!=GML_RENDER_FILTER_HARDWARE_BILINEAR &&
        quad->sampling.filter!=GML_RENDER_FILTER_HARDWARE_PIXEL_CENTRE_POINT){

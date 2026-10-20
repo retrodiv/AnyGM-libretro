@@ -561,6 +561,29 @@
   "    alpha=(alpha*alpha+prior.a*(255-alpha)+127)/255;\n" \
   "    o_color=vec4(rgb,alpha)/255.0; return;\n" \
   "  }\n" \
+  "  // R03_SHADER_SURFACE_TILED_AREA: bounded integer box taps with fixed blending.\n" \
+  "  if(u_filter>=129 && u_filter<=132){\n" \
+  "    ivec2 dest=ivec2(abs(v_map.zw)),size=textureSize(u_image,0);\n" \
+  "    ivec2 p=ivec2(int(gl_FragCoord.x),int(v_step.y)-1-int(gl_FragCoord.y))-ivec2(v_map.xy);\n" \
+  "    if(v_map.z<0.0) p.x=dest.x-1-p.x;\n" \
+  "    if(v_map.w<0.0) p.y=dest.y-1-p.y;\n" \
+  "    ivec2 first=p*size/dest,last=min(size,max((p+ivec2(1))*size/dest,first+ivec2(1)));\n" \
+  "    uvec4 total=uvec4(0u); uint count=0u;\n" \
+  "    for(int y=first.y;y<last.y;y++) for(int x=first.x;x<last.x;x++){\n" \
+  "      ivec2 at=ivec2(x,v_step.x!=0.0?size.y-1-y:y);\n" \
+  "      total+=uvec4(floor(texelFetch(u_image,at,0)*255.0+0.5));count++;\n" \
+  "    }\n" \
+  "    if(count==0u || (u_alpha_test>=0 && total.a<=uint(u_alpha_test)*count)) discard;\n" \
+  "    if(total.a==0u && v_span_y.x!=4.0) discard;\n" \
+  "    if(u_filter==131){o_color=vec4(0.0,0.0,0.0,1.0);return;}\n" \
+  "    uvec3 tint=uvec3(floor(v_colour.rgb*255.0+0.5));\n" \
+  "    uvec3 rgb=(total.rgb/count)*tint/255u;\n" \
+  "    float sampled_alpha=float(total.a)/float(count);\n" \
+  "    float alpha=u_filter==132?1.0:sampled_alpha*v_colour.a/255.0;\n" \
+  "    if(v_span_y.x==2.0) alpha=floor(sampled_alpha+0.5)/255.0;\n" \
+  "    if(v_span_y.x==3.0 && total.a==255u*count) alpha=1.0;\n" \
+  "    o_color=vec4(vec3(rgb)/255.0,alpha);return;\n" \
+  "  }\n" \
   "  // R03_SHADER_INTEGER_SPRITE: whole nearest texels, integer tint and fixed blending.\n" \
   "  if((u_filter>=37 && u_filter<=64) || u_filter==83 || (u_filter>=84 && u_filter<=98)){\n" \
   "    bool flat_rgb=u_filter>=84;\n" \
@@ -591,8 +614,8 @@
   "      int channel=(u_source_alpha_key>>9)-1;\n" \
   "      if(sampled[channel]<uint(u_source_alpha_key&511)) sampled.a=0u;\n" \
   "    }\n" \
-  "    if(sample_filter>50 && sample_filter<=64 && sampled.a==0u && v_span_y.x!=1.0) discard;\n" \
-  "    if(rule<44 && (sampled.a==0u || (rule<41 && v_colour.a<=0.0 && sample_filter<=50)) && !(sample_filter>50 && v_span_y.x==1.0)) discard;\n" \
+  "    if(sample_filter>50 && sample_filter<=64 && sampled.a==0u && v_span_y.x!=1.0 && v_span_y.x!=4.0) discard;\n" \
+  "    if(rule<44 && (sampled.a==0u || (rule<41 && v_colour.a<=0.0 && sample_filter<=50)) && !(sample_filter>50 && (v_span_y.x==1.0 || v_span_y.x==4.0))) discard;\n" \
   "    if(rule==41 || rule==48){ o_color=vec4(0.0,0.0,0.0,1.0); return; }\n" \
   "    uvec3 tint=uvec3(floor(v_colour.rgb*255.0+0.5));\n" \
   "    uint bias=(rule==38 || rule==40 || rule==43 || rule==45 || rule==47 || rule==50)?127u:0u;\n" \
@@ -718,6 +741,7 @@
   "    vec4 sampled=margin!=0?hardware_background_sample(v_texcoord,\n" \
   "      ivec2(v_clamp.xy),ivec2(v_clamp.zw),margin):texture(u_image,uv);\n" \
   "    float alpha=sampled.a*v_colour.a;\n" \
+  "    if(u_alpha_test>=0 && sampled.a*255.0<=float(u_alpha_test)) discard;\n" \
   "    if(alpha<=0.0) discard;\n" \
   "    if(u_filter==25){\n" \
   "      uvec3 rgb=uvec3(sampled.rgb*255.0+0.5);\n" \
