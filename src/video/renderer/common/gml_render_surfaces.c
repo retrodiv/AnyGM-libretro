@@ -2078,8 +2078,10 @@ int gml_render_compose_resident_underlay(GmlRender *r){
     if(r->classic_interp_phase[index] || r->app_interp_phase[index]) return 0;
   GmlRenderQuad *q=&operation.payload.quad;
   q->shape=GML_RENDER_QUAD_AXIS_ALIGNED;
-  q->x[0]=q->x[3]=floor(r->underlay_x-r->cam_x);
-  q->y[0]=q->y[1]=floor(r->underlay_y-r->cam_y);
+  /* The internal presentation rectangle is already in SCREEN pixels. The
+   * CPU owner adds the current camera before its leaf subtracts it again. */
+  q->x[0]=q->x[3]=r->underlay_x;
+  q->y[0]=q->y[1]=r->underlay_y;
   q->x[1]=q->x[2]=q->x[0]+r->underlay_w;
   q->y[2]=q->y[3]=q->y[0]+r->underlay_h;
   q->sampling.filter=r->interp?GML_RENDER_FILTER_BOX:GML_RENDER_FILTER_NEAREST;
@@ -2591,7 +2593,7 @@ static int resident_surface_nearest_selection(GmlRender *r,int surf,double dx,do
   /* The queued application prefix precedes any ordinary surface suffix,
    * regardless of which independent source that suffix samples. */
   if(r->pending_underlay &&
-     (!gml_render_gui_transform_active(r) || r->cam_x!=0.0 || r->cam_y!=0.0 ||
+     (!gml_render_gui_transform_active(r) ||
       !gml_render_compose_resident_underlay(r) || !r->resident_application_pass)) return 0;
   resource=surf==0?(borrowed?borrowed:gml_render_application_resource_ensure(r)):
                    gml_render_surface_resource_ensure(r,surf);
@@ -2911,9 +2913,10 @@ static int resident_surface_filtered_resolved(GmlRender *r,int surf,double dx,do
        r->target_stack[index].pending_fill) return 0;
   /* A queued automatic presentation precedes this public GUI draw even when
    * content has disabled future automatic draws. Reuse its established compositor;
-   * non-GUI and nonzero-camera variants retain their prior ordered CPU owner. */
+   * non-GUI variants retain their prior ordered CPU owner. The internal
+   * compositor consumes its raster rectangle independently of the GUI camera. */
   if(r->pending_underlay &&
-     (!gml_render_gui_transform_active(r) || r->cam_x!=0.0 || r->cam_y!=0.0 ||
+     (!gml_render_gui_transform_active(r) ||
       !gml_render_compose_resident_underlay(r) || !r->resident_application_pass)) return 0;
   resource=surf==0?gml_render_application_resource_ensure(r):
                    gml_render_surface_resource_ensure(r,surf);

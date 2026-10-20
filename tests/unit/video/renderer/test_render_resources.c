@@ -12254,6 +12254,54 @@ static int resident_unregistered_cpu_application_underlay(void){
   return 1;
 }
 
+static int resident_automatic_underlay_raster_camera(void){
+  enum { WIDTH=24,HEIGHT=18,SW=8,SH=6 };
+  static const int policies[]={13,15,17};
+  static const double cameras[][2]={{0,0},{0,-43},{-3,2},{.25,-.75}};
+  for(unsigned policy=0;policy<3u;policy++)
+  for(unsigned camera=0;camera<4u;camera++)
+  for(unsigned device_source=0;device_source<2u;device_source++)
+  for(unsigned filtered=0;filtered<2u;filtered++){
+    GmlWin content={.bytecode=policies[policy]};
+    GmlRender *render=calloc(1,sizeof *render);
+    FakeDevice fake={.on_demand=1};
+    GmlRenderDeviceServices device=service(&fake);
+    uint32_t screen[WIDTH*HEIGHT]={0};
+    CHECK(render && !gml_render_init(render,NULL));
+    device.observe_on_demand=fake_observe_on_demand;
+    render->win=&content;
+    CHECK(gml_render_application_surface_ensure_owned(render,SW,SH));
+    if(device_source){
+      gml_render_bind_device(render,&device);
+      CHECK(gml_render_begin_resident_owned_application(render,0,0,0));
+    }else CHECK(gml_render_begin_owned_application(render,0,0,0));
+    gml_render_set_pending_fill(render,0xFF25C080u);
+    gml_render_flush_pending_fill(render);
+    CHECK(!device_source || gml_render_scene_submit_pending(render));
+    CHECK(gml_render_application_resource_ensure(render));
+    render->app_surface_opaque=1;
+    gml_render_bind_device(render,&device);
+    CHECK(gml_render_begin_resident_base(render,screen,WIDTH,HEIGHT,
+      cameras[camera][0],cameras[camera][1]));
+    render->interp=(int)filtered;
+    gml_render_set_pending_underlay(render,3,4,SW,SH);
+    int reads=fake.readbacks;
+    int accepted=gml_render_compose_resident_underlay(render);
+    if(!accepted) fprintf(stderr,"raster camera: policy=%d camera=%.17g/%.17g device_source=%u filter=%u rejected\n",
+      policies[policy],cameras[camera][0],cameras[camera][1],device_source,filtered);
+    CHECK(accepted &&
+      gml_render_scene_submit_pending(render) && !render->pending_underlay &&
+      render->resident_application_pass && fake.readbacks==reads);
+    /* The CPU internal compositor compensates its camera subtraction: the
+     * pending rectangle is already in SCREEN pixels, not world/GUI space. */
+    CHECK(fake.last_quad.x[0]==3.0 && fake.last_quad.y[0]==4.0 &&
+      fake.last_quad.x[2]==11.0 && fake.last_quad.y[2]==10.0 &&
+      render->cam_x==cameras[camera][0] && render->cam_y==cameras[camera][1]);
+    gml_render_free(render);free(render);
+  }
+  return 1;
+}
+
 static int resident_surface_after_pending_underlay(void){
   enum { WIDTH=8,HEIGHT=8 };
   for(unsigned modern=0;modern<2u;modern++) for(unsigned gpu_source=0;gpu_source<2u;gpu_source++)
@@ -12297,7 +12345,9 @@ static int resident_surface_after_pending_underlay(void){
     render->interp=(int)filtered;
     int reads=fake.readbacks;
     gml_draw_surface_stretched(render,surface,2,1,WIDTH,HEIGHT,0xFFFFFFu,1.0);
-    if(excluded){
+    /* Offset GUI cameras now share the checked raster prefix; non-GUI
+     * preparation retains its ordered CPU boundary. */
+    if(excluded==2u){
       CHECK(!render->resident_application_pass && fake.readbacks>reads);
       gml_render_free(render);free(render);
       continue;
@@ -17802,6 +17852,7 @@ int main(void){
   passed+=resident_nearest_surface_cutout_targets();
   passed+=resident_current_cpu_application_underlay();
   passed+=resident_unregistered_cpu_application_underlay();
+  passed+=resident_automatic_underlay_raster_camera();
   passed+=resident_surface_after_pending_underlay();
   passed+=resident_automatic_underlay_exclusions();
   passed+=resident_nearest_font_pending_underlay();
@@ -17898,6 +17949,6 @@ int main(void){
   passed+=resident_classic_raster_underlay_scope();
   passed+=resident_extended_roundrect_function();
   passed+=resident_extended_roundrect_refusals();
-  printf("render resource cases: passed=%d failed=%d\n",passed,280-passed);
-  return passed==280?EXIT_SUCCESS:EXIT_FAILURE;
+  printf("render resource cases: passed=%d failed=%d\n",passed,281-passed);
+  return passed==281?EXIT_SUCCESS:EXIT_FAILURE;
 }
