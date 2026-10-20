@@ -113,6 +113,8 @@ make architecture-check
 make builtin-registry-check
 make contract-check
 make integration-check
+make build/unix/tests/test_engine_instances
+build/unix/tests/test_engine_instances --case cold_room_entry
 make check TEST=renderer_effects
 make check TEST=renderer_postprocess
 make check TEST=renderer_surfaces

@@ -125,7 +125,7 @@ static void setup_platform_locale(AnygmEngine *engine,GmlVM *vm){
 }
 
 static int boot_runtime_prepare(AnygmEngine *engine);
-static void boot_runtime_start(AnygmEngine *engine);
+static void boot_runtime_start(AnygmEngine *engine,int diagnostic_room);
 static int boot_runtime(AnygmEngine *engine);
 static void engine_unload(AnygmEngine *engine);
 
@@ -636,12 +636,13 @@ static int boot_runtime_prepare(AnygmEngine *engine) {
 }
 
 /* Start the prepared runtime. Everything below this boundary can execute authored code. */
-static void boot_runtime_start(AnygmEngine *engine) {
+static void boot_runtime_start(AnygmEngine *engine,int diagnostic_room) {
   /* Boot the normal entry point unless the host supplied a neutral start-room override. */
   int start_order=0,selected_room=-1,spawn=0;
   double spawn_x=64.0,spawn_y=100.0;
   char spawn_object[128]={0};
-  const char *spawn_setting=anygm_host_development_setting(&engine->host,"GML_SPAWN_OBJ");
+  const char *spawn_setting=diagnostic_room<0?
+    anygm_host_development_setting(&engine->host,"GML_SPAWN_OBJ"):NULL;
   if(spawn_setting && spawn_setting[0]){
     spawn=1;
     const char *colon=strchr(spawn_setting,':');
@@ -652,7 +653,7 @@ static void boot_runtime_start(AnygmEngine *engine) {
       const char *comma=strchr(colon+1,',');
       if(comma){ spawn_x=atof(colon+1); spawn_y=atof(comma+1); }
     }
-  }else{
+  }else if(diagnostic_room<0){
     const char *position=anygm_host_development_setting(&engine->host,"GML_SPAWN_PLAYER");
     const char *object=anygm_host_development_setting(&engine->host,"GML_SPAWN_PLAYER_OBJ");
     if(position && object && object[0]){
@@ -665,14 +666,24 @@ static void boot_runtime_start(AnygmEngine *engine) {
   /* Run declared extension initialization before entering the first room. */
   gml_vm_run_extension_init_scripts(&engine->vm);
   int initial_boot_guard = engine->full_game_on_initial_boot;
-  core_opt_redirect_room_order(engine);
-  if(!initial_boot_guard) core_opt_start_room(engine,&selected_room);
+  if(diagnostic_room<0){
+    core_opt_redirect_room_order(engine);
+    if(!initial_boot_guard) core_opt_start_room(engine,&selected_room);
+  }
   engine->full_game_on_initial_boot = 0;
-  /* always run the first room before a selected start room so game globals, fonts, and
-   * input-controller instances are initialized. */
-  if (start_order != 0 || selected_room >= 0) gml_vm_goto_room_order(&engine->vm, 0);
-  if (selected_room >= 0) gml_room_enter(&engine->vm, selected_room);
-  else gml_vm_goto_room_order(&engine->vm, start_order);
+  if(diagnostic_room>=0){
+    /* Observe the selected room without borrowing another room's globals or persistent
+     * controllers. Authored initialization and subsequent redirects still execute normally. */
+    gml_room_enter(&engine->vm,diagnostic_room);
+    engine_logf(engine,ANYGM_LOG_INFO,
+      "[diagnostic-room-start] requested=%d current=%d pending=%d cold=1\n",
+      diagnostic_room,engine->vm.room_index,engine->vm.pending_room);
+  }else{
+    /* Keep the public chooser's established warm-up, independent of the cold diagnostic. */
+    if (start_order != 0 || selected_room >= 0) gml_vm_goto_room_order(&engine->vm, 0);
+    if (selected_room >= 0) gml_room_enter(&engine->vm, selected_room);
+    else gml_vm_goto_room_order(&engine->vm, start_order);
+  }
   sync_room_fps(engine,0);
   engine->vm.god_mode = core_opt_god(engine);
   if(spawn && spawn_object[0]){
@@ -711,7 +722,7 @@ static void boot_runtime_start(AnygmEngine *engine) {
  * the two phases back to back. Initial host loading uses the phases separately. */
 static int boot_runtime(AnygmEngine *engine) {
   if(!boot_runtime_prepare(engine)) return 0;
-  boot_runtime_start(engine);
+  boot_runtime_start(engine,-1);
   return 1;
 }
 
@@ -2845,7 +2856,13 @@ AnygmResult anygm_load_prepare(AnygmEngine *engine,const AnygmContentSource *sou
 AnygmResult anygm_load_start(AnygmEngine *engine){
   if(!engine || engine->guard!=ANYGM_ENGINE_GUARD || engine->lifecycle!=ENGINE_PREPARED)
     return ANYGM_ERROR_INVALID_STATE;
-  boot_runtime_start(engine);
+  int diagnostic_room=-1;
+  if(core_opt_diagnostic_start_room(engine,&diagnostic_room)<0){
+    engine_errorf(engine,ANYGM_ERROR_INVALID_ARGUMENT,
+      "Invalid GML_DIAGNOSTIC_START_ROOM (expected a room index within this payload)");
+    return ANYGM_ERROR_INVALID_ARGUMENT;
+  }
+  boot_runtime_start(engine,diagnostic_room);
   run_selftest(engine);
   {
     GmlRenderResourceMetrics render_resources;

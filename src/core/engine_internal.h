@@ -447,6 +447,8 @@ int aspect_draw_full_view_gen(AnygmEngine *engine,const GmlInstance *instance,
                               const char *suffix);
 int core_opt_god(AnygmEngine *engine);
 int core_opt_start_room(AnygmEngine *engine,int *room_index);
+/* Fresh-load diagnostic only: 0 disabled, 1 selected, -1 invalid. */
+int core_opt_diagnostic_start_room(AnygmEngine *engine,int *room_index);
 int core_opt_redirect_room_order(AnygmEngine *engine);
 void engine_override_reset(AnygmEngine *engine);
 void engine_override_set(AnygmEngine *engine,unsigned slot,bool enabled,const char *expression);

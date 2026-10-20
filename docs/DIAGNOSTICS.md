@@ -3,6 +3,33 @@
 
 # Opt-in VM diagnostics
 
+## Cold room entry
+
+`GML_DIAGNOSTIC_START_ROOM` is an optional host development setting, disabled when
+absent or empty. A strict decimal room resource index selects direct entry during
+`anygm_load_start`, without first executing the initial room. An invalid, negative,
+overflowing or out-of-range value fails startup without entering any room;
+it never silently samples another room. The public start-room chooser retains its
+existing initial-room warm-up when this diagnostic is disabled.
+
+Cold entry ignores the public chooser, room-order redirect and development spawn
+hooks. Normal VM startup, extension/global-script initialization and the selected room's
+authored events still run; missing globals, persistent controllers or other prior
+game state are not synthesized. `[diagnostic-room-start]` reports the requested,
+current and pending room indices immediately after entry. Authored room changes
+remain enabled. Consumers must also observe which room actually draws each frame;
+a redirected, empty, failed or prior-state-dependent room is not GPU coverage.
+
+This setting applies only to a fresh content load, not Reset, authored restart,
+content replacement or savestate reconstruction. It adds no state bytes or public
+configuration fields. VM initialization during load preparation may already run
+declared startup code; this diagnostic bypasses room warm-up, not such code.
+Recreate each diagnostic run from the original content;
+never turn sampled output into a fidelity oracle. Pair it with the existing draw
+dispatch and CPU-barrier observers rather than inferring acceleration from a
+successful load or from zero draws. The neutral control is
+`build/unix/tests/test_engine_instances --case cold_room_entry`.
+
 ## Resolved draw dispatch accounting
 
 `gml_render_dispatch_diagnostics_enable` opts one renderer into transient, metadata-only

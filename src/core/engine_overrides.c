@@ -34,6 +34,18 @@ static int parse_nonnegative_index(const char **cursor,int *value){
   return 1;
 }
 
+int core_opt_diagnostic_start_room(AnygmEngine *engine,int *room_idx){
+  const char *setting=anygm_host_development_setting(
+    &engine->host,"GML_DIAGNOSTIC_START_ROOM");
+  if(!setting || !setting[0]) return 0;
+  const char *cursor=setting;
+  int room=-1;
+  if(!parse_nonnegative_index(&cursor,&room) || *cursor ||
+     room>=gml_room_count(&engine->win)) return -1;
+  *room_idx=room;
+  return 1;
+}
+
 int core_opt_redirect_room_order(AnygmEngine *engine) {
   const char *setting=anygm_host_development_setting(
     &engine->host,"GML_REDIRECT_ROOM_ORDER");

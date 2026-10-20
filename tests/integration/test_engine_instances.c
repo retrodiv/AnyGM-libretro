@@ -522,6 +522,118 @@ static int screen_refresh_present_latch_policy(void){
   return ok;
 }
 
+typedef struct {
+  const char *room;
+  const char *redirect;
+  int spawn;
+  unsigned reports;
+  int requested,current,pending;
+} ColdRoomFixture;
+
+static const char *cold_room_setting(void *userdata,const char *name){
+  ColdRoomFixture *fixture=userdata;
+  if(!strcmp(name,"GML_REDIRECT_ROOM_ORDER")) return fixture->redirect;
+  if(fixture->spawn && !strcmp(name,"GML_SPAWN_OBJ")) return "obj_boot_controller:1,1";
+  return !strcmp(name,"GML_DIAGNOSTIC_START_ROOM")?fixture->room:NULL;
+}
+
+static void cold_room_log(void *userdata,AnygmLogLevel level,const char *message){
+  ColdRoomFixture *fixture=userdata;
+  (void)level;
+  if(sscanf(message,"[diagnostic-room-start] requested=%d current=%d pending=%d cold=1",
+            &fixture->requested,&fixture->current,&fixture->pending)==3) fixture->reports++;
+}
+
+static int cold_room_entry_policy(void){
+  AnygmSyntheticContent content;
+  if(!anygm_synthetic_cold_room_content_create(&content)) return 0;
+  const struct { const char *setting; int selected,room,boot; } cases[]={
+    {NULL,-1,0,1},{"",-1,0,1},{NULL,1,1,1},
+    {"1",-1,1,0},{"0",-1,0,1},{"01",0,1,0},
+    {"-1",-1,0,0},{"+1",-1,0,0},{" 1",-1,0,0},{"1 ",-1,0,0},
+    {"1junk",-1,0,0},{"2",-1,0,0},{"2147483648",-1,0,0},
+    {"9999999999999999999999",-1,0,0},{"0:1",-1,0,0}
+  };
+  int ok=1;
+  for(size_t index=0;ok && index<sizeof cases/sizeof cases[0];index++){
+    int cold=index>=3 && index<6,room=cases[index].room,boot=cases[index].boot;
+    ColdRoomFixture fixture={.room=cases[index].setting,
+      .redirect=index==4 || index==5?"0:1":NULL,.spawn=index==3};
+    AnygmHostServices services={0};
+    services.struct_size=sizeof services; services.abi_version=ANYGM_HOST_SERVICES_VERSION;
+    anygm_stdio_vfs_services_init(&services);
+    services.userdata=&fixture; services.development_setting=cold_room_setting;
+    services.log=cold_room_log;
+    AnygmEngine *engine=NULL;
+    AnygmContentSource source={0};
+    source.struct_size=sizeof source; source.kind=ANYGM_CONTENT_PATH;
+    source.path=content.path; source.cache_directory=content.directory;
+    source.save_directory=content.directory;
+    ok=anygm_create(&services,&engine)==ANYGM_OK;
+    if(ok){
+      AnygmConfigDelta config={0}; config.struct_size=sizeof config;
+      config.values.struct_size=sizeof config.values;
+      config.fields=ANYGM_CONFIG_START_ROOM; config.values.start_room=cases[index].selected;
+      ok=anygm_set_config(engine,&config)==ANYGM_OK;
+      AnygmResult result=index>=6?anygm_load_prepare(engine,&source,NULL,NULL):
+                                  anygm_load(engine,&source,NULL);
+      if(index>=6){
+        AnygmResult started=anygm_load_start(engine);
+        ok=ok && result==ANYGM_OK && started==ANYGM_ERROR_INVALID_ARGUMENT &&
+           engine->lifecycle==ENGINE_PREPARED && engine->vm.inst_count==0 &&
+           gml_global_num(&engine->vm,"fixture_boot_visits")==0 &&
+           gml_global_num(&engine->vm,"fixture_target_visits")==0 &&
+           !gml_varmap_get(&engine->vm.globals,"fixture_boot_marker");
+        if(!ok) fprintf(stderr,"invalid room prepare=%u start=%u lifecycle=%d inst=%d global=%d\n",
+          result,started,(int)engine->lifecycle,engine->vm.inst_count,
+          gml_varmap_get(&engine->vm.globals,"fixture_boot_visits")!=NULL);
+        anygm_unload(engine);
+        ok=ok && engine->lifecycle==ENGINE_EMPTY;
+      }else{
+        ok=ok && result==ANYGM_OK && engine->vm.room_index==room &&
+           gml_global_num(&engine->vm,"fixture_boot_visits")==boot &&
+           gml_global_num(&engine->vm,"fixture_target_visits")==room &&
+           (gml_varmap_get(&engine->vm.globals,"fixture_boot_marker")!=NULL)==boot &&
+           (!room || gml_global_num(&engine->vm,"fixture_target_saw_boot")==boot) &&
+           fixture.reports==(unsigned)cold && engine->win.room_order[0]==0 &&
+           (!cold || (fixture.requested==room && fixture.current==room && fixture.pending==-1));
+        int active=0;
+        for(int i=0;i<engine->vm.inst_count;i++) active+=engine->vm.inst[i].active!=0;
+        ok=ok && active==boot;
+        if(ok && cold && room){
+          /* The diagnostic applies only to fresh loads. Reset retains normal startup;
+           * restoration recovers the saved room without warm-up side effects. */
+          uint8_t *before=NULL,*after=NULL; size_t before_size=0,after_size=0;
+          config.values.start_room=-1;
+          ok=anygm_set_config(engine,&config)==ANYGM_OK &&
+             save_state(engine,&before,&before_size);
+          fixture.room="invalid"; fixture.redirect=NULL; fixture.spawn=0;
+          ok=ok && anygm_reset(engine)==ANYGM_OK && engine->vm.room_index==0 &&
+             gml_global_num(&engine->vm,"fixture_boot_visits")==1 &&
+             anygm_state_load(engine,before,before_size)==ANYGM_OK &&
+             engine->vm.room_index==1 &&
+             !gml_varmap_get(&engine->vm.globals,"fixture_boot_marker") &&
+             save_state(engine,&after,&after_size) && before_size==after_size &&
+             !memcmp(before,after,before_size);
+          free(before); free(after);
+        }
+      }
+    }
+    if(!ok) fprintf(stderr,"cold-room entry case %zu (%s) failed: lifecycle=%d room=%d"
+                   " boot=%.0f target=%.0f marker=%d saw=%.0f reports=%u\n",index,
+                   cases[index].setting?cases[index].setting:"disabled",
+                   engine?(int)engine->lifecycle:-1,engine?engine->vm.room_index:-1,
+                   engine?gml_global_num(&engine->vm,"fixture_boot_visits"):-1,
+                   engine?gml_global_num(&engine->vm,"fixture_target_visits"):-1,
+                   engine?gml_varmap_get(&engine->vm.globals,"fixture_boot_marker")!=NULL:0,
+                   engine?gml_global_num(&engine->vm,"fixture_target_saw_boot"):-1,fixture.reports);
+    anygm_destroy(engine);
+  }
+  anygm_synthetic_content_destroy(&content);
+  if(ok) puts("cold-room entry: 6 positive and 9 rejecting controls; 2 exact state restorations");
+  return ok;
+}
+
 static int application_surface_port_scale_policy(void){
   AnygmEngine engine={0};
   engine.win.bytecode=17;
@@ -3302,6 +3414,8 @@ static int dispatch_presentation_policy(void){
 
 int main(int argc,char **argv){
   if(argc==3 && !strcmp(argv[1],"--case")){
+    if(!strcmp(argv[2],"cold_room_entry"))
+      return cold_room_entry_policy()?0:1;
     if(!strcmp(argv[2],"dispatch_session"))
       return dispatch_session_policy()?0:1;
     if(!strcmp(argv[2],"dispatch_narrow_room"))
@@ -3401,7 +3515,7 @@ int main(int argc,char **argv){
     return 1;
   }
   if(argc!=1){
-    fputs("usage: test_engine_instances [--case dispatch_session|dispatch_narrow_room|dispatch_presentation|screen_refresh_present_latch|"
+    fputs("usage: test_engine_instances [--case cold_room_entry|dispatch_session|dispatch_narrow_room|dispatch_presentation|screen_refresh_present_latch|"
           "virtual_monitor_geometry|native_raster_window_query|live_monitor_override|host_canvas_scale|"
           "application_surface_port_scale|"
           "first_generation_application_surface|"
@@ -3436,6 +3550,7 @@ int main(int argc,char **argv){
   if(!live_monitor_override_policy()) return 1;
   if(!host_canvas_scale_policy()) return 1;
   if(!room_order_redirect_policy()) return 1;
+  if(!cold_room_entry_policy()) return 1;
   if(!screen_refresh_present_latch_policy()) return 1;
   if(!application_surface_port_scale_policy()) return 1;
   if(!first_generation_application_surface_policy()) return 1;

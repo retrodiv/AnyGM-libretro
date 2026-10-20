@@ -251,6 +251,55 @@ int anygm_synthetic_tilemap_content_create(AnygmSyntheticContent *fixture){
   return 1;
 }
 
+int anygm_synthetic_cold_room_content_create(AnygmSyntheticContent *fixture){
+  if(!fixture) return 0;
+  memset(fixture,0,sizeof *fixture);
+  if(!create_fixture_directory(fixture->directory,sizeof fixture->directory)) return 0;
+  snprintf(fixture->path,sizeof fixture->path,"%s/data.win",fixture->directory);
+  char startup[192],create[192],first[192],second[192];
+  snprintf(startup,sizeof startup,"%s/startup.gml",fixture->directory);
+  snprintf(create,sizeof create,"%s/anchor-call.gml",fixture->directory);
+  snprintf(first,sizeof first,"%s/step.gml",fixture->directory);
+  snprintf(second,sizeof second,"%s/draw.gml",fixture->directory);
+  if(!write_text(startup,"global.fixture_boot_visits=0; global.fixture_target_visits=0;\n") ||
+     !write_text(create,"global.fixture_boot_marker=37;\n") ||
+     !write_text(first,"global.fixture_boot_visits+=1;\n") ||
+     !write_text(second,"global.fixture_target_visits+=1;\n"
+                         "global.fixture_target_saw_boot=variable_global_exists(\"fixture_boot_marker\");\n")){
+    anygm_synthetic_content_destroy(fixture); return 0;
+  }
+  AnygmHostServices services={0};
+  services.struct_size=sizeof services; services.abi_version=ANYGM_HOST_SERVICES_VERSION;
+  anygm_stdio_vfs_services_init(&services);
+  GmlcProject project={0}; GmlcRoom rooms[2]={0}; int order[]={0,1};
+  GmlcObject object={0}; GmlcObjectEvent event={0}; GmlcRoomInstance instance={0};
+  project.host=&services; project.name=(char*)"neutral-cold-room-entry";
+  project.startup_code_path=startup;
+  project.rooms=rooms; project.n_rooms=project.cap_rooms=2;
+  project.room_order=order; project.n_room_order=2;
+  project.objects=&object; project.n_objects=project.cap_objects=1;
+  object.id=object.name=(char*)"obj_boot_controller";
+  object.sprite_id=object.mask_id=object.parent_id=-1; object.persistent=1;
+  object.events=&event; object.n_events=object.cap_events=1;
+  event.event_type=0; event.source_path=create;
+  rooms[0].id=rooms[0].name=(char*)"room_boot"; rooms[0].creation_code_path=first;
+  rooms[1].id=rooms[1].name=(char*)"room_target"; rooms[1].creation_code_path=second;
+  for(int i=0;i<2;i++){
+    rooms[i].width=64; rooms[i].height=48; rooms[i].speed=60;
+    rooms[i].draw_background_color=1;
+  }
+  rooms[0].instances=&instance; rooms[0].n_instances=rooms[0].cap_instances=1;
+  instance.id=instance.name=(char*)"instance_boot_controller";
+  instance.object_id=0; instance.instance_id=100000;
+  instance.sx=instance.sy=1; instance.color=0xFFFFFFFFu;
+  char error[256]={0};
+  if(!gmlc_package_write_structural(&project,fixture->path,error,sizeof error)){
+    fprintf(stderr,"synthetic cold-room package failed: %s\n",error);
+    anygm_synthetic_content_destroy(fixture); return 0;
+  }
+  return 1;
+}
+
 static int synthetic_classic_present_content_create(AnygmSyntheticContent *fixture,int compositing){
   if(!fixture) return 0;
   memset(fixture,0,sizeof *fixture);
