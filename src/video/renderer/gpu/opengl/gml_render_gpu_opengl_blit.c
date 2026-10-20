@@ -230,6 +230,7 @@ int gml_render_gpu_opengl_draw_textured_quad(const GmlRenderDrawOp *op,
        quad->sampling.quantisation==GML_RENDER_QUANTISE_INTEGER_FLAT_RGB ||
        quad->sampling.quantisation==GML_RENDER_QUANTISE_SURFACE_NEAREST_FUNCTION ||
        quad->sampling.quantisation==GML_RENDER_QUANTISE_SURFACE_TILED_POINT ||
+       quad->sampling.quantisation==GML_RENDER_QUANTISE_SURFACE_ROTATED_POINT ||
        quad->sampling.quantisation==GML_RENDER_QUANTISE_SURFACE_BOX_FUNCTION ||
        half_gui || stretched_blend || (rotated && state->coverage_policy) ||
        (quad->sampling.filter==GML_RENDER_FILTER_BOX &&
@@ -283,6 +284,7 @@ int gml_render_gpu_opengl_draw_textured_quad(const GmlRenderDrawOp *op,
     if(!rotated && state->coverage_policy==GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA &&
        quad->sampling.quantisation!=GML_RENDER_QUANTISE_SURFACE_NEAREST_FUNCTION &&
        quad->sampling.quantisation!=GML_RENDER_QUANTISE_SURFACE_TILED_POINT &&
+       quad->sampling.quantisation!=GML_RENDER_QUANTISE_SURFACE_ROTATED_POINT &&
        quad->sampling.filter!=GML_RENDER_FILTER_BOX &&
        quad->sampling.filter!=GML_RENDER_FILTER_HARDWARE_BILINEAR &&
        quad->sampling.filter!=GML_RENDER_FILTER_HARDWARE_PIXEL_CENTRE_POINT){

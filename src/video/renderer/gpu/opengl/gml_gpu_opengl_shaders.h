@@ -561,6 +561,19 @@
   "    alpha=(alpha*alpha+prior.a*(255-alpha)+127)/255;\n" \
   "    o_color=vec4(rgb,alpha)/255.0; return;\n" \
   "  }\n" \
+  "  // R03_SHADER_SURFACE_ROTATED_POINT: CPU-selected geometry,device texels/colour.\n" \
+  "  if(u_filter>=133 && u_filter<=136){\n" \
+  "    ivec2 size=textureSize(u_image,0),at=ivec2(floor(v_texcoord*vec2(size)));\n" \
+  "    uvec4 sampled=uvec4(floor(texelFetch(u_image,at,0)*255.0+0.5));\n" \
+  "    if(u_alpha_test>=0 && sampled.a<=uint(u_alpha_test)) discard;\n" \
+  "    if(sampled.a==0u && v_span_y.x==0.0) discard;\n" \
+  "    if(u_filter==134){o_color=vec4(0.0,0.0,0.0,1.0);return;}\n" \
+  "    uvec3 tint=uvec3(floor(v_colour.rgb*255.0+0.5));\n" \
+  "    vec3 rgb=vec3(sampled.rgb*tint/255u)/255.0;\n" \
+  "    float alpha=float(sampled.a)*v_colour.a;\n" \
+  "    if(v_span_y.y!=0.0) alpha=floor(alpha+0.5);\n" \
+  "    o_color=vec4(rgb,u_filter==135?1.0:alpha/255.0);return;\n" \
+  "  }\n" \
   "  // R03_SHADER_SURFACE_TILED_AREA: bounded integer box taps with fixed blending.\n" \
   "  if(u_filter>=129 && u_filter<=132){\n" \
   "    ivec2 dest=ivec2(abs(v_map.zw)),size=textureSize(u_image,0);\n" \

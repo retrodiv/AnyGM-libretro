@@ -1887,6 +1887,74 @@ static int scene_nearest_surface_function_case(void){
   }
   return 1;
 }
+static int scene_rotated_surface_point_case(void){
+  enum {QUADS=2049};
+  const uint32_t pixels[]={0x001267B9u,0x552679B3u,0xAAC39526u,0xFF7193C5u};
+  const unsigned classes[]={GML_RENDER_RESOURCE_SCREEN,GML_RENDER_RESOURCE_APPLICATION,
+    GML_RENDER_RESOURCE_SURFACE,GML_RENDER_RESOURCE_SCRATCH};
+  for(unsigned api=0;api<2u;api++) for(unsigned target_kind=0;target_kind<3u;target_kind++)
+  for(unsigned source_kind=0;source_kind<4u;source_kind++) for(unsigned invalid=0;invalid<17u;invalid++){
+    anygm_test_graphics_reset();GmlGpu *gpu=gml_gpu_create();GmlRenderDeviceServices device={0};
+    GmlGpuContext context=fake_context(api?GML_GPU_API_OPENGLES3:GML_GPU_API_OPENGL_CORE);
+    GmlRenderDrawOp *ops=calloc(QUADS+1u,sizeof *ops);
+    GmlRenderImageRef source={classes[source_kind],181u,1u,1u};
+    GmlRenderImageUpload upload={.image=source,.storage_width=2u,.storage_height=2u,
+      .region={0,0,2u,2u},.pixel_format=GML_RENDER_PIXEL_ARGB8888,
+      .stride_bytes=8u,.byte_capacity=sizeof pixels,.bytes=pixels};
+    REQUIRE(gpu && ops && gml_gpu_context_reset(gpu,&context),"rotated point context");
+    gml_gpu_device_services(gpu,&device);REQUIRE(device.upload(device.context,&upload),"rotated point source");
+    GmlRenderDrawStateSnapshot state={.colour=0xFFFFFFFFu,.alpha=255u,.write_mask=15u,
+      .coverage_policy=GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA,.sampler_count=1u};
+    state.samplers[0]=(GmlRenderSamplingPolicy){GML_RENDER_FILTER_NEAREST,GML_RENDER_EDGE_CLAMP_SUBIMAGE,
+      {0,0,2u,2u},GML_RENDER_QUANTISE_SURFACE_ROTATED_POINT,0u};
+    for(unsigned index=0;index<QUADS+1u;index++){
+      GmlRenderDrawOp *op=&ops[index];op->sequence=index+1u;
+      op->target=(GmlRenderTargetRef){.image={classes[target_kind],182u,1u,index+1u},
+        .storage_version=1u,.width=8u,.height=8u,.pixel_format=GML_RENDER_PIXEL_ARGB8888,
+        .region={0,0,8u,8u}};
+      if(!index){op->opcode=GML_RENDER_OP_CLEAR;op->payload.clear_colour=0x78273859u;continue;}
+      op->opcode=GML_RENDER_OP_TEXTURED_QUAD;op->scene_family=GML_RENDER_SCENE_SURFACE;
+      op->reconstruction_mode=GML_RENDER_DEVICE_CHECKPOINT;op->sources=&source;op->source_count=1u;
+      GmlRenderQuad *q=&op->payload.quad;q->shape=GML_RENDER_QUAD_AXIS_ALIGNED;
+      q->sampling=state.samplers[0];q->filtered_draw_alpha=.61;q->span_y[0]=1;
+      q->x[0]=q->x[3]=1;q->x[1]=q->x[2]=2;q->y[0]=q->y[1]=1;q->y[2]=q->y[3]=2;
+      for(unsigned corner=0;corner<4u;corner++){
+        q->u[corner]=index&1u?.25:.75;q->v[corner]=.25;q->corner_colour[corner]=0x9CA8C4E0u;
+      }
+    }
+    GmlRenderQuad *last=&ops[QUADS].payload.quad;
+    if(invalid==1u) last->sampling.quantisation++;
+    if(invalid==2u) last->sampling.filter=GML_RENDER_FILTER_HARDWARE_BILINEAR;
+    if(invalid==3u) for(unsigned corner=0;corner<4u;corner++) last->u[corner]=.125;
+    if(invalid==4u) last->v[0]=NAN;
+    if(invalid==5u) last->shape=GML_RENDER_QUAD_GENERAL;
+    if(invalid==6u) state.write_mask=0;
+    if(invalid==7u) last->span_x[1]=1;
+    if(invalid==8u) last->span_y[0]=0;
+    if(invalid==9u) last->span_y[1]=1;
+    if(invalid==10u) last->y[2]=last->y[3]=3;
+    if(invalid==11u) last->sampling.source_region.width=1;
+    if(invalid==12u) source.resource_class=GML_RENDER_RESOURCE_ATLAS;
+    if(invalid==13u) last->corner_colour[1]^=1;
+    if(invalid==14u) last->filtered_draw_alpha=NAN;
+    if(invalid==15u) ops[QUADS].source_count=0;
+    if(invalid==16u) last->inverse_anchor[0]=1;
+    GmlRenderDrawBatch batch={ops,QUADS+1u,&state,1u};
+    GmlRenderExecutionResult result=device.submit(device.context,&batch);
+    if(invalid){
+      REQUIRE(result.status==GML_RENDER_EXEC_UNSUPPORTED && !result.accepted_prefix &&
+        !anygm_test_graphics_clear_calls() && !anygm_test_graphics_scene_draw_calls() &&
+        !anygm_test_graphics_scene_copies(),"rotated point invalid suffix refuses the entire batch prewrite");
+    }else{
+      REQUIRE(result.status==GML_RENDER_EXEC_ACCEPTED && result.accepted_prefix==QUADS+1u &&
+        anygm_test_graphics_scene_draw_calls()==4 && !anygm_test_graphics_scene_copies() &&
+        !anygm_test_graphics_read_pixels(),"rotated point batches at capacity with grouped alpha stamps");
+    }
+    gml_gpu_destroy(gpu,1);free(ops);
+  }
+  return 1;
+}
+
 static int scene_tiled_surface_packets_case(void){
   enum {QUADS=2049,SW=8,SH=6};
   const unsigned equations[]={GML_RENDER_BLEND_ADD,GML_RENDER_BLEND_FIXED_MAX,
@@ -5203,6 +5271,7 @@ int main(int argc,char **argv){
     {"scene_raw_copy",scene_raw_copy_case},
     {"scene_nearest_rows",scene_nearest_rows_case},
     {"scene_nearest_surface_function",scene_nearest_surface_function_case},
+    {"scene_rotated_surface_point",scene_rotated_surface_point_case},
     {"scene_tiled_surface_packets",scene_tiled_surface_packets_case},
     {"scene_gui_tinted_text",scene_gui_tinted_text_case},
     {"scene_gui_filtered_background_batch",scene_gui_filtered_background_batch_case},

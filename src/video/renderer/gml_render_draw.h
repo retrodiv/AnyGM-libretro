@@ -200,7 +200,9 @@ enum {
    * distinct from the previously admitted ordinary point/filter packets. */
   GML_RENDER_QUANTISE_SURFACE_TILED_POINT=21u,
   GML_RENDER_QUANTISE_SURFACE_TILED_FILTERED=22u,
-  GML_RENDER_QUANTISE_SURFACE_TILED_LEADING=23u
+  GML_RENDER_QUANTISE_SURFACE_TILED_LEADING=23u,
+  /* Geometry-prepared constant texel rows;colour and blending stay on device. */
+  GML_RENDER_QUANTISE_SURFACE_ROTATED_POINT=24u
 };
 
 /* Resolved blend semantics, independent of any device API's enumerant values. Zeroed factors
