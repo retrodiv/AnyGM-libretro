@@ -1819,8 +1819,8 @@ GmlRenderResourceExecution gml_render_application_scene_submit(
 static int resident_surface_nearest_function(GmlRender *r,int surf,double dx,double dy,
   double dw,double dh,uint32_t colour,double alpha,int automatic);
 
-int gml_render_resident_classic_phase_present(GmlRender *r,
-  double dx,double dy,double dw,double dh,uint32_t colour,double alpha){
+static int resident_classic_phase_present(GmlRender *r,
+  double dx,double dy,double dw,double dh,uint32_t colour,double alpha,int automatic){
   const GmlRenderDeviceServices *device=gml_render_device(r);
   if(!r || !r->classic || r->interp || !r->classic_phase_resource ||
      !r->resident_application_pass || !gml_render_scene_target_matches(r) ||
@@ -1829,7 +1829,7 @@ int gml_render_resident_classic_phase_present(GmlRender *r,
      r->app_w!=r->classic_phase_resource_width || r->app_h!=r->classic_phase_resource_height ||
      r->classic_phase_scene_target || r->classic_phase_scene_preparing ||
      r->pending_underlay || r->pending_presentation || r->active_shader>=0 ||
-     r->fog_flat || gml_d3_is_active(r) || r->alpha_test_enable ||
+     (!automatic && (r->fog_flat || gml_d3_is_active(r))) || r->alpha_test_enable ||
      (r->blendmode!=0 && r->blendmode!=6) || (colour&0xFFFFFFu)!=0xFFFFFFu ||
      !isfinite(alpha) || alpha<1.0 || !isfinite(dx) || !isfinite(dy) ||
      !isfinite(dw) || !isfinite(dh) ||
@@ -1906,6 +1906,11 @@ int gml_render_resident_classic_phase_present(GmlRender *r,
   return 1;
 }
 
+int gml_render_resident_classic_phase_present(GmlRender *r,
+  double dx,double dy,double dw,double dh,uint32_t colour,double alpha){
+  return resident_classic_phase_present(r,dx,dy,dw,dh,colour,alpha,0);
+}
+
 static int resident_classic_sample_underlay(GmlRender *r){
   const GmlRenderDeviceServices *device=gml_render_device(r);
   if(!r || !r->classic || !r->win ||
@@ -1916,7 +1921,7 @@ static int resident_classic_sample_underlay(GmlRender *r){
      r->fb!=r->base_fb || r->target_sp || r->target_id>=0 ||
      !r->app_surface || r->app_surface==r->fb || r->pending_presentation ||
      r->rotated_batch_count || r->rotated_batch_building ||
-     r->active_shader>=0 || gml_d3_is_active(r) || r->fog_flat ||
+     r->active_shader>=0 ||
      r->blendmode || r->blend_equation!=1 || r->blend_equation_alpha!=1 || !r->alphablend ||
      (r->alpha_test_enable && r->alpha_test_ref) ||
      r->fbw<=0 || r->fbh<=0 || r->fbw>4096 || r->fbh>4096 ||
@@ -2021,9 +2026,9 @@ int gml_render_compose_resident_underlay(GmlRender *r){
   if(r && r->classic){
     if(r->pending_underlay && r->classic_phase_resource && r->app_phase_y){
       r->pending_underlay=0;
-      int accepted=gml_render_resident_classic_phase_present(r,
+      int accepted=resident_classic_phase_present(r,
         r->underlay_x+r->cam_x,r->underlay_y+r->cam_y,
-        r->underlay_w,r->underlay_h,0xFFFFFFu,1.0);
+        r->underlay_w,r->underlay_h,0xFFFFFFu,1.0,1);
       if(!accepted) r->pending_underlay=1;
       return accepted;
     }
@@ -2514,7 +2519,9 @@ static int resident_surface_nearest_selection(GmlRender *r,int surf,double dx,do
                (r->app_surface!=r->app_surface_owned && !borrowed):
                 slot<0 || !r->surface[slot].live) ||
      resident_surface_shader_selected(r) ||
-     gml_d3_is_active(r) || r->fog_flat ||
+     /* Internal automatic presentation is already in raster coordinates and
+      * bypasses the persistent world projection and flat fog. */
+     (!automatic && (gml_d3_is_active(r) || r->fog_flat)) ||
      r->blendmode<0 || (tiled?r->blendmode>11:(r->blendmode>2 && r->blendmode!=6)) ||
      (destination_blend?(r->blend_equation<1 || r->blend_equation>5 ||
                         r->blend_equation_alpha<1 || r->blend_equation_alpha>5):
