@@ -596,12 +596,14 @@ static int integer_function_sprite_valid(const GmlRenderDrawOp *op,
          (region.width<=2u && region.height<=2u &&
           floor(begin*storage)==floor(end*storage)));
       int whole_background=op->scene_family==GML_RENDER_SCENE_BACKGROUND;
+      int wide_sprite=op->scene_family==GML_RENDER_SCENE_SPRITE && !single_cell;
       double maximum=whole_background?16384.0:
-        single_cell?4096.0:64.0;
+        single_cell?4096.0:wide_sprite?16384.0:64.0;
       /* Clipped UV subtraction loses relative precision on highly magnified
-       * backgrounds. Compare the upper bound in destination units instead. */
+       * intervals. Compare the upper bound in destination units instead. */
       if(!isfinite(scale) || scale<(background?0.0625:0x1p-14)-1e-9 ||
-         (!row && (whole_background?extent>maximum*span+1e-9:scale>maximum+1e-9))) return 0;
+         (!row && (whole_background || wide_sprite
+           ?extent>maximum*span+1e-9:scale>maximum+1e-9))) return 0;
     }
   }
   for(unsigned c=0;c<4u;c++){

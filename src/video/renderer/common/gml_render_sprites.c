@@ -720,10 +720,11 @@ static int resident_atlas_crop_from_page_impl(GmlRender *r,GmlTpag *page,
   int keyed_background=(integer_background || tile_function) &&
     (family==GML_RENDER_SCENE_BACKGROUND || family==GML_RENDER_SCENE_TILE) &&
     gml_render_shader_channel_alpha_key(r,&source_alpha_key);
-  /* Whole background magnification is bounded by projected extent below,
-   * not by the older atlas-scale envelope. Other modes keep their domains. */
+  /* Whole backgrounds and packaged whole-sprite point magnification share
+   * the projected-extent bound below. Other atlas ports keep their domains. */
   double maximum_atlas_scale=single_texel_sprite?4096.0:
-    physical_sprite_page==8?16384.0:scaled_atlas?64.0:8.0;
+    (physical_sprite_page==8 || physical_sprite_page==15 || physical_sprite_page==22)
+      ?16384.0:scaled_atlas?64.0:8.0;
   /* Classic's logical background, sprite and text writers remain point-sampled with the
    * presentation interpolation flag enabled. Auxiliary phase planes retain
    * their separate rejection below; the CPU flag itself is never changed. */
@@ -1065,7 +1066,8 @@ static int resident_atlas_crop_from_page_impl(GmlRender *r,GmlTpag *page,
      * first-generation numbered target snaps both sampling and coverage;
      * Classic magnification and modern targets retain their authored phase.
      * No pixel writer, float shader emulation or destination image is needed. */
-    double point_extent_limit=physical_sprite_page==8?16384.0:4096.0;
+    double point_extent_limit=physical_sprite_page==8 || physical_sprite_page==15 ||
+      physical_sprite_page==22?16384.0:4096.0;
     if(scaled_width>point_extent_limit || scaled_height>point_extent_limit) return 0;
     int modern=anygm_policy_has_modern_layer_semantics(r->win);
     int firstgen=gml_render_target_is_first_generation_application_surface(r);
@@ -2064,7 +2066,14 @@ static uint32_t modern_mapped_axis_regions(const GmlRenderRotatedCoverageRegion 
     int64_t fixed=horizontal?maps[0].fixed_x+maps[0].delta_x*(int64_t)pixel:maps[pixel].fixed_y;
     double sample=(double)fixed/1048576.0;
     if(!isfinite(sample) || sample<0.0 || sample>=source_extent) return 0;
-    int texel=fabs(sample-nearbyint(sample))<0.01?(int)floor(sample):-1;
+    /* A legal destination-centre sample can have an affine edge vertex
+     * outside a full-page atlas. Fence only that edge with the same existing
+     * constant-centre strip used for a conflicting nearest phase. */
+    double projected=first+(double)pixel*step;
+    double begin=source_offset+projected-0.5*step;
+    double end=source_offset+projected+0.5*step;
+    int atlas_edge=fmin(begin,end)<0.0 || fmax(begin,end)>atlas_extent;
+    int texel=atlas_edge || fabs(sample-nearbyint(sample))<0.01?(int)floor(sample):-1;
     double coordinate=(double)start+pixel;
     if(count && regions[count-1u].texel==texel) regions[count-1u].end=coordinate+1.0;
     else {
@@ -3764,7 +3773,9 @@ static int resident_modern_nearest_rotation(GmlRender *r,GmlSprite *sprite,GmlTp
      fabs(rotation)>1000000.0 ||
      (screen_axis?r->color_write_mask>15u:r->color_write_mask!=15u) ||
      gml_render_classic_vertical_phase_blocks_scene(r) || r->rotated_batch_count ||
-     r->rotated_batch_building || r->pending_underlay || r->pending_presentation ||
+     r->rotated_batch_building ||
+     (r->pending_underlay && (!screen_axis || !resident_mapped_screen_gui_font(r))) ||
+     r->pending_presentation ||
      !gml_render_scene_target_matches(r) || page->project_authored_edges ||
      page->sw<=0 || page->sh<=0 || page->sx<0 || page->sy<0 ||
      page->tx<0 || page->ty<0 || (int64_t)page->tx+page->sw>page->bw ||
@@ -3801,6 +3812,13 @@ static int resident_modern_nearest_rotation(GmlRender *r,GmlSprite *sprite,GmlTp
          rotation,colour,regions,REGION_LIMIT,&count)) goto done;
   }
   if(!count){accepted=1;goto done;}
+  /* Large axis draws select this CPU coverage owner before the ordinary
+   * point atlas port. Resolve the same ordered automatic GUI prefix here,
+   * after empty coverage has returned without consuming its intent. */
+  if(r->pending_underlay){
+    if(!gml_render_compose_resident_underlay(r) || !r->resident_application_pass) goto done;
+    opaque_screen=r->fb_opaque_known && r->fb_all_opaque;
+  }
   if(screen_axis && (r->color_write_mask&8u) && !opaque_screen &&
      anygm_policy_blend(r->win)!=ANYGM_BLEND_STUDIO_SECOND){
     alpha_regions=malloc(REGION_LIMIT*sizeof *alpha_regions);
@@ -3948,14 +3966,14 @@ static int resident_nearest_texture_function(GmlRender *r,GmlSprite *sprite,GmlT
    * pixel cutoff. Text retains its separately qualified scale range. Source
    * extent, projected area, coverage and region capacity still bound work. */
   double minimum_scale=family==GML_RENDER_SCENE_TEXT?0.0625:0x1p-14;
-  /* Rotated sprites already resolve exact source cells before GPU execution.
-   * Magnification changes neither their sampler nor their bounded clipped
-   * coverage. Axis packets retain their separately qualified scalar bound. */
+  /* Packaged sprite magnification is bounded by source/projected extent and
+   * clipped region capacity, not by the caller's pre-mapping scale. Keep
+   * text and single-texel ports within their separately qualified domains. */
   int rotated_scale=family==GML_RENDER_SCENE_SPRITE && isfinite(rotation) &&
     fabs(fmod(rotation,360.0))>=0.001 &&
     fabs(fabs(fmod(rotation,360.0))-360.0)>=0.001;
-  double maximum_scale=rotated_scale?16384.0:
-    family==GML_RENDER_SCENE_SPRITE && page && page->sw==1 && page->sh==1?4096.0:64.0;
+  double maximum_scale=rotated_scale?16384.0:family==GML_RENDER_SCENE_SPRITE
+    ?page && page->sw==1 && page->sh==1?4096.0:16384.0:64.0;
   int studio_rotated_point=family==GML_RENDER_SCENE_SPRITE &&
     resident_first_generation_rotated_point(r,rotation);
   int fog_axis=r && r->fog_flat && family==GML_RENDER_SCENE_SPRITE && isfinite(rotation) &&

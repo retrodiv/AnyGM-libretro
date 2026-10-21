@@ -3461,7 +3461,7 @@ static int scene_integer_function_sprite_case(void){
       for(unsigned i=0;i<3u;i++) ops[i].target.image.content_version=10u+i;
       for(unsigned i=1u;i<3u;i++){
         ops[i].payload.quad=pristine;GmlRenderQuad *q=&ops[i].payload.quad;
-        if(invalid){q->u[1]=q->u[2]=background==1u?0.99999999:0.99;}
+        if(invalid){q->u[1]=q->u[2]=background!=2u?0.99999999:0.99;}
         else{for(unsigned c=0;c<4u;c++) q->u[c]=0.125;}
       }
       result=device.submit(device.context,&batch);
@@ -3510,8 +3510,8 @@ static int scene_integer_function_sprite_case(void){
         !anygm_test_graphics_scene_copies() && !anygm_test_graphics_read_pixels(),
         "wide nearest intervals through the upper bound retain grouped device execution");
     }
-    /* Background magnification is limited by projected extent. Other packet
-     * families must not inherit that domain from a shared validator. */
+    /* Background and ordinary whole-sprite point magnification are limited
+     * by projected extent. Tile packets retain their separate scalar bound. */
     const double background_scales[]={65.0,207.0,8192.0,16384.0};
     for(unsigned wide=0;wide<sizeof background_scales/sizeof background_scales[0];wide++)
     for(unsigned axis=0;axis<2u;axis++){
@@ -3529,12 +3529,12 @@ static int scene_integer_function_sprite_case(void){
       }
       int calls=anygm_test_graphics_scene_draw_calls(),clears=anygm_test_graphics_clear_calls();
       result=device.submit(device.context,&batch);
-      REQUIRE(result.status==(background==1u?GML_RENDER_EXEC_ACCEPTED:GML_RENDER_EXEC_UNSUPPORTED) &&
-        result.accepted_prefix==(background==1u?3u:0u) &&
-        anygm_test_graphics_scene_draw_calls()==calls+(background==1u?draws:0) &&
-        (background==1u || anygm_test_graphics_clear_calls()==clears) &&
+      REQUIRE(result.status==(background!=2u?GML_RENDER_EXEC_ACCEPTED:GML_RENDER_EXEC_UNSUPPORTED) &&
+        result.accepted_prefix==(background!=2u?3u:0u) &&
+        anygm_test_graphics_scene_draw_calls()==calls+(background!=2u?draws:0) &&
+        (background!=2u || anygm_test_graphics_clear_calls()==clears) &&
         !anygm_test_graphics_scene_copies() && !anygm_test_graphics_read_pixels(),
-        "wide background intervals group while sprite and tile bounds refuse before writes");
+        "wide background and sprite intervals group while tile bounds refuse before writes");
     }
     for(unsigned i=0;i<3u;i++) ops[i].target.image.content_version=200u+i;
     for(unsigned i=1u;i<3u;i++){

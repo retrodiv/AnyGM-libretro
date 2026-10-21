@@ -15524,6 +15524,61 @@ static int resident_integer_sprite_function(void){return resident_sprite_functio
 static int resident_nearest_sprite_function(void){return resident_sprite_function(1);}
 static int resident_first_generation_rotated_point_sprite_function(void){return resident_sprite_function(2);}
 
+static int resident_sprite_axis_frontier(int underlay){
+  enum { W=64,H=48,S=32 };
+  AnygmContentFacts facts={.schema_version=ANYGM_COMPATIBILITY_SCHEMA,
+    .bytecode_revision=17,.has_room_layers=1};AnygmCompatibilityProfile profile={0};
+  GmlWin content={.bytecode=17,.has_room_layers=1,.compatibility=&profile};
+  GmlRender *r=calloc(1,sizeof *r);
+  FakeDevice fake={.on_demand=1};GmlRenderDeviceServices device=service(&fake);
+  uint32_t screen[W*H];GmlRenderJournalMetrics metrics={0};
+  CHECK(anygm_compatibility_resolve(&facts,&profile,NULL,0));
+  CHECK(r && !gml_render_init(r,NULL));r->win=&content;
+  free(r->atlas[0].px);r->atlas[0].px=malloc(S*S*4u);
+  r->tpag=calloc(1,sizeof *r->tpag);r->spr=calloc(1,sizeof *r->spr);
+  CHECK(r->atlas[0].px && r->tpag && r->spr);
+  r->n_tpag=r->n_spr=1;r->atlas[0].w=r->atlas[0].h=S;
+  for(unsigned p=0;p<S*S;p++){
+    r->atlas[0].px[4u*p]=(uint8_t)(p*7u);
+    r->atlas[0].px[4u*p+1u]=(uint8_t)(p*11u);
+    r->atlas[0].px[4u*p+2u]=(uint8_t)(p*13u);
+    r->atlas[0].px[4u*p+3u]=128u;
+  }
+  int extent=underlay?S:S/2;
+  r->tpag[0]=(GmlTpag){.sw=extent,.sh=extent,.tw=extent,.th=extent,.bw=extent,.bh=extent};
+  r->spr[0]=(GmlSprite){.w=extent,.h=extent,.n_frames=1};
+  r->spr[0].frame=calloc(1,sizeof(int));CHECK(r->spr[0].frame);
+  device.observe_on_demand=fake_observe_on_demand;gml_render_bind_device(r,&device);
+  if(underlay){
+    CHECK(gml_render_application_surface_ensure_owned(r,W*2,H*2) &&
+      gml_render_begin_resident_owned_application(r,0,0,0));
+    gml_render_set_pending_fill(r,0x80401020u);gml_render_flush_pending_fill(r);
+    CHECK(gml_render_scene_submit_pending(r));r->app_surface_opaque=0;
+  }
+  for(unsigned p=0;p<W*H;p++) screen[p]=0xA5ABCDEFu;
+  CHECK(gml_render_begin_resident_base(r,screen,W,H,0,0));
+  if(underlay) gml_render_gui_begin(r,W,H);
+  else{r->world_transform_active=1;r->world_scale_x=r->world_scale_y=2;}
+  gml_render_set_pending_fill(r,0x40123456u);
+  if(underlay) gml_render_set_pending_underlay(r,0,0,W,H);
+  r->interp=0;
+  /* A masked wide-axis control cannot be hidden by the older unmasked
+   * preferred packet. Real device pairs cover both mask classes. */
+  if(!underlay) r->color_write_mask=5u;
+  double mx=1,my=1;gml_render_draw_map_scale(r,&mx,&my);
+  CHECK(mx==(underlay?1:2) && my==mx);
+  gml_draw_sprite_ext(r,0,0,1,1,underlay?14:64,underlay?14:1,0,0xFFFFFFu,underlay?.61:1);
+  if(!r->resident_application_pass || r->pending_underlay || fake.readbacks)
+    fprintf(stderr,"sprite axis frontier: underlay=%d resident=%d pending=%d reads=%d\n",
+      underlay,r->resident_application_pass,r->pending_underlay,fake.readbacks);
+  CHECK(r->resident_application_pass && !r->pending_underlay && !fake.readbacks &&
+    gml_render_scene_submit_pending(r));
+  gml_render_resource_journal_metrics(r->base_scene_resource,&metrics);
+  CHECK(metrics.authority==GML_RENDER_RESOURCE_GPU_RESIDENT && !metrics.cpu_replays && !metrics.journal_operations);
+  for(unsigned p=0;p<W*H;p++) CHECK(screen[p]==0xA5ABCDEFu);
+  gml_render_free(r);free(r);return 1;
+}
+
 /* Authority and ownership only; the paired device matrix owns tiled pixels. */
 static int resident_tiled_sprite_function_impl(int underlay){
   enum { W=24,H=20 };
@@ -18738,6 +18793,8 @@ int main(void){
   passed+=resident_classic_nonphase_sprite_targets();
   passed+=resident_integer_sprite_function();
   passed+=resident_nearest_sprite_function();
+  passed+=resident_sprite_axis_frontier(0);
+  passed+=resident_sprite_axis_frontier(1);
   passed+=resident_flat_fog_sprite_function();
   passed+=resident_first_generation_rotated_point_sprite_function();
   passed+=resident_tiled_sprite_function();
@@ -18830,6 +18887,6 @@ int main(void){
   passed+=resident_extended_roundrect_refusals();
   passed+=resident_registered_view_surface_source();
   passed+=resident_empty_surface_part_prefix();
-  printf("render resource cases: passed=%d failed=%d\n",passed,293-passed);
-  return passed==293?EXIT_SUCCESS:EXIT_FAILURE;
+  printf("render resource cases: passed=%d failed=%d\n",passed,295-passed);
+  return passed==295?EXIT_SUCCESS:EXIT_FAILURE;
 }
