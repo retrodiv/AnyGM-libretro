@@ -2085,7 +2085,7 @@ static int scene_filtered_affine_row_batch_case(void){
   for(unsigned positive=0;positive<17u;positive++)
   for(unsigned background=0;background<5u;background++)
   for(unsigned axis_sprite=0;axis_sprite<(background?2u:1u);axis_sprite++)
-  for(unsigned mask_index=0;mask_index<(background>=3u?4u:1u);mask_index++)
+  for(unsigned mask_index=0;mask_index<(background>=3u?4u:axis_sprite?16u:1u);mask_index++)
   for(unsigned invalid=0;invalid<(background>=3u?23u:axis_sprite?18u:background?17u:positive?16u:14u);invalid++){
     if(background && !positive) continue;
     if(!background && positive>=4u) continue;
@@ -2093,7 +2093,7 @@ static int scene_filtered_affine_row_batch_case(void){
     if(background==1u && positive>=5u) continue;
     if(background<3u && positive>=7u) continue;
     if(background>=3u && (positive==3u || positive==5u || positive==6u)) continue;
-    unsigned quads=background>=3u && (positive!=1u || mask_index)?3u:QUADS;
+    unsigned quads=(background>=3u || axis_sprite) && (positive!=1u || mask_index)?3u:QUADS;
     anygm_test_graphics_reset();
     GmlGpu *gpu=gml_gpu_create();GmlRenderDeviceServices device={0};
     GmlGpuContext context=fake_context(api?GML_GPU_API_OPENGLES3:GML_GPU_API_OPENGL_CORE);
@@ -2109,7 +2109,7 @@ static int scene_filtered_affine_row_batch_case(void){
     state.write_mask=15u;state.alpha=255u;state.colour=0xFFFFFFFFu;state.sampler_count=1u;
     if(background>=3u){
       static const uint32_t masks[]={15u,7u,8u,0u};state.write_mask=masks[mask_index];
-    }
+    }else if(axis_sprite) state.write_mask=(mask_index+15u)%16u;
     state.samplers[0]=(GmlRenderSamplingPolicy){GML_RENDER_FILTER_HARDWARE_BILINEAR,
       GML_RENDER_EDGE_CLAMP_SUBIMAGE,{0,0,2u,2u},background>=3u?
         (background==3u?GML_RENDER_QUANTISE_INTEGER_TINT_TRUNC:GML_RENDER_QUANTISE_INTEGER_TINT_ROUND):background==2u?
@@ -2210,7 +2210,9 @@ static int scene_filtered_affine_row_batch_case(void){
       if(positive>=4u || background>=3u) last->inverse_offset[1]=1.0;
       else state.coverage_policy=positive==3u?GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA:0u;
     }
-    if(invalid==16u) state.write_mask=background>=3u?16u:7u;
+    /* All sixteen masks now have paired axis owners. Out-of-range16 is
+     * still malformed and must refuse before even the clear prefix. */
+    if(invalid==16u) state.write_mask=background>=3u || axis_sprite?16u:7u;
     if(invalid==17u) ops[quads].scene_family=axis_sprite?GML_RENDER_SCENE_BACKGROUND:GML_RENDER_SCENE_TILE;
     if(invalid==18u) last->sampling.filter=GML_RENDER_FILTER_NEAREST;
     if(invalid==19u) state.colour=0xFF123456u;

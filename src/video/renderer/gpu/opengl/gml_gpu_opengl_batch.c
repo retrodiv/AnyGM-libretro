@@ -1008,8 +1008,8 @@ static int hardware_screen_sprite_valid(const GmlRenderDrawOp *op,
      (source && (source->width>16384u || source->height>16384u)))) return 0;
   int background_row=positive_row && op->scene_family==GML_RENDER_SCENE_BACKGROUND && state->write_mask==15u;
   if(selected_axis_row && (op->scene_family!=GML_RENDER_SCENE_SPRITE ||
-      (state->write_mask!=15u && !byte_background))) return 0;
-  int firstgen_row=(background_row || (selected_axis_row && state->write_mask==15u)) &&
+      state->write_mask>15u)) return 0;
+  int firstgen_row=(background_row || selected_axis_row) &&
     quad->sampling.quantisation==GML_RENDER_QUANTISE_HARDWARE_SPRITE_FIRSTGEN;
   int covered_blend=((blend==0 || blend==1) &&
       state->coverage_policy==GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA) ||
