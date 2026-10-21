@@ -718,6 +718,20 @@
   "    o_color=vec4(vec3(rgb)/255.0,float(sampled.a)/255.0); return;\n" \
   "  }\n" \
   "  // R03_SHADER_HARDWARE_FILTERED_SURFACE: hardware sampling and batched coverage.\n" \
+  "  if(u_filter>=147 && u_filter<=158){\n" \
+  "    if(u_filter==150 || u_filter==154){ o_color=vec4(0.0,0.0,0.0,1.0); return; }\n" \
+  "    vec2 extent=vec2(textureSize(u_image,0));\n" \
+  "    vec2 uv=clamp(v_texcoord,(v_clamp.xy+vec2(0.5))/extent,(v_clamp.zw+vec2(0.5))/extent);\n" \
+  "    int margin=int(floor(v_margin+0.5));\n" \
+  "    vec4 sampled=margin!=0?hardware_physical_sprite_sample(v_texcoord,ivec2(v_clamp.xy),ivec2(v_clamp.zw),margin):texture(u_image,uv);\n" \
+  "    uvec4 bytes=uvec4(floor(clamp(sampled,0.0,1.0)*255.0+vec4(0.5)));\n" \
+  "    uvec3 tint=uvec3(floor(v_colour.rgb*255.0+vec3(0.5)));\n" \
+  "    uint bias=((u_filter>=151 && u_filter<=154)||u_filter>=157)?127u:0u;\n" \
+  "    uvec3 tinted=(bytes.rgb*tint+uvec3(bias))/255u;\n" \
+  "    float alpha=float(bytes.a)*v_colour.a/255.0;\n" \
+  "    vec3 rgb=u_filter>=155?floor(vec3(tinted)*alpha)/255.0:vec3(tinted)/255.0;\n" \
+  "    o_color=vec4(rgb,(u_filter==149 || u_filter==153)?1.0:alpha); return;\n" \
+  "  }\n" \
   "  bool covered_row=u_filter>=137 && u_filter<=146;\n" \
   "  int physical_filter=covered_row?u_filter-72:u_filter;\n" \
   "  if((u_filter>=65 && u_filter<=74)||(u_filter>=79 && u_filter<=82)||(u_filter>=112 && u_filter<=115)||covered_row){\n" \

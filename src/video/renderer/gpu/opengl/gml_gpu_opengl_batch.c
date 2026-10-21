@@ -201,6 +201,19 @@ static int qualified_blend(const GmlRenderDrawStateSnapshot *state){
 
 static uint32_t scene_filter(const GmlRenderQuad *quad,
                              const GmlRenderDrawStateSnapshot *state,uint32_t family){
+  if(family==GML_RENDER_SCENE_BACKGROUND && quad->sampling.filter==GML_RENDER_FILTER_HARDWARE_BILINEAR &&
+     (quad->sampling.quantisation==GML_RENDER_QUANTISE_INTEGER_TINT_TRUNC ||
+      quad->sampling.quantisation==GML_RENDER_QUANTISE_INTEGER_TINT_ROUND)){
+    unsigned base=quad->sampling.quantisation==GML_RENDER_QUANTISE_INTEGER_TINT_ROUND?151u:147u;
+    int blend=qualified_blend(state);
+    if(blend==9) return (base==151u?157u:155u)+
+      (state->coverage_policy==GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA);
+    if(state->coverage_policy==GML_RENDER_COVERAGE_REPLACE_SOURCE_ALPHA) return base;
+    if(!blend || blend==20 || blend==21 ||
+       (blend>=GL_SCENE_BLEND_SURFACE_DEST_BASE && blend<=GL_SCENE_BLEND_SURFACE_DEST_LIMIT &&
+        state->coverage_policy==GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA)) return base+2u;
+    return base+(state->coverage_policy==GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA);
+  }
   if(quad->sampling.quantisation==GML_RENDER_QUANTISE_SURFACE_ROTATED_POINT){
     int blend=qualified_blend(state);
     if(blend>=GL_SCENE_BLEND_SURFACE_DEST_BASE && blend<=GL_SCENE_BLEND_SURFACE_DEST_LIMIT &&
@@ -973,6 +986,20 @@ static int hardware_screen_sprite_valid(const GmlRenderDrawOp *op,
   int positive_row=quad->span_active==GML_RENDER_SPAN_FILTERED_POSITIVE_ROW;
   int affine_row=positive_row || quad->span_active==GML_RENDER_SPAN_FILTERED_AFFINE_ROW;
   int blend=qualified_blend(state);
+  int byte_background=op->scene_family==GML_RENDER_SCENE_BACKGROUND &&
+    (quad->sampling.quantisation==GML_RENDER_QUANTISE_INTEGER_TINT_TRUNC ||
+     quad->sampling.quantisation==GML_RENDER_QUANTISE_INTEGER_TINT_ROUND);
+  int background_blend=byte_background && (blend==0 || blend==1 || blend==3 || blend==9 ||
+    (blend>=18 && blend<=21) || blend==24 || blend==25 ||
+    (blend>=GL_SCENE_BLEND_SURFACE_DEST_BASE && blend<=GL_SCENE_BLEND_SURFACE_DEST_LIMIT &&
+     state->rgb_equation==GML_RENDER_BLEND_ADD && state->alpha_equation==GML_RENDER_BLEND_ADD));
+  if(byte_background && (!positive_row || !background_blend || state->write_mask>15u ||
+     state->alpha_test_enabled || state->alpha_test_reference ||
+     (quad->filtered_draw_alpha==0.0 &&
+      state->coverage_policy!=GML_RENDER_COVERAGE_REPLACE_SOURCE_ALPHA &&
+      state->coverage_policy!=GML_RENDER_COVERAGE_REPLACE_ZERO_ALPHA &&
+      !(blend>=GL_SCENE_BLEND_SURFACE_DEST_BASE && blend<=GL_SCENE_BLEND_SURFACE_DEST_LIMIT)) ||
+     (source && (source->width>16384u || source->height>16384u)))) return 0;
   int background_row=positive_row && op->scene_family==GML_RENDER_SCENE_BACKGROUND && state->write_mask==15u;
   int firstgen_row=background_row &&
     quad->sampling.quantisation==GML_RENDER_QUANTISE_HARDWARE_SPRITE_FIRSTGEN;
@@ -983,24 +1010,25 @@ static int hardware_screen_sprite_valid(const GmlRenderDrawOp *op,
     (firstgen_row && blend==15 && (state->coverage_policy==0u ||
       state->coverage_policy==GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA)) ||
     (firstgen_row && !blend && state->coverage_policy==GML_RENDER_COVERAGE_REPLACE_ZERO_ALPHA);
-  if(positive_row && ((!firstgen_row &&
+  if(positive_row && ((!firstgen_row && !byte_background &&
        quad->sampling.quantisation!=GML_RENDER_QUANTISE_HARDWARE_SPRITE_MODERN) ||
-     !covered_blend ||
+     (!covered_blend && !background_blend) ||
      (state->alpha_test_enabled && state->alpha_test_reference) ||
-     quad->filtered_draw_alpha<0x1p-32)) return 0;
+     (!byte_background && quad->filtered_draw_alpha<0x1p-32))) return 0;
   int physical=(quad->sampling.quantisation==GML_RENDER_QUANTISE_HARDWARE_SPRITE_FIRSTGEN ||
-                quad->sampling.quantisation==GML_RENDER_QUANTISE_HARDWARE_SPRITE_MODERN) &&
+                quad->sampling.quantisation==GML_RENDER_QUANTISE_HARDWARE_SPRITE_MODERN || byte_background) &&
     (op->scene_family==GML_RENDER_SCENE_SPRITE ||
-     (op->scene_family==GML_RENDER_SCENE_BACKGROUND && state->write_mask==15u) ||
+     (op->scene_family==GML_RENDER_SCENE_BACKGROUND && (state->write_mask==15u || byte_background)) ||
      (op->scene_family==GML_RENDER_SCENE_TEXT && state->write_mask==15u)) && state->write_mask<=15u &&
     (op->target.image.resource_class==GML_RENDER_RESOURCE_SCREEN ||
      op->target.image.resource_class==GML_RENDER_RESOURCE_APPLICATION ||
      op->target.image.resource_class==GML_RENDER_RESOURCE_SURFACE) &&
     (state->coverage_policy==0u ||
      state->coverage_policy==GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA ||
-     (!qualified_blend(state) && state->coverage_policy==GML_RENDER_COVERAGE_REPLACE_ZERO_ALPHA)) &&
+     (!qualified_blend(state) && (state->coverage_policy==GML_RENDER_COVERAGE_REPLACE_ZERO_ALPHA ||
+       (byte_background && state->coverage_policy==GML_RENDER_COVERAGE_REPLACE_SOURCE_ALPHA)))) &&
     (qualified_blend(state)==0 || qualified_blend(state)==1 || qualified_blend(state)==3 ||
-     qualified_blend(state)==15 || qualified_blend(state)==16 || qualified_blend(state)==17);
+     qualified_blend(state)==15 || qualified_blend(state)==16 || qualified_blend(state)==17 || background_blend);
   if(margin==GML_RENDER_MARGIN_UNIT_TEXEL){
     if(!physical || affine_row ||
        xs!=1.0 || ys!=1.0 || left!=floor(left) || top!=floor(top) ||
@@ -1037,7 +1065,8 @@ static int hardware_screen_sprite_valid(const GmlRenderDrawOp *op,
           ((margin&GML_RENDER_MARGIN_BOTTOM) && (uint64_t)(uint32_t)region.y+region.height>=source->height)))
        : quad->sampling.edge_rule!=GML_RENDER_EDGE_CLAMP_SUBIMAGE) ||
      (quad->sampling.quantisation && !physical) || (quad->span_active && !affine_row) ||
-     !isfinite(quad->filtered_draw_alpha) || quad->filtered_draw_alpha<=0.0 ||
+     !isfinite(quad->filtered_draw_alpha) || quad->filtered_draw_alpha<0.0 ||
+     (!byte_background && quad->filtered_draw_alpha==0.0) ||
      quad->filtered_draw_alpha>1.0 ||
      !isfinite(xs) || !isfinite(ys) ||
      (!affine_row && (physical?fabs(xs)<0.125 || fabs(xs)>64.0 || fabs(ys)<0.125 || fabs(ys)>64.0:
@@ -1052,7 +1081,7 @@ static int hardware_screen_sprite_valid(const GmlRenderDrawOp *op,
     /* Background parts share the modern CPU positive-alpha coverage rows.
      * Other affine families and background write masks stay unqualified. */
     int background_positive=positive_row && op->scene_family==GML_RENDER_SCENE_BACKGROUND &&
-      state->write_mask==15u;
+      (state->write_mask==15u || byte_background);
     if(!physical || (op->scene_family!=GML_RENDER_SCENE_SPRITE && !background_positive) ||
        quad->y[2]-quad->y[0]!=1.0 ||
        region.width>4096u || region.height>4096u ||
@@ -1442,7 +1471,10 @@ static int scene_preflight(GmlGpuBackend *backend,const GmlRenderDrawBatch *batc
       int stretched_box=fixed_stretched_quad_valid(op,state,source);
       int physical_sprite=hardware_sprite &&
         (sampling->quantisation==GML_RENDER_QUANTISE_HARDWARE_SPRITE_FIRSTGEN ||
-         sampling->quantisation==GML_RENDER_QUANTISE_HARDWARE_SPRITE_MODERN);
+         sampling->quantisation==GML_RENDER_QUANTISE_HARDWARE_SPRITE_MODERN ||
+         (op->scene_family==GML_RENDER_SCENE_BACKGROUND &&
+          (sampling->quantisation==GML_RENDER_QUANTISE_INTEGER_TINT_TRUNC ||
+           sampling->quantisation==GML_RENDER_QUANTISE_INTEGER_TINT_ROUND)));
       int integer_sourceover=integer_sourceover_sprite_valid(op,state,source) &&
         (blend==1 || blend==3);
       int integer_function=integer_function_sprite_valid(op,state,source) ||
@@ -1600,18 +1632,18 @@ static int scene_preflight(GmlGpuBackend *backend,const GmlRenderDrawBatch *batc
          ((sampling->quantisation==GML_RENDER_QUANTISE_INTEGER_TINT_TRUNC ||
            sampling->quantisation==GML_RENDER_QUANTISE_INTEGER_TINT_ROUND ||
            sampling->quantisation==GML_RENDER_QUANTISE_INTEGER_ROW_TINT_TRUNC ||
-           sampling->quantisation==GML_RENDER_QUANTISE_INTEGER_FLAT_RGB) && !integer_function) ||
+           sampling->quantisation==GML_RENDER_QUANTISE_INTEGER_FLAT_RGB) && !integer_function && !physical_sprite) ||
          state->colour!=0xFFFFFFFFu || (state->alpha_test_enabled && !integer_function && !physical_sprite && !stretched_box && !screen_axis_sprite &&
            !(hardware_surface && (sampling->quantisation==GML_RENDER_QUANTISE_SURFACE_TILED_FILTERED ||
                                  sampling->quantisation==GML_RENDER_QUANTISE_SURFACE_TILED_LEADING))) ||
-         blend<0 || ((blend==13 || blend==14 || (blend>=18 && blend<=21)) && !integer_function) ||
+         blend<0 || ((blend==13 || blend==14 || (blend>=18 && blend<=21)) && !integer_function && !physical_sprite) ||
          ((blend==15 || blend==16 || blend==17) && !physical_sprite) ||
          (blend==11 && (!hardware_surface || !backend->gl.CopyTexSubImage2D)) ||
          ((integer_function || integer_sourceover || physical_sprite || blend==1 || blend==9 || blend==10 ||
                        (blend==3 && sampling->filter==GML_RENDER_FILTER_HARDWARE_BILINEAR)) &&
                       (!backend->gl.BlendFuncSeparate ||
                                  !backend->gl.BlendEquationSeparate)) ||
-         (blend==9 && (sampling->filter!=GML_RENDER_FILTER_HARDWARE_BILINEAR ||
+         (blend==9 && !physical_sprite && (sampling->filter!=GML_RENDER_FILTER_HARDWARE_BILINEAR ||
                        sampling->quantisation || sampling->logical_margin_mask ||
                        sampling->edge_rule!=GML_RENDER_EDGE_CLAMP_SUBIMAGE ||
                        op->payload.quad.shape!=GML_RENDER_QUAD_AXIS_ALIGNED ||
@@ -2026,7 +2058,7 @@ static int flush_quads(GmlGpuBackend *backend,GlSceneImage *target,GlSceneImage 
   GLfloat extent[2]={(GLfloat)target->width,(GLfloat)target->height};
   GLenum texture_filter=(filter>=106u && filter<=108u) || filter==99u || filter==100u || filter==77u || filter==18u || filter==19u || filter==20u || filter==21u ||
     (filter>=65u && filter<=74u) || (filter>=79u && filter<=82u) ||
-    filter==112u || filter==114u || filter==115u || (filter>=137u && filter<=146u)
+    filter==112u || filter==114u || filter==115u || (filter>=137u && filter<=158u)
     ?GL_LINEAR:GL_NEAREST;
   GLsizei stride=GL_SCENE_INSTANCE_FLOATS*(GLsizei)sizeof(float);
   size_t bytes=(size_t)count*GL_SCENE_INSTANCE_FLOATS*sizeof(float),offset;
@@ -2112,7 +2144,8 @@ static int flush_quads(GmlGpuBackend *backend,GlSceneImage *target,GlSceneImage 
                   filter==46u || filter==47u || filter==53u || filter==60u ||
                   filter==66u || filter==69u || filter==71u || filter==80u ||
                   filter==86u || filter==93u || filter==110u || filter==112u ||
-                  filter==138u || filter==141u || filter==143u;
+                  filter==138u || filter==141u || filter==143u || filter==148u || filter==152u ||
+                  filter==156u || filter==158u;
   backend->gl.ColorMask((write_mask&1u)!=0u,(write_mask&2u)!=0u,(write_mask&4u)!=0u,
                         (!stamp_alpha || filter==110u) && (write_mask&8u)!=0u);
   backend->gl.UseProgram(scene->program);
@@ -2161,7 +2194,7 @@ static int flush_quads(GmlGpuBackend *backend,GlSceneImage *target,GlSceneImage 
      * the same sampler and cutout in an alpha-only pass, preserving that recipe's coverage. */
     backend->gl.ColorMask(GL_FALSE,GL_FALSE,GL_FALSE,GL_TRUE);
     backend->gl.Disable(GL_BLEND);
-    backend->gl.Uniform1i(scene->u_filter,filter>=137u && filter<=146u?(filter==141u?146:144):filter==133u?134:filter==130u?131:filter==112u?113:filter==110u?111:filter==104u || filter==107u?(GLint)filter+1:filter==99u?100:filter==93u?95:filter==86u?88:filter==80u?82:filter==77u?78:filter==75u?76:filter==69u?74:filter>=65u?72:filter==60u?62:filter==53u?55:(filter==46u || filter==47u)?48:(filter==39u || filter==40u)?41:filter==35u?36:filter==32u?33:filter==25u?26:
+    backend->gl.Uniform1i(scene->u_filter,filter==148u || filter==156u?150:filter==152u || filter==158u?154:filter>=137u && filter<=146u?(filter==141u?146:144):filter==133u?134:filter==130u?131:filter==112u?113:filter==110u?111:filter==104u || filter==107u?(GLint)filter+1:filter==99u?100:filter==93u?95:filter==86u?88:filter==80u?82:filter==77u?78:filter==75u?76:filter==69u?74:filter>=65u?72:filter==60u?62:filter==53u?55:(filter==46u || filter==47u)?48:(filter==39u || filter==40u)?41:filter==35u?36:filter==32u?33:filter==25u?26:
                          filter==23u?24:filter==21u?22:filter==9u?10:13);
     backend->gl.DrawArraysInstanced(GL_TRIANGLES,0,6,(GLsizei)count);
   }

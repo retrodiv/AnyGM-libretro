@@ -173,7 +173,8 @@ enum {
   GML_RENDER_QUANTISE_SPRITE_MODERN_NEAREST=9u,
   /* Modern numbered rotation: CPU fixed-point texel spans and truncating exact16 blend. */
   GML_RENDER_QUANTISE_SPRITE_MODERN_ROTATED_NEAREST=10u,
-  /* Whole nearest sprite texels use an integer RGB product, then fixed source-over. */
+  /* Nearest texels or hardware-filtered source bytes use an integer RGB tint
+   * product before fixed blending;the sampling filter owns interpolation. */
   GML_RENDER_QUANTISE_INTEGER_TINT_TRUNC=11u,
   GML_RENDER_QUANTISE_INTEGER_TINT_ROUND=12u,
   /* Full-source surface point samples use integral destination loop indices. */

@@ -200,7 +200,8 @@ int gml_render_resident_filtered_atlas_part(GmlRender *r,int page_index,
    * its already qualified exact stamp;sampled application alpha also keeps
    * its cheap owner before the physical companion. */
   if(!nearest_scaled && family==GML_RENDER_SCENE_BACKGROUND &&
-     ((!r->gui_pass_active && !gml_render_target_preserves_alpha(r)) || sx<page->tx || sy<page->ty ||
+     ((r->blendmode!=0 && r->blendmode!=2) ||
+      (!r->gui_pass_active && !gml_render_target_preserves_alpha(r)) || sx<page->tx || sy<page->ty ||
       sx+sw>page->tx+page->sw || sy+sh>page->ty+page->sh))
     sampling_rule=GML_RENDER_FILTERED_HARDWARE_PART_RULE;
   return gml_render_resident_filtered_atlas_page(

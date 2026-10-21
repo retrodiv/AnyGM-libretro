@@ -16558,6 +16558,8 @@ static int resident_selected_background_function(void){
 static int resident_background_part_trim_function(void){
   enum { W=48,H=40,A=16 };
   static const int generations[]={15,530,700,800,13,17};
+  CHECK(!gml_render_resident_filtered_atlas_page(NULL,0,0,0,1,1,
+    GML_RENDER_SCENE_BACKGROUND,0xFFFFFFu,1,NULL,GML_RENDER_FILTERED_HARDWARE_PART_RULE));
   for(unsigned policy=0;policy<6u;policy++) for(unsigned owner=0;owner<5u;owner++)
   for(unsigned gui=0;gui<2u;gui++) for(unsigned filtered=0;filtered<2u;filtered++)
   for(unsigned transformed=0;transformed<2u;transformed++){
@@ -16572,6 +16574,9 @@ static int resident_background_part_trim_function(void){
     FakeDevice fake={.on_demand=1,.readback_colour=0xFF315779u};
     GmlRenderDeviceServices device=service(&fake);device.observe_on_demand=fake_observe_on_demand;
     CHECK(r && !gml_render_init(r,NULL));r->win=&content;r->classic=facts.classic_revision!=0;
+    GmlTpag inactive_page={0};
+    CHECK(!gml_render_resident_filtered_atlas_page(r,0,0,0,1,1,
+      GML_RENDER_SCENE_BACKGROUND,0xFFFFFFu,1,&inactive_page,GML_RENDER_FILTERED_HARDWARE_PART_RULE));
     CHECK(r->atlas && r->n_atlas==1);
     free(r->atlas[0].px);r->atlas[0]=(GmlAtlas){0};
     r->tpag=calloc(1,sizeof *r->tpag);
@@ -16683,7 +16688,7 @@ static int resident_background_part_trim_function(void){
             !fake.readbacks && !fake.rgb_queries && r->color_write_mask==mask);
       CHECK(boundary==3u?fake.submits==submitted:fake.submits>submitted);
     }
-    if(!filtered || r->classic){
+    {
       r->alpha_test_enable=1;r->alpha_test_ref=127u;
       for(unsigned blend=0;blend<12u;blend++){
         r->blendmode=(int)blend;
@@ -16699,6 +16704,22 @@ static int resident_background_part_trim_function(void){
         }
       }
     }
+    if(filtered && !r->classic && owner==3u && !gui && !transformed){
+      /* A preserving target cleared opaque loses that certificate when
+       * replacement writes partial alpha,even without an authored margin. */
+      GmlTpag saved_page=r->tpag[0];
+      r->tpag[0].tx=r->tpag[0].ty=0;
+      r->tpag[0].bw=r->tpag[0].sw;r->tpag[0].bh=r->tpag[0].sh;
+      r->blendmode=6;r->alphablend=1;r->alpha_test_enable=0;r->color_write_mask=15u;
+      gml_render_set_pending_fill(r,0xFF273859u);gml_render_flush_pending_fill(r);
+      CHECK(gml_render_scene_submit_pending(r) && r->fb_opaque_known && r->fb_all_opaque);
+      gml_draw_background_part_ext(r,0,0,0,r->tpag[0].sw,r->tpag[0].sh,
+        12,12,1,1,0xFFFFFFu,.37);
+      CHECK(r->resident_application_pass && !fake.readbacks);
+      CHECK(!r->fb_opaque_known);
+      CHECK(gml_render_scene_submit_pending(r));
+      r->tpag[0]=saved_page;
+    }
     if(filtered && !r->classic && !anygm_policy_has_modern_layer_semantics(r->win) &&
        owner==3u && !gui && !transformed){
       /* Count the unqualified two-axis cutout magnification as ordered CPU,
@@ -16709,6 +16730,15 @@ static int resident_background_part_trim_function(void){
       submitted=fake.submits;int reads=fake.readbacks;
       gml_render_draw_state_get(r,&before);
       gml_draw_background_part_ext(r,0,0,0,8,9,12,12,1.25,2.5,0xFFFFFFu,1);
+      CHECK(!r->resident_application_pass && fake.readbacks==reads+1 && fake.submits==submitted);
+      gml_render_draw_state_get(r,&after);CHECK(!memcmp(&before,&after,sizeof before));
+    }
+    if(filtered && anygm_policy_has_modern_layer_semantics(r->win) &&
+       owner==3u && !gui && !transformed){
+      r->blendmode=4;r->alphablend=1;r->alpha_test_enable=0;
+      submitted=fake.submits;int reads=fake.readbacks;
+      gml_render_draw_state_get(r,&before);
+      gml_draw_background_part_ext(r,0,0,0,8,9,12,12,1,1,0x70B0D0u,1e-100);
       CHECK(!r->resident_application_pass && fake.readbacks==reads+1 && fake.submits==submitted);
       gml_render_draw_state_get(r,&after);CHECK(!memcmp(&before,&after,sizeof before));
     }

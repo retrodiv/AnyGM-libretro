@@ -5545,7 +5545,8 @@ static int filtered_axis_covered_sample(GmlRender *r,const GmlAtlas *atlas,const
                               &red,&green,&blue,&alpha);
   if(shader_discards_alpha_value(r,alpha)) return 0;
   if(!r->blendmode && anygm_policy_has_modern_layer_semantics(r->win)) return alpha>0.0;
-  return (int)(alpha+0.5)>0 || r->blendmode==2;
+  return (int)(alpha+0.5)>0 || r->blendmode==2 ||
+    (r->alphablend && (r->blendmode==6 || gml_render_blend_uses_destination_colour(r->blendmode)));
 }
 
 static int filtered_axis_support_rows(GmlRender *r,GmlTpag *page,
@@ -5597,7 +5598,7 @@ int gml_render_filtered_axis_coverage_rows(GmlRender *r,GmlTpag *page,
     double left,double top,double xs,double ys,GmlRenderRect region,
     GmlRenderFilteredRotationRow *rows,uint32_t capacity,uint32_t *count){
   if(!r || !r->win || r->classic || !r->interp ||
-     r->active_shader>=0 || (r->blendmode!=0 && r->blendmode!=2)) return 0;
+     r->active_shader>=0 || r->blendmode<0 || r->blendmode>11) return 0;
   return filtered_axis_support_rows(r,page,left,top,xs,ys,region,rows,capacity,count,1);
 }
 
