@@ -143,29 +143,36 @@ int gml_render_resident_filtered_atlas_part(GmlRender *r,int page_index,
   int trimmed;
   double overlap_x0=0.0,overlap_y0=0.0,overlap_x1=0.0,overlap_y1=0.0;
   double anchor_x,anchor_y,cell_xs,cell_ys;
+  /* The shared CPU part view clips negative logical background anchors.
+   * Other families retain their source fence;keep crop casts in int range. */
   if(!r || !r->resident_application_pass ||
      page_index<0 || page_index>=r->n_tpag || gml_d3_is_active(r) ||
      !isfinite(sx) || !isfinite(sy) || !isfinite(sw) || !isfinite(sh) ||
      !isfinite(x) || !isfinite(y) || !isfinite(xs) || !isfinite(ys) ||
-     !isfinite(alpha) || sx<0.0 || sy<0.0 || sw<=0.0 || sh<=0.0 ||
+     !isfinite(alpha) || ((sx<0.0 || sy<0.0) && family!=GML_RENDER_SCENE_BACKGROUND) ||
+     sx<-(double)INT_MAX || sy<-(double)INT_MAX || sw<=0.0 || sh<=0.0 ||
      sx>INT_MAX || sy>INT_MAX || sw>INT_MAX || sh>INT_MAX) return 0;
+  /* Negative finite background opacity clamps to zero in the CPU leaf.
+   * Avoid a target read for that no-op without changing readable draw state.
+   * Above-one inputs retain their existing qualification boundary. */
+  if(family==GML_RENDER_SCENE_BACKGROUND && alpha<0.0) alpha=0.0;
   int nearest_scaled=!r->interp;
   int nearest_tile=nearest_scaled && family==GML_RENDER_SCENE_TILE;
   if(nearest_scaled && !nearest_tile && (family!=GML_RENDER_SCENE_BACKGROUND ||
      sx!=floor(sx) || sy!=floor(sy) || sw!=floor(sw) || sh!=floor(sh))) return 0;
   page=&r->tpag[page_index];
-  /* The CPU part view already clips logical trim. Admit a background selection
-   * only when it is wholly inside the packed area; edge-crossing trim and
-   * tile-source trim remain separate rules. */
+  /* Background parts use the CPU's existing logical-trim intersection, also
+   * when the requested selection crosses the stored rectangle. Filtered tile
+   * selections retain their separately qualified source boundary. */
   trimmed=page->tx || page->ty || page->bw!=page->sw || page->bh!=page->sh;
   if(page->tx<0 || page->ty<0 || page->bw<=0 || page->bh<=0 ||
      (int64_t)page->tx+page->sw>page->bw ||
      (int64_t)page->ty+page->sh>page->bh ||
-     (!nearest_tile && ((trimmed && family!=GML_RENDER_SCENE_BACKGROUND) ||
+     (!nearest_tile && family!=GML_RENDER_SCENE_BACKGROUND && (trimmed ||
       sx<(double)page->tx || sy<(double)page->ty ||
-      sx+sw>(double)page->tx+page->sw || sy+sh>(double)page->ty+page->sh)) ||
-     !gml_render_tpag_part_view(page,sx,sy,sw,sh,&view,&source_x,&source_y,
-                                &overlap_x0,&overlap_y0,&overlap_x1,&overlap_y1)) return 0;
+      sx+sw>(double)page->tx+page->sw || sy+sh>(double)page->ty+page->sh))) return 0;
+  if(!gml_render_tpag_part_view(page,sx,sy,sw,sh,&view,&source_x,&source_y,
+                                &overlap_x0,&overlap_y0,&overlap_x1,&overlap_y1)) return 1;
   /* Reuse the CPU part writer's one-cell extent and anchor normalization.
    * Multi-cell selections retain outward-snapped source geometry. Nearest
    * tile selections retain their separate authored-edge/clamp owner. */
@@ -187,10 +194,19 @@ int gml_render_resident_filtered_atlas_part(GmlRender *r,int page_index,
     return gml_render_resident_nearest_tile_page(r,&view,
       x+(anchor_x-sx)*xs-r->cam_x,y+(anchor_y-sy)*ys-r->cam_y,
       cell_xs,cell_ys,color,alpha);
+  int sampling_rule=nearest_scaled?GML_RENDER_NEAREST_PART_PHASE_RULE:GML_RENDER_FILTERED_ATLAS_RULE;
+  /* Trim crossings use hardware filtering. Independent world SCREEN needs
+   * the physical owner's same-draw opaque-alpha stamp. Identity GUI keeps
+   * its already qualified exact stamp;sampled application alpha also keeps
+   * its cheap owner before the physical companion. */
+  if(!nearest_scaled && family==GML_RENDER_SCENE_BACKGROUND &&
+     ((!r->gui_pass_active && !gml_render_target_preserves_alpha(r)) || sx<page->tx || sy<page->ty ||
+      sx+sw>page->tx+page->sw || sy+sh>page->ty+page->sh))
+    sampling_rule=GML_RENDER_FILTERED_HARDWARE_PART_RULE;
   return gml_render_resident_filtered_atlas_page(
     r,page_index,x+(anchor_x-sx)*xs-r->cam_x,
     y+(anchor_y-sy)*ys-r->cam_y,cell_xs,cell_ys,
-    family,color,alpha,&view,nearest_scaled);
+    family,color,alpha,&view,sampling_rule);
 }
 
 /* R03-BG-DIRECT-NEAREST: the CPU's ordinary point writer rounds a fractional
@@ -266,12 +282,16 @@ void gml_draw_background_part_ext(GmlRender *r, int bg, double sx, double sy, do
   gml_render_draw_map_scale(r,&xs,&ys);
   if(bg<0||bg>=r->n_bg) return;
   int ti=r->bg[bg].tpag; if(ti<0||ti>=r->n_tpag) return;
+  /* The existing CPU part writer makes these finite empty draws no-ops
+   * before preparation. Do not read a resident target merely to do nothing. */
+  if(!gml_d3_is_active(r) && isfinite(sw) && isfinite(sh) && isfinite(xs) && isfinite(ys) &&
+     (sw<=0.0 || sh<=0.0 || xs==0.0 || ys==0.0)) return;
   if(resident_integer_background_part(r,ti,sx,sy,sw,sh,x,y,xs,ys,color,alpha,
                                       GML_RENDER_SCENE_BACKGROUND)) return;
-  if(!r->interp && !gml_d3_is_active(r) &&
+  if((!r->interp || r->classic) && !gml_d3_is_active(r) &&
      isfinite(sx) && isfinite(sy) && isfinite(sw) && isfinite(sh) &&
      isfinite(x) && isfinite(y) && isfinite(xs) && isfinite(ys) &&
-     sx>=0.0 && sy>=0.0 && sw>0.0 && sh>0.0 &&
+     sx>=-(double)INT_MAX && sy>=-(double)INT_MAX && sw>0.0 && sh>0.0 &&
      sx<=INT_MAX && sy<=INT_MAX && sw<=INT_MAX && sh<=INT_MAX){
     GmlTpag view;int source_x,source_y;
     double overlap_x0,overlap_y0,overlap_x1,overlap_y1;
@@ -285,7 +305,7 @@ void gml_draw_background_part_ext(GmlRender *r, int bg, double sx, double sy, do
       if(gml_render_resident_selected_background_page(r,&view,
         x+(anchor_x-sx)*xs-r->cam_x,y+(anchor_y-sy)*ys-r->cam_y,
         cell_xs,cell_ys,color,alpha)) return;
-    }
+    }else return;
   }
   if(gml_render_resident_filtered_atlas_part(r,ti,sx,sy,sw,sh,x,y,xs,ys,color,alpha,
                                       GML_RENDER_SCENE_BACKGROUND)) return;

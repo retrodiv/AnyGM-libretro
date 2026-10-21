@@ -863,6 +863,9 @@ int gml_render_sprite_source_is_outside(GmlRender *r,const GmlSprite *sprite,con
 int gml_render_sprite_axis_is_empty(const GmlRender *r,const GmlSprite *sprite,
                                     const GmlTpag *page,double x,double y,
                                     double xs,double ys,double rotation);
+int gml_render_sprite_axis_bounds(const GmlRender *r,const GmlSprite *sprite,
+                                  const GmlTpag *page,double x,double y,
+                                  double xs,double ys,double rotation,GmlRenderRect *region);
 int gml_render_resident_sprite_outside(GmlRender *r,int sprite,int subimg,
                                       double x,double y,double xs,double ys,double rotation);
 int gml_render_rotated_sprite_is_clipped(GmlRender *r,GmlSprite *sprite,GmlTpag *tpag,
@@ -897,6 +900,9 @@ int gml_render_rotated_filtered_rows(GmlRender *r,GmlSprite *sprite,GmlTpag *tpa
                                       double rotation,GmlRenderFilteredRotationRow *rows,
                                       uint32_t capacity,uint32_t *count,int positive_alpha);
 int gml_render_filtered_axis_positive_rows(GmlRender *r,GmlTpag *tpag,
+    double left,double top,double xscale,double yscale,GmlRenderRect region,
+    GmlRenderFilteredRotationRow *rows,uint32_t capacity,uint32_t *count);
+int gml_render_filtered_axis_coverage_rows(GmlRender *r,GmlTpag *tpag,
     double left,double top,double xscale,double yscale,GmlRenderRect region,
     GmlRenderFilteredRotationRow *rows,uint32_t capacity,uint32_t *count);
 

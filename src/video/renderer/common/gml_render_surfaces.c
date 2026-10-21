@@ -635,8 +635,11 @@ int gml_render_application_scene_enqueue_quads(GmlRender *r,
       operation->payload.quad.sampling.filter==GML_RENDER_FILTER_NEAREST) ||
      (operation->scene_family==GML_RENDER_SCENE_BACKGROUND &&
       operation->reconstruction_mode==GML_RENDER_DEVICE_CHECKPOINT &&
-      operation->payload.quad.sampling.filter==GML_RENDER_FILTER_HARDWARE_BILINEAR &&
-      state->coverage_policy==GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA));
+      ((operation->payload.quad.sampling.filter==GML_RENDER_FILTER_HARDWARE_BILINEAR &&
+        state->coverage_policy==GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA) ||
+       (operation->payload.quad.sampling.filter==GML_RENDER_FILTER_NEAREST &&
+        (operation->payload.quad.sampling.quantisation==GML_RENDER_QUANTISE_INTEGER_TINT_TRUNC ||
+         operation->payload.quad.sampling.quantisation==GML_RENDER_QUANTISE_INTEGER_TINT_ROUND)))));
   pending=r->pending_scene_batch;
   if(pending && pending->preparing && !source->borrowed_immutable && !versioned_surface) return 0;
   if(pending && pending->count){

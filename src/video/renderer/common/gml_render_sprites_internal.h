@@ -62,14 +62,15 @@ int gml_render_resident_nearest_quarter_tile_page(GmlRender *render,GmlTpag *pag
 enum {
   GML_RENDER_FILTERED_ATLAS_RULE=0,
   GML_RENDER_NEAREST_PART_PHASE_RULE=1,
-  GML_RENDER_NEAREST_DIRECT_SNAP_RULE=2
+  GML_RENDER_NEAREST_DIRECT_SNAP_RULE=2,
+  GML_RENDER_FILTERED_HARDWARE_PART_RULE=3
 };
 int gml_render_resident_filtered_atlas_page(GmlRender *render, int page_index,
                                            double left, double top,
                                            double xscale, double yscale,
                                            GmlRenderSceneFamily family,
                                            uint32_t colour, double alpha,
-                                           GmlTpag *part_view, int nearest_rule);
+                                           GmlTpag *part_view, int sampling_rule);
 int gml_render_resident_filtered_atlas_part(GmlRender *render, int page_index,
                                            double source_x, double source_y,
                                            double source_width, double source_height,

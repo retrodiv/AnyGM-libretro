@@ -718,7 +718,9 @@
   "    o_color=vec4(vec3(rgb)/255.0,float(sampled.a)/255.0); return;\n" \
   "  }\n" \
   "  // R03_SHADER_HARDWARE_FILTERED_SURFACE: hardware sampling and batched coverage.\n" \
-  "  if((u_filter>=65 && u_filter<=74)||(u_filter>=79 && u_filter<=82)||(u_filter>=112 && u_filter<=115)){\n" \
+  "  bool covered_row=u_filter>=137 && u_filter<=146;\n" \
+  "  int physical_filter=covered_row?u_filter-72:u_filter;\n" \
+  "  if((u_filter>=65 && u_filter<=74)||(u_filter>=79 && u_filter<=82)||(u_filter>=112 && u_filter<=115)||covered_row){\n" \
   "    vec2 extent=vec2(textureSize(u_image,0));\n" \
   "    vec2 uv=clamp(v_texcoord,(v_clamp.xy+vec2(0.5))/extent,\n" \
   "                            (v_clamp.zw+vec2(0.5))/extent);\n" \
@@ -727,25 +729,25 @@
   "    vec4 sampled=unit_texel?texelFetch(u_image,ivec2(floor(uv*extent)),0):\n" \
   "      margin!=0?hardware_physical_sprite_sample(v_texcoord,\n" \
   "        ivec2(v_clamp.xy),ivec2(v_clamp.zw),margin):texture(u_image,uv);\n" \
-  "    if(u_filter<112 && u_alpha_test>=0 && sampled.a*255.0<=float(u_alpha_test)) discard;\n" \
-  "    if(u_filter>=79){\n" \
-  "      float alpha=sampled.a*v_colour.a; if(alpha<=0.0 && u_filter<112) discard;\n" \
+  "    if(!covered_row && physical_filter<112 && u_alpha_test>=0 && sampled.a*255.0<=float(u_alpha_test)) discard;\n" \
+  "    if(physical_filter>=79){\n" \
+  "      float alpha=sampled.a*v_colour.a; if(alpha<=0.0 && physical_filter<112) discard;\n" \
   "      vec3 rgb=sampled.rgb*v_colour.rgb;\n" \
   "      if(unit_texel){\n" \
   "        uvec3 bytes=uvec3(floor(sampled.rgb*255.0+0.5));\n" \
   "        uvec3 tint=uvec3(floor(v_colour.rgb*255.0+0.5));\n" \
   "        rgb=vec3((bytes*tint+127u)/255u)/255.0;\n" \
   "      }\n" \
-  "      o_color=(u_filter==82 || u_filter==113)?vec4(0.0,0.0,0.0,1.0):\n" \
-  "        vec4(rgb,(u_filter==81 || u_filter==114)?1.0:alpha); return;\n" \
+  "      o_color=(physical_filter==82 || physical_filter==113)?vec4(0.0,0.0,0.0,1.0):\n" \
+  "        vec4(rgb,(physical_filter==81 || physical_filter==114)?1.0:alpha); return;\n" \
   "    }\n" \
   "    uvec4 bytes=uvec4(floor(clamp(sampled,0.0,1.0)*255.0+vec4(0.5)));\n" \
-  "    if(bytes.a==0u && u_filter!=68 && u_filter!=69 && u_filter!=73 && u_filter!=74) discard;\n" \
+  "    if(!covered_row && bytes.a==0u && physical_filter!=68 && physical_filter!=69 && physical_filter!=73 && physical_filter!=74) discard;\n" \
   "    uvec3 tint=uvec3(v_colour.rgb*255.0+0.5);\n" \
   "    vec3 rgb=vec3((bytes.rgb*tint)/255u)/255.0;\n" \
   "    float alpha=float(bytes.a)*v_colour.a/255.0;\n" \
-  "    o_color=(u_filter==72 || u_filter==74)?vec4(0.0,0.0,0.0,1.0):\n" \
-  "      vec4(rgb,(u_filter==67 || u_filter==73)?1.0:alpha); return;\n" \
+  "    o_color=(physical_filter==72 || physical_filter==74)?vec4(0.0,0.0,0.0,1.0):\n" \
+  "      vec4(rgb,(physical_filter==67 || physical_filter==73)?1.0:alpha); return;\n" \
   "  }\n" \
   "  if(u_filter==21 || u_filter==22 || u_filter==25 || u_filter==26){\n" \
   "    vec2 extent=vec2(textureSize(u_image,0));\n" \

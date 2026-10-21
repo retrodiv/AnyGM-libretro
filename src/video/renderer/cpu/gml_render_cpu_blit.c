@@ -3053,10 +3053,10 @@ void gml_render_cpu_filtered_tpag_band(
 }
 /* Preserve the axis writer's dimension expression and projected-edge policy.
  * No source samples or target bytes are read, and no renderer state changes. */
-int gml_render_sprite_axis_is_empty(const GmlRender *r,const GmlSprite *sprite,
+int gml_render_sprite_axis_bounds(const GmlRender *r,const GmlSprite *sprite,
                                     const GmlTpag *page,double x,double y,
-                                    double xs,double ys,double rotation){
-  if(!r || !sprite || !page || r->fbw<=0 || r->fbh<=0 ||
+                                    double xs,double ys,double rotation,GmlRenderRect *region){
+  if(!r || !sprite || !page || !region || r->fbw<=0 || r->fbh<=0 ||
      sprite->runtime_rgba || sprite->spine || sprite->ns_enabled ||
      page->sw<=0 || page->sh<=0 || page->sw>4096 || page->sh>4096 ||
      !isfinite(x) || !isfinite(y) || fabs(x)>65536.0 || fabs(y)>65536.0 ||
@@ -3086,7 +3086,17 @@ int gml_render_sprite_axis_is_empty(const GmlRender *r,const GmlSprite *sprite,
       height=ys>0.0?far_y-y0:y0-far_y;
     }
   }
-  if(width>0 && height>0) return 0;
+  *region=(GmlRenderRect){xs<0.0?x0-width:x0,ys<0.0?y0-height:y0,
+    width>0?(uint32_t)width:0u,height>0?(uint32_t)height:0u};
+  return 1;
+}
+
+int gml_render_sprite_axis_is_empty(const GmlRender *r,const GmlSprite *sprite,
+                                    const GmlTpag *page,double x,double y,
+                                    double xs,double ys,double rotation){
+  GmlRenderRect region={0};
+  if(!gml_render_sprite_axis_bounds(r,sprite,page,x,y,xs,ys,rotation,&region) ||
+     (region.width && region.height)) return 0;
   /* The public CPU entry may choose its separate rotated-batch owner before
    * blit_one for a large raw area. That owner's coverage is not this rule. */
   if(!gml_render_target_preserves_alpha(r) && !r->classic && !r->interp &&
@@ -5525,16 +5535,30 @@ static int filtered_positive_support(const GmlAtlas *atlas,const GmlTpag *page,
     (fx>0.0 && fy>0.0 && interp_tpag_sample(atlas,page,ua+1,va+1,logical_margin)[3]);
 }
 
-int gml_render_filtered_axis_positive_rows(GmlRender *r,GmlTpag *page,
+static int filtered_axis_covered_sample(GmlRender *r,const GmlAtlas *atlas,const GmlTpag *page,
+                                      double u,double v,int logical_margin){
+  int ua=(int)floor(u),va=(int)floor(v);
+  double red,green,blue,alpha;
+  /* Reuse the CPU sampler's tap policy and operation order. Only input alpha
+   * is consumed; no destination, tint or color/blend result is calculated. */
+  interp_tpag_filtered_sample(atlas,page,ua,ua+1,va,va+1,u-ua,v-va,logical_margin,
+                              &red,&green,&blue,&alpha);
+  if(shader_discards_alpha_value(r,alpha)) return 0;
+  if(!r->blendmode && anygm_policy_has_modern_layer_semantics(r->win)) return alpha>0.0;
+  return (int)(alpha+0.5)>0 || r->blendmode==2;
+}
+
+static int filtered_axis_support_rows(GmlRender *r,GmlTpag *page,
     double left,double top,double xs,double ys,GmlRenderRect region,
-    GmlRenderFilteredRotationRow *rows,uint32_t capacity,uint32_t *count){
+    GmlRenderFilteredRotationRow *rows,uint32_t capacity,uint32_t *count,int cpu_coverage){
   if(!r || !page || !rows || !count || !capacity ||
      r->fbw<=0 || r->fbh<=0 || r->fbw>16384 || r->fbh>16384 ||
      page->sw<=0 || page->sh<=0 || page->sw>4096 || page->sh>4096 ||
      page->atlas<0 || page->atlas>=r->n_atlas || !atlas_pixels(r,page->atlas) ||
      !isfinite(left) || !isfinite(top) || !isfinite(xs) || !isfinite(ys) ||
      fabs(left)>65536.0 || fabs(top)>65536.0 ||
-     fabs(xs)<.125 || fabs(xs)>64.0 || fabs(ys)<.125 || fabs(ys)>64.0 ||
+     fabs(xs)<(cpu_coverage?.0625:.125) || fabs(xs)>64.0 ||
+     fabs(ys)<(cpu_coverage?.0625:.125) || fabs(ys)>64.0 ||
      region.x<0 || region.y<0 || (uint64_t)(uint32_t)region.x+region.width>(uint32_t)r->fbw ||
      (uint64_t)(uint32_t)region.y+region.height>(uint32_t)r->fbh ||
      (uint64_t)region.width*region.height>1048576u) return 0;
@@ -5547,8 +5571,10 @@ int gml_render_filtered_axis_positive_rows(GmlRender *r,GmlTpag *page,
     double v=((double)py+.5-top)/ys-.5;
     int start=region.x;
     for(int px=region.x;px<=right;px++){
-      int covered=px<right && filtered_positive_support(atlas,page,
-        ((double)px+.5-left)/xs-.5,v,logical_margin);
+      double u=((double)px+.5-left)/xs-.5;
+      int covered=px<right && (cpu_coverage
+        ?filtered_axis_covered_sample(r,atlas,page,u,v,logical_margin)
+        :filtered_positive_support(atlas,page,u,v,logical_margin));
       if(!covered && start<px){
         if(*count==capacity) return 0;
         rows[(*count)++]=(GmlRenderFilteredRotationRow){
@@ -5559,6 +5585,20 @@ int gml_render_filtered_axis_positive_rows(GmlRender *r,GmlTpag *page,
     }
   }
   return 1;
+}
+
+int gml_render_filtered_axis_positive_rows(GmlRender *r,GmlTpag *page,
+    double left,double top,double xs,double ys,GmlRenderRect region,
+    GmlRenderFilteredRotationRow *rows,uint32_t capacity,uint32_t *count){
+  return filtered_axis_support_rows(r,page,left,top,xs,ys,region,rows,capacity,count,0);
+}
+
+int gml_render_filtered_axis_coverage_rows(GmlRender *r,GmlTpag *page,
+    double left,double top,double xs,double ys,GmlRenderRect region,
+    GmlRenderFilteredRotationRow *rows,uint32_t capacity,uint32_t *count){
+  if(!r || !r->win || r->classic || !r->interp ||
+     r->active_shader>=0 || (r->blendmode!=0 && r->blendmode!=2)) return 0;
+  return filtered_axis_support_rows(r,page,left,top,xs,ys,region,rows,capacity,count,1);
 }
 
 int gml_render_rotated_filtered_rows(GmlRender *r,GmlSprite *sprite,GmlTpag *page,
