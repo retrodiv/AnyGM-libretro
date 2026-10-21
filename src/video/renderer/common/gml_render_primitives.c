@@ -46,6 +46,61 @@ static int resident_flat_eligible(GmlRender *render){
   return resident_flat_eligible_rule(render,0,0,0);
 }
 
+/* The particle square writer ignores content colour,program,preset,cutoff and
+ * channel masks. Its one input-alpha byte and half-open integer footprint are
+ * already resolved;reuse the ordinary batched rectangle and target-alpha blend. */
+int gml_render_try_particle_square(GmlRender *r,int cx,int cy,int half_x,int half_y,
+                                    uint32_t colour,double alpha){
+  const GmlRenderDeviceServices *device=gml_render_device(r);
+  if(!r || !r->resident_application_pass || !device || !device->observe_on_demand ||
+     !device->observe_on_demand(device->context) || !gml_render_scene_target_matches(r) ||
+     gml_d3_is_active(r) || r->pending_presentation || r->rotated_batch_count ||
+     r->rotated_batch_building || r->classic_phase_scene_target || r->classic_phase_y ||
+     r->classic_interp_phase[0] || r->classic_interp_phase[1] || r->classic_interp_phase[2] ||
+     r->app_interp_phase[0] || r->app_interp_phase[1] || r->app_interp_phase[2] ||
+     r->fbw<=0 || r->fbh<=0 || r->fbw>16384 || r->fbh>16384 || !isfinite(alpha)) return 0;
+  if(alpha<=0.0 || half_x<0 || half_y<0) return 1;
+  unsigned opacity=(unsigned)((alpha>1.0?1.0:alpha)*255.0+.5);
+  if(r->alphablend && !opacity) return 1;
+  int64_t left=(int64_t)cx-half_x,right=(int64_t)cx+half_x+1;
+  int64_t top=(int64_t)cy-half_y,bottom=(int64_t)cy+half_y+1;
+  /* Do not assign meaning to overflow in the unchanged CPU integer writer. */
+  if(left<INT_MIN || right>INT_MAX || top<INT_MIN || bottom>INT_MAX) return 0;
+  if(left<0) left=0;
+  if(top<0) top=0;
+  if(right>r->fbw) right=r->fbw;
+  if(bottom>r->fbh) bottom=r->fbh;
+  if(right<=left || bottom<=top) return 1;
+  if(r->pending_underlay && !gml_render_compose_resident_underlay(r)) return 0;
+  gml_render_flush_pending_fill(r);
+  GmlRenderResource *target=gml_render_scene_target_resource_ensure(r);
+  if(r->pending_fill || !target) return 0;
+  GmlRenderImageRef next=gml_render_application_scene_next_image_ref(r,target);
+  if(next.content_version==UINT64_MAX) return 0;
+  GmlRenderDrawOp operation={0};
+  operation.opcode=GML_RENDER_OP_COLOURED_PRIMITIVE;
+  operation.scene_family=GML_RENDER_SCENE_PRIMITIVE;
+  operation.reconstruction_mode=GML_RENDER_DEVICE_CHECKPOINT;
+  operation.target=(GmlRenderTargetRef){next,1u,(uint32_t)r->fbw,(uint32_t)r->fbh,
+    GML_RENDER_PIXEL_ARGB8888,{0,0,(uint32_t)r->fbw,(uint32_t)r->fbh}};
+  operation.target.image.content_version++;
+  GmlRenderPrimitiveRect *p=&operation.payload.primitive;
+  p->region=p->authored_region=(GmlRenderRect){(int)left,(int)top,
+    (uint32_t)(right-left),(uint32_t)(bottom-top)};
+  p->kind=GML_RENDER_PRIMITIVE_RECTANGLE;
+  p->colour=gml_render_cpu_backend_color_to_xrgb(colour);
+  for(unsigned corner=0;corner<4u;corner++) p->corner_colour[corner]=p->colour;
+  p->rectangle_flags=GML_RENDER_RECTANGLE_TARGET_ALPHA|GML_RENDER_RECTANGLE_SOURCE_OVER_ALPHA;
+  p->alpha=r->alphablend?opacity/255.0:1.0;p->alpha_blend=r->alphablend?1u:0u;
+  if(!gml_render_rectangle_valid(&operation) ||
+     !gml_render_application_scene_enqueue_primitive(r,&operation)) return 0;
+  int opaque=(r->fb_opaque_known && r->fb_all_opaque) ||
+    ((!r->alphablend || opacity==255u) && left==0 && top==0 &&
+     right==r->fbw && bottom==r->fbh);
+  r->fb_all_transparent=0;r->fb_opaque_known=r->fb_all_opaque=opaque;
+  return 1;
+}
+
 /* Particle discs ignore content programs, colour masks, global alpha and blend
  * presets in the existing CPU writer. Only its alpha-blend enable participates.
  * Resolve the strictly positive ellipse footprint in shared geometry; the

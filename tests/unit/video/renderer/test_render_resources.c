@@ -7502,6 +7502,63 @@ static int resident_particle_square_public_order(void){
   return 1;
 }
 
+static int resident_particle_square_function(void){
+  GmlRender *r=calloc(1,sizeof *r);
+  GmlParticleState *particles=gml_particle_state_create(NULL);
+  FakeDevice fake={.on_demand=1};GmlRenderDeviceServices device=service(&fake);
+  device.observe_on_demand=fake_observe_on_demand;
+  CHECK(r && particles && !gml_render_init(r,NULL));
+  int system=gml_part_system_create(particles),type=gml_part_type_create(particles);
+  CHECK(system && type && gml_render_application_surface_ensure_owned(r,16,12));
+  gml_render_bind_device(r,&device);
+  gml_part_type_shape(particles,type,12);gml_part_type_size(particles,type,.25,.25,0,0);
+  gml_part_type_alpha(particles,type,1,.61,.61,.61);
+  gml_part_particles_create_color(particles,system,7.25,5.75,type,0x123456u,1);
+  for(unsigned state=0;state<16u;state++){
+    CHECK(gml_render_begin_resident_owned_application(r,0,0,0));
+    gml_render_set_pending_fill(r,0x78273859u);gml_render_flush_pending_fill(r);
+    r->active_shader=state&1u?0:-1;r->alpha=.13;r->blendmode=state%12u;
+    r->color_write_mask=state;r->alpha_test_enable=1;r->alpha_test_ref=255;
+    r->blend_equation=state&2u?3:1;r->alphablend=state&1u;
+    int reads=fake.readbacks;
+    gml_part_system_drawit(particles,r,system);
+    CHECK(r->resident_application_pass && gml_render_scene_submit_pending(r));
+    CHECK(fake.readbacks==reads && gml_render_rectangle_valid(&fake.last_primitive));
+    uint32_t untouched[16*12]={0},zero[16*12]={0};
+    CHECK(!gml_render_cpu_replay_eligible(&fake.last_primitive,NULL,NULL) &&
+      !gml_render_cpu_replay_one(untouched,16,12,&fake.last_primitive,NULL,NULL) &&
+      !memcmp(untouched,zero,sizeof zero));
+    GmlRenderDrawOp invalid=fake.last_primitive;
+    invalid.payload.primitive.rectangle_flags|=GML_RENDER_RECTANGLE_OUTLINE;
+    CHECK(!gml_render_rectangle_valid(&invalid));
+    invalid=fake.last_primitive;
+    invalid.payload.primitive.rectangle_flags&=~GML_RENDER_RECTANGLE_TARGET_ALPHA;
+    CHECK(!gml_render_rectangle_valid(&invalid));
+    CHECK(fake.last_primitive.payload.primitive.region.width==1u &&
+      fake.last_primitive.payload.primitive.region.height==1u &&
+      fake.last_primitive.payload.primitive.alpha==(r->alphablend?156.0/255.0:1.0));
+    CHECK(r->active_shader==(state&1u?0:-1) && r->alpha==.13 &&
+      r->blendmode==(int)(state%12u) && r->color_write_mask==state &&
+      r->alpha_test_enable && r->alpha_test_ref==255);
+  }
+  GmlRenderImageRef before=gml_render_resource_image_ref(r->app_surface_resource);
+  int reads=fake.readbacks,submits=fake.submits;
+  CHECK(gml_render_try_particle_square(r,2,2,0,0,0,0));
+  CHECK(gml_render_try_particle_square(r,2,2,0,0,0,.001));
+  CHECK(gml_render_try_particle_square(r,2,2,-1,0,0,1));
+  CHECK(gml_render_try_particle_square(r,-400,-400,1,1,0,1));
+  CHECK(!gml_render_try_particle_square(r,2,2,0,0,0,NAN));
+  uint32_t phase[16*12]={0};
+  r->classic_phase_y=phase;
+  CHECK(!gml_render_try_particle_square(r,2,2,0,0,0,.5));
+  r->classic_phase_y=NULL;r->app_interp_phase[0]=phase;
+  CHECK(!gml_render_try_particle_square(r,2,2,0,0,0,.5));
+  r->app_interp_phase[0]=NULL;
+  GmlRenderImageRef after=gml_render_resource_image_ref(r->app_surface_resource);
+  CHECK(before.content_version==after.content_version && fake.readbacks==reads && fake.submits==submits);
+  gml_particle_state_destroy(particles);gml_render_free(r);free(r);return 1;
+}
+
 static int resident_particle_disc_public_order(void){
   GmlRender *r=calloc(1,sizeof *r);
   GmlParticleState *particles=gml_particle_state_create(NULL);
@@ -18588,6 +18645,7 @@ int main(void){
   passed+=resident_unit_world_primitive_order();
   passed+=resident_gradient_primitive_cpu_boundary();
   passed+=resident_particle_square_public_order();
+  passed+=resident_particle_square_function();
   passed+=particle_line_row_coverage();
   passed+=resident_particle_line_public_order();
   passed+=resident_particle_disc_public_order();
@@ -18772,6 +18830,6 @@ int main(void){
   passed+=resident_extended_roundrect_refusals();
   passed+=resident_registered_view_surface_source();
   passed+=resident_empty_surface_part_prefix();
-  printf("render resource cases: passed=%d failed=%d\n",passed,292-passed);
-  return passed==292?EXIT_SUCCESS:EXIT_FAILURE;
+  printf("render resource cases: passed=%d failed=%d\n",passed,293-passed);
+  return passed==293?EXIT_SUCCESS:EXIT_FAILURE;
 }

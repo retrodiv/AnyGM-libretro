@@ -315,9 +315,10 @@ int gml_render_cpu_replay_one(uint32_t *target,uint32_t width,uint32_t height,
   if(operation->opcode==GML_RENDER_OP_COLOURED_PRIMITIVE){
     if(operation->payload.primitive.kind==GML_RENDER_PRIMITIVE_RECTANGLE){
       const GmlRenderPrimitiveRect *p=&operation->payload.primitive;
-      /* Vertex rows are actual-byte device checkpoints, not exact rectangle
-       * recipes. A refusal must return to the original vertex executor. */
-      if(p->rectangle_flags&GML_RENDER_RECTANGLE_VERTEX_SPAN) return 0;
+      /* Vertex rows and source-over squares are actual-byte device checkpoints,
+       * not this rectangle writer's recipes. Refusal returns to their original executor. */
+      if(p->rectangle_flags&(GML_RENDER_RECTANGLE_VERTEX_SPAN|
+                            GML_RENDER_RECTANGLE_SOURCE_OVER_ALPHA)) return 0;
       GmlRender *render=(GmlRender*)calloc(1,sizeof *render);
       if(!render) return 0;
       render->fb=render->base_fb=target;

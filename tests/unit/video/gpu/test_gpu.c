@@ -1732,7 +1732,8 @@ static int scene_rectangle_function_batch_case(void){
   for(unsigned preset=0;preset<12u;preset++)
   for(unsigned preserve_alpha=0;preserve_alpha<2u;preserve_alpha++)
   for(unsigned blend=0;blend<3u;blend++)
-  for(unsigned outline=0;outline<(preset==1u?2u:1u);outline++){
+  for(unsigned outline=0;outline<(preset==1u?2u:1u);outline++)
+  for(unsigned source_over=0;source_over<(!preset && preserve_alpha?2u:1u);source_over++){
     if(preset==3u || preset==6u) continue;
     GmlRenderDrawOp *ops=calloc(QUADS+1u,sizeof *ops);
     GmlGpuContext context=fake_context(api);
@@ -1760,11 +1761,12 @@ static int scene_rectangle_function_batch_case(void){
         .alpha=blend==2u?1.0:0.375,.alpha_blend=blend!=0u,
         .rectangle_flags=GML_RENDER_RECTANGLE_GRADIENT|
           (preserve_alpha?GML_RENDER_RECTANGLE_TARGET_ALPHA:0u)};
-      if(preset){
+      if(preset || source_over){
         for(unsigned c=0;c<4u;c++) ops[q+1u].payload.primitive.corner_colour[c]=0xFF7193B5u;
         ops[q+1u].payload.primitive.rectangle_flags=
           (preserve_alpha?GML_RENDER_RECTANGLE_TARGET_ALPHA:0u)|
           (outline?GML_RENDER_RECTANGLE_OUTLINE:0u)|
+          (source_over?GML_RENDER_RECTANGLE_SOURCE_OVER_ALPHA:0u)|
           (preset<<GML_RENDER_RECTANGLE_BLEND_SHIFT);
       }
     }
@@ -1780,7 +1782,7 @@ static int scene_rectangle_function_batch_case(void){
     if(blend==1u && !preset){
       anygm_test_graphics_blend_factors(factors);
       REQUIRE(factors[0]==GL_SRC_ALPHA && factors[1]==GL_ONE_MINUS_SRC_ALPHA &&
-              factors[2]==GL_SRC_ALPHA && factors[3]==GL_ONE_MINUS_SRC_ALPHA,
+              factors[2]==(source_over?GL_ONE:GL_SRC_ALPHA) && factors[3]==GL_ONE_MINUS_SRC_ALPHA,
               "numbered rectangle alpha uses its separate source-alpha factor");
     }
     if(preset && blend){

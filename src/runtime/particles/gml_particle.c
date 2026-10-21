@@ -1061,6 +1061,8 @@ void gml_part_system_drawit(GmlParticleState *state,GmlRender *r,int id){
          !gml_d3_is_active(r) &&
          gml_render_try_opaque_primitive_rect(r,cx-half_x,cy-half_y,
                                                cx+half_x,cy+half_y,col)) continue;
+      if(square_shape && !gml_d3_is_active(r) &&
+         gml_render_try_particle_square(r,cx,cy,half_x,half_y,col,alpha)) continue;
       if(t->shape==3 && !gml_d3_is_active(r) &&
          gml_render_try_particle_line(r,p->x*coordinate_scale_x-camera_x,
            p->y*coordinate_scale_y-camera_y,

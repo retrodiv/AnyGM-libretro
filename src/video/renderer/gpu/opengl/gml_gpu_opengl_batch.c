@@ -2741,7 +2741,8 @@ GmlRenderExecutionResult gml_gpu_opengl_scene_submit(GmlGpuBackend *backend,
       (int)(GL_SCENE_BLEND_RECTANGLE_ADD_BYTES+
         ((op->payload.primitive.rectangle_flags&GML_RENDER_RECTANGLE_TARGET_ALPHA)!=0u)):rectangle?
       (op->payload.primitive.alpha_blend?
-        (rectangle_blend?(int)(GL_SCENE_BLEND_RECTANGLE_BASE+2u*rectangle_blend+
+        ((op->payload.primitive.rectangle_flags&GML_RENDER_RECTANGLE_SOURCE_OVER_ALPHA)?1:
+         rectangle_blend?(int)(GL_SCENE_BLEND_RECTANGLE_BASE+2u*rectangle_blend+
            ((op->payload.primitive.rectangle_flags&GML_RENDER_RECTANGLE_TARGET_ALPHA)!=0u)):
          (op->payload.primitive.alpha<1.0 || vertex_span)?3:0):0):
       inverse_rect?GL_SCENE_BLEND_INVERSE_RECT:

@@ -19,6 +19,8 @@ int gml_render_try_opaque_primitive_rect(GmlRender *render,
 
 int gml_render_try_particle_disc(GmlRender *render,double x,double y,
                                 double xs,double ys,uint32_t colour,double alpha);
+int gml_render_try_particle_square(GmlRender *render,int centre_x,int centre_y,
+                                   int half_x,int half_y,uint32_t colour,double alpha);
 int gml_render_try_particle_line(GmlRender *render,double x,double y,
                                  double scale_x,double scale_y,double angle,
                                  uint32_t colour,double alpha);
