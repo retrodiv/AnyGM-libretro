@@ -2555,7 +2555,7 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
    * CPU still changes destination-colour factors. Keep that numerical
    * domain on the counted CPU path rather than relaxing individual D2. */
   if(selected_preset && !hardware_physical_tile && alpha>0.0 && alpha<0x1p-32) return 0;
-  double minimum_physical_scale=hardware_physical_font || (hardware_physical_tile && hardware_physical_rotation)
+  double minimum_physical_scale=hardware_physical_font || hardware_axis_sprite || (hardware_physical_tile && hardware_physical_rotation)
     ?0x1p-14:selected_physical_atlas?.0625:.125;
   double maximum_physical_scale=hardware_physical_tile && hardware_physical_rotation?16384.0:64.0;
   int hardware_physical_sprite=r && (nearest_mode==7 || hardware_physical_part || hardware_physical_tiled || hardware_physical_rotation || hardware_physical_font || hardware_physical_background) && r->interp &&
@@ -2791,6 +2791,14 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
      r->alpha_test_enable && r->alpha_test_ref && !page->scene_fully_opaque &&
      fabs(xs)>1.0 && fabs(ys)>1.0 &&
      floor(fabs(xs))!=fabs(xs) && floor(fabs(ys))!=fabs(ys)) return 0;
+  /* First-generation filtered destination-colour factors can amplify a
+   * source-alpha rounding difference beyond the individual budget. Retain
+   * ordered CPU for this alpha-writing boundary; RGB-only masks and opaque
+   * source interiors keep their independently paired hardware packets. */
+  if(hardware_axis_sprite && anygm_policy_uses_first_generation_studio(r->win) &&
+     r->alphablend && gml_render_blend_uses_destination_colour(r->blendmode) &&
+     (r->color_write_mask&8u) && gml_render_target_preserves_alpha(r) &&
+     !page->scene_fully_opaque) return 0;
   /* The scalar source-over aliases round both filtered terms separately.
    * Variable cardinal coverage on opaque targets exceeded the individual
    * channel budget with hardware filtering; retain that measured CPU bound. */
@@ -3925,10 +3933,14 @@ static int resident_nearest_texture_function(GmlRender *r,GmlSprite *sprite,GmlT
    * pixel cutoff. Text retains its separately qualified scale range. Source
    * extent, projected area, coverage and region capacity still bound work. */
   double minimum_scale=family==GML_RENDER_SCENE_TEXT?0.0625:0x1p-14;
-  /* A single source texel has no interior nearest boundaries to magnify.
-   * Keep the existing coverage/area limits and all larger sources unchanged. */
-  double maximum_scale=family==GML_RENDER_SCENE_SPRITE && page &&
-    page->sw==1 && page->sh==1?4096.0:64.0;
+  /* Rotated sprites already resolve exact source cells before GPU execution.
+   * Magnification changes neither their sampler nor their bounded clipped
+   * coverage. Axis packets retain their separately qualified scalar bound. */
+  int rotated_scale=family==GML_RENDER_SCENE_SPRITE && isfinite(rotation) &&
+    fabs(fmod(rotation,360.0))>=0.001 &&
+    fabs(fabs(fmod(rotation,360.0))-360.0)>=0.001;
+  double maximum_scale=rotated_scale?16384.0:
+    family==GML_RENDER_SCENE_SPRITE && page && page->sw==1 && page->sh==1?4096.0:64.0;
   int studio_rotated_point=family==GML_RENDER_SCENE_SPRITE &&
     resident_first_generation_rotated_point(r,rotation);
   int fog_axis=r && r->fog_flat && family==GML_RENDER_SCENE_SPRITE && isfinite(rotation) &&

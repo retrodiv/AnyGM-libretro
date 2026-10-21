@@ -15768,6 +15768,21 @@ static int resident_physical_filtered_sprite_function_impl(int matched,int moder
     unsigned before=(unsigned)fake.submits;
     for(unsigned draw=0;draw<8u;draw++)
       gml_draw_sprite_ext(render,0,0,10.25/mapping,9.75/mapping,xs,ys,modern==2?31.0:0.0,0x70B0D0u,.4);
+    /* Real-device full-alpha pairs expose an unqualified filtered factor
+     * domain,not a new malformed packet. Preserve its ordered observation
+     * and readable state here;the paired generator requires exact CPU bytes
+     * on every refused draw,without relaxing any admitted RGBA comparison. */
+    int filtered_factor_precision=axis && !modern && generations[generation]<100 &&
+      generations[generation]!=17 && source && render->alphablend &&
+      gml_render_blend_uses_destination_colour(render->blendmode) &&
+      (mask&8u) && gml_render_target_preserves_alpha(render);
+    if(filtered_factor_precision){
+      CHECK(!render->resident_application_pass && fake.readbacks==1 &&
+        (unsigned)fake.submits==before && render->interp==1 &&
+        render->color_write_mask==mask && render->blendmode==(int)(state/2u) &&
+        render->alpha_test_enable==(int)(state&1u) && render->alpha_test_ref==1u);
+      gml_render_free(render);free(render);continue;
+    }
     /* Unqualified old cutout/rotation cases retain their exact ordered CPU
      * contract. Newly qualified axis cases must instead satisfy the positive
      * transport/packet checks below;no old admitted draw may become CPU. */

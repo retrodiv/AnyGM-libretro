@@ -1008,6 +1008,7 @@ static int hardware_screen_sprite_valid(const GmlRenderDrawOp *op,
   int tile_axis_row=selected_axis_row && op->scene_family==GML_RENDER_SCENE_TILE;
   int atlas_background=op->scene_family==GML_RENDER_SCENE_BACKGROUND || op->scene_family==GML_RENDER_SCENE_TILE;
   int text_axis_row=selected_axis_row && op->scene_family==GML_RENDER_SCENE_TEXT;
+  int wide_axis_row=text_axis_row || (selected_axis_row && op->scene_family==GML_RENDER_SCENE_SPRITE);
   int positive_row=selected_axis_row || quad->span_active==GML_RENDER_SPAN_FILTERED_POSITIVE_ROW;
   int affine_row=positive_row || quad->span_active==GML_RENDER_SPAN_FILTERED_AFFINE_ROW;
   int blend=qualified_blend(state);
@@ -1113,13 +1114,14 @@ static int hardware_screen_sprite_valid(const GmlRenderDrawOp *op,
     int background_positive=positive_row && atlas_background &&
       (state->write_mask==15u || byte_background);
     int selected_axis_positive=background_positive || selected_axis_row;
-    double sample_limit=text_axis_row || op->scene_family==GML_RENDER_SCENE_TILE
+    double sample_limit=wide_axis_row || op->scene_family==GML_RENDER_SCENE_TILE
       ?16384.0:selected_axis_positive?16.0:8.0;
     if(!physical || (op->scene_family!=GML_RENDER_SCENE_SPRITE && !background_positive && !text_axis_row) ||
        quad->y[2]-quad->y[0]!=1.0 ||
        region.width>4096u || region.height>4096u ||
        quad->x[1]-quad->x[0]>16384.0 ||
-       fabs(left)>(text_axis_row?16640.0:4097.0) || fabs(top)>(text_axis_row?16640.0:4097.0) ||
+       fabs(left)>(text_axis_row?16640.0:wide_axis_row?20480.0:4097.0) ||
+       fabs(top)>(text_axis_row?16640.0:wide_axis_row?20480.0:4097.0) ||
        fabs(quad->inverse_x[0])>sample_limit ||
        fabs(quad->inverse_x[1])>sample_limit ||
        (quad->inverse_x[0]==0.0 && quad->inverse_x[1]==0.0) ||
@@ -1132,8 +1134,8 @@ static int hardware_screen_sprite_valid(const GmlRenderDrawOp *op,
       /* Rounded axis coverage can sample beyond the cropped page. The
        * physical sampler already repairs those logical/clamped atlas taps;
        * retain the rotation boundary for other rows. */
-      double lower=text_axis_row?-sample_limit:selected_axis_positive?-16.0:-1.0;
-      double upper=extent+(text_axis_row?sample_limit:selected_axis_positive?16.0:0.0);
+      double lower=wide_axis_row?-sample_limit:selected_axis_positive?-16.0:-1.0;
+      double upper=extent+(wide_axis_row?sample_limit:selected_axis_positive?16.0:0.0);
       if(start<lower || start>=upper || end<lower-1e-8 || end>=upper+1e-8) return 0;
       for(unsigned component=0;component<4u;component++)
         if(quad->span_x[component]!=0.0 || quad->span_y[component]!=0.0) return 0;
