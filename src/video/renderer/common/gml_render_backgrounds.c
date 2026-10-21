@@ -441,6 +441,11 @@ void gml_draw_background_ext(GmlRender *r, int bg, double x, double y, double xs
   if(r->classic_phase_resource &&
      gml_render_resident_classic_phase_atlas(r,t,x-r->cam_x+t->tx*xs,
        y-r->cam_y+t->ty*ys,xs,ys,color,alpha,GML_RENDER_PHASE_BACKGROUND)) return;
+  /* R03-BG-ZERO-AXIS: blit_one returns before sampling or writing a zero
+   * physical axis,independently of ordinary colour/filter/blend state. */
+  if(r->resident_application_pass && (xs==0.0 || ys==0.0) &&
+     isfinite(x) && isfinite(y) && isfinite(xs) && isfinite(ys) &&
+     !gml_d3_is_active(r)) return;
   if((color&0xFFFFFFu)==0xFFFFFFu && alpha==1.0 && !r->interp && !gml_d3_is_active(r) &&
      gml_render_resident_atlas_page(r,ti,x-r->cam_x+t->tx*xs,
                                       y-r->cam_y+t->ty*ys,xs,ys,

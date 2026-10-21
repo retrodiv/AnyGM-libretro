@@ -14361,6 +14361,25 @@ static int resident_studio_unit_background_noops(void){
     CHECK(resource);
     gml_render_resource_journal_metrics(resource,&before);
     int submits=fake.submits,uploads=fake.uploads;
+    /* Empty full-background calls must preserve an already queued visible
+     * prefix,not flush or materialize it through the CPU barrier. */
+    for(unsigned filter=0;filter<2u;filter++) for(unsigned mode=0;mode<12u;mode++)
+    for(unsigned axis=0;axis<2u;axis++){
+      render->interp=(int)filter;render->blendmode=(int)mode;
+      render->alphablend=(int)(mode&1u);render->alpha_test_enable=1;
+      render->alpha_test_ref=(uint8_t)(mode*23u);render->color_write_mask=(uint8_t)mode;
+      gml_draw_background_ext(render,1,x,y,axis?35.0:0.0,axis?-0.0:-35.0,
+        mode&1u?0x102030u:0xffffffu,mode%3u==0u?-1.0:mode%3u==1u?.37:2.0);
+      gml_render_resource_journal_metrics(resource,&after);
+      CHECK(render->resident_application_pass && fake.submits==submits && fake.uploads==uploads &&
+        !fake.readbacks && after.logical_version==before.logical_version &&
+        after.authority==before.authority && after.journal_operations==before.journal_operations &&
+        render->interp==(int)filter && render->blendmode==(int)mode &&
+        render->alphablend==(int)(mode&1u) && render->alpha_test_enable==1 &&
+        render->alpha_test_ref==(uint8_t)(mode*23u) && render->color_write_mask==mode);
+    }
+    render->interp=render->blendmode=render->alpha_test_enable=0;
+    render->alpha_test_ref=0u;render->alphablend=1;render->color_write_mask=15u;
     gml_draw_background_tiled(render,1,x,y,0,0);
     gml_render_resource_journal_metrics(resource,&after);
     CHECK(render->resident_application_pass && !fake.readbacks && fake.submits==submits);
