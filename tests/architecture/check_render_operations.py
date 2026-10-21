@@ -104,6 +104,7 @@ REQUIRED_RULES = {
     "R03-P5-SURFACE-RESIZE", "R03-P5-SURFACE-FREE",
     "R03-P5-SURFACE-PART", "R03-P5-SURFACE-STRETCHED",
     "R03-SURFACE-NEAREST-FUNCTION",
+    "R03-SURFACE-BORROWED-FUNCTION",
     "R03-SURFACE-CANVAS-FUNCTION",
     "R03-SURFACE-TILED-FUNCTION",
     "R03-SURFACE-CLASSIC-INTEGER-SCREEN",
@@ -256,6 +257,7 @@ DISPATCH_ADDITIONAL = {
 DISPATCH_HELPERS = {
     "resident_collapsed_additive_sprite_noop",
     "resident_surface_shader_selected",
+    "resident_surface_borrowed_application",
     "resident_sprite_program_blocks",
     "resident_zero_scale_sprite_noop",
     "resident_outside_sprite_noop", "gml_render_resident_sprite_outside",

@@ -1404,9 +1404,11 @@ static int scene_hardware_filtered_batch_case(unsigned kind){
   int screen_sprite=kind==7u || kind==8u || kind==9u || application_sprite || unit_font;
   const uint8_t pixels[64]={11,22,33,255,44,55,66,100,77,88,99,0,111,122,133,200};
   for(unsigned api=0;api<2u;api++)
+  for(unsigned borrowed=0;borrowed<(((kind>=3u && kind<=5u) || leading_surface)?2u:1u);borrowed++)
   for(unsigned excluded=0;excluded<(unit_font?12u:gui_background?9u:application_sprite?12u:leading_surface?9u:integer_surface?9u:kind==9u?11u:nearest || screen_stretch?8u:(combined || surface)?7u:4u);excluded++){
     GmlGpuContext context=fake_context(api?GML_GPU_API_OPENGLES3:GML_GPU_API_OPENGL_CORE);
-    GmlRenderImageRef source={kind==5u || leading_surface?GML_RENDER_RESOURCE_APPLICATION:surface?GML_RENDER_RESOURCE_SURFACE:
+    GmlRenderImageRef source={borrowed?GML_RENDER_RESOURCE_SCREEN:
+      kind==5u || leading_surface?GML_RENDER_RESOURCE_APPLICATION:surface?GML_RENDER_RESOURCE_SURFACE:
       GML_RENDER_RESOURCE_ATLAS,91u,1u,1u};
     GmlRenderDrawOp *ops=(GmlRenderDrawOp*)calloc(QUADS+1u,sizeof *ops);
     GmlRenderDrawStateSnapshot state={0};

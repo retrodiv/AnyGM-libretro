@@ -2708,6 +2708,19 @@ static int resident_surface_nearest_function(GmlRender *r,int surf,double dx,dou
      gml_render_resident_classic_phase_present(r,dx,dy,dw,dh,colour,alpha)) return 1;
   return resident_surface_nearest_selection(r,surf,dx,dy,dw,dh,colour,alpha,automatic,NULL,0);
 }
+/* A view mirror temporarily names a registered base image as surface zero.
+ * Its pointer is a storage identity,not proof that the host shadow is current.
+ * Reuse only the exact registered extent,after all suspended source writes. */
+static GmlRenderResource *resident_surface_borrowed_application(GmlRender *r){
+  int width=0,height=0;
+  if(!r || !r->app_surface || r->app_surface==r->app_surface_owned) return NULL;
+  GmlRenderResource *resource=gml_render_base_resource_lookup(r,r->app_surface,&width,&height);
+  if(!resource || width!=r->app_w || height!=r->app_h) return NULL;
+  for(int index=0;index<r->target_sp;index++)
+    if(r->target_stack[index].fb==r->app_surface &&
+       (r->target_stack[index].pending_fill || r->target_stack[index].pending_underlay)) return NULL;
+  return resource;
+}
 static int resident_surface_nearest_selection(GmlRender *r,int surf,double dx,double dy,
   double dw,double dh,uint32_t colour,double alpha,int automatic,
   const ResidentSurfaceSelection *selection,int resolved_canvas){
@@ -2719,15 +2732,10 @@ static int resident_surface_nearest_selection(GmlRender *r,int surf,double dx,do
   GmlRenderResource *resource,*target;
   GmlRenderImageRef image,source_ref;
   GmlRenderResource *borrowed=NULL;
-  int borrowed_width=0,borrowed_height=0;
   int tiled=resolved_canvas==2;
   int destination_blend=tiled && r && r->alphablend &&
     gml_render_blend_uses_destination_colour(r->blendmode);
-  if(r && ((automatic && r->classic && r->win && !anygm_policy_classic_modern_presentation(r->win)) ||
-           selection || resolved_canvas) &&
-     surf==0 && r->app_surface!=r->app_surface_owned &&
-     (borrowed=gml_render_base_resource_lookup(r,r->app_surface,&borrowed_width,&borrowed_height)) &&
-     (borrowed_width!=r->app_w || borrowed_height!=r->app_h)) borrowed=NULL;
+  if(surf==0) borrowed=resident_surface_borrowed_application(r);
   if(!r || !r->win || !device || !device->observe_on_demand ||
      !device->observe_on_demand(device->context) ||
      (surf==0? (!automatic && !r->app_surface_published) || !r->app_surface ||
@@ -2826,9 +2834,9 @@ static int resident_surface_nearest_selection(GmlRender *r,int surf,double dx,do
   int normal_unit=!r->blendmode || (tiled && (r->blendmode==5 || r->blendmode==7));
   int fast_white=fast_unit && !masked_unit && normal_unit && (colour&0xFFFFFFu)==0xFFFFFFu &&
     (alpha>=1.0 || !r->alphablend);
-  /* A mapped full-source part uses the unit tint/alpha writer before the
-   * Classic application's generic alphaless-copy branch. */
-  if((selection || resolved_canvas) && fast_unit && !masked_unit &&
+  /* Full-source unit tint/alpha uses the unit writer before the Classic
+   * application's generic alphaless-copy branch,including a view borrow. */
+  if(fast_unit && !masked_unit &&
      r->classic && surf==0 && normal_unit && !fast_white) replace=0;
   int ordinary_full=whole && signed_width>0 && signed_height>0 &&
     (!r->blendmode || (r->blendmode==6 && opaque)) && alpha>=1.0 &&
@@ -2951,6 +2959,12 @@ static int resident_surface_nearest_selection(GmlRender *r,int surf,double dx,do
   if(write_mask&8u){
     r->fb_opaque_known=r->fb_all_opaque=r->fb_all_transparent=0;
     if(r->fb==r->app_surface_owned) r->app_surface_opaque=r->app_presentation_coverage_active=0;
+    /* Match the full-source CPU unit copy's certificate,not a sampled guess.
+     * A later shader/source query must not read this complete opaque mirror. */
+    if(!automatic && !selection && !resolved_canvas && fast_unit && normal_unit &&
+       opaque && alpha>=1.0 && (colour&0xFFFFFFu)==0xFFFFFFu && write_mask==15u &&
+       left<=0.0 && top<=0.0 && left+width>=r->fbw && top+height>=r->fbh)
+      r->fb_opaque_known=r->fb_all_opaque=1;
   }
   return 1;
 }
@@ -2972,12 +2986,16 @@ static int resident_surface_filtered_resolved(GmlRender *r,int surf,double dx,do
   GmlRenderDrawStateSnapshot state={0};
   GmlRenderImageRef source_ref,image;
   const GmlRenderDeviceServices *device;
+  GmlRenderResource *borrowed=surf==0?resident_surface_borrowed_application(r):NULL;
+  if(borrowed && (r->app_phase_y || r->app_presentation_coverage_active)) return 0;
+  for(unsigned axis=0;borrowed && axis<3u;axis++)
+    if(r->classic_interp_phase[axis] || r->app_interp_phase[axis]) return 0;
   int destination_blend=r && gml_render_blend_uses_destination_colour(r->blendmode);
   int raw_replace=resolved_canvas==2 && r && r->blendmode==6 &&
     surface_known_opaque(r,surf) && alpha>=1.0 && (blend&0xFFFFFFu)==0xFFFFFFu;
   if(!r || (surf!=0 && (slot<0 || !r->surface[slot].live)) ||
      (surf==0 && (!r->app_surface_published || !r->app_surface ||
-                  r->app_surface!=r->app_surface_owned)) ||
+                  (r->app_surface!=r->app_surface_owned && !borrowed))) ||
      !r->resident_scene_pass || !gml_render_scene_target_matches(r) ||
      !(device=gml_render_device(r)) || !device->observe_on_demand ||
      !device->observe_on_demand(device->context) ||
@@ -3124,7 +3142,7 @@ static int resident_surface_filtered_resolved(GmlRender *r,int surf,double dx,do
   if(r->pending_underlay &&
      (!gml_render_gui_transform_active(r) ||
       !gml_render_compose_resident_underlay(r) || !r->resident_application_pass)) return 0;
-  resource=surf==0?gml_render_application_resource_ensure(r):
+  resource=surf==0?(borrowed?borrowed:gml_render_application_resource_ensure(r)):
                    gml_render_surface_resource_ensure(r,surf);
   if(!resource ||
      (!gml_render_resource_device_source_view(resource,device,&source) &&
@@ -3211,7 +3229,10 @@ static int resident_surface_filtered_resolved(GmlRender *r,int surf,double dx,do
   /* R03-P5-GUI-OPAQUE-SUFFIX: these known-opaque GUI sources write opaque
    * SCREEN alpha at every covered pixel, including partial draw alpha in the
    * unit leaf. Full coverage proves the destination without observing it. */
-  int opaque_gui=(point_presentation || (unit_gui_blend && unit)) &&
+  int opaque_unit=!resolved_canvas && unit && !r->blendmode && r->color_write_mask==15u &&
+    !r->alpha_test_enable && alpha>=1.0 && (blend&0xFFFFFFu)==0xFFFFFFu &&
+    surface_known_opaque(r,surf);
+  int opaque_gui=(point_presentation || (unit_gui_blend && unit) || opaque_unit) &&
     left<=0.0 && top<=0.0 && left+width>=r->fbw && top+height>=r->fbh;
   r->fb_opaque_known=r->fb_all_opaque=opaque_gui;
   r->fb_all_transparent=0;
