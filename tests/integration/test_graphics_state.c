@@ -1513,6 +1513,85 @@ static int classic_borrowed_resize_scene_case(void){
   return 1;
 }
 
+static unsigned classic_borrowed_variant;
+static int classic_borrowed_fixture(AnygmSyntheticContent *fixture){
+  return anygm_synthetic_classic_native_borrowed_content_create(fixture,classic_borrowed_variant);
+}
+
+/* Metadata, dispatch and complete VM bytes; real-device paired hosts own
+ * shader pixels. The negative variants retain their existing CPU policy. */
+static int classic_native_borrowed_scene_case(void){
+  for(unsigned api=0;api<2u;api++) for(unsigned variant=0;variant<12u;variant++){
+    Session plain={0},selected={0};
+    CurrentContextWitness witness={1u,0u};
+    AnygmGraphicsContext context=graphics_context(api?ANYGM_GRAPHICS_OPENGL_CORE:ANYGM_GRAPHICS_OPENGLES3);
+    int matching=1;
+    classic_borrowed_variant=variant;
+    anygm_test_graphics_reset();
+    REQUIRE(session_open_fixture_with_scene(&plain,ANYGM_SCENE_RENDERER_CPU,classic_borrowed_fixture) &&
+      session_open_fixture_with_scene(&selected,ANYGM_SCENE_RENDERER_OPENGL,classic_borrowed_fixture),
+      "native borrowed Classic fixtures load");
+    context.userdata=&witness;context.is_current=graphics_context_is_current;
+    REQUIRE(anygm_graphics_context_reset(selected.engine,&context)==ANYGM_OK,
+      "native borrowed Classic context adopts");
+    gml_rng_seed(&plain.engine->vm,0x13579u);gml_rng_seed(&selected.engine->vm,0x13579u);
+    gml_render_dispatch_diagnostics_enable(&selected.engine->render,1);
+    size_t first_capacity=anygm_state_size(selected.engine);
+    REQUIRE(first_capacity,"borrowed Classic capacity is queried before the first frame");
+    for(unsigned frame=0;frame<6u && matching;frame++){
+      GmlGpuCounters before={0},after={0};
+      gml_gpu_counters(selected.engine->gpu,&before);
+      matching=advance(plain.engine,1,NULL) && advance(selected.engine,1,NULL) &&
+        plain.engine->vm.frame==selected.engine->vm.frame &&
+        plain.engine->vm.room_index==selected.engine->vm.room_index &&
+        plain.engine->width==selected.engine->width && plain.engine->height==selected.engine->height &&
+        plain.engine->output_width==selected.engine->output_width &&
+        plain.engine->output_height==selected.engine->output_height &&
+        !selected.engine->render.app_surface_owned;
+      gml_gpu_counters(selected.engine->gpu,&after);
+      GmlRenderDispatchMetrics dispatch={0};uint64_t ordinary_cpu=0;
+      matching=matching && gml_render_dispatch_metrics(&selected.engine->render,&dispatch);
+      for(unsigned family=0;family<GML_RENDER_SCENE_FAMILY_COUNT;family++)
+        for(unsigned reason=0;reason<GML_RENDER_DISPATCH_REASON_COUNT;reason++)
+          ordinary_cpu+=dispatch.cpu[family][reason];
+      matching=matching && !dispatch.failed && !dispatch.unclassified && !dispatch.overflow &&
+        (variant<8u?ordinary_cpu==0u:ordinary_cpu>0u) &&
+        (variant>=8u || after.scene_readbacks==before.scene_readbacks);
+      size_t cpu_bytes=gml_vm_state_size(&plain.engine->vm),gpu_bytes=gml_vm_state_size(&selected.engine->vm);
+      size_t cpu_written=0,gpu_written=0;
+      uint8_t *cpu_vm=malloc(cpu_bytes?cpu_bytes:1u),*gpu_vm=malloc(gpu_bytes?gpu_bytes:1u);
+      int vm_equal=cpu_bytes && cpu_bytes==gpu_bytes && cpu_vm && gpu_vm &&
+        gml_vm_state_save(&plain.engine->vm,cpu_vm,cpu_bytes,&cpu_written) &&
+        gml_vm_state_save(&selected.engine->vm,gpu_vm,gpu_bytes,&gpu_written) &&
+        cpu_written==cpu_bytes && gpu_written==gpu_bytes && !memcmp(cpu_vm,gpu_vm,cpu_bytes);
+      matching=matching && vm_equal;
+      free(cpu_vm);free(gpu_vm);
+      AnygmResult restore=ANYGM_OK;
+      if(matching && frame==2u){
+        size_t size=0,cpu_size=0;
+        uint8_t *state=serialize(selected.engine,&size),*cpu_state=serialize(plain.engine,&cpu_size);
+        restore=state?anygm_state_load(selected.engine,state,size):ANYGM_ERROR_INTERNAL;
+        matching=restore==ANYGM_OK && cpu_state &&
+          anygm_state_load(plain.engine,cpu_state,cpu_size)==ANYGM_OK;
+        free(state);free(cpu_state);
+      }
+      if(!matching) fprintf(stderr,"native borrowed api=%u variant=%u frame=%u CPU=%llu reads=%llu room=%d/%d VM=%zu/%zu equal=%d restore=%d extent=%ux%u/%ux%u\n",
+        api,variant,frame,(unsigned long long)ordinary_cpu,
+        (unsigned long long)(after.scene_readbacks-before.scene_readbacks),
+        plain.engine->vm.room_index,selected.engine->vm.room_index,cpu_bytes,gpu_bytes,vm_equal,(int)restore,
+        plain.engine->output_width,plain.engine->output_height,
+        selected.engine->output_width,selected.engine->output_height);
+      if(!matching) for(unsigned family=0;family<GML_RENDER_SCENE_FAMILY_COUNT;family++)
+        for(unsigned reason=0;reason<GML_RENDER_DISPATCH_REASON_COUNT;reason++)
+          if(dispatch.cpu[family][reason]) fprintf(stderr,"native borrowed CPU family=%u reason=%u count=%llu\n",
+            family,reason,(unsigned long long)dispatch.cpu[family][reason]);
+    }
+    session_close(&selected);session_close(&plain);
+    REQUIRE(matching,"native borrowed Classic admits world and GUI without changing VM bytes or reading pixels");
+  }
+  return 1;
+}
+
 static int classic_single_view_exclusions_case(void){
   int (*factories[])(AnygmSyntheticContent *)={
     anygm_synthetic_classic_single_view_filtered_content_create,
@@ -2310,7 +2389,11 @@ static int classic_temporal_fallback_variant(
     }
   }
   gml_gpu_counters(selected.engine->gpu,&counters);
-  ok=ok && counters.scene_batches_offered==0u && counters.scene_batches_accepted==0u &&
+  /* Explicit redraw/fade still use their CPU implementation. Ordinary native
+   * world frames now admit their existing clear/sprite pair independently. */
+  uint64_t expected_batches=transition?10u:6u;
+  ok=ok && counters.scene_batches_offered==expected_batches &&
+     counters.scene_batches_accepted==expected_batches &&
      counters.cpu_upload_frames==(unsigned)(transition?9:3);
   if(transition)
     ok=ok && plain.engine->vm.room_index==1 && selected.engine->vm.room_index==1 &&
@@ -5836,6 +5919,7 @@ int main(void){
     {"interpolated Classic identity presentation keeps exact state and residency",
      classic_identity_filtered_presentation_case},
     {"excluded single classic views retain CPU presentation",classic_single_view_exclusions_case},
+    {"native borrowed Classic keeps world GUI and exact VM state",classic_native_borrowed_scene_case},
     {"classic single view preserves later geometry transitions",classic_single_view_geometry_transition_case},
     {"borrowed resize keeps Draw metadata and resident pixels",classic_borrowed_resize_scene_case},
     {"viewless room growth preserves active projection raster",classic_viewless_resize_scene_case},

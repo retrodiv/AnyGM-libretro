@@ -27,6 +27,14 @@ static uint64_t frame_digest(const AnygmFrameOutput *output){
 
 int main(int argc,char **argv){
   AnygmSyntheticContent fixture={0};
+  unsigned borrowed_variant=0u;
+  char borrowed_tail=0;
+  if(argc==3 && !strcmp(argv[1],"--keep-classic-native-borrowed")){
+    if(sscanf(argv[2],"%u%c",&borrowed_variant,&borrowed_tail)!=1 || borrowed_variant>=12u ||
+       !anygm_synthetic_classic_native_borrowed_content_create(&fixture,borrowed_variant)) return 1;
+    puts(fixture.path);
+    return 0;
+  }
   int dense=argc==2 && (!strcmp(argv[1],"--keep-dense") || !strcmp(argv[1],"--dense"));
   int pre_draw=argc==2 && !strcmp(argv[1],"--keep-pre-draw");
   int gui_up=argc==2 && !strcmp(argv[1],"--keep-gui-upscale");
@@ -209,6 +217,7 @@ int main(int argc,char **argv){
           "--keep-classic-manual-application|--keep-classic-manual-application-scaled|"
           "--keep-classic-late-manual-application|"
           "--keep-classic-identity-present|"
+          "--keep-classic-native-borrowed VARIANT(0..11)|"
           "--keep-classic-single-view-geometry|"
           "--keep-classic-borrowed-resize|"
           "--keep-classic-step-composition|--keep-classic-step-base-writer|"

@@ -1693,11 +1693,18 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
     !engine->composed_frame && !engine->aspect_force_active &&
     engine_graphics_active(engine) &&
     engine->scene_renderer_session==ANYGM_SCENE_RENDERER_OPENGL;
-  int early_classic_borrowed_world=(early_classic_full_view || early_classic_viewless) &&
+  /* A late Classic native nearest frame has no derived sample planes either.
+   * Keep its borrowed logical storage, rather than inventing a persistent
+   * application owner only to admit ordinary draws on the device. */
+  int native_classic_borrowed=anygm_policy_classic_modern_presentation(&engine->win) &&
+    !render_presentation.interpolation && render_presentation.application_draw_enabled &&
+    engine->output_width==engine->width && engine->output_height==engine->height &&
+    !engine->composed_frame && !engine->aspect_force_active && !engine->canvas_mode;
+  int classic_borrowed_world=(early_classic_full_view || early_classic_viewless) &&
     !render_presentation.application_owned &&
     app_surface_is_draw_target &&
     anygm_policy_uses_classic_runtime(&engine->win) &&
-    !anygm_policy_classic_modern_presentation(&engine->win);
+    (!anygm_policy_classic_modern_presentation(&engine->win) || native_classic_borrowed);
   GmlRenderSamplePlanes sample_planes={0};
   gml_render_sample_planes_update(
     &engine->render,&sample_planes,GML_RENDER_SAMPLE_PLANES_APPLICATION);
@@ -1888,7 +1895,7 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
        ((!render_presentation.application_draw_enabled && frame_view_count==0) ||
         translated_base_world ||
         (native_assigned_view && !gml_render_is_classic(&engine->render)) ||
-        ((early_classic_borrowed_world || classic_sample_world) &&
+        ((classic_borrowed_world || classic_sample_world) &&
          !(view_surface>0 && gml_surface_exists(&engine->render,view_surface)))) &&
        engine_graphics_active(engine) &&
        (engine->scene_renderer_session==ANYGM_SCENE_RENDERER_OPENGL ||
@@ -1958,7 +1965,7 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
   /* Only a drawn base needs immediate CPU composition. A numbered Draw retains
    * the separate, undrawn logical root on device until a real surface, state or
    * fallback consumer observes it, just like an assigned target or borrowed world. */
-  if(base_world_began && !direct_view_surface && !early_classic_borrowed_world &&
+  if(base_world_began && !direct_view_surface && !classic_borrowed_world &&
      !classic_sample_world && !translated_base_world && !classic_numbered_scene){
     if(!gml_render_resident_application_cpu_barrier(&engine->render))
       return ANYGM_ERROR_INTERNAL;
@@ -1982,7 +1989,7 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
   if(prof){ t1 = profile_now_ms(engine); engine->profile.draw_ms += t1 - t0; t0 = t1; }
   gml_render_presentation_metrics(&engine->render,&render_presentation);
   int log_draw=anygm_host_development_setting(&engine->host,"GML_LOG_DRAW")!=NULL;
-  if(log_draw && (early_classic_borrowed_world || classic_sample_world ||
+  if(log_draw && (classic_borrowed_world || classic_sample_world ||
                  (translated_base_world && base_world_began)) &&
      !gml_render_completed_screen_read(
        &engine->render,world_pixels,world_width,world_height))
@@ -2218,7 +2225,7 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
 			       (!engine->aspect_force_active || forced_owned_scene_began) &&
 			       !aspect_gui_center &&
 			       (retained_gui_scene || gui_indirect || !render_presentation.application_draw_enabled ||
-			        ((early_classic_borrowed_world || classic_sample_world || classic_interp_phase) &&
+			        ((classic_borrowed_world || classic_sample_world || classic_interp_phase) &&
 			         gml_render_can_begin_borrowed_screen(&engine->render,gtarget)) ||
 			        ((frame_view_count<=1 || multiview_rendered==2) && render_presentation.application_owned &&
 			         (!gml_render_is_classic(&engine->render) ||

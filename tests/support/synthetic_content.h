@@ -99,6 +99,9 @@ int anygm_synthetic_classic_identity_present_content_create(AnygmSyntheticConten
 int anygm_synthetic_classic_single_view_filtered_content_create(AnygmSyntheticContent *fixture);
 int anygm_synthetic_classic_single_view_fractional_content_create(AnygmSyntheticContent *fixture);
 int anygm_synthetic_classic_single_view_modern_content_create(AnygmSyntheticContent *fixture);
+/* Later Classic native nearest: generation, view, retention and alpha axes;
+ * the last four variants retain filtered or non-native presentation guards. */
+int anygm_synthetic_classic_native_borrowed_content_create(AnygmSyntheticContent *fixture,unsigned variant);
 int anygm_synthetic_classic_single_view_offset_content_create(AnygmSyntheticContent *fixture);
 int anygm_synthetic_classic_single_view_geometry_content_create(AnygmSyntheticContent *fixture);
 int anygm_synthetic_classic_borrowed_resize_content_create(AnygmSyntheticContent *fixture);
