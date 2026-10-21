@@ -5558,8 +5558,8 @@ static int filtered_axis_support_rows(GmlRender *r,GmlTpag *page,
      page->atlas<0 || page->atlas>=r->n_atlas || !atlas_pixels(r,page->atlas) ||
      !isfinite(left) || !isfinite(top) || !isfinite(xs) || !isfinite(ys) ||
      fabs(left)>65536.0 || fabs(top)>65536.0 ||
-     fabs(xs)<(cpu_coverage?.0625:.125) || fabs(xs)>64.0 ||
-     fabs(ys)<(cpu_coverage?.0625:.125) || fabs(ys)>64.0 ||
+     fabs(xs)<(cpu_coverage?0x1p-14:.125) || fabs(xs)>64.0 ||
+     fabs(ys)<(cpu_coverage?0x1p-14:.125) || fabs(ys)>64.0 ||
      region.x<0 || region.y<0 || (uint64_t)(uint32_t)region.x+region.width>(uint32_t)r->fbw ||
      (uint64_t)(uint32_t)region.y+region.height>(uint32_t)r->fbh ||
      (uint64_t)region.width*region.height>1048576u) return 0;

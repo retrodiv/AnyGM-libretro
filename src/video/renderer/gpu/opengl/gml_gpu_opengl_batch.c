@@ -202,7 +202,8 @@ static int qualified_blend(const GmlRenderDrawStateSnapshot *state){
 static uint32_t scene_filter(const GmlRenderQuad *quad,
                              const GmlRenderDrawStateSnapshot *state,uint32_t family){
   if((family==GML_RENDER_SCENE_BACKGROUND ||
-      (family==GML_RENDER_SCENE_SPRITE && quad->span_active==GML_RENDER_SPAN_FILTERED_AXIS_SUPPORT_ROW)) &&
+      ((family==GML_RENDER_SCENE_SPRITE || family==GML_RENDER_SCENE_TEXT) &&
+       quad->span_active==GML_RENDER_SPAN_FILTERED_AXIS_SUPPORT_ROW)) &&
      quad->sampling.filter==GML_RENDER_FILTER_HARDWARE_BILINEAR &&
      (quad->sampling.quantisation==GML_RENDER_QUANTISE_INTEGER_TINT_TRUNC ||
       quad->sampling.quantisation==GML_RENDER_QUANTISE_INTEGER_TINT_ROUND)){
@@ -506,6 +507,10 @@ static int integer_function_sprite_valid(const GmlRenderDrawOp *op,
   int row=q->sampling.quantisation==GML_RENDER_QUANTISE_INTEGER_ROW_TINT_TRUNC;
   int flat=q->sampling.quantisation==GML_RENDER_QUANTISE_INTEGER_FLAT_RGB;
   int background=op->scene_family==GML_RENDER_SCENE_BACKGROUND;
+  int text_empty=op->scene_family==GML_RENDER_SCENE_TEXT && !row && !flat &&
+    region.width==1u && region.height==1u && q->filtered_draw_alpha==0.0 &&
+    !q->corner_colour[0] && !q->corner_colour[1] &&
+    !q->corner_colour[2] && !q->corner_colour[3] && state->write_mask==15u;
   int background_blend=(background || (op->scene_family==GML_RENDER_SCENE_SPRITE && !row && !flat)) && (blend==24 || blend==25 ||
     (blend>=GL_SCENE_BLEND_SURFACE_DEST_BASE && blend<=GL_SCENE_BLEND_SURFACE_DEST_LIMIT &&
      state->rgb_equation==GML_RENDER_BLEND_ADD && state->alpha_equation==GML_RENDER_BLEND_ADD));
@@ -533,7 +538,7 @@ static int integer_function_sprite_valid(const GmlRenderDrawOp *op,
      !exact_rect(op,NULL,NULL,NULL,NULL,1) || fabs(q->x[0])>65536.0 || fabs(q->y[0])>65536.0 ||
      !isfinite(q->filtered_draw_alpha) || q->filtered_draw_alpha<0.0 || q->filtered_draw_alpha>1.0 ||
      (q->filtered_draw_alpha==0.0 && !background_blend &&
-      ((op->scene_family!=GML_RENDER_SCENE_SPRITE && !background) ||
+      ((op->scene_family!=GML_RENDER_SCENE_SPRITE && !background && !text_empty) ||
        (state->coverage_policy!=GML_RENDER_COVERAGE_REPLACE_ZERO_ALPHA &&
         state->coverage_policy!=GML_RENDER_COVERAGE_REPLACE_SOURCE_ALPHA))) ||
      state->alpha_test_enabled>1u || state->alpha_test_reference>255u ||
@@ -546,7 +551,7 @@ static int integer_function_sprite_valid(const GmlRenderDrawOp *op,
      ((state->coverage_policy==GML_RENDER_COVERAGE_REPLACE_ZERO_ALPHA ||
        state->coverage_policy==GML_RENDER_COVERAGE_REPLACE_SOURCE_ALPHA)?
        (blend!=0 || (state->coverage_policy==GML_RENDER_COVERAGE_REPLACE_SOURCE_ALPHA &&
-        ((op->scene_family!=GML_RENDER_SCENE_SPRITE && !background) ||
+        ((op->scene_family!=GML_RENDER_SCENE_SPRITE && !background && !text_empty) ||
          (q->sampling.quantisation!=GML_RENDER_QUANTISE_INTEGER_TINT_TRUNC && !flat)))):
       state->coverage_policy && (state->coverage_policy!=GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA ||
        (blend!=1 && blend!=13 && blend!=14 && blend!=20 && blend!=21 && !background_blend) || (blend!=14 && !background_blend &&
@@ -993,14 +998,16 @@ static int hardware_screen_sprite_valid(const GmlRenderDrawOp *op,
   double left=quad->inverse_anchor[0],top=quad->inverse_anchor[1];
   uint32_t margin=quad->sampling.logical_margin_mask;
   int selected_axis_row=quad->span_active==GML_RENDER_SPAN_FILTERED_AXIS_SUPPORT_ROW;
+  int text_axis_row=selected_axis_row && op->scene_family==GML_RENDER_SCENE_TEXT;
   int positive_row=selected_axis_row || quad->span_active==GML_RENDER_SPAN_FILTERED_POSITIVE_ROW;
   int affine_row=positive_row || quad->span_active==GML_RENDER_SPAN_FILTERED_AFFINE_ROW;
   int blend=qualified_blend(state);
   int byte_background=(op->scene_family==GML_RENDER_SCENE_BACKGROUND ||
-    (op->scene_family==GML_RENDER_SCENE_SPRITE && selected_axis_row)) &&
+    ((op->scene_family==GML_RENDER_SCENE_SPRITE || op->scene_family==GML_RENDER_SCENE_TEXT) && selected_axis_row)) &&
     (quad->sampling.quantisation==GML_RENDER_QUANTISE_INTEGER_TINT_TRUNC ||
      quad->sampling.quantisation==GML_RENDER_QUANTISE_INTEGER_TINT_ROUND);
   int background_blend=byte_background && (blend==0 || blend==1 || blend==3 || blend==9 ||
+    (text_axis_row && blend==15) ||
     (blend>=18 && blend<=21) || blend==24 || blend==25 ||
     (blend>=GL_SCENE_BLEND_SURFACE_DEST_BASE && blend<=GL_SCENE_BLEND_SURFACE_DEST_LIMIT &&
      state->rgb_equation==GML_RENDER_BLEND_ADD && state->alpha_equation==GML_RENDER_BLEND_ADD));
@@ -1012,7 +1019,7 @@ static int hardware_screen_sprite_valid(const GmlRenderDrawOp *op,
       !(blend>=GL_SCENE_BLEND_SURFACE_DEST_BASE && blend<=GL_SCENE_BLEND_SURFACE_DEST_LIMIT)) ||
      (source && (source->width>16384u || source->height>16384u)))) return 0;
   int background_row=positive_row && op->scene_family==GML_RENDER_SCENE_BACKGROUND && state->write_mask==15u;
-  if(selected_axis_row && (op->scene_family!=GML_RENDER_SCENE_SPRITE ||
+  if(selected_axis_row && ((op->scene_family!=GML_RENDER_SCENE_SPRITE && !text_axis_row) ||
       state->write_mask>15u)) return 0;
   int firstgen_row=(background_row || selected_axis_row) &&
     quad->sampling.quantisation==GML_RENDER_QUANTISE_HARDWARE_SPRITE_FIRSTGEN;
@@ -1032,7 +1039,7 @@ static int hardware_screen_sprite_valid(const GmlRenderDrawOp *op,
                 quad->sampling.quantisation==GML_RENDER_QUANTISE_HARDWARE_SPRITE_MODERN || byte_background) &&
     (op->scene_family==GML_RENDER_SCENE_SPRITE ||
      (op->scene_family==GML_RENDER_SCENE_BACKGROUND && (state->write_mask==15u || byte_background)) ||
-     (op->scene_family==GML_RENDER_SCENE_TEXT && state->write_mask==15u)) && state->write_mask<=15u &&
+     (op->scene_family==GML_RENDER_SCENE_TEXT && (state->write_mask==15u || byte_background))) && state->write_mask<=15u &&
     (op->target.image.resource_class==GML_RENDER_RESOURCE_SCREEN ||
      op->target.image.resource_class==GML_RENDER_RESOURCE_APPLICATION ||
      op->target.image.resource_class==GML_RENDER_RESOURCE_SURFACE) &&
@@ -1096,12 +1103,14 @@ static int hardware_screen_sprite_valid(const GmlRenderDrawOp *op,
     int background_positive=positive_row && op->scene_family==GML_RENDER_SCENE_BACKGROUND &&
       (state->write_mask==15u || byte_background);
     int selected_axis_positive=background_positive || selected_axis_row;
-    if(!physical || (op->scene_family!=GML_RENDER_SCENE_SPRITE && !background_positive) ||
+    double sample_limit=text_axis_row?16384.0:selected_axis_positive?16.0:8.0;
+    if(!physical || (op->scene_family!=GML_RENDER_SCENE_SPRITE && !background_positive && !text_axis_row) ||
        quad->y[2]-quad->y[0]!=1.0 ||
        region.width>4096u || region.height>4096u ||
-       quad->x[1]-quad->x[0]>16384.0 || fabs(left)>4097.0 || fabs(top)>4097.0 ||
-       fabs(quad->inverse_x[0])>(selected_axis_positive?16.0:8.0) ||
-       fabs(quad->inverse_x[1])>(selected_axis_positive?16.0:8.0) ||
+       quad->x[1]-quad->x[0]>16384.0 ||
+       fabs(left)>(text_axis_row?16640.0:4097.0) || fabs(top)>(text_axis_row?16640.0:4097.0) ||
+       fabs(quad->inverse_x[0])>sample_limit ||
+       fabs(quad->inverse_x[1])>sample_limit ||
        (quad->inverse_x[0]==0.0 && quad->inverse_x[1]==0.0) ||
        !isfinite(quad->inverse_x[1]) || quad->inverse_y[0]!=0.0 || quad->inverse_y[1]!=0.0 ||
        quad->inverse_offset[0]!=0.0 || quad->inverse_offset[1]!=0.0) return 0;
@@ -1112,8 +1121,8 @@ static int hardware_screen_sprite_valid(const GmlRenderDrawOp *op,
       /* Rounded axis coverage can sample beyond the cropped page. The
        * physical sampler already repairs those logical/clamped atlas taps;
        * retain the rotation boundary for other rows. */
-      double lower=selected_axis_positive?-16.0:-1.0;
-      double upper=extent+(selected_axis_positive?16.0:0.0);
+      double lower=text_axis_row?-sample_limit:selected_axis_positive?-16.0:-1.0;
+      double upper=extent+(text_axis_row?sample_limit:selected_axis_positive?16.0:0.0);
       if(start<lower || start>=upper || end<lower-1e-8 || end>=upper+1e-8) return 0;
       for(unsigned component=0;component<4u;component++)
         if(quad->span_x[component]!=0.0 || quad->span_y[component]!=0.0) return 0;
@@ -1487,7 +1496,7 @@ static int scene_preflight(GmlGpuBackend *backend,const GmlRenderDrawBatch *batc
         (sampling->quantisation==GML_RENDER_QUANTISE_HARDWARE_SPRITE_FIRSTGEN ||
          sampling->quantisation==GML_RENDER_QUANTISE_HARDWARE_SPRITE_MODERN ||
          ((op->scene_family==GML_RENDER_SCENE_BACKGROUND ||
-           (op->scene_family==GML_RENDER_SCENE_SPRITE &&
+           ((op->scene_family==GML_RENDER_SCENE_SPRITE || op->scene_family==GML_RENDER_SCENE_TEXT) &&
             op->payload.quad.span_active==GML_RENDER_SPAN_FILTERED_AXIS_SUPPORT_ROW)) &&
           (sampling->quantisation==GML_RENDER_QUANTISE_INTEGER_TINT_TRUNC ||
            sampling->quantisation==GML_RENDER_QUANTISE_INTEGER_TINT_ROUND)));

@@ -25,6 +25,12 @@ static int resident_nearest_text_scale(double xs,double ys){
          fabs(ys)>=0.0625 && fabs(ys)<=64.0;
 }
 
+static int resident_filtered_text_scale(double xs,double ys){
+  return isfinite(xs) && isfinite(ys) &&
+         fabs(xs)>=0x1p-14 && fabs(xs)<=64.0 &&
+         fabs(ys)>=0x1p-14 && fabs(ys)<=64.0;
+}
+
 /* Empty glyph coverage needs no source pixels, device command or CPU barrier.
  * Reuse the ordinary CPU geometry envelope after layout and glyph demand. */
 static int resident_text_glyph_outside(GmlRender *r,const GmlSprite *sprite,
@@ -265,7 +271,7 @@ static void draw_text_real_plain(GmlRender *r, GmlFont *f, double x, double y, c
                                    r->atlas[f->atlas].runtime_font_page)) &&
              isfinite(xs) && isfinite(ys) &&
              ((xs>0.0 && ys>0.0 && xs<=1.0 && ys<=1.0) ||
-              resident_nearest_text_scale(xs,ys)))
+              resident_filtered_text_scale(xs,ys)))
             resident_glyph=gml_render_resident_filtered_font_glyph(
               r,f->atlas,g->sx,g->sy,g->w,g->h,
               glyph_x-r->cam_x,glyph_y-r->cam_y,xs,ys,glyph_blend,alpha);
@@ -475,7 +481,8 @@ static void draw_text_transformed_font(GmlRender *r, GmlFont *f,
         if(!resident_glyph && r->resident_application_pass && !use_rot && !s->runtime_rgba &&
            !gml_d3_is_active(r) && s->frame &&
            isfinite(alpha) && alpha>0.0 && alpha<=1.0 &&
-           resident_nearest_text_scale(xs,ys)){
+           (r->interp && !r->classic?resident_filtered_text_scale(xs,ys):
+                                    resident_nearest_text_scale(xs,ys))){
           int page_index=s->frame[fr];
           if(page_index>=0 && page_index<r->n_tpag){
             GmlTpag *page=&r->tpag[page_index];

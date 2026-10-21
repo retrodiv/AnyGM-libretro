@@ -646,7 +646,11 @@ int gml_render_application_scene_enqueue_quads(GmlRender *r,
         (operation->payload.quad.sampling.quantisation==GML_RENDER_QUANTISE_INTEGER_TINT_TRUNC ||
          operation->payload.quad.sampling.quantisation==GML_RENDER_QUANTISE_INTEGER_TINT_ROUND)))));
   pending=r->pending_scene_batch;
-  if(pending && pending->preparing && !source->borrowed_immutable && !versioned_surface) return 0;
+  /* A glyph's ordinary atomic margin/crop group cannot mutate its source.
+   * Keep the page version explicit and retain the writer's pre-mutation flush;
+   * paired roots and surface-run preparations keep their separate contracts. */
+  if(pending && pending->preparing && !source->borrowed_immutable && !versioned_surface &&
+     !(mutable_text && pending->preparing==1 && !r->classic_phase_scene_preparing)) return 0;
   if(pending && pending->count){
     int paired_preparation=pending->preparing && r->classic_phase_scene_preparing;
     int surface_preparation=pending->preparing==GML_SCENE_PREPARING_SURFACE && versioned_surface;

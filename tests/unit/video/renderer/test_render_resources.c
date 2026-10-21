@@ -11371,7 +11371,7 @@ static int resident_maximised_filtered_real_font(void){
       CHECK(metrics.authority==GML_RENDER_RESOURCE_GPU_RESIDENT &&
             metrics.cpu_version<metrics.logical_version && !metrics.journal_operations &&
             !metrics.cpu_replays && !metrics.device_checkpoints);
-    }else if(variant==2u || variant==3u || variant==9u || variant==11u || variant==12u){
+    }else if(variant==2u || variant==3u || variant==5u || variant==9u || variant==11u || variant==12u){
       /* The separately paired physical font owner also handles contained
        * reduction with masks, GUI offsets and mapped first-generation text.
        * The original cheap normal/full-write owner above stays unchanged. */
@@ -11384,6 +11384,9 @@ static int resident_maximised_filtered_real_font(void){
             fake.last_quad_state.coverage_policy==GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA &&
             fake.last_quad_state.rgb_equation==GML_RENDER_BLEND_ADD &&
             !fake.readbacks && !fake.rgb_queries);
+      if(variant==5u)CHECK(render->alpha_test_enable==1 && !render->alpha_test_ref &&
+        !fake.last_quad_state.alpha_test_enabled &&
+        fake.last_quad.span_active==GML_RENDER_SPAN_FILTERED_AXIS_SUPPORT_ROW);
       gml_render_resource_journal_metrics(render->base_scene_resource,&metrics);
       CHECK(metrics.authority==GML_RENDER_RESOURCE_GPU_RESIDENT &&
             metrics.cpu_version<metrics.logical_version && !metrics.journal_operations &&
@@ -11395,10 +11398,11 @@ static int resident_maximised_filtered_real_font(void){
 }
 
 /* Admission/authority only; real-device public strings own RGBA and coverage. */
-static int resident_filtered_font_magnification(int runtime_page,int clamped_page){
+static int resident_filtered_font_magnification(int runtime_page,int clamped_page,int reduced_page){
   enum { W=32,H=24 };
   const int generations[]={13,15,17};
   const double scales[][2]={{40.0/27.0,40.0/27.0},{2,3},{-1.5,.5},{.5,-2},{1,1},{.5,.5}};
+  const double reductions[][2]={{.05,.05},{-.05,.05},{.05,-.05},{-.05,-.05},{.03125,1.5},{1.5,.03125}};
   for(unsigned generation=0;generation<3u;generation++)
   for(unsigned font_kind=0;font_kind<2u;font_kind++)
   for(unsigned kind=0;kind<4u;kind++) for(unsigned gui=0;gui<2u;gui++)
@@ -11410,13 +11414,17 @@ static int resident_filtered_font_magnification(int runtime_page,int clamped_pag
     r->atlas=calloc(1,sizeof *r->atlas);r->tpag=calloc(1,sizeof *r->tpag);
     r->spr=calloc(1,sizeof *r->spr);CHECK(r->atlas && r->tpag && r->spr);
     r->n_atlas=r->n_tpag=r->n_spr=1;
-    r->atlas[0].px=malloc(16u*16u*4u);r->spr[0].frame=calloc(1,sizeof(int));
+    unsigned atlas_extent=reduced_page?64u:16u;
+    int cell_width=reduced_page?20:5,cell_height=reduced_page?44:5;
+    r->atlas[0].px=malloc(atlas_extent*atlas_extent*4u);r->spr[0].frame=calloc(1,sizeof(int));
     CHECK(r->atlas[0].px && r->spr[0].frame);
-    memset(r->atlas[0].px,127,16u*16u*4u);r->atlas[0].w=r->atlas[0].h=16;
+    memset(r->atlas[0].px,127,atlas_extent*atlas_extent*4u);
+    r->atlas[0].w=r->atlas[0].h=(int)atlas_extent;
     if(clamped_page){r->atlas[0].w=2;r->atlas[0].h=1;}
     r->atlas[0].runtime_font_page=runtime_page;
-    r->tpag[0]=(GmlTpag){.sx=5,.sy=5,.sw=5,.sh=5,.tw=5,.th=5,.bw=7,.bh=7,.tx=1,.ty=1};
-    r->spr[0].w=r->spr[0].h=7;r->spr[0].n_frames=1;
+    r->tpag[0]=(GmlTpag){.sx=5,.sy=5,.sw=cell_width,.sh=cell_height,
+      .tw=cell_width,.th=cell_height,.bw=cell_width+2,.bh=cell_height+2,.tx=1,.ty=1};
+    r->spr[0].w=cell_width+2;r->spr[0].h=cell_height+2;r->spr[0].n_frames=1;
     r->spr[0].originx=2;r->spr[0].originy=1;
     GmlFont *font=&r->fonts[0];r->n_fonts=1;
     font->real=1;font->sprite=-1;font->atlas=0;font->line_height=font->align_height=5;
@@ -11424,7 +11432,7 @@ static int resident_filtered_font_magnification(int runtime_page,int clamped_pag
     font->n_glyphs=1;font->glyphs=calloc(1,sizeof *font->glyphs);CHECK(font->glyphs);
     for(unsigned cp=0;cp<256u;cp++)font->glyph_by_char[cp]=-1;
     font->glyph_by_char['A']=0;
-    font->glyphs[0]=(GmlGlyph){.sx=5,.sy=5,.w=5,.h=5,.shift=6,.ch='A'};
+    font->glyphs[0]=(GmlGlyph){.sx=5,.sy=5,.w=cell_width,.h=cell_height,.shift=cell_width+1,.ch='A'};
     CHECK(gml_font_add_sprite_ext(r,0,"A",1,1)==1);
     r->win=&content;r->color_write_mask=15u;r->next_surface_id=1;
     for(unsigned p=0;p<W*H;p++)screen[p]=0xA5123456u;
@@ -11442,25 +11450,27 @@ static int resident_filtered_font_magnification(int runtime_page,int clamped_pag
     gml_render_set_pending_fill(r,0x40273859u);gml_render_flush_pending_fill(r);
     CHECK(gml_render_scene_submit_pending(r));memcpy(shadow,r->fb,sizeof shadow);
     r->interp=1;r->font=(int)font_kind;r->alphablend=state<3u;r->blendmode=(int)(state%3u);
-    unsigned mask=!runtime_page && !clamped_page && scale>=4u?7u:
+    unsigned mask=!runtime_page && !clamped_page && !reduced_page && scale>=4u?7u:
       clamped_page && !state?5u:state&1u?5u:15u;
     r->color_write_mask=(uint8_t)mask;
     double mx=1,my=1;gml_render_draw_map_scale(r,&mx,&my);
+    const double *physical=reduced_page?reductions[scale]:scales[scale];
     int submits=fake.submits;
     int alpha_stamp=clamped_page && !r->blendmode && !gml_render_target_preserves_alpha(r);
-    if(!r->alphablend || r->blendmode==1 || alpha_stamp){
+    if((r->alphablend && r->blendmode==1) ||
+       (clamped_page && !r->alphablend) || alpha_stamp){
       int accepted=font_kind?gml_render_resident_sprite_font_glyph(r,0,16,12,
-        scales[scale][0],scales[scale][1],0x70B0D0u,.5):
-        gml_render_resident_filtered_font_glyph(r,0,5,5,5,5,16,12,
-          scales[scale][0],scales[scale][1],0x70B0D0u,.5);
+        physical[0],physical[1],0x70B0D0u,.5):
+        gml_render_resident_filtered_font_glyph(r,0,5,5,cell_width,cell_height,16,12,
+          physical[0],physical[1],0x70B0D0u,.5);
       CHECK(!accepted && r->interp==1 && r->color_write_mask==mask &&
         r->resident_application_pass && fake.submits==submits &&
         !fake.readbacks && !fake.rgb_queries && !memcmp(shadow,r->fb,sizeof shadow));
       gml_render_free(r);free(r);continue;
     }
     for(unsigned draw=0;draw<8u;draw++)
-      gml_draw_text_transformed(r,16/mx,12/my,"A",scales[scale][0]/mx,
-        scales[scale][1]/my,0,0x70B0D0u,.5);
+      gml_draw_text_transformed(r,16/mx,12/my,"A",physical[0]/mx,
+        physical[1]/my,0,0x70B0D0u,.5);
     if(!r->resident_application_pass) fprintf(stderr,
       "filtered font authority: runtime=%d generation=%d font=%u target=%u gui=%u state=%u scale=%u\n",
       runtime_page,generations[generation],font_kind,kind,gui,state,scale);
@@ -11469,8 +11479,9 @@ static int resident_filtered_font_magnification(int runtime_page,int clamped_pag
       fake.submits==submits+1 && fake.last_filter==GML_RENDER_FILTER_HARDWARE_BILINEAR &&
       fake.last_write_mask==15u &&
       !fake.readbacks && !fake.rgb_queries && !memcmp(shadow,r->fb,sizeof shadow));
-    if(scale==4u && !font_kind && !clamped_page)
-      CHECK(fake.last_quad.sampling.logical_margin_mask==GML_RENDER_MARGIN_UNIT_TEXEL);
+    if(scale==4u && !font_kind && !clamped_page && !reduced_page)
+      CHECK(!fake.last_quad.sampling.logical_margin_mask &&
+        fake.last_quad.span_active==GML_RENDER_SPAN_FILTERED_AXIS_SUPPORT_ROW);
     if(runtime_page){
       GmlRenderResourceSource source={0};
       CHECK(gml_render_atlas_scene_source_view(r,0,&source) && !source.borrowed_immutable &&
@@ -18228,6 +18239,7 @@ int main(void){
     else if(!strcmp(selected,"sprite-part-sub-eighth")) passed=resident_sprite_part_sub_eighth();
     else if(!strcmp(selected,"full-sprite-axis-presets")) passed=resident_full_sprite_axis_function();
     else if(!strcmp(selected,"stretched-coarse-veil")) passed=resident_stretched_coarse_veil_on_demand();
+    else if(!strcmp(selected,"filtered-text-reduction")) passed=resident_filtered_font_magnification(0,0,1);
     else if(!strcmp(selected,"physical-filtered-sprite")) passed=resident_physical_filtered_sprite_function();
     else if(!strcmp(selected,"matched-filtered-sprite")) passed=resident_matched_filtered_sprite_function();
     else if(!strcmp(selected,"modern-physical-filtered-sprite")) passed=resident_modern_physical_filtered_sprite_function();
@@ -18413,9 +18425,10 @@ int main(void){
   passed+=resident_mapped_gui_stretch_on_demand();
   passed+=resident_modern_screen_filtered_sprite();
   passed+=resident_maximised_filtered_real_font();
-  passed+=resident_filtered_font_magnification(0,0);
-  passed+=resident_filtered_font_magnification(1,0);
-  passed+=resident_filtered_font_magnification(0,1);
+  passed+=resident_filtered_font_magnification(0,0,0);
+  passed+=resident_filtered_font_magnification(1,0,0);
+  passed+=resident_filtered_font_magnification(0,1,0);
+  passed+=resident_filtered_font_magnification(0,0,1);
   passed+=resident_packaged_sprite_font_glyph();
   passed+=resident_filtered_gui_real_font();
   passed+=surface_pending_source_lifetime(0,0);
@@ -18531,6 +18544,6 @@ int main(void){
   passed+=resident_classic_raster_underlay_scope();
   passed+=resident_extended_roundrect_function();
   passed+=resident_extended_roundrect_refusals();
-  printf("render resource cases: passed=%d failed=%d\n",passed,288-passed);
-  return passed==288?EXIT_SUCCESS:EXIT_FAILURE;
+  printf("render resource cases: passed=%d failed=%d\n",passed,289-passed);
+  return passed==289?EXIT_SUCCESS:EXIT_FAILURE;
 }

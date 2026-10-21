@@ -23,15 +23,17 @@ int gml_gpu_opengl_clamped_atlas_valid(const GmlRenderDrawOp *op,
      op->sources[0].resource_class!=GML_RENDER_RESOURCE_ATLAS) return 0;
   const GmlRenderQuad *q=&op->payload.quad;
   GmlRenderRect region=q->sampling.source_region;
+  int text_axis_row=op->scene_family==GML_RENDER_SCENE_TEXT &&
+    q->span_active==GML_RENDER_SPAN_FILTERED_AXIS_SUPPORT_ROW;
   int byte_background=((op->scene_family==GML_RENDER_SCENE_BACKGROUND &&
     q->span_active==GML_RENDER_SPAN_FILTERED_POSITIVE_ROW) ||
-    (op->scene_family==GML_RENDER_SCENE_SPRITE &&
+    ((op->scene_family==GML_RENDER_SCENE_SPRITE || op->scene_family==GML_RENDER_SCENE_TEXT) &&
      q->span_active==GML_RENDER_SPAN_FILTERED_AXIS_SUPPORT_ROW)) &&
     (q->sampling.quantisation==GML_RENDER_QUANTISE_INTEGER_TINT_TRUNC ||
      q->sampling.quantisation==GML_RENDER_QUANTISE_INTEGER_TINT_ROUND);
   return (op->scene_family!=GML_RENDER_SCENE_TEXT ||
           (region.width<=256u && region.height<=256u)) &&
-    q->shape==GML_RENDER_QUAD_AXIS_ALIGNED && (!q->span_active || byte_background) &&
+    q->shape==GML_RENDER_QUAD_AXIS_ALIGNED && (!q->span_active || byte_background || text_axis_row) &&
     q->sampling.filter==GML_RENDER_FILTER_HARDWARE_BILINEAR &&
     (q->sampling.quantisation==GML_RENDER_QUANTISE_HARDWARE_SPRITE_FIRSTGEN ||
      q->sampling.quantisation==GML_RENDER_QUANTISE_HARDWARE_SPRITE_MODERN || byte_background) &&
@@ -212,7 +214,7 @@ int gml_render_gpu_opengl_draw_textured_quad(const GmlRenderDrawOp *op,
         quad->sampling.quantisation!=GML_RENDER_QUANTISE_HARDWARE_SURFACE_LEADING &&
         quad->sampling.quantisation!=GML_RENDER_QUANTISE_SURFACE_TILED_LEADING &&
         quad->sampling.filter!=GML_RENDER_FILTER_HARDWARE_PIXEL_CENTRE_POINT &&
-        !(op->scene_family==GML_RENDER_SCENE_SPRITE &&
+        !((op->scene_family==GML_RENDER_SCENE_SPRITE || op->scene_family==GML_RENDER_SCENE_TEXT) &&
           quad->span_active==GML_RENDER_SPAN_FILTERED_AXIS_SUPPORT_ROW &&
           quad->sampling.filter==GML_RENDER_FILTER_HARDWARE_BILINEAR &&
           (quad->sampling.quantisation==GML_RENDER_QUANTISE_INTEGER_TINT_TRUNC ||

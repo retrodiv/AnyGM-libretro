@@ -74,6 +74,17 @@ static int scene_clamped_atlas_window_case(void){
   REQUIRE(gml_gpu_opengl_clamped_atlas_valid(&op,2u,1u),"background physical sampler shares bounded policy");
   op.scene_family=GML_RENDER_SCENE_TEXT;
   REQUIRE(gml_gpu_opengl_clamped_atlas_valid(&op,2u,1u),"bounded filtered glyph shares physical clamping");
+  GmlRenderDrawOp text_row=op;
+  text_row.payload.quad.span_active=GML_RENDER_SPAN_FILTERED_AXIS_SUPPORT_ROW;
+  REQUIRE(gml_gpu_opengl_clamped_atlas_valid(&text_row,2u,1u),
+          "typed text support rows retain bounded physical clamping");
+  text_row.scene_family=GML_RENDER_SCENE_SPRITE;
+  REQUIRE(!gml_gpu_opengl_clamped_atlas_valid(&text_row,2u,1u),
+          "other nonbyte row families do not inherit text clamping");
+  text_row.scene_family=GML_RENDER_SCENE_TEXT;
+  text_row.payload.quad.span_active=GML_RENDER_SPAN_FILTERED_AFFINE_ROW;
+  REQUIRE(!gml_gpu_opengl_clamped_atlas_valid(&text_row,2u,1u),
+          "arbitrary text affine rows retain their clamped-source refusal");
   GmlRenderDrawOp large_glyph=op;
   large_glyph.payload.quad.sampling.source_region.width=257u;
   REQUIRE(!gml_gpu_opengl_clamped_atlas_valid(&large_glyph,2u,1u),"oversized clamped glyph refused");
@@ -2078,16 +2089,21 @@ static int scene_hardware_screen_stretch_batch_case(void){
   return scene_hardware_filtered_batch_case(6);
 }
 /* Typed row admission/atomic refusal only; real paired controls own RGBA. */
-static int scene_filtered_affine_row_batch_case(void){
+static int scene_filtered_affine_row_batch_case(int text){
   enum { QUADS=2049 };
   const uint8_t pixels[16]={11,22,33,255,44,55,66,255,77,88,99,255,111,122,133,255};
   for(unsigned api=0;api<2u;api++) for(unsigned owner=0;owner<3u;owner++)
-  for(unsigned positive=0;positive<17u;positive++)
+  for(unsigned positive=0;positive<18u;positive++)
   for(unsigned background=0;background<5u;background++)
   for(unsigned axis_sprite=0;axis_sprite<(background?2u:1u);axis_sprite++)
-  for(unsigned mask_index=0;mask_index<(background>=3u?4u:axis_sprite?16u:1u);mask_index++)
-  for(unsigned invalid=0;invalid<(background>=3u?23u:axis_sprite?18u:background?17u:positive?16u:14u);invalid++){
+  for(unsigned mask_index=0;mask_index<(background>=3u?4u:axis_sprite && !text?16u:1u);mask_index++)
+  for(unsigned invalid=0;invalid<(text?24u:background>=3u?23u:axis_sprite?18u:background?17u:positive?16u:14u);invalid++){
     if(background && !positive) continue;
+    if(text && !axis_sprite) continue;
+    if(positive==17u && (!text || background<3u)) continue;
+    /* Those mutations belong to byte-preset packets; a zero-reference
+     * cutout is already valid on the ordinary positive row. */
+    if(text && background<3u && invalid>=18u && invalid<=22u) continue;
     if(!background && positive>=4u) continue;
     if(background==2u && positive==3u) continue;
     if(background==1u && positive>=5u) continue;
@@ -2131,7 +2147,12 @@ static int scene_filtered_affine_row_batch_case(void){
         state.rgb_destination_factor=GML_RENDER_BLEND_ZERO;
         state.alpha_source_factor=GML_RENDER_BLEND_SOURCE_ALPHA;
       }else if(positive>=7u){
-        if(positive==7u || positive==16u){
+        if(positive==17u){
+          state.coverage_policy=owner==2u?0u:GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA;
+          state.rgb_source_factor=GML_RENDER_BLEND_ZERO;
+          state.rgb_destination_factor=GML_RENDER_BLEND_ONE_MINUS_SOURCE_COLOUR;
+          state.alpha_source_factor=GML_RENDER_BLEND_SOURCE_ALPHA;
+        }else if(positive==7u || positive==16u){
           state.rgb_source_factor=GML_RENDER_BLEND_ONE;
           state.rgb_destination_factor=GML_RENDER_BLEND_ONE;
           state.alpha_source_factor=GML_RENDER_BLEND_SOURCE_ALPHA;
@@ -2174,20 +2195,21 @@ static int scene_filtered_affine_row_batch_case(void){
         .region={0,0,8u,8u}};
       if(!index){op->opcode=GML_RENDER_OP_CLEAR;op->payload.clear_colour=0x40273859u;continue;}
       op->opcode=GML_RENDER_OP_TEXTURED_QUAD;
-      op->scene_family=background && !axis_sprite?GML_RENDER_SCENE_BACKGROUND:GML_RENDER_SCENE_SPRITE;
+      op->scene_family=text?GML_RENDER_SCENE_TEXT:
+        background && !axis_sprite?GML_RENDER_SCENE_BACKGROUND:GML_RENDER_SCENE_SPRITE;
       op->sources=&source;op->source_count=1u;op->reconstruction_mode=GML_RENDER_DEVICE_CHECKPOINT;
       GmlRenderQuad *q=&op->payload.quad;q->shape=GML_RENDER_QUAD_AXIS_ALIGNED;
       q->sampling=state.samplers[0];q->filtered_draw_alpha=positive==14u?0.0:
         positive==15u?0x1p-40:positive==16u?1e-300:.7;
       q->span_active=axis_sprite?GML_RENDER_SPAN_FILTERED_AXIS_SUPPORT_ROW:
         positive?GML_RENDER_SPAN_FILTERED_POSITIVE_ROW:GML_RENDER_SPAN_FILTERED_AFFINE_ROW;
-      q->inverse_x[0]=background?16.0:1.0;q->inverse_x[1]=.5;
+      q->inverse_x[0]=text?16384.0:background?16.0:1.0;q->inverse_x[1]=.5;
       q->inverse_anchor[0]=background?-.5:0.0;
       q->x[1]=q->x[2]=2.0;q->y[2]=q->y[3]=1.0;
       for(unsigned corner=0;corner<4u;corner++){
         int right=corner==1u || corner==2u;
-        q->corner_colour[corner]=positive>=14u?0x00123456u:0xB3123456u;
-        q->u[corner]=background?(right?12.0:-4.0):(right?1.0:0.0);
+        q->corner_colour[corner]=positive>=14u && positive<=16u?0x00123456u:0xB3123456u;
+        q->u[corner]=text?(right?12288.0:-4096.0):background?(right?12.0:-4.0):(right?1.0:0.0);
         q->v[corner]=right?.625:.125;
       }
     }
@@ -2196,10 +2218,10 @@ static int scene_filtered_affine_row_batch_case(void){
     if(invalid==2u) last->inverse_x[1]=NAN;
     if(invalid==3u) last->inverse_offset[0]=1.0;
     if(invalid==4u) last->span_x[0]=1.0;
-    if(invalid==5u) last->inverse_anchor[0]=background?20.0:2.0;
+    if(invalid==5u) last->inverse_anchor[0]=text?16641.0:background?20.0:2.0;
     if(invalid==6u) last->inverse_y[1]=1.0;
     if(invalid==7u) last->u[1]=.9;
-    if(invalid==8u) ops[quads].scene_family=GML_RENDER_SCENE_TEXT;
+    if(invalid==8u) ops[quads].scene_family=axis_sprite?GML_RENDER_SCENE_SURFACE:GML_RENDER_SCENE_TEXT;
     if(invalid==9u) ops[quads].reconstruction_mode=GML_RENDER_REPLAY_EXACT;
     if(invalid==10u) last->sampling.quantisation=0u;
     if(invalid==11u) last->span_active=4u;
@@ -2213,7 +2235,8 @@ static int scene_filtered_affine_row_batch_case(void){
     /* All sixteen masks now have paired axis owners. Out-of-range16 is
      * still malformed and must refuse before even the clear prefix. */
     if(invalid==16u) state.write_mask=background>=3u || axis_sprite?16u:7u;
-    if(invalid==17u) ops[quads].scene_family=axis_sprite?GML_RENDER_SCENE_BACKGROUND:GML_RENDER_SCENE_TILE;
+    if(invalid==17u) ops[quads].scene_family=text?GML_RENDER_SCENE_TILE:
+      axis_sprite?GML_RENDER_SCENE_BACKGROUND:GML_RENDER_SCENE_TILE;
     if(invalid==18u) last->sampling.filter=GML_RENDER_FILTER_NEAREST;
     if(invalid==19u) state.colour=0xFF123456u;
     if(invalid==20u) last->sampling.quantisation=GML_RENDER_QUANTISE_INTEGER_ROW_TINT_TRUNC;
@@ -2225,6 +2248,7 @@ static int scene_filtered_affine_row_batch_case(void){
       state.alpha_destination_factor=GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA;
       state.rgb_equation=state.alpha_equation=GML_RENDER_BLEND_ADD;
     }
+    if(invalid==23u) last->inverse_x[0]=16385.0;
     GmlRenderDrawBatch batch={ops,quads+1u,&state,1u};
     GmlRenderExecutionResult result=device.submit(device.context,&batch);
     if(invalid){
@@ -2238,7 +2262,7 @@ static int scene_filtered_affine_row_batch_case(void){
         !anygm_test_graphics_clear_calls() && !anygm_test_graphics_scene_draw_calls() &&
         !anygm_test_graphics_scene_copies(),"invalid row suffix refuses before the clear prefix");
     }else{
-      unsigned passes=(positive==1u || positive==5u || (background>=3u &&
+      unsigned passes=(positive==1u || positive==5u || (positive==17u && owner!=2u) || (background>=3u &&
         (positive==7u || positive==8u || positive==15u || positive==16u))) && (state.write_mask&8u)?2u:1u;
       if(result.status!=GML_RENDER_EXEC_ACCEPTED || result.accepted_prefix!=quads+1u ||
          anygm_test_graphics_scene_draw_calls()!=(int)((quads>2048u?2u:1u)*passes) ||
@@ -2260,10 +2284,11 @@ static int scene_filtered_affine_row_batch_case(void){
 }
 static int scene_hardware_screen_sprite_batch_case(void){
   return scene_hardware_filtered_batch_case(7) && scene_hardware_filtered_batch_case(11) &&
-    scene_filtered_affine_row_batch_case();
+    scene_filtered_affine_row_batch_case(0);
 }
 static int scene_hardware_screen_font_batch_case(void){
-  return scene_hardware_filtered_batch_case(8) && scene_hardware_filtered_batch_case(14);
+  return scene_hardware_filtered_batch_case(8) && scene_hardware_filtered_batch_case(14) &&
+    scene_filtered_affine_row_batch_case(1);
 }
 static int scene_hardware_screen_trim_batch_case(void){
   return scene_hardware_filtered_batch_case(9);
@@ -3532,6 +3557,35 @@ static int scene_integer_function_sprite_case(void){
           anygm_test_graphics_scene_draw_calls()==prior && anygm_test_graphics_clear_calls()==clear_count &&
           !anygm_test_graphics_scene_copies() && !anygm_test_graphics_read_pixels(),
           "unqualified replacement family, tint, alpha or coverage refuses before its clear");
+      }
+      /* A font's empty authored margin is constant zero,not an arbitrary
+       * zero-opacity TEXT source. Keep both alpha owners and atomic suffix
+       * rejection for nonzero colour,larger selection and partial writes. */
+      for(unsigned invalid=0;invalid<4u;invalid++){
+        state.alpha_test_enabled=0u;state.alpha_test_reference=0u;
+        state.write_mask=invalid==3u?7u:15u;
+        state.coverage_policy=target_kind==2u?GML_RENDER_COVERAGE_REPLACE_SOURCE_ALPHA:
+          GML_RENDER_COVERAGE_REPLACE_ZERO_ALPHA;
+        state.samplers[0].source_region=(GmlRenderRect){0,0,1u,1u};
+        for(unsigned i=0;i<3u;i++)ops[i].target.image.content_version=320u+invalid*3u+i;
+        for(unsigned i=1u;i<3u;i++){
+          ops[i].payload.quad=pristine;ops[i].scene_family=GML_RENDER_SCENE_TEXT;
+          GmlRenderQuad *q=&ops[i].payload.quad;
+          q->sampling=state.samplers[0];q->filtered_draw_alpha=0.0;
+          for(unsigned c=0;c<4u;c++){
+            q->corner_colour[c]=0u;q->u[c]=q->v[c]=.25;
+          }
+        }
+        if(invalid==1u)ops[2].payload.quad.corner_colour[0]=1u;
+        if(invalid==2u)ops[2].payload.quad.sampling.source_region.width=2u;
+        int prior=anygm_test_graphics_scene_draw_calls(),clear_count=anygm_test_graphics_clear_calls();
+        result=device.submit(device.context,&batch);
+        REQUIRE(result.status==(invalid?GML_RENDER_EXEC_UNSUPPORTED:GML_RENDER_EXEC_ACCEPTED) &&
+          result.accepted_prefix==(invalid?0u:3u) &&
+          anygm_test_graphics_scene_draw_calls()==prior+(invalid?0:1) &&
+          (invalid?anygm_test_graphics_clear_calls()==clear_count:1) &&
+          !anygm_test_graphics_scene_copies() && !anygm_test_graphics_read_pixels(),
+          "only a complete constant-zero font margin groups without observations");
       }
     }
     gml_gpu_destroy(gpu,1);
