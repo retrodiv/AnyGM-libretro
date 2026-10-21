@@ -18407,12 +18407,55 @@ static int resident_registered_view_surface_source(void){
   return controls==48u;
 }
 
+static int resident_empty_surface_part_prefix(void){
+  static const int policies[]={530,700,800,13,15,17};
+  unsigned controls=0;
+  for(unsigned policy=0;policy<6u;policy++) for(unsigned filtering=0;filtering<2u;filtering++)
+  for(unsigned variant=0;variant<5u;variant++){
+    GmlRender *r=calloc(1,sizeof *r);GmlWin content={.classic_version=policy<3u?policies[policy]:0,
+      .bytecode=policy<3u?0:policies[policy]};
+    FakeDevice fake={.on_demand=1,.readback_colour=0xFF2468ACu};
+    GmlRenderDeviceServices device=service(&fake);uint32_t screen[64]={0};
+    CHECK(r && !gml_render_init(r,NULL));r->win=&content;r->classic=policy<3u;
+    CHECK(gml_render_application_surface_ensure_owned(r,8,8));
+    gml_render_application_surface_publish(r);
+    device.observe_on_demand=fake_observe_on_demand;
+    gml_render_bind_device(r,&device);gml_render_set_scene_device(r,1);
+    CHECK(gml_render_begin_resident_base(r,screen,8,8,0,0));
+    int source=gml_surface_create(r,4,4);CHECK(source>0);
+    gml_render_set_pending_fill(r,fake.readback_colour);gml_render_flush_pending_fill(r);
+    CHECK(gml_render_scene_submit_pending(r));
+    GmlRenderResource *target=gml_render_scene_target_resource_ensure(r);
+    GmlRenderJournalMetrics before={0},after={0};
+    gml_render_resource_journal_metrics(target,&before);
+    gml_render_set_pending_fill(r,0xFFAABBCCu);
+    r->interp=(int)filtering;r->blendmode=11;r->color_write_mask=5u;
+    r->app_draw_enable=0;r->composites_app=0;
+    if(variant==4u){r->active_shader=0;r->shader_device_expected=1;}
+    int calls=fake.submits,reads=fake.readbacks,uploads=fake.uploads;
+    double width=variant==1u?-2:4,height=variant==0u || variant==4u?0:4;
+    double xs=variant==2u?0:variant==3u?1e-300:1;
+    gml_draw_surface_part_ext(r,source,0,0,width,height,1.25,2.5,xs,1,0xFFFFFFu,.61);
+    gml_render_resource_journal_metrics(target,&after);
+    if(variant==4u){CHECK(!r->resident_application_pass && fake.readbacks>reads);}
+    else CHECK(r->resident_application_pass && r->pending_fill &&
+      r->pending_fill_color==0xFFAABBCCu && r->composites_app==(int)filtering &&
+      fake.submits==calls && fake.readbacks==reads && fake.uploads==uploads && !screen[0] &&
+      before.logical_version==after.logical_version && before.cpu_version==after.cpu_version &&
+      before.gpu_version==after.gpu_version);
+    gml_render_free(r);free(r);controls++;
+  }
+  printf("empty surface part prefix: controls=%u no_op=48 selected_program_CPU=12\n",controls);
+  return controls==60u;
+}
+
 int main(void){
   const char *selected=getenv("GML_RENDER_RESOURCE_CASE");
   if(selected){
     int passed;
     if(!strcmp(selected,"independent-screen-clear")) passed=independent_screen_clear_preserves_draw_state();
     else if(!strcmp(selected,"registered-view-source")) passed=resident_registered_view_surface_source();
+    else if(!strcmp(selected,"empty-surface-part")) passed=resident_empty_surface_part_prefix();
     else if(!strcmp(selected,"paired-root-clear")) passed=paired_root_public_clear_keeps_device_authority();
     else if(!strcmp(selected,"independent-sample-clear")) passed=independent_sample_clear_owns_all_planes();
     else if(!strcmp(selected,"owned-interpolation-underlay")) passed=owned_interpolation_underlay_keeps_device_sources();
@@ -18728,6 +18771,7 @@ int main(void){
   passed+=resident_extended_roundrect_function();
   passed+=resident_extended_roundrect_refusals();
   passed+=resident_registered_view_surface_source();
-  printf("render resource cases: passed=%d failed=%d\n",passed,291-passed);
-  return passed==291?EXIT_SUCCESS:EXIT_FAILURE;
+  passed+=resident_empty_surface_part_prefix();
+  printf("render resource cases: passed=%d failed=%d\n",passed,292-passed);
+  return passed==292?EXIT_SUCCESS:EXIT_FAILURE;
 }

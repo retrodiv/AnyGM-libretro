@@ -3705,6 +3705,25 @@ int gml_render_resident_surface_tiled(GmlRender *r,int surf,double x,double y,
   return 0;
 }
 
+static int resident_surface_part_empty(GmlRender *r,double sx,double sy,double sw,double sh,
+                                      double dx,double dy,double xs,double ys){
+  double width=sw*xs,height=sh*ys;
+  if(!r || !r->win || !r->fb || r->fbw<=0 || r->fbh<=0 ||
+     !r->resident_application_pass || !gml_render_scene_target_matches(r) ||
+     resident_surface_shader_selected(r) || gml_d3_is_active(r) ||
+     !isfinite(sx) || !isfinite(sy) || !isfinite(sw) || !isfinite(sh) ||
+     !isfinite(dx) || !isfinite(dy) || !isfinite(xs) || !isfinite(ys) ||
+     !isfinite(width) || !isfinite(height) ||
+     !isfinite(dx-r->cam_x) || !isfinite(dy-r->cam_y) ||
+     fabs(dx-r->cam_x)>16384.0 || fabs(dy-r->cam_y)>16384.0 ||
+     fabs(width)>16384.0 || fabs(height)>16384.0 ||
+     !(sw<=0.0 || sh<=0.0 || fabs(width)<.5 || fabs(height)<.5)) return 0;
+  /* Preserve the CPU facade's readable presentation hint without observing
+   * either image or flushing a queued prefix for a region that writes nothing. */
+  if(!r->app_draw_enable && r->interp) r->composites_app=1;
+  return 1;
+}
+
 void gml_draw_surface_part_ext(GmlRender *r,int surf,double sx,double sy,double sw,double sh,
                                double dx,double dy,double xs,double ys,uint32_t blend,double alpha){
   int explicit_target_raster=gml_render_surface_draw_targets_screen_raster(r,surf,sw*xs,sh*ys);
@@ -3714,6 +3733,7 @@ void gml_draw_surface_part_ext(GmlRender *r,int surf,double sx,double sy,double 
   }
   GmlRenderShaderGeometry geometry=gml_render_shader_geometry(r,dx,dy,sw*xs,sh*ys,
                                                                !explicit_target_raster);
+  if(resident_surface_part_empty(r,sx,sy,sw,sh,dx,dy,xs,ys)) return;
   /* Keep the part call's coordinate mapping and independently bounded source
    * rectangle through the existing content-program handoff. Unqualified crop
    * or destination geometry retains the original ordered CPU path below. */

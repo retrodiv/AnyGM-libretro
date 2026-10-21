@@ -105,6 +105,7 @@ REQUIRED_RULES = {
     "R03-P5-SURFACE-PART", "R03-P5-SURFACE-STRETCHED",
     "R03-SURFACE-NEAREST-FUNCTION",
     "R03-SURFACE-BORROWED-FUNCTION",
+    "R03-SURFACE-PART-EMPTY",
     "R03-SURFACE-CANVAS-FUNCTION",
     "R03-SURFACE-TILED-FUNCTION",
     "R03-SURFACE-CLASSIC-INTEGER-SCREEN",
@@ -255,6 +256,7 @@ DISPATCH_ADDITIONAL = {
     "gml_software3d_primitive_2d_end",
 }
 DISPATCH_HELPERS = {
+    "resident_surface_part_empty",
     "resident_collapsed_additive_sprite_noop",
     "resident_surface_shader_selected",
     "resident_surface_borrowed_application",
