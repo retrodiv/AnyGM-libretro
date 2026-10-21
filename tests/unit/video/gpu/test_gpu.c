@@ -2084,8 +2084,9 @@ static int scene_filtered_affine_row_batch_case(void){
   for(unsigned api=0;api<2u;api++) for(unsigned owner=0;owner<3u;owner++)
   for(unsigned positive=0;positive<17u;positive++)
   for(unsigned background=0;background<5u;background++)
+  for(unsigned axis_sprite=0;axis_sprite<(background?2u:1u);axis_sprite++)
   for(unsigned mask_index=0;mask_index<(background>=3u?4u:1u);mask_index++)
-  for(unsigned invalid=0;invalid<(background>=3u?23u:background?17u:positive?16u:14u);invalid++){
+  for(unsigned invalid=0;invalid<(background>=3u?23u:axis_sprite?18u:background?17u:positive?16u:14u);invalid++){
     if(background && !positive) continue;
     if(!background && positive>=4u) continue;
     if(background==2u && positive==3u) continue;
@@ -2173,12 +2174,13 @@ static int scene_filtered_affine_row_batch_case(void){
         .region={0,0,8u,8u}};
       if(!index){op->opcode=GML_RENDER_OP_CLEAR;op->payload.clear_colour=0x40273859u;continue;}
       op->opcode=GML_RENDER_OP_TEXTURED_QUAD;
-      op->scene_family=background?GML_RENDER_SCENE_BACKGROUND:GML_RENDER_SCENE_SPRITE;
+      op->scene_family=background && !axis_sprite?GML_RENDER_SCENE_BACKGROUND:GML_RENDER_SCENE_SPRITE;
       op->sources=&source;op->source_count=1u;op->reconstruction_mode=GML_RENDER_DEVICE_CHECKPOINT;
       GmlRenderQuad *q=&op->payload.quad;q->shape=GML_RENDER_QUAD_AXIS_ALIGNED;
       q->sampling=state.samplers[0];q->filtered_draw_alpha=positive==14u?0.0:
         positive==15u?0x1p-40:positive==16u?1e-300:.7;
-      q->span_active=positive?GML_RENDER_SPAN_FILTERED_POSITIVE_ROW:GML_RENDER_SPAN_FILTERED_AFFINE_ROW;
+      q->span_active=axis_sprite?GML_RENDER_SPAN_FILTERED_AXIS_SUPPORT_ROW:
+        positive?GML_RENDER_SPAN_FILTERED_POSITIVE_ROW:GML_RENDER_SPAN_FILTERED_AFFINE_ROW;
       q->inverse_x[0]=background?16.0:1.0;q->inverse_x[1]=.5;
       q->inverse_anchor[0]=background?-.5:0.0;
       q->x[1]=q->x[2]=2.0;q->y[2]=q->y[3]=1.0;
@@ -2209,7 +2211,7 @@ static int scene_filtered_affine_row_batch_case(void){
       else state.coverage_policy=positive==3u?GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA:0u;
     }
     if(invalid==16u) state.write_mask=background>=3u?16u:7u;
-    if(invalid==17u) ops[quads].scene_family=GML_RENDER_SCENE_TILE;
+    if(invalid==17u) ops[quads].scene_family=axis_sprite?GML_RENDER_SCENE_BACKGROUND:GML_RENDER_SCENE_TILE;
     if(invalid==18u) last->sampling.filter=GML_RENDER_FILTER_NEAREST;
     if(invalid==19u) state.colour=0xFF123456u;
     if(invalid==20u) last->sampling.quantisation=GML_RENDER_QUANTISE_INTEGER_ROW_TINT_TRUNC;
@@ -2224,12 +2226,26 @@ static int scene_filtered_affine_row_batch_case(void){
     GmlRenderDrawBatch batch={ops,quads+1u,&state,1u};
     GmlRenderExecutionResult result=device.submit(device.context,&batch);
     if(invalid){
+      if(result.status!=GML_RENDER_EXEC_UNSUPPORTED || result.accepted_prefix ||
+         anygm_test_graphics_clear_calls() || anygm_test_graphics_scene_draw_calls() ||
+         anygm_test_graphics_scene_copies())
+        fprintf(stderr,"row suffix: api=%u owner=%u background=%u axis=%u positive=%u mask=%u invalid=%u status=%u prefix=%u\n",
+          api,owner,background,axis_sprite,positive,mask_index,invalid,
+          (unsigned)result.status,result.accepted_prefix);
       REQUIRE(result.status==GML_RENDER_EXEC_UNSUPPORTED && !result.accepted_prefix &&
         !anygm_test_graphics_clear_calls() && !anygm_test_graphics_scene_draw_calls() &&
         !anygm_test_graphics_scene_copies(),"invalid row suffix refuses before the clear prefix");
     }else{
       unsigned passes=(positive==1u || positive==5u || (background>=3u &&
         (positive==7u || positive==8u || positive==15u || positive==16u))) && (state.write_mask&8u)?2u:1u;
+      if(result.status!=GML_RENDER_EXEC_ACCEPTED || result.accepted_prefix!=quads+1u ||
+         anygm_test_graphics_scene_draw_calls()!=(int)((quads>2048u?2u:1u)*passes) ||
+         anygm_test_graphics_scene_vertices()!=(int)(quads*6u*passes) ||
+         anygm_test_graphics_scene_filter()!=GL_LINEAR || anygm_test_graphics_scene_copies() ||
+         anygm_test_graphics_read_pixels())
+        fprintf(stderr,"row positive: api=%u owner=%u background=%u axis=%u positive=%u mask=%u status=%u prefix=%u draws=%d vertices=%d\n",
+          api,owner,background,axis_sprite,positive,mask_index,(unsigned)result.status,result.accepted_prefix,
+          anygm_test_graphics_scene_draw_calls(),anygm_test_graphics_scene_vertices());
       REQUIRE(result.status==GML_RENDER_EXEC_ACCEPTED && result.accepted_prefix==quads+1u &&
         anygm_test_graphics_scene_draw_calls()==(int)((quads>2048u?2u:1u)*passes) &&
         anygm_test_graphics_scene_vertices()==(int)(quads*6u*passes) &&
@@ -3238,7 +3254,7 @@ static int scene_integer_function_sprite_case(void){
   for(unsigned alpha_test=0;alpha_test<2u;alpha_test++)
   for(unsigned api=0;api<2u;api++) for(unsigned rounded=0;rounded<3u;rounded++)
   for(unsigned target_kind=0;target_kind<4u;target_kind++) for(unsigned blend=0;blend<12u;blend++){
-    if(blend>=7u && background!=1u) continue;
+    if(blend>=7u && (background==2u || (!background && rounded==2u))) continue;
     uint8_t pixels[16]={208,32,16,128,16,208,32,255,32,16,208,0,192,176,160,64};
     GmlRenderImageRef source={GML_RENDER_RESOURCE_ATLAS,31u,1u,1u};
     GmlRenderImageRef target={target_kind==0u?GML_RENDER_RESOURCE_SCREEN:

@@ -23,8 +23,10 @@ int gml_gpu_opengl_clamped_atlas_valid(const GmlRenderDrawOp *op,
      op->sources[0].resource_class!=GML_RENDER_RESOURCE_ATLAS) return 0;
   const GmlRenderQuad *q=&op->payload.quad;
   GmlRenderRect region=q->sampling.source_region;
-  int byte_background=op->scene_family==GML_RENDER_SCENE_BACKGROUND &&
-    q->span_active==GML_RENDER_SPAN_FILTERED_POSITIVE_ROW &&
+  int byte_background=((op->scene_family==GML_RENDER_SCENE_BACKGROUND &&
+    q->span_active==GML_RENDER_SPAN_FILTERED_POSITIVE_ROW) ||
+    (op->scene_family==GML_RENDER_SCENE_SPRITE &&
+     q->span_active==GML_RENDER_SPAN_FILTERED_AXIS_SUPPORT_ROW)) &&
     (q->sampling.quantisation==GML_RENDER_QUANTISE_INTEGER_TINT_TRUNC ||
      q->sampling.quantisation==GML_RENDER_QUANTISE_INTEGER_TINT_ROUND);
   return (op->scene_family!=GML_RENDER_SCENE_TEXT ||
@@ -210,6 +212,11 @@ int gml_render_gpu_opengl_draw_textured_quad(const GmlRenderDrawOp *op,
         quad->sampling.quantisation!=GML_RENDER_QUANTISE_HARDWARE_SURFACE_LEADING &&
         quad->sampling.quantisation!=GML_RENDER_QUANTISE_SURFACE_TILED_LEADING &&
         quad->sampling.filter!=GML_RENDER_FILTER_HARDWARE_PIXEL_CENTRE_POINT &&
+        !(op->scene_family==GML_RENDER_SCENE_SPRITE &&
+          quad->span_active==GML_RENDER_SPAN_FILTERED_AXIS_SUPPORT_ROW &&
+          quad->sampling.filter==GML_RENDER_FILTER_HARDWARE_BILINEAR &&
+          (quad->sampling.quantisation==GML_RENDER_QUANTISE_INTEGER_TINT_TRUNC ||
+           quad->sampling.quantisation==GML_RENDER_QUANTISE_INTEGER_TINT_ROUND)) &&
         !(op->scene_family==GML_RENDER_SCENE_BACKGROUND &&
           quad->sampling.filter==GML_RENDER_FILTER_HARDWARE_BILINEAR &&
           (state->coverage_policy==GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA ||

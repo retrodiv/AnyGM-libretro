@@ -346,7 +346,10 @@ enum {
   GML_RENDER_SPAN_FILTERED_AFFINE_ROW=3u,
   GML_RENDER_SPAN_OPAQUE_SCALAR_ALPHA=4u,
   /* Immutable input-alpha support, resolved before hardware colour filtering. */
-  GML_RENDER_SPAN_FILTERED_POSITIVE_ROW=5u
+  GML_RENDER_SPAN_FILTERED_POSITIVE_ROW=5u,
+  /* Axis-selected CPU coverage permits bounded sub-eighth inverse steps;
+   * rotated support rows retain their separate smaller numerical domain. */
+  GML_RENDER_SPAN_FILTERED_AXIS_SUPPORT_ROW=6u
 };
 
 /* Shared admission for the bounded double-expression font rule, before target writes. */
