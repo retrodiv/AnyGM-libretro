@@ -114,7 +114,10 @@ static int scene_clamped_atlas_window_case(void){
       case 16:changed.reconstruction_mode=GML_RENDER_REPLAY_EXACT;break;
       default:quad->sampling.source_region=(GmlRenderRect){0,0,2u,1u};break;
     }
-    REQUIRE(!gml_gpu_opengl_clamped_atlas_valid(&changed,2u,1u),"unqualified virtual source policy refused");
+    if(bad==9u)
+      REQUIRE(gml_gpu_opengl_clamped_atlas_valid(&changed,2u,1u),
+              "typed tile shares the paired bounded physical atlas policy");
+    else REQUIRE(!gml_gpu_opengl_clamped_atlas_valid(&changed,2u,1u),"unqualified virtual source policy refused");
   }
   REQUIRE(!gml_gpu_opengl_clamped_atlas_valid(&op,0u,1u) &&
           !gml_gpu_opengl_clamped_atlas_valid(&op,2u,0u) &&
@@ -2251,6 +2254,21 @@ static int scene_filtered_affine_row_batch_case(int text){
     if(invalid==23u) last->inverse_x[0]=16385.0;
     GmlRenderDrawBatch batch={ops,quads+1u,&state,1u};
     GmlRenderExecutionResult result=device.submit(device.context,&batch);
+    if(invalid==17u && ops[quads].scene_family==GML_RENDER_SCENE_TILE && !text){
+      /* Preserve the former other-family input as a positive TILE suffix.
+       * The unchanged malformed rows still refuse atomically below; actual
+       * colour/coverage comes from the paired public tile generator. */
+      if(result.status!=GML_RENDER_EXEC_ACCEPTED) fprintf(stderr,
+        "tile row suffix: text=%d background=%u positive=%u mask=%u status=%u\n",
+        text,background,positive,mask_index,(unsigned)result.status);
+      REQUIRE(result.status==GML_RENDER_EXEC_ACCEPTED && result.accepted_prefix==quads+1u &&
+        anygm_test_graphics_clear_calls()==1 && anygm_test_graphics_scene_draw_calls()>=1 &&
+        anygm_test_graphics_scene_draw_calls()<=4 &&
+        anygm_test_graphics_scene_vertices()>=(int)(quads*6u) &&
+        !anygm_test_graphics_scene_copies() && !anygm_test_graphics_read_pixels(),
+        "typed tile row suffix retains capacity batching without observation");
+      gml_gpu_destroy(gpu,1);free(ops);continue;
+    }
     if(invalid){
       if(result.status!=GML_RENDER_EXEC_UNSUPPORTED || result.accepted_prefix ||
          anygm_test_graphics_clear_calls() || anygm_test_graphics_scene_draw_calls() ||
@@ -3281,7 +3299,7 @@ static int scene_integer_function_sprite_case(void){
   for(unsigned alpha_test=0;alpha_test<2u;alpha_test++)
   for(unsigned api=0;api<2u;api++) for(unsigned rounded=0;rounded<3u;rounded++)
   for(unsigned target_kind=0;target_kind<4u;target_kind++) for(unsigned blend=0;blend<12u;blend++){
-    if(blend>=7u && (background==2u || (!background && rounded==2u))) continue;
+    if(blend>=7u && !background && rounded==2u) continue;
     uint8_t pixels[16]={208,32,16,128,16,208,32,255,32,16,208,0,192,176,160,64};
     GmlRenderImageRef source={GML_RENDER_RESOURCE_ATLAS,31u,1u,1u};
     GmlRenderImageRef target={target_kind==0u?GML_RENDER_RESOURCE_SCREEN:
@@ -3361,7 +3379,7 @@ static int scene_integer_function_sprite_case(void){
       for(unsigned corner=0;corner<4u;corner++) q->corner_colour[corner]=0x663470D0u;
     }
     GmlRenderExecutionResult result=device.submit(device.context,&batch);
-    if((rounded==2u && background) || (blend>=5u && (rounded==2u || background==2u))){
+    if((rounded==2u && background) || (blend>=5u && rounded==2u)){
       REQUIRE(result.status==GML_RENDER_EXEC_UNSUPPORTED && !result.accepted_prefix &&
         !anygm_test_graphics_clear_calls() && !anygm_test_graphics_scene_draw_calls() &&
         !anygm_test_graphics_scene_copies() && !anygm_test_graphics_read_pixels(),
@@ -3382,7 +3400,7 @@ static int scene_integer_function_sprite_case(void){
       for(unsigned extension=0;extension<2u;extension++){
         state=original;
         for(unsigned i=0;i<3u;i++) ops[i].target.image.content_version=i+4u;
-        if(!extension) state.write_mask=background==1u && blend>=5u?16u:7u;
+        if(!extension) state.write_mask=blend>=5u?16u:7u;
         else{
           state.rgb_source_factor=GML_RENDER_BLEND_SOURCE_ALPHA;
           state.rgb_destination_factor=state.alpha_source_factor=
@@ -3553,10 +3571,12 @@ static int scene_integer_function_sprite_case(void){
         state.coverage_policy=invalid==3u?6u:GML_RENDER_COVERAGE_REPLACE_SOURCE_ALPHA;
         int prior=anygm_test_graphics_scene_draw_calls(),clear_count=anygm_test_graphics_clear_calls();
         result=device.submit(device.context,&batch);
-        REQUIRE(result.status==GML_RENDER_EXEC_UNSUPPORTED && !result.accepted_prefix &&
-          anygm_test_graphics_scene_draw_calls()==prior && anygm_test_graphics_clear_calls()==clear_count &&
+        int tile=invalid==0u;
+        REQUIRE(result.status==(tile?GML_RENDER_EXEC_ACCEPTED:GML_RENDER_EXEC_UNSUPPORTED) &&
+          result.accepted_prefix==(tile?3u:0u) &&
+          anygm_test_graphics_scene_draw_calls()==prior+tile && anygm_test_graphics_clear_calls()==clear_count+tile &&
           !anygm_test_graphics_scene_copies() && !anygm_test_graphics_read_pixels(),
-          "unqualified replacement family, tint, alpha or coverage refuses before its clear");
+          "typed tile replacement admits while malformed tint, alpha and coverage refuse before the clear");
       }
       /* A font's empty authored margin is constant zero,not an arbitrary
        * zero-opacity TEXT source. Keep both alpha owners and atomic suffix

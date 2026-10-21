@@ -59,6 +59,8 @@ int gml_render_resident_nearest_tile_page(GmlRender *render,GmlTpag *page,
 int gml_render_resident_nearest_quarter_tile_page(GmlRender *render,GmlTpag *page,
   double x,double y,double xscale,double yscale,int exact_unit,int mirror,int flip,
   uint32_t colour,double alpha);
+int gml_render_resident_filtered_quarter_tile_page(GmlRender *render,int page_index,GmlTpag *page,
+  double x,double y,double xscale,double yscale,uint32_t colour,double alpha);
 enum {
   GML_RENDER_FILTERED_ATLAS_RULE=0,
   GML_RENDER_NEAREST_PART_PHASE_RULE=1,

@@ -201,7 +201,7 @@ static int qualified_blend(const GmlRenderDrawStateSnapshot *state){
 
 static uint32_t scene_filter(const GmlRenderQuad *quad,
                              const GmlRenderDrawStateSnapshot *state,uint32_t family){
-  if((family==GML_RENDER_SCENE_BACKGROUND ||
+  if((family==GML_RENDER_SCENE_BACKGROUND || family==GML_RENDER_SCENE_TILE ||
       ((family==GML_RENDER_SCENE_SPRITE || family==GML_RENDER_SCENE_TEXT) &&
        quad->span_active==GML_RENDER_SPAN_FILTERED_AXIS_SUPPORT_ROW)) &&
      quad->sampling.filter==GML_RENDER_FILTER_HARDWARE_BILINEAR &&
@@ -266,7 +266,7 @@ static uint32_t scene_filter(const GmlRenderQuad *quad,
     uint32_t filter;
     if(state->coverage_policy==GML_RENDER_COVERAGE_REPLACE_SOURCE_ALPHA) filter=83u;
     else if(state->coverage_policy==GML_RENDER_COVERAGE_REPLACE_ZERO_ALPHA) filter=base+12u;
-    else if((family==GML_RENDER_SCENE_BACKGROUND || family==GML_RENDER_SCENE_SPRITE) &&
+    else if((family==GML_RENDER_SCENE_BACKGROUND || family==GML_RENDER_SCENE_SPRITE || family==GML_RENDER_SCENE_TILE) &&
       qualified_blend(state)>=GL_SCENE_BLEND_SURFACE_DEST_BASE &&
       qualified_blend(state)<=GL_SCENE_BLEND_SURFACE_DEST_LIMIT &&
       state->coverage_policy==GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA) filter=base+12u;
@@ -274,8 +274,15 @@ static uint32_t scene_filter(const GmlRenderQuad *quad,
      * Opaque-target variants must therefore write alpha in this same draw,
      * not defer the ordinary source-over alpha stamp until a batch ends. */
     else if(qualified_blend(state)==20 || qualified_blend(state)==21) filter=base+5u;
+    /* The tile CPU leaves keep nonzero binary64 opacity even when its float
+     * packet alpha underflows. Preserve RGB factors and opaque additive
+     * coverage; their raw-zero source rejection is explicit in the state. */
+    else if(family==GML_RENDER_SCENE_TILE &&
+      (qualified_blend(state)==14 || qualified_blend(state)==18 ||
+       qualified_blend(state)==19 || qualified_blend(state)==24 || qualified_blend(state)==25))
+      filter=base+7u+(state->coverage_policy==GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA?2u:0u);
     else if(qualified_blend(state)==13 ||
-      ((family==GML_RENDER_SCENE_BACKGROUND || family==GML_RENDER_SCENE_SPRITE) && qualified_blend(state)>=GL_SCENE_BLEND_SURFACE_DEST_BASE &&
+      ((family==GML_RENDER_SCENE_BACKGROUND || family==GML_RENDER_SCENE_SPRITE || family==GML_RENDER_SCENE_TILE) && qualified_blend(state)>=GL_SCENE_BLEND_SURFACE_DEST_BASE &&
        qualified_blend(state)<=GL_SCENE_BLEND_SURFACE_DEST_LIMIT)) filter=base+7u+
       (state->coverage_policy==GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA?2u:0u);
     else filter=!qualified_blend(state)?base+5u:
@@ -506,7 +513,7 @@ static int integer_function_sprite_valid(const GmlRenderDrawOp *op,
   int blend=qualified_blend(state);
   int row=q->sampling.quantisation==GML_RENDER_QUANTISE_INTEGER_ROW_TINT_TRUNC;
   int flat=q->sampling.quantisation==GML_RENDER_QUANTISE_INTEGER_FLAT_RGB;
-  int background=op->scene_family==GML_RENDER_SCENE_BACKGROUND;
+  int background=op->scene_family==GML_RENDER_SCENE_BACKGROUND || op->scene_family==GML_RENDER_SCENE_TILE;
   int text_empty=op->scene_family==GML_RENDER_SCENE_TEXT && !row && !flat &&
     region.width==1u && region.height==1u && q->filtered_draw_alpha==0.0 &&
     !q->corner_colour[0] && !q->corner_colour[1] &&
@@ -998,11 +1005,13 @@ static int hardware_screen_sprite_valid(const GmlRenderDrawOp *op,
   double left=quad->inverse_anchor[0],top=quad->inverse_anchor[1];
   uint32_t margin=quad->sampling.logical_margin_mask;
   int selected_axis_row=quad->span_active==GML_RENDER_SPAN_FILTERED_AXIS_SUPPORT_ROW;
+  int tile_axis_row=selected_axis_row && op->scene_family==GML_RENDER_SCENE_TILE;
+  int atlas_background=op->scene_family==GML_RENDER_SCENE_BACKGROUND || op->scene_family==GML_RENDER_SCENE_TILE;
   int text_axis_row=selected_axis_row && op->scene_family==GML_RENDER_SCENE_TEXT;
   int positive_row=selected_axis_row || quad->span_active==GML_RENDER_SPAN_FILTERED_POSITIVE_ROW;
   int affine_row=positive_row || quad->span_active==GML_RENDER_SPAN_FILTERED_AFFINE_ROW;
   int blend=qualified_blend(state);
-  int byte_background=(op->scene_family==GML_RENDER_SCENE_BACKGROUND ||
+  int byte_background=(atlas_background ||
     ((op->scene_family==GML_RENDER_SCENE_SPRITE || op->scene_family==GML_RENDER_SCENE_TEXT) && selected_axis_row)) &&
     (quad->sampling.quantisation==GML_RENDER_QUANTISE_INTEGER_TINT_TRUNC ||
      quad->sampling.quantisation==GML_RENDER_QUANTISE_INTEGER_TINT_ROUND);
@@ -1018,8 +1027,8 @@ static int hardware_screen_sprite_valid(const GmlRenderDrawOp *op,
       state->coverage_policy!=GML_RENDER_COVERAGE_REPLACE_ZERO_ALPHA &&
       !(blend>=GL_SCENE_BLEND_SURFACE_DEST_BASE && blend<=GL_SCENE_BLEND_SURFACE_DEST_LIMIT)) ||
      (source && (source->width>16384u || source->height>16384u)))) return 0;
-  int background_row=positive_row && op->scene_family==GML_RENDER_SCENE_BACKGROUND && state->write_mask==15u;
-  if(selected_axis_row && ((op->scene_family!=GML_RENDER_SCENE_SPRITE && !text_axis_row) ||
+  int background_row=positive_row && atlas_background && state->write_mask==15u;
+  if(selected_axis_row && ((op->scene_family!=GML_RENDER_SCENE_SPRITE && !text_axis_row && !tile_axis_row) ||
       state->write_mask>15u)) return 0;
   int firstgen_row=(background_row || selected_axis_row) &&
     quad->sampling.quantisation==GML_RENDER_QUANTISE_HARDWARE_SPRITE_FIRSTGEN;
@@ -1034,11 +1043,12 @@ static int hardware_screen_sprite_valid(const GmlRenderDrawOp *op,
        quad->sampling.quantisation!=GML_RENDER_QUANTISE_HARDWARE_SPRITE_MODERN) ||
      (!covered_blend && !background_blend) ||
      (state->alpha_test_enabled && state->alpha_test_reference) ||
-     (!byte_background && quad->filtered_draw_alpha<0x1p-32))) return 0;
+     (!byte_background && op->scene_family!=GML_RENDER_SCENE_TILE &&
+      quad->filtered_draw_alpha<0x1p-32))) return 0;
   int physical=(quad->sampling.quantisation==GML_RENDER_QUANTISE_HARDWARE_SPRITE_FIRSTGEN ||
                 quad->sampling.quantisation==GML_RENDER_QUANTISE_HARDWARE_SPRITE_MODERN || byte_background) &&
     (op->scene_family==GML_RENDER_SCENE_SPRITE ||
-     (op->scene_family==GML_RENDER_SCENE_BACKGROUND && (state->write_mask==15u || byte_background)) ||
+     (atlas_background && (state->write_mask==15u || byte_background)) ||
      (op->scene_family==GML_RENDER_SCENE_TEXT && (state->write_mask==15u || byte_background))) && state->write_mask<=15u &&
     (op->target.image.resource_class==GML_RENDER_RESOURCE_SCREEN ||
      op->target.image.resource_class==GML_RENDER_RESOURCE_APPLICATION ||
@@ -1066,7 +1076,7 @@ static int hardware_screen_sprite_valid(const GmlRenderDrawOp *op,
   if(!source || source->rendered_origin || source->pixel_format!=GML_RENDER_PIXEL_RGBA8888 ||
      op->sources[0].resource_class!=GML_RENDER_RESOURCE_ATLAS ||
      (op->scene_family!=GML_RENDER_SCENE_SPRITE && op->scene_family!=GML_RENDER_SCENE_TEXT &&
-      !(physical && op->scene_family==GML_RENDER_SCENE_BACKGROUND)) ||
+      !(physical && atlas_background)) ||
      (!physical && op->target.image.resource_class!=GML_RENDER_RESOURCE_SCREEN &&
       (op->target.image.resource_class!=GML_RENDER_RESOURCE_APPLICATION ||
        op->scene_family!=GML_RENDER_SCENE_SPRITE)) ||
@@ -1100,10 +1110,11 @@ static int hardware_screen_sprite_valid(const GmlRenderDrawOp *op,
   if(affine_row){
     /* Background parts share the modern CPU positive-alpha coverage rows.
      * Other affine families and background write masks stay unqualified. */
-    int background_positive=positive_row && op->scene_family==GML_RENDER_SCENE_BACKGROUND &&
+    int background_positive=positive_row && atlas_background &&
       (state->write_mask==15u || byte_background);
     int selected_axis_positive=background_positive || selected_axis_row;
-    double sample_limit=text_axis_row?16384.0:selected_axis_positive?16.0:8.0;
+    double sample_limit=text_axis_row || op->scene_family==GML_RENDER_SCENE_TILE
+      ?16384.0:selected_axis_positive?16.0:8.0;
     if(!physical || (op->scene_family!=GML_RENDER_SCENE_SPRITE && !background_positive && !text_axis_row) ||
        quad->y[2]-quad->y[0]!=1.0 ||
        region.width>4096u || region.height>4096u ||
@@ -1495,7 +1506,7 @@ static int scene_preflight(GmlGpuBackend *backend,const GmlRenderDrawBatch *batc
       int physical_sprite=hardware_sprite &&
         (sampling->quantisation==GML_RENDER_QUANTISE_HARDWARE_SPRITE_FIRSTGEN ||
          sampling->quantisation==GML_RENDER_QUANTISE_HARDWARE_SPRITE_MODERN ||
-         ((op->scene_family==GML_RENDER_SCENE_BACKGROUND ||
+         ((op->scene_family==GML_RENDER_SCENE_BACKGROUND || op->scene_family==GML_RENDER_SCENE_TILE ||
            ((op->scene_family==GML_RENDER_SCENE_SPRITE || op->scene_family==GML_RENDER_SCENE_TEXT) &&
             op->payload.quad.span_active==GML_RENDER_SPAN_FILTERED_AXIS_SUPPORT_ROW)) &&
           (sampling->quantisation==GML_RENDER_QUANTISE_INTEGER_TINT_TRUNC ||

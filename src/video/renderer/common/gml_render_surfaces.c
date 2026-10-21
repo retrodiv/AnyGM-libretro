@@ -636,7 +636,8 @@ int gml_render_application_scene_enqueue_quads(GmlRender *r,
          (operation->scene_family==GML_RENDER_SCENE_BACKGROUND && r->classic_phase_scene_preparing)) &&
         operation->reconstruction_mode==GML_RENDER_DEVICE_CHECKPOINT)) &&
       operation->payload.quad.sampling.filter==GML_RENDER_FILTER_NEAREST) ||
-     (operation->scene_family==GML_RENDER_SCENE_BACKGROUND &&
+     ((operation->scene_family==GML_RENDER_SCENE_BACKGROUND ||
+       operation->scene_family==GML_RENDER_SCENE_TILE) &&
       operation->reconstruction_mode==GML_RENDER_DEVICE_CHECKPOINT &&
       ((operation->payload.quad.sampling.filter==GML_RENDER_FILTER_HARDWARE_BILINEAR &&
         (state->coverage_policy==GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA ||

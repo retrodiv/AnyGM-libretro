@@ -13306,7 +13306,7 @@ static int resident_classic_unit_tiles(void){
       exclusion==7u?0xABCDEFu:0xFFFFFFu,exclusion==8u?0.5:1.0);
     /* The complete nearest TILE owner supersedes the old unit-only scope.
      * Preserve every input and the exclusions outside its paired domain. */
-    if(exclusion==0u || exclusion==2u || exclusion==3u)
+    if(exclusion==0u)
       CHECK(!render->resident_application_pass);
     else{
       CHECK(render->resident_application_pass && !fake.submits && !fake.readbacks &&
@@ -13314,6 +13314,8 @@ static int resident_classic_unit_tiles(void){
       CHECK(gml_render_scene_submit_pending(render) && fake.submits==1 &&
             !fake.readbacks && fake.last_quantisation==GML_RENDER_QUANTISE_INTEGER_TINT_TRUNC &&
             fake.last_filter==GML_RENDER_FILTER_NEAREST);
+      CHECK(render->interp==(exclusion==2u) &&
+            render->color_write_mask==(exclusion==3u?7u:15u));
     }
     gml_render_free(render);free(render);
   }
@@ -16171,22 +16173,39 @@ static int resident_background_function(int fractional){
         :gml_render_resident_integer_background_page(render,0,6,5,2,1,0x70B0D0u,.37))); \
       restore; CHECK(fake.submits==submitted && !fake.readbacks); \
       } while(0)
-      if(!render->classic || fractional==2){
+      if(!render->classic){
         BG_REJECT(render->interp=1,render->interp=(int)interpolation);
       }else{
         /* The Classic logical writer stays nearest even when presentation
          * requests interpolation. Keep a positive packet/shadow discriminator,
          * not the obsolete unsupported-sampler assertion. */
         render->interp=1;
-        CHECK(gml_render_resident_integer_background_page(render,0,6,5,2,1,0x70B0D0u,.37));
+        CHECK(fractional==2
+          ?gml_render_resident_nearest_tile_page(render,&tile_view,6,5,2,1,0x70B0D0u,.37)
+          :gml_render_resident_integer_background_page(render,0,6,5,2,1,0x70B0D0u,.37));
         CHECK(render->interp==1 && fake.submits==submitted && !fake.readbacks &&
               !memcmp(shadow,render->fb,sizeof shadow));
         render->interp=(int)interpolation;
       }
       BG_REJECT(render->fog_flat=1,render->fog_flat=0);
       BG_REJECT(render->active_shader=0,render->active_shader=-1);
-      BG_REJECT(render->color_write_mask=7u,render->color_write_mask=15u);
-      BG_REJECT(render->blendmode=1,render->blendmode=0);
+      if(fractional==2){
+        /* These same admission-only exclusions predate the complete tile
+         * preset owner. Keep positive packet and untouched-shadow witnesses;
+         * paired controls retain the independent RGBA/coverage contract. */
+        for(unsigned variant=0;variant<2u;variant++){
+          render->color_write_mask=variant?15u:7u;render->blendmode=variant?1:0;
+          CHECK(gml_render_resident_nearest_tile_page(render,&tile_view,6,5,2,1,0x70B0D0u,.37));
+          CHECK(fake.submits==submitted && !fake.readbacks && !memcmp(shadow,render->fb,sizeof shadow));
+          CHECK(gml_render_scene_submit_pending(render) && fake.submits==submitted+1 &&
+                !fake.readbacks && !fake.rgb_queries && !memcmp(shadow,render->fb,sizeof shadow));
+          submitted=fake.submits;
+        }
+        render->color_write_mask=15u;render->blendmode=0;
+      }else{
+        BG_REJECT(render->color_write_mask=7u,render->color_write_mask=15u);
+        BG_REJECT(render->blendmode=1,render->blendmode=0);
+      }
       BG_REJECT(render->blend_equation=2,render->blend_equation=1);
       BG_REJECT(render->blend_equation_alpha=2,render->blend_equation_alpha=1);
       if(target_kind==3u){
@@ -16295,7 +16314,7 @@ static int resident_background_function(int fractional){
           generations[generation]==13 && a==2u && !draw_state;
         int effective_cutout=!cardinal || !disabled;
         int enabled=(effective_cutout && (draw_state&1u)) || packed_empty_cutoff ||
-          (cardinal && (draw_state&2u));
+          (cardinal && ((draw_state&2u) || !disabled));
         unsigned reference=effective_cutout && (draw_state&1u)?127u:packed_empty_cutoff?1u:0u;
         CHECK(fake.last_filtered_draw_alpha==expected &&
               fake.last_quad_state.alpha_test_enabled==!!enabled &&

@@ -149,14 +149,18 @@ int gml_render_resident_filtered_atlas_part(GmlRender *r,int page_index,
      page_index<0 || page_index>=r->n_tpag || gml_d3_is_active(r) ||
      !isfinite(sx) || !isfinite(sy) || !isfinite(sw) || !isfinite(sh) ||
      !isfinite(x) || !isfinite(y) || !isfinite(xs) || !isfinite(ys) ||
-     !isfinite(alpha) || ((sx<0.0 || sy<0.0) && family!=GML_RENDER_SCENE_BACKGROUND) ||
+     !isfinite(alpha) || ((sx<0.0 || sy<0.0) &&
+       family!=GML_RENDER_SCENE_BACKGROUND && family!=GML_RENDER_SCENE_TILE) ||
      sx<-(double)INT_MAX || sy<-(double)INT_MAX || sw<=0.0 || sh<=0.0 ||
      sx>INT_MAX || sy>INT_MAX || sw>INT_MAX || sh>INT_MAX) return 0;
   /* Negative finite background opacity clamps to zero in the CPU leaf.
    * Avoid a target read for that no-op without changing readable draw state.
    * Above-one inputs retain their existing qualification boundary. */
-  if(family==GML_RENDER_SCENE_BACKGROUND && alpha<0.0) alpha=0.0;
-  int nearest_scaled=!r->interp;
+  if(family==GML_RENDER_SCENE_BACKGROUND || family==GML_RENDER_SCENE_TILE){
+    if(alpha<0.0) alpha=0.0;
+    if(family==GML_RENDER_SCENE_TILE && alpha>1.0) alpha=1.0;
+  }
+  int nearest_scaled=!r->interp || (r->classic && family==GML_RENDER_SCENE_TILE);
   int nearest_tile=nearest_scaled && family==GML_RENDER_SCENE_TILE;
   if(nearest_scaled && !nearest_tile && (family!=GML_RENDER_SCENE_BACKGROUND ||
      sx!=floor(sx) || sy!=floor(sy) || sw!=floor(sw) || sh!=floor(sh))) return 0;
@@ -168,7 +172,7 @@ int gml_render_resident_filtered_atlas_part(GmlRender *r,int page_index,
   if(page->tx<0 || page->ty<0 || page->bw<=0 || page->bh<=0 ||
      (int64_t)page->tx+page->sw>page->bw ||
      (int64_t)page->ty+page->sh>page->bh ||
-     (!nearest_tile && family!=GML_RENDER_SCENE_BACKGROUND && (trimmed ||
+     (!nearest_tile && family!=GML_RENDER_SCENE_BACKGROUND && family!=GML_RENDER_SCENE_TILE && (trimmed ||
       sx<(double)page->tx || sy<(double)page->ty ||
       sx+sw>(double)page->tx+page->sw || sy+sh>(double)page->ty+page->sh))) return 0;
   if(!gml_render_tpag_part_view(page,sx,sy,sw,sh,&view,&source_x,&source_y,
@@ -177,7 +181,7 @@ int gml_render_resident_filtered_atlas_part(GmlRender *r,int page_index,
    * Multi-cell selections retain outward-snapped source geometry. Nearest
    * tile selections retain their separate authored-edge/clamp owner. */
   if((sx!=floor(sx) || sy!=floor(sy) || sw!=floor(sw) || sh!=floor(sh)) &&
-     family!=GML_RENDER_SCENE_BACKGROUND && !nearest_tile) return 0;
+     family!=GML_RENDER_SCENE_BACKGROUND && family!=GML_RENDER_SCENE_TILE && !nearest_tile) return 0;
   anchor_x=view.sw==1?overlap_x0:(double)source_x;
   anchor_y=view.sh==1?overlap_y0:(double)source_y;
   cell_xs=view.sw==1?(overlap_x1-overlap_x0)*xs:xs;
@@ -199,8 +203,10 @@ int gml_render_resident_filtered_atlas_part(GmlRender *r,int page_index,
    * the physical owner's same-draw opaque-alpha stamp. Identity GUI keeps
    * its already qualified exact stamp;sampled application alpha also keeps
    * its cheap owner before the physical companion. */
-  if(!nearest_scaled && family==GML_RENDER_SCENE_BACKGROUND &&
-     ((r->blendmode!=0 && r->blendmode!=2) ||
+  int tile_checkpoint=family==GML_RENDER_SCENE_TILE && r->device.context &&
+    r->device.observe_on_demand && r->device.observe_on_demand(r->device.context);
+  if(!nearest_scaled && (family==GML_RENDER_SCENE_BACKGROUND || tile_checkpoint) &&
+     (tile_checkpoint || (r->blendmode!=0 && r->blendmode!=2) ||
       (!r->gui_pass_active && !gml_render_target_preserves_alpha(r)) || sx<page->tx || sy<page->ty ||
       sx+sw>page->tx+page->sw || sy+sh>page->ty+page->sh))
     sampling_rule=GML_RENDER_FILTERED_HARDWARE_PART_RULE;
@@ -318,16 +324,16 @@ void gml_draw_background_part_ext(GmlRender *r, int bg, double sx, double sy, do
 static int resident_quarter_background_tile(GmlRender *r,int page_index,
   double sx,double sy,double sw,double sh,double x,double y,double xs,double ys,
   int mirror,int flip,uint32_t colour,double alpha){
-  if(!r || !r->resident_application_pass || r->interp || gml_d3_is_active(r) ||
+  if(!r || !r->resident_application_pass || gml_d3_is_active(r) ||
      !isfinite(sx) || !isfinite(sy) || !isfinite(sw) || !isfinite(sh) ||
      !isfinite(x) || !isfinite(y) || !isfinite(xs) || !isfinite(ys) ||
-     !isfinite(alpha) || sx<0.0 || sy<0.0 || sx>INT_MAX || sy>INT_MAX ||
+     !isfinite(alpha) || sx<INT_MIN || sy<INT_MIN || sx>INT_MAX || sy>INT_MAX ||
      sw<=0.0 || sh<=0.0 || sw>4096.0 || sh>4096.0 || xs==0.0 || ys==0.0)
     return 0;
   GmlTpag *page=&r->tpag[page_index],view;
   int source_x=0,source_y=0;
   if(!gml_render_tpag_part_view(page,sx,sy,sw,sh,&view,&source_x,&source_y,
-                               NULL,NULL,NULL,NULL)) return 0;
+                               NULL,NULL,NULL,NULL)) return 1;
   view.tx=(int)lround(source_x-sx);view.ty=(int)lround(source_y-sy);
   view.bw=(int)ceil(sw);view.bh=(int)ceil(sh);view.project_authored_edges=1;
   int exact_unit=sw==sh && fabs(xs-1.0)<0.001 && fabs(ys-1.0)<0.001 &&
@@ -355,6 +361,9 @@ static int resident_quarter_background_tile(GmlRender *r,int page_index,
   double draw_x=x-min_x,draw_y=y-min_y;
   if(tile_xscale*cosine < -1e-12 || tile_yscale*sine < -1e-12) draw_x+=1.0;
   if(-tile_xscale*sine < -1e-12 || tile_yscale*cosine < -1e-12) draw_y+=1.0;
+  if(r->interp && !r->classic && anygm_policy_has_modern_layer_semantics(r->win))
+    return gml_render_resident_filtered_quarter_tile_page(r,page_index,&view,draw_x,draw_y,
+      tile_xscale,tile_yscale,colour,alpha);
   return gml_render_resident_nearest_quarter_tile_page(r,&view,draw_x,draw_y,
     tile_xscale,tile_yscale,0,mirror,flip,colour,alpha);
 }

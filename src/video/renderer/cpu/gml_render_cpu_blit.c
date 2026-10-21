@@ -5439,7 +5439,7 @@ static int rotated_nearest_regions(GmlRender *r,GmlSprite *spr,GmlTpag *t,
         skip=source_x<0 || source_y<0 || source_x>=t->sw || source_y>=t->sh;
         if(!skip){
           const uint8_t *pixel=atlas->px+((size_t)(t->sy+source_y)*atlas->w+t->sx+source_x)*4u;
-          skip=pixel[3]==0u;
+          skip=pixel[3]==0u && !destination_colour_blend_active(r);
           /* Equal tinted source bytes have equal scalar16 RGB and destination-alpha effects.
            * A representative texel can therefore cover adjacent CPU-selected runs exactly. */
           sample_key=((uint32_t)pixel[3]<<24)|
@@ -5607,8 +5607,10 @@ int gml_render_rotated_filtered_rows(GmlRender *r,GmlSprite *sprite,GmlTpag *pag
   uint32_t capacity,uint32_t *count,int positive_alpha){
   if(!r || !sprite || !page || !rows || !capacity || !count ||
      !isfinite(x) || !isfinite(y) || !isfinite(xs) || !isfinite(ys) || !isfinite(rotation) ||
-     fabs(x)>65536.0 || fabs(y)>65536.0 || fabs(xs)<0.125 || fabs(xs)>64.0 ||
-     fabs(ys)<0.125 || fabs(ys)>64.0 || page->atlas<0 || page->atlas>=r->n_atlas ||
+     fabs(x)>65536.0 || fabs(y)>65536.0 ||
+     fabs(xs)<(positive_alpha==2?0x1p-14:.125) || fabs(xs)>(positive_alpha==2?16384.0:64.0) ||
+     fabs(ys)<(positive_alpha==2?0x1p-14:.125) || fabs(ys)>(positive_alpha==2?16384.0:64.0) ||
+     page->atlas<0 || page->atlas>=r->n_atlas ||
      page->sx<0 || page->sy<0 || page->sw<=0 || page->sh<=0 ||
      page->sw>4096 || page->sh>4096 || !atlas_pixels(r,page->atlas)) return 0;
   GmlAtlas *atlas=&r->atlas[page->atlas];
@@ -5650,10 +5652,11 @@ int gml_render_rotated_filtered_rows(GmlRender *r,GmlSprite *sprite,GmlTpag *pag
         if(++examined>1048576u) return 0;
         double u=filtered_rotation_coordinate(g,sprite,page,px,py,0u);
         double v=filtered_rotation_coordinate(g,sprite,page,px,py,1u);
-        /* All four CPU weights are nonnegative. Their sum is positive iff
-         * a positive input-alpha tap has positive support on both axes.
-         * No RGB, destination, filtered-alpha value or blend is evaluated. */
-        covered=filtered_positive_support(atlas,page,u,v,1);
+        /* Ordinary support needs only positive input-alpha taps. The typed
+         * selected owner also keeps the CPU's sampled-alpha/cutout footprint;
+         * neither mode evaluates a destination or runs a pixel writer. */
+        covered=positive_alpha==2?filtered_axis_covered_sample(r,atlas,page,u,v,1):
+          filtered_positive_support(atlas,page,u,v,1);
       }
       if(!covered && start<px){
         if(*count==capacity) return 0;

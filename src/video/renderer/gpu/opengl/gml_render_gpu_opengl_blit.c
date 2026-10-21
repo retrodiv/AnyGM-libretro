@@ -17,6 +17,7 @@ int gml_gpu_opengl_clamped_atlas_valid(const GmlRenderDrawOp *op,
      op->opcode!=GML_RENDER_OP_TEXTURED_QUAD ||
      (op->scene_family!=GML_RENDER_SCENE_SPRITE &&
       op->scene_family!=GML_RENDER_SCENE_BACKGROUND &&
+      op->scene_family!=GML_RENDER_SCENE_TILE &&
       op->scene_family!=GML_RENDER_SCENE_TEXT) ||
      op->reconstruction_mode!=GML_RENDER_DEVICE_CHECKPOINT ||
      op->source_count!=1u || !op->sources ||
@@ -25,8 +26,10 @@ int gml_gpu_opengl_clamped_atlas_valid(const GmlRenderDrawOp *op,
   GmlRenderRect region=q->sampling.source_region;
   int text_axis_row=op->scene_family==GML_RENDER_SCENE_TEXT &&
     q->span_active==GML_RENDER_SPAN_FILTERED_AXIS_SUPPORT_ROW;
-  int byte_background=((op->scene_family==GML_RENDER_SCENE_BACKGROUND &&
-    q->span_active==GML_RENDER_SPAN_FILTERED_POSITIVE_ROW) ||
+  int byte_background=(((op->scene_family==GML_RENDER_SCENE_BACKGROUND ||
+    op->scene_family==GML_RENDER_SCENE_TILE) &&
+    (q->span_active==GML_RENDER_SPAN_FILTERED_POSITIVE_ROW ||
+     q->span_active==GML_RENDER_SPAN_FILTERED_AXIS_SUPPORT_ROW)) ||
     ((op->scene_family==GML_RENDER_SCENE_SPRITE || op->scene_family==GML_RENDER_SCENE_TEXT) &&
      q->span_active==GML_RENDER_SPAN_FILTERED_AXIS_SUPPORT_ROW)) &&
     (q->sampling.quantisation==GML_RENDER_QUANTISE_INTEGER_TINT_TRUNC ||
@@ -219,10 +222,11 @@ int gml_render_gpu_opengl_draw_textured_quad(const GmlRenderDrawOp *op,
           quad->sampling.filter==GML_RENDER_FILTER_HARDWARE_BILINEAR &&
           (quad->sampling.quantisation==GML_RENDER_QUANTISE_INTEGER_TINT_TRUNC ||
            quad->sampling.quantisation==GML_RENDER_QUANTISE_INTEGER_TINT_ROUND)) &&
-        !(op->scene_family==GML_RENDER_SCENE_BACKGROUND &&
+        !((op->scene_family==GML_RENDER_SCENE_BACKGROUND || op->scene_family==GML_RENDER_SCENE_TILE) &&
           quad->sampling.filter==GML_RENDER_FILTER_HARDWARE_BILINEAR &&
           (state->coverage_policy==GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA ||
-           (quad->span_active==GML_RENDER_SPAN_FILTERED_POSITIVE_ROW &&
+           ((quad->span_active==GML_RENDER_SPAN_FILTERED_POSITIVE_ROW ||
+             quad->span_active==GML_RENDER_SPAN_FILTERED_AXIS_SUPPORT_ROW) &&
             (quad->sampling.quantisation==GML_RENDER_QUANTISE_INTEGER_TINT_TRUNC ||
              quad->sampling.quantisation==GML_RENDER_QUANTISE_INTEGER_TINT_ROUND)))) &&
         (quad->u[corner]<0.0 || quad->u[corner]>1.0 ||
