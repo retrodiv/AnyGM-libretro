@@ -4768,24 +4768,28 @@ static int resident_coarse_mip_veil(GmlRender *r,int sprite,int frame,
   uint8_t pixel[4];
   int x0,y0,width,height,sub,page_index;
   if(!r || !r->resident_application_pass || !(device=gml_render_device(r)) ||
-     !device->retire || (!r->interp && !r->gui_pass_active) || r->classic ||
-     (r->gui_pass_active &&
-      (!resident_identity_screen_gui(r) || r->world_transform_active ||
-       !device->context || !device->observe_on_demand ||
-       !device->observe_on_demand(device->context))) ||
-     r->active_shader>=0 || r->alpha_test_enable || !r->alphablend ||
-     r->blendmode || r->blend_equation!=1 || r->blend_equation_alpha!=1 ||
-     r->color_write_mask!=0x0Fu || gml_render_classic_vertical_phase_blocks_scene(r) ||
+     !device->retire) return 0;
+  int on_demand=device->context && device->observe_on_demand &&
+    device->observe_on_demand(device->context);
+  /* Keep the established exact replay owner for devices without observation.
+   * Real resident devices use the same constant-texel/fixed-blend GUI packet:
+   * the CPU stretch ignores ordinary presets/masks and stamps covered alpha,
+   * regardless of the destination's previous opacity certificate. */
+  if((!on_demand && (r->gui_pass_active || !r->interp || r->classic ||
+       r->alpha_test_enable || !r->alphablend || r->blendmode ||
+       r->blend_equation!=1 || r->blend_equation_alpha!=1 ||
+       r->color_write_mask!=15u || r->target_sp || r->target_id!=-1 ||
+       !r->fb_opaque_known || !r->fb_all_opaque ||
+       blend!=0xFFFFFFu || alpha!=1.0)) ||
+     r->active_shader>=0 || r->fog_flat || !isfinite(alpha) ||
+     gml_render_classic_vertical_phase_blocks_scene(r) ||
      r->rotated_batch_count || r->rotated_batch_building ||
      r->pending_underlay || r->pending_presentation ||
-     r->target_sp || r->target_id!=-1 ||
      !gml_render_scene_target_matches(r) ||
-     (!r->gui_pass_active && (!r->fb_opaque_known || !r->fb_all_opaque)) ||
      (r->world_transform_active &&
       (!isfinite(r->world_scale_x) || !isfinite(r->world_scale_y) ||
        r->world_scale_x<=0.0 || r->world_scale_y<=0.0)) ||
-     sprite<0 || sprite>=r->n_spr || blend!=0xFFFFFFu || alpha!=1.0 ||
-     gml_d3_is_active(r)) return 0;
+     sprite<0 || sprite>=r->n_spr || gml_d3_is_active(r)) return 0;
   if(gml_render_interpolated_phase_blocks_scene(r)) return 0;
   record=&r->spr[sprite];
   if(record->runtime_rgba || record->spine || record->ns_enabled ||
@@ -4818,9 +4822,21 @@ static int resident_coarse_mip_veil(GmlRender *r,int sprite,int frame,
      !(record->w>width || record->h>height) ||
      x0>0 || y0>0 || (int64_t)x0+width<r->fbw ||
      (int64_t)y0+height<r->fbh) return 0;
+  if(alpha<=0.0) return 1;
   sprite_region_coarse_texel(atlas,page->sx,page->sy,page->sw,page->sh,texel);
+  /* The existing CPU leaf tests the reduced raw alpha before byte rounding,
+   * not draw opacity or the rounded sampled alpha. */
+  if(on_demand && r->alpha_test_enable && texel[3]<=r->alpha_test_ref) return 1;
   for(int channel=0;channel<4;channel++) pixel[channel]=(uint8_t)floor(texel[channel]+0.5);
   if(pixel[3]==0u) return 1;
+  /* Preserve the CPU coverage zero when its binary64 opacity product
+   * underflows, before quantising any otherwise positive device coverage. */
+  if(on_demand && !((pixel[3]/255.0)*alpha>0.0)) return 1;
+  /* The whole draw samples this one constant texel. Quantise its effective
+   * opacity once; a positive CPU sample must retain covered alpha even when
+   * its contribution rounds below one code. RGB and tint still blend on GPU. */
+  if(on_demand && alpha!=1.0)
+    pixel[3]=(uint8_t)fmax(1.0,fmin(255.0,floor(pixel[3]*alpha+0.5)));
   gml_render_flush_pending_fill(r);
   if(r->pending_fill || !(target=gml_render_scene_target_resource_ensure(r))) return 0;
   image=gml_render_application_scene_next_image_ref(r,target);
@@ -4836,7 +4852,7 @@ static int resident_coarse_mip_veil(GmlRender *r,int sprite,int frame,
   source_ref=source.image;
   operation.opcode=GML_RENDER_OP_TEXTURED_QUAD;
   operation.scene_family=GML_RENDER_SCENE_SPRITE;
-  operation.reconstruction_mode=r->gui_pass_active
+  operation.reconstruction_mode=on_demand
     ?GML_RENDER_DEVICE_CHECKPOINT:GML_RENDER_REPLAY_EXACT;
   operation.source_count=1u;
   operation.sources=&source_ref;
@@ -4848,13 +4864,15 @@ static int resident_coarse_mip_veil(GmlRender *r,int sprite,int frame,
   operation.target.pixel_format=GML_RENDER_PIXEL_ARGB8888;
   operation.target.region=(GmlRenderRect){0,0,(uint32_t)r->fbw,(uint32_t)r->fbh};
   operation.payload.quad.shape=GML_RENDER_QUAD_AXIS_ALIGNED;
-  int stamp_alpha=r->gui_pass_active && (!r->fb_opaque_known || !r->fb_all_opaque);
+  int stamp_alpha=on_demand && (!r->alphablend || !r->fb_opaque_known || !r->fb_all_opaque ||
+    blend!=0xFFFFFFu || alpha!=1.0);
   operation.payload.quad.sampling.filter=stamp_alpha
     ?GML_RENDER_FILTER_HARDWARE_BILINEAR:GML_RENDER_FILTER_NEAREST;
   operation.payload.quad.filtered_draw_alpha=1.0;
   operation.payload.quad.sampling.edge_rule=GML_RENDER_EDGE_CLAMP_SUBIMAGE;
   operation.payload.quad.sampling.source_region=(GmlRenderRect){0,0,1u,1u};
-  for(int corner=0;corner<4;corner++) operation.payload.quad.corner_colour[corner]=0xFFFFFFFFu;
+  for(int corner=0;corner<4;corner++) operation.payload.quad.corner_colour[corner]=
+    0xFF000000u|((blend&255u)<<16)|(blend&0xFF00u)|((blend>>16)&255u);
   /* The sampled texel is constant and the qualified quad covers the target completely.
    * Clip its resolved coverage here; replay and the device then share the same finite span. */
   operation.payload.quad.x[0]=operation.payload.quad.x[3]=0.0;
@@ -4869,12 +4887,14 @@ static int resident_coarse_mip_veil(GmlRender *r,int sprite,int frame,
   state.colour=0xFFFFFFFFu;
   state.alpha=255u;
   state.coverage_policy=stamp_alpha?GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA:0u;
-  state.rgb_source_factor=GML_RENDER_BLEND_SOURCE_ALPHA;
-  state.rgb_destination_factor=GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA;
-  state.alpha_source_factor=GML_RENDER_BLEND_ONE;
-  state.alpha_destination_factor=GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA;
-  state.rgb_equation=state.alpha_equation=r->gui_pass_active
-    ?GML_RENDER_BLEND_ADD:GML_RENDER_BLEND_EXACT8_ROUND_VEIL;
+  if(r->alphablend){
+    state.rgb_source_factor=GML_RENDER_BLEND_SOURCE_ALPHA;
+    state.rgb_destination_factor=GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA;
+    state.alpha_source_factor=GML_RENDER_BLEND_ONE;
+    state.alpha_destination_factor=GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA;
+    state.rgb_equation=state.alpha_equation=on_demand
+      ?GML_RENDER_BLEND_ADD:GML_RENDER_BLEND_EXACT8_ROUND_VEIL;
+  }
   state.sampler_count=1u;
   state.samplers[0]=operation.payload.quad.sampling;
   batch=(GmlRenderDrawBatch){&operation,1u,&state,1u};

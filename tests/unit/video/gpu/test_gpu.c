@@ -4272,13 +4272,39 @@ static int scene_alpha_composition_api(GmlGpuApi api,const char *renderer,int fo
             anygm_test_graphics_scene_draw_calls()==draws+2 &&
             anygm_test_graphics_scene_copies()==copies && !anygm_test_graphics_read_pixels(),
             "overlapping constant screen veils batch RGB and opaque alpha without copies or reads");
+    const uint32_t targets[]={GML_RENDER_RESOURCE_SCREEN,GML_RENDER_RESOURCE_APPLICATION,
+      GML_RENDER_RESOURCE_SURFACE,GML_RENDER_RESOURCE_SCRATCH};
+    for(unsigned target=0;target<4u;target++) for(unsigned disabled=0;disabled<2u;disabled++)
+    for(unsigned tinted=0;tinted<2u;tinted++){
+      GmlRenderDrawOp typed[3];
+      GmlRenderDrawStateSnapshot typed_state=veil_state;
+      GmlRenderDrawBatch typed_batch={typed,3u,&typed_state,1u};
+      memcpy(typed,veil_ops,sizeof typed);
+      if(disabled){
+        typed_state.rgb_source_factor=typed_state.rgb_destination_factor=0;
+        typed_state.alpha_source_factor=typed_state.alpha_destination_factor=0;
+        typed_state.rgb_equation=typed_state.alpha_equation=0;
+      }
+      for(unsigned index=0;index<3u;index++){
+        typed[index].target.image.resource_class=targets[target];
+        typed[index].target.image.identity=201u+target;
+        if(index) for(unsigned corner=0;corner<4u;corner++)
+          typed[index].payload.quad.corner_colour[corner]=tinted?0xFF93B5D7u:0xFFFFFFFFu;
+      }
+      copies=anygm_test_graphics_scene_copies();draws=anygm_test_graphics_scene_draw_calls();
+      result=service.submit(service.context,&typed_batch);
+      REQUIRE(result.status==GML_RENDER_EXEC_ACCEPTED && result.accepted_prefix==3u &&
+              anygm_test_graphics_scene_draw_calls()==draws+2 &&
+              anygm_test_graphics_scene_copies()==copies && !anygm_test_graphics_read_pixels(),
+              "typed constant veils batch tint and opaque-alpha coverage on every target");
+    }
     for(unsigned variant=0;variant<7u;variant++){
       GmlRenderDrawOp invalid[3];
       GmlRenderDrawBatch refused={invalid,3u,&veil_state,1u};
       int clears=anygm_test_graphics_clear_calls();
       draws=anygm_test_graphics_scene_draw_calls();
       memcpy(invalid,veil_ops,sizeof invalid);
-      if(variant==0u) invalid[1].target.image.resource_class=GML_RENDER_RESOURCE_APPLICATION;
+      if(variant==0u) invalid[1].target.image.resource_class=GML_RENDER_RESOURCE_ATLAS;
       if(variant==1u) invalid[1].scene_family=GML_RENDER_SCENE_BACKGROUND;
       if(variant==2u) invalid[1].payload.quad.x[0]=invalid[1].payload.quad.x[3]=1.0;
       if(variant==3u) invalid[1].payload.quad.filtered_draw_alpha=0.5;

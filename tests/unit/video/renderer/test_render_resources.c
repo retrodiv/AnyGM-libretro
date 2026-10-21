@@ -10958,7 +10958,8 @@ static int resident_gui_coarse_veil_on_demand(void){
 }
 
 static int resident_stretched_function_on_demand_impl(int profile){
-  int raw_opacity=profile==1,coarse_box=profile>=2,over_limit=profile==3;
+  int raw_opacity=profile==1,coarse_box=profile==2 || profile==3,over_limit=profile==3;
+  int coarse_veil=profile==4;
   const int widths[]={6,7,3,2,1},heights[]={16,3,4,1,1};
   const double opacities[]={1.0+0x1p-52,1.0+0x1p-51,1.0+0x1p-25,1.0+0x1p-24,
     nextafter(1.0+0x1p-24,2.0),1.25,2.0,16.0,255.0,256.0,1e100};
@@ -10966,9 +10967,9 @@ static int resident_stretched_function_on_demand_impl(int profile){
   for(unsigned opacity=0;opacity<(raw_opacity?11u:1u);opacity++)
   for(unsigned reduction=0;reduction<(coarse_box && !over_limit?5u:1u);reduction++){
     double alpha=raw_opacity?opacities[opacity]:.975;
-    int physical=coarse_box?64:4,logical=over_limit?65:physical;
-    int width=coarse_box?(over_limit?1:widths[reduction]):12;
-    int height=coarse_box?(over_limit?1:heights[reduction]):10;
+    int physical=coarse_box || coarse_veil?64:4,logical=over_limit?65:physical;
+    int width=coarse_veil?20:coarse_box?(over_limit?1:widths[reduction]):12;
+    int height=coarse_veil?16:coarse_box?(over_limit?1:heights[reduction]):10;
     GmlRender *r=calloc(1,sizeof *r);
     GmlWin content={.bytecode=classic?0:15,.classic_version=classic?701:0};
     FakeDevice fake={.on_demand=1,.readback_colour=0xFF315779u};
@@ -11012,7 +11013,7 @@ static int resident_stretched_function_on_demand_impl(int profile){
     for(unsigned draw=0;draw<4u;draw++)
       gml_draw_sprite_stretched(r,0,0,coarse_box?3.25:-.3,coarse_box?2.25:.3,
         width,height,0x93B5D7u,alpha);
-    CHECK(fake.submits==submits && gml_render_scene_submit_pending(r));
+    CHECK(fake.submits==submits+(coarse_veil?4:0) && gml_render_scene_submit_pending(r));
     if(over_limit){
       CHECK(!r->resident_application_pass && fake.submits==submits &&
             fake.readbacks==reads+1);
@@ -11021,7 +11022,15 @@ static int resident_stretched_function_on_demand_impl(int profile){
     if(raw_opacity){
       CHECK(r->alpha==.37);
     }
-    CHECK(r->resident_application_pass && fake.submits==submits+1 && fake.readbacks==reads &&
+    if(coarse_veil){
+      CHECK(r->resident_application_pass && fake.readbacks==reads &&
+        fake.last_batch_operations==1u && fake.last_filter==GML_RENDER_FILTER_HARDWARE_BILINEAR &&
+        !fake.last_quantisation && fake.last_filtered_draw_alpha==1.0 &&
+        fake.last_quad_state.coverage_policy==GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA &&
+        fake.last_quad_state.write_mask==15u && !fake.last_quad_state.alpha_test_enabled &&
+        r->color_write_mask==5u && r->blendmode==2 && r->alpha_test_enable &&
+        r->alpha_test_ref==127u && !memcmp(shadow,r->fb,sizeof shadow));
+    }else CHECK(r->resident_application_pass && fake.submits==submits+1 && fake.readbacks==reads &&
       fake.last_batch_operations==4u && fake.last_filter==GML_RENDER_FILTER_BOX &&
       fake.last_quantisation==GML_RENDER_QUANTISE_FIXED_STRETCHED &&
       fake.last_quad_state.coverage_policy==GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA &&
@@ -11056,6 +11065,10 @@ static int resident_stretched_coarse_box_on_demand(void){
 
 static int resident_stretched_coarse_box_limit(void){
   return resident_stretched_function_on_demand_impl(3);
+}
+
+static int resident_stretched_coarse_veil_on_demand(void){
+  return resident_stretched_function_on_demand_impl(4);
 }
 
 static int resident_stretched_unavailable_source(void){
@@ -18214,6 +18227,7 @@ int main(void){
     else if(!strcmp(selected,"background-part-trim")) passed=resident_background_part_trim_function();
     else if(!strcmp(selected,"sprite-part-sub-eighth")) passed=resident_sprite_part_sub_eighth();
     else if(!strcmp(selected,"full-sprite-axis-presets")) passed=resident_full_sprite_axis_function();
+    else if(!strcmp(selected,"stretched-coarse-veil")) passed=resident_stretched_coarse_veil_on_demand();
     else if(!strcmp(selected,"physical-filtered-sprite")) passed=resident_physical_filtered_sprite_function();
     else if(!strcmp(selected,"matched-filtered-sprite")) passed=resident_matched_filtered_sprite_function();
     else if(!strcmp(selected,"modern-physical-filtered-sprite")) passed=resident_modern_physical_filtered_sprite_function();
@@ -18393,6 +18407,7 @@ int main(void){
   passed+=resident_stretched_function_on_demand();
   passed+=resident_stretched_coarse_box_on_demand();
   passed+=resident_stretched_coarse_box_limit();
+  passed+=resident_stretched_coarse_veil_on_demand();
   passed+=resident_stretched_raw_opacity_on_demand();
   passed+=resident_stretched_unavailable_source();
   passed+=resident_mapped_gui_stretch_on_demand();
@@ -18516,6 +18531,6 @@ int main(void){
   passed+=resident_classic_raster_underlay_scope();
   passed+=resident_extended_roundrect_function();
   passed+=resident_extended_roundrect_refusals();
-  printf("render resource cases: passed=%d failed=%d\n",passed,287-passed);
-  return passed==287?EXIT_SUCCESS:EXIT_FAILURE;
+  printf("render resource cases: passed=%d failed=%d\n",passed,288-passed);
+  return passed==288?EXIT_SUCCESS:EXIT_FAILURE;
 }

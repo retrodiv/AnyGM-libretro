@@ -926,11 +926,15 @@ static int hardware_screen_veil_valid(const GmlRenderDrawOp *op,
      source->pixel_format!=GML_RENDER_PIXEL_RGBA8888 ||
      op->sources[0].resource_class!=GML_RENDER_RESOURCE_SCRATCH ||
      op->scene_family!=GML_RENDER_SCENE_SPRITE ||
-     op->target.image.resource_class!=GML_RENDER_RESOURCE_SCREEN ||
+     (op->target.image.resource_class!=GML_RENDER_RESOURCE_SCREEN &&
+      op->target.image.resource_class!=GML_RENDER_RESOURCE_APPLICATION &&
+      op->target.image.resource_class!=GML_RENDER_RESOURCE_SURFACE &&
+      op->target.image.resource_class!=GML_RENDER_RESOURCE_SCRATCH) ||
      op->target.pixel_format!=GML_RENDER_PIXEL_ARGB8888 ||
      op->reconstruction_mode!=GML_RENDER_DEVICE_CHECKPOINT ||
      state->coverage_policy!=GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA ||
-     qualified_blend(state)!=1 || quad->shape!=GML_RENDER_QUAD_AXIS_ALIGNED ||
+     (qualified_blend(state)!=1 && qualified_blend(state)!=0) ||
+     quad->shape!=GML_RENDER_QUAD_AXIS_ALIGNED ||
      quad->sampling.filter!=GML_RENDER_FILTER_HARDWARE_BILINEAR ||
      quad->sampling.edge_rule!=GML_RENDER_EDGE_CLAMP_SUBIMAGE ||
      quad->sampling.quantisation || quad->sampling.logical_margin_mask || quad->span_active ||
@@ -938,7 +942,8 @@ static int hardware_screen_veil_valid(const GmlRenderDrawOp *op,
      quad->filtered_draw_alpha!=1.0 ||
      !exact_rect(op,NULL,NULL,NULL,NULL,0)) return 0;
   for(unsigned corner=0;corner<4u;corner++)
-    if(quad->corner_colour[corner]!=0xFFFFFFFFu ||
+    if((quad->corner_colour[corner]>>24)!=255u ||
+       quad->corner_colour[corner]!=quad->corner_colour[0] ||
        quad->x[corner]!=((corner==1u || corner==2u)?(double)op->target.width:0.0) ||
        quad->y[corner]!=(corner>=2u?(double)op->target.height:0.0) ||
        quad->u[corner]!=((corner==1u || corner==2u)?1.0:0.0) ||
