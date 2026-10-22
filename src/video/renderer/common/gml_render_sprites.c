@@ -792,6 +792,9 @@ static int resident_atlas_crop_from_page_impl(GmlRender *r,GmlTpag *page,
         rotated_sprite_function ||
         (!r->classic && r->alphablend && !r->blendmode)) &&
        !(rotated_sprite_function && family==GML_RENDER_SCENE_SPRITE) &&
+       /* Nonunit selected parts keep the point writer at every source area.
+        * Preserve the separately qualified unit-copy owners and alpha fences. */
+       (!sprite_part_function || (fabs(xs)==1.0 && fabs(ys)==1.0)) &&
        !runtime_function && !tiled_sprite_function && physical_sprite_page!=8 &&
        !integral_unit_sprite && !gml_render_target_preserves_alpha(r) &&
        (double)crop_width*fabs(xs)*(double)crop_height*fabs(ys)>=131072.0) ||
