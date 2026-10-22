@@ -3786,7 +3786,7 @@ static int resident_modern_nearest_rotation(GmlRender *r,GmlSprite *sprite,GmlTp
   GmlRenderDrawStateSnapshot state={0};
   GmlRenderResource *target;
   uint32_t count=0,alpha_count=0;
-  int accepted=0,rows=0,prepared=0;
+  int accepted=0,rows=0,prepared=0,retried=0;
   int screen_axis=r && rotation==0.0 &&
     ((r->target_id<0 && r->target_sp==0) || (r->target_id==0 && r->target_sp>0)) &&
     !gml_render_target_preserves_alpha(r);
@@ -3795,10 +3795,11 @@ static int resident_modern_nearest_rotation(GmlRender *r,GmlSprite *sprite,GmlTp
   const GmlRenderDeviceServices *device=gml_render_device(r);
   if(!device || !device->observe_on_demand || !device->observe_on_demand(device->context))
     return 0;
-  /* The first-generation large-visible leaf has a separate alpha8/cull
-   * owner. Do not infer that coverage from this alpha16 packet visitor. */
-  if(screen_axis && !anygm_policy_has_modern_layer_semantics(r->win) &&
-     (uint64_t)(uint32_t)r->fbw*(uint32_t)r->fbh>=262144u) return 0;
+  /* A large framebuffer does not select the alpha8/cull leaf by itself.
+   * Prove this first-generation footprint through the unchanged alpha16
+   * packet visitor before accepting its existing hardware blend recipe. */
+  int prove_small_axis=screen_axis && !anygm_policy_has_modern_layer_semantics(r->win) &&
+    (uint64_t)(uint32_t)r->fbw*(uint32_t)r->fbh>=262144u;
   if(!r->resident_application_pass || r->interp || (!screen_axis && r->target_id<=0) ||
      (screen_axis && (r->classic || page->sw>4096 || page->sh>4096)) ||
      (!screen_axis && !anygm_policy_has_modern_layer_semantics(r->win)) ||
@@ -3848,6 +3849,12 @@ static int resident_modern_nearest_rotation(GmlRender *r,GmlSprite *sprite,GmlTp
          rotation,colour,regions,REGION_LIMIT,&count)) goto done;
   }
   if(!count){accepted=1;goto done;}
+  if(prove_small_axis){
+    alpha_regions=malloc(REGION_LIMIT*sizeof *alpha_regions);
+    if(!alpha_regions || !gml_render_rotated_nearest_regions(r,sprite,page,x,y,xs,ys,0.0,
+         alpha_regions,REGION_LIMIT,&alpha_count)) goto done;
+    if(!alpha_count){accepted=1;goto done;}
+  }
   /* Large axis draws select this CPU coverage owner before the ordinary
    * point atlas port. Resolve the same ordered automatic GUI prefix here,
    * after empty coverage has returned without consuming its intent. */
@@ -3857,13 +3864,16 @@ static int resident_modern_nearest_rotation(GmlRender *r,GmlSprite *sprite,GmlTp
   }
   if(screen_axis && (r->color_write_mask&8u) && !opaque_screen &&
      anygm_policy_blend(r->win)!=ANYGM_BLEND_STUDIO_SECOND){
-    alpha_regions=malloc(REGION_LIMIT*sizeof *alpha_regions);
-    if(!alpha_regions || !gml_render_rotated_nearest_regions(r,sprite,page,x,y,xs,ys,0.0,
-         alpha_regions,REGION_LIMIT,&alpha_count)) goto done;
+    if(!alpha_regions){
+      alpha_regions=malloc(REGION_LIMIT*sizeof *alpha_regions);
+      if(!alpha_regions || !gml_render_rotated_nearest_regions(r,sprite,page,x,y,xs,ys,0.0,
+           alpha_regions,REGION_LIMIT,&alpha_count)) goto done;
+    }
     if(!alpha_count){accepted=1;goto done;}
-  }
+  }else{free(alpha_regions);alpha_regions=NULL;alpha_count=0u;}
   operations=calloc(count,sizeof *operations);
   if(!operations) goto done;
+retry_submission:
   gml_render_flush_pending_fill(r);
   if(r->pending_fill || !(target=gml_render_scene_target_resource_ensure(r))) goto done;
   if(screen_axis && r->color_write_mask==15u){
@@ -3942,7 +3952,17 @@ static int resident_modern_nearest_rotation(GmlRender *r,GmlSprite *sprite,GmlTp
   accepted=result!=GML_RENDER_RESOURCE_EXEC_FAILED;
   if(accepted){r->fb_all_transparent=0;r->fb_opaque_known=0;}
 done:
-  if(prepared) accepted=gml_render_rotated_scene_prepare_finish(r,accepted);
+  if(prepared){
+    accepted=gml_render_rotated_scene_prepare_finish(r,accepted);prepared=0;
+    /* A capacity refusal rolls back only the new atomic group. Deliver the
+     * already validated parent once,then retry against its advanced image
+     * version. Never split or replay a partially prepared sprite. */
+    if(!accepted && !retried){
+      retried=1;
+      if(gml_render_rotated_scene_flush(r) && r->resident_application_pass)
+        goto retry_submission;
+    }
+  }
   free(operations);free(regions);free(alpha_regions);return accepted;
 }
 
@@ -4104,10 +4124,14 @@ rotated_done:
      !r->fog_flat && r->alphablend && !r->blendmode &&
      ((r->target_id<0 && !r->target_sp) || (r->target_id==0 && r->target_sp>0)) &&
      !gml_render_target_preserves_alpha(r) &&
-     fabs((double)page->sw*xs*(double)page->sh*ys)>=131072.0 &&
-     (anygm_policy_has_modern_layer_semantics(r->win) ||
-      (uint64_t)(uint32_t)r->fbw*(uint32_t)r->fbh<262144u))
-    return resident_modern_nearest_rotation(r,sprite,page,x,y,xs,ys,0.0,colour,alpha);
+     fabs((double)page->sw*xs*(double)page->sh*ys)>=131072.0){
+    int accepted=resident_modern_nearest_rotation(r,sprite,page,x,y,xs,ys,0.0,colour,alpha);
+    if(accepted || anygm_policy_has_modern_layer_semantics(r->win) ||
+       (uint64_t)(uint32_t)r->fbw*(uint32_t)r->fbh<262144u) return accepted;
+    /* A genuine large-visible first-generation draw may still have its
+     * established integer endpoint owner. Preserve that independently
+     * qualified fallback instead of turning its proof refusal into CPU. */
+  }
   /* The large normal SCREEN writer goes through its cardinal rotation
    * geometry even at zero degrees. Reuse that half-open reflected anchor
    * for whole unit samples, including the public masked sprite entry. */

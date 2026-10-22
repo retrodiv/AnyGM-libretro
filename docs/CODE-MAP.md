@@ -3,6 +3,13 @@
 
 # Code map
 
+`common/gml_render_sprites.c::resident_modern_nearest_rotation` also admits
+first-generation axis SCREEN footprints proved small by the existing CPU
+coverage visitor,independently of the framebuffer's total area. The nearest
+caller preserves established integer owners on proof refusal. CPU pixel
+bodies and alpha8/cull limits remain unchanged;R03-SPR-LARGE-AXIS-PACKET and
+`resident_bounded_axis_screen_sprite` own paired and authority controls.
+
 `cpu/gml_render_cpu_blit.c::rotated_nearest_regions` shares the bounded nearest
 sample-row visitor with resident sprites. Its CPU-only signed64 rows are limited
 to2048 clipped rows and4096 width,not the pixel visitor's area budget. Pixel

@@ -15179,6 +15179,60 @@ static int resident_tiny_nearest_sprite_scope(void){
 }
 
 /* Admission/authority only; the real-context large-unit matrix owns pixels. */
+static int resident_bounded_axis_screen_sprite(void){
+  enum { W=960,H=540,AW=544,AH=544 };
+  for(unsigned variant=0;variant<13u;variant++){
+    GmlRender *r=calloc(1,sizeof *r);GmlWin content={.bytecode=variant==2u?15:13};
+    FakeDevice fake={.on_demand=variant!=6u};GmlRenderDeviceServices device=service(&fake);
+    uint32_t *storage=calloc(2u*(size_t)W*H,sizeof *storage);
+    uint32_t *screen=storage,*shadow=storage?storage+(size_t)W*H:NULL;
+    CHECK(r && storage && !gml_render_init(r,NULL));r->win=&content;
+    free(r->atlas[0].px);r->atlas[0].px=malloc(AW*AH*4u);
+    r->spr=calloc(1,sizeof *r->spr);r->tpag=calloc(1,sizeof *r->tpag);
+    CHECK(r->atlas[0].px && r->spr && r->tpag);
+    for(unsigned pixel=0;pixel<AW*AH;pixel++){
+      uint8_t *p=r->atlas[0].px+pixel*4u;
+      p[0]=32;p[1]=96;p[2]=192;p[3]=(uint8_t)(1u+(pixel*31u)%254u);
+    }
+    r->atlas[0].w=AW;r->atlas[0].h=AH;r->n_spr=r->n_tpag=1;
+    int height=variant>=9u && variant<=11u?512:320;
+    r->spr[0]=(GmlSprite){.w=512,.h=height,.n_frames=1};
+    r->spr[0].frame=calloc(1,sizeof *r->spr[0].frame);CHECK(r->spr[0].frame);
+    r->tpag[0]=(GmlTpag){.sx=4,.sy=4,.sw=512,.sh=height,.tw=512,.th=height,.bw=512,.bh=height};
+    device.observe_on_demand=fake_observe_on_demand;gml_render_bind_device(r,&device);
+    CHECK(gml_render_begin_resident_base(r,screen,W,H,0,0));
+    if(variant==1u || variant==2u){gml_render_gui_begin(r,W,H);gml_render_gui_set_size(r,W,H);}
+    gml_render_set_pending_fill(r,0x40273859u);gml_render_flush_pending_fill(r);
+    CHECK(gml_render_scene_submit_pending(r));
+    memcpy(shadow,r->fb,(size_t)W*H*sizeof *shadow);int submitted=fake.submits;
+    if(variant==5u || variant==10u)r->fast_alpha_cull=32;
+    if(variant==7u)r->active_shader=0;
+    if(variant==8u)r->blend_equation=2;
+    if(variant==11u){r->color_write_mask=7u;r->fast_alpha_cull=0;}
+    double x=variant==3u?544:variant==4u?32.25:32;
+    double alpha=variant==10u?1.0:variant==12u?0.00001:.75;
+    gml_draw_sprite_ext(r,0,0,x,16,variant==3u?-1:1,1,0,0xFFFFFFu,alpha);
+    int admitted=r->resident_application_pass;
+    int expected=variant<6u || variant>=10u;
+    if(admitted!=expected)fprintf(stderr,"bounded axis variant=%u actual=%d expected=%d\n",variant,admitted,expected);
+    CHECK(admitted==expected && gml_render_scene_submit_pending(r));
+    if(expected)CHECK(!fake.readbacks && !fake.rgb_queries && !memcmp(shadow,r->fb,(size_t)W*H*sizeof *shadow));
+    else CHECK(!fake.rgb_queries);
+    if(expected && variant!=12u)CHECK(fake.submits>submitted);
+    if(!expected || variant==12u)CHECK(fake.submits==submitted);
+    if(variant<6u){
+      for(unsigned draw=0;draw<8u;draw++){
+        gml_draw_sprite_ext(r,0,0,x,16,variant==3u?-1:1,1,0,0xFFFFFFu,alpha);
+        CHECK(r->resident_application_pass);
+      }
+      CHECK(gml_render_scene_submit_pending(r) && !fake.readbacks && !fake.rgb_queries &&
+        !memcmp(shadow,r->fb,(size_t)W*H*sizeof *shadow));
+    }
+    gml_render_abandon_device(r);gml_render_free(r);free(r);free(storage);
+  }
+  return 1;
+}
+
 static int resident_large_unit_sprite_scope(void){
   enum { W=16,H=12,A=416 };
   for(unsigned generation=0;generation<2u;generation++) for(unsigned variant=0;variant<9u;variant++){
@@ -19063,6 +19117,7 @@ int main(void){
     else if(!strcmp(selected,"physical-filtered-sprite")) passed=resident_physical_filtered_sprite_function();
     else if(!strcmp(selected,"wide-nearest-rows")) passed=resident_large_screen_axis_row_metadata();
     else if(!strcmp(selected,"large-rotated-rows")) passed=resident_large_rotated_sample_row_metadata();
+    else if(!strcmp(selected,"bounded-axis-screen")) passed=resident_bounded_axis_screen_sprite();
     else if(!strcmp(selected,"matched-filtered-sprite")) passed=resident_matched_filtered_sprite_function();
     else if(!strcmp(selected,"modern-physical-filtered-sprite")) passed=resident_modern_physical_filtered_sprite_function();
     else if(!strcmp(selected,"modern-rotated-filtered-sprite")) passed=resident_modern_rotated_filtered_sprite_function();
@@ -19344,6 +19399,7 @@ int main(void){
   passed+=resident_large_screen_coherent_phase();
   passed+=resident_cached_rotation_trim_tie_metadata();
   passed+=resident_large_unit_sprite_scope();
+  passed+=resident_bounded_axis_screen_sprite();
   passed+=resident_tiny_nearest_sprite_scope();
   passed+=resident_opaque_sprite_complete_application();
   passed+=resident_integer_world_sourceover_sprite();
@@ -19379,6 +19435,6 @@ int main(void){
   passed+=deferred_rotation_queue_transactions_and_lifetime();
   passed+=resident_point_function_transaction();
   passed+=resident_rectangle_cpu_passthrough_programs();
-  printf("render resource cases: passed=%d failed=%d\n",passed,302-passed);
-  return passed==302?EXIT_SUCCESS:EXIT_FAILURE;
+  printf("render resource cases: passed=%d failed=%d\n",passed,303-passed);
+  return passed==303?EXIT_SUCCESS:EXIT_FAILURE;
 }
