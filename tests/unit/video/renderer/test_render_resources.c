@@ -10,6 +10,7 @@
 #include "gml_render_surfaces_internal.h"
 #include "gml_render_sprites_internal.h"
 #include "gml_render_shaders.h"
+#include "gml_render_palette_internal.h"
 #include "gml_render_texture.h"
 #include "gml_render_primitives.h"
 #include "gml_render_cpu_replay.h"
@@ -19098,6 +19099,61 @@ static int resident_rectangle_cpu_passthrough_programs(void){
   return controls==12096u;
 }
 
+static int source_palette_snapshot_contract(void){
+  GmlRender *r=calloc(1,sizeof *r);CHECK(r);
+  r->shader_pal=calloc(1,sizeof *r->shader_pal);CHECK(r->shader_pal);
+  r->n_shader_pal=1;r->active_shader=0;
+  struct GmlShaderPal *p=&r->shader_pal[0];
+  for(unsigned variant=0;variant<6u;variant++){
+    memset(p,0,sizeof *p);
+    p->threshold_palette=variant<2u;p->threshold_palette_set=0x3ffu;
+    p->indexed_brightness=p->indexed_brightness_set=variant>=2u;
+    p->threshold_palette_red=p->indexed_brightness_red=variant==4u?0.0f:variant==5u?1.0f:.25f;
+    for(unsigned branch=0;branch<2u;branch++) for(unsigned band=0;band<4u;band++)
+      p->threshold_palette_green[branch][band]=p->indexed_brightness_green[branch][band]=
+        variant&1u?.5002f-.0001f*(float)band:(float)(7u-2u*band)/8.0f;
+    for(unsigned index=0;index<10u;index++) for(unsigned channel=0;channel<3u;channel++)
+      p->threshold_palette_colour[index][channel]=(uint8_t)(index*23u+channel*71u+11u);
+    p->indexed_brightness_value=variant&1u?1.25f:-2.5f;
+    p->indexed_brightness_family_cut=5.0f;p->indexed_brightness_negative_cut=0.0f;
+    p->indexed_brightness_special_min=1.0f;p->indexed_brightness_special_max=4.0f;
+    p->indexed_brightness_special_threshold[0]=1.5f;p->indexed_brightness_special_threshold[1]=.5f;
+    for(unsigned band=0;band<6u;band++)p->indexed_brightness_low_threshold[band]=(float)band-1.0f;
+    for(unsigned band=0;band<7u;band++)p->indexed_brightness_high_threshold[band]=(float)band+3.0f;
+    for(unsigned index=0;index<8u;index++) for(unsigned channel=0;channel<3u;channel++){
+      uint8_t colour=(uint8_t)(31u+index*29u+channel*53u);
+      p->indexed_brightness_high_colour[index][channel]=colour;
+      if(index<7u)p->indexed_brightness_low_colour[index][channel]=(uint8_t)(colour+37u);
+      if(index<3u)p->indexed_brightness_special_colour[index][channel]=(uint8_t)(colour+83u);
+    }
+    GmlRenderSourcePalette map={0};CHECK(gml_render_shader_source_palette_snapshot(r,0,&map) && map.enabled);
+    for(unsigned red=0;red<256u;red++) for(unsigned green=0;green<256u;green++){
+      uint32_t input=(((red*13u+green*47u)&255u)<<24)|(red<<16)|(green<<8)|71u;
+      unsigned branch=red>=map.red,band=4u;
+      for(unsigned index=0;index<4u;index++)if(green>=map.green[branch][index]){band=index;break;}
+      uint32_t mapped=(input&0xFF000000u)|map.colour[branch*5u+band],expected;
+      if(p->indexed_brightness)expected=indexed_brightness_map_px(p,input);
+      else{
+        float rf=(float)red*(1.0f/255.0f),gf=(float)green*(1.0f/255.0f);
+        unsigned rb=rf>=p->threshold_palette_red,gb=4u;
+        for(unsigned index=0;index<4u;index++)if(gf>p->threshold_palette_green[rb][index]){gb=index;break;}
+        const uint8_t *colour=p->threshold_palette_colour[rb*5u+gb];
+        expected=(input&0xFF000000u)|((uint32_t)colour[0]<<16)|((uint32_t)colour[1]<<8)|colour[2];
+      }
+      CHECK(mapped==expected);
+    }
+  }
+  GmlRenderSourcePalette snapshot={0};CHECK(gml_render_shader_source_palette_snapshot(r,0,&snapshot));
+  GmlRenderSourcePalette rejected=snapshot;p->indexed_brightness_value=NAN;
+  CHECK(!gml_render_shader_source_palette_snapshot(r,0,&rejected) && !memcmp(&snapshot,&rejected,sizeof snapshot));
+  uint32_t source_pixels[4]={0xFF123456u,0xFF789ABCu,0xFF345678u,0xFFABCDEFu};
+  GmlRenderResourceSource source=source_view(source_pixels,1);
+  GmlRenderDrawOp operation=quad_op(2,&source.image);GmlRenderDrawStateSnapshot state=quad_state(0);
+  CHECK(gml_render_cpu_replay_eligible(&operation,&state,&source));
+  state.source_palette=snapshot;CHECK(!gml_render_cpu_replay_eligible(&operation,&state,&source));
+  free(r->shader_pal);free(r);return 1;
+}
+
 int main(void){
   const char *selected=getenv("GML_RENDER_RESOURCE_CASE");
   if(selected){
@@ -19118,6 +19174,7 @@ int main(void){
     else if(!strcmp(selected,"wide-nearest-rows")) passed=resident_large_screen_axis_row_metadata();
     else if(!strcmp(selected,"large-rotated-rows")) passed=resident_large_rotated_sample_row_metadata();
     else if(!strcmp(selected,"bounded-axis-screen")) passed=resident_bounded_axis_screen_sprite();
+    else if(!strcmp(selected,"source-palette")) passed=source_palette_snapshot_contract();
     else if(!strcmp(selected,"matched-filtered-sprite")) passed=resident_matched_filtered_sprite_function();
     else if(!strcmp(selected,"modern-physical-filtered-sprite")) passed=resident_modern_physical_filtered_sprite_function();
     else if(!strcmp(selected,"modern-rotated-filtered-sprite")) passed=resident_modern_rotated_filtered_sprite_function();
@@ -19400,6 +19457,7 @@ int main(void){
   passed+=resident_cached_rotation_trim_tie_metadata();
   passed+=resident_large_unit_sprite_scope();
   passed+=resident_bounded_axis_screen_sprite();
+  passed+=source_palette_snapshot_contract();
   passed+=resident_tiny_nearest_sprite_scope();
   passed+=resident_opaque_sprite_complete_application();
   passed+=resident_integer_world_sourceover_sprite();
@@ -19435,6 +19493,6 @@ int main(void){
   passed+=deferred_rotation_queue_transactions_and_lifetime();
   passed+=resident_point_function_transaction();
   passed+=resident_rectangle_cpu_passthrough_programs();
-  printf("render resource cases: passed=%d failed=%d\n",passed,303-passed);
-  return passed==303?EXIT_SUCCESS:EXIT_FAILURE;
+  printf("render resource cases: passed=%d failed=%d\n",passed,304-passed);
+  return passed==304?EXIT_SUCCESS:EXIT_FAILURE;
 }

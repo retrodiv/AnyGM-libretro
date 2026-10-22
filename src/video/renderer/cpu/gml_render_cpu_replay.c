@@ -158,7 +158,8 @@ int gml_render_cpu_replay_eligible(const GmlRenderDrawOp *operation,
   GmlRenderRect region;
   double u0,u1,v0,v1;
   double x0,x1,y0,y1;
-  if(!operation || operation->reconstruction_mode!=GML_RENDER_REPLAY_EXACT) return 0;
+  if(!operation || operation->reconstruction_mode!=GML_RENDER_REPLAY_EXACT ||
+     (state && state->source_palette.enabled)) return 0;
   target=&operation->target;
   if(!target->width || !target->height || target->width>INT_MAX || target->height>INT_MAX ||
      (uint64_t)target->width*target->height>INT_MAX ||

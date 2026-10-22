@@ -556,6 +556,29 @@ int gml_render_shader_threshold_palette_snapshot(const GmlRender *r,int shader_i
   return 1;
 }
 
+int gml_render_shader_source_palette_snapshot(const GmlRender *r,int shader_id,
+                                              GmlRenderSourcePalette *out){
+  GmlPlanShader shader;
+  if(!r || !out || !r->shader_pal || shader_id<0 || shader_id>=r->n_shader_pal)
+    return 0;
+  const struct GmlShaderPal *p=&r->shader_pal[shader_id];
+  if((p->threshold_palette && p->indexed_brightness) ||
+     p->vertex_colour_blend || p->vertex_colour_blend_alpha_only || p->channel_mask ||
+     p->channel_alpha_key || p->alpha_discard || p->ordered_dither || p->quantise4 ||
+     p->solid_alpha_mask || p->solid_blur_alpha || p->lut || p->lut_indexed ||
+     p->grid || p->dual_sample || p->radial_wave || p->uv_wave_mode || p->grayscale ||
+     !gml_render_shader_threshold_palette_snapshot(r,shader_id,&shader)) return 0;
+  memset(out,0,sizeof *out);
+  out->enabled=1u;
+  for(unsigned index=0;index<10u;index++) for(unsigned channel=0;channel<3u;channel++)
+    out->colour[index]|=(uint32_t)lroundf(shader.uniforms[index].value[channel]*255.0f)
+                            <<(16u-8u*channel);
+  out->red=(uint16_t)shader.uniforms[10].value[0];
+  for(unsigned branch=0;branch<2u;branch++) for(unsigned band=0;band<4u;band++)
+    out->green[branch][band]=(uint16_t)shader.uniforms[11u+branch].value[band];
+  return 1;
+}
+
 int gml_render_shader_lut_snapshot(GmlRender *r,int shader_id,GmlPlanShader *out,
                                     GmlRenderResourceSource *palette){
   if(!r || !out || !palette || !r->shader_pal || shader_id<0 ||

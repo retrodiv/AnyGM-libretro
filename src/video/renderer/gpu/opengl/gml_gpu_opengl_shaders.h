@@ -274,6 +274,9 @@
   "uniform int u_filter;\n" \
   "uniform int u_alpha_test;\n" \
   "uniform int u_source_alpha_key;\n" \
+  "uniform int u_source_palette_enabled,u_source_palette_red;\n" \
+  "uniform ivec4 u_source_palette_green0,u_source_palette_green1;\n" \
+  "uniform ivec3 u_source_palette_colour[10];\n" \
   "uniform usampler2D u_point_map_x,u_point_map_y;\n" \
   "uniform ivec2 u_point_origin;\n" \
   "uniform sampler2D u_recovery_screen,u_recovery_application;\n" \
@@ -289,6 +292,16 @@
   "flat in vec4 v_span_y;\n" \
   "flat in float v_span_active;\n" \
   "out vec4 o_color;\n" \
+  "vec4 source_colour(vec4 value){\n" \
+  "  if(u_source_palette_enabled==0) return value;\n" \
+  "  ivec3 bytes=ivec3(floor(value.rgb*255.0+0.5));\n" \
+  "  bool upper=bytes.r>=u_source_palette_red;\n" \
+  "  ivec4 edge=upper?u_source_palette_green1:u_source_palette_green0;\n" \
+  "  int band=bytes.g>=edge.x?0:bytes.g>=edge.y?1:bytes.g>=edge.z?2:bytes.g>=edge.w?3:4;\n" \
+  "  return vec4(vec3(u_source_palette_colour[(upper?5:0)+band])/255.0,value.a);\n" \
+  "}\n" \
+  "vec4 source_texel(ivec2 point,int lod){return source_colour(texelFetch(u_image,point,lod));}\n" \
+  "vec4 source_texture(vec2 uv){return source_colour(texture(u_image,uv));}\n" \
   "vec4 margin_tap(ivec2 p,ivec2 first,ivec2 last,int mask){\n" \
   "  if((mask&16)!=0 && (((mask&1)!=0 && p.x<0) || ((mask&2)!=0 && p.y<0) ||\n" \
   "      ((mask&4)!=0 && p.x>last.x) || ((mask&8)!=0 && p.y>last.y))) return vec4(0.0);\n" \
@@ -297,18 +310,18 @@
   "  ivec2 at=first+(raw?p:clamp(p,ivec2(0),last));\n" \
   "  ivec2 extent=textureSize(u_image,0);\n" \
   "  if(any(lessThan(at,ivec2(0))) || any(greaterThanEqual(at,extent))) return vec4(0.0);\n" \
-  "  return floor(texelFetch(u_image,at,0)*255.0+0.5);\n" \
+  "  return floor(source_texel(at,0)*255.0+0.5);\n" \
   "}\n" \
   "vec4 hardware_background_tap(ivec2 at){\n" \
   "  ivec2 extent=textureSize(u_image,0);\n" \
   "  if(any(lessThan(at,ivec2(0))) || any(greaterThanEqual(at,extent))) return vec4(0.0);\n" \
-  "  return texelFetch(u_image,at,0);\n" \
+  "  return source_texel(at,0);\n" \
   "}\n" \
   "vec4 hardware_background_sample(vec2 uv,ivec2 first,ivec2 last,int mask){\n" \
   "  ivec2 low=first-ivec2((mask&1)!=0?1:0,(mask&2)!=0?1:0);\n" \
   "  ivec2 high=last+ivec2((mask&4)!=0?1:0,(mask&8)!=0?1:0);\n" \
   "  vec2 extent=vec2(textureSize(u_image,0));\n" \
-  "  vec4 result=texture(u_image,clamp(uv,(vec2(low)+0.5)/extent,(vec2(high)+0.5)/extent));\n" \
+  "  vec4 result=source_texture(clamp(uv,(vec2(low)+0.5)/extent,(vec2(high)+0.5)/extent));\n" \
   "  vec2 p=uv*extent-vec2(0.5);\n" \
   "  bool x_plain=(p.x<float(first.x)&&(mask&1)==0)||(p.x>float(last.x)&&(mask&4)==0);\n" \
   "  bool y_plain=(p.y<float(first.y)&&(mask&2)==0)||(p.y>float(last.y)&&(mask&8)==0);\n" \
@@ -337,7 +350,7 @@
   "    return hardware_background_sample(uv,first,last,mask);\n" \
   "  // Rounded minified coverage may reach beyond one padding texel.\n" \
   "  // Keep hardware filtering; repair only crop-clamped or absent atlas taps.\n" \
-  "  vec4 result=texture(u_image,uv); ivec2 base=ivec2(floor(p)); vec2 f=fract(p);\n" \
+  "  vec4 result=source_texture(uv); ivec2 base=ivec2(floor(p)); vec2 f=fract(p);\n" \
   "  for(int y=0;y<2;y++) for(int x=0;x<2;x++){\n" \
   "    ivec2 at=base+ivec2(x,y);\n" \
   "    bool escape=(at.x<first.x&&(mask&1)!=0)||(at.x>last.x&&(mask&4)!=0)||\n" \
@@ -416,10 +429,10 @@
   "          ivec2 size=textureSize(u_image,0);\n" \
   "          ivec2 point=ivec2(floor(fract(v_texcoord)*vec2(size)));\n" \
   "          if(v_clamp.x!=0.0) point.y=size.y-1-point.y;\n" \
-  "          sampled=floor(texelFetch(u_image,point,0)*255.0+0.5);\n" \
+  "          sampled=floor(source_texel(point,0)*255.0+0.5);\n" \
   "        }else{\n" \
   "          vec2 uv=v_texcoord;if(v_clamp.x!=0.0) uv.y=1.0-uv.y;\n" \
-  "          sampled=texture(u_image,uv)*255.0;\n" \
+  "          sampled=source_texture(uv)*255.0;\n" \
   "          if(sampled.a==0.0 || (flags&2u)!=0u){\n" \
   "            // Hardware and Classic filtering can disagree at alpha zero.\n" \
   "            // Preserve coverage separately; RGB and blend factors remain hardware filtered.\n" \
@@ -429,7 +442,7 @@
   "            for(int tap=0;tap<4;tap++){\n" \
   "              ivec2 point=(base+size+ivec2(tap&1,tap/2))%size;\n" \
   "              if(v_clamp.x!=0.0) point.y=size.y-1-point.y;\n" \
-  "              taps[tap]=int(floor(texelFetch(u_image,point,0).a*255.0+0.5));\n" \
+  "              taps[tap]=int(floor(source_texel(point,0).a*255.0+0.5));\n" \
   "            }\n" \
   "            bool footprint;\n" \
   "            if((flags&2u)!=0u){\n" \
@@ -533,7 +546,7 @@
   "    ivec2 pixel=ivec2(floor(vec2(gl_FragCoord.x,u_extent.y-gl_FragCoord.y)))-u_recovery_rect.xy;\n" \
   "    ivec2 size=textureSize(u_image,0);\n" \
   "    ivec2 point=clamp(pixel*size/u_recovery_rect.zw,ivec2(0),size-ivec2(1));\n" \
-  "    vec4 sampled=texelFetch(u_image,ivec2(point.x,size.y-1-point.y),0);\n" \
+  "    vec4 sampled=source_texel(ivec2(point.x,size.y-1-point.y),0);\n" \
   "    uint coverage=uint(floor(sampled.a*255.0+0.5));\n" \
   "    if(coverage==0u || (u_alpha_test>=0 && coverage<=uint(u_alpha_test))) discard;\n" \
   "    o_color=u_filter==24?vec4(0.0,0.0,0.0,1.0):sampled; return;\n" \
@@ -550,7 +563,7 @@
   "      point=ivec2(px,py)+ivec2(v_clamp.xy);\n" \
   "      if(any(lessThan(point,ivec2(v_clamp.xy))) || any(greaterThan(point,ivec2(v_clamp.zw)))) discard;\n" \
   "    }\n" \
-  "    ivec4 sampled=ivec4(floor(texelFetch(u_image,point,0)*255.0+0.5));\n" \
+  "    ivec4 sampled=ivec4(floor(source_texel(point,0)*255.0+0.5));\n" \
   "    int encoded=u_rotated_alpha16[sampled.a/4][sampled.a%4];\n" \
   "    int factor=encoded&131071;\n" \
   "    if(factor==0) discard;\n" \
@@ -565,7 +578,7 @@
   "  // R03_SHADER_SURFACE_ROTATED_POINT: CPU-selected geometry,device texels/colour.\n" \
   "  if(u_filter>=133 && u_filter<=136){\n" \
   "    ivec2 size=textureSize(u_image,0),at=ivec2(floor(v_texcoord*vec2(size)));\n" \
-  "    uvec4 sampled=uvec4(floor(texelFetch(u_image,at,0)*255.0+0.5));\n" \
+  "    uvec4 sampled=uvec4(floor(source_texel(at,0)*255.0+0.5));\n" \
   "    if(u_alpha_test>=0 && sampled.a<=uint(u_alpha_test)) discard;\n" \
   "    if(sampled.a==0u && v_span_y.x==0.0) discard;\n" \
   "    if(u_filter==134){o_color=vec4(0.0,0.0,0.0,1.0);return;}\n" \
@@ -585,7 +598,7 @@
   "    uvec4 total=uvec4(0u); uint count=0u;\n" \
   "    for(int y=first.y;y<last.y;y++) for(int x=first.x;x<last.x;x++){\n" \
   "      ivec2 at=ivec2(x,v_step.x!=0.0?size.y-1-y:y);\n" \
-  "      total+=uvec4(floor(texelFetch(u_image,at,0)*255.0+0.5));count++;\n" \
+  "      total+=uvec4(floor(source_texel(at,0)*255.0+0.5));count++;\n" \
   "    }\n" \
   "    if(count==0u || (u_alpha_test>=0 && total.a<=uint(u_alpha_test)*count)) discard;\n" \
   "    if(total.a==0u && v_span_y.x!=4.0) discard;\n" \
@@ -621,8 +634,8 @@
   "      if(v_span_y.w>0.0 && (any(lessThan(at,ivec2(0))) || any(greaterThanEqual(at,size)))) discard;\n" \
   "      at=clamp(at,ivec2(0),size-ivec2(1));\n" \
   "      if(v_step.x!=0.0) at.y=size.y-1-at.y;\n" \
-  "      sampled=uvec4(floor(texelFetch(u_image,at,0)*255.0+0.5));\n" \
-  "    }else sampled=uvec4(floor(texture(u_image,v_texcoord)*255.0+0.5));\n" \
+  "      sampled=uvec4(floor(source_texel(at,0)*255.0+0.5));\n" \
+  "    }else sampled=uvec4(floor(source_texture(v_texcoord)*255.0+0.5));\n" \
   "    if(u_alpha_test>=0 && sampled.a<=uint(u_alpha_test)) discard;\n" \
   "    if(u_source_alpha_key!=0){\n" \
   "      int channel=(u_source_alpha_key>>9)-1;\n" \
@@ -640,7 +653,7 @@
   "    if(sample_filter>50 && v_span_y.x==3.0 && sampled.a==255u) alpha=1.0;\n" \
   "    o_color=vec4(vec3(rgb)/255.0,alpha); return;\n" \
   "  }\n" \
-  "  if(u_filter==0){ o_color=texture(u_image,v_texcoord)*v_colour; return; }\n" \
+  "  if(u_filter==0){ o_color=source_texture(v_texcoord)*v_colour; return; }\n" \
   "  // R03_SHADER_VIEW_COPY: raw integer-centre copy or last-writer retained seed.\n" \
   "  if(u_filter==128){\n" \
   "    ivec2 position=ivec2(floor(vec2(gl_FragCoord.x,v_step.y-gl_FragCoord.y)));\n" \
@@ -649,7 +662,7 @@
   "    ivec2 texel=local/step,extent=textureSize(u_image,0);\n" \
   "    if(any(greaterThanEqual(texel,extent))) discard;\n" \
   "    if(v_step.x!=0.0) texel.y=extent.y-1-texel.y;\n" \
-  "    vec4 sample_colour=texelFetch(u_image,texel,0);\n" \
+  "    vec4 sample_colour=source_texel(texel,0);\n" \
   "    if(v_span_x.x==0.0 && sample_colour.a==0.0) discard;\n" \
   "    o_color=vec4(sample_colour.rgb,1.0); return;\n" \
   "  }\n" \
@@ -667,7 +680,7 @@
   "      texel+=origin;\n" \
   "    }\n" \
   "    if(v_step.x!=0.0) texel.y=extent.y-1-texel.y;\n" \
-  "    o_color=texelFetch(u_image,texel,0); return;\n" \
+  "    o_color=source_texel(texel,0); return;\n" \
   "  }\n" \
   "  // R03_SHADER_APPLICATION_PIXEL_CENTRE: opaque presentation copies RGB and stamps alpha.\n" \
   "  if(u_filter==30){\n" \
@@ -676,14 +689,14 @@
   "    vec2 texel=floor((position-v_map.xy)*extent/v_map.zw);\n" \
   "    if(v_step.x!=0.0) texel.y=extent.y-1.0-texel.y;\n" \
   "    texel=clamp(texel,v_clamp.xy,v_clamp.zw);\n" \
-  "    o_color=vec4(texture(u_image,(texel+vec2(0.5))/extent).rgb,1.0); return;\n" \
+  "    o_color=vec4(source_texture((texel+vec2(0.5))/extent).rgb,1.0); return;\n" \
   "  }\n" \
   "  // R03_SHADER_HARDWARE_FILTERED_ADDITIVE: Hardware bilinear additive without destination sampling.\n" \
   "  if(u_filter==18){\n" \
   "    vec2 extent=vec2(textureSize(u_image,0));\n" \
   "    vec2 uv=clamp(v_texcoord,(v_clamp.xy+vec2(0.5))/extent,\n" \
   "                            (v_clamp.zw+vec2(0.5))/extent);\n" \
-  "    vec4 sampled=floor(texture(u_image,uv)*255.0+vec4(0.5));\n" \
+  "    vec4 sampled=floor(source_texture(uv)*255.0+vec4(0.5));\n" \
   "    float alpha=sampled.a*v_colour.a;\n" \
   "    if(alpha<=0.0) discard;\n" \
   "    uvec3 tint=uvec3(floor(v_colour.rgb*255.0+vec3(0.5)));\n" \
@@ -723,7 +736,7 @@
   "    vec2 extent=vec2(textureSize(u_image,0));\n" \
   "    vec2 uv=clamp(v_texcoord,(v_clamp.xy+vec2(0.5))/extent,(v_clamp.zw+vec2(0.5))/extent);\n" \
   "    int margin=int(floor(v_margin+0.5));\n" \
-  "    vec4 sampled=margin!=0?hardware_physical_sprite_sample(v_texcoord,ivec2(v_clamp.xy),ivec2(v_clamp.zw),margin):texture(u_image,uv);\n" \
+  "    vec4 sampled=margin!=0?hardware_physical_sprite_sample(v_texcoord,ivec2(v_clamp.xy),ivec2(v_clamp.zw),margin):source_texture(uv);\n" \
   "    uvec4 bytes=uvec4(floor(clamp(sampled,0.0,1.0)*255.0+vec4(0.5)));\n" \
   "    uvec3 tint=uvec3(floor(v_colour.rgb*255.0+vec3(0.5)));\n" \
   "    uint bias=((u_filter>=151 && u_filter<=154)||u_filter>=157)?127u:0u;\n" \
@@ -740,9 +753,9 @@
   "                            (v_clamp.zw+vec2(0.5))/extent);\n" \
   "    int margin=int(floor(v_margin+0.5));\n" \
   "    bool unit_texel=margin==16;\n" \
-  "    vec4 sampled=unit_texel?texelFetch(u_image,ivec2(floor(uv*extent)),0):\n" \
+  "    vec4 sampled=unit_texel?source_texel(ivec2(floor(uv*extent)),0):\n" \
   "      margin!=0?hardware_physical_sprite_sample(v_texcoord,\n" \
-  "        ivec2(v_clamp.xy),ivec2(v_clamp.zw),margin):texture(u_image,uv);\n" \
+  "        ivec2(v_clamp.xy),ivec2(v_clamp.zw),margin):source_texture(uv);\n" \
   "    if(!covered_row && physical_filter<112 && u_alpha_test>=0 && sampled.a*255.0<=float(u_alpha_test)) discard;\n" \
   "    if(physical_filter>=79){\n" \
   "      float alpha=sampled.a*v_colour.a; if(alpha<=0.0 && physical_filter<112) discard;\n" \
@@ -769,7 +782,7 @@
   "                            (v_clamp.zw+vec2(0.5))/extent);\n" \
   "    int margin=int(floor(v_margin+0.5));\n" \
   "    vec4 sampled=margin!=0?hardware_background_sample(v_texcoord,\n" \
-  "      ivec2(v_clamp.xy),ivec2(v_clamp.zw),margin):texture(u_image,uv);\n" \
+  "      ivec2(v_clamp.xy),ivec2(v_clamp.zw),margin):source_texture(uv);\n" \
   "    float alpha=sampled.a*v_colour.a;\n" \
   "    if(u_alpha_test>=0 && sampled.a*255.0<=float(u_alpha_test)) discard;\n" \
   "    if(alpha<=0.0) discard;\n" \
@@ -791,7 +804,7 @@
   "    ivec2 low=numerator/den;vec2 phase=vec2(numerator%den)/vec2(den);\n" \
   "    vec2 local=vec2(low-trim)+phase;\n" \
   "    vec2 at=clamp(local,vec2(0.0),vec2(visible-ivec2(1)));\n" \
-  "    vec4 sampled=texture(u_image,(v_clamp.xy+at+vec2(0.5))/vec2(textureSize(u_image,0)));\n" \
+  "    vec4 sampled=source_texture((v_clamp.xy+at+vec2(0.5))/vec2(textureSize(u_image,0)));\n" \
   "    vec2 coverage=clamp(local+vec2(1.0),0.0,1.0)*clamp(vec2(visible)-local,0.0,1.0);\n" \
   "    sampled*=coverage.x*coverage.y;\n" \
   "    // Coverage uses logical taps even when the hardware's tiny alpha rounds away.\n" \
@@ -800,7 +813,7 @@
   "      ivec2 tap=min(low+ivec2(x,y),logical-ivec2(1))-trim;\n" \
   "      if(any(lessThan(tap,ivec2(0))) || any(greaterThanEqual(tap,visible))) continue;\n" \
   "      float weight=(x==0?1.0-phase.x:phase.x)*(y==0?1.0-phase.y:phase.y);\n" \
-  "      witness+=texelFetch(u_image,ivec2(v_clamp.xy)+tap,0).a*weight;\n" \
+  "      witness+=source_texel(ivec2(v_clamp.xy)+tap,0).a*weight;\n" \
   "    }\n" \
   "    if(witness<=0.0 || (u_alpha_test>=0 && sampled.a*255.0<=float(u_alpha_test))) discard;\n" \
   "    o_color=u_filter==78?vec4(0.0,0.0,0.0,1.0):vec4(sampled.rgb*v_colour.rgb,sampled.a*v_colour.a); return;\n" \
@@ -815,7 +828,7 @@
   "    for(int sy=first.y;sy<last.y;sy++) for(int sx=first.x;sx<last.x;sx++){\n" \
   "      ivec2 at=ivec2(sx,sy)-trim;\n" \
   "      if(any(lessThan(at,ivec2(0))) || any(greaterThanEqual(at,visible))) continue;\n" \
-  "      total+=floor(texelFetch(u_image,ivec2(v_clamp.xy)+at,0)*255.0+0.5); count++;\n" \
+  "      total+=floor(source_texel(ivec2(v_clamp.xy)+at,0)*255.0+0.5); count++;\n" \
   "    }\n" \
   "    if(count==0) discard;\n" \
   "    vec4 sampled=floor(total/float(count)+vec4(0.5));\n" \
@@ -879,7 +892,7 @@
   "      if(u_filter!=5 && (any(lessThan(point,ivec2(0))) ||\n" \
   "         any(greaterThanEqual(point,size)))) discard;\n" \
   "      point=clamp(point,ivec2(0),size-ivec2(1));\n" \
-  "      vec4 sampled=floor(texelFetch(u_image,ivec2(v_clamp.xy)+point,0)*255.0+0.5);\n" \
+  "      vec4 sampled=floor(source_texel(ivec2(v_clamp.xy)+point,0)*255.0+0.5);\n" \
   "      // R03_SHADER_GUI_ROTATED_NEAREST_COVERAGE: shared binary64 alpha LUT,\n" \
   "      // exact16 integer source-over and the CPU packet/tail alpha policy.\n" \
   "      if(u_filter==15 || u_filter==17){\n" \
@@ -945,10 +958,10 @@
   "    p11=margin_tap(b,first,last,31);\n" \
   "  } else if(v_margin<0.5){\n" \
   "    ivec2 a=clamp(lo,ivec2(0),last),b=clamp(lo+ivec2(1),ivec2(0),last);\n" \
-  "    p00=floor(texelFetch(u_image,first+a,0)*255.0+0.5);\n" \
-  "    p01=floor(texelFetch(u_image,first+ivec2(b.x,a.y),0)*255.0+0.5);\n" \
-  "    p10=floor(texelFetch(u_image,first+ivec2(a.x,b.y),0)*255.0+0.5);\n" \
-  "    p11=floor(texelFetch(u_image,first+b,0)*255.0+0.5);\n" \
+  "    p00=floor(source_texel(first+a,0)*255.0+0.5);\n" \
+  "    p01=floor(source_texel(first+ivec2(b.x,a.y),0)*255.0+0.5);\n" \
+  "    p10=floor(source_texel(first+ivec2(a.x,b.y),0)*255.0+0.5);\n" \
+  "    p11=floor(source_texel(first+b,0)*255.0+0.5);\n" \
   "  } else {\n" \
   "    int mask=int(v_margin+0.5);\n" \
   "    p00=margin_tap(lo,first,last,mask);\n" \

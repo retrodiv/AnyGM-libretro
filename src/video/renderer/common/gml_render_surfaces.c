@@ -631,6 +631,16 @@ int gml_render_application_scene_enqueue_quads(GmlRender *r,
   GmlRenderImageRef next;
   uint32_t state_index=0,source_index=0;
   int coalescible,exact_filtered_font,versioned_surface;
+  GmlRenderDrawStateSnapshot mapped_state;
+  if(r && r->scene_device_enabled && r->resident_application_pass && operation && state &&
+     operation->scene_family==GML_RENDER_SCENE_SPRITE &&
+     !state->source_palette.enabled){
+    GmlRenderSourcePalette palette;
+    if(gml_render_shader_source_palette_snapshot(r,r->active_shader,&palette)){
+      if(operation->reconstruction_mode!=GML_RENDER_DEVICE_CHECKPOINT) return 0;
+      mapped_state=*state;mapped_state.source_palette=palette;state=&mapped_state;
+    }
+  }
   /* A complete immutable row group is preflighted before device delivery.
    * Its metadata budget is independent of the unchanged GL streaming budget;
    * never split a prepared sprite into an irreversible partial admission. */
@@ -2104,15 +2114,39 @@ GmlRenderResourceExecution gml_render_application_scene_submit(
     ?gml_render_scene_target_resource_ensure(r)
     :gml_render_application_resource_ensure(r);
   GmlRenderResourceExecution result;
+  GmlRenderDrawBatch mapped_batch;
+  GmlRenderDrawStateSnapshot *mapped_states=NULL;
+  GmlRenderSourcePalette palette;
+  if(r && r->scene_device_enabled && r->resident_application_pass &&
+     batch && batch->operations && batch->states &&
+     gml_render_shader_source_palette_snapshot(r,r->active_shader,&palette)){
+    int sprites=0;
+    for(uint32_t index=0;index<batch->operation_count;index++)
+      sprites|=batch->operations[index].scene_family==GML_RENDER_SCENE_SPRITE;
+    if(sprites){
+      if(!batch->state_count || batch->state_count>GML_SCENE_STATE_LIMIT)
+        return GML_RENDER_RESOURCE_EXEC_FAILED;
+      for(uint32_t index=0;index<batch->operation_count;index++)
+        if(batch->operations[index].opcode!=GML_RENDER_OP_TEXTURED_QUAD ||
+           batch->operations[index].scene_family!=GML_RENDER_SCENE_SPRITE ||
+           batch->operations[index].reconstruction_mode!=GML_RENDER_DEVICE_CHECKPOINT)
+          return GML_RENDER_RESOURCE_EXEC_FAILED;
+      mapped_states=malloc(batch->state_count*sizeof *mapped_states);
+      if(!mapped_states) return GML_RENDER_RESOURCE_EXEC_FAILED;
+      memcpy(mapped_states,batch->states,batch->state_count*sizeof *mapped_states);
+      for(uint32_t index=0;index<batch->state_count;index++) mapped_states[index].source_palette=palette;
+      mapped_batch=*batch;mapped_batch.states=mapped_states;batch=&mapped_batch;
+    }
+  }
   if(!resource || !gml_render_application_scene_flush(r))
-    return GML_RENDER_RESOURCE_EXEC_FAILED;
+    {free(mapped_states);return GML_RENDER_RESOURCE_EXEC_FAILED;}
   result=gml_render_resource_submit_deferred(resource,gml_render_device(r),batch,sources,source_count);
   gml_render_dispatch_batch_record(r,batch,result);
   if(result!=GML_RENDER_RESOURCE_EXEC_FAILED && r->fb==r->app_surface_owned){
     r->app_surface_opaque=0;
     r->app_presentation_coverage_active=0;
   }
-  return result;
+  free(mapped_states);return result;
 }
 static int resident_surface_nearest_function(GmlRender *r,int surf,double dx,double dy,
   double dw,double dh,uint32_t colour,double alpha,int automatic);

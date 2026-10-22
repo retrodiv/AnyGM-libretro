@@ -17,6 +17,10 @@ int gml_render_shader_plan_snapshot(const GmlRender *render,int shader_id,
 /* Recognized threshold/indexed byte palettes, without executing content GLSL. */
 int gml_render_shader_threshold_palette_snapshot(const GmlRender *render,int shader_id,
                                                 GmlPlanShader *out);
+/* Same finite evaluator for batched textured checkpoints. Source alpha and
+ * geometry are unchanged;no source or destination pixels are observed. */
+int gml_render_shader_source_palette_snapshot(const GmlRender *render,int shader_id,
+                                              GmlRenderSourcePalette *out);
 /* Resolve the recognized red-index palette against its existing immutable texture owner. */
 int gml_render_shader_lut_snapshot(GmlRender *render,int shader_id,GmlPlanShader *out,
                                     GmlRenderResourceSource *palette);

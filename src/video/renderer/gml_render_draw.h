@@ -278,6 +278,14 @@ enum {
   GML_RENDER_COVERAGE_REPLACE_SOURCE_ALPHA=5u
 };
 
+/* Finite recognized source-colour mapping,not authored shader code. This is
+ * transient checkpoint metadata;canonical state retains actual device bytes. */
+typedef struct GmlRenderSourcePalette {
+  uint32_t colour[10];
+  uint16_t red,green[2][4];
+  uint16_t enabled;
+} GmlRenderSourcePalette;
+
 typedef struct GmlRenderDrawStateSnapshot {
   uint32_t rgb_source_factor,rgb_destination_factor;
   uint32_t alpha_source_factor,alpha_destination_factor;
@@ -295,6 +303,7 @@ typedef struct GmlRenderDrawStateSnapshot {
   GmlRenderSamplingPolicy samplers[GML_RENDER_MAX_SAMPLERS];
   uint64_t material_identity,material_version;
   double additive_draw_alpha;
+  GmlRenderSourcePalette source_palette;
 } GmlRenderDrawStateSnapshot;
 
 typedef enum GmlRenderQuadShape {

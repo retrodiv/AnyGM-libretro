@@ -25,7 +25,10 @@ static int resident_filtered_font_crop(GmlRender *r,GmlTpag *page,
                                        uint32_t colour,double alpha);
 
 static int resident_sprite_program_blocks(const GmlRender *r){
-  return !r || (r->active_shader>=0 && !gml_render_shader_cpu_passthrough(r));
+  GmlRenderSourcePalette palette;
+  return !r || (r->active_shader>=0 && !gml_render_shader_cpu_passthrough(r) &&
+    !(r->scene_device_enabled && !r->interp &&
+      gml_render_shader_source_palette_snapshot(r,r->active_shader,&palette)));
 }
 
 static int resident_first_generation_rotated_point(GmlRender *r,double rotation){

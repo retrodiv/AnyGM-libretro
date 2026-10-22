@@ -3,6 +3,14 @@
 
 # Code map
 
+`common/gml_render_shaders.c::gml_render_shader_source_palette_snapshot`
+projects the existing finite recognized palette into by-value textured
+checkpoint state. Sprite admission and shared enqueue/submit retain the
+selected program;the scene backend compares palette state when batching and
+maps RGB through integer byte partitions. Alpha and CPU pixel writers stay
+unchanged. Device-only palette state is not a CPU replay recipe or canonical
+state bytes;existing resource observation seals actual pixels.
+
 `common/gml_render_sprites.c::resident_modern_nearest_rotation` also admits
 first-generation axis SCREEN footprints proved small by the existing CPU
 coverage visitor,independently of the framebuffer's total area. The nearest

@@ -166,6 +166,11 @@ int gml_gpu_opengl_scene_program(GmlGpuBackend *backend,char *error,size_t error
   scene->u_filter=backend->gl.GetUniformLocation(scene->program,"u_filter");
   scene->u_alpha_test=backend->gl.GetUniformLocation(scene->program,"u_alpha_test");
   scene->u_source_alpha_key=backend->gl.GetUniformLocation(scene->program,"u_source_alpha_key");
+  scene->u_source_palette_enabled=backend->gl.GetUniformLocation(scene->program,"u_source_palette_enabled");
+  scene->u_source_palette_red=backend->gl.GetUniformLocation(scene->program,"u_source_palette_red");
+  scene->u_source_palette_green[0]=backend->gl.GetUniformLocation(scene->program,"u_source_palette_green0");
+  scene->u_source_palette_green[1]=backend->gl.GetUniformLocation(scene->program,"u_source_palette_green1");
+  scene->u_source_palette_colour=backend->gl.GetUniformLocation(scene->program,"u_source_palette_colour[0]");
   scene->u_previous=backend->gl.GetUniformLocation(scene->program,"u_previous");
   scene->u_region_origin=backend->gl.GetUniformLocation(scene->program,"u_region_origin");
   scene->u_rotated_alpha16=backend->gl.GetUniformLocation(scene->program,"u_rotated_alpha16[0]");
@@ -184,6 +189,9 @@ int gml_gpu_opengl_scene_program(GmlGpuBackend *backend,char *error,size_t error
      scene->a_span_x<0 || scene->a_span_y<0 ||
      scene->u_extent<0 || scene->u_image<0 || scene->u_filter<0 || scene->u_alpha_test<0 ||
      scene->u_source_alpha_key<0 ||
+     scene->u_source_palette_enabled<0 || scene->u_source_palette_red<0 ||
+     scene->u_source_palette_green[0]<0 || scene->u_source_palette_green[1]<0 ||
+     scene->u_source_palette_colour<0 ||
      scene->u_previous<0 || scene->u_region_origin<0 || scene->u_rotated_alpha16<0 ||
      scene->u_point_map_x<0 || scene->u_point_map_y<0 || scene->u_point_origin<0 ||
      scene->u_recovery_screen<0 || scene->u_recovery_application<0 || scene->u_recovery_rect<0){
