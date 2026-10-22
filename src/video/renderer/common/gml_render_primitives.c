@@ -1140,8 +1140,52 @@ circle_done:
   return result;
 }
 
+/* R03-PRIM-POINT-FUNCTION: the builtin has already resolved camera and GUI
+ * coordinates. Reuse the existing pixel-span executor, not a filled rectangle's
+ * distinct alpha policy. A clipped/zero-alpha point still orders deferred work
+ * because the unchanged CPU point wrapper prepares before testing its pixel. */
+static int resident_point_function(GmlRender *r,int x,int y,uint32_t colour){
+  if(!resident_primitive_state_eligible(r) || r->app_interp_phase[0] ||
+     r->app_interp_phase[1] || r->app_interp_phase[2]) return 0;
+  if(r->pending_underlay && !gml_render_compose_resident_underlay(r)) return 0;
+  gml_render_flush_pending_fill(r);
+  if(r->pending_fill) return 0;
+  double alpha=fmax(0.0,fmin(1.0,r->alpha));
+  int destination=r->alphablend && gml_render_blend_uses_destination_colour(r->blendmode);
+  if(x<0 || y<0 || x>=r->fbw || y>=r->fbh || (alpha<=0.0 && !destination)) return 1;
+  GmlRenderResource *target=gml_render_scene_target_resource_ensure(r);
+  if(!target) return 0;
+  GmlRenderImageRef next=gml_render_application_scene_next_image_ref(r,target);
+  if(next.content_version==UINT64_MAX) return 0;
+  unsigned blend=(unsigned)r->blendmode;
+  if(blend==3u || blend==6u) blend=2u;
+  unsigned mask=r->alphablend && (destination || blend==4u || blend==7u || blend==8u)?
+    r->color_write_mask:15u;
+  GmlRenderDrawOp operation={0};
+  operation.opcode=GML_RENDER_OP_COLOURED_PRIMITIVE;
+  operation.scene_family=GML_RENDER_SCENE_PRIMITIVE;
+  operation.reconstruction_mode=GML_RENDER_DEVICE_CHECKPOINT;
+  operation.target=(GmlRenderTargetRef){next,1u,(uint32_t)r->fbw,(uint32_t)r->fbh,
+    GML_RENDER_PIXEL_ARGB8888,{0,0,(uint32_t)r->fbw,(uint32_t)r->fbh}};
+  operation.target.image.content_version++;
+  uint32_t colours[4]={colour,colour,colour,colour};
+  GmlRenderRect pixel={x,y,1u,1u};
+  GmlRenderPrimitiveRect *p=&operation.payload.primitive;
+  resident_rectangle_payload(r,p,pixel,pixel,colours,1,0,blend,alpha);
+  p->rectangle_flags|=GML_RENDER_RECTANGLE_PIXEL_SPAN;
+  p->pixel_write_mask=mask;
+  if(!gml_render_application_scene_enqueue_primitive(r,&operation)) return 0;
+  int opaque_write=!(p->rectangle_flags&GML_RENDER_RECTANGLE_TARGET_ALPHA) ||
+    (r->alphablend && (blend==1u || blend==5u)) ||
+    ((!blend || !r->alphablend || blend==4u) && alpha>=1.0) || !(mask&8u);
+  int opaque=opaque_write && r->fb_opaque_known && r->fb_all_opaque;
+  r->fb_all_transparent=0;r->fb_opaque_known=r->fb_all_opaque=opaque;
+  return 1;
+}
+
 void gml_render_primitive_point(GmlRender *render,int x,int y,uint32_t color){
   if(gml_render_try_opaque_primitive_rect(render,x,y,x,y,color)) return;
+  if(resident_point_function(render,x,y,color)) return;
   gml_render_cpu_point(render,x,y,color);
 }
 

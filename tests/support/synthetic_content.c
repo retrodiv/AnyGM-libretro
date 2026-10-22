@@ -1833,8 +1833,9 @@ static int synthetic_framebuffer_content_create(
   int classic_owned_gui=gpu_sprite==47;
   int classic_manual_application=gpu_sprite>=48 && gpu_sprite<=50;
   int classic_sample_root=gpu_sprite>=58 && gpu_sprite<=60;
-  int classic_native_borrowed=gpu_sprite>=66 && gpu_sprite<=77;
-  unsigned borrowed_variant=classic_native_borrowed?(unsigned)(gpu_sprite-66):0u;
+  int point_function=gpu_sprite==78;
+  int classic_native_borrowed=gpu_sprite>=66 && gpu_sprite<=78;
+  unsigned borrowed_variant=classic_native_borrowed && !point_function?(unsigned)(gpu_sprite-66):0u;
   int single_classic_view=(gpu_sprite>=21 && gpu_sprite<=37) || borrowed_resize || classic_manual_application || reduced_view_resize ||
                           (classic_native_borrowed && (borrowed_variant&2u));
   char create[192],step[192],draw[192],draw_begin[192],draw_gui[192];
@@ -2006,7 +2007,15 @@ static int synthetic_framebuffer_content_create(
                  "surface_set_target(global.fixture_surface);\n":
                  "if (global.fixture_frame >= 1) room_goto(1);\n"
                  "global.fixture_frame += 1;\n") ||
-     (gpu_sprite && !write_text(draw,classic_native_borrowed?
+     (gpu_sprite && !write_text(draw,point_function?
+       "global.fixture_application_width = surface_get_width(application_surface);\n"
+       "global.fixture_application_height = surface_get_height(application_surface);\n"
+       "draw_set_color(c_gray); draw_point(9+global.fixture_frame,3);\n"
+       "draw_point_color(3,4,c_red); draw_point_colour(4,5,c_blue);\n"
+       "draw_set_alpha(0.41); draw_point(5,6); draw_set_alpha(1);\n"
+       "draw_sprite(spr_fixture,0,8+global.fixture_frame,12);\n"
+       "draw_set_color(c_white); draw_text(8,30,\"GPU\");\n":
+       classic_native_borrowed?
        "global.fixture_application_width = surface_get_width(application_surface);\n"
        "global.fixture_application_height = surface_get_height(application_surface);\n"
        "draw_sprite(spr_fixture,0,8+global.fixture_frame,12);\n"
@@ -2132,7 +2141,10 @@ static int synthetic_framebuffer_content_create(
          "}\n")) ||
      ((retained_step_target || assigned_view_surface || canvas_geometry || window_geometry ||
        gpu_sprite==28 || classic_owned_gui || classic_manual_application || classic_native_borrowed) &&
-      !write_text(draw_gui,classic_native_borrowed?
+      !write_text(draw_gui,point_function?
+         "draw_set_color(c_red); draw_point(24,14);\n"
+         "draw_point_color(25,15,c_blue); draw_point_colour(26,16,c_lime);\n":
+         classic_native_borrowed?
          (borrowed_variant>=4u && borrowed_variant<8u?
           "draw_sprite_ext(spr_fixture,0,20,12,1,1,0,c_white,0.375);\n"
           "draw_set_color(c_red); draw_set_alpha(0.5);\n"
@@ -2521,7 +2533,7 @@ int anygm_synthetic_classic_single_view_modern_content_create(AnygmSyntheticCont
   return synthetic_framebuffer_content_create(fixture,0,0,1,24);
 }
 int anygm_synthetic_classic_native_borrowed_content_create(AnygmSyntheticContent *fixture,unsigned variant){
-  if(variant>=12u) return 0;
+  if(variant>=13u) return 0;
   return synthetic_framebuffer_content_create(fixture,0,0,1,66+(int)variant);
 }
 int anygm_synthetic_classic_single_view_offset_content_create(AnygmSyntheticContent *fixture){

@@ -1521,7 +1521,7 @@ static int classic_borrowed_fixture(AnygmSyntheticContent *fixture){
 /* Metadata, dispatch and complete VM bytes; real-device paired hosts own
  * shader pixels. The negative variants retain their existing CPU policy. */
 static int classic_native_borrowed_scene_case(void){
-  for(unsigned api=0;api<2u;api++) for(unsigned variant=0;variant<12u;variant++){
+  for(unsigned api=0;api<2u;api++) for(unsigned variant=0;variant<13u;variant++){
     Session plain={0},selected={0};
     CurrentContextWitness witness={1u,0u};
     AnygmGraphicsContext context=graphics_context(api?ANYGM_GRAPHICS_OPENGL_CORE:ANYGM_GRAPHICS_OPENGLES3);
@@ -1555,8 +1555,8 @@ static int classic_native_borrowed_scene_case(void){
         for(unsigned reason=0;reason<GML_RENDER_DISPATCH_REASON_COUNT;reason++)
           ordinary_cpu+=dispatch.cpu[family][reason];
       matching=matching && !dispatch.failed && !dispatch.unclassified && !dispatch.overflow &&
-        (variant<8u?ordinary_cpu==0u:ordinary_cpu>0u) &&
-        (variant>=8u || after.scene_readbacks==before.scene_readbacks);
+        (variant<8u || variant==12u?ordinary_cpu==0u:ordinary_cpu>0u) &&
+        ((variant>=8u && variant!=12u) || after.scene_readbacks==before.scene_readbacks);
       size_t cpu_bytes=gml_vm_state_size(&plain.engine->vm),gpu_bytes=gml_vm_state_size(&selected.engine->vm);
       size_t cpu_written=0,gpu_written=0;
       uint8_t *cpu_vm=malloc(cpu_bytes?cpu_bytes:1u),*gpu_vm=malloc(gpu_bytes?gpu_bytes:1u);

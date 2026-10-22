@@ -8095,6 +8095,52 @@ static int resident_borrowed_application_screen_handoff(void){
   return 1;
 }
 
+static int resident_point_function_transaction(void){
+  for(unsigned classic=0;classic<2u;classic++) for(unsigned owner=0;owner<3u;owner++){
+    GmlWin content={.classic_version=classic?700:0,.bytecode=classic?0:15};
+    GmlRender *r=calloc(1,sizeof *r);
+    FakeDevice fake={.on_demand=1};GmlRenderDeviceServices device=service(&fake);
+    uint32_t screen[16*12]={0},shadow[16*12];
+    device.observe_on_demand=fake_observe_on_demand;
+    CHECK(r && !gml_render_init(r,NULL));r->win=&content;r->classic=(int)classic;
+    gml_render_bind_device(r,&device);
+    if(owner==1u){
+      CHECK(gml_render_application_surface_ensure_owned(r,16,12) &&
+            gml_render_begin_resident_owned_application(r,0,0,0));
+    }else{
+      gml_render_application_surface_bind(r,screen,16,12,1);
+      CHECK(gml_render_begin_resident_base(r,screen,16,12,0,0));
+      if(owner==2u){int id=gml_surface_create(r,16,12);CHECK(id>0 && gml_surface_set_target(r,id));}
+    }
+    gml_render_set_pending_fill(r,0x78123456u);gml_render_flush_pending_fill(r);
+    CHECK(gml_render_scene_submit_pending(r));memcpy(shadow,r->fb,sizeof shadow);
+    int before=fake.submits;
+    gml_render_primitive_point(r,9,2,0x404040u);
+    CHECK(r->resident_application_pass && !fake.readbacks && gml_render_scene_submit_pending(r));
+    CHECK(fake.submits==before+1 && fake.last_primitive.payload.primitive.region.x==9 &&
+          fake.last_primitive.payload.primitive.region.y==2 &&
+          fake.last_primitive.payload.primitive.region.width==1u &&
+          fake.last_primitive.payload.primitive.region.height==1u);
+    /* Point colours use the pixel writer, including the mask only for its
+     * destination-dependent presets. Raw cutoff does not discard this pixel. */
+    r->alpha=.41;r->blendmode=9;r->color_write_mask=3u;
+    r->alpha_test_enable=1;r->alpha_test_ref=255u;
+    gml_render_primitive_point(r,3,4,0x123456u);
+    CHECK(r->resident_application_pass && gml_render_scene_submit_pending(r) &&
+          fake.last_primitive.payload.primitive.pixel_write_mask==3u &&
+          (fake.last_primitive.payload.primitive.rectangle_flags&GML_RENDER_RECTANGLE_PIXEL_SPAN));
+    CHECK(!fake.readbacks && !memcmp(shadow,r->fb,sizeof shadow));
+    /* Even a clipped point orders a deferred clear, like the CPU wrapper. */
+    r->alpha=0;r->blendmode=0;
+    gml_render_set_pending_fill(r,0xFFabcdefu);
+    gml_render_primitive_point(r,-1,12,0xFFFFFFu);
+    CHECK(r->resident_application_pass && !r->pending_fill &&
+          gml_render_scene_submit_pending(r) && !fake.readbacks);
+    gml_render_free(r);free(r);
+  }
+  return 1;
+}
+
 static int resident_line_function_transaction(void){
   GmlRender *r=calloc(1,sizeof *r);
   GmlWin content={.classic_version=530};
@@ -19157,6 +19203,7 @@ int main(void){
   passed+=resident_registered_view_surface_source();
   passed+=resident_empty_surface_part_prefix();
   passed+=deferred_rotation_queue_transactions_and_lifetime();
-  printf("render resource cases: passed=%d failed=%d\n",passed,298-passed);
-  return passed==298?EXIT_SUCCESS:EXIT_FAILURE;
+  passed+=resident_point_function_transaction();
+  printf("render resource cases: passed=%d failed=%d\n",passed,299-passed);
+  return passed==299?EXIT_SUCCESS:EXIT_FAILURE;
 }
