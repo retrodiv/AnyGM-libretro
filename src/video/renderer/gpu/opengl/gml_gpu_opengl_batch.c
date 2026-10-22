@@ -387,7 +387,8 @@ static int nearest_surface_function_valid(const GmlRenderDrawOp *op,
      op->reconstruction_mode!=GML_RENDER_DEVICE_CHECKPOINT ||
      (op->sources[0].resource_class!=GML_RENDER_RESOURCE_SCREEN &&
       op->sources[0].resource_class!=GML_RENDER_RESOURCE_SURFACE &&
-      op->sources[0].resource_class!=GML_RENDER_RESOURCE_APPLICATION) ||
+      op->sources[0].resource_class!=GML_RENDER_RESOURCE_APPLICATION &&
+      op->sources[0].resource_class!=GML_RENDER_RESOURCE_SCRATCH) ||
      source->pixel_format!=GML_RENDER_PIXEL_ARGB8888 ||
      source->width>4096u || source->height>4096u ||
      op->target.pixel_format!=GML_RENDER_PIXEL_ARGB8888 ||
@@ -856,7 +857,8 @@ static int hardware_surface_quad_valid(const GmlRenderDrawOp *op,
   if(!source || op->scene_family!=GML_RENDER_SCENE_SURFACE ||
      (op->sources[0].resource_class!=GML_RENDER_RESOURCE_SURFACE &&
       op->sources[0].resource_class!=GML_RENDER_RESOURCE_APPLICATION &&
-      op->sources[0].resource_class!=GML_RENDER_RESOURCE_SCREEN) ||
+      op->sources[0].resource_class!=GML_RENDER_RESOURCE_SCREEN &&
+      op->sources[0].resource_class!=GML_RENDER_RESOURCE_SCRATCH) ||
      source->pixel_format!=GML_RENDER_PIXEL_ARGB8888 ||
      op->target.pixel_format!=GML_RENDER_PIXEL_ARGB8888 ||
      (op->target.image.resource_class!=GML_RENDER_RESOURCE_SCREEN &&
@@ -885,7 +887,8 @@ static int hardware_surface_quad_valid(const GmlRenderDrawOp *op,
         quad->y[2]-quad->y[0]!=(double)source->height
        :(op->sources[0].resource_class!=GML_RENDER_RESOURCE_SURFACE &&
          op->sources[0].resource_class!=GML_RENDER_RESOURCE_APPLICATION &&
-         op->sources[0].resource_class!=GML_RENDER_RESOURCE_SCREEN) ||
+         op->sources[0].resource_class!=GML_RENDER_RESOURCE_SCREEN &&
+         op->sources[0].resource_class!=GML_RENDER_RESOURCE_SCRATCH) ||
         quad->x[1]-quad->x[0]<=(double)source->width ||
         quad->y[2]-quad->y[0]<=(double)source->height)) ||
      (destination_blend && (source->width>4096u || source->height>4096u ||
@@ -898,7 +901,8 @@ static int hardware_surface_quad_valid(const GmlRenderDrawOp *op,
      (destination_blend && quad->filtered_draw_alpha<0x1p-32)) return 0;
   if(point){
     if(destination_blend || (op->sources[0].resource_class!=GML_RENDER_RESOURCE_APPLICATION &&
-       op->sources[0].resource_class!=GML_RENDER_RESOURCE_SCREEN) ||
+       op->sources[0].resource_class!=GML_RENDER_RESOURCE_SCREEN &&
+       op->sources[0].resource_class!=GML_RENDER_RESOURCE_SCRATCH) ||
        op->target.image.resource_class!=GML_RENDER_RESOURCE_SCREEN ||
        !quad->source_opaque || quad->filtered_draw_alpha!=1.0 ||
        quad->corner_colour[0]!=0xFFFFFFFFu) return 0;
@@ -916,7 +920,8 @@ static int hardware_surface_quad_valid(const GmlRenderDrawOp *op,
   }
   if(leading && (point || destination_blend ||
      (op->sources[0].resource_class!=GML_RENDER_RESOURCE_APPLICATION &&
-      op->sources[0].resource_class!=GML_RENDER_RESOURCE_SCREEN) ||
+      op->sources[0].resource_class!=GML_RENDER_RESOURCE_SCREEN &&
+      op->sources[0].resource_class!=GML_RENDER_RESOURCE_SCRATCH) ||
      quad->sampling.filter!=GML_RENDER_FILTER_HARDWARE_BILINEAR ||
      quad->filtered_draw_alpha!=1.0 || quad->corner_colour[0]!=0xFFFFFFFFu)) return 0;
   for(unsigned corner=0;corner<4u;corner++)

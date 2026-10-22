@@ -662,8 +662,7 @@ int gml_render_application_scene_enqueue_quads(GmlRender *r,
     (source->image.resource_class==GML_RENDER_RESOURCE_SCREEN ||
      source->image.resource_class==GML_RENDER_RESOURCE_SURFACE ||
      source->image.resource_class==GML_RENDER_RESOURCE_APPLICATION ||
-     (source->image.resource_class==GML_RENDER_RESOURCE_SCRATCH && operation &&
-      operation->payload.quad.sampling.quantisation==GML_RENDER_QUANTISE_SURFACE_ROTATED_POINT)) &&
+     source->image.resource_class==GML_RENDER_RESOURCE_SCRATCH) &&
     operation->scene_family==GML_RENDER_SCENE_SURFACE &&
     operation->reconstruction_mode==GML_RENDER_DEVICE_CHECKPOINT &&
     operation->opcode==GML_RENDER_OP_TEXTURED_QUAD &&
@@ -2150,6 +2149,8 @@ GmlRenderResourceExecution gml_render_application_scene_submit(
 }
 static int resident_surface_nearest_function(GmlRender *r,int surf,double dx,double dy,
   double dw,double dh,uint32_t colour,double alpha,int automatic);
+static GmlRenderResource *resident_surface_point_snapshot(const GmlRenderDeviceServices *device,
+  const GmlRenderResourceSource *source,uint32_t *shadow);
 
 static int resident_classic_phase_present(GmlRender *r,
   double dx,double dy,double dw,double dh,uint32_t colour,double alpha,int automatic){
@@ -2890,6 +2891,49 @@ static int surface_scene_retains_opaque(const GmlRender *r,
      (state->alpha_equation==GML_RENDER_BLEND_ADD &&
       state->alpha_destination_factor==GML_RENDER_BLEND_ONE));
 }
+static int surface_feedback_supported(const GmlRender *r,const GmlRenderDeviceServices *device,
+                                      int width,int height){
+  GmlRenderDeviceCaps caps={0};
+  return width==r->fbw && height==r->fbh && device->retire && device->capabilities &&
+    device->capabilities(device->context,&caps) &&
+    (caps.supported_operations&(UINT64_C(1)<<GML_RENDER_OP_COPY_IMAGE));
+}
+static int surface_feedback_source(GmlRender *r,const GmlRenderDeviceServices *device,
+                                   GmlRenderResource *resource,int feedback,
+                                   GmlRenderResourceSource *source){
+  if(feedback){
+    /* CPU self-sampling prepares the pending target before copying its source.
+     * A physical alias names that same current device owner,not a stale mirror. */
+    gml_render_flush_pending_fill(r);
+    if(r->pending_fill || !r->resident_application_pass ||
+       !gml_render_scene_submit_pending(r)) return 0;
+  }
+  return resource && (gml_render_resource_device_source_view(resource,device,source) ||
+    gml_render_resource_current_cpu_source_view(resource,source)) &&
+    source->pixel_format==GML_RENDER_PIXEL_ARGB8888;
+}
+static int surface_feedback_enqueue(GmlRender *r,const GmlRenderDrawOp *operation,
+  const GmlRenderDrawStateSnapshot *state,const GmlRenderResourceSource *source,int feedback){
+  if(!feedback) return gml_render_application_scene_enqueue(r,operation,state,source);
+  const GmlRenderDeviceServices *device=gml_render_device(r);
+  uint32_t *shadow=calloc((size_t)source->width*source->height,sizeof *shadow);
+  GmlRenderResource *snapshot=NULL;GmlRenderResourceSource sampled={0};int result=0;
+  if(!shadow || !(snapshot=resident_surface_point_snapshot(device,source,shadow)) ||
+     !gml_render_resource_device_source_view(snapshot,device,&sampled)) goto done;
+  GmlRenderDrawOp mapped=*operation;GmlRenderImageRef image=sampled.image;
+  mapped.sources=&image;
+  if(!gml_render_application_scene_prepare_begin(r)) goto done;
+  r->pending_scene_batch->preparing=GML_SCENE_PREPARING_SURFACE;
+  int accepted=gml_render_application_scene_enqueue(r,&mapped,state,&sampled);
+  if(!gml_render_application_scene_prepare_finish(r,accepted)) goto done;
+  result=gml_render_application_scene_flush(r);
+  if(!result && r->pending_scene_batch)
+    scene_remove_target(r->pending_scene_batch,operation->target.image);
+done:
+  if(snapshot){device->retire(device->context,gml_render_resource_image_ref(snapshot));
+    gml_render_resource_destroy(snapshot);}
+  free(shadow);return result;
+}
 static int resident_surface_nearest_selection(GmlRender *r,int surf,double dx,double dy,
   double dw,double dh,uint32_t colour,double alpha,int automatic,
   const ResidentSurfaceSelection *selection,int resolved_canvas){
@@ -2926,6 +2970,8 @@ static int resident_surface_nearest_selection(GmlRender *r,int surf,double dx,do
      fabs(dw)>16384.0 || fabs(dh)>16384.0 || !isfinite(alpha)) return 0;
   int sw=surf==0?r->app_w:r->surface[slot].w;
   int sh=surf==0?r->app_h:r->surface[slot].h;
+  int feedback=(surf==0?r->app_surface:r->surface[slot].px)==r->fb;
+  int classic_application=r->classic && surf==0 && !feedback;
   if(selection && (!isfinite(selection->x) || !isfinite(selection->y) ||
       !isfinite(selection->width) || !isfinite(selection->height) ||
       fabs(selection->x)>16384.0 || fabs(selection->y)>16384.0 ||
@@ -2938,8 +2984,11 @@ static int resident_surface_nearest_selection(GmlRender *r,int surf,double dx,do
   int width=abs(signed_width),height=abs(signed_height);
   if(sw<=0 || sh<=0 || sw>4096 || sh>4096 || !isfinite(left) || !isfinite(top) ||
      fabs(left)>16384.0 || fabs(top)>16384.0) return 0;
-  if(!width || !height || alpha<=0.0 ||
+  if(!width || !height || (alpha<=0.0 && !destination_blend) ||
      left>=r->fbw || top>=r->fbh || left+width<=0.0 || top+height<=0.0) return 1;
+  /* Destination factors can write even when the sampled opacity is zero.
+   * Keep their unqualified zero-opacity recipe on the counted CPU owner. */
+  if(alpha<=0.0) return 0;
   int unit=whole && width==sw && height==sh && signed_width>0 && signed_height>0;
   int opaque=surface_known_opaque(r,surf);
   /* The CPU's unit owner treats reference zero as its ordinary sparse
@@ -2948,26 +2997,26 @@ static int resident_surface_nearest_selection(GmlRender *r,int surf,double dx,do
   /* The unchanged full-source normal owner point-magnifies even with texture
    * interpolation enabled. Classic application presentation is its separate
    * leading-edge bilinear exception, not an ordinary point surface. */
-  int ordinary_filtered_point=surf>0 && r->interp && r->alphablend &&
+  int ordinary_filtered_point=(surf>0 || feedback) && r->interp && r->alphablend &&
     !r->blendmode && r->color_write_mask==15u;
   int point_magnification=(selection || resolved_canvas || ordinary_filtered_point) && whole &&
     signed_width>=sw && signed_height>=sh &&
     (!r->blendmode || (r->blendmode==6 && opaque)) && alpha>=1.0 &&
     (colour&0xFFFFFFu)==0xFFFFFFu && (!requires_filter || (opaque && r->alpha_test_ref<255u)) &&
-    !(r->classic && surf==0 && (!tiled || (signed_width>sw && signed_height>sh)));
+    !(classic_application && (!tiled || (signed_width>sw && signed_height>sh)));
   int full_normal_sampling=whole && signed_width>0 && signed_height>0 &&
     (!r->blendmode || (r->blendmode==6 && opaque)) && alpha>=1.0 &&
     (colour&0xFFFFFFu)==0xFFFFFFu && (!requires_filter || (opaque && r->alpha_test_ref<255u));
   int generic_point_magnification=full_presets && width>=sw && height>=sh &&
     (r->blendmode!=0 || signed_width<0 || signed_height<0 || width==sw || height==sh) &&
-    !(full_normal_sampling && r->classic && surf==0 && signed_width>sw && signed_height>sh);
+    !(full_normal_sampling && classic_application && signed_width>sw && signed_height>sh);
   int bilinear=full_presets && r->interp && signed_width>sw && signed_height>sh &&
-    ((!r->blendmode && !full_normal_sampling) || (full_normal_sampling && r->classic && surf==0));
+    ((!r->blendmode && !full_normal_sampling) || (full_normal_sampling && classic_application));
   int box=full_presets && r->interp && !unit && !point_magnification && !generic_point_magnification && !bilinear;
   if((r->interp && !unit && !point_magnification && !generic_point_magnification && !bilinear && !box) ||
      (box && (sw>width*8 || sh>height*8)) || !r->resident_application_pass ||
      !gml_render_scene_target_matches(r) || r->pending_presentation ||
-     (surf==0?r->app_surface:r->surface[slot].px)==r->fb ||
+     (feedback && !surface_feedback_supported(r,device,sw,sh)) ||
      (!selection && !resolved_canvas && r->surface_canvas>0 &&
        (surf==r->surface_canvas || r->target_id==r->surface_canvas)) ||
      (surf==0 && ((!selection && !resolved_canvas && r->aspect_fullwidth) ||
@@ -2988,11 +3037,10 @@ static int resident_surface_nearest_selection(GmlRender *r,int surf,double dx,do
    * cell's hardware sampler and its measured filtered-cutout coverage fence. */
   if(bilinear)
     return resident_surface_filtered_resolved(r,surf,dx,dy,dw,dh,colour,alpha,2);
-  resource=surf==0?(borrowed?borrowed:gml_render_application_resource_ensure(r)):
-                   gml_render_surface_resource_ensure(r,surf);
-  if(!resource || (!gml_render_resource_device_source_view(resource,device,&source) &&
-                  !gml_render_resource_current_cpu_source_view(resource,&source)) ||
-     source.pixel_format!=GML_RENDER_PIXEL_ARGB8888) return 0;
+  resource=feedback?gml_render_scene_target_resource_ensure(r):
+    surf==0?(borrowed?borrowed:gml_render_application_resource_ensure(r)):
+             gml_render_surface_resource_ensure(r,surf);
+  if(!surface_feedback_source(r,device,resource,feedback,&source)) return 0;
   if(alpha>1.0) alpha=1.0;
   int fast_unit=unit && (!requires_filter || (opaque && r->alpha_test_ref<255u));
   int masked_unit=fast_unit && r->color_write_mask!=15u &&
@@ -3002,7 +3050,9 @@ static int resident_surface_nearest_selection(GmlRender *r,int surf,double dx,do
   unsigned write_mask=masked_unit || (full_presets && (r->blendmode==3 || r->blendmode==4 ||
     r->blendmode==8 || destination_blend))?r->color_write_mask:15u;
   if(!write_mask) return 1;
-  int replace=masked_unit?!r->alphablend:r->blendmode==6 || (r->classic && surf==0);
+  /* CPU feedback first replaces its source pointer with an immutable copy;
+   * that copy does not select the Classic application's alphaless identity. */
+  int replace=masked_unit?!r->alphablend:r->blendmode==6 || classic_application;
   int additive=fast_unit && r->blendmode==1;
   int inverse=fast_unit && r->blendmode==2;
   /* The unit add/inverse CPU branches precede the Classic application's
@@ -3146,7 +3196,7 @@ static int resident_surface_nearest_selection(GmlRender *r,int surf,double dx,do
   }
   state.samplers[0]=q->sampling;state.sampler_count=1u;
   int retains_opaque=surface_scene_retains_opaque(r,&state);
-  if(!gml_render_application_scene_enqueue(r,&operation,&state,&source)) return 0;
+  if(!surface_feedback_enqueue(r,&operation,&state,&source,feedback)) return 0;
   if(write_mask&8u){
     r->fb_opaque_known=r->fb_all_opaque=retains_opaque;r->fb_all_transparent=0;
     if(r->fb==r->app_surface_owned) r->app_surface_opaque=r->app_presentation_coverage_active=0;
@@ -3192,7 +3242,6 @@ static int resident_surface_filtered_resolved(GmlRender *r,int surf,double dx,do
      !r->resident_scene_pass || !gml_render_scene_target_matches(r) ||
      !(device=gml_render_device(r)) || !device->observe_on_demand ||
      !device->observe_on_demand(device->context) ||
-     (surf==0?r->app_surface:r->surface[slot].px)==r->fb ||
      (!resolved_canvas && r->surface_canvas>0 &&
        (surf==r->surface_canvas || r->target_id==r->surface_canvas)) ||
      r->pending_presentation ||
@@ -3209,6 +3258,8 @@ static int resident_surface_filtered_resolved(GmlRender *r,int surf,double dx,do
   width=(double)lround(dw);height=(double)lround(dh);
   source_width=surf==0?r->app_w:r->surface[slot].w;
   source_height=surf==0?r->app_h:r->surface[slot].h;
+  int feedback=(surf==0?r->app_surface:r->surface[slot].px)==r->fb;
+  if(feedback && !surface_feedback_supported(r,device,source_width,source_height)) return 0;
   /* Named Classic surfaces have ordinary source coverage, not automatic
    * application phase planes. Integer magnification agrees with both leading
    * and centre point sampling. Reuse the device view without scanning alpha. */
@@ -3335,12 +3386,10 @@ static int resident_surface_filtered_resolved(GmlRender *r,int surf,double dx,do
   if(r->pending_underlay &&
      (!gml_render_gui_transform_active(r) ||
       !gml_render_compose_resident_underlay(r) || !r->resident_application_pass)) return 0;
-  resource=surf==0?(borrowed?borrowed:gml_render_application_resource_ensure(r)):
-                   gml_render_surface_resource_ensure(r,surf);
-  if(!resource ||
-     (!gml_render_resource_device_source_view(resource,device,&source) &&
-      !gml_render_resource_current_cpu_source_view(resource,&source)) ||
-     source.pixel_format!=GML_RENDER_PIXEL_ARGB8888) return 0;
+  resource=feedback?gml_render_scene_target_resource_ensure(r):
+    surf==0?(borrowed?borrowed:gml_render_application_resource_ensure(r)):
+             gml_render_surface_resource_ensure(r,surf);
+  if(!surface_feedback_source(r,device,resource,feedback,&source)) return 0;
   gml_render_flush_pending_fill(r);
   if(r->pending_fill || !r->resident_application_pass ||
      !(target=gml_render_scene_target_resource_ensure(r))) return 0;
@@ -3424,7 +3473,7 @@ static int resident_surface_filtered_resolved(GmlRender *r,int surf,double dx,do
   }
   state.sampler_count=1u;state.samplers[0]=quad->sampling;
   int retains_opaque=surface_scene_retains_opaque(r,&state);
-  if(!gml_render_application_scene_enqueue(r,&operation,&state,&source)) return 0;
+  if(!surface_feedback_enqueue(r,&operation,&state,&source,feedback)) return 0;
   /* R03-P5-GUI-OPAQUE-SUFFIX: these known-opaque GUI sources write opaque
    * SCREEN alpha at every covered pixel, including partial draw alpha in the
    * unit leaf. Full coverage proves the destination without observing it. */
