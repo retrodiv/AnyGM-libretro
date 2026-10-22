@@ -1515,6 +1515,24 @@ static int vertex_scene_triangle(GmlVertexSceneCoverage *coverage,
   return 1;
 }
 
+/* Flat primitive alpha has no barycentric phase. The existing row shader
+ * quantizes inverse-blend alpha once to a byte,as does the CPU pixel writer.
+ * Keep uncertain float byte-boundaries out rather than accumulating a possible
+ * one-byte factor error over arbitrarily many overlapping fragments. */
+static int vertex_scene_flat_inverse_alpha(const GmlD3Vertex *vertex,int count,int primitive){
+  int group=primitive==1?1:primitive==2?2:primitive==4?3:count;
+  for(int first=0;first+group<=count;first+=group){
+    double alpha=vertex[first].alpha;
+    for(int i=1;i<group;i++) if(vertex[first+i].alpha!=alpha) return 0;
+    double byte=(double)(float)alpha*255.0;
+    double rounded=(double)lround(alpha*255.0);
+    /* This margin exceeds the shader multiply/add rounding envelope while
+     * retaining the CPU's selected byte. No pixel colour is prepared here. */
+    if(fabs(byte-rounded)>0.5-1.0/1024.0) return 0;
+  }
+  return 1;
+}
+
 static int vertex_batch_scene(GmlRender *R,const GmlD3Vertex *vertex,int count,
                                int primitive,int texture,int immediate,int joined){
   GmlRenderCpuBackendDrawView draw;
@@ -1619,13 +1637,15 @@ static int vertex_batch_scene(GmlRender *R,const GmlD3Vertex *vertex,int count,
   }
   /* Inverse-source endpoint RGB is an exact destination identity or zero.
    * With alpha>=0.5 the remaining alpha error contracts at each fragment,
-   * just as normal uniform source-over does. Textures and other presets do
-   * not inherit that proof merely from their submitted vertex colours. */
-  int inverse_endpoints=!textured && !rgb_gradient && minimum_alpha>=0.5 &&
+   * just as normal uniform source-over does. Flat primitive alpha can instead
+   * prove the same quantized byte before submission. Textures and other presets
+   * do not inherit either proof merely from their submitted vertex colours. */
+  int inverse_endpoints=!textured && !rgb_gradient &&
     (draw.blend_mode==2 || draw.blend_mode==3 || draw.blend_mode==6) &&
     (vertex[0].r==0.0 || vertex[0].r==255.0) &&
     (vertex[0].g==0.0 || vertex[0].g==255.0) &&
-    (vertex[0].b==0.0 || vertex[0].b==255.0);
+    (vertex[0].b==0.0 || vertex[0].b==255.0) &&
+    (minimum_alpha>=0.5 || vertex_scene_flat_inverse_alpha(vertex,count,primitive));
   /* Other repeated low-alpha/gradient/preset quantisation is not a bounded
    * single draw merely because individual fragments satisfy D2. A rounded
    * outline's two-fragment allowance covers its independently rasterized

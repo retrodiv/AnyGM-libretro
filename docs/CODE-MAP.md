@@ -3,6 +3,13 @@
 
 # Code map
 
+`src/video/software3d/gml_software3d_raster.c::vertex_scene_flat_inverse_alpha`
+qualifies source-free inverse endpoint meshes whose alpha is constant per
+primitive and retains its selected byte after device conversion. It shares the
+existing vertex rows,coverage and quantizing shader;the CPU raster bodies stay
+unchanged. R03-VERTEX-SPANS owns the numerical/overlap limits and the existing
+vertex-visible generator's buffer/immediate/public-binding companions.
+
 `common/gml_render_shaders.c::gml_render_shader_source_palette_snapshot`
 projects the existing finite recognized palette into by-value textured
 checkpoint state. Sprite admission and shared enqueue/submit retain the
