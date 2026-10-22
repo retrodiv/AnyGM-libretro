@@ -1703,11 +1703,31 @@ rejects before enqueue. The larger atomic budget is not a shader or colour
 arithmetic change,does not extend other families and does not remove the
 unchanged8192 ordinary primitive limit.
 
+R03-SPR-LARGE-AXIS-PACKET's SCREEN CPU-metadata consumer may retain signed64 fixed20
+coordinates in its existing row fields. It turns them into bounded hardware
+nearest UV intervals before submission;no such coordinate enters a shader.
+The ordinary finite/source bounds,row capacity and signed32 shader consumers
+are unchanged. Its paired capacity-axis-wide companion covers72 modern
+SCREEN/unstacked-application world/GUI controls with a3072x256 arithmetic
+crop,reflections,trim,alpha/masks/normal/add/inverse and disabled blending;
+its640x480 destination includes partial alpha with an explicitly revoked
+opacity certificate as well as actual opaque backgrounds.
+repeat with the full write mask. EXACT endpoints and opaque eight-call groups
+remain RGBA0,individual blends2,outside coverage/disabled channels exact,
+zero ordinary observations/snapshots/replay and actual detached bytes.
+An ordinary nearest interval uses a2^-7 texel interior margin at a certified
+near-boundary,strictly below the0.01 guard for every other boundary. The
+previous0.001 margin could sample the preceding texel in a wide raw-copy
+control;this is a discrete sampler correction,not blend tolerance. Both
+previous capacity/dense and fog profiles remain required neighbours.
+Preserved/numbered,Classic/first-generation,rotated and filtered wide-source
+domains do not gain qualification from this modern SCREEN companion.
+
 An unqualified wide-source axis companion exposed a first failing green-channel
 difference55 in the older first-generation independent point packet. This is
 open correctness debt,not an accepted D2 precision exception. The attempted
 signed64 sample-coordinate/large-axis expansion is withheld;the qualified
-row matrix does not certify that source-span domain. CPU pixel bodies are
+row matrix does not certify that different policy/source-span domain. CPU pixel bodies are
 unchanged;the observation is not yet attributed by a baseline binary pair.
 
 R03-SPR-NEAREST-CAPACITY also prefers the existing bounded point preparator for

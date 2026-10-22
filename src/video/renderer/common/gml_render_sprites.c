@@ -1946,10 +1946,10 @@ static int modern_nearest_axis_bias(double leading,double snapped,double scale,
     }
   }
   if(near_below && near_at_or_above) return 0;
-  /* Wide visible strips need a margin larger than normalised float UV error.
-   * Every other boundary is at least .01 away, so .001 cannot change its texel.
-   * Conflicting directions still require disjoint constant-centre strips. */
-  *bias=ordinary_interval?(near_below?0.001:near_at_or_above?-0.001:0.0):
+  /* Keep a binary-fraction interior margin beyond normalized UV and sampler
+   * precision at wide source coordinates. Every other boundary is at least
+   * .01 away;conflicting directions still need constant-centre strips. */
+  *bias=ordinary_interval?(near_below?0x1p-7:near_at_or_above?-0x1p-7:0.0):
     near_below?0.00001:0.0;
   return 1;
 }

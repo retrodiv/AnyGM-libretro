@@ -15035,43 +15035,63 @@ static int resident_large_unit_sprite_scope(void){
 }
 
 static int resident_large_screen_axis_row_metadata(void){
-  for(unsigned variant=0;variant<11u;variant++){
+  for(unsigned variant=0;variant<22u;variant++){
     GmlRender *r=calloc(1,sizeof *r);
     GmlWin content={.bytecode=variant==4u?16:17};
     GmlSprite sprite={.w=316,.h=104,.originx=158,.originy=51};
     GmlTpag page={.sx=3,.sy=2,.sw=316,.sh=104,.tw=316,.th=104,.bw=316,.bh=104};
+    int wide=variant>=11u,vertical=variant==16u;
+    unsigned atlas_width=wide?(vertical?288u:3104u):336u;
+    unsigned atlas_height=wide?(vertical?3104u:288u):128u;
+    if(wide){
+      sprite=(GmlSprite){.w=vertical?256:3072,.h=vertical?3072:256,
+        .originx=vertical?128:2560,.originy=vertical?2560:128};
+      page=(GmlTpag){.sx=3,.sy=2,.sw=sprite.w,.sh=sprite.h,.tw=sprite.w,.th=sprite.h,
+        .bw=sprite.w,.bh=sprite.h};
+    }
     GmlRenderRotatedCoverageRegion rows[720];
     uint32_t count=0;
     CHECK(r && gml_render_init(r,NULL)==0 &&
           gml_render_application_surface_ensure_owned(r,1280,720));
     r->win=&content;
     free(r->atlas[0].px);
-    r->atlas[0].px=malloc(336u*128u*4u);
+    r->atlas[0].px=malloc((size_t)atlas_width*atlas_height*4u);
     CHECK(r->atlas[0].px);
-    memset(r->atlas[0].px,255,336u*128u*4u);
-    r->atlas[0].w=336;r->atlas[0].h=128;
+    memset(r->atlas[0].px,255,(size_t)atlas_width*atlas_height*4u);
+    r->atlas[0].w=(int)atlas_width;r->atlas[0].h=(int)atlas_height;
     CHECK(gml_render_begin_owned_application(r,0,0,0));
     r->resident_application_pass=variant!=1u;
     if(variant==2u) r->target_id=1;
     if(variant==5u) r->interp=1;
     if(variant==7u) r->gui_pass_active=1;
     if(variant==8u) r->target_sp=1;
-    double xs=variant==6u?-3.004694835680751:3.004694835680751;
+    if(variant==13u) r->target_id=1;
+    if(variant==15u) r->gui_pass_active=1;
+    if(variant==17u) r->classic=1;
+    if(variant==18u) r->resident_application_pass=0;
+    if(variant==19u) r->interp=1;
+    double xs=wide?(vertical?3:variant==12u?-2.125:2.125):
+      variant==6u?-3.004694835680751:3.004694835680751;
+    double ys=vertical?2.125:3;
     double rotation=variant==3u?0.5:0.0;
     int accepted;
-    if(variant==9u)
-      accepted=gml_render_rotated_nearest_regions(r,&sprite,&page,640,330,xs,3,rotation,
+    if(variant==9u || variant==20u)
+      accepted=gml_render_rotated_nearest_regions(r,&sprite,&page,640,330,xs,ys,rotation,
                                                   rows,720,&count);
-    else if(variant==10u)
-      accepted=gml_render_rotated_nearest_texel_regions(r,&sprite,&page,640,330,xs,3,rotation,
+    else if(variant==10u || variant==21u)
+      accepted=gml_render_rotated_nearest_texel_regions(r,&sprite,&page,640,330,xs,ys,rotation,
                                                        0xFFFFFFu,rows,720,&count);
+    else if(variant==14u)
+      accepted=gml_render_rotated_nearest_sample_rows(r,&sprite,&page,640,330,xs,ys,rotation,
+                                                      rows,720,&count);
     else
-      accepted=gml_render_rotated_nearest_row_regions(r,&sprite,&page,640,330,xs,3,rotation,
+      accepted=gml_render_rotated_nearest_row_regions(r,&sprite,&page,640,330,xs,ys,rotation,
                                                       rows,720,&count);
     /* Signed SCREEN rows and GUI share the bounded row visitor. The
      * first-generation owned application still preserves alpha and remains
      * outside this SCREEN-only metadata extension. */
-    int expected=variant==0u || variant==6u || variant==7u;
+    int expected=variant==0u || variant==6u || variant==7u ||
+      variant==11u || variant==12u || variant==15u || variant==16u;
     CHECK(accepted==expected);
     if(expected){
       CHECK(count>300u && count<=720u);
@@ -15079,6 +15099,12 @@ static int resident_large_screen_axis_row_metadata(void){
         CHECK(rows[row].region.height==1u && rows[row].region.width<=1280u &&
               rows[row].region.x>=0 && rows[row].region.y>=0 && rows[row].region.y<720);
         if(row) CHECK(rows[row].region.y==rows[row-1u].region.y+1);
+      }
+      if(wide){
+        int beyond_shader_range=0;
+        for(uint32_t row=0;row<count;row++)
+          beyond_shader_range|=rows[row].fixed_x>INT32_MAX || rows[row].fixed_y>INT32_MAX;
+        CHECK(beyond_shader_range);
       }
     } else CHECK(!count);
     r->resident_application_pass=0;r->target_id=-1;r->target_sp=0;

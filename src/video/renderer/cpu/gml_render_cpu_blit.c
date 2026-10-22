@@ -5421,13 +5421,16 @@ static int rotated_nearest_regions(GmlRender *r,GmlSprite *spr,GmlTpag *t,
     int64_t ly_fp=(int64_t)floor(local_y*(double)RFP_ONE);
     if(texel_regions==2 || texel_regions==3){
       int64_t last=(int64_t)rx1-rx0-1;
-      /* Every shader multiply and sum must fit independently, not merely their final sum. */
-      if(last<0 || lx_fp<INT32_MIN || lx_fp>INT32_MAX || ly_fp<INT32_MIN || ly_fp>INT32_MAX ||
+      if(last<0 || *count==capacity) return 0;
+      /* SCREEN axis rows become bounded hardware UV intervals in the CPU
+       * metadata consumer;their fixed coordinates never enter a shader.
+       * Every actual shader multiply and sum must still fit independently. */
+      if(!resident_axis_rows &&
+        (lx_fp<INT32_MIN || lx_fp>INT32_MAX || ly_fp<INT32_MIN || ly_fp>INT32_MAX ||
          delta_x<INT32_MIN || delta_x>INT32_MAX || delta_y<INT32_MIN || delta_y>INT32_MAX ||
          llabs(delta_x)*last>INT32_MAX || llabs(delta_y)*last>INT32_MAX ||
          lx_fp+delta_x*last<INT32_MIN || lx_fp+delta_x*last>INT32_MAX ||
-         ly_fp+delta_y*last<INT32_MIN || ly_fp+delta_y*last>INT32_MAX ||
-         *count==capacity) return 0;
+         ly_fp+delta_y*last<INT32_MIN || ly_fp+delta_y*last>INT32_MAX)) return 0;
       regions[(*count)++]=(GmlRenderRotatedCoverageRegion){
         .region={rx0,py,(uint32_t)(rx1-rx0),1u},
         .vector_alpha=row_alpha8?GML_RENDER_ROTATED_ROW_ALPHA8:0u,
