@@ -237,7 +237,9 @@ static int resident_opaque_rect(GmlRender *render,int x1,int y1,int x2,int y2,
      !render->resident_application_pass) return 0;
   resource=gml_render_scene_target_resource_ensure(render);
   if(!resource) return 0;
-  image=gml_render_application_scene_next_image_ref(render,resource);
+  image=classic_rectangle?
+    gml_render_application_scene_next_image_ref_before_rotations(render,resource):
+    gml_render_application_scene_next_image_ref(render,resource);
   if(image.content_version==UINT64_MAX) return 0;
   operation.opcode=GML_RENDER_OP_COLOURED_PRIMITIVE;
   operation.scene_family=GML_RENDER_SCENE_PRIMITIVE;

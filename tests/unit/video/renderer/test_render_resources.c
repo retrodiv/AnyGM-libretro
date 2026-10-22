@@ -64,6 +64,7 @@ typedef struct FakeDevice {
   GmlRenderRect last_shader_source_region;
   uint32_t last_shader_coverage;
   float last_shader_value;
+  int allowed_retirements;
 } FakeDevice;
 
 static int fake_call_forbidden(FakeDevice *fake){
@@ -175,7 +176,8 @@ static int fake_readback(void *context,const GmlRenderImageReadback *readback){
 
 static void fake_retire(void *context,GmlRenderImageRef image){
   FakeDevice *fake=(FakeDevice*)context;
-  if(fake_call_forbidden(fake)) return;
+  if(fake->forbid_calls && fake->allowed_retirements>0)fake->allowed_retirements--;
+  else if(fake_call_forbidden(fake)) return;
   fake->last_retired_image=image;
   fake->retires++;
 }
@@ -2041,6 +2043,129 @@ static int paired_root_append(GmlRender *r,const GmlRenderResourceSource *source
   op.target.image=image;op.target.image.content_version++;
   op.target.pixel_format=GML_RENDER_PIXEL_ARGB8888;
   return target && gml_render_application_scene_enqueue(r,&op,&state,source);
+}
+
+static int deferred_rotation_queue_transactions_and_lifetime(void){
+  for(unsigned variant=0;variant<13u;variant++){
+    uint32_t base[16]={0},pixels[4]={0xFF315779u};
+    FakeDevice fake={.on_demand=1,.prewrite_refusal=1,.readback_colour=0xFF426486u};
+    GmlRender *r=calloc(1,sizeof *r);
+    GmlRenderDeviceServices device=service(&fake);device.observe_on_demand=fake_observe_on_demand;
+    GmlRenderResourceSource source=source_view(pixels,1);
+    CHECK(r && !gml_render_init(r,NULL));
+    gml_render_bind_device(r,&device);
+    CHECK(gml_render_begin_resident_base(r,base,4,4,0,0));
+    if(variant==9u || variant==11u){
+      CHECK(gml_render_application_surface_ensure_owned(r,4,4) &&
+        gml_render_application_resource_ensure(r));
+      if(variant==9u)CHECK(gml_render_begin_resident_owned_application(r,0,0,0));
+    }
+    uint8_t *saved=NULL;size_t saved_size=0,written=0;
+    if(variant==12u){
+      r->alpha=1;r->color=0xFFFFFFu;r->color_write_mask=15u;
+      r->blend_equation=r->blend_equation_alpha=1;r->font=-1;r->next_surface_id=1;
+      saved_size=gml_render_state_size(r,-1);saved=malloc(saved_size);
+      CHECK(saved_size && saved && gml_render_state_save(r,-1,saved,saved_size,&written) && written==saved_size);
+      GmlRender *control=calloc(1,sizeof *control);size_t used=0;
+      CHECK(control && !gml_render_init(control,NULL) &&
+        gml_render_state_load(control,saved,saved_size,&used) && used==saved_size);
+      gml_render_free(control);free(control);
+    }
+    GmlRenderResource *target=gml_render_scene_target_resource_ensure(r);
+    if(variant==2u)CHECK(paired_root_append(r,&source) && gml_render_scene_submit_pending(r));
+    uint64_t original=gml_render_resource_image_ref(target).content_version;
+    CHECK(gml_render_rotated_scene_prepare_begin(r) && paired_root_append(r,&source) &&
+      gml_render_rotated_scene_prepare_finish(r,1) && fake.submits==(variant==2u?1:0) && !fake.readbacks &&
+      gml_render_resource_image_ref(target).content_version==original &&
+      gml_render_device_observation_pending(r));
+    if(variant==8u || variant==9u){
+      GmlRenderImageRef image=gml_render_resource_image_ref(target);
+      CHECK(variant==8u?gml_render_base_resource_resize(r,2,8):
+        gml_render_application_surface_ensure_owned(r,2,8));
+      CHECK(fake.submits>=2 && !fake.readbacks &&
+        fake.submitted_targets[0].incarnation==image.incarnation &&
+        fake.submitted_targets[0].content_version==original+1u &&
+        fake.submitted_counts[0]==1u);
+      gml_render_abandon_device(r);gml_render_free(r);free(r);continue;
+    }
+    if(variant==10u){
+      gml_render_base_resource_dispose(r);
+      CHECK(!r->base_scene_resource && fake.submits==1 && !fake.readbacks &&
+        !gml_render_device_observation_pending(r));
+      gml_render_abandon_device(r);gml_render_free(r);free(r);continue;
+    }
+    if(variant==11u){
+      gml_render_application_resource_dispose(r);
+      CHECK(!r->app_surface_resource && !fake.submits && !fake.readbacks &&
+        gml_render_device_observation_pending(r));
+    }
+    if(variant==12u){
+      GmlRenderImageRef previous=gml_render_resource_image_ref(target);
+      int retired=fake.retires;size_t used=0;
+      /* Restoration retires the old registered SCREEN image. Permit exactly
+       * that lifecycle callback,not delivery or observation of the old queue. */
+      fake.forbid_calls=1;fake.allowed_retirements=1;
+      int restored=gml_render_state_load(r,saved,saved_size,&used);
+      if(!restored || used!=saved_size || r->rotated_scene_batch || r->pending_scene_batch || fake.forbidden_calls)
+        fprintf(stderr,"rotation restore: accepted=%d used=%zu/%zu queue=%d ordinary=%d forbidden=%d\n",
+          restored,used,saved_size,r->rotated_scene_batch!=NULL,r->pending_scene_batch!=NULL,fake.forbidden_calls);
+      CHECK(restored && used==saved_size && !r->rotated_scene_batch &&
+        !r->pending_scene_batch && !r->base_scene_resource && !fake.forbidden_calls &&
+        !fake.allowed_retirements && fake.retires==retired+1 &&
+        fake.last_retired_image.incarnation==previous.incarnation &&
+        fake.last_retired_image.content_version==previous.content_version &&
+        !fake.submits && !fake.uploads && !fake.readbacks && !fake.rgb_queries);
+      free(saved);gml_render_abandon_device(r);gml_render_free(r);free(r);continue;
+    }
+    if(variant==0u || variant==6u){
+      CHECK(gml_render_rotated_scene_prepare_begin(r) && paired_root_append(r,&source));
+      if(variant==6u){
+        /* A preparation borrows its committed parent;disposing both is not
+         * two independent ownerships of that same allocation. */
+        gml_render_application_scene_queue_dispose(r);
+        CHECK(!r->pending_scene_batch && !r->rotated_scene_batch &&
+          !r->rotated_scene_building && !fake.submits && !fake.readbacks);
+        gml_render_free(r);free(r);continue;
+      }
+      CHECK(!gml_render_rotated_scene_prepare_finish(r,0));
+    }
+    if(variant==1u || variant==2u){
+      fake.fail_submit_at=variant==2u?2:1;fake.prewrite_refusal=variant==1u;
+      CHECK(!gml_render_rotated_scene_flush(r) && fake.submits==(variant==2u?2:1) && !fake.readbacks);
+      if(variant==2u){
+        GmlRenderJournalMetrics metrics={0};gml_render_resource_journal_metrics(target,&metrics);
+        CHECK(metrics.authority==GML_RENDER_RESOURCE_INVALID);
+        fake.forbid_calls=1;gml_render_lose_volatile_device(r);
+        CHECK(!r->rotated_scene_batch && !r->base_scene_resource && !fake.forbidden_calls);
+        gml_render_free(r);free(r);continue;
+      }
+      CHECK(gml_render_resource_image_ref(target).content_version==original);
+      fake.fail_submit_at=0;
+    }
+    if(variant==4u){
+      fake.forbid_calls=1;gml_render_lose_volatile_device(r);
+      CHECK(!r->rotated_scene_batch && !r->base_scene_resource && !fake.submits &&
+        !fake.readbacks && !fake.forbidden_calls);
+      gml_render_free(r);free(r);continue;
+    }
+    if(variant==3u) CHECK(gml_render_observe_device_resources(r) && fake.readbacks==1);
+    else if(variant==5u){
+      gml_render_bind_device(r,NULL);
+      CHECK(!gml_render_device(r) && fake.readbacks==1);
+    }else if(variant==7u){
+      CHECK(gml_render_application_scene_prepare_begin(r) && fake.submits==1);
+      CHECK(!gml_render_application_scene_prepare_finish(r,0));
+    }else CHECK(gml_render_rotated_scene_flush(r));
+    CHECK(fake.submits==(variant==1u?2:1) && fake.last_batch_operations==1u &&
+      gml_render_resource_image_ref(target).content_version==original+1u);
+    CHECK(gml_render_rotated_scene_flush(r) && fake.submits==(variant==1u?2:1));
+    if(variant==3u || variant==5u){
+      CHECK(!gml_render_device_observation_pending(r));
+      for(unsigned pixel=0;pixel<16u;pixel++)CHECK(base[pixel]==fake.readback_colour);
+    }else CHECK(!fake.readbacks);
+    gml_render_abandon_device(r);gml_render_free(r);free(r);
+  }
+  return 1;
 }
 
 static int paired_root_queue_groups_and_versions(void){
@@ -8556,7 +8681,11 @@ static int resident_empty_sprite_preserves_queued_draws(void){
 static int nearest_sprite_extension_transport(GmlRender *render,FakeDevice *fake,
                                              int submits){
   GmlRenderJournalMetrics metrics={0};
-  CHECK(render->resident_application_pass && render->pending_scene_batch &&
+  /* This guards queued authority,not which metadata queue owns a draw. A
+   * rotated CPU counterpart deliberately survives an opaque overwrite. */
+  CHECK(render->resident_application_pass &&
+        (render->pending_scene_batch || render->rotated_scene_batch) &&
+        gml_render_device_observation_pending(render) &&
         fake->submits==submits && !fake->readbacks && !fake->rgb_queries);
   CHECK(gml_render_scene_submit_pending(render) && fake->submits==submits+1 &&
         fake->last_batch_operations>=1u && fake->last_filter==GML_RENDER_FILTER_NEAREST &&
@@ -15035,12 +15164,13 @@ static int resident_large_unit_sprite_scope(void){
 }
 
 static int resident_large_screen_axis_row_metadata(void){
-  for(unsigned variant=0;variant<22u;variant++){
+  for(unsigned variant=0;variant<30u;variant++){
     GmlRender *r=calloc(1,sizeof *r);
     GmlWin content={.bytecode=variant==4u?16:17};
     GmlSprite sprite={.w=316,.h=104,.originx=158,.originy=51};
     GmlTpag page={.sx=3,.sy=2,.sw=316,.sh=104,.tw=316,.th=104,.bw=316,.bh=104};
-    int wide=variant>=11u,vertical=variant==16u;
+    int wide=variant>=11u,vertical=variant==16u || variant==24u;
+    int sample_rows=variant==14u || (variant>=22u && variant!=28u);
     unsigned atlas_width=wide?(vertical?288u:3104u):336u;
     unsigned atlas_height=wide?(vertical?3104u:288u):128u;
     if(wide){
@@ -15070,10 +15200,19 @@ static int resident_large_screen_axis_row_metadata(void){
     if(variant==17u) r->classic=1;
     if(variant==18u) r->resident_application_pass=0;
     if(variant==19u) r->interp=1;
+    if(variant==25u) r->target_id=1;
+    if(variant==26u) r->resident_application_pass=0;
+    if(variant>=28u){r->target_id=1;r->fbh=192;}
     double xs=wide?(vertical?3:variant==12u?-2.125:2.125):
       variant==6u?-3.004694835680751:3.004694835680751;
     double ys=vertical?2.125:3;
     double rotation=variant==3u?0.5:0.0;
+    if(variant>=22u){
+      const double angles[]={.03125,-.5,90,17,.03125,.03125,.03125,.03125};
+      rotation=angles[variant-22u];
+      if(variant==23u) xs=-xs;
+      if(variant==27u) xs=INFINITY;
+    }
     int accepted;
     if(variant==9u || variant==20u)
       accepted=gml_render_rotated_nearest_regions(r,&sprite,&page,640,330,xs,ys,rotation,
@@ -15081,20 +15220,21 @@ static int resident_large_screen_axis_row_metadata(void){
     else if(variant==10u || variant==21u)
       accepted=gml_render_rotated_nearest_texel_regions(r,&sprite,&page,640,330,xs,ys,rotation,
                                                        0xFFFFFFu,rows,720,&count);
-    else if(variant==14u)
+    else if(sample_rows)
       accepted=gml_render_rotated_nearest_sample_rows(r,&sprite,&page,640,330,xs,ys,rotation,
                                                       rows,720,&count);
     else
       accepted=gml_render_rotated_nearest_row_regions(r,&sprite,&page,640,330,xs,ys,rotation,
                                                       rows,720,&count);
-    /* Signed SCREEN rows and GUI share the bounded row visitor. The
-     * first-generation owned application still preserves alpha and remains
-     * outside this SCREEN-only metadata extension. */
+    /* Signed SCREEN rows and GUI share the bounded axis visitor. Sample
+     * rows have a separate CPU-only UV consumer across owners;actual shader
+     * row refusals must not inherit that coordinate extension. */
     int expected=variant==0u || variant==6u || variant==7u ||
-      variant==11u || variant==12u || variant==15u || variant==16u;
+      variant==11u || variant==12u || variant==14u || variant==15u || variant==16u ||
+      (variant>=22u && variant<=25u) || variant==29u;
     CHECK(accepted==expected);
     if(expected){
-      CHECK(count>300u && count<=720u);
+      CHECK(count>(variant==29u?100u:300u) && count<=(uint32_t)r->fbh);
       for(uint32_t row=0;row<count;row++){
         CHECK(rows[row].region.height==1u && rows[row].region.width<=1280u &&
               rows[row].region.x>=0 && rows[row].region.y>=0 && rows[row].region.y<720);
@@ -18704,6 +18844,7 @@ int main(void){
     else if(!strcmp(selected,"stretched-coarse-veil")) passed=resident_stretched_coarse_veil_on_demand();
     else if(!strcmp(selected,"filtered-text-reduction")) passed=resident_filtered_font_magnification(0,0,1);
     else if(!strcmp(selected,"physical-filtered-sprite")) passed=resident_physical_filtered_sprite_function();
+    else if(!strcmp(selected,"wide-nearest-rows")) passed=resident_large_screen_axis_row_metadata();
     else if(!strcmp(selected,"matched-filtered-sprite")) passed=resident_matched_filtered_sprite_function();
     else if(!strcmp(selected,"modern-physical-filtered-sprite")) passed=resident_modern_physical_filtered_sprite_function();
     else if(!strcmp(selected,"modern-rotated-filtered-sprite")) passed=resident_modern_rotated_filtered_sprite_function();
@@ -19015,6 +19156,7 @@ int main(void){
   passed+=resident_extended_roundrect_refusals();
   passed+=resident_registered_view_surface_source();
   passed+=resident_empty_surface_part_prefix();
-  printf("render resource cases: passed=%d failed=%d\n",passed,297-passed);
-  return passed==297?EXIT_SUCCESS:EXIT_FAILURE;
+  passed+=deferred_rotation_queue_transactions_and_lifetime();
+  printf("render resource cases: passed=%d failed=%d\n",passed,298-passed);
+  return passed==298?EXIT_SUCCESS:EXIT_FAILURE;
 }

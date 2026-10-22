@@ -613,6 +613,7 @@ int gml_render_application_surface_owned_read(
   GmlRender *r,GmlRenderApplicationReadView *view){
   if(view) memset(view,0,sizeof(*view));
   if(!gml_render_application_surface_owned_extent(r,NULL,NULL)) return 0;
+  if(r->rotated_scene_batch && !gml_render_rotated_scene_flush(r)) return 0;
   gml_render_prepare_draw(r);
   if(!gml_render_application_scene_flush(r)) return 0;
   if(r->app_surface_resource){
@@ -1147,7 +1148,10 @@ void gml_render_set_pending_fill(GmlRender *r, uint32_t color){
                                      gml_render_dispatch_cpu_reason(r),1u);
 }
 static void render_flush_pending_fill(GmlRender *r,int independent_allowed){
-  gml_render_flush_rotated_batch(r);
+  /* Device preparation often asks to realize a nonexistent fill. That is not
+   * a CPU rotation barrier; explicit clear setters and scene completion are. */
+  if(!r || !r->resident_application_pass || r->pending_fill || r->rotated_batch_count)
+    gml_render_flush_rotated_batch(r);
   if(!r || !r->pending_fill || !r->fb || r->fbw<=0 || r->fbh<=0) return;
   unsigned reason=r->dispatch_metrics.enabled
     ?gml_render_dispatch_cpu_reason(r):GML_RENDER_DISPATCH_UNQUALIFIED;
@@ -1274,11 +1278,11 @@ int gml_render_resident_application_cpu_barrier(GmlRender *r){
   return 1;
 }
 int gml_render_scene_flush(GmlRender *r){
-  return gml_render_application_scene_flush(r) &&
+  return gml_render_rotated_scene_flush(r) && gml_render_application_scene_flush(r) &&
     gml_render_checkpoint_pending_resources(r);
 }
 int gml_render_scene_submit_pending(GmlRender *r){
-  return r && gml_render_application_scene_flush(r);
+  return r && gml_render_rotated_scene_flush(r) && gml_render_application_scene_flush(r);
 }
 static GmlRenderResource *completed_screen_resource(const GmlRender *r,
                                                     const uint32_t *pixels,
@@ -1445,7 +1449,8 @@ int gml_render_completed_screen_has_rgb(GmlRender *r,uint32_t *pixels,int width,
   return 1;
 }
 void gml_render_flush_pending_underlay(GmlRender *r){
-  gml_render_flush_rotated_batch(r);
+  if(!r || !r->resident_application_pass || r->pending_underlay || r->rotated_batch_count)
+    gml_render_flush_rotated_batch(r);
   if(!r || !r->pending_underlay) return;
   if(gml_render_compose_resident_underlay(r)) return;
   /* The internal compositor calls the CPU leaf directly, unlike public surface dispatch.
@@ -1587,6 +1592,7 @@ static int pending_underlay_covered(GmlRender *r, int x0, int y0, int x1, int y1
   return x0<=ux0 && y0<=uy0 && x1>=ux1 && y1>=uy1;
 }
 void gml_render_prepare_draw(GmlRender *r){
+  if(r && r->rotated_scene_batch) gml_render_flush_rotated_batch(r);
   gml_render_flush_pending_underlay(r);
   if(r && r->pending_fill && !r->resident_application_pass &&
      r->scene_device_enabled && r->target_id==-1) render_cpu_flush_pending_fill(r);

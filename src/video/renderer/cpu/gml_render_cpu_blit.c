@@ -5140,6 +5140,7 @@ static void GML_HOT_RENDER rotated_batch_rows(
   }
 }
 void gml_render_flush_rotated_batch(GmlRender *r){
+  if(r && r->rotated_scene_batch && !gml_render_rotated_scene_flush(r)) return;
   if(!r || r->rotated_batch_count<=0) return;
   GmlRotatedBatchItem *item=(GmlRotatedBatchItem*)r->rotated_batch;
   int count=r->rotated_batch_count;
@@ -5422,10 +5423,10 @@ static int rotated_nearest_regions(GmlRender *r,GmlSprite *spr,GmlTpag *t,
     if(texel_regions==2 || texel_regions==3){
       int64_t last=(int64_t)rx1-rx0-1;
       if(last<0 || *count==capacity) return 0;
-      /* SCREEN axis rows become bounded hardware UV intervals in the CPU
-       * metadata consumer;their fixed coordinates never enter a shader.
+      /* SCREEN axis rows and sample rows become bounded hardware UV intervals
+       * in their CPU consumers;their fixed coordinates never enter a shader.
        * Every actual shader multiply and sum must still fit independently. */
-      if(!resident_axis_rows &&
+      if(!resident_axis_rows && !resident_sample_rows &&
         (lx_fp<INT32_MIN || lx_fp>INT32_MAX || ly_fp<INT32_MIN || ly_fp>INT32_MAX ||
          delta_x<INT32_MIN || delta_x>INT32_MAX || delta_y<INT32_MIN || delta_y>INT32_MAX ||
          llabs(delta_x)*last>INT32_MAX || llabs(delta_y)*last>INT32_MAX ||

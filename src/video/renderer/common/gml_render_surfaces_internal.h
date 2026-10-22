@@ -79,6 +79,11 @@ GmlRenderResourceExecution gml_render_application_scene_submit(
  * switch, context change, and non-compatible draw drains the queue in order. */
 GmlRenderImageRef gml_render_application_scene_next_image_ref(GmlRender *render,
                                                                GmlRenderResource *resource);
+GmlRenderImageRef gml_render_application_scene_next_image_ref_before_rotations(
+  GmlRender *render,GmlRenderResource *resource);
+int gml_render_rotated_scene_prepare_begin(GmlRender *render);
+int gml_render_rotated_scene_prepare_finish(GmlRender *render,int accepted);
+int gml_render_rotated_scene_flush(GmlRender *render);
 int gml_render_application_scene_enqueue(GmlRender *render,const GmlRenderDrawOp *operation,
                                           const GmlRenderDrawStateSnapshot *state,
                                           const GmlRenderResourceSource *source);

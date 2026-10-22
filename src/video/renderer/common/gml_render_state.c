@@ -739,6 +739,9 @@ static int render_state_read(GmlRender *render,CoreR *s){
     /* A raw mask target is external storage, not one of the state payload's
      * surfaces. Preserve its current bytes before retiring the old device owner. */
     if(!gml_render_masked_bases_observe(render)){s->ok=0;return 0;}
+    /* Successful restoration replaces the old timeline,including transient
+     * packets whose destination may be a non-application SCREEN allocation. */
+    if(render->rotated_scene_batch) gml_render_application_scene_queue_dispose(render);
     gml_render_application_resource_dispose(render);
     gml_render_classic_phase_resource_dispose(render);
     gml_render_interpolated_resources_dispose(render);

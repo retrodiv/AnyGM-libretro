@@ -227,6 +227,10 @@ typedef struct GmlRender {
   GmlRenderDeviceServices device;
   int device_bound;
   GmlRenderPendingSceneBatch *pending_scene_batch;
+  /* Device metadata follows the existing CPU rotated queue's flush barriers,
+   * including opaque copies that execute before an older deferred rotation. */
+  GmlRenderPendingSceneBatch *rotated_scene_batch,*rotated_scene_parent;
+  int rotated_scene_building,rotated_scene_flushing;
   uint64_t scene_source_epoch; /* process-unique source incarnation, assigned on first upload */
   GmlRenderDispatchMetrics dispatch_metrics;
   GmlRenderDispatchFrames *dispatch_frame_accounting;
@@ -884,7 +888,9 @@ int gml_render_rotated_nearest_row_regions(GmlRender *r,GmlSprite *sprite,GmlTpa
                                            double x,double y,double xscale,double yscale,
                                            double rotation,GmlRenderRotatedCoverageRegion *regions,
                                            uint32_t capacity,uint32_t *count);
-/* Sample rows retain the scalar/cached point owner's ordered trim addition. */
+/* Sample rows retain the scalar/cached point owner's ordered trim addition.
+ * Signed64 metadata is consumed in CPU to prepare bounded hardware UVs,not
+ * fixed-coordinate shader arithmetic. Shader row consumers use the other port. */
 int gml_render_rotated_nearest_sample_rows(GmlRender *r,GmlSprite *sprite,GmlTpag *tpag,
                                            double x,double y,double xscale,double yscale,
                                            double rotation,GmlRenderRotatedCoverageRegion *regions,

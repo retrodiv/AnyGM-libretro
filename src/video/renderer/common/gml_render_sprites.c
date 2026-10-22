@@ -3689,7 +3689,7 @@ static int resident_modern_screen_binary_rotation(GmlRender *r,GmlSprite *sprite
   GmlRenderDrawStateSnapshot state={0};
   GmlRenderResource *target;
   uint32_t count=0;
-  int accepted=0;
+  int accepted=0,prepared=0;
   const GmlRenderDeviceServices *device=gml_render_device(r);
   if(!device || !device->observe_on_demand || !device->observe_on_demand(device->context) ||
      !r->resident_application_pass || r->target_id>=0 || r->target_sp || r->classic || r->interp ||
@@ -3718,6 +3718,8 @@ static int resident_modern_screen_binary_rotation(GmlRender *r,GmlSprite *sprite
   if(!operations) goto done;
   gml_render_flush_pending_fill(r);
   if(r->pending_fill || !(target=gml_render_scene_target_resource_ensure(r))) goto done;
+  if(!gml_render_rotated_scene_prepare_begin(r)) goto done;
+  prepared=1;
   GmlRenderImageRef image=gml_render_application_scene_next_image_ref(r,target);
   if(image.content_version>UINT64_MAX-count) goto done;
   state.write_mask=15u;state.colour=0xFFFFFFFFu;state.alpha=255u;
@@ -3751,6 +3753,7 @@ static int resident_modern_screen_binary_rotation(GmlRender *r,GmlSprite *sprite
   accepted=gml_render_application_scene_enqueue_quads(r,operations,count,&state,&source);
   if(accepted){ r->fb_all_transparent=0;r->fb_opaque_known=0; }
 done:
+  if(prepared) accepted=gml_render_rotated_scene_prepare_finish(r,accepted);
   free(operations);free(regions);return accepted;
 }
 
@@ -3765,7 +3768,7 @@ static int resident_modern_nearest_rotation(GmlRender *r,GmlSprite *sprite,GmlTp
   GmlRenderDrawStateSnapshot state={0};
   GmlRenderResource *target;
   uint32_t count=0,alpha_count=0;
-  int accepted=0,rows=0;
+  int accepted=0,rows=0,prepared=0;
   int screen_axis=r && rotation==0.0 &&
     ((r->target_id<0 && r->target_sp==0) || (r->target_id==0 && r->target_sp>0)) &&
     !gml_render_target_preserves_alpha(r);
@@ -3845,6 +3848,10 @@ static int resident_modern_nearest_rotation(GmlRender *r,GmlSprite *sprite,GmlTp
   if(!operations) goto done;
   gml_render_flush_pending_fill(r);
   if(r->pending_fill || !(target=gml_render_scene_target_resource_ensure(r))) goto done;
+  if(screen_axis && r->color_write_mask==15u){
+    if(!gml_render_rotated_scene_prepare_begin(r)) goto done;
+    prepared=1;
+  }
   GmlRenderImageRef image=gml_render_application_scene_next_image_ref(r,target);
   if(image.content_version>UINT64_MAX-count) goto done;
   state.write_mask=screen_axis?r->color_write_mask:15u;
@@ -3917,6 +3924,7 @@ static int resident_modern_nearest_rotation(GmlRender *r,GmlSprite *sprite,GmlTp
   accepted=result!=GML_RENDER_RESOURCE_EXEC_FAILED;
   if(accepted){r->fb_all_transparent=0;r->fb_opaque_known=0;}
 done:
+  if(prepared) accepted=gml_render_rotated_scene_prepare_finish(r,accepted);
   free(operations);free(regions);free(alpha_regions);return accepted;
 }
 
@@ -4053,8 +4061,16 @@ static int resident_nearest_texture_function(GmlRender *r,GmlSprite *sprite,GmlT
     /* Real glyph views leave logical TPAG extents unset. Coverage above used
      * those actual CPU inputs; the detached packet names the physical crop. */
     if(family==GML_RENDER_SCENE_TEXT){selected.tw=selected.sw;selected.th=selected.sh;}
+    int deferred=family==GML_RENDER_SCENE_SPRITE && !r->classic && !r->interp &&
+      r->alphablend && !r->blendmode && r->color_write_mask==15u &&
+      !gml_render_target_preserves_alpha(r);
+    if(deferred){
+      if(r->pending_fill) gml_render_flush_pending_fill(r);
+      if(r->pending_fill || !gml_render_rotated_scene_prepare_begin(r)) goto rotated_done;
+    }
     accepted=resident_atlas_crop_from_page_impl(r,&selected,0,0,page->sw,page->sh,
       0.0,0.0,1.0,1.0,family,colour,alpha,row_geometry?21:16,NULL,regions,count,0,NULL);
+    if(deferred) accepted=gml_render_rotated_scene_prepare_finish(r,accepted);
 rotated_done:
     free(regions);
     return accepted;
