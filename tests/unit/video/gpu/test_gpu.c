@@ -3828,6 +3828,37 @@ static int scene_nearest_rows_case(void){
         !anygm_test_graphics_scene_copies() && !anygm_test_graphics_read_pixels(),
         "invalid row family, geometry, coverage or sampling refuses before the clear prefix");
     }
+    if(kind==0u && blend==0u){
+      enum { LARGE=8194 };
+      GmlRenderDrawOp *large=calloc(LARGE,sizeof *large);
+      REQUIRE(large,"large row group allocation");
+      state.alpha_test_enabled=1u;
+      for(unsigned i=0;i<LARGE;i++){
+        large[i]=i?pristine:ops[0];large[i].sequence=i+1u;
+        large[i].target.image.content_version=4u+i;
+      }
+      GmlRenderDrawBatch wide={large,LARGE,&state,1u};
+      int clears=anygm_test_graphics_clear_calls();
+      large[LARGE-1u].payload.quad.u[1]=NAN;
+      result=device.submit(device.context,&wide);
+      REQUIRE(result.status==GML_RENDER_EXEC_UNSUPPORTED && !result.accepted_prefix &&
+        anygm_test_graphics_scene_draw_calls()==calls && anygm_test_graphics_clear_calls()==clears,
+        "large row preflight rejects its last malformed quad before clearing or drawing");
+      large[LARGE-1u]=large[LARGE-2u];large[LARGE-1u].sequence=LARGE;
+      large[LARGE-1u].target.image.content_version=4u+LARGE-1u;
+      wide.operation_count=65537u;
+      result=device.submit(device.context,&wide);
+      REQUIRE(result.status==GML_RENDER_EXEC_UNSUPPORTED && !result.accepted_prefix &&
+        anygm_test_graphics_scene_draw_calls()==calls && anygm_test_graphics_clear_calls()==clears,
+        "large row global metadata ceiling refuses before reading or executing a prefix");
+      wide.operation_count=LARGE;
+      result=device.submit(device.context,&wide);
+      REQUIRE(result.status==GML_RENDER_EXEC_ACCEPTED && result.accepted_prefix==LARGE &&
+        anygm_test_graphics_scene_draw_calls()==calls+5 && anygm_test_graphics_clear_calls()==clears+1 &&
+        !anygm_test_graphics_scene_copies() && !anygm_test_graphics_read_pixels(),
+        "whole large nearest row group preflights once and streams at the unchanged GL capacity");
+      free(large);
+    }
     gml_gpu_destroy(gpu,1);
   }
   return 1;

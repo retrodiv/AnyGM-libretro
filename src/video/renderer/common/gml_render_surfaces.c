@@ -44,6 +44,7 @@ int surface_slot(int id){ return id>0 && id<=GML_MAX_SURFACES ? id-1 : -1; }
 
 enum { GML_SCENE_BATCH_LIMIT=2048, GML_SCENE_PAIRED_LIMIT=2*GML_SCENE_BATCH_LIMIT,
        GML_SCENE_SURFACE_RUN_LIMIT=8192,
+       GML_SCENE_IMMUTABLE_ROW_LIMIT=65536,
        GML_SCENE_PREPARING_SURFACE=2,
        GML_SCENE_STATE_LIMIT=128,
        GML_SCENE_SOURCE_LIMIT=64 };
@@ -67,9 +68,9 @@ struct GmlRenderPendingSceneBatch {
  * Neither preparation is submitted halfway. */
 static int scene_pending_reserve(GmlRenderPendingSceneBatch *pending,uint32_t count){
   if(count<=pending->operation_capacity) return 1;
-  if(count>GML_SCENE_SURFACE_RUN_LIMIT) return 0;
-  uint32_t capacity=count>GML_SCENE_PAIRED_LIMIT?GML_SCENE_SURFACE_RUN_LIMIT:
-    count>GML_SCENE_BATCH_LIMIT?GML_SCENE_PAIRED_LIMIT:GML_SCENE_BATCH_LIMIT;
+  if(count>GML_SCENE_IMMUTABLE_ROW_LIMIT) return 0;
+  uint32_t capacity=GML_SCENE_BATCH_LIMIT;
+  while(capacity<count) capacity*=2u;
   GmlRenderDrawOp *operations=pending->operations?
     realloc(pending->operations,(size_t)capacity*sizeof *operations):calloc(capacity,sizeof *operations);
   if(!operations) return 0;
@@ -540,6 +541,16 @@ int gml_render_application_scene_enqueue_quads(GmlRender *r,
   GmlRenderImageRef next;
   uint32_t state_index=0,source_index=0;
   int coalescible,exact_filtered_font,versioned_surface;
+  /* A complete immutable row group is preflighted before device delivery.
+   * Its metadata budget is independent of the unchanged GL streaming budget;
+   * never split a prepared sprite into an irreversible partial admission. */
+  int immutable_rows=r && operation && source && source->borrowed_immutable &&
+    !r->classic_phase_scene_preparing && count>GML_SCENE_BATCH_LIMIT &&
+    count<=GML_SCENE_IMMUTABLE_ROW_LIMIT && operation->opcode==GML_RENDER_OP_TEXTURED_QUAD &&
+    operation->scene_family==GML_RENDER_SCENE_SPRITE &&
+    operation->reconstruction_mode==GML_RENDER_DEVICE_CHECKPOINT &&
+    operation->payload.quad.sampling.filter==GML_RENDER_FILTER_NEAREST &&
+    operation->payload.quad.sampling.quantisation==GML_RENDER_QUANTISE_INTEGER_ROW_TINT_TRUNC;
   int mutable_text=operation && source &&
     operation->scene_family==GML_RENDER_SCENE_TEXT &&
     operation->reconstruction_mode==GML_RENDER_DEVICE_CHECKPOINT &&
@@ -578,7 +589,7 @@ int gml_render_application_scene_enqueue_quads(GmlRender *r,
         state->alpha_equation<=GML_RENDER_BLEND_EXACT_DESTINATION_MIN))));
   if(!r || !r->resident_application_pass || !gml_render_device(r) ||
      !gml_render_scene_target_resource_ensure(r) || !operation || !state || !source ||
-     !count || count>GML_SCENE_BATCH_LIMIT ||
+     !count || count>(immutable_rows?GML_SCENE_IMMUTABLE_ROW_LIMIT:GML_SCENE_BATCH_LIMIT) ||
      (count>1u && !source->borrowed_immutable && !mutable_text) ||
      (!source->borrowed_immutable && !versioned_surface &&
       (source->image.resource_class!=GML_RENDER_RESOURCE_ATLAS ||
@@ -655,8 +666,14 @@ int gml_render_application_scene_enqueue_quads(GmlRender *r,
   if(pending && pending->count){
     int paired_preparation=pending->preparing && r->classic_phase_scene_preparing;
     int surface_preparation=pending->preparing==GML_SCENE_PREPARING_SURFACE && versioned_surface;
-    uint32_t target_limit=surface_preparation?GML_SCENE_SURFACE_RUN_LIMIT:GML_SCENE_BATCH_LIMIT;
+    int immutable_run=pending->count>GML_SCENE_BATCH_LIMIT && !pending->phase_count &&
+      pending->coalesce_sources && pending->source_count;
+    for(uint32_t index=0;immutable_run && index<pending->source_count;index++)
+      immutable_run=pending->sources[index].borrowed_immutable;
+    uint32_t target_limit=!paired_preparation && (immutable_rows || immutable_run)
+      ?GML_SCENE_IMMUTABLE_ROW_LIMIT:surface_preparation?GML_SCENE_SURFACE_RUN_LIMIT:GML_SCENE_BATCH_LIMIT;
     uint32_t limit=paired_preparation?GML_SCENE_PAIRED_LIMIT:target_limit;
+    if(count>target_limit || count>limit) return 0;
     uint32_t target_count=paired_preparation?
       (r->classic_phase_scene_target?pending->phase_count:pending->count-pending->phase_count):pending->count;
     int flush=!pending->source_count || target_count>target_limit-count ||

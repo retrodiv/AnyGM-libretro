@@ -849,9 +849,10 @@ void gml_render_dispatch_resident_admitted(GmlRender *render);
 void gml_render_dispatch_resident_lost(GmlRender *render,unsigned cause);
 /* Geometry only: the preserved nearest row walker selects vector packets and
  * scalar tails without reading or writing the destination. */
+enum { GML_RENDER_ROTATED_ROW_ALPHA8=2u };
 typedef struct GmlRenderRotatedCoverageRegion {
   GmlRenderRect region;
-  uint32_t vector_alpha;
+  uint32_t vector_alpha; /* Scalar/vector texel lane,or ALPHA8 for complete sample rows. */
   int source_x,source_y;
   uint32_t sample_key;
   int64_t fixed_x,fixed_y,delta_x,delta_y;

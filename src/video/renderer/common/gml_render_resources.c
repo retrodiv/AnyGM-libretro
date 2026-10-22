@@ -542,6 +542,7 @@ static int batch_valid(const GmlRenderResource *resource,const GmlRenderDrawBatc
   uint64_t version=resource->image.content_version;
   if(!batch || !batch->operations || !batch->operation_count ||
      batch->operation_count>65536u) return 0;
+  int large_rows=0,extended_quads=0;
   *checkpoint_required=0;
   for(uint32_t index=0;index<batch->operation_count;index++){
     const GmlRenderDrawOp *operation=&batch->operations[index];
@@ -555,7 +556,12 @@ static int batch_valid(const GmlRenderResource *resource,const GmlRenderDrawBatc
       operation->payload.primitive.kind==GML_RENDER_PRIMITIVE_RECTANGLE &&
       (operation->payload.primitive.rectangle_flags&GML_RENDER_RECTANGLE_VERTEX_SPAN);
     if(batch->operation_count>8192u && !textured_vertex && !particle_disc &&
-       !(vertex_span && gml_render_rectangle_valid(operation))) return 0;
+       !(vertex_span && gml_render_rectangle_valid(operation))){
+      if(operation->opcode!=GML_RENDER_OP_TEXTURED_QUAD && operation->opcode!=GML_RENDER_OP_CLEAR) return 0;
+      extended_quads=1;
+      if(operation->opcode==GML_RENDER_OP_TEXTURED_QUAD && operation->scene_family==GML_RENDER_SCENE_SPRITE &&
+         operation->payload.quad.sampling.quantisation==GML_RENDER_QUANTISE_INTEGER_ROW_TINT_TRUNC) large_rows=1;
+    }
     if(version==UINT64_MAX || !same_logical(operation->target.image,resource->image) ||
        operation->target.image.content_version!=version+1u ||
        operation->target.width!=resource->width ||
@@ -595,7 +601,7 @@ static int batch_valid(const GmlRenderResource *resource,const GmlRenderDrawBatc
       *checkpoint_required=1;
     } else return 0;
   }
-  return 1;
+  return !extended_quads || large_rows;
 }
 
 static int upload_sources(const GmlRenderDeviceServices *device,

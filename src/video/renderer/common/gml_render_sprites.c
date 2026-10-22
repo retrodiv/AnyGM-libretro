@@ -190,9 +190,10 @@ static int resident_runtime_nearest_packets(GmlRender *r,GmlTpag *page,
 static int resident_nearest_sample_rows(GmlRender *r,const GmlTpag *page,
   const GmlRenderDrawOp *operation,const GmlRenderDrawStateSnapshot *state,
   const GmlRenderResourceSource *source,const GmlRenderRotatedCoverageRegion *rows,uint32_t row_count){
-  enum { LIMIT=2048 };
-  if(!rows || !row_count || row_count>LIMIT || !source->borrowed_immutable) return 0;
-  GmlRenderDrawOp *operations=malloc(LIMIT*sizeof *operations);
+  enum { ROW_LIMIT=2048,LIMIT=65536 };
+  if(!rows || !row_count || row_count>ROW_LIMIT || !source->borrowed_immutable) return 0;
+  uint32_t capacity=2048u;
+  GmlRenderDrawOp *operations=malloc(capacity*sizeof *operations);
   if(!operations) return 0;
   uint32_t count=0;int accepted=0;
   for(uint32_t row=0;row<row_count;row++){
@@ -242,6 +243,11 @@ static int resident_nearest_sample_rows(GmlRender *r,const GmlTpag *page,
       int constant=end==begin;
       if(constant) end=begin+1u;
       if(count==LIMIT || operation->target.image.content_version>UINT64_MAX-count) goto done;
+      if(count==capacity){
+        GmlRenderDrawOp *expanded=realloc(operations,(size_t)(capacity*2u)*sizeof *operations);
+        if(!expanded) goto done;
+        operations=expanded;capacity*=2u;
+      }
       operations[count]=*operation;
       operations[count].target.image.content_version+=count;
       GmlRenderQuad *quad=&operations[count++].payload.quad;
@@ -1324,7 +1330,16 @@ static int resident_atlas_crop_from_page_impl(GmlRender *r,GmlTpag *page,
       state.alpha_test_enabled=1u;
       if(r->alphablend && r->blendmode==0){
         unsigned empty=0u;
-        while(empty<255u && !gml_render_rotated_alpha16_factor(empty+1u,draw_alpha)) empty++;
+        int byte_coverage=rotated_sample_rows && tile_regions && tile_region_count &&
+          tile_regions[0].vector_alpha==GML_RENDER_ROTATED_ROW_ALPHA8;
+        if(byte_coverage){
+          while(empty<255u){
+            double sampled=((empty+1u)/255.0)*draw_alpha;
+            uint32_t factor=sampled>=1.0?256u:(uint32_t)(sampled*256.0);
+            if(factor>(uint32_t)r->fast_alpha_cull) break;
+            empty++;
+          }
+        }else while(empty<255u && !gml_render_rotated_alpha16_factor(empty+1u,draw_alpha)) empty++;
         if(empty>state.alpha_test_reference) state.alpha_test_reference=empty;
       }
     }
@@ -4018,7 +4033,7 @@ static int resident_nearest_texture_function(GmlRender *r,GmlSprite *sprite,GmlT
     if(!regions) return 0;
     if(!gml_render_rotated_nearest_texel_regions(r,sprite,page,x,y,xs,ys,phase,
                                                 colour,regions,CAPACITY,&count)){
-      if(count!=CAPACITY || family!=GML_RENDER_SCENE_SPRITE ||
+      if(family!=GML_RENDER_SCENE_SPRITE ||
          !gml_render_rotated_nearest_sample_rows(r,sprite,page,x,y,xs,ys,phase,
                                                 regions,CAPACITY,&count)) goto rotated_done;
       row_geometry=1;

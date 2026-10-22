@@ -1279,6 +1279,7 @@ static int scene_preflight(GmlGpuBackend *backend,const GmlRenderDrawBatch *batc
   float probe[6*GL_SCENE_VERTEX_FLOATS];
   if(!backend || !batch || !batch->operations || batch->operation_count==0 ||
      batch->operation_count>65536u || !backend->loaded || !backend->scene.available) return 0;
+  int large_rows=0,extended_quads=0;
   for(uint32_t index=0;index<batch->operation_count;index++){
     const GmlRenderDrawOp *op=&batch->operations[index];
     const GmlRenderTargetRef *target=&op->target;
@@ -1287,7 +1288,12 @@ static int scene_preflight(GmlGpuBackend *backend,const GmlRenderDrawBatch *batc
       (op->payload.primitive.rectangle_flags&GML_RENDER_RECTANGLE_VERTEX_SPAN);
     if(batch->operation_count>8192u && !vertex_span &&
        (op->opcode!=GML_RENDER_OP_COLOURED_PRIMITIVE ||
-        op->payload.primitive.kind!=GML_RENDER_PRIMITIVE_TEXTURED_VERTEX_ROW)) return 0;
+        op->payload.primitive.kind!=GML_RENDER_PRIMITIVE_TEXTURED_VERTEX_ROW)){
+      if(op->opcode!=GML_RENDER_OP_TEXTURED_QUAD && op->opcode!=GML_RENDER_OP_CLEAR) return 0;
+      extended_quads=1;
+      if(op->opcode==GML_RENDER_OP_TEXTURED_QUAD && op->scene_family==GML_RENDER_SCENE_SPRITE &&
+         op->payload.quad.sampling.quantisation==GML_RENDER_QUANTISE_INTEGER_ROW_TINT_TRUNC) large_rows=1;
+    }
     if(batch->states && op->state_index<batch->state_count &&
        batch->states[op->state_index].source_alpha_key &&
        op->opcode!=GML_RENDER_OP_TEXTURED_QUAD) return 0;
@@ -1921,7 +1927,7 @@ static int scene_preflight(GmlGpuBackend *backend,const GmlRenderDrawBatch *batc
       }
     }
   }
-  return 1;
+  return !extended_quads || large_rows;
 }
 
 static int scene_prepare_geometry(GmlGpuBackend *backend,char *error,size_t error_capacity){

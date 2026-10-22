@@ -5376,7 +5376,13 @@ static int rotated_nearest_regions(GmlRender *r,GmlSprite *spr,GmlTpag *t,
     ((r->target_id<0 && r->target_sp==0) || (r->target_id==0 && r->target_sp>0)) &&
     !r->classic && !r->interp &&
     !gml_render_target_preserves_alpha(r);
-  if(vispix>=262144ull && !resident_axis_rows) return 0;
+  int resident_sample_rows=texel_regions==3 && r->resident_application_pass &&
+    r->active_shader<0 && !r->fog_flat && vispix<=1048576ull;
+  if(vispix>=262144ull && !resident_axis_rows && !resident_sample_rows) return 0;
+  /* Export the actual byte-alpha coverage choice,not destination arithmetic.
+   * The pixel executors and their alpha tables remain unchanged. */
+  int row_alpha8=resident_sample_rows && gml_blend_family(r)!=GML_BLEND_STUDIO2 &&
+    !gml_render_target_preserves_alpha(r) && r->alphablend && !r->blendmode && vispix>=262144ull;
   double qarea=fabs(g->qx[0]*g->qy[1]-g->qx[1]*g->qy[0] +
                     g->qx[1]*g->qy[2]-g->qx[2]*g->qy[1] +
                     g->qx[2]*g->qy[3]-g->qx[3]*g->qy[2] +
@@ -5389,7 +5395,7 @@ static int rotated_nearest_regions(GmlRender *r,GmlSprite *spr,GmlTpag *t,
   /* The ordinary cached SCREEN rotation combines the integer trim offset
    * before its binary64 addition. Metadata must select that same texel at
    * an exact nearest tie; other point owners keep their ordered additions. */
-  int cached_point=(texel_regions==1 || texel_regions==3) && rot!=0.0 && !r->classic &&
+  int cached_point=(texel_regions==1 || texel_regions==3) && rot!=0.0 && (!r->classic || row_alpha8) &&
     !gml_render_target_preserves_alpha(r) && r->alphablend && r->blendmode==0 &&
     r->active_shader<0 && !r->fog_flat;
   int64_t delta_x=(int64_t)llround(dlx*(double)RFP_ONE);
@@ -5424,6 +5430,7 @@ static int rotated_nearest_regions(GmlRender *r,GmlSprite *spr,GmlTpag *t,
          *count==capacity) return 0;
       regions[(*count)++]=(GmlRenderRotatedCoverageRegion){
         .region={rx0,py,(uint32_t)(rx1-rx0),1u},
+        .vector_alpha=row_alpha8?GML_RENDER_ROTATED_ROW_ALPHA8:0u,
         .fixed_x=lx_fp,.fixed_y=ly_fp,.delta_x=delta_x,.delta_y=delta_y};
       continue;
     }
