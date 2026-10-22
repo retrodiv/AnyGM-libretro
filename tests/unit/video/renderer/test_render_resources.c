@@ -18873,6 +18873,62 @@ static int resident_empty_surface_part_prefix(void){
   return controls==60u;
 }
 
+static int resident_rectangle_cpu_passthrough_programs(void){
+  static const int policies[]={530,700,800,13,15,17};
+  unsigned controls=0;
+  for(unsigned policy=0;policy<6u;policy++) for(unsigned owner=0;owner<4u;owner++)
+  for(unsigned gui=0;gui<2u;gui++) for(unsigned filter=0;filter<2u;filter++)
+  for(unsigned program=0;program<21u;program++) for(unsigned port=0;port<3u;port++)
+  for(unsigned outline=0;outline<2u;outline++){
+    GmlRender *r=calloc(1,sizeof *r);GmlWin content={0};
+    FakeDevice fake={.on_demand=1};GmlRenderDeviceServices device=service(&fake);
+    uint32_t screen[24*20]={0},shadow[24*20];
+    CHECK(r && !gml_render_init(r,NULL));
+    content.classic_version=policy<3u?policies[policy]:0;
+    content.bytecode=policy<3u?0:policies[policy];r->win=&content;r->classic=policy<3u;
+    device.observe_on_demand=fake_observe_on_demand;gml_render_bind_device(r,&device);
+    if(owner==1u || owner==2u){
+      CHECK(gml_render_application_surface_ensure_owned(r,24,20) &&
+            gml_render_begin_resident_owned_application(r,0,0,0));
+    }else{
+      gml_render_application_surface_bind(r,screen,24,20,1);
+      CHECK(gml_render_begin_resident_base(r,screen,24,20,0,0));
+    }
+    if(owner==2u) CHECK(gml_surface_set_target(r,0));
+    if(owner==3u){int id=gml_surface_create(r,24,20);CHECK(id>0 && gml_surface_set_target(r,id));}
+    if(gui){gml_render_gui_begin(r,24,20);gml_render_gui_set_size(r,12,10);}
+    gml_render_set_pending_fill(r,0x78273859u);gml_render_flush_pending_fill(r);
+    CHECK(gml_render_scene_submit_pending(r));
+    r->shader_pal=calloc(1,sizeof *r->shader_pal);CHECK(r->shader_pal);r->n_shader_pal=1;
+    struct GmlShaderPal *p=&r->shader_pal[0];
+    int *effects[]={&p->threshold_palette,&p->indexed_brightness,&p->channel_mask,&p->channel_alpha_key,
+      &p->alpha_discard,&p->ordered_dither,&p->quantise4,&p->solid_alpha_mask,&p->solid_blur_alpha,
+      &p->lut,&p->lut_indexed,&p->grid,&p->dual_sample,&p->radial_wave,&p->uv_wave_mode,
+      &p->grayscale,&p->vertex_colour_blend,&p->vertex_colour_blend_alpha_only};
+    if(program>0u && program<=18u) *effects[program-1u]=1;
+    p->source_vertex_es="attribute vec3 in_Position;void main(){gl_Position=vec4(in_Position,1.0);}";
+    p->source_fragment_es="precision mediump float;void main(){gl_FragColor=vec4(1.0);}";
+    if(program==19u) gml_render_set_shader_executor(r,passthrough_scope_executor,NULL);
+    r->active_shader=program==20u?1:0;r->interp=(int)filter;r->alpha=.61;
+    r->alpha_test_enable=1;r->alpha_test_ref=4;r->color_write_mask=15u;
+    memcpy(shadow,r->fb,sizeof shadow);int reads=fake.readbacks,submits=fake.submits;
+    if(port) gml_render_primitive_rectangle_color(r,2,2,12,10,0x235A97u,
+      port==2u?0xE33A18u:0x235A97u,port==2u?0x41B963u:0x235A97u,0x235A97u,(int)outline);
+    else gml_render_primitive_rectangle(r,2,2,12,10,0x235A97u,(int)outline);
+    if(!program){
+      if(!r->resident_application_pass) fprintf(stderr,"rectangle passthrough policy=%u owner=%u GUI=%u filter=%u port=%u outline=%u lost residence\n",
+        policy,owner,gui,filter,port,outline);
+      CHECK(r->resident_application_pass && gml_render_scene_submit_pending(r) &&
+        fake.readbacks==reads && fake.submits>submits && !memcmp(shadow,r->fb,sizeof shadow));
+    }else CHECK(!r->resident_application_pass);
+    CHECK(r->active_shader==(program==20u?1:0) && r->interp==(int)filter &&
+      r->alpha==.61 && r->alpha_test_enable && r->alpha_test_ref==4 && r->color_write_mask==15u);
+    gml_render_free(r);free(r);controls++;
+  }
+  printf("rectangle program scope: controls=%u passthrough_GPU=576 recognized_external_invalid_CPU=11520\n",controls);
+  return controls==12096u;
+}
+
 int main(void){
   const char *selected=getenv("GML_RENDER_RESOURCE_CASE");
   if(selected){
@@ -19204,6 +19260,7 @@ int main(void){
   passed+=resident_empty_surface_part_prefix();
   passed+=deferred_rotation_queue_transactions_and_lifetime();
   passed+=resident_point_function_transaction();
-  printf("render resource cases: passed=%d failed=%d\n",passed,299-passed);
-  return passed==299?EXIT_SUCCESS:EXIT_FAILURE;
+  passed+=resident_rectangle_cpu_passthrough_programs();
+  printf("render resource cases: passed=%d failed=%d\n",passed,300-passed);
+  return passed==300?EXIT_SUCCESS:EXIT_FAILURE;
 }

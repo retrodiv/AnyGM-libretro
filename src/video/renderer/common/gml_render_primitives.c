@@ -375,11 +375,11 @@ static int resident_studio_alpha_rect(GmlRender *render,int x1,int y1,int x2,int
  * Keep the cheaper qualified flat paths, and batch ordinary rectangle presets
  * without a predecessor snapshot or CPU pixel transfer. Raw cutout does not
  * participate in these unchanged CPU rectangle writers. */
-static int resident_primitive_state_eligible_rule(GmlRender *r,int vertex){
+static int resident_primitive_state_eligible_rule(GmlRender *r,int cpu_passthrough){
   const GmlRenderDeviceServices *device=gml_render_device(r);
   if(!r || !r->resident_application_pass || !device || !device->observe_on_demand ||
      !device->observe_on_demand(device->context) || !gml_render_scene_target_matches(r) ||
-     (r->active_shader>=0 && (!vertex || !gml_render_shader_cpu_passthrough(r))) || r->blendmode<0 ||
+     (r->active_shader>=0 && (!cpu_passthrough || !gml_render_shader_cpu_passthrough(r))) || r->blendmode<0 ||
      r->blendmode>GML_RENDER_BLEND_DEST_ALPHA_DEST_COLOUR || r->blend_equation!=1 ||
      r->blend_equation_alpha!=1 || r->color_write_mask>15u ||
      r->pending_presentation || r->rotated_batch_count || r->rotated_batch_building ||
@@ -394,8 +394,11 @@ static int resident_primitive_state_eligible(GmlRender *r){
   return resident_primitive_state_eligible_rule(r,0);
 }
 
-static int resident_rectangle_state_eligible(GmlRender *r){
-  return resident_primitive_state_eligible(r) && r->color_write_mask==15u;
+static int resident_rectangle_state_eligible(GmlRender *r,int cpu_passthrough){
+  /* Rectangle CPU writers ignore a selected program only when the existing
+   * classifier proves that neither a software effect nor an external executor
+   * applies. Lines keep their separate, unqualified program boundary. */
+  return resident_primitive_state_eligible_rule(r,cpu_passthrough) && r->color_write_mask==15u;
 }
 
 int gml_render_cpu_backend_vertex_spans(GmlRender *r,
@@ -582,7 +585,7 @@ static void resident_rectangle_payload(GmlRender *r,GmlRenderPrimitiveRect *p,
 static int resident_rectangle_function(GmlRender *r,int x1,int y1,int x2,int y2,
                                        uint32_t c1,uint32_t c2,uint32_t c3,uint32_t c4,
                                        int outline){
-  if(!resident_rectangle_state_eligible(r)) return 0;
+  if(!resident_rectangle_state_eligible(r,1)) return 0;
   double alpha=fmax(0.0,fmin(1.0,r->alpha));
   int destination=r->alphablend && gml_render_blend_uses_destination_colour(r->blendmode);
   if(alpha<=0.0 && !destination) return 1;
@@ -924,7 +927,7 @@ static int resident_axis_line(GmlRender *render,int x1,int y1,int x2,int y2,
  * Only adjacent disjoint boxes with identical colour may become one rectangle. */
 static int resident_line_function(GmlRender *r,double x1,double y1,double x2,double y2,
                                   uint32_t colour1,uint32_t colour2,int width,int subpixel){
-  if(!resident_rectangle_state_eligible(r) ||
+  if(!resident_rectangle_state_eligible(r,0) ||
      !isfinite(x1) || !isfinite(y1) || !isfinite(x2) || !isfinite(y2) ||
      !resident_line_bounds(r,x1,y1,x2,y2,width) ||
      fabs(x1)>16384.0 || fabs(y1)>16384.0 || fabs(x2)>16384.0 || fabs(y2)>16384.0 ||
