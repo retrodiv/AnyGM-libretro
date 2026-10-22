@@ -5377,8 +5377,11 @@ static int rotated_nearest_regions(GmlRender *r,GmlSprite *spr,GmlTpag *t,
     ((r->target_id<0 && r->target_sp==0) || (r->target_id==0 && r->target_sp>0)) &&
     !r->classic && !r->interp &&
     !gml_render_target_preserves_alpha(r);
+  /* The UV consumer bounds row count and width independently. A large clipped
+   * picture must not inherit the pixel visitor's area budget. */
   int resident_sample_rows=texel_regions==3 && r->resident_application_pass &&
-    r->active_shader<0 && !r->fog_flat && vispix<=1048576ull;
+    r->active_shader<0 && !r->fog_flat &&
+    g->x1-g->x0<=4096 && g->y1-g->y0<=2048;
   if(vispix>=262144ull && !resident_axis_rows && !resident_sample_rows) return 0;
   /* Export the actual byte-alpha coverage choice,not destination arithmetic.
    * The pixel executors and their alpha tables remain unchanged. */

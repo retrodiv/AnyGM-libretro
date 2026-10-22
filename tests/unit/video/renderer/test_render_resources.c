@@ -15341,6 +15341,60 @@ static int resident_large_screen_axis_row_metadata(void){
   return 1;
 }
 
+/* Large clipped rotations visit bounded rows,not their entire pixel area. */
+static int resident_large_rotated_sample_row_metadata(void){
+  for(unsigned variant=0;variant<15u;variant++){
+    GmlRender *r=calloc(1,sizeof *r);GmlWin content={.bytecode=variant==2u?17:13};
+    GmlSprite sprite={.w=512,.h=512,.originx=256,.originy=256};
+    GmlTpag page={.sx=4,.sy=4,.sw=512,.sh=512,.tw=512,.th=512,.bw=512,.bh=512};
+    GmlRenderRotatedCoverageRegion rows[2048];uint32_t count=0;
+    uint32_t *screen=calloc(1920u*1080u,sizeof *screen);
+    CHECK(r && screen && !gml_render_init(r,NULL) && gml_render_application_surface_ensure_owned(r,1920,1080));
+    r->win=&content;free(r->atlas[0].px);r->atlas[0].px=malloc(544u*544u*4u);
+    CHECK(r->atlas[0].px);memset(r->atlas[0].px,255,544u*544u*4u);
+    r->atlas[0].w=r->atlas[0].h=544;
+    gml_render_begin(r,screen,1920,1080,0,0);
+    if(variant==4u)CHECK(gml_render_begin_owned_application(r,0,0,0));
+    r->resident_application_pass=1;
+    if(variant==3u)r->classic=1;
+    if(variant==4u)r->target_id=1;
+    if(variant==5u)r->gui_pass_active=1;
+    if(variant==6u)r->resident_application_pass=0;
+    if(variant==7u)r->active_shader=0;
+    if(variant==8u)r->fog_flat=1;
+    if(variant==14u)page.sx=64;
+    double scale=variant==1u?6:2,rotation=variant==1u?226:51;
+    double xs=variant==13u?-scale:scale;
+    unsigned capacity=variant==12u?1u:2048u;
+    int accepted;
+    if(variant==9u)
+      accepted=gml_render_rotated_nearest_texel_regions(r,&sprite,&page,960,540,xs,scale,rotation,
+        0xFFFFFFu,rows,capacity,&count);
+    else if(variant==10u)
+      accepted=gml_render_rotated_nearest_regions(r,&sprite,&page,960,540,xs,scale,rotation,
+        rows,capacity,&count);
+    else if(variant==11u)
+      accepted=gml_render_rotated_nearest_row_regions(r,&sprite,&page,960,540,xs,scale,rotation,
+        rows,capacity,&count);
+    else accepted=gml_render_rotated_nearest_sample_rows(r,&sprite,&page,960,540,xs,scale,rotation,
+        rows,capacity,&count);
+    int expected=variant<6u || variant==13u;
+    CHECK(accepted==expected);
+    if(expected){
+      CHECK(count>720u && count<=1080u);
+      for(uint32_t row=0;row<count;row++){
+        CHECK(rows[row].region.height==1u && rows[row].region.width<=1920u &&
+          rows[row].region.x>=0 && rows[row].region.y>=0 && rows[row].region.y<1080);
+        if(row)CHECK(rows[row].region.y==rows[row-1u].region.y+1);
+        CHECK(rows[row].vector_alpha==((variant==2u || variant==4u)?0u:GML_RENDER_ROTATED_ROW_ALPHA8));
+      }
+    }else CHECK(count==(variant==12u?1u:0u));
+    r->resident_application_pass=0;r->target_id=-1;r->target_sp=0;
+    gml_render_free(r);free(r);free(screen);
+  }
+  return 1;
+}
+
 /* Prepared large-axis ties must not turn one coherent span into a CPU suffix.
  * The real-device comparator owns pixels; this fixture owns authority/order. */
 static int resident_large_screen_coherent_phase(void){
@@ -19008,6 +19062,7 @@ int main(void){
     else if(!strcmp(selected,"filtered-text-reduction")) passed=resident_filtered_font_magnification(0,0,1);
     else if(!strcmp(selected,"physical-filtered-sprite")) passed=resident_physical_filtered_sprite_function();
     else if(!strcmp(selected,"wide-nearest-rows")) passed=resident_large_screen_axis_row_metadata();
+    else if(!strcmp(selected,"large-rotated-rows")) passed=resident_large_rotated_sample_row_metadata();
     else if(!strcmp(selected,"matched-filtered-sprite")) passed=resident_matched_filtered_sprite_function();
     else if(!strcmp(selected,"modern-physical-filtered-sprite")) passed=resident_modern_physical_filtered_sprite_function();
     else if(!strcmp(selected,"modern-rotated-filtered-sprite")) passed=resident_modern_rotated_filtered_sprite_function();
@@ -19285,6 +19340,7 @@ int main(void){
   passed+=resident_gui_replacement_sprite();
   passed+=resident_modern_screen_point_sprite();
   passed+=resident_large_screen_axis_row_metadata();
+  passed+=resident_large_rotated_sample_row_metadata();
   passed+=resident_large_screen_coherent_phase();
   passed+=resident_cached_rotation_trim_tie_metadata();
   passed+=resident_large_unit_sprite_scope();
@@ -19323,6 +19379,6 @@ int main(void){
   passed+=deferred_rotation_queue_transactions_and_lifetime();
   passed+=resident_point_function_transaction();
   passed+=resident_rectangle_cpu_passthrough_programs();
-  printf("render resource cases: passed=%d failed=%d\n",passed,301-passed);
-  return passed==301?EXIT_SUCCESS:EXIT_FAILURE;
+  printf("render resource cases: passed=%d failed=%d\n",passed,302-passed);
+  return passed==302?EXIT_SUCCESS:EXIT_FAILURE;
 }

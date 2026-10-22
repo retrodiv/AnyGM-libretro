@@ -3,6 +3,12 @@
 
 # Code map
 
+`cpu/gml_render_cpu_blit.c::rotated_nearest_regions` shares the bounded nearest
+sample-row visitor with resident sprites. Its CPU-only signed64 rows are limited
+to2048 clipped rows and4096 width,not the pixel visitor's area budget. Pixel
+writers retain their bodies;`resident_large_rotated_sample_row_metadata` and
+R03-SPR-NEAREST-CAPACITY own the metadata and complete-RGBA coverage controls.
+
 This map is optimized for quick navigation by maintainers.
 Start with the responsibility row, inspect the named public header, and keep a
 change inside that owner unless an architectural seam genuinely changes.
