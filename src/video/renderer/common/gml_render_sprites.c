@@ -353,6 +353,24 @@ static int resident_outside_sprite_noop(GmlRender *r,GmlSprite *sprite,int subim
   int frame=((subimg%sprite->n_frames)+sprite->n_frames)%sprite->n_frames;
   int page=sprite->frame[frame];
   if(page<0 || page>=r->n_tpag || !r->tpag) return 0;
+  GmlTpag *crop=&r->tpag[page];
+  /* The ordinary rotated CPU geometry discards a physical crop with no
+   * atlas intersection before filtering, tint, masks or target writes.
+   * Axis copies instead clamp or zero-extend, so retain their old owner.
+   * Destination-colour factors deliberately bypass that CPU alpha bound. */
+  if(r->active_shader<0 &&
+     !(r->alphablend && gml_render_blend_uses_destination_colour(r->blendmode)) &&
+     isfinite(x) && isfinite(y) && isfinite(xs) && isfinite(ys) &&
+     xs!=0.0 && ys!=0.0 && isfinite(rotation) &&
+     crop->sw>0 && crop->sh>0 && crop->atlas>=0 && crop->atlas<r->n_atlas && r->atlas &&
+     (!crop->alpha_scanned || crop->ax1<crop->ax0 || crop->ay1<crop->ay0)){
+    double phase=fmod(rotation,360.0);if(phase<0.0) phase+=360.0;
+    const GmlAtlas *atlas=&r->atlas[crop->atlas];
+    if(phase>=0.001 && fabs(phase-360.0)>=0.001 &&
+       atlas->px && atlas->w>0 && atlas->h>0 &&
+       (crop->sx>=atlas->w || crop->sy>=atlas->h ||
+        (int64_t)crop->sx+crop->sw<=0 || (int64_t)crop->sy+crop->sh<=0)) return 1;
+  }
   return gml_render_sprite_axis_is_empty(r,sprite,&r->tpag[page],x,y,xs,ys,rotation) ||
     gml_render_sprite_source_is_outside(r,sprite,&r->tpag[page],x,y,xs,ys,rotation);
 }

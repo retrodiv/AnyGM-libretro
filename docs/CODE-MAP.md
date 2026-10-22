@@ -7,6 +7,13 @@ This map is optimized for quick navigation by maintainers.
 Start with the responsibility row, inspect the named public header, and keep a
 change inside that owner unless an architectural seam genuinely changes.
 
+`common/gml_render_sprites.c::resident_outside_sprite_noop` also recognizes
+an ordinary rotated physical crop without an atlas intersection,matching
+the unchanged CPU alpha-bound early return. It inspects metadata only and
+preserves queued prefix authority; axis,program,destination-colour and stale
+positive-alpha boundaries keep their previous owner. Resource boundary tests
+and the real-context `atlas-absent-rotation` paired companion cover the rule.
+
 `common/gml_render_palette_internal.h` owns the unchanged indexed-brightness
 pixel evaluator shared by CPU sampling and ten-colour scene preparation.
 `common/gml_render_shaders.c::gml_render_shader_threshold_palette_snapshot`

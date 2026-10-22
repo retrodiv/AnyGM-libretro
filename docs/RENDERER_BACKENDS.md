@@ -3,6 +3,22 @@
 
 # Renderer backend correspondence
 
+R03-SPR-ABSENT-ROTATION is EXACT RGBA0: an ordinary packaged rotated crop
+wholly outside an already loaded physical atlas has no CPU alpha bounds and
+writes nothing. The shared outside predicate preserves the resident prefix
+before masked/fog setup across Classic/Studio, SCREEN/application/numbered
+targets, GUI/world mapping, nearest/filtering, ordinary blends, masks, cutout,
+signed scales, tint and opacity. It emits no draw and earns no visible-writer
+credit. CPU raster bodies and shaders are unchanged. The paired
+`atlas-absent-rotation` companion requires 672 unchanged CPU/device images,
+exact coverage and detached actual bytes, zero ordinary transports and a
+rejecting alpha-one negative. `resident_absent_rotated_sprite_boundaries`
+requires near-axis turns, nonfinite inputs, intersecting crops, cached
+positive alpha, active programs and enabled destination-colour factors to
+retain their old owner. Runtime/special sources and phase/authority/deferred
+boundaries remain debt. This does not qualify visible clamped rotations or
+the axis copy/filter policies of an absent crop.
+
 R03-AUTOMATIC-RASTER-CAMERA retains automatic composition in SCREEN pixels,
 independently of the current world/GUI camera. Its unchanged CPU owner adds
 the camera before subtracting it in the surface leaf. Ordinary stretched and
@@ -2225,7 +2241,7 @@ boundary; the numbered resource fixture additionally checks that refusal.
 | `src/video/renderer/common/gml_render_sprites.c::resident_identity_screen_gui` | `CPU` | HELPER | `15705c947f776a106cb6dcd064819d50a379bdc4e598e5ee8d62cc2fa04a7667` | Pure admission/coverage helper; does not submit or execute a draw. |
 | `src/video/renderer/common/gml_render_sprites.c::resident_mapped_screen_gui_font` | `CPU` | HELPER | `c97e57d8325cde40e7e81eeb08f50fc8274ff570accb0e598c11df8cac0ceed7` | Pure admission/coverage helper; does not submit or execute a draw. |
 | `src/video/renderer/common/gml_render_sprites.c::resident_identity_gui_replacement` | `CPU` | HELPER | `adacc17568ba224f1d786dea739f394f4c202ce3424d49e07e1b738f793e4b13` | Pure R03-SPR-GUI-REPLACE admission predicate; does not submit or execute a draw. |
-| `src/video/renderer/common/gml_render_sprites.c::resident_outside_sprite_noop` | `CPU` | HELPER | `890c9edb287e0dc8f90b1a31b1c463e9777a19a2cf4d2a21b457b3ee7ddbf1cf` | Pure R03-SPR-OUTSIDE-FUNCTION frame/geometry predicate; does not submit, read pixels or execute a draw. Inactive numbered root-plane admission is paired by R03-CLASSIC-STEP-COMPOSITION; active-root/interpolated state remains debt. Inactive interpolated numbered ownership is paired under R03-CLASSIC-STEP-COMPOSITION; other debt remains. |
+| `src/video/renderer/common/gml_render_sprites.c::resident_outside_sprite_noop` | `CPU` | HELPER | `2b804364283957f8c9ae31d9d1804672fc281130936f965941b35dd81f2478b8` | Pure R03-SPR-OUTSIDE-FUNCTION frame/geometry predicate; R03-SPR-ABSENT-ROTATION additionally pairs ordinary rotated physical crops with no atlas intersection,without accepting visible sampling or destination-colour/program/axis boundaries; does not submit, read pixels or execute a draw. Inactive numbered root-plane admission is paired by R03-CLASSIC-STEP-COMPOSITION; active-root/interpolated state remains debt. Inactive interpolated numbered ownership is paired under R03-CLASSIC-STEP-COMPOSITION; other debt remains. |
 | `src/video/renderer/common/gml_render_sprites.c::gml_render_resident_sprite_outside` | `CPU` | HELPER | `f0e9d89d28085091a3e4dcf2a8d4e8949e752b5ff028434019220f739448840b` | Pure R03-SPR-OUTSIDE-FUNCTION mapped predicate shared before masked/fog dispatch; no executor or resource mutation. R03-SPR-ZERO-SCALE-NOOP additionally pairs finite empty scales before ordinary fog/mask preparation, without changing visible CPU or GPU variants. |
 | `src/video/renderer/common/gml_render_sprites.c::resident_classic_rotated_sprite_noop` | `CPU` | HELPER | `1fb4ccf3c8b6a86d1d0e89d371ef77b594874400c8c4ab6ad494e458d30d41cb` | Pure R03-SPR-CLASSIC-ROTATED-NOOP predicate, paired by the scaled retained-atlas selector. No operation executes; visible rotations and excluded states remain ordinary debt. Inactive numbered root-plane admission is paired by R03-CLASSIC-STEP-COMPOSITION; active-root/interpolated state remains debt. Inactive interpolated numbered ownership is paired under R03-CLASSIC-STEP-COMPOSITION; other debt remains. |
 | `src/video/renderer/common/gml_render_sprites.c::resident_integer_sprite` | `gml_render_application_scene_enqueue` | PARTIAL | `9908d792d50a6c60a775edf1bab328e071db77c64192eea8467ec676d68f1021` | R03-SPR-INTEGER-FUNCTION is paired by sprite-function-matrix across ordinary target/policy/GUI/tint/alpha/signed integer/trim combinations, including bounded fractional crop origins. The new route keeps applicable positive-unit copies and first-generation positive-unit colours at the CPU's snapped phase. Magnified first-generation application partial-alpha sprites stay on integer geometry/fixed blending rather than the retained float-phase preference; the late-text/large-sprite pair and complete affected sprite matrix guard source phase and all RGBA channels. Other cheaper partial-draw-alpha recipes and the inherited modern numbered world predecessor owner remain preferred, including its fractional unit variants; the latter's new fractional observations are separate D8 debt, not qualification. Full-alpha endpoints use integer tint instead of an unqualified float-tint preference. Phase-free snapped axes avoid the fractional point-region partitioner. R03-SPR-GUI-REPLACE, R03-SPR-CLASSIC-SIGNED-NOOP, scaled retained-atlas and mapped-integer-text controls remain. Runtime, rotation/filtering, noninteger scales and special-state exclusions retain their separate owners/debt; not complete API or game qualification. Classic presentation interpolation uses the same logical nearest packet for ordinary full sprites; the opt-in paired selector, including masked channels, must satisfy EXACT RGBA0 or individual TOLERANCE±2 without relaxing auxiliary-phase or source-layout exclusions. Inactive numbered root-plane admission is paired by R03-CLASSIC-STEP-COMPOSITION; active-root/interpolated state remains debt. Inactive interpolated numbered ownership is paired under R03-CLASSIC-STEP-COMPOSITION; other debt remains. |

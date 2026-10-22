@@ -14061,6 +14061,46 @@ static int resident_outside_sprite_preserves_queued_prefix(void){
   return resident_empty_sprite_preserves_queued_prefix(0);
 }
 
+static int resident_absent_rotated_sprite_boundaries(void){
+  enum {W=24,H=20};
+  GmlRender *r=calloc(1,sizeof *r);GmlWin content={.bytecode=17,.has_room_layers=1};
+  FakeDevice fake={.on_demand=1};GmlRenderDeviceServices device=service(&fake);
+  uint32_t base[W*H]={0};CHECK(r && !gml_render_init(r,NULL));
+  r->win=&content;r->tpag=calloc(1,sizeof *r->tpag);r->spr=calloc(1,sizeof *r->spr);
+  r->atlas=calloc(1,sizeof *r->atlas);CHECK(r->tpag && r->spr && r->atlas);
+  r->n_tpag=r->n_spr=r->n_atlas=1;
+  r->tpag[0]=(GmlTpag){.sx=2,.sw=2,.sh=2,.tw=2,.th=2,.bw=4,.bh=4,.tx=1,.ty=1};
+  r->spr[0]=(GmlSprite){.w=4,.h=4,.originx=2,.originy=2,.n_frames=1};
+  r->spr[0].frame=calloc(1,sizeof(int));r->atlas[0].px=malloc(4);
+  CHECK(r->spr[0].frame && r->atlas[0].px);
+  r->atlas[0].w=r->atlas[0].h=1;memset(r->atlas[0].px,255,4);
+  device.observe_on_demand=fake_observe_on_demand;gml_render_bind_device(r,&device);
+  gml_render_application_surface_bind(r,base,W,H,1);
+  CHECK(gml_render_begin_resident_base(r,base,W,H,0,0));
+  CHECK(gml_render_resident_sprite_outside(r,0,0,12,10,1,1,70));
+  const double axis[]={0,.0005,-.0005,360,360.0005,359.9995};
+  for(unsigned n=0;n<sizeof axis/sizeof *axis;n++)
+    CHECK(!gml_render_resident_sprite_outside(r,0,0,12,10,1,1,axis[n]));
+  CHECK(!gml_render_resident_sprite_outside(r,0,0,NAN,10,1,1,70));
+  CHECK(!gml_render_resident_sprite_outside(r,0,0,12,10,INFINITY,1,70));
+  r->tpag[0].alpha_scanned=1;r->tpag[0].ax1=r->tpag[0].ay1=1;
+  CHECK(!gml_render_resident_sprite_outside(r,0,0,12,10,1,1,70));
+  r->tpag[0].ax1=r->tpag[0].ay1=-1;
+  CHECK(gml_render_resident_sprite_outside(r,0,0,12,10,1,1,70));
+  r->alphablend=1;
+  for(int mode=GML_RENDER_BLEND_DEST_SOURCE_COLOUR;mode<=GML_RENDER_BLEND_DEST_ALPHA_DEST_COLOUR;mode++){
+    r->blendmode=mode;
+    CHECK(!gml_render_resident_sprite_outside(r,0,0,12,10,1,1,70));
+  }
+  r->alphablend=0;
+  CHECK(gml_render_resident_sprite_outside(r,0,0,12,10,1,1,70));
+  r->active_shader=0;
+  CHECK(!gml_render_resident_sprite_outside(r,0,0,12,10,1,1,70));
+  r->active_shader=-1;r->tpag[0].sx=0;
+  CHECK(!gml_render_resident_sprite_outside(r,0,0,12,10,1,1,70));
+  gml_render_free(r);free(r);return 1;
+}
+
 static int resident_vertical_phase_binding_scope(void){
   GmlRender *r=calloc(1,sizeof *r);
   uint32_t root=0,numbered=0,phase=0;
@@ -19228,6 +19268,7 @@ int main(void){
   passed+=resident_outside_sprite_geometry();
   passed+=resident_vertical_phase_binding_scope();
   passed+=resident_outside_sprite_preserves_queued_prefix();
+  passed+=resident_absent_rotated_sprite_boundaries();
   passed+=resident_zero_scale_sprite_preserves_queued_prefix();
   passed+=resident_rounded_empty_axis_preserves_queued_prefix();
   passed+=resident_rounded_empty_axis_geometry();
@@ -19282,6 +19323,6 @@ int main(void){
   passed+=deferred_rotation_queue_transactions_and_lifetime();
   passed+=resident_point_function_transaction();
   passed+=resident_rectangle_cpu_passthrough_programs();
-  printf("render resource cases: passed=%d failed=%d\n",passed,300-passed);
-  return passed==300?EXIT_SUCCESS:EXIT_FAILURE;
+  printf("render resource cases: passed=%d failed=%d\n",passed,301-passed);
+  return passed==301?EXIT_SUCCESS:EXIT_FAILURE;
 }
