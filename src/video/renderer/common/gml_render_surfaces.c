@@ -2794,6 +2794,12 @@ void gml_draw_surface_stretched(GmlRender *r,int surf,double dx,double dy,
         mapped_width,mapped_height,mapped);
       resident_success=resident_surface_shader(r,surf,mapped_x,mapped_y,
         mapped_width,mapped_height,blend,alpha,&geometry,1,NULL);
+      /* Prefer the qualified fixed-factor whole-source owner over the older
+       * explicit destination-reading executor. Other states keep their order. */
+      if(!resident_success && alpha>0.0 &&
+         gml_render_blend_uses_destination_colour(r->blendmode))
+        resident_success=resident_surface_nearest_function(r,surf,mapped_x,mapped_y,
+                                                          mapped_width,mapped_height,blend,alpha,0);
       if(!resident_success)
         resident_success=resident_surface_filtered(r,surf,mapped_x,mapped_y,
           mapped_width,mapped_height,blend,alpha);
@@ -2862,8 +2868,12 @@ static int resident_surface_nearest_selection(GmlRender *r,int surf,double dx,do
   GmlRenderImageRef image,source_ref;
   GmlRenderResource *borrowed=NULL;
   int tiled=resolved_canvas==2;
-  int destination_blend=tiled && r && r->alphablend &&
+  /* Ordinary whole-source draws use the same CPU preset leaf as tiled cells.
+   * Partial selections retain their separately qualified state domain. */
+  int full_presets=tiled || !selection;
+  int destination_preset=full_presets && r &&
     gml_render_blend_uses_destination_colour(r->blendmode);
+  int destination_blend=destination_preset && r->alphablend;
   if(surf==0) borrowed=resident_surface_borrowed_application(r);
   if(!r || !r->win || !device || !device->observe_on_demand ||
      !device->observe_on_demand(device->context) ||
@@ -2874,8 +2884,8 @@ static int resident_surface_nearest_selection(GmlRender *r,int surf,double dx,do
      /* Internal automatic presentation is already in raster coordinates and
       * bypasses the persistent world projection and flat fog. */
      (!automatic && (gml_d3_is_active(r) || r->fog_flat)) ||
-     r->blendmode<0 || (tiled?r->blendmode>11:(r->blendmode>2 && r->blendmode!=6)) ||
-     (destination_blend?(r->blend_equation<1 || r->blend_equation>5 ||
+     r->blendmode<0 || (full_presets?r->blendmode>11:(r->blendmode>2 && r->blendmode!=6)) ||
+     (destination_preset?(r->blend_equation<1 || r->blend_equation>5 ||
                         r->blend_equation_alpha<1 || r->blend_equation_alpha>5):
                        (r->blend_equation!=1 || r->blend_equation_alpha!=1)) || r->color_write_mask>15u ||
      !isfinite(dx) || !isfinite(dy) || !isfinite(dw) || !isfinite(dh) ||
@@ -2898,7 +2908,9 @@ static int resident_surface_nearest_selection(GmlRender *r,int surf,double dx,do
      left>=r->fbw || top>=r->fbh || left+width<=0.0 || top+height<=0.0) return 1;
   int unit=whole && width==sw && height==sh && signed_width>0 && signed_height>0;
   int opaque=surface_known_opaque(r,surf);
-  int requires_filter=r->alpha_test_enable && (!automatic || r->alpha_test_ref>0u);
+  /* The CPU's unit owner treats reference zero as its ordinary sparse
+   * coverage test;it does not force the generic composition branch. */
+  int requires_filter=r->alpha_test_enable && r->alpha_test_ref>0u;
   /* The unchanged full-source normal owner point-magnifies even with texture
    * interpolation enabled. Classic application presentation is its separate
    * leading-edge bilinear exception, not an ordinary point surface. */
@@ -2912,13 +2924,13 @@ static int resident_surface_nearest_selection(GmlRender *r,int surf,double dx,do
   int full_normal_sampling=whole && signed_width>0 && signed_height>0 &&
     (!r->blendmode || (r->blendmode==6 && opaque)) && alpha>=1.0 &&
     (colour&0xFFFFFFu)==0xFFFFFFu && (!requires_filter || (opaque && r->alpha_test_ref<255u));
-  int generic_point_magnification=tiled && width>=sw && height>=sh &&
+  int generic_point_magnification=full_presets && width>=sw && height>=sh &&
     (r->blendmode!=0 || signed_width<0 || signed_height<0 || width==sw || height==sh) &&
     !(full_normal_sampling && r->classic && surf==0 && signed_width>sw && signed_height>sh);
-  int bilinear=tiled && r->interp && signed_width>sw && signed_height>sh &&
+  int bilinear=full_presets && r->interp && signed_width>sw && signed_height>sh &&
     ((!r->blendmode && !full_normal_sampling) || (full_normal_sampling && r->classic && surf==0));
-  int box=tiled && r->interp && !unit && !point_magnification && !generic_point_magnification && !bilinear;
-  if((r->interp && !unit && !point_magnification && !generic_point_magnification && !box) ||
+  int box=full_presets && r->interp && !unit && !point_magnification && !generic_point_magnification && !bilinear;
+  if((r->interp && !unit && !point_magnification && !generic_point_magnification && !bilinear && !box) ||
      (box && (sw>width*8 || sh>height*8)) || !r->resident_application_pass ||
      !gml_render_scene_target_matches(r) || r->pending_presentation ||
      (surf==0?r->app_surface:r->surface[slot].px)==r->fb ||
@@ -2938,6 +2950,10 @@ static int resident_surface_nearest_selection(GmlRender *r,int surf,double dx,do
   if(r->pending_underlay &&
      (!gml_render_gui_transform_active(r) ||
       !gml_render_compose_resident_underlay(r) || !r->resident_application_pass)) return 0;
+  /* Whole-source generic magnification shares the already-qualified tiled
+   * cell's hardware sampler and its measured filtered-cutout coverage fence. */
+  if(bilinear)
+    return resident_surface_filtered_resolved(r,surf,dx,dy,dw,dh,colour,alpha,2);
   resource=surf==0?(borrowed?borrowed:gml_render_application_resource_ensure(r)):
                    gml_render_surface_resource_ensure(r,surf);
   if(!resource || (!gml_render_resource_device_source_view(resource,device,&source) &&
@@ -2949,18 +2965,21 @@ static int resident_surface_nearest_selection(GmlRender *r,int surf,double dx,do
     (r->blendmode==0 || r->blendmode==6) && alpha>=1.0 && (colour&0xFFFFFFu)==0xFFFFFFu;
   /* The unit white copy merges independent channels. The retained generic
    * point writer and its unit add/inverse branches write complete pixels. */
-  unsigned write_mask=masked_unit || (tiled && (r->blendmode==3 || r->blendmode==4 ||
+  unsigned write_mask=masked_unit || (full_presets && (r->blendmode==3 || r->blendmode==4 ||
     r->blendmode==8 || destination_blend))?r->color_write_mask:15u;
   if(!write_mask) return 1;
   int replace=masked_unit?!r->alphablend:r->blendmode==6 || (r->classic && surf==0);
   int additive=fast_unit && r->blendmode==1;
   int inverse=fast_unit && r->blendmode==2;
-  if((automatic || selection || resolved_canvas) && fast_unit && (additive || inverse)) replace=0;
+  /* The unit add/inverse CPU branches precede the Classic application's
+   * alphaless generic copy,including ordinary whole-source calls. */
+  if(fast_unit && (additive || inverse)) replace=0;
   /* The early-classic normal nonunit leaf uses the unchanged scaled mapper,
    * which blends partial source coverage rather than copying its RGB. */
   if(automatic && !unit && !r->blendmode &&
      (!requires_filter || (opaque && r->alpha_test_ref<255u))) replace=0;
-  int normal_unit=!r->blendmode || (tiled && (r->blendmode==5 || r->blendmode==7));
+  int normal_unit=!r->blendmode || (full_presets && (r->blendmode==5 || r->blendmode==7 ||
+    (!r->alphablend && r->blendmode>=9)));
   int fast_white=fast_unit && !masked_unit && normal_unit && (colour&0xFFFFFFu)==0xFFFFFFu &&
     (alpha>=1.0 || !r->alphablend);
   /* Full-source unit tint/alpha uses the unit writer before the Classic
@@ -3043,6 +3062,9 @@ static int resident_surface_nearest_selection(GmlRender *r,int surf,double dx,do
   }
   state.colour=0xFFFFFFFFu;state.alpha=255u;state.write_mask=write_mask;
   state.alpha_test_enabled=!!r->alpha_test_enable;state.alpha_test_reference=r->alpha_test_ref;
+  /* The CPU's unit multiply owner does not discard zero-alpha texels. Its
+   * admitted positive cutoff can only accompany a wholly opaque source. */
+  if(fast_unit && r->blendmode==3) state.alpha_test_enabled=0u;
   state.coverage_policy=q->span_y[0]==2.0 || masked_unit?0u:GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA;
   if(!replace && (r->alphablend || additive || inverse || fast_white || !fast_unit)){
     state.rgb_source_factor=inverse?GML_RENDER_BLEND_ZERO:GML_RENDER_BLEND_SOURCE_ALPHA;
@@ -3054,7 +3076,7 @@ static int resident_surface_nearest_selection(GmlRender *r,int surf,double dx,do
     state.rgb_equation=state.alpha_equation=GML_RENDER_BLEND_ADD;
     if((additive || inverse) && r->target_sp>0) state.coverage_policy=0u;
   }
-  if(tiled && (r->blendmode==3 || r->blendmode==4 || r->blendmode==8 || destination_blend)){
+  if(full_presets && (r->blendmode==3 || r->blendmode==4 || r->blendmode==8 || destination_blend)){
     int preserve=r->blendmode==3 || r->blendmode==4?r->target_sp>0:
       gml_render_target_preserves_alpha(r);
     state.rgb_equation=state.alpha_equation=GML_RENDER_BLEND_ADD;

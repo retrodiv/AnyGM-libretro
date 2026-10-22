@@ -1989,9 +1989,11 @@ static int scene_tiled_surface_packets_case(void){
   const unsigned equations[]={GML_RENDER_BLEND_ADD,GML_RENDER_BLEND_FIXED_MAX,
     GML_RENDER_BLEND_FIXED_REVERSE_SUBTRACT,GML_RENDER_BLEND_FIXED_SUBTRACT,GML_RENDER_BLEND_FIXED_MIN};
   uint32_t pixels[SW*SH];for(unsigned p=0;p<SW*SH;p++) pixels[p]=0x803579B1u+p;
-  for(unsigned api=0;api<2u;api++) for(unsigned target_kind=0;target_kind<3u;target_kind++)
+  for(unsigned api=0;api<2u;api++) for(unsigned whole=0;whole<2u;whole++)
+  for(unsigned target_kind=0;target_kind<3u;target_kind++)
   for(unsigned kind=0;kind<6u;kind++) for(unsigned equation=0;equation<(kind==2u || kind==3u?5u:1u);equation++)
   for(unsigned invalid=0;invalid<14u;invalid++){
+    if(whole && kind>=3u) continue;
     if(invalid==13u && kind==5u) continue;
     anygm_test_graphics_reset();GmlGpu *gpu=gml_gpu_create();GmlRenderDeviceServices device={0};
     GmlGpuContext context=fake_context(api?GML_GPU_API_OPENGLES3:GML_GPU_API_OPENGL_CORE);
@@ -2028,7 +2030,8 @@ static int scene_tiled_surface_packets_case(void){
       kind==3u?GML_RENDER_FILTER_BOX:GML_RENDER_FILTER_NEAREST,GML_RENDER_EDGE_CLAMP_SUBIMAGE,
       {0,0,SW,SH},kind==5u?GML_RENDER_QUANTISE_SURFACE_TILED_LEADING:
        kind==4u?GML_RENDER_QUANTISE_SURFACE_TILED_FILTERED:
-       kind==3u?GML_RENDER_QUANTISE_SURFACE_BOX_FUNCTION:GML_RENDER_QUANTISE_SURFACE_TILED_POINT,0u};
+       kind==3u?GML_RENDER_QUANTISE_SURFACE_BOX_FUNCTION:
+       whole?GML_RENDER_QUANTISE_SURFACE_NEAREST_FUNCTION:GML_RENDER_QUANTISE_SURFACE_TILED_POINT,0u};
     for(unsigned index=0;index<QUADS+1u;index++){
       GmlRenderDrawOp *op=&ops[index];
       op->target=(GmlRenderTargetRef){.image={target_kind==0u?GML_RENDER_RESOURCE_SCREEN:
@@ -2065,6 +2068,9 @@ static int scene_tiled_surface_packets_case(void){
     if(invalid==13u){
       state.samplers[0].quantisation=kind>=4u?0u:GML_RENDER_QUANTISE_SURFACE_NEAREST_FUNCTION;
       for(unsigned index=1;index<=QUADS;index++) ops[index].payload.quad.sampling=state.samplers[0];
+      /* Whole-source presets now have paired owners. Their selected-source
+       * form remains unqualified and must still reject the complete prefix. */
+      if(kind<3u){q->span_y[3]=1;q->span_x[2]=.25;q->span_y[1]=SW;q->span_y[2]=SH;}
     }
     GmlRenderDrawBatch batch={ops,QUADS+1u,&state,1u};
     GmlRenderExecutionResult result=device.submit(device.context,&batch);
@@ -2076,7 +2082,7 @@ static int scene_tiled_surface_packets_case(void){
         anygm_test_graphics_scene_draw_calls(),anygm_test_graphics_scene_copies(),anygm_test_graphics_read_pixels());
     if(invalid) REQUIRE(result.status==GML_RENDER_EXEC_UNSUPPORTED && !result.accepted_prefix &&
       !anygm_test_graphics_clear_calls() && !anygm_test_graphics_scene_draw_calls() &&
-      !anygm_test_graphics_scene_copies(),"malformed or legacy tiled packet refuses before the whole prefix");
+      !anygm_test_graphics_scene_copies(),"malformed or unsupported selected preset refuses before the whole prefix");
     else REQUIRE(result.status==GML_RENDER_EXEC_ACCEPTED && result.accepted_prefix==QUADS+1u &&
       anygm_test_graphics_scene_draw_calls()==(kind>=4u?4:2) &&
       !anygm_test_graphics_scene_copies() && !anygm_test_graphics_read_pixels(),

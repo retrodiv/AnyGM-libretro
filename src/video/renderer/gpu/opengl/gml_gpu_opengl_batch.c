@@ -397,7 +397,7 @@ static int nearest_surface_function_valid(const GmlRenderDrawOp *op,
      q->shape!=GML_RENDER_QUAD_AXIS_ALIGNED || q->span_active ||
      q->sampling.filter!=GML_RENDER_FILTER_NEAREST ||
      (q->sampling.quantisation!=GML_RENDER_QUANTISE_SURFACE_NEAREST_FUNCTION && !tiled) ||
-     (!tiled && blend!=0 && blend!=1 && blend!=3 && blend!=13 && blend!=14) ||
+     (!tiled && q->span_y[3]!=0.0 && blend!=0 && blend!=1 && blend!=3 && blend!=13 && blend!=14) ||
      q->sampling.edge_rule!=GML_RENDER_EDGE_CLAMP_SUBIMAGE || q->sampling.logical_margin_mask ||
      !full_region(q->sampling.source_region,source->width,source->height) ||
      !exact_rect(op,NULL,NULL,NULL,NULL,1) ||
@@ -409,7 +409,7 @@ static int nearest_surface_function_valid(const GmlRenderDrawOp *op,
      (q->span_y[0]!=0.0 && q->span_y[0]!=1.0 && q->span_y[0]!=2.0 && q->span_y[0]!=3.0 && q->span_y[0]!=4.0) ||
      (q->span_y[0]>0.0 && q->span_y[0]<3.0 && (blend || state->coverage_policy)) ||
      (q->span_y[0]==3.0 && (blend!=1 || state->coverage_policy!=GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA)) ||
-     (q->span_y[0]==4.0 && (!tiled || (blend!=22 && blend!=23 &&
+     (q->span_y[0]==4.0 && ((!tiled && q->span_y[3]!=0.0) || (blend!=22 && blend!=23 &&
        (blend<GL_SCENE_BLEND_SURFACE_DEST_BASE || blend>GL_SCENE_BLEND_SURFACE_DEST_LIMIT)))) ||
      state->write_mask>15u || state->alpha_test_enabled>1u || state->alpha_test_reference>255u ||
      (state->coverage_policy && state->coverage_policy!=GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA) ||

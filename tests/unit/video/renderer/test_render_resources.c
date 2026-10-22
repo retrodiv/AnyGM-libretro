@@ -12239,10 +12239,12 @@ static int surface_pending_source_lifetime(int nearest,int destination_mode){
           fake.last_batch_operations==8u && fake.readbacks==(variant==4u?1:0));
     if(destination_mode){
       CHECK(fake.last_filtered_draw_alpha==.5 &&
-        fake.last_filter==(scale && interpolation?GML_RENDER_FILTER_BOX:GML_RENDER_FILTER_NEAREST) &&
+        fake.last_filter==(scale==1u && interpolation?GML_RENDER_FILTER_BOX:GML_RENDER_FILTER_NEAREST) &&
         fake.last_quad_state.coverage_policy==0u &&
-        fake.last_quad_state.rgb_equation==GML_RENDER_BLEND_EXACT_DESTINATION_ADD &&
-        fake.last_quad_state.alpha_equation==GML_RENDER_BLEND_EXACT_DESTINATION_ADD &&
+        /* The qualified whole-source owner now uses fixed factors without
+         * a destination snapshot;source lifetime/prewrite guards stay exact. */
+        fake.last_quad_state.rgb_equation==GML_RENDER_BLEND_ADD &&
+        fake.last_quad_state.alpha_equation==GML_RENDER_BLEND_ADD &&
         fake.last_quad_state.rgb_source_factor==(destination_mode==11?
           GML_RENDER_BLEND_DESTINATION_ALPHA:GML_RENDER_BLEND_DESTINATION_COLOUR) &&
         fake.last_quad_state.rgb_destination_factor==(destination_mode==9?
@@ -15883,6 +15885,7 @@ static int passthrough_scope_executor(void *context,const GmlRenderShaderRequest
 static int resident_cpu_passthrough_sprite_scope(void){
   enum { W=24,H=20 };
   const int generations[]={530,700,800,13,15,17};
+  unsigned surface_presets=0;
   for(unsigned generation=0;generation<6u;generation++)
   for(unsigned kind=0;kind<4u;kind++) for(unsigned interpolation=0;interpolation<2u;interpolation++)
   for(unsigned mask=0;mask<2u;mask++) for(unsigned program=0;program<21u;program++){
@@ -15951,6 +15954,23 @@ static int resident_cpu_passthrough_sprite_scope(void){
       p->source_vertex_es="attribute vec3 in_Position;void main(){gl_Position=vec4(in_Position,1.0);}";
       p->source_fragment_es="void main(){gl_FragColor=vec4(1.0);}";
       submitted=fake.submits;
+      unsigned old_mask=r->color_write_mask,old_cutoff=r->alpha_test_ref;
+      int old_cutout=r->alpha_test_enable;
+      for(unsigned blend=0;blend<12u;blend++) for(unsigned filtered=0;filtered<2u;filtered++)
+      for(unsigned write_mask=0;write_mask<16u;write_mask++) for(unsigned enabled=0;enabled<2u;enabled++){
+        r->blendmode=(int)blend;r->interp=(int)filtered;r->color_write_mask=(uint8_t)write_mask;
+        r->alphablend=(int)enabled;r->alpha_test_enable=1;r->alpha_test_ref=(uint8_t)(blend*17u+write_mask);
+        r->blend_equation=blend>=9u?1+(int)(write_mask%5u):1;
+        r->blend_equation_alpha=blend>=9u?1+(int)((write_mask+blend)%5u):1;
+        gml_draw_surface_stretched(r,source,0,0,8,8,0xFFFFFFu,1.0);
+        CHECK(r->resident_application_pass && gml_render_scene_submit_pending(r) &&
+          !fake.shader_submits && !fake.readbacks && !fake.rgb_queries &&
+          r->active_shader==0 && !memcmp(shadow,r->fb,sizeof shadow));
+        surface_presets++;
+      }
+      r->blendmode=0;r->interp=0;r->color_write_mask=(uint8_t)old_mask;r->alphablend=1;
+      r->alpha_test_enable=old_cutout;r->alpha_test_ref=(uint8_t)old_cutoff;
+      r->blend_equation=r->blend_equation_alpha=1;
       gml_draw_surface_stretched(r,source,0,0,8,8,0xFFFFFFu,1.0);
       gml_draw_surface_part_ext(r,source,0,0,4,4,0,0,1,1,0xFFFFFFu,1.0);
       gml_draw_surface_part_ext(r,source,1,0,2,4,0,0,2,2,0xFFFFFFu,1.0);
@@ -15967,7 +15987,8 @@ static int resident_cpu_passthrough_sprite_scope(void){
     }
     gml_render_abandon_device(r);gml_render_free(r);free(r);
   }
-  return 1;
+  printf("full surface preset authority: controls=%u selected_program=unchanged ordinary_reads=0\n",surface_presets);
+  return surface_presets==36864u;
 }
 
 /* Determine a small cutout fixture's no-write case with an independent CPU
