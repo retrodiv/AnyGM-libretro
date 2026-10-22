@@ -20,6 +20,7 @@
 #include "gml_software3d.h"
 
 #include <stdint.h>
+#include <limits.h>
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -8352,6 +8353,69 @@ static int resident_atlas_uv_refusal_preserves_queued_prefix(void){
         !render->resident_application_pass && fake.readbacks==1);
   gml_render_free(render);
   free(render);
+  return 1;
+}
+
+static int resident_invalid_sprite_part_preserves_pending_work(void){
+  static const int policies[]={530,700,800,13,15,17};
+  static const int invalid[]={-1,INT_MIN,1,INT_MAX};
+  enum { W=24,H=20 };
+  for(unsigned policy=0;policy<6u;policy++) for(unsigned owner=0;owner<4u;owner++)
+  for(unsigned mapping=0;mapping<3u;mapping++){
+    GmlRender *r=calloc(1,sizeof *r);GmlWin content={0};
+    FakeDevice fake={.on_demand=1};GmlRenderDeviceServices device=service(&fake);
+    uint32_t base[W*H]={0},shadow[W*H];
+    CHECK(r && !gml_render_init(r,NULL));
+    content.classic_version=policies[policy]>100?policies[policy]:0;
+    content.bytecode=content.classic_version?0:policies[policy];
+    r->win=&content;r->classic=content.classic_version!=0;
+    r->spr=calloc(1,sizeof *r->spr);CHECK(r->spr);r->n_spr=1;
+    device.observe_on_demand=fake_observe_on_demand;gml_render_bind_device(r,&device);
+    if(owner==1u || owner==2u){
+      CHECK(gml_render_application_surface_ensure_owned(r,W,H));
+      CHECK(gml_render_begin_resident_owned_application(r,-3,2,0));
+    }else{
+      gml_render_application_surface_bind(r,base,W,H,1);
+      CHECK(gml_render_begin_resident_base(r,base,W,H,-3,2));
+    }
+    if(owner==2u) CHECK(gml_surface_set_target(r,0));
+    if(owner==3u){int id=gml_surface_create(r,W,H);CHECK(id>0 && gml_surface_set_target(r,id));}
+    if(mapping==1u){gml_render_gui_begin(r,W,H);gml_render_gui_set_size(r,W/2,H/2);}
+    if(mapping==2u){r->world_transform_active=1;r->world_scale_x=2;r->world_scale_y=3;}
+    gml_render_primitive_rectangle(r,1,1,3,3,0x2468ACu,0);
+    CHECK(r->resident_application_pass);
+    gml_render_set_pending_fill(r,0x7B274961u);
+    GmlRenderResource *resource=gml_render_scene_target_resource_ensure(r);CHECK(resource);
+    GmlRenderJournalMetrics before={0},after={0};
+    gml_render_resource_journal_metrics(resource,&before);
+    memcpy(shadow,r->fb,sizeof shadow);
+    int submits=fake.submits,reads=fake.readbacks,uploads=fake.uploads;
+    for(unsigned blend=0;blend<12u;blend++) for(unsigned filter=0;filter<2u;filter++)
+    for(unsigned mask=0;mask<16u;mask++) for(unsigned index=0;index<4u;index++){
+      GmlRenderDrawState state_before={0},state_after={0};
+      r->interp=(int)filter;r->blendmode=(int)blend;r->color_write_mask=(uint8_t)mask;
+      r->active_shader=index&1u?0:-1;r->fog_flat=(int)(index>>1u);
+      r->alphablend=(int)(mask&1u);r->alpha_test_enable=1;r->alpha_test_ref=128;
+      r->blend_equation=index&1u?3:1;
+      CHECK(gml_render_draw_state_get(r,&state_before));
+      fake.forbid_calls=1;
+      gml_draw_sprite_part_ext(r,invalid[index],0,0,0,2,3,1,1,-2,3,0xB94D27u,.37);
+      uint32_t corners[4]={0xB94D27u,0xB94D27u,0xB94D27u,0xB94D27u};
+      gml_draw_sprite_general(r,invalid[index],0,0,0,2,3,1,1,-2,3,0,corners,.37);
+      fake.forbid_calls=0;
+      gml_render_resource_journal_metrics(resource,&after);
+      CHECK(gml_render_draw_state_get(r,&state_after) &&
+            !memcmp(&state_before,&state_after,sizeof state_before));
+      CHECK(r->resident_application_pass && r->pending_fill && !fake.forbidden_calls &&
+            fake.submits==submits && fake.readbacks==reads && fake.uploads==uploads &&
+            !memcmp(shadow,r->fb,sizeof shadow) &&
+            before.logical_version==after.logical_version && before.cpu_version==after.cpu_version &&
+            before.gpu_version==after.gpu_version && before.authority==after.authority &&
+            before.journal_operations==after.journal_operations && before.cpu_replays==after.cpu_replays);
+    }
+    r->active_shader=-1;gml_render_free(r);free(r);
+  }
+  gml_draw_sprite_part_ext(NULL,-1,0,0,0,1,1,0,0,1,1,0xFFFFFFu,1);
   return 1;
 }
 
@@ -19258,6 +19322,7 @@ int main(void){
     else if(!strcmp(selected,"background-part-trim")) passed=resident_background_part_trim_function();
     else if(!strcmp(selected,"whole-background")) passed=resident_whole_background_function();
     else if(!strcmp(selected,"sprite-part-sub-eighth")) passed=resident_sprite_part_sub_eighth();
+    else if(!strcmp(selected,"invalid-sprite-part")) passed=resident_invalid_sprite_part_preserves_pending_work();
     else if(!strcmp(selected,"full-sprite-axis-presets")) passed=resident_full_sprite_axis_function();
     else if(!strcmp(selected,"stretched-coarse-veil")) passed=resident_stretched_coarse_veil_on_demand();
     else if(!strcmp(selected,"filtered-text-reduction")) passed=resident_filtered_font_magnification(0,0,1);
@@ -19406,6 +19471,7 @@ int main(void){
   passed+=resident_empty_sprite_preserves_queued_draws();
   passed+=resident_black_additive_sprite_noop();
   passed+=resident_collapsed_additive_sprite_scope();
+  passed+=resident_invalid_sprite_part_preserves_pending_work();
   passed+=resident_empty_sprite_part_preserves_pending_work();
   passed+=resident_zero_alpha_sprite_part_noop();
   passed+=resident_offscreen_sprite_part_preserves_queued_draws();
@@ -19586,6 +19652,6 @@ int main(void){
   passed+=deferred_rotation_queue_transactions_and_lifetime();
   passed+=resident_point_function_transaction();
   passed+=resident_rectangle_cpu_passthrough_programs();
-  printf("render resource cases: passed=%d failed=%d\n",passed,305-passed);
-  return passed==305?EXIT_SUCCESS:EXIT_FAILURE;
+  printf("render resource cases: passed=%d failed=%d\n",passed,306-passed);
+  return passed==306?EXIT_SUCCESS:EXIT_FAILURE;
 }

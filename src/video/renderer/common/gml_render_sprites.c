@@ -5838,6 +5838,10 @@ static int resident_modern_unit_sprite_part(GmlRender *r,GmlTpag *page,const Gml
 void gml_draw_sprite_part_ext(GmlRender *r, int sprite, int subimg, double sx, double sy,
                               double sw, double sh, double x, double y,
                               double xs, double ys, uint32_t blend, double alpha){
+  /* R03-SPR-PART-INVALID-RESOURCE: the unchanged CPU suffix rejects the
+   * resource before any pixel writer. Keep that no-op ahead of authority
+   * acquisition,including the uniform unrotated general alias. */
+  if(r && r->resident_application_pass && (sprite<0 || sprite>=r->n_spr)) return;
   /* R03-SPR-PART-EMPTY: both ordinary CPU source owners return without
    * sampling a nonpositive selection or either zero axis. Keep queued work and pending clears
    * resident across every ordinary target/state; specialised preparation
