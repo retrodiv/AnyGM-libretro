@@ -1667,7 +1667,7 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
      gml_render_application_surface_ensure_owned(
        &engine->render,(int)engine->width,(int)engine->height))
     gml_render_presentation_metrics(&engine->render,&render_presentation);
-  /* A sole early-classic integer or reciprocal-integer viewport draws at the borrowed logical raster.
+  /* A sole early-classic nearest viewport draws at the borrowed logical raster.
    * GPU residency must not turn that borrow into a persistent explicit surface resize.
    * Draw may still expose the preceding borrow's extent after a view change. The base
    * resource uses the actual world stride; publish the new surface extent only below. */
@@ -1678,12 +1678,6 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
     frame_views[0].h==(double)engine->height &&
     frame_views[0].pw>0 && frame_views[0].ph>0 &&
     engine->width>0 && engine->height>0 &&
-    ((frame_views[0].pw%(int)engine->width==0 &&
-      frame_views[0].ph%(int)engine->height==0 &&
-      frame_views[0].pw/(int)engine->width==frame_views[0].ph/(int)engine->height) ||
-     ((int)engine->width%frame_views[0].pw==0 &&
-      (int)engine->height%frame_views[0].ph==0 &&
-      (int)engine->width/frame_views[0].pw==(int)engine->height/frame_views[0].ph)) &&
     !render_presentation.interpolation;
   /* Viewless rooms lend the current world raster too. Owning the first raster
    * just for GPU admission would freeze its extent across later room changes

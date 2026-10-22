@@ -29,6 +29,12 @@ int main(int argc,char **argv){
   AnygmSyntheticContent fixture={0};
   unsigned borrowed_variant=0u;
   char borrowed_tail=0;
+  if(argc==3 && !strcmp(argv[1],"--keep-classic-viewport")){
+    if(sscanf(argv[2],"%u%c",&borrowed_variant,&borrowed_tail)!=1 || borrowed_variant>=72u ||
+       !anygm_synthetic_classic_viewport_content_create(&fixture,borrowed_variant)) return 1;
+    puts(fixture.path);
+    return 0;
+  }
   if(argc==3 && !strcmp(argv[1],"--keep-classic-native-borrowed")){
     if(sscanf(argv[2],"%u%c",&borrowed_variant,&borrowed_tail)!=1 || borrowed_variant>=12u ||
        !anygm_synthetic_classic_native_borrowed_content_create(&fixture,borrowed_variant)) return 1;

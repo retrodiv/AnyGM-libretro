@@ -1592,10 +1592,86 @@ static int classic_native_borrowed_scene_case(void){
   return 1;
 }
 
+static unsigned classic_viewport_variant;
+static int classic_viewport_fixture(AnygmSyntheticContent *fixture){
+  return anygm_synthetic_classic_viewport_content_create(fixture,classic_viewport_variant);
+}
+
+/* Actual device pixels belong to the paired scene controls. This engine
+ * matrix owns geometry, borrowed queries, full VM/RNG bytes and lifecycle. */
+static int classic_nearest_viewport_scene_case(void){
+  for(unsigned variant=0;variant<72u;variant++){
+    Session plain={0},selected={0};CurrentContextWitness witness={1u,0u};
+    AnygmGraphicsContext context=graphics_context(ANYGM_GRAPHICS_OPENGLES3);
+    classic_viewport_variant=variant;anygm_test_graphics_reset();
+    REQUIRE(session_open_fixture_with_scene(&plain,ANYGM_SCENE_RENDERER_CPU,classic_viewport_fixture) &&
+            session_open_fixture_with_scene(&selected,ANYGM_SCENE_RENDERER_OPENGL,classic_viewport_fixture),
+            "nearest viewport fixtures load");
+    context.userdata=&witness;context.is_current=graphics_context_is_current;
+    REQUIRE(anygm_graphics_context_reset(selected.engine,&context)==ANYGM_OK,
+            "nearest viewport context adopts");
+    gml_rng_seed(&plain.engine->vm,0x13579u);gml_rng_seed(&selected.engine->vm,0x13579u);
+    gml_render_dispatch_diagnostics_enable(&selected.engine->render,1);
+    REQUIRE(anygm_state_size(selected.engine)>0u,"viewport state capacity is queried before first frame");
+    int matching=1;
+    for(unsigned frame=0;frame<12u && matching;frame++){
+      if(frame==10u){
+        matching=anygm_reset(plain.engine)==ANYGM_OK && anygm_reset(selected.engine)==ANYGM_OK;
+        gml_rng_seed(&plain.engine->vm,0x13579u);gml_rng_seed(&selected.engine->vm,0x13579u);
+        gml_render_dispatch_diagnostics_enable(&selected.engine->render,1);
+      }
+      GmlGpuCounters before={0},after={0};GmlRenderDispatchMetrics dispatch={0};
+      gml_gpu_counters(selected.engine->gpu,&before);
+      matching=matching && advance(plain.engine,1,NULL) && advance(selected.engine,1,NULL) &&
+        plain.engine->width==selected.engine->width && plain.engine->height==selected.engine->height &&
+        plain.engine->output_width==selected.engine->output_width &&
+        plain.engine->output_height==selected.engine->output_height &&
+        plain.engine->present_mouse_x==selected.engine->present_mouse_x &&
+        plain.engine->present_mouse_y==selected.engine->present_mouse_y &&
+        plain.engine->present_mouse_width==selected.engine->present_mouse_width &&
+        plain.engine->present_mouse_height==selected.engine->present_mouse_height &&
+        !plain.engine->render.app_surface_owned && !selected.engine->render.app_surface_owned;
+      gml_gpu_counters(selected.engine->gpu,&after);
+      matching=matching && gml_render_dispatch_metrics(&selected.engine->render,&dispatch);
+      uint64_t cpu=0;
+      for(unsigned family=0;family<GML_RENDER_SCENE_FAMILY_COUNT;family++)
+        for(unsigned reason=0;reason<GML_RENDER_DISPATCH_REASON_COUNT;reason++) cpu+=dispatch.cpu[family][reason];
+      int admitted=variant<48u;
+      /* The later policy keeps its existing separate 2x sample-plane route.
+       * Its other initial extents are CPU boundaries, not new admission. */
+      int initial_boundary=!admitted && frame==0u && variant/2u%12u!=1u;
+      matching=matching && !dispatch.failed && !dispatch.unclassified && !dispatch.overflow &&
+        (!admitted || cpu==0u) && (!initial_boundary || cpu>0u) && (!admitted ||
+          (after.scene_readbacks==before.scene_readbacks &&
+           after.scene_families[GML_RENDER_SCENE_PRIMITIVE]>0u));
+      size_t a=gml_vm_state_size(&plain.engine->vm),b=gml_vm_state_size(&selected.engine->vm),aw=0,bw=0;
+      uint8_t *cpu_vm=malloc(a?a:1u),*gpu_vm=malloc(b?b:1u);
+      int equal=a && a==b && cpu_vm && gpu_vm &&
+        gml_vm_state_save(&plain.engine->vm,cpu_vm,a,&aw) &&
+        gml_vm_state_save(&selected.engine->vm,gpu_vm,b,&bw) && aw==a && bw==b && !memcmp(cpu_vm,gpu_vm,a);
+      free(cpu_vm);free(gpu_vm);matching=matching && equal;
+      if(matching && frame==2u){
+        size_t cpu_size=0,gpu_size=0;
+        uint8_t *cpu_state=serialize(plain.engine,&cpu_size),*gpu_state=serialize(selected.engine,&gpu_size);
+        matching=cpu_state && gpu_state && anygm_state_load(plain.engine,cpu_state,cpu_size)==ANYGM_OK &&
+          anygm_state_load(selected.engine,gpu_state,gpu_size)==ANYGM_OK;
+        free(cpu_state);free(gpu_state);
+      }
+      if(!matching) fprintf(stderr,"nearest viewport variant=%u frame=%u admitted=%d cpu=%llu reads=%llu VM=%d source=%ux%u/%ux%u output=%ux%u/%ux%u\n",
+        variant,frame,admitted,(unsigned long long)cpu,(unsigned long long)(after.scene_readbacks-before.scene_readbacks),equal,
+        plain.engine->width,plain.engine->height,selected.engine->width,selected.engine->height,
+        plain.engine->output_width,plain.engine->output_height,selected.engine->output_width,selected.engine->output_height);
+    }
+    session_close(&selected);session_close(&plain);
+    REQUIRE(matching,"nearest viewport admission preserves geometry, VM/RNG, state and Reset without ordinary reads");
+  }
+  puts("nearest viewport matrix: pairs=72 frames=864 early_resident_frames=576 full_VM_RNG=exact restores=72 resets=72 ordinary_reads=0; later_policy=unchanged");
+  return 1;
+}
+
 static int classic_single_view_exclusions_case(void){
   int (*factories[])(AnygmSyntheticContent *)={
     anygm_synthetic_classic_single_view_filtered_content_create,
-    anygm_synthetic_classic_single_view_fractional_content_create,
     anygm_synthetic_classic_single_view_modern_content_create,
     anygm_synthetic_classic_single_view_offset_content_create
   };
@@ -1630,7 +1706,7 @@ static int classic_single_view_exclusions_case(void){
       (unsigned long long)counters.scene_families[GML_RENDER_SCENE_SPRITE],
       (unsigned long long)counters.scene_families[GML_RENDER_SCENE_TEXT]);
     session_close(&selected); session_close(&plain);
-    REQUIRE(matching,"filtered, fractional, modern and translated classic views retain CPU policy");
+    REQUIRE(matching,"filtered, modern and translated classic views retain CPU policy");
   }
   return 1;
 }
@@ -5919,6 +5995,7 @@ int main(void){
     {"interpolated Classic identity presentation keeps exact state and residency",
      classic_identity_filtered_presentation_case},
     {"excluded single classic views retain CPU presentation",classic_single_view_exclusions_case},
+    {"nearest Classic viewport matrix retains VM and lifecycle",classic_nearest_viewport_scene_case},
     {"native borrowed Classic keeps world GUI and exact VM state",classic_native_borrowed_scene_case},
     {"classic single view preserves later geometry transitions",classic_single_view_geometry_transition_case},
     {"borrowed resize keeps Draw metadata and resident pixels",classic_borrowed_resize_scene_case},

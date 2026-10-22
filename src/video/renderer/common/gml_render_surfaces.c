@@ -3019,11 +3019,12 @@ static int resident_surface_nearest_selection(GmlRender *r,int surf,double dx,do
   }
   /* The white full-source normal leaf centre-samples reductions, assigning an
    * exact source boundary to the preceding texel. Tinted/cutout generic draws
-   * retain their leading-edge indices instead. */
+   * retain their leading-edge indices instead. Internal automatic presentation
+   * ignores a zero cutoff, just as its unchanged CPU owner does. */
   if(!box && !selected && signed_width>0 && signed_height>0 &&
      (!r->blendmode || (r->blendmode==6 && opaque)) && alpha>=1.0 &&
      (colour&0xFFFFFFu)==0xFFFFFFu &&
-     (!r->alpha_test_enable || (opaque && r->alpha_test_ref<255u))){
+     (!requires_filter || (opaque && r->alpha_test_ref<255u))){
     if(width<sw) q->span_x[0]=3.0;
     if(height<sh) q->span_x[1]=3.0;
   }
