@@ -4416,6 +4416,30 @@ static int independent_numbered_target_admission(void){
           r->fb==parent_fb && r->fbw==parent_w && r->fbh==parent_h &&
           r->cam_x==parent_cx && r->cam_y==parent_cy && !fake.readbacks &&
           r->pending_fill==(int)parent && (!parent || r->pending_fill_color==0xFF123456u));
+    if(admitted){
+      /* An initialization copy owns only its explicitly selected child.
+       * A disabled unknown program keeps the same plain CPU semantics. */
+      int destination=gml_surface_create(r,8,8);CHECK(destination>0);
+      CHECK(gml_surface_set_target(r,destination) && r->resident_application_pass &&
+            !r->resident_scene_pass);
+      if(runtime){
+        r->shader_pal=calloc(1,sizeof *r->shader_pal);CHECK(r->shader_pal);
+        r->n_shader_pal=1;r->active_shader=0;
+      }
+      int selected=r->active_shader;
+      gml_draw_surface_stretched(r,id,0,0,8,8,0xFFFFFFu,1);
+      CHECK(gml_render_application_scene_flush(r) && !r->resident_scene_pass &&
+            r->resident_application_pass && !fake.readbacks && r->active_shader==selected);
+      GmlRenderJournalMetrics copied={0};
+      gml_render_resource_journal_metrics(r->surface[destination-1].resource,&copied);
+      CHECK(copied.authority==GML_RENDER_RESOURCE_GPU_RESIDENT &&
+            !copied.cpu_replays && !copied.journal_bytes);
+      gml_surface_reset_target(r);
+      CHECK(!r->resident_scene_pass && !r->resident_application_pass && !r->target_sp &&
+            r->fb==parent_fb && r->fbw==parent_w && r->fbh==parent_h &&
+            r->cam_x==parent_cx && r->cam_y==parent_cy && !fake.readbacks &&
+            r->pending_fill==(int)parent && (!parent || r->pending_fill_color==0xFF123456u));
+    }
     gml_render_free(r);free(r);
   }
   for(unsigned classic=0;classic<2u;classic++) for(unsigned alias=0;alias<2u;alias++){

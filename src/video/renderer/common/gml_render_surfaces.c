@@ -2815,7 +2815,9 @@ void gml_draw_surface_stretched(GmlRender *r,int surf,double dx,double dy,
   if(!resident_success && r && ((source_slot>=0 && r->surface[source_slot].live) ||
            (surf==0 && r->app_surface_published && r->app_surface)) &&
      !(source_slot>=0 && surf==r->surface_canvas) &&
-     r->resident_scene_pass && gml_render_device(r)){
+     (r->resident_scene_pass ||
+      (r->scene_device_enabled && r->resident_application_pass &&
+       r->target_id>0 && r->target_sp>0)) && gml_render_device(r)){
     int source_width=surf==0?r->app_w:r->surface[source_slot].w;
     int source_height=surf==0?r->app_h:r->surface[source_slot].h;
     if(source_width>0 && source_height>0){
@@ -3239,7 +3241,9 @@ static int resident_surface_filtered_resolved(GmlRender *r,int surf,double dx,do
   if(!r || (surf!=0 && (slot<0 || !r->surface[slot].live)) ||
      (surf==0 && (!r->app_surface_published || !r->app_surface ||
                   (r->app_surface!=r->app_surface_owned && !borrowed))) ||
-     !r->resident_scene_pass || !gml_render_scene_target_matches(r) ||
+     !(r->resident_scene_pass ||
+       (r->scene_device_enabled && r->resident_application_pass &&
+        r->target_id>0 && r->target_sp>0)) || !gml_render_scene_target_matches(r) ||
      !(device=gml_render_device(r)) || !device->observe_on_demand ||
      !device->observe_on_demand(device->context) ||
      (!resolved_canvas && r->surface_canvas>0 &&
