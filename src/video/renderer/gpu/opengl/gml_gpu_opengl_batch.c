@@ -11,6 +11,10 @@
 #include <stdlib.h>
 #include <string.h>
 
+#if defined(__SSE2__)
+#include <emmintrin.h>
+#endif
+
 enum { GL_SCENE_MAX_EXACT_REPETITIONS=64, GL_SCENE_BLEND_INVERSE_RECT=12,
        GL_SCENE_BLEND_RECTANGLE_BASE=32, GL_SCENE_BLEND_RECTANGLE_LIMIT=55,
        GL_SCENE_BLEND_RECTANGLE_ADD_BYTES=56,
@@ -2082,7 +2086,13 @@ static int scene_prepare_geometry(GmlGpuBackend *backend,char *error,size_t erro
     backend->gl.BindBuffer(GL_ARRAY_BUFFER,0);
     if(backend->gl.GetError()!=GL_NO_ERROR) return 0;
     scene->instance_bytes_used=0;
+    scene->instance_span_count=scene->instance_span_next=0;
     scene->instance_storage_ready=1;
+  }
+  if(!scene->instance_reuse_attempted){
+    /* Reuse is optional: allocation failure leaves the established append stream available. */
+    if(!scene->instance_mirror) scene->instance_mirror=(uint8_t*)malloc(GL_SCENE_STREAM_BYTES);
+    scene->instance_reuse_attempted=1;
   }
   return backend->gl.GetError()==GL_NO_ERROR;
 }
@@ -2218,6 +2228,93 @@ static void compact_quad_instances(GlScene *scene,uint32_t count){
   }
 }
 
+/* The append-only stream owns this range until wrap/orphan. Write it directly rather than
+ * asking the driver to copy a client packet into host-visible storage. Streaming/word stores
+ * preserve float bits and avoid a slow byte-copy instruction on write-combined mappings. */
+static int upload_quad_instances(GmlGpuBackend *backend,size_t offset,size_t bytes){
+  GlScene *scene=&backend->scene;
+  void *mapped=backend->gl.MapBufferRange(GL_ARRAY_BUFFER,(GLintptr)offset,(GLsizeiptr)bytes,
+                                        GL_MAP_WRITE_BIT|GL_MAP_UNSYNCHRONIZED_BIT);
+  if(mapped){
+    volatile uint32_t *destination=(volatile uint32_t*)mapped;
+    const unsigned char *source=(const unsigned char*)scene->instances;
+    size_t copied=0;
+#if defined(__SSE2__)
+    if(!((uintptr_t)mapped&15u)){
+      for(;copied+64u<=bytes;copied+=64u){
+        _mm_stream_si128((__m128i*)((unsigned char*)mapped+copied),
+                         _mm_loadu_si128((const __m128i*)(source+copied)));
+        _mm_stream_si128((__m128i*)((unsigned char*)mapped+copied+16u),
+                         _mm_loadu_si128((const __m128i*)(source+copied+16u)));
+        _mm_stream_si128((__m128i*)((unsigned char*)mapped+copied+32u),
+                         _mm_loadu_si128((const __m128i*)(source+copied+32u)));
+        _mm_stream_si128((__m128i*)((unsigned char*)mapped+copied+48u),
+                         _mm_loadu_si128((const __m128i*)(source+copied+48u)));
+      }
+      for(;copied+16u<=bytes;copied+=16u)
+        _mm_stream_si128((__m128i*)((unsigned char*)mapped+copied),
+                         _mm_loadu_si128((const __m128i*)(source+copied)));
+    }
+#endif
+    for(;copied<bytes;copied+=sizeof(uint32_t)){
+      uint32_t value;
+      memcpy(&value,source+copied,sizeof value);
+      destination[copied/sizeof value]=value;
+    }
+#if defined(__SSE2__)
+    /* Streaming stores must finish before unmapping exposes their bytes to the device. */
+    _mm_sfence();
+#endif
+    return backend->gl.UnmapBuffer(GL_ARRAY_BUFFER)!=GL_FALSE;
+  }
+  /* A declined map with no GL error can retain the established upload path.
+   * An error or corrupted unmap fails the submission before its draw. */
+  if(backend->gl.GetError()!=GL_NO_ERROR) return 0;
+  backend->gl.BufferSubData(GL_ARRAY_BUFFER,(GLintptr)offset,(GLsizeiptr)bytes,scene->instances);
+  return 1;
+}
+
+static size_t scene_instance_span(GmlGpuBackend *backend,size_t bytes){
+  _Static_assert((GL_SCENE_INSTANCE_FLOATS*sizeof(float))%sizeof(uint64_t)==0,
+                 "Instance fingerprint words must cover whole records.");
+  GlScene *scene=&backend->scene;
+  const uint8_t *input=(const uint8_t*)scene->instances;
+  uint64_t hash=UINT64_C(14695981039346656037);
+  size_t offset;
+  if(scene->instance_mirror){
+    /* All records contain a multiple of eight bytes. Hashes only reject candidates;
+     * equality always compares every byte, including signed zero and trailing operands. */
+    for(size_t index=0;index<bytes;index+=sizeof(uint64_t)){
+      uint64_t word;
+      memcpy(&word,input+index,sizeof word);
+      hash=(hash^word)*UINT64_C(1099511628211);
+    }
+    for(unsigned index=0;index<scene->instance_span_count;index++)
+      if(scene->instance_spans[index].bytes==bytes && scene->instance_spans[index].hash==hash &&
+         !memcmp(scene->instance_mirror+scene->instance_spans[index].offset,input,bytes))
+        return scene->instance_spans[index].offset;
+  }
+  /* Existing ranges remain immutable until orphaning; no fence or overwrite is added. */
+  if(bytes>GL_SCENE_STREAM_BYTES-scene->instance_bytes_used){
+    scene->instance_span_count=scene->instance_span_next=0;
+    backend->gl.BufferData(GL_ARRAY_BUFFER,GL_SCENE_STREAM_BYTES,NULL,GL_STREAM_DRAW);
+    scene->instance_bytes_used=0;
+  }
+  offset=scene->instance_bytes_used;
+  if(!upload_quad_instances(backend,offset,bytes)) return SIZE_MAX;
+  scene->instance_bytes_used+=bytes;
+  if(scene->instance_mirror){
+    unsigned index=scene->instance_span_next;
+    memcpy(scene->instance_mirror+offset,input,bytes);
+    scene->instance_spans[index].offset=offset;
+    scene->instance_spans[index].bytes=bytes;
+    scene->instance_spans[index].hash=hash;
+    scene->instance_span_next=(index+1u)%GL_SCENE_INSTANCE_SPANS;
+    if(scene->instance_span_count<GL_SCENE_INSTANCE_SPANS) scene->instance_span_count++;
+  }
+  return offset;
+}
+
 static int flush_quads(GmlGpuBackend *backend,GlSceneImage *target,GlSceneImage *source,
                        uint32_t filter,int blend,uint32_t count,uint32_t write_mask,int alpha_test,
                        uint32_t source_alpha_key,const GmlRenderSourcePalette *palette){
@@ -2231,6 +2328,7 @@ static int flush_quads(GmlGpuBackend *backend,GlSceneImage *target,GlSceneImage 
   GLsizei stride=GL_SCENE_INSTANCE_FLOATS*(GLsizei)sizeof(float);
   size_t bytes=(size_t)count*GL_SCENE_INSTANCE_FLOATS*sizeof(float),offset;
   GLint attributes[13];
+  int upload_ok=1;
   if(!count) return 1;
   if(count>GL_SCENE_MAX_QUADS) return 0;
   backend->gl.BindFramebuffer(GL_FRAMEBUFFER,target->framebuffer);
@@ -2342,15 +2440,9 @@ static int flush_quads(GmlGpuBackend *backend,GlSceneImage *target,GlSceneImage 
   compact_quad_instances(scene,count);
   backend->gl.BindVertexArray(scene->instance_array);
   backend->gl.BindBuffer(GL_ARRAY_BUFFER,scene->instance_buffer);
-  /* Regions are append-only until wrap. Orphaning preserves the old store for
-   * in-flight draws; neither an unsynchronized overwrite nor a fence is needed. */
-  if(bytes>GL_SCENE_STREAM_BYTES-scene->instance_bytes_used){
-    backend->gl.BufferData(GL_ARRAY_BUFFER,GL_SCENE_STREAM_BYTES,NULL,GL_STREAM_DRAW);
-    scene->instance_bytes_used=0;
-  }
-  offset=scene->instance_bytes_used;
-  backend->gl.BufferSubData(GL_ARRAY_BUFFER,(GLintptr)offset,(GLsizeiptr)bytes,scene->instances);
-  scene->instance_bytes_used+=bytes;
+  offset=scene_instance_span(backend,bytes);
+  upload_ok=offset!=SIZE_MAX;
+  if(!upload_ok) goto restore_stream_state;
   attributes[0]=scene->a_position01;
   attributes[1]=scene->a_position23;
   attributes[2]=scene->a_texcoord01;
@@ -2378,6 +2470,7 @@ static int flush_quads(GmlGpuBackend *backend,GlSceneImage *target,GlSceneImage 
                          filter==23u?24:filter==21u?22:filter==9u?10:13);
     backend->gl.DrawArraysInstanced(GL_TRIANGLES,0,6,(GLsizei)count);
   }
+restore_stream_state:
   if(source && filter>=103u && filter<=108u){
     /* Repeat belongs to this row sampler, not to a later content-program or
      * presentation consumer of the same versioned image. */
@@ -2385,14 +2478,18 @@ static int flush_quads(GmlGpuBackend *backend,GlSceneImage *target,GlSceneImage 
     backend->gl.TexParameteri(GL_TEXTURE_2D,GL_TEXTURE_WRAP_T,GL_CLAMP_TO_EDGE);
   }
   backend->gl.ColorMask(GL_TRUE,GL_TRUE,GL_TRUE,GL_TRUE);
-  for(unsigned index=0;index<13u;index++)
+  if(upload_ok) for(unsigned index=0;index<13u;index++)
     backend->gl.DisableVertexAttribArray((GLuint)attributes[index]);
   backend->gl.BindBuffer(GL_ARRAY_BUFFER,0);
   backend->gl.BindVertexArray(0);
   backend->gl.UseProgram(0);
   backend->gl.BindTexture(GL_TEXTURE_2D,0);
   backend->gl.Disable(GL_BLEND);
-  if(backend->gl.GetError()!=GL_NO_ERROR){ target->valid=0; return 0; }
+  if(backend->gl.GetError()!=GL_NO_ERROR || !upload_ok){
+    scene->instance_span_count=scene->instance_span_next=0;
+    target->valid=0;
+    return 0;
+  }
   target->valid=1;
   target->rendered_origin=1;
   return 1;

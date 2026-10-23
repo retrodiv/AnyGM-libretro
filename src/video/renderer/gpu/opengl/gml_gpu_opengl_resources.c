@@ -223,6 +223,8 @@ void gml_gpu_opengl_scene_forget(GmlGpuBackend *backend){
   scene->upload_buffer=0;
   scene->instance_bytes_used=0;
   scene->instance_storage_ready=0;
+  scene->instance_span_count=scene->instance_span_next=0;
+  scene->instance_reuse_attempted=0;
   memset(scene->exact_programs,0,sizeof scene->exact_programs);
   scene->snapshot_texture=scene->copy_framebuffer=scene->rgb_query=0;
   scene->rgb_reduce_program=scene->rgb_reduce_framebuffer=0;
@@ -271,9 +273,11 @@ void gml_gpu_opengl_scene_destroy(GmlGpuBackend *backend,int context_is_current)
   }
   free(scene->vertices);
   free(scene->instances);
+  free(scene->instance_mirror);
   free(scene->scratch);
   scene->vertices=NULL;
   scene->instances=NULL;
+  scene->instance_mirror=NULL;
   scene->scratch=NULL;
   scene->scratch_capacity=0;
   gml_gpu_opengl_scene_forget(backend);

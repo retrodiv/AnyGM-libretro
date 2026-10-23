@@ -1215,8 +1215,9 @@ static int scene_completed_screen_query_case(void){
   return 1;
 }
 
-static int scene_resident_batch_case(void){
-  enum { QUADS=500 };
+static int scene_resident_batch_impl(int reuse,GmlGpuApi api,unsigned map_mode,uint64_t *packet_hash){
+  enum { QUADS=500, INSTANCE_SPANS=128, STREAM_BYTES=20u*2048u*52u*sizeof(float),
+         WRAP_BATCHES=STREAM_BYTES/(QUADS*52u*sizeof(float)) };
   uint32_t pixels[4]={0xFF112233u,0xFF445566u,0xFF778899u,0xFFAABBCCu};
   GmlRenderDrawOp *operations;
   GmlRenderDrawStateSnapshot state;
@@ -1234,9 +1235,10 @@ static int scene_resident_batch_case(void){
   const unsigned char *uploaded;
   unsigned atlas_name;
   anygm_test_graphics_reset();
+  anygm_test_graphics_stream_mapping(map_mode);
   gpu=gml_gpu_create();
   REQUIRE(gpu!=NULL,"metadata allocated");
-  context=fake_context(GML_GPU_API_OPENGL_CORE);
+  context=fake_context(api);
   REQUIRE(gml_gpu_context_reset(gpu,&context),"context adopted");
   gml_gpu_device_services(gpu,&services);
   memset(&upload,0,sizeof upload);
@@ -1304,6 +1306,13 @@ static int scene_resident_batch_case(void){
   batch.states=&state;
   batch.state_count=1u;
   result=services.submit(services.context,&batch);
+  if(map_mode==2u){
+    REQUIRE(result.status==GML_RENDER_EXEC_RECOVERABLE_ERROR && result.uncertain_target_count==1u &&
+            anygm_test_graphics_scene_draw_calls()==0 &&
+            anygm_test_graphics_stream().unmaps==1u,
+            "a corrupted vertex map cannot submit a draw or report acceptance");
+    free(operations);gml_gpu_destroy(gpu,1);return 1;
+  }
   REQUIRE(result.status==GML_RENDER_EXEC_ACCEPTED && result.accepted_prefix==QUADS+1u,
           "clear and 500 ordered quads are accepted completely");
   REQUIRE(anygm_test_graphics_scene_draw_calls()==1 &&
@@ -1352,15 +1361,121 @@ static int scene_resident_batch_case(void){
             "the explicit subregion readback is counted by byte area");
   }
   services.retire(services.context,target_ref);
+  if(reuse){
+    const size_t bytes=QUADS*52u*sizeof(float);
+    unsigned char *expected=(unsigned char*)malloc(bytes),*observed=(unsigned char*)malloc(bytes);
+    REQUIRE(expected && observed,"instance byte comparison storage allocated");
+    REQUIRE(anygm_test_graphics_instance_bytes(expected,bytes)==bytes,"full initial instance bytes retained");
+    for(unsigned repeat=0;repeat<5u;repeat++){
+      for(unsigned index=0;index<QUADS+1u;index++){
+        operations[index].target.image.content_version+=QUADS+1u;
+        operations[index].target.storage_version+=QUADS+1u;
+      }
+      /* Only the middle two submissions change bytes, including the far end of the span. */
+      operations[1].payload.quad.x[0]=operations[1].payload.quad.x[3]=7.0+(repeat==1u);
+      operations[1].payload.quad.x[1]=operations[1].payload.quad.x[2]=11.0+(repeat==1u);
+      operations[QUADS].payload.quad.x[0]=operations[QUADS].payload.quad.x[3]=20.0+(repeat==3u);
+      operations[QUADS].payload.quad.x[1]=operations[QUADS].payload.quad.x[2]=24.0+(repeat==3u);
+      result=services.submit(services.context,&batch);
+      AnygmTestGraphicsStream stream=anygm_test_graphics_stream();
+      if(result.status!=GML_RENDER_EXEC_ACCEPTED || stream.allocations!=1u ||
+         stream.updates!=(repeat<1u?1u:repeat<3u?2u:3u) || stream.errors)
+        fprintf(stderr,"reuse repeat=%u status=%u allocations=%zu updates=%zu errors=%u\n",
+                repeat,(unsigned)result.status,stream.allocations,stream.updates,stream.errors);
+      REQUIRE(result.status==GML_RENDER_EXEC_ACCEPTED && stream.allocations==1u &&
+              stream.updates==(repeat<1u?1u:repeat<3u?2u:3u) && stream.errors==0u,
+              "identical ranges reuse while changes at either end append distinct bytes");
+      REQUIRE(anygm_test_graphics_instance_bytes(observed,bytes)==bytes &&
+              (!memcmp(expected,observed,bytes))==(repeat!=1u && repeat!=3u),
+              "every fetched byte comes from the selected original or modified span");
+    }
+    size_t allocations=anygm_test_graphics_stream().allocations;
+    for(unsigned repeat=0;repeat<WRAP_BATCHES+2u;repeat++){
+      for(unsigned index=0;index<QUADS+1u;index++){
+        operations[index].target.image.content_version+=QUADS+1u;
+        operations[index].target.storage_version+=QUADS+1u;
+      }
+      operations[1].payload.quad.x[0]=operations[1].payload.quad.x[3]=12.0+repeat/30u;
+      operations[1].payload.quad.x[1]=operations[1].payload.quad.x[2]=16.0+repeat/30u;
+      operations[QUADS].payload.quad.x[0]=operations[QUADS].payload.quad.x[3]=22.0+repeat%30u;
+      operations[QUADS].payload.quad.x[1]=operations[QUADS].payload.quad.x[2]=26.0+repeat%30u;
+      result=services.submit(services.context,&batch);
+      REQUIRE(result.status==GML_RENDER_EXEC_ACCEPTED && !anygm_test_graphics_stream().errors,
+              "distinct spans preserve append and wrap semantics");
+    }
+    REQUIRE(anygm_test_graphics_stream().allocations==allocations+1u,"distinct ranges force one orphan");
+    for(unsigned phase=0;phase<4u;phase++){
+      operations[1].payload.quad.x[0]=operations[1].payload.quad.x[3]=7.0;
+      operations[1].payload.quad.x[1]=operations[1].payload.quad.x[2]=11.0;
+      for(unsigned index=0;index<QUADS+1u;index++){
+        operations[index].target.image.content_version+=QUADS+1u;
+        operations[index].target.storage_version+=QUADS+1u;
+      }
+      operations[QUADS].payload.quad.x[0]=operations[QUADS].payload.quad.x[3]=20.0;
+      operations[QUADS].payload.quad.x[1]=operations[QUADS].payload.quad.x[2]=24.0;
+      size_t updates=anygm_test_graphics_stream().updates;
+      if(phase==2u) anygm_test_graphics_fail_scene_draw_at((unsigned)anygm_test_graphics_scene_draw_calls()+1u);
+      result=services.submit(services.context,&batch);
+      REQUIRE((result.status==GML_RENDER_EXEC_ACCEPTED)==(phase!=2u),"draw error remains a refused execution");
+      REQUIRE(anygm_test_graphics_stream().updates==updates+(phase==0u || phase==3u),
+              "orphan and failed draw invalidate reuse while a successful repeat stays cached");
+      if(phase!=2u) REQUIRE(anygm_test_graphics_instance_bytes(observed,bytes)==bytes &&
+                           !memcmp(expected,observed,bytes),"restored range fetches exact original bytes");
+      anygm_test_graphics_fail_scene_draw_at(0u);
+    }
+    size_t updates=anygm_test_graphics_stream().updates;
+    gml_gpu_context_lost(gpu);
+    REQUIRE(gml_gpu_context_reset(gpu,&context),"reuse context recreated after loss");
+    gml_gpu_device_services(gpu,&services);
+    REQUIRE(services.upload(services.context,&upload),"reuse immutable source recreated after loss");
+    result=services.submit(services.context,&batch);
+    REQUIRE(result.status==GML_RENDER_EXEC_ACCEPTED && anygm_test_graphics_stream().updates==updates+1u &&
+            !anygm_test_graphics_stream().errors && anygm_test_graphics_instance_bytes(observed,bytes)==bytes &&
+            !memcmp(expected,observed,bytes),"replacement context never reuses a predecessor storage identity");
+    REQUIRE(anygm_test_graphics_scene_draw_calls()==WRAP_BATCHES+13u && anygm_test_graphics_read_pixels()==1,
+            "reuse never removes a draw or adds a readback");
+    batch.operation_count=2u;
+    double original_top=operations[1].payload.quad.y[0];
+    for(unsigned repeat=0;repeat<INSTANCE_SPANS+3u;repeat++){
+      for(unsigned index=0;index<2u;index++){
+        operations[index].target.image.content_version+=QUADS+1u;
+        operations[index].target.storage_version+=QUADS+1u;
+      }
+      double left=repeat<INSTANCE_SPANS+1u?7.0+repeat%32u:7.0;
+      double top=original_top+(repeat<INSTANCE_SPANS+1u?(double)(repeat/32u):0.0);
+      operations[1].payload.quad.x[0]=operations[1].payload.quad.x[3]=left;
+      operations[1].payload.quad.x[1]=operations[1].payload.quad.x[2]=left+4.0;
+      operations[1].payload.quad.y[0]=operations[1].payload.quad.y[1]=top;
+      operations[1].payload.quad.y[2]=operations[1].payload.quad.y[3]=top+4.0;
+      updates=anygm_test_graphics_stream().updates;
+      result=services.submit(services.context,&batch);
+      REQUIRE(result.status==GML_RENDER_EXEC_ACCEPTED && !anygm_test_graphics_stream().errors &&
+              anygm_test_graphics_stream().updates==updates+(repeat<INSTANCE_SPANS+2u),
+              "bounded reuse index evicts the oldest small span without prefix or stale hits");
+      if(repeat>=INSTANCE_SPANS+1u) REQUIRE(anygm_test_graphics_instance_bytes(observed,bytes)==52u*sizeof(float) &&
+                             !memcmp(expected,observed,52u*sizeof(float)),
+                             "evicted and reuploaded single instance matches its full original record");
+    }
+    REQUIRE(anygm_test_graphics_scene_draw_calls()==WRAP_BATCHES+INSTANCE_SPANS+16u && anygm_test_graphics_read_pixels()==1,
+            "index eviction also preserves every draw without target observation");
+    free(expected);free(observed);
+    free(operations);gml_gpu_destroy(gpu,1);
+    return 1;
+  }
   {
     AnygmTestGraphicsStream stream=anygm_test_graphics_stream();
     const size_t bytes=QUADS*52u*sizeof(float);
     REQUIRE(stream.allocations==1u && stream.updates==1u && stream.offset==0u &&
-            stream.capacity==4u*2048u*52u*sizeof(float) && stream.errors==0u,
+            stream.capacity==STREAM_BYTES && stream.errors==0u,
             "compact stream allocates once and uses correct instance attributes");
-    /* Sixteen 500-quad batches fit; the seventeenth must orphan, never overwrite
-     * an in-flight region. A new target version also proves the cursor survives submit. */
-    for(unsigned repeat=1;repeat<18u;repeat++){
+    /* Fill the bounded ring, then orphan rather than overwrite an in-flight range.
+     * A new target version also proves the cursor survives submit. */
+    for(unsigned repeat=1;repeat<WRAP_BATCHES+2u;repeat++){
+      /* This append/wrap control deliberately gives each span distinct vertex bytes. */
+      operations[1].payload.quad.x[0]=operations[1].payload.quad.x[3]=7.0+repeat/32u;
+      operations[1].payload.quad.x[1]=operations[1].payload.quad.x[2]=11.0+repeat/32u;
+      operations[QUADS].payload.quad.x[0]=operations[QUADS].payload.quad.x[3]=20.0+repeat%32u;
+      operations[QUADS].payload.quad.x[1]=operations[QUADS].payload.quad.x[2]=24.0+repeat%32u;
       for(unsigned index=0;index<QUADS+1u;index++){
         operations[index].target.image.content_version+=QUADS+1u;
         operations[index].target.storage_version+=QUADS+1u;
@@ -1368,12 +1483,12 @@ static int scene_resident_batch_case(void){
       result=services.submit(services.context,&batch);
       stream=anygm_test_graphics_stream();
       REQUIRE(result.status==GML_RENDER_EXEC_ACCEPTED &&
-              stream.updates==repeat+1u && stream.allocations==(repeat<16u?1u:2u) &&
-              stream.offset==(repeat%16u)*bytes && stream.errors==0u &&
+              stream.updates==repeat+1u && stream.allocations==(repeat<WRAP_BATCHES?1u:2u) &&
+              stream.offset==(repeat%WRAP_BATCHES)*bytes && stream.errors==0u &&
               stream.uploaded_bytes==(repeat+1u)*bytes,
               "stream appends across submits and orphans only when full");
     }
-    REQUIRE(anygm_test_graphics_scene_draw_calls()==18 &&
+    REQUIRE(anygm_test_graphics_scene_draw_calls()==WRAP_BATCHES+2u &&
             anygm_test_graphics_read_pixels()==1,
             "ring wrap adds no draw, fence or target readback");
     gml_gpu_context_lost(gpu);
@@ -1382,13 +1497,33 @@ static int scene_resident_batch_case(void){
     REQUIRE(services.upload(services.context,&upload),"immutable source recreated after loss");
     result=services.submit(services.context,&batch);
     stream=anygm_test_graphics_stream();
+    REQUIRE(!map_mode || (stream.maps==WRAP_BATCHES+3u && stream.unmaps==WRAP_BATCHES+3u),
+            "mapped streams preserve every complete ordered upload");
     REQUIRE(result.status==GML_RENDER_EXEC_ACCEPTED && stream.allocations==3u &&
-            stream.updates==19u && stream.offset==0u && stream.errors==0u,
+            stream.updates==WRAP_BATCHES+3u && stream.offset==0u && stream.errors==0u,
             "replacement context has fresh storage and no stale stream cursor");
   }
+  if(packet_hash) *packet_hash=anygm_test_graphics_stream().packet_hash;
   free(operations);
   gml_gpu_destroy(gpu,1);
   return 1;
+}
+
+static int scene_resident_batch_case(void){
+  return scene_resident_batch_impl(0,GML_GPU_API_OPENGL_CORE,0u,NULL);
+}
+static int scene_mapped_stream_case(void){
+  uint64_t direct=0,mapped=0,unaligned=0;
+  REQUIRE(scene_resident_batch_impl(0,GML_GPU_API_OPENGL_CORE,0u,&direct) &&
+          scene_resident_batch_impl(0,GML_GPU_API_OPENGL_CORE,1u,&mapped) &&
+          scene_resident_batch_impl(0,GML_GPU_API_OPENGL_CORE,3u,&unaligned) &&
+          direct==mapped && direct==unaligned,
+          "mapped and direct streams retain the full ordered-packet fingerprint");
+  return scene_resident_batch_impl(0,GML_GPU_API_OPENGL_CORE,2u,NULL);
+}
+static int scene_instance_reuse_case(void){
+  return scene_resident_batch_impl(1,GML_GPU_API_OPENGL_CORE,1u,NULL) &&
+         scene_resident_batch_impl(1,GML_GPU_API_OPENGLES3,1u,NULL);
 }
 
 /* Call/state proof only. Composed pixel qualification needs a real device. */
@@ -5662,6 +5797,8 @@ int main(int argc,char **argv){
     {"scene_optional_entry_refusal",scene_optional_entry_refusal_case},
     {"scene_content_source_orientation",scene_content_source_orientation_case},
     {"scene_resident_batch",scene_resident_batch_case},
+    {"scene_mapped_stream",scene_mapped_stream_case},
+    {"scene_instance_reuse",scene_instance_reuse_case},
     {"scene_particle_line_batch",scene_particle_line_batch_case},
     {"scene_particle_disc_batch",scene_particle_disc_batch_case},
     {"scene_classic_alpha_rect_batch",scene_classic_alpha_rect_batch_case},

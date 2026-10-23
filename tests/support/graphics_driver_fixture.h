@@ -94,9 +94,14 @@ unsigned anygm_test_graphics_bound_buffer(void);
 size_t anygm_test_graphics_buffer_bytes(void);
 typedef struct AnygmTestGraphicsStream {
   size_t allocations,updates,uploaded_bytes,capacity,offset,size;
-  unsigned errors;
+  unsigned errors,maps,unmaps;
+  uint64_t packet_hash;
 } AnygmTestGraphicsStream;
 AnygmTestGraphicsStream anygm_test_graphics_stream(void);
+/* Zero refuses maps, one maps normally, two corrupts unmapping, three offsets the pointer. */
+void anygm_test_graphics_stream_mapping(unsigned mode);
+/* Actual bytes fetched by the most recent instance draw, including a reused non-latest range. */
+size_t anygm_test_graphics_instance_bytes(void *bytes,size_t capacity);
 unsigned anygm_test_graphics_float_uniforms(void);
 unsigned anygm_test_graphics_matrix_uniforms(void);
 /* Read-backs performed, and the texture attached to the off-screen target (0 for none). */

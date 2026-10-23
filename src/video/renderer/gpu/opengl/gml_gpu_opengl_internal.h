@@ -18,7 +18,8 @@ enum {
   GL_SCENE_MAX_QUADS=2048,
   GL_SCENE_VERTEX_FLOATS=28,
   GL_SCENE_INSTANCE_FLOATS=52,
-  GL_SCENE_STREAM_BYTES=4*GL_SCENE_MAX_QUADS*GL_SCENE_INSTANCE_FLOATS*sizeof(float)
+  GL_SCENE_INSTANCE_SPANS=128,
+  GL_SCENE_STREAM_BYTES=20*GL_SCENE_MAX_QUADS*GL_SCENE_INSTANCE_FLOATS*sizeof(float)
 };
 
 /* One uniform the content's program declares, as the context reports it after linking. A value
@@ -138,6 +139,11 @@ typedef struct GlScene {
   GLuint upload_buffer;
   size_t instance_bytes_used;
   int instance_storage_ready;
+  /* Byte-identical instance ranges share only their immutable stream storage, not draw state. */
+  struct { size_t offset,bytes; uint64_t hash; } instance_spans[GL_SCENE_INSTANCE_SPANS];
+  unsigned instance_span_count,instance_span_next;
+  uint8_t *instance_mirror;
+  int instance_reuse_attempted;
   GLint a_position01,a_position23,a_texcoord01,a_texcoord23;
   GLint a_colour[4],a_clamp,a_map,a_step_margin_active,a_span_x,a_span_y;
   GLint u_extent,u_image,u_filter,u_alpha_test,u_source_alpha_key,u_previous,u_region_origin;

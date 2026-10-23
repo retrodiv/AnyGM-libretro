@@ -89,11 +89,17 @@ typedef struct FakeDriver {
   GLuint bound_buffer;
   size_t buffer_bytes;
   size_t buffer_capacity[FAKE_MAX_CALLS],buffer_high_water[FAKE_MAX_CALLS];
+  unsigned char *buffer_store[FAKE_MAX_CALLS];
+  GLuint instance_buffer;
+  size_t instance_offset,instance_size;
   size_t attribute_offset[16];
   GLsizei attribute_stride[16];
   GLuint attribute_buffer[16],attribute_divisor[16];
   GLint attribute_components[16];
   AnygmTestGraphicsStream stream;
+  unsigned stream_map_mode,stream_mapped;
+  unsigned char *stream_map_store;
+  size_t stream_map_capacity,stream_map_offset,stream_map_length;
   float buffer_data[64];
   unsigned float_uniforms;
   unsigned matrix_uniforms;
@@ -130,6 +136,8 @@ static FakeDriver g_fake;
 
 void anygm_test_graphics_reset(void){
   free(g_fake.unpack_store);
+  free(g_fake.stream_map_store);
+  for(unsigned index=0;index<FAKE_MAX_CALLS;index++) free(g_fake.buffer_store[index]);
   memset(&g_fake,0,sizeof g_fake);
   g_fake.next_name=1;
   g_fake.allow_calls=1;
@@ -141,6 +149,7 @@ void anygm_test_graphics_reset(void){
   g_fake.checkpoint_mask=-1;
   g_fake.renderer="fake";
 }
+void anygm_test_graphics_stream_mapping(unsigned mode){ g_fake.stream_map_mode=mode; }
 void anygm_test_graphics_fail_unpack(unsigned phase){ g_fake.unpack_failure=phase; }
 AnygmTestGraphicsUnpack anygm_test_graphics_unpack(void){ return g_fake.unpack; }
 void anygm_test_graphics_renderer(const char *renderer){ g_fake.renderer=renderer; }
@@ -447,8 +456,31 @@ static GLenum fake_CheckFramebufferStatus(GLenum target){ (void)target; note_cal
 /* A pack buffer bound means the read is asynchronous: the pattern goes into the fixture's own
  * storage for that buffer and is handed back when the backend maps it, which is what lets a test
  * see that a pass took the previous pass's answer. */
+static void fake_BufferSubData(GLenum target,GLintptr offset,GLsizeiptr size,const void *data);
 static void *fake_MapBufferRange(GLenum target,GLintptr offset,GLsizeiptr length,GLbitfield access){
   (void)target;(void)offset;(void)length;(void)access; note_call();
+  if(target==GL_ARRAY_BUFFER){
+    unsigned buffer=g_fake.bound_buffer;
+    g_fake.stream.maps++;
+    if(!g_fake.stream_map_mode) return NULL;
+    if(!buffer || buffer>=FAKE_MAX_CALLS || offset<0 || length<=0 ||
+       (size_t)offset<g_fake.buffer_high_water[buffer] ||
+       (size_t)offset>g_fake.buffer_capacity[buffer] ||
+       (size_t)length>g_fake.buffer_capacity[buffer]-(size_t)offset ||
+       access!=(GL_MAP_WRITE_BIT|GL_MAP_UNSYNCHRONIZED_BIT) || g_fake.stream_mapped){
+      g_fake.stream.errors++;
+      return NULL;
+    }
+    if((size_t)length+4u>g_fake.stream_map_capacity){
+      unsigned char *grown=realloc(g_fake.stream_map_store,(size_t)length+4u);
+      if(!grown) return NULL;
+      g_fake.stream_map_store=grown;g_fake.stream_map_capacity=(size_t)length+4u;
+    }
+    g_fake.stream_map_offset=(size_t)offset;g_fake.stream_map_length=(size_t)length;
+    g_fake.stream_mapped=1u;
+    memset(g_fake.stream_map_store,0xCD,(size_t)length+4u);
+    return g_fake.stream_map_store+(g_fake.stream_map_mode==3u?4u:0u);
+  }
   if(target==GL_PIXEL_UNPACK_BUFFER){
     g_fake.unpack.maps++;
     g_fake.unpack.access=access;
@@ -466,6 +498,16 @@ static void *fake_MapBufferRange(GLenum target,GLintptr offset,GLsizeiptr length
 }
 static GLboolean fake_UnmapBuffer(GLenum target){
   note_call();
+  if(target==GL_ARRAY_BUFFER){
+    g_fake.stream.unmaps++;
+    if(!g_fake.stream_mapped){g_fake.stream.errors++;return GL_FALSE;}
+    g_fake.stream_mapped=0u;
+    if(g_fake.stream_map_mode==2u) return GL_FALSE;
+    fake_BufferSubData(target,(GLintptr)g_fake.stream_map_offset,
+      (GLsizeiptr)g_fake.stream_map_length,
+      g_fake.stream_map_store+(g_fake.stream_map_mode==3u?4u:0u));
+    return GL_TRUE;
+  }
   if(target==GL_PIXEL_UNPACK_BUFFER){
     g_fake.unpack.unmaps++;
     if(!g_fake.unpack_mapped) g_fake.unpack.errors++;
@@ -590,14 +632,20 @@ static void fake_DrawArrays(GLenum mode,GLint first,GLsizei count){
 static void fake_DrawArraysInstanced(GLenum mode,GLint first,GLsizei count,
                                      GLsizei instance_count){
   if(mode==GL_TRIANGLES && first==0 && count==6 && instance_count>0){
+    size_t offset=g_fake.attribute_offset[0],bytes=(size_t)instance_count*52u*sizeof(float);
+    GLuint buffer=g_fake.bound_buffer;
     for(unsigned index=0;index<13u;index++){
-      if(g_fake.attribute_offset[index]!=g_fake.stream.offset+index*4u*sizeof(float) ||
+      if(g_fake.attribute_offset[index]!=offset+index*4u*sizeof(float) ||
          g_fake.attribute_stride[index]!=52*(GLsizei)sizeof(float) ||
          g_fake.attribute_components[index]!=4 || g_fake.attribute_divisor[index]!=1u ||
          g_fake.attribute_buffer[index]!=g_fake.bound_buffer) g_fake.stream.errors++;
     }
-    if((size_t)instance_count*52u*sizeof(float)!=g_fake.stream.size)
+    if(!buffer || buffer>=FAKE_MAX_CALLS || !g_fake.buffer_store[buffer] ||
+       offset>g_fake.buffer_high_water[buffer] || bytes>g_fake.buffer_high_water[buffer]-offset)
       g_fake.stream.errors++;
+    g_fake.instance_buffer=buffer;
+    g_fake.instance_offset=offset;
+    g_fake.instance_size=bytes;
     fake_DrawArrays(mode,first,count*instance_count);
     return;
   }
@@ -677,6 +725,11 @@ static void fake_BufferData(GLenum target,GLsizeiptr size,const void *data,GLenu
   }
   g_fake.buffer_bytes=(size_t)size;
   if(target==GL_ARRAY_BUFFER && g_fake.bound_buffer<FAKE_MAX_CALLS){
+    unsigned char *store=size>0?(unsigned char*)realloc(g_fake.buffer_store[g_fake.bound_buffer],(size_t)size):NULL;
+    if(size>0 && !store){g_fake.pending_error=0x0505u;return;}
+    if(size<=0) free(g_fake.buffer_store[g_fake.bound_buffer]);
+    g_fake.buffer_store[g_fake.bound_buffer]=store;
+    if(data && size>0) memcpy(store,data,(size_t)size);
     g_fake.buffer_capacity[g_fake.bound_buffer]=(size_t)size;
     g_fake.buffer_high_water[g_fake.bound_buffer]=0;
     if(!data){
@@ -700,6 +753,12 @@ static void fake_BufferSubData(GLenum target,GLintptr offset,GLsizeiptr size,con
     return;
   }
   g_fake.buffer_high_water[buffer]=(size_t)offset+(size_t)size;
+  if(!g_fake.stream.updates) g_fake.stream.packet_hash=UINT64_C(14695981039346656037);
+  for(size_t byte=0;byte<(size_t)size;byte++){
+    g_fake.stream.packet_hash^=((const unsigned char*)data)[byte];
+    g_fake.stream.packet_hash*=UINT64_C(1099511628211);
+  }
+  if(g_fake.buffer_store[buffer]) memcpy(g_fake.buffer_store[buffer]+offset,data,(size_t)size);
   g_fake.stream.updates++;
   g_fake.stream.uploaded_bytes+=(size_t)size;
   g_fake.stream.offset=(size_t)offset;
@@ -710,6 +769,11 @@ static void fake_BufferSubData(GLenum target,GLintptr offset,GLsizeiptr size,con
 }
 static void fake_DeleteBuffers(GLsizei n,const GLuint *names){
   note_call(); g_fake.deletes_issued+=n;
+  for(GLsizei index=0;index<n;index++) if(names[index]<FAKE_MAX_CALLS){
+    free(g_fake.buffer_store[names[index]]);
+    g_fake.buffer_store[names[index]]=NULL;
+    g_fake.buffer_capacity[names[index]]=g_fake.buffer_high_water[names[index]]=0;
+  }
   for(GLsizei index=0;index<n;index++) if(names[index]==g_fake.unpack.buffer){
     g_fake.unpack.deletes++;
     free(g_fake.unpack_store);
@@ -892,6 +956,14 @@ int anygm_test_graphics_attributes_enabled(void){ return g_fake.attributes_enabl
 unsigned anygm_test_graphics_bound_buffer(void){ return g_fake.bound_buffer; }
 size_t anygm_test_graphics_buffer_bytes(void){ return g_fake.buffer_bytes; }
 AnygmTestGraphicsStream anygm_test_graphics_stream(void){ return g_fake.stream; }
+size_t anygm_test_graphics_instance_bytes(void *bytes,size_t capacity){
+  GLuint buffer=g_fake.instance_buffer;
+  if(!bytes || capacity<g_fake.instance_size || !buffer || buffer>=FAKE_MAX_CALLS ||
+     !g_fake.buffer_store[buffer] || g_fake.instance_offset>g_fake.buffer_high_water[buffer] ||
+     g_fake.instance_size>g_fake.buffer_high_water[buffer]-g_fake.instance_offset) return 0;
+  memcpy(bytes,g_fake.buffer_store[buffer]+g_fake.instance_offset,g_fake.instance_size);
+  return g_fake.instance_size;
+}
 unsigned anygm_test_graphics_float_uniforms(void){ return g_fake.float_uniforms; }
 unsigned anygm_test_graphics_matrix_uniforms(void){ return g_fake.matrix_uniforms; }
 unsigned anygm_test_graphics_read_pixels(void){ return g_fake.read_pixels; }

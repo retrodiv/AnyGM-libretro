@@ -460,6 +460,18 @@ retain their separately qualified expanded layout and upload path. The neutral
 `scene_resident_batch` driver control covers cross-submit offsets, wrap and context
 loss; existing real-device paired scene controls retain responsibility for pixels.
 
+The same stream keeps at most128 byte-identical range identities and an optional
+CPU mirror bounded by that fixed8.125MiB buffer capacity. A word fingerprint only rejects
+candidates: full byte equality is required before reusing an uploaded range.
+Draws and all source/target/program/blend/attribute state still execute normally;
+this caches vertex bytes, not an image, draw or source version. Cache identities
+are discarded on orphan, context replacement and reported draw error. Allocation
+failure leaves the established append-only upload path available. No shader,
+admission, CPU writer, fidelity class or state format changes. The neutral
+`scene_instance_reuse` control checks actual fetched VBO bytes on both APIs,
+modified first/last instances, ring wrap, bounded-index eviction, draw failure and
+context recreation; paired real-device controls still own pixel qualification.
+
 Known revalidation debt: the inherited modern SCREEN point control rejects its
 alternating-tint partial-alpha case at scale0.7 at the admission/batch-mechanism
 stage on both the frozen pre-change producer and the queue experiment. Pixels
