@@ -634,6 +634,7 @@ int gml_render_application_scene_enqueue_quads(GmlRender *r,
   GmlRenderDrawStateSnapshot mapped_state;
   if(r && r->scene_device_enabled && r->resident_application_pass && operation && state &&
      operation->scene_family==GML_RENDER_SCENE_SPRITE &&
+     operation->payload.quad.sampling.quantisation!=GML_RENDER_QUANTISE_POSITIONED_SAMPLE &&
      !state->source_palette.enabled){
     GmlRenderSourcePalette palette;
     if(gml_render_shader_source_palette_snapshot(r,r->active_shader,&palette)){
@@ -649,8 +650,11 @@ int gml_render_application_scene_enqueue_quads(GmlRender *r,
     count<=GML_SCENE_IMMUTABLE_ROW_LIMIT && operation->opcode==GML_RENDER_OP_TEXTURED_QUAD &&
     operation->scene_family==GML_RENDER_SCENE_SPRITE &&
     operation->reconstruction_mode==GML_RENDER_DEVICE_CHECKPOINT &&
-    operation->payload.quad.sampling.filter==GML_RENDER_FILTER_NEAREST &&
-    operation->payload.quad.sampling.quantisation==GML_RENDER_QUANTISE_INTEGER_ROW_TINT_TRUNC;
+    ((operation->payload.quad.sampling.filter==GML_RENDER_FILTER_NEAREST &&
+      operation->payload.quad.sampling.quantisation==GML_RENDER_QUANTISE_INTEGER_ROW_TINT_TRUNC) ||
+     ((operation->payload.quad.sampling.filter==GML_RENDER_FILTER_NEAREST ||
+       operation->payload.quad.sampling.filter==GML_RENDER_FILTER_HARDWARE_BILINEAR) &&
+      operation->payload.quad.sampling.quantisation==GML_RENDER_QUANTISE_POSITIONED_SAMPLE));
   int mutable_text=operation && source &&
     operation->scene_family==GML_RENDER_SCENE_TEXT &&
     operation->reconstruction_mode==GML_RENDER_DEVICE_CHECKPOINT &&
@@ -730,6 +734,7 @@ int gml_render_application_scene_enqueue_quads(GmlRender *r,
      (operation->payload.quad.sampling.filter==GML_RENDER_FILTER_HARDWARE_BILINEAR &&
       (operation->payload.quad.sampling.quantisation==GML_RENDER_QUANTISE_HARDWARE_SPRITE_FIRSTGEN ||
        operation->payload.quad.sampling.quantisation==GML_RENDER_QUANTISE_HARDWARE_SPRITE_MODERN ||
+       operation->payload.quad.sampling.quantisation==GML_RENDER_QUANTISE_POSITIONED_SAMPLE ||
        (operation->payload.quad.span_active==GML_RENDER_SPAN_FILTERED_AXIS_SUPPORT_ROW &&
         (operation->payload.quad.sampling.quantisation==GML_RENDER_QUANTISE_INTEGER_TINT_TRUNC ||
          operation->payload.quad.sampling.quantisation==GML_RENDER_QUANTISE_INTEGER_TINT_ROUND)) ||

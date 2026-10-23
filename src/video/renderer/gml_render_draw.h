@@ -203,7 +203,9 @@ enum {
   GML_RENDER_QUANTISE_SURFACE_TILED_FILTERED=22u,
   GML_RENDER_QUANTISE_SURFACE_TILED_LEADING=23u,
   /* Geometry-prepared constant texel rows;colour and blending stay on device. */
-  GML_RENDER_QUANTISE_SURFACE_ROTATED_POINT=24u
+  GML_RENDER_QUANTISE_SURFACE_ROTATED_POINT=24u,
+  /* Shared positioned coverage supplies constant nearest/bilinear sample rows. */
+  GML_RENDER_QUANTISE_POSITIONED_SAMPLE=25u
 };
 
 /* Resolved blend semantics, independent of any device API's enumerant values. Zeroed factors

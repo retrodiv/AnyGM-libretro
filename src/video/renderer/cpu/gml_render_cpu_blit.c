@@ -6384,6 +6384,89 @@ static int sprite_pos_triangle(double px,double py,
   return 1;
 }
 
+/* Direct positive-axis input coordinates and coverage. The existing page
+ * writer below remains the colour/blend oracle; this reads source alpha only. */
+int gml_render_sprite_pos_axis_sample(GmlRender *r,const GmlTpag *page,
+  GmlRenderRect bounds,double left,double top,double xs,double ys,
+  int px,int py,double alpha,double *u,double *v,double *sample_alpha){
+  const GmlAtlas *atlas=&r->atlas[page->atlas];
+  double sx,sy,a;
+  int bypass=(r->blendmode==2 || (r->alphablend && r->blendmode==6) ||
+    destination_colour_blend_active(r)) && !shader_alpha_test_active(r);
+  if(r->interp){
+    sx=((double)px+.5-left)/xs-.5;sy=((double)py+.5-top)/ys-.5;
+    int ix=(int)floor(sx),iy=(int)floor(sy);
+    double fx=sx-ix,fy=sy-iy;
+    a=interp_tpag_sample(atlas,page,ix,iy,0)[3]*((1.0-fx)*(1.0-fy))+
+      interp_tpag_sample(atlas,page,ix+1,iy,0)[3]*(fx*(1.0-fy))+
+      interp_tpag_sample(atlas,page,ix,iy+1,0)[3]*((1.0-fx)*fy)+
+      interp_tpag_sample(atlas,page,ix+1,iy+1,0)[3]*(fx*fy);
+    if(shader_discards_alpha_value(r,a) && !bypass) return 0;
+    int modern_normal=!r->blendmode && anygm_policy_has_modern_layer_semantics(r->win);
+    if(!modern_normal) a=floor(a+.5);
+    if(a<=0.0 && r->blendmode!=2 && !(r->alphablend && r->blendmode==6) &&
+       !destination_colour_blend_active(r)) return 0;
+    *u=fmax(0.0,fmin(1.0,(sx+.5)/page->sw));
+    *v=fmax(0.0,fmin(1.0,(sy+.5)/page->sh));
+  }else{
+    int reciprocal_x=fabs(1.0/xs-nearbyint(1.0/xs))<1e-9;
+    int reciprocal_y=fabs(1.0/ys-nearbyint(1.0/ys))<1e-9;
+    int modern=anygm_policy_has_modern_layer_semantics(r->win);
+    int application=gml_render_target_is_first_generation_application_surface(r);
+    double phase_x=modern?bounds.x+.5-left:.5;
+    double phase_y=modern?bounds.y+.5-top:.5;
+    if(application && !reciprocal_x)
+      phase_x=bounds.x+(xs>1.0 && fabs(xs-nearbyint(xs))<1e-9?1.0-1e-9:.5)-left;
+    if(application && !reciprocal_y)
+      phase_y=bounds.y+(ys>1.0 && fabs(ys-nearbyint(ys))<1e-9?1.0-1e-9:.5)-top;
+    int ix=gml_render_point_axis_index(px-bounds.x,phase_x,xs);
+    int iy=gml_render_point_axis_index(py-bounds.y,phase_y,ys);
+    if(page->project_authored_edges){
+      if(ix<0) ix=0;else if(ix>=page->sw) ix=page->sw-1;
+      if(iy<0) iy=0;else if(iy>=page->sh) iy=page->sh-1;
+    }
+    if(ix<0 || iy<0 || ix>=page->sw || iy>=page->sh) return 0;
+    a=atlas->px[((size_t)(page->sy+iy)*atlas->w+page->sx+ix)*4u+3u];
+    if(shader_discards_alpha(r,(unsigned)a) && !bypass) return 0;
+    if(a*alpha<=0.0 && r->blendmode!=2 && r->blendmode!=6 &&
+       !destination_colour_blend_active(r)) return 0;
+    *u=(ix+.5)/page->sw;*v=(iy+.5)/page->sh;
+  }
+  *sample_alpha=a;return 1;
+}
+
+int gml_render_sprite_pos_coordinates(const GmlRenderSpritePosGeometry *geometry,
+                                      int x,int y,double *u,double *v){
+  for(int part=0;part<2;part++)
+    if(sprite_pos_triangle(x+.5,y+.5,geometry->tx[part],geometry->ty[part],
+         geometry->tu[part],geometry->tv[part],u,v)) return 1;
+  return 0;
+}
+
+/* Alpha-only input coverage follows the existing sampler's clamped taps and
+ * binary64 expression. RGB sampling and destination blending stay on device. */
+double gml_render_sprite_pos_source_alpha(const uint8_t *rgba,int stride,
+  int ox,int oy,int sw,int sh,double u,double v,int interpolate){
+  u=fmax(0.0,fmin(1.0,u));v=fmax(0.0,fmin(1.0,v));
+  if(!interpolate){
+    int sx=(int)floor(u*sw),sy=(int)floor(v*sh);
+    if(sx>=sw) sx=sw-1;
+    if(sy>=sh) sy=sh-1;
+    return rgba[((size_t)(oy+sy)*stride+ox+sx)*4u+3u];
+  }
+  double fx=u*sw-.5,fy=v*sh-.5;
+  int x0=(int)floor(fx),y0=(int)floor(fy),x1=x0+1,y1=y0+1;
+  double ax=fx-x0,ay=fy-y0;
+  if(x0<0) x0=0; else if(x0>=sw) x0=sw-1;
+  if(x1<0) x1=0; else if(x1>=sw) x1=sw-1;
+  if(y0<0) y0=0; else if(y0>=sh) y0=sh-1;
+  if(y1<0) y1=0; else if(y1>=sh) y1=sh-1;
+  return rgba[((size_t)(oy+y0)*stride+ox+x0)*4u+3u]*(1-ax)*(1-ay)+
+    rgba[((size_t)(oy+y0)*stride+ox+x1)*4u+3u]*ax*(1-ay)+
+    rgba[((size_t)(oy+y1)*stride+ox+x0)*4u+3u]*(1-ax)*ay+
+    rgba[((size_t)(oy+y1)*stride+ox+x1)*4u+3u]*ax*ay;
+}
+
 static void sprite_pos_sample(const uint8_t *rgba,int stride,int ox,int oy,int sw,int sh,
                               double u,double v,int interpolate,double out[4]){
   if(u<0) u=0; else if(u>1) u=1;

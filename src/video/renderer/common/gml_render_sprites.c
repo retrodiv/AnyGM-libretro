@@ -5635,10 +5635,249 @@ static int resident_positioned_quad_sprite(GmlRender *r,int sprite,int subimg,
   return 1;
 }
 
+/* R03-SPR-POSITIONED-FUNCTION: CPU-owned first-hit coverage and coordinates,
+ * versioned source bytes,hardware colour/filtering and fixed-function blending. */
+static int resident_positioned_function(GmlRender *r,int sprite,int subimg,
+                                        const double x[4],const double y[4],double alpha){
+  enum { LIMIT=65536 };
+  const GmlRenderDeviceServices *device=gml_render_device(r);
+  GmlRenderSpritePosGeometry geometry;
+  GmlTpag *axis_page=NULL;
+  GmlRenderRect axis_bounds={0};
+  double axis_xs=0.0,axis_ys=0.0;
+  double mx[4],my[4];
+  if(!r || !r->win || !r->resident_application_pass || !device ||
+     !device->observe_on_demand || !device->observe_on_demand(device->context) ||
+     gml_d3_is_active(r) || !gml_render_scene_target_matches(r) ||
+     gml_render_classic_vertical_phase_blocks_scene(r) ||
+     gml_render_interpolated_phase_blocks_scene(r) || r->pending_presentation ||
+     r->rotated_batch_count || r->rotated_batch_building ||
+     r->fbw<=0 || r->fbh<=0 || r->fbw>16384 || r->fbh>16384 ||
+     !isfinite(alpha) || alpha< -1.0 || r->blendmode<0 || r->blendmode>11 ||
+     r->blend_equation<1 || r->blend_equation>5 ||
+     r->blend_equation_alpha<1 || r->blend_equation_alpha>5 ||
+     r->color_write_mask>15u) return 0;
+  int destination=r->alphablend && gml_render_blend_uses_destination_colour(r->blendmode);
+  if(sprite<0 || sprite>=r->n_spr || (alpha<=0 && !destination)) return 1;
+  if(alpha>1) alpha=1;
+  for(int corner=0;corner<4;corner++){
+    mx[corner]=x[corner];my[corner]=y[corner];
+    if(!isfinite(mx[corner]) || !isfinite(my[corner])) return 0;
+    gml_render_draw_map_point(r,&mx[corner],&my[corner]);
+    double px=mx[corner]-r->cam_x,py=my[corner]-r->cam_y;
+    if(!isfinite(px) || !isfinite(py) || fabs(px)>1000000.0 || fabs(py)>1000000.0) return 0;
+  }
+  int kind=gml_render_sprite_pos_geometry(r,mx,my,&geometry);
+  if(!kind) return 1;
+  /* The positive axis CPU leaf has its own atlas/logical-trim sampler.
+   * Reuse that complete owner instead of applying triangle UVs to it. */
+  if(kind==1){
+    double left=geometry.qx[0],top=geometry.qy[0];
+    double width=geometry.qx[1]-left,height=geometry.qy[3]-top;
+    if(left>=r->fbw+2.0 || top>=r->fbh+2.0 ||
+       left+width<=-2.0 || top+height<=-2.0) return 1;
+    GmlSprite *sprite_source=&r->spr[sprite];
+    if(sprite_source->runtime_rgba || !sprite_source->frame || sprite_source->n_frames<=0) return 0;
+    int page_index=sprite_source->frame[gml_render_runtime_frame_index(sprite_source,subimg)];
+    if(page_index<0 || page_index>=r->n_tpag) return 1;
+    GmlTpag *page=&r->tpag[page_index];
+    if(page->sw<=0 || page->sh<=0) return 1;
+    double xs=width/page->sw,ys=height/page->sh;
+    if(r->pending_underlay && !gml_render_compose_resident_underlay(r)) return 0;
+    int stored_mode=r->blendmode;
+    int stored_shader=r->active_shader;
+    int stored_equation=r->blend_equation,stored_alpha_equation=r->blend_equation_alpha;
+    unsigned stored_mask=r->color_write_mask;
+    /* This direct CPU blitter has no multiply/source-colour preset arm.
+     * Its ordinary/add/inverse and disabled writers also ignore masks.
+     * Keep those input policies local to preparation,then restore readable
+     * draw state before the public call returns. */
+    if(stored_mode==3 || stored_mode==5) r->blendmode=0;
+    if(!r->alphablend || (stored_mode!=4 && stored_mode!=7 && stored_mode!=8 &&
+       !(stored_mode==6 && r->interp) &&
+       !gml_render_blend_uses_destination_colour(stored_mode))) r->color_write_mask=15u;
+    /* This entry calls the CPU page writer directly. An absent program has
+     * no evaluator there,and separate equations are read only by the
+     * destination-colour presets. Do not import unrelated facade guards. */
+    if(!r->shader_pal || r->active_shader>=r->n_shader_pal) r->active_shader=-1;
+    if(!destination) r->blend_equation=r->blend_equation_alpha=1;
+    if(alpha<0) alpha=0;
+    int accepted=r->interp?resident_filtered_atlas_page(r,page_index,left,top,xs,ys,
+      GML_RENDER_SCENE_SPRITE,0xFFFFFFu,alpha,NULL,NULL,0.0,NULL,0,0,0,0,7):
+      resident_atlas_crop_from_page(r,page,0,0,page->sw,page->sh,left,top,xs,ys,
+        GML_RENDER_SCENE_SPRITE,0xFFFFFFu,alpha,stored_mode==6?20:15,NULL);
+    r->blendmode=stored_mode;r->color_write_mask=stored_mask;
+    r->active_shader=stored_shader;
+    r->blend_equation=stored_equation;r->blend_equation_alpha=stored_alpha_equation;
+    if(accepted) return 1;
+    /* The generic page preparators have narrower numerical/state gates.
+     * Resolve the remaining direct-axis samples with this leaf's own input
+     * coverage,then use the same hardware colour/fixed-blend packet below. */
+    if(r->fog_flat || r->font_sdf_active ||
+       (r->active_shader>=0 && r->active_shader<r->n_shader_pal && r->shader_pal &&
+        !gml_render_shader_cpu_passthrough(r)) ||
+       (r->interp && (page->tx || page->ty || page->bw!=page->sw || page->bh!=page->sh)) ||
+       (stored_mode==6 && (page->tx || page->ty || page->bw!=page->sw || page->bh!=page->sh)) ||
+       (fabs(xs-1.0)<.001 && fabs(ys-1.0)<.001 && !stored_mode)) return 0;
+    GmlSprite physical={0};
+    if(!gml_render_sprite_axis_bounds(r,&physical,page,
+         left+r->cam_x-page->tx*xs,top+r->cam_y-page->ty*ys,xs,ys,0.0,&axis_bounds)) return 0;
+    if(!axis_bounds.width || !axis_bounds.height) return 1;
+    geometry.x0=axis_bounds.x<0?0:axis_bounds.x;
+    geometry.y0=axis_bounds.y<0?0:axis_bounds.y;
+    geometry.x1=(int64_t)axis_bounds.x+axis_bounds.width>r->fbw?r->fbw-1:
+      axis_bounds.x+(int)axis_bounds.width-1;
+    geometry.y1=(int64_t)axis_bounds.y+axis_bounds.height>r->fbh?r->fbh-1:
+      axis_bounds.y+(int)axis_bounds.height-1;
+    if(geometry.x1<geometry.x0 || geometry.y1<geometry.y0) return 1;
+    axis_page=page;axis_xs=xs;axis_ys=ys;
+  }
+  int mode=r->blendmode;
+  int replacement=axis_page && mode==6 && (!r->interp || r->alphablend);
+  int masked=r->alphablend && (mode==4 || mode==7 || mode==8 || destination ||
+    (axis_page && r->interp && mode==6));
+  if(masked && !r->color_write_mask) return 1;
+  GmlSprite *s=&r->spr[sprite];
+  if(s->n_frames<=0) return 1;
+  GmlRenderResourceSource source={0};
+  int ox=0,oy=0,sw=s->w,sh=s->h;
+  if(s->runtime_rgba){
+    if(!gml_render_runtime_sprite_scene_source_view(r,s,subimg,&source)) return 0;
+  }else{
+    if(!s->frame) return 0;
+    int index=s->frame[gml_render_runtime_frame_index(s,subimg)];
+    if(index<0 || index>=r->n_tpag) return 1;
+    GmlTpag *page=&r->tpag[index];
+    ox=page->sx;oy=page->sy;sw=page->sw;sh=page->sh;
+    if(sw<=0 || sh<=0) return 1;
+    if(!gml_render_atlas_scene_source_view(r,page->atlas,&source)) return 0;
+  }
+  if(!source.borrowed_immutable || source.pixel_format!=GML_RENDER_PIXEL_RGBA8888 ||
+     source.width>16384u || source.height>16384u || !source.bytes ||
+     ox<0 || oy<0 || sw<=0 || sh<=0 || sw>4096 || sh>4096 ||
+     (uint64_t)(unsigned)ox+(unsigned)sw>source.width ||
+     (uint64_t)(unsigned)oy+(unsigned)sh>source.height ||
+     source.stride_bytes!=source.width*4u ||
+     (uint64_t)(unsigned)(geometry.x1-geometry.x0+1)*
+       (unsigned)(geometry.y1-geometry.y0+1)>16777216u) return 0;
+  uint64_t area=(uint64_t)(unsigned)(geometry.x1-geometry.x0+1)*
+    (unsigned)(geometry.y1-geometry.y0+1);
+  uint32_t capacity=area<LIMIT?(uint32_t)area:LIMIT;
+  GmlRenderDrawOp *operations=calloc(capacity,sizeof *operations);
+  if(!operations) return 0;
+  uint32_t count=0;int accepted=0;
+  for(int py=geometry.y0;py<=geometry.y1;py++) for(int px=geometry.x0;px<=geometry.x1;px++){
+    double u=0,v=0,a=0;
+    if(axis_page){
+      if(!gml_render_sprite_pos_axis_sample(r,axis_page,axis_bounds,geometry.qx[0],
+           geometry.qy[0],axis_xs,axis_ys,px,py,alpha,&u,&v,&a)) continue;
+    }else{
+      if(!gml_render_sprite_pos_coordinates(&geometry,px,py,&u,&v)) continue;
+      u=fmax(0.0,fmin(1.0,u));v=fmax(0.0,fmin(1.0,v));
+      a=gml_render_sprite_pos_source_alpha(source.bytes,(int)source.width,
+        ox,oy,sw,sh,u,v,r->interp);
+      if(!destination && a*alpha/255.0<=0.0) continue;
+    }
+    double su,sv;
+    if(r->interp){su=(ox+u*sw)/source.width;sv=(oy+v*sh)/source.height;}
+    else{
+      int ix=(int)floor(u*sw),iy=(int)floor(v*sh);
+      if(ix>=sw) ix=sw-1;
+      if(iy>=sh) iy=sh-1;
+      su=(ox+ix+.5)/source.width;sv=(oy+iy+.5)/source.height;
+    }
+    if(count){
+      GmlRenderQuad *q=&operations[count-1u].payload.quad;
+      if(q->y[0]==py && q->x[1]==px && q->u[0]==su && q->v[0]==sv){
+        q->x[1]=q->x[2]=px+1.0;continue;
+      }
+    }
+    if(count==capacity) goto done;
+    GmlRenderQuad *q=&operations[count++].payload.quad;
+    q->shape=GML_RENDER_QUAD_AXIS_ALIGNED;
+    q->sampling=(GmlRenderSamplingPolicy){r->interp?GML_RENDER_FILTER_HARDWARE_BILINEAR:
+      GML_RENDER_FILTER_NEAREST,GML_RENDER_EDGE_CLAMP_SUBIMAGE,
+      {ox,oy,(uint32_t)sw,(uint32_t)sh},GML_RENDER_QUANTISE_POSITIONED_SAMPLE,0u};
+    q->filtered_draw_alpha=alpha;
+    q->span_x[0]=axis_page && (masked || replacement)?3.0:
+      !r->alphablend?2.0:destination && alpha<0.0?3.0:masked?1.0:0.0;
+    if(q->span_x[0]==3.0){
+      long rounded=lround(a*alpha);
+      q->span_y[0]=rounded<0?255.0:(double)rounded;
+    }
+    q->x[0]=q->x[3]=px;q->x[1]=q->x[2]=px+1.0;
+    q->y[0]=q->y[1]=py;q->y[2]=q->y[3]=py+1.0;
+    for(unsigned corner=0;corner<4u;corner++){
+      q->u[corner]=su;q->v[corner]=sv;q->corner_colour[corner]=0xFFFFFFFFu;
+    }
+  }
+  if(!count){accepted=1;goto done;}
+  if(r->pending_underlay && !gml_render_compose_resident_underlay(r)) goto done;
+  gml_render_flush_pending_fill(r);
+  GmlRenderResource *target=gml_render_scene_target_resource_ensure(r);
+  if(!target || r->pending_fill) goto done;
+  GmlRenderDrawStateSnapshot state={.write_mask=masked?r->color_write_mask:15u,
+    .colour=0xFFFFFFFFu,.alpha=255u,.sampler_count=1u};
+  int preserve=gml_render_target_preserves_alpha(r);
+  if(replacement){
+    state.coverage_policy=preserve?0u:GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA;
+  }else if(r->alphablend){
+    state.rgb_equation=state.alpha_equation=GML_RENDER_BLEND_ADD;
+    state.coverage_policy=preserve?0u:GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA;
+    state.rgb_source_factor=GML_RENDER_BLEND_SOURCE_ALPHA;
+    state.rgb_destination_factor=GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA;
+    state.alpha_source_factor=GML_RENDER_BLEND_SOURCE_ALPHA;
+    state.alpha_destination_factor=GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA;
+    if(destination){
+      state.rgb_source_factor=state.alpha_source_factor=mode==11?
+        GML_RENDER_BLEND_DESTINATION_ALPHA:GML_RENDER_BLEND_DESTINATION_COLOUR;
+      state.rgb_destination_factor=state.alpha_destination_factor=mode==9?
+        GML_RENDER_BLEND_SOURCE_COLOUR:GML_RENDER_BLEND_DESTINATION_COLOUR;
+      state.rgb_equation=r->blend_equation==1?GML_RENDER_BLEND_ADD:
+        GML_RENDER_BLEND_FIXED_MAX+(uint32_t)r->blend_equation-2u;
+      state.alpha_equation=r->blend_equation_alpha==1?GML_RENDER_BLEND_ADD:
+        GML_RENDER_BLEND_FIXED_MAX+(uint32_t)r->blend_equation_alpha-2u;
+    }else if(mode==1){
+      state.rgb_destination_factor=GML_RENDER_BLEND_ONE;
+      state.alpha_source_factor=state.alpha_destination_factor=GML_RENDER_BLEND_ONE;
+      state.coverage_policy=GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA;
+    }else if(mode==2){
+      state.rgb_source_factor=state.alpha_source_factor=GML_RENDER_BLEND_ZERO;
+      state.rgb_destination_factor=GML_RENDER_BLEND_ONE_MINUS_SOURCE_COLOUR;
+    }else if(mode==4){
+      state.rgb_destination_factor=GML_RENDER_BLEND_ONE_MINUS_SOURCE_COLOUR;
+      state.coverage_policy=r->target_sp>0?0u:GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA;
+      if(!r->target_sp){state.alpha_source_factor=GML_RENDER_BLEND_ONE;state.alpha_destination_factor=GML_RENDER_BLEND_ZERO;}
+    }else if(mode==7 || mode==8){
+      state.rgb_source_factor=mode==8?GML_RENDER_BLEND_ONE_MINUS_DESTINATION_COLOUR:
+        GML_RENDER_BLEND_ONE_MINUS_DESTINATION_ALPHA;
+      state.rgb_destination_factor=mode==8?GML_RENDER_BLEND_ZERO:GML_RENDER_BLEND_DESTINATION_ALPHA;
+      state.alpha_source_factor=preserve?GML_RENDER_BLEND_ONE_MINUS_DESTINATION_ALPHA:GML_RENDER_BLEND_ONE;
+      state.alpha_destination_factor=preserve && mode==7?GML_RENDER_BLEND_DESTINATION_ALPHA:GML_RENDER_BLEND_ZERO;
+    }
+  }
+  state.samplers[0]=operations[0].payload.quad.sampling;
+  GmlRenderImageRef image=gml_render_application_scene_next_image_ref(r,target);
+  if(image.content_version>UINT64_MAX-count) goto done;
+  for(uint32_t i=0;i<count;i++){
+    GmlRenderDrawOp *op=&operations[i];
+    op->opcode=GML_RENDER_OP_TEXTURED_QUAD;op->reconstruction_mode=GML_RENDER_DEVICE_CHECKPOINT;
+    op->scene_family=GML_RENDER_SCENE_SPRITE;op->source_count=1u;op->sources=&source.image;
+    op->target=(GmlRenderTargetRef){image,1u,(uint32_t)r->fbw,(uint32_t)r->fbh,
+      GML_RENDER_PIXEL_ARGB8888,{0,0,(uint32_t)r->fbw,(uint32_t)r->fbh}};
+    op->target.image.content_version+=i+1u;
+  }
+  accepted=gml_render_application_scene_enqueue_quads(r,operations,count,&state,&source);
+  if(accepted){r->fb_opaque_known=r->fb_all_opaque=r->fb_all_transparent=0;}
+done:
+  free(operations);return accepted;
+}
+
 void gml_draw_sprite_pos(GmlRender *r,int sprite,int subimg,
                          const double x[4],const double y[4],double alpha){
   if(resident_positioned_axis_sprite(r,sprite,subimg,x,y,alpha)) return;
   if(resident_positioned_quad_sprite(r,sprite,subimg,x,y,alpha)) return;
+  if(resident_positioned_function(r,sprite,subimg,x,y,alpha)) return;
   if(!gml_render_resident_application_cpu_barrier(r)) return;
   double mapped_x[4],mapped_y[4];
   for(int i=0;i<4;i++){

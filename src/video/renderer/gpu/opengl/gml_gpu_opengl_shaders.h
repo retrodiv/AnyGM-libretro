@@ -509,6 +509,19 @@
   "    }\n" \
   "    o_color=vec4((fan && blend==2u && v_span_active!=0.0?fan_rgb:vec3(rgb))/255.0,alpha); return;\n" \
   "  }\n" \
+  "  if(u_filter>=159 && u_filter<=166){\n" \
+  "    // R03_SHADER_POSITIONED_SAMPLE: shared input coverage,hardware colour.\n" \
+  "    vec2 size=vec2(textureSize(u_image,0));\n" \
+  "    bool linear=(u_filter%2)==0;\n" \
+  "    vec4 sampled=linear?texture(u_image,clamp(v_texcoord,(v_clamp.xy+0.5)/size,(v_clamp.zw+0.5)/size)):\n" \
+  "      source_texel(ivec2(floor(v_texcoord*size)),0);\n" \
+  "    float alpha=sampled.a*v_colour.a;\n" \
+  "    if(v_span_x.x==1.0) alpha=floor(alpha*255.0+0.5)/255.0;\n" \
+  "    else if(v_span_x.x==2.0) alpha=1.0;\n" \
+  "    else if(v_span_x.x==3.0) alpha=v_span_y.x/255.0;\n" \
+  "    if(u_filter>=165) alpha=1.0;\n" \
+  "    o_color=(u_filter==163 || u_filter==164)?vec4(0.0,0.0,0.0,1.0):vec4(floor(sampled.rgb*255.0+0.5)/255.0,alpha); return;\n" \
+  "  }\n" \
   "  if(u_filter==31 || u_filter==32){ o_color=v_colour; return; }\n" \
   "  // R03_SHADER_STUDIO_ALPHA_RECT: a coverage-only pass stamps written alpha.\n" \
   "  if(u_filter==33){ o_color=vec4(0.0,0.0,0.0,1.0); return; }\n" \

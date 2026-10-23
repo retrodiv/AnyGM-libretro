@@ -201,6 +201,15 @@ static int qualified_blend(const GmlRenderDrawStateSnapshot *state){
 
 static uint32_t scene_filter(const GmlRenderQuad *quad,
                              const GmlRenderDrawStateSnapshot *state,uint32_t family){
+  if(quad->sampling.quantisation==GML_RENDER_QUANTISE_POSITIONED_SAMPLE){
+    int blend=qualified_blend(state);
+    unsigned filtered=quad->sampling.filter==GML_RENDER_FILTER_HARDWARE_BILINEAR;
+    int opaque=state->coverage_policy==GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA;
+    if(opaque && (blend==20 || blend==21 ||
+       (blend>=GL_SCENE_BLEND_SURFACE_DEST_BASE && blend<=GL_SCENE_BLEND_SURFACE_DEST_LIMIT)))
+      return 165u+filtered;
+    return 159u+filtered+2u*opaque;
+  }
   if((family==GML_RENDER_SCENE_BACKGROUND || family==GML_RENDER_SCENE_TILE ||
       ((family==GML_RENDER_SCENE_SPRITE || family==GML_RENDER_SCENE_TEXT) &&
        quad->span_active==GML_RENDER_SPAN_FILTERED_AXIS_SUPPORT_ROW)) &&
@@ -486,6 +495,64 @@ static int rotated_surface_point_valid(const GmlRenderDrawOp *op,
   for(unsigned corner=0;corner<4u;corner++)
     if(q->u[corner]!=q->u[0] || q->v[corner]!=q->v[0] ||
        q->corner_colour[corner]!=q->corner_colour[0]) return 0;
+  return 1;
+}
+
+static int positioned_sample_valid(const GmlRenderDrawOp *op,
+  const GmlRenderDrawStateSnapshot *state,const GlSceneImage *source){
+  const GmlRenderQuad *q=&op->payload.quad;
+  const GmlRenderSamplingPolicy *s=&q->sampling,*sampler=&state->samplers[0];
+  int blend=qualified_blend(state);
+  if(!source || !source->texture || source->rendered_origin ||
+     source->pixel_format!=GML_RENDER_PIXEL_RGBA8888 ||
+     !source->width || !source->height || source->width>16384u || source->height>16384u ||
+     op->scene_family!=GML_RENDER_SCENE_SPRITE ||
+     op->reconstruction_mode!=GML_RENDER_DEVICE_CHECKPOINT ||
+     op->source_count!=1u || !op->sources || op->sources[0].resource_class!=GML_RENDER_RESOURCE_ATLAS ||
+     same_logical(op->sources[0],op->target.image) ||
+     (op->target.image.resource_class!=GML_RENDER_RESOURCE_SCREEN &&
+      op->target.image.resource_class!=GML_RENDER_RESOURCE_APPLICATION &&
+      op->target.image.resource_class!=GML_RENDER_RESOURCE_SURFACE) ||
+     op->target.pixel_format!=GML_RENDER_PIXEL_ARGB8888 ||
+     op->target.width>16384u || op->target.height>16384u ||
+     q->shape!=GML_RENDER_QUAD_AXIS_ALIGNED || q->span_active ||
+     s->quantisation!=GML_RENDER_QUANTISE_POSITIONED_SAMPLE ||
+     (s->filter!=GML_RENDER_FILTER_NEAREST && s->filter!=GML_RENDER_FILTER_HARDWARE_BILINEAR) ||
+     s->edge_rule!=GML_RENDER_EDGE_CLAMP_SUBIMAGE || s->logical_margin_mask ||
+     !valid_region(s->source_region,source->width,source->height) ||
+     s->source_region.width>4096u || s->source_region.height>4096u ||
+     !exact_rect(op,NULL,NULL,NULL,NULL,0) || q->y[2]-q->y[0]!=1.0 ||
+     !isfinite(q->filtered_draw_alpha) || q->filtered_draw_alpha< -1.0 || q->filtered_draw_alpha>1.0 ||
+     !isfinite(q->span_x[0]) || q->span_x[0]<0.0 || q->span_x[0]>3.0 ||
+     q->span_x[0]!=floor(q->span_x[0]) ||
+     q->span_x[1] || q->span_x[2] || q->span_x[3] ||
+     q->span_y[1] || q->span_y[2] || q->span_y[3] ||
+     !isfinite(q->span_y[0]) || q->span_y[0]<0.0 || q->span_y[0]>255.0 ||
+     (q->span_x[0]!=3.0 && q->span_y[0]) ||
+     !state->write_mask || state->write_mask>15u || state->colour!=0xFFFFFFFFu || state->alpha!=255u ||
+     state->alpha_test_enabled || state->source_alpha_key || state->source_palette.enabled ||
+     state->sampler_count!=1u ||
+     sampler->filter!=s->filter || sampler->edge_rule!=s->edge_rule ||
+     sampler->quantisation!=s->quantisation || sampler->logical_margin_mask ||
+     !same_region(sampler->source_region,s->source_region) ||
+     (state->coverage_policy && state->coverage_policy!=GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA) ||
+     (blend!=0 && blend!=1 && blend!=3 && blend!=13 && blend!=14 &&
+      (blend<18 || blend>25) &&
+      (blend<GL_SCENE_BLEND_SURFACE_DEST_BASE || blend>GL_SCENE_BLEND_SURFACE_DEST_LIMIT))) return 0;
+  for(unsigned i=0;i<2u;i++)
+    if(q->inverse_anchor[i] || q->inverse_x[i] || q->inverse_y[i] || q->inverse_offset[i]) return 0;
+  for(unsigned c=0;c<4u;c++)
+    if(q->corner_colour[c]!=0xFFFFFFFFu || !isfinite(q->u[c]) || !isfinite(q->v[c]) ||
+       q->u[c]<0.0 || q->u[c]>1.0 || q->v[c]<0.0 || q->v[c]>1.0 ||
+       q->u[c]!=q->u[0] || q->v[c]!=q->v[0] ||
+       q->u[c]*source->width<s->source_region.x ||
+       q->u[c]*source->width>s->source_region.x+s->source_region.width ||
+       q->v[c]*source->height<s->source_region.y ||
+       q->v[c]*source->height>s->source_region.y+s->source_region.height) return 0;
+  if(s->filter==GML_RENDER_FILTER_NEAREST){
+    double px=q->u[0]*source->width-.5,py=q->v[0]*source->height-.5;
+    if(fabs(px-nearbyint(px))>1e-9 || fabs(py-nearbyint(py))>1e-9) return 0;
+  }
   return 1;
 }
 
@@ -1317,7 +1384,8 @@ static int scene_preflight(GmlGpuBackend *backend,const GmlRenderDrawBatch *batc
       if(op->opcode!=GML_RENDER_OP_TEXTURED_QUAD && op->opcode!=GML_RENDER_OP_CLEAR) return 0;
       extended_quads=1;
       if(op->opcode==GML_RENDER_OP_TEXTURED_QUAD && op->scene_family==GML_RENDER_SCENE_SPRITE &&
-         op->payload.quad.sampling.quantisation==GML_RENDER_QUANTISE_INTEGER_ROW_TINT_TRUNC) large_rows=1;
+         (op->payload.quad.sampling.quantisation==GML_RENDER_QUANTISE_INTEGER_ROW_TINT_TRUNC ||
+          op->payload.quad.sampling.quantisation==GML_RENDER_QUANTISE_POSITIONED_SAMPLE)) large_rows=1;
     }
     if(batch->states && op->state_index<batch->state_count &&
        batch->states[op->state_index].source_alpha_key &&
@@ -1535,6 +1603,12 @@ static int scene_preflight(GmlGpuBackend *backend,const GmlRenderDrawBatch *batc
       GlSceneImage *source=gml_gpu_opengl_scene_image(backend,op->sources[0]);
       const GmlRenderSamplingPolicy *sampling=&op->payload.quad.sampling;
       int blend=qualified_blend(state);
+      if(sampling->quantisation==GML_RENDER_QUANTISE_POSITIONED_SAMPLE){
+        if(!backend->gl.BlendFuncSeparate || !backend->gl.BlendEquationSeparate ||
+           !positioned_sample_valid(op,state,source) ||
+           !gml_render_gpu_opengl_draw_textured_quad(op,state,source->width,source->height,0,probe)) return 0;
+        continue;
+      }
       int hardware_surface=hardware_surface_quad_valid(op,state,source);
       int view_copy=view_copy_quad_valid(op,state,source);
       int sample_plane=sample_plane_copy_valid(op,state,source);
@@ -2133,7 +2207,8 @@ static int flush_quads(GmlGpuBackend *backend,GlSceneImage *target,GlSceneImage 
   GLfloat extent[2]={(GLfloat)target->width,(GLfloat)target->height};
   GLenum texture_filter=(filter>=106u && filter<=108u) || filter==99u || filter==100u || filter==77u || filter==18u || filter==19u || filter==20u || filter==21u ||
     (filter>=65u && filter<=74u) || (filter>=79u && filter<=82u) ||
-    filter==112u || filter==114u || filter==115u || (filter>=137u && filter<=158u)
+    filter==112u || filter==114u || filter==115u || (filter>=137u && filter<=158u) ||
+    filter==160u || filter==162u || filter==164u || filter==166u
     ?GL_LINEAR:GL_NEAREST;
   GLsizei stride=GL_SCENE_INSTANCE_FLOATS*(GLsizei)sizeof(float);
   size_t bytes=(size_t)count*GL_SCENE_INSTANCE_FLOATS*sizeof(float),offset;
@@ -2220,7 +2295,7 @@ static int flush_quads(GmlGpuBackend *backend,GlSceneImage *target,GlSceneImage 
                   filter==66u || filter==69u || filter==71u || filter==80u ||
                   filter==86u || filter==93u || filter==110u || filter==112u ||
                   filter==138u || filter==141u || filter==143u || filter==148u || filter==152u ||
-                  filter==156u || filter==158u;
+                  filter==156u || filter==158u || filter==161u || filter==162u;
   backend->gl.ColorMask((write_mask&1u)!=0u,(write_mask&2u)!=0u,(write_mask&4u)!=0u,
                         (!stamp_alpha || filter==110u) && (write_mask&8u)!=0u);
   backend->gl.UseProgram(scene->program);
@@ -2281,7 +2356,7 @@ static int flush_quads(GmlGpuBackend *backend,GlSceneImage *target,GlSceneImage 
      * the same sampler and cutout in an alpha-only pass, preserving that recipe's coverage. */
     backend->gl.ColorMask(GL_FALSE,GL_FALSE,GL_FALSE,GL_TRUE);
     backend->gl.Disable(GL_BLEND);
-    backend->gl.Uniform1i(scene->u_filter,filter==148u || filter==156u?150:filter==152u || filter==158u?154:filter>=137u && filter<=146u?(filter==141u?146:144):filter==133u?134:filter==130u?131:filter==112u?113:filter==110u?111:filter==104u || filter==107u?(GLint)filter+1:filter==99u?100:filter==93u?95:filter==86u?88:filter==80u?82:filter==77u?78:filter==75u?76:filter==69u?74:filter>=65u?72:filter==60u?62:filter==53u?55:(filter==46u || filter==47u)?48:(filter==39u || filter==40u)?41:filter==35u?36:filter==32u?33:filter==25u?26:
+    backend->gl.Uniform1i(scene->u_filter,filter==161u || filter==162u?(GLint)filter+2:filter==148u || filter==156u?150:filter==152u || filter==158u?154:filter>=137u && filter<=146u?(filter==141u?146:144):filter==133u?134:filter==130u?131:filter==112u?113:filter==110u?111:filter==104u || filter==107u?(GLint)filter+1:filter==99u?100:filter==93u?95:filter==86u?88:filter==80u?82:filter==77u?78:filter==75u?76:filter==69u?74:filter>=65u?72:filter==60u?62:filter==53u?55:(filter==46u || filter==47u)?48:(filter==39u || filter==40u)?41:filter==35u?36:filter==32u?33:filter==25u?26:
                          filter==23u?24:filter==21u?22:filter==9u?10:13);
     backend->gl.DrawArraysInstanced(GL_TRIANGLES,0,6,(GLsizei)count);
   }

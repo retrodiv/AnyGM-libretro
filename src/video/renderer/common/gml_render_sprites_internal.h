@@ -112,6 +112,15 @@ void gml_render_sprite_ext_unmasked(GmlRender *render, int sprite, int subimage,
                                     double rotation, uint32_t blend, double alpha);
 int gml_render_sprite_pos_geometry(GmlRender *render, const double x[4], const double y[4],
                                     GmlRenderSpritePosGeometry *geometry);
+/* The first CPU triangle owns overlapping coverage. These helpers resolve
+ * input coordinates/alpha support only, never destination colour. */
+int gml_render_sprite_pos_coordinates(const GmlRenderSpritePosGeometry *geometry,
+                                      int x,int y,double *u,double *v);
+double gml_render_sprite_pos_source_alpha(const uint8_t *rgba,int stride,
+  int ox,int oy,int width,int height,double u,double v,int interpolate);
+int gml_render_sprite_pos_axis_sample(GmlRender *render,const GmlTpag *page,
+  GmlRenderRect bounds,double left,double top,double xscale,double yscale,
+  int x,int y,double alpha,double *u,double *v,double *sample_alpha);
 void gml_render_sprite_nineslice(GmlRender *render, GmlSprite *sprite_record, GmlTpag *page,
                                   double x, double y, int width, int height,
                                   uint32_t blend, double alpha);
