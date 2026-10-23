@@ -6427,6 +6427,20 @@ int gml_render_sprite_pos_axis_sample(GmlRender *r,const GmlTpag *page,
   double sx,sy,a;
   int bypass=(r->blendmode==2 || (r->alphablend && r->blendmode==6) ||
     destination_colour_blend_active(r)) && !shader_alpha_test_active(r);
+  int unit_copy=fabs(xs-1.0)<.001 && fabs(ys-1.0)<.001 && alpha>0.0 &&
+    !r->blendmode && !mapped_texture_active(r) &&
+    !shader_alpha_test_requires_filter(r) && !r->fog_flat &&
+    (!r->interp || (alpha>=1.0 && fabs(left-nearbyint(left))<1e-9 && fabs(top-nearbyint(top))<1e-9 &&
+      !r->font_sdf_active && (anygm_policy_uses_first_generation_studio(r->win) ||
+       anygm_policy_has_modern_layer_semantics(r->win))));
+  if(unit_copy){
+    int ix=px-bounds.x,iy=py-bounds.y;
+    if(ix<0 || iy<0 || ix>=page->sw || iy>=page->sh) return 0;
+    a=atlas->px[((size_t)(page->sy+iy)*atlas->w+page->sx+ix)*4u+3u];
+    if(a<=0.0) return 0;
+    *u=(ix+.5)/page->sw;*v=(iy+.5)/page->sh;*sample_alpha=a;
+    return 1;
+  }
   if(r->interp){
     sx=((double)px+.5-left)/xs-.5;sy=((double)py+.5-top)/ys-.5;
     int ix=(int)floor(sx),iy=(int)floor(sy);

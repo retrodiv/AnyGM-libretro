@@ -532,7 +532,8 @@
   "    // R03_SHADER_POSITIONED_SAMPLE: shared input coverage,hardware colour.\n" \
   "    vec2 size=vec2(textureSize(u_image,0));\n" \
   "    bool linear=(u_filter%2)==0;\n" \
-  "    vec4 sampled=linear?texture(u_image,clamp(v_texcoord,(v_clamp.xy+0.5)/size,(v_clamp.zw+0.5)/size)):\n" \
+  "    vec4 sampled=linear?(v_margin!=0.0?hardware_physical_sprite_sample(v_texcoord,ivec2(v_clamp.xy),ivec2(v_clamp.zw),int(v_margin)):\n" \
+  "      texture(u_image,clamp(v_texcoord,(v_clamp.xy+0.5)/size,(v_clamp.zw+0.5)/size))):\n" \
   "      source_texel(ivec2(floor(v_texcoord*size)),0);\n" \
   "    float alpha=sampled.a*v_colour.a;\n" \
   "    if(v_span_x.x==1.0) alpha=floor(alpha*255.0+0.5)/255.0;\n" \

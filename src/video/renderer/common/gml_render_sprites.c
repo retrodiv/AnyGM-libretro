@@ -5734,7 +5734,11 @@ static int resident_positioned_function(GmlRender *r,int sprite,int subimg,
     if(!destination) r->blend_equation=r->blend_equation_alpha=1;
     if(alpha<0) alpha=0;
     int trimmed=page->tx || page->ty || page->bw!=page->sw || page->bh!=page->sh;
-    int accepted=trimmed?0:r->interp?resident_filtered_atlas_page(r,page_index,left,top,xs,ys,
+    /* Normalizing an unimplemented preset must not select the ordinary
+     * unit-copy input kernel that the direct CPU preset does not use. */
+    int normalized_unit=(stored_mode==3 || stored_mode==5) &&
+      fabs(xs-1.0)<.001 && fabs(ys-1.0)<.001;
+    int accepted=trimmed || normalized_unit?0:r->interp?resident_filtered_atlas_page(r,page_index,left,top,xs,ys,
       GML_RENDER_SCENE_SPRITE,0xFFFFFFu,alpha,NULL,NULL,0.0,NULL,0,0,0,0,7):
       resident_atlas_crop_from_page(r,page,0,0,page->sw,page->sh,left,top,xs,ys,
         GML_RENDER_SCENE_SPRITE,0xFFFFFFu,alpha,stored_mode==6?20:15,NULL);
@@ -5747,8 +5751,7 @@ static int resident_positioned_function(GmlRender *r,int sprite,int subimg,
      * coverage,then use the same hardware colour/fixed-blend packet below. */
     if(r->fog_flat || r->font_sdf_active ||
        (r->active_shader>=0 && r->active_shader<r->n_shader_pal && r->shader_pal &&
-        !gml_render_shader_cpu_passthrough(r)) ||
-       (fabs(xs-1.0)<.001 && fabs(ys-1.0)<.001 && !stored_mode)) return 0;
+        !gml_render_shader_cpu_passthrough(r))) return 0;
     GmlSprite physical={0};
     if(!gml_render_sprite_axis_bounds(r,&physical,page,
          left+r->cam_x-page->tx*xs,top+r->cam_y-page->ty*ys,xs,ys,0.0,&axis_bounds)) return 0;
@@ -5816,7 +5819,7 @@ static int resident_positioned_function(GmlRender *r,int sprite,int subimg,
   uint32_t capacity=area<LIMIT?(uint32_t)area:LIMIT;
   GmlRenderDrawOp *operations=calloc(capacity,sizeof *operations);
   if(!operations) return 0;
-  uint32_t count=0;int accepted=0;
+  uint32_t count=0;int accepted=0,split_mask=0;
   for(int py=geometry.y0;py<=geometry.y1;py++) for(int px=geometry.x0;px<=geometry.x1;px++){
     double u=0,v=0,a=0;
     GmlRenderRect sample_region={ox,oy,(uint32_t)sw,(uint32_t)sh};
@@ -5834,9 +5837,12 @@ static int resident_positioned_function(GmlRender *r,int sprite,int subimg,
         gml_render_sprite_pos_axis_sample(r,axis_page,axis_bounds,geometry.qx[0],
           geometry.qy[0],axis_xs,axis_ys,px,py,alpha,&u,&v,&a);
       if(!sampled && !cleared) continue;
-      /* Masked physical samples outside the preceding clear need their
-       * original destination channels. Keep that distinct case counted. */
-      if(axis_margin.width && !cleared && sampled && r->interp && r->color_write_mask!=15u) goto done;
+      /* The clear resolves every channel inside its own extent. A physical
+       * sample outside it still keeps the original disabled channels. */
+      if(axis_margin.width && !cleared && sampled && r->interp && r->color_write_mask!=15u){
+        if(!r->color_write_mask) continue;
+        split_mask=1;
+      }
     }else{
       if(!gml_render_sprite_pos_coordinates(&geometry,px,py,&u,&v)) continue;
       u=fmax(0.0,fmin(1.0,u));v=fmax(0.0,fmin(1.0,v));
@@ -5845,38 +5851,23 @@ static int resident_positioned_function(GmlRender *r,int sprite,int subimg,
       if(!destination && a*alpha/255.0<=0.0) continue;
     }
     double su,sv;
-    if(axis_page && sampled){
+    unsigned logical_margin=0u;
+    if(axis_page && r->interp){
+      logical_margin=(axis_page->tx>0?1u:0u)|(axis_page->ty>0?2u:0u)|
+        (axis_page->bw-axis_page->tx-sw>0?4u:0u)|
+        (axis_page->bh-axis_page->ty-sh>0?8u:0u);
+    }
+    if(axis_page && sampled && !r->interp){
       int x0=ox,y0=oy,x1=ox+sw,y1=oy+sh;
-      if(r->interp){
-        double sx=ox+u*sw-.5,sy=oy+v*sh-.5;
-        int taps_x[4],taps_y[4];
-        for(int tap=0;tap<4;tap++){
-          int ix=(int)floor(sx)-ox+(tap&1),iy=(int)floor(sy)-oy+(tap>>1);
-          int margin=(ix<0 && axis_page->tx>0) || (iy<0 && axis_page->ty>0) ||
-            (ix>=sw && axis_page->bw-axis_page->tx-sw>0) ||
-            (iy>=sh && axis_page->bh-axis_page->ty-sh>0);
-          if(!margin){
-            if(ix<0) ix=0;else if(ix>=sw) ix=sw-1;
-            if(iy<0) iy=0;else if(iy>=sh) iy=sh-1;
-          }
-          ix+=ox;iy+=oy;
-          if(ix<0 || iy<0 || ix>=(int)source.width || iy>=(int)source.height) goto done;
-          taps_x[tap]=ix;taps_y[tap]=iy;
-        }
-        /* The CPU logical-margin predicate can couple the two axes.
-         * Hardware clamp is exact only for separable neighbouring taps. */
-        if(taps_x[0]!=taps_x[2] || taps_x[1]!=taps_x[3] ||
-           taps_y[0]!=taps_y[1] || taps_y[2]!=taps_y[3]) goto done;
-        x0=taps_x[0];x1=taps_x[1]+1;y0=taps_y[0];y1=taps_y[2]+1;
-      }else{
-        int ix=(int)floor(u*sw),iy=(int)floor(v*sh);
-        if(ox+ix>=x1) x1=ox+ix+1;
-        if(oy+iy>=y1) y1=oy+iy+1;
-      }
+      int ix=(int)floor(u*sw),iy=(int)floor(v*sh);
+      if(ox+ix>=x1) x1=ox+ix+1;
+      if(oy+iy>=y1) y1=oy+iy+1;
       sample_region=(GmlRenderRect){x0,y0,(uint32_t)(x1-x0),(uint32_t)(y1-y0)};
     }
     if(axis_runtime){
       su=(sample_region.x+.5)/source.width;sv=(sample_region.y+.5)/source.height;
+    }else if(logical_margin){
+      su=(ox+u*sw)/source.width;sv=(oy+v*sh)/source.height;
     }else if(r->interp){
       su=fmax(sample_region.x+.5,fmin(sample_region.x+sample_region.width-.5,ox+u*sw))/source.width;
       sv=fmax(sample_region.y+.5,fmin(sample_region.y+sample_region.height-.5,oy+v*sh))/source.height;
@@ -5888,7 +5879,8 @@ static int resident_positioned_function(GmlRender *r,int sprite,int subimg,
       su=(ox+ix+.5)/source.width;sv=(oy+iy+.5)/source.height;
     }
     unsigned resolved=axis_margin.width?(sampled?(r->interp?r->color_write_mask:15u):0u):0u;
-    double flag=axis_runtime?(masked?3.0:!r->alphablend?2.0:0.0):axis_margin.width?4.0+resolved:axis_page &&
+    int resolve_margin=axis_margin.width && (cleared || !r->interp || r->color_write_mask==15u);
+    double flag=axis_runtime?(masked?3.0:!r->alphablend?2.0:0.0):resolve_margin?4.0+resolved:axis_page &&
       (masked || replacement || (r->interp && r->alphablend))?3.0:
       !r->alphablend?2.0:destination && alpha<0.0?3.0:masked?1.0:0.0;
     long rounded=lround(a*alpha);
@@ -5906,7 +5898,7 @@ static int resident_positioned_function(GmlRender *r,int sprite,int subimg,
     q->shape=GML_RENDER_QUAD_AXIS_ALIGNED;
     q->sampling=(GmlRenderSamplingPolicy){axis_runtime?GML_RENDER_FILTER_BOX:r->interp?GML_RENDER_FILTER_HARDWARE_BILINEAR:
       GML_RENDER_FILTER_NEAREST,GML_RENDER_EDGE_CLAMP_SUBIMAGE,
-      sample_region,GML_RENDER_QUANTISE_POSITIONED_SAMPLE,0u};
+      sample_region,GML_RENDER_QUANTISE_POSITIONED_SAMPLE,logical_margin};
     q->filtered_draw_alpha=alpha;
     q->span_x[0]=flag;q->span_y[0]=input_alpha;
     q->x[0]=q->x[3]=px;q->x[1]=q->x[2]=px+1.0;
@@ -5975,7 +5967,20 @@ static int resident_positioned_function(GmlRender *r,int sprite,int subimg,
       GML_RENDER_PIXEL_ARGB8888,{0,0,(uint32_t)r->fbw,(uint32_t)r->fbh}};
     op->target.image.content_version+=i+1u;
   }
-  accepted=gml_render_application_scene_enqueue_quads(r,operations,count,&state,&source);
+  if(!split_mask) accepted=gml_render_application_scene_enqueue_quads(r,operations,count,&state,&source);
+  else if(gml_render_application_scene_prepare_begin(r)){
+    GmlRenderDrawStateSnapshot outside=state;outside.write_mask=r->color_write_mask;
+    accepted=1;
+    for(uint32_t first=0;first<count;){
+      int resolved=operations[first].payload.quad.span_x[0]>=4.0;
+      uint32_t last=first+1u;
+      while(last<count && (operations[last].payload.quad.span_x[0]>=4.0)==resolved) last++;
+      if(!gml_render_application_scene_enqueue_quads(r,operations+first,last-first,
+           resolved?&state:&outside,&source)){accepted=0;break;}
+      first=last;
+    }
+    accepted=gml_render_application_scene_prepare_finish(r,accepted);
+  }
   if(accepted){r->fb_opaque_known=r->fb_all_opaque=r->fb_all_transparent=0;}
 done:
   free(operations);return accepted;

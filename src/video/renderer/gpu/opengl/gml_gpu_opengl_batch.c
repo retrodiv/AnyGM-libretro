@@ -524,7 +524,8 @@ static int positioned_sample_valid(const GmlRenderDrawOp *op,
      s->quantisation!=GML_RENDER_QUANTISE_POSITIONED_SAMPLE ||
      (s->filter!=GML_RENDER_FILTER_NEAREST && s->filter!=GML_RENDER_FILTER_HARDWARE_BILINEAR &&
       s->filter!=GML_RENDER_FILTER_BOX) ||
-     s->edge_rule!=GML_RENDER_EDGE_CLAMP_SUBIMAGE || s->logical_margin_mask ||
+     s->edge_rule!=GML_RENDER_EDGE_CLAMP_SUBIMAGE || s->logical_margin_mask>15u ||
+     (s->logical_margin_mask && s->filter!=GML_RENDER_FILTER_HARDWARE_BILINEAR) ||
      !valid_region(s->source_region,source->width,source->height) ||
      s->source_region.width>4096u || s->source_region.height>4096u ||
      !exact_rect(op,NULL,NULL,NULL,NULL,0) || q->y[2]-q->y[0]!=1.0 ||
@@ -542,7 +543,7 @@ static int positioned_sample_valid(const GmlRenderDrawOp *op,
      state->alpha_test_enabled || state->source_alpha_key || state->source_palette.enabled ||
      state->sampler_count!=1u ||
      sampler->filter!=s->filter || sampler->edge_rule!=s->edge_rule ||
-     sampler->quantisation!=s->quantisation || sampler->logical_margin_mask ||
+     sampler->quantisation!=s->quantisation || sampler->logical_margin_mask!=s->logical_margin_mask ||
      !valid_region(sampler->source_region,source->width,source->height) ||
      s->source_region.x<sampler->source_region.x || s->source_region.y<sampler->source_region.y ||
      (uint64_t)(unsigned)s->source_region.x+s->source_region.width>
@@ -557,12 +558,14 @@ static int positioned_sample_valid(const GmlRenderDrawOp *op,
     if(q->inverse_anchor[i] || q->inverse_x[i] || q->inverse_y[i] || q->inverse_offset[i]) return 0;
   for(unsigned c=0;c<4u;c++)
     if(q->corner_colour[c]!=0xFFFFFFFFu || !isfinite(q->u[c]) || !isfinite(q->v[c]) ||
-       q->u[c]<0.0 || q->u[c]>1.0 || q->v[c]<0.0 || q->v[c]>1.0 ||
        q->u[c]!=q->u[0] || q->v[c]!=q->v[0] ||
-       q->u[c]*source->width<s->source_region.x ||
-       q->u[c]*source->width>s->source_region.x+s->source_region.width ||
-       q->v[c]*source->height<s->source_region.y ||
-       q->v[c]*source->height>s->source_region.y+s->source_region.height) return 0;
+       (s->logical_margin_mask?
+         (q->u[c]*source->width< -16384.0 || q->u[c]*source->width>source->width+16384.0 ||
+          q->v[c]*source->height< -16384.0 || q->v[c]*source->height>source->height+16384.0):
+         (q->u[c]*source->width<s->source_region.x ||
+          q->u[c]*source->width>s->source_region.x+s->source_region.width ||
+          q->v[c]*source->height<s->source_region.y ||
+          q->v[c]*source->height>s->source_region.y+s->source_region.height))) return 0;
   if(s->filter==GML_RENDER_FILTER_NEAREST || s->filter==GML_RENDER_FILTER_BOX){
     double px=q->u[0]*source->width-.5,py=q->v[0]*source->height-.5;
     if(fabs(px-nearbyint(px))>1e-9 || fabs(py-nearbyint(py))>1e-9) return 0;

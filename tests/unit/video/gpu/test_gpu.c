@@ -3348,12 +3348,14 @@ static int scene_positioned_samples_case(void){
       }
     }
     GmlRenderDrawOp pristine=ops[COUNT-1u];
-    for(unsigned bad=0;bad<3u;bad++){
+    for(unsigned bad=0;bad<5u;bad++){
       ops[COUNT-1u]=pristine;
       GmlRenderQuad *q=&ops[COUNT-1u].payload.quad;
       if(bad==0u) q->u[3]=NAN;
       if(bad==1u) q->u[1]=.75;
       if(bad==2u) q->span_x[0]=4.0;
+      if(bad==3u) q->sampling.logical_margin_mask=16u;
+      if(bad==4u) for(unsigned c=0;c<4u;c++) q->u[c]=-.25;
       GmlRenderExecutionResult result=device.submit(device.context,&batch);
       REQUIRE(result.status==GML_RENDER_EXEC_UNSUPPORTED && !result.accepted_prefix &&
         !anygm_test_graphics_clear_calls() && !anygm_test_graphics_scene_draw_calls() &&
@@ -3388,6 +3390,28 @@ static int scene_positioned_samples_case(void){
     REQUIRE(result.status==GML_RENDER_EXEC_ACCEPTED && result.accepted_prefix==3u &&
       !anygm_test_graphics_scene_copies() && !anygm_test_graphics_read_pixels(),
       "resolved empty and physical positioned samples share one copy state and independent clamp windows");
+    if(linear==1u){
+      GmlRenderDrawStateSnapshot masked[2]={state,state};
+      masked[0].samplers[0].logical_margin_mask=masked[1].samplers[0].logical_margin_mask=1u;
+      masked[1].write_mask=5u;
+      batch.states=masked;batch.state_count=2u;
+      for(unsigned i=1;i<3u;i++){
+        ops[i].state_index=i-1u;
+        GmlRenderQuad *q=&ops[i].payload.quad;
+        q->sampling=masked[0].samplers[0];q->span_x[0]=19.0;q->span_y[0]=102.0;
+        for(unsigned c=0;c<4u;c++) q->u[c]=-.25;
+      }
+      clears=anygm_test_graphics_clear_calls();draws=anygm_test_graphics_scene_draw_calls();
+      result=device.submit(device.context,&batch);
+      REQUIRE(result.status==GML_RENDER_EXEC_UNSUPPORTED && !result.accepted_prefix &&
+        anygm_test_graphics_clear_calls()==clears && anygm_test_graphics_scene_draw_calls()==draws,
+        "invalid masked suffix refuses before its clear and resolved margin prefix");
+      ops[2].payload.quad.span_x[0]=3.0;
+      result=device.submit(device.context,&batch);
+      REQUIRE(result.status==GML_RENDER_EXEC_ACCEPTED && result.accepted_prefix==3u &&
+        !anygm_test_graphics_scene_copies() && !anygm_test_graphics_read_pixels(),
+        "logical atlas taps and distinct physical-mask suffix execute without destination snapshots");
+    }
     }
     free(ops);gml_gpu_destroy(gpu,1);
   }

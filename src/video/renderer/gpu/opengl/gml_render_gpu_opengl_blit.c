@@ -217,6 +217,9 @@ int gml_render_gpu_opengl_draw_textured_quad(const GmlRenderDrawOp *op,
         quad->sampling.quantisation!=GML_RENDER_QUANTISE_HARDWARE_SPRITE_MODERN &&
         quad->sampling.quantisation!=GML_RENDER_QUANTISE_HARDWARE_SURFACE_LEADING &&
         quad->sampling.quantisation!=GML_RENDER_QUANTISE_SURFACE_TILED_LEADING &&
+        !(quad->sampling.quantisation==GML_RENDER_QUANTISE_POSITIONED_SAMPLE &&
+          quad->sampling.filter==GML_RENDER_FILTER_HARDWARE_BILINEAR &&
+          quad->sampling.logical_margin_mask>0u && quad->sampling.logical_margin_mask<=15u) &&
         quad->sampling.filter!=GML_RENDER_FILTER_HARDWARE_PIXEL_CENTRE_POINT &&
         !((op->scene_family==GML_RENDER_SCENE_SPRITE || op->scene_family==GML_RENDER_SCENE_TEXT) &&
           quad->span_active==GML_RENDER_SPAN_FILTERED_AXIS_SUPPORT_ROW &&
