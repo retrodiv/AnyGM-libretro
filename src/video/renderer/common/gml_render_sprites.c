@@ -711,12 +711,13 @@ static int resident_atlas_crop_from_page_impl(GmlRender *r,GmlTpag *page,
   int single_texel_sprite=family==GML_RENDER_SCENE_SPRITE &&
     (physical_sprite_page==15 || physical_sprite_page==16 || sprite_part_function || replacement_sprite) &&
     page && page->sw==1 && page->sh==1;
-  /* Signed unit samples at whole physical anchors select the same texel
-   * in the ordinary point writer and Studio's large-axis cache. */
+  /* Selected unit copies snap their CPU origin before the unit writer.
+   * Their fractional authored anchor does not select a large-axis owner.
+   * Keep the existing unit alpha fences without changing sampling phase. */
   int integral_unit_sprite=family==GML_RENDER_SCENE_SPRITE &&
     (physical_sprite_page==15 || sprite_part_function || tiled_sprite_function || replacement_sprite) &&
     fabs(xs)==1.0 && fabs(ys)==1.0 && isfinite(left) && isfinite(top) &&
-    left==floor(left) && top==floor(top);
+    (sprite_part_function || (left==floor(left) && top==floor(top)));
   int tile_function=physical_sprite_page==11 || physical_sprite_page==12;
   int quarter_tile=physical_sprite_page==12;
   int selected_background=physical_sprite_page==9;
@@ -5929,6 +5930,18 @@ void gml_draw_sprite_part_ext(GmlRender *r, int sprite, int subimg, double sx, d
                GML_RENDER_SCENE_SPRITE,blend,resident_alpha,5,NULL)) return;
           if(resident_sprite_part_function(r,page_index,&view,left,top,
                mapped_xs,mapped_ys,blend,resident_alpha)) return;
+          /* The legacy unit fallback preserves destination alpha where the
+           * first-generation CPU vector/tail writer can stamp it. Keep the
+           * existing large-unit alpha boundary across both GPU owners. */
+          if(!r->classic && !r->interp && !r->fog_flat && r->active_shader<0 &&
+             anygm_policy_uses_first_generation_studio(r->win) &&
+             !anygm_policy_has_modern_layer_semantics(r->win) &&
+             !gml_render_target_preserves_alpha(r) && r->alphablend &&
+             !r->blendmode && (r->color_write_mask&8u) &&
+             fabs(mapped_xs)==1.0 && fabs(mapped_ys)==1.0 &&
+             (double)view.sw*(double)view.sh>=131072.0 &&
+             (!page->scene_binary_alpha || resident_alpha<1.0) && resident_alpha>0.0)
+            goto part_cpu;
           /* R03-SPR-PART-OFFSCREEN-NOOP: the shared physical selection also
            * bounds single-column/row crops. A whole-pixel separation from the
            * target cannot write through the unchanged positive-unit CPU leaf. */
@@ -5995,6 +6008,7 @@ void gml_draw_sprite_part_ext(GmlRender *r, int sprite, int subimg, double sx, d
       }
     }
   }
+part_cpu:
   if(!gml_render_resident_application_cpu_barrier(r)) return;
   gml_render_draw_map_point(r,&x,&y);
   gml_render_draw_map_scale(r,&xs,&ys);
