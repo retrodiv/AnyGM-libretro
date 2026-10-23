@@ -15376,7 +15376,7 @@ static int resident_bounded_axis_screen_sprite(void){
     double alpha=variant==10u?1.0:variant==12u?0.00001:.75;
     gml_draw_sprite_ext(r,0,0,x,16,variant==3u?-1:1,1,0,0xFFFFFFu,alpha);
     int admitted=r->resident_application_pass;
-    int expected=variant<6u || variant>=10u;
+    int expected=variant<6u || variant>=9u;
     if(admitted!=expected)fprintf(stderr,"bounded axis variant=%u actual=%d expected=%d\n",variant,admitted,expected);
     CHECK(admitted==expected && gml_render_scene_submit_pending(r));
     if(expected)CHECK(!fake.readbacks && !fake.rgb_queries && !memcmp(shadow,r->fb,(size_t)W*H*sizeof *shadow));
@@ -15390,6 +15390,63 @@ static int resident_bounded_axis_screen_sprite(void){
       }
       CHECK(gml_render_scene_submit_pending(r) && !fake.readbacks && !fake.rgb_queries &&
         !memcmp(shadow,r->fb,(size_t)W*H*sizeof *shadow));
+    }
+    gml_render_abandon_device(r);gml_render_free(r);free(r);free(storage);
+  }
+  return 1;
+}
+
+/* A distinct SCREEN allocation selects the first-generation byte-alpha
+ * owner at large visible extents. Partial target alpha is not a certificate. */
+static int resident_large_screen_byte_axis(void){
+  enum { W=1920,H=1080,AW=672,AH=392 };
+  for(unsigned policy=0;policy<2u;policy++) for(unsigned variant=0;variant<15u;variant++){
+    GmlRender *r=calloc(1,sizeof *r);GmlWin content={.bytecode=policy?15:13};
+    FakeDevice fake={.on_demand=variant!=12u};GmlRenderDeviceServices device=service(&fake);
+    size_t bytes=(size_t)W*H*sizeof(uint32_t);
+    uint32_t *storage=calloc(2u,bytes),*screen=storage,*shadow=storage?storage+(size_t)W*H:NULL;
+    CHECK(r && storage && !gml_render_init(r,NULL));r->win=&content;
+    free(r->atlas[0].px);r->atlas[0].px=malloc(AW*AH*4u);
+    r->spr=calloc(1,sizeof *r->spr);r->tpag=calloc(1,sizeof *r->tpag);
+    CHECK(r->atlas[0].px && r->spr && r->tpag);
+    for(unsigned pixel=0;pixel<AW*AH;pixel++){
+      uint8_t *p=r->atlas[0].px+pixel*4u;
+      p[0]=32;p[1]=96;p[2]=192;p[3]=(uint8_t)(variant&2u?(pixel*31u)%256u:255u);
+    }
+    r->atlas[0].w=AW;r->atlas[0].h=AH;r->n_spr=r->n_tpag=1;
+    r->spr[0]=(GmlSprite){.w=640,.h=360,.n_frames=1};
+    r->spr[0].frame=calloc(1,sizeof *r->spr[0].frame);CHECK(r->spr[0].frame);
+    r->tpag[0]=(GmlTpag){.sx=4,.sy=4,.sw=640,.sh=360,.tw=640,.th=360,.bw=640,.bh=360};
+    device.observe_on_demand=fake_observe_on_demand;gml_render_bind_device(r,&device);
+    CHECK(gml_render_application_surface_ensure_owned(r,W,H) &&
+      gml_render_begin_resident_base(r,screen,W,H,0,0) && !gml_render_target_preserves_alpha(r));
+    if(variant&1u){gml_render_gui_begin(r,W,H);gml_render_gui_set_size(r,W,H);}
+    gml_render_set_pending_fill(r,0x40273859u);gml_render_flush_pending_fill(r);
+    CHECK(gml_render_scene_submit_pending(r));
+    r->fb_opaque_known=r->fb_all_opaque=0;
+    memcpy(shadow,r->fb,bytes);int submitted=fake.submits;
+    unsigned mask=variant%3u==0u?15u:variant%3u==1u?7u:8u;
+    r->color_write_mask=(uint8_t)mask;
+    if(variant==6u || variant==7u)r->fast_alpha_cull=32;
+    if(variant==8u || variant==9u){r->alpha_test_enable=1;r->alpha_test_ref=127;}
+    if(variant==13u)r->active_shader=0;
+    if(variant==14u)r->blend_equation=2;
+    double alpha=variant==10u?0.00001:variant==11u?0.0:.98;
+    double xs=variant&4u?-3:3,ys=variant&8u?-1:1;
+    for(unsigned draw=0;draw<8u;draw++){
+      gml_draw_sprite_ext(r,0,0,xs<0?W:0,ys<0?H:0,xs,ys,0,0xFFFFFFu,alpha);
+      if(variant<12u)CHECK(r->resident_application_pass);
+    }
+    CHECK(r->resident_application_pass==(variant<12u) && gml_render_scene_submit_pending(r));
+    if(variant<12u){
+      GmlRenderJournalMetrics metrics={0};
+      gml_render_resource_journal_metrics(r->base_scene_resource,&metrics);
+      CHECK(!fake.readbacks && !fake.rgb_queries && !memcmp(shadow,r->fb,bytes) &&
+        metrics.authority==GML_RENDER_RESOURCE_GPU_RESIDENT && !metrics.cpu_replays && !metrics.journal_bytes);
+      CHECK(r->color_write_mask==mask && r->alpha_test_enable==(variant==8u || variant==9u));
+      if(variant<10u)CHECK(fake.submits>submitted && fake.submits-submitted<8 &&
+        fake.last_quantisation==GML_RENDER_QUANTISE_INTEGER_ROW_TINT_TRUNC);
+      else CHECK(fake.submits==submitted);
     }
     gml_render_abandon_device(r);gml_render_free(r);free(r);free(storage);
   }
@@ -19428,6 +19485,7 @@ int main(void){
     else if(!strcmp(selected,"wide-nearest-rows")) passed=resident_large_screen_axis_row_metadata();
     else if(!strcmp(selected,"large-rotated-rows")) passed=resident_large_rotated_sample_row_metadata();
     else if(!strcmp(selected,"bounded-axis-screen")) passed=resident_bounded_axis_screen_sprite();
+    else if(!strcmp(selected,"large-screen-byte-axis")) passed=resident_large_screen_byte_axis();
     else if(!strcmp(selected,"source-palette")) passed=source_palette_snapshot_contract();
     else if(!strcmp(selected,"surface-feedback")) passed=resident_surface_feedback_authority();
     else if(!strcmp(selected,"matched-filtered-sprite")) passed=resident_matched_filtered_sprite_function();
@@ -19714,6 +19772,7 @@ int main(void){
   passed+=resident_cached_rotation_trim_tie_metadata();
   passed+=resident_large_unit_sprite_scope();
   passed+=resident_bounded_axis_screen_sprite();
+  passed+=resident_large_screen_byte_axis();
   passed+=source_palette_snapshot_contract();
   passed+=resident_tiny_nearest_sprite_scope();
   passed+=resident_opaque_sprite_complete_application();
@@ -19751,6 +19810,6 @@ int main(void){
   passed+=deferred_rotation_queue_transactions_and_lifetime();
   passed+=resident_point_function_transaction();
   passed+=resident_rectangle_cpu_passthrough_programs();
-  printf("render resource cases: passed=%d failed=%d\n",passed,307-passed);
-  return passed==307?EXIT_SUCCESS:EXIT_FAILURE;
+  printf("render resource cases: passed=%d failed=%d\n",passed,308-passed);
+  return passed==308?EXIT_SUCCESS:EXIT_FAILURE;
 }

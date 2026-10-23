@@ -3793,7 +3793,7 @@ static int resident_modern_nearest_rotation(GmlRender *r,GmlSprite *sprite,GmlTp
   GmlRenderDrawStateSnapshot state={0};
   GmlRenderResource *target;
   uint32_t count=0,alpha_count=0;
-  int accepted=0,rows=0,prepared=0,retried=0;
+  int accepted=0,rows=0,prepared=0,retried=0,byte_axis=0;
   int screen_axis=r && rotation==0.0 &&
     ((r->target_id<0 && r->target_sp==0) || (r->target_id==0 && r->target_sp>0)) &&
     !gml_render_target_preserves_alpha(r);
@@ -3803,8 +3803,8 @@ static int resident_modern_nearest_rotation(GmlRender *r,GmlSprite *sprite,GmlTp
   if(!device || !device->observe_on_demand || !device->observe_on_demand(device->context))
     return 0;
   /* A large framebuffer does not select the alpha8/cull leaf by itself.
-   * Prove this first-generation footprint through the unchanged alpha16
-   * packet visitor before accepting its existing hardware blend recipe. */
+   * The unchanged visitors distinguish a bounded alpha16 footprint from
+   * the large byte-alpha owner before either hardware recipe is selected. */
   int prove_small_axis=screen_axis && !anygm_policy_has_modern_layer_semantics(r->win) &&
     (uint64_t)(uint32_t)r->fbw*(uint32_t)r->fbh>=262144u;
   if(!r->resident_application_pass || r->interp || (!screen_axis && r->target_id<=0) ||
@@ -3858,8 +3858,17 @@ static int resident_modern_nearest_rotation(GmlRender *r,GmlSprite *sprite,GmlTp
   if(!count){accepted=1;goto done;}
   if(prove_small_axis){
     alpha_regions=malloc(REGION_LIMIT*sizeof *alpha_regions);
-    if(!alpha_regions || !gml_render_rotated_nearest_regions(r,sprite,page,x,y,xs,ys,0.0,
-         alpha_regions,REGION_LIMIT,&alpha_count)) goto done;
+    if(!alpha_regions) goto done;
+    if(!gml_render_rotated_nearest_regions(r,sprite,page,x,y,xs,ys,0.0,
+         alpha_regions,REGION_LIMIT,&alpha_count)){
+      if(!gml_render_rotated_nearest_sample_rows(r,sprite,page,x,y,xs,ys,0.0,
+           alpha_regions,REGION_LIMIT,&alpha_count)) goto done;
+      /* Reuse the row sampler only when its CPU metadata proves the byte
+       * coverage/cull owner. A visitor capacity refusal alone is not proof. */
+      for(uint32_t index=0;index<alpha_count;index++)
+        if(alpha_regions[index].vector_alpha!=GML_RENDER_ROTATED_ROW_ALPHA8) goto done;
+      byte_axis=1;
+    }
     if(!alpha_count){accepted=1;goto done;}
   }
   /* Large axis draws select this CPU coverage owner before the ordinary
@@ -3869,7 +3878,7 @@ static int resident_modern_nearest_rotation(GmlRender *r,GmlSprite *sprite,GmlTp
     if(!gml_render_compose_resident_underlay(r) || !r->resident_application_pass) goto done;
     opaque_screen=r->fb_opaque_known && r->fb_all_opaque;
   }
-  if(screen_axis && (r->color_write_mask&8u) && !opaque_screen &&
+  if(!byte_axis && screen_axis && (r->color_write_mask&8u) && !opaque_screen &&
      anygm_policy_blend(r->win)!=ANYGM_BLEND_STUDIO_SECOND){
     if(!alpha_regions){
       alpha_regions=malloc(REGION_LIMIT*sizeof *alpha_regions);
@@ -3877,15 +3886,26 @@ static int resident_modern_nearest_rotation(GmlRender *r,GmlSprite *sprite,GmlTp
            alpha_regions,REGION_LIMIT,&alpha_count)) goto done;
     }
     if(!alpha_count){accepted=1;goto done;}
-  }else{free(alpha_regions);alpha_regions=NULL;alpha_count=0u;}
-  operations=calloc(count,sizeof *operations);
-  if(!operations) goto done;
+  }else if(!byte_axis){free(alpha_regions);alpha_regions=NULL;alpha_count=0u;}
+  if(!byte_axis){
+    operations=calloc(count,sizeof *operations);
+    if(!operations) goto done;
+  }
 retry_submission:
   gml_render_flush_pending_fill(r);
   if(r->pending_fill || !(target=gml_render_scene_target_resource_ensure(r))) goto done;
   if(screen_axis && r->color_write_mask==15u){
     if(!gml_render_rotated_scene_prepare_begin(r)) goto done;
     prepared=1;
+  }
+  if(byte_axis){
+    /* Prepared rows own geometry; the existing packet retains byte-alpha
+     * no-write cutout, fixed colour blending and written-alpha stamping.
+     * No destination image or per-pixel colour enters this preparation. */
+    accepted=resident_atlas_crop_from_page_impl(r,page,0,0,page->sw,page->sh,
+      0.0,0.0,1.0,1.0,GML_RENDER_SCENE_SPRITE,colour,alpha,21,NULL,
+      alpha_regions,alpha_count,0,NULL);
+    goto done;
   }
   GmlRenderImageRef image=gml_render_application_scene_next_image_ref(r,target);
   if(image.content_version>UINT64_MAX-count) goto done;
