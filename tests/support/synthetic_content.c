@@ -1503,7 +1503,8 @@ static int synthetic_window_gui_content_create(AnygmSyntheticContent *fixture,in
   snprintf(gui,sizeof gui,"%s/window-gui.gml",fixture->directory);
   snprintf(draw,sizeof draw,"%s/window-draw.gml",fixture->directory);
   snprintf(fixture->path,sizeof fixture->path,"%s/data.win",fixture->directory);
-  if(!write_text(create,translated_world?
+  if(!write_text(create,explicit_gui_size==18?
+      "window_set_size(320,180);\n":translated_world?
       "window_set_size(64,48);\n"
       "application_surface_draw_enable(false);\n"
       "view_xport[0]=1; view_yport[0]=2;\n":explicit_gui_size==16?
@@ -1531,7 +1532,10 @@ static int synthetic_window_gui_content_create(AnygmSyntheticContent *fixture,in
       "window_set_size(320,180);\n"
       "surface_resize(application_surface,64,48);\n"
       "application_surface_draw_enable(false);\n") ||
-     !write_text(gui,translated_world?
+     !write_text(gui,explicit_gui_size==18?
+      "var w=window_get_width(); var h=window_get_height();\n"
+      "draw_clear(c_blue); draw_set_color(c_white);\n"
+      "draw_rectangle(w/4,h/4,3*w/4-1,3*h/4-1,false);\n":translated_world?
       "draw_surface(application_surface,0,0);\n"
       "draw_set_color(c_white); draw_rectangle(3,3,6,6,false);\n":explicit_gui_size==16?
       "draw_clear(c_blue);\n"
@@ -1666,6 +1670,10 @@ static int synthetic_window_gui_content_create(AnygmSyntheticContent *fixture,in
 
 int anygm_synthetic_window_gui_content_create(AnygmSyntheticContent *fixture){
   return synthetic_window_gui_content_create(fixture,0);
+}
+
+int anygm_synthetic_window_query_gui_content_create(AnygmSyntheticContent *fixture){
+  return synthetic_window_gui_content_create(fixture,18);
 }
 
 int anygm_synthetic_window_gui_size_content_create(AnygmSyntheticContent *fixture){

@@ -42,6 +42,8 @@ int anygm_synthetic_gpu_scene_route_content_create(AnygmSyntheticContent *fixtur
 int anygm_synthetic_gpu_dense_scene_route_content_create(AnygmSyntheticContent *fixture);
 int anygm_synthetic_shifted_port_content_create(AnygmSyntheticContent *fixture);
 int anygm_synthetic_window_gui_content_create(AnygmSyntheticContent *fixture);
+/* Implicit GUI centres from window queries while an automatic surface scales to a larger client. */
+int anygm_synthetic_window_query_gui_content_create(AnygmSyntheticContent *fixture);
 int anygm_synthetic_window_gui_size_content_create(AnygmSyntheticContent *fixture);
 int anygm_synthetic_indirect_gui_upscale_content_create(AnygmSyntheticContent *fixture);
 int anygm_synthetic_resident_indirect_gui_upscale_content_create(AnygmSyntheticContent *fixture);

@@ -1292,11 +1292,13 @@ void compute_present(AnygmEngine *engine) {
    * above. A presentation path which intentionally retains a narrower completed raster still
    * needs a correctly shaped host framebuffer, so uniformly fit that last result as a fallback. */
   host_canvas_update(engine);
-  /* Earlier profiles retain their authored window coordinates until content selects a
-   * window or GUI size. A native presentation alone must not replace that implicit space.
-   * Later layers and explicit requests still query the last settled native extent. */
+  /* Earlier implicit GUI coordinates follow the authored window even when an automatic
+   * application surface is presented through a larger client. Publishing that destination
+   * as the query extent displaces GUI code which centres and scales from window_get_*.
+   * Explicit GUI sizes, later layers and self-compositors retain the settled raster. */
   int settled_window=anygm_policy_has_modern_layer_semantics(&engine->win) ||
-    engine->vm.window_w>0 || engine->vm.window_h>0 ||
+    (!renderer.application_draw_enabled &&
+     (engine->vm.window_w>0 || engine->vm.window_h>0)) ||
     engine->vm.gui_w>0 || engine->vm.gui_h>0 || engine->vm.gui_maximise_active;
   if(settled_window){
     if(effective_width<=0) effective_width=(int)engine->output_width;
