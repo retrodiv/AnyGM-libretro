@@ -5479,6 +5479,10 @@ static int resident_positioned_axis_sprite(GmlRender *r,int sprite,int subimg,
   if(!r || !r->resident_application_pass || r->classic ||
      gml_d3_is_active(r) || !isfinite(alpha) || alpha<=0.0 || alpha>1.0 ||
      sprite<0 || sprite>=r->n_spr) return 0;
+  /* Recognized mapped input has its own unit/filtered CPU owner. Keep it
+   * with the prepared positioned samples instead of ordinary copy caches. */
+  if(r->shader_pal && r->active_shader>=0 && r->active_shader<r->n_shader_pal &&
+     !gml_render_shader_cpu_passthrough(r)) return 0;
   GmlSprite *source=&r->spr[sprite];
   if(source->runtime_rgba || source->n_frames<=0 || !source->frame) return 0;
   int frame=gml_render_runtime_frame_index(source,subimg);
@@ -5656,6 +5660,7 @@ static int resident_positioned_function(GmlRender *r,int sprite,int subimg,
   GmlTpag *axis_page=NULL;
   GmlRenderRect axis_bounds={0};
   GmlRenderRect axis_margin={0};
+  GmlRenderSourcePalette axis_palette={0};
   int axis_runtime=0;
   double axis_xs=0.0,axis_ys=0.0;
   double mx[4],my[4];
@@ -5685,6 +5690,7 @@ static int resident_positioned_function(GmlRender *r,int sprite,int subimg,
   /* The positive axis CPU leaf has its own atlas/logical-trim sampler.
    * Reuse that complete owner instead of applying triangle UVs to it. */
   if(kind==1){
+    (void)gml_render_shader_source_palette_snapshot(r,r->active_shader,&axis_palette);
     double left=geometry.qx[0],top=geometry.qy[0];
     double width=geometry.qx[1]-left,height=geometry.qy[3]-top;
     if(left>=r->fbw+2.0 || top>=r->fbh+2.0 ||
@@ -5694,7 +5700,7 @@ static int resident_positioned_function(GmlRender *r,int sprite,int subimg,
       if(sprite_source->n_frames<=0 || sprite_source->w<=0 || sprite_source->h<=0) return 1;
       if(width>1000000.0 || height>1000000.0 ||
          (r->active_shader>=0 && r->active_shader<r->n_shader_pal && r->shader_pal &&
-          !gml_render_shader_cpu_passthrough(r))) return 0;
+          !gml_render_shader_cpu_passthrough(r) && !axis_palette.enabled)) return 0;
       axis_runtime=1;
       if(alpha<0.0) alpha=0.0;
       axis_bounds=(GmlRenderRect){(int)floor(left),(int)floor(top),
@@ -5738,7 +5744,7 @@ static int resident_positioned_function(GmlRender *r,int sprite,int subimg,
      * unit-copy input kernel that the direct CPU preset does not use. */
     int normalized_unit=(stored_mode==3 || stored_mode==5) &&
       fabs(xs-1.0)<.001 && fabs(ys-1.0)<.001;
-    int accepted=trimmed || normalized_unit?0:r->interp?resident_filtered_atlas_page(r,page_index,left,top,xs,ys,
+    int accepted=trimmed || normalized_unit || axis_palette.enabled?0:r->interp?resident_filtered_atlas_page(r,page_index,left,top,xs,ys,
       GML_RENDER_SCENE_SPRITE,0xFFFFFFu,alpha,NULL,NULL,0.0,NULL,0,0,0,0,7):
       resident_atlas_crop_from_page(r,page,0,0,page->sw,page->sh,left,top,xs,ys,
         GML_RENDER_SCENE_SPRITE,0xFFFFFFu,alpha,stored_mode==6?20:15,NULL);
@@ -5751,7 +5757,7 @@ static int resident_positioned_function(GmlRender *r,int sprite,int subimg,
      * coverage,then use the same hardware colour/fixed-blend packet below. */
     if(r->fog_flat || r->font_sdf_active ||
        (r->active_shader>=0 && r->active_shader<r->n_shader_pal && r->shader_pal &&
-        !gml_render_shader_cpu_passthrough(r))) return 0;
+        !gml_render_shader_cpu_passthrough(r) && !axis_palette.enabled)) return 0;
     GmlSprite physical={0};
     if(!gml_render_sprite_axis_bounds(r,&physical,page,
          left+r->cam_x-page->tx*xs,top+r->cam_y-page->ty*ys,xs,ys,0.0,&axis_bounds)) return 0;
@@ -5819,6 +5825,7 @@ static int resident_positioned_function(GmlRender *r,int sprite,int subimg,
   uint32_t capacity=area<LIMIT?(uint32_t)area:LIMIT;
   GmlRenderDrawOp *operations=calloc(capacity,sizeof *operations);
   if(!operations) return 0;
+  int palette_point=axis_palette.enabled && axis_page && r->interp;
   uint32_t count=0;int accepted=0,split_mask=0;
   for(int py=geometry.y0;py<=geometry.y1;py++) for(int px=geometry.x0;px<=geometry.x1;px++){
     double u=0,v=0,a=0;
@@ -5852,7 +5859,7 @@ static int resident_positioned_function(GmlRender *r,int sprite,int subimg,
     }
     double su,sv;
     unsigned logical_margin=0u;
-    if(axis_page && r->interp){
+    if(axis_page && r->interp && !palette_point){
       logical_margin=(axis_page->tx>0?1u:0u)|(axis_page->ty>0?2u:0u)|
         (axis_page->bw-axis_page->tx-sw>0?4u:0u)|
         (axis_page->bh-axis_page->ty-sh>0?8u:0u);
@@ -5864,7 +5871,28 @@ static int resident_positioned_function(GmlRender *r,int sprite,int subimg,
       if(oy+iy>=y1) y1=oy+iy+1;
       sample_region=(GmlRenderRect){x0,y0,(uint32_t)(x1-x0),(uint32_t)(y1-y0)};
     }
-    if(axis_runtime){
+    if(palette_point){
+      /* Filtered byte rounding can cross a discontinuous palette edge.
+       * Exact source centres need no interpolation:retain CPU input coverage
+       * and fetch the same physical texel. Other phases stay counted CPU. */
+      int ix=ox,iy=oy;
+      if(sampled){
+        double sx=u*sw-.5,sy=v*sh-.5;
+        if(fabs(sx-nearbyint(sx))>1e-9 || fabs(sy-nearbyint(sy))>1e-9) goto done;
+        ix=(int)nearbyint(sx);iy=(int)nearbyint(sy);
+        int margin=(ix<0 && axis_page->tx>0) || (iy<0 && axis_page->ty>0) ||
+          (ix>=sw && axis_page->bw-axis_page->tx-sw>0) ||
+          (iy>=sh && axis_page->bh-axis_page->ty-sh>0);
+        if(!margin){
+          if(ix<0) ix=0;else if(ix>=sw) ix=sw-1;
+          if(iy<0) iy=0;else if(iy>=sh) iy=sh-1;
+        }
+        ix+=ox;iy+=oy;
+        if(ix<0 || iy<0 || ix>=(int)source.width || iy>=(int)source.height) goto done;
+      }
+      sample_region=(GmlRenderRect){ix,iy,1u,1u};
+      su=(ix+.5)/source.width;sv=(iy+.5)/source.height;
+    }else if(axis_runtime){
       su=(sample_region.x+.5)/source.width;sv=(sample_region.y+.5)/source.height;
     }else if(logical_margin){
       su=(ox+u*sw)/source.width;sv=(oy+v*sh)/source.height;
@@ -5896,7 +5924,7 @@ static int resident_positioned_function(GmlRender *r,int sprite,int subimg,
     if(count==capacity) goto done;
     GmlRenderQuad *q=&operations[count++].payload.quad;
     q->shape=GML_RENDER_QUAD_AXIS_ALIGNED;
-    q->sampling=(GmlRenderSamplingPolicy){axis_runtime?GML_RENDER_FILTER_BOX:r->interp?GML_RENDER_FILTER_HARDWARE_BILINEAR:
+    q->sampling=(GmlRenderSamplingPolicy){axis_runtime?GML_RENDER_FILTER_BOX:r->interp && !palette_point?GML_RENDER_FILTER_HARDWARE_BILINEAR:
       GML_RENDER_FILTER_NEAREST,GML_RENDER_EDGE_CLAMP_SUBIMAGE,
       sample_region,GML_RENDER_QUANTISE_POSITIONED_SAMPLE,logical_margin};
     q->filtered_draw_alpha=alpha;
@@ -5914,6 +5942,9 @@ static int resident_positioned_function(GmlRender *r,int sprite,int subimg,
   if(!target || r->pending_fill) goto done;
   GmlRenderDrawStateSnapshot state={.write_mask=masked && !axis_margin.width?r->color_write_mask:15u,
     .colour=0xFFFFFFFFu,.alpha=255u,.sampler_count=1u};
+  /* Atlas axes map the filtered bytes;runtime axes map the rounded area
+   * mean. Triangle input deliberately keeps its program-independent owner. */
+  state.source_palette=axis_palette;
   int preserve=gml_render_target_preserves_alpha(r);
   if(replacement){
     state.coverage_policy=preserve?0u:GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA;

@@ -292,13 +292,17 @@
   "flat in vec4 v_span_y;\n" \
   "flat in float v_span_active;\n" \
   "out vec4 o_color;\n" \
-  "vec4 source_colour(vec4 value){\n" \
+  "vec4 source_palette_colour(vec4 value){\n" \
   "  if(u_source_palette_enabled==0) return value;\n" \
   "  ivec3 bytes=ivec3(floor(value.rgb*255.0+0.5));\n" \
   "  bool upper=bytes.r>=u_source_palette_red;\n" \
   "  ivec4 edge=upper?u_source_palette_green1:u_source_palette_green0;\n" \
   "  int band=bytes.g>=edge.x?0:bytes.g>=edge.y?1:bytes.g>=edge.z?2:bytes.g>=edge.w?3:4;\n" \
   "  return vec4(vec3(u_source_palette_colour[(upper?5:0)+band])/255.0,value.a);\n" \
+  "}\n" \
+  "vec4 source_colour(vec4 value){\n" \
+  "  // Positioned inputs map after their hardware sample or rounded area mean.\n" \
+  "  return u_filter>=159 && u_filter<=170?value:source_palette_colour(value);\n" \
   "}\n" \
   "vec4 source_texel(ivec2 point,int lod){return source_colour(texelFetch(u_image,point,lod));}\n" \
   "vec4 source_texture(vec2 uv){return source_colour(texture(u_image,uv));}\n" \
@@ -523,10 +527,11 @@
   "    uint count;uvec4 total=source_box_bytes(ivec2(v_clamp.xy),ivec2(v_clamp.zw)+ivec2(1),false,count);\n" \
   "    uvec4 bytes=total/count;uvec4 remainder=total%count;\n" \
   "    bytes+=uvec4(greaterThanEqual(remainder,uvec4((count+1u)/2u)));\n" \
+  "    vec4 sampled=source_palette_colour(vec4(bytes)/255.0);\n" \
   "    float alpha=float(bytes.a)*v_colour.a/255.0;\n" \
   "    if(v_span_x.x==2.0 || u_filter==170) alpha=1.0;\n" \
   "    else if(v_span_x.x==3.0) alpha=v_span_y.x/255.0;\n" \
-  "    o_color=vec4(vec3(bytes.rgb)/255.0,alpha);return;\n" \
+  "    o_color=vec4(sampled.rgb,alpha);return;\n" \
   "  }\n" \
   "  if(u_filter>=159 && u_filter<=166){\n" \
   "    // R03_SHADER_POSITIONED_SAMPLE: shared input coverage,hardware colour.\n" \
@@ -535,6 +540,7 @@
   "    vec4 sampled=linear?(v_margin!=0.0?hardware_physical_sprite_sample(v_texcoord,ivec2(v_clamp.xy),ivec2(v_clamp.zw),int(v_margin)):\n" \
   "      texture(u_image,clamp(v_texcoord,(v_clamp.xy+0.5)/size,(v_clamp.zw+0.5)/size))):\n" \
   "      source_texel(ivec2(floor(v_texcoord*size)),0);\n" \
+  "    sampled=source_palette_colour(sampled);\n" \
   "    float alpha=sampled.a*v_colour.a;\n" \
   "    if(v_span_x.x==1.0) alpha=floor(alpha*255.0+0.5)/255.0;\n" \
   "    else if(v_span_x.x==2.0) alpha=1.0;\n" \

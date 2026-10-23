@@ -540,7 +540,8 @@ static int positioned_sample_valid(const GmlRenderDrawOp *op,
        (uint64_t)s->source_region.width*s->source_region.height>INT_MAX/255u)) ||
      (q->span_x[0]>=4.0 && (blend!=0 || state->write_mask!=15u)) ||
      !state->write_mask || state->write_mask>15u || state->colour!=0xFFFFFFFFu || state->alpha!=255u ||
-     state->alpha_test_enabled || state->source_alpha_key || state->source_palette.enabled ||
+     state->alpha_test_enabled || state->source_alpha_key ||
+     (state->source_palette.enabled && s->filter==GML_RENDER_FILTER_HARDWARE_BILINEAR) ||
      state->sampler_count!=1u ||
      sampler->filter!=s->filter || sampler->edge_rule!=s->edge_rule ||
      sampler->quantisation!=s->quantisation || sampler->logical_margin_mask!=s->logical_margin_mask ||

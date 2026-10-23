@@ -6450,7 +6450,8 @@ int gml_render_sprite_pos_axis_sample(GmlRender *r,const GmlTpag *page,
       interp_tpag_sample(atlas,page,ix,iy+1,1)[3]*((1.0-fx)*fy)+
       interp_tpag_sample(atlas,page,ix+1,iy+1,1)[3]*(fx*fy);
     if(shader_discards_alpha_value(r,a) && !bypass) return 0;
-    int modern_normal=!r->blendmode && anygm_policy_has_modern_layer_semantics(r->win);
+    int modern_normal=!r->blendmode && !mapped_texture_active(r) &&
+      anygm_policy_has_modern_layer_semantics(r->win);
     if(!modern_normal) a=floor(a+.5);
     if(a<=0.0 && r->blendmode!=2 && !(r->alphablend && r->blendmode==6) &&
        !destination_colour_blend_active(r)) return 0;

@@ -3413,6 +3413,51 @@ static int scene_positioned_samples_case(void){
         "logical atlas taps and distinct physical-mask suffix execute without destination snapshots");
     }
     }
+    GmlRenderDrawStateSnapshot palettes[2]={{.write_mask=15u,.alpha=255u,.colour=0xFFFFFFFFu,
+      .sampler_count=1u,.rgb_equation=GML_RENDER_BLEND_ADD,.alpha_equation=GML_RENDER_BLEND_ADD,
+      .rgb_source_factor=GML_RENDER_BLEND_SOURCE_ALPHA,
+      .alpha_source_factor=GML_RENDER_BLEND_SOURCE_ALPHA,
+      .rgb_destination_factor=GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA,
+      .alpha_destination_factor=GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA}};
+    palettes[0].samplers[0]=pristine.payload.quad.sampling;
+    palettes[0].source_palette.enabled=1u;palettes[0].source_palette.red=256u;
+    for(unsigned colour=0;colour<10u;colour++)
+      palettes[0].source_palette.colour[colour]=colour*UINT32_C(0x112233);
+    palettes[1]=palettes[0];palettes[1].source_palette.colour[0]^=1u;
+    for(unsigned i=1;i<3u;i++){
+      ops[i]=pristine;ops[i].state_index=i-1u;
+      ops[i].target.image.content_version=COUNT+i;
+    }
+    batch=(GmlRenderDrawBatch){ops+1u,2u,palettes,2u};
+    int palette_draws=anygm_test_graphics_scene_draw_calls();
+    palettes[1].source_palette.red=257u;
+    result=device.submit(device.context,&batch);
+    REQUIRE(result.status==GML_RENDER_EXEC_UNSUPPORTED && !result.accepted_prefix &&
+      anygm_test_graphics_scene_draw_calls()==palette_draws,
+      "invalid final positioned palette refuses before the first palette draw");
+    palettes[1].source_palette.red=256u;
+    result=device.submit(device.context,&batch);
+    if(linear==1u){
+      REQUIRE(result.status==GML_RENDER_EXEC_UNSUPPORTED && !result.accepted_prefix &&
+        anygm_test_graphics_scene_draw_calls()==palette_draws,
+        "filtered positioned palettes retain their measured colour-boundary rejection");
+    }else{
+      REQUIRE(result.status==GML_RENDER_EXEC_ACCEPTED && result.accepted_prefix==2u &&
+        anygm_test_graphics_scene_draw_calls()==palette_draws+2 &&
+        !anygm_test_graphics_scene_copies() && !anygm_test_graphics_read_pixels(),
+        "positioned point and rounded area states retain distinct palettes without reads or snapshots");
+      for(unsigned i=1;i<COUNT;i++){
+        ops[i]=pristine;ops[i].state_index=0u;
+        ops[i].target.image.content_version=COUNT*2u+i;
+      }
+      batch=(GmlRenderDrawBatch){ops+1u,COUNT-1u,palettes,1u};
+      palette_draws=anygm_test_graphics_scene_draw_calls();
+      result=device.submit(device.context,&batch);
+      REQUIRE(result.status==GML_RENDER_EXEC_ACCEPTED && result.accepted_prefix==COUNT-1u &&
+        anygm_test_graphics_scene_draw_calls()==palette_draws+5 &&
+        !anygm_test_graphics_scene_copies() && !anygm_test_graphics_read_pixels(),
+        "compatible positioned palette samples retain the existing streaming capacity");
+    }
     free(ops);gml_gpu_destroy(gpu,1);
   }
   return 1;
