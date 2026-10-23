@@ -213,7 +213,6 @@ static void begin(unsigned version,uint32_t rooms){
   memset(&g_libretro.config,0,sizeof g_libretro.config);
   g_libretro.prepared=false;
   g_libretro.loaded=false;
-  g_libretro.hybrid_gpu_selected=false;
   g_libretro.scene_gpu_selected=false;
   g_libretro.content_glsl_selected=false;
   g_libretro.content_glsl_candidate=false;
@@ -312,8 +311,10 @@ static void graphics_settings_are_independent(void){
 #if ANYGM_HARDWARE_RENDER
   const struct retro_core_option_v2_definition *hybrid=definition("anygm_hybrid_gpu");
   const struct retro_core_option_v2_definition *scene=definition("anygm_scene_renderer");
-  if(!hybrid){ complain("a hardware build offers no hybrid GPU setting"); return; }
-  if(!scene || strcmp(scene->category_key,"video") || value_count(scene)!=2 ||
+  if(hybrid) complain("the retired hybrid GPU setting is still exposed");
+  if(!scene || strcmp(scene->desc,"Renderer") ||
+     !scene->values[1].label || strcmp(scene->values[1].label,"OpenGL (Experimental)") ||
+     strcmp(scene->category_key,"video") || value_count(scene)!=2 ||
      strcmp(scene->values[0].value,"CPU") || strcmp(scene->values[1].value,"OpenGL") ||
      strcmp(scene->default_value,"CPU") || !strstr(scene->info,"closing and reopening"))
     complain("the scene setting does not expose CPU and OpenGL in Video");
@@ -327,15 +328,10 @@ static void graphics_settings_are_independent(void){
      !shaders->values[3].label || strcmp(shaders->values[3].label,"OFF") ||
      strcmp(shaders->default_value,"Off (but report available)"))
     complain("the GLSL setting does not expose the four agreed policies in Video");
-  if(strcmp(hybrid->desc,"Hybrid GPU rendering (Experimental)") ||
-     strcmp(hybrid->category_key,"video") || value_count(hybrid)!=2 ||
-     strcmp(hybrid->values[0].value,"None") || strcmp(hybrid->values[1].value,"OpenGL") ||
-     strcmp(hybrid->default_value,"None"))
-    complain("the hybrid GPU setting does not expose None and OpenGL in Video");
-  if(!strstr(hybrid->info,"final scaling and composition") ||
-     !strstr(hybrid->info,"cannot be reproduced exactly") ||
-     strstr(hybrid->info,"shader") || strstr(hybrid->info,"Shader"))
-    complain("the hybrid GPU help does not stay within final presentation");
+  if(!scene || !strstr(scene->info,"work in progress") ||
+     !strstr(scene->info,"slower than CPU") || !strstr(scene->info,"mid-frame") ||
+     !strstr(scene->info,"individual games where measurements"))
+    complain("renderer help lost its experimental coverage or cost explanation");
 #else
   if(definition("anygm_hybrid_gpu")) complain("a software-only build offers a graphics device");
   if(definition("anygm_scene_renderer")) complain("a software-only build offers scene GPU");
@@ -402,7 +398,7 @@ static void graphics_settings_are_independent(void){
   expect("independent exact GLSL",applied_config.values.content_shader_readback,
          ANYGM_SHADER_READBACK_ALWAYS);
   expect("exact GLSL intent",applied_config.values.content_shader_device_expected,1u);
-  expect("exact without hybrid",applied_config.values.hybrid_gpu_presentation,0u);
+  expect("OpenGL scene includes GPU presentation",applied_config.values.hybrid_gpu_presentation,1u);
   expect("scene independent of hybrid",applied_config.values.scene_renderer,
          ANYGM_SCENE_RENDERER_OPENGL);
 
@@ -412,7 +408,7 @@ static void graphics_settings_are_independent(void){
   libretro_options_apply(false);
   expect("independent performance GLSL",applied_config.values.content_shader_readback,
          ANYGM_SHADER_READBACK_BUDGETED);
-  expect("performance with hybrid",applied_config.values.hybrid_gpu_presentation,1u);
+  expect("retired hybrid-only setting stays CPU",applied_config.values.hybrid_gpu_presentation,0u);
   expect("hybrid without scene",applied_config.values.scene_renderer,ANYGM_SCENE_RENDERER_CPU);
 
   answered_game_shaders_value="Off (but report available)";
@@ -762,9 +758,34 @@ static void older_hosts_get_every_room_at_once(void){
     complain("the flat declaration does not lead with the shipped amount");
 #if ANYGM_HARDWARE_RENDER
   const char *scene=flat_text("anygm_scene_renderer");
-  if(!scene || !strstr(scene,"; CPU|OpenGL"))
+  if(!scene || strcmp(scene,"Renderer; CPU|OpenGL") || flat_text("anygm_hybrid_gpu"))
     complain("the flat declaration lost the CPU-default scene selector");
 #endif
+}
+
+/* The scene storage key/value stay stable;the retired presentation key is
+ * ignored on every supported menu interface,even if a frontend retains it. */
+static void old_renderer_combinations_have_one_policy(void){
+  const char *scenes[]={NULL,"CPU","OpenGL","invalid"};
+  const char *hybrids[]={NULL,"None","OpenGL","invalid"};
+  for(unsigned version=0;version<3u;version++)
+    for(unsigned scene=0;scene<4u;scene++) for(unsigned hybrid=0;hybrid<4u;hybrid++){
+      begin(version,3);
+      answered_scene_gpu_value=scenes[scene];answered_hybrid_gpu_value=hybrids[hybrid];
+      libretro_options_apply(true);
+#if ANYGM_HARDWARE_RENDER
+      unsigned gpu=scene==2u;
+#else
+      unsigned gpu=0u;
+#endif
+      expect("saved renderer selection",applied_config.values.scene_renderer,
+        gpu?ANYGM_SCENE_RENDERER_OPENGL:ANYGM_SCENE_RENDERER_CPU);
+      expect("saved renderer presentation",applied_config.values.hybrid_gpu_presentation,gpu);
+      if(version==0u && flat_text("anygm_hybrid_gpu")) complain("flat menu kept retired hybrid");
+      if(version==1u) for(const struct retro_core_option_definition *d=declared_v1_definitions;
+          d && d->key;d++) if(!strcmp(d->key,"anygm_hybrid_gpu")) complain("v1 menu kept retired hybrid");
+      if(version==2u && definition("anygm_hybrid_gpu")) complain("v2 menu kept retired hybrid");
+    }
 }
 
 static void v1_host_gets_scene_selector(void){
@@ -772,7 +793,9 @@ static void v1_host_gets_scene_selector(void){
 #if ANYGM_HARDWARE_RENDER
   const struct retro_core_option_definition *scene=declared_v1_definitions;
   while(scene && scene->key && strcmp(scene->key,"anygm_scene_renderer")) scene++;
-  if(!scene || !scene->key || strcmp(scene->default_value,"CPU") ||
+  if(!scene || !scene->key || strcmp(scene->desc,"Renderer") ||
+     !scene->values[1].label || strcmp(scene->values[1].label,"OpenGL (Experimental)") ||
+     strcmp(scene->default_value,"CPU") ||
      strcmp(scene->values[0].value,"CPU") || strcmp(scene->values[1].value,"OpenGL"))
     complain("the v1 declaration lost the CPU-default scene selector");
 #else
@@ -831,6 +854,7 @@ int main(void){
   every_setting_sits_in_a_group();
   frontend_category_order_survives_republication();
   graphics_settings_are_independent();
+  old_renderer_combinations_have_one_policy();
   v1_host_gets_scene_selector();
   unset_settings_keep_content_reachable();
   monitor_dimensions_reach_the_virtual_monitor_fields();

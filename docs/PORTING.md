@@ -96,7 +96,16 @@ only while that parent option is On.
 A host that owns an OpenGL or OpenGL ES 3 context may lend it to the engine with
 `anygm_graphics_context_reset`, supplying an entry-point resolver and a callback that answers with
 the current framebuffer. `content_shader_device_expected` permits unrecognized content GLSL to use
-that context; `hybrid_gpu_presentation` separately permits eligible final scaling and composition.
+that context; `hybrid_gpu_presentation` permits eligible final scaling and composition.
+The libretro Renderer option couples both intents: CPU is the default and
+OpenGL (Experimental) selects scene rendering and GPU presentation together.
+The old independent Hybrid GPU menu is removed. The stored scene key and
+CPU/OpenGL values remain stable; a retired hybrid-only selection is ignored.
+OpenGL remains a work in progress and does not cover every CPU drawing
+operation. It is recommended only for individual games where measurements
+show an improvement; mid-frame unsupported draws can require GPU readback,
+CPU drawing and re-upload, making it slower than CPU. See the README's
+Renderer section for player-facing scope.
 `scene_renderer` requests eligible ordinary 2D scene operations on that context, with a checked CPU
 fallback per unsupported operation. All three policies are independent and none is implied merely
 by adopting a context. The scene request is frozen at content preparation; a changed menu value

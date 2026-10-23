@@ -271,6 +271,25 @@ Libretro is therefore an adapter, not an assumption spread through the
 runtime. See [Architecture](docs/ARCHITECTURE.md) for ownership rules and
 [Porting](docs/PORTING.md) for the exact replacement seam.
 
+## Renderer
+
+The **Renderer** core option offers **CPU** (the default) and **OpenGL
+(Experimental)**. OpenGL runs both scene rendering and presentation on the GPU;
+there is no separate Hybrid GPU mode. It requires an OpenGL or OpenGL ES
+frontend driver and takes effect after closing and reopening content.
+
+OpenGL is a work in progress: it does not yet support every drawing operation
+available in CPU mode. It is not recommended for general use; enable it only
+for individual games where measurements show an improvement. It can be slower
+than CPU in some games. An unsupported draw can fall back to CPU mid-frame,
+requiring the image to be read from the GPU, drawn on CPU and uploaded again.
+
+The stored selection remains `anygm_scene_renderer=CPU|OpenGL`, so an existing
+OpenGL scene selection is preserved. The retired `anygm_hybrid_gpu` setting is
+ignored; all other former scene/hybrid combinations use CPU. Frontends with the
+original flat option interface show the stored value `OpenGL`; newer menus
+show its `OpenGL (Experimental)` label.
+
 ## Documentation
 
 - [Architecture](docs/ARCHITECTURE.md)

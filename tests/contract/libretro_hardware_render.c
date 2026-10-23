@@ -179,13 +179,9 @@ static bool environment_callback(unsigned command,void *data){
     case RETRO_ENVIRONMENT_GET_VARIABLE:{
       struct retro_variable *variable=data;
       if(!variable || !variable->key) return false;
-      if(!strcmp(variable->key,"anygm_hybrid_gpu")){
-        variable->value=option_value;
-        return option_value!=NULL;
-      }
       if(!strcmp(variable->key,"anygm_scene_renderer")){
-        variable->value=scene_option_value;
-        return scene_option_value!=NULL;
+        variable->value=scene_option_value?scene_option_value:option_value;
+        return variable->value!=NULL;
       }
       if(!strcmp(variable->key,"anygm_content_shader_readback")){
         variable->value=shader_option_value;
@@ -729,9 +725,9 @@ static int scene_renderer_requests_context_independently(void){
   scene_option_value="OpenGL";
   REQUIRE(load(),"scene-only content prepares");
   REQUIRE(declared_count==1 && start_calls==0,
-          "scene option requests a context without hybrid presentation or GLSL");
+          "renderer option requests a context independently of GLSL");
   REQUIRE(latest_config.values.scene_renderer==ANYGM_SCENE_RENDERER_OPENGL &&
-          latest_config.values.hybrid_gpu_presentation==0u &&
+          latest_config.values.hybrid_gpu_presentation==1u &&
           latest_config.values.content_shader_device_expected==0u,
           "scene intent remains independent of other graphics options");
   declared.context_reset();

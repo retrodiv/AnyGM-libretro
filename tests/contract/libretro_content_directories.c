@@ -216,7 +216,7 @@ bool libretro_hw_render_requested(void){ return false; }
 #endif
 void libretro_options_register(void){}
 void libretro_options_apply(bool all_fields){
-  (void)all_fields; g_libretro.hybrid_gpu_selected=delay_start!=0;
+  (void)all_fields; g_libretro.scene_gpu_selected=delay_start!=0;
 }
 void libretro_options_finalize_graphics(bool available){ (void)available; }
 const char *libretro_options_value(const char *key){

@@ -126,21 +126,15 @@ static struct retro_core_option_v2_definition g_definitions[]={
     {"Off (but report available)","OFF (but report available)"},{"Off","OFF"},{NULL,NULL}},
    "Off (but report available)"},
 #if ANYGM_HARDWARE_RENDER
-  {"anygm_scene_renderer","Scene renderer",NULL,
-   "CPU is the complete software renderer. OpenGL tries eligible 2D scene work on the graphics "
-   "device and falls back to CPU for unsupported operations or an unavailable context. Requires "
-   "a compatible OpenGL or OpenGL ES frontend driver. Changes take effect after closing and "
-   "reopening the content.",NULL,"video",
-   {{"CPU",NULL},{"OpenGL","OpenGL / OpenGL ES"},{NULL,NULL}},"CPU"},
-  {"anygm_hybrid_gpu","Hybrid GPU rendering (Experimental)",NULL,
-   "Chooses whether eligible final scaling and composition passes are executed on a graphics "
-   "device instead of the processor. None keeps them on the processor. OpenGL can avoid building "
-   "the final output frame on the processor. Passes that cannot be reproduced exactly on the "
-   "graphics device continue using the software renderer. Requires a frontend running a compatible "
-   "OpenGL or OpenGL ES video driver. Changes take effect after closing and reopening the content.",
-   NULL,"video",
-   {{"None",NULL},{"OpenGL","OpenGL / OpenGL ES"},{NULL,NULL}},
-   "None"},
+  {"anygm_scene_renderer","Renderer",NULL,
+   "CPU is the complete software renderer and the default. OpenGL (Experimental) renders the "
+   "scene and its presentation on the graphics device. It is a work in progress and does not yet "
+   "support every drawing operation available in CPU mode. It can be slower than CPU in some "
+   "games: an unsupported draw can fall back mid-frame, reading the image from the GPU, drawing "
+   "on CPU and uploading it again. Use it only for individual games where measurements show an "
+   "improvement. Requires OpenGL or OpenGL ES. Changes take effect after closing and reopening "
+   "the content.",NULL,"video",
+   {{"CPU",NULL},{"OpenGL","OpenGL (Experimental)"},{NULL,NULL}},"CPU"},
 #endif
   /* These are the exact locale strings exposed by the runtime: lowercase language and uppercase
    * region. Auto follows the frontend language and its paired region. Locale environment variables
@@ -367,10 +361,6 @@ static const char *option_value(const char *key){
 const char *libretro_options_value(const char *key){ return option_value(key); }
 
 #if ANYGM_HARDWARE_RENDER
-static int hybrid_gpu_selected(void){
-  const char *value=option_value("anygm_hybrid_gpu");
-  return value && !strcmp(value,"OpenGL");
-}
 static int scene_gpu_selected(void){
   const char *value=option_value("anygm_scene_renderer");
   return value && !strcmp(value,"OpenGL");
@@ -643,7 +633,6 @@ void libretro_options_apply(bool all_fields){
   if(!g_libretro.loaded && !g_libretro.prepared){
     const char *shader=option_value("anygm_content_shader_readback");
 #if ANYGM_HARDWARE_RENDER
-    g_libretro.hybrid_gpu_selected=hybrid_gpu_selected()?true:false;
     g_libretro.scene_gpu_selected=scene_gpu_selected()?true:false;
     g_libretro.content_glsl_selected=
       shader && (!strcmp(shader,"Performance") || !strcmp(shader,"Exact"));
@@ -653,7 +642,6 @@ void libretro_options_apply(bool all_fields){
         ?ANYGM_SHADER_READBACK_ALWAYS:ANYGM_SHADER_READBACK_NEVER;
     config->report_all_shaders_compiled=shader && !strcmp(shader,"Off")?0u:1u;
 #else
-    g_libretro.hybrid_gpu_selected=false;
     g_libretro.scene_gpu_selected=false;
     g_libretro.content_glsl_selected=false;
     config->content_shader_readback=ANYGM_SHADER_READBACK_NEVER;
@@ -662,7 +650,7 @@ void libretro_options_apply(bool all_fields){
     /* These are load-time intents. Content inspection and context negotiation finalize them before
      * the first authored event runs. */
     config->content_shader_device_expected=g_libretro.content_glsl_selected?1u:0u;
-    config->hybrid_gpu_presentation=g_libretro.hybrid_gpu_selected?1u:0u;
+    config->hybrid_gpu_presentation=g_libretro.scene_gpu_selected?1u:0u;
     config->scene_renderer=g_libretro.scene_gpu_selected?
       ANYGM_SCENE_RENDERER_OPENGL:ANYGM_SCENE_RENDERER_CPU;
   }
@@ -728,9 +716,9 @@ void libretro_options_finalize_graphics(bool device_available){
                       g_libretro.content_glsl_candidate;
   config->content_shader_device_expected=content_device?1u:0u;
   config->hybrid_gpu_presentation=
-    device_available && g_libretro.hybrid_gpu_selected?1u:0u;
+    device_available && g_libretro.scene_gpu_selected?1u:0u;
   /* A requested GLSL device that was refused has the documented report-available software
-   * fallback. A separately selected strict Off remains strict when only Hybrid GPU was refused. */
+   * fallback. A separately selected strict Off remains strict when only the renderer was refused. */
   if(g_libretro.content_glsl_selected && g_libretro.content_glsl_candidate && !device_available){
     config->content_shader_readback=ANYGM_SHADER_READBACK_NEVER;
     config->report_all_shaders_compiled=1u;

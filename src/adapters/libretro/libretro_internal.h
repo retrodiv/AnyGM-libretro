@@ -40,7 +40,6 @@ typedef struct LibretroAdapter {
   bool loaded;
   bool provisional_av_exposed;
   bool startup_av_notification_pending;
-  bool hybrid_gpu_selected;
   bool scene_gpu_selected;
   bool content_glsl_selected;
   bool content_glsl_candidate;

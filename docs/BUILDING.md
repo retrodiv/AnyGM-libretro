@@ -87,7 +87,7 @@ make -j1 HARDWARE_RENDER=1
 ```
 
 `HARDWARE_RENDER=0` excludes `src/video/renderer/gpu/` and the adapter's hardware bridge from the source
-lists, omits the `anygm_hybrid_gpu` and `anygm_scene_renderer` core options, and limits
+lists, omits the Renderer (`anygm_scene_renderer`) core option, and limits
 `Game shaders (GLSL)` to its two OFF reporting
 policies, and produces a binary with no graphics-API symbol in it. Everything else is unchanged:
 the same engine, the same recognized software shader families, render-plan software execution,

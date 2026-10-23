@@ -46,7 +46,6 @@ static bool environment(unsigned command,void *data){
     variable->value=NULL;
     if(!strcmp(variable->key,"anygm_render_game_resolution")) variable->value="On";
     if(!strcmp(variable->key,"anygm_scene_renderer")) variable->value="CPU";
-    if(!strcmp(variable->key,"anygm_hybrid_gpu")) variable->value="None";
     return variable->value!=NULL;
   }
   return false;

@@ -451,7 +451,7 @@ bool retro_load_game(const struct retro_game_info *info){
   g_libretro.prepared=true;
   g_libretro.content_glsl_candidate=
     (content_info.flags&ANYGM_CONTENT_GLSL_DEVICE_CANDIDATE)!=0;
-  bool needs_context=g_libretro.hybrid_gpu_selected || g_libretro.scene_gpu_selected ||
+  bool needs_context=g_libretro.scene_gpu_selected ||
     (g_libretro.content_glsl_selected && g_libretro.content_glsl_candidate);
   if(needs_context){
     /* Some frontends may invoke context_reset before the environment call returns. Publish the
