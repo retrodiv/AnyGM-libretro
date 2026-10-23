@@ -995,6 +995,23 @@ static void plot_snow_shape(GmlParticleState *state,const GmlRenderCpuBackendDra
   }
 }
 
+typedef struct {
+  GmlParticleState *state;
+  int shape;
+  double xs,ys;
+} ParticleMaskCoverage;
+
+static double particle_mask_coverage(void *context,double x,double y){
+  ParticleMaskCoverage *mask=context;
+  if(mask->shape==5 || mask->shape==6){
+    double nx=x/(32.0*fabs(mask->xs)),ny=y/(32.0*fabs(mask->ys));
+    return sample_ring_shape(mask->state,nx*32.0,ny*32.0);
+  }
+  if(mask->shape==10) return sample_explosion_shape(mask->state,x/mask->xs,y/mask->ys);
+  if(mask->shape==13) return sample_snow_shape(mask->state,x/mask->xs,y/mask->ys);
+  return sample_glint_shape(mask->state,mask->shape,x/mask->xs,y/mask->ys);
+}
+
 void gml_part_system_drawit(GmlParticleState *state,GmlRender *r,int id){
   PSys *s=ps(state,id); if(!s||!r) return;
   GmlRenderCpuBackendDrawView target;
@@ -1069,6 +1086,15 @@ void gml_part_system_drawit(GmlParticleState *state,GmlRender *r,int id){
            draw_size*t->xscale*coordinate_scale_x,
            draw_size*t->yscale*coordinate_scale_y,
            draw_ori+(t->ori_rel?p->dir:0),col,alpha)) continue;
+      if(t->shape==4 || t->shape==5 || t->shape==6 || t->shape==8 ||
+         t->shape==9 || t->shape==10 || t->shape==13){
+        ParticleMaskCoverage mask={state,t->shape,
+          draw_size*t->xscale*coordinate_scale_x,draw_size*t->yscale*coordinate_scale_y};
+        if(gml_render_try_particle_mask(r,p->x*coordinate_scale_x-camera_x,
+             p->y*coordinate_scale_y-camera_y,mask.xs,mask.ys,
+             draw_ori+(t->ori_rel?p->dir:0),t->shape==5 || t->shape==6,
+             col,alpha,particle_mask_coverage,&mask)) continue;
+      }
       GmlRenderCpuBackendDrawView draw;
       GmlRenderCpuBackendDispatchScope scope;
       gml_render_cpu_backend_dispatch_begin(r,&scope,GML_RENDER_SCENE_PRIMITIVE,0);

@@ -24,6 +24,14 @@ int gml_render_try_particle_square(GmlRender *render,int centre_x,int centre_y,
 int gml_render_try_particle_line(GmlRender *render,double x,double y,
                                  double scale_x,double scale_y,double angle,
                                  uint32_t colour,double alpha);
+/* The sampler resolves coverage only, in the CPU cell's rotated local frame.
+ * Colour and destination blending remain device work. No callback runs on a
+ * rejected target, and the complete covered run group is prepared atomically. */
+typedef double (*GmlRenderParticleCoverage)(void *context,double x,double y);
+int gml_render_try_particle_mask(GmlRender *render,double x,double y,
+                                 double scale_x,double scale_y,double angle,int ellipse,
+                                 uint32_t colour,double alpha,
+                                 GmlRenderParticleCoverage coverage,void *context);
 
 void gml_render_primitive_point(GmlRender *render,
                                 int x,int y,uint32_t color);

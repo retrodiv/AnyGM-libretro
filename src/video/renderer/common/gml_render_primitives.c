@@ -166,6 +166,104 @@ disc_done:
   free(operations);return result;
 }
 
+typedef struct {
+  GmlRenderRect region;
+  unsigned opacity;
+} GmlParticleCoverageRun;
+
+int gml_render_try_particle_mask(GmlRender *r,double x,double y,
+                                 double xs,double ys,double angle,int ellipse,
+                                 uint32_t colour,double alpha,
+                                 GmlRenderParticleCoverage coverage,void *context){
+  const GmlRenderDeviceServices *device=gml_render_device(r);
+  if(!r || !r->resident_application_pass || !device || !device->observe_on_demand ||
+     !device->observe_on_demand(device->context) || !gml_render_scene_target_matches(r) ||
+     r->pending_presentation || r->rotated_batch_count || r->rotated_batch_building ||
+     r->classic_phase_scene_target || r->classic_phase_y ||
+     r->classic_interp_phase[0] || r->classic_interp_phase[1] || r->classic_interp_phase[2] ||
+     r->app_interp_phase[0] || r->app_interp_phase[1] || r->app_interp_phase[2] ||
+     !coverage || (ellipse!=0 && ellipse!=1) ||
+     r->fbw<=0 || r->fbh<=0 || r->fbw>16384 || r->fbh>16384 ||
+     !isfinite(x) || !isfinite(y) || !isfinite(xs) || !isfinite(ys) ||
+     (!ellipse && !isfinite(angle)) || !isfinite(alpha) || fabs(x)>16384.0 || fabs(y)>16384.0)
+    return 0;
+  double rx=32.0*fabs(xs),ry=32.0*fabs(ys);
+  if(rx>16384.0 || ry>16384.0) return 0;
+  if(alpha<=0.0 || rx<.25 || ry<.25) return 1;
+  double radians=ellipse?0.0:angle*3.14159265358979323846/180.0;
+  double co=cos(radians),si=sin(radians);
+  double ex=fabs(co)*rx+fabs(si)*ry,ey=fabs(si)*rx+fabs(co)*ry;
+  if(!isfinite(ex) || !isfinite(ey)) return 0;
+  int x0=(int)fmax(0.0,floor(x-ex)),x1=(int)fmin(r->fbw-1.0,ceil(x+ex));
+  int y0=(int)fmax(0.0,floor(y-ey)),y1=(int)fmin(r->fbh-1.0,ceil(y+ey));
+  if(x1<x0 || y1<y0) return 1;
+  GmlParticleCoverageRun *runs=NULL;
+  GmlRenderDrawOp *operations=NULL;
+  uint32_t count=0u,capacity=0u;int result=0;
+  /* Reuse the existing CPU samplers, not its colour writer. Equal input-alpha
+   * bytes form disjoint row runs; ordinary rectangles batch their fixed blend.
+   * No part of this particle is delivered before the whole group is ready. */
+  for(int row=y0;row<=y1;row++){
+    int first=x0,previous=-1;
+    for(int column=x0;column<=x1+1;column++){
+      int opacity=-1;
+      if(column<=x1){
+        double dx=column+.5-x,dy=row+.5-y;
+        double sample=coverage(context,co*dx-si*dy,si*dx+co*dy);
+        if(!isfinite(sample)) goto mask_done;
+        if(sample>0.0){
+          double value=alpha*sample;
+          if(value>0.0){
+            if(value>1.0) value=1.0;
+            opacity=r->alphablend?(int)(value*255.0+.5):255;
+            if(!opacity) opacity=-1;
+          }
+        }
+      }
+      if(opacity==previous) continue;
+      if(previous>=0){
+        if(count==65536u) goto mask_done;
+        if(count==capacity){
+          uint32_t next=capacity?capacity*2u:256u;
+          GmlParticleCoverageRun *grown=realloc(runs,(size_t)next*sizeof *runs);
+          if(!grown) goto mask_done;
+          runs=grown;capacity=next;
+        }
+        runs[count++]=(GmlParticleCoverageRun){
+          {first,row,(uint32_t)(column-first),1u},(unsigned)previous};
+      }
+      first=column;previous=opacity;
+    }
+  }
+  if(!count){result=1;goto mask_done;}
+  operations=calloc(count,sizeof *operations);
+  if(!operations) goto mask_done;
+  if(r->pending_underlay && !gml_render_compose_resident_underlay(r)) goto mask_done;
+  gml_render_flush_pending_fill(r);
+  GmlRenderResource *target=gml_render_scene_target_resource_ensure(r);
+  if(r->pending_fill || !target) goto mask_done;
+  GmlRenderImageRef next=gml_render_application_scene_next_image_ref(r,target);
+  if(next.content_version>UINT64_MAX-count) goto mask_done;
+  for(uint32_t i=0;i<count;i++){
+    GmlRenderDrawOp *op=&operations[i];
+    op->opcode=GML_RENDER_OP_COLOURED_PRIMITIVE;op->scene_family=GML_RENDER_SCENE_PRIMITIVE;
+    op->reconstruction_mode=GML_RENDER_DEVICE_CHECKPOINT;
+    op->target=(GmlRenderTargetRef){next,1u,(uint32_t)r->fbw,(uint32_t)r->fbh,
+      GML_RENDER_PIXEL_ARGB8888,{0,0,(uint32_t)r->fbw,(uint32_t)r->fbh}};
+    op->target.image.content_version+=i+1u;
+    GmlRenderPrimitiveRect *p=&op->payload.primitive;
+    p->region=p->authored_region=runs[i].region;p->kind=GML_RENDER_PRIMITIVE_RECTANGLE;
+    p->colour=gml_render_cpu_backend_color_to_xrgb(colour);
+    for(unsigned corner=0;corner<4u;corner++) p->corner_colour[corner]=p->colour;
+    p->rectangle_flags=GML_RENDER_RECTANGLE_TARGET_ALPHA|GML_RENDER_RECTANGLE_SOURCE_OVER_ALPHA;
+    p->alpha=runs[i].opacity/255.0;p->alpha_blend=r->alphablend?1u:0u;
+  }
+  result=gml_render_application_scene_enqueue_primitives(r,operations,count);
+  if(result){r->fb_all_transparent=0;r->fb_opaque_known=r->fb_all_opaque=0;}
+mask_done:
+  free(operations);free(runs);return result;
+}
+
 int gml_render_try_particle_line(GmlRender *r,double x,double y,
                                  double xs,double ys,double angle,
                                  uint32_t colour,double alpha){
