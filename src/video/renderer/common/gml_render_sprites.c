@@ -5486,6 +5486,12 @@ static int resident_positioned_axis_sprite(GmlRender *r,int sprite,int subimg,
   if(page_index<0 || page_index>=r->n_tpag) return 0;
   GmlTpag *page=&r->tpag[page_index];
   if(page->sw<=0 || page->sh<=0) return 0;
+  /* A positioned physical crop is not an authored sprite quad. In
+   * particular,replacement clears its logical margin before the crop. */
+  int trimmed=page->tx || page->ty || page->bw!=page->sw || page->bh!=page->sh;
+  const GmlRenderDeviceServices *device=gml_render_device(r);
+  if(trimmed && (r->blendmode==6 || (device && device->observe_on_demand &&
+     device->observe_on_demand(device->context)))) return 0;
   for(int corner=0;corner<4;corner++){
     if(!isfinite(x[corner]) || !isfinite(y[corner])) return 0;
     mapped_x[corner]=x[corner]; mapped_y[corner]=y[corner];
@@ -5493,6 +5499,11 @@ static int resident_positioned_axis_sprite(GmlRender *r,int sprite,int subimg,
     if(!isfinite(mapped_x[corner]) || !isfinite(mapped_y[corner])) return 0;
   }
   if(gml_render_sprite_pos_geometry(r,mapped_x,mapped_y,&geometry)!=1) return 0;
+  if(trimmed && !r->interp && gml_render_target_is_first_generation_application_surface(r)){
+    double xs=(geometry.qx[1]-geometry.qx[0])/page->sw;
+    double ys=(geometry.qy[3]-geometry.qy[0])/page->sh;
+    if(fabs(xs-nearbyint(xs))>1e-9 || fabs(ys-nearbyint(ys))>1e-9) return 0;
+  }
   if(r->interp)
     return resident_filtered_atlas_page(r,page_index,geometry.qx[0],geometry.qy[0],
       (geometry.qx[1]-geometry.qx[0])/page->sw,
@@ -5644,6 +5655,7 @@ static int resident_positioned_function(GmlRender *r,int sprite,int subimg,
   GmlRenderSpritePosGeometry geometry;
   GmlTpag *axis_page=NULL;
   GmlRenderRect axis_bounds={0};
+  GmlRenderRect axis_margin={0};
   double axis_xs=0.0,axis_ys=0.0;
   double mx[4],my[4];
   if(!r || !r->win || !r->resident_application_pass || !device ||
@@ -5702,7 +5714,8 @@ static int resident_positioned_function(GmlRender *r,int sprite,int subimg,
     if(!r->shader_pal || r->active_shader>=r->n_shader_pal) r->active_shader=-1;
     if(!destination) r->blend_equation=r->blend_equation_alpha=1;
     if(alpha<0) alpha=0;
-    int accepted=r->interp?resident_filtered_atlas_page(r,page_index,left,top,xs,ys,
+    int trimmed=page->tx || page->ty || page->bw!=page->sw || page->bh!=page->sh;
+    int accepted=trimmed?0:r->interp?resident_filtered_atlas_page(r,page_index,left,top,xs,ys,
       GML_RENDER_SCENE_SPRITE,0xFFFFFFu,alpha,NULL,NULL,0.0,NULL,0,0,0,0,7):
       resident_atlas_crop_from_page(r,page,0,0,page->sw,page->sh,left,top,xs,ys,
         GML_RENDER_SCENE_SPRITE,0xFFFFFFu,alpha,stored_mode==6?20:15,NULL);
@@ -5716,8 +5729,6 @@ static int resident_positioned_function(GmlRender *r,int sprite,int subimg,
     if(r->fog_flat || r->font_sdf_active ||
        (r->active_shader>=0 && r->active_shader<r->n_shader_pal && r->shader_pal &&
         !gml_render_shader_cpu_passthrough(r)) ||
-       (r->interp && (page->tx || page->ty || page->bw!=page->sw || page->bh!=page->sh)) ||
-       (stored_mode==6 && (page->tx || page->ty || page->bw!=page->sw || page->bh!=page->sh)) ||
        (fabs(xs-1.0)<.001 && fabs(ys-1.0)<.001 && !stored_mode)) return 0;
     GmlSprite physical={0};
     if(!gml_render_sprite_axis_bounds(r,&physical,page,
@@ -5730,13 +5741,30 @@ static int resident_positioned_function(GmlRender *r,int sprite,int subimg,
     geometry.y1=(int64_t)axis_bounds.y+axis_bounds.height>r->fbh?r->fbh-1:
       axis_bounds.y+(int)axis_bounds.height-1;
     if(geometry.x1<geometry.x0 || geometry.y1<geometry.y0) return 1;
+    if(trimmed && stored_mode==6 && r->alphablend){
+      if(fabs(left-page->tx*xs)>1000000.0 || fabs(top-page->ty*ys)>1000000.0 ||
+         page->bw<=0 || page->bh<=0 || page->bw*xs>1000000.0 || page->bh*ys>1000000.0) return 0;
+      int x0=(int)floor(left-page->tx*xs+.5),y0=(int)floor(top-page->ty*ys+.5);
+      int x1=x0+(int)lround(page->bw*xs),y1=y0+(int)lround(page->bh*ys);
+      if(x0<0) x0=0;
+      if(y0<0) y0=0;
+      if(x1>r->fbw) x1=r->fbw;
+      if(y1>r->fbh) y1=r->fbh;
+      if(x1>x0 && y1>y0){
+        axis_margin=(GmlRenderRect){x0,y0,(uint32_t)(x1-x0),(uint32_t)(y1-y0)};
+        if(x0<geometry.x0) geometry.x0=x0;
+        if(y0<geometry.y0) geometry.y0=y0;
+        if(x1>geometry.x1+1) geometry.x1=x1-1;
+        if(y1>geometry.y1+1) geometry.y1=y1-1;
+      }
+    }
     axis_page=page;axis_xs=xs;axis_ys=ys;
   }
   int mode=r->blendmode;
   int replacement=axis_page && mode==6 && (!r->interp || r->alphablend);
   int masked=r->alphablend && (mode==4 || mode==7 || mode==8 || destination ||
     (axis_page && r->interp && mode==6));
-  if(masked && !r->color_write_mask) return 1;
+  if(masked && !r->color_write_mask && !axis_margin.width) return 1;
   GmlSprite *s=&r->spr[sprite];
   if(s->n_frames<=0) return 1;
   GmlRenderResourceSource source={0};
@@ -5768,9 +5796,18 @@ static int resident_positioned_function(GmlRender *r,int sprite,int subimg,
   uint32_t count=0;int accepted=0;
   for(int py=geometry.y0;py<=geometry.y1;py++) for(int px=geometry.x0;px<=geometry.x1;px++){
     double u=0,v=0,a=0;
+    int cleared=axis_margin.width && px>=axis_margin.x && py>=axis_margin.y &&
+      px<axis_margin.x+(int)axis_margin.width && py<axis_margin.y+(int)axis_margin.height;
+    int sampled=1;
     if(axis_page){
-      if(!gml_render_sprite_pos_axis_sample(r,axis_page,axis_bounds,geometry.qx[0],
-           geometry.qy[0],axis_xs,axis_ys,px,py,alpha,&u,&v,&a)) continue;
+      sampled=px>=axis_bounds.x && py>=axis_bounds.y &&
+        px<axis_bounds.x+(int)axis_bounds.width && py<axis_bounds.y+(int)axis_bounds.height &&
+        gml_render_sprite_pos_axis_sample(r,axis_page,axis_bounds,geometry.qx[0],
+          geometry.qy[0],axis_xs,axis_ys,px,py,alpha,&u,&v,&a);
+      if(!sampled && !cleared) continue;
+      /* Masked physical samples outside the preceding clear need their
+       * original destination channels. Keep that distinct case counted. */
+      if(axis_margin.width && !cleared && sampled && r->interp && r->color_write_mask!=15u) goto done;
     }else{
       if(!gml_render_sprite_pos_coordinates(&geometry,px,py,&u,&v)) continue;
       u=fmax(0.0,fmin(1.0,u));v=fmax(0.0,fmin(1.0,v));
@@ -5779,16 +5816,58 @@ static int resident_positioned_function(GmlRender *r,int sprite,int subimg,
       if(!destination && a*alpha/255.0<=0.0) continue;
     }
     double su,sv;
-    if(r->interp){su=(ox+u*sw)/source.width;sv=(oy+v*sh)/source.height;}
+    GmlRenderRect sample_region={ox,oy,(uint32_t)sw,(uint32_t)sh};
+    if(axis_page && sampled){
+      int x0=ox,y0=oy,x1=ox+sw,y1=oy+sh;
+      if(r->interp){
+        double sx=ox+u*sw-.5,sy=oy+v*sh-.5;
+        int taps_x[4],taps_y[4];
+        for(int tap=0;tap<4;tap++){
+          int ix=(int)floor(sx)-ox+(tap&1),iy=(int)floor(sy)-oy+(tap>>1);
+          int margin=(ix<0 && axis_page->tx>0) || (iy<0 && axis_page->ty>0) ||
+            (ix>=sw && axis_page->bw-axis_page->tx-sw>0) ||
+            (iy>=sh && axis_page->bh-axis_page->ty-sh>0);
+          if(!margin){
+            if(ix<0) ix=0;else if(ix>=sw) ix=sw-1;
+            if(iy<0) iy=0;else if(iy>=sh) iy=sh-1;
+          }
+          ix+=ox;iy+=oy;
+          if(ix<0 || iy<0 || ix>=(int)source.width || iy>=(int)source.height) goto done;
+          taps_x[tap]=ix;taps_y[tap]=iy;
+        }
+        /* The CPU logical-margin predicate can couple the two axes.
+         * Hardware clamp is exact only for separable neighbouring taps. */
+        if(taps_x[0]!=taps_x[2] || taps_x[1]!=taps_x[3] ||
+           taps_y[0]!=taps_y[1] || taps_y[2]!=taps_y[3]) goto done;
+        x0=taps_x[0];x1=taps_x[1]+1;y0=taps_y[0];y1=taps_y[2]+1;
+      }else{
+        int ix=(int)floor(u*sw),iy=(int)floor(v*sh);
+        if(ox+ix>=x1) x1=ox+ix+1;
+        if(oy+iy>=y1) y1=oy+iy+1;
+      }
+      sample_region=(GmlRenderRect){x0,y0,(uint32_t)(x1-x0),(uint32_t)(y1-y0)};
+    }
+    if(r->interp){
+      su=fmax(sample_region.x+.5,fmin(sample_region.x+sample_region.width-.5,ox+u*sw))/source.width;
+      sv=fmax(sample_region.y+.5,fmin(sample_region.y+sample_region.height-.5,oy+v*sh))/source.height;
+    }
     else{
       int ix=(int)floor(u*sw),iy=(int)floor(v*sh);
-      if(ix>=sw) ix=sw-1;
-      if(iy>=sh) iy=sh-1;
+      if(!axis_page && ix>=sw) ix=sw-1;
+      if(!axis_page && iy>=sh) iy=sh-1;
       su=(ox+ix+.5)/source.width;sv=(oy+iy+.5)/source.height;
     }
+    unsigned resolved=axis_margin.width?(sampled?(r->interp?r->color_write_mask:15u):0u):0u;
+    double flag=axis_margin.width?4.0+resolved:axis_page &&
+      (masked || replacement || (r->interp && r->alphablend))?3.0:
+      !r->alphablend?2.0:destination && alpha<0.0?3.0:masked?1.0:0.0;
+    long rounded=lround(a*alpha);
+    double input_alpha=flag>=3.0?(rounded<0?255.0:(double)rounded):0.0;
     if(count){
       GmlRenderQuad *q=&operations[count-1u].payload.quad;
-      if(q->y[0]==py && q->x[1]==px && q->u[0]==su && q->v[0]==sv){
+      if(q->y[0]==py && q->x[1]==px && q->u[0]==su && q->v[0]==sv &&
+         q->span_x[0]==flag && q->span_y[0]==input_alpha &&
+         !memcmp(&q->sampling.source_region,&sample_region,sizeof sample_region)){
         q->x[1]=q->x[2]=px+1.0;continue;
       }
     }
@@ -5797,14 +5876,9 @@ static int resident_positioned_function(GmlRender *r,int sprite,int subimg,
     q->shape=GML_RENDER_QUAD_AXIS_ALIGNED;
     q->sampling=(GmlRenderSamplingPolicy){r->interp?GML_RENDER_FILTER_HARDWARE_BILINEAR:
       GML_RENDER_FILTER_NEAREST,GML_RENDER_EDGE_CLAMP_SUBIMAGE,
-      {ox,oy,(uint32_t)sw,(uint32_t)sh},GML_RENDER_QUANTISE_POSITIONED_SAMPLE,0u};
+      sample_region,GML_RENDER_QUANTISE_POSITIONED_SAMPLE,0u};
     q->filtered_draw_alpha=alpha;
-    q->span_x[0]=axis_page && (masked || replacement)?3.0:
-      !r->alphablend?2.0:destination && alpha<0.0?3.0:masked?1.0:0.0;
-    if(q->span_x[0]==3.0){
-      long rounded=lround(a*alpha);
-      q->span_y[0]=rounded<0?255.0:(double)rounded;
-    }
+    q->span_x[0]=flag;q->span_y[0]=input_alpha;
     q->x[0]=q->x[3]=px;q->x[1]=q->x[2]=px+1.0;
     q->y[0]=q->y[1]=py;q->y[2]=q->y[3]=py+1.0;
     for(unsigned corner=0;corner<4u;corner++){
@@ -5816,7 +5890,7 @@ static int resident_positioned_function(GmlRender *r,int sprite,int subimg,
   gml_render_flush_pending_fill(r);
   GmlRenderResource *target=gml_render_scene_target_resource_ensure(r);
   if(!target || r->pending_fill) goto done;
-  GmlRenderDrawStateSnapshot state={.write_mask=masked?r->color_write_mask:15u,
+  GmlRenderDrawStateSnapshot state={.write_mask=masked && !axis_margin.width?r->color_write_mask:15u,
     .colour=0xFFFFFFFFu,.alpha=255u,.sampler_count=1u};
   int preserve=gml_render_target_preserves_alpha(r);
   if(replacement){
@@ -5839,11 +5913,14 @@ static int resident_positioned_function(GmlRender *r,int sprite,int subimg,
         GML_RENDER_BLEND_FIXED_MAX+(uint32_t)r->blend_equation_alpha-2u;
     }else if(mode==1){
       state.rgb_destination_factor=GML_RENDER_BLEND_ONE;
-      state.alpha_source_factor=state.alpha_destination_factor=GML_RENDER_BLEND_ONE;
-      state.coverage_policy=GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA;
+      if(!axis_page || !r->interp){
+        state.alpha_source_factor=state.alpha_destination_factor=GML_RENDER_BLEND_ONE;
+        state.coverage_policy=GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA;
+      }
     }else if(mode==2){
       state.rgb_source_factor=state.alpha_source_factor=GML_RENDER_BLEND_ZERO;
       state.rgb_destination_factor=GML_RENDER_BLEND_ONE_MINUS_SOURCE_COLOUR;
+      if(axis_page && r->interp) state.alpha_source_factor=GML_RENDER_BLEND_SOURCE_ALPHA;
     }else if(mode==4){
       state.rgb_destination_factor=GML_RENDER_BLEND_ONE_MINUS_SOURCE_COLOUR;
       state.coverage_policy=r->target_sp>0?0u:GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA;
@@ -5857,6 +5934,7 @@ static int resident_positioned_function(GmlRender *r,int sprite,int subimg,
     }
   }
   state.samplers[0]=operations[0].payload.quad.sampling;
+  state.samplers[0].source_region=(GmlRenderRect){0,0,source.width,source.height};
   GmlRenderImageRef image=gml_render_application_scene_next_image_ref(r,target);
   if(image.content_version>UINT64_MAX-count) goto done;
   for(uint32_t i=0;i<count;i++){

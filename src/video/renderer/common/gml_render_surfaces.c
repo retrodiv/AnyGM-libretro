@@ -717,8 +717,13 @@ int gml_render_application_scene_enqueue_quads(GmlRender *r,
        part->target.width!=operation->target.width || part->target.height!=operation->target.height ||
        part->target.pixel_format!=operation->target.pixel_format ||
        memcmp(&part->target.region,&operation->target.region,sizeof part->target.region) ||
-       memcmp(&part->payload.quad.sampling,&operation->payload.quad.sampling,
-              sizeof part->payload.quad.sampling)) return 0;
+       (operation->payload.quad.sampling.quantisation==GML_RENDER_QUANTISE_POSITIONED_SAMPLE?
+         (part->payload.quad.sampling.quantisation!=GML_RENDER_QUANTISE_POSITIONED_SAMPLE ||
+          part->payload.quad.sampling.filter!=operation->payload.quad.sampling.filter ||
+          part->payload.quad.sampling.edge_rule!=operation->payload.quad.sampling.edge_rule ||
+          part->payload.quad.sampling.logical_margin_mask!=operation->payload.quad.sampling.logical_margin_mask):
+         memcmp(&part->payload.quad.sampling,&operation->payload.quad.sampling,
+                sizeof part->payload.quad.sampling))) return 0;
   }
   exact_filtered_font=operation->reconstruction_mode==GML_RENDER_REPLAY_EXACT &&
     operation->scene_family==GML_RENDER_SCENE_TEXT &&

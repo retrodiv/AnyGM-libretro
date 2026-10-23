@@ -6397,17 +6397,17 @@ int gml_render_sprite_pos_axis_sample(GmlRender *r,const GmlTpag *page,
     sx=((double)px+.5-left)/xs-.5;sy=((double)py+.5-top)/ys-.5;
     int ix=(int)floor(sx),iy=(int)floor(sy);
     double fx=sx-ix,fy=sy-iy;
-    a=interp_tpag_sample(atlas,page,ix,iy,0)[3]*((1.0-fx)*(1.0-fy))+
-      interp_tpag_sample(atlas,page,ix+1,iy,0)[3]*(fx*(1.0-fy))+
-      interp_tpag_sample(atlas,page,ix,iy+1,0)[3]*((1.0-fx)*fy)+
-      interp_tpag_sample(atlas,page,ix+1,iy+1,0)[3]*(fx*fy);
+    a=interp_tpag_sample(atlas,page,ix,iy,1)[3]*((1.0-fx)*(1.0-fy))+
+      interp_tpag_sample(atlas,page,ix+1,iy,1)[3]*(fx*(1.0-fy))+
+      interp_tpag_sample(atlas,page,ix,iy+1,1)[3]*((1.0-fx)*fy)+
+      interp_tpag_sample(atlas,page,ix+1,iy+1,1)[3]*(fx*fy);
     if(shader_discards_alpha_value(r,a) && !bypass) return 0;
     int modern_normal=!r->blendmode && anygm_policy_has_modern_layer_semantics(r->win);
     if(!modern_normal) a=floor(a+.5);
     if(a<=0.0 && r->blendmode!=2 && !(r->alphablend && r->blendmode==6) &&
        !destination_colour_blend_active(r)) return 0;
-    *u=fmax(0.0,fmin(1.0,(sx+.5)/page->sw));
-    *v=fmax(0.0,fmin(1.0,(sy+.5)/page->sh));
+    *u=(sx+.5)/page->sw;
+    *v=(sy+.5)/page->sh;
   }else{
     int reciprocal_x=fabs(1.0/xs-nearbyint(1.0/xs))<1e-9;
     int reciprocal_y=fabs(1.0/ys-nearbyint(1.0/ys))<1e-9;
@@ -6425,9 +6425,16 @@ int gml_render_sprite_pos_axis_sample(GmlRender *r,const GmlTpag *page,
       if(ix<0) ix=0;else if(ix>=page->sw) ix=page->sw-1;
       if(iy<0) iy=0;else if(iy>=page->sh) iy=page->sh-1;
     }
-    if(ix<0 || iy<0 || ix>=page->sw || iy>=page->sh) return 0;
+    int fast=!r->blendmode && r->alphablend && alpha>=1.0 &&
+      !mapped_texture_active(r) && !shader_alpha_test_requires_filter(r) && !r->fog_flat;
+    int contiguous_x=fast && application && !reciprocal_x && ix==page->sw &&
+      page->sx+ix<atlas->w;
+    int contiguous_y=fast && application && !reciprocal_y && iy==page->sh &&
+      page->sy+iy<atlas->h;
+    if(ix<0 || iy<0 || (ix>=page->sw && !contiguous_x) ||
+       (iy>=page->sh && !contiguous_y)) return 0;
     a=atlas->px[((size_t)(page->sy+iy)*atlas->w+page->sx+ix)*4u+3u];
-    if(shader_discards_alpha(r,(unsigned)a) && !bypass) return 0;
+    if(shader_discards_alpha(r,(unsigned)a) && !bypass && !fast) return 0;
     if(a*alpha<=0.0 && r->blendmode!=2 && r->blendmode!=6 &&
        !destination_colour_blend_active(r)) return 0;
     *u=(ix+.5)/page->sw;*v=(iy+.5)/page->sh;

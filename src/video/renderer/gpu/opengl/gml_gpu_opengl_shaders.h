@@ -519,6 +519,11 @@
   "    if(v_span_x.x==1.0) alpha=floor(alpha*255.0+0.5)/255.0;\n" \
   "    else if(v_span_x.x==2.0) alpha=1.0;\n" \
   "    else if(v_span_x.x==3.0) alpha=v_span_y.x/255.0;\n" \
+  "    if(v_span_x.x>=4.0){\n" \
+  "      uint mask=uint(v_span_x.x)-4u;\n" \
+  "      sampled.rgb*=vec3((mask&1u)!=0u?1.0:0.0,(mask&2u)!=0u?1.0:0.0,(mask&4u)!=0u?1.0:0.0);\n" \
+  "      alpha=(mask&8u)!=0u?v_span_y.x/255.0:0.0;\n" \
+  "    }\n" \
   "    if(u_filter>=165) alpha=1.0;\n" \
   "    o_color=(u_filter==163 || u_filter==164)?vec4(0.0,0.0,0.0,1.0):vec4(floor(sampled.rgb*255.0+0.5)/255.0,alpha); return;\n" \
   "  }\n" \

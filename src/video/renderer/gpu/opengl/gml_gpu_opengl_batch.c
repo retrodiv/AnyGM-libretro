@@ -523,20 +523,26 @@ static int positioned_sample_valid(const GmlRenderDrawOp *op,
      s->source_region.width>4096u || s->source_region.height>4096u ||
      !exact_rect(op,NULL,NULL,NULL,NULL,0) || q->y[2]-q->y[0]!=1.0 ||
      !isfinite(q->filtered_draw_alpha) || q->filtered_draw_alpha< -1.0 || q->filtered_draw_alpha>1.0 ||
-     !isfinite(q->span_x[0]) || q->span_x[0]<0.0 || q->span_x[0]>3.0 ||
+     !isfinite(q->span_x[0]) || q->span_x[0]<0.0 || q->span_x[0]>19.0 ||
      q->span_x[0]!=floor(q->span_x[0]) ||
      q->span_x[1] || q->span_x[2] || q->span_x[3] ||
      q->span_y[1] || q->span_y[2] || q->span_y[3] ||
      !isfinite(q->span_y[0]) || q->span_y[0]<0.0 || q->span_y[0]>255.0 ||
-     (q->span_x[0]!=3.0 && q->span_y[0]) ||
+     (q->span_x[0]<3.0 && q->span_y[0]) ||
+     (q->span_x[0]>=4.0 && (blend!=0 || state->write_mask!=15u)) ||
      !state->write_mask || state->write_mask>15u || state->colour!=0xFFFFFFFFu || state->alpha!=255u ||
      state->alpha_test_enabled || state->source_alpha_key || state->source_palette.enabled ||
      state->sampler_count!=1u ||
      sampler->filter!=s->filter || sampler->edge_rule!=s->edge_rule ||
      sampler->quantisation!=s->quantisation || sampler->logical_margin_mask ||
-     !same_region(sampler->source_region,s->source_region) ||
+     !valid_region(sampler->source_region,source->width,source->height) ||
+     s->source_region.x<sampler->source_region.x || s->source_region.y<sampler->source_region.y ||
+     (uint64_t)(unsigned)s->source_region.x+s->source_region.width>
+       (uint64_t)(unsigned)sampler->source_region.x+sampler->source_region.width ||
+     (uint64_t)(unsigned)s->source_region.y+s->source_region.height>
+       (uint64_t)(unsigned)sampler->source_region.y+sampler->source_region.height ||
      (state->coverage_policy && state->coverage_policy!=GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA) ||
-     (blend!=0 && blend!=1 && blend!=3 && blend!=13 && blend!=14 &&
+     (blend!=0 && blend!=1 && blend!=3 && blend!=13 && blend!=14 && blend!=15 && blend!=16 &&
       (blend<18 || blend>25) &&
       (blend<GL_SCENE_BLEND_SURFACE_DEST_BASE || blend>GL_SCENE_BLEND_SURFACE_DEST_LIMIT))) return 0;
   for(unsigned i=0;i<2u;i++)

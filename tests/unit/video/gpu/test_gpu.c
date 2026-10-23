@@ -3366,6 +3366,27 @@ static int scene_positioned_samples_case(void){
       anygm_test_graphics_clear_calls()==1 && anygm_test_graphics_scene_draw_calls()==5 &&
       !anygm_test_graphics_scene_copies() && !anygm_test_graphics_read_pixels(),
       "prepared positioned samples stream at the existing quad capacity without per-sample draws or snapshots");
+    memset(&state,0,sizeof state);
+    state.write_mask=15u;state.alpha=255u;state.colour=0xFFFFFFFFu;state.sampler_count=1u;
+    state.samplers[0]=pristine.payload.quad.sampling;
+    batch.operation_count=3u;
+    for(unsigned i=1;i<3u;i++){
+      ops[i]=pristine;ops[i].target.image.content_version=i+1u;
+      GmlRenderQuad *q=&ops[i].payload.quad;
+      q->span_x[0]=i==1u?4.0:19.0;q->span_y[0]=i==1u?0.0:102.0;
+      q->sampling.source_region=(GmlRenderRect){0,0,i==1u?1u:2u,2u};
+    }
+    int clears=anygm_test_graphics_clear_calls(),draws=anygm_test_graphics_scene_draw_calls();
+    ops[2].payload.quad.span_x[0]=20.0;
+    result=device.submit(device.context,&batch);
+    REQUIRE(result.status==GML_RENDER_EXEC_UNSUPPORTED && !result.accepted_prefix &&
+      anygm_test_graphics_clear_calls()==clears && anygm_test_graphics_scene_draw_calls()==draws,
+      "resolved positioned mask rejects an invalid final input before its clear prefix");
+    ops[2].payload.quad.span_x[0]=19.0;
+    result=device.submit(device.context,&batch);
+    REQUIRE(result.status==GML_RENDER_EXEC_ACCEPTED && result.accepted_prefix==3u &&
+      !anygm_test_graphics_scene_copies() && !anygm_test_graphics_read_pixels(),
+      "resolved empty and physical positioned samples share one copy state and independent clamp windows");
     free(ops);gml_gpu_destroy(gpu,1);
   }
   return 1;
