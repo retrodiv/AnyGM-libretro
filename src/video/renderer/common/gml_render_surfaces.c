@@ -2149,6 +2149,7 @@ GmlRenderResourceExecution gml_render_application_scene_submit(
 }
 static int resident_surface_nearest_function(GmlRender *r,int surf,double dx,double dy,
   double dw,double dh,uint32_t colour,double alpha,int automatic);
+static int resident_surface_shader_selected(const GmlRender *r);
 static GmlRenderResource *resident_surface_point_snapshot(const GmlRenderDeviceServices *device,
   const GmlRenderResourceSource *source,uint32_t *shadow);
 
@@ -2161,7 +2162,7 @@ static int resident_classic_phase_present(GmlRender *r,
      r->app_phase_y!=r->classic_phase_resource_pixels ||
      r->app_w!=r->classic_phase_resource_width || r->app_h!=r->classic_phase_resource_height ||
      r->classic_phase_scene_target || r->classic_phase_scene_preparing ||
-     r->pending_underlay || r->pending_presentation || r->active_shader>=0 ||
+     r->pending_underlay || r->pending_presentation || resident_surface_shader_selected(r) ||
      (!automatic && (r->fog_flat || gml_d3_is_active(r))) || r->alpha_test_enable ||
      (r->blendmode!=0 && r->blendmode!=6) || (colour&0xFFFFFFu)!=0xFFFFFFu ||
      !isfinite(alpha) || alpha<1.0 || !isfinite(dx) || !isfinite(dy) ||
@@ -2254,7 +2255,7 @@ static int resident_classic_sample_underlay(GmlRender *r){
      r->fb!=r->base_fb || r->target_sp || r->target_id>=0 ||
      !r->app_surface || r->app_surface==r->fb || r->pending_presentation ||
      r->rotated_batch_count || r->rotated_batch_building ||
-     r->active_shader>=0 ||
+     resident_surface_shader_selected(r) ||
      r->blendmode || r->blend_equation!=1 || r->blend_equation_alpha!=1 || !r->alphablend ||
      (r->alpha_test_enable && r->alpha_test_ref) ||
      r->fbw<=0 || r->fbh<=0 || r->fbw>4096 || r->fbh>4096 ||
@@ -2429,7 +2430,7 @@ int gml_render_compose_resident_underlay(GmlRender *r){
      r->app_surface!=r->app_surface_owned ||
      r->app_presentation_coverage_active || r->pending_presentation ||
      r->rotated_batch_count || r->rotated_batch_building ||
-     r->target_sp || r->target_id>=0 || r->active_shader>=0 || r->blendmode ||
+     r->target_sp || r->target_id>=0 || resident_surface_shader_selected(r) || r->blendmode ||
      !r->alphablend || r->blend_equation!=1 || r->blend_equation_alpha!=1 ||
      (r->alpha_test_enable && !opaque_cutout) || r->color_write_mask!=15u ||
      r->classic_phase_y || !isfinite(r->cam_x) || !isfinite(r->cam_y) ||

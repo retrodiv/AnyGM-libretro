@@ -12875,7 +12875,7 @@ static int resident_automatic_underlay_raster_camera(void){
   for(unsigned policy=0;policy<3u;policy++)
   for(unsigned camera=0;camera<4u;camera++)
   for(unsigned device_source=0;device_source<2u;device_source++)
-  for(unsigned filtered=0;filtered<2u;filtered++){
+  for(unsigned filtered=0;filtered<2u;filtered++) for(unsigned program=0;program<25u;program++){
     GmlWin content={.bytecode=policies[policy]};
     GmlRender *render=calloc(1,sizeof *render);
     FakeDevice fake={.on_demand=1};
@@ -12899,13 +12899,37 @@ static int resident_automatic_underlay_raster_camera(void){
       cameras[camera][0],cameras[camera][1]));
     render->interp=(int)filtered;
     gml_render_set_pending_underlay(render,3,4,SW,SH);
+    render->shader_pal=calloc(1,sizeof *render->shader_pal);
+    CHECK(render->shader_pal);render->n_shader_pal=1;
+    render->active_shader=program==0u?-1:program==24u?1:0;
+    struct GmlShaderPal *p=&render->shader_pal[0];
+    if(program>=2u){
+      p->source_vertex_es="attribute vec3 in_Position;void main(){gl_Position=vec4(in_Position,1.0);}";
+      p->source_fragment_es="void main(){gl_FragColor=vec4(1.0);}";
+    }
+    int *effects[]={&p->threshold_palette,&p->indexed_brightness,&p->channel_mask,&p->channel_alpha_key,
+      &p->alpha_discard,&p->ordered_dither,&p->quantise4,&p->solid_alpha_mask,&p->solid_blur_alpha,
+      &p->lut,&p->lut_indexed,&p->grid,&p->dual_sample,&p->radial_wave,&p->uv_wave_mode,
+      &p->grayscale,&p->vertex_colour_blend,&p->vertex_colour_blend_alpha_only};
+    if(program>=3u && program<=20u) *effects[program-3u]=1;
+    if(program==21u) render->shader_device_expected=1;
+    if(program==22u) render->shader_device_present=1;
+    if(program==23u) gml_render_set_shader_executor(render,passthrough_scope_executor,NULL);
+    int selected_shader=render->active_shader,submits=fake.submits,uploads=fake.uploads;
     int reads=fake.readbacks;
     int accepted=gml_render_compose_resident_underlay(render);
+    if(program>=3u){
+      CHECK(!accepted && render->pending_underlay && render->resident_application_pass &&
+        fake.submits==submits && fake.uploads==uploads && fake.readbacks==reads &&
+        render->active_shader==selected_shader && !fake.shader_submits);
+      gml_render_free(render);free(render);continue;
+    }
     if(!accepted) fprintf(stderr,"raster camera: policy=%d camera=%.17g/%.17g device_source=%u filter=%u rejected\n",
       policies[policy],cameras[camera][0],cameras[camera][1],device_source,filtered);
     CHECK(accepted &&
       gml_render_scene_submit_pending(render) && !render->pending_underlay &&
-      render->resident_application_pass && fake.readbacks==reads);
+      render->resident_application_pass && fake.readbacks==reads &&
+      render->active_shader==selected_shader && !fake.shader_submits);
     /* The CPU internal compositor compensates its camera subtraction: the
      * pending rectangle is already in SCREEN pixels, not world/GUI space. */
     CHECK(fake.last_quad.x[0]==3.0 && fake.last_quad.y[0]==4.0 &&
