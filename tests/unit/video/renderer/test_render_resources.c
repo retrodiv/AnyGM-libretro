@@ -33,6 +33,7 @@
 
 typedef struct FakeDevice {
   int on_demand;
+  uint64_t textured_families[GML_RENDER_SCENE_FAMILY_COUNT];
   int uploads,submits,shader_submits,readbacks,retires;
   int rgb_queries,fail_rgb_query,rgb_query_result;
   int forbid_calls,forbidden_calls;
@@ -97,6 +98,12 @@ static GmlRenderExecutionResult fake_submit(void *context,const GmlRenderDrawBat
     if(fake->submits<=8){
       fake->submitted_targets[fake->submits-1]=last->target.image;
       fake->submitted_counts[fake->submits-1]=batch->operation_count;
+    }
+    for(uint32_t index=0;index<batch->operation_count;index++){
+      const GmlRenderDrawOp *op=&batch->operations[index];
+      if(op->opcode==GML_RENDER_OP_TEXTURED_QUAD &&
+         op->scene_family<GML_RENDER_SCENE_FAMILY_COUNT)
+        fake->textured_families[op->scene_family]++;
     }
     fake->last_batch_operations=batch->operation_count;
     fake->last_batch_states=batch->state_count;
@@ -3967,6 +3974,8 @@ static int resident_base_linear_history(void){
     CHECK(metrics.authority==GML_RENDER_RESOURCE_GPU_RESIDENT && !metrics.cpu_replays &&
           !metrics.journal_bytes && !metrics.retained_mutable_bytes);
   }
+  CHECK(fake.textured_families[GML_RENDER_SCENE_SURFACE]>0u &&
+        !fake.textured_families[0]);
   /* A failed explicit publication preparation cannot leak partial history into the live tail. */
   fake.fail_partial_readback=1;
   CHECK(!gml_render_completed_screen_prepare_publish(r,pixels,8,6));
@@ -4088,6 +4097,8 @@ static int resident_surface_resize_storage(void){
         } else {
           CHECK(pixels!=old && replacement && fake.submits==2 &&
                 fake.last_batch_operations==2u && fake.last_batch_states==1u);
+          CHECK(fake.textured_families[GML_RENDER_SCENE_SURFACE]==1u &&
+                !fake.textured_families[0]);
           new_ref=gml_render_resource_image_ref(replacement);
           CHECK(new_ref.incarnation!=old_ref.incarnation &&
                 new_ref.content_version==3u &&

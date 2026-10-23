@@ -1565,6 +1565,7 @@ static int base_stage_copy(GmlRenderResource *target,const GmlRenderDeviceServic
       GmlRenderDrawOp *op=&operations[count++];
       memset(op,0,sizeof *op);
       op->opcode=GML_RENDER_OP_TEXTURED_QUAD;
+      op->scene_family=GML_RENDER_SCENE_SURFACE;
       op->reconstruction_mode=GML_RENDER_DEVICE_CHECKPOINT;
       op->target=(GmlRenderTargetRef){image,1u,width,height,GML_RENDER_PIXEL_ARGB8888,
                                      {0,0,width,height}};
@@ -4346,6 +4347,7 @@ static GmlRenderResource *surface_resize_resident(
   operations[0].target.image.content_version=2u;
   operations[1]=operations[0];
   operations[1].opcode=GML_RENDER_OP_TEXTURED_QUAD;
+  operations[1].scene_family=GML_RENDER_SCENE_SURFACE;
   operations[1].target.image.content_version=3u;
   operations[1].sources=&source.image;
   operations[1].source_count=1u;

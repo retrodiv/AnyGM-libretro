@@ -472,6 +472,11 @@ admission, CPU writer, fidelity class or state format changes. The neutral
 modified first/last instances, ring wrap, bounded-index eviction, draw failure and
 context recreation; paired real-device controls still own pixel qualification.
 
+Internal linear-history band copies and resident resize copies carry the SURFACE
+family through their ordinary typed packets. They remain nearest1:1 raw storage
+copies; family accounting must not report those accepted copies as unclassified.
+Geometry, executor selection and RGBA copying retain their existing controls.
+
 Known revalidation debt: the inherited modern SCREEN point control rejects its
 alternating-tint partial-alpha case at scale0.7 at the admission/batch-mechanism
 stage on both the frozen pre-change producer and the queue experiment. Pixels
