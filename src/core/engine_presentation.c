@@ -1292,10 +1292,16 @@ void compute_present(AnygmEngine *engine) {
    * above. A presentation path which intentionally retains a narrower completed raster still
    * needs a correctly shaped host framebuffer, so uniformly fit that last result as a fallback. */
   host_canvas_update(engine);
-  /* A native raster is still a settled presentation extent. Leaving it unset
-   * makes window queries fall back to the initial display instead of this frame. */
-  if(effective_width<=0) effective_width=(int)engine->output_width;
-  if(effective_height<=0) effective_height=(int)engine->output_height;
+  /* Earlier profiles retain their authored window coordinates until content selects a
+   * window or GUI size. A native presentation alone must not replace that implicit space.
+   * Later layers and explicit requests still query the last settled native extent. */
+  int settled_window=anygm_policy_has_modern_layer_semantics(&engine->win) ||
+    engine->vm.window_w>0 || engine->vm.window_h>0 ||
+    engine->vm.gui_w>0 || engine->vm.gui_h>0 || engine->vm.gui_maximise_active;
+  if(settled_window){
+    if(effective_width<=0) effective_width=(int)engine->output_width;
+    if(effective_height<=0) effective_height=(int)engine->output_height;
+  }
   gml_render_presentation_effective_set(&engine->render,effective_width,effective_height);
 }
 void aspect_view_overlay_begin(AnygmEngine *engine,AspectViewOverlay *ov, int center_hud, int view_mode) {

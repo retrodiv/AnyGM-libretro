@@ -122,6 +122,53 @@ static int native_raster_window_query_policy(void){
   return ok;
 }
 
+static int implicit_window_query_policy(void){
+  int ok=1;
+  for(int generation=0;generation<3;generation++){
+    for(int device=0;device<2;device++){
+      AnygmEngine engine={0};
+      engine.win.bytecode=generation==2?17:15;
+      engine.win.classic_version=generation==0?800:0;
+      engine.win.disp_w=288;
+      engine.win.disp_h=216;
+      engine.width=576;
+      engine.height=432;
+      engine.vm.win=&engine.win;
+      engine.vm.render=&engine.render;
+      engine.vm.room_index=-1;
+      engine.config.present_logical_raster=1;
+      engine.scene_renderer_session=device?ANYGM_SCENE_RENDERER_OPENGL:ANYGM_SCENE_RENDERER_CPU;
+      gml_render_application_surface_set_draw_enabled(&engine.render,0);
+      compute_present(&engine);
+      GmlVal width=gml_builtin_call(&engine.vm,"window_get_width",NULL,0);
+      GmlVal height=gml_builtin_call(&engine.vm,"window_get_height",NULL,0);
+      int expected_width=288;
+      int expected_height=216;
+      unsigned output_width=generation==1?576u:288u;
+      unsigned output_height=generation==1?432u:216u;
+      int implicit_ok=width.t==V_REAL && height.t==V_REAL &&
+        width.d==expected_width && height.d==expected_height &&
+        engine.output_width==output_width && engine.output_height==output_height;
+      /* An authored window request still publishes its settled native extent. */
+      GmlVal request[]={vreal(576),vreal(432)};
+      gml_builtin_call(&engine.vm,"window_set_size",request,2);
+      compute_present(&engine);
+      GmlVal requested_width=gml_builtin_call(&engine.vm,"window_get_width",NULL,0);
+      GmlVal requested_height=gml_builtin_call(&engine.vm,"window_get_height",NULL,0);
+      int explicit_ok=requested_width.t==V_REAL && requested_height.t==V_REAL &&
+        requested_width.d==576 && requested_height.d==432;
+      if(!implicit_ok || !explicit_ok)
+        fprintf(stderr,"implicit window policy generation=%d device=%d: "
+          "implicit=%.0fx%.0f expected=%dx%d explicit=%.0fx%.0f\n",
+          generation,device,width.d,height.d,expected_width,expected_height,
+          requested_width.d,requested_height.d);
+      ok=ok && implicit_ok && explicit_ok;
+      gml_vm_free(&engine.vm);
+    }
+  }
+  return ok;
+}
+
 static int virtual_monitor_geometry_policy(void){
   AnygmEngine engine={0};
   engine.win.bytecode=15;
@@ -3542,6 +3589,8 @@ int main(int argc,char **argv){
       return virtual_monitor_geometry_policy()?0:1;
     if(!strcmp(argv[2],"native_raster_window_query"))
       return native_raster_window_query_policy()?0:1;
+    if(!strcmp(argv[2],"implicit_window_query"))
+      return implicit_window_query_policy()?0:1;
     if(!strcmp(argv[2],"live_monitor_override"))
       return live_monitor_override_policy()?0:1;
     if(!strcmp(argv[2],"host_canvas_scale"))
@@ -3622,7 +3671,7 @@ int main(int argc,char **argv){
   }
   if(argc!=1){
     fputs("usage: test_engine_instances [--case room_census|cold_room_entry|dispatch_session|dispatch_narrow_room|dispatch_presentation|screen_refresh_present_latch|"
-          "virtual_monitor_geometry|native_raster_window_query|live_monitor_override|host_canvas_scale|"
+          "virtual_monitor_geometry|native_raster_window_query|implicit_window_query|live_monitor_override|host_canvas_scale|"
           "application_surface_port_scale|"
           "first_generation_application_surface|"
           "shifted_view_port|"
@@ -3653,6 +3702,7 @@ int main(int argc,char **argv){
   if(!dispatch_narrow_room_policy()) return 1;
   if(!dispatch_presentation_policy()) return 1;
   if(!native_raster_window_query_policy()) return 1;
+  if(!implicit_window_query_policy()) return 1;
   if(!live_monitor_override_policy()) return 1;
   if(!host_canvas_scale_policy()) return 1;
   if(!room_order_redirect_policy()) return 1;
