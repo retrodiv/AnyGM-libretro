@@ -164,6 +164,7 @@ int gml_gpu_opengl_scene_program(GmlGpuBackend *backend,char *error,size_t error
   scene->u_extent=backend->gl.GetUniformLocation(scene->program,"u_extent");
   scene->u_image=backend->gl.GetUniformLocation(scene->program,"u_image");
   scene->u_filter=backend->gl.GetUniformLocation(scene->program,"u_filter");
+  scene->u_additive_bytes=backend->gl.GetUniformLocation(scene->program,"u_additive_bytes");
   scene->u_alpha_test=backend->gl.GetUniformLocation(scene->program,"u_alpha_test");
   scene->u_source_alpha_key=backend->gl.GetUniformLocation(scene->program,"u_source_alpha_key");
   scene->u_source_palette_enabled=backend->gl.GetUniformLocation(scene->program,"u_source_palette_enabled");
@@ -187,7 +188,7 @@ int gml_gpu_opengl_scene_program(GmlGpuBackend *backend,char *error,size_t error
      scene->a_colour[2]<0 || scene->a_colour[3]<0 ||
      scene->a_clamp<0 || scene->a_map<0 || scene->a_step_margin_active<0 ||
      scene->a_span_x<0 || scene->a_span_y<0 ||
-     scene->u_extent<0 || scene->u_image<0 || scene->u_filter<0 || scene->u_alpha_test<0 ||
+     scene->u_extent<0 || scene->u_image<0 || scene->u_filter<0 || scene->u_additive_bytes<0 || scene->u_alpha_test<0 ||
      scene->u_source_alpha_key<0 ||
      scene->u_source_palette_enabled<0 || scene->u_source_palette_red<0 ||
      scene->u_source_palette_green[0]<0 || scene->u_source_palette_green[1]<0 ||

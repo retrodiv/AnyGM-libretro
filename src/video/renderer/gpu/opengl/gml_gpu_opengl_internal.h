@@ -146,7 +146,7 @@ typedef struct GlScene {
   int instance_reuse_attempted;
   GLint a_position01,a_position23,a_texcoord01,a_texcoord23;
   GLint a_colour[4],a_clamp,a_map,a_step_margin_active,a_span_x,a_span_y;
-  GLint u_extent,u_image,u_filter,u_alpha_test,u_source_alpha_key,u_previous,u_region_origin;
+  GLint u_extent,u_image,u_filter,u_additive_bytes,u_alpha_test,u_source_alpha_key,u_previous,u_region_origin;
   GLint u_source_palette_enabled,u_source_palette_red,u_source_palette_green[2],u_source_palette_colour;
   GLint u_rotated_alpha16;
   GLint u_point_map_x,u_point_map_y,u_point_origin;

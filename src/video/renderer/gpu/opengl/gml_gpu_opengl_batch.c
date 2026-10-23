@@ -2395,7 +2395,7 @@ static int flush_quads(GmlGpuBackend *backend,GlSceneImage *target,GlSceneImage 
     else if(blend==13)
       backend->gl.BlendFuncSeparate(GL_ZERO,GL_ONE_MINUS_SRC_COLOR,GL_ZERO,GL_ONE_MINUS_SRC_ALPHA);
     else if(blend==14)
-      backend->gl.BlendFuncSeparate(GL_SRC_ALPHA,GL_ONE,GL_ONE,GL_ONE);
+      backend->gl.BlendFuncSeparate(GL_ONE,GL_ONE,GL_ONE,GL_ONE);
     else if(blend==GL_SCENE_BLEND_INVERSE_RECT)
       backend->gl.BlendFuncSeparate(GL_ZERO,GL_ONE_MINUS_SRC_COLOR,GL_ONE,GL_ZERO);
     else backend->gl.BlendFuncSeparate(blend==9 || blend==10?GL_ONE:GL_SRC_ALPHA,
@@ -2418,6 +2418,7 @@ static int flush_quads(GmlGpuBackend *backend,GlSceneImage *target,GlSceneImage 
   backend->gl.Uniform2fv(scene->u_extent,1,extent);
   backend->gl.Uniform1i(scene->u_image,0);
   backend->gl.Uniform1i(scene->u_filter,(GLint)filter);
+  backend->gl.Uniform1i(scene->u_additive_bytes,blend==14 && filter!=15u && filter!=17u);
   backend->gl.Uniform1i(scene->u_alpha_test,alpha_test);
   backend->gl.Uniform1i(scene->u_source_alpha_key,(GLint)source_alpha_key);
   backend->gl.Uniform1i(scene->u_source_palette_enabled,palette && palette->enabled);

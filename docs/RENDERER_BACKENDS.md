@@ -1,6 +1,20 @@
 <!-- SPDX-License-Identifier: MIT -->
 <!-- Copyright (c) 2026 retrodiv <retrodiv@proton.me> -->
 
+R03-ADDITIVE-CONTRIBUTION-BYTES retains fixed ONE/ONE accumulation for the
+ordinary source-alpha/one RGB and one/one alpha recipe. The existing sampled
+colour is premultiplied and truncated to byte contributions before blending;
+full-alpha samples retain their original output. This avoids rounding one
+extra level into every overlapping partial-alpha draw,without destination
+snapshots,CPU colour evaluation or CPU raster changes. Other blend recipes
+retain their existing factors and quantisation. Individual draws remain
+TOLERANCE±2 and composed gameplay TOLERANCE±4,with exact coverage. The
+432-control public additive-stack companion compares every prefix of ten
+nearest sprites over six policies,four owners,world/GUI and source/draw alpha,
+with explicit CPU boundaries,ordinary-transport and detached-state gates.
+It is a finite regression domain,not full function or filtered qualification.
+
+
 # Renderer backend correspondence
 
 Automatic composition uses the same program-policy predicate as ordinary

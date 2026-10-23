@@ -272,6 +272,7 @@
   "uniform ivec2 u_region_origin;\n" \
   "uniform ivec4 u_rotated_alpha16[64];\n" \
   "uniform int u_filter;\n" \
+  "uniform int u_additive_bytes;\n" \
   "uniform int u_alpha_test;\n" \
   "uniform int u_source_alpha_key;\n" \
   "uniform int u_source_palette_enabled,u_source_palette_red;\n" \
@@ -422,7 +423,7 @@
   "  if(d<=0 || n<=0) return first; if(n>=d) return last;\n" \
   "  return first+(last-first)*n/d;\n" \
   "}\n" \
-  "void main(){\n" \
+  "void scene_sample(){\n" \
   "  if((u_filter>=34 && u_filter<=36) || (u_filter>=103 && u_filter<=108)){\n" \
   "    // R03_SHADER_RECTANGLE: integer authored colours and exact clipped coverage.\n" \
   "    ivec2 pixel=ivec2(int(gl_FragCoord.x),int(u_extent.y)-1-int(gl_FragCoord.y));\n" \
@@ -1070,6 +1071,14 @@
   "  // including opaque alpha above source texels whose stored alpha is zero.\n" \
   "  o_color=vec4(vec3(rgb)/255.0,\n" \
   "               u_filter==8?1.0:sampled.a*v_colour.a/255.0);\n" \
+  "}\n" \
+  "void main(){\n" \
+  "  scene_sample();\n" \
+  "  // Additive CPU writers truncate each contribution before accumulation.\n" \
+  "  // ONE/ONE keeps fixed blending without sampling the destination.\n" \
+  "  if(u_additive_bytes!=0 && o_color.a<1.0){\n" \
+  "    o_color=vec4(floor(o_color.rgb*255.0*o_color.a),floor(o_color.a*255.0))/255.0;\n" \
+  "  }\n" \
   "}\n"
 
 /* The bounded filtered-font rule preserves the CPU's ordered binary64 expression.
