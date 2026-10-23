@@ -5650,6 +5650,20 @@ static int resident_positioned_quad_sprite(GmlRender *r,int sprite,int subimg,
   return 1;
 }
 
+/* These direct CPU input owners use alpha-discard for coverage and ignore
+ * ordered dither and vertex modulation. Their cache selection still reads
+ * those flags,so retain the selected program during input preparation. */
+static int positioned_program_input_only(const GmlRender *r){
+  if(!r->shader_pal || r->active_shader<0 || r->active_shader>=r->n_shader_pal) return 0;
+  const struct GmlShaderPal *p=&r->shader_pal[r->active_shader];
+  return (p->alpha_discard || p->ordered_dither || p->vertex_colour_blend ||
+          p->vertex_colour_blend_alpha_only) &&
+    !(p->threshold_palette || p->indexed_brightness || p->channel_mask ||
+      p->channel_alpha_key || p->quantise4 || p->solid_alpha_mask ||
+      p->solid_blur_alpha || p->lut || p->lut_indexed || p->grid ||
+      p->dual_sample || p->radial_wave || p->uv_wave_mode || p->grayscale);
+}
+
 /* R03-SPR-POSITIONED-FUNCTION: CPU-owned first-hit coverage and coordinates,
  * versioned source bytes,hardware colour/filtering and fixed-function blending. */
 static int resident_positioned_function(GmlRender *r,int sprite,int subimg,
@@ -5661,7 +5675,7 @@ static int resident_positioned_function(GmlRender *r,int sprite,int subimg,
   GmlRenderRect axis_bounds={0};
   GmlRenderRect axis_margin={0};
   GmlRenderSourcePalette axis_palette={0};
-  int axis_runtime=0;
+  int axis_runtime=0,axis_input_only=0;
   double axis_xs=0.0,axis_ys=0.0;
   double mx[4],my[4];
   if(!r || !r->win || !r->resident_application_pass || !device ||
@@ -5690,6 +5704,7 @@ static int resident_positioned_function(GmlRender *r,int sprite,int subimg,
   /* The positive axis CPU leaf has its own atlas/logical-trim sampler.
    * Reuse that complete owner instead of applying triangle UVs to it. */
   if(kind==1){
+    axis_input_only=positioned_program_input_only(r);
     (void)gml_render_shader_source_palette_snapshot(r,r->active_shader,&axis_palette);
     double left=geometry.qx[0],top=geometry.qy[0];
     double width=geometry.qx[1]-left,height=geometry.qy[3]-top;
@@ -5700,7 +5715,7 @@ static int resident_positioned_function(GmlRender *r,int sprite,int subimg,
       if(sprite_source->n_frames<=0 || sprite_source->w<=0 || sprite_source->h<=0) return 1;
       if(width>1000000.0 || height>1000000.0 ||
          (r->active_shader>=0 && r->active_shader<r->n_shader_pal && r->shader_pal &&
-          !gml_render_shader_cpu_passthrough(r) && !axis_palette.enabled)) return 0;
+          !gml_render_shader_cpu_passthrough(r) && !axis_palette.enabled && !axis_input_only)) return 0;
       axis_runtime=1;
       if(alpha<0.0) alpha=0.0;
       axis_bounds=(GmlRenderRect){(int)floor(left),(int)floor(top),
@@ -5744,7 +5759,7 @@ static int resident_positioned_function(GmlRender *r,int sprite,int subimg,
      * unit-copy input kernel that the direct CPU preset does not use. */
     int normalized_unit=(stored_mode==3 || stored_mode==5) &&
       fabs(xs-1.0)<.001 && fabs(ys-1.0)<.001;
-    int accepted=trimmed || normalized_unit || axis_palette.enabled?0:r->interp?resident_filtered_atlas_page(r,page_index,left,top,xs,ys,
+    int accepted=trimmed || normalized_unit || axis_palette.enabled || axis_input_only?0:r->interp?resident_filtered_atlas_page(r,page_index,left,top,xs,ys,
       GML_RENDER_SCENE_SPRITE,0xFFFFFFu,alpha,NULL,NULL,0.0,NULL,0,0,0,0,7):
       resident_atlas_crop_from_page(r,page,0,0,page->sw,page->sh,left,top,xs,ys,
         GML_RENDER_SCENE_SPRITE,0xFFFFFFu,alpha,stored_mode==6?20:15,NULL);
@@ -5757,7 +5772,7 @@ static int resident_positioned_function(GmlRender *r,int sprite,int subimg,
      * coverage,then use the same hardware colour/fixed-blend packet below. */
     if(r->fog_flat || r->font_sdf_active ||
        (r->active_shader>=0 && r->active_shader<r->n_shader_pal && r->shader_pal &&
-        !gml_render_shader_cpu_passthrough(r) && !axis_palette.enabled)) return 0;
+        !gml_render_shader_cpu_passthrough(r) && !axis_palette.enabled && !axis_input_only)) return 0;
     GmlSprite physical={0};
     if(!gml_render_sprite_axis_bounds(r,&physical,page,
          left+r->cam_x-page->tx*xs,top+r->cam_y-page->ty*ys,xs,ys,0.0,&axis_bounds)) return 0;
