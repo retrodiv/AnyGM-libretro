@@ -121,6 +121,9 @@ double gml_render_sprite_pos_source_alpha(const uint8_t *rgba,int stride,
 int gml_render_sprite_pos_axis_sample(GmlRender *render,const GmlTpag *page,
   GmlRenderRect bounds,double left,double top,double xscale,double yscale,
   int x,int y,double alpha,double *u,double *v,double *sample_alpha);
+int gml_render_sprite_pos_area_sample(GmlRender *render,const uint8_t *rgba,
+  int width,int height,GmlRenderRect bounds,int x,int y,double alpha,
+  GmlRenderRect *source_box,double *sample_alpha);
 void gml_render_sprite_nineslice(GmlRender *render, GmlSprite *sprite_record, GmlTpag *page,
                                   double x, double y, int width, int height,
                                   uint32_t blend, double alpha);

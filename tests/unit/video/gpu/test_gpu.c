@@ -3306,7 +3306,7 @@ static int scene_screen_filtered_alpha_stamp_case(void){
 
 static int scene_positioned_samples_case(void){
   enum { COUNT=8194 };
-  for(unsigned api=0;api<2u;api++) for(unsigned linear=0;linear<2u;linear++){
+  for(unsigned api=0;api<2u;api++) for(unsigned linear=0;linear<3u;linear++){
     uint8_t pixels[16]={208,32,16,128,16,208,32,255,32,16,208,0,192,176,160,64};
     GmlRenderImageRef source={GML_RENDER_RESOURCE_ATLAS,31u,1u,1u};
     GmlRenderImageRef target={GML_RENDER_RESOURCE_SURFACE,32u,1u,1u};
@@ -3320,7 +3320,7 @@ static int scene_positioned_samples_case(void){
       .rgb_destination_factor=GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA,
       .alpha_destination_factor=GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA};
     state.samplers[0]=(GmlRenderSamplingPolicy){
-      .filter=linear?GML_RENDER_FILTER_HARDWARE_BILINEAR:GML_RENDER_FILTER_NEAREST,
+      .filter=linear==2u?GML_RENDER_FILTER_BOX:linear?GML_RENDER_FILTER_HARDWARE_BILINEAR:GML_RENDER_FILTER_NEAREST,
       .edge_rule=GML_RENDER_EDGE_CLAMP_SUBIMAGE,.source_region={0,0,2u,2u},
       .quantisation=GML_RENDER_QUANTISE_POSITIONED_SAMPLE};
     GmlRenderDrawOp *ops=calloc(COUNT,sizeof *ops);
@@ -3366,6 +3366,7 @@ static int scene_positioned_samples_case(void){
       anygm_test_graphics_clear_calls()==1 && anygm_test_graphics_scene_draw_calls()==5 &&
       !anygm_test_graphics_scene_copies() && !anygm_test_graphics_read_pixels(),
       "prepared positioned samples stream at the existing quad capacity without per-sample draws or snapshots");
+    if(linear<2u){
     memset(&state,0,sizeof state);
     state.write_mask=15u;state.alpha=255u;state.colour=0xFFFFFFFFu;state.sampler_count=1u;
     state.samplers[0]=pristine.payload.quad.sampling;
@@ -3387,6 +3388,7 @@ static int scene_positioned_samples_case(void){
     REQUIRE(result.status==GML_RENDER_EXEC_ACCEPTED && result.accepted_prefix==3u &&
       !anygm_test_graphics_scene_copies() && !anygm_test_graphics_read_pixels(),
       "resolved empty and physical positioned samples share one copy state and independent clamp windows");
+    }
     free(ops);gml_gpu_destroy(gpu,1);
   }
   return 1;

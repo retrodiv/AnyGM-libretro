@@ -5656,6 +5656,7 @@ static int resident_positioned_function(GmlRender *r,int sprite,int subimg,
   GmlTpag *axis_page=NULL;
   GmlRenderRect axis_bounds={0};
   GmlRenderRect axis_margin={0};
+  int axis_runtime=0;
   double axis_xs=0.0,axis_ys=0.0;
   double mx[4],my[4];
   if(!r || !r->win || !r->resident_application_pass || !device ||
@@ -5689,7 +5690,25 @@ static int resident_positioned_function(GmlRender *r,int sprite,int subimg,
     if(left>=r->fbw+2.0 || top>=r->fbh+2.0 ||
        left+width<=-2.0 || top+height<=-2.0) return 1;
     GmlSprite *sprite_source=&r->spr[sprite];
-    if(sprite_source->runtime_rgba || !sprite_source->frame || sprite_source->n_frames<=0) return 0;
+    if(sprite_source->runtime_rgba){
+      if(sprite_source->n_frames<=0 || sprite_source->w<=0 || sprite_source->h<=0) return 1;
+      if(width>1000000.0 || height>1000000.0 ||
+         (r->active_shader>=0 && r->active_shader<r->n_shader_pal && r->shader_pal &&
+          !gml_render_shader_cpu_passthrough(r))) return 0;
+      axis_runtime=1;
+      if(alpha<0.0) alpha=0.0;
+      axis_bounds=(GmlRenderRect){(int)floor(left),(int)floor(top),
+        (uint32_t)lround(width),(uint32_t)lround(height)};
+      if(!axis_bounds.width || !axis_bounds.height) return 1;
+      geometry.x0=axis_bounds.x<0?0:axis_bounds.x;
+      geometry.y0=axis_bounds.y<0?0:axis_bounds.y;
+      geometry.x1=(int64_t)axis_bounds.x+axis_bounds.width>r->fbw?r->fbw-1:
+        axis_bounds.x+(int)axis_bounds.width-1;
+      geometry.y1=(int64_t)axis_bounds.y+axis_bounds.height>r->fbh?r->fbh-1:
+        axis_bounds.y+(int)axis_bounds.height-1;
+      if(geometry.x1<geometry.x0 || geometry.y1<geometry.y0) return 1;
+    }else{
+    if(!sprite_source->frame || sprite_source->n_frames<=0) return 0;
     int page_index=sprite_source->frame[gml_render_runtime_frame_index(sprite_source,subimg)];
     if(page_index<0 || page_index>=r->n_tpag) return 1;
     GmlTpag *page=&r->tpag[page_index];
@@ -5759,10 +5778,14 @@ static int resident_positioned_function(GmlRender *r,int sprite,int subimg,
       }
     }
     axis_page=page;axis_xs=xs;axis_ys=ys;
+    }
   }
-  int mode=r->blendmode;
+  /* The runtime region leaf has ordinary source-over for stored presets
+   * zero through eight. Only destination-colour factors read the preset,
+   * independent equations and channel mask. */
+  int mode=axis_runtime && !destination?0:r->blendmode;
   int replacement=axis_page && mode==6 && (!r->interp || r->alphablend);
-  int masked=r->alphablend && (mode==4 || mode==7 || mode==8 || destination ||
+  int masked=r->alphablend && (destination || (!axis_runtime && (mode==4 || mode==7 || mode==8)) ||
     (axis_page && r->interp && mode==6));
   if(masked && !r->color_write_mask && !axis_margin.width) return 1;
   GmlSprite *s=&r->spr[sprite];
@@ -5796,10 +5819,16 @@ static int resident_positioned_function(GmlRender *r,int sprite,int subimg,
   uint32_t count=0;int accepted=0;
   for(int py=geometry.y0;py<=geometry.y1;py++) for(int px=geometry.x0;px<=geometry.x1;px++){
     double u=0,v=0,a=0;
+    GmlRenderRect sample_region={ox,oy,(uint32_t)sw,(uint32_t)sh};
     int cleared=axis_margin.width && px>=axis_margin.x && py>=axis_margin.y &&
       px<axis_margin.x+(int)axis_margin.width && py<axis_margin.y+(int)axis_margin.height;
     int sampled=1;
-    if(axis_page){
+    if(axis_runtime){
+      int result=gml_render_sprite_pos_area_sample(r,source.bytes,sw,sh,axis_bounds,
+        px,py,alpha,&sample_region,&a);
+      if(result<0) goto done;
+      if(!result) continue;
+    }else if(axis_page){
       sampled=px>=axis_bounds.x && py>=axis_bounds.y &&
         px<axis_bounds.x+(int)axis_bounds.width && py<axis_bounds.y+(int)axis_bounds.height &&
         gml_render_sprite_pos_axis_sample(r,axis_page,axis_bounds,geometry.qx[0],
@@ -5816,7 +5845,6 @@ static int resident_positioned_function(GmlRender *r,int sprite,int subimg,
       if(!destination && a*alpha/255.0<=0.0) continue;
     }
     double su,sv;
-    GmlRenderRect sample_region={ox,oy,(uint32_t)sw,(uint32_t)sh};
     if(axis_page && sampled){
       int x0=ox,y0=oy,x1=ox+sw,y1=oy+sh;
       if(r->interp){
@@ -5847,7 +5875,9 @@ static int resident_positioned_function(GmlRender *r,int sprite,int subimg,
       }
       sample_region=(GmlRenderRect){x0,y0,(uint32_t)(x1-x0),(uint32_t)(y1-y0)};
     }
-    if(r->interp){
+    if(axis_runtime){
+      su=(sample_region.x+.5)/source.width;sv=(sample_region.y+.5)/source.height;
+    }else if(r->interp){
       su=fmax(sample_region.x+.5,fmin(sample_region.x+sample_region.width-.5,ox+u*sw))/source.width;
       sv=fmax(sample_region.y+.5,fmin(sample_region.y+sample_region.height-.5,oy+v*sh))/source.height;
     }
@@ -5858,7 +5888,7 @@ static int resident_positioned_function(GmlRender *r,int sprite,int subimg,
       su=(ox+ix+.5)/source.width;sv=(oy+iy+.5)/source.height;
     }
     unsigned resolved=axis_margin.width?(sampled?(r->interp?r->color_write_mask:15u):0u):0u;
-    double flag=axis_margin.width?4.0+resolved:axis_page &&
+    double flag=axis_runtime?(masked?3.0:!r->alphablend?2.0:0.0):axis_margin.width?4.0+resolved:axis_page &&
       (masked || replacement || (r->interp && r->alphablend))?3.0:
       !r->alphablend?2.0:destination && alpha<0.0?3.0:masked?1.0:0.0;
     long rounded=lround(a*alpha);
@@ -5874,7 +5904,7 @@ static int resident_positioned_function(GmlRender *r,int sprite,int subimg,
     if(count==capacity) goto done;
     GmlRenderQuad *q=&operations[count++].payload.quad;
     q->shape=GML_RENDER_QUAD_AXIS_ALIGNED;
-    q->sampling=(GmlRenderSamplingPolicy){r->interp?GML_RENDER_FILTER_HARDWARE_BILINEAR:
+    q->sampling=(GmlRenderSamplingPolicy){axis_runtime?GML_RENDER_FILTER_BOX:r->interp?GML_RENDER_FILTER_HARDWARE_BILINEAR:
       GML_RENDER_FILTER_NEAREST,GML_RENDER_EDGE_CLAMP_SUBIMAGE,
       sample_region,GML_RENDER_QUANTISE_POSITIONED_SAMPLE,0u};
     q->filtered_draw_alpha=alpha;

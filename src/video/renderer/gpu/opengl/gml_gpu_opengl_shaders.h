@@ -302,6 +302,14 @@
   "}\n" \
   "vec4 source_texel(ivec2 point,int lod){return source_colour(texelFetch(u_image,point,lod));}\n" \
   "vec4 source_texture(vec2 uv){return source_colour(texture(u_image,uv));}\n" \
+  "uvec4 source_box_bytes(ivec2 first,ivec2 last,bool flipped,out uint count){\n" \
+  "  uvec4 total=uvec4(0u);count=0u;int height=textureSize(u_image,0).y;\n" \
+  "  for(int y=first.y;y<last.y;y++) for(int x=first.x;x<last.x;x++){\n" \
+  "    ivec2 at=ivec2(x,flipped?height-1-y:y);\n" \
+  "    total+=uvec4(floor(source_texel(at,0)*255.0+0.5));count++;\n" \
+  "  }\n" \
+  "  return total;\n" \
+  "}\n" \
   "vec4 margin_tap(ivec2 p,ivec2 first,ivec2 last,int mask){\n" \
   "  if((mask&16)!=0 && (((mask&1)!=0 && p.x<0) || ((mask&2)!=0 && p.y<0) ||\n" \
   "      ((mask&4)!=0 && p.x>last.x) || ((mask&8)!=0 && p.y>last.y))) return vec4(0.0);\n" \
@@ -509,6 +517,17 @@
   "    }\n" \
   "    o_color=vec4((fan && blend==2u && v_span_active!=0.0?fan_rgb:vec3(rgb))/255.0,alpha); return;\n" \
   "  }\n" \
+  "  if(u_filter>=167 && u_filter<=170){\n" \
+  "    // R03_SHADER_POSITIONED_AREA: rounded integer source boxes.\n" \
+  "    if(u_filter==169){o_color=vec4(0.0,0.0,0.0,1.0);return;}\n" \
+  "    uint count;uvec4 total=source_box_bytes(ivec2(v_clamp.xy),ivec2(v_clamp.zw)+ivec2(1),false,count);\n" \
+  "    uvec4 bytes=total/count;uvec4 remainder=total%count;\n" \
+  "    bytes+=uvec4(greaterThanEqual(remainder,uvec4((count+1u)/2u)));\n" \
+  "    float alpha=float(bytes.a)*v_colour.a/255.0;\n" \
+  "    if(v_span_x.x==2.0 || u_filter==170) alpha=1.0;\n" \
+  "    else if(v_span_x.x==3.0) alpha=v_span_y.x/255.0;\n" \
+  "    o_color=vec4(vec3(bytes.rgb)/255.0,alpha);return;\n" \
+  "  }\n" \
   "  if(u_filter>=159 && u_filter<=166){\n" \
   "    // R03_SHADER_POSITIONED_SAMPLE: shared input coverage,hardware colour.\n" \
   "    vec2 size=vec2(textureSize(u_image,0));\n" \
@@ -613,11 +632,7 @@
   "    if(v_map.z<0.0) p.x=dest.x-1-p.x;\n" \
   "    if(v_map.w<0.0) p.y=dest.y-1-p.y;\n" \
   "    ivec2 first=p*size/dest,last=min(size,max((p+ivec2(1))*size/dest,first+ivec2(1)));\n" \
-  "    uvec4 total=uvec4(0u); uint count=0u;\n" \
-  "    for(int y=first.y;y<last.y;y++) for(int x=first.x;x<last.x;x++){\n" \
-  "      ivec2 at=ivec2(x,v_step.x!=0.0?size.y-1-y:y);\n" \
-  "      total+=uvec4(floor(source_texel(at,0)*255.0+0.5));count++;\n" \
-  "    }\n" \
+  "    uint count;uvec4 total=source_box_bytes(first,last,v_step.x!=0.0,count);\n" \
   "    if(count==0u || (u_alpha_test>=0 && total.a<=uint(u_alpha_test)*count)) discard;\n" \
   "    if(total.a==0u && v_span_y.x!=4.0) discard;\n" \
   "    if(u_filter==131){o_color=vec4(0.0,0.0,0.0,1.0);return;}\n" \

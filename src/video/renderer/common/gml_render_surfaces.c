@@ -653,6 +653,7 @@ int gml_render_application_scene_enqueue_quads(GmlRender *r,
     ((operation->payload.quad.sampling.filter==GML_RENDER_FILTER_NEAREST &&
       operation->payload.quad.sampling.quantisation==GML_RENDER_QUANTISE_INTEGER_ROW_TINT_TRUNC) ||
      ((operation->payload.quad.sampling.filter==GML_RENDER_FILTER_NEAREST ||
+       operation->payload.quad.sampling.filter==GML_RENDER_FILTER_BOX ||
        operation->payload.quad.sampling.filter==GML_RENDER_FILTER_HARDWARE_BILINEAR) &&
       operation->payload.quad.sampling.quantisation==GML_RENDER_QUANTISE_POSITIONED_SAMPLE));
   int mutable_text=operation && source &&
@@ -751,7 +752,8 @@ int gml_render_application_scene_enqueue_quads(GmlRender *r,
       operation->reconstruction_mode==GML_RENDER_DEVICE_CHECKPOINT &&
       operation->payload.quad.sampling.filter==GML_RENDER_FILTER_NEAREST_PHASED_OPAQUE_ALPHA) ||
      (operation->payload.quad.sampling.filter==GML_RENDER_FILTER_BOX &&
-      state->coverage_policy==GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA) ||
+      (state->coverage_policy==GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA ||
+       operation->payload.quad.sampling.quantisation==GML_RENDER_QUANTISE_POSITIONED_SAMPLE)) ||
      operation->payload.quad.sampling.filter==GML_RENDER_FILTER_NEAREST)) ||
      ((operation->scene_family==GML_RENDER_SCENE_BACKGROUND ||
        operation->scene_family==GML_RENDER_SCENE_TILE) &&

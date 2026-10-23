@@ -205,6 +205,11 @@ static uint32_t scene_filter(const GmlRenderQuad *quad,
     int blend=qualified_blend(state);
     unsigned filtered=quad->sampling.filter==GML_RENDER_FILTER_HARDWARE_BILINEAR;
     int opaque=state->coverage_policy==GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA;
+    if(quad->sampling.filter==GML_RENDER_FILTER_BOX){
+      if(opaque && blend>=GL_SCENE_BLEND_SURFACE_DEST_BASE && blend<=GL_SCENE_BLEND_SURFACE_DEST_LIMIT)
+        return 170u;
+      return opaque?168u:167u;
+    }
     if(opaque && (blend==20 || blend==21 ||
        (blend>=GL_SCENE_BLEND_SURFACE_DEST_BASE && blend<=GL_SCENE_BLEND_SURFACE_DEST_LIMIT)))
       return 165u+filtered;
@@ -517,7 +522,8 @@ static int positioned_sample_valid(const GmlRenderDrawOp *op,
      op->target.width>16384u || op->target.height>16384u ||
      q->shape!=GML_RENDER_QUAD_AXIS_ALIGNED || q->span_active ||
      s->quantisation!=GML_RENDER_QUANTISE_POSITIONED_SAMPLE ||
-     (s->filter!=GML_RENDER_FILTER_NEAREST && s->filter!=GML_RENDER_FILTER_HARDWARE_BILINEAR) ||
+     (s->filter!=GML_RENDER_FILTER_NEAREST && s->filter!=GML_RENDER_FILTER_HARDWARE_BILINEAR &&
+      s->filter!=GML_RENDER_FILTER_BOX) ||
      s->edge_rule!=GML_RENDER_EDGE_CLAMP_SUBIMAGE || s->logical_margin_mask ||
      !valid_region(s->source_region,source->width,source->height) ||
      s->source_region.width>4096u || s->source_region.height>4096u ||
@@ -529,6 +535,8 @@ static int positioned_sample_valid(const GmlRenderDrawOp *op,
      q->span_y[1] || q->span_y[2] || q->span_y[3] ||
      !isfinite(q->span_y[0]) || q->span_y[0]<0.0 || q->span_y[0]>255.0 ||
      (q->span_x[0]<3.0 && q->span_y[0]) ||
+     (s->filter==GML_RENDER_FILTER_BOX && (q->span_x[0]>3.0 ||
+       (uint64_t)s->source_region.width*s->source_region.height>INT_MAX/255u)) ||
      (q->span_x[0]>=4.0 && (blend!=0 || state->write_mask!=15u)) ||
      !state->write_mask || state->write_mask>15u || state->colour!=0xFFFFFFFFu || state->alpha!=255u ||
      state->alpha_test_enabled || state->source_alpha_key || state->source_palette.enabled ||
@@ -555,7 +563,7 @@ static int positioned_sample_valid(const GmlRenderDrawOp *op,
        q->u[c]*source->width>s->source_region.x+s->source_region.width ||
        q->v[c]*source->height<s->source_region.y ||
        q->v[c]*source->height>s->source_region.y+s->source_region.height) return 0;
-  if(s->filter==GML_RENDER_FILTER_NEAREST){
+  if(s->filter==GML_RENDER_FILTER_NEAREST || s->filter==GML_RENDER_FILTER_BOX){
     double px=q->u[0]*source->width-.5,py=q->v[0]*source->height-.5;
     if(fabs(px-nearbyint(px))>1e-9 || fabs(py-nearbyint(py))>1e-9) return 0;
   }
@@ -2301,7 +2309,7 @@ static int flush_quads(GmlGpuBackend *backend,GlSceneImage *target,GlSceneImage 
                   filter==66u || filter==69u || filter==71u || filter==80u ||
                   filter==86u || filter==93u || filter==110u || filter==112u ||
                   filter==138u || filter==141u || filter==143u || filter==148u || filter==152u ||
-                  filter==156u || filter==158u || filter==161u || filter==162u;
+                  filter==156u || filter==158u || filter==161u || filter==162u || filter==168u;
   backend->gl.ColorMask((write_mask&1u)!=0u,(write_mask&2u)!=0u,(write_mask&4u)!=0u,
                         (!stamp_alpha || filter==110u) && (write_mask&8u)!=0u);
   backend->gl.UseProgram(scene->program);
@@ -2362,7 +2370,7 @@ static int flush_quads(GmlGpuBackend *backend,GlSceneImage *target,GlSceneImage 
      * the same sampler and cutout in an alpha-only pass, preserving that recipe's coverage. */
     backend->gl.ColorMask(GL_FALSE,GL_FALSE,GL_FALSE,GL_TRUE);
     backend->gl.Disable(GL_BLEND);
-    backend->gl.Uniform1i(scene->u_filter,filter==161u || filter==162u?(GLint)filter+2:filter==148u || filter==156u?150:filter==152u || filter==158u?154:filter>=137u && filter<=146u?(filter==141u?146:144):filter==133u?134:filter==130u?131:filter==112u?113:filter==110u?111:filter==104u || filter==107u?(GLint)filter+1:filter==99u?100:filter==93u?95:filter==86u?88:filter==80u?82:filter==77u?78:filter==75u?76:filter==69u?74:filter>=65u?72:filter==60u?62:filter==53u?55:(filter==46u || filter==47u)?48:(filter==39u || filter==40u)?41:filter==35u?36:filter==32u?33:filter==25u?26:
+    backend->gl.Uniform1i(scene->u_filter,filter==168u?169:filter==161u || filter==162u?(GLint)filter+2:filter==148u || filter==156u?150:filter==152u || filter==158u?154:filter>=137u && filter<=146u?(filter==141u?146:144):filter==133u?134:filter==130u?131:filter==112u?113:filter==110u?111:filter==104u || filter==107u?(GLint)filter+1:filter==99u?100:filter==93u?95:filter==86u?88:filter==80u?82:filter==77u?78:filter==75u?76:filter==69u?74:filter>=65u?72:filter==60u?62:filter==53u?55:(filter==46u || filter==47u)?48:(filter==39u || filter==40u)?41:filter==35u?36:filter==32u?33:filter==25u?26:
                          filter==23u?24:filter==21u?22:filter==9u?10:13);
     backend->gl.DrawArraysInstanced(GL_TRIANGLES,0,6,(GLsizei)count);
   }

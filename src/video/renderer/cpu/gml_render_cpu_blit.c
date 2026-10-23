@@ -6384,6 +6384,40 @@ static int sprite_pos_triangle(double px,double py,
   return 1;
 }
 
+/* The runtime region owner rounds the destination extent,then averages its
+ * integer source box independently of the interpolation switch. Prepare only
+ * that box and its alpha/cutoff; colour and blending remain on the device. */
+int gml_render_sprite_pos_area_sample(GmlRender *r,const uint8_t *rgba,
+  int width,int height,GmlRenderRect bounds,int px,int py,double alpha,
+  GmlRenderRect *source_box,double *sample_alpha){
+  int x=px-bounds.x,y=py-bounds.y;
+  int x0=(int)floor((double)x*width/bounds.width);
+  int x1=(int)floor((double)(x+1)*width/bounds.width);
+  int y0=(int)floor((double)y*height/bounds.height);
+  int y1=(int)floor((double)(y+1)*height/bounds.height);
+  if(x1<=x0) x1=x0+1;
+  if(y1<=y0) y1=y0+1;
+  if(x0<0) x0=0;
+  if(y0<0) y0=0;
+  if(x1>width) x1=width;
+  if(y1>height) y1=height;
+  if(x1<=x0 || y1<=y0) return 0;
+  uint64_t count=(uint64_t)(unsigned)(x1-x0)*(unsigned)(y1-y0);
+  /* The original colour/alpha sums use signed int. Do not reproduce its
+   * overflow domain as a different unsigned device result. */
+  if(count>INT_MAX/255u) return -1;
+  unsigned sum=0u;
+  for(int sy=y0;sy<y1;sy++) for(int sx=x0;sx<x1;sx++)
+    sum+=rgba[((size_t)sy*width+sx)*4u+3u];
+  double raw=sum/(double)count;
+  if(shader_discards_alpha_value(r,raw)) return 0;
+  double a=floor(raw+.5);
+  if(a*alpha<=0.0 && !destination_colour_blend_active(r)) return 0;
+  *source_box=(GmlRenderRect){x0,y0,(uint32_t)(x1-x0),(uint32_t)(y1-y0)};
+  *sample_alpha=a;
+  return 1;
+}
+
 /* Direct positive-axis input coordinates and coverage. The existing page
  * writer below remains the colour/blend oracle; this reads source alpha only. */
 int gml_render_sprite_pos_axis_sample(GmlRender *r,const GmlTpag *page,
