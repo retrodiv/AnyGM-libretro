@@ -4051,6 +4051,74 @@ static int scene_source_alpha_key_case(void){
   return 1;
 }
 
+/* Row-centre UVs may round to either side when the inverse is fused.
+ * Exercise the same half-texel neighbourhood without requiring FMA hardware. */
+static int scene_nearest_surface_fringe_case(void){
+  const unsigned heights[]={3u,48u,97u};
+  for(unsigned api=0;api<2u;api++) for(unsigned kind=0;kind<2u;kind++)
+  for(unsigned size=0;size<sizeof heights/sizeof heights[0];size++){
+    unsigned height=heights[size];
+    GmlRenderImageRef source={kind?GML_RENDER_RESOURCE_SCRATCH:GML_RENDER_RESOURCE_SCREEN,31u,1u,1u};
+    GmlRenderImageRef target={GML_RENDER_RESOURCE_SCREEN,32u,1u,1u};
+    GmlRenderDrawStateSnapshot state={.colour=0xFFFFFFFFu,.alpha=255u,
+      .write_mask=15u,.sampler_count=1u};
+    state.samplers[0]=(GmlRenderSamplingPolicy){.filter=GML_RENDER_FILTER_NEAREST,
+      .edge_rule=GML_RENDER_EDGE_CLAMP_SUBIMAGE,.source_region={0,0,64u,height}};
+    GmlRenderDrawOp clear={.opcode=GML_RENDER_OP_CLEAR,
+      .target={source,1u,64u,height,GML_RENDER_PIXEL_ARGB8888,{0,0,64u,height}},
+      .payload.clear_colour=0x80402010u};
+    GmlRenderDrawBatch batch={&clear,1u,&state,1u};
+    GmlRenderDeviceServices device;
+    GmlGpuContext context=fake_context(api?GML_GPU_API_OPENGLES3:GML_GPU_API_OPENGL_CORE);
+    anygm_test_graphics_reset();GmlGpu *gpu=gml_gpu_create();
+    REQUIRE(gpu && gml_gpu_context_reset(gpu,&context),"surface fringe adopts context");
+    gml_gpu_device_services(gpu,&device);
+    GmlRenderExecutionResult result=device.submit(device.context,&batch);
+    REQUIRE(result.status==GML_RENDER_EXEC_ACCEPTED,"surface fringe creates rendered source");
+    clear.target=(GmlRenderTargetRef){target,1u,128u,2u*height,
+      GML_RENDER_PIXEL_ARGB8888,{0,0,128u,2u*height}};
+    result=device.submit(device.context,&batch);
+    REQUIRE(result.status==GML_RENDER_EXEC_ACCEPTED,"surface fringe creates separate target");
+    GmlRenderDrawOp op={.opcode=GML_RENDER_OP_TEXTURED_QUAD,
+      .scene_family=GML_RENDER_SCENE_SURFACE,.reconstruction_mode=GML_RENDER_DEVICE_CHECKPOINT,
+      .target=clear.target,.sources=&source,.source_count=1u};
+    GmlRenderQuad *q=&op.payload.quad;
+    q->shape=GML_RENDER_QUAD_AXIS_ALIGNED;q->sampling=state.samplers[0];q->filtered_draw_alpha=1.0;
+    batch.operations=&op;
+    for(unsigned row=0;row<height;row++) for(unsigned phase=0;phase<3u;phase++){
+      double v=((double)row+.5)/height;
+      if(phase==1u) v=nextafter(v,0.0);
+      if(phase==2u) v=nextafter(v,1.0);
+      for(unsigned corner=0;corner<4u;corner++){
+        q->x[corner]=corner==1u || corner==2u?128.0:127.0;
+        q->y[corner]=2.0*row+(corner>=2u?1.0:0.0);
+        q->u[corner]=63.5/64.0;q->v[corner]=v;q->corner_colour[corner]=0xFFBFBFBFu;
+      }
+      op.target.image.content_version++;
+      result=device.submit(device.context,&batch);
+      REQUIRE(result.status==GML_RENDER_EXEC_ACCEPTED && result.accepted_prefix==1u &&
+        !anygm_test_graphics_scene_copies() && !anygm_test_graphics_read_pixels(),
+        "first, interior and last row centres retain their one-ULP neighbourhood without reads");
+    }
+    GmlRenderDrawOp pristine=op;
+    for(unsigned invalid=0;invalid<9u;invalid++){
+      op=pristine;
+      double v=invalid==0u?-1.0:invalid==1u?0.0:invalid==2u?1.0:
+        invalid==3u?1.1:invalid==4u?NAN:invalid==5u?INFINITY:.75/height;
+      if(invalid<7u) for(unsigned corner=0;corner<4u;corner++) q->v[corner]=v;
+      if(invalid==7u) q->u[3]+=1e-6;
+      if(invalid==8u) q->x[1]=q->x[2]=129.0;
+      int draws=anygm_test_graphics_scene_draw_calls();
+      result=device.submit(device.context,&batch);
+      REQUIRE(result.status==GML_RENDER_EXEC_UNSUPPORTED && !result.accepted_prefix &&
+        anygm_test_graphics_scene_draw_calls()==draws && !anygm_test_graphics_read_pixels(),
+        "non-centre, nonfinite, out-of-range and malformed fringe samples refuse before writes");
+    }
+    gml_gpu_destroy(gpu,1);
+  }
+  return 1;
+}
+
 static int scene_nearest_rows_case(void){
   for(unsigned api=0;api<2u;api++) for(unsigned kind=0;kind<3u;kind++)
   for(unsigned blend=0;blend<4u;blend++){
@@ -5829,6 +5897,7 @@ int main(int argc,char **argv){
     {"scene_source_alpha_key",scene_source_alpha_key_case},
     {"scene_raw_copy",scene_raw_copy_case},
     {"scene_nearest_rows",scene_nearest_rows_case},
+    {"scene_nearest_surface_fringe",scene_nearest_surface_fringe_case},
     {"scene_nearest_surface_function",scene_nearest_surface_function_case},
     {"scene_rotated_surface_point",scene_rotated_surface_point_case},
     {"scene_tiled_surface_packets",scene_tiled_surface_packets_case},

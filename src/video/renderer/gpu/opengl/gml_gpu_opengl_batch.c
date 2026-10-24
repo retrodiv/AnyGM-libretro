@@ -385,8 +385,10 @@ static int nearest_surface_fringe_valid(const GmlRenderDrawOp *op,
      !full_region(q->sampling.source_region,source->width,source->height) ||
      q->filtered_draw_alpha!=1.0 || qualified_blend(state) || state->coverage_policy ||
      state->alpha_test_enabled || state->write_mask!=15u) return 0;
-  double row=q->v[0]*source->height-.5;
-  if(!isfinite(row) || row<0.0 || row>source->height-1.0 || fabs(row-nearbyint(row))>1e-9) return 0;
+  /* Recover the texel row before checking bounds: FMA can reconstruct the
+   * first valid centre as a tiny negative residual rather than exact zero. */
+  double sample=q->v[0]*source->height-.5,row=nearbyint(sample);
+  if(!isfinite(sample) || row<0.0 || row>source->height-1.0 || fabs(sample-row)>1e-9) return 0;
   for(unsigned corner=0;corner<4u;corner++)
     if(q->corner_colour[corner]!=0xFFBFBFBFu ||
        q->u[corner]!=((double)source->width-.5)/source->width ||

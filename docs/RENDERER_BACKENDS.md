@@ -1218,6 +1218,10 @@ owned vertical samples. Individual textured/primitive draws retain their EXACT0
 or TOLERANCE±2 rule. Raw composition interior and alpha are EXACT0;only the CPU
 missing-quarter-colour final-column RGB permits2. Compatible row copies batch
 by source plane without ordinary observation,destination snapshots or CPU replay.
+Fringe admission checks bounds on the recovered integer texel row,retaining the
+existing centre-distance tolerance when FMA reconstructs the first centre just
+below zero. The neutral surface-fringe control covers row centres and adjacent
+representable UVs,plus malformed/out-of-range rejection,on both graphics APIs.
 Storage reuse checks both the host pointer/extent and base incarnation;replacement
 or resize observes and retires the old borrow before host reallocation,with a
 retryable failure leaving ownership intact. No-clear persistent roots,owned
