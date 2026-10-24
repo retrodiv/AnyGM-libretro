@@ -10,6 +10,15 @@ and runs the unit, contract, architecture and fuzz tiers. `make sanitizer-check`
 runs the same code under ASan, UBSan and LSan and is worth running for anything
 that touches memory ownership.
 
+Direct CPU/OpenGL image-parity assertions are disabled in routine checks.
+Run `make check GPU_PIXEL_PARITY=1` to enable them, or set
+`ANYGM_TEST_GPU_PIXEL_PARITY=1` when running `test_graphics_state` directly.
+The selected mode and checked/skipped counts are printed in its summary.
+VM/RNG, geometry, serialization/rewind, actual resource-byte preservation,
+error/lifecycle and CPU optimization-equivalence checks remain mandatory.
+The simulated driver does not qualify real-device pixels; those paired controls
+remain separate explicit development runs.
+
 **One logical change per pull request.** A commit message says what the code now
 does and what was measured, not what was attempted. If a change is motivated by
 a specific piece of content, describe the behaviour, never the content: this

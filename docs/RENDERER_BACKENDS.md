@@ -17,6 +17,14 @@ It is a finite regression domain,not full function or filtered qualification.
 
 # Renderer backend correspondence
 
+Routine CI disables image-only CPU/OpenGL comparisons. Their existing assertions
+remain available through `make check GPU_PIXEL_PARITY=1`; direct execution uses
+`ANYGM_TEST_GPU_PIXEL_PARITY=1`. VM/RNG, geometry, lifecycle, actual-byte state
+preservation and CPU fast/general equivalence remain mandatory. Real-device
+paired pixel probes are separate explicit runs. The EXACT/tolerance rows below
+describe those controls when run; skipped image comparisons confer no fidelity
+qualification and do not change their expected pixels or thresholds.
+
 Automatic composition uses the same program-policy predicate as ordinary
 surface draws. An unknown selected program may keep its CPU passthrough
 owner only while a content-shader device is neither requested nor present;

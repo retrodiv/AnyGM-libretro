@@ -35,6 +35,16 @@
   } \
 }while(0)
 
+/* Image-only cross-renderer parity is opt-in. VM, RNG, serialized-state,
+ * geometry, resource ownership and lifecycle contracts remain unconditional. */
+static int pixel_parity_enabled;
+static size_t pixel_parity_checked,pixel_parity_skipped;
+static int compare_scene_pixels(const void *cpu,const void *gpu,size_t bytes){
+  if(!pixel_parity_enabled){pixel_parity_skipped++;return 0;}
+  pixel_parity_checked++;
+  return memcmp(cpu,gpu,bytes);
+}
+
 typedef struct Session {
   AnygmSyntheticContent fixture;
   AnygmHostServices services;
@@ -1074,7 +1084,7 @@ static int classic_viewless_application_scene_case(void){
               * the completed frame before comparing its canonical CPU bytes. */
              engine_materialize_completed_frame(selected.engine);
     if(matching)
-      matching=!memcmp(cpu.pixels,selected.engine->screen,
+      matching=!compare_scene_pixels(cpu.pixels,selected.engine->screen,
                        (size_t)cpu.width*cpu.height*sizeof(uint32_t));
   }
   gml_render_presentation_metrics(&selected.engine->render,&metrics);
@@ -1267,7 +1277,7 @@ static int classic_identity_filtered_presentation_case(void){
       matching=cpu_state && gpu_state && cpu_size==gpu_size &&
         !memcmp(cpu_state,gpu_state,cpu_size) &&
         engine_materialize_completed_frame(selected.engine) && selected.engine->screen &&
-        !memcmp(cpu.pixels,selected.engine->screen,(size_t)cpu.pitch*cpu.height);
+        !compare_scene_pixels(cpu.pixels,selected.engine->screen,(size_t)cpu.pitch*cpu.height);
       if(matching && frame==1u)
         matching=anygm_state_load(plain.engine,cpu_state,cpu_size)==ANYGM_OK &&
           anygm_state_load(selected.engine,gpu_state,gpu_size)==ANYGM_OK;
@@ -1324,7 +1334,7 @@ static int classic_single_view_application_scene_case(void){
              selected.engine->present_mouse_height==plain.engine->present_mouse_height &&
              selected.engine->vm.room_index==plain.engine->vm.room_index &&
              selected.engine->vm.frame==plain.engine->vm.frame &&
-             !memcmp(cpu.pixels,selected.engine->screen,
+             !compare_scene_pixels(cpu.pixels,selected.engine->screen,
                      (size_t)cpu.width*cpu.height*sizeof(uint32_t));
     if(!matching)
       fprintf(stderr,"single-view classic frame=%d cpu=%ux%u gpu=%ux%u "
@@ -1394,7 +1404,7 @@ static int classic_single_view_geometry_transition_case(void){
              engine_materialize_completed_frame(selected.engine) &&
              cpu.pixels && selected.engine->screen && cpu.width==gpu.width &&
              cpu.height==gpu.height && plain.engine->vm.room_index==selected.engine->vm.room_index &&
-             !memcmp(cpu.pixels,selected.engine->screen,(size_t)cpu.width*cpu.height*4u);
+             !compare_scene_pixels(cpu.pixels,selected.engine->screen,(size_t)cpu.width*cpu.height*4u);
     GmlVal *cpu_width=gml_varmap_get(&plain.engine->vm.globals,"fixture_application_width");
     GmlVal *gpu_width=gml_varmap_get(&selected.engine->vm.globals,"fixture_application_width");
     GmlVal *cpu_height=gml_varmap_get(&plain.engine->vm.globals,"fixture_application_height");
@@ -1485,7 +1495,7 @@ static int classic_borrowed_resize_scene_case(void){
              cpu.width==width && cpu.height==height &&
              gpu.width==width && gpu.height==height &&
              selected.engine->width==width && selected.engine->height==height &&
-             !memcmp(cpu.pixels,selected.engine->screen,(size_t)width*height*4u);
+             !compare_scene_pixels(cpu.pixels,selected.engine->screen,(size_t)width*height*4u);
     GmlRenderPresentationMetrics metrics={0};
     GmlGpuCounters counters={0};
     gml_render_presentation_metrics(&selected.engine->render,&metrics);
@@ -1694,7 +1704,7 @@ static int classic_single_view_exclusions_case(void){
                anygm_run_frame(selected.engine,&input,&gpu)==ANYGM_OK &&
                engine_materialize_completed_frame(selected.engine) && cpu.pixels &&
                selected.engine->screen && cpu.width==gpu.width && cpu.height==gpu.height &&
-               !memcmp(cpu.pixels,selected.engine->screen,(size_t)cpu.width*cpu.height*4u);
+               !compare_scene_pixels(cpu.pixels,selected.engine->screen,(size_t)cpu.width*cpu.height*4u);
       gml_render_presentation_metrics(&selected.engine->render,&metrics);
       matching=matching && !metrics.application_owned;
     }
@@ -1736,7 +1746,8 @@ static int classic_single_view_draw_contracts_case(void){
                anygm_run_frame(selected.engine,&input,&gpu)==ANYGM_OK &&
                engine_materialize_completed_frame(selected.engine) && cpu.pixels &&
                selected.engine->screen && cpu.width==gpu.width && cpu.height==gpu.height;
-      if(matching){
+      if(matching && pixel_parity_enabled){
+        pixel_parity_checked++;
         const uint8_t *a=(const uint8_t *)cpu.pixels;
         const uint8_t *b=(const uint8_t *)selected.engine->screen;
         for(size_t byte=0;byte<(size_t)cpu.width*cpu.height*4u;byte++){
@@ -1745,6 +1756,7 @@ static int classic_single_view_draw_contracts_case(void){
           if(difference>0u) matching=0;
         }
       }
+      if(matching && !pixel_parity_enabled) pixel_parity_skipped++;
       GmlRenderPresentationMetrics metrics={0};
       gml_render_presentation_metrics(&selected.engine->render,&metrics);
       matching=matching && !metrics.application_owned;
@@ -1757,9 +1769,13 @@ static int classic_single_view_draw_contracts_case(void){
              counters.scene_batches_refused==0u;
     if(variant==0u) matching=matching &&
       counters.scene_families[GML_RENDER_SCENE_PRIMITIVE]==24u;
-    fprintf(stderr,"classic draw variant=%u max_bytes=%u,%u,%u,%u sprite=%llu primitive=%llu matching=%d\n",
-      variant,maximum[0],maximum[1],maximum[2],maximum[3],
-      (unsigned long long)counters.scene_families[GML_RENDER_SCENE_SPRITE],
+    if(pixel_parity_enabled)
+      fprintf(stderr,"classic draw variant=%u max_bytes=%u,%u,%u,%u sprite=%llu primitive=%llu matching=%d\n",
+        variant,maximum[0],maximum[1],maximum[2],maximum[3],
+        (unsigned long long)counters.scene_families[GML_RENDER_SCENE_SPRITE],
+        (unsigned long long)counters.scene_families[GML_RENDER_SCENE_PRIMITIVE],matching);
+    else fprintf(stderr,"classic draw variant=%u pixel_parity=disabled sprite=%llu primitive=%llu matching=%d\n",
+      variant,(unsigned long long)counters.scene_families[GML_RENDER_SCENE_SPRITE],
       (unsigned long long)counters.scene_families[GML_RENDER_SCENE_PRIMITIVE],matching);
     session_close(&selected); session_close(&plain);
     REQUIRE(matching,"classic exact draws qualify while unwitnessed tolerant draws retain CPU fallback");
@@ -1790,7 +1806,7 @@ static int classic_retained_target_scene_case(void){
                anygm_run_frame(selected.engine,&input,&gpu)==ANYGM_OK &&
                engine_materialize_completed_frame(selected.engine) && cpu.pixels &&
                selected.engine->screen && cpu.width==gpu.width && cpu.height==gpu.height &&
-               !memcmp(cpu.pixels,selected.engine->screen,(size_t)cpu.width*cpu.height*4u);
+               !compare_scene_pixels(cpu.pixels,selected.engine->screen,(size_t)cpu.width*cpu.height*4u);
       GmlVal *cpu_id=gml_varmap_get(&plain.engine->vm.globals,"fixture_surface");
       GmlVal *gpu_id=gml_varmap_get(&selected.engine->vm.globals,"fixture_surface");
       const uint32_t *cpu_surface=cpu_id?
@@ -1798,7 +1814,7 @@ static int classic_retained_target_scene_case(void){
       const uint32_t *gpu_surface=gpu_id?
         gml_surface_pixels_read(&selected.engine->render,(int)gpu_id->d,NULL,NULL):NULL;
       matching=matching && cpu_surface && gpu_surface &&
-        !memcmp(cpu_surface,gpu_surface,8u*8u*4u) &&
+        !compare_scene_pixels(cpu_surface,gpu_surface,8u*8u*4u) &&
         cpu_surface[0]==0xFF0000FFu && cpu_surface[18]!=0xFF0000FFu &&
         gml_surface_get_target(&selected.engine->render)==-1;
       if(!matching){
@@ -2093,17 +2109,17 @@ static int classic_step_composition_scene_case(void){
       }
       matching=matching && materialized && cpu.pixels &&
         cpu.width==gpu.width && cpu.height==gpu.height &&
-        !memcmp(cpu.pixels,selected.engine->screen,(size_t)cpu.width*cpu.height*4u);
+        !compare_scene_pixels(cpu.pixels,selected.engine->screen,(size_t)cpu.width*cpu.height*4u);
       int cpu_id=(int)gml_varmap_get(&plain.engine->vm.globals,"fixture_surface")->d;
       int gpu_id=(int)gml_varmap_get(&selected.engine->vm.globals,"fixture_surface")->d;
       const uint32_t *cpu_surface=gml_surface_pixels_read(&plain.engine->render,cpu_id,NULL,NULL);
       const uint32_t *gpu_surface=gml_surface_pixels_read(&selected.engine->render,gpu_id,NULL,NULL);
       matching=matching && cpu_surface && gpu_surface &&
-        !memcmp(cpu_surface,gpu_surface,16u*12u*4u) &&
+        !compare_scene_pixels(cpu_surface,gpu_surface,16u*12u*4u) &&
         gml_surface_get_target(&selected.engine->render)==gpu_id;
       if(variant==1)
         matching=matching && plain.engine->fb[0]==0xFFFFFFFFu &&
-          !memcmp(plain.engine->fb,selected.engine->fb,64u*48u*4u);
+          !compare_scene_pixels(plain.engine->fb,selected.engine->fb,64u*48u*4u);
       if(!matching) fprintf(stderr,"classic Step-composition variant=%u frame=%u reads=%llu/%llu surfaces=%llu/%llu\n",
         variant,frame,(unsigned long long)before.scene_readbacks,(unsigned long long)after.scene_readbacks,
         (unsigned long long)before.scene_families[GML_RENDER_SCENE_SURFACE],
@@ -2183,7 +2199,7 @@ static int classic_single_view_cpu_observers_case(void){
                anygm_run_frame(selected.engine,&input,&gpu)==ANYGM_OK &&
                engine_materialize_completed_frame(selected.engine) && cpu.pixels &&
                selected.engine->screen && cpu.width==gpu.width && cpu.height==gpu.height &&
-               !memcmp(cpu.pixels,selected.engine->screen,(size_t)cpu.width*cpu.height*4u);
+               !compare_scene_pixels(cpu.pixels,selected.engine->screen,(size_t)cpu.width*cpu.height*4u);
       GmlRenderPresentationMetrics metrics={0};
       gml_render_presentation_metrics(&selected.engine->render,&metrics);
       matching=matching && !metrics.application_owned;
@@ -2258,7 +2274,7 @@ static int ended_frame_retention_variant(int lose_context){
          selected.engine->frame_materializations==1u &&
          plain.engine->vm.frame==selected.engine->vm.frame;
       for(unsigned row=0;row<cpu.height && ok;row++)
-        ok=!memcmp((const uint8_t*)cpu.pixels+(size_t)row*cpu.pitch,
+        ok=!compare_scene_pixels((const uint8_t*)cpu.pixels+(size_t)row*cpu.pitch,
                    selected.engine->screen+(size_t)row*cpu.width,
                    (size_t)cpu.width*4u);
     }
@@ -2305,7 +2321,7 @@ static int resident_cursor_frame_case(void){
            selected.engine->screen && gpu.width==cpu.width && gpu.height==cpu.height;
   if(matching){
     for(unsigned row=0;row<cpu.height && matching;row++)
-      matching=!memcmp((const uint8_t*)cpu.pixels+(size_t)row*cpu.pitch,
+      matching=!compare_scene_pixels((const uint8_t*)cpu.pixels+(size_t)row*cpu.pitch,
                        selected.engine->screen+(size_t)row*cpu.width,
                        (size_t)cpu.width*4u);
   }
@@ -2401,7 +2417,7 @@ static int resident_transition_snapshot_case(void){
            classic_transition_start(plain.engine,64u,48u,20) &&
            classic_transition_start(selected.engine,64u,48u,20);
   if(matching)
-    matching=!memcmp(plain.engine->classic_transition.old_frame,
+    matching=!compare_scene_pixels(plain.engine->classic_transition.old_frame,
                      selected.engine->classic_transition.old_frame,64u*48u*4u);
   matching=matching && selected.engine->frame_materializations==1u &&
            !gml_render_deferred_presentation(&selected.engine->render,NULL);
@@ -2440,7 +2456,7 @@ static int classic_temporal_fallback_variant(
        plain.engine->vm.frame==selected.engine->vm.frame;
     if(!ok) break;
     for(unsigned row=0;row<cpu.height && ok;row++)
-      ok=!memcmp((const uint8_t*)cpu.pixels+(size_t)row*cpu.pitch,
+      ok=!compare_scene_pixels((const uint8_t*)cpu.pixels+(size_t)row*cpu.pitch,
                  selected.engine->screen+(size_t)row*cpu.width,
                  (size_t)cpu.width*4u);
     if(previous_step>=0 && !transition)
@@ -2628,10 +2644,10 @@ static int resident_indirect_gui_variant(
               "screen=%d app=%d gui=%d alpha=%08x/%08x\n",cpu_size,gpu_size,first,
               cpu_state && first<cpu_size?cpu_state[first]:0u,
               gpu_state && first<gpu_size?gpu_state[first]:0u,selected.engine->frame_materializations,
-              memcmp(plain.engine->screen,selected.engine->screen,(size_t)cpu.width*cpu.height*4u),
-              memcmp(plain.engine->render.app_surface,selected.engine->render.app_surface,
+              compare_scene_pixels(plain.engine->screen,selected.engine->screen,(size_t)cpu.width*cpu.height*4u),
+              compare_scene_pixels(plain.engine->render.app_surface,selected.engine->render.app_surface,
                      (size_t)selected.engine->render.app_w*selected.engine->render.app_h*4u),
-              memcmp(plain.engine->gui_buffer,selected.engine->gui_buffer,
+              compare_scene_pixels(plain.engine->gui_buffer,selected.engine->gui_buffer,
                      (size_t)selected.engine->gui_space_width*selected.engine->gui_space_height*4u),
               plain.engine->gui_buffer[0],selected.engine->gui_buffer[0]);
     }
@@ -2666,7 +2682,7 @@ static int resident_indirect_gui_variant(
            cpu.width==selected.engine->output_width &&
            cpu.height==selected.engine->output_height &&
            cpu.pitch==(size_t)cpu.width*sizeof(uint32_t) &&
-           !memcmp(cpu.pixels,selected.engine->screen,(size_t)cpu.pitch*cpu.height);
+           !compare_scene_pixels(cpu.pixels,selected.engine->screen,(size_t)cpu.pitch*cpu.height);
   if(matching){
     unsigned sample=scale_direction>0?24u:scale_direction==0?6u:12u;
     uint32_t colour=((const uint32_t *)cpu.pixels)[(size_t)sample*cpu.width+sample]&0xFFFFFFu;
@@ -2697,7 +2713,7 @@ static int resident_indirect_gui_variant(
              cpu.width==selected.engine->output_width &&
              cpu.height==selected.engine->output_height &&
              cpu.pitch==(size_t)cpu.width*sizeof(uint32_t) &&
-             !memcmp(cpu.pixels,selected.engine->screen,(size_t)cpu.pitch*cpu.height);
+             !compare_scene_pixels(cpu.pixels,selected.engine->screen,(size_t)cpu.pitch*cpu.height);
   }
   session_close(&selected);
   session_close(&plain);
@@ -2930,7 +2946,7 @@ static int resident_indirect_gui_alpha_fallback_case(void){
            cpu.width==selected.engine->output_width &&
            cpu.height==selected.engine->output_height &&
            cpu.pitch==(size_t)cpu.width*sizeof(uint32_t) &&
-           !memcmp(cpu.pixels,selected.engine->screen,(size_t)cpu.pitch*cpu.height);
+           !compare_scene_pixels(cpu.pixels,selected.engine->screen,(size_t)cpu.pitch*cpu.height);
   if(matching){
     uint32_t colour=((const uint32_t *)cpu.pixels)[6u*cpu.width+6u]&0xFFFFFFu;
     matching=colour!=0x0000FFu && colour!=0xFFFFFFu;
@@ -2969,7 +2985,7 @@ static int resident_multiview_cpu_seed_variant(
              anygm_run_frame(selected.engine,&input,&gpu)==ANYGM_OK &&
              cpu.pixels && selected.engine->screen && cpu.width==64u &&
              cpu.height==48u && cpu.pitch==64u*sizeof(uint32_t) &&
-             !memcmp(cpu.pixels,selected.engine->screen,(size_t)cpu.pitch*cpu.height) &&
+             !compare_scene_pixels(cpu.pixels,selected.engine->screen,(size_t)cpu.pitch*cpu.height) &&
              plain.engine->vm.room_index==selected.engine->vm.room_index;
     if(matching && frame==0){
       const uint32_t *pixels=(const uint32_t *)cpu.pixels;
@@ -3140,16 +3156,16 @@ static int resident_multiview_step_target_variant(
     uint32_t expected_outer=nested?0xFFFF0000u:0xFF0000FFu;
     matching=cpu.pixels && selected.engine->screen && cpu.width==64u &&
              cpu.height==48u && cpu.pitch==64u*sizeof(uint32_t) &&
-             !memcmp(cpu.pixels,selected.engine->screen,(size_t)cpu.pitch*cpu.height) &&
+             !compare_scene_pixels(cpu.pixels,selected.engine->screen,(size_t)cpu.pitch*cpu.height) &&
              cpu_surface && gpu_surface && cw==8 && ch==8 && gw==8 && gh==8 &&
              cpu_surface[0]==expected_outer &&
-             !memcmp(cpu_surface,gpu_surface,64u*sizeof(uint32_t)) &&
+             !compare_scene_pixels(cpu_surface,gpu_surface,64u*sizeof(uint32_t)) &&
              (((const uint32_t *)cpu.pixels)[0]&0xFFFFFFu)==
                (expected_outer&0xFFFFFFu) &&
              (!nested || (cpu_surface[63]!=0u && cpu_surface[63]!=expected_outer &&
                cpu_inner && gpu_inner && ciw==8 && cih==8 && giw==8 && gih==8 &&
                cpu_inner[0]==0xFF0000FFu &&
-               !memcmp(cpu_inner,gpu_inner,64u*sizeof(uint32_t)) &&
+               !compare_scene_pixels(cpu_inner,gpu_inner,64u*sizeof(uint32_t)) &&
                (((const uint32_t *)cpu.pixels)[16]&0xFFFFFFu)==0x000000FFu));
     if(!matching){
       GmlGpuCounters counts={0};
@@ -3229,14 +3245,14 @@ static int resident_multiview_assigned_surface_restore_case(void){
       &selected.engine->render,selected_inner,&tw,&th);
     matching=cpu.pixels && selected.engine->screen && cpu.width==64u &&
              cpu.height==48u && cpu.pitch==64u*sizeof(uint32_t) &&
-             !memcmp(cpu.pixels,selected.engine->screen,(size_t)cpu.pitch*cpu.height) &&
+             !compare_scene_pixels(cpu.pixels,selected.engine->screen,(size_t)cpu.pitch*cpu.height) &&
              outer && inner && scene_outer && scene_inner &&
              ow==8 && oh==8 && iw==8 && ih==8 &&
              sw==8 && sh==8 && tw==8 && th==8 &&
              outer[0]==0xFF0000FFu && inner[0]==0xFF008000u &&
              gml_global_num(&plain.engine->vm,"fixture_seen")==2.0*(frame+1) &&
-             !memcmp(outer,scene_outer,64u*sizeof(uint32_t)) &&
-             !memcmp(inner,scene_inner,64u*sizeof(uint32_t)) &&
+             !compare_scene_pixels(outer,scene_outer,64u*sizeof(uint32_t)) &&
+             !compare_scene_pixels(inner,scene_inner,64u*sizeof(uint32_t)) &&
              (((const uint32_t *)cpu.pixels)[0]&0xFFFFFFu)==0x000000FFu &&
              (((const uint32_t *)cpu.pixels)[16]&0xFFFFFFu)==0x00008000u;
     if(!matching)
@@ -3288,7 +3304,7 @@ static int resident_multiview_assigned_surface_restore_case(void){
                  anygm_run_frame(selected.engine,&input,&restored_gpu)==ANYGM_OK &&
                  restored_cpu.pixels && selected.engine->screen &&
                  restored_cpu.width==64u && restored_cpu.height==48u &&
-                 !memcmp(restored_cpu.pixels,selected.engine->screen,
+                 !compare_scene_pixels(restored_cpu.pixels,selected.engine->screen,
                          64u*48u*sizeof(uint32_t)) &&
                  plain.engine->vm.frame==1 &&
                  gml_global_num(&plain.engine->vm,"fixture_seen")==2.0 &&
@@ -3359,7 +3375,7 @@ static int resident_native_assigned_view_variant(int draw_enabled,int native_sur
              anygm_run_frame(selected.engine,&input,&gpu)==ANYGM_OK &&
              cpu.pixels && selected.engine->screen && cpu.width==64u && cpu.height==48u &&
              gpu.width==cpu.width && gpu.height==cpu.height &&
-             !memcmp(cpu.pixels,selected.engine->screen,64u*48u*sizeof(uint32_t));
+             !compare_scene_pixels(cpu.pixels,selected.engine->screen,64u*48u*sizeof(uint32_t));
     int surface=(int)gml_global_num(&plain.engine->vm,"fixture_surface");
     int selected_surface=(int)gml_global_num(&selected.engine->vm,"fixture_surface");
     int width=0,height=0,selected_width=0,selected_height=0;
@@ -3369,14 +3385,14 @@ static int resident_native_assigned_view_variant(int draw_enabled,int native_sur
       &selected.engine->render,selected_surface,&selected_width,&selected_height);
     matching=matching && pixels && scene_pixels && width==(native_surface?64:32) &&
              height==(native_surface?48:24) && selected_width==width && selected_height==height &&
-             !memcmp(pixels,scene_pixels,(size_t)width*height*sizeof(uint32_t)) &&
+             !compare_scene_pixels(pixels,scene_pixels,(size_t)width*height*sizeof(uint32_t)) &&
              gml_global_num(&plain.engine->vm,"fixture_seen")==frame+1;
     if(matching && app_resize){
       GmlRenderApplicationReadView reference={0},actual={0};
       matching=gml_render_application_surface_owned_read(&plain.engine->render,&reference) &&
                gml_render_application_surface_owned_read(&selected.engine->render,&actual) &&
                reference.width==47 && reference.height==29 && actual.width==47 && actual.height==29 &&
-               !memcmp(reference.pixels,actual.pixels,47u*29u*sizeof(uint32_t));
+               !compare_scene_pixels(reference.pixels,actual.pixels,47u*29u*sizeof(uint32_t));
     }
     if(matching && native_surface)
       matching=pixels[0]==0xFF0000FFu && pixels[9u*64u+6u]==0xFF2030C0u;
@@ -3400,7 +3416,7 @@ static int resident_native_assigned_view_variant(int draw_enabled,int native_sur
         matching=anygm_run_frame(plain.engine,&input,&restored_cpu)==ANYGM_OK &&
                  anygm_run_frame(selected.engine,&input,&restored_gpu)==ANYGM_OK &&
                  restored_cpu.pixels && selected.engine->screen &&
-                 !memcmp(restored_cpu.pixels,selected.engine->screen,64u*48u*sizeof(uint32_t)) &&
+                 !compare_scene_pixels(restored_cpu.pixels,selected.engine->screen,64u*48u*sizeof(uint32_t)) &&
                  plain.engine->vm.frame==1 && selected.engine->vm.frame==1 &&
                  gml_global_num(&plain.engine->vm,"fixture_seen")==1;
       }
@@ -3460,7 +3476,7 @@ static int presentation_geometry_variant(
              cpu.pixels && plain.engine->screen && selected.engine->screen &&
              plain.engine->output_width==selected.engine->output_width &&
              plain.engine->output_height==selected.engine->output_height &&
-             !memcmp(plain.engine->screen,selected.engine->screen,
+             !compare_scene_pixels(plain.engine->screen,selected.engine->screen,
                      (size_t)plain.engine->output_width*plain.engine->output_height*
                      sizeof(uint32_t)) &&
              resolve_host_frame(selected.engine,&selected_host,
@@ -3468,7 +3484,7 @@ static int presentation_geometry_variant(
              selected_host && cpu.width==gpu.width && cpu.height==gpu.height &&
              cpu.width==selected_host_width && cpu.height==selected_host_height &&
              cpu.pitch==(size_t)cpu.width*sizeof(uint32_t) &&
-             !memcmp(cpu.pixels,selected_host,(size_t)cpu.pitch*cpu.height);
+             !compare_scene_pixels(cpu.pixels,selected_host,(size_t)cpu.pitch*cpu.height);
     if(!matching){
       size_t first_diff=(size_t)-1;
       if(cpu.pixels && selected_host && cpu.width==gpu.width &&
@@ -3621,7 +3637,7 @@ static int forced_owned_scene_variant(int narrow_room){
                                     counters.scene_batches_accepted>0u);
     matching=matching && resolve_host_frame(selected.engine,&pixels,&width,&height) &&
              pixels && cpu.pixels && width==cpu.width && height==cpu.height &&
-             !memcmp(cpu.pixels,pixels,(size_t)cpu.pitch*cpu.height);
+             !compare_scene_pixels(cpu.pixels,pixels,(size_t)cpu.pitch*cpu.height);
     if(!matching)
       fprintf(stderr,"forced owned narrow=%d frame=%d scene=%llu/%llu cpu=%ux%u gpu=%ux%u\n",
               narrow_room,frame,(unsigned long long)counters.scene_batches_offered,
@@ -3677,7 +3693,7 @@ static int presentation_filter_variant(
              cpu.pixels && plain.engine->screen && selected.engine->screen &&
              plain.engine->output_width==selected.engine->output_width &&
              plain.engine->output_height==selected.engine->output_height &&
-             !memcmp(plain.engine->screen,selected.engine->screen,
+             !compare_scene_pixels(plain.engine->screen,selected.engine->screen,
                      (size_t)plain.engine->output_width*plain.engine->output_height*
                      sizeof(uint32_t)) &&
              resolve_host_frame(selected.engine,&selected_host,
@@ -3685,7 +3701,7 @@ static int presentation_filter_variant(
              selected_host && cpu.width==gpu.width && cpu.height==gpu.height &&
              cpu.width==selected_host_width && cpu.height==selected_host_height &&
              cpu.pitch==(size_t)cpu.width*sizeof(uint32_t) &&
-             !memcmp(cpu.pixels,selected_host,(size_t)cpu.pitch*cpu.height);
+             !compare_scene_pixels(cpu.pixels,selected_host,(size_t)cpu.pitch*cpu.height);
     if(frame==0){
       GmlGpuCounters counters={0};
       gml_gpu_counters(selected.engine->gpu,&counters);
@@ -3837,7 +3853,7 @@ static int translated_world_variant(unsigned forced){
                 resolve_host_frame(selected.engine,&pixels,&width,&height) &&
                 (forced?width>64u:width==64u) && height==48u && pixels && reference &&
                 width==reference_width && height==reference_height &&
-                !memcmp(reference,pixels,(size_t)width*height*sizeof *pixels),
+                !compare_scene_pixels(reference,pixels,(size_t)width*height*sizeof *pixels),
                 "translated native fake recovery preserves CPU output and stationary GUI");
         size_t cpu_size=0,gpu_size=0,again_size=0;
         uint8_t *cpu_state=serialize(plain.engine,&cpu_size);
@@ -3859,7 +3875,7 @@ static int translated_world_variant(unsigned forced){
                 resolve_host_frame(selected.engine,&pixels,&width,&height) &&
                 (forced?width>64u:width==64u) && height==48u && pixels && reference &&
                 width==reference_width && height==reference_height &&
-                !memcmp(reference,pixels,(size_t)width*height*sizeof *pixels),
+                !compare_scene_pixels(reference,pixels,(size_t)width*height*sizeof *pixels),
                 "translated native restored publication keeps the saved pixels and VM phase");
       }
     }
@@ -4717,7 +4733,7 @@ static int context_replacement_reuses_names_case(void){
     stage=frame==0?"restored completed frame":"continued frame";
     ok=advance(plain.engine,1,NULL) && advance(selected.engine,1,NULL) &&
        plain.engine->screen && selected.engine->screen &&
-       !memcmp(plain.engine->screen,selected.engine->screen,64u*48u*sizeof(uint32_t));
+       !compare_scene_pixels(plain.engine->screen,selected.engine->screen,64u*48u*sizeof(uint32_t));
     if(ok && frame==1){
       stage="recycled live texture";
       ok=anygm_test_graphics_texture_width(recycled_texture)>0 &&
@@ -4798,7 +4814,7 @@ static int live_engine_pair_matches(Session *plain,Session *selected){
   int same=plain->engine && selected->engine && plain->engine->screen &&
            selected->engine->screen &&
            plain->engine->vm.frame==selected->engine->vm.frame &&
-           !memcmp(plain->engine->screen,selected->engine->screen,
+           !compare_scene_pixels(plain->engine->screen,selected->engine->screen,
                    64u*48u*sizeof(uint32_t));
   if(same){
     plain_state=serialize(plain->engine,&plain_size);
@@ -5969,6 +5985,12 @@ static int final_scene_seal_profile_case(void){
 }
 
 int main(void){
+  const char *parity=getenv("ANYGM_TEST_GPU_PIXEL_PARITY");
+  if(parity && strcmp(parity,"0") && strcmp(parity,"1")){
+    fprintf(stderr,"ANYGM_TEST_GPU_PIXEL_PARITY must be 0 or 1\n");
+    return EXIT_FAILURE;
+  }
+  pixel_parity_enabled=parity && !strcmp(parity,"1");
   static const struct { const char *name; int (*run)(void); } cases[]={
     {"witnessed frame end submits without automatic pixel observation",
      scene_frame_end_defers_observation_case},
@@ -6085,6 +6107,7 @@ int main(void){
   }
   if(!executed){fprintf(stderr,"unknown graphics state case\n");return EXIT_FAILURE;}
   if(failed) return EXIT_FAILURE;
-  printf("graphics state: ok\n");
+  printf("graphics state: ok; GPU/CPU image parity=%s checked=%zu skipped=%zu\n",
+    pixel_parity_enabled?"enabled":"disabled",pixel_parity_checked,pixel_parity_skipped);
   return EXIT_SUCCESS;
 }

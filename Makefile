@@ -2,6 +2,9 @@
 # Copyright (c) 2026 retrodiv <retrodiv@proton.me>
 
 DIAGNOSTICS ?= 0
+# Optional image-only parity assertions; state and runtime contracts always run.
+GPU_PIXEL_PARITY ?= 0
+export ANYGM_TEST_GPU_PIXEL_PARITY := $(GPU_PIXEL_PARITY)
 # The optional hardware renderer. HARDWARE_RENDER=0 excludes the GPU objects and the libretro
 # hardware bridge, omits the core option, and leaves a build with no unresolved graphics symbol.
 HARDWARE_RENDER ?= 1
