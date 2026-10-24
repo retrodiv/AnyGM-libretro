@@ -1474,7 +1474,8 @@ static void check_modern_opaque_scaled_partial_alpha(void){
          TARGET_WIDTH=640,TARGET_HEIGHT=480 };
   static const double scale[4][2]={{4.25,4.25},{-4.25,4.25},
                                     {-4.25,-4.25},{4.25,-4.25}};
-  static const double draw_alpha[3]={0.05,0.2,0.375};
+  const double draw_alpha[]={0.05,0.2,0.375,nextafter(0.5,0.0),
+    nextafter(0.5,1.0),1.0/255.0,0.123456789};
   size_t atlas_bytes=(size_t)ATLAS_WIDTH*ATLAS_HEIGHT*4u;
   size_t target_bytes=(size_t)TARGET_WIDTH*TARGET_HEIGHT*sizeof(uint32_t);
   uint8_t *rgba=calloc(atlas_bytes,1);
@@ -1528,8 +1529,10 @@ static void check_modern_opaque_scaled_partial_alpha(void){
   init_modern_point_renderer(
     &fast,&content,&atlas,&fast_page,&background,
     fast_pixels,TARGET_WIDTH,TARGET_HEIGHT,-1);
-  for(int pass=0;pass<3;pass++){
-    fill_alpha_target(reference_pixels,TARGET_WIDTH,TARGET_HEIGHT,(unsigned)pass+1u);
+  for(unsigned target=0;target<2u;target++)
+  for(unsigned pass=0;pass<sizeof draw_alpha/sizeof draw_alpha[0];pass++){
+    reference.target_sp=fast.target_sp=(int)target;
+    fill_alpha_target(reference_pixels,TARGET_WIDTH,TARGET_HEIGHT,pass+1u);
     memcpy(fast_pixels,reference_pixels,target_bytes);
     for(int draw=0;draw<4;draw++){
       gml_draw_background_ext(
@@ -1538,6 +1541,17 @@ static void check_modern_opaque_scaled_partial_alpha(void){
       gml_draw_background_ext(
         &fast,0,320.0,240.0,scale[draw][0],scale[draw][1],
         0xffffffu,draw_alpha[pass]);
+    }
+    if(memcmp(reference_pixels,fast_pixels,target_bytes)){
+      size_t different=0,first=(size_t)TARGET_WIDTH*TARGET_HEIGHT;
+      for(size_t pixel=0;pixel<(size_t)TARGET_WIDTH*TARGET_HEIGHT;pixel++)
+        if(reference_pixels[pixel]!=fast_pixels[pixel]){
+          if(!different) first=pixel;
+          different++;
+        }
+      fprintf(stderr,"opaque scaled alpha: target=%u alpha=%.17g different=%zu first=%zu,%zu reference=%08x fast=%08x\n",
+        target,draw_alpha[pass],different,first%TARGET_WIDTH,first/TARGET_WIDTH,
+        reference_pixels[first],fast_pixels[first]);
     }
     expect(!memcmp(reference_pixels,fast_pixels,target_bytes),
            "modern opaque scaled partial-alpha fast path changed a destination pixel");

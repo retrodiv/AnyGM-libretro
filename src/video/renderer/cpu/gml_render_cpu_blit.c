@@ -3389,10 +3389,16 @@ static void blit_one(GmlRender *r, GmlTpag *t, double dx, double dy, double xs, 
           : uv_wave_sample_index(uvwave,a->w,a->h,t->sx+local_x,t->sy+local_y,position_y);
     }
   }
+  /* Byte products of a 32-bit dyadic weight and their sum fit exactly in
+   * double. Other weights can cross an integer rounding boundary when the
+   * optimized and general loops contract different products into FMA. Keep
+   * those draws with the unchanged general loop. */
+  double opaque_alpha_weight=alpha*0x1p32;
   if(lxtab && vispix>=16384ull && !r->interp && r->active_shader<0 && !mapped_shader &&
      r->alphablend && r->blendmode==0 && r->blend_equation==1 &&
      r->blend_equation_alpha==1 && r->color_write_mask==0x0F &&
-     alpha<1.0 && (blend&0xFFFFFFu)==0xFFFFFFu &&
+     alpha<1.0 && opaque_alpha_weight==floor(opaque_alpha_weight) &&
+     (blend&0xFFFFFFu)==0xFFFFFFu &&
      gml_blend_family(r)==GML_BLEND_STUDIO2){
     const uint32_t *source=tpag_fully_opaque_argb(r,t,a);
     if(source){
