@@ -79,7 +79,10 @@ int software3d_case_blend_shader(Software3dRasterFixture *fixture){
        phase[0][0]!=fixture->render.interp_subrect_cache[0].phase[0][1] ||
        phase[1][0]!=fixture->render.interp_subrect_cache[0].phase[1][2] ||
        phase[2][0]!=fixture->render.interp_subrect_cache[0].phase[2][3]){
-      fprintf(stderr,"software classic projected interpolation cache mismatch\n");
+      fprintf(stderr,"software classic projected interpolation cache mismatch count=%d bytes=%zu projected=%d/%d\n",
+        fixture->render.interp_subrect_count,fixture->render.interp_subrect_bytes,
+        fixture->render.interp_subrect_cache?fixture->render.interp_subrect_cache[0].projected_x:-1,
+        fixture->render.interp_subrect_cache?fixture->render.interp_subrect_cache[0].projected_y:-1);
       return 0;
     }
     size_t cached_bytes=fixture->render.interp_subrect_bytes;

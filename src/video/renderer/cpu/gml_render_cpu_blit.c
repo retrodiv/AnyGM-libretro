@@ -3692,11 +3692,14 @@ static double classic_interp_projected_edge(double relative, double camera, int 
   float precision_view=(float)camera+logical*0.5f;
   float centre=-(precision_view+logical*0.5f);
   float projection=-2.0f/logical;
-  float combined_translation=centre*projection;
+  /* These matrix products round to binary32 before the next addition.
+   * Materialize both stages so FMA cannot change projection classification. */
+  volatile float combined_translation=centre*projection;
   float matrix_scale=-projection;
   float matrix_translation=-combined_translation+
                            (float)(1.0/(2.0*(double)logical_size));
-  float corrected=matrix_scale*vertex+matrix_translation;
+  volatile float projected_vertex=matrix_scale*vertex;
+  float corrected=projected_vertex+matrix_translation;
   return ((double)corrected+1.0)*(double)logical_size;
 }
 static int classic_interp_projected_axis(double camera, int logical_size){
