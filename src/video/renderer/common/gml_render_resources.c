@@ -485,6 +485,8 @@ static GmlRenderResourceExecution cpu_fallback(GmlRenderResource *resource,
                                                 const GmlRenderDrawBatch *batch,
                                                 const GmlRenderResourceSource *sources,
                                                 uint32_t source_count){
+  if(gml_render_cpu_draws_disabled(resource->dispatch_owner))
+    return GML_RENDER_RESOURCE_EXEC_SKIPPED;
   uint32_t *copy=NULL;
   size_t bytes=(size_t)resource->width*resource->height*4u;
   if(!copy_checkpoint(resource,&copy)) return GML_RENDER_RESOURCE_EXEC_FAILED;
@@ -936,6 +938,17 @@ static GmlRenderResourceExecution resource_submit(
   device_result=device->submit(device->context,batch);
   if(device_result.status!=GML_RENDER_EXEC_ACCEPTED ||
      device_result.accepted_prefix!=batch->operation_count){
+    if(gml_render_cpu_draws_disabled(resource->dispatch_owner) &&
+       device_result.status==GML_RENDER_EXEC_UNSUPPORTED &&
+       !device_result.accepted_prefix && !device_result.all_destinations_uncertain &&
+       !device_result.uncertain_target_count){
+      for(uint32_t index=old_source_count;index<resource->source_count;index++)
+        release_pin(&resource->sources[index]);
+      resource->source_count=old_source_count;
+      resource->retained_bytes=old_retained_bytes;
+      resource->recipe_bytes=old_recipe_bytes;
+      return GML_RENDER_RESOURCE_EXEC_SKIPPED;
+    }
     if(pending_prefix && device_result.status==GML_RENDER_EXEC_UNSUPPORTED &&
        !device_result.accepted_prefix && !device_result.all_destinations_uncertain &&
        !device_result.uncertain_target_count){
@@ -946,7 +959,8 @@ static GmlRenderResourceExecution resource_submit(
       return batch_checkpoint_required?GML_RENDER_RESOURCE_EXEC_FAILED:
         cpu_fallback(resource,batch,sources,source_count);
     }
-    if(pending_prefix) resource->authority=GML_RENDER_RESOURCE_INVALID;
+    if(pending_prefix || gml_render_cpu_draws_disabled(resource->dispatch_owner))
+      resource->authority=GML_RENDER_RESOURCE_INVALID;
     if(device->retire) device->retire(device->context,resource->image);
     resource->gpu_version=0;
     resource->device_identity=NULL;

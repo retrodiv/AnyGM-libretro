@@ -169,7 +169,7 @@ void gml_render_layer_rgb_noise(GmlRender *r,uint32_t sampler_tpag_ptr,
     GmlRenderLayerEffect effect={0};
     int opaque_known,all_opaque;
     gml_render_prepare_draw(r);
-    if(!gml_render_resident_application_cpu_barrier(r)) return;
+    if(!gml_render_cpu_draw_barrier(r)) return;
     opaque_known=r->fb_opaque_known;
     all_opaque=r->fb_all_opaque;
     effect.kind=GML_RENDER_LAYER_EFFECT_RGB_NOISE;
@@ -198,7 +198,7 @@ int gml_render_layer_filter_begin(GmlRender *r,const GmlLayerFilter *filter){
   gml_render_prepare_draw(r);
   /* The CPU capture and final composite must observe the current target, even
    * when the preceding scene/clear has only been submitted to the device. */
-  if(!gml_render_resident_application_cpu_barrier(r)) return 0;
+  if(!gml_render_cpu_draw_barrier(r)) return 0;
   if(r->target_id>0){
     int width=0,height=0;
     if(surface_pixels(r,r->target_id,&width,&height)!=r->fb ||

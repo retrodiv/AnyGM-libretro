@@ -4771,7 +4771,7 @@ int gml_render_resident_masked_sprite(GmlRender *r,int sprite,int subimg,
    * CPU-current before that snapshot, without admitting the parent pass. */
   if(r && !r->resident_application_pass && r->scene_device_enabled &&
      r->target_id>=0 && r->color_write_mask<15u)
-    return !gml_render_resident_application_cpu_barrier(r);
+    return !gml_render_cpu_draw_barrier(r);
   if(!r || !r->resident_application_pass || r->color_write_mask>=15u ||
      sprite<0 || sprite>=r->n_spr)
     return 0;
@@ -4931,7 +4931,7 @@ void gml_render_sprite_ext_unmasked(GmlRender *r, int sprite, int subimg, double
     if(sprite>=0 && sprite<r->n_spr &&
        resident_nearest_sprite_function(r,&r->spr[sprite],subimg,x,y,xs,ys,resident_rotation,blend,resident_alpha)) return;
 resident_cpu:
-    if(!gml_render_resident_application_cpu_barrier(r)) return;
+    if(!gml_render_cpu_draw_barrier(r)) return;
   }
   if(r && sprite>=0 && sprite<r->n_spr &&
      gml_render_cpu_draw_spine_sprite(r,&r->spr[sprite],x,y,xs,ys,rot,blend,alpha)) return;
@@ -5449,7 +5449,7 @@ void gml_draw_sprite_stretched(GmlRender *r, int sprite, int frame, double dx, d
       }
     }
   }
-  if(!gml_render_resident_application_cpu_barrier(r)) return;
+  if(!gml_render_cpu_draw_barrier(r)) return;
   gml_render_draw_map_point(r,&dx,&dy);
   gml_render_draw_map_scale(r,&dw,&dh);
   if(sprite<0||sprite>=r->n_spr) return;
@@ -6037,7 +6037,7 @@ void gml_draw_sprite_pos(GmlRender *r,int sprite,int subimg,
   if(resident_positioned_axis_sprite(r,sprite,subimg,x,y,alpha)) return;
   if(resident_positioned_quad_sprite(r,sprite,subimg,x,y,alpha)) return;
   if(resident_positioned_function(r,sprite,subimg,x,y,alpha)) return;
-  if(!gml_render_resident_application_cpu_barrier(r)) return;
+  if(!gml_render_cpu_draw_barrier(r)) return;
   double mapped_x[4],mapped_y[4];
   for(int i=0;i<4;i++){
     mapped_x[i]=x[i]; mapped_y[i]=y[i];
@@ -6427,7 +6427,7 @@ void gml_draw_sprite_part_ext(GmlRender *r, int sprite, int subimg, double sx, d
     }
   }
 part_cpu:
-  if(!gml_render_resident_application_cpu_barrier(r)) return;
+  if(!gml_render_cpu_draw_barrier(r)) return;
   gml_render_draw_map_point(r,&x,&y);
   gml_render_draw_map_scale(r,&xs,&ys);
   if(sprite<0||sprite>=r->n_spr) return;
@@ -6518,7 +6518,7 @@ void gml_draw_sprite_general(GmlRender *r, int sprite, int subimg,
       }
     }
 general_cpu:
-    if(!gml_render_resident_application_cpu_barrier(r)) return;
+    if(!gml_render_cpu_draw_barrier(r)) return;
     gml_render_cpu_blit_sprite_general_coloured(r,&r->spr[sprite],subimg,
                                                  sx,sy,sw,sh,mapped_x,mapped_y,
                                                  mapped_xs,mapped_ys,rotation,
@@ -6580,7 +6580,7 @@ general_cpu:
       }
     }
   }
-  if(!gml_render_resident_application_cpu_barrier(r)) return;
+  if(!gml_render_cpu_draw_barrier(r)) return;
   gml_render_cpu_blit_sprite_general_rotated(r,&r->spr[sprite],subimg,
                                              sx,sy,sw,sh,mapped_x,mapped_y,
                                              mapped_xs,mapped_ys,rotation,
@@ -6946,7 +6946,7 @@ void gml_draw_layer_background_sprite(GmlRender *r, int sprite, int subimg, doub
       }
     }
   }
-  if(!gml_render_resident_application_cpu_barrier(r)) return;
+  if(!gml_render_cpu_draw_barrier(r)) return;
   /* Snap camera-relative background-layer vertices to the nearest output pixel. */
   double ax=round(x-r->cam_x), ay=round(y-r->cam_y);
   double x0=ax, y0=ay;

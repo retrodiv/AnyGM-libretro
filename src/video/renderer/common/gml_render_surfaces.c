@@ -2863,7 +2863,7 @@ void gml_draw_surface_stretched(GmlRender *r,int surf,double dx,double dy,
           mapped_width/source_width,mapped_height/source_height,blend,alpha);
     }
   }
-  if(!resident_success && !gml_render_resident_application_cpu_barrier(r)) return;
+  if(!resident_success && !gml_render_cpu_draw_barrier(r)) return;
   /* A surface drawn onto the base canvas, rather than into another surface, is content compositing
    * its own screen. A bare refresh means only presentation, and a newly created transparent scratch
    * surface writes no pixels. An authored surface can still count after a transparent clear. */
@@ -4025,7 +4025,7 @@ void gml_draw_surface_part_ext(GmlRender *r,int surf,double sx,double sy,double 
   if(r && sx==0.0 && sy==0.0 && sw==gml_surface_width(r,surf) && sh==gml_surface_height(r,surf) &&
      resident_surface_filtered_resolved(r,surf,dx,dy,sw*xs,sh*ys,blend,alpha,1)) return;
   if(resident_surface_part(r,surf,sx,sy,sw,sh,dx,dy,xs,ys,blend,alpha)) return;
-  if(!gml_render_resident_application_cpu_barrier(r)) return;
+  if(!gml_render_cpu_draw_barrier(r)) return;
   gml_render_cpu_draw_surface_part_mapped(r,surf,sx,sy,sw,sh,dx,dy,xs,ys,blend,alpha,&geometry);
 }
 typedef struct {int x,y,width,u,v;} ResidentSurfacePointRun;
@@ -4245,7 +4245,7 @@ void gml_draw_surface_ext(GmlRender *r,int surf,double x,double y,
     return;
   }
   if(resident_surface_rotated_function(r,surf,x,y,xs,ys,rr,blend,alpha)) return;
-  if(!gml_render_resident_application_cpu_barrier(r)) return;
+  if(!gml_render_cpu_draw_barrier(r)) return;
   gml_render_draw_map_point(r,&x,&y);
   gml_render_draw_map_scale(r,&xs,&ys);
   gml_render_cpu_draw_surface_ext_mapped(r,surf,x,y,xs,ys,rr,blend,alpha);

@@ -354,6 +354,8 @@ typedef struct GmlRender {
   int resident_scene_pass;
   /* Scene policy, independent of transport and of a later world/GUI pass. */
   int scene_device_enabled;
+  /* Session policy,never game-state bytes. Observations bypass the draw-only gate. */
+  int skip_cpu_draws;
   /* Optional classic 2x vertical coverage plane.  The game pass replays texture draws at the
    * half-row samples as well as at logical pixel centres; the presentation pass then interleaves
    * them without a GPU.  This is a borrowed scratch buffer owned by the host. */

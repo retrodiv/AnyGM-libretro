@@ -54,7 +54,7 @@ void gml_draw_tile(GmlRender *r, int def, int sx, int sy, int w, int h, double x
   if(gml_render_resident_filtered_atlas_part(r,ti,sx,sy,w,h,x,y,
                                             draw_xscale,draw_yscale,0xFFFFFFu,1.0,
                                             GML_RENDER_SCENE_TILE)) return;
-  if(!gml_render_resident_application_cpu_barrier(r)) return;
+  if(!gml_render_cpu_draw_barrier(r)) return;
   if(gml_d3_draw_background_part_2d(r,def,sx,sy,w,h,x,y,draw_xscale,draw_yscale,0xFFFFFF,1)) return;
   GmlTpag tt=*bt;
   tt.sx=bt->sx+sx; tt.sy=bt->sy+sy; tt.sw=w; tt.sh=h;
@@ -122,7 +122,7 @@ void gml_draw_room_tiles(GmlRender *r, uint32_t tile_ptr){
     if(gml_render_resident_filtered_atlas_part(r,ti,t->sx,t->sy,t->w,t->h,
                                               t->x,t->y,1,1,0xFFFFFFu,1.0,
                                               GML_RENDER_SCENE_TILE)) continue;
-    if(!gml_render_resident_application_cpu_barrier(r)) break;
+    if(!gml_render_cpu_draw_barrier(r)) break;
     GmlTpag tt=*bt;                                  /* sub-rect of the tileset image */
     tt.sx=bt->sx + t->sx; tt.sy=bt->sy + t->sy; tt.sw=t->w; tt.sh=t->h;
     tt.interp_phase_cache[0]=tt.interp_phase_cache[1]=tt.interp_phase_cache[2]=NULL;

@@ -202,7 +202,7 @@ void gml_render_cpu_backend_prepare_draw(GmlRender *r){
   gml_render_maybe_prepare_draw(r);
 }
 int gml_render_cpu_backend_prepare_draw_view(GmlRender *r,GmlRenderCpuBackendDrawView *view){
-  if(!gml_render_resident_application_cpu_barrier(r)) return 0;
+  if(!gml_render_cpu_draw_barrier(r)) return 0;
   gml_render_cpu_backend_prepare_draw(r);
   return gml_render_cpu_backend_draw_view(r,view);
 }

@@ -108,6 +108,21 @@ static void dispatch_frame_cpu(GmlRender *render,unsigned family,unsigned reason
   }
 }
 
+void gml_render_set_skip_cpu_draws(GmlRender *render,int enabled){
+  if(render) render->skip_cpu_draws=enabled?1:0;
+}
+int gml_render_cpu_draws_disabled(const GmlRender *render){
+  return render && render->skip_cpu_draws;
+}
+int gml_render_cpu_draw_barrier(GmlRender *render){
+  if(gml_render_cpu_draws_disabled(render)){
+    if(render->dispatch_metrics.enabled)
+      dispatch_add(&render->dispatch_metrics,&render->dispatch_metrics.skipped,1u);
+    return 0;
+  }
+  return gml_render_resident_application_cpu_barrier(render);
+}
+
 void gml_render_dispatch_diagnostics_enable(GmlRender *render,int enabled){
   if(!render) return;
   /* A subsequent re-enable cannot hide work performed during an accounting gap. */
@@ -145,6 +160,7 @@ void gml_render_dispatch_metrics_accumulate(GmlRenderDispatchMetrics *total,
     for(unsigned exception=0;exception<GML_RENDER_DISPATCH_EXCEPTION_COUNT;exception++)
       dispatch_add(total,&total->exceptions[family][exception],epoch->exceptions[family][exception]);
   }
+  dispatch_add(total,&total->skipped,epoch->skipped);
   dispatch_add(total,&total->failed,epoch->failed);
   dispatch_add(total,&total->unclassified,epoch->unclassified);
   total->overflow=total->overflow || epoch->overflow;
@@ -235,6 +251,14 @@ void gml_render_dispatch_gpu_plan_completion(GmlRender *render,
 
 void gml_render_dispatch_batch_record(GmlRender *render,const GmlRenderDrawBatch *batch,
                                        GmlRenderResourceExecution result){
+  if(render && result==GML_RENDER_RESOURCE_EXEC_SKIPPED){
+    /* Preparators may have predicted coverage for this draw before device refusal.
+     * Omission cannot certify that prediction,even with diagnostics disabled. */
+    render->fb_opaque_known=render->fb_all_opaque=render->fb_all_transparent=0;
+    render->app_surface_opaque=render->app_presentation_coverage_active=0;
+    render->classic_phase_opaque_known=render->classic_phase_all_opaque=0;
+    render->classic_phase_all_transparent=0;
+  }
   if(!render || !render->dispatch_metrics.enabled) return;
   GmlRenderDispatchMetrics *metrics=&render->dispatch_metrics;
   if(!batch || !batch->operations || !batch->operation_count){
@@ -245,6 +269,10 @@ void gml_render_dispatch_batch_record(GmlRender *render,const GmlRenderDrawBatch
     /* A failed or retried batch is not completed GPU work. The device's existing
      * partial-prefix counters retain physical writes from an unsuccessful batch. */
     dispatch_add(metrics,&metrics->failed,batch->operation_count);
+    return;
+  }
+  if(result==GML_RENDER_RESOURCE_EXEC_SKIPPED){
+    dispatch_add(metrics,&metrics->skipped,batch->operation_count);
     return;
   }
   if(result!=GML_RENDER_RESOURCE_EXEC_DEVICE && result!=GML_RENDER_RESOURCE_EXEC_CPU){

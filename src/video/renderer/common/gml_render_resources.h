@@ -24,7 +24,8 @@ typedef enum GmlRenderResourceAuthority {
 typedef enum GmlRenderResourceExecution {
   GML_RENDER_RESOURCE_EXEC_FAILED=0,
   GML_RENDER_RESOURCE_EXEC_DEVICE=1,
-  GML_RENDER_RESOURCE_EXEC_CPU=2
+  GML_RENDER_RESOURCE_EXEC_CPU=2,
+  GML_RENDER_RESOURCE_EXEC_SKIPPED=3
 } GmlRenderResourceExecution;
 
 typedef struct GmlRenderResourceLimits {

@@ -714,6 +714,17 @@ static int content_glsl_requests_only_for_candidates(void){
 
 static int scene_renderer_requests_context_independently(void){
   begin("None",0,0,1,1);
+  scene_option_value="OpenGL (Experimental)";
+  REQUIRE(load(),"draw-omission scene content prepares");
+  REQUIRE(declared_count==1 && start_calls==0 &&
+          latest_config.values.scene_renderer==ANYGM_SCENE_RENDERER_OPENGL_NO_FALLBACK &&
+          latest_config.values.hybrid_gpu_presentation==1u,
+          "draw omission requests the same scene and presentation context");
+  declared.context_reset();
+  REQUIRE(start_calls==1,"draw omission starts content after context adoption");
+  finish();
+
+  begin("None",0,0,1,1);
   scene_option_value="unrecognized";
   REQUIRE(load(),"unknown scene setting leaves the CPU path available");
   REQUIRE(declared_count==0 && start_calls==1 &&

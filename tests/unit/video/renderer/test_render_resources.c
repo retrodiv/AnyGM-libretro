@@ -15,6 +15,7 @@
 #include "gml_render_primitives.h"
 #include "gml_render_cpu_replay.h"
 #include "gml_render_cpu_backend.h"
+#include "gml_render_cpu_primitives.h"
 #include "gml_builtin.h"
 #include "gml_particle.h"
 #include "gml_software3d.h"
@@ -19499,11 +19500,86 @@ static int source_palette_snapshot_contract(void){
   free(r->shader_pal);free(r);return 1;
 }
 
+/* The omission policy gates software drawing,not the observers that game logic uses. */
+static int skip_cpu_draw_policy_preserves_observers(void){
+  for(unsigned skip=0;skip<2u;skip++){
+    GmlRender *render=calloc(1,sizeof *render);
+    uint32_t screen[16]={0};
+    CHECK(render && !gml_render_init(render,NULL));
+    gml_render_begin(render,screen,4,4,0,0);
+    gml_render_dispatch_diagnostics_enable(render,1);
+    gml_render_set_skip_cpu_draws(render,(int)skip);
+    gml_render_cpu_point(render,1,1,0x123456u);
+    CHECK(screen[5]==(skip?0u:0xFF563412u));
+    CHECK(render->dispatch_metrics.skipped==(uint64_t)skip);
+    CHECK(gml_render_resident_application_cpu_barrier(render));
+    CHECK(gml_render_cpu_draws_disabled(render)==(int)skip);
+    int id=gml_surface_create(render,4,4);
+    CHECK(id>0 && gml_surface_set_target(render,id));
+    gml_render_cpu_point(render,1,1,0x654321u);
+    CHECK(gml_surface_exists(render,id));
+    /* Real source/pixel observations still answer from the actual image. */
+    int w=0,h=0;
+    uint32_t *pixels=surface_pixels(render,id,&w,&h);
+    CHECK(pixels && w==4 && h==4 && pixels[5]==(skip?0u:0xFF214365u));
+    gml_surface_reset_target(render);
+    CHECK(render->target_sp==0);
+    size_t capacity=gml_render_state_size(render,-1),written=0,used=0;
+    void *bytes=malloc(capacity);
+    CHECK(bytes && gml_render_state_save(render,-1,bytes,capacity,&written));
+    CHECK(gml_render_state_load(render,bytes,written,&used) && used==written);
+    CHECK(gml_render_cpu_draws_disabled(render)==(int)skip);
+    free(bytes);
+    gml_render_free(render);free(render);
+  }
+  GmlRender *render=calloc(1,sizeof *render);
+  uint32_t pixels[16];fill(pixels,0xFF010203u);
+  FakeDevice fake={.on_demand=1,.readback_colour=0xFF123456u};
+  GmlRenderDeviceServices device=service(&fake);
+  device.observe_on_demand=fake_observe_on_demand;
+  GmlRenderResource *resource=gml_render_resource_create(target_ref(1u,1u),4u,4u,
+    GML_RENDER_PIXEL_XRGB8888,pixels,(GmlRenderResourceLimits){0});
+  GmlRenderDrawOp operation=clear_op(2u,0xFF123456u,GML_RENDER_DEVICE_CHECKPOINT);
+  GmlRenderDrawBatch batch={&operation,1u,NULL,0u};
+  CHECK(render && resource);
+  gml_render_resource_bind_dispatch(resource,render);
+  gml_render_set_skip_cpu_draws(render,1);
+  gml_render_dispatch_diagnostics_enable(render,1);
+  CHECK(gml_render_resource_submit_deferred(resource,&device,&batch,NULL,0u)==GML_RENDER_RESOURCE_EXEC_DEVICE);
+  CHECK(!fake.readbacks && pixels[0]==0xFF010203u);
+  fake.status=GML_RENDER_EXEC_UNSUPPORTED;fake.prewrite_refusal=1;
+  operation=clear_op(3u,0xFFABCDEFu,GML_RENDER_DEVICE_CHECKPOINT);
+  GmlRenderResourceExecution result=gml_render_resource_submit_deferred(resource,&device,&batch,NULL,0u);
+  CHECK(result==GML_RENDER_RESOURCE_EXEC_SKIPPED && !fake.readbacks);
+  CHECK(gml_render_resource_image_ref(resource).content_version==2u);
+  render->fb_opaque_known=render->fb_all_opaque=1;
+  gml_render_dispatch_batch_record(render,&batch,result);
+  CHECK(!render->fb_opaque_known && !render->fb_all_opaque);
+  CHECK(render->dispatch_metrics.skipped==1u && !render->dispatch_metrics.failed &&
+        !render->dispatch_metrics.cpu[GML_RENDER_SCENE_PRIMITIVE][GML_RENDER_DISPATCH_REPLAY]);
+  const uint32_t *observed=NULL;
+  CHECK(gml_render_resource_acquire_cpu_read(resource,&observed));
+  CHECK(fake.readbacks==1 && observed[0]==0xFF123456u);
+  fake.status=GML_RENDER_EXEC_ACCEPTED;fake.prewrite_refusal=0;
+  fake.readback_colour=0xFFABCDEFu;
+  CHECK(gml_render_resource_submit_deferred(resource,&device,&batch,NULL,0u)==GML_RENDER_RESOURCE_EXEC_DEVICE);
+  CHECK(gml_render_resource_acquire_cpu_read(resource,&observed) && observed[0]==0xFFABCDEFu);
+  /* A device that might have written is an error,not a skipped operation. */
+  fake.status=GML_RENDER_EXEC_UNSUPPORTED;fake.prewrite_refusal=0;fake.accepted_prefix=1u;
+  operation=clear_op(4u,0xFF654321u,GML_RENDER_DEVICE_CHECKPOINT);
+  CHECK(gml_render_resource_submit_deferred(resource,&device,&batch,NULL,0u)==GML_RENDER_RESOURCE_EXEC_FAILED);
+  GmlRenderJournalMetrics broken={0};gml_render_resource_journal_metrics(resource,&broken);
+  CHECK(broken.authority==GML_RENDER_RESOURCE_INVALID);
+  gml_render_resource_destroy(resource);free(render);
+  return 1;
+}
+
 int main(void){
   const char *selected=getenv("GML_RENDER_RESOURCE_CASE");
   if(selected){
     int passed;
-    if(!strcmp(selected,"independent-screen-clear")) passed=independent_screen_clear_preserves_draw_state();
+    if(!strcmp(selected,"skip-cpu-draws")) passed=skip_cpu_draw_policy_preserves_observers();
+    else if(!strcmp(selected,"independent-screen-clear")) passed=independent_screen_clear_preserves_draw_state();
     else if(!strcmp(selected,"registered-view-source")) passed=resident_registered_view_surface_source();
     else if(!strcmp(selected,"empty-surface-part")) passed=resident_empty_surface_part_prefix();
     else if(!strcmp(selected,"paired-root-clear")) passed=paired_root_public_clear_keeps_device_authority();
@@ -19845,6 +19921,7 @@ int main(void){
   passed+=deferred_rotation_queue_transactions_and_lifetime();
   passed+=resident_point_function_transaction();
   passed+=resident_rectangle_cpu_passthrough_programs();
-  printf("render resource cases: passed=%d failed=%d\n",passed,308-passed);
-  return passed==308?EXIT_SUCCESS:EXIT_FAILURE;
+  passed+=skip_cpu_draw_policy_preserves_observers();
+  printf("render resource cases: passed=%d failed=%d\n",passed,309-passed);
+  return passed==309?EXIT_SUCCESS:EXIT_FAILURE;
 }

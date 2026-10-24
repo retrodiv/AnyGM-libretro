@@ -7073,7 +7073,7 @@ void gml_draw_sprite_ext(GmlRender *r, int sprite, int subimg, double x, double 
      gml_render_resident_masked_sprite(r,sprite,subimg,x,y,xs,ys,rot,blend,alpha)) return;
   /* Unqualified fog/mask combinations retain the existing ordered CPU writer. */
   if(r && r->resident_application_pass && (r->fog_flat || r->color_write_mask!=0x0Fu) &&
-     !gml_render_resident_application_cpu_barrier(r)) return;
+     !gml_render_cpu_draw_barrier(r)) return;
   GmlMaskedSpriteDraw masked=masked_sprite_draw_begin(r);
   gml_render_sprite_ext_unmasked(r,sprite,subimg,x,y,xs,ys,rot,blend,alpha);
   masked_sprite_draw_end(r,masked);
@@ -7082,7 +7082,7 @@ void gml_draw_sprite_ext(GmlRender *r, int sprite, int subimg, double x, double 
 void gml_draw_sprite_tiled_ext(GmlRender *r, int sprite, int subimg, double x, double y,
                                double xs, double ys, uint32_t blend, double alpha){
   if(gml_render_resident_tiled_sprite(r,sprite,subimg,x,y,xs,ys,blend,alpha)) return;
-  if(!gml_render_resident_application_cpu_barrier(r)) return;
+  if(!gml_render_cpu_draw_barrier(r)) return;
   GmlMaskedSpriteDraw masked=masked_sprite_draw_begin(r);
   gml_render_sprite_tiled_ext_unmasked(r,sprite,subimg,x,y,xs,ys,blend,alpha);
   masked_sprite_draw_end(r,masked);

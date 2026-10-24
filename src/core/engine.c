@@ -170,7 +170,7 @@ int engine_dispatch_metrics(const AnygmEngine *engine,GmlRenderDispatchMetrics *
   /* The setting is pinned before Create, and every renderer epoch is retained.
    * Unknown work, an accounting gap or saturation cannot qualify a zero census. */
   out->complete=out->enabled && engine->diagnostics.dispatch_renderer_epochs>0u &&
-    !out->unclassified && !out->overflow &&
+    !out->unclassified && !out->skipped && !out->overflow &&
     renderer_epoch_enabled;
   return 1;
 }
@@ -203,6 +203,8 @@ static void engine_dispatch_report(AnygmEngine *engine){
     (unsigned long long)totals.gpu[1],(unsigned long long)totals.cpu[1][0],
     (unsigned long long)totals.exceptions[1][0],(unsigned long long)metrics.failed,
     (unsigned long long)metrics.unclassified,metrics.overflow || totals.overflow);
+  if(metrics.skipped) engine_logf(engine,ANYGM_LOG_INFO,
+    "[graphics-dispatch-skipped] draws=%llu\n",(unsigned long long)metrics.skipped);
   static const char *const families[]={"unclassified","sprite","background","tile",
     "surface","text","primitive","effect"};
   _Static_assert(sizeof families/sizeof families[0]==GML_RENDER_SCENE_FAMILY_COUNT,
@@ -2846,7 +2848,10 @@ AnygmResult anygm_load_prepare(AnygmEngine *engine,const AnygmContentSource *sou
     engine_errorf(engine,ANYGM_ERROR_OUT_OF_MEMORY,"Could not allocate the primary frame buffers");
     return ANYGM_ERROR_OUT_OF_MEMORY;
   }
-  engine->scene_renderer_session=engine->config.scene_renderer;
+  engine->scene_skip_cpu_draws_session=
+    engine->config.scene_renderer==ANYGM_SCENE_RENDERER_OPENGL_NO_FALLBACK;
+  engine->scene_renderer_session=engine->scene_skip_cpu_draws_session?
+    ANYGM_SCENE_RENDERER_OPENGL:engine->config.scene_renderer;
   engine->scene_graphics_reported=0u;
   memset(&engine->diagnostics.dispatch_retired,0,sizeof engine->diagnostics.dispatch_retired);
   engine->diagnostics.dispatch_renderer_epochs=0;
@@ -3226,8 +3231,8 @@ AnygmResult anygm_set_config(AnygmEngine *engine,const AnygmConfigDelta *delta){
   if(f&ANYGM_CONFIG_HYBRID_GPU_PRESENTATION)
     engine->config.hybrid_gpu_presentation=delta->values.hybrid_gpu_presentation?1u:0u;
   if(f&ANYGM_CONFIG_SCENE_RENDERER)
-    engine->config.scene_renderer=delta->values.scene_renderer==ANYGM_SCENE_RENDERER_OPENGL?
-      ANYGM_SCENE_RENDERER_OPENGL:ANYGM_SCENE_RENDERER_CPU;
+    engine->config.scene_renderer=delta->values.scene_renderer<=ANYGM_SCENE_RENDERER_OPENGL_NO_FALLBACK?
+      delta->values.scene_renderer:ANYGM_SCENE_RENDERER_CPU;
   if(f&ANYGM_CONFIG_GAMEPAD_CONNECTED) engine->config.gamepad_connected=delta->values.gamepad_connected;
   if(f&ANYGM_CONFIG_FAST_ALPHA_CULL) engine->config.fast_alpha_cull=delta->values.fast_alpha_cull;
   if(f&ANYGM_CONFIG_FAST_FORWARD) engine->config.fast_forward=delta->values.fast_forward;

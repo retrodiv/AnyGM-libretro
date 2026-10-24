@@ -77,7 +77,9 @@ AnygmResult anygm_graphics_context_reset(AnygmEngine *engine,const AnygmGraphics
 
 void engine_graphics_bind_renderer(AnygmEngine *engine){
   GmlRenderDeviceServices services;
-  if(!engine || !engine_graphics_active(engine)) return;
+  if(!engine) return;
+  gml_render_set_skip_cpu_draws(&engine->render,engine->scene_skip_cpu_draws_session);
+  if(!engine_graphics_active(engine)) return;
   gml_gpu_device_services(engine->gpu,&services);
   if(engine->scene_renderer_session!=ANYGM_SCENE_RENDERER_OPENGL)
     services.observe_on_demand=NULL;
@@ -919,7 +921,9 @@ int engine_present_hardware_frame(AnygmEngine *engine,const uint32_t *pixels,
 
 #else
 
-void engine_graphics_bind_renderer(AnygmEngine *engine){ (void)engine; }
+void engine_graphics_bind_renderer(AnygmEngine *engine){
+  if(engine) gml_render_set_skip_cpu_draws(&engine->render,engine->scene_skip_cpu_draws_session);
+}
 
 AnygmResult anygm_graphics_context_reset(AnygmEngine *engine,const AnygmGraphicsContext *context){
   if(!engine || engine->guard!=ANYGM_ENGINE_GUARD) return ANYGM_ERROR_INVALID_STATE;

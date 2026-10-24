@@ -28,7 +28,7 @@ typedef struct {
   uint64_t gpu[GML_RENDER_SCENE_FAMILY_COUNT];
   uint64_t cpu[GML_RENDER_SCENE_FAMILY_COUNT][GML_RENDER_DISPATCH_REASON_COUNT];
   uint64_t exceptions[GML_RENDER_SCENE_FAMILY_COUNT][GML_RENDER_DISPATCH_EXCEPTION_COUNT];
-  uint64_t failed,unclassified;
+  uint64_t failed,unclassified,skipped;
   int enabled,overflow,complete;
 } GmlRenderDispatchMetrics;
 
@@ -586,6 +586,10 @@ int gml_render_begin_resident_numbered_target(GmlRender *r,uint32_t *cpu_base,
                                              int width,int height,double camx,double camy);
 /* Materialise an opt-in scene target before host code observes its CPU pixels. */
 int gml_render_resident_application_cpu_barrier(GmlRender *r);
+/* Reject only software draw execution;pixel observations and target/state ownership stay live. */
+void gml_render_set_skip_cpu_draws(GmlRender *r,int enabled);
+int gml_render_cpu_draws_disabled(const GmlRender *r);
+int gml_render_cpu_draw_barrier(GmlRender *r);
 /* A requested write view is CPU-current. Without one, an opted-in scene device may
  * retain the exact clear on device until an explicit pixel/state observer needs it. */
 int gml_render_application_surface_owned_clear(

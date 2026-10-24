@@ -286,7 +286,7 @@ static void draw_text_real_plain(GmlRender *r, GmlFont *f, double x, double y, c
         }
         if(!resident_glyph){
           if(r->resident_application_pass &&
-             !gml_render_resident_application_cpu_barrier(r)) return;
+             !gml_render_cpu_draw_barrier(r)) return;
           int saved_interp=r->interp;
           int saved_sdf_active=r->font_sdf_active;
           double saved_sdf_width=r->font_sdf_width;
@@ -410,7 +410,7 @@ static void draw_text_transformed_font(GmlRender *r, GmlFont *f,
    * flushes before a later lookup can move that page. */
   if(f->real && r->resident_application_pass &&
      gml_render_shaded_run_wanted(r) &&
-     !gml_render_resident_application_cpu_barrier(r)) return;
+     !gml_render_cpu_draw_barrier(r)) return;
   double rr=fmod(rot,360.0); if(rr<0) rr+=360.0;
   double ca,sa; render_rotation_sincos(rr,&ca,&sa);
   int use_rot = fabs(rr)>0.001 && fabs(rr-360.0)>0.001;
@@ -494,7 +494,7 @@ static void draw_text_transformed_font(GmlRender *r, GmlFont *f,
         }
         if(!resident_glyph){
           if(r->resident_application_pass &&
-             !gml_render_resident_application_cpu_barrier(r)) return;
+             !gml_render_cpu_draw_barrier(r)) return;
           if(gml_d3_draw_sprite_2d(r,f->sprite,fr,glyph_x,glyph_y,xs,ys,rr,blend,alpha)){
             /* The D3 hook projects the glyph quad at the current draw depth. */
           } else if(s->runtime_rgba){

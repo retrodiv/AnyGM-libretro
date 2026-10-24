@@ -127,14 +127,16 @@ static struct retro_core_option_v2_definition g_definitions[]={
    "Off (but report available)"},
 #if ANYGM_HARDWARE_RENDER
   {"anygm_scene_renderer","Renderer",NULL,
-   "CPU is the complete software renderer and the default. OpenGL (Experimental) renders the "
-   "scene and its presentation on the graphics device. It is a work in progress and does not yet "
-   "support every drawing operation available in CPU mode. It can be slower than CPU in some "
-   "games: an unsupported draw can fall back mid-frame, reading the image from the GPU, drawing "
-   "on CPU and uploading it again. Use it only for individual games where measurements show an "
-   "improvement. Requires OpenGL or OpenGL ES. Changes take effect after closing and reopening "
-   "the content.",NULL,"video",
-   {{"CPU",NULL},{"OpenGL","OpenGL (Experimental)"},{NULL,NULL}},"CPU"},
+   "CPU is the complete software renderer and the default. OpenGL (Experimental) skips unsupported "
+   "draws instead of using CPU fallback,so pictures may be incomplete. OpenGL with CPU fallback "
+   "(Experimental) preserves unsupported draws through a mid-frame image read,CPU draw and upload. "
+   "Both OpenGL modes are a work in progress and can be slower than CPU. Use them only for "
+   "individual games where measurements show an improvement. Pixel queries,resource creation, "
+   "savestates and rewind still work and may read the GPU;queries see the image actually drawn. "
+   "Requires OpenGL or OpenGL ES. Changes take effect after closing and reopening the content.",
+   NULL,"video",
+   {{"CPU",NULL},{"OpenGL (Experimental)","OpenGL (Experimental)"},
+    {"OpenGL","OpenGL with CPU fallback (Experimental)"},{NULL,NULL}},"CPU"},
 #endif
   /* These are the exact locale strings exposed by the runtime: lowercase language and uppercase
    * region. Auto follows the frontend language and its paired region. Locale environment variables
@@ -361,9 +363,12 @@ static const char *option_value(const char *key){
 const char *libretro_options_value(const char *key){ return option_value(key); }
 
 #if ANYGM_HARDWARE_RENDER
-static int scene_gpu_selected(void){
+static uint32_t scene_renderer_selected(void){
   const char *value=option_value("anygm_scene_renderer");
-  return value && !strcmp(value,"OpenGL");
+  if(value && !strcmp(value,"OpenGL (Experimental)"))
+    return ANYGM_SCENE_RENDERER_OPENGL_NO_FALLBACK;
+  /* Keep the original stored OpenGL value on the original fallback policy. */
+  return value && !strcmp(value,"OpenGL")?ANYGM_SCENE_RENDERER_OPENGL:ANYGM_SCENE_RENDERER_CPU;
 }
 #endif
 
@@ -633,7 +638,8 @@ void libretro_options_apply(bool all_fields){
   if(!g_libretro.loaded && !g_libretro.prepared){
     const char *shader=option_value("anygm_content_shader_readback");
 #if ANYGM_HARDWARE_RENDER
-    g_libretro.scene_gpu_selected=scene_gpu_selected()?true:false;
+    config->scene_renderer=scene_renderer_selected();
+    g_libretro.scene_gpu_selected=config->scene_renderer!=ANYGM_SCENE_RENDERER_CPU;
     g_libretro.content_glsl_selected=
       shader && (!strcmp(shader,"Performance") || !strcmp(shader,"Exact"));
     config->content_shader_readback=shader && !strcmp(shader,"Performance")
@@ -642,6 +648,7 @@ void libretro_options_apply(bool all_fields){
         ?ANYGM_SHADER_READBACK_ALWAYS:ANYGM_SHADER_READBACK_NEVER;
     config->report_all_shaders_compiled=shader && !strcmp(shader,"Off")?0u:1u;
 #else
+    config->scene_renderer=ANYGM_SCENE_RENDERER_CPU;
     g_libretro.scene_gpu_selected=false;
     g_libretro.content_glsl_selected=false;
     config->content_shader_readback=ANYGM_SHADER_READBACK_NEVER;
@@ -651,8 +658,7 @@ void libretro_options_apply(bool all_fields){
      * the first authored event runs. */
     config->content_shader_device_expected=g_libretro.content_glsl_selected?1u:0u;
     config->hybrid_gpu_presentation=g_libretro.scene_gpu_selected?1u:0u;
-    config->scene_renderer=g_libretro.scene_gpu_selected?
-      ANYGM_SCENE_RENDERER_OPENGL:ANYGM_SCENE_RENDERER_CPU;
+
   }
   config->content_overrides=option_on("anygm_content_overrides",1);
   /* The default option resolves from content before any menu is available. */

@@ -273,22 +273,34 @@ runtime. See [Architecture](docs/ARCHITECTURE.md) for ownership rules and
 
 ## Renderer
 
-The **Renderer** core option offers **CPU** (the default) and **OpenGL
-(Experimental)**. OpenGL runs both scene rendering and presentation on the GPU;
-there is no separate Hybrid GPU mode. It requires an OpenGL or OpenGL ES
-frontend driver and takes effect after closing and reopening content.
+The **Renderer** core option has three choices:
 
-OpenGL is a work in progress: it does not yet support every drawing operation
-available in CPU mode. It is not recommended for general use; enable it only
-for individual games where measurements show an improvement. It can be slower
-than CPU in some games. An unsupported draw can fall back to CPU mid-frame,
-requiring the image to be read from the GPU, drawn on CPU and uploaded again.
+- **CPU** (default): the complete software renderer.
+- **OpenGL (Experimental)**: renders supported scene draws and presentation on
+  the GPU and skips unsupported draws. Images may be incomplete: sprites,
+  text, backgrounds or a surface composition can disappear.
+- **OpenGL with CPU fallback (Experimental)**: renders supported draws on the
+  GPU and retains the CPU executor for unsupported ones. A mid-frame fallback
+  can read the image from GPU, draw on CPU and upload it again.
 
-The stored selection remains `anygm_scene_renderer=CPU|OpenGL`, so an existing
-OpenGL scene selection is preserved. The retired `anygm_hybrid_gpu` setting is
-ignored; all other former scene/hybrid combinations use CPU. Frontends with the
-original flat option interface show the stored value `OpenGL`; newer menus
-show its `OpenGL (Experimental)` label.
+Both OpenGL modes are works in progress and do not yet support the full set of
+CPU drawing operations on the GPU. Either can be slower than CPU in some games;
+use them only for individual games where measurements show an improvement.
+Skipping unsupported draws does not guarantee higher speed or eliminate all
+GPU-to-CPU transfers. Pixel queries, resource creation, savestates, rewind and
+controlled context destruction retain their normal observation paths. Queries
+see the image actually drawn; omitting draws can affect content that uses those
+pixels in its logic. Simulation, input, resource APIs and state transport are
+not disabled. There is no separate presentation-only Hybrid GPU mode.
+
+OpenGL requires an OpenGL or OpenGL ES frontend driver. A selection takes effect
+after closing and reopening content. The key remains `anygm_scene_renderer`:
+`CPU` selects software, `OpenGL (Experimental)` selects draw omission, and the
+original stored value `OpenGL` selects **OpenGL with CPU fallback (Experimental)**.
+Existing OpenGL configurations therefore preserve their behaviour. The retired
+`anygm_hybrid_gpu` setting is ignored. Original flat menus cannot label values
+separately and show the fallback choice as `OpenGL`; version-1 and version-2
+menus show all three labels above.
 
 ## Documentation
 

@@ -41,7 +41,7 @@ static inline float effect_hash_unit(uint32_t h){ return (float)(h&0xFFFFFFu)*(1
 static int layer_inline_cpu_write_ready(GmlRender *r){
   int width=0,height=0;
   gml_render_prepare_draw(r);
-  if(!gml_render_resident_application_cpu_barrier(r)) return 0;
+  if(!gml_render_cpu_draw_barrier(r)) return 0;
   if(r->target_id>0 &&
      (surface_pixels(r,r->target_id,&width,&height)!=r->fb ||
       width!=r->fbw || height!=r->fbh)) return 0;

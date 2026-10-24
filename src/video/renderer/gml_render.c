@@ -1102,12 +1102,16 @@ void gml_render_set_pending_fill(GmlRender *r, uint32_t color){
      r->target_sp==0 && r->fb==r->base_fb){
     if(gml_render_resident_classic_phase_clear(r,color)) return;
     if(gml_render_resident_sample_clear(r,color)) return;
-    if(!gml_render_resident_application_cpu_barrier(r)) return;
+    if(!gml_render_cpu_draw_barrier(r)) return;
   }
   if(r->target_sp==0 && r->fb==r->base_fb &&
      (r->classic_phase_y || r->classic_interp_phase[0] ||
       r->classic_interp_phase[1] || r->classic_interp_phase[2])){
     if(gml_render_resident_sample_clear(r,color)) return;
+    if(gml_render_cpu_draws_disabled(r)){
+      (void)gml_render_cpu_draw_barrier(r);
+      return;
+    }
     if(!gml_render_classic_phase_cpu_barrier(r)) return;
   }
   /* Preserve the fact that content authored the bound surface before replacing it with a deferred
@@ -1194,11 +1198,23 @@ static void render_flush_pending_fill(GmlRender *r,int independent_allowed){
           return;
         }
       }
+      if(gml_render_cpu_draws_disabled(r)){
+        (void)gml_render_cpu_draw_barrier(r);
+        r->pending_fill=0;
+        r->fb_opaque_known=r->fb_all_opaque=r->fb_all_transparent=0;
+        return;
+      }
       uint32_t *pixels=NULL;
       if(!gml_render_resource_acquire_cpu_write(resource,&pixels) ||
          pixels!=r->fb || !gml_render_resource_commit_cpu_write(resource))
         return;
     }
+  }
+  if(gml_render_cpu_draws_disabled(r)){
+    (void)gml_render_cpu_draw_barrier(r);
+    r->pending_fill=0;
+    r->fb_opaque_known=r->fb_all_opaque=r->fb_all_transparent=0;
+    return;
   }
   if(r->target_id>0 && r->target_id<=GML_MAX_SURFACES){
     GmlSurface *surface=&r->surface[r->target_id-1];
@@ -1455,7 +1471,10 @@ void gml_render_flush_pending_underlay(GmlRender *r){
   if(gml_render_compose_resident_underlay(r)) return;
   /* The internal compositor calls the CPU leaf directly, unlike public surface dispatch.
    * Materialise and leave a resident SCREEN before that leaf observes or writes it. */
-  if(!gml_render_resident_application_cpu_barrier(r)) return;
+  if(!gml_render_cpu_draw_barrier(r)){
+    if(gml_render_cpu_draws_disabled(r)) r->pending_underlay=0;
+    return;
+  }
   int x=r->underlay_x, y=r->underlay_y, w=r->underlay_w, h=r->underlay_h;
   r->pending_underlay=0;
   /* This is the host's internal application-surface presentation, not a GML draw call.
