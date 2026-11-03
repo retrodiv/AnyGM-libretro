@@ -10,7 +10,9 @@ and runs the unit, contract, architecture and fuzz tiers. `make sanitizer-check`
 runs the same code under ASan, UBSan and LSan and is worth running for anything
 that touches memory ownership.
 
-Direct CPU/OpenGL image-parity assertions are disabled in routine checks.
+Direct CPU/OpenGL image-parity assertions are diagnostic and disabled in
+routine checks: the GPU executor is qualified against the original runtime,
+not against CPU pixels (see `docs/RENDERER_BACKENDS.md`).
 Run `make check GPU_PIXEL_PARITY=1` to enable them, or set
 `ANYGM_TEST_GPU_PIXEL_PARITY=1` when running `test_graphics_state` directly.
 The selected mode and checked/skipped counts are printed in its summary.

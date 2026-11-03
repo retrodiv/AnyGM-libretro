@@ -17,13 +17,26 @@ It is a finite regression domain,not full function or filtered qualification.
 
 # Renderer backend correspondence
 
-Routine CI disables image-only CPU/OpenGL comparisons. Their existing assertions
-remain available through `make check GPU_PIXEL_PARITY=1`; direct execution uses
-`ANYGM_TEST_GPU_PIXEL_PARITY=1`. VM/RNG, geometry, lifecycle, actual-byte state
-preservation and CPU fast/general equivalence remain mandatory. Real-device
-paired pixel probes are separate explicit runs. The EXACT/tolerance rows below
-describe those controls when run; skipped image comparisons confer no fidelity
-qualification and do not change their expected pixels or thresholds.
+The CPU executor is the default renderer and the exact reference for runtime
+state. The optional GPU executor uses the device's own filtering, blending and
+program execution and is not required to reproduce CPU pixels. The fidelity
+reference for both executors is the original runtime: a GPU picture is
+qualified by its approximate agreement with that runtime, measured per mode,
+exactly as a CPU picture is. VM/RNG state, geometry, coverage, draw order,
+lifecycle, savestate and rewind, actual-byte resource preservation and CPU
+fast/general equivalence are exact in both modes and remain mandatory in
+routine checks. Pixel queries in GPU mode read the image actually drawn; they
+feed program logic, so a change to what they return is checked against the
+runtime state the same route reaches in CPU mode.
+
+The CPU/OpenGL image comparisons in this repository are diagnostic. Routine
+checks skip them; `make check GPU_PIXEL_PARITY=1` runs them and direct
+execution uses `ANYGM_TEST_GPU_PIXEL_PARITY=1`. Real-device paired pixel probes
+are separate explicit runs. The EXACT and TOLERANCE classes in the rows below
+state what those controls expect when run: they locate where the two executors
+differ and by how much, and they do not decide whether a GPU picture is
+acceptable. A skipped comparison confers no qualification and does not change
+its expected pixels or thresholds.
 
 Automatic composition uses the same program-policy predicate as ordinary
 surface draws. An unknown selected program may keep its CPU passthrough
@@ -884,15 +897,17 @@ trim/minification, tint, partial drawing alpha and special-state exclusions are
 unchanged. Synthetic overlap controls prove batching, not accumulated fidelity
 or whole-game speed.
 
-CPU remains the default, exact reference. The optional GPU scene backend uses
-EXACT for the qualified cheap exact rules and TOLERANCE±2 for an individual
-filtered or partially blended draw with identical inputs. A composed real-workload
-image permits TOLERANCE±4 per eight-bit RGBA channel at every pixel. Geometry,
-coverage, draw order, runtime state and restoration of actual saved GPU pixels
-are not relaxed. TOLERANCE±2 labels below describe individual draws; older
-composed±2 qualification notes are historical evidence, not the current gate.
-Synthetic repeated-surface accumulation is informative unless drift greater than
-sixteen levels is demonstrated in a pattern used by an actual workload.
+The GPU scene backend's CPU/GPU controls use EXACT for the qualified cheap exact
+rules and TOLERANCE±2 for an individual filtered or partially blended draw with
+identical inputs. A composed real-workload image is compared at TOLERANCE±4 per
+eight-bit RGBA channel at every pixel. These classes measure agreement between
+the two executors; acceptance of a GPU picture is decided against the original
+runtime, as the opening section states. Geometry, coverage, draw order, runtime
+state and restoration of actual saved GPU pixels are exact in every case.
+TOLERANCE±2 labels below describe individual draws, and rows reporting a
+composed±2 result record a measurement, not a stricter class. Synthetic
+repeated-surface accumulation is informative unless drift greater than sixteen
+levels is demonstrated in a pattern used by an actual workload.
 
 The same 864 physical controls on native NVIDIA Core OpenGL and llvmpipe
 GLES/Core OpenGL preserve the exact clear/copy control and keep all 288 single
