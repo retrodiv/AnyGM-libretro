@@ -276,9 +276,6 @@
   "#elif defined(GML_SCENE_STRETCHED_FILTER)\n" \
   "uniform int u_selected_filter;\n" \
   "#define u_filter (u_selected_filter==78?78:77)\n" \
-  "#elif defined(GML_SCENE_PHYSICAL_FILTER)\n" \
-  "uniform int u_selected_filter;\n" \
-  "#define u_filter (u_selected_filter==72?72:u_selected_filter==66?66:65)\n" \
   "#else\n" \
   "uniform int u_filter;\n" \
   "#endif\n" \
