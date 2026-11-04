@@ -40,6 +40,11 @@ typedef struct GmlTpag {
   int scene_endpoint_rgb_checked;
   uint32_t scene_endpoint_rgb_mask;       /* visible immutable page channels containing only 0/255 */
   int scene_ax0,scene_ay0,scene_ax1,scene_ay1; /* nonzero-alpha crop bounds for device rotation */
+  /* Derived coarse mip of a canonical immutable crop; never serialized. */
+  uintptr_t coarse_pixels;
+  int coarse_key[6],coarse_valid;
+  uint64_t coarse_incarnation,coarse_version;
+  double coarse_texel[4];
   int *alpha_row_min, *alpha_row_max;     /* per-source-row nontransparent span, optional */
   uint16_t *alpha_qrow_min, *alpha_qrow_max; /* per-alpha-threshold row spans, built lazily */
   uint8_t *alpha_qrow_built;
@@ -145,8 +150,9 @@ typedef struct GmlAtlas {
   uint64_t scene_source_incarnation;                              /* runtime font page identity across reuse */
   uint64_t scene_source_version, scene_source_last_view_version;  /* runtime mutations and retirement */
 } GmlAtlas;
-void sprite_region_coarse_texel(GmlAtlas *atlas, int source_x, int source_y,
+int sprite_region_coarse_texel(GmlAtlas *atlas, int source_x, int source_y,
                                int source_width, int source_height, double out[4]);
+int gml_render_cached_coarse_texel(GmlRender *render,GmlAtlas *atlas,GmlTpag *page,double out[4]);
 typedef struct {
   int atlas, sx, sy, sw, sh;
   int projected_x, projected_y, dest_x0, dest_y0;

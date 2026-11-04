@@ -11474,6 +11474,50 @@ static int resident_stretched_coarse_box_limit(void){
   return resident_stretched_function_on_demand_impl(3);
 }
 
+static int immutable_coarse_texel_cache(void){
+  GmlRender *r=calloc(1,sizeof *r);CHECK(r);
+  r->atlas=calloc(1,sizeof *r->atlas);r->tpag=calloc(1,sizeof *r->tpag);
+  CHECK(r->atlas && r->tpag);r->n_atlas=r->n_tpag=1;
+  GmlAtlas *a=&r->atlas[0];GmlTpag *page=&r->tpag[0];
+  a->w=7;a->h=9;a->px=malloc(7u*9u*4u);CHECK(a->px);
+  a->blob=1;a->avail=1; /* Authored fixture models a decoded immutable content page. */
+  for(unsigned i=0;i<7u*9u*4u;i++)a->px[i]=(uint8_t)(i*37u+11u);
+  *page=(GmlTpag){.sx=1,.sy=1,.sw=5,.sh=7};
+  double expected[4],actual[4];
+  CHECK(sprite_region_coarse_texel(a,1,1,5,7,expected));
+  for(unsigned i=0;i<8u;i++){
+    CHECK(gml_render_cached_coarse_texel(r,a,page,actual) &&
+      !memcmp(actual,expected,sizeof actual) && page->coarse_valid &&
+      page->coarse_pixels==(uintptr_t)a->px);
+  }
+  /* Crops, source versions and allocation identities cannot reuse old samples. */
+  page->sw=3;
+  CHECK(sprite_region_coarse_texel(a,1,1,3,7,expected) &&
+    gml_render_cached_coarse_texel(r,a,page,actual) && !memcmp(actual,expected,sizeof actual));
+  memset(a->px,93,7u*9u*4u);a->scene_source_version++;
+  CHECK(gml_render_cached_coarse_texel(r,a,page,actual));
+  for(unsigned c=0;c<4u;c++)CHECK(actual[c]==93.0);
+  uint8_t *replacement=malloc(7u*9u*4u);CHECK(replacement);
+  memset(replacement,181,7u*9u*4u);free(a->px);a->px=replacement;
+  CHECK(gml_render_cached_coarse_texel(r,a,page,actual));
+  for(unsigned c=0;c<4u;c++)CHECK(actual[c]==181.0);
+  a->runtime_font_page=1;memset(a->px,47,7u*9u*4u);
+  CHECK(gml_render_cached_coarse_texel(r,a,page,actual) && !page->coarse_valid);
+  for(unsigned c=0;c<4u;c++)CHECK(actual[c]==47.0);
+  a->runtime_font_page=0;
+  CHECK(gml_render_cached_coarse_texel(r,a,page,actual) && page->coarse_valid);
+  GmlTpag detached=*page;memset(a->px,23,7u*9u*4u);
+  CHECK(gml_render_cached_coarse_texel(r,a,&detached,actual));
+  for(unsigned c=0;c<4u;c++)CHECK(actual[c]==23.0);
+  a->blob=0;memset(a->px,71,7u*9u*4u);
+  CHECK(gml_render_cached_coarse_texel(r,a,page,actual) && !page->coarse_valid);
+  for(unsigned c=0;c<4u;c++)CHECK(actual[c]==71.0);
+  page->sw=0;
+  CHECK(!gml_render_cached_coarse_texel(r,a,page,actual) && !page->coarse_valid);
+  for(unsigned c=0;c<4u;c++)CHECK(actual[c]==0.0);
+  gml_render_free(r);free(r);return 1;
+}
+
 static int resident_stretched_coarse_veil_on_demand(void){
   return resident_stretched_function_on_demand_impl(4);
 }
@@ -19592,6 +19636,8 @@ int main(void){
     else if(!strcmp(selected,"invalid-sprite-part")) passed=resident_invalid_sprite_part_preserves_pending_work();
     else if(!strcmp(selected,"full-sprite-axis-presets")) passed=resident_full_sprite_axis_function();
     else if(!strcmp(selected,"stretched-coarse-veil")) passed=resident_stretched_coarse_veil_on_demand();
+    else if(!strcmp(selected,"immutable-coarse-texel")) passed=immutable_coarse_texel_cache();
+    else if(!strcmp(selected,"coarse-veil-exact-recovery")) passed=resident_coarse_veil_exact_recovery();
     else if(!strcmp(selected,"filtered-text-reduction")) passed=resident_filtered_font_magnification(0,0,1);
     else if(!strcmp(selected,"maximised-filtered-font")) passed=resident_maximised_filtered_real_font();
     else if(!strcmp(selected,"physical-filtered-sprite")) passed=resident_physical_filtered_sprite_function();
@@ -19783,6 +19829,7 @@ int main(void){
   passed+=resident_stretched_coarse_box_on_demand();
   passed+=resident_stretched_coarse_box_limit();
   passed+=resident_stretched_coarse_veil_on_demand();
+  passed+=immutable_coarse_texel_cache();
   passed+=resident_stretched_raw_opacity_on_demand();
   passed+=resident_stretched_unavailable_source();
   passed+=resident_mapped_gui_stretch_on_demand();
@@ -19924,6 +19971,6 @@ int main(void){
   passed+=resident_point_function_transaction();
   passed+=resident_rectangle_cpu_passthrough_programs();
   passed+=skip_cpu_draw_policy_preserves_observers();
-  printf("render resource cases: passed=%d failed=%d\n",passed,309-passed);
-  return passed==309?EXIT_SUCCESS:EXIT_FAILURE;
+  printf("render resource cases: passed=%d failed=%d\n",passed,310-passed);
+  return passed==310?EXIT_SUCCESS:EXIT_FAILURE;
 }

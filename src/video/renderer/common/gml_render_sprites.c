@@ -51,20 +51,20 @@ static int resident_first_generation_rotated_point(GmlRender *r,double rotation)
  * sprite's bright, low-alpha rows should dominate). Reproduce the flat veil by compositing this
  * single coarse texel across the whole rect. Reduction is done in float (no per-level 8-bit
  * rounding) to stay as close as possible to the GPU's mip value. */
-void sprite_region_coarse_texel(GmlAtlas *a, int sx, int sy, int sw, int sh, double out[4]){
+int sprite_region_coarse_texel(GmlAtlas *a, int sx, int sy, int sw, int sh, double out[4]){
   out[0]=out[1]=out[2]=out[3]=0;
-  if(!a || !a->px || sw<=0 || sh<=0) return;
+  if(!a || !a->px || sw<=0 || sh<=0) return 0;
   /* Clamp source coordinates before reading atlas pixels. */
-  if(a->w<=0 || a->h<=0) return;
+  if(a->w<=0 || a->h<=0) return 0;
   if(sx<0){ sw+=sx; sx=0; }
   if(sy<0){ sh+=sy; sy=0; }
-  if(sx>=a->w || sy>=a->h) return;
+  if(sx>=a->w || sy>=a->h) return 0;
   if(sx+sw>a->w) sw=a->w-sx;
   if(sy+sh>a->h) sh=a->h-sy;
-  if(sw<=0 || sh<=0) return;
+  if(sw<=0 || sh<=0) return 0;
   int w=sw, h=sh;
   float *buf=(float*)malloc((size_t)w*(size_t)h*4u*sizeof(float));
-  if(!buf) return;
+  if(!buf) return 0;
   for(int y=0;y<h;y++){
     const uint8_t *sp=a->px + ((size_t)(sy+y)*a->w + sx)*4;
     float *d=buf+(size_t)y*w*4;
@@ -86,6 +86,38 @@ void sprite_region_coarse_texel(GmlAtlas *a, int sx, int sy, int sw, int sh, dou
   }
   out[0]=buf[0]; out[1]=buf[1]; out[2]=buf[2]; out[3]=buf[3];
   free(buf);
+  return 1;
+}
+
+/* Cache only registered immutable cells. Detached views and mutable font pages
+ * retain the existing reduction, and failures never become cached colours. */
+int gml_render_cached_coarse_texel(GmlRender *r,GmlAtlas *atlas,GmlTpag *page,double out[4]){
+  if(!out) return 0;
+  if(!atlas || !page){memset(out,0,4u*sizeof *out);return 0;}
+  uintptr_t address=(uintptr_t)page,base=r?(uintptr_t)r->tpag:0u;
+  int canonical=r && r->tpag && r->n_tpag>0 && address>=base &&
+    address-base<(size_t)r->n_tpag*sizeof *page && (address-base)%sizeof *page==0u;
+  int immutable=canonical && r->atlas && page->atlas>=0 && page->atlas<r->n_atlas &&
+    atlas==&r->atlas[page->atlas] && !atlas->runtime_font_page &&
+    ((atlas->blob && atlas->avail) || (atlas->external_blob && atlas->external_size));
+  int key[6]={page->sx,page->sy,page->sw,page->sh,atlas->w,atlas->h};
+  if(immutable && page->coarse_valid && page->coarse_pixels==(uintptr_t)atlas->px &&
+     page->coarse_incarnation==atlas->scene_source_incarnation &&
+     page->coarse_version==atlas->scene_source_version &&
+     !memcmp(page->coarse_key,key,sizeof key)){
+    memcpy(out,page->coarse_texel,sizeof page->coarse_texel);return 1;
+  }
+  if(!sprite_region_coarse_texel(atlas,page->sx,page->sy,page->sw,page->sh,out)){
+    if(canonical) page->coarse_valid=0;
+    return 0;
+  }
+  if(immutable){
+    page->coarse_pixels=(uintptr_t)atlas->px;memcpy(page->coarse_key,key,sizeof key);
+    page->coarse_incarnation=atlas->scene_source_incarnation;
+    page->coarse_version=atlas->scene_source_version;
+    memcpy(page->coarse_texel,out,sizeof page->coarse_texel);page->coarse_valid=1;
+  }else if(canonical) page->coarse_valid=0;
+  return 1;
 }
 
 static void resident_classify_page(GmlTpag *page,const GmlAtlas *atlas){
@@ -5051,7 +5083,7 @@ static int resident_coarse_mip_veil(GmlRender *r,int sprite,int frame,
      x0>0 || y0>0 || (int64_t)x0+width<r->fbw ||
      (int64_t)y0+height<r->fbh) return 0;
   if(alpha<=0.0) return 1;
-  sprite_region_coarse_texel(atlas,page->sx,page->sy,page->sw,page->sh,texel);
+  gml_render_cached_coarse_texel(r,atlas,page,texel);
   /* The existing CPU leaf tests the reduced raw alpha before byte rounding,
    * not draw opacity or the rounded sampled alpha. */
   if(on_demand && r->alpha_test_enable && texel[3]<=r->alpha_test_ref) return 1;

@@ -7273,7 +7273,7 @@ static void blit_sprite_stretched_impl(GmlRender *r, GmlSprite *s, int frame,
    * whole render target from the origin) so ordinary in-world minified sprites keep the per-pixel
    * filtered path. This is the case GameMaker's mipmapped full-screen sprites hit on the GPU. */
   if((sw>W || sh>H) && x0<=0 && y0<=0 && x0+W>=r->fbw && y0+H>=r->fbh){
-    double ct[4]; sprite_region_coarse_texel(a,t->sx,t->sy,t->sw,t->sh,ct);
+    double ct[4]; gml_render_cached_coarse_texel(r,a,t,ct);
     if(shader_discards_alpha_value(r,ct[3])) return;
     int sample_a=(int)floor(ct[3]+0.5);
     int sample_r=(int)floor(ct[0]+0.5);
