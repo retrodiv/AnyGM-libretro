@@ -220,6 +220,7 @@ static uint32_t scene_filter(const GmlRenderQuad *quad,
     return 159u+filtered+2u*opaque;
   }
   if((family==GML_RENDER_SCENE_BACKGROUND || family==GML_RENDER_SCENE_TILE ||
+      (family==GML_RENDER_SCENE_TEXT && !quad->span_active) ||
       ((family==GML_RENDER_SCENE_SPRITE || family==GML_RENDER_SCENE_TEXT) &&
        quad->span_active==GML_RENDER_SPAN_FILTERED_AXIS_SUPPORT_ROW)) &&
      quad->sampling.filter==GML_RENDER_FILTER_HARDWARE_BILINEAR &&
@@ -1110,21 +1111,22 @@ static int hardware_screen_sprite_valid(const GmlRenderDrawOp *op,
   int tile_axis_row=selected_axis_row && op->scene_family==GML_RENDER_SCENE_TILE;
   int atlas_background=op->scene_family==GML_RENDER_SCENE_BACKGROUND || op->scene_family==GML_RENDER_SCENE_TILE;
   int text_axis_row=selected_axis_row && op->scene_family==GML_RENDER_SCENE_TEXT;
+  int text_quad=op->scene_family==GML_RENDER_SCENE_TEXT && !quad->span_active;
   int wide_axis_row=text_axis_row || (selected_axis_row && op->scene_family==GML_RENDER_SCENE_SPRITE);
   int positive_row=selected_axis_row || quad->span_active==GML_RENDER_SPAN_FILTERED_POSITIVE_ROW;
   int affine_row=positive_row || quad->span_active==GML_RENDER_SPAN_FILTERED_AFFINE_ROW;
   int blend=qualified_blend(state);
   int byte_background=(atlas_background ||
-    ((op->scene_family==GML_RENDER_SCENE_SPRITE || op->scene_family==GML_RENDER_SCENE_TEXT) && selected_axis_row)) &&
+    (((op->scene_family==GML_RENDER_SCENE_SPRITE || op->scene_family==GML_RENDER_SCENE_TEXT) && selected_axis_row) || text_quad)) &&
     (quad->sampling.quantisation==GML_RENDER_QUANTISE_INTEGER_TINT_TRUNC ||
      quad->sampling.quantisation==GML_RENDER_QUANTISE_INTEGER_TINT_ROUND);
   int background_blend=byte_background && (blend==0 || blend==1 || blend==3 || blend==9 ||
-    (text_axis_row && blend==15) ||
+    ((text_axis_row || text_quad) && blend==15) ||
     (blend>=18 && blend<=21) || blend==24 || blend==25 ||
     (blend>=GL_SCENE_BLEND_SURFACE_DEST_BASE && blend<=GL_SCENE_BLEND_SURFACE_DEST_LIMIT &&
      state->rgb_equation==GML_RENDER_BLEND_ADD && state->alpha_equation==GML_RENDER_BLEND_ADD));
-  if(byte_background && (!positive_row || !background_blend || state->write_mask>15u ||
-     state->alpha_test_enabled || state->alpha_test_reference ||
+  if(byte_background && ((!positive_row && !text_quad) || !background_blend || state->write_mask>15u ||
+     (!text_quad && (state->alpha_test_enabled || state->alpha_test_reference)) ||
      (quad->filtered_draw_alpha==0.0 &&
       state->coverage_policy!=GML_RENDER_COVERAGE_REPLACE_SOURCE_ALPHA &&
       state->coverage_policy!=GML_RENDER_COVERAGE_REPLACE_ZERO_ALPHA &&
@@ -1172,7 +1174,7 @@ static int hardware_screen_sprite_valid(const GmlRenderDrawOp *op,
     margin=0u;
   }
   if(quad->sampling.quantisation==GML_RENDER_QUANTISE_HARDWARE_SPRITE_MODERN &&
-     ((state->alpha_test_enabled && state->alpha_test_reference) ||
+     ((!text_quad && state->alpha_test_enabled && state->alpha_test_reference) ||
       (qualified_blend(state)!=0 && qualified_blend(state)!=1 &&
        qualified_blend(state)!=3 && qualified_blend(state)!=17) ||
       state->coverage_policy==GML_RENDER_COVERAGE_REPLACE_ZERO_ALPHA)) return 0;
@@ -1202,7 +1204,8 @@ static int hardware_screen_sprite_valid(const GmlRenderDrawOp *op,
      (!byte_background && quad->filtered_draw_alpha==0.0) ||
      quad->filtered_draw_alpha>1.0 ||
      !isfinite(xs) || !isfinite(ys) ||
-     (!affine_row && (physical?fabs(xs)<0.125 || fabs(xs)>64.0 || fabs(ys)<0.125 || fabs(ys)>64.0:
+     (!affine_row && (physical?fabs(xs)<(text_quad?0x1p-14:0.125) || fabs(xs)>64.0 ||
+               fabs(ys)<(text_quad?0x1p-14:0.125) || fabs(ys)>64.0:
                xs<=0.0 || ys<=0.0)) ||
      (op->scene_family==GML_RENDER_SCENE_TEXT &&
       ((!physical && (xs>1.0 || ys>1.0)) || region.width>256u || region.height>256u)) ||

@@ -778,6 +778,7 @@
   "    vec2 uv=clamp(v_texcoord,(v_clamp.xy+vec2(0.5))/extent,(v_clamp.zw+vec2(0.5))/extent);\n" \
   "    int margin=int(floor(v_margin+0.5));\n" \
   "    vec4 sampled=margin!=0?hardware_physical_sprite_sample(v_texcoord,ivec2(v_clamp.xy),ivec2(v_clamp.zw),margin):source_texture(uv);\n" \
+  "    if(u_alpha_test>=0 && sampled.a*255.0<=float(u_alpha_test)) discard;\n" \
   "    uvec4 bytes=uvec4(floor(clamp(sampled,0.0,1.0)*255.0+vec4(0.5)));\n" \
   "    uvec3 tint=uvec3(floor(v_colour.rgb*255.0+vec3(0.5)));\n" \
   "    uint bias=((u_filter>=151 && u_filter<=154)||u_filter>=157)?127u:0u;\n" \

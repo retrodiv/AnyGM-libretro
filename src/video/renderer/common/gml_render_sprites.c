@@ -2848,7 +2848,7 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
    * on both axes is not qualified: hardware filtering exceeded the individual
    * channel budget. Keep the whole semantic boundary on ordered CPU, not a
    * driver-specific pixel exception or an emulation of CPU float products. */
-  if(selected_physical_atlas && !r->classic &&
+  if(selected_physical_atlas && !hardware_physical_font && !r->classic &&
      !anygm_policy_has_modern_layer_semantics(r->win) &&
      r->alpha_test_enable && r->alpha_test_ref && !page->scene_fully_opaque &&
      fabs(xs)>1.0 && fabs(ys)>1.0 &&
@@ -2923,8 +2923,10 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
   /* Enabled raw cutout at reference zero is still observable at filtered
    * transparent edges,especially inverse RGB. Keep its CPU support decision. */
   int selected_cutout=r->alpha_test_enable;
-  int background_coverage=selected_physical_atlas &&
-    (hardware_physical_font || selected_preset || reduced_part_coverage || selected_cutout || positive_part ||
+  /* A glyph is one placed quad. Device filtering owns its interior coverage;
+   * CPU support rows must not turn text into thousands of tiny packets. */
+  int background_coverage=!hardware_physical_font && selected_physical_atlas &&
+    (selected_preset || reduced_part_coverage || selected_cutout || positive_part ||
       (hardware_physical_tile && (hardware_physical_rotation || alpha<0x1p-32)) || fabs(xs)<.125 || fabs(ys)<.125) &&
     r->active_shader<0 && (((r->blendmode==0 || r->blendmode==2) && (alpha>=0x1p-32 || hardware_physical_tile)) ||
       (selected_preset && (alpha>=0x1p-32 || hardware_physical_tile || (r->alphablend &&
@@ -2933,11 +2935,11 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
   /* Sub-eighth axes need prepared rows,not an unsupported scalar packet. */
   if(hardware_physical_background && !background_coverage && (fabs(xs)<.125 || fabs(ys)<.125))
     return 0;
-  if(hardware_physical_sprite && !hardware_physical_part && !background_coverage && r->alpha_test_enable &&
+  if(hardware_physical_sprite && !hardware_physical_font && !hardware_physical_part && !background_coverage && r->alpha_test_enable &&
      (margin_mask || (!page->scene_fully_opaque && page->scene_ax1>=0))) return 0;
   /* The continuous modern normal packet does not qualify raw positive
    * cutout: a sub-byte interpolation difference can change whole coverage. */
-  if(hardware_physical_sprite && (hardware_physical_part || nearest_mode==7 || hardware_physical_rotation || hardware_physical_font || hardware_physical_background) &&
+  if(hardware_physical_sprite && !hardware_physical_font && (hardware_physical_part || nearest_mode==7 || hardware_physical_rotation || hardware_physical_background) &&
      !r->blendmode && r->alpha_test_enable &&
      r->alpha_test_ref && !background_coverage && anygm_policy_has_modern_layer_semantics(r->win)) return 0;
   /* The established shader truncates tint; modern opaque CPU pixels round it.
@@ -3633,6 +3635,9 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
   }
   if(!gml_render_application_scene_enqueue(r,&operation,&state,&source)) return 0;
   r->fb_all_transparent=0;
+  if(hardware_physical_font && (state.write_mask&8u) &&
+     (state.coverage_policy==0u || state.coverage_policy==GML_RENDER_COVERAGE_REPLACE_SOURCE_ALPHA))
+    r->fb_opaque_known=0;
   return 1;
 }
 

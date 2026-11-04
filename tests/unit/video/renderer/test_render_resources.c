@@ -11792,8 +11792,7 @@ static int resident_maximised_filtered_real_font(void){
             fake.last_quad_state.rgb_equation==GML_RENDER_BLEND_ADD &&
             !fake.readbacks && !fake.rgb_queries);
       if(variant==5u)CHECK(render->alpha_test_enable==1 && !render->alpha_test_ref &&
-        !fake.last_quad_state.alpha_test_enabled &&
-        fake.last_quad.span_active==GML_RENDER_SPAN_FILTERED_AXIS_SUPPORT_ROW);
+        fake.last_quad_state.alpha_test_enabled && !fake.last_quad.span_active);
       gml_render_resource_journal_metrics(render->base_scene_resource,&metrics);
       CHECK(metrics.authority==GML_RENDER_RESOURCE_GPU_RESIDENT &&
             metrics.cpu_version<metrics.logical_version && !metrics.journal_operations &&
@@ -11886,9 +11885,11 @@ static int resident_filtered_font_magnification(int runtime_page,int clamped_pag
       fake.submits==submits+1 && fake.last_filter==GML_RENDER_FILTER_HARDWARE_BILINEAR &&
       fake.last_write_mask==15u &&
       !fake.readbacks && !fake.rgb_queries && !memcmp(shadow,r->fb,sizeof shadow));
+    /* Each real glyph keeps its placed rectangle; the device owns its fill. */
+    if(!font_kind) CHECK(fake.textured_families[GML_RENDER_SCENE_TEXT]==8u &&
+      !fake.last_quad.span_active);
     if(scale==4u && !font_kind && !clamped_page && !reduced_page)
-      CHECK(!fake.last_quad.sampling.logical_margin_mask &&
-        fake.last_quad.span_active==GML_RENDER_SPAN_FILTERED_AXIS_SUPPORT_ROW);
+      CHECK(fake.last_quad.sampling.logical_margin_mask==GML_RENDER_MARGIN_UNIT_TEXEL);
     if(runtime_page){
       GmlRenderResourceSource source={0};
       CHECK(gml_render_atlas_scene_source_view(r,0,&source) && !source.borrowed_immutable &&
@@ -19592,6 +19593,7 @@ int main(void){
     else if(!strcmp(selected,"full-sprite-axis-presets")) passed=resident_full_sprite_axis_function();
     else if(!strcmp(selected,"stretched-coarse-veil")) passed=resident_stretched_coarse_veil_on_demand();
     else if(!strcmp(selected,"filtered-text-reduction")) passed=resident_filtered_font_magnification(0,0,1);
+    else if(!strcmp(selected,"maximised-filtered-font")) passed=resident_maximised_filtered_real_font();
     else if(!strcmp(selected,"physical-filtered-sprite")) passed=resident_physical_filtered_sprite_function();
     else if(!strcmp(selected,"wide-nearest-rows")) passed=resident_large_screen_axis_row_metadata();
     else if(!strcmp(selected,"large-rotated-rows")) passed=resident_large_rotated_sample_row_metadata();
