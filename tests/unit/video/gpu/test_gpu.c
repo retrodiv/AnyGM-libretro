@@ -3934,7 +3934,8 @@ static int scene_integer_function_sprite_case(void){
 
 static int scene_native_stretched_cell_case(void){
   const uint32_t pixels[12]={0xFF112233u,0x80445566u,0x00778899u};
-  for(unsigned api=0;api<2u;api++)for(unsigned trim=0;trim<2u;trim++){
+  for(unsigned api=0;api<2u;api++)for(unsigned trim=0;trim<2u;trim++)
+  for(unsigned failed=0;failed<(trim?1u:2u);failed++){
     GmlGpuContext context=fake_context(api?GML_GPU_API_OPENGLES3:GML_GPU_API_OPENGL_CORE);
     GmlRenderDeviceServices device={0};GmlRenderDrawOp ops[2]={{0}};
     GmlRenderDrawStateSnapshot state={0};
@@ -3944,6 +3945,7 @@ static int scene_native_stretched_cell_case(void){
       .byte_capacity=sizeof pixels,.bytes=pixels};
     anygm_test_graphics_reset();GmlGpu *gpu=gml_gpu_create();
     REQUIRE(gpu && gml_gpu_context_reset(gpu,&context),"native stretched context created");
+    if(failed)anygm_test_graphics_fail_compile_containing("#define GML_SCENE_CONSTANT_FILTER 22");
     gml_gpu_device_services(gpu,&device);
     REQUIRE(device.upload(device.context,&upload),"native stretched source uploaded");
     ops[0].opcode=GML_RENDER_OP_CLEAR;
@@ -3974,6 +3976,12 @@ static int scene_native_stretched_cell_case(void){
     state.sampler_count=1u;state.samplers[0]=q->sampling;
     GmlRenderDrawBatch batch={ops,2u,&state,1u};
     GmlRenderExecutionResult result=device.submit(device.context,&batch);
+    if(failed){
+      REQUIRE(result.status==GML_RENDER_EXEC_RECOVERABLE_ERROR &&
+        result.uncertain_target_count==1u && anygm_test_graphics_scene_draw_calls()==1,
+        "a late alpha-program failure preserves the uncertainty of its RGB write");
+      gml_gpu_destroy(gpu,1);continue;
+    }
     REQUIRE(result.status==GML_RENDER_EXEC_ACCEPTED && result.accepted_prefix==2u &&
       anygm_test_graphics_scene_draw_calls()==2 && !anygm_test_graphics_scene_copies() &&
       !anygm_test_graphics_read_pixels(),"stretched cell and alpha stamp remain resident");
