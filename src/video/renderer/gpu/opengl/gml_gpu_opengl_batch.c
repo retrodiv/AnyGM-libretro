@@ -2644,6 +2644,9 @@ static int draw_rotated_regions(GmlGpuBackend *backend,const GmlRenderDrawBatch 
     count++;
   }
   if(!count) return 0;
+  GlSceneProgram *program=gml_gpu_opengl_scene_draw_program(backend,
+    texel?29u:modern?27u:15u,0,NULL,0);
+  if(!program) return 0;
   if(modern){
     const GmlRenderQuad *quad=&base->payload.quad;
     GLuint map_x,map_y;
@@ -2654,11 +2657,11 @@ static int draw_rotated_regions(GmlGpuBackend *backend,const GmlRenderDrawBatch 
        !gml_gpu_opengl_upload_point_axis(backend,1u,quad->inverse_anchor[1],
          quad->inverse_y[0],quad->inverse_y[1],first_y,(uint32_t)(top-bottom),
          quad->sampling.source_region.height,&map_y)) return 0;
-    backend->gl.UseProgram(scene->main_program.program);
+    backend->gl.UseProgram(program->program);
     GLint point_origin[2]={left,first_y};
-    backend->gl.Uniform2iv(scene->main_program.u_point_origin,1,point_origin);
-    backend->gl.Uniform1i(scene->main_program.u_point_map_x,2);
-    backend->gl.Uniform1i(scene->main_program.u_point_map_y,3);
+    backend->gl.Uniform2iv(program->u_point_origin,1,point_origin);
+    backend->gl.Uniform1i(program->u_point_map_x,2);
+    backend->gl.Uniform1i(program->u_point_map_y,3);
     backend->gl.ActiveTexture(GL_TEXTURE2);
     backend->gl.BindTexture(GL_TEXTURE_2D,map_x);
     backend->gl.ActiveTexture(GL_TEXTURE3);
@@ -2667,9 +2670,9 @@ static int draw_rotated_regions(GmlGpuBackend *backend,const GmlRenderDrawBatch 
   }
   if(!scene_snapshot_region(backend,target,left,bottom,right-left,top-bottom))
     return 0;
-  backend->gl.UseProgram(scene->main_program.program);
-  if(!scene->rotated_alpha16_valid || scene->rotated_alpha16_modern_nearest!=alpha_mode ||
-     scene->rotated_alpha16_value!=base->payload.quad.filtered_draw_alpha){
+  backend->gl.UseProgram(program->program);
+  if(!program->rotated_alpha16_valid || program->rotated_alpha16_modern_nearest!=alpha_mode ||
+     program->rotated_alpha16_value!=base->payload.quad.filtered_draw_alpha){
     GLint factors[256];
     for(unsigned alpha=0;alpha<256u;alpha++){
       double draw_alpha=base->payload.quad.filtered_draw_alpha;
@@ -2687,14 +2690,14 @@ static int draw_rotated_regions(GmlGpuBackend *backend,const GmlRenderDrawBatch 
       } else factors[alpha]=(GLint)gml_render_rotated_alpha16_factor(alpha,draw_alpha);
     }
     /* Pack four entries per vector to remain below the GLES uniform minimum. */
-    backend->gl.Uniform4iv(scene->main_program.u_rotated_alpha16,64,factors);
-    if(backend->gl.GetError()!=GL_NO_ERROR){ scene->rotated_alpha16_valid=0; return 0; }
-    scene->rotated_alpha16_value=base->payload.quad.filtered_draw_alpha;
-    scene->rotated_alpha16_modern_nearest=alpha_mode;
-    scene->rotated_alpha16_valid=1;
+    backend->gl.Uniform4iv(program->u_rotated_alpha16,64,factors);
+    if(backend->gl.GetError()!=GL_NO_ERROR){ program->rotated_alpha16_valid=0; return 0; }
+    program->rotated_alpha16_value=base->payload.quad.filtered_draw_alpha;
+    program->rotated_alpha16_modern_nearest=alpha_mode;
+    program->rotated_alpha16_valid=1;
   }
   GLint origin[2]={left,bottom};
-  backend->gl.Uniform2iv(scene->main_program.u_region_origin,1,origin);
+  backend->gl.Uniform2iv(program->u_region_origin,1,origin);
   if(backend->gl.GetError()!=GL_NO_ERROR) return 0;
   if(!flush_quads(backend,target,source,texel?29u:modern?27u:15u,0,count,base_state->write_mask,-1,0u,&base_state->source_palette)) return -1;
   *consumed=count;

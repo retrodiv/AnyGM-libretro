@@ -3357,6 +3357,8 @@ static int scene_screen_filtered_alpha_stamp_case(void){
           anygm_test_graphics_color_mask_all() && !anygm_test_graphics_blend_enabled() &&
           anygm_test_graphics_read_pixels()==0 && anygm_test_graphics_scene_copies()==copies+2u,
           "overlapping cardinal/arbitrary quads retain distinct exact device-local predecessors");
+  REQUIRE(strstr(anygm_test_graphics_shader_source(1),"#define GML_SCENE_CONSTANT_FILTER 15"),
+          "first-generation sampled regions compile their own unchanged constant kernel");
   for(unsigned variant=0;variant<10u;variant++){
     GmlRenderDrawStateSnapshot invalid_state=state;
     GmlRenderDrawOp invalid_operations[3];

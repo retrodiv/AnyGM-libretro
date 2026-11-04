@@ -125,7 +125,8 @@ static int build_scene_program(GmlGpuBackend *backend,GlSceneProgram *scene,
                                mode==9?"#define GML_SCENE_CONSTANT_FILTER 79\n":
                                mode==10?"#define GML_SCENE_CONSTANT_FILTER 82\n":
                                mode==11?"#define GML_SCENE_CONSTANT_FILTER 79\n#define GML_SCENE_PLAIN_NATIVE 1\n":
-                               mode==12?"#define GML_SCENE_CONSTANT_FILTER 82\n#define GML_SCENE_PLAIN_NATIVE 1\n":"",
+                               mode==12?"#define GML_SCENE_CONSTANT_FILTER 82\n#define GML_SCENE_PLAIN_NATIVE 1\n":
+                               mode==13?"#define GML_SCENE_CONSTANT_FILTER 15\n":"",
                                GML_GPU_OPENGL_SCENE_FRAGMENT_BODY);
   if(vertex_length<0 || (size_t)vertex_length>=sizeof vertex_source ||
      fragment_length<0 || (size_t)fragment_length>=sizeof fragment_source){
@@ -194,7 +195,7 @@ static int build_scene_program(GmlGpuBackend *backend,GlSceneProgram *scene,
   scene->u_recovery_screen=backend->gl.GetUniformLocation(scene->program,"u_recovery_screen");
   scene->u_recovery_application=backend->gl.GetUniformLocation(scene->program,"u_recovery_application");
   scene->u_recovery_rect=backend->gl.GetUniformLocation(scene->program,"u_recovery_rect");
-  if(!mode) backend->scene.rotated_alpha16_valid=0;
+  scene->rotated_alpha16_valid=0;
   if((!mode && (scene->a_position01<0 || scene->a_position23<0 ||
      scene->a_texcoord01<0 || scene->a_texcoord23<0 ||
      scene->a_colour[0]<0 || scene->a_colour[1]<0 ||
@@ -209,6 +210,8 @@ static int build_scene_program(GmlGpuBackend *backend,GlSceneProgram *scene,
      scene->u_previous<0 || scene->u_region_origin<0 || scene->u_rotated_alpha16<0 ||
      scene->u_point_map_x<0 || scene->u_point_map_y<0 || scene->u_point_origin<0 ||
      scene->u_recovery_screen<0 || scene->u_recovery_application<0 || scene->u_recovery_rect<0)) ||
+     (mode==13 && (scene->u_previous<0 || scene->u_region_origin<0 ||
+       scene->u_rotated_alpha16<0)) ||
      (mode && (scene->a_position01<0 || scene->a_position23<0 ||
        (mode!=8 && (scene->a_colour[0]<0 || scene->a_colour[1]<0 || scene->a_colour[2]<0 ||
                     scene->a_colour[3]<0)) || scene->u_extent<0 || scene->u_image<0 ||
@@ -230,7 +233,9 @@ GlSceneProgram *gml_gpu_opengl_scene_draw_program(GmlGpuBackend *backend,uint32_
   GlScene *scene=&backend->scene;
   GlSceneProgram *program=&scene->main_program;
   int mode=0;
-  if(plain_native && (filter==79u || filter==80u || filter==82u)){
+  if(filter==15u){
+    program=&scene->compact_programs[11];mode=13;
+  }else if(plain_native && (filter==79u || filter==80u || filter==82u)){
     unsigned index=filter==82u?10u:9u;
     program=&scene->compact_programs[index];mode=(int)index+2;
   }else if(filter==0u || filter==14u || filter==77u || filter==78u){

@@ -137,6 +137,9 @@ typedef struct GlSceneProgram {
   GLint u_rotated_alpha16;
   GLint u_point_map_x,u_point_map_y,u_point_origin;
   GLint u_recovery_screen,u_recovery_application,u_recovery_rect;
+  double rotated_alpha16_value;
+  int rotated_alpha16_valid;
+  int rotated_alpha16_modern_nearest;
 } GlSceneProgram;
 
 typedef struct GlScene {
@@ -147,7 +150,7 @@ typedef struct GlScene {
   GLint checkpoint_u_image,checkpoint_u_previous,checkpoint_u_alpha;
   uint32_t checkpoint_mask_width,checkpoint_mask_height;
   int checkpoint_program_failed;
-  GlSceneProgram main_program,filtered_program,compact_programs[11];
+  GlSceneProgram main_program,filtered_program,compact_programs[12];
   GLuint vertex_buffer,vertex_array,instance_buffer,instance_array;
   GLuint upload_buffer;
   size_t instance_bytes_used;
@@ -157,9 +160,6 @@ typedef struct GlScene {
   unsigned instance_span_count,instance_span_next;
   uint8_t *instance_mirror;
   int instance_reuse_attempted;
-  double rotated_alpha16_value;
-  int rotated_alpha16_valid;
-  int rotated_alpha16_modern_nearest;
   GlSceneExactProgram exact_programs[3];
   GLuint snapshot_texture,copy_framebuffer,rgb_query;
   /* Two reusable reduction planes and two independent final predicates. No host observation. */

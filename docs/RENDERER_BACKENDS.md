@@ -51,6 +51,12 @@ can use a whole-attachment fast clear. Published pixels and later draw placement
 default framebuffer zero retains its scoped clear. Maximum geometry, completed-frame bytes and state
 transport are unchanged. The hint is optional in GLES 3 and desktop GL 4.3 or newer.
 
+First-generation sampled rotated regions use a constant specialization of their existing
+integer sampling and alpha-lookup body. Their region origin and alpha table belong to the
+selected program, and each program owns its derived lookup cache. Existing modern and texel
+variants retain their program and calculations. Packet geometry, snapshots, draw order and
+CPU rendering are unchanged; no new coverage pieces are introduced.
+
 Native filtered glyph batches with no logical margins, source key or palette use a constant
 plain-source specialization of the same shader body. The backend verifies every queued quad's
 flat margin before selecting it. Other batches retain their existing programs; source colour,
