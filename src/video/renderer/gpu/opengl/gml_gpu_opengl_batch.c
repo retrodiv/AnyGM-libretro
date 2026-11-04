@@ -2338,12 +2338,8 @@ static int flush_quads(GmlGpuBackend *backend,GlSceneImage *target,GlSceneImage 
   int upload_ok=1;
   if(!count) return 1;
   if(count>GL_SCENE_MAX_QUADS) return 0;
-  if(filter==21u || filter==22u || filter==25u || filter==26u ||
-     (filter>=65u && filter<=74u) || (filter>=79u && filter<=82u) ||
-     (filter>=112u && filter<=115u) || (filter>=137u && filter<=158u)){
-    program=gml_gpu_opengl_scene_filtered_program(backend,NULL,0);
-    if(!program) return 0;
-  }
+  program=gml_gpu_opengl_scene_draw_program(backend,filter,NULL,0);
+  if(!program) return 0;
   backend->gl.BindFramebuffer(GL_FRAMEBUFFER,target->framebuffer);
   backend->gl.Viewport(0,0,(GLsizei)target->width,(GLsizei)target->height);
   backend->gl.Scissor(0,0,(GLsizei)target->width,(GLsizei)target->height);
@@ -3265,8 +3261,11 @@ GmlRenderExecutionResult gml_gpu_opengl_scene_submit(GmlGpuBackend *backend,
         break;
       }
       GLint origin[2]={left,bottom};
-      backend->gl.UseProgram(backend->scene.main_program.program);
-      backend->gl.Uniform2iv(backend->scene.main_program.u_region_origin,1,origin);
+      GlSceneProgram *program=gml_gpu_opengl_scene_draw_program(backend,pending_filter,
+                                                               error,error_capacity);
+      if(!program) break;
+      backend->gl.UseProgram(program->program);
+      backend->gl.Uniform2iv(program->u_region_origin,1,origin);
       /* Each overlapping float blend snapshots its own ordered predecessor;
        * never merge these quads against one stale destination image. */
       if(!flush_quads(backend,target,pending_source,pending_filter,pending_blend,1u,pending_write_mask,pending_alpha_test,pending_source_alpha_key,&pending_palette)){

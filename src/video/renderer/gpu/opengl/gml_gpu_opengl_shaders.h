@@ -271,7 +271,14 @@
   "uniform sampler2D u_previous;\n" \
   "uniform ivec2 u_region_origin;\n" \
   "uniform ivec4 u_rotated_alpha16[64];\n" \
+  "#ifdef GML_SCENE_CONSTANT_FILTER\n" \
+  "const int u_filter=GML_SCENE_CONSTANT_FILTER;\n" \
+  "#elif defined(GML_SCENE_STRETCHED_FILTER)\n" \
+  "uniform int u_selected_filter;\n" \
+  "#define u_filter (u_selected_filter==78?78:77)\n" \
+  "#else\n" \
   "uniform int u_filter;\n" \
+  "#endif\n" \
   "uniform int u_additive_bytes;\n" \
   "uniform int u_alpha_test;\n" \
   "uniform int u_source_alpha_key;\n" \

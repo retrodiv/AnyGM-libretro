@@ -220,6 +220,7 @@ void gml_gpu_opengl_scene_forget(GmlGpuBackend *backend){
   scene->checkpoint_program_failed=0;
   memset(&scene->main_program,0,sizeof scene->main_program);
   memset(&scene->filtered_program,0,sizeof scene->filtered_program);
+  memset(scene->compact_programs,0,sizeof scene->compact_programs);
   scene->vertex_buffer=scene->vertex_array=0;
   scene->instance_buffer=scene->instance_array=0;
   scene->upload_buffer=0;
@@ -255,6 +256,9 @@ void gml_gpu_opengl_scene_destroy(GmlGpuBackend *backend,int context_is_current)
       backend->gl.DeleteFramebuffers(1,&scene->checkpoint_framebuffer);
     if(scene->main_program.program) backend->gl.DeleteProgram(scene->main_program.program);
     if(scene->filtered_program.program) backend->gl.DeleteProgram(scene->filtered_program.program);
+    for(unsigned index=0;index<3u;index++)
+      if(scene->compact_programs[index].program)
+        backend->gl.DeleteProgram(scene->compact_programs[index].program);
     for(size_t index=0;index<3u;index++)
       if(scene->exact_programs[index].exact_program)
         backend->gl.DeleteProgram(scene->exact_programs[index].exact_program);

@@ -100,7 +100,7 @@ int gml_gpu_opengl_build_program(GmlGpuBackend *backend,char *error,size_t error
 }
 
 static int build_scene_program(GmlGpuBackend *backend,GlSceneProgram *scene,
-                               int filtered,char *error,size_t error_capacity){
+                               int mode,char *error,size_t error_capacity){
   const char *prefix=backend->api==GML_GPU_API_OPENGLES3
     ?GML_GPU_OPENGL_PREFIX_ES:GML_GPU_OPENGL_PREFIX_DESKTOP;
   char vertex_source[sizeof(GML_GPU_OPENGL_PREFIX_ES)+
@@ -114,7 +114,10 @@ static int build_scene_program(GmlGpuBackend *backend,GlSceneProgram *scene,
   int vertex_length=snprintf(vertex_source,sizeof vertex_source,"%s%s",prefix,
                              GML_GPU_OPENGL_SCENE_INSTANCED_VERTEX_BODY);
   int fragment_length=snprintf(fragment_source,sizeof fragment_source,"%s%s%s",prefix,
-                               filtered?"#define GML_SCENE_FILTERED_ONLY 1\n":"",
+                               mode==1?"#define GML_SCENE_FILTERED_ONLY 1\n":
+                               mode==2?"#define GML_SCENE_CONSTANT_FILTER 0\n":
+                               mode==3?"#define GML_SCENE_CONSTANT_FILTER 14\n":
+                               mode==4?"#define GML_SCENE_STRETCHED_FILTER 1\n":"",
                                GML_GPU_OPENGL_SCENE_FRAGMENT_BODY);
   if(vertex_length<0 || (size_t)vertex_length>=sizeof vertex_source ||
      fragment_length<0 || (size_t)fragment_length>=sizeof fragment_source){
@@ -164,7 +167,8 @@ static int build_scene_program(GmlGpuBackend *backend,GlSceneProgram *scene,
   scene->a_span_y=backend->gl.GetAttribLocation(scene->program,"in_SpanY");
   scene->u_extent=backend->gl.GetUniformLocation(scene->program,"u_extent");
   scene->u_image=backend->gl.GetUniformLocation(scene->program,"u_image");
-  scene->u_filter=backend->gl.GetUniformLocation(scene->program,"u_filter");
+  scene->u_filter=backend->gl.GetUniformLocation(scene->program,
+    mode==4?"u_selected_filter":"u_filter");
   scene->u_additive_bytes=backend->gl.GetUniformLocation(scene->program,"u_additive_bytes");
   scene->u_alpha_test=backend->gl.GetUniformLocation(scene->program,"u_alpha_test");
   scene->u_source_alpha_key=backend->gl.GetUniformLocation(scene->program,"u_source_alpha_key");
@@ -182,8 +186,8 @@ static int build_scene_program(GmlGpuBackend *backend,GlSceneProgram *scene,
   scene->u_recovery_screen=backend->gl.GetUniformLocation(scene->program,"u_recovery_screen");
   scene->u_recovery_application=backend->gl.GetUniformLocation(scene->program,"u_recovery_application");
   scene->u_recovery_rect=backend->gl.GetUniformLocation(scene->program,"u_recovery_rect");
-  if(!filtered) backend->scene.rotated_alpha16_valid=0;
-  if((!filtered && (scene->a_position01<0 || scene->a_position23<0 ||
+  if(!mode) backend->scene.rotated_alpha16_valid=0;
+  if((!mode && (scene->a_position01<0 || scene->a_position23<0 ||
      scene->a_texcoord01<0 || scene->a_texcoord23<0 ||
      scene->a_colour[0]<0 || scene->a_colour[1]<0 ||
      scene->a_colour[2]<0 || scene->a_colour[3]<0 ||
@@ -197,12 +201,10 @@ static int build_scene_program(GmlGpuBackend *backend,GlSceneProgram *scene,
      scene->u_previous<0 || scene->u_region_origin<0 || scene->u_rotated_alpha16<0 ||
      scene->u_point_map_x<0 || scene->u_point_map_y<0 || scene->u_point_origin<0 ||
      scene->u_recovery_screen<0 || scene->u_recovery_application<0 || scene->u_recovery_rect<0)) ||
-     (filtered && (scene->a_position01<0 || scene->a_position23<0 ||
-       scene->a_texcoord01<0 || scene->a_texcoord23<0 ||
+     (mode && (scene->a_position01<0 || scene->a_position23<0 ||
        scene->a_colour[0]<0 || scene->a_colour[1]<0 || scene->a_colour[2]<0 ||
-       scene->a_colour[3]<0 || scene->a_clamp<0 || scene->a_step_margin_active<0 ||
-       scene->u_extent<0 || scene->u_image<0 || scene->u_filter<0 ||
-       scene->u_alpha_test<0))){
+       scene->a_colour[3]<0 || scene->u_extent<0 || scene->u_image<0 ||
+       ((mode==1 || mode==4) && scene->u_filter<0)))){
     gml_gpu_opengl_record_error(error,error_capacity,"scene program is missing an attribute or uniform");
     backend->gl.DeleteProgram(scene->program);
     scene->program=0;
@@ -215,10 +217,20 @@ int gml_gpu_opengl_scene_program(GmlGpuBackend *backend,char *error,size_t error
   return build_scene_program(backend,&backend->scene.main_program,0,error,error_capacity);
 }
 
-GlSceneProgram *gml_gpu_opengl_scene_filtered_program(GmlGpuBackend *backend,
-                                                       char *error,size_t error_capacity){
-  GlSceneProgram *program=&backend->scene.filtered_program;
-  return build_scene_program(backend,program,1,error,error_capacity)?program:NULL;
+GlSceneProgram *gml_gpu_opengl_scene_draw_program(GmlGpuBackend *backend,uint32_t filter,
+                                                   char *error,size_t error_capacity){
+  GlScene *scene=&backend->scene;
+  GlSceneProgram *program=&scene->main_program;
+  int mode=0;
+  if(filter==0u || filter==14u || filter==77u || filter==78u){
+    unsigned index=filter==0u?0u:filter==14u?1u:2u;
+    program=&scene->compact_programs[index];mode=(int)index+2;
+  }else if(filter==21u || filter==22u || filter==25u || filter==26u ||
+     (filter>=65u && filter<=74u) || (filter>=79u && filter<=82u) ||
+     (filter>=112u && filter<=115u) || (filter>=137u && filter<=158u)){
+    program=&scene->filtered_program;mode=1;
+  }
+  return build_scene_program(backend,program,mode,error,error_capacity)?program:NULL;
 }
 
 static GlSceneExactProgram *build_exact_program(GmlGpuBackend *backend,
