@@ -107,7 +107,7 @@ static int build_scene_program(GmlGpuBackend *backend,GlSceneProgram *scene,
                      sizeof(GML_GPU_OPENGL_PREFIX_DESKTOP)+
                      sizeof(GML_GPU_OPENGL_SCENE_INSTANCED_VERTEX_BODY)];
   char fragment_source[sizeof(GML_GPU_OPENGL_PREFIX_ES)+
-                       sizeof(GML_GPU_OPENGL_PREFIX_DESKTOP)+sizeof(GML_GPU_OPENGL_SCENE_FRAGMENT_BODY)+64u];
+                       sizeof(GML_GPU_OPENGL_PREFIX_DESKTOP)+sizeof(GML_GPU_OPENGL_SCENE_FRAGMENT_BODY)+128u];
   GLuint vertex,fragment;
   GLint status=GL_FALSE;
   if(scene->program) return 1;
@@ -123,7 +123,9 @@ static int build_scene_program(GmlGpuBackend *backend,GlSceneProgram *scene,
                                mode==7?"#define GML_SCENE_CONSTANT_FILTER 22\n":
                                mode==8?"#define GML_SCENE_CONSTANT_FILTER 72\n":
                                mode==9?"#define GML_SCENE_CONSTANT_FILTER 79\n":
-                               mode==10?"#define GML_SCENE_CONSTANT_FILTER 82\n":"",
+                               mode==10?"#define GML_SCENE_CONSTANT_FILTER 82\n":
+                               mode==11?"#define GML_SCENE_CONSTANT_FILTER 79\n#define GML_SCENE_PLAIN_NATIVE 1\n":
+                               mode==12?"#define GML_SCENE_CONSTANT_FILTER 82\n#define GML_SCENE_PLAIN_NATIVE 1\n":"",
                                GML_GPU_OPENGL_SCENE_FRAGMENT_BODY);
   if(vertex_length<0 || (size_t)vertex_length>=sizeof vertex_source ||
      fragment_length<0 || (size_t)fragment_length>=sizeof fragment_source){
@@ -223,12 +225,15 @@ int gml_gpu_opengl_scene_program(GmlGpuBackend *backend,char *error,size_t error
   return build_scene_program(backend,&backend->scene.main_program,0,error,error_capacity);
 }
 
-GlSceneProgram *gml_gpu_opengl_scene_draw_program(GmlGpuBackend *backend,uint32_t filter,
+GlSceneProgram *gml_gpu_opengl_scene_draw_program(GmlGpuBackend *backend,uint32_t filter,int plain_native,
                                                    char *error,size_t error_capacity){
   GlScene *scene=&backend->scene;
   GlSceneProgram *program=&scene->main_program;
   int mode=0;
-  if(filter==0u || filter==14u || filter==77u || filter==78u){
+  if(plain_native && (filter==79u || filter==80u || filter==82u)){
+    unsigned index=filter==82u?10u:9u;
+    program=&scene->compact_programs[index];mode=(int)index+2;
+  }else if(filter==0u || filter==14u || filter==77u || filter==78u){
     unsigned index=filter==0u?0u:filter==14u?1u:2u;
     program=&scene->compact_programs[index];mode=(int)index+2;
   }else if(filter==65u || filter==66u){

@@ -2360,7 +2360,13 @@ static int flush_quads(GmlGpuBackend *backend,GlSceneImage *target,GlSceneImage 
   int opaque=target->valid && target->alpha_opaque;
   if(!count) return 1;
   if(count>GL_SCENE_MAX_QUADS) return 0;
-  program=gml_gpu_opengl_scene_draw_program(backend,filter,NULL,0);
+  int plain_native=(filter==79u || filter==80u || filter==82u) &&
+    !source_alpha_key && (!palette || !palette->enabled);
+  if(plain_native) for(uint32_t quad=0;quad<count;quad++){
+    const float *vertex=scene->vertices+(size_t)quad*6u*GL_SCENE_VERTEX_FLOATS;
+    if(vertex[18]!=0.0f){plain_native=0;break;}
+  }
+  program=gml_gpu_opengl_scene_draw_program(backend,filter,plain_native,NULL,0);
   if(!program) return 0;
   backend->gl.BindFramebuffer(GL_FRAMEBUFFER,target->framebuffer);
   backend->gl.Viewport(0,0,(GLsizei)target->width,(GLsizei)target->height);
@@ -3320,7 +3326,7 @@ GmlRenderExecutionResult gml_gpu_opengl_scene_submit(GmlGpuBackend *backend,
         break;
       }
       GLint origin[2]={left,bottom};
-      GlSceneProgram *program=gml_gpu_opengl_scene_draw_program(backend,pending_filter,
+      GlSceneProgram *program=gml_gpu_opengl_scene_draw_program(backend,pending_filter,0,
                                                                error,error_capacity);
       if(!program) break;
       backend->gl.UseProgram(program->program);

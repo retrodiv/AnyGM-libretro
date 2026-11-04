@@ -309,8 +309,12 @@
   "  return vec4(vec3(u_source_palette_colour[(upper?5:0)+band])/255.0,value.a);\n" \
   "}\n" \
   "vec4 source_colour(vec4 value){\n" \
+  "#ifdef GML_SCENE_PLAIN_NATIVE\n" \
+  "  return value;\n" \
+  "#else\n" \
   "  // Positioned inputs map after their hardware sample or rounded area mean.\n" \
   "  return u_filter>=159 && u_filter<=170?value:source_palette_colour(value);\n" \
+  "#endif\n" \
   "}\n" \
   "vec4 source_texel(ivec2 point,int lod){return source_colour(texelFetch(u_image,point,lod));}\n" \
   "vec4 source_texture(vec2 uv){return source_colour(texture(u_image,uv));}\n" \
@@ -802,7 +806,11 @@
   "    vec2 extent=vec2(textureSize(u_image,0));\n" \
   "    vec2 uv=clamp(v_texcoord,(v_clamp.xy+vec2(0.5))/extent,\n" \
   "                            (v_clamp.zw+vec2(0.5))/extent);\n" \
+  "#ifdef GML_SCENE_PLAIN_NATIVE\n" \
+  "    int margin=0;\n" \
+  "#else\n" \
   "    int margin=int(floor(v_margin+0.5));\n" \
+  "#endif\n" \
   "    bool unit_texel=margin==16;\n" \
   "    vec4 sampled=unit_texel?source_texel(ivec2(floor(uv*extent)),0):\n" \
   "      margin!=0?hardware_physical_sprite_sample(v_texcoord,\n" \

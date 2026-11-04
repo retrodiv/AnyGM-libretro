@@ -1723,6 +1723,8 @@ static int scene_hardware_filtered_batch_case(unsigned kind){
         REQUIRE(fragment && strstr(fragment,"#define GML_SCENE_CONSTANT_FILTER 82") &&
           anygm_test_graphics_scene_sampler()==82,
           "complete filtered glyphs use continuous colour and their own coverage kernel");
+        REQUIRE(strstr(fragment,"#define GML_SCENE_PLAIN_NATIVE 1"),
+          "unmapped margin-free glyphs compile without absent source effects");
         result=device.submit(device.context,&batch);
         REQUIRE(result.status==GML_RENDER_EXEC_ACCEPTED &&
           anygm_test_graphics_compile_calls()==compiles,
