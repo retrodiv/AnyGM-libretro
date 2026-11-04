@@ -3932,6 +3932,67 @@ static int scene_integer_function_sprite_case(void){
   return 1;
 }
 
+static int scene_identity_underlay_case(void){
+  for(unsigned api=0;api<2u;api++) for(unsigned variant=0;variant<6u;variant++){
+    GmlGpuContext context=fake_context(api?GML_GPU_API_OPENGLES3:GML_GPU_API_OPENGL_CORE);
+    GmlRenderDeviceServices device={0};
+    GmlRenderImageRef source={GML_RENDER_RESOURCE_APPLICATION,61u,1u,1u};
+    GmlRenderDrawOp clear={0},op={0};GmlRenderDrawStateSnapshot state={0};
+    anygm_test_graphics_reset();
+    if(variant==3u)anygm_test_graphics_withhold("glBlitFramebuffer");
+    GmlGpu *gpu=gml_gpu_create();
+    REQUIRE(gpu && gml_gpu_context_reset(gpu,&context),"identity underlay context created");
+    gml_gpu_device_services(gpu,&device);
+    clear.opcode=GML_RENDER_OP_CLEAR;
+    clear.target=(GmlRenderTargetRef){source,1u,4u,3u,GML_RENDER_PIXEL_ARGB8888,{0,0,4u,3u}};
+    /* Opaque certification is a composition policy, not permission to replace
+     * stored alpha. A raw identity copy must preserve partial and zero alpha. */
+    clear.payload.clear_colour=variant&1u?0x00123456u:0x51123456u;
+    GmlRenderDrawBatch batch={&clear,1u,NULL,0u};
+    REQUIRE(device.submit(device.context,&batch).status==GML_RENDER_EXEC_ACCEPTED,
+      "identity underlay source rendered");
+    clear.target=(GmlRenderTargetRef){{GML_RENDER_RESOURCE_SCREEN,62u,1u,1u},
+      1u,8u,6u,GML_RENDER_PIXEL_ARGB8888,{0,0,8u,6u}};
+    REQUIRE(device.submit(device.context,&batch).status==GML_RENDER_EXEC_ACCEPTED,
+      "identity underlay target rendered");
+    op.opcode=GML_RENDER_OP_TEXTURED_QUAD;op.target=clear.target;
+    op.target.image.content_version=2u;op.source_count=1u;op.sources=&source;
+    op.scene_family=GML_RENDER_SCENE_SURFACE;op.reconstruction_mode=GML_RENDER_REPLAY_EXACT;
+    GmlRenderQuad *q=&op.payload.quad;
+    q->shape=GML_RENDER_QUAD_AXIS_ALIGNED;
+    double x=variant==1u?-1.0:2.0,y=variant==1u?-1.0:1.0;
+    q->x[0]=q->x[3]=x;q->x[1]=q->x[2]=x+(variant==4u?5.0:4.0);
+    q->y[0]=q->y[1]=y;q->y[2]=q->y[3]=y+3.0;
+    q->u[1]=q->u[2]=q->v[2]=q->v[3]=1.0;
+    for(unsigned c=0;c<4u;c++)q->corner_colour[c]=0xFFFFFFFFu;
+    q->source_opaque=variant!=5u;
+    q->sampling=(GmlRenderSamplingPolicy){variant==2u?GML_RENDER_FILTER_NEAREST:GML_RENDER_FILTER_BOX,
+      GML_RENDER_EDGE_CLAMP_SUBIMAGE,{0,0,4u,3u},
+      variant==2u?GML_RENDER_QUANTISE_AUTOMATIC_SURFACE_MODERN:
+        GML_RENDER_QUANTISE_AUTOMATIC_SURFACE_FIRSTGEN,0u};
+    state.write_mask=15u;state.colour=0xFFFFFFFFu;state.alpha=255u;
+    state.rgb_source_factor=GML_RENDER_BLEND_SOURCE_ALPHA;
+    state.rgb_destination_factor=GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA;
+    state.alpha_source_factor=GML_RENDER_BLEND_ONE;
+    state.alpha_destination_factor=GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA;
+    state.rgb_equation=state.alpha_equation=GML_RENDER_BLEND_EXACT_AUTOMATIC_SURFACE;
+    state.sampler_count=1u;state.samplers[0]=q->sampling;
+    batch=(GmlRenderDrawBatch){&op,1u,&state,1u};
+    unsigned copies=anygm_test_graphics_scene_copies();
+    int draws=anygm_test_graphics_scene_draw_calls();
+    GmlRenderExecutionResult result=device.submit(device.context,&batch);
+    REQUIRE(result.status==GML_RENDER_EXEC_ACCEPTED && result.accepted_prefix==1u &&
+      !anygm_test_graphics_read_pixels(),"identity underlay remains resident");
+    REQUIRE(anygm_test_graphics_scene_copies()==copies+1u &&
+      anygm_test_graphics_scene_draw_calls()==draws+(variant>=3u),
+      "certified identity uses one copy; scaled, blended or unavailable blit keeps shader");
+    if(variant<3u)REQUIRE(anygm_test_graphics_scene_copied_pixels()==
+      (variant==1u?6u:12u),"identity copy uses the clipped placement extent");
+    gml_gpu_destroy(gpu,1);
+  }
+  return 1;
+}
+
 static int scene_raw_copy_case(void){
   const uint32_t classes[]={GML_RENDER_RESOURCE_SCREEN,GML_RENDER_RESOURCE_APPLICATION,
     GML_RENDER_RESOURCE_SURFACE,GML_RENDER_RESOURCE_SCRATCH};
@@ -5911,6 +5972,7 @@ int main(int argc,char **argv){
     {"scene_positioned_samples",scene_positioned_samples_case},
     {"scene_source_alpha_key",scene_source_alpha_key_case},
     {"scene_raw_copy",scene_raw_copy_case},
+    {"scene_identity_underlay",scene_identity_underlay_case},
     {"scene_nearest_rows",scene_nearest_rows_case},
     {"scene_nearest_surface_fringe",scene_nearest_surface_fringe_case},
     {"scene_nearest_surface_function",scene_nearest_surface_function_case},

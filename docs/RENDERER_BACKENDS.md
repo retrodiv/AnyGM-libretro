@@ -42,6 +42,11 @@ differ and by how much, and they do not decide whether a GPU picture is
 acceptable. A skipped comparison confers no qualification and does not change
 its expected pixels or thresholds.
 
+Certified opaque-policy application-to-screen composition at identical source and placed
+extents uses the existing raw framebuffer copy when its source was drawn on the device.
+Clipping selects the corresponding source rectangle, and all stored RGBA channels are
+preserved. Scaled, blended and CPU-uploaded sources retain the composition shader.
+
 Automatic composition uses the same program-policy predicate as ordinary
 surface draws. An unknown selected program may keep its CPU passthrough
 owner only while a content-shader device is neither requested nor present;

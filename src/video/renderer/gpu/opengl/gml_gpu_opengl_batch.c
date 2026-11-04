@@ -2687,6 +2687,31 @@ static int draw_exact_quad(GmlGpuBackend *backend,const GmlRenderDrawOp *op,
   GLsizei width,height,stride=GL_SCENE_VERTEX_FLOATS*(GLsizei)sizeof(float);
   GLfloat extent[2]={(GLfloat)target->width,(GLfloat)target->height};
   int outcome,font_mode=0;
+  const GmlRenderQuad *q=&op->payload.quad;
+  /* The certified identity underlay returns the source RGBA unchanged, including
+   * stored partial alpha. Reuse raw image transport instead of snapshotting a
+   * predecessor that this branch never reads. Private preparation images have
+   * no registered resource identity and retain the ordinary shader path. */
+  if(qualified_blend(state)==7 && !effect && repetitions==1u &&
+     q->source_opaque && source->rendered_origin && state->write_mask==15u &&
+     source->ref.resource_class==GML_RENDER_RESOURCE_APPLICATION &&
+     target->ref.resource_class==GML_RENDER_RESOURCE_SCREEN &&
+     source->pixel_format==GML_RENDER_PIXEL_ARGB8888 &&
+     target->pixel_format==GML_RENDER_PIXEL_ARGB8888 &&
+     backend->gl.BlitFramebuffer &&
+     q->x[1]-q->x[0]==(double)source->width &&
+     q->y[2]-q->y[0]==(double)source->height &&
+     exact_rect(op,&left,&bottom,&width,&height,1)){
+    GLint top=(GLint)target->height-bottom-height;
+    GmlRenderDrawOp copy={0};
+    copy.opcode=GML_RENDER_OP_COPY_IMAGE;
+    copy.payload.copy.source=(GmlRenderRect){left-(GLint)q->x[0],top-(GLint)q->y[0],
+      (uint32_t)width,(uint32_t)height};
+    copy.payload.copy.destination=(GmlRenderRect){left,top,(uint32_t)width,(uint32_t)height};
+    if(!gml_render_gpu_opengl_copy_image(backend,&copy,target,source)) return -1;
+    target->valid=1;target->rendered_origin=1;
+    return 1;
+  }
   if(qualified_blend(state)==6)
     font_mode=op->payload.quad.sampling.quantisation==GML_RENDER_QUANTISE_FONT_MODERN?3:2;
   if(!exact_rect(op,&left,&bottom,&width,&height,
