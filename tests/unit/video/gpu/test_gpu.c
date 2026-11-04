@@ -5426,6 +5426,37 @@ static int execute_state_and_geometry_case(void){
   return 1;
 }
 
+static uintptr_t default_host_framebuffer(void *userdata){(void)userdata;return 0u;}
+
+static int full_host_clear_discard_case(void){
+  uint32_t source[4]={0xff010203u,0xff040506u,0xff070809u,0xff0a0b0cu};
+  for(unsigned variant=0;variant<9u;variant++){
+    anygm_test_graphics_reset();
+    if(variant==3u) anygm_test_graphics_withhold("glInvalidateFramebuffer");
+    if(variant>=7u) anygm_test_graphics_version(4u,variant==7u?3u:2u);
+    GmlGpu *gpu=gml_gpu_create();
+    GmlGpuContext context=fake_context((variant==4u || variant>=7u)?GML_GPU_API_OPENGL_CORE:GML_GPU_API_OPENGLES3);
+    if(variant==6u) context.get_current_framebuffer=default_host_framebuffer;
+    REQUIRE(gml_gpu_context_reset(gpu,&context),"optional discard never gates context adoption");
+    GmlRenderPlan plan;uint32_t output[64];
+    REQUIRE(build_canvas_plan(&plan,source,2u,2u,8u,8u,1,1,6u,6u),"full-clear host plan built");
+    if(variant==1u) plan.operations[0].destination.width=7u;
+    if(variant==2u){plan.target=GML_PLAN_TARGET_READBACK;plan.readback_pixels=output;
+      plan.readback_pitch_pixels=8u;}
+    if(variant==5u){plan.operations[0]=plan.operations[1];plan.operation_count=1u;}
+    REQUIRE(gml_gpu_execute_plan(gpu,&plan),"qualified and ordinary paths execute");
+    unsigned attachment=0,framebuffer=0,prior=0;
+    REQUIRE(anygm_test_graphics_invalidates(&attachment,&framebuffer,&prior)==(variant==0u || variant==6u || variant==7u),
+            "only a full first clear on a supported host target discards previous contents");
+    if(variant==0u) REQUIRE(attachment==GL_COLOR_ATTACHMENT0 && framebuffer!=0u && prior==0u,
+      "only the bound host colour attachment is discarded before its initial clear");
+    if(variant==6u) REQUIRE(attachment==GL_COLOR && framebuffer==0u && prior==0u,
+      "default framebuffer uses its colour attachment token before the clear");
+    gml_gpu_destroy(gpu,1);
+  }
+  return 1;
+}
+
 static int upload_and_reuse_case(void){
   enum { SOURCE_WIDTH=4,SOURCE_HEIGHT=3,TARGET=16 };
   uint32_t source[SOURCE_WIDTH*SOURCE_HEIGHT];
@@ -6099,6 +6130,7 @@ int main(int argc,char **argv){
     {"scene_preparation",scene_preparation_case},
     {"unbound_context_access",unbound_context_access_case},
     {"completed_frame_snapshot",completed_frame_snapshot_case},
+    {"full_host_clear_discard",full_host_clear_discard_case},
     {"integer_presentation_shift",integer_presentation_shift_case},
     {"destroy_without_context",lifecycle_destroy_without_context_case},
     {"missing_entry_point",missing_entry_point_case},

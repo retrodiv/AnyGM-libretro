@@ -310,6 +310,7 @@ void gml_gpu_opengl_scene_reset(GmlGpuBackend *backend,const GmlGpuContext *cont
 } while(0)
   GL_SCENE_LOAD(GetIntegerv,"glGetIntegerv");
   GL_SCENE_LOAD(CopyTexSubImage2D,"glCopyTexSubImage2D");
+  GL_SCENE_LOAD(InvalidateFramebuffer,"glInvalidateFramebuffer");
   GL_SCENE_LOAD(BlitFramebuffer,"glBlitFramebuffer");
   GL_SCENE_LOAD(BlendFuncSeparate,"glBlendFuncSeparate");
   GL_SCENE_LOAD(BlendEquationSeparate,"glBlendEquationSeparate");
@@ -332,6 +333,13 @@ void gml_gpu_opengl_scene_reset(GmlGpuBackend *backend,const GmlGpuContext *cont
     backend->gl.GetIntegerv(GL_MAJOR_VERSION,&major);
     backend->gl.GetIntegerv(GL_MINOR_VERSION,&minor);
     scene->supports_sample_mask=major>3 || (major==3 && minor>=1);
+  }
+  /* ES 3 has attachment invalidation. Desktop 3.3 need not expose its later core API. */
+  if(backend->api==GML_GPU_API_OPENGL_CORE){
+    GLint major=0,minor=0;
+    backend->gl.GetIntegerv(GL_MAJOR_VERSION,&major);
+    backend->gl.GetIntegerv(GL_MINOR_VERSION,&minor);
+    if(major<4 || (major==4 && minor<3)) backend->gl.InvalidateFramebuffer=NULL;
   }
   scene->available=scene->max_texture_size>0;
 }

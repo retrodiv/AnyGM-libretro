@@ -65,6 +65,8 @@ typedef struct FakeDriver {
   GLint viewport[4];
   GLint scissor[4];
   GLint clear_calls;
+  unsigned invalidates, invalidate_attachment, invalidate_framebuffer, invalidate_prior_clears;
+  unsigned version_major,version_minor;
   GLfloat clear_colour[4];
   GLint draw_calls;
   GLint scene_draw_calls;
@@ -194,7 +196,9 @@ static const GLubyte *fake_GetString(GLenum name){
 static void fake_GetIntegerv(GLenum name,GLint *value){
   note_call();
   if(value) *value=name==GL_MAX_TEXTURE_SIZE?4096:
-                   name==GL_MAX_TEXTURE_IMAGE_UNITS?g_fake.texture_unit_limit:0;
+                   name==GL_MAX_TEXTURE_IMAGE_UNITS?g_fake.texture_unit_limit:
+                   name==GL_MAJOR_VERSION?(GLint)g_fake.version_major:
+                   name==GL_MINOR_VERSION?(GLint)g_fake.version_minor:0;
 }
 static void fake_Flush(void){ note_call(); g_fake.flush_calls++; }
 static void fake_Finish(void){ note_call();g_fake.finish_calls++; }
@@ -260,6 +264,13 @@ static void fake_ClearColor(GLfloat r,GLfloat g,GLfloat b,GLfloat a){
   note_call();
   g_fake.clear_colour[0]=r; g_fake.clear_colour[1]=g;
   g_fake.clear_colour[2]=b; g_fake.clear_colour[3]=a;
+}
+static void fake_InvalidateFramebuffer(GLenum target,GLsizei count,const GLenum *attachments){
+  note_call();
+  if(target!=GL_FRAMEBUFFER || count!=1 || !attachments){g_fake.pending_error=0x0502u;return;}
+  g_fake.invalidates++;g_fake.invalidate_attachment=attachments[0];
+  g_fake.invalidate_framebuffer=g_fake.framebuffer;
+  g_fake.invalidate_prior_clears=(unsigned)g_fake.clear_calls;
 }
 static void fake_Clear(GLbitfield mask){ (void)mask; note_call(); g_fake.clear_calls++; }
 static void fake_ColorMask(GLboolean r,GLboolean g,GLboolean b,GLboolean a){
@@ -860,6 +871,7 @@ void (*anygm_test_graphics_proc(void *userdata,const char *name))(void){
     {"glScissor",(void*)fake_Scissor},
     {"glClearColor",(void*)fake_ClearColor},
     {"glClear",(void*)fake_Clear},
+    {"glInvalidateFramebuffer",(void*)fake_InvalidateFramebuffer},
     {"glColorMask",(void*)fake_ColorMask},
     {"glDepthMask",(void*)fake_DepthMask},
     {"glBindFramebuffer",(void*)fake_BindFramebuffer},
@@ -1107,4 +1119,15 @@ const unsigned char *anygm_test_graphics_texture_bytes(unsigned name,size_t *cou
   if(name>=FAKE_MAX_TEXTURES){ if(count) *count=0; return NULL; }
   if(count) *count=g_fake.textures[name].byte_count;
   return g_fake.textures[name].bytes;
+}
+
+unsigned anygm_test_graphics_invalidates(unsigned *attachment,unsigned *framebuffer,unsigned *prior_clears){
+  if(attachment) *attachment=g_fake.invalidate_attachment;
+  if(framebuffer) *framebuffer=g_fake.invalidate_framebuffer;
+  if(prior_clears) *prior_clears=g_fake.invalidate_prior_clears;
+  return g_fake.invalidates;
+}
+
+void anygm_test_graphics_version(unsigned major,unsigned minor){
+  g_fake.version_major=major;g_fake.version_minor=minor;
 }

@@ -50,6 +50,7 @@ typedef void GLvoid;
 #define GL_FRAMEBUFFER_SRGB 0x8DB9
 #define GL_MULTISAMPLE 0x809D
 #define GL_COLOR_BUFFER_BIT 0x00004000
+#define GL_COLOR 0x1800
 #define GL_TEXTURE_2D 0x0DE1
 #define GL_TEXTURE0 0x84C0
 #define GL_TEXTURE1 0x84C1
@@ -167,6 +168,7 @@ typedef struct GmlGlApi {
   void     (*Scissor)(GLint x,GLint y,GLsizei width,GLsizei height);
   void     (*ClearColor)(GLfloat red,GLfloat green,GLfloat blue,GLfloat alpha);
   void     (*Clear)(GLbitfield mask);
+  void     (*InvalidateFramebuffer)(GLenum target,GLsizei count,const GLenum *attachments);
   void     (*ColorMask)(GLboolean red,GLboolean green,GLboolean blue,GLboolean alpha);
   void     (*DepthMask)(GLboolean flag);
   void     (*BindFramebuffer)(GLenum target,GLuint framebuffer);

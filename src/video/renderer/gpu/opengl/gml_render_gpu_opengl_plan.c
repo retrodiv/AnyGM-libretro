@@ -56,6 +56,18 @@ int gml_gpu_opengl_execute(GmlGpuBackend *backend,const GmlGpuContext *context,
     /* Handle zero is a valid target: some frontends hand over the default framebuffer. */
     backend->gl.BindFramebuffer(GL_FRAMEBUFFER,(GLuint)framebuffer);
   }
+  /* A full initial clear overwrites every published pixel. Discard the obsolete attachment
+   * before it, so tiled devices need not load a larger frontend allocation's previous frame.
+   * This does not discard the completed-frame texture or change announced geometry. */
+  if(plan->target==GML_PLAN_TARGET_HOST_FRAMEBUFFER && backend->gl.InvalidateFramebuffer &&
+     plan->operation_count && plan->operations[0].opcode==GML_PLAN_OP_CLEAR_XRGB){
+    const GmlPlanRect *rect=&plan->operations[0].destination;
+    if(rect->x==0 && rect->y==0 && rect->width==plan->target_width &&
+       rect->height==plan->target_height){
+      GLenum attachment=framebuffer?GL_COLOR_ATTACHMENT0:GL_COLOR;
+      backend->gl.InvalidateFramebuffer(GL_FRAMEBUFFER,1,&attachment);
+    }
+  }
   begin_plan_state(backend,plan->target_height);
 
   for(uint32_t index=0;index<plan->operation_count;index++){
