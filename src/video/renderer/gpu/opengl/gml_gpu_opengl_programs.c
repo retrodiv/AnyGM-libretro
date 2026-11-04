@@ -117,7 +117,8 @@ static int build_scene_program(GmlGpuBackend *backend,GlSceneProgram *scene,
                                mode==1?"#define GML_SCENE_FILTERED_ONLY 1\n":
                                mode==2?"#define GML_SCENE_CONSTANT_FILTER 0\n":
                                mode==3?"#define GML_SCENE_CONSTANT_FILTER 14\n":
-                               mode==4?"#define GML_SCENE_STRETCHED_FILTER 1\n":"",
+                               mode==4?"#define GML_SCENE_STRETCHED_FILTER 1\n":
+                               mode==5?"#define GML_SCENE_PHYSICAL_FILTER 1\n":"",
                                GML_GPU_OPENGL_SCENE_FRAGMENT_BODY);
   if(vertex_length<0 || (size_t)vertex_length>=sizeof vertex_source ||
      fragment_length<0 || (size_t)fragment_length>=sizeof fragment_source){
@@ -168,7 +169,7 @@ static int build_scene_program(GmlGpuBackend *backend,GlSceneProgram *scene,
   scene->u_extent=backend->gl.GetUniformLocation(scene->program,"u_extent");
   scene->u_image=backend->gl.GetUniformLocation(scene->program,"u_image");
   scene->u_filter=backend->gl.GetUniformLocation(scene->program,
-    mode==4?"u_selected_filter":"u_filter");
+    mode>=4?"u_selected_filter":"u_filter");
   scene->u_additive_bytes=backend->gl.GetUniformLocation(scene->program,"u_additive_bytes");
   scene->u_alpha_test=backend->gl.GetUniformLocation(scene->program,"u_alpha_test");
   scene->u_source_alpha_key=backend->gl.GetUniformLocation(scene->program,"u_source_alpha_key");
@@ -204,7 +205,7 @@ static int build_scene_program(GmlGpuBackend *backend,GlSceneProgram *scene,
      (mode && (scene->a_position01<0 || scene->a_position23<0 ||
        scene->a_colour[0]<0 || scene->a_colour[1]<0 || scene->a_colour[2]<0 ||
        scene->a_colour[3]<0 || scene->u_extent<0 || scene->u_image<0 ||
-       ((mode==1 || mode==4) && scene->u_filter<0)))){
+       ((mode==1 || mode>=4) && scene->u_filter<0)))){
     gml_gpu_opengl_record_error(error,error_capacity,"scene program is missing an attribute or uniform");
     backend->gl.DeleteProgram(scene->program);
     scene->program=0;
@@ -225,6 +226,8 @@ GlSceneProgram *gml_gpu_opengl_scene_draw_program(GmlGpuBackend *backend,uint32_
   if(filter==0u || filter==14u || filter==77u || filter==78u){
     unsigned index=filter==0u?0u:filter==14u?1u:2u;
     program=&scene->compact_programs[index];mode=(int)index+2;
+  }else if(filter==65u || filter==66u || filter==72u){
+    program=&scene->compact_programs[3];mode=5;
   }else if(filter==21u || filter==22u || filter==25u || filter==26u ||
      (filter>=65u && filter<=74u) || (filter>=79u && filter<=82u) ||
      (filter>=112u && filter<=115u) || (filter>=137u && filter<=158u)){
