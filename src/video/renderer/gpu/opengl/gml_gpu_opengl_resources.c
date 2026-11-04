@@ -630,6 +630,7 @@ int gml_gpu_opengl_scene_upload(GmlGpuBackend *backend,const GmlRenderImageUploa
       transfer->region.width!=transfer->storage_width ||
       transfer->region.height!=transfer->storage_height)) return 0;
   slot->content_source_version=0;
+  slot->alpha_opaque=0;
   first=!slot->texture;
   resize=slot->width!=transfer->storage_width || slot->height!=transfer->storage_height;
   if((first || resize || !scene_same_version(slot->ref,transfer->image)) &&
@@ -675,6 +676,7 @@ int gml_gpu_opengl_scene_upload(GmlGpuBackend *backend,const GmlRenderImageUploa
     backend->gl.PixelStorei(GL_UNPACK_ALIGNMENT,4);
     backend->gl.BindTexture(GL_TEXTURE_2D,0);
     slot->valid=0;
+    slot->alpha_opaque=0;
     return 0;
   }
   backend->gl.TexSubImage2D(GL_TEXTURE_2D,0,transfer->region.x,
@@ -726,17 +728,18 @@ GlSceneImage *gml_gpu_opengl_scene_target(GmlGpuBackend *backend,const GmlRender
     backend->gl.TexParameteri(GL_TEXTURE_2D,GL_TEXTURE_WRAP_S,GL_CLAMP_TO_EDGE);
     backend->gl.TexParameteri(GL_TEXTURE_2D,GL_TEXTURE_WRAP_T,GL_CLAMP_TO_EDGE);
     slot->valid=0;
+    slot->alpha_opaque=0;
   }
   backend->gl.BindTexture(GL_TEXTURE_2D,0);
   if(!slot->framebuffer){
     backend->gl.GenFramebuffers(1,&slot->framebuffer);
-    if(!slot->framebuffer){ slot->valid=0; return NULL; }
+    if(!slot->framebuffer){ slot->valid=0; slot->alpha_opaque=0; return NULL; }
   }
   backend->gl.BindFramebuffer(GL_FRAMEBUFFER,slot->framebuffer);
   backend->gl.FramebufferTexture2D(GL_FRAMEBUFFER,GL_COLOR_ATTACHMENT0,GL_TEXTURE_2D,
                                    slot->texture,0);
   if(backend->gl.CheckFramebufferStatus(GL_FRAMEBUFFER)!=GL_FRAMEBUFFER_COMPLETE ||
-     backend->gl.GetError()!=GL_NO_ERROR){ slot->valid=0; return NULL; }
+     backend->gl.GetError()!=GL_NO_ERROR){ slot->valid=0; slot->alpha_opaque=0; return NULL; }
   slot->ref=target->image;
   slot->context_epoch=scene->context_epoch;
   slot->width=target->width;
@@ -1027,6 +1030,7 @@ void gml_gpu_opengl_scene_retire(GmlGpuBackend *backend,GmlRenderImageRef image)
        * A context loss instead forgets the names, as they belong to the lost context. */
       candidate->retired=1;
       candidate->valid=0;
+      candidate->alpha_opaque=0;
       return;
     }
   }

@@ -16,7 +16,12 @@ static int fill_region(GmlGpuBackend *backend,GlSceneImage *target,
                          (GLfloat)((colour>>8)&255u)/255.0f,
                          (GLfloat)(colour&255u)/255.0f,alpha);
   backend->gl.Clear(GL_COLOR_BUFFER_BIT);
-  return backend->gl.GetError()==GL_NO_ERROR;
+  int ok=backend->gl.GetError()==GL_NO_ERROR;
+  target->alpha_opaque=ok && alpha==1.0f &&
+    ((target->valid && target->alpha_opaque) ||
+     (region->x==0 && region->y==0 && region->width==target->width &&
+      region->height==target->height));
+  return ok;
 }
 
 int gml_render_gpu_opengl_clear(GmlGpuBackend *backend,const GmlRenderDrawOp *op,

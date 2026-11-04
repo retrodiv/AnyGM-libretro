@@ -102,6 +102,7 @@ typedef struct GlSceneImage {
   uint32_t width,height,pixel_format;
   uint64_t last_used,context_epoch;
   int valid,target,rendered_origin,retired;
+  int alpha_opaque; /* derived proof that every stored alpha byte is 255 */
 } GlSceneImage;
 
 typedef struct GlSceneCheckpoint {

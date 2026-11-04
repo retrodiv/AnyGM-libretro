@@ -2179,6 +2179,11 @@ int gml_render_gpu_opengl_copy_image(GmlGpuBackend *backend,const GmlRenderDrawO
   const GmlRenderCopyRegion *copy=&op->payload.copy;
   uint32_t sp=copy->source_pitch?copy->source_pitch:source->width;
   uint32_t dp=copy->destination_pitch?copy->destination_pitch:target->width;
+  int opaque=source->valid && source->alpha_opaque &&
+    ((target->valid && target->alpha_opaque) ||
+     (dp==target->width && !copy->destination.x && !copy->destination.y &&
+      copy->destination.width==target->width && copy->destination.height==target->height));
+  target->alpha_opaque=0;
   GmlRenderTargetRef source_target={source->ref,1u,source->width,source->height,
     source->pixel_format,{0,0,source->width,source->height}};
   if(!gml_gpu_opengl_scene_target(backend,&source_target)) return 0;
@@ -2219,7 +2224,9 @@ int gml_render_gpu_opengl_copy_image(GmlGpuBackend *backend,const GmlRenderDrawO
       from+=count;to+=count;remaining-=count;
     }
   }
-  return backend->gl.GetError()==GL_NO_ERROR;
+  int ok=backend->gl.GetError()==GL_NO_ERROR;
+  target->alpha_opaque=ok && opaque;
+  return ok;
 }
 
 static void compact_quad_instances(GlScene *scene,uint32_t count){
@@ -2350,6 +2357,7 @@ static int flush_quads(GmlGpuBackend *backend,GlSceneImage *target,GlSceneImage 
   size_t bytes=(size_t)count*GL_SCENE_INSTANCE_FLOATS*sizeof(float),offset;
   GLint attributes[13];
   int upload_ok=1;
+  int opaque=target->valid && target->alpha_opaque;
   if(!count) return 1;
   if(count>GL_SCENE_MAX_QUADS) return 0;
   program=gml_gpu_opengl_scene_draw_program(backend,filter,NULL,0);
@@ -2435,6 +2443,8 @@ static int flush_quads(GmlGpuBackend *backend,GlSceneImage *target,GlSceneImage 
                   filter==86u || filter==93u || filter==110u || filter==112u ||
                   filter==138u || filter==141u || filter==143u || filter==148u || filter==152u ||
                   filter==156u || filter==158u || filter==161u || filter==162u || filter==168u;
+  int skip_alpha=opaque && (filter==21u || filter==66u || filter==80u);
+  target->alpha_opaque=0;
   backend->gl.ColorMask((write_mask&1u)!=0u,(write_mask&2u)!=0u,(write_mask&4u)!=0u,
                         (!stamp_alpha || filter==110u) && (write_mask&8u)!=0u);
   backend->gl.UseProgram(program->program);
@@ -2485,7 +2495,7 @@ static int flush_quads(GmlGpuBackend *backend,GlSceneImage *target,GlSceneImage 
     backend->gl.VertexAttribDivisor((GLuint)attributes[index],1u);
   }
   backend->gl.DrawArraysInstanced(GL_TRIANGLES,0,6,(GLsizei)count);
-  if(stamp_alpha && (write_mask&8u) && filter!=66u && filter!=21u && filter!=80u){
+  if(stamp_alpha && !skip_alpha && (write_mask&8u) && filter!=66u && filter!=21u && filter!=80u){
     /* The CPU screen writer keeps alpha opaque at every covered texel,
      * even when its prior alpha is unknown. Reuse the sampled vertices and
      * the same sampler and cutout in an alpha-only pass, preserving that recipe's coverage. */
@@ -2517,9 +2527,11 @@ restore_stream_state:
   }
   target->valid=1;
   target->rendered_origin=1;
+  target->alpha_opaque=opaque && filter!=110u &&
+    (!(write_mask&8u) || stamp_alpha || (blend==1 && filter!=15u && filter!=17u));
   /* Constant RGB programs cannot change selector for the separate alpha stamp.
    * Submit that existing kernel through the same stream with complete state. */
-  if((filter==66u || filter==21u || filter==80u) && (write_mask&8u))
+  if(!skip_alpha && (filter==66u || filter==21u || filter==80u) && (write_mask&8u))
     return flush_quads(backend,target,source,filter==21u?22u:filter==80u?82u:72u,0,count,8u,alpha_test,
                        source_alpha_key,palette);
   return 1;
@@ -2733,6 +2745,7 @@ static int draw_exact_quad(GmlGpuBackend *backend,const GmlRenderDrawOp *op,
   }
   if(qualified_blend(state)==6)
     font_mode=op->payload.quad.sampling.quantisation==GML_RENDER_QUANTISE_FONT_MODERN?3:2;
+  target->alpha_opaque=0;
   if(!exact_rect(op,&left,&bottom,&width,&height,
                  qualified_blend(state)==4 || qualified_blend(state)==6 ||
                  qualified_blend(state)==7 || qualified_blend(state)==11) ||
@@ -2961,6 +2974,7 @@ static void mark_uncertain(GmlRenderExecutionResult *result,GlSceneImage *target
   result->status=GML_RENDER_EXEC_RECOVERABLE_ERROR;
   if(target){
     target->valid=0;
+    target->alpha_opaque=0;
     result->uncertain_targets[0]=target->ref;
     result->uncertain_target_count=1;
   } else result->all_destinations_uncertain=1;
@@ -3211,6 +3225,7 @@ GmlRenderExecutionResult gml_gpu_opengl_scene_submit(GmlGpuBackend *backend,
       continue;
     }
     if(op->opcode==GML_RENDER_OP_CONTENT_SHADER_DRAW){
+      target->alpha_opaque=0;
       GlSceneImage *source=gml_gpu_opengl_scene_image(backend,op->sources[0]);
       GlSceneImage *samplers[GML_PLAN_MAX_SAMPLERS]={0};
       for(uint32_t bound=0;bound<op->payload.shader->sampler_count;bound++)

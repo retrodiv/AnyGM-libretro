@@ -3947,6 +3947,93 @@ static int scene_integer_function_sprite_case(void){
   return 1;
 }
 
+static int scene_opaque_native_alpha_case(void){
+  const uint32_t pixels[4]={0x80112233u,0x00445566u,0xFF778899u,0x4099AA11u};
+  for(unsigned api=0;api<2u;api++)for(unsigned variant=0;variant<7u;variant++){
+    GmlGpuContext context=fake_context(api?GML_GPU_API_OPENGLES3:GML_GPU_API_OPENGL_CORE);
+    GmlRenderDeviceServices device={0};
+    GmlRenderImageRef atlas={GML_RENDER_RESOURCE_ATLAS,71u,1u,1u};
+    GmlRenderImageRef other={GML_RENDER_RESOURCE_SURFACE,72u,1u,1u};
+    GmlRenderImageUpload upload={.image=atlas,.storage_width=2u,.storage_height=2u,
+      .region={0,0,2u,2u},.pixel_format=GML_RENDER_PIXEL_RGBA8888,
+      .stride_bytes=8u,.byte_capacity=sizeof pixels,.bytes=pixels};
+    GmlRenderDrawOp op={0};GmlRenderDrawStateSnapshot state={0};
+    GmlRenderDrawBatch batch={&op,1u,&state,1u};
+    anygm_test_graphics_reset();GmlGpu *gpu=gml_gpu_create();
+    REQUIRE(gpu && gml_gpu_context_reset(gpu,&context),"opaque alpha context created");
+    gml_gpu_device_services(gpu,&device);
+    REQUIRE(device.upload(device.context,&upload),"partial-alpha glyph source uploaded");
+    op.opcode=GML_RENDER_OP_CLEAR;
+    op.target=(GmlRenderTargetRef){{GML_RENDER_RESOURCE_SCREEN,73u,1u,1u},
+      1u,2u,2u,GML_RENDER_PIXEL_ARGB8888,{0,0,2u,2u}};
+    op.payload.clear_colour=variant==1u || variant>=5u?0x40123456u:0xFF123456u;
+    REQUIRE(device.submit(device.context,&batch).status==GML_RENDER_EXEC_ACCEPTED,
+      "initial destination alpha established by a full clear");
+    if(variant==2u){
+      op.target.region.width=1u;op.payload.clear_colour=0;
+      REQUIRE(device.submit(device.context,&batch).status==GML_RENDER_EXEC_ACCEPTED,
+        "partial transparent clear invalidates whole-image opacity");
+      op.target.region.width=2u;
+    }
+    if(variant==3u){
+      GmlRenderImageUpload update=upload;update.image=op.target.image;
+      update.pixel_format=GML_RENDER_PIXEL_ARGB8888;
+      REQUIRE(device.upload(device.context,&update),"CPU replacement invalidates opacity");
+    }
+    if(variant>=4u){
+      GmlRenderImageUpload update=upload;update.image=other;
+      update.pixel_format=GML_RENDER_PIXEL_ARGB8888;
+      REQUIRE(device.upload(device.context,&update),"raw copy source uploaded");
+      if(variant>=5u){
+        GmlRenderDrawOp clear=op;clear.target.image=other;
+        clear.payload.clear_colour=0xFF123456u;
+        GmlRenderDrawBatch clear_batch={&clear,1u,NULL,0u};
+        REQUIRE(device.submit(device.context,&clear_batch).status==GML_RENDER_EXEC_ACCEPTED,
+          "independent source opacity established");
+      }
+      GmlRenderDrawOp copy=op;copy.opcode=GML_RENDER_OP_COPY_IMAGE;
+      copy.scene_family=GML_RENDER_SCENE_SURFACE;copy.reconstruction_mode=GML_RENDER_DEVICE_CHECKPOINT;
+      copy.sources=&other;copy.source_count=1u;
+      unsigned width=variant==6u?1u:2u;
+      copy.payload.copy=(GmlRenderCopyRegion){{0,0,width,2u},{0,0,width,2u},0u,0u,0u};
+      GmlRenderDrawBatch copy_batch={&copy,1u,&state,1u};
+      REQUIRE(device.submit(device.context,&copy_batch).status==GML_RENDER_EXEC_ACCEPTED,
+        "raw image copy retains only proven complete destination opacity");
+    }
+    op.opcode=GML_RENDER_OP_TEXTURED_QUAD;op.scene_family=GML_RENDER_SCENE_TEXT;
+    op.reconstruction_mode=GML_RENDER_DEVICE_CHECKPOINT;op.sources=&atlas;op.source_count=1u;
+    GmlRenderQuad *q=&op.payload.quad;memset(q,0,sizeof *q);
+    q->shape=GML_RENDER_QUAD_AXIS_ALIGNED;
+    q->sampling=(GmlRenderSamplingPolicy){GML_RENDER_FILTER_HARDWARE_BILINEAR,
+      GML_RENDER_EDGE_CLAMP_SUBIMAGE,{0,0,2u,2u},GML_RENDER_QUANTISE_HARDWARE_SPRITE_FIRSTGEN,0u};
+    q->x[1]=q->x[2]=q->y[2]=q->y[3]=2.0;
+    q->u[1]=q->u[2]=q->v[2]=q->v[3]=1.0;
+    q->inverse_x[0]=q->inverse_y[1]=1.0;q->filtered_draw_alpha=.5;
+    for(unsigned c=0;c<4u;c++)q->corner_colour[c]=0x803470D0u;
+    state.write_mask=15u;state.colour=0xFFFFFFFFu;state.alpha=255u;
+    state.coverage_policy=GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA;
+    state.rgb_source_factor=GML_RENDER_BLEND_SOURCE_ALPHA;
+    state.rgb_destination_factor=GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA;
+    state.alpha_source_factor=GML_RENDER_BLEND_ONE;
+    state.alpha_destination_factor=GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA;
+    state.rgb_equation=state.alpha_equation=GML_RENDER_BLEND_ADD;
+    state.sampler_count=1u;state.samplers[0]=q->sampling;
+    unsigned expected=variant==0u || variant==5u?1u:2u;
+    if(variant==0u)
+      anygm_test_graphics_fail_compile_containing("#define GML_SCENE_CONSTANT_FILTER 82");
+    for(unsigned repeat=0;repeat<2u;repeat++){
+      int before=anygm_test_graphics_scene_draw_calls();
+      REQUIRE(device.submit(device.context,&batch).status==GML_RENDER_EXEC_ACCEPTED &&
+        anygm_test_graphics_scene_draw_calls()==before+(int)expected &&
+        !anygm_test_graphics_read_pixels(),
+        "only a completely opaque destination skips native alpha work across submissions");
+      op.target.image.content_version++;
+    }
+    gml_gpu_destroy(gpu,1);
+  }
+  return 1;
+}
+
 static int scene_native_stretched_cell_case(void){
   const uint32_t pixels[12]={0xFF112233u,0x80445566u,0x00778899u};
   for(unsigned api=0;api<2u;api++)for(unsigned trim=0;trim<2u;trim++)
@@ -4885,6 +4972,8 @@ static int scene_alpha_composition_api(GmlGpuApi api,const char *renderer,int fo
     argb_upload.image=argb_source;
     REQUIRE(service.upload(service.context,&argb_upload),"unqualified ARGB screen veil uploaded");
     memcpy(veil_ops,operations,sizeof veil_ops);
+    /* This coverage control needs a genuinely nonopaque predecessor. */
+    veil_ops[0].payload.clear_colour&=0x7FFFFFFFu;
     veil_state.rgb_equation=veil_state.alpha_equation=GML_RENDER_BLEND_ADD;
     veil_state.coverage_policy=GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA;
     veil_state.samplers[0].filter=GML_RENDER_FILTER_HARDWARE_BILINEAR;
@@ -6052,6 +6141,7 @@ int main(int argc,char **argv){
     {"scene_raw_copy",scene_raw_copy_case},
     {"scene_identity_underlay",scene_identity_underlay_case},
     {"scene_native_stretched_cell",scene_native_stretched_cell_case},
+    {"scene_opaque_native_alpha",scene_opaque_native_alpha_case},
     {"scene_nearest_rows",scene_nearest_rows_case},
     {"scene_nearest_surface_fringe",scene_nearest_surface_fringe_case},
     {"scene_nearest_surface_function",scene_nearest_surface_function_case},
