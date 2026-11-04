@@ -281,6 +281,45 @@ static int legacy_dynamic_tiles(void){
   }
   return ok;
 }
+static int legacy_dynamic_tile_scale(void){
+  int ok=1;
+  for(int generation=0;generation<4;generation++) for(int cached=0;cached<2;cached++){
+    TileFixture f; setup(&f);
+    GmlWin win={.bytecode=generation?13+generation:16,
+                .classic_version=generation?0:800};
+    f.vm.win=&win; f.render.win=&win;
+    f.vm.tilemaps=NULL; f.vm.n_tilemaps=0;
+    f.layer.visible=1; f.layer.x=f.layer.y=0;
+    f.layer.script_begin=f.layer.script_end=-1;
+    for(int y=0;y<2;y++) for(int x=2;x<4;x++){
+      int at=(y*6+x)*4;
+      f.rgba[at]=255; f.rgba[at+1]=f.rgba[at+2]=0;
+    }
+    GmlVal args[]={vreal(0),vreal(2),vreal(0),vreal(2),vreal(2),
+                   vreal(3),vreal(5),vreal(17)};
+    GmlVal tile=gml_builtin_call(&f.vm,"tile_add",args,8);
+    GmlRtElem *element=gml_rt_elem_find(&f.vm,(int)tile.d);
+    GmlVal scale[]={tile,vreal(2),vreal(0.5)};
+    ok &= call(&f,"tile_set_scale",scale,3,cached);
+    if(!element || element->xs!=2 || element->ys!=0.5){
+      fprintf(stderr,"legacy generation %d cached %d did not apply tile scale\n",
+              generation,cached); ok=0;
+    }
+    gml_vm_draw(&f.vm); gml_render_flush_rotated_batch(&f.render);
+    for(int y=0;y<16;y++) for(int x=0;x<16;x++){
+      uint32_t want=x>=3 && x<7 && y==5?0xffff0000:0;
+      if(f.pixels[y*16+x]!=want){
+        fprintf(stderr,"scaled legacy tile pixel (%d,%d): %08x != %08x\n",
+                x,y,f.pixels[y*16+x],want); ok=0;
+      }
+    }
+    scale[0]=vreal(-1); scale[1]=scale[2]=vreal(9);
+    call(&f,"tile_set_scale",scale,3,cached);
+    ok &= element && element->xs==2 && element->ys==0.5;
+    f.vm.win=NULL; f.render.win=NULL; cleanup(&f);
+  }
+  return ok;
+}
 static int modern_dynamic_tile_resource(void){
   int ok=1;
   for(int revision=15;revision<=17;revision+=2){
@@ -336,6 +375,7 @@ int main(int argc,char **argv){
     {"prepared_layouts",prepared_layouts},{"scaled_map",scaled_map},
     {"bounded_empty_maps",bounded_empty_maps},{"rectangular_tile_extent",rectangular_tile_extent},
     {"legacy_dynamic_tiles",legacy_dynamic_tiles},
+    {"legacy_dynamic_tile_scale",legacy_dynamic_tile_scale},
     {"modern_dynamic_tile_resource",modern_dynamic_tile_resource}};
   const AnygmTestGroup group={"tile_draw",cases,sizeof cases/sizeof cases[0]};
   const char *filter=NULL;

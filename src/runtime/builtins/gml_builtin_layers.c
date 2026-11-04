@@ -348,6 +348,17 @@ GmlVal gml_builtin_try_layers(GmlVM *vm, const char *nm, GmlVal *a, int n){
     GmlRtElem *e=gml_rt_elem_find(vm,(int)N(a,n,0));
     return vreal(e && e->type==7);
   }
+  if(!strcmp(nm,"tile_set_scale")){
+    GmlRtElem *e=gml_rt_elem_find(vm,(int)N(a,n,0));
+    if(e && e->type==7){
+      e->xs=N(a,n,1); e->ys=N(a,n,2);
+      if(builtin_setting(vm,"GML_LOG_RTL"))
+        anygm_host_logf(vm->host,ANYGM_LOG_DEBUG,
+          "[rtl] f%ld tile_set_scale id=%d source=(%d,%d) extent=(%g,%g) scale=(%g,%g)\n",
+          vm->frame,e->id,e->w,e->h,e->w*e->xs,e->h*e->ys,e->xs,e->ys);
+    }
+    return vreal(0);
+  }
   /* ---- runtime layers and elements (Studio layer_* API) ----
    * Compatibility scripts for converted projects implement tile and background operations on top
    * of this model. Elements live in vm->rte, layers in
