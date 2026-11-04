@@ -99,21 +99,22 @@ int gml_gpu_opengl_build_program(GmlGpuBackend *backend,char *error,size_t error
   return 1;
 }
 
-int gml_gpu_opengl_scene_program(GmlGpuBackend *backend,char *error,size_t error_capacity){
-  GlScene *scene=&backend->scene;
+static int build_scene_program(GmlGpuBackend *backend,GlSceneProgram *scene,
+                               int filtered,char *error,size_t error_capacity){
   const char *prefix=backend->api==GML_GPU_API_OPENGLES3
     ?GML_GPU_OPENGL_PREFIX_ES:GML_GPU_OPENGL_PREFIX_DESKTOP;
   char vertex_source[sizeof(GML_GPU_OPENGL_PREFIX_ES)+
                      sizeof(GML_GPU_OPENGL_PREFIX_DESKTOP)+
                      sizeof(GML_GPU_OPENGL_SCENE_INSTANCED_VERTEX_BODY)];
   char fragment_source[sizeof(GML_GPU_OPENGL_PREFIX_ES)+
-                       sizeof(GML_GPU_OPENGL_PREFIX_DESKTOP)+sizeof(GML_GPU_OPENGL_SCENE_FRAGMENT_BODY)];
+                       sizeof(GML_GPU_OPENGL_PREFIX_DESKTOP)+sizeof(GML_GPU_OPENGL_SCENE_FRAGMENT_BODY)+64u];
   GLuint vertex,fragment;
   GLint status=GL_FALSE;
   if(scene->program) return 1;
   int vertex_length=snprintf(vertex_source,sizeof vertex_source,"%s%s",prefix,
                              GML_GPU_OPENGL_SCENE_INSTANCED_VERTEX_BODY);
-  int fragment_length=snprintf(fragment_source,sizeof fragment_source,"%s%s",prefix,
+  int fragment_length=snprintf(fragment_source,sizeof fragment_source,"%s%s%s",prefix,
+                               filtered?"#define GML_SCENE_FILTERED_ONLY 1\n":"",
                                GML_GPU_OPENGL_SCENE_FRAGMENT_BODY);
   if(vertex_length<0 || (size_t)vertex_length>=sizeof vertex_source ||
      fragment_length<0 || (size_t)fragment_length>=sizeof fragment_source){
@@ -181,8 +182,8 @@ int gml_gpu_opengl_scene_program(GmlGpuBackend *backend,char *error,size_t error
   scene->u_recovery_screen=backend->gl.GetUniformLocation(scene->program,"u_recovery_screen");
   scene->u_recovery_application=backend->gl.GetUniformLocation(scene->program,"u_recovery_application");
   scene->u_recovery_rect=backend->gl.GetUniformLocation(scene->program,"u_recovery_rect");
-  scene->rotated_alpha16_valid=0;
-  if(scene->a_position01<0 || scene->a_position23<0 ||
+  if(!filtered) backend->scene.rotated_alpha16_valid=0;
+  if((!filtered && (scene->a_position01<0 || scene->a_position23<0 ||
      scene->a_texcoord01<0 || scene->a_texcoord23<0 ||
      scene->a_colour[0]<0 || scene->a_colour[1]<0 ||
      scene->a_colour[2]<0 || scene->a_colour[3]<0 ||
@@ -195,13 +196,29 @@ int gml_gpu_opengl_scene_program(GmlGpuBackend *backend,char *error,size_t error
      scene->u_source_palette_colour<0 ||
      scene->u_previous<0 || scene->u_region_origin<0 || scene->u_rotated_alpha16<0 ||
      scene->u_point_map_x<0 || scene->u_point_map_y<0 || scene->u_point_origin<0 ||
-     scene->u_recovery_screen<0 || scene->u_recovery_application<0 || scene->u_recovery_rect<0){
+     scene->u_recovery_screen<0 || scene->u_recovery_application<0 || scene->u_recovery_rect<0)) ||
+     (filtered && (scene->a_position01<0 || scene->a_position23<0 ||
+       scene->a_texcoord01<0 || scene->a_texcoord23<0 ||
+       scene->a_colour[0]<0 || scene->a_colour[1]<0 || scene->a_colour[2]<0 ||
+       scene->a_colour[3]<0 || scene->a_clamp<0 || scene->a_step_margin_active<0 ||
+       scene->u_extent<0 || scene->u_image<0 || scene->u_filter<0 ||
+       scene->u_alpha_test<0))){
     gml_gpu_opengl_record_error(error,error_capacity,"scene program is missing an attribute or uniform");
     backend->gl.DeleteProgram(scene->program);
     scene->program=0;
     return 0;
   }
   return 1;
+}
+
+int gml_gpu_opengl_scene_program(GmlGpuBackend *backend,char *error,size_t error_capacity){
+  return build_scene_program(backend,&backend->scene.main_program,0,error,error_capacity);
+}
+
+GlSceneProgram *gml_gpu_opengl_scene_filtered_program(GmlGpuBackend *backend,
+                                                       char *error,size_t error_capacity){
+  GlSceneProgram *program=&backend->scene.filtered_program;
+  return build_scene_program(backend,program,1,error,error_capacity)?program:NULL;
 }
 
 static GlSceneExactProgram *build_exact_program(GmlGpuBackend *backend,

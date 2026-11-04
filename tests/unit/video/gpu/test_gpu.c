@@ -1529,14 +1529,14 @@ static int scene_instance_reuse_case(void){
 /* Call/state proof only. Composed pixel qualification needs a real device. */
 static int scene_hardware_filtered_batch_case(unsigned kind){
   enum { QUADS=2049 };
-  int unit_font=kind==14u;
+  int unit_font=kind==14u,native_font=kind==15u;
   int gui_background=kind==13u;
   int application_sprite=kind==11u;
   int leading_surface=kind==12u;
   int integer_surface=kind==10u;
   int additive=kind==1u,combined=kind==2u,surface=(kind>=3u && kind<=5u) || integer_surface || leading_surface;
-  int nearest=kind==4u || kind==5u || integer_surface,screen_stretch=(kind>=6u && kind<=9u) || application_sprite || unit_font;
-  int screen_sprite=kind==7u || kind==8u || kind==9u || application_sprite || unit_font;
+  int nearest=kind==4u || kind==5u || integer_surface,screen_stretch=(kind>=6u && kind<=9u) || application_sprite || unit_font || native_font;
+  int screen_sprite=kind==7u || kind==8u || kind==9u || application_sprite || unit_font || native_font;
   const uint8_t pixels[64]={11,22,33,255,44,55,66,100,77,88,99,0,111,122,133,200};
   for(unsigned api=0;api<2u;api++)
   for(unsigned borrowed=0;borrowed<(((kind>=3u && kind<=5u) || leading_surface)?2u:1u);borrowed++)
@@ -1568,6 +1568,7 @@ static int scene_hardware_filtered_batch_case(unsigned kind){
     state.samplers[0].filter=nearest?GML_RENDER_FILTER_NEAREST:GML_RENDER_FILTER_HARDWARE_BILINEAR;
     state.samplers[0].edge_rule=GML_RENDER_EDGE_CLAMP_SUBIMAGE;
     state.samplers[0].source_region=upload.region;
+    if(native_font) state.samplers[0].quantisation=GML_RENDER_QUANTISE_INTEGER_TINT_TRUNC;
     if(unit_font){
       state.samplers[0].quantisation=GML_RENDER_QUANTISE_HARDWARE_SPRITE_FIRSTGEN;
       state.samplers[0].logical_margin_mask=GML_RENDER_MARGIN_UNIT_TEXEL;
@@ -1601,7 +1602,7 @@ static int scene_hardware_filtered_batch_case(unsigned kind){
       op->opcode=index?GML_RENDER_OP_TEXTURED_QUAD:GML_RENDER_OP_CLEAR;
       if(!index){op->payload.clear_colour=0x40123456u;continue;}
       op->reconstruction_mode=GML_RENDER_DEVICE_CHECKPOINT;
-      op->scene_family=kind==8u || unit_font?GML_RENDER_SCENE_TEXT:surface?GML_RENDER_SCENE_SURFACE:
+      op->scene_family=kind==8u || unit_font || native_font?GML_RENDER_SCENE_TEXT:surface?GML_RENDER_SCENE_SURFACE:
         additive || screen_stretch?GML_RENDER_SCENE_SPRITE:GML_RENDER_SCENE_BACKGROUND;
       op->sources=&source;op->source_count=1u;
       GmlRenderQuad *quad=&op->payload.quad;
@@ -1637,6 +1638,10 @@ static int scene_hardware_filtered_batch_case(unsigned kind){
         quad->x[1]=quad->x[2]=quad->y[2]=quad->y[3]=1.0;
         quad->u[1]=quad->u[2]=quad->v[2]=quad->v[3]=1.0/1.2;
         for(unsigned corner=0;corner<4u;corner++) quad->corner_colour[corner]=0xB3123456u;
+      }
+      if(native_font){
+        quad->inverse_x[0]=quad->inverse_y[1]=.5;
+        quad->u[1]=quad->u[2]=quad->v[2]=quad->v[3]=1.0;
       }
       if(unit_font){
         quad->inverse_x[0]=quad->inverse_y[1]=1.0;
@@ -1699,6 +1704,16 @@ static int scene_hardware_filtered_batch_case(unsigned kind){
               "hardware filtering and independent alpha factors are configured");
       REQUIRE(!anygm_test_graphics_scene_copies() && !anygm_test_graphics_read_pixels(),
               "ordinary overlap needs no destination snapshots or CPU readbacks");
+      if(native_font){
+        const char *fragment=anygm_test_graphics_shader_source(1);
+        unsigned compiles=anygm_test_graphics_compile_calls();
+        REQUIRE(fragment && strstr(fragment,"#define GML_SCENE_FILTERED_ONLY 1"),
+                "native filtered quads compile only their shared sampler branch");
+        result=device.submit(device.context,&batch);
+        REQUIRE(result.status==GML_RENDER_EXEC_ACCEPTED &&
+                anygm_test_graphics_compile_calls()==compiles,
+                "later filtered batches reuse the context-owned program");
+      }
     }
     gml_gpu_destroy(gpu,1);free(ops);
   }
@@ -2451,7 +2466,7 @@ static int scene_hardware_screen_sprite_batch_case(void){
 }
 static int scene_hardware_screen_font_batch_case(void){
   return scene_hardware_filtered_batch_case(8) && scene_hardware_filtered_batch_case(14) &&
-    scene_filtered_affine_row_batch_case(1);
+    scene_hardware_filtered_batch_case(15) && scene_filtered_affine_row_batch_case(1);
 }
 static int scene_hardware_screen_trim_batch_case(void){
   return scene_hardware_filtered_batch_case(9);

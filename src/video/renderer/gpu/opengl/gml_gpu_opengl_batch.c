@@ -1648,7 +1648,8 @@ static int scene_preflight(GmlGpuBackend *backend,const GmlRenderDrawBatch *batc
          sampling->quantisation==GML_RENDER_QUANTISE_HARDWARE_SPRITE_MODERN ||
          ((op->scene_family==GML_RENDER_SCENE_BACKGROUND || op->scene_family==GML_RENDER_SCENE_TILE ||
            ((op->scene_family==GML_RENDER_SCENE_SPRITE || op->scene_family==GML_RENDER_SCENE_TEXT) &&
-            op->payload.quad.span_active==GML_RENDER_SPAN_FILTERED_AXIS_SUPPORT_ROW)) &&
+            op->payload.quad.span_active==GML_RENDER_SPAN_FILTERED_AXIS_SUPPORT_ROW) ||
+           (op->scene_family==GML_RENDER_SCENE_TEXT && !op->payload.quad.span_active)) &&
           (sampling->quantisation==GML_RENDER_QUANTISE_INTEGER_TINT_TRUNC ||
            sampling->quantisation==GML_RENDER_QUANTISE_INTEGER_TINT_ROUND)));
       int integer_sourceover=integer_sourceover_sprite_valid(op,state,source) &&
@@ -2324,6 +2325,7 @@ static int flush_quads(GmlGpuBackend *backend,GlSceneImage *target,GlSceneImage 
                        uint32_t filter,int blend,uint32_t count,uint32_t write_mask,int alpha_test,
                        uint32_t source_alpha_key,const GmlRenderSourcePalette *palette){
   GlScene *scene=&backend->scene;
+  GlSceneProgram *program=&scene->main_program;
   GLfloat extent[2]={(GLfloat)target->width,(GLfloat)target->height};
   GLenum texture_filter=(filter>=106u && filter<=108u) || filter==99u || filter==100u || filter==77u || filter==18u || filter==19u || filter==20u || filter==21u ||
     (filter>=65u && filter<=74u) || (filter>=79u && filter<=82u) ||
@@ -2336,6 +2338,12 @@ static int flush_quads(GmlGpuBackend *backend,GlSceneImage *target,GlSceneImage 
   int upload_ok=1;
   if(!count) return 1;
   if(count>GL_SCENE_MAX_QUADS) return 0;
+  if(filter==21u || filter==22u || filter==25u || filter==26u ||
+     (filter>=65u && filter<=74u) || (filter>=79u && filter<=82u) ||
+     (filter>=112u && filter<=115u) || (filter>=137u && filter<=158u)){
+    program=gml_gpu_opengl_scene_filtered_program(backend,NULL,0);
+    if(!program) return 0;
+  }
   backend->gl.BindFramebuffer(GL_FRAMEBUFFER,target->framebuffer);
   backend->gl.Viewport(0,0,(GLsizei)target->width,(GLsizei)target->height);
   backend->gl.Scissor(0,0,(GLsizei)target->width,(GLsizei)target->height);
@@ -2419,47 +2427,48 @@ static int flush_quads(GmlGpuBackend *backend,GlSceneImage *target,GlSceneImage 
                   filter==156u || filter==158u || filter==161u || filter==162u || filter==168u;
   backend->gl.ColorMask((write_mask&1u)!=0u,(write_mask&2u)!=0u,(write_mask&4u)!=0u,
                         (!stamp_alpha || filter==110u) && (write_mask&8u)!=0u);
-  backend->gl.UseProgram(scene->program);
-  backend->gl.Uniform2fv(scene->u_extent,1,extent);
-  backend->gl.Uniform1i(scene->u_image,0);
-  backend->gl.Uniform1i(scene->u_filter,(GLint)filter);
-  backend->gl.Uniform1i(scene->u_additive_bytes,blend==14 && filter!=15u && filter!=17u);
-  backend->gl.Uniform1i(scene->u_alpha_test,alpha_test);
-  backend->gl.Uniform1i(scene->u_source_alpha_key,(GLint)source_alpha_key);
-  backend->gl.Uniform1i(scene->u_source_palette_enabled,palette && palette->enabled);
+  backend->gl.UseProgram(program->program);
+  backend->gl.Uniform2fv(program->u_extent,1,extent);
+  backend->gl.Uniform1i(program->u_image,0);
+  backend->gl.Uniform1i(program->u_filter,(GLint)filter);
+  backend->gl.Uniform1i(program->u_additive_bytes,blend==14 && filter!=15u && filter!=17u);
+  backend->gl.Uniform1i(program->u_alpha_test,alpha_test);
+  backend->gl.Uniform1i(program->u_source_alpha_key,(GLint)source_alpha_key);
+  backend->gl.Uniform1i(program->u_source_palette_enabled,palette && palette->enabled);
   if(palette && palette->enabled){
     GLint colours[30],green[2][4];
     for(unsigned index=0;index<10u;index++) for(unsigned channel=0;channel<3u;channel++)
       colours[index*3u+channel]=(GLint)((palette->colour[index]>>(16u-8u*channel))&255u);
     for(unsigned branch=0;branch<2u;branch++) for(unsigned band=0;band<4u;band++)
       green[branch][band]=(GLint)palette->green[branch][band];
-    backend->gl.Uniform1i(scene->u_source_palette_red,(GLint)palette->red);
-    backend->gl.Uniform4iv(scene->u_source_palette_green[0],1,green[0]);
-    backend->gl.Uniform4iv(scene->u_source_palette_green[1],1,green[1]);
-    backend->gl.Uniform3iv(scene->u_source_palette_colour,10,colours);
+    backend->gl.Uniform1i(program->u_source_palette_red,(GLint)palette->red);
+    backend->gl.Uniform4iv(program->u_source_palette_green[0],1,green[0]);
+    backend->gl.Uniform4iv(program->u_source_palette_green[1],1,green[1]);
+    backend->gl.Uniform3iv(program->u_source_palette_colour,10,colours);
   }
-  backend->gl.Uniform1i(scene->u_previous,1);
+  backend->gl.Uniform1i(program->u_previous,1);
   /* Integer map samplers must never alias the floating image samplers, even
    * for a draw whose dynamic branch does not fetch either point map. */
-  backend->gl.Uniform1i(scene->u_point_map_x,2);
-  backend->gl.Uniform1i(scene->u_point_map_y,3);
+  backend->gl.Uniform1i(program->u_point_map_x,2);
+  backend->gl.Uniform1i(program->u_point_map_y,3);
   compact_quad_instances(scene,count);
   backend->gl.BindVertexArray(scene->instance_array);
   backend->gl.BindBuffer(GL_ARRAY_BUFFER,scene->instance_buffer);
   offset=scene_instance_span(backend,bytes);
   upload_ok=offset!=SIZE_MAX;
   if(!upload_ok) goto restore_stream_state;
-  attributes[0]=scene->a_position01;
-  attributes[1]=scene->a_position23;
-  attributes[2]=scene->a_texcoord01;
-  attributes[3]=scene->a_texcoord23;
-  for(unsigned index=0;index<4u;index++) attributes[4u+index]=scene->a_colour[index];
-  attributes[8]=scene->a_clamp;
-  attributes[9]=scene->a_map;
-  attributes[10]=scene->a_step_margin_active;
-  attributes[11]=scene->a_span_x;
-  attributes[12]=scene->a_span_y;
+  attributes[0]=program->a_position01;
+  attributes[1]=program->a_position23;
+  attributes[2]=program->a_texcoord01;
+  attributes[3]=program->a_texcoord23;
+  for(unsigned index=0;index<4u;index++) attributes[4u+index]=program->a_colour[index];
+  attributes[8]=program->a_clamp;
+  attributes[9]=program->a_map;
+  attributes[10]=program->a_step_margin_active;
+  attributes[11]=program->a_span_x;
+  attributes[12]=program->a_span_y;
   for(unsigned index=0;index<13u;index++){
+    if(attributes[index]<0) continue;
     backend->gl.EnableVertexAttribArray((GLuint)attributes[index]);
     backend->gl.VertexAttribPointer((GLuint)attributes[index],4,GL_FLOAT,GL_FALSE,stride,
                                     (const void*)(offset+(size_t)index*4u*sizeof(float)));
@@ -2472,7 +2481,7 @@ static int flush_quads(GmlGpuBackend *backend,GlSceneImage *target,GlSceneImage 
      * the same sampler and cutout in an alpha-only pass, preserving that recipe's coverage. */
     backend->gl.ColorMask(GL_FALSE,GL_FALSE,GL_FALSE,GL_TRUE);
     backend->gl.Disable(GL_BLEND);
-    backend->gl.Uniform1i(scene->u_filter,filter==168u?169:filter==161u || filter==162u?(GLint)filter+2:filter==148u || filter==156u?150:filter==152u || filter==158u?154:filter>=137u && filter<=146u?(filter==141u?146:144):filter==133u?134:filter==130u?131:filter==112u?113:filter==110u?111:filter==104u || filter==107u?(GLint)filter+1:filter==99u?100:filter==93u?95:filter==86u?88:filter==80u?82:filter==77u?78:filter==75u?76:filter==69u?74:filter>=65u?72:filter==60u?62:filter==53u?55:(filter==46u || filter==47u)?48:(filter==39u || filter==40u)?41:filter==35u?36:filter==32u?33:filter==25u?26:
+    backend->gl.Uniform1i(program->u_filter,filter==168u?169:filter==161u || filter==162u?(GLint)filter+2:filter==148u || filter==156u?150:filter==152u || filter==158u?154:filter>=137u && filter<=146u?(filter==141u?146:144):filter==133u?134:filter==130u?131:filter==112u?113:filter==110u?111:filter==104u || filter==107u?(GLint)filter+1:filter==99u?100:filter==93u?95:filter==86u?88:filter==80u?82:filter==77u?78:filter==75u?76:filter==69u?74:filter>=65u?72:filter==60u?62:filter==53u?55:(filter==46u || filter==47u)?48:(filter==39u || filter==40u)?41:filter==35u?36:filter==32u?33:filter==25u?26:
                          filter==23u?24:filter==21u?22:filter==9u?10:13);
     backend->gl.DrawArraysInstanced(GL_TRIANGLES,0,6,(GLsizei)count);
   }
@@ -2485,7 +2494,7 @@ restore_stream_state:
   }
   backend->gl.ColorMask(GL_TRUE,GL_TRUE,GL_TRUE,GL_TRUE);
   if(upload_ok) for(unsigned index=0;index<13u;index++)
-    backend->gl.DisableVertexAttribArray((GLuint)attributes[index]);
+    if(attributes[index]>=0) backend->gl.DisableVertexAttribArray((GLuint)attributes[index]);
   backend->gl.BindBuffer(GL_ARRAY_BUFFER,0);
   backend->gl.BindVertexArray(0);
   backend->gl.UseProgram(0);
@@ -2612,11 +2621,11 @@ static int draw_rotated_regions(GmlGpuBackend *backend,const GmlRenderDrawBatch 
        !gml_gpu_opengl_upload_point_axis(backend,1u,quad->inverse_anchor[1],
          quad->inverse_y[0],quad->inverse_y[1],first_y,(uint32_t)(top-bottom),
          quad->sampling.source_region.height,&map_y)) return 0;
-    backend->gl.UseProgram(scene->program);
+    backend->gl.UseProgram(scene->main_program.program);
     GLint point_origin[2]={left,first_y};
-    backend->gl.Uniform2iv(scene->u_point_origin,1,point_origin);
-    backend->gl.Uniform1i(scene->u_point_map_x,2);
-    backend->gl.Uniform1i(scene->u_point_map_y,3);
+    backend->gl.Uniform2iv(scene->main_program.u_point_origin,1,point_origin);
+    backend->gl.Uniform1i(scene->main_program.u_point_map_x,2);
+    backend->gl.Uniform1i(scene->main_program.u_point_map_y,3);
     backend->gl.ActiveTexture(GL_TEXTURE2);
     backend->gl.BindTexture(GL_TEXTURE_2D,map_x);
     backend->gl.ActiveTexture(GL_TEXTURE3);
@@ -2625,7 +2634,7 @@ static int draw_rotated_regions(GmlGpuBackend *backend,const GmlRenderDrawBatch 
   }
   if(!scene_snapshot_region(backend,target,left,bottom,right-left,top-bottom))
     return 0;
-  backend->gl.UseProgram(scene->program);
+  backend->gl.UseProgram(scene->main_program.program);
   if(!scene->rotated_alpha16_valid || scene->rotated_alpha16_modern_nearest!=alpha_mode ||
      scene->rotated_alpha16_value!=base->payload.quad.filtered_draw_alpha){
     GLint factors[256];
@@ -2645,14 +2654,14 @@ static int draw_rotated_regions(GmlGpuBackend *backend,const GmlRenderDrawBatch 
       } else factors[alpha]=(GLint)gml_render_rotated_alpha16_factor(alpha,draw_alpha);
     }
     /* Pack four entries per vector to remain below the GLES uniform minimum. */
-    backend->gl.Uniform4iv(scene->u_rotated_alpha16,64,factors);
+    backend->gl.Uniform4iv(scene->main_program.u_rotated_alpha16,64,factors);
     if(backend->gl.GetError()!=GL_NO_ERROR){ scene->rotated_alpha16_valid=0; return 0; }
     scene->rotated_alpha16_value=base->payload.quad.filtered_draw_alpha;
     scene->rotated_alpha16_modern_nearest=alpha_mode;
     scene->rotated_alpha16_valid=1;
   }
   GLint origin[2]={left,bottom};
-  backend->gl.Uniform2iv(scene->u_region_origin,1,origin);
+  backend->gl.Uniform2iv(scene->main_program.u_region_origin,1,origin);
   if(backend->gl.GetError()!=GL_NO_ERROR) return 0;
   if(!flush_quads(backend,target,source,texel?29u:modern?27u:15u,0,count,base_state->write_mask,-1,0u,&base_state->source_palette)) return -1;
   *consumed=count;
@@ -3207,10 +3216,10 @@ GmlRenderExecutionResult gml_gpu_opengl_scene_submit(GmlGpuBackend *backend,
         result.status=GML_RENDER_EXEC_RESOURCE_ERROR;
         break;
       }
-      backend->gl.UseProgram(backend->scene.program);
-      backend->gl.Uniform1i(backend->scene.u_recovery_screen,2);
-      backend->gl.Uniform1i(backend->scene.u_recovery_application,3);
-      backend->gl.Uniform4iv(backend->scene.u_recovery_rect,1,rect);
+      backend->gl.UseProgram(backend->scene.main_program.program);
+      backend->gl.Uniform1i(backend->scene.main_program.u_recovery_screen,2);
+      backend->gl.Uniform1i(backend->scene.main_program.u_recovery_application,3);
+      backend->gl.Uniform4iv(backend->scene.main_program.u_recovery_rect,1,rect);
       backend->gl.ActiveTexture(GL_TEXTURE2);
       backend->gl.BindTexture(GL_TEXTURE_2D,backend->scene.rgb_reduce_texture[2]);
       backend->gl.ActiveTexture(GL_TEXTURE3);
@@ -3256,8 +3265,8 @@ GmlRenderExecutionResult gml_gpu_opengl_scene_submit(GmlGpuBackend *backend,
         break;
       }
       GLint origin[2]={left,bottom};
-      backend->gl.UseProgram(backend->scene.program);
-      backend->gl.Uniform2iv(backend->scene.u_region_origin,1,origin);
+      backend->gl.UseProgram(backend->scene.main_program.program);
+      backend->gl.Uniform2iv(backend->scene.main_program.u_region_origin,1,origin);
       /* Each overlapping float blend snapshots its own ordered predecessor;
        * never merge these quads against one stale destination image. */
       if(!flush_quads(backend,target,pending_source,pending_filter,pending_blend,1u,pending_write_mask,pending_alpha_test,pending_source_alpha_key,&pending_palette)){

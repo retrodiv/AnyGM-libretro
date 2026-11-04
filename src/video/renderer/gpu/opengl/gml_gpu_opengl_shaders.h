@@ -424,6 +424,7 @@
   "  return first+(last-first)*n/d;\n" \
   "}\n" \
   "void scene_sample(){\n" \
+  "#ifndef GML_SCENE_FILTERED_ONLY\n" \
   "  if((u_filter>=34 && u_filter<=36) || (u_filter>=103 && u_filter<=108)){\n" \
   "    // R03_SHADER_RECTANGLE: integer authored colours and exact clipped coverage.\n" \
   "    ivec2 pixel=ivec2(int(gl_FragCoord.x),int(u_extent.y)-1-int(gl_FragCoord.y));\n" \
@@ -771,6 +772,7 @@
   "    rgb=(rgb*sampled.a+uvec3(127u))/uvec3(255u);\n" \
   "    o_color=vec4(vec3(rgb)/255.0,float(sampled.a)/255.0); return;\n" \
   "  }\n" \
+  "#endif\n" \
   "  // R03_SHADER_HARDWARE_FILTERED_SURFACE: hardware sampling and batched coverage.\n" \
   "  if(u_filter>=147 && u_filter<=158){\n" \
   "    if(u_filter==150 || u_filter==154){ o_color=vec4(0.0,0.0,0.0,1.0); return; }\n" \
@@ -836,6 +838,7 @@
   "    o_color=(u_filter==22 || u_filter==26)?vec4(0.0,0.0,0.0,1.0):\n" \
   "      vec4(u_filter==25?sampled.rgb:sampled.rgb*v_colour.rgb,alpha); return;\n" \
   "  }\n" \
+  "#ifndef GML_SCENE_FILTERED_ONLY\n" \
   "  vec2 centre=vec2(gl_FragCoord.x,u_extent.y-gl_FragCoord.y);\n" \
   "  // R03_SHADER_BOX_REDUCTION: stretched integer source-box average.\n" \
   "  if(u_filter==77 || u_filter==78){\n" \
@@ -1072,6 +1075,7 @@
   "  // including opaque alpha above source texels whose stored alpha is zero.\n" \
   "  o_color=vec4(vec3(rgb)/255.0,\n" \
   "               u_filter==8?1.0:sampled.a*v_colour.a/255.0);\n" \
+  "#endif\n" \
   "}\n" \
   "void main(){\n" \
   "  scene_sample();\n" \

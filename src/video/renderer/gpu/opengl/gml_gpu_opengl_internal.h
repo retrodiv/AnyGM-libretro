@@ -127,6 +127,17 @@ typedef struct GlSceneExactProgram {
   GLint exact_u_surface_rule,exact_u_surface_tint,exact_u_surface_alpha;
 } GlSceneExactProgram;
 
+typedef struct GlSceneProgram {
+  GLuint program;
+  GLint a_position01,a_position23,a_texcoord01,a_texcoord23;
+  GLint a_colour[4],a_clamp,a_map,a_step_margin_active,a_span_x,a_span_y;
+  GLint u_extent,u_image,u_filter,u_additive_bytes,u_alpha_test,u_source_alpha_key,u_previous,u_region_origin;
+  GLint u_source_palette_enabled,u_source_palette_red,u_source_palette_green[2],u_source_palette_colour;
+  GLint u_rotated_alpha16;
+  GLint u_point_map_x,u_point_map_y,u_point_origin;
+  GLint u_recovery_screen,u_recovery_application,u_recovery_rect;
+} GlSceneProgram;
+
 typedef struct GlScene {
   GlSceneImage images[GL_SCENE_MAX_IMAGES];
   /* Exactly one bounded baseline for each owned frame-target class, never per surface. */
@@ -135,7 +146,8 @@ typedef struct GlScene {
   GLint checkpoint_u_image,checkpoint_u_previous,checkpoint_u_alpha;
   uint32_t checkpoint_mask_width,checkpoint_mask_height;
   int checkpoint_program_failed;
-  GLuint program,vertex_buffer,vertex_array,instance_buffer,instance_array;
+  GlSceneProgram main_program,filtered_program;
+  GLuint vertex_buffer,vertex_array,instance_buffer,instance_array;
   GLuint upload_buffer;
   size_t instance_bytes_used;
   int instance_storage_ready;
@@ -144,12 +156,6 @@ typedef struct GlScene {
   unsigned instance_span_count,instance_span_next;
   uint8_t *instance_mirror;
   int instance_reuse_attempted;
-  GLint a_position01,a_position23,a_texcoord01,a_texcoord23;
-  GLint a_colour[4],a_clamp,a_map,a_step_margin_active,a_span_x,a_span_y;
-  GLint u_extent,u_image,u_filter,u_additive_bytes,u_alpha_test,u_source_alpha_key,u_previous,u_region_origin;
-  GLint u_source_palette_enabled,u_source_palette_red,u_source_palette_green[2],u_source_palette_colour;
-  GLint u_rotated_alpha16;
-  GLint u_point_map_x,u_point_map_y,u_point_origin;
   double rotated_alpha16_value;
   int rotated_alpha16_valid;
   int rotated_alpha16_modern_nearest;
@@ -159,7 +165,6 @@ typedef struct GlScene {
   GLuint rgb_reduce_program,rgb_reduce_framebuffer,rgb_reduce_texture[4];
   uint32_t rgb_reduce_width[4],rgb_reduce_height[4];
   GLint rgb_reduce_u_image,rgb_reduce_u_extent;
-  GLint u_recovery_screen,u_recovery_application,u_recovery_rect;
   uint32_t snapshot_width,snapshot_height;
   GLint max_texture_units;
   float *vertices,*instances;
@@ -227,6 +232,8 @@ void gml_gpu_opengl_record_error(char *error,size_t capacity,const char *format,
 void gml_gpu_opengl_set_rect(GmlGpuBackend *backend,const GmlPlanRect *rect,
                               uint32_t target_height);
 int gml_gpu_opengl_build_program(GmlGpuBackend *backend,char *error,size_t error_capacity);
+GlSceneProgram *gml_gpu_opengl_scene_filtered_program(GmlGpuBackend *backend,
+  char *error,size_t error_capacity);
 int gml_gpu_opengl_scene_program(GmlGpuBackend *backend,char *error,size_t error_capacity);
 int gml_gpu_opengl_prepare_automatic_draw(GmlGpuBackend *backend,GLuint source_texture,
                                           char *error,size_t error_capacity);
