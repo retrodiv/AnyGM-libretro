@@ -923,6 +923,11 @@ filtered sampler branches alone. Other scene branches stay in the common program
 Quad placement, sample/tint arithmetic, fixed blending and alpha passes are unchanged;
 unused attributes are skipped and both programs follow context destruction/loss.
 The native preset glyph control also verifies complete-quad admission and program reuse.
+Complete first-generation filtered TEXT quads with ordinary source-over use the existing
+continuous hardware colour kernel and a constant companion for opaque-written alpha. They
+retain placement, source cutout and crop metadata without quantising sampled colour to CPU
+bytes first. Other families, unit-point glyphs and prepared support packets retain their recipes.
+The device's sampled result is picture; actual resource reads and restored bytes remain exact.
 Three further bounded programs compile the existing ordinary sampler with selector0 or14
 constant, or selector77/78 restricted to the fixed-stretch pair. Their sampler, phase,
 blend and predecessor arithmetic is retained verbatim; no CPU-shaped geometry is added.

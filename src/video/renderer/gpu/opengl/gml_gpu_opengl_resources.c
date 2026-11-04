@@ -256,7 +256,7 @@ void gml_gpu_opengl_scene_destroy(GmlGpuBackend *backend,int context_is_current)
       backend->gl.DeleteFramebuffers(1,&scene->checkpoint_framebuffer);
     if(scene->main_program.program) backend->gl.DeleteProgram(scene->main_program.program);
     if(scene->filtered_program.program) backend->gl.DeleteProgram(scene->filtered_program.program);
-    for(unsigned index=0;index<7u;index++)
+    for(unsigned index=0;index<9u;index++)
       if(scene->compact_programs[index].program)
         backend->gl.DeleteProgram(scene->compact_programs[index].program);
     for(size_t index=0;index<3u;index++)

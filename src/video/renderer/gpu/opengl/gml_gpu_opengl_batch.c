@@ -268,6 +268,12 @@ static uint32_t scene_filter(const GmlRenderQuad *quad,
   if(quad->sampling.quantisation==GML_RENDER_QUANTISE_HARDWARE_SPRITE_FIRSTGEN){
     int blend=qualified_blend(state);
     unsigned opaque=state->coverage_policy==GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA;
+    /* Placed glyph quads use the existing continuous hardware colour kernel.
+     * Other families and prepared support packets retain their selected recipe. */
+    if(family==GML_RENDER_SCENE_TEXT && !quad->span_active && blend==1 &&
+       quad->sampling.filter==GML_RENDER_FILTER_HARDWARE_BILINEAR &&
+       quad->sampling.logical_margin_mask!=GML_RENDER_MARGIN_UNIT_TEXEL)
+      return opaque?80u:79u;
     unsigned filter=!blend?state->coverage_policy==GML_RENDER_COVERAGE_REPLACE_ZERO_ALPHA?73u:67u:
       blend==15?68u+opaque:blend==16?70u+opaque:65u+opaque;
     /* CPU-covered rows share the hardware color recipe but must not repeat
@@ -2479,7 +2485,7 @@ static int flush_quads(GmlGpuBackend *backend,GlSceneImage *target,GlSceneImage 
     backend->gl.VertexAttribDivisor((GLuint)attributes[index],1u);
   }
   backend->gl.DrawArraysInstanced(GL_TRIANGLES,0,6,(GLsizei)count);
-  if(stamp_alpha && (write_mask&8u) && filter!=66u && filter!=21u){
+  if(stamp_alpha && (write_mask&8u) && filter!=66u && filter!=21u && filter!=80u){
     /* The CPU screen writer keeps alpha opaque at every covered texel,
      * even when its prior alpha is unknown. Reuse the sampled vertices and
      * the same sampler and cutout in an alpha-only pass, preserving that recipe's coverage. */
@@ -2513,8 +2519,8 @@ restore_stream_state:
   target->rendered_origin=1;
   /* Constant RGB programs cannot change selector for the separate alpha stamp.
    * Submit that existing kernel through the same stream with complete state. */
-  if((filter==66u || filter==21u) && (write_mask&8u))
-    return flush_quads(backend,target,source,filter==21u?22u:72u,0,count,8u,alpha_test,
+  if((filter==66u || filter==21u || filter==80u) && (write_mask&8u))
+    return flush_quads(backend,target,source,filter==21u?22u:filter==80u?82u:72u,0,count,8u,alpha_test,
                        source_alpha_key,palette);
   return 1;
 }

@@ -121,7 +121,9 @@ static int build_scene_program(GmlGpuBackend *backend,GlSceneProgram *scene,
                                mode==5?"#define GML_SCENE_CONSTANT_FILTER 65\n":
                                mode==6?"#define GML_SCENE_CONSTANT_FILTER 21\n":
                                mode==7?"#define GML_SCENE_CONSTANT_FILTER 22\n":
-                               mode==8?"#define GML_SCENE_CONSTANT_FILTER 72\n":"",
+                               mode==8?"#define GML_SCENE_CONSTANT_FILTER 72\n":
+                               mode==9?"#define GML_SCENE_CONSTANT_FILTER 79\n":
+                               mode==10?"#define GML_SCENE_CONSTANT_FILTER 82\n":"",
                                GML_GPU_OPENGL_SCENE_FRAGMENT_BODY);
   if(vertex_length<0 || (size_t)vertex_length>=sizeof vertex_source ||
      fragment_length<0 || (size_t)fragment_length>=sizeof fragment_source){
@@ -233,6 +235,9 @@ GlSceneProgram *gml_gpu_opengl_scene_draw_program(GmlGpuBackend *backend,uint32_
     program=&scene->compact_programs[3];mode=5;
   }else if(filter==21u || filter==22u || filter==72u){
     unsigned index=filter==21u?4u:filter==22u?5u:6u;
+    program=&scene->compact_programs[index];mode=(int)index+2;
+  }else if(filter==79u || filter==80u || filter==82u){
+    unsigned index=filter==82u?8u:7u;
     program=&scene->compact_programs[index];mode=(int)index+2;
   }else if(filter==21u || filter==22u || filter==25u || filter==26u ||
      (filter>=65u && filter<=74u) || (filter>=79u && filter<=82u) ||
