@@ -120,8 +120,43 @@ int gml_render_cached_coarse_texel(GmlRender *r,GmlAtlas *atlas,GmlTpag *page,do
   return 1;
 }
 
-static void resident_classify_page(GmlTpag *page,const GmlAtlas *atlas){
+void resident_classify_page(GmlRender *r,GmlTpag *page,const GmlAtlas *atlas){
+  GmlRenderAlphaWindow *cached=NULL;
+  GmlAtlas *canonical=r && r->atlas && page->atlas>=0 && page->atlas<r->n_atlas
+    && atlas==&r->atlas[page->atlas]?&r->atlas[page->atlas]:NULL;
+  int immutable=canonical && canonical->resident_alpha_cache_epoch!=UINT64_MAX && !atlas->runtime_font_page &&
+    ((atlas->blob && atlas->avail) || (atlas->external_blob && atlas->external_size));
+  if(canonical){
+    if(!immutable && canonical->resident_alpha_cache_immutable &&
+       canonical->resident_alpha_cache_epoch!=UINT64_MAX)canonical->resident_alpha_cache_epoch++;
+    canonical->resident_alpha_cache_immutable=immutable;
+  }
   if(page->scene_opaque_checked) return;
+  int key[7]={page->atlas,page->sx,page->sy,page->sw,page->sh,atlas->w,atlas->h};
+  if(immutable){
+    uint32_t hash=2166136261u;
+    for(unsigned i=0;i<7u;i++)hash=(hash^(uint32_t)key[i])*16777619u;
+    hash^=hash>>16;
+    unsigned bucket=hash&(GML_RENDER_ALPHA_CACHE_BUCKETS-1u);
+    unsigned base=bucket*GML_RENDER_ALPHA_CACHE_WAYS;
+    for(unsigned way=0;way<GML_RENDER_ALPHA_CACHE_WAYS;way++){
+      GmlRenderAlphaWindow *entry=&r->resident_alpha_cache[base+way];
+      if(entry->valid && entry->pixels==(uintptr_t)atlas->px &&
+         entry->external==(uintptr_t)atlas->external_blob && entry->blob==atlas->blob &&
+         entry->blob_bytes==atlas->avail && entry->external_bytes==atlas->external_size &&
+         entry->incarnation==atlas->scene_source_incarnation &&
+         entry->version==atlas->scene_source_version &&
+         entry->alpha_epoch==canonical->resident_alpha_cache_epoch && !memcmp(entry->key,key,sizeof key)){
+        page->scene_fully_opaque=entry->result[0];page->scene_binary_alpha=entry->result[1];
+        page->scene_ax0=entry->result[2];page->scene_ay0=entry->result[3];
+        page->scene_ax1=entry->result[4];page->scene_ay1=entry->result[5];
+        page->scene_opaque_checked=1;return;
+      }
+    }
+    unsigned way=r->resident_alpha_next[bucket]++%GML_RENDER_ALPHA_CACHE_WAYS;
+    cached=&r->resident_alpha_cache[base+way];
+  }
+  if(r && page->sw>0 && page->sh>0)r->resident_alpha_scan_texels+=(uint64_t)(unsigned)page->sw*(unsigned)page->sh;
   page->scene_fully_opaque=1;
   page->scene_binary_alpha=1;
   page->scene_ax0=page->sw; page->scene_ay0=page->sh;
@@ -139,12 +174,23 @@ static void resident_classify_page(GmlTpag *page,const GmlAtlas *atlas){
       }
     }
   page->scene_opaque_checked=1;
+  if(cached){
+    cached->pixels=(uintptr_t)atlas->px;cached->external=(uintptr_t)atlas->external_blob;
+    cached->blob=atlas->blob;cached->blob_bytes=atlas->avail;
+    cached->external_bytes=atlas->external_size;
+    cached->incarnation=atlas->scene_source_incarnation;cached->version=atlas->scene_source_version;
+    cached->alpha_epoch=canonical->resident_alpha_cache_epoch;
+    memcpy(cached->key,key,sizeof key);
+    cached->result[0]=page->scene_fully_opaque;cached->result[1]=page->scene_binary_alpha;
+    cached->result[2]=page->scene_ax0;cached->result[3]=page->scene_ay0;
+    cached->result[4]=page->scene_ax1;cached->result[5]=page->scene_ay1;cached->valid=1;
+  }
 }
 
 /* The CPU sampler clamps an authored source window to the physical atlas.
  * Classify only that bounded physical rectangle, then extend its edge bounds
  * into the logical window. Never index the atlas with the virtual extent. */
-static void resident_classify_clamped_page(GmlTpag *page,const GmlAtlas *atlas){
+static void resident_classify_clamped_page(GmlRender *r,GmlTpag *page,const GmlAtlas *atlas){
   if(page->scene_opaque_checked) return;
   GmlTpag bounded=*page;
   bounded.sx=page->sx<atlas->w?page->sx:atlas->w-1;
@@ -154,7 +200,7 @@ static void resident_classify_clamped_page(GmlTpag *page,const GmlAtlas *atlas){
   bounded.sw=(int)(right<atlas->w?right:atlas->w-1)-bounded.sx+1;
   bounded.sh=(int)(bottom<atlas->h?bottom:atlas->h-1)-bounded.sy+1;
   bounded.scene_opaque_checked=0;
-  resident_classify_page(&bounded,atlas);
+  resident_classify_page(r,&bounded,atlas);
   page->scene_fully_opaque=bounded.scene_fully_opaque;
   page->scene_binary_alpha=bounded.scene_binary_alpha;
   page->scene_ax0=page->sw;page->scene_ay0=page->sh;
@@ -985,7 +1031,7 @@ static int resident_atlas_crop_from_page_impl(GmlRender *r,GmlTpag *page,
     if(required_endpoint_rgb &&
        (uint64_t)(uint32_t)page->sw*(uint32_t)page->sh>65536u) return 0;
   }
-  resident_classify_page(page,atlas);
+  resident_classify_page(r,page,atlas);
   unsigned large_unit_cutoff=0u;
   /* Large normal SCREEN sprites use a different CPU alpha writer. Whole
    * samples do not require its float arithmetic, but zero-factor coverage
@@ -1622,7 +1668,7 @@ static int resident_depth_free_ortho_sprite(GmlRender *r,int sprite,int subimg,
   GmlAtlas *atlas=&r->atlas[page->atlas];
   if(!atlas->px || (uint64_t)(uint32_t)page->sx+(uint32_t)page->sw>(uint32_t)atlas->w ||
      (uint64_t)(uint32_t)page->sy+(uint32_t)page->sh>(uint32_t)atlas->h) return 0;
-  resident_classify_page(page,atlas);
+  resident_classify_page(r,page,atlas);
   double rectangle[4];
   if(!page->scene_fully_opaque ||
      !gml_software3d_project_sprite_axis(r,sprite,subimg,x,y,rectangle) ||
@@ -2874,8 +2920,8 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
   if(margin_top) margin_mask|=GML_RENDER_MARGIN_TOP;
   if(margin_right) margin_mask|=GML_RENDER_MARGIN_RIGHT;
   if(margin_bottom) margin_mask|=GML_RENDER_MARGIN_BOTTOM;
-  if(clamped_window) resident_classify_clamped_page(page,atlas);
-  else resident_classify_page(page,atlas);
+  if(clamped_window) resident_classify_clamped_page(r,page,atlas);
+  else resident_classify_page(r,page,atlas);
   /* First-generation cutout with variable alpha and fractional magnification
    * on both axes is not qualified: hardware filtering exceeded the individual
    * channel budget. Keep the whole semantic boundary on ordered CPU, not a
@@ -3770,7 +3816,7 @@ static int resident_modern_screen_binary_rotation(GmlRender *r,GmlSprite *sprite
      (uint64_t)(uint32_t)page->sx+(uint32_t)page->sw>source.width ||
      (uint64_t)(uint32_t)page->sy+(uint32_t)page->sh>source.height) return 0;
   if(gml_render_interpolated_phase_blocks_scene(r)) return 0;
-  resident_classify_page(page,&r->atlas[page->atlas]);
+  resident_classify_page(r,page,&r->atlas[page->atlas]);
   if(!page->scene_binary_alpha) return 0;
   regions=malloc(REGION_LIMIT*sizeof *regions);
   if(!regions || !gml_render_rotated_nearest_texel_regions(r,sprite,page,x,y,xs,ys,rotation,
@@ -5326,7 +5372,7 @@ static int resident_stretched_sprite_function(GmlRender *r,int sprite,int frame,
     /* Source pixels and bounds are now validated. Raw cutoffs need constant
      * alpha; larger raw opacity also magnifies unqualified filtering error. */
     if(r->alpha_test_enable || alpha>2.0){
-      resident_classify_page(page,&r->atlas[page->atlas]);
+      resident_classify_page(r,page,&r->atlas[page->atlas]);
       if(!page->scene_fully_opaque || page->tx || page->ty ||
          page->sw!=s->w || page->sh!=s->h) return 0;
     }
@@ -5417,7 +5463,7 @@ void gml_draw_sprite_stretched(GmlRender *r, int sprite, int frame, double dx, d
             GmlRenderResourceSource view={0};
             if(page->scene_opaque_checked ||
                gml_render_atlas_scene_source_view(r,page->atlas,&view)){
-              resident_classify_page(page,&r->atlas[page->atlas]);
+              resident_classify_page(r,page,&r->atlas[page->atlas]);
               copy_alpha=page->scene_fully_opaque || page->scene_binary_alpha;
             }
           }
@@ -5597,7 +5643,7 @@ static int resident_positioned_quad_sprite(GmlRender *r,int sprite,int subimg,
   if(!gml_render_atlas_scene_source_view(r,page->atlas,&source) ||
      (uint64_t)(uint32_t)page->sx+(uint32_t)page->sw>source.width ||
      (uint64_t)(uint32_t)page->sy+(uint32_t)page->sh>source.height) return 0;
-  resident_classify_page(page,atlas);
+  resident_classify_page(r,page,atlas);
   if(anygm_policy_has_modern_layer_semantics(r->win) &&
      (!r->fb_opaque_known || !r->fb_all_opaque)) return 0;
   for(int corner=0;corner<4;corner++){
@@ -6200,7 +6246,7 @@ static int resident_sprite_part_function(GmlRender *r,int page_index,const GmlTp
   GmlRenderResourceSource source={0};
   if(!gml_render_atlas_scene_source_view(r,page->atlas,&source) ||
      !source.borrowed_immutable || !source.bytes) return 0;
-  resident_classify_page(page,&r->atlas[page->atlas]);
+  resident_classify_page(r,page,&r->atlas[page->atlas]);
   GmlTpag selected=*view;
   selected.project_authored_edges=0;
   selected.scene_opaque_checked=1;
@@ -6249,7 +6295,7 @@ static int resident_modern_unit_sprite_part(GmlRender *r,GmlTpag *page,const Gml
      (uint64_t)(uint32_t)page->sx+(uint32_t)page->sw>source.width ||
      (uint64_t)(uint32_t)page->sy+(uint32_t)page->sh>source.height) return 0;
   if(gml_render_interpolated_phase_blocks_scene(r)) return 0;
-  resident_classify_page(page,&r->atlas[page->atlas]);
+  resident_classify_page(r,page,&r->atlas[page->atlas]);
   if(!page->scene_binary_alpha) return 0;
   double right=left+view->sw,bottom=top+view->sh;
   if(left>=r->fbw || top>=r->fbh || right<=0.0 || bottom<=0.0) return 1;
@@ -6869,7 +6915,7 @@ static int resident_modern_trimmed_unit_layer(GmlRender *r,GmlSprite *sprite,int
   double nx=htiled?ceil((xe-x0)/sprite->w):1.0;
   double ny=vtiled?ceil((ye-y0)/sprite->h):1.0;
   if(nx<1.0 || ny<1.0 || nx>CELL_LIMIT || ny>CELL_LIMIT || nx*ny>CELL_LIMIT) return 0;
-  resident_classify_page(page,&r->atlas[page->atlas]);
+  resident_classify_page(r,page,&r->atlas[page->atlas]);
   if(!page->scene_binary_alpha) return 0;
   operations=calloc((size_t)(nx*ny),sizeof *operations);
   if(!operations) return 0;

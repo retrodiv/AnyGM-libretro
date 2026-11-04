@@ -147,12 +147,23 @@ typedef struct GmlAtlas {
   int no_source_reported;                                          /* one-shot: page carries no blob */
   int runtime_font_page;                                          /* reusable only by runtime fonts */
   int scene_source_used;                                          /* atlas source exposed to the scene device */
+  int resident_alpha_cache_immutable;                             /* last observed cache eligibility */
+  uint64_t resident_alpha_cache_epoch;                            /* shared invalidation of derived windows */
   uint64_t scene_source_incarnation;                              /* runtime font page identity across reuse */
   uint64_t scene_source_version, scene_source_last_view_version;  /* runtime mutations and retirement */
 } GmlAtlas;
 int sprite_region_coarse_texel(GmlAtlas *atlas, int source_x, int source_y,
                                int source_width, int source_height, double out[4]);
 int gml_render_cached_coarse_texel(GmlRender *render,GmlAtlas *atlas,GmlTpag *page,double out[4]);
+void resident_classify_page(GmlRender *render,GmlTpag *page,const GmlAtlas *atlas);
+enum { GML_RENDER_ALPHA_CACHE_BUCKETS=64,GML_RENDER_ALPHA_CACHE_WAYS=4 };
+typedef struct {
+  uintptr_t pixels,external;
+  uint64_t incarnation,version,alpha_epoch;
+  size_t blob_bytes,external_bytes;
+  uint32_t blob;
+  int key[7],result[6],valid;
+} GmlRenderAlphaWindow;
 typedef struct {
   int atlas, sx, sy, sw, sh;
   int projected_x, projected_y, dest_x0, dest_y0;
@@ -248,6 +259,10 @@ typedef struct GmlRender {
   long frame;                     /* simulation frame supplied by the owning VM */
   int classic;                    /* GM6/7/8 pixel rules that differ from Studio */
   GmlAtlas *atlas; int n_atlas;
+  /* Derived immutable crop facts, including detached glyph views; never serialized. */
+  GmlRenderAlphaWindow resident_alpha_cache[GML_RENDER_ALPHA_CACHE_BUCKETS*GML_RENDER_ALPHA_CACHE_WAYS];
+  uint8_t resident_alpha_next[GML_RENDER_ALPHA_CACHE_BUCKETS];
+  uint64_t resident_alpha_scan_texels;
   GmlTpag  *tpag; int n_tpag;
   uint32_t *tpag_ptr;                 /* source offsets parallel to tpag, owned by this renderer */
   GmlInterpSubrectCache *interp_subrect_cache;

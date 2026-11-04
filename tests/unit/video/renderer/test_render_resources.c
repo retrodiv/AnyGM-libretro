@@ -11474,6 +11474,74 @@ static int resident_stretched_coarse_box_limit(void){
   return resident_stretched_function_on_demand_impl(3);
 }
 
+static int immutable_alpha_window_cache(void){
+  GmlRender *r=calloc(1,sizeof *r);CHECK(r);
+  r->atlas=calloc(1,sizeof *r->atlas);CHECK(r->atlas);r->n_atlas=1;
+  GmlAtlas *a=r->atlas;a->w=3;a->h=2;a->px=calloc(6u,4u);CHECK(a->px);
+  a->blob=1;a->avail=1;
+  const uint8_t alpha[6]={0,255,128,255,255,255};
+  for(unsigned i=0;i<6u;i++)a->px[i*4u+3u]=alpha[i];
+  GmlTpag base={.atlas=0,.sx=0,.sy=0,.sw=2,.sh=2},view;
+  for(unsigned repeat=0;repeat<100u;repeat++){
+    view=base;resident_classify_page(r,&view,a);
+    CHECK(view.scene_opaque_checked && !view.scene_fully_opaque && view.scene_binary_alpha &&
+      view.scene_ax0==0 && view.scene_ay0==0 && view.scene_ax1==1 && view.scene_ay1==1);
+  }
+  CHECK(r->resident_alpha_scan_texels==4u);
+  view=base;view.sx=2;view.sw=1;resident_classify_page(r,&view,a);
+  CHECK(!view.scene_fully_opaque && !view.scene_binary_alpha &&
+    view.scene_ax0==0 && view.scene_ax1==0 && r->resident_alpha_scan_texels==6u);
+  a->px[3]=255;a->scene_source_version++;
+  view=base;resident_classify_page(r,&view,a);
+  CHECK(view.scene_fully_opaque && view.scene_binary_alpha && r->resident_alpha_scan_texels==10u);
+  a->px[3]=0;a->scene_source_incarnation++;
+  view=base;resident_classify_page(r,&view,a);
+  CHECK(!view.scene_fully_opaque && view.scene_binary_alpha && r->resident_alpha_scan_texels==14u);
+  uint8_t *replacement=malloc(24u);CHECK(replacement);memset(replacement,128,24u);
+  free(a->px);a->px=replacement;
+  view=base;resident_classify_page(r,&view,a);
+  CHECK(!view.scene_binary_alpha && r->resident_alpha_scan_texels==18u);
+  /* Retire windows even when an older canonical page already holds its own facts. */
+  a->blob=0;memset(a->px,255,24u);resident_classify_page(r,&view,a);
+  a->blob=1;view=base;resident_classify_page(r,&view,a);
+  CHECK(view.scene_fully_opaque && r->resident_alpha_scan_texels==22u);
+  /* Unclassified, mutable-font and foreign atlas views cannot borrow immutable facts. */
+  for(unsigned kind=0;kind<3u;kind++){
+    a->blob=kind?1u:0u;a->runtime_font_page=kind==1u;
+    for(unsigned value=0;value<2u;value++){
+      memset(a->px,value?255:0,24u);view=base;
+      uint64_t before=r->resident_alpha_scan_texels;
+      GmlAtlas foreign=*a;
+      resident_classify_page(r,&view,kind==2u?&foreign:a);
+      CHECK(view.scene_fully_opaque==(int)value && view.scene_binary_alpha &&
+        r->resident_alpha_scan_texels==before+4u);
+      if(!value)CHECK(view.scene_ax1==-1 && view.scene_ay1==-1);
+    }
+    if(kind<2u){
+      a->blob=1;a->runtime_font_page=0;memset(a->px,0,24u);view=base;
+      uint64_t before=r->resident_alpha_scan_texels;
+      resident_classify_page(r,&view,a);
+      CHECK(!view.scene_fully_opaque && view.scene_ax1==-1 &&
+        r->resident_alpha_scan_texels==before+4u);
+    }
+  }
+  a->blob=0;memset(a->px,0,24u);a->px[(1u*3u+1u)*4u+3u]=128;
+  view=base;resident_classify_page(r,&view,a);
+  CHECK(!view.scene_binary_alpha && view.scene_ax0==1 && view.scene_ay0==1 &&
+    view.scene_ax1==1 && view.scene_ay1==1);
+  /* One observer's mutable transition also retires another observer's saved windows. */
+  GmlRender *other=calloc(1,sizeof *other);CHECK(other);
+  other->atlas=a;other->n_atlas=1;
+  a->blob=1;memset(a->px,255,24u);view=base;resident_classify_page(other,&view,a);
+  CHECK(view.scene_fully_opaque && other->resident_alpha_scan_texels==4u);
+  a->blob=0;memset(a->px,0,24u);view=base;resident_classify_page(r,&view,a);
+  a->blob=1;view=base;resident_classify_page(other,&view,a);
+  CHECK(!view.scene_fully_opaque && view.scene_ax1==-1 &&
+    other->resident_alpha_scan_texels==8u);
+  free(other);
+  gml_render_free(r);free(r);return 1;
+}
+
 static int immutable_coarse_texel_cache(void){
   GmlRender *r=calloc(1,sizeof *r);CHECK(r);
   r->atlas=calloc(1,sizeof *r->atlas);r->tpag=calloc(1,sizeof *r->tpag);
@@ -19636,6 +19704,7 @@ int main(void){
     else if(!strcmp(selected,"invalid-sprite-part")) passed=resident_invalid_sprite_part_preserves_pending_work();
     else if(!strcmp(selected,"full-sprite-axis-presets")) passed=resident_full_sprite_axis_function();
     else if(!strcmp(selected,"stretched-coarse-veil")) passed=resident_stretched_coarse_veil_on_demand();
+    else if(!strcmp(selected,"immutable-alpha-window")) passed=immutable_alpha_window_cache();
     else if(!strcmp(selected,"immutable-coarse-texel")) passed=immutable_coarse_texel_cache();
     else if(!strcmp(selected,"coarse-veil-exact-recovery")) passed=resident_coarse_veil_exact_recovery();
     else if(!strcmp(selected,"filtered-text-reduction")) passed=resident_filtered_font_magnification(0,0,1);
@@ -19830,6 +19899,7 @@ int main(void){
   passed+=resident_stretched_coarse_box_limit();
   passed+=resident_stretched_coarse_veil_on_demand();
   passed+=immutable_coarse_texel_cache();
+  passed+=immutable_alpha_window_cache();
   passed+=resident_stretched_raw_opacity_on_demand();
   passed+=resident_stretched_unavailable_source();
   passed+=resident_mapped_gui_stretch_on_demand();
@@ -19971,6 +20041,6 @@ int main(void){
   passed+=resident_point_function_transaction();
   passed+=resident_rectangle_cpu_passthrough_programs();
   passed+=skip_cpu_draw_policy_preserves_observers();
-  printf("render resource cases: passed=%d failed=%d\n",passed,310-passed);
-  return passed==310?EXIT_SUCCESS:EXIT_FAILURE;
+  printf("render resource cases: passed=%d failed=%d\n",passed,311-passed);
+  return passed==311?EXIT_SUCCESS:EXIT_FAILURE;
 }
