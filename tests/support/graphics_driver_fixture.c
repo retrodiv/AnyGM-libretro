@@ -76,6 +76,9 @@ typedef struct FakeDriver {
   GLint scene_vertices;
   GLuint scene_texture;
   GLint scene_filter;
+  struct { GLint location,value; GLuint program; } sampler_locations[64];
+  unsigned sampler_location_count;
+  GLint scene_sampler;
   GLenum blend_factors[4];
   unsigned shader_stage[256];
   /* The uniforms the last linked program declares, read from the text it was linked from. */
@@ -567,6 +570,13 @@ static void fake_UseProgram(GLuint p){ note_call(); g_fake.bound_program=p; }
 static void fake_DeleteProgram(GLuint p){ (void)p; note_call(); g_fake.deletes_issued++; }
 static GLint fake_GetUniformLocation(GLuint p,const GLchar *name){
   note_call();
+  if((!strcmp(name,"u_filter") || !strcmp(name,"u_selected_filter")) &&
+     g_fake.sampler_location_count<64u){
+    unsigned index=g_fake.sampler_location_count++;
+    g_fake.sampler_locations[index].location=g_fake.uniform_count;
+    g_fake.sampler_locations[index].program=p;
+    g_fake.sampler_locations[index].value=-1;
+  }
   if(!strcmp(name,"u_font_channel") && g_fake.font_channel_location_count<64u){
     unsigned index=g_fake.font_channel_location_count++;
     g_fake.font_channel_locations[index].location=g_fake.uniform_count;
@@ -576,6 +586,10 @@ static GLint fake_GetUniformLocation(GLuint p,const GLchar *name){
 }
 static void fake_Uniform1i(GLint location,GLint value){
   note_call();
+  for(unsigned index=0;index<g_fake.sampler_location_count;index++)
+    if(g_fake.sampler_locations[index].location==location &&
+       g_fake.sampler_locations[index].program==g_fake.bound_program)
+      g_fake.sampler_locations[index].value=value;
   if(location>=0 && location<8) g_fake.uniforms[location]=value;
   for(unsigned index=0;index<g_fake.font_channel_location_count;index++)
     if(g_fake.font_channel_locations[index].location==location &&
@@ -607,6 +621,10 @@ static void fake_DrawArrays(GLenum mode,GLint first,GLsizei count){
     memcpy(g_fake.scene_sampler_texture,g_fake.bound_texture,sizeof g_fake.bound_texture);
     g_fake.scene_filter=g_fake.scene_texture<FAKE_MAX_TEXTURES
       ?g_fake.textures[g_fake.scene_texture].min_filter:0;
+    g_fake.scene_sampler=-1;
+    for(unsigned index=0;index<g_fake.sampler_location_count;index++)
+      if(g_fake.sampler_locations[index].program==g_fake.bound_program)
+        g_fake.scene_sampler=g_fake.sampler_locations[index].value;
     int font_program=0;
     for(unsigned index=0;index<g_fake.font_channel_location_count;index++)
       if(g_fake.font_channel_locations[index].program==g_fake.bound_program) font_program=1;
@@ -999,6 +1017,7 @@ unsigned anygm_test_graphics_finish_calls(void){ return g_fake.finish_calls; }
 unsigned anygm_test_graphics_last_draw_framebuffer(void){ return g_fake.last_draw_framebuffer; }
 int anygm_test_graphics_blend_enabled(void){ return g_fake.blend_enabled; }
 int anygm_test_graphics_scene_filter(void){ return g_fake.scene_filter; }
+int anygm_test_graphics_scene_sampler(void){ return g_fake.scene_sampler; }
 unsigned anygm_test_graphics_scene_mask_draws(unsigned mask){
   return mask<16u?g_fake.scene_mask_draws[mask]:0u;
 }

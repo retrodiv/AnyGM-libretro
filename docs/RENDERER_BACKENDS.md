@@ -42,6 +42,12 @@ differ and by how much, and they do not decide whether a GPU picture is
 acceptable. A skipped comparison confers no qualification and does not change
 its expected pixels or thresholds.
 
+Complete untrimmed filtered stretched cells use the existing native bilinear sampler on
+their placed quad and physical UVs. The device supplies sampling and fill; the original
+runner is the picture reference. Logical transparent-margin variants keep their existing
+owner. Neutral driver controls retain placed vertices, raw cutout and opaque alpha stamping;
+CPU drawing and admission remain unchanged.
+
 Certified opaque-policy application-to-screen composition at identical source and placed
 extents uses the existing raw framebuffer copy when its source was drawn on the device.
 Clipping selects the corresponding source rectangle, and all stored RGBA channels are

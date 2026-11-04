@@ -66,6 +66,8 @@ int anygm_test_graphics_scene_vertices(void);
 unsigned anygm_test_graphics_scene_mask_draws(unsigned mask);
 unsigned anygm_test_graphics_scene_texture(void);
 int anygm_test_graphics_scene_filter(void);
+/* Last scene draw's requested sampler selector, not a fragment shader emulator. */
+int anygm_test_graphics_scene_sampler(void);
 void anygm_test_graphics_blend_factors(unsigned factors[4]);
 /* Quads drawn through a content program, as opposed to the presentation triangle. */
 int anygm_test_graphics_quad_draw_calls(void);

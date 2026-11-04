@@ -3932,6 +3932,61 @@ static int scene_integer_function_sprite_case(void){
   return 1;
 }
 
+static int scene_native_stretched_cell_case(void){
+  const uint32_t pixels[12]={0xFF112233u,0x80445566u,0x00778899u};
+  for(unsigned api=0;api<2u;api++)for(unsigned trim=0;trim<2u;trim++){
+    GmlGpuContext context=fake_context(api?GML_GPU_API_OPENGLES3:GML_GPU_API_OPENGL_CORE);
+    GmlRenderDeviceServices device={0};GmlRenderDrawOp ops[2]={{0}};
+    GmlRenderDrawStateSnapshot state={0};
+    GmlRenderImageRef source={GML_RENDER_RESOURCE_ATLAS,71u,1u,1u};
+    GmlRenderImageUpload upload={.image=source,.storage_width=4u,.storage_height=3u,
+      .region={0,0,4u,3u},.pixel_format=GML_RENDER_PIXEL_RGBA8888,.stride_bytes=16u,
+      .byte_capacity=sizeof pixels,.bytes=pixels};
+    anygm_test_graphics_reset();GmlGpu *gpu=gml_gpu_create();
+    REQUIRE(gpu && gml_gpu_context_reset(gpu,&context),"native stretched context created");
+    gml_gpu_device_services(gpu,&device);
+    REQUIRE(device.upload(device.context,&upload),"native stretched source uploaded");
+    ops[0].opcode=GML_RENDER_OP_CLEAR;
+    ops[0].target=(GmlRenderTargetRef){{GML_RENDER_RESOURCE_SCREEN,72u,1u,1u},
+      1u,8u,6u,GML_RENDER_PIXEL_ARGB8888,{0,0,8u,6u}};
+    ops[1]=ops[0];ops[1].opcode=GML_RENDER_OP_TEXTURED_QUAD;
+    ops[1].target.image.content_version=2u;ops[1].source_count=1u;ops[1].sources=&source;
+    ops[1].scene_family=GML_RENDER_SCENE_SPRITE;
+    ops[1].reconstruction_mode=GML_RENDER_DEVICE_CHECKPOINT;
+    GmlRenderQuad *q=&ops[1].payload.quad;q->shape=GML_RENDER_QUAD_AXIS_ALIGNED;
+    q->sampling=(GmlRenderSamplingPolicy){GML_RENDER_FILTER_HARDWARE_BILINEAR,
+      GML_RENDER_EDGE_TRANSPARENT,{0,0,4u,3u},GML_RENDER_QUANTISE_FIXED_STRETCHED,0u};
+    q->x[0]=q->x[3]=-2;q->x[1]=q->x[2]=6;
+    q->y[0]=q->y[1]=-1;q->y[2]=q->y[3]=5;
+    q->u[1]=q->u[2]=q->v[2]=q->v[3]=1;
+    q->span_x[0]=trim?6:4;q->span_x[1]=8;q->span_x[2]=trim;q->span_x[3]=4;
+    q->span_y[0]=trim?5:3;q->span_y[1]=6;q->span_y[2]=trim;q->span_y[3]=3;
+    q->filtered_draw_alpha=.5;
+    for(unsigned c=0;c<4u;c++)q->corner_colour[c]=0x803470D0u;
+    state.write_mask=15u;state.colour=0xFFFFFFFFu;state.alpha=255u;
+    state.coverage_policy=GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA;
+    state.alpha_test_enabled=1u;state.alpha_test_reference=64u;
+    state.rgb_source_factor=GML_RENDER_BLEND_SOURCE_ALPHA;
+    state.rgb_destination_factor=GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA;
+    state.alpha_source_factor=GML_RENDER_BLEND_ONE;
+    state.alpha_destination_factor=GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA;
+    state.rgb_equation=state.alpha_equation=GML_RENDER_BLEND_ADD;
+    state.sampler_count=1u;state.samplers[0]=q->sampling;
+    GmlRenderDrawBatch batch={ops,2u,&state,1u};
+    GmlRenderExecutionResult result=device.submit(device.context,&batch);
+    REQUIRE(result.status==GML_RENDER_EXEC_ACCEPTED && result.accepted_prefix==2u &&
+      anygm_test_graphics_scene_draw_calls()==2 && !anygm_test_graphics_scene_copies() &&
+      !anygm_test_graphics_read_pixels(),"stretched cell and alpha stamp remain resident");
+    REQUIRE(anygm_test_graphics_scene_sampler()==(trim?78:22),
+      "complete cells use native sampling; logical transparent margins retain their owner");
+    float position[3];
+    REQUIRE(anygm_test_graphics_quad_position(0,position) && position[0]==-2 && position[1]==-1,
+      "native fill preserves the clipped draw's placed vertices");
+    gml_gpu_destroy(gpu,1);
+  }
+  return 1;
+}
+
 static int scene_identity_underlay_case(void){
   for(unsigned api=0;api<2u;api++) for(unsigned variant=0;variant<6u;variant++){
     GmlGpuContext context=fake_context(api?GML_GPU_API_OPENGLES3:GML_GPU_API_OPENGL_CORE);
@@ -5973,6 +6028,7 @@ int main(int argc,char **argv){
     {"scene_source_alpha_key",scene_source_alpha_key_case},
     {"scene_raw_copy",scene_raw_copy_case},
     {"scene_identity_underlay",scene_identity_underlay_case},
+    {"scene_native_stretched_cell",scene_native_stretched_cell_case},
     {"scene_nearest_rows",scene_nearest_rows_case},
     {"scene_nearest_surface_fringe",scene_nearest_surface_fringe_case},
     {"scene_nearest_surface_function",scene_nearest_surface_function_case},

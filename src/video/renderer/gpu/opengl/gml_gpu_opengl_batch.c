@@ -248,8 +248,16 @@ static uint32_t scene_filter(const GmlRenderQuad *quad,
        state->coverage_policy==GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA)) return 132u;
     return state->coverage_policy==GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA?130u:129u;
   }
-  if(quad->sampling.quantisation==GML_RENDER_QUANTISE_FIXED_STRETCHED)
+  if(quad->sampling.quantisation==GML_RENDER_QUANTISE_FIXED_STRETCHED){
+    /* Complete cells already carry the placed quad and its physical UVs.
+     * Let the device interpolate them instead of reconstructing the CPU's
+     * integer sample phase and redundant logical coverage taps per fragment. */
+    if(quad->sampling.filter==GML_RENDER_FILTER_HARDWARE_BILINEAR &&
+       !quad->span_x[2] && !quad->span_y[2] &&
+       quad->span_x[3]==quad->span_x[0] && quad->span_y[3]==quad->span_y[0])
+      return 21u;
     return quad->sampling.filter==GML_RENDER_FILTER_BOX?75u:77u;
+  }
   if(quad->sampling.quantisation==GML_RENDER_QUANTISE_HARDWARE_SPRITE_MODERN)
     return (quad->span_active==GML_RENDER_SPAN_FILTERED_POSITIVE_ROW ||
             quad->span_active==GML_RENDER_SPAN_FILTERED_AXIS_SUPPORT_ROW)
