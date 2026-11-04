@@ -2082,6 +2082,84 @@ static int scene_nearest_surface_function_case(void){
   }
   return 1;
 }
+static int scene_native_masked_rotation_case(void){
+  const uint8_t pixels[16]={32,64,128,64,128,64,32,128,16,192,48,255,192,48,16,0};
+  for(unsigned api=0;api<2u;api++) for(unsigned geometry=0;geometry<3u;geometry++)
+  for(unsigned invalid=0;invalid<10u;invalid++){
+    anygm_test_graphics_reset();GmlGpu *gpu=gml_gpu_create();GmlRenderDeviceServices device={0};
+    GmlGpuContext context=fake_context(api?GML_GPU_API_OPENGLES3:GML_GPU_API_OPENGL_CORE);
+    GmlRenderImageRef source={GML_RENDER_RESOURCE_ATLAS,181u,1u,1u};
+    GmlRenderImageUpload upload={.image=source,.storage_width=2u,.storage_height=2u,
+      .region={0,0,2u,2u},.pixel_format=GML_RENDER_PIXEL_RGBA8888,
+      .stride_bytes=8u,.byte_capacity=sizeof pixels,.bytes=pixels};
+    REQUIRE(gpu && gml_gpu_context_reset(gpu,&context),"native masked rotation context");
+    gml_gpu_device_services(gpu,&device);
+    REQUIRE(device.upload(device.context,&upload),"native masked rotation source");
+    GmlRenderDrawStateSnapshot states[2]={{.colour=0xFFFFFFFFu,.alpha=255u,.write_mask=15u},
+      {.colour=0xFFFFFFFFu,.alpha=255u,.write_mask=7u,.sampler_count=1u,
+       .rgb_source_factor=GML_RENDER_BLEND_SOURCE_ALPHA,
+       .rgb_destination_factor=GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA,
+       .alpha_source_factor=GML_RENDER_BLEND_SOURCE_ALPHA,
+       .alpha_destination_factor=GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA,
+       .rgb_equation=GML_RENDER_BLEND_ADD,.alpha_equation=GML_RENDER_BLEND_ADD}};
+    states[1].samplers[0]=(GmlRenderSamplingPolicy){GML_RENDER_FILTER_NEAREST,
+      GML_RENDER_EDGE_CLAMP_SUBIMAGE,{0,0,2u,2u},GML_RENDER_QUANTISE_HARDWARE_SPRITE_MODERN,0u};
+    GmlRenderDrawOp ops[3]={0};
+    for(unsigned index=0;index<3u;index++){
+      GmlRenderDrawOp *op=&ops[index];op->sequence=index+1u;
+      op->target=(GmlRenderTargetRef){.image={GML_RENDER_RESOURCE_SURFACE,182u,1u,index+1u},
+        .storage_version=1u,.width=8u,.height=8u,.pixel_format=GML_RENDER_PIXEL_ARGB8888,
+        .region={0,0,8u,8u}};
+      if(!index){op->opcode=GML_RENDER_OP_CLEAR;op->payload.clear_colour=0xA5403050u;continue;}
+      op->opcode=GML_RENDER_OP_TEXTURED_QUAD;op->scene_family=GML_RENDER_SCENE_SPRITE;
+      op->reconstruction_mode=GML_RENDER_DEVICE_CHECKPOINT;op->sources=&source;
+      op->source_count=1u;op->state_index=1u;
+      GmlRenderQuad *q=&op->payload.quad;q->shape=GML_RENDER_QUAD_GENERAL;
+      q->sampling=states[1].samplers[0];q->filtered_draw_alpha=.55;
+      const double x[4]={1.25,4.25,3.25,.25},y[4]={1.5,2.5,5.5,4.5};
+      for(unsigned corner=0;corner<4u;corner++){
+        q->x[corner]=geometry==1u?(corner<2u?2.0:6.0):geometry==2u?8.0-x[corner]:x[corner];
+        q->y[corner]=geometry==1u?(corner==0u || corner==3u?6.0:2.0):y[corner];
+        q->u[corner]=corner==1u || corner==2u?1.0:0.0;q->v[corner]=corner>=2u?1.0:0.0;
+        q->corner_colour[corner]=0x8C70A0D0u;
+      }
+    }
+    GmlRenderQuad *q=&ops[2].payload.quad;
+    if(!invalid){
+      float vertices[6u*GL_SCENE_VERTEX_FLOATS];
+      const unsigned corners[6]={0,1,2,0,2,3};
+      REQUIRE(gml_render_gpu_opengl_draw_textured_quad(&ops[2],&states[1],2,2,0,vertices),
+        "native rotation prepares interpolated texture coordinates");
+      for(unsigned vertex=0;vertex<6u;vertex++){
+        REQUIRE(vertices[vertex*GL_SCENE_VERTEX_FLOATS+2u]==(float)q->u[corners[vertex]] &&
+          vertices[vertex*GL_SCENE_VERTEX_FLOATS+3u]==(float)q->v[corners[vertex]],
+          "native rotation keeps physical UVs instead of legacy inverse rows");
+        for(unsigned field=0;field<GL_SCENE_VERTEX_FLOATS;field++)
+          REQUIRE(isfinite(vertices[vertex*GL_SCENE_VERTEX_FLOATS+field]),"native attributes stay finite at cardinal angles");
+      }
+    }
+    if(invalid==1u) states[1].write_mask=15u;
+    if(invalid==2u) q->x[2]+=1.0;
+    if(invalid==3u) q->u[0]=.25;
+    if(invalid==4u) q->sampling.filter=states[1].samplers[0].filter=GML_RENDER_FILTER_HARDWARE_BILINEAR;
+    if(invalid==5u) q->filtered_draw_alpha=NAN;
+    if(invalid==6u) states[1].source_palette.enabled=1u;
+    if(invalid==7u) q->span_active=1u;
+    if(invalid==8u) ops[2].reconstruction_mode=GML_RENDER_REPLAY_EXACT;
+    if(invalid==9u) q->x[0]=INFINITY;
+    GmlRenderDrawBatch batch={ops,3u,states,2u};
+    GmlRenderExecutionResult result=device.submit(device.context,&batch);
+    if(invalid) REQUIRE(result.status==GML_RENDER_EXEC_UNSUPPORTED && !result.accepted_prefix &&
+      !anygm_test_graphics_clear_calls() && !anygm_test_graphics_scene_draw_calls(),
+      "unqualified native suffix refuses before its clear prefix");
+    else REQUIRE(result.status==GML_RENDER_EXEC_ACCEPTED && result.accepted_prefix==3u &&
+      anygm_test_graphics_scene_draw_calls()==1u && !anygm_test_graphics_scene_copies() &&
+      !anygm_test_graphics_read_pixels(),"native masked rotations group without destination snapshots");
+    gml_gpu_destroy(gpu,1);
+  }
+  return 1;
+}
+
 static int scene_rotated_surface_point_case(void){
   enum {QUADS=2049};
   const uint32_t pixels[]={0x001267B9u,0x552679B3u,0xAAC39526u,0xFF7193C5u};
@@ -6186,6 +6264,7 @@ int main(int argc,char **argv){
     {"scene_nearest_surface_fringe",scene_nearest_surface_fringe_case},
     {"scene_nearest_surface_function",scene_nearest_surface_function_case},
     {"scene_rotated_surface_point",scene_rotated_surface_point_case},
+    {"scene_native_masked_rotation",scene_native_masked_rotation_case},
     {"scene_tiled_surface_packets",scene_tiled_surface_packets_case},
     {"scene_gui_tinted_text",scene_gui_tinted_text_case},
     {"scene_gui_filtered_background_batch",scene_gui_filtered_background_batch_case},

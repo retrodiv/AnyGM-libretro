@@ -5306,6 +5306,26 @@ static int rotated_geometry_prepare(GmlRender *r,GmlSprite *spr,GmlTpag *t,
   return 1;
 }
 
+int gml_render_rotated_sprite_placement(GmlRender *r,GmlSprite *sprite,GmlTpag *page,
+  double x,double y,double xs,double ys,double rotation,GmlRenderRotatedPlacement *placement){
+  if(!r || !sprite || !page || !placement || !r->atlas ||
+     page->atlas<0 || page->atlas>=r->n_atlas || !r->atlas[page->atlas].px ||
+     page->sx<0 || page->sy<0 || page->sw<=0 || page->sh<=0 ||
+     (int64_t)page->sx+page->sw>r->atlas[page->atlas].w ||
+     (int64_t)page->sy+page->sh>r->atlas[page->atlas].h ||
+     !isfinite(x) || !isfinite(y) || !isfinite(xs) || !isfinite(ys) ||
+     xs==0.0 || ys==0.0 || !isfinite(rotation)) return -1;
+  GmlRotatedGeometry geometry;
+  int result=rotated_geometry_prepare(r,sprite,page,&r->atlas[page->atlas],
+    x,y,xs,ys,rotation,0,1,&geometry);
+  if(result<=0) return result;
+  memcpy(placement->x,geometry.qx,sizeof placement->x);
+  memcpy(placement->y,geometry.qy,sizeof placement->y);
+  placement->source_region=(GmlRenderRect){page->sx+geometry.abx0,page->sy+geometry.aby0,
+    (uint32_t)(geometry.abx1-geometry.abx0+1),(uint32_t)(geometry.aby1-geometry.aby0+1)};
+  return 1;
+}
+
 int gml_render_sprite_source_is_outside(GmlRender *r,const GmlSprite *sprite,const GmlTpag *page,
                                       double x,double y,double xs,double ys,double rotation){
   if(!r || !sprite || !page || sprite->w<=0 || sprite->h<=0 ||

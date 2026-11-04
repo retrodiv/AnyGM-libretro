@@ -1111,6 +1111,46 @@ static int hardware_screen_stretch_valid(const GmlRenderDrawOp *op,
   return 1;
 }
 
+/* Ordinary RGB-only nearest rotations use their placed quad and physical UVs.
+ * The alpha-preserving target retains its destination channel unchanged. */
+static int hardware_masked_rotated_sprite_valid(const GmlRenderDrawOp *op,
+  const GmlRenderDrawStateSnapshot *state,const GlSceneImage *source){
+  const GmlRenderQuad *quad=&op->payload.quad;
+  GmlRenderRect crop=quad->sampling.source_region;
+  if(!source || !source->width || !source->height || source->rendered_origin ||
+     source->width>16384u || source->height>16384u ||
+     source->pixel_format!=GML_RENDER_PIXEL_RGBA8888 ||
+     op->scene_family!=GML_RENDER_SCENE_SPRITE || op->source_count!=1u || !op->sources ||
+     op->sources[0].resource_class!=GML_RENDER_RESOURCE_ATLAS ||
+     op->target.image.resource_class!=GML_RENDER_RESOURCE_SURFACE ||
+     op->target.pixel_format!=GML_RENDER_PIXEL_ARGB8888 ||
+     op->reconstruction_mode!=GML_RENDER_DEVICE_CHECKPOINT ||
+     quad->shape!=GML_RENDER_QUAD_GENERAL || quad->span_active ||
+     quad->source_endpoint_rgb_mask ||
+     quad->sampling.quantisation!=GML_RENDER_QUANTISE_HARDWARE_SPRITE_MODERN ||
+     quad->sampling.filter!=GML_RENDER_FILTER_NEAREST ||
+     quad->sampling.edge_rule!=GML_RENDER_EDGE_CLAMP_SUBIMAGE ||
+     quad->sampling.logical_margin_mask || !valid_region(crop,source->width,source->height) ||
+     crop.width>4096u || crop.height>4096u ||
+     state->write_mask!=7u || state->alpha!=255u || state->colour!=0xFFFFFFFFu ||
+     state->alpha_test_enabled || state->alpha_test_reference || state->source_alpha_key ||
+     state->source_palette.enabled ||
+     state->coverage_policy || qualified_blend(state)!=3 ||
+     !isfinite(quad->filtered_draw_alpha) || quad->filtered_draw_alpha<=0.0 ||
+     quad->filtered_draw_alpha>1.0) return 0;
+  for(unsigned corner=0;corner<4u;corner++){
+    double u=((double)crop.x+((corner==1u || corner==2u)?crop.width:0u))/source->width;
+    double v=((double)crop.y+(corner>=2u?crop.height:0u))/source->height;
+    if(!isfinite(quad->x[corner]) || !isfinite(quad->y[corner]) ||
+       fabs(quad->x[corner])>65536.0 || fabs(quad->y[corner])>65536.0 ||
+       quad->u[corner]!=u || quad->v[corner]!=v ||
+       quad->corner_colour[corner]!=quad->corner_colour[0]) return 0;
+  }
+  if(fabs(quad->x[0]+quad->x[2]-quad->x[1]-quad->x[3])>1e-8 ||
+     fabs(quad->y[0]+quad->y[2]-quad->y[1]-quad->y[3])>1e-8) return 0;
+  return 1;
+}
+
 /* Ordinary filtered opaque-stage packets retain authored fractional phase in UVs.
  * This bounded rule does not admit trim, source mutations or exact recipes. */
 static int hardware_screen_sprite_valid(const GmlRenderDrawOp *op,
@@ -1655,7 +1695,8 @@ static int scene_preflight(GmlGpuBackend *backend,const GmlRenderDrawBatch *batc
       int sample_plane=sample_plane_copy_valid(op,state,source);
       int hardware_veil=hardware_screen_veil_valid(op,state,source);
       int hardware_stretch=hardware_screen_stretch_valid(op,state,source);
-      int hardware_sprite=hardware_screen_sprite_valid(op,state,source);
+      int hardware_sprite=hardware_screen_sprite_valid(op,state,source) ||
+        hardware_masked_rotated_sprite_valid(op,state,source);
       int stretched_box=fixed_stretched_quad_valid(op,state,source);
       int physical_sprite=hardware_sprite &&
         (sampling->quantisation==GML_RENDER_QUANTISE_HARDWARE_SPRITE_FIRSTGEN ||

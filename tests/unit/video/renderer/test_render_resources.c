@@ -16084,6 +16084,56 @@ static int resident_opaque_sprite_complete_application(void){
 }
 
 /* Admission/authority only. The owning real-context control supplies D2 pixels. */
+static int resident_numbered_rotated_native_quad(void){
+  enum { W=256,H=192,SW=128,SH=96 };
+  for(unsigned signs=0;signs<4u;signs++){
+    GmlRender *r=calloc(1,sizeof *r);GmlWin content={.bytecode=17};
+    FakeDevice fake={.on_demand=1};GmlRenderDeviceServices device=service(&fake);
+    uint32_t *screen=calloc(W*H,sizeof *screen),*shadow=calloc(W*H,sizeof *shadow);
+    CHECK(r && screen && shadow && !gml_render_init(r,NULL));r->win=&content;
+    free(r->atlas[0].px);r->atlas[0].px=malloc(SW*SH*4u);
+    r->atlas[0].w=SW;r->atlas[0].h=SH;
+    r->tpag=calloc(1,sizeof *r->tpag);r->spr=calloc(1,sizeof *r->spr);
+    CHECK(r->atlas[0].px && r->tpag && r->spr);
+    for(unsigned p=0;p<SW*SH;p++){
+      r->atlas[0].px[p*4u]=(uint8_t)(p*7u);
+      r->atlas[0].px[p*4u+1u]=(uint8_t)(p*13u);
+      r->atlas[0].px[p*4u+2u]=(uint8_t)(p*23u);
+      r->atlas[0].px[p*4u+3u]=128u;
+    }
+    r->n_tpag=r->n_spr=1;
+    r->tpag[0]=(GmlTpag){.sw=SW,.sh=SH,.tw=SW,.th=SH,.bw=SW,.bh=SH};
+    r->spr[0]=(GmlSprite){.w=SW,.h=SH,.originx=SW/2,.originy=SH/2,.n_frames=1};
+    r->spr[0].frame=calloc(1,sizeof(int));CHECK(r->spr[0].frame);
+    device.observe_on_demand=fake_observe_on_demand;gml_render_bind_device(r,&device);
+    CHECK(gml_render_begin_resident_base(r,screen,W,H,0,0));
+    int surface=gml_surface_create(r,W,H);CHECK(surface>0 && gml_surface_set_target(r,surface));
+    gml_render_set_pending_fill(r,0xA5403050u);gml_render_flush_pending_fill(r);
+    CHECK(gml_render_scene_submit_pending(r));
+    memcpy(shadow,r->fb,W*H*sizeof *shadow);
+    uint64_t before=fake.textured_families[GML_RENDER_SCENE_SPRITE];
+    GmlRenderImageRef previous=fake.last_target_image;
+    r->interp=0;r->color_write_mask=7u;
+    gml_draw_sprite_ext(r,0,0,128,96,signs&1u?-1.75:1.75,
+                       signs&2u?-1.25:1.25,31,0xD0A070u,.55);
+    CHECK(r->resident_application_pass && gml_render_scene_submit_pending(r));
+    CHECK(fake.textured_families[GML_RENDER_SCENE_SPRITE]==before+1u);
+    CHECK(fake.last_quad.shape==GML_RENDER_QUAD_GENERAL && !fake.last_quad.span_active &&
+      fake.last_filter==GML_RENDER_FILTER_NEAREST && fake.last_write_mask==7u);
+    CHECK(!fake.readbacks && !fake.rgb_queries && !memcmp(shadow,r->fb,W*H*sizeof *shadow));
+    CHECK(fake.last_target_image.identity==previous.identity &&
+      fake.last_target_image.content_version==previous.content_version+1u);
+    if(!signs){
+      const double x[4]={1.094977826760,193.100453184033,254.905022173240,62.899546815967};
+      const double y[4]={102.254226347799,-13.114302432053,89.745773652201,205.114302432053};
+      for(unsigned i=0;i<4u;i++) CHECK(fabs(fake.last_quad.x[i]-x[i])<1e-9 &&
+        fabs(fake.last_quad.y[i]-y[i])<1e-9);
+    }
+    gml_render_abandon_device(r);gml_render_free(r);free(r);free(screen);free(shadow);
+  }
+  return 1;
+}
+
 static int resident_sprite_function(int geometry){
   enum { W=24,H=20 };
   const int legacy_generations[]={700,800,15,17},nearest_generations[]={700,530,800,13,15,17};
@@ -19712,6 +19762,7 @@ int main(void){
     else if(!strcmp(selected,"physical-filtered-sprite")) passed=resident_physical_filtered_sprite_function();
     else if(!strcmp(selected,"wide-nearest-rows")) passed=resident_large_screen_axis_row_metadata();
     else if(!strcmp(selected,"large-rotated-rows")) passed=resident_large_rotated_sample_row_metadata();
+    else if(!strcmp(selected,"numbered-rotated-native-quad")) passed=resident_numbered_rotated_native_quad();
     else if(!strcmp(selected,"bounded-axis-screen")) passed=resident_bounded_axis_screen_sprite();
     else if(!strcmp(selected,"large-screen-byte-axis")) passed=resident_large_screen_byte_axis();
     else if(!strcmp(selected,"source-palette")) passed=source_palette_snapshot_contract();
@@ -20041,6 +20092,7 @@ int main(void){
   passed+=resident_point_function_transaction();
   passed+=resident_rectangle_cpu_passthrough_programs();
   passed+=skip_cpu_draw_policy_preserves_observers();
-  printf("render resource cases: passed=%d failed=%d\n",passed,311-passed);
-  return passed==311?EXIT_SUCCESS:EXIT_FAILURE;
+  passed+=resident_numbered_rotated_native_quad();
+  printf("render resource cases: passed=%d failed=%d\n",passed,312-passed);
+  return passed==312?EXIT_SUCCESS:EXIT_FAILURE;
 }

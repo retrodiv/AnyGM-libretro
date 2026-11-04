@@ -362,7 +362,8 @@ static int resident_atlas_crop_from_page_impl(GmlRender *r,GmlTpag *page,
                                          const GmlRenderResourceSource *source_override,
                                          const GmlRenderRotatedCoverageRegion *tile_regions,
                                          uint32_t tile_region_count,int tile_exact_unit,
-                                         const ResidentRuntimeNearest *runtime_geometry);
+                                         const ResidentRuntimeNearest *runtime_geometry,
+                                         const GmlRenderRotatedPlacement *native_geometry);
 static void modern_point_axis_prune(double leading,double scale,double phase_offset,
                                     int source_extent,double *start,double *extent);
 static int resident_modern_point_regions(GmlRender *r,GmlTpag *page,
@@ -645,7 +646,7 @@ static int resident_atlas_crop_from_page(GmlRender *r,GmlTpag *page,
                                          double draw_alpha,int physical_sprite_page,
                                          const GmlRenderResourceSource *source_override){
   return resident_atlas_crop_from_page_impl(r,page,crop_x,crop_y,crop_width,crop_height,
-    left,top,xs,ys,family,colour,draw_alpha,physical_sprite_page,source_override,NULL,0u,0,NULL);
+    left,top,xs,ys,family,colour,draw_alpha,physical_sprite_page,source_override,NULL,0u,0,NULL,NULL);
 }
 
 /* Cardinal tiles share the point packet's source/state owner. Geometry is
@@ -689,7 +690,8 @@ static int resident_atlas_crop_from_page_impl(GmlRender *r,GmlTpag *page,
                                          const GmlRenderResourceSource *source_override,
                                          const GmlRenderRotatedCoverageRegion *tile_regions,
                                          uint32_t tile_region_count,int tile_exact_unit,
-                                         const ResidentRuntimeNearest *runtime_geometry){
+                                         const ResidentRuntimeNearest *runtime_geometry,
+                                         const GmlRenderRotatedPlacement *native_geometry){
   GmlAtlas *atlas;
   GmlAtlas runtime_atlas;
   GmlRenderResourceSource source={0};
@@ -1406,6 +1408,19 @@ static int resident_atlas_crop_from_page_impl(GmlRender *r,GmlTpag *page,
   operation.payload.quad.u[1]=operation.payload.quad.u[2]=xs<0.0?source_left:source_right;
   operation.payload.quad.v[0]=operation.payload.quad.v[1]=ys<0.0?source_bottom:source_top;
   operation.payload.quad.v[2]=operation.payload.quad.v[3]=ys<0.0?source_top:source_bottom;
+  if(native_geometry){
+    GmlRenderQuad *quad=&operation.payload.quad;
+    const GmlRenderRect *crop=&native_geometry->source_region;
+    quad->shape=GML_RENDER_QUAD_GENERAL;
+    quad->sampling.quantisation=GML_RENDER_QUANTISE_HARDWARE_SPRITE_MODERN;
+    memcpy(quad->x,native_geometry->x,sizeof quad->x);
+    memcpy(quad->y,native_geometry->y,sizeof quad->y);
+    quad->sampling.source_region=*crop;
+    quad->u[0]=quad->u[3]=(double)crop->x/source.width;
+    quad->u[1]=quad->u[2]=((double)crop->x+crop->width)/source.width;
+    quad->v[0]=quad->v[1]=(double)crop->y/source.height;
+    quad->v[2]=quad->v[3]=((double)crop->y+crop->height)/source.height;
+  }
   /* Public rotated text calls the unwrapped CPU glyph writer: its ordinary
    * normal/add/inverse ports do not apply the sprite API's channel wrapper. */
   state.write_mask=scaled_sprite && family!=GML_RENDER_SCENE_TEXT &&
@@ -1830,7 +1845,7 @@ int gml_render_resident_nearest_quarter_tile_page(GmlRender *r,GmlTpag *page,
   selected.tw=selected.sw;selected.th=selected.sh;
   resident_tile_source_metadata(&selected);
   accepted=!count || resident_atlas_crop_from_page_impl(r,&selected,0,0,page->sw,page->sh,
-    0.0,0.0,1.0,1.0,GML_RENDER_SCENE_TILE,colour,alpha,12,NULL,regions,count,exact_unit,NULL);
+    0.0,0.0,1.0,1.0,GML_RENDER_SCENE_TILE,colour,alpha,12,NULL,regions,count,exact_unit,NULL,NULL);
 done:
   free(regions);
   return accepted;
@@ -3987,7 +4002,7 @@ retry_submission:
      * No destination image or per-pixel colour enters this preparation. */
     accepted=resident_atlas_crop_from_page_impl(r,page,0,0,page->sw,page->sh,
       0.0,0.0,1.0,1.0,GML_RENDER_SCENE_SPRITE,colour,alpha,21,NULL,
-      alpha_regions,alpha_count,0,NULL);
+      alpha_regions,alpha_count,0,NULL,NULL);
     goto done;
   }
   GmlRenderImageRef image=gml_render_application_scene_next_image_ref(r,target);
@@ -4182,6 +4197,23 @@ static int resident_nearest_texture_function(GmlRender *r,GmlSprite *sprite,GmlT
      (int64_t)page->tx+page->sw>sprite->w ||
      (int64_t)page->ty+page->sh>sprite->h) return 0;
   if(phase>=0.001 && fabs(phase-360.0)>=0.001){
+    /* A masked nearest draw keeps its CPU placement while the device owns
+     * rasterization and sampling. Do not tessellate it into CPU coverage rows. */
+    if(family==GML_RENDER_SCENE_SPRITE && !r->classic && !r->interp &&
+       anygm_policy_has_modern_layer_semantics(r->win) && !r->fog_flat &&
+       !r->gui_pass_active && r->active_shader<0 && !r->alpha_test_enable &&
+       r->alphablend && !r->blendmode && r->color_write_mask==7u &&
+       r->target_id>0 && gml_render_target_preserves_alpha(r) &&
+       page->sw<=4096 && page->sh<=4096 && r->atlas &&
+       page->atlas>=0 && page->atlas<r->n_atlas &&
+       r->atlas[page->atlas].w<=16384 && r->atlas[page->atlas].h<=16384){
+      GmlRenderRotatedPlacement placement;
+      int placed=gml_render_rotated_sprite_placement(r,sprite,page,x,y,xs,ys,phase,&placement);
+      if(placed>0) for(unsigned corner=0;corner<4u;corner++)
+        if(fabs(placement.x[corner])>65536.0 || fabs(placement.y[corner])>65536.0) placed=-1;
+      if(placed>=0) return !placed || resident_atlas_crop_from_page_impl(r,page,
+        0,0,page->sw,page->sh,0,0,1,1,family,colour,alpha,16,NULL,NULL,0u,0,NULL,&placement);
+    }
     enum { CAPACITY=2048 };
     GmlRenderRotatedCoverageRegion *regions=malloc(CAPACITY*sizeof *regions);
     uint32_t count=0;
@@ -4217,7 +4249,7 @@ static int resident_nearest_texture_function(GmlRender *r,GmlSprite *sprite,GmlT
       if(r->pending_fill || !gml_render_rotated_scene_prepare_begin(r)) goto rotated_done;
     }
     accepted=resident_atlas_crop_from_page_impl(r,&selected,0,0,page->sw,page->sh,
-      0.0,0.0,1.0,1.0,family,colour,alpha,row_geometry?21:16,NULL,regions,count,0,NULL);
+      0.0,0.0,1.0,1.0,family,colour,alpha,row_geometry?21:16,NULL,regions,count,0,NULL,NULL);
     if(deferred) accepted=gml_render_rotated_scene_prepare_finish(r,accepted);
 rotated_done:
     free(regions);
@@ -4647,7 +4679,7 @@ static int resident_nearest_sprite_function(GmlRender *r,GmlSprite *sprite,int s
       .scene_ax1=sprite->w-1,.scene_ay1=sprite->h-1};
     ResidentRuntimeNearest geometry={sprite,subimg,x,y,xs,ys,rotation};
     return resident_atlas_crop_from_page_impl(r,&runtime_page,0,0,sprite->w,sprite->h,
-      0.0,0.0,1.0,1.0,GML_RENDER_SCENE_SPRITE,colour,alpha,17,&source,NULL,0u,0,&geometry);
+      0.0,0.0,1.0,1.0,GML_RENDER_SCENE_SPRITE,colour,alpha,17,&source,NULL,0u,0,&geometry,NULL);
   }
   if(!sprite->frame) return 0;
   int frame=gml_render_runtime_frame_index(sprite,subimg);

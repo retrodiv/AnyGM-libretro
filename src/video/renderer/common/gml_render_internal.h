@@ -884,6 +884,15 @@ typedef struct GmlRenderRotatedCoverageRegion {
   uint32_t sample_key;
   int64_t fixed_x,fixed_y,delta_x,delta_y;
 } GmlRenderRotatedCoverageRegion;
+typedef struct GmlRenderRotatedPlacement {
+  double x[4],y[4];
+  GmlRenderRect source_region;
+} GmlRenderRotatedPlacement;
+/* Reuse CPU vertex placement without walking destination coverage. Returns
+ * one for placed geometry, zero for an empty draw, and minus one if invalid. */
+int gml_render_rotated_sprite_placement(GmlRender *render,GmlSprite *sprite,GmlTpag *page,
+  double x,double y,double xscale,double yscale,double rotation,
+  GmlRenderRotatedPlacement *placement);
 /* Reuse the CPU rotation's conservative clipped bounds without walking pixels. */
 int gml_render_sprite_source_is_outside(GmlRender *r,const GmlSprite *sprite,const GmlTpag *page,
                                       double x,double y,double xs,double ys,double rotation);

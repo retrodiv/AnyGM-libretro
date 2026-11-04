@@ -113,12 +113,15 @@ int gml_render_gpu_opengl_draw_textured_quad(const GmlRenderDrawOp *op,
   const GmlRenderQuad *quad;
   GmlRenderRect region;
   uint32_t region_storage_y;
-  int rotated,warped,stretched_float,stretched_blend,automatic_surface,destination_surface,half_gui;
+  int rotated,warped,native_uv,stretched_float,stretched_blend,automatic_surface,destination_surface,half_gui;
   if(!op || !state || !vertices || !source_width || !source_height) return 0;
   quad=&op->payload.quad;
   half_gui=!rendered_source_origin &&
     gml_gpu_opengl_half_gui_point_valid(op,state,source_width,source_height);
-  rotated=quad->shape==GML_RENDER_QUAD_CARDINAL || quad->shape==GML_RENDER_QUAD_GENERAL;
+  native_uv=quad->shape==GML_RENDER_QUAD_GENERAL &&
+    quad->sampling.quantisation==GML_RENDER_QUANTISE_HARDWARE_SPRITE_MODERN;
+  rotated=!native_uv &&
+    (quad->shape==GML_RENDER_QUAD_CARDINAL || quad->shape==GML_RENDER_QUAD_GENERAL);
   warped=quad->shape==GML_RENDER_QUAD_WARPED;
   stretched_float=quad->sampling.quantisation==GML_RENDER_QUANTISE_STRETCHED_FLOAT;
   stretched_blend=stretched_float &&
@@ -127,7 +130,7 @@ int gml_render_gpu_opengl_draw_textured_quad(const GmlRenderDrawOp *op,
                     quad->sampling.quantisation==GML_RENDER_QUANTISE_AUTOMATIC_SURFACE_MODERN;
   if(automatic_surface && !gml_render_automatic_surface_quad_valid(quad,
        op->target.width,op->target.height)) return 0;
-  if(quad->shape!=GML_RENDER_QUAD_AXIS_ALIGNED && !rotated && !warped) return 0;
+  if(quad->shape!=GML_RENDER_QUAD_AXIS_ALIGNED && !rotated && !warped && !native_uv) return 0;
   if(warped && (rendered_source_origin ||
      op->reconstruction_mode!=GML_RENDER_DEVICE_CHECKPOINT ||
      (quad->sampling.filter!=GML_RENDER_FILTER_NEAREST &&
@@ -191,8 +194,8 @@ int gml_render_gpu_opengl_draw_textured_quad(const GmlRenderDrawOp *op,
   }
   region_storage_y=rendered_source_origin
     ?source_height-((uint32_t)region.y+region.height):(uint32_t)region.y;
-  if(!rotated && !warped && (quad->x[1]<=quad->x[0] || quad->y[2]<=quad->y[0])) return 0;
-  if(rotated || warped){
+  if(!rotated && !warped && !native_uv && (quad->x[1]<=quad->x[0] || quad->y[2]<=quad->y[0])) return 0;
+  if(rotated || warped || native_uv){
     double area=(quad->x[1]-quad->x[0])*(quad->y[3]-quad->y[0])-
                 (quad->y[1]-quad->y[0])*(quad->x[3]-quad->x[0]);
     if(!isfinite(area) || fabs(area)<1e-10) return 0;
@@ -257,7 +260,7 @@ int gml_render_gpu_opengl_draw_textured_quad(const GmlRenderDrawOp *op,
        quad->sampling.quantisation==GML_RENDER_QUANTISE_SURFACE_ROTATED_POINT ||
        quad->sampling.quantisation==GML_RENDER_QUANTISE_POSITIONED_SAMPLE ||
        quad->sampling.quantisation==GML_RENDER_QUANTISE_SURFACE_BOX_FUNCTION ||
-       half_gui || stretched_blend || (rotated && state->coverage_policy) ||
+       half_gui || native_uv || stretched_blend || (rotated && state->coverage_policy) ||
        (quad->sampling.filter==GML_RENDER_FILTER_BOX &&
         state->coverage_policy==GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA) ||
        (op->scene_family==GML_RENDER_SCENE_SURFACE &&
@@ -268,17 +271,17 @@ int gml_render_gpu_opengl_draw_textured_quad(const GmlRenderDrawOp *op,
     vertex[9]=(float)region_storage_y;
     vertex[10]=(float)((uint32_t)region.x+region.width-1u);
     vertex[11]=(float)(region_storage_y+region.height-1u);
-    vertex[12]=rotated?(float)quad->inverse_anchor[0]:(float)quad->x[0];
-    vertex[13]=rotated?(float)quad->inverse_anchor[1]:(float)quad->y[0];
-    vertex[14]=warped?0.0f:rotated?(float)quad->inverse_x[0]
+    vertex[12]=native_uv?0.0f:rotated?(float)quad->inverse_anchor[0]:(float)quad->x[0];
+    vertex[13]=native_uv?0.0f:rotated?(float)quad->inverse_anchor[1]:(float)quad->y[0];
+    vertex[14]=warped || native_uv?0.0f:rotated?(float)quad->inverse_x[0]
                       :(float)(quad->u[0]*source_width-region.x);
-    vertex[15]=warped?0.0f:rotated?(float)quad->inverse_x[1]
+    vertex[15]=warped || native_uv?0.0f:rotated?(float)quad->inverse_x[1]
                       :(float)((rendered_source_origin?1.0-quad->v[0]:quad->v[0])*
                                 source_height-region_storage_y);
-    vertex[16]=warped?0.0f:rotated?(float)quad->inverse_offset[0]
+    vertex[16]=warped || native_uv?0.0f:rotated?(float)quad->inverse_offset[0]
                       :(float)((quad->u[1]-quad->u[0])*source_width/
                                (quad->x[1]-quad->x[0])-1.0);
-    vertex[17]=warped?0.0f:rotated?(float)quad->inverse_offset[1]
+    vertex[17]=warped || native_uv?0.0f:rotated?(float)quad->inverse_offset[1]
                       :(float)((rendered_source_origin?quad->v[0]-quad->v[2]
                                 :quad->v[2]-quad->v[0])*source_height/
                                (quad->y[2]-quad->y[0])-1.0);
