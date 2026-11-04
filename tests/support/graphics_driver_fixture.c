@@ -67,6 +67,7 @@ typedef struct FakeDriver {
   GLint clear_calls;
   unsigned invalidates, invalidate_attachment, invalidate_framebuffer, invalidate_prior_clears;
   unsigned version_major,version_minor;
+  unsigned full_attachment_clears;
   GLfloat clear_colour[4];
   GLint draw_calls;
   GLint scene_draw_calls;
@@ -271,6 +272,14 @@ static void fake_InvalidateFramebuffer(GLenum target,GLsizei count,const GLenum 
   g_fake.invalidates++;g_fake.invalidate_attachment=attachments[0];
   g_fake.invalidate_framebuffer=g_fake.framebuffer;
   g_fake.invalidate_prior_clears=(unsigned)g_fake.clear_calls;
+}
+static void fake_ClearBufferfv(GLenum buffer,GLint drawbuffer,const GLfloat *value){
+  note_call();
+  if(buffer!=GL_COLOR || drawbuffer!=0 || !value || g_fake.scissor_enabled){
+    g_fake.pending_error=0x0502u;return;
+  }
+  g_fake.full_attachment_clears++;g_fake.clear_calls++;
+  memcpy(g_fake.clear_colour,value,sizeof g_fake.clear_colour);
 }
 static void fake_Clear(GLbitfield mask){ (void)mask; note_call(); g_fake.clear_calls++; }
 static void fake_ColorMask(GLboolean r,GLboolean g,GLboolean b,GLboolean a){
@@ -871,6 +880,7 @@ void (*anygm_test_graphics_proc(void *userdata,const char *name))(void){
     {"glScissor",(void*)fake_Scissor},
     {"glClearColor",(void*)fake_ClearColor},
     {"glClear",(void*)fake_Clear},
+    {"glClearBufferfv",(void*)fake_ClearBufferfv},
     {"glInvalidateFramebuffer",(void*)fake_InvalidateFramebuffer},
     {"glColorMask",(void*)fake_ColorMask},
     {"glDepthMask",(void*)fake_DepthMask},
@@ -1131,3 +1141,5 @@ unsigned anygm_test_graphics_invalidates(unsigned *attachment,unsigned *framebuf
 void anygm_test_graphics_version(unsigned major,unsigned minor){
   g_fake.version_major=major;g_fake.version_minor=minor;
 }
+
+unsigned anygm_test_graphics_full_attachment_clears(void){return g_fake.full_attachment_clears;}

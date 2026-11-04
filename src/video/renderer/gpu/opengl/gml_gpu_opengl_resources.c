@@ -311,6 +311,7 @@ void gml_gpu_opengl_scene_reset(GmlGpuBackend *backend,const GmlGpuContext *cont
   GL_SCENE_LOAD(GetIntegerv,"glGetIntegerv");
   GL_SCENE_LOAD(CopyTexSubImage2D,"glCopyTexSubImage2D");
   GL_SCENE_LOAD(InvalidateFramebuffer,"glInvalidateFramebuffer");
+  GL_SCENE_LOAD(ClearBufferfv,"glClearBufferfv");
   GL_SCENE_LOAD(BlitFramebuffer,"glBlitFramebuffer");
   GL_SCENE_LOAD(BlendFuncSeparate,"glBlendFuncSeparate");
   GL_SCENE_LOAD(BlendEquationSeparate,"glBlendEquationSeparate");

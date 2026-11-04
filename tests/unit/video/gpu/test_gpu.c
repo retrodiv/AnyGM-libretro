@@ -5430,12 +5430,13 @@ static uintptr_t default_host_framebuffer(void *userdata){(void)userdata;return 
 
 static int full_host_clear_discard_case(void){
   uint32_t source[4]={0xff010203u,0xff040506u,0xff070809u,0xff0a0b0cu};
-  for(unsigned variant=0;variant<9u;variant++){
+  for(unsigned variant=0;variant<10u;variant++){
     anygm_test_graphics_reset();
     if(variant==3u) anygm_test_graphics_withhold("glInvalidateFramebuffer");
-    if(variant>=7u) anygm_test_graphics_version(4u,variant==7u?3u:2u);
+    if(variant==7u || variant==8u) anygm_test_graphics_version(4u,variant==7u?3u:2u);
+    if(variant==9u) anygm_test_graphics_withhold("glClearBufferfv");
     GmlGpu *gpu=gml_gpu_create();
-    GmlGpuContext context=fake_context((variant==4u || variant>=7u)?GML_GPU_API_OPENGL_CORE:GML_GPU_API_OPENGLES3);
+    GmlGpuContext context=fake_context((variant==4u || variant==7u || variant==8u)?GML_GPU_API_OPENGL_CORE:GML_GPU_API_OPENGLES3);
     if(variant==6u) context.get_current_framebuffer=default_host_framebuffer;
     REQUIRE(gml_gpu_context_reset(gpu,&context),"optional discard never gates context adoption");
     GmlRenderPlan plan;uint32_t output[64];
@@ -5446,12 +5447,15 @@ static int full_host_clear_discard_case(void){
     if(variant==5u){plan.operations[0]=plan.operations[1];plan.operation_count=1u;}
     REQUIRE(gml_gpu_execute_plan(gpu,&plan),"qualified and ordinary paths execute");
     unsigned attachment=0,framebuffer=0,prior=0;
-    REQUIRE(anygm_test_graphics_invalidates(&attachment,&framebuffer,&prior)==(variant==0u || variant==6u || variant==7u),
+    REQUIRE(anygm_test_graphics_invalidates(&attachment,&framebuffer,&prior)==(variant==0u || variant==6u || variant==7u || variant==9u),
             "only a full first clear on a supported host target discards previous contents");
     if(variant==0u) REQUIRE(attachment==GL_COLOR_ATTACHMENT0 && framebuffer!=0u && prior==0u,
       "only the bound host colour attachment is discarded before its initial clear");
     if(variant==6u) REQUIRE(attachment==GL_COLOR && framebuffer==0u && prior==0u,
       "default framebuffer uses its colour attachment token before the clear");
+    REQUIRE(anygm_test_graphics_full_attachment_clears()==(variant==0u || variant==7u),
+      "only discarded named host attachments use full initialization with the optional clear API");
+    REQUIRE(!anygm_test_graphics_scissor_enabled(),"ordinary final graphics state is restored");
     gml_gpu_destroy(gpu,1);
   }
   return 1;

@@ -132,6 +132,7 @@ int anygm_test_graphics_quad_position(int corner,float *xyz);
 int anygm_test_graphics_content_matrix(unsigned index,float *matrix);
 unsigned anygm_test_graphics_attached_texture(void);
 int anygm_test_graphics_clear_calls(void);
+unsigned anygm_test_graphics_full_attachment_clears(void);
 unsigned anygm_test_graphics_invalidates(unsigned *attachment,unsigned *framebuffer,unsigned *prior_clears);
 unsigned anygm_test_graphics_framebuffer_queries(void);
 unsigned anygm_test_graphics_bound_framebuffer(void);

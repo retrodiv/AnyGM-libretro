@@ -168,6 +168,7 @@ typedef struct GmlGlApi {
   void     (*Scissor)(GLint x,GLint y,GLsizei width,GLsizei height);
   void     (*ClearColor)(GLfloat red,GLfloat green,GLfloat blue,GLfloat alpha);
   void     (*Clear)(GLbitfield mask);
+  void     (*ClearBufferfv)(GLenum buffer,GLint drawbuffer,const GLfloat *value);
   void     (*InvalidateFramebuffer)(GLenum target,GLsizei count,const GLenum *attachments);
   void     (*ColorMask)(GLboolean red,GLboolean green,GLboolean blue,GLboolean alpha);
   void     (*DepthMask)(GLboolean flag);

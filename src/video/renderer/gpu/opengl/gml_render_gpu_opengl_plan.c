@@ -45,7 +45,7 @@ int gml_gpu_opengl_execute(GmlGpuBackend *backend,const GmlGpuContext *context,
                        GmlRenderPlan *plan,GmlGpuCounters *counters,
                        char *error,size_t error_capacity){
   uintptr_t framebuffer;
-  int failed=0;
+  int failed=0,discarded_host_colour=0;
   if(!backend || !backend->loaded || !context || !plan) return 0;
   backend->readback_present_valid=0;
   framebuffer=context->get_current_framebuffer(context->userdata);
@@ -66,6 +66,7 @@ int gml_gpu_opengl_execute(GmlGpuBackend *backend,const GmlGpuContext *context,
        rect->height==plan->target_height){
       GLenum attachment=framebuffer?GL_COLOR_ATTACHMENT0:GL_COLOR;
       backend->gl.InvalidateFramebuffer(GL_FRAMEBUFFER,1,&attachment);
+      discarded_host_colour=framebuffer!=0u;
     }
   }
   begin_plan_state(backend,plan->target_height);
@@ -82,7 +83,15 @@ int gml_gpu_opengl_execute(GmlGpuBackend *backend,const GmlGpuContext *context,
        * implementation; an arbitrary float colour does not, and the plan is refused rather than
        * accepting a value that two drivers would round differently. */
       backend->gl.ClearColor(0.0f,0.0f,0.0f,1.0f);
-      backend->gl.Clear(GL_COLOR_BUFFER_BIT);
+      if(index==0u && discarded_host_colour && backend->gl.ClearBufferfv){
+        /* Padding outside the published frame was discarded above. Initialize that obsolete
+         * storage with the same clear value as the frame, allowing a whole-attachment fast clear.
+         * Only draw buffer zero is initialized; later draws retain their original placement. */
+        static const GLfloat black[4]={0.0f,0.0f,0.0f,1.0f};
+        backend->gl.Disable(GL_SCISSOR_TEST);
+        backend->gl.ClearBufferfv(GL_COLOR,0,black);
+        backend->gl.Enable(GL_SCISSOR_TEST);
+      }else backend->gl.Clear(GL_COLOR_BUFFER_BIT);
       continue;
     }
     {
