@@ -171,8 +171,20 @@ static uintptr_t frontend_get_framebuffer(void){
   return 42u;
 }
 
+static int keyboard_registration_allowed;
+static retro_keyboard_event_t delivered_keyboard;
+static int16_t reserved_keyboard_input(unsigned port,unsigned device,unsigned index,unsigned id){
+  (void)index;
+  return !port && ((device==RETRO_DEVICE_KEYBOARD && id==RETROK_F1) ||
+                   (device==RETRO_DEVICE_JOYPAD && id==RETRO_DEVICE_ID_JOYPAD_B));
+}
+
 static bool environment_callback(unsigned command,void *data){
   switch(command){
+    case RETRO_ENVIRONMENT_SET_KEYBOARD_CALLBACK:
+      if(!keyboard_registration_allowed) return false;
+      delivered_keyboard=((const struct retro_keyboard_callback*)data)->callback;
+      return true;
     case RETRO_ENVIRONMENT_GET_LOG_INTERFACE:
       ((struct retro_log_callback*)data)->log=log_callback;
       return true;
@@ -373,6 +385,8 @@ void anygm_graphics_context_destroy(AnygmEngine *engine,uint32_t context_is_curr
 }
 
 static void begin(const char *value,int available,unsigned preferred,int desktop,int embedded){
+  keyboard_registration_allowed=0;
+  delivered_keyboard=NULL;
   option_value=value;
   shader_option_value=NULL;
   scene_option_value=NULL;
@@ -972,7 +986,35 @@ static int state_call_profile_contract(void){
   return 0;
 }
 
+/* Frontends may suppress environment queries while restoring controller assignments;
+ * their previously accepted keyboard callback remains installed during that phase. */
+static int controller_updates_preserve_keyboard_authority(void){
+  begin(NULL,0,0,0,0);
+  keyboard_registration_allowed=1;
+  retro_set_environment(environment_callback);
+  REQUIRE(delivered_keyboard,"the frontend accepted its keyboard callback");
+  g_libretro.input_state=reserved_keyboard_input;
+  g_libretro.config.gamepad_connected=1;
+  keyboard_registration_allowed=0;
+  for(unsigned port=0;port<ANYGM_MAX_GAMEPADS+2u;port++)
+    retro_set_controller_port_device(port,RETRO_DEVICE_JOYPAD);
+  AnygmInputFrame input;
+  libretro_input_snapshot(&input,320,240);
+  REQUIRE(!input.keys[RETROK_F1],"controller updates must not expose a reserved physical key");
+  REQUIRE(input.gamepad_buttons[0][ANYGM_PAD_FACE_BOTTOM],"the mapped pad button still arrives");
+  delivered_keyboard(true,RETROK_q,0,0);
+  libretro_input_snapshot(&input,320,240);
+  REQUIRE(input.keys[RETROK_q] && !input.keys[RETROK_F1],"delivered keys keep their authority");
+  delivered_keyboard(false,RETROK_q,0,0);
+  libretro_input_snapshot(&input,320,240);
+  REQUIRE(!input.keys[RETROK_q],"delivered release still clears the held key");
+  g_libretro.input_state=NULL;
+  finish();
+  return 0;
+}
+
 int main(void){
+  if(controller_updates_preserve_keyboard_authority()) return EXIT_FAILURE;
   if(option_none_negotiates_nothing()) return EXIT_FAILURE;
   if(rejection_keeps_software()) return EXIT_FAILURE;
   if(desktop_is_requested_first()) return EXIT_FAILURE;

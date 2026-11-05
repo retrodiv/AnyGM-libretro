@@ -243,6 +243,8 @@ load, unload, Reset or state restoration, but preserve them after a rejected res
 strings themselves travel through the ordinary globals codec, and reads own stable value copies.
 The libretro adapter uses the accepted keyboard callback as text authority, keeps its oldest
 256 pending events on overflow, and provides no guessed text for a polling-only frontend.
+Controller-device updates only record the selected port device. They do not republish static input
+declarations or renegotiate keyboard ownership while a frontend suppresses environment requests.
 
 ## VFS and paths
 

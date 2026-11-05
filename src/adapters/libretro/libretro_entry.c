@@ -267,7 +267,8 @@ void retro_get_system_av_info(struct retro_system_av_info *info){
 
 void retro_set_controller_port_device(unsigned port,unsigned device){
   if(port<ANYGM_MAX_GAMEPADS) g_libretro.port_device[port]=device;
-  libretro_input_register();
+  /* Static input declarations belong to environment setup. A frontend may ignore environment
+   * requests while restoring ports; that does not revoke its installed keyboard callback. */
 }
 
 void retro_reset(void){
