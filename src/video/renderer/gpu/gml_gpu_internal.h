@@ -26,6 +26,7 @@ GmlGpuBackend *gml_gpu_opengl_create(void);
 void gml_gpu_opengl_destroy(GmlGpuBackend *backend,int context_is_current);
 /* The context went away without notice: drop every handle without issuing a call. */
 void gml_gpu_opengl_forget(GmlGpuBackend *backend);
+void gml_gpu_opengl_scene_work_counters(const GmlGpuBackend *backend,GmlGpuCounters *counters);
 int gml_gpu_opengl_reset(GmlGpuBackend *backend,const GmlGpuContext *context,
                      char *error,size_t error_capacity);
 /* Executes the plan. A refusal that is the content program's - it did not compile or link - is

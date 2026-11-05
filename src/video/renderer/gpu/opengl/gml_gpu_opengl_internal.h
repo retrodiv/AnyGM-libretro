@@ -104,6 +104,7 @@ typedef struct GlSceneImage {
   uint32_t width,height,pixel_format;
   uint64_t last_used,context_epoch;
   int valid,target,rendered_origin,retired;
+  int framebuffer_complete;
   int alpha_opaque; /* derived proof that every stored alpha byte is 255 */
   int opaque_white_known;
   uint8_t opaque_white[GL_SCENE_WHITE_TEXELS/8];
@@ -184,6 +185,7 @@ typedef struct GlScene {
 } GlScene;
 
 struct GmlGpuBackend {
+  uint64_t target_attachments,target_reuses,white_unit_clears;
   GmlGlApi gl;
   int loaded;
   GmlGpuApi api;

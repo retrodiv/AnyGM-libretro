@@ -675,6 +675,7 @@ int gml_gpu_opengl_scene_upload(GmlGpuBackend *backend,const GmlRenderImageUploa
   backend->gl.PixelStorei(GL_UNPACK_ROW_LENGTH,0);
   backend->gl.BindBuffer(GL_PIXEL_UNPACK_BUFFER,0);
   if(first || resize){
+    slot->framebuffer_complete=0;
     backend->gl.TexImage2D(GL_TEXTURE_2D,0,GL_RGBA8,(GLsizei)transfer->storage_width,
                            (GLsizei)transfer->storage_height,0,GL_RGBA,GL_UNSIGNED_BYTE,NULL);
     backend->gl.TexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,GL_NEAREST);
@@ -746,6 +747,7 @@ GlSceneImage *gml_gpu_opengl_scene_target(GmlGpuBackend *backend,const GmlRender
   backend->gl.ActiveTexture(GL_TEXTURE0);
   backend->gl.BindTexture(GL_TEXTURE_2D,slot->texture);
   if(first || resize){
+    slot->framebuffer_complete=0;
     backend->gl.TexImage2D(GL_TEXTURE_2D,0,GL_RGBA8,(GLsizei)target->width,
                            (GLsizei)target->height,0,GL_RGBA,GL_UNSIGNED_BYTE,NULL);
     backend->gl.TexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,GL_NEAREST);
@@ -761,10 +763,21 @@ GlSceneImage *gml_gpu_opengl_scene_target(GmlGpuBackend *backend,const GmlRender
     if(!slot->framebuffer){ slot->valid=0; slot->alpha_opaque=0; return NULL; }
   }
   backend->gl.BindFramebuffer(GL_FRAMEBUFFER,slot->framebuffer);
-  backend->gl.FramebufferTexture2D(GL_FRAMEBUFFER,GL_COLOR_ATTACHMENT0,GL_TEXTURE_2D,
-                                   slot->texture,0);
-  if(backend->gl.CheckFramebufferStatus(GL_FRAMEBUFFER)!=GL_FRAMEBUFFER_COMPLETE ||
-     backend->gl.GetError()!=GL_NO_ERROR){ slot->valid=0; slot->alpha_opaque=0; return NULL; }
+  /* This framebuffer belongs only to this image. Reattaching unchanged storage
+   * can end a tiled device's render pass between ordinary draws. */
+  if(!slot->framebuffer_complete){
+    backend->gl.FramebufferTexture2D(GL_FRAMEBUFFER,GL_COLOR_ATTACHMENT0,GL_TEXTURE_2D,
+                                     slot->texture,0);
+    if(backend->gl.CheckFramebufferStatus(GL_FRAMEBUFFER)!=GL_FRAMEBUFFER_COMPLETE ||
+       backend->gl.GetError()!=GL_NO_ERROR){ slot->valid=0; slot->alpha_opaque=0; return NULL; }
+    slot->framebuffer_complete=1;
+    backend->target_attachments++;
+  }else{
+    if(backend->gl.GetError()!=GL_NO_ERROR){
+      slot->framebuffer_complete=slot->valid=slot->alpha_opaque=0;return NULL;
+    }
+    backend->target_reuses++;
+  }
   slot->ref=target->image;
   slot->context_epoch=scene->context_epoch;
   slot->width=target->width;

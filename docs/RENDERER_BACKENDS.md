@@ -100,6 +100,13 @@ partial uploads and target access invalidate it. No upload pointer is retained
 and no GPU or CPU target pixels are read. Other colours, partial coverage or
 alpha, source effects and write masks retain their ordinary sampler.
 
+Private image framebuffers retain their validated attachment while storage stays
+unchanged. Both target allocation and upload storage replacement invalidate that
+certificate, as do retirement and context loss. Each access still binds the
+owned framebuffer and checks driver errors. Scene work counters report successful
+attachments, attachment reuse and certified white-unit clears; querying counters
+issues no graphics calls and their totals survive context recreation.
+
 The CPU/OpenGL image comparisons in this repository are diagnostic. Routine
 checks skip them; `make check GPU_PIXEL_PARITY=1` runs them and direct
 execution uses `ANYGM_TEST_GPU_PIXEL_PARITY=1`. Real-device paired pixel probes

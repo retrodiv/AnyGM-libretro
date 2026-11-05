@@ -4435,6 +4435,64 @@ static int scene_opaque_native_alpha_case(void){
   return 1;
 }
 
+static int scene_target_attachment_reuse_case(void){
+  for(unsigned api=0;api<2u;api++){
+    anygm_test_graphics_reset();GmlGpu *gpu=gml_gpu_create();
+    GmlGpuContext context=fake_context(api?GML_GPU_API_OPENGL_CORE:GML_GPU_API_OPENGLES3);
+    REQUIRE(gpu && gml_gpu_context_reset(gpu,&context),"attachment reuse context created");
+    GmlRenderDeviceServices device={0};gml_gpu_device_services(gpu,&device);
+    uint32_t pixels[64]={0};
+    GmlRenderImageUpload upload={.image={GML_RENDER_RESOURCE_ATLAS,83u,1u,1u},
+      .storage_width=1u,.storage_height=1u,.region={0,0,1u,1u},
+      .pixel_format=GML_RENDER_PIXEL_RGBA8888,.stride_bytes=4u,.byte_capacity=4u,.bytes=pixels};
+    REQUIRE(device.upload(device.context,&upload),"attachment fixture primes scene services");
+    GmlRenderTargetRef target={{GML_RENDER_RESOURCE_SCREEN,84u,1u,1u},
+      1u,8u,6u,GML_RENDER_PIXEL_ARGB8888,{0,0,8u,6u}};
+    unsigned before=anygm_test_graphics_framebuffer_attachments();
+    GlSceneImage *first=gml_gpu_opengl_scene_target(gpu->backend,&target);
+    REQUIRE(first && anygm_test_graphics_framebuffer_attachments()==before+1u,
+      "a new private target attaches and validates its texture");
+    target.image.content_version++;
+    REQUIRE(gml_gpu_opengl_scene_target(gpu->backend,&target)==first &&
+      anygm_test_graphics_framebuffer_attachments()==before+1u,
+      "content versions do not reattach unchanged private storage");
+    target.width=7u;target.region.width=7u;
+    REQUIRE(gml_gpu_opengl_scene_target(gpu->backend,&target)==first &&
+      anygm_test_graphics_framebuffer_attachments()==before+2u,
+      "target resize revalidates the attachment");
+    upload.image=target.image;upload.storage_width=7u;upload.storage_height=6u;
+    upload.region=(GmlRenderRect){0,0,7u,6u};upload.stride_bytes=28u;
+    upload.byte_capacity=168u;
+    REQUIRE(device.upload(device.context,&upload) &&
+      gml_gpu_opengl_scene_target(gpu->backend,&target)==first &&
+      anygm_test_graphics_framebuffer_attachments()==before+2u,
+      "same-size CPU uploads retain the existing attachment");
+    upload.storage_width=5u;upload.region.width=5u;upload.stride_bytes=20u;upload.byte_capacity=120u;
+    target.width=5u;target.region.width=5u;
+    REQUIRE(device.upload(device.context,&upload) &&
+      gml_gpu_opengl_scene_target(gpu->backend,&target)==first &&
+      anygm_test_graphics_framebuffer_attachments()==before+3u,
+      "upload storage replacement invalidates attachment completeness");
+    GmlGpuCounters counts={0};gml_gpu_counters(gpu,&counts);
+    REQUIRE(counts.scene_target_attachments==3u && counts.scene_target_reuses==2u,
+      "work counters distinguish successful attachments and reuse");
+    gml_gpu_context_lost(gpu);
+    REQUIRE(gml_gpu_context_reset(gpu,&context),"attachment context recreated");
+    gml_gpu_device_services(gpu,&device);
+    upload.image=(GmlRenderImageRef){GML_RENDER_RESOURCE_ATLAS,83u,1u,1u};
+    REQUIRE(device.upload(device.context,&upload),"new scene primed after loss");
+    before=anygm_test_graphics_framebuffer_attachments();
+    REQUIRE(gml_gpu_opengl_scene_target(gpu->backend,&target) &&
+      anygm_test_graphics_framebuffer_attachments()==before+1u,
+      "context loss never reuses a previous framebuffer certificate");
+    gml_gpu_counters(gpu,&counts);
+    REQUIRE(counts.scene_target_attachments==4u && counts.scene_target_reuses==2u,
+      "work counters retain their lifetime across context loss");
+    gml_gpu_destroy(gpu,1);
+  }
+  return 1;
+}
+
 static int scene_white_unit_clear_case(void){
   for(unsigned api=0;api<2u;api++)for(unsigned variant=0;variant<9u;variant++){
     unsigned sw=variant==8u?256u:4u,sh=variant==8u?128u:3u;
@@ -4510,6 +4568,9 @@ static int scene_white_unit_clear_case(void){
     else REQUIRE(anygm_test_graphics_clear_calls()==clears+1u &&
       anygm_test_graphics_scene_draw_calls()>draws,
       "mutation, nonwhite, partial coverage or alpha and unbounded sources retain sampling");
+    GmlGpuCounters work={0};gml_gpu_counters(gpu,&work);
+    REQUIRE(work.scene_white_unit_clears==(!variant?1u:0u),
+      "only successful certified white clears contribute to the work counter");
     if(!variant){
       GmlRenderTargetRef writable={source,1u,sw,sh,GML_RENDER_PIXEL_ARGB8888,{0,0,sw,sh}};
       GlSceneImage *image=gml_gpu_opengl_scene_target(gpu->backend,&writable);
@@ -6678,6 +6739,7 @@ int main(int argc,char **argv){
     {"scene_identity_underlay",scene_identity_underlay_case},
     {"scene_native_stretched_cell",scene_native_stretched_cell_case},
     {"scene_white_unit_clear",scene_white_unit_clear_case},
+    {"scene_target_attachment_reuse",scene_target_attachment_reuse_case},
     {"scene_opaque_native_alpha",scene_opaque_native_alpha_case},
     {"scene_nearest_rows",scene_nearest_rows_case},
     {"scene_nearest_surface_fringe",scene_nearest_surface_fringe_case},

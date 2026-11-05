@@ -135,6 +135,7 @@ int anygm_test_graphics_clear_calls(void);
 unsigned anygm_test_graphics_full_attachment_clears(void);
 unsigned anygm_test_graphics_invalidates(unsigned *attachment,unsigned *framebuffer,unsigned *prior_clears);
 unsigned anygm_test_graphics_framebuffer_queries(void);
+unsigned anygm_test_graphics_framebuffer_attachments(void);
 unsigned anygm_test_graphics_bound_framebuffer(void);
 unsigned anygm_test_graphics_finish_calls(void);
 unsigned anygm_test_graphics_last_draw_framebuffer(void);

@@ -216,3 +216,11 @@ int gml_gpu_opengl_reset(GmlGpuBackend *backend,const GmlGpuContext *context,
   gml_gpu_opengl_scene_reset(backend,context);
   return 1;
 }
+
+/* Metadata only: observations never issue a graphics call or reset the totals. */
+void gml_gpu_opengl_scene_work_counters(const GmlGpuBackend *backend,GmlGpuCounters *counters){
+  if(!counters) return;
+  counters->scene_target_attachments=backend?backend->target_attachments:0;
+  counters->scene_target_reuses=backend?backend->target_reuses:0;
+  counters->scene_white_unit_clears=backend?backend->white_unit_clears:0;
+}

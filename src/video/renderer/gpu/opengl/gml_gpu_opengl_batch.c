@@ -2469,6 +2469,7 @@ static int clear_white_unit_quad(GmlGpuBackend *backend,GlSceneImage *target,
   backend->gl.ColorMask(GL_TRUE,GL_TRUE,GL_TRUE,GL_TRUE);
   if(!gml_render_gpu_opengl_clear(backend,&clear,target)) return -1;
   target->valid=1;target->rendered_origin=1;
+  backend->white_unit_clears++;
   return 1;
 }
 

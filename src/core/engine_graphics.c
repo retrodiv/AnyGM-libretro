@@ -249,7 +249,8 @@ void engine_graphics_report(AnygmEngine *engine){
     "shader=%llu software3d=%llu uploads=%llu upload_bytes=%llu "
     "readbacks=%llu readback_bytes=%llu rgb_queries=%llu rgb_query_bytes=%llu "
     "checkpoint_masks=%llu checkpoint_mask_bytes=%llu "
-    "rgb_query_refusals=%llu screen_cpu_reads=%llu screen_cpu_materializations=%llu\n",
+    "rgb_query_refusals=%llu screen_cpu_reads=%llu screen_cpu_materializations=%llu "
+    "target_attachments=%llu target_reuses=%llu white_unit_clears=%llu\n",
     engine->scene_renderer_session==ANYGM_SCENE_RENDERER_OPENGL?"OpenGL":"CPU",
     counters.scene_batches_accepted?"OpenGL":"CPU",
     counters.scene_batches_accepted?"accepted":
@@ -279,7 +280,10 @@ void engine_graphics_report(AnygmEngine *engine){
     (unsigned long long)counters.scene_readback_mask_bytes,
     (unsigned long long)counters.scene_rgb_query_refusals,
     (unsigned long long)resources.completed_screen_cpu_reads,
-    (unsigned long long)resources.completed_screen_cpu_materializations);
+    (unsigned long long)resources.completed_screen_cpu_materializations,
+    (unsigned long long)counters.scene_target_attachments,
+    (unsigned long long)counters.scene_target_reuses,
+    (unsigned long long)counters.scene_white_unit_clears);
   engine_logf(engine,ANYGM_LOG_INFO,
     "[graphics-completed-state] copies=%llu copy_bytes=%llu reads=%llu read_bytes=%llu\n",
     (unsigned long long)counters.completed_frame_copies,

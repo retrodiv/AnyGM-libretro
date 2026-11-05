@@ -67,6 +67,8 @@ typedef struct GmlGpuCounters {
   uint64_t scene_rgb_queries,scene_rgb_query_refusals;
   uint64_t completed_frame_copies,completed_frame_copy_bytes;
   uint64_t completed_frame_reads,completed_frame_read_bytes;
+  /* Successful backend work, cumulative across context loss and reset. */
+  uint64_t scene_target_attachments,scene_target_reuses,scene_white_unit_clears;
 } GmlGpuCounters;
 
 /* Creation allocates CPU metadata only and issues no graphics call, so an engine may own a GmlGpu

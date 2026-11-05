@@ -283,6 +283,7 @@ void gml_gpu_counters(const GmlGpu *gpu,GmlGpuCounters *counters){
   if(!counters) return;
   if(!gpu){ memset(counters,0,sizeof *counters); return; }
   *counters=gpu->counters;
+  gml_gpu_opengl_scene_work_counters(gpu->backend,counters);
 }
 
 void gml_gpu_set_readback_pipelined(GmlGpu *gpu,int pipelined){

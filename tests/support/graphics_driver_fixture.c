@@ -44,7 +44,7 @@ typedef struct FakeDriver {
   GLint quad_filter[3];
   GLuint active_unit;
   GLuint framebuffer,last_draw_framebuffer;
-  uint32_t framebuffer_queries;
+  uint32_t framebuffer_queries,framebuffer_attachments;
   GLuint program;
   GLuint vertex_array;
   GLuint bound_program;
@@ -471,7 +471,7 @@ static void fake_GenFramebuffers(GLsizei n,GLuint *names){
 }
 static void fake_DeleteFramebuffers(GLsizei n,const GLuint *names){ (void)names; note_call(); g_fake.deletes_issued+=n; }
 static void fake_FramebufferTexture2D(GLenum target,GLenum attachment,GLenum textarget,GLuint texture,GLint level){
-  (void)target;(void)attachment;(void)textarget;(void)level; note_call(); g_fake.attached_texture=texture;
+  (void)target;(void)attachment;(void)textarget;(void)level; note_call(); g_fake.attached_texture=texture; g_fake.framebuffer_attachments++;
 }
 static GLenum fake_CheckFramebufferStatus(GLenum target){ (void)target; note_call(); return GL_FRAMEBUFFER_COMPLETE; }
 /* Rows from the bottom, bytes R,G,B,A: the red byte carries the device row and the green byte the
@@ -1143,3 +1143,5 @@ void anygm_test_graphics_version(unsigned major,unsigned minor){
 }
 
 unsigned anygm_test_graphics_full_attachment_clears(void){return g_fake.full_attachment_clears;}
+
+unsigned anygm_test_graphics_framebuffer_attachments(void){ return g_fake.framebuffer_attachments; }
