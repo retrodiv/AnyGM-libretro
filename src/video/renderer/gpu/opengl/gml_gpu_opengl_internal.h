@@ -151,7 +151,7 @@ typedef struct GlScene {
   GLint checkpoint_u_image,checkpoint_u_previous,checkpoint_u_alpha;
   uint32_t checkpoint_mask_width,checkpoint_mask_height;
   int checkpoint_program_failed;
-  GlSceneProgram main_program,filtered_program,compact_programs[13];
+  GlSceneProgram main_program,filtered_program,compact_programs[16];
   GLuint vertex_buffer,vertex_array,instance_buffer,instance_array;
   GLuint upload_buffer;
   size_t instance_bytes_used;

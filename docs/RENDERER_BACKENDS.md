@@ -66,6 +66,9 @@ specializations of their existing sampling and alpha-lookup bodies. Region origi
 and the modern point-map samplers belong to the selected program, and each program owns its
 derived lookup cache. Texel variants retain their program. Packet geometry, sampling equations,
 snapshots, draw order and CPU rendering are unchanged; no new coverage pieces are introduced.
+Ordinary integer-round colour, integer replacement and nearest-surface sampling also use
+constant specializations of their unchanged bodies. Their three lazy programs are derived
+context resources; validation, blending, maps, source palettes and CPU rendering stay intact.
 
 Modern numbered nearest sprites may use the existing native colour body with nearest
 texture filtering and separate fixed source-over blending, without predecessor copies or
