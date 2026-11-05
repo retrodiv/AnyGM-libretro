@@ -3192,6 +3192,8 @@ static int scene_numbered_sprite_channel_masks_case(void){
     if(modern) REQUIRE(anygm_test_graphics_scene_copies()==copies+16u,
             "modern masked source-over takes ordered device predecessors across mask changes");
     if(modern){
+      REQUIRE(strstr(anygm_test_graphics_shader_source(1),"#define GML_SCENE_CONSTANT_FILTER 27"),
+              "modern numbered point draws compile the existing kernel without unrelated selectors");
       unsigned map_x=anygm_test_graphics_first_texture_with_format(GL_R16UI);
       unsigned map_y=anygm_test_graphics_texture_with_format(GL_R16UI);
       REQUIRE(map_x && map_y && map_x!=map_y &&
