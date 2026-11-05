@@ -38,7 +38,9 @@ static GLuint compile_stage(GmlGpuBackend *backend,GLenum stage,const char *sour
 
 int gml_gpu_opengl_build_program(GmlGpuBackend *backend,char *error,size_t error_capacity){
   char vertex_source[512];
-  char fragment_source[2048];
+  char fragment_source[sizeof(GML_GPU_OPENGL_PREFIX_ES)+sizeof(GML_GPU_OPENGL_PREFIX_DESKTOP)+
+    sizeof(GML_GPU_OPENGL_FRAGMENT_BODY_HEAD)+sizeof(GML_GPU_OPENGL_FRAGMENT_SWIZZLE_LITTLE)+
+    sizeof(GML_GPU_OPENGL_FRAGMENT_SWIZZLE_BIG)+sizeof(GML_GPU_OPENGL_FRAGMENT_BODY_TAIL)];
   const char *prefix=backend->api==GML_GPU_API_OPENGLES3
     ?GML_GPU_OPENGL_PREFIX_ES:GML_GPU_OPENGL_PREFIX_DESKTOP;
   GLuint vertex,fragment;

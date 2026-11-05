@@ -48,6 +48,8 @@ typedef struct FakeDriver {
   GLuint program;
   GLuint vertex_array;
   GLuint bound_program;
+  GLuint box_program;
+  GLint box_location,box_destination[2];
   GLuint bound_vertex_array;
   int blend_enabled;
   unsigned blend_configurations;
@@ -590,6 +592,9 @@ static void fake_UseProgram(GLuint p){ note_call(); g_fake.bound_program=p; }
 static void fake_DeleteProgram(GLuint p){ (void)p; note_call(); g_fake.deletes_issued++; }
 static GLint fake_GetUniformLocation(GLuint p,const GLchar *name){
   note_call();
+  if(!strcmp(name,"u_box_destination")){
+    g_fake.box_program=p;g_fake.box_location=g_fake.uniform_count;
+  }
   if((!strcmp(name,"u_filter") || !strcmp(name,"u_selected_filter")) &&
      g_fake.sampler_location_count<64u){
     unsigned index=g_fake.sampler_location_count++;
@@ -845,7 +850,12 @@ static void fake_Uniform1iv(GLint l,GLsizei n,const GLint *v){
   (void)n; note_call();
   if(l>=0 && l<8) g_fake.uniforms[l]=v[0];
 }
-static void fake_Uniform2iv(GLint l,GLsizei n,const GLint *v){ (void)l;(void)n;(void)v; note_call(); }
+static void fake_Uniform2iv(GLint l,GLsizei n,const GLint *v){
+  note_call();
+  if(v && n==1 && l==g_fake.box_location && g_fake.bound_program==g_fake.box_program){
+    g_fake.box_destination[0]=v[0];g_fake.box_destination[1]=v[1];
+  }
+}
 static void fake_Uniform3iv(GLint l,GLsizei n,const GLint *v){ (void)l;(void)n;(void)v; note_call(); }
 static void fake_Uniform4iv(GLint l,GLsizei n,const GLint *v){ (void)l;(void)n;(void)v; note_call(); }
 static void fake_UniformMatrix4fv(GLint l,GLsizei n,GLboolean t,const GLfloat *v){
@@ -1145,3 +1155,7 @@ void anygm_test_graphics_version(unsigned major,unsigned minor){
 unsigned anygm_test_graphics_full_attachment_clears(void){return g_fake.full_attachment_clears;}
 
 unsigned anygm_test_graphics_framebuffer_attachments(void){ return g_fake.framebuffer_attachments; }
+
+void anygm_test_graphics_box_destination(int values[2]){
+  values[0]=g_fake.box_destination[0];values[1]=g_fake.box_destination[1];
+}

@@ -187,7 +187,7 @@ typedef struct GlScene {
 enum { GL_SCENE_NATIVE_PLAIN=1,GL_SCENE_NATIVE_WHITE_TINT=2,GL_SCENE_NATIVE_ZERO_ALPHA_BLEND=4 };
 
 struct GmlGpuBackend {
-  uint64_t target_attachments,target_reuses,white_unit_clears,white_tint_quads,zero_alpha_blend_quads;
+  uint64_t target_attachments,target_reuses,white_unit_clears,white_tint_quads,zero_alpha_blend_quads,identity_map_draws;
   GmlGlApi gl;
   int loaded;
   GmlGpuApi api;

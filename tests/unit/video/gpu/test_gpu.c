@@ -429,6 +429,43 @@ static int unbound_context_access_case(void){
   return 1;
 }
 
+static int identity_axis_maps_case(void){
+  for(unsigned api=0;api<2u;api++)for(unsigned rule=0;rule<5u;rule++)
+  for(unsigned variant=0;variant<3u;variant++){
+    anygm_test_graphics_reset();GmlGpu *gpu=gml_gpu_create();
+    GmlGpuContext context=fake_context(api?GML_GPU_API_OPENGLES3:GML_GPU_API_OPENGL_CORE);
+    REQUIRE(gpu && gml_gpu_context_reset(gpu,&context),"identity map context created");
+    uint32_t pixels[12]={0};GmlRenderPlan plan;
+    REQUIRE(build_canvas_plan(&plan,pixels,4u,3u,8u,6u,2,1,4u,3u),"identity map plan built");
+    plan.operations[1].axis_x=(GmlPlanAxis){.rule=rule,.source_extent=4u,
+      .destination_extent=4u,.extent=rule==GML_PLAN_AXIS_PIXEL_CENTRE?4.0:0.0,
+      .intermediate_extent=rule>=GML_PLAN_AXIS_COMPOSED_NEAREST?4u:0u};
+    plan.operations[1].axis_y=(GmlPlanAxis){.rule=rule,.source_extent=3u,
+      .destination_extent=3u,.extent=rule==GML_PLAN_AXIS_PIXEL_CENTRE?3.0:0.0,
+      .intermediate_extent=rule>=GML_PLAN_AXIS_COMPOSED_NEAREST?3u:0u};
+    if(variant==1u){
+      plan.operations[1].axis_x.destination_first=1;
+      plan.operations[1].axis_x.destination_extent=5u;
+    }else if(variant==2u){
+      plan.operations[1].axis_x.rule=GML_PLAN_AXIS_PIXEL_CENTRE;
+      plan.operations[1].axis_x.origin=.25;plan.operations[1].axis_x.extent=4.0;
+    }
+    int draws=anygm_test_graphics_draw_calls();
+    REQUIRE(gml_gpu_execute_plan(gpu,&plan),"identity and mapped plans remain accepted");
+    int mode[2]={0};anygm_test_graphics_box_destination(mode);
+    REQUIRE(mode[0]==(variant?0:-1) && mode[1]==(variant?0:-1),
+      "only canonical identity axes bypass shader map lookups");
+    GmlGpuCounters counts={0};gml_gpu_counters(gpu,&counts);
+    REQUIRE(counts.identity_map_draws==(!variant?1u:0u),
+      "only accepted identity-map shader draws contribute successful work");
+    REQUIRE(anygm_test_graphics_draw_calls()==draws+1 &&
+      !anygm_test_graphics_scene_copies() && !anygm_test_graphics_read_pixels(),
+      "identity axes retain one shader draw without image copies or observations");
+    gml_gpu_destroy(gpu,1);
+  }
+  return 1;
+}
+
 static int completed_frame_snapshot_case(void){
   GmlGpu *gpu;
   GmlGpuContext context=fake_context(GML_GPU_API_OPENGLES3);
@@ -6763,6 +6800,7 @@ int main(int argc,char **argv){
     {"scene_source_alpha_key",scene_source_alpha_key_case},
     {"scene_raw_copy",scene_raw_copy_case},
     {"scene_identity_underlay",scene_identity_underlay_case},
+    {"identity_axis_maps",identity_axis_maps_case},
     {"scene_native_stretched_cell",scene_native_stretched_cell_case},
     {"scene_white_unit_clear",scene_white_unit_clear_case},
     {"scene_target_attachment_reuse",scene_target_attachment_reuse_case},

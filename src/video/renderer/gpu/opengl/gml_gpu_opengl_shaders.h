@@ -88,7 +88,8 @@
   "}\n"
 
 /* u_map_x and u_map_y hold the exact source index for every destination index, built on the CPU
- * from the same expression the software executor walks. u_target_height converts the framebuffer's
+ * from the same expression the software executor walks. A negative box tag uses proven identity
+ * indices directly. u_target_height converts the framebuffer's
  * bottom-left row to the top-left row AnyGM addresses. */
 #define GML_GPU_OPENGL_FRAGMENT_BODY_HEAD \
   "uniform sampler2D u_source;\n" \
@@ -129,8 +130,11 @@
   "    }\n" \
   "    o_color=vec4(total/float(last.y-first.y),1.0); return;\n" \
   "  }\n" \
-  "  int sx=int(texelFetch(u_map_x,ivec2(dx,0),0).r);\n" \
-  "  int sy=int(texelFetch(u_map_y,ivec2(dy,0),0).r);\n" \
+  "  int sx=dx,sy=dy;\n" \
+  "  if(u_box_destination.x>=0){\n" \
+  "    sx=int(texelFetch(u_map_x,ivec2(dx,0),0).r);\n" \
+  "    sy=int(texelFetch(u_map_y,ivec2(dy,0),0).r);\n" \
+  "  }\n" \
   "  // R03_SHADER_RESIDENT_PRESENT: use the current scene image without upload.\n" \
   "  int source_y=u_resident_source!=0 ? u_source_height-1-sy : sy;\n" \
   "  vec4 texel=texelFetch(u_source,ivec2(sx,source_y),0);\n"

@@ -18,6 +18,21 @@ static GmlPlanAxis identity_axis(uint32_t extent){
   return axis;
 }
 
+enum { GL_PLAN_IDENTITY_AXES=-1 };
+
+static int axis_is_identity(const GmlPlanAxis *axis,uint32_t extent){
+  if(axis->source_extent!=extent || axis->destination_extent!=extent ||
+     axis->destination_first) return 0;
+  switch(axis->rule){
+    case GML_PLAN_AXIS_ACCUMULATOR:
+    case GML_PLAN_AXIS_LEADING_EDGE: return 1;
+    case GML_PLAN_AXIS_PIXEL_CENTRE: return axis->origin==0.0 && axis->extent==(double)extent;
+    case GML_PLAN_AXIS_COMPOSED_NEAREST:
+    case GML_PLAN_AXIS_COMPOSED_LEADING_NEAREST: return axis->intermediate_extent==extent;
+    default: return 0;
+  }
+}
+
 static void begin_plan_state(GmlGpuBackend *backend,uint32_t target_height){
   /* The frontend and this core share one context, so every piece of state a pass depends on is set
    * rather than assumed, and nothing is left enabled that the frontend did not enable itself. */
@@ -46,6 +61,7 @@ int gml_gpu_opengl_execute(GmlGpuBackend *backend,const GmlGpuContext *context,
                        char *error,size_t error_capacity){
   uintptr_t framebuffer;
   int failed=0,discarded_host_colour=0;
+  uint64_t identity_draws=0;
   if(!backend || !backend->loaded || !context || !plan) return 0;
   backend->readback_present_valid=0;
   framebuffer=context->get_current_framebuffer(context->userdata);
@@ -107,6 +123,12 @@ int gml_gpu_opengl_execute(GmlGpuBackend *backend,const GmlGpuContext *context,
         axis_x=identity_axis(image->width);
         axis_y=identity_axis(image->height);
       }
+      int identity=op->opcode==GML_PLAN_OP_BLIT_OPAQUE_NEAREST &&
+        op->destination.width==image->width && op->destination.height==image->height &&
+        axis_is_identity(&axis_x,image->width) && axis_is_identity(&axis_y,image->height);
+      /* Keep the existing map cache and bindings; only the shader lookup is redundant.
+       * Zero selects maps, positive values are box extents, and this tag selects identity. */
+      if(identity)box_destination[0]=box_destination[1]=GL_PLAN_IDENTITY_AXES;
       if(image->resident_image.resource_class){
         GlSceneImage *scene=gml_gpu_opengl_scene_image(backend,image->resident_image);
         if(!scene || scene->width!=image->width || scene->height!=image->height ||
@@ -146,6 +168,7 @@ int gml_gpu_opengl_execute(GmlGpuBackend *backend,const GmlGpuContext *context,
       backend->gl.ActiveTexture(GL_TEXTURE2);
       backend->gl.BindTexture(GL_TEXTURE_2D,map_y);
       backend->gl.DrawArrays(GL_TRIANGLES,0,3);
+      if(identity)identity_draws++;
       if(counters) counters->draw_calls++;
       if(box){
         backend->gl.ActiveTexture(GL_TEXTURE0);
@@ -186,6 +209,7 @@ int gml_gpu_opengl_execute(GmlGpuBackend *backend,const GmlGpuContext *context,
     backend->readback_present_valid=!failed;
     backend->gl.BindFramebuffer(GL_FRAMEBUFFER,(GLuint)framebuffer);
   }
+  if(!failed)backend->identity_map_draws+=identity_draws;
   return failed?0:1;
 }
 
