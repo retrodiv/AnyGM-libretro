@@ -16601,6 +16601,55 @@ static int filtered_sprite_cpu_visibility(const GmlRender *subject,unsigned kind
   gml_render_free(cpu);free(cpu);return 1;
 }
 
+/* A single stored texel can cover a large destination without CPU-shaped pieces.
+ * This control checks authority and one-quad delivery, not device pixel parity. */
+static int resident_unit_texel_magnification(void){
+  enum { W=24,H=20,A=4 };
+  const int blends[]={0,6,8,6,6};
+  for(unsigned owner=0;owner<2u;owner++) for(unsigned program=0;program<2u;program++)
+  for(unsigned mode=0;mode<5u;mode++){
+    GmlRender *render=calloc(1,sizeof *render);GmlWin content={.bytecode=17};
+    FakeDevice fake={.on_demand=1,.readback_colour=0x80406080u};
+    GmlRenderDeviceServices device=service(&fake);
+    uint32_t screen[W*H],shadow[W*H];
+    CHECK(render && !gml_render_init(render,NULL));render->win=&content;
+    free(render->atlas[0].px);render->atlas[0].px=malloc(A*A*4u);
+    render->atlas[0].w=render->atlas[0].h=A;
+    render->tpag=calloc(1,sizeof *render->tpag);render->spr=calloc(1,sizeof *render->spr);
+    CHECK(render->atlas[0].px && render->tpag && render->spr);
+    memset(render->atlas[0].px,255,A*A*4u);render->n_tpag=render->n_spr=1;
+    int source_width=mode==3u?2:1;
+    render->tpag[0]=(GmlTpag){.sx=1,.sy=1,.sw=source_width,.sh=1,
+      .tw=source_width,.th=1,.bw=source_width,.bh=1};
+    render->spr[0]=(GmlSprite){.w=source_width,.h=1,.n_frames=1};
+    render->spr[0].frame=calloc(1,sizeof(int));CHECK(render->spr[0].frame);
+    render->shader_pal=calloc(1,sizeof *render->shader_pal);CHECK(render->shader_pal);
+    render->n_shader_pal=1;
+    device.observe_on_demand=fake_observe_on_demand;gml_render_bind_device(render,&device);
+    for(unsigned i=0;i<W*H;i++) screen[i]=0xA5123456u;
+    CHECK(gml_render_begin_resident_base(render,screen,W,H,0,0));
+    if(owner){int id=gml_surface_create(render,W,H);CHECK(id>0 && gml_surface_set_target(render,id));}
+    render->interp=render->alphablend=1;render->color_write_mask=15u;
+    gml_render_set_pending_fill(render,0x80406080u);gml_render_flush_pending_fill(render);
+    CHECK(gml_render_scene_submit_pending(render));
+    memcpy(shadow,render->fb,sizeof shadow);int before=fake.submits;
+    render->blendmode=blends[mode];render->active_shader=program?0:-1;
+    gml_draw_sprite_ext(render,0,0,0,0,mode==4u?16385:1921,1081,0,0xFFFFFFu,mode==1u?0.0:1.0);
+    CHECK(gml_render_scene_submit_pending(render));
+    if(mode>=3u){
+      CHECK(!render->resident_application_pass &&
+            !fake.textured_families[GML_RENDER_SCENE_SPRITE]);
+    }else CHECK(render->resident_application_pass && fake.submits==before+1 &&
+          fake.last_opcode==GML_RENDER_OP_TEXTURED_QUAD && fake.last_batch_operations==1u &&
+          fake.last_quad.sampling.source_region.width==(uint32_t)source_width &&
+          fake.last_quad.sampling.source_region.height==1u &&
+          !fake.readbacks && !fake.rgb_queries && !memcmp(shadow,render->fb,sizeof shadow));
+    CHECK(render->blendmode==blends[mode] && render->active_shader==(program?0:-1));
+    gml_render_free(render);free(render);
+  }
+  return 1;
+}
+
 /* Authority and transport only; the paired device generator owns D2 pixels. */
 static int resident_physical_filtered_sprite_function_impl(int matched,int modern,int axis){
   enum { W=24,H=20 };
@@ -19768,6 +19817,7 @@ int main(void){
     else if(!strcmp(selected,"source-palette")) passed=source_palette_snapshot_contract();
     else if(!strcmp(selected,"surface-feedback")) passed=resident_surface_feedback_authority();
     else if(!strcmp(selected,"matched-filtered-sprite")) passed=resident_matched_filtered_sprite_function();
+    else if(!strcmp(selected,"unit-texel-magnification")) passed=resident_unit_texel_magnification();
     else if(!strcmp(selected,"modern-physical-filtered-sprite")) passed=resident_modern_physical_filtered_sprite_function();
     else if(!strcmp(selected,"modern-rotated-filtered-sprite")) passed=resident_modern_rotated_filtered_sprite_function();
     else if(!strcmp(selected,"black-additive-sprite")) passed=resident_black_additive_sprite_noop();
@@ -20093,6 +20143,7 @@ int main(void){
   passed+=resident_rectangle_cpu_passthrough_programs();
   passed+=skip_cpu_draw_policy_preserves_observers();
   passed+=resident_numbered_rotated_native_quad();
-  printf("render resource cases: passed=%d failed=%d\n",passed,312-passed);
-  return passed==312?EXIT_SUCCESS:EXIT_FAILURE;
+  passed+=resident_unit_texel_magnification();
+  printf("render resource cases: passed=%d failed=%d\n",passed,313-passed);
+  return passed==313?EXIT_SUCCESS:EXIT_FAILURE;
 }

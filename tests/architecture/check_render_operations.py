@@ -261,6 +261,7 @@ DISPATCH_ADDITIONAL = {
     "gml_software3d_primitive_2d_end",
 }
 DISPATCH_HELPERS = {
+    "resident_large_unit_texel",
     "resident_surface_part_empty",
     "resident_collapsed_additive_sprite_noop",
     "resident_surface_shader_selected",

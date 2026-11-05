@@ -2532,6 +2532,15 @@ done:
   free(operations);free(rows);return accepted;
 }
 
+/* A complete modern one-texel source has no interior sampling variation.
+ * Keep its placed quad while allowing a bounded full-target magnification. */
+static int resident_large_unit_texel(const GmlRender *r,const GmlTpag *page){
+  return r && r->win && !r->classic &&
+    anygm_policy_has_modern_layer_semantics(r->win) && page &&
+    page->sw==1 && page->sh==1 && page->bw==1 && page->bh==1 &&
+    !page->tx && !page->ty && !page->project_authored_edges;
+}
+
 static int resident_filtered_atlas_page(GmlRender *r,int page_index,
                                       double left,double top,double xs,double ys,
                                       GmlRenderSceneFamily family,uint32_t colour,double alpha,
@@ -2713,7 +2722,11 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
   if(selected_preset && !hardware_physical_tile && alpha>0.0 && alpha<0x1p-32) return 0;
   double minimum_physical_scale=hardware_physical_font || hardware_axis_sprite || (hardware_physical_tile && hardware_physical_rotation)
     ?0x1p-14:selected_physical_atlas?.0625:.125;
-  double maximum_physical_scale=hardware_physical_tile && hardware_physical_rotation?16384.0:64.0;
+  int large_unit_texel=hardware_axis_sprite && r && page_index>=0 && page_index<r->n_tpag &&
+    resident_large_unit_texel(r,&r->tpag[page_index]) &&
+    (fabs(xs)>64.0 || fabs(ys)>64.0);
+  double maximum_physical_scale=(hardware_physical_tile && hardware_physical_rotation) ||
+    large_unit_texel?16384.0:64.0;
   int hardware_physical_sprite=r && (nearest_mode==7 || hardware_physical_part || hardware_physical_tiled || hardware_physical_rotation || hardware_physical_font || hardware_physical_background) && r->interp &&
     (family==GML_RENDER_SCENE_SPRITE || hardware_physical_tile || hardware_physical_font || hardware_physical_background) && (!rotated_sprite || hardware_physical_rotation) && !corner_colours &&
     (!part_view || hardware_physical_tile || hardware_physical_part || hardware_physical_font || hardware_physical_background) && !opaque_target_alpha && !transparent_stretched_trim &&
@@ -3018,7 +3031,7 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
   int selected_cutout=r->alpha_test_enable;
   /* A glyph is one placed quad. Device filtering owns its interior coverage;
    * CPU support rows must not turn text into thousands of tiny packets. */
-  int background_coverage=!hardware_physical_font && selected_physical_atlas &&
+  int background_coverage=!large_unit_texel && !hardware_physical_font && selected_physical_atlas &&
     (selected_preset || reduced_part_coverage || selected_cutout || positive_part ||
       (hardware_physical_tile && (hardware_physical_rotation || alpha<0x1p-32)) || fabs(xs)<.125 || fabs(ys)<.125) &&
     r->active_shader<0 && (((r->blendmode==0 || r->blendmode==2) && (alpha>=0x1p-32 || hardware_physical_tile)) ||
@@ -4586,6 +4599,8 @@ static int resident_replacement_sprite(GmlRender *r,GmlSprite *sprite,int subimg
                                         double x,double y,double xs,double ys,double rotation,
                                         uint32_t colour,double alpha){
   int filtered_axis=r && r->interp && !r->classic && !r->fog_flat;
+  double maximum_scale=r && r->win && sprite && sprite->w==1 && sprite->h==1 &&
+    !r->classic && anygm_policy_has_modern_layer_semantics(r->win)?16384.0:64.0;
   if(!r || !sprite || r->blendmode!=6 || !r->resident_application_pass ||
      resident_sprite_program_blocks(r) ||
      gml_d3_is_active(r) || r->blend_equation!=1 || r->blend_equation_alpha!=1 ||
@@ -4596,15 +4611,16 @@ static int resident_replacement_sprite(GmlRender *r,GmlSprite *sprite,int subimg
      !sprite->frame || sprite->n_frames<=0 || rotation!=0.0 ||
      !isfinite(alpha) || !isfinite(x) || !isfinite(y) ||
      !isfinite(xs) || !isfinite(ys) ||
-     fabs(xs)<(r->fog_flat?0x1p-14:.0625) || fabs(xs)>64.0 ||
-     fabs(ys)<(r->fog_flat?0x1p-14:.0625) || fabs(ys)>64.0 ||
+     fabs(xs)<(r->fog_flat?0x1p-14:.0625) || fabs(xs)>maximum_scale ||
+     fabs(ys)<(r->fog_flat?0x1p-14:.0625) || fabs(ys)>maximum_scale ||
      !r->device.context || !r->device.observe_on_demand ||
      !r->device.observe_on_demand(r->device.context)) return 0;
   if(gml_render_interpolated_phase_blocks_scene(r)) return 0;
   int index=sprite->frame[gml_render_runtime_frame_index(sprite,subimg)];
   if(index<0 || index>=r->n_tpag) return 0;
   GmlTpag *page=&r->tpag[index];
-  if(page->project_authored_edges || page->sw<=0 || page->sh<=0 ||
+  if(((fabs(xs)>64.0 || fabs(ys)>64.0) && !resident_large_unit_texel(r,page)) ||
+     page->project_authored_edges || page->sw<=0 || page->sh<=0 ||
      page->bw!=sprite->w || page->bh!=sprite->h ||
      page->tx<0 || page->ty<0 ||
      (int64_t)page->tx+page->sw>page->bw || (int64_t)page->ty+page->sh>page->bh) return 0;
