@@ -203,15 +203,17 @@ static int qualified_blend(const GmlRenderDrawStateSnapshot *state){
   return -1;
 }
 
-/* A complete unit crop already carries its physical texel edges. Keep its placed
- * quad and let the device blend it, without sampling an ordered predecessor. */
-static int native_unit_numbered_point(const GmlRenderDrawOp *op,
+/* Preserve the placed point quad and physical affine map. Native nearest sampling
+ * and fixed source-over fill need neither inverse maps nor a predecessor copy. */
+static int native_numbered_point(const GmlRenderDrawOp *op,
   const GmlRenderDrawStateSnapshot *state,const GlSceneImage *source){
   const GmlRenderQuad *q=&op->payload.quad;
   GmlRenderRect crop=q->sampling.source_region;
+  double sx=q->inverse_x[0],sy=q->inverse_y[1];
   if(!source || source->rendered_origin || source->pixel_format!=GML_RENDER_PIXEL_RGBA8888 ||
      !source->width || !source->height || source->width>16384u || source->height>16384u ||
      op->scene_family!=GML_RENDER_SCENE_SPRITE ||
+     op->reconstruction_mode!=GML_RENDER_DEVICE_CHECKPOINT ||
      op->target.image.resource_class!=GML_RENDER_RESOURCE_SURFACE ||
      op->sources[0].resource_class!=GML_RENDER_RESOURCE_ATLAS ||
      q->shape!=GML_RENDER_QUAD_AXIS_ALIGNED || q->span_active ||
@@ -219,24 +221,31 @@ static int native_unit_numbered_point(const GmlRenderDrawOp *op,
      q->sampling.filter!=GML_RENDER_FILTER_NEAREST_PHASED ||
      q->sampling.edge_rule!=GML_RENDER_EDGE_CLAMP_SUBIMAGE || q->sampling.logical_margin_mask ||
      !valid_region(crop,source->width,source->height) || crop.width>4096u || crop.height>4096u ||
-     q->filtered_draw_alpha!=1.0 || state->write_mask!=15u || state->alpha!=255u ||
+     !isfinite(q->filtered_draw_alpha) || q->filtered_draw_alpha<=0.0 || q->filtered_draw_alpha>1.0 ||
+     (state->write_mask!=7u && state->write_mask!=15u) || state->alpha!=255u ||
      state->colour!=0xffffffffu || state->coverage_policy || qualified_blend(state)!=3 ||
      state->alpha_test_enabled || state->source_alpha_key || state->source_palette.enabled ||
-     fabs(q->inverse_x[0])!=1.0 || fabs(q->inverse_y[1])!=1.0 ||
-     q->inverse_x[1]!=0.5 || q->inverse_y[0]!=0.5 ||
-     q->x[1]-q->x[0]!=crop.width || q->y[2]-q->y[0]!=crop.height ||
-     q->inverse_anchor[0]!=(q->inverse_x[0]<0.0?q->x[1]:q->x[0]) ||
-     q->inverse_anchor[1]!=(q->inverse_y[1]<0.0?q->y[2]:q->y[0])) return 0;
+     !isfinite(sx) || !isfinite(sy) || sx==0.0 || sy==0.0 || fabs(sx)>1000000.0 || fabs(sy)>1000000.0 ||
+     (q->corner_colour[0]>>24)!=(uint32_t)lround(q->filtered_draw_alpha*255.0)) return 0;
+  double origin[2]={q->x[0]-(q->u[0]*source->width-crop.x)*sx,
+                    q->y[0]-(q->v[0]*source->height-crop.y)*sy};
+  for(unsigned axis=0;axis<2u;axis++){
+    double scale=axis?sy:sx,phase=axis?q->inverse_y[0]:q->inverse_x[1];
+    double anchor=q->inverse_anchor[axis];
+    if(!isfinite(origin[axis]) || !isfinite(anchor) || !isfinite(phase) ||
+       (scale<0.0?phase!=0.5 || floor(origin[axis]+0.5)!=anchor:
+                    fabs(origin[axis]-(anchor+0.5-phase))>1e-8)) return 0;
+  }
   for(unsigned corner=0;corner<4u;corner++){
     int right=corner==1u || corner==2u,bottom=corner>=2u;
-    double x=q->x[0]+(right?crop.width:0u),y=q->y[0]+(bottom?crop.height:0u);
-    double u=((double)crop.x+((right!=(q->inverse_x[0]<0.0))?crop.width:0u))/source->width;
-    double v=((double)crop.y+((bottom!=(q->inverse_y[1]<0.0))?crop.height:0u))/source->height;
+    double x=right?q->x[1]:q->x[0],y=bottom?q->y[2]:q->y[0];
+    double u=(crop.x+(x-origin[0])/sx)/source->width;
+    double v=(crop.y+(y-origin[1])/sy)/source->height;
     if(!isfinite(x) || !isfinite(y) || x!=floor(x) || y!=floor(y) ||
        fabs(x)>65536.0 || fabs(y)>65536.0 || q->x[corner]!=x || q->y[corner]!=y ||
        !isfinite(q->u[corner]) || !isfinite(q->v[corner]) ||
        fabs(q->u[corner]-u)>1e-12 || fabs(q->v[corner]-v)>1e-12 ||
-       q->corner_colour[corner]!=0xffffffffu || q->span_x[corner] || q->span_y[corner]) return 0;
+       q->corner_colour[corner]!=q->corner_colour[0] || q->span_x[corner] || q->span_y[corner]) return 0;
   }
   return 1;
 }
@@ -2439,7 +2448,8 @@ static int flush_quads(GmlGpuBackend *backend,GlSceneImage *target,GlSceneImage 
   int opaque=target->valid && target->alpha_opaque;
   if(!count) return 1;
   if(count>GL_SCENE_MAX_QUADS) return 0;
-  int plain_native=(filter==79u || filter==80u || filter==82u) &&
+  int plain_native=(filter==79u || filter==80u || filter==82u ||
+                    filter==GL_SCENE_NATIVE_POINT_FILTER) &&
     !source_alpha_key && (!palette || !palette->enabled);
   if(plain_native) for(uint32_t quad=0;quad<count;quad++){
     const float *vertex=scene->vertices+(size_t)quad*6u*GL_SCENE_VERTEX_FLOATS;
@@ -3100,7 +3110,8 @@ GmlRenderExecutionResult gml_gpu_opengl_scene_submit(GmlGpuBackend *backend,
       const GmlRenderDrawStateSnapshot *state=&batch->states[op->state_index];
       GlSceneImage *source=gml_gpu_opengl_scene_image(backend,op->sources[0]);
       operation_filter=scene_filter(&op->payload.quad,state,op->scene_family);
-      if(operation_filter==27u && native_unit_numbered_point(op,state,source)) operation_filter=0u;
+      if(operation_filter==27u && native_numbered_point(op,state,source))
+        operation_filter=GL_SCENE_NATIVE_POINT_FILTER;
     }
     int disc=op->opcode==GML_RENDER_OP_COLOURED_PRIMITIVE &&
       op->payload.primitive.kind==GML_RENDER_PRIMITIVE_PARTICLE_DISC;
@@ -3444,7 +3455,14 @@ GmlRenderExecutionResult gml_gpu_opengl_scene_submit(GmlGpuBackend *backend,
       index+=repetitions-1u;
       continue;
     }
-    if(!gml_render_gpu_opengl_draw_textured_quad(op,&batch->states[op->state_index],
+    GmlRenderDrawOp native_operation;
+    const GmlRenderDrawOp *draw_operation=op;
+    if(pending_filter==GL_SCENE_NATIVE_POINT_FILTER){
+      native_operation=*op;
+      native_operation.payload.quad.sampling.quantisation=GML_RENDER_QUANTISE_HARDWARE_SPRITE_MODERN;
+      draw_operation=&native_operation;
+    }
+    if(!gml_render_gpu_opengl_draw_textured_quad(draw_operation,&batch->states[op->state_index],
        pending_source->width,pending_source->height,pending_source->rendered_origin,
        backend->scene.vertices+(size_t)pending_count*6u*GL_SCENE_VERTEX_FLOATS)){
       result.status=GML_RENDER_EXEC_RESOURCE_ERROR;

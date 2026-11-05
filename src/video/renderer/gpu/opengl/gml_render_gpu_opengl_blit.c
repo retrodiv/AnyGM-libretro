@@ -259,6 +259,7 @@ int gml_render_gpu_opengl_draw_textured_quad(const GmlRenderDrawOp *op,
        quad->sampling.quantisation==GML_RENDER_QUANTISE_SURFACE_TILED_POINT ||
        quad->sampling.quantisation==GML_RENDER_QUANTISE_SURFACE_ROTATED_POINT ||
        quad->sampling.quantisation==GML_RENDER_QUANTISE_POSITIONED_SAMPLE ||
+       quad->sampling.quantisation==GML_RENDER_QUANTISE_HARDWARE_SPRITE_MODERN ||
        quad->sampling.quantisation==GML_RENDER_QUANTISE_SURFACE_BOX_FUNCTION ||
        half_gui || native_uv || stretched_blend || (rotated && state->coverage_policy) ||
        (quad->sampling.filter==GML_RENDER_FILTER_BOX &&

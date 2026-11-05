@@ -235,6 +235,7 @@ GlSceneProgram *gml_gpu_opengl_scene_draw_program(GmlGpuBackend *backend,uint32_
                                                    char *error,size_t error_capacity){
   GlScene *scene=&backend->scene;
   GlSceneProgram *program=&scene->main_program;
+  if(filter==GL_SCENE_NATIVE_POINT_FILTER) filter=79u;
   int mode=0;
   if(filter==27u){
     program=&scene->compact_programs[12];mode=14;

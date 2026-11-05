@@ -3114,7 +3114,12 @@ static int scene_numbered_rotated_texel_spans_case(void){
 /* Unit point placement needs no inverse maps; the device owns source-over fill. */
 static int scene_native_unit_numbered_point_case(void){
   const uint8_t pixels[16]={255,0,0,128,0,255,0,0,0,0,255,255,255,255,255,64};
-  for(unsigned api=0;api<2u;api++) for(unsigned reflection=0;reflection<4u;reflection++){
+  for(unsigned api=0;api<2u;api++) for(unsigned reflection=0;reflection<4u;reflection++)
+  for(unsigned style=0;style<6u;style++){
+    unsigned sampling=style%3u,extent=sampling==1u?3u:sampling==2u?1u:2u;
+    double scale=(double)extent/2.0,opacity=sampling==1u?0.5:sampling==2u?0.25:1.0;
+    uint32_t tint=sampling==1u?0x004080c0u:0x00ffffffu;
+    uint32_t colour=((uint32_t)lround(opacity*255.0)<<24)|tint;
     GmlRenderImageRef source={GML_RENDER_RESOURCE_ATLAS,193u,1u,1u};
     GmlRenderImageRef target={GML_RENDER_RESOURCE_SURFACE,194u,1u,1u};
     GmlRenderImageUpload upload={0};
@@ -3130,7 +3135,7 @@ static int scene_native_unit_numbered_point_case(void){
     upload.region=(GmlRenderRect){0,0,2u,2u};upload.pixel_format=GML_RENDER_PIXEL_RGBA8888;
     upload.stride_bytes=8u;upload.byte_capacity=sizeof pixels;upload.bytes=pixels;
     REQUIRE(service.upload(service.context,&upload),"unit point source uploaded");
-    state.write_mask=15u;state.alpha=255u;state.colour=0xffffffffu;state.sampler_count=1u;
+    state.write_mask=style>=3u?7u:15u;state.alpha=255u;state.colour=0xffffffffu;state.sampler_count=1u;
     state.rgb_source_factor=state.alpha_source_factor=GML_RENDER_BLEND_SOURCE_ALPHA;
     state.rgb_destination_factor=state.alpha_destination_factor=GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA;
     state.rgb_equation=state.alpha_equation=GML_RENDER_BLEND_ADD;
@@ -3147,16 +3152,16 @@ static int scene_native_unit_numbered_point_case(void){
       op->opcode=GML_RENDER_OP_TEXTURED_QUAD;op->scene_family=GML_RENDER_SCENE_SPRITE;
       op->reconstruction_mode=GML_RENDER_DEVICE_CHECKPOINT;op->sources=&source;op->source_count=1u;
       GmlRenderQuad *q=&op->payload.quad;
-      q->shape=GML_RENDER_QUAD_AXIS_ALIGNED;q->sampling=state.samplers[0];q->filtered_draw_alpha=1.0;
-      q->x[0]=q->x[3]=index;q->x[1]=q->x[2]=index+2u;
-      q->y[0]=q->y[1]=1.0;q->y[2]=q->y[3]=3.0;
-      q->inverse_x[0]=(reflection&1u)?-1.0:1.0;q->inverse_y[1]=(reflection&2u)?-1.0:1.0;
+      q->shape=GML_RENDER_QUAD_AXIS_ALIGNED;q->sampling=state.samplers[0];q->filtered_draw_alpha=opacity;
+      q->x[0]=q->x[3]=index;q->x[1]=q->x[2]=index+extent;
+      q->y[0]=q->y[1]=1.0;q->y[2]=q->y[3]=1u+extent;
+      q->inverse_x[0]=(reflection&1u)?-scale:scale;q->inverse_y[1]=(reflection&2u)?-scale:scale;
       q->inverse_x[1]=q->inverse_y[0]=0.5;
-      q->inverse_anchor[0]=(reflection&1u)?index+2u:index;
-      q->inverse_anchor[1]=(reflection&2u)?3.0:1.0;
+      q->inverse_anchor[0]=(reflection&1u)?index+extent:index;
+      q->inverse_anchor[1]=(reflection&2u)?1u+extent:1.0;
       q->u[0]=q->u[3]=(reflection&1u)?1.0:0.0;q->u[1]=q->u[2]=(reflection&1u)?0.0:1.0;
       q->v[0]=q->v[1]=(reflection&2u)?1.0:0.0;q->v[2]=q->v[3]=(reflection&2u)?0.0:1.0;
-      for(unsigned corner=0;corner<4u;corner++)q->corner_colour[corner]=0xffffffffu;
+      for(unsigned corner=0;corner<4u;corner++)q->corner_colour[corner]=colour;
     }
     GmlRenderDrawBatch batch={operations,3u,&state,1u};
     GmlRenderExecutionResult result=service.submit(service.context,&batch);
@@ -3166,19 +3171,20 @@ static int scene_native_unit_numbered_point_case(void){
       anygm_test_graphics_read_pixels()==0u && anygm_test_graphics_scene_filter()==GL_NEAREST &&
       factors[0]==GL_SRC_ALPHA && factors[1]==GL_ONE_MINUS_SRC_ALPHA &&
       factors[2]==GL_SRC_ALPHA && factors[3]==GL_ONE_MINUS_SRC_ALPHA,
-      "overlapping reflected unit sprites retain order through native fixed blending without predecessor copies");
+      "overlapping reflected point sprites keep nearest sampling and native source-over without predecessor copies");
+    float records[2u*52u];
+    REQUIRE(anygm_test_graphics_instance_bytes(records,sizeof records)==sizeof records &&
+      records[0]==1.0f && records[1]==1.0f && records[2]==(float)(1u+extent) &&
+      records[8]==((reflection&1u)?1.0f:0.0f) && records[9]==((reflection&2u)?1.0f:0.0f) &&
+      fabs(records[19]-(float)opacity)<1e-7 && fabs(records[71]-(float)opacity)<1e-7,
+      "native point packets retain placed positions, physical reflections and unquantized draw alpha");
     for(unsigned variant=0;variant<5u;variant++){
       GmlRenderDrawOp changed[3];memcpy(changed,operations,sizeof changed);
       GmlRenderDrawStateSnapshot changed_state=state;
       GmlRenderDrawBatch changed_batch={changed,3u,&changed_state,1u};
-      if(variant==2u)changed_state.write_mask=7u;
+      if(variant<3u)changed_state.write_mask=variant==0u?3u:variant==1u?11u:8u;
       for(unsigned index=1;index<3u;index++){
         GmlRenderQuad *q=&changed[index].payload.quad;
-        if(variant==0u){
-          q->filtered_draw_alpha=0.5;
-          for(unsigned corner=0;corner<4u;corner++)q->corner_colour[corner]=0x80ffffffu;
-        }
-        if(variant==1u)for(unsigned corner=0;corner<4u;corner++)q->corner_colour[corner]=0xff804020u;
         if(variant==3u)q->inverse_x[1]=0.25;
         if(variant==4u){q->u[0]=q->u[3]=0.125;q->u[1]=q->u[2]=0.875;}
       }
@@ -3197,7 +3203,7 @@ static int scene_native_unit_numbered_point_case(void){
           anygm_test_graphics_scene_copies(),copies+2u);
       REQUIRE(result.status==GML_RENDER_EXEC_ACCEPTED && result.accepted_prefix==3u &&
         anygm_test_graphics_scene_copies()==copies+2u && anygm_test_graphics_read_pixels()==0u,
-        "opacity, tint, channel masks and nonunit sample mappings retain their existing ordered predecessor owner");
+        "other channel masks and inconsistent sample mappings retain their existing ordered predecessor owner");
     }
     gml_gpu_destroy(gpu,1);
   }
@@ -3270,7 +3276,17 @@ static int scene_numbered_sprite_channel_masks_case(void){
     }
     GmlRenderDrawBatch batch={operations,17u,states,16u};
     unsigned copies=anygm_test_graphics_scene_copies();
-    GmlRenderExecutionResult result=service.submit(service.context,&batch);
+    GmlRenderExecutionResult result;
+    if(modern){
+      anygm_test_graphics_fail_compile_containing("#define GML_SCENE_CONSTANT_FILTER 27");
+      result=service.submit(service.context,&batch);
+      REQUIRE(result.status==GML_RENDER_EXEC_RESOURCE_ERROR && result.accepted_prefix==1u &&
+        anygm_test_graphics_scene_draw_calls()==0 && anygm_test_graphics_scene_copies()==copies &&
+        anygm_test_graphics_read_pixels()==0u,
+        "legacy point program compilation fails before its first predecessor or draw");
+      anygm_test_graphics_fail_compile_containing(NULL);
+    }
+    result=service.submit(service.context,&batch);
     REQUIRE(result.status==GML_RENDER_EXEC_ACCEPTED && result.accepted_prefix==17u,
             "all channel masks submit on a numbered sprite target");
     for(unsigned mask=0;mask<16u;mask++){
@@ -3282,11 +3298,9 @@ static int scene_numbered_sprite_channel_masks_case(void){
     REQUIRE(anygm_test_graphics_color_mask_all() && !anygm_test_graphics_blend_enabled(),
             "masked draws restore complete writes and disabled blending");
     REQUIRE(anygm_test_graphics_read_pixels()==0,"channel masks do not observe the target");
-    if(modern) REQUIRE(anygm_test_graphics_scene_copies()==copies+16u,
-            "modern masked source-over takes ordered device predecessors across mask changes");
+    if(modern) REQUIRE(anygm_test_graphics_scene_copies()==copies+14u,
+            "RGB and RGBA point fills use native blending while other masks retain ordered predecessors");
     if(modern){
-      REQUIRE(strstr(anygm_test_graphics_shader_source(1),"#define GML_SCENE_CONSTANT_FILTER 27"),
-              "modern numbered point draws compile the existing kernel without unrelated selectors");
       unsigned map_x=anygm_test_graphics_first_texture_with_format(GL_R16UI);
       unsigned map_y=anygm_test_graphics_texture_with_format(GL_R16UI);
       REQUIRE(map_x && map_y && map_x!=map_y &&
