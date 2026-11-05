@@ -50,6 +50,10 @@ margin. Placement, clipping, blend state and CPU execution retain their existing
 owners. This extension never expands the draw into coverage rows. Neutral
 resource controls require one packet, untouched CPU shadows and no observation;
 two-texel replacement and excessive-scale replacement retain their CPU boundaries.
+The OpenGL executor separately admits the same one-texel quad for normal,
+zero-alpha replacement and inverse-destination factors. Its GL/GLES contract
+controls require delivery to the driver and atomic refusal for nonunit crops
+or scale beyond 16384; producer-only mocks do not establish executor admission.
 Original-runner picture qualification remains separate from these controls.
 
 The CPU/OpenGL image comparisons in this repository are diagnostic. Routine

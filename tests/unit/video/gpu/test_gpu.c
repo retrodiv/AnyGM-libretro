@@ -1527,6 +1527,78 @@ static int scene_instance_reuse_case(void){
 }
 
 /* Call/state proof only. Composed pixel qualification needs a real device. */
+/* Exercise the actual executor admission, not just the shared packet producer. */
+static int scene_unit_texel_magnification_case(void){
+  const uint8_t pixels[64]={255,255,255,255};
+  for(unsigned api=0;api<2u;api++) for(unsigned owner=0;owner<2u;owner++)
+  for(unsigned mode=0;mode<3u;mode++) for(unsigned boundary=0;boundary<3u;boundary++){
+    GmlGpuContext context=fake_context(api?GML_GPU_API_OPENGLES3:GML_GPU_API_OPENGL_CORE);
+    GmlRenderDeviceServices device={0};GmlRenderDrawStateSnapshot state={0};
+    GmlRenderImageRef source={GML_RENDER_RESOURCE_ATLAS,91u,1u,1u};
+    GmlRenderDrawOp ops[2]={0};GmlRenderImageUpload upload={0};
+    anygm_test_graphics_reset();GmlGpu *gpu=gml_gpu_create();
+    REQUIRE(gpu && gml_gpu_context_reset(gpu,&context),"unit magnification context");
+    gml_gpu_device_services(gpu,&device);
+    upload.image=source;upload.storage_width=upload.storage_height=4u;
+    upload.region=(GmlRenderRect){0,0,4u,4u};upload.pixel_format=GML_RENDER_PIXEL_RGBA8888;
+    upload.bytes=pixels;upload.byte_capacity=sizeof pixels;upload.stride_bytes=16u;
+    REQUIRE(device.upload(device.context,&upload),"unit magnification atlas upload");
+    for(unsigned i=0;i<2u;i++){
+      ops[i].sequence=i+1u;ops[i].target.image=(GmlRenderImageRef){owner?
+        GML_RENDER_RESOURCE_SURFACE:GML_RENDER_RESOURCE_SCREEN,92u,1u,i+1u};
+      ops[i].target.storage_version=1u;ops[i].target.width=32u;ops[i].target.height=24u;
+      ops[i].target.region=(GmlRenderRect){0,0,32u,24u};
+      ops[i].target.pixel_format=GML_RENDER_PIXEL_ARGB8888;
+    }
+    ops[0].opcode=GML_RENDER_OP_CLEAR;ops[0].payload.clear_colour=0xff123456u;
+    ops[1].opcode=GML_RENDER_OP_TEXTURED_QUAD;ops[1].scene_family=GML_RENDER_SCENE_SPRITE;
+    ops[1].reconstruction_mode=GML_RENDER_DEVICE_CHECKPOINT;
+    ops[1].source_count=1u;ops[1].sources=&source;
+    GmlRenderQuad *q=&ops[1].payload.quad;
+    q->shape=GML_RENDER_QUAD_AXIS_ALIGNED;
+    q->sampling.filter=GML_RENDER_FILTER_HARDWARE_BILINEAR;
+    q->sampling.edge_rule=GML_RENDER_EDGE_CLAMP_SUBIMAGE;
+    q->sampling.quantisation=mode?GML_RENDER_QUANTISE_INTEGER_TINT_ROUND:
+      GML_RENDER_QUANTISE_HARDWARE_SPRITE_MODERN;
+    q->sampling.source_region=(GmlRenderRect){1,1,boundary==1u?2u:1u,1u};
+    q->inverse_x[0]=boundary==2u?16385.0:1921.0;q->inverse_y[1]=1081.0;
+    q->filtered_draw_alpha=mode==1u?0.0:1.0;
+    for(unsigned c=0;c<4u;c++){
+      q->x[c]=(c==1u || c==2u)?q->inverse_x[0]*q->sampling.source_region.width:0.0;
+      q->y[c]=c>=2u?1081.0:0.0;
+      q->u[c]=(1.0+q->x[c]/q->inverse_x[0])/4.0;
+      q->v[c]=(1.0+q->y[c]/q->inverse_y[1])/4.0;
+      q->corner_colour[c]=mode==1u?0x00ffffffu:0xffffffffu;
+    }
+    state.write_mask=15u;state.colour=0xffffffffu;state.alpha=255u;
+    state.sampler_count=1u;state.samplers[0]=q->sampling;
+    if(mode==1u) state.coverage_policy=owner?GML_RENDER_COVERAGE_REPLACE_SOURCE_ALPHA:
+      GML_RENDER_COVERAGE_REPLACE_ZERO_ALPHA;
+    else{
+      state.coverage_policy=owner?0u:GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA;
+      state.rgb_source_factor=mode?GML_RENDER_BLEND_ONE_MINUS_DESTINATION_COLOUR:GML_RENDER_BLEND_SOURCE_ALPHA;
+      state.rgb_destination_factor=mode?GML_RENDER_BLEND_ZERO:GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA;
+      state.alpha_source_factor=owner?(mode?GML_RENDER_BLEND_ONE_MINUS_DESTINATION_ALPHA:
+        GML_RENDER_BLEND_SOURCE_ALPHA):GML_RENDER_BLEND_ONE;
+      state.alpha_destination_factor=mode?GML_RENDER_BLEND_ZERO:GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA;
+      state.rgb_equation=state.alpha_equation=GML_RENDER_BLEND_ADD;
+    }
+    GmlRenderDrawBatch batch={ops,2u,&state,1u};
+    GmlRenderExecutionResult result=device.submit(device.context,&batch);
+    if(!boundary && (result.status!=GML_RENDER_EXEC_ACCEPTED || result.accepted_prefix!=2u))
+      fprintf(stderr,"unit magnification api=%u owner=%u mode=%u status=%u prefix=%u\n",
+        api,owner,mode,result.status,result.accepted_prefix);
+    if(boundary) REQUIRE(result.status==GML_RENDER_EXEC_UNSUPPORTED && !result.accepted_prefix &&
+      !anygm_test_graphics_clear_calls() && !anygm_test_graphics_scene_draw_calls(),
+      "nonunit or excessive magnification rejects transactionally");
+    else REQUIRE(result.status==GML_RENDER_EXEC_ACCEPTED && result.accepted_prefix==2u &&
+      anygm_test_graphics_scene_vertices()>=6u && anygm_test_graphics_scene_vertices()<=12u &&
+      !anygm_test_graphics_read_pixels(),"one placed unit quad reaches the driver without CPU observation");
+    gml_gpu_destroy(gpu,1);
+  }
+  return 1;
+}
+
 static int scene_hardware_filtered_batch_case(unsigned kind){
   enum { QUADS=2049 };
   int unit_font=kind==14u,native_font=kind==15u,continuous_font=kind==16u;
@@ -6331,6 +6403,7 @@ int main(int argc,char **argv){
     {"missing_entry_point",missing_entry_point_case},
     {"program_failure",program_failure_case},
     {"scene_service_contract",scene_service_contract_case},
+    {"scene_unit_texel_magnification",scene_unit_texel_magnification_case},
     {"scene_staged_upload",scene_staged_upload_case},
     {"scene_optional_entry_refusal",scene_optional_entry_refusal_case},
     {"scene_content_source_orientation",scene_content_source_orientation_case},

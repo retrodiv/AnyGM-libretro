@@ -268,6 +268,9 @@ static uint32_t scene_filter(const GmlRenderQuad *quad,
   }
   if((family==GML_RENDER_SCENE_BACKGROUND || family==GML_RENDER_SCENE_TILE ||
       (family==GML_RENDER_SCENE_TEXT && !quad->span_active) ||
+      (family==GML_RENDER_SCENE_SPRITE && !quad->span_active &&
+       quad->sampling.source_region.width==1u && quad->sampling.source_region.height==1u &&
+       (fabs(quad->inverse_x[0])>64.0 || fabs(quad->inverse_y[1])>64.0)) ||
       ((family==GML_RENDER_SCENE_SPRITE || family==GML_RENDER_SCENE_TEXT) &&
        quad->span_active==GML_RENDER_SPAN_FILTERED_AXIS_SUPPORT_ROW)) &&
      quad->sampling.filter==GML_RENDER_FILTER_HARDWARE_BILINEAR &&
@@ -1217,8 +1220,12 @@ static int hardware_screen_sprite_valid(const GmlRenderDrawOp *op,
   int positive_row=selected_axis_row || quad->span_active==GML_RENDER_SPAN_FILTERED_POSITIVE_ROW;
   int affine_row=positive_row || quad->span_active==GML_RENDER_SPAN_FILTERED_AFFINE_ROW;
   int blend=qualified_blend(state);
+  /* The producer retains a complete magnified texel as one placed quad.
+   * Its existing byte-colour sampler also owns replacement/destination factors. */
+  int unit_sprite_quad=op->scene_family==GML_RENDER_SCENE_SPRITE && !quad->span_active &&
+    region.width==1u && region.height==1u && (fabs(xs)>64.0 || fabs(ys)>64.0);
   int byte_background=(atlas_background ||
-    (((op->scene_family==GML_RENDER_SCENE_SPRITE || op->scene_family==GML_RENDER_SCENE_TEXT) && selected_axis_row) || text_quad)) &&
+    (((op->scene_family==GML_RENDER_SCENE_SPRITE || op->scene_family==GML_RENDER_SCENE_TEXT) && selected_axis_row) || text_quad || unit_sprite_quad)) &&
     (quad->sampling.quantisation==GML_RENDER_QUANTISE_INTEGER_TINT_TRUNC ||
      quad->sampling.quantisation==GML_RENDER_QUANTISE_INTEGER_TINT_ROUND);
   int background_blend=byte_background && (blend==0 || blend==1 || blend==3 || blend==9 ||
@@ -1226,7 +1233,7 @@ static int hardware_screen_sprite_valid(const GmlRenderDrawOp *op,
     (blend>=18 && blend<=21) || blend==24 || blend==25 ||
     (blend>=GL_SCENE_BLEND_SURFACE_DEST_BASE && blend<=GL_SCENE_BLEND_SURFACE_DEST_LIMIT &&
      state->rgb_equation==GML_RENDER_BLEND_ADD && state->alpha_equation==GML_RENDER_BLEND_ADD));
-  if(byte_background && ((!positive_row && !text_quad) || !background_blend || state->write_mask>15u ||
+  if(byte_background && ((!positive_row && !text_quad && !unit_sprite_quad) || !background_blend || state->write_mask>15u ||
      (!text_quad && (state->alpha_test_enabled || state->alpha_test_reference)) ||
      (quad->filtered_draw_alpha==0.0 &&
       state->coverage_policy!=GML_RENDER_COVERAGE_REPLACE_SOURCE_ALPHA &&
@@ -1305,8 +1312,8 @@ static int hardware_screen_sprite_valid(const GmlRenderDrawOp *op,
      (!byte_background && quad->filtered_draw_alpha==0.0) ||
      quad->filtered_draw_alpha>1.0 ||
      !isfinite(xs) || !isfinite(ys) ||
-     (!affine_row && (physical?fabs(xs)<(text_quad?0x1p-14:0.125) || fabs(xs)>64.0 ||
-               fabs(ys)<(text_quad?0x1p-14:0.125) || fabs(ys)>64.0:
+     (!affine_row && (physical?fabs(xs)<(text_quad?0x1p-14:0.125) || fabs(xs)>(unit_sprite_quad?16384.0:64.0) ||
+               fabs(ys)<(text_quad?0x1p-14:0.125) || fabs(ys)>(unit_sprite_quad?16384.0:64.0):
                xs<=0.0 || ys<=0.0)) ||
      (op->scene_family==GML_RENDER_SCENE_TEXT &&
       ((!physical && (xs>1.0 || ys>1.0)) || region.width>256u || region.height>256u)) ||
@@ -1751,6 +1758,9 @@ static int scene_preflight(GmlGpuBackend *backend,const GmlRenderDrawBatch *batc
          ((op->scene_family==GML_RENDER_SCENE_BACKGROUND || op->scene_family==GML_RENDER_SCENE_TILE ||
            ((op->scene_family==GML_RENDER_SCENE_SPRITE || op->scene_family==GML_RENDER_SCENE_TEXT) &&
             op->payload.quad.span_active==GML_RENDER_SPAN_FILTERED_AXIS_SUPPORT_ROW) ||
+           (op->scene_family==GML_RENDER_SCENE_SPRITE && !op->payload.quad.span_active &&
+            sampling->source_region.width==1u && sampling->source_region.height==1u &&
+            (fabs(op->payload.quad.inverse_x[0])>64.0 || fabs(op->payload.quad.inverse_y[1])>64.0)) ||
            (op->scene_family==GML_RENDER_SCENE_TEXT && !op->payload.quad.span_active)) &&
           (sampling->quantisation==GML_RENDER_QUANTISE_INTEGER_TINT_TRUNC ||
            sampling->quantisation==GML_RENDER_QUANTISE_INTEGER_TINT_ROUND)));
