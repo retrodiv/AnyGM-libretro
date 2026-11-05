@@ -3111,6 +3111,99 @@ static int scene_numbered_rotated_texel_spans_case(void){
   return 1;
 }
 
+/* Unit point placement needs no inverse maps; the device owns source-over fill. */
+static int scene_native_unit_numbered_point_case(void){
+  const uint8_t pixels[16]={255,0,0,128,0,255,0,0,0,0,255,255,255,255,255,64};
+  for(unsigned api=0;api<2u;api++) for(unsigned reflection=0;reflection<4u;reflection++){
+    GmlRenderImageRef source={GML_RENDER_RESOURCE_ATLAS,193u,1u,1u};
+    GmlRenderImageRef target={GML_RENDER_RESOURCE_SURFACE,194u,1u,1u};
+    GmlRenderImageUpload upload={0};
+    GmlRenderDrawStateSnapshot state={0};
+    GmlRenderDrawOp operations[3]={0};
+    GmlRenderDeviceServices service;
+    GmlGpuContext context=fake_context(api?GML_GPU_API_OPENGLES3:GML_GPU_API_OPENGL_CORE);
+    anygm_test_graphics_reset();
+    GmlGpu *gpu=gml_gpu_create();
+    REQUIRE(gpu && gml_gpu_context_reset(gpu,&context),"unit point context adopted");
+    gml_gpu_device_services(gpu,&service);
+    upload.image=source;upload.storage_width=upload.storage_height=2u;
+    upload.region=(GmlRenderRect){0,0,2u,2u};upload.pixel_format=GML_RENDER_PIXEL_RGBA8888;
+    upload.stride_bytes=8u;upload.byte_capacity=sizeof pixels;upload.bytes=pixels;
+    REQUIRE(service.upload(service.context,&upload),"unit point source uploaded");
+    state.write_mask=15u;state.alpha=255u;state.colour=0xffffffffu;state.sampler_count=1u;
+    state.rgb_source_factor=state.alpha_source_factor=GML_RENDER_BLEND_SOURCE_ALPHA;
+    state.rgb_destination_factor=state.alpha_destination_factor=GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA;
+    state.rgb_equation=state.alpha_equation=GML_RENDER_BLEND_ADD;
+    state.samplers[0].filter=GML_RENDER_FILTER_NEAREST_PHASED;
+    state.samplers[0].edge_rule=GML_RENDER_EDGE_CLAMP_SUBIMAGE;
+    state.samplers[0].source_region=upload.region;
+    state.samplers[0].quantisation=GML_RENDER_QUANTISE_SPRITE_MODERN_NEAREST;
+    for(unsigned index=0;index<3u;index++){
+      GmlRenderDrawOp *op=&operations[index];
+      op->sequence=index+1u;op->target.image=target;op->target.image.content_version=index+1u;
+      op->target.storage_version=1u;op->target.width=op->target.height=8u;
+      op->target.pixel_format=GML_RENDER_PIXEL_ARGB8888;op->target.region=(GmlRenderRect){0,0,8u,8u};
+      if(!index){op->opcode=GML_RENDER_OP_CLEAR;op->payload.clear_colour=0x40102030u;continue;}
+      op->opcode=GML_RENDER_OP_TEXTURED_QUAD;op->scene_family=GML_RENDER_SCENE_SPRITE;
+      op->reconstruction_mode=GML_RENDER_DEVICE_CHECKPOINT;op->sources=&source;op->source_count=1u;
+      GmlRenderQuad *q=&op->payload.quad;
+      q->shape=GML_RENDER_QUAD_AXIS_ALIGNED;q->sampling=state.samplers[0];q->filtered_draw_alpha=1.0;
+      q->x[0]=q->x[3]=index;q->x[1]=q->x[2]=index+2u;
+      q->y[0]=q->y[1]=1.0;q->y[2]=q->y[3]=3.0;
+      q->inverse_x[0]=(reflection&1u)?-1.0:1.0;q->inverse_y[1]=(reflection&2u)?-1.0:1.0;
+      q->inverse_x[1]=q->inverse_y[0]=0.5;
+      q->inverse_anchor[0]=(reflection&1u)?index+2u:index;
+      q->inverse_anchor[1]=(reflection&2u)?3.0:1.0;
+      q->u[0]=q->u[3]=(reflection&1u)?1.0:0.0;q->u[1]=q->u[2]=(reflection&1u)?0.0:1.0;
+      q->v[0]=q->v[1]=(reflection&2u)?1.0:0.0;q->v[2]=q->v[3]=(reflection&2u)?0.0:1.0;
+      for(unsigned corner=0;corner<4u;corner++)q->corner_colour[corner]=0xffffffffu;
+    }
+    GmlRenderDrawBatch batch={operations,3u,&state,1u};
+    GmlRenderExecutionResult result=service.submit(service.context,&batch);
+    unsigned factors[4]={0};anygm_test_graphics_blend_factors(factors);
+    REQUIRE(result.status==GML_RENDER_EXEC_ACCEPTED && result.accepted_prefix==3u &&
+      anygm_test_graphics_scene_draw_calls()==1 && anygm_test_graphics_scene_copies()==0u &&
+      anygm_test_graphics_read_pixels()==0u && anygm_test_graphics_scene_filter()==GL_NEAREST &&
+      factors[0]==GL_SRC_ALPHA && factors[1]==GL_ONE_MINUS_SRC_ALPHA &&
+      factors[2]==GL_SRC_ALPHA && factors[3]==GL_ONE_MINUS_SRC_ALPHA,
+      "overlapping reflected unit sprites retain order through native fixed blending without predecessor copies");
+    for(unsigned variant=0;variant<5u;variant++){
+      GmlRenderDrawOp changed[3];memcpy(changed,operations,sizeof changed);
+      GmlRenderDrawStateSnapshot changed_state=state;
+      GmlRenderDrawBatch changed_batch={changed,3u,&changed_state,1u};
+      if(variant==2u)changed_state.write_mask=7u;
+      for(unsigned index=1;index<3u;index++){
+        GmlRenderQuad *q=&changed[index].payload.quad;
+        if(variant==0u){
+          q->filtered_draw_alpha=0.5;
+          for(unsigned corner=0;corner<4u;corner++)q->corner_colour[corner]=0x80ffffffu;
+        }
+        if(variant==1u)for(unsigned corner=0;corner<4u;corner++)q->corner_colour[corner]=0xff804020u;
+        if(variant==3u)q->inverse_x[1]=0.25;
+        if(variant==4u){q->u[0]=q->u[3]=0.125;q->u[1]=q->u[2]=0.875;}
+      }
+      unsigned copies=anygm_test_graphics_scene_copies();
+      result=service.submit(service.context,&changed_batch);
+      if(variant==3u && (reflection&1u)){
+        REQUIRE(result.status==GML_RENDER_EXEC_UNSUPPORTED && !result.accepted_prefix &&
+          anygm_test_graphics_scene_copies()==copies && anygm_test_graphics_read_pixels()==0u,
+          "reflected non-half point phases retain their existing atomic refusal");
+        continue;
+      }
+      if(result.status!=GML_RENDER_EXEC_ACCEPTED || result.accepted_prefix!=3u ||
+         anygm_test_graphics_scene_copies()!=copies+2u || anygm_test_graphics_read_pixels())
+        fprintf(stderr,"unit point boundary: api=%u reflection=%u variant=%u status=%u prefix=%u copies=%u expected=%u\n",
+          api,reflection,variant,(unsigned)result.status,result.accepted_prefix,
+          anygm_test_graphics_scene_copies(),copies+2u);
+      REQUIRE(result.status==GML_RENDER_EXEC_ACCEPTED && result.accepted_prefix==3u &&
+        anygm_test_graphics_scene_copies()==copies+2u && anygm_test_graphics_read_pixels()==0u,
+        "opacity, tint, channel masks and nonunit sample mappings retain their existing ordered predecessor owner");
+    }
+    gml_gpu_destroy(gpu,1);
+  }
+  return 1;
+}
+
 /* Driver call/state proof for independent channel masks. Real pixels are qualified separately. */
 static int scene_numbered_sprite_channel_masks_case(void){
   const uint8_t pixels[16]={255,0,0,128,0,255,0,0,0,0,255,255,255,255,255,64};
@@ -6277,6 +6370,7 @@ int main(int argc,char **argv){
     {"scene_endpoint_source_sprite",scene_endpoint_source_sprite_case},
     {"scene_gles_font_programs",scene_gles_font_programs_case},
     {"scene_screen_filtered_alpha_stamp",scene_screen_filtered_alpha_stamp_case},
+    {"scene_native_unit_numbered_point",scene_native_unit_numbered_point_case},
     {"scene_numbered_sprite_channel_masks",scene_numbered_sprite_channel_masks_case},
     {"scene_numbered_rotated_texel_spans",scene_numbered_rotated_texel_spans_case},
     {"scene_completed_screen_query",scene_completed_screen_query_case},

@@ -203,6 +203,44 @@ static int qualified_blend(const GmlRenderDrawStateSnapshot *state){
   return -1;
 }
 
+/* A complete unit crop already carries its physical texel edges. Keep its placed
+ * quad and let the device blend it, without sampling an ordered predecessor. */
+static int native_unit_numbered_point(const GmlRenderDrawOp *op,
+  const GmlRenderDrawStateSnapshot *state,const GlSceneImage *source){
+  const GmlRenderQuad *q=&op->payload.quad;
+  GmlRenderRect crop=q->sampling.source_region;
+  if(!source || source->rendered_origin || source->pixel_format!=GML_RENDER_PIXEL_RGBA8888 ||
+     !source->width || !source->height || source->width>16384u || source->height>16384u ||
+     op->scene_family!=GML_RENDER_SCENE_SPRITE ||
+     op->target.image.resource_class!=GML_RENDER_RESOURCE_SURFACE ||
+     op->sources[0].resource_class!=GML_RENDER_RESOURCE_ATLAS ||
+     q->shape!=GML_RENDER_QUAD_AXIS_ALIGNED || q->span_active ||
+     q->sampling.quantisation!=GML_RENDER_QUANTISE_SPRITE_MODERN_NEAREST ||
+     q->sampling.filter!=GML_RENDER_FILTER_NEAREST_PHASED ||
+     q->sampling.edge_rule!=GML_RENDER_EDGE_CLAMP_SUBIMAGE || q->sampling.logical_margin_mask ||
+     !valid_region(crop,source->width,source->height) || crop.width>4096u || crop.height>4096u ||
+     q->filtered_draw_alpha!=1.0 || state->write_mask!=15u || state->alpha!=255u ||
+     state->colour!=0xffffffffu || state->coverage_policy || qualified_blend(state)!=3 ||
+     state->alpha_test_enabled || state->source_alpha_key || state->source_palette.enabled ||
+     fabs(q->inverse_x[0])!=1.0 || fabs(q->inverse_y[1])!=1.0 ||
+     q->inverse_x[1]!=0.5 || q->inverse_y[0]!=0.5 ||
+     q->x[1]-q->x[0]!=crop.width || q->y[2]-q->y[0]!=crop.height ||
+     q->inverse_anchor[0]!=(q->inverse_x[0]<0.0?q->x[1]:q->x[0]) ||
+     q->inverse_anchor[1]!=(q->inverse_y[1]<0.0?q->y[2]:q->y[0])) return 0;
+  for(unsigned corner=0;corner<4u;corner++){
+    int right=corner==1u || corner==2u,bottom=corner>=2u;
+    double x=q->x[0]+(right?crop.width:0u),y=q->y[0]+(bottom?crop.height:0u);
+    double u=((double)crop.x+((right!=(q->inverse_x[0]<0.0))?crop.width:0u))/source->width;
+    double v=((double)crop.y+((bottom!=(q->inverse_y[1]<0.0))?crop.height:0u))/source->height;
+    if(!isfinite(x) || !isfinite(y) || x!=floor(x) || y!=floor(y) ||
+       fabs(x)>65536.0 || fabs(y)>65536.0 || q->x[corner]!=x || q->y[corner]!=y ||
+       !isfinite(q->u[corner]) || !isfinite(q->v[corner]) ||
+       fabs(q->u[corner]-u)>1e-12 || fabs(q->v[corner]-v)>1e-12 ||
+       q->corner_colour[corner]!=0xffffffffu || q->span_x[corner] || q->span_y[corner]) return 0;
+  }
+  return 1;
+}
+
 static uint32_t scene_filter(const GmlRenderQuad *quad,
                              const GmlRenderDrawStateSnapshot *state,uint32_t family){
   if(quad->sampling.quantisation==GML_RENDER_QUANTISE_POSITIONED_SAMPLE){
@@ -3057,6 +3095,13 @@ GmlRenderExecutionResult gml_gpu_opengl_scene_submit(GmlGpuBackend *backend,
   for(;index<batch->operation_count;index++){
     const GmlRenderDrawOp *op=&batch->operations[index];
     GlSceneImage *target;
+    uint32_t operation_filter=0;
+    if(op->opcode==GML_RENDER_OP_TEXTURED_QUAD){
+      const GmlRenderDrawStateSnapshot *state=&batch->states[op->state_index];
+      GlSceneImage *source=gml_gpu_opengl_scene_image(backend,op->sources[0]);
+      operation_filter=scene_filter(&op->payload.quad,state,op->scene_family);
+      if(operation_filter==27u && native_unit_numbered_point(op,state,source)) operation_filter=0u;
+    }
     int disc=op->opcode==GML_RENDER_OP_COLOURED_PRIMITIVE &&
       op->payload.primitive.kind==GML_RENDER_PRIMITIVE_PARTICLE_DISC;
     int particle=disc || (op->opcode==GML_RENDER_OP_COLOURED_PRIMITIVE &&
@@ -3113,7 +3158,7 @@ GmlRenderExecutionResult gml_gpu_opengl_scene_submit(GmlGpuBackend *backend,
        !active_target || !same_logical(active_target->ref,op->target.image) ||
        pending_count==GL_SCENE_MAX_QUADS ||
        !pending_source || !same_version(pending_source->ref,op->sources[0]) ||
-       pending_filter!=scene_filter(&op->payload.quad,&batch->states[op->state_index],op->scene_family) ||
+       pending_filter!=operation_filter ||
        pending_blend!=qualified_blend(&batch->states[op->state_index]) ||
        pending_write_mask!=batch->states[op->state_index].write_mask ||
        pending_source_alpha_key!=batch->states[op->state_index].source_alpha_key ||
@@ -3125,10 +3170,10 @@ GmlRenderExecutionResult gml_gpu_opengl_scene_submit(GmlGpuBackend *backend,
        qualified_blend(&batch->states[op->state_index])==5 ||
        qualified_blend(&batch->states[op->state_index])==6 ||
        qualified_blend(&batch->states[op->state_index])==11 ||
-       scene_filter(&op->payload.quad,&batch->states[op->state_index],op->scene_family)==15u ||
-       scene_filter(&op->payload.quad,&batch->states[op->state_index],op->scene_family)==17u ||
-       scene_filter(&op->payload.quad,&batch->states[op->state_index],op->scene_family)==29u ||
-       scene_filter(&op->payload.quad,&batch->states[op->state_index],op->scene_family)==27u))){
+       operation_filter==15u ||
+       operation_filter==17u ||
+       operation_filter==29u ||
+       operation_filter==27u))){
       if(!flush_quads(backend,active_target,pending_source,pending_filter,
                       pending_blend,pending_count,pending_write_mask,pending_alpha_test,
                       pending_source_alpha_key,&pending_palette)){
@@ -3339,7 +3384,7 @@ GmlRenderExecutionResult gml_gpu_opengl_scene_submit(GmlGpuBackend *backend,
       pending_count=0;
       continue;
     }
-    pending_filter=scene_filter(&op->payload.quad,&batch->states[op->state_index],op->scene_family);
+    pending_filter=operation_filter;
     pending_blend=qualified_blend(&batch->states[op->state_index]);
     pending_write_mask=batch->states[op->state_index].write_mask;
     pending_source_alpha_key=batch->states[op->state_index].source_alpha_key;
