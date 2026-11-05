@@ -1808,9 +1808,44 @@ static int scene_hardware_filtered_batch_case(unsigned kind){
   return 1;
 }
 
+static int scene_hot_constant_programs_case(void){
+  const unsigned filters[]={32u,33u,153u};
+  for(unsigned api=0;api<2u;api++)for(unsigned selected=0;selected<3u;selected++)
+  for(unsigned failure=0;failure<2u;failure++){
+    GmlGpuContext context=fake_context(api?GML_GPU_API_OPENGL_CORE:GML_GPU_API_OPENGLES3);
+    anygm_test_graphics_reset();GmlGpu *gpu=gml_gpu_create();
+    REQUIRE(gpu && gml_gpu_context_reset(gpu,&context),"hot program context created");
+    char prefix[64],error[192];
+    snprintf(prefix,sizeof prefix,"#define GML_SCENE_CONSTANT_FILTER %u\n",filters[selected]);
+    if(failure){
+      anygm_test_graphics_fail_compile_containing(prefix);
+      REQUIRE(!gml_gpu_opengl_scene_draw_program(gpu->backend,filters[selected],0,error,sizeof error),
+        "a required constant-program compile failure is reported");
+      anygm_test_graphics_fail_compile_containing(NULL);
+    }
+    for(unsigned epoch=0;epoch<2u;epoch++){
+      GlSceneProgram *program=gml_gpu_opengl_scene_draw_program(gpu->backend,filters[selected],0,error,sizeof error);
+      const char *fragment=anygm_test_graphics_shader_source(1);
+      REQUIRE(program && fragment && strstr(fragment,prefix),
+        "hot native and filtered samplers compile their existing constant branch");
+      unsigned compiled=anygm_test_graphics_compile_calls();
+      REQUIRE(gml_gpu_opengl_scene_draw_program(gpu->backend,filters[selected],0,error,sizeof error)==program &&
+        anygm_test_graphics_compile_calls()==compiled,"later draws reuse the context-owned program");
+      if(!epoch){
+        anygm_test_graphics_forbid_calls();gml_gpu_context_lost(gpu);
+        REQUIRE(!anygm_test_graphics_calls_after_forget(),"loss forgets hot programs without driver calls");
+        anygm_test_graphics_allow_calls();
+        REQUIRE(gml_gpu_context_reset(gpu,&context),"successor context owns fresh hot programs");
+      }
+    }
+    gml_gpu_destroy(gpu,1);
+  }
+  return 1;
+}
+
 static int scene_native_triangle_batch_case(void){
   for(unsigned owner=0;owner<2u;owner++)
-  for(unsigned api=0;api<2u;api++) for(unsigned variant=0;variant<8u;variant++){
+  for(unsigned api=0;api<2u;api++) for(unsigned variant=0;variant<9u;variant++){
     GmlRenderDrawOp ops[3]={0};
     GmlGpuContext context=fake_context(api?GML_GPU_API_OPENGL_CORE:GML_GPU_API_OPENGLES3);
     GmlRenderDeviceServices device={0};anygm_test_graphics_reset();
@@ -1820,7 +1855,7 @@ static int scene_native_triangle_batch_case(void){
     ops[0].opcode=GML_RENDER_OP_CLEAR;
     ops[0].target=(GmlRenderTargetRef){.image={owner?GML_RENDER_RESOURCE_APPLICATION:GML_RENDER_RESOURCE_SCREEN,1u,1u,2u},
       .storage_version=1u,.width=32u,.height=24u,.pixel_format=GML_RENDER_PIXEL_ARGB8888,
-      .region={0,0,32u,24u}};ops[0].payload.clear_colour=0x40273859u;
+      .region={0,0,32u,24u}};ops[0].payload.clear_colour=variant==8u?0xFF273859u:0x40273859u;
     for(unsigned i=1;i<3u;i++){
       ops[i]=ops[0];ops[i].opcode=GML_RENDER_OP_COLOURED_PRIMITIVE;
       ops[i].scene_family=GML_RENDER_SCENE_PRIMITIVE;
@@ -1842,15 +1877,17 @@ static int scene_native_triangle_batch_case(void){
     if(variant==4u)ops[2].payload.primitive.triangle[1][2]=.5;
     if(variant==5u)ops[2].reconstruction_mode=GML_RENDER_REPLAY_EXACT;
     if(variant==7u)ops[2].payload.primitive.triangle[2][5]=-0.1;
+    if(variant==8u)anygm_test_graphics_fail_compile_containing("#define GML_SCENE_CONSTANT_FILTER 33");
     GmlRenderDrawBatch batch={ops,3u,NULL,0u};
     GmlRenderExecutionResult result=device.submit(device.context,&batch);
-    if(variant)REQUIRE(result.status==GML_RENDER_EXEC_UNSUPPORTED && !result.accepted_prefix &&
+    if(variant && variant!=8u)REQUIRE(result.status==GML_RENDER_EXEC_UNSUPPORTED && !result.accepted_prefix &&
       !anygm_test_graphics_clear_calls() && !anygm_test_graphics_scene_draw_calls(),
       "malformed native triangle batch refuses before all writes");
     else{
       REQUIRE(result.status==GML_RENDER_EXEC_ACCEPTED && result.accepted_prefix==3u &&
-        anygm_test_graphics_scene_draw_calls()==2 && anygm_test_graphics_scene_vertices()==24,
-        "two native triangles share colour and covered-alpha passes");
+        anygm_test_graphics_scene_draw_calls()==(variant==8u?1:2) &&
+        anygm_test_graphics_scene_vertices()==(variant==8u?12:24),
+        "native triangles retain required alpha work and omit it on certified opaque targets");
       float instances[2u*GL_SCENE_INSTANCE_FLOATS];
       REQUIRE(anygm_test_graphics_instance_bytes(instances,sizeof instances)==sizeof instances,
         "actual native triangle instances captured");
@@ -1875,6 +1912,7 @@ static int scene_source_free_alpha_batch_case(unsigned kind){
   int inverse=kind==GML_RENDER_PRIMITIVE_CLASSIC_INVERSE_RECT;
   int studio=kind==GML_RENDER_PRIMITIVE_STUDIO_ALPHA_RECT;
   int rectangle=kind==GML_RENDER_PRIMITIVE_CLASSIC_ALPHA_RECT || inverse || studio;
+  for(unsigned nonopaque=0;nonopaque<(studio?2u:1u);nonopaque++)
   for(unsigned variant=0;variant<(studio || procedural_line?10u:inverse?9u:8u);variant++){
     enum { LINES=2049 };
     GmlRenderDrawOp *ops=(GmlRenderDrawOp*)calloc(LINES+1u,sizeof *ops);
@@ -1893,7 +1931,7 @@ static int scene_source_free_alpha_batch_case(unsigned kind){
                 ?GML_RENDER_RESOURCE_SCREEN:GML_RENDER_RESOURCE_APPLICATION,141u,1u,2u},.storage_version=1u,
       .width=96u,.height=48u,.pixel_format=GML_RENDER_PIXEL_ARGB8888,
       .region={0,0,96u,48u}};
-    ops[0].payload.clear_colour=rectangle
+    ops[0].payload.clear_colour=rectangle && !nonopaque
       ?0xFF273859u:0x49273859u;
     for(unsigned line=0;line<LINES;line++){
       ops[line+1u]=ops[0];
@@ -1955,7 +1993,7 @@ static int scene_source_free_alpha_batch_case(unsigned kind){
       anygm_test_graphics_blend_factors(factors);
       REQUIRE(result.status==GML_RENDER_EXEC_ACCEPTED && result.accepted_prefix==count,
               "source-free particle batch accepted");
-      unsigned expected_quads=count-1u,expected_draws=studio?4u:variant==8u?3u:2u;
+      unsigned expected_quads=count-1u,expected_draws=studio && nonopaque?4u:variant==8u?3u:2u;
       if(procedural_line){
         unsigned queued=0u,previous_blend=1u;
         expected_quads=expected_draws=0u;
@@ -1981,7 +2019,7 @@ static int scene_source_free_alpha_batch_case(unsigned kind){
         if(queued) expected_draws++;
       }
       REQUIRE(anygm_test_graphics_scene_draw_calls()==(int)expected_draws &&
-              anygm_test_graphics_scene_vertices()==(int)expected_quads*6*(studio?2:1),
+              anygm_test_graphics_scene_vertices()==(int)expected_quads*6*(studio && nonopaque?2:1),
               "compatible primitives batch to capacity and split at a changed blend rule");
       REQUIRE(factors[0]==(inverse?GL_ZERO:GL_SRC_ALPHA) &&
               factors[1]==(inverse?GL_ONE_MINUS_SRC_COLOR:GL_ONE_MINUS_SRC_ALPHA) &&
@@ -6494,6 +6532,7 @@ int main(int argc,char **argv){
     {"scene_service_contract",scene_service_contract_case},
     {"scene_unit_texel_magnification",scene_unit_texel_magnification_case},
     {"scene_native_triangles",scene_native_triangle_batch_case},
+    {"scene_hot_constant_programs",scene_hot_constant_programs_case},
     {"scene_staged_upload",scene_staged_upload_case},
     {"scene_optional_entry_refusal",scene_optional_entry_refusal_case},
     {"scene_content_source_orientation",scene_content_source_orientation_case},

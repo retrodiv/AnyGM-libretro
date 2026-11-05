@@ -132,7 +132,10 @@ static int build_scene_program(GmlGpuBackend *backend,GlSceneProgram *scene,
                                mode==16?"#define GML_SCENE_CONSTANT_FILTER 43\n":
                                mode==17?"#define GML_SCENE_CONSTANT_FILTER 38\n":
                                mode==18?"#define GML_SCENE_CONSTANT_FILTER 25\n":
-                               mode==19?"#define GML_SCENE_CONSTANT_FILTER 26\n":"",
+                               mode==19?"#define GML_SCENE_CONSTANT_FILTER 26\n":
+                               mode==20?"#define GML_SCENE_CONSTANT_FILTER 32\n":
+                               mode==21?"#define GML_SCENE_CONSTANT_FILTER 33\n":
+                               mode==22?"#define GML_SCENE_CONSTANT_FILTER 153\n":"",
                                GML_GPU_OPENGL_SCENE_FRAGMENT_BODY);
   if(vertex_length<0 || (size_t)vertex_length>=sizeof vertex_source ||
      fragment_length<0 || (size_t)fragment_length>=sizeof fragment_source){
@@ -222,7 +225,8 @@ static int build_scene_program(GmlGpuBackend *backend,GlSceneProgram *scene,
        scene->u_point_origin<0)) ||
      (mode && (scene->a_position01<0 || scene->a_position23<0 ||
        (mode!=8 && (scene->a_colour[0]<0 || scene->a_colour[1]<0 || scene->a_colour[2]<0 ||
-                    scene->a_colour[3]<0)) || scene->u_extent<0 || scene->u_image<0 ||
+                    scene->a_colour[3]<0)) || scene->u_extent<0 ||
+       ((mode!=20 && mode!=21) && scene->u_image<0) ||
        ((mode==1 || mode==4) && scene->u_filter<0)))){
     gml_gpu_opengl_record_error(error,error_capacity,"scene program is missing an attribute or uniform");
     backend->gl.DeleteProgram(scene->program);
@@ -265,6 +269,9 @@ GlSceneProgram *gml_gpu_opengl_scene_draw_program(GmlGpuBackend *backend,uint32_
     program=&scene->compact_programs[index];mode=(int)index+2;
   }else if(filter==25u || filter==26u){
     unsigned index=filter==25u?16u:17u;
+    program=&scene->compact_programs[index];mode=(int)index+2;
+  }else if(filter==32u || filter==33u || filter==153u){
+    unsigned index=filter==32u?18u:filter==33u?19u:20u;
     program=&scene->compact_programs[index];mode=(int)index+2;
   }else if(filter==21u || filter==22u ||
      (filter>=65u && filter<=74u) || (filter>=79u && filter<=82u) ||

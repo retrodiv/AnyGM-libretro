@@ -2551,7 +2551,7 @@ static int flush_quads(GmlGpuBackend *backend,GlSceneImage *target,GlSceneImage 
                   filter==86u || filter==93u || filter==110u || filter==112u ||
                   filter==138u || filter==141u || filter==143u || filter==148u || filter==152u ||
                   filter==156u || filter==158u || filter==161u || filter==162u || filter==168u;
-  int skip_alpha=opaque && (filter==21u || filter==25u || filter==66u || filter==80u);
+  int skip_alpha=opaque && (filter==21u || filter==25u || filter==32u || filter==66u || filter==80u);
   target->alpha_opaque=0;
   backend->gl.ColorMask((write_mask&1u)!=0u,(write_mask&2u)!=0u,(write_mask&4u)!=0u,
                         (!stamp_alpha || filter==110u) && (write_mask&8u)!=0u);
@@ -2603,7 +2603,7 @@ static int flush_quads(GmlGpuBackend *backend,GlSceneImage *target,GlSceneImage 
     backend->gl.VertexAttribDivisor((GLuint)attributes[index],1u);
   }
   backend->gl.DrawArraysInstanced(GL_TRIANGLES,0,6,(GLsizei)count);
-  if(stamp_alpha && !skip_alpha && (write_mask&8u) && filter!=66u && filter!=21u && filter!=25u && filter!=80u){
+  if(stamp_alpha && !skip_alpha && (write_mask&8u) && filter!=66u && filter!=21u && filter!=25u && filter!=32u && filter!=80u){
     /* The CPU screen writer keeps alpha opaque at every covered texel,
      * even when its prior alpha is unknown. Reuse the sampled vertices and
      * the same sampler and cutout in an alpha-only pass, preserving that recipe's coverage. */
@@ -2639,8 +2639,8 @@ restore_stream_state:
     (!(write_mask&8u) || stamp_alpha || (blend==1 && filter!=15u && filter!=17u));
   /* Constant RGB programs cannot change selector for the separate alpha stamp.
    * Submit that existing kernel through the same stream with complete state. */
-  if(!skip_alpha && (filter==66u || filter==21u || filter==25u || filter==80u) && (write_mask&8u))
-    return flush_quads(backend,target,source,filter==21u?22u:filter==25u?26u:filter==80u?82u:72u,0,count,8u,alpha_test,
+  if(!skip_alpha && (filter==66u || filter==21u || filter==25u || filter==32u || filter==80u) && (write_mask&8u))
+    return flush_quads(backend,target,source,filter==21u?22u:filter==25u?26u:filter==32u?33u:filter==80u?82u:72u,0,count,8u,alpha_test,
                        source_alpha_key,palette);
   return 1;
 }

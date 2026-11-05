@@ -2876,11 +2876,12 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
       !modern_screen_filtered && !hardware_physical_sprite) ||
      page->atlas<0 || page->atlas>=r->n_atlas) return 0;
   if(modern_screen_filtered && page->project_authored_edges) return 0;
-  /* blit_one can select its near-unit white exact-copy leaf instead of
-   * filtering. Do not approximate that separate sampling specialisation. */
+  /* Only an integer physical origin selects the near-unit white copy.
+   * A fractional camera leaves this draw on the ordinary filtered leaf. */
   if((modern_screen_filtered || hardware_physical_sprite) && !hardware_physical_rotation &&
      alpha==1.0 && (colour&0xFFFFFFu)==0xFFFFFFu &&
-     fabs(xs-1.0)<0.001 && fabs(ys-1.0)<0.001 && (xs!=1.0 || ys!=1.0)) return 0;
+     fabs(xs-1.0)<0.001 && fabs(ys-1.0)<0.001 && (xs!=1.0 || ys!=1.0) &&
+     fabs(left-nearbyint(left))<1e-9 && fabs(top-nearbyint(top))<1e-9) return 0;
   if(family==GML_RENDER_SCENE_SPRITE || hardware_physical_font ||
      ((family==GML_RENDER_SCENE_BACKGROUND || family==GML_RENDER_SCENE_TILE) &&
       part_view)){

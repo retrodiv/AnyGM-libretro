@@ -14629,6 +14629,7 @@ static int resident_native_positive_alpha_triangles(void){
 
 static int resident_filtered_near_unit_copy(void){
   enum { W=1040,H=32,SW=1024,SH=16,AW=1026,AH=18 };
+  for(unsigned camera=0;camera<3u;camera++)
   for(unsigned enlarged=0;enlarged<2u;enlarged++)
   for(unsigned owner=0;owner<2u;owner++)for(unsigned pivot=0;pivot<2u;pivot++){
     GmlRender *r=calloc(1,sizeof *r);GmlWin content={.bytecode=17};
@@ -14650,30 +14651,37 @@ static int resident_filtered_near_unit_copy(void){
     for(unsigned i=0;i<W*H;i++)screen[i]=reference[i]=0xFF102030u;
     double xs=enlarged?1025.0/1024.0:1023.0/1024.0,ys=2047.0/2048.0;
     double x=7.0+r->spr[0].originx*xs,y=5.0+r->spr[0].originy*ys;
-    gml_render_begin(r,reference,W,H,0,0);r->interp=1;r->alphablend=1;
+    double cam_x=camera==1u?.75:camera==2u?.5:0.0;
+    double cam_y=camera==1u?.25:camera==2u?.5:0.0;
+    double left=floor(7.0-cam_x+.5-(camera==2u?1e-9:0.0));
+    double top=floor(5.0-cam_y+.5-(camera==2u?1e-9:0.0));
+    double width=camera?floor(SW*xs+.5):SW;
+    gml_render_begin(r,reference,W,H,cam_x,cam_y);r->interp=1;r->alphablend=1;
     gml_draw_sprite_ext(r,0,0,x,y,xs,ys,0,0xFFFFFFu,1.0);
-    /* The preserved CPU copy includes its last source column and never
-     * writes the neighbouring column, despite rounded scale width +/-1. */
-    CHECK(reference[5u*W+7u+SW-1u]==0xFFDE7123u &&
-          reference[5u*W+7u+SW]==0xFF102030u);
+    /* Integral origins select the full-page copy; fractional cameras use
+     * the rounded scaled extent. Independently check the CPU's last written
+     * column and its untouched neighbour before device admission. */
+    if(!camera) CHECK(reference[5u*W+7u+SW-1u]==0xFFDE7123u);
+    CHECK(reference[(size_t)top*W+(size_t)(left+width-1.0)]!=0xFF102030u &&
+          reference[(size_t)top*W+(size_t)(left+width)]==0xFF102030u);
     device.observe_on_demand=fake_observe_on_demand;gml_render_bind_device(r,&device);
-    CHECK(gml_render_begin_resident_base(r,screen,W,H,0,0));
+    CHECK(gml_render_begin_resident_base(r,screen,W,H,cam_x,cam_y));
     if(owner){CHECK(gml_render_application_surface_ensure_owned(r,W,H));
-      CHECK(gml_render_begin_resident_owned_application(r,0,0,0));}
+      CHECK(gml_render_begin_resident_owned_application(r,cam_x,cam_y,0));}
     gml_render_set_pending_fill(r,0xFF102030u);gml_render_flush_pending_fill(r);
     CHECK(gml_render_scene_submit_pending(r));memcpy(shadow,r->fb,sizeof shadow);
     r->interp=1;r->alphablend=1;int before=fake.submits;
     gml_draw_sprite_ext(r,0,0,x,y,xs,ys,0,0xFFFFFFu,1.0);
     int flushed=r->resident_application_pass && gml_render_scene_submit_pending(r);
     if(!flushed || fake.submits!=before+1 || fake.last_batch_operations!=1u)
-      fprintf(stderr,"near-unit copy: enlarged=%u owner=%u pivot=%u pass=%d flush=%d submits=%d/%d ops=%u opcode=%u reads=%d shader=%d alpha=%g blend=%d\n",
-        enlarged,owner,pivot,r->resident_application_pass,flushed,fake.submits,before,
+      fprintf(stderr,"near-unit copy: camera=%u enlarged=%u owner=%u pivot=%u pass=%d flush=%d submits=%d/%d ops=%u opcode=%u reads=%d shader=%d alpha=%g blend=%d\n",
+        camera,enlarged,owner,pivot,r->resident_application_pass,flushed,fake.submits,before,
         fake.last_batch_operations,fake.last_opcode,fake.readbacks,r->active_shader,r->alpha,r->blendmode);
     CHECK(flushed && fake.submits==before+1 && fake.last_batch_operations==1u &&
       fake.last_opcode==GML_RENDER_OP_TEXTURED_QUAD && !fake.readbacks && !fake.rgb_queries &&
       !memcmp(shadow,r->fb,sizeof shadow));
-    CHECK(fake.last_quad.x[0]==7.0 && fake.last_quad.x[1]==7.0+SW &&
-      fake.last_quad.y[0]==5.0 && fake.last_quad.y[2]==5.0+SH);
+    CHECK(fake.last_quad.x[0]==left && fake.last_quad.x[1]==left+width &&
+      fake.last_quad.y[0]==top && fake.last_quad.y[2]==top+SH);
     CHECK(r->fb_opaque_known && r->fb_all_opaque);
     CHECK(r->interp==1 && r->alphablend==1 && !r->blendmode && r->active_shader<0);
     gml_render_free(r);free(r);
