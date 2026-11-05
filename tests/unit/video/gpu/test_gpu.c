@@ -4275,7 +4275,8 @@ static int scene_integer_function_sprite_case(void){
 static int scene_opaque_native_alpha_case(void){
   const uint32_t pixels[4]={0x80112233u,0x00445566u,0xFF778899u,0x4099AA11u};
   for(unsigned nearest=0;nearest<2u;nearest++)
-  for(unsigned api=0;api<2u;api++)for(unsigned variant=0;variant<7u;variant++){
+  for(unsigned api=0;api<2u;api++)for(unsigned variant=0;variant<7u;variant++)
+  for(unsigned failure=0;failure<(nearest && variant==1u?3u:1u);failure++){
     GmlGpuContext context=fake_context(api?GML_GPU_API_OPENGLES3:GML_GPU_API_OPENGL_CORE);
     GmlRenderDeviceServices device={0};
     GmlRenderImageRef atlas={nearest?GML_RENDER_RESOURCE_SURFACE:GML_RENDER_RESOURCE_ATLAS,71u,1u,1u};
@@ -4347,18 +4348,37 @@ static int scene_opaque_native_alpha_case(void){
     state.rgb_equation=state.alpha_equation=GML_RENDER_BLEND_ADD;
     state.sampler_count=1u;state.samplers[0]=q->sampling;
     unsigned expected=variant==0u || variant==5u?1u:2u;
-    if(variant==0u && !nearest)
-      anygm_test_graphics_fail_compile_containing("#define GML_SCENE_CONSTANT_FILTER 82");
+    if(variant==0u)
+      anygm_test_graphics_fail_compile_containing(nearest?
+        "#define GML_SCENE_CONSTANT_FILTER 26":"#define GML_SCENE_CONSTANT_FILTER 82");
+    if(failure) anygm_test_graphics_fail_compile_containing(failure==1u?
+      "#define GML_SCENE_CONSTANT_FILTER 25":"#define GML_SCENE_CONSTANT_FILTER 26");
+    unsigned compiled=0;
     for(unsigned repeat=0;repeat<2u;repeat++){
       int before=anygm_test_graphics_scene_draw_calls();
       GmlRenderExecutionResult submitted=device.submit(device.context,&batch);
       int drawn=anygm_test_graphics_scene_draw_calls()-before;
+      if(failure){
+        REQUIRE(submitted.status==GML_RENDER_EXEC_RECOVERABLE_ERROR &&
+          submitted.uncertain_target_count==1u && drawn==(failure==2u?1:0),
+          "required point-program compilation failures retain target uncertainty");
+        break;
+      }
       if(submitted.status!=GML_RENDER_EXEC_ACCEPTED || drawn!=(int)expected)
         fprintf(stderr,"opaque alpha: point=%u api=%u variant=%u repeat=%u status=%u draws=%d expected=%u\n",
           nearest,api,variant,repeat,(unsigned)submitted.status,drawn,expected);
       REQUIRE(submitted.status==GML_RENDER_EXEC_ACCEPTED && drawn==(int)expected &&
         !anygm_test_graphics_read_pixels(),
         "only a completely opaque destination skips native alpha work across submissions");
+      if(nearest){
+        const char *fragment=anygm_test_graphics_shader_source(1);
+        REQUIRE(fragment && strstr(fragment,expected==1u?
+          "#define GML_SCENE_CONSTANT_FILTER 25":"#define GML_SCENE_CONSTANT_FILTER 26"),
+          "point RGB and required alpha passes compile only their existing sampler branch");
+        if(repeat) REQUIRE(anygm_test_graphics_compile_calls()==compiled,
+          "point programs are cached within their owning context");
+        compiled=anygm_test_graphics_compile_calls();
+      }
       op.target.image.content_version++;
     }
     gml_gpu_destroy(gpu,1);

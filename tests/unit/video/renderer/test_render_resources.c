@@ -14674,6 +14674,7 @@ static int resident_filtered_near_unit_copy(void){
       !memcmp(shadow,r->fb,sizeof shadow));
     CHECK(fake.last_quad.x[0]==7.0 && fake.last_quad.x[1]==7.0+SW &&
       fake.last_quad.y[0]==5.0 && fake.last_quad.y[2]==5.0+SH);
+    CHECK(r->fb_opaque_known && r->fb_all_opaque);
     CHECK(r->interp==1 && r->alphablend==1 && !r->blendmode && r->active_shader<0);
     gml_render_free(r);free(r);
   }

@@ -73,6 +73,13 @@ untrimmed immutable source, an unbound SCREEN or owned application target and
 no GUI, fog, SDF or special state. CPU copy code and readable draw state stay
 unchanged; other near-unit variants retain their existing paths.
 
+Point-sampled surface RGB and opaque-covered alpha reuse the existing shader
+body with separately cached constant selectors. Constant compilation removes
+unrelated sampler branches without changing sampling or channel formulas.
+An unknown destination alpha still requires its existing alpha-only pass;
+a certified opaque destination omits that pass. Context loss forgets both
+programs, and context destruction deletes them with the other cached programs.
+
 The CPU/OpenGL image comparisons in this repository are diagnostic. Routine
 checks skip them; `make check GPU_PIXEL_PARITY=1` runs them and direct
 execution uses `ANYGM_TEST_GPU_PIXEL_PARITY=1`. Real-device paired pixel probes
