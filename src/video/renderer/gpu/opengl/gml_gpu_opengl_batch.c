@@ -2551,7 +2551,7 @@ static int flush_quads(GmlGpuBackend *backend,GlSceneImage *target,GlSceneImage 
                   filter==86u || filter==93u || filter==110u || filter==112u ||
                   filter==138u || filter==141u || filter==143u || filter==148u || filter==152u ||
                   filter==156u || filter==158u || filter==161u || filter==162u || filter==168u;
-  int skip_alpha=opaque && (filter==21u || filter==66u || filter==80u);
+  int skip_alpha=opaque && (filter==21u || filter==25u || filter==66u || filter==80u);
   target->alpha_opaque=0;
   backend->gl.ColorMask((write_mask&1u)!=0u,(write_mask&2u)!=0u,(write_mask&4u)!=0u,
                         (!stamp_alpha || filter==110u) && (write_mask&8u)!=0u);

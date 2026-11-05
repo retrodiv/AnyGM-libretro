@@ -992,14 +992,16 @@ continuous hardware colour kernel and a constant companion for opaque-written al
 retain placement, source cutout and crop metadata without quantising sampled colour to CPU
 bytes first. Other families, unit-point glyphs and prepared support packets retain their recipes.
 The device's sampled result is picture; actual resource reads and restored bytes remain exact.
-Native linear colour kernels omit their separate opaque-alpha pass only when the destination
+Native linear colour kernels and ordinary point-sampled source-over omit their separate
+opaque-alpha pass only when the destination
 has a context-local proof that every stored alpha byte is already 255. A full opaque clear or
 complete raw copy from a proved source can establish it. Partial nonopaque clears, CPU uploads,
 storage replacement, unknown writers and errors retire it. Ordinary source-over and disabled
 alpha writes preserve existing opaque bytes; vector-alpha recipes remain conservative. The
 proof is derived, never serialized, and changes no sampled colour or actual destination byte.
 Unknown and partial-alpha destinations retain their original coverage pass. Neutral controls
-cover both APIs, repeat submissions, partial clears, CPU replacement and full/partial raw copies.
+cover both APIs, native filtered glyphs and point-sampled surfaces, repeat submissions,
+partial clears, CPU replacement and full/partial raw copies.
 Three further bounded programs compile the existing ordinary sampler with selector0 or14
 constant, or selector77/78 restricted to the fixed-stretch pair. Their sampler, phase,
 blend and predecessor arithmetic is retained verbatim; no CPU-shaped geometry is added.

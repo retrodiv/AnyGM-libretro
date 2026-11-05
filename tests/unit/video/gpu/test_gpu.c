@@ -4274,13 +4274,14 @@ static int scene_integer_function_sprite_case(void){
 
 static int scene_opaque_native_alpha_case(void){
   const uint32_t pixels[4]={0x80112233u,0x00445566u,0xFF778899u,0x4099AA11u};
+  for(unsigned nearest=0;nearest<2u;nearest++)
   for(unsigned api=0;api<2u;api++)for(unsigned variant=0;variant<7u;variant++){
     GmlGpuContext context=fake_context(api?GML_GPU_API_OPENGLES3:GML_GPU_API_OPENGL_CORE);
     GmlRenderDeviceServices device={0};
-    GmlRenderImageRef atlas={GML_RENDER_RESOURCE_ATLAS,71u,1u,1u};
+    GmlRenderImageRef atlas={nearest?GML_RENDER_RESOURCE_SURFACE:GML_RENDER_RESOURCE_ATLAS,71u,1u,1u};
     GmlRenderImageRef other={GML_RENDER_RESOURCE_SURFACE,72u,1u,1u};
     GmlRenderImageUpload upload={.image=atlas,.storage_width=2u,.storage_height=2u,
-      .region={0,0,2u,2u},.pixel_format=GML_RENDER_PIXEL_RGBA8888,
+      .region={0,0,2u,2u},.pixel_format=nearest?GML_RENDER_PIXEL_ARGB8888:GML_RENDER_PIXEL_RGBA8888,
       .stride_bytes=8u,.byte_capacity=sizeof pixels,.bytes=pixels};
     GmlRenderDrawOp op={0};GmlRenderDrawStateSnapshot state={0};
     GmlRenderDrawBatch batch={&op,1u,&state,1u};
@@ -4325,16 +4326,18 @@ static int scene_opaque_native_alpha_case(void){
       REQUIRE(device.submit(device.context,&copy_batch).status==GML_RENDER_EXEC_ACCEPTED,
         "raw image copy retains only proven complete destination opacity");
     }
-    op.opcode=GML_RENDER_OP_TEXTURED_QUAD;op.scene_family=GML_RENDER_SCENE_TEXT;
+    op.opcode=GML_RENDER_OP_TEXTURED_QUAD;op.scene_family=nearest?GML_RENDER_SCENE_SURFACE:GML_RENDER_SCENE_TEXT;
     op.reconstruction_mode=GML_RENDER_DEVICE_CHECKPOINT;op.sources=&atlas;op.source_count=1u;
     GmlRenderQuad *q=&op.payload.quad;memset(q,0,sizeof *q);
     q->shape=GML_RENDER_QUAD_AXIS_ALIGNED;
     q->sampling=(GmlRenderSamplingPolicy){GML_RENDER_FILTER_HARDWARE_BILINEAR,
       GML_RENDER_EDGE_CLAMP_SUBIMAGE,{0,0,2u,2u},GML_RENDER_QUANTISE_HARDWARE_SPRITE_FIRSTGEN,0u};
+    if(nearest){q->sampling.filter=GML_RENDER_FILTER_NEAREST;q->sampling.quantisation=0u;}
     q->x[1]=q->x[2]=q->y[2]=q->y[3]=2.0;
     q->u[1]=q->u[2]=q->v[2]=q->v[3]=1.0;
     q->inverse_x[0]=q->inverse_y[1]=1.0;q->filtered_draw_alpha=.5;
-    for(unsigned c=0;c<4u;c++)q->corner_colour[c]=0x803470D0u;
+    for(unsigned c=0;c<4u;c++)q->corner_colour[c]=nearest?0xFFFFFFFFu:0x803470D0u;
+    if(nearest)q->filtered_draw_alpha=1.0;
     state.write_mask=15u;state.colour=0xFFFFFFFFu;state.alpha=255u;
     state.coverage_policy=GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA;
     state.rgb_source_factor=GML_RENDER_BLEND_SOURCE_ALPHA;
@@ -4344,12 +4347,16 @@ static int scene_opaque_native_alpha_case(void){
     state.rgb_equation=state.alpha_equation=GML_RENDER_BLEND_ADD;
     state.sampler_count=1u;state.samplers[0]=q->sampling;
     unsigned expected=variant==0u || variant==5u?1u:2u;
-    if(variant==0u)
+    if(variant==0u && !nearest)
       anygm_test_graphics_fail_compile_containing("#define GML_SCENE_CONSTANT_FILTER 82");
     for(unsigned repeat=0;repeat<2u;repeat++){
       int before=anygm_test_graphics_scene_draw_calls();
-      REQUIRE(device.submit(device.context,&batch).status==GML_RENDER_EXEC_ACCEPTED &&
-        anygm_test_graphics_scene_draw_calls()==before+(int)expected &&
+      GmlRenderExecutionResult submitted=device.submit(device.context,&batch);
+      int drawn=anygm_test_graphics_scene_draw_calls()-before;
+      if(submitted.status!=GML_RENDER_EXEC_ACCEPTED || drawn!=(int)expected)
+        fprintf(stderr,"opaque alpha: point=%u api=%u variant=%u repeat=%u status=%u draws=%d expected=%u\n",
+          nearest,api,variant,repeat,(unsigned)submitted.status,drawn,expected);
+      REQUIRE(submitted.status==GML_RENDER_EXEC_ACCEPTED && drawn==(int)expected &&
         !anygm_test_graphics_read_pixels(),
         "only a completely opaque destination skips native alpha work across submissions");
       op.target.image.content_version++;
