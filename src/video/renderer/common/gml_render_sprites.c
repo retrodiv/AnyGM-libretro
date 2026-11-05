@@ -2771,7 +2771,7 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
       !mapped_gui_sprite && !mapped_gui_rotation && !modern_filtered_identity_maximise &&
       !hardware_physical_sprite) ||
      (r->active_shader>=0 &&
-      (family!=GML_RENDER_SCENE_SPRITE || resident_sprite_program_blocks(r) ||
+      ((family!=GML_RENDER_SCENE_SPRITE && !hardware_physical_font) || resident_sprite_program_blocks(r) ||
        (!hardware_physical_sprite && !nearest_mode))) ||
      (r->alpha_test_enable && !hardware_physical_sprite) ||
      (!r->alphablend && !hardware_physical_sprite) ||

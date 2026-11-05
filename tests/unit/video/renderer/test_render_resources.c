@@ -11916,6 +11916,45 @@ static int resident_maximised_filtered_real_font(void){
 }
 
 /* Admission/authority only; real-device public strings own RGBA and coverage. */
+static int resident_filtered_font_passthrough(void){
+  enum { W=32,H=24,A=16 };
+  for(unsigned owner=0;owner<2u;owner++) for(unsigned gui=0;gui<2u;gui++)
+  for(unsigned scale=0;scale<2u;scale++) for(unsigned program=0;program<3u;program++){
+    GmlRender *r=calloc(1,sizeof *r);GmlWin content={.bytecode=17};
+    FakeDevice fake={.on_demand=1};GmlRenderDeviceServices device=service(&fake);
+    uint32_t screen[W*H],shadow[W*H];CHECK(r);
+    r->atlas=calloc(1,sizeof *r->atlas);CHECK(r->atlas);r->n_atlas=1;
+    r->atlas[0].px=malloc(A*A*4u);CHECK(r->atlas[0].px);
+    memset(r->atlas[0].px,127,A*A*4u);r->atlas[0].w=r->atlas[0].h=A;
+    GmlFont *font=&r->fonts[0];r->n_fonts=1;
+    font->real=1;font->sprite=-1;font->atlas=0;font->line_height=font->align_height=5;
+    font->n_glyphs=1;font->glyphs=calloc(1,sizeof *font->glyphs);CHECK(font->glyphs);
+    for(unsigned cp=0;cp<256u;cp++)font->glyph_by_char[cp]=-1;
+    font->glyph_by_char['A']=0;
+    font->glyphs[0]=(GmlGlyph){.sx=5,.sy=5,.w=5,.h=5,.shift=6,.ch='A'};
+    r->shader_pal=calloc(1,sizeof *r->shader_pal);CHECK(r->shader_pal);r->n_shader_pal=1;
+    r->shader_pal[0].grayscale=program==2u;r->win=&content;
+    r->color_write_mask=15u;r->next_surface_id=1;
+    for(unsigned p=0;p<W*H;p++)screen[p]=0xA5123456u;
+    device.observe_on_demand=fake_observe_on_demand;gml_render_bind_device(r,&device);
+    CHECK(gml_render_begin_resident_base(r,screen,W,H,0,0));
+    if(owner){int id=gml_surface_create(r,W,H);CHECK(id>0 && gml_surface_set_target(r,id));}
+    if(gui)gml_render_gui_begin(r,W,H);
+    gml_render_set_pending_fill(r,0x40273859u);gml_render_flush_pending_fill(r);
+    CHECK(gml_render_scene_submit_pending(r));memcpy(shadow,r->fb,sizeof shadow);
+    r->font=0;r->interp=r->alphablend=1;r->blendmode=0;
+    r->active_shader=program?0:-1;int before=fake.submits;
+    gml_draw_text_transformed(r,8,8,"A",scale?1.5:1.0,scale?1.5:1.0,0,0xFFFFFFu,.5);
+    if(program==2u)CHECK(!r->resident_application_pass && fake.readbacks>0);
+    else CHECK(r->resident_application_pass && gml_render_scene_submit_pending(r) &&
+      fake.submits==before+1 && fake.textured_families[GML_RENDER_SCENE_TEXT]==1u &&
+      fake.last_batch_operations==1u && !fake.last_quad.span_active &&
+      !fake.readbacks && !fake.rgb_queries && !memcmp(shadow,r->fb,sizeof shadow));
+    CHECK(r->active_shader==(program?0:-1));gml_render_free(r);free(r);
+  }
+  return 1;
+}
+
 static int resident_filtered_font_magnification(int runtime_page,int clamped_page,int reduced_page){
   enum { W=32,H=24 };
   const int generations[]={13,15,17};
@@ -19807,6 +19846,7 @@ int main(void){
     else if(!strcmp(selected,"immutable-coarse-texel")) passed=immutable_coarse_texel_cache();
     else if(!strcmp(selected,"coarse-veil-exact-recovery")) passed=resident_coarse_veil_exact_recovery();
     else if(!strcmp(selected,"filtered-text-reduction")) passed=resident_filtered_font_magnification(0,0,1);
+    else if(!strcmp(selected,"filtered-font-passthrough")) passed=resident_filtered_font_passthrough();
     else if(!strcmp(selected,"maximised-filtered-font")) passed=resident_maximised_filtered_real_font();
     else if(!strcmp(selected,"physical-filtered-sprite")) passed=resident_physical_filtered_sprite_function();
     else if(!strcmp(selected,"wide-nearest-rows")) passed=resident_large_screen_axis_row_metadata();
@@ -20007,6 +20047,7 @@ int main(void){
   passed+=resident_modern_screen_filtered_sprite();
   passed+=resident_maximised_filtered_real_font();
   passed+=resident_filtered_font_magnification(0,0,0);
+  passed+=resident_filtered_font_passthrough();
   passed+=resident_filtered_font_magnification(1,0,0);
   passed+=resident_filtered_font_magnification(0,1,0);
   passed+=resident_filtered_font_magnification(0,0,1);
@@ -20144,6 +20185,6 @@ int main(void){
   passed+=skip_cpu_draw_policy_preserves_observers();
   passed+=resident_numbered_rotated_native_quad();
   passed+=resident_unit_texel_magnification();
-  printf("render resource cases: passed=%d failed=%d\n",passed,313-passed);
-  return passed==313?EXIT_SUCCESS:EXIT_FAILURE;
+  printf("render resource cases: passed=%d failed=%d\n",passed,314-passed);
+  return passed==314?EXIT_SUCCESS:EXIT_FAILURE;
 }
