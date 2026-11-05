@@ -104,6 +104,10 @@ typedef struct {
   double first[4],step[4];
   double texcoord_first[2],texcoord_step[2];
 } GmlRenderCpuBackendVertexSpan;
+typedef struct { double vertex[3][6]; } GmlRenderCpuBackendTriangle;
+/* Resolved native 2D geometry, not per-row CPU coverage. A null zero-count call probes state. */
+int gml_render_cpu_backend_native_triangles(GmlRender *render,
+  const GmlRenderCpuBackendTriangle *triangles,uint32_t count);
 int gml_render_cpu_backend_vertex_spans(GmlRender *render,
   const GmlRenderCpuBackendVertexSpan *spans,uint32_t count);
 /* Full texture-page UVs, not sprite-local coordinates. The optional scene

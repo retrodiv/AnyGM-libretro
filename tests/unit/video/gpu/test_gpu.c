@@ -1808,6 +1808,68 @@ static int scene_hardware_filtered_batch_case(unsigned kind){
   return 1;
 }
 
+static int scene_native_triangle_batch_case(void){
+  for(unsigned owner=0;owner<2u;owner++)
+  for(unsigned api=0;api<2u;api++) for(unsigned variant=0;variant<8u;variant++){
+    GmlRenderDrawOp ops[3]={0};
+    GmlGpuContext context=fake_context(api?GML_GPU_API_OPENGL_CORE:GML_GPU_API_OPENGLES3);
+    GmlRenderDeviceServices device={0};anygm_test_graphics_reset();
+    if(variant==6u)anygm_test_graphics_withhold("glBlendFuncSeparate");
+    GmlGpu *gpu=gml_gpu_create();REQUIRE(gpu && gml_gpu_context_reset(gpu,&context),"native triangle context");
+    gml_gpu_device_services(gpu,&device);
+    ops[0].opcode=GML_RENDER_OP_CLEAR;
+    ops[0].target=(GmlRenderTargetRef){.image={owner?GML_RENDER_RESOURCE_APPLICATION:GML_RENDER_RESOURCE_SCREEN,1u,1u,2u},
+      .storage_version=1u,.width=32u,.height=24u,.pixel_format=GML_RENDER_PIXEL_ARGB8888,
+      .region={0,0,32u,24u}};ops[0].payload.clear_colour=0x40273859u;
+    for(unsigned i=1;i<3u;i++){
+      ops[i]=ops[0];ops[i].opcode=GML_RENDER_OP_COLOURED_PRIMITIVE;
+      ops[i].scene_family=GML_RENDER_SCENE_PRIMITIVE;
+      ops[i].reconstruction_mode=GML_RENDER_DEVICE_CHECKPOINT;
+      ops[i].target.image.content_version+=i;
+      GmlRenderPrimitiveRect *p=&ops[i].payload.primitive;
+      p->kind=GML_RENDER_PRIMITIVE_NATIVE_TRIANGLE;p->region=ops[i].target.region;
+      p->alpha=1.0;p->alpha_blend=1u;p->pixel_write_mask=15u;
+      const double xy[3][2]={{-2.25,3.5},{30.5,3.5},{9.75,26.75}};
+      for(unsigned v=0;v<3u;v++){
+        p->triangle[v][0]=xy[v][0];p->triangle[v][1]=xy[v][1];
+        p->triangle[v][2]=.25;p->triangle[v][3]=.5;p->triangle[v][4]=.75;
+        p->triangle[v][5]=v==2u?0.0:1.0;
+      }
+    }
+    if(variant==1u)ops[2].payload.primitive.triangle[1][0]=NAN;
+    if(variant==2u)for(unsigned i=0;i<3u;i++)ops[i].target.image.resource_class=GML_RENDER_RESOURCE_SURFACE;
+    if(variant==3u)ops[2].payload.primitive.pixel_write_mask=7u;
+    if(variant==4u)ops[2].payload.primitive.triangle[1][2]=.5;
+    if(variant==5u)ops[2].reconstruction_mode=GML_RENDER_REPLAY_EXACT;
+    if(variant==7u)ops[2].payload.primitive.triangle[2][5]=-0.1;
+    GmlRenderDrawBatch batch={ops,3u,NULL,0u};
+    GmlRenderExecutionResult result=device.submit(device.context,&batch);
+    if(variant)REQUIRE(result.status==GML_RENDER_EXEC_UNSUPPORTED && !result.accepted_prefix &&
+      !anygm_test_graphics_clear_calls() && !anygm_test_graphics_scene_draw_calls(),
+      "malformed native triangle batch refuses before all writes");
+    else{
+      REQUIRE(result.status==GML_RENDER_EXEC_ACCEPTED && result.accepted_prefix==3u &&
+        anygm_test_graphics_scene_draw_calls()==2 && anygm_test_graphics_scene_vertices()==24,
+        "two native triangles share colour and covered-alpha passes");
+      float instances[2u*GL_SCENE_INSTANCE_FLOATS];
+      REQUIRE(anygm_test_graphics_instance_bytes(instances,sizeof instances)==sizeof instances,
+        "actual native triangle instances captured");
+      const GmlRenderPrimitiveRect *p=&ops[1].payload.primitive;
+      for(unsigned v=0;v<4u;v++){
+        unsigned source=v==3u?2u:v;
+        REQUIRE(instances[v*2u]==(float)p->triangle[source][0] &&
+          instances[v*2u+1u]==(float)p->triangle[source][1],"placed triangle vertices reach device unchanged");
+        for(unsigned c=0;c<4u;c++)REQUIRE(instances[16u+v*4u+c]==(float)p->triangle[source][2u+c],
+          "continuous vertex RGBA reaches device unchanged");
+      }
+      REQUIRE(!anygm_test_graphics_scene_copies() && !anygm_test_graphics_read_pixels(),
+        "native triangle needs no image snapshot or ordinary readback");
+    }
+    gml_gpu_destroy(gpu,1);
+  }
+  return 1;
+}
+
 static int scene_source_free_alpha_batch_case(unsigned kind){
   int procedural_line=kind==GML_RENDER_PRIMITIVE_PARTICLE_LINE;
   int inverse=kind==GML_RENDER_PRIMITIVE_CLASSIC_INVERSE_RECT;
@@ -6404,6 +6466,7 @@ int main(int argc,char **argv){
     {"program_failure",program_failure_case},
     {"scene_service_contract",scene_service_contract_case},
     {"scene_unit_texel_magnification",scene_unit_texel_magnification_case},
+    {"scene_native_triangles",scene_native_triangle_batch_case},
     {"scene_staged_upload",scene_staged_upload_case},
     {"scene_optional_entry_refusal",scene_optional_entry_refusal_case},
     {"scene_content_source_orientation",scene_content_source_orientation_case},

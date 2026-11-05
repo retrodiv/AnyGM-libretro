@@ -499,6 +499,50 @@ static int resident_rectangle_state_eligible(GmlRender *r,int cpu_passthrough){
   return resident_primitive_state_eligible_rule(r,cpu_passthrough) && r->color_write_mask==15u;
 }
 
+int gml_render_cpu_backend_native_triangles(GmlRender *r,
+  const GmlRenderCpuBackendTriangle *triangles,uint32_t count){
+  if(!resident_primitive_state_eligible_rule(r,1) || r->classic ||
+     !anygm_policy_has_modern_layer_semantics(r->win) || r->target_sp ||
+     r->target_id!=-1 || gml_render_target_preserves_alpha(r) || gml_d3_is_active(r) ||
+     r->classic_phase_scene_target || r->fog_flat || r->alpha_test_enable ||
+     !r->alphablend || r->blendmode || r->color_write_mask!=15u ||
+     r->app_interp_phase[0] || r->app_interp_phase[1] || r->app_interp_phase[2] ||
+     count>65536u || (count && !triangles)) return 0;
+  if(!count) return triangles==NULL;
+  GmlRenderDrawOp *operations=calloc(count,sizeof *operations);
+  if(!operations) return 0;
+  int result=0;
+  for(uint32_t i=0;i<count;i++){
+    GmlRenderDrawOp *op=&operations[i];
+    op->opcode=GML_RENDER_OP_COLOURED_PRIMITIVE;op->scene_family=GML_RENDER_SCENE_PRIMITIVE;
+    op->reconstruction_mode=GML_RENDER_DEVICE_CHECKPOINT;
+    op->target=(GmlRenderTargetRef){.image={.resource_class=GML_RENDER_RESOURCE_SCREEN},
+      .width=(uint32_t)r->fbw,.height=(uint32_t)r->fbh,.pixel_format=GML_RENDER_PIXEL_ARGB8888,
+      .region={0,0,(uint32_t)r->fbw,(uint32_t)r->fbh}};
+    GmlRenderPrimitiveRect *p=&op->payload.primitive;
+    p->region=op->target.region;p->kind=GML_RENDER_PRIMITIVE_NATIVE_TRIANGLE;
+    p->alpha=1.0;p->alpha_blend=1u;p->pixel_write_mask=15u;
+    memcpy(p->triangle,triangles[i].vertex,sizeof p->triangle);
+    if(!gml_render_native_triangle_valid(op)) goto native_done;
+  }
+  if(r->pending_underlay && !gml_render_compose_resident_underlay(r)) goto native_done;
+  gml_render_flush_pending_fill(r);
+  GmlRenderResource *target=gml_render_scene_target_resource_ensure(r);
+  if(r->pending_fill || !target) goto native_done;
+  GmlRenderImageRef next=gml_render_application_scene_next_image_ref(r,target);
+  if((next.resource_class!=GML_RENDER_RESOURCE_SCREEN &&
+      next.resource_class!=GML_RENDER_RESOURCE_APPLICATION) || next.content_version>UINT64_MAX-count)
+    goto native_done;
+  for(uint32_t i=0;i<count;i++){
+    operations[i].target.image=next;operations[i].target.image.content_version+=i+1u;
+    operations[i].target.storage_version=1u;
+  }
+  result=gml_render_application_scene_enqueue_primitives(r,operations,count);
+  if(result){r->fb_all_transparent=0;r->fb_opaque_known=r->fb_all_opaque=0;}
+native_done:
+  free(operations);return result;
+}
+
 int gml_render_cpu_backend_vertex_spans(GmlRender *r,
   const GmlRenderCpuBackendVertexSpan *spans,uint32_t count){
   if(!resident_primitive_state_eligible_rule(r,1) || r->classic_phase_scene_target ||

@@ -558,6 +558,7 @@ static int batch_valid(const GmlRenderResource *resource,const GmlRenderDrawBatc
       operation->payload.primitive.kind==GML_RENDER_PRIMITIVE_RECTANGLE &&
       (operation->payload.primitive.rectangle_flags&GML_RENDER_RECTANGLE_VERTEX_SPAN);
     if(batch->operation_count>8192u && !textured_vertex && !particle_disc &&
+       !gml_render_native_triangle_valid(operation) &&
        !(vertex_span && gml_render_rectangle_valid(operation))){
       if(operation->opcode!=GML_RENDER_OP_TEXTURED_QUAD && operation->opcode!=GML_RENDER_OP_CLEAR) return 0;
       extended_quads=1;

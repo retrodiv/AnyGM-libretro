@@ -566,6 +566,8 @@
   "    if(u_filter>=165) alpha=1.0;\n" \
   "    o_color=(u_filter==163 || u_filter==164)?vec4(0.0,0.0,0.0,1.0):vec4(floor(sampled.rgb*255.0+0.5)/255.0,alpha); return;\n" \
   "  }\n" \
+  "  // Native triangle alpha-zero edges own no covered write, including the stamp.\n" \
+  "  if((u_filter==32 || u_filter==33) && u_alpha_test==0 && v_colour.a<=0.0) discard;\n" \
   "  if(u_filter==31 || u_filter==32){ o_color=v_colour; return; }\n" \
   "  // R03_SHADER_STUDIO_ALPHA_RECT: a coverage-only pass stamps written alpha.\n" \
   "  if(u_filter==33){ o_color=vec4(0.0,0.0,0.0,1.0); return; }\n" \

@@ -569,7 +569,8 @@ static int enqueue_primitives(GmlRender *r,const GmlRenderDrawOp *operations,uin
     const GmlRenderDrawOp *op=&operations[i];
     if((source?!gml_render_textured_vertex_row_valid(op) ||
                 !same_scene_source(op->sources[0],source->image):
-               (!gml_render_rectangle_valid(op) && !gml_render_particle_disc_valid(op))) ||
+               (!gml_render_rectangle_valid(op) && !gml_render_particle_disc_valid(op) &&
+                !gml_render_native_triangle_valid(op))) ||
        op->target.image.resource_class!=next.resource_class ||
        op->target.image.identity!=next.identity || op->target.image.incarnation!=next.incarnation ||
        op->target.image.content_version!=next.content_version+i+1u) return 0;

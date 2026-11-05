@@ -1514,6 +1514,7 @@ static int scene_preflight(GmlGpuBackend *backend,const GmlRenderDrawBatch *batc
       op->payload.primitive.kind==GML_RENDER_PRIMITIVE_RECTANGLE &&
       (op->payload.primitive.rectangle_flags&GML_RENDER_RECTANGLE_VERTEX_SPAN);
     if(batch->operation_count>8192u && !vertex_span &&
+       !gml_render_native_triangle_valid(op) &&
        (op->opcode!=GML_RENDER_OP_COLOURED_PRIMITIVE ||
         op->payload.primitive.kind!=GML_RENDER_PRIMITIVE_TEXTURED_VERTEX_ROW)){
       if(op->opcode!=GML_RENDER_OP_TEXTURED_QUAD && op->opcode!=GML_RENDER_OP_CLEAR) return 0;
@@ -1586,13 +1587,15 @@ static int scene_preflight(GmlGpuBackend *backend,const GmlRenderDrawBatch *batc
          op->payload.primitive.kind==GML_RENDER_PRIMITIVE_PARTICLE_DISC ||
          op->payload.primitive.kind==GML_RENDER_PRIMITIVE_CLASSIC_ALPHA_RECT ||
          op->payload.primitive.kind==GML_RENDER_PRIMITIVE_STUDIO_ALPHA_RECT ||
+         op->payload.primitive.kind==GML_RENDER_PRIMITIVE_NATIVE_TRIANGLE ||
          op->payload.primitive.kind==GML_RENDER_PRIMITIVE_RECTANGLE ||
          op->payload.primitive.kind==GML_RENDER_PRIMITIVE_TEXTURED_VERTEX_ROW ||
          op->payload.primitive.kind==GML_RENDER_PRIMITIVE_CLASSIC_INVERSE_RECT){
         if((!gml_render_particle_line_valid(op) && !gml_render_particle_disc_valid(op) &&
             !gml_render_classic_alpha_rect_valid(op) &&
             !gml_render_studio_alpha_rect_valid(op) &&
-            !gml_render_rectangle_valid(op) && !gml_render_textured_vertex_row_valid(op) &&
+            !gml_render_rectangle_valid(op) && !gml_render_native_triangle_valid(op) &&
+            !gml_render_textured_vertex_row_valid(op) &&
             !gml_render_classic_inverse_rect_valid(op)) ||
            (op->payload.primitive.alpha_blend &&
             (!backend->gl.BlendFuncSeparate || !backend->gl.BlendEquationSeparate)) ||
@@ -3125,6 +3128,8 @@ GmlRenderExecutionResult gml_gpu_opengl_scene_submit(GmlGpuBackend *backend,
     }
     int disc=op->opcode==GML_RENDER_OP_COLOURED_PRIMITIVE &&
       op->payload.primitive.kind==GML_RENDER_PRIMITIVE_PARTICLE_DISC;
+    int native_triangle=op->opcode==GML_RENDER_OP_COLOURED_PRIMITIVE &&
+      op->payload.primitive.kind==GML_RENDER_PRIMITIVE_NATIVE_TRIANGLE;
     int particle=disc || (op->opcode==GML_RENDER_OP_COLOURED_PRIMITIVE &&
       op->payload.primitive.kind==GML_RENDER_PRIMITIVE_PARTICLE_LINE);
     int inverse_rect=op->opcode==GML_RENDER_OP_COLOURED_PRIMITIVE &&
@@ -3155,7 +3160,7 @@ GmlRenderExecutionResult gml_gpu_opengl_scene_submit(GmlGpuBackend *backend,
       (op->payload.primitive.alpha_blend && (op->payload.primitive.alpha<1.0 || vertex_span) &&
        (rectangle_blend==0u || rectangle_blend==1u || rectangle_blend==4u) &&
        !(op->payload.primitive.rectangle_flags&GML_RENDER_RECTANGLE_TARGET_ALPHA)?35u:34u):
-      disc?109u:particle?28u:studio_alpha_rect?32u:31u;
+      native_triangle?32u:disc?109u:particle?28u:studio_alpha_rect?32u:31u;
     if(textured_vertex) primitive_filter=(op->payload.primitive.interpolate?106u:103u)+
       (primitive_filter==35u?1u:0u);
     int primitive_blend=additive_bytes?
@@ -3166,12 +3171,12 @@ GmlRenderExecutionResult gml_gpu_opengl_scene_submit(GmlGpuBackend *backend,
          rectangle_blend?(int)(GL_SCENE_BLEND_RECTANGLE_BASE+2u*rectangle_blend+
            ((op->payload.primitive.rectangle_flags&GML_RENDER_RECTANGLE_TARGET_ALPHA)!=0u)):
          (op->payload.primitive.alpha<1.0 || vertex_span)?3:0):0):
-      inverse_rect?GL_SCENE_BLEND_INVERSE_RECT:
+      native_triangle?3:inverse_rect?GL_SCENE_BLEND_INVERSE_RECT:
       (particle || alpha_rect?(int)op->payload.primitive.alpha_blend:0);
-    if(pending_count && (particle || alpha_rect || rectangle
+    if(pending_count && (particle || alpha_rect || rectangle || native_triangle
        ? pending_palette.enabled || !active_target || !same_logical(active_target->ref,op->target.image) ||
          pending_count==GL_SCENE_MAX_QUADS || pending_filter!=primitive_filter ||
-         pending_blend!=primitive_blend || pending_alpha_test!=-1 ||
+         pending_blend!=primitive_blend || pending_alpha_test!=(native_triangle?0:-1) ||
          pending_write_mask!=primitive_write_mask ||
          (textured_vertex?(!pending_source || !same_version(pending_source->ref,op->sources[0])):
                           pending_source!=NULL)
@@ -3237,7 +3242,7 @@ GmlRenderExecutionResult gml_gpu_opengl_scene_submit(GmlGpuBackend *backend,
       continue;
     }
     if(op->opcode==GML_RENDER_OP_COLOURED_PRIMITIVE){
-      if(particle || alpha_rect || rectangle){
+      if(particle || alpha_rect || rectangle || native_triangle){
         const GmlRenderPrimitiveRect *p=&op->payload.primitive;
         uint32_t additive_rgb=0u;
         unsigned additive_alpha=0u;
@@ -3293,6 +3298,14 @@ GmlRenderExecutionResult gml_gpu_opengl_scene_submit(GmlGpuBackend *backend,
             v[14]=(float)co; v[15]=(float)si;
             v[16]=(float)p->scale_x; v[17]=(float)p->scale_y;
             v[21]=(float)p->interpolate; v[22]=(float)p->alpha_blend;
+            if(native_triangle){
+              /* One authored triangle occupies one stream slot. The second
+               * stream triangle is degenerate, not a CPU-shaped coverage piece. */
+              unsigned triangle_corner=vertex<3u?vertex:vertex==3u?0u:2u;
+              v[0]=(float)p->triangle[triangle_corner][0];
+              v[1]=(float)p->triangle[triangle_corner][1];
+              for(unsigned c=0;c<4u;c++) v[4u+c]=(float)p->triangle[triangle_corner][2u+c];
+            }
             if(rectangle){
               v[12]=(float)p->authored_region.x; v[13]=(float)p->authored_region.y;
               v[14]=(float)(p->authored_region.width-1u);
@@ -3324,8 +3337,8 @@ GmlRenderExecutionResult gml_gpu_opengl_scene_submit(GmlGpuBackend *backend,
           pending_source=primitive_source; pending_filter=primitive_filter; pending_blend=primitive_blend;
           pending_source_alpha_key=0u;
           memset(&pending_palette,0,sizeof pending_palette);
-          pending_alpha_test=-1;
-          if(alpha_rect || rectangle) pending_write_mask=primitive_write_mask;
+          pending_alpha_test=native_triangle?0:-1;
+          if(alpha_rect || rectangle || native_triangle) pending_write_mask=primitive_write_mask;
           pending_count++;
         }
         target->valid=1; target->rendered_origin=1;

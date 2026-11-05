@@ -14536,6 +14536,82 @@ static int resident_rounded_empty_axis_geometry(void){
   return 1;
 }
 
+static int resident_native_zero_alpha_triangles(void){
+  enum { W=32,H=24 };
+  for(unsigned owner=0;owner<2u;owner++)
+  for(int primitive=4;primitive<=6;primitive++) for(unsigned gui=0;gui<2u;gui++)
+  for(unsigned program=0;program<2u;program++){
+    GmlRender *r=calloc(1,sizeof *r);GmlWin content={.bytecode=17};
+    GmlSoftware3D *graphics=gml_software3d_create();
+    FakeDevice fake={.on_demand=1};GmlRenderDeviceServices device=service(&fake);
+    uint32_t screen[W*H],shadow[W*H];CHECK(r && graphics);
+    r->win=&content;r->color_write_mask=15u;
+    device.observe_on_demand=fake_observe_on_demand;
+    for(unsigned i=0;i<W*H;i++)screen[i]=0xA5123456u;
+    gml_software3d_reset(graphics);gml_render_bind_software3d(r,graphics);
+    gml_render_bind_device(r,&device);
+    CHECK(gml_render_begin_resident_base(r,screen,W,H,0,0));
+    if(owner){
+      CHECK(gml_render_application_surface_ensure_owned(r,W,H));
+      CHECK(gml_render_begin_resident_owned_application(r,0,0,0));
+    }
+    gml_render_set_pending_fill(r,0x40273859u);gml_render_flush_pending_fill(r);
+    CHECK(gml_render_scene_submit_pending(r));memcpy(shadow,r->fb,sizeof shadow);
+    r->shader_pal=calloc(1,sizeof *r->shader_pal);CHECK(r->shader_pal);r->n_shader_pal=1;
+    if(gui)gml_render_gui_begin(r,W,H);
+    r->alphablend=1;r->blendmode=0;r->active_shader=program?0:-1;r->alpha=1.0;
+    CHECK(gml_render_cpu_backend_native_triangles(r,NULL,0u));
+    const double xy[4][2]={{-2.25,3.5},{30.5,3.5},{30.5,26.75},{-2.25,26.75}};
+    const unsigned order[3][6]={{0,1,2,0,2,3},{0,1,3,2},{0,1,2,3}};
+    int vertices=primitive==4?6:4;
+    int flags_before[GML_SOFTWARE3D_STATE_FLAG_COUNT],flags_after[GML_SOFTWARE3D_STATE_FLAG_COUNT];
+    double values_before[GML_SOFTWARE3D_STATE_VALUE_COUNT],values_after[GML_SOFTWARE3D_STATE_VALUE_COUNT];
+    uint32_t colours_before[GML_SOFTWARE3D_STATE_COLOR_COUNT],colours_after[GML_SOFTWARE3D_STATE_COLOR_COUNT];
+    gml_software3d_state_get(graphics,flags_before,values_before,colours_before);
+    gml_software3d_primitive_2d_begin(graphics,primitive,-1);
+    for(int i=0;i<vertices;i++){
+      unsigned v=order[primitive-4][i];
+      CHECK(gml_software3d_primitive_2d_append(graphics,xy[v][0],xy[v][1],0,0,
+                                             0x375B91u,v<2u?1.0:0.0));
+    }
+    int before=fake.submits;
+    gml_software3d_primitive_2d_end(r);
+    CHECK(r->resident_application_pass && gml_render_scene_submit_pending(r));
+    CHECK(fake.submits==before+1 && fake.last_batch_operations==2u &&
+      gml_render_native_triangle_valid(&fake.last_primitive) &&
+      fake.last_target_image.resource_class==(owner?GML_RENDER_RESOURCE_APPLICATION:GML_RENDER_RESOURCE_SCREEN) &&
+      !fake.readbacks &&
+      !fake.rgb_queries && !memcmp(shadow,r->fb,sizeof shadow));
+    gml_software3d_state_get(graphics,flags_after,values_after,colours_after);
+    CHECK(!memcmp(flags_before,flags_after,sizeof flags_before) &&
+      !memcmp(values_before,values_after,sizeof values_before) &&
+      !memcmp(colours_before,colours_after,sizeof colours_before));
+    const GmlRenderPrimitiveRect *placed=&fake.last_primitive.payload.primitive;
+    CHECK(placed->triangle[2][5]==0.0 && placed->triangle[2][1]==26.75);
+    CHECK(!gml_render_cpu_replay_one(screen,W,H,&fake.last_primitive,NULL,NULL));
+    GmlRenderDrawOp invalid=fake.last_primitive;
+    invalid.payload.primitive.triangle[2][0]=NAN;CHECK(!gml_render_native_triangle_valid(&invalid));
+    invalid=fake.last_primitive;invalid.target.image.resource_class=GML_RENDER_RESOURCE_SURFACE;
+    CHECK(!gml_render_native_triangle_valid(&invalid));
+    invalid=fake.last_primitive;invalid.payload.primitive.triangle[1][2]=.5;
+    CHECK(!gml_render_native_triangle_valid(&invalid));
+    GmlRenderCpuBackendTriangle pair[2];
+    memcpy(pair[0].vertex,placed->triangle,sizeof pair[0].vertex);pair[1]=pair[0];
+    pair[1].vertex[2][5]=NAN;before=fake.submits;
+    CHECK(!gml_render_cpu_backend_native_triangles(r,pair,2u) && fake.submits==before &&
+          !fake.readbacks && !memcmp(shadow,r->fb,sizeof shadow));
+    r->color_write_mask=7u;CHECK(!gml_render_cpu_backend_native_triangles(r,NULL,0u));
+    r->color_write_mask=15u;r->blendmode=1;
+    CHECK(!gml_render_cpu_backend_native_triangles(r,NULL,0u));
+    r->blendmode=0;r->alpha_test_enable=1;
+    CHECK(!gml_render_cpu_backend_native_triangles(r,NULL,0u));r->alpha_test_enable=0;
+    r->active_shader=0;r->shader_pal[0].grayscale=1;
+    CHECK(!gml_render_cpu_backend_native_triangles(r,NULL,0u));
+    gml_render_free(r);free(r);gml_software3d_destroy(graphics);
+  }
+  return 1;
+}
+
 static int vertex_span_packet_boundaries(void){
   uint32_t pixels[64*48],before[64*48];
   for(unsigned i=0;i<64u*48u;i++) pixels[i]=0x83456789u;
@@ -19847,6 +19923,7 @@ int main(void){
     else if(!strcmp(selected,"coarse-veil-exact-recovery")) passed=resident_coarse_veil_exact_recovery();
     else if(!strcmp(selected,"filtered-text-reduction")) passed=resident_filtered_font_magnification(0,0,1);
     else if(!strcmp(selected,"filtered-font-passthrough")) passed=resident_filtered_font_passthrough();
+    else if(!strcmp(selected,"native-zero-alpha-triangles")) passed=resident_native_zero_alpha_triangles();
     else if(!strcmp(selected,"maximised-filtered-font")) passed=resident_maximised_filtered_real_font();
     else if(!strcmp(selected,"physical-filtered-sprite")) passed=resident_physical_filtered_sprite_function();
     else if(!strcmp(selected,"wide-nearest-rows")) passed=resident_large_screen_axis_row_metadata();
@@ -20127,6 +20204,7 @@ int main(void){
   passed+=resident_rounded_empty_axis_preserves_queued_prefix();
   passed+=resident_rounded_empty_axis_geometry();
   passed+=resident_empty_vertex_batches();
+  passed+=resident_native_zero_alpha_triangles();
   passed+=vertex_span_packet_boundaries();
   passed+=resident_studio_unit_background_noops();
   passed+=resident_classic_depth_free_sprites();
@@ -20185,6 +20263,6 @@ int main(void){
   passed+=skip_cpu_draw_policy_preserves_observers();
   passed+=resident_numbered_rotated_native_quad();
   passed+=resident_unit_texel_magnification();
-  printf("render resource cases: passed=%d failed=%d\n",passed,314-passed);
-  return passed==314?EXIT_SUCCESS:EXIT_FAILURE;
+  printf("render resource cases: passed=%d failed=%d\n",passed,315-passed);
+  return passed==315?EXIT_SUCCESS:EXIT_FAILURE;
 }

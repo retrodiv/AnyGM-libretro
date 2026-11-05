@@ -1533,6 +1533,29 @@ static int vertex_scene_flat_inverse_alpha(const GmlD3Vertex *vertex,int count,i
   return 1;
 }
 
+static int vertex_native_zero_alpha_triangles(GmlRender *R,const GmlD3Vertex *vertex,
+                                               int count,int primitive){
+  if(!gml_render_cpu_backend_native_triangles(R,NULL,0u) || !d3_depth_prepare(R)) return 0;
+  uint32_t triangles=(uint32_t)(primitive==4?count/3:count-2);
+  GmlRenderCpuBackendTriangle *placed=calloc(triangles,sizeof *placed);
+  if(!placed) return 0;
+  for(uint32_t i=0;i<triangles;i++){
+    int at[3];
+    if(primitive==4){at[0]=(int)i*3;at[1]=at[0]+1;at[2]=at[0]+2;}
+    else if(primitive==5){int last=(int)i+2;at[0]=last&1?last-1:last-2;
+      at[1]=last&1?last-2:last-1;at[2]=last;}
+    else {at[0]=0;at[1]=(int)i+1;at[2]=(int)i+2;}
+    for(unsigned v=0;v<3u;v++){
+      const GmlD3Vertex *source=&vertex[at[v]];double *target=placed[i].vertex[v];
+      target[0]=source->x;target[1]=source->y;
+      target[2]=source->r/255.0;target[3]=source->g/255.0;target[4]=source->b/255.0;
+      target[5]=source->alpha;
+    }
+  }
+  int result=gml_render_cpu_backend_native_triangles(R,placed,triangles);
+  free(placed);return result;
+}
+
 static int vertex_batch_scene(GmlRender *R,const GmlD3Vertex *vertex,int count,
                                int primitive,int texture,int immediate,int joined){
   GmlRenderCpuBackendDrawView draw;
@@ -1569,9 +1592,8 @@ static int vertex_batch_scene(GmlRender *R,const GmlD3Vertex *vertex,int count,
     .nearest=textured && !draw.interpolate,.texture_width=texture_width,.texture_height=texture_height,
     .classic_filter=textured && draw.interpolate && g_d3.classic,
     .capacity=textured?65536u:8192u};
-  coverage.span=malloc((size_t)coverage.capacity*sizeof *coverage.span);
   int result=0,opaque=1,rgb_gradient=0;double minimum_alpha=1.0,maximum_alpha=0.0;
-  if(!projected || !coverage.span) goto vertex_scene_done;
+  if(!projected) goto vertex_scene_done;
   for(int i=0;i<count;i++){
     const GmlD3Vertex *v=&vertex[i];
     if(!isfinite(v->x) || !isfinite(v->y) || !isfinite(v->z) ||
@@ -1596,6 +1618,16 @@ static int vertex_batch_scene(GmlRender *R,const GmlD3Vertex *vertex,int count,
     if(v->alpha>maximum_alpha) maximum_alpha=v->alpha;
     if(v->r!=vertex[0].r || v->g!=vertex[0].g || v->b!=vertex[0].b) rgb_gradient=1;
   }
+  /* A formerly unsupported zero-alpha transition keeps its authored triangles.
+   * The device interpolates and fills these placed vertices; do not manufacture
+   * CPU coverage rows for the newly admitted variant. Other qualified rows keep
+   * their existing admission and fallback rules. */
+  if(!textured && primitive>=4 && !rgb_gradient && minimum_alpha==0.0 && maximum_alpha>0.0 &&
+     vertex_native_zero_alpha_triangles(R,projected,count,primitive)){
+    result=1;goto vertex_scene_done;
+  }
+  coverage.span=malloc((size_t)coverage.capacity*sizeof *coverage.span);
+  if(!coverage.span) goto vertex_scene_done;
   /* Opaque varying RGB stays EXACT debt, not a new tolerant classification.
    * Bound low-alpha repeated fragments before making any GPU queue visible. */
   if(primitive!=1 && opaque && rgb_gradient && (!textured || !draw.interpolate))

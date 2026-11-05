@@ -350,6 +350,30 @@ int gml_render_textured_vertex_row_valid(const GmlRenderDrawOp *operation){
   return 1;
 }
 
+int gml_render_native_triangle_valid(const GmlRenderDrawOp *operation){
+  if(!operation || operation->opcode!=GML_RENDER_OP_COLOURED_PRIMITIVE ||
+     operation->reconstruction_mode!=GML_RENDER_DEVICE_CHECKPOINT ||
+     operation->scene_family!=GML_RENDER_SCENE_PRIMITIVE ||
+     operation->source_count || operation->sources) return 0;
+  const GmlRenderPrimitiveRect *p=&operation->payload.primitive;
+  const GmlRenderTargetRef *t=&operation->target;
+  if(p->kind!=GML_RENDER_PRIMITIVE_NATIVE_TRIANGLE ||
+     (t->image.resource_class!=GML_RENDER_RESOURCE_SCREEN &&
+      t->image.resource_class!=GML_RENDER_RESOURCE_APPLICATION) ||
+     t->pixel_format!=GML_RENDER_PIXEL_ARGB8888 || !t->width || !t->height ||
+     t->width>16384u || t->height>16384u || t->region.x || t->region.y ||
+     t->region.width!=t->width || t->region.height!=t->height ||
+     p->region.x || p->region.y || p->region.width!=t->width || p->region.height!=t->height ||
+     p->alpha!=1.0 || p->alpha_blend!=1u || p->interpolate || p->rectangle_flags ||
+     p->pixel_write_mask!=15u) return 0;
+  for(unsigned v=0;v<3u;v++) for(unsigned c=0;c<6u;c++){
+    double value=p->triangle[v][c];
+    if(!isfinite(value) || (c<2u?fabs(value)>32766.0:value<0.0 || value>1.0) ||
+       (c>=2u && c<5u && value!=p->triangle[0][c])) return 0;
+  }
+  return 1;
+}
+
 int gml_render_rectangle_valid(const GmlRenderDrawOp *operation){
   if(!operation || operation->opcode!=GML_RENDER_OP_COLOURED_PRIMITIVE ||
      operation->reconstruction_mode!=GML_RENDER_DEVICE_CHECKPOINT ||

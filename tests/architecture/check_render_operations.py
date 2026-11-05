@@ -29,6 +29,7 @@ REQUIRED_RULES = {
     "R03-TEXT-CLAMPED-WINDOW",
     "R03-ATLAS-CLAMPED-WINDOW",
     "R03-VERTEX-SPANS",
+    "R03-VERTEX-NATIVE-ZERO-ALPHA",
     "R03-VERTEX-TEXTURED",
     "R03-VERTEX-EMPTY",
     "R03-MULTIVIEW-COMPOSITION",
@@ -220,6 +221,7 @@ EXECUTOR_ROW = re.compile(
 # Stop traversal here: following resource replay would make CPU kernels appear
 # GPU-capable merely because the resource owner also implements device submission.
 DISPATCH_PORTS = {
+    "gml_render_cpu_backend_native_triangles",
     "gml_render_cpu_backend_vertex_spans",
     "gml_render_cpu_backend_textured_vertex_spans",
     "gml_render_application_surface_owned_stage_base",
@@ -246,6 +248,7 @@ DISPATCH_CPU_BOUNDARIES = {
     "surface_pixels", "surface_pixels_observe", "surface_pixels_access",
 }
 DISPATCH_ADDITIONAL = {
+    "gml_render_cpu_backend_native_triangles",
     "gml_render_cpu_backend_vertex_spans",
     "gml_render_cpu_backend_textured_vertex_spans",
     "gml_render_multiview_prepare", "gml_render_multiview_clear", "gml_render_multiview_copy",

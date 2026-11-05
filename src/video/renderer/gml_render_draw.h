@@ -377,8 +377,9 @@ typedef struct GmlRenderCopyRegion {
   uint32_t source_pitch,destination_pitch;
 } GmlRenderCopyRegion;
 
-/* Fully resolved flat-colour coverage. The rectangle is a half-open pixel region in target
- * coordinates; it does not borrow a texture or mutable draw state after submission. */
+/* Resolved source-free primitives. Rectangle regions are half-open target pixels;
+ * native triangle vertices retain placement and let the device fill their interior.
+ * Neither borrows a texture or mutable draw state after submission. */
 typedef struct GmlRenderPrimitiveRect {
   GmlRenderRect region;
   uint32_t colour;
@@ -394,6 +395,9 @@ typedef struct GmlRenderPrimitiveRect {
   /* A clipped vertex row carries continuous attributes at its first pixel
    * centre and their x slope, not CPU-coloured pixels or destination data. */
   double vertex_first[4],vertex_step[4];
+  /* Placed native triangle vertices: x,y and continuous straight RGBA.
+   * Device rasterization owns their fill; these are never CPU coverage rows. */
+  double triangle[3][6];
 } GmlRenderPrimitiveRect;
 
 enum { GML_RENDER_PRIMITIVE_FLAT=0, GML_RENDER_PRIMITIVE_PARTICLE_LINE=1,
@@ -403,7 +407,8 @@ enum { GML_RENDER_PRIMITIVE_FLAT=0, GML_RENDER_PRIMITIVE_PARTICLE_LINE=1,
        GML_RENDER_PRIMITIVE_RECTANGLE=5,
        /* Vertex row: centre_x/y are first-centre UVs; scale_x/y their x slopes. */
        GML_RENDER_PRIMITIVE_TEXTURED_VERTEX_ROW=6,
-       GML_RENDER_PRIMITIVE_PARTICLE_DISC=7 };
+       GML_RENDER_PRIMITIVE_PARTICLE_DISC=7,
+       GML_RENDER_PRIMITIVE_NATIVE_TRIANGLE=8 };
 
 enum { GML_RENDER_RECTANGLE_OUTLINE=1u, GML_RENDER_RECTANGLE_CLASSIC=2u,
        GML_RENDER_RECTANGLE_TARGET_ALPHA=4u, GML_RENDER_RECTANGLE_GRADIENT=8u,
@@ -477,6 +482,7 @@ int gml_render_classic_alpha_rect_valid(const GmlRenderDrawOp *operation);
 int gml_render_studio_alpha_rect_valid(const GmlRenderDrawOp *operation);
 int gml_render_classic_inverse_rect_valid(const GmlRenderDrawOp *operation);
 int gml_render_rectangle_valid(const GmlRenderDrawOp *operation);
+int gml_render_native_triangle_valid(const GmlRenderDrawOp *operation);
 int gml_render_textured_vertex_row_valid(const GmlRenderDrawOp *operation);
 
 /* Snapshots and per-operation source arrays are immutable for this submission. The caller owns
