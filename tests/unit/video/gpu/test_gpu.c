@@ -4322,6 +4322,7 @@ static int scene_integer_function_sprite_case(void){
 static int scene_opaque_native_alpha_case(void){
   const uint32_t pixels[4]={0x80112233u,0x00445566u,0xFF778899u,0x4099AA11u};
   for(unsigned nearest=0;nearest<2u;nearest++)
+  for(unsigned tinted=0;tinted<(nearest?2u:1u);tinted++)
   for(unsigned api=0;api<2u;api++)for(unsigned variant=0;variant<7u;variant++)
   for(unsigned failure=0;failure<(nearest && variant==1u?3u:1u);failure++){
     GmlGpuContext context=fake_context(api?GML_GPU_API_OPENGLES3:GML_GPU_API_OPENGL_CORE);
@@ -4384,7 +4385,8 @@ static int scene_opaque_native_alpha_case(void){
     q->x[1]=q->x[2]=q->y[2]=q->y[3]=2.0;
     q->u[1]=q->u[2]=q->v[2]=q->v[3]=1.0;
     q->inverse_x[0]=q->inverse_y[1]=1.0;q->filtered_draw_alpha=.5;
-    for(unsigned c=0;c<4u;c++)q->corner_colour[c]=nearest?0xFFFFFFFFu:0x803470D0u;
+    for(unsigned c=0;c<4u;c++)q->corner_colour[c]=nearest?
+      (tinted?0xFF3470D0u:0xFFFFFFFFu):0x803470D0u;
     if(nearest)q->filtered_draw_alpha=1.0;
     state.write_mask=15u;state.colour=0xFFFFFFFFu;state.alpha=255u;
     state.coverage_policy=GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA;
@@ -4409,6 +4411,8 @@ static int scene_opaque_native_alpha_case(void){
         REQUIRE(submitted.status==GML_RENDER_EXEC_RECOVERABLE_ERROR &&
           submitted.uncertain_target_count==1u && drawn==(failure==2u?1:0),
           "required point-program compilation failures retain target uncertainty");
+        GmlGpuCounters work={0};gml_gpu_counters(gpu,&work);
+        REQUIRE(!work.scene_white_tint_quads,"failed point sampling never counts successful white-tint work");
         break;
       }
       if(submitted.status!=GML_RENDER_EXEC_ACCEPTED || drawn!=(int)expected)
@@ -4417,6 +4421,9 @@ static int scene_opaque_native_alpha_case(void){
       REQUIRE(submitted.status==GML_RENDER_EXEC_ACCEPTED && drawn==(int)expected &&
         !anygm_test_graphics_read_pixels(),
         "only a completely opaque destination skips native alpha work across submissions");
+      GmlGpuCounters work={0};gml_gpu_counters(gpu,&work);
+      REQUIRE(work.scene_white_tint_quads==(nearest && !tinted?repeat+1u:0u),
+        "successful white point sampling contributes only its admitted quads");
       if(nearest){
         const char *fragment=anygm_test_graphics_shader_source(1);
         REQUIRE(fragment && strstr(fragment,expected==1u?
@@ -4424,6 +4431,8 @@ static int scene_opaque_native_alpha_case(void){
           "point RGB and required alpha passes compile only their existing sampler branch");
         REQUIRE(strstr(fragment,"#define GML_SCENE_PLAIN_NATIVE 1"),
           "unmapped point surfaces compile without absent source effects");
+        if(expected==1u) REQUIRE(!!strstr(fragment,"#define GML_SCENE_WHITE_TINT 1")==!tinted,
+          "white point tints omit only identity RGB byte arithmetic");
         if(repeat) REQUIRE(anygm_test_graphics_compile_calls()==compiled,
           "point programs are cached within their owning context");
         compiled=anygm_test_graphics_compile_calls();

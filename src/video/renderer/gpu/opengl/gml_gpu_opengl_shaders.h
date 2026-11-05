@@ -851,11 +851,13 @@
   "    float alpha=sampled.a*v_colour.a;\n" \
   "    if(u_alpha_test>=0 && sampled.a*255.0<=float(u_alpha_test)) discard;\n" \
   "    if(alpha<=0.0) discard;\n" \
+  "#ifndef GML_SCENE_WHITE_TINT\n" \
   "    if(u_filter==25){\n" \
   "      uvec3 rgb=uvec3(sampled.rgb*255.0+0.5);\n" \
   "      uvec3 tint=uvec3(v_colour.rgb*255.0+0.5);\n" \
   "      sampled.rgb=vec3((rgb*tint)/255u)/255.0;\n" \
   "    }\n" \
+  "#endif\n" \
   "    o_color=(u_filter==22 || u_filter==26)?vec4(0.0,0.0,0.0,1.0):\n" \
   "      vec4(u_filter==25?sampled.rgb:sampled.rgb*v_colour.rgb,alpha); return;\n" \
   "  }\n" \

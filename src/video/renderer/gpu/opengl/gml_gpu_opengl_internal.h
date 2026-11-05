@@ -155,7 +155,7 @@ typedef struct GlScene {
   GLint checkpoint_u_image,checkpoint_u_previous,checkpoint_u_alpha;
   uint32_t checkpoint_mask_width,checkpoint_mask_height;
   int checkpoint_program_failed;
-  GlSceneProgram main_program,filtered_program,compact_programs[25];
+  GlSceneProgram main_program,filtered_program,compact_programs[26];
   GLuint vertex_buffer,vertex_array,instance_buffer,instance_array;
   GLuint upload_buffer;
   size_t instance_bytes_used;
@@ -184,8 +184,10 @@ typedef struct GlScene {
   int available;
 } GlScene;
 
+enum { GL_SCENE_NATIVE_PLAIN=1,GL_SCENE_NATIVE_WHITE_TINT=2 };
+
 struct GmlGpuBackend {
-  uint64_t target_attachments,target_reuses,white_unit_clears;
+  uint64_t target_attachments,target_reuses,white_unit_clears,white_tint_quads;
   GmlGlApi gl;
   int loaded;
   GmlGpuApi api;
@@ -239,7 +241,7 @@ void gml_gpu_opengl_record_error(char *error,size_t capacity,const char *format,
 void gml_gpu_opengl_set_rect(GmlGpuBackend *backend,const GmlPlanRect *rect,
                               uint32_t target_height);
 int gml_gpu_opengl_build_program(GmlGpuBackend *backend,char *error,size_t error_capacity);
-GlSceneProgram *gml_gpu_opengl_scene_draw_program(GmlGpuBackend *backend,uint32_t filter,int plain_native,
+GlSceneProgram *gml_gpu_opengl_scene_draw_program(GmlGpuBackend *backend,uint32_t filter,int native_flags,
   char *error,size_t error_capacity);
 int gml_gpu_opengl_scene_program(GmlGpuBackend *backend,char *error,size_t error_capacity);
 int gml_gpu_opengl_prepare_automatic_draw(GmlGpuBackend *backend,GLuint source_texture,

@@ -92,6 +92,11 @@ filtered glyphs. Their RGB and
 required alpha programs keep the existing formulas and placed quad; mapped
 sources and logical margins retain their separate program owners.
 
+Unmapped native point-surface draws with white RGB at every vertex also omit
+identity byte-tint arithmetic. Their sampled RGBA8 value, raw draw alpha,
+cutout, blending and placed quad are unchanged; nonwhite tints keep the existing
+integer tint body and required alpha passes retain their original program.
+
 A uniform, full-alpha, clamped one-texel quad covering its whole target may
 reuse the existing device clear writer when its uploaded texel is opaque white.
 The logical quad, placement and clipped extent remain unchanged. A bounded

@@ -2507,7 +2507,17 @@ static int flush_quads(GmlGpuBackend *backend,GlSceneImage *target,GlSceneImage 
     int cleared=clear_white_unit_quad(backend,target,source,scene->vertices);
     if(cleared) return cleared>0;
   }
-  program=gml_gpu_opengl_scene_draw_program(backend,filter,plain_native,NULL,0);
+  int native_flags=plain_native?GL_SCENE_NATIVE_PLAIN:0;
+  if(plain_native && filter==25u){
+    native_flags|=GL_SCENE_NATIVE_WHITE_TINT;
+    for(size_t vertex=0;vertex<(size_t)count*6u;vertex++){
+      const float *colour=scene->vertices+vertex*GL_SCENE_VERTEX_FLOATS+4u;
+      if(colour[0]!=1.0f || colour[1]!=1.0f || colour[2]!=1.0f){
+        native_flags&=~GL_SCENE_NATIVE_WHITE_TINT;break;
+      }
+    }
+  }
+  program=gml_gpu_opengl_scene_draw_program(backend,filter,native_flags,NULL,0);
   if(!program) return 0;
   backend->gl.BindFramebuffer(GL_FRAMEBUFFER,target->framebuffer);
   backend->gl.Viewport(0,0,(GLsizei)target->width,(GLsizei)target->height);
@@ -2679,8 +2689,9 @@ restore_stream_state:
   /* Constant RGB programs cannot change selector for the separate alpha stamp.
    * Submit that existing kernel through the same stream with complete state. */
   if(!skip_alpha && (filter==66u || filter==21u || filter==25u || filter==32u || filter==80u) && (write_mask&8u))
-    return flush_quads(backend,target,source,filter==21u?22u:filter==25u?26u:filter==32u?33u:filter==80u?82u:72u,0,count,8u,alpha_test,
-                       source_alpha_key,palette);
+    if(!flush_quads(backend,target,source,filter==21u?22u:filter==25u?26u:filter==32u?33u:filter==80u?82u:72u,0,count,8u,alpha_test,
+                    source_alpha_key,palette)) return 0;
+  if(native_flags&GL_SCENE_NATIVE_WHITE_TINT) backend->white_tint_quads+=count;
   return 1;
 }
 
