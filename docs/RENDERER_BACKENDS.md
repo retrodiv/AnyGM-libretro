@@ -86,6 +86,11 @@ existing rounded-tint filtered sampler. Untextured triangle programs require
 no image uniform; required alpha work still uses its own unchanged kernel.
 Native source-over triangles also omit that alpha-only pass on an already
 certified opaque destination, where writing covered alpha one is redundant.
+Complete stretched cells and point-sampled surface copies with no source key,
+palette or logical margin reuse the same plain-source specialization as native
+filtered glyphs. Their RGB and
+required alpha programs keep the existing formulas and placed quad; mapped
+sources and logical margins retain their separate program owners.
 
 The CPU/OpenGL image comparisons in this repository are diagnostic. Routine
 checks skip them; `make check GPU_PIXEL_PARITY=1` runs them and direct

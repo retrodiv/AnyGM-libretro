@@ -841,7 +841,11 @@
   "    vec2 extent=vec2(textureSize(u_image,0));\n" \
   "    vec2 uv=clamp(v_texcoord,(v_clamp.xy+vec2(0.5))/extent,\n" \
   "                            (v_clamp.zw+vec2(0.5))/extent);\n" \
+  "#ifdef GML_SCENE_PLAIN_NATIVE\n" \
+  "    int margin=0;\n" \
+  "#else\n" \
   "    int margin=int(floor(v_margin+0.5));\n" \
+  "#endif\n" \
   "    vec4 sampled=margin!=0?hardware_background_sample(v_texcoord,\n" \
   "      ivec2(v_clamp.xy),ivec2(v_clamp.zw),margin):source_texture(uv);\n" \
   "    float alpha=sampled.a*v_colour.a;\n" \

@@ -1809,28 +1809,37 @@ static int scene_hardware_filtered_batch_case(unsigned kind){
 }
 
 static int scene_hot_constant_programs_case(void){
-  const unsigned filters[]={32u,33u,153u};
-  for(unsigned api=0;api<2u;api++)for(unsigned selected=0;selected<3u;selected++)
+  const unsigned filters[]={32u,33u,153u,21u,22u,25u,26u};
+  for(unsigned api=0;api<2u;api++)for(unsigned selected=0;selected<7u;selected++)
   for(unsigned failure=0;failure<2u;failure++){
     GmlGpuContext context=fake_context(api?GML_GPU_API_OPENGL_CORE:GML_GPU_API_OPENGLES3);
     anygm_test_graphics_reset();GmlGpu *gpu=gml_gpu_create();
     REQUIRE(gpu && gml_gpu_context_reset(gpu,&context),"hot program context created");
     char prefix[64],error[192];
+    int plain=selected>=3u;
     snprintf(prefix,sizeof prefix,"#define GML_SCENE_CONSTANT_FILTER %u\n",filters[selected]);
     if(failure){
       anygm_test_graphics_fail_compile_containing(prefix);
-      REQUIRE(!gml_gpu_opengl_scene_draw_program(gpu->backend,filters[selected],0,error,sizeof error),
+      REQUIRE(!gml_gpu_opengl_scene_draw_program(gpu->backend,filters[selected],plain,error,sizeof error),
         "a required constant-program compile failure is reported");
       anygm_test_graphics_fail_compile_containing(NULL);
     }
     for(unsigned epoch=0;epoch<2u;epoch++){
-      GlSceneProgram *program=gml_gpu_opengl_scene_draw_program(gpu->backend,filters[selected],0,error,sizeof error);
+      GlSceneProgram *program=gml_gpu_opengl_scene_draw_program(gpu->backend,filters[selected],plain,error,sizeof error);
       const char *fragment=anygm_test_graphics_shader_source(1);
       REQUIRE(program && fragment && strstr(fragment,prefix),
         "hot native and filtered samplers compile their existing constant branch");
+      if(plain) REQUIRE(strstr(fragment,"#define GML_SCENE_PLAIN_NATIVE 1"),
+        "complete unmapped cells compile without absent source effects");
       unsigned compiled=anygm_test_graphics_compile_calls();
-      REQUIRE(gml_gpu_opengl_scene_draw_program(gpu->backend,filters[selected],0,error,sizeof error)==program &&
+      REQUIRE(gml_gpu_opengl_scene_draw_program(gpu->backend,filters[selected],plain,error,sizeof error)==program &&
         anygm_test_graphics_compile_calls()==compiled,"later draws reuse the context-owned program");
+      if(plain){
+        GlSceneProgram *mapped=gml_gpu_opengl_scene_draw_program(gpu->backend,filters[selected],0,error,sizeof error);
+        fragment=anygm_test_graphics_shader_source(1);
+        REQUIRE(mapped && mapped!=program && fragment && !strstr(fragment,"#define GML_SCENE_PLAIN_NATIVE 1"),
+          "source-effect cells keep their separate program owner");
+      }
       if(!epoch){
         anygm_test_graphics_forbid_calls();gml_gpu_context_lost(gpu);
         REQUIRE(!anygm_test_graphics_calls_after_forget(),"loss forgets hot programs without driver calls");
@@ -4413,6 +4422,8 @@ static int scene_opaque_native_alpha_case(void){
         REQUIRE(fragment && strstr(fragment,expected==1u?
           "#define GML_SCENE_CONSTANT_FILTER 25":"#define GML_SCENE_CONSTANT_FILTER 26"),
           "point RGB and required alpha passes compile only their existing sampler branch");
+        REQUIRE(strstr(fragment,"#define GML_SCENE_PLAIN_NATIVE 1"),
+          "unmapped point surfaces compile without absent source effects");
         if(repeat) REQUIRE(anygm_test_graphics_compile_calls()==compiled,
           "point programs are cached within their owning context");
         compiled=anygm_test_graphics_compile_calls();
@@ -4427,6 +4438,7 @@ static int scene_opaque_native_alpha_case(void){
 static int scene_native_stretched_cell_case(void){
   const uint32_t pixels[12]={0xFF112233u,0x80445566u,0x00778899u};
   for(unsigned api=0;api<2u;api++)for(unsigned trim=0;trim<2u;trim++)
+  for(unsigned margin=0;margin<2u;margin++)
   for(unsigned failed=0;failed<(trim?1u:2u);failed++){
     GmlGpuContext context=fake_context(api?GML_GPU_API_OPENGLES3:GML_GPU_API_OPENGL_CORE);
     GmlRenderDeviceServices device={0};GmlRenderDrawOp ops[2]={{0}};
@@ -4449,7 +4461,7 @@ static int scene_native_stretched_cell_case(void){
     ops[1].reconstruction_mode=GML_RENDER_DEVICE_CHECKPOINT;
     GmlRenderQuad *q=&ops[1].payload.quad;q->shape=GML_RENDER_QUAD_AXIS_ALIGNED;
     q->sampling=(GmlRenderSamplingPolicy){GML_RENDER_FILTER_HARDWARE_BILINEAR,
-      GML_RENDER_EDGE_TRANSPARENT,{0,0,4u,3u},GML_RENDER_QUANTISE_FIXED_STRETCHED,0u};
+      GML_RENDER_EDGE_TRANSPARENT,{0,0,4u,3u},GML_RENDER_QUANTISE_FIXED_STRETCHED,margin};
     q->x[0]=q->x[3]=-2;q->x[1]=q->x[2]=6;
     q->y[0]=q->y[1]=-1;q->y[2]=q->y[3]=5;
     q->u[1]=q->u[2]=q->v[2]=q->v[3]=1;
@@ -4468,6 +4480,12 @@ static int scene_native_stretched_cell_case(void){
     state.sampler_count=1u;state.samplers[0]=q->sampling;
     GmlRenderDrawBatch batch={ops,2u,&state,1u};
     GmlRenderExecutionResult result=device.submit(device.context,&batch);
+    if(margin){
+      REQUIRE(result.status==GML_RENDER_EXEC_UNSUPPORTED && !result.accepted_prefix &&
+        !anygm_test_graphics_clear_calls() && !anygm_test_graphics_scene_draw_calls(),
+        "fixed-stretch packets with explicit logical margins retain prewrite refusal");
+      gml_gpu_destroy(gpu,1);continue;
+    }
     if(failed){
       REQUIRE(result.status==GML_RENDER_EXEC_RECOVERABLE_ERROR &&
         result.uncertain_target_count==1u && anygm_test_graphics_scene_draw_calls()==1,
@@ -4479,6 +4497,9 @@ static int scene_native_stretched_cell_case(void){
       !anygm_test_graphics_read_pixels(),"stretched cell and alpha stamp remain resident");
     REQUIRE(anygm_test_graphics_scene_sampler()==(trim?78:22),
       "complete cells use native sampling; logical transparent margins retain their owner");
+    const char *fragment=anygm_test_graphics_shader_source(1);
+    REQUIRE(fragment && (!!strstr(fragment,"#define GML_SCENE_PLAIN_NATIVE 1")==(!trim && !margin)),
+      "only complete margin-free stretched cells use the plain native program");
     float position[3];
     REQUIRE(anygm_test_graphics_quad_position(0,position) && position[0]==-2 && position[1]==-1,
       "native fill preserves the clipped draw's placed vertices");

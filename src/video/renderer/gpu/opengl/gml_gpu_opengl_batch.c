@@ -2461,12 +2461,17 @@ static int flush_quads(GmlGpuBackend *backend,GlSceneImage *target,GlSceneImage 
   int opaque=target->valid && target->alpha_opaque;
   if(!count) return 1;
   if(count>GL_SCENE_MAX_QUADS) return 0;
-  int plain_native=(filter==79u || filter==80u || filter==82u ||
+  int plain_native=(filter==21u || filter==22u || filter==25u || filter==26u ||
+                    filter==79u || filter==80u || filter==82u ||
                     filter==GL_SCENE_NATIVE_POINT_FILTER) &&
     !source_alpha_key && (!palette || !palette->enabled);
   if(plain_native) for(uint32_t quad=0;quad<count;quad++){
     const float *vertex=scene->vertices+(size_t)quad*6u*GL_SCENE_VERTEX_FLOATS;
-    if(vertex[18]!=0.0f){plain_native=0;break;}
+    /* Native clamped samplers may carry the transparent-edge marker alone.
+     * Their background sampler uses only the four logical-margin bits. */
+    int plain_clamped=(filter==21u || filter==22u || filter==25u || filter==26u) &&
+      vertex[18]==16.0f;
+    if(vertex[18]!=0.0f && !plain_clamped){plain_native=0;break;}
   }
   program=gml_gpu_opengl_scene_draw_program(backend,filter,plain_native,NULL,0);
   if(!program) return 0;
