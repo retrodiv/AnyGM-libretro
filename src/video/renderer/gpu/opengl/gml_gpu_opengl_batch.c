@@ -2517,6 +2517,17 @@ static int flush_quads(GmlGpuBackend *backend,GlSceneImage *target,GlSceneImage 
       }
     }
   }
+  /* Source-over RGB with zero source alpha leaves every destination byte intact.
+   * Keep positive alpha cutoffs and the separately selected alpha stamp unchanged. */
+  if((native_flags&GL_SCENE_NATIVE_WHITE_TINT) && blend==1 && alpha_test<=0){
+    native_flags|=GL_SCENE_NATIVE_ZERO_ALPHA_BLEND;
+    for(size_t vertex=0;vertex<(size_t)count*6u;vertex++){
+      float alpha=scene->vertices[vertex*GL_SCENE_VERTEX_FLOATS+7u];
+      if(!(alpha>=0.0f && alpha<=1.0f)){
+        native_flags&=~GL_SCENE_NATIVE_ZERO_ALPHA_BLEND;break;
+      }
+    }
+  }
   program=gml_gpu_opengl_scene_draw_program(backend,filter,native_flags,NULL,0);
   if(!program) return 0;
   backend->gl.BindFramebuffer(GL_FRAMEBUFFER,target->framebuffer);
@@ -2692,6 +2703,7 @@ restore_stream_state:
     if(!flush_quads(backend,target,source,filter==21u?22u:filter==25u?26u:filter==32u?33u:filter==80u?82u:72u,0,count,8u,alpha_test,
                     source_alpha_key,palette)) return 0;
   if(native_flags&GL_SCENE_NATIVE_WHITE_TINT) backend->white_tint_quads+=count;
+  if(native_flags&GL_SCENE_NATIVE_ZERO_ALPHA_BLEND) backend->zero_alpha_blend_quads+=count;
   return 1;
 }
 

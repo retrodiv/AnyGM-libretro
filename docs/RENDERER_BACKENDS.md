@@ -3038,3 +3038,14 @@ mutable font pages and detached views always reduce afresh, and an allocation fa
 cached as a colour. No raster arithmetic, placement, shader, blend or serialized state bytes
 change. `immutable_coarse_texel_cache` checks exact cold/warm channels and invalidation alongside
 the existing public coarse-veil controls.
+
+R03-SURFACE-ZERO-ALPHA-BLEND specializes the existing plain white-tint point
+surface RGB kernel under source-alpha/one-minus-source-alpha blending and a
+nonpositive alpha cutoff. Finite vertex alpha in [0,1] leaves zero-alpha
+fragments to the existing blend identity instead of discard. Positive cutoff,
+other blends, source effects, ordinary tints and the separate opaque-alpha
+stamp retain their prior bodies. Geometry, texture sampling and CPU algorithms
+are unchanged; successful work has its own diagnostic counter.
+`scene_opaque_native_alpha` retains opacity, cache and failure controls and
+checks the ordinary packet's existing positive-cutoff prewrite refusal.
+This neutral optimization alone establishes no original-runner fidelity or speed.

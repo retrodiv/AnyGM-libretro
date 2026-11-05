@@ -849,8 +849,10 @@
   "    vec4 sampled=margin!=0?hardware_background_sample(v_texcoord,\n" \
   "      ivec2(v_clamp.xy),ivec2(v_clamp.zw),margin):source_texture(uv);\n" \
   "    float alpha=sampled.a*v_colour.a;\n" \
+  "#ifndef GML_SCENE_ZERO_ALPHA_BLEND\n" \
   "    if(u_alpha_test>=0 && sampled.a*255.0<=float(u_alpha_test)) discard;\n" \
   "    if(alpha<=0.0) discard;\n" \
+  "#endif\n" \
   "#ifndef GML_SCENE_WHITE_TINT\n" \
   "    if(u_filter==25){\n" \
   "      uvec3 rgb=uvec3(sampled.rgb*255.0+0.5);\n" \

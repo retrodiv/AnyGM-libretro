@@ -224,4 +224,5 @@ void gml_gpu_opengl_scene_work_counters(const GmlGpuBackend *backend,GmlGpuCount
   counters->scene_target_reuses=backend?backend->target_reuses:0;
   counters->scene_white_unit_clears=backend?backend->white_unit_clears:0;
   counters->scene_white_tint_quads=backend?backend->white_tint_quads:0;
+  counters->scene_zero_alpha_blend_quads=backend?backend->zero_alpha_blend_quads:0;
 }

@@ -4323,6 +4323,7 @@ static int scene_opaque_native_alpha_case(void){
   const uint32_t pixels[4]={0x80112233u,0x00445566u,0xFF778899u,0x4099AA11u};
   for(unsigned nearest=0;nearest<2u;nearest++)
   for(unsigned tinted=0;tinted<(nearest?2u:1u);tinted++)
+  for(unsigned cutoff=0;cutoff<(nearest?2u:1u);cutoff++)
   for(unsigned api=0;api<2u;api++)for(unsigned variant=0;variant<7u;variant++)
   for(unsigned failure=0;failure<(nearest && variant==1u?3u:1u);failure++){
     GmlGpuContext context=fake_context(api?GML_GPU_API_OPENGLES3:GML_GPU_API_OPENGL_CORE);
@@ -4396,6 +4397,7 @@ static int scene_opaque_native_alpha_case(void){
     state.alpha_destination_factor=GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA;
     state.rgb_equation=state.alpha_equation=GML_RENDER_BLEND_ADD;
     state.sampler_count=1u;state.samplers[0]=q->sampling;
+    state.alpha_test_enabled=cutoff;state.alpha_test_reference=cutoff?127u:0u;
     unsigned expected=variant==0u || variant==5u?1u:2u;
     if(variant==0u)
       anygm_test_graphics_fail_compile_containing(nearest?
@@ -4407,23 +4409,35 @@ static int scene_opaque_native_alpha_case(void){
       int before=anygm_test_graphics_scene_draw_calls();
       GmlRenderExecutionResult submitted=device.submit(device.context,&batch);
       int drawn=anygm_test_graphics_scene_draw_calls()-before;
+      if(cutoff){
+        GmlGpuCounters work={0};gml_gpu_counters(gpu,&work);
+        REQUIRE(submitted.status==GML_RENDER_EXEC_UNSUPPORTED && !submitted.accepted_prefix &&
+          !drawn && !work.scene_white_tint_quads && !work.scene_zero_alpha_blend_quads,
+          "positive cutoff retains this ordinary surface packet's prewrite refusal");
+        break;
+      }
       if(failure){
         REQUIRE(submitted.status==GML_RENDER_EXEC_RECOVERABLE_ERROR &&
           submitted.uncertain_target_count==1u && drawn==(failure==2u?1:0),
           "required point-program compilation failures retain target uncertainty");
         GmlGpuCounters work={0};gml_gpu_counters(gpu,&work);
-        REQUIRE(!work.scene_white_tint_quads,"failed point sampling never counts successful white-tint work");
+        REQUIRE(!work.scene_white_tint_quads && !work.scene_zero_alpha_blend_quads,
+          "failed point sampling never counts successful specialized work");
         break;
       }
       if(submitted.status!=GML_RENDER_EXEC_ACCEPTED || drawn!=(int)expected)
-        fprintf(stderr,"opaque alpha: point=%u api=%u variant=%u repeat=%u status=%u draws=%d expected=%u\n",
-          nearest,api,variant,repeat,(unsigned)submitted.status,drawn,expected);
+        fprintf(stderr,"opaque alpha: point=%u api=%u variant=%u cutoff=%u tinted=%u repeat=%u "
+          "status=%u draws=%d expected=%u error=%s\n",
+          nearest,api,variant,cutoff,tinted,repeat,(unsigned)submitted.status,drawn,expected,
+          gml_gpu_last_error(gpu)?gml_gpu_last_error(gpu):"none");
       REQUIRE(submitted.status==GML_RENDER_EXEC_ACCEPTED && drawn==(int)expected &&
         !anygm_test_graphics_read_pixels(),
         "only a completely opaque destination skips native alpha work across submissions");
       GmlGpuCounters work={0};gml_gpu_counters(gpu,&work);
       REQUIRE(work.scene_white_tint_quads==(nearest && !tinted?repeat+1u:0u),
         "successful white point sampling contributes only its admitted quads");
+      REQUIRE(work.scene_zero_alpha_blend_quads==(nearest && !tinted && !cutoff?repeat+1u:0u),
+        "only successful white point RGB with nonpositive cutoff counts blend-identity work");
       if(nearest){
         const char *fragment=anygm_test_graphics_shader_source(1);
         REQUIRE(fragment && strstr(fragment,expected==1u?
@@ -4433,6 +4447,9 @@ static int scene_opaque_native_alpha_case(void){
           "unmapped point surfaces compile without absent source effects");
         if(expected==1u) REQUIRE(!!strstr(fragment,"#define GML_SCENE_WHITE_TINT 1")==!tinted,
           "white point tints omit only identity RGB byte arithmetic");
+        REQUIRE(!!strstr(fragment,"#define GML_SCENE_ZERO_ALPHA_BLEND 1")==
+          (expected==1u && !tinted && !cutoff),
+          "only white source-over RGB with nonpositive cutoff leaves zero alpha to blending");
         if(repeat) REQUIRE(anygm_test_graphics_compile_calls()==compiled,
           "point programs are cached within their owning context");
         compiled=anygm_test_graphics_compile_calls();
