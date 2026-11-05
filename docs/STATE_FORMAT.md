@@ -20,9 +20,19 @@ failed partial reads leave the canonical image unpublished and invalid as a
 current resource. See R03-P9-INCREMENTAL-CHECKPOINT in
 [the renderer map](RENDERER_BACKENDS.md) for owners and controls.
 
-The current AnyGM save-state schema is `37`. It is the format transported by
+The current AnyGM save-state schema is `38`. It is the format transported by
 libretro frontends for manual save states, automatic state slots, and rewind
 snapshots. Those features remain supported.
+
+Schema `38` introduces VM schema `20`. Every live structure record starts with a
+one-byte layout tag. Tag zero uses the established full instance record. Tag one
+stores the lifecycle flags and variable map, with the handle reconstructed from
+the separately recorded slot and generation. It applies only when all omitted
+instance fields have their exact zero bits, the object sentinel is negative one,
+and the handle agrees with its allocator slot. Nonzero instance fields and signed
+zero coordinates retain the full record. Ordinary instances, array identities,
+free-list ordering and collection timing retain their existing rules. Older root
+and VM schemas reject transactionally; no legacy reader is provided.
 
 Schema `37` adds two little-endian doubles after the root audio accumulator:
 presentation phase in `[0,1)`, then presentation Hz (zero for an unused clock,
@@ -426,7 +436,7 @@ same form without an intervening mutation produces identical bytes.
 ## VM payload ownership
 
 `src/core/engine_state.c` owns the root framing and section transaction.
-Within the VM section, `src/runtime/vm/gml_vm_state.c` alone owns schema `19`,
+Within the VM section, `src/runtime/vm/gml_vm_state.c` alone owns schema `20`,
 field order, value-graph encoding, sizing, and restore scratch.
 
 Builtin resources have a separate storage and lifetime owner, not a separate

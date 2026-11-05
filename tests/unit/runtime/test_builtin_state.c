@@ -227,7 +227,109 @@ done:
   return ok;
 }
 
+static int dense_struct_heap_roundtrip(void){
+  enum { count=8192, capacity=1024*1024 };
+  const char *stage="populate";
+  GmlWin win={0};
+  GmlVM source={0},restored={0};
+  unsigned char *before=NULL,*after=NULL;
+  int ok=!gml_vm_init(&source,&win,NULL) && !gml_vm_init(&restored,&win,NULL);
+  GmlVal heap=gml_arr_new(count,vreal(0));
+  gml_arr_mark_escaped(heap);
+  *gml_varmap_put(&source.globals,"retained_heap")=heap;
+  GmlVal shared=gml_arr_new(2,vreal(7));
+  for(int i=0;i<count && ok;i++){
+    GmlInstance *node=gml_struct_new(&source);
+    if(!node){ ok=0; break; }
+    *gml_varmap_put(&node->vars,"value")=vreal(i);
+    gml_arr_set(heap,i,vreal(node->id));
+    if(i<2) ok=gml_inst_var_set_val(&source,vreal(node->id),"shared",shared);
+    if(i==2){
+      node->x=-0.0;
+      node->alarm[3]=17;
+      node->path_speed=1.25;
+      node->path_relative=1;
+      node->timeline_position=2.5;
+    }
+  }
+  /* Collection must keep the rooted graph and retain deterministic free-slot order. */
+  for(int i=0;i<3 && ok;i++) ok=gml_struct_new(&source)!=NULL;
+  size_t measured=ok?gml_vm_state_size(&source):0,written=0,used=0,repeated=0;
+  if(!measured || measured>capacity){
+    fprintf(stderr,"dictionary heap exceeds its fixed state slot: %zu > %d\n",
+            measured,capacity);
+    ok=0;
+  }
+  if(ok){
+    stage="save/load/canonical bytes";
+    before=malloc(capacity); after=malloc(capacity);
+    ok=before && after &&
+      gml_vm_state_save(&source,before,capacity,&written) && written==measured &&
+      gml_vm_state_load(&restored,before,written,&used) && used==written &&
+      gml_vm_state_save(&restored,after,capacity,&repeated) &&
+      repeated==written && !memcmp(before,after,written);
+    if(!ok && repeated==written && repeated){
+      size_t first=0;
+      while(first<written && before[first]==after[first]) first++;
+      if(first<written)
+        fprintf(stderr,"dictionary heap canonical difference at %zu: %u/%u\n",
+                first,(unsigned)before[first],(unsigned)after[first]);
+    }
+  }
+  GmlVal *restored_heap=ok?gml_varmap_get(&restored.globals,"retained_heap"):NULL;
+  if(ok) stage="restored root";
+  if(ok) ok=restored_heap && restored_heap->t==V_ARR &&
+    gml_val_array_length(*restored_heap)==count;
+  GmlArr *restored_shared=NULL;
+  if(ok) stage="restored values, aliases and fields";
+  for(int i=0;i<count && ok;i++){
+    GmlVal id=gml_arr_get(*restored_heap,i);
+    GmlInstance *node=gml_struct_find(&restored,(unsigned)id.d);
+    GmlVal *value=node?gml_varmap_get(&node->vars,"value"):NULL;
+    ok=value && value->t==V_REAL && value->d==i;
+    if(i<2 && ok){
+      GmlVal *alias=gml_varmap_get(&node->vars,"shared");
+      ok=alias && alias->t==V_ARR && alias->arr && alias->arr!=shared.arr;
+      if(i==0 && ok) restored_shared=alias->arr;
+      else if(ok) ok=alias->arr==restored_shared;
+    }
+    if(i==2 && ok){
+      double negative_zero=-0.0;
+      ok=!memcmp(&node->x,&negative_zero,sizeof negative_zero) &&
+        node->alarm[3]==17 && node->path_speed==1.25 &&
+        node->path_relative==1 && node->timeline_position==2.5;
+    }
+  }
+  if(ok){
+    stage="old schema rejection";
+    unsigned char schema[4];
+    memcpy(schema,before+4,sizeof schema);
+    uint32_t current=(uint32_t)schema[0]|((uint32_t)schema[1]<<8)|
+                     ((uint32_t)schema[2]<<16)|((uint32_t)schema[3]<<24);
+    uint32_t older=current-1;
+    for(unsigned i=0;i<4;i++) before[4+i]=(unsigned char)(older>>(8*i));
+    size_t rejected=0;
+    void *root=restored_heap->arr;
+    int refused=!gml_vm_state_load(&restored,before,written,&rejected);
+    GmlVal *retained=gml_varmap_get(&restored.globals,"retained_heap");
+    ok=refused && retained && retained->arr==root;
+    memcpy(before+4,schema,sizeof schema);
+  }
+  if(ok){
+    stage="allocator order";
+    GmlInstance *a=gml_struct_new(&source),*b=gml_struct_new(&restored);
+    ok=a && b && a->id==b->id;
+  }
+  if(!ok) fprintf(stderr,"dense dictionary heap failed at %s: measured=%zu written=%zu "
+                 "used=%zu repeated=%zu\n",stage,measured,written,used,repeated);
+  else printf("dense dictionary heap: %zu bytes in a %d-byte fixed slot\n",written,capacity);
+  free(before); free(after);
+  gml_vm_free(&source); gml_vm_free(&restored);
+  return ok;
+}
+
 int main(void){
+  if(!dense_struct_heap_roundtrip()) return 1;
   if(!many_grids_roundtrip()) return 1;
   GmlWin win={0};
   GmlVM vm={0};

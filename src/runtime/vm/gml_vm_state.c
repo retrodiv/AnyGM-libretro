@@ -18,7 +18,7 @@
 #include <limits.h>
 
 /* ---------------- save-state runtime serialization ---------------- */
-enum { GML_VM_STATE_SCHEMA=19 };
+enum { GML_VM_STATE_SCHEMA=20 };
 enum { STATE_MAX_TILEMAPS=512, STATE_TILEMAP_RECORD_BYTES=56 };
 #define GML_VM_STATE_MAGIC UINT32_C(0x534D5641)
 /* IDs are assigned in canonical traversal order, never from addresses. Zero is the null array;
@@ -546,10 +546,11 @@ static int state_var_slot_compare(const void *left,const void *right){
 }
 
 static void sw_varmap(StateW *s, GmlVarMap *m){
-  int dbg=anygm_host_development_setting(s->vm?s->vm->host:NULL,"GML_DBG_STATEVAR")!=NULL;
+  int dbg=0;
   if(s->vm){
     if(s->vm->diagnostics.state_variable_debug<0)
-      s->vm->diagnostics.state_variable_debug=dbg;
+      s->vm->diagnostics.state_variable_debug=
+        anygm_host_development_setting(s->vm->host,"GML_DBG_STATEVAR")!=NULL;
     dbg=s->vm->diagnostics.state_variable_debug;
   }
   uint32_t n=0;
@@ -619,9 +620,17 @@ static int state_instance_timeline_present(GmlInstance *in){
   return in->timeline_index!=-1 || in->timeline_position!=0 || in->timeline_speed!=1 ||
          in->timeline_running!=0 || in->timeline_loop!=0;
 }
+static uint8_t state_instance_flags(const GmlInstance *in){
+  return (in->active?1:0)|(in->marked?2:0)|(in->deactivated?4:0)|
+         (in->room_dormant?8:0)|(in->room_was_deactivated?16:0)|(in->room_placed?32:0);
+}
+static void state_instance_apply_flags(GmlInstance *in,uint8_t fl){
+  in->active=fl&1; in->marked=(fl>>1)&1; in->deactivated=(fl>>2)&1;
+  in->room_dormant=(fl>>3)&1; in->room_was_deactivated=(fl>>4)&1;
+  in->room_placed=(fl>>5)&1;
+}
 static void sw_instance(StateW *s, GmlInstance *in){
-  uint8_t fl=(in->active?1:0)|(in->marked?2:0)|(in->deactivated?4:0)|
-             (in->room_dormant?8:0)|(in->room_was_deactivated?16:0)|(in->room_placed?32:0);
+  uint8_t fl=state_instance_flags(in);
   sw_raw(s,&fl,1);
   sw_u32(s,in->id); sw_i32(s,in->obj); sw_i32(s,in->room_owner);
   sw_i64(s,(int64_t)in->creation_seq);
@@ -654,6 +663,33 @@ static void sw_instance(StateW *s, GmlInstance *in){
   }
   sw_i32(s,in->draw_layer_order);
   sw_varmap(s,&in->vars);
+}
+/* Dictionary structures normally retain the zeroed instance-only fields from allocation.
+ * Check exact bits, including signed zero, before choosing the short record. Nonzero fields
+ * continue through the established instance codec. Padding and transient caches are excluded. */
+_Static_assert(offsetof(GmlInstance,path_relative)-offsetof(GmlInstance,x)==49*sizeof(double),
+               "contiguous instance coordinate, motion, alarm and path doubles");
+_Static_assert(offsetof(GmlInstance,timeline_loop)+sizeof(double)-
+               offsetof(GmlInstance,timeline_index)==5*sizeof(double),
+               "contiguous instance timeline doubles");
+static int state_struct_zero_fields(const GmlInstance *in){
+  static const unsigned char zero[49*sizeof(double)]={0};
+  return in->obj==-1 && !in->room_owner && !in->creation_seq &&
+         !in->path_relative && !in->draw_layer_order &&
+         !memcmp(&in->x,zero,sizeof zero) &&
+         !memcmp(&in->timeline_index,zero,5*sizeof(double));
+}
+static uint32_t state_struct_id(GmlVM *vm,int slot){
+  unsigned generation=vm->struct_gen?(vm->struct_gen[slot]&0x7Fu):0u;
+  return GML_STRUCT_ID_BASE+(generation<<GML_STRUCT_SLOT_BITS)+(unsigned)slot;
+}
+static void sw_struct(StateW *s,GmlInstance *in,uint32_t id){
+  int compact=in->id==id && state_struct_zero_fields(in);
+  sw_u8(s,compact?1:0);
+  if(compact){
+    sw_u8(s,state_instance_flags(in));
+    sw_varmap(s,&in->vars);
+  }else sw_instance(s,in);
 }
 static void vm_state_profile_globals(GmlVM *vm){
   if(!anygm_host_development_setting(vm->host,"GML_VM_STATE_PROFILE") || !vm) return;
@@ -705,7 +741,7 @@ static void vm_state_profile_globals(GmlVM *vm){
   for(int i=0;i<vm->n_structs;i++) if(vm->structs[i]){
     struct_live++;
     StateW ts={0}; ts.ok=1; ts.vm=vm; ts.compact_strings=1; ts.array_meta=1;
-    sw_instance(&ts,vm->structs[i]);
+    sw_struct(&ts,vm->structs[i],state_struct_id(vm,i));
     free(ts.arrays);
     struct_total += ts.pos;
     const char *name="?";
@@ -732,9 +768,7 @@ static void vm_state_profile_globals(GmlVM *vm){
 }
 static void sr_instance(GmlVM *vm, StateR *s, GmlInstance *in){
   uint8_t fl=0; sr_raw(s,&fl,1);
-  in->active=fl&1; in->marked=(fl>>1)&1; in->deactivated=(fl>>2)&1;
-  in->room_dormant=(fl>>3)&1; in->room_was_deactivated=(fl>>4)&1;
-  in->room_placed=(fl>>5)&1;
+  state_instance_apply_flags(in,fl);
   in->id=sr_u32(s); in->obj=sr_i32(s);
   in->room_owner=sr_i32(s);
   in->creation_seq=(uint64_t)sr_i64(s);
@@ -769,6 +803,18 @@ static void sr_instance(GmlVM *vm, StateR *s, GmlInstance *in){
   }
   in->draw_layer_order=sr_i32(s);
   in->draw_layer_element_order=-1; /* rebuilt from the current ROOM layer records after load */
+  sr_varmap(vm,s,&in->vars);
+}
+static void sr_struct(GmlVM *vm,StateR *s,GmlInstance *in){
+  uint8_t kind=sr_u8(s);
+  if(!s->ok) return;
+  if(!kind){ sr_instance(vm,s,in); return; }
+  if(kind!=1){ s->ok=0; return; }
+  uint8_t flags=sr_u8(s);
+  if(flags&~63u){ s->ok=0; return; }
+  /* The caller allocated this record with calloc and restores its slot-derived identity. */
+  state_instance_apply_flags(in,flags);
+  in->draw_layer_element_order=-1;
   sr_varmap(vm,s,&in->vars);
 }
 
@@ -1258,7 +1304,7 @@ static void sw_vm(StateW *s, GmlVM *vm){
   for(int i=0;i<vm->n_structs;i++){
     sw_i32(s,vm->struct_gen ? (int)(vm->struct_gen[i]&0x7F) : 0);
     sw_i32(s,vm->structs[i]!=NULL);
-    if(vm->structs[i]) sw_instance(s,vm->structs[i]);
+    if(vm->structs[i]) sw_struct(s,vm->structs[i],state_struct_id(vm,i));
   }
   /* The allocator pops reclaimed slots newest-first, so free-list order determines the
    * slot and handle produced by later allocations. Preserve that exact order in state. */
@@ -1471,7 +1517,7 @@ int gml_vm_state_load(GmlVM *vm, const void *data, size_t len, size_t *used){
       if(live){
         GmlInstance *st=calloc(1,sizeof(GmlInstance));
         if(!st){ s.ok=0; break; }
-        sr_instance(vm,&s,st);
+        sr_struct(vm,&s,st);
         st->id = GML_STRUCT_ID_BASE + ((unsigned)gen << GML_STRUCT_SLOT_BITS) + (unsigned)i;
         st->obj = -1; st->active = 1;
         vm->structs[i]=st;
