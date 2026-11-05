@@ -812,11 +812,12 @@ GmlVal var_store_clone(GmlVal v){
   }
   if(v.t==V_ARR){ gml_arr_mark_escaped(v); return v; }
   if(v.t==V_UNDEF) return vundef();
+  if(v.t==V_OBJECT) return v;
   return vreal(v.t==V_REAL?v.d:0.0);
 }
 static GmlVarMap *struct_public_map(GmlVM *vm, GmlVal ref, GmlInstance **owner){
   if(owner) *owner=NULL;
-  if(!vm || ref.t!=V_REAL) return NULL;
+  if(!vm || !gml_val_is_number_or_object(ref)) return NULL;
   if((int)ref.d==IT_GLOBAL) return &vm->globals;
   if(!GML_IS_STRUCT_ID(ref.d)) return NULL;
   GmlInstance *st=gml_struct_find(vm,(unsigned)ref.d);
@@ -848,7 +849,7 @@ static GmlVal struct_public_names(GmlVarMap *map){
   return names;
 }
 static int gml_value_is_method(GmlVM *vm, GmlVal value){
-  if(!vm || value.t!=V_REAL || !GML_IS_STRUCT_ID(value.d)) return 0;
+  if(!vm || !gml_val_is_number_or_object(value) || !GML_IS_STRUCT_ID(value.d)) return 0;
   GmlInstance *st=gml_struct_find(vm,(unsigned)value.d);
   if(!st) return 0;
   GmlVal *fn=gml_varmap_get(&st->vars,"__fn");
@@ -942,9 +943,9 @@ static GmlVal variable_clone_struct(VariableCloneContext *context, GmlInstance *
    * External receivers remain bound to their original instance, matching variable_clone. */
   GmlVal *source_self=gml_varmap_get(&source->vars,"__self");
   GmlVal *clone_self=gml_varmap_get(&clone->vars,"__self");
-  if(source_self && clone_self && source_self->t==V_REAL && GML_IS_STRUCT_ID(source_self->d)){
+  if(source_self && clone_self && gml_val_is_number_or_object(*source_self) && GML_IS_STRUCT_ID(source_self->d)){
     unsigned rebound=variable_clone_struct_lookup(context,(unsigned)source_self->d);
-    if(rebound) *clone_self=vreal((double)rebound);
+    if(rebound) clone_self->d=rebound;
   }
   clone->method_bound=0;
   return vreal((double)clone->id);
@@ -956,10 +957,15 @@ static GmlVal variable_clone_value(VariableCloneContext *context, GmlVal value, 
     return copy?vstr_owned(copy):vstr("");
   }
   if(value.t==V_ARR) return variable_clone_array(context,(GmlArr*)value.arr,depth);
-  if(value.t==V_REAL && GML_IS_STRUCT_ID(value.d)){
+  if(gml_val_is_number_or_object(value) && GML_IS_STRUCT_ID(value.d)){
     GmlInstance *source=gml_struct_find(context->vm,(unsigned)value.d);
-    if(source) return variable_clone_struct(context,source,depth);
+    if(source){
+      GmlVal copy=variable_clone_struct(context,source,depth);
+      if(value.t==V_OBJECT) copy.t=V_OBJECT;
+      return copy;
+    }
   }
+  if(value.t==V_OBJECT) return value;
   return value.t==V_UNDEF?vundef():vreal(value.d);
 }
 
@@ -986,22 +992,21 @@ GmlVal gml_builtin_try_values_variables(GmlVM *vm, const char *nm, GmlVal *a, in
   if(!strcmp(nm,"is_nan")) return vreal(n>0 && a[0].t==V_REAL && isnan(a[0].d));
   if(!strcmp(nm,"is_infinity")) return vreal(n>0 && a[0].t==V_REAL && isinf(a[0].d));
   /* typeof() exposes the language-visible value category, not the C storage used by this VM.
-   * Structs and bound methods deliberately share V_REAL with ordinary numbers because their
-   * public handles must survive bytecode arithmetic/copies; recover their logical type from the
-   * reserved struct-id range.  A raw compiler function value remains "number", matching the
+   * Numeric handles and boxed object values resolve through the same reserved struct-id range.
+   * A raw compiler function value remains "number", matching the
    * documented script-index behaviour, while method(scope, function) is a method. */
   if(!strcmp(nm,"typeof")){
     if(n<1 || a[0].t==V_UNDEF) return vstr("undefined");
     if(a[0].t==V_STR) return vstr("string");
     if(a[0].t==V_ARR) return vstr("array");
-    if(a[0].t==V_REAL && GML_IS_STRUCT_ID(a[0].d)){
+    if(gml_val_is_number_or_object(a[0]) && GML_IS_STRUCT_ID(a[0].d)){
       GmlInstance *st=gml_struct_find(vm,(unsigned)a[0].d);
       if(st){
         if(gml_value_is_method(vm,a[0])) return vstr("method");
         return vstr("struct");
       }
     }
-    if(a[0].t==V_REAL && a[0].d>=100000.0){
+    if(gml_val_is_number_or_object(a[0]) && a[0].d>=100000.0){
       unsigned id=(unsigned)a[0].d;
       for(int i=0;i<vm->inst_count;i++)
         if(vm->inst[i].active && !vm->inst[i].marked && vm->inst[i].id==id)
@@ -1010,13 +1015,13 @@ GmlVal gml_builtin_try_values_variables(GmlVM *vm, const char *nm, GmlVal *a, in
     return vstr(a[0].t==V_REAL?"number":"unknown");
   }
   if(!strcmp(nm,"is_struct")){
-    return vreal(n>0 && a[0].t==V_REAL && GML_IS_STRUCT_ID(a[0].d) &&
+    return vreal(n>0 && gml_val_is_number_or_object(a[0]) && GML_IS_STRUCT_ID(a[0].d) &&
                  gml_struct_find(vm,(unsigned)a[0].d)!=NULL);
   }
   if(!strcmp(nm,"is_method")) return vreal(n>0 && gml_value_is_method(vm,a[0]));
   if(!strcmp(nm,"method_get_index")||!strcmp(nm,"method_get_self")){
     int want_index = nm[11]=='i';
-    if(n>0 && a[0].t==V_REAL && GML_IS_STRUCT_ID(a[0].d)){
+    if(n>0 && gml_val_is_number_or_object(a[0]) && GML_IS_STRUCT_ID(a[0].d)){
       GmlInstance *st=gml_struct_find(vm,(unsigned)a[0].d);
       if(st){
         GmlVal *p=gml_varmap_get(&st->vars,want_index?"__fn":"__self");
@@ -1156,7 +1161,7 @@ GmlVal gml_builtin_try_values_variables(GmlVM *vm, const char *nm, GmlVal *a, in
     return vreal(varmap_delete_key(map,key));
   }
   if(!strcmp(nm,"struct_get_from_hash")){
-    GmlInstance *st=(n>0 && a[0].t==V_REAL && GML_IS_STRUCT_ID(a[0].d))?gml_struct_find(vm,(unsigned)a[0].d):NULL;
+    GmlInstance *st=(n>0 && gml_val_is_number_or_object(a[0]) && GML_IS_STRUCT_ID(a[0].d))?gml_struct_find(vm,(unsigned)a[0].d):NULL;
     if(!st || st->vars.cap<=0) return vundef();
     double hv=N(a,n,1);
     uint32_t want = hv < 0 ? (uint32_t)(int32_t)hv : (uint32_t)hv;
@@ -1177,8 +1182,8 @@ GmlVal gml_builtin_try_values_language(GmlVM *vm, const char *nm, GmlVal *a, int
    * already the concrete receiver reference; replacing it with a generic zero disconnects the
    * following method lookup from the live instance. */
   if(!strcmp(nm,"@@GetInstance@@")) return n>0?a[0]:vreal(0);
-  if(!strcmp(nm,"@@This@@"))   return vreal(vm->cur_self ? (double)vm->cur_self->id : -1);
-  if(!strcmp(nm,"@@Other@@"))  return vreal(vm->cur_other? (double)vm->cur_other->id : -2);
+  if(!strcmp(nm,"@@This@@"))   return vm->cur_self?vobject(vm->cur_self->id):vreal(-1);
+  if(!strcmp(nm,"@@Other@@"))  return vm->cur_other?vobject(vm->cur_other->id):vreal(-2);
   if(!strcmp(nm,"@@Global@@")) return vreal(-5);      /* global scope sentinel */
   if(!strcmp(nm,"@@NullObject@@")) return vreal(-4);  /* noone */
   if(!strcmp(nm,"@@NewGMLArray@@")){ GmlArr *A=calloc(1,sizeof(*A)); if(!A) return vreal(0);
@@ -1255,7 +1260,7 @@ GmlVal gml_builtin_try_values_language(GmlVM *vm, const char *nm, GmlVal *a, int
   /* `instanceof` exposes direct constructor identity. Inheritance-aware queries require a
    * distinct runtime contract. */
   if(!strcmp(nm,"instanceof")){
-    GmlInstance *st=(n>0 && a[0].t==V_REAL && GML_IS_STRUCT_ID(a[0].d))?gml_struct_find(vm,(unsigned)a[0].d):NULL;
+    GmlInstance *st=(n>0 && gml_val_is_number_or_object(a[0]) && GML_IS_STRUCT_ID(a[0].d))?gml_struct_find(vm,(unsigned)a[0].d):NULL;
     GmlVal *pc=st?gml_varmap_get(&st->vars,"__ctor"):NULL;
     int have=(pc && pc->t==V_REAL);
     if(n<2){

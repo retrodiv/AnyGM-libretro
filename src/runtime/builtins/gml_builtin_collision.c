@@ -831,7 +831,7 @@ static int collision_target_value_matches(GmlVM *vm, GmlInstance *instance,
       if(collision_target_value_matches(vm,instance,array->data[i],depth+1)) return 1;
     return 0;
   }
-  if(target.t!=V_REAL) return 0;
+  if(!gml_val_is_number_or_object(target)) return 0;
   return target_matches_instance(vm,vm->cur_self,instance,(int)target.d);
 }
 static GmlInstance *collision_shape_value_linear(GmlVM *vm, int kind, double *p,
@@ -847,7 +847,7 @@ static GmlInstance *collision_shape_value_linear(GmlVM *vm, int kind, double *p,
 }
 static GmlInstance *collision_shape_value(GmlVM *vm, int kind, double *p,
                                           GmlVal target, int precise, int notme){
-  if(target.t==V_REAL) return collision_shape(vm,kind,p,(int)target.d,precise,notme);
+  if(gml_val_is_number_or_object(target)) return collision_shape(vm,kind,p,(int)target.d,precise,notme);
   if(target.t!=V_ARR || !target.arr) return NULL;
   GmlInstance *skip=notme?vm->cur_self:NULL;
   double sl,st,sr,sb; shape_bounds(kind,p,&sl,&st,&sr,&sb);

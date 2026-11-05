@@ -31,14 +31,14 @@ enum {
 };
 
 /* ---------------- helpers ---------------- */
-static double asnum(GmlVal v){ return v.t==V_REAL? v.d : (v.s? atof(v.s):0); }
-static int    astrue(GmlVal v){ return v.t==V_REAL? (v.d>=0.5) : (v.s&&v.s[0]); } /* GM: real>=0.5 true */
+static double asnum(GmlVal v){ return gml_val_is_number_or_object(v)? v.d : (v.s? atof(v.s):0); }
+static int    astrue(GmlVal v){ return gml_val_is_number_or_object(v)? (v.d>=0.5) : (v.s&&v.s[0]); } /* GM: real>=0.5 true */
 double gml_vm_value_as_number(GmlVal value){ return asnum(value); }
 int gml_vm_value_is_true(GmlVal value){ return astrue(value); }
 static const char *asstr_cmp(GmlVal v, char *buf, size_t n){
   if(v.t==V_STR) return v.s?v.s:"";
   if(v.t==V_UNDEF) return "";
-  snprintf(buf,n,"%g",v.t==V_REAL?v.d:0.0);
+  snprintf(buf,n,"%g",gml_val_is_number_or_object(v)?v.d:0.0);
   return buf;
 }
 /* The cmp opcode and conditional actions use one comparison of values: undefined equality, string lexical ordering and policy-aware real comparison remain consistent between both call sites. */
@@ -1437,11 +1437,11 @@ static void gc_scan_arr(GmlVM *vm, GmlArr *A, GmlInstance ***wl, int *wn, int *w
   if(!A || A->gc_epoch==vm->gc_epoch || depth>GML_GC_MAX_ARRAY_DEPTH) return;
   A->gc_epoch=vm->gc_epoch;
   for(int i=0;i<A->len;i++){ GmlVal v=A->data[i];
-    if(v.t==V_REAL && GML_IS_STRUCT_ID(v.d)) gc_mark_struct(vm,(unsigned)v.d,wl,wn,wcap);
+    if(gml_val_is_number_or_object(v) && GML_IS_STRUCT_ID(v.d)) gc_mark_struct(vm,(unsigned)v.d,wl,wn,wcap);
     else if(v.t==V_ARR && v.arr) gc_scan_arr(vm,(GmlArr*)v.arr,wl,wn,wcap,depth+1); }
 }
 static void gc_scan_val(GmlVM *vm, GmlVal v, GmlInstance ***wl, int *wn, int *wcap){
-  if(v.t==V_REAL && GML_IS_STRUCT_ID(v.d)) gc_mark_struct(vm,(unsigned)v.d,wl,wn,wcap);
+  if(gml_val_is_number_or_object(v) && GML_IS_STRUCT_ID(v.d)) gc_mark_struct(vm,(unsigned)v.d,wl,wn,wcap);
   else if(v.t==V_ARR && v.arr) gc_scan_arr(vm,(GmlArr*)v.arr,wl,wn,wcap,0);
 }
 typedef struct {
@@ -1567,10 +1567,10 @@ int gml_inst_var_set_val(GmlVM *vm, GmlVal ref, const char *name, GmlVal v){
  * Returns 0 for absent variables (GM default). */
 double gml_inst_var_get(GmlVM *vm, GmlInstance *in, const char *nm){
   if(!in) return 0;
-  if(inst_is_struct_ref(in)){ GmlVal *p=gml_varmap_get(&in->vars,nm); return p?(p->t==V_REAL?p->d:0):0; }
-  GmlVal o; if(inst_builtin_get(vm,in,nm,&o)) return o.t==V_REAL?o.d:0;
-  if(inst_sprite_metric_get(vm,in,nm,&o)) return o.t==V_REAL?o.d:0;
-  GmlVal *p=gml_varmap_get(&in->vars,nm); return p?(p->t==V_REAL?p->d:0):0;
+  if(inst_is_struct_ref(in)){ GmlVal *p=gml_varmap_get(&in->vars,nm); return p?(gml_val_is_number_or_object(*p)?p->d:0):0; }
+  GmlVal o; if(inst_builtin_get(vm,in,nm,&o)) return gml_val_is_number_or_object(o)?o.d:0;
+  if(inst_sprite_metric_get(vm,in,nm,&o)) return gml_val_is_number_or_object(o)?o.d:0;
+  GmlVal *p=gml_varmap_get(&in->vars,nm); return p?(gml_val_is_number_or_object(*p)?p->d:0):0;
 }
 
 /* ---------------- code lookup ---------------- */
@@ -3889,7 +3889,7 @@ int gml_vm_wait_resume(GmlVM *vm){
 }
 
 GmlVal gml_vm_call_callable(GmlVM *vm, GmlVal callable, GmlVal *args, int n_args){
-  if(!vm || !vm->win || callable.t!=V_REAL) return vundef();
+  if(!vm || !vm->win || !gml_val_is_number_or_object(callable)) return vundef();
   int fci=-1;
   GmlInstance *call_self=vm->cur_self;
   double raw=callable.d;
@@ -3914,7 +3914,7 @@ GmlVal gml_vm_call_callable(GmlVM *vm, GmlVal callable, GmlVal *args, int n_args
 GmlVal gml_vm_call_member_callable(GmlVM *vm, GmlVal receiver,
                                    GmlVal callable, GmlVal *args,
                                    int n_args){
-  if(!vm || !vm->win || callable.t!=V_REAL) return vundef();
+  if(!vm || !vm->win || !gml_val_is_number_or_object(callable)) return vundef();
   GmlInstance *call_self=vm_inst_from_ref(vm,receiver);
   if(!call_self) return vundef();
   int fci=-1;

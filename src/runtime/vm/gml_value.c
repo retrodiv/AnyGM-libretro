@@ -197,6 +197,7 @@ GmlVal gml_arr_store_clone(GmlVal v){
   if(v.t==V_STR){ char *c=v.s?strdup(v.s):NULL; return c?vstr_owned(c):vstr(""); }
   if(v.t==V_ARR){ gml_arr_mark_escaped(v); return v; }
   if(v.t==V_UNDEF) return vundef();
+  if(v.t==V_OBJECT) return v;
   return vreal(v.t==V_REAL?v.d:0.0);
 }
 #define arr_store_clone gml_arr_store_clone

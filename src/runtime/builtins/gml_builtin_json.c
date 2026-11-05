@@ -137,7 +137,7 @@ int gml_builtin_json_writer_put_value(GmlVM *vm, GmlBuiltinJsonWriter *b,
   if(v.t==V_STR) return jb_put_json_string(b,v.s?v.s:"");
   if(v.t==V_UNDEF) return gml_builtin_json_writer_puts(b,"null");
   if(v.t==V_ARR) return json_encode_arr(vm,b,(GmlArr*)v.arr,depth);
-  if(v.t==V_REAL){
+  if(gml_val_is_number_or_object(v)){
     int id=(int)v.d;
     if(GML_IS_STRUCT_ID(v.d)) return json_encode_struct(vm,b,gml_struct_find(vm,(unsigned)v.d),depth,allow_ds);
     if(fabs(v.d-(double)id)<1e-9){

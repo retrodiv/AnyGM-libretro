@@ -9,8 +9,15 @@
 #include <stdint.h>
 
 /* ---- value ---- */
-typedef enum { V_REAL=0, V_STR=1, V_ARR=2, V_UNDEF=3 } GmlValType;
+/* Wire tag four belongs to the array-identity codec. */
+typedef enum { V_REAL=0, V_STR=1, V_ARR=2, V_UNDEF=3, V_OBJECT=5 } GmlValType;
 typedef struct { GmlValType t; double d; const char *s; void *arr; } GmlVal;
+/* Object values retain their category while carrying the VM's stable handle in d.
+ * Numeric selectors can consume that handle; container operations must retain the category.
+ * No host address forms part of an object value or its serialized representation. */
+static inline int gml_val_is_number_or_object(GmlVal v){
+  return v.t==V_REAL || v.t==V_OBJECT;
+}
 typedef struct {
   GmlVal *data; int len, cap;
   int is_2d, height2d, row_cap;
@@ -21,6 +28,9 @@ typedef struct {
   unsigned gc_epoch; /* the collection pass that last scanned this array; see gml_struct_gc */
 } GmlArr;
 static inline GmlVal vreal(double d){ GmlVal v; v.t=V_REAL; v.d=d; v.s=0; v.arr=0; return v; }
+static inline GmlVal vobject(uint32_t id){
+  GmlVal v=vreal(id); v.t=V_OBJECT; return v;
+}
 static inline GmlVal vstr(const char *s){ GmlVal v; v.t=V_STR; v.d=0; v.s=s; v.arr=0; return v; }
 /* owned = the string is a fresh malloc'd temporary (v.d!=0 marks ownership); the VM frees it when
  * consumed. Literals/references (data.win STRG, rodata, var pointers) use vstr() and are never freed. */

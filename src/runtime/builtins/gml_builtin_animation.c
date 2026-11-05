@@ -72,13 +72,13 @@ static int acrv_channel_named(GmlVM *vm,int curve,const char *name){
   return -1;
 }
 static GmlInstance *acrv_struct(GmlVM *vm,GmlVal value){
-  if(!vm || value.t!=V_REAL || !GML_IS_STRUCT_ID(value.d) ||
+  if(!vm || !gml_val_is_number_or_object(value) || !GML_IS_STRUCT_ID(value.d) ||
      floor(value.d)!=value.d) return NULL;
   return gml_struct_find(vm,(unsigned)value.d);
 }
 static GmlVal acrv_channel_index(GmlVM *vm,GmlVal *args,int count){
   int index=-1;
-  if(args && count==2 && args[0].t==V_REAL && args[1].t==V_STR && args[1].s){
+  if(args && count==2 && gml_val_is_number_or_object(args[0]) && args[1].t==V_STR && args[1].s){
     double id=args[0].d;
     GmlInstance *curve=acrv_struct(vm,args[0]);
     if(curve){

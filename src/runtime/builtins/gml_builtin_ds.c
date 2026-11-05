@@ -33,7 +33,7 @@ static char *ds_key_make(GmlVal v){
     return o;
   }
   if(v.t==V_UNDEF) return strdup("u:");
-  snprintf(buf,sizeof(buf),"r:%.17g",v.t==V_REAL?v.d:0.0);
+  snprintf(buf,sizeof(buf),"r:%.17g",gml_val_is_number_or_object(v)?v.d:0.0);
   return strdup(buf);
 }
 typedef struct { char buf[160]; char *heap; } DsKeyTemp;
@@ -56,7 +56,7 @@ static const char *ds_key_temp(GmlVal v, DsKeyTemp *t){
     return t->heap;
   }
   if(v.t==V_UNDEF) return "u:";
-  snprintf(t->buf,sizeof(t->buf),"r:%.17g",v.t==V_REAL?v.d:0.0);
+  snprintf(t->buf,sizeof(t->buf),"r:%.17g",gml_val_is_number_or_object(v)?v.d:0.0);
   return t->buf;
 }
 static void ds_key_temp_free(DsKeyTemp *t){
@@ -75,6 +75,7 @@ static GmlVal ds_key_val_clone(GmlVal v){
    * caller's temporary value. */
   if(v.t==V_STR){ char *c=v.s?strdup(v.s):NULL; return c?vstr_owned(c):vstr(""); }
   if(v.t==V_UNDEF) return vundef();
+  if(v.t==V_OBJECT) return v;
   return vreal(v.t==V_REAL?v.d:0.0);
 }
 /* free one map entry: ONLY the lookup key. The owned key_val/val strings are deliberately
@@ -93,6 +94,7 @@ static GmlVal ds_val_clone(GmlVal v){
   if(v.t==V_STR){ char *c=v.s?strdup(v.s):NULL; return c?vstr_owned(c):vstr(""); }
   if(v.t==V_ARR){ gml_arr_mark_escaped(v); return v; }   /* ds structures outlive the scope */
   if(v.t==V_UNDEF) return vundef();
+  if(v.t==V_OBJECT) return v;
   return vreal(v.t==V_REAL?v.d:0.0);
 }
 GmlDSMap *ds_map_slot(GmlVM *vm, int id){
@@ -1547,7 +1549,9 @@ GmlVal gml_builtin_try_ds(GmlVM *vm, const char *nm, GmlVal *a, int n){
   if(!strcmp(nm,"ds_grid_add")){ GmlDSGrid *g=ds_grid_slot(vm,(int)N(a,n,0)); int x=(int)N(a,n,1),y=(int)N(a,n,2);
     if(g && g->cell && x>=0 && y>=0 && x<g->w && y<g->h && n>=4){
       GmlVal old=g->cell[(size_t)y*g->w+x];
-      g->cell[(size_t)y*g->w+x]=ds_val_clone(vreal(N(&old,1,0)+N(a,n,3)));
+      /* A boxed object is assigned as an identity rather than added to the cell's number. */
+      g->cell[(size_t)y*g->w+x]=ds_val_clone(a[3].t==V_OBJECT?a[3]:
+                                             vreal(N(&old,1,0)+N(a,n,3)));
     }
     return vreal(0); }
   if(!strcmp(nm,"ds_grid_value_exists")||!strcmp(nm,"ds_grid_value_x")||!strcmp(nm,"ds_grid_value_y")){

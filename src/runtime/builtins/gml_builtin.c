@@ -177,7 +177,7 @@ double classic_display_mouse_coord(const GmlVM *vm,const GmlRender *r,double val
 const char *gm_string_format(GmlVal v,char buffer[64]){
   if(v.t==V_STR) return v.s?v.s:"";
   if(v.t==V_UNDEF || v.t==V_ARR) return "";
-  double d=v.t==V_REAL?v.d:0;
+  double d=gml_val_is_number_or_object(v)?v.d:0;
   if(d==floor(d)&&fabs(d)<1e15) snprintf(buffer,64,"%.0f",d);
   else snprintf(buffer,64,"%.2f",d);
   return buffer;
@@ -441,7 +441,8 @@ int ds_val_equal(GmlVal a, GmlVal b){
     char ab[64],bb[64];
     return !strcmp(gm_string_format(a,ab),gm_string_format(b,bb));
   }
-  return fabs((a.t==V_REAL?a.d:0.0)-(b.t==V_REAL?b.d:0.0))<1e-9;
+  return fabs((gml_val_is_number_or_object(a)?a.d:0.0)-
+              (gml_val_is_number_or_object(b)?b.d:0.0))<1e-9;
 }
 int gml_array_search_index(GmlVal *args, int count){
   if(count<2 || args[0].t!=V_ARR || !args[0].arr) return -1;
@@ -486,7 +487,7 @@ static int array_value_equal(GmlVM *vm, GmlVal left, GmlVal right,
   if(left.t!=right.t) return 0;
   if(left.t==V_UNDEF) return 1;
   if(left.t==V_STR) return !strcmp(left.s?left.s:"",right.s?right.s:"");
-  if(left.t==V_REAL)
+  if(gml_val_is_number_or_object(left))
     return gml_real_compare_epsilon(left.d,right.d,CMP_EQ,vm?vm->math_epsilon:1e-5);
   if(left.t!=V_ARR || !left.arr || !right.arr) return left.arr==right.arr;
   GmlArr *a=left.arr, *b=right.arr;
@@ -513,14 +514,14 @@ int array_equals_recursive(GmlVM *vm, GmlVal left, GmlVal right){
   return equal;
 }
 static int gml_val_sort_rank(GmlVal v){
-  if(v.t==V_REAL) return 0;
+  if(gml_val_is_number_or_object(v)) return 0;
   if(v.t==V_STR) return 1;
   if(v.t==V_ARR) return 2;
   return 3;
 }
 int gml_val_sort_compare(GmlVal a, GmlVal b){
   int r=0;
-  if(a.t==V_REAL && b.t==V_REAL){
+  if(gml_val_is_number_or_object(a) && gml_val_is_number_or_object(b)){
     double ad=a.d, bd=b.d;
     if(isnan(ad) && isnan(bd)) r=0;
     else if(isnan(ad)) r=1;
@@ -746,7 +747,7 @@ static int script_asset_code_of(GmlVM *vm,const char *name,int *declared){
 }
 
 int script_ref_code_of(GmlVM *vm, GmlVal v){
-  if(v.t!=V_REAL) return -1;
+  if(!gml_val_is_number_or_object(v)) return -1;
   int iv=(int)v.d;
   if(GML_IS_FUNCVAL(iv)) return iv & 0x00FFFFFF;
   if(GML_IS_STRUCT_ID(v.d)){

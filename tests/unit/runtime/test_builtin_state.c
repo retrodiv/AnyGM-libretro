@@ -227,6 +227,67 @@ done:
   return ok;
 }
 
+static int boxed_object_state_roundtrip(void){
+  GmlWin win={0};
+  GmlVM source={0},restored={0};
+  unsigned char *before=NULL,*after=NULL;
+  int ok=!gml_vm_init(&source,&win,NULL) && !gml_vm_init(&restored,&win,NULL);
+  GmlInstance *owner=ok?gml_struct_new(&source):NULL;
+  if(!owner) ok=0;
+  GmlVal reference=vundef(),grid_reference=vundef(),grid=vundef();
+  if(ok){
+    *gml_varmap_put(&owner->vars,"retained")=vreal(41);
+    source.cur_self=owner;
+    reference=call(&source,"@@This@@",NULL,0);
+    source.cur_self=NULL;
+    GmlVal roots=gml_arr_new(2,reference);
+    gml_arr_set(roots,1,vreal(23));
+    gml_arr_mark_escaped(roots);
+    *gml_varmap_put(&source.globals,"roots")=roots;
+    GmlInstance *grid_owner=gml_struct_new(&source);
+    if(!grid_owner){ ok=0; goto boxed_state_done; }
+    *gml_varmap_put(&grid_owner->vars,"retained")=vreal(72);
+    grid_reference=vobject(grid_owner->id);
+    GmlVal shape[]={vreal(1),vreal(1)};
+    grid=call(&source,"ds_grid_create",shape,2);
+    GmlVal clear[]={grid,vreal(-1)};
+    call(&source,"ds_grid_clear",clear,2);
+    GmlVal cell[]={grid,vreal(0),vreal(0),grid_reference};
+    call(&source,"ds_grid_add",cell,4);
+    ok=reference.t==V_OBJECT;
+  }
+  size_t size=ok?gml_vm_state_size(&source):0,written=0,used=0,repeated=0;
+  if(ok){
+    before=malloc(size);after=malloc(size);
+    ok=size && before && after &&
+      gml_vm_state_save(&source,before,size,&written) && written==size &&
+      gml_vm_state_load(&restored,before,size,&used) && used==size;
+  }
+  if(ok){
+    GmlVal *roots=gml_varmap_get(&restored.globals,"roots");
+    GmlVal boxed=roots?gml_arr_get(*roots,0):vundef();
+    GmlVal numeric=roots?gml_arr_get(*roots,1):vundef();
+    GmlVal cell[]={grid,vreal(0),vreal(0)};
+    GmlVal stored=call(&restored,"ds_grid_get",cell,3);
+    GmlInstance *loaded=gml_struct_find(&restored,(unsigned)reference.d);
+    GmlVal *value=loaded?gml_varmap_get(&loaded->vars,"retained"):NULL;
+    ok=boxed.t==V_OBJECT && boxed.d==reference.d &&
+       numeric.t==V_REAL && numeric.d==23 &&
+       stored.t==V_OBJECT && stored.d==grid_reference.d &&
+       value && value->t==V_REAL && value->d==41 &&
+       gml_vm_state_save(&restored,after,size,&repeated) &&
+       repeated==size && !memcmp(before,after,size);
+    GmlInstance *grid_owner=gml_struct_find(&restored,(unsigned)grid_reference.d);
+    GmlVal *grid_value=grid_owner?gml_varmap_get(&grid_owner->vars,"retained"):NULL;
+    ok=ok && grid_value && grid_value->t==V_REAL && grid_value->d==72;
+  }
+boxed_state_done:
+  if(!ok) fprintf(stderr,"boxed object roots or container state did not roundtrip\n");
+  free(before);free(after);
+  gml_vm_free(&source);gml_vm_free(&restored);
+  return ok;
+}
+
 static int dense_struct_heap_roundtrip(void){
   enum { count=8192, capacity=1024*1024 };
   const char *stage="populate";
@@ -329,6 +390,7 @@ static int dense_struct_heap_roundtrip(void){
 }
 
 int main(void){
+  if(!boxed_object_state_roundtrip()) return 1;
   if(!dense_struct_heap_roundtrip()) return 1;
   if(!many_grids_roundtrip()) return 1;
   GmlWin win={0};

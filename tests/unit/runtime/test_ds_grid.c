@@ -20,6 +20,65 @@ static int expect_real(const char *label, GmlVal actual, double expected){
   return 0;
 }
 
+static int grid_object_identity(void){
+  GmlVM vm={0};
+  GmlInstance receiver={0};
+  receiver.id=100123;
+  vm.cur_self=&receiver;
+  GmlVal create[]={vreal(2),vreal(1)};
+  GmlVal grid=call(&vm,"ds_grid_create",create,2);
+  GmlVal clear[]={grid,vreal(-1)};
+  GmlVal resize[]={grid,vreal(2),vreal(1)};
+  GmlVal cell[]={grid,vreal(0),vreal(0),vreal(42)};
+  call(&vm,"ds_grid_clear",clear,2);
+  call(&vm,"ds_grid_resize",resize,3);
+  int ok=expect_real("same-size resize retains the cell",call(&vm,"ds_grid_get",cell,3),-1);
+  call(&vm,"ds_grid_add",cell,4);
+  ok&=expect_real("numeric addition remains arithmetic",call(&vm,"ds_grid_get",cell,3),41);
+
+  GmlVal reference=call(&vm,"@@This@@",NULL,0);
+  if(reference.t!=V_OBJECT || reference.d!=receiver.id){
+    fprintf(stderr,"current object lost its value category: type=%d identity=%.17g\n",
+            reference.t,reference.d);
+    ok=0;
+  }
+  call(&vm,"ds_grid_clear",clear,2);
+  cell[3]=reference;
+  call(&vm,"ds_grid_add",cell,4);
+  GmlVal restored=call(&vm,"ds_grid_get",cell,3);
+  if(restored.t!=reference.t || restored.d!=receiver.id){
+    fprintf(stderr,"grid addition changed an object identity: type=%d identity=%.17g\n",
+            restored.t,restored.d);
+    ok=0;
+  }
+  GmlVal array=gml_arr_new(1,reference);
+  GmlVal copied=gml_arr_get(array,0);
+  if(copied.t!=reference.t || copied.d!=reference.d){
+    fprintf(stderr,"array storage changed an object identity\n");
+    ok=0;
+  }
+  GmlVal second=vobject(receiver.id+1);
+  GmlVal distinct=gml_arr_new(1,second);
+  GmlVal arrays[]={array,distinct};
+  ok&=expect_real("array equality separates object identities",call(&vm,"array_equals",arrays,2),0);
+  arrays[1]=array;
+  ok&=expect_real("array equality retains object identity",call(&vm,"array_equals",arrays,2),1);
+  GmlVal map=call(&vm,"ds_map_create",NULL,0);
+  GmlVal entry[]={map,reference,vreal(7)};
+  call(&vm,"ds_map_add",entry,3);
+  entry[1]=second;entry[2]=vreal(11);
+  call(&vm,"ds_map_add",entry,3);
+  entry[1]=reference;
+  ok&=expect_real("map lookup retains the first object key",call(&vm,"ds_map_find_value",entry,2),7);
+  entry[1]=second;
+  ok&=expect_real("map lookup separates object keys",call(&vm,"ds_map_find_value",entry,2),11);
+  gml_values_release(&array,1);
+  gml_values_release(&distinct,1);
+  vm.cur_self=NULL;
+  gml_builtin_state_destroy(vm.builtins);
+  return ok;
+}
+
 static int grid_value_fixtures(void){
   GmlVM vm;
   memset(&vm,0,sizeof(vm));
@@ -283,6 +342,7 @@ static int grid_handles_grow(void){
 }
 
 int main(void){
+  if(!grid_object_identity()) return 1;
   if(!grid_handles_grow()) return 1;
   if(!grid_value_fixtures()) return 1;
   if(!grid_region_aggregates()) return 1;

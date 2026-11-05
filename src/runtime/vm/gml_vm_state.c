@@ -18,12 +18,13 @@
 #include <limits.h>
 
 /* ---------------- save-state runtime serialization ---------------- */
-enum { GML_VM_STATE_SCHEMA=20 };
+enum { GML_VM_STATE_SCHEMA=21 };
 enum { STATE_MAX_TILEMAPS=512, STATE_TILEMAP_RECORD_BYTES=56 };
 #define GML_VM_STATE_MAGIC UINT32_C(0x534D5641)
 /* IDs are assigned in canonical traversal order, never from addresses. Zero is the null array;
  * a definition claims the next ID before its elements, so back references can close cycles. */
 enum { STATE_ARRAY_REF=4, STATE_MAX_ARRAYS=1000000, STATE_MAX_ARRAY_DEPTH=64 };
+_Static_assert((int)V_OBJECT!=(int)STATE_ARRAY_REF,"object and array references have distinct wire tags");
 typedef struct { const GmlArr *array; uint32_t id; } StateArrayEntry;
 /* A path a run can build: mp_grid_path fills one cell per step of a route, so the grid's cell
  * count is the ceiling, and path_add_point cannot be asked for more than a state could hold. */
@@ -323,6 +324,11 @@ static void sw_val(StateW *s, GmlVal v, int depth){
   }
   sw_u32(s,(uint32_t)v.t);
   if(v.t==V_REAL){ sw_d(s,v.d); return; }
+  if(v.t==V_OBJECT){
+    if(!isfinite(v.d) || v.d<0 || v.d>UINT32_MAX || floor(v.d)!=v.d){ s->ok=0; return; }
+    sw_u32(s,(uint32_t)v.d);
+    return;
+  }
   if(v.t==V_STR){ sw_str(s,v.s); return; }
   if(v.t==V_UNDEF) return;
   if(v.t==V_ARR && v.arr){
@@ -369,6 +375,7 @@ static GmlVal sr_val(GmlVM *vm, StateR *s, int depth){
   if(!s->ok) return vreal(0);
   uint32_t t=sr_u32(s);
   if(t==V_REAL) return vreal(sr_d(s));
+  if(t==V_OBJECT) return vobject(sr_u32(s));
   if(t==V_STR) return vstr(state_runtime_string(s,sr_str_dup(s)));
   if(t==V_UNDEF) return vundef();
   if(t==STATE_ARRAY_REF){
