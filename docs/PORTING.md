@@ -245,6 +245,9 @@ The libretro adapter uses the accepted keyboard callback as text authority, keep
 256 pending events on overflow, and provides no guessed text for a polling-only frontend.
 Controller-device updates only record the selected port device. They do not republish static input
 declarations or renegotiate keyboard ownership while a frontend suppresses environment requests.
+A successful keyboard registration stays acknowledged until adapter deinitialization. Refusing a
+repeated registration during a late environment refresh does not revoke the installed callback;
+a frontend that has never accepted keyboard events still uses raw polling.
 
 ## VFS and paths
 

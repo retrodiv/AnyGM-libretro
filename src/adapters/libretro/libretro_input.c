@@ -143,8 +143,10 @@ void libretro_input_register(void){
    * hands the whole keyboard over once the player gives the content focus. Remember the answer,
    * because it decides where the keyboard is read from below. */
   struct retro_keyboard_callback callback={keyboard_event};
-  g_libretro.keyboard_events_accepted=
-      g_libretro.environment(RETRO_ENVIRONMENT_SET_KEYBOARD_CALLBACK,&callback);
+  /* Refusing a repeated query does not revoke a callback already installed by this frontend.
+   * Late environment probes may be suppressed; deinit ends the acknowledgement lifetime. */
+  if(g_libretro.environment(RETRO_ENVIRONMENT_SET_KEYBOARD_CALLBACK,&callback))
+    g_libretro.keyboard_events_accepted=true;
 }
 
 static int16_t input_state(unsigned port,unsigned device,unsigned index,unsigned id){

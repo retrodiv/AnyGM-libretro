@@ -998,6 +998,7 @@ static int controller_updates_preserve_keyboard_authority(void){
   keyboard_registration_allowed=0;
   for(unsigned port=0;port<ANYGM_MAX_GAMEPADS+2u;port++)
     retro_set_controller_port_device(port,RETRO_DEVICE_JOYPAD);
+  retro_set_environment(environment_callback);
   AnygmInputFrame input;
   libretro_input_snapshot(&input,320,240);
   REQUIRE(!input.keys[RETROK_F1],"controller updates must not expose a reserved physical key");
@@ -1008,6 +1009,13 @@ static int controller_updates_preserve_keyboard_authority(void){
   delivered_keyboard(false,RETROK_q,0,0);
   libretro_input_snapshot(&input,320,240);
   REQUIRE(!input.keys[RETROK_q],"delivered release still clears the held key");
+  g_libretro.input_state=NULL;
+  finish();
+  REQUIRE(!g_libretro.keyboard_events_accepted,"deinit ends the keyboard acknowledgement lifetime");
+  begin(NULL,0,0,0,0);
+  g_libretro.input_state=reserved_keyboard_input;
+  libretro_input_snapshot(&input,320,240);
+  REQUIRE(input.keys[RETROK_F1],"a new frontend without callbacks retains raw polling");
   g_libretro.input_state=NULL;
   finish();
   return 0;
