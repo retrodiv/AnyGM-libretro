@@ -2443,6 +2443,35 @@ static size_t scene_instance_span(GmlGpuBackend *backend,size_t bytes){
   return offset;
 }
 
+/* A full opaque overwrite keeps the placed quad and its clipping unchanged.
+ * Only an already-uploaded, bounded white-texel certificate replaces sampling. */
+static int clear_white_unit_quad(GmlGpuBackend *backend,GlSceneImage *target,
+                                  GlSceneImage *source,const float *v){
+  if(!source || !source->valid || !source->opaque_white_known ||
+     source->ref.resource_class!=GML_RENDER_RESOURCE_ATLAS ||
+     source->texture==target->texture || v[8]!=v[10] || v[9]!=v[11] ||
+     !(v[8]>=0.0f && v[8]<source->width && v[9]>=0.0f && v[9]<source->height)) return 0;
+  uint32_t pixel=(uint32_t)v[9]*source->width+(uint32_t)v[8];
+  if(pixel>=GL_SCENE_WHITE_TEXELS ||
+     !(source->opaque_white[pixel/8u]&(1u<<(pixel%8u)))) return 0;
+  const float *tr=v+GL_SCENE_VERTEX_FLOATS,*br=v+2u*GL_SCENE_VERTEX_FLOATS;
+  const float *bl=v+5u*GL_SCENE_VERTEX_FLOATS;
+  if(!(v[0]<=0.0f && v[1]<=0.0f && tr[0]>=target->width && br[1]>=target->height) ||
+     tr[1]!=v[1] || br[0]!=tr[0] || bl[0]!=v[0] || bl[1]!=br[1]) return 0;
+  for(unsigned corner=0;corner<6u;corner++){
+    const float *c=v+(size_t)corner*GL_SCENE_VERTEX_FLOATS;
+    if(c[7]!=1.0f || c[4]!=v[4] || c[5]!=v[5] || c[6]!=v[6]) return 0;
+  }
+  GmlRenderDrawOp clear={.opcode=GML_RENDER_OP_CLEAR};
+  clear.target.region=(GmlRenderRect){0,0,target->width,target->height};
+  clear.payload.clear_colour=0xFF000000u|((uint32_t)lroundf(v[4]*255.0f)<<16)|
+    ((uint32_t)lroundf(v[5]*255.0f)<<8)|(uint32_t)lroundf(v[6]*255.0f);
+  backend->gl.ColorMask(GL_TRUE,GL_TRUE,GL_TRUE,GL_TRUE);
+  if(!gml_render_gpu_opengl_clear(backend,&clear,target)) return -1;
+  target->valid=1;target->rendered_origin=1;
+  return 1;
+}
+
 static int flush_quads(GmlGpuBackend *backend,GlSceneImage *target,GlSceneImage *source,
                        uint32_t filter,int blend,uint32_t count,uint32_t write_mask,int alpha_test,
                        uint32_t source_alpha_key,const GmlRenderSourcePalette *palette){
@@ -2472,6 +2501,10 @@ static int flush_quads(GmlGpuBackend *backend,GlSceneImage *target,GlSceneImage 
     int plain_clamped=(filter==21u || filter==22u || filter==25u || filter==26u) &&
       vertex[18]==16.0f;
     if(vertex[18]!=0.0f && !plain_clamped){plain_native=0;break;}
+  }
+  if(count==1u && plain_native && filter==21u && blend==1 && write_mask==15u && alpha_test<255){
+    int cleared=clear_white_unit_quad(backend,target,source,scene->vertices);
+    if(cleared) return cleared>0;
   }
   program=gml_gpu_opengl_scene_draw_program(backend,filter,plain_native,NULL,0);
   if(!program) return 0;

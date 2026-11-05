@@ -640,6 +640,7 @@ int gml_gpu_opengl_scene_upload(GmlGpuBackend *backend,const GmlRenderImageUploa
       transfer->region.height!=transfer->storage_height)) return 0;
   slot->content_source_version=0;
   slot->alpha_opaque=0;
+  slot->opaque_white_known=0;
   first=!slot->texture;
   resize=slot->width!=transfer->storage_width || slot->height!=transfer->storage_height;
   if((first || resize || !scene_same_version(slot->ref,transfer->image)) &&
@@ -705,6 +706,18 @@ int gml_gpu_opengl_scene_upload(GmlGpuBackend *backend,const GmlRenderImageUploa
   slot->pixel_format=transfer->pixel_format;
   slot->valid=1;
   slot->rendered_origin=rendered_origin;
+  if(transfer->image.resource_class==GML_RENDER_RESOURCE_ATLAS &&
+     (uint64_t)slot->width*slot->height<=GL_SCENE_WHITE_TEXELS &&
+     transfer->region.x==0 && transfer->region.y==0 &&
+     transfer->region.width==slot->width && transfer->region.height==slot->height){
+    memset(slot->opaque_white,0,sizeof slot->opaque_white);
+    for(uint32_t pixel=0;pixel<slot->width*slot->height;pixel++){
+      const uint8_t *p=scene->scratch+(size_t)pixel*4u;
+      if(p[0]==255u && p[1]==255u && p[2]==255u && p[3]==255u)
+        slot->opaque_white[pixel/8u]|=(uint8_t)(1u<<(pixel%8u));
+    }
+    slot->opaque_white_known=1;
+  }
   slot->last_used=++scene->use_clock;
   if(did_upload) *did_upload=1;
   return 1;
@@ -721,6 +734,9 @@ GlSceneImage *gml_gpu_opengl_scene_target(GmlGpuBackend *backend,const GmlRender
       target->pixel_format!=GML_RENDER_PIXEL_ARGB8888)) return NULL;
   slot=scene_slot(backend,target->image);
   if(!slot) return NULL;
+  /* A target may be written without another CPU upload. Never retain a source
+   * certificate across that ownership boundary, even before the first write. */
+  slot->opaque_white_known=0;
   first=!slot->texture;
   resize=slot->width!=target->width || slot->height!=target->height;
   if(first){

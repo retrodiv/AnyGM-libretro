@@ -4435,6 +4435,92 @@ static int scene_opaque_native_alpha_case(void){
   return 1;
 }
 
+static int scene_white_unit_clear_case(void){
+  for(unsigned api=0;api<2u;api++)for(unsigned variant=0;variant<9u;variant++){
+    unsigned sw=variant==8u?256u:4u,sh=variant==8u?128u:3u;
+    uint32_t *pixels=malloc((size_t)sw*sh*4u);
+    REQUIRE(pixels,"small atlas fixture allocated");
+    for(unsigned i=0;i<sw*sh;i++)pixels[i]=0xFFFFFFFFu;
+    if(variant==1u)pixels[sw+1u]=0xFF112233u;
+    GmlGpuContext context=fake_context(api?GML_GPU_API_OPENGL_CORE:GML_GPU_API_OPENGLES3);
+    anygm_test_graphics_reset();GmlGpu *gpu=gml_gpu_create();
+    REQUIRE(gpu && gml_gpu_context_reset(gpu,&context),"white unit context created");
+    GmlRenderDeviceServices device={0};gml_gpu_device_services(gpu,&device);
+    GmlRenderImageRef source={GML_RENDER_RESOURCE_ATLAS,73u,1u,1u};
+    if(variant==7u)source.resource_class=GML_RENDER_RESOURCE_SURFACE;
+    GmlRenderImageUpload upload={.image=source,.storage_width=sw,.storage_height=sh,
+      .region={0,0,sw,sh},.pixel_format=GML_RENDER_PIXEL_RGBA8888,
+      .stride_bytes=sw*4u,.byte_capacity=(size_t)sw*sh*4u,.bytes=pixels};
+    REQUIRE(device.upload(device.context,&upload),"white atlas uploaded");
+    if(variant==2u){
+      uint32_t changed=0xFF112233u;GmlRenderImageUpload part=upload;
+      part.region=(GmlRenderRect){0,0,1u,1u};part.stride_bytes=4u;
+      part.byte_capacity=4u;part.bytes=&changed;
+      REQUIRE(device.upload(device.context,&part),"partial atlas mutation uploaded");
+    }
+    if(variant==3u){
+      source.content_version++;upload.image=source;pixels[sw+1u]=0xFF112233u;
+      REQUIRE(device.upload(device.context,&upload),"a new full upload replaces the former white source");
+    }
+    GmlRenderDrawOp ops[2]={{0}};GmlRenderDrawStateSnapshot state={0};
+    ops[0].opcode=GML_RENDER_OP_CLEAR;
+    ops[0].target=(GmlRenderTargetRef){{GML_RENDER_RESOURCE_SCREEN,74u,1u,1u},
+      1u,8u,6u,GML_RENDER_PIXEL_ARGB8888,{0,0,8u,6u}};
+    ops[0].payload.clear_colour=0x80273859u;
+    ops[1]=ops[0];ops[1].opcode=GML_RENDER_OP_TEXTURED_QUAD;
+    ops[1].target.image.content_version++;ops[1].source_count=1u;ops[1].sources=&source;
+    ops[1].scene_family=GML_RENDER_SCENE_SPRITE;
+    ops[1].reconstruction_mode=GML_RENDER_DEVICE_CHECKPOINT;
+    GmlRenderQuad *q=&ops[1].payload.quad;q->shape=GML_RENDER_QUAD_AXIS_ALIGNED;
+    q->sampling=(GmlRenderSamplingPolicy){GML_RENDER_FILTER_HARDWARE_BILINEAR,
+      GML_RENDER_EDGE_TRANSPARENT,{1,1,1u,1u},GML_RENDER_QUANTISE_FIXED_STRETCHED,0u};
+    q->x[0]=q->x[3]=q->y[0]=q->y[1]=-1;
+    q->x[1]=q->x[2]=variant==4u?7:9;q->y[2]=q->y[3]=7;
+    q->u[0]=q->u[3]=1.0/sw;q->u[1]=q->u[2]=2.0/sw;
+    q->v[0]=q->v[1]=1.0/sh;q->v[2]=q->v[3]=2.0/sh;
+    q->span_x[0]=q->span_x[3]=q->span_y[0]=q->span_y[3]=1;
+    q->span_x[1]=variant==4u?8:10;q->span_y[1]=8;
+    q->filtered_draw_alpha=variant==5u?.5:1.0;
+    for(unsigned c=0;c<4u;c++)q->corner_colour[c]=variant==5u?0x803470D0u:0xFF3470D0u;
+    state.write_mask=15u;state.colour=0xFFFFFFFFu;state.alpha=255u;
+    state.coverage_policy=GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA;
+    state.alpha_test_enabled=1u;state.alpha_test_reference=variant==6u?255u:0u;
+    state.rgb_source_factor=GML_RENDER_BLEND_SOURCE_ALPHA;
+    state.rgb_destination_factor=state.alpha_destination_factor=GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA;
+    state.alpha_source_factor=GML_RENDER_BLEND_ONE;
+    state.rgb_equation=state.alpha_equation=GML_RENDER_BLEND_ADD;
+    state.sampler_count=1u;state.samplers[0]=q->sampling;
+    GmlRenderDrawBatch batch={ops,2u,&state,1u};
+    unsigned clears=anygm_test_graphics_clear_calls(),draws=anygm_test_graphics_scene_draw_calls();
+    GmlRenderExecutionResult result=device.submit(device.context,&batch);
+    if(variant==7u){
+      REQUIRE(result.status==GML_RENDER_EXEC_UNSUPPORTED && !result.accepted_prefix &&
+        anygm_test_graphics_clear_calls()==clears && anygm_test_graphics_scene_draw_calls()==draws,
+        "fixed-stretch packets retain their existing mutable-source prewrite boundary");
+      gml_gpu_destroy(gpu,1);free(pixels);continue;
+    }
+    if(result.status!=GML_RENDER_EXEC_ACCEPTED || result.accepted_prefix!=2u)
+      fprintf(stderr,"white unit authority: api=%u variant=%u status=%u prefix=%u error=%s\n",
+        api,variant,(unsigned)result.status,result.accepted_prefix,gml_gpu_last_error(gpu));
+    REQUIRE(result.status==GML_RENDER_EXEC_ACCEPTED && result.accepted_prefix==2u,
+      "white unit fixture remains an accepted placed quad");
+    if(!variant)REQUIRE(anygm_test_graphics_clear_calls()==clears+2u &&
+      anygm_test_graphics_scene_draw_calls()==draws,
+      "a certified white opaque full-target quad reuses the device clear writer");
+    else REQUIRE(anygm_test_graphics_clear_calls()==clears+1u &&
+      anygm_test_graphics_scene_draw_calls()>draws,
+      "mutation, nonwhite, partial coverage or alpha and unbounded sources retain sampling");
+    if(!variant){
+      GmlRenderTargetRef writable={source,1u,sw,sh,GML_RENDER_PIXEL_ARGB8888,{0,0,sw,sh}};
+      GlSceneImage *image=gml_gpu_opengl_scene_target(gpu->backend,&writable);
+      REQUIRE(image && !image->opaque_white_known,
+        "target access invalidates uploaded source certificates before any GPU mutation");
+    }
+    gml_gpu_destroy(gpu,1);free(pixels);
+  }
+  return 1;
+}
+
 static int scene_native_stretched_cell_case(void){
   const uint32_t pixels[12]={0xFF112233u,0x80445566u,0x00778899u};
   for(unsigned api=0;api<2u;api++)for(unsigned trim=0;trim<2u;trim++)
@@ -6591,6 +6677,7 @@ int main(int argc,char **argv){
     {"scene_raw_copy",scene_raw_copy_case},
     {"scene_identity_underlay",scene_identity_underlay_case},
     {"scene_native_stretched_cell",scene_native_stretched_cell_case},
+    {"scene_white_unit_clear",scene_white_unit_clear_case},
     {"scene_opaque_native_alpha",scene_opaque_native_alpha_case},
     {"scene_nearest_rows",scene_nearest_rows_case},
     {"scene_nearest_surface_fringe",scene_nearest_surface_fringe_case},

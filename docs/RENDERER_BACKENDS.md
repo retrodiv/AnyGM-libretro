@@ -92,6 +92,14 @@ filtered glyphs. Their RGB and
 required alpha programs keep the existing formulas and placed quad; mapped
 sources and logical margins retain their separate program owners.
 
+A uniform, full-alpha, clamped one-texel quad covering its whole target may
+reuse the existing device clear writer when its uploaded texel is opaque white.
+The logical quad, placement and clipped extent remain unchanged. A bounded
+bitmap records white texels from full normalized uploads of small atlas images;
+partial uploads and target access invalidate it. No upload pointer is retained
+and no GPU or CPU target pixels are read. Other colours, partial coverage or
+alpha, source effects and write masks retain their ordinary sampler.
+
 The CPU/OpenGL image comparisons in this repository are diagnostic. Routine
 checks skip them; `make check GPU_PIXEL_PARITY=1` runs them and direct
 execution uses `ANYGM_TEST_GPU_PIXEL_PARITY=1`. Real-device paired pixel probes

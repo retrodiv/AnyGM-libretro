@@ -16,6 +16,7 @@ enum {
   GL_READBACK_SLOTS=8,
   GL_SCENE_MAX_IMAGES=64,
   GL_SCENE_MAX_QUADS=2048,
+  GL_SCENE_WHITE_TEXELS=16384,
   GL_SCENE_NATIVE_POINT_FILTER=171,
   GL_SCENE_VERTEX_FLOATS=28,
   GL_SCENE_INSTANCE_FLOATS=52,
@@ -104,6 +105,8 @@ typedef struct GlSceneImage {
   uint64_t last_used,context_epoch;
   int valid,target,rendered_origin,retired;
   int alpha_opaque; /* derived proof that every stored alpha byte is 255 */
+  int opaque_white_known;
+  uint8_t opaque_white[GL_SCENE_WHITE_TEXELS/8];
 } GlSceneImage;
 
 typedef struct GlSceneCheckpoint {
