@@ -503,6 +503,12 @@ static int resident_integer_sprite(GmlRender *r,GmlSprite *sprite,int subimg,
   double left,top;
   int sub,page_index;
   int replace=resident_identity_gui_replacement(r,xs,ys,blend,alpha);
+  int filtered_unit_copy=r && r->win && !r->classic &&
+    anygm_policy_has_modern_layer_semantics(r->win) && r->interp &&
+    !r->gui_pass_active && r->target_id==-1 && !r->target_sp &&
+    !r->fog_flat && !r->font_sdf_active && alpha==1.0 && blend==0xFFFFFFu &&
+    xs>0.0 && ys>0.0 && fabs(xs-1.0)<.001 && fabs(ys-1.0)<.001 &&
+    (xs!=1.0 || ys!=1.0);
   /* R03-SPR-INTEGER-FUNCTION: public point/scale mapping has already happened.
    * Whole physical texels need no phase emulation, including both reflections,
    * trim, mapped GUI and uniform tint on any ordinary target. */
@@ -532,7 +538,7 @@ static int resident_integer_sprite(GmlRender *r,GmlSprite *sprite,int subimg,
      !isfinite(xs) || !isfinite(ys) || xs==0.0 || ys==0.0 ||
      rotation!=0.0 || (blend!=0xFFFFFFu && !normal_integer) ||
      !isfinite(alpha) || alpha<0.0 || alpha>1.0 || (alpha==0.0 && !normal_integer) ||
-     (r->interp && !r->classic && (xs!=1.0 || ys!=1.0)))
+     (r->interp && !r->classic && (xs!=1.0 || ys!=1.0) && !filtered_unit_copy))
     return 0;
   /* A plain sprite reads only the base image; the other texture-stage filter flags do not
    * participate in the CPU blit, and the integer-aligned unit-scale base sample is exact. */
@@ -561,6 +567,18 @@ static int resident_integer_sprite(GmlRender *r,GmlSprite *sprite,int subimg,
      page->atlas<0 || page->atlas>=r->n_atlas) return 0;
   left=x-(double)sprite->originx*xs+(double)page->tx*xs-r->cam_x;
   top=y-(double)sprite->originy*ys+(double)page->ty*ys-r->cam_y;
+  /* The near-unit white CPU leaf copies the complete physical page. Resolve
+   * its origin with the mapped input scale first, then use unit spacing and
+   * full-page extent. A normally scaled quad would lose or add an edge here. */
+  if(filtered_unit_copy){
+    if(page->tx || page->ty || page->sw!=page->bw || page->sh!=page->bh ||
+       page->project_authored_edges || !isfinite(left) || !isfinite(top) ||
+       fabs(left-nearbyint(left))>=1e-9 || fabs(top-nearbyint(top))>=1e-9) return 0;
+    return resident_filtered_sprite(r,sprite,subimg,
+      nearbyint(left)+(double)sprite->originx+r->cam_x,
+      nearbyint(top)+(double)sprite->originy+r->cam_y,
+      1.0,1.0,0.0,blend,alpha);
+  }
   if(r->classic && fabs(xs)==1.0 && fabs(ys)==1.0 &&
      isfinite(left) && isfinite(top) &&
      fabs(left)<1000000.0 && fabs(top)<1000000.0){

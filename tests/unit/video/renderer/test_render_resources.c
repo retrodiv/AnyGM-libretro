@@ -14627,6 +14627,59 @@ static int resident_native_positive_alpha_triangles(void){
   return 1;
 }
 
+static int resident_filtered_near_unit_copy(void){
+  enum { W=1040,H=32,SW=1024,SH=16,AW=1026,AH=18 };
+  for(unsigned enlarged=0;enlarged<2u;enlarged++)
+  for(unsigned owner=0;owner<2u;owner++)for(unsigned pivot=0;pivot<2u;pivot++){
+    GmlRender *r=calloc(1,sizeof *r);GmlWin content={.bytecode=17};
+    FakeDevice fake={.on_demand=1};GmlRenderDeviceServices device=service(&fake);
+    uint32_t screen[W*H],reference[W*H],shadow[W*H];CHECK(r);
+    r->win=&content;r->interp=1;r->alphablend=1;r->color_write_mask=15u;
+    r->atlas=calloc(1,sizeof *r->atlas);r->tpag=calloc(1,sizeof *r->tpag);
+    r->spr=calloc(1,sizeof *r->spr);CHECK(r->atlas && r->tpag && r->spr);
+    r->n_atlas=r->n_tpag=r->n_spr=1;
+    r->atlas[0].w=AW;r->atlas[0].h=AH;r->atlas[0].px=calloc(AW*AH,4u);
+    r->spr[0]=(GmlSprite){.w=SW,.h=SH,.originx=pivot?3:0,.originy=pivot?2:0,.n_frames=1};
+    r->spr[0].frame=calloc(1,sizeof(int));CHECK(r->atlas[0].px && r->spr[0].frame);
+    r->tpag[0]=(GmlTpag){.sx=1,.sy=1,.sw=SW,.sh=SH,.tw=SW,.th=SH,.bw=SW,.bh=SH};
+    for(unsigned y=0;y<SH;y++)for(unsigned x=0;x<SW;x++){
+      uint8_t *pixel=r->atlas[0].px+((size_t)(y+1u)*AW+x+1u)*4u;
+      pixel[0]=222u;pixel[1]=113u;pixel[2]=35u;
+      pixel[3]=x==SW-1u?255u:x%7u?128u:0u;
+    }
+    for(unsigned i=0;i<W*H;i++)screen[i]=reference[i]=0xFF102030u;
+    double xs=enlarged?1025.0/1024.0:1023.0/1024.0,ys=2047.0/2048.0;
+    double x=7.0+r->spr[0].originx*xs,y=5.0+r->spr[0].originy*ys;
+    gml_render_begin(r,reference,W,H,0,0);r->interp=1;r->alphablend=1;
+    gml_draw_sprite_ext(r,0,0,x,y,xs,ys,0,0xFFFFFFu,1.0);
+    /* The preserved CPU copy includes its last source column and never
+     * writes the neighbouring column, despite rounded scale width +/-1. */
+    CHECK(reference[5u*W+7u+SW-1u]==0xFFDE7123u &&
+          reference[5u*W+7u+SW]==0xFF102030u);
+    device.observe_on_demand=fake_observe_on_demand;gml_render_bind_device(r,&device);
+    CHECK(gml_render_begin_resident_base(r,screen,W,H,0,0));
+    if(owner){CHECK(gml_render_application_surface_ensure_owned(r,W,H));
+      CHECK(gml_render_begin_resident_owned_application(r,0,0,0));}
+    gml_render_set_pending_fill(r,0xFF102030u);gml_render_flush_pending_fill(r);
+    CHECK(gml_render_scene_submit_pending(r));memcpy(shadow,r->fb,sizeof shadow);
+    r->interp=1;r->alphablend=1;int before=fake.submits;
+    gml_draw_sprite_ext(r,0,0,x,y,xs,ys,0,0xFFFFFFu,1.0);
+    int flushed=r->resident_application_pass && gml_render_scene_submit_pending(r);
+    if(!flushed || fake.submits!=before+1 || fake.last_batch_operations!=1u)
+      fprintf(stderr,"near-unit copy: enlarged=%u owner=%u pivot=%u pass=%d flush=%d submits=%d/%d ops=%u opcode=%u reads=%d shader=%d alpha=%g blend=%d\n",
+        enlarged,owner,pivot,r->resident_application_pass,flushed,fake.submits,before,
+        fake.last_batch_operations,fake.last_opcode,fake.readbacks,r->active_shader,r->alpha,r->blendmode);
+    CHECK(flushed && fake.submits==before+1 && fake.last_batch_operations==1u &&
+      fake.last_opcode==GML_RENDER_OP_TEXTURED_QUAD && !fake.readbacks && !fake.rgb_queries &&
+      !memcmp(shadow,r->fb,sizeof shadow));
+    CHECK(fake.last_quad.x[0]==7.0 && fake.last_quad.x[1]==7.0+SW &&
+      fake.last_quad.y[0]==5.0 && fake.last_quad.y[2]==5.0+SH);
+    CHECK(r->interp==1 && r->alphablend==1 && !r->blendmode && r->active_shader<0);
+    gml_render_free(r);free(r);
+  }
+  return 1;
+}
+
 static int vertex_span_packet_boundaries(void){
   uint32_t pixels[64*48],before[64*48];
   for(unsigned i=0;i<64u*48u;i++) pixels[i]=0x83456789u;
@@ -19940,6 +19993,7 @@ int main(void){
     else if(!strcmp(selected,"filtered-font-passthrough")) passed=resident_filtered_font_passthrough();
     else if(!strcmp(selected,"native-zero-alpha-triangles")) passed=resident_native_zero_alpha_triangles();
     else if(!strcmp(selected,"native-positive-alpha-triangles")) passed=resident_native_positive_alpha_triangles();
+    else if(!strcmp(selected,"filtered-near-unit-copy")) passed=resident_filtered_near_unit_copy();
     else if(!strcmp(selected,"maximised-filtered-font")) passed=resident_maximised_filtered_real_font();
     else if(!strcmp(selected,"physical-filtered-sprite")) passed=resident_physical_filtered_sprite_function();
     else if(!strcmp(selected,"wide-nearest-rows")) passed=resident_large_screen_axis_row_metadata();
@@ -20222,6 +20276,7 @@ int main(void){
   passed+=resident_empty_vertex_batches();
   passed+=resident_native_zero_alpha_triangles();
   passed+=resident_native_positive_alpha_triangles();
+  passed+=resident_filtered_near_unit_copy();
   passed+=vertex_span_packet_boundaries();
   passed+=resident_studio_unit_background_noops();
   passed+=resident_classic_depth_free_sprites();
@@ -20280,6 +20335,6 @@ int main(void){
   passed+=skip_cpu_draw_policy_preserves_observers();
   passed+=resident_numbered_rotated_native_quad();
   passed+=resident_unit_texel_magnification();
-  printf("render resource cases: passed=%d failed=%d\n",passed,316-passed);
-  return passed==316?EXIT_SUCCESS:EXIT_FAILURE;
+  printf("render resource cases: passed=%d failed=%d\n",passed,317-passed);
+  return passed==317?EXIT_SUCCESS:EXIT_FAILURE;
 }
