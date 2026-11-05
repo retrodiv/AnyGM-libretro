@@ -1533,7 +1533,7 @@ static int vertex_scene_flat_inverse_alpha(const GmlD3Vertex *vertex,int count,i
   return 1;
 }
 
-static int vertex_native_zero_alpha_triangles(GmlRender *R,const GmlD3Vertex *vertex,
+static int vertex_native_colour_triangles(GmlRender *R,const GmlD3Vertex *vertex,
                                                int count,int primitive){
   if(!gml_render_cpu_backend_native_triangles(R,NULL,0u) || !d3_depth_prepare(R)) return 0;
   uint32_t triangles=(uint32_t)(primitive==4?count/3:count-2);
@@ -1618,12 +1618,13 @@ static int vertex_batch_scene(GmlRender *R,const GmlD3Vertex *vertex,int count,
     if(v->alpha>maximum_alpha) maximum_alpha=v->alpha;
     if(v->r!=vertex[0].r || v->g!=vertex[0].g || v->b!=vertex[0].b) rgb_gradient=1;
   }
-  /* A formerly unsupported zero-alpha transition keeps its authored triangles.
-   * The device interpolates and fills these placed vertices; do not manufacture
-   * CPU coverage rows for the newly admitted variant. Other qualified rows keep
-   * their existing admission and fallback rules. */
-  if(!textured && primitive>=4 && !rgb_gradient && minimum_alpha==0.0 && maximum_alpha>0.0 &&
-     vertex_native_zero_alpha_triangles(R,projected,count,primitive)){
+  /* Uniform-colour triangles retain their placed vertices for opaque, positive
+   * and zero-crossing alpha alike. The device interpolates and fills them;
+   * constructing coverage rows here only repeats the CPU raster work. Other
+   * colours, textures, blend policies and owners keep their existing paths. */
+  if(!textured && primitive>=4 && !rgb_gradient && maximum_alpha>0.0 &&
+     (minimum_alpha==0.0 || minimum_alpha>=1.0/65536.0) &&
+     vertex_native_colour_triangles(R,projected,count,primitive)){
     result=1;goto vertex_scene_done;
   }
   coverage.span=malloc((size_t)coverage.capacity*sizeof *coverage.span);

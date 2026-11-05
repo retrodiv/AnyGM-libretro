@@ -14536,8 +14536,11 @@ static int resident_rounded_empty_axis_geometry(void){
   return 1;
 }
 
-static int resident_native_zero_alpha_triangles(void){
+static int resident_native_triangle_alpha_case(unsigned alpha_case){
+  const double alphas[4][4]={{1,1,0,0},{1,1,1,1},{.5,.5,.5,.5},{.2,.3,.7,.9}};
+  CHECK(alpha_case<4u);
   enum { W=32,H=24 };
+  for(unsigned opaque_base=0;opaque_base<2u;opaque_base++)
   for(unsigned owner=0;owner<2u;owner++)
   for(int primitive=4;primitive<=6;primitive++) for(unsigned gui=0;gui<2u;gui++)
   for(unsigned program=0;program<2u;program++){
@@ -14555,12 +14558,13 @@ static int resident_native_zero_alpha_triangles(void){
       CHECK(gml_render_application_surface_ensure_owned(r,W,H));
       CHECK(gml_render_begin_resident_owned_application(r,0,0,0));
     }
-    gml_render_set_pending_fill(r,0x40273859u);gml_render_flush_pending_fill(r);
+    gml_render_set_pending_fill(r,opaque_base?0xFF273859u:0x40273859u);gml_render_flush_pending_fill(r);
     CHECK(gml_render_scene_submit_pending(r));memcpy(shadow,r->fb,sizeof shadow);
     r->shader_pal=calloc(1,sizeof *r->shader_pal);CHECK(r->shader_pal);r->n_shader_pal=1;
     if(gui)gml_render_gui_begin(r,W,H);
     r->alphablend=1;r->blendmode=0;r->active_shader=program?0:-1;r->alpha=1.0;
     CHECK(gml_render_cpu_backend_native_triangles(r,NULL,0u));
+    if(opaque_base)CHECK(r->fb_opaque_known && r->fb_all_opaque);
     const double xy[4][2]={{-2.25,3.5},{30.5,3.5},{30.5,26.75},{-2.25,26.75}};
     const unsigned order[3][6]={{0,1,2,0,2,3},{0,1,3,2},{0,1,2,3}};
     int vertices=primitive==4?6:4;
@@ -14572,7 +14576,7 @@ static int resident_native_zero_alpha_triangles(void){
     for(int i=0;i<vertices;i++){
       unsigned v=order[primitive-4][i];
       CHECK(gml_software3d_primitive_2d_append(graphics,xy[v][0],xy[v][1],0,0,
-                                             0x375B91u,v<2u?1.0:0.0));
+                                             0x375B91u,alphas[alpha_case][v]));
     }
     int before=fake.submits;
     gml_software3d_primitive_2d_end(r);
@@ -14586,8 +14590,9 @@ static int resident_native_zero_alpha_triangles(void){
     CHECK(!memcmp(flags_before,flags_after,sizeof flags_before) &&
       !memcmp(values_before,values_after,sizeof values_before) &&
       !memcmp(colours_before,colours_after,sizeof colours_before));
+    if(opaque_base)CHECK(r->fb_opaque_known && r->fb_all_opaque);
     const GmlRenderPrimitiveRect *placed=&fake.last_primitive.payload.primitive;
-    CHECK(placed->triangle[2][5]==0.0 && placed->triangle[2][1]==26.75);
+    CHECK(placed->triangle[2][5]==alphas[alpha_case][primitive==5?2:3] && placed->triangle[2][1]==26.75);
     CHECK(!gml_render_cpu_replay_one(screen,W,H,&fake.last_primitive,NULL,NULL));
     GmlRenderDrawOp invalid=fake.last_primitive;
     invalid.payload.primitive.triangle[2][0]=NAN;CHECK(!gml_render_native_triangle_valid(&invalid));
@@ -14609,6 +14614,16 @@ static int resident_native_zero_alpha_triangles(void){
     CHECK(!gml_render_cpu_backend_native_triangles(r,NULL,0u));
     gml_render_free(r);free(r);gml_software3d_destroy(graphics);
   }
+  return 1;
+}
+
+static int resident_native_zero_alpha_triangles(void){
+  return resident_native_triangle_alpha_case(0u);
+}
+
+static int resident_native_positive_alpha_triangles(void){
+  for(unsigned alpha_case=1u;alpha_case<4u;alpha_case++)
+    CHECK(resident_native_triangle_alpha_case(alpha_case));
   return 1;
 }
 
@@ -19924,6 +19939,7 @@ int main(void){
     else if(!strcmp(selected,"filtered-text-reduction")) passed=resident_filtered_font_magnification(0,0,1);
     else if(!strcmp(selected,"filtered-font-passthrough")) passed=resident_filtered_font_passthrough();
     else if(!strcmp(selected,"native-zero-alpha-triangles")) passed=resident_native_zero_alpha_triangles();
+    else if(!strcmp(selected,"native-positive-alpha-triangles")) passed=resident_native_positive_alpha_triangles();
     else if(!strcmp(selected,"maximised-filtered-font")) passed=resident_maximised_filtered_real_font();
     else if(!strcmp(selected,"physical-filtered-sprite")) passed=resident_physical_filtered_sprite_function();
     else if(!strcmp(selected,"wide-nearest-rows")) passed=resident_large_screen_axis_row_metadata();
@@ -20205,6 +20221,7 @@ int main(void){
   passed+=resident_rounded_empty_axis_geometry();
   passed+=resident_empty_vertex_batches();
   passed+=resident_native_zero_alpha_triangles();
+  passed+=resident_native_positive_alpha_triangles();
   passed+=vertex_span_packet_boundaries();
   passed+=resident_studio_unit_background_noops();
   passed+=resident_classic_depth_free_sprites();
@@ -20263,6 +20280,6 @@ int main(void){
   passed+=skip_cpu_draw_policy_preserves_observers();
   passed+=resident_numbered_rotated_native_quad();
   passed+=resident_unit_texel_magnification();
-  printf("render resource cases: passed=%d failed=%d\n",passed,315-passed);
-  return passed==315?EXIT_SUCCESS:EXIT_FAILURE;
+  printf("render resource cases: passed=%d failed=%d\n",passed,316-passed);
+  return passed==316?EXIT_SUCCESS:EXIT_FAILURE;
 }

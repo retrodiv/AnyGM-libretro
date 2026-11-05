@@ -537,8 +537,10 @@ int gml_render_cpu_backend_native_triangles(GmlRender *r,
     operations[i].target.image=next;operations[i].target.image.content_version+=i+1u;
     operations[i].target.storage_version=1u;
   }
+  int opaque=r->fb_opaque_known && r->fb_all_opaque;
   result=gml_render_application_scene_enqueue_primitives(r,operations,count);
-  if(result){r->fb_all_transparent=0;r->fb_opaque_known=r->fb_all_opaque=0;}
+  /* Source-over and covered-alpha stamping cannot remove existing opacity. */
+  if(result){r->fb_all_transparent=0;r->fb_opaque_known=r->fb_all_opaque=opaque;}
 native_done:
   free(operations);return result;
 }
