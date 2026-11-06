@@ -475,11 +475,18 @@ static int array_zero_bits_roundtrip(void){
   gml_arr_set(dense,1,vreal(-0.0));gml_arr_set(sparse,127,vreal(-0.0));
   *gml_varmap_put(&source.globals,"dense_zeros")=dense;
   *gml_varmap_put(&source.globals,"sparse_zeros")=sparse;
-  const double numbers[]={-128,-127,127,128,-32768,-32767,32767,32768,
-                          INT32_MIN,INT32_MAX,0.125,-0.0,0.0,INFINITY};
+  uint64_t nan_bits=UINT64_C(0x7ff8000000000042);double nan_value=0;
+  memcpy(&nan_value,&nan_bits,sizeof nan_value);
+  const double numbers[]={-129,-128,-127,126,127,128,-32769,-32768,-32767,
+    32766,32767,32768,INT32_MIN,INT32_MAX,(double)INT32_MIN-1,(double)INT32_MAX+1,
+    0.125,-0.125,-0.0,0.0,INFINITY,-INFINITY,nan_value};
   const int number_count=(int)(sizeof numbers/sizeof numbers[0]);
   GmlVal scalars=gml_arr_new(number_count,vreal(0));
-  for(int i=0;i<number_count;i++)gml_arr_set(scalars,i,vreal(numbers[i]));
+  for(int i=0;i<number_count;i++){
+    char key[32];snprintf(key,sizeof key,"scalar_%02d",i);
+    gml_arr_set(scalars,i,vreal(numbers[i]));
+    *gml_varmap_put_owned(&source.globals,strdup(key))=vreal(numbers[i]);
+  }
   *gml_varmap_put(&source.globals,"scalar_bits")=scalars;
   size_t size=gml_vm_state_size(&source),written=0,used=0;
   unsigned char *bytes=malloc(size?size:1);
@@ -499,10 +506,13 @@ static int array_zero_bits_roundtrip(void){
   GmlVal *loaded=ok?gml_varmap_get(&restored.globals,"scalar_bits"):NULL;
   if(ok)ok=loaded && loaded->t==V_ARR && gml_val_array_length(*loaded)==number_count;
   for(int i=0;i<number_count && ok;i++){
+    char key[32];snprintf(key,sizeof key,"scalar_%02d",i);
     GmlVal value=gml_arr_get(*loaded,i);
-    ok=value.t==V_REAL && !memcmp(&value.d,&numbers[i],sizeof value.d);
+    GmlVal *mapped=gml_varmap_get(&restored.globals,key);
+    ok=value.t==V_REAL && !memcmp(&value.d,&numbers[i],sizeof value.d) && mapped &&
+      mapped->t==V_REAL && !memcmp(&mapped->d,&numbers[i],sizeof mapped->d);
   }
-  if(!ok)fputs("dense/sparse arrays lost scalar bits\n",stderr);
+  if(!ok)fputs("variable maps or dense/sparse arrays lost scalar bits\n",stderr);
   free(bytes);gml_vm_free(&source);gml_vm_free(&restored);return ok;
 }
 

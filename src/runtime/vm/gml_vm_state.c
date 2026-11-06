@@ -422,6 +422,26 @@ static uint32_t sw_array_identity(StateW *s,const GmlArr *array){
   s->arrays[slot]=(StateArrayEntry){array,++s->array_count};
   return 0;
 }
+/* One real codec serves generic values and numeric map entries without copying a value. */
+static inline void sw_real(StateW *s,double value){
+  if(!s->ok) return;
+  uint64_t bits=0; memcpy(&bits,&value,sizeof bits);
+  if(!bits){ sw_u8(s,STATE_REAL_ZERO); return; }
+  /* Casting is safe only after the finite range check. Negative zero and every fractional,
+   * infinite or NaN bit pattern retain the full double encoding. */
+  if(value!=0.0 && isfinite(value) && value>=INT32_MIN && value<=INT32_MAX &&
+     value==(double)(int32_t)value){
+    if(value>=INT8_MIN && value<=INT8_MAX){
+      sw_u8(s,STATE_REAL_I8);sw_u8(s,(uint8_t)(int8_t)value);return;
+    }
+    if(value>=INT16_MIN && value<=INT16_MAX){
+      uint16_t bits=(uint16_t)(int16_t)value;
+      sw_u8(s,STATE_REAL_I16);sw_u8(s,(uint8_t)bits);sw_u8(s,(uint8_t)(bits>>8));return;
+    }
+    sw_u8(s,STATE_REAL_INTEGER); sw_i32(s,(int32_t)value); return;
+  }
+  sw_u8(s,V_REAL);sw_d(s,value);
+}
 static void sw_val(StateW *s, GmlVal v, int depth){
   if(!s->ok) return;
   if(v.t==V_ARR){
@@ -430,25 +450,8 @@ static void sw_val(StateW *s, GmlVal v, int depth){
     if(id || !v.arr){ sw_u8(s,STATE_ARRAY_REF); sw_u32(s,id); return; }
     if(depth>=STATE_MAX_ARRAY_DEPTH){ s->ok=0; return; }
   }
-  if(v.t==V_REAL){
-    uint64_t bits=0; memcpy(&bits,&v.d,sizeof bits);
-    if(!bits){ sw_u8(s,STATE_REAL_ZERO); return; }
-    /* Casting is safe only after the finite range check. Negative zero and every fractional,
-     * infinite or NaN bit pattern retain the full double encoding. */
-    if(v.d!=0.0 && isfinite(v.d) && v.d>=INT32_MIN && v.d<=INT32_MAX &&
-       v.d==(double)(int32_t)v.d){
-      if(v.d>=INT8_MIN && v.d<=INT8_MAX){
-        sw_u8(s,STATE_REAL_I8);sw_u8(s,(uint8_t)(int8_t)v.d);return;
-      }
-      if(v.d>=INT16_MIN && v.d<=INT16_MAX){
-        uint16_t bits=(uint16_t)(int16_t)v.d;
-        sw_u8(s,STATE_REAL_I16);sw_u8(s,(uint8_t)bits);sw_u8(s,(uint8_t)(bits>>8));return;
-      }
-      sw_u8(s,STATE_REAL_INTEGER); sw_i32(s,(int32_t)v.d); return;
-    }
-  }
+  if(v.t==V_REAL){sw_real(s,v.d);return;}
   sw_u8(s,(uint8_t)v.t);
-  if(v.t==V_REAL){ sw_d(s,v.d); return; }
   if(v.t==V_OBJECT){
     if(!isfinite(v.d) || v.d<0 || v.d>UINT32_MAX || floor(v.d)!=v.d){ s->ok=0; return; }
     sw_u32(s,(uint32_t)v.d);
@@ -845,7 +848,8 @@ static void sw_varmap(StateW *s,GmlVarMap *m){
       }
       sw_encoded_string(s,slot->key,text);
     }
-    sw_val(s,*value,0);
+    if(value->t==V_REAL) sw_real(s,value->d);
+    else sw_val(s,*value,0);
   }
   record->key_bytes=keys->key_bytes;
 }
