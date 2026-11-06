@@ -2234,9 +2234,8 @@ static int scene_preflight(GmlGpuBackend *backend,const GmlRenderDrawBatch *batc
   return !extended_quads || large_rows;
 }
 
-static int scene_prepare_geometry(GmlGpuBackend *backend,char *error,size_t error_capacity){
+static int scene_prepare_geometry(GmlGpuBackend *backend){
   GlScene *scene=&backend->scene;
-  if(!gml_gpu_opengl_scene_program(backend,error,error_capacity)) return 0;
   if(!scene->vertices){
     scene->vertices=(float*)malloc((size_t)GL_SCENE_MAX_QUADS*6u*GL_SCENE_VERTEX_FLOATS*
                                    sizeof(float));
@@ -2310,7 +2309,7 @@ int gml_gpu_opengl_scene_prepare(GmlGpuBackend *backend,uint32_t width,uint32_t 
      width>(uint32_t)INT_MAX || height>(uint32_t)INT_MAX ||
      width>(uint32_t)backend->scene.max_texture_size ||
      height>(uint32_t)backend->scene.max_texture_size) return 0;
-  if(!scene_prepare_geometry(backend,error,error_capacity) ||
+  if(!scene_prepare_geometry(backend) ||
      !gml_gpu_opengl_scene_exact_program(backend,0,error,error_capacity) ||
      !gml_gpu_opengl_scene_exact_program(backend,2,error,error_capacity) ||
      !gml_gpu_opengl_scene_exact_program(backend,3,error,error_capacity)) return 0;
@@ -3321,7 +3320,7 @@ GmlRenderExecutionResult gml_gpu_opengl_scene_submit(GmlGpuBackend *backend,
   result.status=GML_RENDER_EXEC_UNSUPPORTED;
   if(!scene_preflight(backend,batch)) return result;
   result.status=GML_RENDER_EXEC_RESOURCE_ERROR;
-  if(!scene_prepare_geometry(backend,error,error_capacity)) return result;
+  if(!scene_prepare_geometry(backend)) return result;
   backend->gl.Disable(GL_BLEND);
   backend->gl.Disable(GL_DEPTH_TEST);
   backend->gl.Disable(GL_STENCIL_TEST);
@@ -3654,7 +3653,8 @@ GmlRenderExecutionResult gml_gpu_opengl_scene_submit(GmlGpuBackend *backend,
       GLint rect[4]={(GLint)op->payload.quad.x[0],(GLint)op->payload.quad.y[0],
         (GLint)(op->payload.quad.x[1]-op->payload.quad.x[0]),
         (GLint)(op->payload.quad.y[2]-op->payload.quad.y[0])};
-      if(!gml_gpu_opengl_scene_reduce_rgb(backend,target,0u) ||
+      if(!gml_gpu_opengl_scene_program(backend,error,error_capacity) ||
+         !gml_gpu_opengl_scene_reduce_rgb(backend,target,0u) ||
          !gml_gpu_opengl_scene_reduce_rgb(backend,pending_source,1u) ||
          !gml_render_gpu_opengl_draw_textured_quad(op,&batch->states[op->state_index],
            pending_source->width,pending_source->height,pending_source->rendered_origin,

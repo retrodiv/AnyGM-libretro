@@ -259,7 +259,7 @@ static int scene_preparation_case(void){
     GmlGpuCounters counters={0};
     uint32_t current=1u;
     unsigned texture,compiles,queries;
-    unsigned preparation_compiles=api==GML_GPU_API_OPENGLES3?6u:4u;
+    unsigned preparation_compiles=api==GML_GPU_API_OPENGLES3?4u:2u;
     context.userdata=&current;
     context.is_current=completed_context_is_current;
     anygm_test_graphics_reset();
@@ -272,7 +272,7 @@ static int scene_preparation_case(void){
     REQUIRE(anygm_test_graphics_compile_calls()==compiles,"invalid extents compile nothing");
     REQUIRE(gml_gpu_prepare_scene(gpu,16u,12u),"common scene resources prepared");
     REQUIRE(anygm_test_graphics_compile_calls()==compiles+preparation_compiles,
-            "common scene, composition and the fixed font program compile once");
+            "composition and fixed font programs compile once without the unused general program");
     texture=anygm_test_graphics_first_texture_with_format(GL_RGBA8);
     REQUIRE(texture && anygm_test_graphics_texture_width(texture)==16 &&
             anygm_test_graphics_texture_height(texture)==12 &&
@@ -1923,6 +1923,41 @@ static int scene_hardware_filtered_batch_case(unsigned kind){
       }
     }
     gml_gpu_destroy(gpu,1);free(ops);
+  }
+  return 1;
+}
+
+static int scene_general_program_demand_case(void){
+  for(unsigned api=0;api<2u;api++){
+    GmlGpuContext context=fake_context(api?GML_GPU_API_OPENGL_CORE:GML_GPU_API_OPENGLES3);
+    anygm_test_graphics_reset();GmlGpu *gpu=gml_gpu_create();
+    REQUIRE(gpu && gml_gpu_context_reset(gpu,&context),"deferred general program context");
+    REQUIRE(gml_gpu_prepare_scene(gpu,16u,16u) && !gpu->backend->scene.main_program.program,
+      "scene storage preparation does not compile an unused general program");
+    GmlRenderDeviceServices device;gml_gpu_device_services(gpu,&device);
+    GmlRenderDrawOp clear={0};GmlRenderDrawBatch batch={&clear,1u,NULL,0u};
+    clear.opcode=GML_RENDER_OP_CLEAR;clear.payload.clear_colour=0xFF273859u;
+    clear.target=(GmlRenderTargetRef){.image={GML_RENDER_RESOURCE_APPLICATION,32u,1u,1u},
+      .storage_version=1u,.width=16u,.height=16u,.pixel_format=GML_RENDER_PIXEL_ARGB8888,
+      .region={0,0,16u,16u}};
+    anygm_test_graphics_fail_compile(1);
+    GmlRenderExecutionResult result=device.submit(device.context,&batch);
+    REQUIRE(result.status==GML_RENDER_EXEC_ACCEPTED && result.accepted_prefix==1u &&
+      !gpu->backend->scene.main_program.program,
+      "a shader-free clear remains available when shader compilation would fail");
+    anygm_test_graphics_fail_compile(0);
+    GlSceneProgram *program=gml_gpu_opengl_scene_draw_program(gpu->backend,34u,0,NULL,0);
+    REQUIRE(program==&gpu->backend->scene.main_program && program->program,
+      "a general draw builds its required program on demand");
+    unsigned compiled=anygm_test_graphics_compile_calls();
+    REQUIRE(gml_gpu_opengl_scene_draw_program(gpu->backend,34u,0,NULL,0)==program &&
+      anygm_test_graphics_compile_calls()==compiled,"the demanded general program is reused");
+    anygm_test_graphics_forbid_calls();gml_gpu_context_lost(gpu);
+    REQUIRE(!anygm_test_graphics_calls_after_forget(),"loss forgets demanded programs without calls");
+    anygm_test_graphics_allow_calls();
+    REQUIRE(gml_gpu_context_reset(gpu,&context) && !gpu->backend->scene.main_program.program,
+      "a replacement context starts without a stale general program");
+    gml_gpu_destroy(gpu,1);
   }
   return 1;
 }
@@ -7503,6 +7538,7 @@ int main(int argc,char **argv){
     {"scene_white_tint_programs",scene_white_tint_programs_case},
     {"scene_white_tint_batches",scene_white_tint_batches_case},
     {"scene_opaque_unit_surface_copy",scene_opaque_unit_surface_copy_case},
+    {"scene_general_program_demand",scene_general_program_demand_case},
     {"scene_staged_upload",scene_staged_upload_case},
     {"scene_optional_entry_refusal",scene_optional_entry_refusal_case},
     {"scene_content_source_orientation",scene_content_source_orientation_case},
