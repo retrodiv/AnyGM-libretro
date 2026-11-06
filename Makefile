@@ -894,9 +894,10 @@ $(TEST_DIR)/test_font_state: tests/integration/test_font_state.c \
 	$(CC) $(TEST_CPPFLAGS) $(CFLAGS) $(filter-out %.h,$^) -o $@ -lm -pthread $(CXX_RUNTIME_LDLIBS)
 
 $(TEST_DIR)/test_engine_instances: tests/integration/test_engine_instances.c \
+	tests/integration/state_fixture_projection.h \
 	tests/support/synthetic_content.c $(RUNTIME_OBJECTS) $(TEST_HOST_OBJECTS)
 	mkdir -p $(dir $@)
-	$(call link_runtime_test,$(TEST_CPPFLAGS))
+	$(CC) $(TEST_CPPFLAGS) $(CFLAGS) $(filter-out %.h,$^) -o $@ -lm -pthread $(CXX_RUNTIME_LDLIBS)
 
 $(TEST_DIR)/test_mouse_input: tests/integration/test_mouse_input.c \
 	tests/support/synthetic_content.c tests/support/anygm_test_runner.c $(RUNTIME_OBJECTS) $(TEST_HOST_OBJECTS)

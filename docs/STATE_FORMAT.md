@@ -20,9 +20,25 @@ failed partial reads leave the canonical image unpublished and invalid as a
 current resource. See R03-P9-INCREMENTAL-CHECKPOINT in
 [the renderer map](RENDERER_BACKENDS.md) for owners and controls.
 
-The current AnyGM save-state schema is `40`. It is the format transported by
+The current AnyGM save-state schema is `41`. It is the format transported by
 libretro frontends for manual save states, automatic state slots, and rewind
 snapshots. Those features remain supported.
+
+Schema `41` introduces VM schema `23`. Strings use a one-byte kind followed by a
+canonical unsigned base-128 integer. Kind zero defines runtime text (length then
+bytes); kind one names the content string index; kind two references a preceding
+runtime-text definition. Runtime-text definitions are scoped to one snapshot,
+with at most one million definitions and one GiB of expanded runtime text. The
+reader copies owned strings and rejects invalid kinds, references and integers.
+No runtime pointer memo persists across snapshots.
+
+Real tags `8` and `9` retain exact nonzero signed 8-bit and 16-bit integers;
+tag `7` retains the 32-bit form. Every structure slot packs its seven generation
+bits and live flag into one byte, including dead slots. Logical order, free-list
+order and handles are unchanged. Flat arrays up to one million elements select
+the existing dense form when avoiding sparse indices costs fewer bytes; legacy
+2D spans keep their sparse walk. Only positive zero is elided: negative-zero bits
+survive both forms. Older public and VM layouts reject without legacy readers.
 
 Schema `40` introduces VM schema `22`. Value tags occupy one byte. Real positive
 zero uses tag `6` without a payload; nonzero exact signed 32-bit integers use tag
@@ -460,7 +476,7 @@ same form without an intervening mutation produces identical bytes.
 ## VM payload ownership
 
 `src/core/engine_state.c` owns the root framing and section transaction.
-Within the VM section, `src/runtime/vm/gml_vm_state.c` alone owns schema `22`,
+Within the VM section, `src/runtime/vm/gml_vm_state.c` alone owns schema `23`,
 field order, value-graph encoding, sizing, and restore scratch.
 
 Builtin resources have a separate storage and lifetime owner, not a separate

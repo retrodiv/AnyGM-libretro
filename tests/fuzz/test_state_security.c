@@ -1120,12 +1120,11 @@ static int map_reference_state_cases(const AnygmHostServices *services,
   size_t start=STATE_HEADER_SIZE+(size_t)read_u64(baseline+64)+
     (size_t)read_u64(baseline+72),end=start+(size_t)read_u64(baseline+80);
   /* The rooted structures were marked by the save-time collector. */
-  uint8_t prefix[]={0,0,0,0,1,0,0,0,1,3};
-  write_u32(prefix,engine->vm.struct_gen[1]);
+  uint8_t prefix[]={(uint8_t)(0x80u|engine->vm.struct_gen[1]),1,3};
   size_t reference=SIZE_MAX,matches=0;
-  for(size_t i=start;i+14<=end;i++) if(!memcmp(baseline+i,prefix,sizeof prefix) &&
-      (baseline[i+13]&0x80)){
-    reference=i+10; matches++;
+  for(size_t i=start;i+7<=end;i++) if(!memcmp(baseline+i,prefix,sizeof prefix) &&
+      (baseline[i+6]&0x80)){
+    reference=i+3; matches++;
   }
   if(matches!=1) fprintf(stderr,"state security: map reference matches=%zu\n",matches);
   ok=matches==1 && anygm_state_load(engine,baseline,size)==ANYGM_OK &&
@@ -1140,8 +1139,19 @@ static int map_reference_state_cases(const AnygmHostServices *services,
     ok=reject_payload_u32(engine,candidate,size,baseline,size,reference,
                           id+1,"forward variable-map reference");
   }
-  if(ok) ok=reject_payload_u32(engine,candidate,size,baseline,size,start+4,21,
-                               "previous map-dictionary-free VM schema");
+  if(ok){
+    const char text[]="record_scalar";size_t literal=SIZE_MAX,hits=0;
+    for(size_t i=start+2;i+sizeof text-1<=end;i++)
+      if(!memcmp(baseline+i,text,sizeof text-1) && !baseline[i-2] &&
+         baseline[i-1]==sizeof text-1){literal=i-2;hits++;}
+    ok=hits==1;
+    if(ok)ok=reject_payload_u32(engine,candidate,size,baseline,size,literal,3,
+                                "invalid string record kind");
+    if(ok)ok=reject_payload_u32(engine,candidate,size,baseline,size,literal,0x7f02,
+                                "unknown runtime string reference");
+  }
+  if(ok) ok=reject_payload_u32(engine,candidate,size,baseline,size,start+4,22,
+                               "previous text-dictionary-free VM schema");
 done:
   free(candidate);free(baseline);anygm_destroy(engine);
   return ok?1:fail("variable-map reference transaction failed");
@@ -1206,7 +1216,8 @@ int main(void){
 
   /* Put the first definition in argument zero: later roots must refer back to it, including
    * the self-cycle. This also makes transactional byte equality sensitive to lost aliases. */
-  GmlVal graph=gml_arr_new(2,vreal(7));
+  GmlVal graph=gml_arr_new(128,vreal(0));
+  gml_arr_set(graph,1,vreal(7));
   gml_arr_set(graph,0,graph);
   engine->vm.script_args[0]=engine->vm.script_args[1]=graph;
   engine->vm.script_argc=2;
@@ -1299,20 +1310,20 @@ int main(void){
     ok=reject_unchanged(engine,candidate,state_size,baseline,state_size,"populated deleted path");
   }
 
-  /* VM header and fixed scalar prefix end at 132. The sparse two-element definition has
-   * a self reference then a real; argument one is the first cross-root reference. */
+  /* Keep the two populated entries in a sparse128-element array. The first is a self
+   * reference, the second a small integer; argument one is the first cross-root reference. */
   StateCursor graph_cursor={baseline,state_size,vm_start+132,1};
   if(!cursor_skip(&graph_cursor,1) || baseline[vm_start+132]!=V_ARR ||
-     cursor_u32(&graph_cursor)!=UINT32_C(0x80000002))
+     cursor_u32(&graph_cursor)!=UINT32_C(0x80000080))
     ok=fail("array mutation fixture does not identify the first definition");
-  graph_cursor.offset=vm_start+167;
-  if(!cursor_skip(&graph_cursor,1) || baseline[vm_start+167]!=4 ||
+  graph_cursor.offset=vm_start+164;
+  if(!cursor_skip(&graph_cursor,1) || baseline[vm_start+164]!=4 ||
      cursor_u32(&graph_cursor)!=1)
     ok=fail("array mutation fixture does not identify the cross-root reference");
   if(ok) ok=reject_payload_u32(engine,candidate,state_size,baseline,state_size,
                                vm_start+154,2,"forward array reference inside a definition");
   if(ok) ok=reject_payload_u32(engine,candidate,state_size,baseline,state_size,
-                               vm_start+168,UINT32_MAX,"unknown cross-root array reference");
+                               vm_start+165,UINT32_MAX,"unknown cross-root array reference");
   if(ok) ok=reject_payload_u32(engine,candidate,state_size,baseline,state_size,
                                vm_start+158,0,"duplicate sparse array index");
   if(ok) ok=reject_payload_u32(engine,candidate,state_size,baseline,state_size,

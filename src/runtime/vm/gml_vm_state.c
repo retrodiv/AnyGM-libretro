@@ -18,7 +18,7 @@
 #include <limits.h>
 
 /* ---------------- save-state runtime serialization ---------------- */
-enum { GML_VM_STATE_SCHEMA=22 };
+enum { GML_VM_STATE_SCHEMA=23 };
 enum { STATE_MAX_TILEMAPS=512, STATE_TILEMAP_RECORD_BYTES=56 };
 #define GML_VM_STATE_MAGIC UINT32_C(0x534D5641)
 /* IDs are assigned in canonical traversal order, never from addresses. Zero is the null array;
@@ -29,8 +29,13 @@ typedef struct { const GmlArr *array; uint32_t id; } StateArrayEntry;
 /* Map dictionaries live for one traversal only. Addresses are lookup keys, never wire data.
  * Equal maps share a record, not storage: restore copies their independent variable tables. */
 enum { STATE_MAX_MAPS=2000000, STATE_MAX_MAP_ENTRIES=16000000,
-       STATE_REAL_ZERO=6, STATE_REAL_INTEGER=7 };
+       STATE_REAL_ZERO=6, STATE_REAL_INTEGER=7, STATE_REAL_I8=8, STATE_REAL_I16=9,
+       STATE_MAX_STRINGS=1000000 };
 typedef struct { const GmlVarMap *map; uint64_t hash; uint32_t id,count; } StateMapEntry;
+typedef struct { const char *text; uint64_t hash; uint32_t id,length; } StateStringEntry;
+typedef struct { const uint8_t *text; uint32_t length; } StateStringRef;
+static uint64_t state_map_mix(uint64_t value);
+static uint64_t state_map_text_hash(const char *text);
 /* A path a run can build: mp_grid_path fills one cell per step of a route, so the grid's cell
  * count is the ceiling, and path_add_point cannot be asked for more than a state could hold. */
 #define GML_STATE_MAX_PATH_POINTS GML_PATH_MAX_POINTS
@@ -77,6 +82,9 @@ struct GmlVmStateWriter {
   StateMapEntry *maps;
   size_t map_capacity;
   uint32_t map_count,map_entries;
+  StateStringEntry *strings;
+  size_t string_capacity,string_bytes;
+  uint32_t string_count;
 };
 struct GmlVmStateReader {
   const uint8_t *data;
@@ -90,9 +98,16 @@ struct GmlVmStateReader {
   GmlVarMap **maps;
   size_t map_capacity;
   uint32_t map_count,map_entries;
+  StateStringRef *strings;
+  size_t string_capacity,string_bytes;
+  uint32_t string_count;
 };
 typedef GmlVmStateWriter StateW;
 typedef GmlVmStateReader StateR;
+static void sw_release(StateW *s){
+  for(size_t i=0;i<s->string_capacity;i++) free((void*)s->strings[i].text);
+  free(s->strings);free(s->maps);free(s->arrays);
+}
 
 static int state_debug_enabled(const GmlVM *vm){
   return vm&&anygm_host_development_setting(vm->host,"GML_STATE_DEBUG")!=NULL;
@@ -122,6 +137,21 @@ static void sw_u32(StateW *s, uint32_t v){
 }
 static void sw_u8(StateW *s,uint8_t value){ sw_raw(s,&value,1); }
 static uint8_t sr_u8(StateR *s){ uint8_t value=0; sr_raw(s,&value,1); return value; }
+static void sw_varuint(StateW *s,uint32_t value){
+  do { uint8_t byte=(uint8_t)(value&127u); value>>=7;
+    sw_u8(s,byte|(value?128u:0u));
+  } while(value);
+}
+static uint32_t sr_varuint(StateR *s){
+  uint32_t value=0;
+  for(unsigned i=0;i<5 && s->ok;i++){
+    uint8_t byte=sr_u8(s);
+    if((i==4 && (byte&0xf0u)) || (i && !byte)){ s->ok=0; return 0; }
+    value|=(uint32_t)(byte&127u)<<(7*i);
+    if(!(byte&128u)) return value;
+  }
+  s->ok=0; return 0;
+}
 static void sw_i32(StateW *s, int v){ sw_u32(s,(uint32_t)(int32_t)v); }
 static void sw_i64(StateW *s, int64_t v){
   uint64_t u=(uint64_t)v; uint8_t b[8]; for(unsigned i=0;i<8;i++) b[i]=(uint8_t)(u>>(i*8));
@@ -209,24 +239,82 @@ static uint32_t state_string_encoding(StateW *s, const char *p){
   return (uint32_t)n;
 }
 static void sw_encoded_string(StateW *s,const char *p,uint32_t encoding){
-  sw_u32(s,encoding);
-  if(!(s->compact_strings && (encoding&0x80000000u)))
-    sw_raw(s,p?p:"",encoding);
+  if(!p) p="";
+  if(s->compact_strings && (encoding&0x80000000u)){
+    sw_u8(s,1); sw_varuint(s,encoding&0x7fffffffu); return;
+  }
+  /* Unlike the content-pointer memo, runtime text sharing is scoped to this snapshot. */
+  if(encoding>1024u*1024u || encoding>1024u*1024u*1024u-s->string_bytes){
+    s->ok=0; return;
+  }
+  s->string_bytes+=encoding;
+  if(!s->string_capacity ||
+     (s->string_count>=s->string_capacity/2 && s->string_count<STATE_MAX_STRINGS)){
+    size_t capacity=s->string_capacity?s->string_capacity*2:64;
+    StateStringEntry *entries=calloc(capacity,sizeof(*entries));
+    if(!entries){ s->ok=0; return; }
+    for(size_t i=0;i<s->string_capacity;i++) if(s->strings[i].text){
+      StateStringEntry entry=s->strings[i];
+      size_t slot=(size_t)entry.hash&(capacity-1);
+      while(entries[slot].text) slot=(slot+1)&(capacity-1);
+      entries[slot]=entry;
+    }
+    free(s->strings);s->strings=entries;s->string_capacity=capacity;
+  }
+  uint64_t hash=state_map_mix(state_map_text_hash(p));
+  size_t slot=(size_t)hash&(s->string_capacity-1);
+  while(s->strings[slot].text){
+    StateStringEntry *entry=&s->strings[slot];
+    if(entry->hash==hash && entry->length==encoding && !memcmp(entry->text,p,encoding)){
+      sw_u8(s,2);sw_varuint(s,entry->id);return;
+    }
+    slot=(slot+1)&(s->string_capacity-1);
+  }
+  if(s->string_count>=STATE_MAX_STRINGS){ s->ok=0; return; }
+  /* Own definitions so a caller's transient formatting buffer may be reused before the
+   * traversal ends. Pointer lifetime is not part of the string writer contract. */
+  char *owned=malloc((size_t)encoding+1);
+  if(!owned){ s->ok=0; return; }
+  memcpy(owned,p,encoding);owned[encoding]=0;
+  s->strings[slot]=(StateStringEntry){owned,hash,s->string_count++,encoding};
+  sw_u8(s,0);sw_varuint(s,encoding);sw_raw(s,p,encoding);
 }
 static void sw_str(StateW *s,const char *p){
   sw_encoded_string(s,p,state_string_encoding(s,p));
 }
 static char *sr_str_dup(StateR *s){
-  uint32_t n=sr_u32(s);
-  if(s->compact_strings && (n&0x80000000u)){
-    uint32_t idx=n&0x7fffffffu;
-    const char *p=(s->vm && s->vm->win && idx<(uint32_t)s->vm->win->n_strs) ? s->vm->win->strs[idx] : "";
-    return strdup(p?p:"");
+  unsigned tag=sr_u8(s);
+  uint32_t code=sr_varuint(s),n=0;
+  const uint8_t *text=NULL;
+  if(!s->ok) return NULL;
+  if(tag==1){
+    GmlWin *win=s->vm?s->vm->win:NULL;
+    if(!win || code>=(uint32_t)win->n_strs){ s->ok=0;return NULL; }
+    char *p=strdup(win->strs[code]?win->strs[code]:"");
+    if(!p) s->ok=0;
+    return p;
   }
-  if(n>1024*1024){ state_debug(s->vm,"string too large",s->pos,n); s->ok=0; return strdup(""); }
+  if(tag==2){
+    if(code>=s->string_count){ s->ok=0;return NULL; }
+    text=s->strings[code].text;n=s->strings[code].length;
+  } else if(!tag){
+    n=code;
+    if(n>1024u*1024u || s->pos>s->cap || n>s->cap-s->pos ||
+       s->string_count>=STATE_MAX_STRINGS){ s->ok=0;return NULL; }
+    if(s->string_count==s->string_capacity){
+      size_t capacity=s->string_capacity?s->string_capacity*2:64;
+      StateStringRef *strings=realloc(s->strings,capacity*sizeof(*strings));
+      if(!strings){ s->ok=0;return NULL; }
+      s->strings=strings;s->string_capacity=capacity;
+    }
+    text=s->data+s->pos;s->pos+=n;
+    s->strings[s->string_count++]=(StateStringRef){text,n};
+  } else { s->ok=0;return NULL; }
+  if(n>1024u*1024u*1024u-s->string_bytes){ s->ok=0;return NULL; }
+  s->string_bytes+=n;
   char *p=malloc((size_t)n+1);
   if(!p){ s->ok=0; return NULL; }
-  sr_raw(s,p,n); p[n]=0; return p;
+  memcpy(p,text,n);p[n]=0;return p;
 }
 static const char *state_intern_ex(GmlVM *vm, char *owned, int *remains_owned){
   if(remains_owned) *remains_owned=0;
@@ -257,7 +345,8 @@ void gml_vm_state_runtime_strings_clear(GmlVM *vm){
   vm->state_runtime_string_count=0;
 }
 static int state_val_is_default_zero(GmlVal v){
-  return v.t==V_REAL && v.d==0.0;
+  uint64_t bits=0;memcpy(&bits,&v.d,sizeof bits);
+  return v.t==V_REAL && !bits;
 }
 static void sw_val(StateW *s, GmlVal v, int depth);
 static int state_array_row_width(GmlArr *A, int row){
@@ -340,6 +429,13 @@ static void sw_val(StateW *s, GmlVal v, int depth){
      * infinite or NaN bit pattern retain the full double encoding. */
     if(v.d!=0.0 && isfinite(v.d) && v.d>=INT32_MIN && v.d<=INT32_MAX &&
        v.d==(double)(int32_t)v.d){
+      if(v.d>=INT8_MIN && v.d<=INT8_MAX){
+        sw_u8(s,STATE_REAL_I8);sw_u8(s,(uint8_t)(int8_t)v.d);return;
+      }
+      if(v.d>=INT16_MIN && v.d<=INT16_MAX){
+        uint16_t bits=(uint16_t)(int16_t)v.d;
+        sw_u8(s,STATE_REAL_I16);sw_u8(s,(uint8_t)bits);sw_u8(s,(uint8_t)(bits>>8));return;
+      }
       sw_u8(s,STATE_REAL_INTEGER); sw_i32(s,(int32_t)v.d); return;
     }
   }
@@ -357,7 +453,15 @@ static void sw_val(StateW *s, GmlVal v, int depth){
     if(A->len<0 || A->len>16000000 || A->cap<A->len || (A->len && !A->data)){
       s->ok=0; return;
     }
-    if(s->compact_strings && A->len>=0 && A->len<0x7fffffff){
+    int sparse=1;
+    if(!A->is_2d && A->len<=1000000){
+      size_t occupied=0;
+      for(int i=0;i<A->len;i++) if(!state_val_is_default_zero(A->data[i])) occupied++;
+      /* Dense values avoid an index for every entry; zero has a one-byte encoding. Sparse
+       * legacy 2D spans retain their established bounded walk through occupied rows. */
+      sparse=(size_t)A->len-occupied>4*occupied;
+    }
+    if(sparse){
       sw_u32(s,0x80000000u | (uint32_t)A->len);
       if(s->array_meta){
         uint32_t h=(A->is_2d && A->height2d>0) ? (uint32_t)A->height2d : 0;
@@ -397,6 +501,11 @@ static GmlVal sr_val(GmlVM *vm, StateR *s, int depth){
   uint32_t t=sr_u8(s);
   if(t==STATE_REAL_ZERO) return vreal(0);
   if(t==STATE_REAL_INTEGER) return vreal(sr_i32(s));
+  if(t==STATE_REAL_I8) return vreal((int8_t)sr_u8(s));
+  if(t==STATE_REAL_I16){
+    uint16_t low=sr_u8(s),high=sr_u8(s);
+    return vreal((int16_t)(low|(high<<8)));
+  }
   if(t==V_REAL) return vreal(sr_d(s));
   if(t==V_OBJECT) return vobject(sr_u32(s));
   if(t==V_STR) return vstr(state_runtime_string(s,sr_str_dup(s)));
@@ -557,6 +666,7 @@ size_t gml_vm_state_measure_string(GmlVM *vm,const char *value){
   writer.compact_strings=1;
   writer.array_meta=1;
   sw_str(&writer,value);
+  sw_release(&writer);
   return writer.pos;
 }
 size_t gml_vm_state_measure_value(GmlVM *vm,GmlVal value){
@@ -566,7 +676,7 @@ size_t gml_vm_state_measure_value(GmlVM *vm,GmlVal value){
   writer.compact_strings=1;
   writer.array_meta=1;
   sw_val(&writer,value,0);
-  free(writer.arrays);
+  sw_release(&writer);
   return writer.ok?writer.pos:0;
 }
 static int state_var_slot_compare(const void *left,const void *right){
@@ -596,7 +706,7 @@ static uint64_t state_map_hash(const GmlVarMap *map,uint32_t *count){
     if(value.t==V_REAL || value.t==V_OBJECT) memcpy(&bits,&value.d,sizeof bits);
     else if(value.t==V_STR) bits=state_map_text_hash(value.s);
     else if(value.t==V_ARR) bits=(uintptr_t)value.arr;
-    hash+=state_map_mix(state_map_text_hash(slot->key)^state_map_mix(bits)^value.t);
+    hash+=state_map_mix(slot->hash^state_map_mix(bits)^value.t);
     (*count)++;
   }
   return state_map_mix(hash^*count);
@@ -659,7 +769,16 @@ static void sw_varmap(StateW *s, GmlVarMap *m){
   if(!n){ sw_u32(s,0); return; }
   StateMapEntry *record=state_map_entry(s,m,hash,n);
   if(!record) return;
-  if(record->map){ sw_u32(s,UINT32_C(0x80000000)|record->id); return; }
+  if(record->map){
+    for(int i=0;i<m->cap;i++) if(m->slots[i].key){
+      uint32_t text=state_string_encoding(s,m->slots[i].key);
+      if(!(text&UINT32_C(0x80000000))){
+        if(text>1024u*1024u*1024u-s->string_bytes){ s->ok=0;return; }
+        s->string_bytes+=text;
+      }
+    }
+    sw_u32(s,UINT32_C(0x80000000)|record->id); return;
+  }
   *record=(StateMapEntry){m,hash,s->map_count++,n};
   sw_u32(s,n);
   if(!s->vm || n>(uint32_t)INT_MAX){ s->ok=0; return; }
@@ -694,6 +813,11 @@ static int sr_varmap(GmlVM *vm, StateR *s, GmlVarMap *m){
     s->map_entries+=n;
     for(int i=0;i<source->cap && s->ok;i++) if(source->slots[i].key){
       const GmlVarSlot *slot=&source->slots[i];
+      if(slot->key_owned){
+        size_t bytes=strlen(slot->key);
+        if(bytes>1024u*1024u*1024u-s->string_bytes){ s->ok=0;break; }
+        s->string_bytes+=bytes;
+      }
       char *key=slot->key_owned?strdup(slot->key):NULL;
       if(slot->key_owned && !key){ s->ok=0; break; }
       GmlVal *value=slot->key_owned
@@ -836,7 +960,7 @@ static void vm_state_profile_globals(GmlVM *vm){
     StateW ts={0}; ts.ok=1; ts.vm=vm; ts.compact_strings=1;
     sw_str(&ts,vm->globals.slots[i].key);
     sw_val(&ts,vm->globals.slots[i].val,0);
-    free(ts.arrays); free(ts.maps);
+    sw_release(&ts);
     total += ts.pos;
     for(int k=0;k<10;k++) if(ts.pos > top[k].bytes){
       memmove(&top[k+1],&top[k],(size_t)(9-k)*sizeof(top[0]));
@@ -856,7 +980,7 @@ static void vm_state_profile_globals(GmlVM *vm){
   for(int i=0;i<vm->inst_count;i++){
     StateW ts={0}; ts.ok=1; ts.vm=vm; ts.compact_strings=1; ts.array_meta=1;
     sw_instance(&ts,&vm->inst[i]);
-    free(ts.arrays); free(ts.maps);
+    sw_release(&ts);
     inst_total += ts.pos;
     const char *name="?";
     int obj=vm->inst[i].obj;
@@ -878,7 +1002,7 @@ static void vm_state_profile_globals(GmlVM *vm){
     struct_live++;
     StateW ts={0}; ts.ok=1; ts.vm=vm; ts.compact_strings=1; ts.array_meta=1;
     sw_struct(&ts,vm->structs[i],state_struct_id(vm,i));
-    free(ts.arrays); free(ts.maps);
+    sw_release(&ts);
     struct_total += ts.pos;
     const char *name="?";
     GmlVal *nm=gml_varmap_get(&vm->structs[i]->vars,"__name");
@@ -1438,8 +1562,8 @@ static void sw_vm(StateW *s, GmlVM *vm){
   for(int i=0;i<vm->inst_count;i++) sw_instance(s,&vm->inst[i]);
   sw_i32(s,vm->n_structs);
   for(int i=0;i<vm->n_structs;i++){
-    sw_i32(s,vm->struct_gen ? (int)(vm->struct_gen[i]&0x7F) : 0);
-    sw_i32(s,vm->structs[i]!=NULL);
+    unsigned generation=vm->struct_gen?(vm->struct_gen[i]&0x7Fu):0u;
+    sw_u8(s,(uint8_t)(generation|(vm->structs[i]?0x80u:0u)));
     if(vm->structs[i]) sw_struct(s,vm->structs[i],state_struct_id(vm,i));
   }
   /* The allocator pops reclaimed slots newest-first, so free-list order determines the
@@ -1544,7 +1668,7 @@ size_t gml_vm_state_size(GmlVM *vm){
   }
   StateW s={0}; s.ok=1; s.vm=vm; s.compact_strings=1; s.memo=state_str_memo(vm);
   sw_vm(&s,vm);
-  free(s.arrays); free(s.maps);
+  sw_release(&s);
   return s.ok?s.pos:0;
 }
 int gml_vm_state_save(GmlVM *vm, void *data, size_t len, size_t *written){
@@ -1556,7 +1680,7 @@ int gml_vm_state_save(GmlVM *vm, void *data, size_t len, size_t *written){
   StateW s={.data=(uint8_t*)data,.cap=len,.pos=0,.ok=1,.vm=vm,.compact_strings=1,
             .memo=state_str_memo(vm)};
   sw_vm(&s,vm);
-  free(s.arrays); free(s.maps);
+  sw_release(&s);
   if(written) *written=s.pos;
   return s.ok && s.pos<=len;
 }
@@ -1646,8 +1770,9 @@ int gml_vm_state_load(GmlVM *vm, const void *data, size_t len, size_t *used){
     if(s.ok && !gml_vm_struct_ensure_capacity(vm,ns)){ state_debug(vm,"struct alloc failed",s.pos,(uint32_t)ns); s.ok=0; ns=0; }
     vm->n_structs=ns; vm->n_struct_free=0;
     for(int i=0;i<ns && s.ok;i++){
-      int gen=sr_i32(&s) & 0x7F;
-      int live=sr_i32(&s);
+      unsigned record=sr_u8(&s);
+      int gen=record&0x7F;
+      int live=record>>7;
       vm->struct_gen[i]=(unsigned char)gen;
       vm->structs[i]=NULL;
       if(live){
@@ -1925,6 +2050,6 @@ int gml_vm_state_load(GmlVM *vm, const void *data, size_t len, size_t *used){
   }
   int ok=s.ok && s.pos<=len;
   if(!ok) runtime_clear(vm,s.arrays,s.array_count);
-  free(s.arrays); free(s.maps);
+  free(s.arrays); free(s.maps); free(s.strings);
   return ok;
 }

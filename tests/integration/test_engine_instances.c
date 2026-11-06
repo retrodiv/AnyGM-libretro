@@ -20,6 +20,8 @@ static int save_state(AnygmEngine *engine,uint8_t **data,size_t *written){
   return anygm_state_save(engine,*data,capacity,written)==ANYGM_OK;
 }
 
+static int project_fixture_vm(AnygmEngine *engine,uint8_t **data,size_t *written);
+
 /* Project only the newly initialized room scales out of the neutral fixture.
  * Borrow the other values through a separate map so canonical state remains
  * intact. This test-only projection preserves every earlier byte/hash pin. */
@@ -41,6 +43,7 @@ static int save_without_background_defaults(AnygmEngine *engine,uint8_t **data,s
   }
   engine->vm.globals=projection;
   int ok=save_state(engine,data,written);
+  if(ok)ok=project_fixture_vm(engine,data,written);
   engine->vm.globals=original;
   free(projection.slots); /* Keys and values remain owned by the original map. */
   return ok;
@@ -70,6 +73,8 @@ static uint64_t state_checksum(const uint8_t *data,size_t size){
   while(size--){ hash^=*data++; hash*=UINT64_C(1099511628211); }
   return hash;
 }
+
+#include "state_fixture_projection.h"
 
 static int native_raster_window_query_policy(void){
   AnygmEngine engine={0};
@@ -4007,6 +4012,13 @@ int main(int argc,char **argv){
    * producer fingerprint, so this hash moves whenever reviewed producer behavior or policy changes,
    * and again whenever the serialized layout itself changes. */
   uint64_t deterministic_hash=state_checksum(deterministic,deterministic_size);
+  if(!fixture_projection_controls(first,first_state,first_written))return 1;
+  /* Compare the background projection with the same expanded format, while the original
+   * current-format bytes remain in first_state for the actual restore controls below. */
+  if(!project_fixture_vm(first,&deterministic,&deterministic_size)){
+    fprintf(stderr,"canonical current VM did not project to the preceding fixture layout\n");
+    return 1;
+  }
   uint8_t *scale_projection=NULL;
   size_t preceding_scale_size=0;
   if(!save_without_background_defaults(first,&scale_projection,&preceding_scale_size) ||

@@ -394,8 +394,9 @@ static int dense_struct_heap_roundtrip(void){
 
 /* Repeated records compress on the wire without sharing mutable variable tables. Different
  * array identities, key ownership, signed zero and NaN payloads remain observable after load. */
-static int repeated_map_heap_roundtrip(void){
-  enum { count=4096, capacity=256*1024 };
+static int repeated_map_heap_roundtrip(int independent_arrays){
+  enum { count=4096 };
+  const size_t capacity=independent_arrays?512*1024:256*1024;
   GmlWin win={0}; GmlVM source={0},restored={0};
   int ok=!gml_vm_init(&source,&win,NULL) && !gml_vm_init(&restored,&win,NULL);
   GmlVal heap=gml_arr_new(count,vreal(0)),shared=gml_arr_new(1,vreal(11));
@@ -408,7 +409,7 @@ static int repeated_map_heap_roundtrip(void){
   for(int i=0;i<count && ok;i++){
     GmlInstance *node=gml_struct_new(&source);
     if(!node){ ok=0; break; }
-    GmlVal independent=i<2?gml_arr_new(0,vreal(0)):shared;
+    GmlVal independent=(i<2 || independent_arrays)?gml_arr_new(0,vreal(0)):shared;
     GmlVal values[]={vreal(0),vreal(-0.0),vreal(i<2?INT32_MIN:INT32_MAX),
       vreal(0.125),vreal(nan_value),vreal(INFINITY),vobject(1234),vundef(),
       vstr("runtime record text"),shared,independent};
@@ -446,7 +447,7 @@ static int repeated_map_heap_roundtrip(void){
     if(!i){loaded_shared=a->arr;first_independent=b->arr;}
     ok=a->arr==loaded_shared && a->arr!=shared.arr;
     if(i<2)ok=ok && b->arr!=loaded_shared && (i==0 || b->arr!=first_independent);
-    else ok=ok && b->arr==loaded_shared;
+    else ok=ok && (independent_arrays?b->arr!=loaded_shared:b->arr==loaded_shared);
   }
   if(ok){
     GmlInstance *a=gml_struct_find(&restored,(unsigned)gml_arr_get(*root,2).d);
@@ -462,12 +463,52 @@ static int repeated_map_heap_roundtrip(void){
   }
   if(!ok)fprintf(stderr,"repeated-map state failed: size=%zu written=%zu used=%zu repeated=%zu\n",
                   measured,written,used,repeated);
-  else printf("repeated-map heap: %zu bytes in a %d-byte fixed slot\n",written,capacity);
+  else printf("repeated-map heap (independent arrays=%d): %zu bytes in a %zu-byte fixed slot\n",
+              independent_arrays,written,capacity);
   free(before);free(after);gml_vm_free(&source);gml_vm_free(&restored);return ok;
 }
 
+static int array_zero_bits_roundtrip(void){
+  GmlWin win={0}; GmlVM source={0},restored={0};
+  int ok=!gml_vm_init(&source,&win,NULL) && !gml_vm_init(&restored,&win,NULL);
+  GmlVal dense=gml_arr_new(2,vreal(0)),sparse=gml_arr_new(128,vreal(0));
+  gml_arr_set(dense,1,vreal(-0.0));gml_arr_set(sparse,127,vreal(-0.0));
+  *gml_varmap_put(&source.globals,"dense_zeros")=dense;
+  *gml_varmap_put(&source.globals,"sparse_zeros")=sparse;
+  const double numbers[]={-128,-127,127,128,-32768,-32767,32767,32768,
+                          INT32_MIN,INT32_MAX,0.125,-0.0,0.0,INFINITY};
+  const int number_count=(int)(sizeof numbers/sizeof numbers[0]);
+  GmlVal scalars=gml_arr_new(number_count,vreal(0));
+  for(int i=0;i<number_count;i++)gml_arr_set(scalars,i,vreal(numbers[i]));
+  *gml_varmap_put(&source.globals,"scalar_bits")=scalars;
+  size_t size=gml_vm_state_size(&source),written=0,used=0;
+  unsigned char *bytes=malloc(size?size:1);
+  ok=ok && size && bytes && gml_vm_state_save(&source,bytes,size,&written) &&
+    written==size && gml_vm_state_load(&restored,bytes,size,&used) && used==size;
+  const char *names[]={"dense_zeros","sparse_zeros"};
+  const int lengths[]={2,128};
+  for(int n=0;n<2 && ok;n++){
+    GmlVal *array=gml_varmap_get(&restored.globals,names[n]);
+    ok=array && array->t==V_ARR && gml_val_array_length(*array)==lengths[n];
+    for(int i=0;i<lengths[n] && ok;i++){
+      GmlVal value=gml_arr_get(*array,i);uint64_t bits=0;
+      memcpy(&bits,&value.d,sizeof bits);
+      ok=value.t==V_REAL && bits==(i==lengths[n]-1?UINT64_C(0x8000000000000000):0);
+    }
+  }
+  GmlVal *loaded=ok?gml_varmap_get(&restored.globals,"scalar_bits"):NULL;
+  if(ok)ok=loaded && loaded->t==V_ARR && gml_val_array_length(*loaded)==number_count;
+  for(int i=0;i<number_count && ok;i++){
+    GmlVal value=gml_arr_get(*loaded,i);
+    ok=value.t==V_REAL && !memcmp(&value.d,&numbers[i],sizeof value.d);
+  }
+  if(!ok)fputs("dense/sparse arrays lost scalar bits\n",stderr);
+  free(bytes);gml_vm_free(&source);gml_vm_free(&restored);return ok;
+}
+
 int main(void){
-  if(!repeated_map_heap_roundtrip()) return 1;
+  if(!array_zero_bits_roundtrip()) return 1;
+  if(!repeated_map_heap_roundtrip(0) || !repeated_map_heap_roundtrip(1)) return 1;
   if(!boxed_object_state_roundtrip()) return 1;
   if(!dense_struct_heap_roundtrip()) return 1;
   if(!many_grids_roundtrip()) return 1;
