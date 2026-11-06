@@ -1107,12 +1107,12 @@ static int map_reference_state_cases(const AnygmHostServices *services,
   AnygmEngine *engine=NULL; uint8_t *baseline=NULL,*candidate=NULL; size_t size=0;
   int ok=anygm_create(services,&engine)==ANYGM_OK &&
     anygm_load(engine,source,NULL)==ANYGM_OK;
-  for(int i=0;i<2 && ok;i++){
+  for(int i=0;i<3 && ok;i++){
     GmlInstance *node=gml_struct_new(&engine->vm);
     ok=node!=NULL;
     if(ok){
-      *gml_varmap_put(&node->vars,"record_scalar")=vreal(17);
-      *gml_varmap_put(&engine->vm.globals,i?"second_record":"first_record")=vobject(node->id);
+      *gml_varmap_put(&node->vars,"record_scalar")=vreal(i==1?18:17);
+      *gml_varmap_put(&engine->vm.globals,i==2?"third_record":i?"second_record":"first_record")=vobject(node->id);
     }
   }
   ok=ok && save_state(engine,&baseline,&size);
@@ -1121,13 +1121,13 @@ static int map_reference_state_cases(const AnygmHostServices *services,
     (size_t)read_u64(baseline+72),end=start+(size_t)read_u64(baseline+80);
   /* The rooted structures were marked by the save-time collector. */
   uint8_t prefix[]={(uint8_t)(0x80u|engine->vm.struct_gen[1]),1,3};
-  size_t reference=SIZE_MAX,matches=0;
-  for(size_t i=start;i+7<=end;i++) if(!memcmp(baseline+i,prefix,sizeof prefix) &&
-      (baseline[i+6]&0x80)){
-    reference=i+3; matches++;
+  size_t reference=SIZE_MAX,shape_reference=SIZE_MAX,matches=0,shape_matches=0;
+  for(size_t i=start;i+7<=end;i++) if(!memcmp(baseline+i,prefix,sizeof prefix)){
+    if(baseline[i+6]&0x80){reference=i+3;matches++;}
+    else if((baseline[i+6]&0xc0)==0x40){shape_reference=i+3;shape_matches++;}
   }
   if(matches!=1) fprintf(stderr,"state security: map reference matches=%zu\n",matches);
-  ok=matches==1 && anygm_state_load(engine,baseline,size)==ANYGM_OK &&
+  ok=matches==1 && shape_matches==1 && anygm_state_load(engine,baseline,size)==ANYGM_OK &&
     engine_matches(engine,baseline,size);
   candidate=malloc(size);
   if(!candidate) ok=0;
@@ -1137,7 +1137,15 @@ static int map_reference_state_cases(const AnygmHostServices *services,
     StateCursor cursor={baseline,size,reference,1};
     uint32_t id=cursor_u32(&cursor);
     ok=reject_payload_u32(engine,candidate,size,baseline,size,reference,
-                          id+1,"forward variable-map reference");
+                          id+2,"forward variable-map reference");
+  }
+  if(ok)ok=reject_payload_u32(engine,candidate,size,baseline,size,shape_reference,
+                              UINT32_C(0x7fffffff),"unknown key-shape reference");
+  if(ok){
+    StateCursor cursor={baseline,size,shape_reference,1};
+    uint32_t id=cursor_u32(&cursor);
+    ok=reject_payload_u32(engine,candidate,size,baseline,size,shape_reference,
+                          id+1,"forward key-shape reference");
   }
   if(ok){
     const char text[]="record_scalar";size_t literal=SIZE_MAX,hits=0;
@@ -1150,11 +1158,40 @@ static int map_reference_state_cases(const AnygmHostServices *services,
     if(ok)ok=reject_payload_u32(engine,candidate,size,baseline,size,literal,0x7f02,
                                 "unknown runtime string reference");
   }
-  if(ok) ok=reject_payload_u32(engine,candidate,size,baseline,size,start+4,22,
-                               "previous text-dictionary-free VM schema");
+  if(ok) ok=reject_payload_u32(engine,candidate,size,baseline,size,start+4,23,
+                               "previous key-shape-free VM schema");
 done:
   free(candidate);free(baseline);anygm_destroy(engine);
   return ok?1:fail("variable-map reference transaction failed");
+}
+
+static int repeated_static_scope_state_case(const AnygmHostServices *services,
+                                            const AnygmContentSource *source){
+  AnygmEngine *engine=NULL;uint8_t *baseline=NULL,*candidate=NULL;size_t size=0;
+  int ok=anygm_create(services,&engine)==ANYGM_OK && anygm_load(engine,source,NULL)==ANYGM_OK;
+  ok=ok && engine->vm.code_static_count>=2;
+  for(int i=0;i<2 && ok;i++){
+    engine->vm.code_static_init[i]=1;
+    *gml_varmap_put(&engine->vm.code_static[i],"scope_value")=vreal(17+i);
+  }
+  ok=ok && save_state(engine,&baseline,&size);
+  if(!ok)goto done;
+  size_t start=STATE_HEADER_SIZE+(size_t)read_u64(baseline+64)+
+    (size_t)read_u64(baseline+72),end=start+(size_t)read_u64(baseline+80);
+  const uint8_t prefix[]={1,0,0,0,1,0,0,0};
+  size_t scope=SIZE_MAX,matches=0;
+  for(size_t i=start;i+14<=end;i++)if(!memcmp(baseline+i,prefix,sizeof prefix) &&
+      (baseline[i+11]&0xc0)==0x40 && baseline[i+12]==8 && baseline[i+13]==18){
+    scope=i;matches++;
+  }
+  ok=matches==1 && anygm_state_load(engine,baseline,size)==ANYGM_OK &&
+    engine_matches(engine,baseline,size);
+  candidate=malloc(size);if(!candidate)ok=0;
+  if(ok)ok=reject_payload_u32(engine,candidate,size,baseline,size,scope,0,
+                              "repeated nonempty static map target");
+done:
+  free(candidate);free(baseline);anygm_destroy(engine);
+  return ok?1:fail("repeated static target invalidated a retained key shape");
 }
 
 int main(void){
@@ -1180,7 +1217,8 @@ int main(void){
   source.size=content_size;
   if(anygm_load(engine,&source,NULL)!=ANYGM_OK) return fail("content load failed")?0:1;
 
-  if(!map_reference_state_cases(&services,&source)) return 1;
+  if(!map_reference_state_cases(&services,&source) ||
+     !repeated_static_scope_state_case(&services,&source)) return 1;
 
   /* Reject a bounded PATH table at the VM/content boundary, including after a renderer
    * existed. A failed cold Reset must also leave an empty, reloadable engine. */

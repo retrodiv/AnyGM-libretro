@@ -9,7 +9,8 @@ typedef struct FixtureProjection {
   size_t size,pos,used;
   uint8_t output[65536];
   struct { const uint8_t *text; uint32_t length; } strings[256];
-  unsigned string_count,array_count;
+  struct { unsigned count; struct { size_t offset,length; } keys[256]; } shapes[64];
+  unsigned string_count,array_count,shape_count;
   int ok;
 } FixtureProjection;
 static void fixture_emit(FixtureProjection *p,const void *data,size_t size){
@@ -111,16 +112,35 @@ static int fixture_value(FixtureProjection *p,unsigned depth){
   return 0;
 }
 static void fixture_map(FixtureProjection *p){
-  uint32_t count=fixture_read_word(p);
-  /* The fixed Classic fixture owns distinct maps. A new repeated-map feature must be measured
-   * and projected explicitly, rather than silently copying an array definition a second time. */
+  uint32_t raw=fixture_read_word(p),count=raw,id=0;
+  /* Full-map references remain unsupported in this fixed fixture: array definitions cannot
+   * simply be copied a second time. Shapes replay only key bytes, then decode current values. */
+  if(raw&UINT32_C(0x80000000)){p->ok=0;return;}
+  int shared=(raw&UINT32_C(0x40000000))!=0;
+  if(shared){
+    id=raw&UINT32_C(0x3fffffff);
+    if(id>=p->shape_count){p->ok=0;return;}
+    count=p->shapes[id].count;
+  }else if(count){
+    if(p->shape_count>=64){p->ok=0;return;}
+    id=p->shape_count++;p->shapes[id].count=count;
+  }
   if(count>256){p->ok=0;return;}
   fixture_word(p,count);
-  for(uint32_t i=0;i<count && p->ok;i++){fixture_string(p);(void)fixture_value(p,0);}
+  for(uint32_t i=0;i<count && p->ok;i++){
+    if(shared){
+      size_t at=p->shapes[id].keys[i].offset,length=p->shapes[id].keys[i].length;
+      fixture_emit(p,p->output+at,length);
+    }else{
+      size_t start=p->used;fixture_string(p);
+      p->shapes[id].keys[i].offset=start;p->shapes[id].keys[i].length=p->used-start;
+    }
+    (void)fixture_value(p,0);
+  }
 }
 static int project_fixture_vm(AnygmEngine *engine,uint8_t **data,size_t *written){
   const uint8_t *bytes=*data;
-  if(*written<112 || (uint32_t)read_u64(bytes+4)!=41 || engine->vm.n_structs ||
+  if(*written<112 || (uint32_t)read_u64(bytes+4)!=42 || engine->vm.n_structs ||
      engine->vm.n_tilemaps || engine->vm.n_rtl || engine->vm.n_rte ||
      engine->vm.room_visuals || engine->vm.wait.active)return 0;
   size_t start=112+(size_t)read_u64(bytes+64)+(size_t)read_u64(bytes+72);
@@ -129,7 +149,7 @@ static int project_fixture_vm(AnygmEngine *engine,uint8_t **data,size_t *written
   FixtureProjection *p=calloc(1,sizeof(*p));if(!p)return 0;
   p->input=bytes+start;p->size=size;p->ok=1;
   fixture_copy(p,132);
-  if((uint32_t)read_u64(p->output+4)!=23)p->ok=0;
+  if((uint32_t)read_u64(p->output+4)!=24)p->ok=0;
   write_u32(p->output+4,19);
   for(unsigned i=0;i<16;i++)(void)fixture_value(p,0);
   fixture_copy(p,76+26*4+616*8+10*4); /* RNG and unchanged software-3D scalars */

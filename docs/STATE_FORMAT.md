@@ -20,9 +20,23 @@ failed partial reads leave the canonical image unpublished and invalid as a
 current resource. See R03-P9-INCREMENTAL-CHECKPOINT in
 [the renderer map](RENDERER_BACKENDS.md) for owners and controls.
 
-The current AnyGM save-state schema is `41`. It is the format transported by
+The current AnyGM save-state schema is `42`. It is the format transported by
 libretro frontends for manual save states, automatic state slots, and rewind
 snapshots. Those features remain supported.
+
+Schema `42` introduces VM schema `24`. Nonempty variable maps share snapshot-local
+sorted key shapes as well as identical full records. A map word with bit31 set
+retains its full-record reference meaning. With only bit30 set, the low30bits name
+a preceding key shape and only the current values follow, in that shape's sorted
+order. Plain counts define a new shape. Values and array identities are never
+taken from the shape template. Restored maps own their keys and slots separately.
+
+Both hash tables confirm exact equality after hash hits. Cached owned-key byte
+totals preserve the existing text-expansion budget without resolving every copied
+name again. Shape vectors and lookup metadata are snapshot scratch, not runtime
+state. Unknown/forward shapes, duplicate keys and repeated nonempty map targets
+reject. The existing map/entry bounds also bound shapes. Earlier public and VM
+schemas reject without a legacy reader. Collection and rendering are unchanged.
 
 Schema `41` introduces VM schema `23`. Strings use a one-byte kind followed by a
 canonical unsigned base-128 integer. Kind zero defines runtime text (length then
@@ -476,7 +490,7 @@ same form without an intervening mutation produces identical bytes.
 ## VM payload ownership
 
 `src/core/engine_state.c` owns the root framing and section transaction.
-Within the VM section, `src/runtime/vm/gml_vm_state.c` alone owns schema `23`,
+Within the VM section, `src/runtime/vm/gml_vm_state.c` alone owns schema `24`,
 field order, value-graph encoding, sizing, and restore scratch.
 
 Builtin resources have a separate storage and lifetime owner, not a separate
