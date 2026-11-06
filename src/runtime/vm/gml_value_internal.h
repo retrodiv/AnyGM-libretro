@@ -16,6 +16,17 @@ typedef struct {
   int active, skip_escaped, owned_strings;
 } GmlValueFreeContext;
 
+/* Preserve the ordinary ascending hash-slot order while skipping empty small-map storage. */
+static inline int gml_varmap_next_slot(const GmlVarMap *map,int start){
+  if(start>=map->cap)return map->cap;
+  if(map->cap<=64){
+    uint64_t remaining=map->occupied&(UINT64_MAX<<start);
+    return remaining?__builtin_ctzll(remaining):map->cap;
+  }
+  for(;start<map->cap;start++)if(map->slots[start].key)return start;
+  return map->cap;
+}
+
 uint32_t gml_value_name_hash(const char *name);
 GmlVal *gml_varmap_get_hashed(GmlVarMap *map, const char *key, uint32_t hash);
 GmlVal *gml_varmap_put_hashed(GmlVarMap *map, const char *key, uint32_t hash);

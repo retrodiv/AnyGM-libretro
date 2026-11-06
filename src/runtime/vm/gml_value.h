@@ -44,7 +44,10 @@ typedef struct {
   GmlVal val;
   unsigned char key_owned; /* heap key released with the map; STRG/literal keys stay borrowed */
 } GmlVarSlot;
-typedef struct { GmlVarSlot *slots; int cap, len; } GmlVarMap;
+typedef struct {
+  GmlVarSlot *slots; int cap, len;
+  uint64_t occupied; /* exact slot bits for capacities up to 64; larger maps use ordinary scans */
+} GmlVarMap;
 /* The largest index gml_arr_index_ensure will grow an array to, and the largest capacity that
  * growth can leave behind. Capacity doubles, so it overshoots the highest index stored by up to a
  * factor of two: a sanity check that bounds capacity by the index limit rejects arrays this

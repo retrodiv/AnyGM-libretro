@@ -707,7 +707,7 @@ static uint64_t state_map_text_hash(const char *text){
 static uint64_t state_map_hash(const GmlVarMap *map,uint32_t *count,uint64_t *shape){
   uint64_t hash=0,keys=0;
   *count=0;
-  for(int i=0;i<map->cap;i++) if(map->slots[i].key){
+  for(int i=gml_varmap_next_slot(map,0);i<map->cap;i=gml_varmap_next_slot(map,i+1)){
     const GmlVarSlot *slot=&map->slots[i];
     GmlVal value=slot->val;
     uint64_t bits=0;
@@ -722,7 +722,7 @@ static uint64_t state_map_hash(const GmlVarMap *map,uint32_t *count,uint64_t *sh
   return state_map_mix(hash^*count);
 }
 static int state_maps_equal(const GmlVarMap *left,const GmlVarMap *right,int keys_only){
-  for(int i=0;i<left->cap;i++) if(left->slots[i].key){
+  for(int i=gml_varmap_next_slot(left,0);i<left->cap;i=gml_varmap_next_slot(left,i+1)){
     const GmlVarSlot *slot=&left->slots[i];
     GmlVal value=slot->val;
     GmlVal *other=gml_varmap_get_hashed((GmlVarMap*)right,slot->key,slot->hash);
@@ -773,7 +773,7 @@ static GmlVarSlot **state_shape_slots(GmlVM *vm,GmlVarMap *m,uint32_t count){
     vm->state_sort_slots=next;vm->state_sort_slots_capacity=(int)count;
   }
   uint32_t entry=0;
-  for(int i=0;i<m->cap;i++) if(m->slots[i].key){
+  for(int i=gml_varmap_next_slot(m,0);i<m->cap;i=gml_varmap_next_slot(m,i+1)){
     if(entry>=count)return NULL;
     vm->state_sort_slots[entry++]=&m->slots[i];
   }
