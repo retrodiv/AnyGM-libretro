@@ -113,8 +113,8 @@ release evidence. The following SHA-256 directives pin only the two
 first-party files in this repository; `make provenance-check` verifies
 their current bytes.
 
-<!-- PROVENANCE-CHECK: src/runtime/builtins/gml_builtin_registry.h = 51d360a79ccfb8b9e2f913822f8d3c319439f773de3c8cd9261750c6468dcf50 -->
-<!-- PROVENANCE-CHECK: src/generated/gml_builtin_registry_index.h = 7f63ed5b16000f3c85cbf4341bd2f8f1e0f381eba960f0e4db8f4671b269dff5 -->
+<!-- PROVENANCE-CHECK: src/runtime/builtins/gml_builtin_registry.h = b827e6e0235886ea2e2f4636faf9b3260f8d7219381816ac8b56117fd8acce60 -->
+<!-- PROVENANCE-CHECK: src/generated/gml_builtin_registry_index.h = df6f0f2d7e0446d10b1485d00de0af4e48d96ecf13010457748d2729056d3581 -->
 
 ## Audio setup packets
 
@@ -275,6 +275,21 @@ origin is documented deliberately instead of discovered.
   `_YY_GLSLES_`/`_YY_GLSL_` dialect markers form an interoperability interface
   for authored shaders. The preamble function bodies and formatting here are
   first-party implementations; no proprietary shader program is bundled.
+
+## Surface subimage append behavior
+
+The `sprite_add_from_surface` signature and runtime-asset restriction follow the
+[public API reference](https://manual.gamemaker.io/monthly/en/GameMaker_Language/GML_Reference/Asset_Management/Sprites/Sprite_Manipulation/sprite_add_from_surface.htm).
+Authored native-runner controls measured an undefined return, retention of the existing
+frames, origin, dimensions and manual collision bounds, and nearest-neighbour normalization
+of a differently sized region. A precise-collision control distinguished preservation of the
+old mask from an explicit later mask rebuild. Only functional observations informed this
+implementation; no original implementation body or content pixels are included.
+
+Both executors use the existing surface observation and runtime-image lifecycle. Appending
+flushes borrowed device views before replacing their storage and preserves collision bytes
+independently of visible subimages. Edge smoothing retains the existing surface-creation
+policy; the controls establish the unsmoothed variant, not general smoothing fidelity.
 
 ## Graphics entry-point declarations
 

@@ -14086,6 +14086,51 @@ static int runtime_sprite_scene_lifetimes(void){
     runtime_sprite_scene_lifetimes_variant(1);
 }
 
+static int runtime_sprite_surface_append_lifetime(void){
+  GmlRender *render=calloc(1,sizeof *render);
+  FakeDevice fake={.on_demand=1};
+  GmlRenderDeviceServices device=service(&fake);
+  GmlRenderResourceSource before={0},after={0};
+  uint32_t base[64]={0};
+  CHECK(render && gml_render_init(render,NULL)==0);
+  gml_render_begin(render,base,8,8,0,0);
+  int source=gml_surface_create(render,3,2);
+  uint32_t *pixels=surface_pixels(render,source,NULL,NULL);
+  CHECK(pixels);
+  for(int i=0;i<6;i++) pixels[i]=0xFF123456u;
+  int sprite=gml_sprite_append_from_rgba_frames(render,
+    runtime_unit_test_rgba(3,2,2,1),3,2,2,0,0,NULL);
+  CHECK(sprite>=0 && gml_render_runtime_sprite_scene_source_view(
+    render,&render->spr[sprite],1,&before));
+  device.observe_on_demand=fake_observe_on_demand;
+  gml_render_bind_device(render,&device);
+  gml_render_application_surface_bind(render,base,8,8,1);
+  CHECK(gml_render_begin_resident_base(render,base,8,8,0,0));
+  gml_draw_sprite_ext(render,sprite,1,2,2,1,1,0,0xFFFFFFu,1);
+  CHECK(render->resident_application_pass && !fake.submits);
+  uint8_t *old=render->spr[sprite].runtime_rgba;
+  fake.fail_upload=1;
+  CHECK(!gml_sprite_add_from_surface(render,sprite,source,0,0,3,2,0,0) &&
+        render->spr[sprite].runtime_rgba==old && render->spr[sprite].n_frames==2 &&
+        render->spr[sprite].runtime_scene_incarnation==before.image.incarnation &&
+        !fake.retires);
+  fake.fail_upload=0;
+  CHECK(gml_sprite_add_from_surface(render,sprite,source,0,0,3,2,0,0) &&
+        fake.submits==1 && fake.retires==2 && !fake.readbacks &&
+        render->spr[sprite].n_frames==3 && !render->spr[sprite].runtime_scene_used);
+  CHECK(gml_render_runtime_sprite_scene_source_view(render,&render->spr[sprite],2,&after) &&
+        after.image.incarnation!=before.image.incarnation &&
+        after.image.identity==UINT32_C(0x80000002) &&
+        ((const uint8_t*)after.bytes)[0]==0x12u &&
+        ((const uint8_t*)after.bytes)[1]==0x34u &&
+        ((const uint8_t*)after.bytes)[2]==0x56u);
+  gml_draw_sprite_ext(render,sprite,2,2,2,1,1,0,0xFFFFFFu,1);
+  CHECK(gml_render_scene_submit_pending(render) && fake.submits==2 &&
+        fake.last_batch_source_ids[0]==UINT32_C(0x80000002) && !fake.readbacks);
+  gml_render_free(render);free(render);
+  return 1;
+}
+
 static int resident_classic_clipped_sprite_noops(void){
   const double anchors[12][2]={{8.0,1.0},{1.0,8.0},{-2.0,1.0},{1.0,-2.0},
     {7.5,1.0},{1.0,7.5},{-2.5,1.0},{1.0,-2.5},
@@ -19982,7 +20027,8 @@ int main(void){
   const char *selected=getenv("GML_RENDER_RESOURCE_CASE");
   if(selected){
     int passed;
-    if(!strcmp(selected,"skip-cpu-draws")) passed=skip_cpu_draw_policy_preserves_observers();
+    if(!strcmp(selected,"surface-sprite-append")) passed=runtime_sprite_surface_append_lifetime();
+    else if(!strcmp(selected,"skip-cpu-draws")) passed=skip_cpu_draw_policy_preserves_observers();
     else if(!strcmp(selected,"independent-screen-clear")) passed=independent_screen_clear_preserves_draw_state();
     else if(!strcmp(selected,"registered-view-source")) passed=resident_registered_view_surface_source();
     else if(!strcmp(selected,"empty-surface-part")) passed=resident_empty_surface_part_prefix();
@@ -20273,6 +20319,7 @@ int main(void){
   passed+=resident_runtime_binary_unit_sprites();
   passed+=resident_classic_unit_tiles();
   passed+=runtime_sprite_scene_lifetimes();
+  passed+=runtime_sprite_surface_append_lifetime();
   passed+=resident_classic_clipped_sprite_noops();
   passed+=resident_classic_rotated_sprite_noops();
   passed+=resident_outside_sprite_geometry();
@@ -20344,6 +20391,6 @@ int main(void){
   passed+=skip_cpu_draw_policy_preserves_observers();
   passed+=resident_numbered_rotated_native_quad();
   passed+=resident_unit_texel_magnification();
-  printf("render resource cases: passed=%d failed=%d\n",passed,317-passed);
-  return passed==317?EXIT_SUCCESS:EXIT_FAILURE;
+  printf("render resource cases: passed=%d failed=%d\n",passed,318-passed);
+  return passed==318?EXIT_SUCCESS:EXIT_FAILURE;
 }

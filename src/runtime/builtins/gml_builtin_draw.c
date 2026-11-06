@@ -1382,6 +1382,11 @@ GmlVal gml_builtin_try_draw(GmlVM *vm, const char *nm, GmlVal *a, int n){
       return vreal(R?gml_sprite_create_from_surface(R,(int)N(a,n,0),(int)N(a,n,1),(int)N(a,n,2),
         (int)N(a,n,3),(int)N(a,n,4),(int)N(a,n,5),(int)N(a,n,6),(int)N(a,n,7),(int)N(a,n,8)):-1);
     }
+    if(!strcmp(nm,"sprite_add_from_surface")){
+      if(R) (void)gml_sprite_add_from_surface(R,(int)N(a,n,0),(int)N(a,n,1),(int)N(a,n,2),
+        (int)N(a,n,3),(int)N(a,n,4),(int)N(a,n,5),(int)N(a,n,6),(int)N(a,n,7));
+      return vundef();
+    }
     if(!strcmp(nm,"sprite_replace")){
       const char *requested=S(vm,a,n,1);
       char *path=resolve_read_path(vm,requested);

@@ -611,16 +611,15 @@ void gml_render_clear_runtime_sprites(GmlRender *r){
   }
   r->n_spr=base;
 }
-int gml_sprite_create_from_surface(GmlRender *r, int surf, int x, int y, int w, int h,
-                                   int removeback, int smooth, int xorig, int yorig){
-  (void)smooth;
+static uint8_t *surface_region_rgba(GmlRender *r,int surf,int x,int y,int w,int h,
+                                     int removeback){
   int sw=0, sh=0; const uint32_t *src=surface_pixels_observe(r,surf,&sw,&sh);
-  if(!src || w<=0 || h<=0) return -1;
+  if(!src || w<=0 || h<=0 || (size_t)w>SIZE_MAX/4u/(size_t)h) return NULL;
   if(src==r->fb) gml_render_maybe_prepare_draw(r);
   uint8_t *rgba=calloc((size_t)w*h*4,1);
-  if(!rgba) return -1;
+  if(!rgba) return NULL;
   for(int yy=0; yy<h; yy++) for(int xx=0; xx<w; xx++){
-    int sx=x+xx, sy=y+yy;
+    int64_t sx=(int64_t)x+xx, sy=(int64_t)y+yy;
     uint8_t *dp=rgba+((size_t)yy*w+xx)*4;
     if(sx>=0 && sy>=0 && sx<sw && sy<sh){
       uint32_t p=src[(size_t)sy*sw+sx];
@@ -631,7 +630,67 @@ int gml_sprite_create_from_surface(GmlRender *r, int surf, int x, int y, int w, 
     }
   }
   gml_render_apply_removeback_rgba(rgba,w,h,removeback);
+  return rgba;
+}
+int gml_sprite_create_from_surface(GmlRender *r, int surf, int x, int y, int w, int h,
+                                   int removeback, int smooth, int xorig, int yorig){
+  (void)smooth;
+  uint8_t *rgba=surface_region_rgba(r,surf,x,y,w,h,removeback);
+  if(!rgba) return -1;
   return gml_sprite_append_from_rgba_frames(r,rgba,w,h,1,xorig,yorig,NULL);
+}
+int gml_sprite_add_from_surface(GmlRender *r,int sprite,int surf,int x,int y,int w,int h,
+                                 int removeback,int smooth){
+  (void)smooth;
+  if(!r || sprite<0 || sprite>=r->n_spr || w<=0 || h<=0 || w>4096 || h>4096)
+    return 0;
+  GmlSprite *s=&r->spr[sprite];
+  /* Surface appends operate on created or duplicated assets, never the packaged source. */
+  if(!s->runtime_extra || !s->runtime_rgba || s->w<=0 || s->h<=0 ||
+     s->w>4096 || s->h>4096 || s->n_frames<=0 || s->n_frames>=4096) return 0;
+  size_t frame_bytes=(size_t)s->w*(size_t)s->h*4u;
+  if(frame_bytes>SIZE_MAX/(size_t)(s->n_frames+1)) return 0;
+  uint8_t *region=surface_region_rgba(r,surf,x,y,w,h,removeback);
+  if(!region) return 0;
+  uint8_t *rgba=malloc(frame_bytes*(size_t)(s->n_frames+1));
+  uint8_t *mask=sprite_copy_collision_mask(s);
+  int rowb=s->mask_rowb,masks=s->mask_count;
+  if(!s->mask && s->collision_kind==0){
+    /* An implicit alpha mask must become independent of the enlarged image.
+     * Adding a subimage does not rebuild the sprite's existing collision mask. */
+    rowb=(s->w+7)/8;masks=s->n_frames;
+    mask=calloc((size_t)rowb*(size_t)s->h*(size_t)masks,1);
+    if(mask) for(int frame=0;frame<masks;frame++)
+      for(int yy=0;yy<s->h;yy++) for(int xx=0;xx<s->w;xx++)
+        if(gml_sprite_collision(r,sprite,frame,xx,yy))
+          mask[((size_t)frame*(size_t)s->h+(size_t)yy)*(size_t)rowb+(size_t)xx/8u]
+            |=(uint8_t)(1u<<(7-(xx%8)));
+  }
+  if(!rgba || (masks && !mask)){
+    free(mask);free(rgba);free(region);return 0;
+  }
+  memcpy(rgba,s->runtime_rgba,frame_bytes*(size_t)s->n_frames);
+  uint8_t *last=rgba+frame_bytes*(size_t)s->n_frames;
+  /* A differently sized region is normalized to the existing logical frame.
+   * This changes resource bytes; device draw filtering remains the device's job. */
+  for(int yy=0;yy<s->h;yy++) for(int xx=0;xx<s->w;xx++){
+    size_t sx=(size_t)xx*(size_t)w/(size_t)s->w;
+    size_t sy=(size_t)yy*(size_t)h/(size_t)s->h;
+    memcpy(last+((size_t)yy*(size_t)s->w+(size_t)xx)*4u,
+           region+(sy*(size_t)w+sx)*4u,4u);
+  }
+  free(region);
+  int ml=s->ml,mt=s->mt,mr=s->mr,mb=s->mb;
+  int kind=s->collision_kind;
+  int tolerance=s->collision_tolerance;
+  if(!sprite_set_runtime_rgba(r,s,rgba,s->w,s->h,s->n_frames+1,
+                              s->originx,s->originy,s->runtime_extra)){
+    free(mask);free(rgba);return 0;
+  }
+  s->ml=ml;s->mt=mt;s->mr=mr;s->mb=mb;
+  s->runtime_mask=mask;s->mask=mask;s->mask_rowb=rowb;s->mask_count=masks;
+  s->collision_kind=kind;s->collision_tolerance=tolerance;
+  return 1;
 }
 int gml_sprite_replace_from_file(GmlRender *r, int sprite, const char *path, int imgnumb,
                                  int removeback, int smooth, int xorig, int yorig){

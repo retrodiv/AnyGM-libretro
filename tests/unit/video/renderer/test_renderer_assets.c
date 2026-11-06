@@ -2,7 +2,10 @@
  * Copyright (c) 2026 retrodiv <retrodiv@proton.me>
  */
 #include "gml_render_internal.h"
+#include "gml_render_surfaces_internal.h"
 #include "gml_render_state.h"
+#include "gml_builtin.h"
+#include "gml_vm_internal.h"
 #include "stdio_vfs.h"
 
 #include <stdint.h>
@@ -99,7 +102,67 @@ static int runtime_sprite_names_survive_state(void){
   return 0;
 }
 
+static int surface_subimages_retain_existing_frames(void){
+  GmlWin win={0}; GmlRender render,restored; GmlVM vm={0};
+  REQUIRE(gml_render_init(&render,&win)==0 && gml_render_init(&restored,&win)==0,
+          "surface subimage renderer init");
+  vm.render=&render;
+  int surface=gml_surface_create(&render,4,4);
+  uint32_t *pixels=surface_pixels(&render,surface,NULL,NULL);
+  REQUIRE(surface>0 && pixels,"surface subimage source");
+  for(int i=0;i<16;i++) pixels[i]=0xFFFF0000u;
+  int sprite=gml_sprite_create_from_surface(&render,surface,0,0,2,2,0,0,1,1);
+  REQUIRE(sprite>=0 && gml_sprite_collision_mask(&render,sprite,1,2,1,1,1,1,0,0),
+          "surface subimage initial sprite and manual bounds");
+  memset(pixels,0,16*sizeof *pixels);
+  pixels[0]=0xFFFF0000u;pixels[1]=0xFF00FF00u;
+  pixels[2]=0xFF0000FFu;pixels[3]=0xFFFFFFFFu;
+  GmlVal args[8]={vreal(sprite),vreal(surface),vreal(0),vreal(0),
+                 vreal(2),vreal(2),vreal(0),vreal(0)};
+  GmlVal result=gml_builtin_call(&vm,"sprite_add_from_surface",args,8);
+  REQUIRE(result.t==vundef().t && gml_sprite_frames(&render,sprite)==2,
+          "surface append adds one subimage and returns undefined");
+  REQUIRE(gml_sprite_collision(&render,sprite,0,1,1) &&
+          gml_sprite_collision(&render,sprite,1,1,1),
+          "surface append retains the original collision plane for the new image");
+  args[4]=vreal(4);args[5]=vreal(1);
+  (void)gml_builtin_call(&vm,"sprite_add_from_surface",args,8);
+  GmlSprite *s=&render.spr[sprite];
+  REQUIRE(s->w==2 && s->h==2 && s->originx==1 && s->originy==1 && s->n_frames==3 &&
+          s->ml==1 && s->mt==1 && s->mr==1 && s->mb==1,
+          "surface append retains geometry, origin and manual collision bounds");
+  const uint8_t expected[48]={
+    255,0,0,255, 255,0,0,255, 255,0,0,255, 255,0,0,255,
+    255,0,0,255, 0,255,0,255, 0,0,0,0, 0,0,0,0,
+    255,0,0,255, 0,0,255,255, 255,0,0,255, 0,0,255,255
+  };
+  REQUIRE(!memcmp(s->runtime_rgba,expected,sizeof expected),
+          "surface append retains old frames and normalizes the new region by nearest sampling");
+  args[4]=vreal(0);
+  (void)gml_builtin_call(&vm,"sprite_add_from_surface",args,8);
+  args[4]=vreal(2);args[1]=vreal(-1);
+  (void)gml_builtin_call(&vm,"sprite_add_from_surface",args,8);
+  REQUIRE(s->n_frames==3 && !memcmp(s->runtime_rgba,expected,sizeof expected),
+          "invalid surface append leaves the sprite unchanged");
+  size_t size=gml_render_state_size(&render,-1),written=0,used=0;
+  uint8_t *state=malloc(size);
+  REQUIRE(state && gml_render_state_save(&render,-1,state,size,&written) && written==size &&
+          gml_render_state_load(&restored,state,size,&used) && used==size,
+          "appended subimage state roundtrip");
+  REQUIRE(restored.spr[sprite].n_frames==3 &&
+          !memcmp(restored.spr[sprite].runtime_rgba,expected,sizeof expected) &&
+          gml_sprite_collision(&restored,sprite,1,1,1),
+          "restored subimages retain every source byte and the independent collision plane");
+  REQUIRE(gml_sprite_collision_mask(&render,sprite,1,2,1,1,1,1,0,0) &&
+          !gml_sprite_collision(&render,sprite,1,1,1),
+          "explicit mask rebuilding adopts the appended frame alpha");
+  free(state);
+  gml_render_free(&restored);gml_render_free(&render);
+  return 0;
+}
+
 int main(void){
+  REQUIRE(surface_subimages_retain_existing_frames()==0,"surface subimage regression");
   REQUIRE(runtime_sprite_names_survive_state()==0,"runtime sprite name state regression");
   char root[]="build/renderer-assets-XXXXXX";
   REQUIRE(mkdtemp(root)!=NULL,"temporary root");

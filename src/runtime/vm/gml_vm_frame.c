@@ -803,6 +803,7 @@ void gml_vm_step(GmlVM *vm){
               else if(!strcmp(tok,"hspeed")) bv=in->hspeed; else if(!strcmp(tok,"vspeed")) bv=in->vspeed;
               else if(!strcmp(tok,"speed")) bv=in->speed; else if(!strcmp(tok,"direction")) bv=in->direction;
               else if(!strcmp(tok,"sprite_index")) bv=in->sprite_index; else if(!strcmp(tok,"image_index")) bv=in->image_index;
+              else if(!strcmp(tok,"image_number")) bv=vm->render?gml_sprite_frames(vm->render,(int)in->sprite_index):0;
               else if(!strcmp(tok,"image_speed")) bv=in->image_speed; else if(!strcmp(tok,"visible")) bv=in->visible;
               else if(!strcmp(tok,"depth")) bv=in->depth; else have=0;
               if(have){ anygm_host_logf(vm ? vm->host : NULL,ANYGM_LOG_DEBUG," %s=%.2f",tok,bv); continue; }

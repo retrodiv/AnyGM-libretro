@@ -905,6 +905,8 @@ void gml_draw_surface_part_ext(GmlRender *r, int surf, double sx, double sy, dou
                                double x, double y, double xs, double ys, uint32_t blend, double alpha);
 int  gml_sprite_create_from_surface(GmlRender *r, int surf, int x, int y, int w, int h,
                                     int removeback, int smooth, int xorig, int yorig);
+int  gml_sprite_add_from_surface(GmlRender *r, int sprite, int surf, int x, int y, int w, int h,
+                                  int removeback, int smooth);
 int  gml_sprite_replace_from_file(GmlRender *r, int sprite, const char *path, int imgnumb,
                                   int removeback, int smooth, int xorig, int yorig);
 int  gml_background_replace_from_file(GmlRender *r, int background, const char *path,
