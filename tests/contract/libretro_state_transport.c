@@ -233,11 +233,11 @@ static int fixed_frontend_reuses_the_measured_capacity(int negotiation_result){
 
 /* A cold container graph can grow beyond the ordinary reserve during initialization. The
  * reservation must exist before that growth, including when variable sizing is unsupported. */
-static int deferred_containers_keep_a_larger_fixed_reserve(int negotiation_result){
+static int deferred_containers_keep_a_larger_fixed_reserve(int negotiation_result,int compact){
   stub_state_bytes=320u*1024u;
   if(!begin_frontend(negotiation_result)) return 0;
   stub_capacity_flags=ANYGM_STATE_CAPACITY_DYNAMIC_CONTAINERS;
-  stub_hint_bytes=512u*1024u;
+  stub_hint_bytes=compact?16u*1024u*1024u:512u*1024u;
   const size_t capacity=retro_serialize_size();
   int ok=capacity==32u*1024u*1024u;
   retro_run();
@@ -654,9 +654,12 @@ int main(void){
      !stable_transport(1) || !stable_transport(0) || !stable_transport(-1) ||
      !fixed_ordinary_ring_covers_expected_runtime_growth(0) ||
      !fixed_ordinary_ring_covers_expected_runtime_growth(-1) ||
-     !deferred_containers_keep_a_larger_fixed_reserve(1) ||
-     !deferred_containers_keep_a_larger_fixed_reserve(0) ||
-     !deferred_containers_keep_a_larger_fixed_reserve(-1) ||
+     !deferred_containers_keep_a_larger_fixed_reserve(1,0) ||
+     !deferred_containers_keep_a_larger_fixed_reserve(0,0) ||
+     !deferred_containers_keep_a_larger_fixed_reserve(-1,0) ||
+     !deferred_containers_keep_a_larger_fixed_reserve(1,1) ||
+     !deferred_containers_keep_a_larger_fixed_reserve(0,1) ||
+     !deferred_containers_keep_a_larger_fixed_reserve(-1,1) ||
      !growth_follows_frontend_acknowledgement(1) ||
      !growth_follows_frontend_acknowledgement(0) ||
      !growth_follows_frontend_acknowledgement(-1) ||

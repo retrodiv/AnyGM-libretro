@@ -8,6 +8,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdint.h>
+#include <math.h>
+#include "gml_value_internal.h"
 
 static GmlVal call(GmlVM *vm,const char *name,GmlVal *args,int count){
   return gml_builtin_call(vm,name,args,count);
@@ -389,7 +392,82 @@ static int dense_struct_heap_roundtrip(void){
   return ok;
 }
 
+/* Repeated records compress on the wire without sharing mutable variable tables. Different
+ * array identities, key ownership, signed zero and NaN payloads remain observable after load. */
+static int repeated_map_heap_roundtrip(void){
+  enum { count=4096, capacity=256*1024 };
+  GmlWin win={0}; GmlVM source={0},restored={0};
+  int ok=!gml_vm_init(&source,&win,NULL) && !gml_vm_init(&restored,&win,NULL);
+  GmlVal heap=gml_arr_new(count,vreal(0)),shared=gml_arr_new(1,vreal(11));
+  gml_arr_mark_escaped(heap);
+  *gml_varmap_put(&source.globals,"repeated_records")=heap;
+  const char *names[]={"zero","negative_zero","integer","fraction","nan","infinity",
+                       "object","undefined","text","alias","independent"};
+  uint64_t nan_bits=UINT64_C(0x7ff8000000000042); double nan_value=0;
+  memcpy(&nan_value,&nan_bits,sizeof nan_value);
+  for(int i=0;i<count && ok;i++){
+    GmlInstance *node=gml_struct_new(&source);
+    if(!node){ ok=0; break; }
+    GmlVal independent=i<2?gml_arr_new(0,vreal(0)):shared;
+    GmlVal values[]={vreal(0),vreal(-0.0),vreal(i<2?INT32_MIN:INT32_MAX),
+      vreal(0.125),vreal(nan_value),vreal(INFINITY),vobject(1234),vundef(),
+      vstr("runtime record text"),shared,independent};
+    for(int n=0;n<11;n++){
+      int k=i%2?10-n:n;
+      char *key=strdup(names[k]);
+      if(!key){ ok=0; break; }
+      *gml_varmap_put_owned(&node->vars,key)=values[k];
+    }
+    gml_arr_set(heap,i,vobject(node->id));
+  }
+  size_t measured=ok?gml_vm_state_size(&source):0,written=0,used=0,repeated=0;
+  unsigned char *before=malloc(capacity),*after=malloc(capacity);
+  ok=ok && measured && measured<=capacity && before && after &&
+    gml_vm_state_save(&source,before,capacity,&written) && written==measured &&
+    gml_vm_state_load(&restored,before,written,&used) && used==written &&
+    gml_vm_state_save(&restored,after,capacity,&repeated) && repeated==written &&
+    !memcmp(before,after,written);
+  GmlVal *root=ok?gml_varmap_get(&restored.globals,"repeated_records"):NULL;
+  GmlArr *loaded_shared=NULL,*first_independent=NULL;
+  for(int i=0;i<count && ok;i++){
+    GmlInstance *node=root?gml_struct_find(&restored,(unsigned)gml_arr_get(*root,i).d):NULL;
+    GmlVal *z=node?gml_varmap_get(&node->vars,"negative_zero"):NULL;
+    GmlVal *n=node?gml_varmap_get(&node->vars,"nan"):NULL;
+    GmlVal *a=node?gml_varmap_get(&node->vars,"alias"):NULL;
+    GmlVal *b=node?gml_varmap_get(&node->vars,"independent"):NULL;
+    GmlVal *integer=node?gml_varmap_get(&node->vars,"integer"):NULL;
+    GmlVal *object=node?gml_varmap_get(&node->vars,"object"):NULL;
+    uint64_t bits=0;if(n)memcpy(&bits,&n->d,sizeof bits);
+    ok=z && z->t==V_REAL && signbit(z->d) && z->d==0 && n && bits==nan_bits &&
+      a && a->t==V_ARR && a->arr && b && b->t==V_ARR && b->arr && integer &&
+      integer->d==(i<2?INT32_MIN:INT32_MAX) && object && object->t==V_OBJECT &&
+      object->d==1234;
+    if(!ok) break;
+    if(!i){loaded_shared=a->arr;first_independent=b->arr;}
+    ok=a->arr==loaded_shared && a->arr!=shared.arr;
+    if(i<2)ok=ok && b->arr!=loaded_shared && (i==0 || b->arr!=first_independent);
+    else ok=ok && b->arr==loaded_shared;
+  }
+  if(ok){
+    GmlInstance *a=gml_struct_find(&restored,(unsigned)gml_arr_get(*root,2).d);
+    GmlInstance *b=gml_struct_find(&restored,(unsigned)gml_arr_get(*root,3).d);
+    *gml_varmap_put(&a->vars,"integer")=vreal(17);
+    *gml_varmap_put_owned(&a->vars,strdup("only_first"))=vreal(1);
+    ok=gml_varmap_get(&b->vars,"integer")->d==INT32_MAX &&
+      !gml_varmap_get(&b->vars,"only_first");
+    /* Releasing one map must not invalidate the other's owned keys or shared values. */
+    gml_varmap_free(&a->vars);
+    ok=ok && gml_varmap_get(&b->vars,"integer")->d==INT32_MAX &&
+      !strcmp(gml_varmap_get(&b->vars,"text")->s,"runtime record text");
+  }
+  if(!ok)fprintf(stderr,"repeated-map state failed: size=%zu written=%zu used=%zu repeated=%zu\n",
+                  measured,written,used,repeated);
+  else printf("repeated-map heap: %zu bytes in a %d-byte fixed slot\n",written,capacity);
+  free(before);free(after);gml_vm_free(&source);gml_vm_free(&restored);return ok;
+}
+
 int main(void){
+  if(!repeated_map_heap_roundtrip()) return 1;
   if(!boxed_object_state_roundtrip()) return 1;
   if(!dense_struct_heap_roundtrip()) return 1;
   if(!many_grids_roundtrip()) return 1;

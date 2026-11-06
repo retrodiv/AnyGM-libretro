@@ -127,8 +127,9 @@ static size_t fixed_state_capacity(size_t actual,bool compact_startup,uint32_t f
   size_t floor=compact_startup?1u*1024u*1024u:4u*1024u*1024u;
   /* Deferred container initialization can outgrow four MiB of required simulation state even
    * with a small authored raster. Reserve 32 MiB before a fixed frontend allocates its ring.
-   * This is a bounded growth policy, not a bound on arbitrary future container allocations. */
-  if(!compact_startup && (flags&ANYGM_STATE_CAPACITY_DYNAMIC_CONTAINERS))
+   * Required simulation growth is independent of completed-frame compaction: the compact ring
+   * needs the same reserve. This is a bounded policy, not a bound on arbitrary allocations. */
+  if(flags&ANYGM_STATE_CAPACITY_DYNAMIC_CONTAINERS)
     floor=32u*1024u*1024u;
   if(actual>(SIZE_MAX-margin)/2u) return SIZE_MAX;
   size_t capacity=actual*2u+margin;

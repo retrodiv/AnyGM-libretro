@@ -20,9 +20,26 @@ failed partial reads leave the canonical image unpublished and invalid as a
 current resource. See R03-P9-INCREMENTAL-CHECKPOINT in
 [the renderer map](RENDERER_BACKENDS.md) for owners and controls.
 
-The current AnyGM save-state schema is `39`. It is the format transported by
+The current AnyGM save-state schema is `40`. It is the format transported by
 libretro frontends for manual save states, automatic state slots, and rewind
 snapshots. Those features remain supported.
+
+Schema `40` introduces VM schema `22`. Value tags occupy one byte. Real positive
+zero uses tag `6` without a payload; nonzero exact signed 32-bit integers use tag
+`7` followed by their little-endian integer. Other real values retain all double
+bits, including negative zero, infinities and NaN payloads. Object handles retain
+tag `5` and unsigned 32-bit payloads.
+
+Nonempty variable maps define snapshot-local records in canonical encounter
+order. A high-bit map count references a prior record by its low 31-bit index.
+The restored maps own independent tables and keys; array values preserve their
+original shared identity, and distinct equal arrays are never coalesced. Hashes
+and addresses are lookup scratch only, with exact typed equality after each hash
+hit; none is serialized. The dictionary is discarded after each size/save/load.
+Both encoder and decoder bound definitions to two million and expanded entries
+to sixteen million. Invalid or forward references reject. Older public and VM
+schemas reject without legacy readers. Rendering and collection timing are
+unchanged; this is a state representation change, not a drawing change.
 
 Schema `39` introduces VM schema `21`. Boxed object values retain their distinct
 category through variables, arrays and builtin containers. Wire value tag `5`
@@ -443,7 +460,7 @@ same form without an intervening mutation produces identical bytes.
 ## VM payload ownership
 
 `src/core/engine_state.c` owns the root framing and section transaction.
-Within the VM section, `src/runtime/vm/gml_vm_state.c` alone owns schema `21`,
+Within the VM section, `src/runtime/vm/gml_vm_state.c` alone owns schema `22`,
 field order, value-graph encoding, sizing, and restore scratch.
 
 Builtin resources have a separate storage and lifetime owner, not a separate
@@ -528,13 +545,12 @@ loadable.
 
 An ordinary complete-capacity session reserves at least 4 MiB because a cold load can precede the
 render and language-level tables populated by gameplay. References to grid/list/map creation or
-explicit array allocation/resizing select a 32-MiB ordinary reserve: deferred container
-initialization can exceed the four-MiB reserve before
-the first gameplay snapshot. These are conservative reference flags and a selected growth policy,
-not a proof that arbitrary language allocations fit. Both established compact-raster policies
-remain unchanged. The compact large-frame path instead
-reserves at least 1 MiB; its frame-free capacity hint describes the startup ring while that separate
-floor covers bounded cold-to-gameplay growth. This adapter capacity policy changes neither
+explicit array allocation/resizing select a 32-MiB simulation reserve in both ordinary and
+compact-frame rings: deferred initialization can exceed the four-MiB reserve before the first
+gameplay snapshot. These are conservative reference flags and a selected growth policy, not a
+proof that arbitrary language allocations fit. Without those flags a compact large-frame path
+retains its one-MiB minimum. Frame-free hints raise either floor when required; selecting a compact
+picture never removes the simulation reserve. This adapter capacity policy changes neither
 the logical size in the canonical header nor the portable state format. Explicit portable hosts
 may still request the frame-free resume representation directly.
 

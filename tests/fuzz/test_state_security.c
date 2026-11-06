@@ -787,17 +787,17 @@ done:
  * This makes mutations field-specific without importing the private pool representation. */
 static size_t delayed_table(const uint8_t *bytes,size_t size,uint32_t first,
                             uint32_t second,double callback){
-  enum { TABLE_BYTES=12+2*64 };
+  enum { TABLE_BYTES=12+2*54 };
   uint8_t expected[TABLE_BYTES]={0};
   write_u32(expected,second+1); write_u32(expected+4,1); write_u32(expected+8,2);
   for(int i=0;i<2;i++){
-    uint8_t *record=expected+12+i*64;
+    uint8_t *record=expected+12+i*54;
     write_u32(record,i?second:first); write_u32(record+4,2);
     write_double(record+8,i?7:123.25); write_double(record+16,i?7:123.25);
     write_u32(record+24,i?1:0); write_u32(record+28,1);
     write_u32(record+32,i?UINT32_MAX:1); write_u32(record+36,i?UINT32_MAX:1);
-    write_u32(record+44,1); write_u32(record+48,V_REAL);
-    write_double(record+52,callback); write_u32(record+60,V_UNDEF);
+    write_u32(record+44,1); record[48]=7;
+    write_u32(record+49,(uint32_t)(int32_t)callback); record[53]=V_UNDEF;
   }
   if(size<STATE_HEADER_SIZE) return SIZE_MAX;
   uint64_t core=read_u64(bytes+64),render=read_u64(bytes+72),vm=read_u64(bytes+80);
@@ -832,14 +832,29 @@ static int delayed_call_state_cases(const AnygmHostServices *services,
   if(!ok){fail("delayed-call baseline failed"); goto done;}
   size_t table=delayed_table(baseline,size,(uint32_t)first.d,(uint32_t)second.d,args[2].d);
   if(table==SIZE_MAX){ok=fail("delayed-call table is not uniquely identified"); goto done;}
-  size_t record=table+12,loop=record+64;
-  candidate=malloc(size);
+  size_t record=table+12,loop=record+54;
+  candidate=malloc(size+4);
   if(!candidate){ok=fail("delayed-call mutation allocation failed"); goto done;}
   /* The valid table must load before its corrupt variants have diagnostic value. */
   gml_builtin_call(&engine->vm,"call_cancel",&first,1);
   gml_builtin_call(&engine->vm,"call_cancel",&second,1);
   ok=anygm_state_load(engine,baseline,size)==ANYGM_OK && engine_matches(engine,baseline,size);
   if(!ok){fail("valid delayed-call state does not restore exactly"); goto done;}
+  /* Validate the expanded encoding separately so malformed-callback controls cannot pass
+   * merely because their adjusted section sizes or shifted tail are wrong. */
+  if(ok){
+    memcpy(candidate,baseline,size);
+    candidate[record+48]=V_REAL;
+    write_double(candidate+record+49,args[2].d);
+    memcpy(candidate+record+57,baseline+record+53,size-record-53);
+    write_u64(candidate+16,size+4);
+    write_u64(candidate+80,read_u64(baseline+80)+4);
+    write_u64(candidate+96,read_u64(baseline+96)+4);
+    refresh_checksum(candidate);
+    ok=anygm_state_load(engine,candidate,size+4)==ANYGM_OK &&
+      engine_matches(engine,baseline,size);
+    if(!ok) fail("valid expanded delayed-call callback does not restore exactly");
+  }
   const struct {size_t offset; uint32_t value; const char *label;} mutations[]={
     {table,(uint32_t)second.d,"non-advancing next timer identity"},
     {table,UINT32_MAX,"overflowing next timer identity"},
@@ -857,7 +872,7 @@ static int delayed_call_state_cases(const AnygmHostServices *services,
     {record+40,UINT32_MAX,"negative completed repetitions"},
     {record+44,0,"nearest-expiry hidden timer"},
     {record+48,UINT32_MAX,"invalid callback value kind"},
-    {record+60,UINT32_MAX,"invalid hidden callback argument kind"}
+    {record+53,UINT32_MAX,"invalid hidden callback argument kind"}
   };
   for(size_t i=0;ok && i<sizeof mutations/sizeof mutations[0];i++)
     ok=reject_payload_u32(engine,candidate,size,baseline,size,mutations[i].offset,
@@ -869,16 +884,28 @@ static int delayed_call_state_cases(const AnygmHostServices *services,
     {record+16,-1,"negative remaining delay"},
     {record+16,INFINITY,"infinite remaining delay"},
     {loop+8,7.5,"fractional frame period"},
-    {record+52,NAN,"nonfinite callback identity"},
-    {record+52,2147483648.0,"overflowing callback identity"},
-    {record+52,-1,"negative callback identity"},
-    {record+52,GML_FUNCVAL_TAG+0.5,"fractional callback identity"},
-    {record+52,0,"untagged callback identity"}
+    {record+49,NAN,"nonfinite callback identity"},
+    {record+49,2147483648.0,"overflowing callback identity"},
+    {record+49,-1,"negative callback identity"},
+    {record+49,GML_FUNCVAL_TAG+0.5,"fractional callback identity"},
+    {record+49,0,"untagged callback identity"}
   };
   for(size_t i=0;ok && i<sizeof reals/sizeof reals[0];i++){
-    memcpy(candidate,baseline,size); write_double(candidate+reals[i].offset,reals[i].value);
+    size_t candidate_size=size;
+    memcpy(candidate,baseline,size);
+    if(reals[i].offset==record+49){
+      /* The canonical callback is an integer. Switch this malicious value to the full-double
+       * form to preserve the nonfinite/fractional controls under the compact value schema. */
+      candidate[record+48]=V_REAL;
+      memcpy(candidate+record+57,baseline+record+53,size-record-53);
+      candidate_size+=4;
+      write_u64(candidate+16,candidate_size);
+      write_u64(candidate+80,read_u64(baseline+80)+4);
+      write_u64(candidate+96,read_u64(baseline+96)+4);
+    }
+    write_double(candidate+reals[i].offset,reals[i].value);
     refresh_checksum(candidate);
-    ok=reject_unchanged(engine,candidate,size,baseline,size,reals[i].label);
+    ok=reject_unchanged(engine,candidate,candidate_size,baseline,size,reals[i].label);
   }
   if(ok){
     /* A valid source mutation followed by an audio failure must roll back too. */
@@ -1075,6 +1102,51 @@ static int grid_state_cases(const AnygmHostServices *services,const AnygmContent
   free(candidate); free(baseline); anygm_destroy(engine); return ok;
 }
 
+static int map_reference_state_cases(const AnygmHostServices *services,
+                                      const AnygmContentSource *source){
+  AnygmEngine *engine=NULL; uint8_t *baseline=NULL,*candidate=NULL; size_t size=0;
+  int ok=anygm_create(services,&engine)==ANYGM_OK &&
+    anygm_load(engine,source,NULL)==ANYGM_OK;
+  for(int i=0;i<2 && ok;i++){
+    GmlInstance *node=gml_struct_new(&engine->vm);
+    ok=node!=NULL;
+    if(ok){
+      *gml_varmap_put(&node->vars,"record_scalar")=vreal(17);
+      *gml_varmap_put(&engine->vm.globals,i?"second_record":"first_record")=vobject(node->id);
+    }
+  }
+  ok=ok && save_state(engine,&baseline,&size);
+  if(!ok) goto done;
+  size_t start=STATE_HEADER_SIZE+(size_t)read_u64(baseline+64)+
+    (size_t)read_u64(baseline+72),end=start+(size_t)read_u64(baseline+80);
+  /* The rooted structures were marked by the save-time collector. */
+  uint8_t prefix[]={0,0,0,0,1,0,0,0,1,3};
+  write_u32(prefix,engine->vm.struct_gen[1]);
+  size_t reference=SIZE_MAX,matches=0;
+  for(size_t i=start;i+14<=end;i++) if(!memcmp(baseline+i,prefix,sizeof prefix) &&
+      (baseline[i+13]&0x80)){
+    reference=i+10; matches++;
+  }
+  if(matches!=1) fprintf(stderr,"state security: map reference matches=%zu\n",matches);
+  ok=matches==1 && anygm_state_load(engine,baseline,size)==ANYGM_OK &&
+    engine_matches(engine,baseline,size);
+  candidate=malloc(size);
+  if(!candidate) ok=0;
+  if(ok) ok=reject_payload_u32(engine,candidate,size,baseline,size,reference,
+                               UINT32_MAX,"unknown variable-map reference");
+  if(ok){
+    StateCursor cursor={baseline,size,reference,1};
+    uint32_t id=cursor_u32(&cursor);
+    ok=reject_payload_u32(engine,candidate,size,baseline,size,reference,
+                          id+1,"forward variable-map reference");
+  }
+  if(ok) ok=reject_payload_u32(engine,candidate,size,baseline,size,start+4,21,
+                               "previous map-dictionary-free VM schema");
+done:
+  free(candidate);free(baseline);anygm_destroy(engine);
+  return ok?1:fail("variable-map reference transaction failed");
+}
+
 int main(void){
   AnygmSyntheticContent fixture;
   if(!anygm_synthetic_list_override_content_create(&fixture))
@@ -1097,6 +1169,8 @@ int main(void){
   source.data=content;
   source.size=content_size;
   if(anygm_load(engine,&source,NULL)!=ANYGM_OK) return fail("content load failed")?0:1;
+
+  if(!map_reference_state_cases(&services,&source)) return 1;
 
   /* Reject a bounded PATH table at the VM/content boundary, including after a renderer
    * existed. A failed cold Reset must also leave an empty, reloadable engine. */
@@ -1228,19 +1302,21 @@ int main(void){
   /* VM header and fixed scalar prefix end at 132. The sparse two-element definition has
    * a self reference then a real; argument one is the first cross-root reference. */
   StateCursor graph_cursor={baseline,state_size,vm_start+132,1};
-  if(cursor_u32(&graph_cursor)!=V_ARR || cursor_u32(&graph_cursor)!=UINT32_C(0x80000002))
+  if(!cursor_skip(&graph_cursor,1) || baseline[vm_start+132]!=V_ARR ||
+     cursor_u32(&graph_cursor)!=UINT32_C(0x80000002))
     ok=fail("array mutation fixture does not identify the first definition");
-  graph_cursor.offset=vm_start+180;
-  if(cursor_u32(&graph_cursor)!=4 || cursor_u32(&graph_cursor)!=1)
+  graph_cursor.offset=vm_start+167;
+  if(!cursor_skip(&graph_cursor,1) || baseline[vm_start+167]!=4 ||
+     cursor_u32(&graph_cursor)!=1)
     ok=fail("array mutation fixture does not identify the cross-root reference");
   if(ok) ok=reject_payload_u32(engine,candidate,state_size,baseline,state_size,
-                               vm_start+160,2,"forward array reference inside a definition");
+                               vm_start+154,2,"forward array reference inside a definition");
   if(ok) ok=reject_payload_u32(engine,candidate,state_size,baseline,state_size,
-                               vm_start+184,UINT32_MAX,"unknown cross-root array reference");
+                               vm_start+168,UINT32_MAX,"unknown cross-root array reference");
   if(ok) ok=reject_payload_u32(engine,candidate,state_size,baseline,state_size,
-                               vm_start+164,0,"duplicate sparse array index");
+                               vm_start+158,0,"duplicate sparse array index");
   if(ok) ok=reject_payload_u32(engine,candidate,state_size,baseline,state_size,
-                               vm_start+136,UINT32_MAX,"oversized array definition");
+                               vm_start+133,UINT32_MAX,"oversized array definition");
   if(ok) ok=reject_payload_u32(engine,candidate,state_size,baseline,state_size,
                                vm_start+4,8,"previous VM tree schema");
   if(ok) ok=reject_payload_u32(engine,candidate,state_size,baseline,state_size,
