@@ -1934,6 +1934,98 @@ static void check_position_varying_cache_eligibility(void) {
   }
 }
 
+/* Independently authored grid programs keep unrelated controls live in another function.
+ * Declaration order must not redirect a palette setter to those controls. */
+static void check_grid_uniform_dependencies(void) {
+  static const char controls[]=
+    "uniform sampler2D fixture_table; uniform vec4 fixture_bounds; "
+    "uniform float fixture_choice; uniform vec2 fixture_step; ";
+  static const char unrelated[]=
+    "uniform float fixture_opacity; uniform vec4 fixture_rectangle; "
+    "uniform vec2 fixture_offset; uniform sampler2D fixture_overlay; ";
+  static const char scan[]=
+    "vec4 remap(vec4 value){vec2 start=fixture_bounds.xy; "
+    "for (float row=start.y;row<fixture_bounds.w;row+=fixture_step.y){"
+    "vec2 pos=vec2(start.x,row);"
+    "if(distance(texture2D(fixture_table,pos),value)<0.004){";
+  static const char interpolate[]=
+    "float column=floor(fixture_choice);"
+    "vec4 a=texture2D(fixture_table,vec2(start.x+fixture_step.x*column,row));"
+    "vec4 b=texture2D(fixture_table,vec2(start.x+fixture_step.x*(column+1.0),row));"
+    "return mix(a,b,fract(fixture_choice));}}return value;}";
+  static const char point[]=
+    "return texture2D(fixture_table,vec2(start.x+fixture_step.x*fixture_choice,row));"
+    "}}return value;}";
+  static const char output[]=
+    "void main(){vec4 value=remap(texture2D(gm_BaseTexture,v_vTexcoord));"
+    "gl_FragColor=value*fixture_opacity+"
+    "texture2D(fixture_overlay,fixture_offset)*fixture_rectangle;}";
+  for(int variant=0;variant<5;variant++){
+    uint8_t data[4096]={0};
+    char fragment[3500];
+    GmlWin content={0};
+    GmlRender render;
+    snprintf(fragment,sizeof fragment,"%s%s%s%s%s%s",
+      variant?unrelated:"",controls,variant?"":unrelated,
+      variant==2?"/* uniform float fixture_fake; distance(texture2D(fixture_overlay,p),q); */":"",
+      scan,variant==3?point:interpolate);
+    if(variant==4){
+      char *at=strstr(fragment,"return mix(a,b,fract(fixture_choice));");
+      if(at){
+        snprintf(at,sizeof fragment-(size_t)(at-fragment),
+          "return mix(a,b,fract(fixture_choice))*fixture_opacity;}}return value;}");
+      }
+    }
+    size_t length=strlen(fragment);
+    snprintf(fragment+length,sizeof fragment-length,"%s",output);
+    write_u32(data,0,1); write_u32(data,4,32); write_u32(data,32+12,96);
+    memcpy(data+96,fragment,strlen(fragment)+1);
+    content.data=data; content.size=sizeof data; content.n_chunks=1;
+    memcpy(content.chunks[0].name,"SHDR",4); content.chunks[0].size=8;
+    expect(gml_render_init(&render,&content)==0,"grid dependency renderer initializes");
+    if(render.n_shader_pal==1 && render.shader_pal){
+      struct GmlShaderPal *shader=&render.shader_pal[0];
+      if(variant==4){
+        expect(!shader->grid,"ambiguous palette dependencies cannot claim specialized controls");
+        gml_render_free(&render);
+        continue;
+      }
+      int bindings=shader->grid && !strcmp(shader->grid_sampler,"fixture_table") &&
+        !strcmp(shader->grid_uvs_uniform,"fixture_bounds") &&
+        !strcmp(shader->grid_id_uniform,"fixture_choice") &&
+        !strcmp(shader->grid_pixel_uniform,"fixture_step");
+      if(!bindings) fprintf(stderr,"grid dependencies variant=%d: %s/%s/%s/%s\n",variant,
+        shader->grid_sampler,shader->grid_uvs_uniform,shader->grid_id_uniform,
+        shader->grid_pixel_uniform);
+      expect(bindings,"grid controls follow palette dependencies rather than declaration order");
+      int choice=gml_render_shader_uniform_handle(&render,0,"fixture_choice");
+      int opacity=gml_render_shader_uniform_handle(&render,0,"fixture_opacity");
+      const double selected[4]={variant==3?2:1.5,0,0,0},unrelated_value[4]={0.25,0,0,0};
+      gml_render_shader_uniform_set(&render,choice,selected);
+      gml_render_shader_uniform_set(&render,opacity,unrelated_value);
+      expect(shader->grid_id==(float)selected[0],"an unrelated float cannot overwrite palette selection");
+      static const uint8_t palette[]={0,0,0,255,255,0,0,255,0,0,255,255};
+      uint8_t *pixels=malloc(sizeof palette);
+      expect(pixels!=NULL,"grid dependency palette allocation");
+      if(pixels){
+        memcpy(pixels,palette,sizeof palette);
+        int sprite=gml_sprite_append_from_rgba(&render,pixels,3,1,0,0,"lookup");
+        int sampler=gml_render_shader_sampler_handle(&render,0,"fixture_table");
+        GmlRenderShaderTextureBinding binding;
+        expect(sprite>=0 && gml_render_shader_texture_stage_set(
+          &render,sampler,gml_render_sprite_texture_handle(sprite,0),&binding),
+          "dependency-selected palette texture binds");
+        render.active_shader=0;
+        uint32_t wanted=variant==3?UINT32_C(0xff0000ff):UINT32_C(0xff800080);
+        expect(mapped_texture_pixel(&render,UINT32_C(0xff000000))==wanted,
+               "palette pixels follow their own control in a compound source");
+        render.active_shader=-1;
+      }
+    }else expect(0,"grid dependency shader loads");
+    gml_render_free(&render);
+  }
+}
+
 static void check_named_palette_sampler(void) {
   static const char fragment[] =
     "uniform sampler2D u_lookup;uniform float u_row;"
@@ -2537,6 +2629,7 @@ int main(void) {
   check_dispatch_atlas_textures();
   check_dispatch_rotated_queue();
   check_named_palette_sampler();
+  check_grid_uniform_dependencies();
   check_opaque_stretched_underlay();
   check_channel_mask_pixels();
   check_zero_reference_alpha_test_pixels();

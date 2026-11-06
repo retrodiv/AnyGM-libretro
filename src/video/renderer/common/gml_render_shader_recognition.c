@@ -1280,6 +1280,67 @@ done:
 }
 
 
+/* A compound fragment can declare controls for several independent helpers. Only uniforms
+ * actually read by the palette helper own its software slots. Ambiguous dependencies decline
+ * recognition rather than silently assigning a control by its declaration order. */
+static int glsl_grid_uniform(const char *source,const char *begin,const char *end,
+                             const char *type,char out[32]){
+  char name[32];
+  int found=0;
+  for(int which=0;glsl_uniform_name(source,type,which,name,sizeof name);which++){
+    if(!glsl_range_identifier(begin,end,name)) continue;
+    if(found) return 0;
+    snprintf(out,32,"%s",name);
+    found=1;
+  }
+  return found;
+}
+
+static int glsl_parse_grid(const char *source,struct GmlShaderPal *shader){
+  char *compact=glsl_compact_source(source);
+  if(!compact) return 0;
+  int recognized=0;
+  for(const char *distance=strstr(compact,"distance(");distance;
+      distance=strstr(distance+1,"distance(")){
+    const char *begin=NULL;
+    int depth=0;
+    for(const char *at=compact;at<distance;at++){
+      if(*at=='{'){ if(!depth) begin=at+1; depth++; }
+      else if(*at=='}') depth--;
+    }
+    if(!begin || depth<=0) continue;
+    const char *end=begin;
+    depth=1;
+    while(*end && depth){
+      if(*end=='{') depth++;
+      else if(*end=='}') depth--;
+      if(depth) end++;
+    }
+    if(depth) continue;
+    size_t length=(size_t)(end-begin);
+    int interpolated=mem_find(begin,length,"fract(",6) && mem_find(begin,length,"floor(",6);
+    int scanned=mem_find(begin,length,"for(",4) && mem_find(begin,length,"+=",2) &&
+                mem_find(begin,length,".y",2);
+    if((!interpolated && !scanned) || !mem_find(begin,length,"texture2D(",10)) continue;
+    char sampler[32],uvs[32],id[32],pixel[32];
+    if(!glsl_grid_uniform(compact,begin,end,"sampler2D",sampler) ||
+       !glsl_grid_uniform(compact,begin,end,"vec4",uvs) ||
+       !glsl_grid_uniform(compact,begin,end,"float",id) ||
+       !glsl_grid_uniform(compact,begin,end,"vec2",pixel)) continue;
+    shader->grid=1;
+    shader->grid_explicit_mix=interpolated?1:0;
+    shader->grid_id=-1.0f;
+    snprintf(shader->grid_sampler,sizeof shader->grid_sampler,"%s",sampler);
+    snprintf(shader->grid_uvs_uniform,sizeof shader->grid_uvs_uniform,"%s",uvs);
+    snprintf(shader->grid_id_uniform,sizeof shader->grid_id_uniform,"%s",id);
+    snprintf(shader->grid_pixel_uniform,sizeof shader->grid_pixel_uniform,"%s",pixel);
+    recognized=1;
+    break;
+  }
+  free(compact);
+  return recognized;
+}
+
 void parse_shader_palettes(GmlRender *r){
   r->active_shader=-1;
   const GmlChunk *c=gml_chunk(r->win,"SHDR"); if(!c) return;
@@ -1526,31 +1587,12 @@ void parse_shader_palettes(GmlRender *r){
       /* Palette-grid family: search column zero for an exact source color, then sample a selected
        * palette column (optionally interpolating fractional ids). Recognize the algorithm and read
        * its uniforms from the shader rather than relying on asset or identifier names. */
-      int interpolated_grid=strstr(src,"fract(") && strstr(src,"floor(");
-      int scanned_grid=strstr(src,"for (") && strstr(src,"+=") && strstr(src,".y");
-      if(strstr(src,"distance(") && (interpolated_grid || scanned_grid) &&
-         strstr(src,"texture2D") && strstr(src,"sampler2D")){
-        struct GmlShaderPal *sp=&r->shader_pal[i];
-        const char *us=src, *samp=NULL;
-        while((us=strstr(us,"uniform sampler2D "))){
-          us+=18; if(strncmp(us,"gm_",3)){ samp=us; break; }
-        }
-        char sname[32]="", uvname[32]="", idname[32]="", pxname[32]="";
-        if(samp){ int k=0; for(;k<31 && (isalnum((unsigned char)samp[k])||samp[k]=='_');k++) sname[k]=samp[k]; sname[k]=0; }
-        glsl_uniform_name(src,"vec4",0,uvname,sizeof uvname);
-        glsl_uniform_name(src,"float",0,idname,sizeof idname);
-        glsl_uniform_name(src,"vec2",0,pxname,sizeof pxname);
-        if(sname[0] && uvname[0] && idname[0] && pxname[0]){
-          sp->grid=1; sp->grid_explicit_mix=interpolated_grid?1:0; sp->grid_id=-1.0f;
-          snprintf(sp->grid_sampler,sizeof sp->grid_sampler,"%s",sname);
-          snprintf(sp->grid_uvs_uniform,sizeof sp->grid_uvs_uniform,"%s",uvname);
-          snprintf(sp->grid_id_uniform,sizeof sp->grid_id_uniform,"%s",idname);
-          snprintf(sp->grid_pixel_uniform,sizeof sp->grid_pixel_uniform,"%s",pxname);
-          if(render_setting(r,"GML_LOG_SHADER"))
-            anygm_host_logf(r && r->win ? r->win->host : NULL,ANYGM_LOG_DEBUG,"[shader] grid[%u] sampler=%s uvs=%s id=%s pixel=%s\n",
-                    i,sname,uvname,idname,pxname);
-          continue;
-        }
+      if(glsl_parse_grid(src,&r->shader_pal[i])){
+        const struct GmlShaderPal *sp=&r->shader_pal[i];
+        if(render_setting(r,"GML_LOG_SHADER"))
+          anygm_host_logf(r && r->win ? r->win->host : NULL,ANYGM_LOG_DEBUG,"[shader] grid[%u] sampler=%s uvs=%s id=%s pixel=%s\n",
+                  i,sp->grid_sampler,sp->grid_uvs_uniform,sp->grid_id_uniform,sp->grid_pixel_uniform);
+        continue;
       }
       /* Palette-LUT template: the fragment samples a palette texture at
        * (a base-colour channel, <row uniform>). Detect a sampler2D besides gm_BaseTexture,
