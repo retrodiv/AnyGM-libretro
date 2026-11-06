@@ -14086,6 +14086,39 @@ static int runtime_sprite_scene_lifetimes(void){
     runtime_sprite_scene_lifetimes_variant(1);
 }
 
+static int runtime_surface_capture_observes_pending_fill(void){
+  GmlRender *render=calloc(1,sizeof *render);
+  FakeDevice fake={.on_demand=1,.readback_colour=0xFFFF0000u};
+  GmlRenderDeviceServices device=service(&fake);
+  uint32_t base[64]={0};
+  CHECK(render && gml_render_init(render,NULL)==0);
+  gml_render_begin(render,base,8,8,0,0);
+  int source=gml_surface_create(render,2,2);
+  CHECK(source>0);
+  device.observe_on_demand=fake_observe_on_demand;
+  gml_render_bind_device(render,&device);
+  gml_render_application_surface_bind(render,base,8,8,1);
+  CHECK(gml_render_begin_resident_base(render,base,8,8,0,0) &&
+        gml_surface_set_target(render,source));
+  gml_render_clear(render,0xFF0000u,1);
+  CHECK(render->pending_fill);
+  int sprite=gml_sprite_create_from_surface(render,source,0,0,2,2,0,0,0,0);
+  CHECK(sprite>=0 && render->spr[sprite].runtime_rgba[0]==255u &&
+        render->spr[sprite].runtime_rgba[1]==0u &&
+        render->spr[sprite].runtime_rgba[2]==0u &&
+        render->spr[sprite].runtime_rgba[3]==255u);
+  fake.readback_colour=0xFF0000FFu;
+  gml_render_clear(render,0x0000FFu,1);
+  CHECK(render->pending_fill &&
+        gml_sprite_add_from_surface(render,sprite,source,0,0,2,2,0,0));
+  const uint8_t *next=render->spr[sprite].runtime_rgba+16u;
+  CHECK(next[0]==0u && next[1]==0u && next[2]==255u && next[3]==255u &&
+        render->spr[sprite].runtime_rgba[0]==255u);
+  gml_surface_reset_target(render);
+  gml_render_free(render);free(render);
+  return 1;
+}
+
 static int runtime_sprite_surface_append_lifetime(void){
   GmlRender *render=calloc(1,sizeof *render);
   FakeDevice fake={.on_demand=1};
@@ -20027,7 +20060,8 @@ int main(void){
   const char *selected=getenv("GML_RENDER_RESOURCE_CASE");
   if(selected){
     int passed;
-    if(!strcmp(selected,"surface-sprite-append")) passed=runtime_sprite_surface_append_lifetime();
+    if(!strcmp(selected,"surface-capture-pending-fill")) passed=runtime_surface_capture_observes_pending_fill();
+    else if(!strcmp(selected,"surface-sprite-append")) passed=runtime_sprite_surface_append_lifetime();
     else if(!strcmp(selected,"skip-cpu-draws")) passed=skip_cpu_draw_policy_preserves_observers();
     else if(!strcmp(selected,"independent-screen-clear")) passed=independent_screen_clear_preserves_draw_state();
     else if(!strcmp(selected,"registered-view-source")) passed=resident_registered_view_surface_source();
@@ -20320,6 +20354,7 @@ int main(void){
   passed+=resident_classic_unit_tiles();
   passed+=runtime_sprite_scene_lifetimes();
   passed+=runtime_sprite_surface_append_lifetime();
+  passed+=runtime_surface_capture_observes_pending_fill();
   passed+=resident_classic_clipped_sprite_noops();
   passed+=resident_classic_rotated_sprite_noops();
   passed+=resident_outside_sprite_geometry();
@@ -20391,6 +20426,6 @@ int main(void){
   passed+=skip_cpu_draw_policy_preserves_observers();
   passed+=resident_numbered_rotated_native_quad();
   passed+=resident_unit_texel_magnification();
-  printf("render resource cases: passed=%d failed=%d\n",passed,318-passed);
-  return passed==318?EXIT_SUCCESS:EXIT_FAILURE;
+  printf("render resource cases: passed=%d failed=%d\n",passed,319-passed);
+  return passed==319?EXIT_SUCCESS:EXIT_FAILURE;
 }

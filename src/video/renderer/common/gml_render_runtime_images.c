@@ -613,9 +613,13 @@ void gml_render_clear_runtime_sprites(GmlRender *r){
 }
 static uint8_t *surface_region_rgba(GmlRender *r,int surf,int x,int y,int w,int h,
                                      int removeback){
+  /* Preparing an active target may enqueue a device clear. Do that before the
+   * observation barrier, so the returned CPU view includes that clear. */
+  if(r && surf>=0 && (gml_surface_get_target(r)==surf ||
+                      (surf==0 && r->fb==r->app_surface)))
+    gml_render_maybe_prepare_draw(r);
   int sw=0, sh=0; const uint32_t *src=surface_pixels_observe(r,surf,&sw,&sh);
   if(!src || w<=0 || h<=0 || (size_t)w>SIZE_MAX/4u/(size_t)h) return NULL;
-  if(src==r->fb) gml_render_maybe_prepare_draw(r);
   uint8_t *rgba=calloc((size_t)w*h*4,1);
   if(!rgba) return NULL;
   for(int yy=0; yy<h; yy++) for(int xx=0; xx<w; xx++){
