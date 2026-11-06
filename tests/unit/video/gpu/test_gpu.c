@@ -1928,7 +1928,7 @@ static int scene_hardware_filtered_batch_case(unsigned kind){
 }
 
 static int scene_hot_constant_programs_case(void){
-  const unsigned filters[]={32u,33u,153u,21u,22u,25u,26u,53u,55u,147u,149u,30u,23u,24u,34u,35u,36u,39u,41u,40u,37u,42u,84u};
+  const unsigned filters[]={32u,33u,153u,21u,22u,25u,26u,53u,55u,147u,149u,30u,23u,24u,34u,35u,36u,39u,41u,40u,37u,42u,84u,31u};
   for(unsigned api=0;api<2u;api++)for(unsigned selected=0;selected<sizeof filters/sizeof filters[0];selected++)
   for(unsigned failure=0;failure<2u;failure++){
     GmlGpuContext context=fake_context(api?GML_GPU_API_OPENGL_CORE:GML_GPU_API_OPENGLES3);
@@ -1974,6 +1974,24 @@ static int scene_hot_constant_programs_case(void){
         anygm_test_graphics_allow_calls();
         REQUIRE(gml_gpu_context_reset(gpu,&context),"successor context owns fresh hot programs");
       }
+    }
+    gml_gpu_destroy(gpu,1);
+  }
+  /* Distinct constant kernels must retain different cache owners in one context. */
+  for(unsigned api=0;api<2u;api++){
+    GmlGpuContext context=fake_context(api?GML_GPU_API_OPENGL_CORE:GML_GPU_API_OPENGLES3);
+    anygm_test_graphics_reset();GmlGpu *gpu=gml_gpu_create();
+    REQUIRE(gpu && gml_gpu_context_reset(gpu,&context),"mixed hot program context created");
+    GlSceneProgram *seen[sizeof filters/sizeof filters[0]]={0};
+    for(unsigned selected=0;selected<sizeof filters/sizeof filters[0];selected++){
+      char prefix[64],error[192];int plain=selected>=3u && selected<7u;
+      snprintf(prefix,sizeof prefix,"#define GML_SCENE_CONSTANT_FILTER %u\n",filters[selected]);
+      seen[selected]=gml_gpu_opengl_scene_draw_program(gpu->backend,filters[selected],plain,error,sizeof error);
+      const char *fragment=anygm_test_graphics_shader_source(1);
+      REQUIRE(seen[selected] && fragment && strstr(fragment,prefix),
+        "mixed constant kernels retain their selected program");
+      for(unsigned previous=0;previous<selected;previous++)
+        REQUIRE(seen[selected]!=seen[previous],"different constant kernels cannot alias one cache slot");
     }
     gml_gpu_destroy(gpu,1);
   }
