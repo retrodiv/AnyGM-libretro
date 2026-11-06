@@ -1194,6 +1194,46 @@ done:
   return ok?1:fail("repeated static target invalidated a retained key shape");
 }
 
+static int instance_order_state_cases(const AnygmHostServices *services,const AnygmContentSource *source){
+  AnygmEngine *engine=NULL;uint8_t *baseline=NULL,*candidate=NULL;size_t size=0;
+  int ok=anygm_create(services,&engine)==ANYGM_OK && anygm_load(engine,source,NULL)==ANYGM_OK;
+  if(!ok || engine->vm.n_objects<1){anygm_destroy(engine);return 0;}
+  GmlInstance *first=gml_instance_create(&engine->vm,1,0,0);
+  GmlInstance *second=gml_instance_create(&engine->vm,2,0,0);
+  GmlInstance *third=gml_instance_create(&engine->vm,3,0,0);
+  GmlInstance *foreign=engine->vm.n_objects>1?gml_instance_create(&engine->vm,4,0,1):NULL;
+  int foreign_slot=foreign?(int)(foreign-engine->vm.inst):-1;
+  if(!first || !second || !third){anygm_destroy(engine);return 0;}
+  gml_instance_change(&engine->vm,first,0,0);
+  uint32_t members=0;
+  for(int i=0;i<engine->vm.inst_count;i++)if(engine->vm.inst[i].obj==0 &&
+      (engine->vm.inst[i].active || engine->vm.inst[i].deactivated))members++;
+  ok=save_state(engine,&baseline,&size);
+  size_t vm_start=ok?STATE_HEADER_SIZE+(size_t)read_u64(baseline+64)+(size_t)read_u64(baseline+72):0;
+  size_t vm_end=ok?vm_start+(size_t)read_u64(baseline+80):0;
+  size_t trailer=(3u+(size_t)members)*4u;
+  if(!ok || trailer>vm_end-vm_start){free(baseline);anygm_destroy(engine);return 0;}
+  size_t at=vm_end-trailer;
+  ok=read_u64(baseline+at)==1 && (uint32_t)read_u64(baseline+at+8)==members &&
+    anygm_state_load(engine,baseline,size)==ANYGM_OK && engine_matches(engine,baseline,size);
+  candidate=malloc(size?size:1);ok=ok && candidate;
+  if(ok)ok=reject_payload_u32(engine,candidate,size,baseline,size,at,UINT32_MAX,"oversized order group count");
+  if(ok)ok=reject_payload_u32(engine,candidate,size,baseline,size,at+4,(uint32_t)engine->vm.n_objects,"unknown order object");
+  if(ok)ok=reject_payload_u32(engine,candidate,size,baseline,size,at+4,UINT32_MAX,"negative order object");
+  if(ok)ok=reject_payload_u32(engine,candidate,size,baseline,size,at+8,0,"empty order membership");
+  if(ok)ok=reject_payload_u32(engine,candidate,size,baseline,size,at+8,members-1,"missing order member");
+  if(ok)ok=reject_payload_u32(engine,candidate,size,baseline,size,at+12,(uint32_t)engine->vm.inst_count,"out-of-pool order slot");
+  if(ok)ok=reject_payload_u32(engine,candidate,size,baseline,size,at+12,UINT32_MAX,"negative order slot");
+  if(ok)ok=reject_payload_u32(engine,candidate,size,baseline,size,at+12,
+    (uint32_t)read_u64(baseline+at+16),"duplicate order member");
+  if(ok && foreign_slot>=0)ok=reject_payload_u32(engine,candidate,size,baseline,size,at+12,
+    (uint32_t)foreign_slot,"foreign object order member");
+  if(ok)ok=reject_payload_u32(engine,candidate,size,baseline,size,vm_start+4,24,"previous order-free VM schema");
+  if(ok)ok=reject_payload_u32(engine,candidate,size,baseline,size,4,42,"previous order-free public schema");
+  if(!ok)fail("instance order rollback controls failed");
+  free(candidate);free(baseline);anygm_destroy(engine);return ok;
+}
+
 int main(void){
   AnygmSyntheticContent fixture;
   if(!anygm_synthetic_list_override_content_create(&fixture))
@@ -1217,7 +1257,8 @@ int main(void){
   source.size=content_size;
   if(anygm_load(engine,&source,NULL)!=ANYGM_OK) return fail("content load failed")?0:1;
 
-  if(!map_reference_state_cases(&services,&source) ||
+  if(!instance_order_state_cases(&services,&source) ||
+     !map_reference_state_cases(&services,&source) ||
      !repeated_static_scope_state_case(&services,&source)) return 1;
 
   /* Reject a bounded PATH table at the VM/content boundary, including after a renderer
@@ -1293,7 +1334,9 @@ int main(void){
   /* Object properties follow the path table. Assert the synthetic table's exact
    * extent before moving the existing path mutations to their current offsets. */
   const size_t object_bytes=4+28;
-  size_t object_table=audio_start-object_bytes;
+  size_t object_table=audio_start-4-object_bytes;
+  if(audio_start<4+object_bytes || memcmp(baseline+audio_start-4,(const uint8_t[4]){0},4))
+    ok=fail("object mutation fixture requires an empty order trailer");
   StateCursor object_cursor={baseline,state_size,object_table,1};
   if(engine->vm.n_objects!=1 || cursor_u32(&object_cursor)!=1)
     ok=fail("object mutation fixture does not identify its table");

@@ -5172,3 +5172,78 @@ static int expect_persistent_lifecycle_exit_code(void){
 int expect_persistent_lifecycle(void){
   return expect_persistent_lifecycle_exit_code()==0;
 }
+
+
+/* Recycled slots and object changes make list insertion order differ from pool order.
+ * A canonical byte roundtrip alone cannot observe a lost derived dispatch list. */
+int expect_vm_state_event_order(void){
+  char source_path[]="/tmp/gml-state-order-source-XXXXXX";
+  char package_path[]="/tmp/gml-state-order-package-XXXXXX";
+  int source_fd=mkstemp(source_path),package_fd=mkstemp(package_path),ok=0;
+  if(source_fd<0 || package_fd<0) goto cleanup;
+  close(source_fd); source_fd=-1;close(package_fd);package_fd=-1;
+  if(!fixture_write_text(source_path,
+      "global.order=global.order*10+x; roll=random(1);\n"))goto cleanup;
+  AnygmHostServices services={.struct_size=sizeof services,
+    .abi_version=ANYGM_HOST_SERVICES_VERSION};
+  anygm_stdio_vfs_services_init(&services);
+  GmlcObject objects[2]={{0}};GmlcObjectEvent event={0};
+  GmlcRoom room={0};GmlcRoomInstance placed[3]={{0}};int room_order[]={0};
+  GmlcProject project={0};project.name="state-event-order";project.host=&services;
+  project.objects=objects;project.n_objects=project.cap_objects=2;
+  project.rooms=&room;project.n_rooms=project.cap_rooms=1;
+  project.room_order=room_order;project.n_room_order=1;
+  event.event_type=3;event.event_number=0;event.source_path=source_path;
+  for(int i=0;i<2;i++){
+    objects[i].id=objects[i].name=i?"obj_order_secondary":"obj_order_primary";
+    objects[i].sprite_id=objects[i].mask_id=objects[i].parent_id=-1;
+    objects[i].events=&event;objects[i].n_events=objects[i].cap_events=1;
+  }
+  for(int i=0;i<3;i++){
+    placed[i].id=placed[i].name="placed_order_member";placed[i].object_id=0;
+    placed[i].instance_id=100000+i;placed[i].x=i+1;
+  }
+  room.id=room.name="room_state_order";room.width=320;room.height=240;room.speed=60;
+  room.instances=placed;room.n_instances=room.cap_instances=3;
+  char error[256]={0};
+  if(!gmlc_package_write_structural(&project,package_path,error,sizeof error))goto cleanup;
+  GmlWin win={0};GmlVM vm={0};
+  if(anygm_stdio_load_win(&win,package_path))goto cleanup;
+  win.bytecode=17;
+  if(gml_vm_init(&vm,&win,&services)){gml_win_free(&win);goto cleanup;}
+  gml_room_enter(&vm,0);*gml_varmap_put(&vm.globals,"order")=vreal(0);
+  gml_instance_destroy(&vm,&vm.inst[0]);gml_vm_step(&vm);
+  GmlInstance *replacement=gml_instance_create(&vm,4,0,0);
+  ok=replacement==&vm.inst[0];
+  for(int variant=0;variant<3 && ok;variant++){
+    GmlInstance *older=find_slot(&vm,100001);
+    if(variant==1){gml_instance_change(&vm,older,1,0);gml_instance_change(&vm,older,0,0);}
+    if(variant==2){older->active=0;older->deactivated=1;}
+    *gml_varmap_put(&vm.globals,"order")=vreal(0);gml_rng_seed(&vm,123456789);
+    size_t n=gml_vm_state_size(&vm),written=0,used=0;
+    uint8_t *state=malloc(n?n:1);ok=ok && state && gml_vm_state_save(&vm,state,n,&written);
+    if(ok){
+      gml_vm_step(&vm);GmlVal *order=gml_varmap_get(&vm.globals,"order");
+      double expected=variant==0?234:variant==1?342:34;
+      ok=order && order->d==expected;
+      size_t final=gml_vm_state_size(&vm);uint8_t *reference=malloc(final?final:1),*replay=malloc(final?final:1);
+      ok=ok && reference && replay && gml_vm_state_save(&vm,reference,final,&written);
+      for(int repeat=0;repeat<2 && ok;repeat++){
+        ok=gml_vm_state_load(&vm,state,n,&used) && used==n;
+        if(ok)gml_vm_step(&vm);
+        order=gml_varmap_get(&vm.globals,"order");
+        ok=ok && order && order->d==expected && gml_vm_state_size(&vm)==final &&
+          gml_vm_state_save(&vm,replay,final,&written) && !memcmp(reference,replay,final);
+        if(!ok)fprintf(stderr,"state event order variant %d: expected %.0f, got %.0f\n",
+          variant,expected,order?order->d:-1);
+      }
+      free(reference);free(replay);
+    }
+    free(state);
+  }
+  gml_vm_free(&vm);gml_win_free(&win);
+cleanup:
+  if(source_fd>=0)close(source_fd);
+  if(package_fd>=0)close(package_fd);
+  unlink(source_path);unlink(package_path);return ok;
+}

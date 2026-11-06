@@ -18,7 +18,7 @@
 #include <limits.h>
 
 /* ---------------- save-state runtime serialization ---------------- */
-enum { GML_VM_STATE_SCHEMA=24 };
+enum { GML_VM_STATE_SCHEMA=25 };
 enum { STATE_MAX_TILEMAPS=512, STATE_TILEMAP_RECORD_BYTES=56 };
 #define GML_VM_STATE_MAGIC UINT32_C(0x534D5641)
 /* IDs are assigned in canonical traversal order, never from addresses. Zero is the null array;
@@ -1575,6 +1575,75 @@ static int state_visual_ids_valid(GmlVM *vm){
   return ok;
 }
 
+/* Per-type lists carry insertion/relink order, which can differ from pool slots after reuse.
+ * Encode only departures from the ordinary descending-slot list built by recount. */
+static void sw_instance_order(StateW *s,GmlVM *vm){
+  if(vm->n_objects<=0 || !vm->obj_head){sw_u32(s,0);return;}
+  if(!vm->inst_next || !vm->inst_prev){s->ok=0;return;}
+  uint32_t *counts=calloc((size_t)vm->n_objects,sizeof(*counts));
+  uint8_t *changed=calloc((size_t)vm->n_objects,1);
+  if(!counts || !changed){free(counts);free(changed);s->ok=0;return;}
+  for(int i=0;i<vm->inst_count;i++){
+    GmlInstance *in=&vm->inst[i];
+    if((in->active || in->deactivated) && in->obj>=0 && in->obj<vm->n_objects)
+      counts[in->obj]++;
+  }
+  uint32_t groups=0;
+  for(int object=0;object<vm->n_objects && s->ok;object++){
+    uint32_t count=0;int previous=vm->inst_count;
+    for(int slot=vm->obj_head[object];slot>=0;slot=vm->inst_next[slot]){
+      if(slot>=vm->inst_count || count>=counts[object]){s->ok=0;break;}
+      GmlInstance *in=&vm->inst[slot];
+      if(in->obj!=object || !(in->active || in->deactivated)){s->ok=0;break;}
+      if(slot>=previous)changed[object]=1;
+      previous=slot;count++;
+    }
+    if(count!=counts[object])s->ok=0;
+    if(changed[object])groups++;
+  }
+  if(s->ok){
+    sw_u32(s,groups);
+    for(int object=0;object<vm->n_objects;object++)if(changed[object]){
+      sw_i32(s,object);sw_u32(s,counts[object]);
+      for(int slot=vm->obj_head[object];slot>=0;slot=vm->inst_next[slot])sw_i32(s,slot);
+    }
+  }
+  free(counts);free(changed);
+}
+static void sr_instance_order(StateR *s,GmlVM *vm){
+  uint32_t groups=sr_u32(s);
+  if(!s->ok || groups>(uint32_t)vm->n_objects){s->ok=0;return;}
+  if(!groups)return;
+  if(!vm->obj_head || !vm->inst_next || !vm->inst_prev || vm->inst_count<=0){s->ok=0;return;}
+  int *slots=malloc((size_t)vm->inst_count*sizeof(*slots));
+  uint8_t *seen=calloc((size_t)vm->inst_count,1);
+  if(!slots || !seen){free(slots);free(seen);s->ok=0;return;}
+  int previous=-1;
+  for(uint32_t group=0;group<groups && s->ok;group++){
+    int object=sr_i32(s);uint32_t count=sr_u32(s);
+    if(!s->ok || object<=previous || object>=vm->n_objects || !count ||
+       count>(uint32_t)vm->inst_count || s->pos>s->cap || count>(s->cap-s->pos)/4){s->ok=0;break;}
+    previous=object;uint32_t expected=0;
+    for(int slot=vm->obj_head[object];slot>=0;slot=vm->inst_next[slot])expected++;
+    if(count!=expected){s->ok=0;break;}
+    for(uint32_t i=0;i<count && s->ok;i++){
+      int slot=sr_i32(s);
+      if(!s->ok || slot<0 || slot>=vm->inst_count || seen[slot] ||
+         vm->inst[slot].obj!=object || !(vm->inst[slot].active || vm->inst[slot].deactivated)){
+        s->ok=0;break;
+      }
+      seen[slot]=1;slots[i]=slot;
+    }
+    if(!s->ok)break;
+    vm->obj_head[object]=-1;
+    for(uint32_t i=count;i>0;i--){
+      int slot=slots[i-1];vm->inst_next[slot]=vm->inst_prev[slot]=-1;
+      gml_vm_instances_link(vm,&vm->inst[slot]);
+    }
+  }
+  free(slots);free(seen);
+}
+
 static void sw_vm(StateW *s, GmlVM *vm){
   s->vm=vm; s->compact_strings=1; s->array_meta=1;
   GmlBuiltinState *builtin_state=gml_builtin_state_ensure(vm);
@@ -1729,6 +1798,7 @@ static void sw_vm(StateW *s, GmlVM *vm){
     }
   }
   sw_object_properties(s,vm);
+  sw_instance_order(s,vm);
   vm_state_profile_globals(vm);
 }
 size_t gml_vm_state_size(GmlVM *vm){
@@ -2098,6 +2168,7 @@ int gml_vm_state_load(GmlVM *vm, const void *data, size_t len, size_t *used){
   vm->step_free_n=vm->step_free_pos=0;
   vm->render=render; vm->audio=audio;
   gml_obj_alive_recount(vm);   /* family live counts rebuilt from the restored pool */
+  if(s.ok)sr_instance_order(&s,vm);
   /* Rebind immutable grids before restoring their saved handles. The temporary
    * construction IDs never escape this state transaction. */
   if(s.ok && vm->win && vm->room_index>=0){

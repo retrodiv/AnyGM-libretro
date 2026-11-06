@@ -130,6 +130,7 @@ int main(int argc,char **argv){
   };
   static const AnygmTestCase state_cases[]={
     {"canonical_roundtrip",expect_vm_state_case},
+    {"event_order_roundtrip",expect_vm_state_event_order},
     {"map_string_replacement",expect_vm_state_map_string_replacement},
     {"sparse_ds_continuation",expect_vm_state_sparse_ds_continuation},
     {"io_identity_continuation",expect_vm_state_io_identity_continuation},

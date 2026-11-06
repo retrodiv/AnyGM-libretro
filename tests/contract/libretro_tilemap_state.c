@@ -332,8 +332,10 @@ static int run_ds_case(int response){
   size_t vm_end=112+(size_t)read_word64(saved+64)+(size_t)read_word64(saved+72)+
                      (size_t)read_word64(saved+80);
   size_t object_bytes=4+28*(size_t)g_libretro.engine->vm.n_objects;
-  REQUIRE(vm_end>=object_bytes && vm_end<=saved_size,"locate VM object table");
-  memset(ring.bytes+vm_end-object_bytes,255,4);
+  REQUIRE(vm_end>=object_bytes+4 && vm_end<=saved_size &&
+          !memcmp(saved+vm_end-4,(const unsigned char[4]){0},4),
+          "locate VM object table before the empty order trailer");
+  memset(ring.bytes+vm_end-4-object_bytes,255,4);
   size_t payload_size=(size_t)read_word64(saved+96);
   REQUIRE(payload_size<=saved_size-112,"validate payload checksum span");
   write_word64(ring.bytes+56,payload_hash(ring.bytes+112,payload_size));

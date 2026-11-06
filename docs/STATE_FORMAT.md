@@ -20,9 +20,20 @@ failed partial reads leave the canonical image unpublished and invalid as a
 current resource. See R03-P9-INCREMENTAL-CHECKPOINT in
 [the renderer map](RENDERER_BACKENDS.md) for owners and controls.
 
-The current AnyGM save-state schema is `42`. It is the format transported by
+The current AnyGM save-state schema is `43`. It is the format transported by
 libretro frontends for manual save states, automatic state slots, and rewind
 snapshots. Those features remain supported.
+
+Schema `43` introduces VM schema `25`. The VM section ends with a bounded table
+of per-object insertion-order exceptions. A group count precedes ascending object
+indices; each group carries its member count and pool slot indices, newest first.
+The ordinary descending-slot list needs no record. Recycled slots and object
+changes can produce another order; reconstructing only from pool position would
+change event dispatch, RNG consumers and continuation after a state load. Restore
+validates exact membership, counts, object bounds, group order and unique slots,
+then rebuilds those lists through the existing link operation. Earlier public and
+VM layouts reject transactionally without legacy readers. Event dispatch itself,
+collection timing, drawing and frontend capacity policy are unchanged.
 
 Schema `42` introduces VM schema `24`. Nonempty variable maps share snapshot-local
 sorted key shapes as well as identical full records. A map word with bit31 set
@@ -490,7 +501,7 @@ same form without an intervening mutation produces identical bytes.
 ## VM payload ownership
 
 `src/core/engine_state.c` owns the root framing and section transaction.
-Within the VM section, `src/runtime/vm/gml_vm_state.c` alone owns schema `24`,
+Within the VM section, `src/runtime/vm/gml_vm_state.c` alone owns schema `25`,
 field order, value-graph encoding, sizing, and restore scratch.
 
 Builtin resources have a separate storage and lifetime owner, not a separate

@@ -140,16 +140,19 @@ static void fixture_map(FixtureProjection *p){
 }
 static int project_fixture_vm(AnygmEngine *engine,uint8_t **data,size_t *written){
   const uint8_t *bytes=*data;
-  if(*written<112 || (uint32_t)read_u64(bytes+4)!=42 || engine->vm.n_structs ||
+  if(*written<112 || (uint32_t)read_u64(bytes+4)!=43 || engine->vm.n_structs ||
      engine->vm.n_tilemaps || engine->vm.n_rtl || engine->vm.n_rte ||
      engine->vm.room_visuals || engine->vm.wait.active)return 0;
   size_t start=112+(size_t)read_u64(bytes+64)+(size_t)read_u64(bytes+72);
   size_t size=(size_t)read_u64(bytes+80);
   if(start>*written || size>*written-start || size<132)return 0;
   FixtureProjection *p=calloc(1,sizeof(*p));if(!p)return 0;
-  p->input=bytes+start;p->size=size;p->ok=1;
+  /* This bounded fixture has no recycled/relinked object groups. Strip only the verified
+   * empty order trailer; nonempty new behavior belongs to its direct continuation controls. */
+  if(size<4 || memcmp(bytes+start+size-4,(const uint8_t[4]){0},4)){free(p);return 0;}
+  p->input=bytes+start;p->size=size-4;p->ok=1;
   fixture_copy(p,132);
-  if((uint32_t)read_u64(p->output+4)!=24)p->ok=0;
+  if((uint32_t)read_u64(p->output+4)!=25)p->ok=0;
   write_u32(p->output+4,19);
   for(unsigned i=0;i<16;i++)(void)fixture_value(p,0);
   fixture_copy(p,76+26*4+616*8+10*4); /* RNG and unchanged software-3D scalars */
