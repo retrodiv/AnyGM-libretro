@@ -149,6 +149,7 @@ typedef struct GmlAtlas {
   int scene_source_used;                                          /* atlas source exposed to the scene device */
   int resident_alpha_cache_immutable;                             /* last observed cache eligibility */
   uint64_t resident_alpha_cache_epoch;                            /* shared invalidation of derived windows */
+  uint64_t scene_local_incarnation;                               /* derived local views; never serialized */
   uint64_t scene_source_incarnation;                              /* runtime font page identity across reuse */
   uint64_t scene_source_version, scene_source_last_view_version;  /* runtime mutations and retirement */
 } GmlAtlas;

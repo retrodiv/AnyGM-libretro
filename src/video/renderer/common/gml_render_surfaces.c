@@ -567,7 +567,8 @@ static int enqueue_primitives(GmlRender *r,const GmlRenderDrawOp *operations,uin
   if(next.content_version>UINT64_MAX-count) return 0;
   for(uint32_t i=0;i<count;i++){
     const GmlRenderDrawOp *op=&operations[i];
-    if((source?!gml_render_textured_vertex_row_valid(op) ||
+    if((source?(!gml_render_textured_vertex_row_valid(op) &&
+                 !gml_render_native_textured_triangle_valid(op)) ||
                 !same_scene_source(op->sources[0],source->image):
                (!gml_render_rectangle_valid(op) && !gml_render_particle_disc_valid(op) &&
                 !gml_render_native_triangle_valid(op))) ||

@@ -1556,6 +1556,31 @@ static int vertex_native_colour_triangles(GmlRender *R,const GmlD3Vertex *vertex
   free(placed);return result;
 }
 
+static int vertex_native_textured_triangles(GmlRender *R,const GmlD3Vertex *vertex,
+                                               int count,int primitive,int texture,int immediate){
+  if(!gml_render_cpu_backend_native_textured_triangles(R,texture,!immediate,NULL,0u) ||
+     !d3_depth_prepare(R)) return 0;
+  uint32_t triangles=(uint32_t)(primitive==4?count/3:count-2);
+  GmlRenderCpuBackendTexturedTriangle *placed=calloc(triangles,sizeof *placed);
+  if(!placed) return 0;
+  for(uint32_t i=0;i<triangles;i++){
+    int at[3];
+    if(primitive==4){at[0]=(int)i*3;at[1]=at[0]+1;at[2]=at[0]+2;}
+    else if(primitive==5){int last=(int)i+2;at[0]=last&1?last-1:last-2;
+      at[1]=last&1?last-2:last-1;at[2]=last;}
+    else {at[0]=0;at[1]=(int)i+1;at[2]=(int)i+2;}
+    for(unsigned v=0;v<3u;v++){
+      const GmlD3Vertex *source=&vertex[at[v]];double *target=placed[i].vertex[v];
+      target[0]=source->x;target[1]=source->y;
+      target[2]=source->r/255.0;target[3]=source->g/255.0;target[4]=source->b/255.0;
+      target[5]=source->alpha;
+      placed[i].uv[v][0]=source->u;placed[i].uv[v][1]=source->v;
+    }
+  }
+  int result=gml_render_cpu_backend_native_textured_triangles(R,texture,!immediate,placed,triangles);
+  free(placed);return result;
+}
+
 static int vertex_batch_scene(GmlRender *R,const GmlD3Vertex *vertex,int count,
                                int primitive,int texture,int immediate,int joined){
   GmlRenderCpuBackendDrawView draw;
@@ -1626,6 +1651,19 @@ static int vertex_batch_scene(GmlRender *R,const GmlD3Vertex *vertex,int count,
      (minimum_alpha==0.0 || minimum_alpha>=1.0/65536.0) &&
      vertex_native_colour_triangles(R,projected,count,primitive)){
     result=1;goto vertex_scene_done;
+  }
+  if(textured && primitive>=4 && !rgb_gradient && maximum_alpha>0.0 &&
+     vertex_native_textured_triangles(R,projected,count,primitive,texture,immediate)){
+    result=1;goto vertex_scene_done;
+  }
+  /* Only a genuine local crop differs from the page-UV executor. Preserve
+   * established full-page points/lines and excluded triangle policies; a local
+   * crop outside native admission must use the existing local CPU resolver. */
+  uint32_t texture_kind=(uint32_t)texture&GML_TEX_KIND_MASK;
+  if(textured && immediate && (texture_kind==GML_TEX_SPR_TAG || texture_kind==GML_TEX_BG_TAG)){
+    GmlRenderCpuBackendTextureView source;
+    if(!gml_render_cpu_backend_texture_view(R,texture,0,&source) || source.source_x || source.source_y ||
+       source.width!=texture_width || source.height!=texture_height) goto vertex_scene_done;
   }
   coverage.span=malloc((size_t)coverage.capacity*sizeof *coverage.span);
   if(!coverage.span) goto vertex_scene_done;

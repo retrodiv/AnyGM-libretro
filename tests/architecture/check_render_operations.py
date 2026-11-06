@@ -223,6 +223,7 @@ EXECUTOR_ROW = re.compile(
 # GPU-capable merely because the resource owner also implements device submission.
 DISPATCH_PORTS = {
     "gml_render_cpu_backend_native_triangles",
+    "gml_render_cpu_backend_native_textured_triangles",
     "gml_render_cpu_backend_vertex_spans",
     "gml_render_cpu_backend_textured_vertex_spans",
     "gml_render_application_surface_owned_stage_base",
@@ -250,6 +251,7 @@ DISPATCH_CPU_BOUNDARIES = {
 }
 DISPATCH_ADDITIONAL = {
     "gml_render_cpu_backend_native_triangles",
+    "gml_render_cpu_backend_native_textured_triangles",
     "gml_render_cpu_backend_vertex_spans",
     "gml_render_cpu_backend_textured_vertex_spans",
     "gml_render_multiview_prepare", "gml_render_multiview_clear", "gml_render_multiview_copy",

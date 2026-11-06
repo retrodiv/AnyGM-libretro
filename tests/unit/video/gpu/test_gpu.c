@@ -1629,7 +1629,7 @@ static int scene_unit_texel_magnification_case(void){
       !anygm_test_graphics_clear_calls() && !anygm_test_graphics_scene_draw_calls(),
       "nonunit or excessive magnification rejects transactionally");
     else REQUIRE(result.status==GML_RENDER_EXEC_ACCEPTED && result.accepted_prefix==2u &&
-      anygm_test_graphics_scene_vertices()>=6u && anygm_test_graphics_scene_vertices()<=12u &&
+      anygm_test_graphics_scene_vertices()>=6 && anygm_test_graphics_scene_vertices()<=12 &&
       !anygm_test_graphics_read_pixels(),"one placed unit quad reaches the driver without CPU observation");
     gml_gpu_destroy(gpu,1);
   }
@@ -1883,6 +1883,70 @@ static int scene_hot_constant_programs_case(void){
         anygm_test_graphics_allow_calls();
         REQUIRE(gml_gpu_context_reset(gpu,&context),"successor context owns fresh hot programs");
       }
+    }
+    gml_gpu_destroy(gpu,1);
+  }
+  return 1;
+}
+
+static int scene_native_textured_triangle_case(void){
+  for(unsigned api=0;api<2u;api++) for(unsigned filtered=0;filtered<2u;filtered++)
+  for(unsigned surface=0;surface<2u;surface++) for(unsigned invalid=0;invalid<3u;invalid++){
+    GmlGpuContext context=fake_context(api?GML_GPU_API_OPENGL_CORE:GML_GPU_API_OPENGLES3);
+    GmlRenderDeviceServices device={0};anygm_test_graphics_reset();
+    GmlGpu *gpu=gml_gpu_create();REQUIRE(gpu && gml_gpu_context_reset(gpu,&context),"textured triangle context");
+    gml_gpu_device_services(gpu,&device);
+    const uint8_t pixels[24]={13,79,151,255};
+    GmlRenderImageRef source={GML_RENDER_RESOURCE_ATLAS,UINT32_C(0x40000000),1u,1u};
+    GmlRenderImageUpload upload={.image=source,.storage_width=2u,.storage_height=3u,
+      .region={0,0,2u,3u},.pixel_format=GML_RENDER_PIXEL_RGBA8888,
+      .bytes=pixels,.byte_capacity=sizeof pixels,.stride_bytes=8u};
+    REQUIRE(device.upload(device.context,&upload),"local repeat image uploads");
+    GmlRenderDrawOp ops[2]={0};
+    ops[0].opcode=GML_RENDER_OP_CLEAR;
+    ops[0].target=(GmlRenderTargetRef){.image={surface?GML_RENDER_RESOURCE_SURFACE:GML_RENDER_RESOURCE_SCREEN,1u,1u,2u},
+      .storage_version=1u,.width=32u,.height=24u,.pixel_format=GML_RENDER_PIXEL_ARGB8888,
+      .region={0,0,32u,24u}};ops[0].payload.clear_colour=0x40273859u;
+    ops[1]=ops[0];ops[1].opcode=GML_RENDER_OP_COLOURED_PRIMITIVE;
+    ops[1].target.image.content_version++;
+    ops[1].scene_family=GML_RENDER_SCENE_PRIMITIVE;
+    ops[1].reconstruction_mode=GML_RENDER_DEVICE_CHECKPOINT;
+    ops[1].source_count=1u;ops[1].sources=&source;
+    GmlRenderPrimitiveRect *p=&ops[1].payload.primitive;
+    p->kind=GML_RENDER_PRIMITIVE_NATIVE_TEXTURED_TRIANGLE;p->region=ops[1].target.region;
+    p->alpha=1.0;p->alpha_blend=1u;p->pixel_write_mask=15u;p->interpolate=filtered;
+    p->rectangle_flags=surface?GML_RENDER_RECTANGLE_TARGET_ALPHA:0u;
+    const double xy[3][2]={{-2.25,3.5},{30.5,3.5},{9.75,26.75}};
+    const double uv[3][2]={{-.25,0},{1.25,0},{.5,3}};
+    for(unsigned v=0;v<3u;v++){
+      memcpy(p->triangle[v],xy[v],sizeof xy[v]);
+      for(unsigned c=2u;c<6u;c++)p->triangle[v][c]=1.0;
+      memcpy(p->triangle_uv[v],uv[v],sizeof uv[v]);
+    }
+    if(invalid==1u)p->triangle_uv[2][1]=NAN;
+    if(invalid==2u)ops[1].sources=NULL;
+    GmlRenderDrawBatch batch={ops,2u,NULL,0u};
+    GmlRenderExecutionResult result=device.submit(device.context,&batch);
+    if(invalid)REQUIRE(result.status==GML_RENDER_EXEC_UNSUPPORTED && !result.accepted_prefix &&
+      !anygm_test_graphics_clear_calls() && !anygm_test_graphics_scene_draw_calls(),
+      "invalid textured triangle refuses the whole batch before writes");
+    else{
+      REQUIRE(result.status==GML_RENDER_EXEC_ACCEPTED && result.accepted_prefix==2u &&
+        anygm_test_graphics_scene_draw_calls()==(surface?1:2) &&
+        anygm_test_graphics_scene_vertices()==(surface?6:12),
+        "one placed triangle and its covered-alpha pass reach the device");
+      float instance[GL_SCENE_INSTANCE_FLOATS];
+      REQUIRE(anygm_test_graphics_instance_bytes(instance,sizeof instance)==sizeof instance,
+        "textured triangle instance captured");
+      for(unsigned v=0;v<4u;v++){
+        unsigned at=v==3u?2u:v;
+        REQUIRE(instance[v*2u]==(float)xy[at][0] && instance[v*2u+1u]==(float)xy[at][1] &&
+          instance[8u+v*2u]==(float)uv[at][0] && instance[9u+v*2u]==(float)uv[at][1],
+          "placed vertices and repeating UVs survive stream compaction");
+      }
+      REQUIRE(anygm_test_graphics_scene_filter()==(int)(filtered?GL_LINEAR:GL_NEAREST) &&
+        !anygm_test_graphics_read_pixels() && !anygm_test_graphics_scene_copies(),
+        "device sampler and covered-alpha stamp need no CPU image observation");
     }
     gml_gpu_destroy(gpu,1);
   }
@@ -4612,7 +4676,7 @@ static int scene_white_unit_clear_case(void){
     state.rgb_equation=state.alpha_equation=GML_RENDER_BLEND_ADD;
     state.sampler_count=1u;state.samplers[0]=q->sampling;
     GmlRenderDrawBatch batch={ops,2u,&state,1u};
-    unsigned clears=anygm_test_graphics_clear_calls(),draws=anygm_test_graphics_scene_draw_calls();
+    int clears=anygm_test_graphics_clear_calls(),draws=anygm_test_graphics_scene_draw_calls();
     GmlRenderExecutionResult result=device.submit(device.context,&batch);
     if(variant==7u){
       REQUIRE(result.status==GML_RENDER_EXEC_UNSUPPORTED && !result.accepted_prefix &&
@@ -4625,10 +4689,10 @@ static int scene_white_unit_clear_case(void){
         api,variant,(unsigned)result.status,result.accepted_prefix,gml_gpu_last_error(gpu));
     REQUIRE(result.status==GML_RENDER_EXEC_ACCEPTED && result.accepted_prefix==2u,
       "white unit fixture remains an accepted placed quad");
-    if(!variant)REQUIRE(anygm_test_graphics_clear_calls()==clears+2u &&
+    if(!variant)REQUIRE(anygm_test_graphics_clear_calls()==clears+2 &&
       anygm_test_graphics_scene_draw_calls()==draws,
       "a certified white opaque full-target quad reuses the device clear writer");
-    else REQUIRE(anygm_test_graphics_clear_calls()==clears+1u &&
+    else REQUIRE(anygm_test_graphics_clear_calls()==clears+1 &&
       anygm_test_graphics_scene_draw_calls()>draws,
       "mutation, nonwhite, partial coverage or alpha and unbounded sources retain sampling");
     GmlGpuCounters work={0};gml_gpu_counters(gpu,&work);
@@ -6763,6 +6827,7 @@ int main(int argc,char **argv){
     {"scene_service_contract",scene_service_contract_case},
     {"scene_unit_texel_magnification",scene_unit_texel_magnification_case},
     {"scene_native_triangles",scene_native_triangle_batch_case},
+    {"scene_native_textured_triangles",scene_native_textured_triangle_case},
     {"scene_hot_constant_programs",scene_hot_constant_programs_case},
     {"scene_staged_upload",scene_staged_upload_case},
     {"scene_optional_entry_refusal",scene_optional_entry_refusal_case},

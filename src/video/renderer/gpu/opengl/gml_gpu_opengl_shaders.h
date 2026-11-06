@@ -570,6 +570,13 @@
   "    if(u_filter>=165) alpha=1.0;\n" \
   "    o_color=(u_filter==163 || u_filter==164)?vec4(0.0,0.0,0.0,1.0):vec4(floor(sampled.rgb*255.0+0.5)/255.0,alpha); return;\n" \
   "  }\n" \
+  "  // Native textured triangles retain authored UVs; the device owns repeat and filtering.\n" \
+  "  if(u_filter>=180 && u_filter<=185){\n" \
+  "    vec2 uv=v_texcoord;if(v_clamp.x!=0.0) uv.y=1.0-uv.y;\n" \
+  "    vec4 sampled=source_texture(uv)*v_colour;\n" \
+  "    if(sampled.a<=0.0) discard;\n" \
+  "    o_color=(u_filter==182 || u_filter==183)?vec4(0.0,0.0,0.0,1.0):sampled;return;\n" \
+  "  }\n" \
   "  // Native triangle alpha-zero edges own no covered write, including the stamp.\n" \
   "  if((u_filter==32 || u_filter==33) && u_alpha_test==0 && v_colour.a<=0.0) discard;\n" \
   "  if(u_filter==31 || u_filter==32){ o_color=v_colour; return; }\n" \

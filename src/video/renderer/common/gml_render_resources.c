@@ -551,7 +551,8 @@ static int batch_valid(const GmlRenderResource *resource,const GmlRenderDrawBatc
     const GmlRenderDrawStateSnapshot *state=NULL;
     const GmlRenderResourceSource *source=NULL;
     int textured_vertex=operation->opcode==GML_RENDER_OP_COLOURED_PRIMITIVE &&
-      operation->payload.primitive.kind==GML_RENDER_PRIMITIVE_TEXTURED_VERTEX_ROW;
+      (operation->payload.primitive.kind==GML_RENDER_PRIMITIVE_TEXTURED_VERTEX_ROW ||
+       operation->payload.primitive.kind==GML_RENDER_PRIMITIVE_NATIVE_TEXTURED_TRIANGLE);
     int particle_disc=operation->opcode==GML_RENDER_OP_COLOURED_PRIMITIVE &&
       gml_render_particle_disc_valid(operation);
     int vertex_span=operation->opcode==GML_RENDER_OP_COLOURED_PRIMITIVE &&
@@ -573,7 +574,8 @@ static int batch_valid(const GmlRenderResource *resource,const GmlRenderDrawBatc
        operation->target.storage_version!=resource->storage_version) return 0;
     version++;
     if(textured_vertex){
-      if(!gml_render_textured_vertex_row_valid(operation) ||
+      if((!gml_render_textured_vertex_row_valid(operation) &&
+          !gml_render_native_textured_triangle_valid(operation)) ||
          !(source=find_input(sources,source_count,operation->sources[0])) ||
          same_logical(source->image,resource->image)) return 0;
     }else if(operation->opcode==GML_RENDER_OP_CLEAR ||

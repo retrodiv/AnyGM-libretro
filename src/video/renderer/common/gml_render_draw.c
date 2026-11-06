@@ -374,6 +374,28 @@ int gml_render_native_triangle_valid(const GmlRenderDrawOp *operation){
   return 1;
 }
 
+int gml_render_native_textured_triangle_valid(const GmlRenderDrawOp *operation){
+  if(!operation || operation->source_count!=1u || !operation->sources ||
+     operation->payload.primitive.kind!=GML_RENDER_PRIMITIVE_NATIVE_TEXTURED_TRIANGLE ||
+     operation->payload.primitive.interpolate>1u) return 0;
+  const GmlRenderPrimitiveRect *p=&operation->payload.primitive;
+  int surface=operation->target.image.resource_class==GML_RENDER_RESOURCE_SURFACE;
+  if((p->rectangle_flags&~GML_RENDER_RECTANGLE_TARGET_ALPHA) ||
+     (surface && !(p->rectangle_flags&GML_RENDER_RECTANGLE_TARGET_ALPHA))) return 0;
+  GmlRenderDrawOp plain=*operation;
+  plain.source_count=0u;plain.sources=NULL;
+  if(surface) plain.target.image.resource_class=GML_RENDER_RESOURCE_SCREEN;
+  plain.payload.primitive.rectangle_flags=0u;
+  plain.payload.primitive.kind=GML_RENDER_PRIMITIVE_NATIVE_TRIANGLE;
+  plain.payload.primitive.interpolate=0u;
+  if(!gml_render_native_triangle_valid(&plain)) return 0;
+  for(unsigned v=0;v<3u;v++) for(unsigned axis=0;axis<2u;axis++){
+    double uv=operation->payload.primitive.triangle_uv[v][axis];
+    if(!isfinite(uv) || fabs(uv)>4096.0) return 0;
+  }
+  return 1;
+}
+
 int gml_render_rectangle_valid(const GmlRenderDrawOp *operation){
   if(!operation || operation->opcode!=GML_RENDER_OP_COLOURED_PRIMITIVE ||
      operation->reconstruction_mode!=GML_RENDER_DEVICE_CHECKPOINT ||

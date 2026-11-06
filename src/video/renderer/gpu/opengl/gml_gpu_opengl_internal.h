@@ -18,11 +18,23 @@ enum {
   GL_SCENE_MAX_QUADS=2048,
   GL_SCENE_WHITE_TEXELS=16384,
   GL_SCENE_NATIVE_POINT_FILTER=171,
+  GL_SCENE_NATIVE_TEXTURE_NEAREST_FILTER=180,
+  GL_SCENE_NATIVE_TEXTURE_LINEAR_FILTER=181,
+  GL_SCENE_NATIVE_TEXTURE_STAMP_NEAREST_FILTER=182,
+  GL_SCENE_NATIVE_TEXTURE_STAMP_LINEAR_FILTER=183,
+  GL_SCENE_NATIVE_TEXTURE_SURFACE_NEAREST_FILTER=184,
+  GL_SCENE_NATIVE_TEXTURE_SURFACE_LINEAR_FILTER=185,
   GL_SCENE_VERTEX_FLOATS=28,
   GL_SCENE_INSTANCE_FLOATS=52,
   GL_SCENE_INSTANCE_SPANS=128,
   GL_SCENE_STREAM_BYTES=20*GL_SCENE_MAX_QUADS*GL_SCENE_INSTANCE_FLOATS*sizeof(float)
 };
+
+_Static_assert(GL_SCENE_NATIVE_POINT_FILTER<GL_SCENE_NATIVE_TEXTURE_NEAREST_FILTER,
+               "Native texture selectors must not alias the point sampler");
+_Static_assert(GL_SCENE_NATIVE_TEXTURE_NEAREST_FILTER==180 &&
+               GL_SCENE_NATIVE_TEXTURE_SURFACE_LINEAR_FILTER==185,
+               "Native texture selectors must match the scene shader range");
 
 /* One uniform the content's program declares, as the context reports it after linking. A value
  * the content sets is delivered through the setter this type calls for, whatever width the content

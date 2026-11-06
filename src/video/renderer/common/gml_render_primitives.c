@@ -635,6 +635,87 @@ static int vertex_texture_source(GmlRender *r,int texture,GmlRenderResourceSourc
   return gml_render_atlas_scene_source_view(r,view.atlas_index,source);
 }
 
+/* A local immutable view keeps its atlas stride but owns a distinct device
+ * image. Hardware repeat and filtering then operate on the selected region,
+ * including its opposite edges, without sampling neighbouring packed sprites. */
+static int native_vertex_texture_source(GmlRender *r,int texture,int full_atlas,
+                                        GmlRenderResourceSource *source){
+  if(full_atlas || ((uint32_t)texture&GML_TEX_KIND_MASK)==GML_TEX_SURF_TAG)
+    return vertex_texture_source(r,texture,source,0);
+  GmlRenderCpuBackendTextureView view;
+  if(!gml_render_cpu_backend_texture_view(r,texture,0,&view) || view.runtime ||
+     view.pixel_kind!=GML_RENDER_CPU_BACKEND_PIXELS_RGBA || view.page_index<0 ||
+     view.width<=0 || view.height<=0 || view.source_x<0 || view.source_y<0 ||
+     (uint64_t)(unsigned)view.source_x+(unsigned)view.width>(unsigned)view.full_width ||
+     (uint64_t)(unsigned)view.source_y+(unsigned)view.height>(unsigned)view.full_height ||
+     !gml_render_atlas_scene_source_view(r,view.atlas_index,source)) return 0;
+  if(view.width==view.full_width && view.height==view.full_height) return 1;
+  size_t offset=((size_t)view.source_y*view.stride+view.source_x)*4u;
+  if(offset>=source->byte_capacity) return 0;
+  if((uint32_t)view.page_index>=UINT32_C(0x40000000) || !source->borrowed_immutable) return 0;
+  source->image.identity=UINT32_C(0x40000000)|(uint32_t)view.page_index;
+  GmlAtlas *atlas=&r->atlas[view.atlas_index];
+  if(!atlas->scene_local_incarnation){
+    atlas->scene_local_incarnation=gml_render_scene_incarnation_allocate();
+    if(!atlas->scene_local_incarnation) return 0;
+  }
+  source->image.incarnation=atlas->scene_local_incarnation;
+  source->width=(uint32_t)view.width;source->height=(uint32_t)view.height;
+  source->bytes=(const uint8_t*)source->bytes+offset;source->byte_capacity-=offset;
+  return 1;
+}
+
+int gml_render_cpu_backend_native_textured_triangles(GmlRender *r,int texture,
+  int full_atlas,const GmlRenderCpuBackendTexturedTriangle *triangles,uint32_t count){
+  if(!resident_primitive_state_eligible_rule(r,1) || r->classic ||
+     !anygm_policy_has_modern_layer_semantics(r->win) || gml_d3_is_active(r) ||
+     r->classic_phase_scene_target || r->fog_flat || r->alpha_test_enable ||
+     !r->alphablend || r->blendmode || r->color_write_mask!=15u ||
+     r->app_interp_phase[0] || r->app_interp_phase[1] || r->app_interp_phase[2] ||
+     texture==-1 || count>65536u || (count && !triangles)) return 0;
+  /* Probe metadata without flushing a mutable source or queuing a draw. */
+  GmlRenderResourceSource source={0};
+  if(!count) return !triangles && vertex_texture_source(r,texture,&source,1);
+  if(!native_vertex_texture_source(r,texture,full_atlas,&source) ||
+     !source.width || !source.height || source.width>16384u || source.height>16384u) return 0;
+  GmlRenderDrawOp *operations=calloc(count,sizeof *operations);
+  if(!operations) return 0;
+  int result=0;
+  for(uint32_t i=0;i<count;i++){
+    GmlRenderDrawOp *op=&operations[i];
+    op->opcode=GML_RENDER_OP_COLOURED_PRIMITIVE;op->scene_family=GML_RENDER_SCENE_PRIMITIVE;
+    op->reconstruction_mode=GML_RENDER_DEVICE_CHECKPOINT;
+    op->source_count=1u;op->sources=&source.image;
+    op->target=(GmlRenderTargetRef){.image={.resource_class=GML_RENDER_RESOURCE_SCREEN},
+      .width=(uint32_t)r->fbw,.height=(uint32_t)r->fbh,.pixel_format=GML_RENDER_PIXEL_ARGB8888,
+      .region={0,0,(uint32_t)r->fbw,(uint32_t)r->fbh}};
+    GmlRenderPrimitiveRect *p=&op->payload.primitive;
+    p->region=op->target.region;p->kind=GML_RENDER_PRIMITIVE_NATIVE_TEXTURED_TRIANGLE;
+    p->alpha=1.0;p->alpha_blend=1u;p->pixel_write_mask=15u;p->interpolate=r->interp?1u:0u;
+    p->rectangle_flags=gml_render_target_preserves_alpha(r)?GML_RENDER_RECTANGLE_TARGET_ALPHA:0u;
+    memcpy(p->triangle,triangles[i].vertex,sizeof p->triangle);
+    memcpy(p->triangle_uv,triangles[i].uv,sizeof p->triangle_uv);
+    if(!gml_render_native_textured_triangle_valid(op)) goto textured_native_done;
+  }
+  if(r->pending_underlay && !gml_render_compose_resident_underlay(r)) goto textured_native_done;
+  gml_render_flush_pending_fill(r);
+  GmlRenderResource *target=gml_render_scene_target_resource_ensure(r);
+  if(r->pending_fill || !target) goto textured_native_done;
+  GmlRenderImageRef next=gml_render_application_scene_next_image_ref(r,target);
+  if(next.content_version>UINT64_MAX-count ||
+     (next.resource_class==source.image.resource_class && next.identity==source.image.identity &&
+      next.incarnation==source.image.incarnation)) goto textured_native_done;
+  for(uint32_t i=0;i<count;i++){
+    operations[i].target.image=next;operations[i].target.image.content_version+=i+1u;
+    operations[i].target.storage_version=1u;
+  }
+  int opaque=!gml_render_target_preserves_alpha(r) && r->fb_opaque_known && r->fb_all_opaque;
+  result=gml_render_application_scene_enqueue_textured_primitives(r,operations,count,&source);
+  if(result){r->fb_all_transparent=0;r->fb_opaque_known=r->fb_all_opaque=opaque;}
+textured_native_done:
+  free(operations);return result;
+}
+
 int gml_render_cpu_backend_vertex_texture_extent(GmlRender *r,int texture,int *width,int *height){
   GmlRenderResourceSource source={0};
   if(width) *width=0;

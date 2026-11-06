@@ -105,6 +105,10 @@ typedef struct {
   double texcoord_first[2],texcoord_step[2];
 } GmlRenderCpuBackendVertexSpan;
 typedef struct { double vertex[3][6]; } GmlRenderCpuBackendTriangle;
+typedef struct { double vertex[3][6],uv[3][2]; } GmlRenderCpuBackendTexturedTriangle;
+/* Immediate primitives repeat a local source; vertex buffers use page UVs. */
+int gml_render_cpu_backend_native_textured_triangles(GmlRender *render,int texture,
+  int full_atlas,const GmlRenderCpuBackendTexturedTriangle *triangles,uint32_t count);
 /* Resolved native 2D geometry, not per-row CPU coverage. A null zero-count call probes state. */
 int gml_render_cpu_backend_native_triangles(GmlRender *render,
   const GmlRenderCpuBackendTriangle *triangles,uint32_t count);

@@ -70,6 +70,19 @@ void gml_render_atlas_scene_retire_one(GmlRender *r,int index){
                               ?atlas->scene_source_incarnation:r->scene_source_epoch,
                             atlas->scene_source_last_view_version};
   device->retire(device->context,image);
+  /* Local repeating views borrow the same immutable allocation. Retire them
+   * with their atlas, before eviction or a mutable font page can reuse it. */
+  if(atlas->scene_local_incarnation){
+    /* Pages can move to a replacement atlas. The original allocation still
+     * owns its earlier views, including page IDs no longer referring to it. */
+    for(int page=0;page<r->n_tpag;page++){
+      GmlRenderImageRef local=image;
+      local.identity=UINT32_C(0x40000000)|(uint32_t)page;
+      local.incarnation=atlas->scene_local_incarnation;
+      device->retire(device->context,local);
+    }
+    atlas->scene_local_incarnation=0;
+  }
   atlas->scene_source_used=0;
 }
 
