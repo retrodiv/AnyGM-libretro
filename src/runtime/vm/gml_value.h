@@ -41,13 +41,10 @@ static inline GmlVal vundef(void){ GmlVal v; v.t=V_UNDEF; v.d=0; v.s=0; v.arr=0;
 typedef struct {
   const char *key;
   uint32_t hash;
-  GmlVal val;
   unsigned char key_owned; /* heap key released with the map; STRG/literal keys stay borrowed */
+  GmlVal val; /* keep key ownership in the alignment gap before the value */
 } GmlVarSlot;
-typedef struct {
-  GmlVarSlot *slots; int cap, len;
-  uint64_t occupied; /* exact slot bits for capacities up to 64; larger maps use ordinary scans */
-} GmlVarMap;
+typedef struct { GmlVarSlot *slots; int cap, len; } GmlVarMap;
 /* The largest index gml_arr_index_ensure will grow an array to, and the largest capacity that
  * growth can leave behind. Capacity doubles, so it overshoots the highest index stored by up to a
  * factor of two: a sanity check that bounds capacity by the index limit rejects arrays this

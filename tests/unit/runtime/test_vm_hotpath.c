@@ -311,55 +311,10 @@ static int draw_item_sort_order(void){
   return 0;
 }
 
-static int occupied_walk_matches_hash_slots(const GmlVarMap *map){
-  int next=gml_varmap_next_slot(map,0),count=0;uint64_t occupied=0;
-  for(int i=0;i<map->cap;i++)if(map->slots[i].key){
-    if(next!=i)return 0;
-    if(map->cap<=64)occupied|=UINT64_C(1)<<i;
-    next=gml_varmap_next_slot(map,i+1);count++;
-  }
-  return next==map->cap && count==map->len &&
-    (map->cap>64 || occupied==map->occupied);
-}
-static int varmap_occupied_traversal(void){
-  GmlVarMap map={0};char keys[96][40];unsigned candidate=0;int ok=1;
-  /* Low-bit collisions force wraparound at slot63, then rehash through16/32/64
-   * and the ordinary larger-table path. Borrowed and owned names share one map. */
-  for(int entry=0;entry<96 && ok;entry++){
-    do{snprintf(keys[entry],sizeof keys[entry],"fixture_slot_%u",candidate++);}
-    while((gml_value_name_hash(keys[entry])&63)!=63);
-    char *owned=entry&1?strdup(keys[entry]):NULL;
-    if((entry&1) && !owned){ok=0;break;}
-    GmlVal *value=owned?gml_varmap_put_owned(&map,owned):gml_varmap_put(&map,keys[entry]);
-    *value=vreal(entry+0.25);
-    GmlVarMap view=map;
-    ok=occupied_walk_matches_hash_slots(&map) && occupied_walk_matches_hash_slots(&view);
-    for(int prior=0;prior<=entry && ok;prior++){
-      GmlVal *found=gml_varmap_get(&map,keys[prior]);
-      ok=found && found->t==V_REAL && found->d==prior+0.25;
-    }
-    int length=map.len;
-    char *duplicate=strdup(keys[entry]);if(!duplicate){ok=0;break;}
-    GmlVal *same=gml_varmap_put_owned(&map,duplicate);
-    ok=ok && same==gml_varmap_get(&map,keys[entry]) && same->t==V_REAL &&
-      same->d==entry+0.25 && map.len==length && occupied_walk_matches_hash_slots(&map);
-  }
-  gml_varmap_free(&map);
-  ok=ok && !map.slots && !map.cap && !map.len && !map.occupied &&
-    gml_varmap_next_slot(&map,0)==0;
-  static const char *const reuse[]={"reuse_a","reuse_b","reuse_c"};
-  for(int entry=0;entry<3;entry++)*gml_varmap_put(&map,reuse[entry])=vreal(entry);
-  ok=ok && occupied_walk_matches_hash_slots(&map);
-  gml_varmap_free(&map);
-  if(!ok){fail("occupied traversal changed hash-slot order, growth, ownership or reuse");return 0;}
-  return 1;
-}
-
 int main(void){
   special_name_gate();
   global_lookup_semantics();
   draw_item_sort_order();
-  varmap_occupied_traversal();
   if(failures) return 1;
   puts("vm hot paths: ok");
   return 0;

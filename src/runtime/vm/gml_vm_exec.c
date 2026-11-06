@@ -1456,8 +1456,7 @@ static void gc_scan_builtin_value(void *userdata,GmlVal value){
 }
 static void gc_scan_vm(GmlVM *vm, GmlVarMap *m, GmlInstance ***wl, int *wn, int *wcap){
   if(!m || !m->slots) return;
-  for(int i=gml_varmap_next_slot(m,0);i<m->cap;i=gml_varmap_next_slot(m,i+1))
-    gc_scan_val(vm,m->slots[i].val,wl,wn,wcap);
+  for(int i=0;i<m->cap;i++) if(m->slots[i].key) gc_scan_val(vm,m->slots[i].val,wl,wn,wcap);
 }
 void gml_struct_gc(GmlVM *vm){
   if(vm->n_structs<=0) return;
