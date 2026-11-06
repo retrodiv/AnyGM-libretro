@@ -90,6 +90,11 @@ runtime path. Failed preparation leaves the live runtime intact. Target paths ar
 the current content directory, reject parent traversal and drive-qualified segments, and retain a
 finite replacement-chain depth. This is not a second engine or a compatibility-selected runtime.
 
+A runtime value's tag selects shared string/array pointer storage; its numeric
+payload and string ownership flag remain separate. Consumers inspect pointer
+payloads only for their matching tag. State codecs encode fields and references,
+never the host value layout.
+
 Language values form a narrow runtime boundary. `gml_value.h` is the sole
 definition owner for `GmlVal`, `GmlArr`, and `GmlVarMap`, their inline
 constructors, and the public array and variable-map operations. `gml_vm.h`

@@ -11,7 +11,9 @@
 /* ---- value ---- */
 /* Wire tag four belongs to the array-identity codec. */
 typedef enum { V_REAL=0, V_STR=1, V_ARR=2, V_UNDEF=3, V_OBJECT=5 } GmlValType;
-typedef struct { GmlValType t; double d; const char *s; void *arr; } GmlVal;
+/* The tag selects one pointer payload. String ownership remains in d; numeric
+ * and object values retain the complete double independently of pointer storage. */
+typedef struct { GmlValType t; double d; union { const char *s; void *arr; }; } GmlVal;
 /* Object values retain their category while carrying the VM's stable handle in d.
  * Numeric selectors can consume that handle; container operations must retain the category.
  * No host address forms part of an object value or its serialized representation. */
@@ -31,10 +33,10 @@ static inline GmlVal vreal(double d){ GmlVal v; v.t=V_REAL; v.d=d; v.s=0; v.arr=
 static inline GmlVal vobject(uint32_t id){
   GmlVal v=vreal(id); v.t=V_OBJECT; return v;
 }
-static inline GmlVal vstr(const char *s){ GmlVal v; v.t=V_STR; v.d=0; v.s=s; v.arr=0; return v; }
+static inline GmlVal vstr(const char *s){ GmlVal v; v.t=V_STR; v.d=0; v.s=s; return v; }
 /* owned = the string is a fresh malloc'd temporary (v.d!=0 marks ownership); the VM frees it when
  * consumed. Literals/references (data.win STRG, rodata, var pointers) use vstr() and are never freed. */
-static inline GmlVal vstr_owned(char *s){ GmlVal v; v.t=V_STR; v.d=1; v.s=s; v.arr=0; return v; }
+static inline GmlVal vstr_owned(char *s){ GmlVal v; v.t=V_STR; v.d=1; v.s=s; return v; }
 static inline GmlVal vundef(void){ GmlVal v; v.t=V_UNDEF; v.d=0; v.s=0; v.arr=0; return v; }
 
 /* ---- variable map: open-addressing, key = interned name pointer ---- */

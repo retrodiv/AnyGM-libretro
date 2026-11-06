@@ -567,7 +567,7 @@ GmlVal builtin_fmod(GmlVM *vm, const char *nm, GmlVal *a, int n);
 static inline uint32_t u32(const uint8_t *d, uint32_t o){
   return (uint32_t)d[o]|(uint32_t)d[o+1]<<8|(uint32_t)d[o+2]<<16|(uint32_t)d[o+3]<<24;
 }
-static inline double N(GmlVal *a, int n, int i){ return (i<n)? (gml_val_is_number_or_object(a[i])?a[i].d:(a[i].s?atof(a[i].s):0)) : 0; }
+static inline double N(GmlVal *a, int n, int i){ return (i<n)? (gml_val_is_number_or_object(a[i])?a[i].d:(a[i].t==V_STR && a[i].s?atof(a[i].s):0)) : 0; }
 
 /* Runtime values reach 32-bit arguments as doubles, and content routinely passes negative ones —
  * -1 is the ordinary "no tint" colour. Converting a negative double straight to an unsigned type is

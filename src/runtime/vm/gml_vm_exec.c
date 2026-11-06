@@ -31,8 +31,8 @@ enum {
 };
 
 /* ---------------- helpers ---------------- */
-static double asnum(GmlVal v){ return gml_val_is_number_or_object(v)? v.d : (v.s? atof(v.s):0); }
-static int    astrue(GmlVal v){ return gml_val_is_number_or_object(v)? (v.d>=0.5) : (v.s&&v.s[0]); } /* GM: real>=0.5 true */
+static double asnum(GmlVal v){ return gml_val_is_number_or_object(v)? v.d : (v.t==V_STR && v.s? atof(v.s):0); }
+static int    astrue(GmlVal v){ return gml_val_is_number_or_object(v)? (v.d>=0.5) : (v.t==V_STR && v.s&&v.s[0]); } /* GM: real>=0.5 true */
 double gml_vm_value_as_number(GmlVal value){ return asnum(value); }
 int gml_vm_value_is_true(GmlVal value){ return astrue(value); }
 static const char *asstr_cmp(GmlVal v, char *buf, size_t n){
@@ -972,7 +972,7 @@ static int background_dimension_get(GmlVM *vm,const char *name,int index,GmlVal 
   return 1;
 }
 static double alarm_store_value(GmlVM *vm,GmlVal v){
-  double value=v.t==V_REAL?v.d:(v.s?atof(v.s):0);
+  double value=v.t==V_REAL?v.d:(v.t==V_STR && v.s?atof(v.s):0);
   /* GM6/7/8 stores alarms as integers. Delphi's Math.Round uses ties-to-even; nearbyint
    * supplies the same result under the process' default IEEE rounding mode. Studio semantics
    * retain fractional alarms, which several typewriter effects deliberately use. */

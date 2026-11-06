@@ -7,6 +7,7 @@
 #include "gml_value_internal.h"
 #include "gml_vm.h"
 #include "gml_vm_internal.h"
+#include "gml_builtin.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -47,6 +48,21 @@ int main(void){
       fprintf(stderr,"conv: undefined to bool became type %d\n",(int)undefined.t);
       failures++;
     }
+  }
+
+  /* Scalar paths must not inspect array storage through the string accessor. The
+   * opaque array address starts with numeric text to distinguish a missing type guard. */
+  {
+    union { GmlArr array; unsigned char bytes[sizeof(GmlArr)]; } payload={0};
+    payload.bytes[0]='7';
+    GmlVal array=vundef();array.t=V_ARR;array.arr=&payload.array;
+    says_real("array scalar fallback stays zero",vreal(gml_vm_value_as_number(array)),0);
+    says_real("array truth fallback stays false",vreal(gml_vm_value_is_true(array)),0);
+    says_real("array bool conversion stays false",gml_vm_conv_value(array,DT_BOOL),0);
+    GmlVM vm={0};
+    says_real("numeric builtin does not read array as text",gml_builtin_call(&vm,"abs",&array,1),0);
+    says_real("numeric string still parses",vreal(gml_vm_value_as_number(vstr("12.5"))),12.5);
+    says_real("nonempty string still tests true",vreal(gml_vm_value_is_true(vstr("ok"))),1);
   }
 
   printf(failures?"FAILED\n":"PASSED\n");
