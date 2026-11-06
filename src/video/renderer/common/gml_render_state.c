@@ -401,6 +401,14 @@ static void render_state_write(GmlRender *render,int view_surface,CoreW *s,
     cw_u32(s,g->alpha_test_ref); cw_u32(s,g->color_write_mask);
     for(int j=0;j<GML_RENDER_TEXTURE_STAGES-1;j++) cw_i32(s,g->texture_filter[j]);
   }
+  /* Playback is mutable resource state, including authored sprites. A recreated runtime
+   * plane must not replace an explicit stopped animation with the default advancing policy. */
+  cw_i32(s,render->n_spr);
+  for(int i=0;i<render->n_spr;i++){
+    const GmlSprite *sprite=&render->spr[i];uint32_t bits=0;
+    memcpy(&bits,&sprite->playback_speed,sizeof bits);cw_u32(s,bits);
+    cw_i32(s,sprite->playback_speed_type);cw_i32(s,sprite->playback_speed_valid);
+  }
 }
 
 
@@ -732,6 +740,15 @@ static int render_state_read(GmlRender *render,CoreR *s){
       if(enabled<0 || enabled>1) s->ok=0;
       g->texture_filter[j]=enabled;
     }
+  }
+  int sprites=cr_i32(s);
+  if(!s->ok || sprites<0 || sprites!=render->n_spr || s->pos>s->cap ||
+     (size_t)sprites>(s->cap-s->pos)/12){s->ok=0;return 0;}
+  for(int i=0;i<sprites && s->ok;i++){
+    uint32_t bits=cr_u32(s);int type=cr_i32(s),valid=cr_i32(s);
+    if(type<0 || type>1 || valid<0 || valid>1){s->ok=0;break;}
+    memcpy(&render->spr[i].playback_speed,&bits,sizeof bits);
+    render->spr[i].playback_speed_type=type;render->spr[i].playback_speed_valid=valid;
   }
   /* The application target is presentation storage, not a serialized surface record. A
    * successful load must not retain a device/journal version from the pre-load timeline. */

@@ -138,7 +138,35 @@ static void fixture_map(FixtureProjection *p){
     (void)fixture_value(p,0);
   }
 }
+/* Only the current neutral fixture is projected, with each omitted playback field checked
+ * against the live fixture. Direct state controls cover mutation/restoration of these fields. */
+static int project_fixture_playback(AnygmEngine *engine,uint8_t **data,size_t *written){
+  const uint8_t *bytes=*data;
+  if(*written<112 || (uint32_t)read_u64(bytes+4)!=44 || engine->render.n_spr<0)return 0;
+  size_t start=112+(size_t)read_u64(bytes+64),size=(size_t)read_u64(bytes+72);
+  size_t count=(size_t)engine->render.n_spr;
+  if(count>(SIZE_MAX-4)/12)return 0;
+  size_t trailer=4+12*count;
+  if(start>*written || size>*written-start || trailer>size)return 0;
+  size_t at=start+size-trailer;
+  if((uint32_t)read_u64(bytes+at)!=(uint32_t)count)return 0;
+  for(size_t i=0;i<count;i++){
+    GmlSprite *sprite=&engine->render.spr[i];uint32_t bits=0;
+    memcpy(&bits,&sprite->playback_speed,sizeof bits);
+    if((uint32_t)read_u64(bytes+at+4+12*i)!=bits ||
+       (uint32_t)read_u64(bytes+at+8+12*i)!=(uint32_t)sprite->playback_speed_type ||
+       (uint32_t)read_u64(bytes+at+12+12*i)!=(uint32_t)sprite->playback_speed_valid)return 0;
+  }
+  uint8_t *result=malloc(*written-trailer);
+  if(!result)return 0;
+  memcpy(result,bytes,at);memcpy(result+at,bytes+at+trailer,*written-at-trailer);
+  *written-=trailer;
+  write_u32(result+4,43);write_u64(result+16,*written);write_u64(result+72,size-trailer);
+  write_u64(result+96,*written-112);write_u64(result+56,state_checksum(result+112,*written-112));
+  free(*data);*data=result;return 1;
+}
 static int project_fixture_vm(AnygmEngine *engine,uint8_t **data,size_t *written){
+  if(!project_fixture_playback(engine,data,written))return 0;
   const uint8_t *bytes=*data;
   if(*written<112 || (uint32_t)read_u64(bytes+4)!=43 || engine->vm.n_structs ||
      engine->vm.n_tilemaps || engine->vm.n_rtl || engine->vm.n_rte ||

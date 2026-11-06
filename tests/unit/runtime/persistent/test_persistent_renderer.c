@@ -1596,3 +1596,62 @@ int expect_a_font_kerning_pair_moves_the_pen(void){
   gml_render_free(&render);
   return ok;
 }
+
+
+int expect_sprite_playback_state(void){
+  int all_ok=1;
+  const double speeds[]={-0.0,0.375,0.0,30.0,-0.25,NAN};
+  for(int kind=0;kind<6;kind++){
+    GmlRender render={0};render.alpha=1;render.font=-1;render.alphablend=1;
+    render.circle_precision=24;render.app_draw_enable=1;render.next_surface_id=1;
+    render.spr=calloc(1,sizeof(*render.spr));
+    if(!render.spr)return 0;
+    render.n_spr=render.base_n_spr=render.spr_cap=1;
+    render.spr[0].w=render.spr[0].h=1;render.spr[0].n_frames=2;
+    int sprite=0,side=kind==3?128:8;size_t rgba_bytes=(size_t)side*side*2*4;
+    if(kind){
+      uint8_t *rgba=malloc(rgba_bytes);if(!rgba){gml_render_free(&render);return 0;}
+      memset(rgba,0x55,rgba_bytes);
+      if(kind==1){
+        if(!gml_sprite_replace_from_rgba_frames(&render,0,rgba,side,side,2,0,0)){
+          free(rgba);gml_render_free(&render);return 0;
+        }
+      }else sprite=gml_sprite_append_from_rgba_frames(&render,rgba,side,side,2,0,0,NULL);
+    }
+    int type=(kind==2 || kind==3)?0:1;
+    int ok=sprite>=0 && gml_render_sprite_set_playback(&render,sprite,speeds[kind],type);
+    float expected=sprite>=0?render.spr[sprite].playback_speed:0;
+    double expected_delta=type==0?(double)expected/60.0:(double)expected;
+    size_t size=gml_render_state_size(&render,0),written=0,used=0;
+    uint8_t *state=malloc(size?size:1),*again=malloc(size?size:1);
+    ok=ok && state && again && gml_render_state_save(&render,0,state,size,&written) && written==size;
+    for(int rebuild=0;rebuild<2 && ok;rebuild++){
+      if(kind && rebuild){
+        uint8_t *rgba=malloc(rgba_bytes);
+        if(!rgba){ok=0;break;}
+        memset(rgba,0x99,rgba_bytes);
+        if(kind==1)ok=gml_sprite_replace_from_rgba_frames(&render,sprite,rgba,side,side,2,0,0);
+        else{
+          gml_sprite_delete(&render,sprite);
+          ok=gml_sprite_append_from_rgba_frames(&render,rgba,side,side,2,0,0,NULL)==sprite;
+        }
+      }
+      ok=ok && gml_render_sprite_set_playback(&render,sprite,2,0) &&
+        gml_render_state_load(&render,state,size,&used) && used==size;
+      GmlRenderSpriteMetrics metrics={0};
+      ok=ok && gml_render_sprite_metrics(&render,sprite,&metrics) &&
+        !memcmp(&render.spr[sprite].playback_speed,&expected,sizeof expected) &&
+        (isnan(expected)?isnan(metrics.playback_speed):metrics.playback_speed==(double)expected) &&
+        metrics.playback_speed_type==type && metrics.playback_speed_valid;
+      double delta=gml_sprite_animation_delta(&render,sprite,1,60);
+      ok=ok && (isnan(expected_delta)?isnan(delta):delta==expected_delta);
+      ok=ok && gml_render_state_save(&render,0,again,size,&written) && written==size && !memcmp(state,again,size);
+    }
+    if(!ok)fprintf(stderr,"sprite playback state kind %d failed: speed=%.9g type=%d valid=%d\n",
+      kind,sprite>=0?render.spr[sprite].playback_speed:-1,
+      sprite>=0?render.spr[sprite].playback_speed_type:-1,
+      sprite>=0?render.spr[sprite].playback_speed_valid:-1);
+    all_ok=all_ok && ok;free(state);free(again);gml_render_free(&render);
+  }
+  return all_ok;
+}

@@ -1194,6 +1194,43 @@ done:
   return ok?1:fail("repeated static target invalidated a retained key shape");
 }
 
+static int sprite_playback_state_cases(const AnygmHostServices *services,const AnygmContentSource *source){
+  AnygmEngine *engine=NULL;uint8_t *baseline=NULL,*candidate=NULL;size_t size=0;
+  int ok=anygm_create(services,&engine)==ANYGM_OK && anygm_load(engine,source,NULL)==ANYGM_OK;
+  AnygmInputFrame input={.struct_size=sizeof input,.pointer_x=-1,.pointer_y=-1};
+  AnygmFrameOutput output={.struct_size=sizeof output};
+  ok=ok && anygm_run_frame(engine,&input,&output)==ANYGM_OK;
+  if(ok && !engine->render.n_spr){
+    uint8_t *first=calloc(4,1);
+    ok=first && gml_sprite_append_from_rgba_frames(&engine->render,first,1,1,1,0,0,NULL)==0;
+  }
+  if(!ok){fail("playback resource fixture setup failed");anygm_destroy(engine);return 0;}
+  uint8_t *rgba=calloc(4,1);
+  int sprite=rgba?gml_sprite_append_from_rgba_frames(&engine->render,rgba,1,1,1,0,0,NULL):-1;
+  ok=sprite>0 && gml_render_sprite_set_playback(&engine->render,0,0.375,1) &&
+    gml_render_sprite_set_playback(&engine->render,sprite,0.125,0) && save_state(engine,&baseline,&size);
+  if(!ok){free(baseline);anygm_destroy(engine);return 0;}
+  size_t render_start=112+(size_t)read_u64(baseline+64),render_size=(size_t)read_u64(baseline+72);
+  size_t count=(size_t)engine->render.n_spr,trailer=4+12*count;
+  if(trailer>render_size){free(baseline);anygm_destroy(engine);return 0;}
+  size_t at=render_start+render_size-trailer;
+  ok=(uint32_t)read_u64(baseline+at)==count &&
+    anygm_state_load(engine,baseline,size)==ANYGM_OK && engine_matches(engine,baseline,size);
+  candidate=malloc(size?size:1);ok=ok && candidate;
+  if(ok)ok=reject_payload_u32(engine,candidate,size,baseline,size,at,UINT32_MAX,"negative playback count");
+  if(ok)ok=reject_payload_u32(engine,candidate,size,baseline,size,at,(uint32_t)count+1,"inconsistent playback count");
+  if(ok)ok=reject_payload_u32(engine,candidate,size,baseline,size,at+8,2,"invalid playback speed type");
+  if(ok)ok=reject_payload_u32(engine,candidate,size,baseline,size,at+12,2,"invalid playback validity");
+  if(ok){
+    memcpy(candidate,baseline,size);write_u32(candidate+at+4,0);
+    write_u32(candidate+at+12+12*(count-1),2);refresh_checksum(candidate);
+    ok=reject_unchanged(engine,candidate,size,baseline,size,"late playback rejection restores prior resource metadata");
+  }
+  if(ok)ok=reject_payload_u32(engine,candidate,size,baseline,size,4,43,"previous playback-free public schema");
+  if(!ok)fail("sprite playback rollback controls failed");
+  free(candidate);free(baseline);anygm_destroy(engine);return ok;
+}
+
 static int instance_order_state_cases(const AnygmHostServices *services,const AnygmContentSource *source){
   AnygmEngine *engine=NULL;uint8_t *baseline=NULL,*candidate=NULL;size_t size=0;
   int ok=anygm_create(services,&engine)==ANYGM_OK && anygm_load(engine,source,NULL)==ANYGM_OK;
@@ -1257,7 +1294,8 @@ int main(void){
   source.size=content_size;
   if(anygm_load(engine,&source,NULL)!=ANYGM_OK) return fail("content load failed")?0:1;
 
-  if(!instance_order_state_cases(&services,&source) ||
+  if(!sprite_playback_state_cases(&services,&source) ||
+     !instance_order_state_cases(&services,&source) ||
      !map_reference_state_cases(&services,&source) ||
      !repeated_static_scope_state_case(&services,&source)) return 1;
 
