@@ -67,6 +67,7 @@ typedef struct {
   uint8_t content_sha256[32];
   int content_hash_known;
   int queue_format,queue_channels;
+  int stream_policy;
   GmlAudioBlock *queue_head,*queue_tail,*queue_shutdown;
 } GmlSound; /* own is decoded/copied PCM; encoded_own backs a dynamic compressed blob */
 typedef struct {
@@ -82,10 +83,20 @@ typedef struct {
 #define GML_EXTERNAL_GROUP_FLAG UINT32_C(0x80000000)
 #define GML_QUEUE_PCM_BYTES_MAX (16u*1024u*1024u)
 #define GML_QUEUE_BLOCKS_MAX 65536u
+#define GML_AUDIO_STREAM_WINDOW 2048u
+typedef struct {
+  stb_vorbis *decoder;
+  const uint8_t *source;
+  int sound,voice,channels;
+  uint32_t first,frames,next;
+  int16_t pcm[GML_AUDIO_STREAM_WINDOW*2u];
+} GmlAudioStream;
 struct GmlAudio {
   GmlWin *win;
   GmlSound *snd; int n_snd, n_base_snd;   /* n_base_snd = SOND resources; dynamic sounds follow */
   GmlVoice voice[GML_MAX_VOICES];
+  /* Derived decoder windows are rebuilt from the serialized voice sample position. */
+  GmlAudioStream *stream[GML_MAX_VOICES];
   int paused;          /* audio_pause_all: freeze all voices (keep position) */
   int next_voice_id;
   int channel_num;     /* requested GM audio_channel_num; playback uses min(requested, GML_MAX_VOICES) */
@@ -102,6 +113,17 @@ struct GmlAudio {
   unsigned event_count,queue_blocks;
   size_t queue_bytes;
 };
+
+static void audio_stream_close(GmlAudioStream *stream){
+  if(!stream) return;
+  if(stream->decoder) stb_vorbis_close(stream->decoder);
+  memset(stream,0,offsetof(GmlAudioStream,pcm));
+}
+static void audio_stream_close_sound(GmlAudio *audio,int sound){
+  for(int i=0;i<GML_MAX_VOICES;i++)
+    if(audio->stream[i] && audio->stream[i]->decoder && audio->stream[i]->sound==sound)
+      audio_stream_close(audio->stream[i]);
+}
 
 static void audio_block_delete(GmlAudio *a,GmlAudioBlock *block){
   if(!block) return;
@@ -597,6 +619,10 @@ GmlAudio *gml_audio_create(GmlWin *win){
 struct GmlFmodBanks *gml_audio_get_fmod(GmlAudio *a){ return a?a->fmod:NULL; }
 
 void gml_audio_free(GmlAudio *a){ if(!a) return;
+  for(int i=0;i<GML_MAX_VOICES;i++){
+    audio_stream_close(a->stream[i]);
+    free(a->stream[i]);
+  }
   gml_fmod_banks_free(a->fmod);
   for(int i=0;i<a->n_snd;i++){
     audio_queue_discard(a,&a->snd[i]);
@@ -660,6 +686,7 @@ static int audio_dynamic_slot_at(GmlAudio *a,int requested){
     a->n_snd=requested+1;
   } else {
     gml_audio_stop(a,requested);
+    audio_stream_close_sound(a,requested);
     audio_queue_discard(a,&a->snd[requested]);
     free(a->snd[requested].own);
     free(a->snd[requested].encoded_own);
@@ -954,6 +981,7 @@ int gml_audio_sound_content_hash(GmlAudio *a,int handle,uint8_t digest[32]){
 
 void gml_audio_caster_free(GmlAudio *a, int handle){
   if(!a || handle<a->n_base_snd || handle>=a->n_snd) return;
+  audio_stream_close_sound(a,handle);
   /* Internal resource retirement, including state load, must not synthesize game events. */
   for(int i=0;i<GML_MAX_VOICES;i++)
     if(a->voice[i].active && a->voice[i].snd==handle) a->voice[i].active=0;
@@ -1014,9 +1042,42 @@ int gml_audio_warm_sound(GmlAudio *a, int snd){
   GmlSound *s=&a->snd[snd];
   int had_pcm=s->pcm!=NULL;
   if(!sound_ensure_pcm(a,s)) return 0;
+  if(s->pcm){
+    s->stream_policy=-1;
+    audio_stream_close_sound(a,snd);
+  }
   if(!had_pcm && audio_setting(a,"GML_LOG_AUDIO"))
     anygm_host_logf(a && a->win ? a->win->host : NULL,ANYGM_LOG_DEBUG,"[audio] warm_sound sound=%d ogg=%u pcm=%u\n",snd,s->ogg_len,s->nval);
   return 1;
+}
+/* Loose and dynamically supplied Ogg streams need only the samples the voices consume.
+ * Embedded effects and explicit full-PCM observations retain the established decoder. */
+static int sound_ensure_playable(GmlAudio *a,GmlSound *s){
+  if(!s) return 0;
+  if(s->pcm || s->queue_format) return 1;
+  if(!s->ogg && !s->mp3 && s->external_filename)
+    (void)audio_sound_load_loose(a,s);
+  if(s->stream_policy>0) return 1;
+  if(!s->stream_policy && s->ogg && !s->ogg_failed &&
+     (s->external_filename || s->encoded_own)){
+    s->stream_policy=-1;
+    int error=0;
+    stb_vorbis *decoder=stb_vorbis_open_memory(s->ogg,(int)s->ogg_len,&error,NULL);
+    if(decoder){
+      stb_vorbis_info info=stb_vorbis_get_info(decoder);
+      unsigned frames=stb_vorbis_stream_length_in_samples(decoder);
+      if((info.channels==1 || info.channels==2) && info.sample_rate && frames &&
+         (uint64_t)frames*(unsigned)info.channels<=UINT32_MAX){
+        s->channels=info.channels;
+        s->sample_rate=(int)info.sample_rate;
+        s->nval=frames*(unsigned)info.channels;
+        s->stream_policy=1;
+      }
+      stb_vorbis_close(decoder);
+    }
+    if(s->stream_policy>0) return 1;
+  }
+  return sound_ensure_pcm(a,s);
 }
 static uint32_t audio_initial_ogg_warm_budget(GmlAudio *a){
   const char *e=audio_setting(a,"GML_AUDIO_WARM_OGG_BYTES");
@@ -1059,7 +1120,7 @@ static int audio_voice_prepare(GmlAudio *a, GmlVoice *v){
   if(!isfinite(v->pan)) v->pan=0.0;
   if(v->pan<-1.0) v->pan=-1.0; else if(v->pan>1.0) v->pan=1.0;
   GmlSound *s=&a->snd[v->snd];
-  if(!sound_ensure_pcm(a,s)){ v->active=0; return 0; }
+  if(!sound_ensure_playable(a,s)){ v->active=0; return 0; }
   if(s->queue_format) return 1;
   if(s->nval==0){ v->active=0; return 0; }
   if(v->loop_start>(double)s->nval) v->loop_start=0.0;
@@ -1077,7 +1138,7 @@ static int voice_matches(GmlAudio *a, GmlVoice *v, int target){
   return v->snd==target;
 }
 int gml_audio_play_on(GmlAudio *a, int snd, int loop, int emitter){
-  if(!a||snd<0||snd>=a->n_snd||!sound_ensure_pcm(a,&a->snd[snd])) return -1;
+  if(!a||snd<0||snd>=a->n_snd||!sound_ensure_playable(a,&a->snd[snd])) return -1;
   int limit=audio_voice_limit(a); if(limit<=0) return -1;
   /* A queue is one consuming stream, never independent copies of its head buffer. */
   if(a->snd[snd].queue_format)
@@ -1085,6 +1146,7 @@ int gml_audio_play_on(GmlAudio *a, int snd, int loop, int emitter){
       if(a->voice[i].active && a->voice[i].snd==snd) return a->voice[i].id;
   int slot=-1; for(int i=0;i<limit;i++) if(!a->voice[i].active){ slot=i; break; }
   if(slot<0) slot=0;
+  audio_stream_close(a->stream[slot]);
   int id=a->next_voice_id++;
   if(a->next_voice_id<1000000) a->next_voice_id=1000000;
   double gain=a->snd[snd].gain>=0.0?a->snd[snd].gain:1.0;
@@ -1101,13 +1163,19 @@ int gml_audio_play(GmlAudio *a, int snd, int loop){ return gml_audio_play_on(a,s
 void gml_audio_stop(GmlAudio *a, int snd){
   if(!a) return;
   for(int i=0;i<GML_MAX_VOICES;i++)
-    if(voice_matches(a,&a->voice[i],snd)) a->voice[i].active=0;
+    if(voice_matches(a,&a->voice[i],snd)){
+      a->voice[i].active=0;
+      audio_stream_close(a->stream[i]);
+    }
   if(snd>=0 && snd<a->n_snd && a->snd[snd].queue_format)
     audio_queue_clear(a,&a->snd[snd],1);
 }
 void gml_audio_stop_all(GmlAudio *a){
   if(!a) return;
-  for(int i=0;i<GML_MAX_VOICES;i++) a->voice[i].active=0;
+  for(int i=0;i<GML_MAX_VOICES;i++){
+    a->voice[i].active=0;
+    audio_stream_close(a->stream[i]);
+  }
   for(int i=0;i<a->n_snd;i++) if(a->snd[i].queue_format) audio_queue_clear(a,&a->snd[i],1);
 }
 void gml_audio_pause_all(GmlAudio *a, int paused){ if(a) a->paused=paused!=0; }
@@ -1377,6 +1445,56 @@ static double pcm_lerp(const int16_t *pcm, uint32_t nval, uint32_t i0, uint32_t 
   double b=(i1<nval)?pcm[i1]:a;
   return a + (b-a)*frac;
 }
+static int audio_stream_pair(GmlAudio *audio,GmlSound *sound,int voice,uint32_t frame,
+                              int16_t first[2],int16_t second[2]){
+  GmlVoice *playing=&audio->voice[voice];
+  GmlAudioStream *stream=audio->stream[voice];
+  if(!stream){
+    stream=calloc(1,sizeof *stream);
+    if(!stream) return 0;
+    audio->stream[voice]=stream;
+  }
+  unsigned channels=(unsigned)sound->channels;
+  if(channels!=1 && channels!=2) return 0;
+  uint32_t total=sound->nval/channels;
+  if(frame>=total) return 0;
+  if(!stream->decoder || stream->source!=sound->ogg || stream->sound!=playing->snd ||
+     stream->voice!=playing->id){
+    audio_stream_close(stream);
+    int error=0;
+    stream->decoder=stb_vorbis_open_memory(sound->ogg,(int)sound->ogg_len,&error,NULL);
+    if(!stream->decoder) return 0;
+    stream->source=sound->ogg;
+    stream->sound=playing->snd; stream->voice=playing->id;
+    stream->channels=(int)channels;
+  }
+  uint32_t needed=frame+1u<total?2u:1u;
+  if(frame<stream->first || frame-stream->first+needed>stream->frames){
+    unsigned carried=0;
+    /* Keep the final frame while decoding its interpolation neighbour. This avoids a backward
+     * codec seek at every ordinary window boundary and preserves the decoder's overlap history. */
+    if(stream->frames && frame==stream->first+stream->frames-1u && stream->next==frame+1u){
+      for(unsigned channel=0;channel<channels;channel++)
+        stream->pcm[channel]=stream->pcm[(stream->frames-1u)*channels+channel];
+      carried=1;
+    }else if(frame!=stream->next && !stb_vorbis_seek(stream->decoder,frame)) return 0;
+    int decoded=stb_vorbis_get_samples_short_interleaved(
+      stream->decoder,(int)channels,stream->pcm+carried*channels,
+      (int)((GML_AUDIO_STREAM_WINDOW-carried)*channels));
+    if(decoded<0 || (!decoded && !carried)) return 0;
+    stream->first=frame; stream->frames=carried+(unsigned)decoded;
+    stream->next=frame+stream->frames;
+  }
+  uint32_t offset=frame-stream->first;
+  if(offset>=stream->frames) return 0;
+  for(unsigned channel=0;channel<channels;channel++){
+    first[channel]=stream->pcm[offset*channels+channel];
+    second[channel]=offset+1u<stream->frames
+      ? stream->pcm[(offset+1u)*channels+channel] : first[channel];
+  }
+  if(channels==1){ first[1]=first[0]; second[1]=second[0]; }
+  return 1;
+}
 static double queue_lerp(const GmlSound *sound,uint32_t i0,uint32_t i1,double frac){
   double first=sound->pcm[i0],second=first;
   if(i1<sound->nval) second=sound->pcm[i1];
@@ -1450,6 +1568,18 @@ static void audio_mix_audo(GmlAudio *a, int16_t *out, int frames){
           r+=center+bass+queue_lerp(s,i0+5,i0+11,frac)*0.7071067811865476;
         }
         vo->pos+=ch*vo->pitch*rate_scale;
+      } else if(s->stream_policy>0 && !s->pcm){
+        double fp=vo->pos/ch;
+        uint32_t source_frame=(uint32_t)floor(fp);
+        double fraction=fp-(double)source_frame;
+        int16_t first[2],second[2];
+        if(!audio_stream_pair(a,s,v,source_frame,first,second)){
+          vo->active=0;
+          break;
+        }
+        l=first[0]+((double)second[0]-first[0])*fraction;
+        r=first[1]+((double)second[1]-first[1])*fraction;
+        vo->pos+=ch*vo->pitch*rate_scale;
       } else if(ch>=2){
         double fp=vo->pos*0.5;
         uint32_t fr=(uint32_t)floor(fp);
@@ -1472,6 +1602,7 @@ static void audio_mix_audo(GmlAudio *a, int16_t *out, int frames){
       mix[f*2+1] += (int32_t)lrint(r*vol*sound_level*group_level*right_pan);
     }
     if(s->queue_format && vo->active) audio_queue_advance(a,s,vo);
+    if(!vo->active) audio_stream_close(a->stream[v]);
   }
   for(int sound=0;sound<a->n_snd;sound++) if(a->snd[sound].gain_fade_frames>0){
     GmlSound *entry=&a->snd[sound];
@@ -1782,6 +1913,9 @@ int gml_audio_state_load(GmlAudio *a, const void *data, size_t len, size_t *used
   if(!isfinite(master_gain) || master_gain<0) master_gain=1.0;
   if(channel_num<0) channel_num=0;
   if(a){
+    /* Commit only after the complete state has passed validation. Decoder windows are derived
+     * from the restored sample positions, not transport bytes or a second audio timeline. */
+    for(int i=0;i<GML_MAX_VOICES;i++) audio_stream_close(a->stream[i]);
     for(int i=restored_count;i<a->n_snd;i++) gml_audio_caster_free(a,i);
     for(int i=0;i<a->n_snd;i++) if(a->snd[i].queue_format){
       audio_queue_discard(a,&a->snd[i]); memset(&a->snd[i],0,sizeof(a->snd[i]));

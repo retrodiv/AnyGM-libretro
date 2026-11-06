@@ -4610,6 +4610,68 @@ static int scene_positioned_samples_case(void){
   return 1;
 }
 
+static int scene_clipped_magnified_cell_case(void){
+  for(unsigned api=0;api<2u;api++) for(unsigned reflected=0;reflected<2u;reflected++)
+  for(unsigned variant=0;variant<4u;variant++){
+    static const double scales[]={4096.0,4800.0,16384.0,20000.0};
+    uint8_t pixels[16]={0,0,0,255,0,0,0,255,0,0,0,255,0,0,0,255};
+    GmlRenderImageRef source={GML_RENDER_RESOURCE_ATLAS,31u,1u,1u};
+    GmlRenderImageRef target={GML_RENDER_RESOURCE_APPLICATION,32u,1u,1u};
+    GmlRenderImageUpload upload={.image=source,.storage_width=2u,.storage_height=2u,
+      .region={0,0,2u,2u},.pixel_format=GML_RENDER_PIXEL_RGBA8888,
+      .stride_bytes=8u,.byte_capacity=sizeof pixels,.bytes=pixels};
+    GmlRenderDrawStateSnapshot state={0};GmlRenderDrawOp ops[2]={0};
+    GmlRenderDrawBatch batch={ops,2u,&state,1u};GmlRenderDeviceServices device;
+    GmlGpuContext context=fake_context(api?GML_GPU_API_OPENGLES3:GML_GPU_API_OPENGL_CORE);
+    anygm_test_graphics_reset();GmlGpu *gpu=gml_gpu_create();
+    REQUIRE(gpu && gml_gpu_context_reset(gpu,&context),"clipped magnification adopts context");
+    gml_gpu_device_services(gpu,&device);
+    REQUIRE(device.upload(device.context,&upload),"clipped magnification uploads its authored cell");
+    state.write_mask=15u;state.alpha=255u;state.colour=0xFFFFFFFFu;
+    state.rgb_source_factor=state.alpha_source_factor=GML_RENDER_BLEND_SOURCE_ALPHA;
+    state.rgb_destination_factor=state.alpha_destination_factor=GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA;
+    state.rgb_equation=state.alpha_equation=GML_RENDER_BLEND_ADD;
+    state.sampler_count=1u;
+    state.samplers[0]=(GmlRenderSamplingPolicy){.filter=GML_RENDER_FILTER_NEAREST,
+      .edge_rule=GML_RENDER_EDGE_CLAMP_SUBIMAGE,.source_region={0,0,2u,2u},
+      .quantisation=GML_RENDER_QUANTISE_INTEGER_TINT_TRUNC};
+    for(unsigned index=0;index<2u;index++){
+      ops[index].sequence=index+1u;
+      ops[index].target=(GmlRenderTargetRef){.image=target,.storage_version=1u,
+        .width=64u,.height=64u,.pixel_format=GML_RENDER_PIXEL_ARGB8888,.region={0,0,64u,64u}};
+      ops[index].target.image.content_version=index+1u;
+    }
+    ops[0].opcode=GML_RENDER_OP_CLEAR;ops[0].payload.clear_colour=0xFF273859u;
+    GmlRenderDrawOp *op=&ops[1];op->opcode=GML_RENDER_OP_TEXTURED_QUAD;
+    op->scene_family=GML_RENDER_SCENE_SPRITE;op->reconstruction_mode=GML_RENDER_DEVICE_CHECKPOINT;
+    op->sources=&source;op->source_count=1u;
+    GmlRenderQuad *q=&op->payload.quad;q->shape=GML_RENDER_QUAD_AXIS_ALIGNED;
+    q->sampling=state.samplers[0];q->filtered_draw_alpha=.08;
+    q->x[1]=q->x[2]=64.0;q->y[2]=q->y[3]=64.0;
+    for(unsigned corner=0;corner<4u;corner++){
+      int right=corner==1u || corner==2u;
+      q->u[corner]=.2+(right?(reflected?-1.0:1.0)*64.0/(2.0*scales[variant]):0.0);
+      q->v[corner]=.1+(corner>=2u?64.0/(2.0*480.0):0.0);
+      q->corner_colour[corner]=0x14FFFFFFu;
+    }
+    GmlRenderQuad placement=*q;
+    GmlRenderExecutionResult result=device.submit(device.context,&batch);
+    if(variant<3u && result.status!=GML_RENDER_EXEC_ACCEPTED)
+      fprintf(stderr,"clipped cell api=%u reflected=%u scale=%.0f status=%u prefix=%u\n",
+        api,reflected,scales[variant],(unsigned)result.status,result.accepted_prefix);
+    if(variant==3u){
+      REQUIRE(result.status==GML_RENDER_EXEC_UNSUPPORTED && !result.accepted_prefix &&
+        !anygm_test_graphics_clear_calls() && !anygm_test_graphics_scene_draw_calls(),
+        "out-of-domain magnification still refuses before writes");
+    }else REQUIRE(result.status==GML_RENDER_EXEC_ACCEPTED && result.accepted_prefix==2u &&
+      anygm_test_graphics_scene_draw_calls()==1 && !anygm_test_graphics_read_pixels() &&
+      !anygm_test_graphics_scene_copies() && !memcmp(q,&placement,sizeof placement),
+      "clipping inside one texel preserves the admitted whole-quad scale and placement");
+    gml_gpu_destroy(gpu,1);
+  }
+  return 1;
+}
+
 static int scene_integer_function_sprite_case(void){
   for(unsigned background=0;background<3u;background++)
   for(unsigned alpha_test=0;alpha_test<2u;alpha_test++)
@@ -7456,6 +7518,7 @@ int main(int argc,char **argv){
     {"scene_alpha_composition",scene_alpha_composition_case},
     {"scene_opaque_target_sourceover",scene_opaque_target_sourceover_case},
     {"scene_integer_function_sprite",scene_integer_function_sprite_case},
+    {"scene_clipped_magnified_cell",scene_clipped_magnified_cell_case},
     {"scene_positioned_samples",scene_positioned_samples_case},
     {"scene_source_alpha_key",scene_source_alpha_key_case},
     {"scene_raw_copy",scene_raw_copy_case},

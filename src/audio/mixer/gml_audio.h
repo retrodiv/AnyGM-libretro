@@ -2,7 +2,7 @@
  * Copyright (c) 2026 retrodiv <retrodiv@proton.me>
  */
 /* gml_audio.h — software mixer for GameMaker AUDO/SOND sounds. WAV data is mixed in place;
- * OGG Vorbis and MP3 assets are decoded lazily on first playback. */
+ * External OGG Vorbis uses bounded voice windows; other compressed assets decode lazily. */
 #ifndef GML_AUDIO_H
 #define GML_AUDIO_H
 #include <stdint.h>
@@ -81,7 +81,7 @@ uint32_t gml_audio_sound_get_external_type(GmlAudio *a, int sound);
 void gml_audio_sound_set_external_group(GmlAudio *a,int sound,int group);
 double gml_audio_sound_length(GmlAudio *a, int sound);
 /* Read-only view of a sound's decoded PCM, for analysis such as jbfmod's spectrum. Returns NULL
- * when the sound holds no decoded samples. */
+ * without a complete PCM image; gml_audio_warm_sound materializes one when required. */
 const int16_t *gml_audio_sound_pcm16(GmlAudio *a,int sound,uint32_t *frames,int *channels);
 int gml_audio_sound_format(GmlAudio *a,int sound,int *channels,
                            int *sample_rate,int *bytes_per_second);

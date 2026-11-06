@@ -792,13 +792,11 @@ static int integer_function_sprite_valid(const GmlRenderDrawOp *op,
       int background=op->scene_family==GML_RENDER_SCENE_BACKGROUND ||
                      op->scene_family==GML_RENDER_SCENE_TILE ||
                      op->scene_family==GML_RENDER_SCENE_TEXT;
-      /* A first-generation trailing tie can retain an adjacent physical
-       * texel. A clipped interior still has no nearest boundary when both
-       * UV endpoints lie strictly inside the same physical cell. */
+      /* The source crop owns the inverse-scale bound. Clipping a multi-texel sprite inside
+       * one cell cannot turn its admitted whole-quad magnification into the smaller unit-cell
+       * domain. Compare large intervals in destination units to retain subtraction precision. */
       int single_cell=op->scene_family==GML_RENDER_SCENE_SPRITE &&
-        ((region.width==1u && region.height==1u) ||
-         (region.width<=2u && region.height<=2u &&
-          floor(begin*storage)==floor(end*storage)));
+        region.width==1u && region.height==1u;
       int whole_background=op->scene_family==GML_RENDER_SCENE_BACKGROUND;
       int wide_sprite=op->scene_family==GML_RENDER_SCENE_SPRITE && !single_cell;
       double maximum=whole_background?16384.0:

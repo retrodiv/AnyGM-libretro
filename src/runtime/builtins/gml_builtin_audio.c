@@ -1685,6 +1685,8 @@ static GmlVal external_jbfmod_call(GmlVM *vm,int operation,GmlVal *args,int coun
     case GML_EXTERNAL_AUDIO_JB_GET_SPECTRUM: {
       if(!jb->spectrum_on || !cur || cur->sound<0) return vreal(0);
       uint32_t frames=0; int channels=0;
+      /* Spectrum observes the complete source; ordinary playback needs only a voice window. */
+      if(!gml_audio_warm_sound(audio,cur->sound)) return vreal(0);
       const int16_t *pcm=gml_audio_sound_pcm16(audio,cur->sound,&frames,&channels);
       if(!pcm || channels!=2) return vreal(0);
       uint32_t position=jb_position_frames(vm,cur);

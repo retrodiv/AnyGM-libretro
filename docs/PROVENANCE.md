@@ -118,6 +118,15 @@ their current bytes.
 
 ## Audio setup packets
 
+The neutral `tests/unit/runtime/persistent/audio_stream_fixture.h` sounds are authored
+1.25-second, 32000-Hz stereo waveform: integer-truncated sine samples at 517/293 Hz and
+amplitudes 7000/5000, plus a mono companion with the first-channel waveform. They contain
+no recorded or extracted audio. FFmpeg 8.0.1 with
+libvorbis 1.3.7 encoded that PCM with quality 3, metadata removed and bitexact format/codec
+flags. The existing libvorbis notice below also covers generated encoder setup data.
+The fixture compares bounded playback, resampling, seeks, loops, concurrent voices and state
+restoration with the existing complete decoder; the encoder is not a build dependency.
+
 `src/generated/audio_setup_data.h` contains 161 Vorbis setup packets generated
 from the official Xiph libvorbis 1.3.7 source release. The corresponding BSD
 terms and source codebook notices are retained in

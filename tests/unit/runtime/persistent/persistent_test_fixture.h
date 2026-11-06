@@ -74,6 +74,7 @@ int expect_ds_priority_lookup_mutation(void);
 int expect_ds_priority_native_read(void);
 int expect_audio_group_paths(void);
 int expect_pcm_queue_playback(void);
+int expect_ogg_stream_windows(void);
 int expect_pcm_queue_resampling_and_state(void);
 int expect_pcm_queue_builtin_ranges(void);
 int expect_pcm_queue_async_dispatch(void);

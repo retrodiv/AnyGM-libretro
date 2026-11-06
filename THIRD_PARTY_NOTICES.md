@@ -20,7 +20,7 @@ including their original copyright years.
 | ww2ogg Wwise Vorbis reconstruction, adapted to read from memory (see [Provenance](docs/PROVENANCE.md)) | `src/third_party/ww2ogg/` | BSD-3-Clause-style terms, reproduced in `LICENSES/ww2ogg.txt` |
 | Liberation Sans-derived glyph coverage | `src/generated/gml_default_font_data.h`, `src/generated/gml_classic_info_font_data.h` | SIL Open Font License in `LICENSES/font-ofl-1.1.txt` |
 | Roboto Mono-derived glyph coverage | `src/generated/gml_studio_default_font_data.h` | SIL Open Font License in `LICENSES/font-roboto-mono-ofl-1.1.txt` |
-| Xiph libvorbis-derived Vorbis setup packets | `src/generated/audio_setup_data.h` | BSD terms in `LICENSES/libvorbis-1.3.7.txt` |
+| Xiph libvorbis-derived Vorbis setup packets | `src/generated/audio_setup_data.h`, `tests/unit/runtime/persistent/audio_stream_fixture.h` | BSD terms in `LICENSES/libvorbis-1.3.7.txt` |
 | Xiph libvorbis-derived packed Wwise codebooks | `src/generated/wwise_codebooks.h` | BSD terms in `LICENSES/libvorbis-1.2.0.txt` |
 | Xiph libogg used by the optional audio-data generator | `tools/audiogen/` build-time dependency, not linked into the core | BSD terms in `LICENSES/libogg.txt` |
 | FMOD Studio bank metadata reader | `src/audio/banks/gml_fmod.c` | Adapted portions retain Apache-2.0 terms; see `NOTICE`, `LICENSES/fmodbankparser.txt`, and `LICENSES/fmodbankparser-NOTICE.txt` |

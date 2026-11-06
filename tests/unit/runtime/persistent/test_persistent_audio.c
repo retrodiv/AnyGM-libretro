@@ -16,7 +16,99 @@
 #include <string.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#include "audio_stream_fixture.h"
 
+static int stream_pair_matches(GmlAudio *reference,GmlAudio *stream,int frames){
+  int16_t expected[8192],actual[8192];
+  if(frames<1 || frames>4096) return 0;
+  gml_audio_mix(reference,expected,frames);
+  gml_audio_mix(stream,actual,frames);
+  for(int i=0;i<frames*2;i++) if(expected[i]!=actual[i]){
+    fprintf(stderr,"stream window sample %d: expected %d, observed %d\n",i,expected[i],actual[i]);
+    return 0;
+  }
+  return 1;
+}
+static int stream_fixture_matches(const uint8_t *fixture,size_t fixture_bytes){
+  GmlWin win={0};
+  GmlAudio *reference=gml_audio_create(&win),*stream=gml_audio_create(&win);
+  if(!reference || !stream){ gml_audio_free(reference); gml_audio_free(stream); return 0; }
+  int sound=gml_audio_add_ogg(reference,fixture,(int)fixture_bytes);
+  int streamed=gml_audio_add_encoded(stream,fixture,(int)fixture_bytes);
+  int ok=sound>=0 && streamed==sound;
+  int first=gml_audio_play(reference,sound,1),second=gml_audio_play(stream,streamed,1);
+  ok=ok && first==second && first>=1000000;
+  /* Bounded playback must not require a complete decoded image. A full observation below is
+   * deliberately separate and must still reproduce the established decoder byte for byte. */
+  uint32_t count=0; int channels=0;
+  ok=ok && !gml_audio_sound_pcm16(stream,streamed,&count,&channels);
+  /* Non-looping EOF must retire its decoder without changing the final PCM tail. */
+  gml_audio_stop(reference,first); gml_audio_stop(stream,second);
+  first=gml_audio_play(reference,sound,0); second=gml_audio_play(stream,streamed,0);
+  gml_audio_sound_set_track_position(reference,first,1.24);
+  gml_audio_sound_set_track_position(stream,second,1.24);
+  ok=ok && first==second && stream_pair_matches(reference,stream,2048) &&
+    !gml_audio_is_playing(reference,first) && !gml_audio_is_playing(stream,second);
+  first=gml_audio_play(reference,sound,1); second=gml_audio_play(stream,streamed,1);
+  ok=ok && first==second && first>=1000000;
+  static const int blocks[]={31,1500,317,4096,100,2053,4096};
+  for(size_t i=0;ok && i<sizeof blocks/sizeof *blocks;i++)
+    ok=stream_pair_matches(reference,stream,blocks[i]);
+  gml_audio_sound_pitch(reference,first,1.3);
+  gml_audio_sound_pitch(stream,second,1.3);
+  gml_audio_sound_loop_start(reference,first,0.07);
+  gml_audio_sound_loop_start(stream,second,0.07);
+  for(int i=0;ok && i<20;i++) ok=stream_pair_matches(reference,stream,1023);
+  gml_audio_sound_set_track_position(reference,first,1.23);
+  gml_audio_sound_set_track_position(stream,second,1.23);
+  ok=ok && stream_pair_matches(reference,stream,4096);
+  gml_audio_sound_set_track_position(reference,first,0.547);
+  gml_audio_sound_set_track_position(stream,second,0.547);
+  ok=ok && stream_pair_matches(reference,stream,2300);
+  gml_audio_sound_set_track_position(reference,first,0.127);
+  gml_audio_sound_set_track_position(stream,second,0.127);
+  gml_audio_sound_gain_fade(reference,first,0.4,90);
+  gml_audio_sound_gain_fade(stream,second,0.4,90);
+  ok=ok && stream_pair_matches(reference,stream,4096);
+  gml_audio_pause_all(reference,1); gml_audio_pause_all(stream,1);
+  ok=ok && stream_pair_matches(reference,stream,120);
+  gml_audio_pause_all(reference,0); gml_audio_pause_all(stream,0);
+  int other=gml_audio_play(reference,sound,1),peer=gml_audio_play(stream,streamed,1);
+  ok=ok && other==peer && other>=1000000;
+  gml_audio_sound_pitch(reference,other,0.73); gml_audio_sound_pitch(stream,peer,0.73);
+  ok=ok && stream_pair_matches(reference,stream,2200);
+  size_t bytes=gml_audio_state_size(reference),stream_bytes=gml_audio_state_size(stream);
+  uint8_t *state=malloc(bytes),*actual_state=malloc(bytes); size_t written=0,used=0;
+  ok=ok && state && actual_state && bytes==stream_bytes &&
+    gml_audio_state_save(reference,state,bytes,&written) && written==bytes &&
+    gml_audio_state_save(stream,actual_state,bytes,&written) &&
+    !memcmp(state,actual_state,bytes);
+  ok=ok && stream_pair_matches(reference,stream,2500) &&
+    gml_audio_state_load(reference,state,bytes,&used) && used==bytes &&
+    gml_audio_state_load(stream,state,bytes,&used) && used==bytes &&
+    stream_pair_matches(reference,stream,3100);
+  if(ok){
+    state[0]^=1u;
+    ok=ok && !gml_audio_state_load(stream,state,bytes,&used) &&
+      stream_pair_matches(reference,stream,1600);
+  }
+  ok=ok && gml_audio_warm_sound(stream,streamed);
+  uint32_t expected_count=0; int expected_channels=0;
+  const int16_t *expected=gml_audio_sound_pcm16(reference,sound,&expected_count,&expected_channels);
+  const int16_t *actual=gml_audio_sound_pcm16(stream,streamed,&count,&channels);
+  ok=ok && expected && actual && count==expected_count && channels==expected_channels &&
+    !memcmp(expected,actual,(size_t)count*(size_t)channels*sizeof(*actual)) &&
+    stream_pair_matches(reference,stream,2100);
+  free(state); free(actual_state);
+  gml_audio_free(reference); gml_audio_free(stream);
+  return ok;
+}
+
+
+int expect_ogg_stream_windows(void){
+  return stream_fixture_matches(audio_stream_fixture,sizeof audio_stream_fixture) &&
+    stream_fixture_matches(audio_stream_mono_fixture,sizeof audio_stream_mono_fixture);
+}
 
 static void fixture_write_u32(unsigned char *data,size_t off,uint32_t value){
   data[off]=(unsigned char)value;
