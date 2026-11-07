@@ -789,6 +789,100 @@ static uint64_t backwards_upload_clock(void *userdata){
   return --*clock;
 }
 
+static int scene_source_region_case(void){
+  uint8_t pixels[16u*16u*4u];
+  for(size_t index=0;index<sizeof pixels;index++) pixels[index]=(uint8_t)(index*13u+index/17u);
+  GmlRenderImageRef ref={GML_RENDER_RESOURCE_ATLAS,91u,1u,1u};
+  GmlRenderImageUpload full={.image=ref,.storage_width=16u,.storage_height=16u,
+    .region={0,0,16u,16u},.pixel_format=GML_RENDER_PIXEL_RGBA8888,
+    .stride_bytes=64u,.byte_capacity=sizeof pixels,.bytes=pixels};
+  for(unsigned api=GML_GPU_API_OPENGL_CORE;api<=GML_GPU_API_OPENGLES3;api++){
+    anygm_test_graphics_reset();
+    GmlGpu *gpu=gml_gpu_create();GmlGpuContext context=fake_context(api);
+    REQUIRE(gpu && gml_gpu_context_reset(gpu,&context) && gml_gpu_prepare_scene(gpu,32u,32u),
+            "source region context prepared");
+    GmlRenderDeviceServices service;gml_gpu_device_services(gpu,&service);
+    REQUIRE(service.upload_source_region &&
+      service.upload_source_region(service.context,&full,(GmlRenderRect){3,3,4u,4u}),
+      "first source demand allocates storage and prepares only its rectangle");
+    GlSceneImage *image=gml_gpu_opengl_scene_image(gpu->backend,ref);
+    REQUIRE(image && image->source_partial && image->source_region.x==3 &&
+      image->source_region.y==3 && image->source_region.width==4u &&
+      image->source_region.height==4u,"partial residency is explicit metadata");
+    size_t count=0;const uint8_t *actual=anygm_test_graphics_texture_bytes(image->texture,&count);
+    REQUIRE(actual && count==sizeof pixels,"partial source retains full storage extent");
+    for(unsigned row=3;row<7;row++) for(unsigned column=3;column<7;column++)
+      REQUIRE(!memcmp(actual+(row*16u+column)*4u,pixels+(row*16u+column)*4u,4u),
+              "strided source demand preserves each requested texel");
+    GmlGpuCounters before={0},after={0};gml_gpu_counters(gpu,&before);
+    REQUIRE(service.upload_source_region(service.context,&full,(GmlRenderRect){4,4,1u,1u}),
+            "contained source demand reuses actual device bytes");
+    gml_gpu_counters(gpu,&after);
+    REQUIRE(before.scene_uploads==after.scene_uploads &&
+            before.scene_uploaded_bytes==after.scene_uploaded_bytes,"contained demand adds no transfer");
+    GmlRenderDrawOp operation={0};operation.opcode=GML_RENDER_OP_TEXTURED_QUAD;
+    operation.scene_family=GML_RENDER_SCENE_SPRITE;operation.source_count=1;operation.sources=&ref;
+    GmlRenderQuad *quad=&operation.payload.quad;
+    quad->shape=GML_RENDER_QUAD_AXIS_ALIGNED;
+    quad->sampling.filter=GML_RENDER_FILTER_HARDWARE_BILINEAR;
+    quad->sampling.source_region=(GmlRenderRect){4,4,2u,2u};
+    for(unsigned corner=0;corner<4;corner++){
+      quad->u[corner]=(corner==1 || corner==2)?6.0/16.0:4.0/16.0;
+      quad->v[corner]=corner>=2?6.0/16.0:4.0/16.0;
+    }
+    GmlRenderRect needed;
+    REQUIRE(gml_render_operation_source_region(&operation,16u,16u,&needed) &&
+      needed.x==3 && needed.y==3 && needed.width==4u && needed.height==4u,
+      "native filtering demand includes its neighbouring texels");
+    REQUIRE(gml_gpu_opengl_scene_source_region_ready(image,&operation),
+            "complete sampling footprint is eligible");
+    quad->sampling.source_region=(GmlRenderRect){9,9,1u,1u};
+    REQUIRE(!gml_gpu_opengl_scene_source_region_ready(image,&operation),
+            "unprepared source texels cannot be sampled");
+    quad->shape=GML_RENDER_QUAD_GENERAL;
+    REQUIRE(!gml_render_operation_source_region(&operation,16u,16u,&needed),
+            "unproved sampling retains complete source preparation");
+    REQUIRE(service.upload(service.context,&full),"ordinary complete upload upgrades the same version");
+    image=gml_gpu_opengl_scene_image(gpu->backend,ref);
+    actual=anygm_test_graphics_texture_bytes(image->texture,&count);
+    REQUIRE(!image->source_partial && count==sizeof pixels && !memcmp(actual,pixels,count),
+            "complete upload publishes every original source byte");
+    REQUIRE(gml_gpu_opengl_scene_source_region_ready(image,&operation),
+            "complete source supports the pre-existing consumers");
+    full.image.content_version++;ref=full.image;
+    REQUIRE(service.upload_source_region(service.context,&full,(GmlRenderRect){0,0,8u,8u}) &&
+      service.upload_source_region(service.context,&full,(GmlRenderRect){8,0,1u,8u}) &&
+      service.upload_source_region(service.context,&full,(GmlRenderRect){9,0,1u,8u}),
+      "new versions build bounded region unions");
+    image=gml_gpu_opengl_scene_image(gpu->backend,ref);
+    REQUIRE(image && image->source_partial && image->source_upload_bytes==864u,
+            "cumulative partial transfer accounting is exact");
+    REQUIRE(service.upload_source_region(service.context,&full,(GmlRenderRect){10,0,1u,8u}),
+            "source growth can switch to a complete transfer");
+    REQUIRE(!image->source_partial && image->source_upload_bytes<2u*sizeof pixels,
+            "amortised growth stays below two complete image transfers");
+    actual=anygm_test_graphics_texture_bytes(image->texture,&count);
+    REQUIRE(count==sizeof pixels && !memcmp(actual,pixels,count),"budget completion preserves every byte");
+    GmlRenderImageUpload invalid=full;invalid.byte_capacity--;
+    REQUIRE(!service.upload_source_region(service.context,&invalid,(GmlRenderRect){0,0,1u,1u}) &&
+      !service.upload_source_region(service.context,&full,(GmlRenderRect){16,0,1u,1u}),
+      "short complete sources and invalid demands are rejected before cache reuse");
+    service.retire(service.context,ref);
+    REQUIRE(!gml_gpu_opengl_scene_image(gpu->backend,ref),"retirement revokes region residency");
+    gml_gpu_context_lost(gpu);anygm_test_graphics_reset();
+    REQUIRE(gml_gpu_context_reset(gpu,&context) && gml_gpu_prepare_scene(gpu,32u,32u),
+            "replacement context is prepared");
+    gml_gpu_device_services(gpu,&service);
+    REQUIRE(service.upload_source_region(service.context,&full,(GmlRenderRect){1,1,2u,2u}),
+            "replacement context does not inherit old coverage or transfer credits");
+    image=gml_gpu_opengl_scene_image(gpu->backend,ref);
+    REQUIRE(image && image->source_partial && image->source_upload_bytes==16u,
+            "context reset starts a fresh exact source demand");
+    gml_gpu_destroy(gpu,1);
+  }
+  return 1;
+}
+
 static int scene_upload_policy_case(void){
   uint8_t pixels[129u*128u*4u];
   for(size_t index=0;index<sizeof pixels;index++) pixels[index]=(uint8_t)(index*17u+53u);
@@ -7685,6 +7779,7 @@ int main(int argc,char **argv){
     {"scene_staged_upload",scene_staged_upload_case},
     {"scene_staged_upload_bound",scene_staged_upload_bound_case},
     {"scene_upload_policy",scene_upload_policy_case},
+    {"scene_source_region",scene_source_region_case},
     {"scene_optional_entry_refusal",scene_optional_entry_refusal_case},
     {"scene_content_source_orientation",scene_content_source_orientation_case},
     {"scene_resident_batch",scene_resident_batch_case},

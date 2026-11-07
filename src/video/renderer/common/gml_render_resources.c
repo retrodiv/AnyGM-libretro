@@ -609,6 +609,29 @@ static int batch_valid(const GmlRenderResource *resource,const GmlRenderDrawBatc
   return !extended_quads || large_rows;
 }
 
+static int source_batch_region(const GmlRenderDrawBatch *batch,
+  const GmlRenderResourceSource *source,GmlRenderRect *out){
+  int found=0;
+  for(uint32_t index=0;index<batch->operation_count;index++){
+    const GmlRenderDrawOp *operation=&batch->operations[index];
+    for(uint32_t bound=0;bound<operation->source_count;bound++){
+      if(!same_version(operation->sources[bound],source->image)) continue;
+      GmlRenderRect selected;
+      if(bound || !gml_render_operation_source_region(operation,source->width,source->height,
+                                                       &selected)) return 0;
+      if(!found){*out=selected;found=1;continue;}
+      uint32_t left=(uint32_t)(out->x<selected.x?out->x:selected.x);
+      uint32_t top=(uint32_t)(out->y<selected.y?out->y:selected.y);
+      uint32_t right=(uint32_t)out->x+out->width;
+      uint32_t bottom=(uint32_t)out->y+out->height;
+      if((uint32_t)selected.x+selected.width>right) right=(uint32_t)selected.x+selected.width;
+      if((uint32_t)selected.y+selected.height>bottom) bottom=(uint32_t)selected.y+selected.height;
+      *out=(GmlRenderRect){(int32_t)left,(int32_t)top,right-left,bottom-top};
+    }
+  }
+  return found;
+}
+
 static int upload_sources(const GmlRenderDeviceServices *device,
                            const GmlRenderDrawBatch *batch,
                            const GmlRenderResourceSource *sources,uint32_t source_count){
@@ -646,6 +669,11 @@ static int upload_sources(const GmlRenderDeviceServices *device,
       transfer.stride_bytes=view->stride_bytes;
       transfer.byte_capacity=view->byte_capacity;
       transfer.bytes=view->bytes;
+      GmlRenderRect needed;
+      if(device->upload_source_region && view->borrowed_immutable &&
+         view->image.resource_class==GML_RENDER_RESOURCE_ATLAS &&
+         source_batch_region(batch,view,&needed) &&
+         device->upload_source_region(device->context,&transfer,needed)) continue;
       if(!device->upload(device->context,&transfer)) return 0;
     }
   }

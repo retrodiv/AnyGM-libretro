@@ -123,6 +123,9 @@ typedef struct GlSceneImage {
   int alpha_opaque; /* derived proof that every stored alpha byte is 255 */
   int opaque_white_known;
   uint8_t opaque_white[GL_SCENE_WHITE_TEXELS/8];
+  int source_partial;
+  GmlRenderRect source_region;
+  uint64_t source_upload_bytes;
 } GlSceneImage;
 
 typedef struct GlSceneCheckpoint {
@@ -304,6 +307,10 @@ void gml_gpu_opengl_scene_destroy(GmlGpuBackend *backend,int context_is_current)
 void gml_gpu_opengl_scene_reset(GmlGpuBackend *backend,const GmlGpuContext *context);
 void gml_gpu_opengl_scene_prepare_uploads(GmlGpuBackend *backend);
 int gml_gpu_opengl_scene_capabilities(const GmlGpuBackend *backend,GmlRenderDeviceCaps *caps);
+int gml_gpu_opengl_scene_upload_source_region(GmlGpuBackend *backend,
+  const GmlRenderImageUpload *full,GmlRenderRect region,uint64_t *uploaded_bytes);
+int gml_gpu_opengl_scene_source_region_ready(const GlSceneImage *image,
+  const GmlRenderDrawOp *operation);
 int gml_gpu_opengl_scene_upload(GmlGpuBackend *backend,const GmlRenderImageUpload *transfer,
                                 int *did_upload);
 int gml_gpu_opengl_scene_readback(GmlGpuBackend *backend,const GmlRenderImageReadback *transfer);

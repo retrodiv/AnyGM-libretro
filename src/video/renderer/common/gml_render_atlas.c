@@ -417,8 +417,8 @@ static int scene_atlas_dimensions(GmlRender *r,GmlAtlas *atlas,int *width,int *h
   return 0;
 }
 
-static void prepare_scene_atlas(GmlRender *r,int index,const GmlRenderDeviceServices *device,
-                                const GmlRenderDeviceCaps *caps){
+static void prepare_scene_atlas_region(GmlRender *r,int index,const GmlRenderDeviceServices *device,
+                                const GmlRenderDeviceCaps *caps,const GmlRenderRect *region){
   GmlRenderResourceSource source;
   GmlRenderImageUpload transfer={0};
   GmlAtlas *atlas;
@@ -438,8 +438,26 @@ static void prepare_scene_atlas(GmlRender *r,int index,const GmlRenderDeviceServ
   transfer.stride_bytes=source.stride_bytes;
   transfer.byte_capacity=source.byte_capacity;
   transfer.bytes=source.bytes;
+  if(region && device->upload_source_region && region->x>=0 && region->y>=0 &&
+     region->width && region->height &&
+     (uint64_t)(uint32_t)region->x+region->width<=source.width &&
+     (uint64_t)(uint32_t)region->y+region->height<=source.height){
+    uint32_t left=region->x>0?(uint32_t)region->x-1u:0u;
+    uint32_t top=region->y>0?(uint32_t)region->y-1u:0u;
+    uint32_t right=(uint32_t)region->x+region->width;
+    uint32_t bottom=(uint32_t)region->y+region->height;
+    if(right<source.width) right++;
+    if(bottom<source.height) bottom++;
+    GmlRenderRect needed={(int32_t)left,(int32_t)top,right-left,bottom-top};
+    if(device->upload_source_region(device->context,&transfer,needed)) return;
+  }
   /* The existing device upload reuses immutable identity/version. Failure keeps lazy retry. */
   (void)device->upload(device->context,&transfer);
+}
+
+static void prepare_scene_atlas(GmlRender *r,int index,const GmlRenderDeviceServices *device,
+                                 const GmlRenderDeviceCaps *caps){
+  prepare_scene_atlas_region(r,index,device,caps,NULL);
 }
 
 void gml_render_prepare_scene_sprite(GmlRender *r,int sprite){
@@ -455,8 +473,11 @@ void gml_render_prepare_scene_sprite(GmlRender *r,int sprite){
     int atlas=r->tpag[tpag].atlas;
     /* Room warming already owns decoding these pages. Do not decode more sprite frames here. */
     if(atlas>=0 && atlas<r->n_atlas && r->atlas &&
-       __atomic_load_n(&r->atlas[atlas].px,__ATOMIC_ACQUIRE))
-      prepare_scene_atlas(r,atlas,device,&caps);
+       __atomic_load_n(&r->atlas[atlas].px,__ATOMIC_ACQUIRE)){
+      GmlTpag *page=&r->tpag[tpag];
+      GmlRenderRect needed={page->sx,page->sy,(uint32_t)page->sw,(uint32_t)page->sh};
+      prepare_scene_atlas_region(r,atlas,device,&caps,&needed);
+    }
   }
 }
 
@@ -470,7 +491,11 @@ void gml_render_prepare_scene_bg(GmlRender *r,int bg){
   if(atlas<0 || atlas>=r->n_atlas || !r->atlas ||
      !__atomic_load_n(&r->atlas[atlas].px,__ATOMIC_ACQUIRE)) return;
   device=scene_preparation_device(r,&caps);
-  if(device) prepare_scene_atlas(r,atlas,device,&caps);
+  if(device){
+    GmlTpag *page=&r->tpag[tpag];
+    GmlRenderRect needed={page->sx,page->sy,(uint32_t)page->sw,(uint32_t)page->sh};
+    prepare_scene_atlas_region(r,atlas,device,&caps,&needed);
+  }
 }
 
 static void prepare_scene_font_atlas(GmlRender *r,int index,

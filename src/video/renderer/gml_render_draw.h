@@ -559,4 +559,9 @@ typedef struct GmlRenderExecutionResult {
   GmlRenderImageRef uncertain_targets[GML_RENDER_MAX_UNCERTAIN_TARGETS];
 } GmlRenderExecutionResult;
 
+/* Conservative source-space demand for ordinary native-sampled quads. This does not change
+ * placement, raster coverage or sampling. A refusal requires the complete source image. */
+int gml_render_operation_source_region(const GmlRenderDrawOp *operation,
+  uint32_t width,uint32_t height,GmlRenderRect *region);
+
 #endif

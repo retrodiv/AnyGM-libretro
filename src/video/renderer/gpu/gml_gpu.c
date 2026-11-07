@@ -169,6 +169,16 @@ static int scene_upload(void *context,const GmlRenderImageUpload *transfer){
   return 1;
 }
 
+static int scene_upload_source_region(void *context,const GmlRenderImageUpload *full,
+                                       GmlRenderRect region){
+  GmlGpu *gpu=(GmlGpu*)context;
+  uint64_t bytes=0;
+  if(!context_accessible(gpu) ||
+     !gml_gpu_opengl_scene_upload_source_region(gpu->backend,full,region,&bytes)) return 0;
+  if(bytes){gpu->counters.scene_uploads++;gpu->counters.scene_uploaded_bytes+=bytes;}
+  return 1;
+}
+
 static int scene_readback(void *context,const GmlRenderImageReadback *transfer){
   GmlGpu *gpu=(GmlGpu*)context;
   GmlRenderImageReadback selected;
@@ -232,6 +242,7 @@ void gml_gpu_device_services(GmlGpu *gpu,GmlRenderDeviceServices *out_services){
   out_services->capabilities=scene_capabilities;
   out_services->submit=scene_submit;
   out_services->upload=scene_upload;
+  out_services->upload_source_region=scene_upload_source_region;
   out_services->readback=scene_readback;
   out_services->retire=scene_retire;
   out_services->flush=scene_flush;

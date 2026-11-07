@@ -735,3 +735,37 @@ const GmlRenderDeviceServices *gml_render_device(const GmlRender *render){
 void gml_render_set_scene_device(GmlRender *render,int enabled){
   if(render) render->scene_device_enabled=enabled && gml_render_device(render);
 }
+
+int gml_render_operation_source_region(const GmlRenderDrawOp *operation,
+  uint32_t width,uint32_t height,GmlRenderRect *region){
+  if(!operation || !region || !width || !height ||
+     operation->opcode!=GML_RENDER_OP_TEXTURED_QUAD || operation->source_count!=1u ||
+     (operation->scene_family!=GML_RENDER_SCENE_SPRITE &&
+      operation->scene_family!=GML_RENDER_SCENE_BACKGROUND &&
+      operation->scene_family!=GML_RENDER_SCENE_TEXT)) return 0;
+  const GmlRenderQuad *quad=&operation->payload.quad;
+  const GmlRenderRect *source=&quad->sampling.source_region;
+  if(quad->shape!=GML_RENDER_QUAD_AXIS_ALIGNED || quad->span_active ||
+     (quad->sampling.filter!=GML_RENDER_FILTER_NEAREST &&
+      quad->sampling.filter!=GML_RENDER_FILTER_BILINEAR &&
+      quad->sampling.filter!=GML_RENDER_FILTER_HARDWARE_BILINEAR) ||
+     source->x<0 || source->y<0 || !source->width || !source->height ||
+     (uint64_t)(uint32_t)source->x+source->width>width ||
+     (uint64_t)(uint32_t)source->y+source->height>height) return 0;
+  double left=source->x,top=source->y;
+  double right=(double)source->x+source->width,bottom=(double)source->y+source->height;
+  for(unsigned corner=0;corner<4u;corner++){
+    if(!isfinite(quad->u[corner]) || !isfinite(quad->v[corner])) return 0;
+    double u=fmax(0.0,fmin(1.0,quad->u[corner]))*width;
+    double v=fmax(0.0,fmin(1.0,quad->v[corner]))*height;
+    left=fmin(left,u);right=fmax(right,u);top=fmin(top,v);bottom=fmax(bottom,v);
+  }
+  /* Native linear filtering can touch the neighbouring texel. Include it in source space,
+   * including authored packed-page margins, without constructing screen coverage spans. */
+  uint32_t x=(uint32_t)fmax(0.0,floor(left)-1.0);
+  uint32_t y=(uint32_t)fmax(0.0,floor(top)-1.0);
+  uint32_t end_x=(uint32_t)fmin((double)width,ceil(right)+1.0);
+  uint32_t end_y=(uint32_t)fmin((double)height,ceil(bottom)+1.0);
+  *region=(GmlRenderRect){(int32_t)x,(int32_t)y,end_x-x,end_y-y};
+  return region->width && region->height;
+}

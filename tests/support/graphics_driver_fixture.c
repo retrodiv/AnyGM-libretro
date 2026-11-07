@@ -392,11 +392,20 @@ static void fake_TexSubImage2D(GLenum target,GLint level,GLint x,GLint y,GLsizei
   if(name<FAKE_MAX_TEXTURES){
     FakeTexture *texture=&g_fake.textures[name];
     size_t stride=type==GL_UNSIGNED_SHORT?2u:4u;
-    size_t bytes=(size_t)width*(size_t)height*stride;
     texture->upload_count++;
     if(pixels) texture->data_upload_count++;
-    texture->byte_count=bytes<sizeof texture->bytes?bytes:sizeof texture->bytes;
-    if(pixels) memcpy(texture->bytes,pixels,texture->byte_count);
+    /* Subimage writes preserve the storage allocated by TexImage and use destination
+     * coordinates. Only the fixture's bounded retained prefix is observable. */
+    for(GLsizei row=0;pixels && row<height;row++){
+      size_t destination=((size_t)(y+row)*(size_t)texture->width+(size_t)x)*stride;
+      size_t bytes=(size_t)width*stride;
+      size_t source_stride=(size_t)(g_fake.unpack_row_length?g_fake.unpack_row_length:width)*stride;
+      size_t source=(size_t)(row+g_fake.unpack_skip_rows)*source_stride+
+                    (size_t)g_fake.unpack_skip_pixels*stride;
+      if(destination>=texture->byte_count) continue;
+      if(bytes>texture->byte_count-destination) bytes=texture->byte_count-destination;
+      memcpy(texture->bytes+destination,(const unsigned char*)pixels+source,bytes);
+    }
   }
 }
 static void fake_PixelStorei(GLenum name,GLint value){

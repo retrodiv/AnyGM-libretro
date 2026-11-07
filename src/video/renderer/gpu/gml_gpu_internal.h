@@ -54,6 +54,8 @@ int gml_gpu_opengl_prepare_presentation(GmlGpuBackend *backend,const GmlGpuConte
                                         GmlGpuCounters *counters,char *error,size_t error_capacity);
 int gml_gpu_opengl_scene_upload(GmlGpuBackend *backend,const GmlRenderImageUpload *transfer,
                                 int *did_upload);
+int gml_gpu_opengl_scene_upload_source_region(GmlGpuBackend *backend,
+  const GmlRenderImageUpload *full,GmlRenderRect region,uint64_t *uploaded_bytes);
 int gml_gpu_opengl_scene_readback(GmlGpuBackend *backend,const GmlRenderImageReadback *transfer);
 int gml_gpu_opengl_scene_has_rgb(GmlGpuBackend *backend,GmlRenderImageRef image,int *has_rgb);
 void gml_gpu_opengl_scene_retire(GmlGpuBackend *backend,GmlRenderImageRef image);

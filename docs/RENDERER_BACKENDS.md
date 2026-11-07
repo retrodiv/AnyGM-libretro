@@ -143,8 +143,8 @@ integer tint body and required alpha passes retain their original program.
 A uniform, full-alpha, clamped one-texel quad covering its whole target may
 reuse the existing device clear writer when its uploaded texel is opaque white.
 The logical quad, placement and clipped extent remain unchanged. A bounded
-bitmap records white texels from full normalized uploads of small atlas images;
-partial uploads and target access invalidate it. No upload pointer is retained
+bitmap records white texels from complete logical inputs of small atlas images;
+ordinary partial updates and target access invalidate it. No upload pointer is retained
 and no GPU or CPU target pixels are read. Other colours, partial coverage or
 alpha, source effects and write masks retain their ordinary sampler.
 
@@ -735,6 +735,28 @@ packing path. No caller pointer survives the upload call. When the selected
 client path creates or resizes a complete image, its initial image submission
 also supplies the pixels, avoiding a separate undefined allocation and fill.
 Partial updates and bounded staged submissions retain their existing ordering.
+
+Immutable RGBA atlas preparation may upload only a demanded source rectangle
+while keeping the original full storage extent and UV coordinates. Axis-aligned
+sprite, background and text packets union their declared source rectangles and
+UV bounds with a one-texel filtering halo. Every consumer in a batch contributes
+to this demand; other shapes, filters or consumers retain complete uploads.
+Room preparation uses the same source-space rectangles for already decoded
+sprite and background pages. This changes transfers, never draw placement,
+packet counts, rasterization or device filtering.
+
+Partial residency records the exact initialized bounding rectangle and version.
+Growing demand reuploads its union from the complete borrowed source, including
+holes. Before cumulative partial copies reach one full-image transfer, preparation
+switches to a complete upload, keeping total transfer volume below two complete
+images. No source pointer survives a call. Ordinary upload still publishes a
+complete image; a consumer outside initialized bounds is refused before target
+writes. Partial sources cannot become targets, readback sources or legacy plan
+inputs. Retirement and context loss revoke residency and transfer accounting.
+CPU reconstruction retains its existing full-source ownership. Small-atlas white
+certificates inspect the complete logical input, never undefined device texels.
+Neutral GPU byte controls and resource batch controls cover these contracts;
+original-runner picture and real-device performance qualification remain separate.
 
 The pixel-unpack buffer's capacity grows geometrically up to
 16 MiB. Synchronized mapped writes wait for preceding transfers before reusing

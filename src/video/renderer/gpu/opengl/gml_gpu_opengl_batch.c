@@ -1583,6 +1583,15 @@ static int scene_preflight(GmlGpuBackend *backend,const GmlRenderDrawBatch *batc
        !valid_region(target->region,target->width,target->height) ||
        (target->pixel_format!=GML_RENDER_PIXEL_XRGB8888 &&
         target->pixel_format!=GML_RENDER_PIXEL_ARGB8888)) return 0;
+    /* Partial immutable sources are usable only inside a proved sampling footprint. Other
+     * consumers retain the complete-image contract and are prepared through ordinary upload. */
+    if(op->source_count>GML_RENDER_MAX_SAMPLERS+1u ||
+       (op->source_count && !op->sources)) return 0;
+    for(uint32_t bound=0;bound<op->source_count;bound++){
+      GlSceneImage *source=gml_gpu_opengl_scene_image(backend,op->sources[bound]);
+      if(source && source->source_partial &&
+         (bound || !gml_gpu_opengl_scene_source_region_ready(source,op))) return 0;
+    }
     if(op->opcode==GML_RENDER_OP_COPY_IMAGE){
       if(!backend->gl.BlitFramebuffer || !backend->gl.CopyTexSubImage2D ||
          !batch->states || op->state_index>=batch->state_count ||

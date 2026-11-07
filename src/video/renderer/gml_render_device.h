@@ -25,6 +25,11 @@ typedef struct GmlRenderDeviceServices {
    * answer keeps successful work resident without retaining CPU replay operations or sources.
    * The host must support observation at CPU/state barriers and controlled destruction. */
   int (*observe_on_demand)(void *context);
+  /* Optional immutable-source preparation. full describes every source texel and borrows bytes
+   * only during this call. Success makes the requested region available at that exact version;
+   * it does not publish uninitialised texels elsewhere. Unknown consumers still use upload. */
+  int (*upload_source_region)(void *context,const GmlRenderImageUpload *full,
+                              GmlRenderRect region);
 } GmlRenderDeviceServices;
 
 #endif

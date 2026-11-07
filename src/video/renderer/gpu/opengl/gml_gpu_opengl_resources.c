@@ -713,8 +713,8 @@ restore:
   }
 }
 
-int gml_gpu_opengl_scene_upload(GmlGpuBackend *backend,const GmlRenderImageUpload *transfer,
-                                int *did_upload){
+static int scene_upload_image(GmlGpuBackend *backend,const GmlRenderImageUpload *transfer,
+                                int *did_upload,int source_region){
   GlScene *scene;
   GlSceneImage *slot;
   size_t row_bytes,bytes;
@@ -746,7 +746,8 @@ int gml_gpu_opengl_scene_upload(GmlGpuBackend *backend,const GmlRenderImageUploa
    * font pages advance on every mutation and get a fresh incarnation on reuse. Generic mutable
    * resources cannot infer same-version residency from their image reference. */
   if(transfer->image.resource_class==GML_RENDER_RESOURCE_ATLAS &&
-     slot->texture && slot->valid && scene_same_version(slot->ref,transfer->image) &&
+     slot->texture && slot->valid && !slot->source_partial &&
+     scene_same_version(slot->ref,transfer->image) &&
      slot->width==transfer->storage_width && slot->height==transfer->storage_height &&
      slot->pixel_format==transfer->pixel_format &&
      slot->rendered_origin==rendered_origin &&
@@ -765,7 +766,8 @@ int gml_gpu_opengl_scene_upload(GmlGpuBackend *backend,const GmlRenderImageUploa
   slot->opaque_white_known=0;
   first=!slot->texture;
   resize=slot->width!=transfer->storage_width || slot->height!=transfer->storage_height;
-  if((first || resize || !scene_same_version(slot->ref,transfer->image)) &&
+  if(!source_region && (first || resize || slot->source_partial ||
+       !scene_same_version(slot->ref,transfer->image)) &&
      (transfer->region.x || transfer->region.y ||
       transfer->region.width!=transfer->storage_width ||
       transfer->region.height!=transfer->storage_height)) return 0;
@@ -806,7 +808,10 @@ int gml_gpu_opengl_scene_upload(GmlGpuBackend *backend,const GmlRenderImageUploa
   backend->gl.BindBuffer(GL_PIXEL_UNPACK_BUFFER,0);
   /* New or resized images are full transfers by the validation above. The selected client path
    * can initialize storage directly instead of first allocating undefined pixels. */
-  initial_client=(first || resize) && scene->upload_policy<0;
+  initial_client=(first || resize) && scene->upload_policy<0 &&
+    !transfer->region.x && !transfer->region.y &&
+    transfer->region.width==transfer->storage_width &&
+    transfer->region.height==transfer->storage_height;
   if(first || resize){
     slot->framebuffer_complete=0;
     backend->gl.TexImage2D(GL_TEXTURE_2D,0,GL_RGBA8,(GLsizei)transfer->storage_width,
@@ -841,6 +846,11 @@ int gml_gpu_opengl_scene_upload(GmlGpuBackend *backend,const GmlRenderImageUploa
   slot->pixel_format=transfer->pixel_format;
   slot->valid=1;
   slot->rendered_origin=rendered_origin;
+  if(!source_region){
+    slot->source_partial=0;
+    slot->source_region=(GmlRenderRect){0,0,slot->width,slot->height};
+    slot->source_upload_bytes=(uint64_t)slot->width*slot->height*4u;
+  }
   if(transfer->image.resource_class==GML_RENDER_RESOURCE_ATLAS &&
      (uint64_t)slot->width*slot->height<=GL_SCENE_WHITE_TEXELS &&
      transfer->region.x==0 && transfer->region.y==0 &&
@@ -858,6 +868,97 @@ int gml_gpu_opengl_scene_upload(GmlGpuBackend *backend,const GmlRenderImageUploa
   return 1;
 }
 
+int gml_gpu_opengl_scene_upload(GmlGpuBackend *backend,const GmlRenderImageUpload *transfer,
+                                int *did_upload){
+  return scene_upload_image(backend,transfer,did_upload,0);
+}
+
+static int scene_contains_region(GmlRenderRect outer,GmlRenderRect inner){
+  return outer.x>=0 && outer.y>=0 && inner.x>=outer.x && inner.y>=outer.y &&
+    (uint64_t)(uint32_t)inner.x+inner.width<=(uint64_t)(uint32_t)outer.x+outer.width &&
+    (uint64_t)(uint32_t)inner.y+inner.height<=(uint64_t)(uint32_t)outer.y+outer.height;
+}
+
+int gml_gpu_opengl_scene_source_region_ready(const GlSceneImage *image,
+                                             const GmlRenderDrawOp *operation){
+  GmlRenderRect required;
+  if(!image) return 0;
+  return !image->source_partial ||
+    (gml_render_operation_source_region(operation,image->width,image->height,&required) &&
+     scene_contains_region(image->source_region,required));
+}
+
+int gml_gpu_opengl_scene_upload_source_region(GmlGpuBackend *backend,
+  const GmlRenderImageUpload *full,GmlRenderRect required,uint64_t *uploaded_bytes){
+  GlSceneImage *image;
+  GmlRenderImageUpload transfer;
+  GmlRenderRect selected=required;
+  uint64_t previous=0,total,bytes;
+  int did_upload=0,current;
+  if(uploaded_bytes) *uploaded_bytes=0;
+  if(!backend || !backend->loaded || !full || !full->bytes ||
+     full->image.resource_class!=GML_RENDER_RESOURCE_ATLAS ||
+     full->pixel_format!=GML_RENDER_PIXEL_RGBA8888 || full->region.x || full->region.y ||
+     full->region.width!=full->storage_width || full->region.height!=full->storage_height ||
+     !scene_extent_valid(&backend->scene,full->storage_width,full->storage_height) ||
+     !scene_region_valid(required,full->storage_width,full->storage_height) ||
+     (uint64_t)full->stride_bytes<(uint64_t)full->storage_width*4u ||
+     full->byte_capacity<(uint64_t)full->storage_width*4u ||
+     (uint64_t)(full->storage_height-1u)>
+       (full->byte_capacity-(uint64_t)full->storage_width*4u)/full->stride_bytes) return 0;
+  image=scene_slot(backend,full->image);
+  if(!image || image->target) return 0;
+  current=image->texture && image->valid &&
+    image->context_epoch==backend->scene.context_epoch &&
+    scene_same_version(image->ref,full->image) &&
+    image->width==full->storage_width && image->height==full->storage_height &&
+    image->pixel_format==full->pixel_format && !image->rendered_origin;
+  if(current){
+    if(!image->source_partial || scene_contains_region(image->source_region,required)){
+      image->last_used=++backend->scene.use_clock;return 1;
+    }
+    GmlRenderRect old=image->source_region;
+    uint32_t x=(uint32_t)(old.x<required.x?old.x:required.x);
+    uint32_t y=(uint32_t)(old.y<required.y?old.y:required.y);
+    uint32_t end_x=(uint32_t)old.x+old.width;
+    uint32_t end_y=(uint32_t)old.y+old.height;
+    if((uint32_t)required.x+required.width>end_x) end_x=(uint32_t)required.x+required.width;
+    if((uint32_t)required.y+required.height>end_y) end_y=(uint32_t)required.y+required.height;
+    selected=(GmlRenderRect){(int32_t)x,(int32_t)y,end_x-x,end_y-y};
+    previous=image->source_upload_bytes;
+  }
+  total=(uint64_t)full->storage_width*full->storage_height*4u;
+  bytes=(uint64_t)selected.width*selected.height*4u;
+  /* Stop growing the bounding region before cumulative partial copies cost a whole image.
+   * This amortisation bound depends only on the resource, not on content or device identity. */
+  if(bytes>=total || previous>=total-bytes){
+    selected=full->region;bytes=total;
+  }
+  transfer=*full;transfer.region=selected;
+  size_t offset=(size_t)(uint32_t)selected.y*full->stride_bytes+(size_t)(uint32_t)selected.x*4u;
+  transfer.bytes=(const uint8_t*)full->bytes+offset;
+  transfer.byte_capacity=full->byte_capacity-offset;
+  if(!scene_upload_image(backend,&transfer,&did_upload,1)) return 0;
+  image->source_partial=selected.x || selected.y ||
+    selected.width!=full->storage_width || selected.height!=full->storage_height;
+  image->source_region=selected;
+  image->source_upload_bytes=previous+bytes;
+  /* Keep the existing small-atlas white proof for the complete logical source. No input
+   * pointer is retained; every source texel inspected here belongs to this call. */
+  if((uint64_t)image->width*image->height<=GL_SCENE_WHITE_TEXELS){
+    memset(image->opaque_white,0,sizeof image->opaque_white);
+    for(uint32_t row=0;row<image->height;row++) for(uint32_t column=0;column<image->width;column++){
+      const uint8_t *pixel=(const uint8_t*)full->bytes+(size_t)row*full->stride_bytes+(size_t)column*4u;
+      uint32_t index=row*image->width+column;
+      if(pixel[0]==255u && pixel[1]==255u && pixel[2]==255u && pixel[3]==255u)
+        image->opaque_white[index/8u]|=(uint8_t)(1u<<(index%8u));
+    }
+    image->opaque_white_known=1;
+  }
+  if(uploaded_bytes && did_upload) *uploaded_bytes=bytes;
+  return 1;
+}
+
 GlSceneImage *gml_gpu_opengl_scene_target(GmlGpuBackend *backend,const GmlRenderTargetRef *target){
   GlScene *scene;
   GlSceneImage *slot;
@@ -869,6 +970,7 @@ GlSceneImage *gml_gpu_opengl_scene_target(GmlGpuBackend *backend,const GmlRender
       target->pixel_format!=GML_RENDER_PIXEL_ARGB8888)) return NULL;
   slot=scene_slot(backend,target->image);
   if(!slot) return NULL;
+  if(slot->source_partial) return NULL;
   /* A target may be written without another CPU upload. Never retain a source
    * certificate across that ownership boundary, even before the first write. */
   slot->opaque_white_known=0;

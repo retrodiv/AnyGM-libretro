@@ -49,6 +49,8 @@ typedef struct FakeDevice {
   uint32_t readback_colour;
   uint32_t max_texture_extent;
   uint64_t supported_operations;
+  int source_region_uploads,refuse_source_region;
+  GmlRenderRect last_source_region;
   GmlRenderImageUpload last_upload;
   uint8_t last_upload_rgba[4];
   GmlRenderImageRef last_retired_image;
@@ -88,6 +90,13 @@ static int fake_upload(void *context,const GmlRenderImageUpload *upload){
     memcpy(fake->last_upload_rgba,upload->bytes,4u);
   return !fake->fail_upload && fake->uploads!=fake->fail_upload_at &&
     upload && upload->bytes && upload->byte_capacity;
+}
+
+static int fake_upload_source_region(void *context,const GmlRenderImageUpload *full,
+                                     GmlRenderRect region){
+  FakeDevice *fake=context;
+  fake->source_region_uploads++;fake->last_source_region=region;
+  return !fake->refuse_source_region && full && full->bytes;
 }
 
 static GmlRenderExecutionResult fake_submit(void *context,const GmlRenderDrawBatch *batch){
@@ -378,6 +387,49 @@ static GmlRenderResourceSource source_view(const uint32_t *pixels,int immutable)
 
 static void fill(uint32_t *pixels,uint32_t colour){
   for(int index=0;index<16;index++) pixels[index]=colour;
+}
+
+static int source_region_batch_contract(void){
+  uint8_t source_pixels[16u*16u*4u];uint32_t pixels[16];
+  memset(source_pixels,255,sizeof source_pixels);
+  GmlRenderImageRef ref=source_ref();ref.resource_class=GML_RENDER_RESOURCE_ATLAS;
+  GmlRenderResourceSource source={.image=ref,.width=16u,.height=16u,
+    .pixel_format=GML_RENDER_PIXEL_RGBA8888,.stride_bytes=64u,
+    .byte_capacity=sizeof source_pixels,.bytes=source_pixels,.borrowed_immutable=1};
+  for(unsigned variant=0;variant<4u;variant++){
+    FakeDevice fake={0};GmlRenderDeviceServices device=service(&fake);
+    device.upload_source_region=fake_upload_source_region;
+    fake.refuse_source_region=variant==2u;
+    GmlRenderDrawOp operations[2]={quad_op(2u,&ref),quad_op(3u,&ref)};
+    GmlRenderDrawStateSnapshot state=quad_state(0);
+    GmlRenderDrawBatch batch={operations,2u,&state,1u};
+    for(unsigned i=0;i<2u;i++){
+      GmlRenderQuad *q=&operations[i].payload.quad;
+      operations[i].scene_family=GML_RENDER_SCENE_SPRITE;
+      q->sampling.source_region=(GmlRenderRect){(int32_t)(2u+i*8u),4,2u,2u};
+      for(unsigned corner=0;corner<4u;corner++){
+        q->u[corner]=(2u+i*8u+((corner==1u || corner==2u)?2u:0u))/16.0;
+        q->v[corner]=(4u+(corner>=2u?2u:0u))/16.0;
+      }
+      operations[i].reconstruction_mode=GML_RENDER_DEVICE_CHECKPOINT;
+    }
+    if(variant==1u) operations[1].payload.quad.shape=GML_RENDER_QUAD_GENERAL;
+    if(variant==3u) source.borrowed_immutable=0;
+    GmlRenderResource *resource=gml_render_resource_create(target_ref(1u,1u),4u,4u,
+      GML_RENDER_PIXEL_XRGB8888,pixels,(GmlRenderResourceLimits){0});
+    CHECK(resource && gml_render_resource_submit(resource,&device,&batch,&source,1u)==
+      GML_RENDER_RESOURCE_EXEC_DEVICE);
+    CHECK(fake.source_region_uploads==(variant==0u || variant==2u));
+    if(fake.source_region_uploads)
+      CHECK(fake.last_source_region.x==1 && fake.last_source_region.y==3 &&
+        fake.last_source_region.width==12u && fake.last_source_region.height==4u);
+    /* One ordinary target upload always remains. Refusal, unbounded sampling and mutable
+     * source ownership additionally require the pre-existing complete source transfer. */
+    CHECK(fake.uploads==(variant?2:1));
+    CHECK(fake.last_batch_operations==2u && fake.submits==1);
+    gml_render_resource_destroy(resource);
+  }
+  return 1;
 }
 
 static int nearest_subrectangle_mirrors(void){
@@ -20530,6 +20582,7 @@ int main(void){
     return passed?EXIT_SUCCESS:EXIT_FAILURE;
   }
   int passed=0;
+  passed+=source_region_batch_contract();
   passed+=dispatch_retained_replay();
   passed+=dispatch_replay_owner_move();
   passed+=journal_loss_and_mutation();
