@@ -252,6 +252,9 @@ runtime: $(RUNTIME_LIBRARY)
 # Track caller toolchain settings without adding a generator to ordinary builds.
 # Expand before target-specific warning flags can be inherited from one object.
 build_quote = '$(subst ','"'"',$(1))'
+# A build root may be passed by absolute or checkout-relative path. Record both object
+# spellings so an included header invalidates the same file through either invocation.
+object_dependency_flags = -MMD -MP $(foreach object_target,$(sort $@ $(abspath $@) $(patsubst $(CURDIR)/%,%,$(abspath $@))),-MQ $(call build_quote,$(object_target)))
 COMPILE_CONFIG := $(BUILD_DIR)/.compile-config
 LINK_CONFIG := $(BUILD_DIR)/.link-config
 COMPILE_SETTINGS := $(foreach name,CC CXX CPPFLAGS CFLAGS CXXFLAGS PIC_FLAGS LIBRETRO_CPPFLAGS MACOSX_DEPLOYMENT_TARGET SDKROOT PATH CPATH C_INCLUDE_PATH CPLUS_INCLUDE_PATH,$(call build_quote,$(name)=$($(name))))
@@ -292,15 +295,15 @@ $(RUNTIME_LIBRARY): $(RUNTIME_OBJECTS)
 
 $(BUILD_DIR)/obj/%.o: %.c
 	mkdir -p $(dir $@)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(PIC_FLAGS) -MMD -MP -c $< -o $@
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(PIC_FLAGS) $(object_dependency_flags) -c $< -o $@
 
 $(BUILD_DIR)/obj/%.o: %.cpp
 	mkdir -p $(dir $@)
-	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(PIC_FLAGS) -MMD -MP -c $< -o $@
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(PIC_FLAGS) $(object_dependency_flags) -c $< -o $@
 
 $(LIBRETRO_OBJECTS): $(BUILD_DIR)/obj/%.o: %.c
 	mkdir -p $(dir $@)
-	$(CC) $(LIBRETRO_CPPFLAGS) $(CFLAGS) $(PIC_FLAGS) -MMD -MP -c $< -o $@
+	$(CC) $(LIBRETRO_CPPFLAGS) $(CFLAGS) $(PIC_FLAGS) $(object_dependency_flags) -c $< -o $@
 
 # Keep warnings from imported bzip2 sources isolated without weakening diagnostics for owned code.
 $(VENDORED_BZIP2_OBJECTS): CFLAGS += -Wno-unused-parameter -Wno-implicit-fallthrough

@@ -64,8 +64,10 @@ the platform-targets section below spells out. `CC`, `CXX`, `AR`,
 Core and runtime objects rebuild when the selected compiler commands, compilation
 flags or SDK environment change. Linker and archiver settings are tracked separately:
 changing only `LDFLAGS` relinks without recompiling. Repeating an unchanged build
-retains its objects and library. Use separate `BUILD_DIR` values for concurrent
-builds with different settings. If a toolchain or SDK is replaced in place while
+retains its objects and library. Dependency files name both absolute and checkout-relative
+object paths, so switching the spelling of the same build directory still rebuilds C,
+C++ and libretro adapter objects when an included header changes. Use separate
+`BUILD_DIR` values for concurrent builds with different settings. If a toolchain or SDK is replaced in place while
 its command and settings stay identical, clean that build directory first.
 
 Dependencies compile directly from the source lists below; the core build does

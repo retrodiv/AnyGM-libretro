@@ -35,8 +35,8 @@ class IncrementalBuild(unittest.TestCase):
             path.chmod(0o755)
         self.env = {k: v for k, v in os.environ.items() if k not in {
             "CC", "CXX", "AR", "CFLAGS", "CXXFLAGS", "CPPFLAGS", "LDFLAGS", "LDLIBS",
-            "MAKEFLAGS", "MFLAGS", "GNUMAKEFLAGS", "MAKEFILES", "CROSS_COMPILE",
-            "SDKROOT", "MACOSX_DEPLOYMENT_TARGET"}}
+            "MAKEFLAGS", "MFLAGS", "GNUMAKEFLAGS", "MAKEFILES", "MAKEOVERRIDES", "CROSS_COMPILE",
+            "BUILD_DIR", "CORE_TARGET", "SDKROOT", "MACOSX_DEPLOYMENT_TARGET"}}
         self.platform = "osx" if sys.platform == "darwin" else "unix"
         self.extension = ".dylib" if sys.platform == "darwin" else ".so"
         self.settings = dict(CC='"./compiler one"', CXX="c++", AR="ar",
@@ -87,6 +87,34 @@ class IncrementalBuild(unittest.TestCase):
         config = (self.root / "build" / self.platform / ".compile-config").read_text()
         self.assertIn("CPPFLAGS=" + flags + "\n", config)
         self.assertNotIn(" -c ", self.build())
+
+    def test_header_dependencies_across_build_root_spellings(self):
+        header = self.root / "probe_header.h"
+        header.write_text("#define HEADER_VALUE 3\n")
+        source = self.root / "probe.c"
+        source.write_text('#include "probe_header.h"\nextern int adapter_value(void);\n' +
+            source.read_text().replace("VALUE + cpp_value()",
+                                       "VALUE + cpp_value() + HEADER_VALUE + adapter_value()"))
+        source = self.root / "probe_cpp.cpp"
+        source.write_text('#include "probe_header.h"\n' +
+            source.read_text().replace("return CPP_VALUE;", "return CPP_VALUE + HEADER_VALUE;"))
+        (self.root / "probe_adapter.c").write_text(
+            '#include "probe_header.h"\nint adapter_value(void) { return HEADER_VALUE; }\n')
+        for absolute_first in (True, False):
+            relative = "build/" + self.platform + ("-absolute" if absolute_first else "-relative")
+            absolute = str(self.root / relative)
+            first, second = (absolute, relative) if absolute_first else (relative, absolute)
+            header.write_text("#define HEADER_VALUE 3\n")
+            self.build(BUILD_DIR=first, ANYGM_LIBRETRO_SOURCES="probe_adapter.c")
+            self.assertEqual(self.value(), 20)
+            self.assertNotIn(" -c ", self.build())
+            for value, spelling in ((7, second), (11, first), (13, second)):
+                with self.subTest(value=value, build_dir=spelling):
+                    header.write_text("#define HEADER_VALUE %d\n" % value)
+                    output = self.build(BUILD_DIR=spelling)
+                    self.assertEqual(self.value(), 11 + 3 * value)
+                    self.assertGreaterEqual(output.count(" -c "), 3)
+                    self.assertNotIn(" -c ", self.build())
 
     def test_static_archives_contain_only_objects(self):
         self.build(STATIC_LINKING="1")
