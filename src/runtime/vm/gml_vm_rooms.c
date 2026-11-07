@@ -1997,23 +1997,31 @@ static int code_audio_call_sound_const(const GmlCode *c, int call_i, int *sound)
   }
   return 0;
 }
-static int code_room_eq_at(const GmlCode *c, int cmp_i, int room_index){
-  if(!c || !c->insn || cmp_i<2 || cmp_i>=(int)c->n_insn) return 0;
+static int code_room_eq_at(const GmlCode *c, int cmp_i, int *room_index){
+  if(!c || !c->insn || !room_index || cmp_i<2 || cmp_i>=(int)c->n_insn) return 0;
   const GmlInsn *a=&c->insn[cmp_i-2], *b=&c->insn[cmp_i-1], *cmp=&c->insn[cmp_i];
   if(cmp->kind!=OP_CMP || cmp->cmp!=CMP_EQ) return 0;
   int room_const=INT_MIN;
-  if(insn_push_var_named(a,"room") && insn_push_int_const(b,&room_const)) return room_const==room_index;
-  if(insn_push_int_const(a,&room_const) && insn_push_var_named(b,"room")) return room_const==room_index;
+  if((insn_push_var_named(a,"room") && insn_push_int_const(b,&room_const)) ||
+     (insn_push_int_const(a,&room_const) && insn_push_var_named(b,"room"))){
+    *room_index=room_const;
+    return 1;
+  }
   return 0;
 }
 static void vm_warm_audio_code_for_room(GmlVM *vm, int ci, int room_index){
   if(!vm || !vm->win || !vm->audio || room_index<0 || ci<0 || ci>=vm->win->n_code) return;
-  if(!gml_vm_code_cache_ensure(vm->win,ci)) return;
   GmlCode *c=&vm->win->code[ci];
+  if(c->audio_room_condition==1) return;
+  if(!gml_vm_code_cache_ensure(vm->win,ci)) return;
   if(!c->insn || !c->branch_index) return;
+  int has_room_condition=0;
   for(int i=2;i+1<(int)c->n_insn;i++){
-    if(!code_room_eq_at(c,i,room_index)) continue;
+    int condition_room;
+    if(!code_room_eq_at(c,i,&condition_room)) continue;
     if(c->insn[i+1].kind!=OP_BF) continue;
+    has_room_condition=1;
+    if(condition_room!=room_index) continue;
     int end=c->branch_index[i+1];
     if(end<=i+1 || end>(int)c->n_insn) end=(int)c->n_insn;
     for(int j=i+2;j<end;j++){
@@ -2026,6 +2034,7 @@ static void vm_warm_audio_code_for_room(GmlVM *vm, int ci, int room_index){
       }
     }
   }
+  c->audio_room_condition=has_room_condition?2:1;
 }
 static int vm_room_order_neighbor(GmlVM *vm, int room_index, int delta){
   if(!vm || !vm->win || !vm->win->room_order || vm->win->n_room_order<=0) return -1;

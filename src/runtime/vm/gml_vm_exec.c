@@ -1631,6 +1631,7 @@ static void code_cache_free(GmlCode *c){
   free(c->insn); free(c->insn_pc); free(c->branch_index);
   c->insn=NULL; c->insn_pc=NULL; c->branch_index=NULL;
   c->n_insn=0;
+  c->audio_room_condition=0;
   c->micro_kind=0; c->micro_name=NULL; c->micro_hash=0;
 }
 enum {

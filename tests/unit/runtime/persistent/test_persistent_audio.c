@@ -110,6 +110,49 @@ int expect_ogg_stream_windows(void){
     stream_fixture_matches(audio_stream_mono_fixture,sizeof audio_stream_mono_fixture);
 }
 
+int expect_room_audio_condition_cache(void){
+  uint8_t data[4]={5,0,0,0};
+  GmlInsn insn[4][7]={0};
+  uint32_t pcs[4][7]={0};
+  int32_t branches[4][7]={0};
+  GmlCode code[4]={0};
+  GmlWin win={0};
+  win.data=data;win.size=sizeof data;win.code=code;win.n_code=4;win.n_chunks=1;
+  memcpy(win.chunks[0].name,"ROOM",5);win.chunks[0].size=sizeof data;
+  GmlAudio *audio=gml_audio_create(&win);
+  if(!audio) return 0;
+  int first=gml_audio_add_encoded(audio,audio_stream_fixture,sizeof audio_stream_fixture);
+  int second=gml_audio_add_encoded(audio,audio_stream_mono_fixture,sizeof audio_stream_mono_fixture);
+  for(int ci=0;ci<4;ci++){
+    code[ci].insn=insn[ci];code[ci].insn_pc=pcs[ci];
+    code[ci].branch_index=branches[ci];code[ci].n_insn=7;
+    int reversed=ci==2;
+    insn[ci][reversed?1:0]=(GmlInsn){.kind=OP_PUSH,.type1=DT_VAR,.refname="room"};
+    insn[ci][reversed?0:1]=(GmlInsn){.kind=OP_PUSH,.type1=DT_INT16,.sval=ci==2?4:2};
+    insn[ci][2]=(GmlInsn){.kind=OP_CMP,.cmp=ci==0?CMP_NEQ:CMP_EQ};
+    insn[ci][3].kind=ci==3?OP_BT:OP_BF;branches[ci][3]=7;
+    insn[ci][4]=(GmlInsn){.kind=OP_PUSH,.type1=DT_INT32,.ival=ci==2?second:first};
+    insn[ci][5]=(GmlInsn){.kind=OP_CALL,.refname="audio_play_sound"};
+    insn[ci][6].kind=OP_EXIT;
+  }
+  GmlVM vm={0};vm.win=&win;vm.audio=audio;
+  gml_vm_warm_audio_for_room(&vm,1);
+  uint32_t count;int channels;
+  int ok=first>=0 && second>=0 && code[0].audio_room_condition==1 &&
+    code[1].audio_room_condition==2 && code[2].audio_room_condition==2 &&
+    code[3].audio_room_condition==1 &&
+    !gml_audio_sound_pcm16(audio,first,&count,&channels) &&
+    !gml_audio_sound_pcm16(audio,second,&count,&channels);
+  gml_vm_warm_audio_for_room(&vm,2);
+  ok=ok && gml_audio_sound_pcm16(audio,first,&count,&channels) &&
+    !gml_audio_sound_pcm16(audio,second,&count,&channels);
+  gml_vm_warm_audio_for_room(&vm,4);
+  ok=ok && gml_audio_sound_pcm16(audio,second,&count,&channels);
+  if(!ok) fprintf(stderr,"room audio classification lost a later matching condition or admitted a different branch\n");
+  free(vm.audio_room_warm_scan);gml_audio_free(audio);
+  return ok;
+}
+
 static void fixture_write_u32(unsigned char *data,size_t off,uint32_t value){
   data[off]=(unsigned char)value;
   data[off+1]=(unsigned char)(value>>8);
