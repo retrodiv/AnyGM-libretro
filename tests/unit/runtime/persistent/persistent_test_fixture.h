@@ -76,6 +76,7 @@ int expect_audio_group_paths(void);
 int expect_pcm_queue_playback(void);
 int expect_ogg_stream_windows(void);
 int expect_room_audio_condition_cache(void);
+int expect_room_audio_scan_cache_ownership(void);
 int expect_pcm_queue_resampling_and_state(void);
 int expect_pcm_queue_builtin_ranges(void);
 int expect_pcm_queue_async_dispatch(void);

@@ -78,6 +78,7 @@ int main(int argc,char **argv){
   static const AnygmTestCase audio_cases[]={
     {"ogg_stream_windows",expect_ogg_stream_windows},
     {"room_audio_condition_cache",expect_room_audio_condition_cache},
+    {"room_audio_scan_cache_ownership",expect_room_audio_scan_cache_ownership},
     {"pcm_queue_playback",expect_pcm_queue_playback},
     {"pcm_queue_resampling_and_state",expect_pcm_queue_resampling_and_state},
     {"pcm_queue_builtin_ranges",expect_pcm_queue_builtin_ranges},

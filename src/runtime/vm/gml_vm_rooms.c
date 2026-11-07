@@ -2013,6 +2013,7 @@ static void vm_warm_audio_code_for_room(GmlVM *vm, int ci, int room_index){
   if(!vm || !vm->win || !vm->audio || room_index<0 || ci<0 || ci>=vm->win->n_code) return;
   GmlCode *c=&vm->win->code[ci];
   if(c->audio_room_condition==1) return;
+  int scan_owned=!c->insn && !c->insn_pc && !c->branch_index;
   if(!gml_vm_code_cache_ensure(vm->win,ci)) return;
   if(!c->insn || !c->branch_index) return;
   int has_room_condition=0;
@@ -2034,6 +2035,9 @@ static void vm_warm_audio_code_for_room(GmlVM *vm, int ci, int room_index){
       }
     }
   }
+  /* A negative lookahead needs only its classification. Keep execution caches and
+   * positive candidates, but release code decoded solely for this unsuccessful scan. */
+  if(scan_owned && !has_room_condition) gml_vm_code_cache_discard(c);
   c->audio_room_condition=has_room_condition?2:1;
 }
 static int vm_room_order_neighbor(GmlVM *vm, int room_index, int delta){

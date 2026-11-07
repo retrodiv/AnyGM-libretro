@@ -2156,6 +2156,9 @@ fail:
 int gml_vm_code_cache_ensure(GmlWin *win, int code_index){
   return code_cache_ensure(win,code_index);
 }
+void gml_vm_code_cache_discard(GmlCode *code){
+  code_cache_free(code);
+}
 
 /* Optional per-code wall time and invocation counts, owned by the VM. */
 /* Which CODE entries this run has executed. One store per invocation and no clock read, so unlike

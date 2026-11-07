@@ -164,6 +164,46 @@ static void fixture_write_u16(unsigned char *data,size_t off,uint16_t value){
   data[off+1]=(unsigned char)(value>>8);
 }
 
+int expect_room_audio_scan_cache_ownership(void){
+  unsigned char data[12]={0};
+  fixture_write_u32(data,0,5);
+  fixture_write_u32(data,4,(OP_PUSH<<24)|(DT_INT16<<16)|23u);
+  fixture_write_u32(data,8,(OP_RET<<24)|(DT_VAR<<16));
+  GmlInsn hot_insn[1]={{.kind=OP_EXIT}};
+  uint32_t hot_pc[1]={0};
+  int32_t hot_branch[1]={-1};
+  GmlCode code[2]={0};
+  code[0].name=(char*)"gml_Script_scan_temporary";
+  code[0].start=4;code[0].length=8;
+  code[1].name=(char*)"gml_Script_scan_hot";
+  code[1].insn=hot_insn;code[1].insn_pc=hot_pc;
+  code[1].branch_index=hot_branch;code[1].n_insn=1;
+  GmlWin win={0};
+  win.data=data;win.size=sizeof data;win.bytecode=16;
+  win.code=code;win.n_code=2;win.n_chunks=1;
+  memcpy(win.chunks[0].name,"ROOM",5);win.chunks[0].size=4;
+  GmlAudio *audio=gml_audio_create(&win);
+  if(!audio) return 0;
+  GmlVM vm={0};vm.win=&win;vm.audio=audio;vm.cur_code_index=-1;
+  gml_vm_warm_audio_for_room(&vm,1);
+  int ok=code[0].audio_room_condition==1 && !code[0].insn &&
+    !code[0].insn_pc && !code[0].branch_index && !code[0].n_insn &&
+    code[1].audio_room_condition==1 && code[1].insn==hot_insn &&
+    code[1].insn_pc==hot_pc && code[1].branch_index==hot_branch;
+  gml_vm_warm_audio_for_room(&vm,2);
+  ok=ok && !code[0].insn && code[0].audio_room_condition==1;
+  GmlVal result=gml_vm_run_code(&vm,0,NULL,NULL,NULL,0);
+  ok=ok && result.t==V_REAL && result.d==23 && code[0].insn &&
+    code[0].insn_pc && code[0].branch_index && code[0].n_insn==2;
+  GmlInsn *executed=code[0].insn;
+  gml_vm_warm_audio_for_room(&vm,3);
+  ok=ok && code[0].insn==executed && code[1].insn==hot_insn;
+  if(!ok) fprintf(stderr,"audio scan retained temporary negative code or discarded an execution cache\n");
+  free(code[0].insn);free(code[0].insn_pc);free(code[0].branch_index);
+  free(vm.audio_room_warm_scan);gml_audio_free(audio);
+  return ok;
+}
+
 int expect_pcm_queue_playback(void){
   GmlWin win={0}; GmlAudio *audio=gml_audio_create(&win);
   if(!audio) return 0;
