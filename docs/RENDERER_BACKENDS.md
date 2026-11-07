@@ -729,6 +729,13 @@ context loss. Diagnostic counters report the current policy (0 unmeasured,
 1 staged,2 client) and both measured call medians in nanoseconds; these are
 neither exclusive process CPU time nor GPU completion time.
 
+Contiguous low-origin RGBA transfers use their validated input bytes directly;
+conversion, stride removal and rendered-origin inversion retain the established
+packing path. No caller pointer survives the upload call. When the selected
+client path creates or resizes a complete image, its initial image submission
+also supplies the pixels, avoiding a separate undefined allocation and fill.
+Partial updates and bounded staged submissions retain their existing ordering.
+
 The pixel-unpack buffer's capacity grows geometrically up to
 16 MiB. Synchronized mapped writes wait for preceding transfers before reusing
 that store, and unmap before texture submission. This bounds successful growth

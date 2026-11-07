@@ -596,7 +596,7 @@ static int scene_scratch_ready(GlScene *scene,size_t bytes){
  * texture transfers before reuse, avoiding a new orphan for every write. Tiny and larger transfers
  * retain the direct path.
  * No buffer or pointer survives context loss; mapping uses the established context entry points. */
-static int scene_stage_upload(GmlGpuBackend *backend,size_t bytes,int *staged){
+static int scene_stage_upload(GmlGpuBackend *backend,size_t bytes,const uint8_t *source,int *staged){
   void *mapped;
   GlScene *scene=&backend->scene;
   *staged=0;
@@ -618,7 +618,7 @@ static int scene_stage_upload(GmlGpuBackend *backend,size_t bytes,int *staged){
   mapped=backend->gl.MapBufferRange(GL_PIXEL_UNPACK_BUFFER,0,(GLsizeiptr)bytes,
                                     GL_MAP_WRITE_BIT);
   if(!mapped) goto refused;
-  memcpy(mapped,scene->scratch,bytes);
+  memcpy(mapped,source,bytes);
   if(!backend->gl.UnmapBuffer(GL_PIXEL_UNPACK_BUFFER)) goto refused;
   if(backend->gl.GetError()!=GL_NO_ERROR) goto refused;
   *staged=1;
@@ -684,7 +684,7 @@ void gml_gpu_opengl_scene_prepare_uploads(GmlGpuBackend *backend){
     int staged=0,path=order^(trial>0?(trial&1):0);
     uint64_t started=trial<0?0:scene->upload_clock(scene->upload_clock_userdata);
     if(path){
-      if(!scene_stage_upload(backend,BYTES,&staged) || !staged){measured=0;break;}
+      if(!scene_stage_upload(backend,BYTES,scene->scratch,&staged) || !staged){measured=0;break;}
     } else backend->gl.BindBuffer(GL_PIXEL_UNPACK_BUFFER,0);
     backend->gl.TexSubImage2D(GL_TEXTURE_2D,0,0,0,SIDE,SIDE,GL_RGBA,GL_UNSIGNED_BYTE,
                               staged?NULL:scene->scratch);
@@ -718,8 +718,8 @@ int gml_gpu_opengl_scene_upload(GmlGpuBackend *backend,const GmlRenderImageUploa
   GlScene *scene;
   GlSceneImage *slot;
   size_t row_bytes,bytes;
-  const uint8_t *source;
-  int first,resize,rendered_origin,staged;
+  const uint8_t *source,*upload_bytes;
+  int first,resize,rendered_origin,staged,initial_client;
   if(did_upload) *did_upload=0;
   if(!backend || !transfer || !transfer->bytes || !backend->loaded) return 0;
   scene=&backend->scene;
@@ -770,23 +770,30 @@ int gml_gpu_opengl_scene_upload(GmlGpuBackend *backend,const GmlRenderImageUploa
       transfer->region.width!=transfer->storage_width ||
       transfer->region.height!=transfer->storage_height)) return 0;
   gml_gpu_opengl_scene_prepare_uploads(backend);
-  if(!scene_scratch_ready(scene,bytes)) return 0;
   source=(const uint8_t*)transfer->bytes;
-  for(uint32_t row=0;row<transfer->region.height;row++){
-    const uint8_t *input=source+(size_t)row*transfer->stride_bytes;
-    uint32_t destination_row=rendered_origin?transfer->region.height-1u-row:row;
-    uint8_t *output=scene->scratch+(size_t)destination_row*row_bytes;
-    if(transfer->pixel_format==GML_RENDER_PIXEL_RGBA8888){
-      memcpy(output,input,row_bytes);
-    } else for(uint32_t column=0;column<transfer->region.width;column++){
-      uint32_t pixel;
-      memcpy(&pixel,input+(size_t)column*4u,sizeof pixel);
-      output[(size_t)column*4u+0]=(uint8_t)(pixel>>16);
-      output[(size_t)column*4u+1]=(uint8_t)(pixel>>8);
-      output[(size_t)column*4u+2]=(uint8_t)pixel;
-      output[(size_t)column*4u+3]=transfer->pixel_format==GML_RENDER_PIXEL_XRGB8888
-                                  ?255u:(uint8_t)(pixel>>24);
+  upload_bytes=source;
+  /* Already contiguous low-origin RGBA needs no packing. Client uploads consume it within this
+   * call; staging copies it into the owned buffer before submission, retaining no caller pointer. */
+  if(rendered_origin || transfer->pixel_format!=GML_RENDER_PIXEL_RGBA8888 ||
+     transfer->stride_bytes!=row_bytes){
+    if(!scene_scratch_ready(scene,bytes)) return 0;
+    for(uint32_t row=0;row<transfer->region.height;row++){
+      const uint8_t *input=source+(size_t)row*transfer->stride_bytes;
+      uint32_t destination_row=rendered_origin?transfer->region.height-1u-row:row;
+      uint8_t *output=scene->scratch+(size_t)destination_row*row_bytes;
+      if(transfer->pixel_format==GML_RENDER_PIXEL_RGBA8888){
+        memcpy(output,input,row_bytes);
+      } else for(uint32_t column=0;column<transfer->region.width;column++){
+        uint32_t pixel;
+        memcpy(&pixel,input+(size_t)column*4u,sizeof pixel);
+        output[(size_t)column*4u+0]=(uint8_t)(pixel>>16);
+        output[(size_t)column*4u+1]=(uint8_t)(pixel>>8);
+        output[(size_t)column*4u+2]=(uint8_t)pixel;
+        output[(size_t)column*4u+3]=transfer->pixel_format==GML_RENDER_PIXEL_XRGB8888
+                                    ?255u:(uint8_t)(pixel>>24);
+      }
     }
+    upload_bytes=scene->scratch;
   }
   if(first){
     backend->gl.GenTextures(1,&slot->texture);
@@ -797,28 +804,32 @@ int gml_gpu_opengl_scene_upload(GmlGpuBackend *backend,const GmlRenderImageUploa
   backend->gl.PixelStorei(GL_UNPACK_ALIGNMENT,1);
   backend->gl.PixelStorei(GL_UNPACK_ROW_LENGTH,0);
   backend->gl.BindBuffer(GL_PIXEL_UNPACK_BUFFER,0);
+  /* New or resized images are full transfers by the validation above. The selected client path
+   * can initialize storage directly instead of first allocating undefined pixels. */
+  initial_client=(first || resize) && scene->upload_policy<0;
   if(first || resize){
     slot->framebuffer_complete=0;
     backend->gl.TexImage2D(GL_TEXTURE_2D,0,GL_RGBA8,(GLsizei)transfer->storage_width,
-                           (GLsizei)transfer->storage_height,0,GL_RGBA,GL_UNSIGNED_BYTE,NULL);
+                           (GLsizei)transfer->storage_height,0,GL_RGBA,GL_UNSIGNED_BYTE,
+                           initial_client?upload_bytes:NULL);
     backend->gl.TexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,GL_NEAREST);
     backend->gl.TexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAG_FILTER,GL_NEAREST);
     backend->gl.TexParameteri(GL_TEXTURE_2D,GL_TEXTURE_WRAP_S,GL_CLAMP_TO_EDGE);
     backend->gl.TexParameteri(GL_TEXTURE_2D,GL_TEXTURE_WRAP_T,GL_CLAMP_TO_EDGE);
   }
-  if(!scene_stage_upload(backend,bytes,&staged)){
+  if(!initial_client && !scene_stage_upload(backend,bytes,upload_bytes,&staged)){
     backend->gl.PixelStorei(GL_UNPACK_ALIGNMENT,4);
     backend->gl.BindTexture(GL_TEXTURE_2D,0);
     slot->valid=0;
     slot->alpha_opaque=0;
     return 0;
   }
-  backend->gl.TexSubImage2D(GL_TEXTURE_2D,0,transfer->region.x,
+  if(!initial_client) backend->gl.TexSubImage2D(GL_TEXTURE_2D,0,transfer->region.x,
                             rendered_origin?(GLint)(transfer->storage_height-
                               (uint32_t)transfer->region.y-transfer->region.height)
                                            :transfer->region.y,
                             (GLsizei)transfer->region.width,(GLsizei)transfer->region.height,
-                            GL_RGBA,GL_UNSIGNED_BYTE,staged?NULL:scene->scratch);
+                            GL_RGBA,GL_UNSIGNED_BYTE,staged?NULL:upload_bytes);
   backend->gl.BindBuffer(GL_PIXEL_UNPACK_BUFFER,0);
   backend->gl.PixelStorei(GL_UNPACK_ALIGNMENT,4);
   backend->gl.BindTexture(GL_TEXTURE_2D,0);
@@ -836,7 +847,7 @@ int gml_gpu_opengl_scene_upload(GmlGpuBackend *backend,const GmlRenderImageUploa
      transfer->region.width==slot->width && transfer->region.height==slot->height){
     memset(slot->opaque_white,0,sizeof slot->opaque_white);
     for(uint32_t pixel=0;pixel<slot->width*slot->height;pixel++){
-      const uint8_t *p=scene->scratch+(size_t)pixel*4u;
+      const uint8_t *p=upload_bytes+(size_t)pixel*4u;
       if(p[0]==255u && p[1]==255u && p[2]==255u && p[3]==255u)
         slot->opaque_white[pixel/8u]|=(uint8_t)(1u<<(pixel%8u));
     }
