@@ -128,6 +128,7 @@ typedef struct FakeDriver {
   unsigned char *unpack_store;
   unsigned unpack_failure;
   int unpack_mapped;
+  int unpack_needs_sync;
   unsigned pack_slot_for[8];
   unsigned pack_fill;
   GLint unpack_row_length;
@@ -363,6 +364,7 @@ static void fake_TexSubImage2D(GLenum target,GLint level,GLint x,GLint y,GLsizei
     }
     pixels=g_fake.unpack_store+offset;
     g_fake.unpack.uploads++;
+    g_fake.unpack_needs_sync=1;
   }
   if(pixels && name && name==g_fake.upload_error_texture){
     g_fake.pending_error=0x0505u;
@@ -519,12 +521,15 @@ static void *fake_MapBufferRange(GLenum target,GLintptr offset,GLsizeiptr length
     g_fake.unpack.maps++;
     g_fake.unpack.access=access;
     if(g_fake.unpack_failure==2u){ g_fake.pending_error=0x0505u;return NULL; }
-    if(!g_fake.unpack.bound || offset!=0 || length<=0 ||
+    if(!g_fake.unpack.bound || g_fake.unpack.bound!=g_fake.unpack.buffer ||
+       offset!=0 || length<=0 ||
        (size_t)length>g_fake.unpack.capacity || g_fake.unpack_mapped ||
-       access!=(GL_MAP_WRITE_BIT|GL_MAP_UNSYNCHRONIZED_BIT)){
+       (access!=GL_MAP_WRITE_BIT && access!=(GL_MAP_WRITE_BIT|GL_MAP_UNSYNCHRONIZED_BIT)) ||
+       ((access&GL_MAP_UNSYNCHRONIZED_BIT) && g_fake.unpack_needs_sync)){
       g_fake.unpack.errors++;
       return NULL;
     }
+    g_fake.unpack_needs_sync=0;
     g_fake.unpack_mapped=1;
     return g_fake.unpack_store;
   }
@@ -828,6 +833,7 @@ static void fake_BufferData(GLenum target,GLsizeiptr size,const void *data,GLenu
     g_fake.unpack_store=grown;
     g_fake.unpack.capacity=(size_t)size;
     g_fake.unpack.buffer=g_fake.unpack.bound;
+    g_fake.unpack_needs_sync=0;
     memset(grown,0xCD,(size_t)size);
     return;
   }
@@ -900,6 +906,7 @@ static void fake_DeleteBuffers(GLsizei n,const GLuint *names){
     g_fake.unpack_store=NULL;
     g_fake.unpack.capacity=0;
     g_fake.unpack.buffer=0;
+    g_fake.unpack_needs_sync=0;
   }
 }
 static void fake_GenQueries(GLsizei count,GLuint *names){

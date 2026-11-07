@@ -224,6 +224,7 @@ void gml_gpu_opengl_scene_forget(GmlGpuBackend *backend){
   scene->vertex_buffer=scene->vertex_array=0;
   scene->instance_buffer=scene->instance_array=0;
   scene->upload_buffer=0;
+  scene->upload_capacity=0;
   scene->instance_bytes_used=0;
   scene->instance_storage_ready=0;
   scene->instance_span_count=scene->instance_span_next=0;
@@ -585,8 +586,9 @@ static int scene_scratch_ready(GlScene *scene,size_t bytes){
   return 1;
 }
 
-/* Keep one bounded staging name. Orphan its store before each write so an unsynchronized map
- * never overwrites an earlier texture transfer. Tiny and larger transfers retain the direct path.
+/* Grow one bounded staging store geometrically. Ordinary map synchronization waits for pending
+ * texture transfers before reuse, avoiding a new orphan for every write. Tiny and larger transfers
+ * retain the direct path.
  * No buffer or pointer survives context loss; mapping uses the established context entry points. */
 static int scene_stage_upload(GmlGpuBackend *backend,size_t bytes,int *staged){
   void *mapped;
@@ -599,10 +601,15 @@ static int scene_stage_upload(GmlGpuBackend *backend,size_t bytes,int *staged){
     if(!scene->upload_buffer) return 0;
   }
   backend->gl.BindBuffer(GL_PIXEL_UNPACK_BUFFER,scene->upload_buffer);
-  backend->gl.BufferData(GL_PIXEL_UNPACK_BUFFER,(GLsizeiptr)bytes,NULL,GL_STREAM_DRAW);
-  if(backend->gl.GetError()!=GL_NO_ERROR) goto refused;
+  if(bytes>scene->upload_capacity){
+    size_t capacity=64u*1024u;
+    while(capacity<bytes) capacity*=2u;
+    backend->gl.BufferData(GL_PIXEL_UNPACK_BUFFER,(GLsizeiptr)capacity,NULL,GL_STREAM_DRAW);
+    if(backend->gl.GetError()!=GL_NO_ERROR) goto refused;
+    scene->upload_capacity=capacity;
+  }
   mapped=backend->gl.MapBufferRange(GL_PIXEL_UNPACK_BUFFER,0,(GLsizeiptr)bytes,
-                                    GL_MAP_WRITE_BIT|GL_MAP_UNSYNCHRONIZED_BIT);
+                                    GL_MAP_WRITE_BIT);
   if(!mapped) goto refused;
   memcpy(mapped,scene->scratch,bytes);
   if(!backend->gl.UnmapBuffer(GL_PIXEL_UNPACK_BUFFER)) goto refused;
@@ -610,6 +617,7 @@ static int scene_stage_upload(GmlGpuBackend *backend,size_t bytes,int *staged){
   *staged=1;
   return 1;
 refused:
+  scene->upload_capacity=0;
   backend->gl.BindBuffer(GL_PIXEL_UNPACK_BUFFER,0);
   (void)backend->gl.GetError();
   return 0;

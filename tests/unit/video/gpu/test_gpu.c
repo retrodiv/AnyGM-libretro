@@ -685,10 +685,14 @@ static int scene_staged_upload_case(void){
     REQUIRE(services.upload(services.context,&upload),"changed version uploads again");
     REQUIRE(anygm_test_graphics_texture_data_uploads(texture)==2u &&
             (omitted || (anygm_test_graphics_unpack().buffer==unpack.buffer &&
-                         anygm_test_graphics_unpack().allocations==2u)),
-            "the staging name is reused with a freshly orphaned store");
+                         anygm_test_graphics_unpack().allocations==1u)),
+            "the staging store is reused after synchronized mapping");
     if(!omitted) for(unsigned phase=1u;phase<=3u;phase++){
       GmlGpuCounters before={0},after={0};
+      if(phase==1u){
+        REQUIRE(gml_gpu_context_reset(gpu,&context),"allocation fault starts in a fresh namespace");
+        gml_gpu_device_services(gpu,&services);
+      }
       upload.image.content_version++;
       gml_gpu_counters(gpu,&before);
       anygm_test_graphics_fail_unpack(phase);
@@ -733,6 +737,49 @@ static int scene_staged_upload_case(void){
             "tiny and over-budget transfers retain direct uploads without staging allocation");
     gml_gpu_destroy(gpu,1);
     free(bytes);
+  }
+  return 1;
+}
+
+static int scene_staged_upload_bound_case(void){
+  uint8_t pixels[257u*128u*4u];
+  const uint32_t widths[]={128u,129u,257u,128u};
+  const size_t capacities[]={65536u,131072u,262144u,262144u};
+  const unsigned allocations[]={1u,2u,3u,3u};
+  for(unsigned api=GML_GPU_API_OPENGL_CORE;api<=GML_GPU_API_OPENGLES3;api++){
+    GmlGpuContext context=fake_context(api);
+    GmlRenderDeviceServices services;
+    GmlRenderImageUpload upload={.image={GML_RENDER_RESOURCE_ATLAS,3u,1u,1u},
+      .pixel_format=GML_RENDER_PIXEL_RGBA8888,.bytes=pixels};
+    unsigned buffer=0;
+    anygm_test_graphics_reset();
+    GmlGpu *gpu=gml_gpu_create();
+    REQUIRE(gpu && gml_gpu_context_reset(gpu,&context),"bounded staging context adopted");
+    gml_gpu_device_services(gpu,&services);
+    for(unsigned version=0;version<4u;version++){
+      size_t bytes=(size_t)widths[version]*128u*4u;
+      for(size_t index=0;index<bytes;index++) pixels[index]=(uint8_t)(index*17u+version*53u);
+      upload.image.content_version=version+1u;
+      upload.storage_width=widths[version];upload.storage_height=128u;
+      upload.region=(GmlRenderRect){0,0,widths[version],128u};
+      upload.stride_bytes=(size_t)widths[version]*4u;upload.byte_capacity=bytes;
+      REQUIRE(services.upload(services.context,&upload),"bounded staging uploads each version");
+      AnygmTestGraphicsUnpack unpack=anygm_test_graphics_unpack();
+      REQUIRE(unpack.access==GL_MAP_WRITE_BIT,
+              "reused staging synchronizes pending transfers before writing");
+      REQUIRE(unpack.capacity==capacities[version] && unpack.allocations==allocations[version],
+              "staging grows geometrically and retains sufficient capacity");
+      if(!version) buffer=unpack.buffer;
+      REQUIRE(unpack.buffer==buffer && unpack.maps==version+1u &&
+              unpack.unmaps==version+1u && !unpack.errors && !unpack.bound,
+              "one staging name is balanced across growth and reuse");
+      unsigned texture=anygm_test_graphics_first_texture_with_format(GL_RGBA8);
+      size_t count=0;const unsigned char *actual=anygm_test_graphics_texture_bytes(texture,&count);
+      REQUIRE(actual && count==bytes && !memcmp(actual,pixels,bytes),
+              "growth and synchronized reuse preserve every submitted RGBA byte");
+    }
+    gml_gpu_destroy(gpu,1);
+    REQUIRE(anygm_test_graphics_unpack().deletes==1u,"bounded staging store is destroyed");
   }
   return 1;
 }
@@ -7540,6 +7587,7 @@ int main(int argc,char **argv){
     {"scene_opaque_unit_surface_copy",scene_opaque_unit_surface_copy_case},
     {"scene_general_program_demand",scene_general_program_demand_case},
     {"scene_staged_upload",scene_staged_upload_case},
+    {"scene_staged_upload_bound",scene_staged_upload_bound_case},
     {"scene_optional_entry_refusal",scene_optional_entry_refusal_case},
     {"scene_content_source_orientation",scene_content_source_orientation_case},
     {"scene_resident_batch",scene_resident_batch_case},

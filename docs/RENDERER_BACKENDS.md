@@ -716,15 +716,20 @@ are not reached. This is not a passing comparison or a newly attributed pixel
 defect; the old draw-count and RGBA assertions remain unchanged.
 
 Scene image transfers remain EXACT RGBA0. Uploads from64 KiB through16 MiB use
-one context-local pixel-unpack buffer, orphaned before each mapped write and
-unmapped before texture submission. This avoids a slow direct-driver copy without
+one context-local pixel-unpack buffer whose capacity grows geometrically up to
+16 MiB. Synchronized mapped writes wait for preceding transfers before reusing
+that store, and unmap before texture submission. This bounds successful growth
+allocations to less than 32 MiB per context between failures instead of orphaning
+on every upload. It avoids a slow direct-driver copy without
 changing conversion, row origin, stride, image versions or immutable-page reuse.
 Smaller and over-budget transfers retain the direct path. Failed allocation,
 mapping, unmapping or submission publishes no valid uploaded version; context
 loss forgets the buffer without deleting into its successor. The existing
 mapping entry-point adoption contract is unchanged. No gameplay readback,
 completion barrier, new shader cache or drawing variant is introduced.
-`scene_staged_upload` covers conversion, reuse, refusal and lifecycle; real-device
+`scene_staged_upload` covers conversion, reuse, refusal and lifecycle;
+`scene_staged_upload_bound` checks geometric growth, synchronized reuse and all
+submitted bytes. Real-device
 full-byte controls and the existing paired scenes establish pixels, not the fake driver.
 
 R03-SPR-FILTERED-EDGE-NOOP retains fully clipped ordinary first-generation

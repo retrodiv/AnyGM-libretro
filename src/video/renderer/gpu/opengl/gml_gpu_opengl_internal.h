@@ -171,6 +171,7 @@ typedef struct GlScene {
   GlSceneProgram main_program,filtered_program,compact_programs[46];
   GLuint vertex_buffer,vertex_array,instance_buffer,instance_array;
   GLuint upload_buffer;
+  size_t upload_capacity;
   size_t instance_bytes_used;
   int instance_storage_ready;
   /* Byte-identical instance ranges share only their immutable stream storage, not draw state. */
