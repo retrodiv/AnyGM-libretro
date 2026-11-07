@@ -1079,6 +1079,10 @@ static int sound_ensure_playable(GmlAudio *a,GmlSound *s){
   }
   return sound_ensure_pcm(a,s);
 }
+int gml_audio_prefetch_sound(GmlAudio *a,int snd){
+  if(!a || snd<0 || snd>=a->n_snd) return 0;
+  return sound_ensure_playable(a,&a->snd[snd]);
+}
 static uint32_t audio_initial_ogg_warm_budget(GmlAudio *a){
   const char *e=audio_setting(a,"GML_AUDIO_WARM_OGG_BYTES");
   if(e && (!strcmp(e,"0") || !strcmp(e,"off") || !strcmp(e,"false"))) return 0;

@@ -2031,7 +2031,7 @@ static void vm_warm_audio_code_for_room(GmlVM *vm, int ci, int room_index){
         if(vm_audio_room_warm_debug(vm))
           anygm_host_logf(vm ? vm->host : NULL,ANYGM_LOG_DEBUG,"[audio-warm-code] room=%d code=%s call=%d sound=%d\n",
                   room_index,c->name?c->name:"?",j,snd);
-        gml_audio_warm_sound((GmlAudio*)vm->audio,snd);
+        gml_audio_prefetch_sound((GmlAudio*)vm->audio,snd);
       }
     }
   }

@@ -31,6 +31,9 @@ int gml_audio_queue_event_pop(GmlAudio *a,int *queue,int *buffer,int *shutdown);
 /* play sound resource `snd` (SOND index); loop!=0 repeats. Returns a voice handle. */
 int  gml_audio_play(GmlAudio *a, int snd, int loop);
 int  gml_audio_play_on(GmlAudio *a, int snd, int loop, int emitter);
+/* Prepare playback while retaining the bounded decode policy of streamed sounds. */
+int  gml_audio_prefetch_sound(GmlAudio *a, int snd);
+/* Materialize the complete PCM image for an explicit source observation. */
 int  gml_audio_warm_sound(GmlAudio *a, int snd);
 /* Register a bounded loose audio blob as a dynamic sound. The generic path accepts PCM WAV,
  * OGG Vorbis, and MP3; the OGG-only entry point retains eager caster validation. Returned handles

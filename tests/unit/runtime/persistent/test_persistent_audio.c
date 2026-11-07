@@ -110,19 +110,43 @@ int expect_ogg_stream_windows(void){
     stream_fixture_matches(audio_stream_mono_fixture,sizeof audio_stream_mono_fixture);
 }
 
-int expect_room_audio_condition_cache(void){
-  uint8_t data[4]={5,0,0,0};
+static void fixture_write_u32(unsigned char *data,size_t off,uint32_t value);
+static const char *room_audio_no_initial_warm(void *userdata,const char *name){
+  (void)userdata;
+  return !strcmp(name,"GML_AUDIO_WARM_OGG_BYTES")?"0":NULL;
+}
+static int room_audio_condition_fixture(int streamed){
+  uint8_t data[128+sizeof audio_stream_fixture+sizeof audio_stream_mono_fixture]={0};
+  fixture_write_u32(data,0,5);
+  fixture_write_u32(data,24,2);
+  fixture_write_u32(data,28,36);fixture_write_u32(data,32,72);
+  fixture_write_u32(data,108,2);
+  fixture_write_u32(data,112,120);
+  fixture_write_u32(data,116,124+sizeof audio_stream_fixture);
+  fixture_write_u32(data,120,sizeof audio_stream_fixture);
+  memcpy(data+124,audio_stream_fixture,sizeof audio_stream_fixture);
+  fixture_write_u32(data,124+sizeof audio_stream_fixture,sizeof audio_stream_mono_fixture);
+  memcpy(data+128+sizeof audio_stream_fixture,audio_stream_mono_fixture,sizeof audio_stream_mono_fixture);
+  for(int i=0;i<2;i++){
+    fixture_write_u32(data,36+(size_t)i*36+4,1);
+    fixture_write_u32(data,36+(size_t)i*36+32,(uint32_t)i);
+  }
   GmlInsn insn[4][7]={0};
   uint32_t pcs[4][7]={0};
   int32_t branches[4][7]={0};
   GmlCode code[4]={0};
   GmlWin win={0};
-  win.data=data;win.size=sizeof data;win.code=code;win.n_code=4;win.n_chunks=1;
-  memcpy(win.chunks[0].name,"ROOM",5);win.chunks[0].size=sizeof data;
+  win.data=data;win.size=sizeof data;win.code=code;win.n_code=4;win.n_chunks=3;
+  memcpy(win.chunks[0].name,"ROOM",5);win.chunks[0].size=24;
+  memcpy(win.chunks[1].name,"SOND",5);win.chunks[1].off=24;win.chunks[1].size=84;
+  memcpy(win.chunks[2].name,"AUDO",5);win.chunks[2].off=108;win.chunks[2].size=sizeof data-108;
+  AnygmHostServices host={0};host.struct_size=sizeof host;
+  host.abi_version=ANYGM_HOST_SERVICES_VERSION;host.development_setting=room_audio_no_initial_warm;
+  win.host=&host;
   GmlAudio *audio=gml_audio_create(&win);
   if(!audio) return 0;
-  int first=gml_audio_add_encoded(audio,audio_stream_fixture,sizeof audio_stream_fixture);
-  int second=gml_audio_add_encoded(audio,audio_stream_mono_fixture,sizeof audio_stream_mono_fixture);
+  int first=streamed?gml_audio_add_encoded(audio,audio_stream_fixture,sizeof audio_stream_fixture):0;
+  int second=streamed?gml_audio_add_encoded(audio,audio_stream_mono_fixture,sizeof audio_stream_mono_fixture):1;
   for(int ci=0;ci<4;ci++){
     code[ci].insn=insn[ci];code[ci].insn_pc=pcs[ci];
     code[ci].branch_index=branches[ci];code[ci].n_insn=7;
@@ -144,13 +168,30 @@ int expect_room_audio_condition_cache(void){
     !gml_audio_sound_pcm16(audio,first,&count,&channels) &&
     !gml_audio_sound_pcm16(audio,second,&count,&channels);
   gml_vm_warm_audio_for_room(&vm,2);
-  ok=ok && gml_audio_sound_pcm16(audio,first,&count,&channels) &&
+  int first_has_pcm=gml_audio_sound_pcm16(audio,first,&count,&channels)!=NULL;
+  ok=ok && first_has_pcm==!streamed &&
     !gml_audio_sound_pcm16(audio,second,&count,&channels);
   gml_vm_warm_audio_for_room(&vm,4);
-  ok=ok && gml_audio_sound_pcm16(audio,second,&count,&channels);
-  if(!ok) fprintf(stderr,"room audio classification lost a later matching condition or admitted a different branch\n");
+  int second_has_pcm=gml_audio_sound_pcm16(audio,second,&count,&channels)!=NULL;
+  ok=ok && second_has_pcm==!streamed;
+  if(streamed){
+    int voice=gml_audio_play(audio,first,0);
+    int16_t mixed[1024]={0};gml_audio_mix(audio,mixed,512);
+    int audible=0;for(size_t i=0;i<sizeof mixed/sizeof *mixed;i++) audible|=mixed[i]!=0;
+    ok=ok && voice>=1000000 && audible && !gml_audio_sound_pcm16(audio,first,&count,&channels) &&
+      gml_audio_warm_sound(audio,first) && gml_audio_sound_pcm16(audio,first,&count,&channels);
+  }
+  if(!ok) fprintf(stderr,"%s\n",streamed
+    ?"room audio prefetch forced complete stream PCM or lost playback/observation"
+    :"room audio classification lost a later matching condition or admitted a different branch");
   free(vm.audio_room_warm_scan);gml_audio_free(audio);
   return ok;
+}
+int expect_room_audio_condition_cache(void){
+  return room_audio_condition_fixture(0);
+}
+int expect_room_audio_stream_prefetch(void){
+  return room_audio_condition_fixture(1);
 }
 
 static void fixture_write_u32(unsigned char *data,size_t off,uint32_t value){
