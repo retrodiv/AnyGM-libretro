@@ -17,6 +17,8 @@ enum {
   GL_SCENE_MAX_IMAGES=64,
   GL_SCENE_MAX_QUADS=2048,
   GL_SCENE_WHITE_TEXELS=16384,
+  GL_SCENE_STAGING_MIN_BYTES=64*1024,
+  GL_SCENE_STAGING_MAX_BYTES=16*1024*1024,
   GL_SCENE_NATIVE_POINT_FILTER=171,
   GL_SCENE_NATIVE_POINT_OPAQUE_FILTER=172,
   GL_SCENE_NATIVE_POINT_STAMP_FILTER=173,
@@ -172,6 +174,11 @@ typedef struct GlScene {
   GLuint vertex_buffer,vertex_array,instance_buffer,instance_array;
   GLuint upload_buffer;
   size_t upload_capacity;
+  /* Zero is unmeasured, positive retains staging, negative selects client bytes. */
+  int upload_policy;
+  GmlGpuTimeFn upload_clock;
+  void *upload_clock_userdata;
+  uint64_t upload_client_ns,upload_staged_ns;
   size_t instance_bytes_used;
   int instance_storage_ready;
   /* Byte-identical instance ranges share only their immutable stream storage, not draw state. */
@@ -295,6 +302,7 @@ int gml_gpu_opengl_read_back_target_pipelined(GmlGpuBackend *backend,GmlRenderPl
 void gml_gpu_opengl_scene_forget(GmlGpuBackend *backend);
 void gml_gpu_opengl_scene_destroy(GmlGpuBackend *backend,int context_is_current);
 void gml_gpu_opengl_scene_reset(GmlGpuBackend *backend,const GmlGpuContext *context);
+void gml_gpu_opengl_scene_prepare_uploads(GmlGpuBackend *backend);
 int gml_gpu_opengl_scene_capabilities(const GmlGpuBackend *backend,GmlRenderDeviceCaps *caps);
 int gml_gpu_opengl_scene_upload(GmlGpuBackend *backend,const GmlRenderImageUpload *transfer,
                                 int *did_upload);

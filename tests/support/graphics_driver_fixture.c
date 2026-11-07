@@ -43,6 +43,7 @@ typedef struct FakeDriver {
   GLuint quad_texture[3];
   GLint quad_filter[3];
   GLuint active_unit;
+  uint64_t clock_ns,client_upload_ns,staged_upload_ns;
   GLuint framebuffer,last_draw_framebuffer;
   uint32_t framebuffer_queries,framebuffer_attachments;
   GLuint program;
@@ -133,6 +134,7 @@ typedef struct FakeDriver {
   unsigned pack_fill;
   GLint unpack_row_length;
   GLint unpack_alignment;
+  GLint unpack_skip_rows,unpack_skip_pixels;
   GLint uniforms[8];
   int uniform_count;
   int compile_fails;
@@ -160,10 +162,17 @@ void anygm_test_graphics_reset(void){
   g_fake.readback_alpha=255u;
   g_fake.checkpoint_mask=-1;
   g_fake.renderer="fake";
+  g_fake.unpack_alignment=4;
 }
 void anygm_test_graphics_stream_mapping(unsigned mode){ g_fake.stream_map_mode=mode; }
 void anygm_test_graphics_fail_unpack(unsigned phase){ g_fake.unpack_failure=phase; }
 AnygmTestGraphicsUnpack anygm_test_graphics_unpack(void){ return g_fake.unpack; }
+void anygm_test_graphics_upload_clock(uint64_t client_ns,uint64_t staged_ns){
+  g_fake.clock_ns=1;g_fake.client_upload_ns=client_ns;g_fake.staged_upload_ns=staged_ns;
+}
+uint64_t anygm_test_graphics_monotonic_time(void *userdata){
+  (void)userdata;return g_fake.clock_ns;
+}
 void anygm_test_graphics_renderer(const char *renderer){ g_fake.renderer=renderer; }
 void anygm_test_graphics_readback_alpha(unsigned alpha){ g_fake.readback_alpha=(uint8_t)alpha; }
 void anygm_test_graphics_checkpoint_mask(unsigned bits){ g_fake.checkpoint_mask=(int)(bits&63u); }
@@ -207,7 +216,15 @@ static void fake_GetIntegerv(GLenum name,GLint *value){
                    name==GL_MAJOR_VERSION?(GLint)g_fake.version_major:
                    name==GL_MINOR_VERSION?(GLint)g_fake.version_minor:
                    name==GL_SHADER_STORAGE_BUFFER_BINDING?(GLint)g_fake.indirect.generic:
-                   name==GL_DRAW_INDIRECT_BUFFER_BINDING?(GLint)g_fake.indirect.indirect:0;
+                   name==GL_DRAW_INDIRECT_BUFFER_BINDING?(GLint)g_fake.indirect.indirect:
+                   name==GL_ACTIVE_TEXTURE?(GLint)(GL_TEXTURE0+g_fake.active_unit):
+                   name==GL_TEXTURE_BINDING_2D?(GLint)(g_fake.active_unit<FAKE_TEXTURE_UNITS?
+                     g_fake.bound_texture[g_fake.active_unit]:0):
+                   name==GL_PIXEL_UNPACK_BUFFER_BINDING?(GLint)g_fake.unpack.bound:
+                   name==GL_UNPACK_ALIGNMENT?g_fake.unpack_alignment:
+                   name==GL_UNPACK_ROW_LENGTH?g_fake.unpack_row_length:
+                   name==GL_UNPACK_SKIP_ROWS?g_fake.unpack_skip_rows:
+                   name==GL_UNPACK_SKIP_PIXELS?g_fake.unpack_skip_pixels:0;
 }
 static void fake_Flush(void){ note_call(); g_fake.flush_calls++; }
 static void fake_Finish(void){ note_call();g_fake.finish_calls++; }
@@ -353,6 +370,8 @@ static void fake_TexSubImage2D(GLenum target,GLint level,GLint x,GLint y,GLsizei
   GLuint name=g_fake.active_unit<FAKE_TEXTURE_UNITS?g_fake.bound_texture[g_fake.active_unit]:0;
   (void)target; (void)level; (void)x; (void)y; (void)format;
   note_call();
+  if(g_fake.clock_ns)
+    g_fake.clock_ns+=g_fake.unpack.bound?g_fake.staged_upload_ns:g_fake.client_upload_ns;
   if(g_fake.unpack.bound){
     size_t bytes=(size_t)width*(size_t)height*(type==GL_UNSIGNED_SHORT?2u:4u);
     size_t offset=(size_t)pixels;
@@ -384,6 +403,8 @@ static void fake_PixelStorei(GLenum name,GLint value){
   note_call();
   if(name==GL_UNPACK_ROW_LENGTH) g_fake.unpack_row_length=value;
   if(name==GL_UNPACK_ALIGNMENT) g_fake.unpack_alignment=value;
+  if(name==GL_UNPACK_SKIP_ROWS) g_fake.unpack_skip_rows=value;
+  if(name==GL_UNPACK_SKIP_PIXELS) g_fake.unpack_skip_pixels=value;
 }
 static GLuint fake_CreateShader(GLenum stage){
   GLuint name=g_fake.next_name++;

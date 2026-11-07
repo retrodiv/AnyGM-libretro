@@ -784,6 +784,102 @@ static int scene_staged_upload_bound_case(void){
   return 1;
 }
 
+static uint64_t backwards_upload_clock(void *userdata){
+  uint64_t *clock=userdata;
+  return --*clock;
+}
+
+static int scene_upload_policy_case(void){
+  uint8_t pixels[129u*128u*4u];
+  for(size_t index=0;index<sizeof pixels;index++) pixels[index]=(uint8_t)(index*17u+53u);
+  for(unsigned api=GML_GPU_API_OPENGL_CORE;api<=GML_GPU_API_OPENGLES3;api++)
+    for(unsigned profile=0;profile<9;profile++){
+      GmlGpuContext context=fake_context(api);
+      uint64_t backwards_clock=1000u;
+      GmlRenderDeviceServices services;
+      GmlRenderImageUpload upload={.image={GML_RENDER_RESOURCE_ATLAS,3u,1u,1u},
+        .storage_width=129u,.storage_height=128u,.region={0,0,129u,128u},
+        .pixel_format=GML_RENDER_PIXEL_RGBA8888,.stride_bytes=129u*4u,
+        .byte_capacity=sizeof pixels,.bytes=pixels};
+      anygm_test_graphics_reset();
+      anygm_test_graphics_upload_clock(profile==0?100u:1000u,profile==1?100u:1000u);
+      if(profile==2) anygm_test_graphics_upload_clock(100u,100u);
+      if(profile==5) anygm_test_graphics_upload_clock(0,0);
+      if(profile!=3) context.monotonic_time_ns=anygm_test_graphics_monotonic_time;
+      if(profile==8){
+        context.monotonic_time_ns=backwards_upload_clock;
+        context.time_userdata=&backwards_clock;
+      }
+      if(profile==4) anygm_test_graphics_fail_unpack(2);
+      if(profile==6) anygm_test_graphics_fail_unpack(1);
+      if(profile==7) anygm_test_graphics_fail_unpack(3);
+      GmlGpu *gpu=gml_gpu_create();
+      REQUIRE(gpu && gml_gpu_context_reset(gpu,&context),"upload policy context adopted");
+      void (*store)(unsigned,int)=(void*)anygm_test_graphics_proc(NULL,"glPixelStorei");
+      void (*get)(unsigned,int*)=(void*)anygm_test_graphics_proc(NULL,"glGetIntegerv");
+      void (*active)(unsigned)=(void*)anygm_test_graphics_proc(NULL,"glActiveTexture");
+      void (*bind)(unsigned,unsigned)=(void*)anygm_test_graphics_proc(NULL,"glBindTexture");
+      void (*generate)(int,unsigned*)=(void*)anygm_test_graphics_proc(NULL,"glGenTextures");
+      void (*retire)(int,const unsigned*)=(void*)anygm_test_graphics_proc(NULL,"glDeleteTextures");
+      unsigned inherited[2]={0};generate(2,inherited);
+      active(GL_TEXTURE0);bind(GL_TEXTURE_2D,inherited[0]);
+      active(GL_TEXTURE3);bind(GL_TEXTURE_2D,inherited[1]);
+      store(GL_UNPACK_ALIGNMENT,8);store(GL_UNPACK_ROW_LENGTH,37);
+      store(GL_UNPACK_SKIP_ROWS,2);store(GL_UNPACK_SKIP_PIXELS,3);
+      /* Isolate this preparation from the established presentation warmup, which draws privately
+       * and normalizes its own state. The facade integration is exercised below afterwards. */
+      gml_gpu_opengl_scene_prepare_uploads(gpu->backend);
+      int value=0;
+      get(GL_ACTIVE_TEXTURE,&value);REQUIRE(value==GL_TEXTURE3,"calibration restores the active unit");
+      get(GL_TEXTURE_BINDING_2D,&value);REQUIRE((unsigned)value==inherited[1],"caller texture remains bound");
+      active(GL_TEXTURE0);get(GL_TEXTURE_BINDING_2D,&value);
+      REQUIRE((unsigned)value==inherited[0],"calibration restores the unit-zero texture");
+      get(GL_UNPACK_ALIGNMENT,&value);REQUIRE(value==8,"calibration restores unpack alignment");
+      get(GL_UNPACK_ROW_LENGTH,&value);REQUIRE(value==37,"calibration restores unpack stride");
+      get(GL_UNPACK_SKIP_ROWS,&value);REQUIRE(value==2,"calibration restores skipped rows");
+      get(GL_UNPACK_SKIP_PIXELS,&value);REQUIRE(value==3,"calibration restores skipped pixels");
+      REQUIRE(!anygm_test_graphics_read_pixels() && !anygm_test_graphics_finish_calls() &&
+              !anygm_test_graphics_draw_calls(),"calibration adds no draw, readback or completion barrier");
+      bind(GL_TEXTURE_2D,0);active(GL_TEXTURE3);bind(GL_TEXTURE_2D,0);active(GL_TEXTURE0);
+      retire(2,inherited);
+      store(GL_UNPACK_ALIGNMENT,4);store(GL_UNPACK_ROW_LENGTH,0);
+      store(GL_UNPACK_SKIP_ROWS,0);store(GL_UNPACK_SKIP_PIXELS,0);
+      AnygmTestGraphicsUnpack before=anygm_test_graphics_unpack();
+      anygm_test_graphics_fail_unpack(0);
+      /* A context keeps its decision when later driver timing changes. */
+      anygm_test_graphics_upload_clock(10000u,1u);
+      REQUIRE(gml_gpu_prepare_scene(gpu,320u,240u),"cached upload preparation succeeds");
+      REQUIRE(anygm_test_graphics_unpack().maps==before.maps,"upload policy measures once per context");
+      GmlGpuCounters counters={0};gml_gpu_counters(gpu,&counters);
+      REQUIRE(counters.scene_upload_policy==(profile==0?2u:1u),
+              "reported upload policy matches the cached selection or fallback");
+      gml_gpu_device_services(gpu,&services);
+      REQUIRE(services.upload(services.context,&upload),"selected upload path accepts an actual image");
+      AnygmTestGraphicsUnpack after=anygm_test_graphics_unpack();
+      REQUIRE(after.maps==before.maps+(profile==0?0u:1u),
+              "faster client path is selected; faster staging, ties and invalid measurements retain PBO");
+      REQUIRE(!after.errors && !after.bound,"selected upload leaves balanced unpack ownership");
+      unsigned texture=anygm_test_graphics_texture_with_format(GL_RGBA8);
+      size_t count=0;const unsigned char *actual=anygm_test_graphics_texture_bytes(texture,&count);
+      REQUIRE(actual && count==sizeof pixels && !memcmp(actual,pixels,count),
+              "both selected upload paths preserve every actual submitted byte");
+      if(profile==0){
+        gml_gpu_context_lost(gpu);
+        anygm_test_graphics_reset();
+        anygm_test_graphics_upload_clock(1000u,100u);
+        REQUIRE(gml_gpu_context_reset(gpu,&context) && gml_gpu_prepare_scene(gpu,320u,240u),
+                "recreated context obtains its own upload policy");
+        before=anygm_test_graphics_unpack();
+        gml_gpu_device_services(gpu,&services);
+        REQUIRE(services.upload(services.context,&upload) &&
+                anygm_test_graphics_unpack().maps==before.maps+1u,
+                "context recreation discards the old client decision");
+      }
+      gml_gpu_destroy(gpu,1);
+    }
+  return 1;
+}
+
 static int scene_service_contract_case(void){
   static const GmlRenderOperationCode unselected[]={
     GML_RENDER_OP_TEXTURED_TRIANGLES,
@@ -7588,6 +7684,7 @@ int main(int argc,char **argv){
     {"scene_general_program_demand",scene_general_program_demand_case},
     {"scene_staged_upload",scene_staged_upload_case},
     {"scene_staged_upload_bound",scene_staged_upload_bound_case},
+    {"scene_upload_policy",scene_upload_policy_case},
     {"scene_optional_entry_refusal",scene_optional_entry_refusal_case},
     {"scene_content_source_orientation",scene_content_source_orientation_case},
     {"scene_resident_batch",scene_resident_batch_case},

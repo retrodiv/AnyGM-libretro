@@ -2318,6 +2318,7 @@ int gml_gpu_opengl_scene_prepare(GmlGpuBackend *backend,uint32_t width,uint32_t 
   int prepared=scene_snapshot_storage(backend,(GLsizei)width,(GLsizei)height);
   backend->gl.BindTexture(GL_TEXTURE_2D,0);
   backend->gl.ActiveTexture(GL_TEXTURE0);
+  if(prepared) gml_gpu_opengl_scene_prepare_uploads(backend);
   return prepared;
 }
 

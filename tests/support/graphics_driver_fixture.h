@@ -28,6 +28,9 @@ typedef struct AnygmTestGraphicsUnpack {
   size_t capacity;
 } AnygmTestGraphicsUnpack;
 AnygmTestGraphicsUnpack anygm_test_graphics_unpack(void);
+/* Authored per-submission clock costs, independent of machine speed. Zero costs stall time. */
+void anygm_test_graphics_upload_clock(uint64_t client_ns,uint64_t staged_ns);
+uint64_t anygm_test_graphics_monotonic_time(void *userdata);
 /* A renderer identity belongs to the current synthetic context; NULL tests an unavailable query. */
 void anygm_test_graphics_renderer(const char *renderer);
 /* A replacement GL namespace may recycle a numeric name from a lost context. Arrange that the

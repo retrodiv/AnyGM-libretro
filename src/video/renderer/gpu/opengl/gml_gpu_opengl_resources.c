@@ -225,6 +225,10 @@ void gml_gpu_opengl_scene_forget(GmlGpuBackend *backend){
   scene->instance_buffer=scene->instance_array=0;
   scene->upload_buffer=0;
   scene->upload_capacity=0;
+  scene->upload_policy=0;
+  scene->upload_clock=NULL;
+  scene->upload_clock_userdata=NULL;
+  scene->upload_client_ns=scene->upload_staged_ns=0;
   scene->instance_bytes_used=0;
   scene->instance_storage_ready=0;
   scene->instance_span_count=scene->instance_span_next=0;
@@ -301,6 +305,8 @@ void gml_gpu_opengl_scene_reset(GmlGpuBackend *backend,const GmlGpuContext *cont
   GmlGpuProc proc;
   GlScene *scene=&backend->scene;
   gml_gpu_opengl_scene_forget(backend);
+  scene->upload_clock=context->monotonic_time_ns;
+  scene->upload_clock_userdata=context->time_userdata;
   /* This table belongs to one backend/engine. A reset starts a new context epoch even when a
    * frontend skipped the old destroy callback; forgotten names must not reach its replacement. */
   scene->context_epoch++;
@@ -595,14 +601,15 @@ static int scene_stage_upload(GmlGpuBackend *backend,size_t bytes,int *staged){
   GlScene *scene=&backend->scene;
   *staged=0;
   backend->gl.BindBuffer(GL_PIXEL_UNPACK_BUFFER,0);
-  if(bytes<64u*1024u || bytes>16u*1024u*1024u) return 1;
+  if(scene->upload_policy<0 || bytes<GL_SCENE_STAGING_MIN_BYTES ||
+     bytes>GL_SCENE_STAGING_MAX_BYTES) return 1;
   if(!scene->upload_buffer){
     backend->gl.GenBuffers(1,&scene->upload_buffer);
     if(!scene->upload_buffer) return 0;
   }
   backend->gl.BindBuffer(GL_PIXEL_UNPACK_BUFFER,scene->upload_buffer);
   if(bytes>scene->upload_capacity){
-    size_t capacity=64u*1024u;
+    size_t capacity=GL_SCENE_STAGING_MIN_BYTES;
     while(capacity<bytes) capacity*=2u;
     backend->gl.BufferData(GL_PIXEL_UNPACK_BUFFER,(GLsizeiptr)capacity,NULL,GL_STREAM_DRAW);
     if(backend->gl.GetError()!=GL_NO_ERROR) goto refused;
@@ -621,6 +628,89 @@ refused:
   backend->gl.BindBuffer(GL_PIXEL_UNPACK_BUFFER,0);
   (void)backend->gl.GetError();
   return 0;
+}
+
+static uint64_t upload_median(uint64_t a,uint64_t b,uint64_t c){
+  uint64_t swap;
+  if(a>b){swap=a;a=b;b=swap;}
+  if(b>c){swap=b;b=c;c=swap;}
+  if(a>b) b=a;
+  return b;
+}
+
+/* Drivers can implement the same PBO submission with very different calling-thread costs. Compare the
+ * existing two paths once, using a neutral image at the established staging lower bound. This
+ * measures call cost, not GPU completion; no draw, readback or completion barrier is introduced. */
+void gml_gpu_opengl_scene_prepare_uploads(GmlGpuBackend *backend){
+  enum {SIDE=128, BYTES=GL_SCENE_STAGING_MIN_BYTES};
+  _Static_assert(SIDE*SIDE*4==BYTES,"neutral transfer uses the staging lower bound");
+  GlScene *scene=&backend->scene;
+  GLuint texture=0;
+  GLint active_texture=GL_TEXTURE0,previous_texture=0,previous_buffer=0;
+  GLint alignment=4,row_length=0,skip_rows=0,skip_pixels=0;
+  uint64_t elapsed[2][3]={{0}},last_sample=0;
+  int measured=1;
+  if(scene->upload_policy) return;
+  scene->upload_policy=1;
+  if(!scene->upload_clock || !scene->upload_clock(scene->upload_clock_userdata) ||
+     scene->max_texture_size<SIDE || !scene_scratch_ready(scene,BYTES)) return;
+  for(size_t index=0;index<BYTES;index++)
+    scene->scratch[index]=(uint8_t)(index^(index>>8));
+  backend->gl.GetIntegerv(GL_ACTIVE_TEXTURE,&active_texture);
+  backend->gl.ActiveTexture(GL_TEXTURE0);
+  /* Preserve the caller's texture unit, binding and pixel-unpack state. */
+  backend->gl.GetIntegerv(GL_TEXTURE_BINDING_2D,&previous_texture);
+  backend->gl.GetIntegerv(GL_PIXEL_UNPACK_BUFFER_BINDING,&previous_buffer);
+  backend->gl.GetIntegerv(GL_UNPACK_ALIGNMENT,&alignment);
+  backend->gl.GetIntegerv(GL_UNPACK_ROW_LENGTH,&row_length);
+  backend->gl.GetIntegerv(GL_UNPACK_SKIP_ROWS,&skip_rows);
+  backend->gl.GetIntegerv(GL_UNPACK_SKIP_PIXELS,&skip_pixels);
+  backend->gl.GenTextures(1,&texture);
+  if(!texture){measured=0;goto restore;}
+  backend->gl.BindTexture(GL_TEXTURE_2D,texture);
+  backend->gl.BindBuffer(GL_PIXEL_UNPACK_BUFFER,0);
+  backend->gl.PixelStorei(GL_UNPACK_ALIGNMENT,1);
+  backend->gl.PixelStorei(GL_UNPACK_ROW_LENGTH,0);
+  backend->gl.PixelStorei(GL_UNPACK_SKIP_ROWS,0);
+  backend->gl.PixelStorei(GL_UNPACK_SKIP_PIXELS,0);
+  backend->gl.TexImage2D(GL_TEXTURE_2D,0,GL_RGBA8,SIDE,SIDE,0,GL_RGBA,GL_UNSIGNED_BYTE,NULL);
+  backend->gl.TexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,GL_NEAREST);
+  backend->gl.TexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAG_FILTER,GL_NEAREST);
+  backend->gl.TexParameteri(GL_TEXTURE_2D,GL_TEXTURE_WRAP_S,GL_CLAMP_TO_EDGE);
+  backend->gl.TexParameteri(GL_TEXTURE_2D,GL_TEXTURE_WRAP_T,GL_CLAMP_TO_EDGE);
+  if(backend->gl.GetError()!=GL_NO_ERROR){measured=0;goto restore;}
+  /* Warm each path, then alternate the order of three matched pairs. No content supplies setup. */
+  for(int trial=-1;trial<3 && measured;trial++) for(int order=0;order<2;order++){
+    int staged=0,path=order^(trial>0?(trial&1):0);
+    uint64_t started=trial<0?0:scene->upload_clock(scene->upload_clock_userdata);
+    if(path){
+      if(!scene_stage_upload(backend,BYTES,&staged) || !staged){measured=0;break;}
+    } else backend->gl.BindBuffer(GL_PIXEL_UNPACK_BUFFER,0);
+    backend->gl.TexSubImage2D(GL_TEXTURE_2D,0,0,0,SIDE,SIDE,GL_RGBA,GL_UNSIGNED_BYTE,
+                              staged?NULL:scene->scratch);
+    if(backend->gl.GetError()!=GL_NO_ERROR){measured=0;break;}
+    if(trial>=0){
+      uint64_t ended=scene->upload_clock(scene->upload_clock_userdata);
+      if(!started || started<last_sample || ended<=started){measured=0;break;}
+      elapsed[path][trial]=ended-started;
+      last_sample=ended;
+    }
+  }
+restore:
+  backend->gl.BindBuffer(GL_PIXEL_UNPACK_BUFFER,(GLuint)previous_buffer);
+  backend->gl.PixelStorei(GL_UNPACK_ALIGNMENT,alignment);
+  backend->gl.PixelStorei(GL_UNPACK_ROW_LENGTH,row_length);
+  backend->gl.PixelStorei(GL_UNPACK_SKIP_ROWS,skip_rows);
+  backend->gl.PixelStorei(GL_UNPACK_SKIP_PIXELS,skip_pixels);
+  backend->gl.BindTexture(GL_TEXTURE_2D,(GLuint)previous_texture);
+  backend->gl.ActiveTexture((GLenum)active_texture);
+  if(texture) backend->gl.DeleteTextures(1,&texture);
+  if(backend->gl.GetError()!=GL_NO_ERROR) measured=0;
+  if(measured){
+    scene->upload_client_ns=upload_median(elapsed[0][0],elapsed[0][1],elapsed[0][2]);
+    scene->upload_staged_ns=upload_median(elapsed[1][0],elapsed[1][1],elapsed[1][2]);
+    if(scene->upload_client_ns<scene->upload_staged_ns) scene->upload_policy=-1;
+  }
 }
 
 int gml_gpu_opengl_scene_upload(GmlGpuBackend *backend,const GmlRenderImageUpload *transfer,
@@ -679,6 +769,7 @@ int gml_gpu_opengl_scene_upload(GmlGpuBackend *backend,const GmlRenderImageUploa
      (transfer->region.x || transfer->region.y ||
       transfer->region.width!=transfer->storage_width ||
       transfer->region.height!=transfer->storage_height)) return 0;
+  gml_gpu_opengl_scene_prepare_uploads(backend);
   if(!scene_scratch_ready(scene,bytes)) return 0;
   source=(const uint8_t*)transfer->bytes;
   for(uint32_t row=0;row<transfer->region.height;row++){

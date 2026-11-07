@@ -54,6 +54,8 @@ AnygmResult anygm_graphics_context_reset(AnygmEngine *engine,const AnygmGraphics
   adopted.get_proc_address=(GmlGpuGetProcFn)context->get_proc_address;
   adopted.get_current_framebuffer=(GmlGpuGetFramebufferFn)context->get_current_framebuffer;
   adopted.is_current=(GmlGpuIsCurrentFn)context->is_current;
+  adopted.monotonic_time_ns=engine->host.monotonic_time_ns;
+  adopted.time_userdata=engine->host.userdata;
   if(!engine->gpu){
     engine->gpu=gml_gpu_create();
     if(!engine->gpu) return ANYGM_ERROR_OUT_OF_MEMORY;
@@ -256,7 +258,8 @@ void engine_graphics_report(AnygmEngine *engine){
     "readbacks=%llu readback_bytes=%llu rgb_queries=%llu rgb_query_bytes=%llu "
     "checkpoint_masks=%llu checkpoint_mask_bytes=%llu "
     "rgb_query_refusals=%llu screen_cpu_reads=%llu screen_cpu_materializations=%llu "
-    "target_attachments=%llu target_reuses=%llu white_unit_clears=%llu white_tint_quads=%llu zero_alpha_blend_quads=%llu identity_map_draws=%llu\n",
+    "target_attachments=%llu target_reuses=%llu white_unit_clears=%llu white_tint_quads=%llu zero_alpha_blend_quads=%llu identity_map_draws=%llu "
+    "upload_policy=%u upload_client_ns=%llu upload_staged_ns=%llu\n",
     engine->scene_renderer_session==ANYGM_SCENE_RENDERER_OPENGL?"OpenGL":"CPU",
     counters.scene_batches_accepted?"OpenGL":"CPU",
     counters.scene_batches_accepted?"accepted":
@@ -292,7 +295,10 @@ void engine_graphics_report(AnygmEngine *engine){
     (unsigned long long)counters.scene_white_unit_clears,
     (unsigned long long)counters.scene_white_tint_quads,
     (unsigned long long)counters.scene_zero_alpha_blend_quads,
-    (unsigned long long)counters.identity_map_draws);
+    (unsigned long long)counters.identity_map_draws,
+    counters.scene_upload_policy,
+    (unsigned long long)counters.scene_upload_client_ns,
+    (unsigned long long)counters.scene_upload_staged_ns);
   engine_logf(engine,ANYGM_LOG_INFO,
     "[graphics-completed-state] copies=%llu copy_bytes=%llu reads=%llu read_bytes=%llu\n",
     (unsigned long long)counters.completed_frame_copies,

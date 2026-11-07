@@ -30,6 +30,7 @@ typedef void (*GmlGpuProc)(void);
 typedef GmlGpuProc (*GmlGpuGetProcFn)(void *userdata,const char *name);
 typedef uintptr_t (*GmlGpuGetFramebufferFn)(void *userdata);
 typedef uint32_t (*GmlGpuIsCurrentFn)(void *userdata);
+typedef uint64_t (*GmlGpuTimeFn)(void *userdata);
 
 typedef struct GmlGpuContext {
   GmlGpuApi api;
@@ -39,6 +40,9 @@ typedef struct GmlGpuContext {
   GmlGpuGetProcFn get_proc_address;
   GmlGpuGetFramebufferFn get_current_framebuffer;
   GmlGpuIsCurrentFn is_current;
+  /* Optional real monotonic clock for context-local upload preparation, never VM time. */
+  GmlGpuTimeFn monotonic_time_ns;
+  void *time_userdata;
 } GmlGpuContext;
 
 /* Opt-in, content-neutral counters. A normal build pays nothing for these beyond the increments
@@ -72,6 +76,9 @@ typedef struct GmlGpuCounters {
   uint64_t scene_white_tint_quads;
   uint64_t scene_zero_alpha_blend_quads;
   uint64_t identity_map_draws;
+  /* Current context's preparation decision: zero unmeasured, one staged, two client. */
+  uint32_t scene_upload_policy;
+  uint64_t scene_upload_client_ns,scene_upload_staged_ns;
 } GmlGpuCounters;
 
 /* Creation allocates CPU metadata only and issues no graphics call, so an engine may own a GmlGpu

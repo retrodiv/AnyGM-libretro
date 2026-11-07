@@ -716,7 +716,20 @@ are not reached. This is not a passing comparison or a newly attributed pixel
 defect; the old draw-count and RGBA assertions remain unchanged.
 
 Scene image transfers remain EXACT RGBA0. Uploads from64 KiB through16 MiB use
-one context-local pixel-unpack buffer whose capacity grows geometrically up to
+either the established client image path or one context-local pixel-unpack buffer.
+At scene preparation (or the first direct service upload), an optional host
+monotonic clock compares calling-thread elapsed time
+of both paths using a neutral64 KiB image, the existing staging lower bound.
+One warmup per path precedes three paired samples in alternating order. The
+lower median selects the context's path; ties, missing or unusable clocks and
+failed preparation retain staging. This is a content-independent preparation
+policy, with no renderer-name selector or GPU completion claim. It adds no draw,
+readback or completion barrier, preserves unpack state, and is forgotten on
+context loss. Diagnostic counters report the current policy (0 unmeasured,
+1 staged,2 client) and both measured call medians in nanoseconds; these are
+neither exclusive process CPU time nor GPU completion time.
+
+The pixel-unpack buffer's capacity grows geometrically up to
 16 MiB. Synchronized mapped writes wait for preceding transfers before reusing
 that store, and unmap before texture submission. This bounds successful growth
 allocations to less than 32 MiB per context between failures instead of orphaning
