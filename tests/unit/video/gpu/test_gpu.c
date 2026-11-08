@@ -6765,6 +6765,84 @@ static int content_program_pipelined_readback_case(void){
   return 1;
 }
 
+/* Equal output extents do not identify a picture: interleaved sources keep separate histories. */
+static int content_program_pipelined_sources_case(void){
+  enum { W=5,H=3 };
+  uint32_t frame[8*6]={0},mask[4*4]={0},output[W*H];
+  GmlGpu *gpu=gml_gpu_create();
+  GmlGpuContext context=fake_context(GML_GPU_API_OPENGL_CORE);
+  GmlRenderPlan plan;
+  anygm_test_graphics_reset();
+  REQUIRE(gml_gpu_context_reset(gpu,&context),"context adopted");
+  gml_gpu_set_readback_pipelined(gpu,1);
+  for(unsigned pass=0;pass<4u;pass++){
+    unsigned source=pass%2u;
+    REQUIRE(build_content_plan(&plan,frame,mask),"interleaved content plan built");
+    plan.target=GML_PLAN_TARGET_READBACK;
+    plan.target_width=W; plan.target_height=H;
+    plan.readback_pixels=output; plan.readback_pitch_pixels=W;
+    plan.images[0].identity=source+1u;
+    plan.operations[0].destination.width=W; plan.operations[0].destination.height=H;
+    plan.operations[1].destination.width=W; plan.operations[1].destination.height=H;
+    REQUIRE(gml_gpu_execute_plan(gpu,&plan),"interleaved pass executes");
+    REQUIRE(anygm_test_graphics_read_pixels()==(pass?2u:1u),
+            "each source is primed separately, then reused without waiting");
+    if(pass>=2u)
+      REQUIRE(((output[0]>>16)&255u)==source+1u,
+              "each source receives its own previous asynchronous picture");
+  }
+  gml_gpu_destroy(gpu,1);
+  return 1;
+}
+
+static int content_program_pipelined_bindings_case(void){
+  enum { W=5,H=3 };
+  uint32_t frame[8*6]={0},mask[4*4]={0},output[W*H];
+  for(unsigned variant=0;variant<7u;variant++){
+    anygm_test_graphics_reset();
+    GmlGpu *gpu=gml_gpu_create();
+    GmlGpuContext context=fake_context(GML_GPU_API_OPENGL_CORE);
+    REQUIRE(gml_gpu_context_reset(gpu,&context),"context adopted");
+    gml_gpu_set_readback_pipelined(gpu,1);
+    for(unsigned pass=0;pass<4u;pass++){
+      unsigned alternate=pass%2u;
+      GmlRenderPlan plan;
+      REQUIRE(build_content_plan(&plan,frame,mask),"binding plan built");
+      plan.target=GML_PLAN_TARGET_READBACK;
+      plan.target_width=W; plan.target_height=H;
+      plan.readback_pixels=output; plan.readback_pitch_pixels=W;
+      plan.operations[0].destination.width=W; plan.operations[0].destination.height=H;
+      plan.operations[1].destination.width=W; plan.operations[1].destination.height=H;
+      /* Upload serials advance even when the binding remains the same. */
+      plan.images[0].content_generation=plan.images[0].pixel_generation=pass+1u;
+      plan.shader.content_generation=pass+1u;
+      switch(variant){
+      case 0: plan.images[1].identity+=alternate;break;
+      case 1:
+        plan.operations[1].source_rect=(GmlPlanRect){(int)alternate,0,4u,3u};break;
+      case 2:
+        plan.target_width=W+1u;
+        plan.readback_rect=(GmlPlanRect){(int)alternate,0,W,H};
+        plan.operations[0].destination.x=plan.operations[1].destination.x=(int)alternate;
+        break;
+      case 3: plan.shader.uniforms[1].value[0]+=(float)alternate;break;
+      case 4: plan.shader.vertex_colour[0]=(float)alternate;break;
+      case 5:
+        plan.shader.geometry=(GmlRenderShaderGeometry){(double)alternate,0.0,W,H,1u};break;
+      case 6: plan.operations[1].linear=alternate;break;
+      }
+      REQUIRE(gml_gpu_execute_plan(gpu,&plan),"binding pass executes");
+      REQUIRE(anygm_test_graphics_read_pixels()==(pass?2u:1u),
+              "each binding is primed separately despite equal readback dimensions");
+      if(pass>=2u)
+        REQUIRE(((output[0]>>16)&255u)==alternate+1u,
+                "source region, placement, uniforms and samplers retain their own pictures");
+    }
+    gml_gpu_destroy(gpu,1);
+  }
+  return 1;
+}
+
 /* The drawing colour reaches the program as quad vertex colour; applying it after
  * program evaluation matters when the result saturates. */
 static int content_program_vertex_colour_case(void){
@@ -6905,6 +6983,8 @@ int main(int argc,char **argv){
     {"content_program_readback",content_program_readback_case},
     {"content_program_source_region",content_program_source_region_case},
     {"content_program_pipelined_readback",content_program_pipelined_readback_case},
+    {"content_program_pipelined_sources",content_program_pipelined_sources_case},
+    {"content_program_pipelined_bindings",content_program_pipelined_bindings_case},
     {"content_program_vertex_colour",content_program_vertex_colour_case},
   };
   const AnygmTestGroup groups[]={

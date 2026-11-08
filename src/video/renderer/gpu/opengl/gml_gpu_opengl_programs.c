@@ -848,7 +848,7 @@ static int content_sources(const GmlPlanShader *shader,const char **vertex,const
   return 1;
 }
 
-static uint64_t content_source_key(const GmlPlanShader *shader){
+uint64_t gml_gpu_opengl_content_source_key(const GmlPlanShader *shader){
   uint64_t hash=UINT64_C(1469598103934665603);
   const char *sources[2];
   if(!content_sources(shader,&sources[0],&sources[1])) return 0;
@@ -865,7 +865,7 @@ int gml_gpu_opengl_content_program_failed(const GmlGpuBackend *backend,
                                            const GmlPlanShader *shader){
   uint64_t key;
   if(!backend || !gml_render_plan_shader_has_program(shader)) return 0;
-  key=content_source_key(shader);
+  key=gml_gpu_opengl_content_source_key(shader);
   for(size_t index=0;index<GL_CONTENT_PROGRAMS;index++){
     const GlContentProgram *slot=&backend->content[index];
     if(slot->failed && slot->identity==shader->identity &&
@@ -878,7 +878,7 @@ int gml_gpu_opengl_content_program_failed(const GmlGpuBackend *backend,
 static GlContentProgram *content_slot(GmlGpuBackend *backend,const GmlPlanShader *shader,
                                       int scene_rgba){
   GlContentProgram *slot=NULL;
-  uint64_t source_key=content_source_key(shader);
+  uint64_t source_key=gml_gpu_opengl_content_source_key(shader);
   uint32_t oldest=0xFFFFFFFFu;
   for(size_t index=0;index<GL_CONTENT_PROGRAMS;index++){
     GlContentProgram *candidate=&backend->content[index];

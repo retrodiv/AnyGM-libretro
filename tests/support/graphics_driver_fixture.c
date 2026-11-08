@@ -124,7 +124,6 @@ typedef struct FakeDriver {
   unsigned char *unpack_store;
   unsigned unpack_failure;
   int unpack_mapped;
-  unsigned char pack_store[2][64*64*4];
   unsigned pack_slot_for[8];
   unsigned pack_fill;
   GLint unpack_row_length;
@@ -519,7 +518,14 @@ static void *fake_MapBufferRange(GLenum target,GLintptr offset,GLsizeiptr length
     g_fake.unpack_mapped=1;
     return g_fake.unpack_store;
   }
-  return g_fake.pack_store[g_fake.bound_pack_buffer&1u];
+  if(target==GL_PIXEL_PACK_BUFFER){
+    unsigned buffer=g_fake.bound_pack_buffer;
+    if(!buffer || buffer>=FAKE_MAX_CALLS || offset<0 || length<=0 ||
+       (size_t)offset>g_fake.buffer_capacity[buffer] ||
+       (size_t)length>g_fake.buffer_capacity[buffer]-(size_t)offset) return NULL;
+    return g_fake.buffer_store[buffer]+offset;
+  }
+  return NULL;
 }
 static GLboolean fake_UnmapBuffer(GLenum target){
   note_call();
@@ -547,9 +553,11 @@ static void fake_ReadPixels(GLint x,GLint y,GLsizei width,GLsizei height,GLenum 
   g_fake.last_read_framebuffer=g_fake.framebuffer;
   if(g_fake.bound_pack_buffer){
     /* Asynchronous: fill the fixture's storage for the bound buffer, hand nothing back now. */
-    uint8_t *store=g_fake.pack_store[g_fake.bound_pack_buffer&1u];
+    unsigned buffer=g_fake.bound_pack_buffer;
     size_t bytes=(size_t)width*(size_t)height*4u;
-    if(bytes>sizeof g_fake.pack_store[0]) bytes=sizeof g_fake.pack_store[0];
+    if(buffer>=FAKE_MAX_CALLS || bytes>g_fake.buffer_capacity[buffer] ||
+       !g_fake.buffer_store[buffer]){ g_fake.pending_error=0x0502u;return; }
+    uint8_t *store=g_fake.buffer_store[buffer];
     g_fake.async_read_pixels++;
     g_fake.pack_fill++;
     for(size_t i=0;i+3<bytes;i+=4){
@@ -767,6 +775,18 @@ static void fake_BufferData(GLenum target,GLsizeiptr size,const void *data,GLenu
     return;
   }
   g_fake.buffer_bytes=(size_t)size;
+  if(target==GL_PIXEL_PACK_BUFFER){
+    unsigned buffer=g_fake.bound_pack_buffer;
+    if(!buffer || buffer>=FAKE_MAX_CALLS || size<=0 || (size_t)size>16u*1024u*1024u){
+      g_fake.pending_error=0x0502u;return;
+    }
+    unsigned char *store=(unsigned char*)realloc(g_fake.buffer_store[buffer],(size_t)size);
+    if(!store){ g_fake.pending_error=0x0505u;return; }
+    g_fake.buffer_store[buffer]=store;
+    g_fake.buffer_capacity[buffer]=(size_t)size;
+    if(data) memcpy(store,data,(size_t)size);
+    return;
+  }
   if(target==GL_ARRAY_BUFFER && g_fake.bound_buffer<FAKE_MAX_CALLS){
     unsigned char *store=size>0?(unsigned char*)realloc(g_fake.buffer_store[g_fake.bound_buffer],(size_t)size):NULL;
     if(size>0 && !store){g_fake.pending_error=0x0505u;return;}

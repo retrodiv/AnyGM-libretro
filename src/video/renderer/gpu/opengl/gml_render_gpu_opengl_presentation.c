@@ -212,13 +212,80 @@ void gml_gpu_opengl_set_readback_pipelined(GmlGpuBackend *backend,int pipelined)
   if(backend) backend->readback_pipelined=pipelined?1:0;
 }
 
-static GlReadbackSlot *readback_slot(GmlGpuBackend *backend,uint32_t identity,
+static uint64_t readback_hash(uint64_t key,const void *data,size_t size){
+  const uint8_t *bytes=(const uint8_t*)data;
+  for(size_t index=0;index<size;index++){
+    key^=bytes[index];
+    key*=UINT64_C(1099511628211);
+  }
+  return key;
+}
+
+/* A delayed answer belongs to a draw, not merely its program and output size. Ignore upload
+ * generations and borrowed pixel addresses: those change on every request, including the next
+ * frame of the same picture. Keep source bindings, placement and program inputs distinct. */
+static uint64_t readback_draw_key(const GmlRenderPlan *plan){
+  uint64_t key=gml_gpu_opengl_content_source_key(&plan->shader);
+#define HASH_VALUE(value) key=readback_hash(key,&(value),sizeof(value))
+  HASH_VALUE(plan->target_width); HASH_VALUE(plan->target_height);
+  HASH_VALUE(plan->readback_rect);
+  HASH_VALUE(plan->image_count);
+  for(uint32_t index=0;index<plan->image_count;index++){
+    const GmlPlanImage *image=&plan->images[index];
+    HASH_VALUE(image->image_class); HASH_VALUE(image->identity);
+    HASH_VALUE(image->width); HASH_VALUE(image->height); HASH_VALUE(image->pitch_pixels);
+    HASH_VALUE(image->pixel_format); HASH_VALUE(image->opaque);
+  }
+  HASH_VALUE(plan->operation_count);
+  for(uint32_t index=0;index<plan->operation_count;index++){
+    const GmlPlanOp *op=&plan->operations[index];
+    HASH_VALUE(op->opcode); HASH_VALUE(op->source); HASH_VALUE(op->destination);
+    HASH_VALUE(op->source_rect); HASH_VALUE(op->linear);
+    HASH_VALUE(op->clear_color); HASH_VALUE(op->alpha_write);
+    const GmlPlanAxis *axes[2]={&op->axis_x,&op->axis_y};
+    for(unsigned axis=0;axis<2u;axis++){
+      HASH_VALUE(axes[axis]->rule); HASH_VALUE(axes[axis]->source_extent);
+      HASH_VALUE(axes[axis]->destination_extent); HASH_VALUE(axes[axis]->destination_first);
+      HASH_VALUE(axes[axis]->origin); HASH_VALUE(axes[axis]->extent);
+      HASH_VALUE(axes[axis]->intermediate_extent);
+    }
+  }
+  const GmlPlanShader *shader=&plan->shader;
+  HASH_VALUE(shader->identity); HASH_VALUE(shader->builtin_kind);
+  HASH_VALUE(shader->vertex_colour);
+  HASH_VALUE(shader->geometry.valid);
+  HASH_VALUE(shader->geometry.origin_x); HASH_VALUE(shader->geometry.origin_y);
+  HASH_VALUE(shader->geometry.extent_x); HASH_VALUE(shader->geometry.extent_y);
+  HASH_VALUE(shader->uniform_count);
+  for(uint32_t index=0;index<shader->uniform_count;index++){
+    const GmlPlanUniform *uniform=&shader->uniforms[index];
+    size_t length=strnlen(uniform->name,sizeof uniform->name);
+    HASH_VALUE(length);
+    key=readback_hash(key,uniform->name,length);
+    HASH_VALUE(uniform->count); HASH_VALUE(uniform->integer);
+    uint32_t count=uniform->count<GML_PLAN_UNIFORM_VALUES
+                     ?uniform->count:GML_PLAN_UNIFORM_VALUES;
+    key=readback_hash(key,uniform->value,count*sizeof *uniform->value);
+  }
+  HASH_VALUE(shader->sampler_count);
+  for(uint32_t index=0;index<shader->sampler_count;index++){
+    const GmlPlanSampler *sampler=&shader->samplers[index];
+    size_t length=strnlen(sampler->name,sizeof sampler->name);
+    HASH_VALUE(length);
+    key=readback_hash(key,sampler->name,length);
+    HASH_VALUE(sampler->image); HASH_VALUE(sampler->linear);
+  }
+#undef HASH_VALUE
+  return key;
+}
+
+static GlReadbackSlot *readback_slot(GmlGpuBackend *backend,uint64_t draw_key,
                                      uint32_t width,uint32_t height){
   GlReadbackSlot *spare=NULL;
   uint32_t oldest=0xFFFFFFFFu;
   for(size_t index=0;index<GL_READBACK_SLOTS;index++){
     GlReadbackSlot *slot=&backend->readback_slots[index];
-    if(slot->buffer[0] && slot->identity==identity && slot->width==width && slot->height==height)
+    if(slot->buffer[0] && slot->draw_key==draw_key && slot->width==width && slot->height==height)
       return slot;
   }
   for(size_t index=0;index<GL_READBACK_SLOTS;index++){
@@ -231,7 +298,7 @@ static GlReadbackSlot *readback_slot(GmlGpuBackend *backend,uint32_t identity,
   memset(spare,0,sizeof *spare);
   backend->gl.GenBuffers(2,spare->buffer);
   if(!spare->buffer[0] || !spare->buffer[1]) return NULL;
-  spare->identity=identity;
+  spare->draw_key=draw_key;
   spare->width=width;
   spare->height=height;
   for(int which=0;which<2;which++){
@@ -243,8 +310,8 @@ static GlReadbackSlot *readback_slot(GmlGpuBackend *backend,uint32_t identity,
   return spare;
 }
 
-/* Read the off-screen target without waiting: take what the previous pass of this program left,
- * and start this one. The answer is one frame old, which is what buys the frame time back. */
+/* Take the previous matching draw's answer and start this one. A draw whose source or program
+ * inputs changed is primed synchronously instead of borrowing an unrelated picture. */
 int gml_gpu_opengl_read_back_target_pipelined(GmlGpuBackend *backend,GmlRenderPlan *plan,
                                       char *error,size_t error_capacity){
   int rx,ry; uint32_t rw,rh;
@@ -254,7 +321,7 @@ int gml_gpu_opengl_read_back_target_pipelined(GmlGpuBackend *backend,GmlRenderPl
   bytes=(size_t)rw*(size_t)rh*4u;
   if(!backend->gl.MapBufferRange || !backend->gl.UnmapBuffer)
     return gml_gpu_opengl_read_back_target(backend,plan,error,error_capacity);
-  slot=readback_slot(backend,plan->shader.identity,rw,rh);
+  slot=readback_slot(backend,readback_draw_key(plan),rw,rh);
   if(!slot) return gml_gpu_opengl_read_back_target(backend,plan,error,error_capacity);
   slot->last_used=++backend->use_clock;
   backend->gl.PixelStorei(GL_PACK_ALIGNMENT,1);

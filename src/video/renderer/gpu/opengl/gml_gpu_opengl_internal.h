@@ -48,11 +48,10 @@ typedef struct GlContentUniform {
 } GlContentUniform;
 
 /* One pipelined read-back: two buffer objects the device fills in turn. A pass reads what the
- * previous pass of the same program left — one frame old — and issues the current one without
- * waiting, which is what removes the stall. A slot is primed by one ordinary read the first time
- * it is used, so the first frame is correct rather than empty. */
+ * previous matching draw left, never another picture drawn with the same program. A slot is
+ * primed by one ordinary read the first time it is used. */
 typedef struct GlReadbackSlot {
-  uint32_t identity;
+  uint64_t draw_key;
   uint32_t width,height;
   GLuint buffer[2];
   int cursor;
@@ -264,6 +263,7 @@ int gml_gpu_opengl_checkpoint_program(GmlGpuBackend *backend);
 int gml_gpu_opengl_rgb_reduce_program(GmlGpuBackend *backend);
 int gml_gpu_opengl_scene_reduce_rgb(GmlGpuBackend *backend,GlSceneImage *source,
                                     unsigned predicate);
+uint64_t gml_gpu_opengl_content_source_key(const GmlPlanShader *shader);
 int gml_gpu_opengl_execute_shader_draw(GmlGpuBackend *backend,GmlRenderPlan *plan,
                                         const GmlPlanOp *op,GmlGpuCounters *counters,
                                        char *error,size_t error_capacity);
