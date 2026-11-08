@@ -16,6 +16,7 @@
 #include "gml_render_cpu_replay.h"
 #include "gml_render_cpu_backend.h"
 #include "gml_render_cpu_primitives.h"
+#include "gml_render_cpu_shader_pass.h"
 #include "gml_builtin.h"
 #include "gml_particle.h"
 #include "gml_software3d.h"
@@ -20017,6 +20018,45 @@ static int resident_rectangle_cpu_passthrough_programs(void){
   return controls==12096u;
 }
 
+static int shaded_plane_preserves_device_target(void){
+  GmlRender *render=calloc(1,sizeof *render);
+  FakeDevice fake={0};
+  GmlRenderDeviceServices device=service(&fake);
+  device.observe_on_demand=fake_observe_on_demand;
+  uint32_t screen[16]={0},plane=0xFFCC8844u;
+  CHECK(render && gml_render_init(render,NULL)==0);
+  fake.on_demand=1;
+  fake.readback_colour=0xFF102030u;
+  gml_render_bind_device(render,&device);
+  gml_render_set_scene_device(render,1);
+  CHECK(gml_render_begin_resident_base(render,screen,4,4,0,0));
+  gml_render_set_pending_fill(render,0xFF102030u);
+  gml_render_flush_pending_fill(render);
+  CHECK(gml_render_scene_submit_pending(render));
+  CHECK(fake.submits>0);
+  GmlRenderJournalMetrics before={0};
+  gml_render_resource_journal_metrics(render->base_scene_resource,&before);
+  CHECK(before.authority!=GML_RENDER_RESOURCE_CPU_CURRENT);
+  CHECK(gml_render_compose_shaded_plane(render,&plane,1,1,0,0,1,1,
+                                        1,1,2,2,0xffffffu,0));
+  CHECK(gml_render_compose_shaded_plane(render,&plane,1,1,0,0,1,1,
+                                        1,1,0,2,0xffffffu,1));
+  GmlRenderJournalMetrics unchanged={0};
+  gml_render_resource_journal_metrics(render->base_scene_resource,&unchanged);
+  CHECK(unchanged.authority==before.authority && fake.readbacks==0);
+  CHECK(gml_render_compose_shaded_plane(render,&plane,1,1,0,0,1,1,
+                                        1,1,2,2,0xffffffu,1));
+  CHECK((screen[5]&0xffffffu)==0xcc8844u);
+  CHECK(gml_render_completed_screen_read(render,screen,4,4));
+  CHECK((screen[5]&0xffffffu)==0xcc8844u &&
+        (screen[6]&0xffffffu)==0xcc8844u &&
+        (screen[9]&0xffffffu)==0xcc8844u &&
+        (screen[10]&0xffffffu)==0xcc8844u);
+  CHECK((screen[0]&0xffffffu)==0x102030u);
+  gml_render_free(render);free(render);
+  return 1;
+}
+
 static int source_palette_snapshot_contract(void){
   GmlRender *r=calloc(1,sizeof *r);CHECK(r);
   r->shader_pal=calloc(1,sizeof *r->shader_pal);CHECK(r->shader_pal);
@@ -20181,6 +20221,7 @@ int main(void){
     else if(!strcmp(selected,"numbered-rotated-native-quad")) passed=resident_numbered_rotated_native_quad();
     else if(!strcmp(selected,"bounded-axis-screen")) passed=resident_bounded_axis_screen_sprite();
     else if(!strcmp(selected,"large-screen-byte-axis")) passed=resident_large_screen_byte_axis();
+    else if(!strcmp(selected,"shaded-plane-authority")) passed=shaded_plane_preserves_device_target();
     else if(!strcmp(selected,"source-palette")) passed=source_palette_snapshot_contract();
     else if(!strcmp(selected,"surface-feedback")) passed=resident_surface_feedback_authority();
     else if(!strcmp(selected,"matched-filtered-sprite")) passed=resident_matched_filtered_sprite_function();
@@ -20478,6 +20519,7 @@ int main(void){
   passed+=resident_large_unit_sprite_scope();
   passed+=resident_bounded_axis_screen_sprite();
   passed+=resident_large_screen_byte_axis();
+  passed+=shaded_plane_preserves_device_target();
   passed+=source_palette_snapshot_contract();
   passed+=resident_tiny_nearest_sprite_scope();
   passed+=resident_opaque_sprite_complete_application();
@@ -20518,6 +20560,6 @@ int main(void){
   passed+=skip_cpu_draw_policy_preserves_observers();
   passed+=resident_numbered_rotated_native_quad();
   passed+=resident_unit_texel_magnification();
-  printf("render resource cases: passed=%d failed=%d\n",passed,320-passed);
-  return passed==320?EXIT_SUCCESS:EXIT_FAILURE;
+  printf("render resource cases: passed=%d failed=%d\n",passed,321-passed);
+  return passed==321?EXIT_SUCCESS:EXIT_FAILURE;
 }

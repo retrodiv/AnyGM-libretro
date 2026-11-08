@@ -187,6 +187,15 @@ int gml_render_compose_shaded_plane(GmlRender *r,const uint32_t *plane,int w,int
   if(rw<=0 || rh<=0 || rx>=w || ry>=h) return 0;
   if(rx+rw>w) rw=w-rx;
   if(ry+rh>h) rh=h-ry;
+  if(fabs(dw)<0.5 || fabs(dh)<0.5 ||
+     (alpha<=0.0 && !(r->alphablend &&
+       gml_render_blend_uses_destination_colour(r->blendmode)))){
+    r->shaded_draws++;return 1;
+  }
+  /* Complete a retained prefix before acquiring this CPU suffix. Otherwise an observer can
+   * restore the preceding device image over pixels composed from the shader's returned plane. */
+  gml_render_maybe_prepare_draw(r);
+  if(!gml_render_cpu_draw_barrier(r)) return 0;
   saved=r->active_shader;
   r->active_shader=-1;
   r->shaded_plane_borrowed=plane;
