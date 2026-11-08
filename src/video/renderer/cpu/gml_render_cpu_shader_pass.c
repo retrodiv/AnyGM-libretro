@@ -424,6 +424,10 @@ int gml_render_shade_target_sprite_part(GmlRender *r,int sprite,int frame,
     if(!shaded){ return 0; }
     if(compose_filtered_additive_sprite(r,shaded,w,h,rx,ry,rw,rh,dx,dy,dw,dh,
                                         blend,alpha)) return 1;
+    /* Sprite extents are signed from their anchor. The surface compositor flips texels inside
+     * a rectangle whose origin is already its leading edge, so move that edge before reusing it. */
+    if(dw<0.0) dx+=dw;
+    if(dh<0.0) dy+=dh;
     if(!gml_render_compose_shaded_plane(r,shaded,w,h,rx,ry,rw,rh,dx,dy,dw,dh,blend,alpha)){
       return 0; }
     return 1;

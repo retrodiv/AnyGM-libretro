@@ -1932,6 +1932,54 @@ static int filtered_additive_shader_sprite_case(void){
   return 0;
 }
 
+/* An identity shader cannot move a mirrored sprite to the other side of its anchor. */
+static int mirrored_shader_sprite_case(void){
+  GmlRender render={0};GmlWin content={0};GmlSprite sprite={0};
+  GmlTpag page={0};GmlAtlas atlas={0};struct GmlShaderPal program={0};
+  uint32_t screen[16*14],plain[16*14];int frame=0,calls=0;
+  uint8_t pixels[24]={255,0,0,255,0,255,0,255,0,0,255,255,
+                      255,255,0,255,0,255,255,255,255,0,255,255};
+  REQUIRE(gml_render_init(&render,NULL)==0,"mirrored shader renderer initialization");
+  GmlAtlas *owned_atlas=render.atlas;int owned_atlas_count=render.n_atlas;
+  content.bytecode=17;render.win=&content;
+  gml_render_begin(&render,screen,16,14,0,0);
+  render.spr=&sprite;render.n_spr=1;render.tpag=&page;render.n_tpag=1;
+  render.atlas=&atlas;render.n_atlas=1;
+  sprite.w=3;sprite.h=2;sprite.originx=1;sprite.originy=1;
+  sprite.n_frames=1;sprite.frame=&frame;
+  page.sw=page.tw=page.bw=3;page.sh=page.th=page.bh=2;
+  atlas.px=pixels;atlas.w=3;atlas.h=2;atlas.decode_attempted=1;
+  program.source_vertex_es="void main(){gl_Position=vec4(0.0);}";
+  program.source_fragment_es="void main(){gl_FragColor=vec4(1.0);}";
+  render.shader_pal=&program;render.n_shader_pal=1;
+  gml_render_set_shader_executor(&render,sprite_identity_executor,&calls);
+  for(int variant=0;variant<16;variant++){
+    double xs=(variant&1)?-1.0:1.0,ys=(variant&2)?-2.0:2.0;
+    if(variant&4) xs*=2.0;
+    page.tx=page.ty=(variant&8)?1:0;
+    sprite.w=page.bw=page.sw+2*page.tx;
+    sprite.h=page.bh=page.sh+2*page.ty;
+    render.active_shader=-1;gml_render_clear(&render,0,1);
+    gml_draw_sprite_ext(&render,0,0,8,7,xs,ys,0,0xffffffu,1);
+    gml_render_maybe_prepare_draw(&render);memcpy(plain,screen,sizeof plain);
+    render.active_shader=0;gml_render_clear(&render,0,1);
+    gml_draw_sprite_ext(&render,0,0,8,7,xs,ys,0,0xffffffu,1);
+    gml_render_maybe_prepare_draw(&render);
+    if(memcmp(plain,screen,sizeof plain)){
+      fprintf(stderr,"identity shader changes mirrored sprite placement: variant=%d xs=%g ys=%g\n",
+              variant,xs,ys);
+      return 1;
+    }
+  }
+  REQUIRE(calls==1,"mirrored draws reuse their own shaded source");
+  gml_render_texture_page_cache_clear(&render,&page);
+  render.spr=NULL;render.n_spr=0;render.tpag=NULL;render.n_tpag=0;
+  render.atlas=owned_atlas;render.n_atlas=owned_atlas_count;
+  render.shader_pal=NULL;render.n_shader_pal=0;
+  gml_render_free(&render);
+  return 0;
+}
+
 static int replacement_sprite_variant(int interpolation,int mode,double alpha,
                                       unsigned source_alpha,unsigned mask,int discard){
   GmlRender *render=calloc(1,sizeof *render);
@@ -2111,6 +2159,7 @@ int main(void){
   REQUIRE(deferred_shader_geometry_case()==0,"deferred shader geometry case");
   REQUIRE(shader_raster_origin_roundoff_case()==0,"shader raster origin roundoff case");
   REQUIRE(filtered_additive_shader_sprite_case()==0,"filtered additive shader sprite case");
+  REQUIRE(mirrored_shader_sprite_case()==0,"mirrored shader sprite placement case");
   REQUIRE(replacement_sprite_case()==0,"replacement sprite case");
   REQUIRE(point_downscale_case()==0,"point downscale case");
   REQUIRE(opaque_near_identity_reduction_case()==0,
