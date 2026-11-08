@@ -402,6 +402,13 @@ gap names itself. A shader whose `recognized` is 1 belongs to a family implement
 software; that flag alone does not establish output fidelity. State-setting builtins
 whose names begin with `draw_` are not counted as draws.
 
+`GML_LOG_SHADER` also reports the first 4096 successful mid-frame device readbacks.
+Each `[shader-readback]` line identifies the frame, program, source, source/output sizes,
+destination and counts of pixels with coverage or nonzero RGB, plus two output samples.
+This observes the already returned CPU plane before composition, so an empty shader answer
+can be distinguished from a later composition loss. The scan and log run after the readback
+timer; diagnostic executions still do not establish undisturbed performance.
+
 ## Graphics-device counters
 
 `GML_GRAPHICS_DEVICE_STATS` reports the bounded render-interval lines when the graphics context is

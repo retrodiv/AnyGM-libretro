@@ -532,6 +532,22 @@ int engine_execute_content_shader(void *context,const GmlRenderShaderRequest *re
         ENGINE_READBACK_BUDGET_US_PER_FRAME/1000.0);
     }
   }
+  if(engine->readback_pass_count<=4096u &&
+     anygm_host_development_setting(&engine->host,"GML_LOG_SHADER")){
+    size_t count=(size_t)request->width*(size_t)request->height;
+    size_t covered=0,ink=0;
+    for(size_t index=0;index<count;index++){
+      uint32_t pixel=request->output[index];
+      covered+=(pixel>>24)!=0u;
+      ink+=(pixel&0x00FFFFFFu)!=0u;
+    }
+    engine_logf(engine,ANYGM_LOG_DEBUG,
+      "[shader-readback] f%ld pass=%u program=%d source=%u source_size=%dx%d "
+      "output=%dx%d destination=%d,%d covered=%zu ink=%zu first=%08x center=%08x\n",
+      engine->vm.frame,engine->readback_pass_count,request->shader,request->source_identity,
+      request->source_width,request->source_height,request->width,request->height,
+      request->dest_x,request->dest_y,covered,ink,request->output[0],request->output[count/2u]);
+  }
   return 1;
 }
 
