@@ -2584,6 +2584,40 @@ static int clear_white_unit_quad(GmlGpuBackend *backend,GlSceneImage *target,
   return 1;
 }
 
+/* Never disturb a caller's indexed storage range. An occupied binding uses the ordinary
+ * fragment predicate. Generic and indirect bindings are restored independently. */
+static int recovery_indirect_prepare(GmlGpuBackend *backend){
+  GlScene *scene=&backend->scene;
+  GLint indexed=0,generic=0;
+  if(!scene->supports_recovery_indirect || scene->recovery_indirect_failed) return 0;
+  backend->gl.GetIntegeri_v(GL_SHADER_STORAGE_BUFFER_BINDING,0u,&indexed);
+  if(indexed || !gml_gpu_opengl_recovery_indirect_program(backend)) return 0;
+  backend->gl.GetIntegerv(GL_SHADER_STORAGE_BUFFER_BINDING,&generic);
+  int allocated=scene->recovery_indirect_buffer!=0u;
+  if(!allocated) backend->gl.GenBuffers(1,&scene->recovery_indirect_buffer);
+  if(!scene->recovery_indirect_buffer) return 0;
+  backend->gl.BindBuffer(GL_SHADER_STORAGE_BUFFER,scene->recovery_indirect_buffer);
+  if(!allocated){
+    backend->gl.BufferData(GL_SHADER_STORAGE_BUFFER,16u,NULL,GL_STREAM_DRAW);
+    if(backend->gl.GetError()!=GL_NO_ERROR){
+      backend->gl.BindBuffer(GL_SHADER_STORAGE_BUFFER,(GLuint)generic);
+      scene->recovery_indirect_failed=1;return 0;
+    }
+  }
+  backend->gl.BindBufferBase(GL_SHADER_STORAGE_BUFFER,0u,scene->recovery_indirect_buffer);
+  backend->gl.UseProgram(scene->recovery_indirect_program);
+  backend->gl.Uniform1i(scene->recovery_indirect_u_screen,2);
+  backend->gl.Uniform1i(scene->recovery_indirect_u_application,3);
+  backend->gl.MemoryBarrier(GL_COMMAND_BARRIER_BIT|GL_SHADER_STORAGE_BARRIER_BIT);
+  backend->gl.DispatchCompute(1u,1u,1u);
+  backend->gl.MemoryBarrier(GL_COMMAND_BARRIER_BIT|GL_SHADER_STORAGE_BARRIER_BIT);
+  backend->gl.BindBufferBase(GL_SHADER_STORAGE_BUFFER,0u,0u);
+  backend->gl.BindBuffer(GL_SHADER_STORAGE_BUFFER,(GLuint)generic);
+  backend->gl.UseProgram(0u);
+  if(backend->gl.GetError()!=GL_NO_ERROR){scene->recovery_indirect_failed=1;return 0;}
+  return 1;
+}
+
 static int flush_quads(GmlGpuBackend *backend,GlSceneImage *target,GlSceneImage *source,
                        uint32_t filter,int blend,uint32_t count,uint32_t write_mask,int alpha_test,
                        uint32_t source_alpha_key,const GmlRenderSourcePalette *palette){
@@ -2780,7 +2814,9 @@ static int flush_quads(GmlGpuBackend *backend,GlSceneImage *target,GlSceneImage 
                                     (const void*)(offset+(size_t)index*4u*sizeof(float)));
     backend->gl.VertexAttribDivisor((GLuint)attributes[index],1u);
   }
-  backend->gl.DrawArraysInstanced(GL_TRIANGLES,0,6,(GLsizei)count);
+  if(scene->recovery_indirect_active && (filter==23u || filter==24u))
+    backend->gl.DrawArraysIndirect(GL_TRIANGLES,NULL);
+  else backend->gl.DrawArraysInstanced(GL_TRIANGLES,0,6,(GLsizei)count);
   if(stamp_alpha && !skip_alpha && (write_mask&8u) && filter!=GL_SCENE_NATIVE_POINT_OPAQUE_FILTER && filter!=23u && filter!=35u && filter!=39u && filter!=53u && filter!=66u && filter!=21u && filter!=25u && filter!=32u && filter!=80u){
     /* The CPU screen writer keeps alpha opaque at every covered texel,
      * even when its prior alpha is unknown. Reuse the sampled vertices and
@@ -3640,10 +3676,20 @@ GmlRenderExecutionResult gml_gpu_opengl_scene_submit(GmlGpuBackend *backend,
       backend->gl.BindTexture(GL_TEXTURE_2D,backend->scene.rgb_reduce_texture[3]);
       int cutoff=batch->states[op->state_index].alpha_test_enabled
         ?(int)batch->states[op->state_index].alpha_test_reference:-1;
-      if(!flush_quads(backend,target,pending_source,23u,1,1u,15u,cutoff,0u,&batch->states[op->state_index].source_palette)){
-        mark_uncertain(&result,target);
-        break;
+      GLint prior_indirect=0;
+      int indirect=recovery_indirect_prepare(backend);
+      if(indirect){
+        backend->gl.GetIntegerv(GL_DRAW_INDIRECT_BUFFER_BINDING,&prior_indirect);
+        backend->gl.BindBuffer(GL_DRAW_INDIRECT_BUFFER,backend->scene.recovery_indirect_buffer);
+        backend->scene.recovery_indirect_active=1;
       }
+      int recovered=flush_quads(backend,target,pending_source,23u,1,1u,15u,cutoff,0u,
+        &batch->states[op->state_index].source_palette);
+      if(indirect){
+        backend->scene.recovery_indirect_active=0;
+        backend->gl.BindBuffer(GL_DRAW_INDIRECT_BUFFER,(GLuint)prior_indirect);
+      }
+      if(!recovered){mark_uncertain(&result,target);break;}
       result.accepted_prefix=index+1u;
       pending_count=0;
       continue;

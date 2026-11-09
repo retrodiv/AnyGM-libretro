@@ -21,6 +21,16 @@
   "precision highp usampler2D;\n" \
   "precision highp sampler2D;\n"
 
+/* One device invocation consumes the existing exact predicates; the recovery fragment programs
+ * and their geometry stay unchanged. The four words are the draw-arrays indirect ABI. */
+#define GML_GPU_OPENGL_RECOVERY_INDIRECT_BODY \
+  "precision highp float;precision highp int;layout(local_size_x=1)in;\n" \
+  "layout(std430,binding=0)buffer RecoveryDraw{uint count;uint instances;uint first;uint reserved;};\n" \
+  "uniform highp sampler2D u_screen;uniform highp sampler2D u_application;\n" \
+  "void main(){count=6u;first=0u;reserved=0u;\n" \
+  "instances=(texelFetch(u_screen,ivec2(0),0).r==0.0&&\n" \
+  "texelFetch(u_application,ivec2(0),0).r!=0.0)?1u:0u;}\n"
+
 /* Fixed recognized-palette executor. Only parsed thresholds and byte colours cross the
  * neutral boundary; arbitrary content GLSL remains a separate frontend policy. */
 #define GML_GPU_OPENGL_THRESHOLD_PALETTE_VERTEX \

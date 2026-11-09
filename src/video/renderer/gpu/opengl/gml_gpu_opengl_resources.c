@@ -231,6 +231,9 @@ void gml_gpu_opengl_scene_forget(GmlGpuBackend *backend){
   memset(scene->exact_programs,0,sizeof scene->exact_programs);
   scene->snapshot_texture=scene->copy_framebuffer=scene->rgb_query=0;
   scene->rgb_reduce_program=scene->rgb_reduce_framebuffer=0;
+  scene->recovery_indirect_program=scene->recovery_indirect_buffer=0;
+  scene->supports_recovery_indirect=scene->recovery_indirect_active=0;
+  scene->recovery_indirect_failed=0;
   memset(scene->rgb_reduce_texture,0,sizeof scene->rgb_reduce_texture);
   memset(scene->rgb_reduce_width,0,sizeof scene->rgb_reduce_width);
   memset(scene->rgb_reduce_height,0,sizeof scene->rgb_reduce_height);
@@ -267,6 +270,8 @@ void gml_gpu_opengl_scene_destroy(GmlGpuBackend *backend,int context_is_current)
     if(scene->rgb_query && backend->gl.DeleteQueries)
       backend->gl.DeleteQueries(1,&scene->rgb_query);
     if(scene->rgb_reduce_program) backend->gl.DeleteProgram(scene->rgb_reduce_program);
+    if(scene->recovery_indirect_program) backend->gl.DeleteProgram(scene->recovery_indirect_program);
+    if(scene->recovery_indirect_buffer) backend->gl.DeleteBuffers(1,&scene->recovery_indirect_buffer);
     if(scene->rgb_reduce_framebuffer)
       backend->gl.DeleteFramebuffers(1,&scene->rgb_reduce_framebuffer);
     for(size_t index=0;index<4u;index++)
@@ -324,6 +329,11 @@ void gml_gpu_opengl_scene_reset(GmlGpuBackend *backend,const GmlGpuContext *cont
   GL_SCENE_LOAD(GetQueryiv,"glGetQueryiv");
   GL_SCENE_LOAD(GetQueryObjectuiv,"glGetQueryObjectuiv");
   GL_SCENE_LOAD(PolygonMode,"glPolygonMode");
+  GL_SCENE_LOAD(GetIntegeri_v,"glGetIntegeri_v");
+  GL_SCENE_LOAD(BindBufferBase,"glBindBufferBase");
+  GL_SCENE_LOAD(DispatchCompute,"glDispatchCompute");
+  GL_SCENE_LOAD(MemoryBarrier,"glMemoryBarrier");
+  GL_SCENE_LOAD(DrawArraysIndirect,"glDrawArraysIndirect");
 #undef GL_SCENE_LOAD
   if(!backend->gl.GetIntegerv || !backend->gl.Finish) return;
   backend->gl.GetIntegerv(GL_MAX_TEXTURE_SIZE,&scene->max_texture_size);
@@ -341,6 +351,16 @@ void gml_gpu_opengl_scene_reset(GmlGpuBackend *backend,const GmlGpuContext *cont
     backend->gl.GetIntegerv(GL_MAJOR_VERSION,&major);
     backend->gl.GetIntegerv(GL_MINOR_VERSION,&minor);
     if(major<4 || (major==4 && minor<3)) backend->gl.InvalidateFramebuffer=NULL;
+  }
+  {
+    GLint major=0,minor=0;
+    backend->gl.GetIntegerv(GL_MAJOR_VERSION,&major);
+    backend->gl.GetIntegerv(GL_MINOR_VERSION,&minor);
+    int version=backend->api==GML_GPU_API_OPENGLES3
+      ?major>3 || (major==3 && minor>=1):major>4 || (major==4 && minor>=3);
+    scene->supports_recovery_indirect=version && backend->gl.GetIntegeri_v &&
+      backend->gl.BindBufferBase && backend->gl.DispatchCompute &&
+      backend->gl.MemoryBarrier && backend->gl.DrawArraysIndirect;
   }
   scene->available=scene->max_texture_size>0;
 }

@@ -87,6 +87,8 @@ typedef struct FakeDriver {
   GLint scene_sampler;
   GLenum blend_factors[4];
   unsigned shader_stage[256];
+  AnygmTestGraphicsIndirect indirect;
+  unsigned indirect_failure,indirect_buffer;
   /* The uniforms the last linked program declares, read from the text it was linked from. */
   /* The declaration parser admits 63 name bytes, plus an array's [0] suffix. */
   struct { char name[68]; GLenum type; GLint size; } uniform[64];
@@ -202,7 +204,9 @@ static void fake_GetIntegerv(GLenum name,GLint *value){
   if(value) *value=name==GL_MAX_TEXTURE_SIZE?4096:
                    name==GL_MAX_TEXTURE_IMAGE_UNITS?g_fake.texture_unit_limit:
                    name==GL_MAJOR_VERSION?(GLint)g_fake.version_major:
-                   name==GL_MINOR_VERSION?(GLint)g_fake.version_minor:0;
+                   name==GL_MINOR_VERSION?(GLint)g_fake.version_minor:
+                   name==GL_SHADER_STORAGE_BUFFER_BINDING?(GLint)g_fake.indirect.generic:
+                   name==GL_DRAW_INDIRECT_BUFFER_BINDING?(GLint)g_fake.indirect.indirect:0;
 }
 static void fake_Flush(void){ note_call(); g_fake.flush_calls++; }
 static void fake_Finish(void){ note_call();g_fake.finish_calls++; }
@@ -388,14 +392,16 @@ static GLuint fake_CreateShader(GLenum stage){
 /* The text is kept, so a test can read what the backend handed the driver: which is the only
  * way to check a rewrite without restating it. */
 static void fake_ShaderSource(GLuint s,GLsizei n,const GLchar *const *source,const GLint *length){
-  int fragment=s<256 && g_fake.shader_stage[s]==GL_FRAGMENT_SHADER;
+  int fragment=s<256 && (g_fake.shader_stage[s]==GL_FRAGMENT_SHADER ||
+                         g_fake.shader_stage[s]==GL_COMPUTE_SHADER);
   (void)length; note_call();
   g_fake.shader_source[fragment][0]='\0';
   if(n>0 && source && source[0]) snprintf(g_fake.shader_source[fragment],sizeof g_fake.shader_source[fragment],"%s",source[0]);
 }
 static void fake_CompileShader(GLuint s){ (void)s; note_call(); g_fake.compile_calls++; }
 static void fake_GetShaderiv(GLuint s,GLenum name,GLint *out){
-  int fragment=s<256 && g_fake.shader_stage[s]==GL_FRAGMENT_SHADER;
+  int fragment=s<256 && (g_fake.shader_stage[s]==GL_FRAGMENT_SHADER ||
+                         g_fake.shader_stage[s]==GL_COMPUTE_SHADER);
   note_call();
   if(name==GL_COMPILE_STATUS)
     *out=g_fake.compile_fails ||
@@ -750,12 +756,49 @@ static void fake_VertexAttribDivisor(GLuint index,GLuint divisor){
   note_call();
   if(index<16u) g_fake.attribute_divisor[index]=divisor;
 }
+static void fake_GetIntegeri_v(GLenum target,GLuint index,GLint *value){
+  note_call();
+  if(target!=GL_SHADER_STORAGE_BUFFER_BINDING || index || !value){g_fake.indirect.errors++;return;}
+  *value=(GLint)g_fake.indirect.indexed;
+}
+static void fake_BindBufferBase(GLenum target,GLuint index,GLuint buffer){
+  note_call();
+  if(target!=GL_SHADER_STORAGE_BUFFER || index){g_fake.indirect.errors++;return;}
+  g_fake.indirect.generic=g_fake.indirect.indexed=buffer;
+}
+static void fake_DispatchCompute(GLuint x,GLuint y,GLuint z){
+  note_call();g_fake.indirect.dispatches++;
+  if(x!=1u || y!=1u || z!=1u || !g_fake.indirect.indexed ||
+     g_fake.indirect.indexed!=g_fake.indirect_buffer || !g_fake.indirect.barriers)
+    g_fake.indirect.errors++;
+  if(g_fake.indirect_failure==2u)g_fake.pending_error=0x0502u;
+}
+static void fake_MemoryBarrier(GLbitfield barriers){
+  note_call();g_fake.indirect.barriers++;g_fake.indirect.barrier_bits=barriers;
+  if(barriers!=(GL_COMMAND_BARRIER_BIT|GL_SHADER_STORAGE_BARRIER_BIT))g_fake.indirect.errors++;
+}
+static void fake_DrawArraysIndirect(GLenum mode,const void *offset){
+  note_call();g_fake.indirect.draws++;
+  if(mode!=GL_TRIANGLES || offset || !g_fake.indirect.indirect ||
+     g_fake.indirect.indirect!=g_fake.indirect_buffer || g_fake.indirect.barriers<2u)
+    g_fake.indirect.errors++;
+  /* Call shape/order only; the fixture never evaluates a shader or its predicate pixels. */
+  fake_DrawArraysInstanced(mode,0,6,1);
+}
+void anygm_test_graphics_indirect_bindings(unsigned generic,unsigned indexed,unsigned indirect){
+  g_fake.indirect.generic=generic;g_fake.indirect.indexed=indexed;g_fake.indirect.indirect=indirect;
+}
+void anygm_test_graphics_indirect_failure(unsigned phase){g_fake.indirect_failure=phase;}
+AnygmTestGraphicsIndirect anygm_test_graphics_indirect(void){return g_fake.indirect;}
+
 static void fake_GenBuffers(GLsizei n,GLuint *names){
   note_call();
   for(GLsizei index=0;index<n;index++) names[index]=g_fake.next_name++;
 }
 static void fake_BindBuffer(GLenum target,GLuint name){
   note_call();
+  if(target==GL_SHADER_STORAGE_BUFFER){ g_fake.indirect.generic=name; return; }
+  if(target==GL_DRAW_INDIRECT_BUFFER){ g_fake.indirect.indirect=name; return; }
   if(target==GL_PIXEL_PACK_BUFFER){ g_fake.bound_pack_buffer=name; return; }
   if(target==GL_PIXEL_UNPACK_BUFFER){ g_fake.unpack.bound=name; return; }
   g_fake.bound_buffer=name;
@@ -763,6 +806,14 @@ static void fake_BindBuffer(GLenum target,GLuint name){
 static void fake_BufferData(GLenum target,GLsizeiptr size,const void *data,GLenum usage){
   size_t floats=(size_t)size/sizeof(float);
   (void)target;(void)usage; note_call();
+  if(target==GL_SHADER_STORAGE_BUFFER){
+    g_fake.indirect.allocations++;
+    if(g_fake.indirect_failure==1u){g_fake.pending_error=0x0505u;return;}
+    if(!g_fake.indirect.generic || size!=16 || data || usage!=GL_STREAM_DRAW)
+      g_fake.indirect.errors++;
+    g_fake.indirect_buffer=g_fake.indirect.generic;
+    return;
+  }
   if(target==GL_PIXEL_UNPACK_BUFFER){
     g_fake.unpack.allocations++;
     if(g_fake.unpack_failure==1u){ g_fake.pending_error=0x0505u;return; }
@@ -949,6 +1000,11 @@ void (*anygm_test_graphics_proc(void *userdata,const char *name))(void){
     {"glDeleteVertexArrays",(void*)fake_DeleteVertexArrays},
     {"glDrawArrays",(void*)fake_DrawArrays},
     {"glDrawArraysInstanced",(void*)fake_DrawArraysInstanced},
+    {"glGetIntegeri_v",(void*)fake_GetIntegeri_v},
+    {"glBindBufferBase",(void*)fake_BindBufferBase},
+    {"glDispatchCompute",(void*)fake_DispatchCompute},
+    {"glMemoryBarrier",(void*)fake_MemoryBarrier},
+    {"glDrawArraysIndirect",(void*)fake_DrawArraysIndirect},
     {"glGetAttribLocation",(void*)fake_GetAttribLocation},
     {"glVertexAttribPointer",(void*)fake_VertexAttribPointer},
     {"glEnableVertexAttribArray",(void*)fake_EnableVertexAttribArray},

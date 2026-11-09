@@ -505,6 +505,37 @@ refused:
   return 0;
 }
 
+/* This optimization is optional even on a capable context. A compiler refusal keeps the
+ * existing GPU fragment-predicate path for this context epoch, without a CPU observation. */
+int gml_gpu_opengl_recovery_indirect_program(GmlGpuBackend *backend){
+  GlScene *scene=&backend->scene;
+  GLint linked=GL_FALSE;
+  char source[sizeof(GML_GPU_OPENGL_RECOVERY_INDIRECT_BODY)+64u];
+  if(!scene->supports_recovery_indirect || scene->recovery_indirect_failed) return 0;
+  if(scene->recovery_indirect_program) return 1;
+  snprintf(source,sizeof source,"%s%s",backend->api==GML_GPU_API_OPENGLES3
+    ?"#version 310 es\n":"#version 430 core\n",GML_GPU_OPENGL_RECOVERY_INDIRECT_BODY);
+  GLuint shader=compile_stage(backend,GL_COMPUTE_SHADER,source,NULL,0u);
+  if(!shader) goto refused;
+  scene->recovery_indirect_program=backend->gl.CreateProgram();
+  if(scene->recovery_indirect_program){
+    backend->gl.AttachShader(scene->recovery_indirect_program,shader);
+    backend->gl.LinkProgram(scene->recovery_indirect_program);
+    backend->gl.GetProgramiv(scene->recovery_indirect_program,GL_LINK_STATUS,&linked);
+  }
+  backend->gl.DeleteShader(shader);
+  if(linked!=GL_TRUE) goto refused;
+  scene->recovery_indirect_u_screen=backend->gl.GetUniformLocation(
+    scene->recovery_indirect_program,"u_screen");
+  scene->recovery_indirect_u_application=backend->gl.GetUniformLocation(
+    scene->recovery_indirect_program,"u_application");
+  if(scene->recovery_indirect_u_screen>=0 && scene->recovery_indirect_u_application>=0) return 1;
+refused:
+  if(scene->recovery_indirect_program) backend->gl.DeleteProgram(scene->recovery_indirect_program);
+  scene->recovery_indirect_program=0;scene->recovery_indirect_failed=1;
+  return 0;
+}
+
 int gml_gpu_opengl_checkpoint_program(GmlGpuBackend *backend){
   GlScene *scene=&backend->scene;
   const char *prefix=backend->api==GML_GPU_API_OPENGLES3

@@ -184,6 +184,9 @@ typedef struct GlScene {
   GLuint rgb_reduce_program,rgb_reduce_framebuffer,rgb_reduce_texture[4];
   uint32_t rgb_reduce_width[4],rgb_reduce_height[4];
   GLint rgb_reduce_u_image,rgb_reduce_u_extent;
+  GLuint recovery_indirect_program,recovery_indirect_buffer;
+  GLint recovery_indirect_u_screen,recovery_indirect_u_application;
+  int supports_recovery_indirect,recovery_indirect_active,recovery_indirect_failed;
   uint32_t snapshot_width,snapshot_height;
   GLint max_texture_units;
   float *vertices,*instances;
@@ -263,6 +266,7 @@ GlSceneExactProgram *gml_gpu_opengl_scene_exact_program(GmlGpuBackend *backend,i
                                                        char *error,size_t error_capacity);
 int gml_gpu_opengl_checkpoint_program(GmlGpuBackend *backend);
 int gml_gpu_opengl_rgb_reduce_program(GmlGpuBackend *backend);
+int gml_gpu_opengl_recovery_indirect_program(GmlGpuBackend *backend);
 int gml_gpu_opengl_scene_reduce_rgb(GmlGpuBackend *backend,GlSceneImage *source,
                                     unsigned predicate);
 uint64_t gml_gpu_opengl_content_source_key(const GmlPlanShader *shader);

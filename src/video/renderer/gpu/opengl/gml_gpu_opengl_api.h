@@ -86,6 +86,13 @@ typedef void GLvoid;
 #define GL_UNPACK_SKIP_PIXELS 0x0CF4
 #define GL_FRAGMENT_SHADER 0x8B30
 #define GL_VERTEX_SHADER 0x8B31
+#define GL_COMPUTE_SHADER 0x91B9
+#define GL_SHADER_STORAGE_BUFFER 0x90D2
+#define GL_SHADER_STORAGE_BUFFER_BINDING 0x90D3
+#define GL_DRAW_INDIRECT_BUFFER 0x8F3F
+#define GL_DRAW_INDIRECT_BUFFER_BINDING 0x8F43
+#define GL_COMMAND_BARRIER_BIT 0x00000040
+#define GL_SHADER_STORAGE_BARRIER_BIT 0x00002000
 #define GL_COMPILE_STATUS 0x8B81
 #define GL_LINK_STATUS 0x8B82
 #define GL_INFO_LOG_LENGTH 0x8B84
@@ -211,6 +218,12 @@ typedef struct GmlGlApi {
   void     (*DeleteVertexArrays)(GLsizei n,const GLuint *arrays);
   void     (*DrawArrays)(GLenum mode,GLint first,GLsizei count);
   void     (*DrawArraysInstanced)(GLenum mode,GLint first,GLsizei count,GLsizei instance_count);
+  /* Optional device-generated recovery commands; baseline contexts retain fragment predicates. */
+  void     (*GetIntegeri_v)(GLenum target,GLuint index,GLint *value);
+  void     (*BindBufferBase)(GLenum target,GLuint index,GLuint buffer);
+  void     (*DispatchCompute)(GLuint x,GLuint y,GLuint z);
+  void     (*MemoryBarrier)(GLbitfield barriers);
+  void     (*DrawArraysIndirect)(GLenum mode,const void *indirect);
   void     (*BlendFuncSeparate)(GLenum source_rgb,GLenum destination_rgb,
                                 GLenum source_alpha,GLenum destination_alpha);
   void     (*BlendEquationSeparate)(GLenum rgb,GLenum alpha);

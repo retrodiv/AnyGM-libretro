@@ -1113,9 +1113,8 @@ static int scene_rgb_reduction_program_case(void){
   return 1;
 }
 
-static int scene_empty_screen_recovery_case(void){
-  for(unsigned embedded=0;embedded<2u;embedded++)
-  for(unsigned borrowed=0;borrowed<2u;borrowed++){
+static int scene_empty_screen_recovery_control(unsigned embedded,unsigned borrowed,unsigned variant){
+  {
     GmlGpu *gpu;
     GmlGpuContext context=fake_context(embedded?GML_GPU_API_OPENGLES3:GML_GPU_API_OPENGL_CORE);
     GmlRenderDeviceServices device={0};
@@ -1127,6 +1126,16 @@ static int scene_empty_screen_recovery_case(void){
     uint32_t pixels[9u*5u]={0};
     GmlRenderImageUpload upload={0};
     anygm_test_graphics_reset();
+    if(variant){
+      anygm_test_graphics_version(embedded?3u:4u,
+        variant==6u?(embedded?0u:2u):(embedded?1u:3u));
+      static const char *missing[]={"glDispatchCompute","glDrawArraysIndirect",
+        "glMemoryBarrier","glGetIntegeri_v","glBindBufferBase"};
+      if(variant>=7u)anygm_test_graphics_withhold(missing[variant-7u]);
+      anygm_test_graphics_indirect_bindings(91u,variant==2u?92u:0u,93u);
+      if(variant==3u)anygm_test_graphics_fail_compile_containing("RecoveryDraw");
+      if(variant==4u || variant==5u)anygm_test_graphics_indirect_failure(variant-3u);
+    }
     gpu=gml_gpu_create();
     REQUIRE(gpu && gml_gpu_context_reset(gpu,&context),"recovery context adopted");
     gml_gpu_device_services(gpu,&device);
@@ -1171,6 +1180,23 @@ static int scene_empty_screen_recovery_case(void){
     REQUIRE(anygm_test_graphics_color_mask_all() && !anygm_test_graphics_attributes_enabled() &&
             !anygm_test_graphics_bound_program() && !anygm_test_graphics_bound_vertex_array(),
             "conditional draw restores shared write/array/program state");
+    AnygmTestGraphicsIndirect indirect=anygm_test_graphics_indirect();
+    if(variant){
+      if(indirect.generic!=91u || indirect.indexed!=(variant==2u?92u:0u) ||
+         indirect.indirect!=93u || indirect.errors || gpu->backend->scene.recovery_indirect_active)
+        fprintf(stderr,"indirect variant=%u api=%u borrowed=%u generic=%u indexed=%u indirect=%u errors=%u active=%d draws=%u dispatch=%u alloc=%u\n",
+          variant,embedded,borrowed,indirect.generic,indirect.indexed,indirect.indirect,indirect.errors,
+          gpu->backend->scene.recovery_indirect_active,indirect.draws,indirect.dispatches,indirect.allocations);
+      REQUIRE(indirect.generic==91u && indirect.indexed==(variant==2u?92u:0u) &&
+        indirect.indirect==93u && !indirect.errors && !gpu->backend->scene.recovery_indirect_active,
+        "conditional commands restore generic, indexed and indirect bindings on every path");
+      REQUIRE(indirect.draws==(variant==1u?2u:0u) &&
+        indirect.dispatches==((variant==1u || variant==5u)?1u:0u),
+        "only a fully available unoccupied successful context uses one device command for both passes");
+      REQUIRE(gpu->backend->scene.recovery_indirect_failed==(variant>=3u && variant<=5u),
+        "optional compiler, allocation and dispatch failures remain a native fragment fallback for this epoch");
+    }else REQUIRE(!indirect.draws && !indirect.dispatches,"baseline contexts keep fragment recovery");
+    unsigned recovery_compiles=anygm_test_graphics_compile_calls();
     for(unsigned cutoff=0;cutoff<256u;cutoff++){
       state.alpha_test_enabled=1u;state.alpha_test_reference=cutoff;
       result=device.submit(device.context,&batch);
@@ -1179,6 +1205,8 @@ static int scene_empty_screen_recovery_case(void){
               !anygm_test_graphics_scene_copies(),
               "every raw conditional cutoff remains device-only");
     }
+    REQUIRE(anygm_test_graphics_compile_calls()==recovery_compiles,
+      "optional recovery programs are reused or remain declined without repeated compilation");
     state.alpha_test_enabled=state.alpha_test_reference=0u;
     for(unsigned variant=0;variant<12u;variant++){
       GmlRenderDrawOp invalid[2];GmlRenderDrawStateSnapshot bad_state=state;
@@ -1208,6 +1236,36 @@ static int scene_empty_screen_recovery_case(void){
     REQUIRE(result.status==GML_RENDER_EXEC_UNSUPPORTED && !anygm_test_graphics_calls_after_forget(),
             "lost conditional namespace is never reused or observed");
     anygm_test_graphics_allow_calls();gml_gpu_destroy(gpu,0);
+  }
+  return 1;
+}
+
+static int scene_empty_screen_recovery_case(void){
+  for(unsigned embedded=0;embedded<2u;embedded++)for(unsigned borrowed=0;borrowed<2u;borrowed++)
+    REQUIRE(scene_empty_screen_recovery_control(embedded,borrowed,0u),"baseline recovery controls");
+  return 1;
+}
+
+static int scene_recovery_indirect_case(void){
+  for(unsigned embedded=0;embedded<2u;embedded++)for(unsigned borrowed=0;borrowed<2u;borrowed++)
+  for(unsigned variant=1u;variant<=11u;variant++)
+    REQUIRE(scene_empty_screen_recovery_control(embedded,borrowed,variant),
+      "optional command capability, binding, failure, cutoff and context-loss controls");
+  for(unsigned embedded=0;embedded<2u;embedded++){
+    anygm_test_graphics_reset();anygm_test_graphics_version(embedded?3u:4u,embedded?1u:3u);
+    GmlGpu *gpu=gml_gpu_create();
+    GmlGpuContext context=fake_context(embedded?GML_GPU_API_OPENGLES3:GML_GPU_API_OPENGL_CORE);
+    REQUIRE(gpu && gml_gpu_context_reset(gpu,&context),"optional program epoch adopted");
+    anygm_test_graphics_fail_compile_containing("RecoveryDraw");
+    REQUIRE(!gml_gpu_opengl_recovery_indirect_program(gpu->backend),"optional program compiler decline");
+    unsigned compiles=anygm_test_graphics_compile_calls();
+    anygm_test_graphics_fail_compile_containing(NULL);
+    REQUIRE(!gml_gpu_opengl_recovery_indirect_program(gpu->backend) &&
+      anygm_test_graphics_compile_calls()==compiles,"compiler decline stays cached in its context epoch");
+    REQUIRE(gml_gpu_context_reset(gpu,&context) &&
+      gml_gpu_opengl_recovery_indirect_program(gpu->backend) &&
+      !gpu->backend->scene.recovery_indirect_failed,"new context retries its own optional program");
+    gml_gpu_destroy(gpu,1);
   }
   return 1;
 }
@@ -7271,6 +7329,7 @@ int main(int argc,char **argv){
     {"scene_numbered_rotated_texel_spans",scene_numbered_rotated_texel_spans_case},
     {"scene_completed_screen_query",scene_completed_screen_query_case},
     {"scene_empty_screen_recovery",scene_empty_screen_recovery_case},
+    {"scene_recovery_indirect",scene_recovery_indirect_case},
     {"scene_rgb_reduction_program",scene_rgb_reduction_program_case},
   };
   static const AnygmTestCase execution_cases[]={

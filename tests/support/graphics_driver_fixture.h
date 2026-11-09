@@ -37,6 +37,13 @@ int anygm_test_graphics_reuse_name(unsigned name);
  * deleting code. */
 void anygm_test_graphics_withhold(const char *name);
 void anygm_test_graphics_version(unsigned major,unsigned minor);
+typedef struct AnygmTestGraphicsIndirect {
+  unsigned dispatches,draws,barriers,errors,allocations;
+  unsigned generic,indexed,indirect,barrier_bits;
+} AnygmTestGraphicsIndirect;
+void anygm_test_graphics_indirect_bindings(unsigned generic,unsigned indexed,unsigned indirect);
+void anygm_test_graphics_indirect_failure(unsigned phase);
+AnygmTestGraphicsIndirect anygm_test_graphics_indirect(void);
 /* Fail shader compilation or program linking, to exercise the refusal paths. */
 void anygm_test_graphics_fail_compile(int failing);
 /* Fail only a shader whose submitted source contains this text; NULL disables the selector. */
