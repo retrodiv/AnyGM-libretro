@@ -2308,6 +2308,7 @@ static int scene_rectangle_function_batch_case(void){
     {GL_DST_ALPHA,GL_DST_COLOR,GL_DST_ALPHA,GL_DST_ALPHA}
   };
   for(unsigned api=GML_GPU_API_OPENGL_CORE;api<=GML_GPU_API_OPENGLES3;api++)
+  for(unsigned opaque=0;opaque<2u;opaque++)
   for(unsigned preset=0;preset<12u;preset++)
   for(unsigned preserve_alpha=0;preserve_alpha<2u;preserve_alpha++)
   for(unsigned blend=0;blend<3u;blend++)
@@ -2327,7 +2328,7 @@ static int scene_rectangle_function_batch_case(void){
       .image={preserve_alpha?GML_RENDER_RESOURCE_SURFACE:GML_RENDER_RESOURCE_SCREEN,141u,1u,2u},
       .storage_version=1u,.width=96u,.height=48u,
       .pixel_format=GML_RENDER_PIXEL_ARGB8888,.region={0,0,96u,48u}};
-    ops[0].payload.clear_colour=0x40273859u;
+    ops[0].payload.clear_colour=opaque?0xFF273859u:0x40273859u;
     for(unsigned q=0;q<QUADS;q++){
       ops[q+1u]=ops[0];ops[q+1u].opcode=GML_RENDER_OP_COLOURED_PRIMITIVE;
       ops[q+1u].scene_family=GML_RENDER_SCENE_PRIMITIVE;
@@ -2351,13 +2352,19 @@ static int scene_rectangle_function_batch_case(void){
     }
     GmlRenderDrawBatch batch={ops,QUADS+1u,NULL,0u};
     GmlRenderExecutionResult result=device.submit(device.context,&batch);
-    int passes=blend==1u && !preserve_alpha &&
+    int passes=blend==1u && !preserve_alpha && !opaque &&
       (!preset || preset==1u || preset==4u)?2:1;
     REQUIRE(result.status==GML_RENDER_EXEC_ACCEPTED && result.accepted_prefix==QUADS+1u,
             "rectangle matrix packets accepted");
     REQUIRE(anygm_test_graphics_scene_draw_calls()==2*passes &&
             anygm_test_graphics_scene_vertices()==QUADS*6*passes,
             "only quad capacity splits compatible source-free rectangles");
+    if(opaque && blend==1u && !preserve_alpha &&
+       (!preset || preset==1u || preset==4u)){
+      GlSceneImage *image=gml_gpu_opengl_scene_image(gpu->backend,ops[QUADS].target.image);
+      REQUIRE(image && image->alpha_opaque,
+        "opaque rectangle alpha remains certified across capacity cuts and covered-alpha omission");
+    }
     if(blend==1u && !preset){
       anygm_test_graphics_blend_factors(factors);
       REQUIRE(factors[0]==GL_SRC_ALPHA && factors[1]==GL_ONE_MINUS_SRC_ALPHA &&
