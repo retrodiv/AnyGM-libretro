@@ -707,6 +707,7 @@ typedef struct GmlRender {
   /* Diagnostic ownership counters, not state or image authority. */
   uint64_t completed_screen_cpu_reads,completed_screen_cpu_materializations;
   uint64_t surface_multiply_skipped_pixels,surface_multiply_sampled_pixels;
+  uint64_t surface_multiply_uniform_spans;
 } GmlRender;
 
 /* Preserve alpha on explicit surface targets and on a first-generation Studio

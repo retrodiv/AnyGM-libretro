@@ -86,11 +86,12 @@ typedef struct {
   int width,height,source_width,source_height,numbered,feedback,interp;
   unsigned mask,colour;
   double x,y,xs,ys,angle,alpha;
-  int destination_black;
+  int destination_black,source_tiles;
 } MappedMultiplyControl;
 
 static int mapped_multiply_result(const MappedMultiplyControl *control,int fast,
-                                  uint32_t *result,uint64_t *draws,int *workers,uint64_t *skipped){
+                                  uint32_t *result,uint64_t *draws,int *workers,uint64_t *skipped,
+                                  uint64_t *uniform_spans){
   GmlRender render={0};
   size_t count=(size_t)control->width*control->height;
   uint32_t *base=calloc(count,sizeof *base);
@@ -105,6 +106,15 @@ static int mapped_multiply_result(const MappedMultiplyControl *control,int fast,
   for(int i=0;i<sw*sh;i++){
     pattern=pattern*1664525u+1013904223u;
     pixels[i]=i%4?pattern:pattern&0xFFFFFFu;
+    if(control->source_tiles){
+      static const uint32_t colours[]={0xFFFFFFu,0x808080u,0u,0x579B31u};
+      unsigned colour=(unsigned)(control->source_tiles-1)%4u;
+      if(control->source_tiles==5) colour=(unsigned)((i%sw)/64+(i/sw)/64)%4u;
+      pixels[i]=(pattern&0xFF000000u)|colours[colour];
+      /* Small independent holes invalidate their complete certificates, including at tile edges. */
+      if(control->source_tiles==5 && (i==sw*9+7 || i==sw*65+64 || i==sw*(sh-2)+sw-2))
+        pixels[i]^=0x000001u;
+    }
   }
   int destination=0;
   if(control->numbered || control->feedback){
@@ -135,6 +145,7 @@ static int mapped_multiply_result(const MappedMultiplyControl *control,int fast,
     *draws+=metrics.cpu[GML_RENDER_SCENE_SURFACE][reason];
   *workers=render.row_pool!=NULL;
   if(skipped) *skipped=render.surface_multiply_skipped_pixels;
+  if(uniform_spans) *uniform_spans=render.surface_multiply_uniform_spans;
   if(destination) gml_surface_reset_target(&render);
   if(destination && destination!=source) gml_surface_free(&render,destination);
   gml_surface_free(&render,source);gml_render_free(&render);free(base);
@@ -163,10 +174,10 @@ static int mapped_multiply_exact_case(void){
   for(int interp=0;interp<2;interp++)for(unsigned tint=0;tint<2u;tint++){
     const double *t=transforms[transform];
     MappedMultiplyControl control={W,H,13,11,target,0,interp,mask,
-      tint?0x7351B9u:0xFFFFFFu,t[0],t[1],t[2],t[3],t[4],.61,0};
+      tint?0x7351B9u:0xFFFFFFu,t[0],t[1],t[2],t[3],t[4],.61,0,0};
     uint64_t before=0,after=0;int unused=0;
-    REQUIRE(!mapped_multiply_result(&control,0,reference,&before,&unused,NULL) &&
-      !mapped_multiply_result(&control,1,selected,&after,&unused,NULL),
+    REQUIRE(!mapped_multiply_result(&control,0,reference,&before,&unused,NULL,NULL) &&
+      !mapped_multiply_result(&control,1,selected,&after,&unused,NULL,NULL),
       "mapped multiply comparison completes");
     REQUIRE(!memcmp(reference,selected,(size_t)W*H*sizeof *reference) && before==after,
       "mapped multiply fast/general ARGB and actual-write diagnostics match");
@@ -174,10 +185,10 @@ static int mapped_multiply_exact_case(void){
   }
   for(int feedback=0;feedback<2;feedback++){
     MappedMultiplyControl control={LARGE_W,LARGE_H,257,193,feedback,feedback,0,15,
-      0xFFFFFFu,-12.25,43.5,3.2,3.2,340,1,0};
+      0xFFFFFFu,-12.25,43.5,3.2,3.2,340,1,0,0};
     uint64_t before=0,after=0,skipped=0;int workers=0,unused=0;
-    REQUIRE(!mapped_multiply_result(&control,0,reference,&before,&unused,NULL) &&
-      !mapped_multiply_result(&control,1,selected,&after,&workers,&skipped),
+    REQUIRE(!mapped_multiply_result(&control,0,reference,&before,&unused,NULL,NULL) &&
+      !mapped_multiply_result(&control,1,selected,&after,&workers,&skipped,NULL),
       "large mapped multiply and source feedback complete");
     if(!workers || memcmp(reference,selected,(size_t)LARGE_W*LARGE_H*sizeof *reference) ||
        before!=after || after!=1u || (!feedback && skipped<=1000u))
@@ -192,10 +203,10 @@ static int mapped_multiply_exact_case(void){
   for(int black=1;black<=2;black++)for(unsigned mask=0;mask<16u;mask++)
   for(int target=0;target<2;target++){
     MappedMultiplyControl control={W,H,13,11,target,0,0,mask,0x7351B9u,
-      -3.25,2.5,3.2,2.25,340,1.0,black};
+      -3.25,2.5,3.2,2.25,340,1.0,black,0};
     uint64_t before=0,after=0,skipped=0;int unused=0;
-    REQUIRE(!mapped_multiply_result(&control,0,reference,&before,&unused,NULL) &&
-      !mapped_multiply_result(&control,1,selected,&after,&unused,&skipped),
+    REQUIRE(!mapped_multiply_result(&control,0,reference,&before,&unused,NULL,NULL) &&
+      !mapped_multiply_result(&control,1,selected,&after,&unused,&skipped,NULL),
       "black multiply target controls complete");
     REQUIRE(!memcmp(reference,selected,(size_t)W*H*sizeof *reference) && before==after &&
       after==1u,"black target preserves exact pixels and a witnessed covered write");
@@ -203,6 +214,47 @@ static int mapped_multiply_exact_case(void){
       REQUIRE(skipped>0u,"no-op multiplication avoids inverse lookup after coverage witness");
     checks++;
   }
+  unsigned uniform_checks=0;
+  for(unsigned mask=0;mask<16u;mask++)for(int target=0;target<2;target++)
+  for(unsigned tint=0;tint<2u;tint++){
+    MappedMultiplyControl control={LARGE_W,LARGE_H,257,193,target,0,0,mask,
+      tint?0x7351B9u:0xFFFFFFu,-12.25,43.5,3.2,3.2,340,1,0,
+      1+(int)((mask+target+tint)%5u)};
+    if(mask&1u){control.x=LARGE_W;control.y=LARGE_H;control.xs=-3.2;control.ys=-3.2;}
+    uint64_t before=0,after=0,spans=0;int workers=0,unused=0;
+    REQUIRE(!mapped_multiply_result(&control,0,reference,&before,&unused,NULL,NULL) &&
+      !mapped_multiply_result(&control,1,selected,&after,&workers,NULL,&spans),
+      "uniform RGB mapped multiply controls complete");
+    REQUIRE(!memcmp(reference,selected,(size_t)LARGE_W*LARGE_H*sizeof *reference) &&
+      before==after && after==1u && workers && spans>0u,
+      "uniform RGB certificates preserve complete ARGB, masks, source alpha and covered writes");
+    uniform_checks++;checks++;
+  }
+  for(unsigned transform=0;transform<8u;transform++){
+    MappedMultiplyControl control={LARGE_W,LARGE_H,257,193,0,0,0,15,
+      0xFFFFFFu,nextafter(.75,transform&1u?1.0:0.0),-.5,
+      nextafter(3.0,transform&2u?4.0:2.0),nextafter(3.0,transform&4u?4.0:2.0),0,1,0,5};
+    uint64_t before=0,after=0,spans=0;int unused=0;
+    REQUIRE(!mapped_multiply_result(&control,0,reference,&before,&unused,NULL,NULL) &&
+      !mapped_multiply_result(&control,1,selected,&after,&unused,NULL,&spans),
+      "uniform RGB endpoint boundary controls complete");
+    REQUIRE(!memcmp(reference,selected,(size_t)LARGE_W*LARGE_H*sizeof *reference) &&
+      before==after && spans>0u,"padded RGB certificates preserve nearest boundary decisions");
+    uniform_checks++;checks++;
+  }
+  for(int feedback=0;feedback<2;feedback++){
+    MappedMultiplyControl control={LARGE_W,LARGE_H,257,193,feedback,feedback,0,15,
+      0xFFFFFFu,0,0,1,1,0,1,0,feedback?2:5};
+    uint64_t before=0,after=0,spans=0;int unused=0;
+    REQUIRE(!mapped_multiply_result(&control,0,reference,&before,&unused,NULL,NULL) &&
+      !mapped_multiply_result(&control,1,selected,&after,&unused,NULL,&spans),
+      "uniform RGB identity and source feedback controls complete");
+    REQUIRE(!memcmp(reference,selected,(size_t)LARGE_W*LARGE_H*sizeof *reference) &&
+      before==after && (feedback?spans>0u:spans==0u),
+      "source feedback snapshots and bounded certification admission preserve original samples");
+    uniform_checks++;checks++;
+  }
+  printf("mapped multiply: uniform RGB controls=%u\n",uniform_checks);
   free(reference);free(selected);
   printf("mapped multiply: exact ARGB/dispatch controls=%u\n",checks);
   return 0;

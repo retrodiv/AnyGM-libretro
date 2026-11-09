@@ -1461,8 +1461,77 @@ typedef struct {
   int red,green,blue,white;
   double ax,ay,c,sn,xs,ys;
   atomic_int *coverage;
-  atomic_uint_fast64_t *skipped_pixels,*sampled_pixels;
+  atomic_uint_fast64_t *skipped_pixels,*sampled_pixels,*uniform_spans;
+  const uint32_t *uniform_tiles;
+  int tile_columns;
 } MappedMultiplyBand;
+
+/* Transient RGB certificates, shared by the joined bands of one draw. Alpha is deliberately
+ * absent: the established fixed-function multiply reads RGB independently of source coverage. */
+static uint32_t *mapped_multiply_tiles(const uint32_t *source,int sw,int sh){
+  int columns=(sw+7)/8,rows=(sh+7)/8;
+  size_t count=(size_t)columns*rows,uniform=0;
+  if(count>65536u) return NULL;
+  uint32_t *tiles=malloc(count*sizeof *tiles);
+  if(!tiles) return NULL;
+  for(int ty=0;ty<rows;ty++)for(int tx=0;tx<columns;tx++){
+    int x0=tx*8,y0=ty*8,x1=x0+8<sw?x0+8:sw,y1=y0+8<sh?y0+8:sh;
+    uint32_t colour=source[(size_t)y0*sw+x0]&0xFFFFFFu;
+    int same=1;
+    for(int y=y0;y<y1 && same;y++)for(int x=x0;x<x1;x++)
+      if((source[(size_t)y*sw+x]&0xFFFFFFu)!=colour){same=0;break;}
+    tiles[(size_t)ty*columns+tx]=same?0x01000000u|colour:0u;
+    uniform+=(size_t)same;
+  }
+  if(uniform<count/4u){free(tiles);return NULL;}
+  return tiles;
+}
+
+/* In the admitted finite domain, rounding error is far below one source texel. Each inverse
+ * coordinate is affine/monotone along the row; enlarge both exact endpoint floors by one texel
+ * before consulting RGB certificates. No approximate point index chooses a colour. Every texel
+ * in this conservative rectangle must have the same RGB, otherwise the original sampler runs. */
+static int mapped_multiply_uniform(const MappedMultiplyBand *b,int x,int y,int width,
+                                    uint32_t *colour){
+  double ry=y+0.5-b->ay,rx0=x+0.5-b->ax,rx1=x+width-1+0.5-b->ax;
+  double u0=(rx0*b->c-ry*b->sn)/b->xs,u1=(rx1*b->c-ry*b->sn)/b->xs;
+  double v0=(rx0*b->sn+ry*b->c)/b->ys,v1=(rx1*b->sn+ry*b->c)/b->ys;
+  double ux0=fmin(u0,u1),ux1=fmax(u0,u1),vy0=fmin(v0,v1),vy1=fmax(v0,v1);
+  if(ux1< -1.0 || vy1< -1.0 || ux0>b->sw+1.0 || vy0>b->sh+1.0) return -1;
+  if(ux0<1.0 || vy0<1.0 || ux1>=b->sw-1.0 || vy1>=b->sh-1.0) return 0;
+  int tx0=((int)floor(ux0)-1)/8,tx1=((int)floor(ux1)+1)/8;
+  int ty0=((int)floor(vy0)-1)/8,ty1=((int)floor(vy1)+1)/8;
+  uint32_t value=b->uniform_tiles[(size_t)ty0*b->tile_columns+tx0];
+  if(!value) return 0;
+  for(int ty=ty0;ty<=ty1;ty++)for(int tx=tx0;tx<=tx1;tx++)
+    if(b->uniform_tiles[(size_t)ty*b->tile_columns+tx]!=value) return 0;
+  *colour=value&0xFFFFFFu;return 1;
+}
+
+static void mapped_multiply_span(uint32_t *destination,int count,uint32_t colour,
+    int red_tint,int green_tint,int blue_tint,int white,uint32_t bits,int opaque){
+  int red=(colour>>16)&255,green=(colour>>8)&255,blue=colour&255;
+  if(!white){red=red*red_tint/255;green=green*green_tint/255;blue=blue*blue_tint/255;}
+  if(red==255 && green==255 && blue==255){
+    if(opaque && (bits&0xFF000000u))
+      for(int i=0;i<count;i++) destination[i]|=0xFF000000u;
+    return;
+  }
+  if(red==128 && green==128 && blue==128){
+    for(int i=0;i<count;i++){
+      uint32_t old=destination[i];
+      /* For every byte d, (128*d+127)/255 is exactly ceil(d/2). */
+      uint32_t value=((old&0x00FEFEFEu)>>1)+(old&0x00010101u);
+      value|=opaque?0xFF000000u:old&0xFF000000u;
+      destination[i]=(old&~bits)|(value&bits);
+    }
+    return;
+  }
+  for(int i=0;i<count;i++){
+    uint32_t old=destination[i],value=blend_multiply_channels(old,red,green,blue,opaque);
+    destination[i]=(old&~bits)|(value&bits);
+  }
+}
 
 static inline uint32_t mapped_multiply_colour(uint32_t source,uint32_t old,
     int red_tint,int green_tint,int blue_tint,int white,uint32_t bits,int opaque){
@@ -1488,62 +1557,78 @@ static void mapped_multiply_band(void *context,int first,int last,int slot){
   const uint32_t bits=color_write_bits(r->color_write_mask),rgb_bits=bits&0xFFFFFFu;
   const int force_alpha=opaque && (bits&0xFF000000u);
   int written=0;
-  uint64_t skipped=0,sampled=0;
+  uint64_t skipped=0,sampled=0,uniform=0;
   for(int py=band->y0+first;py<band->y0+last;py++){
     uint32_t *row=framebuffer+(size_t)py*stride;
-    int px=x0;
-#if FLT_EVAL_METHOD == 0
-    for(;px+3<x1;px+=4){
-      unsigned noops=0;
-      if(written){
-        for(unsigned lane=0;lane<4u;lane++)
-          if(!(row[px+(int)lane]&rgb_bits) &&
-             (!force_alpha || (row[px+(int)lane]>>24)==255u)) noops|=1u<<lane;
-        if(noops==15u){skipped+=4u;continue;}
+    for(int block=x0;block<x1;block+=64){
+      int end=block+64<x1?block+64:x1;
+      if(band->uniform_tiles){
+        uint32_t colour=0;
+        int constant=mapped_multiply_uniform(band,block,py,end-block,&colour);
+        if(constant){
+          skipped+=(unsigned)(end-block);
+          if(constant>0){
+            mapped_multiply_span(row+block,end-block,colour,red,green,blue,white,bits,opaque);
+            written=1;uniform++;
+          }
+          continue;
+        }
       }
-      if(noops){
-        /* Mixed zero/nonzero groups retain scalar admission so an unchanged lane also avoids
-         * its inverse lookup. Fully active groups expose four independent exact expressions. */
+      int px=block;
+#if FLT_EVAL_METHOD == 0
+      for(;px+3<end;px+=4){
+        unsigned noops=0;
+        if(written){
+          for(unsigned lane=0;lane<4u;lane++)
+            if(!(row[px+(int)lane]&rgb_bits) &&
+               (!force_alpha || (row[px+(int)lane]>>24)==255u)) noops|=1u<<lane;
+          if(noops==15u){skipped+=4u;continue;}
+        }
+        if(noops){
+          /* Mixed zero/nonzero groups retain scalar admission so an unchanged lane also avoids
+           * its inverse lookup. Fully active groups expose four independent exact expressions. */
+          for(int lane=0;lane<4;lane++){
+            if(noops&(1u<<lane)){skipped++;continue;}
+            sampled++;
+            double rx=px+lane+0.5-ax,ry=py+0.5-ay;
+            double u=(rx*c-ry*sn)/xs,v=(rx*sn+ry*c)/ys;
+            if(u<0.0 || v<0.0 || u>=(double)sw || v>=(double)sh) continue;
+            uint32_t pixel=source[(size_t)(int)floor(v)*sw+(int)floor(u)];
+            row[px+lane]=mapped_multiply_colour(pixel,row[px+lane],red,green,blue,white,bits,opaque);
+            written=1;
+          }
+          continue;
+        }
+        double u[4],v[4];
         for(int lane=0;lane<4;lane++){
-          if(noops&(1u<<lane)){skipped++;continue;}
-          sampled++;
           double rx=px+lane+0.5-ax,ry=py+0.5-ay;
-          double u=(rx*c-ry*sn)/xs,v=(rx*sn+ry*c)/ys;
-          if(u<0.0 || v<0.0 || u>=(double)sw || v>=(double)sh) continue;
-          uint32_t pixel=source[(size_t)(int)floor(v)*sw+(int)floor(u)];
+          u[lane]=(rx*c-ry*sn)/xs;v[lane]=(rx*sn+ry*c)/ys;
+        }
+        sampled+=4u;
+        for(int lane=0;lane<4;lane++){
+          if(u[lane]<0.0 || v[lane]<0.0 || u[lane]>=(double)sw || v[lane]>=(double)sh) continue;
+          uint32_t pixel=source[(size_t)(int)floor(v[lane])*sw+(int)floor(u[lane])];
           row[px+lane]=mapped_multiply_colour(pixel,row[px+lane],red,green,blue,white,bits,opaque);
           written=1;
         }
-        continue;
       }
-      double u[4],v[4];
-      for(int lane=0;lane<4;lane++){
-        double rx=px+lane+0.5-ax,ry=py+0.5-ay;
-        u[lane]=(rx*c-ry*sn)/xs;v[lane]=(rx*sn+ry*c)/ys;
-      }
-      sampled+=4u;
-      for(int lane=0;lane<4;lane++){
-        if(u[lane]<0.0 || v[lane]<0.0 || u[lane]>=(double)sw || v[lane]>=(double)sh) continue;
-        uint32_t pixel=source[(size_t)(int)floor(v[lane])*sw+(int)floor(u[lane])];
-        row[px+lane]=mapped_multiply_colour(pixel,row[px+lane],red,green,blue,white,bits,opaque);
+#endif
+      for(;px<end;px++){
+        uint32_t old=row[px];
+        if(written && !(old&rgb_bits) && (!force_alpha || (old>>24)==255u)){
+          skipped++;continue;
+        }
+        sampled++;
+        double rx=px+0.5-ax,ry=py+0.5-ay;
+        double u=(rx*c-ry*sn)/xs,v=(rx*sn+ry*c)/ys;
+        if(u<0.0 || v<0.0 || u>=(double)sw || v>=(double)sh) continue;
+        uint32_t pixel=source[(size_t)(int)floor(v)*sw+(int)floor(u)];
+        row[px]=mapped_multiply_colour(pixel,old,red,green,blue,white,bits,opaque);
         written=1;
       }
     }
-#endif
-    for(;px<x1;px++){
-      uint32_t old=row[px];
-      if(written && !(old&rgb_bits) && (!force_alpha || (old>>24)==255u)){
-        skipped++;continue;
-      }
-      sampled++;
-      double rx=px+0.5-ax,ry=py+0.5-ay;
-      double u=(rx*c-ry*sn)/xs,v=(rx*sn+ry*c)/ys;
-      if(u<0.0 || v<0.0 || u>=(double)sw || v>=(double)sh) continue;
-      uint32_t pixel=source[(size_t)(int)floor(v)*sw+(int)floor(u)];
-      row[px]=mapped_multiply_colour(pixel,old,red,green,blue,white,bits,opaque);
-      written=1;
-    }
   }
+  atomic_fetch_add_explicit(band->uniform_spans,uniform,memory_order_relaxed);
   atomic_fetch_add_explicit(band->skipped_pixels,skipped,memory_order_relaxed);
   atomic_fetch_add_explicit(band->sampled_pixels,sampled,memory_order_relaxed);
   if(written) gml_render_dispatch_cpu_coverage_write(band->coverage);
@@ -1598,16 +1683,28 @@ static void draw_surface_ext_mapped_impl(GmlRender *r,int surf,double x,double y
     :source_address-target_address>=target_bytes;
   if(allow_fast && separate && !r->interp && r->blendmode==3 &&
      !destination_colour_blend_active(r) && !sremap && !squant && !slut && !sgrid){
-    atomic_uint_fast64_t skipped_pixels=0,sampled_pixels=0;
+    unsigned long long pixels=(unsigned long long)(x1-x0)*(unsigned)(y1-y0);
+    uint32_t *tiles=NULL;
+    /* One-texel padding encloses all arithmetic error here: coordinates <=81920, sine/cosine
+     * <=1 and scales >=2^-16 bound even a conservative 64-epsilon estimate below 0.001 texel. */
+    if(pixels>=GML_ROW_BAND_MIN_PIXELS_COLD && sw>=32 && sh>=32 && sw<=2048 && sh<=2048 &&
+       (unsigned long long)(unsigned)sw*(unsigned)sh<=pixels && r->fbw<=16384 && r->fbh<=16384 &&
+       fabs(ax)<=65536.0 && fabs(ay)<=65536.0 && fabs(c)<=1.0 && fabs(sn)<=1.0 &&
+       fabs(xs)>=1.0/65536.0 && fabs(ys)>=1.0/65536.0 &&
+       fabs(xs)<=65536.0 && fabs(ys)<=65536.0)
+      tiles=mapped_multiply_tiles(src,sw,sh);
+    atomic_uint_fast64_t skipped_pixels=0,sampled_pixels=0,uniform_spans=0;
     MappedMultiplyBand band={r,src,sw,sh,x0,x1,y0,bR,bG,bB,
       (blend&0xFFFFFFu)==0xFFFFFFu,ax,ay,c,sn,xs,ys,
-      gml_render_dispatch_cpu_scope_coverage(r),&skipped_pixels,&sampled_pixels};
-    unsigned long long pixels=(unsigned long long)(x1-x0)*(unsigned)(y1-y0);
+      gml_render_dispatch_cpu_scope_coverage(r),&skipped_pixels,&sampled_pixels,&uniform_spans,
+      tiles,(sw+7)/8};
     if(gml_render_row_bands_profitable(r,pixels))
       gml_run_row_bands(r,y1-y0,mapped_multiply_band,&band);
     else mapped_multiply_band(&band,0,y1-y0,0);
     r->surface_multiply_skipped_pixels+=atomic_load_explicit(&skipped_pixels,memory_order_relaxed);
     r->surface_multiply_sampled_pixels+=atomic_load_explicit(&sampled_pixels,memory_order_relaxed);
+    r->surface_multiply_uniform_spans+=atomic_load_explicit(&uniform_spans,memory_order_relaxed);
+    free(tiles);
     r->fb_opaque_known=0;
     free(copy);return;
   }

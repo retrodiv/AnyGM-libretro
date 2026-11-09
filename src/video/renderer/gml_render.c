@@ -288,6 +288,7 @@ int gml_render_resource_metrics(const GmlRender *r,
     metrics->completed_screen_cpu_materializations=r->completed_screen_cpu_materializations;
     metrics->surface_multiply_skipped_pixels=r->surface_multiply_skipped_pixels;
     metrics->surface_multiply_sampled_pixels=r->surface_multiply_sampled_pixels;
+    metrics->surface_multiply_uniform_spans=r->surface_multiply_uniform_spans;
   }
   return 1;
 }

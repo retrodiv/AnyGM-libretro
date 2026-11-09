@@ -445,6 +445,7 @@ typedef struct {
   int atlas_count, sprite_count, texture_page_count;
   uint64_t completed_screen_cpu_reads,completed_screen_cpu_materializations;
   uint64_t surface_multiply_skipped_pixels,surface_multiply_sampled_pixels;
+  uint64_t surface_multiply_uniform_spans;
 } GmlRenderResourceMetrics;
 
 typedef struct {
