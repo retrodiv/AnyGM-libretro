@@ -600,7 +600,7 @@ runtime graph it will later save. A compact startup ring retains its one-MiB min
 encoded state, remembered peaks and known mutable render allocations raise these allocations
 through the existing headroom calculation. A reference to a container constructor does not by
 itself select a larger reserve. Content with measured deferred growth may declare
-`statereserve|bytes` in its anchor or existing payload-hashed configuration. Enabled declarations
+`statereserve|bytes` in its content-local `.anygm` anchor, discovered beside the payload. Enabled declarations
 contribute their maximum as a minimum allocation; they cannot reduce ordinary sizing or resize
 an existing fixed ring. The declaration follows content-override disabling but is excluded from
 simulation identity; changing only that minimum keeps existing states loadable. It adds no

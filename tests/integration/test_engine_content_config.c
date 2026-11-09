@@ -61,28 +61,25 @@ static void state_reserve_declarations(void){
                                      slots,&count,error,sizeof error));
   assert(count==2);
   AnygmSyntheticContent fixture;assert(anygm_synthetic_content_create(&fixture));
-  uint8_t *content=NULL,digest[32];size_t size=0;
-  assert(anygm_synthetic_content_read(&fixture,&content,&size));
-  gml_sha256(content,size,digest);
-  char hex[65],ini[256],anchor[256];
-  for(size_t i=0;i<32;i++) snprintf(hex+i*2,3,"%02x",digest[i]);
-  snprintf(ini,sizeof ini,"%s/AnyGM.ini",fixture.directory);
+  char anchor[256];
   snprintf(anchor,sizeof anchor,"%s/reserve.anygm",fixture.directory);
   const char *name=strrchr(fixture.path,'/');name=name?name+1:fixture.path;
-  snprintf(text,sizeof text,"[anygm]\npayload=%s\n[overrides]\nstatereserve|4194304\n",name);
-  write_text(anchor,text);
-  snprintf(text,sizeof text,"[overrides]\nstatereserve|8388608\n"
-    "[sha256:%s.overrides]\nstatereserve|16777216\nstatereserve|1\n",hex);
-  write_text(ini,text);
   AnygmHostServices services={0};services.struct_size=sizeof services;
   services.abi_version=ANYGM_HOST_SERVICES_VERSION;anygm_stdio_vfs_services_init(&services);
   AnygmEngine *engine=NULL;assert(anygm_create(&services,&engine)==ANYGM_OK);
   AnygmContentSource source={0};source.struct_size=sizeof source;
-  source.kind=ANYGM_CONTENT_PATH;source.path=anchor;source.system_directory=fixture.directory;
-  source.cache_directory=fixture.directory;
+  /* Open the payload itself: the reserve must come from sibling discovery. */
+  source.kind=ANYGM_CONTENT_PATH;source.path=fixture.path;
+  source.system_directory=fixture.directory;source.cache_directory=fixture.directory;
   assert(anygm_state_capacity_reserve(NULL)==0 && anygm_state_capacity_reserve(engine)==0);
   assert(anygm_load(engine,&source,NULL)==ANYGM_OK);
-  /* The larger matching source declaration survives lower later and anchor values. */
+  assert(anygm_state_capacity_reserve(engine)==0);
+  anygm_unload(engine);
+  snprintf(text,sizeof text,"[anygm]\npayload=%s\n[overrides]\n"
+    "statereserve|4194304\nstatereserve|16777216\nstatereserve|1\n",name);
+  write_text(anchor,text);
+  assert(anygm_load(engine,&source,NULL)==ANYGM_OK);
+  /* A later smaller declaration cannot withdraw the measured larger minimum. */
   assert(anygm_state_capacity_reserve(engine)==16u*1024u*1024u);
   frame(engine);
   size_t capacity=anygm_state_size(engine),written=0;
@@ -98,29 +95,38 @@ static void state_reserve_declarations(void){
   delta.values.content_overrides=1;assert(anygm_set_config(engine,&delta)==ANYGM_OK);
   assert(anygm_state_capacity_reserve(engine)==16u*1024u*1024u);
   anygm_unload(engine);assert(anygm_state_capacity_reserve(engine)==0);
-  hex[0]=hex[0]=='0'?'1':'0';
-  snprintf(text,sizeof text,"[overrides]\nstatereserve|8388608\n"
-    "[sha256:%s.overrides]\nstatereserve|16777216\n",hex);write_text(ini,text);
+  snprintf(text,sizeof text,"[anygm]\npayload=%s\n[overrides]\n"
+    "statereserve|8388608\nstatereserve|1\n",name);write_text(anchor,text);
   assert(anygm_load(engine,&source,NULL)==ANYGM_OK);
   assert(anygm_state_capacity_reserve(engine)==8u*1024u*1024u);
   assert(anygm_state_load(engine,state,written)==ANYGM_OK);
+  assert(anygm_state_capacity_reserve(engine)==8u*1024u*1024u);
+  anygm_unload(engine);
+  assert(!remove(anchor));
+  assert(anygm_load(engine,&source,NULL)==ANYGM_OK);
+  assert(anygm_state_capacity_reserve(engine)==0);
+  assert(anygm_state_load(engine,state,written)==ANYGM_OK);
+  assert(anygm_state_capacity_reserve(engine)==0);
   anygm_unload(engine);
   snprintf(text,sizeof text,"[anygm]\npayload=%s\n[overrides]\n"
     "statereserve|4194304\n$semantic_marker=7\n",name);write_text(anchor,text);
   assert(anygm_load(engine,&source,NULL)==ANYGM_OK);frame(engine);
   free(state);capacity=anygm_state_size(engine);state=malloc(capacity);assert(state);
   assert(anygm_state_save(engine,state,capacity,&written)==ANYGM_OK);
-  anygm_unload(engine);write_text(ini,"[overrides]\nstatereserve|33554432\n");
+  anygm_unload(engine);
+  snprintf(text,sizeof text,"[anygm]\npayload=%s\n[overrides]\n"
+    "statereserve|33554432\n$semantic_marker=7\n",name);write_text(anchor,text);
   assert(anygm_load(engine,&source,NULL)==ANYGM_OK);
   assert(anygm_state_capacity_reserve(engine)==32u*1024u*1024u);
   assert(anygm_state_load(engine,state,written)==ANYGM_OK);
+  assert(anygm_state_capacity_reserve(engine)==32u*1024u*1024u);
   anygm_unload(engine);
   snprintf(text,sizeof text,"[anygm]\npayload=%s\n[overrides]\n"
     "statereserve|4194304\n$semantic_marker=8\n",name);write_text(anchor,text);
   assert(anygm_load(engine,&source,NULL)==ANYGM_OK);
   assert(anygm_state_load(engine,state,written)==ANYGM_ERROR_STATE_MISMATCH);
-  anygm_destroy(engine);free(content);free(state);
-  assert(!remove(anchor) && !remove(ini));anygm_synthetic_content_destroy(&fixture);
+  anygm_destroy(engine);free(state);
+  assert(!remove(anchor));anygm_synthetic_content_destroy(&fixture);
 }
 
 static void config_text(char *out,size_t capacity,const char *digest,int base,int selected){

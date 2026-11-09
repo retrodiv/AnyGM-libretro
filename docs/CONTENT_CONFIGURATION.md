@@ -120,6 +120,34 @@ The operating-system declaration is 6. The global is held at 5 when the hash
 matches, and at 3 otherwise. A global override holds a value while enabled;
 it is not merely an initial-value declaration.
 
+## Measured state reserve in a sibling anchor
+
+A content-specific state reserve belongs beside the payload in its `.anygm` anchor.
+For example, the unique anchor in a directory containing `data.win` can contain:
+
+```ini
+[anygm]
+payload=data.win
+
+[overrides]
+statereserve|33554432
+```
+
+Opening `data.win` directly discovers that sibling and applies its directives before
+first-frame allocation; opening the anchor explicitly also works. Use the actual payload
+filename, including its archive extension when the normal input is a ZIP-compatible wrapper.
+Keep one anchor in that directory; merge into an existing anchor instead of adding a second.
+Content overrides must be enabled. Do not put this reserve in system INI defaults or hash
+sections: the measured allocation stays with the content.
+
+The argument is a positive decimal byte count through 1073741824. Enabled declarations
+contribute their maximum as an allocation minimum. They can only raise the core's calculation:
+a smaller value cannot reduce its current-state, remembered-peak, mutable-resource or default
+allowance, and a later smaller declaration cannot cancel an earlier larger one. The directive
+adds no state fields and does not change simulation identity. A fixed frontend can allocate its
+ring before the first frame, so install or edit the anchor before loading content; the reserve
+does not resize an existing ring or promise that arbitrary future growth will fit.
+
 ## Lifecycle and bounds
 
 Configuration is read during preparation. Close/reopen content to reload
