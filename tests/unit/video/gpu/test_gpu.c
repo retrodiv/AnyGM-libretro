@@ -3083,8 +3083,8 @@ static int scene_nearest_surface_function_case(void){
 }
 static int scene_native_masked_rotation_case(void){
   const uint8_t pixels[16]={32,64,128,64,128,64,32,128,16,192,48,255,192,48,16,0};
-  for(unsigned owner=0;owner<3u;owner++)
-  for(unsigned api=0;api<2u;api++) for(unsigned geometry=0;geometry<3u;geometry++)
+  for(unsigned owner=0;owner<5u;owner++)
+  for(unsigned api=0;api<2u;api++) for(unsigned geometry=0;geometry<4u;geometry++)
   for(unsigned invalid=0;invalid<10u;invalid++){
     anygm_test_graphics_reset();GmlGpu *gpu=gml_gpu_create();GmlRenderDeviceServices device={0};
     GmlGpuContext context=fake_context(api?GML_GPU_API_OPENGLES3:GML_GPU_API_OPENGL_CORE);
@@ -3108,12 +3108,13 @@ static int scene_native_masked_rotation_case(void){
       states[1].write_mask=15u;
       states[1].alpha_source_factor=GML_RENDER_BLEND_ONE;
       states[1].coverage_policy=GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA;
-      states[1].alpha_test_enabled=owner==2u;states[1].alpha_test_reference=owner==2u?127u:0u;
+      states[1].alpha_test_enabled=owner==2u || owner==4u;
+      states[1].alpha_test_reference=states[1].alpha_test_enabled?127u:0u;
     }
     GmlRenderDrawOp ops[3]={0};
     for(unsigned index=0;index<3u;index++){
       GmlRenderDrawOp *op=&ops[index];op->sequence=index+1u;
-      op->target=(GmlRenderTargetRef){.image={owner?GML_RENDER_RESOURCE_SCREEN:GML_RENDER_RESOURCE_SURFACE,182u,1u,index+1u},
+      op->target=(GmlRenderTargetRef){.image={owner>=3u?GML_RENDER_RESOURCE_APPLICATION:owner?GML_RENDER_RESOURCE_SCREEN:GML_RENDER_RESOURCE_SURFACE,182u,1u,index+1u},
         .storage_version=1u,.width=8u,.height=8u,.pixel_format=GML_RENDER_PIXEL_ARGB8888,
         .region={0,0,8u,8u}};
       if(!index){op->opcode=GML_RENDER_OP_CLEAR;op->payload.clear_colour=0xA5403050u;continue;}
@@ -3124,8 +3125,8 @@ static int scene_native_masked_rotation_case(void){
       q->sampling=states[1].samplers[0];q->filtered_draw_alpha=.55;
       const double x[4]={1.25,4.25,3.25,.25},y[4]={1.5,2.5,5.5,4.5};
       for(unsigned corner=0;corner<4u;corner++){
-        q->x[corner]=geometry==1u?(corner<2u?2.0:6.0):geometry==2u?8.0-x[corner]:x[corner];
-        q->y[corner]=geometry==1u?(corner==0u || corner==3u?6.0:2.0):y[corner];
+        q->x[corner]=geometry==3u?(corner==1u || corner==2u?7.25:1.25):geometry==1u?(corner<2u?2.0:6.0):geometry==2u?8.0-x[corner]:x[corner];
+        q->y[corner]=geometry==3u?(corner>=2u?7.5:1.5):geometry==1u?(corner==0u || corner==3u?6.0:2.0):y[corner];
         q->u[corner]=corner==1u || corner==2u?1.0:0.0;q->v[corner]=corner>=2u?1.0:0.0;
         q->corner_colour[corner]=0x8C70A0D0u;
       }

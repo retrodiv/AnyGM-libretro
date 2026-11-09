@@ -1215,7 +1215,8 @@ static int hardware_masked_rotated_sprite_valid(const GmlRenderDrawOp *op,
   int numbered=op->target.image.resource_class==GML_RENDER_RESOURCE_SURFACE &&
     state->write_mask==7u && !state->alpha_test_enabled && !state->alpha_test_reference &&
     !state->coverage_policy && qualified_blend(state)==3;
-  int screen=op->target.image.resource_class==GML_RENDER_RESOURCE_SCREEN &&
+  int screen=(op->target.image.resource_class==GML_RENDER_RESOURCE_SCREEN ||
+              op->target.image.resource_class==GML_RENDER_RESOURCE_APPLICATION) &&
     state->write_mask==15u && state->alpha_test_enabled<=1u && state->alpha_test_reference<=255u &&
     state->coverage_policy==GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA && qualified_blend(state)==1;
   if(!source || !source->width || !source->height || source->rendered_origin ||
