@@ -810,15 +810,13 @@ void gml_instance_change(GmlVM *vm, GmlInstance *in, int obj, int perform_events
   }
 }
 void gml_instance_destroy_with_event(GmlVM *vm, GmlInstance *in, int perform_destroy_event){
-  /* An instance stops being a live destruction target before its Destroy event runs.  Destroy
-   * handlers are allowed to call instance_destroy() (directly or through a cleanup script);
-   * leaving the pending flag until after the callback re-entered the same handler forever and
-   * eventually overflowed the host thread's stack.  Event dispatch itself deliberately does
-   * not reject marked instances, so the one required Destroy/CleanUp pair still executes. */
-  if(!in||!in->active||in->marked) return;
-  in->marked=1;
+  /* Destroy still observes the receiver in the live population. The transient callback guard
+   * prevents recursive disposal without removing it from instance queries prematurely. Mark it
+   * before Clean Up and retain explicit-ID field access through both callbacks. */
+  if(!in||!in->active||in->marked||in->disposal_callback_active) return;
   in->disposal_callback_active=1;
   if(perform_destroy_event) gml_run_event(vm,in,"Destroy_0");
+  in->marked=1;
   /* Newer Clean Up events fire immediately after Destroy when an instance is disposed of.
    * Per-instance resources are commonly released there. */
   gml_run_event(vm,in,"CleanUp_0");

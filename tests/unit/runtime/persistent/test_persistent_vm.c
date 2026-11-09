@@ -384,6 +384,47 @@ int expect_destroy_callback_reference(void){
   return ok;
 }
 
+int expect_destroy_callback_population(void){
+  /* Query the receiver's family while its Destroy event is still executing. */
+  uint8_t data[36]={0};
+  fixture_word(data,0,(OP_PUSH<<24)|(DT_INT32<<16));
+  fixture_word(data,1,0);
+  fixture_word(data,2,(OP_CALL<<24)|1u);
+  fixture_word(data,3,0);
+  fixture_word(data,4,(OP_POP<<24)|(DT_VAR<<16)|(DT_VAR<<20)|(uint16_t)IT_GLOBAL);
+  fixture_word(data,5,0xa0000000u);
+  fixture_word(data,6,(OP_CALL<<24));
+  fixture_word(data,7,0);
+  fixture_word(data,8,(OP_EXIT<<24)|(DT_VAR<<16));
+  uint32_t refs[]={12,20,28};
+  const char *names[]={"instance_number","destroy_population","instance_destroy"};
+  GmlCode code={0};
+  code.name=(char*)"gml_Object_neutral_receiver_Destroy_0";
+  code.length=sizeof data;
+  GmlWin win={0};
+  win.bytecode=17; win.data=data; win.size=sizeof data;
+  win.code=&code; win.n_code=1;
+  win.ref_addr=refs; win.ref_name=names; win.n_refs=3;
+  GmlVM vm={0};
+  vm.win=&win; vm.cur_code_index=-1;
+  vm.inst=calloc(1,sizeof *vm.inst);
+  vm.objects=calloc(1,sizeof *vm.objects);
+  if(!vm.inst || !vm.objects){ free(vm.inst); free(vm.objects); return 0; }
+  vm.inst_count=vm.inst_cap=vm.n_objects=1;
+  vm.objects[0].name=(char*)"neutral_receiver"; vm.objects[0].parent=-1;
+  vm.inst[0].active=1; vm.inst[0].id=100001;
+  gml_instance_destroy(&vm,&vm.inst[0]);
+  GmlVal *seen=gml_varmap_get(&vm.globals,"destroy_population");
+  int ok=seen && seen->t==V_REAL && seen->d==1 && vm.inst[0].marked &&
+         gml_instance_number(&vm,0)==0;
+  if(!ok) fprintf(stderr,"Destroy population mismatch: during=%.0f after=%d\n",
+                  seen?seen->d:-1.0,gml_instance_number(&vm,0));
+  gml_vm_free(&vm);
+  free(code.insn); free(code.insn_pc); free(code.branch_index);
+  free(win.code_hix); free(win.ref_hix);
+  return ok;
+}
+
 int expect_room_camera_reservation(void){
   uint8_t data[512]={0};
   char *strings[]={(char*)"neutral_camera_room"};
