@@ -236,7 +236,7 @@ static int build_scene_program(GmlGpuBackend *backend,GlSceneProgram *scene,
      (mode==14 && (scene->u_point_map_x<0 || scene->u_point_map_y<0 ||
        scene->u_point_origin<0)) ||
      (mode && (scene->a_position01<0 || scene->a_position23<0 ||
-       (mode!=8 && (scene->a_colour[0]<0 || scene->a_colour[1]<0 || scene->a_colour[2]<0 ||
+       (mode!=8 && mode!=30 && (scene->a_colour[0]<0 || scene->a_colour[1]<0 || scene->a_colour[2]<0 ||
                     scene->a_colour[3]<0)) || scene->u_extent<0 ||
        ((mode!=20 && mode!=21) && scene->u_image<0) ||
        ((mode==1 || mode==4) && scene->u_filter<0)))){

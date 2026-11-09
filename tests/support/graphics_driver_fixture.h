@@ -91,6 +91,8 @@ int anygm_test_graphics_quad_filter(unsigned unit);
 const char *anygm_test_graphics_shader_source(int fragment);
 /* Resolve no vertex attribute, so a program without in_Position can be tested. */
 void anygm_test_graphics_withhold_attributes(int withhold);
+/* Model a driver eliminating an unused group; NULL restores normal lookup. */
+void anygm_test_graphics_withhold_attribute_prefix(const char *prefix);
 /* Attribute arrays left enabled: a content draw must leave none behind. */
 int anygm_test_graphics_attributes_enabled(void);
 unsigned anygm_test_graphics_bound_buffer(void);

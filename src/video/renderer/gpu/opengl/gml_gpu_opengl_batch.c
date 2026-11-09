@@ -2393,6 +2393,43 @@ int gml_render_gpu_opengl_copy_image(GmlGpuBackend *backend,const GmlRenderDrawO
   return ok;
 }
 
+/* A rendered opaque full-source unit copy has no sampling or blend work left.
+ * Keep partial, reflected, tinted and cutout variants on their shader owner. */
+static int opaque_unit_surface_copy(const GmlRenderDrawOp *op,
+  const GmlRenderDrawStateSnapshot *state,const GlSceneImage *source){
+  const GmlRenderQuad *q=&op->payload.quad;
+  if(!source || !source->valid || !source->rendered_origin || !source->alpha_opaque ||
+     source->pixel_format!=GML_RENDER_PIXEL_ARGB8888 ||
+     (source->ref.resource_class!=GML_RENDER_RESOURCE_SCREEN &&
+      source->ref.resource_class!=GML_RENDER_RESOURCE_APPLICATION &&
+      source->ref.resource_class!=GML_RENDER_RESOURCE_SURFACE) ||
+     op->scene_family!=GML_RENDER_SCENE_SURFACE ||
+     op->target.image.resource_class!=GML_RENDER_RESOURCE_SCREEN ||
+     same_logical(source->ref,op->target.image) ||
+     op->target.width!=source->width || op->target.height!=source->height ||
+     state->write_mask!=15u || state->alpha!=255u || state->colour!=0xFFFFFFFFu ||
+     state->source_alpha_key || state->source_palette.enabled || qualified_blend(state)!=1 ||
+     state->coverage_policy!=GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA ||
+     (state->alpha_test_enabled && state->alpha_test_reference>=255u) ||
+     q->shape!=GML_RENDER_QUAD_AXIS_ALIGNED || q->span_active ||
+     q->sampling.filter!=GML_RENDER_FILTER_NEAREST ||
+     q->sampling.quantisation!=GML_RENDER_QUANTISE_SURFACE_NEAREST_FUNCTION ||
+     q->sampling.source_region.x || q->sampling.source_region.y ||
+     q->sampling.source_region.width!=source->width ||
+     q->sampling.source_region.height!=source->height ||
+     q->filtered_draw_alpha!=1.0 ||
+     q->inverse_anchor[0] || q->inverse_anchor[1] ||
+     q->inverse_x[0]!=source->width || q->inverse_x[1] ||
+     q->inverse_y[0] || q->inverse_y[1]!=source->height) return 0;
+  for(unsigned c=0;c<4u;c++){
+    unsigned right=c==1u || c==2u,bottom=c>=2u;
+    if(q->x[c]!=(right?source->width:0u) || q->y[c]!=(bottom?source->height:0u) ||
+       q->u[c]!=right || q->v[c]!=bottom || q->corner_colour[c]!=0xFFFFFFFFu ||
+       q->span_x[c] || q->span_y[c]) return 0;
+  }
+  return 1;
+}
+
 static void compact_quad_instances(GlScene *scene,uint32_t count){
   static const unsigned corner_vertex[4]={0u,1u,2u,5u};
   for(uint32_t quad=0;quad<count;quad++){
@@ -2766,7 +2803,8 @@ restore_stream_state:
   target->valid=1;
   target->rendered_origin=1;
   target->alpha_opaque=opaque && filter!=110u &&
-    (!(write_mask&8u) || stamp_alpha || (blend==1 && filter!=15u && filter!=17u));
+    (!(write_mask&8u) || stamp_alpha || filter==149u || filter==153u || blend==22 || blend==24 ||
+     (blend==1 && filter!=15u && filter!=17u));
   /* Constant RGB programs cannot change selector for the separate alpha stamp.
    * Submit that existing kernel through the same stream with complete state. */
   if(!skip_alpha && (filter==GL_SCENE_NATIVE_POINT_OPAQUE_FILTER || filter==53u || filter==66u || filter==21u || filter==25u || filter==32u || filter==80u) && (write_mask&8u))
@@ -3563,6 +3601,18 @@ GmlRenderExecutionResult gml_gpu_opengl_scene_submit(GmlGpuBackend *backend,
       result.accepted_prefix=index+1u;
       pending_count=0;
       continue;
+    }
+    if(!pending_count && backend->gl.BlitFramebuffer &&
+       opaque_unit_surface_copy(op,&batch->states[op->state_index],pending_source)){
+      GmlRenderDrawOp copy=*op;
+      copy.opcode=GML_RENDER_OP_COPY_IMAGE;
+      copy.payload.copy=(GmlRenderCopyRegion){{0,0,pending_source->width,pending_source->height},
+        {0,0,target->width,target->height},0u,pending_source->width,target->width};
+      if(!gml_render_gpu_opengl_copy_image(backend,&copy,target,pending_source)){
+        mark_uncertain(&result,target);break;
+      }
+      target->valid=1;target->rendered_origin=1;
+      result.accepted_prefix=index+1u;continue;
     }
     pending_filter=operation_filter;
     pending_blend=qualified_blend(&batch->states[op->state_index]);

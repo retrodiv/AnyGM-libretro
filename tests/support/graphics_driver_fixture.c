@@ -93,6 +93,7 @@ typedef struct FakeDriver {
   char shader_source[2][65536];
   GLint strip_draw_calls;
   int no_attributes;
+  char withheld_attribute_prefix[64];
   int attributes_enabled;
   GLuint bound_buffer;
   size_t buffer_bytes;
@@ -707,6 +708,8 @@ static void fake_DrawArraysInstanced(GLenum mode,GLint first,GLsizei count,
 static GLint fake_GetAttribLocation(GLuint p,const GLchar *name){
   (void)p; note_call();
   if(g_fake.no_attributes) return -1;
+  if(g_fake.withheld_attribute_prefix[0] &&
+     !strncmp(name,g_fake.withheld_attribute_prefix,strlen(g_fake.withheld_attribute_prefix))) return -1;
   if(!strcmp(name,"in_Position")) return 0;
   if(!strcmp(name,"in_Colour")) return 1;
   if(!strcmp(name,"in_TextureCoord")) return 2;
@@ -1022,6 +1025,9 @@ unsigned anygm_test_graphics_quad_texture(unsigned unit){ return unit<3?g_fake.q
 int anygm_test_graphics_quad_filter(unsigned unit){ return unit<3?g_fake.quad_filter[unit]:0; }
 const char *anygm_test_graphics_shader_source(int fragment){ return g_fake.shader_source[fragment?1:0]; }
 void anygm_test_graphics_withhold_attributes(int withhold){ g_fake.no_attributes=withhold; }
+void anygm_test_graphics_withhold_attribute_prefix(const char *prefix){
+  snprintf(g_fake.withheld_attribute_prefix,sizeof g_fake.withheld_attribute_prefix,"%s",prefix?prefix:"");
+}
 int anygm_test_graphics_attributes_enabled(void){ return g_fake.attributes_enabled; }
 unsigned anygm_test_graphics_bound_buffer(void){ return g_fake.bound_buffer; }
 size_t anygm_test_graphics_buffer_bytes(void){ return g_fake.buffer_bytes; }
