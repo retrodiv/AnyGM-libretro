@@ -369,6 +369,13 @@ change canonical state. This exposes retained positions outside an active
 view without confusing temporary deactivation with destruction. Consumers
 that request it must interpret object counts as including those instances.
 
+`GML_LOG_INSTVAR=OBJECT:VARIABLES` reports comma-separated instance variables at
+the existing end-of-Step VM boundary, using the VM frame number. A named object
+selects its first instance; `OBJECT@ID` selects one active instance by identity.
+`*:VARIABLES` lists every active, unmarked instance with its actual object name
+and identity. Each instance receives the complete variable list. This read-only
+wildcard does not move the observation to the later engine object-listing phase.
+
 `GML_LOG_COVERAGE=1` reports, once when content is unloaded, how much of the payload's own code a
 run ever entered:
 

@@ -2729,6 +2729,75 @@ static int state_input_history_roundtrip(void){
          state_input_history_roundtrip_for_ports(0u);
 }
 
+typedef struct {
+  char selector[128],text[8192];
+  size_t used;
+} InstanceVariableDiagnostic;
+
+static const char *instance_variable_setting(void *userdata,const char *name){
+  InstanceVariableDiagnostic *control=userdata;
+  return !strcmp(name,"GML_LOG_INSTVAR") && control->selector[0]?control->selector:NULL;
+}
+
+static void instance_variable_message(void *userdata,AnygmLogLevel level,const char *message){
+  InstanceVariableDiagnostic *control=userdata;
+  (void)level;
+  size_t length=strlen(message);
+  if(length>=sizeof control->text-control->used) return;
+  memcpy(control->text+control->used,message,length+1);control->used+=length;
+}
+
+static int instance_variable_diagnostic_policy(void){
+  AnygmSyntheticContent fixture;
+  if(!anygm_synthetic_content_create(&fixture)) return 0;
+  InstanceVariableDiagnostic control={0};
+  AnygmHostServices services={0};services.struct_size=sizeof services;
+  services.abi_version=ANYGM_HOST_SERVICES_VERSION;anygm_stdio_vfs_services_init(&services);
+  services.userdata=&control;services.development_setting=instance_variable_setting;
+  services.log=instance_variable_message;
+  AnygmEngine *engine=NULL;
+  AnygmContentSource source={0};source.struct_size=sizeof source;
+  source.kind=ANYGM_CONTENT_PATH;source.path=fixture.path;
+  source.cache_directory=fixture.directory;source.save_directory=fixture.directory;
+  int ok=anygm_create(&services,&engine)==ANYGM_OK &&
+    anygm_load(engine,&source,NULL)==ANYGM_OK && engine->vm.inst_count==1;
+  unsigned first=ok?engine->vm.inst[0].id:0,second=0;
+  if(ok){
+    GmlInstance *added=gml_instance_create(&engine->vm,17,0,0);
+    ok=added!=NULL;
+    if(ok) second=added->id;
+    for(int i=0;ok && i<engine->vm.inst_count;i++)
+      *gml_varmap_put(&engine->vm.inst[i].vars,"diagnostic_probe")=
+        vreal(engine->vm.inst[i].id==first?11:47);
+    GmlInstance *inactive=ok?gml_instance_create(&engine->vm,23,0,0):NULL;
+    ok=ok && inactive!=NULL;
+    if(ok){inactive->active=0;inactive->deactivated=1;}
+  }
+  for(int variant=0;ok && variant<4;variant++){
+    if(variant==0) snprintf(control.selector,sizeof control.selector,"obj_fixture:diagnostic_probe,x");
+    if(variant==1) snprintf(control.selector,sizeof control.selector,"*:diagnostic_probe,x");
+    if(variant==2) snprintf(control.selector,sizeof control.selector,"obj_fixture@%u:diagnostic_probe,x",second);
+    if(variant==3) control.selector[0]=0;
+    control.used=0;control.text[0]=0;
+    AnygmInputFrame input={0};input.struct_size=sizeof input;
+    input.pointer_x=input.pointer_y=-1;
+    AnygmFrameOutput output={0};output.struct_size=sizeof output;
+    ok=anygm_run_frame(engine,&input,&output)==ANYGM_OK;
+    char left[160],right[160];
+    snprintf(left,sizeof left,"[ivar] f%ld obj_fixture id=%u diagnostic_probe=11.00 x=0.00",engine->vm.frame,first);
+    snprintf(right,sizeof right,"[ivar] f%ld obj_fixture id=%u diagnostic_probe=47.00 x=17.00",engine->vm.frame,second);
+    int rows=0;
+    for(const char *scan=control.text;(scan=strstr(scan,"[ivar]"));scan+=6) rows++;
+    if(variant==0) ok=ok && rows==1 && strstr(control.text,left)!=NULL;
+    if(variant==1) ok=ok && rows==2 && strstr(control.text,left)!=NULL && strstr(control.text,right)!=NULL;
+    if(variant==2) ok=ok && rows==1 && strstr(control.text,right)!=NULL;
+    if(variant==3) ok=ok && rows==0;
+  }
+  if(!ok) fputs("instance variable diagnostics lost selection, values or frame phase\n",stderr);
+  anygm_destroy(engine);anygm_synthetic_content_destroy(&fixture);
+  return ok;
+}
+
 static int declared_keyboard_binding_policy(void){
   AnygmEngine engine={0};
   uint32_t address=0;
@@ -3892,6 +3961,8 @@ int main(int argc,char **argv){
       return zero_count_native_pad_silence_policy()?0:1;
     if(!strcmp(argv[2],"input_declared_keyboard_binding"))
       return declared_keyboard_binding_policy()?0:1;
+    if(!strcmp(argv[2],"instance_variable_diagnostic"))
+      return instance_variable_diagnostic_policy()?0:1;
     if(!strcmp(argv[2],"simulated_key_lifetime"))
       return simulated_key_lifetime_policy()?0:1;
     if(!strcmp(argv[2],"simulated_key_frame_lifetime"))
@@ -3931,6 +4002,7 @@ int main(int argc,char **argv){
           "background_color|view_surface_room_lifetime|view_surface_frame_mirror|"
           "view_surface_actual_target|multi_view_application_canvas|game_change|"
           "input_binding_ownership|input_zero_native_count|input_declared_keyboard_binding|"
+          "instance_variable_diagnostic|"
           "simulated_key_lifetime|simulated_key_frame_lifetime|"
           "bridged_key_press_delivery|bridged_key_hold|bridged_key_restore|undefined_placement|"
           "room_start_deactivation]\n",stderr);
@@ -3982,6 +4054,7 @@ int main(int argc,char **argv){
   if(!input_binding_ownership_policy()) return 1;
   if(!zero_count_native_pad_silence_policy()) return 1;
   if(!declared_keyboard_binding_policy()) return 1;
+  if(!instance_variable_diagnostic_policy()) return 1;
   if(!simulated_key_lifetime_policy()) return 1;
   if(!simulated_key_frame_lifetime_policy()) return 1;
   if(!bridged_key_press_delivery_policy()) return 1;

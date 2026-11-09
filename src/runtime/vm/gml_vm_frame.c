@@ -785,17 +785,31 @@ void gml_vm_step(GmlVM *vm){
     return;
   }
   gml_vm_instances_reap(vm);
-  { const char *iv=anygm_host_development_setting(vm->host,"GML_LOG_INSTVAR");   /* obj_name[@id]:var1,var2 — dump instance vars per frame */
+  { const char *iv=anygm_host_development_setting(vm->host,"GML_LOG_INSTVAR");   /* obj_name[@id]:var1,var2 or *:var1,var2 */
     if(iv && *iv){ char buf[256]; snprintf(buf,sizeof buf,"%s",iv);
       char *colon=strchr(buf,':');
       if(colon){ *colon=0; unsigned wanted_id=0; char *at=strchr(buf,'@');
         if(at){ *at=0; wanted_id=(unsigned)strtoul(at+1,NULL,10); }
-        int oi=gml_object_index_by_name(vm,buf); GmlInstance *in=NULL;
+        int all=!wanted_id && !strcmp(buf,"*");
+        char variables[256]; snprintf(variables,sizeof variables,"%s",colon+1);
+        int oi=all?-1:gml_object_index_by_name(vm,buf);
+        int samples=all && !wanted_id?vm->inst_count:1;
+        for(int sample=0;sample<samples;sample++){
+        GmlInstance *in=NULL;
         if(wanted_id){ for(int i=0;i<vm->inst_count;i++) if(vm->inst[i].active &&
             !vm->inst[i].marked && vm->inst[i].id==wanted_id){ in=&vm->inst[i]; break; } }
+        else if(all){
+          GmlInstance *candidate=&vm->inst[sample];
+          if(candidate->active && !candidate->marked && candidate->obj>=0 &&
+             candidate->obj<vm->n_objects) in=candidate;
+        }
         else if(oi>=0) in=gml_find_instance(vm,oi);
-        if(in){ anygm_host_logf(vm ? vm->host : NULL,ANYGM_LOG_DEBUG,"[ivar] f%ld %s id=%u",vm->frame,buf,in->id);
-          for(char *tok=strtok(colon+1,",");tok;tok=strtok(NULL,",")){
+        if(in){
+          const char *label=all && in->obj>=0 && in->obj<vm->n_objects?
+            vm->objects[in->obj].name:buf;
+          char values[256]; snprintf(values,sizeof values,"%s",variables);
+          anygm_host_logf(vm ? vm->host : NULL,ANYGM_LOG_DEBUG,"[ivar] f%ld %s id=%u",vm->frame,label?label:"?",in->id);
+          for(char *tok=strtok(values,",");tok;tok=strtok(NULL,",")){
             GmlVal *p=gml_varmap_get(&in->vars,tok);
             if(!p){   /* built-in struct fields aren't in the varmap — resolve the common ones */
               double bv; int have=1;
@@ -829,7 +843,7 @@ void gml_vm_step(GmlVM *vm){
                 anygm_host_logf(vm ? vm->host : NULL,ANYGM_LOG_DEBUG,"%s%.1f",e?",":"",A->data[e].t==V_REAL?A->data[e].d:-999);
               anygm_host_logf(vm ? vm->host : NULL,ANYGM_LOG_DEBUG,"]"); }
             else anygm_host_logf(vm ? vm->host : NULL,ANYGM_LOG_DEBUG," %s=<t%d>",tok,p->t); }
-          anygm_host_logf(vm ? vm->host : NULL,ANYGM_LOG_DEBUG,"\n"); } } } }
+          anygm_host_logf(vm ? vm->host : NULL,ANYGM_LOG_DEBUG,"\n"); } } } } }
   { const char *gd=anygm_host_development_setting(vm->host,"GML_DBG_GLOBDUMP");   /* dump the whole globals varmap once at frame N */
     if(gd && vm->frame==atol(gd)){
       anygm_host_logf(vm ? vm->host : NULL,ANYGM_LOG_DEBUG,"[globdump] f%ld cap=%d:\n",vm->frame,vm->globals.cap);
