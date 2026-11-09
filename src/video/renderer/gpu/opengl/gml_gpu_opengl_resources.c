@@ -404,7 +404,11 @@ GlSceneImage *gml_gpu_opengl_scene_image(GmlGpuBackend *backend,GmlRenderImageRe
 
 /* Reduce actual RGB bytes to one exact flag, entirely in this context. Intermediate allocations
  * may be larger than the written level: the shader's explicit extent excludes stale border data.
- * Separate final flags keep SCREEN alive while APPLICATION reuses both scratch planes. */
+ * Separate final flags keep SCREEN alive while APPLICATION reuses both scratch planes.
+ * A positive probe anywhere in the input may set every output cell: replicating an
+ * existing positive cannot change the final OR. Negative probes still scan every
+ * tile, so sparse pixels, black images and alpha-only texels remain exact. The
+ * scratch cells are private reduction intermediates, never per-tile image state. */
 int gml_gpu_opengl_scene_reduce_rgb(GmlGpuBackend *backend,GlSceneImage *source,
                                     unsigned predicate){
   GlScene *scene=&backend->scene;

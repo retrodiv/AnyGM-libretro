@@ -238,12 +238,23 @@
   "uniform sampler2D u_image;\n" \
   "uniform ivec2 u_source_extent;\n" \
   "out vec4 o_color;\n" \
+  "bool rgb_present(ivec2 p){\n" \
+  "  return any(notEqual(texelFetch(u_image,p,0).rgb,vec3(0.0)));\n" \
+  "}\n" \
   "void main(){\n" \
+  "  ivec2 middle=u_source_extent/2;\n" \
+  "  if(rgb_present(middle) ||\n" \
+  "     rgb_present(ivec2(middle.x,u_source_extent.y/3)) ||\n" \
+  "     rgb_present(ivec2(middle.x,(u_source_extent.y/3)*2)) ||\n" \
+  "     rgb_present(ivec2(u_source_extent.x/3,middle.y)) ||\n" \
+  "     rgb_present(ivec2((u_source_extent.x/3)*2,middle.y))){\n" \
+  "    o_color=vec4(1.0); return;\n" \
+  "  }\n" \
   "  ivec2 first=ivec2(gl_FragCoord.xy)*8;\n" \
   "  for(int y=0;y<8;y++) for(int x=0;x<8;x++){\n" \
   "    ivec2 p=first+ivec2(x,y);\n" \
   "    if(all(lessThan(p,u_source_extent)) &&\n" \
-  "       any(notEqual(texelFetch(u_image,p,0).rgb,vec3(0.0)))){\n" \
+  "       rgb_present(p)){\n" \
   "      o_color=vec4(1.0); return;\n" \
   "    }\n" \
   "  }\n" \

@@ -1091,6 +1091,28 @@ static int scene_content_source_orientation_case(void){
   return 1;
 }
 
+static int scene_rgb_reduction_program_case(void){
+  for(unsigned api=0;api<2u;api++){
+    anygm_test_graphics_reset();GmlGpu *gpu=gml_gpu_create();
+    GmlGpuContext context=fake_context(api?GML_GPU_API_OPENGLES3:GML_GPU_API_OPENGL_CORE);
+    REQUIRE(gpu && gml_gpu_context_reset(gpu,&context),"RGB predicate context adopted");
+    anygm_test_graphics_fail_compile_containing("rgb_present");
+    REQUIRE(!gml_gpu_opengl_rgb_reduce_program(gpu->backend) &&
+      !gpu->backend->scene.rgb_reduce_program,
+      "required exact predicate compiler failure leaves no usable program");
+    anygm_test_graphics_fail_compile_containing(NULL);
+    REQUIRE(gml_gpu_opengl_rgb_reduce_program(gpu->backend),
+      "predicate retries successfully after the driver compiler recovers");
+    unsigned compiled=anygm_test_graphics_compile_calls();
+    REQUIRE(gml_gpu_opengl_rgb_reduce_program(gpu->backend) &&
+      compiled==anygm_test_graphics_compile_calls() &&
+      !anygm_test_graphics_read_pixels() && !anygm_test_graphics_rgb_queries(),
+      "context-owned predicate reuse neither recompiles nor observes the image on CPU");
+    gml_gpu_destroy(gpu,1);
+  }
+  return 1;
+}
+
 static int scene_empty_screen_recovery_case(void){
   for(unsigned embedded=0;embedded<2u;embedded++)
   for(unsigned borrowed=0;borrowed<2u;borrowed++){
@@ -7166,6 +7188,7 @@ int main(int argc,char **argv){
     {"scene_numbered_rotated_texel_spans",scene_numbered_rotated_texel_spans_case},
     {"scene_completed_screen_query",scene_completed_screen_query_case},
     {"scene_empty_screen_recovery",scene_empty_screen_recovery_case},
+    {"scene_rgb_reduction_program",scene_rgb_reduction_program_case},
   };
   static const AnygmTestCase execution_cases[]={
     {"state_and_geometry",execute_state_and_geometry_case},
