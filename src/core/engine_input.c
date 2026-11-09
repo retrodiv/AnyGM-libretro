@@ -27,6 +27,8 @@ static void dbg_key_log(AnygmEngine *engine,int vk, int edge, int cur, int prev,
 }
 /* map a GM virtual-key code to a RetroPad button id (-1 = unmapped) */
 static int vk_to_pad(AnygmEngine *engine,int vk){
+  int declared=engine_overrides_key_binding(engine,vk);
+  if(declared>=0) return declared;
   if(anygm_policy_uses_classic_runtime(&engine->win)){
     switch(vk){
       case 37: return ANYGM_PAD_LEFT;

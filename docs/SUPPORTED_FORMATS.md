@@ -80,6 +80,15 @@ content whose default or menu controls require a keyboard despite containing pad
 in charge. These singleton declarations follow ordinary content-override layering, disabling and
 save-state identity. They do not edit the frontend option or the content's own controller settings.
 
+`keybind|65|b` assigns RetroPad B to virtual key 65 during keyboard emulation. The virtual
+key is a decimal Win32 key number from 2 to 255; button names are `b`, `a`, `y`, `x`,
+`start`, `select`, `up`, `down`, `left`, `right`, `l`, `r`, `l2`, `r2`, `l3` and `r3`.
+Only the named key changes; other default aliases and physical keyboard input remain intact.
+Bindings do not select keyboard emulation or affect native pad input. Declare
+`gamepad|keyboard` as well when content contains native pad references. Declarations layer
+by virtual key; `keybind|65|auto` withdraws that key's binding and restores its default.
+These content-only declarations share ordinary override disabling and save-state identity.
+
 `call|script_name` invokes the named zero-argument GMS script exactly once,
 after the first Step of a fresh content load. The name is the script asset
 name, not a CODE entry name: `call|configure_input` resolves only

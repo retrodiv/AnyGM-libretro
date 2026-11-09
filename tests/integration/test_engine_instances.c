@@ -2729,6 +2729,59 @@ static int state_input_history_roundtrip(void){
          state_input_history_roundtrip_for_ports(0u);
 }
 
+static int declared_keyboard_binding_policy(void){
+  AnygmEngine engine={0};
+  uint32_t address=0;
+  const char *name="gamepad_button_check";
+  uint8_t kind=GML_REF_FUNCTION;
+  engine.win.ref_addr=&address;engine.win.ref_name=&name;
+  engine.win.ref_kind=&kind;engine.win.n_refs=1;
+  engine.config.gamepad_connected=ANYGM_GAMEPAD_AUTO;
+  engine.config.content_overrides=1;
+  engine_input_bind(&engine);
+  engine.pad_current[0][ANYGM_PAD_FACE_BOTTOM]=1;
+  char error[256];
+  int ok=engine_boot_overrides_parse("keybind|65|b\n",engine.boot_cheats,
+      &engine.boot_cheat_count,error,sizeof error) &&
+    !engine.vm.input.key(engine.vm.input.userdata,65,0) &&
+    engine.vm.input.gamepad(engine.vm.input.userdata,0,32769,0);
+  ok=ok && engine_boot_overrides_parse("gamepad|keyboard\nkeybind|65|a\n"
+      "keybind|83|a\nkeybind|065|b\n",engine.boot_cheats,
+      &engine.boot_cheat_count,error,sizeof error) && engine.boot_cheat_count==3;
+  if(ok){
+    ok=engine.vm.input.key(engine.vm.input.userdata,65,1) &&
+      engine.vm.input.key(engine.vm.input.userdata,90,0) &&
+      !engine.vm.input.key(engine.vm.input.userdata,83,0) &&
+      !engine.vm.input.gamepad(engine.vm.input.userdata,0,32769,0);
+    engine.pad_current[0][ANYGM_PAD_FACE_RIGHT]=1;
+    ok=ok && engine.vm.input.key(engine.vm.input.userdata,83,1);
+    engine.pad_previous[0][ANYGM_PAD_FACE_BOTTOM]=1;
+    ok=ok && engine.vm.input.key(engine.vm.input.userdata,65,0) &&
+      !engine.vm.input.key(engine.vm.input.userdata,65,1);
+    engine.pad_current[0][ANYGM_PAD_FACE_BOTTOM]=0;
+    ok=ok && engine.vm.input.key(engine.vm.input.userdata,65,2);
+    engine.event_key_current[ANYGM_KEY_a]=1;
+    ok=ok && engine.vm.input.key(engine.vm.input.userdata,65,0);
+    engine.event_key_current[ANYGM_KEY_a]=0;
+    engine.config.content_overrides=0;
+    ok=ok && !engine.vm.input.key(engine.vm.input.userdata,83,0);
+    engine.config.content_overrides=1;
+    engine.pad_current[0][ANYGM_PAD_FACE_BOTTOM]=1;
+    ok=ok && engine_boot_overrides_parse("gamepad|keyboard\nkeybind|65|b\n"
+        "keybind|65|auto\n",engine.boot_cheats,&engine.boot_cheat_count,error,sizeof error) &&
+      engine.boot_cheat_count==2 && !engine.vm.input.key(engine.vm.input.userdata,65,0) &&
+      engine.vm.input.key(engine.vm.input.userdata,90,0);
+  }
+  static const char *invalid[]={"keybind|0|b","keybind|1|b","keybind|256|b",
+    "keybind|-2|b","keybind|2x|b","keybind|65|unknown","keybind|65|b|a",
+    "keybind||b","keybind|65|"};
+  for(unsigned i=0;ok && i<sizeof invalid/sizeof invalid[0];i++)
+    ok=!engine_boot_overrides_parse(invalid[i],engine.boot_cheats,
+        &engine.boot_cheat_count,error,sizeof error);
+  if(!ok) fputs("declared keyboard binding violated ownership, layering or key edges\n",stderr);
+  return ok;
+}
+
 static int zero_count_native_pad_silence_policy(void){
   AnygmSyntheticContent fixture;
   if(!anygm_synthetic_content_create(&fixture)) return 0;
@@ -3837,6 +3890,8 @@ int main(int argc,char **argv){
       return raw_gamepad_button_layout_policy()?0:1;
     if(!strcmp(argv[2],"input_zero_native_count"))
       return zero_count_native_pad_silence_policy()?0:1;
+    if(!strcmp(argv[2],"input_declared_keyboard_binding"))
+      return declared_keyboard_binding_policy()?0:1;
     if(!strcmp(argv[2],"simulated_key_lifetime"))
       return simulated_key_lifetime_policy()?0:1;
     if(!strcmp(argv[2],"simulated_key_frame_lifetime"))
@@ -3875,7 +3930,8 @@ int main(int argc,char **argv){
           "first_generation_oversized_gui|"
           "background_color|view_surface_room_lifetime|view_surface_frame_mirror|"
           "view_surface_actual_target|multi_view_application_canvas|game_change|"
-          "input_binding_ownership|input_zero_native_count|simulated_key_lifetime|simulated_key_frame_lifetime|"
+          "input_binding_ownership|input_zero_native_count|input_declared_keyboard_binding|"
+          "simulated_key_lifetime|simulated_key_frame_lifetime|"
           "bridged_key_press_delivery|bridged_key_hold|bridged_key_restore|undefined_placement|"
           "room_start_deactivation]\n",stderr);
     return 1;
@@ -3925,6 +3981,7 @@ int main(int argc,char **argv){
   if(!state_input_history_roundtrip()) return 1;
   if(!input_binding_ownership_policy()) return 1;
   if(!zero_count_native_pad_silence_policy()) return 1;
+  if(!declared_keyboard_binding_policy()) return 1;
   if(!simulated_key_lifetime_policy()) return 1;
   if(!simulated_key_frame_lifetime_policy()) return 1;
   if(!bridged_key_press_delivery_policy()) return 1;

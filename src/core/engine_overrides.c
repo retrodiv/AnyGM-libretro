@@ -706,6 +706,36 @@ static int boot_line_is_menu(const char *code){
          !strncmp(code,"mtoggle|",8) || !strncmp(code,"mrange|",7) || !strncmp(code,"mwarp|",6);
 }
 
+/* Content keyboard bindings use pad button names and Win32 virtual-key numbers.
+ * Auto removes only this key's declaration, retaining the ordinary keyboard mapping. */
+static int keyboard_binding_parse(const char *code,int *virtual_key,int *button){
+  if(strncmp(code,"keybind|",8)) return 0;
+  const char *scan=code+8;
+  if(*scan<'0' || *scan>'9') return 0;
+  unsigned key=0;
+  while(*scan>='0' && *scan<='9'){
+    key=key*10u+(unsigned)(*scan++-'0');
+    if(key>255u) return 0;
+  }
+  if(key<2u || *scan++!='|') return 0;
+  static const struct { const char *name; int button; } names[]={
+    {"b",ANYGM_PAD_FACE_BOTTOM},{"a",ANYGM_PAD_FACE_RIGHT},
+    {"y",ANYGM_PAD_FACE_LEFT},{"x",ANYGM_PAD_FACE_TOP},
+    {"start",ANYGM_PAD_START},{"select",ANYGM_PAD_SELECT},
+    {"up",ANYGM_PAD_UP},{"down",ANYGM_PAD_DOWN},
+    {"left",ANYGM_PAD_LEFT},{"right",ANYGM_PAD_RIGHT},
+    {"l",ANYGM_PAD_LEFT_SHOULDER},{"r",ANYGM_PAD_RIGHT_SHOULDER},
+    {"l2",ANYGM_PAD_LEFT_TRIGGER},{"r2",ANYGM_PAD_RIGHT_TRIGGER},
+    {"l3",ANYGM_PAD_LEFT_STICK},{"r3",ANYGM_PAD_RIGHT_STICK},{"auto",-1}
+  };
+  for(size_t i=0;i<sizeof names/sizeof names[0];i++){
+    if(strcmp(scan,names[i].name)) continue;
+    *virtual_key=(int)key;*button=names[i].button;
+    return 1;
+  }
+  return 0;
+}
+
 /* Compare destinations and conditions, never the value being assigned. Resolve
  * layers before any slot captures live state, runs a script, or builds a menu. */
 static int boot_same_target(const CheatSlot *left,const CheatSlot *right){
@@ -722,6 +752,10 @@ static int boot_same_target(const CheatSlot *left,const CheatSlot *right){
     size_t length=strlen(singletons[i]);
     if(!strncmp(left->code,singletons[i],length) && !strncmp(right->code,singletons[i],length)) return 1;
   }
+  int left_key,right_key,left_button,right_button;
+  if(keyboard_binding_parse(left->code,&left_key,&left_button) &&
+     keyboard_binding_parse(right->code,&right_key,&right_button))
+    return left_key==right_key;
   if(boot_line_is_menu(left->code) && boot_line_is_menu(right->code)){
     char l[6][128],r[6][128];
     int ln=menu_split(left->code,l),rn=menu_split(right->code,r);
@@ -800,6 +834,14 @@ int engine_boot_overrides_parse(const char *text,CheatSlot *slots,int *count,
           if(strcmp(slot->code+8,"keyboard") && strcmp(slot->code+8,"auto")){
             snprintf(error,error_capacity,
                      "directive %d: gamepad| takes keyboard or auto",line_number);
+            return 0;
+          }
+        } else if(!strncmp(slot->code,"keybind|",8)){
+          int virtual_key,button;
+          if(!keyboard_binding_parse(slot->code,&virtual_key,&button)){
+            snprintf(error,error_capacity,
+                     "directive %d: keybind| takes a virtual key from 2 to 255 and a RetroPad button or auto",
+                     line_number);
             return 0;
           }
         } else if(!strncmp(slot->code,"introskip|",10) || !strncmp(slot->code,"introauto|",10)){
@@ -1553,6 +1595,17 @@ int engine_overrides_keyboard_emulation(AnygmEngine *engine){
     if(engine->boot_cheats[i].enabled &&
        !strcmp(engine->boot_cheats[i].code,"gamepad|keyboard")) return 1;
   return 0;
+}
+/* Binding declarations never select input ownership or alter physical keyboard state. */
+int engine_overrides_key_binding(AnygmEngine *engine,int virtual_key){
+  int active=engine_boot_cheats_active(engine);
+  for(int i=0;i<active;i++){
+    int key,button;
+    if(engine->boot_cheats[i].enabled &&
+       keyboard_binding_parse(engine->boot_cheats[i].code,&key,&button) && key==virtual_key)
+      return button;
+  }
+  return -1;
 }
 void introskip_hook(AnygmEngine *engine){
   if(engine->introskip_enabled < 0){

@@ -46,6 +46,7 @@ Indexes distinguish array/list items; camera destinations use the normalized
 handle mask and field. A surface resize is one operation with two dimensions.
 `ostype`, `gamepad`, `introskip`, `introauto`, `monitorview` and the menu declaration are
 singletons within their applicable scope. Menu rows replace the same label;
+`keybind` declarations replace the same virtual key, with `auto` restoring its default mapping.
 `mset` replaces the same menu variable. Repeated calls to the same script and
 condition become one call. Different destinations remain available.
 
