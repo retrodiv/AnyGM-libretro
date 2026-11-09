@@ -2394,9 +2394,10 @@ int gml_render_gpu_opengl_copy_image(GmlGpuBackend *backend,const GmlRenderDrawO
   return ok;
 }
 
-/* A rendered opaque full-source unit copy has no sampling or blend work left.
- * Keep partial, reflected, tinted and cutout variants on their shader owner. */
-static int opaque_unit_surface_copy(const GmlRenderDrawOp *op,
+/* Full-source opaque device-point draws need no shader blend work. Integral
+ * contained rectangles use the same physical nearest sampling as a framebuffer
+ * blit; other sampling rules retain their existing shader owner. */
+static int opaque_surface_device_copy(const GmlRenderDrawOp *op,
   const GmlRenderDrawStateSnapshot *state,const GlSceneImage *source){
   const GmlRenderQuad *q=&op->payload.quad;
   if(!source || !source->valid || !source->rendered_origin || !source->alpha_opaque ||
@@ -2413,18 +2414,27 @@ static int opaque_unit_surface_copy(const GmlRenderDrawOp *op,
      state->coverage_policy!=GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA ||
      (state->alpha_test_enabled && state->alpha_test_reference>=255u) ||
      q->shape!=GML_RENDER_QUAD_AXIS_ALIGNED || q->span_active ||
-     q->sampling.filter!=GML_RENDER_FILTER_NEAREST ||
-     q->sampling.quantisation!=GML_RENDER_QUANTISE_SURFACE_NEAREST_FUNCTION ||
      q->sampling.source_region.x || q->sampling.source_region.y ||
      q->sampling.source_region.width!=source->width ||
      q->sampling.source_region.height!=source->height ||
-     q->filtered_draw_alpha!=1.0 ||
-     q->inverse_anchor[0] || q->inverse_anchor[1] ||
-     q->inverse_x[0]!=source->width || q->inverse_x[1] ||
-     q->inverse_y[0] || q->inverse_y[1]!=source->height) return 0;
+     q->filtered_draw_alpha!=1.0) return 0;
+  int physical=q->sampling.filter==GML_RENDER_FILTER_HARDWARE_PIXEL_CENTRE_POINT &&
+    q->sampling.quantisation==0u;
+  double left=physical?q->x[0]:0.0,top=physical?q->y[0]:0.0;
+  double width=physical?q->x[1]-left:source->width;
+  double height=physical?q->y[2]-top:source->height;
+  if((!physical && (q->sampling.filter!=GML_RENDER_FILTER_NEAREST ||
+       q->sampling.quantisation!=GML_RENDER_QUANTISE_SURFACE_NEAREST_FUNCTION)) ||
+     !isfinite(left) || !isfinite(top) || !isfinite(width) || !isfinite(height) ||
+     left<0.0 || top<0.0 || width<=0.0 || height<=0.0 ||
+     floor(left)!=left || floor(top)!=top || floor(width)!=width || floor(height)!=height ||
+     left+width>op->target.width || top+height>op->target.height ||
+     q->inverse_anchor[0]!=left || q->inverse_anchor[1]!=top ||
+     q->inverse_x[0]!=width || q->inverse_x[1] ||
+     q->inverse_y[0] || q->inverse_y[1]!=height) return 0;
   for(unsigned c=0;c<4u;c++){
     unsigned right=c==1u || c==2u,bottom=c>=2u;
-    if(q->x[c]!=(right?source->width:0u) || q->y[c]!=(bottom?source->height:0u) ||
+    if(q->x[c]!=left+(right?width:0.0) || q->y[c]!=top+(bottom?height:0.0) ||
        q->u[c]!=right || q->v[c]!=bottom || q->corner_colour[c]!=0xFFFFFFFFu ||
        q->span_x[c] || q->span_y[c]) return 0;
   }
@@ -3610,11 +3620,14 @@ GmlRenderExecutionResult gml_gpu_opengl_scene_submit(GmlGpuBackend *backend,
       continue;
     }
     if(!pending_count && backend->gl.BlitFramebuffer &&
-       opaque_unit_surface_copy(op,&batch->states[op->state_index],pending_source)){
+       opaque_surface_device_copy(op,&batch->states[op->state_index],pending_source)){
       GmlRenderDrawOp copy=*op;
       copy.opcode=GML_RENDER_OP_COPY_IMAGE;
       copy.payload.copy=(GmlRenderCopyRegion){{0,0,pending_source->width,pending_source->height},
-        {0,0,target->width,target->height},0u,pending_source->width,target->width};
+        {(int32_t)op->payload.quad.x[0],(int32_t)op->payload.quad.y[0],
+         (uint32_t)(op->payload.quad.x[1]-op->payload.quad.x[0]),
+         (uint32_t)(op->payload.quad.y[2]-op->payload.quad.y[0])},
+        0u,pending_source->width,target->width};
       if(!gml_render_gpu_opengl_copy_image(backend,&copy,target,pending_source)){
         mark_uncertain(&result,target);break;
       }

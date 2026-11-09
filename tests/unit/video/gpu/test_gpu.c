@@ -1899,7 +1899,7 @@ static int scene_hot_constant_programs_case(void){
 
 static int scene_opaque_unit_surface_copy_case(void){
   enum { W=16,H=12 };
-  for(unsigned api=0;api<2u;api++) for(unsigned variant=0;variant<10u;variant++){
+  for(unsigned api=0;api<2u;api++) for(unsigned variant=0;variant<16u;variant++){
     anygm_test_graphics_reset();GmlGpu *gpu=gml_gpu_create();
     GmlGpuContext context=fake_context(api?GML_GPU_API_OPENGLES3:GML_GPU_API_OPENGL_CORE);
     GmlRenderDeviceServices device={0};
@@ -1924,7 +1924,7 @@ static int scene_opaque_unit_surface_copy_case(void){
         .target={.image=source,.storage_version=1u,.width=W,.height=H,
           .pixel_format=GML_RENDER_PIXEL_ARGB8888,.region={0,0,W,H}}};
       clear.target.image.content_version++;
-      clear.payload.clear_colour=variant==1u?0x8013579Bu:0xFF13579Bu;
+      clear.payload.clear_colour=(variant==1u || variant==13u)?0x8013579Bu:0xFF13579Bu;
       GmlRenderDrawBatch batch={&clear,1u,states,2u};
       REQUIRE(device.submit(device.context,&batch).status==GML_RENDER_EXEC_ACCEPTED,"unit source clear");
       source=clear.target.image;
@@ -1950,6 +1950,21 @@ static int scene_opaque_unit_surface_copy_case(void){
       q->u[c]=right;q->v[c]=bottom;
       q->corner_colour[c]=variant==2u?0x80FFFFFFu:variant==3u?0xFF70B0D0u:0xFFFFFFFFu;
     }
+    if(variant>=10u){
+      q->sampling.filter=GML_RENDER_FILTER_HARDWARE_PIXEL_CENTRE_POINT;
+      q->sampling.quantisation=0u;q->source_opaque=1u;
+      double x=variant==11u?1.25:variant==12u?-1.0:1.0,y=1.0;
+      double width=W-2.0,height=H-2.0;
+      q->inverse_anchor[0]=x;q->inverse_anchor[1]=y;
+      q->inverse_x[0]=width;q->inverse_y[1]=height;
+      for(unsigned c=0;c<4u;c++){
+        q->x[c]=(c==1u || c==2u)?fmin(W,ceil(x+width-.5)):fmax(0.0,ceil(x-.5));
+        q->y[c]=c>=2u?y+height:y;
+        q->u[c]=(q->x[c]-x)/width;q->v[c]=(q->y[c]-y)/height;
+      }
+      if(variant==14u){states[1].alpha_test_enabled=1u;states[1].alpha_test_reference=255u;}
+      if(variant==15u) states[1].write_mask=7u;
+    }
     states[1].samplers[0]=q->sampling;
     if(variant==5u) states[1].write_mask=7u;
     if(variant==6u){states[1].alpha_test_enabled=1u;states[1].alpha_test_reference=255u;}
@@ -1957,14 +1972,27 @@ static int scene_opaque_unit_surface_copy_case(void){
     unsigned copies_before=anygm_test_graphics_scene_copies();
     GmlRenderDrawBatch batch={ops,variant==8u?3u:2u,states,2u};
     GmlRenderExecutionResult result=device.submit(device.context,&batch);
+    if(variant==14u || variant==15u){
+      REQUIRE(result.status!=GML_RENDER_EXEC_ACCEPTED && !result.accepted_prefix &&
+        anygm_test_graphics_scene_copies()==copies_before &&
+        !anygm_test_graphics_scene_draw_calls(),
+        "unsupported physical-point state refuses the whole batch before writes");
+      gml_gpu_destroy(gpu,1);continue;
+    }
     if(result.status!=GML_RENDER_EXEC_ACCEPTED || result.accepted_prefix!=batch.operation_count)
       fprintf(stderr,"unit surface copy: api=%u variant=%u status=%u prefix=%u\n",
         api,variant,result.status,result.accepted_prefix);
     REQUIRE(result.status==GML_RENDER_EXEC_ACCEPTED && result.accepted_prefix==batch.operation_count,
       "unit surface variants keep their ordinary executor");
-    unsigned expected=variant==0u?1u:variant==8u?2u:0u;
+    unsigned expected=(variant==0u || variant==10u)?1u:variant==8u?2u:0u;
     REQUIRE(anygm_test_graphics_scene_copies()==copies_before+expected &&
-      !anygm_test_graphics_read_pixels(),"only full opaque identity surfaces use raw device copies");
+      !anygm_test_graphics_read_pixels(),"only opaque identity or contained physical-point surfaces use raw copies");
+    if(variant==10u){
+      int actual[8],expected[8]={0,0,W,H,1,1,W-1,H-1};
+      anygm_test_graphics_last_blit(actual);
+      REQUIRE(!memcmp(actual,expected,sizeof actual),
+        "physical-point copy preserves the full source and inset destination bounds");
+    }
     gml_gpu_destroy(gpu,1);
   }
   return 1;

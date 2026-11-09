@@ -54,6 +54,7 @@ typedef struct FakeDriver {
   int blend_enabled;
   unsigned blend_configurations;
   unsigned scene_copies;
+  GLint last_blit[8];
   unsigned copy_error_at,last_copy_framebuffer,last_read_framebuffer;
   uint64_t scene_copied_pixels;
   int depth_enabled;
@@ -226,8 +227,10 @@ static void fake_CopyTexSubImage2D(GLenum a,GLint b,GLint c,GLint d,GLint e,GLin
 static void fake_BlitFramebuffer(GLint sx0,GLint sy0,GLint sx1,GLint sy1,
                                   GLint dx0,GLint dy0,GLint dx1,GLint dy1,
                                   GLbitfield mask,GLenum filter){
-  (void)sx0;(void)sy0;(void)sx1;(void)sy1;(void)mask;(void)filter;
+  (void)mask;(void)filter;
   note_call();
+  GLint rectangle[8]={sx0,sy0,sx1,sy1,dx0,dy0,dx1,dy1};
+  memcpy(g_fake.last_blit,rectangle,sizeof rectangle);
   g_fake.scene_copies++;
   g_fake.scene_copied_pixels+=(uint64_t)(unsigned)abs(dx1-dx0)*(unsigned)abs(dy1-dy0);
 }
@@ -1084,6 +1087,9 @@ void anygm_test_graphics_blend_factors(unsigned factors[4]){
 }
 unsigned anygm_test_graphics_blend_configurations(void){ return g_fake.blend_configurations; }
 unsigned anygm_test_graphics_scene_copies(void){ return g_fake.scene_copies; }
+void anygm_test_graphics_last_blit(int coordinates[8]){
+  for(unsigned i=0;i<8u;i++) coordinates[i]=g_fake.last_blit[i];
+}
 uint64_t anygm_test_graphics_scene_copied_pixels(void){ return g_fake.scene_copied_pixels; }
 int anygm_test_graphics_depth_enabled(void){ return g_fake.depth_enabled; }
 int anygm_test_graphics_stencil_enabled(void){ return g_fake.stencil_enabled; }

@@ -122,6 +122,8 @@ void anygm_test_graphics_fail_all_readbacks(int failing);
 void anygm_test_graphics_fail_copy_at(unsigned ordinal);
 unsigned anygm_test_graphics_last_read_framebuffer(void);
 unsigned anygm_test_graphics_last_copy_framebuffer(void);
+/* Exact source and destination framebuffer-blit bounds, in device coordinates. */
+void anygm_test_graphics_last_blit(int coordinates[8]);
 /* Read-backs issued into a pack buffer, which do not wait for the device. */
 unsigned anygm_test_graphics_async_read_pixels(void);
 /* The texture coordinate of one corner of the last quad drawn through a content program. */
