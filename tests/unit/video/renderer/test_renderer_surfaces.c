@@ -142,10 +142,16 @@ static int mapped_multiply_result(const MappedMultiplyControl *control,int fast,
 }
 
 static int mapped_multiply_exact_case(void){
-  static const double transforms[][5]={
+  const double transforms[][5]={
     {-3.25,2.5,3.2,2.25,340},{14.5,-7.25,-1.5,2.25,17.25},
     {2,3,1.0/3.0,.75,90},{17.25,19.5,2.5,-1.25,180},
-    {0,0,1,1,0},{1000,1000,3.2,3.2,340}
+    {0,0,1,1,0},{1000,1000,3.2,3.2,340},
+    {nextafter(.75,1.0),nextafter(0.0,1.0),3.2,3.2,0},
+    {nextafter(.75,0.0),0.0,3.2,3.2,0},
+    {.75,0.0,nextafter(.5,1.0),nextafter(.5,0.0),0},
+    {-17.25,19.5,nextafter(-2.5,-3.0),1.25,180},
+    {.75,0.0,.5,.5,0},
+    {.75,0.0,1.0,1.0,nextafter(90.0,91.0)}
   };
   enum { W=48,H=37,LARGE_W=768,LARGE_H=512 };
   uint32_t *reference=malloc((size_t)LARGE_W*LARGE_H*sizeof *reference);
@@ -173,6 +179,11 @@ static int mapped_multiply_exact_case(void){
     REQUIRE(!mapped_multiply_result(&control,0,reference,&before,&unused,NULL) &&
       !mapped_multiply_result(&control,1,selected,&after,&workers,&skipped),
       "large mapped multiply and source feedback complete");
+    if(!workers || memcmp(reference,selected,(size_t)LARGE_W*LARGE_H*sizeof *reference) ||
+       before!=after || after!=1u || (!feedback && skipped<=1000u))
+      fprintf(stderr,"multiply large: feedback=%d workers=%d different=%d before=%llu after=%llu skipped=%llu\n",
+        feedback,workers,memcmp(reference,selected,(size_t)LARGE_W*LARGE_H*sizeof *reference)!=0,
+        (unsigned long long)before,(unsigned long long)after,(unsigned long long)skipped);
     REQUIRE(workers && !memcmp(reference,selected,(size_t)LARGE_W*LARGE_H*sizeof *reference) &&
       before==after && after==1u && (feedback || skipped>1000u),
       "existing row workers preserve exact mapping, feedback snapshots and one counted draw");

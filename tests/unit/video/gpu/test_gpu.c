@@ -2335,6 +2335,9 @@ static int scene_full_opaque_rectangle_clear_case(void){
       (optimized?anygm_test_graphics_scene_draw_calls()==0:
                  anygm_test_graphics_scene_draw_calls()>0),
       "only plain opaque complete rectangles reuse the existing region fill");
+    if(variant==6u)
+      REQUIRE(anygm_test_graphics_scene_sampler()==31,
+        "plain partial opaque rectangles use the unchanged direct-colour sampler");
     if(optimized){
       float red=0,green=0,blue=0,alpha=0;int x=0,y=0,w=0,h=0;
       anygm_test_graphics_clear_colour(&red,&green,&blue,&alpha);

@@ -3363,6 +3363,13 @@ GmlRenderExecutionResult gml_gpu_opengl_scene_submit(GmlGpuBackend *backend,
          (op->payload.primitive.alpha<1.0 || vertex_span)?3:0):0):
       native_triangle?3:inverse_rect?GL_SCENE_BLEND_INVERSE_RECT:
       (particle || alpha_rect?(int)op->payload.primitive.alpha_blend:0);
+    /* Opaque plain rectangles already carry their final uniform RGBA. Use the established
+     * direct-colour sampler instead of executing the general rectangle program per fragment. */
+    if(op->opcode==GML_RENDER_OP_COLOURED_PRIMITIVE &&
+       op->payload.primitive.kind==GML_RENDER_PRIMITIVE_RECTANGLE &&
+       primitive_blend==0 && op->payload.primitive.alpha==1.0 &&
+       !(op->payload.primitive.rectangle_flags&~GML_RENDER_RECTANGLE_TARGET_ALPHA))
+      primitive_filter=31u;
     if(pending_count && (particle || alpha_rect || rectangle || native_triangle
        ? pending_palette.enabled || !active_target || !same_logical(active_target->ref,op->target.image) ||
          pending_count==GL_SCENE_MAX_QUADS || pending_filter!=primitive_filter ||

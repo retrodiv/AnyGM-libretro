@@ -15,6 +15,7 @@
 #include "anygm_host.h"
 
 #include <limits.h>
+#include <float.h>
 #include <math.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -1463,41 +1464,83 @@ typedef struct {
   atomic_uint_fast64_t *skipped_pixels,*sampled_pixels;
 } MappedMultiplyBand;
 
-/* The general inverse map and multiply expression are unchanged. Immutable
- * source pixels and disjoint destination rows permit the existing worker pool;
- * coverage is one draw flag, so each band marks it once if it wrote. */
+static inline uint32_t mapped_multiply_colour(uint32_t source,uint32_t old,
+    int red_tint,int green_tint,int blue_tint,int white,uint32_t bits,int opaque){
+  int red=(source>>16)&255,green=(source>>8)&255,blue=source&255;
+  if(!white){red=red*red_tint/255;green=green*green_tint/255;blue=blue*blue_tint/255;}
+  uint32_t value=blend_multiply_channels(old,red,green,blue,opaque);
+  return (old&~bits)|(value&bits);
+}
+
+/* Copy immutable draw inputs before writing disjoint rows. Four independent copies of the
+ * established inverse expression expose ordinary compiler vectorization without changing its
+ * sampling rule. Extended-evaluation targets retain the scalar expression and its precision. */
 static void mapped_multiply_band(void *context,int first,int last,int slot){
   (void)slot;
   MappedMultiplyBand *band=context;
   GmlRender *r=band->render;
+  uint32_t *framebuffer=r->fb;
+  const uint32_t *source=band->source;
+  const int stride=r->fbw,sw=band->sw,sh=band->sh,x0=band->x0,x1=band->x1;
+  const int red=band->red,green=band->green,blue=band->blue,white=band->white;
+  const int opaque=r->target_sp==0;
+  const double ax=band->ax,ay=band->ay,c=band->c,sn=band->sn,xs=band->xs,ys=band->ys;
+  const uint32_t bits=color_write_bits(r->color_write_mask),rgb_bits=bits&0xFFFFFFu;
+  const int force_alpha=opaque && (bits&0xFF000000u);
   int written=0;
   uint64_t skipped=0,sampled=0;
-  unsigned mask=r->color_write_mask;
-  uint32_t rgb_mask=(mask&1u?0x00FF0000u:0u)|(mask&2u?0x0000FF00u:0u)|
-                    (mask&4u?0x000000FFu:0u);
-  int force_alpha=r->target_sp==0 && (mask&8u);
   for(int py=band->y0+first;py<band->y0+last;py++){
-    for(int px=band->x0;px<band->x1;px++){
-      uint32_t *destination=r->fb+(size_t)py*r->fbw+px;
-      uint32_t old=*destination;
-      /* Multiplication leaves selected zero RGB bytes unchanged. Once this band has witnessed
-       * one covered write, omitting another unchanged pixel cannot alter either the pixels or
-       * the draw-level coverage flag. A screen alpha byte which still needs stamping is not a
-       * no-op; numbered-target alpha is preserved by the existing multiply owner. */
-      if(written && !(old&rgb_mask) && (!force_alpha || old>>24==255u)){
+    uint32_t *row=framebuffer+(size_t)py*stride;
+    int px=x0;
+#if FLT_EVAL_METHOD == 0
+    for(;px+3<x1;px+=4){
+      unsigned noops=0;
+      if(written){
+        for(unsigned lane=0;lane<4u;lane++)
+          if(!(row[px+(int)lane]&rgb_bits) &&
+             (!force_alpha || (row[px+(int)lane]>>24)==255u)) noops|=1u<<lane;
+        if(noops==15u){skipped+=4u;continue;}
+      }
+      if(noops){
+        /* Mixed zero/nonzero groups retain scalar admission so an unchanged lane also avoids
+         * its inverse lookup. Fully active groups expose four independent exact expressions. */
+        for(int lane=0;lane<4;lane++){
+          if(noops&(1u<<lane)){skipped++;continue;}
+          sampled++;
+          double rx=px+lane+0.5-ax,ry=py+0.5-ay;
+          double u=(rx*c-ry*sn)/xs,v=(rx*sn+ry*c)/ys;
+          if(u<0.0 || v<0.0 || u>=(double)sw || v>=(double)sh) continue;
+          uint32_t pixel=source[(size_t)(int)floor(v)*sw+(int)floor(u)];
+          row[px+lane]=mapped_multiply_colour(pixel,row[px+lane],red,green,blue,white,bits,opaque);
+          written=1;
+        }
+        continue;
+      }
+      double u[4],v[4];
+      for(int lane=0;lane<4;lane++){
+        double rx=px+lane+0.5-ax,ry=py+0.5-ay;
+        u[lane]=(rx*c-ry*sn)/xs;v[lane]=(rx*sn+ry*c)/ys;
+      }
+      sampled+=4u;
+      for(int lane=0;lane<4;lane++){
+        if(u[lane]<0.0 || v[lane]<0.0 || u[lane]>=(double)sw || v[lane]>=(double)sh) continue;
+        uint32_t pixel=source[(size_t)(int)floor(v[lane])*sw+(int)floor(u[lane])];
+        row[px+lane]=mapped_multiply_colour(pixel,row[px+lane],red,green,blue,white,bits,opaque);
+        written=1;
+      }
+    }
+#endif
+    for(;px<x1;px++){
+      uint32_t old=row[px];
+      if(written && !(old&rgb_bits) && (!force_alpha || (old>>24)==255u)){
         skipped++;continue;
       }
       sampled++;
-      double rx=px+0.5-band->ax,ry=py+0.5-band->ay;
-      double u=(rx*band->c-ry*band->sn)/band->xs;
-      double v=(rx*band->sn+ry*band->c)/band->ys;
-      if(u<0.0 || v<0.0 || u>=(double)band->sw || v>=(double)band->sh) continue;
-      uint32_t source=band->source[(size_t)(int)floor(v)*band->sw+(int)floor(u)];
-      int red=(source>>16)&255,green=(source>>8)&255,blue=source&255;
-      if(!band->white){
-        red=red*band->red/255;green=green*band->green/255;blue=blue*band->blue/255;
-      }
-      *destination=color_write_merge(r,old,blend_multiply_pixel(r,old,red,green,blue));
+      double rx=px+0.5-ax,ry=py+0.5-ay;
+      double u=(rx*c-ry*sn)/xs,v=(rx*sn+ry*c)/ys;
+      if(u<0.0 || v<0.0 || u>=(double)sw || v>=(double)sh) continue;
+      uint32_t pixel=source[(size_t)(int)floor(v)*sw+(int)floor(u)];
+      row[px]=mapped_multiply_colour(pixel,old,red,green,blue,white,bits,opaque);
       written=1;
     }
   }

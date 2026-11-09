@@ -155,7 +155,8 @@ static int build_scene_program(GmlGpuBackend *backend,GlSceneProgram *scene,
                                mode==37?"#define GML_SCENE_CONSTANT_FILTER 35\n":
                                mode==38?"#define GML_SCENE_CONSTANT_FILTER 36\n":
                                mode==39?"#define GML_SCENE_CONSTANT_FILTER 39\n":
-                               mode==40?"#define GML_SCENE_CONSTANT_FILTER 41\n":"",
+                               mode==40?"#define GML_SCENE_CONSTANT_FILTER 41\n":
+                               mode==41?"#define GML_SCENE_CONSTANT_FILTER 31\n":"",
                                GML_GPU_OPENGL_SCENE_FRAGMENT_BODY);
   if(vertex_length<0 || (size_t)vertex_length>=sizeof vertex_source ||
      fragment_length<0 || (size_t)fragment_length>=sizeof fragment_source){
@@ -249,7 +250,7 @@ static int build_scene_program(GmlGpuBackend *backend,GlSceneProgram *scene,
        (mode!=8 && mode!=30 && mode!=33 && mode!=34 && mode!=35 && mode!=38 && mode!=40 &&
         (scene->a_colour[0]<0 || scene->a_colour[1]<0 || scene->a_colour[2]<0 ||
                     scene->a_colour[3]<0)) || scene->u_extent<0 ||
-       ((mode!=20 && mode!=21 && mode!=36 && mode!=37 && mode!=38) && scene->u_image<0) ||
+       ((mode!=20 && mode!=21 && mode!=36 && mode!=37 && mode!=38 && mode!=41) && scene->u_image<0) ||
        ((mode==1 || mode==4) && scene->u_filter<0)))){
     gml_gpu_opengl_record_error(error,error_capacity,"scene program is missing an attribute or uniform");
     backend->gl.DeleteProgram(scene->program);
@@ -271,7 +272,9 @@ GlSceneProgram *gml_gpu_opengl_scene_draw_program(GmlGpuBackend *backend,uint32_
   if(filter==GL_SCENE_NATIVE_POINT_STAMP_FILTER) filter=82u;
   int mode=0;
   int plain_native=native_flags&GL_SCENE_NATIVE_PLAIN;
-  if(filter==23u || filter==24u || filter==34u || filter==35u || filter==36u ||
+  if(filter==31u){
+    program=&scene->compact_programs[39];mode=41;
+  }else if(filter==23u || filter==24u || filter==34u || filter==35u || filter==36u ||
      filter==39u || filter==41u){
     unsigned index=filter==23u?32u:filter==24u?33u:filter==34u?34u:
       filter==35u?35u:filter==36u?36u:filter==39u?37u:38u;
