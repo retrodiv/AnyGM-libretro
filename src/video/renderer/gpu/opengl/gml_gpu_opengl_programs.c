@@ -148,7 +148,14 @@ static int build_scene_program(GmlGpuBackend *backend,GlSceneProgram *scene,
                                mode==30?"#define GML_SCENE_CONSTANT_FILTER 55\n":
                                mode==31?"#define GML_SCENE_CONSTANT_FILTER 147\n":
                                mode==32?"#define GML_SCENE_CONSTANT_FILTER 149\n":
-                               mode==33?"#define GML_SCENE_CONSTANT_FILTER 30\n":"",
+                               mode==33?"#define GML_SCENE_CONSTANT_FILTER 30\n":
+                               mode==34?"#define GML_SCENE_CONSTANT_FILTER 23\n":
+                               mode==35?"#define GML_SCENE_CONSTANT_FILTER 24\n":
+                               mode==36?"#define GML_SCENE_CONSTANT_FILTER 34\n":
+                               mode==37?"#define GML_SCENE_CONSTANT_FILTER 35\n":
+                               mode==38?"#define GML_SCENE_CONSTANT_FILTER 36\n":
+                               mode==39?"#define GML_SCENE_CONSTANT_FILTER 39\n":
+                               mode==40?"#define GML_SCENE_CONSTANT_FILTER 41\n":"",
                                GML_GPU_OPENGL_SCENE_FRAGMENT_BODY);
   if(vertex_length<0 || (size_t)vertex_length>=sizeof vertex_source ||
      fragment_length<0 || (size_t)fragment_length>=sizeof fragment_source){
@@ -236,10 +243,13 @@ static int build_scene_program(GmlGpuBackend *backend,GlSceneProgram *scene,
        scene->u_rotated_alpha16<0)) ||
      (mode==14 && (scene->u_point_map_x<0 || scene->u_point_map_y<0 ||
        scene->u_point_origin<0)) ||
+     ((mode==34 || mode==35) && (scene->u_recovery_screen<0 ||
+       scene->u_recovery_application<0 || scene->u_recovery_rect<0)) ||
      (mode && (scene->a_position01<0 || scene->a_position23<0 ||
-       (mode!=8 && mode!=30 && mode!=33 && (scene->a_colour[0]<0 || scene->a_colour[1]<0 || scene->a_colour[2]<0 ||
+       (mode!=8 && mode!=30 && mode!=33 && mode!=34 && mode!=35 && mode!=38 && mode!=40 &&
+        (scene->a_colour[0]<0 || scene->a_colour[1]<0 || scene->a_colour[2]<0 ||
                     scene->a_colour[3]<0)) || scene->u_extent<0 ||
-       ((mode!=20 && mode!=21) && scene->u_image<0) ||
+       ((mode!=20 && mode!=21 && mode!=36 && mode!=37 && mode!=38) && scene->u_image<0) ||
        ((mode==1 || mode==4) && scene->u_filter<0)))){
     gml_gpu_opengl_record_error(error,error_capacity,"scene program is missing an attribute or uniform");
     backend->gl.DeleteProgram(scene->program);
@@ -261,7 +271,12 @@ GlSceneProgram *gml_gpu_opengl_scene_draw_program(GmlGpuBackend *backend,uint32_
   if(filter==GL_SCENE_NATIVE_POINT_STAMP_FILTER) filter=82u;
   int mode=0;
   int plain_native=native_flags&GL_SCENE_NATIVE_PLAIN;
-  if(filter==30u){
+  if(filter==23u || filter==24u || filter==34u || filter==35u || filter==36u ||
+     filter==39u || filter==41u){
+    unsigned index=filter==23u?32u:filter==24u?33u:filter==34u?34u:
+      filter==35u?35u:filter==36u?36u:filter==39u?37u:38u;
+    program=&scene->compact_programs[index];mode=(int)index+2;
+  }else if(filter==30u){
     program=&scene->compact_programs[31];mode=33;
   }else if(filter==53u || filter==55u || filter==147u || filter==149u){
     unsigned index=filter==53u?27u:filter==55u?28u:filter==147u?29u:30u;

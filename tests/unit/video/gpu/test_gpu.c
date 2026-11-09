@@ -1848,7 +1848,7 @@ static int scene_hardware_filtered_batch_case(unsigned kind){
 }
 
 static int scene_hot_constant_programs_case(void){
-  const unsigned filters[]={32u,33u,153u,21u,22u,25u,26u,53u,55u,147u,149u,30u};
+  const unsigned filters[]={32u,33u,153u,21u,22u,25u,26u,53u,55u,147u,149u,30u,23u,24u,34u,35u,36u,39u,41u};
   for(unsigned api=0;api<2u;api++)for(unsigned selected=0;selected<sizeof filters/sizeof filters[0];selected++)
   for(unsigned failure=0;failure<2u;failure++){
     GmlGpuContext context=fake_context(api?GML_GPU_API_OPENGL_CORE:GML_GPU_API_OPENGLES3);
@@ -1864,7 +1864,8 @@ static int scene_hot_constant_programs_case(void){
       anygm_test_graphics_fail_compile_containing(NULL);
     }
     for(unsigned epoch=0;epoch<2u;epoch++){
-      if(filters[selected]==55u || filters[selected]==30u)
+      if(filters[selected]==55u || filters[selected]==30u || filters[selected]==23u ||
+         filters[selected]==24u || filters[selected]==36u || filters[selected]==41u)
         anygm_test_graphics_withhold_attribute_prefix("in_Colour");
       GlSceneProgram *program=gml_gpu_opengl_scene_draw_program(gpu->backend,filters[selected],plain,error,sizeof error);
       const char *fragment=anygm_test_graphics_shader_source(1);

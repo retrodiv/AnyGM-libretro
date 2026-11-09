@@ -1541,10 +1541,11 @@ static int synthetic_window_gui_content_create(AnygmSyntheticContent *fixture,in
       "draw_surface(application_surface,0,0);\n"
       "draw_set_color(c_white); draw_rectangle(3,3,6,6,false);\n":explicit_gui_size==20?
       "draw_set_color(c_white); draw_set_alpha(1); draw_enable_alphablend(false);\n"
+      "if(global.fixture_frame!=2){\n"
       "draw_primitive_begin_texture(5,surface_get_texture(application_surface));\n"
       "draw_vertex_texture(0,0,0,0); draw_vertex_texture(255,0,1,0);\n"
       "draw_vertex_texture(0,223,0,1); draw_vertex_texture(255,223,1,1);\n"
-      "draw_primitive_end(); draw_enable_alphablend(true);\n":explicit_gui_size==19?
+      "draw_primitive_end(); } draw_enable_alphablend(true);\n":explicit_gui_size==19?
       "draw_set_color(c_white); draw_set_alpha(1); draw_enable_alphablend(false);\n"
       "draw_primitive_begin_texture(5,surface_get_texture(application_surface));\n"
       "draw_vertex_texture(0,0,0,0); draw_vertex_texture(256,0,1,0);\n"

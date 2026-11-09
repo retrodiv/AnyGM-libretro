@@ -2771,7 +2771,7 @@ static int flush_quads(GmlGpuBackend *backend,GlSceneImage *target,GlSceneImage 
     backend->gl.VertexAttribDivisor((GLuint)attributes[index],1u);
   }
   backend->gl.DrawArraysInstanced(GL_TRIANGLES,0,6,(GLsizei)count);
-  if(stamp_alpha && !skip_alpha && (write_mask&8u) && filter!=GL_SCENE_NATIVE_POINT_OPAQUE_FILTER && filter!=53u && filter!=66u && filter!=21u && filter!=25u && filter!=32u && filter!=80u){
+  if(stamp_alpha && !skip_alpha && (write_mask&8u) && filter!=GL_SCENE_NATIVE_POINT_OPAQUE_FILTER && filter!=23u && filter!=35u && filter!=39u && filter!=53u && filter!=66u && filter!=21u && filter!=25u && filter!=32u && filter!=80u){
     /* The CPU screen writer keeps alpha opaque at every covered texel,
      * even when its prior alpha is unknown. Reuse the sampled vertices and
      * the same sampler and cutout in an alpha-only pass, preserving that recipe's coverage. */
@@ -2808,8 +2808,8 @@ restore_stream_state:
      (blend==1 && filter!=15u && filter!=17u));
   /* Constant RGB programs cannot change selector for the separate alpha stamp.
    * Submit that existing kernel through the same stream with complete state. */
-  if(!skip_alpha && (filter==GL_SCENE_NATIVE_POINT_OPAQUE_FILTER || filter==53u || filter==66u || filter==21u || filter==25u || filter==32u || filter==80u) && (write_mask&8u))
-    if(!flush_quads(backend,target,source,filter==GL_SCENE_NATIVE_POINT_OPAQUE_FILTER?GL_SCENE_NATIVE_POINT_STAMP_FILTER:filter==53u?55u:filter==21u?22u:filter==25u?26u:filter==32u?33u:filter==80u?82u:72u,0,count,8u,alpha_test,
+  if(!skip_alpha && (filter==GL_SCENE_NATIVE_POINT_OPAQUE_FILTER || filter==23u || filter==35u || filter==39u || filter==53u || filter==66u || filter==21u || filter==25u || filter==32u || filter==80u) && (write_mask&8u))
+    if(!flush_quads(backend,target,source,filter==GL_SCENE_NATIVE_POINT_OPAQUE_FILTER?GL_SCENE_NATIVE_POINT_STAMP_FILTER:filter==23u?24u:filter==35u?36u:filter==39u?41u:filter==53u?55u:filter==21u?22u:filter==25u?26u:filter==32u?33u:filter==80u?82u:72u,0,count,8u,alpha_test,
                     source_alpha_key,palette)) return 0;
   if(native_flags&GL_SCENE_NATIVE_WHITE_TINT) backend->white_tint_quads+=count;
   if(native_flags&GL_SCENE_NATIVE_ZERO_ALPHA_BLEND) backend->zero_alpha_blend_quads+=count;
@@ -3585,10 +3585,16 @@ GmlRenderExecutionResult gml_gpu_opengl_scene_submit(GmlGpuBackend *backend,
         result.status=GML_RENDER_EXEC_RESOURCE_ERROR;
         break;
       }
-      backend->gl.UseProgram(backend->scene.main_program.program);
-      backend->gl.Uniform1i(backend->scene.main_program.u_recovery_screen,2);
-      backend->gl.Uniform1i(backend->scene.main_program.u_recovery_application,3);
-      backend->gl.Uniform4iv(backend->scene.main_program.u_recovery_rect,1,rect);
+      GlSceneProgram *recovery[2]={
+        gml_gpu_opengl_scene_draw_program(backend,23u,0,error,error_capacity),
+        gml_gpu_opengl_scene_draw_program(backend,24u,0,error,error_capacity)};
+      if(!recovery[0] || !recovery[1]){result.status=GML_RENDER_EXEC_RESOURCE_ERROR;break;}
+      for(unsigned pass=0;pass<2u;pass++){
+        backend->gl.UseProgram(recovery[pass]->program);
+        backend->gl.Uniform1i(recovery[pass]->u_recovery_screen,2);
+        backend->gl.Uniform1i(recovery[pass]->u_recovery_application,3);
+        backend->gl.Uniform4iv(recovery[pass]->u_recovery_rect,1,rect);
+      }
       backend->gl.ActiveTexture(GL_TEXTURE2);
       backend->gl.BindTexture(GL_TEXTURE_2D,backend->scene.rgb_reduce_texture[2]);
       backend->gl.ActiveTexture(GL_TEXTURE3);
